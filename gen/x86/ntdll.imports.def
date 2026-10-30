@@ -326,6 +326,7 @@ EXPORTS
     RtlDosPathNameToNtPathName_U_WithStatus@16
     RtlDosPathNameToRelativeNtPathName_U@16
     RtlDosSearchPath_U@24
+    RtlDosSearchPath_Ustr@36
     RtlDowncaseUnicodeChar@4
     RtlDowncaseUnicodeString@12
     RtlDuplicateUnicodeString@12

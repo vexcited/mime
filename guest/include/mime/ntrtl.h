@@ -268,6 +268,10 @@ NTSYSAPI ULONG NTAPI RtlGetCurrentDirectory_U(ULONG size, PWSTR buffer);
 NTSYSAPI NTSTATUS NTAPI RtlSetCurrentDirectory_U(PCUNICODE_STRING dir);
 NTSYSAPI BOOLEAN NTAPI RtlDoesFileExists_U(PCWSTR name);
 NTSYSAPI ULONG NTAPI RtlDosSearchPath_U(PCWSTR path, PCWSTR name, PCWSTR extension, ULONG size, PWSTR buffer, PWSTR *file_part);
+NTSYSAPI NTSTATUS NTAPI RtlDosSearchPath_Ustr(ULONG flags, PCUNICODE_STRING path, PCUNICODE_STRING name,
+                                             PCUNICODE_STRING extension, PUNICODE_STRING static_string,
+                                             PUNICODE_STRING dynamic_string, PCUNICODE_STRING *full_name,
+                                             SIZE_T *file_part, SIZE_T *needed);
 NTSYSAPI ULONG NTAPI RtlIsDosDeviceName_U(PCWSTR name);
 NTSYSAPI NTSTATUS NTAPI LdrFindResource_U(PVOID handle, PLDR_RESOURCE_INFO info, ULONG level, IMAGE_RESOURCE_DATA_ENTRY **entry);
 NTSYSAPI NTSTATUS NTAPI LdrFindResourceDirectory_U(PVOID handle, PLDR_RESOURCE_INFO info, ULONG level, IMAGE_RESOURCE_DIRECTORY **dir);

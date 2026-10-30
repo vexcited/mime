@@ -319,16 +319,13 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDoesFileExists_U(PCWSTR name)
     return NT_SUCCESS(status);
 }
 
-/* path is ';' separated, extension is an optional default. */
+/* path is ';' separated, extension is an optional default, which a name with a dot anywhere does not get. */
 NTDLL_EXPORT ULONG NTAPI RtlDosSearchPath_U(PCWSTR path, PCWSTR name, PCWSTR extension, ULONG size, PWSTR buffer,
                                             PWSTR *file_part)
 {
     WCHAR candidate[MAX_PATH * 2];
     RTL_PATH_TYPE type = RtlDetermineDosPathNameType_U(name);
-    BOOLEAN has_ext = FALSE;
-    for (PCWSTR p = name + wcslen(name); p > name && p[-1] != '\\' && p[-1] != '/'; p--)
-        if (p[-1] == '.')
-            has_ext = TRUE;
+    BOOLEAN has_ext = wcschr(name, '.') != nullptr;
     if (type != RtlPathTypeRelative) {
         if (RtlDoesFileExists_U(name))
             return RtlGetFullPathName_U(name, size, buffer, file_part);
@@ -357,6 +354,129 @@ NTDLL_EXPORT ULONG NTAPI RtlDosSearchPath_U(PCWSTR path, PCWSTR name, PCWSTR ext
         path = *end ? end + 1 : end;
     }
     return 0;
+}
+
+/* the last component of a name has a dot. */
+static BOOLEAN last_part_has_dot(PCUNICODE_STRING name)
+{
+    for (SIZE_T i = name->Length / sizeof(WCHAR); i > 0; i--) {
+        WCHAR c = name->Buffer[i - 1];
+        if (c == '\\' || c == '/')
+            break;
+        if (c == '.')
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static BOOLEAN exists_counted(PCWSTR buffer, SIZE_T chars)
+{
+    WCHAR name[MAX_PATH * 2];
+    if (chars >= RTL_NUMBER_OF(name))
+        return FALSE;
+    memcpy(name, buffer, chars * sizeof(WCHAR));
+    name[chars] = 0;
+    return RtlDoesFileExists_U(name);
+}
+
+/* the full name of a found file into the caller's buffer, or the size it needs. */
+static NTSTATUS search_result(PCWSTR found, PUNICODE_STRING static_string, PUNICODE_STRING dynamic_string,
+                              PCUNICODE_STRING *full_name, SIZE_T *file_part, SIZE_T *needed)
+{
+    WCHAR full[MAX_PATH * 2];
+    PWSTR part = nullptr;
+    ULONG bytes = RtlGetFullPathName_U(found, sizeof(full), full, &part);
+    if (!bytes || bytes >= sizeof(full))
+        return STATUS_NAME_TOO_LONG;
+    PUNICODE_STRING out = static_string;
+    if (!out || bytes + sizeof(WCHAR) > out->MaximumLength) {
+        if (!dynamic_string) {
+            if (needed)
+                *needed = bytes + sizeof(WCHAR);
+            return STATUS_BUFFER_TOO_SMALL;
+        }
+        dynamic_string->Buffer = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, 0, bytes + sizeof(WCHAR));
+        if (!dynamic_string->Buffer)
+            return STATUS_NO_MEMORY;
+        dynamic_string->MaximumLength = (USHORT)(bytes + sizeof(WCHAR));
+        out = dynamic_string;
+    }
+    memcpy(out->Buffer, full, bytes + sizeof(WCHAR));
+    out->Length = (USHORT)bytes;
+    if (full_name)
+        *full_name = out;
+    if (file_part)
+        *file_part = part ? (SIZE_T)(part - full) : 0;
+    return STATUS_SUCCESS;
+}
+
+/*
+ * the counted search kernelbase's SearchPathW uses. flag 2 searches a name that is not relative, or starts with .\ or
+ * ..\, as it is; flag 4 then also tries the default extension on such a name when it has a dot. a relative name is
+ * looked for in each folder of the path, with the extension unless its last part has a dot.
+ */
+NTDLL_EXPORT NTSTATUS NTAPI RtlDosSearchPath_Ustr(ULONG flags, PCUNICODE_STRING path, PCUNICODE_STRING name,
+                                                 PCUNICODE_STRING extension, PUNICODE_STRING static_string,
+                                                 PUNICODE_STRING dynamic_string, PCUNICODE_STRING *full_name,
+                                                 SIZE_T *file_part, SIZE_T *needed)
+{
+    if (full_name)
+        *full_name = nullptr;
+    if (file_part)
+        *file_part = 0;
+    if (needed)
+        *needed = 0;
+    if (dynamic_string) {
+        dynamic_string->Length = dynamic_string->MaximumLength = 0;
+        dynamic_string->Buffer = nullptr;
+    }
+    if ((flags & ~7u) || !path || !name || (static_string && dynamic_string && !full_name))
+        return STATUS_INVALID_PARAMETER;
+    WCHAR candidate[MAX_PATH * 2];
+    SIZE_T name_chars = name->Length / sizeof(WCHAR);
+    SIZE_T ext_chars = extension ? extension->Length / sizeof(WCHAR) : 0;
+    if (name_chars + ext_chars + 1 >= RTL_NUMBER_OF(candidate))
+        return STATUS_NAME_TOO_LONG;
+    memcpy(candidate, name->Buffer, name_chars * sizeof(WCHAR));
+    candidate[name_chars] = 0;
+    RTL_PATH_TYPE type = RtlDetermineDosPathNameType_U(candidate);
+    BOOLEAN dotted = (flags & 2) && name_chars >= 2 && name->Buffer[0] == '.' &&
+                     (name->Buffer[1] == '\\' || name->Buffer[1] == '/' ||
+                      (name_chars >= 3 && name->Buffer[1] == '.' && (name->Buffer[2] == '\\' || name->Buffer[2] == '/')));
+    if (type != RtlPathTypeRelative || dotted) {
+        if (exists_counted(name->Buffer, name_chars))
+            return search_result(candidate, static_string, dynamic_string, full_name, file_part, needed);
+        if (!ext_chars || (!(flags & 4) && last_part_has_dot(name)))
+            return STATUS_NO_SUCH_FILE;
+        memcpy(candidate + name_chars, extension->Buffer, ext_chars * sizeof(WCHAR));
+        candidate[name_chars + ext_chars] = 0;
+        if (RtlDoesFileExists_U(candidate))
+            return search_result(candidate, static_string, dynamic_string, full_name, file_part, needed);
+        return STATUS_NO_SUCH_FILE;
+    }
+    if (last_part_has_dot(name))
+        ext_chars = 0;
+    PCWSTR p = path->Buffer, end = path->Buffer + path->Length / sizeof(WCHAR);
+    while (p < end) {
+        PCWSTR stop = p;
+        while (stop < end && *stop != ';')
+            stop++;
+        SIZE_T dir_chars = (SIZE_T)(stop - p), n = dir_chars;
+        if (dir_chars + name_chars + ext_chars + 2 < RTL_NUMBER_OF(candidate)) {
+            memcpy(candidate, p, dir_chars * sizeof(WCHAR));
+            if (n && candidate[n - 1] != '\\' && candidate[n - 1] != '/')
+                candidate[n++] = '\\';
+            memcpy(candidate + n, name->Buffer, name_chars * sizeof(WCHAR));
+            n += name_chars;
+            if (ext_chars)
+                memcpy(candidate + n, extension->Buffer, ext_chars * sizeof(WCHAR));
+            candidate[n + ext_chars] = 0;
+            if (RtlDoesFileExists_U(candidate))
+                return search_result(candidate, static_string, dynamic_string, full_name, file_part, needed);
+        }
+        p = stop < end ? stop + 1 : stop;
+    }
+    return STATUS_NO_SUCH_FILE;
 }
 
 NTDLL_EXPORT ULONG NTAPI RtlIsDosDeviceName_U(PCWSTR name)

@@ -434,7 +434,19 @@ DWORD WINAPI SearchPathW(LPCWSTR path, LPCWSTR name, LPCWSTR extension, DWORD si
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
+    if (file_part)
+        *file_part = nullptr;
+    /* trailing blanks are not part of the name. */
+    UNICODE_STRING file;
+    RtlInitUnicodeString(&file, name);
+    while (file.Length >= sizeof(WCHAR) && file.Buffer[file.Length / sizeof(WCHAR) - 1] == ' ')
+        file.Length -= sizeof(WCHAR);
+    if (!file.Length) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
     PWSTR list = nullptr;
+    ULONG flags = 6;
     if (!path) {
         list = default_search_path();
         if (!list) {
@@ -442,16 +454,23 @@ DWORD WINAPI SearchPathW(LPCWSTR path, LPCWSTR name, LPCWSTR extension, DWORD si
             return 0;
         }
         path = list;
+        flags = 7;
     }
-    if (size > 0x7FFF)
-        size = 0x7FFF;
-    ULONG bytes = RtlDosSearchPath_U(path, name, extension, size * sizeof(WCHAR), buffer, file_part);
+    UNICODE_STRING folders, ext, out = {0, (USHORT)(size > 0x7FFF ? 0xFFFE : size * sizeof(WCHAR)), buffer};
+    RtlInitUnicodeString(&folders, path);
+    RtlInitUnicodeString(&ext, extension);
+    SIZE_T part = 0, needed = 0;
+    NTSTATUS status = RtlDosSearchPath_Ustr(flags, &folders, &file, &ext, &out, nullptr, nullptr, &part, &needed);
     KbFree(list);
-    if (!bytes) {
-        KbSetError(ERROR_FILE_NOT_FOUND);
+    if (status == STATUS_BUFFER_TOO_SMALL)
+        return (DWORD)(needed / sizeof(WCHAR));
+    if (!NT_SUCCESS(status)) {
+        KbSetError(RtlNtStatusToDosError(status));
         return 0;
     }
-    return bytes / sizeof(WCHAR);
+    if (file_part)
+        *file_part = buffer + part;
+    return out.Length / sizeof(WCHAR);
 }
 
 DWORD WINAPI SearchPathA(LPCSTR path, LPCSTR name, LPCSTR extension, DWORD size, LPSTR buffer, LPSTR *file_part)
