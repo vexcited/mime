@@ -210,7 +210,8 @@ void MimeMsiShutDownHost(void);
             return (type)MimeMsiProxyCall((id), (ULONG)(sizeof(arguments_) / sizeof(arguments_[0])), arguments_); \
         } \
     } while (0)
-UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, PCSTR entry, UINT *result);
+UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, PCSTR entry, WORD machine,
+                      UINT *result);
 UINT MimeMsiExtraAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiRunUnlocked(MSIHANDLE handle, MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiFormat(MIME_MSI_PACKAGE *package, PCWSTR template, PWSTR *out);

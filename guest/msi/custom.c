@@ -258,7 +258,7 @@ static UINT run_library(MIME_MSI_PACKAGE *package, MSIHANDLE session, const MIME
             FreeLibrary(library);
         }
     } else {
-        error = MimeMsiRemoteRun(package, session, path, entry, result);
+        error = MimeMsiRemoteRun(package, session, path, entry, machine, result);
     }
     if (temporary)
         DeleteFileW(path);

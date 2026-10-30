@@ -346,28 +346,31 @@ UINT WINAPI MsiCustomActionServer(LPCWSTR pipe_name)
 
 /* ------------------------------------------------------------------ installer side */
 
-static HANDLE g_host_pipe, g_host_process;
+/* a host for each processor a library may be built for, the 64-bit one first. */
+enum { HOST_NATIVE64, HOST_X86, HOSTS };
+static HANDLE g_host_pipe[HOSTS], g_host_process[HOSTS];
 static SRWLOCK g_host_lock = SRWLOCK_INIT;
 
-static void shut_down_host(void)
+static void shut_down_host(ULONG host)
 {
-    if (g_host_pipe) {
-        send_message(g_host_pipe, MESSAGE_QUIT, nullptr);
-        CloseHandle(g_host_pipe);
-        g_host_pipe = nullptr;
+    if (g_host_pipe[host]) {
+        send_message(g_host_pipe[host], MESSAGE_QUIT, nullptr);
+        CloseHandle(g_host_pipe[host]);
+        g_host_pipe[host] = nullptr;
     }
-    if (g_host_process) {
-        if (WaitForSingleObject(g_host_process, 2000) == WAIT_TIMEOUT)
-            TerminateProcess(g_host_process, 0);
-        CloseHandle(g_host_process);
-        g_host_process = nullptr;
+    if (g_host_process[host]) {
+        if (WaitForSingleObject(g_host_process[host], 2000) == WAIT_TIMEOUT)
+            TerminateProcess(g_host_process[host], 0);
+        CloseHandle(g_host_process[host]);
+        g_host_process[host] = nullptr;
     }
 }
 
 void MimeMsiShutDownHost(void)
 {
     AcquireSRWLockExclusive(&g_host_lock);
-    shut_down_host();
+    for (ULONG host = 0; host < HOSTS; host++)
+        shut_down_host(host);
     ReleaseSRWLockExclusive(&g_host_lock);
 }
 
@@ -393,15 +396,22 @@ static DWORD WINAPI watch_host(PVOID parameter)
     return 0;
 }
 
-static UINT start_host(void)
+/* the folder of the msiexec.exe built for a host. */
+static UINT host_directory(ULONG host, WCHAR directory[MAX_PATH])
 {
-    if (g_host_pipe)
+    UINT length = host == HOST_X86 ? GetSystemWow64DirectoryW(directory, MAX_PATH) : GetSystemDirectoryW(directory, MAX_PATH);
+    return !length || length + 16 >= MAX_PATH ? ERROR_NOT_SUPPORTED : ERROR_SUCCESS;
+}
+
+static UINT start_host(ULONG host)
+{
+    if (g_host_pipe[host])
         return ERROR_SUCCESS;
     WCHAR name[96], directory[MAX_PATH], command[MAX_PATH + 160];
-    _snwprintf(name, RTL_NUMBER_OF(name), L"\\\\.\\pipe\\msihost-%u-%u", GetCurrentProcessId(), GetTickCount());
-    UINT length = GetSystemWow64DirectoryW(directory, RTL_NUMBER_OF(directory));
-    if (!length || length + 16 >= RTL_NUMBER_OF(directory))
-        return ERROR_NOT_SUPPORTED;
+    _snwprintf(name, RTL_NUMBER_OF(name), L"\\\\.\\pipe\\msihost-%u-%u-%u", GetCurrentProcessId(), host, GetTickCount());
+    UINT error = host_directory(host, directory);
+    if (error)
+        return error;
     HANDLE pipe = CreateNamedPipeW(name, PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 65536, 65536,
                                    0, nullptr);
     if (pipe == INVALID_HANDLE_VALUE)
@@ -409,8 +419,14 @@ static UINT start_host(void)
     _snwprintf(command, RTL_NUMBER_OF(command), L"\"%s\\msiexec.exe\" /ca-server %s", directory, name);
     STARTUPINFOW startup = {.cb = sizeof(startup)};
     PROCESS_INFORMATION process;
-    if (!CreateProcessW(nullptr, command, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) {
-        UINT error = GetLastError();
+    /* a 32-bit installer starts the native host from the real System32. */
+    PVOID redirection = nullptr;
+    BOOL unredirected = host == HOST_NATIVE64 && Wow64DisableWow64FsRedirection(&redirection);
+    BOOL started = CreateProcessW(nullptr, command, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process);
+    error = started ? ERROR_SUCCESS : GetLastError();
+    if (unredirected)
+        Wow64RevertWow64FsRedirection(redirection);
+    if (!started) {
         CloseHandle(pipe);
         return error;
     }
@@ -430,9 +446,31 @@ static UINT start_host(void)
         CloseHandle(process.hProcess);
         return ERROR_BROKEN_PIPE;
     }
-    g_host_pipe = pipe;
-    g_host_process = process.hProcess;
+    g_host_pipe[host] = pipe;
+    g_host_process[host] = process.hProcess;
     return ERROR_SUCCESS;
+}
+
+/*
+ * calls the function with as many arguments as its signature has. a function that takes fewer may not be called with
+ * more: on x86 it removes its own arguments from the stack.
+ */
+static UINT_PTR call_proxy(const PROXY_ENTRY *entry, const UINT_PTR *a)
+{
+    typedef UINT_PTR(WINAPI * F1)(UINT_PTR);
+    typedef UINT_PTR(WINAPI * F2)(UINT_PTR, UINT_PTR);
+    typedef UINT_PTR(WINAPI * F3)(UINT_PTR, UINT_PTR, UINT_PTR);
+    typedef UINT_PTR(WINAPI * F4)(UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR);
+    typedef UINT_PTR(WINAPI * F5)(UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR);
+    PVOID f = entry->Function;
+    switch (strlen(entry->Signature)) {
+    case 1: return ((F1)f)(a[0]);
+    case 2: return ((F2)f)(a[0], a[1]);
+    case 3: return ((F3)f)(a[0], a[1], a[2]);
+    case 4: return ((F4)f)(a[0], a[1], a[2], a[3]);
+    case 5: return ((F5)f)(a[0], a[1], a[2], a[3], a[4]);
+    default: return ((PROXY_FUNCTION)f)(a[0], a[1], a[2], a[3], a[4], a[5]);
+    }
 }
 
 /* runs a call from the library on the installer's real handles. */
@@ -484,7 +522,7 @@ static BOOL serve_call(MESSAGE *request, MESSAGE *reply)
     }
     UINT_PTR result = ERROR_FUNCTION_FAILED;
     if (!request->Failed)
-        result = ((PROXY_FUNCTION)entry->Function)(args[0], args[1], args[2], args[3], args[4], args[5]);
+        result = call_proxy(entry, args);
     put_u32(reply, (ULONG)result);
     ULONG o = 0, b = 0, s = 0;
     for (PCSTR p = entry->Signature; *p; p++) {
@@ -514,10 +552,18 @@ static BOOL serve_call(MESSAGE *request, MESSAGE *reply)
     return !reply->Failed;
 }
 
-UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, PCSTR entry, UINT *result)
+UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, PCSTR entry, WORD machine,
+                      UINT *result)
 {
+    ULONG host;
+    if (machine == IMAGE_FILE_MACHINE_I386)
+        host = HOST_X86;
+    else if (machine == IMAGE_FILE_MACHINE_AMD64 || machine == IMAGE_FILE_MACHINE_ARM64)
+        host = HOST_NATIVE64;
+    else
+        return ERROR_BAD_EXE_FORMAT;
     AcquireSRWLockExclusive(&g_host_lock);
-    UINT error = start_host();
+    UINT error = start_host(host);
     if (error) {
         ReleaseSRWLockExclusive(&g_host_lock);
         return error;
@@ -528,13 +574,13 @@ UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, 
     put_u32(&request, session);
     put_text(&request, dll);
     put_text(&request, entry_name);
-    BOOL ok = !request.Failed && send_message(g_host_pipe, MESSAGE_RUN, &request);
+    BOOL ok = !request.Failed && send_message(g_host_pipe[host], MESSAGE_RUN, &request);
     MimeMsiFree(request.Data);
     error = ok ? ERROR_SUCCESS : ERROR_BROKEN_PIPE;
     while (!error) {
         MESSAGE message;
         ULONG kind;
-        if (!receive_message(g_host_pipe, &kind, &message)) {
+        if (!receive_message(g_host_pipe[host], &kind, &message)) {
             error = ERROR_BROKEN_PIPE;
             break;
         }
@@ -542,7 +588,7 @@ UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, 
             MESSAGE reply = {};
             BOOL served = serve_call(&message, &reply);
             MimeMsiFree(message.Data);
-            if (!served || !send_message(g_host_pipe, MESSAGE_REPLY, &reply))
+            if (!served || !send_message(g_host_pipe[host], MESSAGE_REPLY, &reply))
                 error = ERROR_BROKEN_PIPE;
             MimeMsiFree(reply.Data);
         } else if (kind == MESSAGE_RESULT) {
@@ -557,7 +603,7 @@ UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, 
         }
     }
     if (error == ERROR_BROKEN_PIPE)
-        shut_down_host();
+        shut_down_host(host);
     ReleaseSRWLockExclusive(&g_host_lock);
     return error;
 }
