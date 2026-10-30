@@ -175,12 +175,7 @@ static BOOL key_path_present(PCWSTR path)
             if (name)
                 *name++ = 0;
         }
-        DWORD view = 0;
-#ifdef _WIN64
-        view = is64 ? KEY_WOW64_64KEY : KEY_WOW64_32KEY;
-#else
-        (void)is64;
-#endif
+        DWORD view = is64 ? KEY_WOW64_64KEY : KEY_WOW64_32KEY;
         HKEY key;
         BOOL found = !RegOpenKeyExW(root, copy, 0, KEY_QUERY_VALUE | view, &key);
         if (found && name)

@@ -71,12 +71,8 @@ static UINT component_view(MIME_MSI_PACKAGE *package, PCWSTR name, DWORD *view)
         return error;
     int attributes = cell_number(table, row, L"Attributes");
     BOOL is64 = attributes != MSI_NULL_INTEGER && (attributes & 256);
-#ifdef _WIN64
+    /* the view follows the component, whatever processor the installer runs on, as the 64-bit service does it. */
     *view = is64 ? KEY_WOW64_64KEY : KEY_WOW64_32KEY;
-#else
-    *view = 0;
-    (void)is64;
-#endif
     return ERROR_SUCCESS;
 }
 
@@ -1129,10 +1125,7 @@ static PWSTR search_registry(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, U
         MimeMsiFree(key);
         return nullptr;
     }
-    DWORD view = 0;
-#ifdef _WIN64
-    view = (type & 16) ? KEY_WOW64_64KEY : KEY_WOW64_32KEY;
-#endif
+    DWORD view = (type & 16) ? KEY_WOW64_64KEY : KEY_WOW64_32KEY;
     HKEY opened;
     PWSTR text = nullptr, result = nullptr;
     if (!RegOpenKeyExW(root, key, 0, KEY_QUERY_VALUE | view, &opened)) {

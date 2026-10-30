@@ -25,11 +25,7 @@ static UINT uninstall_key(MIME_MSI_PACKAGE *package, WCHAR path[160])
 /* uninstall entries live in the native registry view for a 64-bit package. */
 static DWORD uninstall_view(const MIME_MSI_PACKAGE *package)
 {
-#ifdef _WIN64
     return package->Is64Bit ? KEY_WOW64_64KEY : KEY_WOW64_32KEY;
-#else
-    return 0;
-#endif
 }
 
 static UINT write_number(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path, PCWSTR name, DWORD value)

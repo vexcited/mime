@@ -50,12 +50,7 @@ static HKEY classes_root(MIME_MSI_PACKAGE *package)
 /* a 64-bit component writes to the 64-bit view of the registry. */
 static DWORD registry_view(int attributes)
 {
-#ifdef _WIN64
     return attributes != MSI_NULL_INTEGER && (attributes & 256) ? KEY_WOW64_64KEY : KEY_WOW64_32KEY;
-#else
-    (void)attributes;
-    return 0;
-#endif
 }
 
 static UINT component_info(MIME_MSI_PACKAGE *package, PCWSTR name, COMPONENT_INFO *info)

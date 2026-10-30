@@ -108,11 +108,7 @@ static PWSTR font_title(PCWSTR path)
 
 static DWORD fonts_view(void)
 {
-#ifdef _WIN64
     return KEY_WOW64_64KEY;
-#else
-    return 0;
-#endif
 }
 
 static BOOL in_fonts_folder(PCWSTR path)

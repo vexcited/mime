@@ -28,6 +28,16 @@ static UINT set_csidl(MIME_MSI_PACKAGE *package, PCWSTR name, int csidl)
     return set_folder(package, name, path);
 }
 
+/* a native folder: a 32-bit process reads it from the variable windows keeps for it, as it sees the 32-bit one. */
+static UINT set_native(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR variable, int csidl)
+{
+    WCHAR path[MAX_PATH];
+    DWORD length = GetEnvironmentVariableW(variable, path, RTL_NUMBER_OF(path));
+    if (!length || length >= RTL_NUMBER_OF(path))
+        return set_csidl(package, name, csidl);
+    return set_folder(package, name, path);
+}
+
 BOOL MimeMsiIs64BitPackage(MIME_MSI_PACKAGE *package)
 {
     MIME_MSI_SUMMARY_VALUE value;
@@ -147,28 +157,23 @@ UINT MimeMsiInitializeSystem(MIME_MSI_PACKAGE *package)
         }
     }
 #endif
+    /* on 64-bit windows SystemFolder and ProgramFilesFolder are the 32-bit folders for every package, the 64 names
+       are the native ones. */
+    WCHAR wow[MAX_PATH];
+    BOOL native64 = GetSystemWow64DirectoryW(wow, RTL_NUMBER_OF(wow)) != 0;
     if (!error && length && length < RTL_NUMBER_OF(path)) {
-        /* the system directory matching the package's processor. */
-        if (is64) {
-            error = set_folder(package, L"SystemFolder", path);
+        error = set_folder(package, L"SystemFolder", native64 ? wow : path);
+        if (native64)
             error = error ? error : set_folder(package, L"System64Folder", path);
-        } else {
-            WCHAR wow[MAX_PATH];
-            if (GetSystemWow64DirectoryW(wow, RTL_NUMBER_OF(wow)))
-                error = set_folder(package, L"SystemFolder", wow);
-            else
-                error = set_folder(package, L"SystemFolder", path);
-            error = error ? error : set_folder(package, L"System64Folder", path);
-        }
     }
     if (!error) {
-        int files = is64 ? CSIDL_PROGRAM_FILES : CSIDL_PROGRAM_FILESX86;
-        int common = is64 ? CSIDL_PROGRAM_FILES_COMMON : CSIDL_PROGRAM_FILES_COMMONX86;
-        error = set_csidl(package, L"ProgramFilesFolder", files);
-        error = error ? error : set_csidl(package, L"CommonFilesFolder", common);
-        if (is64 && !error) {
-            error = set_csidl(package, L"ProgramFiles64Folder", CSIDL_PROGRAM_FILES);
-            error = error ? error : set_csidl(package, L"CommonFiles64Folder", CSIDL_PROGRAM_FILES_COMMON);
+        error = set_csidl(package, L"ProgramFilesFolder", native64 ? CSIDL_PROGRAM_FILESX86 : CSIDL_PROGRAM_FILES);
+        error = error ? error : set_csidl(package, L"CommonFilesFolder",
+                                          native64 ? CSIDL_PROGRAM_FILES_COMMONX86 : CSIDL_PROGRAM_FILES_COMMON);
+        if (native64 && !error) {
+            error = set_native(package, L"ProgramFiles64Folder", L"ProgramW6432", CSIDL_PROGRAM_FILES);
+            error = error ? error : set_native(package, L"CommonFiles64Folder", L"CommonProgramW6432",
+                                               CSIDL_PROGRAM_FILES_COMMON);
         }
         error = error ? error : set_csidl(package, L"AppDataFolder", CSIDL_APPDATA);
         error = error ? error : set_csidl(package, L"LocalAppDataFolder", CSIDL_LOCAL_APPDATA);
