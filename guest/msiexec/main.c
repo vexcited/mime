@@ -291,7 +291,7 @@ static DWORD repair_mode(PCWSTR letters)
         case L'm': case L'M': mode |= REINSTALLMODE_MACHINEDATA; break;
         case L's': case L'S': mode |= REINSTALLMODE_SHORTCUT; break;
         case L'v': case L'V': mode |= REINSTALLMODE_PACKAGE; break;
-        default: break;
+        default: return UINT32_MAX;
         }
     }
     return mode;
@@ -348,6 +348,10 @@ static UINT run(COMMAND *command)
     }
     case ACTION_REPAIR: {
         DWORD mode = repair_mode(command->RepairOptions ? command->RepairOptions : L"");
+        if (mode == UINT32_MAX) {
+            error = ERROR_INVALID_COMMAND_LINE;
+            break;
+        }
         if (looks_like_product(command->Target)) {
             error = MsiReinstallProductW(command->Target, mode);
         } else {
