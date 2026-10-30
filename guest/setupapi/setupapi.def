@@ -126,6 +126,3 @@ EXPORTS
     SetupCopyOEMInfA
     SetupDecompressOrCopyFileW
     SetupDecompressOrCopyFileA
-    SetupRegisterOsComponent
-    SetupQueryRegisteredOsComponent
-    SetupUnRegisterOsComponent

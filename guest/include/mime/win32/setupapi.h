@@ -223,23 +223,6 @@ typedef struct _FILE_IN_CABINET_INFO_W {
     WCHAR FullTargetName[MAX_PATH];
 } FILE_IN_CABINET_INFO_W, *PFILE_IN_CABINET_INFO_W;
 
-typedef struct _SETUP_OS_COMPONENT_DATA {
-    DWORD Size;
-    GUID ComponentGuid;
-    DWORD VersionMajor;
-    DWORD VersionMinor;
-    DWORD BuildNumber;
-    DWORD ServicePackMajor;
-    DWORD ServicePackMinor;
-} SETUP_OS_COMPONENT_DATA, *PSETUP_OS_COMPONENT_DATA;
-
-typedef struct _SETUP_OS_EXCEPTION_DATA {
-    DWORD Size;
-    WCHAR ExceptionInfName[MAX_PATH];
-    WCHAR CatalogFileName[MAX_PATH];
-    DWORD NumberOfCatalogs;
-} SETUP_OS_EXCEPTION_DATA, *PSETUP_OS_EXCEPTION_DATA;
-
 #ifndef _WIN64
 #pragma pack(pop)
 #endif
@@ -344,8 +327,6 @@ typedef UINT(CALLBACK *PSP_FILE_CALLBACK_W)(PVOID context, UINT notification, UI
 #define DIRID_INF 17
 #define DIRID_USER 0x8000
 
-#define SETUP_OS_COMPONENT_DATA_SIZE 40
-
 WINSETUPAPI HINF WINAPI SetupOpenInfFileW(PCWSTR name, PCWSTR inf_class, DWORD style, PUINT error_line);
 WINSETUPAPI HINF WINAPI SetupOpenInfFileA(PCSTR name, PCSTR inf_class, DWORD style, PUINT error_line);
 WINSETUPAPI HINF WINAPI SetupOpenMasterInf(void);
@@ -446,9 +427,5 @@ WINSETUPAPI BOOL WINAPI SetupCopyOEMInfA(PCSTR source, PCSTR location, DWORD med
                                          DWORD size, PDWORD required, PSTR *component);
 WINSETUPAPI DWORD WINAPI SetupDecompressOrCopyFileW(PCWSTR source, PCWSTR target, PUINT compression);
 WINSETUPAPI DWORD WINAPI SetupDecompressOrCopyFileA(PCSTR source, PCSTR target, PUINT compression);
-WINSETUPAPI BOOL WINAPI SetupRegisterOsComponent(PSETUP_OS_COMPONENT_DATA component, PSETUP_OS_EXCEPTION_DATA exception);
-WINSETUPAPI BOOL WINAPI SetupQueryRegisteredOsComponent(const GUID *guid, PSETUP_OS_COMPONENT_DATA component,
-                                                        PSETUP_OS_EXCEPTION_DATA exception);
-WINSETUPAPI BOOL WINAPI SetupUnRegisterOsComponent(const GUID *guid);
 
 #endif

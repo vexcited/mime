@@ -91,7 +91,6 @@ EXPORTS
     SetupQueryInfFileInformationW@20
     SetupQueryInfVersionInformationA@24
     SetupQueryInfVersionInformationW@24
-    SetupQueryRegisteredOsComponent@12
     SetupQueueCopyA@36
     SetupQueueCopySectionA@24
     SetupQueueCopySectionW@24
@@ -104,11 +103,9 @@ EXPORTS
     SetupQueueRenameSectionA@16
     SetupQueueRenameSectionW@16
     SetupQueueRenameW@20
-    SetupRegisterOsComponent@8
     SetupSetDirectoryIdA@12
     SetupSetDirectoryIdW@12
     SetupTermDefaultQueueCallback@4
-    SetupUnRegisterOsComponent@4
     CM_Get_Child@12
     CM_Get_DevNode_PropertyW@24
     CM_Get_DevNode_Registry_PropertyA@24

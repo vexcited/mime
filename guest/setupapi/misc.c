@@ -1,6 +1,5 @@
 /*
- * setupapi outside inf parsing: copying or decompressing a file, copying an oem inf into the inf folder, and the
- * OsComponents records update packages leave, which keep a component's files from being restored.
+ * setupapi outside inf parsing: copying or decompressing a file and copying an oem inf into the inf folder.
  */
 #include "setup_private.h"
 
@@ -132,101 +131,6 @@ SETUPAPI BOOL WINAPI SetupCopyOEMInfA(PCSTR source, PCSTR location, DWORD media_
         }
     }
     SetupFree(ansi);
-    return TRUE;
-}
-
-/* ------------------------------------------------------------------ OS components */
-
-#define OS_COMPONENTS L"SYSTEM\\Setup\\OsComponents"
-
-static void guid_text(const GUID *g, WCHAR *out)
-{
-    _snwprintf(out, 40, L"{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}", (unsigned long)g->Data1, g->Data2, g->Data3,
-              g->Data4[0], g->Data4[1], g->Data4[2], g->Data4[3], g->Data4[4], g->Data4[5], g->Data4[6], g->Data4[7]);
-}
-
-/* stored without the trailing zeros that make up most of the record, and read back with them. */
-static LSTATUS set_record(HKEY key, PCWSTR name, const void *record, DWORD size)
-{
-    const BYTE *bytes = record;
-    while (size > sizeof(DWORD) && !bytes[size - 1])
-        size--;
-    return RegSetValueExW(key, name, 0, REG_BINARY, bytes, size);
-}
-
-static BOOL get_record(HKEY key, PCWSTR name, void *record, DWORD size)
-{
-    BYTE *bytes = record;
-    DWORD got = size;
-    memset(bytes, 0, size);
-    if (RegQueryValueExW(key, name, nullptr, nullptr, bytes, &got) != ERROR_SUCCESS || got < sizeof(DWORD))
-        return FALSE;
-    *(DWORD *)bytes = size;
-    return TRUE;
-}
-
-SETUPAPI BOOL WINAPI SetupRegisterOsComponent(PSETUP_OS_COMPONENT_DATA component, PSETUP_OS_EXCEPTION_DATA exception)
-{
-    if (!component || component->Size < sizeof(*component)) {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    WCHAR name[64], path[128];
-    guid_text(&component->ComponentGuid, name);
-    _snwprintf(path, RTL_NUMBER_OF(path), L"%ls\\%ls", OS_COMPONENTS, name);
-    HKEY key;
-    LSTATUS r = RegCreateKeyExW(HKEY_LOCAL_MACHINE, path, 0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr);
-    if (r != ERROR_SUCCESS) {
-        SetLastError((DWORD)r);
-        return FALSE;
-    }
-    set_record(key, L"Component", component, sizeof(*component));
-    if (exception && exception->Size >= sizeof(*exception))
-        set_record(key, L"Exception", exception, sizeof(*exception));
-    else
-        RegDeleteValueW(key, L"Exception");
-    RegCloseKey(key);
-    return TRUE;
-}
-
-SETUPAPI BOOL WINAPI SetupQueryRegisteredOsComponent(const GUID *guid, PSETUP_OS_COMPONENT_DATA component,
-                                                     PSETUP_OS_EXCEPTION_DATA exception)
-{
-    if (!guid || !component || component->Size < sizeof(*component)) {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    WCHAR name[64], path[128];
-    guid_text(guid, name);
-    _snwprintf(path, RTL_NUMBER_OF(path), L"%ls\\%ls", OS_COMPONENTS, name);
-    HKEY key;
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_READ, &key) != ERROR_SUCCESS) {
-        SetLastError(ERROR_NOT_FOUND);
-        return FALSE;
-    }
-    BOOL ok = get_record(key, L"Component", component, sizeof(*component));
-    if (ok && exception && exception->Size >= sizeof(*exception) && !get_record(key, L"Exception", exception, sizeof(*exception)))
-        memset((BYTE *)exception + sizeof(DWORD), 0, sizeof(*exception) - sizeof(DWORD));
-    RegCloseKey(key);
-    if (!ok)
-        SetLastError(ERROR_NOT_FOUND);
-    return ok;
-}
-
-SETUPAPI BOOL WINAPI SetupUnRegisterOsComponent(const GUID *guid)
-{
-    if (!guid) {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    WCHAR name[64], path[128];
-    guid_text(guid, name);
-    _snwprintf(path, RTL_NUMBER_OF(path), L"%ls\\%ls", OS_COMPONENTS, name);
-    LSTATUS r = RegDeleteKeyW(HKEY_LOCAL_MACHINE, path);
-    if (r != ERROR_SUCCESS) {
-        SetLastError(r == ERROR_FILE_NOT_FOUND ? ERROR_NOT_FOUND : (DWORD)r);
-        return FALSE;
-    }
     return TRUE;
 }
 
