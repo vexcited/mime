@@ -669,6 +669,7 @@ NTSTATUS Mx32QuerySystemInformation(const ULONG *a)
     case SystemNumaHighestNodeInformation:
     case SystemEmulationProcessorInformation:
     case SystemFirmwareTableInformation:
+    case SystemBootEnvironmentInformation:
     case SystemHypervisorDetailInformation:
         return NtQuerySystemInformation(klass, out, length, pointer32(a[3]));
     default:

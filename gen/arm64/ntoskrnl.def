@@ -17,6 +17,7 @@ EXPORTS
     ExFreePoolWithTag
     ExGetPreviousMode
     ExGetFirmwareEnvironmentVariable
+    ExGetFirmwareType
     ExInitialize
     ExInitializeFastMutex
     ExInitializePool
@@ -28,6 +29,7 @@ EXPORTS
     ExReleaseFastMutex
     ExReleaseFastMutexUnsafe
     ExReleaseResourceLite
+    ExSetFirmwareEnvironmentVariable
     ExReleaseTimerResolution
     ExSemaphoreObjectType DATA
     ExSemaphoreType DATA

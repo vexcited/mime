@@ -1393,6 +1393,9 @@ void CmRefreshTimeZoneRules(ULONG year);
 void ExInitialize(void);
 void ExpInitializeAtoms(void);
 void ExpInitializeWnf(void);
+/* ex/firmware.c: the variable store of the firmware, and the firmware type system information reports. */
+void ExpInitializeFirmware(void);
+extern ULONG ExpFirmwareType;
 void ExUpdateSystemTime(void);
 NTSTATUS ExWaitHandles(ULONG count, const HANDLE *handles, WAIT_TYPE type, BOOLEAN alertable,
                        PLARGE_INTEGER timeout, KPROCESSOR_MODE mode);

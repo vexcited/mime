@@ -173,6 +173,8 @@ EXPORTS
     NtQuerySection=_NtQuerySection@20
     NtQuerySecurityObject=_NtQuerySecurityObject@20
     NtQuerySymbolicLinkObject=_NtQuerySymbolicLinkObject@12
+    NtEnumerateSystemEnvironmentValuesEx=_NtEnumerateSystemEnvironmentValuesEx@12
+    NtQuerySystemEnvironmentValue=_NtQuerySystemEnvironmentValue@16
     NtQuerySystemEnvironmentValueEx=_NtQuerySystemEnvironmentValueEx@20
     NtQuerySystemInformation=_NtQuerySystemInformation@16
     NtQuerySystemTime=_NtQuerySystemTime@4
@@ -209,7 +211,8 @@ EXPORTS
     NtSetIoCompletion=_NtSetIoCompletion@20
     NtSetIoCompletionEx=_NtSetIoCompletionEx@24
     NtSetSecurityObject=_NtSetSecurityObject@12
-    NtSetSystemEnvironmentValueEx=_NtSetSystemEnvironmentValueEx@16
+    NtSetSystemEnvironmentValue=_NtSetSystemEnvironmentValue@8
+    NtSetSystemEnvironmentValueEx=_NtSetSystemEnvironmentValueEx@20
     NtSetSystemInformation=_NtSetSystemInformation@12
     NtSetTimer=_NtSetTimer@28
     NtSetTimerResolution=_NtSetTimerResolution@12

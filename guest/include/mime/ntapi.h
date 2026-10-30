@@ -117,8 +117,12 @@ NTSYSCALLAPI NTSTATUS NTAPI NtQuerySymbolicLinkObject(HANDLE handle, PUNICODE_ST
 NTSYSCALLAPI NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length, PULONG returned);
 NTSYSCALLAPI NTSTATUS NTAPI NtQuerySystemEnvironmentValueEx(PUNICODE_STRING name, PGUID guid, PVOID buffer, PULONG size,
                                                             PULONG attributes);
-NTSYSCALLAPI NTSTATUS NTAPI NtSetSystemEnvironmentValueEx(PUNICODE_STRING name, PGUID guid, PVOID buffer,
+NTSYSCALLAPI NTSTATUS NTAPI NtSetSystemEnvironmentValueEx(PUNICODE_STRING name, PGUID guid, PVOID value, ULONG length,
                                                           ULONG attributes);
+NTSYSCALLAPI NTSTATUS NTAPI NtEnumerateSystemEnvironmentValuesEx(ULONG information_class, PVOID buffer, PULONG length);
+NTSYSCALLAPI NTSTATUS NTAPI NtQuerySystemEnvironmentValue(PUNICODE_STRING name, PWSTR value, USHORT length,
+                                                          PUSHORT returned);
+NTSYSCALLAPI NTSTATUS NTAPI NtSetSystemEnvironmentValue(PUNICODE_STRING name, PUNICODE_STRING value);
 NTSYSCALLAPI NTSTATUS NTAPI NtSetSystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length);
 NTSYSCALLAPI NTSTATUS NTAPI NtShutdownSystem(SHUTDOWN_ACTION action);
 NTSYSCALLAPI NTSTATUS NTAPI NtInitiatePowerAction(ULONG action, ULONG lightest_state, ULONG flags, BOOLEAN asynchronous);

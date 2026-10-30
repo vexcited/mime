@@ -686,12 +686,33 @@ _NtQuerySystemEnvironmentValueEx@20:
     int $0x2e
     retl $20
     .p2align 4, 0x90
-    .globl _NtSetSystemEnvironmentValueEx@16
-_NtSetSystemEnvironmentValueEx@16:
+    .globl _NtSetSystemEnvironmentValueEx@20
+_NtSetSystemEnvironmentValueEx@20:
     movl $0x1bb, %eax
     movl %esp, %edx
     int $0x2e
+    retl $20
+    .p2align 4, 0x90
+    .globl _NtEnumerateSystemEnvironmentValuesEx@12
+_NtEnumerateSystemEnvironmentValuesEx@12:
+    movl $0xe9, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $12
+    .p2align 4, 0x90
+    .globl _NtQuerySystemEnvironmentValue@16
+_NtQuerySystemEnvironmentValue@16:
+    movl $0x16c, %eax
+    movl %esp, %edx
+    int $0x2e
     retl $16
+    .p2align 4, 0x90
+    .globl _NtSetSystemEnvironmentValue@8
+_NtSetSystemEnvironmentValue@8:
+    movl $0x1ba, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $8
     .p2align 4, 0x90
     .globl _NtSetSystemInformation@12
 _NtSetSystemInformation@12:
@@ -769,6 +790,20 @@ _NtRaiseException@12:
     movl %esp, %edx
     int $0x2e
     retl $12
+    .p2align 4, 0x90
+    .globl _NtLockFile@40
+_NtLockFile@40:
+    movl $0x114, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $40
+    .p2align 4, 0x90
+    .globl _NtUnlockFile@20
+_NtUnlockFile@20:
+    movl $0x1dd, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $20
     .p2align 4, 0x90
     .globl _NtReadFile@36
 _NtReadFile@36:
@@ -1231,17 +1266,3 @@ _NtAdjustPrivilegesToken@24:
     movl %esp, %edx
     int $0x2e
     retl $24
-    .p2align 4, 0x90
-    .globl _NtLockFile@40
-_NtLockFile@40:
-    movl $0x114, %eax
-    movl %esp, %edx
-    int $0x2e
-    retl $40
-    .p2align 4, 0x90
-    .globl _NtUnlockFile@20
-_NtUnlockFile@20:
-    movl $0x1dd, %eax
-    movl %esp, %edx
-    int $0x2e
-    retl $20

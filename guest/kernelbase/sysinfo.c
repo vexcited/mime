@@ -2,6 +2,7 @@
 #include "kernelbase_private.h"
 
 #define SYSTEM_PERFORMANCE_AVAILABLE_PAGES 0x4C
+#define EFI_VARIABLE_NON_VOLATILE 0x1
 
 static void basic_information(SYSTEM_BASIC_INFORMATION *basic)
 {
@@ -798,156 +799,125 @@ BOOL WINAPI IsNativeVhdBoot(PBOOL native)
     return TRUE;
 }
 
+/* the firmware type is the one the boot environment information of the system holds. */
 BOOL WINAPI GetFirmwareType(PDWORD type)
 {
+    struct {
+        GUID BootIdentifier;
+        ULONG FirmwareType;
+        ULONG Pad;
+        ULONG64 BootFlags;
+    } boot = {};
     if (!type) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    *type = 2; /* FirmwareTypeUefi. */
+    NTSTATUS status = NtQuerySystemInformation(SystemBootEnvironmentInformation, &boot, sizeof(boot), nullptr);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    *type = boot.FirmwareType;
     return TRUE;
 }
 
-
-/* the uefi variables of the machine, read by programs and drivers for the secure boot state. */
-static BOOL parse_guid(PCWSTR text, GUID *guid)
+/* the uefi variables of the machine, which the system calls give to programs that hold the privilege. */
+DWORD WINAPI GetFirmwareEnvironmentVariableExW(LPCWSTR name, LPCWSTR guid_text, PVOID buffer, DWORD size, PDWORD attributes)
 {
-    static const WCHAR pattern[] = L"{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}";
-    WCHAR digits[32];
-    ULONG at = 0;
-    if (!text || text[0] != '{')
-        return FALSE;
-    for (ULONG i = 0; pattern[i]; i++) {
-        if (pattern[i] == 'x') {
-            WCHAR c = text[i];
-            if (!c || at >= 32)
-                return FALSE;
-            digits[at++] = c;
-        } else if (text[i] != pattern[i]) {
-            return FALSE;
-        }
-    }
-    if (text[38] != 0 || at != 32)
-        return FALSE;
-    BYTE bytes[16];
-    for (ULONG i = 0; i < 16; i++) {
-        ULONG hi = digits[i * 2], lo = digits[i * 2 + 1];
-        hi = hi >= 'a' ? hi - 'a' + 10 : hi >= 'A' ? hi - 'A' + 10 : hi - '0';
-        lo = lo >= 'a' ? lo - 'a' + 10 : lo >= 'A' ? lo - 'A' + 10 : lo - '0';
-        if (hi > 15 || lo > 15)
-            return FALSE;
-        bytes[i] = (BYTE)(hi << 4 | lo);
-    }
-    guid->Data1 = (ULONG)bytes[0] << 24 | (ULONG)bytes[1] << 16 | (ULONG)bytes[2] << 8 | bytes[3];
-    guid->Data2 = (USHORT)(bytes[4] << 8 | bytes[5]);
-    guid->Data3 = (USHORT)(bytes[6] << 8 | bytes[7]);
-    memcpy(guid->Data4, bytes + 8, 8);
-    return TRUE;
-}
-
-static DWORD firmware_get(PCWSTR name, PCWSTR guid_text, PVOID buffer, DWORD size, LPDWORD attributes)
-{
-    GUID guid;
-    if (!name || !guid_text || !parse_guid(guid_text, &guid)) {
+    if (!name || !guid_text) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    UNICODE_STRING variable;
-    variable.Buffer = (PWCH)name;
-    variable.Length = (USHORT)(wcslen(name) * sizeof(WCHAR));
-    variable.MaximumLength = (USHORT)(variable.Length + sizeof(WCHAR));
-    DWORD needed = size;
-    DWORD attrs = 0;
-    NTSTATUS status = NtQuerySystemEnvironmentValueEx(&variable, &guid, buffer, &needed, &attrs);
-    if (status == STATUS_BUFFER_TOO_SMALL) {
-        KbSetError(ERROR_INSUFFICIENT_BUFFER);
-        return needed;
-    }
+    UNICODE_STRING variable, text;
+    RtlInitUnicodeString(&variable, name);
+    RtlInitUnicodeString(&text, guid_text);
+    GUID guid;
+    ULONG length = size;
+    NTSTATUS status = RtlGUIDFromString(&text, &guid);
+    if (NT_SUCCESS(status))
+        status = NtQuerySystemEnvironmentValueEx(&variable, &guid, buffer, &length, attributes);
     if (!NT_SUCCESS(status)) {
-        KbSetError(status == STATUS_VARIABLE_NOT_FOUND ? ERROR_ENVVAR_NOT_FOUND : RtlNtStatusToDosError(status));
+        KbSetStatus(status);
         return 0;
     }
-    if (attributes)
-        *attributes = attrs;
-    return needed;
+    return length;
 }
 
 DWORD WINAPI GetFirmwareEnvironmentVariableW(LPCWSTR name, LPCWSTR guid, PVOID buffer, DWORD size)
 {
-    return firmware_get(name, guid, buffer, size, nullptr);
+    return GetFirmwareEnvironmentVariableExW(name, guid, buffer, size, nullptr);
 }
 
-DWORD WINAPI GetFirmwareEnvironmentVariableA(LPCSTR name, LPCSTR guid, PVOID buffer, DWORD size)
+/* the ansi names become wide ones, and what fails there fails the call. */
+static BOOL firmware_names(LPCSTR name, LPCSTR guid, UNICODE_STRING *wide_name, UNICODE_STRING *wide_guid)
 {
-    WCHAR wide_name[256], wide_guid[64];
-    if (!name || !guid || !MultiByteToWideChar(CP_ACP, 0, name, -1, wide_name, RTL_NUMBER_OF(wide_name)) ||
-        !MultiByteToWideChar(CP_ACP, 0, guid, -1, wide_guid, RTL_NUMBER_OF(wide_guid))) {
+    ANSI_STRING ansi;
+    if (!name || !guid) {
         KbSetError(ERROR_INVALID_PARAMETER);
-        return 0;
+        return FALSE;
     }
-    return firmware_get(wide_name, wide_guid, buffer, size, nullptr);
-}
-
-DWORD WINAPI GetFirmwareEnvironmentVariableExW(LPCWSTR name, LPCWSTR guid, PVOID buffer, DWORD size, PDWORD attributes)
-{
-    return firmware_get(name, guid, buffer, size, attributes);
+    RtlInitAnsiString(&ansi, name);
+    NTSTATUS status = RtlAnsiStringToUnicodeString(wide_name, &ansi, TRUE);
+    if (!NT_SUCCESS(status))
+        return KbSetStatus(status);
+    RtlInitAnsiString(&ansi, guid);
+    status = RtlAnsiStringToUnicodeString(wide_guid, &ansi, TRUE);
+    if (!NT_SUCCESS(status)) {
+        RtlFreeUnicodeString(wide_name);
+        return KbSetStatus(status);
+    }
+    return TRUE;
 }
 
 DWORD WINAPI GetFirmwareEnvironmentVariableExA(LPCSTR name, LPCSTR guid, PVOID buffer, DWORD size, PDWORD attributes)
 {
-    WCHAR wide_name[256], wide_guid[64];
-    if (!name || !guid || !MultiByteToWideChar(CP_ACP, 0, name, -1, wide_name, RTL_NUMBER_OF(wide_name)) ||
-        !MultiByteToWideChar(CP_ACP, 0, guid, -1, wide_guid, RTL_NUMBER_OF(wide_guid))) {
-        KbSetError(ERROR_INVALID_PARAMETER);
+    UNICODE_STRING wide_name, wide_guid;
+    if (!firmware_names(name, guid, &wide_name, &wide_guid))
         return 0;
-    }
-    return firmware_get(wide_name, wide_guid, buffer, size, attributes);
+    DWORD result = GetFirmwareEnvironmentVariableExW(wide_name.Buffer, wide_guid.Buffer, buffer, size, attributes);
+    RtlFreeUnicodeString(&wide_name);
+    RtlFreeUnicodeString(&wide_guid);
+    return result;
 }
 
-static BOOL firmware_set(PCWSTR name, PCWSTR guid_text, PVOID buffer, DWORD size)
+DWORD WINAPI GetFirmwareEnvironmentVariableA(LPCSTR name, LPCSTR guid, PVOID buffer, DWORD size)
 {
+    return GetFirmwareEnvironmentVariableExA(name, guid, buffer, size, nullptr);
+}
+
+BOOL WINAPI SetFirmwareEnvironmentVariableExW(LPCWSTR name, LPCWSTR guid_text, PVOID value, DWORD size, DWORD attributes)
+{
+    if (!name || !guid_text) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UNICODE_STRING variable, text;
+    RtlInitUnicodeString(&variable, name);
+    RtlInitUnicodeString(&text, guid_text);
     GUID guid;
-    if (!name || !guid_text || !parse_guid(guid_text, &guid)) {
-        KbSetError(ERROR_INVALID_PARAMETER);
+    NTSTATUS status = RtlGUIDFromString(&text, &guid);
+    if (NT_SUCCESS(status))
+        status = NtSetSystemEnvironmentValueEx(&variable, &guid, value, size, attributes);
+    return NT_SUCCESS(status) ? TRUE : KbSetStatus(status);
+}
+
+BOOL WINAPI SetFirmwareEnvironmentVariableW(LPCWSTR name, LPCWSTR guid, PVOID value, DWORD size)
+{
+    return SetFirmwareEnvironmentVariableExW(name, guid, value, size, EFI_VARIABLE_NON_VOLATILE);
+}
+
+BOOL WINAPI SetFirmwareEnvironmentVariableExA(LPCSTR name, LPCSTR guid, PVOID value, DWORD size, DWORD attributes)
+{
+    UNICODE_STRING wide_name, wide_guid;
+    if (!firmware_names(name, guid, &wide_name, &wide_guid))
         return FALSE;
-    }
-    UNICODE_STRING variable = {(USHORT)(wcslen(name) * sizeof(WCHAR)), (USHORT)((wcslen(name) + 1) * sizeof(WCHAR)),
-                               (PWCH)name};
-    NTSTATUS status = NtSetSystemEnvironmentValueEx(&variable, &guid, buffer, 0);
-    if (!NT_SUCCESS(status)) {
-        KbSetError(status == STATUS_VARIABLE_NOT_FOUND ? ERROR_ENVVAR_NOT_FOUND : RtlNtStatusToDosError(status));
-        return FALSE;
-    }
-    (void)size;
-    return TRUE;
+    BOOL result = SetFirmwareEnvironmentVariableExW(wide_name.Buffer, wide_guid.Buffer, value, size, attributes);
+    RtlFreeUnicodeString(&wide_name);
+    RtlFreeUnicodeString(&wide_guid);
+    return result;
 }
 
-BOOL WINAPI SetFirmwareEnvironmentVariableW(LPCWSTR name, LPCWSTR guid, PVOID buffer, DWORD size)
+BOOL WINAPI SetFirmwareEnvironmentVariableA(LPCSTR name, LPCSTR guid, PVOID value, DWORD size)
 {
-    return firmware_set(name, guid, buffer, size);
-}
-
-BOOL WINAPI SetFirmwareEnvironmentVariableA(LPCSTR name, LPCSTR guid, PVOID buffer, DWORD size)
-{
-    WCHAR wide_name[256], wide_guid[64];
-    if (!name || !guid || !MultiByteToWideChar(CP_ACP, 0, name, -1, wide_name, RTL_NUMBER_OF(wide_name)) ||
-        !MultiByteToWideChar(CP_ACP, 0, guid, -1, wide_guid, RTL_NUMBER_OF(wide_guid))) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    return firmware_set(wide_name, wide_guid, buffer, size);
-}
-
-BOOL WINAPI SetFirmwareEnvironmentVariableExA(LPCSTR name, LPCSTR guid, PVOID buffer, DWORD size, DWORD attributes)
-{
-    (void)attributes;
-    return SetFirmwareEnvironmentVariableA(name, guid, buffer, size);
-}
-
-BOOL WINAPI SetFirmwareEnvironmentVariableExW(LPCWSTR name, LPCWSTR guid, PVOID buffer, DWORD size, DWORD attributes)
-{
-    (void)attributes;
-    return SetFirmwareEnvironmentVariableW(name, guid, buffer, size);
+    return SetFirmwareEnvironmentVariableExA(name, guid, value, size, EFI_VARIABLE_NON_VOLATILE);
 }
 
 BOOL WINAPI Beep(DWORD frequency, DWORD duration)

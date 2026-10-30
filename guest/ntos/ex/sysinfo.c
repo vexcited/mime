@@ -485,119 +485,6 @@ static NTSTATUS query_firmware_tables(PVOID info, ULONG length, PULONG returned)
 }
 
 
-/* ------------------------------------------------------------------ firmware environment */
-
-/*
- * the efi variables windows and its drivers read the secure boot state from. the machine boots with secure boot
- * on, its keys enrolled and the setup mode closed, as the uefi configuration of a surface leaves it.
- */
-typedef struct EFI_VARIABLE {
-    const GUID *Guid;
-    PCWSTR Name;
-    UCHAR Value;
-    ULONG Attributes;
-} EFI_VARIABLE;
-
-static const GUID g_efi_global = {0x8be4df61, 0x93ca, 0x11d2, {0xaa, 0x0d, 0x00, 0xe0, 0x98, 0x03, 0x2b, 0x8c}};
-
-static const EFI_VARIABLE g_efi_variables[] = {
-    {&g_efi_global, L"SecureBoot", 1, 0x6},
-    {&g_efi_global, L"SetupMode", 0, 0x6},
-    {&g_efi_global, L"AuditMode", 0, 0x6},
-    {&g_efi_global, L"DeployedMode", 1, 0x6},
-    {&g_efi_global, L"VendorKeys", 1, 0x6},
-};
-
-static const EFI_VARIABLE *efi_find(PCUNICODE_STRING name, const GUID *guid)
-{
-    if (!name || !name->Buffer || !guid)
-        return nullptr;
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_efi_variables); i++) {
-        const EFI_VARIABLE *var = &g_efi_variables[i];
-        if (memcmp(guid, var->Guid, sizeof(GUID)))
-            continue;
-        if (name->Length == wcslen(var->Name) * sizeof(WCHAR) &&
-            !memcmp(name->Buffer, var->Name, name->Length))
-            return var;
-    }
-    return nullptr;
-}
-
-static void efi_read(PVOID dst, const void *src, ULONG length)
-{
-    if (KeGetPreviousMode() == UserMode)
-        KiCopyFromUser(dst, src, length);
-    else
-        memcpy(dst, src, length);
-}
-
-static void efi_write(void *dst, const void *src, ULONG length)
-{
-    if (KeGetPreviousMode() == UserMode)
-        KiCopyToUser(dst, src, length);
-    else
-        memcpy(dst, src, length);
-}
-
-static NTSTATUS query_efi_variable(PCUNICODE_STRING name, const GUID *guid, PVOID buffer, PULONG size,
-                                   PULONG attributes)
-{
-    if (!size)
-        return STATUS_INVALID_PARAMETER;
-    ULONG capacity = 0;
-    ULONG zero = 0;
-    efi_read(&capacity, size, sizeof(capacity));
-    const EFI_VARIABLE *var = efi_find(name, guid);
-    if (!var) {
-        efi_write(size, &zero, sizeof(zero));
-        return STATUS_VARIABLE_NOT_FOUND;
-    }
-    if (attributes)
-        efi_write(attributes, &var->Attributes, sizeof(ULONG));
-    ULONG needed = sizeof(UCHAR);
-    if (!buffer || capacity < needed) {
-        efi_write(size, &needed, sizeof(needed));
-        return buffer ? STATUS_BUFFER_TOO_SMALL : STATUS_SUCCESS;
-    }
-    efi_write(buffer, &var->Value, sizeof(UCHAR));
-    efi_write(size, &needed, sizeof(needed));
-    return STATUS_SUCCESS;
-}
-
-NTSTATUS NTAPI NtQuerySystemEnvironmentValueEx(PUNICODE_STRING name, PGUID guid, PVOID buffer, PULONG size,
-                                               PULONG attributes)
-{
-    if (!name)
-        return STATUS_INVALID_PARAMETER;
-    UNICODE_STRING local;
-    NTSTATUS status = KiCaptureUnicodeString(&local, name);
-    if (!NT_SUCCESS(status))
-        return status;
-    GUID g;
-    if (guid && !NT_SUCCESS(KiCopyFromUser(&g, guid, sizeof(g))))
-        status = STATUS_ACCESS_VIOLATION;
-    else
-        status = query_efi_variable(&local, guid ? &g : nullptr, buffer, size, attributes);
-    if (local.Buffer)
-        ExFreePool(local.Buffer);
-    return status;
-}
-
-NTSTATUS NTAPI NtSetSystemEnvironmentValueEx(PUNICODE_STRING name, PGUID guid, PVOID buffer, ULONG attributes)
-{
-    (void)buffer;
-    (void)attributes;
-    if (!name || !guid || !efi_find(name, guid))
-        return STATUS_VARIABLE_NOT_FOUND;
-    return STATUS_SUCCESS;
-}
-
-NTSTATUS NTAPI ExGetFirmwareEnvironmentVariable(PUNICODE_STRING name, PGUID guid, PVOID buffer, PULONG size,
-                                                PULONG attributes)
-{
-    return query_efi_variable(name, guid, buffer, size, attributes);
-}
-
 /* ------------------------------------------------------------------ processes */
 
 static PCWSTR process_leaf(PEPROCESS p, ULONG *chars)
@@ -983,6 +870,27 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     }
     case SystemFirmwareTableInformation:
         return query_firmware_tables(info, length, returned);
+    case SystemBootEnvironmentInformation: {
+        /* the identifier of the boot application, the firmware type and the boot flags. */
+        struct {
+            GUID BootIdentifier;
+            ULONG FirmwareType;
+            ULONG Pad;
+            ULONG64 BootFlags;
+        } boot = {};
+        boot.FirmwareType = ExpFirmwareType;
+        ULONG need = sizeof(boot);
+        if (returned)
+            KiCopyToUser(returned, &need, sizeof(need));
+        if (length < 0x14)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        NTSTATUS status = KiCopyToUser(info, &boot, 0x14);
+        if (!NT_SUCCESS(status))
+            return status;
+        if (length < need)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        return KiCopyToUser((PUCHAR)info + 0x18, &boot.BootFlags, sizeof(boot.BootFlags));
+    }
     case SystemSecureBootInformation: {
         UCHAR enabled = 1;
         return copy_info(info, &enabled, sizeof(enabled), length, returned);

@@ -1475,6 +1475,25 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtQueryLicenseValue:
         name = a[0] ? string32(a[0]) : (UNICODE_STRING){0};
         return NtQueryLicenseValue(a[0] ? &name : nullptr, pointer32(a[1]), pointer32(a[2]), a[3], pointer32(a[4]));
+
+    /* the firmware variables: strings of 8 bytes in 32-bit programs, the rest is the same in both widths. */
+    case MIME_SVC_NtQuerySystemEnvironmentValueEx:
+        name = a[0] ? string32(a[0]) : (UNICODE_STRING){0};
+        return NtQuerySystemEnvironmentValueEx(a[0] ? &name : nullptr, pointer32(a[1]), pointer32(a[2]), pointer32(a[3]),
+                                               pointer32(a[4]));
+    case MIME_SVC_NtSetSystemEnvironmentValueEx:
+        name = a[0] ? string32(a[0]) : (UNICODE_STRING){0};
+        return NtSetSystemEnvironmentValueEx(a[0] ? &name : nullptr, pointer32(a[1]), pointer32(a[2]), a[3], a[4]);
+    case MIME_SVC_NtEnumerateSystemEnvironmentValuesEx:
+        return NtEnumerateSystemEnvironmentValuesEx(a[0], pointer32(a[1]), pointer32(a[2]));
+    case MIME_SVC_NtQuerySystemEnvironmentValue:
+        name = a[0] ? string32(a[0]) : (UNICODE_STRING){0};
+        return NtQuerySystemEnvironmentValue(a[0] ? &name : nullptr, pointer32(a[1]), (USHORT)a[2], pointer32(a[3]));
+    case MIME_SVC_NtSetSystemEnvironmentValue: {
+        UNICODE_STRING value = a[1] ? string32(a[1]) : (UNICODE_STRING){0};
+        name = a[0] ? string32(a[0]) : (UNICODE_STRING){0};
+        return NtSetSystemEnvironmentValue(a[0] ? &name : nullptr, a[1] ? &value : nullptr);
+    }
     case MIME_SVC_NtTraceEvent:
         /* the high bit of the flags marks the event records as 32-bit. */
         return NtTraceEvent(handle32(a[0]), a[1] | 0x80000000u, a[2], pointer32(a[3]));

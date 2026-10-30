@@ -55,6 +55,7 @@ void NtDisplayString(void);
 void NtDuplicateObject(void);
 void NtDuplicateToken(void);
 void NtEnumerateKey(void);
+void NtEnumerateSystemEnvironmentValuesEx(void);
 void NtEnumerateValueKey(void);
 void NtFilterToken(void);
 void NtFindAtom(void);
@@ -127,7 +128,9 @@ void NtQuerySection(void);
 void NtQuerySecurityObject(void);
 void NtQuerySymbolicLinkObject(void);
 void NtQuerySystemInformation(void);
+void NtQuerySystemEnvironmentValue(void);
 void NtQuerySystemEnvironmentValueEx(void);
+void NtSetSystemEnvironmentValue(void);
 void NtSetSystemEnvironmentValueEx(void);
 void NtQuerySystemTime(void);
 void NtQueryTimerResolution(void);
@@ -335,6 +338,9 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtEnumerateKey
     KiRegisterService(MIME_SVC_NtEnumerateKey, (void *)NtEnumerateKey, STACK_ARGS(6));
+#endif
+#ifdef MIME_SVC_NtEnumerateSystemEnvironmentValuesEx
+    KiRegisterService(MIME_SVC_NtEnumerateSystemEnvironmentValuesEx, (void *)NtEnumerateSystemEnvironmentValuesEx, STACK_ARGS(3));
 #endif
 #ifdef MIME_SVC_NtEnumerateValueKey
     KiRegisterService(MIME_SVC_NtEnumerateValueKey, (void *)NtEnumerateValueKey, STACK_ARGS(6));
@@ -552,11 +558,17 @@ void KiInitializeSystemServices(void)
 #ifdef MIME_SVC_NtQuerySystemInformation
     KiRegisterService(MIME_SVC_NtQuerySystemInformation, (void *)NtQuerySystemInformation, STACK_ARGS(4));
 #endif
+#ifdef MIME_SVC_NtQuerySystemEnvironmentValue
+    KiRegisterService(MIME_SVC_NtQuerySystemEnvironmentValue, (void *)NtQuerySystemEnvironmentValue, STACK_ARGS(4));
+#endif
 #ifdef MIME_SVC_NtQuerySystemEnvironmentValueEx
     KiRegisterService(MIME_SVC_NtQuerySystemEnvironmentValueEx, (void *)NtQuerySystemEnvironmentValueEx, STACK_ARGS(5));
 #endif
+#ifdef MIME_SVC_NtSetSystemEnvironmentValue
+    KiRegisterService(MIME_SVC_NtSetSystemEnvironmentValue, (void *)NtSetSystemEnvironmentValue, STACK_ARGS(2));
+#endif
 #ifdef MIME_SVC_NtSetSystemEnvironmentValueEx
-    KiRegisterService(MIME_SVC_NtSetSystemEnvironmentValueEx, (void *)NtSetSystemEnvironmentValueEx, STACK_ARGS(4));
+    KiRegisterService(MIME_SVC_NtSetSystemEnvironmentValueEx, (void *)NtSetSystemEnvironmentValueEx, STACK_ARGS(5));
 #endif
 #ifdef MIME_SVC_NtQuerySystemTime
     KiRegisterService(MIME_SVC_NtQuerySystemTime, (void *)NtQuerySystemTime, STACK_ARGS(1));

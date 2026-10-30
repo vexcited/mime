@@ -74,6 +74,7 @@ NTSTATUS NTAPI RtlAnsiStringToUnicodeString(PUNICODE_STRING dst, PCANSI_STRING s
 BOOLEAN NTAPI RtlCreateUnicodeString(PUNICODE_STRING s, PCWSTR source);
 void NTAPI RtlFreeUnicodeString(PUNICODE_STRING s);
 void NTAPI RtlFreeAnsiString(PANSI_STRING s);
+NTSTATUS NTAPI RtlGUIDFromString(PCUNICODE_STRING string, GUID *guid);
 NTSTATUS NTAPI RtlIntegerToUnicodeString(ULONG value, ULONG base, PUNICODE_STRING s);
 NTSTATUS NTAPI RtlUnicodeStringToInteger(PCUNICODE_STRING s, ULONG base, PULONG value);
 NTSTATUS NTAPI RtlMultiByteToUnicodeN(PWCH dst, ULONG dst_bytes, PULONG written, const CHAR *src, ULONG src_bytes);
