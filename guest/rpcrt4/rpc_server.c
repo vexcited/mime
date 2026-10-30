@@ -549,6 +549,40 @@ static void random_name(const WCHAR *prefix, WCHAR *out, SIZE_T count)
     RpcStringFreeW(&text);
 }
 
+__declspec(dllimport) ULONG NTAPI RtlLengthSecurityDescriptor(PVOID sd);
+__declspec(dllimport) LONG NTAPI RtlGetControlSecurityDescriptor(PVOID sd, PUSHORT control, PULONG revision);
+__declspec(dllimport) LONG NTAPI RtlMakeSelfRelativeSD(PVOID absolute, PVOID relative, PULONG length);
+#define SE_SELF_RELATIVE_ 0x8000
+
+/* the endpoint keeps its own copy of the descriptor, the caller may free its own once the call returns. */
+static void *copy_descriptor(void *sd)
+{
+    USHORT control;
+    ULONG revision;
+    ULONG length = RtlLengthSecurityDescriptor(sd);
+    void *copy = HeapAlloc(GetProcessHeap(), 0, length);
+    if (!copy)
+        return nullptr;
+    if (RtlGetControlSecurityDescriptor(sd, &control, &revision) < 0)
+        goto failed;
+    if (control & SE_SELF_RELATIVE_) {
+        memcpy(copy, sd, length);
+        return copy;
+    }
+    /* an absolute descriptor is made self relative, in a buffer that holds what it points to. */
+    ULONG size = 0;
+    RtlMakeSelfRelativeSD(sd, nullptr, &size);
+    if (!size)
+        goto failed;
+    HeapFree(GetProcessHeap(), 0, copy);
+    copy = HeapAlloc(GetProcessHeap(), 0, size);
+    if (copy && RtlMakeSelfRelativeSD(sd, copy, &size) >= 0)
+        return copy;
+failed:
+    HeapFree(GetProcessHeap(), 0, copy);
+    return nullptr;
+}
+
 static RPC_STATUS endpoint_create(PCWSTR protseq, PCWSTR endpoint, ULONG max_calls, void *sd, SENDPOINT **out)
 {
     RPC_STATUS status = protseq_status(protseq);
@@ -577,14 +611,17 @@ static RPC_STATUS endpoint_create(PCWSTR protseq, PCWSTR endpoint, ULONG max_cal
         return status;
     }
     e->MaxCalls = max_calls;
-    e->Sd = sd ? sd : RpcpEveryoneDescriptor(0x1F01FF);
+    e->Sd = sd ? copy_descriptor(sd) : RpcpEveryoneDescriptor(0x1F01FF);
+    if (!e->Sd) {
+        HeapFree(GetProcessHeap(), 0, e);
+        return RPC_S_OUT_OF_MEMORY;
+    }
 
     AcquireSRWLockExclusive(&g_lock);
     for (SENDPOINT *o = g_endpoints; o; o = o->Next)
         if (!_wcsicmp(o->PipeName, e->PipeName)) {
             ReleaseSRWLockExclusive(&g_lock);
-            if (!sd)
-                HeapFree(GetProcessHeap(), 0, e->Sd);
+            HeapFree(GetProcessHeap(), 0, e->Sd);
             HeapFree(GetProcessHeap(), 0, e);
             return RPC_S_DUPLICATE_ENDPOINT;
         }
@@ -592,8 +629,7 @@ static RPC_STATUS endpoint_create(PCWSTR protseq, PCWSTR endpoint, ULONG max_cal
     e->FirstPipe = create_pipe_instance(e, TRUE, &error);
     if (e->FirstPipe == INVALID_HANDLE_VALUE) {
         ReleaseSRWLockExclusive(&g_lock);
-        if (!sd)
-            HeapFree(GetProcessHeap(), 0, e->Sd);
+        HeapFree(GetProcessHeap(), 0, e->Sd);
         HeapFree(GetProcessHeap(), 0, e);
         return error == ERROR_ACCESS_DENIED || error == ERROR_PIPE_BUSY ? RPC_S_DUPLICATE_ENDPOINT
                                                                          : RPC_S_CANT_CREATE_ENDPOINT;
