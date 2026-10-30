@@ -554,8 +554,47 @@ static BOOL list_contains(PCWSTR list, PCWSTR name)
     return FALSE;
 }
 
+static ULONG feature_row(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features, ULONG id, PCWSTR name)
+{
+    for (ULONG row = 0; row < features->Rows; row++) {
+        PCWSTR key = MimeMsiText(package->Database, features, row, id);
+        if (key && !wcscmp(name, key))
+            return row;
+    }
+    return UINT32_MAX;
+}
+
+/* a feature named in the list, or one of its ancestors, as a feature turned on turns its parents on. */
+static BOOL list_reaches(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features, ULONG id, ULONG parent_column, PCWSTR list,
+                         PCWSTR name)
+{
+    if (!*list)
+        return FALSE;
+    if (list_contains(list, name))
+        return TRUE;
+    for (ULONG row = 0; row < features->Rows; row++) {
+        PCWSTR child = MimeMsiText(package->Database, features, row, id);
+        if (!child || !list_contains(list, child))
+            continue;
+        PCWSTR up = MimeMsiText(package->Database, features, row, parent_column);
+        for (ULONG depth = 0; up && *up && depth < 64; depth++) {
+            if (!wcscmp(up, name))
+                return TRUE;
+            ULONG at = feature_row(package, features, id, up);
+            up = at == UINT32_MAX ? nullptr : MimeMsiText(package->Database, features, at, parent_column);
+        }
+    }
+    return FALSE;
+}
+
+/*
+ * the state a feature is installed in, as the engine of windows sets it. with none of ADDLOCAL, REMOVE and REINSTALL
+ * on a first install, a feature is installed when its level is within INSTALLLEVEL and its parent is. with them, the
+ * features they name are, the parents of a named one too, and a feature marked to follow its parent takes the
+ * parent's state; the others stay as they are.
+ */
 UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features,
-                             PCWSTR name, ULONG depth, BOOL *selected)
+                            PCWSTR name, ULONG depth, BOOL *selected)
 {
     *selected = FALSE;
     if (depth >= 64)
@@ -566,22 +605,20 @@ UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features,
     ULONG attributes_column = MimeMsiColumn(features, L"Attributes", FALSE);
     if (id == UINT32_MAX || level_column == UINT32_MAX || parent_column == UINT32_MAX || attributes_column == UINT32_MAX)
         return ERROR_INSTALL_PACKAGE_INVALID;
-    ULONG row;
-    for (row = 0; row < features->Rows; row++) {
-        PCWSTR key = MimeMsiText(package->Database, features, row, id);
-        if (key && !wcscmp(name, key))
-            break;
-    }
-    if (row == features->Rows)
+    ULONG row = feature_row(package, features, id, name);
+    if (row == UINT32_MAX)
         return ERROR_INSTALL_PACKAGE_INVALID;
     int level = MimeMsiInteger(features, row, level_column);
     if (level < 0)
         return ERROR_INSTALL_PACKAGE_INVALID;
     level = MimeMsiFeatureLevel(package, name, level);
+    int attributes = MimeMsiInteger(features, row, attributes_column);
+    BOOL follows = attributes != MSI_NULL_INTEGER && (attributes & 2);
     PCWSTR parent = MimeMsiText(package->Database, features, row, parent_column);
+    BOOL parent_selected = TRUE;
     if (parent && *parent) {
-        UINT error = MimeMsiFeatureSelected(package, features, parent, depth + 1, selected);
-        if (error || !*selected)
+        UINT error = MimeMsiFeatureSelected(package, features, parent, depth + 1, &parent_selected);
+        if (error)
             return error;
     }
     PCWSTR install_level = MimeMsiGetProperty(package, L"INSTALLLEVEL");
@@ -594,27 +631,38 @@ UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features,
             limit = limit * 10 + *digit - L'0';
         }
     }
-    *selected = level && level <= limit;
-    if (package->Maintenance && !package->ConfigureDefaults)
-        for (ULONG i = 0; i < package->FeatureCount; i++)
-            if (!wcscmp(package->Features[i].Name, name))
-                *selected = package->Features[i].Installed == INSTALLSTATE_LOCAL;
-    PCWSTR local = MimeMsiGetProperty(package, L"ADDLOCAL");
-    if (*local)
-        *selected = level && list_contains(local, name);
-    if (list_contains(MimeMsiGetProperty(package, L"REMOVE"), name))
+    PCWSTR local = MimeMsiGetProperty(package, L"ADDLOCAL"), removed = MimeMsiGetProperty(package, L"REMOVE");
+    PCWSTR reinstall = MimeMsiGetProperty(package, L"REINSTALL");
+    BOOL requested = *local || *removed || *reinstall;
+    BOOL installed = FALSE;
+    for (ULONG i = 0; i < package->FeatureCount; i++)
+        if (!wcscmp(package->Features[i].Name, name))
+            installed = package->Features[i].Installed == INSTALLSTATE_LOCAL;
+    if (!requested) {
+        *selected = parent_selected && level && level <= limit;
+        if (package->Maintenance && !package->ConfigureDefaults)
+            *selected = installed;
+    } else {
+        /* the state it has, then what the properties ask for it. */
+        *selected = package->Maintenance ? installed : FALSE;
+        if (follows && parent && *parent)
+            *selected = parent_selected;
+        if (list_reaches(package, features, id, parent_column, local, name))
+            *selected = TRUE;
+        if (list_contains(reinstall, name) && installed)
+            *selected = TRUE;
+        *selected = *selected && level;
+    }
+    if (list_contains(removed, name))
         *selected = FALSE;
-    if (list_contains(MimeMsiGetProperty(package, L"REINSTALL"), name))
-        for (ULONG i = 0; i < package->FeatureCount; i++)
-            if (!wcscmp(package->Features[i].Name, name) && package->Features[i].Installed == INSTALLSTATE_LOCAL)
-                *selected = TRUE;
     for (ULONG i = 0; i < package->FeatureCount; i++) {
         MIME_MSI_FEATURE *feature = &package->Features[i];
         if (!wcscmp(feature->Name, name) && feature->Requested != INSTALLSTATE_UNKNOWN)
             *selected = level && feature->Requested == INSTALLSTATE_LOCAL;
     }
-    /* feature attributes cover advertising and following the parent, which a local install ignores. */
-    (void)attributes_column;
+    /* a feature is only there with its parent. */
+    if (!parent_selected)
+        *selected = FALSE;
     return ERROR_SUCCESS;
 }
 
