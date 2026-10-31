@@ -411,10 +411,14 @@ static LONG query_value(HANDLE key, LPCWSTR name, KB_KEY_VALUE_PARTIAL **out)
     }
 }
 
+LSTATUS KbQueryPerformanceData(LPCWSTR name, LPDWORD type, LPBYTE data, LPDWORD size);
+
 LSTATUS WINAPI RegQueryValueExW(HKEY key, LPCWSTR name, LPDWORD reserved, LPDWORD type, LPBYTE data, LPDWORD size)
 {
     if (reserved || (data && !size))
         return ERROR_INVALID_PARAMETER;
+    if (key == HKEY_PERFORMANCE_DATA)
+        return KbQueryPerformanceData(name, type, data, size);
     HANDLE h;
     LONG error = resolve_key(key, &h);
     if (error)
@@ -446,6 +450,14 @@ LSTATUS WINAPI RegQueryValueExA(HKEY key, LPCSTR name, LPDWORD reserved, LPDWORD
 {
     if (reserved || (data && !size))
         return ERROR_INVALID_PARAMETER;
+    if (key == HKEY_PERFORMANCE_DATA) {
+        PWSTR wide = KbAnsiToWideCp(CP_ACP, name);
+        if (name && !wide)
+            return ERROR_NOT_ENOUGH_MEMORY;
+        LSTATUS status = KbQueryPerformanceData(wide, type, data, size);
+        KbFree(wide);
+        return status;
+    }
     HANDLE h;
     LONG error = resolve_key(key, &h);
     if (error)
