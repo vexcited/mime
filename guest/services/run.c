@@ -636,7 +636,20 @@ static DWORD spawn_image(SERVICE *s, const WCHAR *command, IMAGE **out)
     } else if (token) {
         AccessEnablePrivilege(L"SeAssignPrimaryTokenPrivilege");
         AccessEnablePrivilege(L"SeIncreaseQuotaPrivilege");
-        ok = CreateProcessAsUserW(token, nullptr, line, nullptr, nullptr, FALSE, flags, nullptr, n ? directory : nullptr, &si, &pi);
+        /* a service has the environment of its account: the profile of the account, not the one the manager started in. */
+        LPVOID environment = nullptr;
+        HMODULE userenv = LoadLibraryW(L"userenv.dll");
+        BOOL (WINAPI *create_environment)(LPVOID *, HANDLE, BOOL) =
+            userenv ? (BOOL(WINAPI *)(LPVOID *, HANDLE, BOOL))GetProcAddress(userenv, "CreateEnvironmentBlock") : nullptr;
+        BOOL (WINAPI *destroy_environment)(LPVOID) =
+            userenv ? (BOOL(WINAPI *)(LPVOID))GetProcAddress(userenv, "DestroyEnvironmentBlock") : nullptr;
+        BOOL made = create_environment && destroy_environment && create_environment(&environment, token, FALSE);
+        ok = CreateProcessAsUserW(token, nullptr, line, nullptr, nullptr, FALSE, flags, made ? environment : nullptr,
+                                  n ? directory : nullptr, &si, &pi);
+        if (made)
+            destroy_environment(environment);
+        if (userenv)
+            FreeLibrary(userenv);
     } else {
         ok = CreateProcessW(nullptr, line, nullptr, nullptr, FALSE, flags, nullptr, n ? directory : nullptr, &si, &pi);
     }

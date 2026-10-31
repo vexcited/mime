@@ -123,6 +123,36 @@ static void identity(PCWSTR computer, PCWSTR user, PCWSTR sid)
     set(key, L"Sid", REG_BINARY, binary, sizeof(binary));
 }
 
+/*
+ * the profiles of the accounts services run in, which windows setup writes: the folder of each and, for the two service
+ * accounts, the hive the profile service loads at start with the place of their temporary files.
+ */
+static void service_profiles(void)
+{
+    static const struct {
+        PCWSTR Sid;
+        UCHAR Id;
+        PCWSTR Folder;
+        BOOLEAN Hive;
+    } accounts[] = {{L"S-1-5-18", 18, L"%systemroot%\\system32\\config\\systemprofile", FALSE},
+                    {L"S-1-5-19", 19, L"%systemroot%\\ServiceProfiles\\LocalService", TRUE},
+                    {L"S-1-5-20", 20, L"%systemroot%\\ServiceProfiles\\NetworkService", TRUE}};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(accounts); i++) {
+        WCHAR key[160] = {};
+        _snwprintf(key, RTL_NUMBER_OF(key) - 1, NT_CURRENT_VERSION L"\\ProfileList\\%ls", accounts[i].Sid);
+        set_sz(key, L"ProfileImagePath", REG_EXPAND_SZ, accounts[i].Folder);
+        set_dword(key, L"Flags", 12);
+        set_dword(key, L"State", 0);
+        UCHAR binary[12] = {1, 1, 0, 0, 0, 0, 0, 5, accounts[i].Id, 0, 0, 0};
+        set(key, L"Sid", REG_BINARY, binary, sizeof(binary));
+        if (!accounts[i].Hive)
+            continue;
+        _snwprintf(key, RTL_NUMBER_OF(key) - 1, L"\\REGISTRY\\USER\\%ls\\Environment", accounts[i].Sid);
+        set_sz(key, L"TEMP", REG_EXPAND_SZ, L"%USERPROFILE%\\AppData\\Local\\Temp");
+        set_sz(key, L"TMP", REG_EXPAND_SZ, L"%USERPROFILE%\\AppData\\Local\\Temp");
+    }
+}
+
 /* what winlogon writes at logon: the volatile part of the environment. */
 static void volatile_environment(PCWSTR computer, PCWSTR user, PCWSTR sid)
 {
@@ -434,6 +464,7 @@ void CmpSpecialize(void)
     ExAcquireFastMutex(&CmpLock);
     version_data(user);
     identity(computer, user, sid);
+    service_profiles();
     volatile_environment(computer, user, sid);
     shell_state(sid);
     firmware();

@@ -180,11 +180,20 @@ static DWORD set_user(PWSTR *env, HANDLE token)
     LONG error = RegOpenKeyExW(HKEY_USERS, sid, 0, KEY_READ, &hive);
     if (error)
         return error;
+    /* the system and the service accounts are the computer in a workgroup, named as its account, not as a user. */
+    BOOL service = !wcscmp(sid, L"S-1-5-18") || !wcscmp(sid, L"S-1-5-19") || !wcscmp(sid, L"S-1-5-20");
     HMODULE advapi = LoadLibraryW(L"advapi32.dll");
     LOOKUP_ACCOUNT_SID lookup = advapi ? (LOOKUP_ACCOUNT_SID)GetProcAddress(advapi, "LookupAccountSidW") : nullptr;
     WCHAR name[256], domain[256], value[MAX_PATH];
     DWORD name_len = RTL_NUMBER_OF(name), domain_len = RTL_NUMBER_OF(domain), use;
-    if (lookup && lookup(nullptr, (PSID)buffer[0], name, &name_len, domain, &domain_len, &use)) {
+    if (service) {
+        DWORD n = MAX_PATH;
+        if (GetComputerNameExW(ComputerNameNetBIOS, value, &n)) {
+            wcscat(value, L"$");
+            set_var(env, L"USERNAME", value);
+            set_var(env, L"USERDOMAIN", L"WORKGROUP");
+        }
+    } else if (lookup && lookup(nullptr, (PSID)buffer[0], name, &name_len, domain, &domain_len, &use)) {
         set_var(env, L"USERNAME", name);
         set_var(env, L"USERDOMAIN", domain);
     }
@@ -197,6 +206,11 @@ static DWORD set_user(PWSTR *env, HANDLE token)
         set_var(env, L"APPDATA", folder);
         _snwprintf(folder, RTL_NUMBER_OF(folder), L"%ls\\AppData\\Local", value);
         set_var(env, L"LOCALAPPDATA", folder);
+    }
+    /* the system keeps the folder of temporary files of the machine, its own profile is only where its data goes. */
+    if (!wcscmp(sid, L"S-1-5-18")) {
+        RegCloseKey(hive);
+        return ERROR_SUCCESS;
     }
     /* the misspelled key is the one windows reads. */
     set_from_key(env, HKEY_LOCAL_MACHINE, L"SOFTWARE\\DefaultUserEnviroment", TRUE);

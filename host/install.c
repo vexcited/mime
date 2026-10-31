@@ -102,6 +102,14 @@ static bool create_skeleton(const MimePaths *paths)
 {
     static const char *const folders[] = {
         "Windows/System32/config", "Windows/System32/drivers", "Windows/System32/en-US", "Windows/SysWOW64",
+        /* the profiles of the system and of the two service accounts. */
+        "Windows/System32/config/systemprofile/AppData/Local/Temp",
+        "Windows/System32/config/systemprofile/AppData/Roaming",
+        "Windows/ServiceProfiles/LocalService/AppData/Local/Temp", "Windows/ServiceProfiles/LocalService/AppData/Roaming",
+        "Windows/ServiceProfiles/NetworkService/AppData/Local/Temp",
+        "Windows/ServiceProfiles/NetworkService/AppData/Roaming",
+        /* the keys of the machine scope of the data protection api, which a program of any account reads and makes. */
+        "Windows/System32/Microsoft/Protect/S-1-5-18/User",
         "Windows/Media", "Windows/SystemResources", "Windows/Fonts", "Windows/Temp", "Program Files",
         "Program Files (x86)",
 #ifdef __aarch64__

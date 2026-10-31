@@ -27,6 +27,8 @@ static SD_MAPPING file_mapping(void)
 }
 
 static SD_BLOB *g_root, *g_system_directory, *g_installer_cache, *g_profile, *g_locallow, *g_rom_file;
+/* the profiles of the system and of the two service accounts, which only the account and the administrators use. */
+static SD_BLOB *g_system_profile, *g_local_service_profile, *g_network_service_profile, *g_machine_keys;
 
 /* the user's sid, S-1-5-21-a-b-c-1001, and its primary group, None. */
 static void user_sids(UCHAR user[28], UCHAR none[28])
@@ -97,6 +99,30 @@ static void build_seeds(void)
     /* the profile's folder for low integrity programs, labelled low for everything in it. */
     if (g_profile && !NT_SUCCESS(SeSdAddInheritedLabel(g_profile, 0x1000, &g_locallow)))
         g_locallow = nullptr;
+
+    static const UCHAR local_service[12] = {1, 1, 0, 0, 0, 0, 0, 5, 19, 0, 0, 0};
+    static const UCHAR network_service[12] = {1, 1, 0, 0, 0, 0, 0, 5, 20, 0, 0, 0};
+    SD_ACE system_profile[] = {{ACE_OI_CI, FILE_ALL, SeSidSystem}, {ACE_OI_CI, FILE_ALL, SeSidAdministrators}};
+    SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, system_profile, 2,
+              &g_system_profile);
+    /*
+     * the machine scope of the data protection api runs in the process of the caller here, not in a service of the
+     * system, so the keys it keeps are for any account to read and to make, as the scope itself is for any account.
+     */
+    SD_ACE machine_keys[] = {{ACE_OI_CI, FILE_ALL, SeSidSystem},
+                             {ACE_OI_CI, FILE_ALL, SeSidAdministrators},
+                             {ACE_OI_CI, FILE_MODIFY, SeSidAuthenticatedUsers}};
+    SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, machine_keys, 3, &g_machine_keys);
+    SD_ACE local_profile[] = {{ACE_OI_CI, FILE_ALL, SeSidSystem},
+                              {ACE_OI_CI, FILE_ALL, SeSidAdministrators},
+                              {ACE_OI_CI, FILE_ALL, local_service}};
+    SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, local_profile, 3,
+              &g_local_service_profile);
+    SD_ACE network_profile[] = {{ACE_OI_CI, FILE_ALL, SeSidSystem},
+                                {ACE_OI_CI, FILE_ALL, SeSidAdministrators},
+                                {ACE_OI_CI, FILE_ALL, network_service}};
+    SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, network_profile, 3,
+              &g_network_service_profile);
 
     SD_ACE rom[] = {{INHERITED_ACE, FILE_ALL, SeSidTrustedInstaller},
                     {INHERITED_ACE, FILE_READ_EXECUTE, SeSidSystem},
@@ -170,6 +196,18 @@ static SD_BLOB *seed_at(const PATH *p, ULONG depth)
         return g_system_directory;
     if (depth == 2 && component_is(p, 0, L"Windows") && component_is(p, 1, L"Installer"))
         return g_installer_cache;
+    if (depth == 3 && component_is(p, 0, L"Windows") && component_is(p, 1, L"ServiceProfiles")) {
+        if (component_is(p, 2, L"LocalService"))
+            return g_local_service_profile;
+        if (component_is(p, 2, L"NetworkService"))
+            return g_network_service_profile;
+    }
+    if (depth == 6 && component_is(p, 0, L"Windows") && component_is(p, 1, L"System32") && component_is(p, 2, L"Microsoft") &&
+        component_is(p, 3, L"Protect") && component_is(p, 4, L"S-1-5-18") && component_is(p, 5, L"User"))
+        return g_machine_keys;
+    if (depth == 4 && component_is(p, 0, L"Windows") && component_is(p, 1, L"System32") && component_is(p, 2, L"config") &&
+        component_is(p, 3, L"systemprofile"))
+        return g_system_profile;
     if (depth == 2 && component_is(p, 0, L"Users")) {
         WCHAR name[24];
         ULONG n = 0;
