@@ -49,7 +49,7 @@ UINT MimeMsiOpenSubStorage(MIME_MSI_DATABASE *parent, PCWSTR name, MIME_MSI_DATA
     ULONG index = UINT32_MAX;
     for (ULONG i = 0; i < count && index == UINT32_MAX; i++) {
         MIME_CFB_ENTRY entry;
-        if (MimeCfbEntry(&parent->File, list[i], &entry) && entry.Type == 1 && !wcscmp((PCWSTR)entry.Name, name))
+        if (MimeCfbEntry(&parent->File, list[i], &entry) && entry.Type == 1 && !_wcsicmp((PCWSTR)entry.Name, name))
             index = list[i];
     }
     MimeMsiFree(list);

@@ -124,8 +124,27 @@ UINT WINAPI MsiEnableLogW(DWORD mode, LPCWSTR path, DWORD attributes)
     return ERROR_SUCCESS;
 }
 
+/* every message goes to the debug output of the process when MIME_MSI_TRACE is set, whatever the log mode. */
+static void trace_message(UINT kind, PCWSTR text, DWORD length)
+{
+    static LONG enabled;
+    if (!enabled) {
+        WCHAR value[4];
+        InterlockedCompareExchange(&enabled, GetEnvironmentVariableW(L"MIME_MSI_TRACE", value, RTL_NUMBER_OF(value)) ? 1 : 2, 0);
+    }
+    if (enabled != 1)
+        return;
+    WCHAR line[1100];
+    int prefix = _snwprintf(line, 16, L"msi %u: ", kind);
+    DWORD n = length < 1000 ? length : 1000;
+    memcpy(line + prefix, text, n * sizeof(WCHAR));
+    line[prefix + n] = 0;
+    OutputDebugStringW(line);
+}
+
 static BOOL log_message(UINT kind, PCWSTR text, DWORD length)
 {
+    trace_message(kind, text, length);
     if (!log_file || kind == 5 || kind == 10 || (kind >= 12 && kind <= 14) || kind >= 25)
         return TRUE;
     if (!(log_mode & (1u << kind)) && !(log_mode & INSTALLLOGMODE_VERBOSE))

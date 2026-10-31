@@ -107,6 +107,7 @@ UINT MimeMsiLoadStrings(MIME_MSI_DATABASE *database);
 UINT MimeMsiOpenDatabaseFile(PCWSTR path, BOOL transform, MIME_MSI_DATABASE **out);
 UINT MimeMsiOpenStorageFile(PCWSTR path, BYTE kind, MIME_MSI_DATABASE **out);
 UINT MimeMsiOpenSubStorage(MIME_MSI_DATABASE *parent, PCWSTR name, MIME_MSI_DATABASE **out);
+UINT MimeMsiApplyTransform(MSIHANDLE handle, PCWSTR path, int flags, BOOL named_errors);
 UINT MimeMsiChildren(MIME_MSI_DATABASE *database, ULONG **list, ULONG *count);
 UINT MimeMsiTableStream(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZE_T *size);
 UINT MimeMsiApplyTransformStorage(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *transform, UINT flags);

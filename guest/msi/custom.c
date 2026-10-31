@@ -353,6 +353,9 @@ static UINT run_program(MIME_MSI_PACKAGE *package, const MIME_MSI_CA_ROW *row, P
     if (!CreateProcessW(nullptr, command_line, nullptr, nullptr, FALSE, 0, nullptr,
                         source == SOURCE_DIRECTORY ? path : nullptr, &startup, &process)) {
         error = GetLastError();
+        WCHAR note[300];
+        _snwprintf(note, RTL_NUMBER_OF(note), L"msi: the program of an action did not start, error %u: %.200s\n", error, command_line);
+        OutputDebugStringW(note);
     } else {
         CloseHandle(process.hThread);
         if (row->Type & CA_ASYNC) {
@@ -362,6 +365,11 @@ static UINT run_program(MIME_MSI_PACKAGE *package, const MIME_MSI_CA_ROW *row, P
             DWORD code = 0;
             GetExitCodeProcess(process.hProcess, &code);
             *result = code == 0 ? ERROR_SUCCESS : ERROR_INSTALL_FAILURE;
+            if (code) {
+                WCHAR note[300];
+                _snwprintf(note, RTL_NUMBER_OF(note), L"msi: the program of an action ended with %u: %.200s\n", code, command_line);
+                OutputDebugStringW(note);
+            }
         }
         CloseHandle(process.hProcess);
     }

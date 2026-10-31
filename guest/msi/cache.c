@@ -136,20 +136,23 @@ UINT MimeMsiApplyTransformList(MSIHANDLE handle, PCWSTR list)
                         (length > 1 && cursor[0] == L'\\' && cursor[1] == L'\\');
         if (!length || ++count > 256 || (kind >= 0 && kind != (int)absolute))
             error = ERROR_INVALID_PARAMETER;
-        else if (*cursor == L':' || *cursor == L'@' || *cursor == L'|')
+        else if (*cursor == L'@' || *cursor == L'|')
             error = ERROR_CALL_NOT_IMPLEMENTED;
-        else if (!absolute && (wcschr(cursor, L'\\') || wcschr(cursor, L'/') || wcschr(cursor, L':')))
+        else if (*cursor != L':' && !absolute && (wcschr(cursor, L'\\') || wcschr(cursor, L'/') || wcschr(cursor, L':')))
             error = ERROR_INVALID_PARAMETER;
         kind = absolute;
         PWSTR path = nullptr;
-        if (!error) {
+        if (!error && *cursor == L':') {
+            /* a storage of the package itself. */
+            error = MimeMsiApplyTransform(handle, cursor, 0, TRUE);
+        } else if (!error) {
             path = absolute ? MimeMsiDuplicate(cursor) : MimeMsiJoinPath(directory, cursor);
             if (!path)
                 error = ERROR_NOT_ENOUGH_MEMORY;
             else if (wcslen(path) > 32767)
                 error = ERROR_BAD_PATHNAME;
             else
-                error = MsiDatabaseApplyTransformW(handle, path, 0);
+                error = MimeMsiApplyTransform(handle, path, 0, TRUE);
         }
         MimeMsiFree(path);
         cursor = next;

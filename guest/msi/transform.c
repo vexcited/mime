@@ -420,14 +420,19 @@ UINT MimeMsiApplyTransformStorage(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE
     return error;
 }
 
-UINT WINAPI MsiDatabaseApplyTransformW(MSIHANDLE handle, LPCWSTR path, int flags)
+/*
+ * applies a transform database to the database of the handle, which keeps the transform if it applied. a transform
+ * applied from the TRANSFORMS property suppresses the errors its own summary information names.
+ */
+static UINT apply_opened(MSIHANDLE handle, MIME_MSI_DATABASE *transform, int flags, BOOL named_errors)
 {
-    if (!path || !*path || (flags & ~0x3f))
-        return ERROR_INVALID_PARAMETER;
-    MIME_MSI_DATABASE *transform = nullptr;
-    UINT error = MimeMsiOpenDatabaseFile(path, TRUE, &transform);
-    if (error)
-        return error;
+    if (named_errors) {
+        MIME_MSI_SUMMARY_VALUE value;
+        if (!MimeMsiSummaryProperty(transform, 16, &value)) {
+            flags |= value.Number & 0xFFFF;
+            MimeMsiFree(value.Text);
+        }
+    }
     MIME_MSI_TRANSFORM *applied = MimeMsiAllocate(sizeof(*applied));
     if (!applied) {
         transform->Object.Destroy(&transform->Object);
@@ -435,8 +440,8 @@ UINT WINAPI MsiDatabaseApplyTransformW(MSIHANDLE handle, LPCWSTR path, int flags
     }
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_DATABASE *database = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_DATABASE);
-    error = !database ? ERROR_INVALID_HANDLE : database->Revision >= 256 ? ERROR_CALL_NOT_IMPLEMENTED :
-            MimeMsiApplyTransformStorage(database, transform, (UINT)flags);
+    UINT error = !database ? ERROR_INVALID_HANDLE : database->Revision >= 256 ? ERROR_CALL_NOT_IMPLEMENTED :
+                 MimeMsiApplyTransformStorage(database, transform, (UINT)flags);
     if (!error) {
         applied->Database = transform;
         applied->Flags = (UINT)flags;
@@ -452,4 +457,31 @@ UINT WINAPI MsiDatabaseApplyTransformW(MSIHANDLE handle, LPCWSTR path, int flags
         transform->Object.Destroy(&transform->Object);
     }
     return error;
+}
+
+UINT MimeMsiApplyTransform(MSIHANDLE handle, PCWSTR path, int flags, BOOL named_errors)
+{
+    if (!path || !*path || (flags & ~0x3f))
+        return ERROR_INVALID_PARAMETER;
+    MIME_MSI_DATABASE *transform = nullptr;
+    UINT error;
+    if (*path == L':') {
+        /* a transform kept in the package as a storage of its own. */
+        if (!path[1])
+            return ERROR_INVALID_PARAMETER;
+        AcquireSRWLockShared(&MimeMsiLock);
+        MIME_MSI_DATABASE *database = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_DATABASE);
+        error = database ? MimeMsiOpenSubStorage(database, path + 1, &transform) : ERROR_INVALID_HANDLE;
+        ReleaseSRWLockShared(&MimeMsiLock);
+    } else {
+        error = MimeMsiOpenDatabaseFile(path, TRUE, &transform);
+    }
+    if (error)
+        return error;
+    return apply_opened(handle, transform, flags, named_errors);
+}
+
+UINT WINAPI MsiDatabaseApplyTransformW(MSIHANDLE handle, LPCWSTR path, int flags)
+{
+    return MimeMsiApplyTransform(handle, path, flags, FALSE);
 }
