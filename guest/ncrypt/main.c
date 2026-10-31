@@ -888,3 +888,124 @@ SECURITY_STATUS WINAPI NCryptNotifyChangeKey(NCRYPT_PROV_HANDLE handle, HANDLE *
         return NTE_INVALID_HANDLE;
     return NTE_NOT_SUPPORTED;
 }
+
+/* ------------------------------------------------------------------ algorithms of the provider */
+
+typedef struct {
+    LPWSTR name;
+    DWORD class_, operations, flags;
+} ALGORITHM_NAME;
+
+/* the algorithms the provider makes keys of, with the classes and operations Windows lists them with. */
+static const struct {
+    LPCWSTR name;
+    DWORD class_, operations;
+} g_listed[] = {
+    {L"RSA", 3, 0x14}, {L"DH", 4, 0x8}, {L"DSA", 5, 0x10}, {L"ECDH_P256", 4, 0x8}, {L"ECDH_P384", 4, 0x8},
+    {L"ECDH_P521", 4, 0x8}, {L"ECDSA_P256", 5, 0x10}, {L"ECDSA_P384", 5, 0x10}, {L"ECDSA_P521", 5, 0x10},
+};
+
+SECURITY_STATUS WINAPI NCryptEnumAlgorithms(NCRYPT_PROV_HANDLE handle, DWORD operations, DWORD *count,
+                                            ALGORITHM_NAME **list, DWORD flags)
+{
+    if (!find_object(handle, PROVIDER_MAGIC))
+        return NTE_INVALID_HANDLE;
+    if (!count || !list)
+        return NTE_INVALID_PARAMETER;
+    *count = 0;
+    *list = nullptr;
+    if (flags & ~NCRYPT_SILENT_FLAG)
+        return NTE_BAD_FLAGS;
+    UINT selected = 0;
+    SIZE_T size = 0;
+    for (UINT i = 0; i < sizeof(g_listed) / sizeof(g_listed[0]); i++)
+        if (!operations || (operations & g_listed[i].operations)) {
+            size += sizeof(ALGORITHM_NAME) + (wcslen(g_listed[i].name) + 1) * sizeof(WCHAR);
+            selected++;
+        }
+    if (!selected)
+        return operations ? NTE_NOT_SUPPORTED : ERROR_SUCCESS;
+    ALGORITHM_NAME *names = HeapAlloc(GetProcessHeap(), 0, size);
+    if (!names)
+        return NTE_NO_MEMORY;
+    WCHAR *strings = (WCHAR *)(names + selected);
+    UINT next = 0;
+    for (UINT i = 0; i < sizeof(g_listed) / sizeof(g_listed[0]); i++) {
+        if (operations && !(operations & g_listed[i].operations))
+            continue;
+        SIZE_T length = wcslen(g_listed[i].name) + 1;
+        memcpy(strings, g_listed[i].name, length * sizeof(WCHAR));
+        names[next].name = strings;
+        names[next].class_ = g_listed[i].class_;
+        /* a key agreement can sign as well, as the provider lists it. */
+        names[next].operations = g_listed[i].operations == 0x8 ? 0x18 : g_listed[i].operations;
+        names[next].flags = 0;
+        strings += length;
+        next++;
+    }
+    *count = selected;
+    *list = names;
+    return ERROR_SUCCESS;
+}
+
+/* the key encapsulation and the derivation from a key are not in the provider, which has no such interface. */
+SECURITY_STATUS WINAPI NCryptEncapsulate(NCRYPT_KEY_HANDLE key, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5,
+                                         ULONG_PTR a6, ULONG_PTR a7, ULONG_PTR flags)
+{
+    if (!a4 || !a7)
+        return NTE_INVALID_PARAMETER;
+    if (!find_object(key, KEY_MAGIC))
+        return NTE_INVALID_HANDLE;
+    return NTE_NOT_SUPPORTED;
+}
+
+SECURITY_STATUS WINAPI NCryptDecapsulate(NCRYPT_KEY_HANDLE key, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5,
+                                         ULONG_PTR a6, ULONG_PTR flags)
+{
+    if (!a6)
+        return NTE_INVALID_PARAMETER;
+    if (!find_object(key, KEY_MAGIC))
+        return NTE_INVALID_HANDLE;
+    return NTE_NOT_SUPPORTED;
+}
+
+SECURITY_STATUS WINAPI NCryptKeyDerivation(NCRYPT_KEY_HANDLE key, ULONG_PTR parameters, PBYTE output, DWORD size,
+                                           DWORD *result, DWORD flags)
+{
+    if (!result || !output || !size)
+        return NTE_INVALID_PARAMETER;
+    if (!find_object(key, KEY_MAGIC))
+        return NTE_INVALID_HANDLE;
+    return NTE_NOT_SUPPORTED;
+}
+
+SECURITY_STATUS WINAPI NCryptSetAuditingInterface(void *audit)
+{
+    return ERROR_SUCCESS;
+}
+
+/* the handles of key protectors, protection descriptors and streams come from calls that are not here. */
+SECURITY_STATUS WINAPI NCryptCloseKeyProtector(ULONG_PTR protector)
+{
+    return NTE_INVALID_HANDLE;
+}
+
+SECURITY_STATUS WINAPI NCryptCloseProtectionDescriptor(ULONG_PTR descriptor)
+{
+    return NTE_INVALID_HANDLE;
+}
+
+SECURITY_STATUS WINAPI NCryptDuplicateKeyProtectorHandle(ULONG_PTR protector, ULONG_PTR *copy, ULONG_PTR flags)
+{
+    return NTE_INVALID_HANDLE;
+}
+
+SECURITY_STATUS WINAPI NCryptStreamClose(ULONG_PTR stream)
+{
+    return NTE_INVALID_HANDLE;
+}
+
+SECURITY_STATUS WINAPI NCryptStreamUpdate(ULONG_PTR stream, PBYTE data, SIZE_T size, BOOL final)
+{
+    return NTE_INVALID_HANDLE;
+}
