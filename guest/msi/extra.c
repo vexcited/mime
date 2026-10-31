@@ -860,6 +860,35 @@ static PWSTR shortcut_path(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, ULO
     return path;
 }
 
+/* a Target that names a feature makes an advertised shortcut. It points at the key file of the row's component. */
+static UINT advertised_target(MIME_MSI_PACKAGE *package, PCWSTR target, PCWSTR component, PWSTR *path)
+{
+    *path = nullptr;
+    if (!target || wcschr(target, L'['))
+        return ERROR_SUCCESS;
+    MIME_MSI_TABLE *features;
+    UINT error = optional_table(package, L"Feature", &features);
+    if (error || !features)
+        return error;
+    BOOL found = FALSE;
+    for (ULONG row = 0; row < features->Rows && !found; row++) {
+        PCWSTR name = cell_text(package, features, row, L"Feature");
+        found = name && !wcscmp(name, target);
+    }
+    if (!found)
+        return ERROR_SUCCESS;
+    MIME_MSI_TABLE *components;
+    ULONG row;
+    error = find_component(package, component, &components, &row);
+    if (error)
+        return error;
+    PCWSTR key = cell_text(package, components, row, L"KeyPath");
+    int attributes = cell_number(components, row, L"Attributes");
+    if (!key || !*key || (attributes != MSI_NULL_INTEGER && (attributes & (4 | 32))))
+        return ERROR_INSTALL_PACKAGE_INVALID;
+    return MimeMsiFileTargetPath(package, key, path);
+}
+
 static UINT create_shortcuts(MIME_MSI_PACKAGE *package)
 {
     MIME_MSI_TABLE *table;
@@ -878,7 +907,10 @@ static UINT create_shortcuts(MIME_MSI_PACKAGE *package)
             error = ERROR_INSTALL_PACKAGE_INVALID;
             break;
         }
-        error = MimeMsiFormat(package, cell_text(package, table, row, L"Target"), &target);
+        PCWSTR raw_target = cell_text(package, table, row, L"Target");
+        error = advertised_target(package, raw_target, component, &target);
+        if (!error && !target)
+            error = MimeMsiFormat(package, raw_target, &target);
         if (!error)
             error = MimeMsiFormat(package, cell_text(package, table, row, L"Arguments"), &arguments);
         if (!error)
@@ -897,7 +929,6 @@ static UINT create_shortcuts(MIME_MSI_PACKAGE *package)
                 error = ERROR_FUNCTION_FAILED;
         }
         if (!error) {
-            /* a feature's file stands for an advertised shortcut, which is not created. */
             if (!*target) {
                 error = ERROR_INSTALL_PACKAGE_INVALID;
             } else {
