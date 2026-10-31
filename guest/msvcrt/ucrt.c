@@ -193,7 +193,8 @@ DECLSPEC_EXPORT int __cdecl __stdio_common_vswprintf(ULONGLONG options, wchar_t 
         else if (!(options & 1))
             buffer[size - 1] = 0;
     }
-    return (options & 2) || !buffer || (size_t)count < size ? count : -1;
+    /* the legacy form fills the buffer without a terminator when the text is as long as it, and says so. */
+    return (options & 2) || !buffer || (size_t)count < size || ((options & 1) && (size_t)count == size) ? count : -1;
 }
 
 /* narrow __stdio_common_vswprintf: same options, legacy truncation and a count of what was asked. */
@@ -218,7 +219,8 @@ DECLSPEC_EXPORT int __cdecl __stdio_common_vsprintf(ULONGLONG options, char *buf
         else if (!(options & 1))
             buffer[size - 1] = 0;
     }
-    return (options & 2) || !buffer || (size_t)count < size ? count : -1;
+    /* the legacy form fills the buffer without a terminator when the text is as long as it, and says so. */
+    return (options & 2) || !buffer || (size_t)count < size || ((options & 1) && (size_t)count == size) ? count : -1;
 }
 
 DECLSPEC_EXPORT int __cdecl __stdio_common_vswprintf_s(ULONGLONG options, wchar_t *buffer, size_t size,
