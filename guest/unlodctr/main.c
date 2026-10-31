@@ -4,7 +4,7 @@
  *   unlodctr /M:manifest.xml [/Q]
  *
  * the providers of the manifest lose their key below _V2Providers; the numbers they took from the counter names are not
- * given back. a provider that is not there is an error, as it is on windows.
+ * given back. a provider that is not there is nothing to remove, which installers rely on to start from a clean state.
  */
 #include "../lodctr/perfman.h"
 
@@ -59,6 +59,8 @@ int tool_main(void)
         WCHAR *name = pm_key_name(manifest.Providers[p].Guid);
         status = RegDeleteTreeW(providers, name);
         tu_free(name);
+        if (status == ERROR_FILE_NOT_FOUND)
+            status = ERROR_SUCCESS;
     }
     RegCloseKey(providers);
     pm_free(&manifest);
