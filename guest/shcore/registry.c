@@ -80,23 +80,31 @@ LONG WINAPI SHGetValueA(HKEY root, LPCSTR subkey, LPCSTR value, DWORD *type, voi
 
 LONG WINAPI SHSetValueW(HKEY root, LPCWSTR subkey, LPCWSTR value, DWORD type, const void *data, DWORD size)
 {
-    HKEY key;
-    LONG error = RegCreateKeyExW(root, subkey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
-    if (error)
-        return error;
-    error = RegSetValueExW(key, value, 0, type, data, size);
-    RegCloseKey(key);
+    /* without a subkey the value goes in the key itself. */
+    HKEY key = root;
+    if (subkey && *subkey) {
+        LONG error = RegCreateKeyExW(root, subkey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
+        if (error)
+            return error;
+    }
+    LONG error = RegSetValueExW(key, value, 0, type, data, size);
+    if (key != root)
+        RegCloseKey(key);
     return error;
 }
 
 LONG WINAPI SHSetValueA(HKEY root, LPCSTR subkey, LPCSTR value, DWORD type, const void *data, DWORD size)
 {
-    HKEY key;
-    LONG error = RegCreateKeyExA(root, subkey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
-    if (error)
-        return error;
-    error = RegSetValueExA(key, value, 0, type, data, size);
-    RegCloseKey(key);
+    /* without a subkey the value goes in the key itself. */
+    HKEY key = root;
+    if (subkey && *subkey) {
+        LONG error = RegCreateKeyExA(root, subkey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr);
+        if (error)
+            return error;
+    }
+    LONG error = RegSetValueExA(key, value, 0, type, data, size);
+    if (key != root)
+        RegCloseKey(key);
     return error;
 }
 
