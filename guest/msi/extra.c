@@ -166,6 +166,9 @@ UINT MimeMsiComponentState(MIME_MSI_PACKAGE *package, PCWSTR name, INSTALLSTATE 
     error = component_action(package, name, &what);
     if (!error)
         *action = what == ACTION_LOCAL ? INSTALLSTATE_LOCAL : what == ACTION_ABSENT ? INSTALLSTATE_ABSENT : INSTALLSTATE_UNKNOWN;
+    for (ULONG i = 0; !error && i < package->ComponentRequestCount; i++)
+        if (!wcscmp(package->ComponentRequests[i].Name, name))
+            *action = package->ComponentRequests[i].State;
     return error;
 }
 

@@ -52,12 +52,14 @@ MSIAPI UINT WINAPI MsiCloseAllHandles(void);
 MSIAPI UINT WINAPI MsiRecordGetFieldCount(MSIHANDLE record);
 MSIAPI int WINAPI MsiRecordGetInteger(MSIHANDLE record, UINT field);
 MSIAPI UINT WINAPI MsiRecordGetStringW(MSIHANDLE record, UINT field, LPWSTR out, LPDWORD size);
+MSIAPI UINT WINAPI MsiRecordGetStringA(MSIHANDLE record, UINT field, LPSTR out, LPDWORD size);
 MSIAPI UINT WINAPI MsiRecordSetInteger(MSIHANDLE record, UINT field, int value);
 MSIAPI UINT WINAPI MsiRecordSetStringW(MSIHANDLE record, UINT field, LPCWSTR value);
 MSIAPI BOOL WINAPI MsiRecordIsNull(MSIHANDLE record, UINT field);
 MSIAPI UINT WINAPI MsiRecordClearData(MSIHANDLE record);
 MSIAPI UINT WINAPI MsiRecordDataSize(MSIHANDLE record, UINT field);
 MSIAPI UINT WINAPI MsiOpenDatabaseW(LPCWSTR path, LPCWSTR persist, MSIHANDLE *database);
+MSIAPI UINT WINAPI MsiOpenDatabaseA(LPCSTR path, LPCSTR persist, MSIHANDLE *database);
 
 MSIAPI UINT WINAPI MsiDatabaseOpenViewW(MSIHANDLE database, LPCWSTR query, MSIHANDLE *view);
 MSIAPI UINT WINAPI MsiViewExecute(MSIHANDLE view, MSIHANDLE parameters);
@@ -66,6 +68,7 @@ MSIAPI UINT WINAPI MsiViewClose(MSIHANDLE view);
 MSIAPI UINT WINAPI MsiViewModify(MSIHANDLE view, int mode, MSIHANDLE record);
 MSIAPI UINT WINAPI MsiRecordReadStream(MSIHANDLE record, UINT field, char *buffer, LPDWORD size);
 MSIAPI UINT WINAPI MsiRecordSetStreamW(MSIHANDLE record, UINT field, LPCWSTR path);
+MSIAPI UINT WINAPI MsiRecordSetStreamA(MSIHANDLE record, UINT field, LPCSTR path);
 MSIAPI BOOL WINAPI MsiGetMode(MSIHANDLE install, UINT mode);
 MSIAPI UINT WINAPI MsiSetMode(MSIHANDLE install, UINT mode, BOOL state);
 #define MSICOLINFO_NAMES 0
@@ -73,6 +76,8 @@ MSIAPI UINT WINAPI MsiSetMode(MSIHANDLE install, UINT mode, BOOL state);
 MSIAPI UINT WINAPI MsiViewGetColumnInfo(MSIHANDLE view, UINT info, MSIHANDLE *record);
 MSIAPI UINT WINAPI MsiDatabaseGetPrimaryKeysW(MSIHANDLE database, LPCWSTR table, MSIHANDLE *record);
 MSIAPI UINT WINAPI MsiViewGetErrorW(MSIHANDLE view, LPWSTR column, LPDWORD size);
+MSIAPI UINT WINAPI MsiViewGetErrorA(MSIHANDLE view, LPSTR column, LPDWORD size);
+MSIAPI UINT WINAPI MsiDatabaseGetPrimaryKeysA(MSIHANDLE database, LPCSTR table, MSIHANDLE *record);
 
 #define MSITRANSFORM_ERROR_ADDEXISTINGROW 0x01
 #define MSITRANSFORM_ERROR_DELMISSINGROW 0x02
@@ -145,8 +150,11 @@ MSIAPI MSICONDITION WINAPI MsiEvaluateConditionW(MSIHANDLE install, LPCWSTR cond
 #define ERROR_FUNCTION_NOT_CALLED 1626L
 MSIAPI UINT WINAPI MsiDoActionW(MSIHANDLE install, LPCWSTR action);
 MSIAPI UINT WINAPI MsiSequenceW(MSIHANDLE install, LPCWSTR table, int mode);
+MSIAPI UINT WINAPI MsiSequenceA(MSIHANDLE install, LPCSTR table, int mode);
 
 MSIAPI UINT WINAPI MsiGetTargetPathW(MSIHANDLE install, LPCWSTR folder, LPWSTR path, LPDWORD size);
+MSIAPI UINT WINAPI MsiGetTargetPathA(MSIHANDLE install, LPCSTR folder, LPSTR path, LPDWORD size);
+MSIAPI UINT WINAPI MsiSetTargetPathA(MSIHANDLE install, LPCSTR folder, LPCSTR path);
 MSIAPI UINT WINAPI MsiGetSourcePathW(MSIHANDLE install, LPCWSTR folder, LPWSTR path, LPDWORD size);
 MSIAPI UINT WINAPI MsiSetTargetPathW(MSIHANDLE install, LPCWSTR folder, LPCWSTR path);
 
@@ -246,8 +254,22 @@ MSIAPI UINT WINAPI MsiGetComponentStateW(MSIHANDLE install, LPCWSTR component, I
 MSIAPI UINT WINAPI MsiGetFeatureStateW(MSIHANDLE install, LPCWSTR feature, INSTALLSTATE *installed, INSTALLSTATE *action);
 MSIAPI UINT WINAPI MsiSetFeatureStateW(MSIHANDLE install, LPCWSTR feature, INSTALLSTATE state);
 MSIAPI UINT WINAPI MsiSetInstallLevel(MSIHANDLE install, int level);
+MSIAPI LANGID WINAPI MsiGetLanguage(MSIHANDLE install);
 typedef enum { MSICOSTTREE_SELFONLY, MSICOSTTREE_CHILDREN, MSICOSTTREE_PARENTS, MSICOSTTREE_RESERVED } MSICOSTTREE;
 MSIAPI UINT WINAPI MsiGetFeatureCostW(MSIHANDLE install, LPCWSTR feature, MSICOSTTREE tree, INSTALLSTATE state, LPINT cost);
+MSIAPI UINT WINAPI MsiGetFeatureCostA(MSIHANDLE install, LPCSTR feature, MSICOSTTREE tree, INSTALLSTATE state, LPINT cost);
+MSIAPI UINT WINAPI MsiGetFeatureStateA(MSIHANDLE install, LPCSTR feature, INSTALLSTATE *installed, INSTALLSTATE *action);
+MSIAPI UINT WINAPI MsiSetFeatureStateA(MSIHANDLE install, LPCSTR feature, INSTALLSTATE state);
+MSIAPI UINT WINAPI MsiSetComponentStateW(MSIHANDLE install, LPCWSTR component, INSTALLSTATE state);
+MSIAPI UINT WINAPI MsiSetComponentStateA(MSIHANDLE install, LPCSTR component, INSTALLSTATE state);
+MSIAPI UINT WINAPI MsiSetFeatureAttributesW(MSIHANDLE install, LPCWSTR feature, DWORD attributes);
+MSIAPI UINT WINAPI MsiSetFeatureAttributesA(MSIHANDLE install, LPCSTR feature, DWORD attributes);
+MSIAPI UINT WINAPI MsiGetFeatureValidStatesW(MSIHANDLE install, LPCWSTR feature, LPDWORD states);
+MSIAPI UINT WINAPI MsiGetFeatureValidStatesA(MSIHANDLE install, LPCSTR feature, LPDWORD states);
+MSIAPI UINT WINAPI MsiEnumComponentCostsW(MSIHANDLE install, LPCWSTR component, DWORD index, INSTALLSTATE state,
+                                          LPWSTR drive, LPDWORD drive_size, LPINT cost, LPINT temporary);
+MSIAPI UINT WINAPI MsiEnumComponentCostsA(MSIHANDLE install, LPCSTR component, DWORD index, INSTALLSTATE state,
+                                          LPSTR drive, LPDWORD drive_size, LPINT cost, LPINT temporary);
 
 typedef enum {
     MSIINSTALLCONTEXT_NONE = 0, MSIINSTALLCONTEXT_USERMANAGED = 1,
@@ -320,6 +342,7 @@ MSIAPI UINT WINAPI MsiInstallMissingComponentW(LPCWSTR product, LPCWSTR componen
 MSIAPI UINT WINAPI MsiInstallMissingComponentA(LPCSTR product, LPCSTR component, INSTALLSTATE state);
 MSIAPI int WINAPI MsiGetDatabaseState(MSIHANDLE database);
 MSIAPI MSICONDITION WINAPI MsiDatabaseIsTablePersistentW(MSIHANDLE database, LPCWSTR table);
+MSIAPI MSICONDITION WINAPI MsiDatabaseIsTablePersistentA(MSIHANDLE database, LPCSTR table);
 MSIAPI MSIHANDLE WINAPI MsiGetLastErrorRecord(void);
 typedef struct MSIFILEHASHINFO {
     ULONG dwFileHashInfoSize;

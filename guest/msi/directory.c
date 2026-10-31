@@ -154,6 +154,7 @@ UINT WINAPI MsiGetSourcePathW(MSIHANDLE handle, LPCWSTR name, LPWSTR out, LPDWOR
 
 UINT WINAPI MsiSetTargetPathW(MSIHANDLE handle, LPCWSTR name, LPCWSTR value)
 {
+    MIME_REMOTE(PROXY_SetTargetPathW, UINT, MIME_ARG(handle), MIME_ARG(name), MIME_ARG(value));
     if (!name || !*name || !value || !*value)
         return ERROR_INVALID_PARAMETER;
     AcquireSRWLockExclusive(&MimeMsiLock);

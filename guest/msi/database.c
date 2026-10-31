@@ -151,6 +151,7 @@ UINT MimeMsiOpenDatabaseFile(PCWSTR path, BOOL transform, MIME_MSI_DATABASE **ou
 
 UINT WINAPI MsiOpenDatabaseW(LPCWSTR path, LPCWSTR persist, MSIHANDLE *out)
 {
+    MIME_REMOTE(PROXY_OpenDatabaseW, UINT, MIME_ARG(path), MIME_ARG(persist), MIME_ARG(out));
     if (!path || !out)
         return ERROR_INVALID_PARAMETER;
     *out = 0;

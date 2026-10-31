@@ -619,6 +619,9 @@ UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features,
         return ERROR_INSTALL_PACKAGE_INVALID;
     level = MimeMsiFeatureLevel(package, name, level);
     int attributes = MimeMsiInteger(features, row, attributes_column);
+    for (ULONG i = 0; i < package->FeatureCount; i++)
+        if (!wcscmp(package->Features[i].Name, name) && package->Features[i].AttributesSet)
+            attributes = package->Features[i].Attributes;
     BOOL follows = attributes != MSI_NULL_INTEGER && (attributes & 2);
     PCWSTR parent = MimeMsiText(package->Database, features, row, parent_column);
     BOOL parent_selected = TRUE;
@@ -672,7 +675,16 @@ UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features,
     return ERROR_SUCCESS;
 }
 
-UINT MimeMsiComponentSelected(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR *directory, BOOL *selected)
+void MimeMsiClearComponentRequests(MIME_MSI_PACKAGE *package)
+{
+    for (ULONG i = 0; i < package->ComponentRequestCount; i++)
+        MimeMsiFree(package->ComponentRequests[i].Name);
+    MimeMsiFree(package->ComponentRequests);
+    package->ComponentRequests = nullptr;
+    package->ComponentRequestCount = 0;
+}
+
+static UINT component_selected_by_features(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR *directory, BOOL *selected)
 {
     MIME_MSI_DATABASE *database = package->Database;
     MIME_MSI_TABLE *components, *links, *features;
@@ -731,6 +743,15 @@ UINT MimeMsiComponentSelected(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR *di
     if (*selected && flags != MSI_NULL_INTEGER && (flags & ~(2 | 4 | 8 | 16 | 64 | 128 | 256 | 512 | 1024 | 2048)))
         return ERROR_CALL_NOT_IMPLEMENTED;
     return ERROR_SUCCESS;
+}
+
+UINT MimeMsiComponentSelected(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR *directory, BOOL *selected)
+{
+    UINT error = component_selected_by_features(package, name, directory, selected);
+    for (ULONG i = 0; !error && i < package->ComponentRequestCount; i++)
+        if (!wcscmp(package->ComponentRequests[i].Name, name))
+            *selected = package->ComponentRequests[i].State == INSTALLSTATE_LOCAL;
+    return error;
 }
 
 static UINT maintenance_selection(MIME_MSI_PACKAGE *package)
@@ -991,8 +1012,15 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
     return ERROR_SUCCESS;
 }
 
+static UINT rebuild_plan(MIME_MSI_PACKAGE *package);
+
 static UINT validate_cost(MIME_MSI_PACKAGE *package)
 {
+    if (package->PlanStale) {
+        UINT error = rebuild_plan(package);
+        if (error)
+            return error;
+    }
     ULONGLONG required[26] = {};
     DWORD cluster[26] = {};
     BOOL insufficient = FALSE;
@@ -1048,12 +1076,28 @@ static UINT validate_cost(MIME_MSI_PACKAGE *package)
     return error ? error : insufficient ? ERROR_DISK_FULL : ERROR_SUCCESS;
 }
 
+static UINT rebuild_plan(MIME_MSI_PACKAGE *package)
+{
+    free_plan(package);
+    package->PlanStale = FALSE;
+    UINT error = plan_files(package);
+    if (error)
+        free_plan(package);
+    return error;
+}
+
+/* a change of what is selected leaves the plan to be made again when a check needs it. */
+void MimeMsiPlanChanged(MIME_MSI_PACKAGE *package)
+{
+    if (package->CostStage >= 2)
+        package->PlanStale = TRUE;
+}
+
 UINT MimeMsiRefreshFilePlan(MIME_MSI_PACKAGE *package)
 {
     if (package->CostStage < 2)
         return ERROR_SUCCESS;
-    free_plan(package);
-    UINT error = plan_files(package);
+    UINT error = rebuild_plan(package);
     if (!error && package->CostStage >= 3)
         error = validate_cost(package);
     if (error)
@@ -1540,6 +1584,7 @@ UINT MimeMsiStandardAction(MIME_MSI_PACKAGE *package, PCWSTR action)
         if (package->TransactionActive)
             return ERROR_INSTALL_ALREADY_RUNNING;
         free_plan(package);
+        package->PlanStale = FALSE;
         package->CostStage = 1;
         UINT error = MimeMsiLoadFeatures(package);
         if (error)
@@ -1554,11 +1599,8 @@ UINT MimeMsiStandardAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     if (!wcscmp(action, L"FileCost")) {
         if (package->CostStage != 1)
             return ERROR_FUNCTION_NOT_CALLED;
-        free_plan(package);
-        UINT error = plan_files(package);
-        if (error)
-            free_plan(package);
-        else
+        UINT error = rebuild_plan(package);
+        if (!error)
             package->CostStage = 2;
         return error;
     }
@@ -1609,11 +1651,8 @@ UINT MimeMsiStandardAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     if (files) {
         if (package->FilesQueued)
             return ERROR_INSTALL_ALREADY_RUNNING;
-        free_plan(package);
-        UINT error = plan_files(package);
-        if (error)
-            free_plan(package);
-        else
+        UINT error = rebuild_plan(package);
+        if (!error)
             package->FilesQueued = TRUE;
         return error;
     }

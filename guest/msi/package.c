@@ -83,6 +83,7 @@ void MimeMsiDestroyPackage(MIME_MSI_OBJECT *object)
         MimeMsiRelease(&package->Database->Object);
     MimeMsiFree(package->ActionFormat);
     MimeMsiFree(package->ComponentInstalled);
+    MimeMsiClearComponentRequests(package);
     MimeMsiFree(package->Features);
     MimeMsiFree(package);
 }

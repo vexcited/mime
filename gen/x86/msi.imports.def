@@ -20,7 +20,9 @@ EXPORTS
     MsiDatabaseCommit@4 @20
     MsiDatabaseGenerateTransformA@20 @23
     MsiDatabaseGenerateTransformW@20 @24
+    MsiDatabaseGetPrimaryKeysA@12 @25
     MsiDatabaseGetPrimaryKeysW@12 @26
+    MsiDatabaseIsTablePersistentA@8 @164
     MsiDatabaseIsTablePersistentW@8 @165
     MsiDatabaseOpenViewA@12 @31
     MsiDatabaseOpenViewW@12 @32
@@ -32,6 +34,8 @@ EXPORTS
     MsiEnableLogW@12 @169
     MsiEnumClientsExW@32 @292
     MsiEnumClientsW@12 @37
+    MsiEnumComponentCostsA@32 @220
+    MsiEnumComponentCostsW@32 @221
     MsiEnumComponentQualifiersA@24 @38
     MsiEnumComponentQualifiersW@24 @39
     MsiEnumComponentsExW@28 @290
@@ -56,9 +60,13 @@ EXPORTS
     MsiGetComponentStateA@16 @50
     MsiGetComponentStateW@16 @51
     MsiGetDatabaseState@4 @52
+    MsiGetFeatureCostA@20 @53
     MsiGetFeatureCostW@20 @54
     MsiGetFeatureInfoW@28 @56
+    MsiGetFeatureStateA@16 @57
     MsiGetFeatureStateW@16 @58
+    MsiGetFeatureValidStatesA@12 @61
+    MsiGetFeatureValidStatesW@12 @62
     MsiGetFileHashW@12 @219
     MsiGetFileVersionW@20 @195
     MsiGetLanguage@4 @63
@@ -129,9 +137,14 @@ EXPORTS
     MsiRemovePatchesW@16 @238
     MsiSequenceA@12 @132
     MsiSequenceW@12 @133
+    MsiSetComponentStateA@12 @134
+    MsiSetComponentStateW@12 @135
     MsiSetExternalUIA@12 @136
     MsiSetExternalUIRecord@16 @281
     MsiSetExternalUIW@12 @137
+    MsiSetFeatureAttributesA@12 @206
+    MsiSetFeatureAttributesW@12 @207
+    MsiSetFeatureStateA@12 @138
     MsiSetFeatureStateW@12 @139
     MsiSetInstallLevel@8 @140
     MsiSetInternalUI@8 @141
@@ -157,6 +170,7 @@ EXPORTS
     MsiViewExecute@8 @159
     MsiViewFetch@8 @160
     MsiViewGetColumnInfo@12 @166
+    MsiViewGetErrorA@12 @161
     MsiViewGetErrorW@12 @162
     MsiViewModify@12 @163
     QueryInstanceCount@0 @295

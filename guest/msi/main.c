@@ -65,6 +65,7 @@ UINT WINAPI MsiCloseHandle(MSIHANDLE handle)
 
 UINT WINAPI MsiCloseAllHandles(void)
 {
+    MIME_REMOTE(PROXY_CloseAllHandles, UINT);
     UINT count = 0;
     DWORD thread = GetCurrentThreadId();
     AcquireSRWLockExclusive(&MimeMsiLock);

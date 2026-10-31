@@ -823,6 +823,7 @@ UINT WINAPI MsiViewFetch(MSIHANDLE handle, MSIHANDLE *out)
 
 UINT WINAPI MsiViewClose(MSIHANDLE handle)
 {
+    MIME_REMOTE(PROXY_ViewClose, UINT, MIME_ARG(handle));
     AcquireSRWLockExclusive(&MimeMsiLock);
     MSI_VIEW *view = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_VIEW);
     if (view) {

@@ -160,6 +160,7 @@ UINT MimeMsiCreateSummary(MIME_MSI_DATABASE *database, MSIHANDLE *out)
 
 UINT WINAPI MsiGetSummaryInformationW(MSIHANDLE handle, LPCWSTR path, UINT updates, MSIHANDLE *out)
 {
+    MIME_REMOTE(PROXY_GetSummaryInformationW, UINT, MIME_ARG(handle), MIME_ARG(path), MIME_ARG(updates), MIME_ARG(out));
     if (!out || (!handle && (!path || !*path)))
         return ERROR_INVALID_PARAMETER;
     *out = 0;
@@ -183,6 +184,7 @@ UINT WINAPI MsiGetSummaryInformationW(MSIHANDLE handle, LPCWSTR path, UINT updat
 UINT WINAPI MsiSummaryInfoGetPropertyW(MSIHANDLE handle, UINT id, PUINT type, int *number,
                                       FILETIME *time, LPWSTR text, LPDWORD size)
 {
+    MIME_REMOTE(PROXY_SummaryInfoGetPropertyW, UINT, MIME_ARG(handle), MIME_ARG(id), MIME_ARG(type), MIME_ARG(number), MIME_ARG(time), MIME_ARG(text), MIME_ARG(size));
     if (!id || id == 17 || id >= 20 || !type)
         return ERROR_INVALID_PARAMETER;
     AcquireSRWLockShared(&MimeMsiLock);
@@ -204,6 +206,7 @@ UINT WINAPI MsiSummaryInfoGetPropertyW(MSIHANDLE handle, UINT id, PUINT type, in
 
 UINT WINAPI MsiSummaryInfoGetPropertyCount(MSIHANDLE handle, PUINT count)
 {
+    MIME_REMOTE(PROXY_SummaryInfoGetPropertyCount, UINT, MIME_ARG(handle), MIME_ARG(count));
     if (!count)
         return ERROR_INVALID_PARAMETER;
     AcquireSRWLockShared(&MimeMsiLock);

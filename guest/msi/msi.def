@@ -160,3 +160,17 @@ EXPORTS
     MsiDatabaseGenerateTransformA @23
     MsiGetProductCodeA @65
     MsiGetSummaryInformationA @77
+    MsiGetFeatureCostA @53
+    MsiGetFeatureStateA @57
+    MsiSetFeatureStateA @138
+    MsiSetComponentStateW @135
+    MsiSetComponentStateA @134
+    MsiSetFeatureAttributesW @207
+    MsiSetFeatureAttributesA @206
+    MsiGetFeatureValidStatesW @62
+    MsiGetFeatureValidStatesA @61
+    MsiEnumComponentCostsW @221
+    MsiEnumComponentCostsA @220
+    MsiDatabaseIsTablePersistentA @164
+    MsiDatabaseGetPrimaryKeysA @25
+    MsiViewGetErrorA @161

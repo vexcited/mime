@@ -217,6 +217,7 @@ static UINT run_sequence_row(MSIHANDLE handle, MIME_MSI_PACKAGE *package, MIME_M
 
 UINT WINAPI MsiSequenceW(MSIHANDLE handle, LPCWSTR name, int mode)
 {
+    MIME_REMOTE(PROXY_SequenceW, UINT, MIME_ARG(handle), MIME_ARG(name), MIME_ARG(mode));
     if (!name || !*name || mode)
         return ERROR_INVALID_PARAMETER;
     AcquireSRWLockExclusive(&MimeMsiLock);

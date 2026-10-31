@@ -235,6 +235,7 @@ int WINAPI MsiGetDatabaseState(MSIHANDLE handle)
 /* a table of a stored database is persistent, one the database does not have is none. */
 MSICONDITION WINAPI MsiDatabaseIsTablePersistentW(MSIHANDLE handle, LPCWSTR table)
 {
+    MIME_REMOTE(PROXY_DatabaseIsTablePersistentW, MSICONDITION, MIME_ARG(handle), MIME_ARG(table));
     if (!table)
         return MSICONDITION_ERROR;
     AcquireSRWLockShared(&MimeMsiLock);
@@ -250,6 +251,7 @@ MSICONDITION WINAPI MsiDatabaseIsTablePersistentW(MSIHANDLE handle, LPCWSTR tabl
 /* the last error record: the installer keeps none, so there is never one. */
 MSIHANDLE WINAPI MsiGetLastErrorRecord(void)
 {
+    MIME_REMOTE(PROXY_GetLastErrorRecord, MSIHANDLE);
     return 0;
 }
 
@@ -340,6 +342,7 @@ UINT WINAPI MsiGetProductPropertyW(MSIHANDLE session, LPCWSTR property, LPWSTR v
 /* the volumes of the machine are taken to have room: the installer here costs no volume. */
 UINT WINAPI MsiVerifyDiskSpace(MSIHANDLE session)
 {
+    MIME_REMOTE(PROXY_VerifyDiskSpace, UINT, MIME_ARG(session));
     AcquireSRWLockShared(&MimeMsiLock);
     MIME_MSI_OBJECT *package = MimeMsiGetHandle(session, MIME_MSI_KIND_PACKAGE);
     ReleaseSRWLockShared(&MimeMsiLock);

@@ -392,6 +392,7 @@ UINT WINAPI MsiRecordReadStream(MSIHANDLE handle, UINT field, char *buffer, LPDW
 
 UINT WINAPI MsiRecordSetStreamW(MSIHANDLE handle, UINT field, LPCWSTR path)
 {
+    MIME_REMOTE(PROXY_RecordSetStreamW, UINT, MIME_ARG(handle), MIME_ARG(field), MIME_ARG(path));
     HANDLE file = INVALID_HANDLE_VALUE;
     MIME_MSI_BLOB *blob = nullptr;
     UINT error = ERROR_SUCCESS;
@@ -508,6 +509,7 @@ UINT WINAPI MsiSetMode(MSIHANDLE handle, UINT mode, BOOL state)
 
 LANGID WINAPI MsiGetLanguage(MSIHANDLE handle)
 {
+    MIME_REMOTE(PROXY_GetLanguage, LANGID, MIME_ARG(handle));
     AcquireSRWLockShared(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
     LANGID language = 0;
@@ -735,6 +737,7 @@ UINT WINAPI MsiSummaryInfoGetPropertyA(MSIHANDLE summary, UINT id, PUINT type, i
 /* the summary of a package of this installer is read: it is not opened for changes, and a call that changes it fails. */
 UINT WINAPI MsiSummaryInfoSetPropertyW(MSIHANDLE summary, UINT id, UINT type, int number, FILETIME *time, LPCWSTR text)
 {
+    MIME_REMOTE(PROXY_SummaryInfoSetPropertyW, UINT, MIME_ARG(summary), MIME_ARG(id), MIME_ARG(type), MIME_ARG(number), MIME_ARG(time), MIME_ARG(text));
     AcquireSRWLockShared(&MimeMsiLock);
     BOOL valid = MimeMsiGetHandle(summary, MIME_MSI_KIND_SUMMARY) != nullptr;
     ReleaseSRWLockShared(&MimeMsiLock);
@@ -753,6 +756,7 @@ UINT WINAPI MsiSummaryInfoSetPropertyA(MSIHANDLE summary, UINT id, UINT type, in
 
 UINT WINAPI MsiSummaryInfoPersist(MSIHANDLE summary)
 {
+    MIME_REMOTE(PROXY_SummaryInfoPersist, UINT, MIME_ARG(summary));
     AcquireSRWLockShared(&MimeMsiLock);
     BOOL valid = MimeMsiGetHandle(summary, MIME_MSI_KIND_SUMMARY) != nullptr;
     ReleaseSRWLockShared(&MimeMsiLock);
@@ -762,6 +766,7 @@ UINT WINAPI MsiSummaryInfoPersist(MSIHANDLE summary)
 /* a database of this installer is read only, so it never has anything to write. */
 UINT WINAPI MsiDatabaseCommit(MSIHANDLE database)
 {
+    MIME_REMOTE(PROXY_DatabaseCommit, UINT, MIME_ARG(database));
     AcquireSRWLockShared(&MimeMsiLock);
     BOOL valid = MimeMsiGetHandle(database, MIME_MSI_KIND_DATABASE) != nullptr;
     ReleaseSRWLockShared(&MimeMsiLock);
@@ -848,4 +853,99 @@ UINT WINAPI MsiInstallMissingComponentA(LPCSTR product, LPCSTR component, INSTAL
     MimeMsiFree(wide_product);
     MimeMsiFree(wide_component);
     return error;
+}
+
+/* ------------------------------------------------------------------ features, components and views */
+
+UINT WINAPI MsiGetFeatureStateA(MSIHANDLE handle, LPCSTR feature, INSTALLSTATE *installed, INSTALLSTATE *action)
+{
+    PWSTR wide = to_wide(feature);
+    UINT error = feature && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiGetFeatureStateW(handle, wide, installed, action);
+    MimeMsiFree(wide);
+    return error;
+}
+
+UINT WINAPI MsiSetFeatureStateA(MSIHANDLE handle, LPCSTR feature, INSTALLSTATE state)
+{
+    PWSTR wide = to_wide(feature);
+    UINT error = feature && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiSetFeatureStateW(handle, wide, state);
+    MimeMsiFree(wide);
+    return error;
+}
+
+UINT WINAPI MsiGetFeatureCostA(MSIHANDLE handle, LPCSTR feature, MSICOSTTREE tree, INSTALLSTATE state, LPINT cost)
+{
+    PWSTR wide = to_wide(feature);
+    UINT error = feature && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiGetFeatureCostW(handle, wide, tree, state, cost);
+    MimeMsiFree(wide);
+    return error;
+}
+
+UINT WINAPI MsiSetComponentStateA(MSIHANDLE handle, LPCSTR component, INSTALLSTATE state)
+{
+    PWSTR wide = to_wide(component);
+    UINT error = component && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiSetComponentStateW(handle, wide, state);
+    MimeMsiFree(wide);
+    return error;
+}
+
+UINT WINAPI MsiSetFeatureAttributesA(MSIHANDLE handle, LPCSTR feature, DWORD attributes)
+{
+    PWSTR wide = to_wide(feature);
+    UINT error = feature && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiSetFeatureAttributesW(handle, wide, attributes);
+    MimeMsiFree(wide);
+    return error;
+}
+
+UINT WINAPI MsiGetFeatureValidStatesA(MSIHANDLE handle, LPCSTR feature, LPDWORD states)
+{
+    PWSTR wide = to_wide(feature);
+    UINT error = feature && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiGetFeatureValidStatesW(handle, wide, states);
+    MimeMsiFree(wide);
+    return error;
+}
+
+UINT WINAPI MsiEnumComponentCostsA(MSIHANDLE handle, LPCSTR component, DWORD index, INSTALLSTATE state, LPSTR drive,
+                                   LPDWORD drive_size, LPINT cost, LPINT temporary)
+{
+    if (!drive || !drive_size)
+        return ERROR_INVALID_PARAMETER;
+    PWSTR wide = to_wide(component);
+    WCHAR text[16];
+    DWORD length = RTL_NUMBER_OF(text);
+    UINT error = component && !wide ? ERROR_NOT_ENOUGH_MEMORY :
+                 MsiEnumComponentCostsW(handle, wide, index, state, text, &length, cost, temporary);
+    if (!error)
+        error = copy_ansi(text, drive, drive_size);
+    MimeMsiFree(wide);
+    return error;
+}
+
+MSICONDITION WINAPI MsiDatabaseIsTablePersistentA(MSIHANDLE database, LPCSTR table)
+{
+    PWSTR wide = to_wide(table);
+    MSICONDITION result = table && !wide ? MSICONDITION_ERROR : MsiDatabaseIsTablePersistentW(database, wide);
+    MimeMsiFree(wide);
+    return result;
+}
+
+UINT WINAPI MsiDatabaseGetPrimaryKeysA(MSIHANDLE database, LPCSTR table, MSIHANDLE *record)
+{
+    PWSTR wide = to_wide(table);
+    UINT error = table && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiDatabaseGetPrimaryKeysW(database, wide, record);
+    MimeMsiFree(wide);
+    return error;
+}
+
+UINT WINAPI MsiViewGetErrorA(MSIHANDLE view, LPSTR column, LPDWORD size)
+{
+    WCHAR text[1] = {};
+    DWORD length = size && column ? 1 : 0;
+    UINT result = MsiViewGetErrorW(view, size && column ? text : nullptr, size ? &length : nullptr);
+    if (size) {
+        if (column && *size)
+            column[0] = 0;
+        *size = length;
+    }
+    return result;
 }

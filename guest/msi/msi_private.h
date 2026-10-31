@@ -131,7 +131,16 @@ typedef struct MIME_MSI_FEATURE {
     /* the level a Condition row set for this costing. */
     BOOL LevelSet;
     int Level;
+    /* the attributes a program set, as the Feature table holds them. */
+    BOOL AttributesSet;
+    int Attributes;
 } MIME_MSI_FEATURE;
+
+/* the state a program asked for a component, which holds against what the features say. */
+typedef struct MIME_MSI_COMPONENT_REQUEST {
+    PWSTR Name;
+    INSTALLSTATE State;
+} MIME_MSI_COMPONENT_REQUEST;
 
 typedef struct MIME_MSI_PACKAGE {
     MIME_MSI_OBJECT Object;
@@ -147,6 +156,8 @@ typedef struct MIME_MSI_PACKAGE {
     MIME_MSI_FEATURE *Features;
     ULONG FeatureCount, FeatureRevision;
     BOOL FeatureSelectionReady;
+    /* what is selected changed since the file plan was made. */
+    BOOL PlanStale;
     BOOL Maintenance, MaintenanceReady, ConfigureDefaults, Recache;
     HKEY MaintenanceRoot;
     WCHAR MaintenanceProduct[39];
@@ -162,6 +173,8 @@ typedef struct MIME_MSI_PACKAGE {
     PWSTR LaunchMessage;
     BYTE *ComponentInstalled;
     ULONG ComponentRows;
+    MIME_MSI_COMPONENT_REQUEST *ComponentRequests;
+    ULONG ComponentRequestCount;
     ULONG SessionKind;
     struct MIME_MSI_QUEUED_ACTION *Queued;
     struct MIME_MSI_CAHOST *Host;
@@ -196,18 +209,26 @@ enum {
     PROXY_CloseHandle, PROXY_RecordGetStringW, PROXY_DatabaseOpenViewW, PROXY_SetMode, PROXY_EvaluateConditionW,
     PROXY_GetMode, PROXY_RecordIsNull, PROXY_GetSourcePathW, PROXY_GetTargetPathW, PROXY_DoActionW, PROXY_FormatRecordW,
     PROXY_ViewGetErrorW, PROXY_ViewModify, PROXY_ViewGetColumnInfo, PROXY_DatabaseGetPrimaryKeysW, PROXY_RecordSetInteger,
-    PROXY_RecordGetInteger, PROXY_RecordReadStream, PROXY_GetComponentStateW, PROXY_COUNT
+    PROXY_RecordGetInteger, PROXY_RecordReadStream, PROXY_GetComponentStateW,
+    PROXY_GetFeatureStateW, PROXY_SetFeatureStateW, PROXY_SetComponentStateW, PROXY_SetFeatureAttributesW,
+    PROXY_GetFeatureCostW, PROXY_EnumComponentCostsW, PROXY_GetFeatureValidStatesW, PROXY_SetInstallLevel,
+    PROXY_SetTargetPathW, PROXY_GetLanguage, PROXY_VerifyDiskSpace, PROXY_SequenceW, PROXY_GetLastErrorRecord,
+    PROXY_DatabaseIsTablePersistentW, PROXY_DatabaseCommit, PROXY_OpenDatabaseW, PROXY_GetSummaryInformationW,
+    PROXY_SummaryInfoGetPropertyCount, PROXY_SummaryInfoGetPropertyW, PROXY_SummaryInfoSetPropertyW,
+    PROXY_SummaryInfoPersist, PROXY_RecordGetFieldCount, PROXY_RecordDataSize, PROXY_RecordClearData,
+    PROXY_RecordSetStreamW, PROXY_ViewClose, PROXY_CloseAllHandles, PROXY_COUNT
 };
 BOOL MimeMsiProxyActive(void);
 UINT_PTR MimeMsiProxyCall(ULONG id, ULONG count, const UINT_PTR *arguments);
 void MimeMsiShutDownHost(void);
 #define MIME_ARG(x) ((UINT_PTR)(x))
-/* in the custom action host, installer functions forward the call to the installer. */
+/* in the custom action host, installer functions forward the call to the installer. the leading zero keeps the list valid
+   for a call with no arguments. */
 #define MIME_REMOTE(id, type, ...) \
     do { \
         if (MimeMsiProxyActive()) { \
-            const UINT_PTR arguments_[] = {__VA_ARGS__}; \
-            return (type)MimeMsiProxyCall((id), (ULONG)(sizeof(arguments_) / sizeof(arguments_[0])), arguments_); \
+            const UINT_PTR arguments_[] = {0, ##__VA_ARGS__}; \
+            return (type)MimeMsiProxyCall((id), (ULONG)(sizeof(arguments_) / sizeof(arguments_[0]) - 1), arguments_ + 1); \
         } \
     } while (0)
 UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, PCSTR entry, WORD machine,
@@ -308,6 +329,8 @@ UINT MimeMsiFindPackageSource(PCWSTR product, PWSTR path, DWORD size);
 BOOL MimeMsiFindSourceFile(MIME_MSI_PACKAGE *package, PCWSTR relative, PWSTR *full);
 UINT MimeMsiLoadFeatures(MIME_MSI_PACKAGE *package);
 UINT MimeMsiRefreshFilePlan(MIME_MSI_PACKAGE *package);
+void MimeMsiPlanChanged(MIME_MSI_PACKAGE *package);
+void MimeMsiClearComponentRequests(MIME_MSI_PACKAGE *package);
 UINT MimeMsiFeatureState(MIME_MSI_PACKAGE *package, PCWSTR name, INSTALLSTATE *installed, INSTALLSTATE *action);
 
 UINT MimeMsiInitializeSystem(MIME_MSI_PACKAGE *package);

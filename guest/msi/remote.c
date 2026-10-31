@@ -8,9 +8,14 @@
  * share the table below, so a function is known by its index.
  *
  * a message is a length, a kind and the content. a call holds the function number and its arguments in signature
- * order, a reply the result and the outputs in the same order. a signature has one letter per argument: i a number
- * or handle, W an input string, o an output number, H an output handle, T an output string the length of a product
- * code, B and S an output string and its in/out buffer size, b and S the same for bytes.
+ * order, a reply the result and the outputs in the same order. every value is written as 32-bit numbers, so the two
+ * sides need not share a processor. a signature has one letter per argument: i a number or handle, W an input string,
+ * M a number or an input string, f an input time, o an output number, H an output handle, F an output time, T an
+ * output string the length of a product code, B and S an output string and its in/out buffer size, b and S the same
+ * for bytes. an output the caller leaves out is left out in the call, and one the function does not set keeps the
+ * value the caller had.
+ *
+ * the handles a call returns belong to the installer, which keeps them until the library closes them or its call ends.
  */
 
 enum { MESSAGE_CALL = 1, MESSAGE_REPLY, MESSAGE_RUN, MESSAGE_RESULT, MESSAGE_QUIT };
@@ -20,18 +25,22 @@ typedef UINT_PTR (WINAPI *PROXY_FUNCTION)(UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR
 typedef struct PROXY_ENTRY {
     PCSTR Name, Signature;
     PVOID Function;
+    /* the result is a handle. */
+    BOOL Handle;
 } PROXY_ENTRY;
+
+static UINT_PTR WINAPI close_given_handles(void);
 
 static const PROXY_ENTRY g_table[PROXY_COUNT] = {
     [PROXY_GetPropertyW] = {"MsiGetPropertyW", "iWBS", MsiGetPropertyW},
     [PROXY_SetPropertyW] = {"MsiSetPropertyW", "iWW", MsiSetPropertyW},
     [PROXY_RecordSetStringW] = {"MsiRecordSetStringW", "iiW", MsiRecordSetStringW},
-    [PROXY_CreateRecord] = {"MsiCreateRecord", "i", MsiCreateRecord},
+    [PROXY_CreateRecord] = {"MsiCreateRecord", "i", MsiCreateRecord, TRUE},
     [PROXY_ProcessMessage] = {"MsiProcessMessage", "iii", MsiProcessMessage},
     [PROXY_ViewExecute] = {"MsiViewExecute", "ii", MsiViewExecute},
     [PROXY_ViewFetch] = {"MsiViewFetch", "iH", MsiViewFetch},
     [PROXY_EnumRelatedProductsW] = {"MsiEnumRelatedProductsW", "WiiT", MsiEnumRelatedProductsW},
-    [PROXY_GetActiveDatabase] = {"MsiGetActiveDatabase", "i", MsiGetActiveDatabase},
+    [PROXY_GetActiveDatabase] = {"MsiGetActiveDatabase", "i", MsiGetActiveDatabase, TRUE},
     [PROXY_GetProductInfoW] = {"MsiGetProductInfoW", "WWBS", MsiGetProductInfoW},
     [PROXY_CloseHandle] = {"MsiCloseHandle", "i", MsiCloseHandle},
     [PROXY_RecordGetStringW] = {"MsiRecordGetStringW", "iiBS", MsiRecordGetStringW},
@@ -52,6 +61,33 @@ static const PROXY_ENTRY g_table[PROXY_COUNT] = {
     [PROXY_RecordGetInteger] = {"MsiRecordGetInteger", "ii", MsiRecordGetInteger},
     [PROXY_RecordReadStream] = {"MsiRecordReadStream", "iibS", MsiRecordReadStream},
     [PROXY_GetComponentStateW] = {"MsiGetComponentStateW", "iWoo", MsiGetComponentStateW},
+    [PROXY_GetFeatureStateW] = {"MsiGetFeatureStateW", "iWoo", MsiGetFeatureStateW},
+    [PROXY_SetFeatureStateW] = {"MsiSetFeatureStateW", "iWi", MsiSetFeatureStateW},
+    [PROXY_SetComponentStateW] = {"MsiSetComponentStateW", "iWi", MsiSetComponentStateW},
+    [PROXY_SetFeatureAttributesW] = {"MsiSetFeatureAttributesW", "iWi", MsiSetFeatureAttributesW},
+    [PROXY_GetFeatureCostW] = {"MsiGetFeatureCostW", "iWiio", MsiGetFeatureCostW},
+    [PROXY_EnumComponentCostsW] = {"MsiEnumComponentCostsW", "iWiiBSoo", MsiEnumComponentCostsW},
+    [PROXY_GetFeatureValidStatesW] = {"MsiGetFeatureValidStatesW", "iWo", MsiGetFeatureValidStatesW},
+    [PROXY_SetInstallLevel] = {"MsiSetInstallLevel", "ii", MsiSetInstallLevel},
+    [PROXY_SetTargetPathW] = {"MsiSetTargetPathW", "iWW", MsiSetTargetPathW},
+    [PROXY_GetLanguage] = {"MsiGetLanguage", "i", MsiGetLanguage},
+    [PROXY_VerifyDiskSpace] = {"MsiVerifyDiskSpace", "i", MsiVerifyDiskSpace},
+    [PROXY_SequenceW] = {"MsiSequenceW", "iWi", MsiSequenceW},
+    [PROXY_GetLastErrorRecord] = {"MsiGetLastErrorRecord", "", MsiGetLastErrorRecord, TRUE},
+    [PROXY_DatabaseIsTablePersistentW] = {"MsiDatabaseIsTablePersistentW", "iW", MsiDatabaseIsTablePersistentW},
+    [PROXY_DatabaseCommit] = {"MsiDatabaseCommit", "i", MsiDatabaseCommit},
+    [PROXY_OpenDatabaseW] = {"MsiOpenDatabaseW", "WMH", MsiOpenDatabaseW},
+    [PROXY_GetSummaryInformationW] = {"MsiGetSummaryInformationW", "iWiH", MsiGetSummaryInformationW},
+    [PROXY_SummaryInfoGetPropertyCount] = {"MsiSummaryInfoGetPropertyCount", "io", MsiSummaryInfoGetPropertyCount},
+    [PROXY_SummaryInfoGetPropertyW] = {"MsiSummaryInfoGetPropertyW", "iiooFBS", MsiSummaryInfoGetPropertyW},
+    [PROXY_SummaryInfoSetPropertyW] = {"MsiSummaryInfoSetPropertyW", "iiiifW", MsiSummaryInfoSetPropertyW},
+    [PROXY_SummaryInfoPersist] = {"MsiSummaryInfoPersist", "i", MsiSummaryInfoPersist},
+    [PROXY_RecordGetFieldCount] = {"MsiRecordGetFieldCount", "i", MsiRecordGetFieldCount},
+    [PROXY_RecordDataSize] = {"MsiRecordDataSize", "ii", MsiRecordDataSize},
+    [PROXY_RecordClearData] = {"MsiRecordClearData", "i", MsiRecordClearData},
+    [PROXY_RecordSetStreamW] = {"MsiRecordSetStreamW", "iiW", MsiRecordSetStreamW},
+    [PROXY_ViewClose] = {"MsiViewClose", "i", MsiViewClose},
+    [PROXY_CloseAllHandles] = {"MsiCloseAllHandles", "", close_given_handles},
 };
 
 /* ------------------------------------------------------------------ messages */
@@ -207,6 +243,19 @@ BOOL MimeMsiProxyActive(void)
     return g_client_pipe != nullptr;
 }
 
+/* what a call returns when it could not be made, for the functions whose result is no error code. */
+static UINT_PTR failure_result(ULONG id)
+{
+    switch (id) {
+    case PROXY_GetMode: case PROXY_GetLanguage: case PROXY_GetLastErrorRecord: case PROXY_CreateRecord:
+    case PROXY_GetActiveDatabase: case PROXY_RecordGetFieldCount: case PROXY_RecordDataSize: case PROXY_RecordIsNull:
+        return 0;
+    case PROXY_RecordGetInteger: return (UINT_PTR)MSI_NULL_INTEGER;
+    case PROXY_DatabaseIsTablePersistentW: return MSICONDITION_ERROR;
+    default: return ERROR_FUNCTION_FAILED;
+    }
+}
+
 UINT_PTR MimeMsiProxyCall(ULONG id, ULONG count, const UINT_PTR *arguments)
 {
     UINT_PTR args[8] = {};
@@ -215,7 +264,7 @@ UINT_PTR MimeMsiProxyCall(ULONG id, ULONG count, const UINT_PTR *arguments)
     const PROXY_ENTRY *entry = &g_table[id];
     MESSAGE request = {}, reply = {};
     ULONG kind;
-    UINT_PTR result = ERROR_FUNCTION_FAILED;
+    UINT_PTR result = failure_result(id);
     DWORD sizes[2] = {};
     ULONG size_count = 0;
     put_u32(&request, id);
@@ -224,7 +273,38 @@ UINT_PTR MimeMsiProxyCall(ULONG id, ULONG count, const UINT_PTR *arguments)
         switch (*p) {
         case 'i': put_u32(&request, (ULONG)args[a++]); break;
         case 'W': put_text(&request, (PCWSTR)args[a++]); break;
-        case 'o': case 'H': case 'T': a++; break;
+        case 'M': {
+            UINT_PTR value = args[a++];
+            put_u32(&request, value < 0x10000 ? 1 : 2);
+            if (value < 0x10000)
+                put_u32(&request, (ULONG)value);
+            else
+                put_text(&request, (PCWSTR)value);
+            break;
+        }
+        case 'f': {
+            const FILETIME *time = (const FILETIME *)args[a++];
+            put_u32(&request, time != nullptr);
+            if (time) {
+                put_u32(&request, time->dwLowDateTime);
+                put_u32(&request, time->dwHighDateTime);
+            }
+            break;
+        }
+        case 'o': case 'H': {
+            const ULONG *value = (const ULONG *)args[a++];
+            put_u32(&request, value != nullptr);
+            put_u32(&request, value ? *value : 0);
+            break;
+        }
+        case 'F': {
+            const FILETIME *time = (const FILETIME *)args[a++];
+            put_u32(&request, time != nullptr);
+            put_u32(&request, time ? time->dwLowDateTime : 0);
+            put_u32(&request, time ? time->dwHighDateTime : 0);
+            break;
+        }
+        case 'T': a++; break;
         case 'B': case 'b': put_u32(&request, args[a++] != 0); break;
         case 'S': {
             DWORD *size = (DWORD *)args[a++];
@@ -249,11 +329,20 @@ UINT_PTR MimeMsiProxyCall(ULONG id, ULONG count, const UINT_PTR *arguments)
         BOOL buffer_bytes = FALSE;
         for (PCSTR p = entry->Signature; *p; p++) {
             switch (*p) {
-            case 'i': case 'W': a++; break;
+            case 'i': case 'W': case 'M': case 'f': a++; break;
             case 'o': case 'H': {
                 ULONG value = get_u32(&reply);
                 if (args[a])
                     *(ULONG *)args[a] = value;
+                a++;
+                break;
+            }
+            case 'F': {
+                ULONG low = get_u32(&reply), high = get_u32(&reply);
+                if (args[a]) {
+                    ((FILETIME *)args[a])->dwLowDateTime = low;
+                    ((FILETIME *)args[a])->dwHighDateTime = high;
+                }
                 a++;
                 break;
             }
@@ -275,10 +364,10 @@ UINT_PTR MimeMsiProxyCall(ULONG id, ULONG count, const UINT_PTR *arguments)
                 const BYTE *data = get_bytes(&reply, bytes);
                 /* no more than the caller's buffer holds: a size of 0 asks only for the length, with a buffer that may be
                    a constant. */
-                ULONG capacity = size ? sizes[s_index] * (buffer_bytes ? 1 : sizeof(WCHAR)) : 0;
+                ULONGLONG capacity = size ? (ULONGLONG)sizes[s_index] * (buffer_bytes ? 1 : sizeof(WCHAR)) : 0;
                 s_index++;
                 if (bytes > capacity)
-                    bytes = capacity;
+                    bytes = (ULONG)capacity;
                 if (buffer && data && bytes)
                     memcpy(buffer, data, bytes);
                 if (size)
@@ -289,7 +378,7 @@ UINT_PTR MimeMsiProxyCall(ULONG id, ULONG count, const UINT_PTR *arguments)
             }
         }
         if (reply.Failed)
-            result = ERROR_FUNCTION_FAILED;
+            result = failure_result(id);
     }
     MimeMsiFree(reply.Data);
     return result;
@@ -464,25 +553,71 @@ static UINT start_host(ULONG host)
     return ERROR_SUCCESS;
 }
 
+/* the handles the library was given, which stay the installer's until the library closes them or its call ends. */
+static MSIHANDLE *g_given;
+static ULONG g_given_count, g_given_capacity;
+
+static void give_handle(MSIHANDLE handle)
+{
+    if (!handle)
+        return;
+    if (g_given_count == g_given_capacity) {
+        ULONG capacity = g_given_capacity ? g_given_capacity * 2 : 32;
+        MSIHANDLE *bigger = MimeMsiAllocate((SIZE_T)capacity * sizeof(*bigger));
+        if (!bigger)
+            return;
+        if (g_given_count)
+            memcpy(bigger, g_given, (SIZE_T)g_given_count * sizeof(*bigger));
+        MimeMsiFree(g_given);
+        g_given = bigger;
+        g_given_capacity = capacity;
+    }
+    g_given[g_given_count++] = handle;
+}
+
+static void take_handle(MSIHANDLE handle)
+{
+    for (ULONG i = 0; i < g_given_count; i++) {
+        if (g_given[i] == handle) {
+            g_given[i] = g_given[--g_given_count];
+            return;
+        }
+    }
+}
+
+static UINT_PTR WINAPI close_given_handles(void)
+{
+    while (g_given_count)
+        MsiCloseHandle(g_given[--g_given_count]);
+    return ERROR_SUCCESS;
+}
+
 /*
  * calls the function with as many arguments as its signature has. a function that takes fewer may not be called with
  * more: on x86 it removes its own arguments from the stack.
  */
 static UINT_PTR call_proxy(const PROXY_ENTRY *entry, const UINT_PTR *a)
 {
+    typedef UINT_PTR(WINAPI * F0)(void);
     typedef UINT_PTR(WINAPI * F1)(UINT_PTR);
     typedef UINT_PTR(WINAPI * F2)(UINT_PTR, UINT_PTR);
     typedef UINT_PTR(WINAPI * F3)(UINT_PTR, UINT_PTR, UINT_PTR);
     typedef UINT_PTR(WINAPI * F4)(UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR);
     typedef UINT_PTR(WINAPI * F5)(UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR);
+    typedef UINT_PTR(WINAPI * F6)(UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR);
+    typedef UINT_PTR(WINAPI * F7)(UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR);
+    typedef UINT_PTR(WINAPI * F8)(UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR, UINT_PTR);
     PVOID f = entry->Function;
     switch (strlen(entry->Signature)) {
+    case 0: return ((F0)f)();
     case 1: return ((F1)f)(a[0]);
     case 2: return ((F2)f)(a[0], a[1]);
     case 3: return ((F3)f)(a[0], a[1], a[2]);
     case 4: return ((F4)f)(a[0], a[1], a[2], a[3]);
     case 5: return ((F5)f)(a[0], a[1], a[2], a[3], a[4]);
-    default: return ((PROXY_FUNCTION)f)(a[0], a[1], a[2], a[3], a[4], a[5]);
+    case 6: return ((F6)f)(a[0], a[1], a[2], a[3], a[4], a[5]);
+    case 7: return ((F7)f)(a[0], a[1], a[2], a[3], a[4], a[5], a[6]);
+    default: return ((F8)f)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
     }
 }
 
@@ -495,20 +630,72 @@ static BOOL serve_call(MESSAGE *request, MESSAGE *reply)
     const PROXY_ENTRY *entry = &g_table[id];
     UINT_PTR args[8] = {};
     ULONG outputs[4] = {}, sizes[2] = {};
+    FILETIME input_times[2] = {}, output_times[2] = {};
     WCHAR product[40] = {};
     PWSTR strings[4] = {};
-    BOOL has_size[2] = {}, present[2] = {}, bytes[2] = {};
+    BOOL has_size[2] = {}, present[2] = {}, bytes[2] = {}, handle_output[4] = {};
     ULONG buffer_argument[2] = {};
     PVOID buffers[2] = {};
-    ULONG a = 0, output_count = 0, string_count = 0, buffer_count = 0, size_count = 0;
+    ULONG a = 0, output_count = 0, string_count = 0, buffer_count = 0, size_count = 0, input_time_count = 0,
+          output_time_count = 0;
     for (PCSTR p = entry->Signature; *p && !request->Failed && a < RTL_NUMBER_OF(args); p++) {
         switch (*p) {
         case 'i': args[a++] = (UINT_PTR)(INT_PTR)(int)get_u32(request); break;
         case 'W':
+            if (string_count >= RTL_NUMBER_OF(strings)) {
+                request->Failed = TRUE;
+                break;
+            }
             strings[string_count] = get_text(request);
             args[a++] = (UINT_PTR)strings[string_count++];
             break;
-        case 'o': case 'H': args[a++] = (UINT_PTR)&outputs[output_count++]; break;
+        case 'M':
+            if (get_u32(request) == 1) {
+                args[a++] = get_u32(request);
+            } else if (string_count < RTL_NUMBER_OF(strings)) {
+                strings[string_count] = get_text(request);
+                args[a++] = (UINT_PTR)strings[string_count++];
+            } else
+                request->Failed = TRUE;
+            break;
+        case 'f':
+            if (input_time_count >= RTL_NUMBER_OF(input_times)) {
+                request->Failed = TRUE;
+                break;
+            }
+            if (get_u32(request)) {
+                input_times[input_time_count].dwLowDateTime = get_u32(request);
+                input_times[input_time_count].dwHighDateTime = get_u32(request);
+                args[a++] = (UINT_PTR)&input_times[input_time_count];
+            } else
+                args[a++] = 0;
+            input_time_count++;
+            break;
+        case 'o': case 'H': {
+            if (output_count >= RTL_NUMBER_OF(outputs)) {
+                request->Failed = TRUE;
+                break;
+            }
+            BOOL given = get_u32(request) != 0;
+            outputs[output_count] = get_u32(request);
+            handle_output[output_count] = *p == 'H';
+            args[a++] = given ? (UINT_PTR)&outputs[output_count] : 0;
+            output_count++;
+            break;
+        }
+        case 'F':
+            if (output_time_count >= RTL_NUMBER_OF(output_times)) {
+                request->Failed = TRUE;
+                break;
+            }
+            {
+                BOOL given = get_u32(request) != 0;
+                output_times[output_time_count].dwLowDateTime = get_u32(request);
+                output_times[output_time_count].dwHighDateTime = get_u32(request);
+                args[a++] = given ? (UINT_PTR)&output_times[output_time_count] : 0;
+                output_time_count++;
+            }
+            break;
         case 'T': args[a++] = (UINT_PTR)product; break;
         case 'B': case 'b':
             present[buffer_count] = get_u32(request) != 0;
@@ -523,34 +710,55 @@ static BOOL serve_call(MESSAGE *request, MESSAGE *reply)
             break;
         }
     }
-    /* buffers are as large as the caller's size, plus room for a terminator. */
+    /* buffers are as large as the caller's size, plus room for a terminator. a string buffer starts with a mark that
+       a function which writes nothing leaves in place. */
+    ULONG capacities[2] = {};
     for (ULONG k = 0; k < buffer_count && !request->Failed; k++) {
         if (!present[k])
             continue;
         SIZE_T capacity = k < size_count && has_size[k] ? sizes[k] : 0;
+        capacities[k] = (ULONG)capacity;
         buffers[k] = MimeMsiAllocate((capacity + 1) * (bytes[k] ? 1 : sizeof(WCHAR)) + sizeof(WCHAR));
         if (!buffers[k])
             request->Failed = TRUE;
+        else if (!bytes[k])
+            *(WCHAR *)buffers[k] = 0xFFFF;
         args[buffer_argument[k]] = (UINT_PTR)buffers[k];
     }
     UINT_PTR result = ERROR_FUNCTION_FAILED;
     if (!request->Failed)
         result = call_proxy(entry, args);
+    if (!request->Failed) {
+        if (entry->Handle && (ULONG)result)
+            give_handle((MSIHANDLE)result);
+        for (ULONG i = 0; i < output_count; i++)
+            if (handle_output[i] && (ULONG)result == ERROR_SUCCESS && outputs[i])
+                give_handle(outputs[i]);
+        if (id == PROXY_CloseHandle && (ULONG)result == ERROR_SUCCESS)
+            take_handle((MSIHANDLE)args[0]);
+    }
     put_u32(reply, (ULONG)result);
-    ULONG o = 0, b = 0, s = 0;
+    ULONG o = 0, t = 0, b = 0, s = 0;
     for (PCSTR p = entry->Signature; *p; p++) {
         switch (*p) {
         case 'o': case 'H': put_u32(reply, outputs[o++]); break;
+        case 'F':
+            put_u32(reply, output_times[t].dwLowDateTime);
+            put_u32(reply, output_times[t++].dwHighDateTime);
+            break;
         case 'T': put_bytes(reply, product, 39 * sizeof(WCHAR)); break;
         case 'B': case 'b': b++; break;
         case 'S': {
             ULONG value = has_size[s] ? sizes[s] : 0;
             put_u32(reply, value);
-            /* the preceding buffer's content goes along: a string up to its terminator, bytes up to the size. */
+            /* the preceding buffer's content goes along: a string up to its terminator, unless the function left it
+               alone, and bytes up to the size. */
             ULONG data_bytes = 0;
             const void *data = b ? buffers[b - 1] : nullptr;
-            if (data)
-                data_bytes = bytes[b - 1] ? value : (ULONG)((wcslen(data) + 1) * sizeof(WCHAR));
+            if (data && bytes[b - 1])
+                data_bytes = (ULONG)result == ERROR_SUCCESS ? (value < capacities[b - 1] ? value : capacities[b - 1]) : 0;
+            else if (data && *(const WCHAR *)data != 0xFFFF)
+                data_bytes = (ULONG)((wcslen(data) + 1) * sizeof(WCHAR));
             put_u32(reply, data_bytes);
             put_bytes(reply, data, data_bytes);
             s++;
@@ -615,6 +823,7 @@ UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, 
             error = ERROR_INVALID_DATA;
         }
     }
+    close_given_handles();
     if (error == ERROR_BROKEN_PIPE)
         shut_down_host(host);
     ReleaseSRWLockExclusive(&g_host_lock);

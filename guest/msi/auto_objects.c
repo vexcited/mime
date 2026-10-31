@@ -10,8 +10,6 @@
 #define CALL DISPATCH_METHOD
 #define COUNT_OF(table) ((ULONG)(sizeof(table) / sizeof((table)[0])))
 
-MSIAPI UINT WINAPI MsiGetLanguage(MSIHANDLE install);
-
 /* a window of the numbers the installer uses for the state of a script that reports one. */
 static HRESULT bad_index(void)
 {

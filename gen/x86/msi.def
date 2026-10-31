@@ -20,7 +20,9 @@ EXPORTS
     MsiDatabaseCommit=_MsiDatabaseCommit@4 @20
     MsiDatabaseGenerateTransformA=_MsiDatabaseGenerateTransformA@20 @23
     MsiDatabaseGenerateTransformW=_MsiDatabaseGenerateTransformW@20 @24
+    MsiDatabaseGetPrimaryKeysA=_MsiDatabaseGetPrimaryKeysA@12 @25
     MsiDatabaseGetPrimaryKeysW=_MsiDatabaseGetPrimaryKeysW@12 @26
+    MsiDatabaseIsTablePersistentA=_MsiDatabaseIsTablePersistentA@8 @164
     MsiDatabaseIsTablePersistentW=_MsiDatabaseIsTablePersistentW@8 @165
     MsiDatabaseOpenViewA=_MsiDatabaseOpenViewA@12 @31
     MsiDatabaseOpenViewW=_MsiDatabaseOpenViewW@12 @32
@@ -32,6 +34,8 @@ EXPORTS
     MsiEnableLogW=_MsiEnableLogW@12 @169
     MsiEnumClientsExW=_MsiEnumClientsExW@32 @292
     MsiEnumClientsW=_MsiEnumClientsW@12 @37
+    MsiEnumComponentCostsA=_MsiEnumComponentCostsA@32 @220
+    MsiEnumComponentCostsW=_MsiEnumComponentCostsW@32 @221
     MsiEnumComponentQualifiersA=_MsiEnumComponentQualifiersA@24 @38
     MsiEnumComponentQualifiersW=_MsiEnumComponentQualifiersW@24 @39
     MsiEnumComponentsExW=_MsiEnumComponentsExW@28 @290
@@ -56,9 +60,13 @@ EXPORTS
     MsiGetComponentStateA=_MsiGetComponentStateA@16 @50
     MsiGetComponentStateW=_MsiGetComponentStateW@16 @51
     MsiGetDatabaseState=_MsiGetDatabaseState@4 @52
+    MsiGetFeatureCostA=_MsiGetFeatureCostA@20 @53
     MsiGetFeatureCostW=_MsiGetFeatureCostW@20 @54
     MsiGetFeatureInfoW=_MsiGetFeatureInfoW@28 @56
+    MsiGetFeatureStateA=_MsiGetFeatureStateA@16 @57
     MsiGetFeatureStateW=_MsiGetFeatureStateW@16 @58
+    MsiGetFeatureValidStatesA=_MsiGetFeatureValidStatesA@12 @61
+    MsiGetFeatureValidStatesW=_MsiGetFeatureValidStatesW@12 @62
     MsiGetFileHashW=_MsiGetFileHashW@12 @219
     MsiGetFileVersionW=_MsiGetFileVersionW@20 @195
     MsiGetLanguage=_MsiGetLanguage@4 @63
@@ -129,9 +137,14 @@ EXPORTS
     MsiRemovePatchesW=_MsiRemovePatchesW@16 @238
     MsiSequenceA=_MsiSequenceA@12 @132
     MsiSequenceW=_MsiSequenceW@12 @133
+    MsiSetComponentStateA=_MsiSetComponentStateA@12 @134
+    MsiSetComponentStateW=_MsiSetComponentStateW@12 @135
     MsiSetExternalUIA=_MsiSetExternalUIA@12 @136
     MsiSetExternalUIRecord=_MsiSetExternalUIRecord@16 @281
     MsiSetExternalUIW=_MsiSetExternalUIW@12 @137
+    MsiSetFeatureAttributesA=_MsiSetFeatureAttributesA@12 @206
+    MsiSetFeatureAttributesW=_MsiSetFeatureAttributesW@12 @207
+    MsiSetFeatureStateA=_MsiSetFeatureStateA@12 @138
     MsiSetFeatureStateW=_MsiSetFeatureStateW@12 @139
     MsiSetInstallLevel=_MsiSetInstallLevel@8 @140
     MsiSetInternalUI=_MsiSetInternalUI@8 @141
@@ -157,6 +170,7 @@ EXPORTS
     MsiViewExecute=_MsiViewExecute@8 @159
     MsiViewFetch=_MsiViewFetch@8 @160
     MsiViewGetColumnInfo=_MsiViewGetColumnInfo@12 @166
+    MsiViewGetErrorA=_MsiViewGetErrorA@12 @161
     MsiViewGetErrorW=_MsiViewGetErrorW@12 @162
     MsiViewModify=_MsiViewModify@12 @163
     QueryInstanceCount=_QueryInstanceCount@0 @295

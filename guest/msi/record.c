@@ -14,7 +14,7 @@ MIME_MSI_BLOB *MimeMsiBlobCreate(const void *data, SIZE_T size)
         return nullptr;
     blob->References = 1;
     blob->Size = size;
-    if (size)
+    if (size && data)
         memcpy(blob->Data, data, size);
     return blob;
 }
@@ -71,6 +71,7 @@ MSIHANDLE WINAPI MsiCreateRecord(UINT count)
 
 UINT WINAPI MsiRecordGetFieldCount(MSIHANDLE handle)
 {
+    MIME_REMOTE(PROXY_RecordGetFieldCount, UINT, MIME_ARG(handle));
     AcquireSRWLockShared(&MimeMsiLock);
     MIME_MSI_RECORD *record = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_RECORD);
     UINT count = record ? record->Count : 0;
@@ -178,6 +179,7 @@ BOOL WINAPI MsiRecordIsNull(MSIHANDLE handle, UINT index)
 
 UINT WINAPI MsiRecordClearData(MSIHANDLE handle)
 {
+    MIME_REMOTE(PROXY_RecordClearData, UINT, MIME_ARG(handle));
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_RECORD *record = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_RECORD);
     if (record)
@@ -189,6 +191,7 @@ UINT WINAPI MsiRecordClearData(MSIHANDLE handle)
 
 UINT WINAPI MsiRecordDataSize(MSIHANDLE handle, UINT index)
 {
+    MIME_REMOTE(PROXY_RecordDataSize, UINT, MIME_ARG(handle), MIME_ARG(index));
     UINT size = 0;
     AcquireSRWLockShared(&MimeMsiLock);
     MIME_MSI_RECORD *record = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_RECORD);
