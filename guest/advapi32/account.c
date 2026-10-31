@@ -56,6 +56,8 @@ static const ACCOUNT g_well_known[] = {
     {L"NTLM Authentication", NT_AUTHORITY, 5, 2, {64, 10}, SidTypeWellKnownGroup},
     {L"SChannel Authentication", NT_AUTHORITY, 5, 2, {64, 14}, SidTypeWellKnownGroup},
     {L"Digest Authentication", NT_AUTHORITY, 5, 2, {64, 21}, SidTypeWellKnownGroup},
+    {L"NT SERVICE", L"NT SERVICE", 5, 1, {80}, SidTypeDomain},
+    {L"ALL SERVICES", L"NT SERVICE", 5, 2, {80, 0}, SidTypeWellKnownGroup},
     {BUILTIN, BUILTIN, 5, 1, {32}, SidTypeDomain},
     {L"Administrators", BUILTIN, 5, 2, {32, 544}, SidTypeAlias},
     {L"Users", BUILTIN, 5, 2, {32, 545}, SidTypeAlias},
