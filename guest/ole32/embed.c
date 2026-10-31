@@ -505,7 +505,7 @@ static HGLOBAL icon_picture(HICON icon, LPCWSTR label, LPCWSTR source, UINT inde
         label_lost = used;
     }
     HDC meta = CreateMetaFileA(nullptr);
-    HGLOBAL global = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT | GMEM_SHARE, 0x18);
+    HGLOBAL global = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT | GMEM_SHARE, sizeof(METAFILEPICT));
     if (!meta || !global) {
         if (meta)
             DeleteMetaFile(CloseMetaFile(meta));
@@ -560,11 +560,11 @@ static HGLOBAL icon_picture(HICON icon, LPCWSTR label, LPCWSTR source, UINT inde
         GlobalFree(global);
         global = nullptr;
     } else {
-        DWORD *header = GlobalLock(global);
-        header[0] = MM_ANISOTROPIC;
-        header[1] = MulDiv(width, 2540, GetDeviceCaps(screen, LOGPIXELSX));
-        header[2] = MulDiv(height, 2540, GetDeviceCaps(screen, LOGPIXELSY));
-        *(HMETAFILE *)(header + 4) = closed;
+        METAFILEPICT *picture = GlobalLock(global);
+        picture->mm = MM_ANISOTROPIC;
+        picture->xExt = MulDiv(width, 2540, GetDeviceCaps(screen, LOGPIXELSX));
+        picture->yExt = MulDiv(height, 2540, GetDeviceCaps(screen, LOGPIXELSY));
+        picture->hMF = closed;
         GlobalUnlock(global);
     }
     if (handle)

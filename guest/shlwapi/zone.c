@@ -38,6 +38,12 @@ HRESULT WINAPI ZoneCheckUrlExCacheW(LPCWSTR url, BYTE *policy, DWORD policy_size
     } else {
         hr = SHCoCreateInstanceAC(&CLSID_ZoneSecurityManager, nullptr, CLSCTX_INPROC_SERVER, &IID_ZoneSecurityManager,
                                   &manager);
+        if (hr == REGDB_E_CLASSNOTREG) {
+            /* the manager of this machine is not registered as a class, and is asked of the library that has it. */
+            HRESULT(WINAPI * create)(IUnknown *, void **, DWORD) =
+                (HRESULT(WINAPI *)(IUnknown *, void **, DWORD))ShlProc(L"urlmon.dll", "CoInternetCreateSecurityManager");
+            hr = create ? create(nullptr, &manager, 0) : hr;
+        }
         if (FAILED(hr))
             return hr;
         if (cache)

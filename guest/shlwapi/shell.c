@@ -209,10 +209,12 @@ HKEY WINAPI SHGetShellKeyEx(DWORD key_id, LPCWSTR subkey, BOOL create, REGSAM ac
     LSTATUS status;
     if (!parent || owned) {
         HKEY opened = nullptr;
+        /* the key is kept for the next caller, which may ask for other rights than this one. */
+        REGSAM held = access | KEY_READ;
         if (create && shell_keys[index].path)
-            status = RegCreateKeyExW(root, shell_keys[index].path, 0, nullptr, 0, access, nullptr, &opened, nullptr);
+            status = RegCreateKeyExW(root, shell_keys[index].path, 0, nullptr, 0, held, nullptr, &opened, nullptr);
         else
-            status = RegOpenKeyExW(root, shell_keys[index].path, 0, access, &opened);
+            status = RegOpenKeyExW(root, shell_keys[index].path, 0, held, &opened);
         if (!opened) {
             set_status(status);
             if (owned)
