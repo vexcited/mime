@@ -11,12 +11,16 @@ set(MIME_TOOL_LIBS_net advapi32)
 set(MIME_TOOL_LIBS_netsh advapi32)
 set(MIME_TOOL_LIBS_lodctr advapi32)
 set(MIME_TOOL_LIBS_unlodctr advapi32)
+set(MIME_TOOL_LIBS_mofcomp ole32 oleaut32)
+
+# the tools that live in the wbem folder of System32 and SysWOW64.
+set(MIME_TOOLS_WBEM mofcomp)
 
 # the objects a tool links besides toolutil.
 set(MIME_TOOL_OBJECTS_taskkill procutil)
 set(MIME_TOOL_OBJECTS_tasklist procutil)
 
-set(MIME_TOOLS sc taskkill tasklist timeout choice find findstr where whoami hostname setx attrib xcopy net fsutil netsh lodctr unlodctr)
+set(MIME_TOOLS sc taskkill tasklist timeout choice find findstr where whoami hostname setx attrib xcopy net fsutil netsh lodctr unlodctr mofcomp)
 
 set(tool_index 0)
 foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
@@ -53,7 +57,15 @@ foreach(tool IN LISTS MIME_TOOLS)
             set(tool_flags /subsystem:console,10.0 /entry:entry /base:${tool_base} /highentropyva /dynamicbase
                 /stack:0x100000,0x4000)
         endif()
+        set(tool_rom ${MIME_ROM_${arch}}/${tool}.exe)
+        if(tool IN_LIST MIME_TOOLS_WBEM)
+            if(arch STREQUAL "x86")
+                set(tool_rom ${MIME_ROM}/syswow64wbem/${tool}.exe)
+            else()
+                set(tool_rom ${MIME_ROM}/winwbem/${tool}.exe)
+            endif()
+        endif()
         mime_link(${MIME_OUT_${arch}}/${tool}.exe ${arch} OBJECTS ${tool_objects} LIBS ${tool_libs}
-            FLAGS ${tool_flags} ROM ${MIME_ROM_${arch}}/${tool}.exe GROUPS guest)
+            FLAGS ${tool_flags} ROM ${tool_rom} GROUPS guest)
     endforeach()
 endforeach()
