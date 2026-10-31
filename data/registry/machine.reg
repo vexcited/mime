@@ -68,6 +68,9 @@
 "CommonFilesDir"="C:\\Program Files (x86)\\Common Files"
 "ProgramFilesDir"="C:\\Program Files (x86)"
 
+; the reference counts of the files that installers share, which they read and write, empty at first.
+[HKLM\SOFTWARE\{Microsoft,WOW6432Node\Microsoft}\Windows\CurrentVersion\SharedDLLs]
+
 ; the shared shell folders, read by shell32 and by installers for the start menu, in both views as on windows.
 [HKLM\SOFTWARE\{Microsoft,WOW6432Node\Microsoft}\Windows\CurrentVersion\Explorer\User Shell Folders]
 "Common AppData"=expand:"%ProgramData%"
