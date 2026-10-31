@@ -536,3 +536,122 @@ void WINAPI SubscribeFeatureStateChangeNotification(void **subscription, void *c
     if (subscription)
         *subscription = nullptr;
 }
+
+/* ------------------------------------------------------------------ feature usage */
+
+/* nothing reads the usage and errors a program reports, and no subscription is ever made. */
+void WINAPI RecordFeatureError(UINT feature, const void *error)
+{
+}
+
+void WINAPI RecordFeatureUsage(UINT feature, UINT kind, UINT addend, const char *origin)
+{
+}
+
+void WINAPI UnsubscribeFeatureStateChangeNotification(void *subscription)
+{
+}
+
+/* ------------------------------------------------------------------ task pool */
+
+static LONG volatile g_task_context = (LONG)0x80000000;
+static LONG volatile g_task_reuse_thread = -1;
+
+typedef struct {
+    void *task;
+    DWORD apartment;
+    DWORD delay;
+} POOL_TASK;
+
+/* the task interface is IComPoolTask, whose Run is the fourth method. */
+typedef struct {
+    HRESULT(WINAPI *QueryInterface)(void *, const GUID *, void **);
+    ULONG(WINAPI *AddRef)(void *);
+    ULONG(WINAPI *Release)(void *);
+    void(WINAPI *Run)(void *);
+} POOL_TASK_VTBL;
+
+static void run_pool_task(void *task)
+{
+    (*(POOL_TASK_VTBL **)task)->Run(task);
+}
+
+static DWORD WINAPI pool_thread(void *param)
+{
+    POOL_TASK job = *(POOL_TASK *)param;
+    HeapFree(GetProcessHeap(), 0, param);
+    BOOL initialized = SUCCEEDED(CoInitializeEx(nullptr, job.apartment == 1 ? COINIT_APARTMENTTHREADED : COINIT_MULTITHREADED));
+    if (job.delay)
+        Sleep(job.delay);
+    run_pool_task(job.task);
+    (*(POOL_TASK_VTBL **)job.task)->Release(job.task);
+    if (initialized)
+        CoUninitialize();
+    return 0;
+}
+
+HRESULT WINAPI SHTaskPoolAllowThreadReuse(void)
+{
+    InterlockedExchange(&g_task_reuse_thread, (LONG)GetCurrentThreadId());
+    return (HRESULT)GetCurrentThreadId();
+}
+
+/* a thread that ran its task ends, so there is no wait for more and nothing to reuse. */
+void WINAPI SHTaskPoolDoNotWaitForMoreTasks(void)
+{
+}
+
+void WINAPI SHTaskPoolSetThreadReuseAllowed(BOOL allowed)
+{
+}
+
+UINT WINAPI SHTaskPoolGetUniqueContext(void)
+{
+    return (UINT)InterlockedIncrement(&g_task_context);
+}
+
+/* only a thread of the pool has a lifetime object, and the pool is not kept between tasks. */
+HRESULT WINAPI SHTaskPoolGetCurrentThreadLifetime(void **lifetime)
+{
+    *lifetime = nullptr;
+    return (HRESULT)0x80004002;
+}
+
+/*
+ * apartment 4 runs the task where it is called. Any other starts a thread that enters the apartment, a single threaded one
+ * for 1 and 5 and the multithreaded one otherwise, waits out the delay and runs it. There is no shared pool of threads.
+ */
+HRESULT WINAPI SHTaskPoolQueueTask(UINT apartment, UINT options, UINT priority, UINT delay, void *task, UINT *apartment_type)
+{
+    if (apartment_type)
+        *apartment_type = 0;
+    if (!task)
+        return (HRESULT)0x8007000E;
+    if (apartment == 6) {
+        /* a task for the multithreaded apartment runs here when this thread is in it. */
+        APTTYPE type = APTTYPE_CURRENT;
+        APTTYPEQUALIFIER qualifier;
+        if (SUCCEEDED(CoGetApartmentType(&type, &qualifier)) && type != APTTYPE_STA && type != APTTYPE_MAINSTA)
+            apartment = 4;
+    }
+    if (apartment == 4) {
+        run_pool_task(task);
+        return S_OK;
+    }
+    POOL_TASK *job = HeapAlloc(GetProcessHeap(), 0, sizeof(*job));
+    if (!job)
+        return (HRESULT)0x8007000E;
+    job->task = task;
+    job->apartment = apartment == 5 ? 1 : apartment == 6 ? 0 : apartment;
+    job->delay = delay;
+    (*(POOL_TASK_VTBL **)task)->AddRef(task);
+    HANDLE thread = CreateThread(nullptr, 0, pool_thread, job, 0, nullptr);
+    if (!thread) {
+        HRESULT hr = HRESULT_FROM_WIN32(GetLastError());
+        (*(POOL_TASK_VTBL **)task)->Release(task);
+        HeapFree(GetProcessHeap(), 0, job);
+        return hr;
+    }
+    CloseHandle(thread);
+    return S_OK;
+}
