@@ -1158,6 +1158,8 @@ WINCRYPT32API PCCERT_CONTEXT WINAPI CertCreateSelfSignCertificate(ULONG_PTR hCry
                                                                   void *pKeyProvInfo, void *pSignatureAlgorithm,
                                                                   const SYSTEMTIME *pStartTime, const SYSTEMTIME *pEndTime,
                                                                   void *pExtensions);
+WINCRYPT32API BOOL WINAPI CryptExportPublicKeyInfoFromBCryptKeyHandle(PVOID key, DWORD encoding, LPSTR oid, DWORD flags,
+                                                                       void *aux, PCERT_PUBLIC_KEY_INFO info, DWORD *size);
 WINCRYPT32API BOOL WINAPI CryptImportPublicKeyInfo(HCRYPTPROV hCryptProv, DWORD dwCertEncodingType,
                                                   PCERT_PUBLIC_KEY_INFO pInfo, HCRYPTKEY *phKey);
 WINCRYPT32API BOOL WINAPI CryptImportPublicKeyInfoEx(HCRYPTPROV hCryptProv, DWORD dwCertEncodingType,
