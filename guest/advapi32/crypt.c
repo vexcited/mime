@@ -2,13 +2,15 @@
  * CryptoAPI cryptographic service provider functions.
  *
  * windows routes these through cryptsp.dll to provider dlls such as rsaenh.dll. mime implements the microsoft
- * providers itself: contexts, random numbers and imported key blobs. key containers are not stored, so opening one
- * always finds it empty.
+ * providers itself: contexts, random numbers, imported key blobs and key containers. a container is a file under the
+ * Microsoft\Crypto\RSA folder of the user or of the machine, holding the key pairs of key exchange and signature.
  */
 #include "advapi32_private.h"
 #include <crypto/crypto.h>
 
 typedef ULONG_PTR HCRYPTKEY;
+
+ADVAPI BOOL WINAPI CryptDestroyKey(HCRYPTKEY handle);
 
 ADVAPI BOOL WINAPI GetUserNameA(LPSTR buffer, LPDWORD size);
 
@@ -18,6 +20,8 @@ ADVAPI BOOL WINAPI GetUserNameA(LPSTR buffer, LPDWORD size);
 #define NTE_BAD_VER ((DWORD)0x80090007L)
 #define NTE_BAD_FLAGS ((DWORD)0x80090009L)
 #define NTE_BAD_TYPE ((DWORD)0x8009000AL)
+#define NTE_EXISTS ((DWORD)0x8009000FL)
+#define NTE_BAD_KEYSET ((DWORD)0x80090016L)
 #define NTE_PROV_TYPE_NOT_DEF ((DWORD)0x80090017L)
 #define NTE_KEYSET_NOT_DEF ((DWORD)0x80090019L)
 #define NTE_PROV_TYPE_NO_MATCH ((DWORD)0x8009001BL)
@@ -43,6 +47,10 @@ ADVAPI BOOL WINAPI GetUserNameA(LPSTR buffer, LPDWORD size);
 #define PLAINTEXTKEYBLOB 0x8
 
 #define PROV_MAGIC 0x564F5250 /* "PROV" */
+#define AT_KEYEXCHANGE 1
+#define AT_SIGNATURE 2
+#define CALG_RSA_SIGN 0x2400
+#define CALG_RSA_KEYX 0xa400
 #define KEY_MAGIC 0x5945484B  /* "KHEY" */
 
 typedef struct BLOBHEADER {
@@ -61,6 +69,10 @@ typedef struct PROVIDER {
     ULONG Algorithm; /* the next PP_ENUMALGS entry. */
     PWSTR Prompt;
     CHAR Container[MAX_PATH];
+    /* a context for verification only has no container to keep keys in. */
+    BOOL Persistent;
+    ULONG EnumIndex;
+    WCHAR ContainerName[MAX_PATH];
 } PROVIDER;
 
 typedef struct KEY {
@@ -125,6 +137,173 @@ static BOOL type_known(DWORD type)
     return FALSE;
 }
 
+/* ---------------------------------------------------------------- key containers */
+
+#define CONTAINER_MAGIC 0x4B53494D /* "MISK" */
+#define SLOT_KEYX 0
+#define SLOT_SIGN 1
+
+typedef struct CONTAINER {
+    DWORD Magic;
+    WCHAR Name[MAX_PATH];
+    DWORD Exportable[2];
+    DWORD Size[2];
+    BYTE *Blob[2]; /* memory only, the blobs follow the header in the file. */
+} CONTAINER;
+
+#define CONTAINER_HEADER offsetof(CONTAINER, Blob)
+
+static SRWLOCK g_container_lock = SRWLOCK_INIT;
+
+static BOOL container_dir(const PROVIDER *p, WCHAR *dir)
+{
+    WCHAR base[MAX_PATH];
+    BOOL machine = (p->Flags & CRYPT_MACHINE_KEYSET) != 0;
+    DWORD n = GetEnvironmentVariableW(machine ? L"ProgramData" : L"APPDATA", base, MAX_PATH);
+    if (!n || n >= MAX_PATH - 64)
+        return FALSE;
+    _snwprintf(dir, MAX_PATH, L"%ls\\Microsoft\\Crypto\\RSA\\%ls", base, machine ? L"MachineKeys" : L"Keys");
+    return TRUE;
+}
+
+/* the file is named by a hash of the case folded name. */
+static BOOL container_file(const PROVIDER *p, WCHAR *path)
+{
+    WCHAR dir[MAX_PATH];
+    if (!container_dir(p, dir) || wcslen(dir) + 40 >= MAX_PATH)
+        return FALSE;
+    ULONG64 a = 0xcbf29ce484222325ull, b = 0x84222325cbf29ce4ull;
+    for (PCWSTR c = p->ContainerName; *c; c++) {
+        WCHAR w = towupper(*c);
+        a = (a ^ (w & 0xff)) * 0x100000001b3ull;
+        a = (a ^ (w >> 8)) * 0x100000001b3ull;
+        b = (b ^ (w >> 8)) * 0x100000001b3ull;
+        b = (b ^ (w & 0xff)) * 0x100000001b3ull;
+    }
+    _snwprintf(path, MAX_PATH, L"%ls\\%016llx%016llx", dir, a, b);
+    return TRUE;
+}
+
+static void container_free(CONTAINER *c)
+{
+    for (int i = 0; i < 2; i++) {
+        if (c->Blob[i]) {
+            SecureZeroMemory(c->Blob[i], c->Size[i]);
+            AdvFree(c->Blob[i]);
+        }
+        c->Blob[i] = nullptr;
+    }
+}
+
+/* reads the container of the context, with the error set when it is not there. */
+static BOOL container_read(const PROVIDER *p, CONTAINER *c)
+{
+    memset(c, 0, sizeof(*c));
+    WCHAR path[MAX_PATH];
+    if (!container_file(p, path)) {
+        AdvSetError(NTE_BAD_KEYSET);
+        return FALSE;
+    }
+    AcquireSRWLockShared(&g_container_lock);
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    BOOL ok = file != INVALID_HANDLE_VALUE;
+    DWORD read;
+    if (ok && (!ReadFile(file, c, CONTAINER_HEADER, &read, nullptr) || read != CONTAINER_HEADER ||
+               c->Magic != CONTAINER_MAGIC))
+        ok = FALSE;
+    for (int i = 0; ok && i < 2; i++) {
+        if (!c->Size[i])
+            continue;
+        if (c->Size[i] > 0x100000 || !(c->Blob[i] = AdvAlloc(c->Size[i])) ||
+            !ReadFile(file, c->Blob[i], c->Size[i], &read, nullptr) || read != c->Size[i])
+            ok = FALSE;
+    }
+    if (file != INVALID_HANDLE_VALUE)
+        CloseHandle(file);
+    ReleaseSRWLockShared(&g_container_lock);
+    if (!ok) {
+        container_free(c);
+        AdvSetError(NTE_BAD_KEYSET);
+    }
+    return ok;
+}
+
+static BOOL container_write(const PROVIDER *p, CONTAINER *c, BOOL exclusive)
+{
+    WCHAR path[MAX_PATH], dir[MAX_PATH];
+    if (!container_file(p, path) || !container_dir(p, dir)) {
+        AdvSetError(NTE_BAD_KEYSET);
+        return FALSE;
+    }
+    c->Magic = CONTAINER_MAGIC;
+    lstrcpynW(c->Name, p->ContainerName, MAX_PATH);
+    AcquireSRWLockExclusive(&g_container_lock);
+    for (WCHAR *at = dir + 3; *at; at++) {
+        if (*at == L'\\') {
+            *at = 0;
+            CreateDirectoryW(dir, nullptr);
+            *at = L'\\';
+        }
+    }
+    CreateDirectoryW(dir, nullptr);
+    HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, nullptr, exclusive ? CREATE_NEW : CREATE_ALWAYS,
+                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    BOOL ok = file != INVALID_HANDLE_VALUE;
+    DWORD error = ok ? 0 : GetLastError(), written;
+    if (ok)
+        ok = WriteFile(file, c, CONTAINER_HEADER, &written, nullptr);
+    for (int i = 0; ok && i < 2; i++)
+        if (c->Size[i])
+            ok = WriteFile(file, c->Blob[i], c->Size[i], &written, nullptr);
+    if (file != INVALID_HANDLE_VALUE)
+        CloseHandle(file);
+    ReleaseSRWLockExclusive(&g_container_lock);
+    if (!ok)
+        AdvSetError(error == ERROR_FILE_EXISTS || error == ERROR_ALREADY_EXISTS ? NTE_EXISTS : NTE_BAD_KEYSET);
+    return ok;
+}
+
+/* replaces the key pair of a slot in the container of the context. */
+static BOOL container_store_key(const PROVIDER *p, int slot, const BYTE *blob, DWORD size, BOOL exportable)
+{
+    CONTAINER c;
+    if (!container_read(p, &c))
+        return FALSE;
+    BYTE *copy = AdvAlloc(size);
+    if (!copy) {
+        container_free(&c);
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    memcpy(copy, blob, size);
+    if (c.Blob[slot]) {
+        SecureZeroMemory(c.Blob[slot], c.Size[slot]);
+        AdvFree(c.Blob[slot]);
+    }
+    c.Blob[slot] = copy;
+    c.Size[slot] = size;
+    c.Exportable[slot] = exportable;
+    BOOL ok = container_write(p, &c, FALSE);
+    container_free(&c);
+    return ok;
+}
+
+static BOOL container_delete(const PROVIDER *p)
+{
+    WCHAR path[MAX_PATH];
+    if (!container_file(p, path)) {
+        AdvSetError(NTE_BAD_KEYSET);
+        return FALSE;
+    }
+    AcquireSRWLockExclusive(&g_container_lock);
+    BOOL ok = DeleteFileW(path);
+    ReleaseSRWLockExclusive(&g_container_lock);
+    if (!ok)
+        AdvSetError(NTE_BAD_KEYSET);
+    return ok;
+}
+
 ADVAPI BOOL WINAPI CryptAcquireContextW(HCRYPTPROV *result, LPCWSTR container, LPCWSTR name, DWORD type,
                                         DWORD flags)
 {
@@ -161,8 +340,6 @@ ADVAPI BOOL WINAPI CryptAcquireContextW(HCRYPTPROV *result, LPCWSTR container, L
         AdvSetError(NTE_BAD_FLAGS);
         return FALSE;
     }
-    if (flags & CRYPT_DELETEKEYSET)
-        return TRUE;
     PROVIDER *p = AdvAlloc(sizeof(*p));
     if (!p) {
         AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
@@ -177,10 +354,46 @@ ADVAPI BOOL WINAPI CryptAcquireContextW(HCRYPTPROV *result, LPCWSTR container, L
     /* without a name the container is the user's, as on windows. */
     if (container && *container) {
         WideCharToMultiByte(CP_ACP, 0, container, -1, p->Container, sizeof(p->Container), nullptr, nullptr);
+        lstrcpynW(p->ContainerName, container, MAX_PATH);
     } else if ((flags & CRYPT_VERIFYCONTEXT) != CRYPT_VERIFYCONTEXT) {
         DWORD size = sizeof(p->Container);
         if (!GetUserNameA(p->Container, &size))
             p->Container[0] = 0;
+        MultiByteToWideChar(CP_ACP, 0, p->Container, -1, p->ContainerName, MAX_PATH);
+    }
+    p->Persistent = (flags & CRYPT_VERIFYCONTEXT) != CRYPT_VERIFYCONTEXT;
+    if (p->Persistent) {
+        CONTAINER existing;
+        BOOL found = container_read(p, &existing);
+        if (found)
+            container_free(&existing);
+        if (flags & CRYPT_DELETEKEYSET) {
+            BOOL ok = found && container_delete(p);
+            AdvFree(p);
+            if (!found)
+                AdvSetError(NTE_BAD_KEYSET);
+            return ok;
+        }
+        if (flags & CRYPT_NEWKEYSET) {
+            CONTAINER empty;
+            memset(&empty, 0, sizeof(empty));
+            if (found) {
+                AdvFree(p);
+                AdvSetError(NTE_EXISTS);
+                return FALSE;
+            }
+            if (!container_write(p, &empty, TRUE)) {
+                AdvFree(p);
+                return FALSE;
+            }
+        } else if (!found) {
+            AdvFree(p);
+            AdvSetError(NTE_BAD_KEYSET);
+            return FALSE;
+        }
+    } else if (flags & CRYPT_DELETEKEYSET) {
+        AdvFree(p);
+        return TRUE;
     }
     *result = (HCRYPTPROV)p;
     return TRUE;
@@ -237,8 +450,7 @@ ADVAPI BOOL WINAPI CryptGenRandom(HCRYPTPROV handle, DWORD length, BYTE *buffer)
 }
 
 /* keeps the blob of a public, private or plaintext key; there is no cipher to use it with yet. */
-ADVAPI BOOL WINAPI CryptImportKey(HCRYPTPROV handle, const BYTE *data, DWORD size, HCRYPTKEY public_key, DWORD flags,
-                                  HCRYPTKEY *result)
+static BOOL key_import(HCRYPTPROV handle, const BYTE *data, DWORD size, DWORD flags, HCRYPTKEY *result)
 {
     PROVIDER *p = provider(handle);
     if (!p)
@@ -274,6 +486,23 @@ ADVAPI BOOL WINAPI CryptImportKey(HCRYPTPROV handle, const BYTE *data, DWORD siz
     memcpy(k->Blob, data, size);
     InterlockedIncrement(&p->References);
     *result = (HCRYPTKEY)k;
+    return TRUE;
+}
+
+/* a private key of key exchange or signature goes into the container of the context. */
+ADVAPI BOOL WINAPI CryptImportKey(HCRYPTPROV handle, const BYTE *data, DWORD size, HCRYPTKEY public_key, DWORD flags,
+                                  HCRYPTKEY *result)
+{
+    if (!key_import(handle, data, size, flags, result))
+        return FALSE;
+    PROVIDER *p = (PROVIDER *)handle;
+    const BLOBHEADER *h = (const BLOBHEADER *)data;
+    if (p->Persistent && h->bType == PRIVATEKEYBLOB && (h->aiKeyAlg == CALG_RSA_KEYX || h->aiKeyAlg == CALG_RSA_SIGN) &&
+        !container_store_key(p, h->aiKeyAlg == CALG_RSA_KEYX ? SLOT_KEYX : SLOT_SIGN, data, size, flags & 1)) {
+        CryptDestroyKey(*result);
+        *result = 0;
+        return FALSE;
+    }
     return TRUE;
 }
 
@@ -585,10 +814,6 @@ ADVAPI BOOL WINAPI CryptDestroyHash(HCRYPTHASH handle)
 #define PP_KEYSPEC 39
 #define CRYPT_FIRST 1
 #define CRYPT_IMPL_SOFTWARE 2
-#define AT_KEYEXCHANGE 1
-#define AT_SIGNATURE 2
-#define CALG_RSA_SIGN 0x2400
-#define CALG_RSA_KEYX 0xa400
 #define RSA1_MAGIC 0x31415352 /* "RSA1" */
 
 typedef struct PROV_ENUMALGS {
@@ -658,10 +883,50 @@ ADVAPI BOOL WINAPI CryptGetProvParam(HCRYPTPROV handle, DWORD param, BYTE *data,
     case PP_KEYSET_TYPE:
         value = p->Flags & CRYPT_MACHINE_KEYSET;
         return return_param(&value, sizeof(value), data, length);
-    case PP_ENUMCONTAINERS:
-        /* key containers are never stored. */
-        AdvSetError(ERROR_NO_MORE_ITEMS);
-        return FALSE;
+    case PP_ENUMCONTAINERS: {
+        if (flags & CRYPT_FIRST)
+            p->EnumIndex = 0;
+        WCHAR dir[MAX_PATH], pattern[MAX_PATH];
+        if (!container_dir(p, dir)) {
+            AdvSetError(ERROR_NO_MORE_ITEMS);
+            return FALSE;
+        }
+        _snwprintf(pattern, MAX_PATH, L"%ls\\*", dir);
+        WIN32_FIND_DATAW found;
+        HANDLE find = FindFirstFileW(pattern, &found);
+        ULONG index = 0;
+        BOOL ok = FALSE, more = FALSE;
+        CHAR name[MAX_PATH];
+        for (BOOL next = find != INVALID_HANDLE_VALUE; next; next = FindNextFileW(find, &found)) {
+            if (found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                continue;
+            WCHAR path[MAX_PATH];
+            _snwprintf(path, MAX_PATH, L"%ls\\%ls", dir, found.cFileName);
+            CONTAINER c;
+            HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                      OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            DWORD read = 0;
+            BOOL valid = file != INVALID_HANDLE_VALUE && ReadFile(file, &c, CONTAINER_HEADER, &read, nullptr) &&
+                         read == CONTAINER_HEADER && c.Magic == CONTAINER_MAGIC;
+            if (file != INVALID_HANDLE_VALUE)
+                CloseHandle(file);
+            if (!valid || index++ < p->EnumIndex)
+                continue;
+            WideCharToMultiByte(CP_ACP, 0, c.Name, -1, name, sizeof(name), nullptr, nullptr);
+            more = TRUE;
+            break;
+        }
+        if (find != INVALID_HANDLE_VALUE)
+            FindClose(find);
+        if (!more) {
+            AdvSetError(ERROR_NO_MORE_ITEMS);
+            return FALSE;
+        }
+        ok = return_param(name, (DWORD)strlen(name) + 1, data, length);
+        if (ok && data)
+            p->EnumIndex++;
+        return ok;
+    }
     case PP_ENUMALGS:
     case PP_ENUMALGS_EX: {
         if (flags & CRYPT_FIRST)
@@ -734,18 +999,32 @@ ADVAPI BOOL WINAPI CryptEnumProvidersA(DWORD index, DWORD *reserved, DWORD flags
     return return_param(ansi, (DWORD)n, (BYTE *)name, size);
 }
 
-/* containers are never stored, so they hold no key. */
+/* the key pair of a container, as a key of the context. */
 ADVAPI BOOL WINAPI CryptGetUserKey(HCRYPTPROV handle, DWORD spec, HCRYPTKEY *key)
 {
-    if (!provider(handle))
+    PROVIDER *p = provider(handle);
+    if (!p)
         return FALSE;
     if (!key) {
         AdvSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
     *key = 0;
-    AdvSetError(NTE_NO_KEY);
-    return FALSE;
+    if (spec != AT_KEYEXCHANGE && spec != AT_SIGNATURE) {
+        AdvSetError(NTE_NO_KEY);
+        return FALSE;
+    }
+    CONTAINER c;
+    if (!p->Persistent || !container_read(p, &c)) {
+        AdvSetError(NTE_NO_KEY);
+        return FALSE;
+    }
+    int slot = spec == AT_KEYEXCHANGE ? SLOT_KEYX : SLOT_SIGN;
+    BOOL ok = c.Blob[slot] != nullptr && key_import(handle, c.Blob[slot], c.Size[slot], c.Exportable[slot], key);
+    if (!c.Blob[slot])
+        AdvSetError(NTE_NO_KEY);
+    container_free(&c);
+    return ok;
 }
 
 static KEY *key_object(HCRYPTKEY handle)
@@ -1085,7 +1364,14 @@ ADVAPI BOOL WINAPI CryptGenKey(HCRYPTPROV handle, DWORD algorithm, DWORD flags, 
             }
     }
     if (ok)
-        ok = CryptImportKey(handle, blob, size, 0, flags & 1, result);
+        ok = key_import(handle, blob, size, flags & 1, result);
+    /* a key pair of a named container stays in it. */
+    if (ok && rsa_key && p->Persistent &&
+        !container_store_key(p, algorithm == CALG_RSA_KEYX ? SLOT_KEYX : SLOT_SIGN, blob, size, flags & 1)) {
+        CryptDestroyKey(*result);
+        *result = 0;
+        ok = FALSE;
+    }
     SecureZeroMemory(blob, size);
     AdvFree(blob);
     return ok;
@@ -1332,18 +1618,102 @@ ADVAPI BOOL WINAPI CryptSetHashParam(HCRYPTHASH handle, DWORD param, const BYTE 
     return TRUE;
 }
 
-/* signing takes the container's key, and containers hold none. */
+static MimeRsa *rsa_from_blob(const KEY *k);
+#define CRYPT_NOHASHOID 0x00000001
+
+/* the hash value with the key pair of the hash's container, as PKCS#1 v1.5 with the hash's object identifier
+ * unless CRYPT_NOHASHOID is given. the signature is little endian and the hash is finished by it.
+ */
 ADVAPI BOOL WINAPI CryptSignHashW(HCRYPTHASH handle, DWORD spec, LPCWSTR description, DWORD flags, BYTE *signature,
                                   DWORD *length)
 {
-    if (!hash_object(handle))
+    HASH *h = hash_object(handle);
+    if (!h)
         return FALSE;
     if (!length) {
         AdvSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    AdvSetError(NTE_NO_KEY);
-    return FALSE;
+    if (flags & ~CRYPT_NOHASHOID) {
+        AdvSetError(NTE_BAD_FLAGS);
+        return FALSE;
+    }
+    PROVIDER *p = h->Provider;
+    if ((spec != AT_KEYEXCHANGE && spec != AT_SIGNATURE) || !p->Persistent) {
+        AdvSetError(NTE_NO_KEY);
+        return FALSE;
+    }
+    CONTAINER c;
+    if (!container_read(p, &c)) {
+        AdvSetError(NTE_NO_KEY);
+        return FALSE;
+    }
+    int slot = spec == AT_KEYEXCHANGE ? SLOT_KEYX : SLOT_SIGN;
+    BOOL ok = FALSE;
+    MimeRsa *rsa = nullptr;
+    if (c.Blob[slot]) {
+        KEY *copy = AdvAlloc(sizeof(*copy) + c.Size[slot]);
+        if (copy) {
+            memset(copy, 0, sizeof(*copy));
+            copy->Size = c.Size[slot];
+            memcpy(copy->Blob, c.Blob[slot], c.Size[slot]);
+            rsa = rsa_from_blob(copy);
+            if (rsa) {
+                const BLOBHEADER *header = (const BLOBHEADER *)copy->Blob;
+                DWORD bytes = (rsa->bits + 7) / 8, half = bytes / 2;
+                const BYTE *primes = copy->Blob + sizeof(*header) + 12 + bytes;
+                BYTE *big = AdvAlloc(half);
+                BOOL good = header->bType == PRIVATEKEYBLOB && big && sizeof(*header) + 12 + bytes + half * 2 <= copy->Size;
+                for (int i = 0; good && i < 2; i++) {
+                    for (DWORD j = 0; j < half; j++)
+                        big[j] = primes[i * half + half - 1 - j];
+                    good = mime_bn_from_bytes(i ? &rsa->q : &rsa->p, big, half);
+                }
+                AdvFree(big);
+                rsa->private_key = good;
+                if (!good || mime_rsa_check(rsa) != MIME_CRYPTO_OK) {
+                    mime_rsa_free(rsa);
+                    rsa = nullptr;
+                }
+            }
+            SecureZeroMemory(copy, sizeof(*copy) + c.Size[slot]);
+            AdvFree(copy);
+        }
+    }
+    container_free(&c);
+    if (!rsa) {
+        AdvSetError(NTE_NO_KEY);
+        return FALSE;
+    }
+    DWORD size = (rsa->bits + 7) / 8;
+    if (!signature) {
+        *length = size;
+        ok = TRUE;
+    } else if (*length < size) {
+        *length = size;
+        AdvSetError(ERROR_MORE_DATA);
+    } else {
+        BYTE *big = AdvAlloc(size);
+        if (!big) {
+            AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        } else {
+            finish_hash(h);
+            const MimeHashAlg *alg = (flags & CRYPT_NOHASHOID) ? nullptr : h->Hash;
+            int status = alg ? mime_rsa_pkcs1_sign(rsa, alg, h->Value, h->Size, big)
+                             : mime_rsa_pkcs1_sign_prefix(rsa, nullptr, 0, h->Value, h->Size, big);
+            if (status == MIME_CRYPTO_OK) {
+                for (DWORD i = 0; i < size; i++)
+                    signature[i] = big[size - 1 - i];
+                *length = size;
+                ok = TRUE;
+            } else {
+                AdvSetError(NTE_BAD_KEY);
+            }
+            AdvFree(big);
+        }
+    }
+    mime_rsa_free(rsa);
+    return ok;
 }
 
 ADVAPI BOOL WINAPI CryptSignHashA(HCRYPTHASH handle, DWORD spec, LPCSTR description, DWORD flags, BYTE *signature,
@@ -1370,7 +1740,6 @@ bool mime_crypto_random(void *out, size_t size)
 }
 
 #define NTE_BAD_SIGNATURE ((DWORD)0x80090006L)
-#define CRYPT_NOHASHOID 0x00000001
 
 /* the public part of an RSA key blob: exponent, then modulus as little endian bytes. */
 static MimeRsa *rsa_from_blob(const KEY *k)

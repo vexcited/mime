@@ -111,28 +111,6 @@ PCCERT_CONTEXT WINAPI CertCreateCertificateContext(DWORD dwCertEncodingType, con
     return &cert->context;
 }
 
-/*
- * mime's providers have no private keys to make or sign with, so after checking the arguments this fails with
- * NTE_NO_KEY, as for a container without a key, and creates nothing.
- */
-PCCERT_CONTEXT WINAPI CertCreateSelfSignCertificate(ULONG_PTR hCryptProvOrNCryptKey, PCERT_NAME_BLOB pSubjectIssuerBlob,
-                                                    DWORD dwFlags, void *pKeyProvInfo, void *pSignatureAlgorithm,
-                                                    const SYSTEMTIME *pStartTime, const SYSTEMTIME *pEndTime,
-                                                    void *pExtensions)
-{
-    if (!pSubjectIssuerBlob) {
-        SetLastError(E_INVALIDARG);
-        return nullptr;
-    }
-    FILETIME start, end;
-    if (pStartTime && !SystemTimeToFileTime(pStartTime, &start))
-        return nullptr;
-    if (pEndTime && !SystemTimeToFileTime(pEndTime, &end))
-        return nullptr;
-    SetLastError(0x8009000D); /* NTE_NO_KEY */
-    return nullptr;
-}
-
 PCCERT_CONTEXT WINAPI CertDuplicateCertificateContext(PCCERT_CONTEXT pCertContext)
 {
     if (!pCertContext)

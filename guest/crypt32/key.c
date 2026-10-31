@@ -275,6 +275,21 @@ static BOOL acquire_key(PCCERT_CONTEXT cert, DWORD flags, const CRYPT_KEY_PROV_I
     return TRUE;
 }
 
+/* the key a key provider info names, for a caller that has no certificate, and its release. */
+BOOL CrAcquireKeyFromInfo(const CRYPT_KEY_PROV_INFO *info, CERT_KEY_CONTEXT *key)
+{
+    InitOnceExecuteOnce(&g_api_once, load_api, nullptr, nullptr);
+    BOOL mismatch = FALSE;
+    memset(key, 0, sizeof(*key));
+    key->cbSize = sizeof(*key);
+    return acquire_key(nullptr, CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG, info, nullptr, key, &mismatch);
+}
+
+void CrReleaseKeyContext(CERT_KEY_CONTEXT *key)
+{
+    release_key(key);
+}
+
 /* a key cached on the certificate, with the kind of handle the flags accept. */
 static BOOL cached_key(PCCERT_CONTEXT cert, DWORD flags, CERT_KEY_CONTEXT *key)
 {

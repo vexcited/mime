@@ -73,6 +73,8 @@ EXPORTS
     CryptDecodeObjectEx@32
     CryptEncodeObject@20
     CryptEncodeObjectEx@28
+    CryptExportPublicKeyInfo@20
+    CryptExportPublicKeyInfoEx@32
     CryptExportPublicKeyInfoFromBCryptKeyHandle@28
     CryptFindOIDInfo@12
     CryptGetMessageCertificates@20
@@ -93,6 +95,8 @@ EXPORTS
     CryptProtectData@28
     CryptProtectMemory@12
     CryptQueryObject@44
+    CryptSignAndEncodeCertificate@36
+    CryptSignCertificate@36
     CryptSignMessage@28
     CryptStringToBinaryA@28
     CryptStringToBinaryW@28

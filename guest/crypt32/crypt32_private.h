@@ -136,6 +136,8 @@ BOOL CrIsPrintable(const WCHAR *s, DWORD n);
 
 DWORD CrHashSize(ALG_ID alg);
 BOOL CrHash(ALG_ID alg, const BYTE *data, DWORD size, BYTE *out);
+BOOL CrAcquireKeyFromInfo(const CRYPT_KEY_PROV_INFO *info, CERT_KEY_CONTEXT *key);
+void CrReleaseKeyContext(CERT_KEY_CONTEXT *key);
 ALG_ID CrHashFromOid(LPCSTR oid);
 
 /* ------------------------------------------------------------------ signatures, rsa.c */

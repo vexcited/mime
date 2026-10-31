@@ -1153,11 +1153,26 @@ WINCRYPT32API void WINAPI CryptMemFree(LPVOID pv);
 
 WINCRYPT32API PCCERT_CONTEXT WINAPI CertCreateCertificateContext(DWORD dwCertEncodingType, const BYTE *pbCertEncoded,
                                                                  DWORD cbCertEncoded);
-WINCRYPT32API PCCERT_CONTEXT WINAPI CertCreateSelfSignCertificate(ULONG_PTR hCryptProvOrNCryptKey,
-                                                                  PCERT_NAME_BLOB pSubjectIssuerBlob, DWORD dwFlags,
-                                                                  void *pKeyProvInfo, void *pSignatureAlgorithm,
-                                                                  const SYSTEMTIME *pStartTime, const SYSTEMTIME *pEndTime,
-                                                                  void *pExtensions);
+WINCRYPT32API PCCERT_CONTEXT WINAPI CertCreateSelfSignCertificate(
+    ULONG_PTR hCryptProvOrNCryptKey, PCERT_NAME_BLOB pSubjectIssuerBlob, DWORD dwFlags, PCRYPT_KEY_PROV_INFO pKeyProvInfo,
+    PCRYPT_ALGORITHM_IDENTIFIER pSignatureAlgorithm, const SYSTEMTIME *pStartTime, const SYSTEMTIME *pEndTime,
+    PCERT_EXTENSIONS pExtensions);
+#define CERT_CREATE_SELFSIGN_NO_SIGN 1
+#define CERT_CREATE_SELFSIGN_NO_KEY_INFO 2
+WINCRYPT32API BOOL WINAPI CryptExportPublicKeyInfo(ULONG_PTR hCryptProvOrNCryptKey, DWORD dwKeySpec,
+                                                   DWORD dwCertEncodingType, PCERT_PUBLIC_KEY_INFO pInfo, DWORD *pcbInfo);
+WINCRYPT32API BOOL WINAPI CryptExportPublicKeyInfoEx(ULONG_PTR hCryptProvOrNCryptKey, DWORD dwKeySpec,
+                                                     DWORD dwCertEncodingType, LPSTR pszPublicKeyObjId, DWORD dwFlags,
+                                                     void *pvAuxInfo, PCERT_PUBLIC_KEY_INFO pInfo, DWORD *pcbInfo);
+WINCRYPT32API BOOL WINAPI CryptSignCertificate(ULONG_PTR hCryptProvOrNCryptKey, DWORD dwKeySpec,
+                                               DWORD dwCertEncodingType, const BYTE *pbEncodedToBeSigned,
+                                               DWORD cbEncodedToBeSigned, PCRYPT_ALGORITHM_IDENTIFIER pSignatureAlgorithm,
+                                               const void *pvHashAuxInfo, BYTE *pbSignature, DWORD *pcbSignature);
+WINCRYPT32API BOOL WINAPI CryptSignAndEncodeCertificate(ULONG_PTR hCryptProvOrNCryptKey, DWORD dwKeySpec,
+                                                        DWORD dwCertEncodingType, LPCSTR lpszStructType,
+                                                        const void *pvStructInfo,
+                                                        PCRYPT_ALGORITHM_IDENTIFIER pSignatureAlgorithm,
+                                                        const void *pvHashAuxInfo, BYTE *pbEncoded, DWORD *pcbEncoded);
 WINCRYPT32API BOOL WINAPI CryptExportPublicKeyInfoFromBCryptKeyHandle(PVOID key, DWORD encoding, LPSTR oid, DWORD flags,
                                                                        void *aux, PCERT_PUBLIC_KEY_INFO info, DWORD *size);
 WINCRYPT32API BOOL WINAPI CryptImportPublicKeyInfo(HCRYPTPROV hCryptProv, DWORD dwCertEncodingType,

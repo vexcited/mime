@@ -73,6 +73,8 @@ EXPORTS
     CryptDecodeObjectEx=_CryptDecodeObjectEx@32
     CryptEncodeObject=_CryptEncodeObject@20
     CryptEncodeObjectEx=_CryptEncodeObjectEx@28
+    CryptExportPublicKeyInfo=_CryptExportPublicKeyInfo@20
+    CryptExportPublicKeyInfoEx=_CryptExportPublicKeyInfoEx@32
     CryptExportPublicKeyInfoFromBCryptKeyHandle=_CryptExportPublicKeyInfoFromBCryptKeyHandle@28
     CryptFindOIDInfo=_CryptFindOIDInfo@12
     CryptGetMessageCertificates=_CryptGetMessageCertificates@20
@@ -93,6 +95,8 @@ EXPORTS
     CryptProtectData=_CryptProtectData@28
     CryptProtectMemory=_CryptProtectMemory@12
     CryptQueryObject=_CryptQueryObject@44
+    CryptSignAndEncodeCertificate=_CryptSignAndEncodeCertificate@36
+    CryptSignCertificate=_CryptSignCertificate@36
     CryptSignMessage=_CryptSignMessage@28
     CryptStringToBinaryA=_CryptStringToBinaryA@28
     CryptStringToBinaryW=_CryptStringToBinaryW@28

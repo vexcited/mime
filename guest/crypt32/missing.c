@@ -108,17 +108,7 @@ WINCRYPT32API BOOL WINAPI CryptSignMessageWithKey(void)
     return NOT_YET(FALSE);
 }
 
-WINCRYPT32API BOOL WINAPI CryptSignCertificate(void)
-{
-    return NOT_YET(FALSE);
-}
-
 WINCRYPT32API BOOL WINAPI CryptSignAndEncryptMessage(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CryptSignAndEncodeCertificate(void)
 {
     return NOT_YET(FALSE);
 }
@@ -334,16 +324,6 @@ WINCRYPT32API PVOID WINAPI CryptFindLocalizedName(void)
 }
 
 WINCRYPT32API BOOL WINAPI CryptFindCertificateKeyProvInfo(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CryptExportPublicKeyInfoEx(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CryptExportPublicKeyInfo(void)
 {
     return NOT_YET(FALSE);
 }
