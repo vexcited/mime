@@ -213,3 +213,24 @@
 "ObjectName"="LocalSystem"
 "Start"=dword:00000003
 "Type"=dword:00000010
+
+; the logs of the event log service. programs install the sources of their events below them; no events are kept yet.
+[HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Security]
+
+[HKLM\SYSTEM\CurrentControlSet\Services\EventLog\System]
+
+; the key isolation service, which services that use keys of cng depend on. it runs in svchost, not in the security authority.
+[HKLM\SYSTEM\CurrentControlSet\Services\KeyIso]
+"Description"="The CNG key isolation service is hosted in the LSA process. It provides key process isolation to private keys and associated cryptographic operations as required by the Common Criteria."
+"DisplayName"="CNG Key Isolation"
+"ErrorControl"=dword:00000001
+"ImagePath"=expand:"%systemroot%\\system32\\svchost.exe -k netsvcs -p"
+"ObjectName"="LocalSystem"
+"Start"=dword:00000003
+"Type"=dword:00000020
+
+[HKLM\SYSTEM\CurrentControlSet\Services\KeyIso\Parameters]
+"ServiceDll"=expand:"%systemroot%\\system32\\keyiso.dll"
+"ServiceDllUnloadOnStop"=dword:00000001

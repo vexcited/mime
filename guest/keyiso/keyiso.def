@@ -1,0 +1,4 @@
+LIBRARY keyiso.dll
+EXPORTS
+    ServiceMain @1
+    SvchostPushServiceGlobals @2

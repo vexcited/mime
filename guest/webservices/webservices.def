@@ -1,0 +1,12 @@
+LIBRARY webservices.dll
+EXPORTS
+    WsAddCustomHeader @8
+    WsCall @14
+    WsCreateError @25
+    WsCreateHeap @27
+    WsCreateServiceProxy @35
+    WsGetErrorProperty @65
+    WsGetErrorString @66
+    WsOpenServiceProxy @101
+    WsResetError @137
+    WsResetHeap @138

@@ -1,0 +1,16 @@
+LIBRARY loadperf.dll
+EXPORTS
+    BackupPerfRegistryToFileW=_BackupPerfRegistryToFileW@8
+    InstallPerfDllA=_InstallPerfDllA@12
+    InstallPerfDllW=_InstallPerfDllW@12
+    LoadPerfCounterTextStringsA=_LoadPerfCounterTextStringsA@8
+    LoadPerfCounterTextStringsW=_LoadPerfCounterTextStringsW@8
+    LpAcquireInstallationMutex=_LpAcquireInstallationMutex@0
+    LpReleaseInstallationMutex=_LpReleaseInstallationMutex@0
+    RestorePerfRegistryFromFileW=_RestorePerfRegistryFromFileW@8
+    SetServiceAsTrustedA=_SetServiceAsTrustedA@8
+    SetServiceAsTrustedW=_SetServiceAsTrustedW@8
+    UnloadPerfCounterTextStringsA=_UnloadPerfCounterTextStringsA@8
+    UnloadPerfCounterTextStringsW=_UnloadPerfCounterTextStringsW@8
+    UpdatePerfNameFilesA=_UpdatePerfNameFilesA@16
+    UpdatePerfNameFilesW=_UpdatePerfNameFilesW@16
