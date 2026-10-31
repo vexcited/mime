@@ -208,6 +208,28 @@ WINOLEAPI HRESULT WINAPI CoRegisterMessageFilter(IMessageFilter *filter, IMessag
     return S_OK;
 }
 
+/* the spy of the process is kept so a second one is refused; the allocations of this library do not call it. */
+static IUnknown *g_malloc_spy;
+
+WINOLEAPI HRESULT WINAPI CoRegisterMallocSpy(IUnknown *spy)
+{
+    if (!spy)
+        return E_INVALIDARG;
+    if (InterlockedCompareExchangePointer((PVOID *)&g_malloc_spy, spy, nullptr))
+        return CO_E_OBJISREG;
+    spy->lpVtbl->AddRef(spy);
+    return S_OK;
+}
+
+WINOLEAPI HRESULT WINAPI CoRevokeMallocSpy(void)
+{
+    IUnknown *spy = (IUnknown *)InterlockedExchangePointer((PVOID *)&g_malloc_spy, nullptr);
+    if (!spy)
+        return CO_E_OBJNOTREG;
+    spy->lpVtbl->Release(spy);
+    return S_OK;
+}
+
 WINOLEAPI HRESULT WINAPI CoDisconnectObject(IUnknown *object, DWORD reserved)
 {
     if (!object)

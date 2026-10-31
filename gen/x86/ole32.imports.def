@@ -54,6 +54,7 @@ EXPORTS
     CoQueryProxyBlanket@32
     CoRegisterClassObject@20
     CoRegisterInitializeSpy@8
+    CoRegisterMallocSpy@4
     CoRegisterMessageFilter@8
     CoRegisterPSClsid@8
     CoReleaseMarshalData@4
@@ -62,6 +63,7 @@ EXPORTS
     CoRevertToSelf@0
     CoRevokeClassObject@4
     CoRevokeInitializeSpy@8
+    CoRevokeMallocSpy@0
     CoSetCancelObject@4
     CoSetProxyBlanket@32
     CoSuspendClassObjects@0

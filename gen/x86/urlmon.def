@@ -8,6 +8,7 @@ EXPORTS
     CoInternetParseUrl=_CoInternetParseUrl@28
     CreateAsyncBindCtx=_CreateAsyncBindCtx@16
     CreateAsyncBindCtxEx=_CreateAsyncBindCtxEx@24
+    CreateIUriBuilder=_CreateIUriBuilder@16
     CreateURLMoniker=_CreateURLMoniker@12
     CreateURLMonikerEx2=_CreateURLMonikerEx2@16
     CreateURLMonikerEx=_CreateURLMonikerEx@16

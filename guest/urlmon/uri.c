@@ -953,6 +953,15 @@ DECLSPEC_EXPORT HRESULT WINAPI CreateUri(LPCWSTR uri, DWORD flags, DWORD_PTR res
     return Create(uri, flags, result);
 }
 
+/* a builder of uris is not made yet. */
+DECLSPEC_EXPORT HRESULT WINAPI CreateIUriBuilder(IUri *uri, DWORD flags, DWORD_PTR reserved, void **builder)
+{
+    if (!builder)
+        return E_POINTER;
+    *builder = nullptr;
+    return E_NOTIMPL;
+}
+
 DECLSPEC_EXPORT HRESULT WINAPI CreateUriWithFragment(LPCWSTR uri, LPCWSTR fragment, DWORD flags, DWORD_PTR reserved,
                                                     IUri **result)
 {

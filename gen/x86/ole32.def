@@ -54,6 +54,7 @@ EXPORTS
     CoQueryProxyBlanket=_CoQueryProxyBlanket@32
     CoRegisterClassObject=_CoRegisterClassObject@20
     CoRegisterInitializeSpy=_CoRegisterInitializeSpy@8
+    CoRegisterMallocSpy=_CoRegisterMallocSpy@4
     CoRegisterMessageFilter=_CoRegisterMessageFilter@8
     CoRegisterPSClsid=_CoRegisterPSClsid@8
     CoReleaseMarshalData=_CoReleaseMarshalData@4
@@ -62,6 +63,7 @@ EXPORTS
     CoRevertToSelf=_CoRevertToSelf@0
     CoRevokeClassObject=_CoRevokeClassObject@4
     CoRevokeInitializeSpy=_CoRevokeInitializeSpy@8
+    CoRevokeMallocSpy=_CoRevokeMallocSpy@0
     CoSetCancelObject=_CoSetCancelObject@4
     CoSetProxyBlanket=_CoSetProxyBlanket@32
     CoSuspendClassObjects=_CoSuspendClassObjects@0
