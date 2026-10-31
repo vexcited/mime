@@ -243,6 +243,10 @@ _Kernel32Thunk_CopyFile2@12:
     .p2align 4
 _Kernel32Thunk_CopyFileA@12:
     jmp     *__imp__CopyFileA@12
+    .globl  _Kernel32Thunk_CopyFileExA@24
+    .p2align 4
+_Kernel32Thunk_CopyFileExA@24:
+    jmp     *__imp__CopyFileExA@24
     .globl  _Kernel32Thunk_CopyFileExW@24
     .p2align 4
 _Kernel32Thunk_CopyFileExW@24:
@@ -279,6 +283,10 @@ _Kernel32Thunk_CreateConsoleScreenBuffer@20:
     .p2align 4
 _Kernel32Thunk_CreateDirectoryA@8:
     jmp     *__imp__CreateDirectoryA@8
+    .globl  _Kernel32Thunk_CreateDirectoryExA@12
+    .p2align 4
+_Kernel32Thunk_CreateDirectoryExA@12:
+    jmp     *__imp__CreateDirectoryExA@12
     .globl  _Kernel32Thunk_CreateDirectoryExW@12
     .p2align 4
 _Kernel32Thunk_CreateDirectoryExW@12:
@@ -871,6 +879,10 @@ _Kernel32Thunk_FindFirstFileW@8:
     .p2align 4
 _Kernel32Thunk_FindFirstStreamW@16:
     jmp     *__imp__FindFirstStreamW@16
+    .globl  _Kernel32Thunk_FindFirstVolumeA@8
+    .p2align 4
+_Kernel32Thunk_FindFirstVolumeA@8:
+    jmp     *__imp__FindFirstVolumeA@8
     .globl  _Kernel32Thunk_FindFirstVolumeW@8
     .p2align 4
 _Kernel32Thunk_FindFirstVolumeW@8:
@@ -903,6 +915,10 @@ _Kernel32Thunk_FindNextFileW@8:
     .p2align 4
 _Kernel32Thunk_FindNextStreamW@8:
     jmp     *__imp__FindNextStreamW@8
+    .globl  _Kernel32Thunk_FindNextVolumeA@12
+    .p2align 4
+_Kernel32Thunk_FindNextVolumeA@12:
+    jmp     *__imp__FindNextVolumeA@12
     .globl  _Kernel32Thunk_FindNextVolumeW@12
     .p2align 4
 _Kernel32Thunk_FindNextVolumeW@12:
@@ -1475,6 +1491,18 @@ _Kernel32Thunk_GetMailslotInfo@20:
     .p2align 4
 _Kernel32Thunk_GetThreadSelectorEntry@12:
     jmp     *__imp__GetThreadSelectorEntry@12
+    .globl  _Kernel32Thunk_GetVolumeNameForVolumeMountPointA@12
+    .p2align 4
+_Kernel32Thunk_GetVolumeNameForVolumeMountPointA@12:
+    jmp     *__imp__GetVolumeNameForVolumeMountPointA@12
+    .globl  _Kernel32Thunk_GetVolumePathNameA@12
+    .p2align 4
+_Kernel32Thunk_GetVolumePathNameA@12:
+    jmp     *__imp__GetVolumePathNameA@12
+    .globl  _Kernel32Thunk_GetVolumePathNamesForVolumeNameA@16
+    .p2align 4
+_Kernel32Thunk_GetVolumePathNamesForVolumeNameA@16:
+    jmp     *__imp__GetVolumePathNamesForVolumeNameA@16
     .globl  _Kernel32Thunk_Heap32First@12
     .p2align 4
 _Kernel32Thunk_Heap32First@12:
@@ -1491,6 +1519,10 @@ _Kernel32Thunk_Heap32ListNext@8:
     .p2align 4
 _Kernel32Thunk_Heap32Next@4:
     jmp     *__imp__Heap32Next@4
+    .globl  _Kernel32Thunk_MoveFileWithProgressA@20
+    .p2align 4
+_Kernel32Thunk_MoveFileWithProgressA@20:
+    jmp     *__imp__MoveFileWithProgressA@20
     .globl  _Kernel32Thunk_PssCaptureSnapshot@16
     .p2align 4
 _Kernel32Thunk_PssCaptureSnapshot@16:

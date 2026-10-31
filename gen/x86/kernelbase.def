@@ -83,6 +83,7 @@ EXPORTS
     CopyContext=_CopyContext@12
     CopyFile2=_CopyFile2@12
     CopyFileA=_CopyFileA@12
+    CopyFileExA=_CopyFileExA@24
     CopyFileExW=_CopyFileExW@24
     CopyFileW=_CopyFileW@12
     CopyLZFile=_CopyLZFile@8
@@ -92,6 +93,7 @@ EXPORTS
     CreateBoundaryDescriptorW=_CreateBoundaryDescriptorW@8
     CreateConsoleScreenBuffer=_CreateConsoleScreenBuffer@20
     CreateDirectoryA=_CreateDirectoryA@8
+    CreateDirectoryExA=_CreateDirectoryExA@12
     CreateDirectoryExW=_CreateDirectoryExW@12
     CreateDirectoryW=_CreateDirectoryW@8
     CreateEventA=_CreateEventA@16
@@ -252,6 +254,7 @@ EXPORTS
     FindFirstFileNameW=_FindFirstFileNameW@16
     FindFirstFileW=_FindFirstFileW@8
     FindFirstStreamW=_FindFirstStreamW@16
+    FindFirstVolumeA=_FindFirstVolumeA@8
     FindFirstVolumeW=_FindFirstVolumeW@8
     FindNLSString=_FindNLSString@28
     FindNLSStringEx=_FindNLSStringEx@40
@@ -260,6 +263,7 @@ EXPORTS
     FindNextFileNameW=_FindNextFileNameW@12
     FindNextFileW=_FindNextFileW@8
     FindNextStreamW=_FindNextStreamW@8
+    FindNextVolumeA=_FindNextVolumeA@12
     FindNextVolumeW=_FindNextVolumeW@12
     FindPackagesByPackageFamily=_FindPackagesByPackageFamily@28
     FindResourceA=_FindResourceA@12
@@ -419,10 +423,14 @@ EXPORTS
     GetFirmwareEnvironmentVariableExW=_GetFirmwareEnvironmentVariableExW@20
     GetMailslotInfo=_GetMailslotInfo@20
     GetThreadSelectorEntry=_GetThreadSelectorEntry@12
+    GetVolumeNameForVolumeMountPointA=_GetVolumeNameForVolumeMountPointA@12
+    GetVolumePathNameA=_GetVolumePathNameA@12
+    GetVolumePathNamesForVolumeNameA=_GetVolumePathNamesForVolumeNameA@16
     Heap32First=_Heap32First@12
     Heap32ListFirst=_Heap32ListFirst@8
     Heap32ListNext=_Heap32ListNext@8
     Heap32Next=_Heap32Next@4
+    MoveFileWithProgressA=_MoveFileWithProgressA@20
     PssCaptureSnapshot=_PssCaptureSnapshot@16
     PssFreeSnapshot=_PssFreeSnapshot@8
     PssQuerySnapshot=_PssQuerySnapshot@16

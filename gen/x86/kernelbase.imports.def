@@ -83,6 +83,7 @@ EXPORTS
     CopyContext@12
     CopyFile2@12
     CopyFileA@12
+    CopyFileExA@24
     CopyFileExW@24
     CopyFileW@12
     CopyLZFile@8
@@ -92,6 +93,7 @@ EXPORTS
     CreateBoundaryDescriptorW@8
     CreateConsoleScreenBuffer@20
     CreateDirectoryA@8
+    CreateDirectoryExA@12
     CreateDirectoryExW@12
     CreateDirectoryW@8
     CreateEventA@16
@@ -252,6 +254,7 @@ EXPORTS
     FindFirstFileNameW@16
     FindFirstFileW@8
     FindFirstStreamW@16
+    FindFirstVolumeA@8
     FindFirstVolumeW@8
     FindNLSString@28
     FindNLSStringEx@40
@@ -260,6 +263,7 @@ EXPORTS
     FindNextFileNameW@12
     FindNextFileW@8
     FindNextStreamW@8
+    FindNextVolumeA@12
     FindNextVolumeW@12
     FindPackagesByPackageFamily@28
     FindResourceA@12
@@ -419,10 +423,14 @@ EXPORTS
     GetFirmwareEnvironmentVariableExW@20
     GetMailslotInfo@20
     GetThreadSelectorEntry@12
+    GetVolumeNameForVolumeMountPointA@12
+    GetVolumePathNameA@12
+    GetVolumePathNamesForVolumeNameA@16
     Heap32First@12
     Heap32ListFirst@8
     Heap32ListNext@8
     Heap32Next@4
+    MoveFileWithProgressA@20
     PssCaptureSnapshot@16
     PssFreeSnapshot@8
     PssQuerySnapshot@16

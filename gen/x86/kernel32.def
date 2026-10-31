@@ -126,6 +126,7 @@ EXPORTS
     CopyContext=_Kernel32Thunk_CopyContext@12
     CopyFile2=_Kernel32Thunk_CopyFile2@12
     CopyFileA=_Kernel32Thunk_CopyFileA@12
+    CopyFileExA=_Kernel32Thunk_CopyFileExA@24
     CopyFileExW=_Kernel32Thunk_CopyFileExW@24
     CopyFileW=_Kernel32Thunk_CopyFileW@12
     CopyLZFile=_Kernel32Thunk_CopyLZFile@8
@@ -136,6 +137,7 @@ EXPORTS
     CreateBoundaryDescriptorW=_Kernel32Thunk_CreateBoundaryDescriptorW@8
     CreateConsoleScreenBuffer=_Kernel32Thunk_CreateConsoleScreenBuffer@20
     CreateDirectoryA=_Kernel32Thunk_CreateDirectoryA@8
+    CreateDirectoryExA=_Kernel32Thunk_CreateDirectoryExA@12
     CreateDirectoryExW=_Kernel32Thunk_CreateDirectoryExW@12
     CreateDirectoryW=_Kernel32Thunk_CreateDirectoryW@8
     CreateEventA=_Kernel32Thunk_CreateEventA@16
@@ -319,6 +321,7 @@ EXPORTS
     FindFirstFileW=_Kernel32Thunk_FindFirstFileW@8
     FindFirstFreeAce=kernelbase.FindFirstFreeAce
     FindFirstStreamW=_Kernel32Thunk_FindFirstStreamW@16
+    FindFirstVolumeA=_Kernel32Thunk_FindFirstVolumeA@8
     FindFirstVolumeW=_Kernel32Thunk_FindFirstVolumeW@8
     FindNLSString=_Kernel32Thunk_FindNLSString@28
     FindNLSStringEx=_Kernel32Thunk_FindNLSStringEx@40
@@ -327,6 +330,7 @@ EXPORTS
     FindNextFileNameW=_Kernel32Thunk_FindNextFileNameW@12
     FindNextFileW=_Kernel32Thunk_FindNextFileW@8
     FindNextStreamW=_Kernel32Thunk_FindNextStreamW@8
+    FindNextVolumeA=_Kernel32Thunk_FindNextVolumeA@12
     FindNextVolumeW=_Kernel32Thunk_FindNextVolumeW@12
     FindPackagesByPackageFamily=kernelbase.FindPackagesByPackageFamily
     FindResourceA=_Kernel32Thunk_FindResourceA@12
@@ -498,10 +502,14 @@ EXPORTS
     GetFirmwareEnvironmentVariableW=_GetFirmwareEnvironmentVariableW@16
     GetMailslotInfo=_Kernel32Thunk_GetMailslotInfo@20
     GetThreadSelectorEntry=_Kernel32Thunk_GetThreadSelectorEntry@12
+    GetVolumeNameForVolumeMountPointA=_Kernel32Thunk_GetVolumeNameForVolumeMountPointA@12
+    GetVolumePathNameA=_Kernel32Thunk_GetVolumePathNameA@12
+    GetVolumePathNamesForVolumeNameA=_Kernel32Thunk_GetVolumePathNamesForVolumeNameA@16
     Heap32First=_Kernel32Thunk_Heap32First@12
     Heap32ListFirst=_Kernel32Thunk_Heap32ListFirst@8
     Heap32ListNext=_Kernel32Thunk_Heap32ListNext@8
     Heap32Next=_Kernel32Thunk_Heap32Next@4
+    MoveFileWithProgressA=_Kernel32Thunk_MoveFileWithProgressA@20
     PssCaptureSnapshot=_Kernel32Thunk_PssCaptureSnapshot@16
     PssFreeSnapshot=_Kernel32Thunk_PssFreeSnapshot@8
     PssQuerySnapshot=_Kernel32Thunk_PssQuerySnapshot@16

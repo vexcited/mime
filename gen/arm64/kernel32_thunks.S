@@ -365,6 +365,12 @@ Kernel32Thunk_CopyFileA:
     adrp    x16, __imp_CopyFileA
     ldr     x16, [x16, :lo12:__imp_CopyFileA]
     br      x16
+    .globl  Kernel32Thunk_CopyFileExA
+    .p2align 4
+Kernel32Thunk_CopyFileExA:
+    adrp    x16, __imp_CopyFileExA
+    ldr     x16, [x16, :lo12:__imp_CopyFileExA]
+    br      x16
     .globl  Kernel32Thunk_CopyFileExW
     .p2align 4
 Kernel32Thunk_CopyFileExW:
@@ -418,6 +424,12 @@ Kernel32Thunk_CreateConsoleScreenBuffer:
 Kernel32Thunk_CreateDirectoryA:
     adrp    x16, __imp_CreateDirectoryA
     ldr     x16, [x16, :lo12:__imp_CreateDirectoryA]
+    br      x16
+    .globl  Kernel32Thunk_CreateDirectoryExA
+    .p2align 4
+Kernel32Thunk_CreateDirectoryExA:
+    adrp    x16, __imp_CreateDirectoryExA
+    ldr     x16, [x16, :lo12:__imp_CreateDirectoryExA]
     br      x16
     .globl  Kernel32Thunk_CreateDirectoryExW
     .p2align 4
@@ -1307,6 +1319,12 @@ Kernel32Thunk_FindFirstStreamW:
     adrp    x16, __imp_FindFirstStreamW
     ldr     x16, [x16, :lo12:__imp_FindFirstStreamW]
     br      x16
+    .globl  Kernel32Thunk_FindFirstVolumeA
+    .p2align 4
+Kernel32Thunk_FindFirstVolumeA:
+    adrp    x16, __imp_FindFirstVolumeA
+    ldr     x16, [x16, :lo12:__imp_FindFirstVolumeA]
+    br      x16
     .globl  Kernel32Thunk_FindFirstVolumeW
     .p2align 4
 Kernel32Thunk_FindFirstVolumeW:
@@ -1354,6 +1372,12 @@ Kernel32Thunk_FindNextFileW:
 Kernel32Thunk_FindNextStreamW:
     adrp    x16, __imp_FindNextStreamW
     ldr     x16, [x16, :lo12:__imp_FindNextStreamW]
+    br      x16
+    .globl  Kernel32Thunk_FindNextVolumeA
+    .p2align 4
+Kernel32Thunk_FindNextVolumeA:
+    adrp    x16, __imp_FindNextVolumeA
+    ldr     x16, [x16, :lo12:__imp_FindNextVolumeA]
     br      x16
     .globl  Kernel32Thunk_FindNextVolumeW
     .p2align 4
@@ -2213,6 +2237,24 @@ Kernel32Thunk_GetThreadSelectorEntry:
     adrp    x16, __imp_GetThreadSelectorEntry
     ldr     x16, [x16, :lo12:__imp_GetThreadSelectorEntry]
     br      x16
+    .globl  Kernel32Thunk_GetVolumeNameForVolumeMountPointA
+    .p2align 4
+Kernel32Thunk_GetVolumeNameForVolumeMountPointA:
+    adrp    x16, __imp_GetVolumeNameForVolumeMountPointA
+    ldr     x16, [x16, :lo12:__imp_GetVolumeNameForVolumeMountPointA]
+    br      x16
+    .globl  Kernel32Thunk_GetVolumePathNameA
+    .p2align 4
+Kernel32Thunk_GetVolumePathNameA:
+    adrp    x16, __imp_GetVolumePathNameA
+    ldr     x16, [x16, :lo12:__imp_GetVolumePathNameA]
+    br      x16
+    .globl  Kernel32Thunk_GetVolumePathNamesForVolumeNameA
+    .p2align 4
+Kernel32Thunk_GetVolumePathNamesForVolumeNameA:
+    adrp    x16, __imp_GetVolumePathNamesForVolumeNameA
+    ldr     x16, [x16, :lo12:__imp_GetVolumePathNamesForVolumeNameA]
+    br      x16
     .globl  Kernel32Thunk_Heap32First
     .p2align 4
 Kernel32Thunk_Heap32First:
@@ -2236,6 +2278,12 @@ Kernel32Thunk_Heap32ListNext:
 Kernel32Thunk_Heap32Next:
     adrp    x16, __imp_Heap32Next
     ldr     x16, [x16, :lo12:__imp_Heap32Next]
+    br      x16
+    .globl  Kernel32Thunk_MoveFileWithProgressA
+    .p2align 4
+Kernel32Thunk_MoveFileWithProgressA:
+    adrp    x16, __imp_MoveFileWithProgressA
+    ldr     x16, [x16, :lo12:__imp_MoveFileWithProgressA]
     br      x16
     .globl  Kernel32Thunk_PssCaptureSnapshot
     .p2align 4

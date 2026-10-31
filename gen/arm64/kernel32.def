@@ -126,6 +126,7 @@ EXPORTS
     CopyContext=Kernel32Thunk_CopyContext
     CopyFile2=Kernel32Thunk_CopyFile2
     CopyFileA=Kernel32Thunk_CopyFileA
+    CopyFileExA=Kernel32Thunk_CopyFileExA
     CopyFileExW=Kernel32Thunk_CopyFileExW
     CopyFileW=Kernel32Thunk_CopyFileW
     CopyLZFile=Kernel32Thunk_CopyLZFile
@@ -136,6 +137,7 @@ EXPORTS
     CreateBoundaryDescriptorW=Kernel32Thunk_CreateBoundaryDescriptorW
     CreateConsoleScreenBuffer=Kernel32Thunk_CreateConsoleScreenBuffer
     CreateDirectoryA=Kernel32Thunk_CreateDirectoryA
+    CreateDirectoryExA=Kernel32Thunk_CreateDirectoryExA
     CreateDirectoryExW=Kernel32Thunk_CreateDirectoryExW
     CreateDirectoryW=Kernel32Thunk_CreateDirectoryW
     CreateEventA=Kernel32Thunk_CreateEventA
@@ -319,6 +321,7 @@ EXPORTS
     FindFirstFileW=Kernel32Thunk_FindFirstFileW
     FindFirstFreeAce=kernelbase.FindFirstFreeAce
     FindFirstStreamW=Kernel32Thunk_FindFirstStreamW
+    FindFirstVolumeA=Kernel32Thunk_FindFirstVolumeA
     FindFirstVolumeW=Kernel32Thunk_FindFirstVolumeW
     FindNLSString=Kernel32Thunk_FindNLSString
     FindNLSStringEx=Kernel32Thunk_FindNLSStringEx
@@ -327,6 +330,7 @@ EXPORTS
     FindNextFileNameW=Kernel32Thunk_FindNextFileNameW
     FindNextFileW=Kernel32Thunk_FindNextFileW
     FindNextStreamW=Kernel32Thunk_FindNextStreamW
+    FindNextVolumeA=Kernel32Thunk_FindNextVolumeA
     FindNextVolumeW=Kernel32Thunk_FindNextVolumeW
     FindPackagesByPackageFamily=kernelbase.FindPackagesByPackageFamily
     FindResourceA=Kernel32Thunk_FindResourceA
@@ -498,10 +502,14 @@ EXPORTS
     GetFirmwareEnvironmentVariableW=Kernel32Thunk_GetFirmwareEnvironmentVariableW
     GetMailslotInfo=Kernel32Thunk_GetMailslotInfo
     GetThreadSelectorEntry=Kernel32Thunk_GetThreadSelectorEntry
+    GetVolumeNameForVolumeMountPointA=Kernel32Thunk_GetVolumeNameForVolumeMountPointA
+    GetVolumePathNameA=Kernel32Thunk_GetVolumePathNameA
+    GetVolumePathNamesForVolumeNameA=Kernel32Thunk_GetVolumePathNamesForVolumeNameA
     Heap32First=Kernel32Thunk_Heap32First
     Heap32ListFirst=Kernel32Thunk_Heap32ListFirst
     Heap32ListNext=Kernel32Thunk_Heap32ListNext
     Heap32Next=Kernel32Thunk_Heap32Next
+    MoveFileWithProgressA=Kernel32Thunk_MoveFileWithProgressA
     PssCaptureSnapshot=Kernel32Thunk_PssCaptureSnapshot
     PssFreeSnapshot=Kernel32Thunk_PssFreeSnapshot
     PssQuerySnapshot=Kernel32Thunk_PssQuerySnapshot
