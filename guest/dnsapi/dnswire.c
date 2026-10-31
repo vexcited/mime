@@ -119,6 +119,13 @@ static BOOL address_type(WORD type)
     return type == DNS_TYPE_A || type == DNS_TYPE_AAAA;
 }
 
+/* the types the service passes on and keeps, which are the ones below 53 that it knows. */
+static BOOL passed_on(WORD type)
+{
+    return (type >= 1 && type <= 10) || (type >= 12 && type <= 20) || type == 24 || type == 25 || type == 28 ||
+           type == 33 || type == 34 || type == 39 || type == 43 || (type >= 46 && type <= 52);
+}
+
 /* a record of the message, or null when it is of no use; false when the message is broken. */
 static BOOL read_record(const BYTE *m, int length, int *at, BYTE section, DNS_RR **out, WORD *type_out,
                         DWORD *ttl_out)
@@ -274,6 +281,7 @@ BOOL DnsWireParse(const BYTE *m, int length, WORD id, const char *name, WORD typ
     *truncated = (flags & FLAG_TC) != 0;
     answer->records = nullptr;
     answer->negative_ttl = 0;
+    answer->has_soa = FALSE;
     DNS_RR **tail = &answer->records;
     BOOL have_soa = FALSE;
     for (int section = 0; section < 3; section++) {
@@ -292,12 +300,17 @@ BOOL DnsWireParse(const BYTE *m, int length, WORD id, const char *name, WORD typ
             if (!rr)
                 continue;
             BOOL keep = FALSE;
+            if (section != 1 && !passed_on(rr->type)) {
+                DnsRrFree(rr);
+                continue;
+            }
             if (section == 0)
                 keep = rr->type == type || type == DNS_TYPE_ALL || rr->type == DNS_TYPE_CNAME ||
                        rr->type == DNS_TYPE_DNAME;
             else if (section == 2) {
                 if (rr->type == DNS_TYPE_SOA && !have_soa) {
                     have_soa = TRUE;
+                    answer->has_soa = TRUE;
                     DWORD least = rr->soa[4] < rr->ttl ? rr->soa[4] : rr->ttl;
                     answer->negative_ttl = least;
                 }

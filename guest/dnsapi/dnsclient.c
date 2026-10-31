@@ -8,10 +8,10 @@
 #include <mime/win32/iphlpapi.h>
 
 #define MAX_SUFFIXES 8
-#define CACHE_ENTRIES 128
+#define CACHE_ENTRIES 4096
 #define MAX_CACHE_TTL 86400
-#define MAX_NEGATIVE_TTL 900
-#define HOSTS_TTL 86400
+#define MAX_NEGATIVE_TTL 5
+#define HOSTS_TTL 604800
 #define LOCAL_TTL 1200
 #define LITERAL_TTL 604800
 #define MESSAGE_SIZE 65535
@@ -442,12 +442,15 @@ static DNS_STATUS wire_query(const DNS_CONFIG *config, const char *name, WORD ty
 
 /* ------------------------------------------------------------------ the cache */
 
+/*
+ * the cache of the dns client service. it holds a set of records for a name and a type, and the whole set runs out
+ * together when the shortest ttl of the set has: every record of it is then given back with the time that is left.
+ * only the types the service passes on are kept, and an answer without records is kept for a moment as well.
+ */
 typedef struct {
-    char name[256];
+    char *name;
     WORD type;
-    BOOL used;
     DNS_STATUS status;
-    ULONGLONG stored;
     ULONGLONG expires;
     DNS_RR *records;
 } CACHE_ENTRY;
@@ -456,32 +459,45 @@ static SRWLOCK cache_lock = SRWLOCK_INIT;
 static CACHE_ENTRY cache[CACHE_ENTRIES];
 static int cache_next;
 
+static ULONGLONG seconds(void)
+{
+    return GetTickCount64() / 1000;
+}
+
 static void entry_clear(CACHE_ENTRY *e)
 {
     DnsRrFree(e->records);
+    DnsRelease(e->name);
     memset(e, 0, sizeof(*e));
 }
 
-/* a copy of what the cache holds for a name, with the time that went by taken off the ttl values. */
+/* a name that is not there is not there for any type. */
+static BOOL entry_matches(const CACHE_ENTRY *e, const char *name, WORD type)
+{
+    if (!e->name || !DnsNameEqual(e->name, name))
+        return FALSE;
+    return e->type == type || (e->type == DNS_TYPE_ALL && e->status == DNS_ERROR_RCODE_NAME_ERROR);
+}
+
+/* a copy of what the cache holds for a name, every ttl the time that is left. */
 static BOOL cache_get(const char *name, WORD type, DNS_ANSWER *answer)
 {
-    ULONGLONG now = GetTickCount64();
+    ULONGLONG now = seconds();
     BOOL found = FALSE;
     AcquireSRWLockExclusive(&cache_lock);
     for (int i = 0; i < CACHE_ENTRIES && !found; i++) {
         CACHE_ENTRY *e = &cache[i];
-        if (!e->used || e->type != type || !DnsNameEqual(e->name, name))
+        if (!entry_matches(e, name, type))
             continue;
-        if (now >= e->expires) {
+        if (e->expires <= now) {
             entry_clear(e);
             continue;
         }
-        DWORD elapsed = (DWORD)((now - e->stored) / 1000);
         DNS_RR *copy = DnsRrClone(e->records);
         if (e->records && !copy)
             break;
         for (DNS_RR *rr = copy; rr; rr = rr->next)
-            rr->ttl = rr->ttl > elapsed ? rr->ttl - elapsed : 1;
+            rr->ttl = (DWORD)(e->expires - now);
         answer->records = copy;
         answer->status = e->status;
         found = TRUE;
@@ -490,32 +506,55 @@ static BOOL cache_get(const char *name, WORD type, DNS_ANSWER *answer)
     return found;
 }
 
+/* keeps what a lookup found. the answers that say there is nothing are kept for MaxNegativeCacheTtl. */
 static void cache_put(const char *name, WORD type, const DNS_ANSWER *answer)
 {
+    DNS_STATUS status = answer->status;
     DWORD ttl = 0;
-    if (answer->status == ERROR_SUCCESS) {
+    DNS_RR *copy = nullptr;
+    if (status == ERROR_SUCCESS) {
         ttl = MAX_CACHE_TTL;
-        for (DNS_RR *rr = answer->records; rr; rr = rr->next)
-            if (rr->section == DnsSectionAnswer && rr->ttl < ttl)
-                ttl = rr->ttl;
-    } else if (answer->status == DNS_ERROR_RCODE_NAME_ERROR || answer->status == DNS_INFO_NO_RECORDS) {
-        ttl = answer->negative_ttl < MAX_NEGATIVE_TTL ? answer->negative_ttl : MAX_NEGATIVE_TTL;
+        BOOL asked = FALSE;
+        for (DNS_RR *rr = answer->records; rr; rr = rr->next) {
+            ttl = rr->ttl < ttl ? rr->ttl : ttl;
+            asked |= rr->type == type || type == DNS_TYPE_ALL;
+        }
+        if (!asked) {
+            /* aliases alone are kept only when the zone says there is no more. */
+            if (!answer->has_soa)
+                return;
+            status = DNS_INFO_NO_RECORDS;
+            ttl = ttl < MAX_NEGATIVE_TTL ? ttl : MAX_NEGATIVE_TTL;
+        } else {
+            copy = DnsRrClone(answer->records);
+            if (!copy)
+                return;
+            for (DNS_RR *rr = copy; rr; rr = rr->next)
+                rr->ttl = ttl;
+        }
+    } else if (status == DNS_ERROR_RCODE_SERVER_FAILURE || status == DNS_ERROR_RCODE_NAME_ERROR ||
+               status == DNS_INFO_NO_RECORDS || status == DNS_ERROR_RECORD_DOES_NOT_EXIST) {
+        ttl = MAX_NEGATIVE_TTL;
+    } else {
+        return;
     }
-    if (!ttl || strlen(name) >= sizeof(cache[0].name))
+    if (status == DNS_ERROR_RCODE_NAME_ERROR)
+        type = DNS_TYPE_ALL;
+    char *key = ttl ? DnsDuplicate(name) : nullptr;
+    if (!key) {
+        DnsRrFree(copy);
         return;
-    DNS_RR *copy = DnsRrClone(answer->records);
-    if (answer->records && !copy)
-        return;
-    ULONGLONG now = GetTickCount64();
+    }
+    ULONGLONG now = seconds();
     AcquireSRWLockExclusive(&cache_lock);
     CACHE_ENTRY *slot = nullptr;
     for (int i = 0; i < CACHE_ENTRIES; i++) {
         CACHE_ENTRY *e = &cache[i];
-        if (e->used && e->type == type && DnsNameEqual(e->name, name)) {
+        if (e->name && e->type == type && DnsNameEqual(e->name, name)) {
             slot = e;
             break;
         }
-        if (!slot && (!e->used || now >= e->expires))
+        if (!slot && (!e->name || e->expires <= now))
             slot = e;
     }
     if (!slot) {
@@ -523,12 +562,10 @@ static void cache_put(const char *name, WORD type, const DNS_ANSWER *answer)
         cache_next = (cache_next + 1) % CACHE_ENTRIES;
     }
     entry_clear(slot);
-    strcpy(slot->name, name);
+    slot->name = key;
     slot->type = type;
-    slot->used = TRUE;
-    slot->status = answer->status;
-    slot->stored = now;
-    slot->expires = now + (ULONGLONG)ttl * 1000;
+    slot->status = status;
+    slot->expires = now + ttl;
     slot->records = copy;
     ReleaseSRWLockExclusive(&cache_lock);
 }
@@ -538,7 +575,7 @@ void DnsCacheFlush(const char *name)
 {
     AcquireSRWLockExclusive(&cache_lock);
     for (int i = 0; i < CACHE_ENTRIES; i++)
-        if (cache[i].used && (!name || DnsNameEqual(cache[i].name, name)))
+        if (cache[i].name && (!name || DnsNameEqual(cache[i].name, name)))
             entry_clear(&cache[i]);
     ReleaseSRWLockExclusive(&cache_lock);
 }
@@ -572,17 +609,16 @@ static BOOL space(char c)
 }
 
 /* the reverse name of an address, as the hosts file lists it. */
-static BOOL reverse_name(const BYTE *ip, BOOL v6, char *out)
+static void reverse_name(const BYTE *ip, BOOL v6, char *out)
 {
     if (!v6) {
         _snprintf(out, 80, "%u.%u.%u.%u.in-addr.arpa", ip[3], ip[2], ip[1], ip[0]);
-        return TRUE;
+        return;
     }
     char *p = out;
     for (int i = 15; i >= 0; i--)
         p += _snprintf(p, 8, "%x.%x.", ip[i] & 15, ip[i] >> 4);
     strcpy(p, "ip6.arpa");
-    return TRUE;
 }
 
 static void rr_append(DNS_RR ***tail, DNS_RR *rr)
@@ -591,73 +627,128 @@ static void rr_append(DNS_RR ***tail, DNS_RR *rr)
     *tail = &rr->next;
 }
 
-/* the records the hosts file has for a name and a type. */
-static DNS_RR *hosts_lookup(const char *name, WORD type)
+/* names of microsoft that a hosts file cannot take over: the service ignores the entries for them. */
+static BOOL screened_name(const char *name)
 {
+    static const char *const domains[] = {"windowsupdate.microsoft.com", "windowsupdate.com", "microsoftupdate.com",
+                                          "download.microsoft.com", "update.microsoft.com"};
+    static const char *const hosts[] = {"microsoft.com", "www.microsoft.com", "support.microsoft.com",
+                                        "wustats.microsoft.com", "download.microsoft.com",
+                                        "microsoftupdate.microsoft.com", "office.microsoft.com",
+                                        "msdn.microsoft.com", "go.microsoft.com", "msn.com", "www.msn.com",
+                                        "msdn.com", "www.msdn.com", "technet.microsoft.com", "technet.com",
+                                        "www.technet.com", "activation-v2.sls.microsoft.com",
+                                        "validation-v2.sls.microsoft.com"};
+    SIZE_T n = strlen(name);
+    if (n && name[n - 1] == '.')
+        n--;
+    for (int i = 0; i < (int)RTL_NUMBER_OF(domains); i++) {
+        SIZE_T d = strlen(domains[i]);
+        if (n == d && !_strnicmp(name, domains[i], d))
+            return TRUE;
+        if (n > d && name[n - d - 1] == '.' && !_strnicmp(name + n - d, domains[i], d))
+            return TRUE;
+    }
+    for (int i = 0; i < (int)RTL_NUMBER_OF(hosts); i++)
+        if (n == strlen(hosts[i]) && !_strnicmp(name, hosts[i], n))
+            return TRUE;
+    return FALSE;
+}
+
+static DNS_RR *address_record(const char *name, WORD type, DWORD ttl, const BYTE *ip)
+{
+    DNS_RR *rr = DnsRrNew(name, type, ttl, DnsSectionAnswer);
+    if (rr)
+        memcpy(rr->ip, ip, type == DNS_TYPE_A ? 4 : 16);
+    return rr;
+}
+
+/*
+ * what the hosts file says about a name, the way the service loads it: the first name of a line is the host, the
+ * ones after it its aliases, and the host has a record for the address of the line, which never runs out. an alias
+ * is a cname to the host. the address has a ptr record. a host that has an address of one family only is known not
+ * to have one of the other. the result is the status of the answer, or -1 when the file does not know the name.
+ */
+static LONG hosts_lookup(const char *name, WORD type, DNS_RR **records)
+{
+    *records = nullptr;
     char *text = read_hosts();
     if (!text)
-        return nullptr;
-    DNS_RR *head = nullptr, **tail = &head;
+        return -1;
+    DNS_RR **tail = records;
+    BOOL known = FALSE;
+    BOOL address_type = type == DNS_TYPE_A || type == DNS_TYPE_AAAA || type == DNS_TYPE_ALL;
     for (char *line = text; *line;) {
         char *end = line;
         while (*end && *end != '\r' && *end != '\n')
             end++;
-        if (!*end)
-            end = nullptr;
-        char *next = end ? end + 1 : line + strlen(line);
-        if (end)
-            *end = 0;
+        char *next = *end ? end + 1 : end;
+        *end = 0;
         char *hash = strchr(line, '#');
         if (hash)
             *hash = 0;
         char *p = line;
-        while (space(*p))
-            p++;
-        char *address = p;
-        while (*p && !space(*p))
-            p++;
-        if (*p)
-            *p++ = 0;
-        BYTE ip[16];
-        BOOL v6 = strchr(address, ':') != nullptr;
-        BOOL valid = *address && inet_pton(v6 ? AF_INET6 : AF_INET, address, ip) == 1;
-        char reverse[96];
-        if (valid && type == DNS_TYPE_PTR)
-            reverse_name(ip, v6, reverse);
-        while (valid && *p) {
+        char *tokens[10];
+        int count = 0;
+        while (count < 10) {
             while (space(*p))
                 p++;
-            char *host = p;
+            if (!*p)
+                break;
+            tokens[count++] = p;
             while (*p && !space(*p))
                 p++;
             if (*p)
                 *p++ = 0;
-            if (!*host)
-                break;
-            if (type == DNS_TYPE_PTR) {
-                if (DnsNameEqual(reverse, name)) {
-                    DNS_RR *rr = DnsRrNew(name, DNS_TYPE_PTR, HOSTS_TTL, DnsSectionAnswer);
-                    if (rr && (rr->host = DnsDuplicate(host)))
-                        rr_append(&tail, rr);
-                    else
-                        DnsRrFree(rr);
-                    break;
-                }
-                continue;
-            }
-            WORD kind = v6 ? DNS_TYPE_AAAA : DNS_TYPE_A;
-            if ((type != kind && type != DNS_TYPE_ALL) || !DnsNameEqual(host, name))
-                continue;
-            DNS_RR *rr = DnsRrNew(name, kind, HOSTS_TTL, DnsSectionAnswer);
-            if (rr) {
-                memcpy(rr->ip, ip, v6 ? 16 : 4);
-                rr_append(&tail, rr);
-            }
         }
         line = next;
+        BYTE ip[16];
+        BOOL v6 = count >= 2 && strchr(tokens[0], ':') != nullptr;
+        if (count < 2 || inet_pton(v6 ? AF_INET6 : AF_INET, tokens[0], ip) != 1 || screened_name(tokens[1]))
+            continue;
+        const char *host = tokens[1];
+        WORD kind = v6 ? DNS_TYPE_AAAA : DNS_TYPE_A;
+        if (type == DNS_TYPE_PTR) {
+            char reverse[96];
+            reverse_name(ip, v6, reverse);
+            if (DnsNameEqual(reverse, name)) {
+                DNS_RR *rr = DnsRrNew(name, DNS_TYPE_PTR, HOSTS_TTL, DnsSectionAnswer);
+                if (rr && (rr->host = DnsDuplicate(host)))
+                    rr_append(&tail, rr);
+                else
+                    DnsRrFree(rr);
+                known = TRUE;
+            }
+            continue;
+        }
+        if (DnsNameEqual(host, name) && address_type) {
+            known = TRUE;
+            if (type == kind || type == DNS_TYPE_ALL) {
+                DNS_RR *rr = address_record(name, kind, HOSTS_TTL, ip);
+                if (rr)
+                    rr_append(&tail, rr);
+            }
+        }
+        for (int a = 2; a < count && (address_type || type == DNS_TYPE_CNAME); a++) {
+            if (screened_name(tokens[a]) || !DnsNameEqual(tokens[a], name))
+                continue;
+            known = TRUE;
+            DNS_RR *alias = DnsRrNew(name, DNS_TYPE_CNAME, HOSTS_TTL, DnsSectionAnswer);
+            if (alias && (alias->host = DnsDuplicate(host)))
+                rr_append(&tail, alias);
+            else
+                DnsRrFree(alias);
+            if (type != DNS_TYPE_CNAME && (type == kind || type == DNS_TYPE_ALL)) {
+                DNS_RR *rr = address_record(host, kind, HOSTS_TTL, ip);
+                if (rr)
+                    rr_append(&tail, rr);
+            }
+        }
     }
     DnsRelease(text);
-    return head;
+    if (*records)
+        return ERROR_SUCCESS;
+    return known && (type == DNS_TYPE_A || type == DNS_TYPE_AAAA) ? DNS_INFO_NO_RECORDS : -1;
 }
 
 /* ------------------------------------------------------------------ the names of the machine */
@@ -715,14 +806,6 @@ static BOOL is_loopback_reverse(const char *name)
             return FALSE;
     }
     return same_name(p, "127.in-addr.arpa");
-}
-
-static DNS_RR *address_record(const char *name, WORD type, DWORD ttl, const BYTE *ip)
-{
-    DNS_RR *rr = DnsRrNew(name, type, ttl, DnsSectionAnswer);
-    if (rr)
-        memcpy(rr->ip, ip, type == DNS_TYPE_A ? 4 : 16);
-    return rr;
 }
 
 /* what the machine answers for itself: the loopback names, its own name and the loopback addresses reversed. */
@@ -814,17 +897,29 @@ void DnsAnswerFree(DNS_ANSWER *answer)
     memset(answer, 0, sizeof(*answer));
 }
 
-/* one name of the search, from the cache, the hosts file or the servers. */
+/*
+ * one name of the search. the hosts file and the cache answer first, then the machine's own names, and a lookup that
+ * must not use the wire stops there with no record.
+ */
 static DNS_STATUS lookup_candidate(const DNS_CONFIG *config, const char *name, WORD type, ULONGLONG options,
-                                   volatile LONG *cancelled, DNS_ANSWER *answer)
+                                   BOOL own_servers, volatile LONG *cancelled, DNS_ANSWER *answer)
 {
+    if (!(options & DNS_QUERY_NO_HOSTS_FILE)) {
+        DNS_RR *records;
+        LONG status = hosts_lookup(name, type, &records);
+        if (status >= 0) {
+            answer->records = records;
+            return answer->status = status;
+        }
+    }
     if (!(options & DNS_QUERY_BYPASS_CACHE) && cache_get(name, type, answer))
         return answer->status;
     if (options & DNS_QUERY_NO_WIRE_QUERY)
-        return DNS_ERROR_RCODE_NAME_ERROR;
+        return DNS_ERROR_RECORD_DOES_NOT_EXIST;
     DNS_STATUS status = wire_query(config, name, type, options, cancelled, answer);
     answer->status = status;
-    if (!(options & (DNS_QUERY_BYPASS_CACHE | DNS_QUERY_NO_RECURSION)))
+    /* servers a program names are not the machine's, so what they say is not kept. */
+    if (!own_servers)
         cache_put(name, type, answer);
     return status;
 }
@@ -876,12 +971,12 @@ DNS_STATUS DnsLookup(const char *given, WORD type, ULONGLONG options, const DNS_
     if (numeric)
         return DNS_ERROR_NUMERIC_NAME;
 
-    if (!(options & DNS_QUERY_NO_HOSTS_FILE) && (type == DNS_TYPE_A || type == DNS_TYPE_AAAA || type == DNS_TYPE_ALL ||
-                                                 type == DNS_TYPE_PTR)) {
-        DNS_RR *found = hosts_lookup(text, type);
-        if (found) {
+    if (!(options & DNS_QUERY_NO_HOSTS_FILE)) {
+        DNS_RR *found;
+        LONG hosts = hosts_lookup(text, type, &found);
+        if (hosts >= 0) {
             answer->records = found;
-            return answer->status = ERROR_SUCCESS;
+            return answer->status = hosts;
         }
     }
 
@@ -912,7 +1007,7 @@ DNS_STATUS DnsLookup(const char *given, WORD type, ULONGLONG options, const DNS_
     BOOL empty = FALSE, failed = FALSE;
     for (int i = 0; i < count && !failed; i++) {
         DNS_ANSWER got = {};
-        status = lookup_candidate(config, candidates[i], type, options, cancelled, &got);
+        status = lookup_candidate(config, candidates[i], type, options, server_count > 0, cancelled, &got);
         if (status == ERROR_SUCCESS) {
             DnsAnswerFree(answer);
             *answer = got;

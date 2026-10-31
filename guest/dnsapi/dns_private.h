@@ -149,6 +149,7 @@ enum { DnsSectionQuestion, DnsSectionAnswer, DnsSectionAuthority, DnsSectionAddi
 #define DNS_ERROR_INVALID_NAME_CHAR 9560L
 #define DNS_ERROR_NUMERIC_NAME 9561L
 #define DNS_ERROR_NO_DNS_SERVERS 9852L
+#define DNS_ERROR_RECORD_DOES_NOT_EXIST 9701L
 
 /* ------------------------------------------------------------------ resolved records */
 
@@ -175,6 +176,7 @@ typedef struct {
     DNS_RR *records;
     DNS_STATUS status;
     DWORD negative_ttl;
+    BOOL has_soa;
     BYTE *message;
     DWORD message_length;
 } DNS_ANSWER;
