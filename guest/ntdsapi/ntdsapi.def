@@ -1,5 +1,29 @@
 ; the exports of ntdsapi.dll of windows with their ordinals, less the ones that are not here yet.
 LIBRARY ntdsapi.dll
 EXPORTS
+    DsBindA @4
+    DsBindW @9
+    DsBindWithCredA @10
+    DsBindWithCredW @11
+    DsBindWithSpnA @12
+    DsBindWithSpnExA @13
+    DsBindWithSpnExW @14
+    DsBindWithSpnW @16
+    DsClientMakeSpnForTargetServerA @18
+    DsClientMakeSpnForTargetServerW @19
+    DsCrackNamesA @20
+    DsCrackNamesW @21
+    DsFreeNameResultA @36
+    DsFreeNameResultW @37
+    DsFreeSpnArrayA @45
+    DsFreeSpnArrayW @46
+    DsGetSpnA @54
+    DsGetSpnW @55
     DsMakeSpnA @79
     DsMakeSpnW @80
+    DsServerRegisterSpnA @114
+    DsServerRegisterSpnW @115
+    DsUnBindA @116
+    DsUnBindW @117
+    DsWriteAccountSpnA @121
+    DsWriteAccountSpnW @122

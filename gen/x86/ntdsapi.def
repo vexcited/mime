@@ -1,4 +1,28 @@
 LIBRARY ntdsapi.dll
 EXPORTS
+    DsBindA=_DsBindA@12 @4
+    DsBindW=_DsBindW@12 @9
+    DsBindWithCredA=_DsBindWithCredA@16 @10
+    DsBindWithCredW=_DsBindWithCredW@16 @11
+    DsBindWithSpnA=_DsBindWithSpnA@20 @12
+    DsBindWithSpnExA=_DsBindWithSpnExA@24 @13
+    DsBindWithSpnExW=_DsBindWithSpnExW@24 @14
+    DsBindWithSpnW=_DsBindWithSpnW@20 @16
+    DsClientMakeSpnForTargetServerA=_DsClientMakeSpnForTargetServerA@16 @18
+    DsClientMakeSpnForTargetServerW=_DsClientMakeSpnForTargetServerW@16 @19
+    DsCrackNamesA=_DsCrackNamesA@28 @20
+    DsCrackNamesW=_DsCrackNamesW@28 @21
+    DsFreeNameResultA=_DsFreeNameResultA@4 @36
+    DsFreeNameResultW=_DsFreeNameResultW@4 @37
+    DsFreeSpnArrayA=_DsFreeSpnArrayA@8 @45
+    DsFreeSpnArrayW=_DsFreeSpnArrayW@8 @46
+    DsGetSpnA=_DsGetSpnA@36 @54
+    DsGetSpnW=_DsGetSpnW@36 @55
     DsMakeSpnA=_DsMakeSpnA@28 @79
     DsMakeSpnW=_DsMakeSpnW@28 @80
+    DsServerRegisterSpnA=_DsServerRegisterSpnA@12 @114
+    DsServerRegisterSpnW=_DsServerRegisterSpnW@12 @115
+    DsUnBindA=_DsUnBindA@4 @116
+    DsUnBindW=_DsUnBindW@4 @117
+    DsWriteAccountSpnA=_DsWriteAccountSpnA@20 @121
+    DsWriteAccountSpnW=_DsWriteAccountSpnW@20 @122

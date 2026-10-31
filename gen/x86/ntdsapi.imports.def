@@ -1,4 +1,28 @@
 LIBRARY ntdsapi.dll
 EXPORTS
+    DsBindA@12 @4
+    DsBindW@12 @9
+    DsBindWithCredA@16 @10
+    DsBindWithCredW@16 @11
+    DsBindWithSpnA@20 @12
+    DsBindWithSpnExA@24 @13
+    DsBindWithSpnExW@24 @14
+    DsBindWithSpnW@20 @16
+    DsClientMakeSpnForTargetServerA@16 @18
+    DsClientMakeSpnForTargetServerW@16 @19
+    DsCrackNamesA@28 @20
+    DsCrackNamesW@28 @21
+    DsFreeNameResultA@4 @36
+    DsFreeNameResultW@4 @37
+    DsFreeSpnArrayA@8 @45
+    DsFreeSpnArrayW@8 @46
+    DsGetSpnA@36 @54
+    DsGetSpnW@36 @55
     DsMakeSpnA@28 @79
     DsMakeSpnW@28 @80
+    DsServerRegisterSpnA@12 @114
+    DsServerRegisterSpnW@12 @115
+    DsUnBindA@4 @116
+    DsUnBindW@4 @117
+    DsWriteAccountSpnA@20 @121
+    DsWriteAccountSpnW@20 @122
