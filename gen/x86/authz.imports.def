@@ -8,3 +8,10 @@ EXPORTS
     AuthzInitializeContextFromSid@32 @15
     AuthzInitializeContextFromToken@32 @16
     AuthzInitializeResourceManager@24 @21
+    AuthzEnumerateSecurityEventSources@16 @5
+    AuthzInstallSecurityEventSource@8 @23
+    AuthzRegisterSecurityEventSource@12 @29
+    AuthzReportSecurityEvent @30
+    AuthzReportSecurityEventFromParams@20 @31
+    AuthzUninstallSecurityEventSource@8 @34
+    AuthzUnregisterSecurityEventSource@8 @36

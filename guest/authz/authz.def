@@ -9,3 +9,10 @@ EXPORTS
     AuthzFreeHandle @10
     AuthzAccessCheck @1
     AuthzGetInformationFromContext @12
+    AuthzEnumerateSecurityEventSources @5
+    AuthzInstallSecurityEventSource @23
+    AuthzRegisterSecurityEventSource @29
+    AuthzReportSecurityEvent @30
+    AuthzReportSecurityEventFromParams @31
+    AuthzUninstallSecurityEventSource @34
+    AuthzUnregisterSecurityEventSource @36
