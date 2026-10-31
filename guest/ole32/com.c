@@ -55,7 +55,7 @@ static void leave_apartment(OLE_THREAD *t)
         OleContextMtaUsers(-1);
     } else
         InterlockedCompareExchange((LONG volatile *)&g_main_sta, 0, (LONG)GetCurrentThreadId());
-    t->ApartmentFlags &= ~(OLE_TLS_LOCALTID | OLE_TLS_APARTMENTTHREADED | OLE_TLS_MULTITHREADED);
+    t->ApartmentFlags &= ~(OLE_TLS_LOCALTID | OLE_TLS_DISABLE_OLE1DDE | OLE_TLS_APARTMENTTHREADED | OLE_TLS_MULTITHREADED);
     t->ApartmentId = 0;
 }
 
@@ -100,7 +100,15 @@ WINOLEAPI HRESULT WINAPI CoInitializeEx(void *reserved, DWORD flags)
     }
     t->Sta = sta;
     t->ComInits = 1;
-    t->ApartmentFlags |= OLE_TLS_LOCALTID | (sta ? OLE_TLS_APARTMENTTHREADED : OLE_TLS_MULTITHREADED);
+    /* windows marks every multithreaded apartment thread with both 0x100 and 0x40, Chromium tells them apart so. */
+    t->ApartmentFlags |= OLE_TLS_LOCALTID;
+    if (!sta)
+        t->ApartmentFlags |= OLE_TLS_MULTITHREADED | OLE_TLS_DISABLE_OLE1DDE;
+    else {
+        t->ApartmentFlags |= OLE_TLS_APARTMENTTHREADED;
+        if (flags & COINIT_DISABLE_OLE1DDE)
+            t->ApartmentFlags |= OLE_TLS_DISABLE_OLE1DDE;
+    }
     t->ApartmentId = GetCurrentThreadId();
     if (sta)
         InterlockedCompareExchange((LONG volatile *)&g_main_sta, (LONG)GetCurrentThreadId(), 0);

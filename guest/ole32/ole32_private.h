@@ -23,13 +23,14 @@ WINUSERAPI DWORD WINAPI MsgWaitForMultipleObjects(DWORD count, const HANDLE *han
                                                   DWORD milliseconds, DWORD wake_mask);
 
 #define OLE_TLS_LOCALTID 0x01
+#define OLE_TLS_DISABLE_OLE1DDE 0x40
 #define OLE_TLS_APARTMENTTHREADED 0x80
 #define OLE_TLS_MULTITHREADED 0x100
 
 /* per thread COM and ole state. */
 typedef struct _OLE_THREAD {
     /* the first fields mirror the block windows keeps in the TEB's OLE slot. programs such as Chromium read the
-       apartment flags there: 0x80 single threaded, 0x100 multithreaded. */
+       apartment flags there: 0x80 single threaded, 0x140 multithreaded. */
     PVOID ThreadBase, SmAllocator;
     DWORD ApartmentId, ApartmentFlags;
     LONG TlsMapIndex;
