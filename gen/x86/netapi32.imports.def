@@ -16,10 +16,18 @@ EXPORTS
     NetGroupAddUser@12
     NetGroupDelUser@12
     NetGroupGetUsers@32
+    NetLocalGroupAdd@16
+    NetLocalGroupAddMember@12
     NetLocalGroupAddMembers@20
+    NetLocalGroupDel@8
+    NetLocalGroupDelMember@12
     NetLocalGroupDelMembers@20
     NetLocalGroupEnum@28
+    NetLocalGroupGetInfo@16
     NetLocalGroupGetMembers@32
+    NetLocalGroupSetInfo@20
+    NetLocalGroupSetMembers@20
+    NetServerGetInfo@12
     NetShareAdd@16
     NetShareDel@12
     NetShareEnum@28
@@ -32,6 +40,9 @@ EXPORTS
     NetUserGetGroups@28
     NetUserGetInfo@16
     NetUserGetLocalGroups@32
+    NetUserModalsGet@12
+    NetUserModalsSet@16
+    NetUserSetGroups@20
     NetUserSetInfo@20
     NetValidatePasswordPolicy@20
     NetValidatePasswordPolicyFree@4

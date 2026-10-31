@@ -136,6 +136,73 @@ NETAPI NET_API_STATUS WINAPI NetShareEnum(LMSTR server, DWORD level, LPBYTE *buf
     return local_server(server) ? NERR_ServerNotStarted : ERROR_BAD_NETPATH;
 }
 
+/* the server service answers for the machine, and it is not running. */
+NETAPI NET_API_STATUS WINAPI NetServerGetInfo(LMSTR server, DWORD level, LPBYTE *buffer)
+{
+    switch (level) {
+    case 100:
+    case 101:
+    case 102:
+    case 402:
+    case 403:
+    case 502:
+    case 503:
+    case 599:
+    case 1005:
+    case 1010:
+    case 1016:
+    case 1017:
+    case 1018:
+    case 1107:
+    case 1501:
+    case 1502:
+    case 1503:
+    case 1506:
+    case 1509:
+    case 1510:
+    case 1511:
+    case 1512:
+    case 1513:
+    case 1514:
+    case 1515:
+    case 1516:
+    case 1518:
+    case 1523:
+    case 1528:
+    case 1529:
+    case 1530:
+    case 1533:
+    case 1534:
+    case 1535:
+    case 1536:
+    case 1538:
+    case 1539:
+    case 1540:
+    case 1541:
+    case 1542:
+    case 1543:
+    case 1544:
+    case 1545:
+    case 1546:
+    case 1547:
+    case 1548:
+    case 1549:
+    case 1550:
+    case 1552:
+    case 1553:
+    case 1554:
+    case 1555:
+    case 1556:
+        break;
+    default:
+        return ERROR_INVALID_LEVEL;
+    }
+    if (!buffer)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    return local_server(server) ? NERR_ServerNotStarted : ERROR_BAD_NETPATH;
+}
+
 NETAPI NET_API_STATUS WINAPI NetShareAdd(LMSTR server, DWORD level, LPBYTE buffer, LPDWORD parameter)
 {
     if (parameter)
@@ -147,15 +214,199 @@ NETAPI NET_API_STATUS WINAPI NetShareAdd(LMSTR server, DWORD level, LPBYTE buffe
     return local_server(server) ? NERR_ServerNotStarted : ERROR_BAD_NETPATH;
 }
 
-NETAPI NET_API_STATUS WINAPI NetValidatePasswordPolicy(LPCWSTR server, LPVOID qualifier, int type,
-                                                       LPVOID input, LPVOID *output)
+/*
+ * the validation of a password against the account policy of the machine, which windows asks the security accounts
+ * manager for. a standalone machine's policy is the default of a client: no minimum length, no complexity rule, no
+ * history, no lockout, and passwords last 42 days.
+ */
+#define NERR_PasswordExpired 2242
+#define NERR_PasswordHistConflict 2244
+#define NERR_PasswordTooShort 2245
+#define NERR_PasswordTooRecent 2246
+#define NERR_PasswordTooLong 2202
+#define NERR_PasswordNotComplexEnough 2203
+#define NERR_PasswordMustChange 2701
+#define NERR_AccountLockedOut 2702
+
+#define NET_VALIDATE_PASSWORD_LAST_SET 0x1
+#define NET_VALIDATE_BAD_PASSWORD_TIME 0x2
+#define NET_VALIDATE_LOCKOUT_TIME 0x4
+#define NET_VALIDATE_BAD_PASSWORD_COUNT 0x8
+#define NET_VALIDATE_PASSWORD_HISTORY_LENGTH 0x10
+#define NET_VALIDATE_PASSWORD_HISTORY 0x20
+
+#define POLICY_MIN_LENGTH 0
+#define POLICY_COMPLEX FALSE
+#define POLICY_MAX_AGE_100NS (42LL * 24 * 3600 * 10000000LL)
+#define POLICY_MIN_AGE_100NS 0LL
+#define POLICY_LOCKOUT_THRESHOLD 0
+#define PASSWORD_LENGTH_LIMIT 256
+
+typedef struct PW_HASH {
+    ULONG Length;
+    LPBYTE Hash;
+} PW_HASH;
+
+typedef struct PW_PERSISTED {
+    ULONG PresentFields;
+    FILETIME PasswordLastSet, BadPasswordTime, LockoutTime;
+    ULONG BadPasswordCount;
+    ULONG PasswordHistoryLength;
+    PW_HASH *PasswordHistory;
+} PW_PERSISTED;
+
+typedef struct PW_AUTH {
+    PW_PERSISTED Persisted;
+    BOOLEAN PasswordMatched;
+} PW_AUTH;
+
+typedef struct PW_CHANGE {
+    PW_PERSISTED Persisted;
+    LPWSTR ClearPassword;
+    LPWSTR UserAccountName;
+    PW_HASH HashedPassword;
+    BOOLEAN PasswordMatch;
+} PW_CHANGE;
+
+typedef struct PW_RESET {
+    PW_PERSISTED Persisted;
+    LPWSTR ClearPassword;
+    LPWSTR UserAccountName;
+    PW_HASH HashedPassword;
+    BOOLEAN PasswordMustChangeAtNextLogon;
+    BOOLEAN ClearLockout;
+} PW_RESET;
+
+typedef struct PW_OUTPUT {
+    PW_PERSISTED Persisted;
+    NET_API_STATUS ValidationStatus;
+} PW_OUTPUT;
+
+static LONGLONG file_time_value(FILETIME t)
+{
+    return (LONGLONG)t.dwHighDateTime << 32 | t.dwLowDateTime;
+}
+
+/* the classes of characters a complex password draws on: upper, lower, digit and the rest. */
+static int character_classes(const WCHAR *p)
+{
+    int upper = 0, lower = 0, digit = 0, other = 0;
+    for (; *p; p++) {
+        if (*p >= 'A' && *p <= 'Z')
+            upper = 1;
+        else if (*p >= 'a' && *p <= 'z')
+            lower = 1;
+        else if (*p >= '0' && *p <= '9')
+            digit = 1;
+        else
+            other = 1;
+    }
+    return upper + lower + digit + other;
+}
+
+static BOOL contains_name(const WCHAR *password, const WCHAR *name)
+{
+    if (!name || wcslen(name) < 3)
+        return FALSE;
+    SIZE_T n = wcslen(name);
+    for (const WCHAR *p = password; *p; p++)
+        if (!_wcsnicmp(p, name, n))
+            return TRUE;
+    return FALSE;
+}
+
+static NET_API_STATUS check_new_password(const WCHAR *password, const WCHAR *account)
+{
+    SIZE_T length = password ? wcslen(password) : 0;
+    if (length > PASSWORD_LENGTH_LIMIT)
+        return NERR_PasswordTooLong;
+    if (length < POLICY_MIN_LENGTH)
+        return NERR_PasswordTooShort;
+    if (POLICY_COMPLEX && (length < 6 || character_classes(password) < 3 || contains_name(password, account)))
+        return NERR_PasswordNotComplexEnough;
+    return NERR_Success;
+}
+
+NETAPI NET_API_STATUS WINAPI NetValidatePasswordPolicy(LPCWSTR server, LPVOID qualifier, int type, LPVOID input, LPVOID *output)
 {
     if (!output)
         return ERROR_INVALID_PARAMETER;
     *output = nullptr;
     if (qualifier || type < 1 || type > 3 || !input)
         return ERROR_INVALID_PARAMETER;
-    return local_server(server) ? ERROR_NOT_SUPPORTED : ERROR_BAD_NETPATH;
+    if (!local_server(server))
+        return ERROR_BAD_NETPATH;
+    PW_OUTPUT *out = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, sizeof(PW_OUTPUT));
+    if (!out)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    PW_PERSISTED *fields = (PW_PERSISTED *)input;
+    out->Persisted = *fields;
+    out->Persisted.PasswordHistory = nullptr;
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    ULONG present = fields->PresentFields;
+    NET_API_STATUS status = NERR_Success;
+    /* an account is locked out until the lockout time passes, and a password that is too old must change. */
+    BOOL locked = (present & NET_VALIDATE_LOCKOUT_TIME) && file_time_value(fields->LockoutTime) && POLICY_LOCKOUT_THRESHOLD &&
+                  fields->BadPasswordCount >= POLICY_LOCKOUT_THRESHOLD;
+    BOOL expired = (present & NET_VALIDATE_PASSWORD_LAST_SET) && file_time_value(fields->PasswordLastSet) &&
+                   file_time_value(now) - file_time_value(fields->PasswordLastSet) > POLICY_MAX_AGE_100NS;
+    if (type == 1) {
+        PW_AUTH *auth = (PW_AUTH *)input;
+        if (locked) {
+            status = NERR_AccountLockedOut;
+        } else if (!auth->PasswordMatched) {
+            out->Persisted.BadPasswordCount = fields->BadPasswordCount + 1;
+            out->Persisted.BadPasswordTime = now;
+            out->Persisted.PresentFields |= NET_VALIDATE_BAD_PASSWORD_TIME | NET_VALIDATE_BAD_PASSWORD_COUNT;
+            if (POLICY_LOCKOUT_THRESHOLD && out->Persisted.BadPasswordCount >= POLICY_LOCKOUT_THRESHOLD) {
+                out->Persisted.LockoutTime = now;
+                out->Persisted.PresentFields |= NET_VALIDATE_LOCKOUT_TIME;
+            }
+        } else if (expired) {
+            status = NERR_PasswordMustChange;
+        } else {
+            out->Persisted.BadPasswordCount = 0;
+            out->Persisted.PresentFields |= NET_VALIDATE_BAD_PASSWORD_COUNT;
+        }
+    } else if (type == 2) {
+        PW_CHANGE *change = (PW_CHANGE *)input;
+        if (locked) {
+            status = NERR_AccountLockedOut;
+        } else if (!change->PasswordMatch) {
+            out->Persisted.BadPasswordCount = fields->BadPasswordCount + 1;
+            out->Persisted.BadPasswordTime = now;
+            out->Persisted.PresentFields |= NET_VALIDATE_BAD_PASSWORD_TIME | NET_VALIDATE_BAD_PASSWORD_COUNT;
+            status = ERROR_INVALID_PASSWORD;
+        } else if ((present & NET_VALIDATE_PASSWORD_LAST_SET) && file_time_value(fields->PasswordLastSet) &&
+                   file_time_value(now) - file_time_value(fields->PasswordLastSet) < POLICY_MIN_AGE_100NS) {
+            status = NERR_PasswordTooRecent;
+        } else {
+            status = check_new_password(change->ClearPassword, change->UserAccountName);
+        }
+        if (status == NERR_Success) {
+            out->Persisted.PasswordLastSet = now;
+            out->Persisted.BadPasswordCount = 0;
+            out->Persisted.PresentFields |= NET_VALIDATE_PASSWORD_LAST_SET | NET_VALIDATE_BAD_PASSWORD_COUNT;
+        }
+    } else {
+        PW_RESET *reset = (PW_RESET *)input;
+        status = check_new_password(reset->ClearPassword, reset->UserAccountName);
+        if (status == NERR_Success) {
+            out->Persisted.PasswordLastSet = now;
+            out->Persisted.PresentFields |= NET_VALIDATE_PASSWORD_LAST_SET;
+            if (reset->ClearLockout) {
+                memset(&out->Persisted.LockoutTime, 0, sizeof(FILETIME));
+                out->Persisted.BadPasswordCount = 0;
+                out->Persisted.PresentFields |= NET_VALIDATE_LOCKOUT_TIME | NET_VALIDATE_BAD_PASSWORD_COUNT;
+            }
+            if (reset->PasswordMustChangeAtNextLogon)
+                memset(&out->Persisted.PasswordLastSet, 0, sizeof(FILETIME));
+        }
+    }
+    out->ValidationStatus = status;
+    *output = out;
+    return NERR_Success;
 }
 
 NETAPI NET_API_STATUS WINAPI NetValidatePasswordPolicyFree(LPVOID *output)

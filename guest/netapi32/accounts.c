@@ -228,6 +228,181 @@ NETAPI NET_API_STATUS WINAPI NetLocalGroupEnum(LMCSTR server, DWORD level, LPBYT
     return name_list(local_groups, RTL_NUMBER_OF(local_groups), level, TRUE, buffer, entries, total);
 }
 
+/* local groups by name, the account policy and the other calls of the account database that Mime refuses. */
+static BOOL known_group(LMCSTR name, DWORD *index)
+{
+    for (DWORD i = 0; name && i < RTL_NUMBER_OF(local_groups); i++) {
+        if (!_wcsicmp(name, local_groups[i].Name)) {
+            if (index)
+                *index = i;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+#define NERR_GroupExists 2223
+#define NERR_SpeGroupOp 2234
+#define ERROR_NO_SUCH_ALIAS_CODE 1376
+
+NETAPI NET_API_STATUS WINAPI NetLocalGroupAdd(LMCSTR server, DWORD level, LPBYTE buffer, LPDWORD parameter)
+{
+    if (parameter)
+        *parameter = 0;
+    if (level != 0 && level != 1)
+        return ERROR_INVALID_LEVEL;
+    if (!buffer)
+        return ERROR_INVALID_PARAMETER;
+    if (!local_server(server))
+        return ERROR_BAD_NETPATH;
+    return known_group(*(LMCSTR *)buffer, nullptr) ? NERR_GroupExists : refuse(server);
+}
+
+NETAPI NET_API_STATUS WINAPI NetLocalGroupDel(LMCSTR server, LMCSTR group)
+{
+    if (!group)
+        return ERROR_INVALID_PARAMETER;
+    if (!local_server(server))
+        return ERROR_BAD_NETPATH;
+    return known_group(group, nullptr) ? NERR_SpeGroupOp : NERR_GroupNotFound;
+}
+
+NETAPI NET_API_STATUS WINAPI NetLocalGroupGetInfo(LMCSTR server, LMCSTR group, DWORD level, LPBYTE *buffer)
+{
+    if (!buffer || !group)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    if (level != 0 && level != 1 && level != 1002)
+        return ERROR_INVALID_LEVEL;
+    if (!local_server(server))
+        return ERROR_BAD_NETPATH;
+    DWORD index;
+    if (!known_group(group, &index))
+        return NERR_GroupNotFound;
+    LPBYTE list;
+    DWORD entries, total;
+    NET_API_STATUS status = name_list(&local_groups[index], 1, level == 1002 ? 1 : level, TRUE, &list, &entries, &total);
+    if (status)
+        return status;
+    if (level == 1002) {
+        /* level 1002 is the comment alone. */
+        *(PVOID *)list = ((PVOID *)list)[1];
+    }
+    *buffer = list;
+    return NERR_Success;
+}
+
+NETAPI NET_API_STATUS WINAPI NetLocalGroupSetInfo(LMCSTR server, LMCSTR group, DWORD level, LPBYTE buffer, LPDWORD parameter)
+{
+    if (parameter)
+        *parameter = 0;
+    if (!group || !buffer)
+        return ERROR_INVALID_PARAMETER;
+    if (level != 0 && level != 1 && level != 1002)
+        return ERROR_INVALID_LEVEL;
+    if (!local_server(server))
+        return ERROR_BAD_NETPATH;
+    return known_group(group, nullptr) ? refuse(server) : NERR_GroupNotFound;
+}
+
+NETAPI NET_API_STATUS WINAPI NetLocalGroupAddMember(LMCSTR server, LMCSTR group, PVOID sid)
+{
+    if (!group || !sid)
+        return ERROR_INVALID_PARAMETER;
+    if (!local_server(server))
+        return ERROR_BAD_NETPATH;
+    return known_group(group, nullptr) ? refuse(server) : ERROR_NO_SUCH_ALIAS_CODE;
+}
+
+NETAPI NET_API_STATUS WINAPI NetLocalGroupDelMember(LMCSTR server, LMCSTR group, PVOID sid)
+{
+    return NetLocalGroupAddMember(server, group, sid);
+}
+
+NETAPI NET_API_STATUS WINAPI NetLocalGroupSetMembers(LMCSTR server, LMCSTR group, DWORD level, LPBYTE buffer, DWORD count)
+{
+    if (!group || (!buffer && count))
+        return ERROR_INVALID_PARAMETER;
+    if (level > 3)
+        return ERROR_INVALID_LEVEL;
+    if (!local_server(server))
+        return ERROR_BAD_NETPATH;
+    return known_group(group, nullptr) ? refuse(server) : ERROR_NO_SUCH_ALIAS_CODE;
+}
+
+/* the policy of the accounts, which is the default of a client. */
+typedef struct USER_MODALS_0 {
+    DWORD MinPasswordLength, MaxPasswordAge, MinPasswordAge, ForceLogoff, PasswordHistoryLength;
+} USER_MODALS_0;
+
+typedef struct USER_MODALS_3 {
+    DWORD LockoutDuration, LockoutObservationWindow, LockoutThreshold;
+} USER_MODALS_3;
+
+NETAPI NET_API_STATUS WINAPI NetUserModalsGet(LMCSTR server, DWORD level, LPBYTE *buffer)
+{
+    if (!buffer)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    if (!local_server(server))
+        return ERROR_BAD_NETPATH;
+    switch (level) {
+    case 0: {
+        USER_MODALS_0 *info;
+        NET_API_STATUS status = NetApiBufferAllocate(sizeof(*info), (LPVOID *)&info);
+        if (status)
+            return status;
+        /* no minimum length, passwords last 42 days, there is no history and no forced logoff. */
+        *info = (USER_MODALS_0){0, 42 * 24 * 3600, 0, 0xFFFFFFFF, 0};
+        *buffer = (LPBYTE)info;
+        return NERR_Success;
+    }
+    case 3: {
+        USER_MODALS_3 *info;
+        NET_API_STATUS status = NetApiBufferAllocate(sizeof(*info), (LPVOID *)&info);
+        if (status)
+            return status;
+        *info = (USER_MODALS_3){30 * 60, 30 * 60, 0};
+        *buffer = (LPBYTE)info;
+        return NERR_Success;
+    }
+    case 1:
+    case 2:
+    case 1001:
+    case 1002:
+    case 1003:
+    case 1004:
+    case 1005:
+    case 1006:
+    case 1007:
+    case 1008:
+    case 1009:
+    case 1010:
+    case 1011:
+        return ERROR_NOT_SUPPORTED;
+    default:
+        return ERROR_INVALID_LEVEL;
+    }
+}
+
+NETAPI NET_API_STATUS WINAPI NetUserModalsSet(LMCSTR server, DWORD level, LPBYTE buffer, LPDWORD parameter)
+{
+    if (parameter)
+        *parameter = 0;
+    if (!buffer)
+        return ERROR_INVALID_PARAMETER;
+    return refuse(server);
+}
+
+NETAPI NET_API_STATUS WINAPI NetUserSetGroups(LMCSTR server, LMCSTR user, DWORD level, LPBYTE buffer, DWORD count)
+{
+    if (!user || (!buffer && count))
+        return ERROR_INVALID_PARAMETER;
+    if (level != 0 && level != 1)
+        return ERROR_INVALID_LEVEL;
+    return refuse(server);
+}
+
 /* the only global group is None, and the account is in it. */
 NETAPI NET_API_STATUS WINAPI NetGroupGetUsers(LMCSTR server, LMCSTR group, DWORD level, LPBYTE *buffer, DWORD preferred,
                                               LPDWORD entries, LPDWORD total, PDWORD_PTR resume)
