@@ -107,6 +107,8 @@ static DWORD desired_access(SE_OBJECT_TYPE type, OPEN_TYPE open, BOOL extras, DW
 
 /* ---------------------------------------------------------------- objects */
 
+static void *service_function(const char *name);
+
 static void obj_close(OBJ *o)
 {
     if (!o)
@@ -119,6 +121,10 @@ static void obj_close(OBJ *o)
                 close_station(o->Handle);
         } else if (is_registry(o->Type)) {
             RegCloseKey(o->Handle);
+        } else if (o->Type == SE_SERVICE) {
+            BOOL(WINAPI * close_service)(HANDLE) = service_function("CloseServiceHandle");
+            if (close_service)
+                close_service(o->Handle);
         } else {
             CloseHandle(o->Handle);
         }
@@ -279,18 +285,35 @@ static DWORD open_window_name(PCWSTR name, DWORD access, OBJ **out)
     return ERROR_SUCCESS;
 }
 
-/* services belong to the service control manager: whatever it answers is the result. */
-static DWORD open_service_name(PCWSTR name, DWORD access, OBJ **out)
+/* services belong to the service control manager, which answers the calls on a handle of its own. */
+static void *service_function(const char *name)
 {
     HMODULE self = GetModuleHandleW(L"advapi32.dll");
-    HANDLE(WINAPI * open_manager)(PCWSTR, PCWSTR, DWORD) =
-        self ? (HANDLE(WINAPI *)(PCWSTR, PCWSTR, DWORD))GetProcAddress(self, "OpenSCManagerW") : nullptr;
-    if (!open_manager)
+    return self ? (void *)GetProcAddress(self, name) : nullptr;
+}
+
+static DWORD open_service_name(PCWSTR name, DWORD access, OBJ **out)
+{
+    HANDLE(WINAPI * open_manager)(PCWSTR, PCWSTR, DWORD) = service_function("OpenSCManagerW");
+    HANDLE(WINAPI * open_service)(HANDLE, PCWSTR, DWORD) = service_function("OpenServiceW");
+    BOOL(WINAPI * close_service)(HANDLE) = service_function("CloseServiceHandle");
+    if (!open_manager || !open_service || !close_service)
         return ERROR_CALL_NOT_IMPLEMENTED;
     HANDLE manager = open_manager(nullptr, nullptr, 1 /* SC_MANAGER_CONNECT */);
     if (!manager)
         return GetLastError();
-    return ERROR_SERVICE_DOES_NOT_EXIST;
+    HANDLE service = open_service(manager, name, access);
+    DWORD error = service ? ERROR_SUCCESS : GetLastError();
+    close_service(manager);
+    if (error)
+        return error;
+    OBJ *o = obj_new(SE_SERVICE, service, TRUE, name);
+    if (!o) {
+        close_service(service);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    *out = o;
+    return ERROR_SUCCESS;
 }
 
 static DWORD obj_open_name(SE_OBJECT_TYPE type, PCWSTR name, DWORD access, OBJ **out)
@@ -416,6 +439,23 @@ static DWORD obj_get(OBJ *o, DWORD info, BYTE **sd)
         *sd = block;
         return ERROR_SUCCESS;
     }
+    if (o->Type == SE_SERVICE) {
+        BOOL(WINAPI * query)(HANDLE, DWORD, PVOID, DWORD, LPDWORD) = service_function("QueryServiceObjectSecurity");
+        if (!query)
+            return ERROR_CALL_NOT_IMPLEMENTED;
+        if (query(o->Handle, info, nullptr, 0, &needed) || GetLastError() != ERROR_INSUFFICIENT_BUFFER)
+            return GetLastError();
+        BYTE *block = LocalAlloc(LMEM_FIXED, needed);
+        if (!block)
+            return ERROR_NOT_ENOUGH_MEMORY;
+        if (!query(o->Handle, info, block, needed, &needed)) {
+            error = GetLastError();
+            LocalFree(block);
+            return error;
+        }
+        *sd = block;
+        return ERROR_SUCCESS;
+    }
     /* files, keys and kernel objects go through the kernel, with room for most descriptors on the first try. */
     ULONG room = 1024;
     BYTE *block = LocalAlloc(LMEM_FIXED, room);
@@ -446,6 +486,13 @@ static DWORD obj_set(OBJ *o, DWORD info, PVOID sd)
         if (!set)
             return 50;
         return set(o->Handle, &info, sd) ? ERROR_SUCCESS : GetLastError();
+    }
+    if (o->Type == SE_SERVICE) {
+        BOOL(WINAPI * set)(HANDLE, DWORD, PVOID) = service_function("SetServiceObjectSecurity");
+        if (!set)
+            return ERROR_CALL_NOT_IMPLEMENTED;
+        /* the manager knows the parts, not the protection flags that ride on the same word. */
+        return set(o->Handle, info & 0xFF, sd) ? ERROR_SUCCESS : GetLastError();
     }
     NTSTATUS status = NtSetSecurityObject(o->Handle, info, sd);
     return NT_SUCCESS(status) ? ERROR_SUCCESS : RtlNtStatusToDosError(status);
