@@ -79,6 +79,10 @@ EXPORTS
     SetupInstallFilesFromInfSectionW@24
     SetupInstallFromInfSectionA@44
     SetupInstallFromInfSectionW@44
+    SetupInstallServicesFromInfSectionA@12
+    SetupInstallServicesFromInfSectionExA@28
+    SetupInstallServicesFromInfSectionExW@28
+    SetupInstallServicesFromInfSectionW@12
     SetupIterateCabinetA@16
     SetupIterateCabinetW@16
     SetupOpenAppendInfFileA@12

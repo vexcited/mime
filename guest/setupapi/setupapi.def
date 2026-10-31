@@ -91,6 +91,10 @@ EXPORTS
     SetupInstallFromInfSectionA
     SetupInstallFilesFromInfSectionW
     SetupInstallFilesFromInfSectionA
+    SetupInstallServicesFromInfSectionW
+    SetupInstallServicesFromInfSectionA
+    SetupInstallServicesFromInfSectionExW
+    SetupInstallServicesFromInfSectionExA
     SetupOpenFileQueue
     SetupCloseFileQueue
     SetupQueueCopyW
