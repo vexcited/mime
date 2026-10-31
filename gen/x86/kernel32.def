@@ -38,6 +38,8 @@ EXPORTS
     AllocConsole=_Kernel32Thunk_AllocConsole@0
     AllocateAndInitializeSid=kernelbase.AllocateAndInitializeSid
     AllocateLocallyUniqueId=kernelbase.AllocateLocallyUniqueId
+    AllocateUserPhysicalPages=_Kernel32Thunk_AllocateUserPhysicalPages@12
+    AllocateUserPhysicalPagesNuma=_Kernel32Thunk_AllocateUserPhysicalPagesNuma@16
     AppContainerDeriveSidFromMoniker=_Kernel32Thunk_AppContainerDeriveSidFromMoniker@8
     AppContainerFreeMemory=_Kernel32Thunk_AppContainerFreeMemory@4
     AppContainerLookupMoniker=_Kernel32Thunk_AppContainerLookupMoniker@8
@@ -95,6 +97,7 @@ EXPORTS
     CharUpperW=kernelbase.CharUpperW
     CheckRemoteDebuggerPresent=_Kernel32Thunk_CheckRemoteDebuggerPresent@8
     CheckTokenMembership=kernelbase.CheckTokenMembership
+    CheckTokenMembershipEx=_Kernel32Thunk_CheckTokenMembershipEx@16
     ChrCmpIA=_Kernel32Thunk_ChrCmpIA@8
     ChrCmpIW=_Kernel32Thunk_ChrCmpIW@8
     ClearCommBreak=_Kernel32Thunk_ClearCommBreak@4
@@ -189,6 +192,7 @@ EXPORTS
     CreateSemaphoreW=_Kernel32Thunk_CreateSemaphoreW@16
     CreateSymbolicLinkA=_Kernel32Thunk_CreateSymbolicLinkA@12
     CreateSymbolicLinkW=_Kernel32Thunk_CreateSymbolicLinkW@12
+    CreateTapePartition=_Kernel32Thunk_CreateTapePartition@16
     CreateThread=_Kernel32Thunk_CreateThread@24
     CreateThreadpool=_Kernel32Thunk_CreateThreadpool@4
     CreateThreadpoolCleanupGroup=_Kernel32Thunk_CreateThreadpoolCleanupGroup@0
@@ -279,6 +283,7 @@ EXPORTS
     EqualDomainSid=kernelbase.EqualDomainSid
     EqualPrefixSid=kernelbase.EqualPrefixSid
     EqualSid=kernelbase.EqualSid
+    EraseTape=_Kernel32Thunk_EraseTape@12
     EscapeCommFunction=_Kernel32Thunk_EscapeCommFunction@8
     EventActivityIdControl=kernelbase.EventActivityIdControl
     EventEnabled=kernelbase.EventEnabled
@@ -361,6 +366,7 @@ EXPORTS
     FreeLibraryWhenCallbackReturns=kernelbase.FreeLibraryWhenCallbackReturns
     FreeResource=_Kernel32Thunk_FreeResource@4
     FreeSid=kernelbase.FreeSid
+    FreeUserPhysicalPages=_Kernel32Thunk_FreeUserPhysicalPages@12
     GenerateConsoleCtrlEvent=_Kernel32Thunk_GenerateConsoleCtrlEvent@8
     GetACP=_Kernel32Thunk_GetACP@0
     GetAcceptLanguagesA=_Kernel32Thunk_GetAcceptLanguagesA@8
@@ -501,6 +507,10 @@ EXPORTS
     GetFirmwareEnvironmentVariableExW=_GetFirmwareEnvironmentVariableExW@20
     GetFirmwareEnvironmentVariableW=_GetFirmwareEnvironmentVariableW@16
     GetMailslotInfo=_Kernel32Thunk_GetMailslotInfo@20
+    GetNumaNodeProcessorMaskEx=_Kernel32Thunk_GetNumaNodeProcessorMaskEx@8
+    GetTapeParameters=_Kernel32Thunk_GetTapeParameters@16
+    GetTapePosition=_Kernel32Thunk_GetTapePosition@20
+    GetTapeStatus=_Kernel32Thunk_GetTapeStatus@4
     GetThreadSelectorEntry=_Kernel32Thunk_GetThreadSelectorEntry@12
     GetVolumeNameForVolumeMountPointA=_Kernel32Thunk_GetVolumeNameForVolumeMountPointA@12
     GetVolumePathNameA=_Kernel32Thunk_GetVolumePathNameA@12
@@ -509,12 +519,17 @@ EXPORTS
     Heap32ListFirst=_Kernel32Thunk_Heap32ListFirst@8
     Heap32ListNext=_Kernel32Thunk_Heap32ListNext@8
     Heap32Next=_Kernel32Thunk_Heap32Next@4
+    MapUserPhysicalPages=_Kernel32Thunk_MapUserPhysicalPages@12
+    MapUserPhysicalPagesScatter=_Kernel32Thunk_MapUserPhysicalPagesScatter@12
     MoveFileWithProgressA=_Kernel32Thunk_MoveFileWithProgressA@20
+    PrepareTape=_Kernel32Thunk_PrepareTape@12
     PssCaptureSnapshot=_Kernel32Thunk_PssCaptureSnapshot@16
     PssFreeSnapshot=_Kernel32Thunk_PssFreeSnapshot@8
     PssQuerySnapshot=_Kernel32Thunk_PssQuerySnapshot@16
+    QueryProcessAffinityUpdateMode=_Kernel32Thunk_QueryProcessAffinityUpdateMode@8
     ReadFileScatter=_Kernel32Thunk_ReadFileScatter@20
     ReplaceFileA=_Kernel32Thunk_ReplaceFileA@24
+    SetFileIoOverlappedRange=_Kernel32Thunk_SetFileIoOverlappedRange@12
     SetFirmwareEnvironmentVariableA=_SetFirmwareEnvironmentVariableA@16
     SetFirmwareEnvironmentVariableExA=_SetFirmwareEnvironmentVariableExA@20
     SetFirmwareEnvironmentVariableExW=_SetFirmwareEnvironmentVariableExW@20
@@ -1331,6 +1346,7 @@ EXPORTS
     SetPrivateObjectSecurity=kernelbase.SetPrivateObjectSecurity
     SetPrivateObjectSecurityEx=kernelbase.SetPrivateObjectSecurityEx
     SetProcessAffinityMask=_Kernel32Thunk_SetProcessAffinityMask@8
+    SetProcessAffinityUpdateMode=_Kernel32Thunk_SetProcessAffinityUpdateMode@8
     SetProcessDEPPolicy=_Kernel32Thunk_SetProcessDEPPolicy@4
     SetProcessInformation=_Kernel32Thunk_SetProcessInformation@16
     SetProcessMitigationPolicy=kernelbase.SetProcessMitigationPolicy
@@ -1352,6 +1368,8 @@ EXPORTS
     SetStdHandleEx=_Kernel32Thunk_SetStdHandleEx@12
     SetSystemTime=_Kernel32Thunk_SetSystemTime@4
     SetSystemTimeAdjustment=_Kernel32Thunk_SetSystemTimeAdjustment@8
+    SetTapeParameters=_Kernel32Thunk_SetTapeParameters@12
+    SetTapePosition=_Kernel32Thunk_SetTapePosition@24
     SetThreadAffinityMask=_Kernel32Thunk_SetThreadAffinityMask@8
     SetThreadContext=_Kernel32Thunk_SetThreadContext@8
     SetThreadDescription=kernelbase.SetThreadDescription
@@ -1601,6 +1619,7 @@ EXPORTS
     WriteProfileSectionW=_Kernel32Thunk_WriteProfileSectionW@8
     WriteProfileStringA=_Kernel32Thunk_WriteProfileStringA@12
     WriteProfileStringW=_Kernel32Thunk_WriteProfileStringW@12
+    WriteTapemark=_Kernel32Thunk_WriteTapemark@16
     ZombifyActCtx=_Kernel32Thunk_ZombifyActCtx@4
     _lclose=_Kernel32Thunk__lclose@4
     _lcreat=_Kernel32Thunk__lcreat@8

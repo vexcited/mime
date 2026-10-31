@@ -35,6 +35,14 @@ Kernel32Thunk_AddSIDToBoundaryDescriptor:
     .p2align 4
 Kernel32Thunk_AllocConsole:
     jmp     *__imp_AllocConsole(%rip)
+    .globl  Kernel32Thunk_AllocateUserPhysicalPages
+    .p2align 4
+Kernel32Thunk_AllocateUserPhysicalPages:
+    jmp     *__imp_AllocateUserPhysicalPages(%rip)
+    .globl  Kernel32Thunk_AllocateUserPhysicalPagesNuma
+    .p2align 4
+Kernel32Thunk_AllocateUserPhysicalPagesNuma:
+    jmp     *__imp_AllocateUserPhysicalPagesNuma(%rip)
     .globl  Kernel32Thunk_AppContainerDeriveSidFromMoniker
     .p2align 4
 Kernel32Thunk_AppContainerDeriveSidFromMoniker:
@@ -159,6 +167,10 @@ Kernel32Thunk_ChangeTimerQueueTimer:
     .p2align 4
 Kernel32Thunk_CheckRemoteDebuggerPresent:
     jmp     *__imp_CheckRemoteDebuggerPresent(%rip)
+    .globl  Kernel32Thunk_CheckTokenMembershipEx
+    .p2align 4
+Kernel32Thunk_CheckTokenMembershipEx:
+    jmp     *__imp_CheckTokenMembershipEx(%rip)
     .globl  Kernel32Thunk_ChrCmpIA
     .p2align 4
 Kernel32Thunk_ChrCmpIA:
@@ -467,6 +479,10 @@ Kernel32Thunk_CreateSymbolicLinkA:
     .p2align 4
 Kernel32Thunk_CreateSymbolicLinkW:
     jmp     *__imp_CreateSymbolicLinkW(%rip)
+    .globl  Kernel32Thunk_CreateTapePartition
+    .p2align 4
+Kernel32Thunk_CreateTapePartition:
+    jmp     *__imp_CreateTapePartition(%rip)
     .globl  Kernel32Thunk_CreateThread
     .p2align 4
 Kernel32Thunk_CreateThread:
@@ -759,6 +775,10 @@ Kernel32Thunk_EnumTimeFormatsW:
     .p2align 4
 Kernel32Thunk_EnumUILanguagesW:
     jmp     *__imp_EnumUILanguagesW(%rip)
+    .globl  Kernel32Thunk_EraseTape
+    .p2align 4
+Kernel32Thunk_EraseTape:
+    jmp     *__imp_EraseTape(%rip)
     .globl  Kernel32Thunk_EscapeCommFunction
     .p2align 4
 Kernel32Thunk_EscapeCommFunction:
@@ -1019,6 +1039,10 @@ Kernel32Thunk_FreeLibraryAndExitThread:
     .p2align 4
 Kernel32Thunk_FreeResource:
     jmp     *__imp_FreeResource(%rip)
+    .globl  Kernel32Thunk_FreeUserPhysicalPages
+    .p2align 4
+Kernel32Thunk_FreeUserPhysicalPages:
+    jmp     *__imp_FreeUserPhysicalPages(%rip)
     .globl  Kernel32Thunk_GenerateConsoleCtrlEvent
     .p2align 4
 Kernel32Thunk_GenerateConsoleCtrlEvent:
@@ -1487,6 +1511,22 @@ Kernel32Thunk_GetFirmwareEnvironmentVariableW:
     .p2align 4
 Kernel32Thunk_GetMailslotInfo:
     jmp     *__imp_GetMailslotInfo(%rip)
+    .globl  Kernel32Thunk_GetNumaNodeProcessorMaskEx
+    .p2align 4
+Kernel32Thunk_GetNumaNodeProcessorMaskEx:
+    jmp     *__imp_GetNumaNodeProcessorMaskEx(%rip)
+    .globl  Kernel32Thunk_GetTapeParameters
+    .p2align 4
+Kernel32Thunk_GetTapeParameters:
+    jmp     *__imp_GetTapeParameters(%rip)
+    .globl  Kernel32Thunk_GetTapePosition
+    .p2align 4
+Kernel32Thunk_GetTapePosition:
+    jmp     *__imp_GetTapePosition(%rip)
+    .globl  Kernel32Thunk_GetTapeStatus
+    .p2align 4
+Kernel32Thunk_GetTapeStatus:
+    jmp     *__imp_GetTapeStatus(%rip)
     .globl  Kernel32Thunk_GetThreadSelectorEntry
     .p2align 4
 Kernel32Thunk_GetThreadSelectorEntry:
@@ -1519,10 +1559,22 @@ Kernel32Thunk_Heap32ListNext:
     .p2align 4
 Kernel32Thunk_Heap32Next:
     jmp     *__imp_Heap32Next(%rip)
+    .globl  Kernel32Thunk_MapUserPhysicalPages
+    .p2align 4
+Kernel32Thunk_MapUserPhysicalPages:
+    jmp     *__imp_MapUserPhysicalPages(%rip)
+    .globl  Kernel32Thunk_MapUserPhysicalPagesScatter
+    .p2align 4
+Kernel32Thunk_MapUserPhysicalPagesScatter:
+    jmp     *__imp_MapUserPhysicalPagesScatter(%rip)
     .globl  Kernel32Thunk_MoveFileWithProgressA
     .p2align 4
 Kernel32Thunk_MoveFileWithProgressA:
     jmp     *__imp_MoveFileWithProgressA(%rip)
+    .globl  Kernel32Thunk_PrepareTape
+    .p2align 4
+Kernel32Thunk_PrepareTape:
+    jmp     *__imp_PrepareTape(%rip)
     .globl  Kernel32Thunk_PssCaptureSnapshot
     .p2align 4
 Kernel32Thunk_PssCaptureSnapshot:
@@ -1535,6 +1587,10 @@ Kernel32Thunk_PssFreeSnapshot:
     .p2align 4
 Kernel32Thunk_PssQuerySnapshot:
     jmp     *__imp_PssQuerySnapshot(%rip)
+    .globl  Kernel32Thunk_QueryProcessAffinityUpdateMode
+    .p2align 4
+Kernel32Thunk_QueryProcessAffinityUpdateMode:
+    jmp     *__imp_QueryProcessAffinityUpdateMode(%rip)
     .globl  Kernel32Thunk_ReadFileScatter
     .p2align 4
 Kernel32Thunk_ReadFileScatter:
@@ -1543,6 +1599,10 @@ Kernel32Thunk_ReadFileScatter:
     .p2align 4
 Kernel32Thunk_ReplaceFileA:
     jmp     *__imp_ReplaceFileA(%rip)
+    .globl  Kernel32Thunk_SetFileIoOverlappedRange
+    .p2align 4
+Kernel32Thunk_SetFileIoOverlappedRange:
+    jmp     *__imp_SetFileIoOverlappedRange(%rip)
     .globl  Kernel32Thunk_SetFirmwareEnvironmentVariableA
     .p2align 4
 Kernel32Thunk_SetFirmwareEnvironmentVariableA:
@@ -4295,6 +4355,10 @@ Kernel32Thunk_SetPriorityClass:
     .p2align 4
 Kernel32Thunk_SetProcessAffinityMask:
     jmp     *__imp_SetProcessAffinityMask(%rip)
+    .globl  Kernel32Thunk_SetProcessAffinityUpdateMode
+    .p2align 4
+Kernel32Thunk_SetProcessAffinityUpdateMode:
+    jmp     *__imp_SetProcessAffinityUpdateMode(%rip)
     .globl  Kernel32Thunk_SetProcessDEPPolicy
     .p2align 4
 Kernel32Thunk_SetProcessDEPPolicy:
@@ -4347,6 +4411,14 @@ Kernel32Thunk_SetSystemTime:
     .p2align 4
 Kernel32Thunk_SetSystemTimeAdjustment:
     jmp     *__imp_SetSystemTimeAdjustment(%rip)
+    .globl  Kernel32Thunk_SetTapeParameters
+    .p2align 4
+Kernel32Thunk_SetTapeParameters:
+    jmp     *__imp_SetTapeParameters(%rip)
+    .globl  Kernel32Thunk_SetTapePosition
+    .p2align 4
+Kernel32Thunk_SetTapePosition:
+    jmp     *__imp_SetTapePosition(%rip)
     .globl  Kernel32Thunk_SetThreadAffinityMask
     .p2align 4
 Kernel32Thunk_SetThreadAffinityMask:
@@ -5191,6 +5263,10 @@ Kernel32Thunk_WriteProfileStringA:
     .p2align 4
 Kernel32Thunk_WriteProfileStringW:
     jmp     *__imp_WriteProfileStringW(%rip)
+    .globl  Kernel32Thunk_WriteTapemark
+    .p2align 4
+Kernel32Thunk_WriteTapemark:
+    jmp     *__imp_WriteTapemark(%rip)
     .globl  Kernel32Thunk_ZombifyActCtx
     .p2align 4
 Kernel32Thunk_ZombifyActCtx:

@@ -53,6 +53,18 @@ Kernel32Thunk_AllocConsole:
     adrp    x16, __imp_AllocConsole
     ldr     x16, [x16, :lo12:__imp_AllocConsole]
     br      x16
+    .globl  Kernel32Thunk_AllocateUserPhysicalPages
+    .p2align 4
+Kernel32Thunk_AllocateUserPhysicalPages:
+    adrp    x16, __imp_AllocateUserPhysicalPages
+    ldr     x16, [x16, :lo12:__imp_AllocateUserPhysicalPages]
+    br      x16
+    .globl  Kernel32Thunk_AllocateUserPhysicalPagesNuma
+    .p2align 4
+Kernel32Thunk_AllocateUserPhysicalPagesNuma:
+    adrp    x16, __imp_AllocateUserPhysicalPagesNuma
+    ldr     x16, [x16, :lo12:__imp_AllocateUserPhysicalPagesNuma]
+    br      x16
     .globl  Kernel32Thunk_AppContainerDeriveSidFromMoniker
     .p2align 4
 Kernel32Thunk_AppContainerDeriveSidFromMoniker:
@@ -238,6 +250,12 @@ Kernel32Thunk_ChangeTimerQueueTimer:
 Kernel32Thunk_CheckRemoteDebuggerPresent:
     adrp    x16, __imp_CheckRemoteDebuggerPresent
     ldr     x16, [x16, :lo12:__imp_CheckRemoteDebuggerPresent]
+    br      x16
+    .globl  Kernel32Thunk_CheckTokenMembershipEx
+    .p2align 4
+Kernel32Thunk_CheckTokenMembershipEx:
+    adrp    x16, __imp_CheckTokenMembershipEx
+    ldr     x16, [x16, :lo12:__imp_CheckTokenMembershipEx]
     br      x16
     .globl  Kernel32Thunk_ChrCmpIA
     .p2align 4
@@ -701,6 +719,12 @@ Kernel32Thunk_CreateSymbolicLinkW:
     adrp    x16, __imp_CreateSymbolicLinkW
     ldr     x16, [x16, :lo12:__imp_CreateSymbolicLinkW]
     br      x16
+    .globl  Kernel32Thunk_CreateTapePartition
+    .p2align 4
+Kernel32Thunk_CreateTapePartition:
+    adrp    x16, __imp_CreateTapePartition
+    ldr     x16, [x16, :lo12:__imp_CreateTapePartition]
+    br      x16
     .globl  Kernel32Thunk_CreateThread
     .p2align 4
 Kernel32Thunk_CreateThread:
@@ -1139,6 +1163,12 @@ Kernel32Thunk_EnumUILanguagesW:
     adrp    x16, __imp_EnumUILanguagesW
     ldr     x16, [x16, :lo12:__imp_EnumUILanguagesW]
     br      x16
+    .globl  Kernel32Thunk_EraseTape
+    .p2align 4
+Kernel32Thunk_EraseTape:
+    adrp    x16, __imp_EraseTape
+    ldr     x16, [x16, :lo12:__imp_EraseTape]
+    br      x16
     .globl  Kernel32Thunk_EscapeCommFunction
     .p2align 4
 Kernel32Thunk_EscapeCommFunction:
@@ -1528,6 +1558,12 @@ Kernel32Thunk_FreeLibraryAndExitThread:
 Kernel32Thunk_FreeResource:
     adrp    x16, __imp_FreeResource
     ldr     x16, [x16, :lo12:__imp_FreeResource]
+    br      x16
+    .globl  Kernel32Thunk_FreeUserPhysicalPages
+    .p2align 4
+Kernel32Thunk_FreeUserPhysicalPages:
+    adrp    x16, __imp_FreeUserPhysicalPages
+    ldr     x16, [x16, :lo12:__imp_FreeUserPhysicalPages]
     br      x16
     .globl  Kernel32Thunk_GenerateConsoleCtrlEvent
     .p2align 4
@@ -2231,6 +2267,30 @@ Kernel32Thunk_GetMailslotInfo:
     adrp    x16, __imp_GetMailslotInfo
     ldr     x16, [x16, :lo12:__imp_GetMailslotInfo]
     br      x16
+    .globl  Kernel32Thunk_GetNumaNodeProcessorMaskEx
+    .p2align 4
+Kernel32Thunk_GetNumaNodeProcessorMaskEx:
+    adrp    x16, __imp_GetNumaNodeProcessorMaskEx
+    ldr     x16, [x16, :lo12:__imp_GetNumaNodeProcessorMaskEx]
+    br      x16
+    .globl  Kernel32Thunk_GetTapeParameters
+    .p2align 4
+Kernel32Thunk_GetTapeParameters:
+    adrp    x16, __imp_GetTapeParameters
+    ldr     x16, [x16, :lo12:__imp_GetTapeParameters]
+    br      x16
+    .globl  Kernel32Thunk_GetTapePosition
+    .p2align 4
+Kernel32Thunk_GetTapePosition:
+    adrp    x16, __imp_GetTapePosition
+    ldr     x16, [x16, :lo12:__imp_GetTapePosition]
+    br      x16
+    .globl  Kernel32Thunk_GetTapeStatus
+    .p2align 4
+Kernel32Thunk_GetTapeStatus:
+    adrp    x16, __imp_GetTapeStatus
+    ldr     x16, [x16, :lo12:__imp_GetTapeStatus]
+    br      x16
     .globl  Kernel32Thunk_GetThreadSelectorEntry
     .p2align 4
 Kernel32Thunk_GetThreadSelectorEntry:
@@ -2279,11 +2339,29 @@ Kernel32Thunk_Heap32Next:
     adrp    x16, __imp_Heap32Next
     ldr     x16, [x16, :lo12:__imp_Heap32Next]
     br      x16
+    .globl  Kernel32Thunk_MapUserPhysicalPages
+    .p2align 4
+Kernel32Thunk_MapUserPhysicalPages:
+    adrp    x16, __imp_MapUserPhysicalPages
+    ldr     x16, [x16, :lo12:__imp_MapUserPhysicalPages]
+    br      x16
+    .globl  Kernel32Thunk_MapUserPhysicalPagesScatter
+    .p2align 4
+Kernel32Thunk_MapUserPhysicalPagesScatter:
+    adrp    x16, __imp_MapUserPhysicalPagesScatter
+    ldr     x16, [x16, :lo12:__imp_MapUserPhysicalPagesScatter]
+    br      x16
     .globl  Kernel32Thunk_MoveFileWithProgressA
     .p2align 4
 Kernel32Thunk_MoveFileWithProgressA:
     adrp    x16, __imp_MoveFileWithProgressA
     ldr     x16, [x16, :lo12:__imp_MoveFileWithProgressA]
+    br      x16
+    .globl  Kernel32Thunk_PrepareTape
+    .p2align 4
+Kernel32Thunk_PrepareTape:
+    adrp    x16, __imp_PrepareTape
+    ldr     x16, [x16, :lo12:__imp_PrepareTape]
     br      x16
     .globl  Kernel32Thunk_PssCaptureSnapshot
     .p2align 4
@@ -2303,6 +2381,12 @@ Kernel32Thunk_PssQuerySnapshot:
     adrp    x16, __imp_PssQuerySnapshot
     ldr     x16, [x16, :lo12:__imp_PssQuerySnapshot]
     br      x16
+    .globl  Kernel32Thunk_QueryProcessAffinityUpdateMode
+    .p2align 4
+Kernel32Thunk_QueryProcessAffinityUpdateMode:
+    adrp    x16, __imp_QueryProcessAffinityUpdateMode
+    ldr     x16, [x16, :lo12:__imp_QueryProcessAffinityUpdateMode]
+    br      x16
     .globl  Kernel32Thunk_ReadFileScatter
     .p2align 4
 Kernel32Thunk_ReadFileScatter:
@@ -2314,6 +2398,12 @@ Kernel32Thunk_ReadFileScatter:
 Kernel32Thunk_ReplaceFileA:
     adrp    x16, __imp_ReplaceFileA
     ldr     x16, [x16, :lo12:__imp_ReplaceFileA]
+    br      x16
+    .globl  Kernel32Thunk_SetFileIoOverlappedRange
+    .p2align 4
+Kernel32Thunk_SetFileIoOverlappedRange:
+    adrp    x16, __imp_SetFileIoOverlappedRange
+    ldr     x16, [x16, :lo12:__imp_SetFileIoOverlappedRange]
     br      x16
     .globl  Kernel32Thunk_SetFirmwareEnvironmentVariableA
     .p2align 4
@@ -6443,6 +6533,12 @@ Kernel32Thunk_SetProcessAffinityMask:
     adrp    x16, __imp_SetProcessAffinityMask
     ldr     x16, [x16, :lo12:__imp_SetProcessAffinityMask]
     br      x16
+    .globl  Kernel32Thunk_SetProcessAffinityUpdateMode
+    .p2align 4
+Kernel32Thunk_SetProcessAffinityUpdateMode:
+    adrp    x16, __imp_SetProcessAffinityUpdateMode
+    ldr     x16, [x16, :lo12:__imp_SetProcessAffinityUpdateMode]
+    br      x16
     .globl  Kernel32Thunk_SetProcessDEPPolicy
     .p2align 4
 Kernel32Thunk_SetProcessDEPPolicy:
@@ -6520,6 +6616,18 @@ Kernel32Thunk_SetSystemTime:
 Kernel32Thunk_SetSystemTimeAdjustment:
     adrp    x16, __imp_SetSystemTimeAdjustment
     ldr     x16, [x16, :lo12:__imp_SetSystemTimeAdjustment]
+    br      x16
+    .globl  Kernel32Thunk_SetTapeParameters
+    .p2align 4
+Kernel32Thunk_SetTapeParameters:
+    adrp    x16, __imp_SetTapeParameters
+    ldr     x16, [x16, :lo12:__imp_SetTapeParameters]
+    br      x16
+    .globl  Kernel32Thunk_SetTapePosition
+    .p2align 4
+Kernel32Thunk_SetTapePosition:
+    adrp    x16, __imp_SetTapePosition
+    ldr     x16, [x16, :lo12:__imp_SetTapePosition]
     br      x16
     .globl  Kernel32Thunk_SetThreadAffinityMask
     .p2align 4
@@ -7786,6 +7894,12 @@ Kernel32Thunk_WriteProfileStringA:
 Kernel32Thunk_WriteProfileStringW:
     adrp    x16, __imp_WriteProfileStringW
     ldr     x16, [x16, :lo12:__imp_WriteProfileStringW]
+    br      x16
+    .globl  Kernel32Thunk_WriteTapemark
+    .p2align 4
+Kernel32Thunk_WriteTapemark:
+    adrp    x16, __imp_WriteTapemark
+    ldr     x16, [x16, :lo12:__imp_WriteTapemark]
     br      x16
     .globl  Kernel32Thunk_ZombifyActCtx
     .p2align 4

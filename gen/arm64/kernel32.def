@@ -38,6 +38,8 @@ EXPORTS
     AllocConsole=Kernel32Thunk_AllocConsole
     AllocateAndInitializeSid=kernelbase.AllocateAndInitializeSid
     AllocateLocallyUniqueId=kernelbase.AllocateLocallyUniqueId
+    AllocateUserPhysicalPages=Kernel32Thunk_AllocateUserPhysicalPages
+    AllocateUserPhysicalPagesNuma=Kernel32Thunk_AllocateUserPhysicalPagesNuma
     AppContainerDeriveSidFromMoniker=Kernel32Thunk_AppContainerDeriveSidFromMoniker
     AppContainerFreeMemory=Kernel32Thunk_AppContainerFreeMemory
     AppContainerLookupMoniker=Kernel32Thunk_AppContainerLookupMoniker
@@ -95,6 +97,7 @@ EXPORTS
     CharUpperW=kernelbase.CharUpperW
     CheckRemoteDebuggerPresent=Kernel32Thunk_CheckRemoteDebuggerPresent
     CheckTokenMembership=kernelbase.CheckTokenMembership
+    CheckTokenMembershipEx=Kernel32Thunk_CheckTokenMembershipEx
     ChrCmpIA=Kernel32Thunk_ChrCmpIA
     ChrCmpIW=Kernel32Thunk_ChrCmpIW
     ClearCommBreak=Kernel32Thunk_ClearCommBreak
@@ -189,6 +192,7 @@ EXPORTS
     CreateSemaphoreW=Kernel32Thunk_CreateSemaphoreW
     CreateSymbolicLinkA=Kernel32Thunk_CreateSymbolicLinkA
     CreateSymbolicLinkW=Kernel32Thunk_CreateSymbolicLinkW
+    CreateTapePartition=Kernel32Thunk_CreateTapePartition
     CreateThread=Kernel32Thunk_CreateThread
     CreateThreadpool=Kernel32Thunk_CreateThreadpool
     CreateThreadpoolCleanupGroup=Kernel32Thunk_CreateThreadpoolCleanupGroup
@@ -279,6 +283,7 @@ EXPORTS
     EqualDomainSid=kernelbase.EqualDomainSid
     EqualPrefixSid=kernelbase.EqualPrefixSid
     EqualSid=kernelbase.EqualSid
+    EraseTape=Kernel32Thunk_EraseTape
     EscapeCommFunction=Kernel32Thunk_EscapeCommFunction
     EventActivityIdControl=kernelbase.EventActivityIdControl
     EventEnabled=kernelbase.EventEnabled
@@ -361,6 +366,7 @@ EXPORTS
     FreeLibraryWhenCallbackReturns=kernelbase.FreeLibraryWhenCallbackReturns
     FreeResource=Kernel32Thunk_FreeResource
     FreeSid=kernelbase.FreeSid
+    FreeUserPhysicalPages=Kernel32Thunk_FreeUserPhysicalPages
     GenerateConsoleCtrlEvent=Kernel32Thunk_GenerateConsoleCtrlEvent
     GetACP=Kernel32Thunk_GetACP
     GetAcceptLanguagesA=Kernel32Thunk_GetAcceptLanguagesA
@@ -501,6 +507,10 @@ EXPORTS
     GetFirmwareEnvironmentVariableExW=Kernel32Thunk_GetFirmwareEnvironmentVariableExW
     GetFirmwareEnvironmentVariableW=Kernel32Thunk_GetFirmwareEnvironmentVariableW
     GetMailslotInfo=Kernel32Thunk_GetMailslotInfo
+    GetNumaNodeProcessorMaskEx=Kernel32Thunk_GetNumaNodeProcessorMaskEx
+    GetTapeParameters=Kernel32Thunk_GetTapeParameters
+    GetTapePosition=Kernel32Thunk_GetTapePosition
+    GetTapeStatus=Kernel32Thunk_GetTapeStatus
     GetThreadSelectorEntry=Kernel32Thunk_GetThreadSelectorEntry
     GetVolumeNameForVolumeMountPointA=Kernel32Thunk_GetVolumeNameForVolumeMountPointA
     GetVolumePathNameA=Kernel32Thunk_GetVolumePathNameA
@@ -509,12 +519,17 @@ EXPORTS
     Heap32ListFirst=Kernel32Thunk_Heap32ListFirst
     Heap32ListNext=Kernel32Thunk_Heap32ListNext
     Heap32Next=Kernel32Thunk_Heap32Next
+    MapUserPhysicalPages=Kernel32Thunk_MapUserPhysicalPages
+    MapUserPhysicalPagesScatter=Kernel32Thunk_MapUserPhysicalPagesScatter
     MoveFileWithProgressA=Kernel32Thunk_MoveFileWithProgressA
+    PrepareTape=Kernel32Thunk_PrepareTape
     PssCaptureSnapshot=Kernel32Thunk_PssCaptureSnapshot
     PssFreeSnapshot=Kernel32Thunk_PssFreeSnapshot
     PssQuerySnapshot=Kernel32Thunk_PssQuerySnapshot
+    QueryProcessAffinityUpdateMode=Kernel32Thunk_QueryProcessAffinityUpdateMode
     ReadFileScatter=Kernel32Thunk_ReadFileScatter
     ReplaceFileA=Kernel32Thunk_ReplaceFileA
+    SetFileIoOverlappedRange=Kernel32Thunk_SetFileIoOverlappedRange
     SetFirmwareEnvironmentVariableA=Kernel32Thunk_SetFirmwareEnvironmentVariableA
     SetFirmwareEnvironmentVariableExA=Kernel32Thunk_SetFirmwareEnvironmentVariableExA
     SetFirmwareEnvironmentVariableExW=Kernel32Thunk_SetFirmwareEnvironmentVariableExW
@@ -1331,6 +1346,7 @@ EXPORTS
     SetPrivateObjectSecurity=kernelbase.SetPrivateObjectSecurity
     SetPrivateObjectSecurityEx=kernelbase.SetPrivateObjectSecurityEx
     SetProcessAffinityMask=Kernel32Thunk_SetProcessAffinityMask
+    SetProcessAffinityUpdateMode=Kernel32Thunk_SetProcessAffinityUpdateMode
     SetProcessDEPPolicy=Kernel32Thunk_SetProcessDEPPolicy
     SetProcessInformation=Kernel32Thunk_SetProcessInformation
     SetProcessMitigationPolicy=kernelbase.SetProcessMitigationPolicy
@@ -1352,6 +1368,8 @@ EXPORTS
     SetStdHandleEx=Kernel32Thunk_SetStdHandleEx
     SetSystemTime=Kernel32Thunk_SetSystemTime
     SetSystemTimeAdjustment=Kernel32Thunk_SetSystemTimeAdjustment
+    SetTapeParameters=Kernel32Thunk_SetTapeParameters
+    SetTapePosition=Kernel32Thunk_SetTapePosition
     SetThreadAffinityMask=Kernel32Thunk_SetThreadAffinityMask
     SetThreadContext=Kernel32Thunk_SetThreadContext
     SetThreadDescription=kernelbase.SetThreadDescription
@@ -1600,6 +1618,7 @@ EXPORTS
     WriteProfileSectionW=Kernel32Thunk_WriteProfileSectionW
     WriteProfileStringA=Kernel32Thunk_WriteProfileStringA
     WriteProfileStringW=Kernel32Thunk_WriteProfileStringW
+    WriteTapemark=Kernel32Thunk_WriteTapemark
     ZombifyActCtx=Kernel32Thunk_ZombifyActCtx
     __chkstk=ntdll.__chkstk
     _lclose=Kernel32Thunk__lclose

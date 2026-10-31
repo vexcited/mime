@@ -14,6 +14,8 @@ EXPORTS
     AddVectoredContinueHandler@8
     AddVectoredExceptionHandler@8
     AllocConsole@0
+    AllocateUserPhysicalPages@12
+    AllocateUserPhysicalPagesNuma@16
     AppContainerDeriveSidFromMoniker@8
     AppContainerFreeMemory@4
     AppContainerLookupMoniker@8
@@ -54,6 +56,7 @@ EXPORTS
     CancelWaitableTimer@4
     ChangeTimerQueueTimer@16
     CheckRemoteDebuggerPresent@8
+    CheckTokenMembershipEx@16
     ChrCmpIA@8
     ChrCmpIW@8
     ClearCommBreak@4
@@ -141,6 +144,7 @@ EXPORTS
     CreateSemaphoreW@16
     CreateSymbolicLinkA@12
     CreateSymbolicLinkW@12
+    CreateTapePartition@16
     CreateThread@24
     CreateThreadpool@4
     CreateThreadpoolCleanupGroup@0
@@ -223,6 +227,7 @@ EXPORTS
     EnumTimeFormatsEx@16
     EnumTimeFormatsW@12
     EnumUILanguagesW@12
+    EraseTape@12
     EscapeCommFunction@8
     ExitProcess@4
     ExitThread@4
@@ -293,6 +298,7 @@ EXPORTS
     FreeLibraryAndExitThread@8
     FreeLibraryWhenCallbackReturns@8
     FreeResource@4
+    FreeUserPhysicalPages@12
     GenerateConsoleCtrlEvent@8
     GetACP@0
     GetAcceptLanguagesA@8
@@ -422,6 +428,10 @@ EXPORTS
     GetFirmwareEnvironmentVariableExA@20
     GetFirmwareEnvironmentVariableExW@20
     GetMailslotInfo@20
+    GetNumaNodeProcessorMaskEx@8
+    GetTapeParameters@16
+    GetTapePosition@20
+    GetTapeStatus@4
     GetThreadSelectorEntry@12
     GetVolumeNameForVolumeMountPointA@12
     GetVolumePathNameA@12
@@ -430,12 +440,17 @@ EXPORTS
     Heap32ListFirst@8
     Heap32ListNext@8
     Heap32Next@4
+    MapUserPhysicalPages@12
+    MapUserPhysicalPagesScatter@12
     MoveFileWithProgressA@20
+    PrepareTape@12
     PssCaptureSnapshot@16
     PssFreeSnapshot@8
     PssQuerySnapshot@16
+    QueryProcessAffinityUpdateMode@8
     ReadFileScatter@20
     ReplaceFileA@24
+    SetFileIoOverlappedRange@12
     SetFirmwareEnvironmentVariableA@16
     SetFirmwareEnvironmentVariableW@16
     SetFirmwareEnvironmentVariableExA@20
@@ -1183,6 +1198,7 @@ EXPORTS
     SetNamedPipeHandleState@16
     SetPriorityClass@8
     SetProcessAffinityMask@8
+    SetProcessAffinityUpdateMode@8
     SetProcessDEPPolicy@4
     SetProcessInformation@16
     SetProcessMitigationPolicy@12
@@ -1197,6 +1213,8 @@ EXPORTS
     SetStdHandleEx@12
     SetSystemTime@4
     SetSystemTimeAdjustment@8
+    SetTapeParameters@12
+    SetTapePosition@24
     SetThreadAffinityMask@8
     SetThreadContext@8
     SetThreadDescription@8
@@ -1433,6 +1451,7 @@ EXPORTS
     WriteProfileSectionW@8
     WriteProfileStringA@12
     WriteProfileStringW@12
+    WriteTapemark@16
     ZombifyActCtx@4
     _lclose@4
     _lcreat@8

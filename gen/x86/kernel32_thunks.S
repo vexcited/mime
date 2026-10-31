@@ -35,6 +35,14 @@ _Kernel32Thunk_AddSIDToBoundaryDescriptor@8:
     .p2align 4
 _Kernel32Thunk_AllocConsole@0:
     jmp     *__imp__AllocConsole@0
+    .globl  _Kernel32Thunk_AllocateUserPhysicalPages@12
+    .p2align 4
+_Kernel32Thunk_AllocateUserPhysicalPages@12:
+    jmp     *__imp__AllocateUserPhysicalPages@12
+    .globl  _Kernel32Thunk_AllocateUserPhysicalPagesNuma@16
+    .p2align 4
+_Kernel32Thunk_AllocateUserPhysicalPagesNuma@16:
+    jmp     *__imp__AllocateUserPhysicalPagesNuma@16
     .globl  _Kernel32Thunk_AppContainerDeriveSidFromMoniker@8
     .p2align 4
 _Kernel32Thunk_AppContainerDeriveSidFromMoniker@8:
@@ -159,6 +167,10 @@ _Kernel32Thunk_ChangeTimerQueueTimer@16:
     .p2align 4
 _Kernel32Thunk_CheckRemoteDebuggerPresent@8:
     jmp     *__imp__CheckRemoteDebuggerPresent@8
+    .globl  _Kernel32Thunk_CheckTokenMembershipEx@16
+    .p2align 4
+_Kernel32Thunk_CheckTokenMembershipEx@16:
+    jmp     *__imp__CheckTokenMembershipEx@16
     .globl  _Kernel32Thunk_ChrCmpIA@8
     .p2align 4
 _Kernel32Thunk_ChrCmpIA@8:
@@ -467,6 +479,10 @@ _Kernel32Thunk_CreateSymbolicLinkA@12:
     .p2align 4
 _Kernel32Thunk_CreateSymbolicLinkW@12:
     jmp     *__imp__CreateSymbolicLinkW@12
+    .globl  _Kernel32Thunk_CreateTapePartition@16
+    .p2align 4
+_Kernel32Thunk_CreateTapePartition@16:
+    jmp     *__imp__CreateTapePartition@16
     .globl  _Kernel32Thunk_CreateThread@24
     .p2align 4
 _Kernel32Thunk_CreateThread@24:
@@ -759,6 +775,10 @@ _Kernel32Thunk_EnumTimeFormatsW@12:
     .p2align 4
 _Kernel32Thunk_EnumUILanguagesW@12:
     jmp     *__imp__EnumUILanguagesW@12
+    .globl  _Kernel32Thunk_EraseTape@12
+    .p2align 4
+_Kernel32Thunk_EraseTape@12:
+    jmp     *__imp__EraseTape@12
     .globl  _Kernel32Thunk_EscapeCommFunction@8
     .p2align 4
 _Kernel32Thunk_EscapeCommFunction@8:
@@ -1019,6 +1039,10 @@ _Kernel32Thunk_FreeLibraryAndExitThread@8:
     .p2align 4
 _Kernel32Thunk_FreeResource@4:
     jmp     *__imp__FreeResource@4
+    .globl  _Kernel32Thunk_FreeUserPhysicalPages@12
+    .p2align 4
+_Kernel32Thunk_FreeUserPhysicalPages@12:
+    jmp     *__imp__FreeUserPhysicalPages@12
     .globl  _Kernel32Thunk_GenerateConsoleCtrlEvent@8
     .p2align 4
 _Kernel32Thunk_GenerateConsoleCtrlEvent@8:
@@ -1487,6 +1511,22 @@ _Kernel32Thunk_GetFirmwareEnvironmentVariableW@16:
     .p2align 4
 _Kernel32Thunk_GetMailslotInfo@20:
     jmp     *__imp__GetMailslotInfo@20
+    .globl  _Kernel32Thunk_GetNumaNodeProcessorMaskEx@8
+    .p2align 4
+_Kernel32Thunk_GetNumaNodeProcessorMaskEx@8:
+    jmp     *__imp__GetNumaNodeProcessorMaskEx@8
+    .globl  _Kernel32Thunk_GetTapeParameters@16
+    .p2align 4
+_Kernel32Thunk_GetTapeParameters@16:
+    jmp     *__imp__GetTapeParameters@16
+    .globl  _Kernel32Thunk_GetTapePosition@20
+    .p2align 4
+_Kernel32Thunk_GetTapePosition@20:
+    jmp     *__imp__GetTapePosition@20
+    .globl  _Kernel32Thunk_GetTapeStatus@4
+    .p2align 4
+_Kernel32Thunk_GetTapeStatus@4:
+    jmp     *__imp__GetTapeStatus@4
     .globl  _Kernel32Thunk_GetThreadSelectorEntry@12
     .p2align 4
 _Kernel32Thunk_GetThreadSelectorEntry@12:
@@ -1519,10 +1559,22 @@ _Kernel32Thunk_Heap32ListNext@8:
     .p2align 4
 _Kernel32Thunk_Heap32Next@4:
     jmp     *__imp__Heap32Next@4
+    .globl  _Kernel32Thunk_MapUserPhysicalPages@12
+    .p2align 4
+_Kernel32Thunk_MapUserPhysicalPages@12:
+    jmp     *__imp__MapUserPhysicalPages@12
+    .globl  _Kernel32Thunk_MapUserPhysicalPagesScatter@12
+    .p2align 4
+_Kernel32Thunk_MapUserPhysicalPagesScatter@12:
+    jmp     *__imp__MapUserPhysicalPagesScatter@12
     .globl  _Kernel32Thunk_MoveFileWithProgressA@20
     .p2align 4
 _Kernel32Thunk_MoveFileWithProgressA@20:
     jmp     *__imp__MoveFileWithProgressA@20
+    .globl  _Kernel32Thunk_PrepareTape@12
+    .p2align 4
+_Kernel32Thunk_PrepareTape@12:
+    jmp     *__imp__PrepareTape@12
     .globl  _Kernel32Thunk_PssCaptureSnapshot@16
     .p2align 4
 _Kernel32Thunk_PssCaptureSnapshot@16:
@@ -1535,6 +1587,10 @@ _Kernel32Thunk_PssFreeSnapshot@8:
     .p2align 4
 _Kernel32Thunk_PssQuerySnapshot@16:
     jmp     *__imp__PssQuerySnapshot@16
+    .globl  _Kernel32Thunk_QueryProcessAffinityUpdateMode@8
+    .p2align 4
+_Kernel32Thunk_QueryProcessAffinityUpdateMode@8:
+    jmp     *__imp__QueryProcessAffinityUpdateMode@8
     .globl  _Kernel32Thunk_ReadFileScatter@20
     .p2align 4
 _Kernel32Thunk_ReadFileScatter@20:
@@ -1543,6 +1599,10 @@ _Kernel32Thunk_ReadFileScatter@20:
     .p2align 4
 _Kernel32Thunk_ReplaceFileA@24:
     jmp     *__imp__ReplaceFileA@24
+    .globl  _Kernel32Thunk_SetFileIoOverlappedRange@12
+    .p2align 4
+_Kernel32Thunk_SetFileIoOverlappedRange@12:
+    jmp     *__imp__SetFileIoOverlappedRange@12
     .globl  _Kernel32Thunk_SetFirmwareEnvironmentVariableA@16
     .p2align 4
 _Kernel32Thunk_SetFirmwareEnvironmentVariableA@16:
@@ -4295,6 +4355,10 @@ _Kernel32Thunk_SetPriorityClass@8:
     .p2align 4
 _Kernel32Thunk_SetProcessAffinityMask@8:
     jmp     *__imp__SetProcessAffinityMask@8
+    .globl  _Kernel32Thunk_SetProcessAffinityUpdateMode@8
+    .p2align 4
+_Kernel32Thunk_SetProcessAffinityUpdateMode@8:
+    jmp     *__imp__SetProcessAffinityUpdateMode@8
     .globl  _Kernel32Thunk_SetProcessDEPPolicy@4
     .p2align 4
 _Kernel32Thunk_SetProcessDEPPolicy@4:
@@ -4347,6 +4411,14 @@ _Kernel32Thunk_SetSystemTime@4:
     .p2align 4
 _Kernel32Thunk_SetSystemTimeAdjustment@8:
     jmp     *__imp__SetSystemTimeAdjustment@8
+    .globl  _Kernel32Thunk_SetTapeParameters@12
+    .p2align 4
+_Kernel32Thunk_SetTapeParameters@12:
+    jmp     *__imp__SetTapeParameters@12
+    .globl  _Kernel32Thunk_SetTapePosition@24
+    .p2align 4
+_Kernel32Thunk_SetTapePosition@24:
+    jmp     *__imp__SetTapePosition@24
     .globl  _Kernel32Thunk_SetThreadAffinityMask@8
     .p2align 4
 _Kernel32Thunk_SetThreadAffinityMask@8:
@@ -5191,6 +5263,10 @@ _Kernel32Thunk_WriteProfileStringA@12:
     .p2align 4
 _Kernel32Thunk_WriteProfileStringW@12:
     jmp     *__imp__WriteProfileStringW@12
+    .globl  _Kernel32Thunk_WriteTapemark@16
+    .p2align 4
+_Kernel32Thunk_WriteTapemark@16:
+    jmp     *__imp__WriteTapemark@16
     .globl  _Kernel32Thunk_ZombifyActCtx@4
     .p2align 4
 _Kernel32Thunk_ZombifyActCtx@4:

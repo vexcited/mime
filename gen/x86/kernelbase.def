@@ -14,6 +14,8 @@ EXPORTS
     AddVectoredContinueHandler=_AddVectoredContinueHandler@8
     AddVectoredExceptionHandler=_AddVectoredExceptionHandler@8
     AllocConsole=_AllocConsole@0
+    AllocateUserPhysicalPages=_AllocateUserPhysicalPages@12
+    AllocateUserPhysicalPagesNuma=_AllocateUserPhysicalPagesNuma@16
     AppContainerDeriveSidFromMoniker=_AppContainerDeriveSidFromMoniker@8
     AppContainerFreeMemory=_AppContainerFreeMemory@4
     AppContainerLookupMoniker=_AppContainerLookupMoniker@8
@@ -54,6 +56,7 @@ EXPORTS
     CancelWaitableTimer=_CancelWaitableTimer@4
     ChangeTimerQueueTimer=_ChangeTimerQueueTimer@16
     CheckRemoteDebuggerPresent=_CheckRemoteDebuggerPresent@8
+    CheckTokenMembershipEx=_CheckTokenMembershipEx@16
     ChrCmpIA=_ChrCmpIA@8
     ChrCmpIW=_ChrCmpIW@8
     ClearCommBreak=_ClearCommBreak@4
@@ -141,6 +144,7 @@ EXPORTS
     CreateSemaphoreW=_CreateSemaphoreW@16
     CreateSymbolicLinkA=_CreateSymbolicLinkA@12
     CreateSymbolicLinkW=_CreateSymbolicLinkW@12
+    CreateTapePartition=_CreateTapePartition@16
     CreateThread=_CreateThread@24
     CreateThreadpool=_CreateThreadpool@4
     CreateThreadpoolCleanupGroup=_CreateThreadpoolCleanupGroup@0
@@ -223,6 +227,7 @@ EXPORTS
     EnumTimeFormatsEx=_EnumTimeFormatsEx@16
     EnumTimeFormatsW=_EnumTimeFormatsW@12
     EnumUILanguagesW=_EnumUILanguagesW@12
+    EraseTape=_EraseTape@12
     EscapeCommFunction=_EscapeCommFunction@8
     ExitProcess=_ExitProcess@4
     ExitThread=_ExitThread@4
@@ -293,6 +298,7 @@ EXPORTS
     FreeLibraryAndExitThread=_FreeLibraryAndExitThread@8
     FreeLibraryWhenCallbackReturns=_FreeLibraryWhenCallbackReturns@8
     FreeResource=_FreeResource@4
+    FreeUserPhysicalPages=_FreeUserPhysicalPages@12
     GenerateConsoleCtrlEvent=_GenerateConsoleCtrlEvent@8
     GetACP=_GetACP@0
     GetAcceptLanguagesA=_GetAcceptLanguagesA@8
@@ -422,6 +428,10 @@ EXPORTS
     GetFirmwareEnvironmentVariableExA=_GetFirmwareEnvironmentVariableExA@20
     GetFirmwareEnvironmentVariableExW=_GetFirmwareEnvironmentVariableExW@20
     GetMailslotInfo=_GetMailslotInfo@20
+    GetNumaNodeProcessorMaskEx=_GetNumaNodeProcessorMaskEx@8
+    GetTapeParameters=_GetTapeParameters@16
+    GetTapePosition=_GetTapePosition@20
+    GetTapeStatus=_GetTapeStatus@4
     GetThreadSelectorEntry=_GetThreadSelectorEntry@12
     GetVolumeNameForVolumeMountPointA=_GetVolumeNameForVolumeMountPointA@12
     GetVolumePathNameA=_GetVolumePathNameA@12
@@ -430,12 +440,17 @@ EXPORTS
     Heap32ListFirst=_Heap32ListFirst@8
     Heap32ListNext=_Heap32ListNext@8
     Heap32Next=_Heap32Next@4
+    MapUserPhysicalPages=_MapUserPhysicalPages@12
+    MapUserPhysicalPagesScatter=_MapUserPhysicalPagesScatter@12
     MoveFileWithProgressA=_MoveFileWithProgressA@20
+    PrepareTape=_PrepareTape@12
     PssCaptureSnapshot=_PssCaptureSnapshot@16
     PssFreeSnapshot=_PssFreeSnapshot@8
     PssQuerySnapshot=_PssQuerySnapshot@16
+    QueryProcessAffinityUpdateMode=_QueryProcessAffinityUpdateMode@8
     ReadFileScatter=_ReadFileScatter@20
     ReplaceFileA=_ReplaceFileA@24
+    SetFileIoOverlappedRange=_SetFileIoOverlappedRange@12
     SetFirmwareEnvironmentVariableA=_SetFirmwareEnvironmentVariableA@16
     SetFirmwareEnvironmentVariableW=_SetFirmwareEnvironmentVariableW@16
     SetFirmwareEnvironmentVariableExA=_SetFirmwareEnvironmentVariableExA@20
@@ -1183,6 +1198,7 @@ EXPORTS
     SetNamedPipeHandleState=_SetNamedPipeHandleState@16
     SetPriorityClass=_SetPriorityClass@8
     SetProcessAffinityMask=_SetProcessAffinityMask@8
+    SetProcessAffinityUpdateMode=_SetProcessAffinityUpdateMode@8
     SetProcessDEPPolicy=_SetProcessDEPPolicy@4
     SetProcessInformation=_SetProcessInformation@16
     SetProcessMitigationPolicy=_SetProcessMitigationPolicy@12
@@ -1197,6 +1213,8 @@ EXPORTS
     SetStdHandleEx=_SetStdHandleEx@12
     SetSystemTime=_SetSystemTime@4
     SetSystemTimeAdjustment=_SetSystemTimeAdjustment@8
+    SetTapeParameters=_SetTapeParameters@12
+    SetTapePosition=_SetTapePosition@24
     SetThreadAffinityMask=_SetThreadAffinityMask@8
     SetThreadContext=_SetThreadContext@8
     SetThreadDescription=_SetThreadDescription@8
@@ -1433,6 +1451,7 @@ EXPORTS
     WriteProfileSectionW=_WriteProfileSectionW@8
     WriteProfileStringA=_WriteProfileStringA@12
     WriteProfileStringW=_WriteProfileStringW@12
+    WriteTapemark=_WriteTapemark@16
     ZombifyActCtx=_ZombifyActCtx@4
     _lclose=__lclose@4
     _lcreat=__lcreat@8
