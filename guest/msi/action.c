@@ -212,6 +212,9 @@ static UINT run_sequence_row(MSIHANDLE handle, MIME_MSI_PACKAGE *package, MIME_M
     }
     if (error && error != ERROR_NO_MORE_ITEMS)
         DbgPrint("msi: action %ws returned %u\n", action, error);
+    /* an error of the system, not of the installer or a reboot it asks for, fails the installation. */
+    if (error && error != ERROR_NO_MORE_ITEMS && (error < 1601 || error > 1660) && error != 3010)
+        error = ERROR_INSTALL_FAILURE;
     return error;
 }
 

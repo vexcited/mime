@@ -94,6 +94,8 @@ static UINT install_transforms(MSIHANDLE *handle, PCWSTR command)
     if (!error && *list) {
         MSIHANDLE database = MsiGetActiveDatabase(*handle), transformed = 0;
         error = database ? MimeMsiApplyTransformList(database, list) : ERROR_NOT_ENOUGH_MEMORY;
+        if (error && error != ERROR_NOT_ENOUGH_MEMORY)
+            error = ERROR_INSTALL_TRANSFORM_FAILURE;
         if (!error) {
             WCHAR borrowed[32];
             _snwprintf(borrowed, RTL_NUMBER_OF(borrowed), L"#%u", database);
