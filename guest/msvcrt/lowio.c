@@ -103,13 +103,17 @@ void MsvcrtUnlockFd(int fd)
         LeaveCriticalSection(&io->lock);
 }
 
-/* fails like msvcrt with EBADF and a zero _doserrno when fd is not open. */
+/* fails like msvcrt with EBADF and a zero _doserrno when fd is not open. The descriptor -2 of a missing standard
+   handle fails the same way without the invalid parameter report. */
 static int check_fd(int fd)
 {
     if (MsvcrtFdValid(fd))
         return 1;
     *__doserrno() = 0;
-    MSVCRT_INVALID(EBADF);
+    if (fd == -2)
+        MsvcrtSetErrno(EBADF);
+    else
+        MSVCRT_INVALID(EBADF);
     return 0;
 }
 
