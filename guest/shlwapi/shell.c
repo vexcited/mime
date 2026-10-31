@@ -847,13 +847,17 @@ static DWORD get_cipher_strength(void)
         return 0;
     SECURITY_TABLE *(WINAPI * initialize)(void) = (SECURITY_TABLE * (WINAPI *)(void)) GetProcAddress(security, "InitSecurityInterfaceA");
     SECURITY_TABLE *table = initialize ? initialize() : nullptr;
+    /* the outbound credential of schannel tells the strongest cipher it has. */
     if (table && table->table[3] && table->table[2]) {
-        LONG(WINAPI * acquire)(void *, const char *, ULONG) = table->table[3];
-        LONG(WINAPI * query)(void *, ULONG, void *) = table->table[2];
-        void(WINAPI * free_handle)(void *) = table->table[4];
+        LONG(WINAPI * acquire)(char *, char *, ULONG, void *, void *, void *, void *, ULONG_PTR *, LARGE_INTEGER *) =
+            table->table[3];
+        LONG(WINAPI * query)(ULONG_PTR *, ULONG, void *) = table->table[2];
+        LONG(WINAPI * free_handle)(ULONG_PTR *) = table->table[4];
         CIPHER_STRENGTHS strengths = {};
-        BYTE handle[16] = {};
-        if (acquire(nullptr, "Microsoft Unified Security Protocol Provider", 2) == 0) {
+        ULONG_PTR handle[2] = {};
+        LARGE_INTEGER expiry;
+        char provider[] = "Microsoft Unified Security Protocol Provider";
+        if (acquire(nullptr, provider, 2, nullptr, nullptr, nullptr, nullptr, handle, &expiry) == 0) {
             if (query(handle, 87, &strengths) == 0)
                 cipher_strength = strengths.maximum;
             if (free_handle)
