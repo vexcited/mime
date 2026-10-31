@@ -434,9 +434,15 @@ EXPORTS
     OpenTraceFromRealTimeLoggerWithAllocationOptions=_OpenTraceFromRealTimeLoggerWithAllocationOptions@28
     OpenTraceW=_OpenTraceW@4
     PerfCreateInstance=_PerfCreateInstance@16
+    PerfDecrementULongCounterValue=_PerfDecrementULongCounterValue@16
+    PerfDecrementULongLongCounterValue=_PerfDecrementULongLongCounterValue@20
     PerfDeleteInstance=_PerfDeleteInstance@8
+    PerfIncrementULongCounterValue=_PerfIncrementULongCounterValue@16
+    PerfIncrementULongLongCounterValue=_PerfIncrementULongLongCounterValue@20
     PerfSetCounterRefValue=_PerfSetCounterRefValue@16
     PerfSetCounterSetInfo=_PerfSetCounterSetInfo@12
+    PerfSetULongCounterValue=_PerfSetULongCounterValue@16
+    PerfSetULongLongCounterValue=_PerfSetULongLongCounterValue@20
     PerfStartProviderEx=_PerfStartProviderEx@12
     PerfStopProvider=_PerfStopProvider@4
     PrivilegeCheck=_PrivilegeCheck@12
