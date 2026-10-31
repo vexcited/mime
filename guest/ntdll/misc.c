@@ -530,6 +530,46 @@ NTDLL_EXPORT ULONG NTAPI RtlUniform(PULONG seed)
     return *seed & 0x7FFFFFFF;
 }
 
+#if defined(__x86_64__)
+NTDLL_EXPORT PVOID NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base, ULONG64 pc, PVOID function,
+                                                        PCONTEXT context, PVOID *data, PULONG64 frame, PVOID pointers);
+
+/* the callers of the caller, found with the unwind data of the images, so code built without frame pointers shows up. */
+NTDLL_EXPORT USHORT NTAPI RtlCaptureStackBackTrace(ULONG skip, ULONG count, PVOID *frames, PULONG hash)
+{
+    CONTEXT context;
+    RtlCaptureContext(&context);
+    USHORT n = 0;
+    ULONG h = 0;
+    PTEB teb = NtCurrentTeb();
+    for (ULONG depth = 0; depth < 256 && n < count; depth++) {
+        ULONG64 base;
+        PVOID function = RtlLookupFunctionEntry(context.Rip, &base, nullptr);
+        if (function) {
+            PVOID handler_data;
+            ULONG64 frame;
+            RtlVirtualUnwind(0, base, context.Rip, function, &context, &handler_data, &frame, nullptr);
+        } else {
+            /* a leaf without data returns to the address on top of the stack. */
+            if (context.Rsp < (ULONG64)teb->NtTib.StackLimit || context.Rsp >= (ULONG64)teb->NtTib.StackBase)
+                break;
+            context.Rip = *(ULONG64 *)context.Rsp;
+            context.Rsp += sizeof(ULONG64);
+        }
+        if (!context.Rip)
+            break;
+        if (skip) {
+            skip--;
+            continue;
+        }
+        frames[n++] = (PVOID)context.Rip;
+        h += (ULONG)context.Rip;
+    }
+    if (hash)
+        *hash = h;
+    return n;
+}
+#else
 NTDLL_EXPORT USHORT NTAPI RtlCaptureStackBackTrace(ULONG skip, ULONG count, PVOID *frames, PULONG hash)
 {
     /* walk the frame record chain; x29 points at {previous x29, x30}. */
@@ -551,3 +591,4 @@ NTDLL_EXPORT USHORT NTAPI RtlCaptureStackBackTrace(ULONG skip, ULONG count, PVOI
         *hash = h;
     return n;
 }
+#endif
