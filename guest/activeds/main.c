@@ -1,29 +1,11 @@
 /*
- * activeds.dll, the Active Directory service interfaces. there is no directory and no provider, so binding to an
- * object fails with a path not found. the memory and string helpers work, value conversions are not done.
+ * activeds.dll, the Active Directory service interfaces. the only provider is WinNT, for the accounts of this machine
+ * (winnt.c), so binding to any other path fails with a path not found. the memory and string helpers work, value
+ * conversions are not done.
  */
-#include <mime/win32/winbase.h>
-#include <mime/win32/objbase.h>
-#include <mime/win32/oleauto.h>
-#include <mime/win32/winerror.h>
+#include "activeds.h"
 
 #define ADSAPI DECLSPEC_EXPORT
-
-#define E_ADS_BAD_PATHNAME ((HRESULT)0x80005000)
-
-typedef struct IEnumVARIANT IEnumVARIANT;
-typedef struct IEnumVARIANTVtbl {
-    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IEnumVARIANT *This, REFIID riid, void **object);
-    ULONG(STDMETHODCALLTYPE *AddRef)(IEnumVARIANT *This);
-    ULONG(STDMETHODCALLTYPE *Release)(IEnumVARIANT *This);
-    HRESULT(STDMETHODCALLTYPE *Next)(IEnumVARIANT *This, ULONG count, VARIANT *values, ULONG *fetched);
-    HRESULT(STDMETHODCALLTYPE *Skip)(IEnumVARIANT *This, ULONG count);
-    HRESULT(STDMETHODCALLTYPE *Reset)(IEnumVARIANT *This);
-    HRESULT(STDMETHODCALLTYPE *Clone)(IEnumVARIANT *This, IEnumVARIANT **clone);
-} IEnumVARIANTVtbl;
-struct IEnumVARIANT {
-    const IEnumVARIANTVtbl *lpVtbl;
-};
 
 /* copies into count characters, terminator included. */
 static void copy_text(LPWSTR out, LPCWSTR text, SIZE_T count)
@@ -46,7 +28,9 @@ ADSAPI HRESULT WINAPI ADsGetObject(LPCWSTR path, REFIID iid, void **object)
     *object = nullptr;
     if (!path || !*path)
         return E_ADS_BAD_PATHNAME;
-    /* with or without a provider prefix, no provider serves the path. */
+    if (!_wcsnicmp(path, L"WinNT:", 6))
+        return WinNtOpen(path, iid, object);
+    /* with or without another provider prefix, no provider serves the path. */
     return HRESULT_FROM_WIN32(ERROR_PATH_NOT_FOUND);
 }
 
@@ -60,7 +44,18 @@ ADSAPI HRESULT WINAPI ADsBuildEnumerator(IUnknown *container, IEnumVARIANT **enu
     if (!container || !enumerator)
         return E_INVALIDARG;
     *enumerator = nullptr;
-    return E_NOINTERFACE;
+    IADsContainer *items;
+    HRESULT hr = container->lpVtbl->QueryInterface(container, &IID_IADsContainer, (void **)&items);
+    if (FAILED(hr))
+        return hr;
+    IUnknown *unknown;
+    hr = items->lpVtbl->get__NewEnum(items, &unknown);
+    items->lpVtbl->Release(items);
+    if (FAILED(hr))
+        return hr;
+    hr = unknown->lpVtbl->QueryInterface(unknown, &IID_IEnumVARIANT, (void **)enumerator);
+    unknown->lpVtbl->Release(unknown);
+    return hr;
 }
 
 ADSAPI HRESULT WINAPI ADsFreeEnumerator(IEnumVARIANT *enumerator)
