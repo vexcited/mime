@@ -74,6 +74,17 @@ static void apartment_pump(APARTMENT *a)
     }
 }
 
+HANDLE OrpcApartmentWake(APARTMENT *a)
+{
+    APT_QUEUE *q = a ? queue_of(a) : nullptr;
+    return q ? q->Wake : nullptr;
+}
+
+void OrpcApartmentRun(APARTMENT *a)
+{
+    apartment_pump(a);
+}
+
 static LRESULT CALLBACK apartment_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
 {
     if (message == WM_ORPC) {

@@ -84,6 +84,9 @@ void OrpcApartmentLeave(OLE_THREAD *t);
 /* runs on the apartment's thread for a single threaded apartment, in place for the multithreaded one. */
 typedef void (*ORPC_RUN)(void *context);
 HRESULT OrpcRunInApartment(APARTMENT *apartment, ORPC_RUN function, void *context);
+/* the event that wakes the thread of a single threaded apartment for a queued call, and the run of the queued calls. */
+HANDLE OrpcApartmentWake(APARTMENT *apartment);
+void OrpcApartmentRun(APARTMENT *apartment);
 /* waits for a reply while serving the calls that come to the thread's apartment. */
 DWORD WINAPI OrpcWait(DWORD count, const HANDLE *handles, DWORD timeout, void *context);
 
