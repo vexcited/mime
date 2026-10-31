@@ -25,8 +25,6 @@ typedef struct CM_PARSE_CONTEXT {
     ACCESS_MASK Access;   /* requested, then granted once checked */
     ACCESS_MASK Granted;
     BOOLEAN Checked;
-    BOOLEAN ByHandle;        /* the walk starts at a handle's key, opened for HandleAccess */
-    ACCESS_MASK HandleAccess;
     UCHAR RegistryView;
     BOOLEAN SelectView;
     BOOLEAN ViewContainer;
@@ -523,8 +521,6 @@ static NTSTATUS walk(CM_NODE *start, PWCHAR path, ULONG len, ULONG attributes, C
                      CM_NODE **out)
 {
     /* creating a key directly under a handle's key depends on the handle's access. */
-    BOOLEAN by_handle = create && create->ByHandle;
-    ACCESS_MASK handle_access = create ? create->HandleAccess : 0;
     CM_NODE *node = start;
     ULONG pos = 0;
     int reparse = 0;
@@ -567,13 +563,8 @@ static NTSTATUS walk(CM_NODE *start, PWCHAR path, ULONG len, ULONG attributes, C
                 return STATUS_CHILD_MUST_BE_VOLATILE;
             if (last && (create->Options & REG_OPTION_CREATE_LINK))
                 flags |= CM_NODE_LINK;
-            /* a program needs KEY_CREATE_SUB_KEY on the parent. */
-            if (create->Check && by_handle && node == start && !(handle_access & KEY_CREATE_SUB_KEY_)) {
-                if (SeTraceAccess)
-                    KiLogPrintf("  the key of a handle opened for %08x", handle_access);
-                trace_key(node, KEY_CREATE_SUB_KEY_, STATUS_ACCESS_DENIED);
-                return STATUS_ACCESS_DENIED;
-            } else if (create->Check && !(by_handle && node == start)) {
+            /* the parent's descriptor must grant KEY_CREATE_SUB_KEY, whatever rights the handle to it holds. */
+            if (create->Check) {
                 SD_BLOB *parent_sd;
                 status = effective_sd(node, &parent_sd);
                 if (NT_SUCCESS(status)) {
@@ -688,10 +679,6 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
     memcpy(path, remaining->Buffer, len * sizeof(WCHAR));
     CM_NODE *node;
     CM_PARSE_CONTEXT *ctx = context;
-    if (ctx && ctx->Check && PsCurrentThread() && PsCurrentThread()->ParseRootObject == object) {
-        ctx->ByHandle = TRUE;
-        ctx->HandleAccess = PsCurrentThread()->ParseRootAccess;
-    }
     ExAcquireFastMutex(&CmpLock);
     CM_KEY_BODY *root = object;
     CM_NODE *start = root->Node;
@@ -704,8 +691,6 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
         if (!view)
             view = ctx->Mode == UserMode && PsCurrentProcess()->Machine == IMAGE_FILE_MACHINE_I386 ? 32 : 64;
         status = CmpMapRegistryView(root, view, path, &len, MAX_PATH_CHARS, &start, &physical, &ctx->ViewContainer);
-        if (start != root->Node)
-            ctx->ByHandle = FALSE;
     }
     PWCHAR requested = nullptr;
     if (g_trace) {
