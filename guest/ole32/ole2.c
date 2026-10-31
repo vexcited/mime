@@ -1,6 +1,6 @@
 /*
  * the ole layer over COM: running objects, menu descriptors, accelerators, HKCR\CLSID class information and
- * persistence helpers. creating and loading embedded objects is not implemented.
+ * persistence helpers.
  */
 #include "ole32_private.h"
 #include <mime/stub.h>
@@ -683,77 +683,6 @@ WINOLEAPI HANDLE WINAPI OleDuplicateData(HANDLE source, CLIPFORMAT format, UINT 
     }
     GlobalUnlock(source);
     return copy;
-}
-
-/* ------------------------------------------------------------------ embedding, not implemented */
-
-static HRESULT no_object(void **object)
-{
-    if (!object)
-        return E_INVALIDARG;
-    *object = nullptr;
-    return E_NOTIMPL;
-}
-
-WINOLEAPI HRESULT WINAPI OleCreate(REFCLSID clsid, REFIID riid, DWORD render, FORMATETC *format,
-                                   IOleClientSite *site, IStorage *storage, void **object)
-{
-    MIME_STUB("ole32");
-    return no_object(object);
-}
-
-WINOLEAPI HRESULT WINAPI CreateDataCache(IUnknown *outer, REFCLSID clsid, REFIID riid, void **object)
-{
-    MIME_STUB("ole32");
-    return no_object(object);
-}
-
-WINOLEAPI HRESULT WINAPI OleCreateFromData(IDataObject *data, REFIID riid, DWORD render, FORMATETC *format,
-                                           IOleClientSite *site, IStorage *storage, void **object)
-{
-    MIME_STUB("ole32");
-    return no_object(object);
-}
-
-WINOLEAPI HRESULT WINAPI OleCreateLinkFromData(IDataObject *data, REFIID riid, DWORD render, FORMATETC *format,
-                                               IOleClientSite *site, IStorage *storage, void **object)
-{
-    MIME_STUB("ole32");
-    return no_object(object);
-}
-
-WINOLEAPI HRESULT WINAPI OleCreateStaticFromData(IDataObject *data, REFIID riid, DWORD render, FORMATETC *format,
-                                                 IOleClientSite *site, IStorage *storage, void **object)
-{
-    MIME_STUB("ole32");
-    return no_object(object);
-}
-
-WINOLEAPI HRESULT WINAPI OleCreateLinkToFile(LPCOLESTR path, REFIID riid, DWORD render, FORMATETC *format,
-                                             IOleClientSite *site, IStorage *storage, void **object)
-{
-    MIME_STUB("ole32");
-    return no_object(object);
-}
-
-WINOLEAPI HRESULT WINAPI OleCreateFromFile(REFCLSID clsid, LPCOLESTR path, REFIID riid, DWORD render,
-                                           FORMATETC *format, IOleClientSite *site, IStorage *storage,
-                                           void **object)
-{
-    MIME_STUB("ole32");
-    return no_object(object);
-}
-
-WINOLEAPI HRESULT WINAPI OleLoad(IStorage *storage, REFIID riid, IOleClientSite *site, void **object)
-{
-    MIME_STUB("ole32");
-    return no_object(object);
-}
-
-WINOLEAPI HGLOBAL WINAPI OleGetIconOfClass(REFCLSID clsid, LPOLESTR label, BOOL use_type_as_label)
-{
-    MIME_STUB("ole32");
-    return nullptr;
 }
 
 /*
