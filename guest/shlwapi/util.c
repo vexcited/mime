@@ -155,3 +155,50 @@ void WINAPI CalculateAspectRatio(const SIZE *target, BOOL center, RECT *rect)
         rect->right = offset + fitted;
     }
 }
+
+/* ------------------------------------------------------------------ screens and zones */
+
+/* the name of the resolution of the primary display, as the pages of a shell view are named for it. */
+int WINAPI SHGetPerScreenResName(WCHAR *name, UINT size, BOOL with_depth);
+int WINAPI SHGetPerScreenResName(WCHAR *name, UINT size, BOOL with_depth)
+{
+    HDC dc = GetDC(nullptr);
+    int width = GetDeviceCaps(dc, HORZRES), height = GetDeviceCaps(dc, VERTRES), depth = GetDeviceCaps(dc, 90);
+    ReleaseDC(nullptr, dc);
+    int monitors = GetSystemMetrics(SM_CMONITORS);
+    WCHAR text[64];
+    if (with_depth)
+        wsprintfW(text, L"%dx%dx%d(%d)", width, height, depth, monitors);
+    else
+        wsprintfW(text, L"%dx%d(%d)", width, height, monitors);
+    if (lstrlenW(text) >= (int)size)
+        return 0;
+    lstrcpyW(name, text);
+    return lstrlenW(name);
+}
+
+/* the zone checks all end in the one that takes the most arguments, and the host checks in theirs. */
+HRESULT WINAPI ZoneCheckUrlExCacheW(ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6,
+                                    ULONG_PTR a7, ULONG_PTR a8, ULONG_PTR a9);
+HRESULT WINAPI ZoneCheckHostEx(ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6,
+                               ULONG_PTR a7);
+
+HRESULT WINAPI ZoneCheckUrlW(ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4);
+HRESULT WINAPI ZoneCheckUrlW(ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4)
+{
+    return ZoneCheckUrlExCacheW(a1, 0, 0, 0, 0, a2, a3, a4, 0);
+}
+
+HRESULT WINAPI ZoneCheckUrlExW(ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6,
+                               ULONG_PTR a7, ULONG_PTR a8);
+HRESULT WINAPI ZoneCheckUrlExW(ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3, ULONG_PTR a4, ULONG_PTR a5, ULONG_PTR a6,
+                               ULONG_PTR a7, ULONG_PTR a8)
+{
+    return ZoneCheckUrlExCacheW(a1, a2, a3, a4, a5, a6, a7, a8, 0);
+}
+
+HRESULT WINAPI ZoneCheckHost(ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3);
+HRESULT WINAPI ZoneCheckHost(ULONG_PTR a1, ULONG_PTR a2, ULONG_PTR a3)
+{
+    return ZoneCheckHostEx(a1, 0, 0, 0, 0, a2, a3);
+}

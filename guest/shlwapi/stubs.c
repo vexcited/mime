@@ -6,12 +6,9 @@
 
 /* zones grant everything since there is no internet explorer to configure them. */
 SHLWAPI_STUB(HRESULT, ZoneCheckUrlA, 4, S_OK)
-SHLWAPI_STUB(HRESULT, ZoneCheckUrlW, 4, S_OK)
 SHLWAPI_STUB(HRESULT, ZoneCheckUrlExA, 8, S_OK)
-SHLWAPI_STUB(HRESULT, ZoneCheckUrlExW, 8, S_OK)
 SHLWAPI_STUB(HRESULT, ZoneCheckUrlExCacheA, 9, S_OK)
 SHLWAPI_STUB(HRESULT, ZoneCheckUrlExCacheW, 9, S_OK)
-SHLWAPI_STUB(HRESULT, ZoneCheckHost, 3, S_OK)
 SHLWAPI_STUB(HRESULT, ZoneCheckHostEx, 7, S_OK)
 SHLWAPI_STUB(int, ZoneComputePaneSize, 1, 0)
 SHLWAPI_STUB(HRESULT, ZoneConfigureW, 2, E_NOTIMPL)
@@ -91,7 +88,6 @@ SHLWAPI_STUB(HRESULT, IWebBrowser_Navigate2, 6, E_NOTIMPL)
 SHLWAPI_STUB(BOOL, ConvertDIBSECTIONToThumbnail, 8, FALSE)
 SHLWAPI_STUB_VOID(FactorAspectRatio, 12)
 SHLWAPI_STUB(HBITMAP, CreateSizedDIBSECTION, 7, nullptr)
-SHLWAPI_STUB(int, SHGetPerScreenResName, 3, 0)
 
 SHLWAPI_STUB(HRESULT, SHManagedCreateFile, 7, E_NOTIMPL)
 SHLWAPI_STUB(HRESULT, SHManagedCreateStreamOnFile, 7, E_NOTIMPL)
