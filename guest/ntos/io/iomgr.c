@@ -332,7 +332,11 @@ static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICOD
         params.Flags |= SL_OPEN_STAT_ONLY;
     if (op->UserMode)
         params.Flags |= SL_FORCE_ACCESS_CHECK;
-    status = IopSynchronousRequest(file, IRP_MJ_CREATE, 0, nullptr, 0, &params, &op->Iosb);
+    /* extended attributes travel as the system buffer of the request, the way they do in windows. */
+    PETHREAD creator_thread = PsCurrentThread();
+    params.Parameters.Create.EaLength = creator_thread->CreateEaLength;
+    status = IopSynchronousRequest(file, IRP_MJ_CREATE, 0, creator_thread->CreateEa, creator_thread->CreateEaLength, &params,
+                                   &op->Iosb);
     op->Checked = security.Checked;
     op->GrantedAccess = security.GrantedAccess;
     if (!NT_SUCCESS(status)) {
@@ -638,6 +642,7 @@ void IoInitialize(void)
     IopInitializeNamedPipes();
     IopInitializeConsole();
     IopInitializeAfd();
+    IopInitializeHttp();
     IopInitializeRedirector();
     IopInitializePads();
     IopInitializeCameras();

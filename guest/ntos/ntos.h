@@ -968,6 +968,8 @@ typedef struct _ETHREAD {
     ACCESS_MASK ParseRootAccess;
     BOOLEAN HideFromDebugger;
     NTSTATUS PendingException;  /* raised as the system call returns, for a failed strict handle check. */
+    PVOID CreateEa;             /* the extended attributes of the file being created, a kernel copy. */
+    ULONG CreateEaLength;
 } ETHREAD;
 
 #define MIME_IMAGE_NAME_CHARS 260
@@ -1331,6 +1333,15 @@ NTSTATUS FsNotifyCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
 /* mimefs.c: whether a file object is on a host backed volume, and the volume of an open directory. */
 BOOLEAN IopIsMimeFs(PFILE_OBJECT file);
 NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume, PULONG64 host_handle);
+
+/* http.c: the http server driver. */
+void IopInitializeHttp(void);
+BOOLEAN IopIsHttp(PFILE_OBJECT file);
+NTSTATUS HttpDeviceControl(PFILE_OBJECT file, HANDLE event, PVOID apc, PVOID context, PIO_STATUS_BLOCK iosb, ULONG code,
+                           PVOID input, ULONG in_len, PVOID output, ULONG out_len);
+NTSTATUS HttpCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
+/* a socket the host raised that the socket driver does not know: true when this driver watches it. */
+BOOLEAN HttpHostEvent(ULONG sock);
 
 /* hid.c: game controller hid and xusb devices. */
 BOOLEAN IopIsPad(PFILE_OBJECT file);

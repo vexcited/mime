@@ -50,7 +50,33 @@ NTSTATUS NTAPI IoCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
             }
         }
     }
+    PVOID ea_copy = nullptr;
+    if (ea && ea_length) {
+        if (ea_length > 0x10000) {
+            KiFreeCapturedString(&name);
+            return ((NTSTATUS)0xC0000050L);
+        }
+        ea_copy = ExAllocatePool2(POOL_FLAG_NON_PAGED, ea_length, KI_TAG('I', 'o', 'E', 'a'));
+        if (!ea_copy) {
+            KiFreeCapturedString(&name);
+            return STATUS_INSUFFICIENT_RESOURCES;
+        }
+        status = mode == UserMode ? KiCopyFromUser(ea_copy, ea, ea_length) : (memcpy(ea_copy, ea, ea_length), STATUS_SUCCESS);
+        if (!NT_SUCCESS(status)) {
+            ExFreePool(ea_copy);
+            KiFreeCapturedString(&name);
+            return status;
+        }
+    }
+    PVOID outer_ea = thread->CreateEa;
+    ULONG outer_ea_length = thread->CreateEaLength;
+    thread->CreateEa = ea_copy;
+    thread->CreateEaLength = ea_copy ? ea_length : 0;
     status = IopCreateFile(&h, access, &oa, &local, file_attributes, share, disposition, options, mode);
+    thread->CreateEa = outer_ea;
+    thread->CreateEaLength = outer_ea_length;
+    if (ea_copy)
+        ExFreePool(ea_copy);
     thread->CreateQos = 0;
     KiFreeCapturedString(&name);
     if (!NT_SUCCESS(status)) {
@@ -816,6 +842,8 @@ NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTIN
     /* sockets and game controllers read the caller's buffers themselves and may stay pending. */
     if (IopIsAfd(file))
         status = AfdDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
+    else if (IopIsHttp(file))
+        status = HttpDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
     else if (IopIsPad(file))
         status = PadDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
     else
@@ -856,6 +884,8 @@ NTSTATUS NTAPI NtCancelIoFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
         NpfsCancel(file, PsCurrentProcess(), FALSE, nullptr);
     else if (IopIsAfd(file))
         AfdCancel(file, PsCurrentThread(), nullptr);
+    else if (IopIsHttp(file))
+        HttpCancel(file, PsCurrentThread(), nullptr);
     else if (IopIsPad(file))
         PadCancel(file, PsCurrentThread(), nullptr);
     else if (IopIsMimeFs(file)) {
@@ -879,6 +909,8 @@ NTSTATUS NTAPI NtCancelIoFileEx(HANDLE handle, PIO_STATUS_BLOCK request, PIO_STA
         status = NpfsCancel(file, PsCurrentProcess(), request != nullptr, request);
     else if (IopIsAfd(file))
         status = AfdCancel(file, nullptr, request);
+    else if (IopIsHttp(file))
+        status = HttpCancel(file, nullptr, request);
     else if (IopIsPad(file))
         status = PadCancel(file, nullptr, request);
     else if (IopIsMimeFs(file)) {

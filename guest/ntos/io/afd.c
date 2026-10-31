@@ -1060,6 +1060,8 @@ static void NTAPI worker(PVOID context)
                 AFD_SOCKET *s = find_host(id);
                 if (s)
                     service(s);
+                else
+                    HttpHostEvent(id);
             }
             if (n < AFD_EVENTS_BATCH)
                 break;
