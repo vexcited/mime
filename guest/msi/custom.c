@@ -315,13 +315,17 @@ static UINT run_program(MIME_MSI_PACKAGE *package, const MIME_MSI_CA_ROW *row, P
     if (!command_line)
         return ERROR_NOT_ENOUGH_MEMORY;
     if (source == SOURCE_DIRECTORY) {
-        /* the target is the full command line, its first word naming the program in the directory. */
-        _snwprintf(command_line, capacity, L"%s%s", path, arguments);
+        /* the target is the whole command line and the directory its working directory, where a program named
+           without a path is. */
+        PCWSTR program = arguments + (*arguments == L'"');
+        BOOL full = (program[0] && program[1] == L':') || (program[0] == L'\\' && program[1] == L'\\');
+        _snwprintf(command_line, capacity, L"%s%s", full ? L"" : path, arguments);
     } else
         _snwprintf(command_line, capacity, L"\"%s\" %s", path, arguments);
     STARTUPINFOW startup = {.cb = sizeof(startup)};
     PROCESS_INFORMATION process;
-    if (!CreateProcessW(nullptr, command_line, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) {
+    if (!CreateProcessW(nullptr, command_line, nullptr, nullptr, FALSE, 0, nullptr,
+                        source == SOURCE_DIRECTORY ? path : nullptr, &startup, &process)) {
         error = GetLastError();
     } else {
         CloseHandle(process.hThread);
