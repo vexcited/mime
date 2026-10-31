@@ -35,6 +35,8 @@ typedef struct Parser {
     UINT alias_count, alias_capacity;
     LONG object_number;
     int first_line;
+    /* the classes the file defines while it is only checked, kept as |name| so that instances of them are known. */
+    WCHAR *defined;
 } Parser;
 
 /* ------------------------------------------------------------------ lexer */
@@ -902,6 +904,10 @@ static BOOL parse_class(Parser *p, WQuals *class_quals)
                 fail(p, hr);
                 ok = FALSE;
             }
+        } else {
+            WCHAR *grown = wb_format(L"%ls|%ls|", p->defined ? p->defined : L"", name);
+            wb_free(p->defined);
+            p->defined = grown;
         }
     }
     wo_free(c);
@@ -939,6 +945,30 @@ static BOOL parse_instance(Parser *p, WQuals *quals)
         lex(p);
     }
     WObj *class_object = wr_find_class(p->ns, name);
+    if (!class_object && (p->options & WBEM_FLAG_CHECK_ONLY) && p->defined) {
+        /* a class of this file is not stored when the file is only checked, so its instances are read for their syntax. */
+        WCHAR *key = wb_format(L"|%ls|", name);
+        BOOL known = wcsstr(p->defined, key) != nullptr;
+        wb_free(key);
+        if (known) {
+            BOOL ok = expect_punct(p, '{');
+            int depth = ok ? 1 : 0;
+            while (ok && depth && p->tok.kind != T_EOF) {
+                if (is_punct(p, '{'))
+                    depth++;
+                else if (is_punct(p, '}'))
+                    depth--;
+                lex(p);
+            }
+            if (ok && depth)
+                fail(p, WBEM_E_INVALID_SYNTAX);
+            if (ok && is_punct(p, ';'))
+                lex(p);
+            wb_free(name);
+            wb_free(alias);
+            return ok && !depth;
+        }
+    }
     if (!class_object) {
         fail(p, WBEM_E_INVALID_CLASS);
         wb_free(name);
@@ -1041,10 +1071,17 @@ static BOOL parse_pragma(Parser *p)
     if (is_punct(p, '(')) {
         lex(p);
         while (ok && !is_punct(p, ')')) {
-            if (count < 3)
-                ok = parse_scalar(p, &args[count++]);
-            else
+            if (count >= 3) {
                 ok = FALSE;
+            } else if (p->tok.kind == T_IDENT) {
+                /* a flag such as NOFAIL stands for itself. */
+                args[count].vt = VT_BSTR;
+                args[count].bstrVal = SysAllocString(p->tok.text);
+                ok = args[count++].bstrVal != nullptr;
+                lex(p);
+            } else {
+                ok = parse_scalar(p, &args[count++]);
+            }
             if (ok && is_punct(p, ','))
                 lex(p);
             else if (ok && !is_punct(p, ')'))
@@ -1176,5 +1213,6 @@ HRESULT wmof_compile(const WCHAR *text, SIZE_T length, const WCHAR *default_ns, 
         wb_free(p.aliases[i].path);
     }
     wb_free(p.aliases);
+    wb_free(p.defined);
     return p.error;
 }
