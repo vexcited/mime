@@ -324,12 +324,10 @@ static UINT registry_value(PCWSTR text, DWORD length, DWORD *type, BYTE **data, 
     return ERROR_SUCCESS;
 }
 
-static UINT write_registry_rows(MIME_MSI_PACKAGE *package)
+/* the rows that delete a key when they are the first pass, the others when it is the second. */
+static UINT write_registry_pass(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, ULONG pass)
 {
-    MIME_MSI_TABLE *table;
-    UINT error = optional_table(package, L"Registry", &table);
-    if (error || !table)
-        return error;
+    UINT error = ERROR_SUCCESS;
     for (ULONG row = 0; row < table->Rows && !error; row++) {
         PCWSTR component = cell_text(package, table, row, L"Component_");
         ULONG action;
@@ -339,6 +337,9 @@ static UINT write_registry_rows(MIME_MSI_PACKAGE *package)
         HKEY root = registry_root(package, root_number);
         if (!root)
             return ERROR_INSTALL_PACKAGE_INVALID;
+        PCWSTR raw_name = cell_text(package, table, row, L"Name");
+        if ((raw_name && !wcscmp(raw_name, L"-")) != (pass == 0))
+            continue;
         /* user data is written with the letter u and machine data with m, the scope root follows neither. */
         if (((root_number == 1 || root_number == 3) && !MimeMsiModeAllows(package, REINSTALLMODE_USERDATA)) ||
             ((root_number == 0 || root_number == 2) && !MimeMsiModeAllows(package, REINSTALLMODE_MACHINEDATA)))
@@ -384,6 +385,17 @@ static UINT write_registry_rows(MIME_MSI_PACKAGE *package)
         MimeMsiFree(value);
     }
     return error;
+}
+
+/* the keys that are deleted on install go first, whatever their place in the table, so what other rows write is kept. */
+static UINT write_registry_rows(MIME_MSI_PACKAGE *package)
+{
+    MIME_MSI_TABLE *table;
+    UINT error = optional_table(package, L"Registry", &table);
+    if (error || !table)
+        return error;
+    error = write_registry_pass(package, table, 0);
+    return error ? error : write_registry_pass(package, table, 1);
 }
 
 static UINT remove_registry_rows(MIME_MSI_PACKAGE *package)
