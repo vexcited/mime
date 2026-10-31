@@ -592,6 +592,8 @@ WINOLEAPI HGLOBAL WINAPI OleGetIconOfClass(REFCLSID clsid, LPOLESTR label, BOOL 
         if (!GetModuleFileNameW(self, file, MAX_PATH))
             return nullptr;
         icon = LoadIconW(self, MAKEINTRESOURCEW(8));
+        if (!icon)
+            icon = LoadIconW(nullptr, MAKEINTRESOURCEW(32512));
         index = 0;
     }
     HGLOBAL picture = icon_picture(icon, text, file, index);
