@@ -649,8 +649,8 @@ UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features,
         if (package->Maintenance && !package->ConfigureDefaults)
             *selected = installed;
     } else {
-        /* the state it has, then what the properties ask for it. */
-        *selected = package->Maintenance ? installed : FALSE;
+        /* the state it has, which on a first install is the one its level gives, then what the properties ask for it. */
+        *selected = package->Maintenance ? installed : parent_selected && level && level <= limit;
         if (follows && parent && *parent)
             *selected = parent_selected;
         if (list_reaches(package, features, id, parent_column, local, name))
