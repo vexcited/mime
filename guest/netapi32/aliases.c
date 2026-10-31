@@ -52,6 +52,50 @@ BOOL AliasIsBuiltin(LMCSTR name)
     return FALSE;
 }
 
+/* the other groups of every machine. they cannot be made or deleted, but programs add members to them. */
+static const struct {
+    PCWSTR Name, Comment;
+} g_stock[] = {
+    {L"Guests", L"Guests have the same access as members of the Users group by default, except for the Guest account which is further restricted"},
+    {L"Power Users", L"Power Users are included for backwards compatibility and possess limited administrative powers"},
+    {L"Backup Operators", L"Backup Operators can override security restrictions for the sole purpose of backing up or restoring files"},
+    {L"Replicator", L"Supports file replication in a domain"},
+    {L"Remote Desktop Users", L"Members in this group are granted the right to logon remotely"},
+    {L"Network Configuration Operators", L"Members in this group can have some administrative privileges to manage configuration of networking features"},
+    {L"Performance Monitor Users", L"Members of this group can access performance counter data locally and remotely"},
+    {L"Performance Log Users", L"Members of this group may schedule logging of performance counters, enable trace providers, and collect event traces both locally and via remote access to this computer"},
+    {L"Distributed COM Users", L"Members are allowed to launch, activate and use Distributed COM objects on this machine."},
+    {L"IIS_IUSRS", L"Built-in group used by Internet Information Services."},
+    {L"Cryptographic Operators", L"Members are authorized to perform cryptographic operations."},
+    {L"Event Log Readers", L"Members of this group can read event logs from local machine"},
+    {L"Access Control Assistance Operators", L"Members of this group can remotely query authorization attributes and permissions for resources on this computer"},
+    {L"Remote Management Users", L"Members of this group can access WMI resources over management protocols (such as WS-Management via the Windows Remote Management service). This applies only to WMI namespaces that grant access to the user."},
+    {L"Device Owners", L"Members of this group can change system-wide settings."},
+};
+
+static int stock_index(LMCSTR name)
+{
+    for (int i = 0; name && i < (int)RTL_NUMBER_OF(g_stock); i++)
+        if (!_wcsicmp(name, g_stock[i].Name))
+            return i;
+    return -1;
+}
+
+DWORD AliasStockCount(void)
+{
+    return RTL_NUMBER_OF(g_stock);
+}
+
+PCWSTR AliasStockName(DWORD index)
+{
+    return g_stock[index].Name;
+}
+
+PCWSTR AliasStockComment(DWORD index)
+{
+    return g_stock[index].Comment;
+}
+
 /* ------------------------------------------------------------------ advapi32 by name */
 
 typedef BOOL(WINAPI *LOOKUP_NAME)(LPCWSTR, LPCWSTR, PVOID, LPDWORD, LPWSTR, LPDWORD, PDWORD);
@@ -196,7 +240,7 @@ NETAPI NET_API_STATUS WINAPI NetLocalGroupAdd(LMCSTR server, DWORD level, LPBYTE
     LOCALGROUP_INFO_1 *info = (LOCALGROUP_INFO_1 *)buffer;
     if (!valid_name(info->Name))
         return ERROR_INVALID_NAME;
-    if (AliasIsBuiltin(info->Name) || alias_exists(info->Name))
+    if (AliasIsBuiltin(info->Name) || stock_index(info->Name) >= 0 || alias_exists(info->Name))
         return ERROR_ALIAS_EXISTS_CODE;
     DWORD rid = allocate_rid();
     HKEY key;
@@ -216,7 +260,7 @@ NETAPI NET_API_STATUS WINAPI NetLocalGroupDel(LMCSTR server, LMCSTR group)
         return ERROR_INVALID_PARAMETER;
     if (!local_server(server))
         return ERROR_BAD_NETPATH;
-    if (AliasIsBuiltin(group))
+    if (AliasIsBuiltin(group) || stock_index(group) >= 0)
         return NERR_SpeGroupOp;
     if (!alias_exists(group))
         return NERR_GroupNotFound;
@@ -238,11 +282,16 @@ NETAPI NET_API_STATUS WINAPI NetLocalGroupGetInfo(LMCSTR server, LMCSTR group, D
     PCWSTR name = nullptr;
     DWORD index;
     HKEY key;
+    BOOL stock = FALSE;
     for (index = 0; index < RTL_NUMBER_OF(g_builtin) && _wcsicmp(group, g_builtin[index].Name); index++)
         ;
     if (index < RTL_NUMBER_OF(g_builtin)) {
         name = g_builtin[index].Name;
         comment = (PWSTR)g_builtin[index].Comment;
+    } else if (stock_index(group) >= 0) {
+        name = g_stock[stock_index(group)].Name;
+        comment = (PWSTR)g_stock[stock_index(group)].Comment;
+        stock = TRUE;
     } else if (valid_name(group) && !open_alias(group, FALSE, KEY_QUERY_VALUE, &key)) {
         comment = read_text(key, L"Comment");
         RegCloseKey(key);
@@ -255,7 +304,7 @@ NETAPI NET_API_STATUS WINAPI NetLocalGroupGetInfo(LMCSTR server, LMCSTR group, D
     BYTE *memory;
     NET_API_STATUS status = NetApiBufferAllocate((DWORD)(fixed + name_bytes + comment_bytes), (LPVOID *)&memory);
     if (status) {
-        if (comment && comment != (PWSTR)g_builtin[0].Comment && comment != (PWSTR)g_builtin[1].Comment)
+        if (comment && !stock && comment != (PWSTR)g_builtin[0].Comment && comment != (PWSTR)g_builtin[1].Comment)
             LocalFree(comment);
         return status;
     }
@@ -273,7 +322,7 @@ NETAPI NET_API_STATUS WINAPI NetLocalGroupGetInfo(LMCSTR server, LMCSTR group, D
         if (level == 1)
             fields[1] = comment_copy;
     }
-    if (comment && comment != (PWSTR)g_builtin[0].Comment && comment != (PWSTR)g_builtin[1].Comment)
+    if (comment && !stock && comment != (PWSTR)g_builtin[0].Comment && comment != (PWSTR)g_builtin[1].Comment)
         LocalFree(comment);
     *buffer = memory;
     return NERR_Success;
@@ -289,7 +338,7 @@ NETAPI NET_API_STATUS WINAPI NetLocalGroupSetInfo(LMCSTR server, LMCSTR group, D
         return ERROR_INVALID_LEVEL;
     if (!local_server(server))
         return ERROR_BAD_NETPATH;
-    if (AliasIsBuiltin(group))
+    if (AliasIsBuiltin(group) || stock_index(group) >= 0)
         return ERROR_ACCESS_DENIED;
     HKEY key;
     if (!valid_name(group) || open_alias(group, FALSE, KEY_ALL_ACCESS, &key))
@@ -343,7 +392,7 @@ static NET_API_STATUS change_members(LMCSTR server, LMCSTR group, DWORD level, L
     if (AliasIsBuiltin(group))
         return ERROR_ACCESS_DENIED;
     HKEY key;
-    if (!valid_name(group) || open_alias(group, FALSE, KEY_ALL_ACCESS, &key))
+    if (!valid_name(group) || open_alias(group, stock_index(group) >= 0, KEY_ALL_ACCESS, &key))
         return ERROR_NO_SUCH_ALIAS_CODE;
     SIZE_T stride = level == 0 || level == 3 ? sizeof(PVOID) : level == 1 ? 3 * sizeof(PVOID) : 3 * sizeof(PVOID);
     PWSTR list = read_members(key);
@@ -451,6 +500,8 @@ DWORD AliasNames(PWSTR **names)
         DWORD n = RTL_NUMBER_OF(name);
         if (RegEnumKeyExW(root, i, name, &n, nullptr, nullptr, nullptr, nullptr))
             break;
+        if (stock_index(name) >= 0)
+            continue;
         list[found] = LocalAlloc(LMEM_FIXED, (n + 1) * sizeof(WCHAR));
         if (list[found])
             wcscpy(list[found++], name);
@@ -482,10 +533,19 @@ DWORD AliasMemberSids(PCWSTR name, BYTE ***sids)
 {
     *sids = nullptr;
     HKEY key;
-    if (!valid_name(name) || open_alias(name, FALSE, KEY_QUERY_VALUE, &key) || !adv_ready())
+    BOOL stock = stock_index(name) >= 0;
+    if (!valid_name(name) || !adv_ready())
         return (DWORD)-1;
-    PWSTR list = read_members(key);
-    RegCloseKey(key);
+    PWSTR list;
+    if (open_alias(name, FALSE, KEY_QUERY_VALUE, &key)) {
+        /* a stock group nobody was added to has no key yet. */
+        if (!stock)
+            return (DWORD)-1;
+        list = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, 4 * sizeof(WCHAR));
+    } else {
+        list = read_members(key);
+        RegCloseKey(key);
+    }
     if (!list)
         return (DWORD)-1;
     DWORD count = 0;

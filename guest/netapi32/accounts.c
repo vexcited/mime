@@ -23,6 +23,9 @@ NETAPI NET_API_STATUS WINAPI NetApiBufferFree(LPVOID buffer);
 
 /* the groups that programs made, in aliases.c. */
 DWORD AliasNames(PWSTR **names);
+DWORD AliasStockCount(void);
+PCWSTR AliasStockName(DWORD index);
+PCWSTR AliasStockComment(DWORD index);
 void AliasFreeNames(PWSTR *names, DWORD count);
 PWSTR AliasComment(PCWSTR name);
 DWORD AliasMemberSids(PCWSTR name, BYTE ***sids);
@@ -225,20 +228,25 @@ NETAPI NET_API_STATUS WINAPI NetLocalGroupEnum(LMCSTR server, DWORD level, LPBYT
         return ERROR_BAD_NETPATH;
     /* the groups of the machine, then the ones programs made. */
     PWSTR *made;
-    DWORD made_count = AliasNames(&made), count = RTL_NUMBER_OF(local_groups) + made_count;
+    DWORD made_count = AliasNames(&made), stock_count = AliasStockCount();
+    DWORD first = RTL_NUMBER_OF(local_groups), made_first = first + stock_count, count = made_first + made_count;
     NAME_ENTRY *list = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, count * sizeof(NAME_ENTRY));
     if (!list) {
         AliasFreeNames(made, made_count);
         return ERROR_NOT_ENOUGH_MEMORY;
     }
     memcpy(list, local_groups, sizeof(local_groups));
+    for (DWORD i = 0; i < stock_count; i++) {
+        list[first + i].Name = AliasStockName(i);
+        list[first + i].Comment = AliasStockComment(i);
+    }
     for (DWORD i = 0; i < made_count; i++) {
-        list[RTL_NUMBER_OF(local_groups) + i].Name = made[i];
-        list[RTL_NUMBER_OF(local_groups) + i].Comment = AliasComment(made[i]);
+        list[made_first + i].Name = made[i];
+        list[made_first + i].Comment = AliasComment(made[i]);
     }
     NET_API_STATUS status = name_list(list, count, level, TRUE, buffer, entries, total);
     for (DWORD i = 0; i < made_count; i++)
-        LocalFree((PVOID)list[RTL_NUMBER_OF(local_groups) + i].Comment);
+        LocalFree((PVOID)list[made_first + i].Comment);
     LocalFree(list);
     AliasFreeNames(made, made_count);
     return status;
