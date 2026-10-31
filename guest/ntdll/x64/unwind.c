@@ -111,7 +111,10 @@ typedef struct DYNAMIC_TABLE {
 static LIST_ENTRY g_dynamic = {&g_dynamic, &g_dynamic};
 static RTL_SRWLOCK g_dynamic_lock;
 
-static PRUNTIME_FUNCTION search_table(PRUNTIME_FUNCTION table, ULONG count, ULONG rva)
+/* an entry whose unwind data has the low bit set stands for the entry at that offset, which is the one that describes the code. */
+#define RUNTIME_FUNCTION_INDIRECT 1
+
+static PRUNTIME_FUNCTION search_table(PRUNTIME_FUNCTION table, ULONG count, ULONG rva, ULONG64 base)
 {
     ULONG lo = 0, hi = count;
     while (lo < hi) {
@@ -120,6 +123,8 @@ static PRUNTIME_FUNCTION search_table(PRUNTIME_FUNCTION table, ULONG count, ULON
             hi = mid;
         else if (rva >= table[mid].EndAddress)
             lo = mid + 1;
+        else if (table[mid].UnwindData & RUNTIME_FUNCTION_INDIRECT)
+            return (PRUNTIME_FUNCTION)(base + table[mid].UnwindData - RUNTIME_FUNCTION_INDIRECT);
         else
             return &table[mid];
     }
@@ -135,7 +140,7 @@ NTDLL_EXPORT PVOID NTAPI RtlLookupFunctionEntry(ULONG64 pc, PULONG64 image_base,
         *image_base = (ULONG64)entry->DllBase;
         if (!table)
             return nullptr;
-        return search_table(table, size / sizeof(RUNTIME_FUNCTION), (ULONG)(pc - (ULONG64)entry->DllBase));
+        return search_table(table, size / sizeof(RUNTIME_FUNCTION), (ULONG)(pc - (ULONG64)entry->DllBase), (ULONG64)entry->DllBase);
     }
     PRUNTIME_FUNCTION found = nullptr;
     RtlAcquireSRWLockShared(&g_dynamic_lock);
@@ -149,7 +154,7 @@ NTDLL_EXPORT PVOID NTAPI RtlLookupFunctionEntry(ULONG64 pc, PULONG64 image_base,
                 RtlReleaseSRWLockShared(&g_dynamic_lock);
                 return callback(pc, context);
             }
-            found = search_table(t->Table, t->Count, (ULONG)(pc - t->Base));
+            found = search_table(t->Table, t->Count, (ULONG)(pc - t->Base), t->Base);
             if (found) {
                 *image_base = t->Base;
                 break;
