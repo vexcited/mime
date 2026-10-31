@@ -11,10 +11,21 @@
 #define STATUS_USER_MAPPED_FILE ((NTSTATUS)0xC0000243L)
 #define STATUS_INVALID_VOLUME_LABEL ((NTSTATUS)0xC0000086L)
 
+typedef struct MIMEFS_COUNTERS {
+    ULONG64 Reads;
+    ULONG64 ReadBytes;
+    ULONG64 Writes;
+    ULONG64 WriteBytes;
+} MIMEFS_COUNTERS;
+
+#define MIMEFS_MAX_CPUS 64
+
 typedef struct MIMEFS_VOLUME {
     ULONG HostVolume;
     ULONG Serial;
     WCHAR Label[32];
+    /* what the volume read and wrote, for each processor, as the statistics of the file system tell. */
+    MIMEFS_COUNTERS Counters[MIMEFS_MAX_CPUS];
 } MIMEFS_VOLUME;
 
 typedef struct MIMEFS_FCB {
@@ -69,6 +80,19 @@ static NTSTATUS complete(PIRP irp, NTSTATUS status, ULONG_PTR info)
 {
     irp->IoStatus.Status = status;
     irp->IoStatus.Information = info;
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    if (NT_SUCCESS(status) && info && (stack->MajorFunction == IRP_MJ_READ || stack->MajorFunction == IRP_MJ_WRITE) &&
+        stack->DeviceObject) {
+        MIMEFS_VOLUME *vol = stack->DeviceObject->DeviceExtension;
+        MIMEFS_COUNTERS *counters = &vol->Counters[KeGetCurrentPrcb()->Number % MIMEFS_MAX_CPUS];
+        if (stack->MajorFunction == IRP_MJ_READ) {
+            counters->Reads++;
+            counters->ReadBytes += info;
+        } else {
+            counters->Writes++;
+            counters->WriteBytes += info;
+        }
+    }
     IofCompleteRequest(irp, IO_NO_INCREMENT);
     return status;
 }
@@ -1832,6 +1856,117 @@ static NTSTATUS NTAPI mimefs_device_control(PDEVICE_OBJECT device, PIRP irp)
     }
 }
 
+/*
+ * the statistics of the file system, as ntfs gives them: one entry for each processor, each the common counters then
+ * the counters of the file system, and padded to a multiple of 64 bytes. a buffer that cannot hold the first entry's
+ * header is too small, and one that cannot hold every entry gets what fits with STATUS_BUFFER_OVERFLOW. the counters
+ * of the user's files are the ones the volume keeps, and the ones of the metadata and of the file system itself stay
+ * zero, as the volume has no such structures of its own.
+ */
+#define FSCTL_FILESYSTEM_GET_STATISTICS 0x00090060u
+#define FSCTL_FILESYSTEM_GET_STATISTICS_EX 0x00090278u
+#define FILESYSTEM_STATISTICS_TYPE_NTFS 1
+
+typedef struct MIMEFS_STATISTICS {
+    USHORT FileSystemType;
+    USHORT Version;
+    ULONG SizeOfCompleteStructure;
+    ULONG UserFileReads;
+    ULONG UserFileReadBytes;
+    ULONG UserDiskReads;
+    ULONG UserFileWrites;
+    ULONG UserFileWriteBytes;
+    ULONG UserDiskWrites;
+    ULONG MetaDataReads;
+    ULONG MetaDataReadBytes;
+    ULONG MetaDataDiskReads;
+    ULONG MetaDataWrites;
+    ULONG MetaDataWriteBytes;
+    ULONG MetaDataDiskWrites;
+} MIMEFS_STATISTICS;
+
+typedef struct MIMEFS_STATISTICS_EX {
+    USHORT FileSystemType;
+    USHORT Version;
+    ULONG SizeOfCompleteStructure;
+    ULONG64 UserFileReads;
+    ULONG64 UserFileReadBytes;
+    ULONG64 UserDiskReads;
+    ULONG64 UserFileWrites;
+    ULONG64 UserFileWriteBytes;
+    ULONG64 UserDiskWrites;
+    ULONG64 MetaDataReads;
+    ULONG64 MetaDataReadBytes;
+    ULONG64 MetaDataDiskReads;
+    ULONG64 MetaDataWrites;
+    ULONG64 MetaDataWriteBytes;
+    ULONG64 MetaDataDiskWrites;
+} MIMEFS_STATISTICS_EX;
+
+/* the sizes of the counters of ntfs that follow: NTFS_STATISTICS, and NTFS_STATISTICS_EX with its wide counters. */
+#define MIMEFS_NTFS_STATISTICS_SIZE 212
+#define MIMEFS_NTFS_STATISTICS_EX_SIZE 408
+
+static NTSTATUS fs_statistics(PIRP irp, MIMEFS_VOLUME *vol, ULONG length, BOOLEAN wide)
+{
+    ULONG header = wide ? sizeof(MIMEFS_STATISTICS_EX) : sizeof(MIMEFS_STATISTICS);
+    ULONG stride = (header + (wide ? MIMEFS_NTFS_STATISTICS_EX_SIZE : MIMEFS_NTFS_STATISTICS_SIZE) + 63) & ~63u;
+    ULONG count = KeNumberProcessors ? KeNumberProcessors : 1;
+    if (count > MIMEFS_MAX_CPUS)
+        count = MIMEFS_MAX_CPUS;
+    ULONG total = stride * count;
+    if (length < header)
+        return complete(irp, STATUS_BUFFER_TOO_SMALL, 0);
+    PUCHAR out = irp->UserBuffer;
+    ULONG written = length < total ? length : total;
+    memset(out, 0, written);
+    for (ULONG cpu = 0; cpu < count; cpu++) {
+        ULONG at = cpu * stride;
+        if (at >= written)
+            break;
+        /* an entry is built whole and copied as far as the buffer goes. */
+        UCHAR entry[sizeof(MIMEFS_STATISTICS_EX)] = {};
+        const MIMEFS_COUNTERS *c = &vol->Counters[cpu];
+        if (wide) {
+            MIMEFS_STATISTICS_EX *e = (MIMEFS_STATISTICS_EX *)entry;
+            e->FileSystemType = FILESYSTEM_STATISTICS_TYPE_NTFS;
+            e->Version = 1;
+            e->SizeOfCompleteStructure = stride;
+            e->UserFileReads = e->UserDiskReads = c->Reads;
+            e->UserFileReadBytes = c->ReadBytes;
+            e->UserFileWrites = e->UserDiskWrites = c->Writes;
+            e->UserFileWriteBytes = c->WriteBytes;
+        } else {
+            MIMEFS_STATISTICS *e = (MIMEFS_STATISTICS *)entry;
+            e->FileSystemType = FILESYSTEM_STATISTICS_TYPE_NTFS;
+            e->Version = 1;
+            e->SizeOfCompleteStructure = stride;
+            e->UserFileReads = e->UserDiskReads = (ULONG)c->Reads;
+            e->UserFileReadBytes = (ULONG)c->ReadBytes;
+            e->UserFileWrites = e->UserDiskWrites = (ULONG)c->Writes;
+            e->UserFileWriteBytes = (ULONG)c->WriteBytes;
+        }
+        ULONG n = written - at < header ? written - at : header;
+        memcpy(out + at, entry, n);
+    }
+    return complete(irp, written < total ? STATUS_BUFFER_OVERFLOW : STATUS_SUCCESS, written);
+}
+
+static NTSTATUS NTAPI mimefs_fs_control(PDEVICE_OBJECT device, PIRP irp)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    MIMEFS_VOLUME *vol = device->DeviceExtension;
+    ULONG length = stack->Parameters.DeviceIoControl.OutputBufferLength;
+    switch (stack->Parameters.DeviceIoControl.IoControlCode) {
+    case FSCTL_FILESYSTEM_GET_STATISTICS:
+        return fs_statistics(irp, vol, length, FALSE);
+    case FSCTL_FILESYSTEM_GET_STATISTICS_EX:
+        return fs_statistics(irp, vol, length, TRUE);
+    default:
+        return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    }
+}
+
 static NTSTATUS NTAPI mimefs_flush(PDEVICE_OBJECT device, PIRP irp)
 {
     PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
@@ -1884,6 +2019,7 @@ NTSTATUS MimeFsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
     driver->MajorFunction[IRP_MJ_QUERY_VOLUME_INFORMATION] = mimefs_query_volume;
     driver->MajorFunction[IRP_MJ_SET_VOLUME_INFORMATION] = mimefs_set_volume;
     driver->MajorFunction[IRP_MJ_DEVICE_CONTROL] = mimefs_device_control;
+    driver->MajorFunction[IRP_MJ_FILE_SYSTEM_CONTROL] = mimefs_fs_control;
     driver->MajorFunction[IRP_MJ_FLUSH_BUFFERS] = mimefs_flush;
     driver->MajorFunction[IRP_MJ_QUERY_SECURITY] = mimefs_query_security;
     driver->MajorFunction[IRP_MJ_SET_SECURITY] = mimefs_set_security;
