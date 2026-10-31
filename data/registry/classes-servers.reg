@@ -687,3 +687,9 @@
 [HKCR\CLSID\{0002000F-0000-0000-C000-000000000046}\InprocServer32]
 @=expand:"%SystemRoot%\\system32\\avifil32.dll"
 "ThreadingModel"="Both"
+
+; mlang.dll
+; CMultiLanguage
+[HKCR\CLSID\{275C23E2-3747-11D0-9FEA-00AA003F8646}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\mlang.dll"
+"ThreadingModel"="Both"

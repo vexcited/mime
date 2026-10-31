@@ -1,0 +1,8 @@
+LIBRARY mlang.dll
+EXPORTS
+    ConvertINetMultiByteToUnicode@24
+    ConvertINetString@28
+    ConvertINetUnicodeToMultiByte@24
+    DllCanUnloadNow@0
+    DllGetClassObject@12
+    IsConvertINetStringAvailable@8
