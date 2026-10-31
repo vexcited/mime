@@ -1,6 +1,8 @@
-/* URL opening and unsupported FTP/Gopher entry points, which validate handles before failing. */
+/*
+ * URL opening, and the FTP, Gopher and web socket entry points of a machine without those protocols: they validate the
+ * handle and fail as Windows does when no connection of that kind can exist.
+ */
 #include "wininet_private.h"
-#include <mime/stub.h>
 
 /* validate the handle, then report the wrong-type or wrong-state error. */
 static BOOL FailHandle(HINTERNET handle, DWORD type, DWORD error)
@@ -113,7 +115,6 @@ DECLSPEC_EXPORT HINTERNET WINAPI InternetOpenUrlW(HINTERNET session, LPCWSTR url
 /* FtpFindFirstFile and GopherFindFirstFile never succeed, so no find handles exist. */
 DECLSPEC_EXPORT BOOL WINAPI InternetFindNextFileW(HINTERNET find, LPVOID data)
 {
-    MIME_STUB("wininet");
     return FailHandle(find, INTERNET_HANDLE_TYPE_FTP_FIND, ERROR_NO_MORE_FILES);
 }
 
@@ -123,7 +124,6 @@ DECLSPEC_EXPORT BOOL WINAPI InternetFindNextFileW(HINTERNET find, LPVOID data)
 DECLSPEC_EXPORT HINTERNET WINAPI FtpFindFirstFileW(HINTERNET connect, LPCWSTR search, LPWIN32_FIND_DATAW data,
                                                   DWORD flags, DWORD_PTR context)
 {
-    MIME_STUB("wininet");
     FAIL_FTP(connect);
     return nullptr;
 }
@@ -131,33 +131,28 @@ DECLSPEC_EXPORT HINTERNET WINAPI FtpFindFirstFileW(HINTERNET connect, LPCWSTR se
 DECLSPEC_EXPORT BOOL WINAPI FtpGetFileW(HINTERNET connect, LPCWSTR remote, LPCWSTR local, BOOL fail_if_exists,
                                        DWORD attributes, DWORD flags, DWORD_PTR context)
 {
-    MIME_STUB("wininet");
     return FAIL_FTP(connect);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI FtpPutFileW(HINTERNET connect, LPCWSTR local, LPCWSTR remote, DWORD flags,
                                        DWORD_PTR context)
 {
-    MIME_STUB("wininet");
     return FAIL_FTP(connect);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI FtpDeleteFileW(HINTERNET connect, LPCWSTR name)
 {
-    MIME_STUB("wininet");
     return FAIL_FTP(connect);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI FtpRenameFileW(HINTERNET connect, LPCWSTR existing, LPCWSTR name)
 {
-    MIME_STUB("wininet");
     return FAIL_FTP(connect);
 }
 
 /* no ftp file handle exists, so the size of one is asked of a handle that is not one. */
 DECLSPEC_EXPORT DWORD WINAPI FtpGetFileSize(HINTERNET file, LPDWORD high)
 {
-    MIME_STUB("wininet");
     if (high)
         *high = 0;
     FailHandle(file, INTERNET_HANDLE_TYPE_FTP_FILE, ERROR_INTERNET_INCORRECT_HANDLE_TYPE);
@@ -167,39 +162,33 @@ DECLSPEC_EXPORT DWORD WINAPI FtpGetFileSize(HINTERNET file, LPDWORD high)
 DECLSPEC_EXPORT HINTERNET WINAPI FtpOpenFileW(HINTERNET connect, LPCWSTR name, DWORD access, DWORD flags,
                                              DWORD_PTR context)
 {
-    MIME_STUB("wininet");
     FAIL_FTP(connect);
     return nullptr;
 }
 
 DECLSPEC_EXPORT BOOL WINAPI FtpCreateDirectoryW(HINTERNET connect, LPCWSTR name)
 {
-    MIME_STUB("wininet");
     return FAIL_FTP(connect);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI FtpRemoveDirectoryW(HINTERNET connect, LPCWSTR name)
 {
-    MIME_STUB("wininet");
     return FAIL_FTP(connect);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI FtpSetCurrentDirectoryW(HINTERNET connect, LPCWSTR name)
 {
-    MIME_STUB("wininet");
     return FAIL_FTP(connect);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI FtpGetCurrentDirectoryW(HINTERNET connect, LPWSTR name, LPDWORD length)
 {
-    MIME_STUB("wininet");
     return FAIL_FTP(connect);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI FtpCommandW(HINTERNET connect, BOOL expect_response, DWORD flags, LPCWSTR command,
                                        DWORD_PTR context, HINTERNET *ftp_command)
 {
-    MIME_STUB("wininet");
     if (ftp_command)
         *ftp_command = nullptr;
     return FAIL_FTP(connect);
@@ -209,14 +198,12 @@ DECLSPEC_EXPORT BOOL WINAPI FtpCommandW(HINTERNET connect, BOOL expect_response,
 DECLSPEC_EXPORT BOOL WINAPI GopherCreateLocatorW(LPCWSTR host, INTERNET_PORT port, LPCWSTR display, LPCWSTR selector,
                                                 DWORD type, LPWSTR locator, LPDWORD length)
 {
-    MIME_STUB("wininet");
     return InetFail(ERROR_INTERNET_PROTOCOL_NOT_FOUND);
 }
 
 DECLSPEC_EXPORT HINTERNET WINAPI GopherFindFirstFileW(HINTERNET connect, LPCWSTR locator, LPCWSTR search,
                                                      LPGOPHER_FIND_DATAW data, DWORD flags, DWORD_PTR context)
 {
-    MIME_STUB("wininet");
     SetLastError(ERROR_INTERNET_PROTOCOL_NOT_FOUND);
     return nullptr;
 }
@@ -224,7 +211,6 @@ DECLSPEC_EXPORT HINTERNET WINAPI GopherFindFirstFileW(HINTERNET connect, LPCWSTR
 DECLSPEC_EXPORT HINTERNET WINAPI GopherOpenFileW(HINTERNET connect, LPCWSTR locator, LPCWSTR view, DWORD flags,
                                                 DWORD_PTR context)
 {
-    MIME_STUB("wininet");
     SetLastError(ERROR_INTERNET_PROTOCOL_NOT_FOUND);
     return nullptr;
 }
@@ -233,7 +219,6 @@ DECLSPEC_EXPORT BOOL WINAPI GopherGetAttributeW(HINTERNET connect, LPCWSTR locat
                                                DWORD length, LPDWORD returned, GOPHER_ATTRIBUTE_ENUMERATOR enumerator,
                                                DWORD_PTR context)
 {
-    MIME_STUB("wininet");
     return InetFail(ERROR_INTERNET_PROTOCOL_NOT_FOUND);
 }
 
@@ -259,14 +244,12 @@ DECLSPEC_EXPORT BOOL WINAPI GetUrlCacheEntryInfoW(LPCWSTR url, LPVOID info, LPDW
 
 DECLSPEC_EXPORT HINTERNET WINAPI HttpWebSocketCompleteUpgrade(HINTERNET request, DWORD_PTR context)
 {
-    MIME_STUB("wininet");
     FailHandle(request, INTERNET_HANDLE_TYPE_HTTP_REQUEST, ERROR_INTERNET_INCORRECT_HANDLE_STATE);
     return nullptr;
 }
 
 DECLSPEC_EXPORT BOOL WINAPI HttpWebSocketSend(HINTERNET socket, DWORD type, PVOID buffer, DWORD length)
 {
-    MIME_STUB("wininet");
     if (!buffer != !length)
         return InetFail(ERROR_INVALID_PARAMETER);
     return FailHandle(socket, INTERNET_HANDLE_TYPE_WEB_SOCKET_, ERROR_INTERNET_INCORRECT_HANDLE_TYPE);
@@ -274,7 +257,6 @@ DECLSPEC_EXPORT BOOL WINAPI HttpWebSocketSend(HINTERNET socket, DWORD type, PVOI
 
 DECLSPEC_EXPORT BOOL WINAPI HttpWebSocketReceive(HINTERNET socket, PVOID buffer, DWORD length, DWORD *read, DWORD *type)
 {
-    MIME_STUB("wininet");
     if (!buffer || !length || !read || !type)
         return InetFail(ERROR_INVALID_PARAMETER);
     return FailHandle(socket, INTERNET_HANDLE_TYPE_WEB_SOCKET_, ERROR_INTERNET_INCORRECT_HANDLE_TYPE);
@@ -282,19 +264,16 @@ DECLSPEC_EXPORT BOOL WINAPI HttpWebSocketReceive(HINTERNET socket, PVOID buffer,
 
 DECLSPEC_EXPORT BOOL WINAPI HttpWebSocketClose(HINTERNET socket, USHORT status, PVOID reason, DWORD length)
 {
-    MIME_STUB("wininet");
     return FailHandle(socket, INTERNET_HANDLE_TYPE_WEB_SOCKET_, ERROR_INTERNET_INCORRECT_HANDLE_TYPE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI HttpWebSocketShutdown(HINTERNET socket, USHORT status, PVOID reason, DWORD length)
 {
-    MIME_STUB("wininet");
     return FailHandle(socket, INTERNET_HANDLE_TYPE_WEB_SOCKET_, ERROR_INTERNET_INCORRECT_HANDLE_TYPE);
 }
 
 DECLSPEC_EXPORT BOOL WINAPI HttpWebSocketQueryCloseStatus(HINTERNET socket, USHORT *status, PVOID reason, DWORD length,
                                                          DWORD *consumed)
 {
-    MIME_STUB("wininet");
     return FailHandle(socket, INTERNET_HANDLE_TYPE_WEB_SOCKET_, ERROR_INTERNET_INCORRECT_HANDLE_TYPE);
 }
