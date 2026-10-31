@@ -336,6 +336,23 @@ static DWORD obj_open_handle(SE_OBJECT_TYPE type, HANDLE handle, DWORD access, O
             return error;
         use = key;
         owned = TRUE;
+    } else if (is_registry(type) && access) {
+        /* a key is opened again below itself with the rights the parts need, which asks the system again and honors the security privilege. */
+        HKEY key;
+        DWORD error = RegOpenKeyExW(handle, nullptr, 0, access, &key);
+        if (error)
+            return error;
+        use = key;
+        owned = TRUE;
+    } else if (access && type != SE_WINDOW_OBJECT && !is_registry(type)) {
+        /* any other handle that lacks the rights is duplicated with them. */
+        ULONG basic[16] = {0};
+        HANDLE more = nullptr;
+        if (NT_SUCCESS(NtQueryObject(handle, 0, basic, sizeof(basic), nullptr)) && (basic[1] & access) != access &&
+            DuplicateHandle(GetCurrentProcess(), handle, GetCurrentProcess(), &more, access, FALSE, 0)) {
+            use = more;
+            owned = TRUE;
+        }
     }
     /* a file keeps its name to find its parent and the children its lists go to. */
     WCHAR path[1024];
