@@ -189,6 +189,8 @@ EXPORTS
     NtLockFile=_NtLockFile@40
     NtUnlockFile=_NtUnlockFile@20
     NtReadFile=_NtReadFile@36
+    NtReadFileScatter=_NtReadFileScatter@36
+    NtWriteFileGather=_NtWriteFileGather@36
     NtReadVirtualMemory=_NtReadVirtualMemory@20
     NtReleaseMutant=_NtReleaseMutant@8
     NtReleaseSemaphore=_NtReleaseSemaphore@12

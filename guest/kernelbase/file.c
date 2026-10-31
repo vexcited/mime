@@ -508,6 +508,44 @@ BOOL WINAPI WriteFile(HANDLE file, LPCVOID buffer, DWORD length, LPDWORD written
     return TRUE;
 }
 
+/* the pages of a scatter or gather request, which always finishes through the overlapped structure. */
+static BOOL scatter_gather(BOOL write, HANDLE file, PFILE_SEGMENT_ELEMENT segments, DWORD bytes, LPDWORD reserved, LPOVERLAPPED overlapped)
+{
+    if (!overlapped || reserved) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    LARGE_INTEGER offset;
+    offset.LowPart = overlapped->Offset;
+    offset.HighPart = (LONG)overlapped->OffsetHigh;
+    PIO_STATUS_BLOCK iosb = (PIO_STATUS_BLOCK)overlapped;
+    iosb->Status = STATUS_PENDING;
+    iosb->Information = 0;
+    NTSTATUS status = write ? NtWriteFileGather(file, overlapped_event(overlapped), nullptr, overlapped_port_context(overlapped),
+                                                iosb, segments, bytes, &offset, nullptr) :
+                              NtReadFileScatter(file, overlapped_event(overlapped), nullptr, overlapped_port_context(overlapped),
+                                                iosb, segments, bytes, &offset, nullptr);
+    if (status == STATUS_PENDING) {
+        KbSetError(ERROR_IO_PENDING);
+        return FALSE;
+    }
+    if (!NT_SUCCESS(status)) {
+        iosb->Status = status;
+        return KbSetStatus(status);
+    }
+    return TRUE;
+}
+
+WINBASEAPI BOOL WINAPI ReadFileScatter(HANDLE file, PFILE_SEGMENT_ELEMENT segments, DWORD bytes, LPDWORD reserved, LPOVERLAPPED overlapped)
+{
+    return scatter_gather(FALSE, file, segments, bytes, reserved, overlapped);
+}
+
+WINBASEAPI BOOL WINAPI WriteFileGather(HANDLE file, PFILE_SEGMENT_ELEMENT segments, DWORD bytes, LPDWORD reserved, LPOVERLAPPED overlapped)
+{
+    return scatter_gather(TRUE, file, segments, bytes, reserved, overlapped);
+}
+
 /* the kernel queues this as a user apc on completion, so the routine runs at an alertable wait. */
 static void NTAPI completion_apc(PVOID routine, PIO_STATUS_BLOCK iosb, ULONG reserved)
 {

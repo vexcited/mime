@@ -6,6 +6,8 @@
 #define FILE_USE_FILE_POINTER_POSITION 0xFFFFFFFE
 #define FILE_WRITE_TO_END_OF_FILE 0xFFFFFFFF
 #define IO_BOUNCE_SIZE (256 * 1024)
+/* the longest scatter or gather request, in pages. */
+#define IO_MAX_SEGMENTS (64 * 1024)
 
 static NTSTATUS store_iosb(PIO_STATUS_BLOCK user, const IO_STATUS_BLOCK *iosb)
 {
@@ -155,13 +157,41 @@ static NTSTATUS reference_file(HANDLE handle, PFILE_OBJECT *file)
     return ObReferenceHandle(handle, IoFileObjectTypeObject, KeGetPreviousMode(), (PVOID *)file, nullptr);
 }
 
+/*
+ * moves the bytes from done on between a kernel buffer and the user's: one buffer, or the pages of a scatter or gather
+ * request, whose addresses are in an array.
+ */
+static NTSTATUS copy_user(BOOLEAN to_user, PVOID buffer, const ULONG64 *pages, ULONG done, PUCHAR kernel, ULONG count)
+{
+    while (count) {
+        PUCHAR user = pages ? (PUCHAR)(ULONG_PTR)pages[done / PAGE_SIZE] + done % PAGE_SIZE : (PUCHAR)buffer + done;
+        ULONG n = pages ? PAGE_SIZE - done % PAGE_SIZE : count;
+        if (n > count)
+            n = count;
+        NTSTATUS status = to_user ? KiCopyToUser(user, kernel, n) : KiCopyFromUser(kernel, user, n);
+        if (!NT_SUCCESS(status))
+            return status;
+        done += n;
+        kernel += n;
+        count -= n;
+    }
+    return STATUS_SUCCESS;
+}
+
+/* a request with pages reads or writes one buffer made of the pages, in the order of the array. */
 static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_routine, PVOID apc_context,
-                        PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length, PLARGE_INTEGER byte_offset, PULONG key)
+                        PIO_STATUS_BLOCK iosb, PVOID buffer, ULONG length, PLARGE_INTEGER byte_offset, PULONG key,
+                        const ULONG64 *pages)
 {
     PFILE_OBJECT file;
     NTSTATUS status = reference_file(handle, &file);
     if (!NT_SUCCESS(status))
         return status;
+    /* scatter and gather i/o is for files with no buffering that do not serve one request at a time. */
+    if (pages && ((file->Flags & FO_SYNCHRONOUS_IO) || !(file->Flags & FO_NO_INTERMEDIATE_BUFFERING))) {
+        ObDereferenceObject(file);
+        return STATUS_INVALID_PARAMETER;
+    }
     if (IopIsNamedPipe(file)) {
         status = NpfsReadWrite(file, write, event, apc_routine, apc_context, iosb, buffer, length);
         ObDereferenceObject(file);
@@ -237,7 +267,7 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
             chunk = IO_BOUNCE_SIZE;
         PVOID buf = bounce ? bounce : (PUCHAR)buffer + done;
         if (write && bounce) {
-            status = KiCopyFromUser(bounce, (PUCHAR)buffer + done, chunk);
+            status = copy_user(FALSE, buffer, pages, done, bounce, chunk);
             if (!NT_SUCCESS(status))
                 break;
         }
@@ -250,7 +280,7 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
             break;
         ULONG got = (ULONG)io.Information;
         if (!write && bounce && got) {
-            status = KiCopyToUser((PUCHAR)buffer + done, bounce, got);
+            status = copy_user(TRUE, buffer, pages, done, bounce, got);
             if (!NT_SUCCESS(status))
                 break;
         }
@@ -293,7 +323,7 @@ NTSTATUS NTAPI NtReadFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOI
     PVOID routine = (PVOID)apc;
     if (KeGetPreviousMode() == UserMode)
         IopTakeIosb32(&routine, &iosb);
-    return rw_file(FALSE, handle, event, routine, apc_context, iosb, buffer, length, offset, key);
+    return rw_file(FALSE, handle, event, routine, apc_context, iosb, buffer, length, offset, key, nullptr);
 }
 
 NTSTATUS NTAPI NtWriteFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
@@ -302,7 +332,62 @@ NTSTATUS NTAPI NtWriteFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVO
     PVOID routine = (PVOID)apc;
     if (KeGetPreviousMode() == UserMode)
         IopTakeIosb32(&routine, &iosb);
-    return rw_file(TRUE, handle, event, routine, apc_context, iosb, buffer, length, offset, key);
+    return rw_file(TRUE, handle, event, routine, apc_context, iosb, buffer, length, offset, key, nullptr);
+}
+
+/*
+ * scatter and gather i/o: the file is read or written through an array of pages that ends with an element of zero.
+ * the offset is not optional and the length is whole pages of the array, as windows requires.
+ */
+static NTSTATUS sg_file(BOOLEAN write, HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context,
+                        PIO_STATUS_BLOCK iosb, PVOID segments, ULONG length, PLARGE_INTEGER offset, PULONG key)
+{
+    PVOID routine = (PVOID)apc;
+    if (KeGetPreviousMode() != UserMode)
+        return STATUS_NOT_IMPLEMENTED;
+    IopTakeIosb32(&routine, &iosb);
+    if (!offset || (length & (PAGE_SIZE - 1)) || length / PAGE_SIZE > IO_MAX_SEGMENTS)
+        return STATUS_INVALID_PARAMETER;
+    /* a handle that is not a file is refused before the array is looked at. */
+    PFILE_OBJECT probe;
+    NTSTATUS status = reference_file(handle, &probe);
+    if (!NT_SUCCESS(status))
+        return status;
+    ObDereferenceObject(probe);
+    ULONG count = length / PAGE_SIZE;
+    ULONG64 *pages = nullptr;
+    if (count) {
+        pages = ExAllocatePool2(POOL_FLAG_NON_PAGED, count * sizeof(ULONG64), KI_TAG('I', 'o', 'S', 'g'));
+        if (!pages)
+            return STATUS_INSUFFICIENT_RESOURCES;
+        status = KiCopyFromUser(pages, segments, count * sizeof(ULONG64));
+        for (ULONG i = 0; NT_SUCCESS(status) && i < count; i++) {
+            if (!pages[i] || (pages[i] & (PAGE_SIZE - 1)))
+                status = STATUS_INVALID_PARAMETER;
+        }
+        if (!NT_SUCCESS(status)) {
+            ExFreePool(pages);
+            return status;
+        }
+    }
+    status = rw_file(write, handle, event, routine, apc_context, iosb, nullptr, length, offset, key, pages);
+    if (pages)
+        ExFreePool(pages);
+    return status;
+}
+
+NTSTATUS NTAPI NtReadFileScatter(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context,
+                                 PIO_STATUS_BLOCK iosb, PVOID segments, ULONG length, PLARGE_INTEGER offset,
+                                 PULONG key)
+{
+    return sg_file(FALSE, handle, event, apc, apc_context, iosb, segments, length, offset, key);
+}
+
+NTSTATUS NTAPI NtWriteFileGather(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context,
+                                 PIO_STATUS_BLOCK iosb, PVOID segments, ULONG length, PLARGE_INTEGER offset,
+                                 PULONG key)
+{
+    return sg_file(TRUE, handle, event, apc, apc_context, iosb, segments, length, offset, key);
 }
 
 NTSTATUS NTAPI ZwQueryDirectoryFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context,
@@ -315,13 +400,13 @@ NTSTATUS NTAPI ZwQueryDirectoryFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE
 NTSTATUS NTAPI ZwReadFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                           PVOID buffer, ULONG length, PLARGE_INTEGER offset, PULONG key)
 {
-    ZW_WRAP(rw_file(FALSE, handle, event, nullptr, nullptr, iosb, buffer, length, offset, key));
+    ZW_WRAP(rw_file(FALSE, handle, event, nullptr, nullptr, iosb, buffer, length, offset, key, nullptr));
 }
 
 NTSTATUS NTAPI ZwWriteFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                            PVOID buffer, ULONG length, PLARGE_INTEGER offset, PULONG key)
 {
-    ZW_WRAP(rw_file(TRUE, handle, event, nullptr, nullptr, iosb, buffer, length, offset, key));
+    ZW_WRAP(rw_file(TRUE, handle, event, nullptr, nullptr, iosb, buffer, length, offset, key, nullptr));
 }
 
 static NTSTATUS query_file(PFILE_OBJECT file, PVOID info, ULONG length, FILE_INFORMATION_CLASS klass, PULONG written)

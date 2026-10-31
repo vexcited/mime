@@ -143,6 +143,8 @@ void NtQueryWnfStateNameInformation(void);
 void NtQueueApcThread(void);
 void NtRaiseException(void);
 void NtReadFile(void);
+void NtReadFileScatter(void);
+void NtWriteFileGather(void);
 void NtLockFile(void);
 void NtUnlockFile(void);
 void NtReadVirtualMemory(void);
@@ -608,6 +610,12 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtReadFile
     KiRegisterService(MIME_SVC_NtReadFile, (void *)NtReadFile, STACK_ARGS(9));
+#endif
+#ifdef MIME_SVC_NtReadFileScatter
+    KiRegisterService(MIME_SVC_NtReadFileScatter, (void *)NtReadFileScatter, STACK_ARGS(9));
+#endif
+#ifdef MIME_SVC_NtWriteFileGather
+    KiRegisterService(MIME_SVC_NtWriteFileGather, (void *)NtWriteFileGather, STACK_ARGS(9));
 #endif
 #ifdef MIME_SVC_NtReadVirtualMemory
     KiRegisterService(MIME_SVC_NtReadVirtualMemory, (void *)NtReadVirtualMemory, STACK_ARGS(5));

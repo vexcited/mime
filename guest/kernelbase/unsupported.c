@@ -63,25 +63,3 @@ WINBASEAPI BOOL WINAPI SetMailslotInfo(HANDLE mailslot, DWORD timeout)
     KbSetError(ERROR_INVALID_HANDLE);
     return FALSE;
 }
-
-WINBASEAPI BOOL WINAPI ReadFileScatter(HANDLE file, PVOID segments, DWORD bytes, LPDWORD reserved,
-                                       LPOVERLAPPED overlapped)
-{
-    if (!overlapped || reserved) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    KbSetError(ERROR_NOT_SUPPORTED);
-    return FALSE;
-}
-
-WINBASEAPI BOOL WINAPI WriteFileGather(HANDLE file, PVOID segments, DWORD bytes, LPDWORD reserved,
-                                       LPOVERLAPPED overlapped)
-{
-    if (!overlapped || reserved) {
-        KbSetError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    KbSetError(ERROR_NOT_SUPPORTED);
-    return FALSE;
-}

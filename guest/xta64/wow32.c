@@ -1191,6 +1191,17 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return NtWriteFile(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), pointer32(a[5]), a[6],
                            pointer32(a[7]), pointer32(a[8]));
     }
+    case MIME_SVC_NtReadFileScatter:
+    case MIME_SVC_NtWriteFileGather: {
+        /* the elements of the array are 64 bits wide in a 32-bit program too. */
+        PVOID context;
+        PVOID apc = io_apc32(a[2], a[3], &context);
+        if (number == MIME_SVC_NtReadFileScatter)
+            return NtReadFileScatter(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), pointer32(a[5]), a[6],
+                                     pointer32(a[7]), pointer32(a[8]));
+        return NtWriteFileGather(handle32(a[0]), handle32(a[1]), apc, context, pointer32(a[4]), pointer32(a[5]), a[6],
+                                 pointer32(a[7]), pointer32(a[8]));
+    }
     case MIME_SVC_NtNotifyChangeDirectoryFile:
     case MIME_SVC_NtNotifyChangeDirectoryFileEx: {
         PVOID context;

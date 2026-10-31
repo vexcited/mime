@@ -298,6 +298,8 @@ static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICOD
     KeInitializeEvent(&file->Event, NotificationEvent, FALSE);
     if (op->Options & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT))
         file->Flags |= FO_SYNCHRONOUS_IO;
+    if (op->Options & FILE_NO_INTERMEDIATE_BUFFERING)
+        file->Flags |= FO_NO_INTERMEDIATE_BUFFERING;
     if (op->Options & FILE_DELETE_ON_CLOSE)
         file->Flags |= FO_DELETE_ON_CLOSE;
     file->ReadAccess = (op->DesiredAccess & (FILE_READ_DATA | GENERIC_READ | GENERIC_ALL | MAXIMUM_ALLOWED)) != 0;

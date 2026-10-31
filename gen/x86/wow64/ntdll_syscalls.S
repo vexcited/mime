@@ -812,6 +812,20 @@ _NtReadFile@36:
     calll *%edx
     retl $36
     .p2align 4, 0x90
+    .globl _NtReadFileScatter@36
+_NtReadFileScatter@36:
+    movl $0x1a002e, %eax
+    movl $_Wow64SystemServiceCall, %edx
+    calll *%edx
+    retl $36
+    .p2align 4, 0x90
+    .globl _NtWriteFileGather@36
+_NtWriteFileGather@36:
+    movl $0x1a001b, %eax
+    movl $_Wow64SystemServiceCall, %edx
+    calll *%edx
+    retl $36
+    .p2align 4, 0x90
     .globl _NtReadVirtualMemory@20
 _NtReadVirtualMemory@20:
     movl $0x3f, %eax

@@ -867,6 +867,15 @@ WINBASEAPI UINT WINAPI _lread(HFILE file, LPVOID buffer, UINT count);
 WINBASEAPI UINT WINAPI _lwrite(HFILE file, LPCCH buffer, UINT count);
 WINBASEAPI LONG WINAPI _llseek(HFILE file, LONG offset, int origin);
 WINBASEAPI BOOL WINAPI ReadFile(HANDLE file, LPVOID buffer, DWORD length, LPDWORD read, LPOVERLAPPED overlapped);
+/* an element of the array of a scatter or gather request holds the address of a page in 64 bits on every processor. */
+typedef union _FILE_SEGMENT_ELEMENT {
+    ULONGLONG Buffer;
+    ULONGLONG Alignment;
+} FILE_SEGMENT_ELEMENT, *PFILE_SEGMENT_ELEMENT;
+WINBASEAPI BOOL WINAPI ReadFileScatter(HANDLE file, PFILE_SEGMENT_ELEMENT segments, DWORD bytes, LPDWORD reserved,
+                                       LPOVERLAPPED overlapped);
+WINBASEAPI BOOL WINAPI WriteFileGather(HANDLE file, PFILE_SEGMENT_ELEMENT segments, DWORD bytes, LPDWORD reserved,
+                                       LPOVERLAPPED overlapped);
 WINBASEAPI BOOL WINAPI WriteFile(HANDLE file, LPCVOID buffer, DWORD length, LPDWORD written,
                                  LPOVERLAPPED overlapped);
 WINBASEAPI BOOL WINAPI ReadFileEx(HANDLE file, LPVOID buffer, DWORD length, LPOVERLAPPED overlapped,
