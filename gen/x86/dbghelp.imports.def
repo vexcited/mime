@@ -5,8 +5,10 @@ EXPORTS
     SymCleanup@4
     SymEnumerateModules64@12
     SymFromAddr@20
+    SymFromAddrW@20
     SymFunctionTableAccess64@12
     SymGetLineFromAddr64@20
+    SymGetLineFromAddrW64@20
     SymGetModuleBase64@12
     SymGetModuleInfo64@16
     SymGetModuleInfo@12
@@ -20,6 +22,7 @@ EXPORTS
     SymInitializeW@12
     SymLoadModule64@28
     SymLoadModule@24
+    SymLoadModuleExW@36
     SymSetOptions@4
     SymSetSearchPathW@8
     SymSrvGetFileIndexInfo@12

@@ -5,8 +5,10 @@ EXPORTS
     SymCleanup=_SymCleanup@4
     SymEnumerateModules64=_SymEnumerateModules64@12
     SymFromAddr=_SymFromAddr@20
+    SymFromAddrW=_SymFromAddrW@20
     SymFunctionTableAccess64=_SymFunctionTableAccess64@12
     SymGetLineFromAddr64=_SymGetLineFromAddr64@20
+    SymGetLineFromAddrW64=_SymGetLineFromAddrW64@20
     SymGetModuleBase64=_SymGetModuleBase64@12
     SymGetModuleInfo64=_SymGetModuleInfo64@16
     SymGetModuleInfo=_SymGetModuleInfo@12
@@ -20,6 +22,7 @@ EXPORTS
     SymInitializeW=_SymInitializeW@12
     SymLoadModule64=_SymLoadModule64@28
     SymLoadModule=_SymLoadModule@24
+    SymLoadModuleExW=_SymLoadModuleExW@36
     SymSetOptions=_SymSetOptions@4
     SymSetSearchPathW=_SymSetSearchPathW@8
     SymSrvGetFileIndexInfo=_SymSrvGetFileIndexInfo@12

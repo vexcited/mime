@@ -97,7 +97,26 @@ typedef struct _SYMBOL_INFO {
 #define SymTagFunction 5
 #define SymTagPublicSymbol 10
 
+typedef struct _SYMBOL_INFOW {
+    ULONG SizeOfStruct;
+    ULONG TypeIndex;
+    ULONG64 Reserved[2];
+    ULONG Index;
+    ULONG Size;
+    ULONG64 ModBase;
+    ULONG Flags;
+    ULONG64 Value;
+    ULONG64 Address;
+    ULONG Register;
+    ULONG Scope;
+    ULONG Tag;
+    ULONG NameLen;
+    ULONG MaxNameLen;
+    WCHAR Name[1];
+} SYMBOL_INFOW, *PSYMBOL_INFOW;
+
 typedef struct _IMAGEHLP_LINE64 IMAGEHLP_LINE64, *PIMAGEHLP_LINE64;
+typedef struct _IMAGEHLP_LINEW64 IMAGEHLP_LINEW64, *PIMAGEHLP_LINEW64;
 
 typedef BOOL(WINAPI *PREAD_PROCESS_MEMORY_ROUTINE64)(HANDLE, DWORD64, PVOID, DWORD, LPDWORD);
 typedef PVOID(WINAPI *PFUNCTION_TABLE_ACCESS_ROUTINE64)(HANDLE, DWORD64);
@@ -305,6 +324,46 @@ DBGHELP BOOL WINAPI SymGetLineFromAddr64(HANDLE process, DWORD64 address, PDWORD
 {
     SetLastError(ERROR_INVALID_ADDRESS);
     return FALSE;
+}
+
+DBGHELP BOOL WINAPI SymGetLineFromAddrW64(HANDLE process, DWORD64 address, PDWORD displacement, PIMAGEHLP_LINEW64 line)
+{
+    SetLastError(ERROR_INVALID_ADDRESS);
+    return FALSE;
+}
+
+/* the same symbol with its name in wide characters. */
+DBGHELP BOOL WINAPI SymFromAddrW(HANDLE process, DWORD64 address, PDWORD64 displacement, PSYMBOL_INFOW symbol)
+{
+    if (!symbol) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    union {
+        SYMBOL_INFO info;
+        BYTE storage[sizeof(SYMBOL_INFO) + 1024];
+    } u = {};
+    u.info.SizeOfStruct = sizeof(SYMBOL_INFO);
+    u.info.MaxNameLen = 1024;
+    if (!SymFromAddr(process, address, displacement, &u.info))
+        return FALSE;
+    symbol->TypeIndex = u.info.TypeIndex;
+    symbol->Index = u.info.Index;
+    symbol->Size = u.info.Size;
+    symbol->ModBase = u.info.ModBase;
+    symbol->Flags = u.info.Flags;
+    symbol->Value = u.info.Value;
+    symbol->Address = u.info.Address;
+    symbol->Register = u.info.Register;
+    symbol->Scope = u.info.Scope;
+    symbol->Tag = u.info.Tag;
+    symbol->NameLen = u.info.NameLen;
+    if (symbol->MaxNameLen) {
+        ULONG n = u.info.NameLen < symbol->MaxNameLen - 1 ? u.info.NameLen : symbol->MaxNameLen - 1;
+        MultiByteToWideChar(CP_ACP, 0, u.info.Name, n, symbol->Name, n);
+        symbol->Name[n] = 0;
+    }
+    return TRUE;
 }
 
 /* demangles a c++ name down to its qualified name, like UNDNAME_NAME_ONLY. the signature is always left out. */
@@ -1004,6 +1063,17 @@ DBGHELP DWORD64 WINAPI SymLoadModule64(HANDLE process, HANDLE file, PCSTR image,
     if (base)
         return base;
     HMODULE found = own_process(process) ? GetModuleHandleA(image ? image : module) : nullptr;
+    if (!found)
+        SetLastError(ERROR_MOD_NOT_FOUND);
+    return (DWORD64)(ULONG_PTR)found;
+}
+
+DBGHELP DWORD64 WINAPI SymLoadModuleExW(HANDLE process, HANDLE file, PCWSTR image, PCWSTR module, DWORD64 base,
+                                        DWORD size, PVOID data, DWORD flags)
+{
+    if (base)
+        return base;
+    HMODULE found = own_process(process) ? GetModuleHandleW(image ? image : module) : nullptr;
     if (!found)
         SetLastError(ERROR_MOD_NOT_FOUND);
     return (DWORD64)(ULONG_PTR)found;
