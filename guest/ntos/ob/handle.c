@@ -569,10 +569,26 @@ NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS ta
         ULONG valid = OBJECT_TO_HEADER(object)->Type->Init.ValidAccessMask;
         if (valid)
             wanted &= valid | 0x01000000 /* ACCESS_SYSTEM_SECURITY */;
-        /* a handle never gains rights over its source, so a read-only section cannot become writable. */
+        /*
+         * the rights a handle has beyond its source are checked against the descriptor of the object, as an open
+         * checks them. a section keeps to the rights of its source, so a read-only one cannot become writable.
+         */
         if (KeGetPreviousMode() == UserMode && (wanted & ~granted)) {
-            ObDereferenceObject(object);
-            return STATUS_ACCESS_DENIED;
+            NTSTATUS check = STATUS_ACCESS_DENIED;
+            SD_BLOB *sd = nullptr;
+            const OBJECT_TYPE *type = OBJECT_TO_HEADER(object)->Type;
+            /* the types that check their own descriptor, such as keys and files, have no check to repeat here. */
+            if (type != MmSectionType && type->Init.GenericMapping[3] && !type->Init.GetSecurity)
+                ObReferenceSecurity(object, &sd);
+            if (sd) {
+                ACCESS_MASK more;
+                check = ObCheckOpenAccess(object, wanted & ~granted, UserMode, &more);
+                SeSdDereference(sd);
+            }
+            if (!NT_SUCCESS(check)) {
+                ObDereferenceObject(object);
+                return STATUS_ACCESS_DENIED;
+            }
         }
         granted = wanted;
     }
