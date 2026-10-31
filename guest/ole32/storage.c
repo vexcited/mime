@@ -144,28 +144,6 @@ WINOLEAPI HRESULT WINAPI WriteClassStm(IStream *stream, REFCLSID clsid)
     return stream->lpVtbl->Write(stream, clsid, sizeof(CLSID), nullptr);
 }
 
-WINOLEAPI HRESULT WINAPI ReadFmtUserTypeStg(IStorage *storage, CLIPFORMAT *format, LPOLESTR *user_type)
-{
-    MIME_STUB("ole32");
-    if (format)
-        *format = 0;
-    if (user_type)
-        *user_type = nullptr;
-    return E_NOTIMPL;
-}
-
-WINOLEAPI HRESULT WINAPI WriteFmtUserTypeStg(IStorage *storage, CLIPFORMAT format, LPOLESTR user_type)
-{
-    MIME_STUB("ole32");
-    return E_NOTIMPL;
-}
-
-WINOLEAPI HRESULT WINAPI SetConvertStg(IStorage *storage, BOOL convert)
-{
-    MIME_STUB("ole32");
-    return E_NOTIMPL;
-}
-
 #define STGFMT_STORAGE 0
 #define STGFMT_NATIVE 1
 #define STGFMT_FILE 3

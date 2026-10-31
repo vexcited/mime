@@ -750,18 +750,6 @@ WINOLEAPI HRESULT WINAPI OleLoad(IStorage *storage, REFIID riid, IOleClientSite 
     return no_object(object);
 }
 
-WINOLEAPI HRESULT WINAPI OleQueryLinkFromData(IDataObject *data)
-{
-    MIME_STUB("ole32");
-    return S_FALSE;
-}
-
-WINOLEAPI HRESULT WINAPI OleQueryCreateFromData(IDataObject *data)
-{
-    MIME_STUB("ole32");
-    return S_FALSE;
-}
-
 WINOLEAPI HGLOBAL WINAPI OleGetIconOfClass(REFCLSID clsid, LPOLESTR label, BOOL use_type_as_label)
 {
     MIME_STUB("ole32");
