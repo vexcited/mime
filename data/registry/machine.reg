@@ -68,6 +68,9 @@
 "CommonFilesDir"="C:\\Program Files (x86)\\Common Files"
 "ProgramFilesDir"="C:\\Program Files (x86)"
 
+; the settings of the transaction coordinator, which programs that use it give rights to; there is no coordinator service to read them.
+[HKLM\SOFTWARE\Microsoft\MSDTC]
+
 ; the reference counts of the files that installers share, which they read and write, empty at first.
 [HKLM\SOFTWARE\{Microsoft,WOW6432Node\Microsoft}\Windows\CurrentVersion\SharedDLLs]
 
