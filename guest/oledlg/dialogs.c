@@ -1,6 +1,6 @@
 /*
- * oledlg.dll: the OLE user interface dialogs. the server busy, insert object, paste special and change source dialogs
- * are built here in memory and run as dialogs; the others check their structures as the library does and
+ * oledlg.dll: the OLE user interface dialogs. the server busy, insert object, paste special, change source and links
+ * dialogs are built here in memory and run as dialogs; the others check their structures as the library does and
  * report that the dialog could not be made. exports are listed in oledlg.def.
  */
 #define OLEDLGAPI
@@ -791,8 +791,143 @@ OLEDLGAPI UINT WINAPI OleUIConvertW(LPOLEUICONVERTW convert)
     return not_made();
 }
 
+/* ------------------------------------------------------------------ the links dialog */
+
+#define ID_EL_LIST 100
+#define ID_EL_UPDATE 101
+#define ID_EL_OPEN 102
+#define ID_EL_CHANGE 103
+#define ID_EL_BREAK 104
+#define ID_EL_AUTO 105
+#define ID_EL_MANUAL 106
+#define OLEUPDATE_ALWAYS_ 1
+#define OLEUPDATE_ONCALL_ 3
+
+static DWORD selected_link(HWND dialog)
+{
+    HWND list = GetDlgItem(dialog, ID_EL_LIST);
+    int at = (int)SendMessageW(list, LB_GETCURSEL, 0, 0);
+    return at < 0 ? 0 : (DWORD)SendMessageW(list, LB_GETITEMDATA, at, 0);
+}
+
+static void free_task(void *memory)
+{
+    CoTaskMemFree(memory);
+}
+
+/* each link as a line: where it comes from, what it is, and how it is kept up to date. */
+static void fill_links(HWND dialog, LPOLEUILINKCONTAINERW container)
+{
+    HWND list = GetDlgItem(dialog, ID_EL_LIST);
+    SendMessageW(list, LB_RESETCONTENT, 0, 0);
+    for (DWORD link = container->lpVtbl->GetNextLink(container, 0); link;
+         link = container->lpVtbl->GetNextLink(container, link)) {
+        LPWSTR name = nullptr, full_type = nullptr, short_type = nullptr;
+        ULONG file_length = 0;
+        BOOL available = TRUE, selected = FALSE;
+        DWORD options = 0;
+        if (FAILED(container->lpVtbl->GetLinkSource(container, link, &name, &file_length, &full_type, &short_type,
+                                                    &available, &selected)))
+            continue;
+        container->lpVtbl->GetLinkUpdateOptions(container, link, &options);
+        WCHAR line[600];
+        wsprintfW(line, L"%s\t%s\t%s", name ? name : L"", full_type ? full_type : L"",
+                  !available ? L"Unavailable" : options == OLEUPDATE_ALWAYS_ ? L"Automatic" : L"Manual");
+        int at = (int)SendMessageW(list, LB_ADDSTRING, 0, (LPARAM)line);
+        SendMessageW(list, LB_SETITEMDATA, at, link);
+        free_task(name);
+        free_task(full_type);
+        free_task(short_type);
+    }
+    SendMessageW(list, LB_SETCURSEL, 0, 0);
+    SendMessageW(GetParent(list), WM_COMMAND, MAKEWPARAM(ID_EL_LIST, LBN_SELCHANGE), (LPARAM)list);
+}
+
+static INT_PTR CALLBACK edit_links_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lparam)
+{
+    if (message == WM_INITDIALOG) {
+        STATE *state = (STATE *)lparam;
+        OLEUIEDITLINKSW *edit = (OLEUIEDITLINKSW *)state->standard;
+        SetWindowLongPtrW(dialog, DWLP_USER, (LONG_PTR)state);
+        fill_links(dialog, edit->lpOleUILinkContainer);
+        init_hook(dialog, state, wparam);
+        return TRUE;
+    }
+    if (hooked(dialog, message, wparam, lparam))
+        return TRUE;
+    if (message != WM_COMMAND)
+        return FALSE;
+    STATE *state = (STATE *)GetWindowLongPtrW(dialog, DWLP_USER);
+    LPOLEUILINKCONTAINERW container = ((OLEUIEDITLINKSW *)state->standard)->lpOleUILinkContainer;
+    DWORD link = selected_link(dialog);
+    switch (LOWORD(wparam)) {
+    case ID_EL_LIST:
+        if (HIWORD(wparam) == LBN_SELCHANGE) {
+            DWORD options = 0;
+            BOOL any = link != 0;
+            if (any)
+                container->lpVtbl->GetLinkUpdateOptions(container, link, &options);
+            for (int id = ID_EL_UPDATE; id <= ID_EL_MANUAL; id++)
+                EnableWindow(GetDlgItem(dialog, id), any);
+            CheckRadioButton(dialog, ID_EL_AUTO, ID_EL_MANUAL, options == OLEUPDATE_ALWAYS_ ? ID_EL_AUTO : ID_EL_MANUAL);
+        }
+        return TRUE;
+    case ID_EL_UPDATE:
+        container->lpVtbl->UpdateLink(container, link, TRUE, FALSE);
+        fill_links(dialog, container);
+        return TRUE;
+    case ID_EL_OPEN:
+        container->lpVtbl->OpenLinkSource(container, link);
+        return TRUE;
+    case ID_EL_AUTO:
+    case ID_EL_MANUAL:
+        container->lpVtbl->SetLinkUpdateOptions(container, link,
+                                                LOWORD(wparam) == ID_EL_AUTO ? OLEUPDATE_ALWAYS_ : OLEUPDATE_ONCALL_);
+        fill_links(dialog, container);
+        return TRUE;
+    case ID_EL_CHANGE: {
+        OLEUICHANGESOURCEW change = {};
+        change.cbStruct = sizeof(change);
+        change.hWndOwner = dialog;
+        change.lpOleUILinkContainer = container;
+        change.dwLink = link;
+        if (OleUIChangeSourceW(&change) == OLEUI_OK)
+            fill_links(dialog, container);
+        free_task(change.lpszDisplayName);
+        free_task(change.lpszFrom);
+        free_task(change.lpszTo);
+        return TRUE;
+    }
+    case ID_EL_BREAK:
+        if (MessageBoxW(dialog,
+                        L"Breaking a link will disconnect it from its link source.  Are you sure you want to break "
+                        L"this link?",
+                        L"Links", MB_YESNO | MB_ICONEXCLAMATION) == IDYES) {
+            container->lpVtbl->CancelLink(container, link);
+            fill_links(dialog, container);
+        }
+        return TRUE;
+    case IDCANCEL:
+        state->result = OLEUI_OK;
+        EndDialog(dialog, 1);
+        return TRUE;
+    }
+    return FALSE;
+}
+
 OLEDLGAPI UINT WINAPI OleUIEditLinksW(LPOLEUIEDITLINKSW edit)
 {
+    static const CONTROL controls[] = {
+        {CTL_STATIC, L"Links:", 0xffff, SS_LEFT, 8, 8, 100, 10},
+        {CTL_LISTBOX, L"", ID_EL_LIST, LBS_NOTIFY | LBS_USETABSTOPS | WS_BORDER | WS_VSCROLL | WS_TABSTOP, 8, 20, 250, 70},
+        {CTL_BUTTON, L"&Update Now", ID_EL_UPDATE, BS_PUSHBUTTON | WS_TABSTOP, 266, 20, 64, 14},
+        {CTL_BUTTON, L"&Open Source", ID_EL_OPEN, BS_PUSHBUTTON | WS_TABSTOP, 266, 38, 64, 14},
+        {CTL_BUTTON, L"Change &Source...", ID_EL_CHANGE, BS_PUSHBUTTON | WS_TABSTOP, 266, 56, 64, 14},
+        {CTL_BUTTON, L"&Break Link", ID_EL_BREAK, BS_PUSHBUTTON | WS_TABSTOP, 266, 74, 64, 14},
+        {CTL_BUTTON, L"&Automatic", ID_EL_AUTO, BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 8, 98, 70, 10},
+        {CTL_BUTTON, L"&Manual", ID_EL_MANUAL, BS_AUTORADIOBUTTON, 84, 98, 70, 10},
+        {CTL_BUTTON, L"Close", IDCANCEL, BS_DEFPUSHBUTTON | WS_TABSTOP, 266, 96, 64, 14},
+    };
     UINT result = validate(edit, sizeof(OLEUIEDITLINKSW));
     if (result != OLEUI_SUCCESS)
         return result;
@@ -800,7 +935,7 @@ OLEDLGAPI UINT WINAPI OleUIEditLinksW(LPOLEUIEDITLINKSW edit)
         return OLEUI_ELERR_LINKCNTRNULL;
     if (IsBadReadPtr(edit->lpOleUILinkContainer, 8))
         return OLEUI_ELERR_LINKCNTRINVALID;
-    return not_made();
+    return run_dialog((STANDARD *)edit, L"Links", controls, 9, 338, 118, edit_links_proc, nullptr);
 }
 
 OLEDLGAPI UINT WINAPI OleUIObjectPropertiesW(void *properties)
