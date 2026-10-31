@@ -24,14 +24,7 @@ SHLWAPI_STUB(HRESULT, MayQSForward, 6, E_NOTIMPL)
 SHLWAPI_STUB(HRESULT, MayExecForward, 7, E_NOTIMPL)
 SHLWAPI_STUB(HRESULT, IsQSForward, 3, E_NOTIMPL)
 
-SHLWAPI_STUB(BOOL, FDSA_Initialize, 5, FALSE)
-SHLWAPI_STUB(BOOL, FDSA_Destroy, 1, FALSE)
-SHLWAPI_STUB(DWORD, FDSA_InsertItem, 3, (DWORD)-1)
-SHLWAPI_STUB(BOOL, FDSA_DeleteItem, 2, FALSE)
 
-/* there are no timer queues to put timers on. */
-SHLWAPI_STUB(HANDLE, SHSetTimerQueueTimer, 7, nullptr)
-SHLWAPI_STUB(BOOL, SHCancelTimerQueueTimer, 2, FALSE)
 
 SHLWAPI_STUB(DWORD, SHRestrictionLookup, 6, 0)
 SHLWAPI_STUB(HRESULT, SHRegGetCLSIDKey, 6, E_NOTIMPL)
@@ -96,7 +89,6 @@ SHLWAPI_STUB(HRESULT, IUnknown_TranslateAcceleratorGlobal, 2, E_NOTIMPL)
 SHLWAPI_STUB(HRESULT, IWebBrowser_Navigate2, 6, E_NOTIMPL)
 
 SHLWAPI_STUB(BOOL, ConvertDIBSECTIONToThumbnail, 8, FALSE)
-SHLWAPI_STUB_VOID(CalculateAspectRatio, 3)
 SHLWAPI_STUB_VOID(FactorAspectRatio, 12)
 SHLWAPI_STUB(HBITMAP, CreateSizedDIBSECTION, 7, nullptr)
 SHLWAPI_STUB(int, SHGetPerScreenResName, 3, 0)
