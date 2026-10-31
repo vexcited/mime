@@ -1,0 +1,81 @@
+; management instrumentation. the engine is wbemcore.dll, which holds every class of the interfaces (the locator, the objects,
+; the path parser, the status text, the mof compiler); the winmgmt service is its service main.
+
+[HKCR\CLSID\{4590F811-1D3A-11D0-891F-00AA004B2E24}]
+@="WBEM Locator"
+[HKCR\CLSID\{4590F811-1D3A-11D0-891F-00AA004B2E24}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\wbemcore.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{CB8555CC-9128-11D1-AD9B-00C04FD8FDFF}]
+@="WBEM Administrative Locator"
+[HKCR\CLSID\{CB8555CC-9128-11D1-AD9B-00C04FD8FDFF}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\wbemcore.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{CD184336-9128-11D1-AD9B-00C04FD8FDFF}]
+@="WBEM Authenticated Locator"
+[HKCR\CLSID\{CD184336-9128-11D1-AD9B-00C04FD8FDFF}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\wbemcore.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{4590F812-1D3A-11D0-891F-00AA004B2E24}]
+@="WBEM Unauthenticated Locator"
+[HKCR\CLSID\{4590F812-1D3A-11D0-891F-00AA004B2E24}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\wbemcore.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{9A653086-174F-11D2-B5F9-00104B703EFD}]
+@="WBEM Class Object"
+[HKCR\CLSID\{9A653086-174F-11D2-B5F9-00104B703EFD}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\wbemcore.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{674B6698-EE92-11D0-AD71-00C04FD8FDFF}]
+@="WBEM Context"
+[HKCR\CLSID\{674B6698-EE92-11D0-AD71-00C04FD8FDFF}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\wbemcore.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{CF4CC405-E2C5-4DDD-B3CE-5E7582D8C9FA}]
+@="WBEM Default Path Parser"
+[HKCR\CLSID\{CF4CC405-E2C5-4DDD-B3CE-5E7582D8C9FA}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\wbemcore.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{EB87E1BD-3233-11D2-AEC9-00C04FB68820}]
+@="WBEM Status Code Text"
+[HKCR\CLSID\{EB87E1BD-3233-11D2-AEC9-00C04FB68820}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\wbemcore.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{6DAF9757-2E37-11D2-AEC9-00C04FB68820}]
+@="MOF Compiler"
+[HKCR\CLSID\{6DAF9757-2E37-11D2-AEC9-00C04FB68820}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\wbemcore.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{8D1C559D-84F0-4BB3-A7D5-56A7435A9BA6}]
+@="WBEM Object Text Source"
+[HKCR\CLSID\{8D1C559D-84F0-4BB3-A7D5-56A7435A9BA6}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\wbemcore.dll"
+"ThreadingModel"="Both"
+
+[HKLM\SOFTWARE\Microsoft\WBEM]
+"Build Version"="26100.7309"
+"Installation Directory"=expand:"%SystemRoot%\\System32\\wbem"
+
+[HKLM\SOFTWARE\Microsoft\WBEM\CIMOM]
+"Repository Directory"=expand:"%SystemRoot%\\System32\\wbem\\Repository"
+
+[HKLM\SOFTWARE\Microsoft\WBEM\Scripting]
+"Default Namespace"="root\\cimv2"
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Svchost]
+"netsvcs"=multi:"Winmgmt"
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Winmgmt]
+"DependOnService"=multi:"RPCSS"
+"Description"="Provides a common interface and object model to access management information about operating system, devices, applications and services."
+"DisplayName"="Windows Management Instrumentation"
+"ErrorControl"=dword:00000000
+"FailureActions"=hex:80,51,01,00,00,00,00,00,00,00,00,00,03,00,00,00,14,00,00,00,01,00,00,00,60,ea,00,00,01,00,00,00,c0,d4,01,00,00,00,00,00,00,00,00,00
+"ImagePath"=expand:"%systemroot%\\system32\\svchost.exe -k netsvcs -p"
+"ObjectName"="LocalSystem"
+"Start"=dword:00000002
+"Type"=dword:00000020
+
+[HKLM\SYSTEM\CurrentControlSet\Services\Winmgmt\Parameters]
+"ServiceDll"=expand:"%SystemRoot%\\System32\\wbemcore.dll"
+"ServiceDllUnloadOnStop"=dword:00000001

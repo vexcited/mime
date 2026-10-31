@@ -1,0 +1,6 @@
+LIBRARY wbemcore.dll
+EXPORTS
+    DllCanUnloadNow=_DllCanUnloadNow@0
+    DllGetClassObject=_DllGetClassObject@12
+    ServiceMain=_ServiceMain@8
+    SvchostPushServiceGlobals=_SvchostPushServiceGlobals@4
