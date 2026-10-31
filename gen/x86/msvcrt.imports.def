@@ -1305,6 +1305,10 @@ EXPORTS
     _CItan
     _CItanh
     _EH_prolog
+    _NLG_Dispatch2
+    _NLG_Return
+    _NLG_Return2
+    __intrinsic_abnormal_termination
     _abnormal_termination
     _adjust_fdiv DATA
     _adj_fdiv_m16i
@@ -1320,6 +1324,7 @@ EXPORTS
     _adj_fprem
     _adj_fprem1
     _adj_fptan
+    _chkesp
     _except_handler2
     _except_handler3
     _except_handler4_common
@@ -1431,23 +1436,36 @@ EXPORTS
     _Cbuild
     _Cmulcc
     _Cmulcr
+    _CreateFrameInfo
     _Exit
     _FCbuild
     _FCmulcc
     _FCmulcr
+    _FindAndUnlinkFrame
     _Getdays
     _Getmonths
     _Gettnames
+    _IsExceptionObjectToBeDestroyed
+    _SetWinRTOutOfMemoryExceptionCallback
     _Strftime
     _W_Getdays
     _W_Getmonths
     _W_Gettnames
     _Wcsftime
+    __AdjustPointer
+    __BuildCatchObject
+    __BuildCatchObjectHelper
+    __DestructExceptionObject
+    __FrameUnwindFilter
+    __GetPlatformExceptionInfo
+    __TypeMatch
     ___lc_locale_name_func
     __acrt_iob_func
     __dcrt_get_wide_environment_from_os
     __dcrt_initial_narrow_environment
     __fpe_flt_rounds
+    __initialize_lconv_for_unsigned_char
+    __report_gsfailure
     __stdio_common_vfprintf
     __stdio_common_vfwprintf
     __stdio_common_vsnprintf_s
@@ -1472,6 +1490,7 @@ EXPORTS
     _dsin
     _dtest
     _dunscale
+    _except1
     _execute_onexit_table
     _fd_int
     _fdclass
@@ -1485,6 +1504,7 @@ EXPORTS
     _fdsin
     _fdtest
     _fdunscale
+    _fpieee_flt
     _get_FMA3_enable
     _get_initial_narrow_environment
     _get_initial_wide_environment
@@ -1496,6 +1516,7 @@ EXPORTS
     _initialize_onexit_table
     _initialize_wide_environment
     _invalid_parameter_noinfo_noreturn
+    _is_exception_typeof
     _loaddll
     _lock_locales
     _query_app_type

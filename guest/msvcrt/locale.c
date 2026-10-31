@@ -97,6 +97,16 @@ int __cdecl __lconv_init(void)
     return 0;
 }
 
+/* the c locale's character members become 255 for programs whose char is unsigned. */
+DECLSPEC_EXPORT int __cdecl __initialize_lconv_for_unsigned_char(void)
+{
+    g_lconv.int_frac_digits = g_lconv.frac_digits = (char)UCHAR_MAX;
+    g_lconv.p_cs_precedes = g_lconv.p_sep_by_space = (char)UCHAR_MAX;
+    g_lconv.n_cs_precedes = g_lconv.n_sep_by_space = (char)UCHAR_MAX;
+    g_lconv.p_sign_posn = g_lconv.n_sign_posn = (char)UCHAR_MAX;
+    return 0;
+}
+
 unsigned int __cdecl ___lc_codepage_func(void)
 {
     return __lc_codepage;

@@ -178,6 +178,11 @@ struct MSVCRT_EH_THREAD {
     /* 64-bit Windows: the state of each function whose catch block runs, its frame first. */
     ULONG_PTR kept[16][2];
     int kept_count;
+    /* the frames of the catch blocks _CreateFrameInfo chained, newest first. */
+    void *frame_info;
+    /* 64-bit Windows: the image bases handlers and throw information resolve their rvas against. */
+    ULONG_PTR image_base;
+    ULONG_PTR throw_image_base;
 };
 
 extern "C" MSVCRT_EH_THREAD *MsvcrtEhThread(void);

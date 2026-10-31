@@ -216,6 +216,12 @@ int __cdecl _matherr(struct _exception *e)
     return handler ? handler(e) : 0;
 }
 
+/* whether the program installed a _matherr. */
+int MsvcrtHasUserMatherr(void)
+{
+    return !g_matherr_off;
+}
+
 static void errno_from_type(int type)
 {
     if (type == _DOMAIN)

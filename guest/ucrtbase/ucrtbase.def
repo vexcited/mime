@@ -1,8 +1,23 @@
 ; forwarders to msvcrt, ntdll for __C_specific_handler, for what ucrtbase exports on windows and mime implements.
 LIBRARY ucrtbase.dll
 EXPORTS
+    _CreateFrameInfo=msvcrt._CreateFrameInfo
     _CxxThrowException=msvcrt._CxxThrowException
+    _FindAndUnlinkFrame=msvcrt._FindAndUnlinkFrame
+    _GetImageBase=msvcrt._GetImageBase
+    _GetThrowImageBase=msvcrt._GetThrowImageBase
+    _IsExceptionObjectToBeDestroyed=msvcrt._IsExceptionObjectToBeDestroyed
+    _NLG_Dispatch2=msvcrt._NLG_Dispatch2
+    _NLG_Return=msvcrt._NLG_Return
+    _NLG_Return2=msvcrt._NLG_Return2
+    _SetImageBase=msvcrt._SetImageBase
+    _SetThrowImageBase=msvcrt._SetThrowImageBase
+    _SetWinRTOutOfMemoryExceptionCallback=msvcrt._SetWinRTOutOfMemoryExceptionCallback
+    __AdjustPointer=msvcrt.__AdjustPointer
+    __BuildCatchObject=msvcrt.__BuildCatchObject
+    __BuildCatchObjectHelper=msvcrt.__BuildCatchObjectHelper
     __C_specific_handler=ntdll.__C_specific_handler
+    __C_specific_handler_noexcept=msvcrt.__C_specific_handler_noexcept
     __CxxDetectRethrow=msvcrt.__CxxDetectRethrow
     __CxxExceptionFilter=msvcrt.__CxxExceptionFilter
     __CxxFrameHandler=msvcrt.__CxxFrameHandler
@@ -12,9 +27,15 @@ EXPORTS
     __CxxQueryExceptionSize=msvcrt.__CxxQueryExceptionSize
     __CxxRegisterExceptionObject=msvcrt.__CxxRegisterExceptionObject
     __CxxUnregisterExceptionObject=msvcrt.__CxxUnregisterExceptionObject
+    __DestructExceptionObject=msvcrt.__DestructExceptionObject
+    __FrameUnwindFilter=msvcrt.__FrameUnwindFilter
+    __GetPlatformExceptionInfo=msvcrt.__GetPlatformExceptionInfo
+    __NLG_Dispatch2=msvcrt.__NLG_Dispatch2
+    __NLG_Return2=msvcrt.__NLG_Return2
     __RTCastToVoid=msvcrt.__RTCastToVoid
     __RTDynamicCast=msvcrt.__RTDynamicCast
     __RTtypeid=msvcrt.__RTtypeid
+    __TypeMatch=msvcrt.__TypeMatch
     ___lc_codepage_func=msvcrt.___lc_codepage_func
     ___lc_collate_cp_func=msvcrt.___lc_collate_cp_func
     ___lc_locale_name_func=msvcrt.___lc_locale_name_func
@@ -27,6 +48,8 @@ EXPORTS
     __doserrno=msvcrt.__doserrno
     __dstbias=msvcrt.__dstbias
     __fpecode=msvcrt.__fpecode
+    __initialize_lconv_for_unsigned_char=msvcrt.__initialize_lconv_for_unsigned_char
+    __intrinsic_abnormal_termination=msvcrt.__intrinsic_abnormal_termination
     __intrinsic_setjmp=msvcrt._setjmp
     __intrinsic_setjmpex=msvcrt._setjmpex
     __isascii=msvcrt.__isascii
@@ -49,6 +72,7 @@ EXPORTS
     __processing_throw=msvcrt.__processing_throw
     __pwctype_func=msvcrt.__pwctype_func
     __pxcptinfoptrs=msvcrt.__pxcptinfoptrs
+    __report_gsfailure=msvcrt.__report_gsfailure
     __setusermatherr=msvcrt.__setusermatherr
     __std_exception_copy=msvcrt.__std_exception_copy
     __std_exception_destroy=msvcrt.__std_exception_destroy
@@ -113,6 +137,7 @@ EXPORTS
     _chdrive=msvcrt._chdrive
     _chgsign=msvcrt._chgsign
     _chgsignf=msvcrt._chgsignf
+    _chkesp=msvcrt._chkesp
     _chmod=msvcrt._chmod
     _chsize=msvcrt._chsize
     _chsize_s=msvcrt._chsize_s
@@ -146,6 +171,8 @@ EXPORTS
     _endthreadex=msvcrt._endthreadex
     _eof=msvcrt._eof
     _errno=msvcrt._errno
+    _except1=msvcrt._except1
+    _except_handler2=msvcrt._except_handler2
     _execl=msvcrt._execl
     _execle=msvcrt._execle
     _execlp=msvcrt._execlp
@@ -177,6 +204,7 @@ EXPORTS
     _flushall=msvcrt._flushall
     _fpclass=msvcrt._fpclass
     _fpclassf=msvcrt._fpclassf
+    _fpieee_flt=msvcrt._fpieee_flt
     _fpreset=msvcrt._fpreset
     _fputc_nolock=msvcrt._fputc_nolock
     _fputchar=msvcrt._fputchar
@@ -253,6 +281,7 @@ EXPORTS
     _invalid_parameter_noinfo=msvcrt._invalid_parameter_noinfo
     _invalid_parameter_noinfo_noreturn=msvcrt._invalid_parameter_noinfo_noreturn
     _invoke_watson=msvcrt._invoke_watson
+    _is_exception_typeof=msvcrt._is_exception_typeof
     _isalnum_l=msvcrt._isalnum_l
     _isalpha_l=msvcrt._isalpha_l
     _isatty=msvcrt._isatty
@@ -295,6 +324,7 @@ EXPORTS
     _itow_s=msvcrt._itow_s
     _kbhit=msvcrt._kbhit
     _lfind=msvcrt._lfind
+    _local_unwind=msvcrt._local_unwind
     _localtime32=msvcrt._localtime32
     _localtime32_s=msvcrt._localtime32_s
     _localtime64=msvcrt._localtime64
@@ -454,6 +484,7 @@ EXPORTS
     _o__endthreadex=msvcrt._endthreadex
     _o__eof=msvcrt._eof
     _o__errno=msvcrt._errno
+    _o__except1=msvcrt._except1
     _o__execute_onexit_table=msvcrt._execute_onexit_table
     _o__execv=msvcrt._execv
     _o__execve=msvcrt._execve

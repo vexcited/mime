@@ -46,8 +46,19 @@ typedef struct JUMP_BUFFER {
 typedef struct UNWIND_FRAME {
     void *next;
     void *handler;
+    int level;
     EH3_FRAME *frame;
 } UNWIND_FRAME;
+
+/* the registration of the first compilers' __try frames: their own ebp is stored and the filters' pointers follow. */
+typedef struct EH2_FRAME {
+    struct EH2_FRAME *next;
+    void *handler;
+    const SCOPE *scopes;
+    int level;
+    ULONG ebp;
+    EXCEPTION_POINTERS *pointers;
+} EH2_FRAME;
 
 typedef enum {
     ExceptionContinueExecution,
@@ -91,17 +102,22 @@ static EXCEPTION_DISPOSITION __cdecl unwind_handler(EXCEPTION_RECORD *record, vo
 }
 
 /* runs a frame's __finally blocks from its try level down to stop, removing each level before its block runs. */
-static void local_unwind(EH3_FRAME *frame, const SCOPE *scopes, int stop, int top)
+static void local_unwind_with(EH3_FRAME *frame, const SCOPE *scopes, int stop, int top, ULONG ebp)
 {
-    UNWIND_FRAME guard = {read_fs0(), (void *)unwind_handler, frame};
+    UNWIND_FRAME guard = {read_fs0(), (void *)unwind_handler, TOP_LEVEL4, frame};
     write_fs0(&guard);
     while (frame->level != top && frame->level != stop) {
         const SCOPE *s = &scopes[frame->level];
-        frame->level = s->enclosing;
+        guard.level = frame->level = s->enclosing;
         if (!s->filter)
-            MsvcrtCallWithFrame(s->handler, frame_ebp(frame));
+            MsvcrtCallWithFrame(s->handler, ebp);
     }
     write_fs0(guard.next);
+}
+
+static void local_unwind(EH3_FRAME *frame, const SCOPE *scopes, int stop, int top)
+{
+    local_unwind_with(frame, scopes, stop, top, frame_ebp(frame));
 }
 
 void __cdecl _local_unwind2(EH3_FRAME *frame, int stop) { local_unwind(frame, frame->scopes, stop, TOP_LEVEL3); }
@@ -117,6 +133,16 @@ int __cdecl MsvcrtAbnormalTermination(ULONG ebp)
 {
     UNWIND_FRAME *top = read_fs0();
     return top && top != (void *)~0u && top->handler == (void *)unwind_handler && frame_ebp(top->frame) == ebp;
+}
+
+/*
+ * whether the running __finally block was reached by an unwind: the compilers call this without arguments, and the
+ * unwind registration on top of the chain keeps the level it is unwinding in step with its frame's.
+ */
+int __cdecl __intrinsic_abnormal_termination(void)
+{
+    UNWIND_FRAME *top = read_fs0();
+    return top && top != (void *)~0u && top->handler == (void *)unwind_handler && top->level == top->frame->level;
 }
 
 static EXCEPTION_DISPOSITION except_handler3(EXCEPTION_RECORD *record, EH3_FRAME *frame, CONTEXT *context)
@@ -150,11 +176,32 @@ EXCEPTION_DISPOSITION __cdecl _except_handler3(EXCEPTION_RECORD *record, EH3_FRA
     return except_handler3(record, frame, context);
 }
 
-/* older compilers' frames, handled like _except_handler3's: their layout is a guess. */
-EXCEPTION_DISPOSITION __cdecl _except_handler2(EXCEPTION_RECORD *record, EH3_FRAME *frame, CONTEXT *context,
+/* older compilers' frames: the filters and blocks run with the ebp the frame stores. */
+EXCEPTION_DISPOSITION __cdecl _except_handler2(EXCEPTION_RECORD *record, EH2_FRAME *frame, CONTEXT *context,
                                                void *dispatcher)
 {
-    return except_handler3(record, frame, context);
+    EH3_FRAME *registration = (EH3_FRAME *)frame;
+    if (record->ExceptionFlags & (EXCEPTION_UNWINDING | EXCEPTION_EXIT_UNWIND)) {
+        local_unwind_with(registration, frame->scopes, TOP_LEVEL3, TOP_LEVEL3, frame->ebp);
+        return ExceptionContinueSearch;
+    }
+    EXCEPTION_POINTERS pointers = {record, context};
+    frame->pointers = &pointers;
+    for (int level = frame->level; level != TOP_LEVEL3; level = frame->scopes[level].enclosing) {
+        const SCOPE *s = &frame->scopes[level];
+        if (!s->filter)
+            continue;
+        LONG verdict = (LONG)MsvcrtCallWithFrame(s->filter, frame->ebp);
+        if (!verdict)
+            continue;
+        if (verdict < 0)
+            return ExceptionContinueExecution;
+        _global_unwind2(registration);
+        local_unwind_with(registration, frame->scopes, level, TOP_LEVEL3, frame->ebp);
+        frame->level = s->enclosing;
+        MsvcrtJumpWithFrame(s->handler, frame->ebp);
+    }
+    return ExceptionContinueSearch;
 }
 
 static const EH4_SCOPES *eh4_scopes(const ULONG *cookie, const EH3_FRAME *frame)

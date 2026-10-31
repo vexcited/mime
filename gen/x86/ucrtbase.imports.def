@@ -1,7 +1,22 @@
 LIBRARY ucrtbase.dll
 EXPORTS
+    _CreateFrameInfo
     _CxxThrowException
+    _FindAndUnlinkFrame
+    _GetImageBase
+    _GetThrowImageBase
+    _IsExceptionObjectToBeDestroyed
+    _NLG_Dispatch2
+    _NLG_Return
+    _NLG_Return2
+    _SetImageBase
+    _SetThrowImageBase
+    _SetWinRTOutOfMemoryExceptionCallback
+    __AdjustPointer
+    __BuildCatchObject
+    __BuildCatchObjectHelper
     __C_specific_handler
+    __C_specific_handler_noexcept
     __CxxDetectRethrow
     __CxxExceptionFilter
     __CxxFrameHandler
@@ -11,9 +26,15 @@ EXPORTS
     __CxxQueryExceptionSize
     __CxxRegisterExceptionObject
     __CxxUnregisterExceptionObject
+    __DestructExceptionObject
+    __FrameUnwindFilter
+    __GetPlatformExceptionInfo
+    __NLG_Dispatch2
+    __NLG_Return2
     __RTCastToVoid
     __RTDynamicCast
     __RTtypeid
+    __TypeMatch
     ___lc_codepage_func
     ___lc_collate_cp_func
     ___lc_locale_name_func
@@ -26,6 +47,8 @@ EXPORTS
     __doserrno
     __dstbias
     __fpecode
+    __initialize_lconv_for_unsigned_char
+    __intrinsic_abnormal_termination
     __intrinsic_setjmp
     __intrinsic_setjmpex
     __isascii
@@ -48,6 +71,7 @@ EXPORTS
     __processing_throw
     __pwctype_func
     __pxcptinfoptrs
+    __report_gsfailure
     __setusermatherr
     __std_exception_copy
     __std_exception_destroy
@@ -112,6 +136,7 @@ EXPORTS
     _chdrive
     _chgsign
     _chgsignf
+    _chkesp
     _chmod
     _chsize
     _chsize_s
@@ -145,6 +170,8 @@ EXPORTS
     _endthreadex
     _eof
     _errno
+    _except1
+    _except_handler2
     _execl
     _execle
     _execlp
@@ -176,6 +203,7 @@ EXPORTS
     _flushall
     _fpclass
     _fpclassf
+    _fpieee_flt
     _fpreset
     _fputc_nolock
     _fputchar
@@ -252,6 +280,7 @@ EXPORTS
     _invalid_parameter_noinfo
     _invalid_parameter_noinfo_noreturn
     _invoke_watson
+    _is_exception_typeof
     _isalnum_l
     _isalpha_l
     _isatty
@@ -294,6 +323,7 @@ EXPORTS
     _itow_s
     _kbhit
     _lfind
+    _local_unwind
     _localtime32
     _localtime32_s
     _localtime64
@@ -453,6 +483,7 @@ EXPORTS
     _o__endthreadex
     _o__eof
     _o__errno
+    _o__except1
     _o__execute_onexit_table
     _o__execv
     _o__execve
