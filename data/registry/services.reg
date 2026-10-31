@@ -201,3 +201,15 @@
 "Start"=dword:00000003
 "Tag"=dword:00000005
 "Type"=dword:00000002
+
+; the windows installer. Mime installs packages inside the process that asks, so the service never has work to do; it is
+; here for the programs that look at it before they install, as the installers of SQL Server do.
+
+[HKLM\SYSTEM\CurrentControlSet\Services\msiserver]
+"Description"="Adds, modifies, and removes applications provided as a Windows Installer (*.msi, *.msp) package. If this service is disabled, any services that explicitly depend on it will fail to start."
+"DisplayName"="Windows Installer"
+"ErrorControl"=dword:00000001
+"ImagePath"=expand:"%systemroot%\\system32\\msiexec.exe /V"
+"ObjectName"="LocalSystem"
+"Start"=dword:00000003
+"Type"=dword:00000010
