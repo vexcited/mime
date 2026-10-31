@@ -420,8 +420,10 @@ UINT WINAPI MsiCustomActionServer(LPCWSTR pipe_name)
             WideCharToMultiByte(CP_ACP, 0, entry_name, -1, entry, sizeof(entry), nullptr, nullptr);
         typedef UINT (WINAPI *CA_ENTRY)(MSIHANDLE);
         CA_ENTRY function = library ? (CA_ENTRY)GetProcAddress(library, entry) : nullptr;
-        if (!library)
+        if (!library) {
             load_error = path ? GetLastError() : ERROR_INVALID_DATA;
+            DbgPrint("msi: the custom action library %ws does not load, error %u\n", path ? path : L"", load_error);
+        }
         else if (!function)
             load_error = ERROR_PROC_NOT_FOUND;
         else
