@@ -123,7 +123,29 @@ static ULONG STDMETHODCALLTYPE provider_release(void *face)
     return bag_release(bag_of(face, 2));
 }
 
-static HRESULT STDMETHODCALLTYPE bag2_not_implemented(void)
+/* the second property bag does nothing, each method with its own arguments so x86 callers keep their stack. */
+static HRESULT STDMETHODCALLTYPE bag2_read(void *face, ULONG count, void *names, void *log, VARIANT *values,
+                                           HRESULT *errors)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE bag2_write(void *face, ULONG count, void *names, VARIANT *values)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE bag2_count(void *face, ULONG *count)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE bag2_info(void *face, ULONG first, ULONG count, void *names, ULONG *fetched)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE bag2_load(void *face, LPCWSTR name, DWORD hint, IUnknown *object, void *log)
 {
     return E_NOTIMPL;
 }
@@ -423,8 +445,7 @@ static const BAG_VTBL profile_vtbl = {bag_qi, bag_addref, bag_release0, {profile
 static const BAG_VTBL bag2_vtbl = {bag2_qi,
                                    bag2_addref,
                                    bag2_release,
-                                   {bag2_not_implemented, bag2_not_implemented, bag2_not_implemented,
-                                    bag2_not_implemented, bag2_not_implemented}};
+                                   {bag2_read, bag2_write, bag2_count, bag2_info, bag2_load}};
 static const BAG_VTBL provider_vtbl = {provider_qi, provider_addref, provider_release, {provider_read}};
 
 static BAG *bag_create(const BAG_VTBL *vtbl, DWORD flags)
