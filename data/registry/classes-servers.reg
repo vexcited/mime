@@ -184,6 +184,32 @@
 @=expand:"%SystemRoot%\\system32\\msxml6.dll"
 "ThreadingModel"="Both"
 
+; propsys.dll
+; PropertySystem
+[HKCR\CLSID\{B8967F85-58AE-4F46-9FB2-5D7904798F4B}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+
+; InMemoryPropertyStore
+[HKCR\CLSID\{9A02E012-6303-4E1E-B9A1-630F802592C5}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+
+; InMemoryPropertyStoreMarshalByValue
+[HKCR\CLSID\{D4CA0E2D-6DA7-4B75-A97C-5F306F0EAEDC}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+
+; MultiplexPropertyStore
+[HKCR\CLSID\{8D14113B-5715-4714-8A20-69FC343626DE}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+
+; WindowPropertyStore
+[HKCR\CLSID\{56AD4C5D-B908-4F85-8FF1-7940C29B3BCF}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+
 ; shell32.dll
 ; ShellFolderView
 [HKCR\CLSID\{62112AA1-EBE4-11CF-A5FB-0020AFE7292D}\InprocServer32]

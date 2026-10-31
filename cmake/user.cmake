@@ -306,7 +306,10 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_avifil32 ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/msacm32.lib)
     set(includes_zipfldr guest/lib)
     set(libs_zipfldr ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/shell32.lib)
-    set(libs_propsys ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
+    set(libs_propsys ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/advapi32.lib
+        ${MIME_LIB_${arch}}/shlwapi.lib ${MIME_LIB_${arch}}/combase.lib)
+    set(objects_propsys ${arch}-lib-crypto:guest/lib/crypto/hash.c)
+    set(includes_propsys guest/lib)
     set(libs_shcore ${MIME_LIB_${arch}}/ole32.lib)
     set(libs_comdlg32 ${MIME_LIB_${arch}}/comctl32.lib ${MIME_LIB_${arch}}/shell32.lib
         ${MIME_LIB_${arch}}/shlwapi.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/advapi32.lib)
