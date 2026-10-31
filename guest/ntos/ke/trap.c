@@ -103,6 +103,158 @@ void KiTraceUserStack(ULONG64 pc, ULONG64 sp)
     }
 }
 
+#ifdef __x86_64__
+/* the base of the image that holds a user address of the current process, or zero. */
+static ULONG64 image_base_of(ULONG64 va)
+{
+    PMMADDRESS_SPACE as = &PsCurrentProcess()->AddressSpace;
+    ULONG64 base = 0;
+    if (va > MIME_USER_ADDRESS_LIMIT)
+        return 0;
+    ExAcquireFastMutex(&as->Lock);
+    PMMVAD vad = MiFindVad(as, va);
+    if (vad && vad->Type == MiVadImage)
+        base = vad->StartVa;
+    ExReleaseFastMutex(&as->Lock);
+    return base;
+}
+
+static BOOLEAN read_user(ULONG64 va, void *out, ULONG size)
+{
+    return NT_SUCCESS(KiCopyFromUser(out, (PVOID)va, size));
+}
+
+/* the runtime function of a code address in the unwind table of its image, three rvas. */
+static BOOLEAN find_function(ULONG64 base, ULONG64 pc, ULONG function[3])
+{
+    ULONG e_lfanew, table[2];
+    if (!read_user(base + 0x3c, &e_lfanew, 4) || !read_user(base + e_lfanew + 0xa0, table, 8) || !table[0])
+        return FALSE;
+    ULONG rva = (ULONG)(pc - base);
+    LONG low = 0, high = (LONG)(table[1] / 12) - 1;
+    while (low <= high) {
+        LONG mid = (low + high) / 2;
+        if (!read_user(base + table[0] + (ULONG64)mid * 12, function, 12))
+            return FALSE;
+        if (rva < function[0])
+            high = mid - 1;
+        else if (rva >= function[1])
+            low = mid + 1;
+        else if (function[2] & 1)
+            /* a cold part has the entry of the function it belongs to, whose prolog ran completely. */
+            return read_user(base + (function[2] & ~1u), function, 12);
+        else
+            return TRUE;
+    }
+    return FALSE;
+}
+
+/* the frames of the stack by the unwind data of the images, so a call without a frame pointer shows up. */
+static void trace_unwound(PKTRAP_FRAME frame)
+{
+    ULONG64 r[16] = {frame->Rax, frame->Rcx, frame->Rdx, frame->Rbx, frame->Rsp, frame->Rbp, frame->Rsi, frame->Rdi,
+                     frame->R8,  frame->R9,  frame->R10, frame->R11, frame->R12, frame->R13, frame->R14, frame->R15};
+    ULONG64 pc = frame->Rip;
+    char text[96];
+    for (ULONG depth = 0; depth < 32; depth++) {
+        if (KiDescribeUserAddress(pc, text, sizeof(text)))
+            KiLogPrintf("  frame %u: %s", depth, text);
+        else
+            KiLogPrintf("  frame %u: %llx", depth, pc);
+        ULONG64 base = image_base_of(pc);
+        ULONG function[3];
+        if (base && find_function(base, pc, function)) {
+            ULONG offset = (ULONG)(pc - base) - function[0];
+            if (pc - base < function[0] || pc - base >= function[1])
+                offset = 0xffffffff;
+            for (;;) {
+                UCHAR header[4];
+                if (!read_user(base + function[2], header, 4))
+                    return;
+                ULONG count = header[2];
+                UCHAR codes[512];
+                if (count * 2 > sizeof(codes) || !read_user(base + function[2] + 4, codes, count * 2))
+                    return;
+                for (ULONG i = 0; i < count;) {
+                    UCHAR at = codes[i * 2], op = codes[i * 2 + 1] & 15, info = codes[i * 2 + 1] >> 4;
+                    ULONG slots = 1;
+                    ULONG64 value = 0;
+                    if (op == 1)
+                        slots = info ? 3 : 2;
+                    else if (op == 4 || op == 8 || op == 6 || op == 7)
+                        slots = 2;
+                    else if (op == 5 || op == 9)
+                        slots = 3;
+                    if (i + slots > count)
+                        return;
+                    if (at <= offset) {
+                        USHORT w1 = *(USHORT *)&codes[(i + 1) * 2];
+                        switch (op) {
+                        case 0:
+                            if (!read_user(r[4], &value, 8))
+                                return;
+                            r[info] = value;
+                            r[4] += 8;
+                            break;
+                        case 1:
+                            r[4] += info ? *(ULONG *)&codes[(i + 1) * 2] : (ULONG64)w1 * 8;
+                            break;
+                        case 2:
+                            r[4] += (ULONG64)info * 8 + 8;
+                            break;
+                        case 3:
+                            r[4] = r[header[3] & 15] - (ULONG64)(header[3] >> 4) * 16;
+                            break;
+                        case 4:
+                            if (!read_user(r[4] + (ULONG64)w1 * 8, &value, 8))
+                                return;
+                            r[info] = value;
+                            break;
+                        case 5:
+                            if (!read_user(r[4] + *(ULONG *)&codes[(i + 1) * 2], &value, 8))
+                                return;
+                            r[info] = value;
+                            break;
+                        case 10:
+                            KiLogPrintf("  machine frame");
+                            return;
+                        default:
+                            break;
+                        }
+                    }
+                    i += slots;
+                }
+                /* a chained entry continues with the unwind data of the function it belongs to. */
+                if (!(header[0] >> 3 & 4))
+                    break;
+                ULONG chained[3];
+                if (!read_user(base + function[2] + 4 + ((count + 1) & ~1u) * 2, chained, 12))
+                    return;
+                memcpy(function, chained, 12);
+                offset = 0xffffffff;
+            }
+        }
+        ULONG64 ret;
+        if (!read_user(r[4], &ret, 8) || !ret)
+            return;
+        pc = ret;
+        r[4] += 8;
+    }
+}
+#endif
+
+/* the frames of the stack of a thread that is in a system call. */
+void KiTraceUserFrames(PKTRAP_FRAME frame)
+{
+#ifdef __x86_64__
+    if (KI_TRAP_SP(frame) >= 0x100000000ull) {
+        trace_unwound(frame);
+        return;
+    }
+#endif
+    KiTraceUserStack(KI_TRAP_PC(frame), KI_TRAP_SP(frame));
+}
+
 /*
  * final processing before returning to user mode: kernel apcs, thread
  * termination, user apcs and preemption. returns with interrupts masked.

@@ -419,7 +419,7 @@ void KiSystemService(PKTRAP_FRAME frame)
             }
 #endif
             if (KiTraceStackService[0] && !strcmp(service_name(table, index), KiTraceStackService))
-                KiTraceUserStack(KI_TRAP_PC(frame), KI_TRAP_SP(frame));
+                KiTraceUserFrames(frame);
         }
         if (!copied)
             result = (ULONG64)(LONG64)STATUS_ACCESS_VIOLATION;
