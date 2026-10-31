@@ -367,12 +367,14 @@ static NET_API_STATUS change_members(LMCSTR server, LMCSTR group, DWORD level, L
                     status = ERROR_MEMBER_NOT_IN_ALIAS_CODE;
                 } else {
                     PWSTR out = next;
-                    for (PWSTR at = next; *at; at += wcslen(at) + 1) {
+                    for (PWSTR at = next; *at;) {
+                        SIZE_T n = wcslen(at) + 1;
+                        PWSTR following = at + n;
                         if (_wcsicmp(at, text)) {
-                            SIZE_T n = wcslen(at) + 1;
                             memmove(out, at, n * sizeof(WCHAR));
                             out += n;
                         }
+                        at = following;
                     }
                     *out = 0;
                     out[1] = 0;
