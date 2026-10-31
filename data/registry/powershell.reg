@@ -1,0 +1,33 @@
+; windows powershell, as the registry of a finished windows 11 describes it. the files of the shell are not there yet: powershell.exe
+; and the management assemblies are not part of the system, so a program that starts the shell finds no file. what reads only
+; these values, such as the installers that ask for a version of the shell, is answered.
+
+[HKLM\SOFTWARE\Microsoft\PowerShell\1]
+"Install"=dword:00000001
+
+[HKLM\SOFTWARE\Microsoft\PowerShell\1\PowerShellEngine]
+"ApplicationBase"=expand:"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0"
+"ConsoleHostAssemblyName"="Microsoft.PowerShell.ConsoleHost, Version=3.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, ProcessorArchitecture=msil"
+"ConsoleHostModuleName"=expand:"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\Microsoft.PowerShell.ConsoleHost.dll"
+"PowerShellVersion"="2.0"
+"PSCompatibleVersion"="1.0, 2.0"
+"RuntimeVersion"="v2.0.50727"
+
+[HKLM\SOFTWARE\Microsoft\PowerShell\3]
+"Install"=dword:00000001
+
+[HKLM\SOFTWARE\Microsoft\PowerShell\3\PowerShellEngine]
+"ApplicationBase"=expand:"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0"
+"ConsoleHostAssemblyName"="Microsoft.PowerShell.ConsoleHost, Version=3.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, ProcessorArchitecture=msil"
+"ConsoleHostModuleName"=expand:"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\Microsoft.PowerShell.ConsoleHost.dll"
+"PowerShellVersion"="5.1.26100.7309"
+"PSCompatibleVersion"="1.0, 2.0, 3.0, 4.0, 5.0, 5.1"
+"PSPluginWkrModuleName"=expand:"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\system.management.automation.dll"
+"RuntimeVersion"="v4.0.30319"
+
+[HKLM\SOFTWARE\Microsoft\PowerShell\1\ShellIds]
+"ConsolePrompting"="True"
+
+[HKLM\SOFTWARE\Microsoft\PowerShell\1\ShellIds\Microsoft.PowerShell]
+"ExecutionPolicy"="Restricted"
+"Path"=expand:"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
