@@ -1485,13 +1485,19 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetProcedureAddressEx(PVOID base, PCANSI_STRING n
                                                      ULONG flags)
 {
     char buf[256];
+    char *copy = nullptr;
     PCSTR cname = nullptr;
     if (name) {
-        if (name->Length >= sizeof(buf))
-            return STATUS_NAME_TOO_LONG;
-        memcpy(buf, name->Buffer, name->Length);
-        buf[name->Length] = 0;
+        /* decorated names of c++ exports are longer than the buffer. */
         cname = buf;
+        if (name->Length >= sizeof(buf)) {
+            copy = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, 0, (SIZE_T)name->Length + 1);
+            if (!copy)
+                return STATUS_NO_MEMORY;
+            cname = copy;
+        }
+        memcpy((char *)cname, name->Buffer, name->Length);
+        ((char *)cname)[name->Length] = 0;
     }
     RtlEnterCriticalSection(&LdrpLoaderLock);
     PLDR_DATA_TABLE_ENTRY e = find_by_base(base);
@@ -1504,6 +1510,8 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetProcedureAddressEx(PVOID base, PCANSI_STRING n
             status = run_new_initializers(before, nullptr);
     }
     RtlLeaveCriticalSection(&LdrpLoaderLock);
+    if (copy)
+        RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, copy);
     return status;
 }
 
