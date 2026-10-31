@@ -423,9 +423,15 @@ unsigned int __cdecl _controlfp(unsigned int value, unsigned int mask)
 #endif
 }
 
+/* x86 also takes the precision and infinity masks, which the startup of its programs sets. */
 errno_t __cdecl _controlfp_s(unsigned int *current, unsigned int value, unsigned int mask)
 {
-    if (mask & ~(_MCW_EM | _MCW_RC | _MCW_DN)) {
+#ifdef __i386__
+    unsigned valid = _MCW_EM | _MCW_RC | _MCW_DN | _MCW_PC | _MCW_IC;
+#else
+    unsigned valid = _MCW_EM | _MCW_RC | _MCW_DN;
+#endif
+    if (mask & ~valid) {
         if (current)
             *current = _controlfp(0, 0);
         MSVCRT_INVALID(EINVAL);
