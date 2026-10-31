@@ -9,6 +9,12 @@ static void destroy_database(MIME_MSI_OBJECT *object)
         MimeMsiRelease(&transform->Database->Object);
         MimeMsiFree(transform);
     }
+    while (database->Streams) {
+        MIME_MSI_STREAM *stream = database->Streams;
+        database->Streams = stream->Next;
+        MimeMsiFree(stream->Data);
+        MimeMsiFree(stream);
+    }
     for (ULONG i = 0; i < database->StringCount; i++)
         MimeMsiFree(database->Strings[i]);
     MimeMsiFree(database->Strings);

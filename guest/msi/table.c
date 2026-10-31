@@ -61,6 +61,16 @@ UINT MimeMsiReadStream(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZ
     MIME_CFB_ENTRY entry;
     *out = nullptr;
     *size = 0;
+    for (MIME_MSI_STREAM *stream = database->Streams; stream; stream = stream->Next) {
+        if (wcscmp(stream->Name, name))
+            continue;
+        *out = MimeMsiAllocate(stream->Size ? stream->Size : 1);
+        if (!*out)
+            return ERROR_NOT_ENOUGH_MEMORY;
+        memcpy(*out, stream->Data, stream->Size);
+        *size = stream->Size;
+        return ERROR_SUCCESS;
+    }
     if (!MimeCfbEntry(file, database->Root, &entry))
         return ERROR_INSTALL_PACKAGE_INVALID;
     ULONG stack[64], count = 0;

@@ -70,6 +70,14 @@ typedef struct MIME_MSI_TABLE {
     MIME_MSI_COLUMN Columns[64];
 } MIME_MSI_TABLE;
 
+/* a stream a transform adds, read before the streams of the file. */
+typedef struct MIME_MSI_STREAM {
+    struct MIME_MSI_STREAM *Next;
+    WCHAR Name[32];
+    BYTE *Data;
+    SIZE_T Size;
+} MIME_MSI_STREAM;
+
 typedef struct MIME_MSI_DATABASE {
     MIME_MSI_OBJECT Object;
     MIME_CFB File;
@@ -86,6 +94,7 @@ typedef struct MIME_MSI_DATABASE {
     /* patches applied to this database, whose cabinets the patched Media rows name. */
     struct MIME_MSI_DATABASE **Patches;
     ULONG PatchCount, PatchTransforms;
+    MIME_MSI_STREAM *Streams;
 } MIME_MSI_DATABASE;
 
 typedef struct MIME_MSI_TRANSFORM {

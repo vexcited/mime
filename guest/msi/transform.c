@@ -97,10 +97,7 @@ static UINT transform_table(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *tran
                 continue;
             USHORT type = table->Columns[column].Type;
             BOOL text = (type & 0xc00) == 0xc00;
-            if ((type & 0xfff) == 0x900) {
-                error = ERROR_CALL_NOT_IMPLEMENTED;
-                break;
-            }
+            /* a binary cell is two bytes, its data is the stream named after the table and key. */
             ULONG width = text ? transform->StringWidth : table->Columns[column].Width;
             if (!read_cell(data, size, &offset, width, &values[column]) ||
                 (text && values[column] >= transform->StringCount)) {
@@ -245,6 +242,61 @@ static void commit_edits(MSI_TABLE_EDIT *edits, BOOL keep)
     }
 }
 
+/* the streams the transform adds or replaces, such as the data of binary cells of rows it inserts. */
+static UINT read_streams(MIME_MSI_DATABASE *transform, const ULONG *children, ULONG count, MIME_MSI_STREAM **out)
+{
+    UINT error = ERROR_SUCCESS;
+    *out = nullptr;
+    for (ULONG at = 0; !error && at < count; at++) {
+        MIME_CFB_ENTRY entry;
+        if (!MimeCfbEntry(&transform->File, children[at], &entry))
+            return ERROR_INSTALL_PACKAGE_INVALID;
+        if (entry.Type != 2 || entry.Name[0] == 0x4840 || entry.Name[0] == 0x0005)
+            continue;
+        MIME_MSI_STREAM *stream = MimeMsiAllocate(sizeof(*stream));
+        if (!stream) {
+            error = ERROR_NOT_ENOUGH_MEMORY;
+            break;
+        }
+        memcpy(stream->Name, entry.Name, sizeof(stream->Name));
+        stream->Name[31] = 0;
+        error = MimeMsiReadStream(transform, stream->Name, &stream->Data, &stream->Size);
+        stream->Next = *out;
+        *out = stream;
+    }
+    return error;
+}
+
+static void free_streams(MIME_MSI_STREAM *streams)
+{
+    while (streams) {
+        MIME_MSI_STREAM *next = streams->Next;
+        MimeMsiFree(streams->Data);
+        MimeMsiFree(streams);
+        streams = next;
+    }
+}
+
+/* the added streams go before the database's own, so a later one of the same name wins. */
+static void add_streams(MIME_MSI_DATABASE *database, MIME_MSI_STREAM *streams)
+{
+    while (streams) {
+        MIME_MSI_STREAM *next = streams->Next;
+        for (MIME_MSI_STREAM **link = &database->Streams; *link; link = &(*link)->Next) {
+            if (wcscmp((*link)->Name, streams->Name))
+                continue;
+            MIME_MSI_STREAM *old = *link;
+            *link = old->Next;
+            MimeMsiFree(old->Data);
+            MimeMsiFree(old);
+            break;
+        }
+        streams->Next = database->Streams;
+        database->Streams = streams;
+        streams = next;
+    }
+}
+
 /* applies the transform's tables: _Tables and _Columns in the first pass, the rest in the second. */
 static UINT transform_pass(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *transform, PWSTR *strings, ULONG base, UINT flags,
                            const ULONG *children, ULONG count, BOOL schema, MSI_TABLE_EDIT **out)
@@ -261,6 +313,9 @@ static UINT transform_pass(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *trans
             continue;
         WCHAR name[64];
         if (entry.Type == 2 && !wcscmp((PCWSTR)entry.Name, L"\x0005SummaryInformation"))
+            continue;
+        /* a stream that is no table is one the transform adds, which read_streams takes. */
+        if (entry.Type == 2 && entry.Name[0] != 0x4840)
             continue;
         if (entry.Type != 2 || !transform_table_name(entry.Name, name)) {
             error = ERROR_CALL_NOT_IMPLEMENTED;
@@ -324,6 +379,9 @@ UINT MimeMsiApplyTransformStorage(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE
     ULONG *children = nullptr, count = 0;
     if (!error)
         error = MimeMsiChildren(transform, &children, &count);
+    MIME_MSI_STREAM *streams = nullptr;
+    if (!error)
+        error = read_streams(transform, children, count, &streams);
     MSI_TABLE_EDIT *edits = nullptr;
     BOOL swapped = FALSE;
     ULONG base = database->StringCount;
@@ -343,6 +401,10 @@ UINT MimeMsiApplyTransformStorage(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE
         error = transform_pass(database, transform, strings, base, flags, children, count, FALSE, &edits);
     MimeMsiFree(children);
     commit_edits(edits, !error);
+    if (error)
+        free_streams(streams);
+    else
+        add_streams(database, streams);
     if (swapped)
         return error;
     if (error) {
