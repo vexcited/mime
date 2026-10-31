@@ -48,7 +48,7 @@ set(MIME_X86_DLLS
     rpcrt4:0x63000000:rpcrt4_imports imm32:0x62000000:all_five comctl32:0x61000000:comctl comdlg32:0x60000000:dialog_imports
     msi:0x5f000000:msi_imports mpr:0x5e000000:base wintrust:0x5d000000:crypt odbc32:0x5c000000:user
     gdiplus:0x5b000000:gdiplus_imports wininet:0x5a000000:wininet_imports urlmon:0x59000000:urlmon_imports msimg32:0x58000000:gdi
-    oleacc:0x57000000:oleacc_imports oledlg:0x56000000:user combase:0x54000000:all_five usp10:0x51000000:gdi
+    oleacc:0x57000000:oleacc_imports oledlg:0x56000000:oledlg_imports combase:0x54000000:all_five usp10:0x51000000:gdi
     cfgmgr32:0x39000000:base setupapi:0x46000000:setup dwrite:0x45000000:all_five msacm32:0x42000000:acm dsound:0x3D000000:all_five ddraw:0x3C000000:direct3d
     dinput8:0x3B000000:all_five dinput:0x3A000000:all_five hid:0x38000000:base xinput1_4:0x37000000:xinput
     xinput1_3:0x36000000:xinput xinput1_2:0x35000000:xinput xinput1_1:0x34000000:xinput xinput9_1_0:0x33000000:base
@@ -68,6 +68,7 @@ set(MIME_X86_DLLS
     feclient:0x03000000:base wkscli:0x55600000:wkscli_imports zipfldr:0x15800000:explorerframe_imports avifil32:0x16800000:avifil32_imports glu32:0x16C00000:base dbghelp:0x32D00000:base odbccp32:0x55500000:base mscms:0x55400000:base mapi32:0x55300000:mapi32_imports hlink:0x55200000:hlink_imports authz:0x55100000:authz_imports wldap32:0x55000000:base ntdsapi:0x32C00000:base query:0x32B00000:all_five fontsub:0x32A00000:base tdh:0x32900000:base windows.networking:0x32800000:base dbgeng:0x32700000:base wmvcore:0x32600000:base atmlib:0x32500000:base avicap32:0x32400000:all_five rstrtmgr:0x32300000:base wlanapi:0x32200000:base snmpapi:0x32100000:base ktmw32:0x32000000:base msvfw32:0x1FC00000:msvfw32_imports normaliz:0x1F800000:base cryptsp:0x1F400000:base shfolder:0x1F000000:base)
 set(base ntdll kernel32)
 set(wkscli_imports ntdll kernel32 advapi32 rpcrt4 msvcrt)
+set(oledlg_imports ntdll kernel32 user32 ole32)
 set(msvfw32_imports ntdll kernel32 user32 gdi32 win32u winmm comdlg32)
 set(authz_imports ntdll kernel32 advapi32)
 set(mapi32_imports ntdll kernel32 ole32)

@@ -111,24 +111,3 @@ OLEDLGAPI BOOL WINAPI OleUIUpdateLinksA(void *container, HWND parent, LPSTR titl
     MIME_STUB("oledlg");
     return FALSE;
 }
-
-/*
- * the verbs of the object are not listed. what is left is the answer for an object that cannot be asked, a grayed
- * item in the place of the menu, and no popup.
- */
-OLEDLGAPI BOOL WINAPI OleUIAddVerbMenuW(void *object, LPCWSTR short_type, HMENU menu, UINT position, UINT id_min,
-                                        UINT id_max, BOOL add_convert, UINT id_convert, HMENU *popup)
-{
-    MIME_STUB("oledlg");
-    DeleteMenu(menu, position, MF_BYPOSITION);
-    if (popup)
-        *popup = nullptr;
-    InsertMenuW(menu, position, MF_BYPOSITION | MF_GRAYED, id_min, L"Object");
-    return FALSE;
-}
-
-OLEDLGAPI BOOL WINAPI OleUIAddVerbMenuA(void *object, LPCSTR short_type, HMENU menu, UINT position, UINT id_min,
-                                        UINT id_max, BOOL add_convert, UINT id_convert, HMENU *popup)
-{
-    return OleUIAddVerbMenuW(object, nullptr, menu, position, id_min, id_max, add_convert, id_convert, popup);
-}

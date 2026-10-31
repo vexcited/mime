@@ -243,6 +243,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_gdiplus ${arch}-lib-vector ${arch}-lib-ttf)
     set(includes_gdiplus guest/lib)
     set(libs_gdiplus ${MIME_LIB_${arch}}/ole32.lib)
+    set(libs_oledlg ${MIME_LIB_${arch}}/ole32.lib)
     set(objects_windowscodecs ${arch}-lib-png:guest/lib/png/inflate.c ${arch}-lib-png:guest/lib/png/deflate.c
         ${arch}-lib-pngio ${arch}-lib-jpeg ${arch}-lib-tiff ${arch}-lib-gif ${arch}-lib-bcn)
     set(includes_windowscodecs guest/lib)
