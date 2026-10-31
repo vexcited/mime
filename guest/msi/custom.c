@@ -536,8 +536,10 @@ UINT MimeMsiRunCustomAction(MSIHANDLE handle, MIME_MSI_PACKAGE *package, MIME_MS
             else
                 error = MimeMsiSetProperty(package, row->Source, formatted);
         } else if (!error && source == SOURCE_DIRECTORY) {
-            /* sets the directory's target path, which costing needs. */
-            error = *row->Source ? MimeMsiSetProperty(package, row->Source, formatted) : ERROR_INSTALL_PACKAGE_INVALID;
+            /* before costing ends this is the directory's property, after it the target path and its children. */
+            error = !*row->Source ? ERROR_INSTALL_PACKAGE_INVALID :
+                    package->CostStage >= 3 && *formatted ? MimeMsiSetTargetPath(package, row->Source, formatted) :
+                    MimeMsiSetProperty(package, row->Source, formatted);
         } else if (!error && source == SOURCE_FILE) {
             *message = formatted;
             formatted = nullptr;

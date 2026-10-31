@@ -37,6 +37,38 @@ static UINT full_directory(PCWSTR name, PWSTR *out)
     return ERROR_SUCCESS;
 }
 
+/* the part of DefaultDir a directory adds to its parent, the long name of the target or source half. */
+static UINT directory_segment(PCWSTR authored, BOOL source, PWSTR *segment, PWSTR *selected)
+{
+    if (!authored)
+        return ERROR_INSTALL_PACKAGE_INVALID;
+    *segment = MimeMsiDuplicate(authored);
+    if (!*segment)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    PWSTR colon = wcschr(*segment, L':');
+    *selected = source && colon ? colon + 1 : *segment;
+    if (!source && colon)
+        *colon = 0;
+    PWSTR long_name = wcschr(*selected, L'|');
+    if (long_name)
+        *selected = long_name + 1;
+    if (!wcscmp(*selected, L"..") || wcschr(*selected, L'\\') || wcschr(*selected, L'/') || wcschr(*selected, L':')) {
+        MimeMsiFree(*segment);
+        return ERROR_INSTALL_PACKAGE_INVALID;
+    }
+    if (!wcscmp(*selected, L"."))
+        **selected = 0;
+    return ERROR_SUCCESS;
+}
+
+static UINT child_directory(PCWSTR parent, PCWSTR segment, PWSTR *out)
+{
+    PWSTR joined = MimeMsiJoinPath(parent, segment);
+    UINT error = joined ? full_directory(joined, out) : ERROR_NOT_ENOUGH_MEMORY;
+    MimeMsiFree(joined);
+    return error;
+}
+
 static UINT directory_path(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, PCWSTR name,
                            BOOL source, ULONG depth, PWSTR *out)
 {
@@ -64,30 +96,14 @@ static UINT directory_path(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, PCW
         PCWSTR root = source ? MimeMsiGetProperty(package, L"SourceDir") : MimeMsiGetProperty(package, L"ROOTDRIVE");
         return full_directory(*root ? root : L"C:\\", out);
     }
-    if (!authored)
-        return ERROR_INSTALL_PACKAGE_INVALID;
-    PWSTR segment = MimeMsiDuplicate(authored);
-    if (!segment)
-        return ERROR_NOT_ENOUGH_MEMORY;
-    PWSTR colon = wcschr(segment, L':');
-    PWSTR selected = source && colon ? colon + 1 : segment;
-    if (!source && colon)
-        *colon = 0;
-    PWSTR long_name = wcschr(selected, L'|');
-    if (long_name)
-        selected = long_name + 1;
-    UINT error = ERROR_SUCCESS;
-    if (!wcscmp(selected, L"..") || wcschr(selected, L'\\') || wcschr(selected, L'/') || wcschr(selected, L':'))
-        error = ERROR_INSTALL_PACKAGE_INVALID;
-    PWSTR prefix = nullptr, joined = nullptr;
+    PWSTR segment, selected;
+    UINT error = directory_segment(authored, source, &segment, &selected);
+    PWSTR prefix = nullptr;
     if (!error)
         error = directory_path(package, table, parent, source, depth + 1, &prefix);
-    if (!error) {
-        joined = MimeMsiJoinPath(prefix, !wcscmp(selected, L".") ? L"" : selected);
-        error = joined ? full_directory(joined, out) : ERROR_NOT_ENOUGH_MEMORY;
-    }
+    if (!error)
+        error = child_directory(prefix, selected, out);
     MimeMsiFree(prefix);
-    MimeMsiFree(joined);
     MimeMsiFree(segment);
     return error;
 }
@@ -152,6 +168,44 @@ UINT WINAPI MsiGetSourcePathW(MSIHANDLE handle, LPCWSTR name, LPWSTR out, LPDWOR
     return get_path(handle, name, TRUE, out, size);
 }
 
+/* every directory at or under the old path is rebased on the new one, by path and not by the table's parents. */
+static UINT rebase_directories(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, PCWSTR previous, PCWSTR path)
+{
+    ULONG id = MimeMsiColumn(table, L"Directory", TRUE);
+    if (id == UINT32_MAX)
+        return ERROR_INSTALL_PACKAGE_INVALID;
+    SIZE_T length = wcslen(previous);
+    UINT error = ERROR_SUCCESS;
+    for (ULONG row = 0; row < table->Rows && !error; row++) {
+        PCWSTR name = MimeMsiText(package->Database, table, row, id);
+        PCWSTR current = name ? MimeMsiGetProperty(package, name) : L"";
+        if (!*current || _wcsnicmp(current, previous, length))
+            continue;
+        PWSTR moved = MimeMsiJoinPath(path, current + length);
+        error = moved ? MimeMsiSetProperty(package, name, moved) : ERROR_NOT_ENOUGH_MEMORY;
+        MimeMsiFree(moved);
+    }
+    return error;
+}
+
+UINT MimeMsiSetTargetPath(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR value)
+{
+    MIME_MSI_TABLE *table;
+    UINT error = MimeMsiLoadTable(package->Database, L"Directory", &table);
+    PWSTR previous = nullptr, path = nullptr;
+    if (!error)
+        error = directory_path(package, table, name, FALSE, 0, &previous);
+    if (!error)
+        error = full_directory(value, &path);
+    if (!error && _wcsicmp(previous, path))
+        error = rebase_directories(package, table, previous, path);
+    if (!error)
+        error = MimeMsiSetProperty(package, name, path);
+    MimeMsiFree(previous);
+    MimeMsiFree(path);
+    return error;
+}
+
 UINT WINAPI MsiSetTargetPathW(MSIHANDLE handle, LPCWSTR name, LPCWSTR value)
 {
     MIME_REMOTE(PROXY_SetTargetPathW, UINT, MIME_ARG(handle), MIME_ARG(name), MIME_ARG(value));
@@ -159,14 +213,7 @@ UINT WINAPI MsiSetTargetPathW(MSIHANDLE handle, LPCWSTR name, LPCWSTR value)
         return ERROR_INVALID_PARAMETER;
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
-    PWSTR previous = nullptr, path = nullptr;
-    UINT error = package ? MimeMsiDirectoryPath(package, name, FALSE, &previous) : ERROR_INVALID_HANDLE;
-    if (!error)
-        error = full_directory(value, &path);
-    if (!error)
-        error = MimeMsiSetProperty(package, name, path);
-    MimeMsiFree(previous);
-    MimeMsiFree(path);
+    UINT error = package ? MimeMsiSetTargetPath(package, name, value) : ERROR_INVALID_HANDLE;
     ReleaseSRWLockExclusive(&MimeMsiLock);
     return error;
 }

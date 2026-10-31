@@ -260,6 +260,7 @@ PWSTR MimeMsiJoinPath(PCWSTR parent, PCWSTR name);
 UINT MimeMsiPublishDirectories(MIME_MSI_PACKAGE *package);
 UINT MimeMsiSnapshotComponents(MIME_MSI_PACKAGE *package);
 UINT MimeMsiDirectoryPath(MIME_MSI_PACKAGE *package, PCWSTR name, BOOL source, PWSTR *out);
+UINT MimeMsiSetTargetPath(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR value);
 
 UINT MimeMsiStandardAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiFinishTransaction(MIME_MSI_PACKAGE *package, BOOL commit);
