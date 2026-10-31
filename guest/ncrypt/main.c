@@ -290,14 +290,32 @@ static BOOL key_path(LPCWSTR name, DWORD flags, WCHAR *path)
         return FALSE;
     SIZE_T length = wcslen(base);
     static const WCHAR tail[] = L"\\Microsoft\\Crypto\\Keys\\";
-    if (length + wcslen(tail) + wcslen(name) * 4 + 1 >= MAX_PATH)
+    SIZE_T count = wcslen(name);
+    /* a long name is kept under a hash of it, the file holds the name, as windows names its files. */
+    BOOL hashed = count > 24;
+    if (length + wcslen(tail) + (hashed ? 33 : count * 4) + 1 >= MAX_PATH)
         return FALSE;
     memcpy(path, base, length * sizeof(WCHAR));
     memcpy(path + length, tail, sizeof(tail));
     length += wcslen(tail);
-    for (LPCWSTR p = name; *p; p++)
-        for (int shift = 12; shift >= 0; shift -= 4)
-            path[length++] = L"0123456789abcdef"[(*p >> shift) & 15];
+    if (hashed) {
+        ULONG64 a = 0xcbf29ce484222325ull, b = 0x84222325cbf29ce4ull;
+        for (LPCWSTR p = name; *p; p++) {
+            a = (a ^ (*p & 0xff)) * 0x100000001b3ull;
+            a = (a ^ (*p >> 8)) * 0x100000001b3ull;
+            b = (b ^ (*p >> 8)) * 0x100000001b3ull;
+            b = (b ^ (*p & 0xff)) * 0x100000001b3ull;
+        }
+        path[length++] = 'x';
+        for (int shift = 60; shift >= 0; shift -= 4)
+            path[length++] = L"0123456789abcdef"[(a >> shift) & 15];
+        for (int shift = 60; shift >= 0; shift -= 4)
+            path[length++] = L"0123456789abcdef"[(b >> shift) & 15];
+    } else {
+        for (LPCWSTR p = name; *p; p++)
+            for (int shift = 12; shift >= 0; shift -= 4)
+                path[length++] = L"0123456789abcdef"[(*p >> shift) & 15];
+    }
     path[length] = 0;
     return TRUE;
 }
@@ -341,7 +359,8 @@ static SECURITY_STATUS save_key(KEY *key)
         memcpy(header.algorithm, key->algorithm, sizeof(header.algorithm));
         DWORD written;
         if (file == INVALID_HANDLE_VALUE || !WriteFile(file, &header, sizeof(header), &written, nullptr) ||
-            !WriteFile(file, blob, size, &written, nullptr))
+            !WriteFile(file, blob, size, &written, nullptr) ||
+            !WriteFile(file, key->name, (DWORD)((wcslen(key->name) + 1) * sizeof(WCHAR)), &written, nullptr))
             result = NTE_PERM;
         if (file != INVALID_HANDLE_VALUE)
             CloseHandle(file);
@@ -524,7 +543,8 @@ SECURITY_STATUS WINAPI NCryptEnumKeys(NCRYPT_PROV_HANDLE handle, LPCWSTR scope, 
         return NTE_NO_MORE_ITEMS;
     pattern[wcslen(pattern) + 1] = 0;
     pattern[wcslen(pattern)] = '*';
-    ULONG_PTR index = (ULONG_PTR)*state, n = 0;
+    /* the state is a block of the heap that the caller frees, holding how far the listing went. */
+    ULONG_PTR index = *state ? *(ULONG_PTR *)*state : 0, n = 0;
     WIN32_FIND_DATAW data;
     HANDLE find = FindFirstFileW(pattern, &data);
     if (find == INVALID_HANDLE_VALUE)
@@ -535,6 +555,31 @@ SECURITY_STATUS WINAPI NCryptEnumKeys(NCRYPT_PROV_HANDLE handle, LPCWSTR scope, 
             continue;
         LPCWSTR hex = data.cFileName + 5;
         SIZE_T length = wcslen(hex) / 4;
+        WCHAR stored[MAX_PATH];
+        BOOL named_by_file = data.cFileName[0] == 'x';
+        if (named_by_file) {
+            /* the name of a hashed file is at its end. */
+            WCHAR full[MAX_PATH];
+            wcscpy(full, pattern);
+            full[wcslen(full) - 1] = 0;
+            if (wcslen(full) + wcslen(data.cFileName) + 1 >= MAX_PATH)
+                continue;
+            wcscat(full, data.cFileName);
+            HANDLE named = CreateFileW(full, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+            KEY_FILE head;
+            DWORD got = 0;
+            stored[0] = 0;
+            if (named != INVALID_HANDLE_VALUE) {
+                if (ReadFile(named, &head, sizeof(head), &got, nullptr) && got == sizeof(head) &&
+                    SetFilePointer(named, head.blob_size, nullptr, FILE_CURRENT) != INVALID_SET_FILE_POINTER)
+                    ReadFile(named, stored, sizeof(stored) - sizeof(WCHAR), &got, nullptr);
+                CloseHandle(named);
+            }
+            stored[MAX_PATH - 1] = 0;
+            if (!stored[0])
+                continue;
+            length = wcslen(stored);
+        }
         NCryptKeyName *entry = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*entry) + (length + 1) * 2 +
                                                                                  32 * sizeof(WCHAR));
         if (!entry) {
@@ -544,9 +589,13 @@ SECURITY_STATUS WINAPI NCryptEnumKeys(NCRYPT_PROV_HANDLE handle, LPCWSTR scope, 
         entry->pszName = (LPWSTR)(entry + 1);
         for (SIZE_T i = 0; i < length; i++) {
             WCHAR c = 0;
-            for (int j = 0; j < 4; j++) {
-                WCHAR d = hex[i * 4 + j];
-                c = (WCHAR)(c << 4 | (d >= 'a' ? d - 'a' + 10 : d - '0'));
+            if (named_by_file) {
+                c = stored[i];
+            } else {
+                for (int j = 0; j < 4; j++) {
+                    WCHAR d = hex[i * 4 + j];
+                    c = (WCHAR)(c << 4 | (d >= 'a' ? d - 'a' + 10 : d - '0'));
+                }
             }
             entry->pszName[i] = c;
         }
@@ -565,8 +614,13 @@ SECURITY_STATUS WINAPI NCryptEnumKeys(NCRYPT_PROV_HANDLE handle, LPCWSTR scope, 
         memcpy(entry->pszAlgid, header.algorithm, sizeof(header.algorithm));
         entry->pszAlgid[31] = 0;
         entry->dwFlags = flags & NCRYPT_MACHINE_KEY_FLAG;
+        if (!*state && !(*state = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(ULONG_PTR)))) {
+            HeapFree(GetProcessHeap(), 0, entry);
+            status = NTE_NO_MEMORY;
+            break;
+        }
+        *(ULONG_PTR *)*state = index + 1;
         *out = entry;
-        *state = (PVOID)(index + 1);
         status = ERROR_SUCCESS;
         break;
     } while (FindNextFileW(find, &data));
