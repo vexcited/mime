@@ -608,7 +608,10 @@ static NTSTATUS open_client(PFILE_OBJECT file, PIO_STACK_LOCATION stack)
     if (!p)
         return STATUS_OBJECT_NAME_NOT_FOUND;
     PIO_SECURITY_CONTEXT context = stack->Parameters.Create.SecurityContext;
-    NTSTATUS allowed = check_pipe(stack, p, context ? context->DesiredAccess : 0, TRUE);
+    /* a client does not create instances, so the right to is not held against it when it asks to write. */
+    ACCESS_MASK asked = context ? ObMapGenericAccess(IoFileObjectTypeObject, context->DesiredAccess) : 0;
+    asked &= ~(ACCESS_MASK)FILE_CREATE_PIPE_INSTANCE;
+    NTSTATUS allowed = check_pipe(stack, p, asked, TRUE);
     if (!NT_SUCCESS(allowed))
         return allowed;
     NP_INSTANCE *in = listening_instance(p);
