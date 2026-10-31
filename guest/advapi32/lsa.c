@@ -543,28 +543,217 @@ ADVAPI BOOL WINAPI LookupAccountSidLocalA(PSID sid, LPSTR name, LPDWORD name_siz
 
 /* ------------------------------------------------------------------ rights and secrets: no policy database */
 
+/*
+ * the rights of an account are kept in one key of the registry, a subkey per sid with the names of its privileges and
+ * logon rights. an account that holds none has no subkey, which is how the policy tells it is unknown.
+ */
+#define POLICY_CREATE_ACCOUNT 0x10
+#define RIGHTS_KEY L"SYSTEM\\CurrentControlSet\\Control\\Lsa\\MimeRights"
+#define STATUS_NO_SUCH_PRIVILEGE_ ((NTSTATUS)0xC0000060L)
+
+typedef struct LSA_ENUMERATION_INFORMATION_ {
+    PSID Sid;
+} LSA_ENUMERATION_INFORMATION_;
+
+ADVAPI BOOL WINAPI LookupPrivilegeValueW(LPCWSTR system, LPCWSTR name, PLUID luid);
+ADVAPI BOOL WINAPI LookupPrivilegeNameW(LPCWSTR system, PLUID luid, LPWSTR name, LPDWORD size);
+
+static const PCWSTR g_logon_rights[] = {
+    L"SeInteractiveLogonRight", L"SeNetworkLogonRight", L"SeBatchLogonRight", L"SeServiceLogonRight",
+    L"SeDenyInteractiveLogonRight", L"SeDenyNetworkLogonRight", L"SeDenyBatchLogonRight", L"SeDenyServiceLogonRight",
+    L"SeRemoteInteractiveLogonRight", L"SeDenyRemoteInteractiveLogonRight",
+};
+
+static BOOL has_access(POLICY_OBJECT *policy, ACCESS_MASK needed)
+{
+    /* GENERIC_ALL and MAXIMUM_ALLOWED. */
+    return (policy->Access & (0x10000000 | 0x02000000)) || (policy->Access & needed) == needed;
+}
+
+/* the name of a right as the system spells it, or nothing when the system has no such right. */
+static BOOL canonical_right(const LSA_UNICODE_STRING *right, WCHAR *out, DWORD chars)
+{
+    WCHAR name[96];
+    if (!right || !right->Buffer || !right->Length || right->Length / sizeof(WCHAR) >= RTL_NUMBER_OF(name))
+        return FALSE;
+    memcpy(name, right->Buffer, right->Length);
+    name[right->Length / sizeof(WCHAR)] = 0;
+    for (DWORD i = 0; i < RTL_NUMBER_OF(g_logon_rights); i++) {
+        if (!_wcsicmp(name, g_logon_rights[i]) && wcslen(g_logon_rights[i]) < chars) {
+            wcscpy(out, g_logon_rights[i]);
+            return TRUE;
+        }
+    }
+    LUID luid;
+    DWORD size = chars;
+    return LookupPrivilegeValueW(nullptr, name, &luid) && LookupPrivilegeNameW(nullptr, &luid, out, &size);
+}
+
+static BOOL rights_key(PSID sid, BOOL create, HKEY *key)
+{
+    LPWSTR text;
+    WCHAR path[300];
+    if (!ConvertSidToStringSidW(sid, &text))
+        return FALSE;
+    _snwprintf(path, RTL_NUMBER_OF(path), RIGHTS_KEY L"\\%ls", text);
+    AdvFree(text);
+    if (create)
+        return !RegCreateKeyExW(HKEY_LOCAL_MACHINE, path, 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, key, nullptr);
+    return !RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_ALL_ACCESS, key);
+}
+
+/* the rights of an open account as a multi string with room for one more name. */
+static PWSTR read_rights(HKEY key)
+{
+    DWORD size = 0, type;
+    if (RegQueryValueExW(key, L"Rights", nullptr, &type, nullptr, &size) || type != REG_MULTI_SZ)
+        size = 0;
+    PWSTR list = AdvAllocZero(size + 256 * sizeof(WCHAR));
+    if (list && size)
+        RegQueryValueExW(key, L"Rights", nullptr, &type, (BYTE *)list, &size);
+    return list;
+}
+
+static BOOL holds_right(PCWSTR list, PCWSTR right)
+{
+    for (; *list; list += wcslen(list) + 1)
+        if (!_wcsicmp(list, right))
+            return TRUE;
+    return FALSE;
+}
+
+static SIZE_T rights_chars(PCWSTR list)
+{
+    SIZE_T n = 0;
+    for (; list[n]; n += wcslen(list + n) + 1)
+        ;
+    return n;
+}
+
 ADVAPI NTSTATUS WINAPI LsaEnumerateAccountRights(LSA_HANDLE handle, PSID account, PLSA_UNICODE_STRING *rights, PULONG count)
 {
-    if (!policy_of(handle))
+    POLICY_OBJECT *policy = policy_of(handle);
+    if (!policy)
         return STATUS_INVALID_HANDLE;
     if (!account || !rights || !count)
         return STATUS_INVALID_PARAMETER;
     *rights = nullptr;
     *count = 0;
+    if (!has_access(policy, POLICY_LOOKUP_NAMES))
+        return STATUS_ACCESS_DENIED;
+    HKEY key;
     /* an account with no rights is unknown to the policy. */
-    return STATUS_OBJECT_NAME_NOT_FOUND;
+    if (!rights_key(account, FALSE, &key))
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    PWSTR list = read_rights(key);
+    RegCloseKey(key);
+    if (!list)
+        return STATUS_NO_MEMORY;
+    ULONG n = 0;
+    SIZE_T bytes = 0;
+    for (PCWSTR at = list; *at; at += wcslen(at) + 1) {
+        n++;
+        bytes += sizeof(LSA_UNICODE_STRING) + (wcslen(at) + 1) * sizeof(WCHAR);
+    }
+    if (!n) {
+        AdvFree(list);
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    }
+    LSA_UNICODE_STRING *out = lsa_alloc(bytes);
+    if (!out) {
+        AdvFree(list);
+        return STATUS_NO_MEMORY;
+    }
+    WCHAR *text = (WCHAR *)(out + n);
+    ULONG i = 0;
+    for (PCWSTR at = list; *at; at += wcslen(at) + 1, i++) {
+        SIZE_T length = wcslen(at);
+        memcpy(text, at, (length + 1) * sizeof(WCHAR));
+        out[i].Length = (USHORT)(length * sizeof(WCHAR));
+        out[i].MaximumLength = (USHORT)((length + 1) * sizeof(WCHAR));
+        out[i].Buffer = text;
+        text += length + 1;
+    }
+    AdvFree(list);
+    *rights = out;
+    *count = n;
+    return STATUS_SUCCESS;
 }
 
 ADVAPI NTSTATUS WINAPI LsaEnumerateAccountsWithUserRight(LSA_HANDLE handle, PLSA_UNICODE_STRING right, PVOID *buffer,
                                                          PULONG count)
 {
-    if (!policy_of(handle))
+    POLICY_OBJECT *policy = policy_of(handle);
+    if (!policy)
         return STATUS_INVALID_HANDLE;
     if (!buffer || !count)
         return STATUS_INVALID_PARAMETER;
     *buffer = nullptr;
     *count = 0;
-    return STATUS_NO_MORE_ENTRIES;
+    if (!has_access(policy, POLICY_LOOKUP_NAMES | POLICY_VIEW_LOCAL_INFORMATION))
+        return STATUS_ACCESS_DENIED;
+    WCHAR wanted[96];
+    if (right && !canonical_right(right, wanted, RTL_NUMBER_OF(wanted)))
+        return STATUS_NO_SUCH_PRIVILEGE_;
+    if (!right)
+        return STATUS_INVALID_PARAMETER;
+    HKEY root;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, RIGHTS_KEY, 0, KEY_READ, &root))
+        return STATUS_NO_MORE_ENTRIES;
+    DWORD capacity = 0, found = 0;
+    PSID *sids = nullptr;
+    for (DWORD i = 0;; i++) {
+        WCHAR name[200];
+        DWORD n = RTL_NUMBER_OF(name);
+        if (RegEnumKeyExW(root, i, name, &n, nullptr, nullptr, nullptr, nullptr))
+            break;
+        HKEY key;
+        if (RegOpenKeyExW(root, name, 0, KEY_READ, &key))
+            continue;
+        PWSTR list = read_rights(key);
+        RegCloseKey(key);
+        PSID sid = nullptr;
+        if (list && holds_right(list, wanted) && ConvertStringSidToSidW(name, &sid)) {
+            if (found == capacity) {
+                PSID *bigger = AdvAllocZero((capacity ? capacity * 2 : 8) * sizeof(PSID));
+                if (bigger && sids)
+                    memcpy(bigger, sids, found * sizeof(PSID));
+                AdvFree(sids);
+                sids = bigger;
+                capacity = capacity ? capacity * 2 : 8;
+            }
+            if (sids)
+                sids[found++] = sid;
+            else
+                LocalFree(sid);
+        }
+        AdvFree(list);
+    }
+    RegCloseKey(root);
+    if (!found) {
+        AdvFree(sids);
+        return STATUS_NO_MORE_ENTRIES;
+    }
+    SIZE_T bytes = found * sizeof(LSA_ENUMERATION_INFORMATION_);
+    for (DWORD i = 0; i < found; i++)
+        bytes += 8 + 4 * (SIZE_T)((BYTE *)sids[i])[1];
+    LSA_ENUMERATION_INFORMATION_ *out = lsa_alloc(bytes);
+    NTSTATUS status = out ? STATUS_SUCCESS : STATUS_NO_MEMORY;
+    BYTE *at = (BYTE *)(out + found);
+    for (DWORD i = 0; out && i < found; i++) {
+        SIZE_T length = 8 + 4 * (SIZE_T)((BYTE *)sids[i])[1];
+        memcpy(at, sids[i], length);
+        out[i].Sid = at;
+        at += length;
+    }
+    for (DWORD i = 0; i < found; i++)
+        LocalFree(sids[i]);
+    AdvFree(sids);
+    if (out) {
+        *buffer = out;
+        *count = found;
+    }
+    return status;
 }
 
 /* a machine outside any domain trusts none. */
@@ -583,20 +772,121 @@ ADVAPI NTSTATUS WINAPI LsaEnumerateTrustedDomains(LSA_HANDLE handle, PULONG cont
 
 ADVAPI NTSTATUS WINAPI LsaAddAccountRights(LSA_HANDLE handle, PSID account, PLSA_UNICODE_STRING rights, ULONG count)
 {
-    (void)account;
-    (void)rights;
-    (void)count;
-    return policy_of(handle) ? STATUS_ACCESS_DENIED : STATUS_INVALID_HANDLE;
+    POLICY_OBJECT *policy = policy_of(handle);
+    if (!policy)
+        return STATUS_INVALID_HANDLE;
+    if (!account || (count && !rights))
+        return STATUS_INVALID_PARAMETER;
+    if (!has_access(policy, POLICY_CREATE_ACCOUNT | POLICY_LOOKUP_NAMES))
+        return STATUS_ACCESS_DENIED;
+    /* every name is checked before the account changes. */
+    WCHAR (*names)[96] = AdvAllocZero((count ? count : 1) * sizeof(*names));
+    if (!names)
+        return STATUS_NO_MEMORY;
+    for (ULONG i = 0; i < count; i++) {
+        if (!canonical_right(&rights[i], names[i], RTL_NUMBER_OF(names[i]))) {
+            AdvFree(names);
+            return STATUS_NO_SUCH_PRIVILEGE_;
+        }
+    }
+    HKEY key;
+    if (!rights_key(account, TRUE, &key)) {
+        AdvFree(names);
+        return STATUS_INVALID_PARAMETER;
+    }
+    PWSTR list = read_rights(key);
+    SIZE_T used = list ? rights_chars(list) : 0;
+    SIZE_T room = list ? used + 1 + count * 96 + 2 : 0;
+    PWSTR next = list ? AdvAllocZero(room * sizeof(WCHAR)) : nullptr;
+    if (!next) {
+        AdvFree(list);
+        AdvFree(names);
+        RegCloseKey(key);
+        return STATUS_NO_MEMORY;
+    }
+    memcpy(next, list, used * sizeof(WCHAR));
+    for (ULONG i = 0; i < count; i++) {
+        if (holds_right(next, names[i]))
+            continue;
+        SIZE_T at = rights_chars(next), length = wcslen(names[i]);
+        memcpy(next + at, names[i], (length + 1) * sizeof(WCHAR));
+        next[at + length + 1] = 0;
+    }
+    SIZE_T chars = rights_chars(next) + 1;
+    if (chars == 1)
+        chars = 2;
+    RegSetValueExW(key, L"Rights", 0, REG_MULTI_SZ, (const BYTE *)next, (DWORD)(chars * sizeof(WCHAR)));
+    RegCloseKey(key);
+    AdvFree(next);
+    AdvFree(list);
+    AdvFree(names);
+    return STATUS_SUCCESS;
 }
 
 ADVAPI NTSTATUS WINAPI LsaRemoveAccountRights(LSA_HANDLE handle, PSID account, BOOLEAN all, PLSA_UNICODE_STRING rights,
                                               ULONG count)
 {
-    (void)account;
-    (void)all;
-    (void)rights;
-    (void)count;
-    return policy_of(handle) ? STATUS_ACCESS_DENIED : STATUS_INVALID_HANDLE;
+    POLICY_OBJECT *policy = policy_of(handle);
+    if (!policy)
+        return STATUS_INVALID_HANDLE;
+    if (!account || (!all && count && !rights))
+        return STATUS_INVALID_PARAMETER;
+    if (!has_access(policy, POLICY_LOOKUP_NAMES))
+        return STATUS_ACCESS_DENIED;
+    HKEY key;
+    if (!rights_key(account, FALSE, &key))
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    PWSTR list = read_rights(key);
+    if (!list) {
+        RegCloseKey(key);
+        return STATUS_NO_MEMORY;
+    }
+    NTSTATUS status = STATUS_SUCCESS;
+    PWSTR next = AdvAllocZero((rights_chars(list) + 4) * sizeof(WCHAR));
+    if (!next) {
+        status = STATUS_NO_MEMORY;
+    } else if (!all) {
+        memcpy(next, list, (rights_chars(list) + 1) * sizeof(WCHAR));
+        for (ULONG i = 0; i < count && !status; i++) {
+            WCHAR name[96];
+            if (!canonical_right(&rights[i], name, RTL_NUMBER_OF(name)) || !holds_right(next, name)) {
+                status = STATUS_NO_SUCH_PRIVILEGE_;
+                break;
+            }
+            PWSTR out = next;
+            for (PWSTR at = next; *at;) {
+                SIZE_T n = wcslen(at) + 1;
+                PWSTR following = at + n;
+                if (_wcsicmp(at, name)) {
+                    memmove(out, at, n * sizeof(WCHAR));
+                    out += n;
+                }
+                at = following;
+            }
+            *out = 0;
+            out[1] = 0;
+        }
+    }
+    if (!status) {
+        if (all || !*next) {
+            LPWSTR text;
+            WCHAR path[300];
+            RegCloseKey(key);
+            key = nullptr;
+            if (ConvertSidToStringSidW(account, &text)) {
+                _snwprintf(path, RTL_NUMBER_OF(path), RIGHTS_KEY L"\\%ls", text);
+                AdvFree(text);
+                RegDeleteKeyW(HKEY_LOCAL_MACHINE, path);
+            }
+        } else {
+            RegSetValueExW(key, L"Rights", 0, REG_MULTI_SZ, (const BYTE *)next, (DWORD)((rights_chars(next) + 1) * sizeof(WCHAR)));
+        }
+    }
+    if (key)
+        RegCloseKey(key);
+    AdvFree(next);
+    AdvFree(list);
+    return status;
 }
 
 ADVAPI NTSTATUS WINAPI LsaCreateSecret(LSA_HANDLE handle, PLSA_UNICODE_STRING name, ACCESS_MASK access, PLSA_HANDLE secret)
