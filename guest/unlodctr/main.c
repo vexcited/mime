@@ -51,6 +51,13 @@ int tool_main(void)
         return fail(error == ERROR_INVALID_DATA ? L"The manifest is no counters manifest." : L"Unable to read the manifest.", error);
     HKEY providers = nullptr;
     LONG status = RegOpenKeyExW(HKEY_LOCAL_MACHINE, PM_PERFLIB L"\\_V2Providers", 0, KEY_ALL_ACCESS, &providers);
+    if (status == ERROR_FILE_NOT_FOUND) {
+        /* no provider was ever registered. */
+        pm_free(&manifest);
+        if (!g_quiet)
+            tu_print(L"Info: Successfully uninstalled performance counters in %s\n", path);
+        return 0;
+    }
     if (status) {
         pm_free(&manifest);
         return fail(L"Unable to open the list of providers.", (DWORD)status);
