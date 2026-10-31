@@ -40,7 +40,9 @@ static void WINAPI cache_release(PVOID data)
         return;
     for (ULONG b = 0; b < CACHE_BUCKETS; b++)
         for (ULONG i = 0; i < CACHE_SLOTS; i++)
-            AutFree(cache->Slots[b][i].Block);
+            /* a slot with no size gave its block away, and the block is not the cache's any more. */
+            if (cache->Slots[b][i].Size)
+                AutFree(cache->Slots[b][i].Block);
     AutFree(cache);
 }
 
@@ -117,8 +119,10 @@ static BYTE *cached_alloc(DWORD size)
         for (ULONG i = 0; i < g_slots; i++) {
             CACHE_SLOT *slot = &cache->Slots[b][i];
             if (slot->Size >= size) {
+                BYTE *block = slot->Block;
                 slot->Size = 0;
-                return slot->Block;
+                slot->Block = nullptr;
+                return block;
             }
         }
     return AutAlloc(size);
