@@ -41,15 +41,25 @@ static UINT command_properties(MSIHANDLE package, PCWSTR command)
             cursor++;
         if (!*cursor)
             break;
+        /* the name ends at an equals sign or a blank, and blanks may stand on both sides of the equals sign. */
         PWSTR name = cursor;
-        while ((*cursor >= L'A' && *cursor <= L'Z') || (*cursor >= L'a' && *cursor <= L'z') ||
-               (*cursor >= L'0' && *cursor <= L'9') || *cursor == L'_' || *cursor == L'.')
+        while (*cursor && *cursor != L'=' && *cursor != L' ' && *cursor != L'\t')
             cursor++;
-        if (cursor == name || *cursor != L'=' || (*name >= L'0' && *name <= L'9')) {
+        PWSTR name_end = cursor;
+        while (*cursor == L' ' || *cursor == L'\t')
+            cursor++;
+        BOOL valid = name_end != name && *cursor == L'=' && !(*name >= L'0' && *name <= L'9');
+        for (PWSTR c = name; valid && c < name_end; c++)
+            valid = (*c >= L'A' && *c <= L'Z') || (*c >= L'a' && *c <= L'z') || (*c >= L'0' && *c <= L'9') ||
+                    *c == L'_' || *c == L'.';
+        if (!valid) {
             error = ERROR_INVALID_COMMAND_LINE;
             break;
         }
-        *cursor++ = 0;
+        *name_end = 0;
+        cursor++;
+        while (*cursor == L' ' || *cursor == L'\t')
+            cursor++;
         PWSTR value = cursor, output = cursor;
         BOOL quoted = FALSE;
         while (*cursor) {

@@ -544,16 +544,6 @@ UINT WINAPI MsiGetComponentStateA(MSIHANDLE handle, LPCSTR name, INSTALLSTATE *i
     return error;
 }
 
-/* tables are read from the package and never written. */
-UINT WINAPI MsiViewModify(MSIHANDLE view, int mode, MSIHANDLE record)
-{
-    MIME_REMOTE(PROXY_ViewModify, UINT, MIME_ARG(view), MIME_ARG(mode), MIME_ARG(record));
-    AcquireSRWLockShared(&MimeMsiLock);
-    BOOL known = MimeMsiGetHandle(view, MIME_MSI_KIND_VIEW) != nullptr;
-    ReleaseSRWLockShared(&MimeMsiLock);
-    return known ? ERROR_FUNCTION_FAILED : ERROR_INVALID_HANDLE;
-}
-
 /* ------------------------------------------------------------------ descriptors and qualified components */
 
 #define PATH_CHARS 32768

@@ -836,6 +836,232 @@ UINT WINAPI MsiViewClose(MSIHANDLE handle)
     return view ? ERROR_SUCCESS : ERROR_INVALID_HANDLE;
 }
 
+/* ------------------------------------------------------------------ changes to the rows of a table */
+
+/*
+ * the tables of a package are changed in memory only: the rows a custom action inserts, updates or deletes are seen
+ * by the queries that run after, and are never written back to the file.
+ */
+
+enum { MODIFY_SEEK = -1, MODIFY_REFRESH, MODIFY_INSERT, MODIFY_UPDATE, MODIFY_ASSIGN, MODIFY_REPLACE, MODIFY_MERGE,
+       MODIFY_DELETE, MODIFY_INSERT_TEMPORARY, MODIFY_VALIDATE, MODIFY_VALIDATE_NEW, MODIFY_VALIDATE_FIELD,
+       MODIFY_VALIDATE_DELETE };
+
+/* the number of a string of the pool, which a new string joins. */
+static UINT intern_string(MIME_MSI_DATABASE *database, PCWSTR text, ULONG *id)
+{
+    if (!*text) {
+        *id = 0;
+        return ERROR_SUCCESS;
+    }
+    for (ULONG i = 1; i < database->StringCount; i++) {
+        if (database->Strings[i] && !wcscmp(database->Strings[i], text)) {
+            *id = i;
+            return ERROR_SUCCESS;
+        }
+    }
+    SIZE_T length = wcslen(text) + 1;
+    PWSTR copy = MimeMsiAllocate(length * sizeof(WCHAR));
+    PWSTR *grown = MimeMsiAllocate(((SIZE_T)database->StringCount + 1) * sizeof(PWSTR));
+    if (!copy || !grown) {
+        MimeMsiFree(copy);
+        MimeMsiFree(grown);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    memcpy(copy, text, length * sizeof(WCHAR));
+    memcpy(grown, database->Strings, (SIZE_T)database->StringCount * sizeof(PWSTR));
+    grown[database->StringCount] = copy;
+    MimeMsiFree(database->Strings);
+    database->Strings = grown;
+    *id = database->StringCount++;
+    /* a pool that no longer fits the width of the cells cannot be written back, and is not. */
+    return ERROR_SUCCESS;
+}
+
+static void write_cell(MIME_MSI_TABLE *table, ULONG row, ULONG column, ULONG value)
+{
+    MIME_MSI_COLUMN *field = &table->Columns[column];
+    BYTE *at = table->Data + field->Offset + (SIZE_T)row * field->Width;
+    for (ULONG i = 0; i < field->Width; i++)
+        at[i] = (BYTE)(value >> (i * 8));
+}
+
+/* the table with another number of rows, keeping the cells that stay. */
+static UINT resize_rows(MIME_MSI_TABLE *table, ULONG rows)
+{
+    SIZE_T total = 0;
+    for (ULONG c = 0; c < table->Count; c++)
+        total += (SIZE_T)rows * table->Columns[c].Width;
+    BYTE *data = MimeMsiAllocate(total ? total : 1);
+    if (!data)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    ULONG keep = rows < table->Rows ? rows : table->Rows;
+    SIZE_T offset = 0;
+    for (ULONG c = 0; c < table->Count; c++) {
+        MIME_MSI_COLUMN *column = &table->Columns[c];
+        memcpy(data + offset, table->Data + column->Offset, (SIZE_T)keep * column->Width);
+        column->Offset = offset;
+        offset += (SIZE_T)rows * column->Width;
+    }
+    MimeMsiFree(table->Data);
+    table->Data = data;
+    table->Rows = rows;
+    return ERROR_SUCCESS;
+}
+
+/* what the record puts in a column, as the number the cell holds. */
+static UINT cell_for_field(MIME_MSI_DATABASE *database, const MIME_MSI_COLUMN *column, const MIME_MSI_FIELD *field,
+                           ULONG *value)
+{
+    BOOL nullable = !!(column->Type & 0x1000);
+    if (is_binary_column(column))
+        return field->Kind == FIELD_NULL ? (nullable ? ERROR_SUCCESS : ERROR_FUNCTION_FAILED) : ERROR_FUNCTION_FAILED;
+    if (field->Kind == FIELD_NULL) {
+        *value = 0;
+        return nullable ? ERROR_SUCCESS : ERROR_FUNCTION_FAILED;
+    }
+    if (is_string_column(column)) {
+        if (field->Kind == FIELD_STRING)
+            return intern_string(database, field->String ? field->String : L"", value);
+        if (field->Kind == FIELD_INTEGER) {
+            WCHAR number[16];
+            _snwprintf(number, RTL_NUMBER_OF(number), L"%d", field->Integer);
+            return intern_string(database, number, value);
+        }
+        return ERROR_FUNCTION_FAILED;
+    }
+    if (field->Kind != FIELD_INTEGER)
+        return ERROR_FUNCTION_FAILED;
+    if (column->Width == 2) {
+        if (field->Integer < -32767 || field->Integer > 32767)
+            return ERROR_FUNCTION_FAILED;
+        *value = (ULONG)(field->Integer + 0x8000);
+    } else {
+        *value = (ULONG)field->Integer ^ 0x80000000u;
+    }
+    return ERROR_SUCCESS;
+}
+
+static BOOL rows_have_key(const MIME_MSI_TABLE *table, ULONG row, const ULONG *values, BOOL *identical)
+{
+    BOOL same_keys = TRUE;
+    for (ULONG c = 0; c < table->Count; c++) {
+        if ((table->Columns[c].Type & 0x2000) && MimeMsiCell(table, row, c) != values[c]) {
+            same_keys = FALSE;
+            break;
+        }
+    }
+    if (same_keys && identical) {
+        *identical = TRUE;
+        for (ULONG c = 0; c < table->Count; c++)
+            if (MimeMsiCell(table, row, c) != values[c])
+                *identical = FALSE;
+    }
+    return same_keys;
+}
+
+static UINT modify_rows(MSI_VIEW *view, int mode, const MIME_MSI_RECORD *record)
+{
+    if (view->TableCount != 1 || !view->Executed)
+        return ERROR_FUNCTION_FAILED;
+    MIME_MSI_DATABASE *database = view->Database;
+    MIME_MSI_TABLE *table = view->Tables[0];
+    if (mode == MODIFY_DELETE) {
+        if (!view->Position)
+            return ERROR_FUNCTION_FAILED;
+        ULONG row = view->Tuples[view->Position - 1];
+        for (ULONG c = 0; c < table->Count; c++) {
+            MIME_MSI_COLUMN *column = &table->Columns[c];
+            BYTE *base = table->Data + column->Offset;
+            memmove(base + (SIZE_T)row * column->Width, base + (SIZE_T)(row + 1) * column->Width,
+                    (SIZE_T)(table->Rows - row - 1) * column->Width);
+        }
+        UINT error = resize_rows(table, table->Rows - 1);
+        if (error)
+            return error;
+        memmove(view->Tuples + view->Position - 1, view->Tuples + view->Position,
+                (SIZE_T)(view->TupleCount - view->Position) * sizeof(ULONG));
+        view->TupleCount--;
+        view->Position--;
+        for (ULONG i = 0; i < view->TupleCount; i++)
+            if (view->Tuples[i] > row)
+                view->Tuples[i]--;
+        return ERROR_SUCCESS;
+    }
+    if (!record || record->Count < view->Count)
+        return ERROR_INVALID_PARAMETER;
+    ULONG values[MAX_COLUMNS] = {};
+    BOOL given[MAX_COLUMNS] = {};
+    UINT error = ERROR_SUCCESS;
+    for (ULONG i = 0; i < view->Count && !error; i++) {
+        ULONG column = view->Selected[i].Column;
+        error = cell_for_field(database, &table->Columns[column], &record->Fields[i + 1], &values[column]);
+        given[column] = TRUE;
+    }
+    if (error)
+        return error;
+    if (mode == MODIFY_UPDATE) {
+        if (!view->Position)
+            return ERROR_FUNCTION_FAILED;
+        ULONG row = view->Tuples[view->Position - 1];
+        for (ULONG c = 0; c < table->Count; c++) {
+            if (!given[c])
+                continue;
+            /* a key is the row's identity and does not change. */
+            if ((table->Columns[c].Type & 0x2000) && MimeMsiCell(table, row, c) != values[c])
+                return ERROR_FUNCTION_FAILED;
+            write_cell(table, row, c, values[c]);
+        }
+        return ERROR_SUCCESS;
+    }
+    /* the columns the query leaves out are null, which only a column that may be null allows. */
+    for (ULONG c = 0; c < table->Count; c++)
+        if (!given[c] && !(table->Columns[c].Type & 0x1000))
+            return ERROR_FUNCTION_FAILED;
+    ULONG existing = table->Rows;
+    BOOL identical = FALSE;
+    for (ULONG row = 0; row < table->Rows; row++) {
+        if (rows_have_key(table, row, values, &identical)) {
+            existing = row;
+            break;
+        }
+    }
+    if (existing != table->Rows) {
+        if (mode == MODIFY_INSERT || mode == MODIFY_INSERT_TEMPORARY || (mode == MODIFY_MERGE && !identical))
+            return ERROR_FUNCTION_FAILED;
+        if (mode == MODIFY_MERGE)
+            return ERROR_SUCCESS;
+        for (ULONG c = 0; c < table->Count; c++)
+            write_cell(table, existing, c, values[c]);
+        return ERROR_SUCCESS;
+    }
+    error = resize_rows(table, table->Rows + 1);
+    if (error)
+        return error;
+    for (ULONG c = 0; c < table->Count; c++)
+        write_cell(table, table->Rows - 1, c, values[c]);
+    return ERROR_SUCCESS;
+}
+
+UINT WINAPI MsiViewModify(MSIHANDLE handle, int mode, MSIHANDLE record_handle)
+{
+    MIME_REMOTE(PROXY_ViewModify, UINT, MIME_ARG(handle), MIME_ARG(mode), MIME_ARG(record_handle));
+    AcquireSRWLockExclusive(&MimeMsiLock);
+    MSI_VIEW *view = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_VIEW);
+    MIME_MSI_RECORD *record = (void *)MimeMsiGetHandle(record_handle, MIME_MSI_KIND_RECORD);
+    UINT error;
+    if (!view || (record_handle && !record))
+        error = ERROR_INVALID_HANDLE;
+    else if (mode < MODIFY_SEEK || mode > MODIFY_VALIDATE_DELETE)
+        error = ERROR_INVALID_PARAMETER;
+    else if (mode == MODIFY_SEEK || mode == MODIFY_REFRESH || mode >= MODIFY_VALIDATE)
+        error = ERROR_FUNCTION_FAILED;
+    else
+        error = modify_rows(view, mode, record);
+    ReleaseSRWLockExclusive(&MimeMsiLock);
+    return error;
+}
+
 /* the MsiViewGetColumnInfo type text: a letter for the kind, uppercase when nullable. */
 static void column_type_text(const MIME_MSI_COLUMN *column, WCHAR out[16])
 {
