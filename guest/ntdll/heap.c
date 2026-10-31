@@ -374,6 +374,29 @@ NTDLL_EXPORT PVOID NTAPI RtlAllocateHeap(PVOID handle, ULONG flags, SIZE_T size)
     return p;
 }
 
+/* a free of something that is not a busy block, with the callers that did it, as a bug of the program to find. */
+static void report_invalid_free(PVOID p, PHEAP heap)
+{
+    PVOID frames[6];
+    USHORT n = RtlCaptureStackBackTrace(0, RTL_NUMBER_OF(frames), frames, nullptr);
+    char text[320];
+    ULONG used = 0;
+    for (USHORT i = 0; i < n && used + 48 < sizeof(text); i++) {
+        PLDR_DATA_TABLE_ENTRY entry;
+        if (!NT_SUCCESS(LdrFindEntryForAddress(frames[i], &entry)))
+            continue;
+        ULONG k = 0;
+        char name[24];
+        for (; k < sizeof(name) - 1 && k < entry->BaseDllName.Length / sizeof(WCHAR); k++)
+            name[k] = (char)entry->BaseDllName.Buffer[k];
+        name[k] = 0;
+        used += (ULONG)_snprintf(text + used, sizeof(text) - used, " %s+0x%x", name,
+                                 (ULONG)((ULONG_PTR)frames[i] - (ULONG_PTR)entry->DllBase));
+    }
+    text[used] = 0;
+    DbgPrint("heap: invalid free of %p in heap %p, called from%s\n", p, heap, text);
+}
+
 NTDLL_EXPORT BOOLEAN NTAPI RtlFreeHeap(PVOID handle, ULONG flags, PVOID p)
 {
     PHEAP heap = handle;
@@ -383,7 +406,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlFreeHeap(PVOID handle, ULONG flags, PVOID p)
         return FALSE;
     HEAP_BLOCK *b = block_of(p);
     if (!b) {
-        DbgPrint("heap: invalid free of %p in heap %p\n", p, heap);
+        report_invalid_free(p, heap);
         return FALSE;
     }
     lock_heap(heap, flags);
