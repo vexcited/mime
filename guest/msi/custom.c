@@ -190,6 +190,32 @@ static UINT translate_result(UINT result)
 
 typedef UINT (WINAPI *CA_ENTRY)(MSIHANDLE);
 
+typedef struct CA_CALL {
+    CA_ENTRY Function;
+    MSIHANDLE Session;
+    UINT Result;
+} CA_CALL;
+
+static DWORD WINAPI call_entry(PVOID parameter)
+{
+    CA_CALL *call = parameter;
+    call->Result = call->Function(call->Session);
+    return 0;
+}
+
+/* an action runs on a thread of its own as in the server of windows, so the handles it closes are only its own. */
+static UINT call_on_thread(CA_ENTRY function, MSIHANDLE session, UINT *result)
+{
+    CA_CALL call = {.Function = function, .Session = session};
+    HANDLE thread = CreateThread(nullptr, 0, call_entry, &call, 0, nullptr);
+    if (!thread)
+        return GetLastError();
+    WaitForSingleObject(thread, INFINITE);
+    CloseHandle(thread);
+    *result = call.Result;
+    return ERROR_SUCCESS;
+}
+
 static UINT run_library(MIME_MSI_PACKAGE *package, MSIHANDLE session, const MIME_MSI_CA_ROW *row, UINT *result)
 {
     UINT source = row->Type & 0x30;
@@ -254,7 +280,7 @@ static UINT run_library(MIME_MSI_PACKAGE *package, MSIHANDLE session, const MIME
             if (library)
                 FreeLibrary(library);
         } else {
-            *result = function(session);
+            error = call_on_thread(function, session, result);
             FreeLibrary(library);
         }
     } else {
@@ -556,7 +582,14 @@ UINT MimeMsiRunCustomAction(MSIHANDLE handle, MIME_MSI_PACKAGE *package, MIME_MS
     }
     UINT result = ERROR_SUCCESS;
     if (base == CA_DLL) {
-        error = run_library(package, handle, row, &result);
+        /* the action gets a handle of its own to the session, which it may close. */
+        AcquireSRWLockExclusive(&MimeMsiLock);
+        MIME_MSI_OBJECT *object = MimeMsiGetHandle(handle, 0);
+        MSIHANDLE own = object ? MimeMsiAddHandle(object) : 0;
+        ReleaseSRWLockExclusive(&MimeMsiLock);
+        error = !object ? ERROR_INVALID_HANDLE : own ? run_library(package, own, row, &result) : ERROR_NOT_ENOUGH_MEMORY;
+        if (own)
+            MsiCloseHandle(own);
     } else if (base == CA_EXE) {
         PWSTR arguments = nullptr;
         AcquireSRWLockExclusive(&MimeMsiLock);
