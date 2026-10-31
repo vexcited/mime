@@ -5,6 +5,7 @@
  * user's sid and the profiles the kernel registers at boot.
  */
 #include "advapi32_private.h"
+#include <crypto/crypto.h>
 
 typedef struct ACCOUNT {
     PCWSTR Name;
@@ -98,6 +99,93 @@ static const struct {
 };
 
 #define PROFILE_LIST L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList"
+
+/*
+ * local groups made by programs live in one key of the registry, each with its relative id, and a service has a sid of
+ * its own that comes from its name: the five numbers of the sha-1 of the name in capitals.
+ */
+#define ALIAS_KEY L"SYSTEM\\CurrentControlSet\\Control\\Lsa\\MimeAliases"
+#define NT_SERVICE_DOMAIN L"NT SERVICE"
+#define SERVICES_KEY L"SYSTEM\\CurrentControlSet\\Services"
+
+static BOOL alias_by_name(PCWSTR name, DWORD *rid)
+{
+    HKEY key;
+    WCHAR path[300];
+    if (wcslen(name) > 200 || wcschr(name, L'\\'))
+        return FALSE;
+    _snwprintf(path, RTL_NUMBER_OF(path), ALIAS_KEY L"\\%ls", name);
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_QUERY_VALUE, &key))
+        return FALSE;
+    DWORD size = sizeof(*rid), type;
+    BOOL found = !RegQueryValueExW(key, L"Rid", nullptr, &type, (BYTE *)rid, &size) && type == REG_DWORD;
+    RegCloseKey(key);
+    return found;
+}
+
+static BOOL alias_by_rid(DWORD rid, PWSTR name, DWORD chars)
+{
+    HKEY root;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, ALIAS_KEY, 0, KEY_READ, &root))
+        return FALSE;
+    BOOL found = FALSE;
+    for (DWORD i = 0; !found; i++) {
+        WCHAR group[256];
+        DWORD n = RTL_NUMBER_OF(group);
+        if (RegEnumKeyExW(root, i, group, &n, nullptr, nullptr, nullptr, nullptr))
+            break;
+        DWORD value;
+        if (alias_by_name(group, &value) && value == rid && wcslen(group) < chars) {
+            wcscpy(name, group);
+            found = TRUE;
+        }
+    }
+    RegCloseKey(root);
+    return found;
+}
+
+/* S-1-5-80 and the five numbers. */
+static void service_sid(PCWSTR service, SID *sid)
+{
+    WCHAR upper[256];
+    SIZE_T n = wcslen(service);
+    if (n >= RTL_NUMBER_OF(upper))
+        n = RTL_NUMBER_OF(upper) - 1;
+    for (SIZE_T i = 0; i < n; i++)
+        upper[i] = towupper(service[i]);
+    uint8_t digest[20];
+    mime_hash(&mime_sha1, upper, n * sizeof(WCHAR), digest);
+    AdvMakeSid(sid, 5, 1, 80);
+    sid->SubAuthorityCount = 6;
+    for (int i = 0; i < 5; i++)
+        sid->SubAuthority[1 + i] = (DWORD)digest[4 * i] | (DWORD)digest[4 * i + 1] << 8 | (DWORD)digest[4 * i + 2] << 16 |
+                                   (DWORD)digest[4 * i + 3] << 24;
+}
+
+/* the service a sid of the form S-1-5-80-... belongs to, by trying each service of the machine. */
+static BOOL service_name_of(const SID *sid, PWSTR name, DWORD chars)
+{
+    if (sid->IdentifierAuthority.Value[5] != 5 || sid->SubAuthorityCount != 6 || sid->SubAuthority[0] != 80)
+        return FALSE;
+    HKEY root;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, SERVICES_KEY, 0, KEY_READ, &root))
+        return FALSE;
+    BOOL found = FALSE;
+    for (DWORD i = 0; !found; i++) {
+        WCHAR service[256];
+        DWORD n = RTL_NUMBER_OF(service);
+        if (RegEnumKeyExW(root, i, service, &n, nullptr, nullptr, nullptr, nullptr))
+            break;
+        BYTE candidate[SECURITY_MAX_SID_SIZE];
+        service_sid(service, (SID *)candidate);
+        if (AdvSidEqual(sid, (SID *)candidate) && wcslen(service) < chars) {
+            wcscpy(name, service);
+            found = TRUE;
+        }
+    }
+    RegCloseKey(root);
+    return found;
+}
 
 static BOOL is_machine_domain(const SID *sid)
 {
@@ -203,6 +291,10 @@ BOOL AdvLookupSid(const SID *sid, PWSTR name, DWORD name_size, PWSTR domain, DWO
             return copy_name(name, name_size, a->Name) && copy_name(domain, domain_size, a->Domain);
         }
     }
+    if (service_name_of(sid, name, name_size)) {
+        *use = SidTypeWellKnownGroup;
+        return copy_name(domain, domain_size, NT_SERVICE_DOMAIN);
+    }
     BYTE machine[SECURITY_MAX_SID_SIZE];
     if (!is_machine_domain(sid) || !AdvMachineSid((SID *)machine) ||
         memcmp(((SID *)machine)->SubAuthority, sid->SubAuthority, 16))
@@ -220,6 +312,10 @@ BOOL AdvLookupSid(const SID *sid, PWSTR name, DWORD name_size, PWSTR domain, DWO
             *use = g_machine_accounts[i].Use;
             return copy_name(name, name_size, g_machine_accounts[i].Name);
         }
+    }
+    if (alias_by_rid(sid->SubAuthority[4], name, name_size)) {
+        *use = SidTypeAlias;
+        return TRUE;
     }
     *use = SidTypeUser;
     return profile_user_name(sid, name, name_size);
@@ -318,6 +414,14 @@ static BOOL lookup_name(PCWSTR account, SID *sid, PWSTR domain, DWORD domain_siz
         memcpy(wanted_domain, account, (slash - account) * sizeof(WCHAR));
         name = slash + 1;
     }
+    if (slash && !_wcsicmp(wanted_domain, NT_SERVICE_DOMAIN) && *name) {
+        /* the account of any service name resolves, whether or not the service is installed yet. */
+        if (wcslen(name) > 200 || wcschr(name, L'\\'))
+            return FALSE;
+        service_sid(name, sid);
+        *use = SidTypeWellKnownGroup;
+        return copy_name(domain, domain_size, NT_SERVICE_DOMAIN);
+    }
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_well_known); i++) {
         const ACCOUNT *a = &g_well_known[i];
         if (_wcsicmp(name, a->Name) || (slash && _wcsicmp(wanted_domain, a->Domain)))
@@ -344,6 +448,12 @@ static BOOL lookup_name(PCWSTR account, SID *sid, PWSTR domain, DWORD domain_siz
             *use = g_machine_accounts[i].Use;
             return TRUE;
         }
+    }
+    DWORD alias;
+    if (alias_by_name(name, &alias)) {
+        sid->SubAuthority[4] = alias;
+        *use = SidTypeAlias;
+        return TRUE;
     }
     /* local users with a profile. */
     HKEY key;

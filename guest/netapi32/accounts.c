@@ -21,6 +21,14 @@ typedef LPCWSTR LMCSTR;
 NETAPI NET_API_STATUS WINAPI NetApiBufferAllocate(DWORD size, LPVOID *buffer);
 NETAPI NET_API_STATUS WINAPI NetApiBufferFree(LPVOID buffer);
 
+/* the groups that programs made, in aliases.c. */
+DWORD AliasNames(PWSTR **names);
+void AliasFreeNames(PWSTR *names, DWORD count);
+PWSTR AliasComment(PCWSTR name);
+DWORD AliasMemberSids(PCWSTR name, BYTE ***sids);
+void AliasFreeSids(BYTE **sids, DWORD count);
+DWORD AliasMemberName(const BYTE *sid, PWSTR name, DWORD chars, DWORD *use);
+
 static BOOL local_server(LMCSTR server)
 {
     if (!server || !*server)
@@ -170,16 +178,6 @@ NETAPI NET_API_STATUS WINAPI NetGroupDelUser(LMCSTR server, LMCSTR group, LMCSTR
     return group && user ? refuse(server) : ERROR_INVALID_PARAMETER;
 }
 
-NETAPI NET_API_STATUS WINAPI NetLocalGroupAddMembers(LMCSTR server, LMCSTR group, DWORD level, LPBYTE buffer, DWORD count)
-{
-    return group && buffer ? refuse(server) : ERROR_INVALID_PARAMETER;
-}
-
-NETAPI NET_API_STATUS WINAPI NetLocalGroupDelMembers(LMCSTR server, LMCSTR group, DWORD level, LPBYTE buffer, DWORD count)
-{
-    return group && buffer ? refuse(server) : ERROR_INVALID_PARAMETER;
-}
-
 /* the server service is not running, so there are no shares to read, change or end. */
 NETAPI NET_API_STATUS WINAPI NetShareDel(LMCSTR server, LMCSTR share, DWORD reserved)
 {
@@ -225,109 +223,25 @@ NETAPI NET_API_STATUS WINAPI NetLocalGroupEnum(LMCSTR server, DWORD level, LPBYT
         return ERROR_INVALID_LEVEL;
     if (!local_server(server))
         return ERROR_BAD_NETPATH;
-    return name_list(local_groups, RTL_NUMBER_OF(local_groups), level, TRUE, buffer, entries, total);
-}
-
-/* local groups by name, the account policy and the other calls of the account database that Mime refuses. */
-static BOOL known_group(LMCSTR name, DWORD *index)
-{
-    for (DWORD i = 0; name && i < RTL_NUMBER_OF(local_groups); i++) {
-        if (!_wcsicmp(name, local_groups[i].Name)) {
-            if (index)
-                *index = i;
-            return TRUE;
-        }
+    /* the groups of the machine, then the ones programs made. */
+    PWSTR *made;
+    DWORD made_count = AliasNames(&made), count = RTL_NUMBER_OF(local_groups) + made_count;
+    NAME_ENTRY *list = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, count * sizeof(NAME_ENTRY));
+    if (!list) {
+        AliasFreeNames(made, made_count);
+        return ERROR_NOT_ENOUGH_MEMORY;
     }
-    return FALSE;
-}
-
-#define NERR_GroupExists 2223
-#define NERR_SpeGroupOp 2234
-#define ERROR_NO_SUCH_ALIAS_CODE 1376
-
-NETAPI NET_API_STATUS WINAPI NetLocalGroupAdd(LMCSTR server, DWORD level, LPBYTE buffer, LPDWORD parameter)
-{
-    if (parameter)
-        *parameter = 0;
-    if (level != 0 && level != 1)
-        return ERROR_INVALID_LEVEL;
-    if (!buffer)
-        return ERROR_INVALID_PARAMETER;
-    if (!local_server(server))
-        return ERROR_BAD_NETPATH;
-    return known_group(*(LMCSTR *)buffer, nullptr) ? NERR_GroupExists : refuse(server);
-}
-
-NETAPI NET_API_STATUS WINAPI NetLocalGroupDel(LMCSTR server, LMCSTR group)
-{
-    if (!group)
-        return ERROR_INVALID_PARAMETER;
-    if (!local_server(server))
-        return ERROR_BAD_NETPATH;
-    return known_group(group, nullptr) ? NERR_SpeGroupOp : NERR_GroupNotFound;
-}
-
-NETAPI NET_API_STATUS WINAPI NetLocalGroupGetInfo(LMCSTR server, LMCSTR group, DWORD level, LPBYTE *buffer)
-{
-    if (!buffer || !group)
-        return ERROR_INVALID_PARAMETER;
-    *buffer = nullptr;
-    if (level != 0 && level != 1 && level != 1002)
-        return ERROR_INVALID_LEVEL;
-    if (!local_server(server))
-        return ERROR_BAD_NETPATH;
-    DWORD index;
-    if (!known_group(group, &index))
-        return NERR_GroupNotFound;
-    LPBYTE list;
-    DWORD entries, total;
-    NET_API_STATUS status = name_list(&local_groups[index], 1, level == 1002 ? 1 : level, TRUE, &list, &entries, &total);
-    if (status)
-        return status;
-    if (level == 1002) {
-        /* level 1002 is the comment alone. */
-        *(PVOID *)list = ((PVOID *)list)[1];
+    memcpy(list, local_groups, sizeof(local_groups));
+    for (DWORD i = 0; i < made_count; i++) {
+        list[RTL_NUMBER_OF(local_groups) + i].Name = made[i];
+        list[RTL_NUMBER_OF(local_groups) + i].Comment = AliasComment(made[i]);
     }
-    *buffer = list;
-    return NERR_Success;
-}
-
-NETAPI NET_API_STATUS WINAPI NetLocalGroupSetInfo(LMCSTR server, LMCSTR group, DWORD level, LPBYTE buffer, LPDWORD parameter)
-{
-    if (parameter)
-        *parameter = 0;
-    if (!group || !buffer)
-        return ERROR_INVALID_PARAMETER;
-    if (level != 0 && level != 1 && level != 1002)
-        return ERROR_INVALID_LEVEL;
-    if (!local_server(server))
-        return ERROR_BAD_NETPATH;
-    return known_group(group, nullptr) ? refuse(server) : NERR_GroupNotFound;
-}
-
-NETAPI NET_API_STATUS WINAPI NetLocalGroupAddMember(LMCSTR server, LMCSTR group, PVOID sid)
-{
-    if (!group || !sid)
-        return ERROR_INVALID_PARAMETER;
-    if (!local_server(server))
-        return ERROR_BAD_NETPATH;
-    return known_group(group, nullptr) ? refuse(server) : ERROR_NO_SUCH_ALIAS_CODE;
-}
-
-NETAPI NET_API_STATUS WINAPI NetLocalGroupDelMember(LMCSTR server, LMCSTR group, PVOID sid)
-{
-    return NetLocalGroupAddMember(server, group, sid);
-}
-
-NETAPI NET_API_STATUS WINAPI NetLocalGroupSetMembers(LMCSTR server, LMCSTR group, DWORD level, LPBYTE buffer, DWORD count)
-{
-    if (!group || (!buffer && count))
-        return ERROR_INVALID_PARAMETER;
-    if (level > 3)
-        return ERROR_INVALID_LEVEL;
-    if (!local_server(server))
-        return ERROR_BAD_NETPATH;
-    return known_group(group, nullptr) ? refuse(server) : ERROR_NO_SUCH_ALIAS_CODE;
+    NET_API_STATUS status = name_list(list, count, level, TRUE, buffer, entries, total);
+    for (DWORD i = 0; i < made_count; i++)
+        LocalFree((PVOID)list[RTL_NUMBER_OF(local_groups) + i].Comment);
+    LocalFree(list);
+    AliasFreeNames(made, made_count);
+    return status;
 }
 
 /* the policy of the accounts, which is the default of a client. */
@@ -451,17 +365,24 @@ NETAPI NET_API_STATUS WINAPI NetLocalGroupGetMembers(LMCSTR server, LMCSTR group
         return ERROR_BAD_NETPATH;
     static const BYTE interactive[] = {1, 1, 0, 0, 0, 0, 0, 5, 4, 0, 0, 0};
     static const BYTE authenticated[] = {1, 1, 0, 0, 0, 0, 0, 5, 11, 0, 0, 0};
-    MEMBER members[2] = {};
+    MEMBER *members = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, 2 * sizeof(MEMBER));
     DWORD count = 0;
     LPBYTE info = nullptr;
+    BYTE **made = nullptr;
+    if (!members)
+        return ERROR_NOT_ENOUGH_MEMORY;
     if (!_wcsicmp(group, L"Administrators")) {
         WCHAR computer[MAX_COMPUTERNAME_LENGTH + 1], user[257];
         DWORD n = RTL_NUMBER_OF(computer);
-        if (!GetComputerNameW(computer, &n) || !user_name(user, RTL_NUMBER_OF(user)))
+        if (!GetComputerNameW(computer, &n) || !user_name(user, RTL_NUMBER_OF(user))) {
+            LocalFree(members);
             return NERR_UserNotFound;
+        }
         NET_API_STATUS status = NetUserGetInfo(nullptr, user, 23, &info);
-        if (status)
+        if (status) {
+            LocalFree(members);
             return status;
+        }
         /* the sid of level 23 is its last field. */
         members[0].Sid = *(const BYTE **)(info + 3 * sizeof(PVOID) + sizeof(PVOID));
         members[0].Usage = SidTypeUser_;
@@ -472,7 +393,23 @@ NETAPI NET_API_STATUS WINAPI NetLocalGroupGetMembers(LMCSTR server, LMCSTR group
         members[1] = (MEMBER){authenticated, SidTypeWellKnownGroup_, L"NT AUTHORITY\\Authenticated Users"};
         count = 2;
     } else {
-        return ERROR_NO_SUCH_ALIAS_;
+        /* a group a program made keeps the sids of its members. */
+        DWORD found = AliasMemberSids(group, &made);
+        if (found == (DWORD)-1) {
+            LocalFree(members);
+            return ERROR_NO_SUCH_ALIAS_;
+        }
+        LocalFree(members);
+        members = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, (found ? found : 1) * sizeof(MEMBER));
+        if (!members) {
+            AliasFreeSids(made, found);
+            return ERROR_NOT_ENOUGH_MEMORY;
+        }
+        for (DWORD i = 0; i < found; i++) {
+            members[i].Sid = made[i];
+            AliasMemberName(made[i], members[i].Name, RTL_NUMBER_OF(members[i].Name), &members[i].Usage);
+        }
+        count = found;
     }
     SIZE_T fixed = level == 0 ? sizeof(PVOID) : level == 3 ? sizeof(PVOID) : 3 * sizeof(PVOID);
     SIZE_T bytes = fixed * count;
@@ -482,6 +419,8 @@ NETAPI NET_API_STATUS WINAPI NetLocalGroupGetMembers(LMCSTR server, LMCSTR group
     NET_API_STATUS status = NetApiBufferAllocate((DWORD)bytes, (LPVOID *)&memory);
     if (status) {
         NetApiBufferFree(info);
+        AliasFreeSids(made, count);
+        LocalFree(members);
         return status;
     }
     memset(memory, 0, bytes);
@@ -505,6 +444,8 @@ NETAPI NET_API_STATUS WINAPI NetLocalGroupGetMembers(LMCSTR server, LMCSTR group
         }
     }
     NetApiBufferFree(info);
+    AliasFreeSids(made, count);
+    LocalFree(members);
     *buffer = memory;
     *entries = *total = count;
     return NERR_Success;
