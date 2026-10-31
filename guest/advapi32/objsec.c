@@ -358,10 +358,31 @@ static DWORD obj_open_handle(SE_OBJECT_TYPE type, HANDLE handle, DWORD access, O
     WCHAR path[1024];
     DWORD chars = type == SE_FILE_OBJECT ? GetFinalPathNameByHandleW(handle, path, RTL_NUMBER_OF(path), 0) : 0;
     BOOL named = chars && chars < RTL_NUMBER_OF(path);
+    if (is_registry(type)) {
+        /* a key's name is read from the kernel, as the registry path of the 64 bit view, so its parent can be found. */
+        union {
+            UNICODE_STRING Name;
+            BYTE Bytes[sizeof(UNICODE_STRING) + 2048];
+        } info;
+        static const WCHAR prefix[] = L"\\REGISTRY\\";
+        if (NT_SUCCESS(NtQueryObject(use, 1, &info, sizeof(info), nullptr)) && info.Name.Buffer &&
+            info.Name.Length / sizeof(WCHAR) > RTL_NUMBER_OF(prefix) - 1 && info.Name.Length / sizeof(WCHAR) < RTL_NUMBER_OF(path) &&
+            !_wcsnicmp(info.Name.Buffer, prefix, RTL_NUMBER_OF(prefix) - 1)) {
+            SIZE_T length = info.Name.Length / sizeof(WCHAR) - (RTL_NUMBER_OF(prefix) - 1);
+            memcpy(path, info.Name.Buffer + RTL_NUMBER_OF(prefix) - 1, length * sizeof(WCHAR));
+            path[length] = 0;
+            named = TRUE;
+            type = SE_REGISTRY_WOW64_64KEY;
+        }
+    }
     OBJ *o = obj_new(type, use, owned, named ? path : nullptr);
     if (!o) {
-        if (owned)
-            RegCloseKey(use);
+        if (owned) {
+            if (is_registry(type))
+                RegCloseKey(use);
+            else
+                CloseHandle(use);
+        }
         return ERROR_NOT_ENOUGH_MEMORY;
     }
     o->Window = type == SE_WINDOW_OBJECT;

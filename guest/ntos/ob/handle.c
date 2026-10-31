@@ -828,6 +828,13 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
             buf[chars] = 0;
             name.Buffer = buf;
             name.Length = (USHORT)(chars * sizeof(WCHAR));
+        } else if (OBJECT_TO_HEADER(object)->Type == CmKeyType) {
+            ULONG chars = CmQueryKeyObjectName(object, buf, 1023);
+            if (chars > 1023)
+                chars = 1023;
+            buf[chars] = 0;
+            name.Buffer = buf;
+            name.Length = (USHORT)(chars * sizeof(WCHAR));
         } else if (OBJECT_TO_HEADER(object)->Directory) {
             ObQueryNameString(object, &name, buf, 512);
         }

@@ -882,6 +882,13 @@ ULONG CmpFullPath(CM_NODE *node, PWCHAR out, ULONG capacity)
     return len;
 }
 
+/* the name of an open key as the object manager spells it, \REGISTRY\MACHINE\..., and its length in characters. */
+ULONG CmQueryKeyObjectName(PVOID key, PWCHAR out, ULONG capacity)
+{
+    CM_KEY_BODY *body = key;
+    return body && body->Node ? CmpFullPath(body->Node, out, capacity) : 0;
+}
+
 typedef struct KEY_STATS {
     ULONG SubKeys, MaxNameLen, Values, MaxValueNameLen, MaxValueDataLen;
 } KEY_STATS;

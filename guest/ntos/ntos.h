@@ -1177,6 +1177,7 @@ NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes);
 
 /* cm, the configuration manager. */
 extern POBJECT_TYPE CmKeyType;
+ULONG CmQueryKeyObjectName(PVOID key, PWCHAR out, ULONG capacity);
 void CmInitSystem1(void);
 /* answers the thread's pending registry notifications with the clean up status. */
 void CmNotifyRunDown(PETHREAD thread);
