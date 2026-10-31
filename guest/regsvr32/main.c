@@ -44,8 +44,13 @@ static PCWSTR next_word(PCWSTR line, PWSTR word, SIZE_T capacity)
 
 static BOOL parse(SETTINGS *settings, PCWSTR line, PWSTR word, SIZE_T capacity, PWSTR install_line)
 {
-    /* skip the program name. */
-    line = next_word(line, word, capacity);
+    /* the program name ends at its closing quote or at the first blank, so a line that starts with one has none. */
+    if (*line == L'"') {
+        line = wcschr(line + 1, L'"');
+        line = line ? line + 1 : L"";
+    } else
+        while (*line && *line != L' ' && *line != L'\t')
+            line++;
     for (;;) {
         line = next_word(line, word, capacity);
         if (!word[0])
@@ -125,6 +130,65 @@ static int call(const SETTINGS *settings, HMODULE module, PCSTR name, BOOL insta
     return 0;
 }
 
+/* the machine of a library from its headers, 0 when it is no image. */
+static WORD image_machine(PCWSTR path)
+{
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return 0;
+    IMAGE_DOS_HEADER dos;
+    DWORD read;
+    WORD machine = 0;
+    BYTE nt[6];
+    if (ReadFile(file, &dos, sizeof(dos), &read, nullptr) && read == sizeof(dos) && dos.e_magic == IMAGE_DOS_SIGNATURE &&
+        SetFilePointer(file, dos.e_lfanew, nullptr, FILE_BEGIN) != INVALID_SET_FILE_POINTER &&
+        ReadFile(file, nt, sizeof(nt), &read, nullptr) && read == sizeof(nt))
+        machine = (WORD)(nt[4] | nt[5] << 8);
+    CloseHandle(file);
+    return machine;
+}
+
+/* a library of the other processor is registered by the regsvr32 of that processor with the same arguments, whose
+   exit code this one gives. -1 when there is none to hand it to. */
+static DWORD hand_over(PCWSTR library)
+{
+    PWSTR arguments = GetCommandLineW();
+    while (*arguments && *arguments != L' ')
+        arguments = CharNextW(arguments);
+    WORD machine = image_machine(library);
+    USHORT process = 0, native = 0;
+    if (!*arguments || !machine || !IsWow64Process2(GetCurrentProcess(), &process, &native))
+        return (DWORD)-1;
+    WCHAR program[MAX_PATH + 16];
+    UINT length;
+    if (machine == native) {
+        if (process == IMAGE_FILE_MACHINE_UNKNOWN)
+            return (DWORD)-1;
+        length = GetSystemDirectoryW(program, MAX_PATH);
+    } else if (machine == IMAGE_FILE_MACHINE_I386 && process == IMAGE_FILE_MACHINE_UNKNOWN)
+        length = GetSystemWow64Directory2W(program, MAX_PATH, machine);
+    else
+        return (DWORD)-1;
+    if (!length || length >= MAX_PATH)
+        return (DWORD)-1;
+    wcscpy(program + length, L"\\regsvr32.exe");
+    PVOID redirection = nullptr;
+    BOOL redirected = Wow64DisableWow64FsRedirection(&redirection);
+    STARTUPINFOW startup = {.cb = sizeof(startup)};
+    PROCESS_INFORMATION child;
+    BOOL started = CreateProcessW(program, arguments, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &child);
+    if (redirected)
+        Wow64RevertWow64FsRedirection(redirection);
+    if (!started)
+        return (DWORD)-1;
+    DWORD code = (DWORD)-1;
+    if (WaitForSingleObject(child.hProcess, INFINITE) || !GetExitCodeProcess(child.hProcess, &code))
+        code = (DWORD)-1;
+    CloseHandle(child.hThread);
+    CloseHandle(child.hProcess);
+    return code;
+}
+
 void entry(void)
 {
     SETTINGS settings = {};
@@ -147,6 +211,11 @@ void entry(void)
     }
     HMODULE module = LoadLibraryExW(settings.Library, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     int code = 0;
+    DWORD handed = !module && GetLastError() == ERROR_BAD_EXE_FORMAT ? hand_over(settings.Library) : (DWORD)-1;
+    if (handed != (DWORD)-1) {
+        OleUninitialize();
+        ExitProcess(handed);
+    }
     if (!module) {
         WCHAR text[1200];
         _snwprintf(text, RTL_NUMBER_OF(text), L"The module \"%s\" failed to load.", settings.Library);
