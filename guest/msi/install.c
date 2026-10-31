@@ -1381,66 +1381,77 @@ static int extract_end(void *context, void *file_context, const MIME_CAB_FILE *f
     return extract->Error != ERROR_SUCCESS;
 }
 
+/* a cabinet of the source stays in its file, which can be larger than the address space of the installer. */
+static int read_cabinet_file(void *context, uint64_t offset, void *buffer, size_t length)
+{
+    LARGE_INTEGER position = {.QuadPart = (LONGLONG)offset};
+    DWORD read;
+    return !SetFilePointerEx(context, position, nullptr, FILE_BEGIN) || !ReadFile(context, buffer, (DWORD)length, &read, nullptr) ||
+           read != length;
+}
+
 static UINT extract_cabinet(MIME_MSI_PACKAGE *package, PCWSTR cabinet)
 {
     UINT error = ERROR_SUCCESS;
     BYTE *stream = nullptr;
-    void *view = nullptr;
-    const void *data = nullptr;
-    SIZE_T size = 0;
+    HANDLE file = INVALID_HANDLE_VALUE;
+    MIME_CAB *cab = nullptr;
+    int status = MIME_CAB_OK;
     if (cabinet[0] == L'#') {
+        SIZE_T size = 0;
         error = MimeMsiReadBinary(package->Database, cabinet + 1, &stream, &size);
         /* a patch's cabinet is a stream in the patch file. */
         for (ULONG i = 0; error == ERROR_FILE_NOT_FOUND && i < package->Database->PatchCount; i++)
             error = MimeMsiReadBinary(package->Database->Patches[i], cabinet + 1, &stream, &size);
         if (error == ERROR_FILE_NOT_FOUND)
             error = ERROR_INSTALL_SOURCE_ABSENT;
-        data = stream;
+        if (!error)
+            status = MimeCabOpen(&cab, stream, size, MimeMsiAllocate, MimeMsiFree);
     } else {
         PCWSTR source_dir = MimeMsiGetProperty(package, L"SourceDir");
         PWSTR path = MimeMsiJoinPath(source_dir, cabinet);
         if (!path)
             return ERROR_NOT_ENOUGH_MEMORY;
-        HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
-        MimeMsiFree(path);
+        file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
         PWSTR other = nullptr;
         if (file == INVALID_HANDLE_VALUE && MimeMsiFindSourceFile(package, cabinet, &other)) {
-            file = CreateFileW(other, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+            file = CreateFileW(other, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN,
+                               nullptr);
             MimeMsiFree(other);
         }
         if (file == INVALID_HANDLE_VALUE)
-            return ERROR_INSTALL_SOURCE_ABSENT;
+            DbgPrint("msi: the cabinet %ws does not open, error %u\n", path, GetLastError());
+        MimeMsiFree(path);
         LARGE_INTEGER length;
-        HANDLE mapping = GetFileSizeEx(file, &length) && length.QuadPart > 0 ?
-                         CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr) : nullptr;
-        CloseHandle(file);
-        if (!mapping)
+        if (file == INVALID_HANDLE_VALUE || !GetFileSizeEx(file, &length) || length.QuadPart <= 0) {
+            if (file != INVALID_HANDLE_VALUE)
+                CloseHandle(file);
             return ERROR_INSTALL_SOURCE_ABSENT;
-        view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
-        CloseHandle(mapping);
-        data = view;
-        size = (SIZE_T)length.QuadPart;
-        if (!view)
-            return ERROR_INSTALL_SOURCE_ABSENT;
+        }
+        status = MimeCabOpenStream(&cab, read_cabinet_file, file, (uint64_t)length.QuadPart, MimeMsiAllocate, MimeMsiFree);
     }
-    MIME_CAB *cab = nullptr;
-    if (!error) {
-        int status = MimeCabOpen(&cab, data, size, MimeMsiAllocate, MimeMsiFree);
+    if (!error && status)
+        DbgPrint("msi: the cabinet %ws does not open, status %d\n", cabinet, status);
+    if (!error)
         error = status == MIME_CAB_MEMORY ? ERROR_NOT_ENOUGH_MEMORY : status ? ERROR_INSTALL_PACKAGE_INVALID : ERROR_SUCCESS;
-    }
     if (!error) {
         EXTRACT_CONTEXT context = {package, package->Files, cabinet, ERROR_SUCCESS};
         static const MIME_CAB_FILE_SINK sink = {extract_begin, extract_write, extract_end};
-        int status = MimeCabExtract(cab, &sink, &context);
+        status = MimeCabExtract(cab, &sink, &context);
+        if (status || context.Error)
+            DbgPrint("msi: the cabinet %ws does not extract, status %d, error %u\n", cabinet, status, context.Error);
         error = context.Error ? context.Error : status == MIME_CAB_MEMORY ? ERROR_NOT_ENOUGH_MEMORY :
                 status ? ERROR_INSTALL_PACKAGE_INVALID : ERROR_SUCCESS;
-        for (MIME_MSI_FILE_PLAN *plan = package->Files; !error && plan; plan = plan->Next)
-            if (plan->Cabinet && !wcscmp(plan->Cabinet, cabinet) && !plan->Done)
+        for (MIME_MSI_FILE_PLAN *plan = package->Files; !error && plan; plan = plan->Next) {
+            if (plan->Cabinet && !wcscmp(plan->Cabinet, cabinet) && !plan->Done) {
+                DbgPrint("msi: the cabinet %ws lacks the file %ws\n", cabinet, plan->Key);
                 error = ERROR_INSTALL_PACKAGE_INVALID;
-        MimeCabClose(cab);
+            }
+        }
     }
-    if (view)
-        UnmapViewOfFile(view);
+    MimeCabClose(cab);
+    if (file != INVALID_HANDLE_VALUE)
+        CloseHandle(file);
     MimeMsiFree(stream);
     return error;
 }

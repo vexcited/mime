@@ -34,6 +34,15 @@ enum {
 
 /* data is not copied and must outlive the cabinet. null allocate and release mean the C library's. */
 int MimeCabOpen(MIME_CAB **cab, const void *data, size_t size, MIME_CAB_ALLOC allocate, MIME_CAB_FREE release);
+
+/*
+ * a cabinet that stays in its file: read fills the buffer with the bytes at an offset and returns 0 when it did. the
+ * folders and the file entries are read at once and the blocks as the folders are read, so a cabinet of any size
+ * takes memory only for its entries and one block.
+ */
+typedef int (*MIME_CAB_READ)(void *context, uint64_t offset, void *buffer, size_t length);
+int MimeCabOpenStream(MIME_CAB **cab, MIME_CAB_READ read, void *context, uint64_t size, MIME_CAB_ALLOC allocate,
+                      MIME_CAB_FREE release);
 void MimeCabClose(MIME_CAB *cab);
 
 /* the cabinet's set id and index in it, for callers that handle spanned cabinets. */

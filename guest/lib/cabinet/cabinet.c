@@ -37,7 +37,12 @@ typedef struct FOLDER {
 
 struct MIME_CAB {
     const uint8_t *Data;
-    size_t Size;
+    /* the bytes of the cabinet, and how many of them are held in Data: a streamed cabinet keeps only what comes before
+       its blocks. */
+    size_t Size, Held;
+    MIME_CAB_READ Read;
+    void *ReadContext;
+    uint8_t *Head;
     uint16_t Folders, Files, Flags, SetId, Index;
     uint8_t FolderReserve, DataReserve;
     bool SkipContinued, Sequential;
@@ -76,7 +81,7 @@ static void put(MIME_CAB *cab, void *memory)
 /* one past the terminator of the string at offset, or 0 when it runs off the file. */
 static size_t string_end(const MIME_CAB *cab, size_t offset)
 {
-    while (offset < cab->Size) {
+    while (offset < cab->Held) {
         if (!cab->Data[offset])
             return offset + 1;
         offset++;
@@ -84,11 +89,13 @@ static size_t string_end(const MIME_CAB *cab, size_t offset)
     return 0;
 }
 
-int MimeCabOpen(MIME_CAB **out, const void *data, size_t size, MIME_CAB_ALLOC allocate, MIME_CAB_FREE release)
+/* reads the structure of a cabinet from the bytes held of its size. */
+static int open_held(MIME_CAB **out, const void *data, size_t held, size_t size, MIME_CAB_READ read, void *read_context,
+                     uint8_t *head, MIME_CAB_ALLOC allocate, MIME_CAB_FREE release)
 {
     const uint8_t *p = data;
     *out = nullptr;
-    if (!data || size < CFHEADER_SIZE || memcmp(p, "MSCF", 4))
+    if (!data || held < CFHEADER_SIZE || memcmp(p, "MSCF", 4))
         return MIME_CAB_BAD;
     /* only format version 1.3 exists. */
     if (p[24] != 3 || p[25] != 1)
@@ -101,6 +108,9 @@ int MimeCabOpen(MIME_CAB **out, const void *data, size_t size, MIME_CAB_ALLOC al
     cab->Release = release;
     cab->Data = p;
     cab->Size = size;
+    cab->Held = held;
+    cab->Read = read;
+    cab->ReadContext = read_context;
     uint32_t total = dword(p + 8), files_at = dword(p + 16);
     cab->Folders = word(p + 26);
     cab->Files = word(p + 28);
@@ -113,9 +123,11 @@ int MimeCabOpen(MIME_CAB **out, const void *data, size_t size, MIME_CAB_ALLOC al
         return MIME_CAB_BAD;
     }
     cab->Size = total;
+    if (!read)
+        cab->Held = total;
     size_t at = CFHEADER_SIZE;
     if (cab->Flags & CAB_FLAG_RESERVE) {
-        if (at + 4 > cab->Size) {
+        if (at + 4 > cab->Held) {
             MimeCabClose(cab);
             return MIME_CAB_BAD;
         }
@@ -133,7 +145,7 @@ int MimeCabOpen(MIME_CAB **out, const void *data, size_t size, MIME_CAB_ALLOC al
         at = end;
     }
     size_t folder_size = CFFOLDER_SIZE + cab->FolderReserve;
-    if (cab->Folders == 0 || at + (size_t)cab->Folders * folder_size > cab->Size) {
+    if (cab->Folders == 0 || at + (size_t)cab->Folders * folder_size > cab->Held) {
         MimeCabClose(cab);
         return MIME_CAB_BAD;
     }
@@ -148,14 +160,14 @@ int MimeCabOpen(MIME_CAB **out, const void *data, size_t size, MIME_CAB_ALLOC al
         cab->Folder[i].Start = dword(f);
         cab->Folder[i].Blocks = word(f + 4);
         cab->Folder[i].Type = word(f + 6);
-        if (cab->Folder[i].Start >= cab->Size) {
+        if (cab->Folder[i].Start > cab->Size || (cab->Folder[i].Start == cab->Size && cab->Folder[i].Blocks)) {
             MimeCabClose(cab);
             return MIME_CAB_BAD;
         }
     }
     size_t file_at = files_at;
     for (unsigned i = 0; i < cab->Files; i++) {
-        if (file_at + CFFILE_SIZE > cab->Size) {
+        if (file_at + CFFILE_SIZE > cab->Held) {
             MimeCabClose(cab);
             return MIME_CAB_BAD;
         }
@@ -167,8 +179,49 @@ int MimeCabOpen(MIME_CAB **out, const void *data, size_t size, MIME_CAB_ALLOC al
         cab->FileAt[i] = (uint32_t)file_at;
         file_at = end;
     }
+    cab->Head = head;
     *out = cab;
     return MIME_CAB_OK;
+}
+
+int MimeCabOpen(MIME_CAB **out, const void *data, size_t size, MIME_CAB_ALLOC allocate, MIME_CAB_FREE release)
+{
+    return open_held(out, data, size, size, nullptr, nullptr, nullptr, allocate, release);
+}
+
+int MimeCabOpenStream(MIME_CAB **out, MIME_CAB_READ read, void *context, uint64_t size, MIME_CAB_ALLOC allocate,
+                      MIME_CAB_FREE release)
+{
+    *out = nullptr;
+    if (!read || size < CFHEADER_SIZE || size > UINT32_MAX)
+        return MIME_CAB_BAD;
+    uint8_t first[CFHEADER_SIZE];
+    if (read(context, 0, first, sizeof(first)) || memcmp(first, "MSCF", 4))
+        return MIME_CAB_BAD;
+    /* the folders and the file entries come before the blocks, and a file entry is a name of 256 bytes at most. */
+    uint64_t held = (uint64_t)dword(first + 16) + (uint64_t)word(first + 28) * (CFFILE_SIZE + 257);
+    if (held < CFHEADER_SIZE || dword(first + 16) >= size)
+        return MIME_CAB_BAD;
+    if (held > size)
+        held = size;
+    uint8_t *head = allocate ? allocate((size_t)held) : malloc((size_t)held);
+    if (!head)
+        return MIME_CAB_MEMORY;
+    if (read(context, 0, head, (size_t)held)) {
+        if (release)
+            release(head);
+        else
+            free(head);
+        return MIME_CAB_BAD;
+    }
+    int result = open_held(out, head, (size_t)held, (size_t)size, read, context, head, allocate, release);
+    if (result) {
+        if (release)
+            release(head);
+        else
+            free(head);
+    }
+    return result;
 }
 
 void MimeCabClose(MIME_CAB *cab)
@@ -177,6 +230,7 @@ void MimeCabClose(MIME_CAB *cab)
         return;
     put(cab, cab->Folder);
     put(cab, cab->FileAt);
+    put(cab, cab->Head);
     put(cab, cab);
 }
 
@@ -762,8 +816,11 @@ static int lzx_read_block_header(LZX *z)
         if (z->MainLengths[0xE8] && z->TranslationSize)
             z->Translated = 1;
     } else {
-        /* an uncompressed block is word aligned: the three recent offsets, then the raw bytes. */
-        bits_skip(b, (unsigned)(b->Available % 16));
+        /* an uncompressed block is word aligned: one to sixteen bits of padding, which is a whole word when the header
+           ended on a word, then the three recent offsets and the raw bytes. */
+        unsigned padding = (unsigned)(b->Available % 16) ? (unsigned)(b->Available % 16) : 16;
+        bits_fill(b);
+        bits_skip(b, padding);
         const uint8_t *p = bits_position(b);
         if (p + 12 > b->End)
             return FAIL(15);
@@ -959,7 +1016,13 @@ int MimeCabFolderRead(MIME_CAB *cab, unsigned folder, MIME_CAB_SINK sink, void *
     INFLATE *inflate = nullptr;
     LZX *lzx = nullptr;
     uint8_t *frame = nullptr;
+    uint8_t *scratch = nullptr;
     int result = MIME_CAB_OK;
+    if (cab->Read) {
+        scratch = get(cab, CFDATA_SIZE + 255 + 65535);
+        if (!scratch)
+            return MIME_CAB_MEMORY;
+    }
     if (method == TYPE_MSZIP) {
         inflate = get(cab, sizeof(*inflate));
         frame = get(cab, FRAME_SIZE);
@@ -982,7 +1045,11 @@ int MimeCabFolderRead(MIME_CAB *cab, unsigned folder, MIME_CAB_SINK sink, void *
             result = MIME_CAB_BAD;
             goto done;
         }
-        const uint8_t *header = cab->Data + at;
+        const uint8_t *header = cab->Read ? scratch : cab->Data + at;
+        if (cab->Read && cab->Read(cab->ReadContext, at, scratch, CFDATA_SIZE + cab->DataReserve)) {
+            result = MIME_CAB_BAD;
+            goto done;
+        }
         uint32_t sum = dword(header);
         uint16_t compressed = word(header + 4), plain = word(header + 6);
         size_t data_at = at + CFDATA_SIZE + cab->DataReserve;
@@ -990,7 +1057,11 @@ int MimeCabFolderRead(MIME_CAB *cab, unsigned folder, MIME_CAB_SINK sink, void *
             result = MIME_CAB_BAD;
             goto done;
         }
-        const uint8_t *data = cab->Data + data_at;
+        const uint8_t *data = cab->Read ? scratch + CFDATA_SIZE + cab->DataReserve : cab->Data + data_at;
+        if (cab->Read && cab->Read(cab->ReadContext, data_at, scratch + CFDATA_SIZE + cab->DataReserve, compressed)) {
+            result = MIME_CAB_BAD;
+            goto done;
+        }
         if (sum) {
             uint32_t check = checksum(data, compressed, 0);
             check = checksum(header + 4, 4, check);
@@ -1033,6 +1104,7 @@ done:
     }
     put(cab, inflate);
     put(cab, frame);
+    put(cab, scratch);
     return result;
 }
 
