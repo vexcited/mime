@@ -68,12 +68,34 @@
 "CommonFilesDir"="C:\\Program Files (x86)\\Common Files"
 "ProgramFilesDir"="C:\\Program Files (x86)"
 
-; the shared shell folders, read by shell32 and by installers for the start menu.
-[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders]
+; the shared shell folders, read by shell32 and by installers for the start menu, in both views as on windows.
+[HKLM\SOFTWARE\{Microsoft,WOW6432Node\Microsoft}\Windows\CurrentVersion\Explorer\User Shell Folders]
 "Common AppData"=expand:"%ProgramData%"
 "Common Desktop"=expand:"%PUBLIC%\\Desktop"
 "Common Documents"=expand:"%PUBLIC%\\Documents"
 "Common Programs"=expand:"%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs"
+"Common Start Menu"=expand:"%ProgramData%\\Microsoft\\Windows\\Start Menu"
+"Common Startup"=expand:"%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup"
+"Common Templates"=expand:"%ProgramData%\\Microsoft\\Windows\\Templates"
+"CommonMusic"=expand:"%PUBLIC%\\Music"
+"CommonPictures"=expand:"%PUBLIC%\\Pictures"
+"CommonVideo"=expand:"%PUBLIC%\\Videos"
+"{3D644C9B-1FB8-4f30-9B45-F670235F79C0}"=expand:"%PUBLIC%\\Downloads"
+
+; the same folders expanded, which installers search with AppSearch.
+[HKLM\SOFTWARE\{Microsoft,WOW6432Node\Microsoft}\Windows\CurrentVersion\Explorer\Shell Folders]
+"Common Administrative Tools"="C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Administrative Tools"
+"Common AppData"="C:\\ProgramData"
+"Common Desktop"="C:\\Users\\Public\\Desktop"
+"Common Documents"="C:\\Users\\Public\\Documents"
+"Common Programs"="C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs"
+"Common Start Menu"="C:\\ProgramData\\Microsoft\\Windows\\Start Menu"
+"Common Startup"="C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Startup"
+"Common Templates"="C:\\ProgramData\\Microsoft\\Windows\\Templates"
+"CommonMusic"="C:\\Users\\Public\\Music"
+"CommonPictures"="C:\\Users\\Public\\Pictures"
+"CommonVideo"="C:\\Users\\Public\\Videos"
+"OEM Links"="C:\\ProgramData\\OEM\\Links"
 
 ; keys that programs open and that are empty on a new machine.
 [HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\{Internet Settings,SideBySide,Uninstall}]
