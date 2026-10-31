@@ -1,8 +1,20 @@
 LIBRARY dnsapi.dll
 EXPORTS
+    DnsCancelQuery
+    DnsFlushResolverCache
+    DnsFlushResolverCacheEntry_A
+    DnsFlushResolverCacheEntry_UTF8
+    DnsFlushResolverCacheEntry_W
     DnsFree
     DnsQueryConfig
+    DnsQueryEx
+    DnsQueryExA
+    DnsQueryExUTF8
+    DnsQueryExW
     DnsQuery_A
     DnsQuery_UTF8
     DnsQuery_W
     DnsRecordListFree
+    DnsValidateName_A
+    DnsValidateName_UTF8
+    DnsValidateName_W
