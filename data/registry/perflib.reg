@@ -1,0 +1,7 @@
+; the performance counter list of a fresh windows. the numbers that counter sets registered by lodctr take come after the last
+; one, and the text of the system's own counters is not kept, so the 009 key holds no names.
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Perflib]
+"Base Index"=dword:00000737
+"Last Counter"=dword:00000736
+"Last Help"=dword:00000737
