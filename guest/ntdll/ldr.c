@@ -1241,6 +1241,8 @@ static void initialize_process(PCONTEXT context)
         return;
     }
 #endif
+    /* the program's thread local storage is the first, as code built for a program reads it at the index zero. */
+    register_tls(exe);
     /* windows has csrss build the default activation context from the program's manifest. */
     status = LdrpSxsInitializeProcess(peb->ImageBaseAddress, peb->ProcessParameters->ImagePathName.Buffer);
     if (!NT_SUCCESS(status))
@@ -1264,7 +1266,6 @@ static void initialize_process(PCONTEXT context)
     status = snap_imports(exe, &ctx);
     if (!NT_SUCCESS(status))
         fatal("cannot resolve the imports of the program", status);
-    register_tls(exe);
     status = allocate_thread_tls();
     if (!NT_SUCCESS(status))
         fatal("cannot allocate thread local storage", status);
