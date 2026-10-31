@@ -5,6 +5,7 @@
  * followed while parsing a path.
  */
 #include "cm.h"
+#include <mime/ntrtlsec.h>
 
 #define MAX_REPARSE 16
 #define MAX_PATH_CHARS 2048
@@ -31,6 +32,7 @@ typedef struct CM_PARSE_CONTEXT {
 } CM_PARSE_CONTEXT;
 
 #define KEY_CREATE_SUB_KEY_ 0x0004
+#define KEY_ALL_ACCESS_ 0xF003F
 #define KEY_WOW64_64KEY_ 0x0100
 #define KEY_WOW64_32KEY_ 0x0200
 #define REG_OPTION_BACKUP_RESTORE_ 0x00000004
@@ -1541,6 +1543,26 @@ void CmInitSystem1(void)
              HalBootInfo->user_sid[2]);
     g_user_hive = mount(user, sid, L"\\??\\C:\\Users\\Default\\NTUSER.DAT");
     g_user_key = user;
+    /*
+     * the two service accounts have a hive of their own on windows, where their programs keep settings and the store of
+     * their certificates. here the keys of the accounts are kept by the journal like the changes of every other key, so
+     * the roots are not volatile and they exist before the journal is replayed.
+     */
+    static const UCHAR local_service[12] = {1, 1, 0, 0, 0, 0, 0, 5, 19, 0, 0, 0};
+    static const UCHAR network_service[12] = {1, 1, 0, 0, 0, 0, 0, 5, 20, 0, 0, 0};
+    CM_NODE *accounts[2] = {CmpCreateChild(user, L"S-1-5-19", 8, 0), CmpCreateChild(user, L"S-1-5-20", 8, 0)};
+    for (int i = 0; i < 2; i++) {
+        if (!accounts[i])
+            continue;
+        /* the account, the system and the administrators, over the keys below. */
+        SD_ACE aces[] = {{CONTAINER_INHERIT_ACE, KEY_ALL_ACCESS_, SeSidSystem},
+                         {CONTAINER_INHERIT_ACE, KEY_ALL_ACCESS_, SeSidAdministrators},
+                         {CONTAINER_INHERIT_ACE, KEY_ALL_ACCESS_, i ? network_service : local_service}};
+        SD_BLOB *sd;
+        if (NT_SUCCESS(SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_AUTO_INHERITED | SE_DACL_PROTECTED, aces, 3, &sd))) {
+            accounts[i]->Sd = sd;
+        }
+    }
     KiBootStamp("hives");
     CmpJournalInitialize();
     KiBootStamp("journal");
