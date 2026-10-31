@@ -955,7 +955,7 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
             flags = 0;
         if (file_size < 0 || flags < 0)
             return ERROR_INSTALL_PACKAGE_INVALID;
-        PCWSTR long_name = wcschr(filename, L'|');
+        PCWSTR long_name = wcsrchr(filename, L'|');
         if (long_name)
             filename = long_name + 1;
         if (!*filename || !wcscmp(filename, L".") || !wcscmp(filename, L"..") ||

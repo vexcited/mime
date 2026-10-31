@@ -203,7 +203,7 @@ UINT MimeMsiFileTargetPath(MIME_MSI_PACKAGE *package, PCWSTR key, PWSTR *out)
         PCWSTR owner = cell_text(package, files, row, L"Component_");
         if (!name || !owner)
             return ERROR_INSTALL_PACKAGE_INVALID;
-        PCWSTR long_name = wcschr(name, L'|');
+        PCWSTR long_name = wcsrchr(name, L'|');
         PWSTR folder = nullptr;
         error = MimeMsiComponentDirectory(package, owner, &folder);
         if (error)
@@ -796,7 +796,7 @@ static UINT remove_files(MIME_MSI_PACKAGE *package)
             continue;
         if (!((action == ACTION_LOCAL && (mode & 1)) || (action == ACTION_ABSENT && (mode & 2))))
             continue;
-        PCWSTR long_name = wcschr(raw_name, L'|');
+        PCWSTR long_name = wcsrchr(raw_name, L'|');
         PWSTR pattern = nullptr, folder = nullptr;
         error = MimeMsiFormat(package, long_name ? long_name + 1 : raw_name, &pattern);
         if (!error) {
@@ -838,7 +838,7 @@ static PWSTR shortcut_path(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, ULO
     PCWSTR name = cell_text(package, table, row, L"Name");
     if (!directory || !name)
         return nullptr;
-    PCWSTR long_name = wcschr(name, L'|');
+    PCWSTR long_name = wcsrchr(name, L'|');
     PWSTR formatted = nullptr, folder = nullptr;
     if (MimeMsiFormat(package, long_name ? long_name + 1 : name, &formatted))
         return nullptr;
@@ -1085,7 +1085,7 @@ static PWSTR locate(MIME_MSI_PACKAGE *package, PCWSTR directory, PCWSTR signatur
         return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) ? MimeMsiDuplicate(directory) : nullptr;
     }
     PCWSTR names = cell_text(package, signatures, row, L"FileName");
-    PCWSTR long_name = names ? wcschr(names, L'|') : nullptr;
+    PCWSTR long_name = names ? wcsrchr(names, L'|') : nullptr;
     PCWSTR pattern = long_name ? long_name + 1 : names;
     if (!pattern)
         return nullptr;

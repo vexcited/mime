@@ -74,7 +74,7 @@ static UINT component_key_path(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR di
                 value = MimeMsiText(package->Database, files, row, filename);
                 if (!owner || wcscmp(owner, name) || !value)
                     break;
-                PCWSTR long_name = wcschr(value, L'|');
+                PCWSTR long_name = wcsrchr(value, L'|');
                 if (long_name)
                     value = long_name + 1;
                 if (!*value || !wcscmp(value, L".") || !wcscmp(value, L"..") ||

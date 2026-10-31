@@ -49,7 +49,7 @@ static UINT directory_segment(PCWSTR authored, BOOL source, PWSTR *segment, PWST
     *selected = source && colon ? colon + 1 : *segment;
     if (!source && colon)
         *colon = 0;
-    PWSTR long_name = wcschr(*selected, L'|');
+    PWSTR long_name = wcsrchr(*selected, L'|');
     if (long_name)
         *selected = long_name + 1;
     if (!wcscmp(*selected, L"..") || wcschr(*selected, L'\\') || wcschr(*selected, L'/') || wcschr(*selected, L':')) {

@@ -155,7 +155,7 @@ static UINT ini_row(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, ULONG row,
         DbgPrint("msi: no folder for the .ini file %ws\n", file);
         return ERROR_INSTALL_FAILURE;
     }
-    PCWSTR bar = wcschr(file, L'|');
+    PCWSTR bar = wcsrchr(file, L'|');
     PWSTR path = MimeMsiJoinPath(base, bar ? bar + 1 : file);
     PWSTR section = nullptr, key = nullptr, value = nullptr;
     UINT error = path ? MimeMsiFormat(package, section_text, &section) : ERROR_NOT_ENOUGH_MEMORY;

@@ -160,7 +160,7 @@ static UINT installed_file_path(MIME_MSI_PACKAGE *package, PCWSTR key, PWSTR *ou
         error = MimeMsiComponentSelected(package, owner, &directory, &selected);
         if (error)
             return error;
-        PCWSTR long_name = wcschr(name, L'|');
+        PCWSTR long_name = wcsrchr(name, L'|');
         PWSTR folder = nullptr;
         error = MimeMsiDirectoryPath(package, directory, FALSE, &folder);
         if (error)
