@@ -23,6 +23,7 @@ enum {
     WH_REQUEST = WINHTTP_HANDLE_TYPE_REQUEST,
     WH_RESOLVER = WINHTTP_HANDLE_TYPE_PROXY_RESOLVER,
     WH_WEBSOCKET = WINHTTP_HANDLE_TYPE_WEBSOCKET,
+    WH_PROTOCOL = WINHTTP_HANDLE_TYPE_PROTOCOL,
 };
 
 /* WinHttpSetTimeouts and option timeouts; -1 means infinite. */
@@ -247,3 +248,5 @@ BOOL WhPickProxy(WH_OBJECT *request, LPCWSTR host, BOOL secure, PWSTR proxy_host
 
 /* websocket.c. */
 void WhWebSocketReleased(WH_OBJECT *socket);
+/* read what an upgraded connection has, waiting for the first byte. */
+DWORD WhReadSome(WH_OBJECT *object, void *data, DWORD length, DWORD *got);

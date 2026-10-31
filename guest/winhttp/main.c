@@ -2,7 +2,7 @@
  * winhttp entry point, the handle table, sessions, connections, requests, status callbacks and options.
  */
 #include "winhttp_private.h"
-#include <mime/stub.h>
+#include <mime/win32/winsvc.h>
 
 #define WH_MAX_SLOTS 16384
 
@@ -270,7 +270,7 @@ void WhRelease(WH_OBJECT *object)
         WhDropConnection(object);
     if (object->Type == WH_SESSION)
         WhSessionCleanup(object);
-    if (object->Type == WH_WEBSOCKET)
+    if (object->Type == WH_WEBSOCKET || object->Type == WH_PROTOCOL)
         WhWebSocketReleased(object);
     /* send the closing notification after all handle operations finish. */
     if (handle && object->Closed)
@@ -754,7 +754,7 @@ BOOL WINAPI WinHttpCloseHandle(HINTERNET handle)
         return WhFail(ERROR_INVALID_HANDLE);
     object->Closed = TRUE;
     /* a pending operation ends with ERROR_WINHTTP_OPERATION_CANCELLED once its socket is gone. */
-    if (object->Type == WH_REQUEST || object->Type == WH_WEBSOCKET) {
+    if (object->Type == WH_REQUEST || object->Type == WH_WEBSOCKET || object->Type == WH_PROTOCOL) {
         EnterCriticalSection(&object->Lock);
         if (object->Busy && object->Conn)
             shutdown(object->Conn->Socket, SD_BOTH);
@@ -1389,9 +1389,6 @@ HRESULT WINAPI DllCanUnloadNow(void)
 
 HRESULT WINAPI DllGetClassObject(const GUID *clsid, const GUID *iid, LPVOID *object)
 {
-    MIME_STUB("winhttp");
-    if (object)
-        *object = nullptr;
     return CLASS_E_CLASSNOTAVAILABLE;
 }
 
@@ -1399,13 +1396,30 @@ void WINAPI SvchostPushServiceGlobals(LPVOID globals)
 {
 }
 
-void WINAPI WinHttpAutoProxySvcMain(DWORD argc, LPWSTR *argv)
+static DWORD WINAPI AutoProxyControl(DWORD control, DWORD type, LPVOID data, LPVOID context)
 {
-    MIME_STUB("winhttp");
+    return ERROR_CALL_NOT_IMPLEMENTED;
 }
 
+/* the proxy discovery service has no body here, so it registers and stops with the error of a missing feature. */
+void WINAPI WinHttpAutoProxySvcMain(DWORD argc, LPWSTR *argv)
+{
+    typedef SERVICE_STATUS_HANDLE(WINAPI * REGISTER)(LPCWSTR, LPHANDLER_FUNCTION_EX, LPVOID);
+    typedef BOOL(WINAPI * SETSTATUS)(SERVICE_STATUS_HANDLE, LPSERVICE_STATUS);
+    HMODULE advapi32 = LoadLibraryW(L"advapi32.dll");
+    REGISTER register_handler = advapi32 ? (REGISTER)GetProcAddress(advapi32, "RegisterServiceCtrlHandlerExW") : nullptr;
+    SETSTATUS set_status = advapi32 ? (SETSTATUS)GetProcAddress(advapi32, "SetServiceStatus") : nullptr;
+    if (!register_handler || !set_status)
+        return;
+    SERVICE_STATUS_HANDLE handle = register_handler(L"WinHttpAutoProxySvc", AutoProxyControl, nullptr);
+    if (!handle)
+        return;
+    SERVICE_STATUS status = {SERVICE_WIN32_SHARE_PROCESS, SERVICE_STOPPED, 0, ERROR_NOT_SUPPORTED, 0, 0, 0};
+    set_status(handle, &status);
+}
+
+/* the script worker process serves the proxy service over rpc, which does not exist here. */
 DWORD WINAPI WinHttpPacJsWorkerMain(DWORD_PTR a, DWORD_PTR b)
 {
-    MIME_STUB("winhttp");
     return ERROR_NOT_SUPPORTED;
 }

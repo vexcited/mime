@@ -114,6 +114,26 @@ static DWORD ReadExact(WH_OBJECT *socket, BYTE *data, DWORD length)
     return ERROR_SUCCESS;
 }
 
+DWORD WhReadSome(WH_OBJECT *object, void *data, DWORD length, DWORD *got)
+{
+    WH_CONN *conn = object->Conn;
+    *got = 0;
+    if (!conn)
+        return ERROR_WINHTTP_INCORRECT_HANDLE_STATE;
+    if (conn->Eof && conn->Start == conn->End)
+        return ERROR_SUCCESS;
+    DWORD error = ReadExact(object, data, 1);
+    if (error)
+        return error;
+    DWORD count = conn->End - conn->Start;
+    if (count > length - 1)
+        count = length - 1;
+    memcpy((BYTE *)data + 1, conn->Buffer + conn->Start, count);
+    conn->Start += count;
+    *got = count + 1;
+    return ERROR_SUCCESS;
+}
+
 /* read the frame header while answering pings and recording close frames. */
 static DWORD NextFrame(WH_OBJECT *socket)
 {
