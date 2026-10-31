@@ -1824,8 +1824,9 @@ NTSTATUS HttpSendResponse(IO_USER_REQUEST *r, HTTP_OPEN *o, const UCHAR *in, ULO
         BOOLEAN cn_present = cn != nullptr;
         BOOLEAN cn_close = cn && has_token(cn, cn_length, "close");
         BOOLEAN close = (flags & HTTP_SEND_DISCONNECT) != 0 || !req->KeepAlive || cn_close;
+        /* a program that names the chunked coding frames the body itself, only a coding the driver adds is its work. */
         if (te_chunked)
-            chunked_now = TRUE;
+            chunked_now = FALSE;
         else if (more && !has_length && !bodyless && !opaque && !(req->VerMinor == 0)) {
             text_puts(&head, "Transfer-Encoding: chunked\r\n");
             chunked_now = TRUE;
@@ -1833,7 +1834,7 @@ NTSTATUS HttpSendResponse(IO_USER_REQUEST *r, HTTP_OPEN *o, const UCHAR *in, ULO
             /* HTTP/1.0 cannot frame a body of unknown length: the end of it is the end of the connection. */
             close = TRUE;
         }
-        if (!has_length && !more && !chunked_now && !bodyless && !opaque) {
+        if (!has_length && !more && !chunked_now && !te_chunked && !bodyless && !opaque) {
             text_printf(&head, "Content-Length: %llu\r\n", body_total);
             has_length = TRUE;
             declared = body_total;
