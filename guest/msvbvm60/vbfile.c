@@ -867,6 +867,8 @@ typedef struct Transfer {
     LONG record;
     BYTE *bytes;
     LONG used;
+    /* the items of a record, whose strings keep their lengths even in a file of bytes. */
+    BOOL in_record;
 } Transfer;
 
 static void transfer_begin(Transfer *t, SHORT number, LONG record, BOOL has_record, BOOL get)
@@ -876,6 +878,7 @@ static void transfer_begin(Transfer *t, SHORT number, LONG record, BOOL has_reco
     t->get = get;
     t->used = 0;
     t->bytes = nullptr;
+    t->in_record = FALSE;
     if (file->mode != 4 && file->mode != 32)
         VbRaise(54);
     if (file->mode == 32) {
@@ -949,7 +952,7 @@ static void transfer_end(Transfer *t)
 static void transfer_string(Transfer *t, BSTR *slot)
 {
     VbFile *file = t->file;
-    if (file->mode == 32) {
+    if (file->mode == 32 && !t->in_record) {
         /* in a file of bytes the string has the length it has, and a Get fills the string it finds. */
         LONG length = *slot ? (LONG)SysStringLen(*slot) : 0;
         if (t->get) {
@@ -1077,3 +1080,92 @@ VB_STD void vb___vbaGetFxStr3(LONG count, WCHAR *text, SHORT number) { fixed_str
 VB_STD void vb___vbaGetFxStr4(LONG count, WCHAR *text, LONG record, SHORT number) { fixed_string(number, record, TRUE, count, text, TRUE); }
 VB_STD void vb___vbaPutFxStr3(LONG count, WCHAR *text, SHORT number) { fixed_string(number, 0, FALSE, count, text, FALSE); }
 VB_STD void vb___vbaPutFxStr4(LONG count, WCHAR *text, LONG record, SHORT number) { fixed_string(number, record, TRUE, count, text, FALSE); }
+
+/* ------------------------------------------------------------------ records of the compiler
+
+ * a record has a table of the compiler: its size, the number of items, and items of twelve bytes from the tenth byte on.
+ * each says how many bytes lie in front of it, what it is, and the count or size that goes with it. the bytes in front of
+ * an item and the rest after the last one go to the file as they are, an item of a kind that needs a conversion goes
+ * through the conversion, and the padding the compiler added is skipped.
+ */
+static void transfer_fixed_string(Transfer *t, WCHAR *text, LONG chars)
+{
+    char *bytes = HeapAlloc(GetProcessHeap(), 0, (SIZE_T)chars + 1);
+    if (!bytes)
+        VbRaise(VBERR_OUT_OF_MEMORY);
+    if (t->get) {
+        transfer_bytes(t, bytes, chars);
+        MultiByteToWideChar(CP_ACP, 0, bytes, chars, text, chars);
+    } else {
+        WideCharToMultiByte(CP_ACP, 0, text, chars, bytes, chars, nullptr, nullptr);
+        transfer_bytes(t, bytes, chars);
+    }
+    HeapFree(GetProcessHeap(), 0, bytes);
+}
+
+static LONG transfer_owner(Transfer *t, const BYTE *table, BYTE *data)
+{
+    UINT32 size = *(const UINT32 *)table, count = *(const UINT32 *)(table + 4);
+    const BYTE *item = table + 10;
+    LONG done = 0;
+    for (UINT32 i = 0; i < count; i++, item += 12) {
+        const UINT16 *w = (const UINT16 *)item;
+        UINT32 gap = *(const UINT32 *)item;
+        UINT16 flags = w[2];
+        UINT16 extra = w[5];
+        UINT32 many = (flags & 0x10) ? *(const UINT32 *)(item + 6) : 1;
+        if (gap) {
+            transfer_bytes(t, data + done, (LONG)gap);
+            done += (LONG)gap;
+        }
+        if (flags & 0x60)
+            VbRaise(458);
+        switch (flags & 0xF) {
+        case 0:
+            for (UINT32 k = 0; k < many; k++, done += 4)
+                transfer_string(t, (BSTR *)(data + done));
+            break;
+        case 1:
+            for (UINT32 k = 0; k < many; k++, done += 16)
+                transfer_variant(t, (VARIANT *)(data + done));
+            break;
+        case 2: {
+            const BYTE *nested = item + extra;
+            for (UINT32 k = 0; k < many; k++)
+                done += transfer_owner(t, nested, data + done);
+            break;
+        }
+        case 3:
+            for (UINT32 k = 0; k < many; k++, done += extra)
+                transfer_bytes(t, data + done, extra);
+            break;
+        case 4:
+            for (UINT32 k = 0; k < many; k++, done += flags >> 8)
+                transfer_bytes(t, data + done, flags >> 8);
+            break;
+        case 5: done += (LONG)many * (flags >> 8); break;
+        case 6:
+            for (UINT32 k = 0; k < many; k++, done += 2 * extra)
+                transfer_fixed_string(t, (WCHAR *)(data + done), extra);
+            break;
+        default: break;
+        }
+    }
+    if (done < (LONG)size)
+        transfer_bytes(t, data + done, (LONG)size - done);
+    return done > (LONG)size ? done : (LONG)size;
+}
+
+static void owner_transfer(const BYTE *table, BYTE *data, SHORT number, LONG record, BOOL has_record, BOOL get)
+{
+    Transfer t;
+    transfer_begin(&t, number, record, has_record, get);
+    t.in_record = TRUE;
+    transfer_owner(&t, table, data);
+    transfer_end(&t);
+}
+
+VB_STD void vb___vbaGetOwner3(const BYTE *table, BYTE *data, SHORT number) { owner_transfer(table, data, number, 0, FALSE, TRUE); }
+VB_STD void vb___vbaGetOwner4(const BYTE *table, BYTE *data, LONG record, SHORT number) { owner_transfer(table, data, number, record, TRUE, TRUE); }
+VB_STD void vb___vbaPutOwner3(const BYTE *table, BYTE *data, SHORT number) { owner_transfer(table, data, number, 0, FALSE, FALSE); }
+VB_STD void vb___vbaPutOwner4(const BYTE *table, BYTE *data, LONG record, SHORT number) { owner_transfer(table, data, number, record, TRUE, FALSE); }

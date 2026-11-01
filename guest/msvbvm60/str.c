@@ -345,18 +345,6 @@ VB_STD BSTR vb_rtcSpaceBstr(UINT n)
     return b;
 }
 
-VB_STD BSTR vb_rtcStringBstr(UINT n, BSTR fill)
-{
-    /* the argument is a character code or a string whose first character is used. */
-    OLECHAR c = ' ';
-    if (fill && SysStringLen(fill))
-        c = fill[0];
-    BSTR b = alloc_len(nullptr, n);
-    for (UINT i = 0; i < n; i++)
-        b[i] = c;
-    return b;
-}
-
 VB_STD BSTR vb_rtcLeftCharBstr(BSTR s, LONG n)
 {
     if (n < 0)

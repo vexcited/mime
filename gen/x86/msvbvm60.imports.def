@@ -151,8 +151,8 @@ EXPORTS
     __vbaGet4@16 @248
     __vbaGetFxStr3@12 @249
     __vbaGetFxStr4@16 @250
-    __vbaGetOwner3 @251
-    __vbaGetOwner4 @252
+    __vbaGetOwner3@12 @251
+    __vbaGetOwner4@16 @252
     __vbaGosub @253
     __vbaGosubFree @254
     __vbaGosubReturn @255
@@ -233,13 +233,13 @@ EXPORTS
     __vbaLenVarB @330
     __vbaLineInputStr@8 @331
     __vbaLineInputVar@8 @332
-    __vbaLsetFixstr @333
-    __vbaLsetFixstrFree @334
+    __vbaLsetFixstr@12 @333
+    __vbaLsetFixstrFree@12 @334
     __vbaMidStmtBstr @335
     __vbaMidStmtBstrB @336
     __vbaMidStmtVar @337
     __vbaMidStmtVarB @338
-    __vbaNameFile @339
+    __vbaNameFile@8 @339
     __vbaNew2@8 @340
     __vbaNew@4 @341
     __vbaNextEachAry@16 @342
@@ -261,8 +261,8 @@ EXPORTS
     __vbaPut4@16 @358
     __vbaPutFxStr3@12 @359
     __vbaPutFxStr4@16 @360
-    __vbaPutOwner3 @361
-    __vbaPutOwner4 @362
+    __vbaPutOwner3@12 @361
+    __vbaPutOwner4@16 @362
     __vbaR4Cy @363
     __vbaR4ErrVar @364
     __vbaR4ForNextCheck@12 @365
@@ -280,11 +280,11 @@ EXPORTS
     __vbaR8Str@4 @377
     __vbaR8Var@4 @378
     __vbaRaiseEvent @379
-    __vbaRecAnsiToUni @380
-    __vbaRecAssign @381
-    __vbaRecDestruct @382
-    __vbaRecDestructAnsi @383
-    __vbaRecUniToAnsi @384
+    __vbaRecAnsiToUni@12 @380
+    __vbaRecAssign@12 @381
+    __vbaRecDestruct@8 @382
+    __vbaRecDestructAnsi@8 @383
+    __vbaRecUniToAnsi@12 @384
     __vbaRedim @385
     __vbaRedimPreserve @386
     __vbaRedimPreserveVar @387
@@ -292,8 +292,8 @@ EXPORTS
     __vbaRedimVar @389
     __vbaRefVarAry@4 @390
     __vbaResume@4 @391
-    __vbaRsetFixstr @392
-    __vbaRsetFixstrFree @393
+    __vbaRsetFixstr@12 @392
+    __vbaRsetFixstrFree@12 @393
     __vbaSetSystemError @394
     __vbaStopExe @395
     __vbaStr2Vec @396
@@ -359,7 +359,7 @@ EXPORTS
     __vbaVarCmpLe @456
     __vbaVarCmpLt@12 @457
     __vbaVarCmpNe@12 @458
-    __vbaVarDateVar @459
+    __vbaVarDateVar@8 @459
     __vbaVarDiv@12 @460
     __vbaVarEqv@12 @461
     __vbaVarErrI4 @462
@@ -412,58 +412,58 @@ EXPORTS
     __vbaVarXor@12 @509
     __vbaVargObj @510
     __vbaVargObjAddref @511
-    rtcLeftBstr @512
-    rtcLeftVar @513
-    rtcRightBstr @514
-    rtcRightVar @515
+    rtcLeftBstr@8 @512
+    rtcLeftVar@12 @513
+    rtcRightBstr@8 @514
+    rtcRightVar@12 @515
     rtcAnsiValueBstr@4 @516
-    rtcLowerCaseBstr @517
+    rtcLowerCaseBstr@4 @517
     rtcLowerCaseVar@8 @518
     rtcTrimBstr@4 @519
     rtcTrimVar@8 @520
     rtcLeftTrimBstr@4 @521
     rtcLeftTrimVar@8 @522
-    rtcRightTrimBstr @523
+    rtcRightTrimBstr@4 @523
     rtcRightTrimVar@8 @524
     rtcSpaceBstr@4 @525
     rtcSpaceVar@8 @526
     rtcUpperCaseBstr@4 @527
     rtcUpperCaseVar@8 @528
-    rtcKillFiles @529
-    rtcChangeDir @530
-    rtcMakeDir @531
-    rtcRemoveDir @532
-    rtcChangeDrive @533
-    rtcBeep @534
-    rtcGetTimer @535
+    rtcKillFiles@4 @529
+    rtcChangeDir@4 @530
+    rtcMakeDir@4 @531
+    rtcRemoveDir@4 @532
+    rtcChangeDrive@4 @533
+    rtcBeep@0 @534
+    rtcGetTimer@0 @535
     rtcStrFromVar@4 @536
     rtcBstrFromAnsi@4 @537
-    rtcPackDate @538
-    rtcPackTime @539
-    rtcGetDateValue @540
-    rtcGetTimeValue @541
-    rtcGetDayOfMonth @542
-    rtcGetHourOfDay @543
-    rtcGetMinuteOfHour @544
-    rtcGetMonthOfYear @545
-    rtcGetPresentDate @546
-    rtcGetSecondOfMinute @547
-    rtcSetDateVar @548
-    rtcSetDateBstr @549
-    rtcSetTimeVar @550
-    rtcSetTimeBstr @551
-    rtcGetDayOfWeek @552
-    rtcGetYear @553
+    rtcPackDate@16 @538
+    rtcPackTime@16 @539
+    rtcGetDateValue@8 @540
+    rtcGetTimeValue@8 @541
+    rtcGetDayOfMonth@8 @542
+    rtcGetHourOfDay@8 @543
+    rtcGetMinuteOfHour@8 @544
+    rtcGetMonthOfYear@8 @545
+    rtcGetPresentDate@4 @546
+    rtcGetSecondOfMinute@8 @547
+    rtcSetDateVar@4 @548
+    rtcSetDateBstr@4 @549
+    rtcSetTimeVar@4 @550
+    rtcSetTimeBstr@4 @551
+    rtcGetDayOfWeek@12 @552
+    rtcGetYear@8 @553
     rtcFileReset@0 @554
     rtcFileAttributes @555
-    rtcIsArray @556
-    rtcIsDate @557
-    rtcIsEmpty @558
-    rtcIsError @559
-    rtcIsNull @560
+    rtcIsArray@4 @556
+    rtcIsDate@4 @557
+    rtcIsEmpty@4 @558
+    rtcIsError@4 @559
+    rtcIsNull@4 @560
     rtcIsNumeric@4 @561
-    rtcIsObject @562
-    rtcVarType @563
+    rtcIsObject@4 @562
+    rtcVarType@4 @563
     rtDecFromVar @564
     rtcFileWidth@8 @565
     rtcInputCount@8 @566
@@ -476,11 +476,11 @@ EXPORTS
     rtcHexVarFromVar@8 @573
     rtcOctBstrFromVar @574
     rtcOctVarFromVar @575
-    rtcFileCopy @576
-    rtcFileDateTime @577
-    rtcFileLen @578
-    rtcGetFileAttr @579
-    rtcSetFileAttr @580
+    rtcFileCopy@8 @576
+    rtcFileDateTime@8 @577
+    rtcFileLen@4 @578
+    rtcGetFileAttr@4 @579
+    rtcSetFileAttr@8 @580
     rtcR8ValFromBstr@4 @581
     rtcSin @582
     rtcCos @583
@@ -489,10 +489,10 @@ EXPORTS
     rtcExp @586
     rtcLog @587
     rtcRgb@12 @588
-    rtcQBColor @589
+    rtcQBColor@4 @589
     rtcMacId @590
-    rtcTypeName @591
-    rtcIsMissing @592
+    rtcTypeName@4 @591
+    rtcIsMissing@4 @592
     rtcRandomNext @593
     rtcRandomize @594
     rtcMsgBox@20 @595
@@ -500,19 +500,19 @@ EXPORTS
     rtcAppActivate @597
     rtcDoEvents@0 @598
     rtcSendKeys @599
-    rtcShell @600
+    rtcShell@8 @600
     rtcArray @601
     __vbaVargUnk @602
     __vbaVargUnkAddref @603
     __vbaVerifyVarObj@4 @604
     rtcGetErl@0 @605
     rtcStringBstr@8 @606
-    rtcStringVar @607
+    rtcStringVar@12 @607
     rtcVarBstrFromAnsi@8 @608
-    rtcGetDateBstr @609
-    rtcGetDateVar @610
-    rtcGetTimeBstr @611
-    rtcGetTimeVar @612
+    rtcGetDateBstr@0 @609
+    rtcGetDateVar@4 @610
+    rtcGetTimeBstr@0 @611
+    rtcGetTimeVar@4 @612
     rtcVarStrFromVar@8 @613
     rtcSqr @614
     rtcIMEStatus @615
@@ -522,14 +522,14 @@ EXPORTS
     rtcRightCharVar@12 @619
     rtcInputCharCount @620
     rtcInputCharCountVar @621
-    rtcStrConvVar @622
+    rtcStrConvVar@12 @622
     __vbaWriteFile @623
     rtcGetHostLCID @624
     rtcCreateObject@8 @625
     rtcGetObject@12 @626
     rtcAppleScript @627
-    rtcMidBstr @628
-    rtcMidVar @629
+    rtcMidBstr@12 @628
+    rtcMidVar@16 @629
     rtcInStr @630
     rtcMidCharBstr@12 @631
     rtcMidCharVar@16 @632
@@ -541,36 +541,36 @@ EXPORTS
     rtI4FromErrVar @638
     rtR4FromErrVar @639
     rtR8FromErrVar @640
-    rtcDateFromVar @641
-    rtcVarFromVar @642
+    rtcDateFromVar@4 @641
+    rtcVarFromVar@8 @642
     rtcCVErrFromVar @643
     VarPtr@4 @644
-    rtcDir @645
-    rtcCurrentDirBstr @646
-    rtcCurrentDir @647
+    rtcDir@8 @645
+    rtcCurrentDirBstr@4 @646
+    rtcCurrentDir@8 @647
     rtcFreeFile@4 @648
     rtcCompareBstr @649
-    rtcBstrFromFormatVar @650
+    rtcBstrFromFormatVar@16 @650
     rtcBstrFromError @651
     rtcVarFromError@8 @652
-    rtcLenCharVar @653
-    rtcLenVar @654
+    rtcLenCharVar@8 @653
+    rtcLenVar@8 @654
     rtcFixVar@8 @655
     rtcAbsVar@8 @656
     rtcIntVar@8 @657
-    rtcSgnVar @658
+    rtcSgnVar@8 @658
     _adj_fdiv_m16i @659
-    rtcVarFromFormatVar @660
-    rtcDateAdd @661
-    rtcDateDiff @662
-    rtcDatePart @663
+    rtcVarFromFormatVar@20 @660
+    rtcDateAdd@20 @661
+    rtcDateDiff@24 @662
+    rtcDatePart@20 @663
     rtcPartition @664
     rtcChoose @665
-    rtcEnvironVar @666
-    rtcEnvironBstr @667
+    rtcEnvironVar@8 @666
+    rtcEnvironBstr@4 @667
     rtcSwitch @668
-    rtcCommandBstr @669
-    rtcCommandVar @670
+    rtcCommandBstr@0 @669
+    rtcCommandVar@4 @670
     rtcSLN @671
     rtcSYD @672
     rtcDDB @673
@@ -587,37 +587,37 @@ EXPORTS
     rtcNPV @684
     rtcErrObj@0 @685
     rtUI1FromErrVar @686
-    rtcVarDateFromVar @687
+    rtcVarDateFromVar@8 @687
     _adj_fdiv_m32 @688
-    rtcGetSetting @689
-    rtcSaveSetting @690
-    rtcDeleteSetting @691
-    rtcGetAllSettings @692
-    rtcByteValueBstr @693
-    rtcBstrFromByte @694
-    rtcVarBstrFromByte @695
-    rtcCharValueBstr @696
-    rtcBstrFromChar @697
+    rtcGetSetting@28 @689
+    rtcSaveSetting@16 @690
+    rtcDeleteSetting@36 @691
+    rtcGetAllSettings@12 @692
+    rtcByteValueBstr@4 @693
+    rtcBstrFromByte@4 @694
+    rtcVarBstrFromByte@8 @695
+    rtcCharValueBstr@4 @696
+    rtcBstrFromChar@4 @697
     rtcVarBstrFromChar@8 @698
-    rtcSetCurrentCalendar @699
-    rtcGetCurrentCalendar @700
+    rtcSetCurrentCalendar@4 @699
+    rtcGetCurrentCalendar@0 @700
     _adj_fdiv_m32i @701
-    rtcFormatNumber @702
-    rtcFormatCurrency @703
-    rtcFormatPercent @704
-    rtcFormatDateTime @705
-    rtcWeekdayName @706
-    rtcMonthName @707
-    rtcFilter @708
-    rtcInStrRev @709
-    rtcJoin @710
-    rtcSplit @711
-    rtcReplace @712
-    rtcStrReverse @713
-    rtcRound @714
+    rtcFormatNumber@20 @702
+    rtcFormatCurrency@20 @703
+    rtcFormatPercent@20 @704
+    rtcFormatDateTime@8 @705
+    rtcWeekdayName@12 @706
+    rtcMonthName@8 @707
+    rtcFilter@20 @708
+    rtcInStrRev@16 @709
+    rtcJoin@8 @710
+    rtcSplit@20 @711
+    rtcReplace@24 @712
+    rtcStrReverse@4 @713
+    rtcRound@12 @714
     rtcCallByName @715
     rtcCreateObject2@12 @716
-    rtcStrConvVar2 @717
+    rtcStrConvVar2@16 @717
     _adj_fdiv_m64 @718
     _adj_fdiv_r @719
     _adj_fdivr_m16i @720

@@ -17,6 +17,12 @@
 #define VB_THIS __attribute__((thiscall))
 #define VB_C __attribute__((cdecl))
 
+/* the reference forms of the variant members. */
+#define V_ARRAYREF(v) ((v)->pparray)
+#define V_UNKNOWNREF(v) ((v)->ppunkVal)
+#define V_DISPATCHREF(v) ((IDispatch **)(v)->ppunkVal)
+#define V_BSTRREF(v) ((v)->pbstrVal)
+
 /* the numbers of the runtime errors. */
 enum {
     VBERR_RETURN_WITHOUT_GOSUB = 3,
@@ -77,6 +83,15 @@ LONG VbErrorOfHresult(HRESULT hr);
 /* raises the error of a failed hresult, and returns for a success. */
 void VbCheck(HRESULT hr);
 LCID VbLocale(void);
+/* the runtime error of a failed system call. */
+LONG VbErrorOfWin32(DWORD error);
+/* arguments of the library functions, in vbfn.c. */
+BOOL VbIsMissing(const VARIANT *v);
+VB_STD double vb___vbaDateVar(VARIANT *v);
+void VbValue(VARIANT *out, const VARIANT *in);
+LONG VbLong(const VARIANT *v);
+/* the text of an argument, false for Null. the string belongs to the caller. */
+BOOL VbText(const VARIANT *v, BSTR *out);
 
 void VbOutputDebug(const char *text);
 
