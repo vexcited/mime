@@ -38,6 +38,7 @@ EXPORTS
     CoGetObject@16
     CoGetObjectContext@8
     CoGetPSClsid@8
+    CoGetStandardMarshal@24
     CoGetTreatAsClass@8
     CoImpersonateClient@0
     CoIncrementMTAUsage@4

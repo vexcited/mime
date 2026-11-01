@@ -293,6 +293,128 @@ static IMarshal *custom_marshal(IUnknown *object)
     return marshal;
 }
 
+/* ------------------------------------------------------------------ the standard marshaler */
+
+/*
+ * the marshaler that goes with an object that has none of its own: it writes the OBJREF of the object as
+ * CoMarshalInterface does, and reads one as CoUnmarshalInterface does. programs ask for it to marshal by hand, or to
+ * have their own marshaler stand in for it.
+ */
+typedef struct STDMARSHAL {
+    IMarshal Marshal;
+    LONG Refs;
+    IUnknown *Object;
+} STDMARSHAL;
+
+static const CLSID CLSID_StdMarshal = {0x00000017, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
+
+static HRESULT STDMETHODCALLTYPE std_qi(IMarshal *self, REFIID iid, void **out)
+{
+    if (!out)
+        return E_POINTER;
+    if (IsEqualGUID(iid, &IID_IUnknown) || IsEqualGUID(iid, &IID_IMarshal)) {
+        *out = self;
+        InterlockedIncrement(&CONTAINING_RECORD(self, STDMARSHAL, Marshal)->Refs);
+        return S_OK;
+    }
+    *out = nullptr;
+    return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE std_add_ref(IMarshal *self)
+{
+    return InterlockedIncrement(&CONTAINING_RECORD(self, STDMARSHAL, Marshal)->Refs);
+}
+
+static ULONG STDMETHODCALLTYPE std_release(IMarshal *self)
+{
+    STDMARSHAL *m = CONTAINING_RECORD(self, STDMARSHAL, Marshal);
+    ULONG refs = InterlockedDecrement(&m->Refs);
+    if (!refs) {
+        if (m->Object)
+            m->Object->lpVtbl->Release(m->Object);
+        OleFree(m);
+    }
+    return refs;
+}
+
+static HRESULT STDMETHODCALLTYPE std_unmarshal_class(IMarshal *self, REFIID iid, void *object, DWORD destination,
+                                                     void *context, DWORD flags, CLSID *clsid)
+{
+    if (!clsid)
+        return E_POINTER;
+    *clsid = CLSID_StdMarshal;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE std_size_max(IMarshal *self, REFIID iid, void *object, DWORD destination, void *context,
+                                              DWORD flags, DWORD *size)
+{
+    STDMARSHAL *m = CONTAINING_RECORD(self, STDMARSHAL, Marshal);
+    IUnknown *unknown = object ? object : m->Object;
+    if (!size)
+        return E_POINTER;
+    *size = sizeof(OBJREF_HEAD) + sizeof(OBJREF_DIRECT);
+    if (unknown && destination != MSHCTX_INPROC) {
+        ULONG standard;
+        if (SUCCEEDED(OrpcMarshalSizeMax(&standard, iid, unknown, destination, flags)) && standard > *size)
+            *size = standard;
+    }
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE std_marshal(IMarshal *self, IStream *stream, REFIID iid, void *object, DWORD destination,
+                                             void *context, DWORD flags)
+{
+    STDMARSHAL *m = CONTAINING_RECORD(self, STDMARSHAL, Marshal);
+    IUnknown *unknown = object ? object : m->Object;
+    if (!stream || !unknown)
+        return E_INVALIDARG;
+    return marshal_standard(stream, iid, unknown, destination, flags);
+}
+
+static HRESULT STDMETHODCALLTYPE std_unmarshal(IMarshal *self, IStream *stream, REFIID iid, void **out)
+{
+    return CoUnmarshalInterface(stream, iid, out);
+}
+
+static HRESULT STDMETHODCALLTYPE std_release_data(IMarshal *self, IStream *stream)
+{
+    return CoReleaseMarshalData(stream);
+}
+
+static HRESULT STDMETHODCALLTYPE std_disconnect(IMarshal *self, DWORD reserved)
+{
+    return S_OK;
+}
+
+static const IMarshalVtbl g_std_vtbl = {std_qi,        std_add_ref,   std_release,    std_unmarshal_class,
+                                        std_size_max,  std_marshal,   std_unmarshal,  std_release_data,
+                                        std_disconnect};
+
+WINOLEAPI HRESULT WINAPI CoGetStandardMarshal(REFIID iid, IUnknown *object, DWORD destination, void *context,
+                                              DWORD flags, IMarshal **marshal)
+{
+    if (!marshal)
+        return E_POINTER;
+    *marshal = nullptr;
+    STDMARSHAL *m = OleAllocZero(sizeof(*m));
+    if (!m)
+        return E_OUTOFMEMORY;
+    memset(m, 0, sizeof(*m));
+    m->Marshal.lpVtbl = &g_std_vtbl;
+    m->Refs = 1;
+    if (object) {
+        HRESULT hr = object->lpVtbl->QueryInterface(object, &IID_IUnknown, (void **)&m->Object);
+        if (FAILED(hr)) {
+            OleFree(m);
+            return hr;
+        }
+    }
+    *marshal = &m->Marshal;
+    return S_OK;
+}
+
 WINOLEAPI HRESULT WINAPI CoGetMarshalSizeMax(ULONG *size, REFIID iid, IUnknown *object, DWORD destination,
                                              void *context, DWORD flags)
 {
