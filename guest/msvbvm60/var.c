@@ -32,21 +32,21 @@ VB_FAST VARIANT *vb___vbaVarMove(VARIANT *dst, VARIANT *src)
 VB_FAST VARIANT *vb___vbaVarDup(VARIANT *dst, VARIANT *src)
 {
     VariantInit(dst);
-    VbCheck(VariantCopyInd(dst, src));
+    VbCheck(VbCopyInd(dst, src));
     return dst;
 }
 
 VB_FAST VARIANT *vb___vbaVarCopy(VARIANT *dst, VARIANT *src)
 {
     VariantClear(dst);
-    VbCheck(VariantCopyInd(dst, src));
+    VbCheck(VbCopyInd(dst, src));
     return dst;
 }
 
 VB_STD VARIANT *vb___vbaVarSetVar(VARIANT *dst, VARIANT *src)
 {
     VariantClear(dst);
-    VbCheck(VariantCopyInd(dst, src));
+    VbCheck(VbCopyInd(dst, src));
     return dst;
 }
 
@@ -68,7 +68,7 @@ VB_FAST VARIANT *vb___vbaVarVargNofree(VARIANT *tmp, VARIANT *v)
         if (V_VT(v) == (VT_VARIANT | VT_BYREF))
             return V_VARIANTREF(v);
         VariantInit(tmp);
-        VariantCopyInd(tmp, v);
+        VbCopyInd(tmp, v);
         return tmp;
     }
     return v;
@@ -90,8 +90,11 @@ VB_FAST VARIANT *vb___vbaVargVarMove(VARIANT *dst, VARIANT *src)
 
 /* ------------------------------------------------------------------ conversions */
 
-static void convert(VARIANT *out, const VARIANT *v, VARTYPE vt)
+static void convert(VARIANT *out, const VARIANT *source, VARTYPE vt)
 {
+    VARIANT masked = *source;
+    const VARIANT *v = &masked;
+    V_VT(&masked) &= 0x7FFF;
     if (V_VT(v) == VT_NULL)
         VbRaise(VBERR_INVALID_USE_OF_NULL);
     VariantInit(out);
@@ -242,14 +245,25 @@ VB_STD VARIANT *vb___vbaVerifyVarObj(VARIANT *v)
 /* the order of the operands is that the first argument is the right one. */
 static int compare_variants(VARIANT *right, VARIANT *left, ULONG flags)
 {
-    if (V_VT(left) == VT_NULL || V_VT(right) == VT_NULL)
-        return 3;
-    HRESULT hr = VarCmp(left, right, VbLocale(), flags);
-    if (FAILED(hr)) {
-        /* a string against a number compares as text in visual basic only when both are strings. */
-        VbCheck(hr);
+    /* the operands are read through their references and default members first, as every other operation does. */
+    VARIANT l, r;
+    VbValue(&l, left);
+    VbValue(&r, right);
+    int result;
+    if (V_VT(&l) == VT_NULL || V_VT(&r) == VT_NULL) {
+        result = 3;
+    } else {
+        HRESULT hr = VarCmp(&l, &r, VbLocale(), flags);
+        if (FAILED(hr)) {
+            VariantClear(&l);
+            VariantClear(&r);
+            VbCheck(hr);
+        }
+        result = (int)hr;
     }
-    return (int)hr;
+    VariantClear(&l);
+    VariantClear(&r);
+    return result;
 }
 
 /* equal, not equal, less, greater, less or equal, greater or equal as booleans for the three ways a compare ends. */
@@ -314,8 +328,8 @@ static VARIANT *binary(BinaryOp op, VARIANT *dest, VARIANT *right, VARIANT *left
     VariantInit(&l);
     VariantInit(&r);
     VariantInit(&out);
-    VbCheck(VariantCopyInd(&l, left));
-    VbCheck(VariantCopyInd(&r, right));
+    VbCheck(VbCopyInd(&l, left));
+    VbCheck(VbCopyInd(&r, right));
     HRESULT hr = op(&l, &r, &out);
     VariantClear(&l);
     VariantClear(&r);
@@ -329,7 +343,7 @@ static VARIANT *unary(UnaryOp op, VARIANT *dest, VARIANT *v)
     VARIANT in, out;
     VariantInit(&in);
     VariantInit(&out);
-    VbCheck(VariantCopyInd(&in, v));
+    VbCheck(VbCopyInd(&in, v));
     HRESULT hr = op(&in, &out);
     VariantClear(&in);
     VbCheck(hr);
@@ -375,7 +389,7 @@ VB_STD VARIANT *vb_rtcImmediateIf(VARIANT *dest, VARIANT *condition, const VARIA
     VARIANT t;
     convert(&t, condition, VT_BOOL);
     VariantInit(dest);
-    VbCheck(VariantCopyInd(dest, V_BOOL(&t) ? when_true : when_false));
+    VbCheck(VbCopyInd(dest, V_BOOL(&t) ? when_true : when_false));
     return dest;
 }
 

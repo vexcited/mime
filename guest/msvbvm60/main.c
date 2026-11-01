@@ -127,6 +127,15 @@ void VbClearError(void)
     t->erl = 0;
 }
 
+/* a copy that follows references. The compiler marks the variants of its constants with the bit 0x8000 of the type, which every
+ * operation ignores. */
+HRESULT VbCopyInd(VARIANT *dst, const VARIANT *src)
+{
+    VARIANT masked = *src;
+    V_VT(&masked) &= 0x7FFF;
+    return VariantCopyInd(dst, &masked);
+}
+
 void VbCheck(HRESULT hr)
 {
     if (hr < 0)

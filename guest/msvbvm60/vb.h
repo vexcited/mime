@@ -82,6 +82,7 @@ const WCHAR *VbProjectName(void);
 LONG VbErrorOfHresult(HRESULT hr);
 /* raises the error of a failed hresult, and returns for a success. */
 void VbCheck(HRESULT hr);
+HRESULT VbCopyInd(VARIANT *dst, const VARIANT *src);
 LCID VbLocale(void);
 /* the runtime error of a failed system call. */
 LONG VbErrorOfWin32(DWORD error);

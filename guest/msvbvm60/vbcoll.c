@@ -74,7 +74,7 @@ static int locate(const VbCollection *c, VARIANT *index)
 {
     VARIANT v;
     VariantInit(&v);
-    VbCheck(VariantCopyInd(&v, index));
+    VbCheck(VbCopyInd(&v, index));
     int place;
     if (V_VT(&v) == VT_BSTR) {
         place = find_key(c, V_BSTR(&v) ? V_BSTR(&v) : L"");
@@ -176,7 +176,7 @@ static HRESULT STDMETHODCALLTYPE collection_add(VbCollection *self, VARIANT *ite
         VARIANT v, text;
         VariantInit(&v);
         VariantInit(&text);
-        VbCheck(VariantCopyInd(&v, key));
+        VbCheck(VbCopyInd(&v, key));
         HRESULT hr = V_VT(&v) == VT_BSTR ? VariantCopy(&text, &v) : DISP_E_TYPEMISMATCH;
         VariantClear(&v);
         if (FAILED(hr))
@@ -199,7 +199,7 @@ static HRESULT STDMETHODCALLTYPE collection_add(VbCollection *self, VARIANT *ite
         int place;
         VARIANT v;
         VariantInit(&v);
-        VbCheck(VariantCopyInd(&v, where));
+        VbCheck(VbCopyInd(&v, where));
         if (V_VT(&v) == VT_BSTR) {
             place = find_key(self, V_BSTR(&v) ? V_BSTR(&v) : L"");
             VariantClear(&v);
@@ -238,7 +238,7 @@ static HRESULT STDMETHODCALLTYPE collection_add(VbCollection *self, VARIANT *ite
     for (int i = self->count; i > at; i--)
         self->items[i] = self->items[i - 1];
     VariantInit(&self->items[at].value);
-    HRESULT hr = VariantCopyInd(&self->items[at].value, item);
+    HRESULT hr = VbCopyInd(&self->items[at].value, item);
     if (FAILED(hr)) {
         for (int i = at; i < self->count; i++)
             self->items[i] = self->items[i + 1];

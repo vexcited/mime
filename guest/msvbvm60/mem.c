@@ -64,7 +64,7 @@ VB_STD LONG vb_GetMemVar(VARIANT *src, VARIANT *dst)
 
 VB_STD LONG vb_PutMemVar(VARIANT *dst, VARIANT *value)
 {
-    HRESULT hr = VariantCopyInd(dst, value);
+    HRESULT hr = VbCopyInd(dst, value);
     if (FAILED(hr))
         VbRaiseHr(hr);
     return 0;

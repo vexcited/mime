@@ -308,7 +308,7 @@ static void convert_into(VARIANT *target, const VARIANT *source, VARTYPE type)
     VARIANT in, out;
     VariantInit(&in);
     VariantInit(&out);
-    VbCheck(VariantCopyInd(&in, (VARIANT *)source));
+    VbCheck(VbCopyInd(&in, (VARIANT *)source));
     HRESULT hr = VariantChangeTypeEx(&out, &in, VbLocale(), 0, type);
     VariantClear(&in);
     VbCheck(hr);
@@ -380,9 +380,9 @@ VB_STD LONG vb___vbaVarForInit(VARIANT *counter, VARIANT *step_state, VARIANT *l
     VariantInit(&s);
     VariantInit(&l);
     VariantInit(&t);
-    VbCheck(VariantCopyInd(&s, start));
-    VbCheck(VariantCopyInd(&l, limit));
-    VbCheck(VariantCopyInd(&t, step));
+    VbCheck(VbCopyInd(&s, start));
+    VbCheck(VbCopyInd(&l, limit));
+    VbCheck(VbCopyInd(&t, step));
     VARTYPE type = loop_type(&s, &t, &l);
     convert_into(counter, &s, type);
     convert_into(step_state, &t, type);

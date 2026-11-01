@@ -817,7 +817,7 @@ static void put_items(VbFile *file, BOOL write, const USHORT *desc, char *args)
                 p = V_VARIANTREF(p);
             if (V_VT(p) & VT_BYREF) {
                 VariantInit(&v);
-                VbCheck(VariantCopyInd(&v, p));
+                VbCheck(VbCopyInd(&v, p));
                 put_value(file, write, &v, separator);
                 VariantClear(&v);
             } else {
@@ -1008,7 +1008,7 @@ static void transfer_variant(Transfer *t, VARIANT *v)
     if (!t->get && (type & VT_BYREF)) {
         VARIANT copy;
         VariantInit(&copy);
-        VbCheck(VariantCopyInd(&copy, v));
+        VbCheck(VbCopyInd(&copy, v));
         transfer_variant(t, &copy);
         VariantClear(&copy);
         return;

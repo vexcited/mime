@@ -169,7 +169,7 @@ static BSTR text_of(const VARIANT *v)
     VARIANT in, out;
     VariantInit(&in);
     VariantInit(&out);
-    VbCheck(VariantCopyInd(&in, (VARIANT *)v));
+    VbCheck(VbCopyInd(&in, (VARIANT *)v));
     HRESULT hr = VariantChangeTypeEx(&out, &in, VbLocale(), 0, VT_BSTR);
     VariantClear(&in);
     VbCheck(hr);
@@ -181,7 +181,7 @@ static LONG long_of(const VARIANT *v)
     VARIANT in, out;
     VariantInit(&in);
     VariantInit(&out);
-    VbCheck(VariantCopyInd(&in, (VARIANT *)v));
+    VbCheck(VbCopyInd(&in, (VARIANT *)v));
     HRESULT hr = VariantChangeTypeEx(&out, &in, VbLocale(), 0, VT_I4);
     VariantClear(&in);
     VbCheck(hr);

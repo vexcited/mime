@@ -84,7 +84,7 @@ static HRESULT convert(VARIANT *out, const VARIANT *in, VARTYPE vt)
 {
     VARIANT value;
     VariantInit(&value);
-    HRESULT hr = VariantCopyInd(&value, in);
+    HRESULT hr = VbCopyInd(&value, in);
     if (FAILED(hr))
         return hr;
     if (V_VT(&value) == VT_EMPTY || (V_VT(&value) == VT_ERROR && V_ERROR(&value) == DISP_E_PARAMNOTFOUND)) {
@@ -145,7 +145,7 @@ static HRESULT marshal(Call *c, int slot, const BYTE *kind, const VARIANT *in, B
             push(c, (DWORD)(ULONG_PTR)V_VARIANTREF(in));
             return S_OK;
         } else {
-            HRESULT hr = VariantCopyInd(temp, in);
+            HRESULT hr = VbCopyInd(temp, in);
             if (FAILED(hr))
                 return hr;
         }
@@ -160,7 +160,7 @@ static HRESULT marshal(Call *c, int slot, const BYTE *kind, const VARIANT *in, B
         if (!missing) {
             VARIANT value;
             VariantInit(&value);
-            HRESULT hr = VariantCopyInd(&value, in);
+            HRESULT hr = VbCopyInd(&value, in);
             if (FAILED(hr))
                 return hr;
             VARTYPE have = V_VT(&value);

@@ -36,7 +36,7 @@ BOOL VbIsMissing(const VARIANT *v) { return V_VT(v) == VT_ERROR && V_ERROR(v) ==
 void VbValue(VARIANT *out, const VARIANT *in)
 {
     VariantInit(out);
-    VbCheck(VariantCopyInd(out, in));
+    VbCheck(VbCopyInd(out, in));
     for (int depth = 0; V_VT(out) == VT_DISPATCH && depth < 8; depth++) {
         IDispatch *object = V_DISPATCH(out);
         if (!object)
@@ -50,7 +50,7 @@ void VbValue(VARIANT *out, const VARIANT *in)
         VariantClear(out);
         if (FAILED(hr))
             VbRaiseHr(hr);
-        VbCheck(VariantCopyInd(out, &result));
+        VbCheck(VbCopyInd(out, &result));
         VariantClear(&result);
     }
 }
@@ -749,7 +749,7 @@ VB_STD SHORT vb_rtcIsDate(VARIANT *v)
             return -1;
     } else {
         VariantInit(&value);
-        if (FAILED(VariantCopyInd(&value, v)))
+        if (FAILED(VbCopyInd(&value, v)))
             return 0;
     }
     SHORT result = 0;
@@ -839,7 +839,7 @@ VB_STD VARIANT *vb_rtcLenCharVar(VARIANT *dest, VARIANT *src)
 VB_STD VARIANT *vb_rtcVarFromVar(VARIANT *dest, VARIANT *src)
 {
     VariantInit(dest);
-    VbCheck(VariantCopyInd(dest, src));
+    VbCheck(VbCopyInd(dest, src));
     return dest;
 }
 

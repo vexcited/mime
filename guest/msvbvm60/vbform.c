@@ -843,6 +843,12 @@ LONG __cdecl vb_dispatch(int slot, DWORD *frame)
     }
     if (slot < 0 || slot >= cl->nslots) {
         report_slot(c, slot, "member");
+        /* a control with no layout yet takes the call and does nothing, so the program goes on without it. */
+        if (!cl->slots && slot > 6) {
+            if (slot >= 18)
+                *(DWORD *)(ULONG_PTR)args[0] = 0;
+            return S_OK;
+        }
         return E_NOTIMPL;
     }
     const VBSLOT *s = &cl->slots[slot];
@@ -1052,6 +1058,13 @@ static void *make_thunk(int slot, int ret)
 
 static void *make_vtable(const VBCLASS *cl, int total, VbForm *form)
 {
+    /* a class that has no layout yet still answers its first eighteen slots, which are the same in every class, and the others
+     * report themselves, so a call never lands in memory past the table. */
+    const VBCLASS *shape = cl;
+    if (!cl->slots) {
+        total = 190;
+        shape = &g_classes[VBC_LABEL];
+    }
     void **vt = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (total + 8) * sizeof(void *));
     (void)form;
     vt[0] = obj_query;
@@ -1065,9 +1078,9 @@ static void *make_vtable(const VBCLASS *cl, int total, VbForm *form)
         int ret = 8;
         if (cl == &g_classes[VBC_FORM] && i >= ACCESSOR_BASE)
             ret = 4;
-        else if (i < cl->nslots) {
-            ret = cl->slots[i].ret;
-            if (cl->slots[i].kind == 0 && ret == 0 && i > 16)
+        else if (i < shape->nslots && (cl->slots || i < 18)) {
+            ret = shape->slots[i].ret;
+            if (shape->slots[i].kind == 0 && ret == 0 && i > 16)
                 ret = 8;
         }
         vt[i] = make_thunk(i, ret);
@@ -2092,7 +2105,7 @@ static BOOL resource_name(const VARIANT *id, const WCHAR **name, WCHAR *number_t
 {
     VARIANT v;
     VariantInit(&v);
-    if (V_VT(id) == VT_ERROR || FAILED(VariantCopyInd(&v, (VARIANT *)id)))
+    if (V_VT(id) == VT_ERROR || FAILED(VbCopyInd(&v, (VARIANT *)id)))
         return FALSE;
     if (V_VT(&v) == VT_BSTR) {
         lstrcpynW(number_text, V_BSTR(&v) ? V_BSTR(&v) : L"", 80);
@@ -2202,7 +2215,7 @@ static BSTR text_of_variant(const VARIANT *v)
     VARIANT in, out;
     VariantInit(&in);
     VariantInit(&out);
-    if (V_VT(v) == VT_ERROR || FAILED(VariantCopyInd(&in, (VARIANT *)v)))
+    if (V_VT(v) == VT_ERROR || FAILED(VbCopyInd(&in, (VARIANT *)v)))
         return nullptr;
     HRESULT hr = V_VT(&in) == VT_EMPTY ? S_OK : VariantChangeTypeEx(&out, &in, VbLocale(), 0, VT_BSTR);
     VariantClear(&in);
