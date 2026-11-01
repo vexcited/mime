@@ -62,7 +62,7 @@ static int call_com(Frame *f, IDispatch *d, DISPID id, WORD flags, VARIANT *argv
         if (ex.pfnDeferredFillIn)
             ex.pfnDeferredFillIn(&ex);
         HRESULT scode = ex.scode ? ex.scode : (HRESULT)ex.wCode;
-        if (!ex.scode && !ex.wCode)
+        if (scode >= 0)
             scode = E_FAIL;
         int rc = raise_hresult(f, scode, ex.bstrSource, ex.bstrDescription);
         free_excep(&ex);
@@ -76,11 +76,6 @@ static int call_com(Frame *f, IDispatch *d, DISPID id, WORD flags, VARIANT *argv
         if (f->E->Err.Number == (LONG)hr || ((ULONG)hr >> 16) != 0x800A) {
             /* an hresult that has no vbscript error stands as it is, with the engine's own words for none. */
         }
-        f->E->Fault.Host = FALSE;
-        if (hr == DISP_E_MEMBERNOTFOUND || hr == DISP_E_UNKNOWNNAME)
-            f->E->Fault.Host = FALSE;
-        else
-            f->E->Fault.Host = TRUE;
         return rc;
     }
     free_excep(&ex);
@@ -268,18 +263,14 @@ static HRESULT STDMETHODCALLTYPE inst_invoke_com(IDispatch *This, DISPID id, REF
     int rc = inst_invoke(&f, inst, id, nullptr, flags, args, argc, result ? &local : nullptr);
     HRESULT hr = S_OK;
     if (rc != R_OK) {
-        if (e->Fault.Set && e->NestedRun == 1 && !e->Fault.Compile && !e->Fault.Host) {
-            exception_of(e, ex);
-            hr = DISP_E_EXCEPTION;
+        if (e->NestedRun == 1) {
+            engine_report(e, FALSE);
+            hr = SCRIPT_E_REPORTED;
         } else if (e->Fault.Set) {
             exception_of(e, ex);
             hr = DISP_E_EXCEPTION;
         } else
             hr = DISP_E_MEMBERNOTFOUND;
-        if (e->NestedRun == 1) {
-            engine_report(e, FALSE);
-            hr = SCRIPT_E_REPORTED;
-        }
     } else if (result)
         *result = local;
     engine_leave(e);
@@ -713,11 +704,12 @@ static HRESULT STDMETHODCALLTYPE ref_invoke(IDispatch *This, DISPID id, REFIID r
     int rc = call_proc(e, r->P, r->Me, args, argc, result ? &local : nullptr, &f);
     HRESULT hr = S_OK;
     if (rc != R_OK) {
-        exception_of(e, ex);
-        hr = DISP_E_EXCEPTION;
         if (e->NestedRun == 1) {
             engine_report(e, FALSE);
             hr = SCRIPT_E_REPORTED;
+        } else {
+            exception_of(e, ex);
+            hr = DISP_E_EXCEPTION;
         }
     } else if (result)
         *result = local;
@@ -747,6 +739,7 @@ typedef struct ScriptDispatch {
     Engine *E;
     Sym **Ids;
     UINT Count, Capacity;
+    BOOL NoMembers;
 } ScriptDispatch;
 
 static ULONG STDMETHODCALLTYPE sd_addref(IDispatch *This)
@@ -773,7 +766,7 @@ static HRESULT STDMETHODCALLTYPE sd_names(IDispatch *This, REFIID riid, LPOLESTR
     HRESULT hr = S_OK;
     for (UINT i = 0; i < count; i++) {
         ids[i] = DISPID_UNKNOWN;
-        Sym *sym = i ? nullptr : sym_find(s->E, names[i], name_hash(names[i]));
+        Sym *sym = i || s->NoMembers ? nullptr : sym_find(s->E, names[i], name_hash(names[i]));
         if (!sym || (sym->Kind != SYM_VAR && sym->Kind != SYM_PROC && sym->Kind != SYM_CONST && sym->Kind != SYM_CLASS)) {
             hr = DISP_E_UNKNOWNNAME;
             continue;
@@ -833,11 +826,12 @@ static HRESULT STDMETHODCALLTYPE sd_invoke(IDispatch *This, DISPID id, REFIID ri
         rc = raise_error(&f, E_VBS_TYPE_MISMATCH, sym->Name);
     HRESULT hr = S_OK;
     if (rc != R_OK) {
-        exception_of(e, ex);
-        hr = DISP_E_EXCEPTION;
         if (e->NestedRun == 1) {
             engine_report(e, FALSE);
             hr = SCRIPT_E_REPORTED;
+        } else {
+            exception_of(e, ex);
+            hr = DISP_E_EXCEPTION;
         }
     } else if (result)
         *result = local;

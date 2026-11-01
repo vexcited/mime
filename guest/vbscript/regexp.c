@@ -288,6 +288,8 @@ static BOOL quantifier(Compiler *c, LONG *min, LONG *max)
                 *max = d2 ? bb : -1;
                 (void)b;
                 c->Pos = p + 1;
+                if (d2 && bb < a)
+                    c->Error = 5017;
                 return TRUE;
             }
         }
@@ -883,7 +885,7 @@ static HRESULT regex_error(EXCEPINFO *ex, int number)
     if (ex) {
         memset(ex, 0, sizeof(*ex));
         ex->scode = (HRESULT)(0x800A0000u | (ULONG)number);
-        ex->bstrSource = SysAllocString(L"Microsoft VBScript regular expression");
+        ex->bstrSource = SysAllocString(L"Microsoft VBScript runtime error");
         PCWSTR text = error_text(number);
         ex->bstrDescription = SysAllocString(text ? text : L"");
     }
@@ -1148,6 +1150,10 @@ static HRESULT STDMETHODCALLTYPE r_invoke(IDispatch *This, DISPID id, REFIID rii
             }
             return S_OK;
         case D_SUBMATCHES:
+            if (argc == 1) {
+                IDispatch *sub = &o->Sub->Dispatch;
+                return sub->lpVtbl->Invoke(sub, D_ITEM, riid, lcid, flags, p, result, ex, arg_err);
+            }
             if (result) {
                 result->vt = VT_DISPATCH;
                 result->pdispVal = &o->Sub->Dispatch;
@@ -1178,9 +1184,9 @@ static HRESULT STDMETHODCALLTYPE r_invoke(IDispatch *This, DISPID id, REFIID rii
             if (t.lVal < 0 || (UINT)t.lVal >= o->Count) {
                 if (ex) {
                     memset(ex, 0, sizeof(*ex));
-                    ex->scode = (HRESULT)0x800A0009u;
+                    ex->scode = (HRESULT)0x800A0005u;
                     ex->bstrSource = SysAllocString(L"Microsoft VBScript runtime error");
-                    ex->bstrDescription = SysAllocString(L"Subscript out of range");
+                    ex->bstrDescription = SysAllocString(L"Invalid procedure call or argument");
                 }
                 return DISP_E_EXCEPTION;
             }
@@ -1208,6 +1214,20 @@ static HRESULT STDMETHODCALLTYPE r_invoke(IDispatch *This, DISPID id, REFIID rii
     }
     return DISP_E_MEMBERNOTFOUND;
     #undef ARG
+}
+
+/* what TypeName says of these objects. */
+PCWSTR regexp_typename(IDispatch *object)
+{
+    if (object->lpVtbl != &g_robj_vtbl)
+        return nullptr;
+    switch (((RObj *)object)->Kind) {
+    case O_REGEXP: return L"IRegExp2";
+    case O_MATCHES: return L"IMatchCollection2";
+    case O_MATCH: return L"IMatch2";
+    case O_SUBMATCHES: return L"ISubMatches";
+    }
+    return nullptr;
 }
 
 const IDispatchVtbl g_robj_vtbl = {r_qi, r_addref, r_release, r_count, r_typeinfo, r_names, r_invoke};

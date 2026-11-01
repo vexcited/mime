@@ -202,7 +202,8 @@ static void link_stmt(Linker *L, Stmt *s)
         }
         break;
     case S_ERASE:
-        link_expr(L, s->u.Randomize, FALSE);
+        if (s->u.Randomize)
+            link_expr(L, s->u.Randomize, FALSE);
         break;
     case S_RANDOMIZE:
         if (s->u.Randomize)

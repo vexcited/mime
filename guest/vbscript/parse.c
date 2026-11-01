@@ -774,6 +774,11 @@ static Expr *parse_primary(Parser *p)
         advance(p);
         Token n;
         e->u.New.Name = expect_name(p, &n);
+        /* a name with a dot is the name of a class no script has, and says so when it runs. */
+        while (cur(p)->Kind == T_DOT && peek_token(p, 1)->Kind == T_IDENT) {
+            advance(p);
+            advance(p);
+        }
         return e;
     }
     case T_LPAREN: {

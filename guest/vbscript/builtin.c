@@ -1514,7 +1514,9 @@ FN(typename)
         else if (vt == VT_DISPATCH && is_script_instance(v->pdispVal)) {
             _snwprintf(buf, 80, L"%s", ((Instance *)v->pdispVal)->Cls->Name);
             name = buf;
-        } else
+        } else if (vt == VT_DISPATCH && regexp_typename(v->pdispVal))
+            name = regexp_typename(v->pdispVal);
+        else
             name = L"Object";
     } else if (vt == VT_UI1)
         name = L"Byte";

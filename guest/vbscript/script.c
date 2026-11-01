@@ -256,6 +256,8 @@ static HRESULT STDMETHODCALLTYPE script_set_state(IActiveScript *This, SCRIPTSTA
         return S_OK;
     case SCRIPTSTATE_CLOSED:
         return e->Script.lpVtbl->Close(&e->Script);
+    case SCRIPTSTATE_UNINITIALIZED:
+        return S_OK;
     default:
         return E_UNEXPECTED;
     }
@@ -470,6 +472,7 @@ static HRESULT STDMETHODCALLTYPE parse_text(IActiveScriptParse *This, LPCOLESTR 
         VARIANT v;
         VariantInit(&v);
         Stmt *s = unit->Statements;
+        e->Global.Line = e->Global.Col = 0;
         int rc = eval_unit_expression(e, s->u.Call->u.Operand, &e->Global, &v);
         if (rc != R_OK) {
             engine_report(e, FALSE);

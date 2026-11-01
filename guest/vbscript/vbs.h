@@ -317,7 +317,7 @@ typedef struct Fault {
     BOOL Compile;
     PWSTR Text;
     DWORD_PTR Cookie;
-    BOOL Host;
+    BOOL Host, Mapped;
 } Fault;
 
 typedef struct NamedItem {
@@ -348,7 +348,7 @@ struct Engine {
     IDispatch *ErrObject, *ScriptObject;
     ULONG Generation;
     UINT Depth;
-    BOOL Explicit, Interrupted, Closing, InScript, TermError;
+    BOOL Explicit, Interrupted, Closing, InScript;
     DWORD Thread;
     double RndSeed;
     BOOL RndInit;
@@ -447,6 +447,7 @@ int builtin_eval(Frame *frame, VARIANT *source, VARIANT *result, BOOL execute, B
 
 /* regexp.c */
 IDispatch *regexp_create(Engine *e);
+PCWSTR regexp_typename(IDispatch *object);
 
 /* script.c */
 Engine *engine_create(void);

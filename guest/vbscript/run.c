@@ -164,6 +164,7 @@ int raise_hresult(Frame *f, HRESULT hr, PCWSTR source, PCWSTR description)
     LONG number = error_number_of_hresult(hr);
     PCWSTR table = error_text(number);
     BOOL mapped = number != (LONG)hr || ((ULONG)hr >> 16) == 0x800A;
+    BOOL had_description = description != nullptr;
     if (!description && mapped && table)
         description = table;
     if (!source && mapped)
@@ -173,6 +174,8 @@ int raise_hresult(Frame *f, HRESULT hr, PCWSTR source, PCWSTR description)
     fault_set(e, scode, source, description, f->Line, f->Col);
     e->Fault.Cookie = f->Unit ? f->Unit->Cookie : 0;
     e->Fault.Host = TRUE;
+    /* an hresult with no words of its own has the words of the error, and a name can follow them. */
+    e->Fault.Mapped = mapped && !had_description;
     return R_ERR;
 }
 
@@ -483,6 +486,16 @@ static void target_release(Target *t)
 
 /* ------------------------------------------------------------------ values */
 
+/* the head of the dispatch of the script, whose members the keyword Me does not have. */
+typedef struct ScriptDispatchHeader {
+    IDispatch Dispatch;
+    LONG Refs;
+    Engine *E;
+    Sym **Ids;
+    UINT Count, Capacity;
+    BOOL NoMembers;
+} ScriptDispatchHeader;
+
 static int stack_check(Frame *f)
 {
     PTEB teb = NtCurrentTeb();
@@ -534,11 +547,13 @@ static int obj_value(Frame *f, VARIANT *v, Expr *src)
         VariantInit(&r);
         int rc = obj_default(f, v, DISPATCH_METHOD | DISPATCH_PROPERTYGET, nullptr, 0, &r);
         if (rc != R_OK) {
-            if (src && (src->Kind == X_NAME || src->Kind == X_MEMBER) && f->E->Fault.Set && !f->E->Fault.Host &&
-                f->E->Err.Number == E_VBS_NO_MEMBER) {
+            if (src && (src->Kind == X_NAME || src->Kind == X_MEMBER) && f->E->Fault.Set &&
+                (!f->E->Fault.Host || f->E->Fault.Mapped) && f->E->Err.Number != 0 &&
+                (f->E->Err.Number == E_VBS_NO_MEMBER || f->E->Err.Number == E_VBS_WRONG_ARGS)) {
                 WCHAR name[80];
+                LONG number = f->E->Err.Number;
                 describe_expr(src, v, name);
-                raise_error(f, E_VBS_NO_MEMBER, name);
+                raise_error(f, number, name);
             }
             return rc;
         }
@@ -894,6 +909,22 @@ static int field_cell(Frame *f, Instance *inst, PCWSTR name, VARIANT **cell)
 static int lvalue_cell(Frame *f, Expr *x, VARIANT **cell)
 {
     *cell = nullptr;
+    if (x->Kind == X_CALL && x->u.Call.Target->Kind == X_CALL) {
+        VARIANT *outer = nullptr;
+        int rc = lvalue_cell(f, x->u.Call.Target, &outer);
+        if (rc != R_OK || !outer)
+            return rc;
+        VARIANT *arr = cell_target(outer);
+        if (!(arr->vt & VT_ARRAY))
+            return R_OK;
+        ArgList a;
+        rc = arglist_eval(f, &x->u.Call.Arguments, nullptr, FALSE, &a);
+        if (rc != R_OK)
+            return rc;
+        rc = array_element_ref(f, arr, a.V, a.Count, cell);
+        arglist_free(&a);
+        return rc;
+    }
     if (x->Kind == X_NAME) {
         Target t;
         resolve_name(f, x, &t, TRUE);
@@ -1157,8 +1188,10 @@ static int eval_member(Frame *f, Expr *x, VARIANT *out, BOOL statement)
     VARIANT result;
     VariantInit(&result);
     rc = obj_get(f, &obj, x->u.Member.Name, nullptr, a.V, a.Count, flags, &result, nullptr);
-    if (rc != R_OK && f->E->Err.Number == E_VBS_NO_MEMBER && !f->E->Fault.Host)
+    if (rc != R_OK && f->E->Err.Number == E_VBS_NO_MEMBER && (!f->E->Fault.Host || f->E->Fault.Mapped))
         raise_error(f, E_VBS_NO_MEMBER, detail);
+    else if (rc != R_OK && f->E->Err.Number == E_VBS_TYPE_MISMATCH && f->E->Fault.Host && f->E->Fault.Mapped)
+        raise_error(f, E_VBS_TYPE_MISMATCH, detail);
     arglist_free(&a);
     VariantClear(&obj);
     if (rc != R_OK)
@@ -1199,6 +1232,10 @@ static int eval_name_call(Frame *f, Expr *name_expr, Args *args, BOOL statement,
     switch (t.Kind) {
     case TG_CELL: {
         VARIANT *cell = cell_target(t.Cell);
+        if (statement && !has_args && !(args && has_parens)) {
+            rc = raise_error(f, E_VBS_TYPE_MISMATCH, name_declared(f, name_expr) ? nullptr : name);
+            break;
+        }
         if (!has_args && !(args && has_parens)) {
             VariantInit(out);
             VariantCopy(out, cell);
@@ -1392,6 +1429,7 @@ int eval(Frame *f, Expr *x, VARIANT *out)
         if (!f->Me) {
             out->vt = VT_DISPATCH;
             out->pdispVal = script_dispatch_create(f->E);
+            ((ScriptDispatchHeader *)out->pdispVal)->NoMembers = TRUE;
             return R_OK;
         }
         out->vt = VT_DISPATCH;
@@ -1516,7 +1554,7 @@ static int assign_to(Frame *f, Expr *target, VARIANT *value, BOOL set)
             return rc;
         }
         rc = obj_put(f, &obj, target->u.Member.Name, a.V, a.Count, value, set);
-        if (rc != R_OK && f->E->Err.Number == E_VBS_NO_MEMBER && !f->E->Fault.Host) {
+        if (rc != R_OK && f->E->Err.Number == E_VBS_NO_MEMBER && (!f->E->Fault.Host || f->E->Fault.Mapped)) {
             WCHAR d[80];
             member_detail(target, d);
             raise_error(f, E_VBS_NO_MEMBER, d);
@@ -1547,6 +1585,19 @@ static int assign_to(Frame *f, Expr *target, VARIANT *value, BOOL set)
             } else if (t.Kind == TG_NONE) {
                 target_release(&t);
                 return raise_error(f, E_VBS_TYPE_MISMATCH, base->u.Name.Name);
+            }
+        } else if (base->Kind == X_CALL) {
+            VARIANT *inner = nullptr;
+            int rc = lvalue_cell(f, base, &inner);
+            if (rc != R_OK)
+                return rc;
+            if (inner)
+                cell = cell_target(inner);
+            else {
+                rc = eval(f, base, &bv);
+                if (rc != R_OK)
+                    return rc;
+                cell = cell_target(&bv);
             }
         } else {
             int rc = eval(f, base, &bv);
@@ -1804,6 +1855,10 @@ static int exec_for(Frame *f, Stmt *s)
     rc = rvalue(f, s->u.For.To, &to);
     if (rc != R_OK) {
         VariantClear(&from);
+        if (f->ResumeNext) {
+            rc = run_statements(f, s->u.For.Body);
+            return rc == R_EXIT_FOR ? R_OK : rc;
+        }
         return rc;
     }
     VariantInit(&step);
@@ -1842,9 +1897,30 @@ static int exec_for(Frame *f, Stmt *s)
             return raise_error(f, E_VBS_TYPE_MISMATCH, L"Null");
         }
     }
+    {
+        VARTYPE widest = VT_I2;
+        for (int i = 0; i < 3; i++) {
+            VARTYPE vt = cell_target(vs[i])->vt;
+            if (vt == VT_I4 && widest == VT_I2)
+                widest = VT_I4;
+            else if (vt != VT_I2 && vt != VT_I4 && vt != VT_BOOL && vt != VT_EMPTY && vt != VT_UI1)
+                widest = VT_R8;
+        }
+        if (widest != VT_I2)
+            for (int i = 0; i < 3; i++) {
+                VARIANT *v = cell_target(vs[i]);
+                VARIANT c;
+                VariantInit(&c);
+                if (v->vt != widest && SUCCEEDED(VariantChangeTypeEx(&c, v, f->E->Lcid, 0, widest))) {
+                    VariantClear(v);
+                    *v = c;
+                }
+            }
+    }
     VARIANT zero;
     VariantInit(&zero);
     zero.vt = VT_I2;
+    zero.iVal = 0;
     int cmp = 0;
     HRESULT hr = var_compare(&step, &zero, f->E->Lcid, &cmp);
     BOOL down = SUCCEEDED(hr) && cmp < 0;
@@ -2289,11 +2365,6 @@ int run_statements(Frame *f, Stmt *s)
         f->Line = s->Line;
         f->Col = s->Col;
         int rc = exec_one(f, s);
-        if (rc == R_OK && f->E->TermError) {
-            /* the terminator of an object the statement let go of failed. */
-            f->E->TermError = FALSE;
-            rc = R_ERR;
-        }
         if (rc == R_ERR) {
             if (f->ResumeNext && !f->E->Interrupted)
                 continue;
@@ -2352,8 +2423,9 @@ void instance_destroy(Instance *inst)
         Frame g = {};
         g.E = e;
         g.Unit = inst->Cls->Unit;
+        /* a failing terminator is told to the site and the script goes on. */
         if (call_proc(e, inst->Cls->Terminate, inst, nullptr, 0, nullptr, &g) != R_OK)
-            e->TermError = TRUE;
+            engine_report(e, FALSE);
         if (--inst->Refs > 0)
             return;
     }

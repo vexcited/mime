@@ -70,7 +70,19 @@ HRESULT var_binary(int op, VARIANT *l, VARIANT *r, VARIANT *out, LCID lcid)
         }
         return hr;
     }
-    case OP_DIV: return VarDiv(l, r, out);
+    case OP_DIV: {
+        HRESULT hr = VarDiv(l, r, out);
+        if (hr != DISP_E_OVERFLOW || !is_numeric_type(r->vt) || r->vt == VT_DECIMAL)
+            return hr;
+        /* the 32 bit oleaut32 reports every division by zero as an overflow, the engine tells them apart. */
+        VARIANT x, y;
+        VariantInit(&x);
+        VariantInit(&y);
+        if (SUCCEEDED(VariantChangeTypeEx(&y, r, lcid, 0, VT_R8)) && y.dblVal == 0.0 &&
+            SUCCEEDED(VariantChangeTypeEx(&x, l, lcid, 0, VT_R8)) && x.dblVal != 0.0)
+            return DISP_E_DIVBYZERO;
+        return hr;
+    }
     case OP_IDIV: return VarIdiv(l, r, out);
     case OP_MOD: return VarMod(l, r, out);
     case OP_POW: return VarPow(l, r, out);
