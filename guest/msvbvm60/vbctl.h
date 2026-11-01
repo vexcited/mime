@@ -98,6 +98,8 @@ struct VbForm {
 /* the class number of a control of another library, which has the properties of the container of objects. */
 #define VBC_OCX 38
 #define VBC_MDIFORM 20
+static inline BOOL is_list(const VbCtl *c) { return c->cls == VBC_LISTBOX || c->cls == VBC_COMBOBOX; }
+static inline BOOL is_scroll(const VbCtl *c) { return c->cls == VBC_HSCROLL || c->cls == VBC_VSCROLL; }
 static inline BOOL is_form(const VbCtl *c) { return c->cls == VBC_FORM || c->cls == VBC_MDIFORM; }
 
 extern const VbHeader *g_vb_header;

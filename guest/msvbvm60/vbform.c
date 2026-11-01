@@ -434,6 +434,7 @@ static void apply_text(VbCtl *c)
 }
 
 static void timer_update(VbCtl *c);
+static void apply_property(VbCtl *c, int k);
 
 static void apply_all(VbCtl *c)
 {
@@ -447,6 +448,8 @@ static void apply_all(VbCtl *c)
         return;
     }
     place(c);
+    if (is_scroll(c) && c->hwnd)
+        apply_property(c, find_prop(c, "Max"));
     apply_text(c);
     if (c->hwnd) {
         HFONT f = font_of(c);
@@ -466,6 +469,11 @@ static const WCHAR *window_class(int cls)
     case VBC_OPTION: return L"ThunderRT6OptionButton";
     case VBC_FRAME: return L"ThunderRT6Frame";
     case VBC_TEXTBOX: return L"ThunderRT6TextBox";
+    case VBC_PICTUREBOX: return L"ThunderRT6PictureBoxDC";
+    case VBC_LISTBOX: return L"ThunderRT6ListBox";
+    case VBC_COMBOBOX: return L"ThunderRT6ComboBox";
+    case VBC_HSCROLL: return L"ThunderRT6HScrollBar";
+    case VBC_VSCROLL: return L"ThunderRT6VScrollBar";
     default: return nullptr;
     }
 }
@@ -483,6 +491,29 @@ static void create_child_window(VbCtl *c)
     switch (c->cls) {
     case VBC_COMMAND: style |= BS_PUSHBUTTON | BS_MULTILINE; break;
     case VBC_CHECKBOX: style |= BS_AUTOCHECKBOX; break;
+    case VBC_PICTUREBOX:
+        if (NUM(c, "BorderStyle") != 0)
+            ex |= WS_EX_CLIENTEDGE;
+        break;
+    case VBC_LISTBOX:
+        style |= WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT;
+        if (NUM(c, "Sorted") != 0)
+            style |= LBS_SORT;
+        if (NUM(c, "MultiSelect") != 0)
+            style |= NUM(c, "MultiSelect") == 1 ? LBS_MULTIPLESEL : LBS_EXTENDEDSEL;
+        if (NUM(c, "Columns") > 0)
+            style |= LBS_MULTICOLUMN;
+        ex |= WS_EX_CLIENTEDGE;
+        break;
+    case VBC_COMBOBOX: {
+        int cs = (int)NUM(c, "Style");
+        style |= WS_TABSTOP | WS_VSCROLL | (cs == 1 ? CBS_SIMPLE : cs == 2 ? CBS_DROPDOWNLIST : CBS_DROPDOWN) | CBS_AUTOHSCROLL;
+        if (NUM(c, "Sorted") != 0)
+            style |= CBS_SORT;
+        break;
+    }
+    case VBC_HSCROLL: style |= WS_TABSTOP | SBS_HORZ; break;
+    case VBC_VSCROLL: style |= WS_TABSTOP | SBS_VERT; break;
     case VBC_OPTION: style |= BS_AUTORADIOBUTTON; break;
     case VBC_TEXTBOX:
         style |= WS_TABSTOP | ES_AUTOHSCROLL;
@@ -639,6 +670,38 @@ static VbCtl *ctl_of(void *object)
     return c && c->magic == MAGIC ? c : nullptr;
 }
 
+/* what the window of a list box, combo box or scroll bar knows better than the stored property. */
+static BOOL window_value(VbCtl *c, const char *n, DWORD *out)
+{
+    if (!c->hwnd)
+        return FALSE;
+    BOOL list = c->cls == VBC_LISTBOX;
+    if (is_list(c)) {
+        if (!lstrcmpA(n, "ListCount")) {
+            *out = (USHORT)(SHORT)SendMessageW(c->hwnd, list ? LB_GETCOUNT : CB_GETCOUNT, 0, 0);
+            return TRUE;
+        }
+        if (!lstrcmpA(n, "ListIndex")) {
+            *out = (USHORT)(SHORT)SendMessageW(c->hwnd, list ? LB_GETCURSEL : CB_GETCURSEL, 0, 0);
+            return TRUE;
+        }
+        if (!lstrcmpA(n, "Text")) {
+            WCHAR text[512] = L"";
+            LRESULT sel = list ? SendMessageW(c->hwnd, LB_GETCURSEL, 0, 0) : -1;
+            if (list && sel >= 0 && SendMessageW(c->hwnd, LB_GETTEXTLEN, sel, 0) < 511)
+                SendMessageW(c->hwnd, LB_GETTEXT, sel, (LPARAM)text);
+            else if (!list)
+                GetWindowTextW(c->hwnd, text, 512);
+            *(BSTR *)out = SysAllocString(text);
+            return TRUE;
+        }
+    } else if (is_scroll(c) && !lstrcmpA(n, "Value")) {
+        *out = (USHORT)(SHORT)GetScrollPos(c->hwnd, SB_CTL);
+        return TRUE;
+    }
+    return FALSE;
+}
+
 static void get_value(VbCtl *c, int k, DWORD *out)
 {
     const VBPROP *p = prop_of(c, k);
@@ -646,6 +709,8 @@ static void get_value(VbCtl *c, int k, DWORD *out)
         *out = 0;
         return;
     }
+    if (window_value(c, p->name, out))
+        return;
     switch (p->type) {
     case 1: {
         const WCHAR *s = c->set[k] ? text_of(c, k) : L"";
@@ -690,6 +755,25 @@ static void apply_property(VbCtl *c, int k)
     if (c->cls == VBC_TIMER) {
         if (!lstrcmpA(n, "Enabled") || !lstrcmpA(n, "Interval"))
             timer_update(c);
+        return;
+    }
+    if (c->hwnd && is_list(c) && !lstrcmpA(n, "ListIndex")) {
+        SendMessageW(c->hwnd, c->cls == VBC_LISTBOX ? LB_SETCURSEL : CB_SETCURSEL, (WPARAM)(int)NUM(c, "ListIndex"), 0);
+        return;
+    }
+    if (c->hwnd && c->cls == VBC_COMBOBOX && !lstrcmpA(n, "Text")) {
+        SetWindowTextW(c->hwnd, text_of(c, k));
+        return;
+    }
+    if (c->hwnd && is_scroll(c) && (!lstrcmpA(n, "Min") || !lstrcmpA(n, "Max") || !lstrcmpA(n, "Value") || !lstrcmpA(n, "LargeChange"))) {
+        SCROLLINFO si = {sizeof(si), SIF_RANGE | SIF_PAGE | SIF_POS};
+        si.nMin = (int)NUM(c, "Min");
+        si.nMax = (int)NUM(c, "Max");
+        si.nPage = (UINT)NUM(c, "LargeChange") ? (UINT)NUM(c, "LargeChange") : 1;
+        si.nPos = (int)NUM(c, "Value");
+        /* the thumb of a scroll bar of Visual Basic can reach Max, which a page of one makes the last position of the range. */
+        si.nMax += (int)si.nPage - 1;
+        SetScrollInfo(c->hwnd, SB_CTL, &si, TRUE);
         return;
     }
     if (!lstrcmpA(n, "Caption") || !lstrcmpA(n, "Text")) {
@@ -816,6 +900,19 @@ static HRESULT call_method(VbCtl *c, int slot, const VBSLOT *s, DWORD *args)
         return clipboard_method(c, s->index, args);
     } else if (c->cls == VBC_APP) {
         /* StartLogging and LogEvent have nowhere to write to. */
+        return S_OK;
+    } else if (is_list(c) && c->hwnd && (s->kind == 3 || s->kind == 4) && s->index <= 2) {
+        BOOL list = c->cls == VBC_LISTBOX;
+        if (s->index == 0) { /* Clear */
+            SendMessageW(c->hwnd, list ? LB_RESETCONTENT : CB_RESETCONTENT, 0, 0);
+        } else if (s->index == 1) { /* AddItem Item, Index */
+            const WCHAR *text = (const WCHAR *)(ULONG_PTR)args[0];
+            const VARIANT *at = (const VARIANT *)(args + 1);
+            int position = at->vt == VT_ERROR || at->vt == VT_EMPTY ? -1 : (int)(at->vt == VT_I2 ? at->iVal : at->lVal);
+            SendMessageW(c->hwnd, list ? LB_INSERTSTRING : CB_INSERTSTRING, (WPARAM)position, (LPARAM)(text ? text : L""));
+        } else { /* RemoveItem Index */
+            SendMessageW(c->hwnd, list ? LB_DELETESTRING : CB_DELETESTRING, (WPARAM)(int)args[0], 0);
+        }
         return S_OK;
     } else if (s->kind == 3 && s->index == 0) {
         return S_OK;
@@ -1245,6 +1342,34 @@ static LRESULT CALLBACK form_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (f->loaded)
             FIRE(self, LOWORD(wp) ? "Activate" : "Deactivate");
         break;
+    case WM_HSCROLL:
+    case WM_VSCROLL: {
+        VbCtl *bar = ctl_of_window((HWND)lp);
+        if (!bar || !is_scroll(bar))
+            break;
+        SCROLLINFO si = {sizeof(si), SIF_ALL};
+        GetScrollInfo(bar->hwnd, SB_CTL, &si);
+        int small = (int)NUM(bar, "SmallChange"), large = (int)NUM(bar, "LargeChange");
+        int min = (int)NUM(bar, "Min"), max = (int)NUM(bar, "Max");
+        int pos = si.nPos;
+        switch (LOWORD(wp)) {
+        case SB_LINELEFT: pos -= small ? small : 1; break;
+        case SB_LINERIGHT: pos += small ? small : 1; break;
+        case SB_PAGELEFT: pos -= large ? large : 1; break;
+        case SB_PAGERIGHT: pos += large ? large : 1; break;
+        case SB_THUMBTRACK:
+        case SB_THUMBPOSITION: pos = si.nTrackPos; break;
+        case SB_LEFT: pos = min; break;
+        case SB_RIGHT: pos = max; break;
+        default: return 0;
+        }
+        /* the bar goes from Min to Max the way Value runs, which for a vertical bar is the same direction as for a horizontal one. */
+        pos = pos < (min < max ? min : max) ? (min < max ? min : max) : pos > (min < max ? max : min) ? (min < max ? max : min) : pos;
+        SetScrollPos(bar->hwnd, SB_CTL, pos, TRUE);
+        set_number(bar, find_prop(bar, "Value"), pos);
+        FIRE(bar, LOWORD(wp) == SB_THUMBTRACK ? "Scroll" : "Change");
+        return 0;
+    }
     case WM_TIMER:
         if (wp >= TIMER_BASE && wp < TIMER_BASE + MAX_CONTROLS) {
             for (int i = 0; i < f->count; i++)
@@ -1293,6 +1418,19 @@ static LRESULT CALLBACK form_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         VbCtl *c = ctl_of_window(child);
         if (!c)
             break;
+        if (is_list(c)) {
+            switch (HIWORD(wp)) {
+            case 1: FIRE(c, "Click"); break; /* LBN_SELCHANGE and CBN_SELCHANGE */
+            case 2: /* LBN_DBLCLK, CBN_DBLCLK is 2 as well */ FIRE(c, "DblClick"); break;
+            case 7:
+                if (c->cls == VBC_COMBOBOX)
+                    FIRE(c, "DropDown");
+                break;
+            case 3: /* CBN_SETFOCUS, LBN_SETFOCUS */ FIRE(c, "GotFocus"); break;
+            case 4: FIRE(c, "LostFocus"); break;
+            }
+            return 0;
+        }
         switch (HIWORD(wp)) {
         case BN_CLICKED:
             read_back(c);
@@ -1389,6 +1527,33 @@ static LRESULT CALLBACK frame_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+/* a picture box is a window with the colour of its back, whose mouse and focus events are those of a control. */
+static LRESULT CALLBACK picture_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    VbCtl *c = ctl_of_window(hwnd);
+    switch (msg) {
+    case WM_ERASEBKGND:
+        if (c) {
+            RECT r;
+            GetClientRect(hwnd, &r);
+            HBRUSH b = CreateSolidBrush(color_of(c, find_prop(c, "BackColor"), 0));
+            FillRect((HDC)wp, &r, b);
+            DeleteObject(b);
+            return 1;
+        }
+        break;
+    case WM_LBUTTONUP:
+        if (c)
+            FIRE(c, "Click");
+        break;
+    case WM_LBUTTONDBLCLK:
+        if (c)
+            FIRE(c, "DblClick");
+        break;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
 static void register_control_classes(HINSTANCE module)
 {
     WNDCLASSW frame = {};
@@ -1402,7 +1567,8 @@ static void register_control_classes(HINSTANCE module)
         const WCHAR *name;
         const WCHAR *base;
     } classes[] = {{L"ThunderRT6CommandButton", L"BUTTON"}, {L"ThunderRT6CheckBox", L"BUTTON"}, {L"ThunderRT6OptionButton", L"BUTTON"},
-                   {L"ThunderRT6TextBox", L"EDIT"}};
+                   {L"ThunderRT6TextBox", L"EDIT"}, {L"ThunderRT6ListBox", L"LISTBOX"}, {L"ThunderRT6ComboBox", L"COMBOBOX"},
+                   {L"ThunderRT6HScrollBar", L"SCROLLBAR"}, {L"ThunderRT6VScrollBar", L"SCROLLBAR"}};
     for (unsigned i = 0; i < sizeof(classes) / sizeof(classes[0]); i++) {
         WNDCLASSW wc;
         if (!GetClassInfoW(nullptr, classes[i].base, &wc))
@@ -1411,6 +1577,13 @@ static void register_control_classes(HINSTANCE module)
         wc.hInstance = module;
         RegisterClassW(&wc);
     }
+    WNDCLASSW picture = {};
+    picture.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
+    picture.lpfnWndProc = picture_proc;
+    picture.hInstance = module;
+    picture.hCursor = LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW);
+    picture.lpszClassName = L"ThunderRT6PictureBoxDC";
+    RegisterClassW(&picture);
     WNDCLASSW form = {};
     form.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
     form.lpfnWndProc = form_proc;
