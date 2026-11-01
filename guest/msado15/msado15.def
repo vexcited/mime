@@ -1,0 +1,5 @@
+; the exports of msado15.dll of windows with their ordinals, less the ones that are not here yet.
+LIBRARY msado15.dll
+EXPORTS
+    DllCanUnloadNow @1
+    DllGetClassObject @2

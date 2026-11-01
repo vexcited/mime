@@ -1,0 +1,4 @@
+LIBRARY msado15.dll
+EXPORTS
+    DllCanUnloadNow@0 @1
+    DllGetClassObject@12 @2
