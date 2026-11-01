@@ -704,12 +704,49 @@ static HFONT create_dialog_font(const TEMPLATE_INFO *t, UINT dpi)
     return CreateFontIndirectW(&lf);
 }
 
+/* the dpi of the monitor with this handle, 0 when there is none. */
+static UINT monitor_dpi(HMONITOR monitor)
+{
+    MIME_MONITOR_INFO list[MIME_USER_MAX_MONITORS];
+    ULONG count = (ULONG)NtUserCallTwoParam((ULONG_PTR)list, MIME_USER_MAX_MONITORS, MIME_TWOPARAM_GETMONITORS);
+    ULONG_PTR index = (ULONG_PTR)monitor - 0x00010001;
+    if (!monitor || (ULONG_PTR)monitor < 0x00010001 || count > MIME_USER_MAX_MONITORS || index >= count)
+        return 0;
+    return list[index].Dpi ? list[index].Dpi : 96;
+}
+
+/*
+ * the dpi a dialog is made for. a per monitor v2 thread makes a dialog for the monitor it will be on, the one of its
+ * owner, or the one the pointer is on for a dialog centered on it, and a child dialog for the dpi of its parent. else it
+ * is the dpi of the system, and a move to another monitor scales the dialog afterward.
+ */
+static UINT dialog_dpi(HWND owner, DWORD style)
+{
+    UINT dpi = GetDpiForSystem();
+    if (!AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), (DPI_AWARENESS_CONTEXT)-4))
+        return dpi;
+    if (style & (WS_CHILD | DS_CONTROL)) {
+        UINT parent = owner ? GetWindowDPI(owner) : 0;
+        return parent ? parent : dpi;
+    }
+    HMONITOR monitor;
+    if (style & DS_CENTERMOUSE) {
+        POINT pt;
+        GetCursorPos(&pt);
+        monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+    } else {
+        monitor = MonitorFromWindow(owner, MONITOR_DEFAULTTOPRIMARY);
+    }
+    UINT monitor_dpi_value = monitor_dpi(monitor);
+    return monitor_dpi_value ? monitor_dpi_value : dpi;
+}
+
 HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGPROC proc, LPARAM param, BOOL ansi,
                       BOOL modal)
 {
     TEMPLATE_INFO t;
     parse_template(tmpl, &t);
-    UINT dpi = GetDpiForSystem();
+    UINT dpi = dialog_dpi(owner, t.Style);
 
     DIALOG *d = UserAlloc(sizeof(DIALOG));
     if (!d)
