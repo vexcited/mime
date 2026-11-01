@@ -299,8 +299,8 @@ static WND *presented_window(WND *parent, const WND *top, const PLACE *place, co
 
 /*
  * what of the top level window an image shows over: the client area of the window it was presented for, inside the
- * client areas of its parents and under the siblings in front of it, as the window manager clips a child window.
- * canvas pixels relative to the window's corner.
+ * client areas of its parents and under the siblings in front of it, as the window manager clips a child window. a
+ * transparent sibling, such as the legacy window of a browser, hides nothing. canvas pixels of the window.
  */
 static void presented_clip(WND *top, WND *window, const PLACE *place, REGION *out)
 {
@@ -309,7 +309,7 @@ static void presented_clip(WND *top, WND *window, const PLACE *place, REGION *ou
     RgnSetRect(&area, &window->ClientRect);
     for (WND *n = window; n != top && n->Parent; n = n->Parent) {
         for (WND *s = n->Parent->FirstChild; s && s != n; s = s->Next)
-            if (s->Style & WS_VISIBLE)
+            if ((s->Style & WS_VISIBLE) && !(s->ExStyle & WS_EX_TRANSPARENT))
                 RgnCombineRect(&area, &area, &s->WindowRect, RGN_DIFF);
         RgnCombineRect(&area, &area, &n->Parent->ClientRect, RGN_AND);
     }
