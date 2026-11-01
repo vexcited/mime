@@ -291,7 +291,7 @@ EXPORTS
     __vbaRedimPreserveVar2 @388
     __vbaRedimVar @389
     __vbaRefVarAry @390
-    __vbaResume @391
+    __vbaResume@4 @391
     __vbaRsetFixstr @392
     __vbaRsetFixstrFree @393
     __vbaSetSystemError @394
@@ -349,7 +349,7 @@ EXPORTS
     __vbaUdtVar @446
     __vbaUnkVar@4 @447
     __vbaVar2Vec @448
-    __vbaVarAbs @449
+    __vbaVarAbs@8 @449
     __vbaVarAdd@12 @450
     __vbaVarAnd@12 @451
     __vbaVarCat@12 @452
@@ -361,13 +361,13 @@ EXPORTS
     __vbaVarCmpNe@12 @458
     __vbaVarDateVar @459
     __vbaVarDiv@12 @460
-    __vbaVarEqv @461
+    __vbaVarEqv@12 @461
     __vbaVarErrI4 @462
-    __vbaVarFix @463
+    __vbaVarFix@8 @463
     __vbaVarForInit @464
     __vbaVarForNext @465
-    __vbaVarIdiv @466
-    __vbaVarImp @467
+    __vbaVarIdiv@12 @466
+    __vbaVarImp@12 @467
     __vbaVarIndexLoad @468
     __vbaVarIndexLoadRef @469
     __vbaVarIndexLoadRefLock @470
@@ -376,12 +376,12 @@ EXPORTS
     __vbaVarInt@8 @473
     __vbaVarLike @474
     __vbaVarLikeVar @475
-    __vbaVarMod @476
+    __vbaVarMod@12 @476
     __vbaVarMul@12 @477
-    __vbaVarNeg @478
+    __vbaVarNeg@8 @478
     __vbaVarNot@8 @479
     __vbaVarOr@12 @480
-    __vbaVarPow @481
+    __vbaVarPow@12 @481
     __vbaVarSetObj@8 @482
     __vbaVarSetObjAddref@8 @483
     __vbaVarSetUnk @484
@@ -409,7 +409,7 @@ EXPORTS
     __vbaVarTstLe@8 @506
     __vbaVarTstLt @507
     __vbaVarTstNe@8 @508
-    __vbaVarXor @509
+    __vbaVarXor@12 @509
     __vbaVargObj @510
     __vbaVargObjAddref @511
     rtcLeftBstr @512
@@ -505,7 +505,7 @@ EXPORTS
     __vbaVargUnk @602
     __vbaVargUnkAddref @603
     __vbaVerifyVarObj@4 @604
-    rtcGetErl @605
+    rtcGetErl@0 @605
     rtcStringBstr@8 @606
     rtcStringVar @607
     rtcVarBstrFromAnsi@8 @608
@@ -555,9 +555,9 @@ EXPORTS
     rtcVarFromError@8 @652
     rtcLenCharVar @653
     rtcLenVar @654
-    rtcFixVar @655
-    rtcAbsVar @656
-    rtcIntVar @657
+    rtcFixVar@8 @655
+    rtcAbsVar@8 @656
+    rtcIntVar@8 @657
     rtcSgnVar @658
     _adj_fdiv_m16i @659
     rtcVarFromFormatVar @660

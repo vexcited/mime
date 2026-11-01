@@ -229,7 +229,6 @@ void vbstub_387(void) { missing("__vbaRedimPreserveVar"); }
 void vbstub_388(void) { missing("__vbaRedimPreserveVar2"); }
 void vbstub_389(void) { missing("__vbaRedimVar"); }
 void vbstub_390(void) { missing("__vbaRefVarAry"); }
-void vbstub_391(void) { missing("__vbaResume"); }
 void vbstub_392(void) { missing("__vbaRsetFixstr"); }
 void vbstub_393(void) { missing("__vbaRsetFixstrFree"); }
 void vbstub_395(void) { missing("__vbaStopExe"); }
@@ -269,17 +268,12 @@ void vbstub_442(void) { missing("__vbaUI1ErrVar"); }
 void vbstub_445(void) { missing("__vbaUbound"); }
 void vbstub_446(void) { missing("__vbaUdtVar"); }
 void vbstub_448(void) { missing("__vbaVar2Vec"); }
-void vbstub_449(void) { missing("__vbaVarAbs"); }
 void vbstub_454(void) { missing("__vbaVarCmpGe"); }
 void vbstub_456(void) { missing("__vbaVarCmpLe"); }
 void vbstub_459(void) { missing("__vbaVarDateVar"); }
-void vbstub_461(void) { missing("__vbaVarEqv"); }
 void vbstub_462(void) { missing("__vbaVarErrI4"); }
-void vbstub_463(void) { missing("__vbaVarFix"); }
 void vbstub_464(void) { missing("__vbaVarForInit"); }
 void vbstub_465(void) { missing("__vbaVarForNext"); }
-void vbstub_466(void) { missing("__vbaVarIdiv"); }
-void vbstub_467(void) { missing("__vbaVarImp"); }
 void vbstub_468(void) { missing("__vbaVarIndexLoad"); }
 void vbstub_469(void) { missing("__vbaVarIndexLoadRef"); }
 void vbstub_470(void) { missing("__vbaVarIndexLoadRefLock"); }
@@ -287,9 +281,6 @@ void vbstub_471(void) { missing("__vbaVarIndexStore"); }
 void vbstub_472(void) { missing("__vbaVarIndexStoreObj"); }
 void vbstub_474(void) { missing("__vbaVarLike"); }
 void vbstub_475(void) { missing("__vbaVarLikeVar"); }
-void vbstub_476(void) { missing("__vbaVarMod"); }
-void vbstub_478(void) { missing("__vbaVarNeg"); }
-void vbstub_481(void) { missing("__vbaVarPow"); }
 void vbstub_484(void) { missing("__vbaVarSetUnk"); }
 void vbstub_485(void) { missing("__vbaVarSetUnkAddref"); }
 void vbstub_487(void) { missing("__vbaVarSetVarAddref"); }
@@ -302,7 +293,6 @@ void vbstub_495(void) { missing("__vbaVarTextLike"); }
 void vbstub_496(void) { missing("__vbaVarTextLikeVar"); }
 void vbstub_500(void) { missing("__vbaVarTextTstLe"); }
 void vbstub_507(void) { missing("__vbaVarTstLt"); }
-void vbstub_509(void) { missing("__vbaVarXor"); }
 void vbstub_510(void) { missing("__vbaVargObj"); }
 void vbstub_511(void) { missing("__vbaVargObjAddref"); }
 void vbstub_512(void) { missing("rtcLeftBstr"); }
@@ -378,7 +368,6 @@ void vbstub_600(void) { missing("rtcShell"); }
 void vbstub_601(void) { missing("rtcArray"); }
 void vbstub_602(void) { missing("__vbaVargUnk"); }
 void vbstub_603(void) { missing("__vbaVargUnkAddref"); }
-void vbstub_605(void) { missing("rtcGetErl"); }
 void vbstub_607(void) { missing("rtcStringVar"); }
 void vbstub_609(void) { missing("rtcGetDateBstr"); }
 void vbstub_610(void) { missing("rtcGetDateVar"); }
@@ -417,9 +406,6 @@ void vbstub_650(void) { missing("rtcBstrFromFormatVar"); }
 void vbstub_651(void) { missing("rtcBstrFromError"); }
 void vbstub_653(void) { missing("rtcLenCharVar"); }
 void vbstub_654(void) { missing("rtcLenVar"); }
-void vbstub_655(void) { missing("rtcFixVar"); }
-void vbstub_656(void) { missing("rtcAbsVar"); }
-void vbstub_657(void) { missing("rtcIntVar"); }
 void vbstub_658(void) { missing("rtcSgnVar"); }
 void vbstub_660(void) { missing("rtcVarFromFormatVar"); }
 void vbstub_661(void) { missing("rtcDateAdd"); }

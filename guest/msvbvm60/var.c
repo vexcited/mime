@@ -292,185 +292,63 @@ VB_STD VARIANT *vb___vbaVarTextCmpEq(VARIANT *dest, VARIANT *right, VARIANT *lef
 
 /* ------------------------------------------------------------------ arithmetic */
 
-static double as_r8(const VARIANT *v)
-{
-    VARIANT t;
-    convert(&t, v, VT_R8);
-    return V_R8(&t);
-}
+/*
+ * the operations are those of oleaut32. an operand that is a reference is read through first, and a failed operation
+ * is the runtime error its status stands for.
+ */
+typedef HRESULT(WINAPI *BinaryOp)(LPVARIANT, LPVARIANT, LPVARIANT);
+typedef HRESULT(WINAPI *UnaryOp)(LPVARIANT, LPVARIANT);
 
-static BOOL is_text(const VARIANT *v) { return (V_VT(v) & VT_TYPEMASK) == VT_BSTR; }
-
-static BOOL is_integral(const VARIANT *v)
+static VARIANT *binary(BinaryOp op, VARIANT *dest, VARIANT *right, VARIANT *left)
 {
-    switch (V_VT(v) & VT_TYPEMASK) {
-    case VT_I2: case VT_I4: case VT_UI1: case VT_BOOL: case VT_EMPTY:
-        return TRUE;
-    default:
-        return FALSE;
-    }
-}
-
-static VARIANT *set_number(VARIANT *dest, double d, BOOL integral)
-{
-    VariantInit(dest);
-    if (integral && d >= -2147483648.0 && d <= 2147483647.0) {
-        if (d >= -32768.0 && d <= 32767.0) {
-            V_VT(dest) = VT_I2;
-            V_I2(dest) = (SHORT)d;
-        } else {
-            V_VT(dest) = VT_I4;
-            V_I4(dest) = (LONG)d;
-        }
-    } else {
-        V_VT(dest) = VT_R8;
-        V_R8(dest) = d;
-    }
+    VARIANT l, r, out;
+    VariantInit(&l);
+    VariantInit(&r);
+    VariantInit(&out);
+    VbCheck(VariantCopyInd(&l, left));
+    VbCheck(VariantCopyInd(&r, right));
+    HRESULT hr = op(&l, &r, &out);
+    VariantClear(&l);
+    VariantClear(&r);
+    VbCheck(hr);
+    *dest = out;
     return dest;
 }
 
-static BOOL null_operand(const VARIANT *a, const VARIANT *b) { return V_VT(a) == VT_NULL || V_VT(b) == VT_NULL; }
-
-static VARIANT *null_result(VARIANT *dest)
+static VARIANT *unary(UnaryOp op, VARIANT *dest, VARIANT *v)
 {
-    VariantInit(dest);
-    V_VT(dest) = VT_NULL;
+    VARIANT in, out;
+    VariantInit(&in);
+    VariantInit(&out);
+    VbCheck(VariantCopyInd(&in, v));
+    HRESULT hr = op(&in, &out);
+    VariantClear(&in);
+    VbCheck(hr);
+    *dest = out;
     return dest;
 }
 
-VB_STD VARIANT *vb___vbaVarAdd(VARIANT *dest, VARIANT *right, VARIANT *left)
-{
-    if (null_operand(left, right))
-        return null_result(dest);
-    if (is_text(left) && is_text(right)) {
-        BSTR out;
-        VbCheck(VarBstrCat(V_BSTR(left), V_BSTR(right), &out));
-        VariantInit(dest);
-        V_VT(dest) = VT_BSTR;
-        V_BSTR(dest) = out;
-        return dest;
-    }
-    return set_number(dest, as_r8(left) + as_r8(right), is_integral(left) && is_integral(right));
-}
-
-VB_STD VARIANT *vb___vbaVarSub(VARIANT *dest, VARIANT *right, VARIANT *left)
-{
-    if (null_operand(left, right))
-        return null_result(dest);
-    return set_number(dest, as_r8(left) - as_r8(right), is_integral(left) && is_integral(right));
-}
-
-VB_STD VARIANT *vb___vbaVarMul(VARIANT *dest, VARIANT *right, VARIANT *left)
-{
-    if (null_operand(left, right))
-        return null_result(dest);
-    return set_number(dest, as_r8(left) * as_r8(right), is_integral(left) && is_integral(right));
-}
-
-VB_STD VARIANT *vb___vbaVarDiv(VARIANT *dest, VARIANT *right, VARIANT *left)
-{
-    if (null_operand(left, right))
-        return null_result(dest);
-    double d = as_r8(right);
-    if (d == 0.0)
-        VbRaise(VBERR_DIVISION_BY_ZERO);
-    return set_number(dest, as_r8(left) / d, FALSE);
-}
-
-static VARIANT *logic(VARIANT *dest, VARIANT *right, VARIANT *left, int op)
-{
-    BOOL boolean = (V_VT(left) == VT_BOOL || V_VT(left) == VT_NULL) && (V_VT(right) == VT_BOOL || V_VT(right) == VT_NULL);
-    if (V_VT(left) == VT_NULL || V_VT(right) == VT_NULL) {
-        /* null and false is false, null or true is true, anything else with null is null. */
-        VARIANT *other = V_VT(left) == VT_NULL ? right : left;
-        if (V_VT(other) != VT_NULL) {
-            VARIANT t;
-            convert(&t, other, VT_BOOL);
-            if ((op == 0 && V_BOOL(&t) == 0) || (op == 1 && V_BOOL(&t) != 0)) {
-                VariantInit(dest);
-                V_VT(dest) = VT_BOOL;
-                V_BOOL(dest) = V_BOOL(&t);
-                return dest;
-            }
-        }
-        return null_result(dest);
-    }
-    VARIANT a, b;
-    convert(&a, left, boolean ? VT_BOOL : VT_I4);
-    convert(&b, right, boolean ? VT_BOOL : VT_I4);
-    VariantInit(dest);
-    if (boolean) {
-        V_VT(dest) = VT_BOOL;
-        V_BOOL(dest) = op == 0 ? (V_BOOL(&a) & V_BOOL(&b)) : (V_BOOL(&a) | V_BOOL(&b));
-    } else {
-        V_VT(dest) = VT_I4;
-        V_I4(dest) = op == 0 ? (V_I4(&a) & V_I4(&b)) : (V_I4(&a) | V_I4(&b));
-    }
-    return dest;
-}
-
-VB_STD VARIANT *vb___vbaVarAnd(VARIANT *dest, VARIANT *right, VARIANT *left) { return logic(dest, right, left, 0); }
-VB_STD VARIANT *vb___vbaVarOr(VARIANT *dest, VARIANT *right, VARIANT *left) { return logic(dest, right, left, 1); }
-
-VB_STD VARIANT *vb___vbaVarNot(VARIANT *dest, VARIANT *v)
-{
-    if (V_VT(v) == VT_NULL)
-        return null_result(dest);
-    VariantInit(dest);
-    if (V_VT(v) == VT_BOOL) {
-        V_VT(dest) = VT_BOOL;
-        V_BOOL(dest) = (VARIANT_BOOL)~V_BOOL(v);
-        return dest;
-    }
-    VARIANT t;
-    convert(&t, v, VT_I4);
-    V_VT(dest) = VT_I4;
-    V_I4(dest) = ~V_I4(&t);
-    return dest;
-}
-
-VB_STD VARIANT *vb___vbaVarCat(VARIANT *dest, VARIANT *right, VARIANT *left)
-{
-    if (V_VT(left) == VT_NULL && V_VT(right) == VT_NULL)
-        return null_result(dest);
-    BSTR l = nullptr, r = nullptr, out;
-    VARIANT t;
-    if (V_VT(left) != VT_NULL) {
-        convert(&t, left, VT_BSTR);
-        l = V_BSTR(&t);
-    }
-    if (V_VT(right) != VT_NULL) {
-        convert(&t, right, VT_BSTR);
-        r = V_BSTR(&t);
-    }
-    VbCheck(VarBstrCat(l, r, &out));
-    SysFreeString(l);
-    SysFreeString(r);
-    VariantInit(dest);
-    V_VT(dest) = VT_BSTR;
-    V_BSTR(dest) = out;
-    return dest;
-}
-
-VB_STD VARIANT *vb___vbaVarInt(VARIANT *dest, VARIANT *v)
-{
-    if (V_VT(v) == VT_NULL)
-        return null_result(dest);
-    VARIANT t;
-    convert(&t, v, VT_R8);
-    double d = V_R8(&t);
-    double f = (double)(long long)d;
-    if (f > d)
-        f -= 1.0;
-    VariantInit(dest);
-    if (is_integral(v)) {
-        VariantCopyInd(dest, v);
-        return dest;
-    }
-    V_VT(dest) = VT_R8;
-    V_R8(dest) = f;
-    return dest;
-}
+VB_STD VARIANT *vb___vbaVarAdd(VARIANT *dest, VARIANT *right, VARIANT *left) { return binary(VarAdd, dest, right, left); }
+VB_STD VARIANT *vb___vbaVarSub(VARIANT *dest, VARIANT *right, VARIANT *left) { return binary(VarSub, dest, right, left); }
+VB_STD VARIANT *vb___vbaVarMul(VARIANT *dest, VARIANT *right, VARIANT *left) { return binary(VarMul, dest, right, left); }
+VB_STD VARIANT *vb___vbaVarDiv(VARIANT *dest, VARIANT *right, VARIANT *left) { return binary(VarDiv, dest, right, left); }
+VB_STD VARIANT *vb___vbaVarIdiv(VARIANT *dest, VARIANT *right, VARIANT *left) { return binary(VarIdiv, dest, right, left); }
+VB_STD VARIANT *vb___vbaVarMod(VARIANT *dest, VARIANT *right, VARIANT *left) { return binary(VarMod, dest, right, left); }
+VB_STD VARIANT *vb___vbaVarPow(VARIANT *dest, VARIANT *right, VARIANT *left) { return binary(VarPow, dest, right, left); }
+VB_STD VARIANT *vb___vbaVarAnd(VARIANT *dest, VARIANT *right, VARIANT *left) { return binary(VarAnd, dest, right, left); }
+VB_STD VARIANT *vb___vbaVarOr(VARIANT *dest, VARIANT *right, VARIANT *left) { return binary(VarOr, dest, right, left); }
+VB_STD VARIANT *vb___vbaVarXor(VARIANT *dest, VARIANT *right, VARIANT *left) { return binary(VarXor, dest, right, left); }
+VB_STD VARIANT *vb___vbaVarEqv(VARIANT *dest, VARIANT *right, VARIANT *left) { return binary(VarEqv, dest, right, left); }
+VB_STD VARIANT *vb___vbaVarImp(VARIANT *dest, VARIANT *right, VARIANT *left) { return binary(VarImp, dest, right, left); }
+VB_STD VARIANT *vb___vbaVarCat(VARIANT *dest, VARIANT *right, VARIANT *left) { return binary(VarCat, dest, right, left); }
+VB_STD VARIANT *vb___vbaVarNeg(VARIANT *dest, VARIANT *v) { return unary(VarNeg, dest, v); }
+VB_STD VARIANT *vb___vbaVarNot(VARIANT *dest, VARIANT *v) { return unary(VarNot, dest, v); }
+VB_STD VARIANT *vb___vbaVarAbs(VARIANT *dest, VARIANT *v) { return unary(VarAbs, dest, v); }
+VB_STD VARIANT *vb___vbaVarFix(VARIANT *dest, VARIANT *v) { return unary(VarFix, dest, v); }
+VB_STD VARIANT *vb___vbaVarInt(VARIANT *dest, VARIANT *v) { return unary(VarInt, dest, v); }
+VB_STD VARIANT *vb_rtcAbsVar(VARIANT *dest, VARIANT *v) { return unary(VarAbs, dest, v); }
+VB_STD VARIANT *vb_rtcFixVar(VARIANT *dest, VARIANT *v) { return unary(VarFix, dest, v); }
+VB_STD VARIANT *vb_rtcIntVar(VARIANT *dest, VARIANT *v) { return unary(VarInt, dest, v); }
 
 VB_STD LONG vb___vbaLenVar(VARIANT *v, unsigned short *unused)
 {

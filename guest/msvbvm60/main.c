@@ -68,6 +68,7 @@ __attribute__((noreturn)) void VbRaise(LONG number)
 {
     VbThread *t = VbThreadState();
     t->err_number = number;
+    t->hresult = number ? (LONG)(0x800A0000u | (ULONG)number) : 0;
     ULONG_PTR args[1] = {(ULONG_PTR)number};
     RaiseException(VB_EXCEPTION, 0, 1, args);
     ExitProcess(1);
@@ -109,26 +110,83 @@ VB_C int vb___vbaSetSystemError(void)
     return 0;
 }
 
-/* an unhandled runtime error ends the program the way the runtime does, with its dialog. */
-static LONG WINAPI unhandled(EXCEPTION_POINTERS *info)
+static const VbHeader *g_header;
+
+void VbProjectTitle(WCHAR *out, int count)
 {
-    if ((ULONG)info->ExceptionRecord->ExceptionCode == VB_EXCEPTION) {
-        LONG number = (LONG)info->ExceptionRecord->ExceptionInformation[0];
-        if (number == VBERR_END) {
-            VbOutputDebug("msvbvm60: End\n");
-            ExitProcess(0);
-        }
-        char text[96];
-        wsprintfA(text, "Run-time error '%d':", (int)number);
-        VbOutputDebug(text);
-        MessageBoxA(nullptr, text, "Microsoft Visual Basic", MB_OK | MB_ICONSTOP);
-        ExitProcess(1);
-    }
-    return EXCEPTION_CONTINUE_SEARCH;
+    const char *name = nullptr;
+    if (g_header && g_header->project_title)
+        name = (const char *)g_header + g_header->project_title;
+    if (!name || !name[0])
+        name = "Project1";
+    MultiByteToWideChar(CP_ACP, 0, name, -1, out, count);
 }
 
-/* the exe's own frames register this handler. an error that nothing in the program handles goes on to the filter. */
-VB_C int vb___vbaExceptHandler(void *record, void *frame) { return 1; }
+static const struct {
+    LONG number;
+    const WCHAR *text;
+} g_error_texts[] = {
+    {3, L"Return without GoSub"}, {5, L"Invalid procedure call or argument"}, {6, L"Overflow"}, {7, L"Out of memory"},
+    {9, L"Subscript out of range"}, {10, L"This array is fixed or temporarily locked"}, {11, L"Division by zero"},
+    {13, L"Type mismatch"}, {14, L"Out of string space"}, {16, L"Expression too complex"},
+    {17, L"Can't perform requested operation"}, {18, L"User interrupt occurred"}, {20, L"Resume without error"},
+    {28, L"Out of stack space"}, {35, L"Sub or Function not defined"}, {47, L"Too many DLL application clients"},
+    {48, L"Error in loading DLL"}, {49, L"Bad DLL calling convention"}, {51, L"Internal error"},
+    {52, L"Bad file name or number"}, {53, L"File not found"}, {54, L"Bad file mode"}, {55, L"File already open"},
+    {57, L"Device I/O error"}, {58, L"File already exists"}, {59, L"Bad record length"}, {61, L"Disk full"},
+    {62, L"Input past end of file"}, {63, L"Bad record number"}, {67, L"Too many files"}, {68, L"Device unavailable"},
+    {70, L"Permission denied"}, {71, L"Disk not ready"}, {74, L"Can't rename with different drive"},
+    {75, L"Path/File access error"}, {76, L"Path not found"},
+    {91, L"Object variable or With block variable not set"}, {92, L"For loop not initialized"},
+    {93, L"Invalid pattern string"}, {94, L"Invalid use of Null"},
+    {321, L"Invalid file format"}, {322, L"Can't create necessary temporary file"}, {380, L"Invalid property value"},
+    {381, L"Invalid property array index"}, {424, L"Object required"},
+    {429, L"ActiveX component can't create object"}, {430, L"Class doesn't support Automation"},
+    {432, L"File name or class name not found during Automation operation"},
+    {438, L"Object doesn't support this property or method"}, {440, L"Automation error"},
+    {445, L"Object doesn't support this action"}, {446, L"Object doesn't support named arguments"},
+    {447, L"Object doesn't support current locale setting"}, {448, L"Named argument not found"},
+    {449, L"Argument not optional"}, {450, L"Wrong number of arguments or invalid property assignment"},
+    {451, L"Property let procedure not defined and property get procedure did not return an object"},
+    {452, L"Invalid ordinal"}, {453, L"Specified DLL function not found"}, {454, L"Code resource not found"},
+    {455, L"Code resource lock error"}, {457, L"This key is already associated with an element of this collection"},
+    {458, L"Variable uses an Automation type not supported in Visual Basic"},
+    {459, L"Object or class does not support the set of events"}, {460, L"Invalid clipboard format"},
+    {461, L"Method or data member not found"}, {462, L"The remote server machine does not exist or is unavailable"},
+    {463, L"Class not registered on local machine"}, {481, L"Invalid picture"}, {482, L"Printer error"},
+};
+
+const WCHAR *VbErrorText(LONG number)
+{
+    for (size_t i = 0; i < sizeof(g_error_texts) / sizeof(g_error_texts[0]); i++)
+        if (g_error_texts[i].number == number)
+            return g_error_texts[i].text;
+    return number >= 1 && number <= 65535 ? L"Application-defined or object-defined error" : L"";
+}
+
+/* an error nothing handles ends the program with its dialog, and End ends it without. */
+void VbTerminateWithError(LONG number)
+{
+    if (number == VBERR_END) {
+        VbOutputDebug("msvbvm60: End\n");
+        ExitProcess(0);
+    }
+    WCHAR title[64], text[256];
+    VbProjectTitle(title, 64);
+    wsprintfW(text, L"Run-time error '%d':\n\n%s", (int)number, VbErrorText(number));
+    char debug[96];
+    wsprintfA(debug, "msvbvm60: Run-time error '%d'\n", (int)number);
+    VbOutputDebug(debug);
+    MessageBoxW(nullptr, text, title, MB_OK | MB_ICONSTOP);
+    ExitProcess(1);
+}
+
+static LONG WINAPI unhandled(EXCEPTION_POINTERS *info)
+{
+    if ((ULONG)info->ExceptionRecord->ExceptionCode == VB_EXCEPTION)
+        VbTerminateWithError((LONG)info->ExceptionRecord->ExceptionInformation[0]);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 
 /* ------------------------------------------------------------------ startup */
 
@@ -174,6 +232,7 @@ VB_C __attribute__((noreturn)) void vb_ThunRTMain(const VbHeader *header)
         MessageBoxA(nullptr, "The program is not a Visual Basic 6 executable.", "Microsoft Visual Basic", MB_OK | MB_ICONSTOP);
         ExitProcess(1);
     }
+    g_header = header;
     SetUnhandledExceptionFilter(unhandled);
     VbThreadState();
     HINSTANCE exe = GetModuleHandleW(nullptr);

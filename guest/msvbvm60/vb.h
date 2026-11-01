@@ -49,6 +49,8 @@ enum {
 /* the state a thread of a program keeps. */
 typedef struct VbThread {
     LONG err_number;
+    LONG erl;
+    LONG hresult;
     LONG last_dll_error;
     BSTR err_description;
     BSTR err_source;
@@ -66,6 +68,12 @@ void VbCheck(HRESULT hr);
 LCID VbLocale(void);
 
 void VbOutputDebug(const char *text);
+
+/* the text of a runtime error and the dialog an error that nothing handles ends the program with. */
+const WCHAR *VbErrorText(LONG number);
+void VbTerminateWithError(LONG number);
+/* the title of the project, for dialogs. */
+void VbProjectTitle(WCHAR *out, int count);
 
 /* the compiled structures of an executable that main.c reads. */
 #pragma pack(push, 1)
