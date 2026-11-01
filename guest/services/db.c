@@ -488,9 +488,17 @@ static BOOL system_account(const WCHAR *account)
            !_wcsicmp(account, L"NT AUTHORITY\\LocalSystem");
 }
 
-static DWORD validate_account(const WCHAR *account)
+/* the virtual account of a service is named for the service, and has no password. */
+static BOOL virtual_account(const WCHAR *account, const WCHAR *service)
 {
-    if (system_account(account))
+    static const WCHAR prefix[] = L"NT SERVICE\\";
+    return account && service && !_wcsnicmp(account, prefix, RTL_NUMBER_OF(prefix) - 1) &&
+           !_wcsicmp(account + RTL_NUMBER_OF(prefix) - 1, service);
+}
+
+static DWORD validate_account(const WCHAR *account, const WCHAR *service)
+{
+    if (system_account(account) || virtual_account(account, service))
         return ERROR_SUCCESS;
     BYTE sid[SECURITY_MAX_SID_SIZE_];
     DWORD sid_size = sizeof(sid), domain_size = 256, use;
@@ -527,7 +535,7 @@ DWORD DbCreate(const WCHAR *name, const WCHAR *display, DWORD type, DWORD start,
         return ERROR_INVALID_PARAMETER;
     BOOL win32 = (type & (SERVICE_WIN32 | SERVICE_USER_SERVICE)) != 0;
     if (win32) {
-        error = validate_account(account);
+        error = validate_account(account, name);
         if (error)
             return error;
         if ((type & SERVICE_INTERACTIVE_PROCESS) && !system_account(account))
@@ -648,7 +656,7 @@ DWORD DbChange(SERVICE *s, DWORD type, DWORD start, DWORD error_control, const W
         return ERROR_INVALID_PARAMETER;
     BOOL win32 = (new_type & (SERVICE_WIN32 | SERVICE_USER_SERVICE)) != 0;
     if (account && win32) {
-        error = validate_account(account);
+        error = validate_account(account, s->Name);
         if (error)
             return error;
         if ((new_type & SERVICE_INTERACTIVE_PROCESS) && !system_account(account))
