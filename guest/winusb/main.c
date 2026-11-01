@@ -304,7 +304,7 @@ BOOL WINAPI WinUsb_RegisterIsochBuffer(WINUSB_INTERFACE_HANDLE handle, UCHAR pip
                                        PVOID *isoch)
 {
     *isoch = nullptr;
-    if (!length || buffer + length < buffer) {
+    if (!length || (ULONG_PTR)buffer + length < (ULONG_PTR)buffer) {
         SetLastError(ERROR_INVALID_USER_BUFFER);
         return FALSE;
     }
