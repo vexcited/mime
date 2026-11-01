@@ -614,6 +614,11 @@ UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features,
     ULONG row = feature_row(package, features, id, name);
     if (row == UINT32_MAX)
         return ERROR_INSTALL_PACKAGE_INVALID;
+    /* an administrative installation copies every feature, whatever its level. */
+    if (package->Admin) {
+        *selected = TRUE;
+        return ERROR_SUCCESS;
+    }
     int level = MimeMsiInteger(features, row, level_column);
     if (level < 0)
         return ERROR_INSTALL_PACKAGE_INVALID;
@@ -891,12 +896,40 @@ static UINT file_companion(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, ULO
     return ERROR_INSTALL_PACKAGE_INVALID;
 }
 
+/* whether a file of these attributes is in a cabinet, by the source type of the package and what the file asks for. */
+static BOOL file_compressed(const MIME_MSI_PACKAGE *package, int attributes)
+{
+    BOOL source_compressed = (package->SourceType & 2) != 0;
+    if (source_compressed && !(attributes & 0x2000))
+        return TRUE;
+    if (!(package->SourceType & 4) && !source_compressed && (attributes & 0x6000) != 0x6000 && (attributes & 0x4000))
+        return TRUE;
+    return (attributes & 0x1000) != 0;
+}
+
+/* whether a cabinet is a stream of a patch applied to the package. */
+static BOOL patch_cabinet(MIME_MSI_PACKAGE *package, PCWSTR cabinet)
+{
+    if (!cabinet || cabinet[0] != L'#')
+        return FALSE;
+    for (ULONG i = 0; i < package->Database->PatchCount; i++) {
+        BYTE *stream;
+        SIZE_T size;
+        if (!MimeMsiReadBinary(package->Database->Patches[i], cabinet + 1, &stream, &size)) {
+            MimeMsiFree(stream);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 static UINT plan_files(MIME_MSI_PACKAGE *package)
 {
     MIME_MSI_TABLE *table;
     UINT error;
-    if (*MimeMsiGetProperty(package, L"ADDSOURCE") || *MimeMsiGetProperty(package, L"ADVERTISE") ||
-        (!package->Maintenance && (*MimeMsiGetProperty(package, L"REINSTALL") || *MimeMsiGetProperty(package, L"Installed"))))
+    if (!package->Admin &&
+        (*MimeMsiGetProperty(package, L"ADDSOURCE") || *MimeMsiGetProperty(package, L"ADVERTISE") ||
+         (!package->Maintenance && (*MimeMsiGetProperty(package, L"REINSTALL") || *MimeMsiGetProperty(package, L"Installed")))))
         return ERROR_CALL_NOT_IMPLEMENTED;
     error = maintenance_selection(package);
     DWORD mode;
@@ -962,8 +995,9 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
             wcschr(filename, L'\\') || wcschr(filename, L'/') || wcschr(filename, L':'))
             return ERROR_INSTALL_PACKAGE_INVALID;
         PWSTR source = nullptr, target = nullptr;
+        BOOL skip = FALSE;
         error = MimeMsiDirectoryPath(package, directory, TRUE, &source);
-        if (!error)
+        if (!error && !package->Admin)
             error = MimeMsiAssemblyFolder(package, component_name, &target);
         if (!error && !target)
             error = MimeMsiDirectoryPath(package, directory, FALSE, &target);
@@ -975,7 +1009,7 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
             file->Target = MimeMsiJoinPath(target, filename);
             file->Size = (DWORD)file_size;
             file->Attributes = (DWORD)flags;
-            file->Judged = TRUE;
+            file->Judged = !package->Admin;
             file->Mode = mode & (REINSTALLMODE_FILEMISSING | REINSTALLMODE_FILEOLDERVERSION |
                                  REINSTALLMODE_FILEEQUALVERSION | REINSTALLMODE_FILEEXACT | REINSTALLMODE_FILEREPLACE);
             /* only a file that is marked for it has its checksum verified. */
@@ -988,14 +1022,19 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
             if (!error)
                 error = file_companion(package, table, key_column, version, language, file);
             /* compressed files come from their cabinet, the rest from the source tree. */
-            if (media && !(flags & 0x2000) && sequence_column != UINT32_MAX)
-                file->Cabinet = media_cabinet(package, media, MimeMsiInteger(table, row, sequence_column));
+            if (media && sequence_column != UINT32_MAX) {
+                PCWSTR cabinet = media_cabinet(package, media, MimeMsiInteger(table, row, sequence_column));
+                if (file_compressed(package, flags) || patch_cabinet(package, cabinet))
+                    file->Cabinet = cabinet;
+            }
+            /* a patch of an image brings only the files its own cabinets hold. */
+            skip = package->Admin && *MimeMsiGetProperty(package, L"PATCH") && !patch_cabinet(package, file->Cabinet);
             if (!file->Source || !file->Target)
                 error = ERROR_NOT_ENOUGH_MEMORY;
-            else if (!_wcsicmp(file->Source, file->Target))
+            else if (!skip && !file->Cabinet && !_wcsicmp(file->Source, file->Target))
                 error = ERROR_INSTALL_PACKAGE_INVALID;
         }
-        if (file && error) {
+        if (file && (error || skip)) {
             MimeMsiFree(file->Source);
             MimeMsiFree(file->Target);
             MimeMsiFree(file->ParentTarget);
@@ -1028,6 +1067,9 @@ static UINT validate_cost(MIME_MSI_PACKAGE *package)
         WCHAR drive = file->Target[0];
         if (drive >= L'a' && drive <= L'z')
             drive -= L'a' - L'A';
+        /* a network share has no space this can measure. */
+        if (package->Admin && file->Target[0] == L'\\' && file->Target[1] == L'\\')
+            continue;
         if (drive < L'A' || drive > L'Z' || file->Target[1] != L':')
             return ERROR_CALL_NOT_IMPLEMENTED;
         ULONG index = drive - L'A';
@@ -1607,8 +1649,8 @@ UINT MimeMsiStandardAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     if (!wcscmp(action, L"CostFinalize")) {
         if (package->CostStage != 2)
             return ERROR_FUNCTION_NOT_CALLED;
-        BOOL changed;
-        UINT error = MimeMsiProcessConditions(package, &changed);
+        BOOL changed = FALSE;
+        UINT error = package->Admin ? ERROR_SUCCESS : MimeMsiProcessConditions(package, &changed);
         /* the levels decide which files are installed. */
         if (!error && changed)
             error = MimeMsiRefreshFilePlan(package);
@@ -1626,6 +1668,8 @@ UINT MimeMsiStandardAction(MIME_MSI_PACKAGE *package, PCWSTR action)
             package->FeatureSelectionReady = TRUE;
         return error;
     }
+    if (!wcscmp(action, L"InstallAdminPackage"))
+        return MimeMsiInstallAdminPackage(package);
     if (!wcscmp(action, L"InstallValidate"))
         return package->CostStage == 3 ? validate_cost(package) : ERROR_FUNCTION_NOT_CALLED;
     BOOL initialize = !wcscmp(action, L"InstallInitialize");

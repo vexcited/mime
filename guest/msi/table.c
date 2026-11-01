@@ -18,7 +18,7 @@ static int name_digit(WCHAR ch)
     return -1;
 }
 
-static BOOL encode_name(PCWSTR name, BOOL table, WCHAR out[32])
+BOOL MimeMsiEncodeName(PCWSTR name, BOOL table, WCHAR out[32])
 {
     ULONG count = 0;
     if (table)
@@ -43,14 +43,14 @@ static BOOL encode_name(PCWSTR name, BOOL table, WCHAR out[32])
 
 static BOOL table_name(PCWSTR name, WCHAR out[32])
 {
-    return encode_name(name, TRUE, out);
+    return MimeMsiEncodeName(name, TRUE, out);
 }
 
 /* binary cells live in a stream named after the table and row key, in the packed alphabet. */
 UINT MimeMsiReadBinary(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZE_T *size)
 {
     WCHAR encoded[32];
-    if (!encode_name(name, FALSE, encoded))
+    if (!MimeMsiEncodeName(name, FALSE, encoded))
         return ERROR_INVALID_PARAMETER;
     return MimeMsiReadStream(database, encoded, out, size);
 }

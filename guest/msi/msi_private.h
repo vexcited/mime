@@ -104,6 +104,8 @@ typedef struct MIME_MSI_TRANSFORM {
 } MIME_MSI_TRANSFORM;
 
 UINT MimeMsiLoadStrings(MIME_MSI_DATABASE *database);
+BOOL MimeMsiEncodeName(PCWSTR name, BOOL table, WCHAR out[32]);
+BOOL MimeMsiDecodeTableName(const WCHAR encoded[32], WCHAR name[64]);
 UINT MimeMsiOpenDatabaseFile(PCWSTR path, BOOL transform, MIME_MSI_DATABASE **out);
 UINT MimeMsiOpenStorageFile(PCWSTR path, BYTE kind, MIME_MSI_DATABASE **out);
 UINT MimeMsiOpenSubStorage(MIME_MSI_DATABASE *parent, PCWSTR name, MIME_MSI_DATABASE **out);
@@ -112,6 +114,16 @@ UINT MimeMsiChildren(MIME_MSI_DATABASE *database, ULONG **list, ULONG *count);
 UINT MimeMsiTableStream(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZE_T *size);
 UINT MimeMsiApplyTransformStorage(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *transform, UINT flags);
 UINT MimeMsiApplyPatches(MSIHANDLE database, PCWSTR product, PCWSTR list);
+
+/* what an image of a database leaves out, changes and adds. a negative word count leaves the summary's alone. */
+typedef struct MIME_MSI_IMAGE_EDIT {
+    const WCHAR (*Remove)[32];
+    ULONG RemoveCount;
+    BOOL Regenerate, SaveTime;
+    int WordCount;
+    PCWSTR LastAuthor, Subject, Comments, Revision, AdminProperties;
+} MIME_MSI_IMAGE_EDIT;
+UINT MimeMsiBuildImage(MIME_MSI_DATABASE *database, const MIME_MSI_IMAGE_EDIT *edit, BYTE **out, SIZE_T *size);
 UINT MimeMsiCreateSummary(MIME_MSI_DATABASE *database, MSIHANDLE *out);
 
 typedef struct MIME_MSI_SUMMARY_VALUE {
@@ -172,6 +184,9 @@ typedef struct MIME_MSI_PACKAGE {
     HKEY MaintenanceRoot;
     WCHAR MaintenanceProduct[39];
     BOOL Is64Bit;
+    /* an administrative installation is running, or the package is the image of one. */
+    BOOL Admin, AdminImage;
+    int SourceType;
     DWORD RegistryView;
     struct MIME_MSI_SCRIPT_ACTION *Deferred, **DeferredTail;
     struct MIME_MSI_SCRIPT_ACTION *Rollback, *Commit;
@@ -252,6 +267,8 @@ BOOL MimeMsiLogEnabled(void);
 UINT MimeMsiFileTargetPath(MIME_MSI_PACKAGE *package, PCWSTR key, PWSTR *out);
 UINT MimeMsiComponentDirectory(MIME_MSI_PACKAGE *package, PCWSTR name, PWSTR *out);
 
+typedef UINT (*MIME_MSI_PROPERTY_SINK)(void *context, PCWSTR name, PCWSTR value);
+UINT MimeMsiParseProperties(PCWSTR command, MIME_MSI_PROPERTY_SINK sink, void *context);
 PWSTR MimeMsiDuplicate(PCWSTR text);
 UINT MimeMsiCopyString(PCWSTR text, LPWSTR out, LPDWORD size);
 PCWSTR MimeMsiGetProperty(const MIME_MSI_PACKAGE *package, PCWSTR name);
@@ -273,6 +290,7 @@ UINT MimeMsiDirectoryPath(MIME_MSI_PACKAGE *package, PCWSTR name, BOOL source, P
 UINT MimeMsiSetTargetPath(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR value);
 
 UINT MimeMsiStandardAction(MIME_MSI_PACKAGE *package, PCWSTR action);
+UINT MimeMsiInstallAdminPackage(MIME_MSI_PACKAGE *package);
 UINT MimeMsiFinishTransaction(MIME_MSI_PACKAGE *package, BOOL commit);
 
 UINT MimeMsiCatalogPath(PCWSTR product, WCHAR path[96]);

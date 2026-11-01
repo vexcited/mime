@@ -97,7 +97,7 @@ static UINT directory_path(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, PCW
         return full_directory(*root ? root : L"C:\\", out);
     }
     PWSTR segment, selected;
-    UINT error = directory_segment(authored, source, &segment, &selected);
+    UINT error = directory_segment(authored, source || package->Admin, &segment, &selected);
     PWSTR prefix = nullptr;
     if (!error)
         error = directory_path(package, table, parent, source, depth + 1, &prefix);

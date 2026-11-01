@@ -6,7 +6,7 @@ typedef struct MSI_TABLE_EDIT {
     MIME_MSI_TABLE Table;
 } MSI_TABLE_EDIT;
 
-static BOOL transform_table_name(const WCHAR encoded[32], WCHAR name[64])
+BOOL MimeMsiDecodeTableName(const WCHAR encoded[32], WCHAR name[64])
 {
     static const WCHAR alphabet[] = L"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._";
     if (encoded[0] != 0x4840)
@@ -317,7 +317,7 @@ static UINT transform_pass(MIME_MSI_DATABASE *database, MIME_MSI_DATABASE *trans
         /* a stream that is no table is one the transform adds, which read_streams takes. */
         if (entry.Type == 2 && entry.Name[0] != 0x4840)
             continue;
-        if (entry.Type != 2 || !transform_table_name(entry.Name, name)) {
+        if (entry.Type != 2 || !MimeMsiDecodeTableName(entry.Name, name)) {
             error = ERROR_CALL_NOT_IMPLEMENTED;
             break;
         }

@@ -27,7 +27,8 @@ static void end_install(void)
     InterlockedExchange(&installing, 0);
 }
 
-static UINT command_properties(MSIHANDLE package, PCWSTR command)
+/* reads NAME=value words, with blanks around the equals sign and quotes doubled inside quoted values. */
+UINT MimeMsiParseProperties(PCWSTR command, MIME_MSI_PROPERTY_SINK sink, void *context)
 {
     if (!command)
         return ERROR_SUCCESS;
@@ -81,10 +82,20 @@ static UINT command_properties(MSIHANDLE package, PCWSTR command)
         if (*cursor)
             cursor++;
         *output = 0;
-        error = MsiSetPropertyW(package, name, value);
+        error = sink(context, name, value);
     }
     MimeMsiFree(copy);
     return error;
+}
+
+static UINT set_through_handle(void *context, PCWSTR name, PCWSTR value)
+{
+    return MsiSetPropertyW((MSIHANDLE)(UINT_PTR)context, name, value);
+}
+
+static UINT command_properties(MSIHANDLE package, PCWSTR command)
+{
+    return MimeMsiParseProperties(command, set_through_handle, (void *)(UINT_PTR)package);
 }
 
 static UINT install_transforms(MSIHANDLE *handle, PCWSTR command)
@@ -164,6 +175,16 @@ static UINT install_patches(MSIHANDLE *handle, PCWSTR command)
     return error;
 }
 
+/* the directory of a full path, with its closing backslash. */
+static PWSTR directory_of(PCWSTR path)
+{
+    PWSTR copy = MimeMsiDuplicate(path);
+    PWSTR separator = copy ? wcsrchr(copy, L'\\') : nullptr;
+    if (separator)
+        separator[1] = 0;
+    return copy;
+}
+
 static UINT execute_package(MSIHANDLE handle)
 {
     UINT error = ERROR_SUCCESS;
@@ -174,19 +195,34 @@ static UINT execute_package(MSIHANDLE handle)
         WCHAR text[2] = {(WCHAR)(L'0' + level), 0};
         error = MsiSetPropertyW(handle, L"UILevel", text);
     }
+    PCWSTR ui_sequence = L"InstallUISequence", execute_sequence = L"InstallExecuteSequence";
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
     if (!error) {
         PCWSTR action = MimeMsiGetProperty(package, L"ACTION");
+        BOOL admin = !_wcsicmp(action, L"ADMIN");
         if ((*MimeMsiGetProperty(package, L"PATCH") && !package->Database->PatchCount) ||
-            (*action && wcscmp(action, L"INSTALL")))
+            (*action && wcscmp(action, L"INSTALL") && !admin))
             error = ERROR_CALL_NOT_IMPLEMENTED;
-        else
+        else if (admin) {
+            /* the image is made on the target, whatever is installed, and a patch of one is made in its own folder. */
+            ui_sequence = L"AdminUISequence";
+            execute_sequence = L"AdminExecuteSequence";
+            package->Admin = TRUE;
+            error = MimeMsiSetProperty(package, L"ACTION", L"ADMIN");
+            if (!error)
+                error = MimeMsiSetProperty(package, L"Installed", L"");
+            if (!error && *MimeMsiGetProperty(package, L"PATCH") && !*MimeMsiGetProperty(package, L"TARGETDIR")) {
+                PWSTR directory = directory_of(MimeMsiGetProperty(package, L"OriginalDatabase"));
+                error = directory ? MimeMsiSetProperty(package, L"TARGETDIR", directory) : ERROR_NOT_ENOUGH_MEMORY;
+                MimeMsiFree(directory);
+            }
+        } else
             error = MimeMsiSetProperty(package, L"ACTION", L"INSTALL");
     }
     if (!error && level > INSTALLUILEVEL_BASIC) {
         MIME_MSI_TABLE *ui;
-        UINT status = MimeMsiLoadTable(package->Database, L"InstallUISequence", &ui);
+        UINT status = MimeMsiLoadTable(package->Database, ui_sequence, &ui);
         if (!status && ui->Rows)
             error = ERROR_CALL_NOT_IMPLEMENTED;
         else if (status && status != ERROR_BAD_QUERY_SYNTAX)
@@ -194,7 +230,7 @@ static UINT execute_package(MSIHANDLE handle)
     }
     ReleaseSRWLockExclusive(&MimeMsiLock);
     if (!error)
-        error = MsiSequenceW(handle, L"InstallExecuteSequence", 0);
+        error = MsiSequenceW(handle, execute_sequence, 0);
     AcquireSRWLockExclusive(&MimeMsiLock);
     package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
     if (!error && (!package || !package->TransactionCommitted))
@@ -295,6 +331,14 @@ static UINT reopen_installed(MSIHANDLE *handle, PCWSTR command)
     return error;
 }
 
+/* whether the properties ask for an administrative installation, which never works on an installed product. */
+static BOOL administrative(MSIHANDLE handle)
+{
+    WCHAR action[16];
+    DWORD size = RTL_NUMBER_OF(action);
+    return !MsiGetPropertyW(handle, L"ACTION", action, &size) && !_wcsicmp(action, L"ADMIN");
+}
+
 UINT WINAPI MsiInstallProductW(LPCWSTR path, LPCWSTR command)
 {
     if (!path || !*path)
@@ -308,7 +352,7 @@ UINT WINAPI MsiInstallProductW(LPCWSTR path, LPCWSTR command)
         error = ERROR_INSTALL_PACKAGE_OPEN_FAILED;
     if (!error)
         error = command_properties(handle, command);
-    if (!error)
+    if (!error && !administrative(handle))
         error = reopen_installed(&handle, command);
     if (!error)
         error = install_transforms(&handle, command);

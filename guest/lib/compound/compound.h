@@ -31,4 +31,18 @@ void MimeCfbClose(MIME_CFB *file);
 int MimeCfbEntry(const MIME_CFB *file, uint32_t index, MIME_CFB_ENTRY *entry);
 int MimeCfbRead(const MIME_CFB *file, const MIME_CFB_ENTRY *entry, void *out, size_t capacity);
 
+/* a storage or stream to write, with its siblings in no particular order. a stream's data stays with the caller. */
+typedef struct MIME_CFB_NODE {
+    struct MIME_CFB_NODE *Next, *Children;
+    uint16_t Name[32];
+    uint8_t Type;
+    uint8_t ClassId[16];
+    const uint8_t *Data;
+    size_t Size;
+} MIME_CFB_NODE;
+
+/* writes a compound file whose root holds the nodes. the output comes from the allocator and is the caller's. */
+int MimeCfbWrite(const MIME_CFB_NODE *children, const uint8_t root_class[16], MIME_CFB_ALLOC allocate,
+                 MIME_CFB_FREE release, uint8_t **out, size_t *size);
+
 #endif

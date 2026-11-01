@@ -88,6 +88,40 @@ void MimeMsiDestroyPackage(MIME_MSI_OBJECT *object)
     MimeMsiFree(package);
 }
 
+static UINT set_package_property(void *context, PCWSTR name, PCWSTR value)
+{
+    return MimeMsiSetProperty(context, name, value);
+}
+
+/* the source type is the word count of the summary, and an administrative image also carries the properties it saved. */
+static UINT load_source_type(MIME_MSI_PACKAGE *package)
+{
+    MIME_MSI_SUMMARY_VALUE count;
+    package->SourceType = 0;
+    if (!MimeMsiSummaryProperty(package->Database, 15, &count)) {
+        if (count.Type == 2 || count.Type == 3)
+            package->SourceType = count.Number;
+        MimeMsiFree(count.Text);
+    }
+    package->AdminImage = (package->SourceType & 4) != 0;
+    BYTE *bytes;
+    SIZE_T size;
+    UINT error = MimeMsiReadStream(package->Database, L"AdminProperties", &bytes, &size);
+    if (error)
+        return error == ERROR_FILE_NOT_FOUND ? ERROR_SUCCESS : error;
+    PWSTR text = MimeMsiAllocate(size + sizeof(WCHAR));
+    if (!text) {
+        MimeMsiFree(bytes);
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+    memcpy(text, bytes, size & ~(SIZE_T)1);
+    MimeMsiFree(bytes);
+    package->AdminImage = TRUE;
+    error = MimeMsiParseProperties(text, set_package_property, package);
+    MimeMsiFree(text);
+    return error;
+}
+
 static UINT load_properties(MIME_MSI_PACKAGE *package)
 {
     MIME_MSI_DATABASE *database = package->Database;
@@ -123,6 +157,8 @@ static UINT load_properties(MIME_MSI_PACKAGE *package)
     if (!error)
         error = MimeMsiSetProperty(package, L"SourceDir", directory);
     MimeMsiFree(directory);
+    if (!error)
+        error = load_source_type(package);
     if (!error && !(package->Options & MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE) &&
         MsiQueryProductStateW(MimeMsiGetProperty(package, L"ProductCode")) == INSTALLSTATE_DEFAULT)
         error = MimeMsiSetProperty(package, L"Installed", L"1");

@@ -195,7 +195,9 @@ static BOOL parse(COMMAND *command, PCWSTR line)
             command->Action = ACTION_ADVERTISE;
             takes_target = TRUE;
         } else if (match(option, L"p") || match(option, L"update")) {
-            command->Action = ACTION_PATCH;
+            /* a patch of an administrative image stays an administrative installation. */
+            if (command->Action != ACTION_ADMIN)
+                command->Action = ACTION_PATCH;
             line = next_word(line, argument, RTL_NUMBER_OF(argument), &start);
             command->PatchPath = copy_text(argument);
         } else if (match(option, L"quiet")) {
@@ -267,6 +269,7 @@ static void show_help(INSTALLUILEVEL level)
         L"Windows Installer\n\n"
         L"msiexec /i <package|ProductCode> [PROPERTY=value] install or configure a product\n"
         L"msiexec /x <package|ProductCode>                  uninstall a product\n"
+        L"msiexec /a <package> [TARGETDIR=dir] [/p patch]     make or patch an administrative image\n"
         L"msiexec /f[p|o|e|d|c|a|u|m|s|v] <package|ProductCode>  repair a product\n"
         L"msiexec /q[n|b|r|f]   user interface level: none, basic, reduced, full\n"
         L"msiexec /quiet /passive /norestart /forcerestart /promptrestart\n"
@@ -379,6 +382,14 @@ static UINT run(COMMAND *command)
         error = MsiApplyPatchW(command->PatchPath, command->Target, INSTALLTYPE_DEFAULT, properties);
         break;
     case ACTION_ADMIN:
+        if (command->PatchPath) {
+            error = MsiApplyPatchW(command->PatchPath, command->Target, INSTALLTYPE_NETWORK_IMAGE, properties);
+        } else {
+            PWSTR all = combine(properties, L"ACTION=ADMIN");
+            error = all ? MsiInstallProductW(command->Target, all) : ERROR_NOT_ENOUGH_MEMORY;
+            HeapFree(GetProcessHeap(), 0, all);
+        }
+        break;
     case ACTION_ADVERTISE:
         error = ERROR_CALL_NOT_IMPLEMENTED;
         break;

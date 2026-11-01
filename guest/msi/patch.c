@@ -40,6 +40,27 @@ static BOOL guid_list(PCWSTR text, BOOL separated)
     return TRUE;
 }
 
+/* the patch is applied to the image as an administrative installation of it with the patch named. */
+static UINT patch_image(PCWSTR patch, PCWSTR image, PCWSTR command)
+{
+    DWORD characters = GetFullPathNameW(patch, 0, nullptr, nullptr);
+    PWSTR full = characters ? MimeMsiAllocate((SIZE_T)characters * sizeof(WCHAR)) : nullptr;
+    if (!full || !GetFullPathNameW(patch, characters, full, nullptr)) {
+        MimeMsiFree(full);
+        return full ? ERROR_PATCH_PACKAGE_OPEN_FAILED : ERROR_NOT_ENOUGH_MEMORY;
+    }
+    SIZE_T capacity = wcslen(full) + (command ? wcslen(command) : 0) + 48;
+    PWSTR line = MimeMsiAllocate(capacity * sizeof(WCHAR));
+    UINT error = ERROR_NOT_ENOUGH_MEMORY;
+    if (line) {
+        _snwprintf(line, capacity, L"%s ACTION=ADMIN PATCH=\"%s\"", command ? command : L"", full);
+        error = MsiInstallProductW(image, line);
+        MimeMsiFree(line);
+    }
+    MimeMsiFree(full);
+    return error;
+}
+
 UINT WINAPI MsiApplyPatchW(LPCWSTR path, LPCWSTR package, INSTALLTYPE type, LPCWSTR command)
 {
     WCHAR packed[33];
@@ -71,7 +92,9 @@ UINT WINAPI MsiApplyPatchW(LPCWSTR path, LPCWSTR package, INSTALLTYPE type, LPCW
     MimeMsiFree(revision);
     MimeMsiFree(targets);
     MsiCloseHandle(summary);
-    if (!error)
+    if (!error && type == INSTALLTYPE_NETWORK_IMAGE)
+        error = patch_image(path, package, command);
+    else if (!error)
         error = ERROR_PATCH_PACKAGE_UNSUPPORTED;
     return error;
 }
