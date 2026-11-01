@@ -1299,7 +1299,11 @@ static void initialize_thread(void)
 /* called from LdrInitializeThunk on every new thread. */
 void NTAPI LdrpInitialize(PCONTEXT context)
 {
-    if (!g_process_initialized) {
+    /* a thread that a library makes while the process is still starting is a thread, not the start of the process. It
+     * waits for the loader lock, which the start holds, in initialize_thread. */
+    static BOOLEAN process_start_begun;
+    if (!process_start_begun) {
+        process_start_begun = TRUE;
         initialize_process(context);
         g_process_initialized = TRUE;
         if (g_wow64_initialize)
