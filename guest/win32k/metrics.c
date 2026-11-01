@@ -332,6 +332,25 @@ BOOLEAN MetricsKeyboardCues(void)
     return g_keyboard_cues;
 }
 
+/* font smoothing: on, the kind (1 standard, 2 ClearType), the gamma as thousandths and the stripe order (0 BGR, 1 RGB). */
+#define SPI_SETFONTSMOOTHING 0x004B
+#define SPI_SETFONTSMOOTHINGTYPE 0x200B
+#define SPI_SETFONTSMOOTHINGCONTRAST 0x200D
+#define SPI_SETFONTSMOOTHINGORIENTATION 0x2013
+
+static BOOLEAN g_font_smoothing = TRUE;
+static UINT g_smoothing_type = 2;
+static UINT g_smoothing_contrast = 1200;
+static UINT g_smoothing_orientation = 1;
+
+BOOLEAN MetricsFontSmoothing(UINT *type, UINT *contrast, UINT *orientation)
+{
+    *type = g_smoothing_type;
+    *contrast = g_smoothing_contrast;
+    *orientation = g_smoothing_orientation;
+    return g_font_smoothing;
+}
+
 BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT dpi)
 {
     if (!dpi)
@@ -368,6 +387,26 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
     }
     case SPI_GETBEEP:
     case SPI_GETFONTSMOOTHING:
+        b = g_font_smoothing;
+        return NT_SUCCESS(MimeCopyToUser(data, &b, sizeof(b)));
+    case SPI_SETFONTSMOOTHING:
+        g_font_smoothing = param != 0;
+        return TRUE;
+    case SPI_SETFONTSMOOTHINGTYPE:
+        if ((ULONG_PTR)data != 1 && (ULONG_PTR)data != 2)
+            return FALSE;
+        g_smoothing_type = (UINT)(ULONG_PTR)data;
+        return TRUE;
+    case SPI_SETFONTSMOOTHINGCONTRAST:
+        if ((ULONG_PTR)data < 1000 || (ULONG_PTR)data > 2200)
+            return FALSE;
+        g_smoothing_contrast = (UINT)(ULONG_PTR)data;
+        return TRUE;
+    case SPI_SETFONTSMOOTHINGORIENTATION:
+        if ((ULONG_PTR)data > 1)
+            return FALSE;
+        g_smoothing_orientation = (UINT)(ULONG_PTR)data;
+        return TRUE;
     case SPI_GETDRAGFULLWINDOWS:
     case SPI_GETMENUANIMATION:
     case SPI_GETCOMBOBOXANIMATION:
@@ -406,13 +445,13 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
         b = FALSE;
         return NT_SUCCESS(MimeCopyToUser(data, &b, sizeof(b)));
     case SPI_GETFONTSMOOTHINGTYPE:
-        u = 2; /* FE_FONTSMOOTHINGCLEARTYPE */
+        u = g_smoothing_type;
         return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
     case SPI_GETFONTSMOOTHINGCONTRAST:
-        u = 1200;
+        u = g_smoothing_contrast;
         return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
     case SPI_GETFONTSMOOTHINGORIENTATION:
-        u = 1;
+        u = g_smoothing_orientation;
         return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
     case SPI_GETBORDER:
         u = 1;

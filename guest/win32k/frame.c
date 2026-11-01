@@ -571,8 +571,7 @@ void FrameDrawText(SURFACE *s, const REGION *clip, FONT_INSTANCE *fi, LONG x, LO
             continue;
         if (x + g->Advance > max_right)
             break;
-        if (g->Coverage && g->Width && g->Height)
-            DrawCoverage(s, clip, x + g->Left, baseline + g->Top, g->Coverage, g->Width, g->Height, g->Width, pixel);
+        DrawGlyph(s, clip, x, baseline, g, pixel);
         x += g->Advance;
     }
 }

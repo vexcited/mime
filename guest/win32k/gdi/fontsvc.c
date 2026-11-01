@@ -853,39 +853,40 @@ ULONG NTAPI NtGdiGetGlyphOutline(HDC hdc, WCHAR ch, UINT format, LPGLYPHMETRICS 
         by0 = -ceil_f(hi_y);
         by1 = -floor_f(lo_y);
     }
-    /* a bilevel bitmap is scan converted from the outline hinted for it, covering the pixels at least half covered. */
+    /* a bilevel bitmap is scan converted from the outline hinted for it, with the dropout control of the font. */
     UCHAR *bilevel = nullptr;
-    if (kind == GGO_BITMAP && !rotated && identity && !(format & GGO_UNHINTED) && FontHinterAliased(fi)) {
-        MimeTtfRenderParams ap = {sx, sy, 0, 0, shear, fi->SimBold ? (float)W32Max(1, fi->EmPixels / 24) : 0.0f};
+    if (kind == GGO_BITMAP && !rotated && identity && !(format & GGO_UNHINTED) && FontHinterAliased(fi) && !fi->SimBold) {
+        MimeTtfRenderParams ap = {sx, sy, 0, 0, shear, 0};
         ap.hinter = FontHinterAliased(fi);
-        int x0, y0, x1, y1;
-        if (mime_ttf_glyph_box_ex(&fi->Face->Ttf, index, &ap, &x0, &y0, &x1, &y1) && x1 > x0 && y1 > y0) {
-            LONG gw = x1 - x0, gh = y1 - y0;
-            UCHAR *full = W32Alloc((SIZE_T)gw * gh);
-            if (full && mime_ttf_render_glyph_ex(&fi->Face->Ttf, &FontAllocator, index, &ap, full, (int)gw, (int)gh, (int)gw)) {
-                LONG tx0 = gw, ty0 = gh, tx1 = 0, ty1 = 0;
-                for (LONG y = 0; y < gh; y++)
-                    for (LONG x = 0; x < gw; x++)
-                        if (full[y * gw + x] >= 128) {
-                            tx0 = W32Min(tx0, x);
-                            ty0 = W32Min(ty0, y);
-                            tx1 = W32Max(tx1, x + 1);
-                            ty1 = W32Max(ty1, y + 1);
-                        }
-                if (tx1 > tx0) {
-                    LONG bw = tx1 - tx0, bh = ty1 - ty0;
-                    bilevel = W32Alloc((SIZE_T)bw * bh);
-                    if (bilevel)
-                        for (LONG y = 0; y < bh; y++)
-                            memcpy(bilevel + (SIZE_T)y * bw, full + (SIZE_T)(y + ty0) * gw + tx0, (SIZE_T)bw);
-                    bx0 = x0 + tx0;
-                    bx1 = x0 + tx1;
-                    by0 = y0 + ty0;
-                    by1 = y0 + ty1;
-                }
+        MimeTtfScan scan = {0, 0, (int)fi->EmPixels, false, false};
+        mime_ttf_hinter_scan(ap.hinter, &scan.control, &scan.type);
+        MimeTtfBitmap bm;
+        if (mime_ttf_scan_bitmap(&fi->Face->Ttf, &FontAllocator, index, &ap, &scan, &bm) && bm.data) {
+            /* the black box is the ink, runs too short for a sample do not count. */
+            LONG gw = bm.x1 - bm.x0, gh = bm.y1 - bm.y0;
+            LONG tx0 = gw, ty0 = gh, tx1 = 0, ty1 = 0;
+            for (LONG y = 0; y < gh; y++)
+                for (LONG x = 0; x < gw; x++)
+                    if (bm.data[y * bm.stride + x]) {
+                        tx0 = W32Min(tx0, x);
+                        ty0 = W32Min(ty0, y);
+                        tx1 = W32Max(tx1, x + 1);
+                        ty1 = W32Max(ty1, y + 1);
+                    }
+            LONG bw = tx1 - tx0, bh = ty1 - ty0;
+            if (bw > 0 && bh > 0)
+                bilevel = W32Alloc((SIZE_T)bw * bh);
+            if (bilevel) {
+                for (LONG y = 0; y < bh; y++)
+                    for (LONG x = 0; x < bw; x++)
+                        bilevel[y * bw + x] = bm.data[(y + ty0) * bm.stride + x + tx0] ? 255 : 0;
+                bx0 = bm.x0 + tx0;
+                bx1 = bm.x0 + tx1;
+                by0 = bm.y0 + ty0;
+                by1 = bm.y0 + ty1;
             }
-            W32Free(full);
         }
+        mime_ttf_bitmap_free(&FontAllocator, &bm);
     }
     BOOLEAN empty = bx1 <= bx0 || by1 <= by0;
     gm.gmBlackBoxX = empty ? 1 : (UINT)(bx1 - bx0);

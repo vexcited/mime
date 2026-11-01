@@ -213,9 +213,8 @@ void TextDraw(DC *dc, LONG x, LONG y, UINT options, const RECT *rect, PCWSTR tex
         ULONG start = i;
         const GLYPH *g = (options & ETO_GLYPH_INDEX) ? FontGetGlyphIndex(fi, text[i++])
                                                      : FontGetGlyph(fi, next_char(text, count, &i));
-        if (g && g->Width && g->Coverage)
-            DrawCoverage(dc->Surface, &clip, pen + g->Left, baseline + g->Top, g->Coverage, g->Width, g->Height,
-                         g->Width, pixel);
+        if (g)
+            DrawGlyph(dc->Surface, &clip, pen, baseline, g, pixel);
         if (dx) {
             for (ULONG k = start; k < i; k++)
                 pen += dx[index++];

@@ -77,6 +77,8 @@ typedef struct MimeTtfRenderParams {
      * used and oblique still shears. the hinter must have been made for the size drawn.
      */
     const struct MimeTtfHinter *hinter;
+    /* samples per pixel across and down for the scan converter, below 2 means one. shifts are in samples. */
+    int over_x, over_y;
 } MimeTtfRenderParams;
 
 /* number of faces in a font file, 1 for a plain ttf, 0 if unrecognized. */
@@ -142,6 +144,51 @@ bool mime_ttf_glyph_box_ex(const MimeTtfFont *font, uint16_t glyph, const MimeTt
                            int *y0, int *x1, int *y1);
 bool mime_ttf_render_glyph_ex(const MimeTtfFont *font, const MimeAllocator *alloc, uint16_t glyph,
                               const MimeTtfRenderParams *params, uint8_t *out, int width, int height, int stride);
+
+/* the scan control the programs left, SCANCTRL and SCANTYPE as the instructions set them. */
+typedef struct MimeTtfScan {
+    uint32_t control, type;
+    int ppem;
+    bool rotated, stretched;
+} MimeTtfScan;
+
+/*
+ * bilevel scan conversion: a sample is on when its centre is inside the outline, then the dropout rules of the scan
+ * control turn on samples for features thinner than a sample. the box comes from mime_ttf_glyph_box_ex and the
+ * output holds 1 for on samples, 0 for off ones. over_x and over_y of the parameters oversample the outline.
+ */
+bool mime_ttf_scan_glyph_ex(const MimeTtfFont *font, const MimeAllocator *alloc, uint16_t glyph,
+                            const MimeTtfRenderParams *params, const MimeTtfScan *scan, uint8_t *out, int width,
+                            int height, int stride);
+
+/* a bitmap with its box in samples or pixels relative to the glyph origin, y down. free it with mime_ttf_bitmap_free. */
+typedef struct MimeTtfBitmap {
+    int x0, y0, x1, y1;
+    int stride;
+    uint8_t *data;
+} MimeTtfBitmap;
+
+void mime_ttf_bitmap_free(const MimeAllocator *alloc, MimeTtfBitmap *bitmap);
+
+/* the scan converted samples, 1 for on, in the tight box of the samples that are on. an empty glyph has an empty box. */
+bool mime_ttf_scan_bitmap(const MimeTtfFont *font, const MimeAllocator *alloc, uint16_t glyph,
+                          const MimeTtfRenderParams *params, const MimeTtfScan *scan, MimeTtfBitmap *out);
+
+/*
+ * ClearType glyphs: the outline is scanned six samples across a pixel, and one or five down, then each of the three
+ * stripes of a pixel is the count of the six samples around its centre, from 0 to 6, with the rows of five blended
+ * 4, 9, 10, 9, 4 over 36. shifts of the parameters are in pixels. the box is in whole pixels and the data holds three
+ * levels per pixel, left to right.
+ */
+bool mime_ttf_cleartype_bitmap(const MimeTtfFont *font, const MimeAllocator *alloc, uint16_t glyph,
+                               const MimeTtfRenderParams *params, int over_y, const MimeTtfScan *scan,
+                               MimeTtfBitmap *out);
+
+/*
+ * the tables GDI blends ClearType text with, for a font smoothing gamma such as the 1200 of the contrast setting. linear
+ * maps an encoded channel to the space the coverage is blended in, encoded maps back.
+ */
+void mime_ttf_gamma_tables(unsigned gamma, uint8_t *linear, uint8_t *encoded);
 
 /* flags of a hinter, what the GETINFO instruction reports about the rendering. */
 enum {

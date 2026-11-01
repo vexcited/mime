@@ -2,6 +2,7 @@
  * drawing primitives on surfaces and the gdi drawing services.
  */
 #include "../win32k.h"
+#include "ttf/ttf.h"
 
 /* ------------------------------------------------------------------ raster operations */
 
@@ -362,6 +363,80 @@ void DrawCoverage(SURFACE *s, const REGION *clip, LONG x, LONG y, const UCHAR *c
             }
         }
     }
+}
+
+/*
+ * ClearType: every channel of a pixel has its own coverage, a level from 0 to 6. the blend happens in a space made
+ * with the font smoothing gamma, as windows does it: the destination and the color go through the table, are mixed
+ * by the level in twenty bit fractions of a sixth, and come back through the inverse table.
+ */
+static UINT g_ct_gamma;
+static UCHAR g_ct_linear[256], g_ct_encoded[256];
+
+static void clear_type_tables(UINT gamma)
+{
+    if (g_ct_gamma != gamma) {
+        mime_ttf_gamma_tables(gamma, g_ct_linear, g_ct_encoded);
+        g_ct_gamma = gamma;
+    }
+}
+
+static BOOLEAN surface_takes_clear_type(const SURFACE *s)
+{
+    if (s->Bpp < 16)
+        return FALSE;
+    /* the pixels of a layered window carry alpha that stripes of color would break. */
+    if (s->Window && s->Window->LayerFlags)
+        return FALSE;
+    return TRUE;
+}
+
+static void draw_subpixel(SURFACE *s, const REGION *clip, LONG x, LONG y, const UCHAR *levels, LONG width, LONG height,
+                          ULONG pixel)
+{
+    static const LONG weight[7] = {0, 0x2AAAB, 0x55555, 0x80000, 0xAAAAB, 0xD5555, 0x100000};
+    UINT type, gamma, orientation;
+    MetricsFontSmoothing(&type, &gamma, &orientation);
+    clear_type_tables(gamma);
+    LONG fg[3] = {g_ct_linear[(pixel >> 16) & 0xFF], g_ct_linear[(pixel >> 8) & 0xFF], g_ct_linear[pixel & 0xFF]};
+    /* the stripes run left to right, red first unless the panel is the other way round. */
+    int stripe_r = orientation ? 0 : 2, stripe_b = orientation ? 2 : 0;
+    RECT box = {x, y, x + width, y + height};
+    for (ULONG i = 0; i < clip->Count; i++) {
+        RECT r;
+        if (!RectIntersect(&r, &clip->Rects[i], &box))
+            continue;
+        for (LONG yy = r.top; yy < r.bottom; yy++) {
+            const UCHAR *row = levels + (SIZE_T)(yy - y) * (SIZE_T)width * 3;
+            for (LONG xx = r.left; xx < r.right; xx++) {
+                const UCHAR *k = row + (SIZE_T)(xx - x) * 3;
+                if (!(k[0] | k[1] | k[2]))
+                    continue;
+                ULONG d = SurfaceGetPixel(s, xx, yy);
+                if (k[0] == 6 && k[1] == 6 && k[2] == 6) {
+                    SurfacePutPixel(s, xx, yy, (d & 0xFF000000u) | (pixel & 0xFFFFFF));
+                    continue;
+                }
+                LONG dr = g_ct_linear[(d >> 16) & 0xFF], dg = g_ct_linear[(d >> 8) & 0xFF], db = g_ct_linear[d & 0xFF];
+                LONG nr = dr + (LONG)(((LONG64)weight[k[stripe_r]] * (fg[0] - dr) + 0x80000) >> 20);
+                LONG ng = dg + (LONG)(((LONG64)weight[k[1]] * (fg[1] - dg) + 0x80000) >> 20);
+                LONG nb = db + (LONG)(((LONG64)weight[k[stripe_b]] * (fg[2] - db) + 0x80000) >> 20);
+                SurfacePutPixel(s, xx, yy,
+                                (d & 0xFF000000u) | ((ULONG)g_ct_encoded[nr] << 16) | ((ULONG)g_ct_encoded[ng] << 8) |
+                                    g_ct_encoded[nb]);
+            }
+        }
+    }
+}
+
+void DrawGlyph(SURFACE *s, const REGION *clip, LONG x, LONG y, const GLYPH *g, ULONG pixel)
+{
+    if (g->Subpixel && g->SubWidth && g->SubHeight && surface_takes_clear_type(s)) {
+        draw_subpixel(s, clip, x + g->SubLeft, y + g->SubTop, g->Subpixel, g->SubWidth, g->SubHeight, pixel);
+        return;
+    }
+    if (g->Coverage && g->Width && g->Height)
+        DrawCoverage(s, clip, x + g->Left, y + g->Top, g->Coverage, g->Width, g->Height, g->Width, pixel);
 }
 
 /*

@@ -4,7 +4,7 @@
 
 /* largest flattening error, in pixels. */
 #define FLATNESS 0.04f
-#define MAX_SUBDIVISIONS 256
+#define MAX_SUBDIVISIONS 1024
 /* keeps float to int conversions defined. */
 #define COORD_LIMIT 4194304.0f
 #define MAX_BITMAP_SIDE 16384
@@ -28,6 +28,10 @@ struct Path {
     /* raster mode. */
     float *acc;
     int width, height;
+
+    /* scan mode. */
+    void *segs;
+    float flat;
 };
 
 static float clampf(float v)
@@ -63,7 +67,8 @@ static void emit_quad(Path *p, float x0, float y0, float cx, float cy, float x1,
     /* distance from the curve midpoint to the chord midpoint, shrinking with the square of the steps. */
     float dev = (absf(x0 - 2 * cx + x1) + absf(y0 - 2 * cy + y1)) * 0.25f;
     int n = 1;
-    while (n < MAX_SUBDIVISIONS && dev > FLATNESS * (float)(n * n))
+    float flat = p->flat > 0 ? p->flat : FLATNESS;
+    while (n < MAX_SUBDIVISIONS && dev > flat * (float)(n * n))
         n++;
     float px = x0, py = y0;
     float step = 1.0f / (float)n;
@@ -298,6 +303,14 @@ static void path_init(Path *p, const MimeTtfRenderParams *r, float tx, float ty)
         p->yx = 0;
         p->yy = -r->scale_y;
     }
+    if (r->over_x > 1) {
+        p->xx *= (float)r->over_x;
+        p->xy *= (float)r->over_x;
+    }
+    if (r->over_y > 1) {
+        p->yx *= (float)r->over_y;
+        p->yy *= (float)r->over_y;
+    }
     p->tx = tx;
     p->ty = ty;
 }
@@ -400,4 +413,335 @@ bool mime_ttf_render_glyph(const MimeTtfFont *font, const MimeAllocator *alloc, 
 {
     MimeTtfRenderParams r = {scale_x, scale_y, shift_x, shift_y, 0, 0};
     return mime_ttf_render_glyph_ex(font, alloc, glyph, &r, out, width, height, stride);
+}
+
+/* ------------------------------------------------------------------ bilevel scan conversion */
+
+static int dfloor(double v)
+{
+    if (!(v > -4194304.0))
+        return -4194304;
+    if (v > 4194304.0)
+        return 4194304;
+    int i = (int)v;
+    return (double)i > v ? i - 1 : i;
+}
+
+static int dceil(double v)
+{
+    return -dfloor(-v);
+}
+
+typedef struct Seg {
+    double x0, y0, x1, y1;
+} Seg;
+
+typedef struct SegList {
+    const MimeAllocator *alloc;
+    Seg *v;
+    size_t count, cap;
+    bool failed;
+} SegList;
+
+typedef struct Cross {
+    double x;
+    int dir;
+} Cross;
+
+static void seg_line(Path *p, float x0, float y0, float x1, float y1)
+{
+    SegList *l = p->segs;
+    if (l->failed || (y0 == y1 && x0 == x1))
+        return;
+    if (l->count == l->cap) {
+        size_t cap = l->cap ? l->cap * 2 : 128;
+        Seg *v = mime_alloc(l->alloc, cap * sizeof(Seg));
+        if (!v) {
+            l->failed = true;
+            return;
+        }
+        if (l->count)
+            __builtin_memcpy(v, l->v, l->count * sizeof(Seg));
+        if (l->v)
+            mime_free(l->alloc, l->v);
+        l->v = v;
+        l->cap = cap;
+    }
+    l->v[l->count++] = (Seg){x0, y0, x1, y1};
+}
+
+static void cross_sort(Cross *c, int n)
+{
+    for (int i = 1; i < n; i++) {
+        Cross t = c[i];
+        int j = i;
+        while (j > 0 && c[j - 1].x > t.x) {
+            c[j] = c[j - 1];
+            j--;
+        }
+        c[j] = t;
+    }
+}
+
+/* the crossings of the line at coordinate c, along axis 0 for x or 1 for y, sorted along the other axis. */
+static int line_crossings(const Seg *segs, size_t n, int axis, double c, Cross *out)
+{
+    int k = 0;
+    for (size_t i = 0; i < n; i++) {
+        double a0 = axis ? segs[i].x0 : segs[i].y0, a1 = axis ? segs[i].x1 : segs[i].y1;
+        double b0 = axis ? segs[i].y0 : segs[i].x0, b1 = axis ? segs[i].y1 : segs[i].x1;
+        if (a0 == a1)
+            continue;
+        double lo = a0 < a1 ? a0 : a1, hi = a0 < a1 ? a1 : a0;
+        if (c < lo || c >= hi)
+            continue;
+        out[k].x = b0 + (c - a0) * (b1 - b0) / (a1 - a0);
+        out[k].dir = a1 > a0 ? 1 : -1;
+        k++;
+    }
+    cross_sort(out, k);
+    return k;
+}
+
+/* tolerance for a centre exactly on an edge. */
+#define SCAN_EPS 1e-7
+/* the curves are flattened finer than the display ones, a sample can be decided by a hundredth of a pixel. */
+#define SCAN_FLATNESS 0.002f
+/* how far around a dropout the next scan lines must show the contours going on. */
+#define STUB_MARGIN 1.5
+
+static bool scan_enabled(const MimeTtfScan *s)
+{
+    uint32_t c = s->control & 0xFFFF;
+    uint32_t threshold = c & 0xFF;
+    uint32_t ppem = (uint32_t)s->ppem & 0xFF;
+    return ((c & 0x100) && ppem <= threshold) || (threshold == 0xFF && (c & 0x100)) || ((c & 0x200) && s->rotated) ||
+           ((c & 0x400) && s->stretched);
+}
+
+/* the dropout rules of a scan type, bit 1 turns the control off, bit 2 is smart and bit 0 leaves stubs out. */
+static unsigned scan_rules(const MimeTtfScan *s)
+{
+    if (!scan_enabled(s))
+        return 2;
+    return s->type & 0xFFFF;
+}
+
+/* true when the crossings at the line next to a dropout show the contours go on. */
+static bool continues(const Seg *segs, size_t n, Cross *tmp, int axis, int line, int lines, double lo, double hi)
+{
+    if (line < 0 || line >= lines)
+        return false;
+    int k = line_crossings(segs, n, axis, line + 0.5, tmp);
+    int hit = 0;
+    for (int i = 0; i < k; i++)
+        if (tmp[i].x >= lo - STUB_MARGIN && tmp[i].x <= hi + STUB_MARGIN)
+            hit++;
+    return hit >= 2;
+}
+
+/* the box of the runs the scan found, relative to the box of the glyph: columns x0 to x1 and rows y0 to y1. */
+typedef struct RunBox {
+    int x0, y0, x1, y1;
+} RunBox;
+
+static bool scan_core(const MimeTtfFont *font, const MimeAllocator *alloc, uint16_t glyph,
+                      const MimeTtfRenderParams *params, const MimeTtfScan *scan, uint8_t *out, int width, int height,
+                      int stride, RunBox *runs)
+{
+    if (!alloc || !out || !scan || width < 0 || height < 0 || width > MAX_BITMAP_SIDE || height > MAX_BITMAP_SIDE)
+        return false;
+    if (height > 0 && stride < width)
+        return false;
+    int bx0, by0, bx1, by1;
+    if (!mime_ttf_glyph_box_ex(font, glyph, params, &bx0, &by0, &bx1, &by1))
+        return false;
+    for (int y = 0; y < height; y++)
+        __builtin_memset(out + (size_t)y * (size_t)stride, 0, (size_t)width);
+    runs->x0 = runs->y0 = runs->x1 = runs->y1 = 0;
+    if (bx0 == bx1 || width == 0 || height == 0)
+        return true;
+
+    SegList list = {alloc, nullptr, 0, 0, false};
+    Path p;
+    path_init(&p, params, params->shift_x - (float)bx0, params->shift_y - (float)by0);
+    p.line = seg_line;
+    p.segs = &list;
+    p.flat = SCAN_FLATNESS;
+    MimeTtfSink sink = {path_point, path_end, &p};
+    bool ok = walk(font, params, glyph, &sink) && !list.failed;
+    Cross *cross = ok ? mime_alloc(alloc, (list.count + 1) * sizeof(Cross) * 2) : nullptr;
+    if (!cross) {
+        if (list.v)
+            mime_free(alloc, list.v);
+        return false;
+    }
+    Cross *tmp = cross + list.count + 1;
+    const Seg *segs = list.v;
+    size_t n = list.count;
+
+    /* rule 1 and 2: samples whose centre is inside or on the outline are on. */
+    bool any_run = false;
+    for (int y = 0; y < height; y++) {
+        int k = line_crossings(segs, n, 0, y + 0.5, cross);
+        int wind = 0;
+        double start = 0;
+        for (int i = 0; i < k; i++) {
+            int before = wind;
+            wind += cross[i].dir;
+            if (before == 0 && wind != 0) {
+                start = cross[i].x;
+            } else if (before != 0 && wind == 0) {
+                double a = start - 0.5 - SCAN_EPS, b = cross[i].x - 0.5 + SCAN_EPS;
+                int first = dceil(a), last = dfloor(b);
+                if (!any_run) {
+                    runs->x0 = first;
+                    runs->x1 = last + 1;
+                    runs->y0 = y;
+                    runs->y1 = y + 1;
+                    any_run = true;
+                } else {
+                    if (first < runs->x0)
+                        runs->x0 = first;
+                    if (last + 1 > runs->x1)
+                        runs->x1 = last + 1;
+                    if (y < runs->y0)
+                        runs->y0 = y;
+                    if (y + 1 > runs->y1)
+                        runs->y1 = y + 1;
+                }
+                if (first < 0)
+                    first = 0;
+                if (last >= width)
+                    last = width - 1;
+                for (int x = first; x <= last; x++)
+                    out[(size_t)y * (size_t)stride + (size_t)x] = 1;
+            }
+        }
+    }
+
+    unsigned rules = scan_rules(scan);
+    if (!(rules & 2)) {
+        bool smart = (rules & 4) != 0, stubs = (rules & 1) != 0;
+        for (int pass = 0; pass < 2; pass++) {
+            int lines = pass ? width : height, along = pass ? height : width;
+            for (int line = 0; line < lines; line++) {
+                int k = line_crossings(segs, n, pass, line + 0.5, cross);
+                int wind = 0;
+                double start = 0;
+                double span[64][2];
+                int spans = 0;
+                for (int i = 0; i < k; i++) {
+                    int before = wind;
+                    wind += cross[i].dir;
+                    if (before == 0 && wind != 0) {
+                        start = cross[i].x;
+                    } else if (before != 0 && wind == 0 && spans < 64) {
+                        span[spans][0] = start;
+                        span[spans][1] = cross[i].x;
+                        spans++;
+                    }
+                }
+                /* the runs are looked at from the end, so the first dropout wins the sample. */
+                for (int s = 0; s < spans; s++) {
+                    int si = spans - 1 - s;
+                    double lo_x = span[si][0], hi_x = span[si][1];
+                    int first = dceil(lo_x - 0.5 - SCAN_EPS), last = dfloor(hi_x - 0.5 + SCAN_EPS);
+                    if (first <= last)
+                        continue;
+                    /* no centre inside, so the span lies between samples nr and nr + 1. */
+                    int nr = first - 1;
+                    if (nr < 0 || nr + 1 >= along)
+                        continue;
+                    if (stubs && !(continues(segs, n, tmp, pass, line - 1, lines, nr, nr + 1.0 + SCAN_EPS) &&
+                                   continues(segs, n, tmp, pass, line + 1, lines, nr, nr + 1.0 + SCAN_EPS)))
+                        continue;
+                    uint8_t *lo = pass ? out + (size_t)nr * (size_t)stride + (size_t)line
+                                       : out + (size_t)line * (size_t)stride + (size_t)nr;
+                    size_t step = pass ? (size_t)stride : 1;
+                    if (lo[0] || lo[step])
+                        continue;
+                    int pick = 0;
+                    if (smart)
+                        pick = dfloor((lo_x + hi_x) * 0.5) > nr ? 1 : 0;
+                    /* the bitmap ends where the runs do, a sample beyond is left off down and pulled in across. */
+                    int at = nr + pick;
+                    if (pass == 0) {
+                        if (at < runs->x0)
+                            at = runs->x0;
+                        if (at >= runs->x1)
+                            at = runs->x1 - 1;
+                    } else if (at < runs->y0 || at >= runs->y1) {
+                        continue;
+                    }
+                    uint8_t *dst = pass ? out + (size_t)at * (size_t)stride + (size_t)line
+                                        : out + (size_t)line * (size_t)stride + (size_t)at;
+                    *dst = 1;
+                }
+            }
+        }
+    }
+    mime_free(alloc, cross);
+    mime_free(alloc, list.v);
+    return true;
+}
+
+bool mime_ttf_scan_glyph_ex(const MimeTtfFont *font, const MimeAllocator *alloc, uint16_t glyph,
+                            const MimeTtfRenderParams *params, const MimeTtfScan *scan, uint8_t *out, int width,
+                            int height, int stride)
+{
+    RunBox runs;
+    return scan_core(font, alloc, glyph, params, scan, out, width, height, stride, &runs);
+}
+
+void mime_ttf_bitmap_free(const MimeAllocator *alloc, MimeTtfBitmap *bitmap)
+{
+    if (bitmap->data)
+        mime_free(alloc, bitmap->data);
+    __builtin_memset(bitmap, 0, sizeof(*bitmap));
+}
+
+bool mime_ttf_scan_bitmap(const MimeTtfFont *font, const MimeAllocator *alloc, uint16_t glyph,
+                          const MimeTtfRenderParams *params, const MimeTtfScan *scan, MimeTtfBitmap *out)
+{
+    __builtin_memset(out, 0, sizeof(*out));
+    int x0, y0, x1, y1;
+    if (!mime_ttf_glyph_box_ex(font, glyph, params, &x0, &y0, &x1, &y1))
+        return false;
+    if (x0 == x1 || y0 == y1)
+        return true;
+    int w = x1 - x0, h = y1 - y0;
+    uint8_t *bits = mime_alloc(alloc, (size_t)w * (size_t)h);
+    if (!bits)
+        return false;
+    RunBox runs;
+    if (!scan_core(font, alloc, glyph, params, scan, bits, w, h, w, &runs)) {
+        mime_free(alloc, bits);
+        return false;
+    }
+    /* the bitmap spans the runs, even the ones too short to have a sample. */
+    int tx0 = runs.x0, ty0 = runs.y0, tx1 = runs.x1, ty1 = runs.y1;
+    bool any = runs.y1 > runs.y0;
+    if (!any || tx0 >= tx1 || ty0 >= ty1) {
+        mime_free(alloc, bits);
+        return true;
+    }
+    if (tx0 < 0) tx0 = 0;
+    if (tx1 > w) tx1 = w;
+    int tw = tx1 - tx0, th = ty1 - ty0;
+    uint8_t *tight = mime_alloc(alloc, (size_t)tw * (size_t)th);
+    if (!tight) {
+        mime_free(alloc, bits);
+        return false;
+    }
+    for (int y = 0; y < th; y++)
+        __builtin_memcpy(tight + (size_t)y * (size_t)tw, bits + (size_t)(y + ty0) * (size_t)w + (size_t)tx0, (size_t)tw);
+    mime_free(alloc, bits);
+    out->x0 = x0 + tx0;
+    out->y0 = y0 + ty0;
+    out->x1 = x0 + tx1;
+    out->y1 = y0 + ty1;
+    out->stride = tw;
+    out->data = tight;
+    return true;
 }

@@ -359,6 +359,7 @@ ULONG SurfaceGetPixel(SURFACE *s, LONG x, LONG y);
 void SurfacePutPixel(SURFACE *s, LONG x, LONG y, ULONG pixel);
 void DrawCoverage(SURFACE *s, const REGION *clip, LONG x, LONG y, const UCHAR *coverage, LONG width, LONG height,
                   LONG stride, ULONG pixel);
+BOOLEAN MetricsFontSmoothing(UINT *type, UINT *contrast, UINT *orientation);
 void DrawRoundRectAA(SURFACE *s, const REGION *clip, const RECT *rect, LONG rx, LONG ry, BOOLEAN filled, ULONG fill,
                      ULONG border, LONG border_width);
 BOOLEAN BltSurface(SURFACE *dst, const REGION *clip, LONG dx, LONG dy, LONG width, LONG height, SURFACE *src,
@@ -379,7 +380,21 @@ typedef struct GLYPH {
     USHORT Height;
     UCHAR Ready;     /* rendered. */
     UCHAR *Coverage;
+    /* ClearType levels from 0 to 6, three for each pixel from left to right, with a box of their own. */
+    UCHAR *Subpixel;
+    SHORT SubLeft;
+    SHORT SubTop;
+    USHORT SubWidth;
+    USHORT SubHeight;
 } GLYPH;
+
+/* how a font is smoothed. */
+enum {
+    FONT_SMOOTH_ALIASED,
+    FONT_SMOOTH_GRAY,
+    FONT_SMOOTH_CLEARTYPE,
+    FONT_SMOOTH_NATURAL, /* ClearType with the widths of the font itself. */
+};
 
 typedef struct FONT_INSTANCE {
     LIST_ENTRY Links;
@@ -392,6 +407,7 @@ typedef struct FONT_INSTANCE {
     BOOLEAN StrikeOut;
     BOOLEAN SimBold;
     BOOLEAN SimItalic;
+    UCHAR Smooth; /* FONT_SMOOTH_*. */
     float ScaleX;
     float ScaleY;
     TEXTMETRICW Metrics;
@@ -403,6 +419,9 @@ typedef struct FONT_INSTANCE {
     BOOLEAN HinterTried;
     struct MimeTtfHinter *HinterAliased; /* the same for text drawn without anti-aliasing. */
     BOOLEAN HinterAliasedTried;
+    struct MimeTtfHinter *HinterCt; /* the same for ClearType. */
+    BOOLEAN HinterCtTried;
+    BOOLEAN CtVertical; /* ClearType also smooths down, five rows to a pixel. */
     ULONG *CharPages[256]; /* glyph index + 1 for code points by high byte, BMP only, 0 when unknown. */
     GLYPH *Pages[256];     /* rendered glyphs by glyph index high byte. */
 } FONT_INSTANCE;
@@ -415,6 +434,9 @@ USHORT FontGlyphIndex(FONT_INSTANCE *fi, ULONG codepoint); /* 0 for missing glyp
 void FontGlyphAbcFloat(FONT_INSTANCE *fi, USHORT index, ABCFLOAT *abc);
 struct MimeTtfHinter *FontHinter(FONT_INSTANCE *fi);
 struct MimeTtfHinter *FontHinterAliased(FONT_INSTANCE *fi);
+struct MimeTtfHinter *FontHinterClearType(FONT_INSTANCE *fi);
+/* blends a glyph in a color, with ClearType when the glyph has it and the surface can take it. */
+void DrawGlyph(SURFACE *s, const REGION *clip, LONG x, LONG y, const GLYPH *glyph, ULONG pixel);
 LONG FontGlyphAdvance(FONT_INSTANCE *fi, USHORT index);
 UCHAR *FontRenderTransformed(FONT_INSTANCE *fi, USHORT index, const XFORM *m, LONG *left, LONG *top, LONG *width,
                              LONG *height);

@@ -712,6 +712,25 @@ static void compute_metrics(FONT_INSTANCE *fi, const LOGFONTW *lf)
     fi->StrikeoutPos = round_f((float)m->strikeout_position * fi->ScaleY);
 }
 
+/* how text of a logical font is smoothed: the quality asks for it, or the settings of the system decide. */
+static UCHAR smooth_of(const LOGFONTW *lf)
+{
+    switch (lf->lfQuality) {
+    case NONANTIALIASED_QUALITY:
+        return FONT_SMOOTH_ALIASED;
+    case ANTIALIASED_QUALITY:
+        return FONT_SMOOTH_GRAY;
+    case CLEARTYPE_QUALITY:
+        return FONT_SMOOTH_CLEARTYPE;
+    case CLEARTYPE_NATURAL_QUALITY:
+        return FONT_SMOOTH_NATURAL;
+    }
+    UINT type, contrast, orientation;
+    if (!MetricsFontSmoothing(&type, &contrast, &orientation))
+        return FONT_SMOOTH_ALIASED;
+    return type == 2 ? FONT_SMOOTH_CLEARTYPE : FONT_SMOOTH_GRAY;
+}
+
 FONT_INSTANCE *FontRealize(const LOGFONTW *lf, UINT dpi)
 {
     FONT_FACE *face = FontMatchFace(lf);
@@ -732,9 +751,11 @@ FONT_INSTANCE *FontRealize(const LOGFONTW *lf, UINT dpi)
     LONG weight = lf->lfWeight ? lf->lfWeight : FW_NORMAL;
     BOOLEAN sim_bold = weight >= FW_SEMIBOLD && face->Weight < FW_SEMIBOLD;
     BOOLEAN sim_italic = lf->lfItalic && !face->Italic;
+    UCHAR smooth = smooth_of(lf);
     for (PLIST_ENTRY e = g_instances.Flink; e != &g_instances; e = e->Flink) {
         FONT_INSTANCE *fi = CONTAINING_RECORD(e, FONT_INSTANCE, Links);
-        if (fi->Face == face && fi->EmPixels == em && fi->Width == lf->lfWidth && fi->Weight == weight &&
+        if (fi->Face == face && fi->EmPixels == em && fi->Smooth == smooth && fi->Width == lf->lfWidth &&
+            fi->Weight == weight &&
             fi->Italic == !!lf->lfItalic && fi->Underline == !!lf->lfUnderline && fi->StrikeOut == !!lf->lfStrikeOut)
             return fi;
     }
@@ -743,6 +764,7 @@ FONT_INSTANCE *FontRealize(const LOGFONTW *lf, UINT dpi)
         return nullptr;
     fi->Face = face;
     fi->EmPixels = em;
+    fi->Smooth = smooth;
     fi->Width = lf->lfWidth;
     fi->Weight = weight;
     fi->Italic = lf->lfItalic != 0;
@@ -782,6 +804,36 @@ MimeTtfHinter *FontHinterAliased(FONT_INSTANCE *fi)
 }
 
 /*
+ * ClearType smooths down as well, five rows to a pixel, where the gasp table of the font asks for symmetric smoothing.
+ * a font without the table gets it from 21 pixels on, and one without instructions at any size.
+ */
+static BOOLEAN smooths_down(FONT_INSTANCE *fi)
+{
+    const MimeTtfFont *ttf = &fi->Face->Ttf;
+    unsigned gasp = mime_ttf_gasp(ttf, fi->EmPixels);
+    if (gasp != 0xffff)
+        return (gasp & 8) != 0;
+    return fi->EmPixels > 20 || ttf->fpgm.size + ttf->prep.size + ttf->cvt.size == 0;
+}
+
+/* the interpreter for ClearType text, null when the size is drawn unhinted. */
+MimeTtfHinter *FontHinterClearType(FONT_INSTANCE *fi)
+{
+    if (!fi->HinterCtTried) {
+        fi->HinterCtTried = TRUE;
+        fi->CtVertical = smooths_down(fi);
+        if (fi->ScaleX == fi->ScaleY && fi->EmPixels >= 1 && fi->EmPixels <= 1024 && mime_ttf_has_outlines(&fi->Face->Ttf)) {
+            uint32_t flags = MIME_TTF_HINT_CLEARTYPE;
+            flags |= fi->Smooth == FONT_SMOOTH_NATURAL ? MIME_TTF_HINT_SUBPIXEL : MIME_TTF_HINT_COMPAT_WIDTHS;
+            if (fi->CtVertical)
+                flags |= MIME_TTF_HINT_SYMMETRIC;
+            fi->HinterCt = mime_ttf_hinter_new(&fi->Face->Ttf, &FontAllocator, fi->EmPixels, fi->EmPixels, flags);
+        }
+    }
+    return fi->HinterCt;
+}
+
+/*
  * the device advance of a glyph. the hdmx table wins when it has the size, then glyphs the LTSH table calls linear
  * are scaled and rounded once, and the rest take the width the instructions leave.
  */
@@ -805,6 +857,81 @@ LONG FontGlyphAdvance(FONT_INSTANCE *fi, USHORT index)
     return round_f((float)advance * fi->ScaleX);
 }
 
+/* the levels of a glyph for ClearType, fine to leave out. */
+static void render_clear_type(FONT_INSTANCE *fi, USHORT index, GLYPH *g)
+{
+    if (fi->SimBold)
+        return;
+    FONT_FACE *face = fi->Face;
+    MimeTtfRenderParams params = {0};
+    params.hinter = FontHinterClearType(fi);
+    if (!params.hinter) {
+        params.scale_x = fi->ScaleX;
+        params.scale_y = fi->ScaleY;
+    }
+    params.oblique = fi->SimItalic ? 0.2f : 0.0f;
+    MimeTtfScan scan = {0, 0, (int)fi->EmPixels, false, false};
+    if (params.hinter)
+        mime_ttf_hinter_scan(params.hinter, &scan.control, &scan.type);
+    MimeTtfBitmap bm;
+    if (!mime_ttf_cleartype_bitmap(&face->Ttf, &FontAllocator, index, &params, fi->CtVertical ? 5 : 1, &scan, &bm))
+        return;
+    LONG w = bm.x1 - bm.x0, h = bm.y1 - bm.y0;
+    if (bm.data && w > 0 && h > 0 && w <= 4096 && h <= 4096) {
+        UCHAR *levels = W32Alloc((SIZE_T)w * (SIZE_T)h * 3);
+        if (levels) {
+            memcpy(levels, bm.data, (SIZE_T)w * (SIZE_T)h * 3);
+            g->Subpixel = levels;
+            g->SubLeft = (SHORT)bm.x0;
+            g->SubTop = (SHORT)bm.y0;
+            g->SubWidth = (USHORT)w;
+            g->SubHeight = (USHORT)h;
+        }
+    }
+    mime_ttf_bitmap_free(&FontAllocator, &bm);
+}
+
+/* text without smoothing: a sample is on or off. */
+static BOOLEAN render_aliased(FONT_INSTANCE *fi, USHORT index, GLYPH *g)
+{
+    FONT_FACE *face = fi->Face;
+    MimeTtfRenderParams params = {0};
+    params.hinter = FontHinterAliased(fi);
+    if (!params.hinter) {
+        params.scale_x = fi->ScaleX;
+        params.scale_y = fi->ScaleY;
+    }
+    params.oblique = fi->SimItalic ? 0.2f : 0.0f;
+    params.embolden = fi->SimBold ? (float)W32Max(1, fi->EmPixels / 24) : 0.0f;
+    MimeTtfScan scan = {0, 0, (int)fi->EmPixels, false, false};
+    if (params.hinter)
+        mime_ttf_hinter_scan(params.hinter, &scan.control, &scan.type);
+    MimeTtfBitmap bm;
+    if (!mime_ttf_scan_bitmap(&face->Ttf, &FontAllocator, index, &params, &scan, &bm))
+        return FALSE;
+    LONG w = bm.x1 - bm.x0, h = bm.y1 - bm.y0;
+    if (!bm.data || w <= 0 || h <= 0 || w > 4096 || h > 4096) {
+        mime_ttf_bitmap_free(&FontAllocator, &bm);
+        g->Width = g->Height = 0;
+        return TRUE;
+    }
+    UCHAR *cov = W32Alloc((SIZE_T)w * (SIZE_T)h);
+    if (!cov) {
+        mime_ttf_bitmap_free(&FontAllocator, &bm);
+        return FALSE;
+    }
+    for (LONG y = 0; y < h; y++)
+        for (LONG x = 0; x < w; x++)
+            cov[y * w + x] = bm.data[y * bm.stride + x] ? 255 : 0;
+    g->Left = (SHORT)bm.x0;
+    g->Top = (SHORT)bm.y0;
+    g->Width = (USHORT)w;
+    g->Height = (USHORT)h;
+    g->Coverage = cov;
+    mime_ttf_bitmap_free(&FontAllocator, &bm);
+    return TRUE;
+}
+
 static BOOLEAN render_glyph(FONT_INSTANCE *fi, USHORT index, GLYPH *g)
 {
     FONT_FACE *face = fi->Face;
@@ -813,6 +940,10 @@ static BOOLEAN render_glyph(FONT_INSTANCE *fi, USHORT index, GLYPH *g)
     params.hinter = FontHinter(fi);
     g->Index = index;
     g->Advance = (SHORT)(FontGlyphAdvance(fi, index) + (fi->SimBold ? W32Max(1, fi->EmPixels / 24) : 0));
+    if (fi->Smooth >= FONT_SMOOTH_CLEARTYPE)
+        render_clear_type(fi, index, g);
+    if (fi->Smooth == FONT_SMOOTH_ALIASED)
+        return render_aliased(fi, index, g);
     int x0, y0, x1, y1;
     if (params.hinter && !mime_ttf_glyph_box_ex(&face->Ttf, index, &params, &x0, &y0, &x1, &y1))
         params.hinter = nullptr;
