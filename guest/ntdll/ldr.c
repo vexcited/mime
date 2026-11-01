@@ -1759,8 +1759,13 @@ NTDLL_EXPORT DECLSPEC_NORETURN void NTAPI RtlExitUserThread(NTSTATUS status)
 
 NTDLL_EXPORT DECLSPEC_NORETURN void NTAPI RtlExitUserProcess(NTSTATUS status)
 {
-    if (!g_process_detaching)
+    if (!g_process_detaching) {
+        /* the loader lock is taken first, so no thread that is ended holds it, then the other threads end before the
+         * libraries are told, as ExitProcess documents. */
+        RtlEnterCriticalSection(&LdrpLoaderLock);
+        NtTerminateProcess(nullptr, status);
         LdrShutdownProcess();
+    }
     for (;;)
         NtTerminateProcess(NtCurrentProcess(), status);
 }

@@ -298,11 +298,44 @@ NTSTATUS PspTerminateProcess(PEPROCESS process, NTSTATUS status)
     return STATUS_SUCCESS;
 }
 
+/* ends every thread of the process but the caller's, which ExitProcess does before the libraries are told. */
+static void PspTerminateOtherThreads(PEPROCESS process, NTSTATUS status)
+{
+    PETHREAD self = PsGetCurrentThread();
+    ULONG64 s = KiAcquireDispatcherLock();
+    if (!process->Terminating) {
+        process->Terminating = TRUE;
+        process->ExitStatus = status;
+    }
+    for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead; e = e->Flink) {
+        PETHREAD t = CONTAINING_RECORD(e, ETHREAD, ThreadListEntry);
+        if (t == self)
+            continue;
+        if (!t->Tcb.Terminating) {
+            t->Tcb.Terminating = TRUE;
+            t->ExitStatus = status;
+        }
+        if (t->Tcb.State == Waiting)
+            KiUnwaitThread(&t->Tcb, STATUS_KERNEL_APC);
+        else if (t->Tcb.State == Initialized)
+            KiReadyThread(&t->Tcb);
+        else
+            KiInterruptThread(&t->Tcb);
+    }
+    KiReleaseDispatcherLock(s);
+}
+
 NTSTATUS NTAPI NtTerminateProcess(HANDLE handle, NTSTATUS exit_status)
 {
     PEPROCESS process;
-    if (!handle)
-        handle = NtCurrentProcess();
+    /* no handle means the threads of the calling process other than the caller. */
+    if (!handle) {
+        PEPROCESS current = PsCurrentProcess();
+        if (current->SystemProcess)
+            return STATUS_ACCESS_DENIED;
+        PspTerminateOtherThreads(current, exit_status);
+        return STATUS_SUCCESS;
+    }
     NTSTATUS status = PsReferenceProcessHandle(handle, PROCESS_TERMINATE, &process);
     if (!NT_SUCCESS(status))
         return status;
