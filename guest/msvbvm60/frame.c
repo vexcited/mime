@@ -74,7 +74,8 @@ static ULONG locals_of(const VbFrame *frame)
 /* runs a routine of the procedure with its base register. */
 static void call_with_base(ULONG routine, ULONG base)
 {
-    __asm__ volatile("pushl %%ebp\n\tmovl %1, %%ebp\n\tcall *%0\n\tpopl %%ebp" ::"r"(routine), "r"(base) : "eax", "ecx", "edx", "memory", "cc");
+    /* the routine and the base must not sit in the register that is overwritten with the base. */
+    __asm__ volatile("pushl %%ebp\n\tmovl %%ecx, %%ebp\n\tcall *%%eax\n\tpopl %%ebp" ::"a"(routine), "c"(base) : "edx", "memory", "cc");
 }
 
 /* leaves the handler for code of the procedure, with its frame back on top of the list. */
