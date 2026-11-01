@@ -619,7 +619,7 @@ EXPORTS
     rtcCreateObject2=vbstub_716 @716
     rtcStrConvVar2=vbstub_717 @717
     _adj_fdiv_m64=vb__adj_fdiv_m64 @718
-    _adj_fdiv_r=vbstub_719 @719
+    _adj_fdiv_r=vb__adj_fdiv_r @719
     _adj_fdivr_m16i=vb__adj_fdivr_m16i @720
     _adj_fdivr_m32=vb__adj_fdivr_m32 @721
     _adj_fdivr_m32i=vb__adj_fdivr_m32i @722

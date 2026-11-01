@@ -431,7 +431,6 @@ void vbstub_714(void) { missing("rtcRound"); }
 void vbstub_715(void) { missing("rtcCallByName"); }
 void vbstub_716(void) { missing("rtcCreateObject2"); }
 void vbstub_717(void) { missing("rtcStrConvVar2"); }
-void vbstub_719(void) { missing("_adj_fdiv_r"); }
 void vbstub_999(void) { missing("TipInvokeMethod2"); }
 void vbstub_1016(void) { missing("TipInvokeMethod"); }
 void vbstub_1024(void) { missing("IID_IVbaHost"); }
