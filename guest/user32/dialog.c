@@ -587,8 +587,12 @@ static LRESULT default_dialog(HWND hwnd, DIALOG *d, UINT msg, WPARAM wparam, LPA
     case WM_GETFONT:
         return d ? (LRESULT)d->Font : 0;
     case WM_SETFONT:
-        if (d)
+        if (d) {
+            /* a font of the program is the program's to scale. */
+            if (d->Font != (HFONT)wparam)
+                d->OwnsFont = d->Scaled = FALSE;
             d->Font = (HFONT)wparam;
+        }
         return 0;
     case DM_GETDEFID:
         if (d && d->DefId)

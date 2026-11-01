@@ -303,10 +303,8 @@ WINUSERAPI BOOL WINAPI EnableNonClientDpiScaling(HWND hwnd)
         SetLastError(ERROR_INVALID_WINDOW_HANDLE);
         return FALSE;
     }
-    if (!NtUserCallHwndParam(hwnd, 0, MIME_HWNDPARAM_ENABLENCDPI)) {
-        SetLastError(ERROR_ACCESS_DENIED);
+    if (!NtUserCallHwndParam(hwnd, 0, MIME_HWNDPARAM_ENABLENCDPI))
         return FALSE;
-    }
     return TRUE;
 }
 

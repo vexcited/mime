@@ -2840,7 +2840,9 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
     }
     case MIME_HWNDPARAM_ENABLENCDPI:
         /* a per monitor window scales its frame itself from now on, a per monitor v2 one always did. */
-        if (WndIsTopLevel(w) && w->Awareness >= DPI_AWARE_PER_MONITOR) {
+        if (!w->Thread || w->Thread->Process != W32GetProcess()) {
+            W32SetLastError(ERROR_ACCESS_DENIED);
+        } else if (WndIsTopLevel(w) && w->Awareness >= DPI_AWARE_PER_MONITOR) {
             if (w->Awareness == DPI_AWARE_PER_MONITOR && !(w->Flags & WNDF_NCDPI)) {
                 w->Flags |= WNDF_NCDPI;
                 /* the frame of a window that is still being created is calculated after its creation. */
