@@ -614,7 +614,7 @@ static BOOL shape_run(Build *b, const DwSpan *span, UINT32 a, UINT32 e, IDWriteF
     }
     for (UINT32 g = 0; g < shaped.glyph_count; g++) {
         FLOAT w = (FLOAT)shaped.advances[g] * k;
-        if (l->gdi && !l->natural && l->ppd > 0) {
+        if (l->gdi && l->ppd > 0) {
             FLOAT px = w * l->ppd;
             px = px >= 0 ? (FLOAT)(INT32)(px + 0.5f) : (FLOAT)(INT32)(px - 0.5f);
             w = px / l->ppd;
