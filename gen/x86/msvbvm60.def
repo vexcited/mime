@@ -82,7 +82,7 @@ EXPORTS
     __vbaCastObjVar=vbstub_179 @179
     __vbaCheckType=_vb___vbaCheckType@8 @180
     __vbaCheckTypeVar=vbstub_181 @181
-    __vbaChkstk=vbstub_182 @182
+    __vbaChkstk=vb___vbaChkstk @182
     __vbaCopyBytes=_vb___vbaCopyBytes@12 @183
     __vbaCopyBytesZero=vbstub_184 @184
     __vbaCyAbs=vbstub_185 @185
@@ -123,7 +123,7 @@ EXPORTS
     TipSetOption=vbstub_220 @220
     __vbaExitEachColl=vbstub_221 @221
     __vbaExitEachVar=vbstub_222 @222
-    __vbaExitProc=vbstub_223 @223
+    __vbaExitProc=_vb___vbaExitProc@0 @223
     __vbaFPException=_vb___vbaFPException@0 @224
     __vbaFPFix=vbstub_225 @225
     __vbaFPInt=vb___vbaFPInt @226
@@ -158,7 +158,7 @@ EXPORTS
     __vbaGosubReturn=vbstub_255 @255
     __vbaHresultCheck=vbstub_256 @256
     __vbaHresultCheckNonvirt=vbstub_257 @257
-    __vbaHresultCheckObj=vbstub_258 @258
+    __vbaHresultCheckObj=_vb___vbaHresultCheckObj@16 @258
     __vbaI2Cy=vbstub_259 @259
     __vbaI2ErrVar=vbstub_260 @260
     __vbaI2ForNextCheck=vbstub_261 @261
@@ -252,7 +252,7 @@ EXPORTS
     __vbaObjSet=_vb___vbaObjSet@8 @349
     __vbaObjSetAddref=_vb___vbaObjSetAddref@8 @350
     __vbaObjVar=_vb___vbaObjVar@4 @351
-    __vbaOnError=vbstub_352 @352
+    __vbaOnError=_vb___vbaOnError@4 @352
     __vbaOnGoCheck=vbstub_353 @353
     __vbaPowerR8=_vb___vbaPowerR8@16 @354
     __vbaPrintFile=vbstub_355 @355
@@ -495,7 +495,7 @@ EXPORTS
     rtcIsMissing=vbstub_592 @592
     rtcRandomNext=vbstub_593 @593
     rtcRandomize=vbstub_594 @594
-    rtcMsgBox=vbstub_595 @595
+    rtcMsgBox=_vb_rtcMsgBox@20 @595
     rtcInputBox=vbstub_596 @596
     rtcAppActivate=vbstub_597 @597
     rtcDoEvents=vbstub_598 @598

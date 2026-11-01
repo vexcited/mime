@@ -60,7 +60,6 @@ void vbstub_174(void) { missing("__vbaBoolStr"); }
 void vbstub_177(void) { missing("__vbaCVarAryUdt"); }
 void vbstub_179(void) { missing("__vbaCastObjVar"); }
 void vbstub_181(void) { missing("__vbaCheckTypeVar"); }
-void vbstub_182(void) { missing("__vbaChkstk"); }
 void vbstub_184(void) { missing("__vbaCopyBytesZero"); }
 void vbstub_185(void) { missing("__vbaCyAbs"); }
 void vbstub_186(void) { missing("ProcCallEngine"); }
@@ -94,7 +93,6 @@ void vbstub_219(void) { missing("__vbaExitEachAry"); }
 void vbstub_220(void) { missing("TipSetOption"); }
 void vbstub_221(void) { missing("__vbaExitEachColl"); }
 void vbstub_222(void) { missing("__vbaExitEachVar"); }
-void vbstub_223(void) { missing("__vbaExitProc"); }
 void vbstub_225(void) { missing("__vbaFPFix"); }
 void vbstub_227(void) { missing("TipUnloadProject"); }
 void vbstub_228(void) { missing("__vbaFailedFriend"); }
@@ -122,7 +120,6 @@ void vbstub_254(void) { missing("__vbaGosubFree"); }
 void vbstub_255(void) { missing("__vbaGosubReturn"); }
 void vbstub_256(void) { missing("__vbaHresultCheck"); }
 void vbstub_257(void) { missing("__vbaHresultCheckNonvirt"); }
-void vbstub_258(void) { missing("__vbaHresultCheckObj"); }
 void vbstub_259(void) { missing("__vbaI2Cy"); }
 void vbstub_260(void) { missing("__vbaI2ErrVar"); }
 void vbstub_261(void) { missing("__vbaI2ForNextCheck"); }
@@ -200,7 +197,6 @@ void vbstub_344(void) { missing("__vbaNextEachCollObj"); }
 void vbstub_345(void) { missing("__vbaNextEachCollVar"); }
 void vbstub_346(void) { missing("__vbaNextEachVar"); }
 void vbstub_347(void) { missing("__vbaObjAddref"); }
-void vbstub_352(void) { missing("__vbaOnError"); }
 void vbstub_353(void) { missing("__vbaOnGoCheck"); }
 void vbstub_355(void) { missing("__vbaPrintFile"); }
 void vbstub_356(void) { missing("__vbaPrintObj"); }
@@ -374,7 +370,6 @@ void vbstub_591(void) { missing("rtcTypeName"); }
 void vbstub_592(void) { missing("rtcIsMissing"); }
 void vbstub_593(void) { missing("rtcRandomNext"); }
 void vbstub_594(void) { missing("rtcRandomize"); }
-void vbstub_595(void) { missing("rtcMsgBox"); }
 void vbstub_596(void) { missing("rtcInputBox"); }
 void vbstub_597(void) { missing("rtcAppActivate"); }
 void vbstub_598(void) { missing("rtcDoEvents"); }
