@@ -194,4 +194,41 @@ typedef struct IObjectSafety IObjectSafety;
     HRESULT(STDMETHODCALLTYPE *SetInterfaceSafetyOptions)(T * This, REFIID riid, DWORD mask, DWORD options);
 MIME_COM_INTERFACE(IObjectSafety)
 
+#define fdexNameCaseSensitive 0x00000001
+#define fdexNameEnsure 0x00000002
+#define fdexNameImplicit 0x00000004
+#define fdexNameCaseInsensitive 0x00000008
+#define fdexNameInternal 0x00000010
+#define fdexNameNoDynamicProperties 0x00000020
+#define fdexPropCanGet 0x00000001
+#define fdexPropCannotGet 0x00000002
+#define fdexPropCanPut 0x00000004
+#define fdexPropCannotPut 0x00000008
+#define fdexPropCanPutRef 0x00000010
+#define fdexPropCannotPutRef 0x00000020
+#define fdexPropNoSideEffects 0x00000040
+#define fdexPropDynamicType 0x00000080
+#define fdexPropCanCall 0x00000100
+#define fdexPropCannotCall 0x00000200
+#define fdexPropCanConstruct 0x00000400
+#define fdexPropCannotConstruct 0x00000800
+#define fdexPropCanSourceEvents 0x00001000
+#define fdexPropCannotSourceEvents 0x00002000
+#define DISPATCH_CONSTRUCT 0x4000
+#define DISPID_STARTENUM (-1)
+
+typedef struct IDispatchEx IDispatchEx;
+#define IDispatchEx_METHODS(T)                                                                                         \
+    IDispatch_METHODS(T)                                                                                               \
+    HRESULT(STDMETHODCALLTYPE *GetDispID)(T * This, BSTR name, DWORD flags, DISPID * id);                              \
+    HRESULT(STDMETHODCALLTYPE *InvokeEx)(T * This, DISPID id, LCID lcid, WORD flags, DISPPARAMS * params,              \
+                                         VARIANT * result, EXCEPINFO * excep, IUnknown * caller);                      \
+    HRESULT(STDMETHODCALLTYPE *DeleteMemberByName)(T * This, BSTR name, DWORD flags);                                  \
+    HRESULT(STDMETHODCALLTYPE *DeleteMemberByDispID)(T * This, DISPID id);                                             \
+    HRESULT(STDMETHODCALLTYPE *GetMemberProperties)(T * This, DISPID id, DWORD fetch, DWORD * flags);                  \
+    HRESULT(STDMETHODCALLTYPE *GetMemberName)(T * This, DISPID id, BSTR * name);                                       \
+    HRESULT(STDMETHODCALLTYPE *GetNextDispID)(T * This, DWORD flags, DISPID id, DISPID * next);                        \
+    HRESULT(STDMETHODCALLTYPE *GetNameSpaceParent)(T * This, IUnknown * *parent);
+MIME_COM_INTERFACE(IDispatchEx)
+
 #endif

@@ -439,3 +439,28 @@
 @="Regular Expression Object"
 [HKCR\VBScript.RegExp.1\CLSID]
 @="{3F4DACA4-160D-11D2-A8E9-00104B365C9F}"
+
+; the program ids of the JScript engine, which jscript.dll serves.
+[HKCR\JScript]
+@="JScript Language"
+[HKCR\JScript\CLSID]
+@="{F414C260-6AC0-11CF-B6D1-00AA00BBBB58}"
+[HKCR\JScript\CurVer]
+@="JScript.1"
+[HKCR\JScript\OLEScript]
+[HKCR\JScript.1]
+@="JScript Language"
+[HKCR\JScript.1\CLSID]
+@="{F414C260-6AC0-11CF-B6D1-00AA00BBBB58}"
+[HKCR\JScript.1\OLEScript]
+[HKCR\JScript.Encode]
+@="JScript Language Encoding"
+[HKCR\JScript.Encode\CLSID]
+@="{F414C262-6AC0-11CF-B6D1-00AA00BBBB58}"
+[HKCR\JScript.Encode\CurVer]
+@="JScript.Encode.1"
+[HKCR\JScript.Encode\OLEScript]
+[HKCR\JScript.Encode.1]
+@="JScript Language Encoding"
+[HKCR\JScript.Encode.1\CLSID]
+@="{F414C262-6AC0-11CF-B6D1-00AA00BBBB58}"
