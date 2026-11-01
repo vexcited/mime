@@ -64,8 +64,13 @@ static DISPID dispid_of(IDispatch *obj, LPOLESTR name)
     DISPID id;
     object_of(obj);
     HRESULT hr = obj->lpVtbl->GetIDsOfNames(obj, &IID_NULL, &name, 1, LCID_USER, &id);
-    if (FAILED(hr))
+    if (FAILED(hr)) {
+        char text[200], narrow[64];
+        WideCharToMultiByte(CP_ACP, 0, name, -1, narrow, sizeof(narrow), nullptr, nullptr);
+        wsprintfA(text, "msvbvm60: the object %p has no member %s: 0x%08lX\n", obj, narrow, (unsigned long)hr);
+        VbOutputDebug(text);
         raise_invoke_error(hr, &(EXCEPINFO){});
+    }
     return id;
 }
 
@@ -83,8 +88,12 @@ static void invoke(IDispatch *obj, DISPID id, WORD flags, VARIANT *args, UINT co
     }
     object_of(obj);
     HRESULT hr = obj->lpVtbl->Invoke(obj, id, &IID_NULL, LCID_USER, flags, &params, result, &info, &bad);
-    if (FAILED(hr))
+    if (FAILED(hr)) {
+        char text[160];
+        wsprintfA(text, "msvbvm60: Invoke of member %d with flags %X on %p failed: 0x%08lX\n", (int)id, (unsigned)flags, obj, (unsigned long)hr);
+        VbOutputDebug(text);
         raise_invoke_error(hr, &info);
+    }
 }
 
 /* the object a variant holds, which is a dispatch interface or a reference to one. */

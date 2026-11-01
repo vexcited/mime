@@ -96,6 +96,9 @@ static void set_error(LONG number, LONG hresult, BOOL keep)
 
 __attribute__((noreturn)) void VbRaise(LONG number)
 {
+    char where[80];
+    wsprintfA(where, "msvbvm60: error %d raised from %p\n", (int)number, __builtin_return_address(0));
+    VbOutputDebug(where);
     set_error(number, number ? (LONG)(0x800A0000u | (ULONG)number) : 0, FALSE);
     __builtin_unreachable();
 }
@@ -108,6 +111,9 @@ __attribute__((noreturn)) void VbRaiseKeep(LONG number)
 
 __attribute__((noreturn)) void VbRaiseHr(HRESULT hr)
 {
+    char where[80];
+    wsprintfA(where, "msvbvm60: hresult 0x%08lX raised from %p\n", (unsigned long)hr, __builtin_return_address(0));
+    VbOutputDebug(where);
     LONG number = VbErrorOfHresult(hr);
     if (number == VBERR_APPLICATION_DEFINED && hr < 0 && (((ULONG)hr & 0x1FFF0000) != 0xA0000))
         set_error(hr, hr, FALSE);

@@ -3,97 +3,18 @@
  * program, its controls from the stream of properties of the form, and the windows from both. The object a compiled program
  * calls is a vtable of thunks, one for each slot the compiler of Visual Basic knows, which come here with the number of the slot.
  */
-#include "vb.h"
-#include "vbclass.h"
+#include "vbctl.h"
 #include <mime/win32/olectl.h>
 #include <mime/win32/objidl.h>
 
-#define MAX_CONTROLS 160
-#define MAX_PROPS 100
-#define MAX_FORMS 64
-#define MAX_SLOTS 640
-#define FORM_METHODS 446
-#define ACCESSOR_BASE 190
-
-typedef struct VbCtl VbCtl;
-
-/* the vtable and the first words are those of a COM object, and the pointer at 0x10 is the same in the object of a form. */
-struct VbCtl {
-    void **vtable;
-    LONG refs;
-    DWORD magic;
-    DWORD reserved;
-    VbCtl *self;
-    VbForm *form;
-    int cls;
-    int position;
-    const BYTE *entry;
-    char name[48];
-    int control_index;
-    HWND hwnd;
-    HFONT font;
-    VARIANT value[MAX_PROPS];
-    BYTE set[MAX_PROPS];
-    /* a menu */
-    HMENU menu;
-    UINT command;
-    VbCtl *parent_menu;
-    /* the control that contains it, none for the form. */
-    VbCtl *parent;
-    const BYTE *record;
-    /* a windowless label */
-    RECT bounds;
-    char *font_name;
-    float font_size;
-    int font_weight;
-    BOOL font_italic, font_underline, font_strike;
-};
-
-typedef struct VbObject {
-    const BYTE *info;
-    const BYTE *descriptor;
-    const char *name;
-    DWORD type;
-    unsigned count;
-    const BYTE *controls;
-    int gui;
-    /* a class module: its instance size, the entries of its vtable after the ones the runtime gives, and the vtable. */
-    BOOL is_class;
-    ULONG instance_size;
-    const BYTE *thunks;
-    unsigned thunk_count;
-    void **vtable;
-} VbObject;
-
-struct VbForm {
-    const VbObject *object;
-    BYTE *instance;
-    ULONG size;
-    VbCtl *ctl[MAX_CONTROLS];
-    int count;
-    VbCtl *self;
-    HMENU menu;
-    BOOL loaded;
-    BOOL loading;
-    BOOL shown;
-    int unloading;
-    const BYTE *blob;
-    ULONG blob_size;
-    void **vtable;
-    VbCtl *order[MAX_CONTROLS];
-    int ordered;
-    VbCtl *menus[MAX_CONTROLS];
-    int menu_count;
-};
-
-static const VbHeader *g_header;
+const VbHeader *g_vb_header;
+#define g_header g_vb_header
 static VbObject g_objects[MAX_FORMS];
 static int g_object_count;
 static VbForm *g_forms[MAX_FORMS];
 static int g_form_count;
 static int g_dpi_x = 96, g_dpi_y = 96;
 
-#define MAGIC 0x5642434C
 
 /* ------------------------------------------------------------------ the tables of the program */
 
@@ -352,7 +273,12 @@ static const BYTE *load_properties(VbCtl *c, const BYTE *p, const BYTE *limit)
             last = k + n - 1;
             continue;
         }
-        if (t == 1 || t == 0x0d) {
+        if (c->cls == VBC_OCX && k == 45) {
+            /* what the control saved of itself: a tag of four bytes, the length and the bytes. */
+            c->blob_size = *(const DWORD *)(p + 4);
+            c->blob = p + 8;
+            p += 8 + c->blob_size;
+        } else if (t == 1 || t == 0x0d) {
             store_item(c, k, p, 1);
             p += 2 + *(const USHORT *)p + 1;
         } else if (t == 0x14) {
@@ -452,9 +378,26 @@ static void place(VbCtl *c)
     c->bounds.top = top;
     c->bounds.right = left + width;
     c->bounds.bottom = top + height;
-    if (c->hwnd)
+    if (c->cls == VBC_OCX)
+        VbOcxMoved(c);
+    else if (c->hwnd)
         SetWindowPos(c->hwnd, nullptr, left, top, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
 }
+
+const char *VbCtlNameOf(void *object)
+{
+    if (!object || IsBadReadPtr((BYTE *)object + 0x10, 4))
+        return nullptr;
+    VbCtl *c = *(VbCtl **)((BYTE *)object + 0x10);
+    return c && !IsBadReadPtr(c, 16) && c->magic == MAGIC ? c->name : nullptr;
+}
+
+int VbPxX(double twips) { return to_px_x(twips); }
+int VbPxY(double twips) { return to_px_y(twips); }
+double VbCtlNumber(const VbCtl *c, const char *name) { return number_of(c, find_prop(c, name)); }
+void VbCtlSetNumber(VbCtl *c, const char *name, double value) { set_number(c, find_prop(c, name), value); }
+HWND VbCtlParentWindow(VbCtl *c) { return c->parent && c->parent->hwnd ? c->parent->hwnd : form_window(c); }
+void VbCtlPlace(VbCtl *c) { place(c); }
 
 static void paint_windowless(VbCtl *c)
 {
@@ -821,12 +764,28 @@ static HRESULT call_method(VbCtl *c, int slot, const VBSLOT *s, DWORD *args)
     return S_OK;
 }
 
+static LONG dispatch_slot(int slot, DWORD *frame);
+
 LONG __cdecl vb_dispatch(int slot, DWORD *frame)
+{
+    LONG hr = dispatch_slot(slot, frame);
+    if (hr < 0 || slot == 17) {
+        VbCtl *c = ctl_of((void *)(ULONG_PTR)frame[0]);
+        char text[160];
+        wsprintfA(text, "msvbvm60: slot %d of %s (class %d) answered 0x%08lX\n", slot, c ? c->name : "?", c ? c->cls : -1, (unsigned long)hr);
+        VbOutputDebug(text);
+    }
+    return hr;
+}
+
+static LONG dispatch_slot(int slot, DWORD *frame)
 {
     void *object = (void *)(ULONG_PTR)frame[0];
     VbCtl *c = ctl_of(object);
     if (!c)
         return E_POINTER;
+    if (c->cls == VBC_OCX)
+        return VbOcxSlot(c, slot, frame + 1);
     const VBCLASS *cl = &g_classes[c->cls];
     DWORD *args = frame + 1;
     ensure_loaded(c->form);
@@ -1034,7 +993,7 @@ static void (*const g_common[])(void) = {
 };
 
 /* a thunk that pushes its slot and goes to the routine of the size of the arguments it takes. */
-static void *make_thunk(int slot, int ret)
+void *VbMakeThunk(int slot, int ret)
 {
     static BYTE *page;
     static int used;
@@ -1083,7 +1042,7 @@ static void *make_vtable(const VBCLASS *cl, int total, VbForm *form)
             if (shape->slots[i].kind == 0 && ret == 0 && i > 16)
                 ret = 8;
         }
-        vt[i] = make_thunk(i, ret);
+        vt[i] = VbMakeThunk(i, ret);
     }
     return vt;
 }
@@ -1161,6 +1120,9 @@ static void unload_form(VbForm *f, int mode)
         f->unloading = 0;
         return;
     }
+    for (int i = 0; i < f->count; i++)
+        if (f->ctl[i]->cls == VBC_OCX)
+            VbOcxDestroy(f->ctl[i]);
     HWND h = f->self->hwnd;
     f->self->hwnd = nullptr;
     if (h)
@@ -1410,13 +1372,8 @@ VbForm *VbCreateForm(const VbObject *o)
     for (unsigned i = 0; i < o->count && f->count < MAX_CONTROLS; i++) {
         const BYTE *entry = o->controls + i * 0x28;
         int cls = class_of_guid(*(const BYTE *const *)(entry + 8));
-        VbCtl *c = new_ctl(f, cls < 0 ? VBC_COMMAND : cls, entry, f->count);
-        if (cls < 0) {
-            char text[120];
-            wsprintfA(text, "msvbvm60: the control %s is not one of Visual Basic and has no class here\n", c->name);
-            VbOutputDebug(text);
-            c->cls = -1;
-        }
+        /* a control that is not one of Visual Basic comes from another library and is hosted. */
+        VbCtl *c = new_ctl(f, cls < 0 ? VBC_OCX : cls, entry, f->count);
         f->ctl[f->count++] = c;
         if (cls == VBC_FORM)
             f->self = c;
@@ -1438,7 +1395,9 @@ VbForm *VbCreateForm(const VbObject *o)
         VbCtl *c = f->ctl[i];
         if (c->cls < 0)
             continue;
-        if (c != f->self)
+        if (c->cls == VBC_OCX)
+            c->vtable = VbOcxVtable();
+        else if (c != f->self)
             c->vtable = make_vtable(&g_classes[c->cls], g_classes[c->cls].nslots, f);
     }
     return f;
@@ -1518,7 +1477,14 @@ static void load_form_properties(VbForm *f)
         const BYTE *p = find_record(f->blob, f->blob_size, c->control_index, c == f->self ? f->object->name : c->name);
         if (!p)
             continue;
-        p++;
+        if (c->cls == VBC_OCX) {
+            /* the class byte of a control of another library is 0xFF and the program identifier follows it. */
+            USHORT len = *(const USHORT *)(p + 1);
+            lstrcpynA(c->progid, (const char *)p + 3, len + 1 < (USHORT)sizeof(c->progid) ? len + 1 : (USHORT)sizeof(c->progid));
+            p += 3 + len + 1;
+        } else {
+            p++;
+        }
         load_properties(c, p, f->blob + f->blob_size);
     }
     find_parents(f);
@@ -1556,6 +1522,8 @@ static void create_windows(VbForm *f)
             continue;
         create_child_window(c);
         apply_all(c);
+        if (c->cls == VBC_OCX)
+            VbOcxCreate(c);
     }
     build_menus(f);
     layout_form(f);

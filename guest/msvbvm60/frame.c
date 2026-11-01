@@ -2,6 +2,7 @@
  * the frame of a procedure, the stack probe of a procedure with many locals, and message boxes.
  */
 #include "vb.h"
+#include "vbctl.h"
 
 /*
  * a procedure with more than a page of locals asks for them in eax. the stack is probed page by page, lowered by the
@@ -258,8 +259,14 @@ VB_STD LONG vb_rtcGetErl(void)
 /* the result of a call of a method of an object, which is an error when it failed. */
 VB_STD LONG vb___vbaHresultCheckObj(LONG hr, IUnknown *obj, const IID *iid, LONG index)
 {
-    if (hr < 0)
+    if (hr < 0) {
+        char text[160];
+        wsprintfA(text, "msvbvm60: the call at offset %X of the object %p (vtable %p, description %p, caller %p, %s) failed with 0x%08lX\n", (unsigned)index, obj,
+                  obj ? *(void **)obj : nullptr, iid, __builtin_return_address(0),
+                  obj && !IsBadReadPtr(obj, 0x14) && VbCtlNameOf(obj) ? VbCtlNameOf(obj) : "unknown", (unsigned long)hr);
+        VbOutputDebug(text);
         VbRaiseHr(hr);
+    }
     return hr;
 }
 
