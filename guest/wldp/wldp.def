@@ -1,0 +1,6 @@
+; the exports of wldp.dll of windows that this one has, with their ordinals.
+LIBRARY wldp.dll
+EXPORTS
+    WldpGetLockdownPolicy @4
+    WldpIsClassInApprovedList @5
+    WldpIsDynamicCodePolicyEnabled @6

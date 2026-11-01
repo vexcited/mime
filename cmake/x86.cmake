@@ -178,6 +178,7 @@ set(objects_wininet x86-lib-png:guest/lib/png/inflate.c)
 set(includes_wininet guest/lib)
 
 list(APPEND MIME_X86_DLLS d3dcompiler_47:0x4F000000:all_five)
+list(APPEND MIME_X86_DLLS wldp:0x31900000:base)
 set(objects_d3dcompiler_47 x86-lib-dxbc:guest/lib/dxbc/container.c x86-lib-dxbc:guest/lib/dxbc/reader.c)
 
 if(MIME_GUEST_ARCH STREQUAL "x64")

@@ -1,0 +1,5 @@
+LIBRARY wldp.dll
+EXPORTS
+    WldpGetLockdownPolicy=_WldpGetLockdownPolicy@12 @4
+    WldpIsClassInApprovedList=_WldpIsClassInApprovedList@16 @5
+    WldpIsDynamicCodePolicyEnabled=_WldpIsDynamicCodePolicyEnabled@4 @6
