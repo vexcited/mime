@@ -870,7 +870,7 @@ static DWORD launch(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWOR
     s->StatusId = SvcNewId();
 
     /* the process must open its channel in time. one that exits first or never connects is no service. */
-    DWORD timeout = reason == 2 ? g_autostart_timeout : g_control_timeout;
+    DWORD timeout = (reason == SCM_START_REASON_AUTO || reason == SCM_START_REASON_DELAYEDAUTO) ? g_autostart_timeout : g_control_timeout;
     HKEY k = DbOpenKey(s->Name, KEY_READ, FALSE);
     if (k) {
         DWORD own_timeout;
@@ -904,8 +904,8 @@ static DWORD launch(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWOR
     name[SVC_NAME_MAX] = 0;
     DWORD result = 0;
     LeaveCriticalSection(&g_lock);
-    error = send_control(img, own ? SCM_CTRL_START_OWN : SCM_CTRL_START_SHARE, name, 0, nullptr, 0, status_id, count,
-                         arguments, g_control_timeout, &result);
+    error = send_control(img, own ? SCM_CTRL_START_OWN : SCM_CTRL_START_SHARE, name, reason, nullptr, 0, status_id,
+                         count, arguments, g_control_timeout, &result);
     EnterCriticalSection(&g_lock);
     if (!error)
         error = result;
@@ -1316,7 +1316,11 @@ static void start_service(SERVICE *s, DWORD count, const WCHAR *const *arguments
             s->StartState = SS_FAILED;
             return;
         }
-        error = launch(s, count, arguments, boot ? 2 : 0);
+        error = launch(s, count, arguments,
+                       (flags & START_RESTART) ? SCM_START_REASON_RESTART_ON_FAILURE
+                       : !boot                 ? SCM_START_REASON_DEMAND
+                       : (flags & START_DELAYED) ? SCM_START_REASON_DELAYEDAUTO
+                                                 : SCM_START_REASON_AUTO);
     } else {
         error = ERROR_SERVICE_ALREADY_RUNNING;
     }

@@ -2069,6 +2069,7 @@ typedef struct DISPATCH_ENTRY {
     PVOID Context;
     SC_OBJECT *Status; /* the handle the service reports with, set once started. */
     BOOL Started;
+    DWORD StartReason; /* why the manager started it. */
 } DISPATCH_ENTRY;
 
 static DISPATCH_ENTRY *g_entries;
@@ -2340,6 +2341,7 @@ static DWORD control_start(const CONTROL_MESSAGE *c)
     if (!error) {
         entry->Status = status;
         entry->Started = TRUE;
+        entry->StartReason = c->EventType;
         entry->Handler = nullptr;
         entry->HandlerEx = nullptr;
     }
@@ -2604,6 +2606,32 @@ ADVAPI BOOL WINAPI SetServiceStatus(SERVICE_STATUS_HANDLE handle, LPSERVICE_STAT
         object_free(o);
     }
     return TRUE;
+}
+
+/* the service of this process a status handle belongs to: its name and why the manager started it. */
+DWORD AdvScStatusHandleInfo(HANDLE handle, WCHAR *name, DWORD name_chars, DWORD *start_reason)
+{
+    SC_OBJECT *o = handle ? object_find(handle, SCK_STATUS) : nullptr;
+    DWORD error = ERROR_SERVICE_NOT_IN_EXE;
+    AcquireSRWLockShared(&g_entries_lock);
+    for (DWORD i = 0; o && i < g_entry_count; i++) {
+        if (g_entries[i].Status != o)
+            continue;
+        if (name && name_chars) {
+            DWORD n = 0;
+            while (n + 1 < name_chars && g_entries[i].Name[n]) {
+                name[n] = g_entries[i].Name[n];
+                n++;
+            }
+            name[n] = 0;
+        }
+        if (start_reason)
+            *start_reason = g_entries[i].StartReason;
+        error = ERROR_SUCCESS;
+        break;
+    }
+    ReleaseSRWLockShared(&g_entries_lock);
+    return error;
 }
 
 ADVAPI BOOL WINAPI SetServiceBits(SERVICE_STATUS_HANDLE handle, DWORD bits, BOOL set, BOOL update)

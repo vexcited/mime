@@ -18,7 +18,7 @@ EXPORTS
     BuildSecurityDescriptorForSharingAccess@16
     BuildSecurityDescriptorForSharingAccessEx@20
     CapabilityCheck@12
-    CapabilityCheckForSingleSessionSku@8
+    CapabilityCheckForSingleSessionSku@12
     ChangeServiceConfig2A@12
     ChangeServiceConfig2W@12
     ChangeServiceConfigA@44
@@ -38,10 +38,10 @@ EXPORTS
     ConvertStringSDToSDRootDomainW@20
     ConvertStringSecurityDescriptorToSecurityDescriptorW@16
     ConvertStringSidToSidW@8
-    CreateIsolatedProcess@32
+    CreateIsolatedProcess@28
     CreateIsolationContainer@16
     CreateServiceA@52
-    CreateServiceEx@64
+    CreateServiceEx@56
     CreateServiceW@52
     CredBackupCredentials@20
     CredDeleteA@12
@@ -62,7 +62,7 @@ EXPORTS
     CredMarshalCredentialW@12
     CredParseUserNameWithType@16
     CredProfileLoaded@0
-    CredProfileLoadedEx@0
+    CredProfileLoadedEx@4
     CredProfileUnloaded@0
     CredProtectA@24
     CredProtectEx@24
@@ -110,7 +110,7 @@ EXPORTS
     GetEmbeddedImageMitigationPolicy@16
     GetIdentityProviderInfoByGUID@12
     GetIdentityProviderInfoByName@12
-    GetOperandValue@40
+    GetOperandValue@36
     GetOperatorCodeAtIndex@4
     GetOperatorIndexByToken@4
     GetOperatorUnaryAtIndex@4
@@ -133,7 +133,7 @@ EXPORTS
     I_ScReparseServiceDatabase@4
     I_ScRpcBindA@4
     I_ScRpcBindW@4
-    I_ScSendPnPMessage@24
+    I_ScSendPnPMessage@28
     I_ScSendTSMessage@16
     I_ScSetServiceBitsA@20
     I_ScSetServiceBitsW@20
@@ -141,9 +141,9 @@ EXPORTS
     I_ScValidatePnPService@16
     IsArrayType@4
     IsValueSizeFixed@4
-    LocalGetConditionForString@40
+    LocalGetConditionForString@36
     LocalGetReferencedTokenTypesForCondition@12
-    LocalGetSidForString@40
+    LocalGetSidForString@32
     LocalGetStringForCondition@28
     LocalGetStringForRelativeAttribute@28
     LocalRpcBindingCreateWithSecurity@20
@@ -160,9 +160,9 @@ EXPORTS
     LsaEnumerateAccountsWithUserRight@16
     LsaFreeMemory@4
     LsaICLookupNames@40
-    LsaICLookupNamesWithCreds@40
+    LsaICLookupNamesWithCreds@48
     LsaICLookupSids@36
-    LsaICLookupSidsWithCreds@40
+    LsaICLookupSidsWithCreds@48
     LsaIOpenPolicyWithCreds@24
     LsaLookupClose@4
     LsaLookupFreeMemory@4
@@ -191,10 +191,10 @@ EXPORTS
     OpenSCManagerW@12
     OpenServiceA@12
     OpenServiceW@12
-    OpenTraceFromBufferStream@20
+    OpenTraceFromBufferStream@12
     OpenTraceFromFile@12
     OpenTraceFromRealTimeLogger@12
-    OpenTraceFromRealTimeLoggerWithAllocationOptions@28
+    OpenTraceFromRealTimeLoggerWithAllocationOptions@20
     OpenTraceW@4
     ProcessTrace@16
     ProcessTraceAddBufferToBufferStream@20
@@ -214,7 +214,7 @@ EXPORTS
     QueryTraceProcessingHandle@32
     QueryTransientObjectSecurityDescriptor@12
     QueryUserServiceName@20
-    QueryUserServiceNameForContext@16
+    QueryUserServiceNameForContext@20
     RegisterServiceCtrlHandlerA@8
     RegisterServiceCtrlHandlerExA@12
     RegisterServiceCtrlHandlerExW@12
@@ -224,7 +224,7 @@ EXPORTS
     RemoveTraceCallback@4
     ReparseServiceConfig@12
     RpcClientCapabilityCheck@4
-    ScSendSynchronousPowerMessage@16
+    ScSendSynchronousPowerMessage@20
     SetLocalRpcServerInterfaceSecurity@12
     SetLocalRpcServerProtseqSecurity@0
     SetServiceObjectSecurity@12

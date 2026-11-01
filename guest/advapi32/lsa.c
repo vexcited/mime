@@ -946,3 +946,177 @@ ADVAPI NTSTATUS WINAPI LsaRetrievePrivateData(LSA_HANDLE handle, PLSA_UNICODE_ST
         *data = nullptr;
     return policy_of(handle) ? STATUS_OBJECT_NAME_NOT_FOUND : STATUS_INVALID_HANDLE;
 }
+
+/* ------------------------------------------------------------------ the internal client lookups of sechost */
+
+#define LSA_LOOKUP_WKSTA 1
+
+static ULONG mapped_names(ULONG count, const LSA_TRANSLATED_SID2 *sids)
+{
+    ULONG mapped = 0;
+    for (ULONG i = 0; sids && i < count; i++)
+        if (sids[i].Use != SidTypeUnknown && sids[i].Use != SidTypeInvalid)
+            mapped++;
+    return mapped;
+}
+
+static ULONG mapped_sids(ULONG count, const LSA_TRANSLATED_NAME *names)
+{
+    ULONG mapped = 0;
+    for (ULONG i = 0; names && i < count; i++)
+        if (names[i].Use != SidTypeUnknown && names[i].Use != SidTypeInvalid)
+            mapped++;
+    return mapped;
+}
+
+/* what LsaLookupNames2 calls; mapped gets how many names were translated and version the revision of the call. */
+ADVAPI NTSTATUS WINAPI LsaICLookupNames(LSA_HANDLE handle, ULONG flags, ULONG count, PLSA_UNICODE_STRING names,
+                                        LSA_REFERENCED_DOMAIN_LIST **domains, LSA_TRANSLATED_SID2 **sids, ULONG level,
+                                        BOOLEAN options, ULONG *mapped, ULONG *version)
+{
+    (void)options;
+    if (!domains || !sids || !mapped)
+        return STATUS_INVALID_PARAMETER;
+    if (version)
+        *version = 2;
+    *mapped = 0;
+    if (level != LSA_LOOKUP_WKSTA)
+        return STATUS_NOT_SUPPORTED;
+    NTSTATUS status = LsaLookupNames2(handle, flags, count, names, domains, sids);
+    if (NT_SUCCESS(status) || status == STATUS_SOME_NOT_MAPPED)
+        *mapped = mapped_names(count, *sids);
+    return status;
+}
+
+ADVAPI NTSTATUS WINAPI LsaICLookupSids(LSA_HANDLE handle, ULONG count, PSID *sids,
+                                       LSA_REFERENCED_DOMAIN_LIST **domains, LSA_TRANSLATED_NAME **names, ULONG level,
+                                       ULONG options, ULONG *mapped, ULONG *version)
+{
+    if (!domains || !names || !mapped)
+        return STATUS_INVALID_PARAMETER;
+    if (version)
+        *version = 2;
+    *mapped = 0;
+    if (level != LSA_LOOKUP_WKSTA)
+        return STATUS_NOT_SUPPORTED;
+    NTSTATUS status = LsaLookupSids2(handle, options, count, sids, domains, names);
+    if (NT_SUCCESS(status) || status == STATUS_SOME_NOT_MAPPED)
+        *mapped = mapped_sids(count, *names);
+    return status;
+}
+
+/* a lookup at a named server with credentials: the credentials mean nothing to this machine and no other is reachable. */
+static NTSTATUS creds_server(PCWSTR server)
+{
+    if (!server)
+        return STATUS_INVALID_PARAMETER;
+    return AdvIsLocalSystem(server) ? STATUS_SUCCESS : STATUS_RPC_SERVER_UNAVAILABLE_;
+}
+
+ADVAPI NTSTATUS WINAPI LsaICLookupNamesWithCreds(PCWSTR server, PCWSTR user, ULONG user_type, ULONG flags,
+                                                 PVOID credentials, ULONG authn_service, ULONG count,
+                                                 PLSA_UNICODE_STRING names, LSA_REFERENCED_DOMAIN_LIST **domains,
+                                                 LSA_TRANSLATED_SID2 **sids, ULONG level, ULONG *mapped)
+{
+    (void)user;
+    (void)user_type;
+    (void)credentials;
+    (void)authn_service;
+    if (!server || !domains || !sids || !mapped)
+        return STATUS_INVALID_PARAMETER;
+    *domains = nullptr;
+    *sids = nullptr;
+    *mapped = 0;
+    NTSTATUS status = creds_server(server);
+    if (!NT_SUCCESS(status))
+        return status;
+    LSA_OBJECT_ATTRIBUTES attributes = {sizeof(attributes)};
+    LSA_HANDLE policy;
+    status = LsaOpenPolicy(nullptr, &attributes, POLICY_LOOKUP_NAMES, &policy);
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG version;
+    status = LsaICLookupNames(policy, flags, count, names, domains, sids, level, 0, mapped, &version);
+    LsaClose(policy);
+    return status;
+}
+
+ADVAPI NTSTATUS WINAPI LsaICLookupSidsWithCreds(PCWSTR server, PCWSTR user, ULONG user_type, ULONG flags,
+                                                PVOID credentials, ULONG authn_service, ULONG count, PSID *sids,
+                                                LSA_REFERENCED_DOMAIN_LIST **domains, LSA_TRANSLATED_NAME **names,
+                                                ULONG level, ULONG *mapped)
+{
+    (void)user;
+    (void)user_type;
+    (void)credentials;
+    (void)authn_service;
+    if (!server || !domains || !names || !mapped)
+        return STATUS_INVALID_PARAMETER;
+    *domains = nullptr;
+    *names = nullptr;
+    *mapped = 0;
+    NTSTATUS status = creds_server(server);
+    if (!NT_SUCCESS(status))
+        return status;
+    LSA_OBJECT_ATTRIBUTES attributes = {sizeof(attributes)};
+    LSA_HANDLE policy;
+    status = LsaOpenPolicy(nullptr, &attributes, POLICY_LOOKUP_NAMES, &policy);
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG version;
+    status = LsaICLookupSids(policy, count, sids, domains, names, level, flags, mapped, &version);
+    LsaClose(policy);
+    return status;
+}
+
+/* opening a policy by server name and credentials. only the machine itself answers. */
+ADVAPI NTSTATUS WINAPI LsaIOpenPolicyWithCreds(PCWSTR server, PCWSTR user, ULONG user_type, PLSA_OBJECT_ATTRIBUTES attributes,
+                                               ACCESS_MASK access, PLSA_HANDLE handle)
+{
+    (void)user;
+    (void)user_type;
+    if (!handle)
+        return STATUS_INVALID_PARAMETER;
+    *handle = nullptr;
+    if (!attributes || !server)
+        return STATUS_INVALID_PARAMETER;
+    NTSTATUS status = creds_server(server);
+    if (!NT_SUCCESS(status))
+        return status;
+    return LsaOpenPolicy(nullptr, attributes, access, handle);
+}
+
+/* the kinds of account lsass tells apart: this machine has the local ones. */
+#define LSA_LOCAL_USER_ACCOUNT 1
+
+ADVAPI NTSTATUS WINAPI LsaLookupUserAccountType(PSID sid, ULONG *type)
+{
+    if (!type)
+        return STATUS_INVALID_PARAMETER;
+    *type = 0;
+    BYTE own[SECURITY_MAX_SID_SIZE], machine[SECURITY_MAX_SID_SIZE];
+    if (!sid) {
+        if (!AdvCurrentUserSid(own))
+            return STATUS_UNSUCCESSFUL;
+        sid = (PSID)own;
+    }
+    if (!AdvSidValid(sid))
+        return STATUS_INVALID_SID;
+    const SID *user = sid;
+    const SID *domain = AdvMachineSid(machine) ? (const SID *)machine : nullptr;
+    if (!domain || user->SubAuthorityCount != domain->SubAuthorityCount + 1 ||
+        memcmp(&user->IdentifierAuthority, &domain->IdentifierAuthority, sizeof(user->IdentifierAuthority)) ||
+        memcmp(user->SubAuthority, domain->SubAuthority, 4 * domain->SubAuthorityCount))
+        return STATUS_NONE_MAPPED_;
+    *type = LSA_LOCAL_USER_ACCOUNT;
+    return STATUS_SUCCESS;
+}
+
+/* mappings of capability sids to names are kept by lsass, which this machine does not have. */
+ADVAPI NTSTATUS WINAPI LsaLookupManageSidNameMapping(ULONG operation, PVOID input, PVOID *output)
+{
+    (void)operation;
+    (void)input;
+    (void)output;
+    return STATUS_NOT_IMPLEMENTED;
+}

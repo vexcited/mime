@@ -63,6 +63,11 @@ enum {
 /* controls the manager sends down a service process's channel, besides SERVICE_CONTROL_*. */
 #define SCM_CTRL_START_SHARE 80 /* starts one service of a shared process: name, arguments. */
 #define SCM_CTRL_START_OWN 81   /* starts the only service of its process, whatever its name. */
+/* why the manager started a service: the event type of its start control, as QueryServiceDynamicInformation gives it. */
+#define SCM_START_REASON_DEMAND 1
+#define SCM_START_REASON_AUTO 2
+#define SCM_START_REASON_RESTART_ON_FAILURE 8
+#define SCM_START_REASON_DELAYEDAUTO 16
 #define SCM_CTRL_QUIT 32        /* with no name: every service is done and the dispatcher returns. */
 
 typedef struct SCM_HEADER {

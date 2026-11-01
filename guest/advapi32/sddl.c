@@ -1003,7 +1003,8 @@ static DWORD print_attribute(const BYTE *p, DWORD left, PWSTR *text, DWORD *used
     return *text ? ERROR_SUCCESS : ERROR_NOT_ENOUGH_MEMORY;
 }
 
-static DWORD condition_text(const BYTE *binary, DWORD size, const SDDL_CONTEXT *context, PWSTR *result)
+static DWORD condition_text(const BYTE *binary, DWORD size, const SDDL_CONTEXT *context, PWSTR *result,
+                            DWORD *types)
 {
     PWSTR stack[COND_MAX_STACK] = {};
     DWORD count = 0, at = 4, error = ERROR_SUCCESS;
@@ -1027,8 +1028,21 @@ static DWORD condition_text(const BYTE *binary, DWORD size, const SDDL_CONTEXT *
             error = print_attribute(binary + at, size - at, &stack[count], &used);
             if (!error)
                 count++;
+            if (!error && types) {
+                if (token == CT_ATTR_USER)
+                    *types |= 1;
+                else if (token == CT_ATTR_RESOURCE)
+                    *types |= 2;
+                else if (token == CT_ATTR_DEVICE)
+                    *types |= 4;
+                else if (token == CT_ATTR_TOKEN)
+                    *types |= 8;
+            }
         } else if (operator_by_token(token)) {
             const COND_OP *op = operator_by_token(token);
+            /* the device group operators refer to the claims of the device. */
+            if (types && (token == 0x8A || token == 0x8C || token == 0x91 || token == 0x93))
+                *types |= 4;
             if (op->Kind == OP_UNARY_ATTRIBUTE || op->Kind == OP_UNARY_VALUE || op->Kind == OP_NOT) {
                 if (count < 1) {
                     error = ERROR_INVALID_ACL;
@@ -1117,7 +1131,7 @@ ADVAPI BOOL WINAPI GetStringConditionFromBinary(PVOID binary, DWORD size, PVOID 
     PWSTR out;
     if (text)
         *text = nullptr;
-    DWORD error = text ? condition_text(binary, size, nullptr, &out) : ERROR_INVALID_PARAMETER;
+    DWORD error = text ? condition_text(binary, size, nullptr, &out, nullptr) : ERROR_INVALID_PARAMETER;
     if (!error) {
         DWORD chars = (DWORD)wcslen(out) + 1;
         *text = LocalAlloc(LMEM_FIXED, chars * sizeof(WCHAR));
@@ -1130,6 +1144,69 @@ ADVAPI BOOL WINAPI GetStringConditionFromBinary(PVOID binary, DWORD size, PVOID 
     if (error)
         AdvSetError(error);
     return error == ERROR_SUCCESS;
+}
+
+static DWORD print_resource_attribute(const BYTE *d, DWORD n, const SDDL_CONTEXT *context, SB *sb);
+
+/* the pieces sechost's Local functions are made of: text to compiled condition and back. */
+DWORD AdvConditionCompile(PCWSTR text, const SDDL_CONTEXT *context, PVOID *binary, DWORD *size, PCWSTR *end)
+{
+    return condition_compile(text, context, binary, size, end);
+}
+
+/* the text is AdvAlloc'd, types gets the kinds of claims the condition refers to. */
+DWORD AdvConditionToString(const BYTE *binary, DWORD size, const SDDL_CONTEXT *context, PWSTR *result, DWORD *types)
+{
+    return condition_text(binary, size, context, result, types);
+}
+
+/* prints the operand at the start of the bytes into AdvAlloc'd text. */
+DWORD AdvOperandToString(const BYTE *token, DWORD left, const SDDL_CONTEXT *context, PWSTR *text, DWORD *used)
+{
+    return print_operand(token, left, context, text, used, FALSE);
+}
+
+/* parses one operand into the token stream form, AdvAlloc'd; consumed gets how many characters it took. */
+DWORD AdvOperandFromString(PCWSTR text, BOOL attribute, const SDDL_CONTEXT *context, BYTE **token, DWORD *length,
+                           DWORD *consumed)
+{
+    COND c = {text, context, nullptr, 0, 0, 0};
+    DWORD error = parse_operand(&c, attribute, FALSE);
+    if (error) {
+        AdvFree(c.Buffer);
+        return error;
+    }
+    *token = c.Buffer;
+    *length = c.Length;
+    *consumed = (DWORD)(c.Text - text);
+    return ERROR_SUCCESS;
+}
+
+DWORD AdvResourceAttributeToString(const BYTE *attribute, DWORD size, const SDDL_CONTEXT *context, PWSTR *text)
+{
+    SB sb = {};
+    DWORD error = print_resource_attribute(attribute, size, context, &sb);
+    if (error) {
+        AdvFree(sb.Text);
+        return error;
+    }
+    *text = sb_take(&sb);
+    return *text ? ERROR_SUCCESS : ERROR_NOT_ENOUGH_MEMORY;
+}
+
+BOOL AdvNameCharNeedsEncoding(WCHAR c)
+{
+    return needs_encoding(c);
+}
+
+/* the operator table by index: its token, and whether it takes one operand. */
+BOOL AdvOperatorAt(DWORD index, BYTE *token, BOOL *unary)
+{
+    if (index >= RTL_NUMBER_OF(g_operators))
+        return FALSE;
+    *token = g_operators[index].Token;
+    *unary = g_operators[index].Kind != OP_BINARY && g_operators[index].Kind != OP_LOGIC;
+    return TRUE;
 }
 
 /* ---------------------------------------------------------------- guids */
@@ -2047,7 +2124,7 @@ static DWORD sb_ace(SB *sb, const BYTE *ace, BYTE kind, const SDDL_CONTEXT *cont
             }
         } else if (data) {
             PWSTR text;
-            DWORD error = condition_text(sid + AdvSidLength((const SID *)sid), data, context, &text);
+            DWORD error = condition_text(sid + AdvSidLength((const SID *)sid), data, context, &text, nullptr);
             if (error)
                 return error;
             sb_char(sb, L';');

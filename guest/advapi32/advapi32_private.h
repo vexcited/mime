@@ -647,6 +647,19 @@ DWORD AdvConditionFromString(PCWSTR text, PVOID *binary, DWORD *size);
 BOOL AdvIsLocalSystem(LPCWSTR system);
 BOOL AdvLookupSid(const SID *sid, PWSTR name, DWORD name_size, PWSTR domain, DWORD domain_size, SID_NAME_USE *use);
 
+/* scm.c: the name and start reason of the service a status handle of this process belongs to. */
+DWORD AdvScStatusHandleInfo(HANDLE handle, WCHAR *name, DWORD name_chars, DWORD *start_reason);
+
+/* sddl.c: the pieces of the condition and operand text conversions sechost exports. */
+DWORD AdvConditionCompile(PCWSTR text, const SDDL_CONTEXT *context, PVOID *binary, DWORD *size, PCWSTR *end);
+DWORD AdvConditionToString(const BYTE *binary, DWORD size, const SDDL_CONTEXT *context, PWSTR *result, DWORD *types);
+DWORD AdvOperandToString(const BYTE *token, DWORD left, const SDDL_CONTEXT *context, PWSTR *text, DWORD *used);
+DWORD AdvOperandFromString(PCWSTR text, BOOL attribute, const SDDL_CONTEXT *context, BYTE **token, DWORD *length,
+                           DWORD *consumed);
+DWORD AdvResourceAttributeToString(const BYTE *attribute, DWORD size, const SDDL_CONTEXT *context, PWSTR *text);
+BOOL AdvNameCharNeedsEncoding(WCHAR c);
+BOOL AdvOperatorAt(DWORD index, BYTE *token, BOOL *unary);
+
 /* exports used across files. */
 ADVAPI BOOL WINAPI ConvertSidToStringSidW(PSID sid, LPWSTR *result);
 ADVAPI BOOL WINAPI ConvertStringSidToSidW(LPCWSTR string, PSID *result);

@@ -69,7 +69,7 @@ EXPORTS
     BuildTrusteeWithSidA@8
     BuildTrusteeWithSidW@8
     CapabilityCheck@12
-    CapabilityCheckForSingleSessionSku@8
+    CapabilityCheckForSingleSessionSku@12
     ChangeServiceConfig2A@12
     ChangeServiceConfig2W@12
     ChangeServiceConfigA@44
@@ -103,7 +103,7 @@ EXPORTS
     ConvertStringSidToSidW@8
     ConvertToAutoInheritPrivateObjectSecurity@24
     CopySid@12
-    CreateIsolatedProcess@32
+    CreateIsolatedProcess@28
     CreateIsolationContainer@16
     CreatePrivateObjectSecurity@24
     CreatePrivateObjectSecurityEx@32
@@ -112,7 +112,7 @@ EXPORTS
     CreateProcessWithTokenW@36
     CreateRestrictedToken@36
     CreateServiceA@52
-    CreateServiceEx@64
+    CreateServiceEx@56
     CreateServiceW@52
     CreateWellKnownSid@16
     CredBackupCredentials@20
@@ -134,7 +134,7 @@ EXPORTS
     CredMarshalCredentialW@12
     CredParseUserNameWithType@16
     CredProfileLoaded@0
-    CredProfileLoadedEx@0
+    CredProfileLoadedEx@4
     CredProfileUnloaded@0
     CredProtectA@24
     CredProtectEx@24
@@ -173,14 +173,20 @@ EXPORTS
     CryptEnumProvidersA@24
     CryptEnumProvidersW@24
     CryptExportKey@24
+    CryptGenKey@16
     CryptGenRandom@12
+    CryptGetDefaultProviderA@20
+    CryptGetDefaultProviderW@20
     CryptGetHashParam@20
+    CryptGetKeyParam@20
     CryptGetProvParam@20
     CryptGetUserKey@12
     CryptHashData@16
     CryptImportKey@24
     CryptReleaseContext@8
     CryptSetHashParam@16
+    CryptSetKeyParam@16
+    CryptSetProvParam@16
     CryptSignHashA@24
     CryptSignHashW@24
     CryptVerifySignatureA@24
@@ -259,7 +265,7 @@ EXPORTS
     GetNamedSecurityInfoW@32
     GetNumberOfEventLogRecords@8
     GetOldestEventLogRecord@8
-    GetOperandValue@40
+    GetOperandValue@36
     GetOperatorCodeAtIndex@4
     GetOperatorIndexByToken@4
     GetOperatorUnaryAtIndex@4
@@ -309,7 +315,7 @@ EXPORTS
     I_ScReparseServiceDatabase@4
     I_ScRpcBindA@4
     I_ScRpcBindW@4
-    I_ScSendPnPMessage@24
+    I_ScSendPnPMessage@28
     I_ScSendTSMessage@16
     I_ScSetServiceBitsA@20
     I_ScSetServiceBitsW@20
@@ -337,9 +343,11 @@ EXPORTS
     IsValidSid@4
     IsValueSizeFixed@4
     IsWellKnownSid@8
-    LocalGetConditionForString@40
+    LaunchElevated@28
+    LaunchUnelevated@28
+    LocalGetConditionForString@36
     LocalGetReferencedTokenTypesForCondition@12
-    LocalGetSidForString@40
+    LocalGetSidForString@32
     LocalGetStringForCondition@28
     LocalGetStringForRelativeAttribute@28
     LocalRpcBindingCreateWithSecurity@20
@@ -372,9 +380,9 @@ EXPORTS
     LsaEnumerateTrustedDomains@20
     LsaFreeMemory@4
     LsaICLookupNames@40
-    LsaICLookupNamesWithCreds@40
+    LsaICLookupNamesWithCreds@48
     LsaICLookupSids@36
-    LsaICLookupSidsWithCreds@40
+    LsaICLookupSidsWithCreds@48
     LsaIOpenPolicyWithCreds@24
     LsaLookupClose@4
     LsaLookupFreeMemory@4
@@ -401,10 +409,6 @@ EXPORTS
     MakeAbsoluteSD@44
     MakeSelfRelativeSD@12
     MapGenericMask@8
-    LaunchElevated@28
-    LaunchUnelevated@28
-    SspiPublishToken@4
-    SspiRedeemToken@8
     NotifyBootConfigStatus@4
     NotifyChangeEventLog@8
     NotifyServiceStatusChange@12
@@ -431,10 +435,10 @@ EXPORTS
     OpenServiceW@12
     OpenThreadToken@16
     OpenTraceA@4
-    OpenTraceFromBufferStream@20
+    OpenTraceFromBufferStream@12
     OpenTraceFromFile@12
     OpenTraceFromRealTimeLogger@12
-    OpenTraceFromRealTimeLoggerWithAllocationOptions@28
+    OpenTraceFromRealTimeLoggerWithAllocationOptions@20
     OpenTraceW@4
     PerfCreateInstance@16
     PerfDecrementULongCounterValue@16
@@ -475,7 +479,7 @@ EXPORTS
     QueryTraceW@16
     QueryTransientObjectSecurityDescriptor@12
     QueryUserServiceName@20
-    QueryUserServiceNameForContext@16
+    QueryUserServiceNameForContext@20
     ReadEventLogA@28
     ReadEventLogW@28
     RegConnectRegistryA@12
@@ -509,7 +513,10 @@ EXPORTS
     ReportEventW@36
     RevertToSelf@0
     RpcClientCapabilityCheck@4
-    ScSendSynchronousPowerMessage@16
+    SaferCloseLevel@4
+    SaferComputeTokenFromLevel@20
+    SaferCreateLevel@20
+    ScSendSynchronousPowerMessage@20
     SetAclInformation@16
     SetEntriesInAclA@16
     SetEntriesInAclW@16
@@ -538,6 +545,8 @@ EXPORTS
     SetThreadToken@8
     SetTokenInformation@16
     SetTraceCallback@8
+    SspiPublishToken@4
+    SspiRedeemToken@8
     StartServiceA@12
     StartServiceCtrlDispatcherA@4
     StartServiceCtrlDispatcherW@4
@@ -649,12 +658,3 @@ EXPORTS
     TraceMessage
     TraceMessageVa@24
     UnregisterTraceGuids@8
-    CryptGenKey@16
-    CryptGetDefaultProviderA@20
-    CryptGetDefaultProviderW@20
-    CryptGetKeyParam@20
-    CryptSetKeyParam@16
-    CryptSetProvParam@16
-    SaferCreateLevel@20
-    SaferCloseLevel@4
-    SaferComputeTokenFromLevel@20
