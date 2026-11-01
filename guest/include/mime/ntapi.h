@@ -54,6 +54,7 @@ NTSYSCALLAPI NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, P
 NTSYSCALLAPI NTSTATUS NTAPI NtDisplayString(PUNICODE_STRING s);
 NTSYSCALLAPI NTSTATUS NTAPI NtDuplicateObject(HANDLE source_process_handle, HANDLE source, HANDLE target_process_handle, PHANDLE target, ACCESS_MASK access, ULONG attributes, ULONG options);
 NTSYSCALLAPI NTSTATUS NTAPI NtFlushBuffersFile(HANDLE handle, PIO_STATUS_BLOCK iosb);
+NTSYSCALLAPI NTSTATUS NTAPI NtFlushBuffersFileEx(HANDLE handle, ULONG flags, PVOID parameters, ULONG length, PIO_STATUS_BLOCK iosb);
 NTSYSCALLAPI NTSTATUS NTAPI NtFlushInstructionCache(HANDLE process, PVOID base, SIZE_T size);
 NTSYSCALLAPI NTSTATUS NTAPI NtFlushProcessWriteBuffers(void);
 NTSYSCALLAPI NTSTATUS NTAPI NtFreeVirtualMemory(HANDLE process_handle, PVOID *base, PSIZE_T size, ULONG type);

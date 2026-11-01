@@ -1213,7 +1213,49 @@ BOOL WINAPI SetFileInformationByHandle(HANDLE file, FILE_INFO_BY_HANDLE_CLASS kl
         return FALSE;
     }
     IO_STATUS_BLOCK iosb;
-    NTSTATUS status = NtSetInformationFile(file, &iosb, info, size, nt_class);
+    NTSTATUS status;
+    KB_FILE_RENAME_INFORMATION *rename = info;
+    if (klass == FileRenameInfo && info && size >= offsetof(KB_FILE_RENAME_INFORMATION, FileName) &&
+        !rename->RootDirectory) {
+        /* the name is a path of the program that the system call takes as a path of the system, and it ends at its
+           terminator when the buffer has one, whatever the length field says. */
+        ULONG room = (size - (ULONG)offsetof(KB_FILE_RENAME_INFORMATION, FileName)) / sizeof(WCHAR), chars = 0;
+        while (chars < room && rename->FileName[chars])
+            chars++;
+        if (chars == room)
+            chars = rename->FileNameLength / sizeof(WCHAR) < room ? rename->FileNameLength / sizeof(WCHAR) : room;
+        ULONG length = chars * sizeof(WCHAR);
+        WCHAR *dos = KbAlloc(length + sizeof(WCHAR));
+        if (!dos) {
+            KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+        memcpy(dos, rename->FileName, length);
+        dos[length / sizeof(WCHAR)] = 0;
+        UNICODE_STRING nt;
+        BOOL converted = RtlDosPathNameToNtPathName_U(dos, &nt, nullptr, nullptr);
+        KbFree(dos);
+        if (!converted) {
+            KbSetError(ERROR_PATH_NOT_FOUND);
+            return FALSE;
+        }
+        ULONG nt_size = (ULONG)(offsetof(KB_FILE_RENAME_INFORMATION, FileName) + nt.Length);
+        KB_FILE_RENAME_INFORMATION *converted_info = KbAlloc(nt_size);
+        if (!converted_info) {
+            RtlFreeUnicodeString(&nt);
+            KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+            return FALSE;
+        }
+        converted_info->ReplaceIfExists = rename->ReplaceIfExists;
+        converted_info->RootDirectory = nullptr;
+        converted_info->FileNameLength = nt.Length;
+        memcpy(converted_info->FileName, nt.Buffer, nt.Length);
+        status = NtSetInformationFile(file, &iosb, converted_info, nt_size, nt_class);
+        KbFree(converted_info);
+        RtlFreeUnicodeString(&nt);
+    } else {
+        status = NtSetInformationFile(file, &iosb, info, size, nt_class);
+    }
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
     return TRUE;

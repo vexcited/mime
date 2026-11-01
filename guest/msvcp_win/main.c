@@ -60,6 +60,9 @@ void __cdecl throw_cpp_error(int code)
     TerminateProcess(GetCurrentProcess(), 3);
 }
 
+/* the hook a program sets to see exceptions of the library before they are thrown. */
+DECLSPEC_EXPORT void *raise_handler;
+
 void __cdecl xlength_error(const char *message)
 {
     OutputDebugStringA("msvcp_win: std::length_error thrown\n");

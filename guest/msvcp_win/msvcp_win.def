@@ -6,6 +6,7 @@ EXPORTS
     _Mtx_unlock
     ?_Throw_Cpp_error@std@@YAXH@Z=throw_cpp_error
     ?_Xlength_error@std@@YAXPEBD@Z=xlength_error
+    ?_Raise_handler@std@@3P6AXAEBVexception@stdext@@@ZEA=raise_handler DATA
     __std_parallel_algorithms_hw_threads
     __std_create_threadpool_work
     __std_submit_threadpool_work

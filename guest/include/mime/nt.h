@@ -2200,6 +2200,7 @@ typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemModuleInformation = 11,
     SystemPageFileInformation = 18,
     SystemHandleInformation = 16,
+    SystemFileCacheInformation = 21,
     SystemKernelDebuggerInformation = 35,
     SystemRangeStartInformation = 50,
     SystemNumaHighestNodeInformation = 55,

@@ -61,6 +61,7 @@ void NtEnumerateValueKey(void);
 void NtFilterToken(void);
 void NtFindAtom(void);
 void NtFlushBuffersFile(void);
+void NtFlushBuffersFileEx(void);
 void NtFlushInstructionCache(void);
 void NtFlushKey(void);
 void NtFlushProcessWriteBuffers(void);
@@ -359,6 +360,9 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtFlushBuffersFile
     KiRegisterService(MIME_SVC_NtFlushBuffersFile, (void *)NtFlushBuffersFile, STACK_ARGS(2));
+#endif
+#ifdef MIME_SVC_NtFlushBuffersFileEx
+    KiRegisterService(MIME_SVC_NtFlushBuffersFileEx, (void *)NtFlushBuffersFileEx, STACK_ARGS(5));
 #endif
 #ifdef MIME_SVC_NtFlushInstructionCache
     KiRegisterService(MIME_SVC_NtFlushInstructionCache, (void *)NtFlushInstructionCache, STACK_ARGS(3));

@@ -874,6 +874,14 @@ NTSTATUS NTAPI NtFlushBuffersFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
     return NT_SUCCESS(status) ? stored : status;
 }
 
+/* the flags choose the data or the metadata too, and the file systems of the machine flush a file whole either way. */
+NTSTATUS NTAPI NtFlushBuffersFileEx(HANDLE handle, ULONG flags, PVOID parameters, ULONG length, PIO_STATUS_BLOCK iosb)
+{
+    if (flags & ~0x7u || (!parameters && length) || (parameters && !length))
+        return STATUS_INVALID_PARAMETER;
+    return NtFlushBuffersFile(handle, iosb);
+}
+
 /* a device or file system control with buffered input and output, completed before it returns. */
 static NTSTATUS buffered_control(PFILE_OBJECT file, UCHAR major, HANDLE event, PVOID apc_context,
                                  PIO_STATUS_BLOCK iosb, ULONG code, PVOID input, ULONG in_len, PVOID output,

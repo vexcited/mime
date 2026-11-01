@@ -32,15 +32,18 @@ DECLSPEC_EXPORT LONG WINAPI GetPackageInfo(PVOID reference, UINT32 flags, UINT32
     return ERROR_INVALID_PARAMETER;
 }
 
-/* CreateMemoryResourceNotification never creates one, so no handle is valid here. */
+/* the notification is an event, set while its condition holds. */
 DECLSPEC_EXPORT BOOL WINAPI QueryMemoryResourceNotification(HANDLE handle, PBOOL state)
 {
     if (!state) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    KbSetError(ERROR_INVALID_HANDLE);
-    return FALSE;
+    DWORD wait = WaitForSingleObject(handle, 0);
+    if (wait == WAIT_FAILED)
+        return FALSE;
+    *state = wait == WAIT_OBJECT_0;
+    return TRUE;
 }
 
 /* registers for system managed suspend and resume. nothing here changes a process's state, so the routine is never

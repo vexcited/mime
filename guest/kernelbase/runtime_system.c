@@ -49,8 +49,12 @@ DECLSPEC_EXPORT PVOID WINAPI VirtualAllocExNuma(HANDLE process, PVOID address, S
 }
 
 
+/* the machine has memory to spare and is not short of it, so the high condition is set and the low one is not. */
 DECLSPEC_EXPORT HANDLE WINAPI CreateMemoryResourceNotification(int kind)
 {
-    SetLastError(kind == 0 || kind == 1 ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER);
-    return nullptr;
+    if (kind != 0 && kind != 1) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    return CreateEventW(nullptr, TRUE, kind == 1, nullptr);
 }

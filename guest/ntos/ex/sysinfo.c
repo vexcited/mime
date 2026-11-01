@@ -867,7 +867,15 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
         *(PULONG)(perf + 0x50) = (ULONG)MmGetCommittedPages();      /* CommittedPages */
         *(PULONG)(perf + 0x54) = (ULONG)MmGetCommitLimitPages();    /* CommitLimit */
         *(PULONG)(perf + 0x58) = (ULONG)MmGetPeakCommittedPages();  /* PeakCommitment */
-        return copy_info(info, perf, sizeof(perf), length, returned);
+        /* the structure was 0x138 bytes before the build that made it 0x158, and callers pass the size they know. */
+        return copy_info(info, perf, length >= 0x138 && length < sizeof(perf) ? 0x138 : sizeof(perf), length, returned);
+    }
+    case SystemFileCacheInformation: {
+        /* the system cache keeps no working set of its own, so its size is what the host has cached for the guest. */
+        ULONG64 cache[8] = {};
+        cache[0] = MmGetFreePages() * PAGE_SIZE / 8;
+        cache[1] = cache[0];
+        return copy_info(info, cache, sizeof(cache), length, returned);
     }
     case SystemKernelDebuggerInformation: {
         BOOLEAN dbg[2] = {FALSE, TRUE}; /* enabled, not present */
