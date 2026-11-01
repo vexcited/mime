@@ -95,6 +95,9 @@ typedef struct {
     DWORD length, export_policy, key_usage, flags;
     BOOL finalized;
     BCRYPT_HANDLE alg, key;
+    /* the key spec of a key that lives, or is to live, in a container of the legacy store: 0, AT_KEYEXCHANGE or AT_SIGNATURE. */
+    DWORD legacy_spec;
+    BOOL from_legacy;
 } KEY;
 
 typedef struct {
@@ -414,6 +417,246 @@ static SECURITY_STATUS load_key(KEY *key)
 
 /* ------------------------------------------------------------------ keys */
 
+
+/* ------------------------------------------------------------------ the legacy store */
+
+/*
+ * a key can also live in a key container of the legacy provider of the same name. the key storage provider writes it
+ * there when a key is finalized with NCRYPT_WRITE_KEY_TO_LEGACY_STORE_FLAG and reads it from there when a key is opened
+ * with a key spec, through the legacy functions of advapi32, which keep the container.
+ */
+#define NCRYPT_WRITE_KEY_TO_LEGACY_STORE_FLAG 0x00000200
+#define NCRYPT_NO_KEY_VALIDATION 0x00000008
+#define NTE_BAD_DATA_ ((SECURITY_STATUS)0x80090005L)
+#define LEGACY_AT_KEYEXCHANGE 1
+#define LEGACY_AT_SIGNATURE 2
+#define LEGACY_CALG_RSA_KEYX 0xA400
+#define LEGACY_CALG_RSA_SIGN 0x2400
+#define LEGACY_PRIVATEKEYBLOB 7
+#define LEGACY_PROV_RSA_FULL 1
+#define LEGACY_NEWKEYSET 0x8
+#define LEGACY_DELETEKEYSET 0x10
+#define LEGACY_MACHINE_KEYSET 0x20
+#define LEGACY_SILENT 0x40
+#define LEGACY_EXPORTABLE 0x1
+#define RSA_FULLPRIVATE_MAGIC 0x33415352
+#define RSA_LEGACY_MAGIC 0x32415352
+
+static struct {
+    BOOL (WINAPI *acquire)(ULONG_PTR *, LPCWSTR, LPCWSTR, DWORD, DWORD);
+    BOOL (WINAPI *release)(ULONG_PTR, DWORD);
+    BOOL (WINAPI *import_key)(ULONG_PTR, const BYTE *, DWORD, ULONG_PTR, DWORD, ULONG_PTR *);
+    BOOL (WINAPI *get_user_key)(ULONG_PTR, DWORD, ULONG_PTR *);
+    BOOL (WINAPI *export_key)(ULONG_PTR, ULONG_PTR, DWORD, DWORD, BYTE *, DWORD *);
+    BOOL (WINAPI *destroy_key)(ULONG_PTR);
+} g_legacy;
+
+static INIT_ONCE g_legacy_once = INIT_ONCE_STATIC_INIT;
+
+static BOOL WINAPI load_legacy(INIT_ONCE *once, void *param, void **context)
+{
+    HMODULE module = LoadLibraryW(L"advapi32.dll");
+    if (!module)
+        return TRUE;
+    g_legacy.acquire = (void *)GetProcAddress(module, "CryptAcquireContextW");
+    g_legacy.release = (void *)GetProcAddress(module, "CryptReleaseContext");
+    g_legacy.import_key = (void *)GetProcAddress(module, "CryptImportKey");
+    g_legacy.get_user_key = (void *)GetProcAddress(module, "CryptGetUserKey");
+    g_legacy.export_key = (void *)GetProcAddress(module, "CryptExportKey");
+    g_legacy.destroy_key = (void *)GetProcAddress(module, "CryptDestroyKey");
+    return TRUE;
+}
+
+static BOOL legacy_available(void)
+{
+    InitOnceExecuteOnce(&g_legacy_once, load_legacy, nullptr, nullptr);
+    return g_legacy.acquire && g_legacy.release && g_legacy.import_key && g_legacy.get_user_key && g_legacy.export_key &&
+           g_legacy.destroy_key;
+}
+
+static void copy_reversed(BYTE *to, const BYTE *from, ULONG n)
+{
+    for (ULONG i = 0; i < n; i++)
+        to[i] = from[n - 1 - i];
+}
+
+/* the private blob of the legacy provider from the big endian one of cng, or NULL when the key is not an rsa pair. */
+static BYTE *legacy_from_cng(const BYTE *blob, ULONG size, DWORD spec, ULONG *out_size)
+{
+    if (size < 24)
+        return nullptr;
+    const ULONG *h = (const ULONG *)blob;
+    ULONG bits = h[1], exp = h[2], mod = h[3], p = h[4], q = h[5];
+    if (h[0] != RSA_FULLPRIVATE_MAGIC || exp == 0 || exp > 4 || p != q || mod != (bits + 7) / 8 || p * 2 != mod ||
+        size != 24 + exp + mod * 2 + p * 5)
+        return nullptr;
+    ULONG total = 8 + 12 + mod * 2 + p * 5;
+    BYTE *out = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, total);
+    if (!out)
+        return nullptr;
+    out[0] = LEGACY_PRIVATEKEYBLOB;
+    out[1] = 2;
+    *(ULONG *)(out + 4) = spec == LEGACY_AT_SIGNATURE ? LEGACY_CALG_RSA_SIGN : LEGACY_CALG_RSA_KEYX;
+    *(ULONG *)(out + 8) = RSA_LEGACY_MAGIC;
+    *(ULONG *)(out + 12) = bits;
+    ULONG exponent = 0;
+    for (ULONG i = 0; i < exp; i++)
+        exponent = exponent << 8 | blob[24 + i];
+    *(ULONG *)(out + 16) = exponent;
+    const BYTE *from = blob + 24 + exp;
+    BYTE *to = out + 20;
+    /* modulus, the two primes, the two exponents and the coefficient, then the private exponent. */
+    ULONG lengths[] = {mod, p, p, p, p, p, mod};
+    for (int i = 0; i < 7; i++) {
+        copy_reversed(to, from, lengths[i]);
+        to += lengths[i];
+        from += lengths[i];
+    }
+    *out_size = total;
+    return out;
+}
+
+/* the cng blob of an rsa pair from the legacy private blob. */
+static BYTE *cng_from_legacy(const BYTE *blob, ULONG size, ULONG *out_size)
+{
+    if (size < 20 || blob[0] != LEGACY_PRIVATEKEYBLOB || *(const ULONG *)(blob + 8) != RSA_LEGACY_MAGIC)
+        return nullptr;
+    ULONG bits = *(const ULONG *)(blob + 12), exponent = *(const ULONG *)(blob + 16);
+    ULONG mod = (bits + 7) / 8, p = mod / 2;
+    if (bits < 256 || bits > 16384 || bits % 16 || size != 20 + mod * 2 + p * 5)
+        return nullptr;
+    ULONG total = 24 + 4 + mod * 2 + p * 5;
+    BYTE *out = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, total);
+    if (!out)
+        return nullptr;
+    ULONG *h = (ULONG *)out;
+    h[0] = RSA_FULLPRIVATE_MAGIC;
+    h[1] = bits;
+    h[2] = 4;
+    h[3] = mod;
+    h[4] = p;
+    h[5] = p;
+    BYTE *to = out + 24;
+    to[0] = (BYTE)(exponent >> 24);
+    to[1] = (BYTE)(exponent >> 16);
+    to[2] = (BYTE)(exponent >> 8);
+    to[3] = (BYTE)exponent;
+    to += 4;
+    const BYTE *from = blob + 20;
+    ULONG lengths[] = {mod, p, p, p, p, p, mod};
+    for (int i = 0; i < 7; i++) {
+        copy_reversed(to, from, lengths[i]);
+        to += lengths[i];
+        from += lengths[i];
+    }
+    *out_size = total;
+    return out;
+}
+
+static DWORD legacy_context_flags(const KEY *key, DWORD extra)
+{
+    return extra | LEGACY_SILENT | ((key->flags & NCRYPT_MACHINE_KEY_FLAG) ? LEGACY_MACHINE_KEYSET : 0);
+}
+
+/* writes the finalized key into the container of its name in the legacy store. */
+static SECURITY_STATUS legacy_write(KEY *key)
+{
+    if (!legacy_available())
+        return NTE_NOT_SUPPORTED;
+    int index = find_algorithm(key->algorithm);
+    if (index != 0 || !key->name)
+        return NTE_NOT_SUPPORTED;
+    ULONG size = 0;
+    if (!g_bcrypt.export_key || normalize(g_bcrypt.export_key(key->key, nullptr, g_algorithms[index].blob, nullptr, 0, &size, 0)))
+        return NTE_NOT_SUPPORTED;
+    BYTE *cng = HeapAlloc(GetProcessHeap(), 0, size);
+    if (!cng)
+        return NTE_NO_MEMORY;
+    SECURITY_STATUS result = normalize(g_bcrypt.export_key(key->key, nullptr, g_algorithms[index].blob, cng, size, &size, 0));
+    ULONG legacy_size = 0;
+    BYTE *legacy = result ? nullptr : legacy_from_cng(cng, size, key->legacy_spec, &legacy_size);
+    SecureZeroMemory(cng, size);
+    HeapFree(GetProcessHeap(), 0, cng);
+    if (!result && !legacy)
+        result = NTE_BAD_DATA_;
+    if (!result) {
+        ULONG_PTR provider = 0;
+        if (!g_legacy.acquire(&provider, key->name, nullptr, LEGACY_PROV_RSA_FULL, legacy_context_flags(key, LEGACY_NEWKEYSET)) &&
+            ((SECURITY_STATUS)GetLastError() != NTE_EXISTS ||
+             !g_legacy.acquire(&provider, key->name, nullptr, LEGACY_PROV_RSA_FULL, legacy_context_flags(key, 0))))
+            result = GetLastError();
+        if (!result) {
+            ULONG_PTR imported = 0;
+            if (g_legacy.import_key(provider, legacy, legacy_size, 0, LEGACY_EXPORTABLE, &imported))
+                g_legacy.destroy_key(imported);
+            else
+                result = GetLastError();
+            g_legacy.release(provider, 0);
+        }
+    }
+    if (legacy) {
+        SecureZeroMemory(legacy, legacy_size);
+        HeapFree(GetProcessHeap(), 0, legacy);
+    }
+    return result;
+}
+
+/* the key of a container of the legacy store, as a key of this provider. */
+static SECURITY_STATUS legacy_read(KEY *key, DWORD spec)
+{
+    if (!legacy_available())
+        return NTE_NOT_SUPPORTED;
+    ULONG_PTR provider = 0, user = 0;
+    if (!g_legacy.acquire(&provider, key->name, nullptr, LEGACY_PROV_RSA_FULL, legacy_context_flags(key, 0)))
+        return NTE_BAD_KEYSET;
+    SECURITY_STATUS result = NTE_BAD_KEYSET;
+    BYTE *legacy = nullptr, *cng = nullptr;
+    DWORD size = 0;
+    if (g_legacy.get_user_key(provider, spec, &user)) {
+        result = NTE_NOT_SUPPORTED;
+        if (g_legacy.export_key(user, 0, LEGACY_PRIVATEKEYBLOB, 0, nullptr, &size) && size &&
+            (legacy = HeapAlloc(GetProcessHeap(), 0, size)) &&
+            g_legacy.export_key(user, 0, LEGACY_PRIVATEKEYBLOB, 0, legacy, &size)) {
+            ULONG cng_size = 0;
+            cng = cng_from_legacy(legacy, size, &cng_size);
+            result = NTE_BAD_DATA_;
+            if (cng) {
+                memcpy(key->algorithm, L"RSA", sizeof(L"RSA"));
+                key->length = ((const ULONG *)cng)[1];
+                key->export_policy = NCRYPT_ALLOW_EXPORT_FLAG | NCRYPT_ALLOW_PLAINTEXT_EXPORT_FLAG;
+                key->key_usage = 3;
+                result = open_algorithm(key->algorithm, &key->alg);
+                if (!result)
+                    result = normalize(g_bcrypt.import_pair
+                                           ? g_bcrypt.import_pair(key->alg, nullptr, g_algorithms[0].blob, &key->key, cng,
+                                                                  cng_size, 0)
+                                           : (LONG)0xC00000BB);
+                if (!result) {
+                    key->finalized = TRUE;
+                    key->legacy_spec = spec;
+                    key->from_legacy = TRUE;
+                }
+                SecureZeroMemory(cng, cng_size);
+                HeapFree(GetProcessHeap(), 0, cng);
+            }
+        }
+        if (legacy) {
+            SecureZeroMemory(legacy, size);
+            HeapFree(GetProcessHeap(), 0, legacy);
+        }
+        g_legacy.destroy_key(user);
+    }
+    g_legacy.release(provider, 0);
+    return result;
+}
+
+static void legacy_delete(KEY *key)
+{
+    ULONG_PTR provider = 0;
+    if (legacy_available() && key->name)
+        g_legacy.acquire(&provider, key->name, nullptr, LEGACY_PROV_RSA_FULL, legacy_context_flags(key, LEGACY_DELETEKEYSET));
+}
+
 SECURITY_STATUS WINAPI NCryptCreatePersistedKey(NCRYPT_PROV_HANDLE handle, NCRYPT_KEY_HANDLE *out, LPCWSTR algorithm,
                                                 LPCWSTR name, DWORD spec, DWORD flags)
 {
@@ -427,6 +670,8 @@ SECURITY_STATUS WINAPI NCryptCreatePersistedKey(NCRYPT_PROV_HANDLE handle, NCRYP
         return NTE_INVALID_PARAMETER;
     if (flags & ~(NCRYPT_MACHINE_KEY_FLAG | NCRYPT_OVERWRITE_KEY_FLAG | NCRYPT_SILENT_FLAG))
         return NTE_BAD_FLAGS;
+    if (spec != 0 && spec != LEGACY_AT_KEYEXCHANGE && spec != LEGACY_AT_SIGNATURE)
+        return NTE_INVALID_PARAMETER;
     int index = find_algorithm(algorithm);
     if (index < 0)
         return NTE_NOT_SUPPORTED;
@@ -441,6 +686,7 @@ SECURITY_STATUS WINAPI NCryptCreatePersistedKey(NCRYPT_PROV_HANDLE handle, NCRYP
     memcpy(key->algorithm, g_algorithms[index].name, (wcslen(g_algorithms[index].name) + 1) * sizeof(WCHAR));
     key->length = g_algorithms[index].length;
     key->flags = flags;
+    key->legacy_spec = spec;
     SECURITY_STATUS status = open_algorithm(algorithm, &key->alg);
     if (!status && name) {
         SIZE_T size = (wcslen(name) + 1) * sizeof(WCHAR);
@@ -465,6 +711,10 @@ SECURITY_STATUS WINAPI NCryptFinalizeKey(NCRYPT_KEY_HANDLE handle, DWORD flags)
         return NTE_INVALID_HANDLE;
     if (key->finalized)
         return NTE_BAD_KEY_STATE;
+    if (flags & ~(NCRYPT_WRITE_KEY_TO_LEGACY_STORE_FLAG | NCRYPT_SILENT_FLAG | NCRYPT_NO_KEY_VALIDATION))
+        return NTE_BAD_FLAGS;
+    if ((flags & NCRYPT_WRITE_KEY_TO_LEGACY_STORE_FLAG) && (!key->legacy_spec || !key->name))
+        return NTE_INVALID_PARAMETER;
     if (!g_bcrypt.generate || !g_bcrypt.finalize)
         return NTE_NOT_SUPPORTED;
     SECURITY_STATUS status = normalize(g_bcrypt.generate(key->alg, &key->key, key->length, 0));
@@ -472,6 +722,8 @@ SECURITY_STATUS WINAPI NCryptFinalizeKey(NCRYPT_KEY_HANDLE handle, DWORD flags)
         status = normalize(g_bcrypt.finalize(key->key, 0));
     if (!status && key->name)
         status = save_key(key);
+    if (!status && (flags & NCRYPT_WRITE_KEY_TO_LEGACY_STORE_FLAG))
+        status = legacy_write(key);
     if (status && key->key) {
         g_bcrypt.destroy(key->key);
         key->key = nullptr;
@@ -499,9 +751,11 @@ SECURITY_STATUS WINAPI NCryptOpenKey(NCRYPT_PROV_HANDLE handle, NCRYPT_KEY_HANDL
     SIZE_T size = (wcslen(name) + 1) * sizeof(WCHAR);
     key->name = HeapAlloc(GetProcessHeap(), 0, size);
     SECURITY_STATUS status = key->name ? ERROR_SUCCESS : NTE_NO_MEMORY;
+    if (!status && spec != 0 && spec != LEGACY_AT_KEYEXCHANGE && spec != LEGACY_AT_SIGNATURE)
+        status = NTE_INVALID_PARAMETER;
     if (!status) {
         memcpy(key->name, name, size);
-        status = load_key(key);
+        status = spec ? legacy_read(key, spec) : load_key(key);
     }
     if (status) {
         close_key(key);
@@ -517,8 +771,10 @@ SECURITY_STATUS WINAPI NCryptDeleteKey(NCRYPT_KEY_HANDLE handle, DWORD flags)
     if (!key)
         return NTE_INVALID_HANDLE;
     WCHAR path[MAX_PATH];
-    if (key->name && key_path(key->name, key->flags, path) && !DeleteFileW(path) &&
-        GetLastError() != ERROR_FILE_NOT_FOUND)
+    if (key->from_legacy)
+        legacy_delete(key);
+    else if (key->name && key_path(key->name, key->flags, path) && !DeleteFileW(path) &&
+             GetLastError() != ERROR_FILE_NOT_FOUND)
         return NTE_PERM;
     close_key(key);
     return ERROR_SUCCESS;
