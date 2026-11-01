@@ -16,6 +16,7 @@ void NtAdjustPrivilegesToken(void);
 void NtAlertThread(void);
 void NtAlertThreadByThreadId(void);
 void NtAllocateLocallyUniqueId(void);
+void NtCompareTokens(void);
 void NtAllocateVirtualMemory(void);
 void NtAllocateVirtualMemoryEx(void);
 void NtApphelpCacheControl(void);
@@ -223,6 +224,9 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtAllocateLocallyUniqueId
     KiRegisterService(MIME_SVC_NtAllocateLocallyUniqueId, (void *)NtAllocateLocallyUniqueId, STACK_ARGS(1));
+#endif
+#ifdef MIME_SVC_NtCompareTokens
+    KiRegisterService(MIME_SVC_NtCompareTokens, (void *)NtCompareTokens, STACK_ARGS(3));
 #endif
 #ifdef MIME_SVC_NtAllocateVirtualMemory
     KiRegisterService(MIME_SVC_NtAllocateVirtualMemory, (void *)NtAllocateVirtualMemory, STACK_ARGS(6));

@@ -1450,6 +1450,8 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         return Mx32SetInformationToken(a);
     case MIME_SVC_NtAdjustGroupsToken:
         return Mx32AdjustGroupsToken(a);
+    case MIME_SVC_NtCompareTokens:
+        return NtCompareTokens(handle32(a[0]), handle32(a[1]), pointer32(a[2]));
     case MIME_SVC_NtAllocateLocallyUniqueId:
         return NtAllocateLocallyUniqueId(pointer32(a[0]));
     case MIME_SVC_NtImpersonateAnonymousToken:

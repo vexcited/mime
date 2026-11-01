@@ -66,6 +66,7 @@ EXPORTS
     NtAlertThread=_NtAlertThread@4
     NtAlertThreadByThreadId=_NtAlertThreadByThreadId@4
     NtAllocateLocallyUniqueId=_NtAllocateLocallyUniqueId@4
+    NtCompareTokens=_NtCompareTokens@12
     NtAllocateVirtualMemory=_NtAllocateVirtualMemory@24
     NtAllocateVirtualMemoryEx=_NtAllocateVirtualMemoryEx@28
     NtApphelpCacheControl=_NtApphelpCacheControl@8

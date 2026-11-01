@@ -244,6 +244,49 @@ NTSTATUS NTAPI NtAllocateLocallyUniqueId(PLUID luid)
     return write_caller(luid, &value, sizeof(value));
 }
 
+/* whether every group of one list is in the other with the same attributes, the lists being of the same length. */
+static BOOLEAN same_groups(const SEP_GROUP *a, const SEP_GROUP *b, ULONG count)
+{
+    for (ULONG i = 0; i < count; i++) {
+        BOOLEAN found = FALSE;
+        for (ULONG j = 0; j < count && !found; j++)
+            found = SepSidEqual(a[i].Sid, b[j].Sid) && a[i].Attributes == b[j].Attributes;
+        if (!found)
+            return FALSE;
+    }
+    return TRUE;
+}
+
+/*
+ * NtCompareTokens: whether two tokens give their holders the same rights, which is when the user, the groups with their
+ * attributes, the restricting sids and the privileges with their states are the same, whatever the order of the lists.
+ */
+NTSTATUS NTAPI NtCompareTokens(HANDLE first_handle, HANDLE second_handle, PBOOLEAN equal)
+{
+    if (!equal)
+        return STATUS_INVALID_PARAMETER;
+    PTOKEN first = nullptr, second = nullptr;
+    NTSTATUS status = SepReferenceTokenByHandle(first_handle, TOKEN_QUERY, &first, nullptr);
+    if (NT_SUCCESS(status))
+        status = SepReferenceTokenByHandle(second_handle, TOKEN_QUERY, &second, nullptr);
+    BOOLEAN same = FALSE;
+    if (NT_SUCCESS(status)) {
+        ExAcquireFastMutex(&SeLock);
+        same = first->GroupCount == second->GroupCount && first->RestrictedCount == second->RestrictedCount &&
+               first->Present == second->Present && first->Enabled == second->Enabled &&
+               (first->Flags & TOKEN_IS_RESTRICTED) == (second->Flags & TOKEN_IS_RESTRICTED) &&
+               same_groups(first->Groups, second->Groups, first->GroupCount) &&
+               same_groups(first->Restricted, second->Restricted, first->RestrictedCount);
+        ExReleaseFastMutex(&SeLock);
+        status = write_caller(equal, &same, sizeof(same));
+    }
+    if (first)
+        ObDereferenceObject(first);
+    if (second)
+        ObDereferenceObject(second);
+    return status;
+}
+
 NTSTATUS NTAPI NtDuplicateToken(HANDLE token_handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
                                 BOOLEAN effective_only, ULONG type, PHANDLE new_token)
 {

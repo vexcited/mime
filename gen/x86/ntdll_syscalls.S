@@ -434,6 +434,13 @@ _NtAllocateLocallyUniqueId@4:
     int $0x2e
     retl $4
     .p2align 4, 0x90
+    .globl _NtCompareTokens@12
+_NtCompareTokens@12:
+    movl $0xa1, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $12
+    .p2align 4, 0x90
     .globl _NtFilterToken@24
 _NtFilterToken@24:
     movl $0xed, %eax

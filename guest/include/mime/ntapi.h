@@ -80,6 +80,7 @@ NTSYSCALLAPI NTSTATUS NTAPI NtCreateLowBoxToken(PHANDLE new_token, HANDLE token,
 /* access tokens. advapi32 declares NtDuplicateToken and NtAdjustPrivilegesToken itself. */
 NTSYSCALLAPI NTSTATUS NTAPI NtAdjustGroupsToken(HANDLE token, BOOLEAN reset_to_default, PVOID state, ULONG length, PVOID previous, PULONG returned);
 NTSYSCALLAPI NTSTATUS NTAPI NtAllocateLocallyUniqueId(PLUID luid);
+NTSYSCALLAPI NTSTATUS NTAPI NtCompareTokens(HANDLE first, HANDLE second, PBOOLEAN equal);
 NTSYSCALLAPI NTSTATUS NTAPI NtFilterToken(HANDLE token, ULONG flags, PVOID sids_to_disable, PVOID privileges_to_delete, PVOID restricted_sids, PHANDLE new_token);
 NTSYSCALLAPI NTSTATUS NTAPI NtImpersonateAnonymousToken(HANDLE thread);
 NTSYSCALLAPI NTSTATUS NTAPI NtSetInformationToken(HANDLE token, ULONG klass, PVOID info, ULONG length);
