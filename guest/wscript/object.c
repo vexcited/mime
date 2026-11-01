@@ -420,8 +420,8 @@ static HRESULT STDMETHODCALLTYPE args_show_usage(IArguments2 *This)
     ARGUMENTS *self = (ARGUMENTS *)This;
     BSTR text = nullptr;
     HRESULT hr;
-    if (!self->HasRuntime) {
-        hr = WshPrint(self->Description ? self->Description : L"");
+    if (!self->HasRuntime || self->Usage) {
+        hr = WshPrint(self->Usage ? self->Usage : self->Description ? self->Description : L"");
         return FAILED(hr) ? hr : S_OK;
     }
     hr = build_usage(self, &text);
@@ -445,7 +445,7 @@ static NAMED_ARGUMENTS *named_of(void *This)
 
 static int find_name(ARGUMENTS *owner, PCWSTR name)
 {
-    SIZE_T length = SysStringLen((BSTR)name);
+    SIZE_T length = wcslen(name);
     for (int i = 0; i < owner->NamedCount; i++)
         if (SysStringLen(owner->Names[i]) == length && (!length || !_wcsicmp(owner->Names[i], name)))
             return i;
@@ -708,10 +708,190 @@ HRESULT WshArgumentsSetText(IArguments2 *arguments, int which, PCWSTR text)
     return *slot ? S_OK : E_OUTOFMEMORY;
 }
 
+/* a growing wide string. */
+typedef struct TEXT_BUILDER {
+    PWSTR Text;
+    SIZE_T Length, Capacity;
+    BOOL Failed;
+} TEXT_BUILDER;
+
+static void builder_add(TEXT_BUILDER *builder, PCWSTR text)
+{
+    SIZE_T length = text ? wcslen(text) : 0;
+    if (builder->Failed || !length)
+        return;
+    if (builder->Length + length + 1 > builder->Capacity) {
+        SIZE_T capacity = (builder->Length + length + 1) * 2;
+        PWSTR grown = HeapAlloc(GetProcessHeap(), 0, capacity * sizeof(WCHAR));
+        if (!grown) {
+            builder->Failed = TRUE;
+            return;
+        }
+        if (builder->Text) {
+            memcpy(grown, builder->Text, builder->Length * sizeof(WCHAR));
+            HeapFree(GetProcessHeap(), 0, builder->Text);
+        }
+        builder->Text = grown;
+        builder->Capacity = capacity;
+    }
+    memcpy(builder->Text + builder->Length, text, length * sizeof(WCHAR));
+    builder->Length += length;
+    builder->Text[builder->Length] = 0;
+}
+
+static void builder_add_number(TEXT_BUILDER *builder, int value)
+{
+    WCHAR text[16];
+    _snwprintf(text, RTL_NUMBER_OF(text), L"%d", value);
+    builder_add(builder, text);
+}
+
+/* the names of an unnamed argument as they are written in the usage line: how many are needed and whether more may come. */
+static void add_unnamed_usage(TEXT_BUILDER *builder, const RUNTIME_NODE *node)
+{
+    PCWSTR name = node->Name;
+    int needed = node->Required;
+    if (!node->Count) {
+        if (!needed) {
+            builder_add(builder, L"[");
+            builder_add(builder, name);
+            builder_add(builder, L"]");
+        } else if (needed == 1)
+            builder_add(builder, name);
+        else if (needed == 2) {
+            builder_add(builder, name);
+            builder_add(builder, L"1 ");
+            builder_add(builder, name);
+            builder_add(builder, L"2");
+        } else {
+            builder_add(builder, name);
+            builder_add(builder, L"1...");
+            builder_add(builder, name);
+            builder_add_number(builder, needed);
+        }
+        return;
+    }
+    if (!needed) {
+        builder_add(builder, L"[");
+        builder_add(builder, name);
+        builder_add(builder, L"1 ");
+        builder_add(builder, name);
+        builder_add(builder, L"2...]");
+    } else if (needed == 1) {
+        builder_add(builder, name);
+        builder_add(builder, L"1 [");
+        builder_add(builder, name);
+        builder_add(builder, L"2...]");
+    } else if (needed == 2) {
+        builder_add(builder, name);
+        builder_add(builder, L"1 ");
+        builder_add(builder, name);
+        builder_add(builder, L"2 [");
+        builder_add(builder, name);
+        builder_add(builder, L"3...]");
+    } else {
+        builder_add(builder, name);
+        builder_add(builder, L"1...");
+        builder_add(builder, name);
+        builder_add_number(builder, needed);
+        builder_add(builder, L" [");
+        builder_add(builder, name);
+        builder_add_number(builder, needed + 1);
+        builder_add(builder, L"...]");
+    }
+}
+
+/* the usage of the script: the description, the line with the arguments, the list of them with their help and the example. */
 static HRESULT build_usage(ARGUMENTS *self, BSTR *out)
 {
+    TEXT_BUILDER builder = {};
     *out = nullptr;
-    return E_NOTIMPL;
+    BSTR usage = WshLoadString(30), value = WshLoadString(32), options = WshLoadString(31);
+    if (!usage || !value || !options) {
+        SysFreeString(usage);
+        SysFreeString(value);
+        SysFreeString(options);
+        return E_OUTOFMEMORY;
+    }
+    PCWSTR script = g_host.ScriptPath, name = script;
+    for (PCWSTR p = script; p && *p; p++)
+        if (*p == L'\\' || *p == L'/')
+            name = p + 1;
+    if (self->Description && *self->Description) {
+        builder_add(&builder, self->Description);
+        builder_add(&builder, L"\n");
+    }
+    builder_add(&builder, usage);
+    builder_add(&builder, name);
+    SIZE_T widest = 0;
+    for (RUNTIME_NODE *node = self->First; node; node = node->Next) {
+        SIZE_T length = wcslen(node->Name ? node->Name : L"");
+        if (length > widest)
+            widest = length;
+        builder_add(&builder, L" ");
+        if (node->Named) {
+            if (!node->Required)
+                builder_add(&builder, L"[");
+            builder_add(&builder, L"/");
+            builder_add(&builder, node->Name);
+            if (node->Type == 1) {
+                builder_add(&builder, L":");
+                builder_add(&builder, value);
+            } else if (node->Type == 2)
+                builder_add(&builder, L"[+|-]");
+            if (!node->Required)
+                builder_add(&builder, L"]");
+        } else
+            add_unnamed_usage(&builder, node);
+    }
+    if (self->First) {
+        builder_add(&builder, options);
+        for (RUNTIME_NODE *node = self->First; node; node = node->Next) {
+            SIZE_T length = wcslen(node->Name ? node->Name : L"");
+            builder_add(&builder, node->Name);
+            for (; length < widest; length++)
+                builder_add(&builder, L" ");
+            builder_add(&builder, L" : ");
+            builder_add(&builder, node->Help);
+            builder_add(&builder, L"\n");
+        }
+    }
+    if (self->Example && *self->Example)
+        builder_add(&builder, self->Example);
+    HRESULT hr = builder.Failed ? E_OUTOFMEMORY : S_OK;
+    if (SUCCEEDED(hr)) {
+        *out = SysAllocString(builder.Text ? builder.Text : L"");
+        if (!*out)
+            hr = E_OUTOFMEMORY;
+    }
+    if (builder.Text)
+        HeapFree(GetProcessHeap(), 0, builder.Text);
+    SysFreeString(usage);
+    SysFreeString(value);
+    SysFreeString(options);
+    return hr;
+}
+
+/* the runtime of the job starts empty, and from then on the usage is built from it. */
+void WshArgumentsClearRuntime(IArguments2 *arguments)
+{
+    ARGUMENTS *self = (ARGUMENTS *)arguments;
+    while (self->First) {
+        RUNTIME_NODE *next = self->First->Next;
+        free_node(self->First);
+        self->First = next;
+    }
+    self->Last = nullptr;
+    SysFreeString(self->Usage);
+    SysFreeString(self->Description);
+    SysFreeString(self->Example);
+    self->Usage = self->Description = self->Example = nullptr;
+    self->HasRuntime = TRUE;
+}
+
+BOOL WshArgumentsNamedExists(IArguments2 *arguments, PCWSTR name)
+{
+    return find_name((ARGUMENTS *)arguments, name) >= 0;
 }
 
 /* ------------------------------------------------------------------ the host object, WScript */

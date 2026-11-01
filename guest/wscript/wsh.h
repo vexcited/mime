@@ -153,7 +153,7 @@ typedef struct HOST {
     UINT CodePage;
     DWORD Timeout;
     int ExitCode;
-    BOOL Quit;
+    BOOL Quit, ScriptFailed, InWsf, CompileError;
     volatile LONG Pending;
     WCHAR Module[MAX_PATH];
     WCHAR ModuleDirectory[MAX_PATH];
@@ -204,6 +204,9 @@ HRESULT WshCreateArguments(int count, PWSTR *arguments, IArguments2 **out);
 HRESULT WshArgumentsAddRuntimeNamed(IArguments2 *arguments, PCWSTR name, PCWSTR help, int type, BOOL required);
 HRESULT WshArgumentsAddRuntimeUnnamed(IArguments2 *arguments, PCWSTR name, PCWSTR help, int count, int required);
 HRESULT WshArgumentsSetText(IArguments2 *arguments, int which, PCWSTR text);
+void WshArgumentsClearRuntime(IArguments2 *arguments);
+BOOL WshArgumentsNamedExists(IArguments2 *arguments, PCWSTR name);
+HRESULT WshReportLoadError(HRESULT code);
 HRESULT WshSignal(const GUID *iid, PCWSTR source, UINT id, ...);
 HRESULT WshSignalText(const GUID *iid, PCWSTR source, PCWSTR text);
 IArguments2 *WshHostArguments(struct HOST_OBJECT *object);

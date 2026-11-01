@@ -196,7 +196,7 @@ static HRESULT STDMETHODCALLTYPE site_get_item_info(IActiveScriptSite *This, LPC
             hr = provider->lpVtbl->GetClassInfo(provider, info);
             provider->lpVtbl->Release(provider);
         }
-        if (FAILED(hr))
+        if (FAILED(hr) && object == (IUnknown *)WshHostDispatch(g_host.Object))
             return hr;
     }
     if (mask & SCRIPTINFO_IUNKNOWN) {
@@ -280,6 +280,7 @@ static HRESULT STDMETHODCALLTYPE site_on_error(IActiveScriptSite *This, IActiveS
         WshOnTimeout();
     } else {
         BSTR description = info.bstrDescription, formatted = nullptr;
+        g_host.ScriptFailed = TRUE;
         if (!description || !*description) {
             if (FAILED(WshFormatHResult(info.scode, &formatted)))
                 goto done;
@@ -291,8 +292,10 @@ static HRESULT STDMETHODCALLTYPE site_on_error(IActiveScriptSite *This, IActiveS
             line = 0;
             column = -1;
         }
-        error->lpVtbl->GetSourceLineText(error, &text);
-        WshReportScriptError(line, column + 1, info.bstrSource ? info.bstrSource : L"(null)", description, text, (DWORD)info.scode);
+        /* the engines give the line of an error in the code, and none for an error that happened while it ran. */
+        g_host.CompileError = SUCCEEDED(error->lpVtbl->GetSourceLineText(error, &text)) && text && *text;
+        /* the file parser of Windows counts the columns of a script from one, which the host then counts again. */
+        WshReportScriptError(line, column + 1 + (g_host.InWsf ? 1 : 0), info.bstrSource ? info.bstrSource : L"(null)", description, text, (DWORD)info.scode);
         SysFreeString(formatted);
     }
 done:
@@ -616,7 +619,7 @@ HRESULT WshLoadSource(PCWSTR path, BSTR *text)
 
 /* ------------------------------------------------------------------ one script file */
 
-static HRESULT report_load_error(HRESULT code)
+HRESULT WshReportLoadError(HRESULT code)
 {
     if (code == WSH_E_REPORTED || code == (HRESULT)SCRIPT_E_REPORTED)
         return WSH_E_REPORTED;
@@ -675,6 +678,8 @@ HRESULT WshExecute(PCWSTR file, int count, PWSTR *arguments, PCWSTR engine_name,
     BSTR text = nullptr;
     SCRIPT_ENGINE *engine = nullptr;
     g_host.Pending = 0;
+    g_host.ScriptFailed = FALSE;
+    g_host.InWsf = FALSE;
     hr = WshCreateHostObject(count, arguments, &g_host.Object);
     if (FAILED(hr))
         return WshReportError(RES_BASE + 20, 3200, hr);
@@ -729,7 +734,7 @@ HRESULT WshExecute(PCWSTR file, int count, PWSTR *arguments, PCWSTR engine_name,
         if (hr == (HRESULT)0x800C0005)
             hr = HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
         WshEngineClose(engine);
-        hr = report_load_error(hr);
+        hr = WshReportLoadError(hr);
         return hr;
     }
     g_host.Engine = engine;
