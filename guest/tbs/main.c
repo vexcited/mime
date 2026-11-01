@@ -125,6 +125,16 @@ static ULONG random32(void)
     return v;
 }
 
+/* a context is the memory of a state, a handle that is not readable or marked is not one. */
+BOOL tbs_context_valid(TBS_HCONTEXT context)
+{
+    MEMORY_BASIC_INFORMATION info;
+    if (!context || !VirtualQuery(context, &info, sizeof(info)) || info.State != MEM_COMMIT ||
+        (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)) || !info.Protect)
+        return FALSE;
+    return ((const TBS_CONTEXT_STATE *)context)->Magic == CONTEXT_MAGIC;
+}
+
 TBS_RESULT WINAPI Tbsi_GetDeviceInfo(UINT32 size, PVOID info)
 {
     if (!info || size < sizeof(TPM_DEVICE_INFO))
@@ -142,14 +152,27 @@ BOOL WINAPI Tbsi_Is_Tpm_Present(void)
     return TRUE;
 }
 
-TBS_RESULT WINAPI Tbsi_Context_Create(PCTBS_CONTEXT_PARAMS params, PTBS_HCONTEXT context)
+/* the context asks for the kind of tpm there is: version one is for a 1.2 chip and version two names the families. */
+static TBS_RESULT context_create(PCTBS_CONTEXT_PARAMS params, PTBS_HCONTEXT context)
 {
     if (!params)
         return TBS_E_BAD_PARAMETER;
     if (!context)
         return TBS_E_INVALID_OUTPUT_POINTER;
-    if (params->version != TBS_CONTEXT_VERSION_ONE && params->version != TBS_CONTEXT_VERSION_TWO)
+    TPM_DEVICE_INFO info;
+    TBS_RESULT result = Tbsi_GetDeviceInfo(sizeof(info), &info);
+    if (result)
+        return result;
+    if (params->version == TBS_CONTEXT_VERSION_ONE) {
+        if (info.tpmVersion != 1)
+            return TBS_E_TPM_NOT_FOUND;
+    } else if (params->version == TBS_CONTEXT_VERSION_TWO) {
+        ULONG flags = ((const ULONG *)params)[1];
+        if (!((info.tpmVersion != 1 || (flags & 2)) && (info.tpmVersion != 2 || (flags & 4))))
+            return TBS_E_TPM_NOT_FOUND;
+    } else {
         return TBS_E_INVALID_CONTEXT_PARAM;
+    }
     PTBS_CONTEXT_STATE state = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*state));
     if (!state)
         return TBS_E_INTERNAL_ERROR;
@@ -158,10 +181,21 @@ TBS_RESULT WINAPI Tbsi_Context_Create(PCTBS_CONTEXT_PARAMS params, PTBS_HCONTEXT
     return TBS_SUCCESS;
 }
 
+TBS_RESULT WINAPI Tbsi_Context_Create(PCTBS_CONTEXT_PARAMS params, PTBS_HCONTEXT context)
+{
+    return context_create(params, context);
+}
+
+/* the vendor maintenance context is made the same way. */
+TBS_RESULT WINAPI Tbsi_Tpm_Vendor_Maintenance_Mode(PCTBS_CONTEXT_PARAMS params, PTBS_HCONTEXT context)
+{
+    return context_create(params, context);
+}
+
 TBS_RESULT WINAPI Tbsip_Context_Close(TBS_HCONTEXT context)
 {
     PTBS_CONTEXT_STATE state = context;
-    if (!state || state->Magic != CONTEXT_MAGIC)
+    if (!tbs_context_valid(context))
         return TBS_E_INVALID_CONTEXT;
     state->Magic = 0;
     HeapFree(GetProcessHeap(), 0, state);
@@ -170,8 +204,7 @@ TBS_RESULT WINAPI Tbsip_Context_Close(TBS_HCONTEXT context)
 
 TBS_RESULT WINAPI Tbsip_Cancel_Commands(TBS_HCONTEXT context)
 {
-    PTBS_CONTEXT_STATE state = context;
-    return state && state->Magic == CONTEXT_MAGIC ? TBS_SUCCESS : TBS_E_INVALID_CONTEXT;
+    return tbs_context_valid(context) ? TBS_SUCCESS : TBS_E_INVALID_CONTEXT;
 }
 
 /* the properties of the fixed group, the ones a probe of the device asks about. */
@@ -395,8 +428,7 @@ static TBS_RESULT submit(TBS_HCONTEXT context, TBS_COMMAND_LOCALITY locality, TB
         return TBS_E_INSUFFICIENT_BUFFER;
     if (!command || !size)
         return TBS_E_BAD_PARAMETER;
-    PTBS_CONTEXT_STATE state = context;
-    if (!state || state->Magic != CONTEXT_MAGIC)
+    if (!tbs_context_valid(context))
         return TBS_E_INVALID_CONTEXT;
 
     /* the header is answered in place: tag, the length of the whole answer, then the code. */
@@ -439,8 +471,7 @@ TBS_RESULT WINAPI Tbsi_Physical_Presence_Command(TBS_HCONTEXT context, const BYT
         return TBS_E_INVALID_OUTPUT_POINTER;
     if (input_size > 0x40000 || *output_size > 0x40000)
         return TBS_E_BUFFER_TOO_LARGE;
-    PTBS_CONTEXT_STATE state = context;
-    return state && state->Magic == CONTEXT_MAGIC ? TBS_SUCCESS : TBS_E_INVALID_CONTEXT;
+    return tbs_context_valid(context) ? TBS_SUCCESS : TBS_E_INVALID_CONTEXT;
 }
 
 /* windows keeps the measured boot log in the registry. */
