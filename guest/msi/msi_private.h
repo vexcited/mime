@@ -8,6 +8,14 @@
 #include <rtl.h>
 #include "../lib/compound/compound.h"
 
+#if defined(__x86_64__)
+#define IMAGE_FILE_MACHINE_NATIVE 0x8664
+#elif defined(__i386__)
+#define IMAGE_FILE_MACHINE_NATIVE 0x14c
+#else
+#define IMAGE_FILE_MACHINE_NATIVE 0xAA64
+#endif
+
 enum { MIME_MSI_KIND_RECORD = 1, MIME_MSI_KIND_DATABASE, MIME_MSI_KIND_VIEW, MIME_MSI_KIND_PACKAGE, MIME_MSI_KIND_SUMMARY };
 typedef struct MIME_MSI_OBJECT {
     ULONG Kind;
@@ -266,6 +274,8 @@ void MimeMsiShutDownHost(void);
     } while (0)
 UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, PCSTR entry, WORD machine,
                       UINT *result);
+UINT MimeMsiMachineOfImage(const BYTE *data, SIZE_T size, WORD *machine);
+UINT MimeMsiRemoteRegister(MIME_MSI_PACKAGE *package, PCWSTR dll, PCSTR entry, WORD machine, UINT *result);
 UINT MimeMsiExtraAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiRunUnlocked(MSIHANDLE handle, MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiFormat(MIME_MSI_PACKAGE *package, PCWSTR template, PWSTR *out);
@@ -344,6 +354,7 @@ UINT MimeMsiRebootResult(MIME_MSI_PACKAGE *package);
 UINT MimeMsiClassesAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiFontsAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiFileTablesAction(MIME_MSI_PACKAGE *package, PCWSTR action);
+UINT MimeMsiRegistrationTablesAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiIniAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiComponentSelected(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR *directory, BOOL *selected);
 UINT MimeMsiRegistryText(HKEY key, PCWSTR name, PWSTR *out);

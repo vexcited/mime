@@ -1498,10 +1498,6 @@ static const struct {
     {L"SetODBCFolders", {L"ODBCDriver", L"ODBCTranslator", L"ODBCDataSource"}},
     {L"RegisterComPlus", {L"Complus"}},
     {L"UnregisterComPlus", {L"Complus"}},
-    {L"SelfRegModules", {L"SelfReg"}},
-    {L"SelfUnregModules", {L"SelfReg"}},
-    {L"RegisterTypeLibraries", {L"TypeLib"}},
-    {L"UnregisterTypeLibraries", {L"TypeLib"}},
     {L"CCPSearch", {L"CCPSearch"}},
     {L"RMCCPSearch", {L"CCPSearch"}},
 };

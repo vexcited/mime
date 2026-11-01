@@ -7,14 +7,6 @@
  * 0x80 does not wait, 0x400 defers the action to the script, with 0x100 for rollback and 0x200 for commit.
  */
 
-#if defined(__x86_64__)
-#define IMAGE_FILE_MACHINE_NATIVE 0x8664
-#elif defined(__i386__)
-#define IMAGE_FILE_MACHINE_NATIVE 0x14c
-#else
-#define IMAGE_FILE_MACHINE_NATIVE 0xAA64
-#endif
-
 enum { CA_DLL = 1, CA_EXE = 2, CA_TEXT = 3, CA_JSCRIPT = 5, CA_VBSCRIPT = 6, CA_INSTALL = 7 };
 enum { SOURCE_BINARY = 0, SOURCE_FILE = 0x10, SOURCE_DIRECTORY = 0x20, SOURCE_PROPERTY = 0x30 };
 #define CA_CONTINUE 0x40
@@ -96,7 +88,7 @@ static void info_message(MSIHANDLE handle, PCWSTR text)
     MsiCloseHandle(record);
 }
 
-static UINT machine_of_image(const BYTE *data, SIZE_T size, WORD *machine)
+UINT MimeMsiMachineOfImage(const BYTE *data, SIZE_T size, WORD *machine)
 {
     if (size < 0x40 || data[0] != 'M' || data[1] != 'Z')
         return ERROR_BAD_EXE_FORMAT;
@@ -244,7 +236,7 @@ static UINT run_library(MIME_MSI_PACKAGE *package, MSIHANDLE session, const MIME
     ReleaseSRWLockExclusive(&MimeMsiLock);
     WORD machine = 0;
     if (!error && bytes) {
-        error = machine_of_image(bytes, size, &machine);
+        error = MimeMsiMachineOfImage(bytes, size, &machine);
         if (!error)
             error = write_temporary(bytes, size, L".dll", path);
         temporary = !error;
@@ -260,7 +252,7 @@ static UINT run_library(MIME_MSI_PACKAGE *package, MSIHANDLE session, const MIME
                 error = GetLastError();
             CloseHandle(file);
             if (!error)
-                error = machine_of_image(header, read, &machine);
+                error = MimeMsiMachineOfImage(header, read, &machine);
         }
     }
     MimeMsiFree(bytes);

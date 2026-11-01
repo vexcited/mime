@@ -413,8 +413,10 @@ UINT WINAPI MsiCustomActionServer(LPCWSTR pipe_name)
         }
         MSIHANDLE session = get_u32(&request);
         PWSTR path = get_text(&request), entry_name = get_text(&request);
+        /* a library asked to register itself is called with nothing, and answers with an HRESULT. */
+        BOOL registering = get_u32(&request) != 0;
         ULONG load_error = ERROR_SUCCESS, result = 0;
-        HMODULE library = path ? LoadLibraryW(path) : nullptr;
+        HMODULE library = path ? LoadLibraryExW(path, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH) : nullptr;
         char entry[256] = {};
         if (entry_name)
             WideCharToMultiByte(CP_ACP, 0, entry_name, -1, entry, sizeof(entry), nullptr, nullptr);
@@ -426,6 +428,8 @@ UINT WINAPI MsiCustomActionServer(LPCWSTR pipe_name)
         }
         else if (!function)
             load_error = ERROR_PROC_NOT_FOUND;
+        else if (registering)
+            result = (ULONG)((HRESULT (WINAPI *)(void))function)();
         else
             result = function(session);
         if (library)
@@ -775,8 +779,8 @@ static BOOL serve_call(MESSAGE *request, MESSAGE *reply)
     return !reply->Failed;
 }
 
-UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, PCSTR entry, WORD machine,
-                      UINT *result)
+static UINT remote_run(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, PCSTR entry, WORD machine,
+                       BOOL registering, UINT *result)
 {
     ULONG host;
     if (machine == IMAGE_FILE_MACHINE_I386)
@@ -797,6 +801,7 @@ UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, 
     put_u32(&request, session);
     put_text(&request, dll);
     put_text(&request, entry_name);
+    put_u32(&request, registering);
     BOOL ok = !request.Failed && send_message(g_host_pipe[host], MESSAGE_RUN, &request);
     MimeMsiFree(request.Data);
     error = ok ? ERROR_SUCCESS : ERROR_BROKEN_PIPE;
@@ -830,4 +835,14 @@ UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, 
         shut_down_host(host);
     ReleaseSRWLockExclusive(&g_host_lock);
     return error;
+}
+
+UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, PCSTR entry, WORD machine, UINT *result)
+{
+    return remote_run(package, session, dll, entry, machine, FALSE, result);
+}
+
+UINT MimeMsiRemoteRegister(MIME_MSI_PACKAGE *package, PCWSTR dll, PCSTR entry, WORD machine, UINT *result)
+{
+    return remote_run(package, 0, dll, entry, machine, TRUE, result);
 }
