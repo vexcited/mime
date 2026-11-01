@@ -51,6 +51,14 @@ ADVAPI BOOL WINAPI GetUserNameA(LPSTR buffer, LPDWORD size);
 #define AT_SIGNATURE 2
 #define CALG_RSA_SIGN 0x2400
 #define CALG_RSA_KEYX 0xa400
+#define CALG_DES 0x6601
+#define CALG_RC2 0x6602
+#define CALG_3DES 0x6603
+#define CALG_3DES_112 0x6609
+#define CALG_AES_128 0x660e
+#define CALG_AES_192 0x660f
+#define CALG_AES_256 0x6610
+#define CALG_RC4 0x6801
 #define KEY_MAGIC 0x5945484B  /* "KHEY" */
 
 typedef struct BLOBHEADER {
@@ -835,18 +843,29 @@ typedef struct PROV_ENUMALGS_EX {
     CHAR szLongName[40];
 } PROV_ENUMALGS_EX;
 
-/* the algorithms the provider implements: hashes only, as it has no cipher. */
+/* the algorithms the provider implements, with the key lengths it takes, in bits. */
 static const struct {
     DWORD Id;
     DWORD Bits;
+    DWORD MinBits;
+    DWORD MaxBits;
     const char *Name;
     const char *LongName;
 } g_algorithms[] = {
-    {CALG_SHA_256, 256, "SHA-256", "Secure Hash Algorithm SHA-256"},
-    {CALG_SHA_384, 384, "SHA-384", "Secure Hash Algorithm SHA-384"},
-    {CALG_SHA_512, 512, "SHA-512", "Secure Hash Algorithm SHA-512"},
-    {CALG_SHA1, 160, "SHA-1", "Secure Hash Algorithm (SHA-1)"},
-    {CALG_MD5, 128, "MD5", "Message Digest 5 (MD5)"},
+    {CALG_RSA_SIGN, 1024, 384, 16384, "RSA_SIGN", "RSA Signature"},
+    {CALG_RSA_KEYX, 1024, 384, 16384, "RSA_KEYX", "RSA Key Exchange"},
+    {CALG_AES_128, 128, 128, 128, "AES-128", "Advanced Encryption Standard (AES-128)"},
+    {CALG_AES_192, 192, 192, 192, "AES-192", "Advanced Encryption Standard (AES-192)"},
+    {CALG_AES_256, 256, 256, 256, "AES-256", "Advanced Encryption Standard (AES-256)"},
+    {CALG_3DES, 168, 168, 168, "3DES", "Three Key Triple DES"},
+    {CALG_3DES_112, 112, 112, 112, "3DES TWO KEY", "Two Key Triple DES"},
+    {CALG_DES, 56, 56, 56, "DES", "Data Encryption Standard (DES)"},
+    {CALG_RC4, 128, 40, 128, "RC4", "RSA Data Security's RC4"},
+    {CALG_SHA_256, 256, 256, 256, "SHA-256", "Secure Hash Algorithm SHA-256"},
+    {CALG_SHA_384, 384, 384, 384, "SHA-384", "Secure Hash Algorithm SHA-384"},
+    {CALG_SHA_512, 512, 512, 512, "SHA-512", "Secure Hash Algorithm SHA-512"},
+    {CALG_SHA1, 160, 160, 160, "SHA-1", "Secure Hash Algorithm (SHA-1)"},
+    {CALG_MD5, 128, 128, 128, "MD5", "Message Digest 5 (MD5)"},
 };
 
 ADVAPI BOOL WINAPI CryptGetProvParam(HCRYPTPROV handle, DWORD param, BYTE *data, DWORD *length, DWORD flags)
@@ -944,7 +963,9 @@ ADVAPI BOOL WINAPI CryptGetProvParam(HCRYPTPROV handle, DWORD param, BYTE *data,
         } else {
             PROV_ENUMALGS_EX a = {};
             a.aiAlgid = g_algorithms[i].Id;
-            a.dwDefaultLen = a.dwMinLen = a.dwMaxLen = g_algorithms[i].Bits;
+            a.dwDefaultLen = g_algorithms[i].Bits;
+            a.dwMinLen = g_algorithms[i].MinBits;
+            a.dwMaxLen = g_algorithms[i].MaxBits;
             a.dwNameLen = (DWORD)strlen(g_algorithms[i].Name) + 1;
             strcpy(a.szName, g_algorithms[i].Name);
             a.dwLongNameLen = (DWORD)strlen(g_algorithms[i].LongName) + 1;
@@ -1085,14 +1106,6 @@ ADVAPI BOOL WINAPI CryptExportKey(HCRYPTKEY handle, HCRYPTKEY wrap, DWORD type, 
     return FALSE;
 }
 
-#define CALG_DES 0x6601
-#define CALG_RC2 0x6602
-#define CALG_3DES 0x6603
-#define CALG_3DES_112 0x6609
-#define CALG_AES_128 0x660e
-#define CALG_AES_192 0x660f
-#define CALG_AES_256 0x6610
-#define CALG_RC4 0x6801
 
 #define CRYPT_MODE_CBC 1
 #define CRYPT_MODE_ECB 2
