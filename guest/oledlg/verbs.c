@@ -95,8 +95,10 @@ OLEDLGAPI BOOL WINAPI OleUIAddVerbMenuW(IOleObject *object, LPCWSTR short_type, 
     BOOL result = FALSE, linked = FALSE, convert = add_convert && id_convert != 0;
 
     DeleteMenu(menu, position, MF_BYPOSITION);
-    if (popup && object) {
+    /* the popup is cleared before the object is looked at, so it is empty when there is none. */
+    if (popup)
         *popup = nullptr;
+    if (popup && object) {
         if (!short_type)
             object->lpVtbl->GetUserType(object, USERCLASSTYPE_SHORT, &type);
         IOleObject *link = nullptr;

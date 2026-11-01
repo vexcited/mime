@@ -944,10 +944,9 @@ OLEDLGAPI UINT WINAPI OleUIObjectPropertiesW(void *properties)
 }
 
 /* the links are not updated without the dialog that does it, which is the answer for a dialog that failed. */
+/* TRUE says every link was brought up to date, which a refused argument does not, and no dialog updates them yet. */
 OLEDLGAPI BOOL WINAPI OleUIUpdateLinksW(LPOLEUILINKCONTAINERW container, HWND parent, LPWSTR title, int links)
 {
-    if (!container || IsBadReadPtr(container, 8) || (parent && !IsWindow(parent)) || links < 0)
-        return TRUE;
     return FALSE;
 }
 
