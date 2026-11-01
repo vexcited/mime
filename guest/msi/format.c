@@ -161,11 +161,14 @@ UINT MimeMsiFormatRecord(MIME_MSI_PACKAGE *package, const MIME_MSI_RECORD *recor
     if (!error && !*template) {
         for (UINT i = 1; i <= record->Count && !error; i++) {
             WCHAR label[24];
-            _snwprintf(label, RTL_NUMBER_OF(label), i == 1 ? L"%u: " : L" %u: ", i);
+            _snwprintf(label, RTL_NUMBER_OF(label), L"%u: ", i);
             error = append_text(&numeric, label, wcslen(label));
             PCWSTR value = field_text(&record->Fields[i], number);
             if (!error)
                 error = append_text(&numeric, value, wcslen(value));
+            /* every field ends with a space, callers strip the last one. */
+            if (!error)
+                error = append_text(&numeric, L" ", 1);
         }
     } else if (!error)
         error = format_part(package, record, &template, FALSE, 0, 0, &numeric, &unused);
