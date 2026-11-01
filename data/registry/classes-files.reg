@@ -86,3 +86,134 @@
 [HKCR\SystemFileAssociations\{.html,.ico,.png,.txt,image}]
 [HKCR\SystemFileAssociations\text\DefaultIcon]
 @=expand:"%SystemRoot%\\System32\\imageres.dll,-102"
+
+; the script hosts: the file types wscript.exe and cscript.exe run. A file type names its engine in ScriptEngine, which is a
+; program id the host makes the class of. Shell holds the verb that opens the file, Open for wscript and Open2 for cscript,
+; which //H changes.
+[HKCR\.vbs]
+@="VBSFile"
+[HKCR\.vbs\PersistentHandler]
+@="{5e941d80-bf96-11cd-b579-08002b30bfeb}"
+[HKCR\.vbe]
+@="VBEFile"
+[HKCR\.js]
+@="JSFile"
+[HKCR\.js\PersistentHandler]
+@="{5e941d80-bf96-11cd-b579-08002b30bfeb}"
+[HKCR\.jse]
+@="JSEFile"
+[HKCR\.wsf]
+@="WSFFile"
+[HKCR\.wsh]
+@="WSHFile"
+
+[HKCR\VBSFile]
+@="VBScript Script File"
+[HKCR\VBSFile\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\WScript.exe,2"
+[HKCR\VBSFile\ScriptEngine]
+@="VBScript"
+[HKCR\VBSFile\ScriptHostEncode]
+@="{85131631-480C-11D2-B1F9-00C04F86C324}"
+[HKCR\VBSFile\Shell]
+@="Open"
+[HKCR\VBSFile\Shell\Edit\Command]
+@=expand:"\"%SystemRoot%\\System32\\Notepad.exe\" %1"
+[HKCR\VBSFile\Shell\Open\Command]
+@=expand:"\"%SystemRoot%\\System32\\WScript.exe\" \"%1\" %*"
+[HKCR\VBSFile\Shell\Open2]
+@=expand:"Open &with Command Prompt"
+[HKCR\VBSFile\Shell\Open2\Command]
+@=expand:"\"%SystemRoot%\\System32\\CScript.exe\" \"%1\" %*"
+[HKCR\VBSFile\Shell\Print\Command]
+@=expand:"\"%SystemRoot%\\System32\\Notepad.exe\" /p %1"
+
+[HKCR\VBEFile]
+@="VBScript Encoded File"
+[HKCR\VBEFile\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\WScript.exe,2"
+[HKCR\VBEFile\ScriptEngine]
+@="VBScript.Encode"
+[HKCR\VBEFile\Shell]
+@="Open"
+[HKCR\VBEFile\Shell\Edit\Command]
+@=expand:"\"%SystemRoot%\\System32\\Notepad.exe\" %1"
+[HKCR\VBEFile\Shell\Open\Command]
+@=expand:"\"%SystemRoot%\\System32\\WScript.exe\" \"%1\" %*"
+[HKCR\VBEFile\Shell\Open2]
+@=expand:"Open &with Command Prompt"
+[HKCR\VBEFile\Shell\Open2\Command]
+@=expand:"\"%SystemRoot%\\System32\\CScript.exe\" \"%1\" %*"
+[HKCR\VBEFile\Shell\Print\Command]
+@=expand:"\"%SystemRoot%\\System32\\Notepad.exe\" /p %1"
+
+[HKCR\JSFile]
+@="JavaScript File"
+[HKCR\JSFile\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\WScript.exe,3"
+[HKCR\JSFile\ScriptEngine]
+@="JScript"
+[HKCR\JSFile\ScriptHostEncode]
+@="{85131630-480C-11D2-B1F9-00C04F86C324}"
+[HKCR\JSFile\Shell]
+@="Open"
+[HKCR\JSFile\Shell\Edit\Command]
+@=expand:"\"%SystemRoot%\\System32\\Notepad.exe\" %1"
+[HKCR\JSFile\Shell\Open\Command]
+@=expand:"\"%SystemRoot%\\System32\\WScript.exe\" \"%1\" %*"
+[HKCR\JSFile\Shell\Open2]
+@=expand:"Open &with Command Prompt"
+[HKCR\JSFile\Shell\Open2\Command]
+@=expand:"\"%SystemRoot%\\System32\\CScript.exe\" \"%1\" %*"
+[HKCR\JSFile\Shell\Print\Command]
+@=expand:"\"%SystemRoot%\\System32\\Notepad.exe\" /p %1"
+
+[HKCR\JSEFile]
+@="JScript Encoded File"
+[HKCR\JSEFile\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\WScript.exe,3"
+[HKCR\JSEFile\ScriptEngine]
+@="JScript.Encode"
+[HKCR\JSEFile\Shell]
+@="Open"
+[HKCR\JSEFile\Shell\Edit\Command]
+@=expand:"\"%SystemRoot%\\System32\\Notepad.exe\" %1"
+[HKCR\JSEFile\Shell\Open\Command]
+@=expand:"\"%SystemRoot%\\System32\\WScript.exe\" \"%1\" %*"
+[HKCR\JSEFile\Shell\Open2]
+@=expand:"Open &with Command Prompt"
+[HKCR\JSEFile\Shell\Open2\Command]
+@=expand:"\"%SystemRoot%\\System32\\CScript.exe\" \"%1\" %*"
+[HKCR\JSEFile\Shell\Print\Command]
+@=expand:"\"%SystemRoot%\\System32\\Notepad.exe\" /p %1"
+
+[HKCR\WSFFile]
+@=expand:"Windows Script File"
+[HKCR\WSFFile\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\WScript.exe,2"
+[HKCR\WSFFile\Shell]
+@="Open"
+[HKCR\WSFFile\Shell\Edit\Command]
+@=expand:"\"%SystemRoot%\\System32\\Notepad.exe\" %1"
+[HKCR\WSFFile\Shell\Open\Command]
+@=expand:"\"%SystemRoot%\\System32\\WScript.exe\" \"%1\" %*"
+[HKCR\WSFFile\Shell\Open2]
+@=expand:"Open &with Command Prompt"
+[HKCR\WSFFile\Shell\Open2\Command]
+@=expand:"\"%SystemRoot%\\System32\\CScript.exe\" \"%1\" %*"
+[HKCR\WSFFile\Shell\Print\Command]
+@=expand:"\"%SystemRoot%\\System32\\Notepad.exe\" /p %1"
+
+[HKCR\WSHFile]
+@="Windows Script Host Settings File"
+"IsShortcut"="Yes"
+[HKCR\WSHFile\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\WScript.exe,1"
+[HKCR\WSHFile\Shell]
+@="Open"
+[HKCR\WSHFile\Shell\Open\Command]
+@=expand:"\"%SystemRoot%\\System32\\WScript.exe\" \"%1\" %*"
+[HKCR\WSHFile\Shell\Open2]
+@="Open &with Command Prompt"
+[HKCR\WSHFile\Shell\Open2\Command]
+@=expand:"\"%SystemRoot%\\System32\\CScript.exe\" \"%1\" %*"

@@ -122,3 +122,6 @@
 ; the contract of the Windows runtime that chrome checks for.
 [HKLM\SOFTWARE\Microsoft\WindowsRuntime\WellKnownContracts]
 "Windows.Foundation.UniversalApiContract"=dword:00130000
+
+; the settings of the script hosts. The user keeps their own below HKCU, which the hosts create when //S saves them.
+[HKLM\SOFTWARE\Microsoft\Windows Script Host\Settings]
