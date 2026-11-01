@@ -92,6 +92,7 @@ typedef struct DwRun {
 typedef struct DwItem {
     UINT32 cluster; /* DW_OPEN_END for the trimming sign. */
     FLOAT x, width;
+    UINT8 level; /* the bidi level in the line, which gives trailing white space the level of the paragraph. */
 } DwItem;
 
 typedef struct DwLine {

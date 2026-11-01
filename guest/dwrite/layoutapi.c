@@ -495,9 +495,9 @@ static HRESULT WINAPI ly_metrics(IDWriteTextLayout4 *This, DWRITE_TEXT_METRICS *
     return S_OK;
 }
 
-/* the ink of the glyphs of a cluster against the layout box. */
-static void cluster_ink(const DwLayout *l, const DwLine *ln, const DwItem *it, FLOAT *x0, FLOAT *y0, FLOAT *x1,
-                        FLOAT *y1, BOOL *any)
+/* the ink of the glyphs of a cluster against the layout box, turned over inside its line when the glyphs lie sideways. */
+static void cluster_ink(const DwLayout *l, const DwLine *ln, const DwItem *it, BOOL flip, FLOAT *x0, FLOAT *y0,
+                        FLOAT *x1, FLOAT *y1, BOOL *any)
 {
     const DwCluster *c = &l->clusters[it->cluster];
     const DwRun *r = &l->runs[c->run];
@@ -542,6 +542,11 @@ static void cluster_ink(const DwLayout *l, const DwLine *ln, const DwItem *it, F
             FLOAT top =
                 base_y - r->offsets[g].ascenderOffset - ((FLOAT)gm.verticalOriginY - (FLOAT)gm.topSideBearing) * k;
             FLOAT bottom = top + (FLOAT)ink_h * k;
+            if (flip) {
+                FLOAT turned = 2 * ln->top + ln->height - bottom;
+                bottom = 2 * ln->top + ln->height - top;
+                top = turned;
+            }
             if (!*any || left < *x0)
                 *x0 = left;
             if (!*any || top < *y0)
@@ -566,6 +571,7 @@ static HRESULT WINAPI overhang(IDWriteTextLayout4 *This, DWRITE_OVERHANG_METRICS
         return hr;
     FLOAT x0 = 0, y0 = 0, x1 = 0, y1 = 0;
     BOOL any = FALSE;
+    BOOL flip = l->vertical && l->fmt.flow != DWRITE_FLOW_DIRECTION_RIGHT_TO_LEFT;
     for (UINT32 li = 0; li < l->line_count; li++) {
         const DwLine *ln = &l->lines[li];
         if (ln->hidden)
@@ -573,7 +579,7 @@ static HRESULT WINAPI overhang(IDWriteTextLayout4 *This, DWRITE_OVERHANG_METRICS
         for (UINT32 q = 0; q < ln->item_count; q++) {
             if (ln->items[q].cluster == DW_OPEN_END)
                 continue;
-            cluster_ink(l, ln, &ln->items[q], &x0, &y0, &x1, &y1, &any);
+            cluster_ink(l, ln, &ln->items[q], flip, &x0, &y0, &x1, &y1, &any);
         }
     }
     if (!any) {
@@ -811,11 +817,7 @@ static HRESULT WINAPI hit_point(IDWriteTextLayout4 *This, FLOAT x, FLOAT y, BOOL
     }
     const DwItem *it = &ln->items[pick];
     BOOL sign = it->cluster == DW_OPEN_END;
-    BOOL level_odd = FALSE;
-    if (!sign)
-        level_odd = l->clusters[it->cluster].level & 1;
-    else
-        level_odd = DW_READS_RTL(l);
+    BOOL level_odd = sign ? DW_READS_RTL(l) : (it->level & 1);
     if (found)
         *trailing = level_odd ? x < it->x + it->width / 2 : x >= it->x + it->width / 2;
     else if (x < first->x)

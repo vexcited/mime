@@ -434,6 +434,7 @@ HRESULT DwLayoutBuildLines(DwLayout *l)
             ln->items[q].cluster = entries[q].cluster;
             ln->items[q].x = pen;
             ln->items[q].width = entries[q].width;
+            ln->items[q].level = (UINT8)entries[q].level;
             if (entries[q].cluster == DW_OPEN_END)
                 ln->sign_x = pen;
             pen += entries[q].width;
