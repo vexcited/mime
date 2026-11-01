@@ -21,6 +21,7 @@ MIME_DEFINE_GUID(CLSID_JScriptEncode, 0xF414C262, 0x6AC0, 0x11CF, 0xB6, 0xD1, 0x
 
 typedef struct FACTORY {
     IClassFactory Factory;
+    BOOL Encoded;
 } FACTORY;
 
 static HRESULT STDMETHODCALLTYPE factory_qi(IClassFactory *This, REFIID riid, void **object)
@@ -54,6 +55,7 @@ static HRESULT STDMETHODCALLTYPE factory_create(IClassFactory *This, IUnknown *o
     Engine *e = engine_create();
     if (!e)
         return E_OUTOFMEMORY;
+    e->Encoded = ((FACTORY *)This)->Encoded;
     HRESULT hr = e->Script.lpVtbl->QueryInterface(&e->Script, riid, object);
     e->Script.lpVtbl->Release(&e->Script);
     return hr;
@@ -65,7 +67,8 @@ static HRESULT STDMETHODCALLTYPE factory_lock(IClassFactory *This, BOOL lock)
 }
 
 static const IClassFactoryVtbl g_factory_vtbl = {factory_qi, factory_addref, factory_release, factory_create, factory_lock};
-static FACTORY g_engine_factory = {{&g_factory_vtbl}};
+static FACTORY g_engine_factory = {{&g_factory_vtbl}, FALSE};
+static FACTORY g_encode_factory = {{&g_factory_vtbl}, TRUE};
 
 DECLSPEC_EXPORT HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void **object)
 {
@@ -75,7 +78,8 @@ DECLSPEC_EXPORT HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, vo
     if (!IsEqualCLSID(clsid, &CLSID_JScriptEngine) && !IsEqualCLSID(clsid, &CLSID_JScriptEncode) &&
         !IsEqualCLSID(clsid, &CLSID_JScriptAuthor))
         return CLASS_E_CLASSNOTAVAILABLE;
-    return g_engine_factory.Factory.lpVtbl->QueryInterface(&g_engine_factory.Factory, riid, object);
+    FACTORY *factory = IsEqualCLSID(clsid, &CLSID_JScriptEncode) ? &g_encode_factory : &g_engine_factory;
+    return factory->Factory.lpVtbl->QueryInterface(&factory->Factory, riid, object);
 }
 
 DECLSPEC_EXPORT HRESULT WINAPI DllCanUnloadNow(void)

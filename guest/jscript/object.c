@@ -659,8 +659,10 @@ const WCHAR *class_name(Obj *o)
     }
 }
 
-int obj_default_value(Engine *e, Obj *o, int hint, Val *out)
+static int default_value_ex(Engine *e, Obj *o, int hint, Val *out, BOOL *none)
 {
+    if (none)
+        *none = FALSE;
     if (o->cls == C_HOST) {
         int rc = host_default_value(e, o, hint, out);
         if (rc != 2)
@@ -685,8 +687,28 @@ int obj_default_value(Engine *e, Obj *o, int hint, Val *out)
             }
         }
     }
-    *out = UNDEF;
-    return RC_OK;
+    /* a sum with such an object has no value, any other use of it is an error. */
+    if (none) {
+        *none = TRUE;
+        *out = UNDEF;
+        return RC_OK;
+    }
+    return throw_error(e, ERR_TYPE, 438, nullptr);
+}
+
+int obj_default_value(Engine *e, Obj *o, int hint, Val *out)
+{
+    return default_value_ex(e, o, hint, out, nullptr);
+}
+
+int to_primitive_soft(Engine *e, Val *v, int hint, Val *out, BOOL *none)
+{
+    *none = FALSE;
+    if (v->t != T_OBJ) {
+        *out = *v;
+        return RC_OK;
+    }
+    return default_value_ex(e, v->u.o, hint, out, none);
 }
 
 /* ------------------------------------------------------------------ errors */

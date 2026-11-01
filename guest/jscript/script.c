@@ -227,17 +227,29 @@ HRESULT engine_enter(Engine *e)
 {
     if (e->NestedRun++ == 0) {
         e->Interrupted = FALSE;
+        e->EnterNotified = FALSE;
         stack_base(e);
-        if (e->Site)
-            e->Site->lpVtbl->OnEnterScript(e->Site);
     }
     return S_OK;
 }
 
+/* the site hears of the script at the first code that runs. */
+void engine_note_code(Engine *e)
+{
+    if (!e->EnterNotified && e->NestedRun) {
+        e->EnterNotified = TRUE;
+        if (e->Site)
+            e->Site->lpVtbl->OnEnterScript(e->Site);
+    }
+}
+
 void engine_leave(Engine *e)
 {
-    if (--e->NestedRun == 0 && e->Site)
-        e->Site->lpVtbl->OnLeaveScript(e->Site);
+    if (--e->NestedRun == 0 && e->EnterNotified) {
+        e->EnterNotified = FALSE;
+        if (e->Site)
+            e->Site->lpVtbl->OnLeaveScript(e->Site);
+    }
 }
 
 static void notify(Engine *e, SCRIPTSTATE state)
@@ -354,26 +366,57 @@ static HRESULT STDMETHODCALLTYPE script_get_site(IActiveScript *This, REFIID rii
     return e->Site->lpVtbl->QueryInterface(e->Site, riid, site);
 }
 
+static void notify_all(Engine *e, const int *list)
+{
+    for (; *list >= 0; list++)
+        notify(e, (SCRIPTSTATE)*list);
+}
+
 static HRESULT STDMETHODCALLTYPE script_set_state(IActiveScript *This, SCRIPTSTATE state)
 {
     Engine *e = ENGINE_OF(Script, This);
-    if (e->State == SCRIPTSTATE_CLOSED || e->State == SCRIPTSTATE_UNINITIALIZED || !e->Site)
+    SCRIPTSTATE c = e->State;
+    if (c == SCRIPTSTATE_CLOSED || c == SCRIPTSTATE_UNINITIALIZED || !e->Site)
         return E_UNEXPECTED;
+    static const int none[] = {-1};
+    static const int to_started_from_connected[] = {3, 5, 1, -1};
+    static const int to_init_from_connected[] = {3, 5, 5, -1};
+    static const int to_uninit[] = {3, 5, 0, -1};
     switch (state) {
     case SCRIPTSTATE_STARTED:
     case SCRIPTSTATE_CONNECTED:
         InterlockedIncrement(&e->Refs);
-        engine_run_pending(e);
-        notify(e, state);
+        if (c == SCRIPTSTATE_CONNECTED && state == SCRIPTSTATE_STARTED)
+            notify_all(e, to_started_from_connected);
+        else if (c == state)
+            ;
+        else {
+            if (c == SCRIPTSTATE_DISCONNECTED && state == SCRIPTSTATE_STARTED)
+                notify(e, SCRIPTSTATE_INITIALIZED);
+            engine_run_pending(e);
+            notify(e, state);
+        }
         script_release(This);
         return S_OK;
     case SCRIPTSTATE_DISCONNECTED:
+        if (c == SCRIPTSTATE_STARTED || c == SCRIPTSTATE_INITIALIZED)
+            return E_UNEXPECTED;
+        if (c == SCRIPTSTATE_CONNECTED)
+            notify(e, state);
+        return S_OK;
     case SCRIPTSTATE_INITIALIZED:
-        notify(e, state);
+        if (c == SCRIPTSTATE_CONNECTED)
+            notify_all(e, to_init_from_connected);
+        else if (c != SCRIPTSTATE_INITIALIZED)
+            notify(e, state);
         return S_OK;
     case SCRIPTSTATE_CLOSED:
-        return e->Script.lpVtbl->Close(&e->Script);
+        engine_close(e);
+        return S_OK;
     case SCRIPTSTATE_UNINITIALIZED:
+        if (c == SCRIPTSTATE_CONNECTED || c == SCRIPTSTATE_DISCONNECTED || c == SCRIPTSTATE_STARTED || c == SCRIPTSTATE_INITIALIZED)
+            notify_all(e, to_uninit);
+        (void)none;
         return S_OK;
     default:
         return E_UNEXPECTED;
@@ -393,17 +436,22 @@ void engine_close(Engine *e)
     if (e->State == SCRIPTSTATE_CLOSED)
         return;
     e->Closing = TRUE;
-    if (e->State == SCRIPTSTATE_CONNECTED)
+    SCRIPTSTATE c = e->State;
+    if (c == SCRIPTSTATE_CONNECTED)
         notify(e, SCRIPTSTATE_DISCONNECTED);
-    if (e->State >= SCRIPTSTATE_STARTED && e->State <= SCRIPTSTATE_DISCONNECTED)
+    if (c == SCRIPTSTATE_CONNECTED || c == SCRIPTSTATE_DISCONNECTED)
         notify(e, SCRIPTSTATE_INITIALIZED);
     /* the items go, which releases the objects the script holds. */
     for (NamedItem *it = e->Items; it; it = it->next)
         it->value = UNDEF;
+    e->GlobalThis = UNDEF;
     gc_collect(e);
     if (e->Site) {
         IActiveScriptSite *site = e->Site;
-        notify(e, SCRIPTSTATE_CLOSED);
+        if (c == SCRIPTSTATE_UNINITIALIZED)
+            e->State = SCRIPTSTATE_CLOSED;
+        else
+            notify(e, SCRIPTSTATE_CLOSED);
         e->Site = nullptr;
         site->lpVtbl->Release(site);
     } else
@@ -413,8 +461,6 @@ void engine_close(Engine *e)
 static HRESULT STDMETHODCALLTYPE script_close(IActiveScript *This)
 {
     Engine *e = ENGINE_OF(Script, This);
-    if (e->State == SCRIPTSTATE_CLOSED)
-        return E_UNEXPECTED;
     engine_close(e);
     return S_OK;
 }
@@ -438,6 +484,8 @@ int item_load(Engine *e, NamedItem *it)
     }
     it->value = v_obj(host_wrap(e, d));
     d->lpVtbl->Release(d);
+    if ((it->flags & SCRIPTITEM_GLOBALMEMBERS) && e->GlobalThis.t != T_OBJ)
+        e->GlobalThis = it->value;
     return RC_OK;
 }
 
@@ -612,9 +660,12 @@ static HRESULT STDMETHODCALLTYPE parse_text(IActiveScriptParse *This, LPCOLESTR 
     ParseError err = {};
     e->NoGc = FALSE;
     stack_base(e);
-    Unit *unit = parse_unit(e, code, wcslen(code), line, cookie, expression ? PARSE_EVAL : PARSE_PROGRAM, &err);
+    SIZE_T code_length = wcslen(code);
+    WCHAR *decoded = e->Encoded ? script_decode(code, code_length, &code_length) : nullptr;
+    Unit *unit = parse_unit(e, decoded ? decoded : code, code_length, line, cookie, expression ? PARSE_EVAL : PARSE_PROGRAM, &err);
+    js_free(decoded);
     if (!unit) {
-        fault_from_syntax(e, (HRESULT)(0x800A0000u | err.Code), err.Line + line, err.Col, err.LineText, cookie);
+        fault_from_syntax(e, (HRESULT)(0x800A0000u | err.Code), err.Line, err.Col, err.LineText, cookie);
         js_free(err.LineText);
         engine_report(e);
         script_release(&e->Script);
@@ -840,6 +891,12 @@ static void engine_destroy(Engine *e)
     if (e->State != SCRIPTSTATE_CLOSED)
         engine_close(e);
     e->Closing = TRUE;
+    /* the dispatches the host still holds lose their engine. */
+    for (struct JsDisp *d = e->Disps; d;) {
+        struct JsDisp *next = jsdisp_orphan(d);
+        d = next;
+    }
+    e->Disps = nullptr;
     /* everything the heap holds goes, with the objects it keeps from the host. */
     e->RootCount = 0;
     e->StackBase = nullptr;

@@ -1164,8 +1164,26 @@ static int global_collect(Engine *e, Val *self, Val *args, int argc, Val *ret, B
     return RC_OK;
 }
 
+static int debug_write(Engine *e, Val *self, Val *args, int argc, Val *ret, BOOL construct)
+{
+    for (int i = 0; i < argc; i++) {
+        Str *s;
+        if (to_string(e, &args[i], &s))
+            return RC_THROW;
+        OutputDebugStringW(s->s);
+    }
+    if (e->Magic == 1)
+        OutputDebugStringW(L"\n");
+    *ret = UNDEF;
+    return RC_OK;
+}
+
 void init_globals(Engine *e)
 {
+    Obj *dbg = obj_new(e, C_DEBUG, e->ObjectProto);
+    obj_method(e, dbg, "write", debug_write, 0, 0);
+    obj_method(e, dbg, "writeln", debug_write, 0, 1);
+    obj_define_z(e, e->Global, "Debug", v_obj(dbg), PF_DONTENUM);
     Obj *g = e->Global;
     def_const(e, g, "NaN", v_num(js_pnan));
     def_const(e, g, "Infinity", v_num(__builtin_inf()));

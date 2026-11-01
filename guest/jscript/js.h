@@ -28,6 +28,7 @@ typedef struct Node Node;
 typedef struct FuncNode FuncNode;
 typedef struct Prop Prop;
 typedef struct VarBox VarBox;
+struct JsDisp;
 
 /* ------------------------------------------------------------------ memory and the collector */
 
@@ -313,7 +314,9 @@ struct Engine {
     Obj *ScriptDispatch;
     ULONG Epoch;
     int Magic, CallCtx;
-    Val RetVal;
+    Val RetVal, GlobalThis;
+    BOOL SoftPrim, NoPrim, EnterNotified, Encoded;
+    struct JsDisp *Disps;
     DWORD_PTR ErrCookie;
     BOOL Abort, LastCapturesValid;
 };
@@ -392,6 +395,7 @@ void array_push(Engine *e, Obj *a, Val v);
 int call_function(Engine *e, Val *func, Val *self, Val *args, int argc, Val *ret);
 int construct_function(Engine *e, Val *func, Val *args, int argc, Val *ret);
 int obj_default_value(Engine *e, Obj *o, int hint, Val *out);
+int to_primitive_soft(Engine *e, Val *v, int hint, Val *out, BOOL *none);
 int obj_enum_keys(Engine *e, Obj *o, Obj **out_array, BOOL include_dontenum);
 const WCHAR *class_name(Obj *o);
 int throw_error(Engine *e, int kind, int code, const WCHAR *detail);
@@ -456,9 +460,11 @@ int host_put(Engine *e, Obj *o, Str *key, Val *v);
 BOOL host_has(Engine *e, Obj *o, Str *key);
 int host_delete(Engine *e, Obj *o, Str *key, BOOL *result);
 int host_call(Engine *e, Obj *o, Val *self, Val *args, int argc, Val *ret, BOOL construct);
+int host_put_args(Engine *e, Obj *o, Str *key, Val *args, int argc);
 int host_call_member(Engine *e, Obj *o, Str *key, Val *args, int argc, Val *ret, BOOL *found, int ctx);
 int host_get_quiet(Engine *e, Obj *o, Str *key, Val *out, BOOL *found);
 Obj *script_object_of(Engine *e, IDispatch *d);
+struct JsDisp *jsdisp_orphan(struct JsDisp *d);
 int item_load(Engine *e, NamedItem *it);
 int lookup_item_by_name(Engine *e, Str *name, Val *out, BOOL *found);
 void init_globals_all(Engine *e);
@@ -483,11 +489,14 @@ Str *disp_name_of(Engine *e, DISPID id);
 int fill_excepinfo_from_exception(Engine *e, EXCEPINFO *ei);
 int host_item_dispatch_member(Engine *e, Str *name, Val *out, BOOL *found);
 
+WCHAR *script_decode(const WCHAR *text, SIZE_T length, SIZE_T *result_length);
+
 /* ------------------------------------------------------------------ script.c */
 
 Engine *engine_create(void);
 void engine_report(Engine *e);
 HRESULT engine_enter(Engine *e);
+void engine_note_code(Engine *e);
 void engine_leave(Engine *e);
 void engine_close(Engine *e);
 int engine_run_pending(Engine *e);

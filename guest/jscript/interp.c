@@ -87,7 +87,7 @@ static int lookup_item(Engine *e, Str *name, Val *out, BOOL *found)
 }
 
 /* finds a name along the scope chain: *base is the object that holds it when it is a with object. */
-static int ident_get(Env *env, Str *name, Val *out, Obj **with_base, BOOL *found)
+static int ident_get_scope(Env *env, Str *name, Val *out, Obj **with_base, BOOL *found)
 {
     Engine *e = env->e;
     *found = FALSE;
@@ -115,7 +115,15 @@ static int ident_get(Env *env, Str *name, Val *out, Obj **with_base, BOOL *found
         if (s->cls == C_GLOBAL)
             break;
     }
-    return lookup_item(e, name, out, found);
+    return RC_OK;
+}
+
+static int ident_get(Env *env, Str *name, Val *out, Obj **with_base, BOOL *found)
+{
+    int rc = ident_get_scope(env, name, out, with_base, found);
+    if (rc || *found)
+        return rc;
+    return lookup_item(env->e, name, out, found);
 }
 
 static int ident_put(Env *env, Str *name, Val *v)
@@ -289,12 +297,17 @@ static int assign_error(Env *env, Node *t, BOOL compound)
 static int op_add(Engine *e, Val *a, Val *b, Val *out)
 {
     Val pa, pb;
-    int rc = to_primitive(e, a, 0, &pa);
+    BOOL none_a, none_b;
+    int rc = to_primitive_soft(e, a, 0, &pa, &none_a);
     if (rc)
         return rc;
-    rc = to_primitive(e, b, 0, &pb);
+    rc = to_primitive_soft(e, b, 0, &pb, &none_b);
     if (rc)
         return rc;
+    if (none_a || none_b) {
+        *out = UNDEF;
+        return RC_OK;
+    }
     if (pa.t == T_STR || pb.t == T_STR) {
         Str *sa, *sb;
         if ((rc = to_string(e, &pa, &sa)) || (rc = to_string(e, &pb, &sb)))
@@ -454,10 +467,6 @@ static int get_property(Env *env, Val *base, Str *key, Val *out)
         return obj_get(e, e->NumberProto, key, out);
     if (base->t == T_BOOL)
         return obj_get(e, e->BooleanProto, key, out);
-    if (base->t == T_VAR) {
-        *out = UNDEF;
-        return RC_OK;
-    }
     return RC_THROW;
 }
 
@@ -499,7 +508,7 @@ static int eval_call(Env *env, Node *n, Val *out, int ctx, BOOL is_new)
         return construct_function(e, &fv, args, argc, out);
     }
     if (callee->kind == N_MEMBER || callee->kind == N_INDEX) {
-        rc = eval_ctx(env, callee->a, &base, 1);
+        rc = eval_ctx(env, callee->a, &base, 0);
         if (rc)
             return rc;
         Str *key = member_key(env, callee, &rc);
@@ -530,14 +539,37 @@ static int eval_call(Env *env, Node *n, Val *out, int ctx, BOOL is_new)
     } else if (callee->kind == N_IDENT) {
         Obj *wb = nullptr;
         BOOL found;
-        rc = ident_get(env, callee->u.str, &fv, &wb, &found);
+        rc = ident_get_scope(env, callee->u.str, &fv, &wb, &found);
         if (rc)
             return rc;
         if (!found) {
-            if (callee->u.str->len == 4 && !wcscmp(callee->u.str->s, L"eval"))
-                ;
-            /* an unknown function is "Object expected". */
-            return throw_error(e, ERR_TYPE, 5007, nullptr);
+            /* the items of the host by name, then the members of those that give theirs to the script. */
+            for (NamedItem *it = e->Items; it && !found; it = it->next)
+                if ((it->flags & SCRIPTITEM_ISVISIBLE) && it->name->len == callee->u.str->len &&
+                    !_wcsicmp(it->name->s, callee->u.str->s)) {
+                    if (it->value.t == T_UNDEF && !(it->flags & 0x80000000))
+                        item_load(e, it);
+                    if (it->value.t == T_OBJ) {
+                        fv = it->value;
+                        found = TRUE;
+                    }
+                }
+            if (!found) {
+                if ((rc = eval_args(env, n->b, args, argc)))
+                    return rc;
+                for (NamedItem *it = e->Items; it && !found; it = it->next)
+                    if (it->flags & SCRIPTITEM_GLOBALMEMBERS) {
+                        if (it->value.t == T_UNDEF && !(it->flags & 0x80000000))
+                            item_load(e, it);
+                        if (it->value.t != T_OBJ)
+                            continue;
+                        rc = host_call_member(e, it->value.u.o, callee->u.str, args, argc, out, &found, ctx);
+                        if (rc || found)
+                            return rc;
+                    }
+                /* an unknown function is "Object expected". */
+                return throw_error(e, ERR_TYPE, 5007, nullptr);
+            }
         }
         if (wb)
             self = v_obj(wb);
@@ -779,12 +811,12 @@ static int eval_ctx(Env *env, Node *n, Val *out, int ctx)
     case N_MEMBER:
     case N_INDEX: {
         Val base;
-        if ((rc = eval_ctx(env, n->a, &base, 1)))
+        if ((rc = eval_ctx(env, n->a, &base, 0)))
             return rc;
         Str *key = member_key(env, n, &rc);
         if (rc)
             return rc;
-        if (base.t == T_UNDEF || base.t == T_NULL)
+        if (base.t == T_UNDEF || base.t == T_NULL || base.t == T_VAR)
             return throw_null_base(env, n, &base, TRUE);
         rc = get_property(env, &base, key, out);
         return rc;
@@ -815,8 +847,14 @@ static int eval_ctx(Env *env, Node *n, Val *out, int ctx)
                     return rc;
                 if (base.t == T_UNDEF || base.t == T_NULL)
                     return throw_null_base(env, n->a, &base, FALSE);
-                if ((rc = get_property(env, &base, key, &v)))
+                if ((rc = get_property(env, &base, key, &v))) {
+                    /* a member of a host that cannot be read by its name alone is of a type that cannot be said. */
+                    if (rc == RC_THROW && base.t == T_OBJ && base.u.o->cls == C_HOST) {
+                        *out = v_str(S(e, "unknown"));
+                        return RC_OK;
+                    }
                     return rc;
+                }
             } else if ((rc = EVAL(env, n->a, &v)))
                 return rc;
             *out = v_str(str_intern_z(e, typeof_name(&v)));
@@ -942,6 +980,29 @@ static int eval_ctx(Env *env, Node *n, Val *out, int ctx)
                 return rc;
             *out = v;
             return RC_OK;
+        }
+        if (t->kind == N_CALL && (t->a->kind == N_MEMBER || t->a->kind == N_INDEX)) {
+            /* a property of a host with arguments takes the value as its last one. */
+            Val base;
+            if ((rc = EVAL(env, t->a->a, &base)))
+                return rc;
+            Str *key = member_key(env, t->a, &rc);
+            if (rc)
+                return rc;
+            int pc = (int)t->u.count;
+            Val *pargs = gc_alloc(e, (pc + 1) * sizeof(Val), GC_VALS);
+            if ((rc = eval_args(env, t->b, pargs, pc)))
+                return rc;
+            if ((rc = EVAL(env, n->b, &v)))
+                return rc;
+            if (base.t == T_OBJ && base.u.o->cls == C_HOST) {
+                pargs[pc] = v;
+                if ((rc = host_put_args(e, base.u.o, key, pargs, pc + 1)))
+                    return rc;
+                *out = v;
+                return RC_OK;
+            }
+            return assign_error(env, t, FALSE);
         }
         if ((rc = EVAL(env, n->b, &v)))
             return rc;
@@ -1289,9 +1350,6 @@ Obj *func_new_node(Engine *e, FuncNode *f, Obj *scope)
 static void hoist(Env *env, FuncNode *f, Obj *vars)
 {
     Engine *e = env->e;
-    for (ULONG i = 0; i < f->nvars; i++)
-        if (!obj_find_own(vars, f->vars[i]))
-            obj_add_prop(e, vars, f->vars[i], UNDEF, vars->cls == C_GLOBAL ? PF_DONTDELETE : 0);
     for (ULONG i = 0; i < f->nfuncs; i++) {
         FuncNode *fn = f->funcs[i]->u.fn;
         Obj *fo = func_new_node(e, fn, env->scope);
@@ -1301,6 +1359,9 @@ static void hoist(Env *env, FuncNode *f, Obj *vars)
         else
             obj_add_prop(e, vars, fn->name, v_obj(fo), vars->cls == C_GLOBAL ? PF_DONTDELETE : 0);
     }
+    for (ULONG i = 0; i < f->nvars; i++)
+        if (!obj_find_own(vars, f->vars[i]))
+            obj_add_prop(e, vars, f->vars[i], UNDEF, vars->cls == C_GLOBAL ? PF_DONTDELETE : 0);
 }
 
 static Obj *make_arguments(Env *env, Obj *func, Obj *act, Val *args, int argc)
@@ -1323,6 +1384,7 @@ static Obj *make_arguments(Env *env, Obj *func, Obj *act, Val *args, int argc)
 int call_node_function(Engine *e, Obj *func, Val *self, Val *args, int argc, Val *ret, BOOL construct)
 {
     FuncNode *f = func->u.fn.node;
+    engine_note_code(e);
     if (e->Depth > 3000 || stack_low())
         return throw_error(e, ERR_RANGE, 28, nullptr);
     Env env = {};
@@ -1332,7 +1394,7 @@ int call_node_function(Engine *e, Obj *func, Val *self, Val *args, int argc, Val
     env.scope = act;
     env.var_scope = act;
     if (!self || self->t == T_UNDEF || self->t == T_NULL)
-        env.self = v_obj(e->Global);
+        env.self = e->GlobalThis.t == T_OBJ ? e->GlobalThis : v_obj(e->Global);
     else if (self->t != T_OBJ) {
         Obj *o;
         to_object(e, self, &o);
@@ -1372,11 +1434,12 @@ int call_node_function(Engine *e, Obj *func, Val *self, Val *args, int argc, Val
 
 int run_program(Engine *e, Unit *u, Obj *scope, Val *result, BOOL want_value)
 {
+    engine_note_code(e);
     Env env = {};
     env.e = e;
     env.scope = scope ? scope : e->Global;
     env.var_scope = e->Global;
-    env.self = v_obj(e->Global);
+    env.self = e->GlobalThis.t == T_OBJ ? e->GlobalThis : v_obj(e->Global);
     env.want_value = want_value;
     FuncNode *f = u->program;
     hoist(&env, f, e->Global);
@@ -1404,7 +1467,7 @@ int eval_code(Engine *e, Str *code, Obj *scope, Val *self, Val *out)
     Env env = {};
     env.e = e;
     env.scope = scope;
-    env.self = self ? *self : v_obj(e->Global);
+    env.self = self ? *self : (e->GlobalThis.t == T_OBJ ? e->GlobalThis : v_obj(e->Global));
     env.want_value = TRUE;
     Obj *vs = scope;
     while (vs && (vs->cls == C_WITH || (vs->cls == C_ACTIVATION && (vs->flags & 2))))

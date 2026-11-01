@@ -166,13 +166,13 @@ int variant_to_val(Engine *e, const VARIANT *vin, Val *out)
         *out = v_str(str_new(e, v->bstrVal ? v->bstrVal : L"", v->bstrVal ? SysStringLen(v->bstrVal) : 0));
         break;
     case VT_CY:
+        *out = v_num((double)v->cyVal.int64 / 10000.0);
+        break;
     case VT_DECIMAL: {
-        VARIANT r;
-        VariantInit(&r);
-        if (SUCCEEDED(VariantChangeType(&r, (VARIANT *)v, 0, VT_R8)))
-            *out = v_num(r.dblVal);
-        else
-            *out = v_num(js_nan);
+        double d = ((double)v->decVal.Hi32 * 18446744073709551616.0 + (double)v->decVal.Lo64);
+        for (int k = 0; k < v->decVal.scale; k++)
+            d /= 10.0;
+        *out = v_num(v->decVal.sign ? -d : d);
         break;
     }
     case VT_DISPATCH:
@@ -312,6 +312,14 @@ static int host_fail(Engine *e, HRESULT hr, EXCEPINFO *ei)
             sc = E_FAIL;
             SysFreeString(desc);
             desc = nullptr;
+        }
+        if (((ULONG)sc >> 16) == 0x800A && (!desc || !desc[0])) {
+            if (ei) {
+                SysFreeString(ei->bstrSource);
+                SysFreeString(ei->bstrDescription);
+                SysFreeString(ei->bstrHelpFile);
+            }
+            return throw_number(e, sc);
         }
         int rc = throw_host_error(e, sc, src, desc);
         if (ei) {
@@ -463,7 +471,9 @@ int host_delete(Engine *e, Obj *o, Str *key, BOOL *result)
         *result = SUCCEEDED(hr);
         return RC_OK;
     }
-    return throw_error(e, ERR_TYPE, 445, nullptr);
+    /* a member of a host cannot be taken away, a name it does not know is gone already. */
+    *result = !host_has(e, o, key);
+    return RC_OK;
 }
 
 int host_call_member(Engine *e, Obj *o, Str *key, Val *args, int argc, Val *ret, BOOL *found, int ctx)
@@ -474,8 +484,17 @@ int host_call_member(Engine *e, Obj *o, Str *key, Val *args, int argc, Val *ret,
         return RC_OK;
     *found = TRUE;
     *ret = UNDEF;
-    WORD flags = ctx == 1 ? DISPATCH_METHOD : (DISPATCH_METHOD | DISPATCH_PROPERTYGET);
+    WORD flags = argc > 0 && ctx != 1 ? (DISPATCH_METHOD | DISPATCH_PROPERTYGET) : DISPATCH_METHOD;
     return invoke_host(e, o, id, flags, args, argc, ret, FALSE);
+}
+
+int host_put_args(Engine *e, Obj *o, Str *key, Val *args, int argc)
+{
+    DISPID id;
+    if (host_dispid(e, o, key, &id) != S_OK)
+        return throw_error(e, ERR_TYPE, 438, nullptr);
+    WORD flags = args[argc - 1].t == T_OBJ ? (DISPATCH_PROPERTYPUT | DISPATCH_PROPERTYPUTREF) : DISPATCH_PROPERTYPUT;
+    return invoke_host(e, o, id, flags, args, argc, nullptr, TRUE);
 }
 
 int host_call(Engine *e, Obj *o, Val *self, Val *args, int argc, Val *ret, BOOL construct)
@@ -483,8 +502,7 @@ int host_call(Engine *e, Obj *o, Val *self, Val *args, int argc, Val *ret, BOOL 
     *ret = UNDEF;
     if (construct)
         return throw_error(e, ERR_TYPE, 438, nullptr);
-    WORD flags = e->CallCtx == 1 ? DISPATCH_METHOD : (DISPATCH_METHOD | DISPATCH_PROPERTYGET);
-    return invoke_host(e, o, DISPID_VALUE, flags, args, argc, ret, FALSE);
+    return invoke_host(e, o, DISPID_VALUE, argc > 0 && e->CallCtx != 1 ? (DISPATCH_METHOD | DISPATCH_PROPERTYGET) : DISPATCH_METHOD, args, argc, ret, FALSE);
 }
 
 int host_default_value(Engine *e, Obj *o, int hint, Val *out)
@@ -498,12 +516,15 @@ int host_default_value(Engine *e, Obj *o, int hint, Val *out)
     EXCEPINFO ei = {};
     HRESULT hr = d->lpVtbl->Invoke(d, DISPID_VALUE, &IID_NULL, e->Lcid, DISPATCH_PROPERTYGET, &dp, &res, &ei, nullptr);
     if (FAILED(hr)) {
-        if (hr == DISP_E_EXCEPTION) {
-            SysFreeString(ei.bstrSource);
-            SysFreeString(ei.bstrDescription);
-            SysFreeString(ei.bstrHelpFile);
+        if (hr == DISP_E_MEMBERNOTFOUND || hr == DISP_E_UNKNOWNNAME || hr == E_NOTIMPL || hr == E_NOINTERFACE) {
+            if (hr == DISP_E_EXCEPTION) {
+                SysFreeString(ei.bstrSource);
+                SysFreeString(ei.bstrDescription);
+                SysFreeString(ei.bstrHelpFile);
+            }
+            return 2;
         }
-        return 2;
+        return host_fail(e, hr, &ei);
     }
     variant_to_val(e, &res, out);
     VariantClear(&res);
@@ -548,34 +569,10 @@ MIME_DEFINE_GUID(IID_IPersistFile, 0x0000010B, 0x0000, 0x0000, 0xC0, 0x00, 0x00,
 MIME_COM_INTERFACE(IPersistFile)
 
 
-static int activex_ctor(Engine *e, Val *self, Val *args, int argc, Val *ret, BOOL construct)
+static int wrap_unknown(Engine *e, IUnknown *unk, Val *ret)
 {
-    Str *prog;
-    Val a = ARG(0);
-    if (a.t != T_STR) {
-        int rc = to_string(e, &a, &prog);
-        if (rc)
-            return rc;
-    } else
-        prog = a.u.s;
-    if (argc < 1)
-        return throw_error(e, ERR_ERROR, 5, nullptr);
-    CLSID clsid;
-    HRESULT hr = CLSIDFromProgID(prog->s, &clsid);
-    if (FAILED(hr)) {
-        if (prog->len && prog->s[0] == '{')
-            hr = CLSIDFromString(prog->s, &clsid);
-    }
-    if (FAILED(hr))
-        return throw_error(e, ERR_ERROR, 429, nullptr);
-    IUnknown *unk = nullptr;
-    e->NoGc = TRUE;
-    hr = CoCreateInstance(&clsid, nullptr, CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER, &IID_IUnknown, (void **)&unk);
-    e->NoGc = FALSE;
-    if (FAILED(hr))
-        return throw_error(e, ERR_ERROR, 429, nullptr);
     IDispatch *d = nullptr;
-    hr = unk->lpVtbl->QueryInterface(unk, &IID_IDispatch, (void **)&d);
+    HRESULT hr = unk->lpVtbl->QueryInterface(unk, &IID_IDispatch, (void **)&d);
     unk->lpVtbl->Release(unk);
     if (FAILED(hr))
         return throw_error(e, ERR_ERROR, 430, nullptr);
@@ -585,15 +582,54 @@ static int activex_ctor(Engine *e, Val *self, Val *args, int argc, Val *ret, BOO
     return RC_OK;
 }
 
+static int activex_ctor(Engine *e, Val *self, Val *args, int argc, Val *ret, BOOL construct)
+{
+    if (!construct) {
+        /* called as a function it takes the text for a moniker. */
+        Val a = ARG(0);
+        if (a.t != T_STR)
+            return throw_error(e, ERR_TYPE, 13, nullptr);
+        IUnknown *unk = nullptr;
+        e->NoGc = TRUE;
+        HRESULT hr = CoGetObject(a.u.s->s, nullptr, &IID_IUnknown, (void **)&unk);
+        e->NoGc = FALSE;
+        if (FAILED(hr) || !unk)
+            return throw_host_error(e, hr, nullptr, nullptr);
+        return wrap_unknown(e, unk, ret);
+    }
+    if (argc < 1)
+        return throw_error(e, ERR_ERROR, 429, nullptr);
+    Val a = args[0];
+    if (a.t != T_STR)
+        return throw_error(e, ERR_TYPE, 13, nullptr);
+    Str *prog = a.u.s;
+    if (argc >= 2 && args[1].t != T_UNDEF)
+        return throw_error(e, ERR_ERROR, 429, nullptr);
+    CLSID clsid;
+    HRESULT hr = CLSIDFromProgID(prog->s, &clsid);
+    if (FAILED(hr) && prog->len && prog->s[0] == '{')
+        hr = CLSIDFromString(prog->s, &clsid);
+    if (FAILED(hr))
+        return throw_error(e, ERR_ERROR, 429, nullptr);
+    IUnknown *unk = nullptr;
+    e->NoGc = TRUE;
+    hr = CoCreateInstance(&clsid, nullptr, CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER, &IID_IUnknown, (void **)&unk);
+    e->NoGc = FALSE;
+    if (FAILED(hr))
+        return throw_error(e, ERR_ERROR, 429, nullptr);
+    return wrap_unknown(e, unk, ret);
+}
+
 static int global_get_object(Engine *e, Val *self, Val *args, int argc, Val *ret, BOOL construct)
 {
     Val a0 = ARG(0), a1 = ARG(1);
     Str *path = nullptr, *prog = nullptr;
-    int rc;
-    if (a0.t != T_UNDEF && (rc = to_string(e, &a0, &path)))
-        return rc;
-    if (a1.t != T_UNDEF && (rc = to_string(e, &a1, &prog)))
-        return rc;
+    if (argc < 1 || (a0.t != T_STR && !(a0.t == T_UNDEF && argc >= 2)) || (a1.t != T_STR && a1.t != T_UNDEF))
+        return throw_error(e, ERR_TYPE, 13, nullptr);
+    if (a0.t == T_STR)
+        path = a0.u.s;
+    if (a1.t == T_STR)
+        prog = a1.u.s;
     IUnknown *unk = nullptr;
     HRESULT hr;
     e->NoGc = TRUE;
@@ -612,27 +648,25 @@ static int global_get_object(Engine *e, Val *self, Val *args, int argc, Val *ret
                     pf->lpVtbl->Release(pf);
                 }
             }
-        } else
-            hr = CoGetObject(path->s, nullptr, &IID_IUnknown, (void **)&unk);
-    } else if (prog) {
-        CLSID clsid;
-        hr = CLSIDFromProgID(prog->s, &clsid);
-        if (SUCCEEDED(hr))
-            hr = GetActiveObject(&clsid, nullptr, &unk);
-    } else
-        hr = E_INVALIDARG;
+            e->NoGc = FALSE;
+            if (FAILED(hr) || !unk)
+                return throw_error(e, ERR_ERROR, 429, nullptr);
+            return wrap_unknown(e, unk, ret);
+        }
+        hr = CoGetObject(path->s, nullptr, &IID_IUnknown, (void **)&unk);
+        e->NoGc = FALSE;
+        if (FAILED(hr) || !unk)
+            return throw_host_error(e, hr, nullptr, nullptr);
+        return wrap_unknown(e, unk, ret);
+    }
+    CLSID clsid;
+    hr = prog ? CLSIDFromProgID(prog->s, &clsid) : E_INVALIDARG;
+    if (SUCCEEDED(hr))
+        hr = GetActiveObject(&clsid, nullptr, &unk);
     e->NoGc = FALSE;
     if (FAILED(hr) || !unk)
-        return throw_error(e, ERR_ERROR, hr == MK_E_SYNTAX || prog ? 429 : 432, nullptr);
-    IDispatch *d = nullptr;
-    hr = unk->lpVtbl->QueryInterface(unk, &IID_IDispatch, (void **)&d);
-    unk->lpVtbl->Release(unk);
-    if (FAILED(hr))
-        return throw_error(e, ERR_ERROR, 430, nullptr);
-    Obj *o = host_wrap(e, d);
-    d->lpVtbl->Release(d);
-    *ret = v_obj(o);
-    return RC_OK;
+        return throw_error(e, ERR_ERROR, 429, nullptr);
+    return wrap_unknown(e, unk, ret);
 }
 
 /* ------------------------------------------------------------------ Enumerator */
@@ -651,20 +685,31 @@ static int enum_advance(Engine *e, Obj *o)
 
 int enumerator_new(Engine *e, Val *args, int argc, Val *ret)
 {
-    Val a = ARG(0);
-    if (a.t != T_OBJ || a.u.o->cls != C_HOST) {
-        if (a.t == T_VAR && a.u.v->v.vt == (VT_ARRAY | VT_VARIANT))
-            ;
-        return throw_error(e, ERR_TYPE, 5007, nullptr);
-    }
+    Obj *o = obj_new(e, C_ENUMERATOR, e->EnumeratorProto);
+    VariantInit(&o->u.en.cur);
+    o->u.en.at_end = TRUE;
+    *ret = v_obj(o);
+    if (argc < 1)
+        return RC_OK;
+    Val a = args[0];
+    if (a.t == T_OBJ && a.u.o->cls != C_HOST)
+        return throw_error(e, ERR_TYPE, 5015, nullptr);
+    if (a.t != T_OBJ)
+        return throw_error(e, ERR_TYPE, 451, nullptr);
     IDispatch *d = a.u.o->u.host.disp;
     VARIANT res;
     VariantInit(&res);
     DISPPARAMS dp = {};
     EXCEPINFO ei = {};
     HRESULT hr = d->lpVtbl->Invoke(d, DISPID_NEWENUM, &IID_NULL, e->Lcid, DISPATCH_METHOD | DISPATCH_PROPERTYGET, &dp, &res, &ei, nullptr);
-    if (FAILED(hr))
-        return host_fail(e, hr == DISP_E_MEMBERNOTFOUND ? DISP_E_MEMBERNOTFOUND : hr, &ei);
+    if (FAILED(hr)) {
+        if (hr == DISP_E_EXCEPTION) {
+            SysFreeString(ei.bstrSource);
+            SysFreeString(ei.bstrDescription);
+            SysFreeString(ei.bstrHelpFile);
+        }
+        return throw_error(e, ERR_TYPE, 451, nullptr);
+    }
     IEnumVARIANT *en = nullptr;
     if ((res.vt == VT_UNKNOWN || res.vt == VT_DISPATCH) && res.punkVal)
         hr = res.punkVal->lpVtbl->QueryInterface(res.punkVal, &IID_IEnumVARIANT, (void **)&en);
@@ -672,12 +717,9 @@ int enumerator_new(Engine *e, Val *args, int argc, Val *ret)
         hr = E_NOINTERFACE;
     VariantClear(&res);
     if (FAILED(hr) || !en)
-        return throw_error(e, ERR_TYPE, 5007, nullptr);
-    Obj *o = obj_new(e, C_ENUMERATOR, e->EnumeratorProto);
+        return throw_error(e, ERR_TYPE, 451, nullptr);
     o->u.en.en = en;
-    VariantInit(&o->u.en.cur);
     enum_advance(e, o);
-    *ret = v_obj(o);
     return RC_OK;
 }
 
@@ -686,39 +728,30 @@ static int enumerator_ctor(Engine *e, Val *self, Val *args, int argc, Val *ret, 
     return enumerator_new(e, args, argc, ret);
 }
 
-static int enumerator_this(Engine *e, Val *self, Obj **o)
-{
-    if (self->t != T_OBJ || self->u.o->cls != C_ENUMERATOR)
-        return throw_error(e, ERR_TYPE, 5015, nullptr);
-    *o = self->u.o;
-    return RC_OK;
-}
-
 static int enumerator_method(Engine *e, Val *self, Val *args, int argc, Val *ret, BOOL construct)
 {
-    Obj *o;
-    int rc = enumerator_this(e, self, &o);
-    if (rc)
-        return rc;
+    Obj *o = self->t == T_OBJ && self->u.o->cls == C_ENUMERATOR ? self->u.o : nullptr;
+    *ret = UNDEF;
+    if (!o || !o->u.en.en) {
+        if (e->Magic == 0)
+            *ret = v_bool(TRUE);
+        return RC_OK;
+    }
     switch (e->Magic) {
     case 0:
         *ret = v_bool(o->u.en.at_end);
         break;
     case 1:
-        if (o->u.en.at_end)
-            *ret = UNDEF;
-        else
+        if (!o->u.en.at_end)
             variant_to_val(e, &o->u.en.cur, ret);
         break;
     case 2:
         if (!o->u.en.at_end)
             enum_advance(e, o);
-        *ret = UNDEF;
         break;
     default:
         o->u.en.en->lpVtbl->Reset(o->u.en.en);
         enum_advance(e, o);
-        *ret = UNDEF;
         break;
     }
     return RC_OK;
@@ -729,7 +762,7 @@ static int enumerator_method(Engine *e, Val *self, Val *args, int argc, Val *ret
 static int vbarray_ctor(Engine *e, Val *self, Val *args, int argc, Val *ret, BOOL construct)
 {
     Val a = ARG(0);
-    if (a.t != T_VAR || !(a.u.v->v.vt & VT_ARRAY))
+    if (a.t != T_VAR || (a.u.v->v.vt & ~VT_BYREF) != (VT_ARRAY | VT_VARIANT))
         return throw_error(e, ERR_TYPE, 5013, nullptr);
     SAFEARRAY *copy = nullptr;
     SAFEARRAY *src = (a.u.v->v.vt & VT_BYREF) ? *a.u.v->v.pparray : a.u.v->v.parray;
@@ -854,7 +887,7 @@ void init_host(Engine *e)
 
     Obj *eproto = obj_new(e, C_OBJECT, e->ObjectProto);
     e->EnumeratorProto = eproto;
-    Obj *ector = obj_native(e, "Enumerator", enumerator_ctor, 1, 0);
+    Obj *ector = obj_native(e, "Enumerator", enumerator_ctor, 7, 0);
     obj_define_z(e, ector, "prototype", v_obj(eproto), PF_DONTENUM | PF_DONTDELETE | PF_READONLY);
     obj_define_z(e, eproto, "constructor", v_obj(ector), PF_DONTENUM);
     obj_method(e, eproto, "atEnd", enumerator_method, 0, 0);
@@ -883,6 +916,7 @@ typedef struct JsDisp {
     LONG Refs;
     Engine *E;
     Obj *O;
+    struct JsDisp *Prev, *Next;
 } JsDisp;
 
 extern LONG g_js_objects;
@@ -908,11 +942,29 @@ static ULONG STDMETHODCALLTYPE jd_release(IDispatchEx *This)
     JsDisp *d = (JsDisp *)This;
     LONG refs = InterlockedDecrement(&d->Refs);
     if (!refs) {
-        d->O->ext--;
+        if (d->E) {
+            d->O->ext--;
+            if (d->Prev)
+                d->Prev->Next = d->Next;
+            else
+                d->E->Disps = d->Next;
+            if (d->Next)
+                d->Next->Prev = d->Prev;
+        }
         InterlockedDecrement(&g_js_objects);
         js_free(d);
     }
     return refs;
+}
+
+/* the engine is gone: what a host still holds of it answers nothing. */
+struct JsDisp *jsdisp_orphan(struct JsDisp *d)
+{
+    struct JsDisp *next = d->Next;
+    d->E = nullptr;
+    d->O = nullptr;
+    d->Prev = d->Next = nullptr;
+    return next;
 }
 
 IDispatch *dispatch_for_obj(Engine *e, Obj *o)
@@ -923,6 +975,10 @@ IDispatch *dispatch_for_obj(Engine *e, Obj *o)
     d->Refs = 1;
     d->E = e;
     d->O = o;
+    d->Next = e->Disps;
+    if (e->Disps)
+        e->Disps->Prev = d;
+    e->Disps = d;
     o->ext++;
     InterlockedIncrement(&g_js_objects);
     return (IDispatch *)&d->Ex;
@@ -957,6 +1013,8 @@ static HRESULT STDMETHODCALLTYPE jd_getdispid(IDispatchEx *This, BSTR name, DWOR
 {
     JsDisp *d = (JsDisp *)This;
     Engine *e = d->E;
+    if (!e)
+        return E_UNEXPECTED;
     if (!name || !id)
         return E_POINTER;
     Str *key = str_intern(e, name, SysStringLen(name));
@@ -1017,6 +1075,8 @@ static int jd_run(JsDisp *d, DISPID id, WORD flags, DISPPARAMS *dp, Val *result)
     }
     (void)has_put_arg;
     *result = UNDEF;
+    if (thisv.t == T_UNDEF && e->GlobalThis.t == T_OBJ)
+        thisv = e->GlobalThis;
     if (id == DISPID_VALUE && (flags & (DISPATCH_METHOD | DISPATCH_CONSTRUCT)) && (o->cls == C_FUNCTION || o->cls == C_HOST)) {
         Val fv = v_obj(o);
         if (flags & DISPATCH_CONSTRUCT)
@@ -1047,7 +1107,8 @@ static int jd_run(JsDisp *d, DISPID id, WORD flags, DISPPARAMS *dp, Val *result)
     }
     if (flags & DISPATCH_CONSTRUCT)
         return construct_function(e, &member, args, (int)n, result);
-    if (is_callable(&member) && (flags & DISPATCH_METHOD)) {
+    BOOL value = (flags & DISPATCH_PROPERTYGET) && n == 0;
+    if (is_callable(&member) && (flags & DISPATCH_METHOD) && !value) {
         Val self = thisv.t != T_UNDEF ? thisv : v_obj(o);
         return call_function(e, &member, &self, args, (int)n, result);
     }
@@ -1062,7 +1123,7 @@ static HRESULT STDMETHODCALLTYPE jd_invokeex(IDispatchEx *This, DISPID id, LCID 
 {
     JsDisp *d = (JsDisp *)This;
     Engine *e = d->E;
-    if (e->State == SCRIPTSTATE_CLOSED)
+    if (!e || e->State == SCRIPTSTATE_CLOSED)
         return E_UNEXPECTED;
     This->lpVtbl->AddRef(This);
     engine_enter(e);
@@ -1097,7 +1158,9 @@ static HRESULT STDMETHODCALLTYPE jd_names(IDispatchEx *This, REFIID riid, LPOLES
         ids[i] = DISPID_UNKNOWN;
     if (!count)
         return S_OK;
-    HRESULT hr = This->lpVtbl->GetDispID(This, names[0], fdexNameCaseSensitive, &ids[0]);
+    BSTR name = SysAllocString(names[0]);
+    HRESULT hr = This->lpVtbl->GetDispID(This, name, fdexNameCaseSensitive, &ids[0]);
+    SysFreeString(name);
     if (hr == S_OK && count > 1)
         return DISP_E_UNKNOWNNAME;
     return hr;
@@ -1112,6 +1175,8 @@ static HRESULT STDMETHODCALLTYPE jd_invoke(IDispatchEx *This, DISPID id, REFIID 
 static HRESULT STDMETHODCALLTYPE jd_delete_name(IDispatchEx *This, BSTR name, DWORD flags)
 {
     JsDisp *d = (JsDisp *)This;
+    if (!d->E)
+        return E_UNEXPECTED;
     Str *key = str_intern(d->E, name, SysStringLen(name));
     BOOL r;
     obj_delete(d->E, d->O, key, &r);
@@ -1121,6 +1186,8 @@ static HRESULT STDMETHODCALLTYPE jd_delete_name(IDispatchEx *This, BSTR name, DW
 static HRESULT STDMETHODCALLTYPE jd_delete_id(IDispatchEx *This, DISPID id)
 {
     JsDisp *d = (JsDisp *)This;
+    if (!d->E)
+        return E_UNEXPECTED;
     Str *key = disp_name_of(d->E, id);
     if (!key)
         return S_OK;
@@ -1131,14 +1198,15 @@ static HRESULT STDMETHODCALLTYPE jd_delete_id(IDispatchEx *This, DISPID id)
 
 static HRESULT STDMETHODCALLTYPE jd_props(IDispatchEx *This, DISPID id, DWORD fetch, DWORD *flags)
 {
-    *flags = fdexPropCanGet | fdexPropCanPut | fdexPropCannotPutRef | fdexPropCannotCall | fdexPropCannotConstruct |
-             fdexPropCannotSourceEvents;
+    *flags = 0;
     return S_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE jd_member_name(IDispatchEx *This, DISPID id, BSTR *name)
 {
     JsDisp *d = (JsDisp *)This;
+    if (!d->E)
+        return E_UNEXPECTED;
     Str *k = disp_name_of(d->E, id);
     if (!k)
         return DISP_E_UNKNOWNNAME;
@@ -1150,9 +1218,21 @@ static HRESULT STDMETHODCALLTYPE jd_next(IDispatchEx *This, DWORD flags, DISPID 
 {
     JsDisp *d = (JsDisp *)This;
     Engine *e = d->E;
+    if (!e)
+        return E_UNEXPECTED;
     Obj *keys;
     if (obj_enum_keys(e, d->O, &keys, FALSE))
         return E_FAIL;
+    if (d->O == e->Global) {
+        /* the items of the host come before the names of the script. */
+        Obj *all = array_new(e, 0);
+        for (NamedItem *it = e->Items; it; it = it->next)
+            if (it->flags & SCRIPTITEM_ISVISIBLE)
+                array_push(e, all, v_str(it->name));
+        for (ULONG i = 0; i < keys->u.arr.len; i++)
+            array_push(e, all, keys->u.arr.items[i]);
+        keys = all;
+    }
     ULONG start = 0;
     if (id != DISPID_STARTENUM) {
         Str *cur = disp_name_of(e, id);

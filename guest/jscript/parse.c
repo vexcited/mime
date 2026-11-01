@@ -662,6 +662,11 @@ static void lex(Parser *p)
                 newline_at(p);
             } else if (c == ' ' || c == '\t' || c == '\v' || c == '\f' || c == 0xA0 || c == 0xFEFF || (c > 127 && is_js_space(c)))
                 p->pos++;
+            else if (c == '<' && p->pos + 3 < p->n && s[p->pos + 1] == '!' && s[p->pos + 2] == '-' && s[p->pos + 3] == '-')
+                skip_to_line_end(p);
+            else if (c == '-' && p->pos + 2 < p->n && s[p->pos + 1] == '-' && s[p->pos + 2] == '>' &&
+                     (p->nl_before || p->prev_end == 0))
+                skip_to_line_end(p);
             else if (c == '/' && p->pos + 1 < p->n && s[p->pos + 1] == '/') {
                 if (p->pos + 2 < p->n && s[p->pos + 2] == '@' && p->cc_on == FALSE && p->pos + 7 < p->n &&
                     !wcsncmp(s + p->pos + 3, L"cc_on", 5)) {
@@ -2079,6 +2084,7 @@ Unit *parse_unit(Engine *e, const WCHAR *text, SIZE_T length, ULONG first_line, 
     p.n = (ULONG)length;
     p.mode = mode;
     p.first_line = first_line;
+    p.line = first_line;
     FuncNode *prog = arena_alloc(u->arena, sizeof(FuncNode));
     prog->n.kind = N_FUNC;
     prog->n.u.fn = prog;
@@ -2108,7 +2114,7 @@ Unit *parse_unit(Engine *e, const WCHAR *text, SIZE_T length, ULONG first_line, 
             err->Code = p.code;
             err->Line = p.eline;
             err->Col = p.ecol;
-            err->LineText = line_text(u->text, u->length, p.eline);
+            err->LineText = line_text(u->text, u->length, p.eline >= first_line ? p.eline - first_line : 0);
         }
         unit_free(u);
         return nullptr;
