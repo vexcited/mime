@@ -55,6 +55,9 @@ enum {
     SCM_OP_LAUNCH_ELEVATED = 96,
     /* a process with the unelevated token of the caller, which dcom's launcher gives a server that runs as the interactive user. */
     SCM_OP_LAUNCH_UNELEVATED,
+    /* the token of a client kept under a ticket for the server that accepts its authentication, and given to that server. */
+    SCM_OP_SSPI_PUBLISH,
+    SCM_OP_SSPI_REDEEM,
 };
 
 /* controls the manager sends down a service process's channel, besides SERVICE_CONTROL_*. */

@@ -1353,6 +1353,22 @@ static DWORD handle_request(CONN *c, DWORD op, SCM_READER *r, SCM_WRITER *w, KEE
         case SCM_OP_LAUNCH_UNELEVATED:
             error = op_launch_elevated(c, cl, r, w, TRUE);
             break;
+        case SCM_OP_SSPI_PUBLISH: {
+            UCHAR id[16];
+            error = SspiPublish(c->Pipe, id);
+            if (!error)
+                ScmPutBytes(w, id, sizeof(id));
+            break;
+        }
+        case SCM_OP_SSPI_REDEEM: {
+            UINT32 length;
+            const void *id = ScmGetBytes(r, &length);
+            UINT64 handle = 0;
+            error = r->Failed || length != 16 ? ERROR_INVALID_PARAMETER : SspiRedeem(c->Pid, id, &handle);
+            if (!error)
+                ScmPutU64(w, handle);
+            break;
+        }
         case SCM_OP_NOTIFY_ATTACH:
             error = ERROR_SUCCESS;
             *keep = KEEP_NOTIFY;

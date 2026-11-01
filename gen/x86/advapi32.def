@@ -402,6 +402,8 @@ EXPORTS
     MapGenericMask=_MapGenericMask@8
     LaunchElevated=_LaunchElevated@28
     LaunchUnelevated=_LaunchUnelevated@28
+    SspiPublishToken=_SspiPublishToken@4
+    SspiRedeemToken=_SspiRedeemToken@8
     NotifyBootConfigStatus=_NotifyBootConfigStatus@4
     NotifyChangeEventLog=_NotifyChangeEventLog@8
     NotifyServiceStatusChange=_NotifyServiceStatusChange@12

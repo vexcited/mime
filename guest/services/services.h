@@ -369,6 +369,10 @@ typedef struct ELEVATE_RESULT {
 
 DWORD ElevateLaunch(HANDLE pipe, DWORD pid, const ELEVATE_REQUEST *request, ELEVATE_RESULT *result);
 
+/* lsa.c */
+DWORD SspiPublish(HANDLE pipe, UCHAR *id);
+DWORD SspiRedeem(DWORD pid, const UCHAR *id, UINT64 *handle);
+
 /* boot.c */
 void BootStart(void);
 void ShutdownInit(void);

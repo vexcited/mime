@@ -2675,6 +2675,60 @@ ADVAPI DWORD WINAPI LaunchElevated(LPCWSTR application, LPCWSTR command_line, LP
 }
 
 /*
+ * the exchange of identities that the local authentication packages need: lsass, on windows, knows the logon session a
+ * client speaks for and gives it to the server that accepts the client's token. here the manager keeps the client's
+ * token under a ticket that only the two ends of an exchange see, and gives it to the server as a handle of its own.
+ */
+ADVAPI DWORD WINAPI SspiPublishToken(BYTE *ticket)
+{
+    if (!ticket)
+        return ERROR_INVALID_PARAMETER;
+    DWORD error = scm_wait_until_ready();
+    if (error)
+        return error;
+    SCM_WRITER w;
+    ScmWriterInit(&w, SCM_OP_SSPI_PUBLISH);
+    SC_REPLY reply;
+    error = call(&w, &reply);
+    if (!error) {
+        UINT32 length;
+        const void *bytes = ScmGetBytes(&reply.R, &length);
+        if (reply.R.Failed || length != 16)
+            error = ERROR_INVALID_DATA;
+        else
+            memcpy(ticket, bytes, 16);
+    }
+    reply_free(&reply);
+    AdvSetError(error);
+    return error;
+}
+
+ADVAPI DWORD WINAPI SspiRedeemToken(const BYTE *ticket, HANDLE *token)
+{
+    if (!ticket || !token)
+        return ERROR_INVALID_PARAMETER;
+    *token = nullptr;
+    DWORD error = scm_wait_until_ready();
+    if (error)
+        return error;
+    SCM_WRITER w;
+    ScmWriterInit(&w, SCM_OP_SSPI_REDEEM);
+    ScmPutBytes(&w, ticket, 16);
+    SC_REPLY reply;
+    error = call(&w, &reply);
+    if (!error) {
+        UINT64 handle = ScmGetU64(&reply.R);
+        if (reply.R.Failed)
+            error = ERROR_INVALID_DATA;
+        else
+            *token = (HANDLE)(ULONG_PTR)handle;
+    }
+    reply_free(&reply);
+    AdvSetError(error);
+    return error;
+}
+
+/*
  * the same for a process that must not be elevated: a server that runs as the interactive user, which takes the limited
  * half of an elevated caller's token and the caller's own token otherwise. ole32 asks for it when a class says so.
  */
