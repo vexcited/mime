@@ -35,7 +35,9 @@ DECLSPEC_EXPORT int __cdecl _initialize_onexit_table(MIME_ONEXIT_TABLE *table)
 {
     if (!table)
         return -1;
-    memset(table, 0, sizeof(*table));
+    /* a table that was made already is left as it is. */
+    if (!table->first)
+        memset(table, 0, sizeof(*table));
     return 0;
 }
 
