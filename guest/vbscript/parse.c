@@ -128,6 +128,7 @@ typedef struct Token {
     /* the value of a literal, or for a bad token the error number in Value.lVal. */
     VARIANT Value;
     BOOL Bracketed, SpaceBefore;
+    ULONG LineStart;
 } Token;
 
 typedef struct Parser {
@@ -169,6 +170,9 @@ static const struct {
     {L"with", K_WITH}, {L"xor", K_XOR}, {L"step", K_STEP}, {L"default", K_DEFAULT}, {L"error", K_ERROR},
     {L"explicit", K_EXPLICIT}, {L"preserve", K_PRESERVE}, {L"get", K_GET}, {L"resume", K_RESUME},
     {L"randomize", K_RANDOMIZE}, {L"execute", K_EXECUTE}, {L"executeglobal", K_EXECUTEGLOBAL}, {L"stop", K_STOP},
+    {L"endif", K_RESERVED}, {L"enum", K_RESERVED}, {L"event", K_RESERVED}, {L"implements", K_RESERVED}, {L"optional", K_RESERVED},
+    {L"paramarray", K_RESERVED}, {L"raiseevent", K_RESERVED}, {L"shared", K_RESERVED}, {L"static", K_RESERVED},
+    {L"type", K_RESERVED}, {L"typeof", K_RESERVED}, {L"lset", K_RESERVED}, {L"rset", K_RESERVED}, {L"like", K_LIKE},
 };
 
 /* words that stay identifiers wherever a name is expected. */
@@ -183,6 +187,7 @@ static void add_token(Parser *p, Token *t)
 {
     t->SpaceBefore = p->SpaceFlag;
     p->SpaceFlag = FALSE;
+    t->LineStart = !p->Count || p->Tokens[p->Count - 1].Kind == T_NL ? t->Col : p->Tokens[p->Count - 1].LineStart;
     if (p->Count == p->Capacity) {
         UINT capacity = p->Capacity ? p->Capacity * 2 : 256;
         Token *tokens = arena_alloc(p->A, capacity * sizeof(Token));
@@ -325,7 +330,7 @@ static void lex_number(Parser *p, Token *t)
         Token bad = *t;
         add_token(p, t);
         bad.Line = p->Line;
-        bad.Col = p->Col;
+        bad.Col = p->Col + (*d == L'_' ? 1 : 0);
         bad_token(p, &bad, *d == L'_' ? 1032 : E_VBS_SYNTAX);
         while (is_alpha(*p->Cursor) || is_digit(*p->Cursor) || *p->Cursor == L'_') {
             p->Cursor++;
@@ -404,6 +409,7 @@ static void lex(Parser *p)
             p->Col += length;
             t.Length = length;
             if (length > 255) {
+                t.Col = p->Col;
                 bad_token(p, &t, 1030);
                 continue;
             }
@@ -479,6 +485,7 @@ static void lex(Parser *p)
             p->Cursor = q;
             if (!closed) {
                 vbs_free(buffer);
+                t.Col = p->Col;
                 bad_token(p, &t, 1033);
                 break;
             }
@@ -519,6 +526,9 @@ static void lex(Parser *p)
             while (*q && *q != L']' && *q != L'\r' && *q != L'\n')
                 q++;
             if (*q != L']') {
+                p->Col += (ULONG)(q - p->Cursor);
+                p->Cursor = q;
+                t.Col = p->Col;
                 bad_token(p, &t, 1007);
                 break;
             }
@@ -570,6 +580,8 @@ static void lex(Parser *p)
             add_token(p, &t);
             break;
         default:
+            if (c == L'_')
+                t.Col++;
             bad_token(p, &t, 1032);
             break;
         }
@@ -652,7 +664,7 @@ static Stmt *new_stmt(Parser *p, BYTE kind, const Token *at)
     Stmt *s = node(p, sizeof(Stmt));
     s->Kind = kind;
     s->Line = at->Line + p->FirstLine;
-    s->Col = at->Col;
+    s->Col = at->LineStart;
     return s;
 }
 
@@ -705,17 +717,9 @@ static void parse_args(Parser *p, Args *args, BOOL parenthesized)
         items[count++] = item;
         if (accept(p, T_COMMA)) {
             expect_more = TRUE;
-            if (parenthesized && cur(p)->Kind == T_RPAREN) {
-                items[count++] = nullptr;
-                break;
-            }
-            if (!parenthesized) {
-                Token *n = cur(p);
-                if (n->Kind == T_NL || n->Kind == T_EOF || n->Kind == T_COLON) {
-                    items[count++] = nullptr;
-                    break;
-                }
-            }
+            Token *n = cur(p);
+            if (n->Kind == T_RPAREN || n->Kind == T_NL || n->Kind == T_EOF || n->Kind == T_COLON)
+                fail(p, E_VBS_SYNTAX, n);
             continue;
         }
         break;
@@ -762,8 +766,6 @@ static Expr *parse_primary(Parser *p)
         advance(p);
         return e;
     case K_ME:
-        if (!p->InClass || !p->InProc)
-            fail(p, 1037, t);
         e = new_expr(p, X_ME, t);
         advance(p);
         return e;
@@ -825,8 +827,8 @@ static BOOL paren_ends_statement(Parser *p)
     if (i + 1 >= p->Count)
         return TRUE;
     BYTE next = p->Tokens[i + 1].Kind;
-    return next == T_NL || next == T_COLON || next == T_EOF || next == K_ELSE ||
-           (next == K_END && i + 2 < p->Count && p->Tokens[i + 2].Kind == K_IF);
+    return next == T_NL || next == T_COLON || next == T_EOF || next == K_ELSE || next == T_EQ || next == T_LPAREN ||
+           next == T_DOT || (next == K_END && i + 2 < p->Count && p->Tokens[i + 2].Kind == K_IF);
 }
 
 static Expr *parse_postfix(Parser *p)
@@ -834,6 +836,8 @@ static Expr *parse_postfix(Parser *p)
     BOOL statement = p->StatementTarget;
     p->StatementTarget = FALSE;
     Expr *e = parse_primary(p);
+    if (e->Kind == X_NEW)
+        return e;
     for (;;) {
         Token *t = cur(p);
         /* in a statement, a dot after a blank starts the first argument, a member of the With object. */
@@ -854,7 +858,7 @@ static Expr *parse_postfix(Parser *p)
             m->u.Member.Name = token_name(p, &n);
             advance(p);
             e = m;
-        } else if (t->Kind == T_LPAREN && !e->Parens) {
+        } else if (t->Kind == T_LPAREN && e->Parens != 1) {
             advance(p);
             if (e->Kind == X_MEMBER && !e->u.Member.HasArguments) {
                 e->u.Member.HasArguments = TRUE;
@@ -985,6 +989,7 @@ static Expr *parse_compare(Parser *p)
         case T_LE: op = OP_LE; break;
         case T_GE: op = OP_GE; break;
         case K_IS: op = OP_IS; break;
+        case K_LIKE: op = OP_LIKE; break;
         default: return l;
         }
         advance(p);
@@ -1153,6 +1158,9 @@ static Stmt *parse_simple(Parser *p, BOOL set_keyword)
             Token end = p->Tokens[p->Index];
             fail(p, 1044, &end);
         }
+        /* the one argument of a call without Call is an expression in parentheses, which goes by value. */
+        if (args->Count == 1 && args->Items[0])
+            args->Items[0]->Parens = 1;
         target->Op = 2;
     }
     return s;
@@ -1170,7 +1178,9 @@ static Stmt *parse_call_keyword(Parser *p)
         c->u.Call.Target = target;
         c->Op = 3;
         s->u.Call = c;
-    } else if (target->Kind != X_MEMBER && target->Kind != X_CALL)
+    } else if (target->Kind == X_CONST)
+        ;
+    else if (target->Kind != X_MEMBER && target->Kind != X_CALL)
         fail(p, 1024, &first);
     else
         target->Op = 3;
@@ -1261,7 +1271,14 @@ static Stmt *parse_single_line_block(Parser *p)
     return head;
 }
 
+static Stmt *parse_if_clause(Parser *p, BOOL elseif);
+
 static Stmt *parse_if(Parser *p)
+{
+    return parse_if_clause(p, FALSE);
+}
+
+static Stmt *parse_if_clause(Parser *p, BOOL elseif)
 {
     Token first = *cur(p);
     advance(p);
@@ -1273,7 +1290,7 @@ static Stmt *parse_if(Parser *p)
         s->u.If.Then = parse_block(p, stop_end_if);
         Token *n = cur(p);
         if (n->Kind == K_ELSEIF) {
-            s->u.If.Else = parse_if(p);
+            s->u.If.Else = parse_if_clause(p, TRUE);
             s->u.If.Else->Flag2 = 1;
             return s;
         }
@@ -1288,6 +1305,28 @@ static Stmt *parse_if(Parser *p)
         end_statement(p);
         return s;
     }
+    if (elseif) {
+        /* what follows ElseIf on its line belongs to the block, which goes on to the End If. */
+        s->u.If.Then = parse_block(p, stop_end_if);
+        Token *n = cur(p);
+        if (n->Kind == K_ELSEIF) {
+            s->u.If.Else = parse_if_clause(p, TRUE);
+            s->u.If.Else->Flag2 = 1;
+            return s;
+        }
+        if (n->Kind == K_ELSE) {
+            advance(p);
+            s->u.If.Else = parse_block(p, stop_end_if);
+        }
+        if (!(cur(p)->Kind == K_END && peek_token(p, 1)->Kind == K_IF))
+            fail(p, 1014, cur(p));
+        advance(p);
+        advance(p);
+        end_statement(p);
+        return s;
+    }
+    if (t->Kind == K_ELSE)
+        fail(p, 1024, t);
     p->SingleLine++;
     s->u.If.Then = parse_single_line_block(p);
     if (cur(p)->Kind == K_ELSE) {
@@ -1312,15 +1351,19 @@ static Stmt *parse_select(Parser *p)
     s->u.Select.Subject = parse_expr(p);
     end_statement(p);
     CaseClause **tail = &s->u.Select.Cases;
+    BOOL had_else = FALSE;
     skip_newlines(p);
     for (;;) {
         Token *t = cur(p);
         if (t->Kind == K_CASE) {
+            if (had_else)
+                fail(p, 1014, t);
             advance(p);
             CaseClause *c = node(p, sizeof(CaseClause));
             if (cur(p)->Kind == K_ELSE) {
                 advance(p);
                 c->IsElse = TRUE;
+                had_else = TRUE;
             } else {
                 Expr *values[64];
                 UINT count = 0;
@@ -1357,10 +1400,11 @@ static Stmt *parse_for(Parser *p)
     if (cur(p)->Kind == K_EACH) {
         advance(p);
         Stmt *s = new_stmt(p, S_FOREACH, &first);
-        Token vt = *cur(p);
+        if (!is_name_token(cur(p)))
+            fail(p, 1010, cur(p));
         Expr *var = parse_postfix(p);
         if (var->Kind != X_NAME)
-            fail(p, 1040, &vt);
+            fail(p, 1040, cur(p));
         s->u.Each.Var = var;
         expect(p, K_IN, 1046);
         s->u.Each.Group = parse_expr(p);
@@ -1375,10 +1419,11 @@ static Stmt *parse_for(Parser *p)
         return s;
     }
     Stmt *s = new_stmt(p, S_FOR, &first);
-    Token vt = *cur(p);
+    if (!is_name_token(cur(p)))
+        fail(p, 1010, cur(p));
     Expr *var = parse_postfix(p);
     if (var->Kind != X_NAME)
-        fail(p, 1040, &vt);
+        fail(p, 1040, cur(p));
     s->u.For.Var = var;
     expect(p, T_EQ, 1011);
     s->u.For.From = parse_expr(p);
@@ -1480,20 +1525,16 @@ static Stmt *parse_exit(Parser *p)
         s->Flag = EXIT_DO;
         break;
     case K_SUB:
-        if (!p->InProc || !p->InSub)
-            fail(p, 1039, t);
-        s->Flag = EXIT_SUB;
-        break;
     case K_FUNCTION:
-        if (!p->InProc || !p->InFunction)
+    case K_PROPERTY: {
+        if (!p->InProc)
             fail(p, 1039, t);
-        s->Flag = EXIT_FUNCTION;
+        BOOL right = t->Kind == K_SUB ? p->InSub : t->Kind == K_FUNCTION ? p->InFunction : p->InProperty;
+        if (!right)
+            fail(p, p->InSub ? 1016 : p->InFunction ? 1015 : 1050, t);
+        s->Flag = t->Kind == K_SUB ? EXIT_SUB : t->Kind == K_FUNCTION ? EXIT_FUNCTION : EXIT_PROPERTY;
         break;
-    case K_PROPERTY:
-        if (!p->InProc || !p->InProperty)
-            fail(p, 1039, t);
-        s->Flag = EXIT_PROPERTY;
-        break;
+    }
     default:
         fail(p, 1039, t);
     }
@@ -1594,6 +1635,7 @@ static Stmt *parse_redim(Parser *p)
 static Expr *literal_value(Parser *p)
 {
     Token *t = cur(p);
+    UINT start = p->Index;
     BOOL negative = FALSE, signed_ = FALSE;
     BOOL paren = FALSE;
     if (t->Kind == T_LPAREN) {
@@ -1650,6 +1692,7 @@ static Expr *literal_value(Parser *p)
     if (paren)
         expect(p, T_RPAREN, 1006);
     if (cur(p)->Kind != T_COMMA && !at_end_of_statement(p)) {
+        p->Index = start;
         parse_expr(p);
         fail(p, 1045, cur(p));
     }
@@ -1834,9 +1877,8 @@ static Proc *parse_proc(Parser *p, BYTE public_, BOOL is_default, BYTE default_e
         proc->ResultSlot = (LONG)proc->LocalCount;
         proc_add_local(p, proc, proc->Name);
     }
-    if (!at_end_of_statement(p))
-        fail(p, 1025, cur(p));
-    end_statement(p);
+    if (cur(p)->Kind == T_NL || cur(p)->Kind == T_COLON)
+        advance(p);
     proc->Body = parse_block(p, stop_end_sub);
     if (!(cur(p)->Kind == K_END && peek_token(p, 1)->Kind == end_kind)) {
         if (cur(p)->Kind == K_END && (peek_token(p, 1)->Kind == K_SUB || peek_token(p, 1)->Kind == K_FUNCTION ||
@@ -1847,6 +1889,7 @@ static Proc *parse_proc(Parser *p, BYTE public_, BOOL is_default, BYTE default_e
     advance(p);
     advance(p);
     end_statement(p);
+    proc->DeclaredCount = proc->LocalCount;
     p->CurrentProc = saved;
     p->InProc = saved != nullptr;
     p->InSub = ss;
@@ -2034,9 +2077,9 @@ static Stmt *parse_declaration(Parser *p, BYTE is_public, BOOL is_default)
         return parse_const(p, is_public);
     }
     if (p->InProc)
-        fail(p, E_VBS_SYNTAX, t);
+        fail(p, E_VBS_SYNTAX, &p->Tokens[p->Index - 1]);
     if (t->Kind == K_DIM)
-        return parse_dim(p, is_public, FALSE);
+        fail(p, 1010, t);
     /* Public x, y */
     Token first = *t;
     s = new_stmt(p, S_DIM, &first);
@@ -2085,7 +2128,8 @@ static Stmt *parse_statement(Parser *p)
         BYTE vis = t->Kind == K_PUBLIC;
         advance(p);
         BOOL def = FALSE;
-        if (cur(p)->Kind == K_DEFAULT) {
+        if (cur(p)->Kind == K_DEFAULT && (peek_token(p, 1)->Kind == K_SUB || peek_token(p, 1)->Kind == K_FUNCTION ||
+                                          peek_token(p, 1)->Kind == K_PROPERTY)) {
             def = TRUE;
             advance(p);
         }
@@ -2115,13 +2159,14 @@ static Stmt *parse_statement(Parser *p)
         Token first = *t;
         advance(p);
         s = new_stmt(p, S_ERASE, &first);
-        s->u.Randomize = parse_expr(p);
+        if (!at_end_of_statement(p))
+            s->u.Randomize = parse_expr(p);
         end_statement(p);
         return s;
     }
     case K_OPTION: {
         Token first = *t;
-        if (p->StatementCount > 1 || p->InProc || p->InClass || p->ExecuteMode)
+        if (p->StatementCount > 1 || p->InProc || p->InClass)
             fail(p, 1024, t);
         advance(p);
         if (cur(p)->Kind != K_EXPLICIT)
@@ -2129,6 +2174,8 @@ static Stmt *parse_statement(Parser *p)
         advance(p);
         s = new_stmt(p, S_OPTION, &first);
         p->U->Explicit = TRUE;
+        if (!at_end_of_statement(p))
+            fail(p, E_VBS_SYNTAX, cur(p));
         end_statement(p);
         return s;
     }
@@ -2177,6 +2224,12 @@ static Stmt *parse_statement(Parser *p)
     case T_NL:
     case T_COLON:
         advance(p);
+        return nullptr;
+    case K_NEXT:
+        fail(p, 1055, t);
+        return nullptr;
+    case K_LOOP:
+        fail(p, 1038, t);
         return nullptr;
     default:
         fail(p, 1024, t);

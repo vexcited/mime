@@ -166,7 +166,7 @@ int obj_enum(Frame *f, VARIANT *collection, IEnumVARIANT **out)
     VARIANT r;
     VariantInit(&r);
     if (is_script_instance(d) || d == f->E->ErrObject)
-        return raise_error(f, E_VBS_NOT_COLLECTION, nullptr);
+        return raise_error(f, E_VBS_NO_MEMBER, nullptr);
     int rc = call_com(f, d, DISPID_NEWENUM, DISPATCH_METHOD | DISPATCH_PROPERTYGET, nullptr, 0, &r);
     if (rc != R_OK)
         return rc;
@@ -304,11 +304,8 @@ static int inst_invoke(Frame *f, Instance *inst, DISPID id, PCWSTR name, WORD fl
 {
     Member *m = name ? member_find(inst->Cls, name, name_hash(name)) : member_by_id(inst->Cls, id);
     BOOL inside = f->Me == inst;
-    if (!m || (!(m->Public & 1) && !inside)) {
-        if (name && name_equal(name, L"Class_Initialize") == 0) {
-        }
+    if (!m || (!(m->Public & 1) && !inside))
         return raise_error(f, E_VBS_NO_MEMBER, nullptr);
-    }
     Engine *e = f->E;
     if (m->Kind == M_FIELD) {
         VARIANT *cell = &inst->Fields[m->Slot];
@@ -381,7 +378,7 @@ static int inst_invoke(Frame *f, Instance *inst, DISPID id, PCWSTR name, WORD fl
         if (!p && ref && m->Let)
             p = m->Let;
         if (!p)
-            return raise_error(f, E_VBS_ILLEGAL_ASSIGN, m->Name);
+            return raise_error(f, E_VBS_NO_MEMBER, nullptr);
         return call_proc(e, p, inst, argv, argc, nullptr, f);
     }
     if (!m->Get)

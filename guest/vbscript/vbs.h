@@ -66,7 +66,8 @@ enum {
     K_END, K_EQV, K_ERASE, K_EXIT, K_FALSE, K_FOR, K_FUNCTION, K_GOTO, K_IF, K_IMP, K_IN, K_IS, K_LET, K_LOOP, K_ME,
     K_MOD, K_NEW, K_NEXT, K_NOT, K_NOTHING, K_NULL, K_ON, K_OPTION, K_OR, K_PRIVATE, K_PROPERTY, K_PUBLIC, K_REDIM,
     K_SELECT, K_SET, K_SUB, K_THEN, K_TO, K_TRUE, K_UNTIL, K_WEND, K_WHILE, K_WITH, K_XOR, K_STEP, K_DEFAULT,
-    K_ERROR, K_EXPLICIT, K_PRESERVE, K_GET, K_RESUME, K_RANDOMIZE, K_EXECUTE, K_EXECUTEGLOBAL, K_STOP
+    K_LIKE, K_ERROR, K_EXPLICIT, K_PRESERVE, K_GET, K_RESUME, K_RANDOMIZE, K_EXECUTE, K_EXECUTEGLOBAL, K_STOP,
+    K_RESERVED
 };
 
 /* ------------------------------------------------------------------ syntax tree */
@@ -77,7 +78,7 @@ enum {
 
 enum {
     OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_IDIV, OP_MOD, OP_POW, OP_CAT, OP_EQ, OP_NE, OP_LT, OP_GT, OP_LE, OP_GE, OP_IS,
-    OP_AND, OP_OR, OP_XOR, OP_EQV, OP_IMP, OP_NEG, OP_PLUS, OP_NOT
+    OP_AND, OP_OR, OP_XOR, OP_EQV, OP_IMP, OP_NEG, OP_PLUS, OP_NOT, OP_LIKE
 };
 
 /* how a name was bound when the unit was linked. */
@@ -211,7 +212,7 @@ struct Proc {
     /* locals: parameters first, then the result slot, then the declared and implied ones. */
     PWSTR *Locals;
     ULONG *LocalHashes;
-    UINT LocalCount, LocalCapacity;
+    UINT LocalCount, LocalCapacity, DeclaredCount;
     LONG ResultSlot;
     Class *Cls;
     Unit *Unit;
@@ -266,7 +267,7 @@ struct Sym {
     Sym *Next;
     PWSTR Name;
     ULONG Hash;
-    BYTE Kind, Public;
+    BYTE Kind, Public, Declared;
     VARIANT Value;
     Proc *Procedure;
     Class *Cls;
@@ -347,7 +348,7 @@ struct Engine {
     IDispatch *ErrObject, *ScriptObject;
     ULONG Generation;
     UINT Depth;
-    BOOL Explicit, Interrupted, Closing, InScript;
+    BOOL Explicit, Interrupted, Closing, InScript, TermError;
     DWORD Thread;
     double RndSeed;
     BOOL RndInit;

@@ -347,7 +347,7 @@ static void resolve_late(Frame *f, Expr *e, Target *t, BOOL assign)
         }
     if (f->P) {
         for (UINT i = 0; i < f->P->LocalCount && i < f->LocalCount; i++)
-            if (f->P->LocalHashes[i] == hash && name_equal(f->P->Locals[i], name)) {
+            if (f->P->LocalHashes[i] == hash && name_equal(f->P->Locals[i], name) && (assign || (LONG)i != f->P->ResultSlot)) {
                 t->Kind = TG_CELL;
                 t->Cell = &f->Locals[i];
                 return;
@@ -463,6 +463,16 @@ static void resolve_name(Frame *f, Expr *e, Target *t, BOOL assign)
     resolve_late(f, e, t, assign);
 }
 
+BOOL engine_global_member(Frame *f, PCWSTR name)
+{
+    Engine *eng = f->E;
+    for (Sym **b = eng->Buckets; b < eng->Buckets + 128; b++)
+        for (Sym *item = *b; item; item = item->Next)
+            if (item->Kind == SYM_ITEM && (item->ItemFlags & SCRIPTITEM_GLOBALMEMBERS) && item_has_member(f, item, name))
+                return TRUE;
+    return FALSE;
+}
+
 static void target_release(Target *t)
 {
     if (t->Kind == TG_ITEM)
@@ -476,13 +486,31 @@ static void target_release(Target *t)
 static int stack_check(Frame *f)
 {
     PTEB teb = NtCurrentTeb();
-    BYTE marker;
-    if ((BYTE *)&marker < (BYTE *)teb->DeallocationStack + 0x14000)
+    BYTE marker = 0;
+    BYTE *low = teb->DeallocationStack;
+    if (!low) {
+        MEMORY_BASIC_INFORMATION info;
+        if (VirtualQuery(&marker, &info, sizeof(info)))
+            low = info.AllocationBase;
+    }
+    if (f->E->Depth > 6000 || (BYTE *)&marker < low + 0x14000)
         return raise_error(f, E_VBS_STACK, nullptr);
     return R_OK;
 }
 
 extern const WCHAR g_detail_empty[];
+
+/* whether the name was declared, by Dim, Const or as a parameter, and not made by use. */
+static BOOL name_declared(Frame *f, Expr *x)
+{
+    if (x->Kind != X_NAME)
+        return TRUE;
+    if (x->Bound == B_LOCAL && f->P)
+        return (UINT)x->u.Name.Slot < f->P->DeclaredCount;
+    if (x->Bound == B_GLOBAL)
+        return x->u.Name.Symbol->Declared != 0;
+    return x->Bound == B_FIELD;
+}
 
 static int obj_value(Frame *f, VARIANT *v, Expr *src)
 {
@@ -506,7 +534,8 @@ static int obj_value(Frame *f, VARIANT *v, Expr *src)
         VariantInit(&r);
         int rc = obj_default(f, v, DISPATCH_METHOD | DISPATCH_PROPERTYGET, nullptr, 0, &r);
         if (rc != R_OK) {
-            if (src && f->E->Fault.Set && !f->E->Fault.Host && f->E->Err.Number == E_VBS_NO_MEMBER) {
+            if (src && (src->Kind == X_NAME || src->Kind == X_MEMBER) && f->E->Fault.Set && !f->E->Fault.Host &&
+                f->E->Err.Number == E_VBS_NO_MEMBER) {
                 WCHAR name[80];
                 describe_expr(src, v, name);
                 raise_error(f, E_VBS_NO_MEMBER, name);
@@ -916,6 +945,12 @@ static int eval_binary(Frame *f, Expr *x, VARIANT *out)
     int rc = eval(f, x->u.Operands.Left, &l);
     if (rc != R_OK)
         return rc;
+    if (x->Op == OP_LIKE) {
+        VARIANT skip;
+        eval(f, x->u.Operands.Left, &skip);
+        VariantClear(&skip);
+        return raise_error(f, E_VBS_NOT_DEFINED, nullptr);
+    }
     if (x->Op == OP_IS) {
         rc = eval(f, x->u.Operands.Right, &r);
         if (rc != R_OK) {
@@ -1102,8 +1137,9 @@ static int eval_member(Frame *f, Expr *x, VARIANT *out, BOOL statement)
     int rc = eval_object(f, x, &obj);
     if (rc != R_OK) {
         if (f->E->Err.Number == E_VBS_OBJECT_REQUIRED && x->u.Member.Object) {
-            if (x->u.Member.Object->Kind == X_NAME)
-                raise_error(f, E_VBS_OBJECT_REQUIRED, g_detail_empty);
+            Expr *oe = x->u.Member.Object;
+            if (oe->Kind == X_NAME)
+                raise_error(f, E_VBS_OBJECT_REQUIRED, name_declared(f, oe) ? g_detail_empty : oe->u.Name.Name);
         }
         return rc;
     }
@@ -1284,7 +1320,7 @@ static int eval_name_call(Frame *f, Expr *name_expr, Args *args, BOOL statement,
             rc = raise_error(f, E_VBS_UNDEFINED, name);
         } else if (has_args) {
             rc = raise_error(f, E_VBS_TYPE_MISMATCH, name);
-        } else if (statement && whole && whole->Kind == X_CALL && has_parens) {
+        } else if (statement) {
             rc = raise_error(f, E_VBS_TYPE_MISMATCH, name);
         } else {
             VariantInit(out);
@@ -1353,8 +1389,11 @@ int eval(Frame *f, Expr *x, VARIANT *out)
     case X_BINARY: return eval_binary(f, x, out);
     case X_NEW: return eval_new(f, x, out);
     case X_ME:
-        if (!f->Me)
-            return raise_error(f, E_VBS_UNQUALIFIED, nullptr);
+        if (!f->Me) {
+            out->vt = VT_DISPATCH;
+            out->pdispVal = script_dispatch_create(f->E);
+            return R_OK;
+        }
         out->vt = VT_DISPATCH;
         out->pdispVal = &f->Me->Dispatch;
         out->pdispVal->lpVtbl->AddRef(out->pdispVal);
@@ -1722,6 +1761,8 @@ static int exec_erase(Frame *f, Stmt *s)
 {
     Expr *x = s->u.Randomize;
     Target t;
+    if (!x)
+        return raise_error(f, E_VBS_WRONG_ARGS, L"Erase");
     if (x->Kind != X_NAME)
         return raise_error(f, E_VBS_TYPE_MISMATCH, L"Erase");
     resolve_name(f, x, &t, FALSE);
@@ -1807,24 +1848,28 @@ static int exec_for(Frame *f, Stmt *s)
     int cmp = 0;
     HRESULT hr = var_compare(&step, &zero, f->E->Lcid, &cmp);
     BOOL down = SUCCEEDED(hr) && cmp < 0;
+    /* the variable is the counter: it takes the first value, and the step is added to it after each pass, so it
+       ends one step past the last value. */
     VARIANT counter;
     VariantInit(&counter);
     VariantCopy(&counter, &from);
-    rc = R_OK;
-    for (;;) {
-        hr = var_compare(&counter, &to, f->E->Lcid, &cmp);
+    rc = assign_to(f, s->u.For.Var, &counter, FALSE);
+    VariantClear(&counter);
+    while (rc == R_OK) {
+        VARIANT cur_var;
+        VariantInit(&cur_var);
+        Target t;
+        resolve_name(f, s->u.For.Var, &t, TRUE);
+        if (t.Kind == TG_CELL)
+            var_deref(&cur_var, t.Cell);
+        target_release(&t);
+        hr = var_compare(cell_target(&cur_var), &to, f->E->Lcid, &cmp);
+        VariantClear(&cur_var);
         if (FAILED(hr)) {
             rc = raise_error(f, E_VBS_TYPE_MISMATCH, nullptr);
             break;
         }
         if (down ? cmp < 0 : cmp > 0)
-            break;
-        VARIANT copy;
-        VariantInit(&copy);
-        VariantCopy(&copy, &counter);
-        rc = assign_to(f, s->u.For.Var, &copy, FALSE);
-        VariantClear(&copy);
-        if (rc != R_OK)
             break;
         rc = run_statements(f, s->u.For.Body);
         if (rc == R_EXIT_FOR) {
@@ -1837,10 +1882,7 @@ static int exec_for(Frame *f, Stmt *s)
             rc = raise_error(f, 4096, nullptr);
             break;
         }
-        VARIANT cur_var;
         VariantInit(&cur_var);
-        /* the counter is the variable itself, so a change by the body counts. */
-        Target t;
         resolve_name(f, s->u.For.Var, &t, TRUE);
         if (t.Kind == TG_CELL)
             var_deref(&cur_var, t.Cell);
@@ -1853,13 +1895,12 @@ static int exec_for(Frame *f, Stmt *s)
             rc = raise_error(f, hr == DISP_E_OVERFLOW ? E_VBS_OVERFLOW : E_VBS_TYPE_MISMATCH, nullptr);
             break;
         }
-        VariantClear(&counter);
-        counter = next;
+        rc = assign_to(f, s->u.For.Var, &next, FALSE);
+        VariantClear(&next);
     }
     VariantClear(&from);
     VariantClear(&to);
     VariantClear(&step);
-    VariantClear(&counter);
     return rc;
 }
 
@@ -2086,7 +2127,7 @@ static int exec_let(Frame *f, Stmt *s)
     if (tg->Kind == X_MEMBER || (tg->Kind == X_CALL))
         object_ok = TRUE;
     if (!object_ok && (v.vt == VT_DISPATCH || v.vt == VT_UNKNOWN)) {
-        rc = value_of_expr(f, &v, s->u.Assign.Value);
+        rc = value_of_expr(f, &v, tg->Kind == X_NAME && !name_declared(f, tg) ? tg : nullptr);
         if (rc != R_OK) {
             VariantClear(&v);
             return rc;
@@ -2118,6 +2159,8 @@ static int exec_one(Frame *f, Stmt *s)
     case S_SETASSIGN: return exec_set(f, s);
     case S_CALL: {
         VARIANT r;
+        if (s->u.Call->Kind == X_CONST)
+            return raise_error(f, E_VBS_TYPE_MISMATCH, nullptr);
         int rc = eval_stmt_expr(f, s->u.Call, &r, TRUE);
         if (rc == R_OK)
             VariantClear(&r);
@@ -2185,6 +2228,24 @@ static int exec_one(Frame *f, Stmt *s)
     case S_REDIM: return exec_redim(f, s);
     case S_ERASE: return exec_erase(f, s);
     case S_CONST:
+        if (f->P) {
+            /* a constant of a procedure is a local that takes its value here. */
+            Expr nameexpr = {};
+            nameexpr.Kind = X_NAME;
+            nameexpr.u.Name.Name = s->u.Const.Name;
+            nameexpr.u.Name.Hash = name_hash(s->u.Const.Name);
+            Target t;
+            resolve_name(f, &nameexpr, &t, TRUE);
+            if (t.Kind == TG_CELL) {
+                VARIANT v;
+                eval(f, s->u.Const.Value, &v);
+                VARIANT *cell = cell_target(t.Cell);
+                VariantClear(cell);
+                *cell = v;
+            }
+            target_release(&t);
+        }
+        return R_OK;
     case S_NOP:
     case S_PROCDECL:
     case S_CLASSDECL:
@@ -2206,7 +2267,7 @@ static int exec_one(Frame *f, Stmt *s)
     }
     case S_EXECUTE: {
         if (!s->u.Execute.Source)
-            return raise_error(f, E_VBS_WRONG_ARGS, nullptr);
+            return raise_error(f, E_VBS_WRONG_ARGS, s->u.Execute.Global ? L"ExecuteGlobal" : L"Execute");
         VARIANT v;
         int rc = rvalue(f, s->u.Execute.Source, &v);
         if (rc != R_OK)
@@ -2228,6 +2289,11 @@ int run_statements(Frame *f, Stmt *s)
         f->Line = s->Line;
         f->Col = s->Col;
         int rc = exec_one(f, s);
+        if (rc == R_OK && f->E->TermError) {
+            /* the terminator of an object the statement let go of failed. */
+            f->E->TermError = FALSE;
+            rc = R_ERR;
+        }
         if (rc == R_ERR) {
             if (f->ResumeNext && !f->E->Interrupted)
                 continue;
@@ -2286,15 +2352,8 @@ void instance_destroy(Instance *inst)
         Frame g = {};
         g.E = e;
         g.Unit = inst->Cls->Unit;
-        ErrState saved = e->Err;
-        memset(&e->Err, 0, sizeof(e->Err));
-        Fault sf = e->Fault;
-        memset(&e->Fault, 0, sizeof(e->Fault));
-        call_proc(e, inst->Cls->Terminate, inst, nullptr, 0, nullptr, &g);
-        err_clear(e);
-        e->Err = saved;
-        fault_clear(e);
-        e->Fault = sf;
+        if (call_proc(e, inst->Cls->Terminate, inst, nullptr, 0, nullptr, &g) != R_OK)
+            e->TermError = TRUE;
         if (--inst->Refs > 0)
             return;
     }

@@ -50,7 +50,9 @@ static void bind_name(Linker *L, Expr *x, BOOL assign)
         p = L->Frame->P;
     if (p) {
         int slot = proc_local_find(p, name, hash);
-        if (slot >= 0) {
+        if (slot >= 0 && slot == p->ResultSlot && !assign)
+            slot = -1;
+        else if (slot >= 0) {
             x->Bound = B_LOCAL;
             x->u.Name.Slot = slot;
             return;
@@ -67,6 +69,18 @@ static void bind_name(Linker *L, Expr *x, BOOL assign)
     }
     if (s || !assign || L->Explicit)
         return;
+    /* a member of the host's global items takes the name. */
+    {
+        Frame probe = {};
+        probe.E = L->E;
+        extern BOOL engine_global_member(Frame * f, PCWSTR name);
+        if (engine_global_member(&probe, name))
+            return;
+    }
+    if (L->Exec && L->Frame)
+        for (DynName *d = L->Frame->Dyn; d; d = d->Next)
+            if (d->Hash == hash && name_equal(d->Name, name))
+                return;
     if (L->P && !L->Exec) {
         int slot = proc_local_add(L->U, L->P, name);
         x->Bound = B_LOCAL;
@@ -230,6 +244,7 @@ static BOOL declare_dims(Engine *e, Unit *u, Stmt *s, Frame *frame, BOOL exec)
                         /* a variable of the same name hides the item. */
                         VariantClear(&old->Value);
                         old->Kind = SYM_VAR;
+                        old->Declared = 1;
                         continue;
                     }
                     if (exec && old->Kind == SYM_VAR)
@@ -238,6 +253,7 @@ static BOOL declare_dims(Engine *e, Unit *u, Stmt *s, Frame *frame, BOOL exec)
                 }
                 Sym *sym = sym_add(e, d->Name, SYM_VAR);
                 sym->Public = d->Public;
+                sym->Declared = 1;
             }
             break;
         case S_CONST: {
@@ -263,6 +279,7 @@ static BOOL declare_dims(Engine *e, Unit *u, Stmt *s, Frame *frame, BOOL exec)
             }
             Sym *sym = old ? old : sym_add(e, s->u.Const.Name, SYM_CONST);
             sym->Kind = SYM_CONST;
+            sym->Declared = 1;
             VariantClear(&sym->Value);
             if (s->u.Const.Value->u.Value.vt == VT_BSTR) {
                 sym->Value.vt = VT_BSTR;
@@ -310,7 +327,7 @@ BOOL unit_declare(Engine *e, Unit *unit, Frame *frame)
     }
     for (Proc *p = unit->Procedures; p; p = p->Next) {
         Sym *old = sym_find(e, p->Name, name_hash(p->Name));
-        if (old && !(exec && (old->Kind == SYM_PROC || old->Kind == SYM_VAR)) && old->Kind != SYM_ITEM) {
+        if (old && old->Kind != SYM_PROC && !(exec && old->Kind == SYM_VAR) && old->Kind != SYM_ITEM) {
             raise_error(&g, 1041, nullptr);
             return FALSE;
         }

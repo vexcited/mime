@@ -2423,8 +2423,8 @@ int builtin_eval(Frame *f, VARIANT *source, VARIANT *result, BOOL execute, BOOL 
         vbs_free(e->Fault.Text);
         e->Fault.Text = nullptr;
         e->Fault.Compile = FALSE;
-        e->Fault.Line = 0;
-        e->Fault.Col = 0;
+        e->Fault.Line = f->Line;
+        e->Fault.Col = f->Col;
         return R_ERR;
     }
     unit->Global = global;
@@ -2445,7 +2445,11 @@ int builtin_eval(Frame *f, VARIANT *source, VARIANT *result, BOOL execute, BOOL 
     target->Line = 0;
     target->Col = 0;
     if (execute) {
+        /* the executed text has an error handling of its own. */
+        BOOL resume = target->ResumeNext;
+        target->ResumeNext = FALSE;
         rc = run_statements(target, unit->Statements);
+        target->ResumeNext = resume;
         if (rc >= R_EXIT_FOR)
             rc = R_OK;
     } else {

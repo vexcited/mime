@@ -485,10 +485,11 @@ static HRESULT STDMETHODCALLTYPE parse_text(IActiveScriptParse *This, LPCOLESTR 
         return hr;
     }
     if (!unit_declare(e, unit, &e->Global)) {
+        /* a name declared twice is found when the script starts. */
         engine_report(e, FALSE);
         unit_free(unit);
         engine_release(e);
-        return SCRIPT_E_REPORTED;
+        return S_OK;
     }
     unit_link(e, unit, &e->Global);
     unit->Next = nullptr;
