@@ -476,7 +476,8 @@ static HRESULT WINAPI ly_line_metrics(IDWriteTextLayout4 *This, DWRITE_LINE_METR
         m[i].trailingWhitespaceLength = ln->tws_length;
         m[i].newlineLength = ln->newline_length;
         m[i].height = ln->height;
-        m[i].baseline = ln->baseline;
+        /* the lines of vertical text keep their baseline in the middle. */
+        m[i].baseline = l->vertical ? ln->height * 0.5f : ln->baseline;
         m[i].isTrimmed = ln->trimmed;
     }
     return S_OK;
@@ -674,7 +675,7 @@ static const DwItem *item_of(const DwLine *ln, UINT32 cluster)
 static void end_metrics(const DwLayout *l, DWRITE_HIT_TEST_METRICS *m, FLOAT *x, FLOAT *y)
 {
     const DwLine *ln = &l->lines[l->line_count - 1];
-    BOOL rtl = l->fmt.reading == DWRITE_READING_DIRECTION_RIGHT_TO_LEFT;
+    BOOL rtl = DW_READS_RTL(l);
     FLOAT px = rtl ? ln->x - ln->tws_width : ln->x + ln->width + ln->tws_width;
     if (ln->trimmed && !ln->hidden)
         px = rtl ? ln->x : ln->x + ln->width;
@@ -731,7 +732,7 @@ static HRESULT WINAPI hit_text_position(IDWriteTextLayout4 *This, UINT32 pos, BO
         m->top = ln->top;
         m->width = ln->sign_width;
         m->height = ln->height;
-        m->bidiLevel = l->fmt.reading == DWRITE_READING_DIRECTION_RIGHT_TO_LEFT ? 1 : 0;
+        m->bidiLevel = DW_READS_RTL(l) ? 1 : 0;
         m->isText = TRUE;
         m->isTrimmed = TRUE;
         *px = trailing ? m->left + m->width : m->left;
@@ -814,7 +815,7 @@ static HRESULT WINAPI hit_point(IDWriteTextLayout4 *This, FLOAT x, FLOAT y, BOOL
     if (!sign)
         level_odd = l->clusters[it->cluster].level & 1;
     else
-        level_odd = l->fmt.reading == DWRITE_READING_DIRECTION_RIGHT_TO_LEFT;
+        level_odd = DW_READS_RTL(l);
     if (found)
         *trailing = level_odd ? x < it->x + it->width / 2 : x >= it->x + it->width / 2;
     else if (x < first->x)
@@ -961,6 +962,8 @@ typedef struct Rend {
     DWRITE_READING_DIRECTION reading;
     DWRITE_FLOW_DIRECTION flow;
     BOOL vertical; /* the geometry is turned a quarter, glyphs lie sideways. */
+    BOOL mirror; /* lines stack from the right, so x runs from the right edge of the layout. */
+    FLOAT origin_x, extent; /* of the layout, to mirror about. */
 } Rend;
 
 static DWRITE_GLYPH_ORIENTATION_ANGLE angle_of(const Rend *r)
@@ -977,6 +980,8 @@ static void turn(const Rend *r, FLOAT *x, FLOAT *y)
         FLOAT t = *x;
         *x = *y;
         *y = t;
+        if (r->mirror)
+            *x = 2 * r->origin_x + r->extent - *x;
     }
 }
 
@@ -1060,6 +1065,9 @@ HRESULT DwLayoutDraw(DwLayout *l, void *context, IDWriteTextRenderer *renderer, 
     r.reading = l->fmt.reading;
     r.vertical = l->vertical;
     r.flow = l->fmt.flow;
+    r.mirror = l->vertical && l->fmt.flow == DWRITE_FLOW_DIRECTION_RIGHT_TO_LEFT;
+    r.origin_x = oy;
+    r.extent = l->max_width;
     if (FAILED(renderer->lpVtbl->QueryInterface(renderer, &IID_IDWriteTextRenderer1, (void **)&r.r1)))
         r.r1 = nullptr;
     BOOL disabled = FALSE;
@@ -1238,7 +1246,7 @@ HRESULT DwLayoutDraw(DwLayout *l, void *context, IDWriteTextRenderer *renderer, 
                     objects[object_count].object = ln->sign;
                     objects[object_count].x = ox + it->x;
                     objects[object_count].y = snap_y - om.baseline;
-                    objects[object_count].rtl = l->fmt.reading == DWRITE_READING_DIRECTION_RIGHT_TO_LEFT;
+                    objects[object_count].rtl = DW_READS_RTL(l);
                     objects[object_count].effect = nullptr;
                     object_count++;
                 }
@@ -1294,15 +1302,28 @@ static void swap_hit(DWRITE_HIT_TEST_METRICS *m)
     m->height = t;
 }
 
+/* lines stack from the right edge when the text flows right to left. */
+static BOOL mirrored(const DwLayout *l)
+{
+    return l->vertical && l->fmt.flow == DWRITE_FLOW_DIRECTION_RIGHT_TO_LEFT;
+}
+
+static void mirror_hit(const DwLayout *l, DWRITE_HIT_TEST_METRICS *m)
+{
+    if (mirrored(l))
+        m->left = l->max_width - m->left - m->width;
+}
+
 static HRESULT WINAPI ly_hit_text_position(IDWriteTextLayout4 *This, UINT32 pos, BOOL trailing, FLOAT *px, FLOAT *py,
                                            DWRITE_HIT_TEST_METRICS *m)
 {
     HRESULT hr = hit_text_position(This, pos, trailing, px, py, m);
     if (SUCCEEDED(hr) && L(This)->vertical) {
-        FLOAT t = *px;
-        *px = *py;
-        *py = t;
+        *py = *px;
         swap_hit(m);
+        mirror_hit(L(This), m);
+        /* the caret of a vertical line sits on the far side of its box. */
+        *px = m->left + m->width;
     }
     return hr;
 }
@@ -1314,9 +1335,13 @@ static HRESULT WINAPI ly_hit_point(IDWriteTextLayout4 *This, FLOAT x, FLOAT y, B
         return E_INVALIDARG;
     if (FAILED(DwLayoutEnsure(L(This))) || !L(This)->vertical)
         return hit_point(This, x, y, trailing, inside, m);
+    if (mirrored(L(This)))
+        x = L(This)->max_width - x;
     HRESULT hr = hit_point(This, y, x, trailing, inside, m);
-    if (SUCCEEDED(hr))
+    if (SUCCEEDED(hr)) {
         swap_hit(m);
+        mirror_hit(L(This), m);
+    }
     return hr;
 }
 
@@ -1325,10 +1350,16 @@ static HRESULT WINAPI ly_hit_range(IDWriteTextLayout4 *This, UINT32 pos, UINT32 
 {
     if (FAILED(DwLayoutEnsure(L(This))) || !L(This)->vertical)
         return hit_range(This, pos, len, ox, oy, out, max, actual);
-    HRESULT hr = hit_range(This, pos, len, oy, ox, out, max, actual);
+    BOOL mirror = mirrored(L(This));
+    HRESULT hr = hit_range(This, pos, len, oy, mirror ? 0 : ox, out, max, actual);
     if (out && actual)
-        for (UINT32 i = 0; i < *actual && i < max; i++)
+        for (UINT32 i = 0; i < *actual && i < max; i++) {
             swap_hit(&out[i]);
+            if (mirror) {
+                mirror_hit(L(This), &out[i]);
+                out[i].left += ox;
+            }
+        }
     return hr;
 }
 
@@ -1351,6 +1382,11 @@ static HRESULT WINAPI ly_overhang(IDWriteTextLayout4 *This, DWRITE_OVERHANG_METR
     t = o->right;
     o->right = o->bottom;
     o->bottom = t;
+    if (mirrored(l)) {
+        t = o->left;
+        o->left = o->right;
+        o->right = t;
+    }
     return hr;
 }
 
@@ -1490,7 +1526,8 @@ static HRESULT WINAPI ly3_line_metrics(IDWriteTextLayout4 *This, DWRITE_LINE_MET
         m[i].trailingWhitespaceLength = ln->tws_length;
         m[i].newlineLength = ln->newline_length;
         m[i].height = ln->height;
-        m[i].baseline = ln->baseline;
+        /* the lines of vertical text keep their baseline in the middle. */
+        m[i].baseline = l->vertical ? ln->height * 0.5f : ln->baseline;
         m[i].isTrimmed = ln->trimmed;
         m[i].leadingBefore = ln->leading_before;
         m[i].leadingAfter = ln->leading_after;

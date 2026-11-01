@@ -83,7 +83,7 @@ HRESULT DwLayoutBuildLines(DwLayout *l)
     FLOAT avail = l->max_width;
     UINT32 ncl = l->cluster_count;
     DwCluster *cl = l->clusters;
-    UINT8 para_level = f->reading == DWRITE_READING_DIRECTION_RIGHT_TO_LEFT ? 1 : 0;
+    UINT8 para_level = DW_READS_RTL(l) ? 1 : 0;
     for (UINT32 i = 0; i < ncl; i++)
         cl[i].extra = 0;
     UINT32 cap = 8;
@@ -508,12 +508,17 @@ HRESULT DwLayoutEnsure(DwLayout *l)
         FLOAT t = m->left;
         m->left = m->top;
         m->top = t;
+        FLOAT trailing = m->widthIncludingTrailingWhitespace;
         t = m->width;
         m->width = m->height;
         m->height = t;
         m->widthIncludingTrailingWhitespace = m->width;
         m->layoutWidth = width;
         m->layoutHeight = height;
+        if (r == DWRITE_READING_DIRECTION_BOTTOM_TO_TOP)
+            m->top = height - trailing;
+        if (fl == DWRITE_FLOW_DIRECTION_RIGHT_TO_LEFT)
+            m->left = width - m->left - m->width;
     }
     return hr;
 }

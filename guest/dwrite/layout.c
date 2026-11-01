@@ -720,7 +720,7 @@ HRESULT DwLayoutBuildRuns(DwLayout *l)
     }
     if (ok && n) {
         DwResolveScripts(l->text, n, b.script, b.shapes);
-        DwBidiLevels(l->text, n, l->fmt.reading == DWRITE_READING_DIRECTION_RIGHT_TO_LEFT ? 1 : 0, b.explicit_level,
+        DwBidiLevels(l->text, n, DW_READS_RTL(l) ? 1 : 0, b.explicit_level,
                      b.level);
         DwLineBreaks(l->text, n, b.gaps);
         for (UINT32 i = 0; i < n; i++)

@@ -156,4 +156,7 @@ BOOL DwSpanPropEqual(const DwSpan *a, const DwSpan *b, int prop);
 HRESULT DwResolveFace(DwLayout *layout, const DwSpan *span, UINT32 position, UINT32 length, UINT32 *mapped,
                       IDWriteFontFace **face, FLOAT *scale);
 
+/* text that reads bottom to top runs through its lines the way right to left text does. */
+#define DW_READS_RTL(l) ((l)->fmt.reading == DWRITE_READING_DIRECTION_RIGHT_TO_LEFT || (l)->fmt.reading == DWRITE_READING_DIRECTION_BOTTOM_TO_TOP)
+
 #endif
