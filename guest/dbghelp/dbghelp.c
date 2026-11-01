@@ -583,11 +583,14 @@ typedef struct _MINIDUMP_EXCEPTION_STREAM {
 } MINIDUMP_EXCEPTION_STREAM;
 #pragma pack(pop)
 
+/* callers lay it out with four byte packing, so the pointer comes straight after the thread on x64 too. */
+#pragma pack(push, 4)
 typedef struct _MINIDUMP_EXCEPTION_INFORMATION {
     DWORD ThreadId;
     PEXCEPTION_POINTERS ExceptionPointers;
     BOOL ClientPointers;
 } MINIDUMP_EXCEPTION_INFORMATION, *PMINIDUMP_EXCEPTION_INFORMATION;
+#pragma pack(pop)
 
 typedef struct DUMP {
     HANDLE File;
