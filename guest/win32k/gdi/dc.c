@@ -941,6 +941,12 @@ HANDLE NTAPI NtGdiGetDCObject(HDC hdc, int type)
             h = dc->State.Font->Header.Handle;
             break;
         case OBJ_BITMAP:
+            if (dc->Surface && dc->Surface == dc->DefaultBitmap && (dc->Flags & DC_MEMORY)) {
+                /* a memory dc holds the stock bitmap until another is selected. */
+                if (!dc->DefaultBitmap->Header.Handle)
+                    GdiCreateHandle(&dc->DefaultBitmap->Header, GDI_TYPE_BITMAP);
+                dc->DefaultBitmap->Header.Flags |= GDI_FLAG_SYSTEM;
+            }
             h = dc->Surface && dc->Surface->Header.Handle ? dc->Surface->Header.Handle : nullptr;
             break;
         }
