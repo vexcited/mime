@@ -1,7 +1,7 @@
 /*
- * event trace consumers and the isolation functions of sechost.dll. a consumer opens the event log file or session of a
- * trace, and the machine has neither a trace session nor the parser of the log format. containers that isolate a
- * process need app container profiles, which it does not have either.
+ * the event trace consumers that open a log by options, and the isolation functions of sechost.dll. the consumers that
+ * open a log by its record are in sechost_trace.c. containers that isolate a process need app container profiles, which
+ * the machine does not have.
  */
 #define MIME_BUILD_ADVAPI32 1
 #include "advapi32_private.h"
@@ -43,32 +43,6 @@ static ULONGLONG open_trace_file(PCWSTR name)
         return trace_failed(GetLastError());
     CloseHandle(file);
     return trace_failed(ERROR_NOT_SUPPORTED);
-}
-
-ADVAPI ULONGLONG WINAPI OpenTraceW(TRACE_LOGFILEW_START *logfile)
-{
-    if (!logfile)
-        return trace_failed(ERROR_INVALID_PARAMETER);
-    /* a real time trace needs the session, and no session can be started. */
-    if (logfile->LogFileMode & EVENT_TRACE_REAL_TIME_MODE_)
-        return trace_failed(ERROR_NOT_SUPPORTED);
-    return open_trace_file(logfile->LogFileName);
-}
-
-ADVAPI ULONGLONG WINAPI OpenTraceA(TRACE_LOGFILEA_START *logfile)
-{
-    if (!logfile)
-        return trace_failed(ERROR_INVALID_PARAMETER);
-    if (logfile->LogFileMode & EVENT_TRACE_REAL_TIME_MODE_)
-        return trace_failed(ERROR_NOT_SUPPORTED);
-    PWSTR name = AdvAnsiToWide(logfile->LogFileName);
-    if (logfile->LogFileName && !name)
-        return trace_failed(ERROR_NOT_ENOUGH_MEMORY);
-    ULONGLONG result = open_trace_file(name);
-    DWORD error = GetLastError();
-    AdvFree(name);
-    SetLastError(error);
-    return result;
 }
 
 ADVAPI ULONGLONG WINAPI OpenTraceFromFile(PCWSTR name, PVOID options, PVOID header)

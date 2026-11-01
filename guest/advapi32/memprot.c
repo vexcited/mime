@@ -10,9 +10,13 @@ typedef BOOL(WINAPI *PROTECT_MEMORY)(LPVOID data, DWORD size, DWORD flags);
 
 #define MEMORY_BLOCK 16
 #define MEMORY_SAME_LOGON 2
+#define MEMORY_FOR_SYSTEM 4
 
 static NTSTATUS protect_memory(PBYTE memory, ULONG length, ULONG flags, BOOL encrypt)
 {
+    /* the system option has the key of the machine alone, which crypt32 makes for a block shared by processes. */
+    if (flags == MEMORY_FOR_SYSTEM)
+        flags = 1;
     if (flags > MEMORY_SAME_LOGON || length % 8)
         return STATUS_INVALID_PARAMETER;
     if (!length)

@@ -6,6 +6,7 @@
  * time the slot is reused, so a stale handle can be told from a live one.
  */
 #include "ntdll_private.h"
+#include <mime/etwshare.h>
 
 #define ERROR_SUCCESS 0
 #define ERROR_INVALID_HANDLE 6
@@ -30,6 +31,11 @@ typedef struct ETW_REGISTRATION {
     BOOLEAN DescriptorType;
     PVOID Traits;
     PVOID ClassicContext;
+    BOOLEAN Enabled;
+    UCHAR Level;
+    LONG Seen;
+    ULONGLONG MatchAny;
+    ULONGLONG MatchAll;
 } ETW_REGISTRATION;
 
 static RTL_SRWLOCK g_lock;
@@ -94,6 +100,7 @@ static ULONG register_provider(const GUID *id, ULONG type, PVOID callback, PVOID
     r->ClassicContext = classic_context;
     r->Traits = nullptr;
     r->DescriptorType = FALSE;
+    r->Seen = -1;
     do
         r->Sequence = ++g_sequence;
     while (!r->Sequence);
@@ -131,6 +138,208 @@ static BOOLEAN registered(ULONGLONG handle)
     return found;
 }
 
+/* ------------------------------------------------------------------ sessions */
+
+typedef void(NTAPI *ENABLE_CALLBACK)(const GUID *source, ULONG enabled, UCHAR level, ULONGLONG any, ULONGLONG all,
+                                     PVOID filter, PVOID context);
+
+static LONGLONG g_next_open;
+
+/* the table of sessions when one exists; a process looks again for it a few times a second. */
+static ETWS_TABLE *session_table(void)
+{
+    if (g_etws_table)
+        return g_etws_table;
+    LARGE_INTEGER now;
+    NtQuerySystemTime(&now);
+    if (now.QuadPart < g_next_open)
+        return nullptr;
+    g_next_open = now.QuadPart + 2500000;
+    return etws_table(FALSE);
+}
+
+/*
+ * brings a registration up to date with the sessions that enable its provider, and calls its callback when the state
+ * changed. the callback runs in the thread that asked, outside the lock.
+ */
+static void sync_registration(ULONGLONG handle, BOOLEAN force)
+{
+    ETWS_TABLE *table = session_table();
+    if (!table)
+        return;
+    LONG generation = table->Generation;
+    GUID guid;
+    UCHAR level;
+    ULONGLONG any, all;
+    RtlAcquireSRWLockShared(&g_lock);
+    ETW_REGISTRATION *r = lookup(handle);
+    if (!r || r->Type != TYPE_EVENT || (r->Seen == generation && !force)) {
+        RtlReleaseSRWLockShared(&g_lock);
+        return;
+    }
+    guid = r->Provider;
+    RtlReleaseSRWLockShared(&g_lock);
+    BOOLEAN enabled = etws_provider_state(table, &guid, &level, &any, &all);
+    RtlAcquireSRWLockExclusive(&g_lock);
+    r = lookup(handle);
+    if (!r) {
+        RtlReleaseSRWLockExclusive(&g_lock);
+        return;
+    }
+    BOOLEAN changed = r->Enabled != enabled || (enabled && (r->Level != level || r->MatchAny != any || r->MatchAll != all));
+    r->Seen = generation;
+    r->Enabled = enabled;
+    r->Level = level;
+    r->MatchAny = any;
+    r->MatchAll = all;
+    PVOID callback = r->Callback, context = r->Context;
+    RtlReleaseSRWLockExclusive(&g_lock);
+    if (changed && callback)
+        ((ENABLE_CALLBACK)callback)(&guid, enabled ? 1 : 0, level, any, all, nullptr, context);
+}
+
+/* the data of an event is a list of descriptors of memory. */
+typedef struct EVENT_DATA {
+    ULONGLONG Pointer;
+    ULONG Size;
+    ULONG Reserved;
+} EVENT_DATA;
+
+static ULONG payload_size(ULONG count, const EVENT_DATA *data)
+{
+    ULONG size = 0;
+    for (ULONG i = 0; data && i < count; i++)
+        size += data[i].Size;
+    return size;
+}
+
+static BYTE *build_record(const ETWS_RECORD *record, ULONG count, const EVENT_DATA *data, ULONG length)
+{
+    BYTE *out = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, 0, length);
+    if (!out)
+        return nullptr;
+    memcpy(out, record, sizeof(*record));
+    ((ETWS_RECORD *)out)->Length = length;
+    BYTE *payload = out + sizeof(*record);
+    for (ULONG i = 0; data && i < count; i++) {
+        if (data[i].Size) {
+            memcpy(payload, (const void *)(ULONG_PTR)data[i].Pointer, data[i].Size);
+            payload += data[i].Size;
+        }
+    }
+    memset(payload, 0, out + length - payload);
+    return out;
+}
+
+/* drops the oldest events of the ring until the new record fits. */
+static void make_room(ETWS_SESSION *session, ULONG length)
+{
+    while (session->Write + length - session->Floor > ETWS_RING) {
+        session->Floor += ((ETWS_RECORD *)&session->Ring[session->Floor % ETWS_RING])->Length;
+        session->EventsLost++;
+    }
+}
+
+static void append_to_file(const ETWS_SESSION *session, const BYTE *bytes, ULONG length)
+{
+    UNICODE_STRING nt;
+    if (!RtlDosPathNameToNtPathName_U(session->File, &nt, nullptr, nullptr))
+        return;
+    OBJECT_ATTRIBUTES attributes;
+    InitializeObjectAttributes(&attributes, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+    IO_STATUS_BLOCK io;
+    HANDLE file;
+    if (NT_SUCCESS(NtCreateFile(&file, FILE_APPEND_DATA | SYNCHRONIZE, &attributes, &io, nullptr, FILE_ATTRIBUTE_NORMAL,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
+                                FILE_SYNCHRONOUS_IO_NONALERT, nullptr, 0))) {
+        LARGE_INTEGER end;
+        end.QuadPart = -2;
+        NtWriteFile(file, nullptr, nullptr, nullptr, &io, (PVOID)bytes, length, &end, nullptr);
+        NtClose(file);
+    }
+    RtlFreeUnicodeString(&nt);
+}
+
+/* writes an event to each session that enables the provider and whose level and keywords it passes. */
+static void deliver(ULONGLONG handle, const void *descriptor, const GUID *activity, const GUID *related, ULONG count,
+                    const void *data)
+{
+    ETWS_TABLE *table = session_table();
+    if (!table)
+        return;
+    GUID guid;
+    RtlAcquireSRWLockShared(&g_lock);
+    ETW_REGISTRATION *r = lookup(handle);
+    if (!r) {
+        RtlReleaseSRWLockShared(&g_lock);
+        return;
+    }
+    guid = r->Provider;
+    RtlReleaseSRWLockShared(&g_lock);
+    ETWS_RECORD record = {};
+    record.Kind = 1;
+    record.Provider = guid;
+    memcpy(&record.Id, descriptor, 16);
+    record.ProcessId = (ULONG)(ULONG_PTR)NtCurrentTeb()->ClientId.UniqueProcess;
+    record.ThreadId = (ULONG)(ULONG_PTR)NtCurrentTeb()->ClientId.UniqueThread;
+    LARGE_INTEGER now;
+    NtQuerySystemTime(&now);
+    record.Time = now.QuadPart;
+    record.Activity = activity ? *activity : NtCurrentTeb()->ActivityId;
+    if (related)
+        record.Related = *related;
+    record.PayloadSize = payload_size(count, data);
+    ULONG length = (sizeof(record) + record.PayloadSize + 7) & ~7u;
+    if (length > ETWS_RING / 2)
+        return;
+    BYTE *copy = build_record(&record, count, data, length);
+    if (!copy)
+        return;
+    etws_lock(table);
+    for (ULONG s = 0; s < ETWS_MAX_SESSIONS; s++) {
+        ETWS_SESSION *session = &table->Sessions[s];
+        if (!session->Used)
+            continue;
+        for (ULONG p = 0; p < ETWS_MAX_PROVIDERS; p++) {
+            ETWS_PROVIDER *provider = &session->Providers[p];
+            if (!provider->Used || memcmp(&provider->Guid, &guid, sizeof(GUID)))
+                continue;
+            if (!etws_passes(record.Level, record.Keyword, provider->Level, provider->MatchAny, provider->MatchAll))
+                break;
+            ULONG at = (ULONG)(session->Write % ETWS_RING);
+            if (at + length > ETWS_RING) {
+                ETWS_RECORD pad = {};
+                pad.Length = ETWS_RING - at;
+                pad.Kind = 2;
+                make_room(session, pad.Length);
+                memcpy(&session->Ring[at], &pad, sizeof(pad));
+                session->Write += pad.Length;
+                at = 0;
+            }
+            make_room(session, length);
+            memcpy(&session->Ring[at], copy, length);
+            session->Write += length;
+            session->BuffersWritten++;
+            if (session->File[0])
+                append_to_file(session, copy, length);
+            break;
+        }
+    }
+    etws_unlock(table);
+    RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, copy);
+}
+
+/* whether the provider of a registration is enabled for an event of the level and keyword. */
+static BOOLEAN enabled_for(ULONGLONG handle, UCHAR level, ULONGLONG keyword)
+{
+    sync_registration(handle, FALSE);
+    RtlAcquireSRWLockShared(&g_lock);
+    ETW_REGISTRATION *r = lookup(handle);
+    BOOLEAN enabled = r && r->Enabled && etws_passes(level, keyword, r->Level, r->MatchAny, r->MatchAll);
+    RtlReleaseSRWLockShared(&g_lock);
+    return enabled;
+}
+
 /* ------------------------------------------------------------------ providers */
 
 NTDLL_EXPORT ULONG NTAPI EtwEventRegister(const GUID *id, PVOID callback, PVOID context, ULONGLONG *handle)
@@ -138,7 +347,10 @@ NTDLL_EXPORT ULONG NTAPI EtwEventRegister(const GUID *id, PVOID callback, PVOID 
     /* a context without a callback has nothing to be passed to. */
     if (!callback && context)
         return ERROR_INVALID_PARAMETER;
-    return register_provider(id, TYPE_EVENT, callback, context, handle, nullptr);
+    ULONG error = register_provider(id, TYPE_EVENT, callback, context, handle, nullptr);
+    if (!error)
+        sync_registration(*handle, TRUE);
+    return error;
 }
 
 NTDLL_EXPORT ULONG NTAPI EtwEventUnregister(ULONGLONG handle)
@@ -208,15 +420,20 @@ NTDLL_EXPORT ULONG NTAPI EtwEventSetInformation(ULONGLONG handle, ULONG kind, co
     return r ? ERROR_SUCCESS : ERROR_INVALID_PARAMETER;
 }
 
-/* no session enables a provider. */
+/* a descriptor starts with its id, version, channel, level and opcode, and its keyword ends it. */
 NTDLL_EXPORT BOOLEAN NTAPI EtwEventEnabled(ULONGLONG handle, const void *descriptor)
 {
-    return FALSE;
+    if (!descriptor)
+        return FALSE;
+    const BYTE *d = descriptor;
+    ULONGLONG keyword;
+    memcpy(&keyword, d + 8, sizeof(keyword));
+    return enabled_for(handle, d[4], keyword);
 }
 
 NTDLL_EXPORT BOOLEAN NTAPI EtwEventProviderEnabled(ULONGLONG handle, UCHAR level, ULONGLONG keyword)
 {
-    return FALSE;
+    return enabled_for(handle, level, keyword);
 }
 
 /* ------------------------------------------------------------------ writing */
@@ -229,27 +446,39 @@ static ULONG check_write(ULONGLONG handle, const void *descriptor)
     return registered(handle) ? ERROR_SUCCESS : ERROR_INVALID_HANDLE;
 }
 
+/* checks the handle and the descriptor, then delivers the event to the sessions that want it. */
+static ULONG write_event(ULONGLONG handle, const void *descriptor, const GUID *activity, const GUID *related, ULONG count,
+                         const void *data)
+{
+    ULONG error = check_write(handle, descriptor);
+    if (error)
+        return error;
+    if (EtwEventEnabled(handle, descriptor))
+        deliver(handle, descriptor, activity, related, count, data);
+    return ERROR_SUCCESS;
+}
+
 NTDLL_EXPORT ULONG NTAPI EtwEventWriteTransfer(ULONGLONG handle, const void *descriptor, const GUID *activity,
                                                const GUID *related, ULONG count, const void *data)
 {
-    return check_write(handle, descriptor);
+    return write_event(handle, descriptor, activity, related, count, data);
 }
 
 NTDLL_EXPORT ULONG NTAPI EtwEventWrite(ULONGLONG handle, const void *descriptor, ULONG count, const void *data)
 {
-    return check_write(handle, descriptor);
+    return write_event(handle, descriptor, nullptr, nullptr, count, data);
 }
 
 NTDLL_EXPORT ULONG NTAPI EtwEventWriteEx(ULONGLONG handle, const void *descriptor, ULONGLONG filter, ULONG flags,
                                          const GUID *activity, const GUID *related, ULONG count, const void *data)
 {
-    return check_write(handle, descriptor);
+    return write_event(handle, descriptor, activity, related, count, data);
 }
 
 NTDLL_EXPORT ULONG NTAPI EtwEventWriteFull(ULONGLONG handle, const void *descriptor, USHORT group,
                                            const GUID *activity, const GUID *related, ULONG count, const void *data)
 {
-    return check_write(handle, descriptor);
+    return write_event(handle, descriptor, activity, related, count, data);
 }
 
 /* the handle is looked at before the string, unlike the other writers. */
@@ -257,7 +486,17 @@ NTDLL_EXPORT ULONG NTAPI EtwEventWriteString(ULONGLONG handle, UCHAR level, ULON
 {
     if (!registered(handle))
         return ERROR_INVALID_HANDLE;
-    return text ? ERROR_SUCCESS : ERROR_INVALID_PARAMETER;
+    if (!text)
+        return ERROR_INVALID_PARAMETER;
+    if (enabled_for(handle, level, keyword)) {
+        /* the text with its terminator is the data of an event whose descriptor has only the level and keyword. */
+        BYTE descriptor[16] = {};
+        descriptor[4] = level;
+        memcpy(descriptor + 8, &keyword, sizeof(keyword));
+        EVENT_DATA data = {(ULONG_PTR)text, (ULONG)((wcslen(text) + 1) * sizeof(WCHAR)), 0};
+        deliver(handle, descriptor, nullptr, nullptr, 1, &data);
+    }
+    return ERROR_SUCCESS;
 }
 
 /*

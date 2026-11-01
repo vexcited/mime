@@ -238,8 +238,8 @@ EXPORTS
     StartTraceW@12
     StopTraceW@16
     SubscribeServiceChangeNotifications@20
-    TraceConfigureLastBranchRecord@16
-    TraceQueryInformation@20
+    TraceConfigureLastBranchRecord@20
+    TraceQueryInformation@24
     TraceSetInformation@20
     UnsubscribeServiceChangeNotifications@4
     WaitServiceState@16

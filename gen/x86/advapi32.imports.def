@@ -34,16 +34,23 @@ EXPORTS
     AreAllAccessesGranted@8
     AreAnyAccessesGranted@8
     AuditComputeEffectivePolicyBySid@16
+    AuditComputeEffectivePolicyByToken@16
     AuditEnumerateCategories@8
     AuditEnumeratePerUserPolicy@4
     AuditEnumerateSubCategories@16
     AuditFree@4
+    AuditLookupCategoryGuidFromCategoryId@8
+    AuditLookupCategoryIdFromCategoryGuid@8
+    AuditLookupCategoryNameA@8
     AuditLookupCategoryNameW@8
+    AuditLookupSubCategoryNameA@8
     AuditLookupSubCategoryNameW@8
+    AuditQueryGlobalSaclA@8
     AuditQueryGlobalSaclW@8
     AuditQueryPerUserPolicy@16
     AuditQuerySecurity@8
     AuditQuerySystemPolicy@12
+    AuditSetGlobalSaclA@8
     AuditSetGlobalSaclW@8
     AuditSetPerUserPolicy@12
     AuditSetSecurity@8
@@ -144,6 +151,8 @@ EXPORTS
     CredReadDomainCredentialsA@16
     CredReadDomainCredentialsW@16
     CredReadW@16
+    CredRenameA@16
+    CredRenameW@16
     CredRestoreCredentials@16
     CredUnmarshalCredentialA@12
     CredUnmarshalCredentialW@12
@@ -559,8 +568,8 @@ EXPORTS
     SystemFunction036@8
     SystemFunction040@12
     SystemFunction041@12
-    TraceConfigureLastBranchRecord@16
-    TraceQueryInformation@20
+    TraceConfigureLastBranchRecord@20
+    TraceQueryInformation@24
     TraceSetInformation@20
     TreeResetNamedSecurityInfoA@44
     TreeResetNamedSecurityInfoW@44
