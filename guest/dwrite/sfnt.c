@@ -207,7 +207,11 @@ void DwFontDataMetrics(const DwFontData *d, DWRITE_FONT_METRICS1 *m)
     const MimeTtfFont *f = &d->ttf;
     const MimeTtfMetrics *t = &d->metrics;
     m->designUnitsPerEm = f->units_per_em;
-    int ascent = t->ascender, descent = -t->descender, gap = t->line_gap;
+    /* the windows metrics are the ascent and descent, whatever the line spacing of the hhea table asks for on top. */
+    int ascent = t->win_ascent, descent = t->win_descent;
+    int gap = t->ascender - t->descender + t->line_gap - (ascent + descent);
+    if (gap < 0)
+        gap = 0;
     if (t->use_typo_metrics && (t->typo_ascender || t->typo_descender)) {
         ascent = t->typo_ascender;
         descent = -t->typo_descender;
@@ -231,13 +235,31 @@ void DwFontDataMetrics(const DwFontData *d, DWRITE_FONT_METRICS1 *m)
         m->subscriptSizeX = s16(os2 + 10);
         m->subscriptSizeY = s16(os2 + 12);
         m->subscriptPositionX = s16(os2 + 14);
-        m->subscriptPositionY = s16(os2 + 16);
+        m->subscriptPositionY = (INT16)-s16(os2 + 16);
         m->superscriptSizeX = s16(os2 + 18);
         m->superscriptSizeY = s16(os2 + 20);
         m->superscriptPositionX = s16(os2 + 22);
         m->superscriptPositionY = s16(os2 + 24);
     }
     m->hasTypographicMetrics = t->use_typo_metrics;
+}
+
+static float floor_f(float v)
+{
+    float t = (float)(INT32)v;
+    return t > v ? t - 1.0f : t;
+}
+
+/* an oblique simulation shears the glyph box and the positions of the scripts by the slant the simulation uses. */
+void DwSimulateMetrics(DWRITE_FONT_METRICS1 *m, DWRITE_FONT_SIMULATIONS simulations)
+{
+    if (!(simulations & DWRITE_FONT_SIMULATIONS_OBLIQUE))
+        return;
+    const float slant = 696.0f / 2048.0f;
+    m->glyphBoxLeft = (INT16)(m->glyphBoxLeft + (INT16)floor_f((float)m->glyphBoxBottom * slant));
+    m->glyphBoxRight = (INT16)(m->glyphBoxRight + (INT16)floor_f((float)m->glyphBoxTop * slant));
+    m->subscriptPositionX = (INT16)(m->subscriptPositionX + (INT16)floor_f((float)m->subscriptPositionY * slant));
+    m->superscriptPositionX = (INT16)(m->superscriptPositionX + (INT16)floor_f((float)m->superscriptPositionY * slant));
 }
 
 /* the glyph's outline box in font units, zero for a glyph without one. */

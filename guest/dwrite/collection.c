@@ -424,6 +424,22 @@ BOOL DwFindFamily(const DwCollection *c, const WCHAR *name, UINT32 *index)
     return FALSE;
 }
 
+BOOL DwFindFamilyExact(const DwCollection *c, const WCHAR *name, UINT32 *index)
+{
+    for (UINT32 i = 0; i < c->count; i++) {
+        if (c->families[i].count && c->families[i].entries[0].gdi_family)
+            continue;
+        const DwStrings *names = c->families[i].names;
+        for (UINT32 l = 0; l < DwStringsCount(names); l++) {
+            if (!DwCompareNames(DwStringsAt(names, l)->text, name)) {
+                *index = i;
+                return TRUE;
+            }
+        }
+    }
+    return FALSE;
+}
+
 static HRESULT WINAPI collection_find(IDWriteFontCollection *This, const WCHAR *name, UINT32 *index, BOOL *exists)
 {
     if (!index || !exists)
@@ -757,7 +773,9 @@ static DWRITE_FONT_SIMULATIONS WINAPI font_simulations(IDWriteFont1 *This)
 
 static void WINAPI font_metrics(IDWriteFont1 *This, DWRITE_FONT_METRICS *metrics)
 {
-    memcpy(metrics, &font_entry((DwFont *)This)->metrics, sizeof(*metrics));
+    DWRITE_FONT_METRICS1 m = font_entry((DwFont *)This)->metrics;
+    DwSimulateMetrics(&m, font_entry((DwFont *)This)->simulations);
+    memcpy(metrics, &m, sizeof(*metrics));
 }
 
 static HRESULT WINAPI font_has_character(IDWriteFont1 *This, UINT32 code_point, BOOL *exists)
@@ -787,6 +805,7 @@ static HRESULT WINAPI font_create_face(IDWriteFont1 *This, IDWriteFontFace **fac
 static void WINAPI font_metrics1(IDWriteFont1 *This, DWRITE_FONT_METRICS1 *metrics)
 {
     *metrics = font_entry((DwFont *)This)->metrics;
+    DwSimulateMetrics(metrics, font_entry((DwFont *)This)->simulations);
 }
 
 static void WINAPI font_panose(IDWriteFont1 *This, DWRITE_PANOSE *panose)

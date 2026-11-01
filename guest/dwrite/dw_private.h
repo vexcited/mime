@@ -121,6 +121,7 @@ void DwFontDataAttributes(const DwFontData *data, DwAttributes *attributes);
 /* every name record with the id, or nullptr when there is none. */
 DwStrings *DwFontDataNames(const DwFontData *data, UINT32 name_id);
 void DwFontDataMetrics(const DwFontData *data, DWRITE_FONT_METRICS1 *metrics);
+void DwSimulateMetrics(DWRITE_FONT_METRICS1 *metrics, DWRITE_FONT_SIMULATIONS simulations);
 void DwFontDataGlyphMetrics(const DwFontData *data, UINT16 glyph, DWRITE_GLYPH_METRICS *metrics);
 /* the cmap's unicode coverage as ranges; returns how many there are. */
 UINT32 DwFontDataRanges(const DwFontData *data, DWRITE_UNICODE_RANGE *ranges, UINT32 max);
@@ -170,6 +171,8 @@ void DwSortEntries(const DwFamily *family, DWRITE_FONT_WEIGHT weight, DWRITE_FON
                    DWRITE_FONT_STYLE style, UINT32 *order);
 /* case insensitive, in any language. */
 BOOL DwFindFamily(const DwCollection *collection, const WCHAR *name, UINT32 *index);
+/* the same without the families that only exist for the names gdi gives to faces. */
+BOOL DwFindFamilyExact(const DwCollection *collection, const WCHAR *name, UINT32 *index);
 /* the font closest to the request in the named family. */
 HRESULT DwCreateFontByName(DwCollection *collection, const WCHAR *name, DWRITE_FONT_WEIGHT weight,
                            DWRITE_FONT_STRETCH stretch, DWRITE_FONT_STYLE style, IDWriteFont **font);

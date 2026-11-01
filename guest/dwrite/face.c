@@ -405,6 +405,7 @@ HRESULT DwFaceCreate(DwFactory *factory, IDWriteFontFile *file, DWRITE_FONT_FACE
     f->simulations = simulations;
     f->index = index;
     DwFontDataMetrics(data, &f->metrics);
+    DwSimulateMetrics(&f->metrics, simulations);
     *out = (IDWriteFontFace *)f;
     return S_OK;
 }

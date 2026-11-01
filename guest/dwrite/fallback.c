@@ -38,9 +38,10 @@ static ULONG WINAPI fallback_release(IDWriteFontFallback *This)
 static const WCHAR *const g_emoji[] = {L"Segoe UI Emoji", L"Segoe UI Symbol", nullptr};
 static const WCHAR *const g_cjk[] = {L"Microsoft YaHei", L"Yu Gothic UI", L"MS Gothic", L"SimSun",
                                      L"Microsoft JhengHei", L"Malgun Gothic", nullptr};
+static const WCHAR *const g_thai[] = {L"Leelawadee UI", L"Tahoma", L"Microsoft Sans Serif", nullptr};
 static const WCHAR *const g_hangul[] = {L"Malgun Gothic", L"Microsoft YaHei", L"Gulim", nullptr};
 static const WCHAR *const g_general[] = {
-    L"Segoe UI", L"Arial", L"Times New Roman", MIME_FALLBACK_FONT, L"Segoe UI Symbol", L"Cambria Math", L"Segoe UI Historic",
+    L"Segoe UI", L"Segoe UI Symbol", L"Arial", L"Times New Roman", MIME_FALLBACK_FONT, L"Cambria Math", L"Segoe UI Historic",
     L"Nirmala UI", L"Ebrima", L"Gadugi", L"Leelawadee UI", L"Myanmar Text", L"Microsoft Himalaya",
     L"Mongolian Baiti", L"Microsoft New Tai Lue", L"Microsoft Tai Le", L"Microsoft PhagsPa", L"Javanese Text",
     L"Sylfaen", L"Segoe UI Emoji", L"Microsoft YaHei", L"Yu Gothic UI", L"Malgun Gothic", L"MS Gothic",
@@ -48,9 +49,15 @@ static const WCHAR *const g_general[] = {
 
 static BOOL is_emoji(UINT32 c)
 {
-    return (c >= 0x1F000 && c <= 0x1FAFF) || (c >= 0x2600 && c <= 0x27BF) || (c >= 0x2B00 && c <= 0x2BFF) ||
-           c == 0xFE0F || c == 0x200D || (c >= 0x2190 && c <= 0x21FF) || (c >= 0x2300 && c <= 0x23FF);
+    return (c >= 0x1F000 && c <= 0x1FAFF) || (c >= 0x2600 && c <= 0x27BF) || c == 0xFE0F || c == 0x200D;
 }
+
+static BOOL is_ignorable(UINT32 c)
+{
+    return c == 0x200C || c == 0x200D || (c >= 0xFE00 && c <= 0xFE0F) || c == 0x34F;
+}
+
+static BOOL is_thai(UINT32 c) { return c >= 0x0E00 && c <= 0x0E7F; }
 
 static BOOL is_hangul(UINT32 c) { return (c >= 0x1100 && c <= 0x11FF) || (c >= 0xAC00 && c <= 0xD7AF) || (c >= 0x3130 && c <= 0x318F); }
 
@@ -93,12 +100,14 @@ static BOOL pick(DwCollection *c, DwCollection *system, const WCHAR *base, DWRIT
                  UINT32 *family, UINT32 *entry, DwFontData **data)
 {
     UINT32 index;
-    if (base && *base && DwFindFamily(c, base, &index) && try_family(c, index, weight, stretch, style, cp, entry, data)) {
+    if (base && *base && DwFindFamilyExact(c, base, &index) &&
+        try_family(c, index, weight, stretch, style, cp, entry, data)) {
         *found_in = c;
         *family = index;
         return TRUE;
     }
     const WCHAR *const *lists[2] = {is_emoji(cp)    ? g_emoji
+                                    : is_thai(cp)   ? g_thai
                                     : is_hangul(cp) ? g_hangul
                                     : is_cjk(cp)    ? g_cjk
                                                     : nullptr,
@@ -164,21 +173,49 @@ static HRESULT WINAPI fallback_map(IDWriteFontFallback *This, IDWriteTextAnalysi
     UINT32 family, entry;
     DwFontData *data;
     HRESULT hr = S_OK;
+    UINT32 base_index = 0xFFFFFFFF;
+    BOOL has_base = base_family && *base_family && DwFindFamilyExact(c, base_family, &base_index);
+    if (!has_base)
+        has_base = DwFindFamilyExact(c, L"Segoe UI", &base_index);
     if (system && pick(c, system, base_family, weight, stretch, style, first, &found_in, &family, &entry, &data)) {
-        /* the run goes on while the font has the characters. */
+        /* the run goes on while the font has the characters, and a font that is not the requested one gives way to it. */
+        BOOL is_base = has_base && found_in == c && family == base_index;
         UINT32 end = cursor;
         while (end < have) {
             UINT32 at = end;
             UINT32 cp = next_code_point(text, have, &at);
+            if (is_ignorable(cp)) {
+                end = at;
+                continue;
+            }
             if (!DwFontDataHasCharacter(data, cp))
                 break;
+            if (!is_base && has_base) {
+                UINT32 base_entry;
+                DwFontData *base_data;
+                if (try_family(c, base_index, weight, stretch, style, cp, &base_entry, &base_data)) {
+                    DwFontDataRelease(base_data);
+                    break;
+                }
+            }
             end = at;
         }
         DwFontDataRelease(data);
         *mapped_length = end;
         hr = DwFontCreate(found_in, family, entry, mapped_font);
     } else {
-        *mapped_length = cursor;
+        /* no font has it: the characters after it that no font has either go with it. */
+        UINT32 end = cursor;
+        while (end < have) {
+            UINT32 at = end;
+            UINT32 cp = next_code_point(text, have, &at);
+            if (system && pick(c, system, base_family, weight, stretch, style, cp, &found_in, &family, &entry, &data)) {
+                DwFontDataRelease(data);
+                break;
+            }
+            end = at;
+        }
+        *mapped_length = end;
     }
     DwFree(text);
     return hr;

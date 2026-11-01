@@ -1,8 +1,7 @@
 /*
- * IDWriteFactory: versions one and two are the same object. text layout is
- * not offered.
+ * IDWriteFactory: versions one and two are the same object.
  */
-#include "dw_private.h"
+#include "text_private.h"
 
 static DwFactory *g_shared;
 
@@ -328,25 +327,22 @@ static HRESULT WINAPI factory_text_format(IDWriteFactory2 *This, const WCHAR *fa
                                           DWRITE_FONT_STRETCH stretch, FLOAT size, const WCHAR *locale,
                                           IDWriteTextFormat **format)
 {
-    if (format)
-        *format = nullptr;
-    return E_NOTIMPL;
+    return DwTextFormatCreate((DwFactory *)This, family, collection, weight, style, stretch, size, locale, format);
 }
 
 static HRESULT WINAPI factory_typography(IDWriteFactory2 *This, IDWriteTypography **typography)
 {
-    if (typography)
-        *typography = nullptr;
-    return E_NOTIMPL;
+    if (!typography)
+        return E_POINTER;
+    return DwTypographyCreate(typography);
 }
 
 static HRESULT WINAPI factory_text_layout(IDWriteFactory2 *This, const WCHAR *text, UINT32 length,
                                           IDWriteTextFormat *format, FLOAT max_width, FLOAT max_height,
                                           IDWriteTextLayout **layout)
 {
-    if (layout)
-        *layout = nullptr;
-    return E_NOTIMPL;
+    return DwTextLayoutCreate((DwFactory *)This, text, length, format, max_width, max_height, 1.0f, nullptr, TRUE, FALSE,
+                              layout);
 }
 
 static HRESULT WINAPI factory_gdi_text_layout(IDWriteFactory2 *This, const WCHAR *text, UINT32 length,
@@ -354,31 +350,31 @@ static HRESULT WINAPI factory_gdi_text_layout(IDWriteFactory2 *This, const WCHAR
                                               FLOAT pixels_per_dip, const DWRITE_MATRIX *transform, BOOL natural,
                                               IDWriteTextLayout **layout)
 {
-    if (layout)
-        *layout = nullptr;
-    return E_NOTIMPL;
+    return DwTextLayoutCreate((DwFactory *)This, text, length, format, max_width, max_height, pixels_per_dip, transform,
+                              natural, TRUE, layout);
 }
 
 static HRESULT WINAPI factory_ellipsis(IDWriteFactory2 *This, IDWriteTextFormat *format, IDWriteInlineObject **sign)
 {
-    if (sign)
-        *sign = nullptr;
-    return E_NOTIMPL;
+    return DwEllipsisSignCreate((DwFactory *)This, format, sign);
 }
 
 static HRESULT WINAPI factory_analyzer(IDWriteFactory2 *This, IDWriteTextAnalyzer **analyzer)
 {
-    if (analyzer)
-        *analyzer = nullptr;
-    return E_NOTIMPL;
+    if (!analyzer)
+        return E_POINTER;
+    return DwAnalyzerCreate((DwFactory *)This, analyzer);
 }
 
 static HRESULT WINAPI factory_number_substitution(IDWriteFactory2 *This, UINT32 method, const WCHAR *locale,
                                                   BOOL ignore_user_override, IDWriteNumberSubstitution **substitution)
 {
-    if (substitution)
-        *substitution = nullptr;
-    return E_NOTIMPL;
+    if (!substitution)
+        return E_POINTER;
+    *substitution = nullptr;
+    if (method > DWRITE_NUMBER_SUBSTITUTION_METHOD_TRADITIONAL || (method != DWRITE_NUMBER_SUBSTITUTION_METHOD_NONE && !locale))
+        return E_INVALIDARG;
+    return DwNumberSubstitutionCreate((DWRITE_NUMBER_SUBSTITUTION_METHOD)method, locale, ignore_user_override, substitution);
 }
 
 /* ------------------------------------------------------------------ versions one and two */

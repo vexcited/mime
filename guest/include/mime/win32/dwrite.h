@@ -1,6 +1,6 @@
 /*
- * directwrite: fonts, metrics and glyphs, in windows' vtable order. text layout and
- * the text analyzer are declared only as far as the factory's vtable needs them.
+ * directwrite: fonts, metrics and glyphs, text formats and layouts, and the text analyzer, in windows' vtable
+ * order.
  */
 #ifndef MIME_WIN32_DWRITE_H
 #define MIME_WIN32_DWRITE_H
@@ -324,6 +324,21 @@ typedef struct IDWriteFont1 IDWriteFont1;
 typedef struct IDWriteFontFace1 IDWriteFontFace1;
 typedef struct IDWriteFontFace2 IDWriteFontFace2;
 typedef struct IDWriteLocalFontFileLoader IDWriteLocalFontFileLoader;
+typedef struct IDWritePixelSnapping IDWritePixelSnapping;
+typedef struct IDWriteTextRenderer IDWriteTextRenderer;
+typedef struct IDWriteTextAnalysisSink IDWriteTextAnalysisSink;
+typedef struct IDWriteTextAnalysisSource1 IDWriteTextAnalysisSource1;
+typedef struct IDWriteTextAnalysisSink1 IDWriteTextAnalysisSink1;
+typedef struct IDWriteTextAnalyzer1 IDWriteTextAnalyzer1;
+typedef struct IDWriteTextAnalyzer2 IDWriteTextAnalyzer2;
+typedef struct IDWriteTextLayout1 IDWriteTextLayout1;
+typedef struct IDWriteTextLayout2 IDWriteTextLayout2;
+typedef struct IDWriteTextLayout3 IDWriteTextLayout3;
+typedef struct IDWriteTextLayout4 IDWriteTextLayout4;
+typedef struct IDWriteTextRenderer1 IDWriteTextRenderer1;
+typedef struct IDWriteTextFormat1 IDWriteTextFormat1;
+typedef struct IDWriteTextFormat2 IDWriteTextFormat2;
+typedef struct IDWriteTextFormat3 IDWriteTextFormat3;
 
 typedef struct DWRITE_GLYPH_RUN {
     IDWriteFontFace *fontFace;
@@ -335,6 +350,368 @@ typedef struct DWRITE_GLYPH_RUN {
     BOOL isSideways;
     UINT32 bidiLevel;
 } DWRITE_GLYPH_RUN;
+
+/* ------------------------------------------------------------------ text layout types */
+
+typedef enum DWRITE_TEXT_ALIGNMENT {
+    DWRITE_TEXT_ALIGNMENT_LEADING = 0,
+    DWRITE_TEXT_ALIGNMENT_TRAILING = 1,
+    DWRITE_TEXT_ALIGNMENT_CENTER = 2,
+    DWRITE_TEXT_ALIGNMENT_JUSTIFIED = 3
+} DWRITE_TEXT_ALIGNMENT;
+typedef enum DWRITE_PARAGRAPH_ALIGNMENT {
+    DWRITE_PARAGRAPH_ALIGNMENT_NEAR = 0,
+    DWRITE_PARAGRAPH_ALIGNMENT_FAR = 1,
+    DWRITE_PARAGRAPH_ALIGNMENT_CENTER = 2
+} DWRITE_PARAGRAPH_ALIGNMENT;
+typedef enum DWRITE_WORD_WRAPPING {
+    DWRITE_WORD_WRAPPING_WRAP = 0,
+    DWRITE_WORD_WRAPPING_NO_WRAP = 1,
+    DWRITE_WORD_WRAPPING_EMERGENCY_BREAK = 2,
+    DWRITE_WORD_WRAPPING_WHOLE_WORD = 3,
+    DWRITE_WORD_WRAPPING_CHARACTER = 4
+} DWRITE_WORD_WRAPPING;
+typedef enum DWRITE_READING_DIRECTION {
+    DWRITE_READING_DIRECTION_LEFT_TO_RIGHT = 0,
+    DWRITE_READING_DIRECTION_RIGHT_TO_LEFT = 1,
+    DWRITE_READING_DIRECTION_TOP_TO_BOTTOM = 2,
+    DWRITE_READING_DIRECTION_BOTTOM_TO_TOP = 3
+} DWRITE_READING_DIRECTION;
+typedef enum DWRITE_FLOW_DIRECTION {
+    DWRITE_FLOW_DIRECTION_TOP_TO_BOTTOM = 0,
+    DWRITE_FLOW_DIRECTION_BOTTOM_TO_TOP = 1,
+    DWRITE_FLOW_DIRECTION_LEFT_TO_RIGHT = 2,
+    DWRITE_FLOW_DIRECTION_RIGHT_TO_LEFT = 3
+} DWRITE_FLOW_DIRECTION;
+typedef enum DWRITE_TRIMMING_GRANULARITY {
+    DWRITE_TRIMMING_GRANULARITY_NONE = 0,
+    DWRITE_TRIMMING_GRANULARITY_CHARACTER = 1,
+    DWRITE_TRIMMING_GRANULARITY_WORD = 2
+} DWRITE_TRIMMING_GRANULARITY;
+typedef enum DWRITE_BREAK_CONDITION {
+    DWRITE_BREAK_CONDITION_NEUTRAL = 0,
+    DWRITE_BREAK_CONDITION_CAN_BREAK = 1,
+    DWRITE_BREAK_CONDITION_MAY_NOT_BREAK = 2,
+    DWRITE_BREAK_CONDITION_MUST_BREAK = 3
+} DWRITE_BREAK_CONDITION;
+typedef enum DWRITE_LINE_SPACING_METHOD {
+    DWRITE_LINE_SPACING_METHOD_DEFAULT = 0,
+    DWRITE_LINE_SPACING_METHOD_UNIFORM = 1,
+    DWRITE_LINE_SPACING_METHOD_PROPORTIONAL = 2
+} DWRITE_LINE_SPACING_METHOD;
+typedef enum DWRITE_FONT_FEATURE_TAG {
+    DWRITE_FONT_FEATURE_TAG_ALTERNATIVE_FRACTIONS = 0x63726661,
+    DWRITE_FONT_FEATURE_TAG_PETITE_CAPITALS_FROM_CAPITALS = 0x63703263,
+    DWRITE_FONT_FEATURE_TAG_SMALL_CAPITALS_FROM_CAPITALS = 0x63733263,
+    DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_ALTERNATES = 0x746c6163,
+    DWRITE_FONT_FEATURE_TAG_CASE_SENSITIVE_FORMS = 0x65736163,
+    DWRITE_FONT_FEATURE_TAG_GLYPH_COMPOSITION_DECOMPOSITION = 0x706d6363,
+    DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_LIGATURES = 0x67696c63,
+    DWRITE_FONT_FEATURE_TAG_CAPITAL_SPACING = 0x70737063,
+    DWRITE_FONT_FEATURE_TAG_CONTEXTUAL_SWASH = 0x68777363,
+    DWRITE_FONT_FEATURE_TAG_CURSIVE_POSITIONING = 0x73727563,
+    DWRITE_FONT_FEATURE_TAG_DEFAULT = 0x746c6664,
+    DWRITE_FONT_FEATURE_TAG_DISCRETIONARY_LIGATURES = 0x67696c64,
+    DWRITE_FONT_FEATURE_TAG_EXPERT_FORMS = 0x74707865,
+    DWRITE_FONT_FEATURE_TAG_FRACTIONS = 0x63617266,
+    DWRITE_FONT_FEATURE_TAG_FULL_WIDTH = 0x64697766,
+    DWRITE_FONT_FEATURE_TAG_HALF_FORMS = 0x666c6168,
+    DWRITE_FONT_FEATURE_TAG_HALANT_FORMS = 0x6e6c6168,
+    DWRITE_FONT_FEATURE_TAG_ALTERNATE_HALF_WIDTH = 0x746c6168,
+    DWRITE_FONT_FEATURE_TAG_HISTORICAL_FORMS = 0x74736968,
+    DWRITE_FONT_FEATURE_TAG_HORIZONTAL_KANA_ALTERNATES = 0x616e6b68,
+    DWRITE_FONT_FEATURE_TAG_HISTORICAL_LIGATURES = 0x67696c68,
+    DWRITE_FONT_FEATURE_TAG_HALF_WIDTH = 0x64697768,
+    DWRITE_FONT_FEATURE_TAG_HOJO_KANJI_FORMS = 0x6f6a6f68,
+    DWRITE_FONT_FEATURE_TAG_JIS04_FORMS = 0x3430706a,
+    DWRITE_FONT_FEATURE_TAG_JIS78_FORMS = 0x3837706a,
+    DWRITE_FONT_FEATURE_TAG_JIS83_FORMS = 0x3338706a,
+    DWRITE_FONT_FEATURE_TAG_JIS90_FORMS = 0x3039706a,
+    DWRITE_FONT_FEATURE_TAG_KERNING = 0x6e72656b,
+    DWRITE_FONT_FEATURE_TAG_STANDARD_LIGATURES = 0x6167696c,
+    DWRITE_FONT_FEATURE_TAG_LINING_FIGURES = 0x6d756e6c,
+    DWRITE_FONT_FEATURE_TAG_LOCALIZED_FORMS = 0x6c636f6c,
+    DWRITE_FONT_FEATURE_TAG_MARK_POSITIONING = 0x6b72616d,
+    DWRITE_FONT_FEATURE_TAG_MATHEMATICAL_GREEK = 0x6b72676d,
+    DWRITE_FONT_FEATURE_TAG_MARK_TO_MARK_POSITIONING = 0x6b6d6b6d,
+    DWRITE_FONT_FEATURE_TAG_ALTERNATE_ANNOTATION_FORMS = 0x746c616e,
+    DWRITE_FONT_FEATURE_TAG_NLC_KANJI_FORMS = 0x6b636c6e,
+    DWRITE_FONT_FEATURE_TAG_OLD_STYLE_FIGURES = 0x6d756e6f,
+    DWRITE_FONT_FEATURE_TAG_ORDINALS = 0x6e64726f,
+    DWRITE_FONT_FEATURE_TAG_PROPORTIONAL_ALTERNATE_WIDTH = 0x746c6170,
+    DWRITE_FONT_FEATURE_TAG_PETITE_CAPITALS = 0x70616370,
+    DWRITE_FONT_FEATURE_TAG_PROPORTIONAL_FIGURES = 0x6d756e70,
+    DWRITE_FONT_FEATURE_TAG_PROPORTIONAL_WIDTHS = 0x64697770,
+    DWRITE_FONT_FEATURE_TAG_QUARTER_WIDTHS = 0x64697771,
+    DWRITE_FONT_FEATURE_TAG_REQUIRED_LIGATURES = 0x67696c72,
+    DWRITE_FONT_FEATURE_TAG_RUBY_NOTATION_FORMS = 0x79627572,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_ALTERNATES = 0x746c6173,
+    DWRITE_FONT_FEATURE_TAG_SCIENTIFIC_INFERIORS = 0x666e6973,
+    DWRITE_FONT_FEATURE_TAG_SMALL_CAPITALS = 0x70636d73,
+    DWRITE_FONT_FEATURE_TAG_SIMPLIFIED_FORMS = 0x6c706d73,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_1 = 0x31307373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_2 = 0x32307373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_3 = 0x33307373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_4 = 0x34307373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_5 = 0x35307373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_6 = 0x36307373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_7 = 0x37307373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_8 = 0x38307373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_9 = 0x39307373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_10 = 0x30317373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_11 = 0x31317373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_12 = 0x32317373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_13 = 0x33317373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_14 = 0x34317373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_15 = 0x35317373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_16 = 0x36317373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_17 = 0x37317373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_18 = 0x38317373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_19 = 0x39317373,
+    DWRITE_FONT_FEATURE_TAG_STYLISTIC_SET_20 = 0x30327373,
+    DWRITE_FONT_FEATURE_TAG_SUBSCRIPT = 0x73627573,
+    DWRITE_FONT_FEATURE_TAG_SUPERSCRIPT = 0x73707573,
+    DWRITE_FONT_FEATURE_TAG_SWASH = 0x68737773,
+    DWRITE_FONT_FEATURE_TAG_TITLING = 0x6c746974,
+    DWRITE_FONT_FEATURE_TAG_TRADITIONAL_NAME_FORMS = 0x6d616e74,
+    DWRITE_FONT_FEATURE_TAG_TABULAR_FIGURES = 0x6d756e74,
+    DWRITE_FONT_FEATURE_TAG_TRADITIONAL_FORMS = 0x64617274,
+    DWRITE_FONT_FEATURE_TAG_THIRD_WIDTHS = 0x64697774,
+    DWRITE_FONT_FEATURE_TAG_UNICASE = 0x63696e75,
+    DWRITE_FONT_FEATURE_TAG_VERTICAL_WRITING = 0x74726576,
+    DWRITE_FONT_FEATURE_TAG_VERTICAL_ALTERNATES_AND_ROTATION = 0x32747276,
+    DWRITE_FONT_FEATURE_TAG_SLASHED_ZERO = 0x6f72657a
+} DWRITE_FONT_FEATURE_TAG;
+#define DWRITE_MAKE_OPENTYPE_TAG(a, b, c, d) \
+    (((UINT32)(UINT8)(d) << 24) | ((UINT32)(UINT8)(c) << 16) | ((UINT32)(UINT8)(b) << 8) | (UINT32)(UINT8)(a))
+typedef enum DWRITE_SCRIPT_SHAPES {
+    DWRITE_SCRIPT_SHAPES_DEFAULT = 0,
+    DWRITE_SCRIPT_SHAPES_NO_VISUAL = 1
+} DWRITE_SCRIPT_SHAPES;
+typedef enum DWRITE_NUMBER_SUBSTITUTION_METHOD {
+    DWRITE_NUMBER_SUBSTITUTION_METHOD_FROM_CULTURE = 0,
+    DWRITE_NUMBER_SUBSTITUTION_METHOD_CONTEXTUAL = 1,
+    DWRITE_NUMBER_SUBSTITUTION_METHOD_NONE = 2,
+    DWRITE_NUMBER_SUBSTITUTION_METHOD_NATIONAL = 3,
+    DWRITE_NUMBER_SUBSTITUTION_METHOD_TRADITIONAL = 4
+} DWRITE_NUMBER_SUBSTITUTION_METHOD;
+typedef struct DWRITE_TRIMMING {
+    DWRITE_TRIMMING_GRANULARITY granularity;
+    UINT32 delimiter;
+    UINT32 delimiterCount;
+} DWRITE_TRIMMING;
+typedef struct DWRITE_UNDERLINE {
+    FLOAT width;
+    FLOAT thickness;
+    FLOAT offset;
+    FLOAT runHeight;
+    DWRITE_READING_DIRECTION readingDirection;
+    DWRITE_FLOW_DIRECTION flowDirection;
+    const WCHAR *localeName;
+    DWRITE_MEASURING_MODE measuringMode;
+} DWRITE_UNDERLINE;
+typedef struct DWRITE_STRIKETHROUGH {
+    FLOAT width;
+    FLOAT thickness;
+    FLOAT offset;
+    DWRITE_READING_DIRECTION readingDirection;
+    DWRITE_FLOW_DIRECTION flowDirection;
+    const WCHAR *localeName;
+    DWRITE_MEASURING_MODE measuringMode;
+} DWRITE_STRIKETHROUGH;
+typedef struct DWRITE_INLINE_OBJECT_METRICS {
+    FLOAT width;
+    FLOAT height;
+    FLOAT baseline;
+    BOOL supportsSideways;
+} DWRITE_INLINE_OBJECT_METRICS;
+typedef struct DWRITE_OVERHANG_METRICS {
+    FLOAT left;
+    FLOAT top;
+    FLOAT right;
+    FLOAT bottom;
+} DWRITE_OVERHANG_METRICS;
+typedef struct DWRITE_FONT_FEATURE {
+    DWRITE_FONT_FEATURE_TAG nameTag;
+    UINT32 parameter;
+} DWRITE_FONT_FEATURE;
+typedef struct DWRITE_TEXT_RANGE {
+    UINT32 startPosition;
+    UINT32 length;
+} DWRITE_TEXT_RANGE;
+typedef struct DWRITE_LINE_METRICS {
+    UINT32 length;
+    UINT32 trailingWhitespaceLength;
+    UINT32 newlineLength;
+    FLOAT height;
+    FLOAT baseline;
+    BOOL isTrimmed;
+} DWRITE_LINE_METRICS;
+typedef struct DWRITE_TEXT_METRICS {
+    FLOAT left;
+    FLOAT top;
+    FLOAT width;
+    FLOAT widthIncludingTrailingWhitespace;
+    FLOAT height;
+    FLOAT layoutWidth;
+    FLOAT layoutHeight;
+    UINT32 maxBidiReorderingDepth;
+    UINT32 lineCount;
+} DWRITE_TEXT_METRICS;
+typedef struct DWRITE_CLUSTER_METRICS {
+    FLOAT width;
+    UINT16 length;
+    UINT16 canWrapLineAfter : 1;
+    UINT16 isWhitespace : 1;
+    UINT16 isNewline : 1;
+    UINT16 isSoftHyphen : 1;
+    UINT16 isRightToLeft : 1;
+    UINT16 padding : 11;
+} DWRITE_CLUSTER_METRICS;
+typedef struct DWRITE_HIT_TEST_METRICS {
+    UINT32 textPosition;
+    UINT32 length;
+    FLOAT left;
+    FLOAT top;
+    FLOAT width;
+    FLOAT height;
+    UINT32 bidiLevel;
+    BOOL isText;
+    BOOL isTrimmed;
+} DWRITE_HIT_TEST_METRICS;
+typedef struct DWRITE_SCRIPT_ANALYSIS {
+    UINT16 script;
+    DWRITE_SCRIPT_SHAPES shapes;
+} DWRITE_SCRIPT_ANALYSIS;
+typedef struct DWRITE_LINE_BREAKPOINT {
+    UINT8 breakConditionBefore : 2;
+    UINT8 breakConditionAfter : 2;
+    UINT8 isWhitespace : 1;
+    UINT8 isSoftHyphen : 1;
+    UINT8 padding : 2;
+} DWRITE_LINE_BREAKPOINT;
+typedef struct DWRITE_TYPOGRAPHIC_FEATURES {
+    DWRITE_FONT_FEATURE *features;
+    UINT32 featureCount;
+} DWRITE_TYPOGRAPHIC_FEATURES;
+typedef struct DWRITE_SHAPING_TEXT_PROPERTIES {
+    UINT16 isShapedAlone : 1;
+    UINT16 reserved1 : 1;
+    UINT16 canBreakShapingAfter : 1;
+    UINT16 reserved : 13;
+} DWRITE_SHAPING_TEXT_PROPERTIES;
+typedef struct DWRITE_SHAPING_GLYPH_PROPERTIES {
+    UINT16 justification : 4;
+    UINT16 isClusterStart : 1;
+    UINT16 isDiacritic : 1;
+    UINT16 isZeroWidthSpace : 1;
+    UINT16 reserved : 9;
+} DWRITE_SHAPING_GLYPH_PROPERTIES;
+typedef enum DWRITE_BASELINE {
+    DWRITE_BASELINE_DEFAULT = 0,
+    DWRITE_BASELINE_ROMAN = 1,
+    DWRITE_BASELINE_CENTRAL = 2,
+    DWRITE_BASELINE_MATH = 3,
+    DWRITE_BASELINE_HANGING = 4,
+    DWRITE_BASELINE_IDEOGRAPHIC_BOTTOM = 5,
+    DWRITE_BASELINE_IDEOGRAPHIC_TOP = 6,
+    DWRITE_BASELINE_MINIMUM = 7,
+    DWRITE_BASELINE_MAXIMUM = 8
+} DWRITE_BASELINE;
+typedef enum DWRITE_VERTICAL_GLYPH_ORIENTATION {
+    DWRITE_VERTICAL_GLYPH_ORIENTATION_DEFAULT = 0,
+    DWRITE_VERTICAL_GLYPH_ORIENTATION_STACKED = 1
+} DWRITE_VERTICAL_GLYPH_ORIENTATION;
+typedef enum DWRITE_GLYPH_ORIENTATION_ANGLE {
+    DWRITE_GLYPH_ORIENTATION_ANGLE_0_DEGREES = 0,
+    DWRITE_GLYPH_ORIENTATION_ANGLE_90_DEGREES = 1,
+    DWRITE_GLYPH_ORIENTATION_ANGLE_180_DEGREES = 2,
+    DWRITE_GLYPH_ORIENTATION_ANGLE_270_DEGREES = 3
+} DWRITE_GLYPH_ORIENTATION_ANGLE;
+typedef struct DWRITE_SCRIPT_PROPERTIES {
+    UINT32 isoScriptCode;
+    UINT32 isoScriptNumber;
+    UINT32 clusterLookahead;
+    UINT32 justificationCharacter;
+    UINT32 restrictCaretToClusters : 1;
+    UINT32 usesWordDividers : 1;
+    UINT32 isDiscreteWriting : 1;
+    UINT32 isBlockWriting : 1;
+    UINT32 isDistributedWithinCluster : 1;
+    UINT32 isConnectedWriting : 1;
+    UINT32 isCursiveWriting : 1;
+    UINT32 reserved : 25;
+} DWRITE_SCRIPT_PROPERTIES;
+typedef struct DWRITE_JUSTIFICATION_OPPORTUNITY {
+    FLOAT expansionMinimum;
+    FLOAT expansionMaximum;
+    FLOAT compressionMaximum;
+    UINT32 expansionPriority : 8;
+    UINT32 compressionPriority : 8;
+    UINT32 allowResidualExpansion : 1;
+    UINT32 allowResidualCompression : 1;
+    UINT32 applyToLeadingEdge : 1;
+    UINT32 applyToTrailingEdge : 1;
+    UINT32 reserved : 12;
+} DWRITE_JUSTIFICATION_OPPORTUNITY;
+typedef enum DWRITE_OPTICAL_ALIGNMENT {
+    DWRITE_OPTICAL_ALIGNMENT_NONE = 0,
+    DWRITE_OPTICAL_ALIGNMENT_NO_SIDE_BEARINGS = 1
+} DWRITE_OPTICAL_ALIGNMENT;
+typedef struct DWRITE_TEXT_METRICS1 {
+    FLOAT left;
+    FLOAT top;
+    FLOAT width;
+    FLOAT widthIncludingTrailingWhitespace;
+    FLOAT height;
+    FLOAT layoutWidth;
+    FLOAT layoutHeight;
+    UINT32 maxBidiReorderingDepth;
+    UINT32 lineCount;
+    FLOAT heightIncludingTrailingWhitespace;
+} DWRITE_TEXT_METRICS1;
+typedef enum DWRITE_FONT_AXIS_TAG {
+    DWRITE_FONT_AXIS_TAG_WEIGHT = 0x74686777,
+    DWRITE_FONT_AXIS_TAG_WIDTH = 0x68746477,
+    DWRITE_FONT_AXIS_TAG_SLANT = 0x746e6c73,
+    DWRITE_FONT_AXIS_TAG_OPTICAL_SIZE = 0x7a73706f,
+    DWRITE_FONT_AXIS_TAG_ITALIC = 0x6c617469
+} DWRITE_FONT_AXIS_TAG;
+typedef struct DWRITE_FONT_AXIS_VALUE {
+    DWRITE_FONT_AXIS_TAG axisTag;
+    FLOAT value;
+} DWRITE_FONT_AXIS_VALUE;
+typedef struct DWRITE_FONT_AXIS_RANGE {
+    DWRITE_FONT_AXIS_TAG axisTag;
+    FLOAT minValue;
+    FLOAT maxValue;
+} DWRITE_FONT_AXIS_RANGE;
+typedef enum DWRITE_AUTOMATIC_FONT_AXES {
+    DWRITE_AUTOMATIC_FONT_AXES_NONE = 0,
+    DWRITE_AUTOMATIC_FONT_AXES_OPTICAL_SIZE = 1
+} DWRITE_AUTOMATIC_FONT_AXES;
+typedef struct DWRITE_LINE_METRICS1 {
+    UINT32 length;
+    UINT32 trailingWhitespaceLength;
+    UINT32 newlineLength;
+    FLOAT height;
+    FLOAT baseline;
+    BOOL isTrimmed;
+    FLOAT leadingBefore;
+    FLOAT leadingAfter;
+} DWRITE_LINE_METRICS1;
+typedef enum DWRITE_FONT_LINE_GAP_USAGE {
+    DWRITE_FONT_LINE_GAP_USAGE_DEFAULT = 0,
+    DWRITE_FONT_LINE_GAP_USAGE_DISABLED = 1,
+    DWRITE_FONT_LINE_GAP_USAGE_ENABLED = 2
+} DWRITE_FONT_LINE_GAP_USAGE;
+typedef struct DWRITE_LINE_SPACING {
+    DWRITE_LINE_SPACING_METHOD method;
+    FLOAT height;
+    FLOAT baseline;
+    FLOAT leadingBefore;
+    DWRITE_FONT_LINE_GAP_USAGE fontLineGapUsage;
+} DWRITE_LINE_SPACING;
 
 /* direct2d's simplified geometry, used to describe glyph outlines. */
 typedef D2D_POINT_2F D2D1_POINT_2F;
@@ -609,6 +986,345 @@ MIME_COM_INTERFACE(IDWriteTextAnalysisSource)
                                               UINT32 *mapped_length, IDWriteFont **mapped_font, FLOAT *scale);
 MIME_COM_INTERFACE(IDWriteFontFallback)
 
+/* ------------------------------------------------------------------ text layout and analysis */
+
+#define IDWritePixelSnapping_METHODS(T)                                                                                \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *IsPixelSnappingDisabled)(T * This, void *client_drawingcontext, BOOL *disabled);        \
+    HRESULT(STDMETHODCALLTYPE *GetCurrentTransform)(T * This, void *client_drawingcontext, DWRITE_MATRIX *transform);  \
+    HRESULT(STDMETHODCALLTYPE *GetPixelsPerDip)(T * This, void *client_drawingcontext, FLOAT *pixels_per_dip);
+MIME_COM_INTERFACE(IDWritePixelSnapping)
+
+#define IDWriteTextRenderer_METHODS(T)                                                                                 \
+    IDWritePixelSnapping_METHODS(T) HRESULT(STDMETHODCALLTYPE *DrawGlyphRun)(                                          \
+        T * This, void *client_drawingcontext, FLOAT baselineOriginX, FLOAT baselineOriginY,                           \
+        DWRITE_MEASURING_MODE mode, const DWRITE_GLYPH_RUN *glyph_run, const DWRITE_GLYPH_RUN_DESCRIPTION *run_descr,  \
+        IUnknown *drawing_effect);                                                                                     \
+    HRESULT(STDMETHODCALLTYPE *DrawUnderline)(T * This, void *client_drawingcontext, FLOAT baselineOriginX,            \
+                                              FLOAT baselineOriginY, const DWRITE_UNDERLINE *underline,                \
+                                              IUnknown *drawing_effect);                                               \
+    HRESULT(STDMETHODCALLTYPE *DrawStrikethrough)(T * This, void *client_drawingcontext, FLOAT baselineOriginX,        \
+                                                  FLOAT baselineOriginY, const DWRITE_STRIKETHROUGH *strikethrough,    \
+                                                  IUnknown *drawing_effect);                                           \
+    HRESULT(STDMETHODCALLTYPE *DrawInlineObject)(T * This, void *client_drawingcontext, FLOAT originX, FLOAT originY,  \
+                                                 IDWriteInlineObject *object, BOOL is_sideways, BOOL is_rtl,           \
+                                                 IUnknown *drawing_effect);
+MIME_COM_INTERFACE(IDWriteTextRenderer)
+
+#define IDWriteInlineObject_METHODS(T)                                                                                 \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *Draw)(T * This, void *client_drawingontext, IDWriteTextRenderer *renderer,              \
+                                     FLOAT originX, FLOAT originY, BOOL is_sideways, BOOL is_rtl,                      \
+                                     IUnknown *drawing_effect);                                                        \
+    HRESULT(STDMETHODCALLTYPE *GetMetrics)(T * This, DWRITE_INLINE_OBJECT_METRICS * metrics);                          \
+    HRESULT(STDMETHODCALLTYPE *GetOverhangMetrics)(T * This, DWRITE_OVERHANG_METRICS * overhangs);                     \
+    HRESULT(STDMETHODCALLTYPE *GetBreakConditions)(T * This, DWRITE_BREAK_CONDITION * condition_before,                \
+                                                   DWRITE_BREAK_CONDITION * condition_after);
+MIME_COM_INTERFACE(IDWriteInlineObject)
+
+#define IDWriteTextFormat_METHODS(T)                                                                                   \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *SetTextAlignment)(T * This, DWRITE_TEXT_ALIGNMENT alignment);                           \
+    HRESULT(STDMETHODCALLTYPE *SetParagraphAlignment)(T * This, DWRITE_PARAGRAPH_ALIGNMENT alignment);                 \
+    HRESULT(STDMETHODCALLTYPE *SetWordWrapping)(T * This, DWRITE_WORD_WRAPPING wrapping);                              \
+    HRESULT(STDMETHODCALLTYPE *SetReadingDirection)(T * This, DWRITE_READING_DIRECTION direction);                     \
+    HRESULT(STDMETHODCALLTYPE *SetFlowDirection)(T * This, DWRITE_FLOW_DIRECTION direction);                           \
+    HRESULT(STDMETHODCALLTYPE *SetIncrementalTabStop)(T * This, FLOAT tabstop);                                        \
+    HRESULT(STDMETHODCALLTYPE *SetTrimming)(T * This, const DWRITE_TRIMMING *trimming,                                 \
+                                            IDWriteInlineObject *trimming_sign);                                       \
+    HRESULT(STDMETHODCALLTYPE *SetLineSpacing)(T * This, DWRITE_LINE_SPACING_METHOD spacing, FLOAT line_spacing,       \
+                                               FLOAT baseline);                                                        \
+    DWRITE_TEXT_ALIGNMENT(STDMETHODCALLTYPE *GetTextAlignment)(T * This);                                              \
+    DWRITE_PARAGRAPH_ALIGNMENT(STDMETHODCALLTYPE *GetParagraphAlignment)(T * This);                                    \
+    DWRITE_WORD_WRAPPING(STDMETHODCALLTYPE *GetWordWrapping)(T * This);                                                \
+    DWRITE_READING_DIRECTION(STDMETHODCALLTYPE *GetReadingDirection)(T * This);                                        \
+    DWRITE_FLOW_DIRECTION(STDMETHODCALLTYPE *GetFlowDirection)(T * This);                                              \
+    FLOAT(STDMETHODCALLTYPE *GetIncrementalTabStop)(T * This);                                                         \
+    HRESULT(STDMETHODCALLTYPE *GetTrimming)(T * This, DWRITE_TRIMMING * options,                                       \
+                                            IDWriteInlineObject * *trimming_sign);                                     \
+    HRESULT(STDMETHODCALLTYPE *GetLineSpacing)(T * This, DWRITE_LINE_SPACING_METHOD * method, FLOAT * spacing,         \
+                                               FLOAT * baseline);                                                      \
+    HRESULT(STDMETHODCALLTYPE *GetFontCollection)(T * This, IDWriteFontCollection * *collection);                      \
+    UINT32(STDMETHODCALLTYPE *GetFontFamilyNameLength)(T * This);                                                      \
+    HRESULT(STDMETHODCALLTYPE *GetFontFamilyName)(T * This, WCHAR * name, UINT32 size);                                \
+    DWRITE_FONT_WEIGHT(STDMETHODCALLTYPE *GetFontWeight)(T * This);                                                    \
+    DWRITE_FONT_STYLE(STDMETHODCALLTYPE *GetFontStyle)(T * This);                                                      \
+    DWRITE_FONT_STRETCH(STDMETHODCALLTYPE *GetFontStretch)(T * This);                                                  \
+    FLOAT(STDMETHODCALLTYPE *GetFontSize)(T * This);                                                                   \
+    UINT32(STDMETHODCALLTYPE *GetLocaleNameLength)(T * This);                                                          \
+    HRESULT(STDMETHODCALLTYPE *GetLocaleName)(T * This, WCHAR * name, UINT32 size);
+MIME_COM_INTERFACE(IDWriteTextFormat)
+
+#define IDWriteTypography_METHODS(T)                                                                                   \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *AddFontFeature)(T * This, DWRITE_FONT_FEATURE feature);                                 \
+    UINT32(STDMETHODCALLTYPE *GetFontFeatureCount)(T * This);                                                          \
+    HRESULT(STDMETHODCALLTYPE *GetFontFeature)(T * This, UINT32 index, DWRITE_FONT_FEATURE * feature);
+MIME_COM_INTERFACE(IDWriteTypography)
+
+#define IDWriteTextLayout_METHODS(T)                                                                                   \
+    IDWriteTextFormat_METHODS(T) HRESULT(STDMETHODCALLTYPE *SetMaxWidth)(T * This, FLOAT maxWidth);                    \
+    HRESULT(STDMETHODCALLTYPE *SetMaxHeight)(T * This, FLOAT maxHeight);                                               \
+    HRESULT(STDMETHODCALLTYPE *SetFontCollection)(T * This, IDWriteFontCollection * collection,                        \
+                                                  DWRITE_TEXT_RANGE range);                                            \
+    HRESULT(STDMETHODCALLTYPE *SetFontFamilyName)(T * This, const WCHAR *name, DWRITE_TEXT_RANGE range);               \
+    HRESULT(STDMETHODCALLTYPE *SetFontWeight)(T * This, DWRITE_FONT_WEIGHT weight, DWRITE_TEXT_RANGE range);           \
+    HRESULT(STDMETHODCALLTYPE *SetFontStyle)(T * This, DWRITE_FONT_STYLE style, DWRITE_TEXT_RANGE range);              \
+    HRESULT(STDMETHODCALLTYPE *SetFontStretch)(T * This, DWRITE_FONT_STRETCH stretch, DWRITE_TEXT_RANGE range);        \
+    HRESULT(STDMETHODCALLTYPE *SetFontSize)(T * This, FLOAT size, DWRITE_TEXT_RANGE range);                            \
+    HRESULT(STDMETHODCALLTYPE *SetUnderline)(T * This, BOOL underline, DWRITE_TEXT_RANGE range);                       \
+    HRESULT(STDMETHODCALLTYPE *SetStrikethrough)(T * This, BOOL strikethrough, DWRITE_TEXT_RANGE range);               \
+    HRESULT(STDMETHODCALLTYPE *SetDrawingEffect)(T * This, IUnknown * effect, DWRITE_TEXT_RANGE range);                \
+    HRESULT(STDMETHODCALLTYPE *SetInlineObject)(T * This, IDWriteInlineObject * object, DWRITE_TEXT_RANGE range);      \
+    HRESULT(STDMETHODCALLTYPE *SetTypography)(T * This, IDWriteTypography * typography, DWRITE_TEXT_RANGE range);      \
+    HRESULT(STDMETHODCALLTYPE *SetLocaleName)(T * This, const WCHAR *locale, DWRITE_TEXT_RANGE range);                 \
+    FLOAT(STDMETHODCALLTYPE *GetMaxWidth)(T * This);                                                                   \
+    FLOAT(STDMETHODCALLTYPE *GetMaxHeight)(T * This);                                                                  \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextLayout_GetFontCollection)(                                                   \
+        T * This, UINT32 pos, IDWriteFontCollection * *collection, DWRITE_TEXT_RANGE * range);                         \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextLayout_GetFontFamilyNameLength)(T * This, UINT32 pos, UINT32 * len,          \
+                                                                          DWRITE_TEXT_RANGE * range);                  \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextLayout_GetFontFamilyName)(T * This, UINT32 position, WCHAR * name,           \
+                                                                    UINT32 name_size, DWRITE_TEXT_RANGE * range);      \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextLayout_GetFontWeight)(                                                       \
+        T * This, UINT32 position, DWRITE_FONT_WEIGHT * weight, DWRITE_TEXT_RANGE * range);                            \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextLayout_GetFontStyle)(T * This, UINT32 currentPosition,                       \
+                                                               DWRITE_FONT_STYLE * style, DWRITE_TEXT_RANGE * range);  \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextLayout_GetFontStretch)(                                                      \
+        T * This, UINT32 position, DWRITE_FONT_STRETCH * stretch, DWRITE_TEXT_RANGE * range);                          \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextLayout_GetFontSize)(T * This, UINT32 position, FLOAT * size,                 \
+                                                              DWRITE_TEXT_RANGE * range);                              \
+    HRESULT(STDMETHODCALLTYPE *GetUnderline)(T * This, UINT32 position, BOOL * has_underline,                          \
+                                             DWRITE_TEXT_RANGE * range);                                               \
+    HRESULT(STDMETHODCALLTYPE *GetStrikethrough)(T * This, UINT32 position, BOOL * has_strikethrough,                  \
+                                                 DWRITE_TEXT_RANGE * range);                                           \
+    HRESULT(STDMETHODCALLTYPE *GetDrawingEffect)(T * This, UINT32 position, IUnknown * *effect,                        \
+                                                 DWRITE_TEXT_RANGE * range);                                           \
+    HRESULT(STDMETHODCALLTYPE *GetInlineObject)(T * This, UINT32 position, IDWriteInlineObject * *object,              \
+                                                DWRITE_TEXT_RANGE * range);                                            \
+    HRESULT(STDMETHODCALLTYPE *GetTypography)(T * This, UINT32 position, IDWriteTypography * *typography,              \
+                                              DWRITE_TEXT_RANGE * range);                                              \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextLayout_GetLocaleNameLength)(T * This, UINT32 position, UINT32 * length,      \
+                                                                      DWRITE_TEXT_RANGE * range);                      \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextLayout_GetLocaleName)(T * This, UINT32 position, WCHAR * name,               \
+                                                                UINT32 name_size, DWRITE_TEXT_RANGE * range);          \
+    HRESULT(STDMETHODCALLTYPE *Draw)(T * This, void *context, IDWriteTextRenderer *renderer, FLOAT originX,            \
+                                     FLOAT originY);                                                                   \
+    HRESULT(STDMETHODCALLTYPE *GetLineMetrics)(T * This, DWRITE_LINE_METRICS * metrics, UINT32 max_count,              \
+                                               UINT32 * actual_count);                                                 \
+    HRESULT(STDMETHODCALLTYPE *GetMetrics)(T * This, DWRITE_TEXT_METRICS * metrics);                                   \
+    HRESULT(STDMETHODCALLTYPE *GetOverhangMetrics)(T * This, DWRITE_OVERHANG_METRICS * overhangs);                     \
+    HRESULT(STDMETHODCALLTYPE *GetClusterMetrics)(T * This, DWRITE_CLUSTER_METRICS * metrics, UINT32 max_count,        \
+                                                  UINT32 * act_count);                                                 \
+    HRESULT(STDMETHODCALLTYPE *DetermineMinWidth)(T * This, FLOAT * min_width);                                        \
+    HRESULT(STDMETHODCALLTYPE *HitTestPoint)(T * This, FLOAT pointX, FLOAT pointY, BOOL * is_trailinghit,              \
+                                             BOOL * is_inside, DWRITE_HIT_TEST_METRICS * metrics);                     \
+    HRESULT(STDMETHODCALLTYPE *HitTestTextPosition)(T * This, UINT32 textPosition, BOOL is_trailinghit,                \
+                                                    FLOAT * pointX, FLOAT * pointY,                                    \
+                                                    DWRITE_HIT_TEST_METRICS * metrics);                                \
+    HRESULT(STDMETHODCALLTYPE *HitTestTextRange)(T * This, UINT32 textPosition, UINT32 textLength, FLOAT originX,      \
+                                                 FLOAT originY, DWRITE_HIT_TEST_METRICS * metrics,                     \
+                                                 UINT32 max_metricscount, UINT32 * actual_metricscount);
+MIME_COM_INTERFACE(IDWriteTextLayout)
+
+#define IDWriteNumberSubstitution_METHODS(T) MIME_IUNKNOWN_METHODS(T)
+MIME_COM_INTERFACE(IDWriteNumberSubstitution)
+
+#define IDWriteTextAnalysisSink_METHODS(T)                                                                             \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *SetScriptAnalysis)(T * This, UINT32 position, UINT32 length,                            \
+                                                  const DWRITE_SCRIPT_ANALYSIS *scriptanalysis);                       \
+    HRESULT(STDMETHODCALLTYPE *SetLineBreakpoints)(T * This, UINT32 position, UINT32 length,                           \
+                                                   const DWRITE_LINE_BREAKPOINT *breakpoints);                         \
+    HRESULT(STDMETHODCALLTYPE *SetBidiLevel)(T * This, UINT32 position, UINT32 length, UINT8 explicitLevel,            \
+                                             UINT8 resolvedLevel);                                                     \
+    HRESULT(STDMETHODCALLTYPE *SetNumberSubstitution)(T * This, UINT32 position, UINT32 length,                        \
+                                                      IDWriteNumberSubstitution * substitution);
+MIME_COM_INTERFACE(IDWriteTextAnalysisSink)
+
+#define IDWriteTextAnalyzer_METHODS(T)                                                                                 \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *AnalyzeScript)(T * This, IDWriteTextAnalysisSource * source, UINT32 position,           \
+                                              UINT32 length, IDWriteTextAnalysisSink * sink);                          \
+    HRESULT(STDMETHODCALLTYPE *AnalyzeBidi)(T * This, IDWriteTextAnalysisSource * source, UINT32 position,             \
+                                            UINT32 length, IDWriteTextAnalysisSink * sink);                            \
+    HRESULT(STDMETHODCALLTYPE *AnalyzeNumberSubstitution)(                                                             \
+        T * This, IDWriteTextAnalysisSource * source, UINT32 position, UINT32 length, IDWriteTextAnalysisSink * sink); \
+    HRESULT(STDMETHODCALLTYPE *AnalyzeLineBreakpoints)(T * This, IDWriteTextAnalysisSource * source, UINT32 position,  \
+                                                       UINT32 length, IDWriteTextAnalysisSink * sink);                 \
+    HRESULT(STDMETHODCALLTYPE *GetGlyphs)(                                                                             \
+        T * This, const WCHAR *text, UINT32 length, IDWriteFontFace *font_face, BOOL is_sideways, BOOL is_rtl,         \
+        const DWRITE_SCRIPT_ANALYSIS *analysis, const WCHAR *locale, IDWriteNumberSubstitution *substitution,          \
+        const DWRITE_TYPOGRAPHIC_FEATURES **features, const UINT32 *feature_range_len, UINT32 feature_ranges,          \
+        UINT32 max_glyph_count, UINT16 *clustermap, DWRITE_SHAPING_TEXT_PROPERTIES *text_props, UINT16 *glyph_indices, \
+        DWRITE_SHAPING_GLYPH_PROPERTIES *glyph_props, UINT32 *actual_glyph_count);                                     \
+    HRESULT(STDMETHODCALLTYPE *GetGlyphPlacements)(                                                                    \
+        T * This, const WCHAR *text, const UINT16 *clustermap, DWRITE_SHAPING_TEXT_PROPERTIES *props, UINT32 text_len, \
+        const UINT16 *glyph_indices, const DWRITE_SHAPING_GLYPH_PROPERTIES *glyph_props, UINT32 glyph_count,           \
+        IDWriteFontFace *font_face, FLOAT fontEmSize, BOOL is_sideways, BOOL is_rtl,                                   \
+        const DWRITE_SCRIPT_ANALYSIS *analysis, const WCHAR *locale, const DWRITE_TYPOGRAPHIC_FEATURES **features,     \
+        const UINT32 *feature_range_len, UINT32 feature_ranges, FLOAT *glyph_advances,                                 \
+        DWRITE_GLYPH_OFFSET *glyph_offsets);                                                                           \
+    HRESULT(STDMETHODCALLTYPE *GetGdiCompatibleGlyphPlacements)(                                                       \
+        T * This, const WCHAR *text, const UINT16 *clustermap, DWRITE_SHAPING_TEXT_PROPERTIES *props, UINT32 text_len, \
+        const UINT16 *glyph_indices, const DWRITE_SHAPING_GLYPH_PROPERTIES *glyph_props, UINT32 glyph_count,           \
+        IDWriteFontFace *font_face, FLOAT fontEmSize, FLOAT pixels_per_dip, const DWRITE_MATRIX *transform,            \
+        BOOL use_gdi_natural, BOOL is_sideways, BOOL is_rtl, const DWRITE_SCRIPT_ANALYSIS *analysis,                   \
+        const WCHAR *locale, const DWRITE_TYPOGRAPHIC_FEATURES **features, const UINT32 *feature_range_lengths,        \
+        UINT32 feature_ranges, FLOAT *glyph_advances, DWRITE_GLYPH_OFFSET *glyph_offsets);
+MIME_COM_INTERFACE(IDWriteTextAnalyzer)
+
+#define IDWriteTextAnalysisSource1_METHODS(T)                                                                          \
+    IDWriteTextAnalysisSource_METHODS(T) HRESULT(STDMETHODCALLTYPE *GetVerticalGlyphOrientation)(                      \
+        T * This, UINT32 pos, UINT32 * length, DWRITE_VERTICAL_GLYPH_ORIENTATION * orientation, UINT8 * bidi_level);
+MIME_COM_INTERFACE(IDWriteTextAnalysisSource1)
+
+#define IDWriteTextAnalysisSink1_METHODS(T)                                                                            \
+    IDWriteTextAnalysisSink_METHODS(T) HRESULT(STDMETHODCALLTYPE *SetGlyphOrientation)(                                \
+        T * This, UINT32 pos, UINT32 length, DWRITE_GLYPH_ORIENTATION_ANGLE angle, UINT8 adjusted_bidilevel,           \
+        BOOL is_sideways, BOOL is_rtl);
+MIME_COM_INTERFACE(IDWriteTextAnalysisSink1)
+
+#define IDWriteTextAnalyzer1_METHODS(T)                                                                                \
+    IDWriteTextAnalyzer_METHODS(T) HRESULT(STDMETHODCALLTYPE *ApplyCharacterSpacing)(                                  \
+        T * This, FLOAT leading_spacing, FLOAT trailing_spacing, FLOAT min_advance_width, UINT32 len,                  \
+        UINT32 glyph_count, const UINT16 *clustermap, const FLOAT *advances, const DWRITE_GLYPH_OFFSET *offsets,       \
+        const DWRITE_SHAPING_GLYPH_PROPERTIES *props, FLOAT *modified_advances,                                        \
+        DWRITE_GLYPH_OFFSET *modified_offsets);                                                                        \
+    HRESULT(STDMETHODCALLTYPE *GetBaseline)(T * This, IDWriteFontFace * face, DWRITE_BASELINE baseline, BOOL vertical, \
+                                            BOOL is_simulation_allowed, DWRITE_SCRIPT_ANALYSIS sa,                     \
+                                            const WCHAR *localeName, INT32 *baseline_coord, BOOL *exists);             \
+    HRESULT(STDMETHODCALLTYPE *AnalyzeVerticalGlyphOrientation)(                                                       \
+        T * This, IDWriteTextAnalysisSource1 * source, UINT32 text_pos, UINT32 len, IDWriteTextAnalysisSink1 * sink);  \
+    HRESULT(STDMETHODCALLTYPE *GetGlyphOrientationTransform)(T * This, DWRITE_GLYPH_ORIENTATION_ANGLE angle,           \
+                                                             BOOL is_sideways, DWRITE_MATRIX * transform);             \
+    HRESULT(STDMETHODCALLTYPE *GetScriptProperties)(T * This, DWRITE_SCRIPT_ANALYSIS sa,                               \
+                                                    DWRITE_SCRIPT_PROPERTIES * props);                                 \
+    HRESULT(STDMETHODCALLTYPE *GetTextComplexity)(T * This, const WCHAR *text, UINT32 len, IDWriteFontFace *face,      \
+                                                  BOOL *is_simple, UINT32 *len_read, UINT16 *indices);                 \
+    HRESULT(STDMETHODCALLTYPE *GetJustificationOpportunities)(                                                         \
+        T * This, IDWriteFontFace * face, FLOAT font_em_size, DWRITE_SCRIPT_ANALYSIS sa, UINT32 length,                \
+        UINT32 glyph_count, const WCHAR *text, const UINT16 *clustermap, const DWRITE_SHAPING_GLYPH_PROPERTIES *prop,  \
+        DWRITE_JUSTIFICATION_OPPORTUNITY *jo);                                                                         \
+    HRESULT(STDMETHODCALLTYPE *JustifyGlyphAdvances)(                                                                  \
+        T * This, FLOAT width, UINT32 glyph_count, const DWRITE_JUSTIFICATION_OPPORTUNITY *jo, const FLOAT *advances,  \
+        const DWRITE_GLYPH_OFFSET *offsets, FLOAT *justifiedadvances, DWRITE_GLYPH_OFFSET *justifiedoffsets);          \
+    HRESULT(STDMETHODCALLTYPE *GetJustifiedGlyphs)(                                                                    \
+        T * This, IDWriteFontFace * face, FLOAT font_em_size, DWRITE_SCRIPT_ANALYSIS sa, UINT32 length,                \
+        UINT32 glyph_count, UINT32 max_glyphcount, const UINT16 *clustermap, const UINT16 *indices,                    \
+        const FLOAT *advances, const FLOAT *justifiedadvances, const DWRITE_GLYPH_OFFSET *justifiedoffsets,            \
+        const DWRITE_SHAPING_GLYPH_PROPERTIES *prop, UINT32 *actual_count, UINT16 *modified_clustermap,                \
+        UINT16 *modified_indices, FLOAT *modified_advances, DWRITE_GLYPH_OFFSET *modified_offsets);
+MIME_COM_INTERFACE(IDWriteTextAnalyzer1)
+
+#define IDWriteTextLayout1_METHODS(T)                                                                                  \
+    IDWriteTextLayout_METHODS(T)                                                                                       \
+        HRESULT(STDMETHODCALLTYPE *SetPairKerning)(T * This, BOOL is_pairkerning_enabled, DWRITE_TEXT_RANGE range);    \
+    HRESULT(STDMETHODCALLTYPE *GetPairKerning)(T * This, UINT32 position, BOOL * is_pairkerning_enabled,               \
+                                               DWRITE_TEXT_RANGE * range);                                             \
+    HRESULT(STDMETHODCALLTYPE *SetCharacterSpacing)(T * This, FLOAT leading_spacing, FLOAT trailing_spacing,           \
+                                                    FLOAT minimum_advance_width, DWRITE_TEXT_RANGE range);             \
+    HRESULT(STDMETHODCALLTYPE *GetCharacterSpacing)(T * This, UINT32 position, FLOAT * leading_spacing,                \
+                                                    FLOAT * trailing_spacing, FLOAT * minimum_advance_width,           \
+                                                    DWRITE_TEXT_RANGE * range);
+MIME_COM_INTERFACE(IDWriteTextLayout1)
+
+#define IDWriteTextRenderer1_METHODS(T)                                                                                \
+    IDWriteTextRenderer_METHODS(T) HRESULT(STDMETHODCALLTYPE *IDWriteTextRenderer1_DrawGlyphRun)(                      \
+        T * This, void *context, FLOAT originX, FLOAT originY, DWRITE_GLYPH_ORIENTATION_ANGLE angle,                   \
+        DWRITE_MEASURING_MODE mode, const DWRITE_GLYPH_RUN *run, const DWRITE_GLYPH_RUN_DESCRIPTION *rundescr,         \
+        IUnknown *effect);                                                                                             \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextRenderer1_DrawUnderline)(                                                    \
+        T * This, void *context, FLOAT originX, FLOAT originY, DWRITE_GLYPH_ORIENTATION_ANGLE angle,                   \
+        const DWRITE_UNDERLINE *underline, IUnknown *effect);                                                          \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextRenderer1_DrawStrikethrough)(                                                \
+        T * This, void *context, FLOAT originX, FLOAT originY, DWRITE_GLYPH_ORIENTATION_ANGLE angle,                   \
+        const DWRITE_STRIKETHROUGH *strikethrough, IUnknown *effect);                                                  \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextRenderer1_DrawInlineObject)(                                                 \
+        T * This, void *context, FLOAT originX, FLOAT originY, DWRITE_GLYPH_ORIENTATION_ANGLE angle,                   \
+        IDWriteInlineObject *inlineObject, BOOL is_sideways, BOOL is_rtl, IUnknown *effect);
+MIME_COM_INTERFACE(IDWriteTextRenderer1)
+
+#define IDWriteTextFormat1_METHODS(T)                                                                                  \
+    IDWriteTextFormat_METHODS(T) HRESULT(STDMETHODCALLTYPE *SetVerticalGlyphOrientation)(                              \
+        T * This, DWRITE_VERTICAL_GLYPH_ORIENTATION orientation);                                                      \
+    DWRITE_VERTICAL_GLYPH_ORIENTATION(STDMETHODCALLTYPE *GetVerticalGlyphOrientation)(T * This);                       \
+    HRESULT(STDMETHODCALLTYPE *SetLastLineWrapping)(T * This, BOOL lastline_wrapping_enabled);                         \
+    BOOL(STDMETHODCALLTYPE *GetLastLineWrapping)(T * This);                                                            \
+    HRESULT(STDMETHODCALLTYPE *SetOpticalAlignment)(T * This, DWRITE_OPTICAL_ALIGNMENT alignment);                     \
+    DWRITE_OPTICAL_ALIGNMENT(STDMETHODCALLTYPE *GetOpticalAlignment)(T * This);                                        \
+    HRESULT(STDMETHODCALLTYPE *SetFontFallback)(T * This, IDWriteFontFallback * fallback);                             \
+    HRESULT(STDMETHODCALLTYPE *GetFontFallback)(T * This, IDWriteFontFallback * *fallback);
+MIME_COM_INTERFACE(IDWriteTextFormat1)
+
+#define IDWriteTextLayout2_METHODS(T)                                                                                  \
+    IDWriteTextLayout1_METHODS(T)                                                                                      \
+        HRESULT(STDMETHODCALLTYPE *IDWriteTextLayout2_GetMetrics)(T * This, DWRITE_TEXT_METRICS1 * metrics);           \
+    HRESULT(STDMETHODCALLTYPE *SetVerticalGlyphOrientation)(T * This, DWRITE_VERTICAL_GLYPH_ORIENTATION orientation);  \
+    DWRITE_VERTICAL_GLYPH_ORIENTATION(STDMETHODCALLTYPE *GetVerticalGlyphOrientation)(T * This);                       \
+    HRESULT(STDMETHODCALLTYPE *SetLastLineWrapping)(T * This, BOOL lastline_wrapping_enabled);                         \
+    BOOL(STDMETHODCALLTYPE *GetLastLineWrapping)(T * This);                                                            \
+    HRESULT(STDMETHODCALLTYPE *SetOpticalAlignment)(T * This, DWRITE_OPTICAL_ALIGNMENT alignment);                     \
+    DWRITE_OPTICAL_ALIGNMENT(STDMETHODCALLTYPE *GetOpticalAlignment)(T * This);                                        \
+    HRESULT(STDMETHODCALLTYPE *SetFontFallback)(T * This, IDWriteFontFallback * fallback);                             \
+    HRESULT(STDMETHODCALLTYPE *GetFontFallback)(T * This, IDWriteFontFallback * *fallback);
+MIME_COM_INTERFACE(IDWriteTextLayout2)
+
+#define IDWriteTextAnalyzer2_METHODS(T)                                                                                \
+    IDWriteTextAnalyzer1_METHODS(T) HRESULT(STDMETHODCALLTYPE *IDWriteTextAnalyzer2_GetGlyphOrientationTransform)(     \
+        T * This, DWRITE_GLYPH_ORIENTATION_ANGLE angle, BOOL is_sideways, FLOAT originX, FLOAT originY,                \
+        DWRITE_MATRIX * transform);                                                                                    \
+    HRESULT(STDMETHODCALLTYPE *GetTypographicFeatures)(                                                                \
+        T * This, IDWriteFontFace * fontface, DWRITE_SCRIPT_ANALYSIS analysis, const WCHAR *localeName,                \
+        UINT32 max_tagcount, UINT32 *actual_tagcount, DWRITE_FONT_FEATURE_TAG *tags);                                  \
+    HRESULT(STDMETHODCALLTYPE *CheckTypographicFeature)(                                                               \
+        T * This, IDWriteFontFace * fontface, DWRITE_SCRIPT_ANALYSIS analysis, const WCHAR *localeName,                \
+        DWRITE_FONT_FEATURE_TAG feature, UINT32 glyph_count, const UINT16 *indices, UINT8 *feature_applies);
+MIME_COM_INTERFACE(IDWriteTextAnalyzer2)
+
+#define IDWriteFontFallbackBuilder_METHODS(T)                                                                          \
+    MIME_IUNKNOWN_METHODS(T)                                                                                           \
+    HRESULT(STDMETHODCALLTYPE *AddMapping)(T * This, const DWRITE_UNICODE_RANGE *ranges, UINT32 rangesCount,           \
+                                           const WCHAR **targetFamilyNames, UINT32 targetFamilyNamesCount,             \
+                                           IDWriteFontCollection *collection, const WCHAR *localeName,                 \
+                                           const WCHAR *baseFamilyName, FLOAT scale);                                  \
+    HRESULT(STDMETHODCALLTYPE *AddMappings)(T * This, IDWriteFontFallback * fallback);                                 \
+    HRESULT(STDMETHODCALLTYPE *CreateFontFallback)(T * This, IDWriteFontFallback * *fallback);
+MIME_COM_INTERFACE(IDWriteFontFallbackBuilder)
+
+#define IDWriteTextFormat2_METHODS(T)                                                                                  \
+    IDWriteTextFormat1_METHODS(T)                                                                                      \
+        HRESULT(STDMETHODCALLTYPE *IDWriteTextFormat2_SetLineSpacing)(T * This, const DWRITE_LINE_SPACING *spacing);   \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextFormat2_GetLineSpacing)(T * This, DWRITE_LINE_SPACING * spacing);
+MIME_COM_INTERFACE(IDWriteTextFormat2)
+
+#define IDWriteTextFormat3_METHODS(T)                                                                                  \
+    IDWriteTextFormat2_METHODS(T) HRESULT(STDMETHODCALLTYPE *SetFontAxisValues)(                                       \
+        T * This, const DWRITE_FONT_AXIS_VALUE *axis_values, UINT32 num_values);                                       \
+    UINT32(STDMETHODCALLTYPE *GetFontAxisValueCount)(T * This);                                                        \
+    HRESULT(STDMETHODCALLTYPE *GetFontAxisValues)(T * This, DWRITE_FONT_AXIS_VALUE * axis_values, UINT32 num_values);  \
+    DWRITE_AUTOMATIC_FONT_AXES(STDMETHODCALLTYPE *GetAutomaticFontAxes)(T * This);                                     \
+    HRESULT(STDMETHODCALLTYPE *SetAutomaticFontAxes)(T * This, DWRITE_AUTOMATIC_FONT_AXES axes);
+MIME_COM_INTERFACE(IDWriteTextFormat3)
+
+#define IDWriteTextLayout3_METHODS(T)                                                                                  \
+    IDWriteTextLayout2_METHODS(T) HRESULT(STDMETHODCALLTYPE *InvalidateLayout)(T * This);                              \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextLayout3_SetLineSpacing)(T * This, const DWRITE_LINE_SPACING *spacing);       \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextLayout3_GetLineSpacing)(T * This, DWRITE_LINE_SPACING * spacing);            \
+    HRESULT(STDMETHODCALLTYPE *IDWriteTextLayout3_GetLineMetrics)(T * This, DWRITE_LINE_METRICS1 * metrics,            \
+                                                                  UINT32 max_count, UINT32 * count);
+MIME_COM_INTERFACE(IDWriteTextLayout3)
+
+#define IDWriteTextLayout4_METHODS(T)                                                                                  \
+    IDWriteTextLayout3_METHODS(T) HRESULT(STDMETHODCALLTYPE *SetFontAxisValues)(                                       \
+        T * This, const DWRITE_FONT_AXIS_VALUE *axis_values, UINT32 num_values, DWRITE_TEXT_RANGE range);              \
+    UINT32(STDMETHODCALLTYPE *GetFontAxisValueCount)(T * This, UINT32 pos);                                            \
+    HRESULT(STDMETHODCALLTYPE *GetFontAxisValues)(T * This, UINT32 pos, DWRITE_FONT_AXIS_VALUE * values,               \
+                                                  UINT32 num_values, DWRITE_TEXT_RANGE * range);                       \
+    DWRITE_AUTOMATIC_FONT_AXES(STDMETHODCALLTYPE *GetAutomaticFontAxes)(T * This);                                     \
+    HRESULT(STDMETHODCALLTYPE *SetAutomaticFontAxes)(T * This, DWRITE_AUTOMATIC_FONT_AXES axes);
+MIME_COM_INTERFACE(IDWriteTextLayout4)
+
 /* ------------------------------------------------------------------ the factory */
 
 #define IDWriteFactory_METHODS(T)                                                                                      \
@@ -771,6 +1487,33 @@ MIME_DEFINE_GUID(IID_IDWriteFontFallback, 0xefa008f9, 0xf7a1, 0x48bf, 0xb0, 0x5c
                  0xff);
 MIME_DEFINE_GUID(IID_IDWriteTextAnalysisSource, 0x688e1a58, 0x5094, 0x47c8, 0xad, 0xc8, 0xfb, 0xce, 0xa6, 0x0a,
                  0xe9, 0x2b);
+MIME_DEFINE_GUID(IID_IDWritePixelSnapping, 0xeaf3a2da, 0xecf4, 0x4d24, 0xb6, 0x44, 0xb3, 0x4f, 0x68, 0x42, 0x02, 0x4b);
+MIME_DEFINE_GUID(IID_IDWriteTextRenderer, 0xef8a8135, 0x5cc6, 0x45fe, 0x88, 0x25, 0xc5, 0xa0, 0x72, 0x4e, 0xb8, 0x19);
+MIME_DEFINE_GUID(IID_IDWriteInlineObject, 0x8339fde3, 0x106f, 0x47ab, 0x83, 0x73, 0x1c, 0x62, 0x95, 0xeb, 0x10, 0xb3);
+MIME_DEFINE_GUID(IID_IDWriteTextFormat, 0x9c906818, 0x31d7, 0x4fd3, 0xa1, 0x51, 0x7c, 0x5e, 0x22, 0x5d, 0xb5, 0x5a);
+MIME_DEFINE_GUID(IID_IDWriteTypography, 0x55f1112b, 0x1dc2, 0x4b3c, 0x95, 0x41, 0xf4, 0x68, 0x94, 0xed, 0x85, 0xb6);
+MIME_DEFINE_GUID(IID_IDWriteTextLayout, 0x53737037, 0x6d14, 0x410b, 0x9b, 0xfe, 0x0b, 0x18, 0x2b, 0xb7, 0x09, 0x61);
+MIME_DEFINE_GUID(IID_IDWriteNumberSubstitution, 0x14885cc9, 0xbab0, 0x4f90, 0xb6, 0xed, 0x5c, 0x36, 0x6a, 0x2c, 0xd0,
+                 0x3d);
+MIME_DEFINE_GUID(IID_IDWriteTextAnalysisSink, 0x5810cd44, 0x0ca0, 0x4701, 0xb3, 0xfa, 0xbe, 0xc5, 0x18, 0x2a, 0xe4,
+                 0xf6);
+MIME_DEFINE_GUID(IID_IDWriteTextAnalyzer, 0xb7e6163e, 0x7f46, 0x43b4, 0x84, 0xb3, 0xe4, 0xe6, 0x24, 0x9c, 0x36, 0x5d);
+MIME_DEFINE_GUID(IID_IDWriteTextAnalysisSource1, 0x639cfad8, 0x0fb4, 0x4b21, 0xa5, 0x8a, 0x06, 0x79, 0x20, 0x12, 0x00,
+                 0x09);
+MIME_DEFINE_GUID(IID_IDWriteTextAnalysisSink1, 0xb0d941a0, 0x85e7, 0x4d8b, 0x9f, 0xd3, 0x5c, 0xed, 0x99, 0x34, 0x48,
+                 0x2a);
+MIME_DEFINE_GUID(IID_IDWriteTextAnalyzer1, 0x80dad800, 0xe21f, 0x4e83, 0x96, 0xce, 0xbf, 0xcc, 0xe5, 0x00, 0xdb, 0x7c);
+MIME_DEFINE_GUID(IID_IDWriteTextLayout1, 0x9064d822, 0x80a7, 0x465c, 0xa9, 0x86, 0xdf, 0x65, 0xf7, 0x8b, 0x8f, 0xeb);
+MIME_DEFINE_GUID(IID_IDWriteTextRenderer1, 0xd3e0e934, 0x22a0, 0x427e, 0xaa, 0xe4, 0x7d, 0x95, 0x74, 0xb5, 0x9d, 0xb1);
+MIME_DEFINE_GUID(IID_IDWriteTextFormat1, 0x5f174b49, 0x0d8b, 0x4cfb, 0x8b, 0xca, 0xf1, 0xcc, 0xe9, 0xd0, 0x6c, 0x67);
+MIME_DEFINE_GUID(IID_IDWriteTextLayout2, 0x1093c18f, 0x8d5e, 0x43f0, 0xb0, 0x64, 0x09, 0x17, 0x31, 0x1b, 0x52, 0x5e);
+MIME_DEFINE_GUID(IID_IDWriteTextAnalyzer2, 0x553a9ff3, 0x5693, 0x4df7, 0xb5, 0x2b, 0x74, 0x80, 0x6f, 0x7f, 0x2e, 0xb9);
+MIME_DEFINE_GUID(IID_IDWriteFontFallbackBuilder, 0xfd882d06, 0x8aba, 0x4fb8, 0xb8, 0x49, 0x8b, 0xe8, 0xb7, 0x3e, 0x14,
+                 0xde);
+MIME_DEFINE_GUID(IID_IDWriteTextFormat2, 0xf67e0edd, 0x9e3d, 0x4ecc, 0x8c, 0x32, 0x41, 0x83, 0x25, 0x3d, 0xfe, 0x70);
+MIME_DEFINE_GUID(IID_IDWriteTextFormat3, 0x6d3b5641, 0xe550, 0x430d, 0xa8, 0x5b, 0xb7, 0xbf, 0x48, 0xa9, 0x34, 0x27);
+MIME_DEFINE_GUID(IID_IDWriteTextLayout3, 0x07ddcd52, 0x020e, 0x4de8, 0xac, 0x33, 0x6c, 0x95, 0x3d, 0x83, 0xf9, 0x2d);
+MIME_DEFINE_GUID(IID_IDWriteTextLayout4, 0x05a9bf42, 0x223f, 0x4441, 0xb5, 0xfb, 0x82, 0x63, 0x68, 0x5f, 0x55, 0xe9);
 
 DWRITEAPI HRESULT WINAPI DWriteCreateFactory(DWRITE_FACTORY_TYPE type, REFIID iid, IUnknown **factory);
 
