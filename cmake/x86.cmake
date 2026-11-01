@@ -47,7 +47,7 @@ set(MIME_X86_DLLS
     crypt32:0x67000000:all_five userenv:0x66000000:all_five ole32:0x65000000:ole32_imports oleaut32:0x64000000:oleaut32_imports
     rpcrt4:0x63000000:rpcrt4_imports imm32:0x62000000:all_five comctl32:0x61000000:comctl comdlg32:0x60000000:dialog_imports
     msi:0x5f000000:msi_imports mpr:0x5e000000:base wintrust:0x5d000000:crypt odbc32:0x5c000000:user
-    gdiplus:0x5b000000:gdiplus_imports wininet:0x5a000000:wininet_imports urlmon:0x59000000:urlmon_imports msimg32:0x58000000:gdi
+    gdiplus:0x5b000000:gdiplus_imports d2d1:0x1E500000:d2d1_imports wininet:0x5a000000:wininet_imports urlmon:0x59000000:urlmon_imports msimg32:0x58000000:gdi
     oleacc:0x57000000:oleacc_imports oledlg:0x56000000:oledlg_imports combase:0x54000000:all_five usp10:0x51000000:gdi
     cfgmgr32:0x39000000:base setupapi:0x46000000:setup dwrite:0x45000000:all_five msacm32:0x42000000:acm dsound:0x3D000000:all_five ddraw:0x3C000000:direct3d
     dinput8:0x3B000000:all_five dinput:0x3A000000:all_five hid:0x38000000:base xinput1_4:0x37000000:xinput
@@ -119,6 +119,7 @@ set(ctf_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32)
 set(gdi ntdll kernel32 gdi32)
 set(user_gdi ntdll kernel32 user32 gdi32)
 set(gdiplus_imports ntdll kernel32 user32 gdi32 ole32)
+set(d2d1_imports ntdll kernel32 user32 gdi32 ole32 dwrite)
 set(crypt ntdll kernel32 crypt32)
 set(acm ntdll kernel32 user32 gdi32 winmm)
 set(direct3d ntdll kernel32 user32 gdi32 win32u msvcrt)
@@ -141,6 +142,8 @@ foreach(xinput xinput1_4 xinput1_3 xinput1_2 xinput1_1)
 endforeach()
 set(objects_gdiplus x86-lib-vector x86-lib-ttf x86-div)
 set(includes_gdiplus guest/lib)
+set(objects_d2d1 x86-lib-vector x86-div)
+set(includes_d2d1 guest/lib)
 set(objects_dwrite x86-lib-ttf x86-div)
 set(includes_dwrite guest/lib)
 set(objects_windowscodecs x86-lib-png:guest/lib/png/inflate.c x86-lib-png:guest/lib/png/deflate.c x86-lib-pngio x86-lib-jpeg x86-lib-tiff x86-lib-gif x86-lib-bcn x86-div)

@@ -6,6 +6,7 @@
 #define MIME_WIN32_DWRITE_H
 
 #include <mime/win32/objbase.h>
+#include <mime/win32/d2dbasetypes.h>
 #include <mime/win32/wingdi.h>
 
 #ifdef MIME_BUILD_DWRITE
@@ -336,9 +337,7 @@ typedef struct DWRITE_GLYPH_RUN {
 } DWRITE_GLYPH_RUN;
 
 /* direct2d's simplified geometry, used to describe glyph outlines. */
-typedef struct D2D1_POINT_2F {
-    FLOAT x, y;
-} D2D1_POINT_2F;
+typedef D2D_POINT_2F D2D1_POINT_2F;
 
 typedef struct D2D1_BEZIER_SEGMENT {
     D2D1_POINT_2F point1, point2, point3;
