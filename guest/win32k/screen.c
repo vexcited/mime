@@ -277,19 +277,18 @@ static LONG distance(LONG a, LONG b)
 }
 
 /* the window below top that a connection's swap chain was made for: its client area is where the image shows. */
-static WND *presented_window(WND *parent, const WND *top, const PLACE *place, const RECT *client)
+static WND *presented_window(WND *parent, const WND *top, const RECT *client)
 {
     for (WND *c = parent->FirstChild; c; c = c->Next) {
         if (!(c->Style & WS_VISIBLE))
             continue;
-        WND *below = presented_window(c, top, place, client);
+        WND *below = presented_window(c, top, client);
         if (below)
             return below;
         if (!has_connection(c))
             continue;
         RECT r = c->ClientRect;
         RectOffset(&r, -top->WindowRect.left, -top->WindowRect.top);
-        r = to_canvas(r, place);
         if (distance(r.left, client->left) <= 1 && distance(r.top, client->top) <= 1 &&
             distance(r.right, client->right) <= 1 && distance(r.bottom, client->bottom) <= 1)
             return c;
@@ -356,18 +355,16 @@ static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *
     BOOLEAN got = host_pixels && presents_through_host(w) && read_presented(w, TRUE, &width, &height, &client, &serial);
     if (!got)
         return;
-    /* the host reports the client area in physical pixels, a canvas in window pixels has them smaller. */
-    if (place->Num == place->Den && DpiVirtual(w->Awareness))
-        DpiRectConvert(&client, DPI_AWARE_SYSTEM, w->Awareness);
-    RECT c = {place->Origin.x + client.left, place->Origin.y + client.top, place->Origin.x + client.right,
-              place->Origin.y + client.bottom};
+    /* the client area comes in the pixels of the presenting program, the same as the window's own, so the canvas scales it. */
+    RECT c = to_canvas(client, place);
+    RectOffset(&c, place->Origin.x, place->Origin.y);
     if (c.right <= c.left || c.bottom <= c.top)
         return;
     /* a child window of another process is clipped by its parents, whose client areas are smaller than its own. */
     REGION shown, clip;
     RgnInit(&shown);
     RgnCopy(&shown, vis);
-    WND *presenter = presented_window(w, w, place, &client);
+    WND *presenter = presented_window(w, w, &client);
     if (presenter) {
         presented_clip(w, presenter, place, &clip);
         RgnCombine(&shown, &shown, &clip, RGN_AND);
