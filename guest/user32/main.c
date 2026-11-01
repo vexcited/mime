@@ -227,6 +227,7 @@ static void initialize_process(void)
     register_system_class(L"#32769", DesktopProc, MIME_FNID_DESKTOP, 0);
     register_system_class(L"#32768", MenuProc, MIME_FNID_MENU, CS_DROPSHADOW | CS_SAVEBITS);
     register_system_class(L"Message", MessageWindowProc, MIME_FNID_MESSAGE, 0);
+    UserRegisterMdiClient();
 }
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)

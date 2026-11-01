@@ -165,4 +165,7 @@ HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGP
                       BOOL modal);
 INT_PTR UserModalLoop(HWND dialog, HWND owner);
 
+/* mdi.c */
+void UserRegisterMdiClient(void);
+
 #endif
