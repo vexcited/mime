@@ -1,6 +1,7 @@
 /* instances: where the instances of a class come from, the static ones of the repository and the providers of the machine. */
 #include "wbemcore.h"
 #include <mime/win32/winsvc.h>
+#include <mime/win32/winspool.h>
 #include <mime/ntrtl.h>
 #include <mime/ntapi.h>
 
@@ -462,6 +463,98 @@ static BOOL disk_enum(WNs *ns, WObj *c, WEmit emit, void *context)
     return TRUE;
 }
 
+/* ------------------------------------------------------------------ Win32_VideoController */
+
+#define DISPLAY_CLASS_KEY L"SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0000"
+
+/* the driver's date as setup writes it, month-day-year, in the form of a datetime. */
+static WCHAR *driver_date(const WCHAR *text)
+{
+    int part[3] = {};
+    if (!text)
+        return nullptr;
+    for (int i = 0; i < 3; i++) {
+        if (*text < '0' || *text > '9')
+            return nullptr;
+        while (*text >= '0' && *text <= '9')
+            part[i] = part[i] * 10 + (*text++ - '0');
+        if (i < 2 && *text++ != '-')
+            return nullptr;
+    }
+    return wb_format(L"%04d%02d%02d000000.000000+000", part[2], part[0], part[1]);
+}
+
+static BOOL video_enum(WNs *ns, WObj *c, WEmit emit, void *context)
+{
+    WCHAR *name = registry_text(HKEY_LOCAL_MACHINE, DISPLAY_CLASS_KEY, L"DriverDesc");
+    if (!name)
+        return TRUE;
+    WCHAR *vendor = registry_text(HKEY_LOCAL_MACHINE, DISPLAY_CLASS_KEY, L"ProviderName");
+    WCHAR *hardware = registry_text(HKEY_LOCAL_MACHINE, DISPLAY_CLASS_KEY, L"MatchingDeviceId");
+    WCHAR *version = registry_text(HKEY_LOCAL_MACHINE, DISPLAY_CLASS_KEY, L"DriverVersion");
+    WCHAR *date_text = registry_text(HKEY_LOCAL_MACHINE, DISPLAY_CLASS_KEY, L"DriverDate");
+    WCHAR *date = driver_date(date_text);
+    WCHAR *inf = registry_text(HKEY_LOCAL_MACHINE, DISPLAY_CLASS_KEY, L"InfPath");
+    WCHAR *section = registry_text(HKEY_LOCAL_MACHINE, DISPLAY_CLASS_KEY, L"InfSection");
+    WCHAR *pnp = hardware ? wb_format(L"%s\\3&11583659&0&10", hardware) : nullptr;
+    WCHAR *description = nullptr;
+    WObj *o = wo_spawn(c);
+    put_str(o, L"DeviceID", L"VideoController1");
+    put_str(o, L"Name", name);
+    put_str(o, L"Caption", name);
+    put_str(o, L"Description", name);
+    put_str(o, L"AdapterCompatibility", vendor);
+    put_str(o, L"VideoProcessor", name);
+    put_str(o, L"DriverVersion", version);
+    put_str(o, L"DriverDate", date);
+    put_str(o, L"InfFilename", inf);
+    put_str(o, L"InfSection", section);
+    put_str(o, L"PNPDeviceID", pnp);
+    put_str(o, L"SystemName", computer_name());
+    put_str(o, L"CreationClassName", L"Win32_VideoController");
+    put_str(o, L"SystemCreationClassName", L"Win32_ComputerSystem");
+    put_str(o, L"Status", L"OK");
+    put_str(o, L"AdapterDACType", L"Internal");
+    put_uint(o, L"Availability", 3);
+    put_uint(o, L"ConfigManagerErrorCode", 0);
+    put_bool(o, L"ConfigManagerUserConfig", FALSE);
+    put_uint(o, L"VideoArchitecture", 5);
+    put_uint(o, L"VideoMemoryType", 2);
+    put_bool(o, L"Monochrome", FALSE);
+    put_uint(o, L"CurrentScanMode", 2);
+    /* the mode of the primary display, when the process has user32. */
+    typedef BOOL(WINAPI * EnumSettings)(LPCWSTR, DWORD, DEVMODEW *);
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    EnumSettings settings = user32 ? (EnumSettings)(void *)GetProcAddress(user32, "EnumDisplaySettingsW") : nullptr;
+    DEVMODEW mode = {};
+    mode.dmSize = sizeof(mode);
+    if (settings && settings(nullptr, (DWORD)-1, &mode)) {
+        ULONGLONG colors = mode.dmBitsPerPel >= 32 ? 4294967296ull : 1ull << mode.dmBitsPerPel;
+        description = wb_format(L"%u x %u x %I64u colors", mode.dmPelsWidth, mode.dmPelsHeight, colors);
+        put_uint(o, L"CurrentHorizontalResolution", mode.dmPelsWidth);
+        put_uint(o, L"CurrentVerticalResolution", mode.dmPelsHeight);
+        put_uint(o, L"CurrentBitsPerPixel", mode.dmBitsPerPel);
+        put_uint(o, L"CurrentRefreshRate", mode.dmDisplayFrequency);
+        put_uint(o, L"MaxRefreshRate", mode.dmDisplayFrequency);
+        put_uint(o, L"MinRefreshRate", mode.dmDisplayFrequency);
+        put_uint(o, L"CurrentNumberOfColors", colors);
+        put_str(o, L"VideoModeDescription", description);
+    }
+    BOOL more = emit(context, o);
+    wo_free(o);
+    wb_free(name);
+    wb_free(vendor);
+    wb_free(hardware);
+    wb_free(version);
+    wb_free(date_text);
+    wb_free(date);
+    wb_free(inf);
+    wb_free(section);
+    wb_free(pnp);
+    wb_free(description);
+    return more;
+}
+
 /* ------------------------------------------------------------------ Win32_Service */
 
 static const WCHAR *state_name(DWORD state)
@@ -698,7 +791,8 @@ typedef struct Native {
 static const Native NATIVES[] = {
     {L"Win32_OperatingSystem", os_enum, nullptr}, {L"Win32_ComputerSystem", computer_enum, nullptr},
     {L"Win32_Processor", processor_enum, nullptr}, {L"Win32_PhysicalMemory", memory_enum, nullptr},
-    {L"Win32_LogicalDisk", disk_enum, nullptr},    {L"Win32_Service", service_enum, service_method},
+    {L"Win32_LogicalDisk", disk_enum, nullptr},    {L"Win32_VideoController", video_enum, nullptr},
+    {L"Win32_Service", service_enum, service_method},
 };
 
 static const Native *find_native(const WCHAR *name)

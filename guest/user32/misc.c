@@ -1130,6 +1130,7 @@ WINUSERAPI BOOL WINAPI EnumDisplayDevicesW(LPCWSTR device, DWORD index, PDISPLAY
     if (!device) {
         if (index >= count)
             return FALSE;
+        wsprintfW(number, L"%04u", 0);
         wcscpy(d.DeviceName, list[index].Device);
 #if defined(__aarch64__)
         wcscpy(d.DeviceString, L"Qualcomm(R) Adreno(TM) X1-85 GPU");
