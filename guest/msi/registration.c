@@ -139,6 +139,28 @@ static UINT write_uninstall_entry(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR c
     return error;
 }
 
+/* the files a numbered list under the product names, such as its cached transforms. */
+static UINT remove_cached_files(MIME_MSI_PACKAGE *package, HKEY product, PCWSTR list)
+{
+    HKEY key;
+    if (RegOpenKeyExW(product, list, 0, KEY_READ, &key))
+        return ERROR_SUCCESS;
+    DWORD count = 0, size = sizeof(count);
+    RegQueryValueExW(key, L"Count", nullptr, nullptr, (BYTE *)&count, &size);
+    UINT error = ERROR_SUCCESS;
+    for (DWORD index = 1; !error && index <= count && index <= 256; index++) {
+        WCHAR name[32];
+        PWSTR file = nullptr;
+        _snwprintf(name, RTL_NUMBER_OF(name), L"%u", index);
+        /* a storage of the package or a file at the source is not the product's to remove. */
+        if (!MimeMsiRegistryText(key, name, &file) && file && file[0] != L':' && file[0] != L'@')
+            error = MimeMsiRemoveFile(package, file[0] == L'|' ? file + 1 : file);
+        MimeMsiFree(file);
+    }
+    RegCloseKey(key);
+    return error;
+}
+
 static UINT unregister_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
 {
     HKEY key;
@@ -147,26 +169,14 @@ static UINT unregister_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path
         return ERROR_SUCCESS;
     if (error)
         return error;
-    /* the cached package and its transforms are machine files like any other. */
+    /* the cached package, its transforms and its patches are machine files like any other. */
     PWSTR local = nullptr;
-    if (!MimeMsiRegistryText(key, L"LocalPackage", &local) && local) {
+    if (!MimeMsiRegistryText(key, L"LocalPackage", &local) && local)
         error = MimeMsiRemoveFile(package, local);
-        HKEY transforms;
-        if (!error && !RegOpenKeyExW(key, L"Transforms", 0, KEY_READ, &transforms)) {
-            DWORD count = 0, size = sizeof(count);
-            RegQueryValueExW(transforms, L"Count", nullptr, nullptr, (BYTE *)&count, &size);
-            for (DWORD index = 1; !error && index <= count && index <= 256; index++) {
-                WCHAR name[32];
-                PWSTR file = nullptr;
-                _snwprintf(name, RTL_NUMBER_OF(name), L"%u", index);
-                /* a storage of the package or a file at the source is not the product's to remove. */
-                if (!MimeMsiRegistryText(transforms, name, &file) && file && file[0] != L':' && file[0] != L'@')
-                    error = MimeMsiRemoveFile(package, file[0] == L'|' ? file + 1 : file);
-                MimeMsiFree(file);
-            }
-            RegCloseKey(transforms);
-        }
-    }
+    if (!error)
+        error = remove_cached_files(package, key, L"Transforms");
+    if (!error)
+        error = remove_cached_files(package, key, L"Patches");
     MimeMsiFree(local);
     RegCloseKey(key);
     if (!error)
@@ -253,6 +263,19 @@ static UINT register_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
         UINT error = MimeMsiValidateMaintenance(package);
         if (!error && package->Recache)
             error = MimeMsiRecachePackage(package, root, path);
+        if (!error && package->NewPatches) {
+            /* the patches go beside the cached package, under the names the package gives them. */
+            HKEY key;
+            PWSTR cache = nullptr;
+            error = RegOpenKeyExW(root, path, 0, KEY_READ, &key);
+            if (!error) {
+                error = MimeMsiRegistryText(key, L"LocalPackage", &cache);
+                RegCloseKey(key);
+            }
+            if (!error)
+                error = MimeMsiCachePatches(package, root, path, cache);
+            MimeMsiFree(cache);
+        }
         if (!error)
             package->CatalogRegistered = TRUE;
         return error;

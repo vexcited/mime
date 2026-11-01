@@ -7,6 +7,7 @@
 #include <rtl.h>
 
 #ifndef ADVERTISEFLAGS_MACHINEASSIGN
+MSIAPI UINT WINAPI MsiApplyMultiplePatchesW(LPCWSTR patches, LPCWSTR product, LPCWSTR command);
 MSIAPI UINT WINAPI MsiAdvertiseProductExW(LPCWSTR package, LPCWSTR script, LPCWSTR transforms, LANGID language, DWORD platform,
                                           DWORD options);
 #endif
@@ -32,6 +33,7 @@ typedef struct COMMAND {
     BOOL LevelSet;
     PWSTR Reboot;         /* the REBOOT value a switch asked for. */
     PWSTR PatchPath;
+    PWSTR Instance;       /* the product code /n names. */
     PWSTR Pipe;
     PWSTR Transforms;     /* the list /t gives an advertisement. */
     PWSTR AdvertiseFor;   /* the letter after /j, who the product is advertised to. */
@@ -185,8 +187,9 @@ static BOOL parse(COMMAND *command, PCWSTR line)
         if (match(option, L"?") || match(option, L"h") || match(option, L"help")) {
             command->Action = ACTION_HELP;
         } else if (match(option, L"n") && command->Action != ACTION_ADVERTISE) {
-            /* /n names the product for /i, ignored since a package path carries its own code. */
+            /* /n names the product for /i, ignored since a package path carries its own code, and for /p it limits the patch. */
             line = next_word(line, argument, RTL_NUMBER_OF(argument), &start);
+            command->Instance = copy_text(argument);
         } else if ((match(option, L"n") || match(option, L"c")) && command->Action == ACTION_ADVERTISE) {
             /* an advertisement of a new instance, which has its own transform. */
             command->NewInstance = TRUE;
@@ -401,7 +404,12 @@ static UINT run(COMMAND *command)
         break;
     }
     case ACTION_PATCH:
-        error = MsiApplyPatchW(command->PatchPath, command->Target, INSTALLTYPE_DEFAULT, properties);
+        if (wcschr(command->PatchPath, L';'))
+            error = MsiApplyMultiplePatchesW(command->PatchPath, command->Instance, properties);
+        else if (command->Instance)
+            error = MsiApplyPatchW(command->PatchPath, command->Instance, INSTALLTYPE_SINGLE_INSTANCE, properties);
+        else
+            error = MsiApplyPatchW(command->PatchPath, command->Target, INSTALLTYPE_DEFAULT, properties);
         break;
     case ACTION_ADMIN:
         if (command->PatchPath) {

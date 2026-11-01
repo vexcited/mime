@@ -9,6 +9,9 @@ EXPORTS
     MsiAdvertiseProductExA@24 @227
     MsiAdvertiseProductExW@24 @228
     MsiAdvertiseProductW@16 @6
+    MsiApplyMultiplePatchesA@12 @239
+    MsiApplyMultiplePatchesW@12 @240
+    MsiApplyPatchA@16 @174
     MsiApplyPatchW@16 @175
     MsiCloseAllHandles@0 @7
     MsiCloseHandle@4 @8

@@ -61,6 +61,58 @@ static UINT patch_image(PCWSTR patch, PCWSTR image, PCWSTR command)
     return error;
 }
 
+/* each installed product the patch is for is reinstalled with it, those it is not for are passed over. */
+static UINT patch_products(PCWSTR patches, PCWSTR single, PCWSTR targets, PCWSTR command)
+{
+    /* the engine reads the patches from wherever the caller is not. */
+    SIZE_T capacity = wcslen(patches) + (command ? wcslen(command) : 0) + 32 + 260 * 8;
+    PWSTR line = MimeMsiAllocate(capacity * sizeof(WCHAR));
+    if (!line)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    SIZE_T at = (SIZE_T)_snwprintf(line, capacity, L"%s PATCH=\"", command ? command : L"");
+    for (PCWSTR cursor = patches; *cursor;) {
+        PCWSTR end = wcschr(cursor, L';');
+        WCHAR one[MAX_PATH], full[MAX_PATH];
+        SIZE_T length = end ? (SIZE_T)(end - cursor) : wcslen(cursor);
+        if (length >= RTL_NUMBER_OF(one)) {
+            MimeMsiFree(line);
+            return ERROR_PATCH_PACKAGE_OPEN_FAILED;
+        }
+        memcpy(one, cursor, length * sizeof(WCHAR));
+        one[length] = 0;
+        if (length && GetFullPathNameW(one, RTL_NUMBER_OF(full), full, nullptr) && wcslen(full) + at + 8 < capacity) {
+            at += (SIZE_T)_snwprintf(line + at, capacity - at, L"%s%s", line[at - 1] == L'"' ? L"" : L";", full);
+        }
+        cursor = end ? end + 1 : cursor + length;
+    }
+    line[at++] = L'"';
+    line[at] = 0;
+    BOOL matched = FALSE;
+    UINT error = ERROR_SUCCESS;
+    for (PCWSTR cursor = targets; !error && *cursor; cursor += *cursor == L';' ? 1 : 38) {
+        if (*cursor == L';')
+            continue;
+        WCHAR code[39];
+        memcpy(code, cursor, 38 * sizeof(WCHAR));
+        code[38] = 0;
+        if (single && _wcsicmp(single, code))
+            continue;
+        INSTALLSTATE state = MsiQueryProductStateW(code);
+        if (state == INSTALLSTATE_DEFAULT) {
+            matched = TRUE;
+            error = MsiConfigureProductExW(code, 0, INSTALLSTATE_DEFAULT, line);
+        } else if (state == INSTALLSTATE_ADVERTISED) {
+            matched = TRUE;
+            error = ERROR_CALL_NOT_IMPLEMENTED;
+        }
+        /* a product the patch does not fit is not the end of the others. */
+        if (error == ERROR_PATCH_TARGET_NOT_FOUND)
+            error = ERROR_SUCCESS;
+    }
+    MimeMsiFree(line);
+    return error ? error : matched ? ERROR_SUCCESS : ERROR_PATCH_TARGET_NOT_FOUND;
+}
+
 UINT WINAPI MsiApplyPatchW(LPCWSTR path, LPCWSTR package, INSTALLTYPE type, LPCWSTR command)
 {
     WCHAR packed[33];
@@ -90,12 +142,64 @@ UINT WINAPI MsiApplyPatchW(LPCWSTR path, LPCWSTR package, INSTALLTYPE type, LPCW
     if (!error && (!guid_list(revision, FALSE) || !guid_list(targets, TRUE)))
         error = ERROR_PATCH_PACKAGE_INVALID;
     MimeMsiFree(revision);
-    MimeMsiFree(targets);
     MsiCloseHandle(summary);
     if (!error && type == INSTALLTYPE_NETWORK_IMAGE)
         error = patch_image(path, package, command);
     else if (!error)
-        error = ERROR_PATCH_PACKAGE_UNSUPPORTED;
+        error = patch_products(path, type == INSTALLTYPE_SINGLE_INSTANCE ? package : nullptr, targets, command);
+    MimeMsiFree(targets);
+    return error;
+}
+
+UINT WINAPI MsiApplyMultiplePatchesW(LPCWSTR patches, LPCWSTR product, LPCWSTR command)
+{
+    if (!patches || !*patches)
+        return ERROR_INVALID_PARAMETER;
+    WCHAR packed[33];
+    if (product && *product && !MimeMsiPackGuid(product, packed))
+        return ERROR_INVALID_PARAMETER;
+    PWSTR copy = MimeMsiDuplicate(patches);
+    if (!copy)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    /* every patch must be one of the installer, and the first says which products are to have them. */
+    PWSTR targets = nullptr;
+    UINT error = ERROR_SUCCESS;
+    for (PWSTR cursor = copy; !error && cursor;) {
+        PWSTR end = wcschr(cursor, L';');
+        if (end)
+            *end = 0;
+        if (*cursor) {
+            MIME_MSI_DATABASE *storage;
+            error = MimeMsiOpenStorageFile(cursor, 0x86, &storage);
+            MSIHANDLE summary = 0;
+            if (error)
+                error = error == ERROR_NOT_ENOUGH_MEMORY ? error :
+                        error == ERROR_INSTALL_PACKAGE_INVALID ? ERROR_PATCH_PACKAGE_INVALID : ERROR_PATCH_PACKAGE_OPEN_FAILED;
+            else {
+                AcquireSRWLockExclusive(&MimeMsiLock);
+                error = MimeMsiCreateSummary(storage, &summary);
+                ReleaseSRWLockExclusive(&MimeMsiLock);
+                storage->Object.Destroy(&storage->Object);
+                error = error ? (error == ERROR_NOT_ENOUGH_MEMORY ? error : ERROR_PATCH_PACKAGE_INVALID) : ERROR_SUCCESS;
+            }
+            PWSTR list = nullptr;
+            if (!error)
+                error = summary_text(summary, 7, &list);
+            if (!error && !guid_list(list, TRUE))
+                error = ERROR_PATCH_PACKAGE_INVALID;
+            if (summary)
+                MsiCloseHandle(summary);
+            if (!targets)
+                targets = list;
+            else
+                MimeMsiFree(list);
+        }
+        cursor = end ? end + 1 : nullptr;
+    }
+    if (!error)
+        error = patch_products(patches, product && *product ? product : nullptr, targets, command);
+    MimeMsiFree(targets);
+    MimeMsiFree(copy);
     return error;
 }
 

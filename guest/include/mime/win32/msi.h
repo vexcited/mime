@@ -35,6 +35,10 @@ typedef enum {
 
 MSIAPI UINT WINAPI MsiApplyPatchW(LPCWSTR patch, LPCWSTR package, INSTALLTYPE type, LPCWSTR command);
 
+MSIAPI UINT WINAPI MsiApplyMultiplePatchesW(LPCWSTR patches, LPCWSTR product, LPCWSTR command);
+MSIAPI UINT WINAPI MsiApplyMultiplePatchesA(LPCSTR patches, LPCSTR product, LPCSTR command);
+MSIAPI UINT WINAPI MsiApplyPatchA(LPCSTR patch, LPCSTR package, INSTALLTYPE type, LPCSTR command);
+
 /* who an advertisement is for, in the place of a script file. */
 #define ADVERTISEFLAGS_MACHINEASSIGN 0
 #define ADVERTISEFLAGS_USERASSIGN 1

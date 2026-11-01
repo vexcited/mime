@@ -272,6 +272,97 @@ static UINT maintenance_command(MSIHANDLE handle, PCWSTR command)
     return error;
 }
 
+/* the values of the Property table, for what a patch changes among them to be told after. */
+typedef struct PROPERTY_ROW {
+    PWSTR Name, Value;
+} PROPERTY_ROW;
+
+static void free_rows(PROPERTY_ROW *rows, ULONG count)
+{
+    for (ULONG i = 0; rows && i < count; i++) {
+        MimeMsiFree(rows[i].Name);
+        MimeMsiFree(rows[i].Value);
+    }
+    MimeMsiFree(rows);
+}
+
+static UINT property_rows(MIME_MSI_PACKAGE *package, PROPERTY_ROW **out, ULONG *count)
+{
+    MIME_MSI_TABLE *table;
+    *out = nullptr;
+    *count = 0;
+    UINT error = MimeMsiLoadTable(package->Database, L"Property", &table);
+    if (error)
+        return error;
+    PROPERTY_ROW *rows = MimeMsiAllocate(((SIZE_T)table->Rows + 1) * sizeof(*rows));
+    if (!rows)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    for (ULONG row = 0; !error && row < table->Rows; row++) {
+        PCWSTR name = MimeMsiText(package->Database, table, row, 0), value = MimeMsiText(package->Database, table, row, 1);
+        rows[row].Name = MimeMsiDuplicate(name ? name : L"");
+        rows[row].Value = MimeMsiDuplicate(value ? value : L"");
+        if (!rows[row].Name || !rows[row].Value)
+            error = ERROR_NOT_ENOUGH_MEMORY;
+        *count = row + 1;
+    }
+    if (error)
+        free_rows(rows, *count);
+    else
+        *out = rows;
+    return error;
+}
+
+/*
+ * a patch of an installed product is applied to the database of its session, with the properties it changes taken on, and what
+ * it changes is reinstalled. the session caches the patch when it registers.
+ */
+static UINT patch_session(MSIHANDLE handle)
+{
+    AcquireSRWLockExclusive(&MimeMsiLock);
+    MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
+    PWSTR list = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"PATCH")) : nullptr;
+    PWSTR product = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"ProductCode")) : nullptr;
+    PROPERTY_ROW *before = nullptr;
+    ULONG before_count = 0;
+    UINT error = !package ? ERROR_INVALID_HANDLE : !list || !product ? ERROR_NOT_ENOUGH_MEMORY : ERROR_SUCCESS;
+    if (!error && *list)
+        error = property_rows(package, &before, &before_count);
+    ReleaseSRWLockExclusive(&MimeMsiLock);
+    if (!error && *list) {
+        MSIHANDLE database = MsiGetActiveDatabase(handle);
+        error = database ? MimeMsiApplyPatches(database, product, list) : ERROR_NOT_ENOUGH_MEMORY;
+        if (database)
+            MsiCloseHandle(database);
+        PROPERTY_ROW *after = nullptr;
+        ULONG after_count = 0;
+        AcquireSRWLockExclusive(&MimeMsiLock);
+        package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
+        if (!error && !package)
+            error = ERROR_INVALID_HANDLE;
+        if (!error)
+            error = property_rows(package, &after, &after_count);
+        for (ULONG i = 0; !error && i < after_count; i++) {
+            BOOL changed = TRUE;
+            for (ULONG k = 0; k < before_count; k++)
+                if (!wcscmp(before[k].Name, after[i].Name))
+                    changed = wcscmp(before[k].Value, after[i].Value) != 0;
+            if (changed)
+                error = MimeMsiSetProperty(package, after[i].Name, after[i].Value);
+        }
+        if (!error) {
+            package->NewPatches = TRUE;
+            if (!*MimeMsiGetProperty(package, L"REINSTALL"))
+                error = MimeMsiSetProperty(package, L"REINSTALL", L"ALL");
+        }
+        ReleaseSRWLockExclusive(&MimeMsiLock);
+        free_rows(after, after_count);
+    }
+    free_rows(before, before_count);
+    MimeMsiFree(list);
+    MimeMsiFree(product);
+    return error;
+}
+
 /* whether the mode of the session recaches the package, which asks for it from the source. */
 static BOOL recaches(MSIHANDLE handle)
 {
@@ -290,6 +381,8 @@ static UINT open_installed(PCWSTR product, PCWSTR package, PCWSTR command, MSIHA
     UINT error = MsiOpenProductW(product, &cached);
     if (!error)
         error = maintenance_command(cached, command);
+    if (!error)
+        error = patch_session(cached);
     if (!error && recaches(cached)) {
         WCHAR found[MAX_PATH];
         if (!package) {
@@ -301,6 +394,8 @@ static UINT open_installed(PCWSTR product, PCWSTR package, PCWSTR command, MSIHA
             error = MimeMsiOpenProductEx(product, package, &source);
         if (!error)
             error = maintenance_command(source, command);
+        if (!error)
+            error = patch_session(source);
         if (error && source)
             MsiCloseHandle(source);
         else if (!error) {

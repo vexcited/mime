@@ -468,6 +468,8 @@ BOOL WINAPI MsiGetMode(MSIHANDLE handle, UINT mode)
     BOOL result = FALSE;
     if (package) {
         switch (mode) {
+        case MSIRUNMODE_ADMIN: result = package->Admin; break;
+        case MSIRUNMODE_ADVERTISE: result = package->Advertise; break;
         case MSIRUNMODE_MAINTENANCE: result = package->Maintenance; break;
         case MSIRUNMODE_ROLLBACKENABLED: result = !package->NoRollback; break;
         case MSIRUNMODE_LOGENABLED: result = MimeMsiLogEnabled(); break;
@@ -986,4 +988,26 @@ UINT WINAPI MsiAdvertiseProductExA(LPCSTR package, LPCSTR script, LPCSTR transfo
 UINT WINAPI MsiAdvertiseProductA(LPCSTR package, LPCSTR script, LPCSTR transforms, LANGID language)
 {
     return MsiAdvertiseProductExA(package, script, transforms, language, 0, 0);
+}
+
+UINT WINAPI MsiApplyPatchA(LPCSTR patch, LPCSTR package, INSTALLTYPE type, LPCSTR command)
+{
+    PWSTR wide_patch = to_wide(patch), wide_package = to_wide(package), wide_command = to_wide(command);
+    UINT error = (patch && !wide_patch) || (package && !wide_package) || (command && !wide_command) ?
+                 ERROR_NOT_ENOUGH_MEMORY : MsiApplyPatchW(wide_patch, wide_package, type, wide_command);
+    MimeMsiFree(wide_patch);
+    MimeMsiFree(wide_package);
+    MimeMsiFree(wide_command);
+    return error;
+}
+
+UINT WINAPI MsiApplyMultiplePatchesA(LPCSTR patches, LPCSTR product, LPCSTR command)
+{
+    PWSTR wide_patches = to_wide(patches), wide_product = to_wide(product), wide_command = to_wide(command);
+    UINT error = (patches && !wide_patches) || (product && !wide_product) || (command && !wide_command) ?
+                 ERROR_NOT_ENOUGH_MEMORY : MsiApplyMultiplePatchesW(wide_patches, wide_product, wide_command);
+    MimeMsiFree(wide_patches);
+    MimeMsiFree(wide_product);
+    MimeMsiFree(wide_command);
+    return error;
 }

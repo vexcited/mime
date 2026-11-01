@@ -192,6 +192,8 @@ typedef struct MIME_MSI_PACKAGE {
     BOOL Is64Bit;
     /* an administrative installation is running, or the package is the image of one. */
     BOOL Admin, AdminImage, Advertise;
+    /* patches were applied to the installed product in this session, and are to be cached. */
+    BOOL NewPatches;
     int SourceType;
     DWORD RegistryView;
     struct MIME_MSI_SCRIPT_ACTION *Deferred, **DeferredTail;
