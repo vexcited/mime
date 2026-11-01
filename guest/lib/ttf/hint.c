@@ -197,6 +197,8 @@ typedef struct Exec {
     Zone zones[2]; /* 0 twilight, 1 glyph. */
     int32_t *stack;
     uint32_t sp, stack_cap;
+    int32_t *cvt, *storage;
+    uint32_t cvt_count, storage_count;
     Code code;
     uint32_t ip;
     Call calls[MAX_CALL_DEPTH];
@@ -342,9 +344,48 @@ static int32_t round_super(const GState *gs, int32_t d)
     return v > 0 ? -gs->phase : v;
 }
 
+/*
+ * with ClearType the rendering is finer than a pixel along the x axis, so rounding along it keeps a sixteenth of a
+ * pixel and distances may shrink to half a pixel.
+ */
+static bool subpixel_axis(const Exec *ex)
+{
+    return (ex->h->flags & MIME_TTF_HINT_CLEARTYPE) && !(ex->gs.pv.x == 0 && ex->gs.pv.y == 0x4000);
+}
+
+static bool subpixel_rounding(const Exec *ex)
+{
+    return subpixel_axis(ex) && (ex->h->native || ex->program != PROGRAM_FONT);
+}
+
 static int32_t round_value(const Exec *ex, int32_t d)
 {
     const GState *gs = &ex->gs;
+    if (subpixel_rounding(ex) && gs->round_mode <= ROUND_OFF) {
+        int32_t v;
+        switch (gs->round_mode) {
+        case ROUND_GRID:
+            v = d < 0 ? -((-d + 2) & ~3) : ((d + 2) & ~3);
+            break;
+        case ROUND_HALF:
+            v = d < 0 ? -2 - ((-d) & ~3) : ((d & ~3) + 2);
+            if ((d ^ v) < 0 && d != 0)
+                return d > 0 ? 2 : -2;
+            return v;
+        case ROUND_DOUBLE:
+            v = d < 0 ? -((-d + 1) & ~1) : ((d + 1) & ~1);
+            break;
+        case ROUND_DOWN:
+            v = d < 0 ? -((-d) & ~3) : (d & ~3);
+            break;
+        case ROUND_UP:
+            v = d < 0 ? -((-d + 3) & ~3) : ((d + 3) & ~3);
+            break;
+        default:
+            return d;
+        }
+        return ((d ^ v) < 0 && d != 0) ? 0 : v;
+    }
     switch (gs->round_mode) {
     case ROUND_GRID:
         if (d >= 0) {
@@ -529,11 +570,11 @@ static void ins_mdap(Exec *ex, uint8_t op)
 static int32_t read_cvt(const Exec *ex, int32_t i)
 {
     const MimeTtfHinter *h = ex->h;
-    if (i < 0 || (uint32_t)i >= h->cvt_count)
+    if (i < 0 || (uint32_t)i >= ex->cvt_count)
         return 0;
     if (!h->stretched)
-        return h->cvt[i];
-    return mul_fix(h->cvt[i], current_ratio(ex));
+        return ex->cvt[i];
+    return mul_fix(ex->cvt[i], current_ratio(ex));
 }
 
 static void ins_miap(Exec *ex, uint8_t op)
@@ -542,7 +583,7 @@ static void ins_miap(Exec *ex, uint8_t op)
     if (!pop(ex, &n) || !pop(ex, &p))
         return;
     Zone *z = zone_of(ex, ex->gs.zp0);
-    if (!point_ok(z, p) || n < 0 || (uint32_t)n >= ex->h->cvt_count)
+    if (!point_ok(z, p) || n < 0 || (uint32_t)n >= ex->cvt_count)
         FAIL();
     int32_t dist = read_cvt(ex, n);
     if (ex->gs.zp0 == 0) {
@@ -587,11 +628,12 @@ static void ins_mdrp(Exec *ex, uint8_t op)
     if (op & 4)
         dist = round_value(ex, org_dist);
     if (op & 8) {
+        int32_t least = subpixel_axis(ex) ? ex->gs.min_dist / 2 : ex->gs.min_dist;
         if (org_dist >= 0) {
-            if (dist < ex->gs.min_dist)
-                dist = ex->gs.min_dist;
-        } else if (dist > -ex->gs.min_dist) {
-            dist = -ex->gs.min_dist;
+            if (dist < least)
+                dist = least;
+        } else if (dist > -least) {
+            dist = -least;
         }
     }
     int32_t cur_dist = project(ex, z1->cur[p].x - z0->cur[rp0].x, z1->cur[p].y - z0->cur[rp0].y);
@@ -609,7 +651,7 @@ static void ins_mirp(Exec *ex, uint8_t op)
         return;
     Zone *z0 = zone_of(ex, ex->gs.zp0), *z1 = zone_of(ex, ex->gs.zp1);
     uint32_t rp0 = ex->gs.rp0;
-    if (!point_ok(z1, p) || !point_ok(z0, (int32_t)rp0) || n < -1 || (n >= 0 && (uint32_t)n >= ex->h->cvt_count))
+    if (!point_ok(z1, p) || !point_ok(z0, (int32_t)rp0) || n < -1 || (n >= 0 && (uint32_t)n >= ex->cvt_count))
         FAIL();
     int32_t cvt_dist = n < 0 ? 0 : read_cvt(ex, n);
     int32_t diff = cvt_dist - ex->gs.sw_value;
@@ -627,22 +669,32 @@ static void ins_mirp(Exec *ex, uint8_t op)
     if (ex->gs.auto_flip && ((org_dist ^ cvt_dist) < 0))
         cvt_dist = -cvt_dist;
     int32_t dist;
-    if (op & 4) {
-        int32_t d = cvt_dist - org_dist;
-        if (d < 0)
-            d = -d;
-        if (d > ex->gs.cvt_cutin)
+    bool sub = subpixel_axis(ex);
+    /* along the subpixel axis the cut in is a sixteenth of the usual unless the font asked for native behaviour. */
+    if (sub && !ex->h->native) {
+        int32_t d = 16 * (cvt_dist - org_dist);
+        if (d > ex->gs.cvt_cutin || d < -ex->gs.cvt_cutin)
             cvt_dist = org_dist;
+    }
+    if (op & 4) {
+        if (!sub || ex->h->native) {
+            int32_t d = cvt_dist - org_dist;
+            if (d < 0)
+                d = -d;
+            if (d > ex->gs.cvt_cutin)
+                cvt_dist = org_dist;
+        }
         dist = round_value(ex, cvt_dist);
     } else {
         dist = cvt_dist;
     }
     if (op & 8) {
+        int32_t least = sub ? ex->gs.min_dist / 2 : ex->gs.min_dist;
         if (org_dist >= 0) {
-            if (dist < ex->gs.min_dist)
-                dist = ex->gs.min_dist;
-        } else if (dist > -ex->gs.min_dist) {
-            dist = -ex->gs.min_dist;
+            if (dist < least)
+                dist = least;
+        } else if (dist > -least) {
+            dist = -least;
         }
     }
 #ifdef HINT_TRACE
@@ -994,7 +1046,7 @@ static void ins_iup(Exec *ex, uint8_t op)
             iup_run(z, x_axis, first, last);
         first = last + 1;
     }
-    if (ex->compat)
+    if (!x_axis)
         ex->iupy = true;
 }
 
@@ -1016,6 +1068,10 @@ static void ins_deltap(Exec *ex, uint8_t op)
         int32_t ppem = base + ((arg >> 4) & 0xF);
         if (ppem != ex->ppem_for_delta)
             continue;
+        /* with ClearType only moves along y of points touched along y and not yet interpolated are kept. */
+        if ((ex->h->flags & MIME_TTF_HINT_CLEARTYPE) && !ex->h->native &&
+            !(ex->gs.fv.x == 0 && ex->gs.fv.y == 0x4000 && (z->tag[p] & TAG_TOUCH_Y) && !ex->iupy))
+            continue;
         int32_t step = (arg & 0xF) < 8 ? (arg & 0xF) - 8 : (arg & 0xF) - 7;
         int32_t mag = step * (64 >> ex->gs.delta_shift);
         move_point(ex, z, (uint32_t)p, mag);
@@ -1032,13 +1088,13 @@ static void ins_deltac(Exec *ex, uint8_t op)
         int32_t c, arg;
         if (!pop(ex, &c) || !pop(ex, &arg))
             return;
-        if (c < 0 || (uint32_t)c >= ex->h->cvt_count)
+        if (c < 0 || (uint32_t)c >= ex->cvt_count)
             FAIL();
         int32_t ppem = base + ((arg >> 4) & 0xF);
         if (ppem != ex->ppem_for_delta)
             continue;
         int32_t step = (arg & 0xF) < 8 ? (arg & 0xF) - 8 : (arg & 0xF) - 7;
-        ex->h->cvt[c] += step * (64 >> ex->gs.delta_shift);
+        ex->cvt[c] += step * (64 >> ex->gs.delta_shift);
     }
 }
 
@@ -1312,28 +1368,28 @@ static void execute_one(Exec *ex, uint8_t op)
     }
     case 0x42: {
         POP2(i, v);
-        if (i < 0 || (uint32_t)i >= ex->h->storage_count)
+        if (i < 0 || (uint32_t)i >= ex->storage_count)
             FAIL();
-        ex->h->storage[i] = v;
+        ex->storage[i] = v;
         return;
     }
     case 0x43: {
         POP1(i);
-        if (i < 0 || (uint32_t)i >= ex->h->storage_count)
+        if (i < 0 || (uint32_t)i >= ex->storage_count)
             FAIL();
-        push(ex, ex->h->storage[i]);
+        push(ex, ex->storage[i]);
         return;
     }
     case 0x44: {
         POP2(i, v);
-        if (i < 0 || (uint32_t)i >= ex->h->cvt_count)
+        if (i < 0 || (uint32_t)i >= ex->cvt_count)
             FAIL();
-        ex->h->cvt[i] = ex->h->stretched ? mul_div(v, 0x10000, current_ratio(ex)) : v;
+        ex->cvt[i] = ex->h->stretched ? mul_div(v, 0x10000, current_ratio(ex)) : v;
         return;
     }
     case 0x45: {
         POP1(i);
-        if (i < 0 || (uint32_t)i >= ex->h->cvt_count)
+        if (i < 0 || (uint32_t)i >= ex->cvt_count)
             FAIL();
         push(ex, read_cvt(ex, i));
         return;
@@ -1422,9 +1478,9 @@ static void execute_one(Exec *ex, uint8_t op)
     case 0x6C: case 0x6D: case 0x6E: case 0x6F: { POP1(a); push(ex, a); return; }
     case 0x70: {
         POP2(i, v);
-        if (i < 0 || (uint32_t)i >= ex->h->cvt_count)
+        if (i < 0 || (uint32_t)i >= ex->cvt_count)
             FAIL();
-        ex->h->cvt[i] = mul_fix(v, ex->h->scale_y);
+        ex->cvt[i] = mul_fix(v, ex->h->scale_y);
         return;
     }
     case 0x73: case 0x74: case 0x75: ins_deltac(ex, op); return;
@@ -1628,8 +1684,12 @@ static void exec_init(Exec *ex, MimeTtfHinter *h, const GState *gs)
     ex->stack = h->stack;
     ex->stack_cap = h->stack_cap;
     ex->zones[0] = h->twilight;
+    ex->cvt = h->cvt;
+    ex->storage = h->storage;
+    ex->cvt_count = h->cvt_count;
+    ex->storage_count = h->storage_count;
     ex->ppem_for_delta = h->ppem_y;
-    ex->compat = (h->flags & MIME_TTF_HINT_SUBPIXEL) && !h->native;
+    ex->compat = false;
     compute_fdotp(ex);
 }
 
@@ -1844,35 +1904,29 @@ static void run_glyph_program(const MimeTtfHinter *hc, HGlyph *g, Code program)
     z->n = g->n + 4;
     z->contours = g->contours;
     ex.step_limit = MAX_GLYPH_STEPS;
-    /* writes by the glyph program must not leak into the shared tables. */
-    int32_t *cvt_copy = halloc(h, h->cvt_count * sizeof(int32_t) + 1);
-    int32_t *storage_copy = halloc(h, h->storage_count * sizeof(int32_t) + 1);
-    if (!cvt_copy || !storage_copy) {
-        mime_free(&h->alloc, cvt_copy);
-        mime_free(&h->alloc, storage_copy);
+    /* the program works on copies, so the tables of the hinter are never written and threads may share it. */
+    size_t cvt_bytes = h->cvt_count * sizeof(int32_t), storage_bytes = h->storage_count * sizeof(int32_t);
+    size_t twilight_bytes = (size_t)h->twilight.n * (3 * sizeof(V2) + 1), stack_bytes = h->stack_cap * sizeof(int32_t);
+    uint8_t *scratch = halloc(h, cvt_bytes + storage_bytes + twilight_bytes + stack_bytes + 16);
+    if (!scratch)
         return;
-    }
-    memcpy(cvt_copy, h->cvt, h->cvt_count * sizeof(int32_t));
-    memcpy(storage_copy, h->storage, h->storage_count * sizeof(int32_t));
-    Zone twilight_save_dummy = h->twilight;
-    (void)twilight_save_dummy;
-    /* keep a copy of the twilight zone points too. */
-    size_t tbytes = (size_t)h->twilight.n * (3 * sizeof(V2) + 1);
-    uint8_t *twi_copy = halloc(h, tbytes);
-    if (!twi_copy) {
-        mime_free(&h->alloc, cvt_copy);
-        mime_free(&h->alloc, storage_copy);
-        return;
-    }
-    memcpy(twi_copy, h->twilight.org, tbytes);
-    ex.zones[0] = h->twilight;
+    int32_t *cvt = (int32_t *)scratch;
+    int32_t *storage = cvt + h->cvt_count;
+    V2 *twilight = (V2 *)(storage + h->storage_count);
+    memcpy(cvt, h->cvt, cvt_bytes);
+    memcpy(storage, h->storage, storage_bytes);
+    memcpy(twilight, h->twilight.org, twilight_bytes);
+    uint32_t tn = h->twilight.n;
+    ex.cvt = cvt;
+    ex.storage = storage;
+    ex.zones[0].org = twilight;
+    ex.zones[0].cur = twilight + tn;
+    ex.zones[0].orus = twilight + 2 * tn;
+    ex.zones[0].tag = (uint8_t *)(twilight + 3 * tn);
+    ex.stack = (int32_t *)((uint8_t *)twilight + twilight_bytes + 8 - ((uintptr_t)((uint8_t *)twilight + twilight_bytes) & 7));
+    ex.stack_cap = h->stack_cap;
     bool ok = run_program(&ex, program, PROGRAM_GLYPH);
-    memcpy(h->cvt, cvt_copy, h->cvt_count * sizeof(int32_t));
-    memcpy(h->storage, storage_copy, h->storage_count * sizeof(int32_t));
-    memcpy(h->twilight.org, twi_copy, tbytes);
-    mime_free(&h->alloc, cvt_copy);
-    mime_free(&h->alloc, storage_copy);
-    mime_free(&h->alloc, twi_copy);
+    mime_free(&h->alloc, scratch);
     g->hinted_ok = ok;
 }
 

@@ -475,7 +475,9 @@ unsigned mime_ttf_gasp(const MimeTtfFont *font, int ppem)
 static int glyph_top(const MimeTtfFont *font, uint32_t codepoint)
 {
     MimeTtfTable g;
-    if (!mime_ttf_glyph_data(font, mime_ttf_glyph_index(font, codepoint), &g) || g.size < 10)
+    /* symbol fonts have no letters to measure. */
+    if (font->cmap_symbol || !font->cmap_sub.data ||
+        !mime_ttf_glyph_data(font, (uint16_t)cmap_lookup(font, codepoint), &g) || g.size < 10)
         return 0;
     return s16(g, 8);
 }
@@ -529,10 +531,15 @@ void mime_ttf_metrics(const MimeTtfFont *font, MimeTtfMetrics *m)
             m->cap_height = s16(os2, 88);
         }
     }
+    /* the heights come from the letters when the font does not give them, and from the em when it has no such letters. */
     if (m->x_height <= 0)
         m->x_height = glyph_top(font, 'x');
+    if (m->x_height <= 0)
+        m->x_height = font->units_per_em / 2;
     if (m->cap_height <= 0)
         m->cap_height = glyph_top(font, 'H');
+    if (m->cap_height <= 0)
+        m->cap_height = font->units_per_em * 7 / 10;
     if (m->avg_char_width <= 0) {
         int adv = 0;
         mime_ttf_glyph_hmetrics(font, mime_ttf_glyph_index(font, 'x'), &adv, 0);
@@ -548,6 +555,11 @@ void mime_ttf_metrics(const MimeTtfFont *font, MimeTtfMetrics *m)
         m->underline_position = -font->units_per_em / 10;
         m->underline_thickness = font->units_per_em / 20;
     }
+    /* lines the font gives no thickness to are a fourteenth of the em. */
+    if (m->underline_thickness <= 0)
+        m->underline_thickness = font->units_per_em / 14;
+    if (m->strikeout_size <= 0)
+        m->strikeout_size = font->units_per_em / 14;
 }
 
 static int name_score(uint16_t platform, uint16_t encoding, uint16_t language)

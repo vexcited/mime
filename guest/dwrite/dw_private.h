@@ -97,7 +97,20 @@ typedef struct DwFontData {
     MimeTtfFont ttf;
     BOOL ttf_ok;
     MimeTtfMetrics metrics;
+    /* interpreters of the glyph programs, one per size and kind of rendering. */
+    CRITICAL_SECTION hint_lock;
+    BOOL hint_lock_ready;
+    UINT32 hinter_count;
+    struct { UINT32 key; MimeTtfHinter *hinter; } hinters[48];
 } DwFontData;
+
+/* the weight a subfamily name like Light or Semibold Italic gives, 400 for other names. */
+UINT32 DwWeightOfName(const WCHAR *name);
+/* the interpreter for a size, null when the face cannot be hinted. flags are the MIME_TTF_HINT ones. */
+MimeTtfHinter *DwFontDataHinter(DwFontData *data, int ppem, UINT32 flags);
+/* the advance of a glyph in whole pixels the way GDI measures, or the natural rounding of the linear width. */
+int DwGdiAdvancePixels(DwFontData *data, UINT16 glyph, int ppem, BOOL natural);
+
 
 /* collections count their faces, other files have one. */
 HRESULT DwFontDataOpen(IDWriteFontFile *file, UINT32 face_index, DwFontData **data);
@@ -156,6 +169,7 @@ typedef struct DwCollection {
     DwFactory *factory;
     DwFamily *families;
     UINT32 count;
+    UINT32 public_count; /* the families listed, before those only win32 names find. */
     SRWLOCK lock;
 } DwCollection;
 
@@ -195,6 +209,8 @@ typedef struct DwFace {
     DWRITE_FONT_METRICS1 metrics;
 } DwFace;
 
+/* GDI's advance of a glyph in design units. */
+int DwGdiAdvanceDesign(const DwFace *f, UINT16 glyph, int ppem, BOOL natural);
 HRESULT DwFaceCreate(DwFactory *factory, IDWriteFontFile *file, DWRITE_FONT_FACE_TYPE type, UINT32 index,
                      DWRITE_FONT_SIMULATIONS simulations, IDWriteFontFace **face);
 /* nullptr for a face of another implementation. */

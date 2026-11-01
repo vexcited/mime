@@ -487,12 +487,32 @@ HRESULT DwLayoutEnsure(DwLayout *l)
     BOOL flow_vertical = fl == DWRITE_FLOW_DIRECTION_TOP_TO_BOTTOM || fl == DWRITE_FLOW_DIRECTION_BOTTOM_TO_TOP;
     if (vertical == flow_vertical)
         return DWRITE_E_FLOWDIRECTIONCONFLICTS;
-    if (vertical)
-        return DWRITE_E_UNSUPPORTEDOPERATION;
     HRESULT hr = S_OK;
+    /* vertical text is laid out along its lines as horizontal text and then turned: the sizes swap here and the
+       metrics and geometry swap back when they are asked for. */
+    FLOAT width = l->max_width, height = l->max_height;
+    if (vertical) {
+        l->max_width = height;
+        l->max_height = width;
+    }
+    l->vertical = vertical;
     if (!l->runs_valid)
         hr = DwLayoutBuildRuns(l);
     if (SUCCEEDED(hr))
         hr = DwLayoutBuildLines(l);
+    if (vertical) {
+        l->max_width = width;
+        l->max_height = height;
+        DWRITE_TEXT_METRICS1 *m = &l->metrics;
+        FLOAT t = m->left;
+        m->left = m->top;
+        m->top = t;
+        t = m->width;
+        m->width = m->height;
+        m->height = t;
+        m->widthIncludingTrailingWhitespace = m->width;
+        m->layoutWidth = width;
+        m->layoutHeight = height;
+    }
     return hr;
 }

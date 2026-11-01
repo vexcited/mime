@@ -28,6 +28,8 @@ HRESULT DwFontDataOpen(IDWriteFontFile *file, UINT32 face_index, DwFontData **ou
         return E_OUTOFMEMORY;
     }
     d->refs = 1;
+    InitializeCriticalSection(&d->hint_lock);
+    d->hint_lock_ready = TRUE;
     d->stream = stream;
     d->bytes = start;
     d->size = size;
@@ -73,7 +75,62 @@ void DwFontDataRelease(DwFontData *d)
             d->stream->lpVtbl->ReleaseFileFragment(d->stream, d->fragment);
         d->stream->lpVtbl->Release(d->stream);
     }
+    for (UINT32 i = 0; i < d->hinter_count; i++)
+        mime_ttf_hinter_free(d->hinters[i].hinter);
+    if (d->hint_lock_ready)
+        DeleteCriticalSection(&d->hint_lock);
     DwFree(d);
+}
+
+static void *hint_alloc(void *ctx, size_t size) { return DwAlloc(size); }
+static void hint_free(void *ctx, void *p) { DwFree(p); }
+static const MimeAllocator g_hint_alloc = {hint_alloc, hint_free, nullptr};
+
+MimeTtfHinter *DwFontDataHinter(DwFontData *d, int ppem, UINT32 flags)
+{
+    if (!d->ttf_ok || ppem < 1 || ppem > 1024 || d->cff)
+        return nullptr;
+    UINT32 key = (UINT32)ppem | flags << 11;
+    MimeTtfHinter *found = nullptr;
+    EnterCriticalSection(&d->hint_lock);
+    for (UINT32 i = 0; i < d->hinter_count && !found; i++)
+        if (d->hinters[i].key == key)
+            found = d->hinters[i].hinter;
+    if (!found && d->hinter_count < sizeof(d->hinters) / sizeof(d->hinters[0])) {
+        found = mime_ttf_hinter_new(&d->ttf, &g_hint_alloc, ppem, ppem, flags);
+        if (found) {
+            d->hinters[d->hinter_count].key = key;
+            d->hinters[d->hinter_count++].hinter = found;
+        }
+    }
+    LeaveCriticalSection(&d->hint_lock);
+    return found;
+}
+
+/*
+ * hdmx wins when it has the size, then glyphs the LTSH table calls linear are scaled and rounded once, and the rest
+ * take the width the instructions leave. natural widths scale the design width and round it by the same two steps.
+ */
+int DwGdiAdvancePixels(DwFontData *d, UINT16 glyph, int ppem, BOOL natural)
+{
+    int advance = 0;
+    mime_ttf_glyph_hmetrics(&d->ttf, glyph, &advance, nullptr);
+    int64_t upem = d->ttf.units_per_em ? d->ttf.units_per_em : 2048;
+    int64_t linear26 = ((int64_t)advance * ppem * 64 * 2 + upem) / (2 * upem);
+    int double_rounded = (int)((linear26 + 32) >> 6);
+    if (natural)
+        return double_rounded;
+    int device;
+    if (mime_ttf_hdmx_advance(&d->ttf, ppem, glyph, &device))
+        return device;
+    unsigned linear_from = mime_ttf_ltsh_threshold(&d->ttf, glyph);
+    if (linear_from && (unsigned)ppem >= linear_from)
+        return (int)(((int64_t)advance * ppem * 2 + upem) / (2 * upem));
+    MimeTtfHinter *h = DwFontDataHinter(d, ppem, 0);
+    int32_t hinted;
+    if (h && mime_ttf_hint_advance(h, glyph, &hinted))
+        return (hinted + 32) >> 6;
+    return double_rounded;
 }
 
 const BYTE *DwFontDataTable(const DwFontData *d, UINT32 tag, UINT32 *size)
@@ -94,6 +151,37 @@ const BYTE *DwFontDataTable(const DwFontData *d, UINT32 tag, UINT32 *size)
 
 /* ------------------------------------------------------------------ style */
 
+/* the weight a typographic subfamily name gives, 0 when it names none. */
+static UINT32 weight_from_subfamily(const WCHAR *name, size_t length)
+{
+    static const struct { const WCHAR *text; UINT32 weight; } table[] = {
+        {L"extralight", 200}, {L"ultralight", 200}, {L"semilight", 350}, {L"light", 300}, {L"thin", 100},
+        {L"semibold", 600},   {L"demibold", 600},   {L"extrabold", 800}, {L"ultrabold", 800}, {L"black", 900},
+        {L"heavy", 900},      {L"medium", 500},
+    };
+    WCHAR lower[64];
+    if (!length || length >= sizeof(lower) / sizeof(lower[0]))
+        return 0;
+    size_t n = 0;
+    for (size_t i = 0; i < length; i++)
+        if (name[i] != ' ' && name[i] != '-')
+            lower[n++] = name[i] >= 'A' && name[i] <= 'Z' ? (WCHAR)(name[i] + 32) : name[i];
+    lower[n] = 0;
+    for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++) {
+        size_t len = wcslen(table[i].text);
+        if (n >= len && !wcsncmp(lower, table[i].text, len) && (n == len || !wcscmp(lower + len, L"italic") ||
+                                                              !wcscmp(lower + len, L"oblique")))
+            return table[i].weight;
+    }
+    return 0;
+}
+
+UINT32 DwWeightOfName(const WCHAR *name)
+{
+    UINT32 weight = name ? weight_from_subfamily(name, wcslen(name)) : 0;
+    return weight ? weight : 400;
+}
+
 void DwFontDataAttributes(const DwFontData *d, DwAttributes *a)
 {
     UINT32 os2_size = 0, head_size = 0, post_size = 0;
@@ -112,6 +200,16 @@ void DwFontDataAttributes(const DwFontData *d, DwAttributes *a)
         weight = (mac & 1) || (selection & 0x20) ? 700 : 400;
     if (weight > 999)
         weight = 999;
+    /* a face the font file leaves at the regular weight is the one its typographic subfamily says it is. */
+    if (weight == 400) {
+        WCHAR sub[64];
+        size_t length = 0;
+        if (mime_ttf_name(&d->ttf, 17, (uint16_t *)sub, 64, &length)) {
+            UINT32 named = weight_from_subfamily(sub, length);
+            if (named)
+                weight = named;
+        }
+    }
     a->weight = (DWRITE_FONT_WEIGHT)weight;
     a->stretch = width >= 1 && width <= 9 ? (DWRITE_FONT_STRETCH)width : DWRITE_FONT_STRETCH_NORMAL;
     if ((selection & 1) || (mac & 2))

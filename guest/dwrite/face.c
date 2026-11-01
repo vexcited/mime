@@ -156,6 +156,13 @@ static HRESULT WINAPI face_recommended(IDWriteFontFace2 *This, FLOAT em_size, FL
     return S_OK;
 }
 
+/* the whole pixel advance of a glyph given back in design units. */
+int DwGdiAdvanceDesign(const DwFace *f, UINT16 glyph, int ppem, BOOL natural)
+{
+    int pixels = DwGdiAdvancePixels(f->data, glyph, ppem, natural);
+    return (int)round_f((float)pixels * (float)f->metrics.designUnitsPerEm / (float)ppem);
+}
+
 /* GDI's metrics: whole pixel sizes, given back in design units. */
 static void gdi_round_metrics(const DwFace *f, FLOAT em_size, FLOAT pixels_per_dip, DWRITE_FONT_METRICS1 *out)
 {
@@ -197,18 +204,16 @@ static HRESULT WINAPI face_gdi_glyph_metrics(IDWriteFontFace2 *This, FLOAT em_si
     DwFace *f = (DwFace *)This;
     if (!(em_size > 0) || !(pixels_per_dip > 0) || (count && (!glyphs || !metrics)))
         return E_INVALIDARG;
-    float ppem = round_f(em_size * pixels_per_dip);
-    float scale = ppem >= 1 ? ppem / (float)f->metrics.designUnitsPerEm : 0;
+    int ppem = (int)round_f(em_size * pixels_per_dip);
     for (UINT32 i = 0; i < count; i++) {
         if (glyphs[i] >= f->data->ttf.num_glyphs) {
             memset(&metrics[i], 0, sizeof(metrics[i]));
             return E_INVALIDARG;
         }
         DwFontDataGlyphMetrics(f->data, glyphs[i], &metrics[i]);
-        if (scale > 0) {
+        if (ppem >= 1) {
             /* the advance is whole pixels, and the bearings keep the outline in place. */
-            float advance = round_f((float)metrics[i].advanceWidth * scale);
-            int delta = (int)round_f(advance / scale) - (int)metrics[i].advanceWidth;
+            int delta = DwGdiAdvanceDesign(f, glyphs[i], ppem, natural) - (int)metrics[i].advanceWidth;
             metrics[i].advanceWidth = (UINT32)((int)metrics[i].advanceWidth + delta);
             metrics[i].rightSideBearing += delta;
         }
@@ -284,8 +289,7 @@ static HRESULT WINAPI face_gdi_advances(IDWriteFontFace2 *This, FLOAT em_size, F
     DwFace *f = (DwFace *)This;
     if (!(em_size > 0) || !(pixels_per_dip > 0) || (count && (!glyphs || !advances)))
         return E_INVALIDARG;
-    float ppem = round_f(em_size * pixels_per_dip);
-    float scale = ppem >= 1 ? ppem / (float)f->metrics.designUnitsPerEm : 0;
+    int ppem = (int)round_f(em_size * pixels_per_dip);
     for (UINT32 i = 0; i < count; i++) {
         if (glyphs[i] >= f->data->ttf.num_glyphs) {
             advances[i] = 0;
@@ -293,7 +297,7 @@ static HRESULT WINAPI face_gdi_advances(IDWriteFontFace2 *This, FLOAT em_size, F
         }
         int advance;
         mime_ttf_glyph_hmetrics(&f->data->ttf, glyphs[i], &advance, nullptr);
-        advances[i] = scale > 0 ? (INT32)round_f(round_f((float)advance * scale) / scale) : advance;
+        advances[i] = ppem >= 1 ? DwGdiAdvanceDesign(f, glyphs[i], ppem, natural) : advance;
     }
     return S_OK;
 }

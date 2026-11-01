@@ -112,6 +112,7 @@ void DwSortEntries(const DwFamily *family, DWRITE_FONT_WEIGHT weight, DWRITE_FON
 typedef struct Builder {
     DwFamily *families;
     UINT32 count, capacity;
+    UINT32 public_count;
 } Builder;
 
 static DwFamily *family_for(Builder *b, DwStrings *names)
@@ -241,19 +242,10 @@ static void add_simulations(DwFamily *f)
                 DwStringsRelease(sim.face_names);
             }
         }
-        BOOL has_slant = FALSE, any = FALSE;
-        for (UINT32 i = 0; i < f->count; i++) {
-            if (f->entries[i].attributes.stretch != stretch)
-                continue;
-            any = TRUE;
-            if (f->entries[i].attributes.style != DWRITE_FONT_STYLE_NORMAL)
-                has_slant = TRUE;
-        }
-        if (!any || has_slant)
-            continue;
+        /* every upright face has an oblique twin, even when the family has italics of its own. */
         UINT32 present = f->count;
         for (UINT32 i = 0; i < present; i++) {
-            if (f->entries[i].attributes.stretch != stretch)
+            if (f->entries[i].attributes.stretch != stretch || f->entries[i].attributes.style != DWRITE_FONT_STYLE_NORMAL)
                 continue;
             DwEntry sim = f->entries[i];
             sim.attributes.style = DWRITE_FONT_STYLE_OBLIQUE;
@@ -267,6 +259,9 @@ static void add_simulations(DwFamily *f)
 
 static int entry_order(const DwEntry *a, const DwEntry *b)
 {
+    /* the faces made by simulation come after the real ones. */
+    if ((a->simulations != 0) != (b->simulations != 0))
+        return a->simulations ? 1 : -1;
     if (a->attributes.stretch != b->attributes.stretch)
         return a->attributes.stretch < b->attributes.stretch ? -1 : 1;
     if (a->attributes.weight != b->attributes.weight)
@@ -289,6 +284,42 @@ static void sort_entries(DwFamily *f)
         }
         f->entries[j] = v;
     }
+}
+
+/*
+ * a font named after its weight, like Franklin Gothic Medium, belongs to the family without the word. returns the
+ * family names with the word removed and the face name it leaves, or null when the name has no such word.
+ */
+static DwStrings *family_without_weight(const DwStrings *win32, UINT32 weight, BOOL italic, DwStrings **face)
+{
+    static const struct { const WCHAR *word; UINT32 weight; } words[] = {
+        {L"Medium", 500}, {L"Semilight", 350}, {L"Light", 300}, {L"Semibold", 600}, {L"Demibold", 600},
+        {L"Black", 900}, {L"Heavy", 900},    {L"Thin", 100},  {L"Extralight", 200}, {L"Extrabold", 800},
+    };
+    const WCHAR *name = DwStringsBest(win32, L"en-us");
+    size_t length = name ? wcslen(name) : 0;
+    for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); i++) {
+        size_t word = wcslen(words[i].word);
+        if ((words[i].weight != weight && weight != 400) || length <= word + 1 || name[length - word - 1] != ' ' ||
+            _wcsicmp(name + length - word, words[i].word))
+            continue;
+        DwStrings *family = DwStringsNew();
+        DwStrings *sub = DwStringsNew();
+        WCHAR text[LF_FACESIZE + 16];
+        if (!family || !sub || length - word - 1 >= sizeof(text) / sizeof(text[0]) - 1) {
+            DwStringsRelease(family);
+            DwStringsRelease(sub);
+            return nullptr;
+        }
+        DwStringsAdd(family, L"en-us", 5, name, (UINT32)(length - word - 1));
+        wcscpy(text, words[i].word);
+        if (italic)
+            wcscat(text, L" Italic");
+        DwStringsAdd(sub, L"en-us", 5, text, (UINT32)wcslen(text));
+        *face = sub;
+        return family;
+    }
+    return nullptr;
 }
 
 static void add_file(Builder *b, IDWriteFontFile *file)
@@ -319,6 +350,18 @@ static void add_file(Builder *b, IDWriteFontFile *file)
         entry.win32_subfamily = win32_sub;
         entry.face_names = wws_sub ? wws_sub : typographic_sub ? typographic_sub : win32_sub;
         DwStrings *family_names = wws ? wws : typographic ? typographic : win32;
+        DwStrings *derived = nullptr, *derived_face = nullptr;
+        if (!wws && !typographic && win32) {
+            derived = family_without_weight(win32, entry.attributes.weight,
+                                            entry.attributes.style != DWRITE_FONT_STYLE_NORMAL, &derived_face);
+            if (derived) {
+                family_names = derived;
+                entry.face_names = derived_face;
+                /* a font left at the regular weight by its file has the weight its name gives. */
+                if (entry.attributes.weight == 400)
+                    entry.attributes.weight = DwWeightOfName(DwStringsBest(derived_face, L"en-us"));
+            }
+        }
         if (family_names) {
             DwFamily *f = family_for(b, family_names);
             if (f)
@@ -336,6 +379,8 @@ static void add_file(Builder *b, IDWriteFontFile *file)
             }
         }
         /* the entries took references of their own. */
+        DwStringsRelease(derived);
+        DwStringsRelease(derived_face);
         DwStringsRelease(wws);
         DwStringsRelease(typographic);
         DwStringsRelease(win32);
@@ -358,6 +403,28 @@ static void sort_families(Builder *b)
         }
         b->families[j] = v;
     }
+}
+
+/* the families named after win32 names only serve fonts looked up by name, they come after the families listed. */
+static void partition_families(Builder *b)
+{
+    DwFamily *ordered = DwAlloc((b->count ? b->count : 1) * sizeof(DwFamily));
+    if (!ordered) {
+        b->public_count = b->count;
+        return;
+    }
+    UINT32 n = 0;
+    for (UINT32 pass = 0; pass < 2; pass++) {
+        for (UINT32 i = 0; i < b->count; i++) {
+            BOOL gdi = b->families[i].count && b->families[i].entries[0].gdi_family;
+            if (gdi == (pass == 1))
+                ordered[n++] = b->families[i];
+        }
+        if (pass == 0)
+            b->public_count = n;
+    }
+    memcpy(b->families, ordered, n * sizeof(DwFamily));
+    DwFree(ordered);
 }
 
 /* ------------------------------------------------------------------ collection object */
@@ -397,7 +464,7 @@ static ULONG WINAPI collection_release(IDWriteFontCollection *This)
     return refs;
 }
 
-static UINT32 WINAPI collection_count(IDWriteFontCollection *This) { return ((DwCollection *)This)->count; }
+static UINT32 WINAPI collection_count(IDWriteFontCollection *This) { return ((DwCollection *)This)->public_count; }
 
 static HRESULT WINAPI collection_family(IDWriteFontCollection *This, UINT32 index, IDWriteFontFamily **family)
 {
@@ -405,7 +472,7 @@ static HRESULT WINAPI collection_family(IDWriteFontCollection *This, UINT32 inde
         return E_POINTER;
     *family = nullptr;
     DwCollection *c = (DwCollection *)This;
-    if (index >= c->count)
+    if (index >= c->public_count)
         return E_INVALIDARG;
     return DwFamilyCreate(c, index, family);
 }
@@ -449,7 +516,7 @@ static HRESULT WINAPI collection_find(IDWriteFontCollection *This, const WCHAR *
     if (!name)
         return E_INVALIDARG;
     UINT32 found;
-    if (DwFindFamily((DwCollection *)This, name, &found)) {
+    if (DwFindFamilyExact((DwCollection *)This, name, &found)) {
         *index = found;
         *exists = TRUE;
     }
@@ -540,6 +607,7 @@ HRESULT DwCollectionFromFiles(DwFactory *factory, IDWriteFontFile *const *files,
         sort_entries(&b.families[i]);
     }
     sort_families(&b);
+    partition_families(&b);
     DwCollection *c = DwAllocZero(sizeof(*c));
     if (!c)
         return E_OUTOFMEMORY;
@@ -548,6 +616,7 @@ HRESULT DwCollectionFromFiles(DwFactory *factory, IDWriteFontFile *const *files,
     c->factory = factory;
     c->families = b.families;
     c->count = b.count;
+    c->public_count = b.public_count;
     InitializeSRWLock(&c->lock);
     *out = c;
     return S_OK;

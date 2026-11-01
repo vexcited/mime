@@ -555,7 +555,7 @@ static void cluster_ink(const DwLayout *l, const DwLine *ln, const DwItem *it, F
     }
 }
 
-static HRESULT WINAPI ly_overhang(IDWriteTextLayout4 *This, DWRITE_OVERHANG_METRICS *o)
+static HRESULT WINAPI overhang(IDWriteTextLayout4 *This, DWRITE_OVERHANG_METRICS *o)
 {
     DwLayout *l = L(This);
     if (!o)
@@ -706,7 +706,7 @@ static void cluster_metrics(const DwLayout *l, const DwLine *ln, const DwItem *i
     m->isText = TRUE;
 }
 
-static HRESULT WINAPI ly_hit_text_position(IDWriteTextLayout4 *This, UINT32 pos, BOOL trailing, FLOAT *px, FLOAT *py,
+static HRESULT WINAPI hit_text_position(IDWriteTextLayout4 *This, UINT32 pos, BOOL trailing, FLOAT *px, FLOAT *py,
                                            DWRITE_HIT_TEST_METRICS *m)
 {
     DwLayout *l = L(This);
@@ -753,7 +753,7 @@ static HRESULT WINAPI ly_hit_text_position(IDWriteTextLayout4 *This, UINT32 pos,
     return S_OK;
 }
 
-static HRESULT WINAPI ly_hit_point(IDWriteTextLayout4 *This, FLOAT x, FLOAT y, BOOL *trailing, BOOL *inside,
+static HRESULT WINAPI hit_point(IDWriteTextLayout4 *This, FLOAT x, FLOAT y, BOOL *trailing, BOOL *inside,
                                    DWRITE_HIT_TEST_METRICS *m)
 {
     DwLayout *l = L(This);
@@ -849,7 +849,7 @@ static HRESULT WINAPI ly_hit_point(IDWriteTextLayout4 *This, FLOAT x, FLOAT y, B
     return S_OK;
 }
 
-static HRESULT WINAPI ly_hit_range(IDWriteTextLayout4 *This, UINT32 pos, UINT32 len, FLOAT ox, FLOAT oy,
+static HRESULT WINAPI hit_range(IDWriteTextLayout4 *This, UINT32 pos, UINT32 len, FLOAT ox, FLOAT oy,
                                    DWRITE_HIT_TEST_METRICS *out, UINT32 max, UINT32 *actual)
 {
     DwLayout *l = L(This);
@@ -960,38 +960,61 @@ typedef struct Rend {
     DWRITE_MEASURING_MODE mm;
     DWRITE_READING_DIRECTION reading;
     DWRITE_FLOW_DIRECTION flow;
+    BOOL vertical; /* the geometry is turned a quarter, glyphs lie sideways. */
 } Rend;
+
+static DWRITE_GLYPH_ORIENTATION_ANGLE angle_of(const Rend *r)
+{
+    if (!r->vertical)
+        return DWRITE_GLYPH_ORIENTATION_ANGLE_0_DEGREES;
+    return r->reading == DWRITE_READING_DIRECTION_BOTTOM_TO_TOP ? DWRITE_GLYPH_ORIENTATION_ANGLE_270_DEGREES
+                                                                 : DWRITE_GLYPH_ORIENTATION_ANGLE_90_DEGREES;
+}
+
+static void turn(const Rend *r, FLOAT *x, FLOAT *y)
+{
+    if (r->vertical) {
+        FLOAT t = *x;
+        *x = *y;
+        *y = t;
+    }
+}
 
 static HRESULT rend_glyphs(Rend *r, FLOAT x, FLOAT y, const DWRITE_GLYPH_RUN *run,
                            const DWRITE_GLYPH_RUN_DESCRIPTION *desc, IUnknown *effect)
 {
+    turn(r, &x, &y);
     if (r->r1)
-        return r->r1->lpVtbl->IDWriteTextRenderer1_DrawGlyphRun(
-            r->r1, r->ctx, x, y, DWRITE_GLYPH_ORIENTATION_ANGLE_0_DEGREES, r->mm, run, desc, effect);
-    return r->r->lpVtbl->DrawGlyphRun(r->r, r->ctx, x, y, r->mm, run, desc, effect);
+        return r->r1->lpVtbl->IDWriteTextRenderer1_DrawGlyphRun(r->r1, r->ctx, x, y, angle_of(r), r->mm, run, desc,
+                                                                effect);
+    DWRITE_GLYPH_RUN sideways = *run;
+    if (r->vertical)
+        sideways.isSideways = TRUE;
+    return r->r->lpVtbl->DrawGlyphRun(r->r, r->ctx, x, y, r->mm, &sideways, desc, effect);
 }
 
 static HRESULT rend_underline(Rend *r, FLOAT x, FLOAT y, const DWRITE_UNDERLINE *u, IUnknown *effect)
 {
+    turn(r, &x, &y);
     if (r->r1)
-        return r->r1->lpVtbl->IDWriteTextRenderer1_DrawUnderline(r->r1, r->ctx, x, y,
-                                                                 DWRITE_GLYPH_ORIENTATION_ANGLE_0_DEGREES, u, effect);
+        return r->r1->lpVtbl->IDWriteTextRenderer1_DrawUnderline(r->r1, r->ctx, x, y, angle_of(r), u, effect);
     return r->r->lpVtbl->DrawUnderline(r->r, r->ctx, x, y, u, effect);
 }
 
 static HRESULT rend_strike(Rend *r, FLOAT x, FLOAT y, const DWRITE_STRIKETHROUGH *s, IUnknown *effect)
 {
+    turn(r, &x, &y);
     if (r->r1)
-        return r->r1->lpVtbl->IDWriteTextRenderer1_DrawStrikethrough(
-            r->r1, r->ctx, x, y, DWRITE_GLYPH_ORIENTATION_ANGLE_0_DEGREES, s, effect);
+        return r->r1->lpVtbl->IDWriteTextRenderer1_DrawStrikethrough(r->r1, r->ctx, x, y, angle_of(r), s, effect);
     return r->r->lpVtbl->DrawStrikethrough(r->r, r->ctx, x, y, s, effect);
 }
 
 static HRESULT rend_inline(Rend *r, FLOAT x, FLOAT y, IDWriteInlineObject *o, BOOL sideways, BOOL rtl, IUnknown *effect)
 {
+    turn(r, &x, &y);
     if (r->r1)
-        return r->r1->lpVtbl->IDWriteTextRenderer1_DrawInlineObject(
-            r->r1, r->ctx, x, y, DWRITE_GLYPH_ORIENTATION_ANGLE_0_DEGREES, o, sideways, rtl, effect);
+        return r->r1->lpVtbl->IDWriteTextRenderer1_DrawInlineObject(r->r1, r->ctx, x, y, angle_of(r), o, sideways, rtl,
+                                                                    effect);
     return r->r->lpVtbl->DrawInlineObject(r->r, r->ctx, x, y, o, sideways, rtl, effect);
 }
 
@@ -1035,6 +1058,7 @@ HRESULT DwLayoutDraw(DwLayout *l, void *context, IDWriteTextRenderer *renderer, 
     r.mm = l->gdi ? (l->natural ? DWRITE_MEASURING_MODE_GDI_NATURAL : DWRITE_MEASURING_MODE_GDI_CLASSIC)
                   : DWRITE_MEASURING_MODE_NATURAL;
     r.reading = l->fmt.reading;
+    r.vertical = l->vertical;
     r.flow = l->fmt.flow;
     if (FAILED(renderer->lpVtbl->QueryInterface(renderer, &IID_IDWriteTextRenderer1, (void **)&r.r1)))
         r.r1 = nullptr;
@@ -1259,11 +1283,85 @@ HRESULT DwLayoutDraw(DwLayout *l, void *context, IDWriteTextRenderer *renderer, 
     return hr;
 }
 
+/* vertical layouts keep their geometry along the lines, so the answers swap their axes on the way out. */
+static void swap_hit(DWRITE_HIT_TEST_METRICS *m)
+{
+    FLOAT t = m->left;
+    m->left = m->top;
+    m->top = t;
+    t = m->width;
+    m->width = m->height;
+    m->height = t;
+}
+
+static HRESULT WINAPI ly_hit_text_position(IDWriteTextLayout4 *This, UINT32 pos, BOOL trailing, FLOAT *px, FLOAT *py,
+                                           DWRITE_HIT_TEST_METRICS *m)
+{
+    HRESULT hr = hit_text_position(This, pos, trailing, px, py, m);
+    if (SUCCEEDED(hr) && L(This)->vertical) {
+        FLOAT t = *px;
+        *px = *py;
+        *py = t;
+        swap_hit(m);
+    }
+    return hr;
+}
+
+static HRESULT WINAPI ly_hit_point(IDWriteTextLayout4 *This, FLOAT x, FLOAT y, BOOL *trailing, BOOL *inside,
+                                   DWRITE_HIT_TEST_METRICS *m)
+{
+    if (!trailing || !inside || !m)
+        return E_INVALIDARG;
+    if (FAILED(DwLayoutEnsure(L(This))) || !L(This)->vertical)
+        return hit_point(This, x, y, trailing, inside, m);
+    HRESULT hr = hit_point(This, y, x, trailing, inside, m);
+    if (SUCCEEDED(hr))
+        swap_hit(m);
+    return hr;
+}
+
+static HRESULT WINAPI ly_hit_range(IDWriteTextLayout4 *This, UINT32 pos, UINT32 len, FLOAT ox, FLOAT oy,
+                                   DWRITE_HIT_TEST_METRICS *out, UINT32 max, UINT32 *actual)
+{
+    if (FAILED(DwLayoutEnsure(L(This))) || !L(This)->vertical)
+        return hit_range(This, pos, len, ox, oy, out, max, actual);
+    HRESULT hr = hit_range(This, pos, len, oy, ox, out, max, actual);
+    if (out && actual)
+        for (UINT32 i = 0; i < *actual && i < max; i++)
+            swap_hit(&out[i]);
+    return hr;
+}
+
+static HRESULT WINAPI ly_overhang(IDWriteTextLayout4 *This, DWRITE_OVERHANG_METRICS *o)
+{
+    DwLayout *l = L(This);
+    if (!o)
+        return E_INVALIDARG;
+    if (FAILED(DwLayoutEnsure(l)) || !l->vertical)
+        return overhang(This, o);
+    FLOAT w = l->max_width, h = l->max_height;
+    l->max_width = h;
+    l->max_height = w;
+    HRESULT hr = overhang(This, o);
+    l->max_width = w;
+    l->max_height = h;
+    FLOAT t = o->left;
+    o->left = o->top;
+    o->top = t;
+    t = o->right;
+    o->right = o->bottom;
+    o->bottom = t;
+    return hr;
+}
+
 static HRESULT WINAPI ly_draw(IDWriteTextLayout4 *This, void *context, IDWriteTextRenderer *renderer, FLOAT x, FLOAT y)
 {
     if (!renderer)
         return E_INVALIDARG;
-    return DwLayoutDraw(L(This), context, renderer, x, y);
+    DwLayout *l = L(This);
+    if (SUCCEEDED(DwLayoutEnsure(l)) && l->vertical)
+        return DwLayoutDraw(l, context, renderer, y, x);
+    return DwLayoutDraw(l, context, renderer, x, y);
 }
 
 /* ------------------------------------------------------------------ layout 1 to 4 */

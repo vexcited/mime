@@ -120,6 +120,7 @@ typedef struct DwLayout {
     WCHAR *text;
     UINT32 length;
     FLOAT max_width, max_height;
+    BOOL vertical; /* the lines were built along the vertical axis, so the sizes and geometry are swapped. */
     DwSpan *spans;
     UINT32 span_count, span_capacity;
     /* gdi compatible layouts. */

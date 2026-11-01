@@ -115,6 +115,7 @@ typedef struct DwAnalysis {
     DWRITE_RENDERING_MODE mode;
     BOOL bold;
     BOOL grayscale; /* the aliased texture holds coverage instead of on and off. */
+    MimeTtfHinter *hinter; /* outlines are hinted for the size when it is set. */
 } DwAnalysis;
 
 static HRESULT WINAPI analysis_query(IDWriteGlyphRunAnalysis *This, REFIID riid, void **out)
@@ -157,6 +158,13 @@ static void glyph_params(const DwAnalysis *a, UINT32 i, float x_scale, float shi
     p->xy = a->xy * x_scale;
     p->yx = a->yx;
     p->yy = a->yy;
+    if (a->hinter) {
+        /* the hinted outline is in pixels already. */
+        p->hinter = a->hinter;
+        p->xx = x_scale;
+        p->xy = p->yx = 0;
+        p->yy = -1;
+    }
     p->shift_x = a->x[i] * x_scale + shift_x;
     p->shift_y = a->y[i] + shift_y;
     if (a->bold) {
@@ -288,19 +296,16 @@ static HRESULT WINAPI analysis_texture(IDWriteGlyphRunAnalysis *This, DWRITE_TEX
                 }
                 continue;
             }
-            /* a five tap filter over the subpixel samples keeps colour fringes mild. */
-            static const int taps[5] = {8, 77, 86, 77, 8};
+            /* each subpixel is the mean of itself and its two neighbours. */
             int samples = width * 3;
             for (int s = 0; s < samples; s++) {
                 int sum = 0;
-                for (int t = 0; t < 5; t++) {
-                    int c = s + t - 2 - x0;
+                for (int t = 0; t < 3; t++) {
+                    int c = s + t - 1 - x0;
                     if (c >= 0 && c < gw)
-                        sum += taps[t] * src[c];
+                        sum += src[c];
                 }
-                sum = (sum + 128) >> 8;
-                if (sum > 255)
-                    sum = 255;
+                sum = (sum * 2 + 3) / 6;
                 if (sum)
                     dst[s] = combine(dst[s], (UINT8)sum);
             }
@@ -372,6 +377,29 @@ HRESULT DwGlyphRunAnalysisCreate(const DWRITE_GLYPH_RUN *run, FLOAT pixels_per_d
         a->xy += a->xx * OBLIQUE_SHEAR;
         a->yy += a->yx * OBLIQUE_SHEAR;
     }
+    /* glyphs at a whole pixel size without a transform are hinted, and sit on whole pixels so the hints hold. */
+    float ppem_exact = run->fontEmSize * pixels_per_dip;
+    int ppem = (int)(ppem_exact + 0.5f);
+    BOOL plain = m.m11 == 1 && m.m22 == 1 && m.m12 == 0 && m.m21 == 0 && !face->simulations;
+    UINT32 hint_flags = 0;
+    BOOL natural_positions = FALSE;
+    if (plain && ppem >= 1 && absf(ppem_exact - (float)ppem) < 0.001f && mode != DWRITE_RENDERING_MODE_OUTLINE) {
+        DWRITE_RENDERING_MODE kind = mode == DWRITE_RENDERING_MODE_DEFAULT ? DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC : mode;
+        if (kind != DWRITE_RENDERING_MODE_ALIASED) {
+            hint_flags = MIME_TTF_HINT_CLEARTYPE;
+            if (a->grayscale)
+                hint_flags |= MIME_TTF_HINT_GRAY;
+            if (kind == DWRITE_RENDERING_MODE_GDI_CLASSIC)
+                hint_flags |= MIME_TTF_HINT_COMPAT_WIDTHS;
+            if (kind == DWRITE_RENDERING_MODE_NATURAL || kind == DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC) {
+                hint_flags |= MIME_TTF_HINT_SUBPIXEL;
+                natural_positions = TRUE;
+            }
+            if (kind == DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC)
+                hint_flags |= MIME_TTF_HINT_SYMMETRIC;
+        }
+        a->hinter = DwFontDataHinter(face->data, ppem, hint_flags);
+    }
     float pen = 0;
     for (UINT32 i = 0; i < run->glyphCount; i++) {
         float advance_offset = run->glyphOffsets ? run->glyphOffsets[i].advanceOffset : 0;
@@ -380,6 +408,12 @@ HRESULT DwGlyphRunAnalysisCreate(const DWRITE_GLYPH_RUN *run, FLOAT pixels_per_d
         float ly = (origin_y - ascender_offset) * pixels_per_dip;
         a->x[i] = m.m11 * lx + m.m21 * ly + m.dx;
         a->y[i] = m.m12 * lx + m.m22 * ly + m.dy;
+        if (a->hinter) {
+            /* natural glyphs sit on sixths of a pixel across, the others on whole pixels. */
+            float step = natural_positions ? 6.0f : 1.0f;
+            a->x[i] = ifloor(a->x[i] * step + 0.5f) / step;
+            a->y[i] = (float)ifloor(a->y[i] + 0.5f);
+        }
         if (run->glyphAdvances) {
             pen += run->glyphAdvances[i];
         } else {

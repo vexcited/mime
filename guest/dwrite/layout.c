@@ -615,8 +615,20 @@ static BOOL shape_run(Build *b, const DwSpan *span, UINT32 a, UINT32 e, IDWriteF
     for (UINT32 g = 0; g < shaped.glyph_count; g++) {
         FLOAT w = (FLOAT)shaped.advances[g] * k;
         if (l->gdi && l->ppd > 0) {
-            FLOAT px = w * l->ppd;
-            px = px >= 0 ? (FLOAT)(INT32)(px + 0.5f) : (FLOAT)(INT32)(px - 0.5f);
+            /* the width GDI measures for the glyph, and what the shaping added to its design width in whole pixels. */
+            FLOAT px;
+            DwFace *own = DwFaceFrom(face);
+            int ppem = (int)(em * l->ppd + 0.5f);
+            if (own && ppem >= 1 && shaped.glyphs[g] < own->data->ttf.num_glyphs) {
+                int design = 0;
+                mime_ttf_glyph_hmetrics(&own->data->ttf, shaped.glyphs[g], &design, nullptr);
+                FLOAT extra = (FLOAT)(shaped.advances[g] - design) * k * l->ppd;
+                extra = extra >= 0 ? (FLOAT)(INT32)(extra + 0.5f) : (FLOAT)(INT32)(extra - 0.5f);
+                px = (FLOAT)DwGdiAdvancePixels(own->data, shaped.glyphs[g], ppem, l->natural) + extra;
+            } else {
+                px = w * l->ppd;
+                px = px >= 0 ? (FLOAT)(INT32)(px + 0.5f) : (FLOAT)(INT32)(px - 0.5f);
+            }
             w = px / l->ppd;
         }
         run.advances[g] = w;
