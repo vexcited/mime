@@ -632,9 +632,16 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
 
     if (moved || sized || (pos.flags & SWP_FRAMECHANGED)) {
         RECT client;
-        calc_client(w, &new_window, &old_window, &client, TRUE);
-        if (!alive(w))
-            goto done;
+        if (sized || (pos.flags & SWP_FRAMECHANGED)) {
+            calc_client(w, &new_window, &old_window, &client, TRUE);
+            if (!alive(w))
+                goto done;
+        } else {
+            /* a move alone does not ask the window for its client area, which moves with it. */
+            client = w->ClientRect;
+            screen_to_parent(w, &client);
+            RectOffset(&client, new_window.left - old_window.left, new_window.top - old_window.top);
+        }
         if (w->Style & WS_MINIMIZE)
             client = (RECT){new_window.left, new_window.top, new_window.left, new_window.top};
         RECT win_screen = new_window, client_screen = client;
