@@ -503,7 +503,8 @@ ULONG NTAPI NtUserWaitForInputIdle(ULONG_PTR process_id, DWORD timeout, BOOL rem
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return WIDLE_FAILED;
     }
-    BOOLEAN graphical = FALSE;
+    /* a console program does not wait, even once it has loaded user32 and has a queue. */
+    BOOLEAN graphical = image_subsystem(pid) == 2; /* IMAGE_SUBSYSTEM_WINDOWS_GUI */
     ULONG result = 0;
     for (;;) {
         if (PsGetProcessExitStatus(target) != STATUS_PENDING) {
@@ -511,6 +512,8 @@ ULONG NTAPI NtUserWaitForInputIdle(ULONG_PTR process_id, DWORD timeout, BOOL rem
             result = WIDLE_FAILED;
             break;
         }
+        if (!graphical)
+            break;
         UserEnter();
         W32PROCESS *wp = nullptr;
         for (PLIST_ENTRY e = W32Processes.Flink; e != &W32Processes; e = e->Flink) {
@@ -520,9 +523,8 @@ ULONG NTAPI NtUserWaitForInputIdle(ULONG_PTR process_id, DWORD timeout, BOOL rem
                 break;
             }
         }
-        BOOLEAN idle = FALSE, has_queue = FALSE;
+        BOOLEAN idle = FALSE;
         if (wp) {
-            has_queue = TRUE;
             idle = wp->InputIdle;
             for (PLIST_ENTRY e = g_threads.Flink; e != &g_threads && !idle; e = e->Flink) {
                 W32THREAD *t = CONTAINING_RECORD(e, W32THREAD, Links);
@@ -536,14 +538,6 @@ ULONG NTAPI NtUserWaitForInputIdle(ULONG_PTR process_id, DWORD timeout, BOOL rem
         if (idle) {
             result = 0;
             break;
-        }
-        if (!has_queue && !graphical) {
-            ULONG subsystem = image_subsystem(pid);
-            graphical = subsystem == 2; /* IMAGE_SUBSYSTEM_WINDOWS_GUI */
-            if (!graphical) {
-                result = 0;
-                break;
-            }
         }
         LARGE_INTEGER step;
         step.QuadPart = -(LONGLONG)WIDLE_POLL_MS * 10000;
