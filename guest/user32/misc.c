@@ -511,6 +511,21 @@ WINUSERAPI LRESULT WINAPI CallNextHookEx(HHOOK hook, int code, WPARAM wparam, LP
     return NtUserCallNextHookEx(code, wparam, lparam, FALSE);
 }
 
+/* the loops of menus and dialogs of this system do not run WH_MSGFILTER hooks, so a message is never filtered. */
+WINUSERAPI BOOL WINAPI CallMsgFilterW(LPMSG msg, int code)
+{
+    if (!msg) {
+        SetLastError(ERROR_NOACCESS);
+        return FALSE;
+    }
+    return FALSE;
+}
+
+WINUSERAPI BOOL WINAPI CallMsgFilterA(LPMSG msg, int code)
+{
+    return CallMsgFilterW(msg, code);
+}
+
 WINUSERAPI BOOL WINAPI FlashWindow(HWND hwnd, BOOL invert)
 {
     return TRUE;

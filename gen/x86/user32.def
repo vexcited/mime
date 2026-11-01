@@ -20,6 +20,8 @@ EXPORTS
     BroadcastSystemMessageExA=_BroadcastSystemMessageExA@24
     BroadcastSystemMessageExW=_BroadcastSystemMessageExW@24
     BroadcastSystemMessageW=_BroadcastSystemMessageW@20
+    CallMsgFilterA=_CallMsgFilterA@8
+    CallMsgFilterW=_CallMsgFilterW@8
     CallNextHookEx=_CallNextHookEx@16
     CallWindowProcA=_CallWindowProcA@20
     CallWindowProcW=_CallWindowProcW@20

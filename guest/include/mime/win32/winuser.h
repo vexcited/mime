@@ -1622,6 +1622,8 @@ WINUSERAPI HHOOK WINAPI SetWindowsHookExW(int id, HOOKPROC proc, HINSTANCE insta
 WINUSERAPI HHOOK WINAPI SetWindowsHookExA(int id, HOOKPROC proc, HINSTANCE instance, DWORD thread);
 WINUSERAPI BOOL WINAPI UnhookWindowsHookEx(HHOOK hook);
 WINUSERAPI LRESULT WINAPI CallNextHookEx(HHOOK hook, int code, WPARAM wparam, LPARAM lparam);
+WINUSERAPI BOOL WINAPI CallMsgFilterA(LPMSG msg, int code);
+WINUSERAPI BOOL WINAPI CallMsgFilterW(LPMSG msg, int code);
 
 WINUSERAPI ATOM WINAPI RegisterClassExW(const WNDCLASSEXW *wc);
 WINUSERAPI ATOM WINAPI RegisterClassExA(const WNDCLASSEXA *wc);
