@@ -349,6 +349,8 @@ struct Engine {
     ULONG Generation;
     UINT Depth;
     BOOL Explicit, Interrupted, Closing, InScript;
+    /* the code the host gave when it interrupted the script, which the site is told about. */
+    HRESULT InterruptCode;
     DWORD Thread;
     double RndSeed;
     BOOL RndInit;
@@ -404,6 +406,7 @@ IDispatch *proc_ref_create(Engine *e, Proc *proc, Instance *me);
 /* errors */
 int raise_error(Frame *frame, LONG number, PCWSTR detail);
 int raise_hresult(Frame *frame, HRESULT hr, PCWSTR source, PCWSTR description);
+int raise_interrupt(Frame *frame);
 int raise_compile(Engine *e, LONG number, ULONG line, ULONG col, PCWSTR text, DWORD_PTR cookie);
 void err_clear(Engine *e);
 void err_set(Engine *e, LONG number, PCWSTR source, PCWSTR description);

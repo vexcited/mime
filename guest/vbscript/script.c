@@ -363,8 +363,47 @@ int vbs_item_load(Frame *f, Sym *s)
     return R_OK;
 }
 
+/* the constants of a type library become constants of the script: the members of its enumerations and of its modules. */
 static HRESULT STDMETHODCALLTYPE script_add_typelib(IActiveScript *This, REFGUID lib, DWORD major, DWORD minor, DWORD flags)
 {
+    Engine *e = ENGINE_OF(Script, This);
+    ITypeLib *library;
+    HRESULT hr = LoadRegTypeLib(lib, (WORD)major, (WORD)minor, 0, &library);
+    if (FAILED(hr))
+        return hr;
+    UINT count = library->lpVtbl->GetTypeInfoCount(library);
+    for (UINT i = 0; i < count; i++) {
+        TYPEKIND kind;
+        ITypeInfo *info;
+        if (FAILED(library->lpVtbl->GetTypeInfoType(library, i, &kind)) || (kind != TKIND_ENUM && kind != TKIND_MODULE))
+            continue;
+        if (FAILED(library->lpVtbl->GetTypeInfo(library, i, &info)))
+            continue;
+        TYPEATTR *attr;
+        if (SUCCEEDED(info->lpVtbl->GetTypeAttr(info, &attr))) {
+            for (UINT v = 0; v < attr->cVars; v++) {
+                VARDESC *var;
+                if (FAILED(info->lpVtbl->GetVarDesc(info, v, &var)))
+                    continue;
+                BSTR name = nullptr;
+                UINT got = 0;
+                if (var->varkind == VAR_CONST && var->lpvarValue && SUCCEEDED(info->lpVtbl->GetNames(info, var->memid, &name, 1, &got)) && got &&
+                    !sym_find(e, name, name_hash(name))) {
+                    Sym *symbol = sym_add(e, name, SYM_CONST);
+                    if (symbol) {
+                        symbol->Public = 1;
+                        symbol->Declared = 1;
+                        VariantCopy(&symbol->Value, var->lpvarValue);
+                    }
+                }
+                SysFreeString(name);
+                info->lpVtbl->ReleaseVarDesc(info, var);
+            }
+            info->lpVtbl->ReleaseTypeAttr(info, attr);
+        }
+        info->lpVtbl->Release(info);
+    }
+    library->lpVtbl->Release(library);
     return S_OK;
 }
 
@@ -407,7 +446,9 @@ static HRESULT STDMETHODCALLTYPE script_thread_state(IActiveScript *This, SCRIPT
 
 static HRESULT STDMETHODCALLTYPE script_interrupt(IActiveScript *This, SCRIPTTHREADID id, const EXCEPINFO *info, DWORD flags)
 {
-    ENGINE_OF(Script, This)->Interrupted = TRUE;
+    Engine *e = ENGINE_OF(Script, This);
+    e->InterruptCode = info ? info->scode : 0;
+    e->Interrupted = TRUE;
     return S_OK;
 }
 

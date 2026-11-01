@@ -1955,7 +1955,7 @@ static int exec_for(Frame *f, Stmt *s)
         if (rc != R_OK)
             break;
         if (f->E->Interrupted) {
-            rc = raise_error(f, 4096, nullptr);
+            rc = raise_interrupt(f);
             break;
         }
         VariantInit(&cur_var);
@@ -2275,7 +2275,7 @@ static int exec_one(Frame *f, Stmt *s)
             if (rc != R_OK)
                 return rc;
             if (e->Interrupted)
-                return raise_error(f, 4096, nullptr);
+                return raise_interrupt(f);
             if (s->Kind == S_DO && s->Flag2) {
                 rc = eval_condition(f, s->u.Loop.Condition, &c);
                 if (rc != R_OK)
@@ -2359,11 +2359,20 @@ static int exec_one(Frame *f, Stmt *s)
     return R_OK;
 }
 
+/* the host stopped the script: the site hears the code the host gave and nothing catches it. */
+int raise_interrupt(Frame *f)
+{
+    HRESULT code = f->E->InterruptCode ? f->E->InterruptCode : (HRESULT)0x800A1000;
+    return raise_hresult(f, code, L"", L"");
+}
+
 int run_statements(Frame *f, Stmt *s)
 {
     for (; s; s = s->Next) {
         f->Line = s->Line;
         f->Col = s->Col;
+        if (f->E->Interrupted)
+            return raise_interrupt(f);
         int rc = exec_one(f, s);
         if (rc == R_ERR) {
             if (f->ResumeNext && !f->E->Interrupted)
