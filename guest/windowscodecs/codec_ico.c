@@ -211,12 +211,62 @@ static HRESULT icon_frame_decode(void *state, UINT index, BYTE *dest, UINT strid
     return e->png ? decode_png(e, data, dest, stride) : decode_dib(e, data, dest, stride);
 }
 
+/*
+ * the thumbnail of a frame is the frame in the pixel format the icon is stored in, which is how a program learns the
+ * bit depth of the images of an icon, the frames themselves all being 32 bits. WPF picks the best frame of a window's
+ * icon by it and takes a missing thumbnail for a null reference.
+ */
+static HRESULT icon_thumbnail(void *state, UINT index, IWICBitmapSource **out)
+{
+    IconState *s = state;
+    if (index >= s->count)
+        return WINCODEC_ERR_FRAMEMISSING;
+    const IconEntry *e = &s->entries[index];
+    const BYTE *data = s->data + e->offset;
+    WicDib dib;
+    const GUID *format = &GUID_WICPixelFormat32bppBGRA;
+    if (!e->png) {
+        HRESULT hr = WicDibParse(data, e->size, TRUE, &dib);
+        if (FAILED(hr))
+            return hr;
+        format = dib.bpp == 32 ? &GUID_WICPixelFormat32bppBGRA : &dib.format;
+    }
+    IWICBitmap *bitmap;
+    HRESULT hr = WicBitmapCreate(e->width, e->height, format, nullptr, 0, 0, FALSE, &bitmap);
+    if (FAILED(hr))
+        return hr;
+    UINT stride;
+    BYTE *pixels = WicBitmapPixels(bitmap, &stride);
+    if (e->png)
+        hr = decode_png(e, data, pixels, stride);
+    else
+        hr = dib.bits_offset < e->size ? WicDibDecode(&dib, data + dib.bits_offset, e->size - dib.bits_offset, pixels, stride)
+                                       : WINCODEC_ERR_BADIMAGE;
+    if (SUCCEEDED(hr) && !e->png && dib.palette_count) {
+        IWICPalette *palette;
+        hr = WicPaletteCreate(&palette);
+        if (SUCCEEDED(hr)) {
+            hr = WicPaletteSet(palette, dib.palette, dib.palette_count);
+            if (SUCCEEDED(hr))
+                hr = bitmap->lpVtbl->SetPalette(bitmap, palette);
+            palette->lpVtbl->Release(palette);
+        }
+    }
+    if (FAILED(hr)) {
+        bitmap->lpVtbl->Release(bitmap);
+        return hr;
+    }
+    *out = (IWICBitmapSource *)bitmap;
+    return S_OK;
+}
+
 const WicDecoderOps wic_dec_ico = {
     .open = ico_open,
     .close = icon_close,
     .frame_count = icon_frame_count,
     .frame_info = icon_frame_info,
     .frame_decode = icon_frame_decode,
+    .thumbnail = icon_thumbnail,
 };
 
 const WicDecoderOps wic_dec_cur = {
@@ -225,4 +275,5 @@ const WicDecoderOps wic_dec_cur = {
     .frame_count = icon_frame_count,
     .frame_info = icon_frame_info,
     .frame_decode = icon_frame_decode,
+    .thumbnail = icon_thumbnail,
 };
