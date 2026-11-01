@@ -207,6 +207,14 @@ BOOL OrpcBuiltinServer(REFCLSID clsid, const WCHAR **dll)
         *dll = L"oleaut32.dll";
         return TRUE;
     }
+    /* the standard font, the picture and the older font are made by oleaut32 as well. */
+    static const GUID standard_font = {0x0BE35203, 0x8F91, 0x11CE, {0x9D, 0xE3, 0x00, 0xAA, 0x00, 0x4B, 0xB8, 0x51}};
+    static const GUID standard_picture = {0x0BE35204, 0x8F91, 0x11CE, {0x9D, 0xE3, 0x00, 0xAA, 0x00, 0x4B, 0xB8, 0x51}};
+    static const GUID old_font = {0x46763EE0, 0xCAB2, 0x11CE, {0x8C, 0x20, 0x00, 0xAA, 0x00, 0x51, 0xE5, 0xD4}};
+    if (IsEqualGUID(clsid, &standard_font) || IsEqualGUID(clsid, &standard_picture) || IsEqualGUID(clsid, &old_font)) {
+        *dll = L"oleaut32.dll";
+        return TRUE;
+    }
     return FALSE;
 }
 

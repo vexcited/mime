@@ -203,6 +203,7 @@ static BOOL is_proxy_class(REFCLSID clsid)
 }
 
 HRESULT AutUniversalFactory(REFIID iid, void **object);
+HRESULT AutStandardFactory(REFCLSID clsid, REFIID iid, void **object);
 
 WINOLEAUTAPI HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, void **object)
 {
@@ -210,7 +211,7 @@ WINOLEAUTAPI HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, void *
         return E_POINTER;
     *object = nullptr;
     if (!is_proxy_class(clsid))
-        return CLASS_E_CLASSNOTAVAILABLE;
+        return AutStandardFactory(clsid, iid, object);
     if (clsid->Data1 == 0x00020424)
         return AutUniversalFactory(iid, object);
     return NdrDllGetClassObject(clsid, iid, object, oaproxy_ProxyFileList, clsid, &oaproxy_PSFactory);
