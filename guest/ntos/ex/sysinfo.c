@@ -803,8 +803,21 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
             PKPRCB prcb = KiProcessorBlock[i];
             if (!prcb)
                 continue;
+            /* the running thread's time since its last tick is busy too, though not charged yet, and idle time never
+               goes back, as the time of the idle thread on windows. */
             ULONG64 busy = prcb->KernelTime + prcb->UserTime;
+            PKTHREAD running = prcb->CurrentThread;
+            ULONG64 since = prcb->TickTime;
+            if (running && running != prcb->IdleThread && now > since)
+                busy += now - since;
             ULONG64 idle = now > busy ? now - busy : 0;
+            static ULONG64 reported[MAXIMUM_PROCESSORS];
+            ULONG64 seen = __atomic_load_n(&reported[i], __ATOMIC_RELAXED);
+            while (seen < idle && !__atomic_compare_exchange_n(&reported[i], &seen, idle, FALSE, __ATOMIC_RELAXED,
+                                                                __ATOMIC_RELAXED))
+                ;
+            if (seen > idle)
+                idle = seen;
             p[i].IdleTime.QuadPart = (LONGLONG)idle;
             p[i].KernelTime.QuadPart = (LONGLONG)(prcb->KernelTime + idle);
             p[i].UserTime.QuadPart = (LONGLONG)prcb->UserTime;
