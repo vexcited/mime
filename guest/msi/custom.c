@@ -283,6 +283,155 @@ static UINT run_library(MIME_MSI_PACKAGE *package, MSIHANDLE session, const MIME
     return error;
 }
 
+/* the text of a script file or stream: utf-16 or utf-8 with a mark, or in the ansi code page. */
+static PWSTR decode_script(const BYTE *data, SIZE_T size)
+{
+    PWSTR text;
+    if (size >= 2 && data[0] == 0xFF && data[1] == 0xFE) {
+        SIZE_T count = (size - 2) / sizeof(WCHAR);
+        text = MimeMsiAllocate((count + 1) * sizeof(WCHAR));
+        if (text)
+            memcpy(text, data + 2, count * sizeof(WCHAR));
+        return text;
+    }
+    UINT page = CP_ACP;
+    if (size >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF) {
+        page = CP_UTF8;
+        data += 3;
+        size -= 3;
+    }
+    int count = size ? MultiByteToWideChar(page, 0, (PCSTR)data, (int)size, nullptr, 0) : 0;
+    text = MimeMsiAllocate(((SIZE_T)count + 1) * sizeof(WCHAR));
+    if (text && count)
+        MultiByteToWideChar(page, 0, (PCSTR)data, (int)size, text, count);
+    return text;
+}
+
+static UINT read_file_bytes(PCWSTR path, BYTE **data, SIZE_T *size)
+{
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return GetLastError();
+    LARGE_INTEGER length;
+    UINT error = ERROR_SUCCESS;
+    if (!GetFileSizeEx(file, &length) || length.QuadPart > 0x10000000)
+        error = GetLastError() ? GetLastError() : ERROR_FILE_TOO_LARGE;
+    else {
+        *data = MimeMsiAllocate((SIZE_T)length.QuadPart + 1);
+        DWORD read = 0;
+        if (!*data)
+            error = ERROR_NOT_ENOUGH_MEMORY;
+        else if (!ReadFile(file, *data, (DWORD)length.QuadPart, &read, nullptr))
+            error = GetLastError();
+        *size = read;
+    }
+    CloseHandle(file);
+    return error;
+}
+
+/* the script of an action comes from the Binary table, an installed file, a property or the target itself. */
+static UINT script_source(MIME_MSI_PACKAGE *package, const MIME_MSI_CA_ROW *row, PWSTR *text, PCWSTR *function)
+{
+    UINT source = row->Type & 0x30;
+    UINT error = ERROR_SUCCESS;
+    BYTE *bytes = nullptr;
+    SIZE_T size = 0;
+    *text = nullptr;
+    *function = row->Target;
+    AcquireSRWLockExclusive(&MimeMsiLock);
+    if (source == SOURCE_BINARY) {
+        WCHAR name[256];
+        _snwprintf(name, RTL_NUMBER_OF(name), L"Binary.%s", row->Source);
+        error = MimeMsiReadBinary(package->Database, name, &bytes, &size);
+        if (error == ERROR_FILE_NOT_FOUND)
+            error = ERROR_INSTALL_PACKAGE_INVALID;
+    } else if (source == SOURCE_FILE) {
+        PWSTR installed = nullptr;
+        error = installed_file_path(package, row->Source, &installed);
+        if (!error)
+            error = read_file_bytes(installed, &bytes, &size);
+        MimeMsiFree(installed);
+    } else if (source == SOURCE_PROPERTY) {
+        *text = MimeMsiDuplicate(MimeMsiGetProperty(package, row->Source));
+        if (!*text)
+            error = ERROR_NOT_ENOUGH_MEMORY;
+    } else {
+        /* the script is the target, and no function is called. */
+        *text = MimeMsiDuplicate(row->Target);
+        *function = L"";
+        if (!*text)
+            error = ERROR_NOT_ENOUGH_MEMORY;
+    }
+    ReleaseSRWLockExclusive(&MimeMsiLock);
+    if (!error && bytes) {
+        *text = decode_script(bytes, size);
+        if (!*text)
+            error = ERROR_NOT_ENOUGH_MEMORY;
+    }
+    MimeMsiFree(bytes);
+    return error;
+}
+
+typedef struct CA_SCRIPT {
+    MSIHANDLE Session;
+    BOOL Js;
+    PCWSTR Text, Function, Action;
+    UINT Result, Error;
+} CA_SCRIPT;
+
+static DWORD WINAPI call_script(PVOID parameter)
+{
+    CA_SCRIPT *call = parameter;
+    call->Error = MimeMsiRunActionScript(call->Session, call->Js, call->Text, call->Function, call->Action, &call->Result);
+    return 0;
+}
+
+/* what a script returns is a button of a dialog: 1 is success, 2 a user exit, 3 a failure, 4 a suspension. */
+static UINT script_return(UINT value)
+{
+    switch (value) {
+    case 0: return ERROR_FUNCTION_NOT_CALLED;
+    case 1: return ERROR_SUCCESS;
+    case 2: return ERROR_INSTALL_USEREXIT;
+    case 3: return ERROR_INSTALL_FAILURE;
+    case 4: return ERROR_INSTALL_SUSPEND;
+    default: return ERROR_NO_MORE_ITEMS;
+    }
+}
+
+/* runs the script of an action. a 32-bit script of a 64-bit installer runs in the 32-bit host. */
+static UINT run_script(MIME_MSI_PACKAGE *package, MSIHANDLE session, const MIME_MSI_CA_ROW *row, UINT *result)
+{
+    PWSTR text;
+    PCWSTR function;
+    UINT error = script_source(package, row, &text, &function);
+    if (error) {
+        MsiCloseHandle(session);
+        return error;
+    }
+    BOOL js = (row->Type & 7) == CA_JSCRIPT;
+    UINT value = 0;
+    if (sizeof(void *) == 8 && !(row->Type & 0x1000)) {
+        error = MimeMsiRemoteScript(package, session, js, text, function, row->Name, &value);
+        MsiCloseHandle(session);
+    } else {
+        CA_SCRIPT call = {session, js, text, function, row->Name};
+        HANDLE thread = CreateThread(nullptr, 0, call_script, &call, 0, nullptr);
+        if (!thread) {
+            error = GetLastError();
+            MsiCloseHandle(session);
+        } else {
+            WaitForSingleObject(thread, INFINITE);
+            CloseHandle(thread);
+            error = call.Error;
+            value = call.Result;
+        }
+    }
+    MimeMsiFree(text);
+    *result = error ? ERROR_INSTALL_FAILURE : script_return(value);
+    return ERROR_SUCCESS;
+}
+
 static UINT run_program(MIME_MSI_PACKAGE *package, const MIME_MSI_CA_ROW *row, PCWSTR arguments, UINT *result)
 {
     UINT source = row->Type & 0x30;
@@ -420,6 +569,12 @@ static UINT run_scheduled(MIME_MSI_PACKAGE *package, MIME_MSI_SCRIPT_ACTION *act
         if (!error)
             error = run_program(package, &action->Row, arguments, &result);
         MimeMsiFree(arguments);
+    } else if (base == CA_JSCRIPT || base == CA_VBSCRIPT) {
+        /* the script takes the session along and closes it. */
+        error = run_script(package, session, &action->Row, &result);
+        if (error)
+            return error;
+        return translate_result(result);
     } else
         error = ERROR_CALL_NOT_IMPLEMENTED;
     MsiCloseHandle(session);
@@ -598,6 +753,12 @@ UINT MimeMsiRunCustomAction(MSIHANDLE handle, MIME_MSI_PACKAGE *package, MIME_MS
         if (!error)
             error = run_program(package, row, arguments, &result);
         MimeMsiFree(arguments);
+    } else if (base == CA_JSCRIPT || base == CA_VBSCRIPT) {
+        AcquireSRWLockExclusive(&MimeMsiLock);
+        MIME_MSI_OBJECT *object = MimeMsiGetHandle(handle, 0);
+        MSIHANDLE own = object ? MimeMsiAddHandle(object) : 0;
+        ReleaseSRWLockExclusive(&MimeMsiLock);
+        error = !object ? ERROR_INVALID_HANDLE : own ? run_script(package, own, row, &result) : ERROR_NOT_ENOUGH_MEMORY;
     } else {
         error = ERROR_CALL_NOT_IMPLEMENTED;
     }

@@ -413,9 +413,31 @@ UINT WINAPI MsiCustomActionServer(LPCWSTR pipe_name)
         }
         MSIHANDLE session = get_u32(&request);
         PWSTR path = get_text(&request), entry_name = get_text(&request);
-        /* a library asked to register itself is called with nothing, and answers with an HRESULT. */
-        BOOL registering = get_u32(&request) != 0;
+        /* a library asked to register itself is called with nothing, and answers with an HRESULT. the modes above
+           that run a script, whose text takes the place of the library's path and which names its action too. */
+        ULONG mode = get_u32(&request);
+        BOOL registering = mode == 1;
+        PWSTR action = mode >= 2 ? get_text(&request) : nullptr;
         ULONG load_error = ERROR_SUCCESS, result = 0;
+        if (mode >= 2) {
+            UINT script_result = 0;
+            load_error = MimeMsiRunActionScript(session, mode == 3, path, entry_name, action, &script_result);
+            result = script_result;
+            MimeMsiFree(path);
+            MimeMsiFree(entry_name);
+            MimeMsiFree(action);
+            MimeMsiFree(request.Data);
+            MESSAGE reply = {};
+            put_u32(&reply, load_error);
+            put_u32(&reply, result);
+            AcquireSRWLockExclusive(&g_client_lock);
+            BOOL sent = send_message(pipe, MESSAGE_RESULT, &reply);
+            ReleaseSRWLockExclusive(&g_client_lock);
+            MimeMsiFree(reply.Data);
+            if (!sent)
+                break;
+            continue;
+        }
         HMODULE library = path ? LoadLibraryExW(path, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH) : nullptr;
         char entry[256] = {};
         if (entry_name)
@@ -779,8 +801,8 @@ static BOOL serve_call(MESSAGE *request, MESSAGE *reply)
     return !reply->Failed;
 }
 
-static UINT remote_run(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, PCSTR entry, WORD machine,
-                       BOOL registering, UINT *result)
+static UINT remote_run(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, PCWSTR entry_name, WORD machine,
+                       ULONG mode, PCWSTR action, UINT *result)
 {
     ULONG host;
     if (machine == IMAGE_FILE_MACHINE_I386)
@@ -795,13 +817,13 @@ static UINT remote_run(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll,
         ReleaseSRWLockExclusive(&g_host_lock);
         return error;
     }
-    WCHAR entry_name[256];
-    MultiByteToWideChar(CP_ACP, 0, entry, -1, entry_name, RTL_NUMBER_OF(entry_name));
     MESSAGE request = {};
     put_u32(&request, session);
     put_text(&request, dll);
     put_text(&request, entry_name);
-    put_u32(&request, registering);
+    put_u32(&request, mode);
+    if (mode >= 2)
+        put_text(&request, action);
     BOOL ok = !request.Failed && send_message(g_host_pipe[host], MESSAGE_RUN, &request);
     MimeMsiFree(request.Data);
     error = ok ? ERROR_SUCCESS : ERROR_BROKEN_PIPE;
@@ -839,10 +861,21 @@ static UINT remote_run(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll,
 
 UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, PCSTR entry, WORD machine, UINT *result)
 {
-    return remote_run(package, session, dll, entry, machine, FALSE, result);
+    WCHAR entry_name[256];
+    MultiByteToWideChar(CP_ACP, 0, entry, -1, entry_name, RTL_NUMBER_OF(entry_name));
+    return remote_run(package, session, dll, entry_name, machine, 0, nullptr, result);
+}
+
+/* a script runs in the 32-bit host, whose msi.dll reaches the installation through the installer. */
+UINT MimeMsiRemoteScript(MIME_MSI_PACKAGE *package, MSIHANDLE session, BOOL jscript, PCWSTR text, PCWSTR function,
+                         PCWSTR action, UINT *result)
+{
+    return remote_run(package, session, text, function, IMAGE_FILE_MACHINE_I386, jscript ? 3 : 2, action, result);
 }
 
 UINT MimeMsiRemoteRegister(MIME_MSI_PACKAGE *package, PCWSTR dll, PCSTR entry, WORD machine, UINT *result)
 {
-    return remote_run(package, 0, dll, entry, machine, TRUE, result);
+    WCHAR entry_name[256];
+    MultiByteToWideChar(CP_ACP, 0, entry, -1, entry_name, RTL_NUMBER_OF(entry_name));
+    return remote_run(package, 0, dll, entry_name, machine, 1, nullptr, result);
 }

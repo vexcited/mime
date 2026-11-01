@@ -276,6 +276,10 @@ UINT MimeMsiRemoteRun(MIME_MSI_PACKAGE *package, MSIHANDLE session, PCWSTR dll, 
                       UINT *result);
 UINT MimeMsiMachineOfImage(const BYTE *data, SIZE_T size, WORD *machine);
 UINT MimeMsiRemoteRegister(MIME_MSI_PACKAGE *package, PCWSTR dll, PCSTR entry, WORD machine, UINT *result);
+UINT MimeMsiRemoteScript(MIME_MSI_PACKAGE *package, MSIHANDLE session, BOOL jscript, PCWSTR text, PCWSTR function,
+                         PCWSTR action, UINT *result);
+/* runs a script custom action on an active scripting engine, in this process. */
+UINT MimeMsiRunActionScript(MSIHANDLE session, BOOL jscript, PCWSTR text, PCWSTR function, PCWSTR action, UINT *result);
 UINT MimeMsiExtraAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiRunUnlocked(MSIHANDLE handle, MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiFormat(MIME_MSI_PACKAGE *package, PCWSTR template, PWSTR *out);
