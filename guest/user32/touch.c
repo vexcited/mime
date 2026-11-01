@@ -79,21 +79,6 @@ WINUSERAPI BOOL WINAPI GetDisplayAutoRotationPreferences(DWORD *orientation)
     return TRUE;
 }
 
-/* one scale for every monitor, so logical and physical points are the same. */
-WINUSERAPI BOOL WINAPI PhysicalToLogicalPoint(HWND hwnd, LPPOINT point)
-{
-    if (!point || !IsWindow(hwnd)) {
-        SetLastError(!point ? ERROR_INVALID_PARAMETER : ERROR_INVALID_WINDOW_HANDLE);
-        return FALSE;
-    }
-    return TRUE;
-}
-
-WINUSERAPI BOOL WINAPI LogicalToPhysicalPoint(HWND hwnd, LPPOINT point)
-{
-    return PhysicalToLogicalPoint(hwnd, point);
-}
-
 static BOOL g_ime_enabled = TRUE;
 
 /* the old 16 bit switch of the input method: the state it was in. the input method itself stays as it is. */

@@ -306,6 +306,9 @@ static void set_area(HWND hwnd, const LONG *area)
     LONG rect[5] = {area[0] + w->ClientRect.left - top->WindowRect.left, area[1] + w->ClientRect.top - top->WindowRect.top,
                     area[2] + w->ClientRect.left - top->WindowRect.left, area[3] + w->ClientRect.top - top->WindowRect.top,
                     area[4] + w->ClientRect.left - top->WindowRect.left};
+    /* the host takes physical pixels. */
+    for (ULONG i = 0; i < RTL_NUMBER_OF(rect); i++)
+        rect[i] = DpiScale(rect[i], DpiScaleOf(top->Awareness), W32SystemDpi());
     if (g_ime.AreaWindow == WndHandle(top) && !memcmp(rect, g_ime.Area, sizeof(rect)))
         return;
     g_ime.AreaWindow = WndHandle(top);

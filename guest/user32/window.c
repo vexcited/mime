@@ -1080,7 +1080,10 @@ WINUSERAPI BOOL WINAPI TrackMouseEvent(LPTRACKMOUSEEVENT track)
 
 WINUSERAPI UINT WINAPI GetDpiForWindow(HWND hwnd)
 {
-    return (UINT)NtUserCallHwnd(hwnd, MIME_HWND_GETDPI);
+    UINT dpi = (UINT)NtUserCallHwnd(hwnd, MIME_HWND_GETDPI);
+    if (!dpi)
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+    return dpi;
 }
 
 WINUSERAPI UINT WINAPI GetDpiForSystem(void)
@@ -1092,47 +1095,6 @@ UINT UserWindowDpi(HWND hwnd)
 {
     UINT dpi = hwnd ? GetDpiForWindow(hwnd) : 0;
     return dpi ? dpi : GetDpiForSystem();
-}
-
-WINUSERAPI BOOL WINAPI SetProcessDPIAware(void)
-{
-    if (!UserDpiAwareness) {
-        UserDpiAwareness = 1;
-        NtUserCallOneParam(1, MIME_ONEPARAM_SETPROCESSDPIAWARENESS);
-    }
-    return TRUE;
-}
-
-WINUSERAPI BOOL WINAPI IsProcessDPIAware(void)
-{
-    return UserDpiAwareness != 0;
-}
-
-/* like windows, a manifest set awareness cannot change: access denied. */
-WINUSERAPI BOOL WINAPI SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT context)
-{
-    LONG_PTR value = (LONG_PTR)context;
-    if (value > -1 || value < -4) {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    if (UserDpiAwarenessLocked) {
-        SetLastError(ERROR_ACCESS_DENIED);
-        return FALSE;
-    }
-    UserDpiAwareness = (ULONG)(-value - 1);
-    NtUserCallOneParam(UserDpiAwareness, MIME_ONEPARAM_SETPROCESSDPIAWARENESS);
-    return TRUE;
-}
-
-WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI GetThreadDpiAwarenessContext(void)
-{
-    return UserDpiAwarenessContext();
-}
-
-WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT context)
-{
-    return UserDpiAwarenessContext();
 }
 
 WINUSERAPI int WINAPI GetSystemMetrics(int index)

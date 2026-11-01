@@ -81,7 +81,8 @@ DC *DcCreate(ULONG flags)
     if (!dc)
         return nullptr;
     dc->Flags = flags;
-    dc->Dpi = W32SystemDpi();
+    dc->Awareness = (UCHAR)DpiCurrentAwareness();
+    dc->Dpi = DpiScaleOf(dc->Awareness);
     RgnInit(&dc->VisRgn);
     RgnInit(&dc->State.ClipRgn);
     RgnInit(&dc->State.MetaRgn);
@@ -312,8 +313,10 @@ HDC NTAPI NtGdiCreateCompatibleDC(HDC hdc)
     HDC result = nullptr;
     if (dc) {
         DC *ref = hdc ? DcLookup(hdc) : nullptr;
-        if (ref)
+        if (ref) {
             dc->Dpi = ref->Dpi;
+            dc->Awareness = ref->Awareness;
+        }
         /* memory dcs start with a 1x1 monochrome bitmap. */
         dc->DefaultBitmap = SurfaceCreate(1, 1, 1, 0);
         if (dc->DefaultBitmap) {
@@ -339,6 +342,7 @@ HDC NTAPI NtGdiCreateMetafileDC(HDC hdc)
     HDC result = nullptr;
     if (dc) {
         dc->Dpi = ref->Dpi;
+        dc->Awareness = ref->Awareness;
         RECT all = {0, 0, W32Display.Width, W32Display.Height};
         RgnSetRect(&dc->VisRgn, &all);
         result = (HDC)dc->Header.Handle;
@@ -382,7 +386,8 @@ int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
     UserEnter();
     DC *dc = DcLookup(hdc);
     int v = 0;
-    UINT dpi = dc ? dc->Dpi : W32SystemDpi();
+    ULONG awareness = dc ? dc->Awareness : DpiCurrentAwareness();
+    UINT dpi = dc ? dc->Dpi : DpiScaleOf(awareness);
     /* size and refresh rate of the dc's monitor, else of the primary one. */
     LONG width = W32Display.Width, height = W32Display.Height;
     ULONG refresh = W32Display.RefreshHz;
@@ -392,6 +397,10 @@ int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
         height = monitor.Rect.bottom - monitor.Rect.top;
         refresh = monitor.RefreshHz;
     }
+    /* the desktop in the pixels of the dc, DESKTOPHORZRES keeps the real ones. */
+    LONG desktop_width = width, desktop_height = height;
+    width = DpiScale(width, W32SystemDpi(), DpiScaleOf(awareness));
+    height = DpiScale(height, W32SystemDpi(), DpiScaleOf(awareness));
     switch (index) {
     case DRIVERVERSION:
         v = 0x4001;
@@ -406,12 +415,16 @@ int NTAPI NtGdiGetDeviceCaps(HDC hdc, int index)
         v = W32MulDiv(height, 254, (LONG)dpi * 10);
         break;
     case HORZRES:
-    case DESKTOPHORZRES:
         v = width;
         break;
+    case DESKTOPHORZRES:
+        v = desktop_width;
+        break;
     case VERTRES:
-    case DESKTOPVERTRES:
         v = height;
+        break;
+    case DESKTOPVERTRES:
+        v = desktop_height;
         break;
     case BITSPIXEL:
         v = dc && dc->Surface && (dc->Flags & DC_MEMORY) ? dc->Surface->Bpp : (int)W32Display.Bits;
@@ -520,8 +533,8 @@ static BOOL set_map_mode(DC *dc, int mode, DWORD *old)
             mx = dc->VirtualMm.cx;
             my = dc->VirtualMm.cy;
         } else {
-            px = W32Display.Width;
-            py = W32Display.Height;
+            px = DpiScale(W32Display.Width, W32SystemDpi(), DpiScaleOf(dc->Awareness));
+            py = DpiScale(W32Display.Height, W32SystemDpi(), DpiScaleOf(dc->Awareness));
             /* the physical size in micrometers. */
             mx = W32MulDiv(px, 25400, (LONG)dc->Dpi);
             my = W32MulDiv(py, 25400, (LONG)dc->Dpi);

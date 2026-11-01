@@ -46,12 +46,8 @@ extern HINSTANCE User32Instance;
 /* dnd.c: handles WM_MIME_HOSTDND, drag and drop with host programs. */
 void UserHostDnd(const MSG *msg);
 
-/* 0 unaware, 1 system, 2 per monitor, 3 per monitor v2. */
-extern ULONG UserDpiAwareness;
-extern BOOL UserDpiAwarenessLocked;
 extern BOOL UserGdiScaling;
 void UserInitializeDpiAwareness(void);
-DPI_AWARENESS_CONTEXT UserDpiAwarenessContext(void);
 extern MIME_CLIENT_INFO User32Client;
 
 static inline void *UserAlloc(SIZE_T size)

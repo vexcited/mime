@@ -560,6 +560,49 @@ BOOL NTAPI NtGdiPatBlt(HDC hdc, int x, int y, int width, int height, DWORD rop)
 static BOOL stretch_blt(HDC hdst, int x, int y, int width, int height, HDC hsrc, int src_x, int src_y,
                         int src_width, int src_height, DWORD rop);
 
+/*
+ * the screen of a program that is not dpi aware has 96 dpi pixels, and what it reads of it comes from the physical
+ * screen by taking one pixel in the scale of them.
+ */
+static BOOLEAN screen_is_scaled(const DC *dc)
+{
+    return ScreenIsSurface(dc->Surface) && DpiVirtual(dc->Awareness);
+}
+
+/* the pixel of the physical screen under a pixel of the dc's screen, the dc's device coordinates without its origin. */
+static void physical_screen_point(const DC *dc, LONG *x, LONG *y)
+{
+    *x = DpiScale(*x, 96, W32SystemDpi()) + dc->Origin.x;
+    *y = DpiScale(*y, 96, W32SystemDpi()) + dc->Origin.y;
+}
+
+/* a copy of the part of the screen that starts at x, y of the dc's device. */
+static SURFACE *scaled_screen(DC *dc, LONG x, LONG y, LONG width, LONG height)
+{
+    if (width <= 0 || height <= 0)
+        return nullptr;
+    SURFACE *copy = SurfaceCreate(width, height, 32, SURF_TOPDOWN);
+    if (!copy)
+        return nullptr;
+    LONG left = x, top = y, right = x + width, bottom = y + height;
+    physical_screen_point(dc, &left, &top);
+    physical_screen_point(dc, &right, &bottom);
+    ScreenCompose(&(RECT){left, top, right + 1, bottom + 1});
+    const SURFACE *screen = dc->Surface;
+    for (LONG j = 0; j < height; j++) {
+        LONG sy = DpiScale(y + j, 96, W32SystemDpi()) + dc->Origin.y;
+        if (sy < 0 || sy >= screen->Height)
+            continue;
+        const ULONG *from = (const ULONG *)(screen->Bits + (LONG_PTR)sy * screen->Stride);
+        ULONG *to = (ULONG *)(copy->Bits + (LONG_PTR)j * copy->Stride);
+        for (LONG i = 0; i < width; i++) {
+            LONG px = DpiScale(x + i, 96, W32SystemDpi()) + dc->Origin.x;
+            to[i] = px >= 0 && px < screen->Width ? from[px] : 0xFF000000;
+        }
+    }
+    return copy;
+}
+
 /* a scaling transform on either dc stretches. */
 static BOOLEAN blt_scales(HDC hdst, HDC hsrc)
 {
@@ -587,6 +630,16 @@ BOOL NTAPI NtGdiBitBlt(HDC hdst, int x, int y, int width, int height, HDC hsrc, 
             r = logical_rect_to_surface(ctx.Dc, x, y, x + width, y + height);
             DrawBrushRect(ctx.Dc, &ctx.Clip, &r, ctx.Dc->State.Brush, rop);
             ok = TRUE;
+        } else if (src && src->Surface && screen_is_scaled(src)) {
+            LONG dx = x, dy = y, sx = src_x, sy = src_y;
+            DcLogicalToSurface(ctx.Dc, &dx, &dy);
+            DcLogicalToDevice(src, &sx, &sy);
+            SURFACE *copy = scaled_screen(src, sx, sy, width, height);
+            if (copy) {
+                ok = BltSurface(ctx.Dc->Surface, &ctx.Clip, dx, dy, width, height, copy, 0, 0, rop, ctx.Dc);
+                SurfaceDestroy(copy);
+            }
+            r = (RECT){dx, dy, dx + width, dy + height};
         } else if (src && src->Surface) {
             LONG dx = x, dy = y, sx = src_x, sy = src_y;
             DcLogicalToSurface(ctx.Dc, &dx, &dy);
@@ -632,12 +685,26 @@ static BOOL stretch_blt(HDC hdst, int x, int y, int width, int height, HDC hsrc,
         DcLogicalToSurface(ctx.Dc, &x0, &y0);
         DcLogicalToSurface(ctx.Dc, &x1, &y1);
         LONG sx0 = src_x, sy0 = src_y, sx1 = src_x + src_width, sy1 = src_y + src_height;
-        DcLogicalToSurface(src, &sx0, &sy0);
-        DcLogicalToSurface(src, &sx1, &sy1);
+        SURFACE *copy = nullptr;
+        if (screen_is_scaled(src)) {
+            DcLogicalToDevice(src, &sx0, &sy0);
+            DcLogicalToDevice(src, &sx1, &sy1);
+            LONG left = W32Min(sx0, sx1), top = W32Min(sy0, sy1);
+            copy = scaled_screen(src, left, top, W32Max(sx0, sx1) - left, W32Max(sy0, sy1) - top);
+            sx0 -= left, sx1 -= left, sy0 -= top, sy1 -= top;
+        } else {
+            DcLogicalToSurface(src, &sx0, &sy0);
+            DcLogicalToSurface(src, &sx1, &sy1);
+        }
         RECT dr = {x0, y0, x1, y1}, sr = {sx0, sy0, sx1, sy1};
-        if (ScreenIsSurface(src->Surface))
-            ScreenCompose(&(RECT){W32Min(sx0, sx1), W32Min(sy0, sy1), W32Max(sx0, sx1), W32Max(sy0, sy1)});
-        ok = StretchSurface(ctx.Dc->Surface, &ctx.Clip, &dr, src->Surface, &sr, rop, ctx.Dc->State.StretchMode);
+        if (copy) {
+            ok = StretchSurface(ctx.Dc->Surface, &ctx.Clip, &dr, copy, &sr, rop, ctx.Dc->State.StretchMode);
+            SurfaceDestroy(copy);
+        } else {
+            if (ScreenIsSurface(src->Surface))
+                ScreenCompose(&(RECT){W32Min(sx0, sx1), W32Min(sy0, sy1), W32Max(sx0, sx1), W32Max(sy0, sy1)});
+            ok = StretchSurface(ctx.Dc->Surface, &ctx.Clip, &dr, src->Surface, &sr, rop, ctx.Dc->State.StretchMode);
+        }
         dirty = (RECT){W32Min(x0, x1), W32Min(y0, y1), W32Max(x0, x1), W32Max(y0, y1)};
     } else if (ctx.Dc) {
         ok = TRUE;
@@ -1046,7 +1113,15 @@ COLORREF NTAPI NtGdiGetPixel(HDC hdc, int x, int y)
     UserEnter();
     DC *dc = DcLookup(hdc);
     COLORREF result = CLR_INVALID;
-    if (dc && dc->Surface) {
+    if (dc && dc->Surface && screen_is_scaled(dc)) {
+        LONG sx = x, sy = y;
+        DcLogicalToDevice(dc, &sx, &sy);
+        physical_screen_point(dc, &sx, &sy);
+        if (RgnPtIn(&dc->VisRgn, sx, sy) && sx < dc->Surface->Width && sy < dc->Surface->Height) {
+            ScreenCompose(&(RECT){sx, sy, sx + 1, sy + 1});
+            result = PixelToColor(SurfaceGetPixel(dc->Surface, sx, sy));
+        }
+    } else if (dc && dc->Surface) {
         LONG sx = x, sy = y;
         DcLogicalToSurface(dc, &sx, &sy);
         if (RgnPtIn(&dc->VisRgn, sx, sy) && sx < dc->Surface->Width && sy < dc->Surface->Height) {

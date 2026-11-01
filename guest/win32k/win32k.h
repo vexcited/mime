@@ -290,6 +290,7 @@ typedef struct DC {
     DC_SAVED *Saved;
     int SaveLevel;
     UINT Dpi;
+    UCHAR Awareness; /* the DPI awareness of the window or thread it belongs to: what HORZRES and mapping modes show. */
     struct FONT_INSTANCE *Realized;
     FONT *RealizedFor;
     RECT Bounds;
@@ -450,7 +451,8 @@ typedef struct W32PROCESS {
     HANDLE Pid;
     LIST_ENTRY Classes;
     LIST_ENTRY Links;
-    ULONG DpiAwareness;
+    ULONG DpiAwareness; /* DPI_AWARENESS_* as 0 to 3, unaware, system, per monitor and per monitor v2. */
+    BOOLEAN DpiSet;     /* the manifest or a call chose the awareness, so it cannot change again. */
     MIME_CLIENT_INFO Client;
     BOOLEAN ClientValid;
     BOOLEAN Wow;        /* a 32-bit program, its structures are converted at its boundary. */
@@ -548,6 +550,7 @@ typedef struct W32THREAD {
     HANDLE DesktopHandle;
     HWND TsfSink;          /* text services window for host input methods, ime.c. */
     BOOLEAN AltAlone;      /* Alt or F10 went down and no other key or button has since, for the menu bar. */
+    ULONG DpiOverride;     /* the awareness set for the thread plus one, 0 to follow the process. */
 } W32THREAD;
 
 /* caller job restrictions, JOB_OBJECT_UILIMIT_*. */
@@ -669,8 +672,8 @@ typedef struct WND {
     DWORD Style;
     DWORD ExStyle;
     ULONG Flags;
-    RECT WindowRect;  /* screen coordinates. */
-    RECT ClientRect;  /* screen coordinates. */
+    RECT WindowRect;  /* screen coordinates of the window's DPI awareness. */
+    RECT ClientRect;  /* screen coordinates of the window's DPI awareness. */
     RECT NormalRect;
     POINT MinPosition;
     POINT MaxPosition;
@@ -692,6 +695,7 @@ typedef struct WND {
     HICON Icon;
     HICON IconSmall;
     UINT Dpi;
+    UCHAR Awareness;  /* the DPI awareness it was created with, its rectangles are in that awareness' coordinates. */
     POINT MinTrack, MaxTrack; /* from the last WM_GETMINMAXINFO, 0 until there was one. */
     HICON HostIcon;
     ULONG HostStateRequest;
@@ -732,6 +736,8 @@ static inline HWND WndHandle(WND *w)
     return w ? (HWND)w->Header.Handle : nullptr;
 }
 BOOLEAN WndIsTopLevel(WND *w); /* direct child of the desktop. */
+void WndPhysicalRect(const WND *w, RECT *out);
+BOOLEAN WndCoversMonitor(WND *w);
 WND *WndTopLevel(WND *w);
 BOOLEAN WndIsVisible(WND *w);  /* the window and all its ancestors are visible. */
 BOOLEAN WndIsChildOf(WND *child, WND *parent);
@@ -757,6 +763,29 @@ extern BOOLEAN WndActivatedByHost;
 void WndSetFocus(WND *w);
 void WndCenterOnOwner(WND *w);
 UINT WndGetDpi(WND *w);
+
+/*
+ * dpi.c: DPI awareness and the coordinates it gives. a window keeps its rectangles in the pixels of its awareness: an
+ * unaware window lives in a 96 dpi screen the host scales up by the system dpi, any other one in physical pixels.
+ */
+enum {
+    DPI_AWARE_UNAWARE,
+    DPI_AWARE_SYSTEM,
+    DPI_AWARE_PER_MONITOR,
+    DPI_AWARE_PER_MONITOR_V2,
+    DPI_AWARE_GDISCALED, /* unaware, only a thread can have it. */
+};
+ULONG DpiThreadAwareness(const W32THREAD *t);
+ULONG DpiCurrentAwareness(void);
+UINT DpiScaleOf(ULONG awareness);
+BOOLEAN DpiVirtual(ULONG awareness);
+LONG DpiScale(LONG value, UINT from, UINT to);
+void DpiRectConvert(RECT *r, ULONG from, ULONG to);
+void DpiPointConvert(POINT *p, ULONG from, ULONG to);
+RECT DpiWorkArea(ULONG awareness);
+void DpiProcessAwarenessChanged(W32PROCESS *p, ULONG old);
+UINT DpiProcessSetAwareness(W32PROCESS *p, ULONG awareness, BOOLEAN force);
+ULONG DpiThreadSetContext(W32THREAD *t, ULONG context);
 void WndSetText(WND *w, PCWSTR text, ULONG chars);
 
 /* frame. */
@@ -999,6 +1028,7 @@ typedef struct W32_DISPLAY {
     UINT Dpi;
     UINT RefreshHz;
     DWORD Bits; /* of the display mode a program set, 32 otherwise. */
+    BOOLEAN Stretch; /* the host stretches the windows of a program that is not dpi aware. */
 } W32_DISPLAY;
 
 extern W32_DISPLAY W32Display;
@@ -1031,6 +1061,7 @@ ULONG MenuFlattenForHost(HMENU handle, MimeTrayItem *items, ULONG *ids, ULONG ma
 void WndCheckMonitorDpi(WND *w);
 UINT WndHostDpi(WND *w);
 int MetricsGet(int index, UINT dpi);
+int MetricsGetFor(int index, UINT dpi, ULONG awareness);
 BOOLEAN MetricsKeyboardCues(void);
 COLORREF MetricsSysColor(int index);
 

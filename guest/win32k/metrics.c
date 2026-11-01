@@ -131,6 +131,7 @@ void MetricsInitialize(void)
     read_display();
     MonitorsTakeChanged();
     W32Display.Dpi = boot->display.dpi ? boot->display.dpi : 96;
+    W32Display.Stretch = (boot->display.flags & MIME_DISPLAY_STRETCH) != 0;
     for (int i = 0; i < NUM_SYSCOLORS; i++) {
         g_colors[i] = g_default_colors[i];
         g_brushes[i] = GdiCreateSystemBrush(g_colors[i], i);
@@ -169,29 +170,36 @@ static int scale(int v, UINT dpi)
     return W32MulDiv(v, (LONG)dpi, 96);
 }
 
-int MetricsGet(int index, UINT dpi)
+/* the sizes of the screen in the pixels of an awareness. */
+static int screen(int v, ULONG awareness)
+{
+    return DpiScale(v, W32SystemDpi(), DpiScaleOf(awareness));
+}
+
+/* a metric at a dpi, with screen sizes in the pixels of an awareness. */
+int MetricsGetFor(int index, UINT dpi, ULONG awareness)
 {
     if (!dpi)
-        dpi = W32SystemDpi();
+        dpi = DpiScaleOf(awareness);
     /* the sizing border is 3 fixed pixels plus the scaled border width, like Windows. */
     int frame = 3 + scale(1, dpi), padded = scale(4, dpi);
     switch (index) {
     case SM_CXSCREEN:
-        return W32Display.Width;
+        return screen(W32Display.Width, awareness);
     case SM_CYSCREEN:
-        return W32Display.Height;
+        return screen(W32Display.Height, awareness);
     case SM_CXVIRTUALSCREEN: {
         RECT all = MonitorVirtualScreen();
-        return all.right - all.left;
+        return screen(all.right, awareness) - screen(all.left, awareness);
     }
     case SM_CYVIRTUALSCREEN: {
         RECT all = MonitorVirtualScreen();
-        return all.bottom - all.top;
+        return screen(all.bottom, awareness) - screen(all.top, awareness);
     }
     case SM_XVIRTUALSCREEN:
-        return MonitorVirtualScreen().left;
+        return screen(MonitorVirtualScreen().left, awareness);
     case SM_YVIRTUALSCREEN:
-        return MonitorVirtualScreen().top;
+        return screen(MonitorVirtualScreen().top, awareness);
     case SM_CMONITORS:
         return (int)MonitorCount();
     case SM_CXVSCROLL:
@@ -220,9 +228,9 @@ int MetricsGet(int index, UINT dpi)
     case SM_CYMENU:
         return scale(20, dpi);
     case SM_CXFULLSCREEN:
-        return W32Display.Work.right - W32Display.Work.left;
+        return screen(W32Display.Work.right, awareness) - screen(W32Display.Work.left, awareness);
     case SM_CYFULLSCREEN:
-        return W32Display.Work.bottom - W32Display.Work.top - scale(23, dpi);
+        return screen(W32Display.Work.bottom, awareness) - screen(W32Display.Work.top, awareness) - scale(23, dpi);
     case SM_MOUSEPRESENT:
     case SM_MOUSEWHEELPRESENT:
     case SM_SAMEDISPLAYFORMAT:
@@ -273,18 +281,23 @@ int MetricsGet(int index, UINT dpi)
     case SM_CYMENUCHECK:
         return scale(15, dpi);
     case SM_CXMAXTRACK:
-        return W32Display.Width + 2 * (frame + padded);
+        return screen(W32Display.Width, awareness) + 2 * (frame + padded);
     case SM_CYMAXTRACK:
-        return W32Display.Height + 2 * (frame + padded);
+        return screen(W32Display.Height, awareness) + 2 * (frame + padded);
     case SM_CXMAXIMIZED:
-        return W32Display.Work.right - W32Display.Work.left + 2 * (frame + padded);
+        return screen(W32Display.Work.right, awareness) - screen(W32Display.Work.left, awareness) + 2 * (frame + padded);
     case SM_CYMAXIMIZED:
-        return W32Display.Work.bottom - W32Display.Work.top + 2 * (frame + padded);
+        return screen(W32Display.Work.bottom, awareness) - screen(W32Display.Work.top, awareness) + 2 * (frame + padded);
     case SM_ARRANGE:
         return 8;
     default:
         return 0;
     }
+}
+
+int MetricsGet(int index, UINT dpi)
+{
+    return MetricsGetFor(index, dpi, DpiCurrentAwareness());
 }
 
 static void fill_nonclient(NONCLIENTMETRICSW *m, UINT dpi)
@@ -322,7 +335,7 @@ BOOLEAN MetricsKeyboardCues(void)
 BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT dpi)
 {
     if (!dpi)
-        dpi = W32SystemDpi();
+        dpi = DpiScaleOf(DpiCurrentAwareness());
     BOOL b;
     UINT u;
     switch (action) {
@@ -349,8 +362,10 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
         LOGFONTW lf = W32MessageFontForDpi(dpi);
         return NT_SUCCESS(MimeCopyToUser(data, &lf, sizeof(lf)));
     }
-    case SPI_GETWORKAREA:
-        return NT_SUCCESS(MimeCopyToUser(data, &W32Display.Work, sizeof(RECT)));
+    case SPI_GETWORKAREA: {
+        RECT work = DpiWorkArea(DpiCurrentAwareness());
+        return NT_SUCCESS(MimeCopyToUser(data, &work, sizeof(RECT)));
+    }
     case SPI_GETBEEP:
     case SPI_GETFONTSMOOTHING:
     case SPI_GETDRAGFULLWINDOWS:

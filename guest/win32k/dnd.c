@@ -60,6 +60,7 @@ static ULONG keys_of(ULONG modifiers)
 static WND *find_target(WND *top, POINT pt, BOOLEAN *files)
 {
     WND *desktop = WndDesktop();
+    DpiPointConvert(&pt, DPI_AWARE_SYSTEM, top->Awareness);
     for (WND *w = WndFromPoint(top, pt); w && w != desktop; w = w->Parent) {
         if (w->Style & WS_DISABLED)
             return nullptr;

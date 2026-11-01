@@ -153,25 +153,68 @@ ULONG64 ScreenHostSerial(void)
     return mix;
 }
 
-/* draw a surface rectangle on a canvas whose first pixel has screen coordinates origin. */
-static void compose_surface(PUCHAR bits, LONG stride, POINT shift, const RECT *r, WND *w, SURFACE *s)
+/*
+ * where a window is drawn on a canvas: the canvas coordinates of its top left corner and how many canvas pixels cover a
+ * pixel of its surface, num per den. a window that is not aware is drawn at 96 dpi and covers more of the screen.
+ */
+typedef struct PLACE {
+    POINT Origin;
+    LONG Num, Den;
+} PLACE;
+
+/* the place of a window on the physical screen. */
+static PLACE place_on_screen(const WND *w)
 {
-    LONG ox = w->WindowRect.left, oy = w->WindowRect.top;
+    RECT physical;
+    WndPhysicalRect(w, &physical);
+    PLACE p = {{physical.left, physical.top}, 1, 1};
+    if (DpiVirtual(w->Awareness)) {
+        p.Num = (LONG)W32SystemDpi();
+        p.Den = (LONG)DpiScaleOf(w->Awareness);
+    }
+    return p;
+}
+
+/* the place of a window in its own pixels. */
+static PLACE place_in_window(const WND *w)
+{
+    return (PLACE){{w->WindowRect.left, w->WindowRect.top}, 1, 1};
+}
+
+/* the size of a surface on the canvas. */
+static LONG placed(LONG size, const PLACE *place)
+{
+    return (LONG)(((LONG64)size * place->Num + place->Den - 1) / place->Den);
+}
+
+/* draw a surface rectangle on a canvas whose first pixel has screen coordinates origin. */
+static void compose_surface(PUCHAR bits, LONG stride, POINT shift, const RECT *r, const PLACE *place, WND *w,
+                            SURFACE *s)
+{
+    LONG ox = place->Origin.x, oy = place->Origin.y;
     /* plain windows are opaque regardless of GDI alpha; layered and shaped windows retain their alpha. */
     BOOLEAN blend = w->Present || (w->LayerFlags & MIME_LAYER_UPDATE);
-    LONG x0 = W32Max(r->left, ox), x1 = W32Min(r->right, ox + s->Width);
+    LONG x0 = W32Max(r->left, ox), x1 = W32Min(r->right, ox + placed(s->Width, place));
     for (LONG y = r->top; y < r->bottom; y++) {
-        LONG sy = y - oy;
-        if (sy < 0 || sy >= s->Height || x0 >= x1)
+        LONG sy = (LONG)((LONG64)(y - oy) * place->Den / place->Num);
+        if (y < oy || sy >= s->Height || x0 >= x1)
             continue;
-        const ULONG *src = (const ULONG *)(s->Bits + (LONG_PTR)sy * s->Stride) + (x0 - ox);
+        const ULONG *row = (const ULONG *)(s->Bits + (LONG_PTR)sy * s->Stride);
         ULONG *dst = (ULONG *)(bits + (LONG_PTR)(y - shift.y) * stride) + (x0 - shift.x);
-        if (blend)
-            for (LONG x = x0; x < x1; x++, src++, dst++)
-                *dst = over(*src, *dst);
-        else
-            for (LONG x = x0; x < x1; x++)
-                *dst++ = *src++ | 0xFF000000;
+        if (place->Num == place->Den) {
+            const ULONG *src = row + (x0 - ox);
+            if (blend)
+                for (LONG x = x0; x < x1; x++, src++, dst++)
+                    *dst = over(*src, *dst);
+            else
+                for (LONG x = x0; x < x1; x++)
+                    *dst++ = *src++ | 0xFF000000;
+            continue;
+        }
+        for (LONG x = x0; x < x1; x++, dst++) {
+            ULONG pixel = row[(LONG)((LONG64)(x - ox) * place->Den / place->Num)];
+            *dst = blend ? over(pixel, *dst) : pixel | 0xFF000000;
+        }
     }
 }
 
@@ -200,7 +243,8 @@ static void compose_presented(PUCHAR bits, LONG stride, POINT shift, const RECT 
  * compose visible screen rectangles from the window surface and last Vulkan client image. read the host image once
  * for all rectangles.
  */
-static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *vis, WND *w, BOOLEAN host_pixels)
+static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *vis, WND *w, const PLACE *place,
+                           BOOLEAN host_pixels)
 {
     SURFACE *s = w->Present ? w->Present : w->Surface;
     ULONG affinity = w->DisplayAffinity;
@@ -218,7 +262,7 @@ static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *
     }
     if (s)
         for (ULONG i = 0; i < vis->Count; i++)
-            compose_surface(bits, stride, shift, &vis->Rects[i], w, s);
+            compose_surface(bits, stride, shift, &vis->Rects[i], place, w, s);
 
     /* the client area shows the last Vulkan present. */
     ULONG width, height;
@@ -227,8 +271,11 @@ static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *
     BOOLEAN got = host_pixels && presents_through_host(w) && read_presented(w, TRUE, &width, &height, &client, &serial);
     if (!got)
         return;
-    RECT c = {w->WindowRect.left + client.left, w->WindowRect.top + client.top, w->WindowRect.left + client.right,
-              w->WindowRect.top + client.bottom};
+    /* the host reports the client area in physical pixels, a canvas in window pixels has them smaller. */
+    if (place->Num == place->Den && DpiVirtual(w->Awareness))
+        DpiRectConvert(&client, DPI_AWARE_SYSTEM, w->Awareness);
+    RECT c = {place->Origin.x + client.left, place->Origin.y + client.top, place->Origin.x + client.right,
+              place->Origin.y + client.bottom};
     if (c.right <= c.left || c.bottom <= c.top)
         return;
     for (ULONG i = 0; i < vis->Count; i++)
@@ -240,15 +287,19 @@ static BOOLEAN window_covers(WND *w, RECT *out)
 {
     if (w->DisplayAffinity == 0x11)
         return FALSE;
+    RECT window;
+    WndPhysicalRect(w, &window);
     if (w->DisplayAffinity == 1) {
-        *out = w->WindowRect;
+        *out = window;
         return TRUE;
     }
     SURFACE *s = w->Present ? w->Present : w->Surface;
     if (!s || w->Present || (w->LayerFlags & MIME_LAYER_UPDATE))
         return FALSE;
-    RECT own = {w->WindowRect.left, w->WindowRect.top, w->WindowRect.left + s->Width, w->WindowRect.top + s->Height};
-    return RectIntersect(out, &w->WindowRect, &own);
+    PLACE place = place_on_screen(w);
+    RECT own = {place.Origin.x, place.Origin.y, place.Origin.x + placed(s->Width, &place),
+                place.Origin.y + placed(s->Height, &place)};
+    return RectIntersect(out, &window, &own);
 }
 
 #define PLAN_MAX 1024
@@ -270,8 +321,9 @@ static ULONG plan_windows(PLAN *plans, const RECT *area, REGION *covered)
         list[count++] = w;
     for (ULONG i = 0; i < count; i++) {
         WND *w = list[i];
-        RECT r, cover;
-        if (!WndIsVisible(w) || (w->Style & WS_MINIMIZE) || !RectIntersect(&r, area, &w->WindowRect))
+        RECT r, cover, window;
+        WndPhysicalRect(w, &window);
+        if (!WndIsVisible(w) || (w->Style & WS_MINIMIZE) || !RectIntersect(&r, area, &window))
             continue;
         PLAN *plan = &plans[planned];
         RgnInit(&plan->Visible);
@@ -327,7 +379,9 @@ void ScreenCompose(const RECT *area)
         }
     }
     while (planned--) {
-        compose_window(screen->Bits, screen->Stride, g_screen_origin, &plans[planned].Visible, plans[planned].Window, TRUE);
+        PLACE place = place_on_screen(plans[planned].Window);
+        compose_window(screen->Bits, screen->Stride, g_screen_origin, &plans[planned].Visible, plans[planned].Window,
+                       &place, TRUE);
         RgnFree(&plans[planned].Visible);
     }
     W32Free(plans);
@@ -356,8 +410,9 @@ BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, BOOLEAN host_pixels, PUC
     REGION vis;
     RgnInit(&vis);
     RECT r;
+    PLACE place = place_in_window(top);
     if (RectIntersect(&r, &area, &top->WindowRect) && RgnSetRect(&vis, &r))
-        compose_window(bits, stride, shift, &vis, top, host_pixels);
+        compose_window(bits, stride, shift, &vis, top, &place, host_pixels);
     RgnFree(&vis);
     for (LONG y = 0; y < height; y++) {
         ULONG *row = (ULONG *)(bits + (LONG_PTR)y * stride);

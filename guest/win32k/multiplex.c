@@ -33,6 +33,9 @@ ULONG_PTR NTAPI NtUserCallNoParam(ULONG routine)
         r = t ? t->ExtraInfo : 0;
         break;
     case MIME_NOPARAM_GETDPIFORSYSTEM:
+        r = DpiScaleOf(DpiThreadAwareness(t));
+        break;
+    case MIME_NOPARAM_GETSYSTEMDPI:
         r = W32SystemDpi();
         break;
     case MIME_NOPARAM_INSENDMESSAGE:
@@ -40,7 +43,7 @@ ULONG_PTR NTAPI NtUserCallNoParam(ULONG routine)
         break;
     case MIME_NOPARAM_GETDIALOGBASEUNITS: {
         /* averages of the system font, 8 by 16 at 96 dpi. */
-        UINT dpi = W32SystemDpi();
+        UINT dpi = DpiScaleOf(DpiThreadAwareness(t));
         r = (ULONG_PTR)MAKELONG(W32MulDiv(8, (LONG)dpi, 96), W32MulDiv(16, (LONG)dpi, 96));
         break;
     }
@@ -108,13 +111,20 @@ ULONG_PTR NTAPI NtUserCallOneParam(ULONG_PTR param, ULONG routine)
         }
         break;
     case MIME_ONEPARAM_SETPROCESSDPIAWARENESS:
-        if (t) {
-            t->Process->DpiAwareness = (ULONG)param;
-            r = 1;
-        }
+        /* a call is refused once the awareness was chosen, what the manifest says is forced. */
+        r = t ? DpiProcessSetAwareness(t->Process, (ULONG)param & 0xFF, (param & 0x100) != 0) : 0;
         break;
     case MIME_ONEPARAM_GETPROCESSDPIAWARENESS:
         r = t ? t->Process->DpiAwareness : 0;
+        break;
+    case MIME_ONEPARAM_GETPROCESSDPISET:
+        r = t ? t->Process->DpiSet : 0;
+        break;
+    case MIME_ONEPARAM_SETTHREADDPICONTEXT:
+        r = t ? DpiThreadSetContext(t, (ULONG)param) : 0;
+        break;
+    case MIME_ONEPARAM_GETTHREADDPICONTEXT:
+        r = t ? (t->DpiOverride ? t->DpiOverride - 1 : t->Process->DpiAwareness) : 0;
         break;
     case MIME_ONEPARAM_REPLYMESSAGE:
         r = MsgReply(t, (LRESULT)param);
@@ -140,6 +150,7 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
         break;
     case MIME_TWOPARAM_SETCURSORPOS:
         InputCursorPos = (POINT){(LONG)param1, (LONG)param2};
+        DpiPointConvert(&InputCursorPos, DpiCurrentAwareness(), DPI_AWARE_SYSTEM);
         InputCursorMoved();
         r = 1;
         break;
@@ -173,12 +184,15 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
         break;
     case MIME_TWOPARAM_WINDOWFROMPOINT: {
         POINT pt = {(LONG)param1, (LONG)param2};
+        DpiPointConvert(&pt, DpiCurrentAwareness(), DPI_AWARE_SYSTEM);
         WND *desktop = WndDesktop();
         for (WND *c = desktop ? desktop->FirstChild : nullptr; c; c = c->Next) {
+            POINT at = pt;
+            DpiPointConvert(&at, DPI_AWARE_SYSTEM, c->Awareness);
             if (!(c->Style & WS_VISIBLE) || (c->Style & WS_MINIMIZE) || (c->ExStyle & WS_EX_TRANSPARENT) ||
-                (c->ExStyle & 0x80000000u) || !RectContains(&c->WindowRect, pt.x, pt.y) || !LayerHitTest(c, pt))
+                (c->ExStyle & 0x80000000u) || !RectContains(&c->WindowRect, at.x, at.y) || !LayerHitTest(c, at))
                 continue;
-            r = (ULONG_PTR)WndHandle(WndFromPoint(c, pt));
+            r = (ULONG_PTR)WndHandle(WndFromPoint(c, at));
             break;
         }
         break;
@@ -201,6 +215,7 @@ BOOL NTAPI NtUserGetCursorInfo(PCURSORINFO user_info)
     ci.flags = t && t->CursorShowCount >= 0 ? CURSOR_SHOWING : 0;
     ci.hCursor = t ? t->Cursor : nullptr;
     ci.ptScreenPos = InputCursorPos;
+    DpiPointConvert(&ci.ptScreenPos, DPI_AWARE_SYSTEM, DpiThreadAwareness(t));
     UserLeave();
     if (!NT_SUCCESS(MimeCopyToUser(user_info, &ci, sizeof(ci)))) {
         W32SetLastError(ERROR_NOACCESS);

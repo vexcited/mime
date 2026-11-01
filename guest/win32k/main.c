@@ -251,8 +251,8 @@ W32PROCESS *W32GetProcess(void)
         }
     }
     InitializeListHead(&p->Classes);
-    /* every process is treated as system dpi aware until dpi virtualization exists. */
-    p->DpiAwareness = 1;
+    /* a program is dpi unaware until its manifest or a call says otherwise. */
+    p->DpiAwareness = DPI_AWARE_UNAWARE;
     InsertTailList(&W32Processes, &p->Links);
     PsSetProcessWin32Process(process, p, nullptr);
     return p;

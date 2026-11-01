@@ -6,16 +6,13 @@
 
 #define ERROR_BAD_ARGUMENTS 160L
 
-/* set once per process, as windows allows. a manifest awareness does not count yet. */
-static LONG g_awareness_set;
-
+/* set once per process, whether by the manifest or by a call, win32k keeps it. */
 HRESULT WINAPI SetProcessDpiAwareness(PROCESS_DPI_AWARENESS value)
 {
     if (value != PROCESS_DPI_UNAWARE && value != PROCESS_SYSTEM_DPI_AWARE && value != PROCESS_PER_MONITOR_DPI_AWARE)
         return E_INVALIDARG;
-    if (InterlockedCompareExchange(&g_awareness_set, 1, 0))
+    if (!NtUserCallOneParam((ULONG_PTR)value, MIME_ONEPARAM_SETPROCESSDPIAWARENESS))
         return E_ACCESSDENIED;
-    NtUserCallOneParam((ULONG_PTR)value, MIME_ONEPARAM_SETPROCESSDPIAWARENESS);
     return S_OK;
 }
 

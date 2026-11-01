@@ -594,8 +594,10 @@ NTSTATUS NTAPI NtGdiDdDDICreateDCFromMemory(D3DKMT_CREATEDCFROMMEMORY *user_desc
             s->ColorCount = 256;
         }
         DC *ref = d.hDeviceDc ? DcLookup(d.hDeviceDc) : nullptr;
-        if (ref)
+        if (ref) {
             dc->Dpi = ref->Dpi;
+            dc->Awareness = ref->Awareness;
+        }
         if (GdiCreateHandle(&s->Header, GDI_TYPE_BITMAP)) {
             DcSetSurface(dc, s);
             d.hDc = (HDC)dc->Header.Handle;

@@ -16,6 +16,7 @@ typedef struct GDI_ENTRY {
 static GDI_ENTRY *g_table;
 static ULONG g_next_free = 1;
 static GDI_OBJECT *g_stock[STOCK_LAST + 1];
+static GDI_OBJECT *g_stock_96[STOCK_LAST + 1]; /* the fonts of a program that does not know the display's dpi. */
 
 static HANDLE make_handle(ULONG index, UCHAR type, UCHAR unique)
 {
@@ -205,12 +206,14 @@ GDI_REGION *GdiCreateRegion(void)
     return r;
 }
 
+static GDI_OBJECT **g_making = g_stock;
+
 static void make_stock(int index, GDI_OBJECT *o)
 {
     if (!o)
         return;
     o->Flags |= GDI_FLAG_STOCK;
-    g_stock[index] = o;
+    g_making[index] = o;
 }
 
 static LOGFONTW make_logfont(LONG height, LONG weight, PCWSTR face)
@@ -226,20 +229,8 @@ static LOGFONTW make_logfont(LONG height, LONG weight, PCWSTR face)
     return lf;
 }
 
-void GdiInitializeStockObjects(void)
+static void stock_fonts(UINT dpi)
 {
-    make_stock(WHITE_BRUSH, &new_brush(BS_SOLID, RGB(255, 255, 255), 0)->Header);
-    make_stock(LTGRAY_BRUSH, &new_brush(BS_SOLID, RGB(192, 192, 192), 0)->Header);
-    make_stock(GRAY_BRUSH, &new_brush(BS_SOLID, RGB(128, 128, 128), 0)->Header);
-    make_stock(DKGRAY_BRUSH, &new_brush(BS_SOLID, RGB(64, 64, 64), 0)->Header);
-    make_stock(BLACK_BRUSH, &new_brush(BS_SOLID, RGB(0, 0, 0), 0)->Header);
-    make_stock(NULL_BRUSH, &new_brush(BS_NULL, 0, 0)->Header);
-    make_stock(WHITE_PEN, &new_pen(PS_SOLID, 0, RGB(255, 255, 255), GDI_TYPE_PEN)->Header);
-    make_stock(BLACK_PEN, &new_pen(PS_SOLID, 0, RGB(0, 0, 0), GDI_TYPE_PEN)->Header);
-    make_stock(NULL_PEN, &new_pen(PS_NULL, 0, 0, GDI_TYPE_PEN)->Header);
-    make_stock(DC_BRUSH, &new_brush(BS_SOLID, RGB(255, 255, 255), 0)->Header);
-    make_stock(DC_PEN, &new_pen(PS_SOLID, 0, RGB(0, 0, 0), GDI_TYPE_PEN)->Header);
-    UINT dpi = W32SystemDpi();
     /* bitmap fonts are not supported, so the legacy stock fonts map to outline faces. */
     /* System is a bitmap font with a 16 pixel cell at 96 dpi. */
     LOGFONTW lf = make_logfont(16 * (LONG)dpi / 96, FW_BOLD, L"Segoe UI");
@@ -255,9 +246,35 @@ void GdiInitializeStockObjects(void)
     make_stock(DEFAULT_GUI_FONT, &new_font(&lf)->Header);
 }
 
+void GdiInitializeStockObjects(void)
+{
+    make_stock(WHITE_BRUSH, &new_brush(BS_SOLID, RGB(255, 255, 255), 0)->Header);
+    make_stock(LTGRAY_BRUSH, &new_brush(BS_SOLID, RGB(192, 192, 192), 0)->Header);
+    make_stock(GRAY_BRUSH, &new_brush(BS_SOLID, RGB(128, 128, 128), 0)->Header);
+    make_stock(DKGRAY_BRUSH, &new_brush(BS_SOLID, RGB(64, 64, 64), 0)->Header);
+    make_stock(BLACK_BRUSH, &new_brush(BS_SOLID, RGB(0, 0, 0), 0)->Header);
+    make_stock(NULL_BRUSH, &new_brush(BS_NULL, 0, 0)->Header);
+    make_stock(WHITE_PEN, &new_pen(PS_SOLID, 0, RGB(255, 255, 255), GDI_TYPE_PEN)->Header);
+    make_stock(BLACK_PEN, &new_pen(PS_SOLID, 0, RGB(0, 0, 0), GDI_TYPE_PEN)->Header);
+    make_stock(NULL_PEN, &new_pen(PS_NULL, 0, 0, GDI_TYPE_PEN)->Header);
+    make_stock(DC_BRUSH, &new_brush(BS_SOLID, RGB(255, 255, 255), 0)->Header);
+    make_stock(DC_PEN, &new_pen(PS_SOLID, 0, RGB(0, 0, 0), GDI_TYPE_PEN)->Header);
+    stock_fonts(W32SystemDpi());
+    /* a program that is not dpi aware has its own fonts, those of a 96 dpi display. */
+    if (W32SystemDpi() != 96) {
+        g_making = g_stock_96;
+        stock_fonts(96);
+        g_making = g_stock;
+    }
+}
+
 GDI_OBJECT *GdiStockObject(int index)
 {
-    return index >= 0 && index <= STOCK_LAST ? g_stock[index] : nullptr;
+    if (index < 0 || index > STOCK_LAST)
+        return nullptr;
+    if (g_stock_96[index] && DpiCurrentAwareness() == DPI_AWARE_UNAWARE)
+        return g_stock_96[index];
+    return g_stock[index];
 }
 
 HANDLE GdiStockHandle(int index)

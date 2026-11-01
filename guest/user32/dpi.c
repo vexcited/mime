@@ -1,4 +1,4 @@
-/* the process dpi awareness requested by the program's manifest, read when user32 starts. */
+/* the dpi awareness: the program's manifest and compatibility layers read when user32 starts, and the calls that set or ask it. */
 #include "user32_private.h"
 
 /* manifest dpi values, in windows' order of precedence. */
@@ -12,8 +12,6 @@ enum {
     DPI_MANIFEST_UNIFORM,
 };
 
-ULONG UserDpiAwareness = 1;
-BOOL UserDpiAwarenessLocked;
 BOOL UserGdiScaling;
 
 static BOOL is_blank(WCHAR c)
@@ -83,6 +81,83 @@ static ULONG parse_dpi_aware(void)
     return DPI_MANIFEST_UNAWARE;
 }
 
+/* the layers of the program in the registry: HIGHDPIAWARE, DPIUNAWARE and GDIDPISCALING in a space separated list. */
+static BOOL layer_has(PCWSTR layers, PCWSTR flag)
+{
+    SIZE_T length = lstrlenW(flag);
+    for (PCWSTR p = layers; *p;) {
+        while (is_blank(*p))
+            p++;
+        PCWSTR start = p;
+        while (*p && !is_blank(*p))
+            p++;
+        if ((SIZE_T)(p - start) == length && CompareStringOrdinal(start, (int)length, flag, (int)length, TRUE) == CSTR_EQUAL)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+/* the awareness the layers force, or DPI_MANIFEST_NONE. */
+static ULONG parse_layers(void)
+{
+    WCHAR image[MAX_PATH], layers[256];
+    if (!GetModuleFileNameW(nullptr, image, RTL_NUMBER_OF(image)))
+        return DPI_MANIFEST_NONE;
+    ULONG result = DPI_MANIFEST_NONE;
+    HKEY roots[] = {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(roots) && result == DPI_MANIFEST_NONE; i++) {
+        DWORD size = sizeof(layers);
+        if (RegGetValueW(roots[i], L"Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers", image,
+                         RRF_RT_REG_SZ, nullptr, layers, &size))
+            continue;
+        if (layer_has(layers, L"HIGHDPIAWARE"))
+            result = DPI_MANIFEST_SYSTEM;
+        else if (layer_has(layers, L"DPIUNAWARE"))
+            result = DPI_MANIFEST_UNAWARE;
+        if (layer_has(layers, L"GDIDPISCALING"))
+            UserGdiScaling = TRUE;
+    }
+    return result;
+}
+
+/* the awareness a dpi awareness value stands for, -1 when it is none. */
+static LONG awareness_of(DPI_AWARENESS_CONTEXT context)
+{
+    LONG_PTR value = (LONG_PTR)context;
+    if (value >= -5 && value <= -1)
+        return (LONG)(-value - 1);
+    /* the values behind the pseudo handles. */
+    switch ((ULONG)value & 0x7FFFFFFF) {
+    case 0x6010:
+        return 0;
+    case 0x40006010:
+        return 4;
+    case 0x12:
+        return 2;
+    case 0x22:
+        return 3;
+    }
+    if (((ULONG)value & 0xFFFE00FF) == 0x11 && (((ULONG)value >> 8) & 0x1FF))
+        return 1;
+    return -1;
+}
+
+/* the value behind the pseudo handle of an awareness, as the get functions return it. */
+static DPI_AWARENESS_CONTEXT context_of(ULONG awareness)
+{
+    switch (awareness) {
+    case 0:
+        return (DPI_AWARENESS_CONTEXT)(ULONG_PTR)0x6010;
+    case 1:
+        return (DPI_AWARENESS_CONTEXT)(ULONG_PTR)(((UINT)NtUserCallNoParam(MIME_NOPARAM_GETSYSTEMDPI) << 8) | 0x11);
+    case 2:
+        return (DPI_AWARENESS_CONTEXT)(ULONG_PTR)0x12;
+    case 3:
+        return (DPI_AWARENESS_CONTEXT)(ULONG_PTR)0x22;
+    }
+    return (DPI_AWARENESS_CONTEXT)(ULONG_PTR)0x40006010;
+}
+
 void UserInitializeDpiAwareness(void)
 {
     WCHAR scaling[6];
@@ -92,10 +167,11 @@ void UserInitializeDpiAwareness(void)
     ULONG manifest = parse_dpi_awareness();
     if (manifest == DPI_MANIFEST_NONE)
         manifest = parse_dpi_aware();
-    /*
-     * win32k's values: 0 unaware, 1 system aware, 2 per monitor, 3 per monitor v2. without a dpi setting a program
-     * stays system aware, mime's default while it has no dpi virtualization.
-     */
+    /* a compatibility layer overrides what the manifest asks. */
+    ULONG layers = parse_layers();
+    if (layers != DPI_MANIFEST_NONE)
+        manifest = layers;
+    /* win32k's values: 0 unaware, 1 system aware, 2 per monitor, 3 per monitor v2. nothing asked means unaware. */
     ULONG awareness;
     switch (manifest) {
     case DPI_MANIFEST_UNAWARE:
@@ -111,16 +187,160 @@ void UserInitializeDpiAwareness(void)
         awareness = 3;
         break;
     default:
-        UserDpiAwareness = (ULONG)NtUserCallOneParam(0, MIME_ONEPARAM_GETPROCESSDPIAWARENESS);
         return;
     }
-    UserDpiAwareness = awareness;
-    UserDpiAwarenessLocked = TRUE;
-    NtUserCallOneParam(awareness, MIME_ONEPARAM_SETPROCESSDPIAWARENESS);
+    /* forced: the awareness then counts as chosen. */
+    NtUserCallOneParam(awareness | 0x100, MIME_ONEPARAM_SETPROCESSDPIAWARENESS);
 }
 
-DPI_AWARENESS_CONTEXT UserDpiAwarenessContext(void)
+/* ------------------------------------------------------------------ the calls */
+
+WINUSERAPI BOOL WINAPI IsValidDpiAwarenessContext(DPI_AWARENESS_CONTEXT context)
 {
-    static const LONG_PTR contexts[] = {-1, -2, -3, -4};
-    return (DPI_AWARENESS_CONTEXT)contexts[UserDpiAwareness < 4 ? UserDpiAwareness : 1];
+    return awareness_of(context) >= 0;
+}
+
+WINUSERAPI BOOL WINAPI AreDpiAwarenessContextsEqual(DPI_AWARENESS_CONTEXT a, DPI_AWARENESS_CONTEXT b)
+{
+    LONG x = awareness_of(a), y = awareness_of(b);
+    if (x < 0 || y < 0) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return x == y;
+}
+
+WINUSERAPI DPI_AWARENESS WINAPI GetAwarenessFromDpiAwarenessContext(DPI_AWARENESS_CONTEXT context)
+{
+    LONG awareness = awareness_of(context);
+    if (awareness < 0)
+        return DPI_AWARENESS_INVALID;
+    /* per monitor v2 is a per monitor awareness, the gdi scaled one unaware. */
+    return awareness == 4 ? DPI_AWARENESS_UNAWARE : awareness == 3 ? DPI_AWARENESS_PER_MONITOR_AWARE
+                                                                    : (DPI_AWARENESS)awareness;
+}
+
+WINUSERAPI UINT WINAPI GetDpiFromDpiAwarenessContext(DPI_AWARENESS_CONTEXT context)
+{
+    LONG awareness = awareness_of(context);
+    if (awareness < 0) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    /* the aware ones have the system dpi, what a monitor has is not part of a context. */
+    return awareness == 0 || awareness == 4 ? 96 : (UINT)NtUserCallNoParam(MIME_NOPARAM_GETSYSTEMDPI);
+}
+
+WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI GetThreadDpiAwarenessContext(void)
+{
+    return context_of((ULONG)NtUserCallOneParam(0, MIME_ONEPARAM_GETTHREADDPICONTEXT));
+}
+
+/* returns the context in effect before, a call with a context that is not one fails. */
+WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT context)
+{
+    LONG awareness = awareness_of(context);
+    if (awareness < 0) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    return context_of((ULONG)NtUserCallOneParam((ULONG)awareness + 1, MIME_ONEPARAM_SETTHREADDPICONTEXT));
+}
+
+WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI GetWindowDpiAwarenessContext(HWND hwnd)
+{
+    if (!IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return nullptr;
+    }
+    return context_of((ULONG)NtUserCallHwnd(hwnd, MIME_HWND_GETDPIAWARENESS));
+}
+
+WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI GetDpiAwarenessContextForProcess(HANDLE process)
+{
+    if (process && process != GetCurrentProcess() && GetProcessId(process) != GetCurrentProcessId()) {
+        SetLastError(ERROR_ACCESS_DENIED);
+        return nullptr;
+    }
+    return context_of((ULONG)NtUserCallOneParam(0, MIME_ONEPARAM_GETPROCESSDPIAWARENESS));
+}
+
+/* a process can choose its awareness once, whether through its manifest or here. */
+WINUSERAPI BOOL WINAPI SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT context)
+{
+    LONG awareness = awareness_of(context);
+    if (awareness < 0) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!NtUserCallOneParam((ULONG)(awareness == 4 ? 0 : awareness), MIME_ONEPARAM_SETPROCESSDPIAWARENESS)) {
+        SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+    if (awareness == 4)
+        UserGdiScaling = TRUE;
+    return TRUE;
+}
+
+WINUSERAPI BOOL WINAPI SetProcessDPIAware(void)
+{
+    if (!NtUserCallOneParam(DPI_AWARENESS_SYSTEM_AWARE, MIME_ONEPARAM_SETPROCESSDPIAWARENESS)) {
+        SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+WINUSERAPI BOOL WINAPI IsProcessDPIAware(void)
+{
+    return NtUserCallOneParam(0, MIME_ONEPARAM_GETPROCESSDPIAWARENESS) != 0;
+}
+
+/* a window scales its frame itself only when its program is per monitor aware, and only while it is created. */
+WINUSERAPI BOOL WINAPI EnableNonClientDpiScaling(HWND hwnd)
+{
+    if (!IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    if (NtUserCallHwnd(hwnd, MIME_HWND_GETDPIAWARENESS) < 2) {
+        SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL convert_point(HWND hwnd, LPPOINT point, ULONG op, BOOL window_optional)
+{
+    if (!point || (hwnd && !IsWindow(hwnd)) || (!hwnd && !window_optional)) {
+        SetLastError(hwnd || !point ? ERROR_INVALID_WINDOW_HANDLE : ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    MIME_DPI_CONVERT convert = {*point, op};
+    if (!NtUserCallHwndParam(hwnd, (ULONG_PTR)&convert, MIME_HWNDPARAM_DPICONVERT))
+        return FALSE;
+    *point = convert.Point;
+    return TRUE;
+}
+
+/* the pixels of the window and the physical ones. */
+WINUSERAPI BOOL WINAPI LogicalToPhysicalPoint(HWND hwnd, LPPOINT point)
+{
+    return convert_point(hwnd, point, MIME_DPI_WINDOW_TO_PHYSICAL, FALSE);
+}
+
+WINUSERAPI BOOL WINAPI PhysicalToLogicalPoint(HWND hwnd, LPPOINT point)
+{
+    return convert_point(hwnd, point, MIME_DPI_PHYSICAL_TO_WINDOW, FALSE);
+}
+
+/* the pixels of the calling thread, which a point of the window must be in. */
+WINUSERAPI BOOL WINAPI LogicalToPhysicalPointForPerMonitorDPI(HWND hwnd, LPPOINT point)
+{
+    return convert_point(hwnd, point, MIME_DPI_THREAD_TO_PHYSICAL, TRUE);
+}
+
+WINUSERAPI BOOL WINAPI PhysicalToLogicalPointForPerMonitorDPI(HWND hwnd, LPPOINT point)
+{
+    return convert_point(hwnd, point, MIME_DPI_PHYSICAL_TO_THREAD, TRUE);
 }

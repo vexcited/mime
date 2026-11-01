@@ -249,8 +249,10 @@ EXPORTS
     GetDlgItemTextA=_GetDlgItemTextA@16
     GetDlgItemTextW=_GetDlgItemTextW@16
     GetDoubleClickTime=_GetDoubleClickTime@0
+    GetDpiAwarenessContextForProcess=_GetDpiAwarenessContextForProcess@4
     GetDpiForSystem=_GetDpiForSystem@0
     GetDpiForWindow=_GetDpiForWindow@4
+    GetDpiFromDpiAwarenessContext=_GetDpiFromDpiAwarenessContext@4
     GetFocus=_GetFocus@0
     GetForegroundWindow=_GetForegroundWindow@0
     GetGUIThreadInfo=_GetGUIThreadInfo@8

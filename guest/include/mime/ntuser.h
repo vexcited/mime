@@ -170,6 +170,7 @@ enum {
     MIME_NOPARAM_GETDIALOGBASEUNITS,
     MIME_NOPARAM_GETLASTINPUTTIME,
     MIME_NOPARAM_INSENDMESSAGE,
+    MIME_NOPARAM_GETSYSTEMDPI,          /* the physical dpi of the system, whatever the thread is aware of. */
 };
 
 enum {
@@ -183,6 +184,9 @@ enum {
     MIME_ONEPARAM_GETPROCESSDPIAWARENESS,
     MIME_ONEPARAM_REPLYMESSAGE,
     MIME_ONEPARAM_SETMESSAGEEXTRAINFO,  /* the new value -> the old one. */
+    MIME_ONEPARAM_GETPROCESSDPISET,     /* whether the awareness was chosen. */
+    MIME_ONEPARAM_SETTHREADDPICONTEXT,  /* an awareness plus one, 0 for the process' own -> the awareness in effect before. */
+    MIME_ONEPARAM_GETTHREADDPICONTEXT,  /* -> the awareness in effect, 4 is unaware with gdi scaling. */
 };
 
 enum {
@@ -223,6 +227,7 @@ enum {
     MIME_HWND_ISZOOMED,
     MIME_HWND_MONITOR,
     MIME_HWND_ISUNICODE,
+    MIME_HWND_GETDPIAWARENESS,          /* the awareness the window was created with, 4 is unaware with gdi scaling. */
 };
 
 enum {
@@ -251,7 +256,21 @@ enum {
     MIME_HWNDPARAM_MENUBAR,             /* MIME_MENUBAR pointer: the layout of the window's menu bar and the state it is drawn in. */
     MIME_HWNDPARAM_GETCONTEXTHELPID,
     MIME_HWNDPARAM_SETWINDOWWORD,       /* the word in the low half and the byte offset into the extra bytes above it -> the old word, or -1. */
+    MIME_HWNDPARAM_DPICONVERT,          /* MIME_DPI_CONVERT pointer, the window may be NULL for the thread ones. */
 };
+
+/* what MIME_HWNDPARAM_DPICONVERT converts a point between. */
+enum {
+    MIME_DPI_WINDOW_TO_PHYSICAL = 1, /* the pixels of the window to the physical ones. */
+    MIME_DPI_PHYSICAL_TO_WINDOW,
+    MIME_DPI_THREAD_TO_PHYSICAL,     /* the pixels of the thread, fails when the point is not in the window. */
+    MIME_DPI_PHYSICAL_TO_THREAD,
+};
+
+typedef struct MIME_DPI_CONVERT {
+    POINT Point;
+    ULONG Op;
+} MIME_DPI_CONVERT;
 
 /* what MIME_HWNDPARAM_MENUBAR asks, with only fields of the same size in both processors. */
 enum {

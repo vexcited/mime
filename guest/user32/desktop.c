@@ -1,94 +1,10 @@
 /*
- * desktop-level helpers: DPI awareness contexts, mouse input as pointer input, message input source, drag detection
+ * desktop-level helpers: mouse input as pointer input, message input source, drag detection
  * and a few window helpers.
  */
 #include "user32_private.h"
 #include <mime/win32/winuser.h>
 #include <mime/win32/wingdi.h>
-
-/* ------------------------------------------------------------------ DPI awareness contexts */
-
-/*
- * pseudo handles -1 to -5 are the unaware, system aware, per monitor, per monitor v2 and gdi scaled unaware
- * contexts, and the get functions return the values behind them. the low nibble is the awareness, and the system
- * aware value carries the system dpi.
- */
-static ULONG context_value(DPI_AWARENESS_CONTEXT context)
-{
-    LONG_PTR value = (LONG_PTR)context;
-    switch (value) {
-    case -1:
-        return 0x6010;
-    case -2:
-        return ((GetDpiForSystem() & 0x1FF) << 8) | 0x11;
-    case -3:
-        return 0x12;
-    case -4:
-        return 0x22;
-    case -5:
-        return 0x40006010;
-    }
-    SetLastError(ERROR_INVALID_PARAMETER);
-    return 0;
-}
-
-WINUSERAPI BOOL WINAPI IsValidDpiAwarenessContext(DPI_AWARENESS_CONTEXT context)
-{
-    return context_value(context) != 0;
-}
-
-WINUSERAPI BOOL WINAPI AreDpiAwarenessContextsEqual(DPI_AWARENESS_CONTEXT a, DPI_AWARENESS_CONTEXT b)
-{
-    ULONG x = context_value(a), y = context_value(b);
-    if (!x || !y)
-        return FALSE;
-    return ((x ^ y) & 0x7FFFFFFF) == 0;
-}
-
-WINUSERAPI DPI_AWARENESS WINAPI GetAwarenessFromDpiAwarenessContext(DPI_AWARENESS_CONTEXT context)
-{
-    ULONG value = context_value(context);
-    return value ? (DPI_AWARENESS)(value & 0xF) : DPI_AWARENESS_INVALID;
-}
-
-/* windows keeps the awareness per window, mime per process. */
-WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI GetWindowDpiAwarenessContext(HWND hwnd)
-{
-    if (!IsWindow(hwnd)) {
-        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-        return nullptr;
-    }
-    return UserDpiAwarenessContext();
-}
-
-/* only per monitor aware processes may scale the frame. */
-WINUSERAPI BOOL WINAPI EnableNonClientDpiScaling(HWND hwnd)
-{
-    if (!IsWindow(hwnd)) {
-        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
-        return FALSE;
-    }
-    if (UserDpiAwareness < 2) {
-        SetLastError(ERROR_ACCESS_DENIED);
-        return FALSE;
-    }
-    return TRUE;
-}
-
-/* one scale for every monitor, so logical and physical points are the same. */
-WINUSERAPI BOOL WINAPI LogicalToPhysicalPointForPerMonitorDPI(HWND hwnd, LPPOINT point)
-{
-    if (!point || (hwnd && !IsWindow(hwnd))) {
-        SetLastError(hwnd ? ERROR_INVALID_WINDOW_HANDLE : ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    return TRUE;
-}
-
-WINUSERAPI BOOL WINAPI PhysicalToLogicalPointForPerMonitorDPI(HWND hwnd, LPPOINT point)
-{
-    return LogicalToPhysicalPointForPerMonitorDPI(hwnd, point);
-}
 
 /* ------------------------------------------------------------------ pointer input */
 

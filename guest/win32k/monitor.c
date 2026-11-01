@@ -231,6 +231,8 @@ ULONG_PTR MonitorCall(ULONG_PTR param1, ULONG_PTR param2, ULONG routine)
             return 0;
         mi.rcMonitor = m.Rect;
         mi.rcWork = m.Work;
+        DpiRectConvert(&mi.rcMonitor, DPI_AWARE_SYSTEM, DpiCurrentAwareness());
+        DpiRectConvert(&mi.rcWork, DPI_AWARE_SYSTEM, DpiCurrentAwareness());
         mi.dwFlags = m.Flags;
         memcpy(mi.szDevice, m.Device, sizeof(mi.szDevice));
         return NT_SUCCESS(MimeCopyToUser((PVOID)param2, &mi, mi.cbSize));
@@ -238,8 +240,11 @@ ULONG_PTR MonitorCall(ULONG_PTR param1, ULONG_PTR param2, ULONG routine)
     case MIME_TWOPARAM_GETMONITORS:
         if (count > param2)
             count = (ULONG)param2;
-        for (ULONG i = 0; i < count; i++)
+        for (ULONG i = 0; i < count; i++) {
             MonitorGet(i, &list[i]);
+            DpiRectConvert(&list[i].Rect, DPI_AWARE_SYSTEM, DpiCurrentAwareness());
+            DpiRectConvert(&list[i].Work, DPI_AWARE_SYSTEM, DpiCurrentAwareness());
+        }
         if (count && !NT_SUCCESS(MimeCopyToUser((PVOID)param1, list, count * sizeof(list[0]))))
             return 0;
         return count;

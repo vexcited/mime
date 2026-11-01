@@ -110,6 +110,7 @@ SHORT NTAPI NtUserGetAsyncKeyState(int key)
 BOOL NTAPI NtUserGetCursorPos(LPPOINT point)
 {
     POINT p = InputCursorPos;
+    DpiPointConvert(&p, DPI_AWARE_SYSTEM, DpiCurrentAwareness());
     return NT_SUCCESS(MimeCopyToUser(point, &p, sizeof(p)));
 }
 
@@ -721,6 +722,7 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
                                BOOLEAN remove, BOOLEAN *consumed)
 {
     const MimeInputEvent *ev = &qm->Input;
+    /* the pointer is in physical pixels, a window sees it in its own. */
     POINT pt = {ev->x, ev->y};
     WND *w;
     LONG hit;
@@ -728,12 +730,14 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
     if (capture) {
         w = capture;
         hit = t->CaptureNc ? (LONG)t->CaptureNc : HTCLIENT;
+        DpiPointConvert(&pt, DPI_AWARE_SYSTEM, capture->Awareness);
     } else {
         WND *top = WndLookup((HWND)(ULONG_PTR)ev->window_id);
         if (!top || top->Thread != t || !(top->Style & WS_VISIBLE)) {
             *consumed = TRUE;
             return FALSE;
         }
+        DpiPointConvert(&pt, DPI_AWARE_SYSTEM, top->Awareness);
         w = hit_test(top, pt, &hit);
         if (!w) {
             *consumed = TRUE;
@@ -804,7 +808,8 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
     BOOLEAN dbl = FALSE;
     if (ev->type == MIME_INPUT_MOUSE_DOWN) {
         BOOLEAN class_dbl = nc || (w->Class && (w->Class->Style & CS_DBLCLKS));
-        LONG dx = MetricsGet(SM_CXDOUBLECLK, 0) / 2, dy = MetricsGet(SM_CYDOUBLECLK, 0) / 2;
+        LONG dx = MetricsGetFor(SM_CXDOUBLECLK, 0, w->Awareness) / 2,
+             dy = MetricsGetFor(SM_CYDOUBLECLK, 0, w->Awareness) / 2;
         if (class_dbl && g_last_click.Hwnd == WndHandle(w) && g_last_click.Message == msg &&
             (DWORD)ev->time_ms - g_last_click.Time <= DOUBLE_CLICK_MS && g_last_click.Hit == hit &&
             pt.x >= g_last_click.Pt.x - dx && pt.x <= g_last_click.Pt.x + dx && pt.y >= g_last_click.Pt.y - dy &&
@@ -857,8 +862,12 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
         } else if (!w->Header.Destroyed) {
             /* under capture the mouse window is still the one under the pointer, without hit test messages. */
             WND *top = WndLookup((HWND)(ULONG_PTR)ev->window_id);
-            WND *under = top && top->Thread == t && (top->Style & WS_VISIBLE) ? WndFromPoint(top, pt) : nullptr;
-            track_mouse(t, under, under && RectContains(&under->ClientRect, pt.x, pt.y) ? HTCLIENT : HTNOWHERE);
+            POINT under_pt = {ev->x, ev->y};
+            if (top)
+                DpiPointConvert(&under_pt, DPI_AWARE_SYSTEM, top->Awareness);
+            WND *under = top && top->Thread == t && (top->Style & WS_VISIBLE) ? WndFromPoint(top, under_pt) : nullptr;
+            track_mouse(t, under,
+                        under && RectContains(&under->ClientRect, under_pt.x, under_pt.y) ? HTCLIENT : HTNOWHERE);
         }
         BOOLEAN dead = w->Header.Destroyed;
         BOOLEAN handed_on = !dead && !capture && of_another_thread(t, w);
@@ -1039,12 +1048,15 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
     }
     case MIME_INPUT_WINDOW_FULLSCREEN: {
         RECT rect = {ev->x, ev->y, ev->x + ev->width, ev->y + ev->height};
+        DpiRectConvert(&rect, DPI_AWARE_SYSTEM, w->Awareness);
         WndFullscreen(w, (ev->flags & 1) != 0, &rect);
         break;
     }
     case MIME_INPUT_WINDOW_MOVED:
         w->Flags |= WNDF_HOST_MOVING;
-        WndSetPos(w, nullptr, ev->x, ev->y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        POINT moved = {ev->x, ev->y};
+        DpiPointConvert(&moved, DPI_AWARE_SYSTEM, w->Awareness);
+        WndSetPos(w, nullptr, moved.x, moved.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         if (!w->Header.Destroyed)
             w->Flags &= ~WNDF_HOST_MOVING;
         break;

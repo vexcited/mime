@@ -125,7 +125,13 @@ static void host_rects(WND *w, const FRAME_METRICS *m, RECT *visible, RECT *inpu
         *input = (RECT){0, 0, w->WindowRect.right - w->WindowRect.left, w->WindowRect.bottom - w->WindowRect.top};
 }
 
-/* host bounds include the visible window and its resize border. */
+/* a window relative rectangle in physical pixels, the window's own when it is not stretched. */
+static void host_pixels(const WND *w, RECT *r)
+{
+    DpiRectConvert(r, w->Awareness, DPI_AWARE_SYSTEM);
+}
+
+/* host bounds include the visible window and its resize border, in physical pixels. */
 void HostPart(WND *w, RECT *part)
 {
     FRAME_METRICS m;
@@ -141,6 +147,7 @@ void HostPart(WND *w, RECT *part)
         part->right = W32Max(part->right, input.right);
         part->bottom = W32Max(part->bottom, input.bottom);
     }
+    host_pixels(w, part);
 }
 
 void HostConfigure(WND *w, BOOLEAN activate)
@@ -178,7 +185,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
     /* a thin border, as on Godot fullscreen windows, does not imply a title bar. */
     BOOLEAN fullscreen = (w->Flags & WNDF_FULLSCREEN) ||
                          ((w->Style & WS_CAPTION) != WS_CAPTION && !(w->Style & (WS_THICKFRAME | WS_MINIMIZE)) &&
-                          MonitorCoveredBy(&w->WindowRect));
+                          WndCoversMonitor(w));
     if (fullscreen)
         c->flags |= MIME_WIN_FULLSCREEN;
     if (visible && (w->Flags & WNDF_ACTIVATE_PENDING)) {
@@ -194,14 +201,18 @@ void HostConfigure(WND *w, BOOLEAN activate)
     }
     if (w->ExStyle & WS_EX_TRANSPARENT)
         c->flags |= MIME_WIN_NOINPUT;
-    c->rect = mime_rect(&w->WindowRect);
+    RECT physical;
+    WndPhysicalRect(w, &physical);
+    c->rect = mime_rect(&physical);
     FRAME_METRICS m;
     FrameGetMetrics(w->Style, w->ExStyle, WndGetDpi(w), &m);
     RECT vis, input;
     host_rects(w, &m, &vis, &input);
+    host_pixels(w, &vis);
+    host_pixels(w, &input);
     c->visible = mime_rect(&vis);
     c->input = mime_rect(&input);
-    c->corner_radius = corner_radius(w, &m);
+    c->corner_radius = (uint32_t)DpiScale((LONG)corner_radius(w, &m), DpiScaleOf(w->Awareness), W32SystemDpi());
     if (w->Flags & WNDF_ACTIVE_FRAME)
         c->flags |= MIME_WIN_ACTIVE;
     if (m.Border && !(w->Style & WS_MAXIMIZE)) {
@@ -231,19 +242,29 @@ void HostConfigure(WND *w, BOOLEAN activate)
     }
     RECT drag[MIME_WIN_MAX_DRAG_RECTS];
     c->drag_count = FrameGetDragRects(w, drag, MIME_WIN_MAX_DRAG_RECTS);
-    for (ULONG i = 0; i < c->drag_count; i++)
+    for (ULONG i = 0; i < c->drag_count; i++) {
+        host_pixels(w, &drag[i]);
         c->drag[i] = mime_rect(&drag[i]);
+    }
     c->owner_id = w->Owner ? window_id(w->Owner) : 0;
     c->dpi = WndHostDpi(w);
+    /* the surface of a window that is not aware is drawn at 96 dpi and stretched by the host. */
+    if (DpiVirtual(w->Awareness))
+        c->surface_dpi = DpiScaleOf(w->Awareness);
     /* constrain compositor resizing to application limits; apply a maximum only if one was set. */
     if ((w->Style & WS_THICKFRAME) && !(w->Style & WS_MINIMIZE)) {
-        POINT min = w->MinTrack.x ? w->MinTrack : (POINT){MetricsGet(SM_CXMINTRACK, WndGetDpi(w)), MetricsGet(SM_CYMINTRACK, WndGetDpi(w))};
+        UINT dpi = WndGetDpi(w);
+        POINT min = w->MinTrack.x ? w->MinTrack : (POINT){MetricsGetFor(SM_CXMINTRACK, dpi, w->Awareness),
+                                                          MetricsGetFor(SM_CYMINTRACK, dpi, w->Awareness)};
+        POINT max = w->MaxTrack;
+        DpiPointConvert(&min, w->Awareness, DPI_AWARE_SYSTEM);
+        DpiPointConvert(&max, w->Awareness, DPI_AWARE_SYSTEM);
         c->min_width = min.x;
         c->min_height = min.y;
-        if (w->MaxTrack.x && w->MaxTrack.x < MetricsGet(SM_CXMAXTRACK, WndGetDpi(w)))
-            c->max_width = w->MaxTrack.x;
-        if (w->MaxTrack.y && w->MaxTrack.y < MetricsGet(SM_CYMAXTRACK, WndGetDpi(w)))
-            c->max_height = w->MaxTrack.y;
+        if (w->MaxTrack.x && w->MaxTrack.x < MetricsGetFor(SM_CXMAXTRACK, dpi, w->Awareness))
+            c->max_width = max.x;
+        if (w->MaxTrack.y && w->MaxTrack.y < MetricsGetFor(SM_CYMAXTRACK, dpi, w->Awareness))
+            c->max_height = max.y;
     }
     if (w->Thread && w->Thread->Process) {
         W32PROCESS *process = w->Thread->Process;
@@ -392,7 +413,10 @@ HDC PaintGetDC(WND *w, HRGN clip, ULONG flags)
     if (!dc)
         return nullptr;
     dc->Window = w;
-    dc->Dpi = WndGetDpi(w);
+    if (w && w != WndDesktop()) {
+        dc->Dpi = WndGetDpi(w);
+        dc->Awareness = w->Awareness;
+    }
     WND *top = w ? WndTopLevel(w) : nullptr;
     SURFACE *s = top && top != WndDesktop() ? top->Surface : nullptr;
     if (!top || top == WndDesktop()) {
@@ -460,7 +484,7 @@ HDC PaintGetMonitorDC(ULONG index)
     if (!dc)
         return nullptr;
     dc->Window = WndDesktop();
-    dc->Dpi = m.Dpi ? m.Dpi : 96;
+    dc->Dpi = dc->Awareness == DPI_AWARE_UNAWARE ? 96 : m.Dpi ? m.Dpi : 96;
     dc->OfMonitor = TRUE;
     dc->Monitor = index;
     DcSetSurface(dc, screen);
