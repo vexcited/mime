@@ -47,6 +47,17 @@ bool SecLookupCredential(PCredHandle handle, const SEC_PACKAGE **package, ULONG 
     return c != nullptr;
 }
 
+bool SecCredentialName(PCredHandle handle, PWSTR out, DWORD capacity)
+{
+    RtlEnterCriticalSection(&g_lock);
+    SEC_CREDENTIAL *c = find(handle);
+    bool named = c && c->Name && wcslen(c->Name) < capacity;
+    if (named)
+        wcscpy(out, c->Name);
+    RtlLeaveCriticalSection(&g_lock);
+    return named;
+}
+
 bool SecSchannelConfig(PCredHandle handle, SCH_CONFIG *config)
 {
     RtlEnterCriticalSection(&g_lock);
@@ -149,11 +160,17 @@ static SECURITY_STATUS acquire(const SEC_PACKAGE *package, ULONG use, void *auth
     SEC_CREDENTIAL *c = SecHeapAlloc(sizeof(*c));
     if (!c)
         return SEC_E_INSUFFICIENT_MEMORY;
+    memset(c, 0, sizeof(*c));
     c->Package = package;
     c->Use = use;
     c->Name = auth_data && takes_identity(package) ? identity_name(auth_data, ansi) : nullptr;
     if (package->Kind == SEC_KIND_SCHANNEL)
         SchParseCredentials(auth_data, &c->Schannel);
+    /* a server needs the certificate it answers with. */
+    if (package->Kind == SEC_KIND_SCHANNEL && (use & SECPKG_CRED_INBOUND) && !c->Schannel.Certificate) {
+        SecHeapFree(c);
+        return SEC_E_NO_CREDENTIALS;
+    }
     RtlEnterCriticalSection(&g_lock);
     c->Next = g_credentials;
     g_credentials = c;
@@ -196,6 +213,8 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY FreeCredentialsHandle(PCredHandle credenti
     if (!c)
         return SEC_E_INVALID_HANDLE;
     SecHeapFree(c->Name);
+    if (c->Schannel.Certificate)
+        SchFreeCertificate(c->Schannel.Certificate);
     SecHeapFree(c);
     return SEC_E_OK;
 }

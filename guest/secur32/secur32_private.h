@@ -92,4 +92,18 @@ bool SecUserName(PWSTR out, DWORD capacity, bool *system);
 
 NTSTATUS SecSamCompatibleName(PWSTR out, DWORD capacity, DWORD *length);
 
+/* the account a credential was made for, or false when it is for the logged on one. */
+bool SecCredentialName(PCredHandle handle, PWSTR out, DWORD capacity);
+
+/* ntlm.c: ntlm and negotiate for a client and a server on one machine. */
+typedef struct AUTH_CONTEXT AUTH_CONTEXT;
+SECURITY_STATUS SecAuthEstablish(const SEC_PACKAGE *package, PCredHandle credential, AUTH_CONTEXT **context, bool server,
+                                 PCWSTR target, ULONG flags, PSecBufferDesc input, PSecBufferDesc output,
+                                 ULONG *attributes, PTimeStamp expiry);
+void SecAuthFree(AUTH_CONTEXT *context);
+SECURITY_STATUS SecAuthQuery(AUTH_CONTEXT *context, const SEC_PACKAGE *package, ULONG attribute, void *buffer, bool ansi);
+SECURITY_STATUS SecAuthImpersonate(AUTH_CONTEXT *context);
+SECURITY_STATUS SecAuthRevert(AUTH_CONTEXT *context);
+SECURITY_STATUS SecAuthToken(AUTH_CONTEXT *context, void **token);
+
 #endif

@@ -245,6 +245,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_gdiplus ${MIME_LIB_${arch}}/ole32.lib)
     set(libs_oledlg ${MIME_LIB_${arch}}/ole32.lib)
     set(libs_mlang ${MIME_LIB_${arch}}/oleaut32.lib)
+    set(libs_secur32 ${MIME_LIB_${arch}}/advapi32.lib)
     set(objects_windowscodecs ${arch}-lib-png:guest/lib/png/inflate.c ${arch}-lib-png:guest/lib/png/deflate.c
         ${arch}-lib-pngio ${arch}-lib-jpeg ${arch}-lib-tiff ${arch}-lib-gif ${arch}-lib-bcn)
     set(includes_windowscodecs guest/lib)

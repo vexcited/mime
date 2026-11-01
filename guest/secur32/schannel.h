@@ -192,6 +192,9 @@ typedef struct SCH_CONFIG {
     ULONG Flags;
     ULONG MinStrength;
     ULONG MaxStrength;
+    /* the server protocols that may be negotiated, SP_PROT_TLS1_2_SERVER, and the certificate a server answers with. */
+    ULONG ServerProtocols;
+    PCCERT_CONTEXT Certificate;
 } SCH_CONFIG;
 
 /* reads SCHANNEL_CRED or SCH_CREDENTIALS; NULL means the defaults. */
@@ -213,6 +216,8 @@ bool TlsBufPut(TLS_BUF *b, const void *data, SIZE_T size);
 void TlsBufFree(TLS_BUF *b);
 
 TLS *TlsCreate(const SCH_CONFIG *config, ULONG requested, PCWSTR target);
+/* a server end, which answers the first records of a client with its own. */
+TLS *TlsCreateServer(const SCH_CONFIG *config, ULONG requested);
 void TlsDestroy(TLS *t);
 /* queues the ClientHello in the pending output. */
 SECURITY_STATUS TlsStart(TLS *t, const BYTE *alpn, SIZE_T alpn_size);
@@ -276,6 +281,9 @@ void SchFreeKey(TLS_PEER_KEY *key);
 SECURITY_STATUS SchValidateChain(const TLS_CERTS *certs, PCWSTR server, ULONG flags, BYTE *alert);
 void SchFreeCertificates(TLS_CERTS *certs);
 PCCERT_CONTEXT SchDuplicate(PCCERT_CONTEXT cert);
+/* signs with the key the certificate's properties name. */
+bool SchSignWithCertificate(PCCERT_CONTEXT cert, unsigned scheme, const MimeHashAlg *hash, const BYTE *content,
+                            SIZE_T size, BYTE *sig, SIZE_T *sig_size);
 void SchFreeCertificate(PCCERT_CONTEXT cert);
 
 /* crypto library hooks. */
@@ -286,6 +294,8 @@ bool SchRandom(void *out, SIZE_T size);
 SECURITY_STATUS SchInitialize(PCredHandle credential, PCtxtHandle context, PCWSTR target, ULONG flags,
                               PSecBufferDesc input, PCtxtHandle new_context, PSecBufferDesc output,
                               ULONG *attributes, PTimeStamp expiry);
+SECURITY_STATUS SchAccept(PCredHandle credential, PCtxtHandle context, ULONG flags, PSecBufferDesc input,
+                          PCtxtHandle new_context, PSecBufferDesc output, ULONG *attributes, PTimeStamp expiry);
 SECURITY_STATUS SchEncrypt(TLS *t, PSecBufferDesc message);
 SECURITY_STATUS SchDecrypt(TLS *t, PSecBufferDesc message);
 SECURITY_STATUS SchQueryAttributes(TLS *t, ULONG attribute, void *buffer, bool ansi);

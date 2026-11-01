@@ -140,12 +140,13 @@ void SchFreeCertificates(TLS_CERTS *certs)
 
 PCCERT_CONTEXT SchDuplicate(PCCERT_CONTEXT cert)
 {
-    return crypt32.Duplicate(cert);
+    return have_crypt32() ? crypt32.Duplicate(cert) : nullptr;
 }
 
 void SchFreeCertificate(PCCERT_CONTEXT cert)
 {
-    crypt32.FreeContext(cert);
+    if (cert && have_crypt32())
+        crypt32.FreeContext(cert);
 }
 
 /* one der element of the given tag. */
@@ -319,4 +320,104 @@ SECURITY_STATUS SchValidateChain(const TLS_CERTS *certs, PCWSTR server, ULONG fl
         *alert = 42;
         return SEC_E_CERT_UNKNOWN;
     }
+}
+
+/* ------------------------------------------------------------------ signing with the server's own key */
+
+#define CERT_NCRYPT_KEY_SPEC_ 0xFFFFFFFFu
+#define CRYPT_ACQUIRE_SILENT_ 0x00000040
+#define CRYPT_ACQUIRE_PREFER_NCRYPT_ 0x00020000
+#define NCRYPT_PAD_PKCS1_ 0x00000002
+#define NCRYPT_PAD_PSS_ 0x00000008
+#define HP_HASHVAL_ 2
+
+static struct {
+    BOOL (WINAPI *Acquire)(PCCERT_CONTEXT, DWORD, void *, ULONG_PTR *, DWORD *, BOOL *);
+    LONG (WINAPI *NSign)(ULONG_PTR, void *, PBYTE, DWORD, PBYTE, DWORD, DWORD *, DWORD);
+    LONG (WINAPI *NFree)(ULONG_PTR);
+    BOOL (WINAPI *LCreateHash)(ULONG_PTR, ALG_ID, ULONG_PTR, DWORD, ULONG_PTR *);
+    BOOL (WINAPI *LSetHashParam)(ULONG_PTR, DWORD, const BYTE *, DWORD);
+    BOOL (WINAPI *LSign)(ULONG_PTR, DWORD, LPCWSTR, DWORD, BYTE *, DWORD *);
+    BOOL (WINAPI *LDestroyHash)(ULONG_PTR);
+    BOOL (WINAPI *LRelease)(ULONG_PTR, DWORD);
+} signing;
+
+static INIT_ONCE signing_once = INIT_ONCE_STATIC_INIT;
+
+static BOOL WINAPI load_signing(INIT_ONCE *once, void *parameter, void **context)
+{
+    HMODULE crypt32_module = LoadLibraryW(L"crypt32.dll"), advapi32_module = LoadLibraryW(L"advapi32.dll");
+    HMODULE ncrypt_module = LoadLibraryW(L"ncrypt.dll");
+    if (crypt32_module)
+        signing.Acquire = (void *)GetProcAddress(crypt32_module, "CryptAcquireCertificatePrivateKey");
+    if (ncrypt_module) {
+        signing.NSign = (void *)GetProcAddress(ncrypt_module, "NCryptSignHash");
+        signing.NFree = (void *)GetProcAddress(ncrypt_module, "NCryptFreeObject");
+    }
+    if (advapi32_module) {
+        signing.LCreateHash = (void *)GetProcAddress(advapi32_module, "CryptCreateHash");
+        signing.LSetHashParam = (void *)GetProcAddress(advapi32_module, "CryptSetHashParam");
+        signing.LSign = (void *)GetProcAddress(advapi32_module, "CryptSignHashW");
+        signing.LDestroyHash = (void *)GetProcAddress(advapi32_module, "CryptDestroyHash");
+        signing.LRelease = (void *)GetProcAddress(advapi32_module, "CryptReleaseContext");
+    }
+    return TRUE;
+}
+
+/*
+ * signs content with the private key of a certificate, as the server does in its key exchange. the key is a cng key or
+ * a key of a legacy container, whatever the property of the certificate names. false when there is no such key, or it
+ * cannot sign in the scheme.
+ */
+bool SchSignWithCertificate(PCCERT_CONTEXT cert, unsigned scheme, const MimeHashAlg *hash, const BYTE *content,
+                            SIZE_T size, BYTE *sig, SIZE_T *sig_size)
+{
+    InitOnceExecuteOnce(&signing_once, load_signing, nullptr, nullptr);
+    if (!signing.Acquire)
+        return false;
+    BYTE digest[64];
+    mime_hash(hash, content, size, digest);
+    ULONG_PTR key = 0;
+    DWORD spec = 0;
+    BOOL release = FALSE;
+    if (!signing.Acquire(cert, CRYPT_ACQUIRE_SILENT_ | CRYPT_ACQUIRE_PREFER_NCRYPT_, nullptr, &key, &spec, &release)) {
+        return false;
+    }
+    bool pss = (scheme & 0xFF00) == 0x0800;
+    bool ok = false;
+    if (spec == CERT_NCRYPT_KEY_SPEC_) {
+        PCWSTR name = hash->digest_size == 32 ? L"SHA256" : hash->digest_size == 48 ? L"SHA384" : L"SHA512";
+        struct {
+            PCWSTR algorithm;
+            ULONG salt;
+        } padding = {name, hash->digest_size};
+        DWORD out = 0;
+        if (signing.NSign)
+            ok = signing.NSign(key, &padding, digest, hash->digest_size, sig, (DWORD)*sig_size, &out,
+                               pss ? NCRYPT_PAD_PSS_ : NCRYPT_PAD_PKCS1_) == 0;
+        if (ok)
+            *sig_size = out;
+        if (release && signing.NFree)
+            signing.NFree(key);
+    } else {
+        ALG_ID algorithm = hash->digest_size == 32 ? 0x800C : hash->digest_size == 48 ? 0x800D : 0x800E;
+        ULONG_PTR legacy_hash = 0;
+        DWORD out = (DWORD)*sig_size;
+        if (!pss && signing.LCreateHash && signing.LCreateHash(key, algorithm, 0, 0, &legacy_hash)) {
+            ok = signing.LSetHashParam(legacy_hash, HP_HASHVAL_, digest, 0) &&
+                 signing.LSign(legacy_hash, spec, nullptr, 0, sig, &out);
+            signing.LDestroyHash(legacy_hash);
+        }
+        /* the provider writes the signature little endian. */
+        for (DWORD i = 0; ok && i < out / 2; i++) {
+            BYTE swap = sig[i];
+            sig[i] = sig[out - 1 - i];
+            sig[out - 1 - i] = swap;
+        }
+        if (ok)
+            *sig_size = out;
+        if (release && signing.LRelease)
+            signing.LRelease(key, 0);
+    }
+    return ok;
 }

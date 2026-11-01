@@ -1,9 +1,9 @@
 /*
  * security contexts.
  *
- * only schannel establishes real contexts, through its tls client in schannel.c. there is no kerberos, ntlm or digest,
- * so for the other packages the first InitializeSecurityContext or AcceptSecurityContext with a valid credential fails
- * with SEC_ESTABLISH_FAILURE. like windows, a handle naming no live context gets SEC_E_INVALID_HANDLE.
+ * schannel establishes contexts through its tls client in schannel.c, and ntlm and negotiate through ntlm.c. there is no
+ * kerberos or digest, so for the other packages the first InitializeSecurityContext or AcceptSecurityContext with a valid
+ * credential fails with SEC_ESTABLISH_FAILURE. like windows, a handle naming no live context gets SEC_E_INVALID_HANDLE.
  */
 #include "schannel.h"
 
@@ -15,6 +15,7 @@ typedef struct SEC_CONTEXT {
     struct SEC_CONTEXT *Next;
     const SEC_PACKAGE *Package;
     TLS *Tls;
+    AUTH_CONTEXT *Auth;
     LONG Refs;
     RTL_CRITICAL_SECTION Lock;
 } SEC_CONTEXT;
@@ -38,6 +39,7 @@ static void release(SEC_CONTEXT *c)
     if (InterlockedDecrement(&c->Refs))
         return;
     TlsDestroy(c->Tls);
+    SecAuthFree(c->Auth);
     RtlDeleteCriticalSection(&c->Lock);
     SecHeapFree(c);
 }
@@ -57,6 +59,7 @@ bool SecNewSchannelContext(const SEC_PACKAGE *package, TLS *t, PCtxtHandle handl
     SEC_CONTEXT *c = SecHeapAlloc(sizeof(*c));
     if (!c)
         return false;
+    memset(c, 0, sizeof(*c));
     c->Package = package;
     c->Tls = t;
     c->Refs = 1;
@@ -68,6 +71,64 @@ bool SecNewSchannelContext(const SEC_PACKAGE *package, TLS *t, PCtxtHandle handl
     handle->dwLower = (ULONG_PTR)package;
     handle->dwUpper = (ULONG_PTR)c;
     return true;
+}
+
+static bool new_auth_context(const SEC_PACKAGE *package, AUTH_CONTEXT *auth, PCtxtHandle handle)
+{
+    SEC_CONTEXT *c = SecHeapAlloc(sizeof(*c));
+    if (!c)
+        return false;
+    memset(c, 0, sizeof(*c));
+    c->Package = package;
+    c->Auth = auth;
+    c->Refs = 1;
+    RtlInitializeCriticalSection(&c->Lock);
+    RtlEnterCriticalSection(&g_lock);
+    c->Next = g_contexts;
+    g_contexts = c;
+    RtlLeaveCriticalSection(&g_lock);
+    handle->dwLower = (ULONG_PTR)package;
+    handle->dwUpper = (ULONG_PTR)c;
+    return true;
+}
+
+/* one step of ntlm or negotiate, on a context that is made when the first step goes through. */
+static SECURITY_STATUS establish_auth(const SEC_PACKAGE *package, PCredHandle credential, PCtxtHandle context,
+                                      bool server, PCWSTR target, ULONG flags, PSecBufferDesc input, PCtxtHandle new_context,
+                                      PSecBufferDesc output, ULONG *attributes, PTimeStamp expiry)
+{
+    SEC_CONTEXT *c = nullptr;
+    AUTH_CONTEXT *auth = nullptr;
+    if (context) {
+        c = reference(context);
+        if (!c || !c->Auth) {
+            if (c)
+                release(c);
+            return SEC_E_INVALID_HANDLE;
+        }
+        auth = c->Auth;
+        RtlEnterCriticalSection(&c->Lock);
+    }
+    SECURITY_STATUS status = SecAuthEstablish(package, credential, &auth, server, target, flags, input, output, attributes,
+                                              expiry);
+    if (c) {
+        RtlLeaveCriticalSection(&c->Lock);
+        release(c);
+        if (new_context && (status == SEC_E_OK || status == SEC_I_CONTINUE_NEEDED))
+            *new_context = *context;
+        return status;
+    }
+    if (status == SEC_E_OK || status == SEC_I_CONTINUE_NEEDED) {
+        CtxtHandle handle;
+        if (!new_context || !new_auth_context(package, auth, &handle)) {
+            SecAuthFree(auth);
+            return new_context ? SEC_E_INSUFFICIENT_MEMORY : SEC_E_INVALID_PARAMETER;
+        }
+        *new_context = handle;
+    } else {
+        SecAuthFree(auth);
+    }
+    return status;
 }
 
 TLS *SecAcquireSchannelContext(PCtxtHandle handle)
@@ -104,6 +165,12 @@ static SECURITY_STATUS establish(PCredHandle credential, PCtxtHandle context, UL
     if (context) {
         if (!SecContextExists(context))
             return SEC_E_INVALID_HANDLE;
+        const SEC_PACKAGE *continued = (const SEC_PACKAGE *)context->dwLower;
+        if (continued->Kind == SEC_KIND_NEGOTIATE || continued->Kind == SEC_KIND_NTLM)
+            return establish_auth(continued, credential, context, direction == SECPKG_CRED_INBOUND, target, flags, input,
+                                  new_context, output, attributes, expiry);
+        if (direction == SECPKG_CRED_INBOUND)
+            return SchAccept(credential, context, flags, input, new_context, output, attributes, expiry);
         if (direction != SECPKG_CRED_OUTBOUND)
             return SEC_E_UNSUPPORTED_FUNCTION;
         return SchInitialize(credential, context, target, flags, input, new_context, output, attributes, expiry);
@@ -114,7 +181,11 @@ static SECURITY_STATUS establish(PCredHandle credential, PCtxtHandle context, UL
         return SEC_E_INVALID_HANDLE;
     if (!(use & direction))
         return SEC_E_NO_CREDENTIALS;
-    /* only the schannel client is implemented; servers need certificates mime cannot hold. */
+    if (package->Kind == SEC_KIND_NEGOTIATE || package->Kind == SEC_KIND_NTLM)
+        return establish_auth(package, credential, nullptr, direction == SECPKG_CRED_INBOUND, target, flags, input,
+                              new_context, output, attributes, expiry);
+    if (package->Kind == SEC_KIND_SCHANNEL && direction == SECPKG_CRED_INBOUND)
+        return SchAccept(credential, nullptr, flags, input, new_context, output, attributes, expiry);
     if (package->Kind == SEC_KIND_SCHANNEL && direction == SECPKG_CRED_OUTBOUND)
         return SchInitialize(credential, nullptr, target, flags, input, new_context, output, attributes, expiry);
     return SEC_ESTABLISH_FAILURE;
@@ -195,6 +266,10 @@ static SECURITY_STATUS query(PCtxtHandle context, ULONG attribute, void *buffer,
         status = !buffer ? SEC_E_INVALID_PARAMETER
                  : ansi  ? SecCopyPackageInfoA(c->Package, (PSecPkgInfoA *)info)
                          : SecCopyPackageInfoW(c->Package, info);
+    } else if (c->Auth) {
+        RtlEnterCriticalSection(&c->Lock);
+        status = SecAuthQuery(c->Auth, c->Package, attribute, buffer, ansi);
+        RtlLeaveCriticalSection(&c->Lock);
     } else {
         RtlEnterCriticalSection(&c->Lock);
         status = SchQueryAttributes(c->Tls, attribute, buffer, ansi);
@@ -243,12 +318,22 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY ApplyControlToken(PCtxtHandle context, PSe
 
 SECURITYAPI SECURITY_STATUS SEC_ENTRY ImpersonateSecurityContext(PCtxtHandle context)
 {
-    return no_context(context);
+    SEC_CONTEXT *c = reference(context);
+    if (!c)
+        return SEC_E_INVALID_HANDLE;
+    SECURITY_STATUS status = c->Auth ? SecAuthImpersonate(c->Auth) : SEC_E_UNSUPPORTED_FUNCTION;
+    release(c);
+    return status;
 }
 
 SECURITYAPI SECURITY_STATUS SEC_ENTRY RevertSecurityContext(PCtxtHandle context)
 {
-    return no_context(context);
+    SEC_CONTEXT *c = reference(context);
+    if (!c)
+        return SEC_E_INVALID_HANDLE;
+    SECURITY_STATUS status = c->Auth ? SecAuthRevert(c->Auth) : SEC_E_UNSUPPORTED_FUNCTION;
+    release(c);
+    return status;
 }
 
 SECURITYAPI SECURITY_STATUS SEC_ENTRY MakeSignature(PCtxtHandle context, ULONG qop, PSecBufferDesc message,
@@ -302,7 +387,12 @@ SECURITYAPI SECURITY_STATUS SEC_ENTRY UnsealMessage(PCtxtHandle context, PSecBuf
 
 SECURITYAPI SECURITY_STATUS SEC_ENTRY QuerySecurityContextToken(PCtxtHandle context, void **token)
 {
-    return no_context(context);
+    SEC_CONTEXT *c = reference(context);
+    if (!c)
+        return SEC_E_INVALID_HANDLE;
+    SECURITY_STATUS status = c->Auth ? SecAuthToken(c->Auth, token) : SEC_E_UNSUPPORTED_FUNCTION;
+    release(c);
+    return status;
 }
 
 SECURITYAPI SECURITY_STATUS SEC_ENTRY ExportSecurityContext(PCtxtHandle context, ULONG flags, PSecBuffer packed,

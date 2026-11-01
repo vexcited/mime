@@ -16,6 +16,8 @@ void SchParseCredentials(const void *auth_data, SCH_CONFIG *config)
         if (version == SCH_CREDENTIALS_VERSION) {
             const SCH_CRED_V5 *c = auth_data;
             config->Flags = c->dwFlags;
+            if (c->cCreds && c->paCred)
+                config->Certificate = SchDuplicate(c->paCred[0]);
             /* parameters tied to alpn ids only apply to those protocols, which are not tracked. */
             for (DWORD i = 0; c->pTlsParameters && i < c->cTlsParameters; i++)
                 if (!c->pTlsParameters[i].cAlpnIds)
@@ -23,6 +25,8 @@ void SchParseCredentials(const void *auth_data, SCH_CONFIG *config)
         } else if (version == SCHANNEL_CRED_VERSION || version == SCH_CRED_V3) {
             const SCH_CRED_V4 *c = auth_data;
             config->Flags = c->dwFlags;
+            if (c->cCreds && c->paCred)
+                config->Certificate = SchDuplicate(c->paCred[0]);
             enabled = c->grbitEnabledProtocols;
             config->MinStrength = c->dwMinimumCipherStrength;
             config->MaxStrength = c->dwMaximumCipherStrength;
@@ -31,6 +35,9 @@ void SchParseCredentials(const void *auth_data, SCH_CONFIG *config)
     /* no protocols means the system defaults: tls 1.2 and 1.3 on windows 11. */
     ULONG supported = SP_PROT_TLS1_2_CLIENT | SP_PROT_TLS1_3_CLIENT;
     config->Protocols = (enabled ? enabled : supported) & supported & ~disabled;
+    /* a server speaks tls 1.2. */
+    ULONG server = SP_PROT_TLS1_2_SERVER;
+    config->ServerProtocols = (enabled ? enabled : server) & server & ~disabled;
 }
 
 /* ------------------------------------------------------------------ buffers */
@@ -236,6 +243,60 @@ SECURITY_STATUS SchInitialize(PCredHandle credential, PCtxtHandle context, PCWST
     if (expiry && status == SEC_E_OK)
         TlsExpiry(t, expiry);
     SecReleaseSchannelContext(context);
+    return status;
+}
+
+/* ------------------------------------------------------------------ AcceptSecurityContext */
+
+#define ASC_FLAGS_KEPT 0x00038900 /* allocate memory, extended error, stream and integrity. */
+
+SECURITY_STATUS SchAccept(PCredHandle credential, PCtxtHandle context, ULONG flags, PSecBufferDesc input,
+                          PCtxtHandle new_context, PSecBufferDesc output, ULONG *attributes, PTimeStamp expiry)
+{
+    /* the flags of the two sides differ above allocating memory, and the engine speaks the client's. */
+    ULONG requested = (flags & ISC_REQ_ALLOCATE_MEMORY) | ((flags & 0x8000) ? ISC_REQ_EXTENDED_ERROR : 0);
+    ULONG returned = (flags & ASC_FLAGS_KEPT) | ISC_RET_REPLAY_DETECT | ISC_RET_SEQUENCE_DETECT |
+                     ISC_RET_CONFIDENTIALITY | 0x10000;
+    SECURITY_STATUS status;
+    if (context) {
+        status = SchInitialize(credential, context, nullptr, requested, input, new_context, output, nullptr, expiry);
+        if (attributes)
+            *attributes = returned;
+        return status;
+    }
+    const SEC_PACKAGE *package;
+    ULONG use;
+    SCH_CONFIG config;
+    if (!credential || !SecLookupCredential(credential, &package, &use) || !SecSchannelConfig(credential, &config))
+        return SEC_E_INVALID_HANDLE;
+    if (!(use & SECPKG_CRED_INBOUND) || !config.Certificate)
+        return SEC_E_NO_CREDENTIALS;
+    if (!new_context)
+        return SEC_E_INVALID_PARAMETER;
+    TLS *t = TlsCreateServer(&config, requested);
+    if (!t)
+        return SEC_E_INSUFFICIENT_MEMORY;
+    SecBuffer *token = find_buffer(input, SECBUFFER_TOKEN);
+    BYTE *data = token ? token->pvBuffer : nullptr;
+    SIZE_T size = data ? token->cbBuffer : 0, consumed = 0, missing = 0;
+    status = TlsHandshake(t, data, size, &consumed, &missing);
+    if (input)
+        report_input(input, data ? token : nullptr, consumed, missing, status);
+    if (status == SEC_E_OK || status == SEC_I_CONTINUE_NEEDED) {
+        SECURITY_STATUS emitted = emit(t, output, requested);
+        if (emitted)
+            status = emitted;
+    }
+    if ((status != SEC_E_OK && status != SEC_I_CONTINUE_NEEDED) || !SecNewSchannelContext(package, t, new_context)) {
+        if (status == SEC_E_OK || status == SEC_I_CONTINUE_NEEDED)
+            status = SEC_E_INSUFFICIENT_MEMORY;
+        TlsDestroy(t);
+        return status;
+    }
+    if (attributes)
+        *attributes = returned;
+    if (expiry)
+        TlsExpiry(t, expiry);
     return status;
 }
 

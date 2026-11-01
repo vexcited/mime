@@ -85,6 +85,10 @@ enum {
     ST12_WAIT_FINISHED,
     ST_CONNECTED,
     ST_FAILED,
+    ST_SRV_WAIT_HELLO,
+    ST_SRV_WAIT_KEY_EXCHANGE,
+    ST_SRV_WAIT_CCS,
+    ST_SRV_WAIT_FINISHED,
 };
 
 #define TLS_MAX_PLAIN 16384
@@ -131,6 +135,9 @@ typedef struct TLS_CIPHER {
 
 struct TLS {
     SCH_CONFIG Config;
+    /* a server end answers with this certificate, a reference of its own. */
+    bool Server;
+    PCCERT_CONTEXT ServerCert;
     ULONG Requested;
     PWSTR Target;
     char Host[256];
@@ -886,10 +893,30 @@ TLS *TlsCreate(const SCH_CONFIG *config, ULONG requested, PCWSTR target)
     return t;
 }
 
+TLS *TlsCreateServer(const SCH_CONFIG *config, ULONG requested)
+{
+    if (!config->Certificate)
+        return nullptr;
+    TLS *t = TlsCreate(config, requested, nullptr);
+    if (!t)
+        return nullptr;
+    t->Server = true;
+    t->ServerCert = SchDuplicate(config->Certificate);
+    if (!t->ServerCert) {
+        TlsDestroy(t);
+        return nullptr;
+    }
+    t->Config.Certificate = t->ServerCert;
+    t->State = ST_SRV_WAIT_HELLO;
+    return t;
+}
+
 void TlsDestroy(TLS *t)
 {
     if (!t)
         return;
+    if (t->ServerCert)
+        SchFreeCertificate(t->ServerCert);
     TlsBufFree(&t->Cookie);
     TlsBufFree(&t->Transcript);
     TlsBufFree(&t->HandshakeIn);
@@ -1555,7 +1582,299 @@ static SECURITY_STATUS on_finished12(TLS *t, READER body, const BYTE *raw, SIZE_
     return SEC_E_OK;
 }
 
+static SECURITY_STATUS on_client_message(TLS *t, unsigned type, READER body, const BYTE *raw, SIZE_T raw_size);
+
+/* ------------------------------------------------------------------ the server end, tls 1.2 */
+
+/* a handshake message in the making: its type, then the length that close fills in. */
+static SIZE_T begin_message(TLS_BUF *m, unsigned type)
+{
+    put8(m, type);
+    return open_vector(m, 3);
+}
+
+/* the signature schemes the server signs with, best first. */
+static const USHORT server_schemes[] = {0x0401, 0x0501, 0x0804, 0x0805};
+
+static SECURITY_STATUS on_client_hello(TLS *t, READER body, const BYTE *raw, SIZE_T raw_size)
+{
+    unsigned legacy;
+    const BYTE *random;
+    READER session, ciphers, compression, block = {};
+    if (!read_int(&body, 2, &legacy) || !take(&body, 32, &random) || !read_vector(&body, 1, &session) ||
+        session.Left > 32 || !read_vector(&body, 2, &ciphers) || (ciphers.Left & 1) || !read_vector(&body, 1, &compression))
+        return fail(t, ALERT_DECODE_ERROR, 0);
+    if (body.Left && (!read_vector(&body, 2, &block) || body.Left))
+        return fail(t, ALERT_DECODE_ERROR, 0);
+    memcpy(t->ClientRandom, random, 32);
+
+    /* the extensions that matter to a tls 1.2 server. */
+    bool ems = false, points = false, versions = false, offers12 = false, have_groups = false, have_schemes = false;
+    READER groups_list = {}, schemes_list = {};
+    while (block.Left) {
+        unsigned type;
+        READER data;
+        if (!read_int(&block, 2, &type) || !read_vector(&block, 2, &data))
+            return fail(t, ALERT_DECODE_ERROR, 0);
+        switch (type) {
+        case EXT_EXTENDED_MASTER_SECRET:
+            ems = true;
+            break;
+        case EXT_EC_POINT_FORMATS:
+            points = true;
+            break;
+        case EXT_SUPPORTED_GROUPS:
+            if (!read_vector(&data, 2, &groups_list) || data.Left)
+                return fail(t, ALERT_DECODE_ERROR, 0);
+            have_groups = true;
+            break;
+        case EXT_SIGNATURE_ALGORITHMS:
+            if (!read_vector(&data, 2, &schemes_list) || data.Left)
+                return fail(t, ALERT_DECODE_ERROR, 0);
+            have_schemes = true;
+            break;
+        case EXT_SUPPORTED_VERSIONS: {
+            READER list;
+            if (!read_vector(&data, 1, &list) || data.Left || (list.Left & 1))
+                return fail(t, ALERT_DECODE_ERROR, 0);
+            versions = true;
+            unsigned v;
+            while (list.Left && read_int(&list, 2, &v))
+                if (v == 0x0303)
+                    offers12 = true;
+            break;
+        }
+        }
+    }
+    if (!(t->Config.ServerProtocols & SP_PROT_TLS1_2_SERVER) || (versions ? !offers12 : legacy < 0x0303))
+        return fail(t, ALERT_PROTOCOL_VERSION, 0);
+
+    /* the suite, the group and the signature scheme: the server's choice among what the client offers. */
+    static const USHORT suite_order[] = {0xC030, 0xC02F};
+    const TLS_SUITE *suite = nullptr;
+    for (SIZE_T i = 0; i < RTL_NUMBER_OF(suite_order) && !suite; i++) {
+        READER list = ciphers;
+        unsigned id;
+        while (read_int(&list, 2, &id))
+            if (id == suite_order[i]) {
+                for (SIZE_T j = 0; j < RTL_NUMBER_OF(suites); j++)
+                    if (suites[j].Id == id)
+                        suite = &suites[j];
+                break;
+            }
+    }
+    USHORT group = 0;
+    if (!have_groups) {
+        group = GROUP_P256;
+    } else {
+        static const USHORT group_order[] = {GROUP_X25519, GROUP_P256, GROUP_P384};
+        for (SIZE_T i = 0; i < RTL_NUMBER_OF(group_order) && !group; i++) {
+            READER list = groups_list;
+            unsigned g;
+            while (read_int(&list, 2, &g))
+                if (g == group_order[i]) {
+                    group = group_order[i];
+                    break;
+                }
+        }
+    }
+    unsigned scheme = 0;
+    if (!have_schemes) {
+        scheme = 0x0401;
+    } else {
+        for (SIZE_T i = 0; i < RTL_NUMBER_OF(server_schemes) && !scheme; i++) {
+            READER list = schemes_list;
+            unsigned v;
+            while (read_int(&list, 2, &v))
+                if (v == server_schemes[i]) {
+                    scheme = v;
+                    break;
+                }
+        }
+    }
+    if (!suite || !group || !scheme)
+        return fail(t, ALERT_HANDSHAKE_FAILURE, SEC_E_ALGORITHM_MISMATCH);
+    if (!t->ServerCert)
+        return fail(t, ALERT_INTERNAL_ERROR, SEC_E_INTERNAL_ERROR);
+
+    t->Version = 0x0303;
+    t->Suite = suite;
+    t->Group = group;
+    t->Ems = ems;
+    if (!SchRandom(t->ServerRandom, 32) || make_share(t, group))
+        return fail(t, ALERT_INTERNAL_ERROR, SEC_E_INTERNAL_ERROR);
+    add_transcript(t, raw, raw_size);
+
+    /* ServerHello. */
+    TLS_BUF m = {};
+    SIZE_T at = begin_message(&m, HS_SERVER_HELLO);
+    put16(&m, 0x0303);
+    TlsBufPut(&m, t->ServerRandom, 32);
+    put8(&m, 0);
+    put16(&m, suite->Id);
+    put8(&m, 0);
+    SIZE_T extensions = open_vector(&m, 2);
+    put16(&m, EXT_RENEGOTIATION_INFO);
+    put16(&m, 1);
+    put8(&m, 0);
+    if (ems) {
+        put16(&m, EXT_EXTENDED_MASTER_SECRET);
+        put16(&m, 0);
+    }
+    if (points) {
+        put16(&m, EXT_EC_POINT_FORMATS);
+        put16(&m, 2);
+        put8(&m, 1);
+        put8(&m, 0);
+    }
+    close_vector(&m, extensions, 2);
+    close_vector(&m, at, 3);
+    if (m.Failed) {
+        TlsBufFree(&m);
+        return no_memory(t);
+    }
+    send_message(t, m.Data, m.Size);
+    TlsBufFree(&m);
+
+    /* Certificate: the leaf alone. */
+    PCCERT_CONTEXT cert = t->ServerCert;
+    at = begin_message(&m, HS_CERTIFICATE);
+    SIZE_T list_at = open_vector(&m, 3);
+    SIZE_T cert_at = open_vector(&m, 3);
+    TlsBufPut(&m, cert->pbCertEncoded, cert->cbCertEncoded);
+    close_vector(&m, cert_at, 3);
+    close_vector(&m, list_at, 3);
+    close_vector(&m, at, 3);
+    if (m.Failed) {
+        TlsBufFree(&m);
+        return no_memory(t);
+    }
+    send_message(t, m.Data, m.Size);
+    TlsBufFree(&m);
+
+    /* ServerKeyExchange: the parameters and the signature the certificate's key makes over them and both randoms. */
+    BYTE content[64 + 4 + 133];
+    TLS_BUF params = {};
+    put8(&params, 3);
+    put16(&params, group);
+    SIZE_T point_at = open_vector(&params, 1);
+    put_share(t, &params, group);
+    close_vector(&params, point_at, 1);
+    if (params.Failed || params.Size > sizeof(content) - 64) {
+        TlsBufFree(&params);
+        return no_memory(t);
+    }
+    memcpy(content, t->ClientRandom, 32);
+    memcpy(content + 32, t->ServerRandom, 32);
+    memcpy(content + 64, params.Data, params.Size);
+    BYTE signature[1024];
+    SIZE_T signature_size = sizeof(signature);
+    const MimeHashAlg *hash = scheme_hash(scheme);
+    if (!hash || !SchSignWithCertificate(cert, scheme, hash, content, 64 + params.Size, signature, &signature_size)) {
+        TlsBufFree(&params);
+        return fail(t, ALERT_INTERNAL_ERROR, SEC_E_NO_CREDENTIALS);
+    }
+    at = begin_message(&m, HS_SERVER_KEY_EXCHANGE);
+    TlsBufPut(&m, params.Data, params.Size);
+    TlsBufFree(&params);
+    put16(&m, scheme);
+    put16(&m, (unsigned)signature_size);
+    TlsBufPut(&m, signature, signature_size);
+    close_vector(&m, at, 3);
+    if (m.Failed) {
+        TlsBufFree(&m);
+        return no_memory(t);
+    }
+    send_message(t, m.Data, m.Size);
+    TlsBufFree(&m);
+
+    static const BYTE done[4] = {HS_SERVER_HELLO_DONE, 0, 0, 0};
+    send_message(t, done, sizeof(done));
+    if (t->Out.Failed || t->Transcript.Failed)
+        return no_memory(t);
+    t->State = ST_SRV_WAIT_KEY_EXCHANGE;
+    return SEC_E_OK;
+}
+
+static SECURITY_STATUS on_client_key_exchange(TLS *t, READER body, const BYTE *raw, SIZE_T raw_size)
+{
+    READER point;
+    if (!read_vector(&body, 1, &point) || body.Left)
+        return fail(t, ALERT_DECODE_ERROR, 0);
+    add_transcript(t, raw, raw_size);
+    BYTE secret[66];
+    SIZE_T secret_size;
+    if (!agree(t, t->Group, point.P, point.Left, secret, &secret_size))
+        return fail(t, ALERT_ILLEGAL_PARAMETER, 0);
+    BYTE seed[64];
+    if (t->Ems) {
+        BYTE session_hash[48];
+        transcript_hash(t, session_hash);
+        prf12(t, secret, secret_size, "extended master secret", session_hash, hash_size(t), t->Master, 48);
+    } else {
+        memcpy(seed, t->ClientRandom, 32);
+        memcpy(seed + 32, t->ServerRandom, 32);
+        prf12(t, secret, secret_size, "master secret", seed, 64, t->Master, 48);
+    }
+    mime_wipe(secret, sizeof(secret));
+    /* the key block holds the client's key, then the server's, then the parts of the nonces. */
+    BYTE block[2 * 32 + 2 * 4];
+    UINT k = t->Suite->KeySize;
+    memcpy(seed, t->ServerRandom, 32);
+    memcpy(seed + 32, t->ClientRandom, 32);
+    prf12(t, t->Master, 48, "key expansion", seed, 64, block, 2 * k + 8);
+    mime_aes_init(&t->PendingRead.Aes, block, k);
+    memcpy(t->PendingRead.Iv, block + 2 * k, 4);
+    mime_aes_init(&t->Write.Aes, block + k, k);
+    memcpy(t->Write.Iv, block + 2 * k + 4, 4);
+    mime_wipe(block, sizeof(block));
+    t->State = ST_SRV_WAIT_CCS;
+    return SEC_E_OK;
+}
+
+static SECURITY_STATUS on_client_finished(TLS *t, READER body, const BYTE *raw, SIZE_T raw_size)
+{
+    BYTE th[48], expected[12];
+    if (body.Left != 12)
+        return fail(t, ALERT_DECODE_ERROR, 0);
+    transcript_hash(t, th);
+    prf12(t, t->Master, 48, "client finished", th, hash_size(t), expected, 12);
+    if (!mime_ct_equal(expected, body.P, 12))
+        return fail(t, ALERT_DECRYPT_ERROR, 0);
+    add_transcript(t, raw, raw_size);
+    send_ccs(t);
+    t->Write.Seq = 0;
+    t->Write.Active = true;
+    BYTE fin[4 + 12] = {HS_FINISHED, 0, 0, 12};
+    transcript_hash(t, th);
+    prf12(t, t->Master, 48, "server finished", th, hash_size(t), fin + 4, 12);
+    send_message(t, fin, sizeof(fin));
+    if (t->Out.Failed || t->Transcript.Failed)
+        return no_memory(t);
+    t->State = ST_CONNECTED;
+    return SEC_E_OK;
+}
+
 static SECURITY_STATUS on_message(TLS *t, unsigned type, READER body, const BYTE *raw, SIZE_T raw_size)
+{
+    switch (t->State) {
+    case ST_SRV_WAIT_HELLO:
+        if (type == HS_CLIENT_HELLO)
+            return on_client_hello(t, body, raw, raw_size);
+        break;
+    case ST_SRV_WAIT_KEY_EXCHANGE:
+        if (type == HS_CLIENT_KEY_EXCHANGE)
+            return on_client_key_exchange(t, body, raw, raw_size);
+        break;
+    case ST_SRV_WAIT_FINISHED:
+        if (type == HS_FINISHED)
+            return on_client_finished(t, body, raw, raw_size);
+        break;
+    }
+    return on_client_message(t, type, body, raw, raw_size);
+}
+
+static SECURITY_STATUS on_client_message(TLS *t, unsigned type, READER body, const BYTE *raw, SIZE_T raw_size)
 {
     switch (t->State) {
     case ST_WAIT_SERVER_HELLO:
@@ -1657,6 +1976,13 @@ static SECURITY_STATUS handshake_record(TLS *t, BYTE *record, SIZE_T total)
         /* d.4: the compatibility ChangeCipherSpec of a tls 1.3 server is dropped. */
         if (is13(t) && t->State >= ST_WAIT_SERVER_HELLO && t->State <= ST13_WAIT_FINISHED)
             return SEC_E_OK;
+        if (t->State == ST_SRV_WAIT_CCS && !t->HandshakeIn.Size) {
+            t->Read = t->PendingRead;
+            t->Read.Seq = 0;
+            t->Read.Active = true;
+            t->State = ST_SRV_WAIT_FINISHED;
+            return SEC_E_OK;
+        }
         if (t->State == ST12_WAIT_CCS && !t->HandshakeIn.Size) {
             t->Read = t->PendingRead;
             t->Read.Seq = 0;
@@ -1963,6 +2289,8 @@ void TlsStreamSizes(const TLS *t, SCH_STREAM_SIZES *sizes)
 
 static ULONG protocol_bit(const TLS *t)
 {
+    if (t->Server)
+        return is13(t) ? SP_PROT_TLS1_3_SERVER : SP_PROT_TLS1_2_SERVER;
     return is13(t) ? SP_PROT_TLS1_3_CLIENT : SP_PROT_TLS1_2_CLIENT;
 }
 

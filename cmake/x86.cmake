@@ -43,7 +43,7 @@ set(all_five ntdll kernel32 user32 gdi32 win32u)
 set(MIME_X86_DLLS
     shlwapi:0x71000000:all_five shell32:0x70000000:shell32_imports winmm:0x6f000000:all_five version:0x6e000000:all_five
     advapi32:0x6d000000:all_five sechost:0x0F000000:base ws2_32:0x6c000000:all_five uxtheme:0x6b000000:all_five
-    netapi32:0x6a000000:all_five wtsapi32:0x69000000:all_five secur32:0x68000000:all_five
+    netapi32:0x6a000000:all_five wtsapi32:0x69000000:all_five secur32:0x68000000:secur32_imports
     crypt32:0x67000000:all_five userenv:0x66000000:all_five ole32:0x65000000:ole32_imports oleaut32:0x64000000:oleaut32_imports
     rpcrt4:0x63000000:rpcrt4_imports imm32:0x62000000:all_five comctl32:0x61000000:comctl comdlg32:0x60000000:dialog_imports
     msi:0x5f000000:msi_imports mpr:0x5e000000:base wintrust:0x5d000000:crypt odbc32:0x5c000000:user
@@ -86,6 +86,7 @@ set(ole32_imports ntdll kernel32 user32 gdi32 win32u rpcrt4 msvcrt)
 set(oleaut32_imports ntdll kernel32 user32 gdi32 win32u ole32 rpcrt4 msvcrt)
 set(propsys_imports ntdll kernel32 user32 gdi32 win32u ole32 oleaut32 advapi32 shlwapi combase)
 set(mlang_imports ntdll kernel32 oleaut32)
+set(secur32_imports ntdll kernel32 user32 gdi32 win32u advapi32)
 set(objects_propsys x86-lib-crypto:guest/lib/crypto/hash.c)
 set(includes_propsys guest/lib)
 set(wic_imports ntdll kernel32 user32 gdi32 win32u ole32)
