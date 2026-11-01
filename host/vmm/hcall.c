@@ -457,6 +457,13 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
             break;
         }
         value = mime_ui_get_monitors(dst, (uint32_t)capacity);
+        /* MIME_DISPLAY_DPI sets the dpi of the display of the boot information, so the primary monitor has it too. */
+        const char *text = getenv("MIME_DISPLAY_DPI");
+        long dpi = text ? strtol(text, nullptr, 10) : 0;
+        if (dpi >= 96 && dpi <= 480)
+            for (uint64_t i = 0; i < value && i < capacity; i++)
+                if (dst[i].flags & MIME_MONITOR_PRIMARY)
+                    dst[i].dpi = (uint32_t)dpi;
         break;
     }
     case MIME_HC_GPU_OPEN:

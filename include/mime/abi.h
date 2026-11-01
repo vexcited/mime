@@ -77,7 +77,10 @@ typedef struct MimeDisplayInfo {
     uint32_t work_height;
     uint32_t dpi; /* 96 * backing scale factor. */
     uint32_t refresh_hz;
+    uint32_t flags; /* MIME_DISPLAY_*. */
 } MimeDisplayInfo;
+
+#define MIME_DISPLAY_STRETCH 0x1 /* windows drawn at a lower dpi than the display's are stretched by the host, see MimeWinConfig. */
 
 /*
  * MIME_HC_TRAY manages notification icons, balloons and menus. commands occupy up to MIME_TRAY_COMMAND_SIZE
@@ -996,6 +999,7 @@ typedef struct MimeWinConfig {
     uint32_t owner_id; /* keeps owned windows above their owner, 0 if none. */
     uint32_t process_id;
     uint32_t dpi; /* guest pixel DPI: the host window uses this many guest pixels per 96 size units, or the display DPI when 0. */
+    uint32_t surface_dpi; /* the DPI of the presented surface, 0 when it is the guest pixel DPI. a lower one is stretched to the window. */
     int32_t min_width, min_height; /* the smallest and largest size the window can be sized to, window rectangle in guest pixels, 0 for no limit. */
     int32_t max_width, max_height;
     uint32_t image_chars;
@@ -1006,7 +1010,7 @@ typedef struct MimeWinConfig {
 
 typedef struct MimeWinPresent {
     uint32_t window_id;
-    uint32_t width;  /* surface size, matches rect. */
+    uint32_t width;  /* surface size, matches rect unless the window is stretched, see surface_dpi. */
     uint32_t height;
     uint32_t stride; /* bytes */
     uint64_t surface_phys; /* BGRA8 premultiplied, physically contiguous. */

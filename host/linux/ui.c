@@ -196,6 +196,15 @@ static double config_scale(const MimeWinConfig *c)
     return c->dpi ? c->dpi / 96.0 : g_scale;
 }
 
+/*
+ * host pixels per surface pixel: a window that does not know the display's DPI draws at a lower one and is stretched,
+ * as Windows' compositor does.
+ */
+static double surface_stretch(const MimeWinConfig *c)
+{
+    return c->surface_dpi && c->dpi && c->dpi > c->surface_dpi ? (double)c->dpi / c->surface_dpi : 1.0;
+}
+
 static Fit window_fit(const UiWindow *w)
 {
     Fit fit = {1.0 / config_scale(&w->config), 0, 0};
@@ -509,6 +518,7 @@ void mime_ui_get_display(MimeDisplayInfo *info)
             update_display();
     }
     *info = g_display;
+    info->flags |= MIME_DISPLAY_STRETCH;
 }
 
 uint32_t mime_ui_get_monitors(MimeMonitor *monitors, uint32_t capacity)
@@ -987,7 +997,11 @@ static void draw(UiWindow *w)
     /* around a window the fit leaves smaller than the screen, black as a monitor's border. */
     SDL_SetRenderDrawColor(w->renderer, 0, 0, 0, w->fullscreen ? 255 : 0);
     SDL_RenderClear(w->renderer);
-    SDL_FRect src = {(float)vis.left, (float)vis.top, (float)(vis.right - vis.left), (float)(vis.bottom - vis.top)};
+    double stretch = surface_stretch(&w->config);
+    SDL_FRect src = {(float)(vis.left / stretch), (float)(vis.top / stretch), (float)((vis.right - vis.left) / stretch),
+                     (float)((vis.bottom - vis.top) / stretch)};
+    /* whole multiples repeat pixels, any other stretch blends them, like the compositor does. */
+    SDL_SetTextureScaleMode(w->texture, stretch == floor(stretch) ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
     /* the renderer draws in pixels, the fit is in window coordinates. */
     Fit fit = window_fit(w);
     fit.scale *= density;
@@ -1048,7 +1062,7 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
         w->shown = false;
         w->fullscreen = false;
     }
-    bool size_changed = !w->configured || w->config.dpi != cfg->dpi || host_part(&w->config).right - host_part(&w->config).left !=
+    bool size_changed = !w->configured || w->config.dpi != cfg->dpi || w->config.surface_dpi != cfg->surface_dpi || host_part(&w->config).right - host_part(&w->config).left !=
                                                   host_part(cfg).right - host_part(cfg).left ||
                         host_part(&w->config).bottom - host_part(&w->config).top !=
                             host_part(cfg).bottom - host_part(cfg).top;
