@@ -389,7 +389,8 @@ static void collect_counter(COUNTER *counter, const PDH_SNAPSHOT *snapshot)
 PDH_STATUS WINAPI PdhValidatePathExW(PVOID source, LPCWSTR path);
 
 /* the counter the path names, as it is now; a path that cannot be a counter says why. */
-static PDH_STATUS validate_path(LPCWSTR path, PDH_PATH **parsed)
+/* the type of the counter, when it was found, is given back for a counter that is being added. */
+static PDH_STATUS validate_path(LPCWSTR path, PDH_PATH **parsed, DWORD *type)
 {
     *parsed = nullptr;
     PDH_STATUS status = PdhiParsePath(path, TRUE, parsed);
@@ -402,6 +403,8 @@ static PDH_STATUS validate_path(LPCWSTR path, PDH_PATH **parsed)
     status = PdhiSnapshot(&snapshot);
     if (!status) {
         status = resolve(&snapshot, *parsed, &object_index, &object, &counter);
+        if (!status && type)
+            *type = counter->CounterType;
         if (!status && object->NumInstances == PERF_NO_INSTANCES_ && (*parsed)->Instance)
             status = PDH_CSTATUS_NO_INSTANCE;
         else if (!status && object->NumInstances != PERF_NO_INSTANCES_) {
@@ -426,7 +429,7 @@ PDH_STATUS WINAPI PdhValidatePathW(LPCWSTR path)
         return PDH_INVALID_ARGUMENT;
     if (!*path || wcslen(path) > 0x800)
         return PDH_INVALID_ARGUMENT;
-    PDH_STATUS status = validate_path(path, &parsed);
+    PDH_STATUS status = validate_path(path, &parsed, nullptr);
     LocalFree(parsed);
     return status;
 }
@@ -462,7 +465,8 @@ PDH_STATUS WINAPI PdhAddCounterW(PDH_HQUERY handle, LPCWSTR path, DWORD_PTR user
     if (!length || length > 0x800)
         return PDH_INVALID_ARGUMENT;
     PDH_PATH *parsed = nullptr;
-    PDH_STATUS status = validate_path(path, &parsed);
+    DWORD type = 0;
+    PDH_STATUS status = validate_path(path, &parsed, &type);
     if (status && status != PDH_CSTATUS_NO_INSTANCE)
         return status;
     COUNTER *counter = LocalAlloc(LMEM_ZEROINIT, sizeof(*counter));
@@ -479,6 +483,7 @@ PDH_STATUS WINAPI PdhAddCounterW(PDH_HQUERY handle, LPCWSTR path, DWORD_PTR user
     counter->user = user;
     counter->Status = status;
     counter->Scale = INT32_MIN;
+    counter->Type = type;
     AcquireSRWLockExclusive(&g_lock);
     QUERY *query = find_query(handle);
     if (!query || !counter->FullPath) {
@@ -495,8 +500,18 @@ PDH_STATUS WINAPI PdhAddCounterW(PDH_HQUERY handle, LPCWSTR path, DWORD_PTR user
 }
 
 /* the counters are not localized, so the English names are the names. */
+/* the english path is translated first, and a path that does not parse fails there as a bad counter name. */
 PDH_STATUS WINAPI PdhAddEnglishCounterW(PDH_HQUERY handle, LPCWSTR path, DWORD_PTR user, PDH_HCOUNTER *out)
 {
+    if (out && path && *path && wcslen(path) <= 0x800) {
+        PDH_PATH *parsed = nullptr;
+        PDH_STATUS status = PdhiParsePath(path, TRUE, &parsed);
+        if (status == PDH_INVALID_PATH) {
+            *out = nullptr;
+            return PDH_CSTATUS_BAD_COUNTERNAME;
+        }
+        LocalFree(parsed);
+    }
     return PdhAddCounterW(handle, path, user, out);
 }
 
