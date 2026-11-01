@@ -8,6 +8,10 @@
 #define STG_E_ACCESSDENIED ((HRESULT)0x80030005L)
 #endif
 
+#define ERROR_INSTALL_USEREXIT_ 1602
+#define ERROR_SUCCESS_REBOOT_INITIATED_ 1641
+#define ERROR_SUCCESS_REBOOT_REQUIRED_ 3010
+
 #define LINK_FROM(This, member) ((LINK *)((BYTE *)(This) - offsetof(LINK, member)))
 
 /* property-key interface ids handled directly by the link. */
@@ -468,6 +472,43 @@ static HRESULT STDMETHODCALLTYPE w_set_relative_path(IShellLinkW *This, LPCWSTR 
     return S_OK;
 }
 
+typedef DWORD(WINAPI *COMMAND_LINE_FROM_DESCRIPTOR)(LPWSTR descriptor, LPWSTR command, DWORD *length);
+
+/* the path of the key file of the component of an advertised link, which the installer checks and repairs. */
+static HRESULT resolve_darwin(LINK *link, HWND hwnd, DWORD flags)
+{
+    if (!(flags & SLR_INVOKE_MSI))
+        return S_OK;
+    LINK_BLOCK *block = LkFindBlock(link, EXP_DARWIN_ID_SIG);
+    if (!block || block->Size < sizeof(EXP_DARWIN_LINK))
+        return S_OK;
+    WCHAR descriptor[MAX_PATH], command[MAX_PATH];
+    LkCopy(descriptor, ((const EXP_DARWIN_LINK *)block->Data)->szwDarwinID, MAX_PATH);
+    descriptor[MAX_PATH - 1] = 0;
+    HMODULE advapi32 = LoadLibraryW(L"advapi32.dll");
+    COMMAND_LINE_FROM_DESCRIPTOR provide =
+        advapi32 ? (COMMAND_LINE_FROM_DESCRIPTOR)(void *)GetProcAddress(advapi32, "CommandLineFromMsiDescriptor")
+                 : nullptr;
+    DWORD length = MAX_PATH;
+    command[0] = 0;
+    DWORD error = provide ? provide(descriptor, command, &length) : ERROR_CALL_NOT_IMPLEMENTED;
+    HRESULT hr = error ? HRESULT_FROM_WIN32(error) : S_OK;
+    if (FAILED(hr)) {
+        if (error == ERROR_INSTALL_USEREXIT_ || error == ERROR_SUCCESS_REBOOT_INITIATED_ ||
+            error == ERROR_SUCCESS_REBOOT_REQUIRED_)
+            return HRESULT_FROM_WIN32(ERROR_CANCELLED);
+        if (flags & SLR_NO_UI)
+            return hr;
+        WCHAR text[MAX_PATH] = L"";
+        FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, error, 0, text, MAX_PATH,
+                       nullptr);
+        MessageBoxW(hwnd, text, nullptr, MB_OK | MB_ICONERROR);
+        return HRESULT_FROM_WIN32(ERROR_CANCELLED);
+    }
+    PathUnquoteSpacesW(command);
+    return set_target(link, nullptr, command);
+}
+
 /* only check target existence; shell search would require user interaction and tracking. */
 static HRESULT STDMETHODCALLTYPE w_resolve(IShellLinkW *This, HWND hwnd, DWORD flags)
 {
@@ -478,6 +519,8 @@ static HRESULT STDMETHODCALLTYPE w_resolve(IShellLinkW *This, HWND hwnd, DWORD f
             return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
         return S_OK;
     }
+    if (link->Flags & SLDF_HAS_DARWINID)
+        return resolve_darwin(link, hwnd, flags);
     if (!link->Pidl)
         return S_OK;
     if (!target_path(link, path))
@@ -509,6 +552,50 @@ static HRESULT STDMETHODCALLTYPE w_resolve(IShellLinkW *This, HWND hwnd, DWORD f
     return S_FALSE;
 }
 
+#define ERROR_INSTALL_USEREXIT_ 1602
+#define ERROR_SUCCESS_REBOOT_INITIATED_ 1641
+#define ERROR_SUCCESS_REBOOT_REQUIRED_ 3010
+#define INSTALLER_FOLDER L"::{9db1186e-40df-11d1-aa8c-00c04fb67863}:"
+#define INSTALLER_FOLDER_CHARS 41
+
+/*
+ * the descriptor of an advertised shortcut, up to the colon that ends it, is kept as a block of the link and flags it as
+ * one that the installer provides. one too long for the block is left half read, as windows leaves it.
+ */
+static LONG add_darwin_data(LINK *link, LPCWSTR *cursor)
+{
+    EXP_DARWIN_LINK darwin;
+    memset(&darwin, 0, sizeof(darwin));
+    ULONG count = 0;
+    for (LPCWSTR p = *cursor; *p && *p != L':'; p = *cursor) {
+        if (count >= MAX_PATH)
+            return ERROR_INSUFFICIENT_BUFFER;
+        darwin.szwDarwinID[count++] = *p;
+        (*cursor)++;
+    }
+    if (count >= MAX_PATH)
+        return ERROR_INSUFFICIENT_BUFFER;
+    darwin.dwSize = sizeof(darwin);
+    darwin.dwSignature = EXP_DARWIN_ID_SIG;
+    WideCharToMultiByte(CP_ACP, 0, darwin.szwDarwinID, -1, darwin.szDarwinID, MAX_PATH, nullptr, nullptr);
+    darwin.szDarwinID[MAX_PATH - 1] = 0;
+    link->Flags |= SLDF_HAS_DARWINID;
+    LkSetBlock(link, &darwin);
+    return 0;
+}
+
+/* 0 for a path of the installer's folder, which is taken in, 1 for any other, and an error when the descriptor is not. */
+static LONG check_special_link(LINK *link, LPCWSTR *cursor)
+{
+    LONG result = 1;
+    while (result >= 0 && (*cursor)[0] == L':' && (*cursor)[1] == L':' &&
+           !_wcsnicmp(*cursor, INSTALLER_FOLDER, INSTALLER_FOLDER_CHARS)) {
+        *cursor += INSTALLER_FOLDER_CHARS;
+        result = add_darwin_data(link, cursor);
+    }
+    return result;
+}
+
 /* a path contains environment variables if expansion changes it. */
 static HRESULT STDMETHODCALLTYPE w_set_path(IShellLinkW *This, LPCWSTR file)
 {
@@ -518,6 +605,9 @@ static HRESULT STDMETHODCALLTYPE w_set_path(IShellLinkW *This, LPCWSTR file)
         return E_INVALIDARG;
     if (link->Flags & (SLDF_HAS_DARWINID | SLDF_DISABLE_LINK_PATH_TRACKING))
         return S_FALSE;
+    /* a descriptor of the installer makes the link an advertised one, which has no path of its own to set. */
+    if (check_special_link(link, &file) == 0)
+        return S_OK;
     if (!SHExpandEnvironmentStringsW(file, expanded, MAX_PATH))
         return E_FAIL;
     if (wcscmp(expanded, file)) {

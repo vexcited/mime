@@ -80,6 +80,7 @@ EXPORTS
     CloseEventLog=_CloseEventLog@4
     CloseServiceHandle=_CloseServiceHandle@4
     CloseTrace=_CloseTrace@8
+    CommandLineFromMsiDescriptor=_CommandLineFromMsiDescriptor@12
     ControlService=_ControlService@12
     ControlServiceExA=_ControlServiceExA@16
     ControlServiceExW=_ControlServiceExW@16

@@ -255,6 +255,24 @@ typedef struct SHORTCUT {
     int Show;
 } SHORTCUT;
 
+/* an advertised shortcut has the installer provide its target, its own path being only the icon. */
+static BOOL advertised_link(IShellLinkW *link)
+{
+    IShellLinkDataList *list;
+    DWORD flags = 0;
+    if (FAILED(link->lpVtbl->QueryInterface(link, &IID_IShellLinkDataList, (void **)&list)))
+        return FALSE;
+    list->lpVtbl->GetFlags(list, &flags);
+    list->lpVtbl->Release(list);
+    return (flags & SLDF_HAS_DARWINID) != 0;
+}
+
+/* the installer checks the feature and component of an advertised shortcut, and repairs them if it must. */
+static BOOL resolve_advertised(IShellLinkW *link)
+{
+    return !advertised_link(link) || SUCCEEDED(link->lpVtbl->Resolve(link, nullptr, SLR_INVOKE_MSI | SLR_NO_UI));
+}
+
 /* reads a shortcut's target, arguments, folder and window state, in a multithreaded apartment if the thread has none. */
 static BOOL read_shortcut(LPCWSTR path, SHORTCUT *shortcut)
 {
@@ -275,8 +293,12 @@ static BOOL read_shortcut(LPCWSTR path, SHORTCUT *shortcut)
     BOOL ok = FALSE;
     IPersistFile *file = nullptr;
     if (SUCCEEDED(hr) && SUCCEEDED(link->lpVtbl->QueryInterface(link, &IID_IPersistFile, (void **)&file)) &&
-        SUCCEEDED(file->lpVtbl->Load(file, path, STGM_READ))) {
-        if (link->lpVtbl->GetPath(link, shortcut->Target, MAX_PATH, nullptr, 0) != S_OK || !shortcut->Target[0]) {
+        SUCCEEDED(file->lpVtbl->Load(file, path, STGM_READ)) && resolve_advertised(link)) {
+        if (advertised_link(link))
+            shortcut->Target[0] = 0;
+        else
+            link->lpVtbl->GetPath(link, shortcut->Target, MAX_PATH, nullptr, 0);
+        if (!shortcut->Target[0]) {
             PIDLIST_ABSOLUTE pidl = nullptr;
             if (SUCCEEDED(link->lpVtbl->GetIDList(link, &pidl)) && pidl &&
                 !ShPathFromIdList(pidl, shortcut->Target, MAX_PATH))

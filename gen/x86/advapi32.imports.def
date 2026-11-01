@@ -80,6 +80,7 @@ EXPORTS
     CloseEventLog@4
     CloseServiceHandle@4
     CloseTrace@8
+    CommandLineFromMsiDescriptor@12
     ControlService@12
     ControlServiceExA@16
     ControlServiceExW@16
