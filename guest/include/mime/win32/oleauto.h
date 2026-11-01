@@ -444,6 +444,13 @@ WINOLEAUTAPI HRESULT WINAPI VariantChangeTypeEx(VARIANTARG *dst, const VARIANTAR
 WINOLEAUTAPI HRESULT WINAPI VarParseNumFromStr(LPCOLESTR string, LCID lcid, ULONG flags, NUMPARSE *parse, BYTE *digits);
 WINOLEAUTAPI HRESULT WINAPI VarNumFromParseNum(NUMPARSE *parse, BYTE *digits, ULONG vtbits, VARIANT *out);
 WINOLEAUTAPI HRESULT WINAPI VarUdateFromDate(DATE date, ULONG flags, UDATE *udate);
+WINOLEAUTAPI HRESULT WINAPI VarFormat(LPVARIANT in, LPOLESTR picture, int first_day, int first_week, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarFormatDateTime(LPVARIANT in, int named, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarFormatNumber(LPVARIANT in, int digits, int lead, int parens, int group, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarFormatPercent(LPVARIANT in, int digits, int lead, int parens, int group, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarFormatCurrency(LPVARIANT in, int digits, int lead, int parens, int group, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarWeekdayName(int weekday, int abbreviate, int first_day, ULONG flags, BSTR *out);
+WINOLEAUTAPI HRESULT WINAPI VarMonthName(int month, int abbreviate, ULONG flags, BSTR *out);
 WINOLEAUTAPI HRESULT WINAPI VarDateFromUdate(UDATE *udate, ULONG flags, DATE *date);
 WINOLEAUTAPI HRESULT WINAPI VarDateFromUdateEx(UDATE *udate, LCID lcid, ULONG flags, DATE *date);
 WINOLEAUTAPI INT WINAPI VariantTimeToDosDateTime(DATE date, USHORT *dos_date, USHORT *dos_time);

@@ -63,6 +63,13 @@ EXPORTS
     RegisterTypeLib @163
     SafeArrayRedim @40
     VarDateFromStr @94
+    VarFormat @87
+    VarFormatDateTime @97
+    VarFormatNumber @107
+    VarFormatPercent @117
+    VarFormatCurrency @127
+    VarWeekdayName @128
+    VarMonthName @129
     VarCyFromStr @104
     VarBstrFromCy @113
     VarBstrFromDate @114
