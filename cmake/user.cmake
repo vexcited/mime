@@ -469,6 +469,37 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     endif()
 endforeach()
 
+# the script hosts, one source tree built twice: cscript.exe for the console and wscript.exe for windows.
+mime_glob(wscript_sources guest/wscript/*.c)
+foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
+    if(arch STREQUAL "x86" OR arch STREQUAL MIME_GUEST_ARCH)
+        foreach(host IN ITEMS wscript cscript)
+            if(host STREQUAL "cscript")
+                set(host_base 0x7FF6A6000000)
+                set(host_subsystem console)
+                set(host_options -DWSH_CONSOLE=1)
+            else()
+                set(host_base 0x7FF6A5000000)
+                set(host_subsystem windows)
+                set(host_options -DWSH_CONSOLE=0)
+            endif()
+            mime_objects(${arch}-${host} ${arch} SOURCES ${wscript_sources} INCLUDES guest/wscript OPTIONS ${host_options})
+            set(host_libs ${MIME_LIB_${arch}}/ntdll.lib ${MIME_LIB_${arch}}/kernel32.lib ${MIME_LIB_${arch}}/user32.lib
+                ${MIME_LIB_${arch}}/advapi32.lib ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib
+                ${MIME_LIB_${arch}}/shell32.lib ${MIME_LIB_${arch}}/version.lib)
+            set(host_flags /subsystem:${host_subsystem},10.0 /entry:entry /base:${host_base} /highentropyva /dynamicbase
+                /stack:0x100000,0x4000)
+            if(arch STREQUAL "x86")
+                set(host_flags /subsystem:${host_subsystem},6.0 /entry:entry /base:0x00400000 /dynamicbase
+                    /stack:0x100000,0x4000)
+            endif()
+            mime_link(${MIME_OUT_${arch}}/${host}.exe ${arch} OBJECTS ${arch}-${host} ${arch}-chkstk LIBS ${host_libs}
+                FLAGS ${host_flags} RESOURCE ${host}.exe RESOURCE_SCRIPT ${CMAKE_SOURCE_DIR}/guest/wscript/${host}_${arch}.rc
+                ROM ${MIME_ROM_${arch}}/${host}.exe GROUPS guest)
+        endforeach()
+    endif()
+endforeach()
+
 set(MIME_ACM_CODECS msg711:0x7FF360000000 imaadp32:0x7FF350000000 msadp32:0x7FF340000000 msgsm32:0x7FF330000000
     l3codeca:0x7FF3F0000000)
 foreach(arch IN LISTS MIME_USER_ARCHS)
