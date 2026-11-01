@@ -9,7 +9,7 @@
 #endif
 
 typedef HANDLE HBLUETOOTH_RADIO_FIND, HBLUETOOTH_DEVICE_FIND, HBLUETOOTH_CONTAINER_ELEMENT;
-typedef ULONGLONG BTH_ADDR;
+typedef ULONGLONG BTH_ADDR __attribute__((aligned(8)));
 
 typedef struct _BLUETOOTH_ADDRESS {
     union {
@@ -115,6 +115,9 @@ typedef struct _SDP_ELEMENT_DATA {
         } string, url, sequence, alternative;
     } data;
 } SDP_ELEMENT_DATA, *PSDP_ELEMENT_DATA;
+
+_Static_assert(sizeof(BLUETOOTH_DEVICE_INFO) == 560, "the size of the device record");
+_Static_assert(sizeof(BLUETOOTH_RADIO_INFO) == 520, "the size of the radio record");
 
 BLUETOOTHAPI HBLUETOOTH_RADIO_FIND WINAPI BluetoothFindFirstRadio(const BLUETOOTH_FIND_RADIO_PARAMS *params,
                                                                   HANDLE *radio);

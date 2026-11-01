@@ -232,7 +232,7 @@ mime_dll(winspool x86 BASE 0x55000000 FILE winspool.drv SOURCES ${sources}
     IMPORTS ntdll kernel32 user32 gdi32)
 
 mime_sources(sources bthprops x86)
-mime_dll(bthprops x86 BASE 0x1F000000 FILE bthprops.cpl SOURCES ${sources} OBJECTS x86-chkstk IMPORTS ${all_five})
+mime_dll(bthprops x86 BASE 0x1F000000 FILE bthprops.cpl SOURCES ${sources} OBJECTS x86-chkstk IMPORTS ${all_five} rpcrt4 ole32)
 
 mime_sources(sources msvcrt x86)
 mime_objects(x86-msvcrt x86 SOURCES ${sources} INCLUDES guest/msvcrt)

@@ -7,6 +7,8 @@
 
 #define ERROR_REVISION_MISMATCH 1306L
 
+DWORD service_error(void);
+
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved) { return TRUE; }
 
 /* ------------------------------------------------------------------ radios and devices */
@@ -83,16 +85,16 @@ DWORD WINAPI BluetoothGetDeviceInfo(HANDLE radio, BLUETOOTH_DEVICE_INFO *info)
     return ERROR_NOT_FOUND;
 }
 
-/* with no radio there is nothing to make discoverable or connectable. */
+/* both go through the bluetooth support service, which is not running. */
 BOOL WINAPI BluetoothEnableDiscovery(HANDLE radio, BOOL enabled)
 {
-    SetLastError(ERROR_NOT_FOUND);
+    SetLastError(service_error());
     return FALSE;
 }
 
 BOOL WINAPI BluetoothEnableIncomingConnections(HANDLE radio, BOOL enabled)
 {
-    SetLastError(ERROR_NOT_FOUND);
+    SetLastError(service_error());
     return FALSE;
 }
 
