@@ -411,6 +411,7 @@ LRESULT CALLBACK StatusProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         return CcCopyText((LPWSTR)lparam, (int)wparam, s->Parts[0].Text);
     case WM_GETTEXTLENGTH:
         return LOWORD(get_text(s, 0, nullptr, FALSE, TRUE));
+    case WM_DPICHANGED_BEFOREPARENT:
     case WM_THEMECHANGED:
         if (s->Theme)
             CloseThemeData(s->Theme);

@@ -429,6 +429,7 @@ LRESULT CALLBACK TrackbarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         }
         return 0;
     }
+    case WM_DPICHANGED_BEFOREPARENT:
     case WM_THEMECHANGED:
         if (t->Theme)
             CloseThemeData(t->Theme);

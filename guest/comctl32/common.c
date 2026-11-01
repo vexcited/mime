@@ -243,7 +243,7 @@ void CcDrawThemedEdge(HWND hwnd, HTHEME theme)
     HDC dc = GetWindowDC(hwnd);
     if (!dc)
         return;
-    UINT dpi = GetDpiForWindow(hwnd);
+    UINT dpi = GetWindowDPI(hwnd);
     int ex = GetSystemMetricsForDpi(SM_CXEDGE, dpi), ey = GetSystemMetricsForDpi(SM_CYEDGE, dpi);
     ExcludeClipRect(dc, w.left + ex, w.top + ey, w.right - ex, w.bottom - ey);
     DrawThemeBackground(theme, dc, 0, 0, &w, nullptr);
@@ -252,7 +252,7 @@ void CcDrawThemedEdge(HWND hwnd, HTHEME theme)
 
 int CcScale(HWND hwnd, int value)
 {
-    UINT dpi = hwnd ? GetDpiForWindow(hwnd) : 96;
+    UINT dpi = hwnd ? GetWindowDPI(hwnd) : 96;
     if (!dpi)
         dpi = 96;
     return MulDiv(value, (int)dpi, 96);

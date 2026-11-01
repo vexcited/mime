@@ -580,6 +580,7 @@ typedef struct W32THREAD {
     HWND TsfSink;          /* text services window for host input methods, ime.c. */
     BOOLEAN AltAlone;      /* Alt or F10 went down and no other key or button has since, for the menu bar. */
     ULONG DpiOverride;     /* the awareness set for the thread plus one, 0 to follow the process. */
+    ULONG DpiHosting;      /* the DPI hosting behavior of the thread, 0 default and 1 mixed. */
 } W32THREAD;
 
 /* caller job restrictions, JOB_OBJECT_UILIMIT_*. */
@@ -673,6 +674,8 @@ typedef struct WND_CLASS {
 #define WNDF_FULLSCREEN 0x20000
 #define WNDF_DROPTARGET 0x80000    /* takes drops through a handler of its process, dnd.c. */
 #define WNDF_APP_FULLSCREEN 0x40000 /* the program made it cover the screen before the host made it fullscreen. */
+#define WNDF_DPI_CHILDREN 0x100000 /* the dpi change reaches the children, per monitor v2 windows have it from the start. */
+#define WNDF_NCDPI 0x200000        /* the frame is drawn at the dpi of the window, not the one of the system. */
 
 /* caption buttons for hot and pressed tracking. */
 enum {
@@ -725,6 +728,9 @@ typedef struct WND {
     HICON IconSmall;
     UINT Dpi;
     UCHAR Awareness;  /* the DPI awareness it was created with, its rectangles are in that awareness' coordinates. */
+    UINT MonitorDpi;  /* the dpi of the monitor the window was last on, which is the one it follows when it moves. */
+    UCHAR Hosting;    /* the DPI hosting behavior of its thread when it was created, 1 is mixed. */
+    UCHAR ControlDpi; /* DCDC_*, what a dialog does to this control when the dpi changes. */
     POINT MinTrack, MaxTrack; /* from the last WM_GETMINMAXINFO, 0 until there was one. */
     HICON HostIcon;
     ULONG HostStateRequest;
@@ -816,6 +822,13 @@ RECT DpiWorkArea(ULONG awareness);
 void DpiProcessAwarenessChanged(W32PROCESS *p, ULONG old);
 UINT DpiProcessSetAwareness(W32PROCESS *p, ULONG awareness, BOOLEAN force);
 ULONG DpiThreadSetContext(W32THREAD *t, ULONG context);
+BOOLEAN DpiChildIsolated(const WND *parent, ULONG awareness);
+BOOLEAN WndBroadcastsDpi(const WND *w);
+BOOLEAN DpiChildMessageEnabled(WND *w);
+UINT DpiWindowDpi(WND *w);
+void WndNotifyDpiChanged(WND *w, UINT old, const RECT *suggested);
+BOOLEAN WndForceDpi(WND *w, UINT dpi);
+UINT WndFrameDpi(WND *w);
 void WndSetText(WND *w, PCWSTR text, ULONG chars);
 
 /* frame. */

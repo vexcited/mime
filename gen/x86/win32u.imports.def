@@ -159,6 +159,7 @@ EXPORTS
     NtUserEnumClipboardFormats@4
     NtUserEnumDisplaySettings@16
     NtUserFindWindowEx@20
+    NtUserForceWindowToDpiForTest@8
     NtUserGetAncestor@8
     NtUserGetAsyncKeyState@4
     NtUserGetClassInfoEx@20

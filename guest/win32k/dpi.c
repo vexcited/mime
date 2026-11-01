@@ -95,7 +95,7 @@ static void convert_tree(WND *w, ULONG from, ULONG to, UINT dpi)
                           DpiScale(w->MaxTrack.y, DpiScaleOf(from), DpiScaleOf(to))};
     RgnClear(&w->Update);
     w->Awareness = (UCHAR)to;
-    w->Dpi = dpi;
+    w->Dpi = w->MonitorDpi = dpi;
     for (WND *c = w->FirstChild; c; c = c->Next)
         convert_tree(c, from, to, dpi);
 }
@@ -149,4 +149,34 @@ ULONG DpiThreadSetContext(W32THREAD *t, ULONG context)
     ULONG old = t->DpiOverride ? t->DpiOverride - 1 : t->Process->DpiAwareness;
     t->DpiOverride = context;
     return old;
+}
+
+/* a child takes the awareness of its thread, not the one of its parent, when the parent allows mixed hosting. */
+BOOLEAN DpiChildIsolated(const WND *parent, ULONG awareness)
+{
+    if (!parent || parent->Hosting != 1)
+        return FALSE;
+    return parent->Awareness >= DPI_AWARE_PER_MONITOR || awareness < DPI_AWARE_PER_MONITOR;
+}
+
+/* whether the window hears about the dpi of its tree: the top level one does, a child as its top level window allows. */
+BOOLEAN DpiChildMessageEnabled(WND *w)
+{
+    if (w->Awareness == DPI_AWARE_PER_MONITOR_V2)
+        return TRUE;
+    if (w->Awareness != DPI_AWARE_PER_MONITOR)
+        return FALSE;
+    WND *top = WndTopLevel(w);
+    return top == w || (top && (top->Flags & WNDF_DPI_CHILDREN));
+}
+
+/*
+ * the dpi controls work at. an unaware window is at 96 and a system aware one at the system dpi, a per monitor window
+ * follows its monitor, but a per monitor window that does not tell its children stays at the dpi of the system.
+ */
+UINT DpiWindowDpi(WND *w)
+{
+    if (w->Awareness < DPI_AWARE_PER_MONITOR)
+        return DpiScaleOf(w->Awareness);
+    return DpiChildMessageEnabled(w) ? WndGetDpi(w) : W32SystemDpi();
 }

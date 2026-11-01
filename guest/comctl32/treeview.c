@@ -1042,6 +1042,7 @@ LRESULT CALLBACK TreeViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         relayout(tv);
         return 0;
     }
+    case WM_DPICHANGED_BEFOREPARENT:
     case WM_THEMECHANGED:
         if (tv->Theme)
             CloseThemeData(tv->Theme);

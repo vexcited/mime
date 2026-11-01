@@ -206,8 +206,8 @@ EXPORTS
     FreeDDElParam=_FreeDDElParam@8
     GetActiveWindow=_GetActiveWindow@0
     GetAncestor=_GetAncestor@8
-    GetAppCompatFlags2=_GetAppCompatFlags2@4
     GetAppCompatFlags=_GetAppCompatFlags@4
+    GetAppCompatFlags2=_GetAppCompatFlags2@4
     GetAsyncKeyState=_GetAsyncKeyState@4
     GetAwarenessFromDpiAwarenessContext=_GetAwarenessFromDpiAwarenessContext@4
     GetCapture=_GetCapture@0
@@ -241,6 +241,8 @@ EXPORTS
     GetDCEx=_GetDCEx@12
     GetDesktopWindow=_GetDesktopWindow@0
     GetDialogBaseUnits=_GetDialogBaseUnits@0
+    GetDialogControlDpiChangeBehavior=_GetDialogControlDpiChangeBehavior@4
+    GetDialogDpiChangeBehavior=_GetDialogDpiChangeBehavior@4
     GetDisplayAutoRotationPreferences=_GetDisplayAutoRotationPreferences@4
     GetDisplayConfigBufferSizes=_GetDisplayConfigBufferSizes@12
     GetDlgCtrlID=_GetDlgCtrlID@4
@@ -337,6 +339,7 @@ EXPORTS
     GetTabbedTextExtentW=_GetTabbedTextExtentW@20
     GetThreadDesktop=_GetThreadDesktop@4
     GetThreadDpiAwarenessContext=_GetThreadDpiAwarenessContext@0
+    GetThreadDpiHostingBehavior=_GetThreadDpiHostingBehavior@0
     GetTopWindow=_GetTopWindow@4
     GetTouchInputInfo=_GetTouchInputInfo@16
     GetUnpredictedMessagePos=_GetUnpredictedMessagePos@0
@@ -349,8 +352,10 @@ EXPORTS
     GetWindow=_GetWindow@8
     GetWindowContextHelpId=_GetWindowContextHelpId@4
     GetWindowDC=_GetWindowDC@4
+    GetWindowDPI=_GetWindowDPI@4
     GetWindowDisplayAffinity=_GetWindowDisplayAffinity@8
     GetWindowDpiAwarenessContext=_GetWindowDpiAwarenessContext@4
+    GetWindowDpiHostingBehavior=_GetWindowDpiHostingBehavior@4
     GetWindowInfo=_GetWindowInfo@8
     GetWindowLongA=_GetWindowLongA@8
     GetWindowLongPtrA=_GetWindowLongPtrA@8
@@ -552,6 +557,8 @@ EXPORTS
     SetCoalescableTimer=_SetCoalescableTimer@20
     SetCursor=_SetCursor@4
     SetCursorPos=_SetCursorPos@8
+    SetDialogControlDpiChangeBehavior=_SetDialogControlDpiChangeBehavior@12
+    SetDialogDpiChangeBehavior=_SetDialogDpiChangeBehavior@12
     SetDisplayAutoRotationPreferences=_SetDisplayAutoRotationPreferences@4
     SetDlgItemInt=_SetDlgItemInt@16
     SetDlgItemTextA=_SetDlgItemTextA@12
@@ -585,6 +592,7 @@ EXPORTS
     SetSysColors=_SetSysColors@12
     SetThreadDesktop=_SetThreadDesktop@4
     SetThreadDpiAwarenessContext=_SetThreadDpiAwarenessContext@4
+    SetThreadDpiHostingBehavior=_SetThreadDpiHostingBehavior@4
     SetTimer=_SetTimer@16
     SetUserObjectInformationA=_SetUserObjectInformationA@16
     SetUserObjectInformationW=_SetUserObjectInformationW@16

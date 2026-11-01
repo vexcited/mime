@@ -17,11 +17,25 @@ typedef struct DIALOG {
     BOOL Ended;
     INT_PTR Result;
     BOOL Ansi;
+    WORD PointSize;      /* of the font of the template, 0x7FFF for the font of message boxes. */
+    BOOL Scaled;         /* the font comes from the template, so a change of dpi scales the dialog. */
+    UINT FontDpi;        /* the dpi of the font in use, or of the one made ahead of a change. */
+    HFONT NextFont;      /* made for a dpi the dialog is about to move to. */
+    LONG NextBaseX, NextBaseY;
+    UINT Behavior;       /* DDC_* */
 } DIALOG;
 
 static DIALOG *get_dialog(HWND hwnd)
 {
     return (DIALOG *)GetWindowLongPtrW(hwnd, DWLP_MIME);
+}
+
+/* a window the dialog manager made, which a custom class of dialogs can be as well. */
+static DIALOG *dialog_of(HWND hwnd)
+{
+    if (!hwnd || !IsWindow(hwnd) || !NtUserCallHwnd(hwnd, MIME_HWND_ISDIALOG))
+        return nullptr;
+    return get_dialog(hwnd);
 }
 
 /* ------------------------------------------------------------------ templates */
@@ -305,6 +319,204 @@ WINUSERAPI HWND WINAPI GetNextDlgGroupItem(HWND dialog, HWND control, BOOL previ
     return control;
 }
 
+/* ------------------------------------------------------------------ dialogs and the dpi */
+
+/* the size of a window of the style at a dpi, once its frame and bars are added to a client area. */
+static void expand_by_frame(HWND hwnd, UINT dpi, RECT *r)
+{
+    DWORD style = (DWORD)GetWindowLongW(hwnd, GWL_STYLE), ex = (DWORD)GetWindowLongW(hwnd, GWL_EXSTYLE);
+    AdjustWindowRectExForDpi(r, style, GetMenu(hwnd) != nullptr, ex, dpi);
+    if (style & WS_HSCROLL)
+        r->bottom += GetSystemMetricsForDpi(SM_CYHSCROLL, dpi);
+    if (style & WS_VSCROLL)
+        r->right += GetSystemMetricsForDpi(SM_CXVSCROLL, dpi);
+}
+
+static void to_dialog_units(RECT *r, LONG bx, LONG by)
+{
+    RECT in = *r;
+    r->left = UserMulDiv(in.left, 4, bx);
+    r->top = UserMulDiv(in.top, 8, by);
+    r->right = r->left + UserMulDiv(in.right - in.left, 4, bx);
+    r->bottom = r->top + UserMulDiv(in.bottom - in.top, 8, by);
+}
+
+static void from_dialog_units(RECT *r, LONG bx, LONG by)
+{
+    RECT in = *r;
+    r->left = UserMulDiv(in.left, bx, 4);
+    r->top = UserMulDiv(in.top, by, 8);
+    r->right = r->left + UserMulDiv(in.right - in.left, bx, 4);
+    r->bottom = r->top + UserMulDiv(in.bottom - in.top, by, 8);
+}
+
+/* the font a dialog gets at a dpi, kept until the dialog moves there. */
+static void make_next_font(HWND hwnd, DIALOG *d, UINT dpi)
+{
+    if (d->NextFont) {
+        DeleteObject(d->NextFont);
+        d->NextFont = nullptr;
+        d->NextBaseX = d->NextBaseY = 0;
+        d->FontDpi = 0;
+    }
+    HFONT font = nullptr;
+    if (d->PointSize == 0x7FFF) {
+        font = UserGetMessageBoxFont(dpi);
+    } else {
+        LOGFONTW lf;
+        if (GetObjectW(d->Font, sizeof(lf), &lf)) {
+            lf.lfHeight = -(LONG)(((LONG)d->PointSize * (LONG)dpi + 36) / 72);
+            font = CreateFontIndirectW(&lf);
+        }
+    }
+    if (!font)
+        return;
+    d->NextFont = font;
+    d->FontDpi = dpi;
+    HDC dc = GetDC(hwnd);
+    if (dc) {
+        HGDIOBJ old = SelectObject(dc, font);
+        d->NextBaseX = GdiGetCharDimensions(dc, nullptr, &d->NextBaseY);
+        SelectObject(dc, old);
+        ReleaseDC(hwnd, dc);
+    }
+    if (!d->NextBaseX) {
+        LONG units = GetDialogBaseUnits();
+        d->NextBaseX = LOWORD(units);
+        d->NextBaseY = HIWORD(units);
+    }
+}
+
+/*
+ * the size a dialog has at a dpi: its client area in dialog units of the font it has now, in pixels of the font it
+ * would have there, and the frame of the dpi around it. false when the dialog does not scale.
+ */
+static BOOL dialog_scaled_size(HWND hwnd, DIALOG *d, UINT dpi, SIZE *size)
+{
+    if (!d->Scaled || !d->Font || (d->Behavior & DDC_DISABLE_ALL))
+        return FALSE;
+    RECT frame = {};
+    expand_by_frame(hwnd, GetDpiForWindow(hwnd), &frame);
+    RECT client = {0, 0, frame.left + size->cx - frame.right, frame.top + size->cy - frame.bottom};
+    if (d->FontDpi != dpi)
+        make_next_font(hwnd, d, dpi);
+    if (d->NextFont) {
+        to_dialog_units(&client, d->BaseX, d->BaseY);
+        from_dialog_units(&client, d->NextBaseX, d->NextBaseY);
+        expand_by_frame(hwnd, dpi, &client);
+        size->cx = client.right - client.left;
+        size->cy = client.bottom - client.top;
+    }
+    return TRUE;
+}
+
+static void set_font_of_children(HWND dialog, HFONT font)
+{
+    for (HWND c = GetWindow(dialog, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT))
+        if (!(NtUserCallHwnd(c, MIME_HWND_GETCONTROLDPIBEHAVIOR) & DCDC_DISABLE_FONT_UPDATE))
+            SendMessageW(c, WM_SETFONT, (WPARAM)font, 1);
+}
+
+static void reposition_children(HDWP hdwp, HWND dialog, DIALOG *d, LONG old_x, LONG old_y)
+{
+    if (d->Behavior & DDC_DISABLE_CONTROL_RELAYOUT)
+        return;
+    for (HWND c = GetWindow(dialog, GW_CHILD); c && hdwp; c = GetWindow(c, GW_HWNDNEXT)) {
+        if (NtUserCallHwnd(c, MIME_HWND_GETCONTROLDPIBEHAVIOR) & DCDC_DISABLE_RELAYOUT)
+            continue;
+        RECT r;
+        GetWindowRect(c, &r);
+        MapWindowPoints(nullptr, dialog, (POINT *)&r, 2);
+        to_dialog_units(&r, old_x, old_y);
+        from_dialog_units(&r, d->BaseX, d->BaseY);
+        hdwp = DeferWindowPos(hdwp, c, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top,
+                              SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    if (hdwp)
+        EndDeferWindowPos(hdwp);
+}
+
+/* the dialog follows a change of the dpi it is at: a new font, its controls moved to where the font puts them. */
+static void dialog_dpi_changed(HWND hwnd, DIALOG *d, UINT dpi, const RECT *rect)
+{
+    if (!d->Scaled || !d->Font || (d->Behavior & DDC_DISABLE_ALL))
+        return;
+    RECT now;
+    GetWindowRect(hwnd, &now);
+    SIZE size = {now.right - now.left, now.bottom - now.top};
+    if (d->FontDpi == dpi && rect) {
+        size.cx = rect->right - rect->left;
+        size.cy = rect->bottom - rect->top;
+    } else {
+        SIZE before = size;
+        dialog_scaled_size(hwnd, d, dpi, &size);
+        if (size.cx == before.cx && size.cy == before.cy)
+            return;
+    }
+    if (!d->NextFont)
+        return;
+    LONG old_x = d->BaseX, old_y = d->BaseY;
+    d->BaseX = d->NextBaseX;
+    d->BaseY = d->NextBaseY;
+    if (d->OwnsFont)
+        DeleteObject(d->Font);
+    d->Font = d->NextFont;
+    d->OwnsFont = TRUE;
+    d->NextFont = nullptr;
+    d->NextBaseX = d->NextBaseY = 0;
+    set_font_of_children(hwnd, d->Font);
+    reposition_children(BeginDeferWindowPos(1), hwnd, d, old_x, old_y);
+    if (!(GetWindowLongW(hwnd, GWL_STYLE) & WS_CHILD) && !(d->Behavior & DDC_DISABLE_RESIZE) && rect)
+        SetWindowPos(hwnd, nullptr, rect->left, rect->top, size.cx, size.cy,
+                     SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    InvalidateRect(hwnd, nullptr, TRUE);
+}
+
+WINUSERAPI BOOL WINAPI SetDialogDpiChangeBehavior(HWND hwnd, DIALOG_DPI_CHANGE_BEHAVIORS mask,
+                                                  DIALOG_DPI_CHANGE_BEHAVIORS values)
+{
+    if (!hwnd || !IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    DWORD process = 0;
+    GetWindowThreadProcessId(hwnd, &process);
+    if (process != GetCurrentProcessId()) {
+        SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+    DIALOG *d = dialog_of(hwnd);
+    if (!d)
+        return FALSE;
+    UINT bits = (UINT)mask & 7;
+    d->Behavior = ((UINT)values & bits) | (d->Behavior & ~bits);
+    return TRUE;
+}
+
+WINUSERAPI DIALOG_DPI_CHANGE_BEHAVIORS WINAPI GetDialogDpiChangeBehavior(HWND hwnd)
+{
+    DIALOG *d = dialog_of(hwnd);
+    return d ? (DIALOG_DPI_CHANGE_BEHAVIORS)d->Behavior : DDC_DEFAULT;
+}
+
+WINUSERAPI BOOL WINAPI SetDialogControlDpiChangeBehavior(HWND hwnd, DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS mask,
+                                                         DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS values)
+{
+    if (!hwnd || !IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    return (BOOL)NtUserCallHwndParam(hwnd, ((ULONG_PTR)values << 8) | ((ULONG_PTR)mask & 0xFF),
+                                     MIME_HWNDPARAM_CONTROLDPIBEHAVIOR);
+}
+
+WINUSERAPI DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS WINAPI GetDialogControlDpiChangeBehavior(HWND hwnd)
+{
+    if (!hwnd || !IsWindow(hwnd))
+        return DCDC_DEFAULT;
+    return (DIALOG_CONTROL_DPI_CHANGE_BEHAVIORS)NtUserCallHwnd(hwnd, MIME_HWND_GETCONTROLDPIBEHAVIOR);
+}
+
 /* ------------------------------------------------------------------ the dialog window procedure */
 
 static BOOL returns_value_directly(UINT msg)
@@ -409,6 +621,14 @@ static LRESULT default_dialog(HWND hwnd, DIALOG *d, UINT msg, WPARAM wparam, LPA
         return DefWindowProcW(hwnd, WM_UPDATEUISTATE, wparam, lparam);
     case WM_GETDLGCODE:
         return 0;
+    case WM_GETDPISCALEDSIZE:
+        if (wparam < 96 || wparam > 96 + 0x180) {
+            SetLastError(ERROR_INVALID_PARAMETER);
+            return 0;
+        }
+        if (!d || (d->Behavior & DDC_DISABLE_RESIZE))
+            return 0;
+        return dialog_scaled_size(hwnd, d, (UINT)wparam, (SIZE *)lparam);
     }
     return DefWindowProcW(hwnd, msg, wparam, lparam);
 }
@@ -417,6 +637,9 @@ WINUSERAPI LRESULT WINAPI DefDlgProcW(HWND hwnd, UINT msg, WPARAM wparam, LPARAM
 {
     DIALOG *d = get_dialog(hwnd);
     DLGPROC proc = (DLGPROC)GetWindowLongPtrW(hwnd, DWLP_DLGPROC);
+    /* the dialog follows the dpi before its procedure hears of it. */
+    if (d && (msg == WM_DPICHANGED || msg == WM_DPICHANGED_BEFOREPARENT))
+        dialog_dpi_changed(hwnd, d, GetWindowDPI(hwnd), msg == WM_DPICHANGED ? (const RECT *)lparam : nullptr);
     if (proc) {
         SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, 0);
         INT_PTR r = d && d->Ansi ? (INT_PTR)UserCallProc((WNDPROC)proc, TRUE, hwnd, msg, wparam, lparam)
@@ -491,6 +714,9 @@ HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGP
     if (t.Style & (DS_SETFONT | DS_SHELLFONT)) {
         d->Font = create_dialog_font(&t, dpi);
         d->OwnsFont = d->Font != nullptr;
+        d->PointSize = t.PointSize;
+        d->Scaled = d->OwnsFont;
+        d->FontDpi = dpi;
     }
     if (d->Font) {
         compute_base_units(d->Font, &d->BaseX, &d->BaseY);

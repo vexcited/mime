@@ -117,7 +117,7 @@ void FrameGetVisibleRect(WND *w, RECT *r)
     if (!is_top_frame(w->Style))
         return;
     FRAME_METRICS m;
-    FrameGetMetrics(w->Style, w->ExStyle, WndGetDpi(w), &m);
+    FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
     if (w->Style & WS_MAXIMIZE) {
         /* the frame of a maximized window lies outside the work area. */
         *r = (RECT){m.Border, m.Border, width - m.Border, height - m.Border};
@@ -145,7 +145,7 @@ void FrameGetButtonRect(WND *w, int button, RECT *r)
     if (!FrameHasCaption(w->Style, w->ExStyle) || !(w->Style & WS_SYSMENU))
         return;
     FRAME_METRICS m;
-    FrameGetMetrics(w->Style, w->ExStyle, WndGetDpi(w), &m);
+    FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
     RECT vis;
     FrameGetVisibleRect(w, &vis);
     LONG top = vis.top;
@@ -210,12 +210,12 @@ ULONG FrameGetDragRects(WND *w, RECT *rects, ULONG max)
     if (!max || !FrameHasCaption(w->Style, w->ExStyle) || !is_top_frame(w->Style))
         return 0;
     FRAME_METRICS m;
-    FrameGetMetrics(w->Style, w->ExStyle, WndGetDpi(w), &m);
+    FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
     RECT vis;
     FrameGetVisibleRect(w, &vis);
     LONG top = vis.top;
     if ((w->Style & WS_THICKFRAME) && !(w->Style & WS_MAXIMIZE))
-        top += scale(4, WndGetDpi(w)); /* leave the top resize strip to the window. */
+        top += scale(4, WndFrameDpi(w)); /* leave the top resize strip to the window. */
     rects[0] = (RECT){vis.left, top, caption_buttons_left(w), m.Top};
     return RectEmpty(&rects[0]) ? 0 : 1;
 }
@@ -233,7 +233,7 @@ LRESULT FrameHitTest(WND *w, POINT pt)
     RECT bar;
     if (!(w->Style & WS_CHILD) && MenuBarArea(w, &bar) && RectContains(&bar, pt.x, pt.y))
         return HTMENU;
-    UINT dpi = WndGetDpi(w);
+    UINT dpi = WndFrameDpi(w);
     POINT wp = {pt.x - w->WindowRect.left, pt.y - w->WindowRect.top};
     LONG width = w->WindowRect.right - w->WindowRect.left;
     LONG height = w->WindowRect.bottom - w->WindowRect.top;
@@ -731,7 +731,7 @@ void FramePaint(WND *w)
     if (!top || !top->Surface || !WndIsVisible(w))
         return;
     SURFACE *s = top->Surface;
-    UINT dpi = WndGetDpi(w);
+    UINT dpi = WndFrameDpi(w);
     POINT origin = {w->WindowRect.left - top->WindowRect.left, w->WindowRect.top - top->WindowRect.top};
 
     REGION clip;
@@ -823,7 +823,7 @@ void FrameBleed(WND *w)
     if (!s || !WndIsTopLevel(w))
         return;
     FRAME_METRICS m;
-    FrameGetMetrics(w->Style, w->ExStyle, WndGetDpi(w), &m);
+    FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
     if (!m.VisibleInset)
         return;
     RECT vis;

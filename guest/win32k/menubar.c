@@ -163,7 +163,7 @@ static void item_size(WND *w, const MENU_ITEM *it, UINT dpi, FONT_INSTANCE *fi, 
 
 static void layout(WND *w, MENU *m, LONG x, LONG y, LONG width)
 {
-    UINT dpi = WndGetDpi(w);
+    UINT dpi = WndFrameDpi(w);
     MENUBAR *bar = w->MenuBar;
     if (!bar) {
         bar = W32Alloc(sizeof(MENUBAR));
@@ -243,7 +243,7 @@ static MENUBAR *current_bar(WND *w, MENU **menu)
     MENUBAR *bar = w->MenuBar;
     if (!m || !bar || !w->MenuBarHeight || bar->Menu != (HMENU)w->Id)
         return nullptr;
-    if (bar->Serial != m->Serial || bar->Dpi != WndGetDpi(w)) {
+    if (bar->Serial != m->Serial || bar->Dpi != WndFrameDpi(w)) {
         LONG rows = bar->Rows;
         layout(w, m, bar->X, bar->Y, bar->Width);
         bar = w->MenuBar;

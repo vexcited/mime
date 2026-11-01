@@ -206,8 +206,8 @@ EXPORTS
     FreeDDElParam@8
     GetActiveWindow@0
     GetAncestor@8
-    GetAppCompatFlags2@4
     GetAppCompatFlags@4
+    GetAppCompatFlags2@4
     GetAsyncKeyState@4
     GetAwarenessFromDpiAwarenessContext@4
     GetCapture@0
@@ -241,6 +241,8 @@ EXPORTS
     GetDCEx@12
     GetDesktopWindow@0
     GetDialogBaseUnits@0
+    GetDialogControlDpiChangeBehavior@4
+    GetDialogDpiChangeBehavior@4
     GetDisplayAutoRotationPreferences@4
     GetDisplayConfigBufferSizes@12
     GetDlgCtrlID@4
@@ -335,6 +337,7 @@ EXPORTS
     GetTabbedTextExtentW@20
     GetThreadDesktop@4
     GetThreadDpiAwarenessContext@0
+    GetThreadDpiHostingBehavior@0
     GetTopWindow@4
     GetTouchInputInfo@16
     GetUnpredictedMessagePos@0
@@ -347,8 +350,10 @@ EXPORTS
     GetWindow@8
     GetWindowContextHelpId@4
     GetWindowDC@4
+    GetWindowDPI@4
     GetWindowDisplayAffinity@8
     GetWindowDpiAwarenessContext@4
+    GetWindowDpiHostingBehavior@4
     GetWindowInfo@8
     GetWindowLongA@8
     GetWindowLongPtrA@8
@@ -550,6 +555,8 @@ EXPORTS
     SetCoalescableTimer@20
     SetCursor@4
     SetCursorPos@8
+    SetDialogControlDpiChangeBehavior@12
+    SetDialogDpiChangeBehavior@12
     SetDisplayAutoRotationPreferences@4
     SetDlgItemInt@16
     SetDlgItemTextA@12
@@ -583,6 +590,7 @@ EXPORTS
     SetSysColors@12
     SetThreadDesktop@4
     SetThreadDpiAwarenessContext@4
+    SetThreadDpiHostingBehavior@4
     SetTimer@16
     SetUserObjectInformationA@16
     SetUserObjectInformationW@16

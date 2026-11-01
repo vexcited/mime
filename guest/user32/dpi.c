@@ -296,18 +296,53 @@ WINUSERAPI BOOL WINAPI IsProcessDPIAware(void)
     return NtUserCallOneParam(0, MIME_ONEPARAM_GETPROCESSDPIAWARENESS) != 0;
 }
 
-/* a window scales its frame itself only when its program is per monitor aware, and only while it is created. */
+/* a per monitor window scales its frame itself, a per monitor v2 one always does. */
 WINUSERAPI BOOL WINAPI EnableNonClientDpiScaling(HWND hwnd)
 {
     if (!IsWindow(hwnd)) {
         SetLastError(ERROR_INVALID_WINDOW_HANDLE);
         return FALSE;
     }
-    if (NtUserCallHwnd(hwnd, MIME_HWND_GETDPIAWARENESS) < 2) {
+    if (!NtUserCallHwndParam(hwnd, 0, MIME_HWNDPARAM_ENABLENCDPI)) {
         SetLastError(ERROR_ACCESS_DENIED);
         return FALSE;
     }
     return TRUE;
+}
+
+/* the dpi the controls of a window work at, which is the dpi of the system for a per monitor window not told of it. */
+WINUSERAPI UINT WINAPI GetWindowDPI(HWND hwnd)
+{
+    if (!IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    return (UINT)NtUserCallHwnd(hwnd, MIME_HWND_GETWINDOWDPI);
+}
+
+/* DPI_HOSTING_BEHAVIOR_DEFAULT or DPI_HOSTING_BEHAVIOR_MIXED, -1 when it is none. */
+WINUSERAPI DPI_HOSTING_BEHAVIOR WINAPI SetThreadDpiHostingBehavior(DPI_HOSTING_BEHAVIOR behavior)
+{
+    if ((UINT)behavior > 1) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return DPI_HOSTING_BEHAVIOR_INVALID;
+    }
+    return (DPI_HOSTING_BEHAVIOR)NtUserCallOneParam((ULONG)behavior, MIME_ONEPARAM_SETTHREADDPIHOSTING);
+}
+
+WINUSERAPI DPI_HOSTING_BEHAVIOR WINAPI GetThreadDpiHostingBehavior(void)
+{
+    return (DPI_HOSTING_BEHAVIOR)NtUserCallOneParam(0, MIME_ONEPARAM_GETTHREADDPIHOSTING);
+}
+
+/* the behavior its thread had when the window was created. */
+WINUSERAPI DPI_HOSTING_BEHAVIOR WINAPI GetWindowDpiHostingBehavior(HWND hwnd)
+{
+    if (!hwnd || !IsWindow(hwnd)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return DPI_HOSTING_BEHAVIOR_INVALID;
+    }
+    return (DPI_HOSTING_BEHAVIOR)NtUserCallHwnd(hwnd, MIME_HWND_GETDPIHOSTING);
 }
 
 static BOOL convert_point(HWND hwnd, LPPOINT point, ULONG op, BOOL window_optional)

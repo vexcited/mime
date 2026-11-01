@@ -473,7 +473,7 @@ LRESULT CALLBACK AnimateProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         a->Id = (UINT)(UINT_PTR)cs->hMenu;
         a->Style = cs->style;
         a->FirstPaint = TRUE;
-        a->Dpi = (int)GetDpiForWindow(hwnd);
+        a->Dpi = (int)GetWindowDPI(hwnd);
         if (!a->Dpi)
             a->Dpi = 96;
         SetWindowLongPtrW(hwnd, 0, (LONG_PTR)a);
@@ -512,6 +512,14 @@ LRESULT CALLBACK AnimateProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     case CCM_DPISCALE_:
         a->Scaled = (wparam & 1) != 0;
         return 1;
+    case WM_DPICHANGED_BEFOREPARENT: {
+        int dpi = (int)GetWindowDPI(hwnd);
+        if (dpi && dpi != a->Dpi) {
+            a->Dpi = dpi;
+            InvalidateRect(hwnd, nullptr, TRUE);
+        }
+        return 0;
+    }
     case WM_SIZE:
         if ((a->Style & ACS_CENTER) && a->Clip) {
             int w = a->Box.right - a->Box.left, h = a->Box.bottom - a->Box.top;

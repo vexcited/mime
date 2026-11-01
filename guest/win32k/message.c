@@ -1687,7 +1687,7 @@ static ULONG system_cursor_for_hit(LONG hit)
 
 static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN user)
 {
-    UINT dpi = WndGetDpi(w);
+    UINT dpi = WndFrameDpi(w);
     switch (msg) {
     case WM_NCCREATE:
         return TRUE;
@@ -1982,13 +1982,6 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         if (w->Thread && w->Thread->Capture == WndHandle(w))
             InputSetCapture(w->Thread, nullptr, 0);
         return 0;
-
-    case WM_DPICHANGED: {
-        RECT r;
-        if (read_lparam(&r, lparam, sizeof(r), user))
-            WndSetPos(w, nullptr, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE);
-        return 0;
-    }
 
     case WM_MOUSEWHEEL:
     case WM_MOUSEHWHEEL:

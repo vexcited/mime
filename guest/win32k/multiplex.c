@@ -126,6 +126,18 @@ ULONG_PTR NTAPI NtUserCallOneParam(ULONG_PTR param, ULONG routine)
     case MIME_ONEPARAM_GETTHREADDPICONTEXT:
         r = t ? (t->DpiOverride ? t->DpiOverride - 1 : t->Process->DpiAwareness) : 0;
         break;
+    case MIME_ONEPARAM_SETTHREADDPIHOSTING:
+        /* only the two behaviors there are. */
+        if (!t || (ULONG)param > 1) {
+            r = (ULONG)-1;
+        } else {
+            r = t->DpiHosting;
+            t->DpiHosting = (ULONG)param;
+        }
+        break;
+    case MIME_ONEPARAM_GETTHREADDPIHOSTING:
+        r = t ? t->DpiHosting : 0;
+        break;
     case MIME_ONEPARAM_REPLYMESSAGE:
         r = MsgReply(t, (LRESULT)param);
         break;

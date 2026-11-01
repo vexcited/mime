@@ -111,6 +111,15 @@ UINT WndGetDpi(WND *w)
     return w && w->Dpi ? w->Dpi : W32SystemDpi();
 }
 
+/* the dpi a frame is drawn at. a per monitor window keeps the one of the system unless it scales its frame itself. */
+UINT WndFrameDpi(WND *w)
+{
+    WND *top = WndTopLevel(w);
+    if (top && top->Awareness == DPI_AWARE_PER_MONITOR && !(top->Flags & WNDF_NCDPI))
+        return W32SystemDpi();
+    return WndGetDpi(w);
+}
+
 /* tree links. */
 
 static void unlink_window(WND *w)
@@ -205,17 +214,29 @@ static void offset_tree(WND *w, LONG dx, LONG dy)
         offset_tree(c, dx, dy);
 }
 
+/* the client origin of a parent in the pixels of a child, which may be of another awareness than its parent. */
+static POINT parent_origin(const WND *parent, ULONG awareness)
+{
+    POINT origin = {parent->ClientRect.left, parent->ClientRect.top};
+    DpiPointConvert(&origin, parent->Awareness, awareness);
+    return origin;
+}
+
 /* screen rectangle to the coordinates used for positioning: parent client, or screen for top level windows. */
 static void screen_to_parent(WND *w, RECT *r)
 {
-    if (w->Parent && w->Parent != g_desktop)
-        RectOffset(r, -w->Parent->ClientRect.left, -w->Parent->ClientRect.top);
+    if (w->Parent && w->Parent != g_desktop) {
+        POINT origin = parent_origin(w->Parent, w->Awareness);
+        RectOffset(r, -origin.x, -origin.y);
+    }
 }
 
-static void parent_to_screen(WND *parent, RECT *r)
+static void parent_to_screen(WND *parent, ULONG awareness, RECT *r)
 {
-    if (parent && parent != g_desktop)
-        RectOffset(r, parent->ClientRect.left, parent->ClientRect.top);
+    if (parent && parent != g_desktop) {
+        POINT origin = parent_origin(parent, awareness);
+        RectOffset(r, origin.x, origin.y);
+    }
 }
 
 /* text. */
@@ -488,7 +509,7 @@ static RECT work_of(const WND *w, const RECT *rect)
 
 void WndGetMinMaxInfo(WND *w, MINMAXINFO *mmi)
 {
-    UINT dpi = WndGetDpi(w);
+    UINT dpi = WndFrameDpi(w);
     memset(mmi, 0, sizeof(*mmi));
     FRAME_METRICS m;
     FrameGetMetrics(w->Style, w->ExStyle, dpi, &m);
@@ -617,8 +638,8 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
         if (w->Style & WS_MINIMIZE)
             client = (RECT){new_window.left, new_window.top, new_window.left, new_window.top};
         RECT win_screen = new_window, client_screen = client;
-        parent_to_screen(w->Parent, &win_screen);
-        parent_to_screen(w->Parent, &client_screen);
+        parent_to_screen(w->Parent, w->Awareness, &win_screen);
+        parent_to_screen(w->Parent, w->Awareness, &client_screen);
         LONG dx = client_screen.left - w->ClientRect.left;
         LONG dy = client_screen.top - w->ClientRect.top;
         client_moved = dx || dy;
@@ -795,12 +816,115 @@ static void set_tree_dpi(WND *w, UINT dpi)
 {
     w->Dpi = dpi;
     for (WND *c = w->FirstChild; c; c = c->Next)
-        set_tree_dpi(c, dpi);
+        if (c->Awareness >= DPI_AWARE_PER_MONITOR)
+            set_tree_dpi(c, dpi);
+}
+
+/* whether the dpi of the window reaches its children: always for per monitor v2, on request for per monitor. */
+BOOLEAN WndBroadcastsDpi(const WND *w)
+{
+    return w->Awareness == DPI_AWARE_PER_MONITOR_V2 ||
+           (w->Awareness == DPI_AWARE_PER_MONITOR && (w->Flags & WNDF_DPI_CHILDREN));
+}
+
+/* the descendants in the order of a tree walk, parents first. */
+static ULONG collect_descendants(WND *w, HWND *out, ULONG capacity, ULONG count)
+{
+    for (WND *c = w->FirstChild; c; c = c->Next) {
+        if (c->Flags & WNDF_DESTROYING)
+            continue;
+        if (count < capacity)
+            out[count] = WndHandle(c);
+        count = collect_descendants(c, out, capacity, count + 1);
+    }
+    return count;
+}
+
+static void send_child_dpi(HWND handle, BOOLEAN before)
+{
+    WND *c = WndLookup(handle);
+    if (!c || c->Awareness < DPI_AWARE_PER_MONITOR || (c->Flags & WNDF_DESTROYING))
+        return;
+    UserReference(&c->Header);
+    MsgSend(c, before ? WM_DPICHANGED_BEFOREPARENT : WM_DPICHANGED_AFTERPARENT, 0, 0);
+    /* the frame is recalculated at the new dpi once the child knows. */
+    if (before && alive(c))
+        WndSetPos(c, nullptr, 0, 0, 0, 0,
+                  SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    UserDereference(&c->Header);
 }
 
 /*
- * send WM_DPICHANGED when a per-monitor-aware window moves mostly onto a monitor with a different DPI. suggest a
- * rectangle keeping the corner and scaling the size.
+ * the rectangle a window of the dpi it is on gets at another one: the program is asked for the size first, as
+ * WM_GETDPISCALEDSIZE, when the dpi reaches its children. else the size scales and the corner stays.
+ */
+static RECT dpi_candidate_rect(WND *w, UINT old, UINT dpi)
+{
+    RECT current = w->WindowRect;
+    if (WndBroadcastsDpi(w)) {
+        SIZE size = {current.right - current.left, current.bottom - current.top};
+        UserReference(&w->Header);
+        LRESULT handled = send_kernel(w, WM_GETDPISCALEDSIZE, dpi, &size, MIME_LPARAM_INOUT, sizeof(size));
+        UserDereference(&w->Header);
+        if (handled)
+            return (RECT){current.left, current.top, current.left + size.cx, current.top + size.cy};
+    }
+    return (RECT){current.left, current.top, current.left + W32MulDiv(current.right - current.left, (LONG)dpi, (LONG)old),
+                  current.top + W32MulDiv(current.bottom - current.top, (LONG)dpi, (LONG)old)};
+}
+
+/*
+ * the dpi of a window tree has changed and the windows tell their programs, in the order of windows: the children
+ * of the tree hear WM_DPICHANGED_BEFOREPARENT from the last to the first, the top level window gets
+ * WM_DPICHANGED with the rectangle it should have, and the children hear WM_DPICHANGED_AFTERPARENT from the
+ * first to the last. a window that does not reach its children is told alone.
+ */
+void WndNotifyDpiChanged(WND *w, UINT old, const RECT *suggested)
+{
+    UINT dpi = w->Dpi;
+    BOOLEAN top = WndIsTopLevel(w), broadcast = WndBroadcastsDpi(w);
+    RECT rect = {};
+    if (top)
+        rect = suggested ? *suggested : dpi_candidate_rect(w, old, dpi);
+    HWND small[32];
+    HWND *list = small;
+    ULONG count = 0, capacity = RTL_NUMBER_OF(small);
+    UserReference(&w->Header);
+    if (broadcast) {
+        count = collect_descendants(w, small, capacity, 0);
+        if (count > capacity) {
+            capacity = count;
+            list = W32Alloc(capacity * sizeof(HWND));
+            if (!list) {
+                list = small;
+                count = capacity = RTL_NUMBER_OF(small);
+            } else {
+                count = collect_descendants(w, list, capacity, 0);
+            }
+        }
+    }
+    for (ULONG i = count; i > 0 && alive(w); i--)
+        send_child_dpi(list[i - 1], TRUE);
+    if (alive(w) && top) {
+        send_kernel(w, WM_DPICHANGED, MAKEWPARAM(dpi, dpi), &rect, MIME_LPARAM_IN, sizeof(rect));
+        if (alive(w))
+            WndSetPos(w, nullptr, 0, 0, 0, 0,
+                      SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    } else if (alive(w) && broadcast) {
+        /* a child that moved under a parent of another dpi hears both about itself. */
+        send_child_dpi(WndHandle(w), TRUE);
+        send_child_dpi(WndHandle(w), FALSE);
+    }
+    for (ULONG i = 0; i < count && alive(w); i++)
+        send_child_dpi(list[i], FALSE);
+    if (list != small)
+        W32Free(list);
+    UserDereference(&w->Header);
+}
+
+/*
+ * a per monitor aware window that moved mostly onto a monitor of another dpi follows it. the program is asked for
+ * the size at the new dpi while the window still has the old one.
  */
 void WndCheckMonitorDpi(WND *w)
 {
@@ -808,17 +932,52 @@ void WndCheckMonitorDpi(WND *w)
         (w->Flags & WNDF_DESTROYING) || (w->Style & WS_MINIMIZE) || (w->ExStyle & 0x80000000u))
         return;
     UINT dpi = MonitorDpiOfRect(&w->WindowRect), old = w->Dpi ? w->Dpi : W32SystemDpi();
-    if (!dpi || dpi == old)
+    /* only a move to a monitor of another dpi counts, not the dpi a test gave the window. */
+    if (!dpi || dpi == w->MonitorDpi)
         return;
-    set_tree_dpi(w, dpi);
-    RECT suggested = {w->WindowRect.left, w->WindowRect.top,
-                      w->WindowRect.left + W32MulDiv(w->WindowRect.right - w->WindowRect.left, (LONG)dpi, (LONG)old),
-                      w->WindowRect.top + W32MulDiv(w->WindowRect.bottom - w->WindowRect.top, (LONG)dpi, (LONG)old)};
+    w->MonitorDpi = dpi;
+    if (dpi == old)
+        return;
     UserReference(&w->Header);
-    send_kernel(w, WM_DPICHANGED, MAKEWPARAM(dpi, dpi), &suggested, MIME_LPARAM_IN, sizeof(suggested));
+    RECT suggested = dpi_candidate_rect(w, old, dpi);
+    if (alive(w)) {
+        set_tree_dpi(w, dpi);
+        WndNotifyDpiChanged(w, old, &suggested);
+    }
     if (alive(w))
         WndUpdateHostConfig(w, FALSE);
     UserDereference(&w->Header);
+}
+
+/* the scales a display can have: 100 to 250 percent in steps of 25, then 300 to 500 in steps of 50. */
+static BOOLEAN valid_plateau(UINT dpi)
+{
+    static const UINT plateaus[] = {96, 120, 144, 168, 192, 216, 240, 288, 336, 384, 432, 480};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(plateaus); i++)
+        if (plateaus[i] == dpi)
+            return TRUE;
+    return FALSE;
+}
+
+/*
+ * the dpi of the window tree is forced, as if the window moved to a monitor of that dpi. the program is asked for
+ * the size while the window still has the old dpi, as a move does it.
+ */
+BOOLEAN WndForceDpi(WND *w, UINT dpi)
+{
+    if (!WndIsTopLevel(w) || w->Awareness < DPI_AWARE_PER_MONITOR || !valid_plateau(dpi))
+        return FALSE;
+    UINT old = w->Dpi ? w->Dpi : W32SystemDpi();
+    UserReference(&w->Header);
+    RECT suggested = dpi_candidate_rect(w, old, dpi);
+    if (alive(w)) {
+        set_tree_dpi(w, dpi);
+        WndNotifyDpiChanged(w, old, &suggested);
+    }
+    if (alive(w))
+        WndUpdateHostConfig(w, FALSE);
+    UserDereference(&w->Header);
+    return TRUE;
 }
 
 /*
@@ -961,8 +1120,8 @@ void WndShow(WND *w, int cmd)
                 w->Flags &= ~WNDF_RESTORETOMAX;
             LONG x = WndIsTopLevel(w) ? -32000 : 0;
             LONG y = WndIsTopLevel(w) ? -32000 : 0;
-            rect = (RECT){x, y, x + MetricsGetFor(SM_CXMINIMIZED, WndGetDpi(w), w->Awareness),
-                         y + MetricsGetFor(SM_CYMINIMIZED, WndGetDpi(w), w->Awareness)};
+            rect = (RECT){x, y, x + MetricsGetFor(SM_CXMINIMIZED, WndFrameDpi(w), w->Awareness),
+                         y + MetricsGetFor(SM_CYMINIMIZED, WndFrameDpi(w), w->Awareness)};
             flags &= ~(SWP_NOMOVE | SWP_NOSIZE);
         } else if (new_state == WS_MAXIMIZE) {
             maximized_rect(w, &rect);
@@ -1522,9 +1681,16 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     w->Ansi = cls->Ansi;
     w->Instance = instance;
     w->Owner = owner;
-    /* a child works in the pixels of its parent, a top level window in those of the awareness of its thread. */
-    w->Awareness = (UCHAR)(parent != desktop ? parent->Awareness : DpiThreadAwareness(t));
-    w->Dpi = parent != desktop ? parent->Dpi : DpiScaleOf(w->Awareness);
+    /*
+     * a child works in the pixels of its parent, unless the parent was made by a thread that hosts windows of any
+     * awareness and the child is not more aware than it, and a top level window in those of its thread.
+     */
+    w->Hosting = (UCHAR)t->DpiHosting;
+    w->Awareness = (UCHAR)(parent != desktop && !DpiChildIsolated(parent, DpiThreadAwareness(t)) ? parent->Awareness
+                                                                                                : DpiThreadAwareness(t));
+    w->Dpi = parent != desktop && w->Awareness == parent->Awareness ? parent->Dpi : DpiScaleOf(w->Awareness);
+    if (w->Awareness == DPI_AWARE_PER_MONITOR_V2)
+        w->Flags |= WNDF_DPI_CHILDREN;
     w->Icon = cls->Icon;
     w->IconSmall = cls->IconSmall;
     if (cls->Fnid == MIME_FNID_DIALOG)
@@ -1591,12 +1757,12 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
     HWND after = (style & WS_CHILD) ? HWND_BOTTOM : HWND_TOP;
     link_window(parent, w, after);
     RECT rect = {x, y, x + cx, y + cy};
-    parent_to_screen(parent, &rect);
+    parent_to_screen(parent, w->Awareness, &rect);
     w->WindowRect = rect;
     w->ClientRect = rect;
     /* per-monitor-aware windows start with their monitor's DPI. */
     if (parent == desktop && w->Awareness >= DPI_AWARE_PER_MONITOR && !message_only)
-        w->Dpi = MonitorDpiOfRect(&rect);
+        w->Dpi = w->MonitorDpi = MonitorDpiOfRect(&rect);
     UserReference(&w->Header);
 
     if (HookActive(WH_CBT, t)) {
@@ -1610,7 +1776,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
         }
         x = placed[0], y = placed[1], cx = W32Max(placed[2], 0), cy = W32Max(placed[3], 0);
         rect = (RECT){x, y, x + cx, y + cy};
-        parent_to_screen(parent, &rect);
+        parent_to_screen(parent, w->Awareness, &rect);
         w->WindowRect = rect;
         w->ClientRect = rect;
     }
@@ -1629,7 +1795,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
             cy = W32Max(cy, mmi.ptMinTrackSize.y);
         }
         rect = (RECT){x, y, x + cx, y + cy};
-        parent_to_screen(parent, &rect);
+        parent_to_screen(parent, w->Awareness, &rect);
         w->WindowRect = rect;
         w->ClientRect = rect;
     }
@@ -1651,7 +1817,7 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
         W32Free(cs);
         goto fail;
     }
-    parent_to_screen(parent, &client);
+    parent_to_screen(parent, w->Awareness, &client);
     w->ClientRect = client;
 
     r = send_kernel(w, WM_CREATE, 0, cs, MIME_LPARAM_CREATESTRUCT, cs_size);
@@ -1813,6 +1979,14 @@ HWND NTAPI NtUserSetParent(HWND hwnd, HWND parent_h)
     WND *w = WndLookup(hwnd);
     WND *p = parent_h ? WndLookup(parent_h) : WndDesktop();
     HWND old = nullptr;
+    /* a window of the same program cannot go under one of another awareness unless the parent hosts mixed ones. */
+    if (w && p && p != g_desktop && w->Thread && p->Thread && w->Thread->Process == p->Thread->Process &&
+        W32Min(w->Awareness, DPI_AWARE_PER_MONITOR) != W32Min(p->Awareness, DPI_AWARE_PER_MONITOR) &&
+        !DpiChildIsolated(p, w->Awareness)) {
+        W32SetLastError(5023);
+        UserLeave();
+        return nullptr;
+    }
     if (can_touch(w) && p && p != w && !WndIsChildOf(p, w)) {
         old = WndHandle(w->Parent);
         BOOLEAN visible = (w->Style & WS_VISIBLE) != 0;
@@ -1831,10 +2005,20 @@ HWND NTAPI NtUserSetParent(HWND hwnd, HWND parent_h)
         link_window(p, w, HWND_TOP);
         /* keep the position relative to the new parent. */
         RECT nr = r;
-        parent_to_screen(p, &nr);
+        parent_to_screen(p, w->Awareness, &nr);
         offset_tree(w, nr.left - w->WindowRect.left, nr.top - w->WindowRect.top);
         if (visible)
             WndSetPos(w, nullptr, 0, 0, 0, 0, SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
+        /* the window takes the monitor of its new parent, and tells its program when the dpi is not the same. */
+        if (alive(w) && w->Awareness >= DPI_AWARE_PER_MONITOR) {
+            if (p == g_desktop) {
+                WndCheckMonitorDpi(w);
+            } else if (p->Awareness >= DPI_AWARE_PER_MONITOR && p->Dpi && p->Dpi != w->Dpi) {
+                UINT before = w->Dpi;
+                set_tree_dpi(w, p->Dpi);
+                WndNotifyDpiChanged(w, before, nullptr);
+            }
+        }
     }
     UserLeave();
     return old;
@@ -2344,6 +2528,21 @@ ULONG_PTR NTAPI NtUserCallHwnd(HWND hwnd, ULONG routine)
         case MIME_HWND_GETDPIAWARENESS:
             r = w->Awareness;
             break;
+        case MIME_HWND_GETDPIHOSTING:
+            r = w->Hosting;
+            break;
+        case MIME_HWND_ISDIALOG:
+            r = (w->Flags & WNDF_DIALOG) != 0;
+            break;
+        case MIME_HWND_GETCONTROLDPIBEHAVIOR:
+            r = w->ControlDpi;
+            break;
+        case MIME_HWND_ISCHILDDPIMESSAGE:
+            r = DpiChildMessageEnabled(w);
+            break;
+        case MIME_HWND_GETWINDOWDPI:
+            r = DpiWindowDpi(w);
+            break;
         }
     }
     UserLeave();
@@ -2540,7 +2739,7 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         wi.dwExStyle = w->ExStyle & 0x7FFFFFFFu;
         wi.dwWindowStatus = InputForeground == w ? 1 /* WS_ACTIVECAPTION */ : 0;
         FRAME_METRICS m;
-        FrameGetMetrics(w->Style, w->ExStyle, WndGetDpi(w), &m);
+        FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
         wi.cxWindowBorders = (UINT)(wi.rcClient.left - wi.rcWindow.left);
         wi.cyWindowBorders = (UINT)(wi.rcWindow.bottom - wi.rcClient.bottom);
         wi.atomWindowType = w->Class ? w->Class->Atom : 0;
@@ -2580,9 +2779,9 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         MIME_ADJUST_RECT ar;
         if (!NT_SUCCESS(MimeCopyFromUser(&ar, (PVOID)param, sizeof(ar))))
             break;
-        FrameAdjustRect(&ar.Rect, ar.Style, ar.ExStyle, ar.Dpi ? ar.Dpi : WndGetDpi(w));
+        FrameAdjustRect(&ar.Rect, ar.Style, ar.ExStyle, ar.Dpi ? ar.Dpi : WndFrameDpi(w));
         if (ar.Menu)
-            ar.Rect.top -= MetricsGet(SM_CYMENU, ar.Dpi ? ar.Dpi : WndGetDpi(w));
+            ar.Rect.top -= MetricsGet(SM_CYMENU, ar.Dpi ? ar.Dpi : WndFrameDpi(w));
         r = NT_SUCCESS(MimeCopyToUser((PVOID)param, &ar, sizeof(ar)));
         break;
     }
@@ -2639,6 +2838,39 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         r = ok && NT_SUCCESS(MimeCopyToUser((PVOID)param, &dc, sizeof(dc)));
         break;
     }
+    case MIME_HWNDPARAM_ENABLENCDPI:
+        /* a per monitor window scales its frame itself from now on, a per monitor v2 one always did. */
+        if (WndIsTopLevel(w) && w->Awareness >= DPI_AWARE_PER_MONITOR) {
+            if (w->Awareness == DPI_AWARE_PER_MONITOR && !(w->Flags & WNDF_NCDPI)) {
+                w->Flags |= WNDF_NCDPI;
+                /* the frame of a window that is still being created is calculated after its creation. */
+                if (w->Flags & WNDF_SENT_CREATE)
+                    WndSetPos(w, nullptr, 0, 0, 0, 0,
+                              SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            }
+            r = 1;
+        }
+        break;
+    case MIME_HWNDPARAM_CONTROLDPIBEHAVIOR:
+        /* only a window of the program can be changed. */
+        if (w->Thread && w->Thread->Process == W32GetProcess()) {
+            UCHAR mask = (UCHAR)(param & 3);
+            w->ControlDpi = (UCHAR)(((param >> 8) & mask) | (w->ControlDpi & ~mask));
+            r = 1;
+        } else {
+            W32SetLastError(ERROR_ACCESS_DENIED);
+        }
+        break;
+    case MIME_HWNDPARAM_DPICHILDREN:
+        /* only a per monitor top level window decides, the v2 ones always tell their children. */
+        if (WndIsTopLevel(w) && w->Awareness == DPI_AWARE_PER_MONITOR) {
+            if (param)
+                w->Flags |= WNDF_DPI_CHILDREN;
+            else
+                w->Flags &= ~WNDF_DPI_CHILDREN;
+            r = 1;
+        }
+        break;
     case MIME_HWNDPARAM_SETTOUCH:
         w->TouchFlags = (ULONG)param;
         r = 1;
@@ -2709,4 +2941,13 @@ BOOL NTAPI NtUserIsTouchWindow(HWND hwnd, PULONG user_flags)
         MimeCopyToUser(user_flags, &out, sizeof(out));
     }
     return (flags & MIME_TOUCH_REGISTERED) != 0;
+}
+
+BOOL NTAPI NtUserForceWindowToDpiForTest(HWND hwnd, UINT dpi)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL r = w && can_touch(w) && WndForceDpi(w, dpi);
+    UserLeave();
+    return r;
 }

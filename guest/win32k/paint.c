@@ -136,7 +136,7 @@ void HostPart(WND *w, RECT *part)
 {
     FRAME_METRICS m;
     RECT visible, input;
-    FrameGetMetrics(w->Style, w->ExStyle, WndGetDpi(w), &m);
+    FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
     host_rects(w, &m, &visible, &input);
     if (visible.right <= visible.left || visible.bottom <= visible.top)
         visible = (RECT){0, 0, w->WindowRect.right - w->WindowRect.left, w->WindowRect.bottom - w->WindowRect.top};
@@ -205,7 +205,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
     WndPhysicalRect(w, &physical);
     c->rect = mime_rect(&physical);
     FRAME_METRICS m;
-    FrameGetMetrics(w->Style, w->ExStyle, WndGetDpi(w), &m);
+    FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
     RECT vis, input;
     host_rects(w, &m, &vis, &input);
     host_pixels(w, &vis);

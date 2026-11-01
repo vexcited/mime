@@ -168,6 +168,7 @@ void NtUserEndPaint(void);
 void NtUserEnumClipboardFormats(void);
 void NtUserEnumDisplaySettings(void);
 void NtUserFindWindowEx(void);
+void NtUserForceWindowToDpiForTest(void);
 void NtUserGetAncestor(void);
 void NtUserGetAsyncKeyState(void);
 void NtUserGetClassInfoEx(void);
@@ -1089,6 +1090,11 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserFindWindowEx & 0xFFF] = (SERVICE){(void *)NtUserFindWindowEx, STACK_ARGS(5), 1, 0};
 #else
 #warning "NtUserFindWindowEx has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserForceWindowToDpiForTest
+    table[MIME_SVC_NtUserForceWindowToDpiForTest & 0xFFF] = (SERVICE){(void *)NtUserForceWindowToDpiForTest, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserForceWindowToDpiForTest has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserGetAncestor
     table[MIME_SVC_NtUserGetAncestor & 0xFFF] = (SERVICE){(void *)NtUserGetAncestor, STACK_ARGS(2), 1, 0};

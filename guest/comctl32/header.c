@@ -1124,7 +1124,7 @@ LRESULT CALLBACK HeaderProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         }
         return 0;
     case WM_THEMECHANGED:
-    case WM_DPICHANGED:
+    case WM_DPICHANGED_BEFOREPARENT:
         open_theme(h);
         InvalidateRect(hwnd, nullptr, TRUE);
         return 0;

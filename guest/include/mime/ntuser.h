@@ -187,6 +187,8 @@ enum {
     MIME_ONEPARAM_GETPROCESSDPISET,     /* whether the awareness was chosen. */
     MIME_ONEPARAM_SETTHREADDPICONTEXT,  /* an awareness plus one, 0 for the process' own -> the awareness in effect before. */
     MIME_ONEPARAM_GETTHREADDPICONTEXT,  /* -> the awareness in effect, 4 is unaware with gdi scaling. */
+    MIME_ONEPARAM_SETTHREADDPIHOSTING,  /* 0 default or 1 mixed -> the behavior before, -1 when it is none. */
+    MIME_ONEPARAM_GETTHREADDPIHOSTING,
 };
 
 enum {
@@ -228,6 +230,11 @@ enum {
     MIME_HWND_MONITOR,
     MIME_HWND_ISUNICODE,
     MIME_HWND_GETDPIAWARENESS,          /* the awareness the window was created with, 4 is unaware with gdi scaling. */
+    MIME_HWND_GETDPIHOSTING,            /* the hosting behavior its thread had when it was created. */
+    MIME_HWND_GETWINDOWDPI,             /* the dpi the controls of the window work at, GetWindowDPI of windows. */
+    MIME_HWND_ISCHILDDPIMESSAGE,        /* whether the children of the window hear about dpi changes. */
+    MIME_HWND_ISDIALOG,                 /* whether the dialog manager made the window. */
+    MIME_HWND_GETCONTROLDPIBEHAVIOR,    /* DCDC_* of a control. */
 };
 
 enum {
@@ -257,6 +264,9 @@ enum {
     MIME_HWNDPARAM_GETCONTEXTHELPID,
     MIME_HWNDPARAM_SETWINDOWWORD,       /* the word in the low half and the byte offset into the extra bytes above it -> the old word, or -1. */
     MIME_HWNDPARAM_DPICONVERT,          /* MIME_DPI_CONVERT pointer, the window may be NULL for the thread ones. */
+    MIME_HWNDPARAM_ENABLENCDPI,         /* EnableNonClientDpiScaling, the parameter is unused. */
+    MIME_HWNDPARAM_DPICHILDREN,         /* EnableChildWindowDpiMessage: nonzero for the children to hear, zero for not. */
+    MIME_HWNDPARAM_CONTROLDPIBEHAVIOR,  /* the DCDC_* mask in the low byte and their values above it. */
 };
 
 /* what MIME_HWNDPARAM_DPICONVERT converts a point between. */
@@ -568,6 +578,7 @@ W32KAPI NTSTATUS NTAPI NtUserEnumDisplaySettings(PUNICODE_STRING device, DWORD i
 W32KAPI LONG NTAPI NtUserChangeDisplaySettings(PUNICODE_STRING device, struct _devicemodeW *mode, DWORD flags,
                                                PVOID param);
 W32KAPI BOOL NTAPI NtUserSystemParametersInfoForDpi(UINT action, UINT param, PVOID data, UINT ini, UINT dpi);
+W32KAPI BOOL NTAPI NtUserForceWindowToDpiForTest(HWND hwnd, UINT dpi);
 W32KAPI BOOL NTAPI NtUserMessageBeep(UINT type);
 
 W32KAPI HICON NTAPI NtUserCreateEmptyCurObject(BOOL icon);

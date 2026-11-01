@@ -281,7 +281,7 @@ static int button_metrics(TD_STATE *td, int *width, int *height)
         count++;
     }
     *width = w;
-    *height = MulDiv(23, (int)GetDpiForWindow(td->Hwnd), 96);
+    *height = MulDiv(23, (int)GetWindowDPI(td->Hwnd), 96);
     return count;
 }
 

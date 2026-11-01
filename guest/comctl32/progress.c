@@ -340,7 +340,7 @@ LRESULT CALLBACK ProgressProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         redraw(p);
         return 0;
     case WM_THEMECHANGED:
-    case WM_DPICHANGED_AFTERPARENT:
+    case WM_DPICHANGED_BEFOREPARENT:
         open_theme(p);
         adjust_ex_style(p);
         RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);

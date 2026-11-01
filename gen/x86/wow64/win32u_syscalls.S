@@ -567,6 +567,13 @@ _NtUserSystemParametersInfoForDpi@20:
     calll *%edx
     retl $20
     .p2align 4, 0x90
+    .globl _NtUserForceWindowToDpiForTest@8
+_NtUserForceWindowToDpiForTest@8:
+    movl $0x1425, %eax
+    movl $_Wow64SystemServiceCall, %edx
+    calll *%edx
+    retl $8
+    .p2align 4, 0x90
     .globl _NtUserMessageBeep@4
 _NtUserMessageBeep@4:
     movl $0x14dd, %eax
