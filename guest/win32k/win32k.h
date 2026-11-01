@@ -230,6 +230,7 @@ typedef struct DC_STATE {
     int GraphicsMode;
     int MapMode;
     int TextCharExtra;
+    DWORD Layout; /* LAYOUT_RTL and the other flags of SetLayout, kept and not drawn yet. */
     POINT ViewportOrg;
     POINT WindowOrg;
     POINT CurrentPos;
@@ -790,7 +791,8 @@ void WndInvalidate(WND *w, const RECT *client_rect, BOOLEAN erase, BOOLEAN child
 void WndInvalidateRegion(WND *w, const REGION *screen_rgn, ULONG flags);
 void WndValidate(WND *w, const RECT *client_rect);
 void WndUpdateHostConfig(WND *w, BOOLEAN activate);
-void WndEnsureSurface(WND *w); /* top level windows: creates or resizes the surface and the host window. */
+void WndEnsureSurface(WND *w);
+BOOLEAN WndLayerRects(WND *w, const POINT *pos, const SIZE *size); /* top level windows: creates or resizes the surface and the host window. */
 void WndComputeVisRgn(WND *w, BOOLEAN client, ULONG dcx_flags, REGION *out);
 WND *WndFindNeedsPaint(W32THREAD *t, HWND filter);
 void WndActivate(WND *w, BOOLEAN click);
@@ -1124,6 +1126,7 @@ HBRUSH MetricsSysColorBrush(int index);
 BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT dpi);
 void MetricsInitialize(void);
 void MetricsDisplayChanged(void);
+ULONG MetricsDisplayUniqueness(void);
 /* display.c. */
 void DisplayApplyMode(void);
 void DisplayProcessExited(HANDLE pid);

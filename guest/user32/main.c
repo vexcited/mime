@@ -151,11 +151,26 @@ static LRESULT call_cbt_create(MIME_HOOKPROC_ARGS *args)
     return result;
 }
 
+/* the message of a window procedure hook, and after it the data its lparam points at, see MIME_HOOKPROC_ARGS. */
+static LRESULT call_wnd_hook(MIME_HOOKPROC_ARGS *args)
+{
+    BOOLEAN after = args->Id == WH_CALLWNDPROCRET;
+    ULONG head = after ? sizeof(CWPRETSTRUCT) : sizeof(CWPSTRUCT);
+    if (args->DataSize > head) {
+        LPARAM *lparam = after ? &((CWPRETSTRUCT *)args->Data)->lParam : &((CWPSTRUCT *)args->Data)->lParam;
+        *lparam = (LPARAM)(args->Data + head);
+    }
+    return args->Proc(args->Code, args->Wparam, (LPARAM)args->Data);
+}
+
 static NTSTATUS CALLBACK callback_hook_proc(MIME_HOOKPROC_ARGS *args, ULONG length)
 {
     ULONG size = args->DataSize;
     LRESULT result;
-    if (args->Id == WH_CBT && args->Code == HCBT_CREATEWND && size >= sizeof(CBT_CREATEWNDW) + sizeof(CREATESTRUCTW))
+    if ((args->Id == WH_CALLWNDPROC && size >= sizeof(CWPSTRUCT)) ||
+        (args->Id == WH_CALLWNDPROCRET && size >= sizeof(CWPRETSTRUCT)))
+        result = call_wnd_hook(args);
+    else if (args->Id == WH_CBT && args->Code == HCBT_CREATEWND && size >= sizeof(CBT_CREATEWNDW) + sizeof(CREATESTRUCTW))
         result = call_cbt_create(args);
     else
         result = args->Proc(args->Code, args->Wparam, size ? (LPARAM)args->Data : args->Lparam);

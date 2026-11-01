@@ -139,6 +139,14 @@ void MetricsInitialize(void)
     W32SystemFont = W32MessageFontForDpi(W32Display.Dpi);
 }
 
+/* counts the changes of the display settings, which GdiEntry13 of gdi32 gives to programs that cache what they read of them. */
+static ULONG g_display_uniqueness = 1;
+
+ULONG MetricsDisplayUniqueness(void)
+{
+    return g_display_uniqueness;
+}
+
 void MetricsDisplayChanged(void)
 {
     LONG width = W32Display.Width, height = W32Display.Height;
@@ -146,8 +154,10 @@ void MetricsDisplayChanged(void)
     DWORD bits = W32Display.Bits;
     read_display();
     if (MonitorsTakeChanged() || width != W32Display.Width || height != W32Display.Height ||
-        bits != W32Display.Bits || memcmp(&work, &W32Display.Work, sizeof(work)))
+        bits != W32Display.Bits || memcmp(&work, &W32Display.Work, sizeof(work))) {
+        g_display_uniqueness++;
         WndDisplayChanged();
+    }
 }
 
 UINT W32SystemDpi(void)

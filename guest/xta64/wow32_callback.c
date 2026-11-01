@@ -87,6 +87,34 @@ static ULONG cbt_data32(int code, const UCHAR *in, ULONG size, UCHAR *out)
     return 0;
 }
 
+/*
+ * the data a message's lparam points at, as a window procedure hook sees it after the message: in the x86 layout, and
+ * none for the structures that have no conversion here.
+ */
+static ULONG cwp_payload32(UINT msg, ULONG_PTR wparam, const UCHAR *in, ULONG size, UCHAR *out)
+{
+    if (!size || msg == WM_COPYDATA || msg == WM_MDICREATE)
+        return 0;
+    ULONG fixed = lay_size32(msg);
+    if (fixed) {
+        if (size < lay_size64(msg))
+            return 0;
+        lay_to32(msg, in, out);
+        return fixed;
+    }
+    if (msg == WM_NCCALCSIZE && wparam && size >= sizeof(NCCALCSIZE_PARAMS) + sizeof(WINDOWPOS)) {
+        memcpy(out, in, 3 * sizeof(RECT));
+        PULONG pos = (void *)(out + 3 * sizeof(RECT));
+        *pos = 0;
+        lay_to32(WM_WINDOWPOSCHANGING, in + sizeof(NCCALCSIZE_PARAMS), pos + 1);
+        return 3 * sizeof(RECT) + 4 + sizeof(WINDOWPOS32);
+    }
+    if (msg == WM_NCCALCSIZE)
+        return 0;
+    memcpy(out, in, size);
+    return size;
+}
+
 static ULONG hook_data32(int id, int code, const UCHAR *in, ULONG size, UCHAR *out)
 {
     switch (id) {
@@ -114,7 +142,7 @@ static ULONG hook_data32(int id, int code, const UCHAR *in, ULONG size, UCHAR *o
             return 0;
         ULONG v[4] = {low(c->lParam), low(c->wParam), c->message, low((ULONG_PTR)c->hwnd)};
         memcpy(out, v, sizeof(v));
-        return sizeof(v);
+        return sizeof(v) + cwp_payload32(c->message, c->wParam, in + sizeof(*c), size - sizeof(*c), out + sizeof(v));
     }
     case WH_CALLWNDPROCRET: {
         const CWPRETSTRUCT *c = (const void *)in;
@@ -122,7 +150,7 @@ static ULONG hook_data32(int id, int code, const UCHAR *in, ULONG size, UCHAR *o
             return 0;
         ULONG v[5] = {low(c->lResult), low(c->lParam), low(c->wParam), c->message, low((ULONG_PTR)c->hwnd)};
         memcpy(out, v, sizeof(v));
-        return sizeof(v);
+        return sizeof(v) + cwp_payload32(c->message, c->wParam, in + sizeof(*c), size - sizeof(*c), out + sizeof(v));
     }
     case WH_GETMESSAGE: {
         const MSG *m = (const void *)in;

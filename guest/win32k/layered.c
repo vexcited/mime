@@ -251,28 +251,9 @@ BOOL NTAPI NtUserUpdateLayeredWindow(HWND hwnd, HDC hdst, POINT *user_dst_pos, S
             error = ERROR_INCORRECT_SIZE;
     }
     if (!error) {
-        UINT swp = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW;
-        LONG x = 0, y = 0, cx = 0, cy = 0;
-        if (user_dst_pos) {
-            x = dst_pos.x;
-            y = dst_pos.y;
-            if (w->Parent && w->Parent != WndDesktop()) {
-                x -= w->Parent->ClientRect.left;
-                y -= w->Parent->ClientRect.top;
-            }
-        } else {
-            swp |= SWP_NOMOVE;
-        }
-        if (user_size) {
-            cx = size.cx;
-            cy = size.cy;
-        } else {
-            swp |= SWP_NOSIZE;
-        }
         BOOLEAN first = !(w->LayerFlags & MIME_LAYER_UPDATE);
         w->LayerFlags = MIME_LAYER_UPDATE;
-        if ((swp & (SWP_NOMOVE | SWP_NOSIZE)) != (SWP_NOMOVE | SWP_NOSIZE))
-            WndSetPos(w, nullptr, x, y, cx, cy, swp);
+        BOOLEAN changed = WndLayerRects(w, user_dst_pos ? &dst_pos : nullptr, user_size ? &size : nullptr);
         /* the window no longer paints: its pixels come from the caller. */
         WndValidate(w, nullptr);
         w->Flags &= ~(WNDF_FRAME_DIRTY | WNDF_INTERNAL_PAINT);
@@ -293,7 +274,7 @@ BOOL NTAPI NtUserUpdateLayeredWindow(HWND hwnd, HDC hdst, POINT *user_dst_pos, S
             copy_layer(w, src, src_pos, &area, key, user_blend ? &blend : nullptr, flags);
             SurfaceMarkDirty(w->Surface, &area);
         }
-        if (first && WndIsTopLevel(w))
+        if ((first || changed) && WndIsTopLevel(w))
             WndUpdateHostConfig(w, FALSE);
         if (WndIsTopLevel(w))
             PaintPresent(w);

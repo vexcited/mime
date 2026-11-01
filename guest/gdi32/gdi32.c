@@ -750,6 +750,15 @@ WINGDIAPI BOOL WINAPI SetDeviceGammaRamp(HDC dc, LPVOID ramp)
     return NT_SUCCESS(NtGdiMimeGamma(MIME_GAMMA_SET, (PUSHORT)ramp));
 }
 
+/*
+ * windows keeps a count of display setting changes in the shared gdi memory and exports it unnamed to its own
+ * components: direct3d programs, WPF among them, ask it with GetProcAddress to know when to make their devices again.
+ */
+WINGDIAPI DWORD WINAPI GdiEntry13(void)
+{
+    return (DWORD)NtUserCallTwoParam(0, 0, MIME_TWOPARAM_DISPLAYUNIQUENESS);
+}
+
 /* gdi's ramp, not what a fullscreen program shows over it. */
 WINGDIAPI BOOL WINAPI GetDeviceGammaRamp(HDC dc, LPVOID ramp)
 {

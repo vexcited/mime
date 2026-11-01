@@ -622,6 +622,12 @@ WINGDIAPI int WINAPI AddFontResourceExW(LPCWSTR name, DWORD flags, PVOID reserve
 WINGDIAPI LONG WINAPI GdiGetCharDimensions(HDC dc, LPTEXTMETRICW tm, LONG *height);
 WINGDIAPI BOOL WINAPI GetTextExtentPointW(HDC dc, LPCWSTR text, int count, LPSIZE size);
 WINGDIAPI DWORD WINAPI SetLayout(HDC dc, DWORD layout);
+WINGDIAPI DWORD WINAPI GetLayout(HDC dc);
+#define LAYOUT_RTL 0x00000001
+#define LAYOUT_BTT 0x00000002
+#define LAYOUT_VBH 0x00000004
+#define LAYOUT_ORIENTATIONMASK (LAYOUT_RTL | LAYOUT_BTT | LAYOUT_VBH)
+#define LAYOUT_BITMAPORIENTATIONPRESERVED 0x00000008
 WINGDIAPI int WINAPI SetPolyFillMode(HDC dc, int mode);
 
 /* ------------------------------------------------------------------ font enumeration and outlines */

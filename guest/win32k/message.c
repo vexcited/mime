@@ -250,28 +250,50 @@ static void call_async(W32THREAD *t, SENDASYNCPROC proc, HWND hwnd, UINT msg, UL
 }
 
 /*
- * run the window procedure between WH_CALLWNDPROC and WH_CALLWNDPROCRET. hooks see pointer parameters as 0 because
- * the data stays in the kernel until the procedure receives it.
+ * a message hook sees the message as it is, the data its lparam points at included: a copy follows the message
+ * in the call, and the hook's copy is dropped afterwards. other pointer kinds are seen as 0.
  */
+static void call_wnd_hook(int id, W32THREAD *t, BOOLEAN own, LRESULT result, LPARAM shown, WPARAM wparam, UINT msg,
+                          HWND hwnd, ULONG kind, LPARAM lparam, ULONG size)
+{
+    BOOLEAN data = size && (kind == MIME_LPARAM_IN || kind == MIME_LPARAM_INOUT);
+    ULONG head = id == WH_CALLWNDPROCRET ? sizeof(CWPRETSTRUCT) : sizeof(CWPSTRUCT);
+    ULONG total = head + (data ? size : 0);
+    UCHAR local[sizeof(CWPRETSTRUCT) + 64];
+    UCHAR *buffer = total <= sizeof(local) ? local : W32Alloc(total);
+    if (!buffer)
+        return;
+    if (id == WH_CALLWNDPROCRET) {
+        CWPRETSTRUCT ret = {result, shown, wparam, msg, hwnd};
+        memcpy(buffer, &ret, head);
+    } else {
+        CWPSTRUCT cwp = {shown, wparam, msg, hwnd};
+        memcpy(buffer, &cwp, head);
+    }
+    if (data)
+        memcpy(buffer + head, (PVOID)lparam, size);
+    HookCall(id, t, HC_ACTION, own, (LPARAM)buffer, total, nullptr);
+    if (buffer != local)
+        W32Free(buffer);
+}
+
+/* run the window procedure between WH_CALLWNDPROC and WH_CALLWNDPROCRET. */
 static LRESULT call_sent(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG kind, ULONG size, BOOLEAN own)
 {
     W32THREAD *t = w->Thread;
     HWND hwnd = WndHandle(w);
     LPARAM shown = kind == MIME_LPARAM_VALUE ? lparam : 0;
     if (HookActive(WH_CALLWNDPROC, t)) {
-        CWPSTRUCT cwp = {shown, wparam, msg, hwnd};
         UserReference(&w->Header);
-        HookCall(WH_CALLWNDPROC, t, HC_ACTION, own, (LPARAM)&cwp, sizeof(cwp), nullptr);
+        call_wnd_hook(WH_CALLWNDPROC, t, own, 0, shown, wparam, msg, hwnd, kind, lparam, size);
         BOOLEAN gone = w->Header.Destroyed;
         UserDereference(&w->Header);
         if (gone)
             return 0;
     }
     LRESULT r = MsgCallWindowProc(w, w->Proc, w->Ansi, msg, wparam, lparam, kind, size);
-    if (HookActive(WH_CALLWNDPROCRET, t)) {
-        CWPRETSTRUCT ret = {r, shown, wparam, msg, hwnd};
-        HookCall(WH_CALLWNDPROCRET, t, HC_ACTION, own, (LPARAM)&ret, sizeof(ret), nullptr);
-    }
+    if (HookActive(WH_CALLWNDPROCRET, t))
+        call_wnd_hook(WH_CALLWNDPROCRET, t, own, r, shown, wparam, msg, hwnd, kind, lparam, size);
     return r;
 }
 

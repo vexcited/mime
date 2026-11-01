@@ -44,6 +44,7 @@ void DcResetState(DC *dc)
     s->GraphicsMode = GM_COMPATIBLE;
     s->MapMode = MM_TEXT;
     s->TextCharExtra = 0;
+    s->Layout = 0;
     s->ViewportOrg = (POINT){0, 0};
     s->WindowOrg = (POINT){0, 0};
     s->CurrentPos = (POINT){0, 0};
@@ -728,6 +729,14 @@ BOOL NTAPI NtGdiGetAndSetDCDword(HDC hdc, UINT index, DWORD value, DWORD *result
             old = (DWORD)s->TextCharExtra;
             s->TextCharExtra = (int)value;
             break;
+        case MIME_DCDW_LAYOUT:
+            /* the orientation flags and LAYOUT_BITMAPORIENTATIONPRESERVED, nothing else. */
+            old = s->Layout;
+            if (value & ~0xFu)
+                ok = FALSE, old = GDI_ERROR;
+            else
+                s->Layout = value;
+            break;
         default:
             ok = FALSE;
             break;
@@ -780,6 +789,9 @@ BOOL NTAPI NtGdiGetDCDword(HDC hdc, UINT index, DWORD *result)
             break;
         case MIME_DCDW_TEXTCHAREXTRA:
             v = (DWORD)s->TextCharExtra;
+            break;
+        case MIME_DCDW_LAYOUT:
+            v = s->Layout;
             break;
         case MIME_DCDW_POLYFILLMODE:
             v = (DWORD)s->PolyFillMode;

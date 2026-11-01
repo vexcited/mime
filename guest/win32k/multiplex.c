@@ -174,6 +174,9 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
     case MIME_TWOPARAM_CBTSYSCOMMAND:
         r = HookCbt(nullptr, HCBT_SYSCOMMAND, param1, (LPARAM)param2, 0);
         break;
+    case MIME_TWOPARAM_DISPLAYUNIQUENESS:
+        r = MetricsDisplayUniqueness();
+        break;
     case MIME_TWOPARAM_ALTALONE: {
         W32THREAD *t = W32GetThread();
         r = t && t->AltAlone;

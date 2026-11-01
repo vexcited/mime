@@ -214,6 +214,33 @@ static void offset_tree(WND *w, LONG dx, LONG dy)
         offset_tree(c, dx, dy);
 }
 
+/*
+ * UpdateLayeredWindow moves and sizes the rectangles of the window and its client area by the same distances and
+ * sends nothing: no WM_WINDOWPOSCHANGING, no WM_NCCALCSIZE, so a program may call it from a thread that does not own
+ * the window while the owner is waiting for it. children move with the window and do not change size.
+ * returns whether anything changed.
+ */
+BOOLEAN WndLayerRects(WND *w, const POINT *pos, const SIZE *size)
+{
+    LONG dx = pos ? pos->x - w->WindowRect.left : 0, dy = pos ? pos->y - w->WindowRect.top : 0;
+    LONG dw = size ? size->cx - (w->WindowRect.right - w->WindowRect.left) : 0;
+    LONG dh = size ? size->cy - (w->WindowRect.bottom - w->WindowRect.top) : 0;
+    if (!dx && !dy && !dw && !dh)
+        return FALSE;
+    w->WindowRect.left += dx;
+    w->WindowRect.top += dy;
+    w->WindowRect.right += dx + dw;
+    w->WindowRect.bottom += dy + dh;
+    w->ClientRect.left += dx;
+    w->ClientRect.top += dy;
+    w->ClientRect.right += dx + dw;
+    w->ClientRect.bottom += dy + dh;
+    if (dx || dy)
+        for (WND *c = w->FirstChild; c; c = c->Next)
+            offset_tree(c, dx, dy);
+    return TRUE;
+}
+
 /* the client origin of a parent in the pixels of a child, which may be of another awareness than its parent. */
 static POINT parent_origin(const WND *parent, ULONG awareness)
 {
