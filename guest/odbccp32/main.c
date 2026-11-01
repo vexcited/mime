@@ -85,6 +85,7 @@ static DWORD g_config_mode = ODBC_BOTH_DSN;
 typedef struct {
     int Count, Read;
     int Codes[MAX_ERRORS];
+    char Text[MAX_ERRORS][128];
 } ERROR_LIST;
 
 static ERROR_LIST *error_list(void)
@@ -114,6 +115,7 @@ static BOOL fail(int code)
 {
     ERROR_LIST *list = error_list();
     if (list && list->Count < MAX_ERRORS) {
+        list->Text[list->Count][0] = 0;
         list->Codes[list->Count++] = code;
         list->Read = 0;
     }
@@ -128,7 +130,7 @@ short WINAPI SQLInstallerError(WORD index, DWORD *code, char *message, WORD size
     int number = list->Codes[index - 1];
     if (code)
         *code = number;
-    const char *text = error_text(number);
+    const char *text = list->Text[index - 1][0] ? list->Text[index - 1] : error_text(number);
     WORD length = (WORD)lstrlenA(text);
     if (written)
         *written = length;
@@ -542,4 +544,193 @@ BOOL WINAPI SQLConfigDataSource(HWND parent, WORD request, const char *driver, c
     g_config_mode = saved;
     FreeLibrary(module);
     return ok ? TRUE : fail(ODBC_ERROR_REQUEST_FAILED);
+}
+
+/* a driver leaves an error of its own for the application to read with SQLInstallerError. */
+short WINAPI SQLPostInstallerErrorA(DWORD code, const char *message)
+{
+    ERROR_LIST *list = error_list();
+    if (!list || list->Count >= MAX_ERRORS)
+        return SQL_ERROR;
+    list->Codes[list->Count] = (int)code;
+    lstrcpynA(list->Text[list->Count], message ? message : "", sizeof(list->Text[0]));
+    list->Count++;
+    return SQL_SUCCESS;
+}
+
+/* ------------------------------------------------------------------ wide versions */
+
+/* the registry and the files of the installer are read in the code page of the system, as the ansi calls do. */
+static char *narrow(const WCHAR *text, BOOL multi)
+{
+    if (!text)
+        return nullptr;
+    int length = 0;
+    if (multi) {
+        while (text[length] || text[length + 1])
+            length++;
+        length += 2;
+    } else {
+        length = lstrlenW(text) + 1;
+    }
+    int size = WideCharToMultiByte(CP_ACP, 0, text, length, nullptr, 0, nullptr, nullptr);
+    char *out = HeapAlloc(GetProcessHeap(), 0, size + 1);
+    if (!out)
+        return nullptr;
+    size = WideCharToMultiByte(CP_ACP, 0, text, length, out, size, nullptr, nullptr);
+    out[size] = 0;
+    return out;
+}
+
+static void drop(char *text)
+{
+    if (text)
+        HeapFree(GetProcessHeap(), 0, text);
+}
+
+static int widen(const char *text, int length, WCHAR *out, int size)
+{
+    return MultiByteToWideChar(CP_ACP, 0, text, length, out, size);
+}
+
+short WINAPI SQLPostInstallerErrorW(DWORD code, const WCHAR *message)
+{
+    char *text = narrow(message, FALSE);
+    short rc = SQLPostInstallerErrorA(code, text);
+    drop(text);
+    return rc;
+}
+
+short WINAPI SQLInstallerErrorW(WORD index, DWORD *code, WCHAR *message, WORD size, WORD *written)
+{
+    char text[256];
+    WORD length = 0;
+    short rc = SQLInstallerError(index, code, text, sizeof(text), &length);
+    if (rc == SQL_NO_DATA)
+        return rc;
+    if (written)
+        *written = length;
+    if (message && size) {
+        if (!widen(text, -1, message, size))
+            message[size - 1] = 0;
+        return length >= size ? 1 : SQL_SUCCESS;
+    }
+    return SQL_SUCCESS;
+}
+
+BOOL WINAPI SQLWritePrivateProfileStringW(const WCHAR *section, const WCHAR *key, const WCHAR *value, const WCHAR *file)
+{
+    char *a = narrow(section, FALSE), *b = narrow(key, FALSE), *c = narrow(value, FALSE), *d = narrow(file, FALSE);
+    BOOL ok = SQLWritePrivateProfileString(a, b, c, d);
+    drop(a), drop(b), drop(c), drop(d);
+    return ok;
+}
+
+int WINAPI SQLGetPrivateProfileStringW(const WCHAR *section, const WCHAR *key, const WCHAR *default_value,
+                                       WCHAR *buffer, int size, const WCHAR *file)
+{
+    if (!buffer || size <= 0)
+        return -1;
+    char *a = narrow(section, FALSE), *b = narrow(key, FALSE), *c = narrow(default_value, FALSE),
+         *d = narrow(file, FALSE);
+    char *text = HeapAlloc(GetProcessHeap(), 0, size + 2);
+    int length = -1;
+    if (text) {
+        length = SQLGetPrivateProfileString(a, b, c, text, size, d);
+        if (length >= 0) {
+            length = widen(text, length, buffer, size);
+            if (length < size)
+                buffer[length] = 0;
+            if (length + 1 < size)
+                buffer[length + 1] = 0;
+        }
+    }
+    drop(text);
+    drop(a), drop(b), drop(c), drop(d);
+    return length;
+}
+
+BOOL WINAPI SQLValidDSNW(const WCHAR *dsn)
+{
+    char *a = narrow(dsn, FALSE);
+    BOOL ok = SQLValidDSN(a);
+    drop(a);
+    return ok;
+}
+
+BOOL WINAPI SQLWriteDSNToIniW(const WCHAR *dsn, const WCHAR *driver)
+{
+    char *a = narrow(dsn, FALSE), *b = narrow(driver, FALSE);
+    BOOL ok = SQLWriteDSNToIni(a, b);
+    drop(a), drop(b);
+    return ok;
+}
+
+BOOL WINAPI SQLRemoveDSNFromIniW(const WCHAR *dsn)
+{
+    char *a = narrow(dsn, FALSE);
+    BOOL ok = SQLRemoveDSNFromIni(a);
+    drop(a);
+    return ok;
+}
+
+BOOL WINAPI SQLRemoveDriverW(const WCHAR *driver, BOOL remove_dsns, DWORD *usage)
+{
+    char *a = narrow(driver, FALSE);
+    BOOL ok = SQLRemoveDriver(a, remove_dsns, usage);
+    drop(a);
+    return ok;
+}
+
+BOOL WINAPI SQLConfigDataSourceW(HWND parent, WORD request, const WCHAR *driver, const WCHAR *attributes)
+{
+    char *a = narrow(driver, FALSE), *b = narrow(attributes, TRUE);
+    BOOL ok = SQLConfigDataSource(parent, request, a, b);
+    drop(a), drop(b);
+    return ok;
+}
+
+BOOL WINAPI SQLInstallDriverExW(const WCHAR *driver, const WCHAR *path_in, WCHAR *path_out, WORD path_out_size,
+                                WORD *path_out_length, WORD request, DWORD *usage)
+{
+    char *a = narrow(driver, TRUE), *b = narrow(path_in, FALSE);
+    char out[MAX_PATH];
+    WORD length = 0;
+    BOOL ok = SQLInstallDriverEx(a, b, out, sizeof(out), &length, request, usage);
+    if (ok && path_out && path_out_size)
+        widen(out, -1, path_out, path_out_size);
+    if (path_out_length)
+        *path_out_length = length;
+    drop(a), drop(b);
+    return ok;
+}
+
+BOOL WINAPI SQLInstallDriverManagerW(WCHAR *path, WORD size, WORD *length)
+{
+    char out[MAX_PATH];
+    WORD count = 0;
+    BOOL ok = SQLInstallDriverManager(out, sizeof(out), &count);
+    if (ok && path && size)
+        widen(out, -1, path, size);
+    if (length)
+        *length = count;
+    return ok;
+}
+
+BOOL WINAPI SQLGetInstalledDriversW(WCHAR *buffer, WORD size, WORD *length)
+{
+    if (!buffer || size < 2) {
+        clear_errors();
+        return fail(ODBC_ERROR_INVALID_BUFF_LEN);
+    }
+    char *text = HeapAlloc(GetProcessHeap(), 0, size);
+    WORD count = 0;
+    BOOL ok = text && SQLGetInstalledDrivers(text, size, &count);
+    if (ok) {
+        widen(text, count, buffer, size);
+        if (length)
+            *length = count;
+    }
+    drop(text);
+    return ok;
 }

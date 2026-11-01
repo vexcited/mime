@@ -15,3 +15,16 @@ EXPORTS
     SQLWriteDSNToIni @8
     SQLRemoveDSNFromIni @9
     SQLConfigDataSource @6
+    SQLPostInstallerErrorA
+    SQLPostInstallerErrorW
+    SQLInstallerErrorW
+    SQLWritePrivateProfileStringW
+    SQLGetPrivateProfileStringW
+    SQLValidDSNW
+    SQLWriteDSNToIniW
+    SQLRemoveDSNFromIniW
+    SQLRemoveDriverW
+    SQLConfigDataSourceW
+    SQLInstallDriverExW
+    SQLInstallDriverManagerW
+    SQLGetInstalledDriversW
