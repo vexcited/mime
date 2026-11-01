@@ -36,9 +36,16 @@ typedef unsigned char SQLTIME;
 typedef unsigned char SQLTIMESTAMP;
 typedef unsigned char SQLVARCHAR;
 typedef WCHAR SQLWCHAR;
+/* the lengths are as wide as a pointer, and a row number of SQLSetPos is a short in 32 bits. */
+#ifdef _WIN64
 typedef INT64 SQLLEN;
 typedef UINT64 SQLULEN;
 typedef UINT64 SQLSETPOSIROW;
+#else
+typedef SQLINTEGER SQLLEN;
+typedef SQLUINTEGER SQLULEN;
+typedef SQLUSMALLINT SQLSETPOSIROW;
+#endif
 typedef SQLULEN SQLROWCOUNT;
 typedef SQLULEN SQLROWSETSIZE;
 typedef SQLULEN SQLTRANSID;

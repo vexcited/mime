@@ -102,8 +102,8 @@ static SQLRETURN OdbcAllocDbc(SQLHANDLE input, SQLHANDLE *output)
     return OdbcReturn(&env->h, SQL_SUCCESS);
 }
 
-/* statements and descriptors need an open connection, which never exists without drivers. */
-static SQLRETURN OdbcAllocOnDbc(SQLHANDLE input, SQLHANDLE *output)
+/* statements and descriptors need an open connection, and are the driver's own handles. */
+static SQLRETURN OdbcAllocOnDbc(SQLHANDLE input, SQLHANDLE *output, SQLSMALLINT type)
 {
     OdbcDbc *dbc = OdbcLookupDbc(input);
     if (!dbc)
@@ -112,6 +112,8 @@ static SQLRETURN OdbcAllocOnDbc(SQLHANDLE input, SQLHANDLE *output)
     if (!output)
         return OdbcFail(&dbc->h, ODBC_E_HY009);
     *output = SQL_NULL_HANDLE;
+    if (dbc->connected)
+        return OdbcDriverAlloc(dbc, type, output);
     return OdbcFail(&dbc->h, ODBC_E_08003);
 }
 
@@ -127,7 +129,7 @@ static SQLRETURN OdbcAllocHandle(SQLSMALLINT type, SQLHANDLE input, SQLHANDLE *o
         return OdbcAllocDbc(input, output);
     case SQL_HANDLE_STMT:
     case SQL_HANDLE_DESC:
-        return OdbcAllocOnDbc(input, output);
+        return OdbcAllocOnDbc(input, output, type);
     }
     OdbcHandle *h = OdbcLookup(input, SQL_HANDLE_ENV);
     if (!h)
@@ -173,7 +175,7 @@ DECLSPEC_EXPORT SQLRETURN SQL_API SQLAllocConnect(SQLHENV env, SQLHDBC *dbc)
 DECLSPEC_EXPORT SQLRETURN SQL_API SQLAllocStmt(SQLHDBC dbc, SQLHSTMT *stmt)
 {
     OdbcLock();
-    SQLRETURN rc = OdbcAllocOnDbc(dbc, stmt);
+    SQLRETURN rc = OdbcAllocOnDbc(dbc, stmt, SQL_HANDLE_STMT);
     OdbcUnlock();
     return rc;
 }
@@ -198,6 +200,10 @@ static SQLRETURN OdbcFreeDbc(SQLHANDLE handle)
     OdbcDbc *dbc = OdbcLookupDbc(handle);
     if (!dbc)
         return SQL_INVALID_HANDLE;
+    OdbcBegin(&dbc->h);
+    if (dbc->connected)
+        return OdbcFail(&dbc->h, ODBC_E_HY010);
+    OdbcCloseDriverHandles(dbc);
     dbc->h.env->connections--;
     OdbcUnlink(&dbc->h);
     OdbcFreeDbcAttrs(dbc);
@@ -213,6 +219,10 @@ DECLSPEC_EXPORT SQLRETURN SQL_API SQLFreeHandle(SQLSMALLINT type, SQLHANDLE hand
         rc = OdbcFreeEnv(handle);
     else if (type == SQL_HANDLE_DBC)
         rc = OdbcFreeDbc(handle);
+    else if (type == SQL_HANDLE_STMT || type == SQL_HANDLE_DESC) {
+        OdbcUnlock();
+        return OdbcDriverFree(type, handle);
+    }
     OdbcUnlock();
     return rc;
 }

@@ -7,9 +7,9 @@ EXPORTS
     SQLAllocHandle@12 @24
     SQLAllocHandleStd@12 @77
     SQLAllocStmt@8 @3
-    SQLBindCol@28 @4
-    SQLBindParam@36 @25
-    SQLBindParameter@48 @72
+    SQLBindCol@24 @4
+    SQLBindParam@32 @25
+    SQLBindParameter@40 @72
     SQLBrowseConnectA@24 @255
     SQLBrowseConnectW@24 @155
     SQLBulkOperations@8 @78
@@ -44,9 +44,9 @@ EXPORTS
     SQLExecDirectA@12 @211
     SQLExecDirectW@12 @111
     SQLExecute@4 @12
-    SQLExtendedFetch@24 @59
+    SQLExtendedFetch@20 @59
     SQLFetch@4 @13
-    SQLFetchScroll@16 @30
+    SQLFetchScroll@12 @30
     SQLForeignKeysA@52 @260
     SQLForeignKeysW@52 @160
     SQLFreeConnect@4 @14
@@ -59,7 +59,7 @@ EXPORTS
     SQLGetConnectOptionW@12 @142
     SQLGetCursorNameA@16 @217
     SQLGetCursorNameW@16 @117
-    SQLGetData@28 @43
+    SQLGetData@24 @43
     SQLGetDescFieldA@24 @233
     SQLGetDescFieldW@24 @133
     SQLGetDescRecA@44 @234
@@ -83,7 +83,7 @@ EXPORTS
     SQLNumParams@8 @63
     SQLNumResultCols@8 @18
     SQLParamData@8 @48
-    SQLParamOptions@16 @64
+    SQLParamOptions@12 @64
     SQLPrepareA@12 @219
     SQLPrepareW@12 @119
     SQLPrimaryKeysA@28 @265
@@ -92,24 +92,24 @@ EXPORTS
     SQLProcedureColumnsW@36 @166
     SQLProceduresA@28 @267
     SQLProceduresW@28 @167
-    SQLPutData@16 @49
+    SQLPutData@12 @49
     SQLRowCount@8 @20
     SQLSetConnectAttrA@16 @239
     SQLSetConnectAttrW@16 @139
-    SQLSetConnectOptionA@16 @250
-    SQLSetConnectOptionW@16 @150
+    SQLSetConnectOptionA@12 @250
+    SQLSetConnectOptionW@12 @150
     SQLSetCursorNameA@12 @221
     SQLSetCursorNameW@12 @121
     SQLSetDescFieldA@20 @273
     SQLSetDescFieldW@20 @173
-    SQLSetDescRec@44 @74
+    SQLSetDescRec@40 @74
     SQLSetEnvAttr@16 @75
-    SQLSetParam@36 @22
-    SQLSetPos@20 @68
-    SQLSetScrollOptions@20 @69
+    SQLSetParam@32 @22
+    SQLSetPos@16 @68
+    SQLSetScrollOptions@16 @69
     SQLSetStmtAttrA@16 @276
     SQLSetStmtAttrW@16 @176
-    SQLSetStmtOption@16 @51
+    SQLSetStmtOption@12 @51
     SQLSpecialColumnsA@40 @252
     SQLSpecialColumnsW@40 @152
     SQLStatisticsA@36 @253

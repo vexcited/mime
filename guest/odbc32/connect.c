@@ -87,6 +87,15 @@ static SQLRETURN OdbcSetAttr(OdbcDbc *dbc, SQLINTEGER attribute, SQLPOINTER valu
     return OdbcReturn(&dbc->h, SQL_SUCCESS);
 }
 
+/* an open connection answers for its attributes itself, except the ones the manager traces with. */
+static BOOL OdbcDriverAttr(OdbcDbc *dbc, SQLINTEGER attribute)
+{
+    return dbc->connected && attribute != SQL_ATTR_TRACE && attribute != SQL_ATTR_TRACEFILE;
+}
+
+typedef SQLRETURN(SQL_API *SET_ATTR_FN)(SQLHDBC, SQLINTEGER, SQLPOINTER, SQLINTEGER);
+typedef SQLRETURN(SQL_API *GET_ATTR_FN)(SQLHDBC, SQLINTEGER, SQLPOINTER, SQLINTEGER, SQLINTEGER *);
+
 SQLRETURN OdbcSetConnectAttr(SQLHDBC handle, SQLINTEGER attribute, SQLPOINTER value, SQLINTEGER length, BOOL ansi)
 {
     OdbcLock();
@@ -94,6 +103,18 @@ SQLRETURN OdbcSetConnectAttr(SQLHDBC handle, SQLINTEGER attribute, SQLPOINTER va
     OdbcDbc *dbc = OdbcLookupDbc(handle);
     if (dbc) {
         OdbcBegin(&dbc->h);
+        if (OdbcDriverAttr(dbc, attribute)) {
+            SET_ATTR_FN fn = OdbcDrvFn(dbc->driver, ansi ? "SQLSetConnectAttr" : "SQLSetConnectAttrW");
+            SQLHDBC drv = dbc->drv_dbc;
+            OdbcUnlock();
+            rc = fn ? fn(drv, attribute, value, length) : SQL_ERROR;
+            OdbcLock();
+            dbc = OdbcLookupDbc(handle);
+            if (dbc)
+                dbc->diag_driver = TRUE;
+            OdbcUnlock();
+            return rc;
+        }
         rc = OdbcSetAttr(dbc, attribute, value, length, ansi);
     }
     OdbcUnlock();
@@ -174,6 +195,18 @@ SQLRETURN OdbcGetConnectAttr(SQLHDBC handle, SQLINTEGER attribute, SQLPOINTER va
     OdbcDbc *dbc = OdbcLookupDbc(handle);
     if (dbc) {
         OdbcBegin(&dbc->h);
+        if (OdbcDriverAttr(dbc, attribute)) {
+            GET_ATTR_FN fn = OdbcDrvFn(dbc->driver, ansi ? "SQLGetConnectAttr" : "SQLGetConnectAttrW");
+            SQLHDBC drv = dbc->drv_dbc;
+            OdbcUnlock();
+            rc = fn ? fn(drv, attribute, value, buffer_length, length) : SQL_ERROR;
+            OdbcLock();
+            dbc = OdbcLookupDbc(handle);
+            if (dbc)
+                dbc->diag_driver = TRUE;
+            OdbcUnlock();
+            return rc;
+        }
         rc = OdbcGetAttr(dbc, attribute, value, buffer_length, length, ansi);
     }
     OdbcUnlock();
@@ -227,10 +260,27 @@ DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetConnectOptionA(SQLHDBC dbc, SQLUSMALLINT
 
 /* ------------------------------------------------------------------ connecting */
 
-/* without an installed driver every data source lookup fails with IM002. */
-static SQLRETURN OdbcConnect(SQLHDBC handle, SQLSMALLINT dsn_length, SQLLEN dsn_chars, SQLSMALLINT user_length,
-                             SQLSMALLINT password_length)
+/* a connection string or a data source the registry does not know has no driver: IM002, and IM003 when it will not load. */
+static SQLRETURN OdbcConnectResult(SQLHDBC handle, SQLRETURN rc)
 {
+    if (rc != ODBC_NO_DRIVER && rc != ODBC_DRIVER_NOT_LOADED)
+        return rc;
+    OdbcLock();
+    OdbcDbc *dbc = OdbcLookupDbc(handle);
+    if (!dbc) {
+        OdbcUnlock();
+        return SQL_INVALID_HANDLE;
+    }
+    OdbcBegin(&dbc->h);
+    rc = OdbcFail(&dbc->h, rc == ODBC_NO_DRIVER ? ODBC_E_IM002 : ODBC_E_IM003);
+    OdbcUnlock();
+    return rc;
+}
+
+static SQLRETURN OdbcConnect(SQLHDBC handle, BOOL ansi, const void *dsn, SQLSMALLINT dsn_length, const void *user,
+                             SQLSMALLINT user_length, const void *password, SQLSMALLINT password_length)
+{
+    SQLLEN dsn_chars = !dsn ? 0 : dsn_length != SQL_NTS ? dsn_length : ansi ? (SQLLEN)strlen(dsn) : (SQLLEN)wcslen(dsn);
     OdbcLock();
     SQLRETURN rc = SQL_INVALID_HANDLE;
     OdbcDbc *dbc = OdbcLookupDbc(handle);
@@ -240,30 +290,37 @@ static SQLRETURN OdbcConnect(SQLHDBC handle, SQLSMALLINT dsn_length, SQLLEN dsn_
             rc = OdbcFail(&dbc->h, ODBC_E_HY090);
         else if (dsn_chars > SQL_MAX_DSN_LENGTH)
             rc = OdbcFail(&dbc->h, ODBC_E_IM010);
-        else
+        else if (dbc->connected)
+            rc = OdbcFail(&dbc->h, ODBC_E_08002);
+        else if (!dsn)
             rc = OdbcFail(&dbc->h, ODBC_E_IM002);
+        else
+            rc = SQL_SUCCESS;
     }
     OdbcUnlock();
-    return rc;
+    if (rc != SQL_SUCCESS)
+        return rc;
+    rc = OdbcConnectToDriver(handle, 0, ansi, nullptr, dsn, dsn_length, nullptr, 0, nullptr, 0, user, user_length, password,
+                             password_length);
+    return OdbcConnectResult(handle, rc);
 }
 
 DECLSPEC_EXPORT SQLRETURN SQL_API SQLConnectW(SQLHDBC dbc, SQLWCHAR *dsn, SQLSMALLINT dsn_length,
                                                     SQLWCHAR *user, SQLSMALLINT user_length, SQLWCHAR *password,
                                                     SQLSMALLINT password_length)
 {
-    SQLLEN chars = !dsn ? 0 : dsn_length == SQL_NTS ? (SQLLEN)wcslen(dsn) : dsn_length;
-    return OdbcConnect(dbc, dsn_length, chars, user_length, password_length);
+    return OdbcConnect(dbc, FALSE, dsn, dsn_length, user, user_length, password, password_length);
 }
 
 DECLSPEC_EXPORT SQLRETURN SQL_API SQLConnectA(SQLHDBC dbc, SQLCHAR *dsn, SQLSMALLINT dsn_length, SQLCHAR *user,
                                                     SQLSMALLINT user_length, SQLCHAR *password,
                                                     SQLSMALLINT password_length)
 {
-    SQLLEN chars = !dsn ? 0 : dsn_length == SQL_NTS ? (SQLLEN)strlen((PCSTR)dsn) : dsn_length;
-    return OdbcConnect(dbc, dsn_length, chars, user_length, password_length);
+    return OdbcConnect(dbc, TRUE, dsn, dsn_length, user, user_length, password, password_length);
 }
 
-static SQLRETURN OdbcDriverConnect(SQLHDBC handle, SQLSMALLINT in_length, SQLSMALLINT out_max,
+static SQLRETURN OdbcDriverConnect(SQLHDBC handle, BOOL ansi, int kind, SQLHWND window, const void *in,
+                                   SQLSMALLINT in_length, void *out, SQLSMALLINT out_max, SQLSMALLINT *out_length,
                                    SQLUSMALLINT completion)
 {
     OdbcLock();
@@ -275,38 +332,46 @@ static SQLRETURN OdbcDriverConnect(SQLHDBC handle, SQLSMALLINT in_length, SQLSMA
             rc = OdbcFail(&dbc->h, ODBC_E_HY090);
         else if (completion > SQL_DRIVER_COMPLETE_REQUIRED)
             rc = OdbcFail(&dbc->h, ODBC_E_HY110);
-        else
+        else if (dbc->connected)
+            rc = OdbcFail(&dbc->h, ODBC_E_08002);
+        else if (!in)
             rc = OdbcFail(&dbc->h, ODBC_E_IM002);
+        else
+            rc = SQL_SUCCESS;
     }
     OdbcUnlock();
-    return rc;
+    if (rc != SQL_SUCCESS)
+        return rc;
+    rc = OdbcConnectToDriver(handle, kind, ansi, window, in, in_length, out, out_max, out_length, completion, nullptr, 0,
+                             nullptr, 0);
+    return OdbcConnectResult(handle, rc);
 }
 
 DECLSPEC_EXPORT SQLRETURN SQL_API SQLDriverConnectW(SQLHDBC dbc, SQLHWND window, SQLWCHAR *in,
                                                           SQLSMALLINT in_length, SQLWCHAR *out, SQLSMALLINT out_max,
                                                           SQLSMALLINT *out_length, SQLUSMALLINT completion)
 {
-    return OdbcDriverConnect(dbc, in_length, out_max, completion);
+    return OdbcDriverConnect(dbc, FALSE, 1, window, in, in_length, out, (SQLSMALLINT)(out_max * 1), out_length, completion);
 }
 
 DECLSPEC_EXPORT SQLRETURN SQL_API SQLDriverConnectA(SQLHDBC dbc, SQLHWND window, SQLCHAR *in,
                                                           SQLSMALLINT in_length, SQLCHAR *out, SQLSMALLINT out_max,
                                                           SQLSMALLINT *out_length, SQLUSMALLINT completion)
 {
-    return OdbcDriverConnect(dbc, in_length, out_max, completion);
+    return OdbcDriverConnect(dbc, TRUE, 1, window, in, in_length, out, out_max, out_length, completion);
 }
 
 DECLSPEC_EXPORT SQLRETURN SQL_API SQLBrowseConnectW(SQLHDBC dbc, SQLWCHAR *in, SQLSMALLINT in_length,
                                                           SQLWCHAR *out, SQLSMALLINT out_max,
                                                           SQLSMALLINT *out_length)
 {
-    return OdbcDriverConnect(dbc, in_length, out_max, SQL_DRIVER_NOPROMPT);
+    return OdbcDriverConnect(dbc, FALSE, 2, nullptr, in, in_length, out, out_max, out_length, SQL_DRIVER_NOPROMPT);
 }
 
 DECLSPEC_EXPORT SQLRETURN SQL_API SQLBrowseConnectA(SQLHDBC dbc, SQLCHAR *in, SQLSMALLINT in_length,
                                                           SQLCHAR *out, SQLSMALLINT out_max, SQLSMALLINT *out_length)
 {
-    return OdbcDriverConnect(dbc, in_length, out_max, SQL_DRIVER_NOPROMPT);
+    return OdbcDriverConnect(dbc, TRUE, 2, nullptr, in, in_length, out, out_max, out_length, SQL_DRIVER_NOPROMPT);
 }
 
 static SQLRETURN OdbcDbcFail(SQLHDBC handle, enum OdbcError error)
@@ -322,12 +387,18 @@ static SQLRETURN OdbcDbcFail(SQLHDBC handle, enum OdbcError error)
     return rc;
 }
 
-DECLSPEC_EXPORT SQLRETURN SQL_API SQLDisconnect(SQLHDBC dbc)
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLDisconnect(SQLHDBC handle)
 {
-    return OdbcDbcFail(dbc, ODBC_E_08003);
+    OdbcLock();
+    OdbcDbc *dbc = OdbcLookupDbc(handle);
+    BOOL open = dbc && dbc->connected;
+    OdbcUnlock();
+    return open ? OdbcDisconnectDriver(handle) : OdbcDbcFail(handle, ODBC_E_08003);
 }
 
 /* ------------------------------------------------------------------ information */
+
+typedef SQLRETURN(SQL_API *GET_INFO_FN)(SQLHDBC, SQLUSMALLINT, SQLPOINTER, SQLSMALLINT, SQLSMALLINT *);
 
 static SQLRETURN OdbcGetInfo(SQLHDBC handle, SQLUSMALLINT type, SQLPOINTER value, SQLSMALLINT buffer_length,
                              SQLSMALLINT *length, BOOL ansi)
@@ -337,6 +408,13 @@ static SQLRETURN OdbcGetInfo(SQLHDBC handle, SQLUSMALLINT type, SQLPOINTER value
     OdbcDbc *dbc = OdbcLookupDbc(handle);
     if (dbc) {
         OdbcBegin(&dbc->h);
+        if (dbc->connected && type != SQL_ODBC_VER) {
+            GET_INFO_FN fn = OdbcDrvFn(dbc->driver, ansi ? "SQLGetInfo" : "SQLGetInfoW");
+            SQLHDBC drv = dbc->drv_dbc;
+            dbc->diag_driver = TRUE;
+            OdbcUnlock();
+            return fn ? fn(drv, type, value, buffer_length, length) : SQL_ERROR;
+        }
         if (type != SQL_ODBC_VER) {
             rc = OdbcFail(&dbc->h, ODBC_E_08003);
         } else {
@@ -362,13 +440,28 @@ DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetInfoA(SQLHDBC dbc, SQLUSMALLINT type, SQ
     return OdbcGetInfo(dbc, type, value, buffer_length, length, TRUE);
 }
 
-DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetFunctions(SQLHDBC dbc, SQLUSMALLINT function, SQLUSMALLINT *supported)
+typedef SQLRETURN(SQL_API *GET_FUNCTIONS_FN)(SQLHDBC, SQLUSMALLINT, SQLUSMALLINT *);
+
+DECLSPEC_EXPORT SQLRETURN SQL_API SQLGetFunctions(SQLHDBC handle, SQLUSMALLINT function, SQLUSMALLINT *supported)
 {
-    return OdbcDbcFail(dbc, ODBC_E_HY010);
+    OdbcLock();
+    OdbcDbc *dbc = OdbcLookupDbc(handle);
+    if (dbc && dbc->connected) {
+        GET_FUNCTIONS_FN fn = OdbcDrvFn(dbc->driver, "SQLGetFunctions");
+        SQLHDBC drv = dbc->drv_dbc;
+        OdbcBegin(&dbc->h);
+        dbc->diag_driver = TRUE;
+        OdbcUnlock();
+        return fn ? fn(drv, function, supported) : SQL_ERROR;
+    }
+    OdbcUnlock();
+    return OdbcDbcFail(handle, ODBC_E_HY010);
 }
 
-static SQLRETURN OdbcNativeSql(SQLHDBC handle, const void *in, SQLINTEGER in_length, const void *out,
-                               SQLINTEGER out_max)
+typedef SQLRETURN(SQL_API *NATIVE_SQL_FN)(SQLHDBC, const void *, SQLINTEGER, void *, SQLINTEGER, SQLINTEGER *);
+
+static SQLRETURN OdbcNativeSql(SQLHDBC handle, const void *in, SQLINTEGER in_length, void *out, SQLINTEGER out_max,
+                               SQLINTEGER *out_length, BOOL ansi)
 {
     OdbcLock();
     SQLRETURN rc = SQL_INVALID_HANDLE;
@@ -379,7 +472,13 @@ static SQLRETURN OdbcNativeSql(SQLHDBC handle, const void *in, SQLINTEGER in_len
             rc = OdbcFail(&dbc->h, ODBC_E_HY009);
         else if (OdbcBadLength(in_length) || (out && out_max < 0))
             rc = OdbcFail(&dbc->h, ODBC_E_HY090);
-        else
+        else if (dbc->connected) {
+            NATIVE_SQL_FN fn = OdbcDrvFn(dbc->driver, ansi ? "SQLNativeSql" : "SQLNativeSqlW");
+            SQLHDBC drv = dbc->drv_dbc;
+            dbc->diag_driver = TRUE;
+            OdbcUnlock();
+            return fn ? fn(drv, in, in_length, out, out_max, out_length) : SQL_ERROR;
+        } else
             rc = OdbcFail(&dbc->h, ODBC_E_08003);
     }
     OdbcUnlock();
@@ -389,13 +488,13 @@ static SQLRETURN OdbcNativeSql(SQLHDBC handle, const void *in, SQLINTEGER in_len
 DECLSPEC_EXPORT SQLRETURN SQL_API SQLNativeSqlW(SQLHDBC dbc, SQLWCHAR *in, SQLINTEGER in_length, SQLWCHAR *out,
                                                       SQLINTEGER out_max, SQLINTEGER *out_length)
 {
-    return OdbcNativeSql(dbc, in, in_length, out, out_max);
+    return OdbcNativeSql(dbc, in, in_length, out, out_max, out_length, FALSE);
 }
 
 DECLSPEC_EXPORT SQLRETURN SQL_API SQLNativeSqlA(SQLHDBC dbc, SQLCHAR *in, SQLINTEGER in_length, SQLCHAR *out,
                                                       SQLINTEGER out_max, SQLINTEGER *out_length)
 {
-    return OdbcNativeSql(dbc, in, in_length, out, out_max);
+    return OdbcNativeSql(dbc, in, in_length, out, out_max, out_length, TRUE);
 }
 
 /* ------------------------------------------------------------------ transactions and asynchronous calls */
@@ -419,6 +518,13 @@ static SQLRETURN OdbcEndTran(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT com
         OdbcDbc *dbc = OdbcLookupDbc(handle);
         if (dbc) {
             OdbcBegin(&dbc->h);
+            if (dbc->connected && (SQLUSMALLINT)completion <= SQL_ROLLBACK) {
+                SQLRETURN(SQL_API * fn)(SQLSMALLINT, SQLHANDLE, SQLSMALLINT) = OdbcDrvFn(dbc->driver, "SQLEndTran");
+                SQLHDBC drv = dbc->drv_dbc;
+                dbc->diag_driver = TRUE;
+                OdbcUnlock();
+                return fn ? fn(SQL_HANDLE_DBC, drv, completion) : SQL_ERROR;
+            }
             rc = OdbcFail(&dbc->h, (SQLUSMALLINT)completion > SQL_ROLLBACK ? ODBC_E_HY012 : ODBC_E_08003);
         }
     }
@@ -440,13 +546,29 @@ DECLSPEC_EXPORT SQLRETURN SQL_API SQLTransact(SQLHENV env, SQLHDBC dbc, SQLUSMAL
     return SQL_INVALID_HANDLE;
 }
 
+typedef SQLRETURN(SQL_API *HANDLE_CALL_FN)(SQLSMALLINT, SQLHANDLE);
+
 DECLSPEC_EXPORT SQLRETURN SQL_API SQLCancelHandle(SQLSMALLINT type, SQLHANDLE handle)
 {
     OdbcLock();
     SQLRETURN rc = SQL_INVALID_HANDLE;
+    OdbcSub *sub = OdbcFindSub(handle);
+    if (sub && sub->type == type) {
+        HANDLE_CALL_FN fn = OdbcDrvFn(sub->dbc->driver, "SQLCancelHandle");
+        OdbcUnlock();
+        return fn ? fn(type, handle) : SQL_ERROR;
+    }
     OdbcHandle *h = OdbcLookup(handle, type == SQL_HANDLE_SENV ? SQL_HANDLE_ENV : type);
     if (h) {
         OdbcBegin(h);
+        if (h->type == SQL_HANDLE_DBC && ((OdbcDbc *)h)->connected) {
+            OdbcDbc *dbc = (OdbcDbc *)h;
+            HANDLE_CALL_FN fn = OdbcDrvFn(dbc->driver, "SQLCancelHandle");
+            SQLHDBC drv = dbc->drv_dbc;
+            dbc->diag_driver = TRUE;
+            OdbcUnlock();
+            return fn ? fn(type, drv) : SQL_ERROR;
+        }
         /* an unopened connection has nothing to cancel. */
         rc = h->type == SQL_HANDLE_DBC ? OdbcReturn(h, SQL_SUCCESS) : OdbcFail(h, ODBC_E_HY092);
     }
@@ -458,9 +580,23 @@ DECLSPEC_EXPORT SQLRETURN SQL_API SQLCompleteAsync(SQLSMALLINT type, SQLHANDLE h
 {
     OdbcLock();
     SQLRETURN rc = SQL_INVALID_HANDLE;
+    OdbcSub *sub = OdbcFindSub(handle);
+    if (sub && sub->type == type) {
+        SQLRETURN(SQL_API * fn)(SQLSMALLINT, SQLHANDLE, RETCODE *) = OdbcDrvFn(sub->dbc->driver, "SQLCompleteAsync");
+        OdbcUnlock();
+        return fn ? fn(type, handle, result) : SQL_ERROR;
+    }
     OdbcHandle *h = type == SQL_HANDLE_DBC ? OdbcLookup(handle, SQL_HANDLE_DBC) : nullptr;
     if (h) {
         OdbcBegin(h);
+        OdbcDbc *dbc = (OdbcDbc *)h;
+        if (dbc->connected) {
+            SQLRETURN(SQL_API * fn)(SQLSMALLINT, SQLHANDLE, RETCODE *) = OdbcDrvFn(dbc->driver, "SQLCompleteAsync");
+            SQLHDBC drv = dbc->drv_dbc;
+            dbc->diag_driver = TRUE;
+            OdbcUnlock();
+            return fn ? fn(type, drv, result) : SQL_ERROR;
+        }
         rc = OdbcFail(h, ODBC_E_HY010);
     }
     OdbcUnlock();

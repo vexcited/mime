@@ -24,6 +24,7 @@ enum OdbcError {
     ODBC_E_HY110, /* invalid driver completion. */
     ODBC_E_HYC00, /* optional feature not implemented. */
     ODBC_E_IM002, /* data source name not found and no default driver specified. */
+    ODBC_E_IM003, /* specified driver could not be loaded. */
     ODBC_E_IM010, /* data source name too long. */
     ODBC_E_COUNT,
 };
@@ -60,11 +61,43 @@ typedef struct OdbcAttr {
     PWSTR string;
 } OdbcAttr;
 
+typedef struct OdbcDriver OdbcDriver;
+
 typedef struct OdbcDbc {
     OdbcHandle h;
     ULONG attr_count;
     OdbcAttr attrs[ODBC_MAX_ATTRS];
+    /* the driver of an open connection, with the handles it made, and whether its diagnostics are the ones to give. */
+    OdbcDriver *driver;
+    SQLHANDLE drv_env, drv_dbc;
+    BOOL connected;
+    BOOL diag_driver;
 } OdbcDbc;
+
+/* a statement or descriptor of a driver, which the manager only remembers belongs to a connection. */
+typedef struct OdbcSub {
+    struct OdbcSub *next;
+    SQLHANDLE handle;
+    SQLSMALLINT type;
+    OdbcDbc *dbc;
+} OdbcSub;
+
+/* driver.c */
+void *OdbcDrvFn(OdbcDriver *driver, const char *name);
+OdbcSub *OdbcFindSub(SQLHANDLE handle);
+void OdbcRemoveSub(SQLHANDLE handle);
+void OdbcNoteDescriptor(SQLHANDLE statement, SQLHANDLE descriptor);
+BOOL OdbcSubDriver(SQLHANDLE handle, OdbcDriver **driver, SQLSMALLINT *type);
+SQLRETURN OdbcDriverAlloc(OdbcDbc *dbc, SQLSMALLINT type, SQLHANDLE *output);
+SQLRETURN OdbcDriverFree(SQLSMALLINT type, SQLHANDLE handle);
+void OdbcCloseDriverHandles(OdbcDbc *dbc);
+#define ODBC_NO_DRIVER (-1000)
+#define ODBC_DRIVER_NOT_LOADED (-1001)
+SQLRETURN OdbcConnectToDriver(SQLHDBC handle, int kind, BOOL ansi, SQLHWND window, const void *in, SQLSMALLINT in_length,
+                              void *out, SQLSMALLINT out_max, SQLSMALLINT *out_length, SQLUSMALLINT completion,
+                              const void *user, SQLSMALLINT user_length, const void *password,
+                              SQLSMALLINT password_length);
+SQLRETURN OdbcDisconnectDriver(SQLHDBC handle);
 
 FORCEINLINE PVOID OdbcAlloc(SIZE_T size)
 {

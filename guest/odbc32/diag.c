@@ -26,6 +26,7 @@ static const struct {
     [ODBC_E_HY110] = {L"HY110", L"S1110", L"Invalid driver completion"},
     [ODBC_E_HYC00] = {L"HYC00", L"S1C00", L"Optional feature not implemented"},
     [ODBC_E_IM002] = {L"IM002", L"IM002", L"Data source name not found and no default driver specified"},
+    [ODBC_E_IM003] = {L"IM003", L"IM003", L"Specified driver could not be loaded"},
     [ODBC_E_IM010] = {L"IM010", L"IM010", L"Data source name too long"},
 };
 
@@ -35,6 +36,8 @@ static constexpr WCHAR g_prefix[] = L"[Microsoft][ODBC Driver Manager] ";
 
 void OdbcBegin(OdbcHandle *h)
 {
+    if (h->type == SQL_HANDLE_DBC)
+        ((OdbcDbc *)h)->diag_driver = FALSE;
     h->diag_count = 0;
     h->diag_read = 0;
 }
@@ -172,12 +175,43 @@ static SQLRETURN OdbcOutputRecord(const OdbcRecord *record, SQLPOINTER state, SQ
     return rc;
 }
 
+/*
+ * the handle a driver answers diagnostics for: a statement or descriptor of its own, or the connection when the last
+ * call on it went to the driver. set to the driver's handle, with NULL when the manager answers.
+ */
+static OdbcDriver *OdbcDriverDiag(SQLSMALLINT type, SQLHANDLE handle, SQLHANDLE *driver_handle)
+{
+    OdbcSub *sub = OdbcFindSub(handle);
+    if (sub && sub->type == type) {
+        *driver_handle = handle;
+        return sub->dbc->driver;
+    }
+    OdbcDbc *dbc = type == SQL_HANDLE_DBC ? OdbcLookupDbc(handle) : nullptr;
+    if (dbc && dbc->driver && dbc->diag_driver && !dbc->h.diag_count) {
+        *driver_handle = dbc->drv_dbc;
+        return dbc->driver;
+    }
+    return nullptr;
+}
+
+typedef SQLRETURN(SQL_API *DIAG_REC_FN)(SQLSMALLINT, SQLHANDLE, SQLSMALLINT, SQLPOINTER, SQLINTEGER *, SQLPOINTER,
+                                        SQLSMALLINT, SQLSMALLINT *);
+typedef SQLRETURN(SQL_API *DIAG_FIELD_FN)(SQLSMALLINT, SQLHANDLE, SQLSMALLINT, SQLSMALLINT, SQLPOINTER, SQLSMALLINT,
+                                          SQLSMALLINT *);
+
 static SQLRETURN OdbcGetDiagRec(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT number, SQLPOINTER state,
                                 SQLINTEGER *native, SQLPOINTER message, SQLSMALLINT message_max,
                                 SQLSMALLINT *message_length, BOOL ansi)
 {
     OdbcLock();
     SQLRETURN rc;
+    SQLHANDLE driver_handle;
+    OdbcDriver *driver = OdbcDriverDiag(type, handle, &driver_handle);
+    if (driver) {
+        DIAG_REC_FN fn = OdbcDrvFn(driver, ansi ? "SQLGetDiagRec" : "SQLGetDiagRecW");
+        OdbcUnlock();
+        return fn ? fn(type, driver_handle, number, state, native, message, message_max, message_length) : SQL_ERROR;
+    }
     OdbcHandle *h = OdbcLookup(handle, type);
     if (!h) {
         rc = SQL_INVALID_HANDLE;
@@ -280,6 +314,15 @@ static SQLRETURN OdbcOutputField(PCWSTR text, SQLPOINTER value, SQLSMALLINT buff
 static SQLRETURN OdbcGetDiagField(SQLSMALLINT type, SQLHANDLE handle, SQLSMALLINT number, SQLSMALLINT field,
                                   SQLPOINTER value, SQLSMALLINT buffer_length, SQLSMALLINT *length, BOOL ansi)
 {
+    SQLHANDLE driver_handle;
+    OdbcDriver *driver = OdbcDriverDiag(type, handle, &driver_handle);
+    if (driver) {
+        DIAG_FIELD_FN fn = OdbcDrvFn(driver, ansi ? "SQLGetDiagField" : "SQLGetDiagFieldW");
+        OdbcUnlock();
+        SQLRETURN rc = fn ? fn(type, driver_handle, number, field, value, buffer_length, length) : SQL_ERROR;
+        OdbcLock();
+        return rc;
+    }
     OdbcHandle *h = OdbcLookup(handle, type);
     if (!h)
         return SQL_INVALID_HANDLE;
