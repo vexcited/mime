@@ -125,9 +125,7 @@ JET_ERR ese_attach_db(SESSION *sess, LPCWSTR path, JET_GRBIT grbit, ULONG max_pa
         return JET_errInvalidPath;
     if (find_db(inst, path))
         return JET_wrnDatabaseAttached;
-    JET_ERR err = path_error(path);
-    if (err)
-        return err;
+    JET_ERR err;
     DWORD attributes = GetFileAttributesW(path);
     if (attributes == INVALID_FILE_ATTRIBUTES)
         return JET_errFileNotFound;

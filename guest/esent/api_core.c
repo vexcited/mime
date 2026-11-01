@@ -54,6 +54,10 @@ SESSION *api_session(JET_SESID sesid, JET_ERR *err)
 
 /* ------------------------------------------------------------------ instances */
 
+static JET_INSTANCE g_failed_init[16];
+static ULONG g_failed_next;
+static void free_instance(INSTANCE *inst);
+
 static JET_ERR create_instance(JET_INSTANCE *out, LPCWSTR name, LPCWSTR display, BOOL legacy)
 {
     if (!out)
@@ -88,6 +92,9 @@ static JET_ERR create_instance(JET_INSTANCE *out, LPCWSTR name, LPCWSTR display,
             if (!g_run_mode)
                 g_run_mode = legacy ? 1 : 2;
             *out = (JET_INSTANCE)inst;
+            for (ULONG i = 0; i < 16; i++)
+                if (g_failed_init[i] == (JET_INSTANCE)inst)
+                    g_failed_init[i] = 0;
         }
     }
     UNLOCK();
@@ -164,6 +171,11 @@ JET_ERR api_init(JET_INSTANCE *handle, JET_GRBIT grbit)
                 err = JET_errInvalidPath;
         }
     }
+    if (err && inst && !inst->initialized && err != JET_errInvalidInstance && err != JET_errAlreadyInitialized) {
+        /* an instance that does not start is gone, and its handle is refused by JetTerm as a parameter. */
+        g_failed_init[g_failed_next++ % 16] = (JET_INSTANCE)inst;
+        free_instance(inst);
+    }
     if (!err) {
         inst->initialized = TRUE;
         inst->recovery = TRUE;
@@ -238,9 +250,12 @@ static JET_ERR term(JET_INSTANCE handle, JET_GRBIT grbit)
     LOCK();
     INSTANCE *inst = handle && handle != JET_instanceNil ? ese_instance(handle) : legacy_instance();
     JET_ERR err = JET_errSuccess;
-    if (!inst)
+    if (!inst) {
         err = handle && handle != JET_instanceNil ? JET_errInvalidInstance : JET_errNotInitialized;
-    else if (!inst->initialized && inst->legacy)
+        for (ULONG i = 0; i < 16; i++)
+            if (handle && g_failed_init[i] == handle)
+                err = JET_errInvalidParameter;
+    } else if (!inst->initialized && inst->legacy)
         err = JET_errNotInitialized;
     if (!err)
         free_instance(inst);
@@ -415,12 +430,20 @@ JET_ERR api_set_param(JET_INSTANCE *handle, JET_SESID sesid, ULONG id, JET_API_P
         } else if (lstrlenW(buffer) > 246) {
             err = JET_errInvalidParameter;
         } else {
-            ULONG n = (ULONG)lstrlenW(buffer);
             BOOL path = id == JET_paramSystemPath || id == JET_paramLogFilePath;
+            /* a directory is kept as a full path ending in a backslash, and no text is the current directory. */
+            WCHAR full[MAX_PATH + 2];
+            if (path) {
+                DWORD length = GetFullPathNameW(buffer[0] ? buffer : L".", MAX_PATH, full, nullptr);
+                if (!length || length >= MAX_PATH)
+                    lstrcpyW(full, buffer);
+                else if (full[length - 1] != L'\\')
+                    full[length] = L'\\', full[length + 1] = 0;
+                lstrcpyW(buffer, full);
+            }
+            ULONG n = (ULONG)lstrlenW(buffer);
             WCHAR *copy = ese_alloc((n + 2) * sizeof(WCHAR));
             lstrcpyW(copy, buffer);
-            if (path && n && copy[n - 1] != L'\\')
-                copy[n] = L'\\';
             ese_free(params->texts[id]);
             params->texts[id] = copy;
         }
