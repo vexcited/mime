@@ -428,6 +428,9 @@ bool mime_ttf_vdmx(const MimeTtfFont *font, int x_ratio, int y_ratio, int ppem, 
         if (!has(t, r, 4))
             return false;
         uint32_t rx = u8(t, r + 1), ys = u8(t, r + 2), ye = u8(t, r + 3);
+        /* only the records for the unicode character set are used. */
+        if (u8(t, r) != 1)
+            continue;
         /* the ratio record 0, 0, 0 is the default and matches everything. */
         if (rx || ys || ye) {
             if (rx == 0 || ys == 0 || ye == 0)

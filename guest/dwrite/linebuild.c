@@ -34,7 +34,7 @@ static void default_metrics(DwLayout *l, FLOAT *ascent, FLOAT *descent)
     }
     FLOAT k = m.designUnitsPerEm ? l->fmt.size * scale / (FLOAT)m.designUnitsPerEm : 0;
     *ascent =
-        (FLOAT)(m.ascent + (l->fmt.spacing.fontLineGapUsage == DWRITE_FONT_LINE_GAP_USAGE_DISABLED ? 0 : m.lineGap)) *
+        (FLOAT)(m.ascent + (l->fmt.spacing.fontLineGapUsage == DWRITE_FONT_LINE_GAP_USAGE_DISABLED || l->gdi ? 0 : m.lineGap)) *
         k;
     *descent = (FLOAT)m.descent * k;
     face->lpVtbl->Release(face);
@@ -173,7 +173,8 @@ HRESULT DwLayoutBuildLines(DwLayout *l)
     /* line heights. */
     FLOAT def_asc = 0, def_desc = 0;
     BOOL have_default = FALSE;
-    BOOL usage_gap = f->spacing.fontLineGapUsage != DWRITE_FONT_LINE_GAP_USAGE_DISABLED;
+    /* lines of GDI compatible layouts are as high as the text, without the line gap. */
+    BOOL usage_gap = f->spacing.fontLineGapUsage != DWRITE_FONT_LINE_GAP_USAGE_DISABLED && !l->gdi;
     for (UINT32 li = 0; li < nlines; li++) {
         DwLine *ln = &lines[li];
         FLOAT asc = 0, desc = 0;

@@ -10,11 +10,6 @@
 #define memset __builtin_memset
 #define memcpy __builtin_memcpy
 
-#ifdef HINT_TRACE
-#include <stdio.h>
-extern int hint_trace_on;
-#endif
-
 #define MAX_CALL_DEPTH 64
 #define MAX_PROGRAM_STEPS 3000000u
 #define MAX_GLYPH_STEPS 400000u
@@ -161,7 +156,7 @@ static uint32_t isqrt64(uint64_t v)
     return (uint32_t)r;
 }
 
-/* unit vector in 2.14 along (dx, dy), false for a zero vector. */
+/* the unit vector in 2.14 along dx and dy, false for a zero vector. */
 static bool normalize(int32_t dx, int32_t dy, V2 *out)
 {
     if (dx == 0 && dy == 0)
@@ -206,8 +201,7 @@ typedef struct Exec {
     uint32_t steps, step_limit;
     int program;
     int32_t fdotp;
-    bool compat; /* backward compatible subpixel mode: x hints ignored. */
-    bool iupx, iupy;
+    bool iupy; /* the points were interpolated along y. */
     bool failed;
     int ppem_for_delta;
 } Exec;
@@ -309,14 +303,9 @@ static void move_point(Exec *ex, Zone *z, uint32_t p, int32_t dist)
 /* moves a point by a displacement along the freedom vector. */
 static void shift_point(Exec *ex, Zone *z, uint32_t p, int32_t dx, int32_t dy)
 {
-    if (ex->compat) {
-        dx = 0;
-        if (ex->iupx && ex->iupy)
-            dy = 0;
-    }
-    if (ex->gs.fv.x && !ex->compat)
+    if (ex->gs.fv.x)
         z->tag[p] |= TAG_TOUCH_X;
-    if (ex->gs.fv.y && !(ex->compat && ex->iupx && ex->iupy))
+    if (ex->gs.fv.y)
         z->tag[p] |= TAG_TOUCH_Y;
     z->cur[p].x = sat32((int64_t)z->cur[p].x + dx);
     z->cur[p].y = sat32((int64_t)z->cur[p].y + dy);
@@ -467,7 +456,7 @@ static uint32_t instr_length(Code c, uint32_t ip)
     return ip + len > c.size ? 0 : len;
 }
 
-/* skips forward over nested conditionals; stops after the ELSE (when allowed) or EIF at the same level. */
+/* skips forward over nested conditionals, and stops after the ELSE if asked to or else after the EIF. */
 static bool skip_if(Exec *ex, bool stop_at_else)
 {
     int nest = 1;
@@ -697,10 +686,6 @@ static void ins_mirp(Exec *ex, uint8_t op)
             dist = -least;
         }
     }
-#ifdef HINT_TRACE
-    if (hint_trace_on)
-        printf("  mirp p=%d n=%d cvt=%d org=%d cur=%d dist=%d flip=%d cutin=%d\n", p, n, cvt_dist, org_dist, cur_dist, dist, ex->gs.auto_flip, ex->gs.cvt_cutin);
-#endif
     move_point(ex, z1, (uint32_t)p, dist - cur_dist);
     ex->gs.rp1 = ex->gs.rp0;
     ex->gs.rp2 = (uint32_t)p;
@@ -822,10 +807,8 @@ static void ins_shz(Exec *ex, uint8_t op)
     for (uint32_t p = 0; p < limit && p < z->n; p++) {
         if (refz == z && p == rp)
             continue;
-        if (ex->compat)
-            dx = 0;
         z->cur[p].x = sat32((int64_t)z->cur[p].x + dx);
-        z->cur[p].y = sat32((int64_t)z->cur[p].y + (ex->compat && ex->iupx && ex->iupy ? 0 : dy));
+        z->cur[p].y = sat32((int64_t)z->cur[p].y + dy);
     }
 }
 
@@ -1032,10 +1015,6 @@ static void iup_run(Zone *z, bool x_axis, uint32_t first, uint32_t last)
 static void ins_iup(Exec *ex, uint8_t op)
 {
     bool x_axis = (op & 1) != 0;
-    if (ex->compat && x_axis) {
-        ex->iupx = true;
-        return;
-    }
     Zone *z = zone_of(ex, 1);
     uint32_t first = 0;
     for (uint32_t c = 0; c < z->contours; c++) {
@@ -1617,17 +1596,6 @@ static void execute_one(Exec *ex, uint8_t op)
     ex->failed = true;
 }
 
-#ifdef HINT_TRACE
-int hint_trace_on;
-static void hint_trace(const Exec *ex, uint8_t op)
-{
-    printf("p%d ip=%u op=%02x sp=%u", ex->program, ex->ip - 1, op, ex->sp);
-    for (uint32_t i = 0; i < 4 && i < ex->sp; i++)
-        printf(" %d", ex->stack[ex->sp - 1 - i]);
-    printf(" rp=%u,%u,%u pv=%d,%d fv=%d,%d\n", ex->gs.rp0, ex->gs.rp1, ex->gs.rp2, ex->gs.pv.x, ex->gs.pv.y, ex->gs.fv.x, ex->gs.fv.y);
-}
-#endif
-
 static bool run_program(Exec *ex, Code code, int program)
 {
     ex->code = code;
@@ -1648,10 +1616,6 @@ static bool run_program(Exec *ex, Code code, int program)
         if (!len)
             return false;
         uint8_t op = ex->code.data[ex->ip++];
-#ifdef HINT_TRACE
-        if (hint_trace_on)
-            hint_trace(ex, op);
-#endif
         execute_one(ex, op);
     }
     return false;
@@ -1689,7 +1653,6 @@ static void exec_init(Exec *ex, MimeTtfHinter *h, const GState *gs)
     ex->cvt_count = h->cvt_count;
     ex->storage_count = h->storage_count;
     ex->ppem_for_delta = h->ppem_y;
-    ex->compat = false;
     compute_fdotp(ex);
 }
 
@@ -1928,6 +1891,10 @@ static void run_glyph_program(const MimeTtfHinter *hc, HGlyph *g, Code program)
     bool ok = run_program(&ex, program, PROGRAM_GLYPH);
     mime_free(&h->alloc, scratch);
     g->hinted_ok = ok;
+    /* a program that fails leaves the glyph as scaled, not half fitted. */
+    if (!ok)
+        for (uint32_t i = 0; i < g->n + 4; i++)
+            g->pts[i] = g->org[i];
 }
 
 static bool load_hglyph(const MimeTtfHinter *h, uint16_t glyph, unsigned depth, HGlyph *out);

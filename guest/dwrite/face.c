@@ -182,6 +182,12 @@ static void gdi_round_metrics(const DwFace *f, FLOAT em_size, FLOAT pixels_per_d
     ROUND(strikethroughPosition);
     ROUND(strikethroughThickness);
 #undef ROUND
+    /* fonts with a VDMX table say the ascent and descent they need at the size. */
+    int y_max, y_min;
+    if (mime_ttf_vdmx(&f->data->ttf, 1, 1, (int)ppem, &y_max, &y_min) && y_max >= 0 && y_min <= 0) {
+        out->ascent = (UINT16)round_f((float)y_max / scale);
+        out->descent = (UINT16)round_f((float)-y_min / scale);
+    }
 }
 
 static HRESULT WINAPI face_gdi_metrics(IDWriteFontFace2 *This, FLOAT em_size, FLOAT pixels_per_dip,

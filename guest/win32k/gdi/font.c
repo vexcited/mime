@@ -670,6 +670,13 @@ static void compute_metrics(FONT_INSTANCE *fi, const LOGFONTW *lf)
     memset(tm, 0, sizeof(*tm));
     LONG ascent = round_f((float)m->win_ascent * fi->ScaleY);
     LONG descent = round_f((float)m->win_descent * fi->ScaleY);
+    /* fonts with a VDMX table say the ascent and descent they need at the size. */
+    int y_max, y_min;
+    if (fi->ScaleX == fi->ScaleY && mime_ttf_vdmx(&face->Ttf, 1, 1, fi->EmPixels, &y_max, &y_min) && y_max >= 0 &&
+        y_min <= 0) {
+        ascent = y_max;
+        descent = -y_min;
+    }
     tm->tmAscent = ascent;
     tm->tmDescent = descent;
     tm->tmHeight = ascent + descent;
