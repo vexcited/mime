@@ -21,7 +21,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 typedef HRESULT(WINAPI *CO_INITIALIZE_EX)(LPVOID, DWORD);
 typedef void(WINAPI *CO_UNINITIALIZE)(void);
 
-static FARPROC ole32_proc(LPCSTR name)
+FARPROC CbOleProc(LPCSTR name)
 {
     HMODULE ole32 = LoadLibraryW(L"ole32.dll");
     return ole32 ? GetProcAddress(ole32, name) : nullptr;
@@ -31,7 +31,7 @@ ROAPI HRESULT WINAPI RoInitialize(RO_INIT_TYPE type)
 {
     if (type != RO_INIT_SINGLETHREADED && type != RO_INIT_MULTITHREADED)
         return E_INVALIDARG;
-    CO_INITIALIZE_EX initialize = (CO_INITIALIZE_EX)(void *)ole32_proc("CoInitializeEx");
+    CO_INITIALIZE_EX initialize = (CO_INITIALIZE_EX)(void *)CbOleProc("CoInitializeEx");
     if (!initialize)
         return E_UNEXPECTED;
     return initialize(nullptr, type == RO_INIT_MULTITHREADED ? COINIT_MULTITHREADED : COINIT_APARTMENTTHREADED);
@@ -39,7 +39,7 @@ ROAPI HRESULT WINAPI RoInitialize(RO_INIT_TYPE type)
 
 ROAPI void WINAPI RoUninitialize(void)
 {
-    CO_UNINITIALIZE uninitialize = (CO_UNINITIALIZE)(void *)ole32_proc("CoUninitialize");
+    CO_UNINITIALIZE uninitialize = (CO_UNINITIALIZE)(void *)CbOleProc("CoUninitialize");
     if (uninitialize)
         uninitialize();
 }
@@ -58,6 +58,8 @@ static const struct {
     {CbToastManagerClass, CbToastManagerFactory},
     {CbToastClass, CbToastFactory},
     {CbRegionPolicyClass, CbRegionPolicyFactory},
+    {CbNetworkInformationClass, CbNetworkInformationFactory},
+    {CbKeyCredentialManagerClass, CbKeyCredentialManagerFactory},
 #ifdef _WIN64
     {CbCompositorControllerClass, CbCompositorControllerFactory},
     {CbCompositorClass, CbCompositorFactory},

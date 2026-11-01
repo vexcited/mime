@@ -16,6 +16,9 @@ FORCEINLINE void CbFree(void *p)
         HeapFree(GetProcessHeap(), 0, p);
 }
 
+/* the entry of a function of ole32, which is loaded at run time. */
+FARPROC CbOleProc(LPCSTR name);
+
 /* a static string that needs no release, for runtime class names. */
 HSTRING CbStaticString(HSTRING_HEADER *header, LPCWSTR text);
 
@@ -45,5 +48,32 @@ HRESULT CbCapturePoolFactory(REFIID riid, void **factory);
 extern const WCHAR CbCompositorControllerClass[], CbCompositorClass[];
 HRESULT CbCompositorControllerFactory(REFIID riid, void **factory);
 HRESULT CbCompositorFactory(REFIID riid, void **factory);
+
+/* async.c: operations that are finished before they are handed out. */
+typedef enum CB_ASYNC_KIND {
+    CB_ASYNC_ACTION,
+    CB_ASYNC_BOOL,
+    CB_ASYNC_KEY_RETRIEVAL,
+    CB_ASYNC_PROFILE,
+    CB_ASYNC_KINDS,
+} CB_ASYNC_KIND;
+/* a failed operation carries the error, a finished one the flag or the object, which the operation then owns. */
+HRESULT CbAsyncFinished(CB_ASYNC_KIND kind, HRESULT error, BOOLEAN flag, IUnknown *object, void **operation);
+
+/* collections.c: views of items fixed at creation. the view owns the items it is given. */
+typedef enum CB_VECTOR_KIND {
+    CB_VECTOR_PROFILES,
+    CB_VECTOR_STRINGS,
+    CB_VECTOR_KINDS,
+} CB_VECTOR_KIND;
+HRESULT CbNewVectorView(CB_VECTOR_KIND kind, void **items, UINT32 count, void **view);
+
+/* netinfo.c: Windows.Networking.Connectivity.NetworkInformation. */
+extern const WCHAR CbNetworkInformationClass[];
+HRESULT CbNetworkInformationFactory(REFIID riid, void **factory);
+
+/* keycred.c: Windows.Security.Credentials.KeyCredentialManager. */
+extern const WCHAR CbKeyCredentialManagerClass[];
+HRESULT CbKeyCredentialManagerFactory(REFIID riid, void **factory);
 
 #endif
