@@ -131,6 +131,37 @@ static PCWSTR cache_architecture(PCWSTR architecture)
     return L"GAC_MSIL";
 }
 
+/* a version as the cache writes it: four numbers, whatever zeros the package put in front of them. */
+static void cache_version(PCWSTR version, WCHAR out[64])
+{
+    ULONG parts[4] = {};
+    ULONG count = 0;
+    PCWSTR p = version;
+    BOOL valid = p && *p;
+    while (valid && count < 4) {
+        if (*p < L'0' || *p > L'9') {
+            valid = FALSE;
+            break;
+        }
+        ULONG64 value = 0;
+        while (*p >= L'0' && *p <= L'9')
+            value = value * 10 + (ULONG)(*p++ - L'0');
+        if (value > 0xFFFF) {
+            valid = FALSE;
+            break;
+        }
+        parts[count++] = (ULONG)value;
+        if (*p == L'.')
+            p++;
+        else
+            break;
+    }
+    if (!valid || *p)
+        lstrcpynW(out, version && *version ? version : L"0.0.0.0", 64);
+    else
+        _snwprintf(out, 64, L"%u.%u.%u.%u", parts[0], parts[1], parts[2], parts[3]);
+}
+
 /*
  * where the files of a global assembly go. the .NET Framework 4 keeps its cache below Microsoft.NET\assembly, by processor,
  * assembly name and a folder of the version, the culture and the public key token, the token in lower case. an assembly of
@@ -171,9 +202,10 @@ UINT MimeMsiAssemblyFolder(MIME_MSI_PACKAGE *package, PCWSTR component, PWSTR *f
         identity_free(&identity);
         return ERROR_NOT_ENOUGH_MEMORY;
     }
+    WCHAR version[64];
+    cache_version(identity.Version, version);
     SIZE_T at = _snwprintf(*folder, size, L"%s\\Microsoft.NET\\assembly\\%s\\%s\\v4.0_%s_%s_", windows,
-                           cache_architecture(identity.Architecture), identity.Name,
-                           identity.Version && *identity.Version ? identity.Version : L"0.0.0.0", culture);
+                           cache_architecture(identity.Architecture), identity.Name, version, culture);
     for (PCWSTR p = identity.Token; *p; p++)
         (*folder)[at++] = (*p >= L'A' && *p <= L'Z') ? (WCHAR)(*p + L'a' - L'A') : *p;
     (*folder)[at] = 0;
