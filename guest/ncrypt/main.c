@@ -1300,29 +1300,3 @@ SECURITY_STATUS WINAPI NCryptSetAuditingInterface(void *audit)
 {
     return ERROR_SUCCESS;
 }
-
-/* the handles of key protectors, protection descriptors and streams come from calls that are not here. */
-SECURITY_STATUS WINAPI NCryptCloseKeyProtector(ULONG_PTR protector)
-{
-    return NTE_INVALID_HANDLE;
-}
-
-SECURITY_STATUS WINAPI NCryptCloseProtectionDescriptor(ULONG_PTR descriptor)
-{
-    return NTE_INVALID_HANDLE;
-}
-
-SECURITY_STATUS WINAPI NCryptDuplicateKeyProtectorHandle(ULONG_PTR protector, ULONG_PTR *copy, ULONG_PTR flags)
-{
-    return NTE_INVALID_HANDLE;
-}
-
-SECURITY_STATUS WINAPI NCryptStreamClose(ULONG_PTR stream)
-{
-    return NTE_INVALID_HANDLE;
-}
-
-SECURITY_STATUS WINAPI NCryptStreamUpdate(ULONG_PTR stream, PBYTE data, SIZE_T size, BOOL final)
-{
-    return NTE_INVALID_HANDLE;
-}
