@@ -46,15 +46,27 @@ static void file_name(const WCHAR *path, WCHAR *out)
 static JET_ERR backup_instance_files(INSTANCE *inst, LPCWSTR dir, JET_GRBIT grbit)
 {
     if (!dir || !*dir)
-        return JET_errInvalidParameter;
+        return JET_errBackupDirectoryNotEmpty;
     if (grbit & ~(0x1 | 0x2 | 0x4 | 0x10 | 0x20 | 0x40))
         return JET_errInvalidGrbit;
     DWORD attributes = GetFileAttributesW(dir);
-    if (attributes == INVALID_FILE_ATTRIBUTES) {
-        if (!CreateDirectoryW(dir, nullptr))
-            return JET_errInvalidPath;
-    } else if (!(attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+    if (attributes == INVALID_FILE_ATTRIBUTES || !(attributes & FILE_ATTRIBUTE_DIRECTORY))
         return JET_errInvalidPath;
+    /* a backup goes to an empty directory. */
+    WCHAR pattern[MAX_PATH];
+    lstrcpynW(pattern, dir, MAX_PATH - 3);
+    lstrcatW(pattern, L"\\*");
+    WIN32_FIND_DATAW find;
+    HANDLE listing = FindFirstFileW(pattern, &find);
+    if (listing != INVALID_HANDLE_VALUE) {
+        BOOL empty = TRUE;
+        do {
+            if (!(find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+                empty = FALSE;
+        } while (empty && FindNextFileW(listing, &find));
+        FindClose(listing);
+        if (!empty)
+            return JET_errBackupDirectoryNotEmpty;
     }
     for (DB *db = inst->dbs; db; db = db->next) {
         ese_save_db(db, FALSE);
@@ -169,8 +181,6 @@ static JET_ERR restore_impl(JET_INSTANCE handle, LPCWSTR source, LPCWSTR dest)
                 } while (!err && FindNextFileW(h, &find));
                 FindClose(h);
             }
-        } else {
-            err = JET_errFileNotFound;
         }
     }
     UNLOCK();
@@ -301,7 +311,7 @@ static JET_ERR double_string_out(const WCHAR *names, ULONG chars, void *out, ULO
             memcpy(out, names, cb & ~1u);
         else
             WideCharToMultiByte(CP_ACP, 0, names, (int)chars, out, (int)cb, nullptr, nullptr);
-        return JET_wrnBufferTruncated;
+        return JET_errSuccess;
     }
     if (wide)
         memcpy(out, names, need);
@@ -459,7 +469,7 @@ static JET_ERR open_file(JET_INSTANCE handle, LPCWSTR path, JET_HANDLE *out, ULO
                 if (!lstrcmpiW(db->path, path))
                     found = db;
             if (!found) {
-                err = GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES ? JET_errFileNotFound : JET_errInvalidParameter;
+                err = JET_errDatabaseNotFound;
             } else {
                 ese_save_db(found, FALSE);
                 HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,

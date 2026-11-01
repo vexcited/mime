@@ -632,28 +632,57 @@ TC(JetCreateTableColumnIndex4A, FALSE, 4)
 TC(JetCreateTableColumnIndex5W, TRUE, 5)
 TC(JetCreateTableColumnIndex5A, FALSE, 5)
 
+/* the fields of a table to create, whichever structure of whichever size holds them. */
+typedef struct TSPEC {
+    void *name, *template_name;
+    ULONG pages, density, ncols, nidx, grbit;
+    void *columns, *indexes;
+    JET_TABLEID *tableid;
+    ULONG *created;
+} TSPEC;
+
+static BOOL read_spec(void *spec, ULONG version, TSPEC *out)
+{
+    ULONG cb = *(ULONG *)spec;
+    ULONG expected = version <= 1 ? sizeof(JET_TABLECREATE) : version == 2 ? sizeof(JET_TABLECREATE2) : sizeof(JET_TABLECREATE3);
+    if (cb != expected)
+        return FALSE;
+    if (cb == sizeof(JET_TABLECREATE)) {
+        JET_TABLECREATE *t = spec;
+        *out = (TSPEC){t->szTableName, t->szTemplateTableName, t->ulPages, t->ulDensity, t->cColumns, t->cIndexes,
+                       t->grbit, t->rgcolumncreate, t->rgindexcreate, &t->tableid, &t->cCreated};
+    } else if (cb == sizeof(JET_TABLECREATE2)) {
+        JET_TABLECREATE2 *t = spec;
+        *out = (TSPEC){t->szTableName, t->szTemplateTableName, t->ulPages, t->ulDensity, t->cColumns, t->cIndexes,
+                       t->grbit, t->rgcolumncreate, t->rgindexcreate, &t->tableid, &t->cCreated};
+    } else if (cb == sizeof(JET_TABLECREATE3)) {
+        JET_TABLECREATE3 *t = spec;
+        *out = (TSPEC){t->szTableName, t->szTemplateTableName, t->ulPages, t->ulDensity, t->cColumns, t->cIndexes,
+                       t->grbit, t->rgcolumncreate, t->rgindexcreate, &t->tableid, &t->cCreated};
+    } else {
+        return FALSE;
+    }
+    return TRUE;
+}
+
 JET_ERR api_create_table_spec(SESSION *sess, DBH *dbh, BOOL wide, ULONG version, void *spec)
 {
-    /* every version begins with the same fields and the callback and space hints of the later ones follow. */
-    JET_TABLECREATE *tc = spec;
-    if (!tc)
-        return JET_errInvalidParameter;
-    ULONG expected = tc->cbStruct;
-    if (version == 1 && expected != sizeof(JET_TABLECREATE))
+    TSPEC tc;
+    if (!spec || !read_spec(spec, version, &tc))
         return JET_errInvalidParameter;
     WCHAR name[JET_cbNameMost + 2], template_name[JET_cbNameMost + 2];
-    if (!tc->szTableName)
+    if (!tc.name)
         return JET_errInvalidParameter;
-    name_of(wide, tc->szTableName, name);
+    name_of(wide, tc.name, name);
     template_name[0] = 0;
-    if (tc->szTemplateTableName)
-        name_of(wide, tc->szTemplateTableName, template_name);
-    if (tc->ulDensity && (tc->ulDensity < 20 || tc->ulDensity > 100))
+    if (tc.template_name)
+        name_of(wide, tc.template_name, template_name);
+    if (tc.density && (tc.density < 20 || tc.density > 100))
         return JET_errDensityInvalid;
     BOOL implicit;
     api_ddl_begin(sess, &implicit);
     TABLE *table;
-    JET_ERR err = ese_create_table(sess, dbh, name, tc->ulPages, tc->ulDensity, &table);
+    JET_ERR err = ese_create_table(sess, dbh, name, tc.pages, tc.density, &table);
     ULONG created = 0;
     if (!err) {
         if (template_name[0]) {
@@ -672,27 +701,26 @@ JET_ERR api_create_table_spec(SESSION *sess, DBH *dbh, BOOL wide, ULONG version,
                 }
             }
         }
-        if (!err && (tc->grbit & JET_bitTableCreateTemplateTable))
+        if (!err && (tc.grbit & JET_bitTableCreateTemplateTable))
             table->is_template = TRUE;
     }
     if (!err)
-        err = create_columns_and_indexes(sess, table, wide, version, tc->cColumns, tc->rgcolumncreate, tc->cIndexes,
-                                         tc->rgindexcreate, &created);
+        err = create_columns_and_indexes(sess, table, wide, version, tc.ncols, tc.columns, tc.nidx, tc.indexes, &created);
     if (!err) {
         CURSOR *cur;
         err = ese_open_cursor(sess, dbh, table, JET_bitTablePermitDDL | JET_bitTableUpdatable, &cur);
         if (!err) {
             cur->ddl = TRUE;
             table->creator = cur;
-            if (tc->grbit & JET_bitTableCreateTemplateTable) {
+            if (tc.grbit & JET_bitTableCreateTemplateTable) {
                 ese_close_cursor(cur);
-                tc->tableid = 0;
+                *tc.tableid = 0;
             } else {
-                tc->tableid = (JET_TABLEID)cur;
+                *tc.tableid = (JET_TABLEID)cur;
             }
         }
     }
-    tc->cCreated = created + (err < 0 ? 0 : 1);
+    *tc.created = created + (err < 0 ? 0 : 1);
     api_ddl_end(sess, implicit, err < 0 ? err : JET_errSuccess);
     return err;
 }

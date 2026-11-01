@@ -126,6 +126,7 @@ typedef struct DB {
     ULONG max_pages;
     BYTE header[512];
     BOOL header_valid;
+    BOOL real_format;
 } DB;
 
 typedef struct DBH {
@@ -279,6 +280,8 @@ JET_ERR ese_close_db(SESSION *sess, JET_DBID dbid);
 DBH *ese_dbh(SESSION *sess, JET_DBID dbid);
 JET_ERR ese_save_db(DB *db, BOOL final);
 JET_ERR ese_load_db(DB *db, LPCWSTR path);
+JET_ERR ese_load_real(DB *db, const BYTE *file, ULONG size);
+JET_ERR ese_index_record(TABLE *t, RECORD *rec, VERSION *v);
 JET_ERR ese_read_header(DB *db, LPCWSTR path);
 void ese_free_db(DB *db);
 JET_ERR ese_flush_if_needed(SESSION *sess, DB *db);

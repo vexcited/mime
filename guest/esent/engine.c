@@ -253,12 +253,6 @@ ULONG64 ese_next_stamp(INSTANCE *inst)
     return ++inst->clock;
 }
 
-static void apply_delta_check(UNDO *u, SESSION *sess)
-{
-    (void)u;
-    (void)sess;
-}
-
 JET_ERR ese_commit(SESSION *sess, JET_GRBIT grbit)
 {
     if (!sess->level)
@@ -297,9 +291,6 @@ JET_ERR ese_commit(SESSION *sess, JET_GRBIT grbit)
             break;
         case U_DELETE_TABLE:
             u->table->deleted = TRUE;
-            break;
-        case U_ESCROW:
-            apply_delta_check(u, sess);
             break;
         default:
             break;

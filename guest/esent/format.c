@@ -191,7 +191,7 @@ static void serialize(DB *db, BUF *b)
     }
 }
 
-static JET_ERR index_record(TABLE *t, RECORD *rec, VERSION *v)
+JET_ERR ese_index_record(TABLE *t, RECORD *rec, VERSION *v)
 {
     for (ULONG i = 0; i < t->nidx; i++) {
         INDEX *idx = t->idx[i];
@@ -380,7 +380,7 @@ static JET_ERR deserialize(DB *db, const BYTE *data, ULONG size)
             primary->entries[at].cb = rec->pkcb;
             primary->entries[at].rec = rec;
             primary->count++;
-            index_record(t, rec, v);
+            ese_index_record(t, rec, v);
         }
         t->next = db->tables;
         db->tables = t;
@@ -449,8 +449,6 @@ JET_ERR ese_save_db(DB *db, BOOL final)
     return JET_errSuccess;
 }
 
-JET_ERR ese_load_real(DB *db, const BYTE *file, ULONG size);
-
 JET_ERR ese_load_db(DB *db, LPCWSTR path)
 {
     HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
@@ -490,12 +488,6 @@ JET_ERR ese_load_db(DB *db, LPCWSTR path)
     }
     ese_free(file);
     return err;
-}
-
-/* databases of Windows' engine are not read yet. */
-JET_ERR ese_load_real(DB *db, const BYTE *file, ULONG size)
-{
-    return JET_errDatabaseCorrupted;
 }
 
 /* the header page alone, which says what the file is without attaching it. */

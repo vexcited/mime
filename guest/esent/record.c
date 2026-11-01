@@ -500,7 +500,13 @@ JET_ERR ese_set_current_index(CURSOR *cur, LPCWSTR name, JET_GRBIT grbit, ULONG 
         return JET_errSuccess;
     }
     cur->pos = POS_BEFORE;
-    return ese_move(cur, JET_MoveFirst, 0);
+    JET_ERR err = ese_move(cur, JET_MoveFirst, 0);
+    /* a table with no records is not an error. */
+    if (err == JET_errNoCurrentRecord) {
+        cur->pos = POS_BEFORE;
+        return JET_errSuccess;
+    }
+    return err;
 }
 
 JET_ERR ese_get_bookmark(CURSOR *cur, void *buf, ULONG cb, ULONG *actual)
@@ -627,6 +633,12 @@ JET_ERR ese_set_column(CURSOR *cur, JET_COLUMNID id, const void *data, ULONG cb,
     ULONG size;
     BOOL fixed = ese_fixed_size(col->coltyp, &size);
     JET_ERR warn = JET_errSuccess;
+    BYTE bit_value;
+    if (col->coltyp == JET_coltypBit && cb == 1 && data) {
+        /* a bit is kept as all ones or as none. */
+        bit_value = ((const BYTE *)data)[0] ? 0xff : 0;
+        data = &bit_value;
+    }
     if (grbit & JET_bitSetRevertToDefaultValue) {
         set_cell_values(cell, nullptr, 0);
         cell->set = FALSE;
@@ -747,7 +759,7 @@ JET_ERR ese_retrieve_column(CURSOR *cur, JET_COLUMNID id, void *data, ULONG cb, 
     }
     ULONG slot = ese_slot(table, id);
     const CELL *cell = ese_cell(v, slot);
-    ULONG itag = info ? info->itagSequence : 0;
+    ULONG itag = info ? info->itagSequence : 1;
     ULONG iblv = info ? info->ibLongValue : 0;
     if (!itag)
         itag = 1;
