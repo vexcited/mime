@@ -1,7 +1,7 @@
 /*
  * no USB device is bound to winusb, so no interface handles exist. initialization validates the device handle then
- * returns its driver's winusb query error; interface calls return ERROR_INVALID_HANDLE. descriptor parsing is
- * implemented.
+ * returns the error of its driver, and interface calls fail as windows does on a handle it cannot use. descriptor
+ * parsing and the frame number adjustment are real.
  */
 #define WINUSBAPI
 #include <mime/win32/winusb.h>
@@ -98,4 +98,251 @@ PUSB_INTERFACE_DESCRIPTOR WINAPI WinUsb_ParseConfigurationDescriptor(PUSB_CONFIG
     }
     SetLastError(ERROR_NOT_FOUND);
     return nullptr;
+}
+
+/*
+ * no interface handle is ever made, so every handle is invalid. windows reads the handle without a check on most
+ * calls and faults on garbage, here a handle that is not null is reported like a null one.
+ */
+
+typedef struct {
+    UCHAR PipeType;
+    UCHAR PipeId;
+    USHORT MaximumPacketSize;
+    UCHAR Interval;
+} PIPE_INFORMATION;
+
+typedef struct {
+    ULONG PipeType;
+    UCHAR PipeId;
+    USHORT MaximumPacketSize;
+    UCHAR Interval;
+    ULONG MaximumBytesPerInterval;
+} PIPE_INFORMATION_EX;
+
+static BOOL invalid_handle(void)
+{
+    SetLastError(ERROR_INVALID_HANDLE);
+    return FALSE;
+}
+
+static BOOL invalid_parameter(void)
+{
+    SetLastError(ERROR_INVALID_PARAMETER);
+    return FALSE;
+}
+
+BOOL WINAPI WinUsb_AbortPipe(WINUSB_INTERFACE_HANDLE handle, UCHAR pipe)
+{
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_AbortPipeAsync(WINUSB_INTERFACE_HANDLE handle, UCHAR pipe, LPOVERLAPPED overlapped)
+{
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_FlushPipe(WINUSB_INTERFACE_HANDLE handle, UCHAR pipe)
+{
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_ResetPipe(WINUSB_INTERFACE_HANDLE handle, UCHAR pipe)
+{
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_ResetPipeAsync(WINUSB_INTERFACE_HANDLE handle, UCHAR pipe, LPOVERLAPPED overlapped)
+{
+    return invalid_handle();
+}
+
+/* this one needs no device, it adds the time since the stamp in milliseconds to the frame number. */
+BOOL WINAPI WinUsb_GetAdjustedFrameNumber(PULONG frame, LARGE_INTEGER stamp)
+{
+    LARGE_INTEGER count = {0}, frequency = {0};
+    if (!frame)
+        return invalid_parameter();
+    if (!QueryPerformanceCounter(&count) || !QueryPerformanceFrequency(&frequency))
+        return FALSE;
+    LONGLONG elapsed = 1000 * (count.QuadPart - stamp.QuadPart) / frequency.QuadPart;
+    if (elapsed > 1000)
+        return invalid_parameter();
+    *frame += (ULONG)elapsed;
+    return TRUE;
+}
+
+BOOL WINAPI WinUsb_GetAssociatedInterface(WINUSB_INTERFACE_HANDLE handle, UCHAR index,
+                                          PWINUSB_INTERFACE_HANDLE associated)
+{
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_GetCurrentAlternateSetting(WINUSB_INTERFACE_HANDLE handle, PUCHAR setting)
+{
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_GetCurrentFrameNumber(WINUSB_INTERFACE_HANDLE handle, PULONG frame, LARGE_INTEGER *stamp)
+{
+    if (!frame || !stamp)
+        return invalid_parameter();
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_GetCurrentFrameNumberAndQpc(WINUSB_INTERFACE_HANDLE handle, PVOID info)
+{
+    if (!handle || !info)
+        return invalid_parameter();
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_StartTrackingForTimeSync(WINUSB_INTERFACE_HANDLE handle, PVOID info)
+{
+    if (!handle || !info)
+        return invalid_parameter();
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_StopTrackingForTimeSync(WINUSB_INTERFACE_HANDLE handle, PVOID info)
+{
+    if (!handle || !info)
+        return invalid_parameter();
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_GetDescriptor(WINUSB_INTERFACE_HANDLE handle, UCHAR type, UCHAR index, USHORT language,
+                                 PUCHAR buffer, ULONG length, PULONG transferred)
+{
+    if (transferred)
+        *transferred = 0;
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_GetOverlappedResult(WINUSB_INTERFACE_HANDLE handle, LPOVERLAPPED overlapped, LPDWORD transferred,
+                                       BOOL wait)
+{
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_GetPipePolicy(WINUSB_INTERFACE_HANDLE handle, UCHAR pipe, ULONG policy, PULONG length, PVOID value)
+{
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_SetPipePolicy(WINUSB_INTERFACE_HANDLE handle, UCHAR pipe, ULONG policy, ULONG length, PVOID value)
+{
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_GetPowerPolicy(WINUSB_INTERFACE_HANDLE handle, ULONG policy, PULONG length, PVOID value)
+{
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_SetPowerPolicy(WINUSB_INTERFACE_HANDLE handle, ULONG policy, ULONG length, PVOID value)
+{
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_QueryDeviceInformation(WINUSB_INTERFACE_HANDLE handle, ULONG type, PULONG length, PVOID buffer)
+{
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_QueryInterfaceSettings(WINUSB_INTERFACE_HANDLE handle, UCHAR alternate,
+                                          PUSB_INTERFACE_DESCRIPTOR descriptor)
+{
+    return invalid_handle();
+}
+
+/* the information pointer is checked after the handle. */
+BOOL WINAPI WinUsb_QueryPipe(WINUSB_INTERFACE_HANDLE handle, UCHAR alternate, UCHAR index, PIPE_INFORMATION *info)
+{
+    if (handle && !info)
+        return invalid_parameter();
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_QueryPipeEx(WINUSB_INTERFACE_HANDLE handle, UCHAR alternate, UCHAR index,
+                               PIPE_INFORMATION_EX *info)
+{
+    if (handle && !info)
+        return invalid_parameter();
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_ReadPipe(WINUSB_INTERFACE_HANDLE handle, UCHAR pipe, PUCHAR buffer, ULONG length,
+                            PULONG transferred, LPOVERLAPPED overlapped)
+{
+    if (transferred)
+        *transferred = 0;
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_WritePipe(WINUSB_INTERFACE_HANDLE handle, UCHAR pipe, PUCHAR buffer, ULONG length,
+                             PULONG transferred, LPOVERLAPPED overlapped)
+{
+    if (transferred)
+        *transferred = 0;
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_SetCurrentAlternateSetting(WINUSB_INTERFACE_HANDLE handle, UCHAR setting)
+{
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_SetCurrentAlternateSettingAsync(WINUSB_INTERFACE_HANDLE handle, UCHAR setting,
+                                                   LPOVERLAPPED overlapped)
+{
+    return invalid_handle();
+}
+
+/* the isochronous buffer handle is checked to point to itself, which no handle here does. */
+BOOL WINAPI WinUsb_RegisterIsochBuffer(WINUSB_INTERFACE_HANDLE handle, UCHAR pipe, PUCHAR buffer, ULONG length,
+                                       PVOID *isoch)
+{
+    *isoch = nullptr;
+    if (!length || buffer + length < buffer) {
+        SetLastError(ERROR_INVALID_USER_BUFFER);
+        return FALSE;
+    }
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_UnregisterIsochBuffer(PVOID isoch)
+{
+    return invalid_handle();
+}
+
+BOOL WINAPI WinUsb_ReadIsochPipe(PVOID isoch, ULONG offset, ULONG length, PULONG frame, ULONG packets,
+                                 PVOID descriptors, LPOVERLAPPED overlapped)
+{
+    return invalid_parameter();
+}
+
+BOOL WINAPI WinUsb_ReadIsochPipeAsap(PVOID isoch, ULONG offset, ULONG length, BOOL continue_stream, ULONG packets,
+                                     PVOID descriptors, LPOVERLAPPED overlapped)
+{
+    return invalid_parameter();
+}
+
+BOOL WINAPI WinUsb_WriteIsochPipe(PVOID isoch, ULONG offset, ULONG length, PULONG frame, LPOVERLAPPED overlapped)
+{
+    if (!length) {
+        SetLastError(ERROR_INVALID_USER_BUFFER);
+        return FALSE;
+    }
+    return invalid_parameter();
+}
+
+BOOL WINAPI WinUsb_WriteIsochPipeAsap(PVOID isoch, ULONG offset, ULONG length, BOOL continue_stream,
+                                      LPOVERLAPPED overlapped)
+{
+    if (!length) {
+        SetLastError(ERROR_INVALID_USER_BUFFER);
+        return FALSE;
+    }
+    return invalid_parameter();
 }
