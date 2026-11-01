@@ -395,3 +395,22 @@ EXPORTS
     VarR8Round @317
     VarCyMulI8 @329
     VarCmp @176
+    VarAdd @141
+    VarSub @159
+    VarMul @156
+    VarDiv @143
+    VarIdiv @153
+    VarMod @155
+    VarPow @158
+    VarNeg @173
+    VarNot @174
+    VarAnd @142
+    VarOr @157
+    VarXor @167
+    VarEqv @152
+    VarImp @154
+    VarAbs @168
+    VarFix @169
+    VarInt @172
+    VarRound @175
+    VarCat @318

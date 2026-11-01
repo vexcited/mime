@@ -236,7 +236,12 @@ static HRESULT add_or_subtract(const DECIMAL *a, const DECIMAL *b, DECIMAL *out,
     BYTE sign = sign_q;
     if (sign_q == sign_p) {
         big_add(&q, &p);
+#ifdef __i386__
+        /* the 32 bit library takes equal magnitudes the other way, which gives zero the other sign. */
+    } else if (big_compare(&q, &p) > 0) {
+#else
     } else if (big_compare(&q, &p) >= 0) {
+#endif
         big_sub(&q, &p);
     } else {
         big_sub(&p, &q);
