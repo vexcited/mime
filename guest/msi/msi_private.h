@@ -343,6 +343,7 @@ UINT MimeMsiRequireTransaction(MIME_MSI_PACKAGE *package);
 UINT MimeMsiRebootResult(MIME_MSI_PACKAGE *package);
 UINT MimeMsiClassesAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiFontsAction(MIME_MSI_PACKAGE *package, PCWSTR action);
+UINT MimeMsiFileTablesAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiIniAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiComponentSelected(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR *directory, BOOL *selected);
 UINT MimeMsiRegistryText(HKEY key, PCWSTR name, PWSTR *out);

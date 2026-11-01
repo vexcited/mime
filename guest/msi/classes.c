@@ -769,6 +769,63 @@ static UINT class_info(MIME_MSI_PACKAGE *package, BOOL remove)
     return error;
 }
 
+/* a content type names the file type that holds it, and the class that opens it. */
+static UINT mime_info(MIME_MSI_PACKAGE *package, BOOL remove)
+{
+    MIME_MSI_TABLE *table, *extensions, *features;
+    UINT error = optional_table(package, L"MIME", &table);
+    if (error || !table || !table->Rows)
+        return error;
+    error = MimeMsiRequireTransaction(package);
+    if (!error)
+        error = MimeMsiLoadTable(package->Database, L"Extension", &extensions);
+    if (!error)
+        error = MimeMsiLoadTable(package->Database, L"Feature", &features);
+    HKEY root = classes_root(package);
+    DWORD previous = package->RegistryView;
+    for (ULONG row = 0; row < table->Rows && !error; row++) {
+        PCWSTR type = cell_text(package, table, row, L"ContentType");
+        PCWSTR extension = cell_text(package, table, row, L"Extension_");
+        PCWSTR clsid = cell_text(package, table, row, L"CLSID");
+        if (!type || !extension)
+            return ERROR_INSTALL_PACKAGE_INVALID;
+        ULONG owner = UINT32_MAX;
+        for (ULONG other = 0; other < extensions->Rows && owner == UINT32_MAX; other++) {
+            PCWSTR name = cell_text(package, extensions, other, L"Extension");
+            if (name && !wcscmp(name, extension))
+                owner = other;
+        }
+        if (owner == UINT32_MAX)
+            return ERROR_INSTALL_PACKAGE_INVALID;
+        PCWSTR component = cell_text(package, extensions, owner, L"Component_");
+        PCWSTR feature = cell_text(package, extensions, owner, L"Feature_");
+        BOOL use;
+        COMPONENT_INFO info;
+        if (!component)
+            return ERROR_INSTALL_PACKAGE_INVALID;
+        error = wanted(package, features, component, feature, remove, &use);
+        if (!error && use)
+            error = component_info(package, component, &info);
+        if (error || !use)
+            continue;
+        package->RegistryView = info.View;
+        PWSTR dotted = join_text(L".", L"", extension);
+        if (!dotted)
+            error = ERROR_NOT_ENOUGH_MEMORY;
+        else if (remove)
+            error = drop_tree(package, root, L"MIME", L"Database", L"Content Type", type);
+        else {
+            error = put(package, root, L"Extension", dotted, L"MIME", L"Database", L"Content Type", type);
+            if (!error)
+                error = put(package, root, L"CLSID", clsid, L"MIME", L"Database", L"Content Type", type);
+        }
+        MimeMsiFree(dotted);
+        package->RegistryView = previous;
+    }
+    package->RegistryView = previous;
+    return error;
+}
+
 UINT MimeMsiClassesAction(MIME_MSI_PACKAGE *package, PCWSTR action)
 {
     static const struct {
@@ -779,6 +836,7 @@ UINT MimeMsiClassesAction(MIME_MSI_PACKAGE *package, PCWSTR action)
         {L"RegisterClassInfo", class_info, FALSE}, {L"UnregisterClassInfo", class_info, TRUE},
         {L"RegisterExtensionInfo", extension_info, FALSE}, {L"UnregisterExtensionInfo", extension_info, TRUE},
         {L"RegisterProgIdInfo", progid_info, FALSE}, {L"UnregisterProgIdInfo", progid_info, TRUE},
+        {L"RegisterMIMEInfo", mime_info, FALSE}, {L"UnregisterMIMEInfo", mime_info, TRUE},
     };
     for (ULONG i = 0; i < RTL_NUMBER_OF(actions); i++) {
         if (wcscmp(action, actions[i].Name))

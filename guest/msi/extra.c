@@ -1502,12 +1502,6 @@ static const struct {
     {L"SelfUnregModules", {L"SelfReg"}},
     {L"RegisterTypeLibraries", {L"TypeLib"}},
     {L"UnregisterTypeLibraries", {L"TypeLib"}},
-    {L"RegisterMIMEInfo", {L"MIME"}},
-    {L"UnregisterMIMEInfo", {L"MIME"}},
-    {L"DuplicateFiles", {L"DuplicateFile"}},
-    {L"RemoveDuplicateFiles", {L"DuplicateFile"}},
-    {L"MoveFiles", {L"MoveFile"}},
-    {L"BindImage", {L"BindImage"}},
     {L"CCPSearch", {L"CCPSearch"}},
     {L"RMCCPSearch", {L"CCPSearch"}},
 };

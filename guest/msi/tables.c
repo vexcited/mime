@@ -36,6 +36,8 @@ UINT MimeMsiTableAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     }
     UINT error = MimeMsiClassesAction(package, action);
     if (error == UINT32_MAX)
+        error = MimeMsiFileTablesAction(package, action);
+    if (error == UINT32_MAX)
         error = MimeMsiFontsAction(package, action);
     if (error == UINT32_MAX)
         error = MimeMsiIniAction(package, action);
