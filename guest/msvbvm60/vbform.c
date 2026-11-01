@@ -115,6 +115,9 @@ void VbLoadProject(const VbHeader *header)
 {
     g_header = header;
     const BYTE *project = (const BYTE *)(ULONG_PTR)header->project_info;
+    /* a program that has no project information has no forms and no classes. */
+    if (!project || IsBadReadPtr(project, 8))
+        return;
     const BYTE *table = (const BYTE *)*(const DWORD *)(project + 4);
     unsigned count = *(const unsigned short *)(table + 42);
     const BYTE *objects = (const BYTE *)*(const DWORD *)(table + 48);
