@@ -332,6 +332,11 @@ static HRESULT arith_values(ARITH op, const VARIANT *l, const VARIANT *r, VARIAN
         else if (out->vt == VT_DECIMAL && !out->decVal.Lo64 && !out->decVal.Hi32)
             out->decVal.sign = out->decVal.scale = 0;
     }
+#ifdef __i386__
+    /* an empty right operand leaves the zero of a decimal unsigned in the 32 bit library. */
+    if (SUCCEEDED(hr) && op == OP_SUB && r->vt == VT_EMPTY && out->vt == VT_DECIMAL && !out->decVal.Lo64 && !out->decVal.Hi32)
+        out->decVal.sign = 0;
+#endif
     if (SUCCEEDED(hr) && op == OP_SUB && l->vt == VT_EMPTY && out->vt == VT_DECIMAL && !out->decVal.Lo64 && !out->decVal.Hi32 &&
         (r->vt != VT_DECIMAL || !r->decVal.sign))
         out->decVal.sign = 0x80;

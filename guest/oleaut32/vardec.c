@@ -216,7 +216,12 @@ static HRESULT add_or_subtract(const DECIMAL *a, const DECIMAL *b, DECIMAL *out,
     LONG scale = a->scale;
     big_from_decimal(a, &q);
     big_from_decimal(b, &p);
+#ifdef __i386__
+    /* the 32 bit library takes the second operand as the one of the smaller scale when the scales are equal. */
+    if (a->scale >= b->scale) {
+#else
     if (a->scale > b->scale) {
+#endif
         BIG swap = q;
         q = p;
         p = swap;
@@ -236,12 +241,7 @@ static HRESULT add_or_subtract(const DECIMAL *a, const DECIMAL *b, DECIMAL *out,
     BYTE sign = sign_q;
     if (sign_q == sign_p) {
         big_add(&q, &p);
-#ifdef __i386__
-        /* the 32 bit library takes equal magnitudes the other way, which gives zero the other sign. */
-    } else if (big_compare(&q, &p) > 0) {
-#else
     } else if (big_compare(&q, &p) >= 0) {
-#endif
         big_sub(&q, &p);
     } else {
         big_sub(&p, &q);
@@ -346,6 +346,11 @@ WINOLEAUTAPI HRESULT WINAPI VarDecDiv(const DECIMAL *left, const DECIMAL *right,
             digits = digits_that_fit(&quotient, scale);
             if (digits < 0)
                 return DISP_E_OVERFLOW;
+#ifdef __i386__
+            /* the 32 bit library takes one digit at a time and stops when nothing is left. */
+            if (digits > 1)
+                digits = 1;
+#endif
             if (digits == 0) {
                 /* what is left decides the rounding: past half goes up, exactly half to the even one. */
                 BIG twice = rem;
@@ -373,7 +378,8 @@ WINOLEAUTAPI HRESULT WINAPI VarDecDiv(const DECIMAL *left, const DECIMAL *right,
         big_divide(&step, &divisor, &rem);
         big_add(&quotient, &step);
     }
-    /* trailing zeros of the quotient are not kept. */
+#ifndef __i386__
+    /* trailing zeros of the quotient are not kept. the 32 bit library keeps them. */
     while (scale > 0) {
         BIG shorter = quotient;
         if (big_div_small(&shorter, 10))
@@ -381,6 +387,7 @@ WINOLEAUTAPI HRESULT WINAPI VarDecDiv(const DECIMAL *left, const DECIMAL *right,
         quotient = shorter;
         scale--;
     }
+#endif
     decimal_from_big(result, &quotient, (ULONG)scale, left->sign ^ right->sign);
     return S_OK;
 }
