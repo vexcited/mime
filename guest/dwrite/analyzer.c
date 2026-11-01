@@ -283,30 +283,93 @@ static HRESULT WINAPI an_bidi(IDWriteTextAnalyzer2 *This, IDWriteTextAnalysisSou
     return hr;
 }
 
+static BOOL is_digit(WCHAR c)
+{
+    return c >= '0' && c <= '9';
+}
+
+/* the end of the number that starts at a digit: digits, a separator between digits and a percent sign after them. */
+static UINT32 number_end(const WCHAR *text, UINT32 from, UINT32 to)
+{
+    UINT32 i = from;
+    while (i < to) {
+        WCHAR c = text[i];
+        if (is_digit(c) || (c == '%' && i > from && is_digit(text[i - 1])))
+            i++;
+        else if ((c == ',' || c == '.') && i > from && is_digit(text[i - 1]) && i + 1 < to && is_digit(text[i + 1]))
+            i++;
+        else
+            break;
+    }
+    return i;
+}
+
+static BOOL arabic_script(WCHAR c)
+{
+    return (c >= 0x0600 && c <= 0x06FF) || (c >= 0x0750 && c <= 0x077F) || (c >= 0xFB50 && c <= 0xFDFF) ||
+           (c >= 0xFE70 && c <= 0xFEFF);
+}
+
+/*
+ * a substitution that is none, or not given, never reaches the sink. otherwise the sink hears of each number in
+ * the range. a contextual substitution only applies to the numbers that follow text of the arabic script, the
+ * others to every number.
+ */
 static HRESULT WINAPI an_numbers(IDWriteTextAnalyzer2 *This, IDWriteTextAnalysisSource *source, UINT32 position,
                                  UINT32 length, IDWriteTextAnalysisSink *sink)
 {
     if (!source || !sink)
         return E_INVALIDARG;
+    if (!length)
+        return S_OK;
+    WCHAR *text;
+    HRESULT hr = source_text(source, position, length, &text);
+    if (FAILED(hr))
+        return hr;
+    BOOL arabic = FALSE;
     UINT32 done = 0;
     while (done < length) {
         UINT32 n = 0;
         IDWriteNumberSubstitution *sub = nullptr;
-        HRESULT hr = source->lpVtbl->GetNumberSubstitution(source, position + done, &n, &sub);
+        hr = source->lpVtbl->GetNumberSubstitution(source, position + done, &n, &sub);
         if (FAILED(hr))
-            return hr;
-        if (!n)
-            return E_INVALIDARG;
+            break;
+        if (!n) {
+            hr = E_INVALIDARG;
+            if (sub)
+                sub->lpVtbl->Release(sub);
+            break;
+        }
         if (n > length - done)
             n = length - done;
-        hr = sink->lpVtbl->SetNumberSubstitution(sink, position + done, n, sub);
+        DWRITE_NUMBER_SUBSTITUTION_METHOD method = DWRITE_NUMBER_SUBSTITUTION_METHOD_NONE;
+        const WCHAR *locale;
+        BOOL active = sub && DwNumberSubstitutionInfo(sub, &method, &locale) &&
+                      method != DWRITE_NUMBER_SUBSTITUTION_METHOD_NONE;
+        BOOL contextual = method == DWRITE_NUMBER_SUBSTITUTION_METHOD_FROM_CULTURE ||
+                          method == DWRITE_NUMBER_SUBSTITUTION_METHOD_CONTEXTUAL;
+        for (UINT32 i = done; i < done + n && SUCCEEDED(hr);) {
+            if (is_digit(text[i])) {
+                UINT32 end = number_end(text, i, done + n);
+                if (active && (!contextual || arabic))
+                    hr = sink->lpVtbl->SetNumberSubstitution(sink, position + i, end - i, sub);
+                i = end;
+                continue;
+            }
+            if (arabic_script(text[i]))
+                arabic = TRUE;
+            else if ((text[i] | 0x20) >= 'a' && (text[i] | 0x20) <= 'z')
+                arabic = FALSE;
+            i++;
+        }
         if (sub)
             sub->lpVtbl->Release(sub);
         if (FAILED(hr))
-            return hr;
+            break;
         done += n;
     }
-    return S_OK;
+    DwFree(text);
+    return hr;
 }
 
 static HRESULT WINAPI an_breaks(IDWriteTextAnalyzer2 *This, IDWriteTextAnalysisSource *source, UINT32 position,
