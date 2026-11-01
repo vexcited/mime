@@ -872,28 +872,80 @@ static PWSTR shortcut_path(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, ULO
     return path;
 }
 
-/* a Target that names a feature makes an advertised shortcut. It points at the key file of the row's component. */
-static UINT advertised_target(MIME_MSI_PACKAGE *package, PCWSTR target, PCWSTR component, PWSTR *path)
+#define INSTALLER_SHELL_FOLDER L"::{9db1186e-40df-11d1-aa8c-00c04fb67863}:"
+
+/* whether a Target names a feature of the package, and how many features the package has. */
+static UINT named_feature(MIME_MSI_PACKAGE *package, PCWSTR target, BOOL *found, ULONG *count)
 {
-    *path = nullptr;
+    *found = FALSE;
+    *count = 0;
     if (!target || wcschr(target, L'['))
         return ERROR_SUCCESS;
     MIME_MSI_TABLE *features;
     UINT error = optional_table(package, L"Feature", &features);
     if (error || !features)
         return error;
-    BOOL found = FALSE;
-    for (ULONG row = 0; row < features->Rows && !found; row++) {
+    *count = features->Rows;
+    for (ULONG row = 0; row < features->Rows && !*found; row++) {
         PCWSTR name = cell_text(package, features, row, L"Feature");
-        found = name && !wcscmp(name, target);
+        *found = name && !wcscmp(name, target);
     }
-    if (!found)
-        return ERROR_SUCCESS;
+    return ERROR_SUCCESS;
+}
+
+/*
+ * the target of an advertised shortcut is the descriptor of its feature and component behind the name of the
+ * installer's folder of the shell, which the shell link keeps as a block of its own. a package with a single feature
+ * leaves the feature out of the descriptor, and a feature with a single component leaves the component out.
+ */
+static UINT descriptor_target(MIME_MSI_PACKAGE *package, PCWSTR feature, ULONG features, MIME_MSI_TABLE *components,
+                              ULONG row, PWSTR *target)
+{
+    PCWSTR id = cell_text(package, components, row, L"ComponentId");
+    if (!id || !*id)
+        return ERROR_INSTALL_PACKAGE_INVALID;
+    ULONG flags = features == 1 ? 2 : 0, count = 0;
+    MIME_MSI_TABLE *links;
+    UINT error = optional_table(package, L"FeatureComponents", &links);
+    if (error)
+        return error;
+    for (ULONG i = 0; links && i < links->Rows; i++) {
+        PCWSTR name = cell_text(package, links, i, L"Feature_");
+        count += name && !wcscmp(name, feature);
+    }
+    if (count == 1)
+        flags |= 1;
+    PWSTR descriptor;
+    error = MimeMsiDescriptorEx(MimeMsiGetProperty(package, L"ProductCode"), feature, id, flags, &descriptor);
+    if (error)
+        return error == ERROR_INVALID_PARAMETER ? ERROR_INSTALL_PACKAGE_INVALID : error;
+    SIZE_T length = wcslen(INSTALLER_SHELL_FOLDER) + wcslen(descriptor) + 3;
+    *target = MimeMsiAllocate(length * sizeof(WCHAR));
+    if (*target)
+        _snwprintf(*target, length, L"%s%s::", INSTALLER_SHELL_FOLDER, descriptor);
+    MimeMsiFree(descriptor);
+    return *target ? ERROR_SUCCESS : ERROR_NOT_ENOUGH_MEMORY;
+}
+
+/*
+ * a Target that names a feature makes an advertised shortcut. with DISABLEADVTSHORTCUTS set the shortcut points at
+ * the key file of the row's component instead.
+ */
+static UINT advertised_target(MIME_MSI_PACKAGE *package, PCWSTR target, PCWSTR component, PWSTR *path)
+{
+    *path = nullptr;
+    BOOL found;
+    ULONG features;
+    UINT error = named_feature(package, target, &found, &features);
+    if (error || !found)
+        return error;
     MIME_MSI_TABLE *components;
     ULONG row;
     error = find_component(package, component, &components, &row);
     if (error)
         return error;
+    if (!*MimeMsiGetProperty(package, L"DISABLEADVTSHORTCUTS"))
+        return descriptor_target(package, target, features, components, row, path);
     PCWSTR key = cell_text(package, components, row, L"KeyPath");
     int attributes = cell_number(components, row, L"Attributes");
     if (!key || !*key || (attributes != MSI_NULL_INTEGER && (attributes & (4 | 32))))
@@ -992,22 +1044,37 @@ static UINT create_shortcuts(MIME_MSI_PACKAGE *package)
     return error;
 }
 
+/* an advertised shortcut that another product made over this one's is left alone. */
+static BOOL overwritten_by_other(MIME_MSI_PACKAGE *package, PCWSTR path)
+{
+    WCHAR product[39];
+    return MsiGetShortcutTargetW(path, product, nullptr, nullptr) == ERROR_SUCCESS &&
+           _wcsicmp(product, MimeMsiGetProperty(package, L"ProductCode"));
+}
+
 static UINT remove_shortcuts(MIME_MSI_PACKAGE *package)
 {
     MIME_MSI_TABLE *table;
     UINT error = optional_table(package, L"Shortcut", &table);
     if (!MimeMsiModeAllows(package, REINSTALLMODE_SHORTCUT))
         table = nullptr;
+    HRESULT init = table ? CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED) : E_FAIL;
     for (ULONG row = 0; table && row < table->Rows && !error; row++) {
         PCWSTR component = cell_text(package, table, row, L"Component_");
         ULONG action;
         if (!component || component_action(package, component, &action) || action != ACTION_ABSENT)
             continue;
         PWSTR path = shortcut_path(package, table, row);
+        if (path && overwritten_by_other(package, path)) {
+            MimeMsiFree(path);
+            path = nullptr;
+        }
         if (path)
             error = MimeMsiRemoveFile(package, path);
         MimeMsiFree(path);
     }
+    if (SUCCEEDED(init))
+        CoUninitialize();
     return error;
 }
 

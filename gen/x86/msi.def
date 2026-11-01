@@ -8,6 +8,8 @@ EXPORTS
     MsiApplyPatchW=_MsiApplyPatchW@16 @175
     MsiCloseAllHandles=_MsiCloseAllHandles@0 @7
     MsiCloseHandle=_MsiCloseHandle@4 @8
+    MsiConfigureFeatureA=_MsiConfigureFeatureA@12 @11
+    MsiConfigureFeatureW=_MsiConfigureFeatureW@12 @14
     MsiConfigureProductA=_MsiConfigureProductA@12 @15
     MsiConfigureProductExA=_MsiConfigureProductExA@16 @189
     MsiConfigureProductExW=_MsiConfigureProductExW@16 @190
@@ -82,6 +84,8 @@ EXPORTS
     MsiGetProductPropertyW=_MsiGetProductPropertyW@16 @72
     MsiGetPropertyA=_MsiGetPropertyA@16 @73
     MsiGetPropertyW=_MsiGetPropertyW@16 @74
+    MsiGetShortcutTargetA=_MsiGetShortcutTargetA@16 @216
+    MsiGetShortcutTargetW=_MsiGetShortcutTargetW@16 @217
     MsiGetSourcePathA=_MsiGetSourcePathA@16 @75
     MsiGetSourcePathW=_MsiGetSourcePathW@16 @76
     MsiGetSummaryInformationA=_MsiGetSummaryInformationA@16 @77

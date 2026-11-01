@@ -76,101 +76,110 @@ static BOOL expand_guid(PCWSTR text, WCHAR out[39])
     return TRUE;
 }
 
-UINT MimeMsiDescriptor(PCWSTR product, PCWSTR feature, PCWSTR component, PWSTR *out)
+/* the compressed forms of a GUID, for the other files of the installer. */
+BOOL MimeMsiCompressGuid(PCWSTR guid, WCHAR out[21])
+{
+    return compress_guid(guid, out);
+}
+
+BOOL MimeMsiExpandGuid(PCWSTR text, WCHAR out[39])
+{
+    return expand_guid(text, out);
+}
+
+/*
+ * the descriptor of a feature and one of its components. a product with a single feature leaves the feature name out,
+ * and a feature with a single component leaves the component out, which the flags ask for: 1 for no component and 2
+ * for no feature.
+ */
+UINT MimeMsiDescriptorEx(PCWSTR product, PCWSTR feature, PCWSTR component, ULONG flags, PWSTR *out)
 {
     WCHAR packed_product[21], packed_component[21];
-    if (!compress_guid(product, packed_product) || !compress_guid(component, packed_component) ||
-        wcslen(feature) > MAX_FEATURE_CHARS)
+    if (!compress_guid(product, packed_product) || wcslen(feature) > MAX_FEATURE_CHARS ||
+        (!(flags & 1) && !compress_guid(component, packed_component)))
         return ERROR_INVALID_PARAMETER;
-    SIZE_T length = 20 + wcslen(feature) + 1 + 20 + 1;
+    PCWSTR name = flags & 2 ? L"" : feature;
+    SIZE_T length = 20 + wcslen(name) + 1 + 20 + 1;
     *out = MimeMsiAllocate(length * sizeof(WCHAR));
     if (!*out)
         return ERROR_NOT_ENOUGH_MEMORY;
-    _snwprintf(*out, length, L"%s%s>%s", packed_product, feature, packed_component);
+    if (flags & 1)
+        _snwprintf(*out, length, L"%s%s<", packed_product, name);
+    else
+        _snwprintf(*out, length, L"%s%s>%s", packed_product, name, packed_component);
     return ERROR_SUCCESS;
 }
 
-/* a descriptor without its component, which '<' ends, names a feature of one component. */
-UINT WINAPI MsiDecomposeDescriptorW(LPCWSTR descriptor, LPWSTR product, LPWSTR feature, LPWSTR component, LPDWORD used)
+UINT MimeMsiDescriptor(PCWSTR product, PCWSTR feature, PCWSTR component, PWSTR *out)
 {
-    WCHAR product_code[39], component_code[39] = L"";
-    if (!descriptor || wcslen(descriptor) < 21 || !expand_guid(descriptor, product_code))
-        return ERROR_INVALID_PARAMETER;
-    PCWSTR end = descriptor + 20;
-    while (*end && *end != L'>' && *end != L'<')
-        end++;
-    SIZE_T feature_length = (SIZE_T)(end - descriptor - 20);
-    if (!*end || feature_length > MAX_FEATURE_CHARS)
-        return ERROR_INVALID_PARAMETER;
-    SIZE_T length = feature_length + 21;
-    if (*end == L'>') {
-        if (wcslen(end + 1) < 20 || !expand_guid(end + 1, component_code))
-            return ERROR_INVALID_PARAMETER;
-        length += 20;
+    return MimeMsiDescriptorEx(product, feature, component, 0, out);
+}
+
+/*
+ * the product, feature and component of a descriptor, and where its arguments begin. a descriptor may start with a
+ * bar, for a program of the .NET Framework. a feature name that is missing names the only feature of the product,
+ * which the validation looks up, and a '<' in place of the '>' leaves the component out.
+ */
+BOOL MimeMsiDecompose(PCWSTR descriptor, BOOL validate, PWSTR product, PWSTR feature, PWSTR component, DWORD *used,
+                      DWORD *remaining, BOOL *prefixed)
+{
+    if (!descriptor)
+        return FALSE;
+    SIZE_T total = wcslen(descriptor);
+    if (total < 20)
+        return FALSE;
+    BOOL bar = descriptor[0] == L'|';
+    PCWSTR cursor = descriptor + bar;
+    SIZE_T left = total - bar;
+    WCHAR product_code[39], feature_name[MAX_FEATURE_CHARS + 1], component_code[39] = L"";
+    if (left < 20 || !expand_guid(cursor, product_code))
+        return FALSE;
+    cursor += 20;
+    left -= 20;
+    SIZE_T count = 0;
+    for (;; cursor++, left--) {
+        if (!left)
+            return FALSE;
+        if (*cursor == L'<' || *cursor == L'>')
+            break;
+        if (count == MAX_FEATURE_CHARS)
+            return FALSE;
+        feature_name[count++] = *cursor;
+    }
+    feature_name[count] = 0;
+    if (!count && validate) {
+        WCHAR second[39];
+        if (MsiEnumFeaturesW(product_code, 0, feature_name, nullptr) != ERROR_SUCCESS ||
+            MsiEnumFeaturesW(product_code, 1, second, nullptr) != ERROR_NO_MORE_ITEMS)
+            return FALSE;
+    }
+    WCHAR terminator = *cursor++;
+    left--;
+    if (terminator == L'>') {
+        if (left < 20 || (component && !expand_guid(cursor, component_code)))
+            return FALSE;
+        cursor += 20;
     }
     if (product)
         wcscpy(product, product_code);
-    if (feature) {
-        memcpy(feature, descriptor + 20, feature_length * sizeof(WCHAR));
-        feature[feature_length] = 0;
-    }
+    if (feature)
+        wcscpy(feature, feature_name);
     if (component)
         wcscpy(component, component_code);
     if (used)
-        *used = (DWORD)length;
-    return ERROR_SUCCESS;
+        *used = (DWORD)(cursor - descriptor);
+    if (remaining)
+        *remaining = (DWORD)(total - (SIZE_T)(cursor - descriptor));
+    if (prefixed)
+        *prefixed = bar;
+    return TRUE;
 }
 
-UINT WINAPI MsiProvideComponentW(LPCWSTR product, LPCWSTR feature, LPCWSTR component, DWORD mode, LPWSTR path,
-                                 LPDWORD size)
+UINT WINAPI MsiDecomposeDescriptorW(LPCWSTR descriptor, LPWSTR product, LPWSTR feature, LPWSTR component, LPDWORD used)
 {
-    if (!product || !feature || !component || (path && !size))
-        return ERROR_INVALID_PARAMETER;
-    INSTALLSTATE state = MsiQueryFeatureStateW(product, feature);
-    if (state == INSTALLSTATE_UNKNOWN)
-        return MsiQueryProductStateW(product) == INSTALLSTATE_UNKNOWN ? ERROR_UNKNOWN_PRODUCT : ERROR_UNKNOWN_FEATURE;
-    if (state == INSTALLSTATE_INVALIDARG)
-        return ERROR_INVALID_PARAMETER;
-    /* a feature that is not there would be installed on demand, which needs the source. */
-    if (state != INSTALLSTATE_LOCAL && state != INSTALLSTATE_SOURCE && state != INSTALLSTATE_DEFAULT)
-        return ERROR_FILE_NOT_FOUND;
-    WCHAR probe[1];
-    DWORD none = 0;
-    state = MsiGetComponentPathW(product, component, path ? path : probe, path ? size : &none);
-    if (!path && size)
-        *size = none;
-    switch (state) {
-    case INSTALLSTATE_LOCAL:
-    case INSTALLSTATE_SOURCE:
-        return ERROR_SUCCESS;
-    case INSTALLSTATE_MOREDATA:
-        return path ? ERROR_MORE_DATA : ERROR_SUCCESS;
-    case INSTALLSTATE_UNKNOWN:
-        return ERROR_UNKNOWN_COMPONENT;
-    case INSTALLSTATE_INVALIDARG:
-        return ERROR_INVALID_PARAMETER;
-    case INSTALLSTATE_ABSENT:
-        /* a key file that is gone counts only when the caller asked to look. */
-        return mode == (DWORD)INSTALLMODE_NODETECTION || mode == (DWORD)INSTALLMODE_NODETECTION_ANY
-                   ? ERROR_SUCCESS : ERROR_FILE_NOT_FOUND;
-    default:
-        return ERROR_FILE_NOT_FOUND;
-    }
-}
-
-UINT WINAPI MsiProvideComponentFromDescriptorW(LPCWSTR descriptor, LPWSTR path, LPDWORD size, LPDWORD args)
-{
-    WCHAR product[39], feature[MAX_FEATURE_CHARS + 1], component[39];
-    DWORD used;
-    UINT error = MsiDecomposeDescriptorW(descriptor, product, feature, component, &used);
-    if (error)
-        return error;
-    if (!*component)
-        return ERROR_FILE_NOT_FOUND;
-    error = MsiProvideComponentW(product, feature, component, INSTALLMODE_DEFAULT, path, size);
-    if (!error && args)
-        *args = used;
-    return error;
+    return MimeMsiDecompose(descriptor, TRUE, product, feature, component, used, nullptr, nullptr)
+               ? ERROR_SUCCESS
+               : ERROR_INVALID_PARAMETER;
 }
 
 /* the category in the user's catalog first, then in the machine's. */

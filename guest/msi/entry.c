@@ -355,6 +355,29 @@ static UINT reinstall(PCWSTR product, PCWSTR features, DWORD mode)
     return error;
 }
 
+/* one feature added or removed in a session of maintenance, the others left as they are. */
+UINT WINAPI MsiConfigureFeatureW(LPCWSTR product, LPCWSTR feature, INSTALLSTATE state)
+{
+    WCHAR packed[33];
+    if (!product || !MimeMsiPackGuid(product, packed) || !feature || !*feature || wcslen(feature) > 38 ||
+        state < INSTALLSTATE_ADVERTISED || state > INSTALLSTATE_DEFAULT)
+        return ERROR_INVALID_PARAMETER;
+    if (state != INSTALLSTATE_LOCAL && state != INSTALLSTATE_DEFAULT && state != INSTALLSTATE_ABSENT)
+        return ERROR_CALL_NOT_IMPLEMENTED;
+    WCHAR command[512];
+    _snwprintf(command, RTL_NUMBER_OF(command), state == INSTALLSTATE_ABSENT ? L"REMOVE=%s" : L"ADDLOCAL=%s", feature);
+    if (!begin_install())
+        return ERROR_INSTALL_ALREADY_RUNNING;
+    MSIHANDLE handle = 0;
+    UINT error = open_installed(product, nullptr, command, &handle);
+    if (!error)
+        error = execute_package(handle);
+    if (handle)
+        MsiCloseHandle(handle);
+    end_install();
+    return error;
+}
+
 UINT WINAPI MsiReinstallProductW(LPCWSTR product, DWORD mode)
 {
     return reinstall(product, L"ALL", mode);

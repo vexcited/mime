@@ -300,6 +300,13 @@ UINT MimeMsiRegistrationAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiProcessComponents(MIME_MSI_PACKAGE *package, HKEY root);
 UINT MimeMsiPublishComponents(MIME_MSI_PACKAGE *package, HKEY root, BOOL publish, BOOL removing);
 UINT MimeMsiDescriptor(PCWSTR product, PCWSTR feature, PCWSTR component, PWSTR *out);
+UINT MimeMsiDescriptorEx(PCWSTR product, PCWSTR feature, PCWSTR component, ULONG flags, PWSTR *out);
+BOOL MimeMsiDecompose(PCWSTR descriptor, BOOL validate, PWSTR product, PWSTR feature, PWSTR component, DWORD *used,
+                      DWORD *remaining, BOOL *prefixed);
+BOOL MimeMsiCompressGuid(PCWSTR guid, WCHAR out[21]);
+BOOL MimeMsiExpandGuid(PCWSTR text, WCHAR out[39]);
+UINT MimeMsiOpenProductKey(PCWSTR product, HKEY *key, BOOL *machine);
+UINT MimeMsiProvideComponent(PCWSTR product, PCWSTR feature, PCWSTR component, DWORD mode, PWSTR path, LPDWORD size);
 UINT MimeMsiProcessConditions(MIME_MSI_PACKAGE *package, BOOL *changed);
 int MimeMsiFeatureLevel(MIME_MSI_PACKAGE *package, PCWSTR name, int level);
 UINT MimeMsiInstallQueuedFiles(MIME_MSI_PACKAGE *package);

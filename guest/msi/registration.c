@@ -302,6 +302,41 @@ static UINT register_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
     return error;
 }
 
+/*
+ * the components of a feature as the compressed GUIDs of their ids, one after the other, for the call that is given a
+ * feature and no component.
+ */
+static UINT publish_feature_components(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR key, PCWSTR feature)
+{
+    MIME_MSI_TABLE *links, *components;
+    if (MimeMsiLoadTable(package->Database, L"FeatureComponents", &links) ||
+        MimeMsiLoadTable(package->Database, L"Component", &components))
+        return ERROR_SUCCESS;
+    ULONG owner = MimeMsiColumn(links, L"Feature_", TRUE), part = MimeMsiColumn(links, L"Component_", TRUE);
+    ULONG name = MimeMsiColumn(components, L"Component", TRUE), id = MimeMsiColumn(components, L"ComponentId", TRUE);
+    if (owner == UINT32_MAX || part == UINT32_MAX || name == UINT32_MAX || id == UINT32_MAX)
+        return ERROR_SUCCESS;
+    WCHAR list[21 * 64 + 1] = L"";
+    SIZE_T length = 0;
+    for (ULONG row = 0; row < links->Rows; row++) {
+        PCWSTR linked = MimeMsiText(package->Database, links, row, owner);
+        PCWSTR component = MimeMsiText(package->Database, links, row, part);
+        if (!linked || !component || wcscmp(linked, feature))
+            continue;
+        for (ULONG other = 0; other < components->Rows; other++) {
+            PCWSTR candidate = MimeMsiText(package->Database, components, other, name);
+            PCWSTR guid = MimeMsiText(package->Database, components, other, id);
+            WCHAR packed[21];
+            if (candidate && !wcscmp(candidate, component) && guid && length + 20 < RTL_NUMBER_OF(list) &&
+                MimeMsiCompressGuid(guid, packed)) {
+                wcscpy(list + length, packed);
+                length += 20;
+            }
+        }
+    }
+    return write_text(package, root, key, feature, list);
+}
+
 static UINT publish_features(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
 {
     if (removing_product(package))
@@ -314,7 +349,8 @@ static UINT publish_features(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
     ULONG parent = MimeMsiColumn(table, L"Feature_Parent", TRUE);
     if (id == UINT32_MAX || parent == UINT32_MAX)
         return ERROR_INSTALL_PACKAGE_INVALID;
-    WCHAR features[128], parents[128];
+    WCHAR features[128], parents[128], components[128];
+    _snwprintf(components, RTL_NUMBER_OF(components), L"%s\\FeatureComponents", path);
     _snwprintf(features, RTL_NUMBER_OF(features), L"%s\\Features", path);
     _snwprintf(parents, RTL_NUMBER_OF(parents), L"%s\\FeatureParents", path);
     for (ULONG row = 0; row < table->Rows; row++) {
@@ -330,6 +366,8 @@ static UINT publish_features(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
         error = MimeMsiWriteRegistry(package, root, features, name, REG_DWORD, &state, sizeof(state));
         if (!error)
             error = write_text(package, root, parents, name, parent_name ? parent_name : L"");
+        if (!error)
+            error = publish_feature_components(package, root, components, name);
         if (error)
             return error;
     }

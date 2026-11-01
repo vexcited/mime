@@ -248,6 +248,14 @@ typedef struct {
     WCHAR swzTarget[MAX_PATH];
 } EXP_SZ_LINK;
 
+/* the descriptor of an advertised shortcut, in both character sets. */
+typedef struct {
+    DWORD dwSize;
+    DWORD dwSignature;
+    CHAR szDarwinID[MAX_PATH];
+    WCHAR szwDarwinID[MAX_PATH];
+} EXP_DARWIN_LINK;
+
 typedef struct {
     DWORD cbSize;
     DWORD dwSignature;

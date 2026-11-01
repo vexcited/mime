@@ -586,6 +586,34 @@ UINT WINAPI MsiDecomposeDescriptorA(LPCSTR descriptor, LPSTR product, LPSTR feat
     return error;
 }
 
+UINT WINAPI MsiConfigureFeatureA(LPCSTR product, LPCSTR feature, INSTALLSTATE state)
+{
+    PWSTR wide_product = to_wide(product), wide_feature = to_wide(feature);
+    UINT error = (product && !wide_product) || (feature && !wide_feature)
+                     ? ERROR_NOT_ENOUGH_MEMORY
+                     : MsiConfigureFeatureW(wide_product, wide_feature, state);
+    MimeMsiFree(wide_product);
+    MimeMsiFree(wide_feature);
+    return error;
+}
+
+UINT WINAPI MsiGetShortcutTargetA(LPCSTR shortcut, LPSTR product, LPSTR feature, LPSTR component)
+{
+    PWSTR wide = to_wide(shortcut);
+    if (shortcut && !wide)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    WCHAR wide_product[39], wide_feature[MAX_FEATURE_CHARS + 1], wide_component[39];
+    UINT error = MsiGetShortcutTargetW(wide, product ? wide_product : nullptr, feature ? wide_feature : nullptr,
+                                       component ? wide_component : nullptr);
+    if (!error) {
+        to_ansi(wide_product, product, 39);
+        to_ansi(wide_feature, feature, MAX_FEATURE_CHARS + 1);
+        to_ansi(wide_component, component, 39);
+    }
+    MimeMsiFree(wide);
+    return error;
+}
+
 UINT WINAPI MsiProvideComponentA(LPCSTR product, LPCSTR feature, LPCSTR component, DWORD mode, LPSTR path,
                                  LPDWORD size)
 {

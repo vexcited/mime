@@ -29,6 +29,11 @@ static UINT open_product(PCWSTR product, HKEY *out, BOOL *machine)
     return ERROR_UNKNOWN_PRODUCT;
 }
 
+UINT MimeMsiOpenProductKey(PCWSTR product, HKEY *key, BOOL *machine)
+{
+    return open_product(product, key, machine);
+}
+
 static UINT read_state(HKEY key, PCWSTR name, INSTALLSTATE *state)
 {
     DWORD value, type, bytes = sizeof(value);

@@ -208,6 +208,8 @@ MSIAPI INSTALLSTATE WINAPI MsiQueryProductStateW(LPCWSTR product);
 #define REINSTALLMODE_PACKAGE 0x0400
 MSIAPI UINT WINAPI MsiReinstallProductW(LPCWSTR product, DWORD mode);
 MSIAPI UINT WINAPI MsiReinstallFeatureW(LPCWSTR product, LPCWSTR feature, DWORD mode);
+MSIAPI UINT WINAPI MsiConfigureFeatureW(LPCWSTR product, LPCWSTR feature, INSTALLSTATE state);
+MSIAPI UINT WINAPI MsiConfigureFeatureA(LPCSTR product, LPCSTR feature, INSTALLSTATE state);
 MSIAPI UINT WINAPI MsiConfigureProductW(LPCWSTR product, int level, INSTALLSTATE state);
 MSIAPI UINT WINAPI MsiConfigureProductExW(LPCWSTR product, int level, INSTALLSTATE state, LPCWSTR command);
 MSIAPI INSTALLSTATE WINAPI MsiQueryFeatureStateW(LPCWSTR product, LPCWSTR feature);
@@ -234,6 +236,8 @@ MSIAPI UINT WINAPI MsiProvideComponentW(LPCWSTR product, LPCWSTR feature, LPCWST
 MSIAPI UINT WINAPI MsiProvideComponentA(LPCSTR product, LPCSTR feature, LPCSTR component, DWORD mode, LPSTR path,
                                         LPDWORD size);
 MSIAPI UINT WINAPI MsiProvideComponentFromDescriptorW(LPCWSTR descriptor, LPWSTR path, LPDWORD size, LPDWORD args);
+MSIAPI UINT WINAPI MsiGetShortcutTargetW(LPCWSTR shortcut, LPWSTR product, LPWSTR feature, LPWSTR component);
+MSIAPI UINT WINAPI MsiGetShortcutTargetA(LPCSTR shortcut, LPSTR product, LPSTR feature, LPSTR component);
 MSIAPI UINT WINAPI MsiProvideComponentFromDescriptorA(LPCSTR descriptor, LPSTR path, LPDWORD size, LPDWORD args);
 MSIAPI UINT WINAPI MsiProvideQualifiedComponentW(LPCWSTR category, LPCWSTR qualifier, DWORD mode, LPWSTR path,
                                                  LPDWORD size);
