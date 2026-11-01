@@ -37,6 +37,7 @@ enum {
     VBERR_PATH_NOT_FOUND = 76,
     VBERR_INVALID_USE_OF_NULL = 94,
     VBERR_OBJECT_REQUIRED = 424,
+    VBERR_NO_SUCH_FILE_OR_CLASS = 432,
     VBERR_CANNOT_CREATE_OBJECT = 429,
     VBERR_NO_SUCH_MEMBER = 438,
     VBERR_APPLICATION_DEFINED = 440,
@@ -54,6 +55,8 @@ typedef struct VbThread {
     LONG last_dll_error;
     BSTR err_description;
     BSTR err_source;
+    BSTR err_helpfile;
+    LONG err_helpcontext;
     VARIANT scratch[4];
     BOOL in_handler;
 } VbThread;
@@ -61,6 +64,14 @@ typedef struct VbThread {
 VbThread *VbThreadState(void);
 /* raises the runtime error. it does not return. */
 __attribute__((noreturn)) void VbRaise(LONG number);
+/* the same, for an error whose description and source the caller set already. */
+__attribute__((noreturn)) void VbRaiseKeep(LONG number);
+/* raises the error that stands for a failed hresult, which is the hresult itself when no runtime error stands for it. */
+__attribute__((noreturn)) void VbRaiseHr(HRESULT hr);
+/* clears the error of the thread. */
+void VbClearError(void);
+/* the name of the project, which is the source of the errors the runtime raises. */
+const WCHAR *VbProjectName(void);
 /* the runtime error that stands for a failed hresult. */
 LONG VbErrorOfHresult(HRESULT hr);
 /* raises the error of a failed hresult, and returns for a success. */
@@ -68,6 +79,10 @@ void VbCheck(HRESULT hr);
 LCID VbLocale(void);
 
 void VbOutputDebug(const char *text);
+
+/* the Collection of Visual Basic, in vbcoll.c. */
+extern const GUID CLSID_VbCollection;
+void *VbNewCollection(void);
 
 /* the text of a runtime error and the dialog an error that nothing handles ends the program with. */
 const WCHAR *VbErrorText(LONG number);
@@ -103,5 +118,18 @@ typedef struct VbHeader {
     UINT32 project_name;
 } VbHeader;
 #pragma pack(pop)
+
+
+/* forms and controls, in vbform.c. */
+typedef struct VbForm VbForm;
+void VbLoadProject(const VbHeader *header);
+BOOL VbStartForms(HINSTANCE module);
+BOOL VbHasForms(void);
+int VbFormCount(void);
+/* the object of New on a class of the project, or null when the class is not one that can be made. */
+void *VbNewProjectObject(const void *info);
+/* the global object of the library, which holds App, Screen and the loading of forms. */
+extern const GUID CLSID_VbGlobal;
+void *VbNewGlobal(void);
 
 #endif

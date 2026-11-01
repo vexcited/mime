@@ -87,7 +87,7 @@ EXPORTS
     __vbaCopyBytesZero @184
     __vbaCyAbs @185
     ProcCallEngine @186
-    DllFunctionCall @187
+    DllFunctionCall@4 @187
     __vbaCyAdd @188
     __vbaCyErrVar @189
     CopyRecord @190
@@ -119,10 +119,10 @@ EXPORTS
     __vbaError @216
     __vbaErrorOverflow@0 @217
     __vbaExceptHandler @218
-    __vbaExitEachAry @219
+    __vbaExitEachAry@4 @219
     TipSetOption @220
-    __vbaExitEachColl @221
-    __vbaExitEachVar @222
+    __vbaExitEachColl@4 @221
+    __vbaExitEachVar@12 @222
     __vbaExitProc@0 @223
     __vbaFPException@0 @224
     __vbaFPFix @225
@@ -133,24 +133,24 @@ EXPORTS
     TipCreateInstanceProject2 @230
     EbResetProject @231
     EbGetHandleOfExecutingProject @232
-    __vbaFileCloseAll @233
+    __vbaFileCloseAll@0 @233
     __vbaFileLock @234
     __vbaFileOpen@16 @235
-    __vbaFileSeek @236
+    __vbaFileSeek@8 @236
     __vbaFixstrConstruct@8 @237
-    __vbaForEachAry @238
-    __vbaForEachCollAd @239
-    __vbaForEachCollObj @240
-    __vbaForEachCollVar @241
-    __vbaForEachVar @242
+    __vbaForEachAry@20 @238
+    __vbaForEachCollAd@12 @239
+    __vbaForEachCollObj@16 @240
+    __vbaForEachCollVar@12 @241
+    __vbaForEachVar@24 @242
     __vbaFreeObjList @243
     __vbaFreeStrList @244
     __vbaFreeVarList @245
     __vbaGenerateBoundsError@0 @246
-    __vbaGet3 @247
-    __vbaGet4 @248
-    __vbaGetFxStr3 @249
-    __vbaGetFxStr4 @250
+    __vbaGet3@12 @247
+    __vbaGet4@16 @248
+    __vbaGetFxStr3@12 @249
+    __vbaGetFxStr4@16 @250
     __vbaGetOwner3 @251
     __vbaGetOwner4 @252
     __vbaGosub @253
@@ -161,7 +161,7 @@ EXPORTS
     __vbaHresultCheckObj@16 @258
     __vbaI2Cy @259
     __vbaI2ErrVar @260
-    __vbaI2ForNextCheck @261
+    __vbaI2ForNextCheck@12 @261
     __vbaI2Str @262
     __vbaI2Var@4 @263
     __vbaI4Cy @264
@@ -170,7 +170,7 @@ EXPORTS
     __vbaI4ErrVar @267
     EbLibraryLoad @268
     EbLibraryUnload @269
-    __vbaI4ForNextCheck @270
+    __vbaI4ForNextCheck@12 @270
     EbLoadRunTime @271
     __vbaI4Str @272
     __vbaI4Var @273
@@ -242,11 +242,11 @@ EXPORTS
     __vbaNameFile @339
     __vbaNew2@8 @340
     __vbaNew@4 @341
-    __vbaNextEachAry @342
-    __vbaNextEachCollAd @343
-    __vbaNextEachCollObj @344
-    __vbaNextEachCollVar @345
-    __vbaNextEachVar @346
+    __vbaNextEachAry@16 @342
+    __vbaNextEachCollAd@8 @343
+    __vbaNextEachCollObj@12 @344
+    __vbaNextEachCollVar@8 @345
+    __vbaNextEachVar@20 @346
     __vbaObjAddref @347
     __vbaObjIs@8 @348
     __vbaObjSet@8 @349
@@ -257,15 +257,15 @@ EXPORTS
     __vbaPowerR8@16 @354
     __vbaPrintFile @355
     __vbaPrintObj @356
-    __vbaPut3 @357
-    __vbaPut4 @358
-    __vbaPutFxStr3 @359
-    __vbaPutFxStr4 @360
+    __vbaPut3@12 @357
+    __vbaPut4@16 @358
+    __vbaPutFxStr3@12 @359
+    __vbaPutFxStr4@16 @360
     __vbaPutOwner3 @361
     __vbaPutOwner4 @362
     __vbaR4Cy @363
     __vbaR4ErrVar @364
-    __vbaR4ForNextCheck @365
+    __vbaR4ForNextCheck@12 @365
     __vbaR4Sgn @366
     __vbaR4Str @367
     __vbaR4Var@4 @368
@@ -273,7 +273,7 @@ EXPORTS
     __vbaR8ErrVar @370
     __vbaR8FixI2 @371
     __vbaR8FixI4 @372
-    __vbaR8ForNextCheck @373
+    __vbaR8ForNextCheck@24 @373
     __vbaR8IntI2@0 @374
     __vbaR8IntI4@0 @375
     __vbaR8Sgn @376
@@ -300,11 +300,11 @@ EXPORTS
     __vbaStrAryToAnsi @397
     __vbaStrAryToUnicode @398
     __vbaStrBool @399
-    EVENT_SINK_QueryInterface @400
-    EVENT_SINK_AddRef @401
-    EVENT_SINK_Release @402
-    EVENT_SINK_GetIDsOfNames @403
-    EVENT_SINK_Invoke @404
+    EVENT_SINK_QueryInterface@12 @400
+    EVENT_SINK_AddRef@4 @401
+    EVENT_SINK_Release@4 @402
+    EVENT_SINK_GetIDsOfNames@24 @403
+    EVENT_SINK_Invoke@36 @404
     __vbaStrCat@8 @405
     __vbaStrCmp@8 @406
     __vbaStrComp @407
@@ -340,8 +340,8 @@ EXPORTS
     __vbaStrVarMove@4 @437
     __vbaStrVarVal@8 @438
     __vbaUI1Cy @439
-    EVENT_SINK2_AddRef @440
-    EVENT_SINK2_Release @441
+    EVENT_SINK2_AddRef@4 @440
+    EVENT_SINK2_Release@4 @441
     __vbaUI1ErrVar @442
     __vbaUI1Str@4 @443
     __vbaUI1Var@4 @444
@@ -364,8 +364,8 @@ EXPORTS
     __vbaVarEqv@12 @461
     __vbaVarErrI4 @462
     __vbaVarFix@8 @463
-    __vbaVarForInit @464
-    __vbaVarForNext @465
+    __vbaVarForInit@24 @464
+    __vbaVarForNext@12 @465
     __vbaVarIdiv@12 @466
     __vbaVarImp@12 @467
     __vbaVarIndexLoad @468
@@ -454,7 +454,7 @@ EXPORTS
     rtcSetTimeBstr @551
     rtcGetDayOfWeek @552
     rtcGetYear @553
-    rtcFileReset @554
+    rtcFileReset@0 @554
     rtcFileAttributes @555
     rtcIsArray @556
     rtcIsDate @557
@@ -465,13 +465,13 @@ EXPORTS
     rtcIsObject @562
     rtcVarType @563
     rtDecFromVar @564
-    rtcFileWidth @565
-    rtcInputCount @566
+    rtcFileWidth@8 @565
+    rtcInputCount@8 @566
     rtcInputCountVar @567
-    rtcFileSeek @568
-    rtcFileLocation @569
-    rtcFileLength @570
-    rtcEndOfFile @571
+    rtcFileSeek@4 @568
+    rtcFileLocation@4 @569
+    rtcFileLength@4 @570
+    rtcEndOfFile@4 @571
     rtcHexBstrFromVar@4 @572
     rtcHexVarFromVar@8 @573
     rtcOctBstrFromVar @574
@@ -498,7 +498,7 @@ EXPORTS
     rtcMsgBox@20 @595
     rtcInputBox @596
     rtcAppActivate @597
-    rtcDoEvents @598
+    rtcDoEvents@0 @598
     rtcSendKeys @599
     rtcShell @600
     rtcArray @601
@@ -525,8 +525,8 @@ EXPORTS
     rtcStrConvVar @622
     __vbaWriteFile @623
     rtcGetHostLCID @624
-    rtcCreateObject @625
-    rtcGetObject @626
+    rtcCreateObject@8 @625
+    rtcGetObject@12 @626
     rtcAppleScript @627
     rtcMidBstr @628
     rtcMidVar @629
@@ -548,7 +548,7 @@ EXPORTS
     rtcDir @645
     rtcCurrentDirBstr @646
     rtcCurrentDir @647
-    rtcFreeFile @648
+    rtcFreeFile@4 @648
     rtcCompareBstr @649
     rtcBstrFromFormatVar @650
     rtcBstrFromError @651
@@ -585,7 +585,7 @@ EXPORTS
     rtcIRR @682
     rtcMIRR @683
     rtcNPV @684
-    rtcErrObj @685
+    rtcErrObj@0 @685
     rtUI1FromErrVar @686
     rtcVarDateFromVar @687
     _adj_fdiv_m32 @688
@@ -616,7 +616,7 @@ EXPORTS
     rtcStrReverse @713
     rtcRound @714
     rtcCallByName @715
-    rtcCreateObject2 @716
+    rtcCreateObject2@12 @716
     rtcStrConvVar2 @717
     _adj_fdiv_m64 @718
     _adj_fdiv_r @719

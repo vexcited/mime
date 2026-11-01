@@ -49,7 +49,7 @@ static void raise_invoke_error(HRESULT hr, EXCEPINFO *info)
         t->err_source = info->bstrSource;
         SysFreeString(info->bstrHelpFile);
     }
-    VbRaise(number);
+    VbRaiseKeep(number);
 }
 
 static IDispatch *object_of(IDispatch *obj)

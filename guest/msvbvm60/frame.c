@@ -154,10 +154,7 @@ static LONG error_of_exception(const EXCEPTION_RECORD *record)
 VB_STD ULONG vb___vbaOnError(LONG target)
 {
     VbFrame *frame = current_frame();
-    VbThread *t = VbThreadState();
-    t->erl = 0;
-    t->err_number = 0;
-    t->hresult = 0;
+    VbClearError();
     if (target == -3) {
         frame->state &= ~(ULONG)FRAME_IN_HANDLER;
         return (ULONG)(ULONG_PTR)frame;
@@ -170,10 +167,7 @@ VB_STD ULONG vb___vbaExitProc(void)
 {
     VbFrame *frame = current_frame();
     if (frame->state & FRAME_IN_HANDLER) {
-        VbThread *t = VbThreadState();
-        t->erl = 0;
-        t->err_number = 0;
-        t->hresult = 0;
+        VbClearError();
     }
     frame->state = 0;
     return (ULONG)(ULONG_PTR)frame;
@@ -243,12 +237,10 @@ VB_C int vb___vbaExceptHandler(EXCEPTION_RECORD *record, VbFrame *frame)
 VB_STD ULONG vb___vbaResume(LONG mode)
 {
     VbFrame *frame = current_frame();
-    VbThread *t = VbThreadState();
-    t->erl = 0;
+    VbThreadState()->erl = 0;
     if (!(frame->state & FRAME_IN_HANDLER))
         VbRaise(20);
-    t->err_number = 0;
-    t->hresult = 0;
+    VbClearError();
     frame->state &= ~(ULONG)FRAME_IN_HANDLER;
     if (mode == -2)
         transfer(frame, frame->proc->resume[frame->error_statement]);
@@ -266,15 +258,37 @@ VB_STD LONG vb_rtcGetErl(void)
 VB_STD LONG vb___vbaHresultCheckObj(LONG hr, IUnknown *obj, const IID *iid, LONG index)
 {
     if (hr < 0)
-        VbRaise(VbErrorOfHresult(hr));
+        VbRaiseHr(hr);
     return hr;
 }
 
-VB_STD LONG vb_rtcMsgBox(BSTR prompt, LONG flags, VARIANT *title, VARIANT *help, VARIANT *context)
+/* the text of a variant argument as a string, or null when it is not there. a null value is an error. */
+static BSTR text_argument(VARIANT *v)
 {
-    WCHAR caption[128] = L"Project1";
-    if (title && V_VT(title) == VT_BSTR && V_BSTR(title))
-        lstrcpynW(caption, V_BSTR(title), 128);
+    if (!v || (V_VT(v) == VT_ERROR && V_ERROR(v) == DISP_E_PARAMNOTFOUND))
+        return nullptr;
+    VARIANT in, out;
+    VariantInit(&in);
+    VariantInit(&out);
+    VbCheck(VariantCopyInd(&in, v));
+    if (V_VT(&in) == VT_NULL)
+        VbRaise(VBERR_INVALID_USE_OF_NULL);
+    HRESULT hr = V_VT(&in) == VT_EMPTY ? S_OK : VariantChangeTypeEx(&out, &in, VbLocale(), 0, VT_BSTR);
+    VariantClear(&in);
+    VbCheck(hr);
+    if (V_VT(&out) != VT_BSTR)
+        V_BSTR(&out) = SysAllocString(L"");
+    return V_BSTR(&out);
+}
+
+VB_STD LONG vb_rtcMsgBox(VARIANT *prompt, LONG flags, VARIANT *title, VARIANT *help, VARIANT *context)
+{
+    BSTR text = text_argument(prompt), caption = text_argument(title);
+    WCHAR default_caption[64];
+    VbProjectTitle(default_caption, 64);
     HWND owner = GetActiveWindow();
-    return MessageBoxW(owner, prompt ? prompt : L"", caption, (UINT)flags & ~MB_TOPMOST);
+    LONG answer = MessageBoxW(owner, text ? text : L"", caption ? caption : default_caption, (UINT)flags & ~MB_TOPMOST);
+    SysFreeString(text);
+    SysFreeString(caption);
+    return answer;
 }
