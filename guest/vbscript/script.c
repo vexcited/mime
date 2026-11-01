@@ -71,12 +71,21 @@ static HRESULT STDMETHODCALLTYPE error_info(IActiveScriptError *This, EXCEPINFO 
 static HRESULT STDMETHODCALLTYPE error_position(IActiveScriptError *This, DWORD *cookie, ULONG *line, LONG *character)
 {
     ScriptError *e = (ScriptError *)This;
-    if (cookie) {
-        if (sizeof(void *) == 8)
-            *(DWORD_PTR *)cookie = e->F.Cookie;
-        else
-            *cookie = (DWORD)e->F.Cookie;
-    }
+    if (cookie)
+        *cookie = (DWORD)e->F.Cookie;
+    if (line)
+        *line = e->F.Line;
+    if (character)
+        *character = (LONG)e->F.Col;
+    return S_OK;
+}
+
+/* IActiveScriptError64 adds this call after the three of the interface it extends, with a source context of 64 bits. */
+static HRESULT STDMETHODCALLTYPE error_position64(IActiveScriptError *This, DWORD64 *cookie, ULONG *line, LONG *character)
+{
+    ScriptError *e = (ScriptError *)This;
+    if (cookie)
+        *cookie = (DWORD64)e->F.Cookie;
     if (line)
         *line = e->F.Line;
     if (character)
@@ -96,8 +105,12 @@ static HRESULT STDMETHODCALLTYPE error_line(IActiveScriptError *This, BSTR *text
     return S_OK;
 }
 
-static const IActiveScriptErrorVtbl g_error_vtbl = {error_qi, error_addref, error_release, error_info, error_position,
-                                                    error_line};
+/* the table has the extra call of the 64-bit interface after the others, which a caller of the plain interface never reaches. */
+static const struct {
+    IActiveScriptErrorVtbl Base;
+    HRESULT(STDMETHODCALLTYPE *GetSourcePosition64)(IActiveScriptError *, DWORD64 *, ULONG *, LONG *);
+} g_error_table = {{error_qi, error_addref, error_release, error_info, error_position, error_line}, error_position64};
+#define g_error_vtbl g_error_table.Base
 
 /* tells the site about the fault in progress, then clears it. */
 void engine_report(Engine *e, BOOL terminate)
