@@ -1032,9 +1032,16 @@ SECURITY_STATUS WINAPI NCryptImportKey(NCRYPT_PROV_HANDLE handle, NCRYPT_KEY_HAN
     if (unwrap)
         return NTE_NOT_SUPPORTED;
     LPCWSTR algorithm = nullptr;
-    if (!wcsncmp(type, L"RSA", 3))
+    /* the legacy blobs of the legacy store and the generic ones are told apart by their magic. */
+    BOOL legacy_rsa = !wcscmp(type, L"CAPIPUBLICBLOB") || !wcscmp(type, L"CAPIPRIVATEBLOB");
+    BOOL generic = !wcscmp(type, L"PUBLICBLOB") || !wcscmp(type, L"PRIVATEBLOB");
+    if (!wcsncmp(type, L"RSA", 3) || legacy_rsa)
         algorithm = L"RSA";
-    else if (!wcsncmp(type, L"ECC", 3) && size >= 8) {
+    else if (generic && size >= 4) {
+        DWORD magic = *(const DWORD *)input;
+        if (magic == 0x31415352 || magic == 0x32415352 || magic == 0x33415352)
+            algorithm = L"RSA";
+    } else if (!wcsncmp(type, L"ECC", 3) && size >= 8) {
         DWORD magic = *(const DWORD *)input;
         BOOL dh = magic == 0x314B4345 || magic == 0x324B4345 || magic == 0x334B4345 || magic == 0x344B4345 ||
                   magic == 0x354B4345 || magic == 0x364B4345;
