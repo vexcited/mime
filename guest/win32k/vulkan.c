@@ -15,6 +15,9 @@ typedef struct VK_BLOCK {
     PVOID User;
 } VK_BLOCK;
 
+/* how many processes hold a connection, so the screen need not look for presenting windows when none does. */
+ULONG VkProcessCount;
+
 typedef struct W32VK {
     ULONG Connection;
     MvkHeader *Header;
@@ -73,6 +76,7 @@ NTSTATUS NTAPI NtGdiMimeVkOpen(PVOID *base)
             v->Connection = (ULONG)connection;
             v->Header = v->Main.Kernel;
             p->Vk = v;
+            __atomic_add_fetch(&VkProcessCount, 1, __ATOMIC_RELAXED);
         } else if (v) {
             free_block(&v->Main, TRUE);
             W32Free(v);
@@ -220,5 +224,6 @@ void VkFreeProcess(W32PROCESS *p)
     }
     free_block(&v->Main, FALSE);
     p->Vk = nullptr;
+    __atomic_sub_fetch(&VkProcessCount, 1, __ATOMIC_RELAXED);
     W32Free(v);
 }

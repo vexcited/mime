@@ -78,9 +78,29 @@ static inline ULONG over(ULONG s, ULONG d)
 ULONG ScreenSerial;
 
 /* host Vulkan presentation requires a process connection. */
-static BOOLEAN presents_through_host(WND *w)
+static BOOLEAN has_connection(const WND *w)
 {
     return w->Thread && w->Thread->Process && w->Thread->Process->Vk;
+}
+
+/*
+ * a swap chain shows in the top level window of the window it was made for, so the process that presents need not
+ * own the top level window: the web view of a program is presented by the browser's graphics process, in a child
+ * window it parented to the program's.
+ */
+static BOOLEAN tree_presents(const WND *w)
+{
+    if (has_connection(w))
+        return TRUE;
+    for (const WND *c = w->FirstChild; c; c = c->Next)
+        if ((c->Style & WS_VISIBLE) && tree_presents(c))
+            return TRUE;
+    return FALSE;
+}
+
+static BOOLEAN presents_through_host(WND *w)
+{
+    return VkProcessCount && tree_presents(w);
 }
 
 /*
@@ -239,6 +259,71 @@ static void compose_presented(PUCHAR bits, LONG stride, POINT shift, const RECT 
     }
 }
 
+/* a rectangle of window pixels relative to its top level window, as the canvas has it. */
+static RECT to_canvas(RECT r, const PLACE *place)
+{
+    if (place->Num != place->Den) {
+        r.left = (LONG)((LONG64)r.left * place->Num / place->Den);
+        r.top = (LONG)((LONG64)r.top * place->Num / place->Den);
+        r.right = (LONG)(((LONG64)r.right * place->Num + place->Den - 1) / place->Den);
+        r.bottom = (LONG)(((LONG64)r.bottom * place->Num + place->Den - 1) / place->Den);
+    }
+    return r;
+}
+
+static LONG distance(LONG a, LONG b)
+{
+    return a > b ? a - b : b - a;
+}
+
+/* the window below top that a connection's swap chain was made for: its client area is where the image shows. */
+static WND *presented_window(WND *parent, const WND *top, const PLACE *place, const RECT *client)
+{
+    for (WND *c = parent->FirstChild; c; c = c->Next) {
+        if (!(c->Style & WS_VISIBLE))
+            continue;
+        WND *below = presented_window(c, top, place, client);
+        if (below)
+            return below;
+        if (!has_connection(c))
+            continue;
+        RECT r = c->ClientRect;
+        RectOffset(&r, -top->WindowRect.left, -top->WindowRect.top);
+        r = to_canvas(r, place);
+        if (distance(r.left, client->left) <= 1 && distance(r.top, client->top) <= 1 &&
+            distance(r.right, client->right) <= 1 && distance(r.bottom, client->bottom) <= 1)
+            return c;
+    }
+    return nullptr;
+}
+
+/*
+ * what of the top level window an image shows over: the client area of the window it was presented for, inside the
+ * client areas of its parents and under the siblings in front of it, as the window manager clips a child window.
+ * canvas pixels relative to the window's corner.
+ */
+static void presented_clip(WND *top, WND *window, const PLACE *place, REGION *out)
+{
+    REGION area;
+    RgnInit(&area);
+    RgnSetRect(&area, &window->ClientRect);
+    for (WND *n = window; n != top && n->Parent; n = n->Parent) {
+        for (WND *s = n->Parent->FirstChild; s && s != n; s = s->Next)
+            if (s->Style & WS_VISIBLE)
+                RgnCombineRect(&area, &area, &s->WindowRect, RGN_DIFF);
+        RgnCombineRect(&area, &area, &n->Parent->ClientRect, RGN_AND);
+    }
+    RgnInit(out);
+    for (ULONG i = 0; i < area.Count; i++) {
+        RECT r = area.Rects[i];
+        RectOffset(&r, -top->WindowRect.left, -top->WindowRect.top);
+        r = to_canvas(r, place);
+        RectOffset(&r, place->Origin.x, place->Origin.y);
+        RgnCombineRect(out, out, &r, RGN_OR);
+    }
+    RgnFree(&area);
+}
+
 /*
  * compose visible screen rectangles from the window surface and last Vulkan client image. read the host image once
  * for all rectangles.
@@ -278,8 +363,19 @@ static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *
               place->Origin.y + client.bottom};
     if (c.right <= c.left || c.bottom <= c.top)
         return;
-    for (ULONG i = 0; i < vis->Count; i++)
-        compose_presented(bits, stride, shift, &vis->Rects[i], &c, width, height);
+    /* a child window of another process is clipped by its parents, whose client areas are smaller than its own. */
+    REGION shown, clip;
+    RgnInit(&shown);
+    RgnCopy(&shown, vis);
+    WND *presenter = presented_window(w, w, place, &client);
+    if (presenter) {
+        presented_clip(w, presenter, place, &clip);
+        RgnCombine(&shown, &shown, &clip, RGN_AND);
+        RgnFree(&clip);
+    }
+    for (ULONG i = 0; i < shown.Count; i++)
+        compose_presented(bits, stride, shift, &shown.Rects[i], &c, width, height);
+    RgnFree(&shown);
 }
 
 /* find the surface-backed rectangle that occludes lower windows. */

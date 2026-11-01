@@ -1119,6 +1119,7 @@ BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, BOOLEAN host_pixels, PUC
                            LONG height);
 ULONG64 ScreenHostSerial(void);
 extern ULONG ScreenSerial;
+extern ULONG VkProcessCount;
 HBRUSH MetricsSysColorBrush(int index);
 BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT dpi);
 void MetricsInitialize(void);
