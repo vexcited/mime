@@ -1089,26 +1089,50 @@ static HRESULT STDMETHODCALLTYPE tr_ppd(void *This, void *ctx, FLOAT *ppd)
     *ppd = D2dUnitScaleX(((TextRenderer *)This)->rt);
     return S_OK;
 }
+/* a drawing effect that is a brush paints its range of the text, any other leaves the text brush. */
+static ID2D1Brush *effect_brush(IUnknown *effect, ID2D1Brush *fallback, BOOL *owned)
+{
+    ID2D1Brush *brush = nullptr;
+    *owned = FALSE;
+    if (effect && SUCCEEDED(effect->lpVtbl->QueryInterface(effect, &IID_ID2D1Brush, (void **)&brush)) && brush) {
+        *owned = TRUE;
+        return brush;
+    }
+    return fallback;
+}
+
 static HRESULT STDMETHODCALLTYPE tr_glyphs(void *This, void *ctx, FLOAT x, FLOAT y, DWRITE_MEASURING_MODE mm,
                                            const DWRITE_GLYPH_RUN *run, const void *desc, IUnknown *effect)
 {
     TextRenderer *t = This;
     D2D1_POINT_2F o = {x, y};
-    D2dDrawGlyphRun(t->rt, o, run, t->brush, mm);
+    BOOL owned;
+    ID2D1Brush *brush = effect_brush(effect, t->brush, &owned);
+    D2dDrawGlyphRun(t->rt, o, run, brush, mm);
+    if (owned)
+        ((IUnknown *)brush)->lpVtbl->Release((IUnknown *)brush);
     return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE tr_underline(void *This, void *ctx, FLOAT x, FLOAT y, const UnderlineRec *u, IUnknown *effect)
 {
     TextRenderer *t = This;
     D2D1_RECT_F r = {x, y + u->offset, x + u->width, y + u->offset + u->thickness};
-    D2dFillRect(t->rt, &r, t->brush);
+    BOOL owned;
+    ID2D1Brush *brush = effect_brush(effect, t->brush, &owned);
+    D2dFillRect(t->rt, &r, brush);
+    if (owned)
+        ((IUnknown *)brush)->lpVtbl->Release((IUnknown *)brush);
     return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE tr_strike(void *This, void *ctx, FLOAT x, FLOAT y, const StrikeRec *u, IUnknown *effect)
 {
     TextRenderer *t = This;
     D2D1_RECT_F r = {x, y + u->offset, x + u->width, y + u->offset + u->thickness};
-    D2dFillRect(t->rt, &r, t->brush);
+    BOOL owned;
+    ID2D1Brush *brush = effect_brush(effect, t->brush, &owned);
+    D2dFillRect(t->rt, &r, brush);
+    if (owned)
+        ((IUnknown *)brush)->lpVtbl->Release((IUnknown *)brush);
     return S_OK;
 }
 static HRESULT STDMETHODCALLTYPE tr_inline(void *This, void *ctx, FLOAT x, FLOAT y, IUnknown *object, BOOL sideways,
