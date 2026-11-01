@@ -151,6 +151,10 @@ bool mime_ttf_glyph_box_ex(const MimeTtfFont *font, uint16_t glyph, const MimeTt
 bool mime_ttf_render_glyph_ex(const MimeTtfFont *font, const MimeAllocator *alloc, uint16_t glyph,
                               const MimeTtfRenderParams *params, uint8_t *out, int width, int height, int stride);
 
+/* the horizontal extent of all the points of the outline, the ones off the curve too, in the units of the parameters. */
+bool mime_ttf_glyph_control_extent(const MimeTtfFont *font, uint16_t glyph, const MimeTtfRenderParams *params,
+                                   float *x0, float *x1);
+
 /* the scan control the programs left, SCANCTRL and SCANTYPE as the instructions set them. */
 typedef struct MimeTtfScan {
     uint32_t control, type;

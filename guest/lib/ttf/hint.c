@@ -164,10 +164,38 @@ static int32_t mul_fix(int32_t a, int32_t b)
     return mul_div(a, b, 0x10000);
 }
 
-static int32_t dot14(int32_t ax, int32_t ay, int32_t bx, int32_t by)
+/* a product with a 2.14 number, rounded half up. */
+static int32_t mul14(int32_t a, int32_t b)
 {
-    int64_t v = (int64_t)ax * bx + (int64_t)ay * by;
-    return sat32((v + (v < 0 ? 0x1fff : 0x2000)) >> 14);
+    return (int32_t)((((int64_t)a * b >> 13) + 1) >> 1);
+}
+
+/* a divided by b rounded away from zero at a half, the way the font driver does it. */
+static int32_t comp_div(int32_t b, int64_t a)
+{
+    if (b == 0)
+        return (a < 0) + INT32_MAX;
+    int64_t half = b / 2;
+    int64_t v = ((b < 0) == (a < 0)) ? a + half : a - half;
+    return (int32_t)(v / b);
+}
+
+/* two 26.6 numbers multiplied, rounded half up when they are small. */
+static int32_t mul_26_6(int32_t a, int32_t b)
+{
+    if (a <= 46340 && a >= -46340 && b <= 46340 && b >= -46340)
+        return (a * b + 32) >> 6;
+    bool negative = (a < 0) != (b < 0);
+    uint64_t m = (uint64_t)(a < 0 ? -(int64_t)a : a) * (uint64_t)(b < 0 ? -(int64_t)b : b);
+    int32_t r = (int32_t)((m + 32) >> 6);
+    return negative ? -r : r;
+}
+
+/* round to the pixel as ODD and EVEN do, whatever the rounding state is. */
+static int32_t round_pixel(int32_t d)
+{
+    int32_t v = d < 0 ? -((32 - d) & ~63) : ((d + 32) & ~63);
+    return ((d ^ v) < 0 && d != 0) ? 0 : v;
 }
 
 static int32_t scale_apply(const Scale *s, int32_t v)
@@ -214,7 +242,7 @@ static void scale_init(Scale *s, int ppem, int upem)
     }
 }
 
-static uint32_t isqrt64(uint64_t v)
+static uint64_t isqrt64(uint64_t v)
 {
     uint64_t r = 0, bit = 1ull << 62;
     while (bit > v)
@@ -228,14 +256,17 @@ static uint32_t isqrt64(uint64_t v)
         }
         bit >>= 2;
     }
-    return (uint32_t)r;
+    return r;
 }
 
-/* the unit vector in 2.14 along dx and dy, false for a zero vector. */
+/* the unit vector in 2.14 along dx and dy, a zero vector gives the x axis. */
 static bool normalize(int32_t dx, int32_t dy, V2 *out)
 {
-    if (dx == 0 && dy == 0)
-        return false;
+    if (dx == 0 && dy == 0) {
+        out->x = 0x4000;
+        out->y = 0;
+        return true;
+    }
     if (dy == 0) {
         out->x = dx < 0 ? -0x4000 : 0x4000;
         out->y = 0;
@@ -246,11 +277,16 @@ static bool normalize(int32_t dx, int32_t dy, V2 *out)
         out->y = dy < 0 ? -0x4000 : 0x4000;
         return true;
     }
-    int64_t len = isqrt64((uint64_t)((int64_t)dx * dx + (int64_t)dy * dy));
+    /* the square sum is lifted by an even power of two so the root keeps thirty bits. */
+    uint64_t sq = (uint64_t)((int64_t)dx * dx + (int64_t)dy * dy);
+    int bits = 64 - __builtin_clzll(sq), up = (62 - bits) & ~1;
+    int64_t len = (int64_t)isqrt64(sq << up);
     if (len == 0)
         return false;
-    out->x = sat32(((int64_t)dx * 0x4000 + (dx < 0 ? -len / 2 : len / 2)) / len);
-    out->y = sat32(((int64_t)dy * 0x4000 + (dy < 0 ? -len / 2 : len / 2)) / len);
+    int64_t one = (int64_t)1 << (up / 2);
+    int64_t nx = (int64_t)dx * one * 0x4000, ny = (int64_t)dy * one * 0x4000;
+    out->x = sat32((nx + (nx < 0 ? -len / 2 : len / 2)) / len);
+    out->y = sat32((ny + (ny < 0 ? -len / 2 : len / 2)) / len);
     return true;
 }
 
@@ -278,6 +314,7 @@ typedef struct Exec {
     int32_t fdotp;
     bool iupy; /* the points were interpolated along y. */
     bool iupx;
+    bool dual_is_project; /* the dual projection vector is the projection vector, set from a line or two numbers. */
     bool read8; /* storage 8 was read as zero by the patch. */
     bool composite; /* the program is the one of a composite glyph. */
     uint32_t special_depth; /* calls into delta shift functions that are running. */
@@ -318,8 +355,9 @@ static bool point_ok(const Zone *z, int32_t p)
 
 static void compute_fdotp(Exec *ex)
 {
-    int32_t d = dot14(ex->gs.fv.x, ex->gs.fv.y, ex->gs.pv.x, ex->gs.pv.y);
-    ex->fdotp = (d > -0x400 && d < 0x400) ? 0x4000 : d;
+    int32_t d = ((ex->gs.pv.y * ex->gs.fv.y + 0x2000) >> 14) + ((ex->gs.pv.x * ex->gs.fv.x + 0x2000) >> 14);
+    d = (int16_t)d;
+    ex->fdotp = (d >= -1023 && d <= 1023) ? (d < 0 ? -0x4000 : 0x4000) : d;
 }
 
 static int32_t project(const Exec *ex, int32_t dx, int32_t dy)
@@ -329,7 +367,7 @@ static int32_t project(const Exec *ex, int32_t dx, int32_t dy)
         return dx;
     if (p->y == 0x4000)
         return dy;
-    return dot14(dx, dy, p->x, p->y);
+    return mul14(dy, p->y) + mul14(dx, p->x);
 }
 
 static int32_t dual_project(const Exec *ex, int32_t dx, int32_t dy)
@@ -339,7 +377,7 @@ static int32_t dual_project(const Exec *ex, int32_t dx, int32_t dy)
         return dx;
     if (p->y == 0x4000)
         return dy;
-    return dot14(dx, dy, p->x, p->y);
+    return mul14(dy, p->y) + mul14(dx, p->x);
 }
 
 /* the ratio of the pixel scale along the projection vector to the y scale, in 16.16. */
@@ -365,16 +403,25 @@ static void shift_point(Exec *ex, Zone *z, uint32_t p, int32_t dx, int32_t dy);
 static void move_point(Exec *ex, Zone *z, uint32_t p, int32_t dist)
 {
     const V2 *f = &ex->gs.fv;
-    int32_t dx = 0, dy = 0;
-    if (f->x == 0x4000 && ex->gs.pv.x == 0x4000) {
-        dx = dist;
-    } else if (f->y == 0x4000 && ex->gs.pv.y == 0x4000) {
-        dy = dist;
-    } else {
+    int32_t fd = ex->fdotp, dx = 0, dy = 0;
+    if (fd == 0x4000) {
         if (f->x)
-            dx = mul_div(dist, f->x, ex->fdotp);
+            dx = mul14(dist, f->x);
         if (f->y)
-            dy = mul_div(dist, f->y, ex->fdotp);
+            dy = mul14(dist, f->y);
+    } else {
+        if (f->x) {
+            if (fd == f->x) {
+                dx = dist;
+            } else {
+                /* the half is added whatever the sign, so negative moves lean towards zero. */
+                int32_t v = (int32_t)((uint32_t)dist * (uint32_t)f->x);
+                v = fd < 0 ? v - fd / 2 : v + fd / 2;
+                dx = fd ? v / fd : (v < 0) + INT32_MAX;
+            }
+        }
+        if (f->y)
+            dy = fd == f->y ? dist : comp_div(fd, (int64_t)dist * f->y);
     }
     shift_point(ex, z, p, dx, dy);
 }
@@ -444,6 +491,9 @@ static int32_t round_value(const Exec *ex, int32_t d)
             v = d < 0 ? -((-d + 1) & ~1) : ((d + 1) & ~1);
             break;
         case ROUND_DOWN:
+            /* along a line set by points the font driver rounds down to the pixel. */
+            if (!ex->h->native && ex->dual_is_project)
+                return d >= 0 ? (d & ~63) : -((-d) & ~63);
             v = d < 0 ? -((-d) & ~3) : (d & ~3);
             break;
         case ROUND_UP:
@@ -597,11 +647,6 @@ static bool set_vector_from_points(V2 *v, int32_t p1, int32_t p2, bool perp, boo
     const V2 *a = original ? &za->org[p1] : &za->cur[p1];
     const V2 *b = original ? &zb->org[p2] : &zb->cur[p2];
     int32_t dx = b->x - a->x, dy = b->y - a->y;
-    if (dx == 0 && dy == 0) {
-        dx = 0x4000;
-        dy = 0;
-        perp = false;
-    }
     V2 n;
     if (!normalize(dx, dy, &n))
         return false;
@@ -651,8 +696,8 @@ static void ins_miap(Exec *ex, uint8_t op)
         FAIL();
     int32_t dist = read_cvt(ex, n);
     if (ex->gs.zp0 == 0) {
-        z->org[p].x = mul_div(dist, ex->gs.fv.x, 0x4000);
-        z->org[p].y = mul_div(dist, ex->gs.fv.y, 0x4000);
+        z->org[p].x = mul14(dist, ex->gs.pv.x);
+        z->org[p].y = mul14(dist, ex->gs.pv.y);
         z->cur[p] = z->org[p];
     }
     int32_t org_dist = project(ex, z->cur[p].x, z->cur[p].y);
@@ -735,8 +780,8 @@ static void ins_mirp(Exec *ex, uint8_t op)
     if (diff < ex->gs.sw_cutin)
         cvt_dist = cvt_dist >= 0 ? ex->gs.sw_value : -ex->gs.sw_value;
     if (ex->gs.zp1 == 0) {
-        z1->org[p].x = z0->org[rp0].x + mul_div(cvt_dist, ex->gs.fv.x, 0x4000);
-        z1->org[p].y = z0->org[rp0].y + mul_div(cvt_dist, ex->gs.fv.y, 0x4000);
+        z1->org[p].x = z0->org[rp0].x + mul14(cvt_dist, ex->gs.pv.x);
+        z1->org[p].y = z0->org[rp0].y + mul14(cvt_dist, ex->gs.pv.y);
         z1->cur[p] = z1->org[p];
     }
     int32_t org_dist = dual_project(ex, z1->org[p].x - z0->org[rp0].x, z1->org[p].y - z0->org[rp0].y);
@@ -815,8 +860,18 @@ static bool displacement(Exec *ex, bool use_rp1, int32_t *dx, int32_t *dy)
     if (!point_ok(z, (int32_t)rp))
         return false;
     int32_t d = project(ex, z->cur[rp].x - z->org[rp].x, z->cur[rp].y - z->org[rp].y);
-    *dx = mul_div(d, ex->gs.fv.x, ex->fdotp);
-    *dy = mul_div(d, ex->gs.fv.y, ex->fdotp);
+    *dx = *dy = 0;
+    if (ex->fdotp == 0x4000) {
+        if (ex->gs.fv.x)
+            *dx = mul14(d, ex->gs.fv.x);
+        if (ex->gs.fv.y)
+            *dy = mul14(d, ex->gs.fv.y);
+    } else {
+        if (ex->gs.fv.x)
+            *dx = comp_div(ex->fdotp, (int64_t)d * ex->gs.fv.x);
+        if (ex->gs.fv.y)
+            *dy = comp_div(ex->fdotp, (int64_t)d * ex->gs.fv.y);
+    }
     return true;
 }
 
@@ -903,7 +958,7 @@ static void ins_shpix(Exec *ex)
     int32_t amount;
     if (!pop(ex, &amount))
         return;
-    int32_t dx = mul_div(amount, ex->gs.fv.x, 0x4000), dy = mul_div(amount, ex->gs.fv.y, 0x4000);
+    int32_t dx = ex->gs.fv.x ? mul14(amount, ex->gs.fv.x) : 0, dy = ex->gs.fv.y ? mul14(amount, ex->gs.fv.y) : 0;
     Zone *z = zone_of(ex, ex->gs.zp2);
     while (ex->gs.loop > 0) {
         int32_t p;
@@ -1066,21 +1121,23 @@ static void iup_run(Zone *z, bool x_axis, uint32_t first, uint32_t last)
         /* the untouched points strictly between t1 and t2. */
         uint32_t count = (t2 + n - t1) % n;
         if (count > 1) {
-            int32_t o1 = COORD(z->orus, t1), o2 = COORD(z->orus, t2);
-            int32_t c1 = COORD(z->cur, t1), c2 = COORD(z->cur, t2);
-            int32_t g1 = COORD(z->org, t1), g2 = COORD(z->org, t2);
-            if (o1 > o2) {
-                int32_t t;
-                t = o1; o1 = o2; o2 = t;
-                t = c1; c1 = c2; c2 = t;
-                t = g1; g1 = g2; g2 = t;
+            /* the lower one in font units leads, the second of two equal ones when they are. */
+            uint32_t lo = t1, hi = t2;
+            if (COORD(z->orus, t1) >= COORD(z->orus, t2)) {
+                lo = t2;
+                hi = t1;
             }
+            int32_t o1 = COORD(z->orus, lo), o2 = COORD(z->orus, hi);
+            int32_t c1 = COORD(z->cur, lo), c2 = COORD(z->cur, hi);
+            int32_t g1 = COORD(z->org, lo), g2 = COORD(z->org, hi);
             int32_t d1 = c1 - g1, d2 = c2 - g2;
-            int32_t scale = 0;
-            bool scaled = false;
-            if (c1 != c2 && o1 != o2) {
-                scale = mul_div(c2 - c1, 0x10000, o2 - o1);
-                scaled = true;
+            int32_t span = o2 - o1, rise = c2 - c1;
+            int32_t ratio = 0;
+            bool small = span < 0x8000 && rise < 0x8000;
+            if (span && !small) {
+                int64_t num = (int64_t)rise << 16;
+                int64_t half = span / 2;
+                ratio = (int32_t)(((span < 0) == (num < 0) ? num + half : num - half) / span);
             }
             uint32_t p = t1;
             for (uint32_t j = 1; j < count; j++) {
@@ -1088,14 +1145,16 @@ static void iup_run(Zone *z, bool x_axis, uint32_t first, uint32_t last)
                 int32_t orus = COORD(z->orus, p);
                 int32_t org = COORD(z->org, p);
                 int32_t v;
-                if (orus <= o1)
+                if (span == 0)
+                    v = COORD(z->cur, p) + d1;
+                else if (org <= g1)
                     v = org + d1;
-                else if (orus >= o2)
+                else if (org >= g2)
                     v = org + d2;
-                else if (!scaled)
-                    v = c1;
+                else if (small)
+                    v = c1 + (int32_t)((span / 2 + (int64_t)rise * (orus - o1)) / span);
                 else
-                    v = c1 + mul_fix(orus - o1, scale);
+                    v = c1 + mul_fix(orus - o1, ratio);
                 SETC(z->cur, p, v);
             }
         }
@@ -1348,11 +1407,13 @@ static void execute_one(Exec *ex, uint8_t op)
     case 0x00: case 0x01: {
         V2 v = (op & 1) ? (V2){0x4000, 0} : (V2){0, 0x4000};
         gs->pv = gs->dv = gs->fv = v;
+        ex->dual_is_project = false;
         compute_fdotp(ex);
         return;
     }
     case 0x02: case 0x03: {
         gs->pv = gs->dv = (op & 1) ? (V2){0x4000, 0} : (V2){0, 0x4000};
+        ex->dual_is_project = false;
         compute_fdotp(ex);
         return;
     }
@@ -1367,6 +1428,7 @@ static void execute_one(Exec *ex, uint8_t op)
             FAIL();
         (void)p2;
         gs->dv = gs->pv;
+        ex->dual_is_project = true;
         compute_fdotp(ex);
         return;
     }
@@ -1385,6 +1447,7 @@ static void execute_one(Exec *ex, uint8_t op)
         if (!normalize(v.x, v.y, &v))
             FAIL();
         gs->pv = gs->dv = v;
+        ex->dual_is_project = true;
         compute_fdotp(ex);
         return;
     }
@@ -1401,7 +1464,7 @@ static void execute_one(Exec *ex, uint8_t op)
     }
     case 0x0C: push(ex, gs->pv.x); push(ex, gs->pv.y); return;
     case 0x0D: push(ex, gs->fv.x); push(ex, gs->fv.y); return;
-    case 0x0E: gs->fv = gs->pv; compute_fdotp(ex); return;
+    case 0x0E: gs->fv = gs->pv; ex->fdotp = 0x4000; return;
     case 0x0F: ins_isect(ex); return;
     case 0x10: { POP1(a); if (a < 0) FAIL(); gs->rp0 = (uint32_t)a; return; }
     case 0x11: { POP1(a); if (a < 0) FAIL(); gs->rp1 = (uint32_t)a; return; }
@@ -1609,8 +1672,8 @@ static void execute_one(Exec *ex, uint8_t op)
     case 0x53: { POP2(a, b); push(ex, a >= b); return; }
     case 0x54: { POP2(a, b); push(ex, a == b); return; }
     case 0x55: { POP2(a, b); push(ex, a != b); return; }
-    case 0x56: { POP1(a); push(ex, (round_value(ex, a) & 127) == 64); return; }
-    case 0x57: { POP1(a); push(ex, (round_value(ex, a) & 127) == 0); return; }
+    case 0x56: { POP1(a); push(ex, (round_pixel(a) >> 6) & 1); return; }
+    case 0x57: { POP1(a); push(ex, ((round_pixel(a) >> 6) - 1) & 1); return; }
     case 0x58: {
         POP1(c);
         if (c == 0 && !skip_if(ex, true))
@@ -1633,7 +1696,7 @@ static void execute_one(Exec *ex, uint8_t op)
         push(ex, sat32((int64_t)a * 64 / b));
         return;
     }
-    case 0x63: { POP2(a, b); push(ex, mul_div(a, b, 64)); return; }
+    case 0x63: { POP2(a, b); push(ex, mul_26_6(a, b)); return; }
     case 0x64: { POP1(a); push(ex, a < 0 ? (a == INT32_MIN ? INT32_MAX : -a) : a); return; }
     case 0x65: { POP1(a); push(ex, a == INT32_MIN ? INT32_MAX : -a); return; }
     case 0x66: { POP1(a); push(ex, a & ~63); return; }
@@ -1703,6 +1766,7 @@ static void execute_one(Exec *ex, uint8_t op)
         if (!set_vector_from_points(&w, p1, p2, op & 1, false, za, zb))
             FAIL();
         gs->pv = w;
+        ex->dual_is_project = false;
         compute_fdotp(ex);
         return;
     }
@@ -1782,6 +1846,10 @@ static void execute_one(Exec *ex, uint8_t op)
     }
     ex->failed = true;
 }
+
+
+
+
 
 static bool run_program(Exec *ex, Code code, int program)
 {
@@ -2116,13 +2184,21 @@ static void phantom_points(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable 
             vadv = be16(f->vmtx.data + 4ull * idx);
         if (glyph < nm && 4ull * idx + 4 <= f->vmtx.size)
             tsb = (int16_t)be16(f->vmtx.data + 4ull * idx + 2);
-    } else if (f->hhea.size >= 8) {
-        int asc = (int16_t)be16(f->hhea.data + 4), desc = (int16_t)be16(f->hhea.data + 6);
+    } else if (f->os2.size >= 72 || f->hhea.size >= 8) {
+        /* without vertical metrics the line from the typographic ascender to the descender is used. */
+        int asc, desc;
+        if (f->os2.size >= 72) {
+            asc = (int16_t)be16(f->os2.data + 68);
+            desc = (int16_t)be16(f->os2.data + 70);
+        } else {
+            asc = (int16_t)be16(f->hhea.data + 4);
+            desc = (int16_t)be16(f->hhea.data + 6);
+        }
         vadv = asc - desc;
         tsb = asc - ymax;
     }
-    g->orus[n + 2] = (V2){0, ymax + tsb};
-    g->orus[n + 3] = (V2){0, ymax + tsb - vadv};
+    g->orus[n + 2] = (V2){adv >> 1, ymax + tsb};
+    g->orus[n + 3] = (V2){adv >> 1, ymax + tsb - vadv};
 }
 
 /* the side bearing points go to a sixteenth of a pixel along x with cleartype and to the pixel without. */

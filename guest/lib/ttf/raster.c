@@ -24,6 +24,9 @@ struct Path {
     /* box mode. */
     bool any;
     float min_x, min_y, max_x, max_y;
+    /* the box of every point, off the curve ones too. */
+    bool cany;
+    float cmin_x, cmin_y, cmax_x, cmax_y;
 
     /* raster mode. */
     float *acc;
@@ -88,6 +91,16 @@ static void path_point(void *ctx, float fx, float fy, bool on)
     Path *p = ctx;
     float x = clampf(p->xx * fx + p->xy * fy + p->tx);
     float y = clampf(p->yx * fx + p->yy * fy + p->ty);
+
+    if (!p->cany) {
+        p->cmin_x = p->cmax_x = x;
+        p->cmin_y = p->cmax_y = y;
+        p->cany = true;
+    }
+    if (x < p->cmin_x) p->cmin_x = x;
+    if (x > p->cmax_x) p->cmax_x = x;
+    if (y < p->cmin_y) p->cmin_y = y;
+    if (y > p->cmax_y) p->cmax_y = y;
 
     if (p->count++ == 0) {
         if (on) {
@@ -341,6 +354,27 @@ bool mime_ttf_glyph_box_ex(const MimeTtfFont *font, uint16_t glyph, const MimeTt
     if (y0) *y0 = b[1];
     if (x1) *x1 = b[2];
     if (y1) *y1 = b[3];
+    return ok;
+}
+
+bool mime_ttf_glyph_control_extent(const MimeTtfFont *font, uint16_t glyph, const MimeTtfRenderParams *params,
+                                   float *x0, float *x1)
+{
+    float lo = 0, hi = 0;
+    bool ok = false;
+    if (font && params && params_ok(params)) {
+        Path p;
+        path_init(&p, params, params->shift_x, params->shift_y);
+        p.line = box_line;
+        MimeTtfSink sink = {path_point, path_end, &p};
+        ok = walk(font, params, glyph, &sink);
+        if (ok && p.cany) {
+            lo = p.cmin_x;
+            hi = p.cmax_x;
+        }
+    }
+    if (x0) *x0 = lo;
+    if (x1) *x1 = hi;
     return ok;
 }
 

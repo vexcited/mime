@@ -61,6 +61,19 @@ bool mime_ttf_cleartype_bitmap(const MimeTtfFont *font, const MimeAllocator *all
     /* a stripe looks at the six samples around its centre, so it reaches one stripe past the ink on each side. */
     int first = cdiv(s.x0 - 3, 2), last = fdiv(s.x1 + 1, 2);
     int px0 = fdiv(first, SUBPIXELS), px1 = fdiv(last, SUBPIXELS) + 1;
+    /* the pixels are those a quarter of a pixel around the points touch, the closed intervals. */
+    float lo, hi;
+    if (mime_ttf_glyph_control_extent(font, glyph, &p, &lo, &hi)) {
+        float m = (lo - 1.5f) / 6.0f, e = (hi + 1.5f) / 6.0f;
+        int fm = (int)m;
+        if ((float)fm > m)
+            fm--;
+        int fe = (int)e;
+        if ((float)fe > e)
+            fe--;
+        px0 = ((float)fm < m ? fm + 1 : fm) - 1;
+        px1 = fe + 1;
+    }
     int py0 = fdiv(s.y0, over_y), py1 = cdiv(s.y1, over_y);
     int w = px1 - px0, h = py1 - py0;
     uint8_t *levels = mime_alloc(alloc, (size_t)w * (size_t)h * SUBPIXELS);
