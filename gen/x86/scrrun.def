@@ -1,0 +1,8 @@
+LIBRARY scrrun.dll
+EXPORTS
+    DLLGetDocumentation=_DLLGetDocumentation@20 @1
+    DllCanUnloadNow=_DllCanUnloadNow@0 @2
+    DllGetClassObject=_DllGetClassObject@12 @3
+    DllRegisterServer=_DllRegisterServer@0 @4
+    DllUnregisterServer=_DllUnregisterServer@0 @5
+    DoOpenPipeStream=_DoOpenPipeStream@12 @6

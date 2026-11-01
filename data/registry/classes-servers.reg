@@ -781,3 +781,43 @@
 [HKCR\CLSID\{E22AD333-B25F-460C-83D0-0581107395C9}\InprocServer32]
 @=expand:"%SystemRoot%\\system32\\uiautomationcore.dll"
 "ThreadingModel"="Both"
+
+; scrrun.dll
+; Scripting.FileSystemObject
+[HKCR\CLSID\{0D43FE01-F093-11CF-8940-00A0C9054228}]
+@="FileSystem Object"
+[HKCR\CLSID\{0D43FE01-F093-11CF-8940-00A0C9054228}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\scrrun.dll"
+"ThreadingModel"="Both"
+; Scripting.Dictionary
+[HKCR\CLSID\{EE09B103-97E0-11CF-978F-00A02463E06F}]
+@="Scripting.Dictionary"
+[HKCR\CLSID\{EE09B103-97E0-11CF-978F-00A02463E06F}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\scrrun.dll"
+"ThreadingModel"="Apartment"
+
+; wshom.ocx
+; WScript.Shell
+[HKCR\CLSID\{72C24DD5-D70A-438B-8A42-98424B88AFB8}]
+@="Windows Script Host Shell Object"
+[HKCR\CLSID\{72C24DD5-D70A-438B-8A42-98424B88AFB8}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\wshom.ocx"
+"ThreadingModel"="Apartment"
+; WScript.Shell
+[HKCR\CLSID\{F935DC22-1CF0-11D0-ADB9-00C04FD58A0B}]
+@="Windows Script Host Shell Object"
+[HKCR\CLSID\{F935DC22-1CF0-11D0-ADB9-00C04FD58A0B}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\wshom.ocx"
+"ThreadingModel"="Apartment"
+; WScript.Network
+[HKCR\CLSID\{093FF999-1EA0-4079-9525-9614C3504B74}]
+@="Windows Script Host Network Object"
+[HKCR\CLSID\{093FF999-1EA0-4079-9525-9614C3504B74}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\wshom.ocx"
+"ThreadingModel"="Apartment"
+; WScript.Network
+[HKCR\CLSID\{F935DC26-1CF0-11D0-ADB9-00C04FD58A0B}]
+@="Windows Script Host Network Object"
+[HKCR\CLSID\{F935DC26-1CF0-11D0-ADB9-00C04FD58A0B}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\wshom.ocx"
+"ThreadingModel"="Apartment"

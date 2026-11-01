@@ -1,0 +1,28 @@
+1 VERSIONINFO
+FILEVERSION 10, 0, 26100, 9278
+PRODUCTVERSION 10, 0, 26100, 9278
+FILEFLAGSMASK 0x3
+FILEFLAGS 0x0
+FILEOS 0x4
+FILETYPE 2
+FILESUBTYPE 0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Microsoft Corporation"
+            VALUE "FileDescription", "Microsoft \256 Script Runtime"
+            VALUE "FileVersion", "10.0.26100.9278"
+            VALUE "InternalName", "scrrun.dll"
+            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "OriginalFilename", "scrrun.dll"
+            VALUE "ProductName", "Microsoft \256 Script Runtime"
+            VALUE "ProductVersion", "10.0.26100.9278"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
