@@ -56,6 +56,23 @@ void DpiPointConvert(POINT *p, ULONG from, ULONG to)
     p->y = DpiScale(p->y, a, b);
 }
 
+/* the pixel of the other grid a point is in, which is how a pointer position becomes a position in coarser pixels. */
+static LONG floor_scale(LONG value, UINT from, UINT to)
+{
+    LONG64 v = (LONG64)value * to;
+    LONG64 q = v / (LONG64)from;
+    return (LONG)(v % (LONG64)from < 0 ? q - 1 : q);
+}
+
+void DpiPixelConvert(POINT *p, ULONG from, ULONG to)
+{
+    UINT a = DpiScaleOf(from), b = DpiScaleOf(to);
+    if (a == b)
+        return;
+    p->x = floor_scale(p->x, a, b);
+    p->y = floor_scale(p->y, a, b);
+}
+
 /* the work area of the primary monitor in the pixels of an awareness. */
 RECT DpiWorkArea(ULONG awareness)
 {

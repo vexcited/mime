@@ -1167,7 +1167,7 @@ WND *WndChildFromPoint(WND *parent, POINT pt, BOOLEAN skip_disabled)
         /* the desktop is in physical pixels and a top level window in its own. */
         POINT at = pt;
         if (parent == g_desktop)
-            DpiPointConvert(&at, DPI_AWARE_SYSTEM, c->Awareness);
+            DpiPixelConvert(&at, DPI_AWARE_SYSTEM, c->Awareness);
         if (!(c->Style & WS_VISIBLE) || !RectContains(&c->WindowRect, at.x, at.y) || !LayerHitTest(c, at))
             continue;
         if (skip_disabled && (c->Style & WS_DISABLED))

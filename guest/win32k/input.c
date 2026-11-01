@@ -110,7 +110,7 @@ SHORT NTAPI NtUserGetAsyncKeyState(int key)
 BOOL NTAPI NtUserGetCursorPos(LPPOINT point)
 {
     POINT p = InputCursorPos;
-    DpiPointConvert(&p, DPI_AWARE_SYSTEM, DpiCurrentAwareness());
+    DpiPixelConvert(&p, DPI_AWARE_SYSTEM, DpiCurrentAwareness());
     return NT_SUCCESS(MimeCopyToUser(point, &p, sizeof(p)));
 }
 
@@ -730,14 +730,14 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
     if (capture) {
         w = capture;
         hit = t->CaptureNc ? (LONG)t->CaptureNc : HTCLIENT;
-        DpiPointConvert(&pt, DPI_AWARE_SYSTEM, capture->Awareness);
+        DpiPixelConvert(&pt, DPI_AWARE_SYSTEM, capture->Awareness);
     } else {
         WND *top = WndLookup((HWND)(ULONG_PTR)ev->window_id);
         if (!top || top->Thread != t || !(top->Style & WS_VISIBLE)) {
             *consumed = TRUE;
             return FALSE;
         }
-        DpiPointConvert(&pt, DPI_AWARE_SYSTEM, top->Awareness);
+        DpiPixelConvert(&pt, DPI_AWARE_SYSTEM, top->Awareness);
         w = hit_test(top, pt, &hit);
         if (!w) {
             *consumed = TRUE;
@@ -864,7 +864,7 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
             WND *top = WndLookup((HWND)(ULONG_PTR)ev->window_id);
             POINT under_pt = {ev->x, ev->y};
             if (top)
-                DpiPointConvert(&under_pt, DPI_AWARE_SYSTEM, top->Awareness);
+                DpiPixelConvert(&under_pt, DPI_AWARE_SYSTEM, top->Awareness);
             WND *under = top && top->Thread == t && (top->Style & WS_VISIBLE) ? WndFromPoint(top, under_pt) : nullptr;
             track_mouse(t, under,
                         under && RectContains(&under->ClientRect, under_pt.x, under_pt.y) ? HTCLIENT : HTNOWHERE);

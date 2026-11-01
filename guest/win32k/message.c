@@ -698,7 +698,7 @@ static BOOLEAN input_hook_discards(W32THREAD *t, const MSG *m, BOOLEAN remove)
         return FALSE;
     MOUSEHOOKSTRUCTEX mh = {};
     mh.pt = m->pt;
-    DpiPointConvert(&mh.pt, DPI_AWARE_SYSTEM, DpiThreadAwareness(t));
+    DpiPixelConvert(&mh.pt, DPI_AWARE_SYSTEM, DpiThreadAwareness(t));
     mh.hwnd = m->hwnd;
     mh.wHitTestCode = nc ? LOWORD(m->wParam) : HTCLIENT;
     mh.dwExtraInfo = t->ExtraInfo;
@@ -895,7 +895,7 @@ BOOL NTAPI NtUserGetMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max)
     if (t)
         t->ChangeBits = 0;
     if (t && MsgPeek(t, &m, hwnd, min, max, PM_REMOVE, TRUE)) {
-        DpiPointConvert(&m.pt, DPI_AWARE_SYSTEM, DpiThreadAwareness(t));
+        DpiPixelConvert(&m.pt, DPI_AWARE_SYSTEM, DpiThreadAwareness(t));
         get_message_hook(t, &m, PM_REMOVE);
     }
     UserLeave();
@@ -914,7 +914,7 @@ BOOL NTAPI NtUserPeekMessage(MSG *user_msg, HWND hwnd, UINT min, UINT max, UINT 
         t->ChangeBits = 0;
     BOOLEAN got = t && MsgPeek(t, &m, hwnd, min, max, flags, FALSE);
     if (got) {
-        DpiPointConvert(&m.pt, DPI_AWARE_SYSTEM, DpiThreadAwareness(t));
+        DpiPixelConvert(&m.pt, DPI_AWARE_SYSTEM, DpiThreadAwareness(t));
         get_message_hook(t, &m, flags);
     }
     UserLeave();
@@ -1105,7 +1105,7 @@ BOOL NTAPI NtUserGetMessagePos(void)
     UserEnter();
     W32THREAD *t = W32GetThread();
     POINT at = t ? t->MessagePos : (POINT){0, 0};
-    DpiPointConvert(&at, DPI_AWARE_SYSTEM, DpiThreadAwareness(t));
+    DpiPixelConvert(&at, DPI_AWARE_SYSTEM, DpiThreadAwareness(t));
     DWORD pos = t ? (DWORD)MAKELONG((SHORT)at.x, (SHORT)at.y) : 0;
     UserLeave();
     return (BOOL)pos;

@@ -782,6 +782,7 @@ BOOLEAN DpiVirtual(ULONG awareness);
 LONG DpiScale(LONG value, UINT from, UINT to);
 void DpiRectConvert(RECT *r, ULONG from, ULONG to);
 void DpiPointConvert(POINT *p, ULONG from, ULONG to);
+void DpiPixelConvert(POINT *p, ULONG from, ULONG to);
 RECT DpiWorkArea(ULONG awareness);
 void DpiProcessAwarenessChanged(W32PROCESS *p, ULONG old);
 UINT DpiProcessSetAwareness(W32PROCESS *p, ULONG awareness, BOOLEAN force);
