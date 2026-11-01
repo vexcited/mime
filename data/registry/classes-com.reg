@@ -404,3 +404,38 @@
 [HKCR\Interface\{F935DC2B-1CF0-11D0-ADB9-00C04FD58A0B}\TypeLib]
 @="{F935DC20-1CF0-11D0-ADB9-00C04FD58A0B}"
 "Version"="1.0"
+
+; the program ids of the VBScript engine and its RegExp, which vbscript.dll serves.
+[HKCR\VBScript]
+@="VB Script Language"
+[HKCR\VBScript\CLSID]
+@="{B54F3741-5B07-11cf-A4B0-00AA004A55E8}"
+[HKCR\VBScript\CurVer]
+@="VBScript.1"
+[HKCR\VBScript\OLEScript]
+[HKCR\VBScript.1]
+@="VB Script Language"
+[HKCR\VBScript.1\CLSID]
+@="{B54F3741-5B07-11cf-A4B0-00AA004A55E8}"
+[HKCR\VBScript.1\OLEScript]
+[HKCR\VBScript.Encode]
+@="VBScript Language Encoding"
+[HKCR\VBScript.Encode\CLSID]
+@="{B54F3743-5B07-11cf-A4B0-00AA004A55E8}"
+[HKCR\VBScript.Encode\CurVer]
+@="VBScript.Encode.1"
+[HKCR\VBScript.Encode\OLEScript]
+[HKCR\VBScript.Encode.1]
+@="VBScript Language Encoding"
+[HKCR\VBScript.Encode.1\CLSID]
+@="{B54F3743-5B07-11cf-A4B0-00AA004A55E8}"
+[HKCR\VBScript.RegExp]
+@="Regular Expression Object"
+[HKCR\VBScript.RegExp\CLSID]
+@="{3F4DACA4-160D-11D2-A8E9-00104B365C9F}"
+[HKCR\VBScript.RegExp\CurVer]
+@="VBScript.RegExp.1"
+[HKCR\VBScript.RegExp.1]
+@="Regular Expression Object"
+[HKCR\VBScript.RegExp.1\CLSID]
+@="{3F4DACA4-160D-11D2-A8E9-00104B365C9F}"

@@ -1,0 +1,6 @@
+LIBRARY vbscript.dll
+EXPORTS
+    DllCanUnloadNow@0 @1
+    DllGetClassObject@12 @2
+    DllRegisterServer@0 @3
+    DllUnregisterServer@0 @4
