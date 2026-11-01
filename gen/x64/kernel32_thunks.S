@@ -5115,6 +5115,10 @@ Kernel32Thunk_WakeByAddressAll:
     .p2align 4
 Kernel32Thunk_WakeByAddressSingle:
     jmp     *__imp_WakeByAddressSingle(%rip)
+    .globl  Kernel32Thunk_WerGetFlags
+    .p2align 4
+Kernel32Thunk_WerGetFlags:
+    jmp     *__imp_WerGetFlags(%rip)
     .globl  Kernel32Thunk_WerRegisterFile
     .p2align 4
 Kernel32Thunk_WerRegisterFile:

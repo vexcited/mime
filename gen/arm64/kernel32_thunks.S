@@ -7673,6 +7673,12 @@ Kernel32Thunk_WakeByAddressSingle:
     adrp    x16, __imp_WakeByAddressSingle
     ldr     x16, [x16, :lo12:__imp_WakeByAddressSingle]
     br      x16
+    .globl  Kernel32Thunk_WerGetFlags
+    .p2align 4
+Kernel32Thunk_WerGetFlags:
+    adrp    x16, __imp_WerGetFlags
+    ldr     x16, [x16, :lo12:__imp_WerGetFlags]
+    br      x16
     .globl  Kernel32Thunk_WerRegisterFile
     .p2align 4
 Kernel32Thunk_WerRegisterFile:

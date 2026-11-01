@@ -1414,6 +1414,7 @@ EXPORTS
     WakeByAddressAll@4
     WakeByAddressSingle@4
     WakeConditionVariable@4
+    WerGetFlags@8
     WerRegisterFile@12
     WerRegisterMemoryBlock@8
     WerRegisterRuntimeExceptionModule@8

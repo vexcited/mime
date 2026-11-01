@@ -1582,6 +1582,7 @@ EXPORTS
     WakeByAddressAll=_Kernel32Thunk_WakeByAddressAll@4
     WakeByAddressSingle=_Kernel32Thunk_WakeByAddressSingle@4
     WakeConditionVariable=kernelbase.WakeConditionVariable
+    WerGetFlags=_Kernel32Thunk_WerGetFlags@8
     WerRegisterFile=_Kernel32Thunk_WerRegisterFile@12
     WerRegisterMemoryBlock=_Kernel32Thunk_WerRegisterMemoryBlock@8
     WerRegisterRuntimeExceptionModule=_Kernel32Thunk_WerRegisterRuntimeExceptionModule@8

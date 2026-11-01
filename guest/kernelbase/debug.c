@@ -303,6 +303,14 @@ DWORD WINAPI WerRegisterRuntimeExceptionModule(PCWSTR dll, PVOID context)
     return S_OK;
 }
 
+HRESULT WINAPI WerGetFlags(HANDLE process, PDWORD flags)
+{
+    if (!flags)
+        return E_INVALIDARG;
+    *flags = 0;
+    return S_OK;
+}
+
 HRESULT WINAPI WerSetFlags(DWORD flags)
 {
     return S_OK;
