@@ -399,6 +399,10 @@ typedef struct FONT_INSTANCE {
     LONG UnderlineSize;
     LONG StrikeoutPos;
     ULONG RefCount;
+    struct MimeTtfHinter *Hinter; /* runs the glyph programs at this size, null when the size is not hinted. */
+    BOOLEAN HinterTried;
+    struct MimeTtfHinter *HinterAliased; /* the same for text drawn without anti-aliasing. */
+    BOOLEAN HinterAliasedTried;
     ULONG *CharPages[256]; /* glyph index + 1 for code points by high byte, BMP only, 0 when unknown. */
     GLYPH *Pages[256];     /* rendered glyphs by glyph index high byte. */
 } FONT_INSTANCE;
@@ -409,6 +413,9 @@ const GLYPH *FontGetGlyph(FONT_INSTANCE *fi, ULONG codepoint);
 const GLYPH *FontGetGlyphIndex(FONT_INSTANCE *fi, USHORT index);
 USHORT FontGlyphIndex(FONT_INSTANCE *fi, ULONG codepoint); /* 0 for missing glyphs. */
 void FontGlyphAbcFloat(FONT_INSTANCE *fi, USHORT index, ABCFLOAT *abc);
+struct MimeTtfHinter *FontHinter(FONT_INSTANCE *fi);
+struct MimeTtfHinter *FontHinterAliased(FONT_INSTANCE *fi);
+LONG FontGlyphAdvance(FONT_INSTANCE *fi, USHORT index);
 UCHAR *FontRenderTransformed(FONT_INSTANCE *fi, USHORT index, const XFORM *m, LONG *left, LONG *top, LONG *width,
                              LONG *height);
 void FontReleaseProcess(HANDLE pid);

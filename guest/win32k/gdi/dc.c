@@ -1025,6 +1025,8 @@ HFONT NTAPI NtGdiSelectFont(HDC hdc, HFONT font)
         old = (HFONT)dc->State.Font->Header.Handle;
         select_unref(&dc->State.Font->Header);
         dc->State.Font = f;
+        dc->Realized = nullptr;
+        dc->RealizedFor = nullptr;
         select_ref(&f->Header);
     }
     UserLeave();

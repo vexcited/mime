@@ -752,16 +752,63 @@ FONT_INSTANCE *FontRealize(const LOGFONTW *lf, UINT dpi)
     return fi;
 }
 
+/* the interpreter for the size of an instance, null when the size is drawn unhinted. */
+MimeTtfHinter *FontHinter(FONT_INSTANCE *fi)
+{
+    if (!fi->HinterTried) {
+        fi->HinterTried = TRUE;
+        if (fi->ScaleX == fi->ScaleY && fi->EmPixels >= 1 && fi->EmPixels <= 1024 && mime_ttf_has_outlines(&fi->Face->Ttf))
+            fi->Hinter = mime_ttf_hinter_new(&fi->Face->Ttf, &FontAllocator, fi->EmPixels, fi->EmPixels,
+                                             MIME_TTF_HINT_GRAY);
+    }
+    return fi->Hinter;
+}
+
+MimeTtfHinter *FontHinterAliased(FONT_INSTANCE *fi)
+{
+    if (!fi->HinterAliasedTried) {
+        fi->HinterAliasedTried = TRUE;
+        if (FontHinter(fi))
+            fi->HinterAliased = mime_ttf_hinter_new(&fi->Face->Ttf, &FontAllocator, fi->EmPixels, fi->EmPixels, 0);
+    }
+    return fi->HinterAliased;
+}
+
+/*
+ * the device advance of a glyph. the hdmx table wins when it has the size, then glyphs the LTSH table calls linear
+ * are scaled and rounded once, and the rest take the width the instructions leave.
+ */
+LONG FontGlyphAdvance(FONT_INSTANCE *fi, USHORT index)
+{
+    const MimeTtfFont *ttf = &fi->Face->Ttf;
+    int advance, lsb;
+    mime_ttf_glyph_hmetrics(ttf, index, &advance, &lsb);
+    MimeTtfHinter *h = FontHinter(fi);
+    if (!h)
+        return round_f((float)advance * fi->ScaleX);
+    int device;
+    if (mime_ttf_hdmx_advance(ttf, fi->EmPixels, index, &device))
+        return device;
+    unsigned linear_from = mime_ttf_ltsh_threshold(ttf, index);
+    if (linear_from && (unsigned)fi->EmPixels >= linear_from)
+        return (LONG)(((int64_t)advance * fi->EmPixels * 2 + ttf->units_per_em) / (2 * (int64_t)ttf->units_per_em));
+    int32_t hinted;
+    if (mime_ttf_hint_advance(h, index, &hinted))
+        return (hinted + 32) >> 6;
+    return round_f((float)advance * fi->ScaleX);
+}
+
 static BOOLEAN render_glyph(FONT_INSTANCE *fi, USHORT index, GLYPH *g)
 {
     FONT_FACE *face = fi->Face;
     MimeTtfRenderParams params = {fi->ScaleX, fi->ScaleY, 0, 0, fi->SimItalic ? 0.2f : 0.0f,
                                   fi->SimBold ? (float)W32Max(1, fi->EmPixels / 24) : 0.0f};
-    int advance, lsb;
-    mime_ttf_glyph_hmetrics(&face->Ttf, index, &advance, &lsb);
+    params.hinter = FontHinter(fi);
     g->Index = index;
-    g->Advance = (SHORT)(round_f((float)advance * fi->ScaleX) + (fi->SimBold ? W32Max(1, fi->EmPixels / 24) : 0));
+    g->Advance = (SHORT)(FontGlyphAdvance(fi, index) + (fi->SimBold ? W32Max(1, fi->EmPixels / 24) : 0));
     int x0, y0, x1, y1;
+    if (params.hinter && !mime_ttf_glyph_box_ex(&face->Ttf, index, &params, &x0, &y0, &x1, &y1))
+        params.hinter = nullptr;
     if (!mime_ttf_glyph_box_ex(&face->Ttf, index, &params, &x0, &y0, &x1, &y1) || x1 <= x0 || y1 <= y0) {
         g->Width = g->Height = 0;
         return TRUE;

@@ -26,6 +26,7 @@ typedef struct MimeTtfFont {
     const uint8_t *data;
     size_t size;
     MimeTtfTable head, hhea, hmtx, maxp, loca, glyf, cmap, kern, os2, name, post;
+    MimeTtfTable fpgm, prep, cvt, hdmx, ltsh, vdmx, gasp, vhea, vmtx;
     MimeTtfTable cmap_sub;
     MimeTtfTable kern_pairs;
     uint32_t kern_count;
@@ -37,6 +38,8 @@ typedef struct MimeTtfFont {
     uint16_t units_per_em;
     int16_t loca_format;
 } MimeTtfFont;
+
+struct MimeTtfHinter;
 
 /* every field is in font units unless noted. */
 typedef struct MimeTtfMetrics {
@@ -69,6 +72,11 @@ typedef struct MimeTtfRenderParams {
      */
     bool use_matrix;
     float xx, xy, yx, yy;
+    /*
+     * with a hinter the glyph is drawn from its hinted outline in pixels, scale_x, scale_y and the matrix are not
+     * used and oblique still shears. the hinter must have been made for the size drawn.
+     */
+    const struct MimeTtfHinter *hinter;
 } MimeTtfRenderParams;
 
 /* number of faces in a font file, 1 for a plain ttf, 0 if unrecognized. */
@@ -86,6 +94,18 @@ bool mime_ttf_has_outlines(const MimeTtfFont *font);
 uint16_t mime_ttf_glyph_index(const MimeTtfFont *font, uint32_t codepoint);
 
 void mime_ttf_glyph_hmetrics(const MimeTtfFont *font, uint16_t glyph, int *advance, int *left_bearing);
+
+/* the device advance of a glyph from the hdmx table at this ppem, false when the table has no such size. */
+bool mime_ttf_hdmx_advance(const MimeTtfFont *font, int ppem, uint16_t glyph, int *advance);
+
+/* the ppem a glyph's advance is linear from, from the LTSH table, 0 when there is none. */
+unsigned mime_ttf_ltsh_threshold(const MimeTtfFont *font, uint16_t glyph);
+
+/* VDMX ascent and descent extremes in pixels for an aspect ratio and ppem, false when the table has none. */
+bool mime_ttf_vdmx(const MimeTtfFont *font, int x_ratio, int y_ratio, int ppem, int *y_max, int *y_min);
+
+/* gasp behavior flags for a ppem, 0xffff when the table is absent. */
+unsigned mime_ttf_gasp(const MimeTtfFont *font, int ppem);
 
 /* kern table adjustment to add to the advance of left, in font units. */
 int mime_ttf_kerning(const MimeTtfFont *font, uint16_t left, uint16_t right);
@@ -122,5 +142,38 @@ bool mime_ttf_glyph_box_ex(const MimeTtfFont *font, uint16_t glyph, const MimeTt
                            int *y0, int *x1, int *y1);
 bool mime_ttf_render_glyph_ex(const MimeTtfFont *font, const MimeAllocator *alloc, uint16_t glyph,
                               const MimeTtfRenderParams *params, uint8_t *out, int width, int height, int stride);
+
+/* flags of a hinter, what the GETINFO instruction reports about the rendering. */
+enum {
+    MIME_TTF_HINT_CLEARTYPE = 1,
+    MIME_TTF_HINT_GRAY = 2,
+    MIME_TTF_HINT_COMPAT_WIDTHS = 4,
+    MIME_TTF_HINT_SUBPIXEL = 8,
+    MIME_TTF_HINT_SYMMETRIC = 16,
+    MIME_TTF_HINT_GRAY_CLEARTYPE = 32,
+};
+
+/* GETINFO version override in the upper bits of the flags, 0 for the default. */
+#define MIME_TTF_HINT_VERSION(v) ((uint32_t)(v) << 8)
+#define MIME_TTF_HINT_VERSION_OF(flags) (((flags) >> 8) & 0xff)
+
+typedef struct MimeTtfHinter MimeTtfHinter;
+
+/*
+ * runs the font program and the control value program for one pixel size. null when the face has no outlines or
+ * memory is short. the font must outlive the hinter.
+ */
+MimeTtfHinter *mime_ttf_hinter_new(const MimeTtfFont *font, const MimeAllocator *alloc, int ppem_x, int ppem_y,
+                                   uint32_t flags);
+void mime_ttf_hinter_free(MimeTtfHinter *hinter);
+
+/* true when the glyph programs of this face run at this size. */
+bool mime_ttf_hinter_active(const MimeTtfHinter *hinter);
+
+/* the SCANCTRL and SCANTYPE values the prep left. */
+void mime_ttf_hinter_scan(const MimeTtfHinter *hinter, uint32_t *control, uint32_t *type);
+
+/* the hinted advance width in 26.6 pixels. */
+bool mime_ttf_hint_advance(const MimeTtfHinter *hinter, uint16_t glyph, int32_t *advance);
 
 #endif

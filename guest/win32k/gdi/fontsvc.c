@@ -293,6 +293,7 @@ typedef struct OUTLINE {
     ULONG Contours;
     ULONG ContourCapacity;
     BOOLEAN Failed;
+    BOOLEAN Pixels; /* hinted, in pixels instead of font units. */
 } OUTLINE;
 
 static void outline_point(void *ctx, float x, float y, bool on)
@@ -363,15 +364,30 @@ static void outline_free(OUTLINE *o)
     memset(o, 0, sizeof(*o));
 }
 
-static BOOLEAN outline_load(FONT_INSTANCE *fi, USHORT glyph, OUTLINE *o)
+/* the outline in font units, or in pixels when hinted. */
+static BOOLEAN outline_load_ex(FONT_INSTANCE *fi, USHORT glyph, BOOLEAN hinted, OUTLINE *o)
 {
     memset(o, 0, sizeof(*o));
     MimeTtfSink sink = {outline_point, outline_end, o};
+    MimeTtfHinter *h = hinted ? FontHinter(fi) : nullptr;
+    if (h) {
+        if (mime_ttf_hint_walk(h, glyph, &sink) && !o->Failed) {
+            o->Pixels = TRUE;
+            return TRUE;
+        }
+        outline_free(o);
+        memset(o, 0, sizeof(*o));
+    }
     if (!mime_ttf_walk_outline(&fi->Face->Ttf, glyph, &sink) || o->Failed) {
         outline_free(o);
         return FALSE;
     }
     return TRUE;
+}
+
+static BOOLEAN outline_load(FONT_INSTANCE *fi, USHORT glyph, OUTLINE *o)
+{
+    return outline_load_ex(fi, glyph, FALSE, o);
 }
 
 /* font units to pixels, y up: x' = x * A + y * C, y' = x * B + y * D. */
@@ -389,18 +405,20 @@ void FontGlyphAbcFloat(FONT_INSTANCE *fi, USHORT index, ABCFLOAT *abc)
 {
     int advance = 0, lsb = 0;
     mime_ttf_glyph_hmetrics(&fi->Face->Ttf, index, &advance, &lsb);
-    float adv = advance * fi->ScaleX;
+    BOOLEAN hinted = FontHinter(fi) != nullptr;
+    float adv = hinted ? (float)FontGlyphAdvance(fi, index) : advance * fi->ScaleX;
     abc->abcfA = 0;
     abc->abcfB = 0;
     abc->abcfC = adv;
     OUTLINE o;
-    if (!outline_load(fi, index, &o))
+    if (!outline_load_ex(fi, index, hinted, &o))
         return;
+    float sx = o.Pixels ? 1.0f : fi->ScaleX, sy = o.Pixels ? 1.0f : fi->ScaleY;
     if (o.Count) {
-        float shear = fi->SimItalic ? 0.2f * fi->ScaleY : 0;
+        float shear = fi->SimItalic ? 0.2f * sy : 0;
         float lo = 0, hi = 0;
         for (ULONG i = 0; i < o.Count; i++) {
-            float x = o.X[i] * fi->ScaleX + o.Y[i] * shear;
+            float x = o.X[i] * sx + o.Y[i] * shear;
             if (!i || x < lo)
                 lo = x;
             if (!i || x > hi)
@@ -798,7 +816,10 @@ ULONG NTAPI NtGdiGetGlyphOutline(HDC hdc, WCHAR ch, UINT format, LPGLYPHMETRICS 
     MimeTtfRenderParams params = {sx * m11, sy * m22, 0, 0, m22 ? (shear * m11 + m21) / m22 : 0,
                                   fi->SimBold ? (float)W32Max(1, fi->EmPixels / 24) : 0.0f};
     OUTLINE o;
-    BOOLEAN have_outline = outline_load(fi, index, &o);
+    BOOLEAN have_outline = outline_load_ex(fi, index, identity && !rotated && !(format & GGO_UNHINTED), &o);
+    if (have_outline && o.Pixels) {
+        t = (GLYPH_XFORM){m11, m12, shear * m11 + m21, shear * m12 + m22};
+    }
     if (!rotated && identity && cached && cached->Width) {
         bx0 = cached->Left;
         by0 = cached->Top;
@@ -831,6 +852,40 @@ ULONG NTAPI NtGdiGetGlyphOutline(HDC hdc, WCHAR ch, UINT format, LPGLYPHMETRICS 
         bx1 = ceil_f(hi_x);
         by0 = -ceil_f(hi_y);
         by1 = -floor_f(lo_y);
+    }
+    /* a bilevel bitmap is scan converted from the outline hinted for it, covering the pixels at least half covered. */
+    UCHAR *bilevel = nullptr;
+    if (kind == GGO_BITMAP && !rotated && identity && !(format & GGO_UNHINTED) && FontHinterAliased(fi)) {
+        MimeTtfRenderParams ap = {sx, sy, 0, 0, shear, fi->SimBold ? (float)W32Max(1, fi->EmPixels / 24) : 0.0f};
+        ap.hinter = FontHinterAliased(fi);
+        int x0, y0, x1, y1;
+        if (mime_ttf_glyph_box_ex(&fi->Face->Ttf, index, &ap, &x0, &y0, &x1, &y1) && x1 > x0 && y1 > y0) {
+            LONG gw = x1 - x0, gh = y1 - y0;
+            UCHAR *full = W32Alloc((SIZE_T)gw * gh);
+            if (full && mime_ttf_render_glyph_ex(&fi->Face->Ttf, &FontAllocator, index, &ap, full, (int)gw, (int)gh, (int)gw)) {
+                LONG tx0 = gw, ty0 = gh, tx1 = 0, ty1 = 0;
+                for (LONG y = 0; y < gh; y++)
+                    for (LONG x = 0; x < gw; x++)
+                        if (full[y * gw + x] >= 128) {
+                            tx0 = W32Min(tx0, x);
+                            ty0 = W32Min(ty0, y);
+                            tx1 = W32Max(tx1, x + 1);
+                            ty1 = W32Max(ty1, y + 1);
+                        }
+                if (tx1 > tx0) {
+                    LONG bw = tx1 - tx0, bh = ty1 - ty0;
+                    bilevel = W32Alloc((SIZE_T)bw * bh);
+                    if (bilevel)
+                        for (LONG y = 0; y < bh; y++)
+                            memcpy(bilevel + (SIZE_T)y * bw, full + (SIZE_T)(y + ty0) * gw + tx0, (SIZE_T)bw);
+                    bx0 = x0 + tx0;
+                    bx1 = x0 + tx1;
+                    by0 = y0 + ty0;
+                    by1 = y0 + ty1;
+                }
+            }
+            W32Free(full);
+        }
     }
     BOOLEAN empty = bx1 <= bx0 || by1 <= by0;
     gm.gmBlackBoxX = empty ? 1 : (UINT)(bx1 - bx0);
@@ -866,6 +921,8 @@ ULONG NTAPI NtGdiGetGlyphOutline(HDC hdc, WCHAR ch, UINT format, LPGLYPHMETRICS 
                 if (rotated) {
                     if (have_outline)
                         rasterize_outline(&o, &t, bx0, -by0, w, h, cov);
+                } else if (bilevel) {
+                    memcpy(cov, bilevel, (SIZE_T)w * h);
                 } else if (identity && cached && cached->Coverage && cached->Width == w && cached->Height == h) {
                     memcpy(cov, cached->Coverage, (SIZE_T)w * h);
                 } else {
@@ -896,6 +953,7 @@ ULONG NTAPI NtGdiGetGlyphOutline(HDC hdc, WCHAR ch, UINT format, LPGLYPHMETRICS 
             W32Free(cov);
         }
     }
+    W32Free(bilevel);
     if (have_outline)
         outline_free(&o);
     UserLeave();

@@ -14,4 +14,10 @@ typedef struct MimeTtfSink {
 /* false on malformed data. */
 bool mime_ttf_walk_outline(const MimeTtfFont *font, uint16_t glyph, const MimeTtfSink *sink);
 
+/* the glyf data of a glyph, empty for a blank glyph. false when out of range. */
+bool mime_ttf_glyph_data(const MimeTtfFont *font, uint16_t glyph, MimeTtfTable *out);
+
+/* walks the hinted outline: points in pixels, y up, relative to the glyph origin. false when hinting failed. */
+bool mime_ttf_hint_walk(const MimeTtfHinter *hinter, uint16_t glyph, const MimeTtfSink *sink);
+
 #endif

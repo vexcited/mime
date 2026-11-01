@@ -254,7 +254,10 @@ static bool params_ok(const MimeTtfRenderParams *r)
     /* the negated comparisons also reject nan. */
     if (!(r->embolden >= 0) || !(r->embolden < 1e4f))
         return false;
-    if (r->use_matrix) {
+    if (r->hinter && !r->use_matrix) {
+        if (!(r->oblique > -16 && r->oblique < 16))
+            return false;
+    } else if (r->use_matrix) {
         if (!(absf(r->xx) < 1e4f) || !(absf(r->xy) < 1e4f) || !(absf(r->yx) < 1e4f) || !(absf(r->yy) < 1e4f))
             return false;
     } else {
@@ -268,10 +271,23 @@ static bool params_ok(const MimeTtfRenderParams *r)
     return true;
 }
 
+static bool walk(const MimeTtfFont *font, const MimeTtfRenderParams *r, uint16_t glyph, const MimeTtfSink *sink)
+{
+    if (r->hinter)
+        return mime_ttf_hint_walk(r->hinter, glyph, sink);
+    return mime_ttf_walk_outline(font, glyph, sink);
+}
+
 static void path_init(Path *p, const MimeTtfRenderParams *r, float tx, float ty)
 {
     __builtin_memset(p, 0, sizeof(*p));
-    if (r->use_matrix) {
+    if (r->hinter && !r->use_matrix) {
+        /* the hinted outline is already in pixels with y up. */
+        p->xx = 1;
+        p->xy = r->oblique;
+        p->yx = 0;
+        p->yy = -1;
+    } else if (r->use_matrix) {
         p->xx = r->xx;
         p->xy = r->xy;
         p->yx = r->yx;
@@ -296,7 +312,7 @@ bool mime_ttf_glyph_box_ex(const MimeTtfFont *font, uint16_t glyph, const MimeTt
         path_init(&p, params, params->shift_x, params->shift_y);
         p.line = box_line;
         MimeTtfSink sink = {path_point, path_end, &p};
-        ok = mime_ttf_walk_outline(font, glyph, &sink);
+        ok = walk(font, params, glyph, &sink);
         if (ok && p.any) {
             b[0] = ifloor(p.min_x);
             b[1] = ifloor(p.min_y);
@@ -352,7 +368,7 @@ bool mime_ttf_render_glyph_ex(const MimeTtfFont *font, const MimeAllocator *allo
         p.width = width;
         p.height = height;
         MimeTtfSink sink = {path_point, path_end, &p};
-        ok = mime_ttf_walk_outline(font, glyph, &sink);
+        ok = walk(font, params, glyph, &sink);
     }
 
     if (ok) {

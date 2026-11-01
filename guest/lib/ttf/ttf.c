@@ -202,6 +202,15 @@ bool mime_ttf_open(MimeTtfFont *font, const void *data, size_t size, unsigned fa
         case TAG('O', 'S', '/', '2'): font->os2 = t; break;
         case TAG('n', 'a', 'm', 'e'): font->name = t; break;
         case TAG('p', 'o', 's', 't'): font->post = t; break;
+        case TAG('f', 'p', 'g', 'm'): font->fpgm = t; break;
+        case TAG('p', 'r', 'e', 'p'): font->prep = t; break;
+        case TAG('c', 'v', 't', ' '): font->cvt = t; break;
+        case TAG('h', 'd', 'm', 'x'): font->hdmx = t; break;
+        case TAG('L', 'T', 'S', 'H'): font->ltsh = t; break;
+        case TAG('V', 'D', 'M', 'X'): font->vdmx = t; break;
+        case TAG('g', 'a', 's', 'p'): font->gasp = t; break;
+        case TAG('v', 'h', 'e', 'a'): font->vhea = t; break;
+        case TAG('v', 'm', 't', 'x'): font->vmtx = t; break;
         default: break;
         }
     }
@@ -358,7 +367,7 @@ int mime_ttf_kerning(const MimeTtfFont *font, uint16_t left, uint16_t right)
     return 0;
 }
 
-static bool glyph_data(const MimeTtfFont *font, uint16_t glyph, MimeTtfTable *out)
+bool mime_ttf_glyph_data(const MimeTtfFont *font, uint16_t glyph, MimeTtfTable *out)
 {
     out->data = 0;
     out->size = 0;
@@ -379,11 +388,94 @@ static bool glyph_data(const MimeTtfFont *font, uint16_t glyph, MimeTtfTable *ou
     return true;
 }
 
+bool mime_ttf_hdmx_advance(const MimeTtfFont *font, int ppem, uint16_t glyph, int *advance)
+{
+    MimeTtfTable t = font->hdmx;
+    if (t.size < 8 || glyph >= font->num_glyphs || ppem < 1 || ppem > 255)
+        return false;
+    uint32_t records = u16(t, 2);
+    uint32_t record_size = u32(t, 4);
+    if (record_size < 2 + (uint32_t)font->num_glyphs)
+        return false;
+    for (uint32_t i = 0; i < records; i++) {
+        uint64_t off = 8 + (uint64_t)i * record_size;
+        if (!has(t, off, record_size))
+            return false;
+        if (u8(t, off) == (uint8_t)ppem) {
+            *advance = u8(t, off + 2 + glyph);
+            return true;
+        }
+    }
+    return false;
+}
+
+unsigned mime_ttf_ltsh_threshold(const MimeTtfFont *font, uint16_t glyph)
+{
+    MimeTtfTable t = font->ltsh;
+    if (t.size < 4 || u16(t, 2) != font->num_glyphs || glyph >= font->num_glyphs)
+        return 0;
+    return u8(t, 4ull + glyph);
+}
+
+bool mime_ttf_vdmx(const MimeTtfFont *font, int x_ratio, int y_ratio, int ppem, int *y_max, int *y_min)
+{
+    MimeTtfTable t = font->vdmx;
+    if (t.size < 6)
+        return false;
+    uint32_t ratios = u16(t, 4);
+    for (uint32_t i = 0; i < ratios; i++) {
+        uint64_t r = 6 + 4ull * i;
+        if (!has(t, r, 4))
+            return false;
+        uint32_t rx = u8(t, r + 1), ys = u8(t, r + 2), ye = u8(t, r + 3);
+        /* the ratio record 0, 0, 0 is the default and matches everything. */
+        if (rx || ys || ye) {
+            if (rx == 0 || ys == 0 || ye == 0)
+                continue;
+            /* the aspect y over x lies between ys over rx and ye over rx. */
+            if ((int64_t)ys * x_ratio > (int64_t)y_ratio * rx || (int64_t)ye * x_ratio < (int64_t)y_ratio * rx)
+                continue;
+        }
+        uint32_t group = u16(t, 6 + 4ull * ratios + 2ull * i);
+        if (!has(t, group, 4))
+            return false;
+        uint32_t recs = u16(t, group);
+        for (uint32_t k = 0; k < recs; k++) {
+            uint64_t e = group + 4 + 6ull * k;
+            if (!has(t, e, 6))
+                return false;
+            if (u16(t, e) == (uint32_t)ppem) {
+                *y_max = s16(t, e + 2);
+                *y_min = s16(t, e + 4);
+                return true;
+            }
+        }
+        return false;
+    }
+    return false;
+}
+
+unsigned mime_ttf_gasp(const MimeTtfFont *font, int ppem)
+{
+    MimeTtfTable t = font->gasp;
+    if (t.size < 4)
+        return 0xffff;
+    uint32_t n = u16(t, 2);
+    for (uint32_t i = 0; i < n; i++) {
+        uint64_t r = 4 + 4ull * i;
+        if (!has(t, r, 4))
+            break;
+        if ((uint32_t)ppem <= u16(t, r))
+            return u16(t, r + 2);
+    }
+    return 0xffff;
+}
+
 /* yMax of a glyph header, 0 when unavailable. */
 static int glyph_top(const MimeTtfFont *font, uint32_t codepoint)
 {
     MimeTtfTable g;
-    if (!glyph_data(font, mime_ttf_glyph_index(font, codepoint), &g) || g.size < 10)
+    if (!mime_ttf_glyph_data(font, mime_ttf_glyph_index(font, codepoint), &g) || g.size < 10)
         return 0;
     return s16(g, 8);
 }
@@ -746,7 +838,7 @@ static bool walk_glyph(const Walk *w, uint16_t glyph, const Xform *m, unsigned d
         return false;
     w->budget->visits--;
     MimeTtfTable g;
-    if (!glyph_data(w->font, glyph, &g))
+    if (!mime_ttf_glyph_data(w->font, glyph, &g))
         return false;
     if (g.size == 0)
         return true;

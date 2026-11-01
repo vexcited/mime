@@ -1,0 +1,2246 @@
+/*
+ * truetype bytecode interpreter.
+ *
+ * runs the font program, the control value program and the glyph programs of a face at one pixel size, as defined in
+ * the published truetype instruction set. coordinates are 26.6 fixed point pixels, unit vectors are 2.14.
+ */
+#include "ttf.h"
+#include "ttf_internal.h"
+
+#define memset __builtin_memset
+#define memcpy __builtin_memcpy
+
+#ifdef HINT_TRACE
+#include <stdio.h>
+extern int hint_trace_on;
+#endif
+
+#define MAX_CALL_DEPTH 64
+#define MAX_PROGRAM_STEPS 3000000u
+#define MAX_GLYPH_STEPS 400000u
+#define MAX_COMPONENT_DEPTH 6
+#define MAX_POINTS 20000u
+
+enum { ROUND_GRID, ROUND_HALF, ROUND_DOUBLE, ROUND_DOWN, ROUND_UP, ROUND_OFF, ROUND_SUPER, ROUND_SUPER45 };
+
+enum { PROGRAM_FONT, PROGRAM_PREP, PROGRAM_GLYPH };
+
+enum { TAG_ON = 1, TAG_TOUCH_X = 2, TAG_TOUCH_Y = 4 };
+
+typedef struct V2 {
+    int32_t x, y;
+} V2;
+
+typedef struct Zone {
+    V2 *org, *cur, *orus;
+    uint8_t *tag;
+    const uint16_t *ends; /* contour end points, may be null. */
+    uint32_t n, contours, cap;
+} Zone;
+
+typedef struct GState {
+    uint32_t rp0, rp1, rp2;
+    V2 dv, pv, fv;
+    int32_t loop;
+    int32_t min_dist;
+    int round_mode;
+    int32_t period, phase, threshold;
+    bool auto_flip;
+    int32_t cvt_cutin, sw_cutin, sw_value;
+    int32_t delta_base, delta_shift;
+    uint32_t instruct_control;
+    uint32_t scan_control; /* raw SCANCTRL value. */
+    uint32_t scan_type;
+    int zp0, zp1, zp2;
+} GState;
+
+typedef struct Code {
+    const uint8_t *data;
+    uint32_t size;
+} Code;
+
+typedef struct FuncDef {
+    Code code; /* the body after the FDEF, up to the ENDF. */
+    bool active;
+} FuncDef;
+
+typedef struct InstrDef {
+    Code code;
+    uint8_t opcode;
+    bool active;
+} InstrDef;
+
+typedef struct Call {
+    Code code;
+    uint32_t ip;
+    uint32_t count;
+    const FuncDef *func;
+} Call;
+
+struct MimeTtfHinter {
+    const MimeTtfFont *font;
+    MimeAllocator alloc;
+    int ppem_x, ppem_y;
+    uint32_t flags;
+    int32_t scale_x, scale_y; /* 16.16 pixels in 26.6 per font unit. */
+    bool stretched;
+    bool usable;
+    bool glyph_hinting; /* glyph programs run. */
+    bool native; /* the prep asked for native cleartype behaviour. */
+
+    int32_t *cvt;
+    uint32_t cvt_count;
+    int32_t *storage;
+    uint32_t storage_count;
+    FuncDef *funcs;
+    uint32_t func_count;
+    InstrDef *idefs;
+    uint32_t idef_count;
+    int32_t *stack;
+    uint32_t stack_cap;
+
+    Zone twilight;
+    GState defaults; /* the graphics state after the prep. */
+    uint32_t instruct_control;
+    uint32_t scan_control, scan_type;
+};
+
+/* ------------------------------------------------------------------ fixed point helpers */
+
+static int32_t sat32(int64_t v)
+{
+    return v > INT32_MAX ? INT32_MAX : v < INT32_MIN ? INT32_MIN : (int32_t)v;
+}
+
+/* a * b / c rounded to nearest, ties away from zero. */
+static int32_t mul_div(int32_t a, int32_t b, int32_t c)
+{
+    if (c == 0)
+        return a < 0 ? INT32_MIN : INT32_MAX;
+    int64_t n = (int64_t)a * b;
+    int64_t d = c;
+    bool neg = false;
+    if (n < 0) {
+        n = -n;
+        neg = !neg;
+    }
+    if (d < 0) {
+        d = -d;
+        neg = !neg;
+    }
+    int64_t q = (n + d / 2) / d;
+    return sat32(neg ? -q : q);
+}
+
+/* a * b / c rounded down, for the instructions that truncate. */
+static int32_t mul_fix(int32_t a, int32_t b)
+{
+    return mul_div(a, b, 0x10000);
+}
+
+static int32_t dot14(int32_t ax, int32_t ay, int32_t bx, int32_t by)
+{
+    int64_t v = (int64_t)ax * bx + (int64_t)ay * by;
+    return sat32((v + (v < 0 ? 0x1fff : 0x2000)) >> 14);
+}
+
+static uint32_t isqrt64(uint64_t v)
+{
+    uint64_t r = 0, bit = 1ull << 62;
+    while (bit > v)
+        bit >>= 2;
+    while (bit) {
+        if (v >= r + bit) {
+            v -= r + bit;
+            r = (r >> 1) + bit;
+        } else {
+            r >>= 1;
+        }
+        bit >>= 2;
+    }
+    return (uint32_t)r;
+}
+
+/* unit vector in 2.14 along (dx, dy), false for a zero vector. */
+static bool normalize(int32_t dx, int32_t dy, V2 *out)
+{
+    if (dx == 0 && dy == 0)
+        return false;
+    if (dy == 0) {
+        out->x = dx < 0 ? -0x4000 : 0x4000;
+        out->y = 0;
+        return true;
+    }
+    if (dx == 0) {
+        out->x = 0;
+        out->y = dy < 0 ? -0x4000 : 0x4000;
+        return true;
+    }
+    int64_t len = isqrt64((uint64_t)((int64_t)dx * dx + (int64_t)dy * dy));
+    if (len == 0)
+        return false;
+    out->x = sat32(((int64_t)dx * 0x4000 + (dx < 0 ? -len / 2 : len / 2)) / len);
+    out->y = sat32(((int64_t)dy * 0x4000 + (dy < 0 ? -len / 2 : len / 2)) / len);
+    return true;
+}
+
+static uint32_t be16(const uint8_t *p)
+{
+    return (uint32_t)p[0] << 8 | p[1];
+}
+
+/* ------------------------------------------------------------------ interpreter state */
+
+typedef struct Exec {
+    MimeTtfHinter *h;
+    GState gs;
+    Zone zones[2]; /* 0 twilight, 1 glyph. */
+    int32_t *stack;
+    uint32_t sp, stack_cap;
+    Code code;
+    uint32_t ip;
+    Call calls[MAX_CALL_DEPTH];
+    uint32_t depth;
+    uint32_t steps, step_limit;
+    int program;
+    int32_t fdotp;
+    bool compat; /* backward compatible subpixel mode: x hints ignored. */
+    bool iupx, iupy;
+    bool failed;
+    int ppem_for_delta;
+} Exec;
+
+#define FAIL() do { ex->failed = true; return; } while (0)
+
+static bool pop(Exec *ex, int32_t *v)
+{
+    if (ex->sp == 0) {
+        ex->failed = true;
+        return false;
+    }
+    *v = ex->stack[--ex->sp];
+    return true;
+}
+
+static void push(Exec *ex, int32_t v)
+{
+    if (ex->sp >= ex->stack_cap) {
+        ex->failed = true;
+        return;
+    }
+    ex->stack[ex->sp++] = v;
+}
+
+static Zone *zone_of(Exec *ex, int z)
+{
+    return &ex->zones[z];
+}
+
+static bool point_ok(const Zone *z, int32_t p)
+{
+    return p >= 0 && (uint32_t)p < z->n;
+}
+
+static void compute_fdotp(Exec *ex)
+{
+    int32_t d = dot14(ex->gs.fv.x, ex->gs.fv.y, ex->gs.pv.x, ex->gs.pv.y);
+    ex->fdotp = (d > -0x400 && d < 0x400) ? 0x4000 : d;
+}
+
+static int32_t project(const Exec *ex, int32_t dx, int32_t dy)
+{
+    const V2 *p = &ex->gs.pv;
+    if (p->x == 0x4000)
+        return dx;
+    if (p->y == 0x4000)
+        return dy;
+    return dot14(dx, dy, p->x, p->y);
+}
+
+static int32_t dual_project(const Exec *ex, int32_t dx, int32_t dy)
+{
+    const V2 *p = &ex->gs.dv;
+    if (p->x == 0x4000)
+        return dx;
+    if (p->y == 0x4000)
+        return dy;
+    return dot14(dx, dy, p->x, p->y);
+}
+
+/* the ratio of the pixel scale along the projection vector to the y scale, in 16.16. */
+static int32_t current_ratio(const Exec *ex)
+{
+    const MimeTtfHinter *h = ex->h;
+    if (!h->stretched)
+        return 0x10000;
+    int32_t rx = mul_div(h->scale_x, 0x10000, h->scale_y);
+    if (ex->gs.pv.y == 0x4000)
+        return 0x10000;
+    if (ex->gs.pv.x == 0x4000)
+        return rx;
+    int64_t px = (int64_t)ex->gs.pv.x * rx / 0x10000;
+    int64_t py = ex->gs.pv.y;
+    uint32_t len = isqrt64((uint64_t)(px * px + py * py));
+    return (int32_t)((int64_t)len * 0x10000 / 0x4000);
+}
+
+static void shift_point(Exec *ex, Zone *z, uint32_t p, int32_t dx, int32_t dy);
+
+/* moves a point along the freedom vector so its projection changes by dist. */
+static void move_point(Exec *ex, Zone *z, uint32_t p, int32_t dist)
+{
+    const V2 *f = &ex->gs.fv;
+    int32_t dx = 0, dy = 0;
+    if (f->x == 0x4000 && ex->gs.pv.x == 0x4000) {
+        dx = dist;
+    } else if (f->y == 0x4000 && ex->gs.pv.y == 0x4000) {
+        dy = dist;
+    } else {
+        if (f->x)
+            dx = mul_div(dist, f->x, ex->fdotp);
+        if (f->y)
+            dy = mul_div(dist, f->y, ex->fdotp);
+    }
+    shift_point(ex, z, p, dx, dy);
+}
+
+/* moves a point by a displacement along the freedom vector. */
+static void shift_point(Exec *ex, Zone *z, uint32_t p, int32_t dx, int32_t dy)
+{
+    if (ex->compat) {
+        dx = 0;
+        if (ex->iupx && ex->iupy)
+            dy = 0;
+    }
+    if (ex->gs.fv.x && !ex->compat)
+        z->tag[p] |= TAG_TOUCH_X;
+    if (ex->gs.fv.y && !(ex->compat && ex->iupx && ex->iupy))
+        z->tag[p] |= TAG_TOUCH_Y;
+    z->cur[p].x = sat32((int64_t)z->cur[p].x + dx);
+    z->cur[p].y = sat32((int64_t)z->cur[p].y + dy);
+}
+
+/* ------------------------------------------------------------------ rounding */
+
+/* the largest multiple of period not above v. */
+static int32_t floor_period(int32_t v, int32_t period)
+{
+    if (v >= 0)
+        return v / period * period;
+    return -((-v + period - 1) / period * period);
+}
+
+static int32_t round_super(const GState *gs, int32_t d)
+{
+    if (gs->period <= 0)
+        return d;
+    if (d >= 0) {
+        int32_t v = floor_period(d - gs->phase + gs->threshold, gs->period) + gs->phase;
+        return v < 0 ? gs->phase : v;
+    }
+    int32_t v = -floor_period(-d - gs->phase + gs->threshold, gs->period) - gs->phase;
+    return v > 0 ? -gs->phase : v;
+}
+
+static int32_t round_value(const Exec *ex, int32_t d)
+{
+    const GState *gs = &ex->gs;
+    switch (gs->round_mode) {
+    case ROUND_GRID:
+        if (d >= 0) {
+            int32_t v = (d + 32) & ~63;
+            return v < 0 ? 0 : v;
+        } else {
+            int32_t v = -((-d + 32) & ~63);
+            return v > 0 ? 0 : v;
+        }
+    case ROUND_HALF:
+        if (d >= 0) {
+            int32_t v = (d & ~63) + 32;
+            return v < 0 ? 32 : v;
+        } else {
+            int32_t v = -((-d & ~63) + 32);
+            return v > 0 ? -32 : v;
+        }
+    case ROUND_DOUBLE:
+        if (d >= 0) {
+            int32_t v = (d + 16) & ~31;
+            return v < 0 ? 0 : v;
+        } else {
+            int32_t v = -((-d + 16) & ~31);
+            return v > 0 ? 0 : v;
+        }
+    case ROUND_DOWN:
+        return d >= 0 ? (d & ~63) : -((-d) & ~63);
+    case ROUND_UP:
+        return d >= 0 ? ((d + 63) & ~63) : -((-d + 63) & ~63);
+    case ROUND_OFF:
+        return d;
+    default:
+        return round_super(gs, d);
+    }
+}
+
+static void set_super_round(Exec *ex, int32_t n, int32_t grid_period)
+{
+    GState *gs = &ex->gs;
+    switch (n & 0xC0) {
+    case 0x00: gs->period = grid_period / 2; break;
+    case 0x40: gs->period = grid_period; break;
+    case 0x80: gs->period = grid_period * 2; break;
+    default: gs->period = grid_period; break;
+    }
+    switch (n & 0x30) {
+    case 0x00: gs->phase = 0; break;
+    case 0x10: gs->phase = gs->period / 4; break;
+    case 0x20: gs->phase = gs->period / 2; break;
+    default: gs->phase = gs->period * 3 / 4; break;
+    }
+    if ((n & 0x0F) == 0)
+        gs->threshold = gs->period - 1;
+    else
+        gs->threshold = ((n & 0x0F) - 4) * gs->period / 8;
+    /* the 26.6 values the stack holds are scaled by the 64 of the grid. */
+}
+
+/* ------------------------------------------------------------------ instruction lengths */
+
+/* the length in bytes of the instruction at ip, 0 when it runs past the end. */
+static uint32_t instr_length(Code c, uint32_t ip)
+{
+    uint8_t op = c.data[ip];
+    uint32_t len = 1;
+    if (op == 0x40) {
+        if (ip + 1 >= c.size)
+            return 0;
+        len = 2 + c.data[ip + 1];
+    } else if (op == 0x41) {
+        if (ip + 1 >= c.size)
+            return 0;
+        len = 2 + 2u * c.data[ip + 1];
+    } else if (op >= 0xB0 && op <= 0xB7) {
+        len = 2 + (op - 0xB0);
+    } else if (op >= 0xB8 && op <= 0xBF) {
+        len = 1 + 2u * (op - 0xB8 + 1);
+    }
+    return ip + len > c.size ? 0 : len;
+}
+
+/* skips forward over nested conditionals; stops after the ELSE (when allowed) or EIF at the same level. */
+static bool skip_if(Exec *ex, bool stop_at_else)
+{
+    int nest = 1;
+    while (ex->ip < ex->code.size) {
+        uint32_t len = instr_length(ex->code, ex->ip);
+        if (!len)
+            return false;
+        uint8_t op = ex->code.data[ex->ip];
+        ex->ip += len;
+        if (op == 0x58) {
+            nest++;
+        } else if (op == 0x1B) {
+            if (nest == 1 && stop_at_else)
+                return true;
+        } else if (op == 0x59) {
+            if (--nest == 0)
+                return true;
+        }
+    }
+    return false;
+}
+
+/* ------------------------------------------------------------------ individual instructions */
+
+static void ins_getinfo(Exec *ex)
+{
+    int32_t sel;
+    if (!pop(ex, &sel))
+        return;
+    const MimeTtfHinter *h = ex->h;
+    int32_t r = 0;
+    uint32_t fl = h->flags;
+    if (sel & 1)
+        r |= MIME_TTF_HINT_VERSION_OF(fl) ? MIME_TTF_HINT_VERSION_OF(fl) : (fl & MIME_TTF_HINT_SUBPIXEL) ? 40 : 35;
+    if (sel & 2)
+        r |= 0; /* glyph rotated. */
+    if ((sel & 4) && h->stretched)
+        r |= 1 << 9;
+    if (sel & 8)
+        r |= 1 << 10;
+    if (sel & 16)
+        r |= 1 << 11;
+    if ((sel & 32) && (fl & MIME_TTF_HINT_GRAY))
+        r |= 1 << 12;
+    if ((sel & 64) && (fl & MIME_TTF_HINT_CLEARTYPE))
+        r |= 1 << 13;
+    if ((sel & 128) && (fl & MIME_TTF_HINT_CLEARTYPE) && (fl & MIME_TTF_HINT_COMPAT_WIDTHS))
+        r |= 1 << 14;
+    if ((sel & 1024) && (fl & MIME_TTF_HINT_SUBPIXEL))
+        r |= 1 << 17;
+    if ((sel & 2048) && (fl & MIME_TTF_HINT_SYMMETRIC))
+        r |= 1 << 18;
+    if ((sel & 4096) && (fl & MIME_TTF_HINT_CLEARTYPE) && (fl & MIME_TTF_HINT_GRAY_CLEARTYPE))
+        r |= 1 << 19;
+    push(ex, r);
+}
+
+static bool set_vector_from_points(V2 *v, int32_t p1, int32_t p2, bool perp, bool original, Zone *za, Zone *zb)
+{
+    /* p1 in the zone za, p2 in the zone zb, the vector runs from p1 to p2... */
+    if (!point_ok(za, p1) || !point_ok(zb, p2))
+        return false;
+    const V2 *a = original ? &za->org[p1] : &za->cur[p1];
+    const V2 *b = original ? &zb->org[p2] : &zb->cur[p2];
+    int32_t dx = b->x - a->x, dy = b->y - a->y;
+    if (dx == 0 && dy == 0) {
+        dx = 0x4000;
+        dy = 0;
+        perp = false;
+    }
+    V2 n;
+    if (!normalize(dx, dy, &n))
+        return false;
+    if (perp) {
+        int32_t t = n.x;
+        n.x = -n.y;
+        n.y = t;
+    }
+    *v = n;
+    return true;
+}
+
+static void ins_mdap(Exec *ex, uint8_t op)
+{
+    int32_t p;
+    if (!pop(ex, &p))
+        return;
+    Zone *z = zone_of(ex, ex->gs.zp0);
+    if (!point_ok(z, p))
+        FAIL();
+    int32_t dist = 0;
+    if (op & 1) {
+        int32_t cur = project(ex, z->cur[p].x, z->cur[p].y);
+        dist = round_value(ex, cur) - cur;
+    }
+    move_point(ex, z, (uint32_t)p, dist);
+    ex->gs.rp0 = ex->gs.rp1 = (uint32_t)p;
+}
+
+static int32_t read_cvt(const Exec *ex, int32_t i)
+{
+    const MimeTtfHinter *h = ex->h;
+    if (i < 0 || (uint32_t)i >= h->cvt_count)
+        return 0;
+    if (!h->stretched)
+        return h->cvt[i];
+    return mul_fix(h->cvt[i], current_ratio(ex));
+}
+
+static void ins_miap(Exec *ex, uint8_t op)
+{
+    int32_t n, p;
+    if (!pop(ex, &n) || !pop(ex, &p))
+        return;
+    Zone *z = zone_of(ex, ex->gs.zp0);
+    if (!point_ok(z, p) || n < 0 || (uint32_t)n >= ex->h->cvt_count)
+        FAIL();
+    int32_t dist = read_cvt(ex, n);
+    if (ex->gs.zp0 == 0) {
+        z->org[p].x = mul_div(dist, ex->gs.fv.x, 0x4000);
+        z->org[p].y = mul_div(dist, ex->gs.fv.y, 0x4000);
+        z->cur[p] = z->org[p];
+    }
+    int32_t org_dist = project(ex, z->cur[p].x, z->cur[p].y);
+    if (op & 1) {
+        int32_t diff = dist - org_dist;
+        if (diff < 0)
+            diff = -diff;
+        if (diff > ex->gs.cvt_cutin)
+            dist = org_dist;
+        dist = round_value(ex, dist);
+    }
+    move_point(ex, z, (uint32_t)p, dist - org_dist);
+    ex->gs.rp0 = ex->gs.rp1 = (uint32_t)p;
+}
+
+static void ins_mdrp(Exec *ex, uint8_t op)
+{
+    int32_t p;
+    if (!pop(ex, &p))
+        return;
+    Zone *z0 = zone_of(ex, ex->gs.zp0), *z1 = zone_of(ex, ex->gs.zp1);
+    if (!point_ok(z1, p) || !point_ok(z0, (int32_t)ex->gs.rp0))
+        FAIL();
+    uint32_t rp0 = ex->gs.rp0;
+    int32_t org_dist;
+    if (ex->gs.zp0 == 0 || ex->gs.zp1 == 0)
+        org_dist = dual_project(ex, z1->org[p].x - z0->org[rp0].x, z1->org[p].y - z0->org[rp0].y);
+    else
+        org_dist = dual_project(ex, z1->org[p].x - z0->org[rp0].x, z1->org[p].y - z0->org[rp0].y);
+    /* single width cut in. */
+    int32_t diff = org_dist - ex->gs.sw_value;
+    if (diff < 0)
+        diff = -diff;
+    if (diff < ex->gs.sw_cutin)
+        org_dist = org_dist >= 0 ? ex->gs.sw_value : -ex->gs.sw_value;
+    int32_t dist = org_dist;
+    if (op & 4)
+        dist = round_value(ex, org_dist);
+    if (op & 8) {
+        if (org_dist >= 0) {
+            if (dist < ex->gs.min_dist)
+                dist = ex->gs.min_dist;
+        } else if (dist > -ex->gs.min_dist) {
+            dist = -ex->gs.min_dist;
+        }
+    }
+    int32_t cur_dist = project(ex, z1->cur[p].x - z0->cur[rp0].x, z1->cur[p].y - z0->cur[rp0].y);
+    move_point(ex, z1, (uint32_t)p, dist - cur_dist);
+    ex->gs.rp1 = ex->gs.rp0;
+    ex->gs.rp2 = (uint32_t)p;
+    if (op & 16)
+        ex->gs.rp0 = (uint32_t)p;
+}
+
+static void ins_mirp(Exec *ex, uint8_t op)
+{
+    int32_t p, n;
+    if (!pop(ex, &n) || !pop(ex, &p))
+        return;
+    Zone *z0 = zone_of(ex, ex->gs.zp0), *z1 = zone_of(ex, ex->gs.zp1);
+    uint32_t rp0 = ex->gs.rp0;
+    if (!point_ok(z1, p) || !point_ok(z0, (int32_t)rp0) || n < -1 || (n >= 0 && (uint32_t)n >= ex->h->cvt_count))
+        FAIL();
+    int32_t cvt_dist = n < 0 ? 0 : read_cvt(ex, n);
+    int32_t diff = cvt_dist - ex->gs.sw_value;
+    if (diff < 0)
+        diff = -diff;
+    if (diff < ex->gs.sw_cutin)
+        cvt_dist = cvt_dist >= 0 ? ex->gs.sw_value : -ex->gs.sw_value;
+    if (ex->gs.zp1 == 0) {
+        z1->org[p].x = z0->org[rp0].x + mul_div(cvt_dist, ex->gs.fv.x, 0x4000);
+        z1->org[p].y = z0->org[rp0].y + mul_div(cvt_dist, ex->gs.fv.y, 0x4000);
+        z1->cur[p] = z1->org[p];
+    }
+    int32_t org_dist = dual_project(ex, z1->org[p].x - z0->org[rp0].x, z1->org[p].y - z0->org[rp0].y);
+    int32_t cur_dist = project(ex, z1->cur[p].x - z0->cur[rp0].x, z1->cur[p].y - z0->cur[rp0].y);
+    if (ex->gs.auto_flip && ((org_dist ^ cvt_dist) < 0))
+        cvt_dist = -cvt_dist;
+    int32_t dist;
+    if (op & 4) {
+        int32_t d = cvt_dist - org_dist;
+        if (d < 0)
+            d = -d;
+        if (d > ex->gs.cvt_cutin)
+            cvt_dist = org_dist;
+        dist = round_value(ex, cvt_dist);
+    } else {
+        dist = cvt_dist;
+    }
+    if (op & 8) {
+        if (org_dist >= 0) {
+            if (dist < ex->gs.min_dist)
+                dist = ex->gs.min_dist;
+        } else if (dist > -ex->gs.min_dist) {
+            dist = -ex->gs.min_dist;
+        }
+    }
+#ifdef HINT_TRACE
+    if (hint_trace_on)
+        printf("  mirp p=%d n=%d cvt=%d org=%d cur=%d dist=%d flip=%d cutin=%d\n", p, n, cvt_dist, org_dist, cur_dist, dist, ex->gs.auto_flip, ex->gs.cvt_cutin);
+#endif
+    move_point(ex, z1, (uint32_t)p, dist - cur_dist);
+    ex->gs.rp1 = ex->gs.rp0;
+    ex->gs.rp2 = (uint32_t)p;
+    if (op & 16)
+        ex->gs.rp0 = (uint32_t)p;
+}
+
+static void ins_msirp(Exec *ex, uint8_t op)
+{
+    int32_t dist, p;
+    if (!pop(ex, &dist) || !pop(ex, &p))
+        return;
+    Zone *z0 = zone_of(ex, ex->gs.zp0), *z1 = zone_of(ex, ex->gs.zp1);
+    uint32_t rp0 = ex->gs.rp0;
+    if (!point_ok(z1, p) || !point_ok(z0, (int32_t)rp0))
+        FAIL();
+    if (ex->gs.zp1 == 0) {
+        z1->org[p] = z0->org[rp0];
+        z1->cur[p] = z1->org[p];
+    }
+    int32_t cur = project(ex, z1->cur[p].x - z0->cur[rp0].x, z1->cur[p].y - z0->cur[rp0].y);
+    move_point(ex, z1, (uint32_t)p, dist - cur);
+    ex->gs.rp1 = ex->gs.rp0;
+    ex->gs.rp2 = (uint32_t)p;
+    if (op & 1)
+        ex->gs.rp0 = (uint32_t)p;
+}
+
+/* the displacement of a reference point from its original position, as a vector along the freedom vector. */
+static bool displacement(Exec *ex, bool use_rp1, int32_t *dx, int32_t *dy)
+{
+    Zone *z;
+    uint32_t rp;
+    if (use_rp1) {
+        z = zone_of(ex, ex->gs.zp0);
+        rp = ex->gs.rp1;
+    } else {
+        z = zone_of(ex, ex->gs.zp1);
+        rp = ex->gs.rp2;
+    }
+    if (!point_ok(z, (int32_t)rp))
+        return false;
+    int32_t d = project(ex, z->cur[rp].x - z->org[rp].x, z->cur[rp].y - z->org[rp].y);
+    *dx = mul_div(d, ex->gs.fv.x, ex->fdotp);
+    *dy = mul_div(d, ex->gs.fv.y, ex->fdotp);
+    return true;
+}
+
+static void ins_shp(Exec *ex, uint8_t op)
+{
+    int32_t dx, dy;
+    if (!displacement(ex, (op & 1) != 0, &dx, &dy)) {
+        ex->failed = true;
+        return;
+    }
+    Zone *z = zone_of(ex, ex->gs.zp2);
+    while (ex->gs.loop > 0) {
+        int32_t p;
+        if (!pop(ex, &p))
+            return;
+        if (!point_ok(z, p))
+            FAIL();
+        shift_point(ex, z, (uint32_t)p, dx, dy);
+        ex->gs.loop--;
+    }
+    ex->gs.loop = 1;
+}
+
+static void ins_shc(Exec *ex, uint8_t op)
+{
+    int32_t c;
+    if (!pop(ex, &c))
+        return;
+    int32_t dx, dy;
+    if (!displacement(ex, (op & 1) != 0, &dx, &dy)) {
+        ex->failed = true;
+        return;
+    }
+    Zone *z = zone_of(ex, ex->gs.zp2);
+    if (ex->gs.zp2 == 0 || z->ends == nullptr) {
+        if (c != 0 && ex->gs.zp2 != 0)
+            FAIL();
+    }
+    uint32_t first, last;
+    if (ex->gs.zp2 == 0) {
+        first = 0;
+        last = z->n;
+    } else {
+        if (c < 0 || (uint32_t)c >= z->contours)
+            FAIL();
+        first = c == 0 ? 0 : (uint32_t)z->ends[c - 1] + 1u;
+        last = (uint32_t)z->ends[c] + 1u;
+    }
+    Zone *refz = (op & 1) ? zone_of(ex, ex->gs.zp0) : zone_of(ex, ex->gs.zp1);
+    uint32_t rp = (op & 1) ? ex->gs.rp1 : ex->gs.rp2;
+    for (uint32_t p = first; p < last && p < z->n; p++)
+        if (refz != z || p != rp)
+            shift_point(ex, z, p, dx, dy);
+}
+
+static void ins_shz(Exec *ex, uint8_t op)
+{
+    int32_t e;
+    if (!pop(ex, &e))
+        return;
+    if (e < 0 || e > 1)
+        FAIL();
+    int32_t dx, dy;
+    if (!displacement(ex, (op & 1) != 0, &dx, &dy)) {
+        ex->failed = true;
+        return;
+    }
+    Zone *z = zone_of(ex, e);
+    uint32_t limit = z->n;
+    if (e == 1 && z->contours)
+        limit = (uint32_t)z->ends[z->contours - 1] + 1u;
+    Zone *refz = (op & 1) ? zone_of(ex, ex->gs.zp0) : zone_of(ex, ex->gs.zp1);
+    uint32_t rp = (op & 1) ? ex->gs.rp1 : ex->gs.rp2;
+    for (uint32_t p = 0; p < limit && p < z->n; p++) {
+        if (refz == z && p == rp)
+            continue;
+        if (ex->compat)
+            dx = 0;
+        z->cur[p].x = sat32((int64_t)z->cur[p].x + dx);
+        z->cur[p].y = sat32((int64_t)z->cur[p].y + (ex->compat && ex->iupx && ex->iupy ? 0 : dy));
+    }
+}
+
+static void ins_shpix(Exec *ex)
+{
+    int32_t amount;
+    if (!pop(ex, &amount))
+        return;
+    int32_t dx = mul_div(amount, ex->gs.fv.x, 0x4000), dy = mul_div(amount, ex->gs.fv.y, 0x4000);
+    Zone *z = zone_of(ex, ex->gs.zp2);
+    while (ex->gs.loop > 0) {
+        int32_t p;
+        if (!pop(ex, &p))
+            return;
+        if (!point_ok(z, p))
+            FAIL();
+        shift_point(ex, z, (uint32_t)p, dx, dy);
+        ex->gs.loop--;
+    }
+    ex->gs.loop = 1;
+}
+
+static void ins_ip(Exec *ex)
+{
+    Zone *z0 = zone_of(ex, ex->gs.zp0), *z1 = zone_of(ex, ex->gs.zp1), *z2 = zone_of(ex, ex->gs.zp2);
+    uint32_t rp1 = ex->gs.rp1, rp2 = ex->gs.rp2;
+    if (!point_ok(z0, (int32_t)rp1) || !point_ok(z1, (int32_t)rp2))
+        FAIL();
+    bool twilight = ex->gs.zp0 == 0 || ex->gs.zp1 == 0 || ex->gs.zp2 == 0;
+    const V2 *base;
+    int32_t old_range;
+    if (twilight) {
+        base = &z0->org[rp1];
+        old_range = dual_project(ex, z1->org[rp2].x - base->x, z1->org[rp2].y - base->y);
+    } else {
+        base = &z0->orus[rp1];
+        old_range = dual_project(ex, z1->orus[rp2].x - base->x, z1->orus[rp2].y - base->y);
+    }
+    int32_t cur_range = project(ex, z1->cur[rp2].x - z0->cur[rp1].x, z1->cur[rp2].y - z0->cur[rp1].y);
+    while (ex->gs.loop > 0) {
+        int32_t p;
+        if (!pop(ex, &p))
+            return;
+        if (!point_ok(z2, p))
+            FAIL();
+        int32_t org_dist = twilight ? dual_project(ex, z2->org[p].x - base->x, z2->org[p].y - base->y)
+                                    : dual_project(ex, z2->orus[p].x - base->x, z2->orus[p].y - base->y);
+        int32_t new_dist;
+        if (old_range != 0)
+            new_dist = mul_div(org_dist, cur_range, old_range);
+        else
+            new_dist = org_dist;
+        int32_t cur_dist = project(ex, z2->cur[p].x - z0->cur[rp1].x, z2->cur[p].y - z0->cur[rp1].y);
+        move_point(ex, z2, (uint32_t)p, new_dist - cur_dist);
+        ex->gs.loop--;
+    }
+    ex->gs.loop = 1;
+}
+
+static void ins_alignrp(Exec *ex)
+{
+    Zone *z0 = zone_of(ex, ex->gs.zp0), *z1 = zone_of(ex, ex->gs.zp1);
+    if (!point_ok(z0, (int32_t)ex->gs.rp0))
+        FAIL();
+    while (ex->gs.loop > 0) {
+        int32_t p;
+        if (!pop(ex, &p))
+            return;
+        if (!point_ok(z1, p))
+            FAIL();
+        int32_t d = project(ex, z1->cur[p].x - z0->cur[ex->gs.rp0].x, z1->cur[p].y - z0->cur[ex->gs.rp0].y);
+        move_point(ex, z1, (uint32_t)p, -d);
+        ex->gs.loop--;
+    }
+    ex->gs.loop = 1;
+}
+
+static void ins_alignpts(Exec *ex)
+{
+    int32_t p2, p1;
+    if (!pop(ex, &p2) || !pop(ex, &p1))
+        return;
+    Zone *z0 = zone_of(ex, ex->gs.zp0), *z1 = zone_of(ex, ex->gs.zp1);
+    if (!point_ok(z1, p1) || !point_ok(z0, p2))
+        FAIL();
+    int32_t d = project(ex, z0->cur[p2].x - z1->cur[p1].x, z0->cur[p2].y - z1->cur[p1].y) / 2;
+    move_point(ex, z1, (uint32_t)p1, d);
+    move_point(ex, z0, (uint32_t)p2, -d);
+}
+
+static void ins_isect(Exec *ex)
+{
+    int32_t b1, b0, a1, a0, p;
+    if (!pop(ex, &b1) || !pop(ex, &b0) || !pop(ex, &a1) || !pop(ex, &a0) || !pop(ex, &p))
+        return;
+    Zone *z0 = zone_of(ex, ex->gs.zp0), *z1 = zone_of(ex, ex->gs.zp1), *z2 = zone_of(ex, ex->gs.zp2);
+    if (!point_ok(z0, a0) || !point_ok(z0, a1) || !point_ok(z1, b0) || !point_ok(z1, b1) || !point_ok(z2, p))
+        FAIL();
+    int64_t dbx = z1->cur[b1].x - z1->cur[b0].x, dby = z1->cur[b1].y - z1->cur[b0].y;
+    int64_t dax = z0->cur[a1].x - z0->cur[a0].x, day = z0->cur[a1].y - z0->cur[a0].y;
+    int64_t dx = z1->cur[b0].x - z0->cur[a0].x, dy = z1->cur[b0].y - z0->cur[a0].y;
+    z2->tag[p] |= TAG_TOUCH_X | TAG_TOUCH_Y;
+    int64_t discriminant = dax * -dby + day * dbx;
+    int64_t dotproduct = dax * dbx + day * dby;
+    int64_t x, y;
+    /* the lines are parallel when the discriminant is small against the dot product. */
+    int64_t ad = discriminant < 0 ? -discriminant : discriminant;
+    int64_t adot = dotproduct < 0 ? -dotproduct : dotproduct;
+    if (ad * 19 > adot) {
+        int64_t val = dx * -dby + dy * dbx;
+        x = z0->cur[a0].x + val * dax / discriminant;
+        y = z0->cur[a0].y + val * day / discriminant;
+    } else {
+        x = ((int64_t)z0->cur[a0].x + z0->cur[a1].x + z1->cur[b0].x + z1->cur[b1].x) / 4;
+        y = ((int64_t)z0->cur[a0].y + z0->cur[a1].y + z1->cur[b0].y + z1->cur[b1].y) / 4;
+    }
+    z2->cur[p].x = sat32(x);
+    z2->cur[p].y = sat32(y);
+}
+
+/* ------------------------------------------------------------------ interpolate untouched points */
+
+static void iup_run(Zone *z, bool x_axis, uint32_t first, uint32_t last)
+{
+    uint8_t mask = x_axis ? TAG_TOUCH_X : TAG_TOUCH_Y;
+    uint32_t n = last - first + 1;
+    /* a coordinate accessor by axis keeps the loop short. */
+#define COORD(arr, i) (x_axis ? (arr)[i].x : (arr)[i].y)
+#define SETC(arr, i, v) do { if (x_axis) (arr)[i].x = (v); else (arr)[i].y = (v); } while (0)
+    uint32_t start = first;
+    while (start <= last && !(z->tag[start] & mask))
+        start++;
+    if (start > last)
+        return;
+    uint32_t touched = 0;
+    for (uint32_t i = first; i <= last; i++)
+        if (z->tag[i] & mask)
+            touched++;
+    if (touched == 1) {
+        int32_t delta = COORD(z->cur, start) - COORD(z->org, start);
+        if (delta == 0)
+            return;
+        for (uint32_t i = first; i <= last; i++)
+            if (!(z->tag[i] & mask))
+                SETC(z->cur, i, COORD(z->cur, i) + delta);
+        return;
+    }
+    uint32_t t1 = start;
+    for (;;) {
+        /* find the next touched point after t1, cyclically. */
+        uint32_t k = t1;
+        uint32_t t2;
+        for (;;) {
+            k = k == last ? first : k + 1;
+            if (z->tag[k] & mask) {
+                t2 = k;
+                break;
+            }
+        }
+        /* the untouched points strictly between t1 and t2. */
+        uint32_t count = (t2 + n - t1) % n;
+        if (count > 1) {
+            int32_t o1 = COORD(z->orus, t1), o2 = COORD(z->orus, t2);
+            int32_t c1 = COORD(z->cur, t1), c2 = COORD(z->cur, t2);
+            int32_t g1 = COORD(z->org, t1), g2 = COORD(z->org, t2);
+            if (o1 > o2) {
+                int32_t t;
+                t = o1; o1 = o2; o2 = t;
+                t = c1; c1 = c2; c2 = t;
+                t = g1; g1 = g2; g2 = t;
+            }
+            int32_t d1 = c1 - g1, d2 = c2 - g2;
+            int32_t scale = 0;
+            bool scaled = false;
+            if (c1 != c2 && o1 != o2) {
+                scale = mul_div(c2 - c1, 0x10000, o2 - o1);
+                scaled = true;
+            }
+            uint32_t p = t1;
+            for (uint32_t j = 1; j < count; j++) {
+                p = p == last ? first : p + 1;
+                int32_t orus = COORD(z->orus, p);
+                int32_t org = COORD(z->org, p);
+                int32_t v;
+                if (orus <= o1)
+                    v = org + d1;
+                else if (orus >= o2)
+                    v = org + d2;
+                else if (!scaled)
+                    v = c1;
+                else
+                    v = c1 + mul_fix(orus - o1, scale);
+                SETC(z->cur, p, v);
+            }
+        }
+        t1 = t2;
+        if (t1 == start)
+            break;
+    }
+#undef COORD
+#undef SETC
+}
+
+static void ins_iup(Exec *ex, uint8_t op)
+{
+    bool x_axis = (op & 1) != 0;
+    if (ex->compat && x_axis) {
+        ex->iupx = true;
+        return;
+    }
+    Zone *z = zone_of(ex, 1);
+    uint32_t first = 0;
+    for (uint32_t c = 0; c < z->contours; c++) {
+        uint32_t last = z->ends[c];
+        if (last >= z->n)
+            FAIL();
+        if (last >= first)
+            iup_run(z, x_axis, first, last);
+        first = last + 1;
+    }
+    if (ex->compat)
+        ex->iupy = true;
+}
+
+/* ------------------------------------------------------------------ deltas */
+
+static void ins_deltap(Exec *ex, uint8_t op)
+{
+    int32_t n;
+    if (!pop(ex, &n))
+        return;
+    int32_t base = ex->gs.delta_base + (op == 0x5D ? 0 : op == 0x71 ? 16 : 32);
+    Zone *z = zone_of(ex, ex->gs.zp0);
+    for (; n > 0; n--) {
+        int32_t p, arg;
+        if (!pop(ex, &p) || !pop(ex, &arg))
+            return;
+        if (!point_ok(z, p))
+            FAIL();
+        int32_t ppem = base + ((arg >> 4) & 0xF);
+        if (ppem != ex->ppem_for_delta)
+            continue;
+        int32_t step = (arg & 0xF) < 8 ? (arg & 0xF) - 8 : (arg & 0xF) - 7;
+        int32_t mag = step * (64 >> ex->gs.delta_shift);
+        move_point(ex, z, (uint32_t)p, mag);
+    }
+}
+
+static void ins_deltac(Exec *ex, uint8_t op)
+{
+    int32_t n;
+    if (!pop(ex, &n))
+        return;
+    int32_t base = ex->gs.delta_base + (op == 0x73 ? 0 : op == 0x74 ? 16 : 32);
+    for (; n > 0; n--) {
+        int32_t c, arg;
+        if (!pop(ex, &c) || !pop(ex, &arg))
+            return;
+        if (c < 0 || (uint32_t)c >= ex->h->cvt_count)
+            FAIL();
+        int32_t ppem = base + ((arg >> 4) & 0xF);
+        if (ppem != ex->ppem_for_delta)
+            continue;
+        int32_t step = (arg & 0xF) < 8 ? (arg & 0xF) - 8 : (arg & 0xF) - 7;
+        ex->h->cvt[c] += step * (64 >> ex->gs.delta_shift);
+    }
+}
+
+/* ------------------------------------------------------------------ the main loop */
+
+static bool call_function(Exec *ex, int32_t number, uint32_t count)
+{
+    const MimeTtfHinter *h = ex->h;
+    if (number < 0 || (uint32_t)number >= h->func_count || !h->funcs[number].active || ex->depth >= MAX_CALL_DEPTH) {
+        ex->failed = true;
+        return false;
+    }
+    if (count == 0)
+        return true;
+    Call *c = &ex->calls[ex->depth++];
+    c->code = ex->code;
+    c->ip = ex->ip;
+    c->count = count;
+    c->func = &h->funcs[number];
+    ex->code = c->func->code;
+    ex->ip = 0;
+    return true;
+}
+
+static void ins_fdef(Exec *ex)
+{
+    int32_t n;
+    if (!pop(ex, &n))
+        return;
+    MimeTtfHinter *h = ex->h;
+    if (ex->program == PROGRAM_GLYPH || n < 0 || (uint32_t)n >= h->func_count)
+        FAIL();
+    uint32_t begin = ex->ip;
+    while (ex->ip < ex->code.size) {
+        uint32_t len = instr_length(ex->code, ex->ip);
+        if (!len)
+            FAIL();
+        uint8_t op = ex->code.data[ex->ip];
+        if (op == 0x2D) {
+            h->funcs[n].code.data = ex->code.data + begin;
+            h->funcs[n].code.size = ex->ip - begin + 1;
+            h->funcs[n].active = true;
+            ex->ip += len;
+            return;
+        }
+        if (op == 0x2C)
+            FAIL();
+        ex->ip += len;
+    }
+    ex->failed = true;
+}
+
+static void ins_idef(Exec *ex)
+{
+    int32_t n;
+    if (!pop(ex, &n))
+        return;
+    MimeTtfHinter *h = ex->h;
+    if (ex->program == PROGRAM_GLYPH || n < 0 || n > 255)
+        FAIL();
+    InstrDef *slot = nullptr;
+    for (uint32_t i = 0; i < h->idef_count; i++)
+        if (h->idefs[i].active && h->idefs[i].opcode == n) {
+            slot = &h->idefs[i];
+            break;
+        }
+    for (uint32_t i = 0; !slot && i < h->idef_count; i++)
+        if (!h->idefs[i].active)
+            slot = &h->idefs[i];
+    if (!slot)
+        FAIL();
+    uint32_t begin = ex->ip;
+    while (ex->ip < ex->code.size) {
+        uint32_t len = instr_length(ex->code, ex->ip);
+        if (!len)
+            FAIL();
+        uint8_t op = ex->code.data[ex->ip];
+        if (op == 0x2D) {
+            slot->code.data = ex->code.data + begin;
+            slot->code.size = ex->ip - begin + 1;
+            slot->opcode = (uint8_t)n;
+            slot->active = true;
+            ex->ip += len;
+            return;
+        }
+        ex->ip += len;
+    }
+    ex->failed = true;
+}
+
+#define POP1(a) int32_t a; if (!pop(ex, &a)) return
+#define POP2(a, b) int32_t a, b; if (!pop(ex, &b) || !pop(ex, &a)) return
+
+static void execute_one(Exec *ex, uint8_t op)
+{
+    GState *gs = &ex->gs;
+    switch (op) {
+    case 0x00: case 0x01: {
+        V2 v = (op & 1) ? (V2){0x4000, 0} : (V2){0, 0x4000};
+        gs->pv = gs->dv = gs->fv = v;
+        compute_fdotp(ex);
+        return;
+    }
+    case 0x02: case 0x03: {
+        gs->pv = gs->dv = (op & 1) ? (V2){0x4000, 0} : (V2){0, 0x4000};
+        compute_fdotp(ex);
+        return;
+    }
+    case 0x04: case 0x05:
+        gs->fv = (op & 1) ? (V2){0x4000, 0} : (V2){0, 0x4000};
+        compute_fdotp(ex);
+        return;
+    case 0x06: case 0x07: {
+        POP2(p2, p1);
+        /* p1 is the top of the stack, in zone zp2, and p2 in zp1. */
+        if (!set_vector_from_points(&gs->pv, p1, p2, op & 1, false, zone_of(ex, gs->zp2), zone_of(ex, gs->zp1)))
+            FAIL();
+        (void)p2;
+        gs->dv = gs->pv;
+        compute_fdotp(ex);
+        return;
+    }
+    case 0x08: case 0x09: {
+        POP2(p2, p1);
+        if (!set_vector_from_points(&gs->fv, p1, p2, op & 1, false, zone_of(ex, gs->zp2), zone_of(ex, gs->zp1)))
+            FAIL();
+        compute_fdotp(ex);
+        return;
+    }
+    case 0x0A: {
+        POP2(x, y);
+        V2 v;
+        v.x = (int16_t)x;
+        v.y = (int16_t)y;
+        if (!normalize(v.x, v.y, &v))
+            FAIL();
+        gs->pv = gs->dv = v;
+        compute_fdotp(ex);
+        return;
+    }
+    case 0x0B: {
+        POP2(x, y);
+        V2 v;
+        v.x = (int16_t)x;
+        v.y = (int16_t)y;
+        if (!normalize(v.x, v.y, &v))
+            FAIL();
+        gs->fv = v;
+        compute_fdotp(ex);
+        return;
+    }
+    case 0x0C: push(ex, gs->pv.x); push(ex, gs->pv.y); return;
+    case 0x0D: push(ex, gs->fv.x); push(ex, gs->fv.y); return;
+    case 0x0E: gs->fv = gs->pv; compute_fdotp(ex); return;
+    case 0x0F: ins_isect(ex); return;
+    case 0x10: { POP1(a); if (a < 0) FAIL(); gs->rp0 = (uint32_t)a; return; }
+    case 0x11: { POP1(a); if (a < 0) FAIL(); gs->rp1 = (uint32_t)a; return; }
+    case 0x12: { POP1(a); if (a < 0) FAIL(); gs->rp2 = (uint32_t)a; return; }
+    case 0x13: { POP1(a); if (a < 0 || a > 1) FAIL(); gs->zp0 = a; return; }
+    case 0x14: { POP1(a); if (a < 0 || a > 1) FAIL(); gs->zp1 = a; return; }
+    case 0x15: { POP1(a); if (a < 0 || a > 1) FAIL(); gs->zp2 = a; return; }
+    case 0x16: { POP1(a); if (a < 0 || a > 1) FAIL(); gs->zp0 = gs->zp1 = gs->zp2 = a; return; }
+    case 0x17: { POP1(a); if (a < 0) FAIL(); gs->loop = a > 0xFFFF ? 0xFFFF : a; return; }
+    case 0x18: gs->round_mode = ROUND_GRID; return;
+    case 0x19: gs->round_mode = ROUND_HALF; return;
+    case 0x1A: { POP1(a); gs->min_dist = a; return; }
+    case 0x1B: /* ELSE reached by falling through the true branch. */
+        if (!skip_if(ex, false))
+            FAIL();
+        return;
+    case 0x1C: {
+        POP1(off);
+        if (off == 0 && false)
+            FAIL();
+        int64_t target = (int64_t)ex->ip - 1 + off;
+        if (target < 0 || target > ex->code.size)
+            FAIL();
+        ex->ip = (uint32_t)target;
+        return;
+    }
+    case 0x1D: { POP1(a); gs->cvt_cutin = a; return; }
+    case 0x1E: { POP1(a); gs->sw_cutin = a; return; }
+    case 0x1F: { POP1(a); gs->sw_value = mul_fix(a, ex->h->scale_y); return; }
+    case 0x20: { POP1(a); push(ex, a); push(ex, a); return; }
+    case 0x21: { POP1(a); (void)a; return; }
+    case 0x22: ex->sp = 0; return;
+    case 0x23: { POP2(a, b); push(ex, b); push(ex, a); return; }
+    case 0x24: push(ex, (int32_t)ex->sp); return;
+    case 0x25: {
+        POP1(k);
+        if (k <= 0 || (uint32_t)k > ex->sp)
+            FAIL();
+        push(ex, ex->stack[ex->sp - (uint32_t)k]);
+        return;
+    }
+    case 0x26: {
+        POP1(k);
+        if (k <= 0 || (uint32_t)k > ex->sp)
+            FAIL();
+        int32_t v = ex->stack[ex->sp - (uint32_t)k];
+        for (uint32_t i = ex->sp - (uint32_t)k; i + 1 < ex->sp; i++)
+            ex->stack[i] = ex->stack[i + 1];
+        ex->stack[ex->sp - 1] = v;
+        return;
+    }
+    case 0x27: ins_alignpts(ex); return;
+    case 0x29: {
+        POP1(p);
+        Zone *z = zone_of(ex, gs->zp0);
+        if (!point_ok(z, p))
+            FAIL();
+        if (gs->fv.x)
+            z->tag[p] &= (uint8_t)~TAG_TOUCH_X;
+        if (gs->fv.y)
+            z->tag[p] &= (uint8_t)~TAG_TOUCH_Y;
+        return;
+    }
+    case 0x2A: {
+        POP2(count, f);
+        if (count < 0)
+            FAIL();
+        call_function(ex, f, (uint32_t)count);
+        return;
+    }
+    case 0x2B: {
+        POP1(f);
+        call_function(ex, f, 1);
+        return;
+    }
+    case 0x2C: ins_fdef(ex); return;
+    case 0x2D: {
+        if (ex->depth == 0)
+            FAIL();
+        Call *c = &ex->calls[ex->depth - 1];
+        if (c->count > 1) {
+            c->count--;
+            ex->ip = 0;
+            return;
+        }
+        ex->code = c->code;
+        ex->ip = c->ip;
+        ex->depth--;
+        return;
+    }
+    case 0x2E: case 0x2F: ins_mdap(ex, op); return;
+    case 0x30: case 0x31: ins_iup(ex, op); return;
+    case 0x32: case 0x33: ins_shp(ex, op); return;
+    case 0x34: case 0x35: ins_shc(ex, op); return;
+    case 0x36: case 0x37: ins_shz(ex, op); return;
+    case 0x38: ins_shpix(ex); return;
+    case 0x39: ins_ip(ex); return;
+    case 0x3A: case 0x3B: ins_msirp(ex, op); return;
+    case 0x3C: ins_alignrp(ex); return;
+    case 0x3D: gs->round_mode = ROUND_DOUBLE; return;
+    case 0x3E: case 0x3F: ins_miap(ex, op); return;
+    case 0x40: {
+        uint32_t n = ex->code.data[ex->ip];
+        ex->ip++;
+        for (uint32_t i = 0; i < n; i++)
+            push(ex, ex->code.data[ex->ip++]);
+        return;
+    }
+    case 0x41: {
+        uint32_t n = ex->code.data[ex->ip];
+        ex->ip++;
+        for (uint32_t i = 0; i < n; i++) {
+            push(ex, (int16_t)be16(ex->code.data + ex->ip));
+            ex->ip += 2;
+        }
+        return;
+    }
+    case 0x42: {
+        POP2(i, v);
+        if (i < 0 || (uint32_t)i >= ex->h->storage_count)
+            FAIL();
+        ex->h->storage[i] = v;
+        return;
+    }
+    case 0x43: {
+        POP1(i);
+        if (i < 0 || (uint32_t)i >= ex->h->storage_count)
+            FAIL();
+        push(ex, ex->h->storage[i]);
+        return;
+    }
+    case 0x44: {
+        POP2(i, v);
+        if (i < 0 || (uint32_t)i >= ex->h->cvt_count)
+            FAIL();
+        ex->h->cvt[i] = ex->h->stretched ? mul_div(v, 0x10000, current_ratio(ex)) : v;
+        return;
+    }
+    case 0x45: {
+        POP1(i);
+        if (i < 0 || (uint32_t)i >= ex->h->cvt_count)
+            FAIL();
+        push(ex, read_cvt(ex, i));
+        return;
+    }
+    case 0x46: case 0x47: {
+        POP1(p);
+        Zone *z = zone_of(ex, gs->zp2);
+        if (!point_ok(z, p))
+            FAIL();
+        if (op & 1)
+            push(ex, dual_project(ex, z->org[p].x, z->org[p].y));
+        else
+            push(ex, project(ex, z->cur[p].x, z->cur[p].y));
+        return;
+    }
+    case 0x48: {
+        POP2(p, v);
+        Zone *z = zone_of(ex, gs->zp2);
+        if (!point_ok(z, p))
+            FAIL();
+        int32_t cur = project(ex, z->cur[p].x, z->cur[p].y);
+        move_point(ex, z, (uint32_t)p, v - cur);
+        if (gs->zp2 == 0)
+            z->org[p] = z->cur[p];
+        return;
+    }
+    case 0x49: case 0x4A: {
+        POP2(p2, p1);
+        /* the top of the stack indexes zp1 and the other zp0. */
+        Zone *z0 = zone_of(ex, gs->zp0), *z1 = zone_of(ex, gs->zp1);
+        if (!point_ok(z0, p2) || !point_ok(z1, p1))
+            FAIL();
+        if (op == 0x49)
+            push(ex, project(ex, z0->cur[p2].x - z1->cur[p1].x, z0->cur[p2].y - z1->cur[p1].y));
+        else
+            push(ex, dual_project(ex, z0->org[p2].x - z1->org[p1].x, z0->org[p2].y - z1->org[p1].y));
+        return;
+    }
+    case 0x4B: {
+        int32_t ppem = ex->h->ppem_y;
+        if (ex->h->stretched)
+            ppem = mul_fix(ex->h->ppem_y, current_ratio(ex));
+        push(ex, ppem);
+        return;
+    }
+    case 0x4C: push(ex, ex->h->ppem_y); return;
+    case 0x4D: gs->auto_flip = true; return;
+    case 0x4E: gs->auto_flip = false; return;
+    case 0x4F: { POP1(a); (void)a; return; }
+    case 0x50: { POP2(a, b); push(ex, a < b); return; }
+    case 0x51: { POP2(a, b); push(ex, a <= b); return; }
+    case 0x52: { POP2(a, b); push(ex, a > b); return; }
+    case 0x53: { POP2(a, b); push(ex, a >= b); return; }
+    case 0x54: { POP2(a, b); push(ex, a == b); return; }
+    case 0x55: { POP2(a, b); push(ex, a != b); return; }
+    case 0x56: { POP1(a); push(ex, (round_value(ex, a) & 127) == 64); return; }
+    case 0x57: { POP1(a); push(ex, (round_value(ex, a) & 127) == 0); return; }
+    case 0x58: {
+        POP1(c);
+        if (c == 0 && !skip_if(ex, true))
+            FAIL();
+        return;
+    }
+    case 0x59: return;
+    case 0x5A: { POP2(a, b); push(ex, a != 0 && b != 0); return; }
+    case 0x5B: { POP2(a, b); push(ex, a != 0 || b != 0); return; }
+    case 0x5C: { POP1(a); push(ex, a == 0); return; }
+    case 0x5D: case 0x71: case 0x72: ins_deltap(ex, op); return;
+    case 0x5E: { POP1(a); gs->delta_base = a; return; }
+    case 0x5F: { POP1(a); if (a < 0 || a > 6) FAIL(); gs->delta_shift = a; return; }
+    case 0x60: { POP2(a, b); push(ex, sat32((int64_t)a + b)); return; }
+    case 0x61: { POP2(a, b); push(ex, sat32((int64_t)a - b)); return; }
+    case 0x62: {
+        POP2(a, b);
+        if (b == 0)
+            FAIL();
+        push(ex, sat32((int64_t)a * 64 / b));
+        return;
+    }
+    case 0x63: { POP2(a, b); push(ex, mul_div(a, b, 64)); return; }
+    case 0x64: { POP1(a); push(ex, a < 0 ? (a == INT32_MIN ? INT32_MAX : -a) : a); return; }
+    case 0x65: { POP1(a); push(ex, a == INT32_MIN ? INT32_MAX : -a); return; }
+    case 0x66: { POP1(a); push(ex, a & ~63); return; }
+    case 0x67: { POP1(a); push(ex, sat32((int64_t)a + 63) & ~63); return; }
+    case 0x68: case 0x69: case 0x6A: case 0x6B: { POP1(a); push(ex, round_value(ex, a)); return; }
+    case 0x6C: case 0x6D: case 0x6E: case 0x6F: { POP1(a); push(ex, a); return; }
+    case 0x70: {
+        POP2(i, v);
+        if (i < 0 || (uint32_t)i >= ex->h->cvt_count)
+            FAIL();
+        ex->h->cvt[i] = mul_fix(v, ex->h->scale_y);
+        return;
+    }
+    case 0x73: case 0x74: case 0x75: ins_deltac(ex, op); return;
+    case 0x76: { POP1(a); gs->round_mode = ROUND_SUPER; set_super_round(ex, a, 64); return; }
+    case 0x77: { POP1(a); gs->round_mode = ROUND_SUPER45; set_super_round(ex, a, 45); return; }
+    case 0x78: case 0x79: {
+        POP2(off, c);
+        if ((op == 0x78) == (c != 0)) {
+            int64_t target = (int64_t)ex->ip - 1 + off;
+            if (off == 0 || target < 0 || target > ex->code.size)
+                FAIL();
+            ex->ip = (uint32_t)target;
+        }
+        return;
+    }
+    case 0x7A: gs->round_mode = ROUND_OFF; return;
+    case 0x7C: gs->round_mode = ROUND_UP; return;
+    case 0x7D: gs->round_mode = ROUND_DOWN; return;
+    case 0x7E: case 0x7F: { POP1(a); (void)a; return; }
+    case 0x80: {
+        Zone *z = zone_of(ex, 1);
+        while (gs->loop > 0) {
+            POP1(p);
+            if (!point_ok(z, p))
+                FAIL();
+            z->tag[p] ^= TAG_ON;
+            gs->loop--;
+        }
+        gs->loop = 1;
+        return;
+    }
+    case 0x81: case 0x82: {
+        POP2(lo, hi);
+        Zone *z = zone_of(ex, 1);
+        if (!point_ok(z, lo) || !point_ok(z, hi))
+            FAIL();
+        for (int32_t p = lo; p <= hi; p++) {
+            if (op == 0x81)
+                z->tag[p] |= TAG_ON;
+            else
+                z->tag[p] &= (uint8_t)~TAG_ON;
+        }
+        return;
+    }
+    case 0x85: { POP1(a); ex->gs.scan_control = (uint32_t)a; return; }
+    case 0x86: case 0x87: {
+        POP2(p2, p1);
+        Zone *za = zone_of(ex, gs->zp2), *zb = zone_of(ex, gs->zp1);
+        if (!point_ok(za, p1) || !point_ok(zb, p2))
+            FAIL();
+        V2 v;
+        if (!set_vector_from_points(&v, p1, p2, op & 1, true, za, zb))
+            FAIL();
+        gs->dv = v;
+        V2 w;
+        if (!set_vector_from_points(&w, p1, p2, op & 1, false, za, zb))
+            FAIL();
+        gs->pv = w;
+        compute_fdotp(ex);
+        return;
+    }
+    case 0x88: ins_getinfo(ex); return;
+    case 0x89: ins_idef(ex); return;
+    case 0x8A: {
+        if (ex->sp < 3)
+            FAIL();
+        int32_t a = ex->stack[ex->sp - 3], b = ex->stack[ex->sp - 2], c = ex->stack[ex->sp - 1];
+        ex->stack[ex->sp - 3] = b;
+        ex->stack[ex->sp - 2] = c;
+        ex->stack[ex->sp - 1] = a;
+        return;
+    }
+    case 0x8B: { POP2(a, b); push(ex, a > b ? a : b); return; }
+    case 0x8C: { POP2(a, b); push(ex, a < b ? a : b); return; }
+    case 0x8D: { POP1(a); gs->scan_type = (uint32_t)a; return; }
+    case 0x8E: {
+        POP2(value, sel);
+        if (sel < 1 || sel > 3)
+            return;
+        uint32_t bit = 1u << (sel - 1);
+        if (sel == 3) {
+            if (ex->program == PROGRAM_PREP && (value == 0 || value == 4))
+                ex->h->native = value == 4;
+            return;
+        }
+        if (ex->program != PROGRAM_PREP)
+            return;
+        if (value != 0 && value != (int32_t)bit)
+            return;
+        gs->instruct_control = (gs->instruct_control & ~bit) | (uint32_t)value;
+        return;
+    }
+    default:
+        break;
+    }
+    if (op >= 0xB0 && op <= 0xB7) {
+        uint32_t n = op - 0xB0 + 1;
+        for (uint32_t i = 0; i < n; i++)
+            push(ex, ex->code.data[ex->ip++]);
+        return;
+    }
+    if (op >= 0xB8 && op <= 0xBF) {
+        uint32_t n = op - 0xB8 + 1;
+        for (uint32_t i = 0; i < n; i++) {
+            push(ex, (int16_t)be16(ex->code.data + ex->ip));
+            ex->ip += 2;
+        }
+        return;
+    }
+    if (op >= 0xC0 && op <= 0xDF) {
+        ins_mdrp(ex, op);
+        return;
+    }
+    if (op >= 0xE0) {
+        ins_mirp(ex, op);
+        return;
+    }
+    /* user defined instructions. */
+    for (uint32_t i = 0; i < ex->h->idef_count; i++) {
+        const InstrDef *d = &ex->h->idefs[i];
+        if (d->active && d->opcode == op) {
+            if (ex->depth >= MAX_CALL_DEPTH)
+                FAIL();
+            Call *c = &ex->calls[ex->depth++];
+            c->code = ex->code;
+            c->ip = ex->ip;
+            c->count = 1;
+            c->func = nullptr;
+            ex->code = d->code;
+            ex->ip = 0;
+            return;
+        }
+    }
+    ex->failed = true;
+}
+
+#ifdef HINT_TRACE
+int hint_trace_on;
+static void hint_trace(const Exec *ex, uint8_t op)
+{
+    printf("p%d ip=%u op=%02x sp=%u", ex->program, ex->ip - 1, op, ex->sp);
+    for (uint32_t i = 0; i < 4 && i < ex->sp; i++)
+        printf(" %d", ex->stack[ex->sp - 1 - i]);
+    printf(" rp=%u,%u,%u pv=%d,%d fv=%d,%d\n", ex->gs.rp0, ex->gs.rp1, ex->gs.rp2, ex->gs.pv.x, ex->gs.pv.y, ex->gs.fv.x, ex->gs.fv.y);
+}
+#endif
+
+static bool run_program(Exec *ex, Code code, int program)
+{
+    ex->code = code;
+    ex->ip = 0;
+    ex->depth = 0;
+    ex->program = program;
+    ex->failed = false;
+    ex->steps = 0;
+    while (!ex->failed) {
+        if (ex->ip >= ex->code.size) {
+            if (ex->depth != 0)
+                return false;
+            return true;
+        }
+        if (++ex->steps > ex->step_limit)
+            return false;
+        uint32_t len = instr_length(ex->code, ex->ip);
+        if (!len)
+            return false;
+        uint8_t op = ex->code.data[ex->ip++];
+#ifdef HINT_TRACE
+        if (hint_trace_on)
+            hint_trace(ex, op);
+#endif
+        execute_one(ex, op);
+    }
+    return false;
+}
+
+/* ------------------------------------------------------------------ setup */
+
+static void default_state(GState *gs)
+{
+    memset(gs, 0, sizeof(*gs));
+    gs->dv = gs->pv = gs->fv = (V2){0x4000, 0};
+    gs->loop = 1;
+    gs->min_dist = 64;
+    gs->round_mode = ROUND_GRID;
+    gs->period = 64;
+    gs->phase = 0;
+    gs->threshold = 32;
+    gs->auto_flip = true;
+    gs->cvt_cutin = 68;
+    gs->delta_base = 9;
+    gs->delta_shift = 3;
+    gs->zp0 = gs->zp1 = gs->zp2 = 1;
+}
+
+static void exec_init(Exec *ex, MimeTtfHinter *h, const GState *gs)
+{
+    memset(ex, 0, sizeof(*ex));
+    ex->h = h;
+    ex->gs = *gs;
+    ex->stack = h->stack;
+    ex->stack_cap = h->stack_cap;
+    ex->zones[0] = h->twilight;
+    ex->ppem_for_delta = h->ppem_y;
+    ex->compat = (h->flags & MIME_TTF_HINT_SUBPIXEL) && !h->native;
+    compute_fdotp(ex);
+}
+
+static void *halloc(const MimeTtfHinter *h, size_t n)
+{
+    return mime_alloc(&h->alloc, n ? n : 1);
+}
+
+void mime_ttf_hinter_free(MimeTtfHinter *h)
+{
+    if (!h)
+        return;
+    MimeAllocator a = h->alloc;
+    mime_free(&a, h->cvt);
+    mime_free(&a, h->storage);
+    mime_free(&a, h->funcs);
+    mime_free(&a, h->idefs);
+    mime_free(&a, h->stack);
+    mime_free(&a, h->twilight.org);
+    mime_free(&a, h);
+}
+
+static uint32_t maxp_value(const MimeTtfFont *f, uint32_t off)
+{
+    if (f->maxp.size < off + 2)
+        return 0;
+    return be16(f->maxp.data + off);
+}
+
+MimeTtfHinter *mime_ttf_hinter_new(const MimeTtfFont *font, const MimeAllocator *alloc, int ppem_x, int ppem_y,
+                                   uint32_t flags)
+{
+    if (!font || !alloc || !font->has_outlines || ppem_x < 1 || ppem_y < 1 || ppem_x > 2048 || ppem_y > 2048)
+        return nullptr;
+    MimeTtfHinter *h = mime_alloc(alloc, sizeof(*h));
+    if (!h)
+        return nullptr;
+    memset(h, 0, sizeof(*h));
+    h->font = font;
+    h->alloc = *alloc;
+    h->ppem_x = ppem_x;
+    h->ppem_y = ppem_y;
+    h->flags = flags;
+    h->stretched = ppem_x != ppem_y;
+    h->scale_x = (int32_t)(((int64_t)ppem_x * 64 * 65536 + font->units_per_em / 2) / font->units_per_em);
+    h->scale_y = (int32_t)(((int64_t)ppem_y * 64 * 65536 + font->units_per_em / 2) / font->units_per_em);
+    default_state(&h->defaults);
+
+    uint32_t storage = maxp_value(font, 18);
+    uint32_t funcs = maxp_value(font, 20);
+    uint32_t idefs = maxp_value(font, 22);
+    uint32_t stack = maxp_value(font, 24);
+    uint32_t twilight = maxp_value(font, 16);
+    if (font->maxp.size < 32) {
+        storage = funcs = idefs = stack = twilight = 0;
+    }
+    h->storage_count = storage;
+    h->func_count = funcs;
+    h->idef_count = idefs;
+    h->stack_cap = stack + 32;
+    if (h->stack_cap < 256)
+        h->stack_cap = 256;
+    if (h->stack_cap > 65536)
+        h->stack_cap = 65536;
+    h->cvt_count = font->cvt.size / 2;
+    if (twilight > 4096)
+        twilight = 4096;
+
+    h->cvt = halloc(h, h->cvt_count * sizeof(int32_t));
+    h->storage = halloc(h, h->storage_count * sizeof(int32_t));
+    h->funcs = halloc(h, h->func_count * sizeof(FuncDef));
+    h->idefs = halloc(h, h->idef_count * sizeof(InstrDef));
+    h->stack = halloc(h, h->stack_cap * sizeof(int32_t));
+    uint32_t tn = twilight + 4;
+    size_t zbytes = (size_t)tn * (3 * sizeof(V2) + 1);
+    h->twilight.org = halloc(h, zbytes);
+    if (!h->cvt || !h->storage || !h->funcs || !h->idefs || !h->stack || !h->twilight.org) {
+        mime_ttf_hinter_free(h);
+        return nullptr;
+    }
+    memset(h->funcs, 0, h->func_count * sizeof(FuncDef));
+    memset(h->idefs, 0, h->idef_count * sizeof(InstrDef));
+    memset(h->storage, 0, h->storage_count * sizeof(int32_t));
+    memset(h->twilight.org, 0, zbytes);
+    h->twilight.cur = h->twilight.org + tn;
+    h->twilight.orus = h->twilight.cur + tn;
+    h->twilight.tag = (uint8_t *)(h->twilight.orus + tn);
+    h->twilight.n = tn;
+    h->twilight.cap = tn;
+
+    for (uint32_t i = 0; i < h->cvt_count; i++)
+        h->cvt[i] = mul_fix((int16_t)be16(font->cvt.data + 2 * i), h->scale_y);
+
+    Exec ex;
+    Zone empty = {nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0};
+    exec_init(&ex, h, &h->defaults);
+    ex.zones[1] = empty;
+    ex.step_limit = MAX_PROGRAM_STEPS;
+    bool ok = true;
+    if (font->fpgm.size) {
+        Code c = {font->fpgm.data, font->fpgm.size};
+        ok = run_program(&ex, c, PROGRAM_FONT);
+    }
+    if (ok && font->prep.size) {
+        /* the prep starts from the default state each time. */
+        exec_init(&ex, h, &h->defaults);
+        ex.zones[1] = empty;
+        ex.step_limit = MAX_PROGRAM_STEPS;
+        Code c = {font->prep.data, font->prep.size};
+        ex.sp = 0;
+        ok = run_program(&ex, c, PROGRAM_PREP);
+        if (ok) {
+            h->defaults = ex.gs;
+            h->instruct_control = ex.gs.instruct_control;
+        }
+    }
+    h->usable = ok && font->fpgm.size + font->prep.size > 0;
+    h->glyph_hinting = h->usable && !(h->instruct_control & 1);
+    h->scan_control = h->defaults.scan_control;
+    h->scan_type = h->defaults.scan_type;
+    return h;
+}
+
+bool mime_ttf_hinter_active(const MimeTtfHinter *h)
+{
+    return h && h->glyph_hinting;
+}
+
+void mime_ttf_hinter_scan(const MimeTtfHinter *h, uint32_t *control, uint32_t *type)
+{
+    *control = h ? h->scan_control : 0;
+    *type = h ? h->scan_type : 0;
+}
+
+/* ------------------------------------------------------------------ hinted glyph loading */
+
+typedef struct HGlyph {
+    uint32_t n;       /* real points. */
+    uint32_t contours;
+    V2 *pts;          /* n + 4 with the phantom points, in 26.6. */
+    uint8_t *on;
+    uint16_t *ends;
+    V2 *orus;
+    uint8_t *tag;
+    V2 *org;
+    void *block;
+    int32_t pp1x, pp2x;
+    int32_t adv_fu, lsb_fu;
+    bool hinted_ok;
+} HGlyph;
+
+static void hglyph_free(const MimeTtfHinter *h, HGlyph *g)
+{
+    if (g->block)
+        mime_free(&h->alloc, g->block);
+    memset(g, 0, sizeof(*g));
+}
+
+static bool hglyph_alloc(const MimeTtfHinter *h, HGlyph *g, uint32_t n, uint32_t contours)
+{
+    uint32_t total = n + 4;
+    size_t bytes = (size_t)total * (3 * sizeof(V2) + 1 + 1) + sizeof(V2) * total + ((size_t)contours + 1) * 2;
+    uint8_t *b = halloc(h, bytes);
+    if (!b)
+        return false;
+    memset(b, 0, bytes);
+    g->block = b;
+    g->n = n;
+    g->contours = contours;
+    g->pts = (V2 *)b;
+    g->org = g->pts + total;
+    g->orus = g->org + total;
+    V2 *after = g->orus + total;
+    g->tag = (uint8_t *)after;
+    g->on = g->tag + total;
+    g->ends = (uint16_t *)(((uintptr_t)(g->on + total) + 1) & ~(uintptr_t)1);
+    (void)bytes;
+    return true;
+}
+
+static int32_t scale_fu_x(const MimeTtfHinter *h, int32_t v)
+{
+    return mul_fix(v, h->scale_x);
+}
+
+static int32_t scale_fu_y(const MimeTtfHinter *h, int32_t v)
+{
+    return mul_fix(v, h->scale_y);
+}
+
+/* runs the glyph program over a glyph whose points are in place. */
+static void run_glyph_program(const MimeTtfHinter *hc, HGlyph *g, Code program)
+{
+    MimeTtfHinter *h = (MimeTtfHinter *)hc;
+    if (!h->glyph_hinting || program.size == 0)
+        return;
+    Exec ex;
+    GState gs = h->defaults;
+    if (h->instruct_control & 2)
+        default_state(&gs);
+    gs.rp0 = gs.rp1 = gs.rp2 = 0;
+    gs.zp0 = gs.zp1 = gs.zp2 = 1;
+    gs.dv = gs.pv = gs.fv = (V2){0x4000, 0};
+    gs.loop = 1;
+    exec_init(&ex, h, &gs);
+    Zone *z = &ex.zones[1];
+    z->org = g->org;
+    z->cur = g->pts;
+    z->orus = g->orus;
+    z->tag = g->tag;
+    z->ends = g->ends;
+    z->n = g->n + 4;
+    z->contours = g->contours;
+    ex.step_limit = MAX_GLYPH_STEPS;
+    /* writes by the glyph program must not leak into the shared tables. */
+    int32_t *cvt_copy = halloc(h, h->cvt_count * sizeof(int32_t) + 1);
+    int32_t *storage_copy = halloc(h, h->storage_count * sizeof(int32_t) + 1);
+    if (!cvt_copy || !storage_copy) {
+        mime_free(&h->alloc, cvt_copy);
+        mime_free(&h->alloc, storage_copy);
+        return;
+    }
+    memcpy(cvt_copy, h->cvt, h->cvt_count * sizeof(int32_t));
+    memcpy(storage_copy, h->storage, h->storage_count * sizeof(int32_t));
+    Zone twilight_save_dummy = h->twilight;
+    (void)twilight_save_dummy;
+    /* keep a copy of the twilight zone points too. */
+    size_t tbytes = (size_t)h->twilight.n * (3 * sizeof(V2) + 1);
+    uint8_t *twi_copy = halloc(h, tbytes);
+    if (!twi_copy) {
+        mime_free(&h->alloc, cvt_copy);
+        mime_free(&h->alloc, storage_copy);
+        return;
+    }
+    memcpy(twi_copy, h->twilight.org, tbytes);
+    ex.zones[0] = h->twilight;
+    bool ok = run_program(&ex, program, PROGRAM_GLYPH);
+    memcpy(h->cvt, cvt_copy, h->cvt_count * sizeof(int32_t));
+    memcpy(h->storage, storage_copy, h->storage_count * sizeof(int32_t));
+    memcpy(h->twilight.org, twi_copy, tbytes);
+    mime_free(&h->alloc, cvt_copy);
+    mime_free(&h->alloc, storage_copy);
+    mime_free(&h->alloc, twi_copy);
+    g->hinted_ok = ok;
+}
+
+static bool load_hglyph(const MimeTtfHinter *h, uint16_t glyph, unsigned depth, HGlyph *out);
+
+static void phantom_points(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd, HGlyph *g, bool has_outline)
+{
+    const MimeTtfFont *f = h->font;
+    int adv, lsb;
+    mime_ttf_glyph_hmetrics(f, glyph, &adv, &lsb);
+    int xmin = 0, ymax = 0;
+    if (gd.size >= 10) {
+        xmin = (int16_t)be16(gd.data + 2);
+        ymax = (int16_t)be16(gd.data + 8);
+    }
+    (void)has_outline;
+    g->adv_fu = adv;
+    g->lsb_fu = lsb;
+    uint32_t n = g->n;
+    g->orus[n + 0] = (V2){xmin - lsb, 0};
+    g->orus[n + 1] = (V2){xmin - lsb + adv, 0};
+    int vadv = f->units_per_em, tsb = 0;
+    if (f->vhea.size >= 36 && f->vmtx.size >= 4) {
+        uint32_t nm = be16(f->vhea.data + 34);
+        if (nm == 0)
+            nm = 1;
+        uint32_t idx = glyph < nm ? glyph : nm - 1;
+        if (4ull * idx + 2 <= f->vmtx.size)
+            vadv = be16(f->vmtx.data + 4ull * idx);
+        if (glyph < nm && 4ull * idx + 4 <= f->vmtx.size)
+            tsb = (int16_t)be16(f->vmtx.data + 4ull * idx + 2);
+    } else if (f->hhea.size >= 8) {
+        int asc = (int16_t)be16(f->hhea.data + 4), desc = (int16_t)be16(f->hhea.data + 6);
+        vadv = asc - desc;
+        tsb = asc - ymax;
+    }
+    g->orus[n + 2] = (V2){0, ymax + tsb};
+    g->orus[n + 3] = (V2){0, ymax + tsb - vadv};
+}
+
+static void scale_and_round_phantoms(const MimeTtfHinter *h, HGlyph *g)
+{
+    for (uint32_t i = 0; i < 4; i++) {
+        uint32_t k = g->n + i;
+        g->org[k].x = scale_fu_x(h, g->orus[k].x);
+        g->org[k].y = scale_fu_y(h, g->orus[k].y);
+        g->pts[k] = g->org[k];
+    }
+    /* the phantom points are rounded to the grid before the instructions run, except with subpixel positioning. */
+    for (uint32_t i = 0; i < 4 && !(h->flags & MIME_TTF_HINT_SUBPIXEL); i++) {
+        uint32_t k = g->n + i;
+        g->pts[k].x = (g->pts[k].x + 32) & ~63;
+        g->pts[k].y = (g->pts[k].y + 32) & ~63;
+    }
+}
+
+static bool load_simple(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd, int contours, HGlyph *out)
+{
+    if (contours == 0) {
+        if (!hglyph_alloc(h, out, 0, 0))
+            return false;
+        phantom_points(h, glyph, gd, out, false);
+        scale_and_round_phantoms(h, out);
+        return true;
+    }
+    uint64_t ends_off = 10;
+    if (gd.size < ends_off + 2ull * contours + 2)
+        return false;
+    uint32_t points = be16(gd.data + ends_off + 2ull * (contours - 1)) + 1u;
+    if (points > MAX_POINTS)
+        return false;
+    uint64_t ins_off = ends_off + 2ull * contours;
+    uint32_t ins_len = be16(gd.data + ins_off);
+    uint64_t flags_off = ins_off + 2 + ins_len;
+    if (flags_off > gd.size)
+        return false;
+    if (!hglyph_alloc(h, out, points, (uint32_t)contours))
+        return false;
+    int32_t prev = -1;
+    for (int i = 0; i < contours; i++) {
+        int32_t e = be16(gd.data + ends_off + 2ull * i);
+        if (e <= prev)
+            return false;
+        out->ends[i] = (uint16_t)e;
+        prev = e;
+    }
+    /* flags. */
+    uint64_t p = flags_off;
+    uint8_t *fl = out->on;
+    for (uint32_t i = 0; i < points;) {
+        if (p >= gd.size)
+            return false;
+        uint8_t f = gd.data[p++];
+        uint32_t run = 1;
+        if (f & 8) {
+            if (p >= gd.size)
+                return false;
+            run += gd.data[p++];
+        }
+        for (; run && i < points; run--)
+            fl[i++] = f;
+    }
+    int32_t x = 0;
+    for (uint32_t i = 0; i < points; i++) {
+        uint8_t f = fl[i];
+        if (f & 2) {
+            if (p >= gd.size)
+                return false;
+            int v = gd.data[p++];
+            x += (f & 16) ? v : -v;
+        } else if (!(f & 16)) {
+            if (p + 2 > gd.size)
+                return false;
+            x += (int16_t)be16(gd.data + p);
+            p += 2;
+        }
+        out->orus[i].x = x;
+    }
+    int32_t y = 0;
+    for (uint32_t i = 0; i < points; i++) {
+        uint8_t f = fl[i];
+        if (f & 4) {
+            if (p >= gd.size)
+                return false;
+            int v = gd.data[p++];
+            y += (f & 32) ? v : -v;
+        } else if (!(f & 32)) {
+            if (p + 2 > gd.size)
+                return false;
+            y += (int16_t)be16(gd.data + p);
+            p += 2;
+        }
+        out->orus[i].y = y;
+    }
+    for (uint32_t i = 0; i < points; i++) {
+        out->tag[i] = fl[i] & TAG_ON;
+        out->on[i] = fl[i] & 1;
+        out->org[i].x = scale_fu_x(h, out->orus[i].x);
+        out->org[i].y = scale_fu_y(h, out->orus[i].y);
+        out->pts[i] = out->org[i];
+    }
+    phantom_points(h, glyph, gd, out, true);
+    scale_and_round_phantoms(h, out);
+    Code prog = {gd.data + ins_off + 2, ins_len};
+    if (ins_off + 2 + ins_len <= gd.size)
+        run_glyph_program(h, out, prog);
+    return true;
+}
+
+static bool load_composite(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd, unsigned depth, HGlyph *out)
+{
+    if (depth >= MAX_COMPONENT_DEPTH)
+        return false;
+    typedef struct Part {
+        HGlyph g;
+        int32_t dx, dy;
+    } Part;
+    enum { MAX_PARTS = 64 };
+    Part *parts = halloc(h, sizeof(Part) * MAX_PARTS);
+    if (!parts)
+        return false;
+    memset(parts, 0, sizeof(Part) * MAX_PARTS);
+    uint32_t nparts = 0, total_points = 0, total_contours = 0;
+    bool ok = false;
+    uint64_t off = 10;
+    uint32_t flags;
+    int32_t metrics_from = -1;
+    uint32_t last_flags = 0;
+    do {
+        if (nparts >= MAX_PARTS || off + 4 > gd.size)
+            goto done;
+        flags = be16(gd.data + off);
+        last_flags = flags;
+        uint16_t child = (uint16_t)be16(gd.data + off + 2);
+        off += 4;
+        int32_t a1, a2;
+        if (flags & 1) {
+            if (off + 4 > gd.size)
+                goto done;
+            a1 = (flags & 2) ? (int16_t)be16(gd.data + off) : (int32_t)be16(gd.data + off);
+            a2 = (flags & 2) ? (int16_t)be16(gd.data + off + 2) : (int32_t)be16(gd.data + off + 2);
+            off += 4;
+        } else {
+            if (off + 2 > gd.size)
+                goto done;
+            a1 = (flags & 2) ? (int8_t)gd.data[off] : (int32_t)gd.data[off];
+            a2 = (flags & 2) ? (int8_t)gd.data[off + 1] : (int32_t)gd.data[off + 1];
+            off += 2;
+        }
+        int32_t m[4] = {0x4000, 0, 0, 0x4000};
+        bool transformed = false;
+        if (flags & 8) {
+            if (off + 2 > gd.size)
+                goto done;
+            m[0] = m[3] = (int16_t)be16(gd.data + off);
+            off += 2;
+            transformed = true;
+        } else if (flags & 0x40) {
+            if (off + 4 > gd.size)
+                goto done;
+            m[0] = (int16_t)be16(gd.data + off);
+            m[3] = (int16_t)be16(gd.data + off + 2);
+            off += 4;
+            transformed = true;
+        } else if (flags & 0x80) {
+            if (off + 8 > gd.size)
+                goto done;
+            m[0] = (int16_t)be16(gd.data + off);
+            m[1] = (int16_t)be16(gd.data + off + 2);
+            m[2] = (int16_t)be16(gd.data + off + 4);
+            m[3] = (int16_t)be16(gd.data + off + 6);
+            off += 8;
+            transformed = true;
+        }
+        Part *part = &parts[nparts];
+        if (!load_hglyph(h, child, depth + 1, &part->g))
+            goto done;
+        HGlyph *pg = &part->g;
+        if (transformed) {
+            for (uint32_t i = 0; i < pg->n; i++) {
+                int32_t x = pg->pts[i].x, y = pg->pts[i].y;
+                pg->pts[i].x = mul_div(x, m[0], 0x4000) + mul_div(y, m[2], 0x4000);
+                pg->pts[i].y = mul_div(x, m[1], 0x4000) + mul_div(y, m[3], 0x4000);
+                x = pg->orus[i].x;
+                y = pg->orus[i].y;
+                pg->orus[i].x = mul_div(x, m[0], 0x4000) + mul_div(y, m[2], 0x4000);
+                pg->orus[i].y = mul_div(x, m[1], 0x4000) + mul_div(y, m[3], 0x4000);
+            }
+        }
+        if (flags & 0x200)
+            metrics_from = (int32_t)nparts;
+        if (flags & 2) {
+            int32_t dx = scale_fu_x(h, a1), dy = scale_fu_y(h, a2);
+            if ((flags & 0x800) && !(flags & 0x1000) && transformed) {
+                int32_t sx = scale_fu_x(h, a1), sy = scale_fu_y(h, a2);
+                dx = mul_div(sx, m[0], 0x4000) + mul_div(sy, m[2], 0x4000);
+                dy = mul_div(sx, m[1], 0x4000) + mul_div(sy, m[3], 0x4000);
+            }
+            if (flags & 4) {
+                dx = (dx + 32) & ~63;
+                dy = (dy + 32) & ~63;
+            }
+            part->dx = dx;
+            part->dy = dy;
+        } else {
+            /* point matching, the first point is in the composite so far. */
+            uint32_t acc = 0;
+            bool found1 = false;
+            int32_t px = 0, py = 0;
+            for (uint32_t k = 0; k < nparts && !found1; k++) {
+                if ((uint32_t)a1 < acc + parts[k].g.n) {
+                    px = parts[k].g.pts[a1 - acc].x + parts[k].dx;
+                    py = parts[k].g.pts[a1 - acc].y + parts[k].dy;
+                    found1 = true;
+                }
+                acc += parts[k].g.n;
+            }
+            if (!found1 || (uint32_t)a2 >= pg->n)
+                goto done;
+            part->dx = px - pg->pts[a2].x;
+            part->dy = py - pg->pts[a2].y;
+        }
+        total_points += pg->n;
+        total_contours += pg->contours;
+        nparts++;
+    } while (flags & 0x20);
+    {
+        if (total_points > MAX_POINTS)
+            goto done;
+        if (!hglyph_alloc(h, out, total_points, total_contours))
+            goto done;
+        uint32_t pi = 0, ci = 0;
+        for (uint32_t k = 0; k < nparts; k++) {
+            HGlyph *pg = &parts[k].g;
+            for (uint32_t i = 0; i < pg->n; i++) {
+                out->pts[pi + i].x = pg->pts[i].x + parts[k].dx;
+                out->pts[pi + i].y = pg->pts[i].y + parts[k].dy;
+                out->orus[pi + i] = pg->orus[i];
+                out->tag[pi + i] = pg->tag[i] & TAG_ON;
+                out->on[pi + i] = pg->on[i];
+            }
+            for (uint32_t c = 0; c < pg->contours; c++)
+                out->ends[ci + c] = (uint16_t)(pg->ends[c] + pi);
+            pi += pg->n;
+            ci += pg->contours;
+        }
+        /* the composite's own phantom points, or those of the component that asked to be used. */
+        phantom_points(h, glyph, gd, out, true);
+        scale_and_round_phantoms(h, out);
+        if (metrics_from >= 0) {
+            HGlyph *mg = &parts[metrics_from].g;
+            for (uint32_t i = 0; i < 4; i++) {
+                out->pts[out->n + i] = mg->pts[mg->n + i];
+                out->orus[out->n + i] = mg->orus[mg->n + i];
+            }
+            out->pts[out->n + 0].x += parts[metrics_from].dx;
+            out->pts[out->n + 1].x += parts[metrics_from].dx;
+            out->adv_fu = mg->adv_fu;
+            out->lsb_fu = mg->lsb_fu;
+        }
+        /* the original positions of the composite are the assembled hinted components. */
+        for (uint32_t i = 0; i < out->n + 4; i++)
+            out->org[i] = out->pts[i];
+        if (last_flags & 0x100) {
+            if (off + 2 <= gd.size) {
+                uint32_t ilen = be16(gd.data + off);
+                if (off + 2 + ilen <= gd.size) {
+                    Code prog = {gd.data + off + 2, ilen};
+                    run_glyph_program(h, out, prog);
+                }
+            }
+        }
+        ok = true;
+    }
+done:
+    for (uint32_t k = 0; k <= nparts && k < MAX_PARTS; k++)
+        hglyph_free(h, &parts[k].g);
+    mime_free(&h->alloc, parts);
+    return ok;
+}
+
+static bool load_hglyph(const MimeTtfHinter *h, uint16_t glyph, unsigned depth, HGlyph *out)
+{
+    memset(out, 0, sizeof(*out));
+    MimeTtfTable gd;
+    if (!mime_ttf_glyph_data(h->font, glyph, &gd))
+        return false;
+    bool ok;
+    int contours = gd.size >= 10 ? (int16_t)be16(gd.data) : 0;
+    if (gd.size == 0)
+        ok = load_simple(h, glyph, gd, 0, out);
+    else if (gd.size < 10)
+        ok = false;
+    else if (contours >= 0)
+        ok = load_simple(h, glyph, gd, contours, out);
+    else
+        ok = load_composite(h, glyph, gd, depth, out);
+    if (!ok)
+        hglyph_free(h, out);
+    return ok;
+}
+
+/* ------------------------------------------------------------------ public glyph access */
+
+bool mime_ttf_hint_advance(const MimeTtfHinter *h, uint16_t glyph, int32_t *advance)
+{
+    HGlyph g;
+    if (!h || !load_hglyph(h, glyph, 0, &g))
+        return false;
+    int32_t adv = g.pts[g.n + 1].x - g.pts[g.n].x;
+    hglyph_free(h, &g);
+    *advance = adv;
+    return true;
+}
+
+bool mime_ttf_hint_walk(const MimeTtfHinter *h, uint16_t glyph, const MimeTtfSink *sink)
+{
+    HGlyph g;
+    if (!h || !sink || !load_hglyph(h, glyph, 0, &g))
+        return false;
+    int32_t shift = g.pts[g.n].x;
+    uint32_t first = 0;
+    for (uint32_t c = 0; c < g.contours; c++) {
+        for (uint32_t i = first; i <= g.ends[c]; i++)
+            sink->point(sink->ctx, (float)(g.pts[i].x - shift) / 64.0f, (float)g.pts[i].y / 64.0f, g.on[i] != 0);
+        sink->end(sink->ctx);
+        first = (uint32_t)g.ends[c] + 1u;
+    }
+    hglyph_free(h, &g);
+    return true;
+}
