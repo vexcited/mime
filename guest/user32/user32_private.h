@@ -141,6 +141,7 @@ COLORREF UserThemeTextColor(int part, int state, COLORREF fallback);
 void UserDrawFocusRect(HDC dc, const RECT *r);
 HFONT UserGetMessageFont(UINT dpi);
 HFONT UserGetMessageBoxFont(UINT dpi);
+UINT UserDialogDpi(HWND owner, DWORD style); /* the dpi a dialog is made for, dialog.c. */
 UINT UserWindowDpi(HWND hwnd);
 
 /* scroll.c: scroll bar state lives in window properties. */

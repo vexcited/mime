@@ -269,7 +269,7 @@ static int box_layout_and_run(MSGBOX *mb)
 {
     MSGBOXPARAMSW *p = &mb->Params;
     UINT style = p->dwStyle;
-    UINT dpi = GetDpiForSystem();
+    UINT dpi = UserDialogDpi(p->hwndOwner, 0);
     LPCWSTR text = p->lpszText ? p->lpszText : L"";
     LPCWSTR caption = p->lpszCaption;
     WCHAR text_buf[1024], caption_buf[256];

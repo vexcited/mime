@@ -720,7 +720,7 @@ static UINT monitor_dpi(HMONITOR monitor)
  * owner, or the one the pointer is on for a dialog centered on it, and a child dialog for the dpi of its parent. else it
  * is the dpi of the system, and a move to another monitor scales the dialog afterward.
  */
-static UINT dialog_dpi(HWND owner, DWORD style)
+UINT UserDialogDpi(HWND owner, DWORD style)
 {
     UINT dpi = GetDpiForSystem();
     if (!AreDpiAwarenessContextsEqual(GetThreadDpiAwarenessContext(), (DPI_AWARENESS_CONTEXT)-4))
@@ -746,7 +746,7 @@ HWND UserCreateDialog(HINSTANCE instance, LPCDLGTEMPLATEW tmpl, HWND owner, DLGP
 {
     TEMPLATE_INFO t;
     parse_template(tmpl, &t);
-    UINT dpi = dialog_dpi(owner, t.Style);
+    UINT dpi = UserDialogDpi(owner, t.Style);
 
     DIALOG *d = UserAlloc(sizeof(DIALOG));
     if (!d)
