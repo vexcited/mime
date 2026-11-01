@@ -206,6 +206,14 @@ UINT MimeMsiOpenProductEx(PCWSTR product, PCWSTR package, MSIHANDLE *out)
     PWSTR path = nullptr, source = nullptr, transforms = nullptr;
     MSIHANDLE database = 0;
     error = package ? ERROR_SUCCESS : MimeMsiRegistryText(key, L"LocalPackage", &path);
+    /* an advertised product has no cached package, and is read from its source. */
+    if (error == ERROR_FILE_NOT_FOUND && !package && MsiQueryProductStateW(product) == INSTALLSTATE_ADVERTISED) {
+        WCHAR found[MAX_PATH];
+        error = MimeMsiFindPackageSource(product, found, RTL_NUMBER_OF(found));
+        path = error ? nullptr : MimeMsiDuplicate(found);
+        if (!error && !path)
+            error = ERROR_NOT_ENOUGH_MEMORY;
+    }
     if (!error && !package && (!*path || wcslen(path) > 32760))
         error = ERROR_BAD_CONFIGURATION;
     if (!error)

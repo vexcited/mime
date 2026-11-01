@@ -5,6 +5,10 @@ EXPORTS
     DllGetVersion=_DllGetVersion@4 @182
     DllRegisterServer=_DllRegisterServer@0 @298
     DllUnregisterServer=_DllUnregisterServer@0 @299
+    MsiAdvertiseProductA=_MsiAdvertiseProductA@16 @5
+    MsiAdvertiseProductExA=_MsiAdvertiseProductExA@24 @227
+    MsiAdvertiseProductExW=_MsiAdvertiseProductExW@24 @228
+    MsiAdvertiseProductW=_MsiAdvertiseProductW@16 @6
     MsiApplyPatchW=_MsiApplyPatchW@16 @175
     MsiCloseAllHandles=_MsiCloseAllHandles@0 @7
     MsiCloseHandle=_MsiCloseHandle@4 @8

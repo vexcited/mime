@@ -967,3 +967,23 @@ UINT WINAPI MsiViewGetErrorA(MSIHANDLE view, LPSTR column, LPDWORD size)
     }
     return result;
 }
+
+UINT WINAPI MsiAdvertiseProductExA(LPCSTR package, LPCSTR script, LPCSTR transforms, LANGID language, DWORD platform, DWORD options)
+{
+    PWSTR wide_package = to_wide(package), wide_transforms = to_wide(transforms);
+    /* a script argument below the addresses says who the product is advertised to. */
+    PWSTR wide_script = (UINT_PTR)script > 1 ? to_wide(script) : nullptr;
+    UINT error = (package && !wide_package) || (transforms && !wide_transforms) || ((UINT_PTR)script > 1 && !wide_script) ?
+                 ERROR_NOT_ENOUGH_MEMORY :
+                 MsiAdvertiseProductExW(wide_package, (UINT_PTR)script > 1 ? wide_script : (LPCWSTR)script, wide_transforms,
+                                        language, platform, options);
+    MimeMsiFree(wide_package);
+    MimeMsiFree(wide_script);
+    MimeMsiFree(wide_transforms);
+    return error;
+}
+
+UINT WINAPI MsiAdvertiseProductA(LPCSTR package, LPCSTR script, LPCSTR transforms, LANGID language)
+{
+    return MsiAdvertiseProductExA(package, script, transforms, language, 0, 0);
+}

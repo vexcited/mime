@@ -213,6 +213,40 @@ UINT MimeMsiApplyTransformList(MSIHANDLE handle, PCWSTR list, PCWSTR source, BOO
     return error;
 }
 
+/*
+ * the transforms that change the product code, which make an instance: the summary of a transform names the product
+ * codes it is for and the one it leaves, as the first and the second GUID of its revision number.
+ */
+UINT MimeMsiInstanceTransforms(MSIHANDLE handle, ULONG *count, BOOL *first, WCHAR code[39])
+{
+    *count = 0;
+    *first = FALSE;
+    UINT error = ERROR_SUCCESS;
+    AcquireSRWLockShared(&MimeMsiLock);
+    MIME_MSI_DATABASE *database = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_DATABASE);
+    if (!database)
+        error = ERROR_INVALID_HANDLE;
+    ULONG index = 0;
+    for (MIME_MSI_TRANSFORM *entry = database ? database->Transforms : nullptr; !error && entry; entry = entry->Next, index++) {
+        MIME_MSI_SUMMARY_VALUE value;
+        if (MimeMsiSummaryProperty(entry->Database, 9, &value))
+            continue;
+        PCWSTR text = value.Type == 30 ? value.Text : nullptr;
+        PCWSTR separator = text ? wcschr(text, L';') : nullptr;
+        if (text && separator && separator - text >= 38 && wcslen(separator + 1) >= 38 &&
+            _wcsnicmp(text, separator + 1, 38)) {
+            if (!(*count)++) {
+                *first = !index;
+                memcpy(code, separator + 1, 38 * sizeof(WCHAR));
+                code[38] = 0;
+            }
+        }
+        MimeMsiFree(value.Text);
+    }
+    ReleaseSRWLockShared(&MimeMsiLock);
+    return error;
+}
+
 /* caches the applied patches in order, so the product reopens with them. */
 UINT MimeMsiCachePatches(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product_path, PCWSTR cache)
 {

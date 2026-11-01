@@ -35,6 +35,16 @@ typedef enum {
 
 MSIAPI UINT WINAPI MsiApplyPatchW(LPCWSTR patch, LPCWSTR package, INSTALLTYPE type, LPCWSTR command);
 
+/* who an advertisement is for, in the place of a script file. */
+#define ADVERTISEFLAGS_MACHINEASSIGN 0
+#define ADVERTISEFLAGS_USERASSIGN 1
+MSIAPI UINT WINAPI MsiAdvertiseProductW(LPCWSTR package, LPCWSTR script, LPCWSTR transforms, LANGID language);
+MSIAPI UINT WINAPI MsiAdvertiseProductA(LPCSTR package, LPCSTR script, LPCSTR transforms, LANGID language);
+MSIAPI UINT WINAPI MsiAdvertiseProductExW(LPCWSTR package, LPCWSTR script, LPCWSTR transforms, LANGID language, DWORD platform,
+                                          DWORD options);
+MSIAPI UINT WINAPI MsiAdvertiseProductExA(LPCSTR package, LPCSTR script, LPCSTR transforms, LANGID language, DWORD platform,
+                                          DWORD options);
+
 typedef enum {
     INSTALLFEATUREATTRIBUTE_FAVORLOCAL = 1,
     INSTALLFEATUREATTRIBUTE_FAVORSOURCE = 2,

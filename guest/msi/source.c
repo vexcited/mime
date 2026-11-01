@@ -37,7 +37,8 @@ static UINT source_product(PCWSTR product, PCWSTR sid, MSIINSTALLCONTEXT context
     DWORD state, type, bytes = sizeof(state);
     error = RegQueryValueExW(key, L"State", nullptr, &type, (BYTE *)&state, &bytes);
     RegCloseKey(key);
-    if (error || type != REG_DWORD || bytes != sizeof(state) || state != INSTALLSTATE_DEFAULT)
+    if (error || type != REG_DWORD || bytes != sizeof(state) ||
+        (state != INSTALLSTATE_DEFAULT && state != INSTALLSTATE_ADVERTISED))
         return ERROR_BAD_CONFIGURATION;
     wcscat(path, L"\\SourceList");
     return ERROR_SUCCESS;

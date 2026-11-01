@@ -6,6 +6,11 @@
 #include <mime/win32/winuser.h>
 #include <rtl.h>
 
+#ifndef ADVERTISEFLAGS_MACHINEASSIGN
+MSIAPI UINT WINAPI MsiAdvertiseProductExW(LPCWSTR package, LPCWSTR script, LPCWSTR transforms, LANGID language, DWORD platform,
+                                          DWORD options);
+#endif
+
 #define ERROR_SUCCESS_REBOOT_REQUIRED 3010L
 #define ERROR_SUCCESS_REBOOT_INITIATED 1641L
 
@@ -28,6 +33,10 @@ typedef struct COMMAND {
     PWSTR Reboot;         /* the REBOOT value a switch asked for. */
     PWSTR PatchPath;
     PWSTR Pipe;
+    PWSTR Transforms;     /* the list /t gives an advertisement. */
+    PWSTR AdvertiseFor;   /* the letter after /j, who the product is advertised to. */
+    int Language;
+    BOOL NewInstance;
     BOOL Bad;
 } COMMAND;
 
@@ -175,9 +184,20 @@ static BOOL parse(COMMAND *command, PCWSTR line)
         BOOL takes_target = FALSE;
         if (match(option, L"?") || match(option, L"h") || match(option, L"help")) {
             command->Action = ACTION_HELP;
-        } else if (match(option, L"n")) {
+        } else if (match(option, L"n") && command->Action != ACTION_ADVERTISE) {
             /* /n names the product for /i, ignored since a package path carries its own code. */
             line = next_word(line, argument, RTL_NUMBER_OF(argument), &start);
+        } else if ((match(option, L"n") || match(option, L"c")) && command->Action == ACTION_ADVERTISE) {
+            /* an advertisement of a new instance, which has its own transform. */
+            command->NewInstance = TRUE;
+        } else if (match(option, L"t")) {
+            line = next_word(line, argument, RTL_NUMBER_OF(argument), &start);
+            command->Transforms = copy_text(argument);
+        } else if (match(option, L"g")) {
+            line = next_word(line, argument, RTL_NUMBER_OF(argument), &start);
+            command->Language = 0;
+            for (PCWSTR digit = argument; *digit >= L'0' && *digit <= L'9'; digit++)
+                command->Language = command->Language * 10 + (*digit - L'0');
         } else if (match(option, L"i") || match(option, L"package")) {
             command->Action = ACTION_INSTALL;
             takes_target = TRUE;
@@ -193,6 +213,7 @@ static BOOL parse(COMMAND *command, PCWSTR line)
             takes_target = TRUE;
         } else if (starts(option, L"j")) {
             command->Action = ACTION_ADVERTISE;
+            command->AdvertiseFor = copy_text(option + 1);
             takes_target = TRUE;
         } else if (match(option, L"p") || match(option, L"update")) {
             /* a patch of an administrative image stays an administrative installation. */
@@ -227,8 +248,7 @@ static BOOL parse(COMMAND *command, PCWSTR line)
             command->Pipe = copy_text(argument);
         } else if (match(option, L"regserver") || match(option, L"unregserver") || match(option, L"service") ||
                    match(option, L"y") || match(option, L"z") || match(option, L"embedding") || match(option, L"v") ||
-                   match(option, L"m") || match(option, L"t") || match(option, L"c") || match(option, L"g") ||
-                   match(option, L"w") || match(option, L"d")) {
+                   match(option, L"m") || match(option, L"c") || match(option, L"w") || match(option, L"d")) {
             command->Action = ACTION_REGISTER;
         } else {
             /* a bad switch, but the rest is still read for the UI level it asks for. */
@@ -319,6 +339,8 @@ static UINT run(COMMAND *command)
 {
     if (command->Level != INSTALLUILEVEL_NOCHANGE || command->LevelSet)
         MsiSetInternalUI(command->LevelSet ? command->Level : INSTALLUILEVEL_FULL, nullptr);
+    else if (command->Action == ACTION_ADVERTISE)
+        MsiSetInternalUI(INSTALLUILEVEL_BASIC, nullptr);
     if (command->LogPath)
         MsiEnableLogW(command->LogMode, command->LogPath, command->LogAttributes);
     WCHAR reboot[64] = {};
@@ -390,9 +412,30 @@ static UINT run(COMMAND *command)
             HeapFree(GetProcessHeap(), 0, all);
         }
         break;
-    case ACTION_ADVERTISE:
-        error = ERROR_CALL_NOT_IMPLEMENTED;
+    case ACTION_ADVERTISE: {
+        /* a letter says who: u for the user, m or none for everyone. */
+        PCWSTR who = command->AdvertiseFor ? command->AdvertiseFor : L"";
+        if (*who && (who[1] || ((*who | 0x20) != L'u' && (*who | 0x20) != L'm'))) {
+            error = ERROR_INVALID_PARAMETER;
+            break;
+        }
+        LPCWSTR context = (LPCWSTR)(UINT_PTR)((*who | 0x20) == L'u');
+        error = MsiAdvertiseProductExW(command->Target, context, command->Transforms, (LANGID)command->Language, 0,
+                                       command->NewInstance);
+        /* a package named without its extension is looked for with one. */
+        if (error == ERROR_FILE_NOT_FOUND && !wcschr(command->Target, L'.')) {
+            SIZE_T length = wcslen(command->Target);
+            PWSTR named = allocate((length + 5) * sizeof(WCHAR));
+            if (named) {
+                memcpy(named, command->Target, length * sizeof(WCHAR));
+                wcscpy(named + length, L".msi");
+                error = MsiAdvertiseProductExW(named, context, command->Transforms, (LANGID)command->Language, 0,
+                                               command->NewInstance);
+                HeapFree(GetProcessHeap(), 0, named);
+            }
+        }
         break;
+    }
     default:
         error = ERROR_INVALID_COMMAND_LINE;
         break;

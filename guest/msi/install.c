@@ -627,6 +627,11 @@ UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features,
     for (ULONG i = 0; i < package->FeatureCount; i++)
         if (!wcscmp(package->Features[i].Name, name) && package->Features[i].AttributesSet)
             attributes = package->Features[i].Attributes;
+    /* a feature marked so is never advertised. */
+    if (package->Advertise && attributes != MSI_NULL_INTEGER && (attributes & 8)) {
+        *selected = FALSE;
+        return ERROR_SUCCESS;
+    }
     BOOL follows = attributes != MSI_NULL_INTEGER && (attributes & 2);
     PCWSTR parent = MimeMsiText(package->Database, features, row, parent_column);
     BOOL parent_selected = TRUE;
@@ -1647,7 +1652,8 @@ UINT MimeMsiStandardAction(MIME_MSI_PACKAGE *package, PCWSTR action)
         return error;
     }
     if (!wcscmp(action, L"CostFinalize")) {
-        if (package->CostStage != 2)
+        /* an advertisement costs no files, so it goes from the start of costing to its end. */
+        if (package->CostStage != 2 && !(package->Advertise && package->CostStage == 1))
             return ERROR_FUNCTION_NOT_CALLED;
         BOOL changed = FALSE;
         UINT error = package->Admin ? ERROR_SUCCESS : MimeMsiProcessConditions(package, &changed);

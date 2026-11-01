@@ -178,3 +178,7 @@ EXPORTS
     MsiDatabaseIsTablePersistentA @164
     MsiDatabaseGetPrimaryKeysA @25
     MsiViewGetErrorA @161
+    MsiAdvertiseProductA @5
+    MsiAdvertiseProductW @6
+    MsiAdvertiseProductExA @227
+    MsiAdvertiseProductExW @228

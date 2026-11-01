@@ -135,7 +135,7 @@ static UINT component_action(MIME_MSI_PACKAGE *package, PCWSTR name, ULONG *acti
     BOOL requested = TRUE;
     if (selected)
         error = MimeMsiComponentRequested(package, name, &requested);
-    *action = selected ? (requested ? ACTION_LOCAL : ACTION_NONE) : registered ? ACTION_ABSENT : ACTION_NONE;
+    *action = selected ? (requested ? ACTION_LOCAL : ACTION_NONE) : registered && !package->Advertise ? ACTION_ABSENT : ACTION_NONE;
     return error;
 }
 
@@ -965,6 +965,15 @@ static UINT create_shortcuts(MIME_MSI_PACKAGE *package)
         ULONG action;
         if (!component || component_action(package, component, &action) || action != ACTION_LOCAL)
             continue;
+        if (package->Advertise) {
+            /* only the shortcuts of features are made, as advertised ones. */
+            PWSTR probe = nullptr;
+            UINT status = advertised_target(package, cell_text(package, table, row, L"Target"), component, &probe);
+            BOOL advertised = probe != nullptr;
+            MimeMsiFree(probe);
+            if (status || !advertised)
+                continue;
+        }
         PWSTR path = shortcut_path(package, table, row);
         PWSTR target = nullptr, arguments = nullptr, description = nullptr, directory = nullptr;
         if (!path) {

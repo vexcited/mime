@@ -138,6 +138,7 @@ typedef struct MIME_MSI_SUMMARY_VALUE {
     PWSTR Text;
 } MIME_MSI_SUMMARY_VALUE;
 UINT MimeMsiSummaryProperty(MIME_MSI_DATABASE *database, UINT id, MIME_MSI_SUMMARY_VALUE *value);
+UINT MimeMsiInstanceTransforms(MSIHANDLE database, ULONG *count, BOOL *first, WCHAR code[39]);
 UINT MimeMsiApplyTransformList(MSIHANDLE database, PCWSTR list, PCWSTR source, BOOL secure, BOOL at_source);
 UINT MimeMsiLoadTable(MIME_MSI_DATABASE *database, PCWSTR name, MIME_MSI_TABLE **out);
 UINT MimeMsiReadStream(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZE_T *size);
@@ -190,7 +191,7 @@ typedef struct MIME_MSI_PACKAGE {
     WCHAR MaintenanceProduct[39];
     BOOL Is64Bit;
     /* an administrative installation is running, or the package is the image of one. */
-    BOOL Admin, AdminImage;
+    BOOL Admin, AdminImage, Advertise;
     int SourceType;
     DWORD RegistryView;
     struct MIME_MSI_SCRIPT_ACTION *Deferred, **DeferredTail;
@@ -296,6 +297,7 @@ UINT MimeMsiSetTargetPath(MIME_MSI_PACKAGE *package, PCWSTR name, PCWSTR value);
 
 UINT MimeMsiStandardAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiInstallAdminPackage(MIME_MSI_PACKAGE *package);
+UINT MimeMsiAdvertiseScriptFile(PCWSTR package, PCWSTR script, PCWSTR transforms, LANGID language, DWORD platform, DWORD options);
 UINT MimeMsiFinishTransaction(MIME_MSI_PACKAGE *package, BOOL commit);
 
 UINT MimeMsiCatalogPath(PCWSTR product, WCHAR path[96]);

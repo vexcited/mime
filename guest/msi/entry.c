@@ -203,11 +203,17 @@ static UINT execute_package(MSIHANDLE handle)
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
     if (!error) {
         PCWSTR action = MimeMsiGetProperty(package, L"ACTION");
-        BOOL admin = !_wcsicmp(action, L"ADMIN");
+        BOOL admin = !_wcsicmp(action, L"ADMIN"), advertise = !_wcsicmp(action, L"ADVERTISE");
         if ((*MimeMsiGetProperty(package, L"PATCH") && !package->Database->PatchCount) ||
-            (*action && wcscmp(action, L"INSTALL") && !admin))
+            (*action && wcscmp(action, L"INSTALL") && !admin && !advertise))
             error = ERROR_CALL_NOT_IMPLEMENTED;
-        else if (admin) {
+        else if (advertise) {
+            /* the product is made known to the machine or the user, with nothing of it installed. */
+            ui_sequence = L"AdvtUISequence";
+            execute_sequence = L"AdvtExecuteSequence";
+            package->Advertise = TRUE;
+            error = MimeMsiSetProperty(package, L"ACTION", L"ADVERTISE");
+        } else if (admin) {
             /* the image is made on the target, whatever is installed, and a patch of one is made in its own folder. */
             ui_sequence = L"AdminUISequence";
             execute_sequence = L"AdminExecuteSequence";
@@ -308,7 +314,7 @@ static UINT open_installed(PCWSTR product, PCWSTR package, PCWSTR command, MSIHA
     return error;
 }
 
-static UINT reopen_installed(MSIHANDLE *handle, PCWSTR command)
+static UINT reopen_installed(MSIHANDLE *handle, PCWSTR command, PCWSTR instance)
 {
     AcquireSRWLockShared(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(*handle, MIME_MSI_KIND_PACKAGE);
@@ -321,7 +327,14 @@ static UINT reopen_installed(MSIHANDLE *handle, PCWSTR command)
         return package ? ERROR_NOT_ENOUGH_MEMORY : ERROR_INVALID_HANDLE;
     }
     UINT error = ERROR_SUCCESS;
-    if (MsiQueryProductStateW(product) == INSTALLSTATE_DEFAULT) {
+    /* the instance a code names is the product to maintain, whatever code the package has. */
+    if (*instance) {
+        MimeMsiFree(product);
+        product = MimeMsiDuplicate(instance);
+        if (!product)
+            error = ERROR_NOT_ENOUGH_MEMORY;
+    }
+    if (!error && MsiQueryProductStateW(product) == INSTALLSTATE_DEFAULT) {
         MSIHANDLE reopened = 0;
         error = open_installed(product, original, command, &reopened);
         if (!error) {
@@ -334,12 +347,68 @@ static UINT reopen_installed(MSIHANDLE *handle, PCWSTR command)
     return error;
 }
 
-/* whether the properties ask for an administrative installation, which never works on an installed product. */
+/* the properties of a multiple instance installation: a new instance with the transform that makes it, or an old one by its code. */
+static UINT instance_properties(MSIHANDLE handle, BOOL *fresh, WCHAR code[39])
+{
+    WCHAR flag[8], transforms[8];
+    DWORD size = RTL_NUMBER_OF(flag), transforms_size = RTL_NUMBER_OF(transforms), code_size = 39;
+    *fresh = FALSE;
+    code[0] = 0;
+    UINT flag_error = MsiGetPropertyW(handle, L"MSINEWINSTANCE", flag, &size);
+    UINT code_error = MsiGetPropertyW(handle, L"MSIINSTANCEGUID", code, &code_size);
+    UINT list_error = MsiGetPropertyW(handle, L"TRANSFORMS", transforms, &transforms_size);
+    if ((flag_error && flag_error != ERROR_MORE_DATA) || (code_error && code_error != ERROR_MORE_DATA) ||
+        (list_error && list_error != ERROR_MORE_DATA))
+        return flag_error ? flag_error : code_error ? code_error : list_error;
+    BOOL named = code_error == ERROR_MORE_DATA || *code;
+    if (flag_error == ERROR_MORE_DATA || *flag) {
+        /* a new instance needs the transform that makes it, and has no code of an old one. */
+        if (named || (!list_error && !*transforms))
+            return ERROR_INVALID_COMMAND_LINE;
+        *fresh = TRUE;
+        return ERROR_SUCCESS;
+    }
+    if (!named)
+        return ERROR_SUCCESS;
+    WCHAR packed[33];
+    WCHAR info[8];
+    DWORD info_size = RTL_NUMBER_OF(info);
+    if (code_error || !MimeMsiPackGuid(code, packed))
+        return ERROR_INVALID_COMMAND_LINE;
+    INSTALLSTATE state = MsiQueryProductStateW(code);
+    if (state != INSTALLSTATE_ADVERTISED && state != INSTALLSTATE_DEFAULT)
+        return ERROR_INVALID_COMMAND_LINE;
+    if (MsiGetProductInfoW(code, L"InstanceType", info, &info_size) || wcscmp(info, L"1"))
+        return ERROR_INVALID_COMMAND_LINE;
+    return ERROR_SUCCESS;
+}
+
+/* the transform that makes an instance is one, comes first and leaves a product code that is not installed. */
+static UINT instance_transform(MSIHANDLE handle)
+{
+    MSIHANDLE database = MsiGetActiveDatabase(handle);
+    ULONG count;
+    BOOL first;
+    WCHAR code[39];
+    UINT error = database ? MimeMsiInstanceTransforms(database, &count, &first, code) : ERROR_NOT_ENOUGH_MEMORY;
+    if (database)
+        MsiCloseHandle(database);
+    if (error)
+        return error;
+    if (count != 1 || !first)
+        return ERROR_INVALID_COMMAND_LINE;
+    INSTALLSTATE state = MsiQueryProductStateW(code);
+    if (state == INSTALLSTATE_ADVERTISED || state == INSTALLSTATE_DEFAULT)
+        return ERROR_INVALID_COMMAND_LINE;
+    return MsiSetPropertyW(handle, L"MSIINSTANCEGUID", code);
+}
+
+/* whether the properties ask for an administrative installation or an advertisement, which are never of an installed product. */
 static BOOL administrative(MSIHANDLE handle)
 {
     WCHAR action[16];
     DWORD size = RTL_NUMBER_OF(action);
-    return !MsiGetPropertyW(handle, L"ACTION", action, &size) && !_wcsicmp(action, L"ADMIN");
+    return !MsiGetPropertyW(handle, L"ACTION", action, &size) && (!_wcsicmp(action, L"ADMIN") || !_wcsicmp(action, L"ADVERTISE"));
 }
 
 UINT WINAPI MsiInstallProductW(LPCWSTR path, LPCWSTR command)
@@ -355,10 +424,16 @@ UINT WINAPI MsiInstallProductW(LPCWSTR path, LPCWSTR command)
         error = ERROR_INSTALL_PACKAGE_OPEN_FAILED;
     if (!error)
         error = command_properties(handle, command);
-    if (!error && !administrative(handle))
-        error = reopen_installed(&handle, command);
+    BOOL fresh = FALSE;
+    WCHAR instance[39];
+    if (!error)
+        error = instance_properties(handle, &fresh, instance);
+    if (!error && !administrative(handle) && !fresh)
+        error = reopen_installed(&handle, command, instance);
     if (!error)
         error = install_transforms(&handle, command);
+    if (!error && fresh)
+        error = instance_transform(handle);
     if (!error)
         error = install_patches(&handle, command);
     if (!error)

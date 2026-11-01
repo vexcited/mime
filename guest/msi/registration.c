@@ -259,7 +259,8 @@ static UINT register_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
     }
     PCWSTR product = MimeMsiGetProperty(package, L"ProductCode");
     INSTALLSTATE previous = MsiQueryProductStateW(product);
-    if (previous != INSTALLSTATE_UNKNOWN)
+    /* an advertised product is installed over its advertisement. */
+    if (previous != INSTALLSTATE_UNKNOWN && previous != INSTALLSTATE_ADVERTISED)
         return ERROR_CALL_NOT_IMPLEMENTED;
     WCHAR packed[33], cache[MAX_PATH];
     if (!MimeMsiPackGuid(product, packed))
@@ -288,6 +289,9 @@ static UINT register_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
         DWORD state = INSTALLSTATE_DEFAULT;
         error = MimeMsiWriteRegistry(package, root, path, L"State", REG_DWORD, &state, sizeof(state));
     }
+    /* a product made by an instance transform says so. */
+    if (!error && *MimeMsiGetProperty(package, L"MSIINSTANCEGUID") && *MimeMsiGetProperty(package, L"MSINEWINSTANCE"))
+        error = write_text(package, root, path, L"InstanceType", L"1");
     if (!error)
         error = MimeMsiCacheTransforms(package, root, path, cache);
     if (!error)
@@ -298,6 +302,45 @@ static UINT register_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
         error = MimeMsiRegisterSource(package, root, path);
     if (!error)
         error = write_uninstall_entry(package, root, cache);
+    if (!error)
+        package->CatalogRegistered = TRUE;
+    return error;
+}
+
+/* the product is known to the machine or the user as advertised, with the source to install it from and nothing cached. */
+static UINT advertise_registration(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
+{
+    if (package->CatalogRegistered)
+        return ERROR_SUCCESS;
+    PCWSTR product = MimeMsiGetProperty(package, L"ProductCode");
+    INSTALLSTATE previous = MsiQueryProductStateW(product);
+    if (previous != INSTALLSTATE_UNKNOWN && previous != INSTALLSTATE_ADVERTISED)
+        return ERROR_CALL_NOT_IMPLEMENTED;
+    WCHAR packed[33], cache[MAX_PATH];
+    if (!MimeMsiPackGuid(product, packed))
+        return ERROR_INSTALL_PACKAGE_INVALID;
+    UINT length = GetWindowsDirectoryW(cache, RTL_NUMBER_OF(cache));
+    if (!length || length + 48 >= RTL_NUMBER_OF(cache))
+        return ERROR_BAD_PATHNAME;
+    _snwprintf(cache + length, RTL_NUMBER_OF(cache) - length, L"\\Installer\\%s.msi", packed);
+    UINT error = write_product_fields(package, root, path);
+    PCWSTR filename = wcsrchr(package->Database->Path, L'\\');
+    if (!error)
+        error = write_text(package, root, path, L"PackageName", filename ? filename + 1 : package->Database->Path);
+    if (!error) {
+        DWORD state = INSTALLSTATE_ADVERTISED;
+        error = MimeMsiWriteRegistry(package, root, path, L"State", REG_DWORD, &state, sizeof(state));
+    }
+    if (!error && *MimeMsiGetProperty(package, L"MSIINSTANCEGUID") && *MimeMsiGetProperty(package, L"MSINEWINSTANCE"))
+        error = write_text(package, root, path, L"InstanceType", L"1");
+    if (!error)
+        error = MimeMsiCacheTransforms(package, root, path, cache);
+    if (!error)
+        error = MimeMsiCachePatches(package, root, path, cache);
+    if (!error)
+        error = MimeMsiSaveDirectories(package, root, path);
+    if (!error)
+        error = MimeMsiRegisterSource(package, root, path);
     if (!error)
         package->CatalogRegistered = TRUE;
     return error;
@@ -363,7 +406,7 @@ static UINT publish_features(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
         error = MimeMsiFeatureSelected(package, table, name, 0, &selected);
         if (error)
             return error;
-        DWORD state = selected ? INSTALLSTATE_LOCAL : INSTALLSTATE_ABSENT;
+        DWORD state = selected ? (package->Advertise ? INSTALLSTATE_ADVERTISED : INSTALLSTATE_LOCAL) : INSTALLSTATE_ABSENT;
         error = MimeMsiWriteRegistry(package, root, features, name, REG_DWORD, &state, sizeof(state));
         if (!error)
             error = write_text(package, root, parents, name, parent_name ? parent_name : L"");
@@ -429,6 +472,14 @@ UINT MimeMsiRegistrationAction(MIME_MSI_PACKAGE *package, PCWSTR action)
     UINT error = MimeMsiCatalogPath(MimeMsiGetProperty(package, L"ProductCode"), path);
     if (error)
         return ERROR_INSTALL_PACKAGE_INVALID;
+    if (package->Advertise) {
+        /* an advertisement registers the product when it publishes, and has no components of its own to process. */
+        if (registration || components)
+            return ERROR_SUCCESS;
+        UINT status = (features || publish) ? advertise_registration(package, root, path) : ERROR_SUCCESS;
+        if (status)
+            return status;
+    }
     if (components)
         return MimeMsiProcessComponents(package, root);
     if (qualified || unqualified)
