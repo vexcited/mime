@@ -44,6 +44,7 @@ struct VbOcx {
     /* what the extender keeps for the control. */
     BSTR tag;
     BSTR tooltip;
+    int align;
 };
 
 static const GUID IID_ClassFactory2 = {0xB196B28F, 0xBAB4, 0x101A, {0xB6, 0x9C, 0x00, 0xAA, 0x00, 0x34, 0x1D, 0x07}};
@@ -494,7 +495,7 @@ static HRESULT load_control(VbOcx *o)
             ULONG written;
             ((HRESULT(S *)(void *, const void *, ULONG, ULONG *))SLOT(stream, 4))(stream, c->blob, c->blob_size, &written);
             LARGE_INTEGER zero = {};
-            ((HRESULT(S *)(void *, DWORD, DWORD, DWORD, DWORD, void *))SLOT(stream, 5))(stream, zero.LowPart, zero.HighPart, 0, 0, nullptr);
+            ((HRESULT(S *)(void *, DWORD, DWORD, DWORD, void *))SLOT(stream, 5))(stream, zero.LowPart, zero.HighPart, 0, nullptr);
             hr = ((HRESULT(S *)(void *, void *))SLOT(persist, 5))(persist, stream);
             release(stream);
         }
@@ -568,6 +569,7 @@ void VbOcxCreate(VbCtl *c)
         wsprintfA(debug, "msvbvm60: the control %s did not load its data: 0x%08lX\n", c->name, (unsigned long)hr);
         VbOutputDebug(debug);
     }
+    o->align = c->stream_align;
     SIZEL extent = {himetric(VbCtlNumber(c, "Width")), himetric(VbCtlNumber(c, "Height"))};
     ((HRESULT(S *)(void *, DWORD, SIZEL *))SLOT(o->object, 17))(o->object, 1, &extent);
     connect_events(o, rec);
@@ -630,7 +632,7 @@ void VbOcxDestroy(VbCtl *c)
 typedef enum {
     EXT_NAME = 1, EXT_INDEX, EXT_LEFT, EXT_TOP, EXT_WIDTH, EXT_HEIGHT, EXT_VISIBLE, EXT_TAG, EXT_PARENT, EXT_CONTAINER, EXT_TABINDEX, EXT_TABSTOP,
     EXT_OBJECT, EXT_TOOLTIP, EXT_MOVE, EXT_SETFOCUS, EXT_REFRESH, EXT_ZORDER, EXT_DRAG, EXT_DRAGMODE, EXT_HELPCONTEXT, EXT_WHATSTHIS, EXT_ENABLED,
-    EXT_HWND
+    EXT_HWND, EXT_ALIGN
 } ExtMember;
 
 static const struct {
@@ -641,7 +643,7 @@ static const struct {
     {"Visible", EXT_VISIBLE}, {"Tag", EXT_TAG}, {"Parent", EXT_PARENT}, {"Container", EXT_CONTAINER}, {"TabIndex", EXT_TABINDEX},
     {"TabStop", EXT_TABSTOP}, {"Object", EXT_OBJECT}, {"ToolTipText", EXT_TOOLTIP}, {"Move", EXT_MOVE}, {"SetFocus", EXT_SETFOCUS},
     {"Refresh", EXT_REFRESH}, {"ZOrder", EXT_ZORDER}, {"Drag", EXT_DRAG}, {"DragMode", EXT_DRAGMODE}, {"HelpContextID", EXT_HELPCONTEXT},
-    {"WhatsThisHelpID", EXT_WHATSTHIS}, {"Enabled", EXT_ENABLED}, {"hWnd", EXT_HWND},
+    {"WhatsThisHelpID", EXT_WHATSTHIS}, {"Enabled", EXT_ENABLED}, {"hWnd", EXT_HWND}, {"Align", EXT_ALIGN},
 };
 
 static VbCtl *extender_of(void *self)
@@ -697,12 +699,6 @@ static HRESULT S ext_names(void *self, const GUID *iid, LPOLESTR *names, UINT co
     VbCtl *c = extender_of(self);
     if (!c)
         return E_POINTER;
-    {
-        char debug[120], narrow[48];
-        WideCharToMultiByte(CP_ACP, 0, names[0], -1, narrow, sizeof(narrow), nullptr, nullptr);
-        wsprintfA(debug, "msvbvm60: GetIDsOfNames %s of %s\n", narrow, c->name);
-        VbOutputDebug(debug);
-    }
     /* the control's own members win over the ones the container gives every control. */
     HRESULT hr = c->ocx->dispatch ? c->ocx->dispatch->lpVtbl->GetIDsOfNames(c->ocx->dispatch, iid, names, count, lcid, ids) : DISP_E_UNKNOWNNAME;
     if (SUCCEEDED(hr) || count != 1)
@@ -842,6 +838,14 @@ static HRESULT extender_member(VbCtl *c, ExtMember m, WORD flags, DISPPARAMS *pa
     case EXT_HWND:
         set_variant_long(result, (LONG)(LONG_PTR)o->window, VT_I4);
         return S_OK;
+    case EXT_ALIGN:
+        if (put) {
+            o->align = (int)number;
+            VbFormDock(c->form);
+        } else {
+            set_variant_long(result, o->align, VT_I2);
+        }
+        return S_OK;
     case EXT_MOVE:
         if (!params->cArgs)
             return DISP_E_BADPARAMCOUNT;
@@ -906,4 +910,9 @@ void **VbOcxVtable(void)
             table[i] = i < 7 ? first[i] : VbMakeThunk(i, 8);
     }
     return table;
+}
+
+int VbOcxAlign(VbCtl *c)
+{
+    return c->ocx ? c->ocx->align : 0;
 }

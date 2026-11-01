@@ -51,6 +51,7 @@ struct VbCtl {
     const BYTE *blob;
     ULONG blob_size;
     struct VbOcx *ocx;
+    int stream_align;
 };
 
 typedef struct VbObject {
@@ -94,11 +95,12 @@ struct VbForm {
 
 /* the class number of a control of another library, which has the properties of the container of objects. */
 #define VBC_OCX 38
+#define VBC_MDIFORM 20
+static inline BOOL is_form(const VbCtl *c) { return c->cls == VBC_FORM || c->cls == VBC_MDIFORM; }
 
 extern const VbHeader *g_vb_header;
 
 /* helpers of vbform.c the container uses. */
-const char *VbCtlNameOf(void *object);
 int VbPxX(double twips);
 int VbPxY(double twips);
 double VbCtlNumber(const VbCtl *c, const char *name);
@@ -112,6 +114,8 @@ void VbOcxCreate(VbCtl *c);
 void VbOcxDestroy(VbCtl *c);
 void VbOcxMoved(VbCtl *c);
 void VbOcxShow(VbCtl *c, BOOL visible);
+int VbOcxAlign(VbCtl *c);
+void VbFormDock(VbForm *f);
 void **VbOcxVtable(void);
 LONG VbOcxSlot(VbCtl *c, int slot, DWORD *args);
 void *VbMakeThunk(int slot, int ret);

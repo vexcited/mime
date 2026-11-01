@@ -260,6 +260,17 @@ static const BYTE *load_properties(VbCtl *c, const BYTE *p, const BYTE *limit)
         const VBPROP *prop = &cl->props[k];
         int t = prop->type;
         p++;
+        if (c->cls == VBC_OCX && (k == 57 || k == 58)) {
+            /* the place of a control that has no window on the form, in twips as long words. */
+            p += 4;
+            last = k;
+            continue;
+        }
+        if (c->cls == VBC_OCX && k == 59) {
+            c->stream_align = *p++;
+            last = k;
+            continue;
+        }
         if (!lstrcmpA(prop->name, "Left") || !lstrcmpA(prop->name, "ClientLeft")) {
             int wide = !lstrcmpA(prop->name, "ClientLeft") ? 4 : 2;
             int n = 1;
@@ -384,14 +395,6 @@ static void place(VbCtl *c)
         SetWindowPos(c->hwnd, nullptr, left, top, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-const char *VbCtlNameOf(void *object)
-{
-    if (!object || IsBadReadPtr((BYTE *)object + 0x10, 4))
-        return nullptr;
-    VbCtl *c = *(VbCtl **)((BYTE *)object + 0x10);
-    return c && !IsBadReadPtr(c, 16) && c->magic == MAGIC ? c->name : nullptr;
-}
-
 int VbPxX(double twips) { return to_px_x(twips); }
 int VbPxY(double twips) { return to_px_y(twips); }
 double VbCtlNumber(const VbCtl *c, const char *name) { return number_of(c, find_prop(c, name)); }
@@ -430,11 +433,17 @@ static void apply_text(VbCtl *c)
         SetWindowTextW(c->hwnd, text_of(c, k));
 }
 
+static void timer_update(VbCtl *c);
+
 static void apply_all(VbCtl *c)
 {
-    if (c->cls == VBC_FORM) {
+    if (is_form(c)) {
         if (c->hwnd)
             SetWindowTextW(c->hwnd, text_of(c, find_prop(c, "Caption")));
+        return;
+    }
+    if (c->cls == VBC_TIMER) {
+        timer_update(c);
         return;
     }
     place(c);
@@ -544,6 +553,35 @@ static void menu_click(VbForm *f, UINT command)
         }
 }
 
+/* controls with an alignment take the edges of the client area of their form in the order they were made, and the rest is left to the others. */
+void VbFormDock(VbForm *f)
+{
+    HWND h = f->self->hwnd;
+    RECT rc;
+    if (!h || !GetClientRect(h, &rc))
+        return;
+    int left = 0, top = 0, right = rc.right, bottom = rc.bottom;
+    for (int i = 0; i < f->ordered; i++) {
+        VbCtl *c = f->order[i];
+        int align = c->cls == VBC_OCX ? VbOcxAlign(c) : 0;
+        if (align < 1 || align > 4)
+            continue;
+        int width = to_px_x(NUM(c, "Width")), height = to_px_y(NUM(c, "Height"));
+        RECT r;
+        switch (align) {
+        case 1: r = (RECT){left, top, right, top + height}; top += height; break;
+        case 2: r = (RECT){left, bottom - height, right, bottom}; bottom -= height; break;
+        case 3: r = (RECT){left, top, left + width, bottom}; left += width; break;
+        default: r = (RECT){right - width, top, right, bottom}; right -= width; break;
+        }
+        VbCtlSetNumber(c, "Left", (double)r.left * 1440 / g_dpi_x);
+        VbCtlSetNumber(c, "Top", (double)r.top * 1440 / g_dpi_y);
+        VbCtlSetNumber(c, "Width", (double)(r.right - r.left) * 1440 / g_dpi_x);
+        VbCtlSetNumber(c, "Height", (double)(r.bottom - r.top) * 1440 / g_dpi_y);
+        place(c);
+    }
+}
+
 static void layout_form(VbForm *f)
 {
     VbCtl *c = f->self;
@@ -564,6 +602,7 @@ static void layout_form(VbForm *f)
     }
     SetWindowPos(c->hwnd, nullptr, x == CW_USEDEFAULT ? 0 : x, y == CW_USEDEFAULT ? 0 : y, rc.right - rc.left, rc.bottom - rc.top,
                  SWP_NOZORDER | SWP_NOACTIVATE | (x == CW_USEDEFAULT ? SWP_NOMOVE : 0));
+    VbFormDock(f);
 }
 
 /* ------------------------------------------------------------------ the object of a control */
@@ -626,22 +665,41 @@ static void get_value(VbCtl *c, int k, DWORD *out)
     }
 }
 
+#define TIMER_BASE 0x7000
+
+/* a timer is a timer of the window of its form, which runs while it is enabled and its interval is not zero. */
+static void timer_update(VbCtl *c)
+{
+    HWND h = c->form->self->hwnd;
+    if (!h)
+        return;
+    KillTimer(h, TIMER_BASE + c->position);
+    double interval = NUM(c, "Interval");
+    if (NUM(c, "Enabled") != 0 && interval >= 1)
+        SetTimer(h, TIMER_BASE + c->position, (UINT)interval, nullptr);
+}
+
 static void apply_property(VbCtl *c, int k)
 {
     const VBPROP *p = prop_of(c, k);
     if (!p)
         return;
     const char *n = p->name;
+    if (c->cls == VBC_TIMER) {
+        if (!lstrcmpA(n, "Enabled") || !lstrcmpA(n, "Interval"))
+            timer_update(c);
+        return;
+    }
     if (!lstrcmpA(n, "Caption") || !lstrcmpA(n, "Text")) {
-        if (c->cls == VBC_FORM && c->hwnd)
+        if (is_form(c) && c->hwnd)
             SetWindowTextW(c->hwnd, text_of(c, k));
         else
             apply_text(c);
     } else if (!lstrcmpA(n, "Left") || !lstrcmpA(n, "Top") || !lstrcmpA(n, "Width") || !lstrcmpA(n, "Height")) {
-        if (c->cls != VBC_FORM)
+        if (!is_form(c))
             place(c);
     } else if (!lstrcmpA(n, "Visible")) {
-        if (c->cls == VBC_FORM) {
+        if (is_form(c)) {
             if (c->hwnd)
                 ShowWindow(c->hwnd, NUM(c, "Visible") ? SW_SHOW : SW_HIDE);
         } else if (c->hwnd) {
@@ -663,7 +721,7 @@ static void apply_property(VbCtl *c, int k)
     } else if (!lstrcmpA(n, "ForeColor") || !lstrcmpA(n, "BackColor") || !lstrcmpA(n, "BackStyle") || !lstrcmpA(n, "Alignment")) {
         if (c->hwnd)
             InvalidateRect(c->hwnd, nullptr, TRUE);
-        else if (c->cls == VBC_FORM && c->hwnd)
+        else if (is_form(c) && c->hwnd)
             InvalidateRect(c->hwnd, nullptr, TRUE);
         else
             paint_windowless(c);
@@ -730,7 +788,7 @@ static HRESULT call_method(VbCtl *c, int slot, const VBSLOT *s, DWORD *args)
 {
     (void)args;
     HWND form = c->form->self->hwnd;
-    if (c->cls == VBC_FORM) {
+    if (is_form(c)) {
         switch (s->index) {
         case 4: /* Show */
             c->form->shown = TRUE;
@@ -764,21 +822,7 @@ static HRESULT call_method(VbCtl *c, int slot, const VBSLOT *s, DWORD *args)
     return S_OK;
 }
 
-static LONG dispatch_slot(int slot, DWORD *frame);
-
 LONG __cdecl vb_dispatch(int slot, DWORD *frame)
-{
-    LONG hr = dispatch_slot(slot, frame);
-    if (hr < 0 || slot == 17) {
-        VbCtl *c = ctl_of((void *)(ULONG_PTR)frame[0]);
-        char text[160];
-        wsprintfA(text, "msvbvm60: slot %d of %s (class %d) answered 0x%08lX\n", slot, c ? c->name : "?", c ? c->cls : -1, (unsigned long)hr);
-        VbOutputDebug(text);
-    }
-    return hr;
-}
-
-static LONG dispatch_slot(int slot, DWORD *frame)
 {
     void *object = (void *)(ULONG_PTR)frame[0];
     VbCtl *c = ctl_of(object);
@@ -786,10 +830,11 @@ static LONG dispatch_slot(int slot, DWORD *frame)
         return E_POINTER;
     if (c->cls == VBC_OCX)
         return VbOcxSlot(c, slot, frame + 1);
-    const VBCLASS *cl = &g_classes[c->cls];
+    /* an MDI form has the layout of a form, whose properties it finds by their names in its own table. */
+    const VBCLASS *cl = &g_classes[c->cls == VBC_MDIFORM ? VBC_FORM : c->cls];
     DWORD *args = frame + 1;
     ensure_loaded(c->form);
-    if (slot >= ACCESSOR_BASE && c->cls == VBC_FORM) {
+    if (slot >= ACCESSOR_BASE && is_form(c)) {
         int index = slot - ACCESSOR_BASE;
         for (int i = 0; i < c->form->count; i++) {
             VbCtl *t = c->form->ctl[i];
@@ -797,6 +842,11 @@ static LONG dispatch_slot(int slot, DWORD *frame)
                 InterlockedIncrement(&t->refs);
                 return (LONG)(LONG_PTR)t;
             }
+        }
+        {
+            char text[120];
+            wsprintfA(text, "msvbvm60: the form %s has no control of index %d for the accessor slot %d\n", c->name, index, slot);
+            VbOutputDebug(text);
         }
         return 0;
     }
@@ -811,6 +861,19 @@ static LONG dispatch_slot(int slot, DWORD *frame)
         return E_NOTIMPL;
     }
     const VBSLOT *s = &cl->slots[slot];
+    VBSLOT mapped;
+    if (c->cls == VBC_MDIFORM && (s->kind == 1 || s->kind == 2)) {
+        int k = find_prop(c, g_classes[VBC_FORM].props[s->index].name);
+        if (k < 0) {
+            /* a property the MDI form has no table entry for answers with zero. */
+            if (s->kind == 1)
+                *(DWORD *)(ULONG_PTR)args[0] = 0;
+            return S_OK;
+        }
+        mapped = *s;
+        mapped.index = (unsigned char)k;
+        s = &mapped;
+    }
     switch (s->kind) {
     case 1: {
         DWORD *out = (DWORD *)(ULONG_PTR)args[0];
@@ -1171,12 +1234,23 @@ static LRESULT CALLBACK form_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_SIZE:
-        if (f->loaded && wp != SIZE_MINIMIZED)
+        if (f->loaded && wp != SIZE_MINIMIZED) {
+            VbFormDock(f);
             FIRE(self, "Resize");
+        }
         return 0;
     case WM_ACTIVATE:
         if (f->loaded)
             FIRE(self, LOWORD(wp) ? "Activate" : "Deactivate");
+        break;
+    case WM_TIMER:
+        if (wp >= TIMER_BASE && wp < TIMER_BASE + MAX_CONTROLS) {
+            for (int i = 0; i < f->count; i++)
+                if (f->ctl[i]->cls == VBC_TIMER && f->ctl[i]->position == (int)(wp - TIMER_BASE)) {
+                    FIRE(f->ctl[i], "Timer");
+                    return 0;
+                }
+        }
         break;
     case WM_SETFOCUS:
         break;
@@ -1352,6 +1426,44 @@ static const BYTE *gui_blob(const VbObject *o, ULONG *size)
     return (const BYTE *)*(const DWORD *)(entry + 0x48);
 }
 
+/*
+ * a control of another library that no procedure of the program names an event of has no entry in the table of controls, only its
+ * record in the stream, which is found by the shape of a record: its place, its length, its index, its name and the 0xFF that says
+ * it is one of another library.
+ */
+static void add_stream_controls(VbForm *f)
+{
+    const BYTE *b = f->blob;
+    ULONG n = f->blob_size;
+    for (ULONG i = 0; i + 12 < n && f->count < MAX_CONTROLS; i++) {
+        if (b[i] < 1 || b[i] > 3)
+            continue;
+        ULONG size = *(const DWORD *)(b + i + 1);
+        if (size < 8 || size > n || i + 5 + size > n)
+            continue;
+        int index = b[i + 5];
+        ULONG len = *(const USHORT *)(b + i + 6);
+        if (len < 1 || len >= sizeof(((VbCtl *)0)->name) || i + 9 + len + 1 > n || b[i + 8 + len] != 0 || b[i + 9 + len] != 0xFF)
+            continue;
+        BOOL name_ok = TRUE;
+        for (ULONG k = 0; k < len; k++)
+            name_ok &= (b[i + 8 + k] >= '0' && b[i + 8 + k] <= '9') || (b[i + 8 + k] >= 'A' && b[i + 8 + k] <= 'Z') ||
+                       (b[i + 8 + k] >= 'a' && b[i + 8 + k] <= 'z') || b[i + 8 + k] == '_';
+        if (!name_ok)
+            continue;
+        BOOL known = FALSE;
+        for (int k = 0; k < f->count; k++)
+            known |= f->ctl[k]->control_index == index && f->ctl[k]->cls != VBC_FORM && f->ctl[k]->cls != VBC_MDIFORM;
+        if (known)
+            continue;
+        VbCtl *c = new_ctl(f, VBC_OCX, nullptr, f->count);
+        memcpy(c->name, b + i + 8, len);
+        c->name[len] = 0;
+        c->control_index = index;
+        f->ctl[f->count++] = c;
+    }
+}
+
 VbForm *VbCreateForm(const VbObject *o)
 {
     VbForm *f = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*f));
@@ -1375,11 +1487,12 @@ VbForm *VbCreateForm(const VbObject *o)
         /* a control that is not one of Visual Basic comes from another library and is hosted. */
         VbCtl *c = new_ctl(f, cls < 0 ? VBC_OCX : cls, entry, f->count);
         f->ctl[f->count++] = c;
-        if (cls == VBC_FORM)
+        if (cls == VBC_FORM || cls == VBC_MDIFORM)
             f->self = c;
         DWORD sink = *(const DWORD *)(entry + 0x18);
         *(DWORD *)(f->instance + *(const DWORD *)(entry + 4)) = sink;
     }
+    add_stream_controls(f);
     if (!f->self)
         return nullptr;
     /* the object of the form, whose vtable is the interface of the form followed by the accessors of its controls. */
@@ -1706,11 +1819,23 @@ void VbShowForm(VbForm *f)
 }
 
 /* the form a program starts with: the first of its forms, when it has no Sub Main. */
+/* a program that starts with a form starts with its MDI form when it has one, which holds the other forms. */
+static BOOL object_is_mdi(const VbObject *o)
+{
+    for (unsigned i = 0; i < o->count; i++)
+        if (class_of_guid(*(const BYTE *const *)(o->controls + i * 0x28 + 8)) == VBC_MDIFORM)
+            return TRUE;
+    return FALSE;
+}
+
 BOOL VbStartForms(HINSTANCE module)
 {
     register_control_classes(module);
+    BOOL have_mdi = FALSE;
+    for (int i = 0; i < g_object_count; i++)
+        have_mdi |= (g_objects[i].type & 0x80) && object_is_mdi(&g_objects[i]);
     for (int i = 0; i < g_object_count; i++) {
-        if (!(g_objects[i].type & 0x80))
+        if (!(g_objects[i].type & 0x80) || (have_mdi && !object_is_mdi(&g_objects[i])))
             continue;
         VbForm *f = new_form(&g_objects[i]);
         if (!f)
