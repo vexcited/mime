@@ -251,6 +251,11 @@ WINOLEAUTAPI HRESULT WINAPI VarDateFromStr(LPCOLESTR string, LCID lcid, ULONG fl
     DATE date;
     if (!make_date(y, m, d, h, mi, s, &date))
         return DISP_E_TYPEMISMATCH;
+    /* a value of only the date or only the time drops the other part. */
+    if (flags & VAR_DATEVALUEONLY)
+        date = (double)(LONG)date;
+    else if (flags & VAR_TIMEVALUEONLY)
+        date = date - (double)(LONG)date;
     *out = date;
     return S_OK;
 }
@@ -372,6 +377,14 @@ WINOLEAUTAPI HRESULT WINAPI VarUdateFromDate(DATE date, ULONG flags, UDATE *udat
 static HRESULT date_from_fields(const SYSTEMTIME *st, ULONG flags, DATE *out)
 {
     LONG y = st->wYear, m = st->wMonth, d = st->wDay, h = st->wHour, mi = st->wMinute, s = st->wSecond;
+    /* a value of only the time or only the date ignores the other fields. */
+    if (flags & VAR_TIMEVALUEONLY) {
+        y = 1899;
+        m = 12;
+        d = 30;
+    }
+    if (flags & VAR_DATEVALUEONLY)
+        h = mi = s = 0;
     if (flags & VAR_VALIDDATE) {
         if (m < 1 || m > 12 || d < 1 || y < 100 || y > 9999 || d > days_in_month(y, m) || h > 23 || mi > 59 || s > 59)
             return E_INVALIDARG;
