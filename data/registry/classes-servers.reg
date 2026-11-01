@@ -693,3 +693,17 @@
 [HKCR\CLSID\{275C23E2-3747-11D0-9FEA-00AA003F8646}\InprocServer32]
 @=expand:"%SystemRoot%\\system32\\mlang.dll"
 "ThreadingModel"="Both"
+
+; mstask.dll
+; CTaskScheduler
+[HKCR\CLSID\{148BD52A-A2AB-11CE-B11F-00AA00530503}]
+@="Task Scheduler"
+[HKCR\CLSID\{148BD52A-A2AB-11CE-B11F-00AA00530503}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\mstask.dll"
+"ThreadingModel"="Both"
+; CTask
+[HKCR\CLSID\{148BD520-A2AB-11CE-B11F-00AA00530503}]
+@="Task"
+[HKCR\CLSID\{148BD520-A2AB-11CE-B11F-00AA00530503}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\mstask.dll"
+"ThreadingModel"="Both"

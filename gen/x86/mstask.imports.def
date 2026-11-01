@@ -1,0 +1,4 @@
+LIBRARY mstask.dll
+EXPORTS
+    DllCanUnloadNow@0 @2
+    DllGetClassObject@12 @3
