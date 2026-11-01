@@ -115,6 +115,7 @@ typedef struct DwAnalysis {
     DWRITE_RENDERING_MODE mode;
     BOOL bold;
     BOOL grayscale; /* the aliased texture holds coverage instead of on and off. */
+    int over_y; /* ClearType rows a pixel is scanned in, five for the symmetric modes. */
     MimeTtfHinter *hinter; /* outlines are hinted for the size when it is set. */
 } DwAnalysis;
 
@@ -180,12 +181,6 @@ static int ifloor(float v)
     return (float)i > v ? i - 1 : i;
 }
 
-static int iceil(float v)
-{
-    int i = (int)v;
-    return (float)i < v ? i + 1 : i;
-}
-
 static void run_bounds(const DwAnalysis *a, float x_scale, RECT *box)
 {
     box->left = box->top = box->right = box->bottom = 0;
@@ -211,6 +206,38 @@ static void run_bounds(const DwAnalysis *a, float x_scale, RECT *box)
     }
 }
 
+/* the glyph as the scan converter takes it: pixel positions, and the matrix or the hinted outline. */
+static void scan_params(const DwAnalysis *a, UINT32 i, MimeTtfRenderParams *p, MimeTtfScan *scan)
+{
+    memset(p, 0, sizeof(*p));
+    if (a->hinter) {
+        p->hinter = a->hinter;
+    } else {
+        p->use_matrix = true;
+        p->xx = a->xx;
+        p->xy = a->xy;
+        p->yx = a->yx;
+        p->yy = a->yy;
+    }
+    p->shift_x = a->x[i];
+    p->shift_y = a->y[i];
+    scan->control = scan->type = 0;
+    scan->ppem = (int)(absf(a->yy) * (float)a->face->data->ttf.units_per_em + 0.5f);
+    scan->rotated = a->xy != 0 && a->yx != 0;
+    scan->stretched = false;
+    if (a->hinter)
+        mime_ttf_hinter_scan(a->hinter, &scan->control, &scan->type);
+}
+
+/* the pixel box and levels of each glyph of the run, false when a glyph could not be drawn. */
+static BOOL glyph_clear_type(const DwAnalysis *a, UINT32 i, MimeTtfBitmap *bm)
+{
+    MimeTtfRenderParams p;
+    MimeTtfScan scan;
+    scan_params(a, i, &p, &scan);
+    return mime_ttf_cleartype_bitmap(&a->face->data->ttf, &g_ttf_alloc, a->glyphs[i], &p, a->over_y, &scan, bm);
+}
+
 static HRESULT WINAPI analysis_bounds(IDWriteGlyphRunAnalysis *This, DWRITE_TEXTURE_TYPE type, RECT *bounds)
 {
     DwAnalysis *a = (DwAnalysis *)This;
@@ -221,17 +248,56 @@ static HRESULT WINAPI analysis_bounds(IDWriteGlyphRunAnalysis *This, DWRITE_TEXT
         return E_INVALIDARG;
     }
     if (type == DWRITE_TEXTURE_CLEARTYPE_3x1) {
-        /* the subpixel box, rounded out to whole pixels plus one on each side for the filter. */
-        RECT sub;
-        run_bounds(a, 3.0f, &sub);
-        if (sub.left == sub.right) {
-            memset(bounds, 0, sizeof(*bounds));
-            return S_OK;
+        memset(bounds, 0, sizeof(*bounds));
+        BOOL any = FALSE;
+        for (UINT32 i = 0; i < a->count; i++) {
+            MimeTtfBitmap bm;
+            if (!glyph_clear_type(a, i, &bm))
+                continue;
+            if (bm.data) {
+                if (!any) {
+                    bounds->left = bm.x0;
+                    bounds->top = bm.y0;
+                    bounds->right = bm.x1;
+                    bounds->bottom = bm.y1;
+                    any = TRUE;
+                } else {
+                    if (bm.x0 < bounds->left) bounds->left = bm.x0;
+                    if (bm.y0 < bounds->top) bounds->top = bm.y0;
+                    if (bm.x1 > bounds->right) bounds->right = bm.x1;
+                    if (bm.y1 > bounds->bottom) bounds->bottom = bm.y1;
+                }
+            }
+            mime_ttf_bitmap_free(&g_ttf_alloc, &bm);
         }
-        bounds->left = ifloor((float)sub.left / 3.0f) - 1;
-        bounds->right = iceil((float)sub.right / 3.0f) + 1;
-        bounds->top = sub.top;
-        bounds->bottom = sub.bottom;
+        return S_OK;
+    }
+    if (!a->grayscale) {
+        memset(bounds, 0, sizeof(*bounds));
+        BOOL any = FALSE;
+        for (UINT32 i = 0; i < a->count; i++) {
+            MimeTtfRenderParams p;
+            MimeTtfScan scan;
+            MimeTtfBitmap bm;
+            scan_params(a, i, &p, &scan);
+            if (!mime_ttf_scan_bitmap(&a->face->data->ttf, &g_ttf_alloc, a->glyphs[i], &p, &scan, &bm))
+                continue;
+            if (bm.data) {
+                if (!any) {
+                    bounds->left = bm.x0;
+                    bounds->top = bm.y0;
+                    bounds->right = bm.x1;
+                    bounds->bottom = bm.y1;
+                    any = TRUE;
+                } else {
+                    if (bm.x0 < bounds->left) bounds->left = bm.x0;
+                    if (bm.y0 < bounds->top) bounds->top = bm.y0;
+                    if (bm.x1 > bounds->right) bounds->right = bm.x1;
+                    if (bm.y1 > bounds->bottom) bounds->bottom = bm.y1;
+                }
+            }
+            mime_ttf_bitmap_free(&g_ttf_alloc, &bm);
+        }
         return S_OK;
     }
     run_bounds(a, 1.0f, bounds);
@@ -262,11 +328,44 @@ static HRESULT WINAPI analysis_texture(IDWriteGlyphRunAnalysis *This, DWRITE_TEX
     memset(alpha, 0, (size_t)needed);
     if (!needed)
         return S_OK;
-    float x_scale = type == DWRITE_TEXTURE_CLEARTYPE_3x1 ? 3.0f : 1.0f;
+    if (type == DWRITE_TEXTURE_CLEARTYPE_3x1 || !a->grayscale) {
+        for (UINT32 i = 0; i < a->count; i++) {
+            MimeTtfBitmap bm;
+            if (type == DWRITE_TEXTURE_CLEARTYPE_3x1) {
+                if (!glyph_clear_type(a, i, &bm))
+                    continue;
+            } else {
+                MimeTtfRenderParams p;
+                MimeTtfScan scan;
+                scan_params(a, i, &p, &scan);
+                if (!mime_ttf_scan_bitmap(&a->face->data->ttf, &g_ttf_alloc, a->glyphs[i], &p, &scan, &bm))
+                    continue;
+            }
+            for (int row = 0; bm.data && row < bm.y1 - bm.y0; row++) {
+                int y = bm.y0 + row - bounds->top;
+                if (y < 0 || y >= height)
+                    continue;
+                const UINT8 *src = bm.data + (size_t)row * (size_t)bm.stride;
+                UINT8 *dst = alpha + (size_t)y * width * bytes_per_pixel;
+                int cells = (bm.x1 - bm.x0) * (int)bytes_per_pixel;
+                for (int col = 0; col < cells; col++) {
+                    int x = (bm.x0 - bounds->left) * (int)bytes_per_pixel + col;
+                    if (x < 0 || x >= width * (int)bytes_per_pixel || !src[col])
+                        continue;
+                    if (type == DWRITE_TEXTURE_CLEARTYPE_3x1)
+                        dst[x] = combine(dst[x], (UINT8)((src[col] * 255 + 3) / 6));
+                    else
+                        dst[x] = 255;
+                }
+            }
+            mime_ttf_bitmap_free(&g_ttf_alloc, &bm);
+        }
+        return S_OK;
+    }
     for (UINT32 i = 0; i < a->count; i++) {
         MimeTtfRenderParams p;
         /* the bitmap's origin is the corner of the requested area. */
-        glyph_params(a, i, x_scale, -(float)bounds->left * x_scale, -(float)bounds->top, &p);
+        glyph_params(a, i, 1.0f, -(float)bounds->left, -(float)bounds->top, &p);
         int x0, y0, x1, y1;
         if (!mime_ttf_glyph_box_ex(&a->face->data->ttf, a->glyphs[i], &p, &x0, &y0, &x1, &y1) || x0 == x1 || y0 == y1)
             continue;
@@ -283,31 +382,12 @@ static HRESULT WINAPI analysis_texture(IDWriteGlyphRunAnalysis *This, DWRITE_TEX
             if (y < 0 || y >= height)
                 continue;
             const UINT8 *src = bitmap + (size_t)row * gw;
-            UINT8 *dst = alpha + (size_t)y * width * bytes_per_pixel;
-            if (type == DWRITE_TEXTURE_ALIASED_1x1) {
-                for (int col = 0; col < gw; col++) {
-                    int x = x0 + col;
-                    if (x < 0 || x >= width || !src[col])
-                        continue;
-                    if (a->grayscale)
-                        dst[x] = combine(dst[x], src[col]);
-                    else if (src[col] >= 128)
-                        dst[x] = 255;
-                }
-                continue;
-            }
-            /* each subpixel is the mean of itself and its two neighbours. */
-            int samples = width * 3;
-            for (int s = 0; s < samples; s++) {
-                int sum = 0;
-                for (int t = 0; t < 3; t++) {
-                    int c = s + t - 1 - x0;
-                    if (c >= 0 && c < gw)
-                        sum += src[c];
-                }
-                sum = (sum * 2 + 3) / 6;
-                if (sum)
-                    dst[s] = combine(dst[s], (UINT8)sum);
+            UINT8 *dst = alpha + (size_t)y * width;
+            for (int col = 0; col < gw; col++) {
+                int x = x0 + col;
+                if (x < 0 || x >= width || !src[col])
+                    continue;
+                dst[x] = combine(dst[x], src[col]);
             }
         }
         DwFree(bitmap);
@@ -356,6 +436,7 @@ HRESULT DwGlyphRunAnalysisCreate(const DWRITE_GLYPH_RUN *run, FLOAT pixels_per_d
     ((IDWriteFontFace *)face)->lpVtbl->AddRef((IDWriteFontFace *)face);
     a->count = run->glyphCount;
     a->mode = mode;
+    a->over_y = mode == DWRITE_RENDERING_MODE_DEFAULT || mode == DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC ? 5 : 1;
     a->grayscale = antialias == DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE && mode != DWRITE_RENDERING_MODE_ALIASED;
     a->bold = (face->simulations & DWRITE_FONT_SIMULATIONS_BOLD) != 0;
     a->glyphs = DwAlloc(run->glyphCount * sizeof(UINT16));
@@ -391,10 +472,10 @@ HRESULT DwGlyphRunAnalysisCreate(const DWRITE_GLYPH_RUN *run, FLOAT pixels_per_d
                 hint_flags |= MIME_TTF_HINT_GRAY;
             if (kind == DWRITE_RENDERING_MODE_GDI_CLASSIC)
                 hint_flags |= MIME_TTF_HINT_COMPAT_WIDTHS;
-            if (kind == DWRITE_RENDERING_MODE_NATURAL || kind == DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC) {
+            if (kind != DWRITE_RENDERING_MODE_GDI_CLASSIC)
                 hint_flags |= MIME_TTF_HINT_SUBPIXEL;
+            if (kind == DWRITE_RENDERING_MODE_NATURAL || kind == DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC)
                 natural_positions = TRUE;
-            }
             if (kind == DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC)
                 hint_flags |= MIME_TTF_HINT_SYMMETRIC;
         }
