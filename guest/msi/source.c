@@ -440,3 +440,22 @@ BOOL MimeMsiFindSourceFile(MIME_MSI_PACKAGE *package, PCWSTR relative, PWSTR *fu
         MimeMsiFree(candidate);
     }
 }
+
+/* a file relative to a source, from the first source of the product that has it. */
+UINT MimeMsiFindProductSourceFile(PCWSTR product, PCWSTR relative, PWSTR *full)
+{
+    for (DWORD index = 0;; index++) {
+        WCHAR directory[MAX_PATH];
+        UINT error = source_directory(product, index, directory, RTL_NUMBER_OF(directory));
+        if (error)
+            return error == ERROR_NO_MORE_ITEMS ? ERROR_FILE_NOT_FOUND : error;
+        PWSTR candidate = MimeMsiJoinPath(directory, relative);
+        if (!candidate)
+            return ERROR_NOT_ENOUGH_MEMORY;
+        if (GetFileAttributesW(candidate) != INVALID_FILE_ATTRIBUTES) {
+            *full = candidate;
+            return ERROR_SUCCESS;
+        }
+        MimeMsiFree(candidate);
+    }
+}

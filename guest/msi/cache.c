@@ -12,7 +12,7 @@ UINT MimeMsiCacheTransforms(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product
     for (MIME_MSI_TRANSFORM *entry = package->Database->Transforms; entry; entry = entry->Next) {
         if (++count > 256)
             return ERROR_BAD_CONFIGURATION;
-        characters += wcslen(entry->Database->Path) + 1;
+        characters += wcslen(entry->Database->Path) + (entry->Name ? wcslen(entry->Name) : 0) + MAX_PATH + 3;
     }
     if (count + package->Database->PatchTransforms != package->Database->Revision || characters > 512 * 1024)
         return ERROR_BAD_CONFIGURATION;
@@ -29,19 +29,33 @@ UINT MimeMsiCacheTransforms(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product
     ULONG index = 0;
     for (MIME_MSI_TRANSFORM *entry = package->Database->Transforms; !error && entry; entry = entry->Next) {
         index++;
-        wcscpy(filename, cache);
-        _snwprintf(filename + base_length - 4, RTL_NUMBER_OF(filename) - base_length + 4, L"-%08u.mst", index);
-        error = MimeMsiWriteInstalledFile(package, entry->Database->Data, entry->Database->File.Size, filename);
+        PCWSTR recorded;
+        WCHAR kept[MAX_PATH + 40];
+        if (entry->Kind == TRANSFORM_EMBEDDED || entry->Kind == TRANSFORM_SOURCE) {
+            /* a storage of the package is in the cached package, and a transform at the source stays there. */
+            _snwprintf(kept, RTL_NUMBER_OF(kept), L"%c%s", entry->Kind == TRANSFORM_EMBEDDED ? L':' : L'@', entry->Name);
+            recorded = kept;
+        } else {
+            wcscpy(filename, cache);
+            _snwprintf(filename + base_length - 4, RTL_NUMBER_OF(filename) - base_length + 4, L"-%08u.mst", index);
+            error = MimeMsiWriteInstalledFile(package, entry->Database->Data, entry->Database->File.Size, filename);
+            recorded = filename;
+            if (entry->Kind == TRANSFORM_SECURE) {
+                _snwprintf(kept, RTL_NUMBER_OF(kept), L"|%s", filename);
+                recorded = kept;
+            }
+        }
         _snwprintf(name, RTL_NUMBER_OF(name), L"%u", index);
         if (!error)
-            error = write_text(package, root, path, name, filename);
+            error = write_text(package, root, path, name, recorded);
         _snwprintf(name, RTL_NUMBER_OF(name), L"Flags%u", index);
         if (!error)
             error = MimeMsiWriteRegistry(package, root, path, name, REG_DWORD, &entry->Flags, sizeof(entry->Flags));
         if (cursor != names)
             *cursor++ = L';';
-        SIZE_T length = wcslen(entry->Database->Path);
-        memcpy(cursor, entry->Database->Path, length * sizeof(WCHAR));
+        PCWSTR listed = entry->Kind == TRANSFORM_FILE ? entry->Database->Path : recorded;
+        SIZE_T length = wcslen(listed);
+        memcpy(cursor, listed, length * sizeof(WCHAR));
         cursor += length;
     }
     if (!error)
@@ -62,7 +76,7 @@ static UINT read_number(HKEY key, PCWSTR name, DWORD *out)
     return error;
 }
 
-UINT MimeMsiRestoreTransforms(MSIHANDLE database, HKEY product)
+UINT MimeMsiRestoreTransforms(MSIHANDLE database, HKEY product, PCWSTR code)
 {
     HKEY key;
     UINT error = RegOpenKeyExW(product, L"Transforms", 0, KEY_READ, &key);
@@ -95,20 +109,44 @@ UINT MimeMsiRestoreTransforms(MSIHANDLE database, HKEY product)
             error = MimeMsiRegistryText(key, name, &path);
         if (!error && (!*path || wcslen(path) > 32767))
             error = ERROR_BAD_CONFIGURATION;
-        if (!error)
-            error = MsiDatabaseApplyTransformW(database, path, (int)flags);
+        if (!error && path[0] == L'@') {
+            /* a transform at the source is read from wherever the product finds its source. */
+            PWSTR found = nullptr;
+            error = MimeMsiFindProductSourceFile(code, path + 1, &found);
+            if (!error)
+                error = MimeMsiApplyTransform(database, found, (int)flags, FALSE);
+            MimeMsiFree(found);
+        } else if (!error)
+            error = MimeMsiApplyTransform(database, path[0] == L'|' ? path + 1 : path, (int)flags, FALSE);
         MimeMsiFree(path);
     }
     RegCloseKey(key);
     return error;
 }
 
-UINT MimeMsiApplyTransformList(MSIHANDLE handle, PCWSTR list)
+/* the transform just applied remembers where it was kept. */
+static void tag_transform(MSIHANDLE handle, UINT kind, PCWSTR name)
+{
+    AcquireSRWLockExclusive(&MimeMsiLock);
+    MIME_MSI_DATABASE *database = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_DATABASE);
+    MIME_MSI_TRANSFORM *last = database ? database->Transforms : nullptr;
+    while (last && last->Next)
+        last = last->Next;
+    if (last) {
+        last->Kind = kind;
+        last->Name = name ? MimeMsiDuplicate(name) : nullptr;
+    }
+    ReleaseSRWLockExclusive(&MimeMsiLock);
+}
+
+/*
+ * applies the TRANSFORMS list. a name starting with a colon is a storage of the package, one with an at sign is read from the
+ * source and one with a bar is kept in a secure copy. TRANSFORMSATSOURCE and TRANSFORMSSECURE give every file that.
+ */
+UINT MimeMsiApplyTransformList(MSIHANDLE handle, PCWSTR list, PCWSTR source, BOOL secure, BOOL at_source)
 {
     if (!list || !*list)
         return ERROR_SUCCESS;
-    if (*list == L'@' || *list == L'|')
-        return ERROR_CALL_NOT_IMPLEMENTED;
     PWSTR copy = MimeMsiDuplicate(list), directory = nullptr;
     if (!copy)
         return ERROR_NOT_ENOUGH_MEMORY;
@@ -131,13 +169,18 @@ UINT MimeMsiApplyTransformList(MSIHANDLE handle, PCWSTR list)
         PWSTR next = wcschr(cursor, L';');
         if (next)
             *next++ = 0;
+        UINT where = TRANSFORM_FILE;
+        if (*cursor == L'@' || *cursor == L'|') {
+            where = *cursor == L'@' ? TRANSFORM_SOURCE : TRANSFORM_SECURE;
+            cursor++;
+        } else if (*cursor != L':') {
+            where = at_source ? TRANSFORM_SOURCE : secure ? TRANSFORM_SECURE : TRANSFORM_FILE;
+        }
         SIZE_T length = wcslen(cursor);
         BOOL absolute = (length > 2 && cursor[1] == L':' && (cursor[2] == L'\\' || cursor[2] == L'/')) ||
                         (length > 1 && cursor[0] == L'\\' && cursor[1] == L'\\');
         if (!length || ++count > 256 || (kind >= 0 && kind != (int)absolute))
             error = ERROR_INVALID_PARAMETER;
-        else if (*cursor == L'@' || *cursor == L'|')
-            error = ERROR_CALL_NOT_IMPLEMENTED;
         else if (*cursor != L':' && !absolute && (wcschr(cursor, L'\\') || wcschr(cursor, L'/') || wcschr(cursor, L':')))
             error = ERROR_INVALID_PARAMETER;
         kind = absolute;
@@ -145,14 +188,22 @@ UINT MimeMsiApplyTransformList(MSIHANDLE handle, PCWSTR list)
         if (!error && *cursor == L':') {
             /* a storage of the package itself. */
             error = MimeMsiApplyTransform(handle, cursor, 0, TRUE);
+            if (!error)
+                tag_transform(handle, TRANSFORM_EMBEDDED, cursor + 1);
         } else if (!error) {
-            path = absolute ? MimeMsiDuplicate(cursor) : MimeMsiJoinPath(directory, cursor);
+            /* a transform at the source is a name there, a full path stays where it is. */
+            PCWSTR base = where == TRANSFORM_SOURCE && source && *source ? source : directory;
+            path = absolute ? MimeMsiDuplicate(cursor) : MimeMsiJoinPath(base, cursor);
             if (!path)
                 error = ERROR_NOT_ENOUGH_MEMORY;
             else if (wcslen(path) > 32767)
                 error = ERROR_BAD_PATHNAME;
             else
                 error = MimeMsiApplyTransform(handle, path, 0, TRUE);
+            if (!error && where == TRANSFORM_SOURCE && !absolute)
+                tag_transform(handle, TRANSFORM_SOURCE, cursor);
+            else if (!error)
+                tag_transform(handle, where == TRANSFORM_SOURCE ? TRANSFORM_FILE : where, nullptr);
         }
         MimeMsiFree(path);
         cursor = next;

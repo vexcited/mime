@@ -211,7 +211,7 @@ UINT MimeMsiOpenProductEx(PCWSTR product, PCWSTR package, MSIHANDLE *out)
     if (!error)
         error = MsiOpenDatabaseW(package ? package : path, MSIDBOPEN_READONLY, &database);
     if (!error)
-        error = MimeMsiRestoreTransforms(database, key);
+        error = MimeMsiRestoreTransforms(database, key, product);
     if (!error)
         error = MimeMsiRestorePatches(database, key);
     if (!error) {

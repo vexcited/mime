@@ -97,10 +97,15 @@ typedef struct MIME_MSI_DATABASE {
     MIME_MSI_STREAM *Streams;
 } MIME_MSI_DATABASE;
 
+/* where a transform is kept: in the package, beside it in the source, in a secure copy, or wherever its file is. */
+enum { TRANSFORM_FILE, TRANSFORM_EMBEDDED, TRANSFORM_SECURE, TRANSFORM_SOURCE };
+
 typedef struct MIME_MSI_TRANSFORM {
     struct MIME_MSI_TRANSFORM *Next;
     MIME_MSI_DATABASE *Database;
-    UINT Flags;
+    UINT Flags, Kind;
+    /* the storage of an embedded transform, the name relative to the source of one kept there. */
+    PWSTR Name;
 } MIME_MSI_TRANSFORM;
 
 UINT MimeMsiLoadStrings(MIME_MSI_DATABASE *database);
@@ -133,7 +138,7 @@ typedef struct MIME_MSI_SUMMARY_VALUE {
     PWSTR Text;
 } MIME_MSI_SUMMARY_VALUE;
 UINT MimeMsiSummaryProperty(MIME_MSI_DATABASE *database, UINT id, MIME_MSI_SUMMARY_VALUE *value);
-UINT MimeMsiApplyTransformList(MSIHANDLE database, PCWSTR list);
+UINT MimeMsiApplyTransformList(MSIHANDLE database, PCWSTR list, PCWSTR source, BOOL secure, BOOL at_source);
 UINT MimeMsiLoadTable(MIME_MSI_DATABASE *database, PCWSTR name, MIME_MSI_TABLE **out);
 UINT MimeMsiReadStream(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZE_T *size);
 UINT MimeMsiReadBinary(MIME_MSI_DATABASE *database, PCWSTR name, BYTE **out, SIZE_T *size);
@@ -341,7 +346,8 @@ UINT MimeMsiCurrentSid(WCHAR sid[256]);
 UINT MimeMsiRegisterSource(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product_path);
 UINT MimeMsiWriteInstalledFile(MIME_MSI_PACKAGE *package, const void *data, SIZE_T size, PCWSTR target);
 UINT MimeMsiCacheTransforms(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product_path, PCWSTR cache);
-UINT MimeMsiRestoreTransforms(MSIHANDLE database, HKEY product);
+UINT MimeMsiRestoreTransforms(MSIHANDLE database, HKEY product, PCWSTR code);
+UINT MimeMsiFindProductSourceFile(PCWSTR product, PCWSTR relative, PWSTR *full);
 UINT MimeMsiCachePatches(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR product_path, PCWSTR cache);
 UINT MimeMsiRestorePatches(MSIHANDLE database, HKEY product);
 UINT MimeMsiSaveDirectories(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path);

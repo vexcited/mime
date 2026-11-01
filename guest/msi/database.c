@@ -7,6 +7,7 @@ static void destroy_database(MIME_MSI_OBJECT *object)
         MIME_MSI_TRANSFORM *transform = database->Transforms;
         database->Transforms = transform->Next;
         MimeMsiRelease(&transform->Database->Object);
+        MimeMsiFree(transform->Name);
         MimeMsiFree(transform);
     }
     while (database->Streams) {

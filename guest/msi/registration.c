@@ -159,8 +159,9 @@ static UINT unregister_product(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path
                 WCHAR name[32];
                 PWSTR file = nullptr;
                 _snwprintf(name, RTL_NUMBER_OF(name), L"%u", index);
-                if (!MimeMsiRegistryText(transforms, name, &file) && file)
-                    error = MimeMsiRemoveFile(package, file);
+                /* a storage of the package or a file at the source is not the product's to remove. */
+                if (!MimeMsiRegistryText(transforms, name, &file) && file && file[0] != L':' && file[0] != L'@')
+                    error = MimeMsiRemoveFile(package, file[0] == L'|' ? file + 1 : file);
                 MimeMsiFree(file);
             }
             RegCloseKey(transforms);

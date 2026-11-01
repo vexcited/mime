@@ -108,13 +108,15 @@ static UINT install_transforms(MSIHANDLE *handle, PCWSTR command)
     }
     PWSTR list = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"TRANSFORMS")) : nullptr;
     UINT error = !package ? ERROR_INVALID_HANDLE : !list ? ERROR_NOT_ENOUGH_MEMORY : ERROR_SUCCESS;
-    if (!error && *list && (!wcscmp(MimeMsiGetProperty(package, L"TRANSFORMSSECURE"), L"1") ||
-                           !wcscmp(MimeMsiGetProperty(package, L"TRANSFORMSATSOURCE"), L"1")))
-        error = ERROR_CALL_NOT_IMPLEMENTED;
+    PWSTR source = package ? MimeMsiDuplicate(MimeMsiGetProperty(package, L"SourceDir")) : nullptr;
+    BOOL secure = package && !wcscmp(MimeMsiGetProperty(package, L"TRANSFORMSSECURE"), L"1");
+    BOOL at_source = package && !wcscmp(MimeMsiGetProperty(package, L"TRANSFORMSATSOURCE"), L"1");
+    if (!error && !source)
+        error = ERROR_NOT_ENOUGH_MEMORY;
     ReleaseSRWLockShared(&MimeMsiLock);
     if (!error && *list) {
         MSIHANDLE database = MsiGetActiveDatabase(*handle), transformed = 0;
-        error = database ? MimeMsiApplyTransformList(database, list) : ERROR_NOT_ENOUGH_MEMORY;
+        error = database ? MimeMsiApplyTransformList(database, list, source, secure, at_source) : ERROR_NOT_ENOUGH_MEMORY;
         if (error && error != ERROR_NOT_ENOUGH_MEMORY) {
             WCHAR note[300];
             _snwprintf(note, RTL_NUMBER_OF(note), L"msi: the transforms %.200s did not apply, error %u\n", list, error);
@@ -137,6 +139,7 @@ static UINT install_transforms(MSIHANDLE *handle, PCWSTR command)
             MsiCloseHandle(database);
     }
     MimeMsiFree(list);
+    MimeMsiFree(source);
     return error;
 }
 
