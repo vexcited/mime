@@ -102,6 +102,11 @@ static void make(const VbClassInfo *info, void **slot)
     *slot = object;
 }
 
+void VbNewObject(const void *info, void **out)
+{
+    make(info, out);
+}
+
 VB_STD void *vb___vbaNew(const VbClassInfo *info)
 {
     void *object;

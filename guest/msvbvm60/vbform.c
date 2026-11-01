@@ -5,11 +5,14 @@
  */
 #include "vb.h"
 #include "vbclass.h"
+#include <mime/win32/olectl.h>
+#include <mime/win32/objidl.h>
 
 #define MAX_CONTROLS 160
 #define MAX_PROPS 100
-#define MAX_FORMS 32
-#define MAX_SLOTS 480
+#define MAX_FORMS 64
+#define MAX_SLOTS 640
+#define FORM_METHODS 446
 #define ACCESSOR_BASE 190
 
 typedef struct VbCtl VbCtl;
@@ -54,6 +57,12 @@ typedef struct VbObject {
     unsigned count;
     const BYTE *controls;
     int gui;
+    /* a class module: its instance size, the entries of its vtable after the ones the runtime gives, and the vtable. */
+    BOOL is_class;
+    ULONG instance_size;
+    const BYTE *thunks;
+    unsigned thunk_count;
+    void **vtable;
 } VbObject;
 
 struct VbForm {
@@ -124,6 +133,21 @@ void VbLoadProject(const VbHeader *header)
             o->count = *(const DWORD *)(opt + 0x20);
             o->controls = (const BYTE *)*(const DWORD *)(opt + 0x24);
             o->gui = gui++;
+            /* the procedures of the form that are public follow the 439 slots the runtime gives every form, after the seven of the interfaces. */
+            o->thunk_count = *(const DWORD *)(opt + 0x28) & 0xFFFF;
+            o->thunks = (const BYTE *)(ULONG_PTR)*(const DWORD *)(opt + 0x30);
+        } else if (*(const DWORD *)(o->info + 0xC) != 0xFFFFFFFFu && readable(o->info + 0x38, 0x30)) {
+            /* a class module has a private object, the entry of its own sink where a form has its controls, and its vtable after it. */
+            const BYTE *priv = (const BYTE *)*(const DWORD *)(o->info + 0xC);
+            const BYTE *opt = o->info + 0x38;
+            if (priv && readable(priv, 0x40)) {
+                o->is_class = TRUE;
+                o->instance_size = *(const DWORD *)(priv + 0x38);
+                o->count = *(const DWORD *)(opt + 0x20);
+                o->controls = (const BYTE *)*(const DWORD *)(opt + 0x24);
+                o->thunk_count = *(const DWORD *)(opt + 0x28);
+                o->thunks = o->controls + o->count * 0x28;
+            }
         }
     }
     HDC dc = GetDC(nullptr);
@@ -472,7 +496,7 @@ static void apply_all(VbCtl *c)
         SendMessageW(c->hwnd, WM_SETFONT, (WPARAM)f, TRUE);
         EnableWindow(c->hwnd, NUM(c, "Enabled") != 0);
         ShowWindow(c->hwnd, NUM(c, "Visible") != 0 ? SW_SHOWNA : SW_HIDE);
-        if (c->cls == VBC_CHECKBOX)
+        if (c->cls == VBC_CHECKBOX || c->cls == VBC_OPTION)
             SendMessageW(c->hwnd, BM_SETCHECK, (WPARAM)NUM(c, "Value"), 0);
     }
 }
@@ -749,6 +773,10 @@ static void report_slot(VbCtl *c, int slot, const char *what)
     VbOutputDebug(text);
 }
 
+static LONG library_error(LONG number);
+static LONG make_picture(UINT type, HANDLE handle, IDispatch **out);
+static LONG clipboard_method(VbCtl *c, int method, DWORD *args);
+
 /* methods of the controls and forms by their place in the table of the layout. */
 static HRESULT call_method(VbCtl *c, int slot, const VBSLOT *s, DWORD *args)
 {
@@ -776,6 +804,11 @@ static HRESULT call_method(VbCtl *c, int slot, const VBSLOT *s, DWORD *args)
                 SetFocus(form);
             return S_OK;
         }
+    } else if (c->cls == VBC_CLIPBOARD) {
+        return clipboard_method(c, s->index, args);
+    } else if (c->cls == VBC_APP) {
+        /* StartLogging and LogEvent have nowhere to write to. */
+        return S_OK;
     } else if (s->kind == 3 && s->index == 0) {
         return S_OK;
     }
@@ -921,8 +954,12 @@ static LONG __stdcall obj_invoke(void *self, DISPID id, const IID *iid, LCID l, 
 {
     VbCtl *c = ctl_of(self);
     int k = id - 0x10000;
-    if (!c || k < 0 || k >= g_classes[c->cls].nprops)
+    if (!c || k < 0 || k >= g_classes[c->cls].nprops) {
+        char text[160];
+        wsprintfA(text, "msvbvm60: Invoke of member %d (%X) with flags %X on %s is not known\n", (int)id, (unsigned)id, (unsigned)flags, c ? c->name : "?");
+        VbOutputDebug(text);
         return DISP_E_MEMBERNOTFOUND;
+    }
     const VBPROP *p = prop_of(c, k);
     if (flags & (DISPATCH_PROPERTYPUT | DISPATCH_PROPERTYPUTREF)) {
         if (!params->cArgs)
@@ -1365,6 +1402,8 @@ VbForm *VbCreateForm(const VbObject *o)
         return nullptr;
     /* the object of the form, whose vtable is the interface of the form followed by the accessors of its controls. */
     f->vtable = make_vtable(&g_classes[VBC_FORM], MAX_SLOTS, f);
+    for (unsigned i = 0; i < o->thunk_count && o->thunks && readable(o->thunks, 4 * (i + 1)); i++)
+        f->vtable[FORM_METHODS + i] = (void *)(ULONG_PTR)*(const DWORD *)(o->thunks + 4 * i);
     *(void ***)f->instance = f->vtable;
     *(LONG *)(f->instance + 4) = 1;
     *(VbCtl **)(f->instance + 0x10) = f->self;
@@ -1529,13 +1568,139 @@ VbForm *VbLoadForm(const VbObject *o)
     return f;
 }
 
-/* the object of a New on the description of a class of the project, which is a form here. */
+/* ------------------------------------------------------------------ class modules */
+
+/*
+ * the object of a class module is a block with the vtable at its start, a count of references at 4, the record of its class at 8 and
+ * its variables from 0x34 on, among them the slot of its sink. the vtable has seven entries of the runtime, the three of IUnknown
+ * and the four of IDispatch, and then the ones the compiler wrote, which take the object itself as it is.
+ */
+static const VbObject *class_of_instance(void *object) { return *(const VbObject **)((BYTE *)object + 8); }
+
+static LONG __stdcall class_query(void *self, const IID *iid, void **out)
+{
+    if (IsEqualGUID(iid, &IID_IUnknown) || IsEqualGUID(iid, &IID_IDispatch)) {
+        *out = self;
+        InterlockedIncrement((LONG *)((BYTE *)self + 4));
+        return S_OK;
+    }
+    *out = nullptr;
+    return E_NOINTERFACE;
+}
+
+static ULONG __stdcall class_addref(void *self) { return (ULONG)InterlockedIncrement((LONG *)((BYTE *)self + 4)); }
+
+/* a call of the handler of an event of the class, with the sink of the object as the one argument. */
+static void class_event(void *object, int index)
+{
+    const VbObject *o = class_of_instance(object);
+    if (!o->count)
+        return;
+    const BYTE *entry = o->controls;
+    const DWORD *table = (const DWORD *)(ULONG_PTR)*(const DWORD *)(entry + 0x18);
+    if (!table || !table[6 + index])
+        return;
+    DWORD sink = (DWORD)(ULONG_PTR)((BYTE *)object + *(const DWORD *)(entry + 4));
+    call_stdcall((void *)(ULONG_PTR)table[6 + index], &sink, 1);
+}
+
+static ULONG __stdcall class_release(void *self)
+{
+    LONG n = InterlockedDecrement((LONG *)((BYTE *)self + 4));
+    if (n == 0) {
+        /* the references that Terminate takes are not counted, and the object is not freed while it runs. */
+        InterlockedIncrement((LONG *)((BYTE *)self + 4));
+        class_event(self, 1);
+        InterlockedDecrement((LONG *)((BYTE *)self + 4));
+        HeapFree(GetProcessHeap(), 0, self);
+    }
+    return (ULONG)n;
+}
+
+static LONG __stdcall class_count(void *self, UINT *n)
+{
+    *n = 0;
+    return S_OK;
+}
+
+static LONG __stdcall class_info(void *self, UINT i, LCID l, void **info)
+{
+    *info = nullptr;
+    return E_NOTIMPL;
+}
+
+/* the names of the members are in the descriptor of the class, in the order of its records. */
+static LONG __stdcall class_names(void *self, const IID *iid, LPOLESTR *names, UINT count, LCID lcid, DISPID *ids)
+{
+    const VbObject *o = class_of_instance(self);
+    const BYTE *descriptor = o->descriptor;
+    DWORD members = *(const DWORD *)(descriptor + 0x1C);
+    const DWORD *list = (const DWORD *)*(const DWORD *)(descriptor + 0x20);
+    if (count < 1 || !list)
+        return DISP_E_UNKNOWNNAME;
+    char narrow[100];
+    WideCharToMultiByte(CP_ACP, 0, names[0], -1, narrow, sizeof(narrow), nullptr, nullptr);
+    for (UINT i = 0; i < count; i++)
+        ids[i] = DISPID_UNKNOWN;
+    for (DWORD i = 0; i < members; i++)
+        if (!lstrcmpiA((const char *)list[i], narrow)) {
+            ids[0] = (DISPID)(i + 1);
+            return count == 1 ? S_OK : DISP_E_UNKNOWNNAME;
+        }
+    return DISP_E_UNKNOWNNAME;
+}
+
+static LONG __stdcall class_invoke(void *self, DISPID id, const IID *iid, LCID lcid, WORD flags, DISPPARAMS *params, VARIANT *result,
+                                   EXCEPINFO *info, UINT *bad)
+{
+    VbOutputDebug("msvbvm60: a call of a member of a class of the program by its name is not implemented\n");
+    return DISP_E_MEMBERNOTFOUND;
+}
+
+static void **class_vtable(VbObject *o)
+{
+    if (o->vtable)
+        return o->vtable;
+    void **vt = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (7 + o->thunk_count + 1) * sizeof(void *));
+    vt[0] = class_query;
+    vt[1] = class_addref;
+    vt[2] = class_release;
+    vt[3] = class_count;
+    vt[4] = class_info;
+    vt[5] = class_names;
+    vt[6] = class_invoke;
+    for (unsigned i = 0; i < o->thunk_count; i++)
+        vt[7 + i] = (void *)(ULONG_PTR)*(const DWORD *)(o->thunks + 4 * i);
+    o->vtable = vt;
+    return vt;
+}
+
+static void *new_class_object(VbObject *o)
+{
+    ULONG size = o->instance_size < 0x40 ? 0x40 : o->instance_size;
+    BYTE *instance = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, size + 16);
+    if (!instance)
+        return nullptr;
+    *(void ***)instance = class_vtable(o);
+    *(LONG *)(instance + 4) = 1;
+    *(const VbObject **)(instance + 8) = o;
+    for (unsigned i = 0; i < o->count; i++) {
+        const BYTE *entry = o->controls + i * 0x28;
+        *(DWORD *)(instance + *(const DWORD *)(entry + 4)) = *(const DWORD *)(entry + 0x18);
+    }
+    class_event(instance, 0);
+    return instance;
+}
+
+/* the object of a New on the description of a class of the project: a form or a class module. */
 void *VbNewProjectObject(const void *info)
 {
     for (int i = 0; i < g_object_count; i++) {
-        const VbObject *o = &g_objects[i];
+        VbObject *o = &g_objects[i];
         if (o->info != info)
             continue;
+        if (o->is_class)
+            return new_class_object(o);
         if (!(o->type & 0x80))
             return nullptr;
         VbForm *f = new_form(o);
@@ -1735,6 +1900,138 @@ static LONG __stdcall global_unload(void *self, void *form)
     return S_OK;
 }
 
+static BOOL open_clipboard(VbCtl *c)
+{
+    HWND owner = c->form && c->form->self ? c->form->self->hwnd : nullptr;
+    for (int i = 0; i < 10; i++) {
+        if (OpenClipboard(owner))
+            return TRUE;
+        Sleep(10);
+    }
+    return FALSE;
+}
+
+/* ------------------------------------------------------------------ the clipboard */
+
+/*
+ * the formats are optional variants, 16 bytes each in the arguments, and the numbers are those of the system: 1 text, 2 bitmap,
+ * 3 metafile, 8 device independent bitmap. a format that is not given is the one that fits.
+ */
+static LONG format_of(const DWORD *variant)
+{
+    const VARIANT *v = (const VARIANT *)variant;
+    if (V_VT(v) == VT_ERROR)
+        return 0;
+    VARIANT n;
+    VariantInit(&n);
+    if (FAILED(VariantChangeTypeEx(&n, (VARIANT *)v, VbLocale(), 0, VT_I4)))
+        return -1;
+    return V_I4(&n);
+}
+
+static LONG clipboard_method(VbCtl *c, int method, DWORD *args)
+{
+    switch (method) {
+    case 0:
+        if (!open_clipboard(c))
+            return library_error(521);
+        EmptyClipboard();
+        CloseClipboard();
+        return S_OK;
+    case 3: {
+        /* GetText(Format) */
+        BSTR *out = (BSTR *)(ULONG_PTR)args[4];
+        *out = nullptr;
+        LONG format = format_of(args);
+        if (format != 0 && format != CF_TEXT && format != CF_UNICODETEXT)
+            return library_error(461);
+        if (!open_clipboard(c))
+            return library_error(521);
+        HANDLE data = GetClipboardData(CF_UNICODETEXT);
+        const WCHAR *text = data ? GlobalLock(data) : nullptr;
+        *out = SysAllocString(text ? text : L"");
+        if (text)
+            GlobalUnlock(data);
+        CloseClipboard();
+        return S_OK;
+    }
+    case 4: {
+        /* SetText(Str, Format) */
+        const WCHAR *text = (const WCHAR *)(ULONG_PTR)args[0];
+        LONG format = format_of(args + 1);
+        if (format != 0 && format != CF_TEXT && format != CF_UNICODETEXT)
+            return library_error(461);
+        if (!text)
+            text = L"";
+        SIZE_T bytes = (lstrlenW(text) + 1) * sizeof(WCHAR);
+        HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, bytes);
+        if (!memory)
+            return E_OUTOFMEMORY;
+        memcpy(GlobalLock(memory), text, bytes);
+        GlobalUnlock(memory);
+        if (!open_clipboard(c)) {
+            GlobalFree(memory);
+            return library_error(521);
+        }
+        if (!SetClipboardData(CF_UNICODETEXT, memory))
+            GlobalFree(memory);
+        CloseClipboard();
+        return S_OK;
+    }
+    case 5: {
+        /* GetFormat(Format) */
+        SHORT *out = (SHORT *)(ULONG_PTR)args[4];
+        LONG format = format_of(args);
+        *out = IsClipboardFormatAvailable(format == CF_TEXT ? CF_UNICODETEXT : (UINT)format) ? -1 : 0;
+        return S_OK;
+    }
+    case 1: {
+        /* GetData(Format) makes a picture of the bitmap that is on the clipboard. */
+        IDispatch **out = (IDispatch **)(ULONG_PTR)args[4];
+        *out = nullptr;
+        if (!open_clipboard(c))
+            return library_error(521);
+        LONG hr = S_OK;
+        HANDLE bitmap = GetClipboardData(CF_BITMAP);
+        if (!bitmap) {
+            hr = library_error(461);
+        } else {
+            HANDLE copy = CopyImage(bitmap, IMAGE_BITMAP, 0, 0, LR_CREATEDIBSECTION);
+            hr = copy ? make_picture(PICTYPE_BITMAP, copy, out) : E_OUTOFMEMORY;
+        }
+        CloseClipboard();
+        return hr;
+    }
+    case 2: {
+        /* SetData(Picture, Format) */
+        IDispatch *picture = (IDispatch *)(ULONG_PTR)args[0];
+        IPicture *pic = nullptr;
+        if (!picture || FAILED(picture->lpVtbl->QueryInterface(picture, &IID_IPicture, (void **)&pic)))
+            return library_error(picture ? 13 : 91);
+        OLE_HANDLE handle = 0;
+        SHORT type = 0;
+        pic->lpVtbl->get_Type(pic, &type);
+        pic->lpVtbl->get_Handle(pic, &handle);
+        LONG hr = S_OK;
+        if (type == PICTYPE_BITMAP && handle) {
+            HANDLE copy = CopyImage((HANDLE)(ULONG_PTR)handle, IMAGE_BITMAP, 0, 0, 0);
+            if (!open_clipboard(c)) {
+                hr = library_error(521);
+            } else {
+                if (copy)
+                    SetClipboardData(CF_BITMAP, copy);
+                CloseClipboard();
+            }
+        } else {
+            hr = library_error(461);
+        }
+        pic->lpVtbl->Release(pic);
+        return hr;
+    }
+    }
+    return E_NOTIMPL;
+}
+
 static LONG library_result(int cls, VbCtl **slot, void **out)
 {
     VbCtl *c = library_object(cls, slot);
@@ -1746,6 +2043,234 @@ static LONG library_result(int cls, VbCtl **slot, void **out)
 static LONG __stdcall global_app(void *self, void **out) { return library_result(VBC_APP, &g_app, out); }
 static LONG __stdcall global_screen(void *self, void **out) { return library_result(VBC_SCREEN, &g_screen, out); }
 static LONG __stdcall global_clipboard(void *self, void **out) { return library_result(VBC_CLIPBOARD, &g_clipboard, out); }
+
+/* the error a function of the library gives, as the result of a call that goes through the check of the compiled code. */
+static LONG library_error(LONG number)
+{
+    return (LONG)(0x800A0000u | (ULONG)number);
+}
+
+/* Printer: no printer is installed, so the object has its properties and no pages. */
+static VbCtl *g_printer;
+static LONG __stdcall global_get_printer(void *self, void **out) { return library_result(VBC_PRINTER, &g_printer, out); }
+static LONG __stdcall global_put_printer(void *self, void *printer) { return S_OK; }
+
+/* Forms: the forms that are loaded, as a collection of their objects. */
+static LONG __stdcall global_forms(void *self, void **out)
+{
+    void *collection = VbNewCollection();
+    if (!collection)
+        return E_OUTOFMEMORY;
+    void **vtable = *(void ***)collection;
+    typedef HRESULT(__stdcall * ADD)(void *, VARIANT *, VARIANT *, VARIANT *, VARIANT *);
+    ADD add = (ADD)vtable[8];
+    VARIANT none;
+    VariantInit(&none);
+    V_VT(&none) = VT_ERROR;
+    V_ERROR(&none) = DISP_E_PARAMNOTFOUND;
+    for (int i = 0; i < g_form_count; i++) {
+        VARIANT item;
+        VariantInit(&item);
+        V_VT(&item) = VT_DISPATCH;
+        V_DISPATCH(&item) = (IDispatch *)g_forms[i]->instance;
+        add(collection, &item, &none, &none, &none);
+    }
+    *out = collection;
+    return S_OK;
+}
+
+static LONG __stdcall global_empty_collection(void *self, void **out)
+{
+    *out = VbNewCollection();
+    return *out ? S_OK : E_OUTOFMEMORY;
+}
+
+/* the strings of the resources of the program. the number is an integer, or a string for a resource kept under a name. */
+static BOOL resource_name(const VARIANT *id, const WCHAR **name, WCHAR *number_text)
+{
+    VARIANT v;
+    VariantInit(&v);
+    if (V_VT(id) == VT_ERROR || FAILED(VariantCopyInd(&v, (VARIANT *)id)))
+        return FALSE;
+    if (V_VT(&v) == VT_BSTR) {
+        lstrcpynW(number_text, V_BSTR(&v) ? V_BSTR(&v) : L"", 80);
+        *name = number_text;
+        VariantClear(&v);
+        return TRUE;
+    }
+    VARIANT n;
+    VariantInit(&n);
+    BOOL ok = SUCCEEDED(VariantChangeTypeEx(&n, &v, VbLocale(), 0, VT_I4));
+    VariantClear(&v);
+    if (!ok)
+        return FALSE;
+    *name = MAKEINTRESOURCEW(V_I4(&n) & 0xFFFF);
+    return TRUE;
+}
+
+static LONG load_string(LONG id, BSTR *out)
+{
+    WCHAR text[1024];
+    if (id < 0 || id > 0xFFFF)
+        return library_error(5);
+    int n = LoadStringW(GetModuleHandleW(nullptr), (UINT)id, text, 1024);
+    if (!n)
+        return library_error(326);
+    *out = SysAllocStringLen(text, (UINT)n);
+    return *out ? S_OK : E_OUTOFMEMORY;
+}
+
+static LONG __stdcall global_load_string_short(void *self, SHORT id, BSTR *out) { return load_string((USHORT)id, out); }
+static LONG __stdcall global_load_string_long(void *self, LONG id, BSTR *out) { return load_string(id, out); }
+
+/* a picture object of a bitmap, an icon or a cursor, which owns the handle. */
+static LONG make_picture(UINT type, HANDLE handle, IDispatch **out)
+{
+    PICTDESC desc = {};
+    desc.cbSizeofstruct = sizeof(desc);
+    desc.picType = type;
+    if (type == PICTYPE_BITMAP)
+        desc.bmp.hbitmap = (HBITMAP)handle;
+    else
+        desc.icon.hicon = (HICON)handle;
+    return OleCreatePictureIndirect(&desc, &IID_IPictureDisp, TRUE, (void **)out);
+}
+
+/* LoadResPicture: 0 a bitmap, 1 an icon, 2 a cursor. */
+static LONG __stdcall global_load_res_picture(void *self, VARIANT id, SHORT kind, IDispatch **out)
+{
+    const WCHAR *name;
+    WCHAR text[80];
+    *out = nullptr;
+    if (!resource_name(&id, &name, text))
+        return library_error(13);
+    if (kind < 0 || kind > 2)
+        return library_error(5);
+    HINSTANCE module = GetModuleHandleW(nullptr);
+    UINT image = kind == 0 ? IMAGE_BITMAP : kind == 1 ? IMAGE_ICON : IMAGE_CURSOR;
+    HANDLE handle = LoadImageW(module, name, image, 0, 0, kind == 0 ? LR_CREATEDIBSECTION : 0);
+    if (!handle)
+        return library_error(326);
+    LONG hr = make_picture(kind == 0 ? PICTYPE_BITMAP : PICTYPE_ICON, handle, out);
+    if (FAILED(hr)) {
+        if (kind == 0)
+            DeleteObject(handle);
+        else
+            DestroyIcon((HICON)handle);
+    }
+    return hr;
+}
+
+/* LoadResData: the bytes of a resource, as an array of bytes. the kind is 1 a cursor, 2 a bitmap, 3 an icon or a number or name. */
+static LONG __stdcall global_load_res_data(void *self, VARIANT id, VARIANT kind, VARIANT *out)
+{
+    const WCHAR *name, *type_name;
+    WCHAR text[80], type_text[80];
+    if (!resource_name(&id, &name, text) || !resource_name(&kind, &type_name, type_text))
+        return library_error(13);
+    if (IS_INTRESOURCE(type_name)) {
+        /* the numbers of Visual Basic for the kinds that the system numbers differently. */
+        switch ((ULONG_PTR)type_name) {
+        case 1: type_name = MAKEINTRESOURCEW(1); break;
+        case 2: type_name = MAKEINTRESOURCEW(2); break;
+        case 3: type_name = MAKEINTRESOURCEW(3); break;
+        }
+    }
+    HRSRC found = FindResourceW(nullptr, name, type_name);
+    if (!found)
+        return library_error(326);
+    DWORD size = SizeofResource(nullptr, found);
+    const void *data = LockResource(LoadResource(nullptr, found));
+    SAFEARRAYBOUND bound = {size, 0};
+    SAFEARRAY *array = SafeArrayCreate(VT_UI1, 1, &bound);
+    if (!array)
+        return E_OUTOFMEMORY;
+    void *target;
+    SafeArrayAccessData(array, &target);
+    memcpy(target, data, size);
+    SafeArrayUnaccessData(array);
+    VariantClear(out);
+    V_VT(out) = VT_ARRAY | VT_UI1;
+    V_ARRAY(out) = array;
+    return S_OK;
+}
+
+static BSTR text_of_variant(const VARIANT *v)
+{
+    VARIANT in, out;
+    VariantInit(&in);
+    VariantInit(&out);
+    if (V_VT(v) == VT_ERROR || FAILED(VariantCopyInd(&in, (VARIANT *)v)))
+        return nullptr;
+    HRESULT hr = V_VT(&in) == VT_EMPTY ? S_OK : VariantChangeTypeEx(&out, &in, VbLocale(), 0, VT_BSTR);
+    VariantClear(&in);
+    if (FAILED(hr))
+        return nullptr;
+    return V_VT(&out) == VT_BSTR ? V_BSTR(&out) : SysAllocString(L"");
+}
+
+/* LoadPicture: a file of any kind of picture the system reads. no name is no picture. */
+static LONG load_picture_file(BSTR file, IDispatch **out)
+{
+    *out = nullptr;
+    if (!file || !file[0])
+        return S_OK;
+    DWORD attributes = GetFileAttributesW(file);
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+        return library_error(GetLastError() == ERROR_PATH_NOT_FOUND ? 76 : 53);
+    HRESULT hr = OleLoadPicturePath(file, nullptr, 0, 0, &IID_IPictureDisp, (void **)out);
+    return FAILED(hr) ? library_error(481) : S_OK;
+}
+
+static LONG __stdcall global_load_picture_file(void *self, VARIANT file, IDispatch **out)
+{
+    BSTR name = text_of_variant(&file);
+    LONG hr = load_picture_file(name, out);
+    SysFreeString(name);
+    return hr;
+}
+
+static LONG __stdcall global_load_picture(void *self, VARIANT file, VARIANT size, VARIANT depth, VARIANT x, VARIANT y, IDispatch **out)
+{
+    BSTR name = text_of_variant(&file);
+    LONG hr = load_picture_file(name, out);
+    SysFreeString(name);
+    return hr;
+}
+
+/* SavePicture writes a picture to a file in the form it has: a bitmap, an icon, a metafile. */
+static LONG __stdcall global_save_picture(void *self, IDispatch *picture, BSTR file)
+{
+    if (!picture)
+        return library_error(91);
+    IPicture *pic = nullptr;
+    if (FAILED(picture->lpVtbl->QueryInterface(picture, &IID_IPicture, (void **)&pic)))
+        return library_error(13);
+    IStream *stream = nullptr;
+    LONG written = 0;
+    LONG hr = CreateStreamOnHGlobal(nullptr, TRUE, &stream);
+    if (SUCCEEDED(hr))
+        hr = pic->lpVtbl->SaveAsFile(pic, stream, TRUE, &written);
+    if (SUCCEEDED(hr)) {
+        HGLOBAL memory = nullptr;
+        GetHGlobalFromStream(stream, &memory);
+        const void *data = GlobalLock(memory);
+        HANDLE h = CreateFileW(file, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) {
+            hr = library_error(GetLastError() == ERROR_PATH_NOT_FOUND ? 76 : 75);
+        } else {
+            DWORD done;
+            WriteFile(h, data, (DWORD)written, &done, nullptr);
+            CloseHandle(h);
+        }
+        GlobalUnlock(memory);
+    }
+    if (stream)
+        stream->lpVtbl->Release(stream);
+    pic->lpVtbl->Release(pic);
+    return hr;
+}
+
 static LONG global_unsupported(int slot)
 {
     char text[100];
@@ -1755,15 +2280,19 @@ static LONG global_unsupported(int slot)
 }
 
 #define UNSUPPORTED(N) static LONG __stdcall global_unsupported_##N(void *self) { return global_unsupported(N); }
-UNSUPPORTED(8) UNSUPPORTED(9) UNSUPPORTED(10) UNSUPPORTED(11) UNSUPPORTED(12) UNSUPPORTED(13) UNSUPPORTED(14) UNSUPPORTED(15)
-UNSUPPORTED(16) UNSUPPORTED(17) UNSUPPORTED(18) UNSUPPORTED(19) UNSUPPORTED(20) UNSUPPORTED(21) UNSUPPORTED(22) UNSUPPORTED(23)
+UNSUPPORTED(20) UNSUPPORTED(21) UNSUPPORTED(22) UNSUPPORTED(23)
 
 const GUID CLSID_VbGlobal = {0xFCFB3D23, 0xA0FA, 0x1068, {0xA7, 0x38, 0x08, 0x00, 0x2B, 0x33, 0x71, 0xB5}};
 
+/*
+ * the interface of the global object, by the table of the runtime of Windows: 3 Load, 4 Unload, 5 App, 6 Screen, 7 Clipboard,
+ * 8 and 9 the Printer property, 10 and 19 collections that are empty here, 11 Forms, 12 and 18 LoadResString by an integer
+ * and by a long, 13 LoadResPicture, 14 LoadResData, 15 LoadPicture by name, 16 SavePicture, 17 LoadPicture with sizes.
+ */
 void *VbNewGlobal(void)
 {
     static VbGlobal global;
-    static void *vtable[32];
+    static void *vtable[24];
     if (!global.vtable) {
         vtable[0] = global_query;
         vtable[1] = global_addref;
@@ -1773,14 +2302,25 @@ void *VbNewGlobal(void)
         vtable[5] = global_app;
         vtable[6] = global_screen;
         vtable[7] = global_clipboard;
-        static void *const unsupported[] = {global_unsupported_8,  global_unsupported_9,  global_unsupported_10, global_unsupported_11,
-                                            global_unsupported_12, global_unsupported_13, global_unsupported_14, global_unsupported_15,
-                                            global_unsupported_16, global_unsupported_17, global_unsupported_18, global_unsupported_19,
-                                            global_unsupported_20, global_unsupported_21, global_unsupported_22, global_unsupported_23};
-        for (int i = 8; i < 32; i++)
-            vtable[i] = i < 24 ? unsupported[i - 8] : (void *)global_unsupported_23;
+        vtable[8] = global_get_printer;
+        vtable[9] = global_put_printer;
+        vtable[10] = global_empty_collection;
+        vtable[11] = global_forms;
+        vtable[12] = global_load_string_short;
+        vtable[13] = global_load_res_picture;
+        vtable[14] = global_load_res_data;
+        vtable[15] = global_load_picture_file;
+        vtable[16] = global_save_picture;
+        vtable[17] = global_load_picture;
+        vtable[18] = global_load_string_long;
+        vtable[19] = global_empty_collection;
+        vtable[20] = global_unsupported_20;
+        vtable[21] = global_unsupported_21;
+        vtable[22] = global_unsupported_22;
+        vtable[23] = global_unsupported_23;
         global.vtable = vtable;
         global.refs = 1;
     }
     return &global;
 }
+

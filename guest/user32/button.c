@@ -500,8 +500,12 @@ LRESULT CALLBACK ButtonProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         return b->State & (BST_CHECKED | BST_INDETERMINATE);
     case BM_SETCHECK: {
         UINT old = b->State;
-        b->State = (b->State & ~(BST_CHECKED | BST_INDETERMINATE)) | (wparam & (BST_CHECKED | BST_INDETERMINATE));
         UINT type = button_type(hwnd);
+        /* only a button of three states has the third, and a state it cannot have is checked. */
+        UINT most = (type == BS_3STATE || type == BS_AUTO3STATE) ? BST_INDETERMINATE : BST_CHECKED;
+        if (wparam > most)
+            wparam = BST_CHECKED;
+        b->State = (b->State & ~(BST_CHECKED | BST_INDETERMINATE)) | (wparam & (BST_CHECKED | BST_INDETERMINATE));
         if (is_radio(type)) {
             DWORD style = (DWORD)GetWindowLongW(hwnd, GWL_STYLE);
             if (wparam == BST_CHECKED)

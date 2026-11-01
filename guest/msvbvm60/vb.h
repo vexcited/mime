@@ -128,6 +128,8 @@ BOOL VbHasForms(void);
 int VbFormCount(void);
 /* the object of New on a class of the project, or null when the class is not one that can be made. */
 void *VbNewProjectObject(const void *info);
+/* the object of New on a class description of any kind. */
+void VbNewObject(const void *info, void **out);
 /* the global object of the library, which holds App, Screen and the loading of forms. */
 extern const GUID CLSID_VbGlobal;
 void *VbNewGlobal(void);

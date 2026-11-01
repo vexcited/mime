@@ -202,25 +202,25 @@ EXPORTS
     TipCreateInstanceEx @299
     GetMem2@8 @300
     GetMem4@8 @301
-    GetMem8 @302
-    GetMemStr @303
-    GetMemVar @304
-    GetMemObj @305
+    GetMem8@8 @302
+    GetMemStr@8 @303
+    GetMemVar@8 @304
+    GetMemObj@8 @305
     PutMem2@8 @306
     PutMem4@8 @307
-    PutMem8 @308
-    PutMemStr @309
-    PutMemVar @310
+    PutMem8@12 @308
+    PutMemStr@8 @309
+    PutMemVar@8 @310
     PutMemObj @311
-    SetMemVar @312
-    SetMemObj @313
-    GetMemNewObj @314
+    SetMemVar@8 @312
+    SetMemObj@8 @313
+    GetMemNewObj@16 @314
     PutMemNewObj @315
-    SetMemNewObj @316
-    GetMem1 @317
-    PutMem1 @318
-    GetMemEvent @319
-    PutMemEvent @320
+    SetMemNewObj@16 @316
+    GetMem1@8 @317
+    PutMem1@8 @318
+    GetMemEvent@16 @319
+    PutMemEvent@16 @320
     SetMemEvent @321
     __vbaLateMemNamedStAd @322
     __vbaLateMemSt@24 @323

@@ -421,14 +421,6 @@ VB_STD VARIANT *vb_rtcCreateObject2(VARIANT *out, BSTR progid, BSTR server)
     IUnknown *object = nullptr;
     HRESULT hr;
     SetErrorInfo(0, nullptr);
-    {
-        char text[160];
-        WideCharToMultiByte(CP_ACP, 0, progid, -1, text, 120, nullptr, nullptr);
-        text[120] = 0;
-        VbOutputDebug("msvbvm60: CreateObject ");
-        VbOutputDebug(text);
-        VbOutputDebug("\n");
-    }
     if (server && server[0] && !is_local(server)) {
         hr = CLSIDFromProgID(progid, &clsid);
         if (hr == (HRESULT)0x800401F3)
@@ -454,6 +446,12 @@ VB_STD VARIANT *vb_rtcCreateObject2(VARIANT *out, BSTR progid, BSTR server)
             VbRaiseHr(hr);
         }
     } else if (FAILED(bind_name(progid, &object))) {
+        char text[200];
+        char narrow[120];
+        WideCharToMultiByte(CP_ACP, 0, progid, -1, narrow, sizeof(narrow), nullptr, nullptr);
+        narrow[sizeof(narrow) - 1] = 0;
+        wsprintfA(text, "msvbvm60: CreateObject of %s failed, the class is not registered\n", narrow);
+        VbOutputDebug(text);
         VbRaise(VBERR_CANNOT_CREATE_OBJECT);
     }
     if (!object)
