@@ -877,6 +877,11 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
         cache[1] = cache[0];
         return copy_info(info, cache, sizeof(cache), length, returned);
     }
+    case SystemMimePoolInformation: {
+        MIME_POOL_INFORMATION pool;
+        MiSpecialPoolQuery(&pool);
+        return copy_info(info, &pool, sizeof(pool), length, returned);
+    }
     case SystemKernelDebuggerInformation: {
         BOOLEAN dbg[2] = {FALSE, TRUE}; /* enabled, not present */
         return copy_info(info, dbg, sizeof(dbg), length, returned);

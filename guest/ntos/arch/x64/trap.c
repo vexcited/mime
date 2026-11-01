@@ -191,6 +191,8 @@ static void kernel_exception(PKTRAP_FRAME frame)
     if (frame->Vector == 14) {
         ULONG_PTR address = frame->Cr2;
         BOOLEAN write = (frame->ErrorCode & 0x2) != 0;
+        if (__builtin_expect(MmVerifyPool, 0))
+            MiSpecialPoolFault(address, (ULONG)frame->ErrorCode, frame->Rip);
         if (address <= MIME_USER_ADDRESS_LIMIT && KI_TRAP_INTERRUPTS_ENABLED(frame)) {
             /* demand faults on user memory touched by the kernel, only from interruptible code. */
             KiEnableInterrupts();

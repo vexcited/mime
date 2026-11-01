@@ -54,6 +54,55 @@ ULONG MiEnumerateSystemImages(MI_SYSTEM_IMAGE_CALLBACK callback, PVOID context)
     return count;
 }
 
+/* the image that holds a code address, the kernel included. */
+static BOOLEAN find_image(ULONG_PTR address, const char **kernel_name, const LOADED_MODULE **module, ULONG_PTR *offset)
+{
+    if (address >= HalBootInfo->kernel_virt && address < HalBootInfo->kernel_virt + HalBootInfo->kernel_size) {
+        *kernel_name = "ntoskrnl";
+        *module = nullptr;
+        *offset = address - HalBootInfo->kernel_virt;
+        return TRUE;
+    }
+    for (const LOADED_MODULE *m = g_modules; m; m = m->Next) {
+        if (address >= (ULONG_PTR)m->Base && address < (ULONG_PTR)m->Base + m->Size) {
+            *kernel_name = nullptr;
+            *module = m;
+            *offset = address - (ULONG_PTR)m->Base;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+BOOLEAN MiIsCodeAddress(ULONG_PTR address)
+{
+    const char *name;
+    const LOADED_MODULE *m;
+    ULONG_PTR offset;
+    return find_image(address, &name, &m, &offset);
+}
+
+/* image name and offset in the image, which the linker maps give the function for. */
+void MiDescribeCodeAddress(ULONG_PTR address, char *out, SIZE_T size)
+{
+    const char *name;
+    const LOADED_MODULE *m;
+    ULONG_PTR offset;
+    if (!find_image(address, &name, &m, &offset)) {
+        mime_format(out, size, "%p", (PVOID)address);
+        return;
+    }
+    char text[64];
+    if (!name) {
+        ULONG n = 0;
+        for (; m->Name[n] && n < sizeof(text) - 1; n++)
+            text[n] = m->Name[n] < 0x80 ? (char)m->Name[n] : '?';
+        text[n] = 0;
+        name = text;
+    }
+    mime_format(out, size, "%s+0x%llx", name, (ULONG64)offset);
+}
+
 PVOID MiFindKernelExport(PVOID image_base, const char *name)
 {
     return find_export(image_base, name, 0, FALSE);

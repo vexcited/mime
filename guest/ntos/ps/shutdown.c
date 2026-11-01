@@ -582,6 +582,12 @@ NTSTATUS NTAPI NtInitiatePowerAction(ULONG action, ULONG lightest_state, ULONG f
 
 NTSTATUS NTAPI NtSetSystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length)
 {
+    if ((ULONG)klass == SystemMimePoolInformation) {
+        ULONG operation;
+        if (length != sizeof(operation) || !NT_SUCCESS(KiCopyFromUser(&operation, info, sizeof(operation))))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        return MiSpecialPoolSelfTest(operation);
+    }
     if ((ULONG)klass != MX_SYSTEM_SHUTDOWN_REQUEST)
         return STATUS_INVALID_INFO_CLASS;
     MX_SHUTDOWN_REQUEST request;

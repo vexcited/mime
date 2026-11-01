@@ -653,6 +653,20 @@ void MmFreeKernelStack(PVOID allocation, SIZE_T size);
 void ExInitializePool(void);
 SIZE_T ExQueryPoolUsage(void);
 
+/* the verifying pool, kernel option verify-pool, see mm/specpool.c. */
+extern BOOLEAN MmVerifyPool;
+extern BOOLEAN MmVerifyPoolFill;
+PVOID MiSpecialPoolAllocate(SIZE_T size, ULONG tag, BOOLEAN zero, PVOID caller);
+void MiSpecialPoolFree(PVOID block, ULONG tag, PVOID caller);
+BOOLEAN MiSpecialPoolContains(PVOID block);
+ULONG MiSpecialPoolSweep(BOOLEAN fatal);
+void MiSpecialPoolBugCheckReport(void);
+void MiSpecialPoolFault(ULONG_PTR address, ULONG error, ULONG_PTR rip);
+void MiSpecialPoolQuery(MIME_POOL_INFORMATION *out);
+NTSTATUS MiSpecialPoolSelfTest(ULONG operation);
+BOOLEAN MiIsCodeAddress(ULONG_PTR address);
+void MiDescribeCodeAddress(ULONG_PTR address, char *out, SIZE_T size);
+
 NTSTATUS MmCreateAddressSpace(PMMADDRESS_SPACE as);
 void MmDeleteAddressSpace(PMMADDRESS_SPACE as);
 PMMVAD MiFindVad(PMMADDRESS_SPACE as, ULONG_PTR va);

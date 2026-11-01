@@ -148,6 +148,8 @@ void KiKernelExceptionHandler(PKTRAP_FRAME frame)
     if (ec == 0x25 || ec == 0x21) {
         BOOLEAN write = ec == 0x25 && (frame->Esr & (1u << 6)) && !(frame->Esr & (1u << 8));
         ULONG_PTR far = frame->Far;
+        if (__builtin_expect(MmVerifyPool, 0))
+            MiSpecialPoolFault(far, write ? 2 : 0, frame->Pc);
         if (far <= MIME_USER_ADDRESS_LIMIT && !(frame->Spsr & (1u << 7))) {
             /* demand faults on user memory touched by the kernel, from interruptible code only. */
             KiEnableInterrupts();

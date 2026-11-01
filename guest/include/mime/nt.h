@@ -2215,6 +2215,30 @@ typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemHypervisorDetailInformation = 185,
 } SYSTEM_INFORMATION_CLASS;
 
+/* Mime's own class of NtQuerySystemInformation and NtSetSystemInformation for the verifying pool, kernel option verify-pool. */
+#define SystemMimePoolInformation 0x4D50
+
+typedef struct _MIME_POOL_INFORMATION {
+    ULONG Verifying; /* the verifying pool is on and working. */
+    ULONG Fill;
+    ULONG64 LiveBlocks;
+    ULONG64 LivePages;
+    ULONG64 Allocations;
+    ULONG64 Fallbacks; /* allocations that got no guard pages of their own. */
+} MIME_POOL_INFORMATION;
+
+/* the operations of NtSetSystemInformation: each misuses the pool on purpose and ends in a bug check. */
+enum {
+    MIME_POOL_TEST_DOUBLE_FREE = 1,
+    MIME_POOL_TEST_WRONG_TAG,
+    MIME_POOL_TEST_OVERRUN,
+    MIME_POOL_TEST_USE_AFTER_FREE,
+    MIME_POOL_TEST_TAIL_CANARY,
+    MIME_POOL_TEST_UNDERRUN_CANARY,
+    MIME_POOL_TEST_UNDERRUN_GUARD,
+    MIME_POOL_TEST_INTERIOR_FREE,
+};
+
 /* SystemFirmwareTableInformation, as in wdm.h. */
 #define SystemFirmwareTable_Enumerate 0
 #define SystemFirmwareTable_Get 1

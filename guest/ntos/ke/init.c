@@ -68,6 +68,8 @@ void NTAPI KeBugCheckEx(ULONG code, ULONG_PTR p1, ULONG_PTR p2, ULONG_PTR p3, UL
         KiLogPrintf("  frame %d: %p", depth, (PVOID)((ULONG64 *)fp)[1]);
         fp = ((ULONG64 *)fp)[0];
     }
+    if (MmVerifyPool)
+        MiSpecialPoolBugCheckReport();
     mime_format(buf, sizeof(buf), "*** STOP: 0x%08X (0x%llX, 0x%llX, 0x%llX, 0x%llX)", code, (ULONG64)p1,
                 (ULONG64)p2, (ULONG64)p3, (ULONG64)p4);
     HalPanic(buf);
@@ -206,6 +208,9 @@ void KiInitializeKernel(MimeBootInfo *boot)
     KiNoLockFlush = strstr(boot->cmdline, "nolockflush") != nullptr;
     extern BOOLEAN KiTraceUserExceptions;
     KiTraceUserExceptions = strstr(boot->cmdline, "trace-exceptions") != nullptr;
+    /* verify-pool gives every pool block guard pages, verify-pool-fill also fills blocks that are not asked zeroed. */
+    MmVerifyPool = strstr(boot->cmdline, "verify-pool") != nullptr;
+    MmVerifyPoolFill = strstr(boot->cmdline, "verify-pool-fill") != nullptr;
     /* the kernel options no-access-checks, which opens every object to every program, and trace-access. */
     SeAccessEnforced = strstr(boot->cmdline, "no-access-checks") == nullptr;
     SeTraceAccess = strstr(boot->cmdline, "trace-access") != nullptr;

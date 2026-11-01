@@ -88,7 +88,9 @@ static void flush_local_all(BOOLEAN global)
 static void shootdown(BOOLEAN global)
 {
     PKPRCB self = KeGetCurrentPrcb();
-    PKPROCESS process = KiCurrentThread()->ApcStateProcess;
+    /* the boot processor has no thread until the scheduler starts, and no other processor runs yet. */
+    PKTHREAD thread = KiCurrentThread();
+    PKPROCESS process = thread ? thread->ApcStateProcess : nullptr;
     ULONG64 targets = 0;
     for (ULONG i = 0; i < KeNumberProcessors; i++) {
         PKPRCB p = KiProcessorBlock[i];

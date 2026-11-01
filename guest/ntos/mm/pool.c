@@ -56,10 +56,31 @@ static BOOLEAN refill(int cls)
 /* above any real address space, and low enough that adding a header size cannot wrap. */
 #define POOL_MAX_REQUEST (1ull << 46)
 
-static PVOID pool_alloc(SIZE_T size, ULONG tag, BOOLEAN zero)
+[[clang::noinline, noreturn]] __attribute__((cold)) static void bad_large_free(PVOID p, PVOID caller)
+{
+    KiLogPrintf("pool: free of %p, a page aligned address that is not a large block, called from %p", p, caller);
+    KeBugCheckEx(0x000000C2, 7, (ULONG_PTR)p, (ULONG_PTR)caller, 0); /* BAD_POOL_CALLER, with the caller. */
+    __builtin_unreachable();
+}
+
+[[clang::noinline, noreturn]] __attribute__((cold)) static void bad_header(PVOID p, const POOL_HEADER *h, PVOID caller)
+{
+    KiLogPrintf("pool: free of %p with a damaged header, tag %08x, class %u, magic %04x, size %llu, called from %p", p,
+                h->Tag, h->Class, h->Magic, h->Size, caller);
+    KeBugCheckEx(0x00000019, 0x20, (ULONG_PTR)p, h->Magic, h->Class); /* BAD_POOL_HEADER. */
+    __builtin_unreachable();
+}
+
+/* inline, so that the return address of the verifying pool is that of the caller of the exported function. */
+[[clang::always_inline]] static inline PVOID pool_alloc(SIZE_T size, ULONG tag, BOOLEAN zero)
 {
     if (size > POOL_MAX_REQUEST)
         return nullptr;
+    if (__builtin_expect(MmVerifyPool, 0)) {
+        PVOID special = MiSpecialPoolAllocate(size, tag, zero, __builtin_return_address(0));
+        if (special)
+            return special;
+    }
     if (size == 0)
         size = 1;
     SIZE_T total = size + sizeof(POOL_HEADER);
@@ -101,15 +122,19 @@ static PVOID pool_alloc(SIZE_T size, ULONG tag, BOOLEAN zero)
     return body;
 }
 
-static void pool_free(PVOID p)
+[[clang::always_inline]] static inline void pool_free(PVOID p, ULONG tag)
 {
     if (!p)
         return;
+    if (__builtin_expect(MmVerifyPool, 0) && MiSpecialPoolContains(p)) {
+        MiSpecialPoolFree(p, tag, __builtin_return_address(0));
+        return;
+    }
     if (((ULONG_PTR)p & (PAGE_SIZE - 1)) == 0) {
         ULONG64 pa = HalPhysicalOf(p);
         PMMPFN pfn = MiGetPfn(pa);
         if (!pfn || pfn->ShareCount != POOL_LARGE_MARK)
-            KeBugCheckEx(0x000000C2, 7, (ULONG_PTR)p, (ULONG_PTR)__builtin_return_address(0), 0); /* BAD_POOL_CALLER, with the caller. */
+            bad_large_free(p, __builtin_return_address(0));
         SIZE_T pages = (SIZE_T)(ULONG_PTR)pfn->ListEntry.Flink;
         pfn->ShareCount = 0;
         ULONG64 state = KiDisableInterrupts();
@@ -120,7 +145,7 @@ static void pool_free(PVOID p)
     }
     POOL_HEADER *h = (POOL_HEADER *)p - 1;
     if (h->Magic != POOL_MAGIC || h->Class >= POOL_CLASSES)
-        KeBugCheckEx(0x00000019, 0x20, (ULONG_PTR)p, h->Magic, h->Class); /* BAD_POOL_HEADER. */
+        bad_header(p, h, __builtin_return_address(0));
     int cls = h->Class;
     h->Magic = 0;
     ULONG64 state = KiDisableInterrupts();
@@ -156,12 +181,12 @@ PVOID NTAPI ExAllocatePoolZero(POOL_TYPE type, SIZE_T size, ULONG tag)
 
 void NTAPI ExFreePoolWithTag(PVOID p, ULONG tag)
 {
-    pool_free(p);
+    pool_free(p, tag);
 }
 
 void NTAPI ExFreePool(PVOID p)
 {
-    pool_free(p);
+    pool_free(p, 0);
 }
 
 SIZE_T ExQueryPoolUsage(void)
@@ -176,7 +201,7 @@ PVOID MimeRtlAllocate(SIZE_T size)
 
 void MimeRtlFree(PVOID p)
 {
-    pool_free(p);
+    pool_free(p, 0);
 }
 
 void ExInitializePool(void)
