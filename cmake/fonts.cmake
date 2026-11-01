@@ -2,3 +2,5 @@
 # It keeps its own name, Noto Sans, and the license text goes along with it.
 file(GLOB mime_rom_fonts ${CMAKE_SOURCE_DIR}/third_party/fonts/winfonts/*)
 set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${mime_rom_fonts})
+# the folder's desktop.ini, which gives it the fonts view of the shell as on windows.
+set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${CMAKE_SOURCE_DIR}/data/winfonts/desktop.ini)
