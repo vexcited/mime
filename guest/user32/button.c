@@ -501,15 +501,19 @@ LRESULT CALLBACK ButtonProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     case BM_SETCHECK: {
         UINT old = b->State;
         UINT type = button_type(hwnd);
-        /* only a button of three states has the third, and a state it cannot have is checked. */
-        UINT most = (type == BS_3STATE || type == BS_AUTO3STATE) ? BST_INDETERMINATE : BST_CHECKED;
-        if (wparam > most)
-            wparam = BST_CHECKED;
-        b->State = (b->State & ~(BST_CHECKED | BST_INDETERMINATE)) | (wparam & (BST_CHECKED | BST_INDETERMINATE));
+        /* a button of three states keeps up to the third, any other check box or radio is checked by any value, and
+           the rest have no check at all. a radio button is a tab stop while it is checked. */
+        if (type == BS_3STATE || type == BS_AUTO3STATE) {
+            if (wparam > BST_INDETERMINATE)
+                wparam = BST_INDETERMINATE;
+        } else if (type == BS_CHECKBOX || type == BS_AUTOCHECKBOX || is_radio(type)) {
+            wparam = wparam ? BST_CHECKED : BST_UNCHECKED;
+        } else
+            return 0;
+        b->State = (b->State & ~(BST_CHECKED | BST_INDETERMINATE)) | (UINT)wparam;
         if (is_radio(type)) {
             DWORD style = (DWORD)GetWindowLongW(hwnd, GWL_STYLE);
-            if (wparam == BST_CHECKED)
-                style |= WS_TABSTOP;
+            style = wparam ? style | WS_TABSTOP : style & ~(DWORD)WS_TABSTOP;
             SetWindowLongW(hwnd, GWL_STYLE, (LONG)style);
         }
         if (old != b->State)
