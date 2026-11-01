@@ -472,10 +472,10 @@ HRESULT DwGlyphRunAnalysisCreate(const DWRITE_GLYPH_RUN *run, FLOAT pixels_per_d
                 hint_flags |= MIME_TTF_HINT_GRAY;
             if (kind == DWRITE_RENDERING_MODE_GDI_CLASSIC)
                 hint_flags |= MIME_TTF_HINT_COMPAT_WIDTHS;
-            if (kind != DWRITE_RENDERING_MODE_GDI_CLASSIC)
+            if (kind == DWRITE_RENDERING_MODE_NATURAL || kind == DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC) {
                 hint_flags |= MIME_TTF_HINT_SUBPIXEL;
-            if (kind == DWRITE_RENDERING_MODE_NATURAL || kind == DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC)
                 natural_positions = TRUE;
+            }
             if (kind == DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC)
                 hint_flags |= MIME_TTF_HINT_SYMMETRIC;
         }

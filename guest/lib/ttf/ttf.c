@@ -623,6 +623,30 @@ bool mime_ttf_name(const MimeTtfFont *font, unsigned name_id, uint16_t *buffer, 
     return true;
 }
 
+bool mime_ttf_thin(const MimeTtfFont *font)
+{
+    static const char *const families[] = {"Courier New",     "Fixed Miriam Transparent", "Miriam Fixed",
+                                           "Rod",             "Rod Transparent",          "Simplified Arabic Fixed"};
+    uint16_t name[48];
+    size_t length;
+    if (!font || !mime_ttf_name(font, 1, name, 47, &length) || length == 0 || length > 47)
+        return false;
+    bool match = false;
+    for (unsigned i = 0; i < sizeof(families) / sizeof(families[0]) && !match; i++) {
+        size_t n = 0;
+        while (families[i][n])
+            n++;
+        match = n == length;
+        for (size_t k = 0; k < n && match; k++)
+            match = name[k] == (uint8_t)families[i][k];
+    }
+    if (!match)
+        return false;
+    if (font->os2.size >= 64 && (u16(font->os2, 4) >= 600 || (u16(font->os2, 62) & 0x20)))
+        return false;
+    return true;
+}
+
 /* outline walking. */
 
 typedef struct Xform {

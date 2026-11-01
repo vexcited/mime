@@ -70,7 +70,33 @@ typedef struct Call {
     uint32_t ip;
     uint32_t count;
     const FuncDef *func;
+    int patch;        /* PATCH_* of a value held back for the length of the call. */
+    int32_t saved;
+    bool special;     /* the call runs one of the delta shift functions. */
 } Call;
+
+/*
+ * Windows spots a few functions of the font programs of its own fonts by their first bytes and treats them on their
+ * own while ClearType is on: a call holds back a storage value or the cut in, and the delta shift functions only move
+ * along y. these are the flags found.
+ */
+enum {
+    PATCH_STORAGE22 = 0x100, /* functions 64 to 66 that begin with a test of storage 22. */
+    PATCH_STORAGE24 = 0x200, /* functions 0 to 2, 4, 7 and 8 that begin with a test of storage 24. */
+    PATCH_READ8 = 0x400,     /* function 0 that reads storage 8, which then reads as zero. */
+    PATCH_CUTIN = 0x800      /* function 58, called with an endless cut in. */
+};
+
+enum { HELD_NONE, HELD_STORAGE22, HELD_STORAGE24, HELD_CUTIN };
+
+/*
+ * a font unit to 26.6 conversion as the font driver of Windows does it: a whole number ratio rounded half up when the
+ * divisor is a power of two, rounded away from zero when it is not, and a 16.16 factor when the numbers are big.
+ */
+typedef struct Scale {
+    int32_t num, den, fix;
+    int shift; /* above zero for a power of two divisor, otherwise minus one for a plain divisor or minus two for 16.16. */
+} Scale;
 
 struct MimeTtfHinter {
     const MimeTtfFont *font;
@@ -78,10 +104,14 @@ struct MimeTtfHinter {
     int ppem_x, ppem_y;
     uint32_t flags;
     int32_t scale_x, scale_y; /* 16.16 pixels in 26.6 per font unit. */
+    Scale sx, sy, su;         /* x, y and the larger of both. */
     bool stretched;
     bool usable;
     bool glyph_hinting; /* glyph programs run. */
     bool native; /* the prep asked for native cleartype behaviour. */
+    uint16_t patches;     /* PATCH_* flags the font program set when it defined its functions. */
+    uint16_t special[4];  /* the numbers of the delta shift functions. */
+    uint8_t special_count;
 
     int32_t *cvt;
     uint32_t cvt_count;
@@ -101,6 +131,7 @@ struct MimeTtfHinter {
 };
 
 /* ------------------------------------------------------------------ fixed point helpers */
+
 
 static int32_t sat32(int64_t v)
 {
@@ -137,6 +168,50 @@ static int32_t dot14(int32_t ax, int32_t ay, int32_t bx, int32_t by)
 {
     int64_t v = (int64_t)ax * bx + (int64_t)ay * by;
     return sat32((v + (v < 0 ? 0x1fff : 0x2000)) >> 14);
+}
+
+static int32_t scale_apply(const Scale *s, int32_t v)
+{
+    if (s->shift >= 0)
+        return sat32(((int64_t)(s->den >> 1) + (int64_t)s->num * v) >> s->shift);
+    if (s->shift == -1) {
+        int64_t n = (int64_t)s->num * v;
+        if (v < 0)
+            return sat32(-((s->den / 2 - n) / s->den));
+        return sat32((n + s->den / 2) / s->den);
+    }
+    int64_t n = (int64_t)s->fix * v;
+    return sat32((n + (n >> 63) + 0x8000) >> 16);
+}
+
+static void scale_init(Scale *s, int ppem, int upem)
+{
+    uint32_t n = (uint32_t)ppem << 16, d = (uint32_t)upem << 16;
+    uint32_t both = n | d;
+    int zeros = 0;
+    while (!(both & 1)) {
+        both >>= 1;
+        zeros++;
+    }
+    if (zeros - 1 > 0) {
+        n >>= zeros - 1;
+        d >>= zeros - 1;
+    }
+    uint32_t num = n << 6;
+    if (n >= 0x2000000) {
+        num = n;
+        d >>= 6;
+    }
+    s->fix = (int32_t)((((int64_t)num << 16) + d / 2) / d);
+    s->num = (int32_t)num;
+    s->den = (int32_t)d;
+    if (num > 0x7FFF) {
+        s->shift = -2;
+    } else if (d && !(d & (d - 1))) {
+        s->shift = __builtin_ctz(d);
+    } else {
+        s->shift = -1;
+    }
 }
 
 static uint32_t isqrt64(uint64_t v)
@@ -202,6 +277,10 @@ typedef struct Exec {
     int program;
     int32_t fdotp;
     bool iupy; /* the points were interpolated along y. */
+    bool iupx;
+    bool read8; /* storage 8 was read as zero by the patch. */
+    bool composite; /* the program is the one of a composite glyph. */
+    uint32_t special_depth; /* calls into delta shift functions that are running. */
     bool failed;
     int ppem_for_delta;
 } Exec;
@@ -344,7 +423,7 @@ static bool subpixel_axis(const Exec *ex)
 
 static bool subpixel_rounding(const Exec *ex)
 {
-    return subpixel_axis(ex) && (ex->h->native || ex->program != PROGRAM_FONT);
+    return subpixel_axis(ex) && (ex->h->native || ex->program != PROGRAM_PREP);
 }
 
 static int32_t round_value(const Exec *ex, int32_t d)
@@ -487,12 +566,8 @@ static void ins_getinfo(Exec *ex)
     if (!pop(ex, &sel))
         return;
     const MimeTtfHinter *h = ex->h;
-    int32_t r = 0;
     uint32_t fl = h->flags;
-    if (sel & 1)
-        r |= MIME_TTF_HINT_VERSION_OF(fl) ? MIME_TTF_HINT_VERSION_OF(fl) : (fl & MIME_TTF_HINT_SUBPIXEL) ? 40 : 35;
-    if (sel & 2)
-        r |= 0; /* glyph rotated. */
+    int32_t r = (sel & 1) ? 42 : 0;
     if ((sel & 4) && h->stretched)
         r |= 1 << 9;
     if (sel & 8)
@@ -593,6 +668,21 @@ static void ins_miap(Exec *ex, uint8_t op)
     ex->gs.rp0 = ex->gs.rp1 = (uint32_t)p;
 }
 
+/*
+ * the distance between two points of the original outline. outside the twilight zone the font unit distance is
+ * projected and scaled once, which is not the same as the difference of two points scaled one by one.
+ */
+static int32_t original_distance(Exec *ex, const Zone *z0, uint32_t p0, const Zone *z1, uint32_t p1)
+{
+    if (z0 == &ex->zones[0] || z1 == &ex->zones[0])
+        return dual_project(ex, z1->org[p1].x - z0->org[p0].x, z1->org[p1].y - z0->org[p0].y);
+    int32_t dx = z1->orus[p1].x - z0->orus[p0].x, dy = z1->orus[p1].y - z0->orus[p0].y;
+    const MimeTtfHinter *h = ex->h;
+    if (!h->stretched)
+        return scale_apply(&h->su, dual_project(ex, dx, dy));
+    return dual_project(ex, scale_apply(&h->sx, dx), scale_apply(&h->sy, dy));
+}
+
 static void ins_mdrp(Exec *ex, uint8_t op)
 {
     int32_t p;
@@ -602,11 +692,7 @@ static void ins_mdrp(Exec *ex, uint8_t op)
     if (!point_ok(z1, p) || !point_ok(z0, (int32_t)ex->gs.rp0))
         FAIL();
     uint32_t rp0 = ex->gs.rp0;
-    int32_t org_dist;
-    if (ex->gs.zp0 == 0 || ex->gs.zp1 == 0)
-        org_dist = dual_project(ex, z1->org[p].x - z0->org[rp0].x, z1->org[p].y - z0->org[rp0].y);
-    else
-        org_dist = dual_project(ex, z1->org[p].x - z0->org[rp0].x, z1->org[p].y - z0->org[rp0].y);
+    int32_t org_dist = original_distance(ex, z0, rp0, z1, (uint32_t)p);
     /* single width cut in. */
     int32_t diff = org_dist - ex->gs.sw_value;
     if (diff < 0)
@@ -825,6 +911,15 @@ static void ins_shpix(Exec *ex)
             return;
         if (!point_ok(z, p))
             FAIL();
+        /* the delta shift functions only move along y, and only points touched along it that were not interpolated. */
+        if (ex->special_depth) {
+            bool allowed = ex->gs.pv.y == 0x4000 && ex->gs.pv.x == 0 &&
+                           (ex->composite || (!ex->iupy && (z->tag[p] & TAG_TOUCH_Y)));
+            if (!allowed) {
+                ex->gs.loop--;
+                continue;
+            }
+        }
         shift_point(ex, z, (uint32_t)p, dx, dy);
         ex->gs.loop--;
     }
@@ -1025,7 +1120,9 @@ static void ins_iup(Exec *ex, uint8_t op)
             iup_run(z, x_axis, first, last);
         first = last + 1;
     }
-    if (!x_axis)
+    if (x_axis)
+        ex->iupx = true;
+    else
         ex->iupy = true;
 }
 
@@ -1079,7 +1176,7 @@ static void ins_deltac(Exec *ex, uint8_t op)
 
 /* ------------------------------------------------------------------ the main loop */
 
-static bool call_function(Exec *ex, int32_t number, uint32_t count)
+static bool call_function(Exec *ex, int32_t number, uint32_t count, bool patched)
 {
     const MimeTtfHinter *h = ex->h;
     if (number < 0 || (uint32_t)number >= h->func_count || !h->funcs[number].active || ex->depth >= MAX_CALL_DEPTH) {
@@ -1093,9 +1190,85 @@ static bool call_function(Exec *ex, int32_t number, uint32_t count)
     c->ip = ex->ip;
     c->count = count;
     c->func = &h->funcs[number];
+    c->patch = HELD_NONE;
+    c->special = false;
+    if (patched && (h->flags & MIME_TTF_HINT_CLEARTYPE) && !h->native) {
+        if (number >= 64) {
+            if (number <= 66 && (h->patches & PATCH_STORAGE22) && ex->storage_count > 22) {
+                c->patch = HELD_STORAGE22;
+                c->saved = ex->storage[22];
+                ex->storage[22] = 0;
+            }
+        } else {
+            if ((number <= 2 || number == 4 || (number >= 7 && number <= 8)) && (h->patches & PATCH_STORAGE24) &&
+                ex->storage_count > 24) {
+                c->patch = HELD_STORAGE24;
+                c->saved = ex->storage[24];
+                ex->storage[24] = 0;
+            }
+            if (number == 58 && (h->patches & PATCH_CUTIN)) {
+                c->patch = HELD_CUTIN;
+                c->saved = ex->gs.cvt_cutin;
+                ex->gs.cvt_cutin = 0x7FFFFFFF;
+            }
+        }
+        for (uint32_t i = 0; i < h->special_count; i++) {
+            if (h->special[i] == number) {
+                c->special = true;
+                ex->special_depth++;
+                break;
+            }
+        }
+    }
     ex->code = c->func->code;
     ex->ip = 0;
     return true;
+}
+
+/* gives back what a patched call held. */
+static void end_call(Exec *ex, const Call *c)
+{
+    switch (c->patch) {
+    case HELD_STORAGE22: ex->storage[22] = c->saved; break;
+    case HELD_STORAGE24: ex->storage[24] = c->saved; break;
+    case HELD_CUTIN: ex->gs.cvt_cutin = c->saved; break;
+    default: break;
+    }
+    if (c->special && ex->special_depth)
+        ex->special_depth--;
+}
+
+static bool starts_with(const uint8_t *body, uint32_t size, const uint8_t *want, uint32_t n)
+{
+    return size >= n && __builtin_memcmp(body, want, n) == 0;
+}
+
+/* looks at the first bytes of a function a font program defined. */
+static void note_signature(MimeTtfHinter *h, int32_t n, const uint8_t *body, uint32_t size)
+{
+    static const uint8_t storage22[] = {0xB0, 0x16, 0x43, 0x58};
+    static const uint8_t storage24a[] = {0x01, 0xB0, 0x18, 0x43, 0x58};
+    static const uint8_t storage24b[] = {0x01, 0x18, 0xB0, 0x18, 0x43, 0x58};
+    static const uint8_t read8[] = {0x45, 0x23, 0x46, 0x60, 0x20, 0xB0, 0x26};
+    static const uint8_t cutin[] = {0x20, 0x20, 0xB0, 0x01, 0x60, 0x46, 0xB0, 0x40, 0x23, 0x42};
+    static const uint8_t delta_a[] = {0x4B, 0x54, 0x58, 0x38, 0x1B, 0x21, 0x21, 0x59, 0x2D};
+    static const uint8_t delta_b[] = {0x4B, 0x53, 0x23, 0x4B, 0x51, 0x5A, 0x58, 0x38, 0x1B, 0x21, 0x21, 0x59, 0x2D};
+    if (n >= 64) {
+        if (n <= 66 && starts_with(body, size, storage22, sizeof(storage22)))
+            h->patches |= PATCH_STORAGE22;
+    } else {
+        if ((n <= 2 || n == 4 || (n >= 7 && n <= 8)) &&
+            (starts_with(body, size, storage24a, sizeof(storage24a)) ||
+             starts_with(body, size, storage24b, sizeof(storage24b))))
+            h->patches |= PATCH_STORAGE24;
+        if (n == 0 && starts_with(body, size, read8, sizeof(read8)))
+            h->patches |= PATCH_READ8;
+        if (n == 58 && starts_with(body, size, cutin, sizeof(cutin)))
+            h->patches |= PATCH_CUTIN;
+    }
+    if ((starts_with(body, size, delta_a, sizeof(delta_a)) || starts_with(body, size, delta_b, sizeof(delta_b))) &&
+        h->special_count < 4)
+        h->special[h->special_count++] = (uint16_t)n;
 }
 
 static void ins_fdef(Exec *ex)
@@ -1117,6 +1290,7 @@ static void ins_fdef(Exec *ex)
             h->funcs[n].code.size = ex->ip - begin + 1;
             h->funcs[n].active = true;
             ex->ip += len;
+            note_signature(h, n, ex->code.data + begin, ex->code.size - begin);
             return;
         }
         if (op == 0x2C)
@@ -1256,7 +1430,7 @@ static void execute_one(Exec *ex, uint8_t op)
     }
     case 0x1D: { POP1(a); gs->cvt_cutin = a; return; }
     case 0x1E: { POP1(a); gs->sw_cutin = a; return; }
-    case 0x1F: { POP1(a); gs->sw_value = mul_fix(a, ex->h->scale_y); return; }
+    case 0x1F: { POP1(a); gs->sw_value = scale_apply(&ex->h->su, a); return; }
     case 0x20: { POP1(a); push(ex, a); push(ex, a); return; }
     case 0x21: { POP1(a); (void)a; return; }
     case 0x22: ex->sp = 0; return;
@@ -1295,12 +1469,12 @@ static void execute_one(Exec *ex, uint8_t op)
         POP2(count, f);
         if (count < 0)
             FAIL();
-        call_function(ex, f, (uint32_t)count);
+        call_function(ex, f, (uint32_t)count, false);
         return;
     }
     case 0x2B: {
         POP1(f);
-        call_function(ex, f, 1);
+        call_function(ex, f, 1, true);
         return;
     }
     case 0x2C: ins_fdef(ex); return;
@@ -1313,6 +1487,7 @@ static void execute_one(Exec *ex, uint8_t op)
             ex->ip = 0;
             return;
         }
+        end_call(ex, c);
         ex->code = c->code;
         ex->ip = c->ip;
         ex->depth--;
@@ -1356,6 +1531,11 @@ static void execute_one(Exec *ex, uint8_t op)
         POP1(i);
         if (i < 0 || (uint32_t)i >= ex->storage_count)
             FAIL();
+        if (i == 8 && (ex->h->flags & MIME_TTF_HINT_CLEARTYPE) && !ex->h->native && (ex->h->patches & PATCH_READ8)) {
+            ex->read8 = true;
+            push(ex, 0);
+            return;
+        }
         push(ex, ex->storage[i]);
         return;
     }
@@ -1401,10 +1581,15 @@ static void execute_one(Exec *ex, uint8_t op)
         Zone *z0 = zone_of(ex, gs->zp0), *z1 = zone_of(ex, gs->zp1);
         if (!point_ok(z0, p2) || !point_ok(z1, p1))
             FAIL();
-        if (op == 0x49)
-            push(ex, project(ex, z0->cur[p2].x - z1->cur[p1].x, z0->cur[p2].y - z1->cur[p1].y));
+        if (op == 0x49) {
+            int32_t d = project(ex, z0->cur[p2].x - z1->cur[p1].x, z0->cur[p2].y - z1->cur[p1].y);
+            /* the patched fonts measure 65 where the stem is exactly a pixel, once both axes were interpolated. */
+            if (d == 64 && ex->iupx && ex->iupy && ex->read8)
+                d = 65;
+            push(ex, d);
+        }
         else
-            push(ex, dual_project(ex, z0->org[p2].x - z1->org[p1].x, z0->org[p2].y - z1->org[p1].y));
+            push(ex, original_distance(ex, z1, (uint32_t)p1, z0, (uint32_t)p2));
         return;
     }
     case 0x4B: {
@@ -1459,7 +1644,7 @@ static void execute_one(Exec *ex, uint8_t op)
         POP2(i, v);
         if (i < 0 || (uint32_t)i >= ex->cvt_count)
             FAIL();
-        ex->cvt[i] = mul_fix(v, ex->h->scale_y);
+        ex->cvt[i] = scale_apply(&ex->h->su, v);
         return;
     }
     case 0x73: case 0x74: case 0x75: ins_deltac(ex, op); return;
@@ -1588,6 +1773,8 @@ static void execute_one(Exec *ex, uint8_t op)
             c->ip = ex->ip;
             c->count = 1;
             c->func = nullptr;
+            c->patch = HELD_NONE;
+            c->special = false;
             ex->code = d->code;
             ex->ip = 0;
             return;
@@ -1699,6 +1886,9 @@ MimeTtfHinter *mime_ttf_hinter_new(const MimeTtfFont *font, const MimeAllocator 
     h->stretched = ppem_x != ppem_y;
     h->scale_x = (int32_t)(((int64_t)ppem_x * 64 * 65536 + font->units_per_em / 2) / font->units_per_em);
     h->scale_y = (int32_t)(((int64_t)ppem_y * 64 * 65536 + font->units_per_em / 2) / font->units_per_em);
+    scale_init(&h->sx, ppem_x, font->units_per_em);
+    scale_init(&h->sy, ppem_y, font->units_per_em);
+    h->su = ppem_x >= ppem_y ? h->sx : h->sy;
     default_state(&h->defaults);
 
     uint32_t storage = maxp_value(font, 18);
@@ -1744,7 +1934,7 @@ MimeTtfHinter *mime_ttf_hinter_new(const MimeTtfFont *font, const MimeAllocator 
     h->twilight.cap = tn;
 
     for (uint32_t i = 0; i < h->cvt_count; i++)
-        h->cvt[i] = mul_fix((int16_t)be16(font->cvt.data + 2 * i), h->scale_y);
+        h->cvt[i] = scale_apply(&h->su, (int16_t)be16(font->cvt.data + 2 * i));
 
     Exec ex;
     Zone empty = {nullptr, nullptr, nullptr, nullptr, nullptr, 0, 0, 0};
@@ -1835,16 +2025,16 @@ static bool hglyph_alloc(const MimeTtfHinter *h, HGlyph *g, uint32_t n, uint32_t
 
 static int32_t scale_fu_x(const MimeTtfHinter *h, int32_t v)
 {
-    return mul_fix(v, h->scale_x);
+    return scale_apply(&h->sx, v);
 }
 
 static int32_t scale_fu_y(const MimeTtfHinter *h, int32_t v)
 {
-    return mul_fix(v, h->scale_y);
+    return scale_apply(&h->sy, v);
 }
 
 /* runs the glyph program over a glyph whose points are in place. */
-static void run_glyph_program(const MimeTtfHinter *hc, HGlyph *g, Code program)
+static void run_glyph_program(const MimeTtfHinter *hc, HGlyph *g, Code program, bool composite)
 {
     MimeTtfHinter *h = (MimeTtfHinter *)hc;
     if (!h->glyph_hinting || program.size == 0)
@@ -1858,6 +2048,7 @@ static void run_glyph_program(const MimeTtfHinter *hc, HGlyph *g, Code program)
     gs.dv = gs.pv = gs.fv = (V2){0x4000, 0};
     gs.loop = 1;
     exec_init(&ex, h, &gs);
+    ex.composite = composite;
     Zone *z = &ex.zones[1];
     z->org = g->org;
     z->cur = g->pts;
@@ -1934,20 +2125,35 @@ static void phantom_points(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable 
     g->orus[n + 3] = (V2){0, ymax + tsb - vadv};
 }
 
-static void scale_and_round_phantoms(const MimeTtfHinter *h, HGlyph *g)
+/* the side bearing points go to a sixteenth of a pixel along x with cleartype and to the pixel without. */
+static int32_t round_bearing(const MimeTtfHinter *h, int32_t v)
 {
+    return (h->flags & MIME_TTF_HINT_CLEARTYPE) ? (v + 2) & ~3 : (v + 32) & ~63;
+}
+
+static void scale_and_round_phantoms(const MimeTtfHinter *h, HGlyph *g, bool composite)
+{
+    uint32_t n = g->n;
     for (uint32_t i = 0; i < 4; i++) {
-        uint32_t k = g->n + i;
-        g->org[k].x = scale_fu_x(h, g->orus[k].x);
-        g->org[k].y = scale_fu_y(h, g->orus[k].y);
-        g->pts[k] = g->org[k];
+        g->org[n + i].x = scale_fu_x(h, g->orus[n + i].x);
+        g->org[n + i].y = scale_fu_y(h, g->orus[n + i].y);
     }
-    /* the phantom points are rounded to the grid before the instructions run, except with subpixel positioning. */
-    for (uint32_t i = 0; i < 4 && !(h->flags & MIME_TTF_HINT_SUBPIXEL); i++) {
-        uint32_t k = g->n + i;
-        g->pts[k].x = (g->pts[k].x + 32) & ~63;
-        g->pts[k].y = (g->pts[k].y + 32) & ~63;
+    /* the glyph moves so that its left bearing point sits on the grid, the original positions follow. */
+    int32_t shift = round_bearing(h, g->org[n].x) - g->org[n].x;
+    if (shift) {
+        for (uint32_t i = composite ? n : 0; i < n + 4; i++)
+            g->org[i].x += shift;
     }
+    for (uint32_t i = 0; i < n + 4; i++)
+        g->pts[i] = g->org[i];
+    int64_t upem = h->font->units_per_em;
+    int64_t adv = (int16_t)(g->orus[n + 1].x - g->orus[n].x);
+    int64_t wide = (((int64_t)h->ppem_x << 16) * adv + upem / 2) / upem;
+    g->pts[n + 1].x = g->pts[n].x + round_bearing(h, (int32_t)((wide + 512) >> 10));
+    int64_t tall = (int16_t)(g->orus[n + 3].y - g->orus[n + 2].y);
+    int64_t drop = (((int64_t)h->ppem_y << 16) * tall + upem / 2) / upem;
+    g->pts[n + 2].y = (g->pts[n + 2].y + 32) & ~63;
+    g->pts[n + 3].y = (g->pts[n + 2].y + 32 + (int32_t)((drop + 512) >> 10)) & ~63;
 }
 
 static bool load_simple(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd, int contours, HGlyph *out)
@@ -1956,7 +2162,7 @@ static bool load_simple(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd,
         if (!hglyph_alloc(h, out, 0, 0))
             return false;
         phantom_points(h, glyph, gd, out, false);
-        scale_and_round_phantoms(h, out);
+        scale_and_round_phantoms(h, out, false);
         return true;
     }
     uint64_t ends_off = 10;
@@ -2036,10 +2242,10 @@ static bool load_simple(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd,
         out->pts[i] = out->org[i];
     }
     phantom_points(h, glyph, gd, out, true);
-    scale_and_round_phantoms(h, out);
+    scale_and_round_phantoms(h, out, false);
     Code prog = {gd.data + ins_off + 2, ins_len};
     if (ins_off + 2 + ins_len <= gd.size)
-        run_glyph_program(h, out, prog);
+        run_glyph_program(h, out, prog, false);
     return true;
 }
 
@@ -2182,27 +2388,30 @@ static bool load_composite(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable 
         }
         /* the composite's own phantom points, or those of the component that asked to be used. */
         phantom_points(h, glyph, gd, out, true);
-        scale_and_round_phantoms(h, out);
+        scale_and_round_phantoms(h, out, true);
         if (metrics_from >= 0) {
             HGlyph *mg = &parts[metrics_from].g;
             for (uint32_t i = 0; i < 4; i++) {
                 out->pts[out->n + i] = mg->pts[mg->n + i];
+                out->org[out->n + i] = mg->org[mg->n + i];
                 out->orus[out->n + i] = mg->orus[mg->n + i];
             }
             out->pts[out->n + 0].x += parts[metrics_from].dx;
             out->pts[out->n + 1].x += parts[metrics_from].dx;
+            out->org[out->n + 0].x += parts[metrics_from].dx;
+            out->org[out->n + 1].x += parts[metrics_from].dx;
             out->adv_fu = mg->adv_fu;
             out->lsb_fu = mg->lsb_fu;
         }
         /* the original positions of the composite are the assembled hinted components. */
-        for (uint32_t i = 0; i < out->n + 4; i++)
+        for (uint32_t i = 0; i < out->n; i++)
             out->org[i] = out->pts[i];
         if (last_flags & 0x100) {
             if (off + 2 <= gd.size) {
                 uint32_t ilen = be16(gd.data + off);
                 if (off + 2 + ilen <= gd.size) {
                     Code prog = {gd.data + off + 2, ilen};
-                    run_glyph_program(h, out, prog);
+                    run_glyph_program(h, out, prog, true);
                 }
             }
         }

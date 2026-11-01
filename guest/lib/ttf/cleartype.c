@@ -33,6 +33,29 @@ bool mime_ttf_cleartype_bitmap(const MimeTtfFont *font, const MimeAllocator *all
         return false;
     if (!s.data)
         return true;
+    if (mime_ttf_thin(font)) {
+        int nw = (s.x1 - s.x0) + 1;
+        int oh = s.y1 - s.y0;
+        uint8_t *nd = mime_alloc(alloc, (size_t)nw * (size_t)oh);
+        if (!nd) {
+            mime_ttf_bitmap_free(alloc, &s);
+            return false;
+        }
+        int ow = s.x1 - s.x0;
+        for (int y = 0; y < oh; y++) {
+            uint8_t *dst = nd + (size_t)y * (size_t)nw;
+            const uint8_t *src = s.data + (size_t)y * (size_t)s.stride;
+            for (int x = 0; x < nw; x++) {
+                int a = x < ow ? src[x] : 0;
+                int b = x > 0 && x - 1 < ow ? src[x - 1] : 0;
+                dst[x] = a | b;
+            }
+        }
+        mime_free(alloc, s.data);
+        s.data = nd;
+        s.stride = nw;
+        s.x1 += 1;
+    }
     int sw = s.x1 - s.x0, sh = s.y1 - s.y0;
 
     /* a stripe looks at the six samples around its centre, so it reaches one stripe past the ink on each side. */

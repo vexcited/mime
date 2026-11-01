@@ -824,9 +824,8 @@ MimeTtfHinter *FontHinterClearType(FONT_INSTANCE *fi)
         fi->CtVertical = smooths_down(fi);
         if (fi->ScaleX == fi->ScaleY && fi->EmPixels >= 1 && fi->EmPixels <= 1024 && mime_ttf_has_outlines(&fi->Face->Ttf)) {
             uint32_t flags = MIME_TTF_HINT_CLEARTYPE;
-            flags |= fi->Smooth == FONT_SMOOTH_NATURAL ? MIME_TTF_HINT_SUBPIXEL : MIME_TTF_HINT_COMPAT_WIDTHS;
-            if (fi->CtVertical)
-                flags |= MIME_TTF_HINT_SYMMETRIC;
+            if (fi->Smooth != FONT_SMOOTH_NATURAL)
+                flags |= MIME_TTF_HINT_COMPAT_WIDTHS;
             fi->HinterCt = mime_ttf_hinter_new(&fi->Face->Ttf, &FontAllocator, fi->EmPixels, fi->EmPixels, flags);
         }
     }

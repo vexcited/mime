@@ -123,6 +123,12 @@ void mime_ttf_metrics(const MimeTtfFont *font, MimeTtfMetrics *metrics);
 bool mime_ttf_name(const MimeTtfFont *font, unsigned name_id, uint16_t *buffer, size_t capacity, size_t *length);
 
 /*
+ * true for the regular faces of a few fixed pitch families Windows draws a sample wider in ClearType: Courier New, the
+ * Miriam and Rod faces and Simplified Arabic Fixed. the bold ones are left alone.
+ */
+bool mime_ttf_thin(const MimeTtfFont *font);
+
+/*
  * pixel box of the rendered glyph relative to the baseline origin, y down.
  * the bitmap passed to the render functions is x1 - x0 by y1 - y0 pixels.
  * an empty glyph succeeds with an empty box.
