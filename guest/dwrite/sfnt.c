@@ -109,7 +109,8 @@ MimeTtfHinter *DwFontDataHinter(DwFontData *d, int ppem, UINT32 flags)
 
 /*
  * hdmx wins when it has the size, then glyphs the LTSH table calls linear are scaled and rounded once, and the rest
- * take the width the instructions leave. natural widths scale the design width and round it by the same two steps.
+ * take the width the instructions leave. natural widths take the cleartype fit, or the design width rounded by the
+ * same two steps where gasp has no smoothing.
  */
 int DwGdiAdvancePixels(DwFontData *d, UINT16 glyph, int ppem, BOOL natural)
 {
@@ -118,8 +119,17 @@ int DwGdiAdvancePixels(DwFontData *d, UINT16 glyph, int ppem, BOOL natural)
     int64_t upem = d->ttf.units_per_em ? d->ttf.units_per_em : 2048;
     int64_t linear26 = ((int64_t)advance * ppem * 64 * 2 + upem) / (2 * upem);
     int double_rounded = (int)((linear26 + 32) >> 6);
-    if (natural)
+    if (natural) {
+        /* sizes the gasp table leaves without smoothing keep the scaled width, the others take the cleartype fit. */
+        unsigned gasp = mime_ttf_gasp(&d->ttf, ppem);
+        if (gasp != 0xffff && !(gasp & 1))
+            return double_rounded;
+        MimeTtfHinter *fitted_hinter = DwFontDataHinter(d, ppem, MIME_TTF_HINT_CLEARTYPE);
+        int32_t fitted;
+        if (fitted_hinter && mime_ttf_hint_advance(fitted_hinter, glyph, &fitted))
+            return (fitted + 32) >> 6;
         return double_rounded;
+    }
     int device;
     if (mime_ttf_hdmx_advance(&d->ttf, ppem, glyph, &device))
         return device;
