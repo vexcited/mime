@@ -49,6 +49,7 @@ void HalArmTimer(ULONG64 deadline_counter);
 /* the system files mapped by the host, see MimeRomHeader. paths are relative to C:. */
 const MimeRomEntry *HalRomFind(PCWSTR path, ULONG chars);
 const MimeRomEntry *HalRomEntry(ULONG index); /* NULL past the last entry. */
+ULONG64 HalRomFiletime(void);                 /* the time of every rom file. */
 ULONG64 HalRomPhysical(const MimeRomEntry *entry);
 BOOLEAN HalIsRomPhysical(ULONG64 pa);
 ULONG HalAcknowledgeInterrupt(void); /* the interrupt id, 1020 or above when none is pending. */
@@ -1185,6 +1186,7 @@ void CmNotifyRunDown(PETHREAD thread);
 /* makes the registry journal durable before power off. */
 void CmpJournalShutdown(void);
 NTSTATUS CmQueryValue(PCWSTR key_path, PCWSTR name, PULONG type, PVOID data, PULONG length);
+NTSTATUS CmQueryValueUnlessBusy(PCWSTR key_path, PCWSTR name, PULONG type, PVOID data, PULONG length);
 NTSTATUS CmSetValue(PCWSTR key_path, PCWSTR name, ULONG type, const void *data, ULONG length);
 NTSTATUS CmEnumerateValues(PCWSTR key_path,
                            void (*fn)(PVOID ctx, PCWSTR name, ULONG name_chars, ULONG type, const void *data, ULONG length),

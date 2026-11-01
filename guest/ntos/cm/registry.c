@@ -1453,6 +1453,14 @@ NTSTATUS CmQueryValue(PCWSTR key_path, PCWSTR name, PULONG type, PVOID data, PUL
     return status;
 }
 
+/* for the file system, which is asked while the registry may be opening its own files: no answer from a thread that holds the registry. */
+NTSTATUS CmQueryValueUnlessBusy(PCWSTR key_path, PCWSTR name, PULONG type, PVOID data, PULONG length)
+{
+    if (!CmpRoot || CmpLock.Owner == KiCurrentThread())
+        return STATUS_UNSUCCESSFUL;
+    return CmQueryValue(key_path, name, type, data, length);
+}
+
 NTSTATUS CmSetValue(PCWSTR key_path, PCWSTR name, ULONG type, const void *data, ULONG length)
 {
     ExAcquireFastMutex(&CmpLock);

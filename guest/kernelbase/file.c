@@ -1563,7 +1563,8 @@ BOOL WINAPI CopyFileExW(LPCWSTR source, LPCWSTR destination, LPPROGRESS_ROUTINE 
     (void)zero;
     KbFree(buffer);
     if (ok) {
-        SetFileTime(out, &info.ftCreationTime, &info.ftLastAccessTime, &info.ftLastWriteTime);
+        /* the copy is a new file, made now, with the contents of the original as last written. */
+        SetFileTime(out, nullptr, nullptr, &info.ftLastWriteTime);
         CloseHandle(out);
         if (attributes & FILE_ATTRIBUTE_READONLY)
             SetFileAttributesW(destination, attributes);

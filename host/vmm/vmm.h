@@ -6,6 +6,7 @@
 #include "../../include/mime/abi.h"
 
 #include <pthread.h>
+#include <sys/stat.h>
 #include <time.h>
 
 #define MIME_VMM_MAX_VCPUS 64
@@ -19,6 +20,13 @@
 #define MIME_LAYOUT_BOOT_STACK_SIZE 0x10000ull
 
 typedef struct MimeVm MimeVm;
+
+/* the time fields of struct stat are named alike on both hosts. */
+#ifdef __APPLE__
+#define st_atim st_atimespec
+#define st_mtim st_mtimespec
+#define st_ctim st_ctimespec
+#endif
 
 /* host time zone and corresponding Windows registry name. */
 bool mime_host_time_zone(char *out, size_t size);
@@ -68,6 +76,10 @@ typedef struct MimeFsHandle {
     char *host_path;
     void *dir_entries; /* cached directory listing. */
     uint32_t dir_count;
+    uint8_t frozen;        /* MIME_FS_TIME_* this handle no longer updates on its own. */
+    bool no_access_update; /* reads leave the access time alone. */
+    bool touch_failed;     /* the host refused to set the access time of this file. */
+    int64_t touched_ns;    /* when this handle last set the access time. */
 } MimeFsHandle;
 
 /* the host page size: guest memory goes back to the host in these units. */
@@ -212,6 +224,33 @@ bool mime_fs_path_of_id(MimeVm *vm, uint32_t volume, const uint16_t *id, uint32_
 uint32_t mime_fs_guest_name(MimeVm *vm, uint32_t volume, const char *host, uint16_t *out, size_t capacity);
 bool mime_fs_find_entry(const char *dir, const char *leaf, char *found, size_t size);
 MimeFsHandle *mime_fs_handle(MimeVm *vm, uint64_t h);
+
+/* fstimes.c, the creation and change times a file keeps for windows. */
+typedef struct MimeFsStat {
+    struct stat st;
+    struct timespec birth; /* the host's own birth time, where it has one. */
+    bool has_birth;
+} MimeFsStat;
+typedef struct MimeFsTimes {
+    uint64_t creation, access, write, change; /* filetimes. */
+} MimeFsTimes;
+uint64_t mime_fs_now(void);
+int mime_fs_stat(const char *path, MimeFsStat *out);
+int mime_fs_fstat(int fd, MimeFsStat *out);
+void mime_fs_times(const char *path, int fd, const MimeFsStat *s, MimeFsTimes *t);
+/* a file made by the guest: the creation time is now, kept apart where the host has no birth time. */
+void mime_fs_times_created(const char *path, int fd, const MimeFsStat *s);
+/* the creation and change times the guest sets, or NULL to leave them as they are. */
+void mime_fs_times_set(const char *path, int fd, const uint64_t *creation, const uint64_t *change);
+/* the file changed in a way the host's write time does not show: its change time is now. */
+void mime_fs_times_changed(const char *path, int fd);
+/* the file is gone, with the times kept in memory for it. */
+void mime_fs_times_forget(const struct stat *st);
+/* sets the access time to now, at most once a second for a handle unless force is set. */
+void mime_fs_touch_access(MimeFsHandle *fh, bool force);
+/* a file that lost its name can give its creation time to a new file of that name for a short while. */
+void mime_fs_tunnel_add(const char *path, uint64_t creation);
+bool mime_fs_tunnel_take(const char *path, uint64_t *creation);
 /* Linux directory notifications from host programs; see fswatch.c. */
 enum {
     MIME_FSWATCH_CREATE,

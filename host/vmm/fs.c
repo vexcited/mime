@@ -12,17 +12,8 @@
 #include <sys/xattr.h>
 #ifdef __APPLE__
 #include <sys/mount.h>
-#define ST_BIRTH(st) ((st)->st_birthtimespec)
-#define ST_ATIME(st) ((st)->st_atimespec)
-#define ST_MTIME(st) ((st)->st_mtimespec)
-#define ST_CTIME(st) ((st)->st_ctimespec)
 #else
 #include <sys/vfs.h>
-/* Linux keeps the birth time out of stat; the change time is the closest a plain stat has. */
-#define ST_BIRTH(st) ((st)->st_ctim.tv_sec < (st)->st_mtim.tv_sec ? (st)->st_ctim : (st)->st_mtim)
-#define ST_ATIME(st) ((st)->st_atim)
-#define ST_MTIME(st) ((st)->st_mtim)
-#define ST_CTIME(st) ((st)->st_ctim)
 #endif
 #include <pthread.h>
 #include <time.h>
@@ -153,11 +144,6 @@ static DIR *opendir_quiet(const char *path)
     return dir;
 }
 
-static uint64_t ts_to_filetime(struct timespec ts)
-{
-    return ((uint64_t)ts.tv_sec + 11644473600ull) * 10000000ull + (uint64_t)ts.tv_nsec / 100;
-}
-
 static struct timespec filetime_to_ts(uint64_t filetime)
 {
     uint64_t ticks = filetime;
@@ -168,16 +154,19 @@ static struct timespec filetime_to_ts(uint64_t filetime)
     return (struct timespec){.tv_sec = (time_t)(ticks / 10000000ull), .tv_nsec = (long)(ticks % 10000000ull) * 100};
 }
 
-static void fill_info(const struct stat *st, const char *name, MimeFsInfo *info)
+static void fill_info(const MimeFsStat *s, const char *path, int fd, const char *name, MimeFsInfo *info)
 {
+    const struct stat *st = &s->st;
     memset(info, 0, sizeof(*info));
     bool dir = S_ISDIR(st->st_mode);
+    MimeFsTimes times;
+    mime_fs_times(path, fd, s, &times);
     info->size = dir ? 0 : (uint64_t)st->st_size;
     info->allocation_size = dir ? 0 : (uint64_t)st->st_blocks * 512;
-    info->creation_time = ts_to_filetime(ST_BIRTH(st));
-    info->access_time = ts_to_filetime(ST_ATIME(st));
-    info->write_time = ts_to_filetime(ST_MTIME(st));
-    info->change_time = ts_to_filetime(ST_CTIME(st));
+    info->creation_time = times.creation;
+    info->access_time = times.access;
+    info->write_time = times.write;
+    info->change_time = times.change;
     info->file_id = (uint64_t)st->st_ino;
     /* a directory is one name on ntfs, where the host counts the entries that point back to it. */
     info->links = dir ? 1 : (uint32_t)st->st_nlink;
@@ -350,15 +339,23 @@ static void free_handle(MimeVm *vm, uint64_t h)
     if (fh->fd >= 0)
         close(fh->fd);
     if (fh->delete_on_close && fh->host_path) {
-        struct stat gone;
-        if (stat(fh->host_path, &gone) == 0) {
+        MimeFsStat gone;
+        MimeFsTimes times = {};
+        bool known = mime_fs_stat(fh->host_path, &gone) == 0;
+        if (known) {
+            mime_fs_times(fh->host_path, -1, &gone, &times);
             pthread_mutex_lock(&vm->fs_lock);
-            sd_memory_forget(&gone);
+            sd_memory_forget(&gone.st);
             pthread_mutex_unlock(&vm->fs_lock);
         }
         mime_fswatch_self(fh->host_path, MIME_FSWATCH_REMOVE);
-        if (fh->is_dir ? rmdir(fh->host_path) != 0 : unlink(fh->host_path) != 0)
+        if (fh->is_dir ? rmdir(fh->host_path) != 0 : unlink(fh->host_path) != 0) {
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_UNDO_REMOVE);
+        } else if (known) {
+            mime_fs_tunnel_add(fh->host_path, times.creation);
+            if (gone.st.st_nlink <= 1)
+                mime_fs_times_forget(&gone.st);
+        }
     }
     free(fh->host_path);
     free(fh->dir_entries);
@@ -379,13 +376,44 @@ static bool dir_empty(const char *path)
     return empty;
 }
 
-/* sets an open file's timestamps and read-only attribute. */
+/*
+ * a write through a handle that keeps a time leaves it as it was. the host moved the write time, and with it the
+ * change time, so those are put back, or the change time is made now where only the write time was kept.
+ */
+static void times_after_write(MimeFsHandle *fh, const MimeFsStat *before, const MimeFsTimes *kept)
+{
+    if (fh->frozen & MIME_FS_TIME_WRITE) {
+        struct timespec times[2] = {{.tv_nsec = UTIME_OMIT}, before->st.st_mtim};
+        futimens(fh->fd, times);
+    }
+    if (fh->frozen & MIME_FS_TIME_CHANGE) {
+        uint64_t change = kept->change;
+        mime_fs_times_set(fh->host_path, fh->fd, nullptr, &change);
+    } else if (fh->frozen & MIME_FS_TIME_WRITE) {
+        mime_fs_times_changed(fh->host_path, fh->fd);
+    }
+}
+
+/*
+ * sets the times and the read only attribute of an open file the way NTFS does. a time that is set stops this
+ * handle from updating it with its own writes, and so does a time given as -1 until it is given as -2. a change
+ * to the file is a change time of now, unless the handle keeps that or the caller gave one.
+ */
 static uint64_t fs_set_basic(MimeVm *vm, MimeFsHandle *fh, uint64_t pa)
 {
     const MimeFsBasic *basic = mime_vm_phys(vm, pa, sizeof(*basic));
     if (!basic || fh->fd < 0)
         return MIME_HC_STATUS_INVALID;
     MimeFsBasic b = *basic;
+    bool change_kept = (fh->frozen & MIME_FS_TIME_CHANGE) || (b.freeze & MIME_FS_TIME_CHANGE);
+    bool changed = false;
+    if (b.mask & MIME_FS_BASIC_TOUCH) {
+        if (!fh->no_access_update)
+            mime_fs_touch_access(fh, false);
+        b.mask &= ~(uint32_t)MIME_FS_BASIC_TOUCH;
+        if (!b.mask && !b.freeze && !b.thaw)
+            return MIME_HC_STATUS_OK;
+    }
     if (b.mask & (MIME_FS_BASIC_ACCESS | MIME_FS_BASIC_WRITE)) {
         struct timespec times[2] = {{.tv_nsec = UTIME_OMIT}, {.tv_nsec = UTIME_OMIT}};
         if (b.mask & MIME_FS_BASIC_ACCESS)
@@ -394,6 +422,7 @@ static uint64_t fs_set_basic(MimeVm *vm, MimeFsHandle *fh, uint64_t pa)
             times[1] = filetime_to_ts(b.write_time);
         if (futimens(fh->fd, times) != 0)
             return errno_status(errno);
+        changed = true;
     }
     /* a directory without write permission cannot have files made in it, which is not what read only means for it. */
     if ((b.mask & MIME_FS_BASIC_READONLY) && !fh->is_dir) {
@@ -405,9 +434,22 @@ static uint64_t fs_set_basic(MimeVm *vm, MimeFsHandle *fh, uint64_t pa)
             mode &= ~(mode_t)(S_IWUSR | S_IWGRP | S_IWOTH);
         else
             mode |= S_IWUSR;
-        if (mode != (st.st_mode & 07777) && fchmod(fh->fd, mode) != 0)
-            return errno_status(errno);
+        if (mode != (st.st_mode & 07777)) {
+            if (fchmod(fh->fd, mode) != 0)
+                return errno_status(errno);
+            changed = true;
+        }
     }
+    uint64_t creation = b.creation_time, change = b.change_time, now = mime_fs_now();
+    if (b.mask & MIME_FS_BASIC_CREATION)
+        changed = true;
+    if (!(b.mask & MIME_FS_BASIC_CHANGE) && changed && !change_kept)
+        change = now;
+    bool set_change = (b.mask & MIME_FS_BASIC_CHANGE) || (changed && !change_kept);
+    if ((b.mask & MIME_FS_BASIC_CREATION) || set_change)
+        mime_fs_times_set(fh->host_path, fh->fd, (b.mask & MIME_FS_BASIC_CREATION) ? &creation : nullptr,
+                          set_change ? &change : nullptr);
+    fh->frozen = (uint8_t)((fh->frozen | b.freeze) & ~b.thaw);
     return MIME_HC_STATUS_OK;
 }
 
@@ -444,8 +486,9 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
 
 static uint64_t fs_open_path(MimeVm *vm, MimeFsOpen *req, const char *path)
 {
-    struct stat st;
-    bool exists = stat(path, &st) == 0;
+    MimeFsStat ms;
+    bool exists = mime_fs_stat(path, &ms) == 0;
+    struct stat st = ms.st;
     if (req->flags & MIME_FS_OPEN_STAT_ONLY) {
         /* queries attributes without opening a handle. */
         if (!exists) {
@@ -463,7 +506,7 @@ static uint64_t fs_open_path(MimeVm *vm, MimeFsOpen *req, const char *path)
         if ((req->flags & MIME_FS_OPEN_NON_DIRECTORY) && is_dir)
             return MIME_HC_STATUS_IS_DIRECTORY;
         const char *leaf = strrchr(path, '/');
-        fill_info(&st, leaf ? leaf + 1 : path, &req->info_out);
+        fill_info(&ms, path, -1, leaf ? leaf + 1 : path, &req->info_out);
         req->handle_out = 0;
         req->action_out = FILE_OPENED;
         open_fill_sd(vm, req, path);
@@ -534,10 +577,25 @@ static uint64_t fs_open_path(MimeVm *vm, MimeFsOpen *req, const char *path)
     }
     if (fd < 0)
         return errno_status(errno);
-    if (fstat(fd, &st) != 0 || (private_registry && S_ISREG(st.st_mode) && fchmod(fd, 0600) != 0)) {
+    if (mime_fs_fstat(fd, &ms) != 0 || (private_registry && S_ISREG(ms.st.st_mode) && fchmod(fd, 0600) != 0)) {
         uint64_t status = errno_status(errno);
         close(fd);
         return status;
+    }
+    st = ms.st;
+    if (action == FILE_CREATED) {
+        /* a name that lost a file lately gives its creation time to the new one. */
+        uint64_t tunneled;
+        if (mime_fs_tunnel_take(path, &tunneled))
+            mime_fs_times_set(path, fd, &tunneled, nullptr);
+        else
+            mime_fs_times_created(path, fd, &ms);
+    } else if (action != FILE_OPENED && !S_ISDIR(st.st_mode)) {
+        /* the file was emptied: that is a write, and a read as far as the access time goes. */
+        struct timespec times[2] = {{.tv_nsec = UTIME_NOW}, {.tv_nsec = UTIME_OMIT}};
+        clock_gettime(CLOCK_REALTIME, &times[0]);
+        futimens(fd, times);
+        mime_fs_fstat(fd, &ms);
     }
     if (private_registry && S_ISREG(st.st_mode) && (action == FILE_CREATED || st.st_size == 0)) {
         /* retry the directory sync until a record is in the journal, when the entry is known to be there. */
@@ -552,6 +610,7 @@ static uint64_t fs_open_path(MimeVm *vm, MimeFsOpen *req, const char *path)
     fh->fd = fd;
     fh->is_dir = S_ISDIR(st.st_mode);
     fh->volume = req->volume;
+    fh->no_access_update = (req->flags & MIME_FS_OPEN_NO_ACCESS_TIME) != 0;
     fh->host_path = mime_xstrdup(path);
     uint64_t h = alloc_handle(vm, fh);
     if (!h) {
@@ -561,7 +620,7 @@ static uint64_t fs_open_path(MimeVm *vm, MimeFsOpen *req, const char *path)
         return MIME_HC_STATUS_NO_MEMORY;
     }
     const char *leaf = strrchr(path, '/');
-    fill_info(&st, leaf ? leaf + 1 : path, &req->info_out);
+    fill_info(&ms, path, fd, leaf ? leaf + 1 : path, &req->info_out);
     req->handle_out = h;
     req->action_out = action;
     open_fill_sd(vm, req, path);
@@ -598,8 +657,8 @@ static void load_dir(MimeFsHandle *fh)
             continue;
         char full[MIME_PATH_MAX];
         mime_path_join(full, sizeof(full), fh->host_path, e->d_name);
-        struct stat st;
-        if (stat(full, &st) != 0)
+        MimeFsStat st;
+        if (mime_fs_stat(full, &st) != 0)
             continue;
         if (count == capacity) {
             capacity *= 2;
@@ -607,7 +666,7 @@ static void load_dir(MimeFsHandle *fh)
         }
         MimeFsDirEntry *de = &entries[count++];
         memset(de, 0, sizeof(*de));
-        fill_info(&st, e->d_name, &de->info);
+        fill_info(&st, full, -1, e->d_name, &de->info);
         de->name_chars = (uint32_t)mime_utf8_to_utf16(de->name, MIME_ARRAY_COUNT(de->name), e->d_name);
     }
     closedir(dir);
@@ -923,12 +982,26 @@ static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
     size_t from_length = strlen(src->host_path);
     if (S_ISDIR(from.st_mode) && !strncmp(target, src->host_path, from_length) && target[from_length] == '/')
         return MIME_HC_STATUS_INVALID;
+    MimeFsTimes times = {};
+    MimeFsStat known;
+    if (src->fd >= 0 && mime_fs_fstat(src->fd, &known) == 0)
+        mime_fs_times(src->host_path, src->fd, &known, &times);
     mime_fswatch_self(src->host_path, MIME_FSWATCH_MOVE_FROM);
     mime_fswatch_self(target, MIME_FSWATCH_MOVE_TO);
     if (rename(src->host_path, target) != 0) {
         mime_fswatch_self(src->host_path, MIME_FSWATCH_UNDO_MOVE);
         mime_fswatch_self(target, MIME_FSWATCH_UNDO_MOVE);
         return errno_status(errno);
+    }
+    if (exists && !same && there.st_nlink <= 1)
+        mime_fs_times_forget(&there);
+    /* the file keeps its creation time, and its change time is now. a name it takes that lost a file lately gets that file's. */
+    if (src->fd >= 0) {
+        uint64_t tunneled, now = mime_fs_now();
+        if (times.creation)
+            mime_fs_tunnel_add(src->host_path, times.creation);
+        bool tunnel = !exists && mime_fs_tunnel_take(target, &tunneled);
+        mime_fs_times_set(target, src->fd, tunnel ? &tunneled : nullptr, &now);
     }
     /* the journal takes its place for good only when the directory says so. */
     if (src->volume == MIME_FS_VOLUME_SYSTEM && is_private_registry(vm, target))
@@ -1002,6 +1075,12 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         }
         if (nr == MIME_HC_FS_WRITE)
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
+        MimeFsStat before = {};
+        MimeFsTimes kept = {};
+        bool keeping = nr == MIME_HC_FS_WRITE && (fh->frozen & (MIME_FS_TIME_WRITE | MIME_FS_TIME_CHANGE)) &&
+                       mime_fs_fstat(fh->fd, &before) == 0;
+        if (keeping)
+            mime_fs_times(fh->host_path, fh->fd, &before, &kept);
         ssize_t n;
         if (nr == MIME_HC_FS_READ) {
             n = pread(fh->fd, buf, (size_t)a[4], (off_t)a[2]);
@@ -1032,6 +1111,11 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
                               (unsigned long long)a[2], fh->host_path, (long long)n, strerror(errno));
             }
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
+            if (n > 0) {
+                if (keeping)
+                    times_after_write(fh, &before, &kept);
+                mime_fs_touch_access(fh, false);
+            }
         }
         if (n < 0)
             status = errno_status(errno);
@@ -1062,17 +1146,17 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     case MIME_HC_FS_QUERY: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
         MimeFsInfo *info = mime_vm_phys(vm, a[2], sizeof(MimeFsInfo));
-        struct stat st;
+        MimeFsStat st;
         if (!fh || !info) {
             status = MIME_HC_STATUS_INVALID;
             break;
         }
-        if (fstat(fh->fd, &st) != 0) {
+        if (mime_fs_fstat(fh->fd, &st) != 0) {
             status = errno_status(errno);
             break;
         }
         const char *name = strrchr(fh->host_path, '/');
-        fill_info(&st, name ? name + 1 : fh->host_path, info);
+        fill_info(&st, fh->host_path, fh->fd, name ? name + 1 : fh->host_path, info);
         break;
     }
     case MIME_HC_FS_READDIR: {
@@ -1104,8 +1188,21 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             status = MIME_HC_STATUS_INVALID;
         else {
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
-            if (ftruncate(fh->fd, (off_t)a[2]) != 0)
+            MimeFsStat before = {};
+            MimeFsTimes kept = {};
+            bool keeping = (fh->frozen & (MIME_FS_TIME_WRITE | MIME_FS_TIME_CHANGE)) && mime_fs_fstat(fh->fd, &before) == 0;
+            if (keeping)
+                mime_fs_times(fh->host_path, fh->fd, &before, &kept);
+            if (ftruncate(fh->fd, (off_t)a[2]) != 0) {
                 status = errno_status(errno);
+            } else if (keeping) {
+                times_after_write(fh, &before, &kept);
+            } else {
+                /* a size set is a write even when the size stays, which the host would not count. */
+                struct timespec times[2] = {{.tv_nsec = UTIME_OMIT}, {.tv_nsec = UTIME_NOW}};
+                clock_gettime(CLOCK_REALTIME, &times[1]);
+                futimens(fh->fd, times);
+            }
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
         }
         break;
@@ -1171,6 +1268,8 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         mime_utf16_to_utf8(leaf, sizeof(leaf), wide, a[4]);
         uint32_t flags = (uint32_t)a[5];
         status = mime_fs_link(vm, src, dir, leaf, flags, &regs[1]);
+        if (status == MIME_HC_STATUS_OK && src->host_path)
+            mime_fs_times_changed(src->host_path, src->fd);
         break;
     }
     case MIME_HC_FS_LINKS: {
@@ -1184,6 +1283,8 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         status = fh && !fh->is_dir ? mime_window_map(vm, fh->fd, (a[2] & MIME_FS_MAP_WRITABLE) != 0, &regs[1])
                                     : MIME_HC_STATUS_INVALID;
         pthread_mutex_unlock(WINDOW_LOCK(vm));
+        if (fh && status == MIME_HC_STATUS_OK && !fh->no_access_update)
+            mime_fs_touch_access(fh, false);
         break;
     }
     case MIME_HC_FS_WARM:

@@ -36,6 +36,8 @@ typedef struct MIMEFS_FCB {
     ULONG64 HostHandle;
     FS_WB Wb;            /* small writes buffered for the host, see io/fswrite.c. */
     BOOLEAN Buffered;    /* not opened for write through or unbuffered i/o, so it may buffer. */
+    BOOLEAN NoAccessTime; /* reads leave the access time alone. */
+    LONGLONG LastTouch;   /* when a read last set the access time. */
     BOOLEAN StatOnly;    /* answers one query by name: no host handle, OpenInfo is the answer. */
     MimeFsInfo OpenInfo; /* what the host reported at open. */
     BOOLEAN Directory;
@@ -116,12 +118,28 @@ static WCHAR fold(WCHAR c)
     return c >= 'a' && c <= 'z' ? (WCHAR)(c - 32) : c;
 }
 
+#define KEY_FILE_SYSTEM L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\FileSystem"
+
+/*
+ * NtfsDisableLastAccessUpdate: with the value set, bit 0 decides whether reads set the access time. without it the
+ * system manages the setting, and ntfs.sys of Windows 11 disables the updates on every volume of a client: the
+ * default is 0x80000003, and the size threshold only matters on a server. writes set the access time either way.
+ */
+static BOOLEAN access_time_disabled(void)
+{
+    ULONG type, value, length = sizeof(value);
+    if (NT_SUCCESS(CmQueryValueUnlessBusy(KEY_FILE_SYSTEM, L"NtfsDisableLastAccessUpdate", &type, &value, &length)) &&
+        type == 4 /* REG_DWORD */ && length >= sizeof(value))
+        return (value & 1) != 0;
+    return TRUE;
+}
+
 static void rom_info(const MimeRomEntry *rom, MimeFsInfo *info)
 {
     memset(info, 0, sizeof(*info));
     info->size = rom->size;
     info->allocation_size = (rom->size + PAGE_SIZE - 1) & ~(ULONG64)(PAGE_SIZE - 1);
-    info->creation_time = info->access_time = info->write_time = info->change_time = HalBootInfo->boot_filetime;
+    info->creation_time = info->access_time = info->write_time = info->change_time = HalRomFiletime();
     /* an ntfs file reference: sequence number 1, mft records after the reserved ones. */
     info->file_id = (1ull << 48) | (0x1000 + (ULONG64)(rom - HalRomEntry(0)));
     info->attributes = FILE_ATTRIBUTE_ARCHIVE;
@@ -405,6 +423,8 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
         req->flags |= MIME_FS_OPEN_NON_DIRECTORY;
     if (check)
         req->flags |= MIME_FS_OPEN_WANT_SD;
+    if ((req->flags & MIME_FS_OPEN_READ) && access_time_disabled())
+        req->flags |= MIME_FS_OPEN_NO_ACCESS_TIME;
     /* a query by name only needs the attributes: the host answers without making a handle. */
     BOOLEAN stat_only = (stack->Flags & SL_OPEN_STAT_ONLY) != 0 && disposition == FILE_OPEN && !by_id &&
                         !(req->flags & MIME_FS_OPEN_WRITE) && !(file->Flags & FO_DELETE_ON_CLOSE);
@@ -567,6 +587,7 @@ opened:
     fcb->Volume = vol->HostVolume;
     fcb->FileId = opened.file_id;
     fcb->Directory = directory;
+    fcb->NoAccessTime = (req_flags & MIME_FS_OPEN_NO_ACCESS_TIME) != 0;
     fcb->Buffered = (req_flags & MIME_FS_OPEN_WRITE) && !(options & (FILE_WRITE_THROUGH | FILE_NO_INTERMEDIATE_BUFFERING));
     if (!fcb->Directory && !fcb->StatOnly)
         FsWbOpen(&fcb->Wb, vol->HostVolume, opened.file_id, host, &file->FileName);
@@ -657,6 +678,25 @@ static NTSTATUS NTAPI mimefs_close(PDEVICE_OBJECT device, PIRP irp)
     return complete(irp, STATUS_SUCCESS, 0);
 }
 
+/* a read sets the access time of the file, at most once a second for a handle. */
+static void touch_access(MIMEFS_FCB *fcb)
+{
+    if (fcb->NoAccessTime || !fcb->HostHandle)
+        return;
+    LARGE_INTEGER now;
+    KeQuerySystemTime(&now);
+    if (fcb->LastTouch && now.QuadPart - fcb->LastTouch < 10000000)
+        return;
+    fcb->LastTouch = now.QuadPart;
+    MimeFsBasic *touch = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*touch), KI_TAG('M', 'f', 'B', 's'));
+    if (!touch)
+        return;
+    memset(touch, 0, sizeof(*touch));
+    touch->mask = MIME_FS_BASIC_TOUCH;
+    HalHypercallUnlocked(MIME_HC_FS_SET_BASIC, fcb->HostHandle, HalPhysicalOf(touch), 0, 0, 0, 0, nullptr);
+    ExFreePool(touch);
+}
+
 static NTSTATUS NTAPI mimefs_read_write(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
@@ -690,6 +730,8 @@ static NTSTATUS NTAPI mimefs_read_write(PDEVICE_OBJECT device, PIRP irp)
             return complete(irp, kept, NT_SUCCESS(kept) ? length : 0);
         }
     }
+    if (!write)
+        touch_access(fcb);
     /* host reads and writes stay ordered with what handles buffered for the file. */
     NTSTATUS synced = FsWbSync(&fcb->Wb);
     if (!NT_SUCCESS(synced) && write)
@@ -1276,32 +1318,58 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
         if (length < sizeof(FILE_BASIC_INFORMATION))
             return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
         const FILE_BASIC_INFORMATION *basic = (const void *)in;
+        /* a time below 0 is only -1, which keeps the time from updating, or -2, which lets it update again. */
+        const LONGLONG given[4] = {basic->CreationTime.QuadPart, basic->LastAccessTime.QuadPart,
+                                   basic->LastWriteTime.QuadPart, basic->ChangeTime.QuadPart};
+        for (ULONG i = 0; i < 4; i++)
+            if (given[i] < -2)
+                return complete(irp, STATUS_INVALID_PARAMETER, 0);
         MimeFsBasic *change = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*change), KI_TAG('M', 'f', 'B', 's'));
         if (!change)
             return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
         memset(change, 0, sizeof(*change));
-        /* a time of 0 is left as it is, and so is -1, which on windows also keeps later writes from changing it. */
-        if (basic->LastAccessTime.QuadPart > 0) {
-            change->access_time = (ULONG64)basic->LastAccessTime.QuadPart;
-            change->mask |= MIME_FS_BASIC_ACCESS;
+        /* a time of 0 is left as it is. one that is set stops updating for this handle, like -1. */
+        if (given[0] > 0) {
+            change->creation_time = (ULONG64)given[0];
+            change->mask |= MIME_FS_BASIC_CREATION;
         }
-        if (basic->LastWriteTime.QuadPart > 0) {
-            change->write_time = (ULONG64)basic->LastWriteTime.QuadPart;
-            change->mask |= MIME_FS_BASIC_WRITE;
+        static const struct {
+            ULONG Index, Mask, Time;
+        } times[3] = {{1, MIME_FS_BASIC_ACCESS, MIME_FS_TIME_ACCESS},
+                      {2, MIME_FS_BASIC_WRITE, MIME_FS_TIME_WRITE},
+                      {3, MIME_FS_BASIC_CHANGE, MIME_FS_TIME_CHANGE}};
+        ULONG64 *values[3] = {&change->access_time, &change->write_time, &change->change_time};
+        for (ULONG i = 0; i < 3; i++) {
+            LONGLONG value = given[times[i].Index];
+            if (value > 0) {
+                *values[i] = (ULONG64)value;
+                change->mask |= times[i].Mask;
+                change->freeze |= times[i].Time;
+            } else if (value == -1) {
+                change->freeze |= times[i].Time;
+            } else if (value == -2) {
+                change->thaw |= times[i].Time;
+            }
         }
         if (basic->FileAttributes) {
             change->attributes = basic->FileAttributes;
             change->mask |= MIME_FS_BASIC_READONLY;
         }
         NTSTATUS status = STATUS_SUCCESS;
-        if (change->mask && !fcb->StatOnly) {
-            /* flush this handle's buffer first, or the host would stamp the file with that write's time. */
+        if ((change->mask || change->freeze || change->thaw) && !fcb->StatOnly) {
+            /* buffered writes of this file go first, or the host would stamp the file with them afterwards. */
+            FsWbSyncOthers(&fcb->Wb);
             FsWbSync(&fcb->Wb);
             status = host_status(HalHypercallUnlocked(MIME_HC_FS_SET_BASIC, fcb->HostHandle, HalPhysicalOf(change), 0, 0, 0, 0,
                                                        nullptr), FALSE);
-            if (NT_SUCCESS(status))
-                FsNotifyReport(fcb->Volume, &stack->FileObject->FileName, FILE_ACTION_MODIFIED,
-                               FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_ATTRIBUTES);
+            if (NT_SUCCESS(status) && change->mask) {
+                ULONG filter = FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_ATTRIBUTES;
+                if (change->mask & MIME_FS_BASIC_ACCESS)
+                    filter |= FILE_NOTIFY_CHANGE_LAST_ACCESS;
+                if (change->mask & MIME_FS_BASIC_CREATION)
+                    filter |= FILE_NOTIFY_CHANGE_CREATION;
+                FsNotifyReport(fcb->Volume, &stack->FileObject->FileName, FILE_ACTION_MODIFIED, filter);
+            }
         }
         ExFreePool(change);
         return complete(irp, status, 0);

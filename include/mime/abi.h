@@ -366,7 +366,7 @@ typedef struct MimeRomEntry {
 typedef struct MimeRomHeader {
     uint64_t magic;
     uint32_t count;
-    uint32_t pad;
+    uint32_t built; /* when the build made it, in seconds since 1970: the time of every file in it. */
     MimeRomEntry entries[];
 } MimeRomHeader;
 
@@ -424,7 +424,7 @@ enum {
     MIME_HC_FS_SET_SD = 0x1F,   /* (handle, pa, length) stores a security descriptor, none for length 0 */
     MIME_HC_FS_WARM = 0x61,     /* (pa) maps a file window into the guest's tables ahead of its first reads, without waiting for it */
     MIME_HC_FS_RENAME = 0x60,   /* (handle, directory handle, pa, chars, MIME_FS_RENAME_*) moves a file or directory to a name in a directory */
-    MIME_HC_FS_SET_BASIC = 0x66, /* (handle, MimeFsBasic pa) sets the times and the read only attribute the mask names */
+    MIME_HC_FS_SET_BASIC = 0x66, /* (handle, MimeFsBasic pa) sets the times and the read only attribute the mask names, see MimeFsBasic */
     MIME_HC_FS_LINK = 0x67,     /* handle, directory handle or 0 for the file's own, pa, chars and MIME_FS_LINK_* flags: makes a hard link to the file in a directory, returns the links the file has now. */
     MIME_HC_FS_LINKS = 0x68,    /* handle, pa and capacity: every name of the file on its volume as MimeFsLinkName records, returns the bytes they need. */
     MIME_HC_FS_WINDOW_LOST = 0xA0, /* (pa of MimeWindowLost) the next range of window pages whose file lost them, after MIME_IRQ_WINDOW */
@@ -812,6 +812,7 @@ enum {
     MIME_FS_OPEN_NON_DIRECTORY = 1u << 3, /* must not be a directory. */
     MIME_FS_OPEN_STAT_ONLY = 1u << 4,     /* returns info_out without creating a handle to close. */
     MIME_FS_OPEN_WANT_SD = 1u << 5,       /* also the nearest stored security descriptor, see sd_length: for a guest that checks the open. */
+    MIME_FS_OPEN_NO_ACCESS_TIME = 1u << 7, /* reads leave the access time alone: NtfsDisableLastAccessUpdate. */
     MIME_FS_OPEN_BY_ID = 1u << 6,         /* path holds a file id, 8 bytes or 16 with the high half 0, and comes back as the file's volume relative name. */
 };
 
@@ -893,16 +894,31 @@ typedef struct MimeFsInfo {
     uint32_t links;
 } MimeFsInfo;
 
-/* MIME_HC_FS_SET_BASIC updates access and write FILETIMEs and the read-only attribute. */
+/*
+ * MIME_HC_FS_SET_BASIC sets the times the mask names and the read-only attribute. a change time given is kept as it is;
+ * otherwise any change the call makes sets it to now, unless the handle stopped its automatic updates.
+ */
 #define MIME_FS_BASIC_ACCESS 1u
 #define MIME_FS_BASIC_WRITE 2u
 #define MIME_FS_BASIC_READONLY 4u /* attributes has FILE_ATTRIBUTE_READONLY or not. */
+#define MIME_FS_BASIC_CREATION 8u
+#define MIME_FS_BASIC_CHANGE 16u
+#define MIME_FS_BASIC_TOUCH 32u /* a read: the access time becomes now, unless the handle keeps it or the open said not to. */
+
+/* the times a handle can stop updating on its own, in MimeFsBasic freeze and thaw: a time set or given as -1 is frozen, -2 thaws it. */
+#define MIME_FS_TIME_WRITE 1u
+#define MIME_FS_TIME_ACCESS 2u
+#define MIME_FS_TIME_CHANGE 4u
 
 typedef struct MimeFsBasic {
+    uint64_t creation_time;
     uint64_t access_time;
     uint64_t write_time;
+    uint64_t change_time;
     uint32_t attributes;
     uint32_t mask;
+    uint32_t freeze;
+    uint32_t thaw;
 } MimeFsBasic;
 
 typedef struct MimeFsOpen {

@@ -143,6 +143,11 @@ const MimeRomEntry *HalRomFind(PCWSTR path, ULONG chars)
     return nullptr;
 }
 
+ULONG64 HalRomFiletime(void)
+{
+    return g_rom->built ? ((ULONG64)g_rom->built + 11644473600ull) * 10000000ull : HalBootInfo->boot_filetime;
+}
+
 const MimeRomEntry *HalRomEntry(ULONG index)
 {
     return index < g_rom->count ? &g_rom->entries[index] : nullptr;
