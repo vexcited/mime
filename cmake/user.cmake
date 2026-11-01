@@ -331,6 +331,8 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_comctl32 ${MIME_LIB_${arch}}/uxtheme.lib)
     set(libs_msctf ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
     set(libs_oleacc ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib)
+    set(libs_uiautomationcore ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/oleacc.lib
+        ${MIME_LIB_${arch}}/advapi32.lib)
     foreach(service rpcss rpcepmap coremessaging)
         set(libs_${service} ${MIME_LIB_${arch}}/advapi32.lib)
     endforeach()
