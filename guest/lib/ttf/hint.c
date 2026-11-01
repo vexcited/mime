@@ -98,6 +98,16 @@ typedef struct Scale {
     int shift; /* above zero for a power of two divisor, otherwise minus one for a plain divisor or minus two for 16.16. */
 } Scale;
 
+/* what ClearType with compatible widths remembers about each point of a glyph while the program runs. */
+typedef struct PhaseLink {
+    int16_t first, second; /* the points this one follows, second is minus one when there is one. */
+    int16_t partner;       /* the other edge of the stem. */
+    uint16_t flags;        /* PHASE_*. */
+    int32_t shift;
+} PhaseLink;
+
+enum { PHASE_CONFLICT = 1, PHASE_DONE = 2, PHASE_VISITING = 4 };
+
 struct MimeTtfHinter {
     const MimeTtfFont *font;
     MimeAllocator alloc;
@@ -109,6 +119,7 @@ struct MimeTtfHinter {
     bool usable;
     bool glyph_hinting; /* glyph programs run. */
     bool native; /* the prep asked for native cleartype behaviour. */
+    MimeTtfHinter *plain; /* the same size without cleartype, whose advance the compatible widths take. */
     uint16_t patches;     /* PATCH_* flags the font program set when it defined its functions. */
     uint16_t special[4];  /* the numbers of the delta shift functions. */
     uint8_t special_count;
@@ -314,6 +325,11 @@ typedef struct Exec {
     int32_t fdotp;
     bool iupy; /* the points were interpolated along y. */
     bool iupx;
+    PhaseLink *links;      /* null unless the phase control runs. */
+    uint8_t *misoriented;  /* per contour, wound against its nesting. */
+    int32_t phase_scale;   /* 16.16, the compatible advance over the scaled one. */
+    bool phase_done;
+    int32_t line_p1, line_p2; /* the points of the last line a vector was set along, minus one after an axis. */
     bool dual_is_project; /* the dual projection vector is the projection vector, set from a line or two numbers. */
     bool read8; /* storage 8 was read as zero by the patch. */
     bool composite; /* the program is the one of a composite glyph. */
@@ -713,6 +729,343 @@ static void ins_miap(Exec *ex, uint8_t op)
     ex->gs.rp0 = ex->gs.rp1 = (uint32_t)p;
 }
 
+static void *halloc(const MimeTtfHinter *h, size_t n);
+
+/* ------------------------------------------------------------------ phase control */
+
+/*
+ * with cleartype and compatible widths the glyph is first fitted without cleartype to find the advance the program
+ * leaves, and fitted again with the stems free along x. every point then remembers the points it was placed from
+ * and, once the program is done, is shifted by the stretch that takes the scaled advance to the compatible one.
+ */
+
+static bool phase_axis(const Exec *ex)
+{
+    return ex->links && subpixel_axis(ex);
+}
+
+static int contour_of(const Zone *z, int32_t p)
+{
+    for (uint32_t c = 0; c < z->contours; c++)
+        if (p <= z->ends[c])
+            return (int)c;
+    return -1;
+}
+
+static bool depends_on(const Exec *ex, int32_t a, int32_t b, int depth)
+{
+    int d = depth - 1;
+    if (d < 0)
+        return true;
+    const PhaseLink *l = &ex->links[a];
+    if (l->first == -1)
+        return false;
+    if (l->second == -1)
+        return l->first == b || depends_on(ex, l->first, b, d - 1);
+    if (l->first == b || l->second == b)
+        return true;
+    return depends_on(ex, l->first, b, d - 1) || depends_on(ex, l->second, b, d - 1);
+}
+
+static bool phase_points_ok(const Zone *z, int32_t a, int32_t b)
+{
+    return a >= 0 && b >= 0 && (uint32_t)a < z->n && (uint32_t)b < z->n && a != b;
+}
+
+/* q follows p. */
+static void phase_distance(Exec *ex, const Zone *z, int32_t p, int32_t q, int color)
+{
+    if (!phase_points_ok(z, p, q))
+        return;
+    PhaseLink *l = ex->links;
+    int32_t root = p;
+    if (depends_on(ex, p, q, 100)) {
+        l[q].flags |= PHASE_CONFLICT;
+    } else if (l[q].first == -1) {
+        for (int32_t i = l[p].first; i != -1; i = l[i].first) {
+            if (z->orus[root].x != z->orus[i].x)
+                break;
+            root = i;
+        }
+        l[q].first = (int16_t)root;
+        l[q].second = -1;
+    }
+    if (color == 1 && l[root].partner == -1 && l[q].partner != root) {
+        int32_t t = l[root].first;
+        if (t != -1 && l[t].partner == root)
+            l[q].flags |= PHASE_CONFLICT;
+        else
+            l[root].partner = (int16_t)q;
+    }
+}
+
+/* q lies between p1 and p2. */
+static void phase_proportion(Exec *ex, const Zone *z, int32_t p1, int32_t q, int32_t p2)
+{
+    if (!phase_points_ok(z, p1, q) || !phase_points_ok(z, p2, q) || p1 == p2)
+        return;
+    PhaseLink *l = ex->links;
+    if (depends_on(ex, p1, q, 100) || depends_on(ex, p2, q, 100)) {
+        l[q].flags |= PHASE_CONFLICT;
+    } else if (l[q].first == -1 && l[q].second == -1) {
+        l[q].first = (int16_t)p1;
+        l[q].second = (int16_t)p2;
+    }
+}
+
+static bool inter_align(const Zone *z, int32_t a, int32_t q, int32_t b)
+{
+    int32_t lo = z->orus[a].x, hi = z->orus[b].x;
+    if (lo > hi) {
+        int32_t t = lo;
+        lo = hi;
+        hi = t;
+    }
+    return lo <= z->orus[q].x && z->orus[q].x <= hi;
+}
+
+/* the color of the edge between two neighbours of a contour: 1 or 2 by the side of the stem, 0 when they disagree. */
+static int link_color(const Exec *ex, const Zone *z, int32_t a, int32_t b, int fallback)
+{
+    int ca = contour_of(z, a), cb = contour_of(z, b);
+    if (ca < 0 || cb < 0)
+        return 0;
+    if (ca != cb)
+        return fallback;
+    int32_t first = ca == 0 ? 0 : z->ends[ca - 1] + 1, last = z->ends[ca];
+    int32_t next_a = a != last ? a + 1 : first, prev_a = a != first ? a - 1 : last;
+    if (b != next_a && b != prev_a)
+        return fallback;
+    const V2 *o = z->orus;
+    bool turn_a = (int32_t)((int64_t)(o[next_a].y - o[a].y) * (o[a].x - o[prev_a].x)) <
+                  (int32_t)((int64_t)(o[next_a].x - o[a].x) * (o[a].y - o[prev_a].y));
+    int32_t prev_b = b != first ? b - 1 : last, next_b = b != last ? b + 1 : first;
+    bool turn_b = (int32_t)((int64_t)(o[next_b].y - o[b].y) * (o[b].x - o[prev_b].x)) <
+                  (int32_t)((int64_t)(o[next_b].x - o[b].x) * (o[b].y - o[prev_b].y));
+    if (turn_a != turn_b)
+        return 0;
+    int32_t dx = o[b].x - o[a].x, dy = o[b].y - o[a].y;
+    if (dx < 0)
+        dx = -dx;
+    if (dy < 0)
+        dy = -dy;
+    if (2 * (int64_t)dx < dy)
+        return 0;
+    return ((turn_a ^ ((ex->misoriented[ca] & 1) == 0)) ? 1 : 0) + 1;
+}
+
+typedef struct FlatPoint {
+    double x, y;
+} FlatPoint;
+
+static void flat_curve(FlatPoint *out, uint32_t *n, FlatPoint p0, FlatPoint c, FlatPoint p1)
+{
+    for (int t = 1; t <= 6; t++) {
+        double u = t / 6.0, v = 1 - u;
+        out[(*n)++] = (FlatPoint){v * v * p0.x + 2 * u * v * c.x + u * u * p1.x, v * v * p0.y + 2 * u * v * c.y + u * u * p1.y};
+    }
+}
+
+/* the outline of a contour as a polygon, curves cut in six. */
+static uint32_t flatten_contour(const Zone *z, uint32_t first, uint32_t last, FlatPoint *out)
+{
+    uint32_t count = last - first + 1, n = 0, start = first;
+    bool have_on = false;
+    for (uint32_t i = first; i <= last; i++) {
+        if (z->tag[i] & TAG_ON) {
+            start = i;
+            have_on = true;
+            break;
+        }
+    }
+    FlatPoint begin;
+    uint32_t skip;
+    if (have_on) {
+        begin = (FlatPoint){z->orus[start].x, z->orus[start].y};
+        skip = 1;
+    } else {
+        begin = (FlatPoint){((double)z->orus[first].x + z->orus[last].x) / 2, ((double)z->orus[first].y + z->orus[last].y) / 2};
+        start = last;
+        skip = 0;
+    }
+    out[n++] = begin;
+    FlatPoint cur = begin, ctrl = {0, 0};
+    bool pending = false;
+    for (uint32_t k = skip; k <= count; k++) {
+        FlatPoint pt = begin;
+        bool on = true;
+        if (k != count) {
+            uint32_t idx = first + (start - first + k) % count;
+            pt = (FlatPoint){z->orus[idx].x, z->orus[idx].y};
+            on = (z->tag[idx] & TAG_ON) != 0;
+        }
+        if (on) {
+            if (pending)
+                flat_curve(out, &n, cur, ctrl, pt);
+            else
+                out[n++] = pt;
+            pending = false;
+            cur = pt;
+        } else {
+            if (pending) {
+                FlatPoint mid = {(ctrl.x + pt.x) / 2, (ctrl.y + pt.y) / 2};
+                flat_curve(out, &n, cur, ctrl, mid);
+                cur = mid;
+            }
+            ctrl = pt;
+            pending = true;
+        }
+    }
+    return n;
+}
+
+/* a contour is misoriented when it is wound against its nesting, outer contours clockwise and holes the other way. */
+static void find_misoriented(const MimeTtfHinter *h, const Zone *z, uint8_t *out)
+{
+    uint32_t points = z->n >= 4 ? z->n - 4 : 0;
+    FlatPoint *flat = halloc(h, sizeof(FlatPoint) * (7 * (size_t)points + 8 * (size_t)z->contours + 16));
+    FlatPoint **starts = halloc(h, sizeof(FlatPoint *) * (z->contours + 1));
+    uint32_t *counts = halloc(h, sizeof(uint32_t) * (z->contours + 1));
+    memset(out, 0, z->contours);
+    if (!flat || !starts || !counts)
+        goto done;
+    uint32_t used = 0, first = 0;
+    for (uint32_t c = 0; c < z->contours; c++) {
+        uint32_t last = z->ends[c];
+        starts[c] = flat + used;
+        counts[c] = 0;
+        if (last >= first && last + 1 - first > 2)
+            counts[c] = flatten_contour(z, first, last, flat + used);
+        used += counts[c];
+        first = last + 1u;
+    }
+    for (uint32_t c = 0; c < z->contours; c++) {
+        if (counts[c] < 3)
+            continue;
+        const FlatPoint *f = starts[c];
+        double area = 0;
+        uint32_t left = 0;
+        for (uint32_t i = 0; i + 1 < counts[c]; i++) {
+            area += f[i].x * f[i + 1].y - f[i + 1].x * f[i].y;
+            if (f[i].x < f[left].x || (f[i].x == f[left].x && f[i].y < f[left].y))
+                left = i;
+        }
+        double px = f[left].x, py = f[left].y;
+        uint32_t crossings = 0;
+        for (uint32_t k = 0; k < z->contours; k++) {
+            if (k == c)
+                continue;
+            const FlatPoint *g = starts[k];
+            for (uint32_t i = 0; i + 1 < counts[k]; i++) {
+                double y0 = g[i].y, y1 = g[i + 1].y;
+                if ((y0 <= py) == (y1 <= py))
+                    continue;
+                double x = g[i].x + (py - y0) * (g[i + 1].x - g[i].x) / (y1 - y0);
+                if (x < px)
+                    crossings++;
+            }
+        }
+        out[c] = ((crossings & 1) == 0) == (area > 0);
+    }
+done:
+    mime_free(&h->alloc, flat);
+    mime_free(&h->alloc, starts);
+    mime_free(&h->alloc, counts);
+}
+
+static int32_t round_scale(int64_t v)
+{
+    v += v >= 0 ? 0x10000 : -0x10000;
+    return (int32_t)(v / 0x20000);
+}
+
+/* the amount a point moves, found from the points it follows. */
+static int32_t phase_shift(Exec *ex, Zone *z, bool conflict, int32_t idx)
+{
+    if (idx == -1)
+        return 0;
+    PhaseLink *l = ex->links;
+    PhaseLink *r = &l[idx];
+    if (r->flags & PHASE_VISITING)
+        return 0;
+    r->flags |= PHASE_VISITING;
+    if (!(r->flags & PHASE_DONE)) {
+        int64_t k = (int64_t)ex->phase_scale - 0x10000;
+        int32_t s = 0;
+        int32_t last = z->contours ? (int32_t)z->ends[z->contours - 1] : -1;
+        bool scale_own = true;
+        if (last >= idx || idx > last + 2) {
+            if (r->first != -1) {
+                scale_own = false;
+                if (r->second == -1) {
+                    s = phase_shift(ex, z, conflict, r->first);
+                } else {
+                    int32_t s1 = phase_shift(ex, z, conflict, r->second);
+                    int32_t s0 = phase_shift(ex, z, conflict, r->first);
+                    if (s0 == s1) {
+                        s = s0;
+                    } else {
+                        int32_t p0 = z->org[r->first].x, p1 = z->org[r->second].x, pc = z->org[idx].x;
+                        if (p0 >= p1) {
+                            int32_t t = p0;
+                            p0 = p1;
+                            p1 = t;
+                            t = s0;
+                            s0 = s1;
+                            s1 = t;
+                        }
+                        if (p0 == p1)
+                            s = (s0 + s1) / 2;
+                        else
+                            s = (int32_t)(((int64_t)s1 * (pc - p0) + (int64_t)s0 * (p1 - pc)) / (p1 - p0));
+                    }
+                }
+            } else if (!conflict) {
+                scale_own = false;
+            }
+        }
+        if (scale_own)
+            s = round_scale(k * (int64_t)(2 * z->cur[idx].x));
+        if (!(r->flags & PHASE_DONE)) {
+            int32_t partner = r->partner;
+            if (partner != -1 && !(l[partner].flags & PHASE_DONE)) {
+                if (r->first == -1 || r->second == -1)
+                    s = round_scale(k * (int64_t)(int32_t)(z->cur[idx].x + z->cur[partner].x));
+                z->cur[idx].x += s;
+                z->cur[partner].x += s;
+                l[partner].flags |= PHASE_DONE;
+                l[partner].shift = s;
+            } else {
+                if (conflict && r->second == -1 && !(r->first != -1 && z->org[idx].x == z->org[r->first].x))
+                    s = round_scale(k * (int64_t)(2 * z->cur[idx].x));
+                if (r->first != -1)
+                    z->cur[idx].x += s;
+            }
+            r->flags |= PHASE_DONE;
+            r->shift = s;
+        }
+    }
+    r->flags &= (uint16_t)~PHASE_VISITING;
+    return r->shift;
+}
+
+static void phase_run(Exec *ex)
+{
+    if (!ex->links || ex->phase_done)
+        return;
+    Zone *z = &ex->zones[1];
+    bool conflict = false;
+    for (uint32_t i = 0; i < z->n; i++) {
+        if (ex->links[i].flags & PHASE_CONFLICT) {
+            conflict = true;
+            break;
+        }
+    }
+    for (uint32_t i = 0; i < z->n; i++)
+        phase_shift(ex, z, conflict, (int32_t)i);
+    ex->phase_done = true;
+}
+
 /*
  * the distance between two points of the original outline. outside the twilight zone the font unit distance is
  * projected and scaled once, which is not the same as the difference of two points scaled one by one.
@@ -728,6 +1081,15 @@ static int32_t original_distance(Exec *ex, const Zone *z0, uint32_t p0, const Zo
     return dual_project(ex, scale_apply(&h->sx, dx), scale_apply(&h->sy, dy));
 }
 
+/* the leader of a point moved against a reference point in the other zone than the twilight one. */
+static void phase_follow(Exec *ex, const Zone *z, int32_t rp, int32_t p)
+{
+    if (ex->line_p1 < 0 || ex->line_p2 < 0 || !inter_align(z, ex->line_p1, p, ex->line_p2))
+        phase_distance(ex, z, rp, p, 3);
+    else
+        phase_proportion(ex, z, ex->line_p1, p, ex->line_p2);
+}
+
 static void ins_mdrp(Exec *ex, uint8_t op)
 {
     int32_t p;
@@ -737,6 +1099,8 @@ static void ins_mdrp(Exec *ex, uint8_t op)
     if (!point_ok(z1, p) || !point_ok(z0, (int32_t)ex->gs.rp0))
         FAIL();
     uint32_t rp0 = ex->gs.rp0;
+    if (phase_axis(ex) && ex->gs.zp1 != 0)
+        phase_follow(ex, z1, (int32_t)rp0, p);
     int32_t org_dist = original_distance(ex, z0, rp0, z1, (uint32_t)p);
     /* single width cut in. */
     int32_t diff = org_dist - ex->gs.sw_value;
@@ -784,6 +1148,8 @@ static void ins_mirp(Exec *ex, uint8_t op)
         z1->org[p].y = z0->org[rp0].y + mul14(cvt_dist, ex->gs.pv.y);
         z1->cur[p] = z1->org[p];
     }
+    if (phase_axis(ex) && ex->gs.zp1 != 0)
+        phase_distance(ex, z1, (int32_t)rp0, p, link_color(ex, z1, (int32_t)rp0, p, op & 3));
     int32_t org_dist = dual_project(ex, z1->org[p].x - z0->org[rp0].x, z1->org[p].y - z0->org[rp0].y);
     int32_t cur_dist = project(ex, z1->cur[p].x - z0->cur[rp0].x, z1->cur[p].y - z0->cur[rp0].y);
     if (ex->gs.auto_flip && ((org_dist ^ cvt_dist) < 0))
@@ -837,6 +1203,8 @@ static void ins_msirp(Exec *ex, uint8_t op)
         z1->org[p] = z0->org[rp0];
         z1->cur[p] = z1->org[p];
     }
+    if (phase_axis(ex) && ex->gs.zp1 != 0)
+        phase_distance(ex, z1, (int32_t)rp0, p, link_color(ex, z1, (int32_t)rp0, p, 1));
     int32_t cur = project(ex, z1->cur[p].x - z0->cur[rp0].x, z1->cur[p].y - z0->cur[rp0].y);
     move_point(ex, z1, (uint32_t)p, dist - cur);
     ex->gs.rp1 = ex->gs.rp0;
@@ -889,6 +1257,8 @@ static void ins_shp(Exec *ex, uint8_t op)
             return;
         if (!point_ok(z, p))
             FAIL();
+        if (phase_axis(ex) && ex->gs.zp2 != 0)
+            phase_distance(ex, z, (int32_t)((op & 1) ? ex->gs.rp1 : ex->gs.rp2), p, 3);
         shift_point(ex, z, (uint32_t)p, dx, dy);
         ex->gs.loop--;
     }
@@ -922,6 +1292,12 @@ static void ins_shc(Exec *ex, uint8_t op)
     }
     Zone *refz = (op & 1) ? zone_of(ex, ex->gs.zp0) : zone_of(ex, ex->gs.zp1);
     uint32_t rp = (op & 1) ? ex->gs.rp1 : ex->gs.rp2;
+    /* the phase pass runs first and the contour follows the reference point's own shift. */
+    if (ex->links && !ex->phase_done && refz != &ex->zones[0]) {
+        phase_run(ex);
+        if (rp < z->n)
+            dx += ex->links[rp].shift;
+    }
     for (uint32_t p = first; p < last && p < z->n; p++)
         if (refz != z || p != rp)
             shift_point(ex, z, p, dx, dy);
@@ -1004,6 +1380,8 @@ static void ins_ip(Exec *ex)
             return;
         if (!point_ok(z2, p))
             FAIL();
+        if (phase_axis(ex) && ex->gs.zp2 != 0)
+            phase_proportion(ex, z2, (int32_t)rp1, p, (int32_t)rp2);
         int32_t org_dist = twilight ? dual_project(ex, z2->org[p].x - base->x, z2->org[p].y - base->y)
                                     : dual_project(ex, z2->orus[p].x - base->x, z2->orus[p].y - base->y);
         int32_t new_dist;
@@ -1029,6 +1407,8 @@ static void ins_alignrp(Exec *ex)
             return;
         if (!point_ok(z1, p))
             FAIL();
+        if (phase_axis(ex) && ex->gs.zp1 != 0)
+            phase_follow(ex, z1, (int32_t)ex->gs.rp0, p);
         int32_t d = project(ex, z1->cur[p].x - z0->cur[ex->gs.rp0].x, z1->cur[p].y - z0->cur[ex->gs.rp0].y);
         move_point(ex, z1, (uint32_t)p, -d);
         ex->gs.loop--;
@@ -1054,13 +1434,23 @@ static void ins_isect(Exec *ex)
     int32_t b1, b0, a1, a0, p;
     if (!pop(ex, &b1) || !pop(ex, &b0) || !pop(ex, &a1) || !pop(ex, &a0) || !pop(ex, &p))
         return;
-    Zone *z0 = zone_of(ex, ex->gs.zp0), *z1 = zone_of(ex, ex->gs.zp1), *z2 = zone_of(ex, ex->gs.zp2);
+    /* the line a lies in zp1 and the line b in zp0. */
+    Zone *z0 = zone_of(ex, ex->gs.zp1), *z1 = zone_of(ex, ex->gs.zp0), *z2 = zone_of(ex, ex->gs.zp2);
     if (!point_ok(z0, a0) || !point_ok(z0, a1) || !point_ok(z1, b0) || !point_ok(z1, b1) || !point_ok(z2, p))
         FAIL();
     int64_t dbx = z1->cur[b1].x - z1->cur[b0].x, dby = z1->cur[b1].y - z1->cur[b0].y;
     int64_t dax = z0->cur[a1].x - z0->cur[a0].x, day = z0->cur[a1].y - z0->cur[a0].y;
     int64_t dx = z1->cur[b0].x - z0->cur[a0].x, dy = z1->cur[b0].y - z0->cur[a0].y;
     z2->tag[p] |= TAG_TOUCH_X | TAG_TOUCH_Y;
+    if (phase_axis(ex) && ex->gs.zp2 != 0) {
+        int32_t lead = b0, follow = b1;
+        int64_t across_a = mul_26_6((int32_t)dax, (int32_t)dby), across_b = mul_26_6((int32_t)day, (int32_t)dbx);
+        if ((across_b < 0 ? -across_b : across_b) > (across_a < 0 ? -across_a : across_a)) {
+            lead = a0;
+            follow = a1;
+        }
+        phase_proportion(ex, z2, lead, p, follow);
+    }
     int64_t discriminant = dax * -dby + day * dbx;
     int64_t dotproduct = dax * dbx + day * dby;
     int64_t x, y;
@@ -1170,6 +1560,8 @@ static void ins_iup(Exec *ex, uint8_t op)
 {
     bool x_axis = (op & 1) != 0;
     Zone *z = zone_of(ex, 1);
+    if (x_axis && ex->links && !ex->phase_done)
+        phase_run(ex);
     uint32_t first = 0;
     for (uint32_t c = 0; c < z->contours; c++) {
         uint32_t last = z->ends[c];
@@ -1408,12 +1800,14 @@ static void execute_one(Exec *ex, uint8_t op)
         V2 v = (op & 1) ? (V2){0x4000, 0} : (V2){0, 0x4000};
         gs->pv = gs->dv = gs->fv = v;
         ex->dual_is_project = false;
+        ex->line_p1 = ex->line_p2 = -1;
         compute_fdotp(ex);
         return;
     }
     case 0x02: case 0x03: {
         gs->pv = gs->dv = (op & 1) ? (V2){0x4000, 0} : (V2){0, 0x4000};
         ex->dual_is_project = false;
+        ex->line_p1 = ex->line_p2 = -1;
         compute_fdotp(ex);
         return;
     }
@@ -1426,9 +1820,10 @@ static void execute_one(Exec *ex, uint8_t op)
         /* p1 is the top of the stack, in zone zp2, and p2 in zp1. */
         if (!set_vector_from_points(&gs->pv, p1, p2, op & 1, false, zone_of(ex, gs->zp2), zone_of(ex, gs->zp1)))
             FAIL();
-        (void)p2;
         gs->dv = gs->pv;
         ex->dual_is_project = true;
+        ex->line_p1 = p1;
+        ex->line_p2 = p2;
         compute_fdotp(ex);
         return;
     }
@@ -1448,6 +1843,7 @@ static void execute_one(Exec *ex, uint8_t op)
             FAIL();
         gs->pv = gs->dv = v;
         ex->dual_is_project = true;
+        ex->line_p1 = ex->line_p2 = -1;
         compute_fdotp(ex);
         return;
     }
@@ -1767,6 +2163,8 @@ static void execute_one(Exec *ex, uint8_t op)
             FAIL();
         gs->pv = w;
         ex->dual_is_project = false;
+        ex->line_p1 = p1;
+        ex->line_p2 = p2;
         compute_fdotp(ex);
         return;
     }
@@ -1908,6 +2306,7 @@ static void exec_init(Exec *ex, MimeTtfHinter *h, const GState *gs)
     ex->cvt_count = h->cvt_count;
     ex->storage_count = h->storage_count;
     ex->ppem_for_delta = h->ppem_y;
+    ex->line_p1 = ex->line_p2 = -1;
     compute_fdotp(ex);
 }
 
@@ -1927,6 +2326,7 @@ void mime_ttf_hinter_free(MimeTtfHinter *h)
     mime_free(&a, h->idefs);
     mime_free(&a, h->stack);
     mime_free(&a, h->twilight.org);
+    mime_ttf_hinter_free(h->plain);
     mime_free(&a, h);
 }
 
@@ -2031,6 +2431,9 @@ MimeTtfHinter *mime_ttf_hinter_new(const MimeTtfFont *font, const MimeAllocator 
     h->glyph_hinting = h->usable && !(h->instruct_control & 1);
     h->scan_control = h->defaults.scan_control;
     h->scan_type = h->defaults.scan_type;
+    /* the compatible widths take the advance of the glyph fitted without cleartype. */
+    if ((flags & MIME_TTF_HINT_CLEARTYPE) && (flags & MIME_TTF_HINT_COMPAT_WIDTHS) && h->glyph_hinting)
+        h->plain = mime_ttf_hinter_new(font, alloc, ppem_x, ppem_y, 0);
     return h;
 }
 
@@ -2102,7 +2505,7 @@ static int32_t scale_fu_y(const MimeTtfHinter *h, int32_t v)
 }
 
 /* runs the glyph program over a glyph whose points are in place. */
-static void run_glyph_program(const MimeTtfHinter *hc, HGlyph *g, Code program, bool composite)
+static void run_glyph_program(const MimeTtfHinter *hc, HGlyph *g, Code program, bool composite, int32_t ratio)
 {
     MimeTtfHinter *h = (MimeTtfHinter *)hc;
     if (!h->glyph_hinting || program.size == 0)
@@ -2129,7 +2532,9 @@ static void run_glyph_program(const MimeTtfHinter *hc, HGlyph *g, Code program, 
     /* the program works on copies, so the tables of the hinter are never written and threads may share it. */
     size_t cvt_bytes = h->cvt_count * sizeof(int32_t), storage_bytes = h->storage_count * sizeof(int32_t);
     size_t twilight_bytes = (size_t)h->twilight.n * (3 * sizeof(V2) + 1), stack_bytes = h->stack_cap * sizeof(int32_t);
-    uint8_t *scratch = halloc(h, cvt_bytes + storage_bytes + twilight_bytes + stack_bytes + 16);
+    bool phase = (h->flags & MIME_TTF_HINT_CLEARTYPE) && (h->flags & MIME_TTF_HINT_COMPAT_WIDTHS);
+    size_t link_bytes = phase ? (size_t)(g->n + 4) * sizeof(PhaseLink) + g->contours + 8 : 0;
+    uint8_t *scratch = halloc(h, cvt_bytes + storage_bytes + twilight_bytes + stack_bytes + link_bytes + 32);
     if (!scratch)
         return;
     int32_t *cvt = (int32_t *)scratch;
@@ -2147,7 +2552,19 @@ static void run_glyph_program(const MimeTtfHinter *hc, HGlyph *g, Code program, 
     ex.zones[0].tag = (uint8_t *)(twilight + 3 * tn);
     ex.stack = (int32_t *)((uint8_t *)twilight + twilight_bytes + 8 - ((uintptr_t)((uint8_t *)twilight + twilight_bytes) & 7));
     ex.stack_cap = h->stack_cap;
+    if (phase) {
+        uint8_t *after = (uint8_t *)ex.stack + stack_bytes;
+        after += (-(uintptr_t)after) & 7;
+        ex.links = (PhaseLink *)after;
+        for (uint32_t i = 0; i < g->n + 4; i++)
+            ex.links[i] = (PhaseLink){-1, -1, -1, 0, 0};
+        ex.misoriented = (uint8_t *)(ex.links + g->n + 4);
+        find_misoriented(h, z, ex.misoriented);
+        ex.phase_scale = ratio;
+    }
     bool ok = run_program(&ex, program, PROGRAM_GLYPH);
+    if (ok && ex.links && !ex.phase_done)
+        phase_run(&ex);
     mime_free(&h->alloc, scratch);
     g->hinted_ok = ok;
     /* a program that fails leaves the glyph as scaled, not half fitted. */
@@ -2156,7 +2573,7 @@ static void run_glyph_program(const MimeTtfHinter *hc, HGlyph *g, Code program, 
             g->pts[i] = g->org[i];
 }
 
-static bool load_hglyph(const MimeTtfHinter *h, uint16_t glyph, unsigned depth, HGlyph *out);
+static bool load_hglyph(const MimeTtfHinter *h, uint16_t glyph, unsigned depth, int32_t ratio, HGlyph *out);
 
 static void phantom_points(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd, HGlyph *g, bool has_outline)
 {
@@ -2232,7 +2649,7 @@ static void scale_and_round_phantoms(const MimeTtfHinter *h, HGlyph *g, bool com
     g->pts[n + 3].y = (g->pts[n + 2].y + 32 + (int32_t)((drop + 512) >> 10)) & ~63;
 }
 
-static bool load_simple(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd, int contours, HGlyph *out)
+static bool load_simple(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd, int contours, int32_t ratio, HGlyph *out)
 {
     if (contours == 0) {
         if (!hglyph_alloc(h, out, 0, 0))
@@ -2321,11 +2738,11 @@ static bool load_simple(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd,
     scale_and_round_phantoms(h, out, false);
     Code prog = {gd.data + ins_off + 2, ins_len};
     if (ins_off + 2 + ins_len <= gd.size)
-        run_glyph_program(h, out, prog, false);
+        run_glyph_program(h, out, prog, false, ratio);
     return true;
 }
 
-static bool load_composite(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd, unsigned depth, HGlyph *out)
+static bool load_composite(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd, unsigned depth, int32_t ratio, HGlyph *out)
 {
     if (depth >= MAX_COMPONENT_DEPTH)
         return false;
@@ -2391,7 +2808,7 @@ static bool load_composite(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable 
             transformed = true;
         }
         Part *part = &parts[nparts];
-        if (!load_hglyph(h, child, depth + 1, &part->g))
+        if (!load_hglyph(h, child, depth + 1, ratio, &part->g))
             goto done;
         HGlyph *pg = &part->g;
         if (transformed) {
@@ -2487,7 +2904,7 @@ static bool load_composite(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable 
                 uint32_t ilen = be16(gd.data + off);
                 if (off + 2 + ilen <= gd.size) {
                     Code prog = {gd.data + off + 2, ilen};
-                    run_glyph_program(h, out, prog, true);
+                    run_glyph_program(h, out, prog, true, ratio);
                 }
             }
         }
@@ -2500,7 +2917,7 @@ done:
     return ok;
 }
 
-static bool load_hglyph(const MimeTtfHinter *h, uint16_t glyph, unsigned depth, HGlyph *out)
+static bool load_hglyph(const MimeTtfHinter *h, uint16_t glyph, unsigned depth, int32_t ratio, HGlyph *out)
 {
     memset(out, 0, sizeof(*out));
     MimeTtfTable gd;
@@ -2509,13 +2926,13 @@ static bool load_hglyph(const MimeTtfHinter *h, uint16_t glyph, unsigned depth, 
     bool ok;
     int contours = gd.size >= 10 ? (int16_t)be16(gd.data) : 0;
     if (gd.size == 0)
-        ok = load_simple(h, glyph, gd, 0, out);
+        ok = load_simple(h, glyph, gd, 0, ratio, out);
     else if (gd.size < 10)
         ok = false;
     else if (contours >= 0)
-        ok = load_simple(h, glyph, gd, contours, out);
+        ok = load_simple(h, glyph, gd, contours, ratio, out);
     else
-        ok = load_composite(h, glyph, gd, depth, out);
+        ok = load_composite(h, glyph, gd, depth, ratio, out);
     if (!ok)
         hglyph_free(h, out);
     return ok;
@@ -2523,10 +2940,31 @@ static bool load_hglyph(const MimeTtfHinter *h, uint16_t glyph, unsigned depth, 
 
 /* ------------------------------------------------------------------ public glyph access */
 
+/* the advance the compatible widths give a glyph over the scaled one, in 16.16, the program's phase control uses it. */
+static int32_t phase_ratio(const MimeTtfHinter *h, uint16_t glyph)
+{
+    if (!h->plain)
+        return 0x10000;
+    int adv_fu;
+    mime_ttf_glyph_hmetrics(h->font, glyph, &adv_fu, nullptr);
+    int32_t fitted;
+    if (adv_fu == 0 || !mime_ttf_hint_advance(h->plain, glyph, &fitted) || fitted == 0)
+        return 0x10000;
+    int32_t scaled = scale_apply(&h->sx, adv_fu);
+    if (scaled == 0)
+        return 0x10000;
+    int64_t num = (int64_t)fitted << 16, half = scaled / 2;
+    int64_t q = ((scaled < 0) == (num < 0) ? num + half : num - half) / scaled;
+    q = q < 0 ? -q : q;
+    return q > INT32_MAX ? INT32_MAX : (int32_t)q;
+}
+
 bool mime_ttf_hint_advance(const MimeTtfHinter *h, uint16_t glyph, int32_t *advance)
 {
     HGlyph g;
-    if (!h || !load_hglyph(h, glyph, 0, &g))
+    if (h && h->plain)
+        return mime_ttf_hint_advance(h->plain, glyph, advance);
+    if (!h || !load_hglyph(h, glyph, 0, 0x10000, &g))
         return false;
     int32_t adv = g.pts[g.n + 1].x - g.pts[g.n].x;
     hglyph_free(h, &g);
@@ -2537,7 +2975,7 @@ bool mime_ttf_hint_advance(const MimeTtfHinter *h, uint16_t glyph, int32_t *adva
 bool mime_ttf_hint_walk(const MimeTtfHinter *h, uint16_t glyph, const MimeTtfSink *sink)
 {
     HGlyph g;
-    if (!h || !sink || !load_hglyph(h, glyph, 0, &g))
+    if (!h || !sink || !load_hglyph(h, glyph, 0, phase_ratio(h, glyph), &g))
         return false;
     int32_t shift = g.pts[g.n].x;
     uint32_t first = 0;
