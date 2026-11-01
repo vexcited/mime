@@ -225,7 +225,7 @@ EXPORTS
     __vbaLateMemNamedStAd @322
     __vbaLateMemSt@24 @323
     __vbaLateMemStAd @324
-    __vbaLbound @325
+    __vbaLbound@8 @325
     __vbaLdZeroAry @326
     __vbaLenBstr@4 @327
     __vbaLenBstrB @328
@@ -235,9 +235,9 @@ EXPORTS
     __vbaLineInputVar@8 @332
     __vbaLsetFixstr@12 @333
     __vbaLsetFixstrFree@12 @334
-    __vbaMidStmtBstr @335
+    __vbaMidStmtBstr@20 @335
     __vbaMidStmtBstrB @336
-    __vbaMidStmtVar @337
+    __vbaMidStmtVar@16 @337
     __vbaMidStmtVarB @338
     __vbaNameFile@8 @339
     __vbaNew2@8 @340
@@ -299,7 +299,7 @@ EXPORTS
     __vbaStr2Vec @396
     __vbaStrAryToAnsi @397
     __vbaStrAryToUnicode @398
-    __vbaStrBool @399
+    __vbaStrBool@4 @399
     EVENT_SINK_QueryInterface@12 @400
     EVENT_SINK_AddRef@4 @401
     EVENT_SINK_Release@4 @402
@@ -309,7 +309,7 @@ EXPORTS
     __vbaStrCmp@8 @406
     __vbaStrComp @407
     __vbaStrCompVar @408
-    __vbaStrCy @409
+    @__vbaStrCy@16 @409
     BASIC_CLASS_QueryInterface @410
     BASIC_CLASS_AddRef @411
     BASIC_CLASS_Release @412
@@ -354,9 +354,9 @@ EXPORTS
     __vbaVarAnd@12 @451
     __vbaVarCat@12 @452
     __vbaVarCmpEq@12 @453
-    __vbaVarCmpGe @454
+    __vbaVarCmpGe@12 @454
     __vbaVarCmpGt@12 @455
-    __vbaVarCmpLe @456
+    __vbaVarCmpLe@12 @456
     __vbaVarCmpLt@12 @457
     __vbaVarCmpNe@12 @458
     __vbaVarDateVar@8 @459
@@ -390,24 +390,24 @@ EXPORTS
     __vbaVarSetVarAddref @487
     __vbaVarSub@12 @488
     __vbaVarTextCmpEq@12 @489
-    __vbaVarTextCmpGe @490
-    __vbaVarTextCmpGt @491
-    __vbaVarTextCmpLe @492
-    __vbaVarTextCmpLt @493
-    __vbaVarTextCmpNe @494
+    __vbaVarTextCmpGe@12 @490
+    __vbaVarTextCmpGt@12 @491
+    __vbaVarTextCmpLe@12 @492
+    __vbaVarTextCmpLt@12 @493
+    __vbaVarTextCmpNe@12 @494
     __vbaVarTextLike @495
     __vbaVarTextLikeVar @496
     __vbaVarTextTstEq@8 @497
     __vbaVarTextTstGe@8 @498
     __vbaVarTextTstGt@8 @499
-    __vbaVarTextTstLe @500
+    __vbaVarTextTstLe@8 @500
     __vbaVarTextTstLt@8 @501
     __vbaVarTextTstNe@8 @502
     __vbaVarTstEq@8 @503
     __vbaVarTstGe@8 @504
     __vbaVarTstGt@8 @505
     __vbaVarTstLe@8 @506
-    __vbaVarTstLt @507
+    __vbaVarTstLt@8 @507
     __vbaVarTstNe@8 @508
     __vbaVarXor@12 @509
     __vbaVargObj @510

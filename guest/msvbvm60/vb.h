@@ -135,6 +135,13 @@ typedef struct VbHeader {
 #pragma pack(pop)
 
 
+/* the members of an object of the program, in vbmember.c. */
+HRESULT VbMemberIds(const BYTE *descriptor, const BYTE *priv, LPOLESTR *names, UINT count, DISPID *ids);
+HRESULT VbMemberInvoke(void *object, void **vtable, const BYTE *descriptor, const BYTE *priv, DISPID id, WORD flags, DISPPARAMS *params,
+                       VARIANT *result, EXCEPINFO *info, UINT *bad);
+/* calls a procedure of the compiled code with the words as its stack arguments. */
+LONG VbCallMember(void *fn, DWORD *argv, int argc);
+
 /* forms and controls, in vbform.c. */
 typedef struct VbForm VbForm;
 void VbLoadProject(const VbHeader *header);

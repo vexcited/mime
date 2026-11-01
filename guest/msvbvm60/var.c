@@ -263,6 +263,8 @@ static const short g_tst[6][4] = {
 
 VB_STD int vb___vbaVarTstEq(VARIANT *right, VARIANT *left) { return g_tst[0][compare_variants(right, left, 0)]; }
 VB_STD int vb___vbaVarTstNe(VARIANT *right, VARIANT *left) { return g_tst[1][compare_variants(right, left, 0)]; }
+VB_STD int vb___vbaVarTstLt(VARIANT *right, VARIANT *left) { return g_tst[2][compare_variants(right, left, 0)]; }
+VB_STD int vb___vbaVarTextTstLe(VARIANT *right, VARIANT *left) { return g_tst[4][compare_variants(right, left, NORM_IGNORECASE)]; }
 VB_STD int vb___vbaVarTstLe(VARIANT *right, VARIANT *left) { return g_tst[4][compare_variants(right, left, 0)]; }
 VB_STD int vb___vbaVarTstGt(VARIANT *right, VARIANT *left) { return g_tst[3][compare_variants(right, left, 0)]; }
 VB_STD int vb___vbaVarTstGe(VARIANT *right, VARIANT *left) { return g_tst[5][compare_variants(right, left, 0)]; }
@@ -289,6 +291,13 @@ VB_STD VARIANT *vb___vbaVarCmpNe(VARIANT *dest, VARIANT *right, VARIANT *left) {
 VB_STD VARIANT *vb___vbaVarCmpLt(VARIANT *dest, VARIANT *right, VARIANT *left) { return cmp_result(dest, compare_variants(right, left, 0), 2); }
 VB_STD VARIANT *vb___vbaVarCmpGt(VARIANT *dest, VARIANT *right, VARIANT *left) { return cmp_result(dest, compare_variants(right, left, 0), 3); }
 VB_STD VARIANT *vb___vbaVarTextCmpEq(VARIANT *dest, VARIANT *right, VARIANT *left) { return cmp_result(dest, compare_variants(right, left, NORM_IGNORECASE), 0); }
+VB_STD VARIANT *vb___vbaVarTextCmpNe(VARIANT *dest, VARIANT *right, VARIANT *left) { return cmp_result(dest, compare_variants(right, left, NORM_IGNORECASE), 1); }
+VB_STD VARIANT *vb___vbaVarTextCmpLt(VARIANT *dest, VARIANT *right, VARIANT *left) { return cmp_result(dest, compare_variants(right, left, NORM_IGNORECASE), 2); }
+VB_STD VARIANT *vb___vbaVarTextCmpGt(VARIANT *dest, VARIANT *right, VARIANT *left) { return cmp_result(dest, compare_variants(right, left, NORM_IGNORECASE), 3); }
+VB_STD VARIANT *vb___vbaVarTextCmpLe(VARIANT *dest, VARIANT *right, VARIANT *left) { return cmp_result(dest, compare_variants(right, left, NORM_IGNORECASE), 4); }
+VB_STD VARIANT *vb___vbaVarTextCmpGe(VARIANT *dest, VARIANT *right, VARIANT *left) { return cmp_result(dest, compare_variants(right, left, NORM_IGNORECASE), 5); }
+VB_STD VARIANT *vb___vbaVarCmpLe(VARIANT *dest, VARIANT *right, VARIANT *left) { return cmp_result(dest, compare_variants(right, left, 0), 4); }
+VB_STD VARIANT *vb___vbaVarCmpGe(VARIANT *dest, VARIANT *right, VARIANT *left) { return cmp_result(dest, compare_variants(right, left, 0), 5); }
 
 /* ------------------------------------------------------------------ arithmetic */
 

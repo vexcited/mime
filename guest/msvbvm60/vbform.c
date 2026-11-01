@@ -402,6 +402,8 @@ static LONG call_stdcall(void *fn, DWORD *argv, int argc)
     return result;
 }
 
+LONG VbCallMember(void *fn, DWORD *argv, int argc) { return call_stdcall(fn, argv, argc); }
+
 /* an event of a control goes to the procedure the program has for it, when it has one. */
 static BOOL fire(VbCtl *c, const char *event, DWORD *args, int nargs)
 {
@@ -943,8 +945,12 @@ static LONG __stdcall obj_names(void *self, const IID *iid, LPOLESTR *names, UIN
     char narrow[80];
     WideCharToMultiByte(CP_ACP, 0, names[0], -1, narrow, sizeof(narrow), nullptr, nullptr);
     int k = find_prop(c, narrow);
-    if (k < 0)
+    if (k < 0) {
+        /* the public procedures of a form are its members by name. */
+        if (c == c->form->self)
+            return VbMemberIds(c->form->object->descriptor, (const BYTE *)(ULONG_PTR)*(const DWORD *)(c->form->object->info + 0xC), names, n, ids);
         return DISP_E_UNKNOWNNAME;
+    }
     ids[0] = 0x10000 + k;
     return S_OK;
 }
@@ -954,6 +960,9 @@ static LONG __stdcall obj_invoke(void *self, DISPID id, const IID *iid, LCID l, 
 {
     VbCtl *c = ctl_of(self);
     int k = id - 0x10000;
+    if (c && c == c->form->self && (id < 0x10000 || id >= 0x10000 + g_classes[c->cls].nprops))
+        return VbMemberInvoke(c->form->instance, c->form->vtable, c->form->object->descriptor,
+                              (const BYTE *)(ULONG_PTR)*(const DWORD *)(c->form->object->info + 0xC), id, flags, params, result, ei, bad);
     if (!c || k < 0 || k >= g_classes[c->cls].nprops) {
         char text[160];
         wsprintfA(text, "msvbvm60: Invoke of member %d (%X) with flags %X on %s is not known\n", (int)id, (unsigned)id, (unsigned)flags, c ? c->name : "?");
@@ -1629,32 +1638,22 @@ static LONG __stdcall class_info(void *self, UINT i, LCID l, void **info)
     return E_NOTIMPL;
 }
 
-/* the names of the members are in the descriptor of the class, in the order of its records. */
 static LONG __stdcall class_names(void *self, const IID *iid, LPOLESTR *names, UINT count, LCID lcid, DISPID *ids)
 {
     const VbObject *o = class_of_instance(self);
-    const BYTE *descriptor = o->descriptor;
-    DWORD members = *(const DWORD *)(descriptor + 0x1C);
-    const DWORD *list = (const DWORD *)*(const DWORD *)(descriptor + 0x20);
-    if (count < 1 || !list)
-        return DISP_E_UNKNOWNNAME;
-    char narrow[100];
-    WideCharToMultiByte(CP_ACP, 0, names[0], -1, narrow, sizeof(narrow), nullptr, nullptr);
-    for (UINT i = 0; i < count; i++)
-        ids[i] = DISPID_UNKNOWN;
-    for (DWORD i = 0; i < members; i++)
-        if (!lstrcmpiA((const char *)list[i], narrow)) {
-            ids[0] = (DISPID)(i + 1);
-            return count == 1 ? S_OK : DISP_E_UNKNOWNNAME;
-        }
-    return DISP_E_UNKNOWNNAME;
+    return VbMemberIds(o->descriptor, (const BYTE *)(ULONG_PTR)*(const DWORD *)(o->info + 0xC), names, count, ids);
 }
 
 static LONG __stdcall class_invoke(void *self, DISPID id, const IID *iid, LCID lcid, WORD flags, DISPPARAMS *params, VARIANT *result,
                                    EXCEPINFO *info, UINT *bad)
 {
-    VbOutputDebug("msvbvm60: a call of a member of a class of the program by its name is not implemented\n");
-    return DISP_E_MEMBERNOTFOUND;
+    const VbObject *o = class_of_instance(self);
+    /* the object holds on to itself for the call, since a procedure may release the last reference. */
+    class_addref(self);
+    HRESULT hr = VbMemberInvoke(self, *(void ***)self, o->descriptor, (const BYTE *)(ULONG_PTR)*(const DWORD *)(o->info + 0xC), id, flags, params,
+                                result, info, bad);
+    class_release(self);
+    return hr;
 }
 
 static void **class_vtable(VbObject *o)

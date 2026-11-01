@@ -916,3 +916,95 @@ VB_STD VARIANT *vb_rtcRound(VARIANT *dest, VARIANT *src, LONG decimals)
     return dest;
 }
 
+
+/* ------------------------------------------------------------------ Mid as a statement, bounds and conversions to text */
+
+/* the characters of the replacement go over the target from the start, no further than the count or the target allows. */
+VB_STD void vb___vbaMidStmtBstr(LONG fixed_chars, BSTR replacement, ULONG count, LONG start, void *target)
+{
+    OLECHAR *text;
+    ULONG length;
+    if (fixed_chars) {
+        text = (OLECHAR *)target;
+        length = (ULONG)fixed_chars;
+    } else {
+        text = *(BSTR *)target;
+        length = bstr_chars(text);
+    }
+    if (start < 1 || (ULONG)start > length || count >= 0x40000000)
+        VbRaise(VBERR_INVALID_CALL);
+    ULONG take = bstr_chars(replacement);
+    if (take > count)
+        take = count;
+    if (take > length - (ULONG)(start - 1))
+        take = length - (ULONG)(start - 1);
+    if (take)
+        memcpy(text + (start - 1), replacement, take * sizeof(OLECHAR));
+}
+
+VB_STD void vb___vbaMidStmtVar(VARIANT *replacement, ULONG count, LONG start, VARIANT *target)
+{
+    BSTR *slot;
+    VARIANT converted;
+    if (V_VT(target) & VT_BYREF) {
+        if (V_VT(target) != (VT_BYREF | VT_BSTR))
+            VbRaise(VBERR_TYPE_MISMATCH);
+        slot = V_BSTRREF(target);
+    } else {
+        if (V_VT(target) != VT_BSTR)
+            VbCheck(VariantChangeTypeEx(target, target, VbLocale(), 0, VT_BSTR));
+        slot = &V_BSTR(target);
+    }
+    BSTR text;
+    BOOL has = VbText(replacement, &text);
+    VariantInit(&converted);
+    if (!has)
+        VbRaise(VBERR_INVALID_USE_OF_NULL);
+    vb___vbaMidStmtBstr(0, text, count, start, slot);
+    SysFreeString(text);
+}
+
+VB_STD LONG vb___vbaLbound(SHORT dimension, const SHORT *array)
+{
+    if (dimension < 1 || !array || dimension > *array)
+        VbRaise(VBERR_SUBSCRIPT);
+    return ((const LONG *)array)[2 * (*array - dimension) + 5];
+}
+
+VB_STD BSTR vb___vbaStrBool(SHORT value)
+{
+    VARIANT source, text;
+    VariantInit(&source);
+    VariantInit(&text);
+    V_VT(&source) = VT_BOOL;
+    V_BOOL(&source) = value;
+    VbCheck(VariantChangeTypeEx(&text, &source, VbLocale(), 0, VT_BSTR));
+    return V_BSTR(&text);
+}
+
+VB_FAST BSTR vb___vbaStrCy(void *unused, int unused2, CY value)
+{
+    BSTR out = nullptr;
+    VbCheck(VarBstrFromCy(value, VbLocale(), 0, &out));
+    return out;
+}
+
+VB_THIS BSTR vb___vbaStrDate(void *unused, DATE value)
+{
+    BSTR out = nullptr;
+    VbCheck(VarBstrFromDate(value, VbLocale(), 0, &out));
+    return out;
+}
+
+/* Print to an object: the object must offer the interface of the printing objects, which no object here does. */
+static const IID IID_VbPrintTarget = {0x000204F0, 0x0000, 0x0000, {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+
+VB_C void vb___vbaPrintObj(const void *items, IUnknown *object, ...)
+{
+    if (!object)
+        VbRaise(VBERR_OBJECT_REQUIRED);
+    void *target = nullptr;
+    if (FAILED(object->lpVtbl->QueryInterface(object, &IID_VbPrintTarget, &target)))
+        VbRaise(VBERR_NO_SUCH_MEMBER);
+    ((IUnknown *)target)->lpVtbl->Release((IUnknown *)target);
+}

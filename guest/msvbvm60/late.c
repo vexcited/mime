@@ -64,8 +64,12 @@ static DISPID dispid_of(IDispatch *obj, LPOLESTR name)
     DISPID id;
     object_of(obj);
     HRESULT hr = obj->lpVtbl->GetIDsOfNames(obj, &IID_NULL, &name, 1, LCID_USER, &id);
-    if (FAILED(hr))
+    if (FAILED(hr)) {
+        char dbg[200];
+        wsprintfA(dbg, "vbdbg: GetIDsOfNames %S hr %08x\n", name, (unsigned)hr);
+        VbOutputDebug(dbg);
         raise_invoke_error(hr, &(EXCEPINFO){});
+    }
     return id;
 }
 
@@ -83,8 +87,12 @@ static void invoke(IDispatch *obj, DISPID id, WORD flags, VARIANT *args, UINT co
     }
     object_of(obj);
     HRESULT hr = obj->lpVtbl->Invoke(obj, id, &IID_NULL, LCID_USER, flags, &params, result, &info, &bad);
-    if (FAILED(hr))
+    if (FAILED(hr)) {
+        char dbg[200];
+        wsprintfA(dbg, "vbdbg: Invoke id %08x flags %x args %u hr %08x\n", (unsigned)id, flags, count, (unsigned)hr);
+        VbOutputDebug(dbg);
         raise_invoke_error(hr, &info);
+    }
 }
 
 /* the object a variant holds, which is a dispatch interface or a reference to one. */
