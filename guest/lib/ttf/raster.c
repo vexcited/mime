@@ -685,15 +685,14 @@ static bool scan_core(const MimeTtfFont *font, const MimeAllocator *alloc, uint1
                         continue;
                     /* no centre inside, so the span lies between samples nr and nr + 1. */
                     int nr = first - 1;
-                    if (nr < 0 || nr + 1 >= along)
+                    if (pass == 0 ? (nr < 0 || nr + 1 >= along) : (nr < -1 || nr + 1 > along))
                         continue;
                     if (stubs && !(continues(segs, n, tmp, pass, line - 1, lines, nr, nr + 1.0 + SCAN_EPS) &&
                                    continues(segs, n, tmp, pass, line + 1, lines, nr, nr + 1.0 + SCAN_EPS)))
                         continue;
-                    uint8_t *lo = pass ? out + (size_t)nr * (size_t)stride + (size_t)line
-                                       : out + (size_t)line * (size_t)stride + (size_t)nr;
+                    uint8_t *base = pass ? out + (size_t)line : out + (size_t)line * (size_t)stride;
                     size_t step = pass ? (size_t)stride : 1;
-                    if (lo[0] || lo[step])
+                    if ((nr >= 0 && base[(size_t)nr * step]) || (nr + 1 < along && base[(size_t)(nr + 1) * step]))
                         continue;
                     int pick = 0;
                     if (smart)
