@@ -563,6 +563,8 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     RECT old_screen = w->WindowRect;
     RECT old_client_screen = w->ClientRect;
     BOOLEAN was_visible = WndIsVisible(w);
+    /* what the window procedure is told of the client area: it is told of a move or a size that happened to it. */
+    BOOLEAN client_moved = FALSE, client_sized = FALSE;
 
     if (moved || sized || (pos.flags & SWP_FRAMECHANGED)) {
         RECT client;
@@ -576,6 +578,9 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
         parent_to_screen(w->Parent, &client_screen);
         LONG dx = client_screen.left - w->ClientRect.left;
         LONG dy = client_screen.top - w->ClientRect.top;
+        client_moved = dx || dy;
+        client_sized = (client_screen.right - client_screen.left) != (w->ClientRect.right - w->ClientRect.left) ||
+                       (client_screen.bottom - client_screen.top) != (w->ClientRect.bottom - w->ClientRect.top);
         /* children follow the client origin. */
         for (WND *c = w->FirstChild; c; c = c->Next)
             offset_tree(c, dx, dy);
@@ -650,7 +655,8 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
 
     if (!alive(w))
         goto done;
-    pos.flags |= (moved ? 0 : SWP_NOMOVE) | (sized ? 0 : SWP_NOSIZE);
+    pos.flags |= (moved ? 0 : SWP_NOMOVE) | (sized ? 0 : SWP_NOSIZE) | (client_moved ? 0 : SWP_NOCLIENTMOVE) |
+                 (client_sized ? 0 : SWP_NOCLIENTSIZE);
     RECT final = w->WindowRect;
     screen_to_parent(w, &final);
     pos.x = final.left;

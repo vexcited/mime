@@ -1879,13 +1879,13 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         WINDOWPOS pos;
         if (!read_lparam(&pos, lparam, sizeof(pos), user))
             return 0;
-        if (!(pos.flags & SWP_NOMOVE) || (pos.flags & SWP_FRAMECHANGED)) {
+        if (!(pos.flags & SWP_NOCLIENTMOVE)) {
             RECT c = w->ClientRect;
             if (w->Parent && w->Parent != WndDesktop())
                 RectOffset(&c, -w->Parent->ClientRect.left, -w->Parent->ClientRect.top);
             MsgSend(w, WM_MOVE, 0, MAKELPARAM(c.left, c.top));
         }
-        if (!(pos.flags & SWP_NOSIZE) || (pos.flags & (SWP_FRAMECHANGED | SWP_STATECHANGED))) {
+        if (!(pos.flags & SWP_NOCLIENTSIZE) || (pos.flags & SWP_STATECHANGED)) {
             WPARAM kind = (w->Style & WS_MINIMIZE) ? SIZE_MINIMIZED : (w->Style & WS_MAXIMIZE) ? SIZE_MAXIMIZED : SIZE_RESTORED;
             MsgSend(w, WM_SIZE, kind, kind == SIZE_MINIMIZED ? 0 :
                     MAKELPARAM(w->ClientRect.right - w->ClientRect.left, w->ClientRect.bottom - w->ClientRect.top));
