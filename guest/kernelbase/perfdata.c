@@ -208,7 +208,9 @@ static BYTE *processor_object(DWORD *length, ULONG64 time, const LARGE_INTEGER *
                     name[n++] = (WCHAR)(L'0' + v / d % 10);
             name[n] = 0;
         } else {
-            memcpy(value, sum, sizeof(sum));
+            /* the total is the mean of the processors, so its percentage stays within a hundred. */
+            for (int c = 0; c < 3; c++)
+                value[c].QuadPart = count ? sum[c].QuadPart / count : 0;
             memcpy(name, L"_Total", sizeof(L"_Total"));
         }
         PERF_INSTANCE *instance = (PERF_INSTANCE *)at;
