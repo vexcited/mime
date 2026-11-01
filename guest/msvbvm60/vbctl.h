@@ -89,6 +89,8 @@ struct VbForm {
     int ordered;
     VbCtl *menus[MAX_CONTROLS];
     int menu_count;
+    /* the window an MDI form keeps its child forms in. */
+    HWND mdi_client;
 };
 
 #define MAGIC 0x5642434C

@@ -580,6 +580,8 @@ void VbFormDock(VbForm *f)
         VbCtlSetNumber(c, "Height", (double)(r.bottom - r.top) * 1440 / g_dpi_y);
         place(c);
     }
+    if (f->mdi_client)
+        MoveWindow(f->mdi_client, left, top, right - left > 0 ? right - left : 0, bottom - top > 0 ? bottom - top : 0, TRUE);
 }
 
 static void layout_form(VbForm *f)
@@ -1308,6 +1310,8 @@ static LRESULT CALLBACK form_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     }
+    if (f->mdi_client)
+        return DefFrameProcW(hwnd, f->mdi_client, msg, wp, lp);
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
@@ -1415,6 +1419,8 @@ static void register_control_classes(HINSTANCE module)
     form.lpszClassName = L"ThunderRT6FormDC";
     RegisterClassW(&form);
     form.lpszClassName = L"ThunderRT6Form";
+    RegisterClassW(&form);
+    form.lpszClassName = L"ThunderRT6MDIForm";
     RegisterClassW(&form);
 }
 
@@ -1606,28 +1612,38 @@ static void load_form_properties(VbForm *f)
 static void create_windows(VbForm *f)
 {
     VbCtl *self = f->self;
-    int style_caption = (int)NUM(self, "BorderStyle");
+    /* an MDI form has no such properties of its own and is a sizable window with all its buttons. */
+    BOOL mdi = self->cls == VBC_MDIFORM;
+    int style_caption = mdi ? 2 : (int)NUM(self, "BorderStyle");
     DWORD style = WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
     DWORD ex = 0;
     if (style_caption != 0) {
         style |= WS_CAPTION;
-        if (NUM(self, "ControlBox") != 0)
+        if (mdi || NUM(self, "ControlBox") != 0)
             style |= WS_SYSMENU;
         if (style_caption == 2 || style_caption == 5)
             style |= WS_THICKFRAME;
-        if (NUM(self, "MinButton") != 0)
+        if (mdi || NUM(self, "MinButton") != 0)
             style |= WS_MINIMIZEBOX;
-        if (NUM(self, "MaxButton") != 0 && style_caption == 2)
+        if ((mdi || NUM(self, "MaxButton") != 0) && style_caption == 2)
             style |= WS_MAXIMIZEBOX;
     } else {
         style |= WS_POPUP;
     }
     if (style_caption == 4 || style_caption == 5)
         ex |= WS_EX_TOOLWINDOW;
-    self->hwnd = CreateWindowExW(ex, L"ThunderRT6FormDC", text_of(self, find_prop(self, "Caption")), style, 0, 0, 100, 100, nullptr, nullptr,
-                                 GetModuleHandleW(nullptr), nullptr);
+    self->hwnd = CreateWindowExW(ex, mdi ? L"ThunderRT6MDIForm" : L"ThunderRT6FormDC", text_of(self, find_prop(self, "Caption")), style, 0, 0, 100, 100,
+                                 nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!self->hwnd)
         return;
+    if (mdi) {
+        struct {
+            HANDLE window_menu;
+            UINT first_child;
+        } ccs = {nullptr, 0xFF00};
+        f->mdi_client = CreateWindowExW(WS_EX_CLIENTEDGE, L"MDICLIENT", nullptr, WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL,
+                                        0, 0, 0, 0, self->hwnd, nullptr, GetModuleHandleW(nullptr), &ccs);
+    }
     SetWindowLongW(self->hwnd, GWL_USERDATA, (LONG)(LONG_PTR)self);
     for (int i = 0; i < f->ordered; i++) {
         VbCtl *c = f->order[i];

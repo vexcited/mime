@@ -525,6 +525,8 @@ void VbOcxMoved(VbCtl *c)
     SIZEL extent = {himetric(VbCtlNumber(c, "Width")), himetric(VbCtlNumber(c, "Height"))};
     ((HRESULT(S *)(void *, DWORD, SIZEL *))SLOT(o->object, 17))(o->object, 1, &extent);
     position(o);
+    if (o->window)
+        RedrawWindow(o->window, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN);
 }
 
 void VbOcxShow(VbCtl *c, BOOL visible)
