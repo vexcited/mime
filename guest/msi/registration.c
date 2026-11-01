@@ -429,7 +429,7 @@ static UINT publish_features(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
         error = MimeMsiFeatureSelected(package, table, name, 0, &selected);
         if (error)
             return error;
-        DWORD state = selected ? (package->Advertise ? INSTALLSTATE_ADVERTISED : INSTALLSTATE_LOCAL) : INSTALLSTATE_ABSENT;
+        DWORD state = MimeMsiFeaturePublishState(package, table, name, selected);
         error = MimeMsiWriteRegistry(package, root, features, name, REG_DWORD, &state, sizeof(state));
         if (!error)
             error = write_text(package, root, parents, name, parent_name ? parent_name : L"");

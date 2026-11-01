@@ -332,6 +332,7 @@ UINT MimeMsiAssemblyAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiAssemblyFolder(MIME_MSI_PACKAGE *package, PCWSTR component, PWSTR *folder);
 UINT MimeMsiAssemblyCleanup(MIME_MSI_PACKAGE *package, PCWSTR component);
 UINT MimeMsiCopyInstalledFile(MIME_MSI_PACKAGE *package, PCWSTR source, PCWSTR target);
+INSTALLSTATE MimeMsiFeaturePublishState(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features, PCWSTR name, BOOL selected);
 UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features, PCWSTR name, ULONG depth, BOOL *selected);
 UINT MimeMsiRegistrationAction(MIME_MSI_PACKAGE *package, PCWSTR action);
 UINT MimeMsiProcessComponents(MIME_MSI_PACKAGE *package, HKEY root);

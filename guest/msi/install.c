@@ -674,6 +674,10 @@ UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features,
     }
     if (list_contains(removed, name))
         *selected = FALSE;
+    /* a feature to run from the source or to advertise has nothing installed on the machine. */
+    if (list_reaches(package, features, id, parent_column, MimeMsiGetProperty(package, L"ADDSOURCE"), name) ||
+        list_contains(MimeMsiGetProperty(package, L"ADVERTISE"), name))
+        *selected = FALSE;
     for (ULONG i = 0; i < package->FeatureCount; i++) {
         MIME_MSI_FEATURE *feature = &package->Features[i];
         if (!wcscmp(feature->Name, name) && feature->Requested != INSTALLSTATE_UNKNOWN)
@@ -683,6 +687,22 @@ UINT MimeMsiFeatureSelected(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features,
     if (!parent_selected)
         *selected = FALSE;
     return ERROR_SUCCESS;
+}
+
+/* the state a feature is published in: what the properties ask of it, else installed or not. */
+INSTALLSTATE MimeMsiFeaturePublishState(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *features, PCWSTR name, BOOL selected)
+{
+    ULONG id = MimeMsiColumn(features, L"Feature", TRUE), parent_column = MimeMsiColumn(features, L"Feature_Parent", TRUE);
+    if (package->Advertise)
+        return selected ? INSTALLSTATE_ADVERTISED : INSTALLSTATE_ABSENT;
+    if (selected)
+        return INSTALLSTATE_LOCAL;
+    if (list_contains(MimeMsiGetProperty(package, L"ADVERTISE"), name))
+        return INSTALLSTATE_ADVERTISED;
+    if (id != UINT32_MAX && parent_column != UINT32_MAX &&
+        list_reaches(package, features, id, parent_column, MimeMsiGetProperty(package, L"ADDSOURCE"), name))
+        return INSTALLSTATE_SOURCE;
+    return INSTALLSTATE_ABSENT;
 }
 
 void MimeMsiClearComponentRequests(MIME_MSI_PACKAGE *package)
@@ -932,9 +952,8 @@ static UINT plan_files(MIME_MSI_PACKAGE *package)
 {
     MIME_MSI_TABLE *table;
     UINT error;
-    if (!package->Admin &&
-        (*MimeMsiGetProperty(package, L"ADDSOURCE") || *MimeMsiGetProperty(package, L"ADVERTISE") ||
-         (!package->Maintenance && (*MimeMsiGetProperty(package, L"REINSTALL") || *MimeMsiGetProperty(package, L"Installed")))))
+    if (!package->Admin && !package->Maintenance &&
+        (*MimeMsiGetProperty(package, L"REINSTALL") || *MimeMsiGetProperty(package, L"Installed")))
         return ERROR_CALL_NOT_IMPLEMENTED;
     error = maintenance_selection(package);
     DWORD mode;

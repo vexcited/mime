@@ -429,7 +429,7 @@ UINT WINAPI MsiCustomActionServer(LPCWSTR pipe_name)
         else if (!function)
             load_error = ERROR_PROC_NOT_FOUND;
         else if (registering)
-            result = (ULONG)((HRESULT (WINAPI *)(void))function)();
+            result = (ULONG)((HRESULT (WINAPI *)(void))(void *)function)();
         else
             result = function(session);
         if (library)
