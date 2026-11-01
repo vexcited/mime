@@ -97,6 +97,55 @@
 @=expand:"%SystemRoot%\\system32\\explorerframe.dll"
 "ThreadingModel"="Apartment"
 
+; ieframe.dll
+; WebBrowser, the control that programs embed to show a page, as Shell.Explorer.2 and Shell.Explorer.
+[HKCR\CLSID\{8856F961-340A-11D0-A96B-00C04FD705A2}]
+@="Microsoft Web Browser"
+[HKCR\CLSID\{8856F961-340A-11D0-A96B-00C04FD705A2}\Control]
+[HKCR\CLSID\{8856F961-340A-11D0-A96B-00C04FD705A2}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\ieframe.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{8856F961-340A-11D0-A96B-00C04FD705A2}\MiscStatus]
+@="0"
+[HKCR\CLSID\{8856F961-340A-11D0-A96B-00C04FD705A2}\MiscStatus\1]
+@="131473"
+[HKCR\CLSID\{8856F961-340A-11D0-A96B-00C04FD705A2}\ProgID]
+@="Shell.Explorer.2"
+[HKCR\CLSID\{8856F961-340A-11D0-A96B-00C04FD705A2}\Programmable]
+[HKCR\CLSID\{8856F961-340A-11D0-A96B-00C04FD705A2}\TypeLib]
+@="{EAB22AC0-30C1-11CF-A7EB-0000C05BAE0B}"
+[HKCR\CLSID\{8856F961-340A-11D0-A96B-00C04FD705A2}\Version]
+@="1.1"
+[HKCR\CLSID\{8856F961-340A-11D0-A96B-00C04FD705A2}\VersionIndependentProgID]
+@="Shell.Explorer"
+[HKCR\Shell.Explorer]
+@="Microsoft Web Browser"
+[HKCR\Shell.Explorer\CLSID]
+@="{8856F961-340A-11D0-A96B-00C04FD705A2}"
+[HKCR\Shell.Explorer\CurVer]
+@="Shell.Explorer.2"
+[HKCR\Shell.Explorer.2]
+@="Microsoft Web Browser"
+[HKCR\Shell.Explorer.2\CLSID]
+@="{8856F961-340A-11D0-A96B-00C04FD705A2}"
+[HKCR\CLSID\{EAB22AC3-30C1-11CF-A7EB-0000C05BAE0B}]
+@="Microsoft Web Browser"
+[HKCR\CLSID\{EAB22AC3-30C1-11CF-A7EB-0000C05BAE0B}\Control]
+[HKCR\CLSID\{EAB22AC3-30C1-11CF-A7EB-0000C05BAE0B}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\ieframe.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{EAB22AC3-30C1-11CF-A7EB-0000C05BAE0B}\MiscStatus]
+@="0"
+[HKCR\CLSID\{EAB22AC3-30C1-11CF-A7EB-0000C05BAE0B}\MiscStatus\1]
+@="131473"
+[HKCR\CLSID\{EAB22AC3-30C1-11CF-A7EB-0000C05BAE0B}\ProgID]
+@="Shell.Explorer.1"
+[HKCR\CLSID\{EAB22AC3-30C1-11CF-A7EB-0000C05BAE0B}\Programmable]
+[HKCR\Shell.Explorer.1]
+@="Microsoft Web Browser"
+[HKCR\Shell.Explorer.1\CLSID]
+@="{EAB22AC3-30C1-11CF-A7EB-0000C05BAE0B}"
+
 ; zipfldr.dll
 ; CompressedFolder
 [HKCR\CLSID\{E88DCCE0-B7B3-11D1-A9F0-00AA0060FA31}\InprocServer32]

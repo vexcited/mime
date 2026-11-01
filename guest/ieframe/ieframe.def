@@ -1,0 +1,8 @@
+LIBRARY ieframe.dll
+EXPORTS
+    DllCanUnloadNow @117
+    DllGetClassObject @118
+    DllGetVersion @119
+    DllInstall @120
+    DllRegisterServer @121
+    DllUnregisterServer @122

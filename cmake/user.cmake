@@ -205,7 +205,7 @@ set(MIME_EXTRA_DLLS msvcrt:0x7FF6F0000000 advapi32:0x7FF6E0000000 sechost:0x7FF0
     d3d10:0x7FF390000000 d3d10_1:0x7FF380000000 msacm32:0x7FF370000000 dsound:0x7FF320000000
     ddraw:0x7FF310000000 dinput:0x7FF300000000 hid:0x7FF2E0000000 xinput1_4:0x7FF2D0000000
     xinput1_3:0x7FF2C0000000 xinput1_2:0x7FF2B0000000 xinput1_1:0x7FF2A0000000 xinput9_1_0:0x7FF290000000
-    winhttp:0x7FF240000000 windows_storage:0x7FF130000000 explorerframe:0x7FF120000000
+    winhttp:0x7FF240000000 windows_storage:0x7FF130000000 explorerframe:0x7FF120000000 ieframe:0x7FEC00000000
     propsys:0x7FF230000000 shcore:0x7FF220000000 powrprof:0x7FF210000000 bcryptprimitives:0x7FF200000000
     pdh:0x7FF1F0000000 wevtapi:0x7FF1E0000000 tbs:0x7FF1D0000000 ncrypt:0x7FF1C0000000 credui:0x7FF1B0000000
     cryptui:0x7FF1A0000000 ndfapi:0x7FF190000000 winusb:0x7FF180000000 bthprops:0x7FF170000000
@@ -309,6 +309,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(libs_onecorecommonproxystub ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
     set(libs_onecoreuapcommonproxystub ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/rpcrt4.lib)
     set(libs_explorerframe ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/shell32.lib)
+    set(libs_ieframe ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/advapi32.lib)
     set(objects_zipfldr ${arch}-lib-png:guest/lib/png/inflate.c)
     set(libs_avifil32 ${MIME_LIB_${arch}}/ole32.lib ${MIME_LIB_${arch}}/msacm32.lib)
     set(includes_zipfldr guest/lib)
