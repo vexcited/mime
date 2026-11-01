@@ -12,6 +12,7 @@ enum {
     COUNTER_PROCESSOR_TIME = 6,
     COUNTER_USER_TIME = 142,
     COUNTER_PRIVILEGED_TIME = 144,
+    COUNTER_IDLE_TIME = 1746,
     TYPE_100NSEC_TIMER = 0x20510500,
     TYPE_100NSEC_TIMER_INV = 0x21510500,
 };
@@ -67,6 +68,7 @@ static const struct {
     {238, L"Processor",
      L"The Processor object type includes as instances all processors on the computer. For each processor it reports the "
      L"percentage of elapsed time spent in the idle, user and privileged modes."},
+    {1746, L"% Idle Time", L"% Idle Time is the percentage of time the processor is idle during the sample interval"},
 };
 
 typedef struct {
@@ -156,14 +158,15 @@ static BYTE *processor_object(DWORD *length, ULONG64 time, const LARGE_INTEGER *
     if (!NT_SUCCESS(NtQuerySystemInformation(SystemProcessorPerformanceInformation, times, count * sizeof(CPU_TIMES), &got)))
         return nullptr;
     count = got / sizeof(CPU_TIMES);
-    static const DWORD counters[3][2] = {
+    static const DWORD counters[4][2] = {
         {COUNTER_PROCESSOR_TIME, TYPE_100NSEC_TIMER_INV},
         {COUNTER_USER_TIME, TYPE_100NSEC_TIMER},
         {COUNTER_PRIVILEGED_TIME, TYPE_100NSEC_TIMER},
+        {COUNTER_IDLE_TIME, TYPE_100NSEC_TIMER},
     };
     SIZE_T definitions = sizeof(PERF_OBJECT) + sizeof(counters) / sizeof(counters[0]) * sizeof(PERF_COUNTER);
-    /* each instance: its definition with the name, then the block of the counters, a length and three 64-bit values. */
-    SIZE_T per_instance = 8 + 3 * 8;
+    /* each instance: its definition with the name, then the block of the counters, a length and four 64-bit values. */
+    SIZE_T per_instance = 8 + 4 * 8;
     SIZE_T total = definitions + (count + 1) * (sizeof(PERF_INSTANCE) + 16 + per_instance);
     BYTE *buffer = KbAllocZero(total);
     if (!buffer)
@@ -174,14 +177,14 @@ static BYTE *processor_object(DWORD *length, ULONG64 time, const LARGE_INTEGER *
     object->ObjectNameTitleIndex = OBJECT_PROCESSOR;
     object->ObjectHelpTitleIndex = OBJECT_PROCESSOR + 1;
     object->DetailLevel = 100;
-    object->NumCounters = 3;
+    object->NumCounters = 4;
     object->DefaultCounter = 0;
     object->NumInstances = (LONG)(count + 1);
     object->CodePage = 0;
     object->PerfTime.QuadPart = (LONGLONG)time;
     object->PerfFreq = *freq;
     PERF_COUNTER *counter = (PERF_COUNTER *)(buffer + sizeof(PERF_OBJECT));
-    for (int i = 0; i < 3; i++, counter++) {
+    for (int i = 0; i < 4; i++, counter++) {
         counter->ByteLength = sizeof(*counter);
         counter->CounterNameTitleIndex = counters[i][0];
         counter->CounterHelpTitleIndex = counters[i][0] + 1;
@@ -192,15 +195,16 @@ static BYTE *processor_object(DWORD *length, ULONG64 time, const LARGE_INTEGER *
         counter->CounterOffset = (DWORD)(8 + 8 * i);
     }
     BYTE *at = buffer + definitions;
-    LARGE_INTEGER sum[3] = {};
+    LARGE_INTEGER sum[4] = {};
     for (ULONG i = 0; i <= count; i++) {
-        LARGE_INTEGER value[3];
+        LARGE_INTEGER value[4];
         WCHAR name[16];
         if (i < count) {
             value[0] = times[i].IdleTime;
             value[1] = times[i].UserTime;
             value[2].QuadPart = times[i].KernelTime.QuadPart - times[i].IdleTime.QuadPart;
-            for (int c = 0; c < 3; c++)
+            value[3] = times[i].IdleTime;
+            for (int c = 0; c < 4; c++)
                 sum[c].QuadPart += value[c].QuadPart;
             int n = 0;
             for (ULONG v = i, d = 100; d; d /= 10)
@@ -209,16 +213,16 @@ static BYTE *processor_object(DWORD *length, ULONG64 time, const LARGE_INTEGER *
             name[n] = 0;
         } else {
             /* the total is the mean of the processors, so its percentage stays within a hundred. */
-            for (int c = 0; c < 3; c++)
+            for (int c = 0; c < 4; c++)
                 value[c].QuadPart = count ? sum[c].QuadPart / count : 0;
             memcpy(name, L"_Total", sizeof(L"_Total"));
         }
         PERF_INSTANCE *instance = (PERF_INSTANCE *)at;
         write_name(instance, name, -1);
         BYTE *block = at + instance->ByteLength;
-        *(DWORD *)block = 8 + 3 * 8;
+        *(DWORD *)block = 8 + 4 * 8;
         memcpy(block + 8, value, sizeof(value));
-        at = block + 8 + 3 * 8;
+        at = block + 8 + 4 * 8;
     }
     object->TotalByteLength = (DWORD)(at - buffer);
     *length = object->TotalByteLength;
