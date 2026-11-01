@@ -8,14 +8,14 @@ EXPORTS
     UserDllMain @105
     DllRegisterServer @106
     DllUnregisterServer @107
-    __vbaAryLock @108
+    __vbaAryLock@8 @108
     __vbaBoolErrVar @109
     __vbaRedimVar2 @110
     __vbaStrErrVarCopy@4 @111
     __vbaVarLateMemCallLd @112
     __vbaVarLateMemCallLdRf @113
     __vbaVarLateMemCallSt @114
-    __vbaVarLateMemSt @115
+    __vbaVarLateMemSt@24 @115
     __vbaVarLateMemStAd @116
     __vbaAryVarVarg @117
     __vbaFpCDblR4 @118
@@ -64,22 +64,22 @@ EXPORTS
     _CIsqrt @161
     _CItan @162
     __vbaAptOffset @163
-    __vbaAryConstruct2 @164
+    __vbaAryConstruct2@12 @164
     __vbaAryConstruct @165
     __vbaAryCopy @166
-    __vbaAryDestruct @167
+    __vbaAryDestruct@8 @167
     __vbaAryMove @168
     __vbaAryRebase1Var @169
     __vbaAryRecCopy @170
     __vbaAryRecMove @171
-    __vbaAryUnlock @172
+    __vbaAryUnlock@4 @172
     __vbaAryVar @173
     __vbaBoolStr @174
     __vbaBoolVar@4 @175
     __vbaBoolVarNull@4 @176
     __vbaCVarAryUdt @177
     __vbaCastObj@8 @178
-    __vbaCastObjVar @179
+    __vbaCastObjVar@8 @179
     __vbaCheckType@8 @180
     __vbaCheckTypeVar @181
     __vbaChkstk @182
@@ -113,7 +113,7 @@ EXPORTS
     __vbaDerefAry @210
     __vbaDerefAry1 @211
     __vbaEnd@0 @212
-    __vbaErase @213
+    __vbaErase@8 @213
     __vbaEraseKeepData @214
     __vbaEraseNoPop @215
     __vbaError @216
@@ -129,13 +129,13 @@ EXPORTS
     __vbaFPInt @226
     TipUnloadProject @227
     __vbaFailedFriend @228
-    __vbaFileClose @229
+    __vbaFileClose@4 @229
     TipCreateInstanceProject2 @230
     EbResetProject @231
     EbGetHandleOfExecutingProject @232
     __vbaFileCloseAll @233
     __vbaFileLock @234
-    __vbaFileOpen @235
+    __vbaFileOpen@16 @235
     __vbaFileSeek @236
     __vbaFixstrConstruct@8 @237
     __vbaForEachAry @238
@@ -179,7 +179,7 @@ EXPORTS
     EbSetContextWorkerThread @276
     __vbaInStr@16 @277
     __vbaInStrB @278
-    __vbaInStrVar @279
+    __vbaInStrVar@20 @279
     __vbaInStrVarB @280
     __vbaInputFile @281
     __vbaLateIdCall @282
@@ -190,7 +190,7 @@ EXPORTS
     __vbaLateIdNamedCallLd @287
     __vbaLateIdNamedCallSt @288
     __vbaLateIdNamedStAd @289
-    __vbaLateIdSt @290
+    __vbaLateIdSt@24 @290
     __vbaLateIdStAd @291
     __vbaLateMemCall @292
     __vbaLateMemCallLd @293
@@ -223,7 +223,7 @@ EXPORTS
     PutMemEvent @320
     SetMemEvent @321
     __vbaLateMemNamedStAd @322
-    __vbaLateMemSt @323
+    __vbaLateMemSt@24 @323
     __vbaLateMemStAd @324
     __vbaLbound @325
     __vbaLdZeroAry @326
@@ -231,8 +231,8 @@ EXPORTS
     __vbaLenBstrB @328
     __vbaLenVar@8 @329
     __vbaLenVarB @330
-    __vbaLineInputStr @331
-    __vbaLineInputVar @332
+    __vbaLineInputStr@8 @331
+    __vbaLineInputVar@8 @332
     __vbaLsetFixstr @333
     __vbaLsetFixstrFree @334
     __vbaMidStmtBstr @335
@@ -241,7 +241,7 @@ EXPORTS
     __vbaMidStmtVarB @338
     __vbaNameFile @339
     __vbaNew2@8 @340
-    __vbaNew @341
+    __vbaNew@4 @341
     __vbaNextEachAry @342
     __vbaNextEachCollAd @343
     __vbaNextEachCollObj @344
@@ -290,7 +290,7 @@ EXPORTS
     __vbaRedimPreserveVar @387
     __vbaRedimPreserveVar2 @388
     __vbaRedimVar @389
-    __vbaRefVarAry @390
+    __vbaRefVarAry@4 @390
     __vbaResume@4 @391
     __vbaRsetFixstr @392
     __vbaRsetFixstrFree @393
@@ -345,7 +345,7 @@ EXPORTS
     __vbaUI1ErrVar @442
     __vbaUI1Str@4 @443
     __vbaUI1Var@4 @444
-    __vbaUbound @445
+    __vbaUbound@8 @445
     __vbaUdtVar @446
     __vbaUnkVar@4 @447
     __vbaVar2Vec @448

@@ -215,16 +215,3 @@ VB_STD int vb___vbaCheckType(IUnknown *obj, const IID *iid)
     return -1;
 }
 
-/* an object of an external class is made from its class id, and its interface comes back in the slot. */
-VB_STD int vb___vbaNew2(const CLSID *clsid, void **slot)
-{
-    IUnknown *old = *slot;
-    IUnknown *obj = nullptr;
-    HRESULT hr = CoCreateInstance(clsid, nullptr, CLSCTX_ALL, &IID_IDispatch, (void **)&obj);
-    if (FAILED(hr))
-        VbRaise(VBERR_CANNOT_CREATE_OBJECT);
-    *slot = obj;
-    if (old)
-        old->lpVtbl->Release(old);
-    return 0;
-}
