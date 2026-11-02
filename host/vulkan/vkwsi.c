@@ -2015,6 +2015,9 @@ bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t c
 {
     /* where a window has one presenter, the image is the last one presented and the window it was made for is the one asked. */
     bool layers = mime_ui_vk_layers();
+    /* the pixels are the last frame the program presented, which may still be on its way. */
+    if (pixels)
+        mime_vk_sync();
     pthread_mutex_lock(&g_presenters_lock);
     Presenter *p = nullptr;
     for (int i = 0; i < MAX_PRESENTERS; i++) {

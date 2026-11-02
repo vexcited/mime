@@ -26,6 +26,7 @@ struct MvkConnection {
     pthread_cond_t cond;
     bool kicked;
     volatile bool closing;
+    volatile uint32_t syncing; /* reads of the screen waiting for what the guest posted, see mime_vk_sync. */
 
     /* handle-table chunks never move, allowing recording threads to read while new handles are bound. */
     uint64_t **handle_chunks;
@@ -162,6 +163,8 @@ bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t c
 void mvk_wsi_close(MvkConnection *c);
 /* every present sent so far submitted. */
 void mvk_wsi_drain(MvkConnection *c);
+/* every guest process's calls posted so far run and their presents shown or kept, for a read of what a window presented. */
+void mime_vk_sync(void);
 
 /*
  * presents a bottom-first host-rendered image on a guest window, like a single-image swapchain. presentation

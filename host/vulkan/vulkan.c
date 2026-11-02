@@ -3287,6 +3287,47 @@ void mime_vk_kick(uint64_t index)
 
 static pthread_mutex_t g_teardown_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/*
+ * returns once the calls every guest process posted before it have run and the presents among them are shown or kept.
+ * the host runs a connection's calls and its presents after the guest went on, so a read of what a window presented
+ * would give the frame before the last one. the window manager of Windows syncs the same way for a capture of the pixels
+ * of a window, with DwmSyncCaptureSurfaceBits. a connection that does not catch up in a short while is left alone.
+ */
+void mime_vk_sync(void)
+{
+    MvkConnection *list[MAX_CONNECTIONS];
+    uint64_t put[MAX_CONNECTIONS];
+    uint32_t count = 0;
+    pthread_mutex_lock(&g_lock);
+    for (uint32_t i = 1; i < MAX_CONNECTIONS; i++) {
+        MvkConnection *c = g_connections[i];
+        if (!c || !c->header)
+            continue;
+        __atomic_add_fetch(&c->syncing, 1, __ATOMIC_ACQ_REL);
+        list[count] = c;
+        put[count++] = __atomic_load_n(&c->header->put, __ATOMIC_ACQUIRE);
+    }
+    pthread_mutex_unlock(&g_lock);
+    uint64_t until = mime_now_ns() + 500000000;
+    for (uint32_t i = 0; i < count; i++) {
+        MvkConnection *c = list[i];
+        MvkHeader *h = c->header;
+        if (__atomic_load_n(&h->get, __ATOMIC_ACQUIRE) < put[i]) {
+            pthread_mutex_lock(&c->lock);
+            c->kicked = true;
+            pthread_cond_signal(&c->cond);
+            pthread_mutex_unlock(&c->lock);
+        }
+        while (__atomic_load_n(&h->get, __ATOMIC_ACQUIRE) < put[i] && !c->closing &&
+               !__atomic_load_n(&h->lost, __ATOMIC_ACQUIRE) && mime_now_ns() < until) {
+            struct timespec pause = {0, 100000};
+            nanosleep(&pause, nullptr);
+        }
+        mvk_wsi_drain(c);
+        __atomic_sub_fetch(&c->syncing, 1, __ATOMIC_ACQ_REL);
+    }
+}
+
 void mime_gpu_teardown_enter(void)
 {
     pthread_mutex_lock(&g_teardown_lock);
@@ -3311,6 +3352,11 @@ void mime_vk_close(uint64_t index)
     c->closing = true;
     pthread_cond_signal(&c->cond);
     pthread_mutex_unlock(&c->lock);
+    /* a read of a window that sync waits for the connection is done with it first. */
+    while (__atomic_load_n(&c->syncing, __ATOMIC_ACQUIRE)) {
+        struct timespec pause = {0, 100000};
+        nanosleep(&pause, nullptr);
+    }
     pthread_join(c->thread, nullptr);
     drain_records(c);
     drain_jobs(c);
