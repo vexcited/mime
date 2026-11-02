@@ -332,3 +332,4 @@ EXPORTS
     UnrealizeObject@4
     UpdateColors@4
     WidenPath@4
+    CreateScalableFontResourceW@16

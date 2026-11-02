@@ -375,3 +375,4 @@ EXPORTS
     UspAllocCache=usp10.UspAllocCache
     UspAllocTemp=usp10.UspAllocTemp
     UspFreeMem=usp10.UspFreeMem
+    CreateScalableFontResourceW=_CreateScalableFontResourceW@16

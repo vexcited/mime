@@ -7,8 +7,14 @@ EXPORTS
     SetupDiClassGuidsFromNameExA
     SetupDiClassGuidsFromNameExW
     SetupDiClassGuidsFromNameW
+    SetupDiClassNameFromGuidA
+    SetupDiClassNameFromGuidExA
+    SetupDiClassNameFromGuidExW
+    SetupDiClassNameFromGuidW
     SetupDiCreateDevRegKeyW
     SetupDiCreateDeviceInfoList
+    SetupDiCreateDeviceInfoListExA
+    SetupDiCreateDeviceInfoListExW
     SetupDiCreateDeviceInterfaceRegKeyW
     SetupDiDestroyDeviceInfoList
     SetupDiEnumDeviceInfo

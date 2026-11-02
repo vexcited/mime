@@ -129,3 +129,9 @@ EXPORTS
     CM_Locate_DevNodeW@12
     CM_MapCrToWin32Err@8
     CM_Open_DevNode_Key@24
+    SetupDiClassNameFromGuidA@16
+    SetupDiClassNameFromGuidW@16
+    SetupDiClassNameFromGuidExA@24
+    SetupDiClassNameFromGuidExW@24
+    SetupDiCreateDeviceInfoListExA@16
+    SetupDiCreateDeviceInfoListExW@16

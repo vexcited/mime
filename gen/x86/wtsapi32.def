@@ -12,3 +12,6 @@ EXPORTS
     WTSSendMessageW=_WTSSendMessageW@40
     WTSUnRegisterSessionNotification=_WTSUnRegisterSessionNotification@4
     WTSUnRegisterSessionNotificationEx=_WTSUnRegisterSessionNotificationEx@8
+    WTSEnumerateProcessesW=_WTSEnumerateProcessesW@20
+    WTSLogoffSession=_WTSLogoffSession@12
+    WTSDisconnectSession=_WTSDisconnectSession@12

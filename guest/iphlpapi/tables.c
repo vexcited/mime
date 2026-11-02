@@ -577,6 +577,17 @@ DWORD WINAPI SendARP(ULONG destination, ULONG source, PVOID address, PULONG leng
     return NO_ERROR;
 }
 
+/*
+ * the neighbor cache is the host's, so there is nothing of it to empty: an adapter that exists has an empty one.
+ */
+DWORD WINAPI FlushIpNetTable(DWORD index)
+{
+    IPH_SNAPSHOT *s = IphAcquire();
+    BOOL exists = IphAdapterByIndex(s, index) != nullptr;
+    IphRelease(s);
+    return exists ? NO_ERROR : ERROR_INVALID_PARAMETER;
+}
+
 /* ------------------------------------------------------------------ tcp and udp */
 
 typedef struct {
@@ -775,6 +786,17 @@ static DWORD socket_table(void *table, PULONG size, BOOL order, ADDRESS_FAMILY f
     }
     IphFree(sockets.list);
     return error;
+}
+
+/*
+ * the only change a row takes is to delete the connection. the connections are the host's sockets, out of reach of
+ * the guest, so none can be taken down.
+ */
+DWORD WINAPI SetTcpEntry(PMIB_TCPROW row)
+{
+    if (!row || row->dwState != MIB_TCP_STATE_DELETE_TCB)
+        return ERROR_INVALID_PARAMETER;
+    return ERROR_NOT_SUPPORTED;
 }
 
 ULONG WINAPI GetTcpTable(PMIB_TCPTABLE table, PULONG size, BOOL order)

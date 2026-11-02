@@ -878,6 +878,10 @@ WINSETUPAPI BOOL WINAPI SetupDiOpenDeviceInterfaceA(HDEVINFO set, PCSTR path, DW
 
 /* ---------------------------------------------------------------- device setup classes */
 
+#ifndef ERROR_INVALID_CLASS
+#define ERROR_INVALID_CLASS ((DWORD)0xE0000203)
+#endif
+
 #define CLASS_KEY L"SYSTEM\\CurrentControlSet\\Control\\Class"
 
 static BOOL hex_digits(const WCHAR *s, int count, DWORD *value)
@@ -976,6 +980,104 @@ WINSETUPAPI BOOL WINAPI SetupDiClassGuidsFromNameExW(PCWSTR name, GUID *list, DW
         return FALSE;
     }
     return TRUE;
+}
+
+/*
+ * the name of a device class: the Class value of its key below the class folder, which is the name the class goes by
+ * in the setup files. remote machines are not reachable, a class without a key is unknown.
+ */
+WINSETUPAPI BOOL WINAPI SetupDiClassNameFromGuidExW(const GUID *guid, PWSTR name, DWORD size, PDWORD required,
+                                                    PCWSTR machine, PVOID reserved)
+{
+    if (!guid || (size && !name) || reserved) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (machine && *machine) {
+        SetLastError(ERROR_INVALID_MACHINENAME);
+        return FALSE;
+    }
+    WCHAR path[128], text[64];
+    _snwprintf(path, RTL_NUMBER_OF(path), CLASS_KEY L"\\{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+               guid->Data1, guid->Data2, guid->Data3, guid->Data4[0], guid->Data4[1], guid->Data4[2], guid->Data4[3],
+               guid->Data4[4], guid->Data4[5], guid->Data4[6], guid->Data4[7]);
+    path[RTL_NUMBER_OF(path) - 1] = 0;
+    HKEY key;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_QUERY_VALUE, &key) != ERROR_SUCCESS) {
+        SetLastError(ERROR_INVALID_CLASS);
+        return FALSE;
+    }
+    DWORD bytes = sizeof(text) - sizeof(WCHAR), type = 0;
+    LSTATUS status = RegQueryValueExW(key, L"Class", nullptr, &type, (LPBYTE)text, &bytes);
+    RegCloseKey(key);
+    if (status != ERROR_SUCCESS || type != REG_SZ) {
+        SetLastError(ERROR_INVALID_CLASS);
+        return FALSE;
+    }
+    text[bytes / sizeof(WCHAR)] = 0;
+    DWORD needed = (DWORD)wcslen(text) + 1;
+    if (required)
+        *required = needed;
+    if (size < needed) {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    memcpy(name, text, needed * sizeof(WCHAR));
+    return TRUE;
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiClassNameFromGuidW(const GUID *guid, PWSTR name, DWORD size, PDWORD required)
+{
+    return SetupDiClassNameFromGuidExW(guid, name, size, required, nullptr, nullptr);
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiClassNameFromGuidExA(const GUID *guid, PSTR name, DWORD size, PDWORD required,
+                                                    PCSTR machine, PVOID reserved)
+{
+    WCHAR wide[64], wide_machine[MAX_PATH];
+    DWORD needed = 0;
+    if (machine && !MultiByteToWideChar(CP_ACP, 0, machine, -1, wide_machine, RTL_NUMBER_OF(wide_machine)))
+        return FALSE;
+    if (!SetupDiClassNameFromGuidExW(guid, wide, RTL_NUMBER_OF(wide), &needed, machine ? wide_machine : nullptr,
+                                     reserved))
+        return FALSE;
+    int bytes = WideCharToMultiByte(CP_ACP, 0, wide, -1, nullptr, 0, nullptr, nullptr);
+    if (required)
+        *required = (DWORD)bytes;
+    if (!name || size < (DWORD)bytes) {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    WideCharToMultiByte(CP_ACP, 0, wide, -1, name, (int)size, nullptr, nullptr);
+    return TRUE;
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiClassNameFromGuidA(const GUID *guid, PSTR name, DWORD size, PDWORD required)
+{
+    return SetupDiClassNameFromGuidExA(guid, name, size, required, nullptr, nullptr);
+}
+
+WINSETUPAPI HDEVINFO WINAPI SetupDiCreateDeviceInfoListExW(const GUID *guid, HWND parent, PCWSTR machine,
+                                                           PVOID reserved)
+{
+    if (machine && *machine) {
+        SetLastError(ERROR_INVALID_MACHINENAME);
+        return INVALID_HANDLE_VALUE;
+    }
+    if (reserved) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return INVALID_HANDLE_VALUE;
+    }
+    return SetupDiCreateDeviceInfoList(guid, parent);
+}
+
+WINSETUPAPI HDEVINFO WINAPI SetupDiCreateDeviceInfoListExA(const GUID *guid, HWND parent, PCSTR machine,
+                                                           PVOID reserved)
+{
+    WCHAR wide[MAX_PATH];
+    if (machine && !MultiByteToWideChar(CP_ACP, 0, machine, -1, wide, RTL_NUMBER_OF(wide)))
+        return INVALID_HANDLE_VALUE;
+    return SetupDiCreateDeviceInfoListExW(guid, parent, machine ? wide : nullptr, reserved);
 }
 
 WINSETUPAPI BOOL WINAPI SetupDiClassGuidsFromNameW(PCWSTR name, GUID *list, DWORD size, PDWORD required)

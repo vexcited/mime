@@ -501,6 +501,20 @@ WINGDIAPI BOOL WINAPI RemoveFontResourceExW(LPCWSTR name, DWORD flags, PVOID res
     return font_resource(name, flags, FALSE);
 }
 
+/*
+ * a .fot file that holds the name of a font for a program that adds fonts by their resource file. Windows 10 and later
+ * write none and fail this call, and so does this machine.
+ */
+WINGDIAPI BOOL WINAPI CreateScalableFontResourceW(DWORD hidden, LPCWSTR resource, LPCWSTR font, LPCWSTR path)
+{
+    if (!resource || !font) {
+        RtlSetLastWin32Error(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    RtlSetLastWin32Error(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}
+
 WINGDIAPI BOOL WINAPI RemoveFontResourceW(LPCWSTR name)
 {
     return font_resource(name, 0, FALSE);

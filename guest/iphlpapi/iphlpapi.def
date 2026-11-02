@@ -39,6 +39,7 @@ EXPORTS
     GetIpForwardTable2 @108
     GetIpInterfaceEntry @109
     GetIpInterfaceTable @110
+    FlushIpNetTable @62
     GetIpNetTable @112
     GetIpNetTable2 @113
     GetMulticastIpAddressEntry @120
@@ -67,3 +68,4 @@ EXPORTS
     SendARP @282
     if_indextoname @311
     if_nametoindex @312
+    SetTcpEntry @305

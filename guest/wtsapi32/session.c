@@ -420,6 +420,115 @@ WTSAPI BOOL WINAPI WTSQuerySessionInformationA(HANDLE server, DWORD id, WTS_INFO
     return TRUE;
 }
 
+/*
+ * the processes of the machine as the terminal services list them. there is one machine and no other session to ask,
+ * so the list is the snapshot of the system with each process in its session. no process has an owner here.
+ */
+typedef struct _WTS_PROCESS_INFOW {
+    DWORD SessionId;
+    DWORD ProcessId;
+    LPWSTR pProcessName;
+    PSID pUserSid;
+} WTS_PROCESS_INFOW;
+
+typedef struct _PROCESSENTRY32W_ {
+    DWORD dwSize;
+    DWORD cntUsage;
+    DWORD th32ProcessID;
+    ULONG_PTR th32DefaultHeapID;
+    DWORD th32ModuleID;
+    DWORD cntThreads;
+    DWORD th32ParentProcessID;
+    LONG pcPriClassBase;
+    DWORD dwFlags;
+    WCHAR szExeFile[MAX_PATH];
+} PROCESSENTRY32W_;
+
+WINBASEAPI HANDLE WINAPI CreateToolhelp32Snapshot(DWORD flags, DWORD process);
+WINBASEAPI BOOL WINAPI Process32FirstW(HANDLE snapshot, PROCESSENTRY32W_ *entry);
+WINBASEAPI BOOL WINAPI Process32NextW(HANDLE snapshot, PROCESSENTRY32W_ *entry);
+
+WTSAPI BOOL WINAPI WTSEnumerateProcessesW(HANDLE server, DWORD reserved, DWORD version, WTS_PROCESS_INFOW **processes,
+                                          DWORD *count)
+{
+    if (reserved || version != 1 || !processes || !count) {
+        set_error(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!MimeWtsServerValid(server)) {
+        set_error(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    *processes = nullptr;
+    *count = 0;
+    HANDLE snapshot = CreateToolhelp32Snapshot(2, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        return FALSE;
+    DWORD capacity = 64, n = 0;
+    SIZE_T names = 0;
+    PROCESSENTRY32W_ *list = nullptr;
+    PROCESSENTRY32W_ entry = {sizeof(entry)};
+    for (BOOL more = Process32FirstW(snapshot, &entry); more; more = Process32NextW(snapshot, &entry)) {
+        if (n == capacity || !list) {
+            PROCESSENTRY32W_ *grown = LocalAlloc(LMEM_FIXED, (capacity *= 2) * sizeof(*list));
+            if (!grown) {
+                LocalFree(list);
+                CloseHandle(snapshot);
+                set_error(ERROR_NOT_ENOUGH_MEMORY);
+                return FALSE;
+            }
+            if (list)
+                memcpy(grown, list, n * sizeof(*list));
+            LocalFree(list);
+            list = grown;
+        }
+        list[n++] = entry;
+        names += (wcslen(entry.szExeFile) + 1) * sizeof(WCHAR);
+    }
+    CloseHandle(snapshot);
+    WTS_PROCESS_INFOW *out = LocalAlloc(LPTR, n * sizeof(*out) + names + sizeof(WCHAR));
+    if (!out) {
+        LocalFree(list);
+        set_error(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    PWSTR text = (PWSTR)(out + n);
+    for (DWORD i = 0; i < n; i++) {
+        DWORD session = 0;
+        ProcessIdToSessionId(list[i].th32ProcessID, &session);
+        out[i].SessionId = session;
+        out[i].ProcessId = list[i].th32ProcessID;
+        out[i].pProcessName = text;
+        wcscpy(text, list[i].szExeFile);
+        text += wcslen(text) + 1;
+    }
+    LocalFree(list);
+    *processes = out;
+    *count = n;
+    return TRUE;
+}
+
+/* a session is ended by the session manager, which this machine does not have for a session to end. */
+WTSAPI BOOL WINAPI WTSLogoffSession(HANDLE server, DWORD id, BOOL wait)
+{
+    if (!MimeWtsServerValid(server)) {
+        set_error(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    set_error(ERROR_ACCESS_DENIED);
+    return FALSE;
+}
+
+WTSAPI BOOL WINAPI WTSDisconnectSession(HANDLE server, DWORD id, BOOL wait)
+{
+    if (!MimeWtsServerValid(server)) {
+        set_error(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    set_error(ERROR_ACCESS_DENIED);
+    return FALSE;
+}
+
 WTSAPI void WINAPI WTSFreeMemory(PVOID memory)
 {
     LocalFree(memory);

@@ -67,3 +67,5 @@ EXPORTS
     SendARP=_SendARP@16 @282
     if_indextoname=_if_indextoname@8 @311
     if_nametoindex=_if_nametoindex@4 @312
+    FlushIpNetTable=_FlushIpNetTable@4 @62
+    SetTcpEntry=_SetTcpEntry@4 @305

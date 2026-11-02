@@ -129,3 +129,9 @@ EXPORTS
     CM_Locate_DevNodeW=cfgmgr32.CM_Locate_DevNodeW
     CM_MapCrToWin32Err=cfgmgr32.CM_MapCrToWin32Err
     CM_Open_DevNode_Key=cfgmgr32.CM_Open_DevNode_Key
+    SetupDiClassNameFromGuidA=_SetupDiClassNameFromGuidA@16
+    SetupDiClassNameFromGuidW=_SetupDiClassNameFromGuidW@16
+    SetupDiClassNameFromGuidExA=_SetupDiClassNameFromGuidExA@24
+    SetupDiClassNameFromGuidExW=_SetupDiClassNameFromGuidExW@24
+    SetupDiCreateDeviceInfoListExA=_SetupDiCreateDeviceInfoListExA@16
+    SetupDiCreateDeviceInfoListExW=_SetupDiCreateDeviceInfoListExW@16
