@@ -402,6 +402,14 @@ void APIENTRY glPixelStorei(GLenum pname, GLint param);
 void APIENTRY glPixelTransferf(GLenum pname, GLfloat param);
 void APIENTRY glPixelTransferi(GLenum pname, GLint param);
 void APIENTRY glPixelZoom(GLfloat xfactor, GLfloat yfactor);
+void APIENTRY glPointParameterf(GLenum pname, GLfloat value);
+void APIENTRY glPointParameterfARB(GLenum pname, GLfloat value);
+void APIENTRY glPointParameterfEXT(GLenum pname, GLfloat value);
+void APIENTRY glPointParameterfv(GLenum pname, const GLfloat *values);
+void APIENTRY glPointParameterfvARB(GLenum pname, const GLfloat *values);
+void APIENTRY glPointParameterfvEXT(GLenum pname, const GLfloat *values);
+void APIENTRY glPointParameteri(GLenum pname, GLint value);
+void APIENTRY glPointParameteriv(GLenum pname, const GLint *values);
 void APIENTRY glPointSize(GLfloat size);
 void APIENTRY glPolygonMode(GLenum face, GLenum mode);
 void APIENTRY glPolygonOffset(GLfloat factor, GLfloat units);
@@ -1044,6 +1052,14 @@ const GL_PROC GlProcs[] = {
     {"glPixelTransferf", (const void *)glPixelTransferf},
     {"glPixelTransferi", (const void *)glPixelTransferi},
     {"glPixelZoom", (const void *)glPixelZoom},
+    {"glPointParameterf", (const void *)glPointParameterf},
+    {"glPointParameterfARB", (const void *)glPointParameterfARB},
+    {"glPointParameterfEXT", (const void *)glPointParameterfEXT},
+    {"glPointParameterfv", (const void *)glPointParameterfv},
+    {"glPointParameterfvARB", (const void *)glPointParameterfvARB},
+    {"glPointParameterfvEXT", (const void *)glPointParameterfvEXT},
+    {"glPointParameteri", (const void *)glPointParameteri},
+    {"glPointParameteriv", (const void *)glPointParameteriv},
     {"glPointSize", (const void *)glPointSize},
     {"glPolygonMode", (const void *)glPolygonMode},
     {"glPolygonOffset", (const void *)glPolygonOffset},
@@ -1284,4 +1300,4 @@ const GL_PROC GlProcs[] = {
     {"wglUseFontOutlinesA", (const void *)wglUseFontOutlinesA},
     {"wglUseFontOutlinesW", (const void *)wglUseFontOutlinesW},
 };
-const ULONG GlProcCount = 640;
+const ULONG GlProcCount = 648;

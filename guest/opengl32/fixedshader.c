@@ -290,7 +290,7 @@ void gl_ff_prepare(GlContext *ctx, GlProgram *p)
     gl_ff_texture_state(ctx, &env, &format);
     f->uniforms[FF_U_FLAGS1][0] = (GLfloat)env;
     f->uniforms[FF_U_FLAGS1][1] = (GLfloat)format;
-    f->uniforms[FF_U_MISC][0] = ctx->point_size;
+    f->uniforms[FF_U_MISC][0] = gl_point_size(ctx);
     for (uint32_t i = 0; i < FF_U_COUNT; i++) {
         uint8_t *dst = p->ublock + f->uniform_offset + i * f->uniform_stride;
         if (memcmp(dst, f->uniforms[i], 16)) {

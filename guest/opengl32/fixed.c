@@ -1792,7 +1792,7 @@ void gl_ff_pack(GlContext *ctx, GLfloat (*u)[4])
     GLfloat range = f->fog_end - f->fog_start;
     set4(u[FF_U_FOG], f->fog_density, f->fog_start, f->fog_end, range != 0 ? 1 / range : 0);
     memcpy(u[FF_U_FOG_COLOR], f->fog_color, 16);
-    set4(u[FF_U_MISC], ctx->point_size, (GLfloat)tracked_parameter(f), f->local_viewer,
+    set4(u[FF_U_MISC], gl_point_size(ctx), (GLfloat)tracked_parameter(f), f->local_viewer,
          f->color_control == GL_SEPARATE_SPECULAR_COLOR);
     memcpy(u[FF_U_MODEL_AMBIENT], f->model_ambient, 16);
     const GlMaterial *mat = &f->material[0];

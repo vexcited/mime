@@ -455,6 +455,9 @@ typedef struct GlContext {
     BOOL dither, multisample, sample_alpha_to_coverage, program_point_size, primitive_restart, depth_clamp;
     BOOL framebuffer_srgb;
     GLfloat line_width, point_size;
+    /* the point parameters: the size limits, the fade threshold, the attenuation and the sprite coordinate origin. */
+    GLfloat point_size_min, point_size_max, point_fade_threshold, point_attenuation[3];
+    GLenum point_sprite_origin;
     GLint pack_alignment, unpack_alignment, unpack_row_length, unpack_skip_rows, unpack_skip_pixels,
         unpack_image_height, unpack_skip_images, pack_row_length, pack_skip_rows, pack_skip_pixels;
     GLfloat generic[MIME_GPU_MAX_ATTRIBS][4];
@@ -506,6 +509,7 @@ static inline GlContext *gl_current(void)
 }
 
 void gl_error(GlContext *ctx, GLenum error);
+GLfloat gl_point_size(const GlContext *ctx);
 void gl_context_init(GlContext *ctx);
 void gl_queries_destroy(GlContext *ctx);
 GLuint64 gl_timestamp(void);

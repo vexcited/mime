@@ -401,6 +401,14 @@ EXPORTS
     glPixelTransferf
     glPixelTransferi
     glPixelZoom
+    glPointParameterf
+    glPointParameterfARB
+    glPointParameterfEXT
+    glPointParameterfv
+    glPointParameterfvARB
+    glPointParameterfvEXT
+    glPointParameteri
+    glPointParameteriv
     glPointSize
     glPolygonMode
     glPolygonOffset

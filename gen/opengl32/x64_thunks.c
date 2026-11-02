@@ -2424,6 +2424,54 @@ static void x_glPixelZoom(MX_NATIVE_CALL *c)
     glPixelZoom(F(c, 0), F(c, 1));
 }
 
+void APIENTRY glPointParameterf(GLenum pname, GLfloat value);
+static void x_glPointParameterf(MX_NATIVE_CALL *c)
+{
+    glPointParameterf((GLenum)I(c, 0), F(c, 1));
+}
+
+void APIENTRY glPointParameterfARB(GLenum pname, GLfloat value);
+static void x_glPointParameterfARB(MX_NATIVE_CALL *c)
+{
+    glPointParameterfARB((GLenum)I(c, 0), F(c, 1));
+}
+
+void APIENTRY glPointParameterfEXT(GLenum pname, GLfloat value);
+static void x_glPointParameterfEXT(MX_NATIVE_CALL *c)
+{
+    glPointParameterfEXT((GLenum)I(c, 0), F(c, 1));
+}
+
+void APIENTRY glPointParameterfv(GLenum pname, const GLfloat *values);
+static void x_glPointParameterfv(MX_NATIVE_CALL *c)
+{
+    glPointParameterfv((GLenum)I(c, 0), (const GLfloat *)I(c, 1));
+}
+
+void APIENTRY glPointParameterfvARB(GLenum pname, const GLfloat *values);
+static void x_glPointParameterfvARB(MX_NATIVE_CALL *c)
+{
+    glPointParameterfvARB((GLenum)I(c, 0), (const GLfloat *)I(c, 1));
+}
+
+void APIENTRY glPointParameterfvEXT(GLenum pname, const GLfloat *values);
+static void x_glPointParameterfvEXT(MX_NATIVE_CALL *c)
+{
+    glPointParameterfvEXT((GLenum)I(c, 0), (const GLfloat *)I(c, 1));
+}
+
+void APIENTRY glPointParameteri(GLenum pname, GLint value);
+static void x_glPointParameteri(MX_NATIVE_CALL *c)
+{
+    glPointParameteri((GLenum)I(c, 0), (GLint)I(c, 1));
+}
+
+void APIENTRY glPointParameteriv(GLenum pname, const GLint *values);
+static void x_glPointParameteriv(MX_NATIVE_CALL *c)
+{
+    glPointParameteriv((GLenum)I(c, 0), (const GLint *)I(c, 1));
+}
+
 void APIENTRY glPointSize(GLfloat size);
 static void x_glPointSize(MX_NATIVE_CALL *c)
 {
@@ -4254,6 +4302,14 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glPixelTransferf,
     x_glPixelTransferi,
     x_glPixelZoom,
+    x_glPointParameterf,
+    x_glPointParameterfARB,
+    x_glPointParameterfEXT,
+    x_glPointParameterfv,
+    x_glPointParameterfvARB,
+    x_glPointParameterfvEXT,
+    x_glPointParameteri,
+    x_glPointParameteriv,
     x_glPointSize,
     x_glPolygonMode,
     x_glPolygonOffset,
@@ -4494,4 +4550,4 @@ static const MX_NATIVE_FN g_functions[] = {
     x_wglUseFontOutlinesW,
 };
 
-const MX_NATIVE_TABLE MimeX64Thunks = {639, 0, g_functions};
+const MX_NATIVE_TABLE MimeX64Thunks = {647, 0, g_functions};

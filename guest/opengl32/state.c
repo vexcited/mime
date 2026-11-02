@@ -75,6 +75,11 @@ void gl_context_init(GlContext *ctx)
     ctx->dither = TRUE;
     ctx->multisample = TRUE;
     ctx->line_width = ctx->point_size = 1.0f;
+    ctx->point_size_min = 0.0f;
+    ctx->point_size_max = 8192.0f;
+    ctx->point_fade_threshold = 1.0f;
+    ctx->point_attenuation[0] = 1.0f;
+    ctx->point_sprite_origin = GL_UPPER_LEFT;
     ctx->pack_alignment = ctx->unpack_alignment = 4;
     for (int i = 0; i < MIME_GPU_MAX_ATTRIBS; i++)
         ctx->generic[i][3] = 1.0f;
@@ -403,6 +408,106 @@ GLAPI void APIENTRY glPointSize(GLfloat size)
 {
     GL_CONTEXT_OR_RETURN();
     ctx->point_size = size;
+}
+
+/*
+ * the point parameters of OpenGL 1.4 and of the extensions before it. the size limits clamp the size a draw uses and
+ * the rest is kept for queries: the distance attenuation of points is not applied.
+ */
+static void point_parameters(GlContext *ctx, GLenum pname, const GLfloat *v)
+{
+    switch (pname) {
+    case GL_POINT_SIZE_MIN:
+        if (v[0] < 0)
+            gl_error(ctx, GL_INVALID_VALUE);
+        else
+            ctx->point_size_min = v[0];
+        break;
+    case GL_POINT_SIZE_MAX:
+        if (v[0] < 0)
+            gl_error(ctx, GL_INVALID_VALUE);
+        else
+            ctx->point_size_max = v[0];
+        break;
+    case GL_POINT_FADE_THRESHOLD_SIZE:
+        if (v[0] < 0)
+            gl_error(ctx, GL_INVALID_VALUE);
+        else
+            ctx->point_fade_threshold = v[0];
+        break;
+    case GL_POINT_DISTANCE_ATTENUATION:
+        memcpy(ctx->point_attenuation, v, sizeof(ctx->point_attenuation));
+        break;
+    case GL_POINT_SPRITE_COORD_ORIGIN:
+        if ((GLenum)v[0] != GL_UPPER_LEFT && (GLenum)v[0] != GL_LOWER_LEFT)
+            gl_error(ctx, GL_INVALID_VALUE);
+        else
+            ctx->point_sprite_origin = (GLenum)v[0];
+        break;
+    default:
+        gl_error(ctx, GL_INVALID_ENUM);
+    }
+}
+
+GLfloat gl_point_size(const GlContext *ctx)
+{
+    GLfloat size = ctx->point_size;
+    if (size < ctx->point_size_min)
+        size = ctx->point_size_min;
+    if (size > ctx->point_size_max)
+        size = ctx->point_size_max;
+    return size;
+}
+
+GLAPI void APIENTRY glPointParameterf(GLenum pname, GLfloat value)
+{
+    GL_CONTEXT_OR_RETURN();
+    point_parameters(ctx, pname, &value);
+}
+
+GLAPI void APIENTRY glPointParameterfv(GLenum pname, const GLfloat *values)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (!values)
+        return;
+    point_parameters(ctx, pname, values);
+}
+
+GLAPI void APIENTRY glPointParameteri(GLenum pname, GLint value)
+{
+    GL_CONTEXT_OR_RETURN();
+    GLfloat v = (GLfloat)value;
+    point_parameters(ctx, pname, &v);
+}
+
+GLAPI void APIENTRY glPointParameteriv(GLenum pname, const GLint *values)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (!values)
+        return;
+    GLfloat v[3] = {(GLfloat)values[0], pname == GL_POINT_DISTANCE_ATTENUATION ? (GLfloat)values[1] : 0,
+                    pname == GL_POINT_DISTANCE_ATTENUATION ? (GLfloat)values[2] : 0};
+    point_parameters(ctx, pname, v);
+}
+
+GLAPI void APIENTRY glPointParameterfARB(GLenum pname, GLfloat value)
+{
+    glPointParameterf(pname, value);
+}
+
+GLAPI void APIENTRY glPointParameterfvARB(GLenum pname, const GLfloat *values)
+{
+    glPointParameterfv(pname, values);
+}
+
+GLAPI void APIENTRY glPointParameterfEXT(GLenum pname, GLfloat value)
+{
+    glPointParameterf(pname, value);
+}
+
+GLAPI void APIENTRY glPointParameterfvEXT(GLenum pname, const GLfloat *values)
+{
+    glPointParameterfv(pname, values);
 }
 
 GLAPI void APIENTRY glViewport(GLint x, GLint y, GLsizei w, GLsizei h)
@@ -821,6 +926,18 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
     case GL_POINT_SIZE:
         v[0] = ctx->point_size;
         return 1;
+    case GL_POINT_SIZE_MIN:
+        v[0] = ctx->point_size_min;
+        return 1;
+    case GL_POINT_SIZE_MAX:
+        v[0] = ctx->point_size_max;
+        return 1;
+    case GL_POINT_FADE_THRESHOLD_SIZE:
+        v[0] = ctx->point_fade_threshold;
+        return 1;
+    case GL_POINT_DISTANCE_ATTENUATION:
+        memcpy(v, ctx->point_attenuation, sizeof(ctx->point_attenuation));
+        return 3;
     case GL_PACK_ALIGNMENT:
         v[0] = ctx->pack_alignment;
         return 1;

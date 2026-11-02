@@ -3208,11 +3208,75 @@ glPixelZoom:
 	syscall
 	retq
 
+	.globl	glPointParameterf
+	.p2align	4, 0x90
+glPointParameterf:
+	movq	%rcx, %r10
+	movl	$0x7e010191, %eax
+	syscall
+	retq
+
+	.globl	glPointParameterfARB
+	.p2align	4, 0x90
+glPointParameterfARB:
+	movq	%rcx, %r10
+	movl	$0x7e010192, %eax
+	syscall
+	retq
+
+	.globl	glPointParameterfEXT
+	.p2align	4, 0x90
+glPointParameterfEXT:
+	movq	%rcx, %r10
+	movl	$0x7e010193, %eax
+	syscall
+	retq
+
+	.globl	glPointParameterfv
+	.p2align	4, 0x90
+glPointParameterfv:
+	movq	%rcx, %r10
+	movl	$0x7e010194, %eax
+	syscall
+	retq
+
+	.globl	glPointParameterfvARB
+	.p2align	4, 0x90
+glPointParameterfvARB:
+	movq	%rcx, %r10
+	movl	$0x7e010195, %eax
+	syscall
+	retq
+
+	.globl	glPointParameterfvEXT
+	.p2align	4, 0x90
+glPointParameterfvEXT:
+	movq	%rcx, %r10
+	movl	$0x7e010196, %eax
+	syscall
+	retq
+
+	.globl	glPointParameteri
+	.p2align	4, 0x90
+glPointParameteri:
+	movq	%rcx, %r10
+	movl	$0x7e010197, %eax
+	syscall
+	retq
+
+	.globl	glPointParameteriv
+	.p2align	4, 0x90
+glPointParameteriv:
+	movq	%rcx, %r10
+	movl	$0x7e010198, %eax
+	syscall
+	retq
+
 	.globl	glPointSize
 	.p2align	4, 0x90
 glPointSize:
 	movq	%rcx, %r10
-	movl	$0x7e010191, %eax
+	movl	$0x7e010199, %eax
 	syscall
 	retq
 
@@ -3220,7 +3284,7 @@ glPointSize:
 	.p2align	4, 0x90
 glPolygonMode:
 	movq	%rcx, %r10
-	movl	$0x7e010192, %eax
+	movl	$0x7e01019a, %eax
 	syscall
 	retq
 
@@ -3228,7 +3292,7 @@ glPolygonMode:
 	.p2align	4, 0x90
 glPolygonOffset:
 	movq	%rcx, %r10
-	movl	$0x7e010193, %eax
+	movl	$0x7e01019b, %eax
 	syscall
 	retq
 
@@ -3236,7 +3300,7 @@ glPolygonOffset:
 	.p2align	4, 0x90
 glPolygonStipple:
 	movq	%rcx, %r10
-	movl	$0x7e010194, %eax
+	movl	$0x7e01019c, %eax
 	syscall
 	retq
 
@@ -3244,7 +3308,7 @@ glPolygonStipple:
 	.p2align	4, 0x90
 glPopAttrib:
 	movq	%rcx, %r10
-	movl	$0x7e010195, %eax
+	movl	$0x7e01019d, %eax
 	syscall
 	retq
 
@@ -3252,7 +3316,7 @@ glPopAttrib:
 	.p2align	4, 0x90
 glPopClientAttrib:
 	movq	%rcx, %r10
-	movl	$0x7e010196, %eax
+	movl	$0x7e01019e, %eax
 	syscall
 	retq
 
@@ -3260,7 +3324,7 @@ glPopClientAttrib:
 	.p2align	4, 0x90
 glPopDebugGroup:
 	movq	%rcx, %r10
-	movl	$0x7e010197, %eax
+	movl	$0x7e01019f, %eax
 	syscall
 	retq
 
@@ -3268,7 +3332,7 @@ glPopDebugGroup:
 	.p2align	4, 0x90
 glPopMatrix:
 	movq	%rcx, %r10
-	movl	$0x7e010198, %eax
+	movl	$0x7e0101a0, %eax
 	syscall
 	retq
 
@@ -3276,7 +3340,7 @@ glPopMatrix:
 	.p2align	4, 0x90
 glPopName:
 	movq	%rcx, %r10
-	movl	$0x7e010199, %eax
+	movl	$0x7e0101a1, %eax
 	syscall
 	retq
 
@@ -3284,7 +3348,7 @@ glPopName:
 	.p2align	4, 0x90
 glPrioritizeTextures:
 	movq	%rcx, %r10
-	movl	$0x7e01019a, %eax
+	movl	$0x7e0101a2, %eax
 	syscall
 	retq
 
@@ -3292,7 +3356,7 @@ glPrioritizeTextures:
 	.p2align	4, 0x90
 glPushAttrib:
 	movq	%rcx, %r10
-	movl	$0x7e01019b, %eax
+	movl	$0x7e0101a3, %eax
 	syscall
 	retq
 
@@ -3300,7 +3364,7 @@ glPushAttrib:
 	.p2align	4, 0x90
 glPushClientAttrib:
 	movq	%rcx, %r10
-	movl	$0x7e01019c, %eax
+	movl	$0x7e0101a4, %eax
 	syscall
 	retq
 
@@ -3308,7 +3372,7 @@ glPushClientAttrib:
 	.p2align	4, 0x90
 glPushDebugGroup:
 	movq	%rcx, %r10
-	movl	$0x7e01019d, %eax
+	movl	$0x7e0101a5, %eax
 	syscall
 	retq
 
@@ -3316,7 +3380,7 @@ glPushDebugGroup:
 	.p2align	4, 0x90
 glPushMatrix:
 	movq	%rcx, %r10
-	movl	$0x7e01019e, %eax
+	movl	$0x7e0101a6, %eax
 	syscall
 	retq
 
@@ -3324,7 +3388,7 @@ glPushMatrix:
 	.p2align	4, 0x90
 glPushName:
 	movq	%rcx, %r10
-	movl	$0x7e01019f, %eax
+	movl	$0x7e0101a7, %eax
 	syscall
 	retq
 
@@ -3332,7 +3396,7 @@ glPushName:
 	.p2align	4, 0x90
 glQueryCounter:
 	movq	%rcx, %r10
-	movl	$0x7e0101a0, %eax
+	movl	$0x7e0101a8, %eax
 	syscall
 	retq
 
@@ -3340,7 +3404,7 @@ glQueryCounter:
 	.p2align	4, 0x90
 glRasterPos2d:
 	movq	%rcx, %r10
-	movl	$0x7e0101a1, %eax
+	movl	$0x7e0101a9, %eax
 	syscall
 	retq
 
@@ -3348,7 +3412,7 @@ glRasterPos2d:
 	.p2align	4, 0x90
 glRasterPos2dv:
 	movq	%rcx, %r10
-	movl	$0x7e0101a2, %eax
+	movl	$0x7e0101aa, %eax
 	syscall
 	retq
 
@@ -3356,7 +3420,7 @@ glRasterPos2dv:
 	.p2align	4, 0x90
 glRasterPos2f:
 	movq	%rcx, %r10
-	movl	$0x7e0101a3, %eax
+	movl	$0x7e0101ab, %eax
 	syscall
 	retq
 
@@ -3364,7 +3428,7 @@ glRasterPos2f:
 	.p2align	4, 0x90
 glRasterPos2fv:
 	movq	%rcx, %r10
-	movl	$0x7e0101a4, %eax
+	movl	$0x7e0101ac, %eax
 	syscall
 	retq
 
@@ -3372,7 +3436,7 @@ glRasterPos2fv:
 	.p2align	4, 0x90
 glRasterPos2i:
 	movq	%rcx, %r10
-	movl	$0x7e0101a5, %eax
+	movl	$0x7e0101ad, %eax
 	syscall
 	retq
 
@@ -3380,7 +3444,7 @@ glRasterPos2i:
 	.p2align	4, 0x90
 glRasterPos2iv:
 	movq	%rcx, %r10
-	movl	$0x7e0101a6, %eax
+	movl	$0x7e0101ae, %eax
 	syscall
 	retq
 
@@ -3388,7 +3452,7 @@ glRasterPos2iv:
 	.p2align	4, 0x90
 glRasterPos2s:
 	movq	%rcx, %r10
-	movl	$0x7e0101a7, %eax
+	movl	$0x7e0101af, %eax
 	syscall
 	retq
 
@@ -3396,7 +3460,7 @@ glRasterPos2s:
 	.p2align	4, 0x90
 glRasterPos2sv:
 	movq	%rcx, %r10
-	movl	$0x7e0101a8, %eax
+	movl	$0x7e0101b0, %eax
 	syscall
 	retq
 
@@ -3404,7 +3468,7 @@ glRasterPos2sv:
 	.p2align	4, 0x90
 glRasterPos3d:
 	movq	%rcx, %r10
-	movl	$0x7e0101a9, %eax
+	movl	$0x7e0101b1, %eax
 	syscall
 	retq
 
@@ -3412,7 +3476,7 @@ glRasterPos3d:
 	.p2align	4, 0x90
 glRasterPos3dv:
 	movq	%rcx, %r10
-	movl	$0x7e0101aa, %eax
+	movl	$0x7e0101b2, %eax
 	syscall
 	retq
 
@@ -3420,7 +3484,7 @@ glRasterPos3dv:
 	.p2align	4, 0x90
 glRasterPos3f:
 	movq	%rcx, %r10
-	movl	$0x7e0101ab, %eax
+	movl	$0x7e0101b3, %eax
 	syscall
 	retq
 
@@ -3428,7 +3492,7 @@ glRasterPos3f:
 	.p2align	4, 0x90
 glRasterPos3fv:
 	movq	%rcx, %r10
-	movl	$0x7e0101ac, %eax
+	movl	$0x7e0101b4, %eax
 	syscall
 	retq
 
@@ -3436,7 +3500,7 @@ glRasterPos3fv:
 	.p2align	4, 0x90
 glRasterPos3i:
 	movq	%rcx, %r10
-	movl	$0x7e0101ad, %eax
+	movl	$0x7e0101b5, %eax
 	syscall
 	retq
 
@@ -3444,7 +3508,7 @@ glRasterPos3i:
 	.p2align	4, 0x90
 glRasterPos3iv:
 	movq	%rcx, %r10
-	movl	$0x7e0101ae, %eax
+	movl	$0x7e0101b6, %eax
 	syscall
 	retq
 
@@ -3452,7 +3516,7 @@ glRasterPos3iv:
 	.p2align	4, 0x90
 glRasterPos3s:
 	movq	%rcx, %r10
-	movl	$0x7e0101af, %eax
+	movl	$0x7e0101b7, %eax
 	syscall
 	retq
 
@@ -3460,7 +3524,7 @@ glRasterPos3s:
 	.p2align	4, 0x90
 glRasterPos3sv:
 	movq	%rcx, %r10
-	movl	$0x7e0101b0, %eax
+	movl	$0x7e0101b8, %eax
 	syscall
 	retq
 
@@ -3468,7 +3532,7 @@ glRasterPos3sv:
 	.p2align	4, 0x90
 glRasterPos4d:
 	movq	%rcx, %r10
-	movl	$0x7e0101b1, %eax
+	movl	$0x7e0101b9, %eax
 	syscall
 	retq
 
@@ -3476,7 +3540,7 @@ glRasterPos4d:
 	.p2align	4, 0x90
 glRasterPos4dv:
 	movq	%rcx, %r10
-	movl	$0x7e0101b2, %eax
+	movl	$0x7e0101ba, %eax
 	syscall
 	retq
 
@@ -3484,7 +3548,7 @@ glRasterPos4dv:
 	.p2align	4, 0x90
 glRasterPos4f:
 	movq	%rcx, %r10
-	movl	$0x7e0101b3, %eax
+	movl	$0x7e0101bb, %eax
 	syscall
 	retq
 
@@ -3492,7 +3556,7 @@ glRasterPos4f:
 	.p2align	4, 0x90
 glRasterPos4fv:
 	movq	%rcx, %r10
-	movl	$0x7e0101b4, %eax
+	movl	$0x7e0101bc, %eax
 	syscall
 	retq
 
@@ -3500,7 +3564,7 @@ glRasterPos4fv:
 	.p2align	4, 0x90
 glRasterPos4i:
 	movq	%rcx, %r10
-	movl	$0x7e0101b5, %eax
+	movl	$0x7e0101bd, %eax
 	syscall
 	retq
 
@@ -3508,7 +3572,7 @@ glRasterPos4i:
 	.p2align	4, 0x90
 glRasterPos4iv:
 	movq	%rcx, %r10
-	movl	$0x7e0101b6, %eax
+	movl	$0x7e0101be, %eax
 	syscall
 	retq
 
@@ -3516,7 +3580,7 @@ glRasterPos4iv:
 	.p2align	4, 0x90
 glRasterPos4s:
 	movq	%rcx, %r10
-	movl	$0x7e0101b7, %eax
+	movl	$0x7e0101bf, %eax
 	syscall
 	retq
 
@@ -3524,7 +3588,7 @@ glRasterPos4s:
 	.p2align	4, 0x90
 glRasterPos4sv:
 	movq	%rcx, %r10
-	movl	$0x7e0101b8, %eax
+	movl	$0x7e0101c0, %eax
 	syscall
 	retq
 
@@ -3532,7 +3596,7 @@ glRasterPos4sv:
 	.p2align	4, 0x90
 glReadBuffer:
 	movq	%rcx, %r10
-	movl	$0x7e0101b9, %eax
+	movl	$0x7e0101c1, %eax
 	syscall
 	retq
 
@@ -3540,7 +3604,7 @@ glReadBuffer:
 	.p2align	4, 0x90
 glReadPixels:
 	movq	%rcx, %r10
-	movl	$0x7e0101ba, %eax
+	movl	$0x7e0101c2, %eax
 	syscall
 	retq
 
@@ -3548,7 +3612,7 @@ glReadPixels:
 	.p2align	4, 0x90
 glRectd:
 	movq	%rcx, %r10
-	movl	$0x7e0101bb, %eax
+	movl	$0x7e0101c3, %eax
 	syscall
 	retq
 
@@ -3556,7 +3620,7 @@ glRectd:
 	.p2align	4, 0x90
 glRectdv:
 	movq	%rcx, %r10
-	movl	$0x7e0101bc, %eax
+	movl	$0x7e0101c4, %eax
 	syscall
 	retq
 
@@ -3564,7 +3628,7 @@ glRectdv:
 	.p2align	4, 0x90
 glRectf:
 	movq	%rcx, %r10
-	movl	$0x7e0101bd, %eax
+	movl	$0x7e0101c5, %eax
 	syscall
 	retq
 
@@ -3572,7 +3636,7 @@ glRectf:
 	.p2align	4, 0x90
 glRectfv:
 	movq	%rcx, %r10
-	movl	$0x7e0101be, %eax
+	movl	$0x7e0101c6, %eax
 	syscall
 	retq
 
@@ -3580,7 +3644,7 @@ glRectfv:
 	.p2align	4, 0x90
 glRecti:
 	movq	%rcx, %r10
-	movl	$0x7e0101bf, %eax
+	movl	$0x7e0101c7, %eax
 	syscall
 	retq
 
@@ -3588,7 +3652,7 @@ glRecti:
 	.p2align	4, 0x90
 glRectiv:
 	movq	%rcx, %r10
-	movl	$0x7e0101c0, %eax
+	movl	$0x7e0101c8, %eax
 	syscall
 	retq
 
@@ -3596,7 +3660,7 @@ glRectiv:
 	.p2align	4, 0x90
 glRects:
 	movq	%rcx, %r10
-	movl	$0x7e0101c1, %eax
+	movl	$0x7e0101c9, %eax
 	syscall
 	retq
 
@@ -3604,7 +3668,7 @@ glRects:
 	.p2align	4, 0x90
 glRectsv:
 	movq	%rcx, %r10
-	movl	$0x7e0101c2, %eax
+	movl	$0x7e0101ca, %eax
 	syscall
 	retq
 
@@ -3612,7 +3676,7 @@ glRectsv:
 	.p2align	4, 0x90
 glReleaseShaderCompiler:
 	movq	%rcx, %r10
-	movl	$0x7e0101c3, %eax
+	movl	$0x7e0101cb, %eax
 	syscall
 	retq
 
@@ -3620,7 +3684,7 @@ glReleaseShaderCompiler:
 	.p2align	4, 0x90
 glRenderMode:
 	movq	%rcx, %r10
-	movl	$0x7e0101c4, %eax
+	movl	$0x7e0101cc, %eax
 	syscall
 	retq
 
@@ -3628,7 +3692,7 @@ glRenderMode:
 	.p2align	4, 0x90
 glRenderbufferStorage:
 	movq	%rcx, %r10
-	movl	$0x7e0101c5, %eax
+	movl	$0x7e0101cd, %eax
 	syscall
 	retq
 
@@ -3636,7 +3700,7 @@ glRenderbufferStorage:
 	.p2align	4, 0x90
 glRenderbufferStorageMultisample:
 	movq	%rcx, %r10
-	movl	$0x7e0101c6, %eax
+	movl	$0x7e0101ce, %eax
 	syscall
 	retq
 
@@ -3644,7 +3708,7 @@ glRenderbufferStorageMultisample:
 	.p2align	4, 0x90
 glRotated:
 	movq	%rcx, %r10
-	movl	$0x7e0101c7, %eax
+	movl	$0x7e0101cf, %eax
 	syscall
 	retq
 
@@ -3652,7 +3716,7 @@ glRotated:
 	.p2align	4, 0x90
 glRotatef:
 	movq	%rcx, %r10
-	movl	$0x7e0101c8, %eax
+	movl	$0x7e0101d0, %eax
 	syscall
 	retq
 
@@ -3660,7 +3724,7 @@ glRotatef:
 	.p2align	4, 0x90
 glScaled:
 	movq	%rcx, %r10
-	movl	$0x7e0101c9, %eax
+	movl	$0x7e0101d1, %eax
 	syscall
 	retq
 
@@ -3668,7 +3732,7 @@ glScaled:
 	.p2align	4, 0x90
 glScalef:
 	movq	%rcx, %r10
-	movl	$0x7e0101ca, %eax
+	movl	$0x7e0101d2, %eax
 	syscall
 	retq
 
@@ -3676,7 +3740,7 @@ glScalef:
 	.p2align	4, 0x90
 glScissor:
 	movq	%rcx, %r10
-	movl	$0x7e0101cb, %eax
+	movl	$0x7e0101d3, %eax
 	syscall
 	retq
 
@@ -3684,7 +3748,7 @@ glScissor:
 	.p2align	4, 0x90
 glSelectBuffer:
 	movq	%rcx, %r10
-	movl	$0x7e0101cc, %eax
+	movl	$0x7e0101d4, %eax
 	syscall
 	retq
 
@@ -3692,7 +3756,7 @@ glSelectBuffer:
 	.p2align	4, 0x90
 glShadeModel:
 	movq	%rcx, %r10
-	movl	$0x7e0101cd, %eax
+	movl	$0x7e0101d5, %eax
 	syscall
 	retq
 
@@ -3700,7 +3764,7 @@ glShadeModel:
 	.p2align	4, 0x90
 glShaderSource:
 	movq	%rcx, %r10
-	movl	$0x7e0101ce, %eax
+	movl	$0x7e0101d6, %eax
 	syscall
 	retq
 
@@ -3708,7 +3772,7 @@ glShaderSource:
 	.p2align	4, 0x90
 glStencilFunc:
 	movq	%rcx, %r10
-	movl	$0x7e0101cf, %eax
+	movl	$0x7e0101d7, %eax
 	syscall
 	retq
 
@@ -3716,7 +3780,7 @@ glStencilFunc:
 	.p2align	4, 0x90
 glStencilFuncSeparate:
 	movq	%rcx, %r10
-	movl	$0x7e0101d0, %eax
+	movl	$0x7e0101d8, %eax
 	syscall
 	retq
 
@@ -3724,7 +3788,7 @@ glStencilFuncSeparate:
 	.p2align	4, 0x90
 glStencilMask:
 	movq	%rcx, %r10
-	movl	$0x7e0101d1, %eax
+	movl	$0x7e0101d9, %eax
 	syscall
 	retq
 
@@ -3732,7 +3796,7 @@ glStencilMask:
 	.p2align	4, 0x90
 glStencilMaskSeparate:
 	movq	%rcx, %r10
-	movl	$0x7e0101d2, %eax
+	movl	$0x7e0101da, %eax
 	syscall
 	retq
 
@@ -3740,7 +3804,7 @@ glStencilMaskSeparate:
 	.p2align	4, 0x90
 glStencilOp:
 	movq	%rcx, %r10
-	movl	$0x7e0101d3, %eax
+	movl	$0x7e0101db, %eax
 	syscall
 	retq
 
@@ -3748,7 +3812,7 @@ glStencilOp:
 	.p2align	4, 0x90
 glStencilOpSeparate:
 	movq	%rcx, %r10
-	movl	$0x7e0101d4, %eax
+	movl	$0x7e0101dc, %eax
 	syscall
 	retq
 
@@ -3756,7 +3820,7 @@ glStencilOpSeparate:
 	.p2align	4, 0x90
 glTexCoord1d:
 	movq	%rcx, %r10
-	movl	$0x7e0101d5, %eax
+	movl	$0x7e0101dd, %eax
 	syscall
 	retq
 
@@ -3764,7 +3828,7 @@ glTexCoord1d:
 	.p2align	4, 0x90
 glTexCoord1dv:
 	movq	%rcx, %r10
-	movl	$0x7e0101d6, %eax
+	movl	$0x7e0101de, %eax
 	syscall
 	retq
 
@@ -3772,7 +3836,7 @@ glTexCoord1dv:
 	.p2align	4, 0x90
 glTexCoord1f:
 	movq	%rcx, %r10
-	movl	$0x7e0101d7, %eax
+	movl	$0x7e0101df, %eax
 	syscall
 	retq
 
@@ -3780,7 +3844,7 @@ glTexCoord1f:
 	.p2align	4, 0x90
 glTexCoord1fv:
 	movq	%rcx, %r10
-	movl	$0x7e0101d8, %eax
+	movl	$0x7e0101e0, %eax
 	syscall
 	retq
 
@@ -3788,7 +3852,7 @@ glTexCoord1fv:
 	.p2align	4, 0x90
 glTexCoord1i:
 	movq	%rcx, %r10
-	movl	$0x7e0101d9, %eax
+	movl	$0x7e0101e1, %eax
 	syscall
 	retq
 
@@ -3796,7 +3860,7 @@ glTexCoord1i:
 	.p2align	4, 0x90
 glTexCoord1iv:
 	movq	%rcx, %r10
-	movl	$0x7e0101da, %eax
+	movl	$0x7e0101e2, %eax
 	syscall
 	retq
 
@@ -3804,7 +3868,7 @@ glTexCoord1iv:
 	.p2align	4, 0x90
 glTexCoord1s:
 	movq	%rcx, %r10
-	movl	$0x7e0101db, %eax
+	movl	$0x7e0101e3, %eax
 	syscall
 	retq
 
@@ -3812,7 +3876,7 @@ glTexCoord1s:
 	.p2align	4, 0x90
 glTexCoord1sv:
 	movq	%rcx, %r10
-	movl	$0x7e0101dc, %eax
+	movl	$0x7e0101e4, %eax
 	syscall
 	retq
 
@@ -3820,7 +3884,7 @@ glTexCoord1sv:
 	.p2align	4, 0x90
 glTexCoord2d:
 	movq	%rcx, %r10
-	movl	$0x7e0101dd, %eax
+	movl	$0x7e0101e5, %eax
 	syscall
 	retq
 
@@ -3828,7 +3892,7 @@ glTexCoord2d:
 	.p2align	4, 0x90
 glTexCoord2dv:
 	movq	%rcx, %r10
-	movl	$0x7e0101de, %eax
+	movl	$0x7e0101e6, %eax
 	syscall
 	retq
 
@@ -3836,7 +3900,7 @@ glTexCoord2dv:
 	.p2align	4, 0x90
 glTexCoord2f:
 	movq	%rcx, %r10
-	movl	$0x7e0101df, %eax
+	movl	$0x7e0101e7, %eax
 	syscall
 	retq
 
@@ -3844,7 +3908,7 @@ glTexCoord2f:
 	.p2align	4, 0x90
 glTexCoord2fv:
 	movq	%rcx, %r10
-	movl	$0x7e0101e0, %eax
+	movl	$0x7e0101e8, %eax
 	syscall
 	retq
 
@@ -3852,7 +3916,7 @@ glTexCoord2fv:
 	.p2align	4, 0x90
 glTexCoord2i:
 	movq	%rcx, %r10
-	movl	$0x7e0101e1, %eax
+	movl	$0x7e0101e9, %eax
 	syscall
 	retq
 
@@ -3860,7 +3924,7 @@ glTexCoord2i:
 	.p2align	4, 0x90
 glTexCoord2iv:
 	movq	%rcx, %r10
-	movl	$0x7e0101e2, %eax
+	movl	$0x7e0101ea, %eax
 	syscall
 	retq
 
@@ -3868,7 +3932,7 @@ glTexCoord2iv:
 	.p2align	4, 0x90
 glTexCoord2s:
 	movq	%rcx, %r10
-	movl	$0x7e0101e3, %eax
+	movl	$0x7e0101eb, %eax
 	syscall
 	retq
 
@@ -3876,7 +3940,7 @@ glTexCoord2s:
 	.p2align	4, 0x90
 glTexCoord2sv:
 	movq	%rcx, %r10
-	movl	$0x7e0101e4, %eax
+	movl	$0x7e0101ec, %eax
 	syscall
 	retq
 
@@ -3884,7 +3948,7 @@ glTexCoord2sv:
 	.p2align	4, 0x90
 glTexCoord3d:
 	movq	%rcx, %r10
-	movl	$0x7e0101e5, %eax
+	movl	$0x7e0101ed, %eax
 	syscall
 	retq
 
@@ -3892,7 +3956,7 @@ glTexCoord3d:
 	.p2align	4, 0x90
 glTexCoord3dv:
 	movq	%rcx, %r10
-	movl	$0x7e0101e6, %eax
+	movl	$0x7e0101ee, %eax
 	syscall
 	retq
 
@@ -3900,7 +3964,7 @@ glTexCoord3dv:
 	.p2align	4, 0x90
 glTexCoord3f:
 	movq	%rcx, %r10
-	movl	$0x7e0101e7, %eax
+	movl	$0x7e0101ef, %eax
 	syscall
 	retq
 
@@ -3908,7 +3972,7 @@ glTexCoord3f:
 	.p2align	4, 0x90
 glTexCoord3fv:
 	movq	%rcx, %r10
-	movl	$0x7e0101e8, %eax
+	movl	$0x7e0101f0, %eax
 	syscall
 	retq
 
@@ -3916,7 +3980,7 @@ glTexCoord3fv:
 	.p2align	4, 0x90
 glTexCoord3i:
 	movq	%rcx, %r10
-	movl	$0x7e0101e9, %eax
+	movl	$0x7e0101f1, %eax
 	syscall
 	retq
 
@@ -3924,7 +3988,7 @@ glTexCoord3i:
 	.p2align	4, 0x90
 glTexCoord3iv:
 	movq	%rcx, %r10
-	movl	$0x7e0101ea, %eax
+	movl	$0x7e0101f2, %eax
 	syscall
 	retq
 
@@ -3932,7 +3996,7 @@ glTexCoord3iv:
 	.p2align	4, 0x90
 glTexCoord3s:
 	movq	%rcx, %r10
-	movl	$0x7e0101eb, %eax
+	movl	$0x7e0101f3, %eax
 	syscall
 	retq
 
@@ -3940,7 +4004,7 @@ glTexCoord3s:
 	.p2align	4, 0x90
 glTexCoord3sv:
 	movq	%rcx, %r10
-	movl	$0x7e0101ec, %eax
+	movl	$0x7e0101f4, %eax
 	syscall
 	retq
 
@@ -3948,7 +4012,7 @@ glTexCoord3sv:
 	.p2align	4, 0x90
 glTexCoord4d:
 	movq	%rcx, %r10
-	movl	$0x7e0101ed, %eax
+	movl	$0x7e0101f5, %eax
 	syscall
 	retq
 
@@ -3956,7 +4020,7 @@ glTexCoord4d:
 	.p2align	4, 0x90
 glTexCoord4dv:
 	movq	%rcx, %r10
-	movl	$0x7e0101ee, %eax
+	movl	$0x7e0101f6, %eax
 	syscall
 	retq
 
@@ -3964,7 +4028,7 @@ glTexCoord4dv:
 	.p2align	4, 0x90
 glTexCoord4f:
 	movq	%rcx, %r10
-	movl	$0x7e0101ef, %eax
+	movl	$0x7e0101f7, %eax
 	syscall
 	retq
 
@@ -3972,7 +4036,7 @@ glTexCoord4f:
 	.p2align	4, 0x90
 glTexCoord4fv:
 	movq	%rcx, %r10
-	movl	$0x7e0101f0, %eax
+	movl	$0x7e0101f8, %eax
 	syscall
 	retq
 
@@ -3980,7 +4044,7 @@ glTexCoord4fv:
 	.p2align	4, 0x90
 glTexCoord4i:
 	movq	%rcx, %r10
-	movl	$0x7e0101f1, %eax
+	movl	$0x7e0101f9, %eax
 	syscall
 	retq
 
@@ -3988,7 +4052,7 @@ glTexCoord4i:
 	.p2align	4, 0x90
 glTexCoord4iv:
 	movq	%rcx, %r10
-	movl	$0x7e0101f2, %eax
+	movl	$0x7e0101fa, %eax
 	syscall
 	retq
 
@@ -3996,7 +4060,7 @@ glTexCoord4iv:
 	.p2align	4, 0x90
 glTexCoord4s:
 	movq	%rcx, %r10
-	movl	$0x7e0101f3, %eax
+	movl	$0x7e0101fb, %eax
 	syscall
 	retq
 
@@ -4004,7 +4068,7 @@ glTexCoord4s:
 	.p2align	4, 0x90
 glTexCoord4sv:
 	movq	%rcx, %r10
-	movl	$0x7e0101f4, %eax
+	movl	$0x7e0101fc, %eax
 	syscall
 	retq
 
@@ -4012,7 +4076,7 @@ glTexCoord4sv:
 	.p2align	4, 0x90
 glTexCoordPointer:
 	movq	%rcx, %r10
-	movl	$0x7e0101f5, %eax
+	movl	$0x7e0101fd, %eax
 	syscall
 	retq
 
@@ -4020,7 +4084,7 @@ glTexCoordPointer:
 	.p2align	4, 0x90
 glTexEnvf:
 	movq	%rcx, %r10
-	movl	$0x7e0101f6, %eax
+	movl	$0x7e0101fe, %eax
 	syscall
 	retq
 
@@ -4028,7 +4092,7 @@ glTexEnvf:
 	.p2align	4, 0x90
 glTexEnvfv:
 	movq	%rcx, %r10
-	movl	$0x7e0101f7, %eax
+	movl	$0x7e0101ff, %eax
 	syscall
 	retq
 
@@ -4036,7 +4100,7 @@ glTexEnvfv:
 	.p2align	4, 0x90
 glTexEnvi:
 	movq	%rcx, %r10
-	movl	$0x7e0101f8, %eax
+	movl	$0x7e010200, %eax
 	syscall
 	retq
 
@@ -4044,7 +4108,7 @@ glTexEnvi:
 	.p2align	4, 0x90
 glTexEnviv:
 	movq	%rcx, %r10
-	movl	$0x7e0101f9, %eax
+	movl	$0x7e010201, %eax
 	syscall
 	retq
 
@@ -4052,7 +4116,7 @@ glTexEnviv:
 	.p2align	4, 0x90
 glTexGend:
 	movq	%rcx, %r10
-	movl	$0x7e0101fa, %eax
+	movl	$0x7e010202, %eax
 	syscall
 	retq
 
@@ -4060,7 +4124,7 @@ glTexGend:
 	.p2align	4, 0x90
 glTexGendv:
 	movq	%rcx, %r10
-	movl	$0x7e0101fb, %eax
+	movl	$0x7e010203, %eax
 	syscall
 	retq
 
@@ -4068,7 +4132,7 @@ glTexGendv:
 	.p2align	4, 0x90
 glTexGenf:
 	movq	%rcx, %r10
-	movl	$0x7e0101fc, %eax
+	movl	$0x7e010204, %eax
 	syscall
 	retq
 
@@ -4076,7 +4140,7 @@ glTexGenf:
 	.p2align	4, 0x90
 glTexGenfv:
 	movq	%rcx, %r10
-	movl	$0x7e0101fd, %eax
+	movl	$0x7e010205, %eax
 	syscall
 	retq
 
@@ -4084,7 +4148,7 @@ glTexGenfv:
 	.p2align	4, 0x90
 glTexGeni:
 	movq	%rcx, %r10
-	movl	$0x7e0101fe, %eax
+	movl	$0x7e010206, %eax
 	syscall
 	retq
 
@@ -4092,7 +4156,7 @@ glTexGeni:
 	.p2align	4, 0x90
 glTexGeniv:
 	movq	%rcx, %r10
-	movl	$0x7e0101ff, %eax
+	movl	$0x7e010207, %eax
 	syscall
 	retq
 
@@ -4100,7 +4164,7 @@ glTexGeniv:
 	.p2align	4, 0x90
 glTexImage1D:
 	movq	%rcx, %r10
-	movl	$0x7e010200, %eax
+	movl	$0x7e010208, %eax
 	syscall
 	retq
 
@@ -4108,7 +4172,7 @@ glTexImage1D:
 	.p2align	4, 0x90
 glTexImage2D:
 	movq	%rcx, %r10
-	movl	$0x7e010201, %eax
+	movl	$0x7e010209, %eax
 	syscall
 	retq
 
@@ -4116,7 +4180,7 @@ glTexImage2D:
 	.p2align	4, 0x90
 glTexImage2DMultisample:
 	movq	%rcx, %r10
-	movl	$0x7e010202, %eax
+	movl	$0x7e01020a, %eax
 	syscall
 	retq
 
@@ -4124,7 +4188,7 @@ glTexImage2DMultisample:
 	.p2align	4, 0x90
 glTexImage3D:
 	movq	%rcx, %r10
-	movl	$0x7e010203, %eax
+	movl	$0x7e01020b, %eax
 	syscall
 	retq
 
@@ -4132,7 +4196,7 @@ glTexImage3D:
 	.p2align	4, 0x90
 glTexParameterf:
 	movq	%rcx, %r10
-	movl	$0x7e010204, %eax
+	movl	$0x7e01020c, %eax
 	syscall
 	retq
 
@@ -4140,7 +4204,7 @@ glTexParameterf:
 	.p2align	4, 0x90
 glTexParameterfv:
 	movq	%rcx, %r10
-	movl	$0x7e010205, %eax
+	movl	$0x7e01020d, %eax
 	syscall
 	retq
 
@@ -4148,7 +4212,7 @@ glTexParameterfv:
 	.p2align	4, 0x90
 glTexParameteri:
 	movq	%rcx, %r10
-	movl	$0x7e010206, %eax
+	movl	$0x7e01020e, %eax
 	syscall
 	retq
 
@@ -4156,7 +4220,7 @@ glTexParameteri:
 	.p2align	4, 0x90
 glTexParameteriv:
 	movq	%rcx, %r10
-	movl	$0x7e010207, %eax
+	movl	$0x7e01020f, %eax
 	syscall
 	retq
 
@@ -4164,7 +4228,7 @@ glTexParameteriv:
 	.p2align	4, 0x90
 glTexStorage2D:
 	movq	%rcx, %r10
-	movl	$0x7e010208, %eax
+	movl	$0x7e010210, %eax
 	syscall
 	retq
 
@@ -4172,7 +4236,7 @@ glTexStorage2D:
 	.p2align	4, 0x90
 glTexStorage3D:
 	movq	%rcx, %r10
-	movl	$0x7e010209, %eax
+	movl	$0x7e010211, %eax
 	syscall
 	retq
 
@@ -4180,7 +4244,7 @@ glTexStorage3D:
 	.p2align	4, 0x90
 glTexSubImage1D:
 	movq	%rcx, %r10
-	movl	$0x7e01020a, %eax
+	movl	$0x7e010212, %eax
 	syscall
 	retq
 
@@ -4188,7 +4252,7 @@ glTexSubImage1D:
 	.p2align	4, 0x90
 glTexSubImage2D:
 	movq	%rcx, %r10
-	movl	$0x7e01020b, %eax
+	movl	$0x7e010213, %eax
 	syscall
 	retq
 
@@ -4196,7 +4260,7 @@ glTexSubImage2D:
 	.p2align	4, 0x90
 glTexSubImage3D:
 	movq	%rcx, %r10
-	movl	$0x7e01020c, %eax
+	movl	$0x7e010214, %eax
 	syscall
 	retq
 
@@ -4204,7 +4268,7 @@ glTexSubImage3D:
 	.p2align	4, 0x90
 glTranslated:
 	movq	%rcx, %r10
-	movl	$0x7e01020d, %eax
+	movl	$0x7e010215, %eax
 	syscall
 	retq
 
@@ -4212,7 +4276,7 @@ glTranslated:
 	.p2align	4, 0x90
 glTranslatef:
 	movq	%rcx, %r10
-	movl	$0x7e01020e, %eax
+	movl	$0x7e010216, %eax
 	syscall
 	retq
 
@@ -4220,7 +4284,7 @@ glTranslatef:
 	.p2align	4, 0x90
 glUniform1f:
 	movq	%rcx, %r10
-	movl	$0x7e01020f, %eax
+	movl	$0x7e010217, %eax
 	syscall
 	retq
 
@@ -4228,7 +4292,7 @@ glUniform1f:
 	.p2align	4, 0x90
 glUniform1fv:
 	movq	%rcx, %r10
-	movl	$0x7e010210, %eax
+	movl	$0x7e010218, %eax
 	syscall
 	retq
 
@@ -4236,7 +4300,7 @@ glUniform1fv:
 	.p2align	4, 0x90
 glUniform1i:
 	movq	%rcx, %r10
-	movl	$0x7e010211, %eax
+	movl	$0x7e010219, %eax
 	syscall
 	retq
 
@@ -4244,7 +4308,7 @@ glUniform1i:
 	.p2align	4, 0x90
 glUniform1iv:
 	movq	%rcx, %r10
-	movl	$0x7e010212, %eax
+	movl	$0x7e01021a, %eax
 	syscall
 	retq
 
@@ -4252,7 +4316,7 @@ glUniform1iv:
 	.p2align	4, 0x90
 glUniform1ui:
 	movq	%rcx, %r10
-	movl	$0x7e010213, %eax
+	movl	$0x7e01021b, %eax
 	syscall
 	retq
 
@@ -4260,7 +4324,7 @@ glUniform1ui:
 	.p2align	4, 0x90
 glUniform1uiv:
 	movq	%rcx, %r10
-	movl	$0x7e010214, %eax
+	movl	$0x7e01021c, %eax
 	syscall
 	retq
 
@@ -4268,7 +4332,7 @@ glUniform1uiv:
 	.p2align	4, 0x90
 glUniform2f:
 	movq	%rcx, %r10
-	movl	$0x7e010215, %eax
+	movl	$0x7e01021d, %eax
 	syscall
 	retq
 
@@ -4276,7 +4340,7 @@ glUniform2f:
 	.p2align	4, 0x90
 glUniform2fv:
 	movq	%rcx, %r10
-	movl	$0x7e010216, %eax
+	movl	$0x7e01021e, %eax
 	syscall
 	retq
 
@@ -4284,7 +4348,7 @@ glUniform2fv:
 	.p2align	4, 0x90
 glUniform2i:
 	movq	%rcx, %r10
-	movl	$0x7e010217, %eax
+	movl	$0x7e01021f, %eax
 	syscall
 	retq
 
@@ -4292,7 +4356,7 @@ glUniform2i:
 	.p2align	4, 0x90
 glUniform2iv:
 	movq	%rcx, %r10
-	movl	$0x7e010218, %eax
+	movl	$0x7e010220, %eax
 	syscall
 	retq
 
@@ -4300,7 +4364,7 @@ glUniform2iv:
 	.p2align	4, 0x90
 glUniform2ui:
 	movq	%rcx, %r10
-	movl	$0x7e010219, %eax
+	movl	$0x7e010221, %eax
 	syscall
 	retq
 
@@ -4308,7 +4372,7 @@ glUniform2ui:
 	.p2align	4, 0x90
 glUniform2uiv:
 	movq	%rcx, %r10
-	movl	$0x7e01021a, %eax
+	movl	$0x7e010222, %eax
 	syscall
 	retq
 
@@ -4316,7 +4380,7 @@ glUniform2uiv:
 	.p2align	4, 0x90
 glUniform3f:
 	movq	%rcx, %r10
-	movl	$0x7e01021b, %eax
+	movl	$0x7e010223, %eax
 	syscall
 	retq
 
@@ -4324,7 +4388,7 @@ glUniform3f:
 	.p2align	4, 0x90
 glUniform3fv:
 	movq	%rcx, %r10
-	movl	$0x7e01021c, %eax
+	movl	$0x7e010224, %eax
 	syscall
 	retq
 
@@ -4332,7 +4396,7 @@ glUniform3fv:
 	.p2align	4, 0x90
 glUniform3i:
 	movq	%rcx, %r10
-	movl	$0x7e01021d, %eax
+	movl	$0x7e010225, %eax
 	syscall
 	retq
 
@@ -4340,7 +4404,7 @@ glUniform3i:
 	.p2align	4, 0x90
 glUniform3iv:
 	movq	%rcx, %r10
-	movl	$0x7e01021e, %eax
+	movl	$0x7e010226, %eax
 	syscall
 	retq
 
@@ -4348,7 +4412,7 @@ glUniform3iv:
 	.p2align	4, 0x90
 glUniform3ui:
 	movq	%rcx, %r10
-	movl	$0x7e01021f, %eax
+	movl	$0x7e010227, %eax
 	syscall
 	retq
 
@@ -4356,7 +4420,7 @@ glUniform3ui:
 	.p2align	4, 0x90
 glUniform3uiv:
 	movq	%rcx, %r10
-	movl	$0x7e010220, %eax
+	movl	$0x7e010228, %eax
 	syscall
 	retq
 
@@ -4364,7 +4428,7 @@ glUniform3uiv:
 	.p2align	4, 0x90
 glUniform4f:
 	movq	%rcx, %r10
-	movl	$0x7e010221, %eax
+	movl	$0x7e010229, %eax
 	syscall
 	retq
 
@@ -4372,7 +4436,7 @@ glUniform4f:
 	.p2align	4, 0x90
 glUniform4fv:
 	movq	%rcx, %r10
-	movl	$0x7e010222, %eax
+	movl	$0x7e01022a, %eax
 	syscall
 	retq
 
@@ -4380,7 +4444,7 @@ glUniform4fv:
 	.p2align	4, 0x90
 glUniform4i:
 	movq	%rcx, %r10
-	movl	$0x7e010223, %eax
+	movl	$0x7e01022b, %eax
 	syscall
 	retq
 
@@ -4388,7 +4452,7 @@ glUniform4i:
 	.p2align	4, 0x90
 glUniform4iv:
 	movq	%rcx, %r10
-	movl	$0x7e010224, %eax
+	movl	$0x7e01022c, %eax
 	syscall
 	retq
 
@@ -4396,7 +4460,7 @@ glUniform4iv:
 	.p2align	4, 0x90
 glUniform4ui:
 	movq	%rcx, %r10
-	movl	$0x7e010225, %eax
+	movl	$0x7e01022d, %eax
 	syscall
 	retq
 
@@ -4404,7 +4468,7 @@ glUniform4ui:
 	.p2align	4, 0x90
 glUniform4uiv:
 	movq	%rcx, %r10
-	movl	$0x7e010226, %eax
+	movl	$0x7e01022e, %eax
 	syscall
 	retq
 
@@ -4412,7 +4476,7 @@ glUniform4uiv:
 	.p2align	4, 0x90
 glUniformBlockBinding:
 	movq	%rcx, %r10
-	movl	$0x7e010227, %eax
+	movl	$0x7e01022f, %eax
 	syscall
 	retq
 
@@ -4420,7 +4484,7 @@ glUniformBlockBinding:
 	.p2align	4, 0x90
 glUniformMatrix2fv:
 	movq	%rcx, %r10
-	movl	$0x7e010228, %eax
+	movl	$0x7e010230, %eax
 	syscall
 	retq
 
@@ -4428,7 +4492,7 @@ glUniformMatrix2fv:
 	.p2align	4, 0x90
 glUniformMatrix2x3fv:
 	movq	%rcx, %r10
-	movl	$0x7e010229, %eax
+	movl	$0x7e010231, %eax
 	syscall
 	retq
 
@@ -4436,7 +4500,7 @@ glUniformMatrix2x3fv:
 	.p2align	4, 0x90
 glUniformMatrix2x4fv:
 	movq	%rcx, %r10
-	movl	$0x7e01022a, %eax
+	movl	$0x7e010232, %eax
 	syscall
 	retq
 
@@ -4444,7 +4508,7 @@ glUniformMatrix2x4fv:
 	.p2align	4, 0x90
 glUniformMatrix3fv:
 	movq	%rcx, %r10
-	movl	$0x7e01022b, %eax
+	movl	$0x7e010233, %eax
 	syscall
 	retq
 
@@ -4452,7 +4516,7 @@ glUniformMatrix3fv:
 	.p2align	4, 0x90
 glUniformMatrix3x2fv:
 	movq	%rcx, %r10
-	movl	$0x7e01022c, %eax
+	movl	$0x7e010234, %eax
 	syscall
 	retq
 
@@ -4460,7 +4524,7 @@ glUniformMatrix3x2fv:
 	.p2align	4, 0x90
 glUniformMatrix3x4fv:
 	movq	%rcx, %r10
-	movl	$0x7e01022d, %eax
+	movl	$0x7e010235, %eax
 	syscall
 	retq
 
@@ -4468,7 +4532,7 @@ glUniformMatrix3x4fv:
 	.p2align	4, 0x90
 glUniformMatrix4fv:
 	movq	%rcx, %r10
-	movl	$0x7e01022e, %eax
+	movl	$0x7e010236, %eax
 	syscall
 	retq
 
@@ -4476,7 +4540,7 @@ glUniformMatrix4fv:
 	.p2align	4, 0x90
 glUniformMatrix4x2fv:
 	movq	%rcx, %r10
-	movl	$0x7e01022f, %eax
+	movl	$0x7e010237, %eax
 	syscall
 	retq
 
@@ -4484,7 +4548,7 @@ glUniformMatrix4x2fv:
 	.p2align	4, 0x90
 glUniformMatrix4x3fv:
 	movq	%rcx, %r10
-	movl	$0x7e010230, %eax
+	movl	$0x7e010238, %eax
 	syscall
 	retq
 
@@ -4492,7 +4556,7 @@ glUniformMatrix4x3fv:
 	.p2align	4, 0x90
 glUnmapBuffer:
 	movq	%rcx, %r10
-	movl	$0x7e010231, %eax
+	movl	$0x7e010239, %eax
 	syscall
 	retq
 
@@ -4500,7 +4564,7 @@ glUnmapBuffer:
 	.p2align	4, 0x90
 glUseProgram:
 	movq	%rcx, %r10
-	movl	$0x7e010232, %eax
+	movl	$0x7e01023a, %eax
 	syscall
 	retq
 
@@ -4508,7 +4572,7 @@ glUseProgram:
 	.p2align	4, 0x90
 glValidateProgram:
 	movq	%rcx, %r10
-	movl	$0x7e010233, %eax
+	movl	$0x7e01023b, %eax
 	syscall
 	retq
 
@@ -4516,7 +4580,7 @@ glValidateProgram:
 	.p2align	4, 0x90
 glVertex2d:
 	movq	%rcx, %r10
-	movl	$0x7e010234, %eax
+	movl	$0x7e01023c, %eax
 	syscall
 	retq
 
@@ -4524,7 +4588,7 @@ glVertex2d:
 	.p2align	4, 0x90
 glVertex2dv:
 	movq	%rcx, %r10
-	movl	$0x7e010235, %eax
+	movl	$0x7e01023d, %eax
 	syscall
 	retq
 
@@ -4532,7 +4596,7 @@ glVertex2dv:
 	.p2align	4, 0x90
 glVertex2f:
 	movq	%rcx, %r10
-	movl	$0x7e010236, %eax
+	movl	$0x7e01023e, %eax
 	syscall
 	retq
 
@@ -4540,7 +4604,7 @@ glVertex2f:
 	.p2align	4, 0x90
 glVertex2fv:
 	movq	%rcx, %r10
-	movl	$0x7e010237, %eax
+	movl	$0x7e01023f, %eax
 	syscall
 	retq
 
@@ -4548,7 +4612,7 @@ glVertex2fv:
 	.p2align	4, 0x90
 glVertex2i:
 	movq	%rcx, %r10
-	movl	$0x7e010238, %eax
+	movl	$0x7e010240, %eax
 	syscall
 	retq
 
@@ -4556,7 +4620,7 @@ glVertex2i:
 	.p2align	4, 0x90
 glVertex2iv:
 	movq	%rcx, %r10
-	movl	$0x7e010239, %eax
+	movl	$0x7e010241, %eax
 	syscall
 	retq
 
@@ -4564,7 +4628,7 @@ glVertex2iv:
 	.p2align	4, 0x90
 glVertex2s:
 	movq	%rcx, %r10
-	movl	$0x7e01023a, %eax
+	movl	$0x7e010242, %eax
 	syscall
 	retq
 
@@ -4572,7 +4636,7 @@ glVertex2s:
 	.p2align	4, 0x90
 glVertex2sv:
 	movq	%rcx, %r10
-	movl	$0x7e01023b, %eax
+	movl	$0x7e010243, %eax
 	syscall
 	retq
 
@@ -4580,7 +4644,7 @@ glVertex2sv:
 	.p2align	4, 0x90
 glVertex3d:
 	movq	%rcx, %r10
-	movl	$0x7e01023c, %eax
+	movl	$0x7e010244, %eax
 	syscall
 	retq
 
@@ -4588,7 +4652,7 @@ glVertex3d:
 	.p2align	4, 0x90
 glVertex3dv:
 	movq	%rcx, %r10
-	movl	$0x7e01023d, %eax
+	movl	$0x7e010245, %eax
 	syscall
 	retq
 
@@ -4596,7 +4660,7 @@ glVertex3dv:
 	.p2align	4, 0x90
 glVertex3f:
 	movq	%rcx, %r10
-	movl	$0x7e01023e, %eax
+	movl	$0x7e010246, %eax
 	syscall
 	retq
 
@@ -4604,7 +4668,7 @@ glVertex3f:
 	.p2align	4, 0x90
 glVertex3fv:
 	movq	%rcx, %r10
-	movl	$0x7e01023f, %eax
+	movl	$0x7e010247, %eax
 	syscall
 	retq
 
@@ -4612,7 +4676,7 @@ glVertex3fv:
 	.p2align	4, 0x90
 glVertex3i:
 	movq	%rcx, %r10
-	movl	$0x7e010240, %eax
+	movl	$0x7e010248, %eax
 	syscall
 	retq
 
@@ -4620,7 +4684,7 @@ glVertex3i:
 	.p2align	4, 0x90
 glVertex3iv:
 	movq	%rcx, %r10
-	movl	$0x7e010241, %eax
+	movl	$0x7e010249, %eax
 	syscall
 	retq
 
@@ -4628,7 +4692,7 @@ glVertex3iv:
 	.p2align	4, 0x90
 glVertex3s:
 	movq	%rcx, %r10
-	movl	$0x7e010242, %eax
+	movl	$0x7e01024a, %eax
 	syscall
 	retq
 
@@ -4636,7 +4700,7 @@ glVertex3s:
 	.p2align	4, 0x90
 glVertex3sv:
 	movq	%rcx, %r10
-	movl	$0x7e010243, %eax
+	movl	$0x7e01024b, %eax
 	syscall
 	retq
 
@@ -4644,7 +4708,7 @@ glVertex3sv:
 	.p2align	4, 0x90
 glVertex4d:
 	movq	%rcx, %r10
-	movl	$0x7e010244, %eax
+	movl	$0x7e01024c, %eax
 	syscall
 	retq
 
@@ -4652,7 +4716,7 @@ glVertex4d:
 	.p2align	4, 0x90
 glVertex4dv:
 	movq	%rcx, %r10
-	movl	$0x7e010245, %eax
+	movl	$0x7e01024d, %eax
 	syscall
 	retq
 
@@ -4660,7 +4724,7 @@ glVertex4dv:
 	.p2align	4, 0x90
 glVertex4f:
 	movq	%rcx, %r10
-	movl	$0x7e010246, %eax
+	movl	$0x7e01024e, %eax
 	syscall
 	retq
 
@@ -4668,7 +4732,7 @@ glVertex4f:
 	.p2align	4, 0x90
 glVertex4fv:
 	movq	%rcx, %r10
-	movl	$0x7e010247, %eax
+	movl	$0x7e01024f, %eax
 	syscall
 	retq
 
@@ -4676,7 +4740,7 @@ glVertex4fv:
 	.p2align	4, 0x90
 glVertex4i:
 	movq	%rcx, %r10
-	movl	$0x7e010248, %eax
+	movl	$0x7e010250, %eax
 	syscall
 	retq
 
@@ -4684,7 +4748,7 @@ glVertex4i:
 	.p2align	4, 0x90
 glVertex4iv:
 	movq	%rcx, %r10
-	movl	$0x7e010249, %eax
+	movl	$0x7e010251, %eax
 	syscall
 	retq
 
@@ -4692,7 +4756,7 @@ glVertex4iv:
 	.p2align	4, 0x90
 glVertex4s:
 	movq	%rcx, %r10
-	movl	$0x7e01024a, %eax
+	movl	$0x7e010252, %eax
 	syscall
 	retq
 
@@ -4700,7 +4764,7 @@ glVertex4s:
 	.p2align	4, 0x90
 glVertex4sv:
 	movq	%rcx, %r10
-	movl	$0x7e01024b, %eax
+	movl	$0x7e010253, %eax
 	syscall
 	retq
 
@@ -4708,7 +4772,7 @@ glVertex4sv:
 	.p2align	4, 0x90
 glVertexAttrib1f:
 	movq	%rcx, %r10
-	movl	$0x7e01024c, %eax
+	movl	$0x7e010254, %eax
 	syscall
 	retq
 
@@ -4716,7 +4780,7 @@ glVertexAttrib1f:
 	.p2align	4, 0x90
 glVertexAttrib1fv:
 	movq	%rcx, %r10
-	movl	$0x7e01024d, %eax
+	movl	$0x7e010255, %eax
 	syscall
 	retq
 
@@ -4724,7 +4788,7 @@ glVertexAttrib1fv:
 	.p2align	4, 0x90
 glVertexAttrib2f:
 	movq	%rcx, %r10
-	movl	$0x7e01024e, %eax
+	movl	$0x7e010256, %eax
 	syscall
 	retq
 
@@ -4732,7 +4796,7 @@ glVertexAttrib2f:
 	.p2align	4, 0x90
 glVertexAttrib2fv:
 	movq	%rcx, %r10
-	movl	$0x7e01024f, %eax
+	movl	$0x7e010257, %eax
 	syscall
 	retq
 
@@ -4740,7 +4804,7 @@ glVertexAttrib2fv:
 	.p2align	4, 0x90
 glVertexAttrib3f:
 	movq	%rcx, %r10
-	movl	$0x7e010250, %eax
+	movl	$0x7e010258, %eax
 	syscall
 	retq
 
@@ -4748,7 +4812,7 @@ glVertexAttrib3f:
 	.p2align	4, 0x90
 glVertexAttrib3fv:
 	movq	%rcx, %r10
-	movl	$0x7e010251, %eax
+	movl	$0x7e010259, %eax
 	syscall
 	retq
 
@@ -4756,7 +4820,7 @@ glVertexAttrib3fv:
 	.p2align	4, 0x90
 glVertexAttrib4Nub:
 	movq	%rcx, %r10
-	movl	$0x7e010252, %eax
+	movl	$0x7e01025a, %eax
 	syscall
 	retq
 
@@ -4764,7 +4828,7 @@ glVertexAttrib4Nub:
 	.p2align	4, 0x90
 glVertexAttrib4f:
 	movq	%rcx, %r10
-	movl	$0x7e010253, %eax
+	movl	$0x7e01025b, %eax
 	syscall
 	retq
 
@@ -4772,7 +4836,7 @@ glVertexAttrib4f:
 	.p2align	4, 0x90
 glVertexAttrib4fv:
 	movq	%rcx, %r10
-	movl	$0x7e010254, %eax
+	movl	$0x7e01025c, %eax
 	syscall
 	retq
 
@@ -4780,7 +4844,7 @@ glVertexAttrib4fv:
 	.p2align	4, 0x90
 glVertexAttribDivisor:
 	movq	%rcx, %r10
-	movl	$0x7e010255, %eax
+	movl	$0x7e01025d, %eax
 	syscall
 	retq
 
@@ -4788,7 +4852,7 @@ glVertexAttribDivisor:
 	.p2align	4, 0x90
 glVertexAttribI4i:
 	movq	%rcx, %r10
-	movl	$0x7e010256, %eax
+	movl	$0x7e01025e, %eax
 	syscall
 	retq
 
@@ -4796,7 +4860,7 @@ glVertexAttribI4i:
 	.p2align	4, 0x90
 glVertexAttribI4iv:
 	movq	%rcx, %r10
-	movl	$0x7e010257, %eax
+	movl	$0x7e01025f, %eax
 	syscall
 	retq
 
@@ -4804,7 +4868,7 @@ glVertexAttribI4iv:
 	.p2align	4, 0x90
 glVertexAttribI4ui:
 	movq	%rcx, %r10
-	movl	$0x7e010258, %eax
+	movl	$0x7e010260, %eax
 	syscall
 	retq
 
@@ -4812,7 +4876,7 @@ glVertexAttribI4ui:
 	.p2align	4, 0x90
 glVertexAttribI4uiv:
 	movq	%rcx, %r10
-	movl	$0x7e010259, %eax
+	movl	$0x7e010261, %eax
 	syscall
 	retq
 
@@ -4820,7 +4884,7 @@ glVertexAttribI4uiv:
 	.p2align	4, 0x90
 glVertexAttribIPointer:
 	movq	%rcx, %r10
-	movl	$0x7e01025a, %eax
+	movl	$0x7e010262, %eax
 	syscall
 	retq
 
@@ -4828,7 +4892,7 @@ glVertexAttribIPointer:
 	.p2align	4, 0x90
 glVertexAttribPointer:
 	movq	%rcx, %r10
-	movl	$0x7e01025b, %eax
+	movl	$0x7e010263, %eax
 	syscall
 	retq
 
@@ -4836,7 +4900,7 @@ glVertexAttribPointer:
 	.p2align	4, 0x90
 glVertexPointer:
 	movq	%rcx, %r10
-	movl	$0x7e01025c, %eax
+	movl	$0x7e010264, %eax
 	syscall
 	retq
 
@@ -4844,7 +4908,7 @@ glVertexPointer:
 	.p2align	4, 0x90
 glViewport:
 	movq	%rcx, %r10
-	movl	$0x7e01025d, %eax
+	movl	$0x7e010265, %eax
 	syscall
 	retq
 
@@ -4852,7 +4916,7 @@ glViewport:
 	.p2align	4, 0x90
 glWaitSync:
 	movq	%rcx, %r10
-	movl	$0x7e01025e, %eax
+	movl	$0x7e010266, %eax
 	syscall
 	retq
 
@@ -4860,7 +4924,7 @@ glWaitSync:
 	.p2align	4, 0x90
 wglChoosePixelFormat:
 	movq	%rcx, %r10
-	movl	$0x7e01025f, %eax
+	movl	$0x7e010267, %eax
 	syscall
 	retq
 
@@ -4868,7 +4932,7 @@ wglChoosePixelFormat:
 	.p2align	4, 0x90
 wglChoosePixelFormatARB:
 	movq	%rcx, %r10
-	movl	$0x7e010260, %eax
+	movl	$0x7e010268, %eax
 	syscall
 	retq
 
@@ -4876,7 +4940,7 @@ wglChoosePixelFormatARB:
 	.p2align	4, 0x90
 wglCopyContext:
 	movq	%rcx, %r10
-	movl	$0x7e010261, %eax
+	movl	$0x7e010269, %eax
 	syscall
 	retq
 
@@ -4884,7 +4948,7 @@ wglCopyContext:
 	.p2align	4, 0x90
 wglCreateContext:
 	movq	%rcx, %r10
-	movl	$0x7e010262, %eax
+	movl	$0x7e01026a, %eax
 	syscall
 	retq
 
@@ -4892,7 +4956,7 @@ wglCreateContext:
 	.p2align	4, 0x90
 wglCreateContextAttribsARB:
 	movq	%rcx, %r10
-	movl	$0x7e010263, %eax
+	movl	$0x7e01026b, %eax
 	syscall
 	retq
 
@@ -4900,7 +4964,7 @@ wglCreateContextAttribsARB:
 	.p2align	4, 0x90
 wglCreateLayerContext:
 	movq	%rcx, %r10
-	movl	$0x7e010264, %eax
+	movl	$0x7e01026c, %eax
 	syscall
 	retq
 
@@ -4908,7 +4972,7 @@ wglCreateLayerContext:
 	.p2align	4, 0x90
 wglDeleteContext:
 	movq	%rcx, %r10
-	movl	$0x7e010265, %eax
+	movl	$0x7e01026d, %eax
 	syscall
 	retq
 
@@ -4916,7 +4980,7 @@ wglDeleteContext:
 	.p2align	4, 0x90
 wglDescribeLayerPlane:
 	movq	%rcx, %r10
-	movl	$0x7e010266, %eax
+	movl	$0x7e01026e, %eax
 	syscall
 	retq
 
@@ -4924,7 +4988,7 @@ wglDescribeLayerPlane:
 	.p2align	4, 0x90
 wglDescribePixelFormat:
 	movq	%rcx, %r10
-	movl	$0x7e010267, %eax
+	movl	$0x7e01026f, %eax
 	syscall
 	retq
 
@@ -4932,7 +4996,7 @@ wglDescribePixelFormat:
 	.p2align	4, 0x90
 wglGetCurrentContext:
 	movq	%rcx, %r10
-	movl	$0x7e010268, %eax
+	movl	$0x7e010270, %eax
 	syscall
 	retq
 
@@ -4940,7 +5004,7 @@ wglGetCurrentContext:
 	.p2align	4, 0x90
 wglGetCurrentDC:
 	movq	%rcx, %r10
-	movl	$0x7e010269, %eax
+	movl	$0x7e010271, %eax
 	syscall
 	retq
 
@@ -4948,7 +5012,7 @@ wglGetCurrentDC:
 	.p2align	4, 0x90
 wglGetCurrentReadDCARB:
 	movq	%rcx, %r10
-	movl	$0x7e01026a, %eax
+	movl	$0x7e010272, %eax
 	syscall
 	retq
 
@@ -4956,7 +5020,7 @@ wglGetCurrentReadDCARB:
 	.p2align	4, 0x90
 wglGetExtensionsStringARB:
 	movq	%rcx, %r10
-	movl	$0x7e01026b, %eax
+	movl	$0x7e010273, %eax
 	syscall
 	retq
 
@@ -4964,7 +5028,7 @@ wglGetExtensionsStringARB:
 	.p2align	4, 0x90
 wglGetExtensionsStringEXT:
 	movq	%rcx, %r10
-	movl	$0x7e01026c, %eax
+	movl	$0x7e010274, %eax
 	syscall
 	retq
 
@@ -4972,7 +5036,7 @@ wglGetExtensionsStringEXT:
 	.p2align	4, 0x90
 wglGetLayerPaletteEntries:
 	movq	%rcx, %r10
-	movl	$0x7e01026d, %eax
+	movl	$0x7e010275, %eax
 	syscall
 	retq
 
@@ -4980,7 +5044,7 @@ wglGetLayerPaletteEntries:
 	.p2align	4, 0x90
 wglGetPixelFormat:
 	movq	%rcx, %r10
-	movl	$0x7e01026e, %eax
+	movl	$0x7e010276, %eax
 	syscall
 	retq
 
@@ -4988,7 +5052,7 @@ wglGetPixelFormat:
 	.p2align	4, 0x90
 wglGetPixelFormatAttribfvARB:
 	movq	%rcx, %r10
-	movl	$0x7e01026f, %eax
+	movl	$0x7e010277, %eax
 	syscall
 	retq
 
@@ -4996,7 +5060,7 @@ wglGetPixelFormatAttribfvARB:
 	.p2align	4, 0x90
 wglGetPixelFormatAttribivARB:
 	movq	%rcx, %r10
-	movl	$0x7e010270, %eax
+	movl	$0x7e010278, %eax
 	syscall
 	retq
 
@@ -5004,7 +5068,7 @@ wglGetPixelFormatAttribivARB:
 	.p2align	4, 0x90
 wglGetSwapIntervalEXT:
 	movq	%rcx, %r10
-	movl	$0x7e010271, %eax
+	movl	$0x7e010279, %eax
 	syscall
 	retq
 
@@ -5012,7 +5076,7 @@ wglGetSwapIntervalEXT:
 	.p2align	4, 0x90
 wglMakeContextCurrentARB:
 	movq	%rcx, %r10
-	movl	$0x7e010272, %eax
+	movl	$0x7e01027a, %eax
 	syscall
 	retq
 
@@ -5020,7 +5084,7 @@ wglMakeContextCurrentARB:
 	.p2align	4, 0x90
 wglMakeCurrent:
 	movq	%rcx, %r10
-	movl	$0x7e010273, %eax
+	movl	$0x7e01027b, %eax
 	syscall
 	retq
 
@@ -5028,7 +5092,7 @@ wglMakeCurrent:
 	.p2align	4, 0x90
 wglRealizeLayerPalette:
 	movq	%rcx, %r10
-	movl	$0x7e010274, %eax
+	movl	$0x7e01027c, %eax
 	syscall
 	retq
 
@@ -5036,7 +5100,7 @@ wglRealizeLayerPalette:
 	.p2align	4, 0x90
 wglSetLayerPaletteEntries:
 	movq	%rcx, %r10
-	movl	$0x7e010275, %eax
+	movl	$0x7e01027d, %eax
 	syscall
 	retq
 
@@ -5044,7 +5108,7 @@ wglSetLayerPaletteEntries:
 	.p2align	4, 0x90
 wglSetPixelFormat:
 	movq	%rcx, %r10
-	movl	$0x7e010276, %eax
+	movl	$0x7e01027e, %eax
 	syscall
 	retq
 
@@ -5052,7 +5116,7 @@ wglSetPixelFormat:
 	.p2align	4, 0x90
 wglShareLists:
 	movq	%rcx, %r10
-	movl	$0x7e010277, %eax
+	movl	$0x7e01027f, %eax
 	syscall
 	retq
 
@@ -5060,7 +5124,7 @@ wglShareLists:
 	.p2align	4, 0x90
 wglSwapBuffers:
 	movq	%rcx, %r10
-	movl	$0x7e010278, %eax
+	movl	$0x7e010280, %eax
 	syscall
 	retq
 
@@ -5068,7 +5132,7 @@ wglSwapBuffers:
 	.p2align	4, 0x90
 wglSwapIntervalEXT:
 	movq	%rcx, %r10
-	movl	$0x7e010279, %eax
+	movl	$0x7e010281, %eax
 	syscall
 	retq
 
@@ -5076,7 +5140,7 @@ wglSwapIntervalEXT:
 	.p2align	4, 0x90
 wglSwapLayerBuffers:
 	movq	%rcx, %r10
-	movl	$0x7e01027a, %eax
+	movl	$0x7e010282, %eax
 	syscall
 	retq
 
@@ -5084,7 +5148,7 @@ wglSwapLayerBuffers:
 	.p2align	4, 0x90
 wglUseFontBitmapsA:
 	movq	%rcx, %r10
-	movl	$0x7e01027b, %eax
+	movl	$0x7e010283, %eax
 	syscall
 	retq
 
@@ -5092,7 +5156,7 @@ wglUseFontBitmapsA:
 	.p2align	4, 0x90
 wglUseFontBitmapsW:
 	movq	%rcx, %r10
-	movl	$0x7e01027c, %eax
+	movl	$0x7e010284, %eax
 	syscall
 	retq
 
@@ -5100,7 +5164,7 @@ wglUseFontBitmapsW:
 	.p2align	4, 0x90
 wglUseFontOutlinesA:
 	movq	%rcx, %r10
-	movl	$0x7e01027d, %eax
+	movl	$0x7e010285, %eax
 	syscall
 	retq
 
@@ -5108,7 +5172,7 @@ wglUseFontOutlinesA:
 	.p2align	4, 0x90
 wglUseFontOutlinesW:
 	movq	%rcx, %r10
-	movl	$0x7e01027e, %eax
+	movl	$0x7e010286, %eax
 	syscall
 	retq
 
