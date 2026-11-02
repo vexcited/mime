@@ -129,7 +129,7 @@ typedef struct Arena {
 typedef struct Expr Expr;
 typedef struct Step Step;
 
-enum { X_NUM, X_STR, X_PATH, X_FILTER, X_FUNC, X_BIN, X_NEG, X_UNION };
+enum { X_NUM, X_STR, X_PATH, X_FILTER, X_FUNC, X_BIN, X_NEG, X_UNION, X_VAR, X_EXT };
 enum { OP_OR, OP_AND, OP_EQ, OP_NE, OP_LT, OP_LE, OP_GT, OP_GE, OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD };
 enum {
     AX_CHILD,
@@ -168,6 +168,7 @@ struct Step {
     Expr **preds;
     UINT npreds;
     BOOL positional;
+    UINT tok_start, tok_end; /* the axis name or the abbreviation, for messages. */
 };
 
 struct Expr {
@@ -185,6 +186,9 @@ struct Expr {
     UINT npreds;
     Step *steps;
     BOOL absolute;
+    const WCHAR *uri; /* of a variable or an extension function. */
+    const WCHAR *local;
+    UINT llen;
 };
 
 typedef struct Parser {
@@ -198,6 +202,13 @@ typedef struct Parser {
     UINT nscount;
     BOOL xpath;
     XDoc *doc;
+    const XpHost *host;
+    BOOL pattern;
+    UINT errpos;
+    UINT errstart, errend;
+    WCHAR errp1[40], errp2[40];
+    BOOL v6;
+    UINT prevend; /* where the token before the current one ended. */
     int kind;
     const WCHAR *tstart;
     UINT tlen;
@@ -209,7 +220,7 @@ typedef struct Parser {
 
 enum {
     T_EOF, T_NUM, T_STR, T_NAME, T_STAR_NAME, T_MUL, T_OP, T_SLASH, T_DSLASH, T_DOT, T_DDOT, T_AT, T_COMMA, T_LP,
-    T_RP, T_LB, T_RB, T_PIPE, T_PLUS, T_MINUS, T_EQ, T_NE, T_LT, T_LE, T_GT, T_GE, T_AXIS, T_VAR, T_ERROR
+    T_RP, T_LB, T_RB, T_PIPE, T_PLUS, T_MINUS, T_EQ, T_NE, T_LT, T_LE, T_GT, T_GE, T_AXIS, T_VAR, T_ERROR, T_COLON
 };
 
 static void *arena_alloc(Parser *ps, SIZE_T size)
@@ -246,8 +257,100 @@ static void arena_free(Arena *a)
 
 static BOOL fail(Parser *ps, HRESULT hr)
 {
-    if (!ps->error)
+    if (!ps->error) {
         ps->error = hr;
+        ps->errpos = (UINT)(ps->p - ps->s);
+        ps->errstart = (UINT)(ps->tstart - ps->s);
+        ps->errend = ps->errstart + ps->tlen;
+        if (ps->kind == T_VAR && ps->errstart)
+            ps->errstart--;
+        if (ps->kind == T_STR && ps->errstart) {
+            ps->errstart--;
+            ps->errend++;
+        }
+        if (ps->kind == T_EOF)
+            ps->errstart = ps->errend = (UINT)(ps->e - ps->s);
+    }
+    return FALSE;
+}
+
+static BOOL fail_range(Parser *ps, HRESULT hr, UINT start, UINT end)
+{
+    if (!ps->error) {
+        ps->error = hr;
+        ps->errpos = end;
+        ps->errstart = start;
+        ps->errend = end;
+    }
+    return FALSE;
+}
+
+/* an expression that cannot be a node set. */
+static BOOL expr_not_set(const Expr *x)
+{
+    switch (x->kind) {
+    case X_NUM:
+    case X_STR:
+    case X_NEG:
+    case X_BIN:
+        return TRUE;
+    case X_FUNC:
+        return x->op != F_ID;
+    }
+    return FALSE;
+}
+
+/* the name msxml gives a token in "Expected token ')' found ','". */
+static void token_text(Parser *ps, WCHAR *out)
+{
+    const char *name = nullptr;
+    switch (ps->kind) {
+    case T_EOF:
+        name = ps->v6 ? "EOF" : "eof";
+        break;
+    case T_NAME:
+    case T_STAR_NAME:
+        name = ps->kind == T_STAR_NAME && ps->tlen == 1 ? "*" : "NAME";
+        break;
+    case T_NUM:
+        name = "NUMBER";
+        break;
+    case T_STR:
+        name = "STRING";
+        break;
+    case T_ERROR:
+        name = "unknown";
+        break;
+    case T_OP:
+        name = nullptr;
+        break;
+    }
+    UINT n = 0;
+    out[n++] = '\'';
+    if (name) {
+        for (; *name && n < 36; name++)
+            out[n++] = (WCHAR)*name;
+    } else {
+        for (UINT i = 0; i < ps->tlen && n < 36; i++)
+            out[n++] = ps->tstart[i];
+    }
+    out[n++] = '\'';
+    out[n] = 0;
+}
+
+/* a failure because a token was needed: the message names the one wanted and the one found. */
+static BOOL fail_expected(Parser *ps, const char *wanted)
+{
+    if (!ps->error) {
+        fail(ps, XE_XPATH_INCOMPLETE);
+        UINT i = 0;
+        ps->errp1[i++] = '\'';
+        for (; *wanted && i < 36; wanted++)
+            ps->errp1[i++] = (WCHAR)*wanted;
+        ps->errp1[i++] = '\'';
+        ps->errp1[i] = 0;
+        token_text(ps, ps->errp2);
+    }
     return FALSE;
 }
 
@@ -270,6 +373,7 @@ static BOOL name_is(const WCHAR *s, UINT n, const char *lit)
 
 static void next_token(Parser *ps)
 {
+    ps->prevend = (UINT)(ps->p - ps->s);
     ps->prev = ps->kind;
     ps->func_follows = FALSE;
     const WCHAR *p = ps->p, *e = ps->e;
@@ -304,7 +408,12 @@ static void next_token(Parser *ps)
             q++;
         if (q >= e) {
             ps->kind = T_ERROR;
-            ps->error = ps->error ? ps->error : (HRESULT)XE_STRING_NOT_CLOSED;
+            if (!ps->error) {
+                ps->error = (HRESULT)XE_STRING_NOT_CLOSED;
+                ps->errstart = (UINT)(p - ps->s);
+                ps->errend = (UINT)(e - ps->s);
+                ps->errpos = ps->errend;
+            }
             ps->p = e;
             return;
         }
@@ -416,6 +525,9 @@ static void next_token(Parser *ps)
         case '|':
             kind = T_PIPE;
             break;
+        case ':':
+            kind = ps->host ? T_COLON : T_ERROR;
+            break;
         case '+':
             kind = T_PLUS;
             break;
@@ -455,8 +567,10 @@ static void next_token(Parser *ps)
     }
     ps->p = p;
     ps->kind = kind;
-    if (kind == T_ERROR && !ps->error)
-        ps->error = (HRESULT)XE_XPATH_CHAR;
+    if (!ps->tlen && p > ps->tstart && kind != T_STR)
+        ps->tlen = (UINT)(p - ps->tstart);
+    if (kind == T_ERROR && !ps->error && (ps->v6 || !ps->host))
+        fail(ps, (HRESULT)XE_XPATH_CHAR);
 }
 
 /* ------------------------------------------------------------------ parser */
@@ -536,6 +650,9 @@ static BOOL may_be_number(const Expr *x)
         return FALSE;
     case X_BIN:
         return x->op >= OP_ADD;
+    case X_VAR:
+    case X_EXT:
+        return TRUE;
     }
     return FALSE;
 }
@@ -583,7 +700,7 @@ static BOOL parse_predicates(Parser *ps, Expr ***list, UINT *count, BOOL *positi
         if (!x)
             return FALSE;
         if (ps->kind != T_RB)
-            return fail(ps, XE_XPATH_INCOMPLETE);
+            return fail_expected(ps, "]");
         next_token(ps);
         items[n++] = x;
         if (positional && positional_expr(x))
@@ -641,6 +758,8 @@ static Step *parse_step(Parser *ps)
     Step *st = arena_alloc(ps, sizeof(Step));
     if (!st)
         return nullptr;
+    st->tok_start = (UINT)(ps->tstart - ps->s);
+    st->tok_end = st->tok_start + ps->tlen;
     if (ps->kind == T_DOT) {
         st->axis = AX_SELF;
         st->test = NT_NODE;
@@ -699,7 +818,7 @@ static Step *parse_step(Parser *ps)
                                name_is(name, len, "node") || name_is(name, len, "processing-instruction"))) {
             next_token(ps);
             if (ps->kind != T_LP)
-                return fail(ps, XE_XPATH_INCOMPLETE), nullptr;
+                return fail_expected(ps, "("), nullptr;
             next_token(ps);
             if (name_is(name, len, "text"))
                 st->test = NT_TEXT;
@@ -713,10 +832,12 @@ static Step *parse_step(Parser *ps)
                     st->local = ps->tstart;
                     st->llen = ps->tlen;
                     next_token(ps);
+                } else if (ps->kind != T_RP && ps->host) {
+                    return fail_expected(ps, "STRING"), nullptr;
                 }
             }
             if (ps->kind != T_RP)
-                return fail(ps, XE_XPATH_INCOMPLETE), nullptr;
+                return fail_expected(ps, ")"), nullptr;
             next_token(ps);
         } else if (func) {
             fail(ps, XE_NODETEST);
@@ -866,15 +987,50 @@ static Expr *parse_primary(Parser *ps)
         if (!x)
             return nullptr;
         if (ps->kind != T_RP) {
-            fail(ps, XE_XPATH_INCOMPLETE);
+            fail_expected(ps, ")");
             return nullptr;
         }
         next_token(ps);
         return x;
     }
-    case T_VAR:
-        fail(ps, XE_NO_VARIABLES);
-        return nullptr;
+    case T_VAR: {
+        if (!ps->host)
+            return fail(ps, XE_NO_VARIABLES), nullptr;
+        const WCHAR *name = ps->tstart;
+        UINT len = ps->tlen, colon = 0;
+        if (!len) {
+            next_token(ps);
+            fail_expected(ps, "NAME");
+            return nullptr;
+        }
+        for (UINT i = 0; i < len; i++)
+            if (name[i] == ':') {
+                colon = i;
+                break;
+            }
+        if (!len || (colon && (colon + 1 >= len || colon == 0)))
+            return fail(ps, XE_EXPR_EXPECTED), nullptr;
+        x = new_expr(ps, X_VAR);
+        if (!x)
+            return nullptr;
+        if (ps->pattern)
+            return fail(ps, XE_PATTERN_VAR), nullptr;
+        if (colon) {
+            BOOL found;
+            x->uri = resolve_prefix(ps, name, colon, &found);
+            if (!found)
+                return fail(ps, XE_UNDECLARED_PREFIX), nullptr;
+            x->local = name + colon + 1;
+            x->llen = len - colon - 1;
+        } else {
+            x->local = name;
+            x->llen = len;
+        }
+        if (ps->host->declared && !ps->host->declared(ps->host->user, x->uri, x->local, x->llen))
+            return fail(ps, XE_VAR_UNRESOLVED), nullptr;
+        next_token(ps);
+        return x;
+    }
     case T_NAME: {
         const WCHAR *name = ps->tstart;
         UINT len = ps->tlen;
@@ -888,25 +1044,64 @@ static Expr *parse_primary(Parser *ps)
                 break;
             }
         }
+        if (ps->pattern && ps->host && len == 7 && name_is(name, len, "current")) {
+            const WCHAR *close = name + len;
+            while (close < ps->e && *close != ')')
+                close++;
+            fail_range(ps, XE_PATTERN_FUNCTION, (UINT)(name - ps->s), (UINT)(close < ps->e ? close + 1 - ps->s : ps->e - ps->s));
+            UINT k = 0;
+            for (const char *q = "current"; *q; q++)
+                ps->errp1[k++] = (WCHAR)*q;
+            ps->errp1[k] = 0;
+            return nullptr;
+        }
+        const WCHAR *ext_uri = nullptr, *ext_local = name;
+        UINT ext_len = len;
+        BOOL ext = FALSE;
+        UINT fstart = (UINT)(name - ps->s);
+        UINT fname_len = len;
+        if ((id < 0 || (id == F_INDEX && ps->xpath)) && ps->host) {
+            UINT colon = ps->colon;
+            if (colon) {
+                BOOL found;
+                ext_uri = resolve_prefix(ps, name, colon, &found);
+                if (!found)
+                    return fail(ps, XE_UNDECLARED_PREFIX), nullptr;
+                ext_local = name + colon + 1;
+                ext_len = len - colon - 1;
+            }
+            ext = TRUE;
+            id = F_COUNT_FUNCS;
+            min = 0;
+            max = 1000;
+        }
         if (id < 0 || (id == F_INDEX && ps->xpath)) {
             fail(ps, XE_BAD_FUNCTION);
             return nullptr;
         }
         next_token(ps);
         if (ps->kind != T_LP) {
-            fail(ps, XE_XPATH_INCOMPLETE);
+            fail_expected(ps, "(");
             return nullptr;
         }
         next_token(ps);
-        x = new_expr(ps, X_FUNC);
+        UINT astart = (UINT)(ps->tstart - ps->s);
+        x = new_expr(ps, ext ? X_EXT : X_FUNC);
         if (!x)
             return nullptr;
         x->op = id;
-        Expr *args[16];
+        x->uri = ext_uri;
+        x->local = ext_local;
+        x->llen = ext_len;
+        Expr *args[128];
         UINT n = 0;
+        if (ps->kind == T_RP && min > 0 && ps->host && !ps->v6) {
+            fail(ps, XE_EXPR_EXPECTED);
+            return nullptr;
+        }
         if (ps->kind != T_RP) {
             for (;;) {
-                if (n == 16) {
+                if (n == 128) {
                     fail(ps, XE_BAD_ARGUMENTS);
                     return nullptr;
                 }
@@ -914,7 +1109,17 @@ static Expr *parse_primary(Parser *ps)
                 if (!a)
                     return nullptr;
                 args[n++] = a;
+                if (n == 1 && !ext && ps->host && !ps->v6 &&
+                    (id == F_COUNT || id == F_SUM || id == F_LOCAL_NAME || id == F_NAMESPACE_URI || id == F_NAME) &&
+                    expr_not_set(a)) {
+                    fail_range(ps, XE_NOT_DOM_NODE, fstart, (UINT)(ps->p - ps->s));
+                    return nullptr;
+                }
                 if (ps->kind == T_COMMA) {
+                    if (n >= max && !(ps->v6 && min == max)) {
+                        fail_expected(ps, ")");
+                        return nullptr;
+                    }
                     next_token(ps);
                     continue;
                 }
@@ -922,12 +1127,26 @@ static Expr *parse_primary(Parser *ps)
             }
         }
         if (ps->kind != T_RP) {
-            fail(ps, XE_XPATH_INCOMPLETE);
+            fail_expected(ps, ")");
             return nullptr;
         }
         next_token(ps);
+        UINT fend = ps->prevend;
         if (n < min || n > max) {
-            fail(ps, XE_BAD_ARGUMENTS);
+            fail_range(ps, XE_BAD_ARGUMENTS, ps->v6 ? fstart : astart, fend);
+            return nullptr;
+        }
+        if (ext && !ps->host->known(ps->host->user, ext_uri, ext_local, ext_len, n)) {
+            fail_range(ps, XE_BAD_FUNCTION, fstart, fend);
+            UINT k = 0;
+            for (UINT i = 0; i < fname_len && k < 38; i++)
+                ps->errp1[k++] = name[i];
+            ps->errp1[k] = 0;
+            return nullptr;
+        }
+        if (!ext && n && (id == F_COUNT || id == F_SUM || id == F_LOCAL_NAME || id == F_NAMESPACE_URI || id == F_NAME) &&
+            expr_not_set(args[0])) {
+            fail_range(ps, XE_NOT_DOM_NODE, fstart, fend);
             return nullptr;
         }
         if (n) {
@@ -940,7 +1159,8 @@ static Expr *parse_primary(Parser *ps)
         return x;
     }
     }
-    fail(ps, XE_EXPR_EXPECTED);
+    fail(ps, ps->kind == T_ERROR ? XE_XPATH_CHAR
+                                 : ps->host && !ps->v6 && ps->kind == T_PIPE ? XE_NOT_DOM_NODE : XE_EXPR_EXPECTED);
     return nullptr;
 }
 
@@ -973,7 +1193,8 @@ static Expr *parse_path_expr(Parser *ps)
         }
         if (!parse_steps(ps, path, first))
             return nullptr;
-        merge_steps(path);
+        if (!ps->pattern)
+            merge_steps(path);
         return path;
     }
     if (starts_step(ps)) {
@@ -982,12 +1203,25 @@ static Expr *parse_path_expr(Parser *ps)
             return nullptr;
         if (!parse_steps(ps, path, nullptr))
             return nullptr;
-        merge_steps(path);
+        if (!ps->pattern)
+            merge_steps(path);
         return path;
     }
+    UINT pstart = (UINT)(ps->tstart - ps->s);
     Expr *primary = parse_primary(ps);
     if (!primary)
         return nullptr;
+    if (ps->host && (ps->kind == T_SLASH || ps->kind == T_DSLASH) && expr_not_set(primary)) {
+        fail_range(ps, XE_NOT_DOM_NODE, pstart, (UINT)(ps->p - ps->s));
+        return nullptr;
+    }
+    if (ps->host && ps->kind == T_LB && expr_not_set(primary)) {
+        if (ps->v6)
+            fail_range(ps, XE_NOT_NODESET, pstart, (UINT)(ps->tstart - ps->s));
+        else
+            fail(ps, XE_NOT_DOM_NODE);
+        return nullptr;
+    }
     if (ps->kind == T_LB || ps->kind == T_SLASH || ps->kind == T_DSLASH) {
         Expr *f = new_expr(ps, X_FILTER);
         if (!f)
@@ -1011,7 +1245,8 @@ static Expr *parse_path_expr(Parser *ps)
             }
             if (!parse_steps(ps, f, nullptr))
                 return nullptr;
-            merge_steps(f);
+            if (!ps->pattern)
+                merge_steps(f);
         }
         return f;
     }
@@ -1022,10 +1257,26 @@ static Expr *parse_union(Parser *ps)
 {
     Expr *left = parse_path_expr(ps);
     while (left && ps->kind == T_PIPE) {
+        if (ps->host && expr_not_set(left)) {
+            fail_range(ps, XE_NOT_DOM_NODE, 0, (UINT)(ps->p - ps->s));
+            return nullptr;
+        }
         next_token(ps);
         Expr *right = parse_path_expr(ps);
-        if (!right)
+        if (!right) {
+            if (ps->host && ps->error == (HRESULT)XE_EXPR_EXPECTED && ps->kind == T_EOF) {
+                if (ps->v6) {
+                    ps->error = (HRESULT)XE_XPATH_UNEXPECTED;
+                    UINT k = 0;
+                    for (const char *q = "'EOF'"; *q; q++)
+                        ps->errp1[k++] = (WCHAR)*q;
+                    ps->errp1[k] = 0;
+                } else {
+                    ps->error = (HRESULT)XE_NOT_DOM_NODE;
+                }
+            }
             return nullptr;
+        }
         Expr *u = new_expr(ps, X_UNION);
         if (!u)
             return nullptr;
@@ -1036,13 +1287,26 @@ static Expr *parse_union(Parser *ps)
     return left;
 }
 
+/* an operand that was missing after an arithmetic operator is named a number. */
+static void number_expected(Parser *ps)
+{
+    if (ps->host && ps->error == (HRESULT)XE_EXPR_EXPECTED)
+        ps->error = (HRESULT)XE_NUMBER_EXPECTED;
+}
+
 static Expr *parse_unary(Parser *ps)
 {
     if (ps->kind == T_MINUS) {
         next_token(ps);
-        Expr *x = parse_unary(ps);
-        if (!x)
+        if (ps->host && !ps->v6 && ps->kind == T_MINUS) {
+            fail_range(ps, XE_NUMBER_EXPECTED, (UINT)(ps->tstart - ps->s), (UINT)(ps->tstart - ps->s) + 1);
             return nullptr;
+        }
+        Expr *x = parse_unary(ps);
+        if (!x) {
+            number_expected(ps);
+            return nullptr;
+        }
         Expr *n = new_expr(ps, X_NEG);
         if (!n)
             return nullptr;
@@ -1078,8 +1342,10 @@ static Expr *parse_mul(Parser *ps)
             break;
         next_token(ps);
         Expr *right = parse_unary(ps);
-        if (!right)
+        if (!right) {
+            number_expected(ps);
             return nullptr;
+        }
         left = binary(ps, op, left, right);
     }
     return left;
@@ -1092,8 +1358,10 @@ static Expr *parse_add(Parser *ps)
         int op = ps->kind == T_PLUS ? OP_ADD : OP_SUB;
         next_token(ps);
         Expr *right = parse_mul(ps);
-        if (!right)
+        if (!right) {
+            number_expected(ps);
             return nullptr;
+        }
         left = binary(ps, op, left, right);
     }
     return left;
@@ -1213,16 +1481,6 @@ static Expr *parse_or(Parser *ps)
 
 /* ------------------------------------------------------------------ values */
 
-enum { V_SET, V_NUM, V_STR, V_BOOL };
-
-typedef struct Val {
-    int t;
-    double n;
-    BOOL b;
-    XBuf s;
-    XSet set;
-} Val;
-
 typedef struct Env {
     XNode *node;
     UINT pos;
@@ -1230,48 +1488,122 @@ typedef struct Env {
     BOOL xpath;
     XNode *root;
     HRESULT error;
+    const XpHost *host;
+    XNode *current;
+    const XNs *ns;
+    UINT nns;
 } Env;
 
-static void val_free(Val *v)
+void xpv_free(XpVal *v)
 {
     xb_free(&v->s);
     xs_free(&v->set);
 }
 
-static void node_string(XNode *n, XBuf *out)
+/* whether strings of nodes include the white space the parser dropped between tags, as xslt sees them. */
+static LONG g_mode_tls = -1;
+
+static DWORD mode_slot(void)
 {
-    xd_text(n, out);
+    if (g_mode_tls < 0) {
+        DWORD s = TlsAlloc();
+        if (InterlockedCompareExchange(&g_mode_tls, (LONG)s, -1) != -1)
+            TlsFree(s);
+    }
+    return (DWORD)g_mode_tls;
 }
 
-static void val_to_string(Val *v, XBuf *out)
+BOOL xd_text_mode(BOOL on)
+{
+    DWORD slot = mode_slot();
+    BOOL old = TlsGetValue(slot) != nullptr;
+    TlsSetValue(slot, on ? (PVOID)1 : nullptr);
+    return old;
+}
+
+static void put_hidden(XNode *n, XBuf *out)
+{
+    if (n->flags & XF_WS_AFTER)
+        xb_putc(out, ' ');
+}
+
+/* the string of a node of a source tree: the text of its descendants with a space for each run of white space the
+ * parser dropped. */
+void xd_text_xsl(XNode *n, XBuf *out)
+{
+    switch (n->type) {
+    case XN_ELEMENT:
+    case XN_DOCUMENT:
+    case XN_FRAGMENT:
+        break;
+    default:
+        xd_text(n, out);
+        return;
+    }
+    if (n->type == XN_ELEMENT && (n->flags & XF_WS_INSIDE))
+        xb_putc(out, ' ');
+    XNode *c = n->first;
+    while (c) {
+        if ((c->type == XN_TEXT || c->type == XN_CDATA) && c->value)
+            xb_put(out, c->value, c->length);
+        if (c->type == XN_ELEMENT && c->first) {
+            if (c->flags & XF_WS_INSIDE)
+                xb_putc(out, ' ');
+            c = c->first;
+            continue;
+        }
+        if (c->type == XN_ELEMENT && (c->flags & XF_WS_INSIDE))
+            xb_putc(out, ' ');
+        put_hidden(c, out);
+        while (c != n && !c->next) {
+            c = c->parent;
+            if (c == n)
+                break;
+            put_hidden(c, out);
+        }
+        if (c == n)
+            break;
+        c = c->next;
+    }
+}
+
+static void node_string(XNode *n, XBuf *out)
+{
+    if (TlsGetValue(mode_slot()))
+        xd_text_xsl(n, out);
+    else
+        xd_text(n, out);
+}
+
+void xpv_string(XpVal *v, XBuf *out)
 {
     switch (v->t) {
-    case V_STR:
+    case XPV_STR:
         xb_put(out, v->s.s ? v->s.s : L"", v->s.length);
         break;
-    case V_NUM:
+    case XPV_NUM:
         xd_format_number(v->n, out);
         break;
-    case V_BOOL:
+    case XPV_BOOL:
         xb_puta(out, v->b ? "true" : "false");
         break;
-    case V_SET:
+    case XPV_SET:
         if (v->set.n)
             node_string(v->set.v[0], out);
         break;
     }
 }
 
-static double val_to_number(Val *v)
+double xpv_number(XpVal *v)
 {
     switch (v->t) {
-    case V_NUM:
+    case XPV_NUM:
         return v->n;
-    case V_BOOL:
+    case XPV_BOOL:
         return v->b ? 1 : 0;
     default: {
         XBuf b = {};
-        val_to_string(v, &b);
+        xpv_string(v, &b);
         double d = xd_parse_number(b.s ? b.s : L"", b.length);
         xb_free(&b);
         return d;
@@ -1279,24 +1611,44 @@ static double val_to_number(Val *v)
     }
 }
 
-static BOOL val_to_bool(Val *v)
+BOOL xpv_bool(XpVal *v)
 {
     switch (v->t) {
-    case V_NUM:
+    case XPV_NUM:
         return v->n != 0 && !xd_isnan(v->n);
-    case V_BOOL:
+    case XPV_BOOL:
         return v->b;
-    case V_STR:
+    case XPV_STR:
         return v->s.length != 0;
     default:
         return v->set.n != 0;
     }
 }
 
-static void val_set_string(Val *v, const WCHAR *s, UINT n)
+static void val_set_string(XpVal *v, const WCHAR *s, UINT n)
 {
-    v->t = V_STR;
+    v->t = XPV_STR;
     xb_put(&v->s, s, n);
+}
+
+void xpv_set_string(XpVal *v, const WCHAR *s, UINT n)
+{
+    val_set_string(v, s, n);
+}
+
+BOOL xpv_copy(XpVal *to, const XpVal *from)
+{
+    memset(to, 0, sizeof(*to));
+    to->t = from->t;
+    to->n = from->n;
+    to->b = from->b;
+    to->rtf = from->rtf;
+    if (from->s.length)
+        xb_put(&to->s, from->s.s, from->s.length);
+    for (UINT i = 0; i < from->set.n; i++)
+        if (!xs_add(&to->set, from->set.v[i]))
+            return FALSE;
+    return !to->s.failed;
 }
 
 /* ------------------------------------------------------------------ axes and tests */
@@ -1512,7 +1864,7 @@ static BOOL reverse_axis(int axis)
            axis == AX_PRECEDING_SIBLING;
 }
 
-static HRESULT eval(Expr *x, Env *env, Val *out);
+static HRESULT eval(Expr *x, Env *env, XpVal *out);
 
 /* narrows a set by a predicate, positions counted along the axis. */
 static HRESULT apply_predicate(Expr *pred, XSet *set, Env *env, BOOL zero_based)
@@ -1523,19 +1875,19 @@ static HRESULT apply_predicate(Expr *pred, XSet *set, Env *env, BOOL zero_based)
         sub.node = set->v[i];
         sub.pos = i + 1;
         sub.size = set->n;
-        Val v = {};
+        XpVal v = {};
         HRESULT hr = eval(pred, &sub, &v);
         if (FAILED(hr)) {
-            val_free(&v);
+            xpv_free(&v);
             xs_free(&kept);
             return hr;
         }
         BOOL keep;
-        if (v.t == V_NUM)
+        if (v.t == XPV_NUM)
             keep = (v.n == (double)(i + 1) - (zero_based ? 1 : 0));
         else
-            keep = val_to_bool(&v);
-        val_free(&v);
+            keep = xpv_bool(&v);
+        xpv_free(&v);
         if (keep && !xs_add(&kept, set->v[i])) {
             xs_free(&kept);
             return E_OUTOFMEMORY;
@@ -1620,10 +1972,10 @@ static BOOL compare_numbers(int op, double a, double b)
     }
 }
 
-static BOOL compare_values(int op, Val *a, Val *b)
+static BOOL compare_values(int op, XpVal *a, XpVal *b)
 {
     BOOL equality = op == OP_EQ || op == OP_NE;
-    if (a->t == V_SET && b->t == V_SET) {
+    if (a->t == XPV_SET && b->t == XPV_SET) {
         for (UINT i = 0; i < a->set.n; i++) {
             XBuf sa = {};
             node_string(a->set.v[i], &sa);
@@ -1647,11 +1999,11 @@ static BOOL compare_values(int op, Val *a, Val *b)
         }
         return FALSE;
     }
-    if (a->t == V_SET || b->t == V_SET) {
-        BOOL swapped = b->t == V_SET;
-        Val *set = swapped ? b : a;
-        Val *other = swapped ? a : b;
-        if (other->t == V_BOOL) {
+    if (a->t == XPV_SET || b->t == XPV_SET) {
+        BOOL swapped = b->t == XPV_SET;
+        XpVal *set = swapped ? b : a;
+        XpVal *other = swapped ? a : b;
+        if (other->t == XPV_BOOL) {
             BOOL sb = set->set.n != 0;
             return swapped ? (equality ? (op == OP_EQ ? other->b == sb : other->b != sb) : compare_numbers(op, other->b, sb))
                            : (equality ? (op == OP_EQ ? sb == other->b : sb != other->b) : compare_numbers(op, sb, other->b));
@@ -1660,7 +2012,7 @@ static BOOL compare_values(int op, Val *a, Val *b)
             XBuf s = {};
             node_string(set->set.v[i], &s);
             BOOL r;
-            if (other->t == V_NUM) {
+            if (other->t == XPV_NUM) {
                 double n = xd_parse_number(s.s ? s.s : L"", s.length);
                 r = swapped ? compare_numbers(op, other->n, n) : compare_numbers(op, n, other->n);
             } else if (equality) {
@@ -1677,15 +2029,15 @@ static BOOL compare_values(int op, Val *a, Val *b)
         return FALSE;
     }
     if (equality) {
-        if (a->t == V_BOOL || b->t == V_BOOL) {
-            BOOL x = val_to_bool(a), y = val_to_bool(b);
+        if (a->t == XPV_BOOL || b->t == XPV_BOOL) {
+            BOOL x = xpv_bool(a), y = xpv_bool(b);
             return op == OP_EQ ? x == y : x != y;
         }
-        if (a->t == V_NUM || b->t == V_NUM)
-            return compare_numbers(op, val_to_number(a), val_to_number(b));
+        if (a->t == XPV_NUM || b->t == XPV_NUM)
+            return compare_numbers(op, xpv_number(a), xpv_number(b));
         return compare_strings(op, a->s.s ? a->s.s : L"", a->s.length, b->s.s ? b->s.s : L"", b->s.length);
     }
-    return compare_numbers(op, val_to_number(a), val_to_number(b));
+    return compare_numbers(op, xpv_number(a), xpv_number(b));
 }
 
 static double xp_floor(double x)
@@ -1724,11 +2076,11 @@ static double xp_mod(double a, double b)
 static HRESULT arg_string(Expr *x, UINT i, Env *env, XBuf *out)
 {
     if (i < x->nargs) {
-        Val v = {};
+        XpVal v = {};
         HRESULT hr = eval(x->args[i], env, &v);
         if (SUCCEEDED(hr))
-            val_to_string(&v, out);
-        val_free(&v);
+            xpv_string(&v, out);
+        xpv_free(&v);
         return hr;
     }
     node_string(env->node, out);
@@ -1737,57 +2089,57 @@ static HRESULT arg_string(Expr *x, UINT i, Env *env, XBuf *out)
 
 static HRESULT arg_number(Expr *x, UINT i, Env *env, double *out)
 {
-    Val v = {};
+    XpVal v = {};
     HRESULT hr = eval(x->args[i], env, &v);
     if (SUCCEEDED(hr))
-        *out = val_to_number(&v);
-    val_free(&v);
+        *out = xpv_number(&v);
+    xpv_free(&v);
     return hr;
 }
 
-static HRESULT eval_function(Expr *x, Env *env, Val *out)
+static HRESULT eval_function(Expr *x, Env *env, XpVal *out)
 {
     HRESULT hr = S_OK;
     XBuf a = {}, b = {}, c = {};
     switch (x->op) {
     case F_LAST:
-        out->t = V_NUM;
+        out->t = XPV_NUM;
         out->n = env->size;
         break;
     case F_POSITION:
-        out->t = V_NUM;
+        out->t = XPV_NUM;
         out->n = env->pos;
         break;
     case F_INDEX:
-        out->t = V_NUM;
+        out->t = XPV_NUM;
         out->n = env->pos ? env->pos - 1 : 0;
         break;
     case F_COUNT: {
-        Val v = {};
+        XpVal v = {};
         hr = eval(x->args[0], env, &v);
-        if (SUCCEEDED(hr) && v.t != V_SET)
+        if (SUCCEEDED(hr) && v.t != XPV_SET)
             hr = (HRESULT)XE_NOT_NODESET;
-        out->t = V_NUM;
+        out->t = XPV_NUM;
         out->n = v.set.n;
-        val_free(&v);
+        xpv_free(&v);
         break;
     }
     case F_ID:
-        out->t = V_SET;
+        out->t = XPV_SET;
         break;
     case F_LOCAL_NAME:
     case F_NAMESPACE_URI:
     case F_NAME: {
         XNode *n = env->node;
         if (x->nargs) {
-            Val v = {};
+            XpVal v = {};
             hr = eval(x->args[0], env, &v);
-            if (SUCCEEDED(hr) && v.t != V_SET)
+            if (SUCCEEDED(hr) && v.t != XPV_SET)
                 hr = (HRESULT)XE_NOT_NODESET;
             n = SUCCEEDED(hr) && v.set.n ? v.set.v[0] : nullptr;
-            val_free(&v);
+            xpv_free(&v);
         }
-        out->t = V_STR;
+        out->t = XPV_STR;
         if (n && SUCCEEDED(hr)) {
             if (x->op == F_NAMESPACE_URI) {
                 if (n->uri)
@@ -1807,7 +2159,7 @@ static HRESULT eval_function(Expr *x, Env *env, Val *out)
             val_set_string(out, a.s ? a.s : L"", a.length);
         break;
     case F_CONCAT:
-        out->t = V_STR;
+        out->t = XPV_STR;
         for (UINT i = 0; i < x->nargs && SUCCEEDED(hr); i++) {
             a.length = 0;
             hr = arg_string(x, i, env, &a);
@@ -1835,10 +2187,10 @@ static HRESULT eval_function(Expr *x, Env *env, Val *out)
                 break;
         }
         if (x->op == F_STARTS_WITH || x->op == F_CONTAINS) {
-            out->t = V_BOOL;
+            out->t = XPV_BOOL;
             out->b = at != (UINT)-1;
         } else {
-            out->t = V_STR;
+            out->t = XPV_STR;
             if (at != (UINT)-1) {
                 if (x->op == F_SUBSTRING_BEFORE)
                     xb_put(&out->s, s, at);
@@ -1862,7 +2214,7 @@ static HRESULT eval_function(Expr *x, Env *env, Val *out)
         double last = x->nargs == 3 ? first + xp_floor(len + 0.5) : 1.0e300;
         if (x->nargs == 3 && (xd_isnan(len) || xd_isnan(start)))
             last = first - 1;
-        out->t = V_STR;
+        out->t = XPV_STR;
         if (xd_isnan(start))
             break;
         for (UINT i = 0; i < a.length; i++) {
@@ -1874,12 +2226,12 @@ static HRESULT eval_function(Expr *x, Env *env, Val *out)
     }
     case F_STRING_LENGTH:
         hr = arg_string(x, 0, env, &a);
-        out->t = V_NUM;
+        out->t = XPV_NUM;
         out->n = a.length;
         break;
     case F_NORMALIZE_SPACE: {
         hr = arg_string(x, 0, env, &a);
-        out->t = V_STR;
+        out->t = XPV_STR;
         BOOL pending = FALSE;
         for (UINT i = 0; i < a.length; i++) {
             if (xd_is_space(a.s[i])) {
@@ -1901,7 +2253,7 @@ static HRESULT eval_function(Expr *x, Env *env, Val *out)
             hr = arg_string(x, 2, env, &c);
         if (FAILED(hr))
             break;
-        out->t = V_STR;
+        out->t = XPV_STR;
         for (UINT i = 0; i < a.length; i++) {
             UINT k = 0;
             while (k < b.length && b.s[k] != a.s[i])
@@ -1915,23 +2267,23 @@ static HRESULT eval_function(Expr *x, Env *env, Val *out)
     }
     case F_BOOLEAN:
     case F_NOT: {
-        Val v = {};
+        XpVal v = {};
         hr = eval(x->args[0], env, &v);
-        out->t = V_BOOL;
-        out->b = SUCCEEDED(hr) ? val_to_bool(&v) : FALSE;
+        out->t = XPV_BOOL;
+        out->b = SUCCEEDED(hr) ? xpv_bool(&v) : FALSE;
         if (x->op == F_NOT)
             out->b = !out->b;
-        val_free(&v);
+        xpv_free(&v);
         break;
     }
     case F_TRUE:
     case F_FALSE:
-        out->t = V_BOOL;
+        out->t = XPV_BOOL;
         out->b = x->op == F_TRUE;
         break;
     case F_LANG: {
         hr = arg_string(x, 0, env, &a);
-        out->t = V_BOOL;
+        out->t = XPV_BOOL;
         if (FAILED(hr))
             break;
         for (XNode *n = env->node; n; n = n->parent) {
@@ -1953,12 +2305,12 @@ static HRESULT eval_function(Expr *x, Env *env, Val *out)
         break;
     }
     case F_NUMBER: {
-        out->t = V_NUM;
+        out->t = XPV_NUM;
         if (x->nargs) {
-            Val v = {};
+            XpVal v = {};
             hr = eval(x->args[0], env, &v);
-            out->n = SUCCEEDED(hr) ? val_to_number(&v) : 0;
-            val_free(&v);
+            out->n = SUCCEEDED(hr) ? xpv_number(&v) : 0;
+            xpv_free(&v);
         } else {
             node_string(env->node, &a);
             out->n = xd_parse_number(a.s ? a.s : L"", a.length);
@@ -1966,11 +2318,11 @@ static HRESULT eval_function(Expr *x, Env *env, Val *out)
         break;
     }
     case F_SUM: {
-        Val v = {};
+        XpVal v = {};
         hr = eval(x->args[0], env, &v);
-        if (SUCCEEDED(hr) && v.t != V_SET)
+        if (SUCCEEDED(hr) && v.t != XPV_SET)
             hr = (HRESULT)XE_NOT_NODESET;
-        out->t = V_NUM;
+        out->t = XPV_NUM;
         double total = 0;
         for (UINT i = 0; SUCCEEDED(hr) && i < v.set.n; i++) {
             XBuf s = {};
@@ -1979,7 +2331,7 @@ static HRESULT eval_function(Expr *x, Env *env, Val *out)
             xb_free(&s);
         }
         out->n = total;
-        val_free(&v);
+        xpv_free(&v);
         break;
     }
     case F_FLOOR:
@@ -1987,7 +2339,7 @@ static HRESULT eval_function(Expr *x, Env *env, Val *out)
     case F_ROUND: {
         double d = 0;
         hr = arg_number(x, 0, env, &d);
-        out->t = V_NUM;
+        out->t = XPV_NUM;
         out->n = x->op == F_FLOOR ? xp_floor(d) : x->op == F_CEILING ? xp_ceil(d) : xp_floor(d + 0.5);
         break;
     }
@@ -1998,11 +2350,11 @@ static HRESULT eval_function(Expr *x, Env *env, Val *out)
     return hr;
 }
 
-static HRESULT eval(Expr *x, Env *env, Val *out)
+static HRESULT eval(Expr *x, Env *env, XpVal *out)
 {
     switch (x->kind) {
     case X_NUM:
-        out->t = V_NUM;
+        out->t = XPV_NUM;
         out->n = x->num;
         return S_OK;
     case X_STR:
@@ -2010,23 +2362,49 @@ static HRESULT eval(Expr *x, Env *env, Val *out)
         return S_OK;
     case X_FUNC:
         return eval_function(x, env, out);
+    case X_VAR:
+        if (!env->host || !env->host->variable)
+            return (HRESULT)XE_NO_VARIABLES;
+        return env->host->variable(env->host->user, x->uri, x->local, x->llen, out);
+    case X_EXT: {
+        XpVal args[16];
+        XpVal *list = args;
+        if (x->nargs > 16) {
+            list = xd_alloc(sizeof(XpVal) * x->nargs);
+            if (!list)
+                return E_OUTOFMEMORY;
+        }
+        memset(list, 0, sizeof(XpVal) * x->nargs);
+        HRESULT hr = S_OK;
+        for (UINT i = 0; i < x->nargs && SUCCEEDED(hr); i++)
+            hr = eval(x->args[i], env, &list[i]);
+        if (SUCCEEDED(hr)) {
+            XpCall call = {env->node, env->pos, env->size, env->current, env->host, env->ns, env->nns};
+            hr = env->host->function(env->host->user, x->uri, x->local, x->llen, list, x->nargs, &call, out);
+        }
+        for (UINT i = 0; i < x->nargs; i++)
+            xpv_free(&list[i]);
+        if (list != args)
+            xd_free(list);
+        return hr;
+    }
     case X_NEG: {
-        Val v = {};
+        XpVal v = {};
         HRESULT hr = eval(x->a, env, &v);
-        out->t = V_NUM;
-        out->n = SUCCEEDED(hr) ? -val_to_number(&v) : 0;
-        val_free(&v);
+        out->t = XPV_NUM;
+        out->n = SUCCEEDED(hr) ? -xpv_number(&v) : 0;
+        xpv_free(&v);
         return hr;
     }
     case X_UNION: {
-        Val l = {}, r = {};
+        XpVal l = {}, r = {};
         HRESULT hr = eval(x->a, env, &l);
         if (SUCCEEDED(hr))
             hr = eval(x->b, env, &r);
-        if (SUCCEEDED(hr) && (l.t != V_SET || r.t != V_SET))
+        if (SUCCEEDED(hr) && (l.t != XPV_SET || r.t != XPV_SET))
             hr = (HRESULT)XE_NOT_NODESET;
         if (SUCCEEDED(hr)) {
-            out->t = V_SET;
+            out->t = XPV_SET;
             out->set = l.set;
             memset(&l.set, 0, sizeof(l.set));
             for (UINT i = 0; i < r.set.n && SUCCEEDED(hr); i++)
@@ -2034,21 +2412,21 @@ static HRESULT eval(Expr *x, Env *env, Val *out)
                     hr = E_OUTOFMEMORY;
             sort_unique(&out->set);
         }
-        val_free(&l);
-        val_free(&r);
+        xpv_free(&l);
+        xpv_free(&r);
         return hr;
     }
     case X_BIN: {
         if (x->op == OP_AND || x->op == OP_OR) {
-            Val l = {};
+            XpVal l = {};
             HRESULT hr = eval(x->a, env, &l);
             if (FAILED(hr)) {
-                val_free(&l);
+                xpv_free(&l);
                 return hr;
             }
-            BOOL lb = val_to_bool(&l);
-            val_free(&l);
-            out->t = V_BOOL;
+            BOOL lb = xpv_bool(&l);
+            xpv_free(&l);
+            out->t = XPV_BOOL;
             if (x->op == OP_AND && !lb) {
                 out->b = FALSE;
                 return S_OK;
@@ -2057,13 +2435,13 @@ static HRESULT eval(Expr *x, Env *env, Val *out)
                 out->b = TRUE;
                 return S_OK;
             }
-            Val r = {};
+            XpVal r = {};
             hr = eval(x->b, env, &r);
-            out->b = SUCCEEDED(hr) && val_to_bool(&r);
-            val_free(&r);
+            out->b = SUCCEEDED(hr) && xpv_bool(&r);
+            xpv_free(&r);
             return hr;
         }
-        Val l = {}, r = {};
+        XpVal l = {}, r = {};
         HRESULT hr = eval(x->a, env, &l);
         if (SUCCEEDED(hr))
             hr = eval(x->b, env, &r);
@@ -2075,12 +2453,12 @@ static HRESULT eval(Expr *x, Env *env, Val *out)
             case OP_LE:
             case OP_GT:
             case OP_GE:
-                out->t = V_BOOL;
+                out->t = XPV_BOOL;
                 out->b = compare_values(x->op, &l, &r);
                 break;
             default: {
-                double a = val_to_number(&l), b = val_to_number(&r);
-                out->t = V_NUM;
+                double a = xpv_number(&l), b = xpv_number(&r);
+                out->t = XPV_NUM;
                 switch (x->op) {
                 case OP_ADD:
                     out->n = a + b;
@@ -2100,20 +2478,20 @@ static HRESULT eval(Expr *x, Env *env, Val *out)
             }
             }
         }
-        val_free(&l);
-        val_free(&r);
+        xpv_free(&l);
+        xpv_free(&r);
         return hr;
     }
     case X_FILTER: {
-        Val v = {};
+        XpVal v = {};
         HRESULT hr = eval(x->primary, env, &v);
         if (FAILED(hr)) {
-            val_free(&v);
+            xpv_free(&v);
             return hr;
         }
-        if (v.t != V_SET) {
+        if (v.t != XPV_SET) {
             if (x->npreds || x->steps) {
-                val_free(&v);
+                xpv_free(&v);
                 return (HRESULT)XE_NOT_NODESET;
             }
             *out = v;
@@ -2124,7 +2502,7 @@ static HRESULT eval(Expr *x, Env *env, Val *out)
         if (SUCCEEDED(hr) && x->steps)
             hr = run_steps(x->steps, &v.set, env);
         if (FAILED(hr)) {
-            val_free(&v);
+            xpv_free(&v);
             return hr;
         }
         *out = v;
@@ -2143,7 +2521,7 @@ static HRESULT eval(Expr *x, Env *env, Val *out)
             xs_free(&cur);
             return hr;
         }
-        out->t = V_SET;
+        out->t = XPV_SET;
         out->set = cur;
         return S_OK;
     }
@@ -2151,47 +2529,398 @@ static HRESULT eval(Expr *x, Env *env, Val *out)
     return E_FAIL;
 }
 
+/* ------------------------------------------------------------------ patterns */
+
+static void collect_steps(Step *st, Step **v, int *n)
+{
+    for (; st && *n < 64; st = st->next)
+        v[(*n)++] = st;
+}
+
+/* whether the node passes the test of a child or attribute step and its predicates among its siblings. */
+static HRESULT step_accepts(Step *st, XNode *n, Env *env, BOOL *ok)
+{
+    *ok = FALSE;
+    if (st->axis == AX_ATTRIBUTE) {
+        if (n->type != XN_ATTRIBUTE || !n->parent)
+            return S_OK;
+    } else if (n->type == XN_ATTRIBUTE || !n->parent) {
+        return S_OK;
+    }
+    if (!test_node(st, n))
+        return S_OK;
+    if (!st->npreds) {
+        *ok = TRUE;
+        return S_OK;
+    }
+    XSet cand = {};
+    if (!gather(st, n->parent, &cand))
+        return E_OUTOFMEMORY;
+    HRESULT hr = S_OK;
+    for (UINT p = 0; p < st->npreds && cand.n && SUCCEEDED(hr); p++)
+        hr = apply_predicate(st->preds[p], &cand, env, FALSE);
+    for (UINT i = 0; SUCCEEDED(hr) && i < cand.n; i++)
+        if (cand.v[i] == n)
+            *ok = TRUE;
+    xs_free(&cand);
+    return hr;
+}
+
+static BOOL is_descend_step(const Step *st)
+{
+    return st->axis == AX_DESCENDANT_OR_SELF && st->test == NT_NODE && !st->npreds;
+}
+
+static HRESULT match_chain(Step **st, int k, BOOL absolute, XNode *n, Env *env, BOOL *matches)
+{
+    BOOL ok;
+    HRESULT hr = step_accepts(st[k], n, env, &ok);
+    if (FAILED(hr) || !ok) {
+        *matches = FALSE;
+        return hr;
+    }
+    if (k == 0) {
+        *matches = !absolute || (n->parent && n->parent->type == XN_DOCUMENT) ||
+                   (n->parent && !n->parent->parent && n->parent->type == XN_FRAGMENT);
+        return S_OK;
+    }
+    if (is_descend_step(st[k - 1])) {
+        if (k - 1 == 0) {
+            *matches = TRUE;
+            return S_OK;
+        }
+        for (XNode *a = n->parent; a; a = a->parent) {
+            hr = match_chain(st, k - 2, absolute, a, env, matches);
+            if (FAILED(hr) || *matches)
+                return hr;
+        }
+        *matches = FALSE;
+        return S_OK;
+    }
+    if (!n->parent) {
+        *matches = FALSE;
+        return S_OK;
+    }
+    return match_chain(st, k - 1, absolute, n->parent, env, matches);
+}
+
+/* a pattern by the definition: some ancestor or self context selects the node. used where the fast match cannot be. */
+static HRESULT match_slow(Expr *x, XNode *n, Env *env, BOOL *matches)
+{
+    *matches = FALSE;
+    for (XNode *c = n;; c = c->parent) {
+        Env sub = *env;
+        sub.node = c;
+        sub.pos = sub.size = 1;
+        sub.root = tree_root(c);
+        XpVal v = {};
+        HRESULT hr = eval(x, &sub, &v);
+        if (SUCCEEDED(hr) && v.t == XPV_SET)
+            for (UINT i = 0; i < v.set.n; i++)
+                if (v.set.v[i] == n)
+                    *matches = TRUE;
+        xpv_free(&v);
+        if (FAILED(hr) || *matches || !c->parent)
+            return hr;
+    }
+}
+
+static HRESULT match_expr(Expr *x, XNode *n, Env *env, BOOL *matches)
+{
+    *matches = FALSE;
+    if (x->kind == X_UNION) {
+        HRESULT hr = match_expr(x->a, n, env, matches);
+        if (FAILED(hr) || *matches)
+            return hr;
+        return match_expr(x->b, n, env, matches);
+    }
+    if (x->kind != X_PATH)
+        return match_slow(x, n, env, matches);
+    if (!x->steps) {
+        *matches = x->absolute && n->type == XN_DOCUMENT;
+        return S_OK;
+    }
+    Step *st[64];
+    int count = 0;
+    collect_steps(x->steps, st, &count);
+    return match_chain(st, count - 1, x->absolute, n, env, matches);
+}
+
 /* ------------------------------------------------------------------ entry points */
 
-HRESULT xp_select_in(XNode *ctx, const WCHAR *expr, const XNs *ns, UINT nscount, BOOL xpath, XSet *out)
+struct XpExpr {
+    Expr *root;
+    Arena *arena;
+    WCHAR *text;
+    const XNs *ns;
+    UINT nns;
+    const XpHost *host;
+    BOOL xpath;
+    BOOL pattern;
+};
+
+XpExpr *xp_compile(const WCHAR *text, UINT length, const XNs *ns, UINT nscount, UINT flags, const XpHost *host,
+                   XDoc *doc, XpError *error)
 {
     Parser ps = {};
-    ps.s = ps.p = expr;
-    ps.e = expr + xd_wlen(expr);
+    WCHAR *copy = xd_alloc_raw(((SIZE_T)length + 1) * sizeof(WCHAR));
+    if (!copy) {
+        if (error)
+            error->hr = E_OUTOFMEMORY;
+        return nullptr;
+    }
+    memcpy(copy, text, (SIZE_T)length * sizeof(WCHAR));
+    copy[length] = 0;
+    ps.s = ps.p = copy;
+    ps.e = copy + length;
     ps.ns = ns;
     ps.nscount = nscount;
-    ps.xpath = xpath;
-    ps.doc = ctx->doc;
+    ps.xpath = (flags & XPF_XPATH) != 0;
+    ps.v6 = (flags & XPF_V6) != 0;
+    ps.doc = doc;
+    ps.host = host;
+    ps.pattern = (flags & XPF_PATTERN) != 0;
     ps.kind = T_EOF;
     ps.prev = T_EOF;
     next_token(&ps);
     HRESULT hr;
     Expr *x = nullptr;
     if (ps.kind == T_EOF) {
-        hr = (HRESULT)XE_EXPR_EXPECTED;
+        fail(&ps, (HRESULT)XE_EXPR_EXPECTED);
+        hr = ps.error;
     } else {
-        x = parse_or(&ps);
+        x = ps.pattern ? parse_union(&ps) : parse_or(&ps);
         if (x && ps.kind != T_EOF && !ps.error)
-            ps.error = (HRESULT)XE_XPATH_UNEXPECTED;
+            fail_expected(&ps, ps.v6 ? "EOF" : "eof");
         hr = ps.error ? ps.error : (x ? S_OK : (HRESULT)XE_EXPR_EXPECTED);
     }
-    if (SUCCEEDED(hr)) {
-        Env env = {};
-        env.node = ctx;
-        env.pos = env.size = 1;
-        env.xpath = xpath;
-        env.root = tree_root(ctx);
-        Val v = {};
-        hr = eval(x, &env, &v);
-        if (SUCCEEDED(hr) && v.t != V_SET)
-            hr = (HRESULT)XE_NOT_NODESET;
-        if (SUCCEEDED(hr)) {
-            *out = v.set;
-            memset(&v.set, 0, sizeof(v.set));
-        }
-        val_free(&v);
+    if (error) {
+        error->hr = hr;
+        error->start = ps.errstart;
+        error->end = ps.errend;
+        memcpy(error->p1, ps.errp1, sizeof(error->p1));
+        memcpy(error->p2, ps.errp2, sizeof(error->p2));
     }
-    arena_free(ps.arena);
+    if (FAILED(hr)) {
+        arena_free(ps.arena);
+        xd_free(copy);
+        return nullptr;
+    }
+    XpExpr *e = xd_alloc(sizeof(XpExpr));
+    if (!e) {
+        arena_free(ps.arena);
+        xd_free(copy);
+        if (error)
+            error->hr = E_OUTOFMEMORY;
+        return nullptr;
+    }
+    e->root = x;
+    e->arena = ps.arena;
+    e->text = copy;
+    e->ns = ns;
+    e->nns = nscount;
+    e->host = host;
+    e->xpath = ps.xpath;
+    e->pattern = ps.pattern;
+    return e;
+}
+
+void xp_free(XpExpr *x)
+{
+    if (x) {
+        arena_free(x->arena);
+        xd_free(x->text);
+        xd_free(x);
+    }
+}
+
+static void env_for(XpExpr *x, XpCall *call, Env *env)
+{
+    memset(env, 0, sizeof(*env));
+    env->node = call->node;
+    env->pos = call->pos;
+    env->size = call->size;
+    env->xpath = x->xpath;
+    env->root = tree_root(call->node);
+    env->ns = x->ns;
+    env->nns = x->nns;
+    env->host = call->host ? call->host : x->host;
+    env->current = call->current;
+}
+
+HRESULT xp_eval(XpExpr *x, XpCall *call, XpVal *out)
+{
+    Env env;
+    env_for(x, call, &env);
+    memset(out, 0, sizeof(*out));
+    BOOL saved = xd_text_mode(x->host != nullptr);
+    HRESULT hr = eval(x->root, &env, out);
+    xd_text_mode(saved);
+    return hr;
+}
+
+HRESULT xp_match(XpExpr *x, XNode *node, XpCall *call, BOOL *matches)
+{
+    Env env;
+    env_for(x, call, &env);
+    BOOL saved = xd_text_mode(x->host != nullptr);
+    HRESULT hr = match_expr(x->root, node, &env, matches);
+    xd_text_mode(saved);
+    return hr;
+}
+
+static void flatten(Expr *x, Expr **v, UINT *n, UINT max)
+{
+    if (x->kind == X_UNION) {
+        flatten(x->a, v, n, max);
+        flatten(x->b, v, n, max);
+    } else if (*n < max) {
+        v[(*n)++] = x;
+    }
+}
+
+/* an alternative of a pattern is its own compiled expression that shares the arena of the whole. */
+UINT xp_alternatives(XpExpr *x, XpExpr **out, UINT max)
+{
+    Expr *v[64];
+    UINT n = 0;
+    flatten(x->root, v, &n, max < 64 ? max : 64);
+    for (UINT i = 0; i < n; i++) {
+        XpExpr *e = xd_alloc(sizeof(XpExpr));
+        if (!e)
+            return i;
+        *e = *x;
+        e->root = v[i];
+        e->arena = nullptr;
+        e->text = nullptr;
+        out[i] = e;
+    }
+    return n;
+}
+
+double xp_priority(XpExpr *x)
+{
+    Expr *e = x->root;
+    if (e->kind != X_PATH || !e->steps)
+        return 0.5;
+    Step *st = e->steps;
+    if (st->next || st->npreds || e->absolute)
+        return 0.5;
+    switch (st->test) {
+    case NT_NAME:
+        return 0;
+    case NT_ANY:
+        return st->uri || st->by_prefix ? -0.25 : -0.5;
+    case NT_PI:
+        return st->local ? 0 : -0.5;
+    }
+    return -0.5;
+}
+
+/* whether an alternative is a location path pattern: child and attribute steps joined by / and //, or id() or key() first. */
+/* whether the expression cannot be a node set. */
+BOOL xp_not_nodeset(XpExpr *x)
+{
+    return expr_not_set(x->root);
+}
+
+static BOOL literal_args(const Expr *e)
+{
+    for (UINT i = 0; i < e->nargs; i++)
+        if (e->args[i]->kind != X_STR)
+            return FALSE;
+    return TRUE;
+}
+
+BOOL xp_pattern_ok(XpExpr *x, UINT *start, UINT *end)
+{
+    Expr *e = x->root;
+    *start = *end = 0;
+    BOOL has_path = TRUE;
+    Expr *call = nullptr;
+    if (e->kind == X_FILTER)
+        call = e->primary;
+    else if (e->kind == X_FUNC || e->kind == X_EXT)
+        call = e, has_path = FALSE;
+    else if (e->kind != X_PATH)
+        return FALSE;
+    if (call) {
+        BOOL is_id = call->kind == X_FUNC && call->op == F_ID;
+        BOOL is_key = call->kind == X_EXT && !call->uri && call->llen == 3 && !memcmp(call->local, L"key", 6);
+        if (!is_id && !is_key)
+            return FALSE;
+        if (!literal_args(call))
+            return FALSE;
+        if (!has_path)
+            return TRUE;
+    }
+    for (Step *st = e->steps; st; st = st->next) {
+        if (st->axis == AX_CHILD || st->axis == AX_ATTRIBUTE)
+            continue;
+        if (st->axis == AX_DESCENDANT_OR_SELF && st->test == NT_NODE && !st->npreds)
+            continue;
+        *start = st->tok_start;
+        *end = st->tok_end;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* the name of the function a pattern starts with, id() or key(), else null. */
+/* what a pattern can match, from its last step, so a node of another kind or name is skipped without testing it. */
+int xp_quick(XpExpr *x, const WCHAR **local, UINT *length)
+{
+    Expr *e = x->root;
+    *local = nullptr;
+    *length = 0;
+    if (e->kind != X_PATH)
+        return XPQ_NONE;
+    if (!e->steps)
+        return e->absolute ? XPQ_ROOT : XPQ_NONE;
+    Step *st = e->steps;
+    while (st->next)
+        st = st->next;
+    BOOL attr = st->axis == AX_ATTRIBUTE;
+    switch (st->test) {
+    case NT_NAME:
+        *local = st->local;
+        *length = st->llen;
+        return attr ? XPQ_ATTRIBUTE_NAME : XPQ_ELEMENT_NAME;
+    case NT_ANY:
+        return attr ? XPQ_ATTRIBUTE : XPQ_ELEMENT;
+    case NT_TEXT:
+        return XPQ_TEXT;
+    case NT_COMMENT:
+        return XPQ_COMMENT;
+    case NT_PI:
+        return XPQ_PI;
+    }
+    return XPQ_NONE;
+}
+
+void xs_sort(XSet *s)
+{
+    sort_unique(s);
+}
+
+HRESULT xp_select_in(XNode *ctx, const WCHAR *expr, const XNs *ns, UINT nscount, BOOL xpath, XSet *out)
+{
+    XpError err;
+    XpExpr *x = xp_compile(expr, xd_wlen(expr), ns, nscount, xpath ? XPF_XPATH : 0, nullptr, ctx->doc, &err);
+    HRESULT hr = err.hr;
+    if (!x)
+        return hr;
+    XpCall call = {ctx, 1, 1, nullptr, nullptr, nullptr, 0};
+    XpVal v = {};
+    hr = xp_eval(x, &call, &v);
+    if (SUCCEEDED(hr) && v.t != XPV_SET)
+        hr = (HRESULT)XE_NOT_NODESET;
+    if (SUCCEEDED(hr)) {
+        *out = v.set;
+        memset(&v.set, 0, sizeof(v.set));
+    }
+    xpv_free(&v);
+    xp_free(x);
     return hr;
 }
 

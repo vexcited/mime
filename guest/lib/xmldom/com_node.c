@@ -1,5 +1,5 @@
 /* the node interfaces: IXMLDOMNode and the interfaces of each node type. */
-#include <xmldom/xmldom.h>
+#include <xmldom/xslt.h>
 
 #define N(p) ((XNode *)(p))
 
@@ -489,7 +489,9 @@ static HRESULT STDMETHODCALLTYPE n_transformNode(XNode *n, XNode *style, BSTR *p
 {
     if (p)
         *p = nullptr;
-    return E_NOTIMPL;
+    if (!style || !p)
+        return E_INVALIDARG;
+    return xs_transform_node(n, style, nullptr, p);
 }
 
 static HRESULT select_list(XNode *n, BSTR query, XList **out)
@@ -583,7 +585,9 @@ static HRESULT STDMETHODCALLTYPE n_get_baseName(XNode *n, BSTR *p)
 
 static HRESULT STDMETHODCALLTYPE n_transformNodeToObject(XNode *n, XNode *style, VARIANT output)
 {
-    return E_NOTIMPL;
+    if (!style)
+        return E_INVALIDARG;
+    return xs_transform_node(n, style, &output, nullptr);
 }
 
 #define NODE_ENTRIES                                                                                                   \

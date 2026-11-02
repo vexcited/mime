@@ -5,6 +5,14 @@
 
 /* ------------------------------------------------------------------ lists */
 
+BOOL xd_list_is_ours(const void *p)
+{
+    if (!p)
+        return FALSE;
+    const void *vtbl = ((const XList *)p)->vtbl;
+    return vtbl == &xd_vtbl_list || vtbl == &xd_vtbl_selection;
+}
+
 XList *xd_list_new(XNode *base, UINT kind, const WCHAR *name, BOOL selection)
 {
     XList *l = xd_alloc(sizeof(XList));

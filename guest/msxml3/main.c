@@ -19,6 +19,8 @@ static const XClass classes[] = {
     {&CLSID_DOMDocument26, BASE_FLAGS, L"Msxml2.DOMDocument.2.6", nullptr, L"XML DOM Document 2.6"},
     {&CLSID_FreeThreadedDOMDocument26, BASE_FLAGS | XDF_FREE, L"Msxml2.FreeThreadedDOMDocument.2.6", nullptr,
      L"Free Threaded XML DOM Document 2.6"},
+    {&CLSID_XSLTemplate, 0, L"Msxml2.XSLTemplate", nullptr, L"XSL Template", XK_TEMPLATE},
+    {&CLSID_XSLTemplate30, 0, L"Msxml2.XSLTemplate.3.0", L"Msxml2.XSLTemplate", L"XSL Template 3.0", XK_TEMPLATE},
 };
 
 static HMODULE g_module;

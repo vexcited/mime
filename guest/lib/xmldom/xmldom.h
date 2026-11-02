@@ -101,7 +101,12 @@
 #define XE_XPATH_UNEXPECTED 0xC00CE381u
 #define XE_XPATH_CHAR 0xC00CE386u
 #define XE_NOT_NODESET 0xC00CE617u
+#define XE_NOT_DOM_NODE 0xC00CE382u
+#define XE_NUMBER_EXPECTED 0xC00CE603u
+#define XE_PATTERN_FUNCTION 0xC00CE338u
 #define XE_NO_VARIABLES 0xC00CE605u
+#define XE_PATTERN_VAR 0xC00CE610u
+#define XE_VAR_UNRESOLVED 0xC00CE316u
 #define XE_BAD_FUNCTION 0xC00CE334u
 #define XE_INSERT_NOT_FOUND 0xC00CE206u
 #define XE_NODE_NOT_FOUND 0xC00CE207u
@@ -148,6 +153,7 @@ enum {
 #define XF_EXPLICIT 0x02  /* written with an end tag though empty, as parsed from a start and end tag or after its text was set to empty. */
 #define XF_WS_INSIDE 0x04 /* the parser dropped white space between the start tag and the first child. */
 #define XF_WS_AFTER 0x08  /* the parser dropped white space after the node. */
+#define XF_DOE 0x10       /* a text node of a result tree that is written without escapes. */
 
 /*
  * a node is its own com object: the first member is its type's vtable. refs counts com references, subs the
@@ -286,6 +292,10 @@ int xd_check_name(const WCHAR *s, UINT length, BOOL allow_colon);
 int xd_wcsicmp(const WCHAR *a, const WCHAR *b);
 
 void xd_format_number(double value, XBuf *out);
+/* the shortest plain decimal text that reads back as the same double. */
+void xd_format_double(double value, XBuf *out);
+/* the double nearest to 0.digits... times ten to the exp10 and the digits count, digits are characters. */
+double xd_decimal_to_double(const WCHAR *digits, UINT count, int exp10);
 double xd_parse_number(const WCHAR *s, UINT length);
 double xd_nan(void);
 BOOL xd_isnan(double value);
@@ -331,6 +341,9 @@ const WCHAR *xd_lookup_ns(XNode *at, const WCHAR *prefix, UINT length);
 
 XNode *xd_clone(XNode *src, XDoc *into, BOOL deep);
 BOOL xd_text(XNode *n, XBuf *out);
+/* strings of nodes include the white space the parser dropped, as xslt sees them: returns the old mode. */
+BOOL xd_text_mode(BOOL on);
+void xd_text_xsl(XNode *n, XBuf *out);
 BOOL xd_set_text(XNode *n, const WCHAR *text, UINT length);
 void xd_normalize(XNode *n);
 void xd_number_order(XDoc *doc);
@@ -388,6 +401,76 @@ BOOL xs_add(XSet *s, XNode *n);
 /* uses the document's selection settings, the nodes come out in document order. */
 HRESULT xp_select(XNode *ctx, const WCHAR *expr, XSet *out);
 HRESULT xp_select_in(XNode *ctx, const WCHAR *expr, const XNs *ns, UINT nscount, BOOL xpath, XSet *out);
+
+/* the value of an expression. a node set that is a result tree fragment has rtf set. */
+enum { XPV_SET, XPV_NUM, XPV_STR, XPV_BOOL };
+typedef struct XpVal {
+    int t;
+    double n;
+    BOOL b;
+    XBuf s;
+    XSet set;
+    BOOL rtf;
+} XpVal;
+
+void xpv_free(XpVal *v);
+void xpv_string(XpVal *v, XBuf *out);
+double xpv_number(XpVal *v);
+BOOL xpv_bool(XpVal *v);
+void xpv_set_string(XpVal *v, const WCHAR *s, UINT n);
+/* a deep copy. */
+BOOL xpv_copy(XpVal *to, const XpVal *from);
+
+/* what an expression is evaluated for. current is the node current() answers. */
+struct XpHost;
+typedef struct XpCall {
+    XNode *node;
+    UINT pos;
+    UINT size;
+    XNode *current;
+    const struct XpHost *host; /* the host of the run, else the one the expression was compiled with. */
+    const XNs *ns;             /* the namespaces the expression was written in. */
+    UINT nns;
+} XpCall;
+
+/* the stylesheet side of an expression: variables and the functions that are not xpath's own. */
+typedef struct XpHost {
+    BOOL (*declared)(void *user, const WCHAR *uri, const WCHAR *local, UINT length);
+    BOOL (*known)(void *user, const WCHAR *uri, const WCHAR *local, UINT length, UINT args);
+    HRESULT (*function)(void *user, const WCHAR *uri, const WCHAR *local, UINT length, XpVal *args, UINT count,
+                        XpCall *call, XpVal *out);
+    HRESULT (*variable)(void *user, const WCHAR *uri, const WCHAR *local, UINT length, XpVal *out);
+    void *user;
+} XpHost;
+
+typedef struct XpExpr XpExpr;
+#define XPF_XPATH 0x1   /* xpath 1.0 rules, not xslpattern. */
+#define XPF_PATTERN 0x2 /* an xslt match pattern. */
+#define XPF_V6 0x4
+/* why an expression failed: the message id, the part of the text the message points at and its two words. */
+typedef struct XpError {
+    HRESULT hr;
+    UINT start, end;
+    WCHAR p1[40], p2[40];
+} XpError;
+/* the text is copied, the expression does not point into it. */
+XpExpr *xp_compile(const WCHAR *text, UINT length, const XNs *ns, UINT nscount, UINT flags, const XpHost *host,
+                   XDoc *doc, XpError *error);
+void xp_free(XpExpr *x);
+HRESULT xp_eval(XpExpr *x, XpCall *call, XpVal *out);
+/* the alternatives of a pattern, in order, and the default priority of each. */
+UINT xp_alternatives(XpExpr *x, XpExpr **out, UINT max);
+double xp_priority(XpExpr *x);
+/* whether the node matches the pattern. */
+HRESULT xp_match(XpExpr *x, XNode *node, XpCall *call, BOOL *matches);
+/* the plain name test a pattern or a path begins with, for indexing: the local name of a single step, else null. */
+BOOL xp_not_nodeset(XpExpr *x);
+/* whether a pattern is a location path of child and attribute steps, else the range of the step that is not. */
+BOOL xp_pattern_ok(XpExpr *x, UINT *start, UINT *end);
+enum { XPQ_NONE, XPQ_ELEMENT_NAME, XPQ_ELEMENT, XPQ_ATTRIBUTE_NAME, XPQ_ATTRIBUTE, XPQ_TEXT, XPQ_COMMENT, XPQ_PI, XPQ_ROOT };
+int xp_quick(XpExpr *x, const WCHAR **local, UINT *length);
+/* sorts a node set into document order and drops repeats. */
+void xs_sort(XSet *s);
 
 /* ------------------------------------------------------------------ com objects */
 
@@ -450,6 +533,9 @@ extern const XDispSet xd_dispset_selection;
 extern const XDispSet xd_dispset_map;
 extern const XDispSet xd_dispset_error;
 extern const XDispSet xd_dispset_impl;
+extern const XDispSet xd_dispset_template;
+extern const XDispSet xd_dispset_processor;
+HRESULT xd_create_template(BOOL v6, REFIID riid, void **out);
 
 HRESULT xd_disp_names(const XDispSet *set, REFIID riid, LPOLESTR *names, UINT cnames, LCID lcid, DISPID *ids);
 HRESULT xd_disp_invoke(void *self, const XDispSet *set, DISPID id, REFIID riid, LCID lcid, WORD flags,
@@ -461,7 +547,10 @@ typedef struct XClass {
     const WCHAR *progid; /* may be null. */
     const WCHAR *version_independent;
     const WCHAR *name;
+    UINT kind; /* 0 a document, 1 an xslt template */
 } XClass;
+#define XK_DOCUMENT 0
+#define XK_TEMPLATE 1
 
 HRESULT xd_get_class_object(const XClass *classes, UINT count, REFCLSID clsid, REFIID riid, void **out);
 HRESULT xd_can_unload(void);
@@ -480,6 +569,10 @@ XNode *xv_to_node(const VARIANT *v);
 HRESULT xd_ret_string(BSTR *out, const WCHAR *s, UINT length);
 HRESULT xd_ret_buf(BSTR *out, XBuf *b);
 HRESULT xd_ret_node(XNode *n, void **out);
+/* the text of the last failure of a transformation on this thread, handed out once for the exception info. */
+void xd_set_error_text(HRESULT hr, const WCHAR *text);
+WCHAR *xd_take_error_text(HRESULT hr);
+BOOL xd_list_is_ours(const void *p);
 
 /* ------------------------------------------------------------------ interface tables */
 

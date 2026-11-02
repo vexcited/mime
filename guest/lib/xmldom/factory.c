@@ -49,6 +49,8 @@ static HRESULT STDMETHODCALLTYPE f_create(Factory *f, IUnknown *outer, REFIID ri
     *out = nullptr;
     if (outer)
         return CLASS_E_NOAGGREGATION;
+    if (f->cls->kind == XK_TEMPLATE)
+        return xd_create_template((f->cls->flags & XDF_V6) != 0, riid, out);
     XDoc *doc = xd_doc_new(f->cls->flags);
     if (!doc)
         return E_OUTOFMEMORY;
@@ -178,7 +180,7 @@ HRESULT xd_register_server(const XClass *classes, UINT count, HMODULE module, BO
         if (!r)
             r = put_value_typed(prog, nullptr, file, REG_EXPAND_SZ);
         if (!r)
-            r = put_value(prog, L"ThreadingModel", L"Both");
+            r = put_value(prog, L"ThreadingModel", classes[i].kind == XK_TEMPLATE ? L"Both" : L"Both");
         if (!r && classes[i].progid) {
             compose(prog, 160, path, L"\\ProgID", nullptr);
             r = put_value(prog, nullptr, classes[i].progid);

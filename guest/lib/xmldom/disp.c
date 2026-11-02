@@ -46,14 +46,14 @@ static const XDisp node_rows[] = {
     ROW(L"dataType", 26, GET, XNodeVtbl, get_dataType, ">V"),
     ROW(L"dataType", 26, PUT, XNodeVtbl, put_dataType, "b>-"),
     ROW(L"xml", 27, GET, XNodeVtbl, get_xml, ">B"),
-    ROW(L"transformNode", 28, CALL, XNodeVtbl, transformNode, "n>B"),
+    ROW(L"transformNode", 28, CALL, XNodeVtbl, transformNode, "x>B"),
     ROW(L"selectNodes", 29, CALL, XNodeVtbl, selectNodes, "b>N"),
     ROW(L"selectSingleNode", 30, CALL, XNodeVtbl, selectSingleNode, "b>N"),
     ROW(L"parsed", 31, GET, XNodeVtbl, get_parsed, ">F"),
     ROW(L"namespaceURI", 32, GET, XNodeVtbl, get_namespaceURI, ">B"),
     ROW(L"prefix", 33, GET, XNodeVtbl, get_prefix, ">B"),
     ROW(L"baseName", 34, GET, XNodeVtbl, get_baseName, ">B"),
-    ROW(L"transformNodeToObject", 35, CALL, XNodeVtbl, transformNodeToObject, "nv>-"),
+    ROW(L"transformNodeToObject", 35, CALL | 0x8000, XNodeVtbl, transformNodeToObject, "xv>-"),
 };
 
 static const XDisp element_rows[] = {
@@ -203,6 +203,29 @@ static const XDisp impl_rows[] = {
     ROW(L"hasFeature", 0x91, CALL, XImplVtbl, hasFeature, "bb>F"),
 };
 
+static const XDisp template_rows[] = {
+    ROW(L"stylesheet", 2, DISPATCH_PROPERTYGET, XTplVtbl, get_stylesheet, ">N"),
+    ROW(L"stylesheet", 2, PUT, XTplVtbl, putref_stylesheet, "n>-"),
+    ROW(L"createProcessor", 3, CALL, XTplVtbl, createProcessor, ">N"),
+};
+
+static const XDisp processor_rows[] = {
+    ROW(L"input", 2, DISPATCH_PROPERTYGET, XProcVtbl, get_input, ">V"),
+    ROW(L"input", 2, PUT, XProcVtbl, put_input, "v>-"),
+    ROW(L"ownerTemplate", 3, DISPATCH_PROPERTYGET, XProcVtbl, get_ownerTemplate, ">N"),
+    ROW(L"setStartMode", 4, CALL, XProcVtbl, setStartMode, "st>-"),
+    ROW(L"startMode", 5, DISPATCH_PROPERTYGET, XProcVtbl, get_startMode, ">B"),
+    ROW(L"startModeURI", 6, DISPATCH_PROPERTYGET, XProcVtbl, get_startModeURI, ">B"),
+    ROW(L"output", 7, DISPATCH_PROPERTYGET, XProcVtbl, get_output, ">V"),
+    ROW(L"output", 7, PUT, XProcVtbl, put_output, "v>-"),
+    ROW(L"transform", 8, CALL, XProcVtbl, transform, ">F"),
+    ROW(L"reset", 9, CALL, XProcVtbl, reset, ">-"),
+    ROW(L"readyState", 10, DISPATCH_PROPERTYGET, XProcVtbl, get_readyState, ">L"),
+    ROW(L"addParameter", 11, CALL, XProcVtbl, addParameter, "bvc>-"),
+    ROW(L"addObject", 12, CALL, XProcVtbl, addObject, "ob>-"),
+    ROW(L"stylesheet", 13, DISPATCH_PROPERTYGET, XProcVtbl, get_stylesheet, ">N"),
+};
+
 #define COUNT(rows) (sizeof(rows) / sizeof((rows)[0]))
 
 #define SET1(a) {{a}, {COUNT(a)}}
@@ -234,6 +257,8 @@ const XDispSet xd_dispset_selection = SET1(selection_rows);
 const XDispSet xd_dispset_map = SET1(map_rows);
 const XDispSet xd_dispset_error = SET1(error_rows);
 const XDispSet xd_dispset_impl = SET1(impl_rows);
+const XDispSet xd_dispset_template = SET1(template_rows);
+const XDispSet xd_dispset_processor = SET1(processor_rows);
 
 /* ------------------------------------------------------------------ names */
 
@@ -305,13 +330,30 @@ static void exception_info(EXCEPINFO *excep, HRESULT hr)
     memset(excep, 0, sizeof(*excep));
     excep->scode = hr;
     excep->bstrSource = SysAllocString(L"msxml");
-    const WCHAR *text = xd_message((UINT)hr);
+    WCHAR *taken = xd_take_error_text(hr);
+    const WCHAR *text = taken ? taken : xd_message((UINT)hr);
+    if (!text) {
+        switch ((UINT)hr) {
+        case 0x80070057u:
+            text = L"The parameter is incorrect.\r\n";
+            break;
+        case 0x80020005u:
+            text = L"Type mismatch.\r\n";
+            break;
+        case 0x8007007Bu:
+            text = L"The filename, directory name, or volume label syntax is incorrect.\r\n";
+            break;
+        }
+        if (text)
+            taken = xd_wcsdup(text, xd_wlen(text));
+    }
     if (text) {
         UINT len = xd_wlen(text);
-        while (len && (text[len - 1] == '\r' || text[len - 1] == '\n'))
+        while (!taken && len && (text[len - 1] == '\r' || text[len - 1] == '\n'))
             len--;
         excep->bstrDescription = SysAllocStringLen(text, len);
     }
+    xd_free(taken);
 }
 
 HRESULT xd_disp_invoke(void *self, const XDispSet *set, DISPID id, REFIID riid, LCID lcid, WORD flags,
@@ -337,7 +379,7 @@ HRESULT xd_disp_invoke(void *self, const XDispSet *set, DISPID id, REFIID riid, 
     UINT required = 0, total = 0;
     const char *sig = row->sig;
     for (; sig[total] && sig[total] != '>'; total++)
-        if (sig[total] != 'w')
+        if (sig[total] != 'w' && sig[total] != 'c' && sig[total] != 't')
             required++;
     char out_kind = sig[total] == '>' ? sig[total + 1] : '-';
     if (supplied < required || supplied > total)
@@ -359,12 +401,37 @@ HRESULT xd_disp_invoke(void *self, const XDispSet *set, DISPID id, REFIID riid, 
     for (UINT i = 0; i < total && SUCCEEDED(hr); i++) {
         const VARIANT *arg = i < supplied ? &params->rgvarg[supplied - 1 - i] : nullptr;
         char kind = sig[i];
-        if (!arg && kind != 'w') {
+        if (!arg && kind != 'w' && kind != 'c' && kind != 't') {
             hr = DISP_E_BADPARAMCOUNT;
             break;
         }
         switch (kind) {
+        case 'o': {
+            const VARIANT *v = xv_deref(arg);
+            void *p = nullptr;
+            if (v->vt == VT_DISPATCH || v->vt == VT_UNKNOWN)
+                p = v->punkVal;
+            else if ((v->vt == (VT_DISPATCH | VT_BYREF) || v->vt == (VT_UNKNOWN | VT_BYREF)) && v->ppunkVal)
+                p = *v->ppunkVal;
+            else if (!xv_is_missing(v)) {
+                hr = DISP_E_TYPEMISMATCH;
+                break;
+            }
+            words[nw++] = (W)p;
+            break;
+        }
+        case 's':
+        case 't':
+        case 'c':
         case 'b': {
+            if (!arg) {
+                words[nw++] = 0;
+                break;
+            }
+            if ((kind == 's' || kind == 't') && xv_deref(arg)->vt == VT_NULL) {
+                hr = DISP_E_TYPEMISMATCH;
+                break;
+            }
             const VARIANT *v = xv_deref(arg);
             BSTR s = nullptr;
             if ((v->vt & ~VT_BYREF) == VT_BSTR) {
@@ -405,6 +472,12 @@ HRESULT xd_disp_invoke(void *self, const XDispSet *set, DISPID id, REFIID riid, 
             words[nw++] = on ? 0xFFFF : 0;
             break;
         }
+        case 'x':
+            if (xv_is_missing(arg) && arg->vt != VT_ERROR) {
+                hr = DISP_E_TYPEMISMATCH;
+                break;
+            }
+            [[fallthrough]];
         case 'n': {
             XNode *node = nullptr;
             if (!xv_is_missing(arg)) {
@@ -448,6 +521,7 @@ HRESULT xd_disp_invoke(void *self, const XDispSet *set, DISPID id, REFIID riid, 
         }
     }
 
+    BOOL called = FALSE;
     BSTR bout = nullptr;
     LONG lout = 0;
     VARIANT_BOOL fout = 0;
@@ -475,6 +549,7 @@ HRESULT xd_disp_invoke(void *self, const XDispSet *set, DISPID id, REFIID riid, 
         }
         void *fn = ((void **)*(void ***)self)[row->slot];
         hr = call_words(fn, words, nw);
+        called = TRUE;
     } else if (hr == DISP_E_TYPEMISMATCH && argerr) {
         *argerr = 0;
     }
@@ -492,7 +567,14 @@ HRESULT xd_disp_invoke(void *self, const XDispSet *set, DISPID id, REFIID riid, 
         VariantClear(&vout);
         if (pout)
             ((IUnknown *)pout)->lpVtbl->Release((IUnknown *)pout);
-        if (hr == DISP_E_TYPEMISMATCH || hr == DISP_E_BADPARAMCOUNT || hr == E_OUTOFMEMORY)
+        if (row->flags & 0x8000)
+            return hr;
+        if (hr == DISP_E_BADVARTYPE) {
+            if (result)
+                *result = vout;
+            return hr;
+        }
+        if (!called && (hr == DISP_E_TYPEMISMATCH || hr == DISP_E_BADPARAMCOUNT || hr == E_OUTOFMEMORY))
             return hr;
         exception_info(excep, hr);
         return DISP_E_EXCEPTION;

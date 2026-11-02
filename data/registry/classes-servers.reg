@@ -222,7 +222,22 @@
 @=expand:"%SystemRoot%\\system32\\msxml3.dll"
 "ThreadingModel"="Both"
 
+; XSLTemplate
+[HKCR\CLSID\{2933BF94-7B36-11D2-B20E-00C04F983E60}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msxml3.dll"
+"ThreadingModel"="Both"
+
+; XSLTemplate30
+[HKCR\CLSID\{F5078F36-C551-11D3-89B9-0000F81FE221}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msxml3.dll"
+"ThreadingModel"="Both"
+
 ; msxml6.dll
+; XSLTemplate60
+[HKCR\CLSID\{88D96A08-F192-11D4-A65F-0040963251E5}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msxml6.dll"
+"ThreadingModel"="Both"
+
 ; DOMDocument60
 [HKCR\CLSID\{88D96A05-F192-11D4-A65F-0040963251E5}\InprocServer32]
 @=expand:"%SystemRoot%\\system32\\msxml6.dll"

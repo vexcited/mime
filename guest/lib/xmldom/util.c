@@ -326,103 +326,9 @@ BOOL xd_isnan(double value)
     return value != value;
 }
 
-static double pow10_int(int e)
-{
-    double r = 1, base = 10;
-    UINT n = e < 0 ? (UINT)-e : (UINT)e;
-    while (n) {
-        if (n & 1)
-            r *= base;
-        base *= base;
-        n >>= 1;
-    }
-    return e < 0 ? 1 / r : r;
-}
-
 void xd_format_number(double value, XBuf *out)
 {
-    if (xd_isnan(value)) {
-        xb_puta(out, "NaN");
-        return;
-    }
-    if (value == 0) {
-        xb_putc(out, '0');
-        return;
-    }
-    if (value > 1.7976931348623157e308) {
-        xb_puta(out, "Infinity");
-        return;
-    }
-    if (value < -1.7976931348623157e308) {
-        xb_puta(out, "-Infinity");
-        return;
-    }
-    if (value < 0) {
-        xb_putc(out, '-');
-        value = -value;
-    }
-    /* integers below 2^63 are exact. */
-    if (value < 9.2e18 && value == (double)(INT64)value) {
-        UINT64 v = (UINT64)(INT64)value;
-        WCHAR digits[24];
-        UINT n = 0;
-        while (v) {
-            digits[n++] = (WCHAR)('0' + (UINT)(v % 10));
-            v /= 10;
-        }
-        while (n)
-            xb_putc(out, digits[--n]);
-        return;
-    }
-    /* otherwise fifteen significant digits, without an exponent. */
-    int exp10 = 0;
-    double scaled = value;
-    if (scaled >= 1e15) {
-        while (scaled >= 1e15) {
-            scaled /= 10;
-            exp10++;
-        }
-    } else {
-        while (scaled < 1e14) {
-            scaled *= 10;
-            exp10--;
-        }
-    }
-    UINT64 digits = (UINT64)(scaled + 0.5);
-    if (digits >= 1000000000000000ull) {
-        digits /= 10;
-        exp10++;
-    }
-    WCHAR d[24];
-    UINT n = 0;
-    while (digits) {
-        d[n++] = (WCHAR)('0' + (UINT)(digits % 10));
-        digits /= 10;
-    }
-    /* d holds fifteen digits backwards, exp10 is the power of the last. */
-    WCHAR text[16];
-    for (UINT i = 0; i < n; i++)
-        text[i] = d[n - 1 - i];
-    UINT used = n;
-    while (used > 1 && text[used - 1] == '0') {
-        used--;
-        exp10++;
-    }
-    int point = (int)used + exp10; /* digits before the decimal point. */
-    if (point <= 0) {
-        xb_puta(out, "0.");
-        for (int i = 0; i < -point; i++)
-            xb_putc(out, '0');
-        xb_put(out, text, used);
-    } else if ((UINT)point >= used) {
-        xb_put(out, text, used);
-        for (int i = 0; i < point - (int)used; i++)
-            xb_putc(out, '0');
-    } else {
-        xb_put(out, text, (UINT)point);
-        xb_putc(out, '.');
-        xb_put(out, text + point, used - (UINT)point);
-    }
+    xd_format_double(value, out);
 }
 
 double xd_parse_number(const WCHAR *s, UINT length)
@@ -439,23 +345,26 @@ double xd_parse_number(const WCHAR *s, UINT length)
     }
     if (i >= length)
         return xd_nan();
-    double value = 0;
-    UINT digits = 0;
-    for (; i < length && s[i] >= '0' && s[i] <= '9'; i++, digits++)
-        value = value * 10 + (s[i] - '0');
+    WCHAR *digits = xd_alloc_raw(((SIZE_T)length - i + 1) * sizeof(WCHAR));
+    if (!digits)
+        return xd_nan();
+    UINT count = 0;
+    int exp10 = 0;
+    UINT seen = 0;
+    for (; i < length && s[i] >= '0' && s[i] <= '9'; i++, seen++)
+        digits[count++] = s[i];
     if (i < length && s[i] == '.') {
         i++;
-        UINT64 fraction = 0;
-        int places = 0;
-        for (; i < length && s[i] >= '0' && s[i] <= '9'; i++, digits++) {
-            if (fraction < 100000000000000000ull) {
-                fraction = fraction * 10 + (UINT)(s[i] - '0');
-                places++;
-            }
+        for (; i < length && s[i] >= '0' && s[i] <= '9'; i++, seen++) {
+            digits[count++] = s[i];
+            exp10--;
         }
-        value += (double)fraction / pow10_int(places);
     }
-    if (i != length || !digits)
-        return xd_nan();
+    double value;
+    if (i != length || !seen)
+        value = xd_nan();
+    else
+        value = xd_decimal_to_double(digits, count, exp10);
+    xd_free(digits);
     return negative ? -value : value;
 }

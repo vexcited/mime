@@ -253,6 +253,34 @@ typedef struct XAux {
     BOOL safety;
 } XAux;
 
+/* the xslt template and processor objects. */
+typedef struct XTemplate XTemplate;
+typedef struct XTplVtbl {
+    IDispatch_METHODS(XTemplate)
+    HRESULT(STDMETHODCALLTYPE *putref_stylesheet)(XTemplate *This, XNode *style);
+    HRESULT(STDMETHODCALLTYPE *get_stylesheet)(XTemplate *This, void **style);
+    HRESULT(STDMETHODCALLTYPE *createProcessor)(XTemplate *This, void **processor);
+} XTplVtbl;
+
+typedef struct XProc XProc;
+typedef struct XProcVtbl {
+    IDispatch_METHODS(XProc)
+    HRESULT(STDMETHODCALLTYPE *put_input)(XProc *This, VARIANT input);
+    HRESULT(STDMETHODCALLTYPE *get_input)(XProc *This, VARIANT *input);
+    HRESULT(STDMETHODCALLTYPE *get_ownerTemplate)(XProc *This, void **tmpl);
+    HRESULT(STDMETHODCALLTYPE *setStartMode)(XProc *This, BSTR mode, BSTR uri);
+    HRESULT(STDMETHODCALLTYPE *get_startMode)(XProc *This, BSTR *mode);
+    HRESULT(STDMETHODCALLTYPE *get_startModeURI)(XProc *This, BSTR *uri);
+    HRESULT(STDMETHODCALLTYPE *put_output)(XProc *This, VARIANT output);
+    HRESULT(STDMETHODCALLTYPE *get_output)(XProc *This, VARIANT *output);
+    HRESULT(STDMETHODCALLTYPE *transform)(XProc *This, VARIANT_BOOL *done);
+    HRESULT(STDMETHODCALLTYPE *reset)(XProc *This);
+    HRESULT(STDMETHODCALLTYPE *get_readyState)(XProc *This, LONG *state);
+    HRESULT(STDMETHODCALLTYPE *addParameter)(XProc *This, BSTR name, VARIANT value, BSTR uri);
+    HRESULT(STDMETHODCALLTYPE *addObject)(XProc *This, IDispatch *object, BSTR uri);
+    HRESULT(STDMETHODCALLTYPE *get_stylesheet)(XProc *This, void **style);
+} XProcVtbl;
+
 extern const XNodeVtbl xd_vtbl_node;
 extern const XElementVtbl xd_vtbl_element;
 extern const XAttributeVtbl xd_vtbl_attribute;
