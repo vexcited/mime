@@ -215,6 +215,158 @@ NETAPI NET_API_STATUS WINAPI NetShareAdd(LMSTR server, DWORD level, LPBYTE buffe
 }
 
 /*
+ * the server and workstation services that these calls belong to are not running. the answers are the ones of a
+ * machine that has no connection, session, open remote file or share, and of a computer that is not the primary
+ * domain controller of a domain, which the groups belong to.
+ */
+#define NERR_UseNotFound 2250
+#define NERR_DeviceNotShared 2311
+#define NERR_ClientNameNotFound 2312
+#define NERR_FileIdNotFound 2314
+#define NERR_NotPrimary 2226
+
+NETAPI NET_API_STATUS WINAPI NetUseEnum(LMSTR server, DWORD level, LPBYTE *buffer, DWORD max_length, LPDWORD read,
+                                        LPDWORD total, LPDWORD resume)
+{
+    if (level > 2)
+        return ERROR_INVALID_LEVEL;
+    if (!buffer || !read || !total)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    *read = 0;
+    *total = 0;
+    return local_server(server) ? NERR_Success : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetUseGetInfo(LMSTR server, LMSTR name, DWORD level, LPBYTE *buffer)
+{
+    if (level > 2)
+        return ERROR_INVALID_LEVEL;
+    if (!name || !buffer)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    return local_server(server) ? NERR_UseNotFound : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetShareCheck(LMSTR server, LMSTR device, LPDWORD type)
+{
+    if (!device || !type)
+        return ERROR_INVALID_PARAMETER;
+    *type = 0;
+    return local_server(server) ? NERR_ServerNotStarted : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetSessionEnum(LMSTR server, LMSTR client, LMSTR user, DWORD level, LPBYTE *buffer,
+                                            DWORD max_length, LPDWORD read, LPDWORD total, LPDWORD resume)
+{
+    if (level != 0 && level != 1 && level != 2 && level != 10 && level != 502)
+        return ERROR_INVALID_LEVEL;
+    if (!buffer || !read || !total)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    *read = 0;
+    *total = 0;
+    return local_server(server) ? NERR_ServerNotStarted : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetSessionGetInfo(LMSTR server, LMSTR client, LMSTR user, DWORD level, LPBYTE *buffer)
+{
+    if (level != 0 && level != 1 && level != 2 && level != 10 && level != 502)
+        return ERROR_INVALID_LEVEL;
+    if (!client || !user || !buffer)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    return local_server(server) ? NERR_ServerNotStarted : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetSessionDel(LMSTR server, LMSTR client, LMSTR user)
+{
+    return local_server(server) ? NERR_ServerNotStarted : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetFileEnum(LMSTR server, LMSTR base, LMSTR user, DWORD level, LPBYTE *buffer,
+                                         DWORD max_length, LPDWORD read, LPDWORD total, ULONG_PTR *resume)
+{
+    if (level != 2 && level != 3)
+        return ERROR_INVALID_LEVEL;
+    if (!buffer || !read || !total)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    *read = 0;
+    *total = 0;
+    return local_server(server) ? NERR_ServerNotStarted : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetFileGetInfo(LMSTR server, DWORD id, DWORD level, LPBYTE *buffer)
+{
+    if (level != 2 && level != 3)
+        return ERROR_INVALID_LEVEL;
+    if (!buffer)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    return local_server(server) ? NERR_ServerNotStarted : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetFileClose(LMSTR server, DWORD id)
+{
+    return local_server(server) ? NERR_ServerNotStarted : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetConnectionEnum(LMSTR server, LMSTR qualifier, DWORD level, LPBYTE *buffer,
+                                               DWORD max_length, LPDWORD read, LPDWORD total, LPDWORD resume)
+{
+    if (level != 0 && level != 1)
+        return ERROR_INVALID_LEVEL;
+    if (!qualifier || !buffer || !read || !total)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    *read = 0;
+    *total = 0;
+    return local_server(server) ? NERR_ServerNotStarted : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetGroupEnum(LPCWSTR server, DWORD level, LPBYTE *buffer, DWORD max_length, LPDWORD read,
+                                          LPDWORD total, ULONG_PTR *resume)
+{
+    if (level != 0 && level != 1 && level != 2 && level != 3)
+        return ERROR_INVALID_LEVEL;
+    if (!buffer || !read || !total)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    *read = 0;
+    *total = 0;
+    return local_server(server) ? NERR_NotPrimary : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetGroupGetInfo(LPCWSTR server, LPCWSTR group, DWORD level, LPBYTE *buffer)
+{
+    if (level != 0 && level != 1 && level != 2 && level != 3)
+        return ERROR_INVALID_LEVEL;
+    if (!group || !buffer)
+        return ERROR_INVALID_PARAMETER;
+    *buffer = nullptr;
+    return local_server(server) ? NERR_NotPrimary : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetGroupAdd(LPCWSTR server, DWORD level, LPBYTE buffer, LPDWORD parameter)
+{
+    if (parameter)
+        *parameter = 0;
+    if (level != 0 && level != 1 && level != 2)
+        return ERROR_INVALID_LEVEL;
+    if (!buffer)
+        return ERROR_INVALID_PARAMETER;
+    return local_server(server) ? NERR_NotPrimary : ERROR_BAD_NETPATH;
+}
+
+NETAPI NET_API_STATUS WINAPI NetGroupDel(LPCWSTR server, LPCWSTR group)
+{
+    if (!group)
+        return ERROR_INVALID_PARAMETER;
+    return local_server(server) ? NERR_NotPrimary : ERROR_BAD_NETPATH;
+}
+
+/*
  * the validation of a password against the account policy of the machine, which windows asks the security accounts
  * manager for. a standalone machine's policy is the default of a client: no minimum length, no complexity rule, no
  * history, no lockout, and passwords last 42 days.

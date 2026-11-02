@@ -49,3 +49,17 @@ EXPORTS
     NetWkstaGetInfo=_NetWkstaGetInfo@12
     NetWkstaUserGetInfo=_NetWkstaUserGetInfo@12
     Netbios=_Netbios@4
+    NetUseEnum=_NetUseEnum@28
+    NetUseGetInfo=_NetUseGetInfo@16
+    NetShareCheck=_NetShareCheck@12
+    NetSessionEnum=_NetSessionEnum@36
+    NetSessionGetInfo=_NetSessionGetInfo@20
+    NetSessionDel=_NetSessionDel@12
+    NetFileEnum=_NetFileEnum@36
+    NetFileGetInfo=_NetFileGetInfo@16
+    NetFileClose=_NetFileClose@8
+    NetConnectionEnum=_NetConnectionEnum@32
+    NetGroupEnum=_NetGroupEnum@28
+    NetGroupGetInfo=_NetGroupGetInfo@16
+    NetGroupAdd=_NetGroupAdd@16
+    NetGroupDel=_NetGroupDel@8

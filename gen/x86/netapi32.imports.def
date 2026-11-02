@@ -49,3 +49,17 @@ EXPORTS
     NetWkstaGetInfo@12
     NetWkstaUserGetInfo@12
     Netbios@4
+    NetUseEnum@28
+    NetUseGetInfo@16
+    NetShareCheck@12
+    NetSessionEnum@36
+    NetSessionGetInfo@20
+    NetSessionDel@12
+    NetFileEnum@36
+    NetFileGetInfo@16
+    NetFileClose@8
+    NetConnectionEnum@32
+    NetGroupEnum@28
+    NetGroupGetInfo@16
+    NetGroupAdd@16
+    NetGroupDel@8
