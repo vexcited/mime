@@ -242,14 +242,6 @@ static HWND create_find_replace(FINDREPLACEW *fr, BOOL replace, BOOL unicode)
         DlgSetError(CDERR_INITIALIZATION);
         return nullptr;
     }
-    if (fr->lStructSize != sizeof(FINDREPLACEW)) {
-        DlgSetError(CDERR_STRUCTSIZE);
-        return nullptr;
-    }
-    if (!fr->hwndOwner || !IsWindow(fr->hwndOwner)) {
-        DlgSetError(CDERR_DIALOGFAILURE);
-        return nullptr;
-    }
     DWORD error = 0;
     if (!DlgHookValid(fr->Flags, FR_ENABLEHOOK, fr->lpfnHook, &error)) {
         DlgSetError(error);
