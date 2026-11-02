@@ -203,7 +203,8 @@ void KiInitializeKernel(MimeBootInfo *boot)
                 (strstr(boot->cmdline, "nosectionfault") ? KI_OPT_NO_SECTION_FAULT : 0) |
                 (strstr(boot->cmdline, "noidlespin") ? KI_OPT_NO_IDLE_SPIN : 0) |
                 (strstr(boot->cmdline, "eagertimer") ? KI_OPT_EAGER_TIMER : 0) |
-                (strstr(boot->cmdline, "noattrcache") ? KI_OPT_NO_ATTR_CACHE : 0);
+                (strstr(boot->cmdline, "noattrcache") ? KI_OPT_NO_ATTR_CACHE : 0) |
+                (strstr(boot->cmdline, "precisetimers") ? KI_OPT_PRECISE_TIMERS : 0);
 
     KiNoLockFlush = strstr(boot->cmdline, "nolockflush") != nullptr;
     extern BOOLEAN KiTraceUserExceptions;

@@ -321,6 +321,7 @@ FORCEINLINE void KiReleaseDispatcherLock(ULONG64 state)
 #define KI_OPT_NO_IDLE_SPIN 0x4
 #define KI_OPT_EAGER_TIMER 0x8
 #define KI_OPT_NO_ATTR_CACHE 0x10
+#define KI_OPT_PRECISE_TIMERS 0x20
 extern ULONG KiOptions;
 extern UCHAR KiNoLockFlush;
 

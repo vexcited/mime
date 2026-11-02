@@ -3,6 +3,25 @@
 #include <mime/ntuser.h>
 #include <rtl.h>
 
+/* the periods are kept by the multimedia time api set that kernel32 hosts. */
+static void period(const char *name)
+{
+    HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+    UINT(WINAPI * function)(UINT) = kernel32 ? (UINT(WINAPI *)(UINT))GetProcAddress(kernel32, name) : nullptr;
+    if (function)
+        function(1);
+}
+
+void MimeOutputPeriodBegin(void)
+{
+    period("timeBeginPeriod");
+}
+
+void MimeOutputPeriodEnd(void)
+{
+    period("timeEndPeriod");
+}
+
 NTSTATUS MimeOutputOpen(MimeOutput *o, UINT32 rate, UINT32 channels, UINT32 bits, BOOL is_float)
 {
     memset(o, 0, sizeof(*o));

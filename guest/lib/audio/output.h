@@ -41,4 +41,11 @@ void MimeOutputDrop(MimeOutput *o);
 /* level is 0 to 1, applied by the host. */
 void MimeOutputVolume(MimeOutput *o, float level);
 
+/*
+ * the threads that keep a stream fed wake every few milliseconds, which a process that never asked for a finer clock
+ * does not get: they hold a one millisecond period while they run.
+ */
+void MimeOutputPeriodBegin(void);
+void MimeOutputPeriodEnd(void);
+
 #endif

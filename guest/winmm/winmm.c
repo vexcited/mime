@@ -16,6 +16,7 @@ typedef struct MM_TIMER {
     LPTIMECALLBACK Callback;
     DWORD_PTR User;
     ULONGLONG Due; /* in milliseconds of timeGetTime, 64 bit. */
+    UINT Period;   /* what timeSetEvent asked the clock for, given back when the timer ends. */
 } MM_TIMER;
 
 static struct {
@@ -65,15 +66,27 @@ WINMMAPI MMRESULT WINAPI timeGetDevCaps(LPTIMECAPS caps, UINT size)
     return TIMERR_NOERROR;
 }
 
-/* the scheduler ticks every millisecond already, so periods only need validating. */
+/*
+ * the periods are the process's, kept by the multimedia time api set that kernel32 hosts, which this library's calls
+ * and the other libraries' go through, so that the one that ends a period is the one that began it.
+ */
+typedef UINT(WINAPI *PERIOD_FUNCTION)(UINT period);
+
+static UINT call_period(const char *name, UINT period)
+{
+    HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+    PERIOD_FUNCTION function = kernel32 ? (PERIOD_FUNCTION)GetProcAddress(kernel32, name) : nullptr;
+    return function ? function(period) : TIMERR_NOCANDO;
+}
+
 WINMMAPI MMRESULT WINAPI timeBeginPeriod(UINT period)
 {
-    return period < MIN_PERIOD || period > MAX_PERIOD ? TIMERR_NOCANDO : TIMERR_NOERROR;
+    return call_period("timeBeginPeriod", period);
 }
 
 WINMMAPI MMRESULT WINAPI timeEndPeriod(UINT period)
 {
-    return period < MIN_PERIOD || period > MAX_PERIOD ? TIMERR_NOCANDO : TIMERR_NOERROR;
+    return call_period("timeEndPeriod", period);
 }
 
 static DWORD WINAPI timer_thread(LPVOID param)
@@ -106,6 +119,7 @@ static DWORD WINAPI timer_thread(LPVOID param)
                 slot->Due = now + slot->Delay;
         } else {
             g_mm.Timers[fire].Id = 0;
+            timeEndPeriod(t.Period);
         }
         g_mm.Running = t.Id;
         g_mm.RunningFlags = t.Flags;
@@ -159,6 +173,12 @@ WINMMAPI MMRESULT WINAPI timeSetEvent(UINT delay, UINT resolution, LPTIMECALLBAC
     if (delay > MAX_PERIOD || delay < MIN_PERIOD)
         return 0;
     RtlRunOnceExecuteOnce(&g_mm.Once, init_timers, nullptr, nullptr);
+    /* the clock is asked for the resolution of the timer, as long as the timer lives. */
+    UINT period = resolution < MIN_PERIOD ? MIN_PERIOD : resolution;
+    if (period > delay)
+        period = MIN_PERIOD;
+    if (timeBeginPeriod(period) != TIMERR_NOERROR)
+        return 0;
     RtlEnterCriticalSection(&g_mm.Lock);
     UINT id = 0;
     if (start_thread()) {
@@ -175,12 +195,15 @@ WINMMAPI MMRESULT WINAPI timeSetEvent(UINT delay, UINT resolution, LPTIMECALLBAC
             t->Flags = flags;
             t->Callback = callback;
             t->User = user;
+            t->Period = period;
             t->Due = now_ms() + delay;
             SetEvent(g_mm.Wake);
             break;
         }
     }
     RtlLeaveCriticalSection(&g_mm.Lock);
+    if (!id)
+        timeEndPeriod(period);
     return id;
 }
 
@@ -194,10 +217,12 @@ WINMMAPI MMRESULT WINAPI timeKillEvent(UINT id)
         return TIMERR_NOCANDO;
     }
     UINT flags = t->Flags;
+    UINT period = t->Period;
     t->Id = 0;
     SetEvent(g_mm.Wake);
     BOOL wait = g_mm.Running == id && GetCurrentThreadId() != g_mm.ThreadId && (flags & TIME_KILL_SYNCHRONOUS);
     RtlLeaveCriticalSection(&g_mm.Lock);
+    timeEndPeriod(period);
     if (wait)
         WaitForSingleObject(g_mm.Idle, INFINITE);
     return TIMERR_NOERROR;

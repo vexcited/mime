@@ -264,6 +264,18 @@ static void cancel_thread_timer(PKTHREAD thread)
 
 void KiInsertTimer(PKTIMER timer, ULONG64 due_interrupt_time);
 
+/*
+ * a process that never asked for a finer timer resolution has the waits of its user mode threads end on the clock
+ * tick, 15.625 ms, whatever the other processes asked for. a one millisecond sleep lasts until the next tick, as on
+ * Windows since version 2004, where the resolution a process asked for is its own and not the system's.
+ */
+static ULONG64 round_to_tick(PKTHREAD thread, KPROCESSOR_MODE mode, ULONG64 due)
+{
+    if (mode != UserMode || !due || ((PEPROCESS)thread->Process)->TimerResolution || (KiOptions & KI_OPT_PRECISE_TIMERS))
+        return due;
+    return (due + KI_CLOCK_TICK_HNS - 1) / KI_CLOCK_TICK_HNS * KI_CLOCK_TICK_HNS;
+}
+
 NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASON reason, KPROCESSOR_MODE mode,
                        BOOLEAN alertable, PLARGE_INTEGER timeout, PKWAIT_BLOCK blocks)
 {
@@ -282,6 +294,7 @@ NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASO
             due = KiQueryInterruptTime() + (ULONG64)(-timeout->QuadPart);
         else
             due = (ULONG64)timeout->QuadPart > KeBootFiletime ? (ULONG64)timeout->QuadPart - KeBootFiletime : 1;
+        due = round_to_tick(thread, mode, due);
     }
 
     for (;;) {

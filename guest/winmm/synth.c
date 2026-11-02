@@ -1182,6 +1182,7 @@ static void render(SYNTH *s, SHORT *out, UINT32 frames)
 static DWORD WINAPI render_thread(void *arg)
 {
     SYNTH *s = arg;
+    MimeOutputPeriodBegin();
     while (!s->quit) {
         RtlEnterCriticalSection(&s->lock);
         while (MimeOutputQueued(&s->out) < QUEUE_FRAMES) {
@@ -1199,6 +1200,7 @@ static DWORD WINAPI render_thread(void *arg)
         RtlLeaveCriticalSection(&s->lock);
         Sleep(5);
     }
+    MimeOutputPeriodEnd();
     return 0;
 }
 

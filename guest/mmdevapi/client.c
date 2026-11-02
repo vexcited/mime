@@ -112,14 +112,26 @@ static void apply_volume(CLIENT *c)
     __atomic_store_n(&c->hdr->volume, (UINT32)(level * 65536.0f + 0.5f), __ATOMIC_RELAXED);
 }
 
+/* the periods are kept by the multimedia time api set that kernel32 hosts. */
+static void period(const char *name)
+{
+    HMODULE kernel32 = GetModuleHandleW(L"kernel32.dll");
+    UINT(WINAPI * function)(UINT) = kernel32 ? (UINT(WINAPI *)(UINT))GetProcAddress(kernel32, name) : nullptr;
+    if (function)
+        function(1);
+}
+
+/* a period is 10 ms, which a process that never asked for a finer clock would get every 15.6 ms. */
 static DWORD WINAPI event_thread(void *arg)
 {
     CLIENT *c = arg;
+    period("timeBeginPeriod");
     while (!c->quit) {
         Sleep((DWORD)(PERIOD / 10000));
         if (c->started && c->event)
             SetEvent(c->event);
     }
+    period("timeEndPeriod");
     return 0;
 }
 

@@ -402,6 +402,7 @@ static void begin(void)
     QueryPerformanceCounter(&clock_start);
     clock_passes = 0;
     running = TRUE;
+    MimeOutputPeriodBegin();
     /* focus is not tracked while nothing plays. */
     update_focus(FALSE);
 }
@@ -420,6 +421,8 @@ static DWORD WINAPI engine(void *arg)
             BOOL draining = output_open && output.started && MimeOutputQueued(&output);
             if (output_open && output.started && !draining)
                 MimeOutputStop(&output);
+            if (running)
+                MimeOutputPeriodEnd();
             running = FALSE;
             RtlLeaveCriticalSection(&DsLock);
             WaitForSingleObject(wake, draining ? 5 : INFINITE);
