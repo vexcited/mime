@@ -13,7 +13,20 @@ typedef struct {
     void *arg;
     int ex;
     HANDLE handle;
+    HMODULE module; /* holds the library of the start routine for as long as the thread runs. */
 } THREAD_ARGS;
+
+/*
+ * a thread keeps the library its routine is in loaded, as the C runtime of Windows does: a library that is freed while a
+ * thread still runs in it stays, and the thread frees its reference as it ends. Without it a library that stops its own
+ * threads when it is unloaded waits for them holding the loader lock, which a thread that ends needs.
+ */
+static HMODULE hold_module(void *start)
+{
+    HMODULE module = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCWSTR)start, &module);
+    return module;
+}
 
 static DWORD WINAPI thread_entry(LPVOID param)
 {
@@ -21,6 +34,7 @@ static DWORD WINAPI thread_entry(LPVOID param)
     free(param);
     MSVCRT_THREAD_DATA *ptd = MsvcrtThreadData();
     ptd->thread_handle = args.handle;
+    ptd->thread_module = args.module;
     ptd->beginthread = !args.ex;
     if (args.ex) {
         unsigned code = ((THREADEX_START)args.start)(args.arg);
@@ -46,10 +60,14 @@ uintptr_t __cdecl _beginthreadex(void *security, unsigned stack, THREADEX_START 
     args->arg = arg;
     args->ex = 1;
     args->handle = nullptr;
+    args->module = hold_module((void *)start);
     DWORD tid;
     HANDLE h = CreateThread(security, stack, thread_entry, args, flags, &tid);
     if (!h) {
-        MsvcrtDosMapError(GetLastError());
+        DWORD error = GetLastError();
+        if (args->module)
+            FreeLibrary(args->module);
+        MsvcrtDosMapError(error);
         free(args);
         return 0;
     }
@@ -60,7 +78,10 @@ uintptr_t __cdecl _beginthreadex(void *security, unsigned stack, THREADEX_START 
 
 void __cdecl _endthreadex(unsigned code)
 {
+    HMODULE module = MsvcrtThreadData()->thread_module;
     MsvcrtFreeThreadData();
+    if (module)
+        FreeLibraryAndExitThread(module, code);
     ExitThread(code);
 }
 
@@ -79,10 +100,13 @@ uintptr_t __cdecl _beginthread(THREAD_START start, unsigned stack, void *arg)
     args->start = (void *)start;
     args->arg = arg;
     args->ex = 0;
+    args->module = hold_module((void *)start);
     DWORD tid;
     HANDLE h = CreateThread(nullptr, stack, thread_entry, args, CREATE_SUSPENDED, &tid);
     if (!h) {
         DWORD err = GetLastError();
+        if (args->module)
+            FreeLibrary(args->module);
         free(args);
         MsvcrtDosMapError(err);
         if (err == ERROR_NOT_ENOUGH_MEMORY)
@@ -101,9 +125,12 @@ void __cdecl _endthread(void)
 {
     MSVCRT_THREAD_DATA *ptd = MsvcrtThreadData();
     HANDLE h = ptd->beginthread ? ptd->thread_handle : nullptr;
+    HMODULE module = ptd->thread_module;
     MsvcrtFreeThreadData();
     if (h)
         CloseHandle(h);
+    if (module)
+        FreeLibraryAndExitThread(module, 0);
     ExitThread(0);
 }
 

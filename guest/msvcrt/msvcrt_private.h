@@ -270,6 +270,7 @@ typedef struct {
     wchar_t wtmpnam_buf[FILENAME_MAX];
     /* _beginthread bookkeeping. */
     HANDLE thread_handle;
+    HMODULE thread_module;
     void *start;
     void *arg;
     int beginthread;
