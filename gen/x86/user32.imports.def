@@ -676,3 +676,9 @@ EXPORTS
     wsprintfW
     wvsprintfA@12
     wvsprintfW@12
+    DdeConnectList@20
+    DdeQueryNextServer@8
+    DdeDisconnectList@4
+    DdeQueryConvInfo@12
+    DdeAddData@16
+    LockWorkStation@0

@@ -74,6 +74,13 @@ WINUSERAPI BOOL WINAPI ExitWindowsEx(UINT flags, DWORD reason)
     return ask_for_shutdown(flags, reason, FALSE);
 }
 
+/* there is no secure desktop to lock the session to. */
+WINUSERAPI BOOL WINAPI LockWorkStation(void)
+{
+    RtlSetLastWin32Error(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}
+
 /* ------------------------------------------------------------------ block reasons */
 
 /*

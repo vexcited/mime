@@ -678,3 +678,9 @@ EXPORTS
     wsprintfW=wsprintfW
     wvsprintfA=_wvsprintfA@12
     wvsprintfW=_wvsprintfW@12
+    DdeConnectList=_DdeConnectList@20
+    DdeQueryNextServer=_DdeQueryNextServer@8
+    DdeDisconnectList=_DdeDisconnectList@4
+    DdeQueryConvInfo=_DdeQueryConvInfo@12
+    DdeAddData=_DdeAddData@16
+    LockWorkStation=_LockWorkStation@0

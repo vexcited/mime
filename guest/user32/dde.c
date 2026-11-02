@@ -594,3 +594,218 @@ WINUSERAPI BOOL WINAPI DdePostAdvise(DWORD id, HSZ topic, HSZ item)
     ReleaseSRWLockShared(&g_lock);
     return i != nullptr;
 }
+
+/* ------------------------------------------------------------------ lists of conversations */
+
+DECLARE_HANDLE(HCONVLIST);
+
+#define LIST_MAGIC 0x54534C43
+#define MAX_LIST_CONVS 64
+
+/* every server that answers the initiate is one conversation of the list. */
+typedef struct DDE_LIST {
+    DWORD Magic;
+    DDE_INSTANCE *Instance;
+    DWORD Count;
+    DDE_CONV *Convs[MAX_LIST_CONVS];
+} DDE_LIST;
+
+typedef struct DDE_WINDOWS {
+    HWND Windows[256];
+    DWORD Count;
+} DDE_WINDOWS;
+
+static BOOL CALLBACK collect_window(HWND hwnd, LPARAM param)
+{
+    DDE_WINDOWS *list = (DDE_WINDOWS *)param;
+    if (list->Count < RTL_NUMBER_OF(list->Windows))
+        list->Windows[list->Count++] = hwnd;
+    return TRUE;
+}
+
+static DDE_LIST *list_of(HCONVLIST handle)
+{
+    DDE_LIST *l = (DDE_LIST *)handle;
+    return l && l->Magic == LIST_MAGIC ? l : nullptr;
+}
+
+/*
+ * connects to every server of the service and topic, the ones a list has already left out. a list that was given is
+ * brought up to date: its conversations that ended go, the servers that came are added.
+ */
+WINUSERAPI HCONVLIST WINAPI DdeConnectList(DWORD id, HSZ service, HSZ topic, HCONVLIST old, void *context)
+{
+    DDE_INSTANCE *i = instance_of(id);
+    if (!i)
+        return nullptr;
+    DDE_LIST *list = old ? list_of(old) : nullptr;
+    if (old && !list) {
+        fail(i, DMLERR_INVALIDPARAMETER);
+        return nullptr;
+    }
+    if (!list) {
+        list = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*list));
+        if (!list) {
+            fail(i, DMLERR_MEMORY_ERROR);
+            return nullptr;
+        }
+        list->Magic = LIST_MAGIC;
+        list->Instance = i;
+    }
+    DWORD kept = 0;
+    for (DWORD n = 0; n < list->Count; n++) {
+        DDE_CONV *c = list->Convs[n];
+        if (c->Server && IsWindow(c->Server)) {
+            list->Convs[kept++] = c;
+        } else {
+            c->Magic = 0;
+            DestroyWindow(c->Client);
+            HeapFree(GetProcessHeap(), 0, c);
+        }
+    }
+    list->Count = kept;
+    DDE_WINDOWS windows = {};
+    EnumWindows(collect_window, (LPARAM)&windows);
+    for (DWORD w = 0; w < windows.Count && list->Count < MAX_LIST_CONVS; w++) {
+        BOOL known = FALSE;
+        for (DWORD n = 0; n < list->Count; n++)
+            known |= list->Convs[n]->Server == windows.Windows[w];
+        if (known)
+            continue;
+        DDE_CONV *c = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*c));
+        if (!c)
+            break;
+        c->Magic = CONV_MAGIC;
+        c->Instance = i;
+        c->Service = (ATOM)(ULONG_PTR)service;
+        c->Topic = (ATOM)(ULONG_PTR)topic;
+        c->Client = client_window(c);
+        if (c->Client) {
+            DWORD_PTR result;
+            SendMessageTimeoutW(windows.Windows[w], WM_DDE_INITIATE, (WPARAM)c->Client,
+                                MAKELPARAM(c->Service, c->Topic), SMTO_ABORTIFHUNG, 2000, &result);
+        }
+        if (!c->Client || !c->Server) {
+            if (c->Client)
+                DestroyWindow(c->Client);
+            HeapFree(GetProcessHeap(), 0, c);
+            continue;
+        }
+        list->Convs[list->Count++] = c;
+    }
+    if (!list->Count) {
+        list->Magic = 0;
+        HeapFree(GetProcessHeap(), 0, list);
+        fail(i, DMLERR_NO_CONV_ESTABLISHED);
+        return nullptr;
+    }
+    return (HCONVLIST)list;
+}
+
+/* the conversation after another in the list, the first after none, none after the last. */
+WINUSERAPI HCONV WINAPI DdeQueryNextServer(HCONVLIST handle, HCONV previous)
+{
+    DDE_LIST *list = list_of(handle);
+    if (!list)
+        return nullptr;
+    DWORD next = 0;
+    if (previous) {
+        next = list->Count;
+        for (DWORD n = 0; n < list->Count; n++)
+            if ((HCONV)list->Convs[n] == previous)
+                next = n + 1;
+    }
+    return next < list->Count ? (HCONV)list->Convs[next] : nullptr;
+}
+
+WINUSERAPI BOOL WINAPI DdeDisconnectList(HCONVLIST handle)
+{
+    DDE_LIST *list = list_of(handle);
+    if (!list)
+        return FALSE;
+    list->Magic = 0;
+    for (DWORD n = 0; n < list->Count; n++)
+        DdeDisconnect((HCONV)list->Convs[n]);
+    HeapFree(GetProcessHeap(), 0, list);
+    return TRUE;
+}
+
+/* ------------------------------------------------------------------ conversation information */
+
+#define ST_CONNECTED 0x0001
+#define ST_CLIENT 0x0010
+#define XST_CONNECTED 2
+#define CP_WINANSI 1004
+
+typedef struct CONVCONTEXT_ {
+    UINT cb;
+    UINT wFlags;
+    UINT wCountryID;
+    int iCodePage;
+    DWORD dwLangID;
+    DWORD dwSecurity;
+    DWORD qos[3];
+} CONVCONTEXT_;
+
+typedef struct CONVINFO_ {
+    DWORD cb;
+    DWORD_PTR hUser;
+    HCONV hConvPartner;
+    HSZ hszSvcPartner;
+    HSZ hszServiceReq;
+    HSZ hszTopic;
+    HSZ hszItem;
+    UINT wFmt;
+    UINT wType;
+    UINT wStatus;
+    UINT wConvst;
+    UINT wLastError;
+    HCONVLIST hConvList;
+    CONVCONTEXT_ ConvCtxt;
+    HWND hwnd;
+    HWND hwndPartner;
+} CONVINFO_;
+
+/* the state of a conversation. no transaction is kept, so every id is the last one. */
+WINUSERAPI UINT WINAPI DdeQueryConvInfo(HCONV handle, DWORD transaction, CONVINFO_ *info)
+{
+    DDE_CONV *c = conv_of(handle);
+    if (!c || !info || info->cb < offsetof(CONVINFO_, hConvList))
+        return 0;
+    DWORD size = info->cb < sizeof(*info) ? info->cb : sizeof(*info);
+    CONVINFO_ filled = {};
+    filled.cb = size;
+    filled.hszSvcPartner = (HSZ)(ULONG_PTR)c->Service;
+    filled.hszServiceReq = (HSZ)(ULONG_PTR)c->Service;
+    filled.hszTopic = (HSZ)(ULONG_PTR)c->Topic;
+    filled.wStatus = ST_CLIENT | (c->Server ? ST_CONNECTED : 0);
+    filled.wConvst = c->Server ? XST_CONNECTED : 0;
+    filled.wLastError = c->Instance ? c->Instance->LastError : 0;
+    filled.ConvCtxt.cb = sizeof(filled.ConvCtxt);
+    filled.ConvCtxt.iCodePage = c->Instance && c->Instance->Unicode ? CP_WINUNICODE : CP_WINANSI;
+    filled.hwnd = c->Client;
+    filled.hwndPartner = c->Server;
+    memcpy(info, &filled, size);
+    return size;
+}
+
+/* adds bytes to a data handle, which may move: the handle that holds the result comes back. */
+WINUSERAPI HDDEDATA WINAPI DdeAddData(HDDEDATA handle, LPBYTE source, DWORD size, DWORD offset)
+{
+    DDE_DATA *d = data_of(handle);
+    if (!d || (size && !source) || offset > 0x7FFFFFFF || size > 0x7FFFFFFF)
+        return nullptr;
+    DWORD needed = offset + size;
+    if (needed < d->Size)
+        needed = d->Size;
+    DDE_DATA *grown = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*grown) + needed);
+    if (!grown)
+        return nullptr;
+    memcpy(grown, d, sizeof(*d) + d->Size);
+    grown->Size = needed;
+    if (size)
+        memcpy(grown->Bytes + offset, source, size);
+    d->Magic = 0;
+    HeapFree(GetProcessHeap(), 0, d);
+    return (HDDEDATA)grown;
+}
