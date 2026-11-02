@@ -109,14 +109,16 @@ static BOOLEAN presents_through_host(WND *w)
  * query the last Vulkan image: size, client rectangle relative to the window, and host present count. return false if
  * absent; read pixels into g_pixels only when requested.
  */
-static BOOLEAN read_presented(WND *w, BOOLEAN pixels, ULONG *width, ULONG *height, RECT *client, ULONG64 *serial)
+static BOOLEAN read_presented(WND *top, WND *source, BOOLEAN pixels, ULONG *width, ULONG *height, RECT *client,
+                             ULONG64 *serial)
 {
     if (!g_readback && !(g_readback = MmAllocateContiguousPages(4096)))
         return FALSE;
     for (int attempt = 0; attempt < 2; attempt++) {
         MimeWinReadback *r = g_readback;
         memset(r, 0, sizeof(*r));
-        r->window_id = (uint32_t)(ULONG_PTR)WndHandle(w);
+        r->window_id = (uint32_t)(ULONG_PTR)WndHandle(top);
+        r->source = (uint32_t)(ULONG_PTR)WndHandle(source);
         /* first the size, then the pixels into a buffer that holds them. */
         if (HalMimeHypercall(MIME_HC_WIN_READBACK, (ULONG64)MmGetPhysicalAddress(r).QuadPart, 0, 0, 0, 0, 0, nullptr))
             return FALSE;
@@ -159,6 +161,22 @@ static BOOLEAN read_presented(WND *w, BOOLEAN pixels, ULONG *width, ULONG *heigh
     return FALSE;
 }
 
+/* mixes the present counts of the windows of a tree that present. */
+static ULONG64 tree_serial(WND *top, WND *w, ULONG64 mix)
+{
+    if (has_connection(w)) {
+        ULONG width, height;
+        RECT client;
+        ULONG64 serial;
+        if (read_presented(top, w, FALSE, &width, &height, &client, &serial))
+            mix = (mix ^ (serial + (ULONG64)(ULONG_PTR)WndHandle(w) * 0x9E3779B97F4A7C15ull)) * 0xFF51AFD7ED558CCDull;
+    }
+    for (WND *c = w->FirstChild; c; c = c->Next)
+        if (c->Style & WS_VISIBLE)
+            mix = tree_serial(top, c, mix);
+    return mix;
+}
+
 /* combine visible windows' host present counts so captures detect changes that bypass the guest. */
 ULONG64 ScreenHostSerial(void)
 {
@@ -166,11 +184,7 @@ ULONG64 ScreenHostSerial(void)
     for (WND *w = WndDesktop()->FirstChild; w; w = w->Next) {
         if (!presents_through_host(w) || !WndIsVisible(w) || (w->Style & WS_MINIMIZE))
             continue;
-        ULONG width, height;
-        RECT client;
-        ULONG64 serial;
-        if (read_presented(w, FALSE, &width, &height, &client, &serial))
-            mix = (mix ^ (serial + (ULONG64)(ULONG_PTR)WndHandle(w) * 0x9E3779B97F4A7C15ull)) * 0xFF51AFD7ED558CCDull;
+        mix = tree_serial(w, w, mix);
     }
     return mix;
 }
@@ -273,61 +287,82 @@ static RECT to_canvas(RECT r, const PLACE *place)
     return r;
 }
 
-static LONG distance(LONG a, LONG b)
-{
-    return a > b ? a - b : b - a;
-}
-
-/* the window below top that a connection's swap chain was made for: its client area is where the image shows. */
-static WND *presented_window(WND *parent, const WND *top, const RECT *client)
-{
-    for (WND *c = parent->FirstChild; c; c = c->Next) {
-        if (!(c->Style & WS_VISIBLE))
-            continue;
-        WND *below = presented_window(c, top, client);
-        if (below)
-            return below;
-        if (!has_connection(c))
-            continue;
-        RECT r = c->ClientRect;
-        RectOffset(&r, -top->WindowRect.left, -top->WindowRect.top);
-        if (distance(r.left, client->left) <= 1 && distance(r.top, client->top) <= 1 &&
-            distance(r.right, client->right) <= 1 && distance(r.bottom, client->bottom) <= 1)
-            return c;
-    }
-    return nullptr;
-}
-
 /*
- * what of the top level window an image shows over: the client area of the window it was presented for, inside the
- * client areas of its parents and under the siblings in front of it, as the window manager clips a child window. a
- * transparent sibling, such as the legacy window of a browser, hides nothing. canvas pixels of the window.
+ * what of the top level window the image of a window shows over, in screen coordinates of the windows: its client area,
+ * inside the client areas of its parents, under the windows in front of it and under its own children, as the window
+ * manager composes the windows of a tree one over the other. a transparent window, such as the legacy window of a
+ * browser, hides nothing. the clip styles are for the drawing of the program and do not change that.
  */
-static void presented_clip(WND *top, WND *window, const PLACE *place, REGION *out)
+static void layer_area(const WND *top, const WND *window, BOOLEAN children, REGION *out)
 {
-    REGION area;
-    RgnInit(&area);
-    RgnSetRect(&area, &window->ClientRect);
-    for (WND *n = window; n != top && n->Parent; n = n->Parent) {
-        for (WND *s = n->Parent->FirstChild; s && s != n; s = s->Next)
-            if ((s->Style & WS_VISIBLE) && !(s->ExStyle & WS_EX_TRANSPARENT))
-                RgnCombineRect(&area, &area, &s->WindowRect, RGN_DIFF);
-        RgnCombineRect(&area, &area, &n->Parent->ClientRect, RGN_AND);
-    }
     RgnInit(out);
+    RgnSetRect(out, &window->ClientRect);
+    for (const WND *n = window; n != top && n->Parent; n = n->Parent) {
+        for (const WND *s = n->Parent->FirstChild; s && s != n; s = s->Next)
+            if ((s->Style & WS_VISIBLE) && !(s->ExStyle & WS_EX_TRANSPARENT))
+                RgnCombineRect(out, out, &s->WindowRect, RGN_DIFF);
+        RgnCombineRect(out, out, &n->Parent->ClientRect, RGN_AND);
+    }
+    for (const WND *c = children ? window->FirstChild : nullptr; c; c = c->Next)
+        if ((c->Style & WS_VISIBLE) && !(c->ExStyle & WS_EX_TRANSPARENT))
+            RgnCombineRect(out, out, &c->WindowRect, RGN_DIFF);
+}
+
+typedef struct COMPOSE {
+    PUCHAR Bits;
+    LONG Stride;
+    POINT Shift;
+    const REGION *Visible; /* of the top level window, canvas pixels. */
+    WND *Top;
+    const PLACE *Place;
+} COMPOSE;
+
+/* the image a window presented over what shows of its client area. */
+static void compose_layer(const COMPOSE *cx, WND *window)
+{
+    WND *top = cx->Top;
+    RECT own = window->ClientRect;
+    RectOffset(&own, -top->WindowRect.left, -top->WindowRect.top);
+    RECT c = to_canvas(own, cx->Place);
+    RectOffset(&c, cx->Place->Origin.x, cx->Place->Origin.y);
+    if (c.right <= c.left || c.bottom <= c.top)
+        return;
+    REGION area, shown;
+    layer_area(top, window, TRUE, &area);
+    RgnInit(&shown);
     for (ULONG i = 0; i < area.Count; i++) {
         RECT r = area.Rects[i];
         RectOffset(&r, -top->WindowRect.left, -top->WindowRect.top);
-        r = to_canvas(r, place);
-        RectOffset(&r, place->Origin.x, place->Origin.y);
-        RgnCombineRect(out, out, &r, RGN_OR);
+        r = to_canvas(r, cx->Place);
+        RectOffset(&r, cx->Place->Origin.x, cx->Place->Origin.y);
+        RgnCombineRect(&shown, &shown, &r, RGN_OR);
     }
     RgnFree(&area);
+    RgnCombine(&shown, &shown, cx->Visible, RGN_AND);
+    ULONG width, height;
+    RECT client;
+    ULONG64 serial;
+    if (!RgnIsEmpty(&shown) && read_presented(top, window, TRUE, &width, &height, &client, &serial))
+        for (ULONG i = 0; i < shown.Count; i++)
+            compose_presented(cx->Bits, cx->Stride, cx->Shift, &shown.Rects[i], &c, width, height);
+    RgnFree(&shown);
+}
+
+/* the images of a tree from the back to the front: a window's own, then its children's. */
+static void compose_tree(const COMPOSE *cx, WND *parent)
+{
+    for (WND *c = parent->LastChild; c; c = c->Prev) {
+        if (!(c->Style & WS_VISIBLE) || !tree_presents(c))
+            continue;
+        if (has_connection(c))
+            compose_layer(cx, c);
+        compose_tree(cx, c);
+    }
 }
 
 /*
- * compose visible screen rectangles from the window surface and last Vulkan client image. read the host image once
- * for all rectangles.
+ * compose visible screen rectangles from the window surface and the images the windows of its tree presented through
+ * the host, each in its client area. the host image of a window is read once for all rectangles.
  */
 static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *vis, WND *w, const PLACE *place,
                            BOOLEAN host_pixels)
@@ -349,32 +384,29 @@ static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *
     if (s)
         for (ULONG i = 0; i < vis->Count; i++)
             compose_surface(bits, stride, shift, &vis->Rects[i], place, w, s);
+    if (!host_pixels || !presents_through_host(w))
+        return;
 
-    /* the client area shows the last Vulkan present. */
-    ULONG width, height;
-    RECT client;
-    ULONG64 serial;
-    BOOLEAN got = host_pixels && presents_through_host(w) && read_presented(w, TRUE, &width, &height, &client, &serial);
-    if (!got)
-        return;
-    /* the client area comes in the pixels of the presenting program, the same as the window's own, so the canvas scales it. */
-    RECT c = to_canvas(client, place);
-    RectOffset(&c, place->Origin.x, place->Origin.y);
-    if (c.right <= c.left || c.bottom <= c.top)
-        return;
-    /* a child window of another process is clipped by its parents, whose client areas are smaller than its own. */
-    REGION shown, clip;
-    RgnInit(&shown);
-    RgnCopy(&shown, vis);
-    WND *presenter = presented_window(w, w, &client);
-    if (presenter) {
-        presented_clip(w, presenter, place, &clip);
-        RgnCombine(&shown, &shown, &clip, RGN_AND);
-        RgnFree(&clip);
+    /* the window's own image under its children's, cut by the window's region. */
+    REGION cut;
+    RgnInit(&cut);
+    RgnCopy(&cut, vis);
+    if (w->Shape) {
+        REGION shape;
+        RgnInit(&shape);
+        for (ULONG i = 0; i < w->Shape->Count; i++) {
+            RECT r = to_canvas(w->Shape->Rects[i], place);
+            RectOffset(&r, place->Origin.x, place->Origin.y);
+            RgnCombineRect(&shape, &shape, &r, RGN_OR);
+        }
+        RgnCombine(&cut, &cut, &shape, RGN_AND);
+        RgnFree(&shape);
     }
-    for (ULONG i = 0; i < shown.Count; i++)
-        compose_presented(bits, stride, shift, &shown.Rects[i], &c, width, height);
-    RgnFree(&shown);
+    COMPOSE cx = {bits, stride, shift, &cut, w, place};
+    if (has_connection(w))
+        compose_layer(&cx, w);
+    compose_tree(&cx, w);
+    RgnFree(&cut);
 }
 
 /* find the surface-backed rectangle that occludes lower windows. */
@@ -691,4 +723,99 @@ BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, BOOLEAN host_pixels, PUC
             row[x] |= 0xFF000000;
     }
     return TRUE;
+}
+
+/* the places in the paint order of a tree before a window: its parent first, then the children from the back. */
+static BOOLEAN paint_order(const WND *parent, const WND *window, ULONG *count)
+{
+    for (const WND *c = parent->LastChild; c; c = c->Prev) {
+        if (!(c->Style & WS_VISIBLE))
+            continue;
+        ++*count;
+        if (c == window || paint_order(c, window, count))
+            return TRUE;
+    }
+    return FALSE;
+}
+
+/*
+ * where the image a window presents lies in its top level window, which the host shows it in: the client area, the part
+ * of it that shows (empty while the window is hidden or covered) and the place of the window in the paint order of
+ * the tree. window pixels relative to the top level window.
+ */
+void ScreenLayer(WND *w, MIME_PRESENT_LAYER *out)
+{
+    *out = (MIME_PRESENT_LAYER){};
+    WND *top = WndTopLevel(w);
+    if (!top || top == WndDesktop() || !(top->Flags & WNDF_HOST_WINDOW))
+        return;
+    out->Window = (ULONG)(ULONG_PTR)WndHandle(top);
+    out->Client = w->ClientRect;
+    RectOffset(&out->Client, -top->WindowRect.left, -top->WindowRect.top);
+    if (w != top)
+        paint_order(top, w, &out->Order);
+    if (!WndIsVisible(w) || (top->Style & WS_MINIMIZE))
+        return;
+    /* a window only its children draw in has nothing of its own to show, yet its layers need a host window. */
+    if (!(top->Flags & WNDF_PRESENTED)) {
+        top->Flags |= WNDF_PRESENTED;
+        HostConfigure(top, FALSE);
+    }
+    REGION area;
+    layer_area(top, w, FALSE, &area);
+    if (!RgnIsEmpty(&area)) {
+        RECT bounds = area.Rects[0];
+        for (ULONG i = 1; i < area.Count; i++) {
+            bounds.left = W32Min(bounds.left, area.Rects[i].left);
+            bounds.top = W32Min(bounds.top, area.Rects[i].top);
+            bounds.right = W32Max(bounds.right, area.Rects[i].right);
+            bounds.bottom = W32Max(bounds.bottom, area.Rects[i].bottom);
+        }
+        RectOffset(&bounds, -top->WindowRect.left, -top->WindowRect.top);
+        out->Visible = bounds;
+    }
+    RgnFree(&area);
+}
+
+static MimeWinLayer *g_layer;
+
+/* tells the host where a window that presents lies now, and whether it shows. */
+static void send_layers(WND *top, WND *w)
+{
+    if (has_connection(w) && (g_layer || (g_layer = MmAllocateContiguousPages(4096)))) {
+        MIME_PRESENT_LAYER where;
+        ScreenLayer(w, &where);
+        *g_layer = (MimeWinLayer){.window_id = where.Window,
+                                  .source = (uint32_t)(ULONG_PTR)WndHandle(w),
+                                  .order = where.Order,
+                                  .client = {where.Client.left, where.Client.top, where.Client.right, where.Client.bottom},
+                                  .visible = {where.Visible.left, where.Visible.top, where.Visible.right,
+                                              where.Visible.bottom}};
+        HalMimeHypercall(MIME_HC_WIN_LAYER, (ULONG64)MmGetPhysicalAddress(g_layer).QuadPart, 0, 0, 0, 0, 0, nullptr);
+    }
+    for (WND *c = w->FirstChild; c; c = c->Next)
+        send_layers(top, c);
+}
+
+static BOOLEAN tree_has_connection(const WND *w)
+{
+    if (has_connection(w))
+        return TRUE;
+    for (const WND *c = w->FirstChild; c; c = c->Next)
+        if (tree_has_connection(c))
+            return TRUE;
+    return FALSE;
+}
+
+/*
+ * a window moved, changed size or shown, hidden or restacked: the windows of its tree that present are told to the host
+ * again, which keeps their layers over the right parts of the window between their presents.
+ */
+void ScreenLayersChanged(WND *w)
+{
+    if (!VkProcessCount)
+        return;
+    WND *top = WndTopLevel(w);
+    if (top && top != WndDesktop() && (top->Flags & WNDF_HOST_WINDOW) && tree_has_connection(top))
+        send_layers(top, top);
 }

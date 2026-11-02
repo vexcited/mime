@@ -18,6 +18,8 @@ void mime_vk_close(uint64_t connection);
 void mime_vk_close_all(void);
 /* releases host storage when the last shared Direct3D resource or fence handle closes. */
 void mime_vk_share_free(uint64_t id);
+/* moves the layer of a window that presents to where the guest has it now; the image stays. */
+void mime_vk_layer(const MimeWinLayer *layer);
 /* loads the Vulkan driver in the background to reduce first-connection latency. */
 void mime_vk_warm_up(void);
 /* logs host time spent on guest calls since the previous report. */

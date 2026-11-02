@@ -2381,7 +2381,9 @@ static void vk_place_now(void *layer, uint32_t window_id, MimeRect r)
 }
 
 /* the Vulkan driver sets the layer's device and pixel format with the first swapchain on it. */
-bool mime_ui_vk_attach(uint32_t id_, MimeRect client, MimeUiNative *native)
+bool mime_ui_vk_layers(void) { return false; }
+
+bool mime_ui_vk_attach(uint32_t id_, uint32_t source, MimeRect client, uint32_t order, MimeUiNative *native)
 {
     pthread_mutex_lock(&g_windows_lock);
     bool exists = find_window(id_) != nullptr;
@@ -2407,7 +2409,7 @@ bool mime_ui_vk_attach(uint32_t id_, MimeRect client, MimeUiNative *native)
     return true;
 }
 
-void mime_ui_vk_detach(uint32_t id_)
+void mime_ui_vk_detach(uint32_t id_, uint32_t source)
 {
     pthread_mutex_lock(&g_vk_lock);
     VkLayer *v = vk_layer(id_);
@@ -2420,7 +2422,7 @@ void mime_ui_vk_detach(uint32_t id_)
 }
 
 /* guest pixels are the window's backing pixels, so the client area is the drawable as it is. */
-bool mime_ui_vk_frame(uint32_t id_, MimeRect client, MimeUiFrame *frame)
+bool mime_ui_vk_frame(uint32_t id_, uint32_t source, MimeRect full, MimeRect client, uint32_t order, MimeUiFrame *frame)
 {
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(id_);
@@ -2428,7 +2430,7 @@ bool mime_ui_vk_frame(uint32_t id_, MimeRect client, MimeUiFrame *frame)
         pthread_mutex_unlock(&g_windows_lock);
         return false;
     }
-    *frame = (MimeUiFrame){.subsurface = true, .scale = 1.0};
+    *frame = (MimeUiFrame){.subsurface = true, .scale = 1.0, .client = full, .area = client};
     /* a layer keeps the last drawable presented to it, so a frame before the window appears shows with it. */
     frame->shown = !(w->config.flags & MIME_WIN_MINIMIZED);
     frame->visible = w->config.visible;

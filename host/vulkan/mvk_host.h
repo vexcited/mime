@@ -148,7 +148,16 @@ void mvk_wsi_create_swapchain(MvkCall *call);
 void mvk_wsi_destroy_swapchain(MvkCall *call);
 void mvk_wsi_acquire(MvkCall *call);
 void mvk_wsi_present(MvkCall *call);
-bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
+/* where a present shows: the guest window it was made for, in the host window of its top level window. */
+typedef struct MvkTarget {
+    uint32_t window;  /* the host window. */
+    uint32_t source;  /* the window the image was made for. */
+    uint32_t order;   /* its place in the paint order of the tree, the front ones last. */
+    MimeRect client;  /* its client area in the host window. */
+    MimeRect visible; /* and the part of it that shows. */
+} MvkTarget;
+/* source 0 is the one presenter of a window that shows one image. */
+bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
                       uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client, uint64_t *serial);
 void mvk_wsi_close(MvkConnection *c);
 /* every present sent so far submitted. */
@@ -161,7 +170,7 @@ void mvk_wsi_drain(MvkConnection *c);
 typedef struct Swapchain MvkImageChain;
 MvkImageChain *mvk_wsi_chain_create(MvkConnection *c, VkImage image, VkFormat format, VkExtent2D extent);
 void mvk_wsi_chain_present(MvkConnection *c, MvkImageChain *s, VkQueue queue, uint32_t family, VkSemaphore rendered,
-                           uint32_t window, MimeRect client, bool sync);
+                           const MvkTarget *target, bool sync);
 VkSemaphore mvk_wsi_chain_acquire(MvkConnection *c, MvkImageChain *s);
 void mvk_wsi_chain_destroy(MvkConnection *c, MvkImageChain *s);
 

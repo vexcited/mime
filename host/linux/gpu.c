@@ -657,8 +657,7 @@ typedef struct Surface {
     bool presented;  /* in the presenter's hands: the next use waits for it. */
     uint32_t width, height, samples;
     uint16_t depth_format, stencil_format;
-    uint32_t window_id;
-    MimeRect client;
+    MvkTarget target;
     bool sync, live;
 } Surface;
 
@@ -1984,8 +1983,9 @@ static void surface_config(Channel *c, const MimeGpuSurfaceConfig *sc)
             g_vk.fn.vkCreateSemaphore(g_vk.device, &info, nullptr, &s->rendered);
         }
     }
-    s->window_id = sc->window_id;
-    s->client = (MimeRect){sc->x, sc->y, sc->x + (int32_t)w, sc->y + (int32_t)h};
+    MimeRect client = {sc->x, sc->y, sc->x + (int32_t)w, sc->y + (int32_t)h};
+    s->target = (MvkTarget){sc->window_id, sc->source, sc->order, client,
+                            {sc->visible[0], sc->visible[1], sc->visible[2], sc->visible[3]}};
     s->sync = sc->sync != 0;
 }
 
@@ -2009,7 +2009,7 @@ static void surface_destroy(Channel *c, uint32_t id_)
 static void present(Channel *c, uint32_t id_)
 {
     Surface *s = id_ < c->surfaces_cap ? &c->surfaces[id_] : nullptr;
-    if (!s || !s->live || !s->chain || !s->window_id) {
+    if (!s || !s->live || !s->chain || !s->target.window) {
         commit(c, 0);
         return;
     }
@@ -2019,7 +2019,7 @@ static void present(Channel *c, uint32_t id_)
     image_layout(c, s->color.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
     c->signal = s->rendered;
     commit(c, 0);
-    mvk_wsi_chain_present(&g_vk, s->chain, g_queue, g_family, s->rendered, s->window_id, s->client, s->sync);
+    mvk_wsi_chain_present(&g_vk, s->chain, g_queue, g_family, s->rendered, &s->target, s->sync);
     s->presented = true;
 }
 

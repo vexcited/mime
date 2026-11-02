@@ -1140,6 +1140,8 @@ void ScreenCompose(const RECT *area);
 BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, BOOLEAN host_pixels, PUCHAR bits, LONG stride, LONG width,
                            LONG height);
 ULONG64 ScreenHostSerial(void);
+void ScreenLayer(WND *w, MIME_PRESENT_LAYER *out);
+void ScreenLayersChanged(WND *w);
 extern ULONG ScreenSerial;
 extern ULONG VkProcessCount;
 HBRUSH MetricsSysColorBrush(int index);

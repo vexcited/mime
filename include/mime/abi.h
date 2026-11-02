@@ -501,6 +501,7 @@ enum {
 
     /* the notification area and notifications of the desktop. */
     MIME_HC_TRAY = 0x55,         /* (pa, size) a MimeTrayCommand */
+    MIME_HC_WIN_LAYER = 0x56,    /* (MimeWinLayer pa) where a window that presents lies now, so its layer follows it between presents */
 
     /* the desktop's shell: toast notifications, application identity and the taskbar. see MimeShell*. */
     MIME_HC_SHELL = 0x80,        /* (pa, size) a MimeShell* command, whose first word is MIME_SHELL_* */
@@ -1034,19 +1035,31 @@ typedef struct MimeWinPresent {
 } MimeWinPresent;
 
 /*
- * reads the last Vulkan present into BGRA rows at pixels_phys if capacity permits, forcing opaque alpha.
- * returns width, height, window-relative client rectangle and image serial. MIME_HC_STATUS_NOT_FOUND means no
- * presented image.
+ * reads the last image a window of the guest presented into BGRA rows at pixels_phys if capacity permits, forcing
+ * opaque alpha. window_id is the top level window and source the window that presented. returns width, height,
+ * window-relative client rectangle and image serial. MIME_HC_STATUS_NOT_FOUND means no presented image.
  */
 typedef struct MimeWinReadback {
     uint32_t window_id;
+    uint32_t source; /* the window that presented, one image is kept for each. */
     uint32_t capacity_width, capacity_height;
     uint32_t stride;
+    uint32_t pad;
     uint64_t pixels_phys;
     uint32_t width, height;
     MimeRect client;
     uint64_t serial; /* counts the images the window presented, so a capture can tell whether it changed. */
 } MimeWinReadback;
+
+/* where a window that presents lies in its top level window, window relative pixels of its own. */
+typedef struct MimeWinLayer {
+    uint32_t window_id; /* the top level window. */
+    uint32_t source;    /* the window that presents. */
+    uint32_t order;     /* its place in the paint order of the tree. */
+    uint32_t pad;
+    MimeRect client;
+    MimeRect visible;   /* the part of the client area that shows, empty while it is hidden or covered. */
+} MimeWinLayer;
 
 typedef struct MimeWinIcon {
     uint32_t window_id;

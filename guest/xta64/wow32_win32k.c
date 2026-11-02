@@ -439,7 +439,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         v[1] = a[2];
         return (ULONG)MxCallService(number, v);
     case MIME_SVC_NtGdiMimeGpuGetSurface: {
-        /* MIME_GPU_SURFACE is a window handle and five longs. */
+        /* MIME_GPU_SURFACE is a window handle and the longs after it. */
         MIME_GPU_SURFACE surface = {};
         v[0] = a[0];
         v[1] = (ULONG_PTR)&surface;
@@ -452,6 +452,11 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
             out[3] = (ULONG)surface.Y;
             out[4] = surface.Width;
             out[5] = surface.Height;
+            out[6] = surface.Order;
+            out[7] = (ULONG)surface.Visible.left;
+            out[8] = (ULONG)surface.Visible.top;
+            out[9] = (ULONG)surface.Visible.right;
+            out[10] = (ULONG)surface.Visible.bottom;
         }
         return ok;
     }

@@ -281,7 +281,9 @@ typedef struct MimeGpuSurfaceConfig {
     uint16_t color_format, depth_format, stencil_format;
     uint16_t sync;  /* wait for the display when presenting. */
     uint32_t samples;
-    uint32_t pad;
+    uint32_t source; /* the window the surface is for, a child of the host window or the host window itself. */
+    uint32_t order;  /* its place in the paint order of the host window's tree, the front ones last. */
+    int32_t visible[4]; /* left, top, right and bottom of the part of the client area that shows, window-relative. */
 } MimeGpuSurfaceConfig;
 
 typedef struct MimeGpuAttachment {

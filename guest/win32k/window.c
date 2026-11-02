@@ -806,6 +806,8 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
         send_kernel(w, WM_WINDOWPOSCHANGED, 0, &pos, MIME_LPARAM_IN, sizeof(pos));
     if ((moved || sized) && alive(w))
         WndCheckMonitorDpi(w);
+    if (alive(w))
+        ScreenLayersChanged(w);
 done:
     UserDereference(&w->Header);
 }
@@ -3014,6 +3016,12 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         }
         dc.Point = pt;
         r = ok && NT_SUCCESS(MimeCopyToUser((PVOID)param, &dc, sizeof(dc)));
+        break;
+    }
+    case MIME_HWNDPARAM_PRESENTLAYER: {
+        MIME_PRESENT_LAYER layer;
+        ScreenLayer(w, &layer);
+        r = NT_SUCCESS(MimeCopyToUser((PVOID)param, &layer, sizeof(layer)));
         break;
     }
     case MIME_HWNDPARAM_ENABLENCDPI:

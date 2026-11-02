@@ -283,6 +283,12 @@ void gl_surface_refresh(GlSurface *s, HDC dc)
     c->stencil_format = (uint16_t)s->stencil_format;
     c->sync = (uint16_t)s->sync;
     c->samples = 1;
+    c->source = (uint32_t)(ULONG_PTR)info.Window;
+    c->order = info.Order;
+    c->visible[0] = info.Visible.left;
+    c->visible[1] = info.Visible.top;
+    c->visible[2] = info.Visible.right;
+    c->visible[3] = info.Visible.bottom;
     gl_device_unlock();
 }
 

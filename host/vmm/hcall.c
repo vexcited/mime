@@ -328,6 +328,15 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
             status = MIME_HC_STATUS_NOT_FOUND;
         break;
     }
+    case MIME_HC_WIN_LAYER: {
+        const MimeWinLayer *layer = mime_vm_phys(vm, regs[1], sizeof(MimeWinLayer));
+        if (!layer) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        mime_vk_layer(layer);
+        break;
+    }
     case MIME_HC_WIN_ICON: {
         const MimeWinIcon *icon = mime_vm_phys(vm, regs[1], sizeof(MimeWinIcon));
         if (!icon || icon->width > 1024 || icon->height > 1024 || icon->stride < icon->width * 4 ||

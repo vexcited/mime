@@ -15,9 +15,11 @@ typedef struct MimeUiNative {
 } MimeUiNative;
 
 typedef struct MimeUiFrame {
-    uint32_t pixel_width, pixel_height; /* the surface: the client area, or the whole host window. */
+    uint32_t pixel_width, pixel_height; /* the surface: the part of the client area that shows, or the whole host window. */
     MimeRect host;                      /* window relative part the host window covers. */
     MimeRect visible;
+    MimeRect client;                    /* window relative client area of the window that presents, in screen pixels. */
+    MimeRect area;                      /* and the part of it that shows, the same. */
     uint32_t surface_width, surface_height; /* the guest surface. */
     double scale;                           /* host window pixels per guest pixel. */
     double origin_x, origin_y;              /* where the host part starts, in host window pixels. */
@@ -26,13 +28,15 @@ typedef struct MimeUiFrame {
 } MimeUiFrame;
 
 /*
- * Wayland uses a client-area subsurface excluded from SDL rendering, macOS a Metal layer over the client area; X11
- * uses the whole window and draws its frame.
- * attach waits for the main thread. client coordinates are window-relative guest pixels.
+ * Wayland uses a subsurface for each window of the guest that presents, over the part of its client area that shows
+ * and excluded from SDL rendering, macOS a Metal layer over the client area; X11 uses the whole window and draws its
+ * frame. attach waits for the main thread. rectangles are window-relative guest pixels of the window's own, order is
+ * the window's place in the paint order of its tree. without layers a window has one presenter and source is 0.
  */
-bool mime_ui_vk_attach(uint32_t id, MimeRect client, MimeUiNative *native);
-void mime_ui_vk_detach(uint32_t id);
-bool mime_ui_vk_frame(uint32_t id, MimeRect client, MimeUiFrame *frame);
+bool mime_ui_vk_layers(void);
+bool mime_ui_vk_attach(uint32_t id, uint32_t source, MimeRect area, uint32_t order, MimeUiNative *native);
+void mime_ui_vk_detach(uint32_t id, uint32_t source);
+bool mime_ui_vk_frame(uint32_t id, uint32_t source, MimeRect client, MimeRect area, uint32_t order, MimeUiFrame *frame);
 /* copies changes from a guest surface of the given dimensions; returns false if unchanged. */
 bool mime_ui_vk_copy(uint32_t id, uint8_t *dst, uint32_t width, uint32_t height, MimeRect *dirty);
 

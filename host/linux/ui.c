@@ -18,6 +18,18 @@
 #include <time.h>
 
 #define MAX_WINDOWS 256
+#define MAX_VK_LAYERS 8
+
+/* a surface over the window for each window of the guest that presents, stacked by the guest's paint order. */
+typedef struct VkLayer {
+    bool used;
+    uint32_t source; /* the guest window it presents for. */
+    uint32_t order;  /* place in the paint order of the window's tree, the front ones last. */
+    struct wl_surface *surface;
+    struct wl_subsurface *subsurface;
+    struct wl_proxy *viewport;
+    MimeRect place; /* where the subsurface is, in SDL window coordinates. */
+} VkLayer;
 
 typedef struct UiWindow {
     uint32_t id;
@@ -34,10 +46,7 @@ typedef struct UiWindow {
     bool fullscreen;
     bool vk;       /* a Vulkan presenter shows the client area. */
     bool vk_whole; /* and the frame too, the renderer gone: the window has no subsurface. */
-    struct wl_surface *vk_surface;
-    struct wl_subsurface *vk_subsurface;
-    struct wl_proxy *vk_viewport;
-    MimeRect vk_place; /* where the subsurface is, in SDL window coordinates. */
+    VkLayer vk_layers[MAX_VK_LAYERS];
     bool state_pending;
     uint32_t state_request;
     int state_command;
@@ -347,11 +356,15 @@ bool mime_ui_surface_point(void *surface, double x, double y, uint32_t *window, 
                                                     SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
         double ox = 0, oy = 0;
         if (surface == main_surface) {
-        } else if (w->vk_surface && surface == (void *)w->vk_surface) {
-            ox = w->vk_place.left;
-            oy = w->vk_place.top;
         } else {
-            continue;
+            const VkLayer *layer = nullptr;
+            for (int k = 0; k < MAX_VK_LAYERS; k++)
+                if (w->vk_layers[k].used && surface == (void *)w->vk_layers[k].surface)
+                    layer = &w->vk_layers[k];
+            if (!layer)
+                continue;
+            ox = layer->place.left;
+            oy = layer->place.top;
         }
         *window = w->id;
         window_point_to_guest(w, (float)(x + ox), (float)(y + oy), gx, gy);
@@ -841,7 +854,7 @@ static void update_pixel_size(UiWindow *w)
     pthread_mutex_unlock(&w->lock);
 }
 
-static void destroy_subsurface(UiWindow *w);
+static void destroy_layers(UiWindow *w);
 
 static bool has_open_popup(const UiWindow *w)
 {
@@ -856,7 +869,7 @@ static void destroy_host_window(UiWindow *w)
 {
     if (w->vk) {
         mime_vk_window_lost(w->id);
-        destroy_subsurface(w);
+        destroy_layers(w);
         w->vk = false;
         w->vk_whole = false;
     }
@@ -1519,81 +1532,165 @@ static bool wayland_globals(struct wl_display *display)
     return g_compositor && g_subcompositor;
 }
 
+/* a rectangle of the window's own pixels in the pixels of the guest's screen, which differ for a window that is stretched. */
+static MimeRect physical_rect(const UiWindow *w, MimeRect r)
+{
+    double k = surface_stretch(&w->config);
+    if (k == 1.0)
+        return r;
+    return (MimeRect){(int32_t)lround(r.left * k), (int32_t)lround(r.top * k), (int32_t)lround(r.right * k),
+                      (int32_t)lround(r.bottom * k)};
+}
+
 /*
- * the client area in SDL window coordinates. the guest gives it in the pixels of the program, which a window that is
- * not aware of the display's dpi has fewer of: the image is shown over the whole client area, stretched as the rest
- * of the window is.
+ * a rectangle of the window's own pixels in SDL window coordinates. the guest gives it in the pixels of the program,
+ * which a window that is not aware of the display's dpi has fewer of: the image is shown over the whole rectangle,
+ * stretched as the rest of the window is.
  */
 static MimeRect client_in_window(UiWindow *w, MimeRect client)
 {
     MimeRect host = host_part(&w->config);
     Fit fit = window_fit(w);
-    double stretch = surface_stretch(&w->config);
-    return (MimeRect){(int32_t)lround(fit.x + (client.left * stretch - host.left) * fit.scale),
-                      (int32_t)lround(fit.y + (client.top * stretch - host.top) * fit.scale),
-                      (int32_t)lround(fit.x + (client.right * stretch - host.left) * fit.scale),
-                      (int32_t)lround(fit.y + (client.bottom * stretch - host.top) * fit.scale)};
+    client = physical_rect(w, client);
+    return (MimeRect){(int32_t)lround(fit.x + (client.left - host.left) * fit.scale),
+                      (int32_t)lround(fit.y + (client.top - host.top) * fit.scale),
+                      (int32_t)lround(fit.x + (client.right - host.left) * fit.scale),
+                      (int32_t)lround(fit.y + (client.bottom - host.top) * fit.scale)};
 }
 
-static void destroy_subsurface(UiWindow *w)
+static VkLayer *find_layer(UiWindow *w, uint32_t source)
 {
-    if (w->vk_viewport)
-        wl_proxy_marshal_flags(w->vk_viewport, 0, nullptr, wl_proxy_get_version(w->vk_viewport),
-                               WL_MARSHAL_FLAG_DESTROY);
-    if (w->vk_subsurface)
-        wl_subsurface_destroy(w->vk_subsurface);
-    if (w->vk_surface)
-        wl_surface_destroy(w->vk_surface);
-    w->vk_viewport = nullptr;
-    w->vk_subsurface = nullptr;
-    w->vk_surface = nullptr;
+    for (int i = 0; i < MAX_VK_LAYERS; i++)
+        if (w->vk_layers[i].used && w->vk_layers[i].source == source)
+            return &w->vk_layers[i];
+    return nullptr;
 }
 
-/* places the subsurface over the client area; the position lands with the window's next frame. */
-static void place_subsurface(UiWindow *w, MimeRect client)
+static void destroy_layer(VkLayer *l)
 {
-    MimeRect r = client_in_window(w, client);
-    if (!w->vk_subsurface || !memcmp(&r, &w->vk_place, sizeof(r)))
-        return;
-    w->vk_place = r;
-    wl_subsurface_set_position(w->vk_subsurface, r.left, r.top);
-    if (w->vk_viewport && r.right > r.left && r.bottom > r.top)
-        wl_proxy_marshal_flags(w->vk_viewport, 2, nullptr, wl_proxy_get_version(w->vk_viewport), 0, r.right - r.left,
-                               r.bottom - r.top);
+    if (l->viewport)
+        wl_proxy_marshal_flags(l->viewport, 0, nullptr, wl_proxy_get_version(l->viewport), WL_MARSHAL_FLAG_DESTROY);
+    if (l->subsurface)
+        wl_subsurface_destroy(l->subsurface);
+    if (l->surface)
+        wl_surface_destroy(l->surface);
+    *l = (VkLayer){};
+}
+
+static void destroy_layers(UiWindow *w)
+{
+    for (int i = 0; i < MAX_VK_LAYERS; i++)
+        if (w->vk_layers[i].used)
+            destroy_layer(&w->vk_layers[i]);
+}
+
+static bool has_layers(const UiWindow *w)
+{
+    for (int i = 0; i < MAX_VK_LAYERS; i++)
+        if (w->vk_layers[i].used)
+            return true;
+    return false;
+}
+
+static struct wl_surface *parent_surface(UiWindow *w)
+{
+    return w->window ? SDL_GetPointerProperty(SDL_GetWindowProperties(w->window), SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER,
+                                              nullptr)
+                     : nullptr;
+}
+
+/* a change of the parent's stack or of a position lands with the parent's next commit. */
+static void commit_parent(UiWindow *w)
+{
     if (w->renderer && w->pixels && w->shown) {
         pthread_mutex_lock(&w->lock);
         w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
         w->has_dirty = true;
         pthread_mutex_unlock(&w->lock);
         draw(w);
-    } else if (w->window) {
-        struct wl_surface *parent = SDL_GetPointerProperty(SDL_GetWindowProperties(w->window),
-                                                           SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
+    } else {
+        struct wl_surface *parent = parent_surface(w);
         if (parent)
             wl_surface_commit(parent);
     }
 }
 
-static bool make_subsurface(UiWindow *w, struct wl_surface *parent, MimeRect client)
+/* the layers over the window's own pixels from the back of the guest's paint order to the front. */
+static void restack_layers(UiWindow *w)
 {
-    w->vk_surface = wl_compositor_create_surface(g_compositor);
-    w->vk_subsurface = w->vk_surface ? wl_subcompositor_get_subsurface(g_subcompositor, w->vk_surface, parent) : nullptr;
-    if (!w->vk_subsurface) {
-        destroy_subsurface(w);
-        return false;
+    struct wl_surface *below = parent_surface(w);
+    bool done[MAX_VK_LAYERS] = {};
+    for (int n = 0; below && n < MAX_VK_LAYERS; n++) {
+        int best = -1;
+        for (int k = 0; k < MAX_VK_LAYERS; k++)
+            if (w->vk_layers[k].used && !done[k] && (best < 0 || w->vk_layers[k].order < w->vk_layers[best].order))
+                best = k;
+        if (best < 0)
+            break;
+        done[best] = true;
+        wl_subsurface_place_above(w->vk_layers[best].subsurface, below);
+        below = w->vk_layers[best].surface;
     }
-    wl_subsurface_set_desync(w->vk_subsurface);
+}
+
+/* places a layer over the area; the position lands with the window's next frame. */
+static void place_layer(UiWindow *w, VkLayer *l, MimeRect area, uint32_t order)
+{
+    MimeRect r = client_in_window(w, area);
+    bool restack = l->order != order;
+    l->order = order;
+    if (r.right <= r.left || r.bottom <= r.top) {
+        /* nothing of it shows: an empty buffer takes it off until the next frame. */
+        wl_surface_attach(l->surface, nullptr, 0, 0);
+        wl_surface_commit(l->surface);
+        l->place = r;
+        if (restack)
+            restack_layers(w);
+        return;
+    }
+    if (!restack && !memcmp(&r, &l->place, sizeof(r)))
+        return;
+    if (memcmp(&r, &l->place, sizeof(r))) {
+        l->place = r;
+        wl_subsurface_set_position(l->subsurface, r.left, r.top);
+        if (l->viewport)
+            wl_proxy_marshal_flags(l->viewport, 2, nullptr, wl_proxy_get_version(l->viewport), 0, r.right - r.left,
+                                   r.bottom - r.top);
+    }
+    if (restack)
+        restack_layers(w);
+    commit_parent(w);
+}
+
+static VkLayer *make_layer(UiWindow *w, struct wl_surface *parent, uint32_t source, MimeRect area, uint32_t order)
+{
+    VkLayer *l = nullptr;
+    for (int i = 0; i < MAX_VK_LAYERS && !l; i++)
+        if (!w->vk_layers[i].used)
+            l = &w->vk_layers[i];
+    if (!l)
+        return nullptr;
+    l->surface = wl_compositor_create_surface(g_compositor);
+    l->subsurface = l->surface ? wl_subcompositor_get_subsurface(g_subcompositor, l->surface, parent) : nullptr;
+    if (!l->subsurface) {
+        destroy_layer(l);
+        return nullptr;
+    }
+    l->used = true;
+    l->source = source;
+    wl_subsurface_set_desync(l->subsurface);
     /* the mouse goes through, to the window SDL knows. */
     struct wl_region *empty = wl_compositor_create_region(g_compositor);
-    wl_surface_set_input_region(w->vk_surface, empty);
+    wl_surface_set_input_region(l->surface, empty);
     wl_region_destroy(empty);
     if (g_viewporter)
-        w->vk_viewport = wl_proxy_marshal_flags(g_viewporter, 1, &viewport_interface,
-                                                wl_proxy_get_version(g_viewporter), 0, nullptr, w->vk_surface);
-    wl_surface_commit(w->vk_surface);
-    w->vk_place = (MimeRect){0};
-    place_subsurface(w, client);
-    return true;
+        l->viewport = wl_proxy_marshal_flags(g_viewporter, 1, &viewport_interface, wl_proxy_get_version(g_viewporter), 0,
+                                             nullptr, l->surface);
+    wl_surface_commit(l->surface);
+    l->place = (MimeRect){0};
+    l->order = ~order;
+    place_layer(w, l, area, order);
+    return l;
 }
 
 typedef struct MoveSize {
@@ -1675,13 +1772,19 @@ uint64_t mime_ui_window_movesize(uint32_t window, uint32_t edge)
 }
 
 typedef struct VkAttach {
-    uint32_t id;
-    MimeRect client;
+    uint32_t id, source, order;
+    MimeRect area;
     MimeUiNative *native;
     bool ok, done;
     pthread_mutex_t lock;
     pthread_cond_t cond;
 } VkAttach;
+
+/* Wayland gives every window of the guest that presents a subsurface of its own, X11 and the others one swapchain. */
+bool mime_ui_vk_layers(void)
+{
+    return g_video && g_wayland;
+}
 
 static void attach_main(void *arg)
 {
@@ -1695,9 +1798,11 @@ static void attach_main(void *arg)
         if (driver && !strcmp(driver, "wayland")) {
             struct wl_display *display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
             struct wl_surface *parent = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
-            if (display && parent && wayland_globals(display) && (w->vk_surface || make_subsurface(w, parent, a->client))) {
+            VkLayer *layer = nullptr;
+            if (display && parent && wayland_globals(display) &&
+                ((layer = find_layer(w, a->source)) || (layer = make_layer(w, parent, a->source, a->area, a->order)))) {
                 a->native->display = display;
-                a->native->surface = w->vk_surface;
+                a->native->surface = layer->surface;
                 a->native->subsurface = true;
                 a->ok = true;
             }
@@ -1734,14 +1839,14 @@ static void attach_main(void *arg)
     pthread_mutex_unlock(&a->lock);
 }
 
-bool mime_ui_vk_attach(uint32_t id, MimeRect client, MimeUiNative *native)
+bool mime_ui_vk_attach(uint32_t id, uint32_t source, MimeRect area, uint32_t order, MimeUiNative *native)
 {
     if (!g_video)
         return false;
     VkAttach *a = calloc(1, sizeof(*a));
     if (!a)
         return false;
-    *a = (VkAttach){.id = id, .client = client, .native = native};
+    *a = (VkAttach){.id = id, .source = source, .order = order, .area = area, .native = native};
     pthread_mutex_init(&a->lock, nullptr);
     pthread_cond_init(&a->cond, nullptr);
     on_main(attach_main, a);
@@ -1762,39 +1867,57 @@ bool mime_ui_vk_attach(uint32_t id, MimeRect client, MimeUiNative *native)
     return done && ok;
 }
 
+typedef struct VkDetach {
+    uint32_t id, source;
+} VkDetach;
+
 static void detach_main(void *arg)
 {
+    VkDetach *d = arg;
     pthread_mutex_lock(&g_windows_lock);
-    UiWindow *w = find_window((uint32_t)(uintptr_t)arg);
+    UiWindow *w = find_window(d->id);
     if (w && w->vk) {
-        w->vk = false;
-        w->vk_whole = false;
-        destroy_subsurface(w);
-        if (w->window && !w->renderer) {
-            w->renderer = SDL_CreateRenderer(w->window, nullptr);
-            if (w->renderer)
-                SDL_SetRenderVSync(w->renderer, 0);
-            else
-                mime_warn("cannot create a renderer: %s", SDL_GetError());
+        VkLayer *layer = w->vk_whole ? nullptr : find_layer(w, d->source);
+        if (layer)
+            destroy_layer(layer);
+        /* the window stays under the presenters while a layer is left. */
+        if (w->vk_whole || !has_layers(w)) {
+            w->vk = false;
+            w->vk_whole = false;
+            destroy_layers(w);
+            if (w->window && !w->renderer) {
+                w->renderer = SDL_CreateRenderer(w->window, nullptr);
+                if (w->renderer)
+                    SDL_SetRenderVSync(w->renderer, 0);
+                else
+                    mime_warn("cannot create a renderer: %s", SDL_GetError());
+            }
+            pthread_mutex_lock(&w->lock);
+            w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
+            w->has_dirty = w->pixels != nullptr;
+            pthread_mutex_unlock(&w->lock);
+        } else {
+            restack_layers(w);
         }
-        pthread_mutex_lock(&w->lock);
-        w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
-        w->has_dirty = w->pixels != nullptr;
-        pthread_mutex_unlock(&w->lock);
     }
     pthread_mutex_unlock(&g_windows_lock);
     if (w && w->shown)
         draw(w);
+    free(d);
 }
 
-void mime_ui_vk_detach(uint32_t id)
+void mime_ui_vk_detach(uint32_t id, uint32_t source)
 {
-    on_main(detach_main, (void *)(uintptr_t)id);
+    VkDetach *d = malloc(sizeof(*d));
+    if (!d)
+        return;
+    *d = (VkDetach){id, source};
+    on_main(detach_main, d);
 }
 
 typedef struct VkPlace {
-    uint32_t id;
-    MimeRect client;
+    uint32_t id, source, order;
+    MimeRect area;
 } VkPlace;
 
 static void place_main(void *arg)
@@ -1802,13 +1925,14 @@ static void place_main(void *arg)
     VkPlace *p = arg;
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(p->id);
-    if (w && w->vk)
-        place_subsurface(w, p->client);
+    VkLayer *layer = w && w->vk && !w->vk_whole ? find_layer(w, p->source) : nullptr;
+    if (layer)
+        place_layer(w, layer, p->area, p->order);
     pthread_mutex_unlock(&g_windows_lock);
     free(p);
 }
 
-bool mime_ui_vk_frame(uint32_t id, MimeRect client, MimeUiFrame *frame)
+bool mime_ui_vk_frame(uint32_t id, uint32_t source, MimeRect client, MimeRect area, uint32_t order, MimeUiFrame *frame)
 {
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(id);
@@ -1830,13 +1954,20 @@ bool mime_ui_vk_frame(uint32_t id, MimeRect client, MimeUiFrame *frame)
     frame->surface_height = w->pixels ? w->height : 0;
     frame->shown = w->shown && !(w->config.flags & MIME_WIN_MINIMIZED);
     frame->subsurface = !w->vk_whole;
+    frame->client = physical_rect(w, client);
+    frame->area = physical_rect(w, area);
     bool moved = false;
     if (frame->subsurface) {
-        /* the client area at the window's density. */
-        MimeRect r = client_in_window(w, client);
+        VkLayer *layer = find_layer(w, source);
+        if (!layer) {
+            pthread_mutex_unlock(&w->lock);
+            return false;
+        }
+        /* the layer's area at the window's density. */
+        MimeRect r = client_in_window(w, area);
         frame->pixel_width = (uint32_t)MIME_MAX(lround((r.right - r.left) * density), 0);
         frame->pixel_height = (uint32_t)MIME_MAX(lround((r.bottom - r.top) * density), 0);
-        moved = memcmp(&r, &w->vk_place, sizeof(r)) != 0;
+        moved = memcmp(&r, &layer->place, sizeof(r)) != 0 || layer->order != order;
     } else {
         frame->pixel_width = w->pixel_width;
         frame->pixel_height = w->pixel_height;
@@ -1845,7 +1976,7 @@ bool mime_ui_vk_frame(uint32_t id, MimeRect client, MimeUiFrame *frame)
     if (moved) {
         VkPlace *p = malloc(sizeof(*p));
         if (p) {
-            *p = (VkPlace){id, client};
+            *p = (VkPlace){id, source, order, area};
             on_main(place_main, p);
         }
     }
@@ -2442,11 +2573,11 @@ int mime_app_proxy_main(int argc, char **argv)
 }
 
 /* vkwsi.c supplies this entry without exposing Vulkan headers here. */
-bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
+bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
                       uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client, uint64_t *serial);
 
 bool mime_ui_window_readback(MimeWinReadback *r, void *pixels)
 {
-    return mvk_wsi_readback(r->window_id, pixels, r->capacity_width, r->capacity_height, r->stride, &r->width,
+    return mvk_wsi_readback(r->window_id, r->source, pixels, r->capacity_width, r->capacity_height, r->stride, &r->width,
                             &r->height, &r->client, &r->serial);
 }

@@ -10,6 +10,7 @@
  */
 #include "mvk_guest.h"
 
+#include <mime/ntuser.h>
 #include <mime/win32/winuser.h>
 
 #define MAX_IMAGES 8
@@ -335,22 +336,11 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAcquireNextImage2KHR(VkDevice device, const VkA
     return vkAcquireNextImageKHR(device, info->swapchain, info->timeout, info->semaphore, info->fence, index);
 }
 
-/* the swapchain shows in the top level window, at the client area's place in it. */
-static void target(HWND hwnd, uint32_t *window, RECT *client)
+/* the swapchain shows in the top level window, at the client area's place in it and in front of what is behind it. */
+static void target(HWND hwnd, MIME_PRESENT_LAYER *layer)
 {
-    HWND top = GetAncestor(hwnd, GA_ROOT);
-    if (!top)
-        top = hwnd;
-    RECT wr = {}, cr = {};
-    POINT origin = {0, 0};
-    GetWindowRect(top, &wr);
-    GetClientRect(hwnd, &cr);
-    ClientToScreen(hwnd, &origin);
-    *window = (uint32_t)(ULONG_PTR)top;
-    client->left = origin.x - wr.left;
-    client->top = origin.y - wr.top;
-    client->right = client->left + cr.right - cr.left;
-    client->bottom = client->top + cr.bottom - cr.top;
+    *layer = (MIME_PRESENT_LAYER){};
+    NtUserCallHwndParam(hwnd, (ULONG_PTR)layer, MIME_HWNDPARAM_PRESENTLAYER);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *info)
@@ -364,16 +354,22 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue queue, const VkPresentI
     VkResult result = VK_SUCCESS;
     for (uint32_t i = 0; i < info->swapchainCount; i++) {
         MvkSwapchain *s = swapchain_of(info->pSwapchains[i]);
-        uint32_t index = info->pImageIndices[i], window;
-        RECT client;
-        target(s->hwnd, &window, &client);
+        uint32_t index = info->pImageIndices[i];
+        MIME_PRESENT_LAYER layer;
+        target(s->hwnd, &layer);
         mvk_put_u64(e, s->id);
         mvk_put_u32(e, index);
-        mvk_put_u32(e, window);
-        mvk_put_u32(e, (uint32_t)client.left);
-        mvk_put_u32(e, (uint32_t)client.top);
-        mvk_put_u32(e, (uint32_t)client.right);
-        mvk_put_u32(e, (uint32_t)client.bottom);
+        mvk_put_u32(e, layer.Window);
+        mvk_put_u32(e, (uint32_t)layer.Client.left);
+        mvk_put_u32(e, (uint32_t)layer.Client.top);
+        mvk_put_u32(e, (uint32_t)layer.Client.right);
+        mvk_put_u32(e, (uint32_t)layer.Client.bottom);
+        mvk_put_u32(e, (uint32_t)(ULONG_PTR)s->hwnd);
+        mvk_put_u32(e, layer.Order);
+        mvk_put_u32(e, (uint32_t)layer.Visible.left);
+        mvk_put_u32(e, (uint32_t)layer.Visible.top);
+        mvk_put_u32(e, (uint32_t)layer.Visible.right);
+        mvk_put_u32(e, (uint32_t)layer.Visible.bottom);
         AcquireSRWLockExclusive(&s->lock);
         if (index < s->count)
             s->acquired[index] = FALSE;

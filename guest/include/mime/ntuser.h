@@ -270,6 +270,7 @@ enum {
     MIME_HWNDPARAM_ENABLENCDPI,         /* EnableNonClientDpiScaling, the parameter is unused. */
     MIME_HWNDPARAM_DPICHILDREN,         /* EnableChildWindowDpiMessage: nonzero for the children to hear, zero for not. */
     MIME_HWNDPARAM_CONTROLDPIBEHAVIOR,  /* the DCDC_* mask in the low byte and their values above it. */
+    MIME_HWNDPARAM_PRESENTLAYER,        /* MIME_PRESENT_LAYER pointer: where the image the window presents lies in its top level window. */
 };
 
 /* what MIME_HWNDPARAM_DPICONVERT converts a point between. */
@@ -649,12 +650,22 @@ W32KAPI LONG NTAPI NtUserMimeExitWindows(ULONG flags, ULONG reason);
 
 /* ------------------------------------------------------------------ gpu */
 
+/* what MIME_HWNDPARAM_PRESENTLAYER tells of a window, window pixels relative to its top level window. */
+typedef struct MIME_PRESENT_LAYER {
+    ULONG Window;  /* the host window: the top level window of the tree, 0 while it has none. */
+    ULONG Order;   /* the place of the window in the paint order of the tree, the front ones last. */
+    RECT Client;
+    RECT Visible;  /* the part of the client area that shows, empty while the window is hidden or covered. */
+} MIME_PRESENT_LAYER;
+
 /* where a window dc renders in its host window, see mime/gpu.h. */
 typedef struct MIME_GPU_SURFACE {
     HWND Window;
     ULONG HostWindow; /* 0 while the window is hidden. */
     LONG X, Y;        /* the client area in the host window's surface. */
     ULONG Width, Height;
+    ULONG Order;      /* the window's place in the paint order of the host window's tree. */
+    RECT Visible;     /* the part of the client area that shows, in the host window's surface. */
 } MIME_GPU_SURFACE;
 
 W32KAPI NTSTATUS NTAPI NtGdiMimeGpuOpen(PVOID *base, PULONG size);

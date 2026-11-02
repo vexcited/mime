@@ -33,7 +33,7 @@ typedef unsigned long VisualID;
 #define MAX_IMAGES 8
 #define MAX_HOST_IMAGES 16
 #define FRAMES 3
-#define MAX_PRESENTERS 64
+#define MAX_PRESENTERS 128
 #define MAX_GRAVE 64
 #define ACQUIRE_TIMEOUT_NS 100000000ull
 
@@ -111,6 +111,8 @@ typedef struct GammaPass {
 
 struct Presenter {
     uint32_t window;
+    uint32_t source; /* the window of the guest it presents for, 0 when a window has one presenter. */
+    uint32_t last_source; /* the window the last image was made for. */
     MvkConnection *conn;
     int refs;
     pthread_mutex_t lock;
@@ -184,8 +186,8 @@ struct Presenter {
 typedef struct PresentJob {
     struct PresentJob *next;
     Swapchain *s;
-    uint32_t index, window;
-    MimeRect client;
+    uint32_t index;
+    MvkTarget target;
     VkQueue queue;
     uint32_t family;
     uint64_t ready; /* the value of the ready timeline the guest's semaphores signal, 0 for none. */
@@ -531,18 +533,18 @@ static void destroy_presenter(MvkConnection *c, Presenter *p)
     pthread_mutex_destroy(&p->lock);
     pthread_mutex_destroy(&p->info_lock);
     if (attached)
-        mime_ui_vk_detach(p->window);
+        mime_ui_vk_detach(p->window, p->source);
     free(p->shadow);
     free(p);
 }
 
 /* creates a presenter unless another connection owns the window. */
-static Presenter *presenter_get(MvkConnection *c, uint32_t window)
+static Presenter *presenter_get(MvkConnection *c, uint32_t window, uint32_t source)
 {
     pthread_mutex_lock(&g_presenters_lock);
     Presenter *p = nullptr, **slot = nullptr;
     for (int i = 0; i < MAX_PRESENTERS; i++) {
-        if (g_presenters[i] && g_presenters[i]->window == window)
+        if (g_presenters[i] && g_presenters[i]->window == window && g_presenters[i]->source == source)
             p = g_presenters[i];
         else if (!g_presenters[i] && !slot)
             slot = &g_presenters[i];
@@ -551,6 +553,7 @@ static Presenter *presenter_get(MvkConnection *c, uint32_t window)
         p = nullptr;
     else if (!p && slot && (p = calloc(1, sizeof(*p)))) {
         p->window = window;
+        p->source = source;
         p->conn = c;
         p->checked_family = UINT32_MAX;
         p->pool_family = UINT32_MAX;
@@ -607,7 +610,7 @@ void mime_vk_window_lost(uint32_t id)
 }
 
 /* takes the host window from SDL and makes the surface, outside the presenter's lock. */
-static void presenter_attach(MvkConnection *c, Presenter *p, MimeRect client)
+static void presenter_attach(MvkConnection *c, Presenter *p, MimeRect area, uint32_t order)
 {
     pthread_mutex_lock(&p->lock);
     uint32_t generation = p->generation;
@@ -616,7 +619,7 @@ static void presenter_attach(MvkConnection *c, Presenter *p, MimeRect client)
     if (!need)
         return;
     MimeUiNative native;
-    if (!mime_ui_vk_attach(p->window, client, &native))
+    if (!mime_ui_vk_attach(p->window, p->source, area, order, &native))
         return;
     pthread_mutex_lock(&p->lock);
     p->attached = true;
@@ -1396,9 +1399,20 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
     VkImage src = s->images[index];
     barrier(c, cmd, src, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0,
             VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-    Box area = frame->subsurface ? (Box){0, 0, p->extent.width, p->extent.height} : to_pixels(frame, client);
-    blit(c, cmd, src, (Box){0, 0, s->extent.width, s->extent.height}, s->extent.width, s->extent.height, dst, area,
-         p->extent.width, p->extent.height, s->flip);
+    Box crop = {0, 0, s->extent.width, s->extent.height}, area;
+    if (frame->subsurface) {
+        /* a layer is the part of the client area that shows, so it takes the same part of the image. */
+        area = (Box){0, 0, p->extent.width, p->extent.height};
+        double cw = frame->client.right - frame->client.left, ch = frame->client.bottom - frame->client.top;
+        if (cw > 0 && ch > 0) {
+            double fx = s->extent.width / cw, fy = s->extent.height / ch;
+            crop = (Box){(frame->area.left - frame->client.left) * fx, (frame->area.top - frame->client.top) * fy,
+                         (frame->area.right - frame->client.left) * fx, (frame->area.bottom - frame->client.top) * fy};
+        }
+    } else {
+        area = to_pixels(frame, frame->client);
+    }
+    blit(c, cmd, src, crop, s->extent.width, s->extent.height, dst, area, p->extent.width, p->extent.height, s->flip);
     /* and kept, for captures of the screen. */
     if (p->last) {
         barrier(c, cmd, p->last, p->last_valid ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
@@ -1586,27 +1600,42 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
     return false;
 }
 
+/* the part of the client area that shows, empty when none does. */
+static MimeRect shown_area(const MvkTarget *t)
+{
+    MimeRect r = {MIME_MAX(t->visible.left, t->client.left), MIME_MAX(t->visible.top, t->client.top),
+                  MIME_MIN(t->visible.right, t->client.right), MIME_MIN(t->visible.bottom, t->client.bottom)};
+    if (r.right <= r.left || r.bottom <= r.top)
+        return (MimeRect){};
+    return r;
+}
+
 /* presents one swapchain, or just releases its image when the window is hidden. */
 static void present_one(MvkConnection *c, VkQueue queue, uint32_t family, const Waits *waits, Swapchain *s,
-                        uint32_t index, uint32_t window, MimeRect client)
+                        uint32_t index, const MvkTarget *t)
 {
     MvkWsi *w = c->wsi;
-    if (s->presenter && s->presenter->window != window) {
+    /* a window of the guest keeps a presenter for each window that presents where the display has layers, else one. */
+    uint32_t source = mime_ui_vk_layers() ? t->source : 0;
+    if (s->presenter && (s->presenter->window != t->window || s->presenter->source != source)) {
         presenter_put(c, s->presenter);
         s->presenter = nullptr;
     }
-    if (!s->presenter && window && can_present(w))
-        s->presenter = presenter_get(c, window);
+    if (!s->presenter && t->window && can_present(w))
+        s->presenter = presenter_get(c, t->window, source);
     Presenter *p = s->presenter;
     bool shown = false;
+    MimeRect area = shown_area(t);
     if (p) {
-        presenter_attach(c, p, client);
-        MimeUiFrame frame;
-        if (mime_ui_vk_frame(window, client, &frame)) {
+        if (area.right > area.left || p->surface)
+            presenter_attach(c, p, area, t->order);
+        MimeUiFrame frame = {};
+        if (mime_ui_vk_frame(t->window, source, t->client, area, t->order, &frame)) {
             if (!frame.subsurface)
                 refresh_shadow(p, &frame);
             pthread_mutex_lock(&p->lock);
-            shown = show(c, p, queue, family, waits, s, index, &frame, client);
+            p->last_source = t->source;
+            shown = show(c, p, queue, family, waits, s, index, &frame, t->client);
             pthread_mutex_unlock(&p->lock);
         }
     }
@@ -1638,7 +1667,7 @@ static void *presenting_main(void *arg)
             waits.values[0] = job->ready;
             waits.count = 1;
         }
-        present_one(c, job->queue, job->family, &waits, job->s, job->index, job->window, job->client);
+        present_one(c, job->queue, job->family, &waits, job->s, job->index, &job->target);
         pthread_mutex_lock(&w->lock);
         job->s->queued[job->index]--;
         w->busy = false;
@@ -1747,12 +1776,17 @@ void mvk_wsi_present(MvkCall *call)
     for (uint32_t i = 0; i < count; i++) {
         Swapchain *s = (Swapchain *)(uintptr_t)mvk_get_handle(d, 0);
         uint32_t index = mvk_get_u32(d);
-        uint32_t window = mvk_get_u32(d);
-        MimeRect client;
-        client.left = (int32_t)mvk_get_u32(d);
-        client.top = (int32_t)mvk_get_u32(d);
-        client.right = (int32_t)mvk_get_u32(d);
-        client.bottom = (int32_t)mvk_get_u32(d);
+        MvkTarget target = {.window = mvk_get_u32(d)};
+        target.client.left = (int32_t)mvk_get_u32(d);
+        target.client.top = (int32_t)mvk_get_u32(d);
+        target.client.right = (int32_t)mvk_get_u32(d);
+        target.client.bottom = (int32_t)mvk_get_u32(d);
+        target.source = mvk_get_u32(d);
+        target.order = mvk_get_u32(d);
+        target.visible.left = (int32_t)mvk_get_u32(d);
+        target.visible.top = (int32_t)mvk_get_u32(d);
+        target.visible.right = (int32_t)mvk_get_u32(d);
+        target.visible.bottom = (int32_t)mvk_get_u32(d);
         if (d->error || !s || index >= s->count)
             break;
         /* a released image is acquired before its next present: anything else is the guest's mistake. */
@@ -1761,14 +1795,14 @@ void mvk_wsi_present(MvkCall *call)
             continue;
         }
         if (!aside) {
-            present_one(c, queue, family, &waits, s, index, window, client);
+            present_one(c, queue, family, &waits, s, index, &target);
             waits.count = 0;
             continue;
         }
         PresentJob *job = calloc(1, sizeof(*job));
         if (!job)
             break;
-        *job = (PresentJob){nullptr, s, index, window, client, queue, family, ready};
+        *job = (PresentJob){nullptr, s, index, target, queue, family, ready};
         s->pending[index] = true;
         pthread_mutex_lock(&w->lock);
         s->queued[index]++;
@@ -1893,7 +1927,7 @@ MvkImageChain *mvk_wsi_chain_create(MvkConnection *c, VkImage image, VkFormat fo
 
 /* presents a host-owned image after waiting for rendered. */
 void mvk_wsi_chain_present(MvkConnection *c, MvkImageChain *s, VkQueue queue, uint32_t family, VkSemaphore rendered,
-                           uint32_t window, MimeRect client, bool sync)
+                           const MvkTarget *target, bool sync)
 {
     MvkWsi *w = wsi_of(c);
     if (!w || s->pending[0])
@@ -1906,7 +1940,7 @@ void mvk_wsi_chain_present(MvkConnection *c, MvkImageChain *s, VkQueue queue, ui
         waits.count = 1;
     }
     if (!start_presenting(c, w)) {
-        present_one(c, queue, family, &waits, s, 0, window, client);
+        present_one(c, queue, family, &waits, s, 0, target);
         return;
     }
     uint64_t ready = 0;
@@ -1921,7 +1955,7 @@ void mvk_wsi_chain_present(MvkConnection *c, MvkImageChain *s, VkQueue queue, ui
     PresentJob *job = calloc(1, sizeof(*job));
     if (!job)
         return;
-    *job = (PresentJob){nullptr, s, 0, window, client, queue, family, ready};
+    *job = (PresentJob){nullptr, s, 0, *target, queue, family, ready};
     s->pending[0] = true;
     pthread_mutex_lock(&w->lock);
     s->queued[0]++;
@@ -1976,17 +2010,21 @@ static void copy_opaque(void *pixels, uint32_t stride, const uint8_t *from, uint
  * copies the last presented image into BGRA rows if capacity permits. returns its size and window-relative
  * client rectangle, or false if the window has no image.
  */
-bool mvk_wsi_readback(uint32_t window, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
+bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
                       uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client, uint64_t *serial)
 {
+    /* where a window has one presenter, the image is the last one presented and the window it was made for is the one asked. */
+    bool layers = mime_ui_vk_layers();
     pthread_mutex_lock(&g_presenters_lock);
     Presenter *p = nullptr;
-    for (int i = 0; i < MAX_PRESENTERS; i++)
-        if (g_presenters[i] && g_presenters[i]->window == window) {
-            p = g_presenters[i];
+    for (int i = 0; i < MAX_PRESENTERS; i++) {
+        Presenter *q = g_presenters[i];
+        if (q && q->window == window && (layers ? q->source == source : (!source || q->last_source == source))) {
+            p = q;
             p->refs++;
             break;
         }
+    }
     pthread_mutex_unlock(&g_presenters_lock);
     if (!p)
         return false;
@@ -2099,4 +2137,25 @@ out:
     pthread_mutex_unlock(&p->lock);
     presenter_put(c, p);
     return ok;
+}
+
+/* a window that presents moved, was hidden, or was covered: its layer follows without waiting for the next present. */
+void mime_vk_layer(const MimeWinLayer *layer)
+{
+    if (!mime_ui_vk_layers())
+        return;
+    pthread_mutex_lock(&g_presenters_lock);
+    Presenter *p = nullptr;
+    for (int i = 0; i < MAX_PRESENTERS && !p; i++)
+        if (g_presenters[i] && g_presenters[i]->window == layer->window_id && g_presenters[i]->source == layer->source)
+            p = g_presenters[i];
+    if (p)
+        p->refs++;
+    pthread_mutex_unlock(&g_presenters_lock);
+    if (!p)
+        return;
+    MvkTarget t = {layer->window_id, layer->source, layer->order, layer->client, layer->visible};
+    MimeUiFrame frame;
+    mime_ui_vk_frame(t.window, t.source, t.client, shown_area(&t), t.order, &frame);
+    presenter_put(p->conn, p);
 }

@@ -172,20 +172,22 @@ NTSTATUS NTAPI NtGdiMimeGpuWait(ULONG64 fence, ULONG timeout_ms)
 BOOL NTAPI NtGdiMimeGpuGetSurface(HDC hdc, MIME_GPU_SURFACE *user_surface)
 {
     MIME_GPU_SURFACE s = {};
+    MIME_PRESENT_LAYER layer = {};
     UserEnter();
     DC *dc = DcLookup(hdc);
     WND *w = dc ? dc->Window : nullptr;
     if (w) {
-        WND *top = w;
-        while (top && !(top->Flags & WNDF_HOST_WINDOW))
-            top = top->Parent;
         s.Window = WndHandle(w);
         s.Width = (ULONG)(w->ClientRect.right - w->ClientRect.left);
         s.Height = (ULONG)(w->ClientRect.bottom - w->ClientRect.top);
-        if (top && WndIsVisible(w) && !(top->Style & WS_MINIMIZE)) {
-            s.HostWindow = (ULONG)(ULONG_PTR)WndHandle(top);
-            s.X = w->ClientRect.left - top->WindowRect.left;
-            s.Y = w->ClientRect.top - top->WindowRect.top;
+        ScreenLayer(w, &layer);
+        /* a window that is hidden has no host window to draw in. */
+        if (layer.Window && WndIsVisible(w) && !(WndTopLevel(w)->Style & WS_MINIMIZE)) {
+            s.HostWindow = layer.Window;
+            s.X = layer.Client.left;
+            s.Y = layer.Client.top;
+            s.Order = layer.Order;
+            s.Visible = layer.Visible;
         }
     }
     UserLeave();
