@@ -1519,15 +1519,20 @@ static bool wayland_globals(struct wl_display *display)
     return g_compositor && g_subcompositor;
 }
 
-/* the client area in SDL window coordinates. */
+/*
+ * the client area in SDL window coordinates. the guest gives it in the pixels of the program, which a window that is
+ * not aware of the display's dpi has fewer of: the image is shown over the whole client area, stretched as the rest
+ * of the window is.
+ */
 static MimeRect client_in_window(UiWindow *w, MimeRect client)
 {
     MimeRect host = host_part(&w->config);
     Fit fit = window_fit(w);
-    return (MimeRect){(int32_t)lround(fit.x + (client.left - host.left) * fit.scale),
-                      (int32_t)lround(fit.y + (client.top - host.top) * fit.scale),
-                      (int32_t)lround(fit.x + (client.right - host.left) * fit.scale),
-                      (int32_t)lround(fit.y + (client.bottom - host.top) * fit.scale)};
+    double stretch = surface_stretch(&w->config);
+    return (MimeRect){(int32_t)lround(fit.x + (client.left * stretch - host.left) * fit.scale),
+                      (int32_t)lround(fit.y + (client.top * stretch - host.top) * fit.scale),
+                      (int32_t)lround(fit.x + (client.right * stretch - host.left) * fit.scale),
+                      (int32_t)lround(fit.y + (client.bottom * stretch - host.top) * fit.scale)};
 }
 
 static void destroy_subsurface(UiWindow *w)

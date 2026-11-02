@@ -582,6 +582,12 @@ W32KAPI LONG NTAPI NtUserChangeDisplaySettings(PUNICODE_STRING device, struct _d
                                                PVOID param);
 W32KAPI BOOL NTAPI NtUserSystemParametersInfoForDpi(UINT action, UINT param, PVOID data, UINT ini, UINT dpi);
 W32KAPI BOOL NTAPI NtUserForceWindowToDpiForTest(HWND hwnd, UINT dpi);
+W32KAPI BOOL NTAPI NtUserDeferWindowDpiChanges(HWND hwnd);
+W32KAPI BOOL NTAPI NtUserRestoreWindowDpiChanges(HWND hwnd);
+W32KAPI BOOL NTAPI NtUserSetDpiForWindow(HWND hwnd, UINT dpi);
+W32KAPI BOOL NTAPI NtUserEnableChildWindowDpiMessage(HWND hwnd, BOOL enable);
+W32KAPI BOOL NTAPI NtUserIsChildWindowDpiMessageEnabled(HWND hwnd);
+W32KAPI BOOL NTAPI NtUserIsWindowBroadcastingDpiToChildren(HWND hwnd);
 W32KAPI BOOL NTAPI NtUserMessageBeep(UINT type);
 
 W32KAPI HICON NTAPI NtUserCreateEmptyCurObject(BOOL icon);

@@ -354,7 +354,7 @@ EXPORTS
     GetWindow=_GetWindow@8
     GetWindowContextHelpId=_GetWindowContextHelpId@4
     GetWindowDC=_GetWindowDC@4
-    GetWindowDPI=_GetWindowDPI@4
+    GetWindowDPI=_GetWindowDPI@4 @2707
     GetWindowDisplayAffinity=_GetWindowDisplayAffinity@8
     GetWindowDpiAwarenessContext=_GetWindowDpiAwarenessContext@4
     GetWindowDpiHostingBehavior=_GetWindowDpiHostingBehavior@4

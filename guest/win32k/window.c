@@ -144,8 +144,11 @@ BOOLEAN WndIsChildOf(WND *child, WND *parent)
     return FALSE;
 }
 
+/* the dpi a window works at: the one its program was last told of while the changes are deferred. */
 UINT WndGetDpi(WND *w)
 {
+    if (w && w->DeferredDpi)
+        return w->DeferredDpi;
     return w && w->Dpi ? w->Dpi : W32SystemDpi();
 }
 
@@ -1011,10 +1014,16 @@ void WndCheckMonitorDpi(WND *w)
     if (dpi == old)
         return;
     UserReference(&w->Header);
-    RECT suggested = dpi_candidate_rect(w, old, dpi);
-    if (alive(w)) {
+    /* a program that deferred the changes is told when it restores them. */
+    if (w->DeferredDpi) {
         set_tree_dpi(w, dpi);
-        WndNotifyDpiChanged(w, old, &suggested);
+        w->Flags |= WNDF_DPI_PENDING;
+    } else {
+        RECT suggested = dpi_candidate_rect(w, old, dpi);
+        if (alive(w)) {
+            set_tree_dpi(w, dpi);
+            WndNotifyDpiChanged(w, old, &suggested);
+        }
     }
     if (alive(w))
         WndUpdateHostConfig(w, FALSE);
@@ -1041,15 +1050,89 @@ BOOLEAN WndForceDpi(WND *w, UINT dpi)
         return FALSE;
     UINT old = w->Dpi ? w->Dpi : W32SystemDpi();
     UserReference(&w->Header);
-    RECT suggested = dpi_candidate_rect(w, old, dpi);
-    if (alive(w)) {
+    if (w->DeferredDpi) {
         set_tree_dpi(w, dpi);
-        WndNotifyDpiChanged(w, old, &suggested);
+        w->Flags |= WNDF_DPI_PENDING;
+    } else {
+        RECT suggested = dpi_candidate_rect(w, old, dpi);
+        if (alive(w)) {
+            set_tree_dpi(w, dpi);
+            WndNotifyDpiChanged(w, old, &suggested);
+        }
     }
     if (alive(w))
         WndUpdateHostConfig(w, FALSE);
     UserDereference(&w->Header);
     return TRUE;
+}
+
+/* the dpi the windows of a tree last told their programs of, kept while the changes wait. a window whose program
+   deferred its own changes keeps its state, and its windows with it. */
+static void set_tree_deferred(const WND *root, WND *w, UINT dpi)
+{
+    if (w != root && (w->Flags & WNDF_DPI_DEFERRED))
+        return;
+    w->DeferredDpi = (USHORT)dpi;
+    for (WND *c = w->FirstChild; c; c = c->Next)
+        set_tree_deferred(root, c, dpi);
+}
+
+/* SetDeferredDpiStateForWindowAndChildren of win32kfull. */
+static BOOLEAN set_deferred_dpi(WND *w, BOOLEAN defer, BOOLEAN by_program)
+{
+    if ((w->Flags & WNDF_DPI_DEFERRED) && !by_program)
+        return FALSE;
+    if (defer == (w->DeferredDpi != 0)) {
+        if (!(w->Flags & WNDF_DPI_DEFERRED) && by_program) {
+            w->Flags |= WNDF_DPI_DEFERRED;
+            return TRUE;
+        }
+        return FALSE;
+    }
+    set_tree_deferred(w, w, defer ? WndGetDpi(w) : 0);
+    if (defer && by_program)
+        w->Flags |= WNDF_DPI_DEFERRED;
+    else
+        w->Flags &= ~WNDF_DPI_DEFERRED;
+    return TRUE;
+}
+
+/* the windows of the tree keep the dpi their program knows until it restores the changes. */
+BOOLEAN WndDeferDpiChanges(WND *w)
+{
+    if (w->Awareness < DPI_AWARE_PER_MONITOR) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return set_deferred_dpi(w, TRUE, TRUE);
+}
+
+/* the deferral ends and the program hears of what it missed, from the dpi it knew. */
+BOOLEAN WndRestoreDpiChanges(WND *w)
+{
+    if (w->Awareness < DPI_AWARE_PER_MONITOR) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    UINT known = w->DeferredDpi;
+    if (!known)
+        return FALSE;
+    if (!WndIsTopLevel(w) && w->Parent->DeferredDpi) {
+        w->Flags &= ~WNDF_DPI_DEFERRED;
+        return TRUE;
+    }
+    BOOLEAN ok = set_deferred_dpi(w, FALSE, TRUE);
+    if (known == w->Dpi) {
+        w->Flags &= ~WNDF_DPI_PENDING;
+    } else {
+        w->Flags &= ~WNDF_DPI_PENDING;
+        UserReference(&w->Header);
+        WndNotifyDpiChanged(w, known, nullptr);
+        if (alive(w))
+            WndUpdateHostConfig(w, FALSE);
+        UserDereference(&w->Header);
+    }
+    return ok;
 }
 
 /*
@@ -3043,6 +3126,71 @@ BOOL NTAPI NtUserForceWindowToDpiForTest(HWND hwnd, UINT dpi)
     UserEnter();
     WND *w = WndLookup(hwnd);
     BOOL r = w && can_touch(w) && WndForceDpi(w, dpi);
+    UserLeave();
+    return r;
+}
+
+BOOL NTAPI NtUserDeferWindowDpiChanges(HWND hwnd)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL r = w && WndDeferDpiChanges(w);
+    UserLeave();
+    return r;
+}
+
+BOOL NTAPI NtUserRestoreWindowDpiChanges(HWND hwnd)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL r = w && WndRestoreDpiChanges(w);
+    UserLeave();
+    return r;
+}
+
+/* the window decides its dpi in a later Windows, here nothing can be set. */
+BOOL NTAPI NtUserSetDpiForWindow(HWND hwnd, UINT dpi)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    if (w)
+        W32SetLastError(ERROR_NOT_SUPPORTED);
+    UserLeave();
+    return FALSE;
+}
+
+/* a per monitor top level window decides whether its children hear of the dpi, and the frame follows. */
+BOOL NTAPI NtUserEnableChildWindowDpiMessage(HWND hwnd, BOOL enable)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL r = FALSE;
+    if (w && can_touch(w) && WndIsTopLevel(w) && w->Awareness >= DPI_AWARE_PER_MONITOR) {
+        if (enable)
+            w->Flags |= WNDF_DPI_CHILDREN | WNDF_NCDPI;
+        else
+            w->Flags &= ~(WNDF_DPI_CHILDREN | WNDF_NCDPI);
+        WndSetPos(w, nullptr, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        r = TRUE;
+    }
+    UserLeave();
+    return r;
+}
+
+BOOL NTAPI NtUserIsChildWindowDpiMessageEnabled(HWND hwnd)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL r = w && DpiChildMessageEnabled(w);
+    UserLeave();
+    return r;
+}
+
+BOOL NTAPI NtUserIsWindowBroadcastingDpiToChildren(HWND hwnd)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL r = w && WndIsTopLevel(w) && WndBroadcastsDpi(w);
     UserLeave();
     return r;
 }

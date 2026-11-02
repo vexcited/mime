@@ -144,6 +144,7 @@ EXPORTS
     NtUserCreateWindowEx@52
     NtUserCreateWindowStation@28
     NtUserDefSetText@8
+    NtUserDeferWindowDpiChanges@4
     NtUserDeleteMenu@12
     NtUserDestroyCursor@8
     NtUserDestroyMenu@4
@@ -152,6 +153,7 @@ EXPORTS
     NtUserDrawIconEx@44
     NtUserDrawMenuBar@4
     NtUserEmptyClipboard@0
+    NtUserEnableChildWindowDpiMessage@8
     NtUserEnableMenuItem@12
     NtUserEnableWindow@8
     NtUserEndMenu@0
@@ -202,8 +204,10 @@ EXPORTS
     NtUserInitializeClientPfnArrays@4
     NtUserInternalGetWindowText@12
     NtUserInvalidateRect@12
+    NtUserIsChildWindowDpiMessageEnabled@4
     NtUserIsClipboardFormatAvailable@4
     NtUserIsTouchWindow@8
+    NtUserIsWindowBroadcastingDpiToChildren@4
     NtUserKillTimer@8
     NtUserMessageBeep@4
     NtUserMessageCall@28
@@ -234,6 +238,7 @@ EXPORTS
     NtUserRemoveClipboardFormatListener@4
     NtUserRemoveMenu@12
     NtUserRemoveProp@8
+    NtUserRestoreWindowDpiChanges@4
     NtUserSendInput@12
     NtUserSetActiveWindow@4
     NtUserSetCapture@4
@@ -244,6 +249,7 @@ EXPORTS
     NtUserSetClipboardViewer@4
     NtUserSetCursor@4
     NtUserSetCursorIconData@16
+    NtUserSetDpiForWindow@8
     NtUserSetFocus@4
     NtUserSetKeyboardState@4
     NtUserSetLayeredWindowAttributes@16

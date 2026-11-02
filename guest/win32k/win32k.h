@@ -677,6 +677,8 @@ typedef struct WND_CLASS {
 #define WNDF_APP_FULLSCREEN 0x40000 /* the program made it cover the screen before the host made it fullscreen. */
 #define WNDF_DPI_CHILDREN 0x100000 /* the dpi change reaches the children, per monitor v2 windows have it from the start. */
 #define WNDF_NCDPI 0x200000        /* the frame is drawn at the dpi of the window, not the one of the system. */
+#define WNDF_DPI_DEFERRED 0x400000 /* the program asked for the changes of its dpi to wait, DeferWindowDpiChanges. */
+#define WNDF_DPI_PENDING 0x800000  /* the dpi changed and the program has not been told. */
 
 /* caption buttons for hot and pressed tracking. */
 enum {
@@ -730,6 +732,7 @@ typedef struct WND {
     UINT Dpi;
     UCHAR Awareness;  /* the DPI awareness it was created with, its rectangles are in that awareness' coordinates. */
     UINT MonitorDpi;  /* the dpi of the monitor the window was last on, which is the one it follows when it moves. */
+    USHORT DeferredDpi; /* the dpi the program was last told of while its changes are deferred, else 0. */
     UCHAR Hosting;    /* the DPI hosting behavior of its thread when it was created, 1 is mixed. */
     UCHAR ControlDpi; /* DCDC_*, what a dialog does to this control when the dpi changes. */
     POINT MinTrack, MaxTrack; /* from the last WM_GETMINMAXINFO, 0 until there was one. */
@@ -836,6 +839,8 @@ BOOLEAN DpiChildMessageEnabled(WND *w);
 UINT DpiWindowDpi(WND *w);
 void WndNotifyDpiChanged(WND *w, UINT old, const RECT *suggested);
 BOOLEAN WndForceDpi(WND *w, UINT dpi);
+BOOLEAN WndDeferDpiChanges(WND *w);
+BOOLEAN WndRestoreDpiChanges(WND *w);
 UINT WndFrameDpi(WND *w);
 void WndSetText(WND *w, PCWSTR text, ULONG chars);
 

@@ -391,6 +391,11 @@ WINUSERAPI LRESULT WINAPI DefWindowProcW(HWND hwnd, UINT msg, WPARAM wparam, LPA
     /* common controls ask their parent which character set their notifications use. */
     if (msg == WM_NOTIFYFORMAT)
         return lparam == NF_QUERY ? (IsWindowUnicode(hwnd) ? NFR_UNICODE : NFR_ANSI) : 0;
+    /* the window is told its preferred dpi and the system answers that it cannot take one, which no one reads. */
+    if (msg == WM_PREFERREDDPICHANGED) {
+        NtUserSetDpiForWindow(hwnd, (UINT)wparam);
+        return 0;
+    }
     return NtUserMessageCall(hwnd, msg, wparam, lparam, 0, MIME_MSGCALL_DEFWINDOWPROC, FALSE);
 }
 

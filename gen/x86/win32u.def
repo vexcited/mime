@@ -144,6 +144,7 @@ EXPORTS
     NtUserCreateWindowEx=_NtUserCreateWindowEx@52
     NtUserCreateWindowStation=_NtUserCreateWindowStation@28
     NtUserDefSetText=_NtUserDefSetText@8
+    NtUserDeferWindowDpiChanges=_NtUserDeferWindowDpiChanges@4
     NtUserDeleteMenu=_NtUserDeleteMenu@12
     NtUserDestroyCursor=_NtUserDestroyCursor@8
     NtUserDestroyMenu=_NtUserDestroyMenu@4
@@ -152,6 +153,7 @@ EXPORTS
     NtUserDrawIconEx=_NtUserDrawIconEx@44
     NtUserDrawMenuBar=_NtUserDrawMenuBar@4
     NtUserEmptyClipboard=_NtUserEmptyClipboard@0
+    NtUserEnableChildWindowDpiMessage=_NtUserEnableChildWindowDpiMessage@8
     NtUserEnableMenuItem=_NtUserEnableMenuItem@12
     NtUserEnableWindow=_NtUserEnableWindow@8
     NtUserEndMenu=_NtUserEndMenu@0
@@ -202,8 +204,10 @@ EXPORTS
     NtUserInitializeClientPfnArrays=_NtUserInitializeClientPfnArrays@4
     NtUserInternalGetWindowText=_NtUserInternalGetWindowText@12
     NtUserInvalidateRect=_NtUserInvalidateRect@12
+    NtUserIsChildWindowDpiMessageEnabled=_NtUserIsChildWindowDpiMessageEnabled@4
     NtUserIsClipboardFormatAvailable=_NtUserIsClipboardFormatAvailable@4
     NtUserIsTouchWindow=_NtUserIsTouchWindow@8
+    NtUserIsWindowBroadcastingDpiToChildren=_NtUserIsWindowBroadcastingDpiToChildren@4
     NtUserKillTimer=_NtUserKillTimer@8
     NtUserMessageBeep=_NtUserMessageBeep@4
     NtUserMessageCall=_NtUserMessageCall@28
@@ -234,6 +238,7 @@ EXPORTS
     NtUserRemoveClipboardFormatListener=_NtUserRemoveClipboardFormatListener@4
     NtUserRemoveMenu=_NtUserRemoveMenu@12
     NtUserRemoveProp=_NtUserRemoveProp@8
+    NtUserRestoreWindowDpiChanges=_NtUserRestoreWindowDpiChanges@4
     NtUserSendInput=_NtUserSendInput@12
     NtUserSetActiveWindow=_NtUserSetActiveWindow@4
     NtUserSetCapture=_NtUserSetCapture@4
@@ -244,6 +249,7 @@ EXPORTS
     NtUserSetClipboardViewer=_NtUserSetClipboardViewer@4
     NtUserSetCursor=_NtUserSetCursor@4
     NtUserSetCursorIconData=_NtUserSetCursorIconData@16
+    NtUserSetDpiForWindow=_NtUserSetDpiForWindow@8
     NtUserSetFocus=_NtUserSetFocus@4
     NtUserSetKeyboardState=_NtUserSetKeyboardState@4
     NtUserSetLayeredWindowAttributes=_NtUserSetLayeredWindowAttributes@16

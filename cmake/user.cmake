@@ -21,6 +21,32 @@ set(MIME_DLL_FLAGS_arm64 /dll /subsystem:console,10.0 /highentropyva /dynamicbas
 set(MIME_DLL_FLAGS_x64 ${MIME_DLL_FLAGS_arm64})
 set(MIME_DLL_FLAGS_x86 /dll /subsystem:console,6.0 /dynamicbase /stack:0x40000,0x1000)
 
+# the calls user32 exports by ordinal only, the dpi ones of Windows 11. GetWindowDPI has a name here, too.
+set(user32_ordinals ForceWindowToDpiForTest:2642 RestoreWindowDpiChanges:2643 DeferWindowDpiChanges:2644 SetDpiForWindow:2661
+    EnableChildWindowDpiMessage:2704 IsChildWindowDpiMessageEnabled:2705 IsWindowBroadcastingDpiToChildren:2706)
+set(user32_args_x86_ForceWindowToDpiForTest 8)
+set(user32_args_x86_RestoreWindowDpiChanges 4)
+set(user32_args_x86_DeferWindowDpiChanges 4)
+set(user32_args_x86_SetDpiForWindow 8)
+set(user32_args_x86_EnableChildWindowDpiMessage 8)
+set(user32_args_x86_IsChildWindowDpiMessageEnabled 4)
+set(user32_args_x86_IsWindowBroadcastingDpiToChildren 4)
+foreach(arch IN ITEMS x64 arm64 x86)
+    set(MIME_USER32_ORDINALS_${arch} /export:GetWindowDPI,@2707)
+    foreach(entry IN LISTS user32_ordinals)
+        string(REPLACE ":" ";" entry "${entry}")
+        list(GET entry 0 name)
+        list(GET entry 1 ordinal)
+        if(arch STREQUAL "x86")
+            list(APPEND MIME_USER32_ORDINALS_${arch} /export:${name}=_${name}@${user32_args_x86_${name}},@${ordinal},NONAME)
+        else()
+            list(APPEND MIME_USER32_ORDINALS_${arch} /export:${name},@${ordinal},NONAME)
+        endif()
+    endforeach()
+endforeach()
+# x86 has the name of GetWindowDPI in its definition file already, with the ordinal.
+list(REMOVE_ITEM MIME_USER32_ORDINALS_x86 /export:GetWindowDPI,@2707)
+
 set(MIME_CHKSTK_arm64 guest/crt/chkstk.S)
 set(MIME_CHKSTK_x64 guest/crt/x64/chkstk.S)
 set(MIME_CHKSTK_x86 guest/crt/x86/chkstk.S)
@@ -176,7 +202,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     mime_sources(sources user32 ${arch})
     mime_dll(user32 ${arch} BASE 0x7FF900000000 SOURCES ${sources}
         OBJECTS ${arch}-chkstk ${arch}-lib-png OPTIONS -DMIME_BUILD_USER32 INCLUDES guest/lib
-        IMPORTS ntdll kernel32 win32u gdi32 FLAGS /subsystem:windows,10.0)
+        IMPORTS ntdll kernel32 win32u gdi32 FLAGS /subsystem:windows,10.0 ${MIME_USER32_ORDINALS_${arch}})
 
     # the icons of the system, found by their numbers in the way Windows 11 keeps them.
     mime_dll(imageres ${arch} BASE 0x7FF7D0000000 ENTRY /noentry NOIMPLIB DEF ${CMAKE_SOURCE_DIR}/guest/imageres/imageres.def)

@@ -574,6 +574,48 @@ _NtUserForceWindowToDpiForTest@8:
     int $0x2e
     retl $8
     .p2align 4, 0x90
+    .globl _NtUserDeferWindowDpiChanges@4
+_NtUserDeferWindowDpiChanges@4:
+    movl $0x13e0, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $4
+    .p2align 4, 0x90
+    .globl _NtUserRestoreWindowDpiChanges@4
+_NtUserRestoreWindowDpiChanges@4:
+    movl $0x1537, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $4
+    .p2align 4, 0x90
+    .globl _NtUserSetDpiForWindow@8
+_NtUserSetDpiForWindow@8:
+    movl $0x1558, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $8
+    .p2align 4, 0x90
+    .globl _NtUserEnableChildWindowDpiMessage@8
+_NtUserEnableChildWindowDpiMessage@8:
+    movl $0x1408, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $8
+    .p2align 4, 0x90
+    .globl _NtUserIsChildWindowDpiMessageEnabled@4
+_NtUserIsChildWindowDpiMessageEnabled@4:
+    movl $0x14ba, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $4
+    .p2align 4, 0x90
+    .globl _NtUserIsWindowBroadcastingDpiToChildren@4
+_NtUserIsWindowBroadcastingDpiToChildren@4:
+    movl $0x14c3, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $4
+    .p2align 4, 0x90
     .globl _NtUserMessageBeep@4
 _NtUserMessageBeep@4:
     movl $0x14dd, %eax

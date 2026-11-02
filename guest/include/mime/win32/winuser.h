@@ -213,6 +213,8 @@ typedef void(CALLBACK *MSGBOXCALLBACK)(struct tagHELPINFO *info);
 #define WM_DPICHANGED_BEFOREPARENT 0x02E2
 #define WM_DPICHANGED_AFTERPARENT 0x02E3
 #define WM_GETDPISCALEDSIZE 0x02E4
+#define WM_GDISCALEDDPICHANGED 0x02E5 /* a window scaled by GDI heard its dpi change, not in the SDK. */
+#define WM_PREFERREDDPICHANGED 0x02E6  /* a window that picks its own dpi, not in the SDK. */
 #define WM_CUT 0x0300
 #define WM_COPY 0x0301
 #define WM_PASTE 0x0302

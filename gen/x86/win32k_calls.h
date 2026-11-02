@@ -208,6 +208,26 @@
         v[0] = (LONG64)(LONG)a[0];
         v[1] = a[1];
         return MxCallService(number, v);
+    case MIME_SVC_NtUserDeferWindowDpiChanges:
+        v[0] = (LONG64)(LONG)a[0];
+        return MxCallService(number, v);
+    case MIME_SVC_NtUserRestoreWindowDpiChanges:
+        v[0] = (LONG64)(LONG)a[0];
+        return MxCallService(number, v);
+    case MIME_SVC_NtUserSetDpiForWindow:
+        v[0] = (LONG64)(LONG)a[0];
+        v[1] = a[1];
+        return MxCallService(number, v);
+    case MIME_SVC_NtUserEnableChildWindowDpiMessage:
+        v[0] = (LONG64)(LONG)a[0];
+        v[1] = a[1];
+        return MxCallService(number, v);
+    case MIME_SVC_NtUserIsChildWindowDpiMessageEnabled:
+        v[0] = (LONG64)(LONG)a[0];
+        return MxCallService(number, v);
+    case MIME_SVC_NtUserIsWindowBroadcastingDpiToChildren:
+        v[0] = (LONG64)(LONG)a[0];
+        return MxCallService(number, v);
     case MIME_SVC_NtUserMessageBeep:
         v[0] = a[0];
         return MxCallService(number, v);

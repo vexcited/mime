@@ -318,6 +318,47 @@ WINUSERAPI UINT WINAPI GetWindowDPI(HWND hwnd)
     return (UINT)NtUserCallHwnd(hwnd, MIME_HWND_GETWINDOWDPI);
 }
 
+/*
+ * the calls Windows exports from user32 by ordinal only: EnableChildWindowDpiMessage 2704, IsChildWindowDpiMessageEnabled
+ * 2705, IsWindowBroadcastingDpiToChildren 2706, GetWindowDPI 2707, ForceWindowToDpiForTest 2642,
+ * DeferWindowDpiChanges 2644, RestoreWindowDpiChanges 2643, SetDpiForWindow 2661, EnableWindowGDIScaledDpiMessage 2709
+ * and IsWindowGDIScaledDpiMessageEnabled 2710. each is a jump to the system call of its name, the linker exports them.
+ */
+BOOL WINAPI EnableChildWindowDpiMessage(HWND hwnd, BOOL enable)
+{
+    return NtUserEnableChildWindowDpiMessage(hwnd, enable);
+}
+
+BOOL WINAPI IsChildWindowDpiMessageEnabled(HWND hwnd)
+{
+    return NtUserIsChildWindowDpiMessageEnabled(hwnd);
+}
+
+BOOL WINAPI IsWindowBroadcastingDpiToChildren(HWND hwnd)
+{
+    return NtUserIsWindowBroadcastingDpiToChildren(hwnd);
+}
+
+BOOL WINAPI ForceWindowToDpiForTest(HWND hwnd, UINT dpi)
+{
+    return NtUserForceWindowToDpiForTest(hwnd, dpi);
+}
+
+BOOL WINAPI DeferWindowDpiChanges(HWND hwnd)
+{
+    return NtUserDeferWindowDpiChanges(hwnd);
+}
+
+BOOL WINAPI RestoreWindowDpiChanges(HWND hwnd)
+{
+    return NtUserRestoreWindowDpiChanges(hwnd);
+}
+
+BOOL WINAPI SetDpiForWindow(HWND hwnd, UINT dpi)
+{
+    return NtUserSetDpiForWindow(hwnd, dpi);
+}
+
 /* DPI_HOSTING_BEHAVIOR_DEFAULT or DPI_HOSTING_BEHAVIOR_MIXED, -1 when it is none. */
 WINUSERAPI DPI_HOSTING_BEHAVIOR WINAPI SetThreadDpiHostingBehavior(DPI_HOSTING_BEHAVIOR behavior)
 {

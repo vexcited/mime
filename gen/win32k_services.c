@@ -153,6 +153,7 @@ void NtUserCreateWindowEx(void);
 void NtUserCreateWindowStation(void);
 void NtUserCreateWindowStationEx(void);
 void NtUserDefSetText(void);
+void NtUserDeferWindowDpiChanges(void);
 void NtUserDeleteMenu(void);
 void NtUserDestroyCursor(void);
 void NtUserDestroyMenu(void);
@@ -161,6 +162,7 @@ void NtUserDispatchMessage(void);
 void NtUserDrawIconEx(void);
 void NtUserDrawMenuBar(void);
 void NtUserEmptyClipboard(void);
+void NtUserEnableChildWindowDpiMessage(void);
 void NtUserEnableMenuItem(void);
 void NtUserEnableWindow(void);
 void NtUserEndMenu(void);
@@ -211,8 +213,10 @@ void NtUserGetWindowRgnEx(void);
 void NtUserInitializeClientPfnArrays(void);
 void NtUserInternalGetWindowText(void);
 void NtUserInvalidateRect(void);
+void NtUserIsChildWindowDpiMessageEnabled(void);
 void NtUserIsClipboardFormatAvailable(void);
 void NtUserIsTouchWindow(void);
+void NtUserIsWindowBroadcastingDpiToChildren(void);
 void NtUserKillTimer(void);
 void NtUserMessageBeep(void);
 void NtUserMessageCall(void);
@@ -243,6 +247,7 @@ void NtUserReleaseDC(void);
 void NtUserRemoveClipboardFormatListener(void);
 void NtUserRemoveMenu(void);
 void NtUserRemoveProp(void);
+void NtUserRestoreWindowDpiChanges(void);
 void NtUserSendInput(void);
 void NtUserSetActiveWindow(void);
 void NtUserSetCapture(void);
@@ -253,6 +258,7 @@ void NtUserSetClipboardData(void);
 void NtUserSetClipboardViewer(void);
 void NtUserSetCursor(void);
 void NtUserSetCursorIconData(void);
+void NtUserSetDpiForWindow(void);
 void NtUserSetFocus(void);
 void NtUserSetKeyboardState(void);
 void NtUserSetLayeredWindowAttributes(void);
@@ -1016,6 +1022,11 @@ void Win32kInitializeServices(SERVICE *table)
 #else
 #warning "NtUserDefSetText has no syscall number"
 #endif
+#ifdef MIME_SVC_NtUserDeferWindowDpiChanges
+    table[MIME_SVC_NtUserDeferWindowDpiChanges & 0xFFF] = (SERVICE){(void *)NtUserDeferWindowDpiChanges, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserDeferWindowDpiChanges has no syscall number"
+#endif
 #ifdef MIME_SVC_NtUserDeleteMenu
     table[MIME_SVC_NtUserDeleteMenu & 0xFFF] = (SERVICE){(void *)NtUserDeleteMenu, STACK_ARGS(3), 1, 0};
 #else
@@ -1055,6 +1066,11 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserEmptyClipboard & 0xFFF] = (SERVICE){(void *)NtUserEmptyClipboard, STACK_ARGS(0), 1, 0};
 #else
 #warning "NtUserEmptyClipboard has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserEnableChildWindowDpiMessage
+    table[MIME_SVC_NtUserEnableChildWindowDpiMessage & 0xFFF] = (SERVICE){(void *)NtUserEnableChildWindowDpiMessage, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserEnableChildWindowDpiMessage has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserEnableMenuItem
     table[MIME_SVC_NtUserEnableMenuItem & 0xFFF] = (SERVICE){(void *)NtUserEnableMenuItem, STACK_ARGS(3), 1, 0};
@@ -1306,6 +1322,11 @@ void Win32kInitializeServices(SERVICE *table)
 #else
 #warning "NtUserInvalidateRect has no syscall number"
 #endif
+#ifdef MIME_SVC_NtUserIsChildWindowDpiMessageEnabled
+    table[MIME_SVC_NtUserIsChildWindowDpiMessageEnabled & 0xFFF] = (SERVICE){(void *)NtUserIsChildWindowDpiMessageEnabled, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserIsChildWindowDpiMessageEnabled has no syscall number"
+#endif
 #ifdef MIME_SVC_NtUserIsClipboardFormatAvailable
     table[MIME_SVC_NtUserIsClipboardFormatAvailable & 0xFFF] = (SERVICE){(void *)NtUserIsClipboardFormatAvailable, STACK_ARGS(1), 1, 0};
 #else
@@ -1315,6 +1336,11 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserIsTouchWindow & 0xFFF] = (SERVICE){(void *)NtUserIsTouchWindow, STACK_ARGS(2), 1, 0};
 #else
 #warning "NtUserIsTouchWindow has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserIsWindowBroadcastingDpiToChildren
+    table[MIME_SVC_NtUserIsWindowBroadcastingDpiToChildren & 0xFFF] = (SERVICE){(void *)NtUserIsWindowBroadcastingDpiToChildren, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserIsWindowBroadcastingDpiToChildren has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserKillTimer
     table[MIME_SVC_NtUserKillTimer & 0xFFF] = (SERVICE){(void *)NtUserKillTimer, STACK_ARGS(2), 1, 0};
@@ -1466,6 +1492,11 @@ void Win32kInitializeServices(SERVICE *table)
 #else
 #warning "NtUserRemoveProp has no syscall number"
 #endif
+#ifdef MIME_SVC_NtUserRestoreWindowDpiChanges
+    table[MIME_SVC_NtUserRestoreWindowDpiChanges & 0xFFF] = (SERVICE){(void *)NtUserRestoreWindowDpiChanges, STACK_ARGS(1), 1, 0};
+#else
+#warning "NtUserRestoreWindowDpiChanges has no syscall number"
+#endif
 #ifdef MIME_SVC_NtUserSendInput
     table[MIME_SVC_NtUserSendInput & 0xFFF] = (SERVICE){(void *)NtUserSendInput, STACK_ARGS(3), 1, 0};
 #else
@@ -1515,6 +1546,11 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserSetCursorIconData & 0xFFF] = (SERVICE){(void *)NtUserSetCursorIconData, STACK_ARGS(4), 1, 0};
 #else
 #warning "NtUserSetCursorIconData has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserSetDpiForWindow
+    table[MIME_SVC_NtUserSetDpiForWindow & 0xFFF] = (SERVICE){(void *)NtUserSetDpiForWindow, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserSetDpiForWindow has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserSetFocus
     table[MIME_SVC_NtUserSetFocus & 0xFFF] = (SERVICE){(void *)NtUserSetFocus, STACK_ARGS(1), 1, 0};
