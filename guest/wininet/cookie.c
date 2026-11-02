@@ -578,6 +578,56 @@ DECLSPEC_EXPORT BOOL WINAPI FindNextUrlCacheEntryExW(HANDLE handle, LPVOID entry
     return InetFail(ERROR_INVALID_HANDLE);
 }
 
+/*
+ * the cache folder is the one of Windows, INetCache\IE below the local application data. a program that downloads
+ * to the cache asks for a file name here, writes the file and commits it. the cache keeps no records, so the commit
+ * leaves the file where it is and the entry cannot be found again, see GetUrlCacheEntryInfoExW.
+ */
+DECLSPEC_EXPORT BOOL WINAPI CreateUrlCacheEntryW(LPCWSTR url, DWORD expected_size, LPCWSTR extension, LPWSTR file_name,
+                                                DWORD reserved)
+{
+    if (!url || !*url || !file_name || reserved)
+        return InetFail(ERROR_INVALID_PARAMETER);
+    WCHAR folder[MAX_PATH];
+    DWORD length = ExpandEnvironmentStringsW(L"%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache", folder, MAX_PATH);
+    if (!length || length > MAX_PATH - 16)
+        return InetFail(ERROR_INSUFFICIENT_BUFFER);
+    static const WCHAR parts[][8] = {L"\\IE"};
+    CreateDirectoryW(folder, nullptr);
+    for (SIZE_T i = 0; i < RTL_NUMBER_OF(parts); i++) {
+        wcscat(folder, parts[i]);
+        CreateDirectoryW(folder, nullptr);
+    }
+    WCHAR temp[MAX_PATH];
+    if (!GetTempFileNameW(folder, L"inc", 0, temp))
+        return FALSE;
+    /* the name has the extension the program asked for, as the cache names its files. */
+    WCHAR named[MAX_PATH];
+    wcscpy(named, temp);
+    if (extension && *extension && wcslen(temp) + wcslen(extension) + 2 < MAX_PATH) {
+        PWSTR dot = wcsrchr(named, L'.');
+        if (dot)
+            *dot = 0;
+        wcscat(named, L".");
+        wcscat(named, extension);
+        if (MoveFileExW(temp, named, MOVEFILE_REPLACE_EXISTING))
+            wcscpy(temp, named);
+    }
+    wcscpy(file_name, temp);
+    return TRUE;
+}
+
+DECLSPEC_EXPORT BOOL WINAPI CommitUrlCacheEntryW(LPCWSTR url, LPCWSTR local_file, FILETIME expire, FILETIME modified,
+                                                DWORD type, LPWSTR header, DWORD header_size, LPCWSTR extension,
+                                                LPCWSTR original_url)
+{
+    if (!url || !*url)
+        return InetFail(ERROR_INVALID_PARAMETER);
+    if (local_file && GetFileAttributesW(local_file) == INVALID_FILE_ATTRIBUTES)
+        return InetFail(ERROR_FILE_NOT_FOUND);
+    return TRUE;
+}
+
 /* there is no entry to delete or to open a stream on. */
 DECLSPEC_EXPORT BOOL WINAPI DeleteUrlCacheEntryW(LPCWSTR url)
 {

@@ -116,3 +116,5 @@ EXPORTS
     ReadUrlCacheEntryStream@20
     RetrieveUrlCacheEntryStreamW@20
     UnlockUrlCacheEntryStream@8
+    CreateUrlCacheEntryW@20
+    CommitUrlCacheEntryW@44

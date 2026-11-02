@@ -36,3 +36,4 @@ EXPORTS
     SymUnloadModule64=dbghelp.SymUnloadModule64
     SymUnloadModule=dbghelp.SymUnloadModule
     UnMapAndLoad=_UnMapAndLoad@4
+    ImageGetDigestStream=_ImageGetDigestStream@16

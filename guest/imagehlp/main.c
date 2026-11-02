@@ -542,3 +542,108 @@ IMAGEHLP BOOL WINAPI UnMapAndLoad(PLOADED_IMAGE image)
         HeapFree(GetProcessHeap(), 0, image->ModuleName);
     return TRUE;
 }
+
+/* ------------------------------------------------------------------ digest */
+
+#define CERT_PE_IMAGE_DIGEST_DEBUG_INFO 0x01
+#define CERT_PE_IMAGE_DIGEST_RESOURCES 0x02
+#define CERT_PE_IMAGE_DIGEST_NON_PE_INFO 0x80
+
+typedef BOOL(WINAPI *DIGEST_FUNCTION)(PVOID handle, PBYTE data, DWORD length);
+
+/* hands a range of the file to the digest function in pieces. */
+static BOOL digest_range(HANDLE file, DIGEST_FUNCTION digest, PVOID handle, DWORD from, DWORD to)
+{
+    static BYTE buffer[65536];
+    while (from < to) {
+        DWORD n = to - from < sizeof buffer ? to - from : (DWORD)sizeof buffer;
+        if (!read_at(file, from, buffer, n)) {
+            SetLastError(ERROR_READ_FAULT);
+            return FALSE;
+        }
+        if (!digest(handle, buffer, n))
+            return FALSE;
+        from += n;
+    }
+    return TRUE;
+}
+
+/*
+ * the bytes of a signed image in the order its digest takes them: the headers without the checksum and the
+ * certificate directory entry, then the data of each section by file position, then the rest of the file but for the
+ * certificates when the level asks for data outside the image. The levels leave out the data of the debug directory
+ * and of the resource section unless they name them. The import tables are always in, the level has no effect on them.
+ */
+IMAGEHLP BOOL WINAPI ImageGetDigestStream(HANDLE file, DWORD level, DIGEST_FUNCTION digest, PVOID handle)
+{
+    SECDIR dir;
+    IMAGE_DOS_HEADER dos;
+    IMAGE_FILE_HEADER header;
+    WORD magic = 0;
+    if (!digest || !open_directory(file, &dir) || !read_at(file, 0, &dos, sizeof dos) ||
+        !read_at(file, (DWORD)dos.e_lfanew + 4, &header, sizeof header)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    DWORD optional = (DWORD)dos.e_lfanew + 4 + sizeof header;
+    read_at(file, optional, &magic, 2);
+    BOOL pe64 = magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC;
+    DWORD checksum_at = optional + 64;
+    DWORD headers_size = 0, directories = optional + (pe64 ? 112 : 96);
+    if (!read_at(file, optional + 60, &headers_size, 4)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (headers_size > dir.FileSize)
+        headers_size = dir.FileSize;
+    /* the rva and size of the resource and debug directories, to find their data in the sections. */
+    DWORD debug[2] = {}, resource[2] = {};
+    read_at(file, directories + 2 * 8, resource, sizeof resource);
+    read_at(file, directories + 6 * 8, debug, sizeof debug);
+    if (!digest_range(file, digest, handle, 0, checksum_at) ||
+        !digest_range(file, digest, handle, checksum_at + 4, dir.DirectoryPosition) ||
+        !digest_range(file, digest, handle, dir.DirectoryPosition + 8, headers_size))
+        return FALSE;
+    IMAGE_SECTION_HEADER sections[96];
+    DWORD count = header.NumberOfSections < 96 ? header.NumberOfSections : 96;
+    if (!read_at(file, optional + header.SizeOfOptionalHeader, sections, count * (DWORD)sizeof(sections[0]))) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    DWORD end = headers_size;
+    for (DWORD done = 0; done < count; done++) {
+        /* the next section by position in the file. */
+        DWORD next = count;
+        for (DWORD i = 0; i < count; i++)
+            if (sections[i].SizeOfRawData && sections[i].PointerToRawData >= end &&
+                (next == count || sections[i].PointerToRawData < sections[next].PointerToRawData))
+                next = i;
+        if (next == count)
+            break;
+        const IMAGE_SECTION_HEADER *s = &sections[next];
+        DWORD from = s->PointerToRawData, to = from + s->SizeOfRawData;
+        if (to > dir.FileSize)
+            to = dir.FileSize;
+        BOOL skip_debug = !(level & CERT_PE_IMAGE_DIGEST_DEBUG_INFO) && debug[0] && debug[0] >= s->VirtualAddress &&
+            debug[0] - s->VirtualAddress < s->SizeOfRawData;
+        BOOL skip_resources = !(level & CERT_PE_IMAGE_DIGEST_RESOURCES) && resource[0] && !memcmp(s->Name, ".rsrc", 6);
+        DWORD cut_from = to, cut_to = to;
+        if (skip_resources) {
+            cut_from = from;
+        } else if (skip_debug) {
+            cut_from = from + (debug[0] - s->VirtualAddress);
+            cut_to = cut_from + debug[1] < to ? cut_from + debug[1] : to;
+        }
+        if (!digest_range(file, digest, handle, from, cut_from) ||
+            (cut_to < to && !digest_range(file, digest, handle, cut_to, to)))
+            return FALSE;
+        end = to;
+    }
+    if ((level & CERT_PE_IMAGE_DIGEST_NON_PE_INFO) && end < dir.FileSize) {
+        /* what follows the sections, but for the certificates, which a signature cannot cover. */
+        DWORD stop = dir.Size && dir.Offset >= end ? dir.Offset : dir.FileSize;
+        if (!digest_range(file, digest, handle, end, stop))
+            return FALSE;
+    }
+    return TRUE;
+}

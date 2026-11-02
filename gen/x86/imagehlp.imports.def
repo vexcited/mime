@@ -36,3 +36,4 @@ EXPORTS
     SymUnloadModule
     SymUnloadModule64
     UnMapAndLoad@4
+    ImageGetDigestStream@16
