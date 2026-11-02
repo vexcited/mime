@@ -107,5 +107,6 @@ MIME_COM_INTERFACE(IPersistFolder2)
 /* ------------------------------------------------------------------ shell32 functions */
 
 SHSTDAPI HRESULT WINAPI SHGetDesktopFolder(IShellFolder **folder);
+SHSTDAPI HRESULT WINAPI SHBindToParent(PCIDLIST_ABSOLUTE pidl, REFIID riid, void **result, PCUITEMID_CHILD *last);
 
 #endif

@@ -1,7 +1,11 @@
 #include <mime/win32/winbase.h>
+#include <mime/win32/winnls.h>
 
 #define ERROR_BAD_DEVICE 1200L
 #define ERROR_NOT_CONNECTED 2250L
+#ifndef ERROR_MORE_DATA
+#define ERROR_MORE_DATA 234L
+#endif
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
 {
@@ -245,6 +249,64 @@ static BOOL valid_path_a(const void *text)
         return TRUE;
     BOOL letter = (p[0] >= 'a' && p[0] <= 'z') || (p[0] >= 'A' && p[0] <= 'Z');
     return letter && p[1] == ':';
+}
+
+/* the provider that would describe a resource is not there: no network exists to ask. */
+DECLSPEC_EXPORT DWORD WINAPI WNetGetResourceInformationW(NETRESOURCE_W *resource, LPVOID buffer, LPDWORD size,
+                                                         LPWSTR *system)
+{
+    if (!resource || !buffer || !size)
+        return ERROR_INVALID_PARAMETER;
+    if (system)
+        *system = nullptr;
+    SetLastError(ERROR_NO_NETWORK);
+    return ERROR_NO_NETWORK;
+}
+
+/*
+ * the user of a connection. a machine with no connections has no user for one, and the user of no name is the one
+ * logged on, as the environment says.
+ */
+DECLSPEC_EXPORT DWORD WINAPI WNetGetUserW(LPCWSTR name, LPWSTR user, LPDWORD length)
+{
+    if (!user || !length)
+        return ERROR_INVALID_PARAMETER;
+    if (name && *name)
+        return ERROR_NOT_CONNECTED;
+    WCHAR account[256];
+    DWORD n = GetEnvironmentVariableW(L"USERNAME", account, RTL_NUMBER_OF(account));
+    if (!n || n >= RTL_NUMBER_OF(account))
+        return ERROR_NO_NETWORK;
+    if (*length < n + 1) {
+        *length = n + 1;
+        return ERROR_MORE_DATA;
+    }
+    memcpy(user, account, (n + 1) * sizeof(WCHAR));
+    *length = n + 1;
+    return NO_ERROR;
+}
+
+DECLSPEC_EXPORT DWORD WINAPI WNetGetUserA(LPCSTR name, LPSTR user, LPDWORD length)
+{
+    if (!user || !length)
+        return ERROR_INVALID_PARAMETER;
+    if (name && *name)
+        return ERROR_NOT_CONNECTED;
+    WCHAR account[256];
+    DWORD n = GetEnvironmentVariableW(L"USERNAME", account, RTL_NUMBER_OF(account));
+    if (!n || n >= RTL_NUMBER_OF(account))
+        return ERROR_NO_NETWORK;
+    char narrow[512];
+    int bytes = WideCharToMultiByte(CP_ACP, 0, account, -1, narrow, sizeof(narrow), nullptr, nullptr);
+    if (!bytes)
+        return ERROR_NO_NETWORK;
+    if (*length < (DWORD)bytes) {
+        *length = (DWORD)bytes;
+        return ERROR_MORE_DATA;
+    }
+    memcpy(user, narrow, (size_t)bytes);
+    *length = (DWORD)bytes;
+    return NO_ERROR;
 }
 
 DECLSPEC_EXPORT DWORD WINAPI WNetGetUniversalNameW(LPCWSTR path, DWORD level, LPVOID buffer, LPDWORD size)

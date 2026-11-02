@@ -108,3 +108,6 @@ EXPORTS
     Shell_NotifyIconA=_Shell_NotifyIconA@8
     Shell_NotifyIconGetRect=_Shell_NotifyIconGetRect@8
     Shell_NotifyIconW=_Shell_NotifyIconW@8
+    SHBindToParent=_SHBindToParent@16
+    SHFreeNameMappings=_SHFreeNameMappings@4
+    SHInvokePrinterCommandW=_SHInvokePrinterCommandW@20

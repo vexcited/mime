@@ -627,6 +627,55 @@ static const IShellFolderVtbl g_folder_vtbl = {
     folder_set_name_of,
 };
 
+/*
+ * the folder that holds the last item of a list, bound through the desktop, and the item itself. a list of one item
+ * is in the desktop folder.
+ */
+SHSTDAPI HRESULT WINAPI SHBindToParent(PCIDLIST_ABSOLUTE pidl, REFIID riid, void **result, PCUITEMID_CHILD *last)
+{
+    if (result)
+        *result = nullptr;
+    if (last)
+        *last = nullptr;
+    if (!pidl || !result)
+        return E_INVALIDARG;
+    IShellFolder *desktop;
+    HRESULT hr = SHGetDesktopFolder(&desktop);
+    if (FAILED(hr))
+        return hr;
+    PIDLIST_ABSOLUTE parent = ILClone(pidl);
+    if (!parent) {
+        desktop->lpVtbl->Release(desktop);
+        return E_OUTOFMEMORY;
+    }
+    if (!ILRemoveLastID(parent))
+        hr = desktop->lpVtbl->QueryInterface(desktop, riid, result);
+    else if (!parent->mkid.cb)
+        hr = desktop->lpVtbl->QueryInterface(desktop, riid, result);
+    else
+        hr = desktop->lpVtbl->BindToObject(desktop, parent, nullptr, riid, result);
+    ILFree(parent);
+    desktop->lpVtbl->Release(desktop);
+    if (SUCCEEDED(hr) && last)
+        *last = ILFindLastID(pidl);
+    return hr;
+}
+
+/*
+ * the handle of the old and new names that SHFileOperation hands back with FOF_WANTMAPPINGHANDLE. Mime's
+ * SHFileOperation makes none, so there is no handle to release.
+ */
+SHSTDAPI void WINAPI SHFreeNameMappings(HANDLE mappings)
+{
+}
+
+/* the printer user interface of the shell is printui.dll, which is not here. */
+SHSTDAPI BOOL WINAPI SHInvokePrinterCommandW(HWND owner, UINT action, LPCWSTR parameters, LPCWSTR name, BOOL modal)
+{
+    SetLastError(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}
+
 SHSTDAPI HRESULT WINAPI SHGetDesktopFolder(IShellFolder **folder)
 {
     if (!folder)

@@ -23,3 +23,6 @@ EXPORTS
     WNetOpenEnumW=_WNetOpenEnumW@20
     WNetUseConnectionA=_WNetUseConnectionA@32
     WNetUseConnectionW=_WNetUseConnectionW@32
+    WNetGetResourceInformationW=_WNetGetResourceInformationW@16
+    WNetGetUserW=_WNetGetUserW@12
+    WNetGetUserA=_WNetGetUserA@12
