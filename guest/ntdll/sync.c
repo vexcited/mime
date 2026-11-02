@@ -214,6 +214,47 @@ static struct {
     ADDRESS_WAITER *Head;
 } __attribute__((aligned(64))) g_wait_buckets[WAIT_BUCKETS];
 
+/*
+ * the nodes of waiting threads are kept apart from their stacks: a thread that is ended while it waits, as ExitProcess ends
+ * the others before the libraries are told, leaves its node in the list, and the stack it was on is gone by then. the pool is
+ * not given back, a node that is left over only costs a useless alert of a thread that is gone.
+ */
+#define WAIT_NODES 1024
+static ADDRESS_WAITER g_nodes[WAIT_NODES];
+static ADDRESS_WAITER *g_free_nodes;
+static volatile LONG g_nodes_lock;
+static BOOLEAN g_nodes_ready;
+
+static void bucket_lock(volatile LONG *lock);
+static void bucket_unlock(volatile LONG *lock);
+
+static ADDRESS_WAITER *take_node(void)
+{
+    bucket_lock(&g_nodes_lock);
+    if (!g_nodes_ready) {
+        for (ULONG i = 0; i < WAIT_NODES; i++) {
+            g_nodes[i].Next = g_free_nodes;
+            g_free_nodes = &g_nodes[i];
+        }
+        g_nodes_ready = TRUE;
+    }
+    ADDRESS_WAITER *node = g_free_nodes;
+    if (node)
+        g_free_nodes = node->Next;
+    bucket_unlock(&g_nodes_lock);
+    return node;
+}
+
+static void give_node(ADDRESS_WAITER *node)
+{
+    if (node < g_nodes || node >= g_nodes + WAIT_NODES)
+        return;
+    bucket_lock(&g_nodes_lock);
+    node->Next = g_free_nodes;
+    g_free_nodes = node;
+    bucket_unlock(&g_nodes_lock);
+}
+
 static ULONG bucket_of(const volatile void *address)
 {
     return (ULONG)(((ULONG_PTR)address * 0x9E3779B97F4A7C15ull) >> 57) % WAIT_BUCKETS;
@@ -257,16 +298,20 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlWaitOnAddress(const void *address, const void *co
 {
     if (size != 1 && size != 2 && size != 4 && size != 8)
         return STATUS_INVALID_PARAMETER;
-    ADDRESS_WAITER w = {nullptr, address, NtCurrentThreadId(), 1};
+    ADDRESS_WAITER local;
+    ADDRESS_WAITER *node = take_node();
+    ADDRESS_WAITER *w = node ? node : &local;
+    *w = (ADDRESS_WAITER){nullptr, address, NtCurrentThreadId(), 1};
     ULONG b = bucket_of(address);
     bucket_lock(&g_wait_buckets[b].Lock);
     /* queue before comparing: a waker stores the value, then looks for waiters. */
-    w.Next = g_wait_buckets[b].Head;
-    g_wait_buckets[b].Head = &w;
+    w->Next = g_wait_buckets[b].Head;
+    g_wait_buckets[b].Head = w;
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
     if (!same_value(address, compare, size)) {
-        g_wait_buckets[b].Head = w.Next;
+        g_wait_buckets[b].Head = w->Next;
         bucket_unlock(&g_wait_buckets[b].Lock);
+        give_node(node);
         return STATUS_SUCCESS;
     }
     bucket_unlock(&g_wait_buckets[b].Lock);
@@ -274,16 +319,17 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlWaitOnAddress(const void *address, const void *co
     NTSTATUS status = STATUS_TIMEOUT;
     if (!timeout || timeout->QuadPart)
         status = NtWaitForAlertByThreadId((PVOID)address, (PLARGE_INTEGER)timeout);
-    if (__atomic_load_n(&w.Queued, __ATOMIC_ACQUIRE)) {
+    if (__atomic_load_n(&w->Queued, __ATOMIC_ACQUIRE)) {
         bucket_lock(&g_wait_buckets[b].Lock);
         for (ADDRESS_WAITER **p = &g_wait_buckets[b].Head; *p; p = &(*p)->Next) {
-            if (*p == &w) {
-                *p = w.Next;
+            if (*p == w) {
+                *p = w->Next;
                 break;
             }
         }
         bucket_unlock(&g_wait_buckets[b].Lock);
     }
+    give_node(node);
     return status == STATUS_TIMEOUT ? STATUS_TIMEOUT : STATUS_SUCCESS;
 }
 
@@ -294,9 +340,8 @@ static void wake_address(const void *address, BOOLEAN all)
     if (!__atomic_load_n(&g_wait_buckets[b].Head, __ATOMIC_RELAXED))
         return;
     HANDLE threads[64];
-    ULONG count;
-    do {
-        count = 0;
+    for (;;) {
+        ULONG count = 0;
         bucket_lock(&g_wait_buckets[b].Lock);
         ADDRESS_WAITER **p = &g_wait_buckets[b].Head;
         while (*p && count < RTL_NUMBER_OF(threads)) {
@@ -313,9 +358,13 @@ static void wake_address(const void *address, BOOLEAN all)
                 break;
         }
         bucket_unlock(&g_wait_buckets[b].Lock);
+        BOOLEAN gone = FALSE;
         for (ULONG i = 0; i < count; i++)
-            NtAlertThreadByThreadId(threads[i]);
-    } while (all && count == RTL_NUMBER_OF(threads));
+            gone = !NT_SUCCESS(NtAlertThreadByThreadId(threads[i]));
+        /* a single wake meant for a thread that was ended while it waited goes on to the next one. */
+        if (all ? count < RTL_NUMBER_OF(threads) : !(count == 1 && gone))
+            break;
+    }
 }
 
 NTDLL_EXPORT void NTAPI RtlWakeAddressSingle(const void *address)
