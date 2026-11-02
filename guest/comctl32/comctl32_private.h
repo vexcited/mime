@@ -133,6 +133,7 @@ LRESULT CALLBACK TrackbarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 LRESULT CALLBACK TabProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT CALLBACK TreeViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT CALLBACK ToolbarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+LRESULT CALLBACK RebarProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 
 /* the width for an item's text, image and sort arrow, used by list view autosizing. */
 int HeaderItemWidth(HWND header, int index);

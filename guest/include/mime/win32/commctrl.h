@@ -2366,6 +2366,200 @@ WINCOMMCTRLAPI int WINAPI DPA_Search(HDPA hdpa, void *find, int start, PFNDACOMP
 WINCOMMCTRLAPI ULONGLONG WINAPI DPA_GetSize(HDPA hdpa);
 WINCOMMCTRLAPI BOOL WINAPI Str_SetPtrW(LPWSTR *slot, LPCWSTR text);
 
+/* ------------------------------------------------------------------ rebar */
+
+#define REBARCLASSNAMEW L"ReBarWindow32"
+
+#define RBS_TOOLTIPS 0x0100
+#define RBS_VARHEIGHT 0x0200
+#define RBS_BANDBORDERS 0x0400
+#define RBS_FIXEDORDER 0x0800
+#define RBS_REGISTERDROP 0x1000
+#define RBS_AUTOSIZE 0x2000
+#define RBS_VERTICALGRIPPER 0x4000
+#define RBS_DBLCLKTOGGLE 0x8000
+
+#define RBIM_IMAGELIST 0x00000001
+
+#define RBBS_BREAK 0x00000001
+#define RBBS_FIXEDSIZE 0x00000002
+#define RBBS_CHILDEDGE 0x00000004
+#define RBBS_HIDDEN 0x00000008
+#define RBBS_NOVERT 0x00000010
+#define RBBS_FIXEDBMP 0x00000020
+#define RBBS_VARIABLEHEIGHT 0x00000040
+#define RBBS_GRIPPERALWAYS 0x00000080
+#define RBBS_NOGRIPPER 0x00000100
+#define RBBS_USECHEVRON 0x00000200
+#define RBBS_HIDETITLE 0x00000400
+#define RBBS_TOPALIGN 0x00000800
+
+#define RBBIM_STYLE 0x00000001
+#define RBBIM_COLORS 0x00000002
+#define RBBIM_TEXT 0x00000004
+#define RBBIM_IMAGE 0x00000008
+#define RBBIM_CHILD 0x00000010
+#define RBBIM_CHILDSIZE 0x00000020
+#define RBBIM_SIZE 0x00000040
+#define RBBIM_BACKGROUND 0x00000080
+#define RBBIM_ID 0x00000100
+#define RBBIM_IDEALSIZE 0x00000200
+#define RBBIM_LPARAM 0x00000400
+#define RBBIM_HEADERSIZE 0x00000800
+#define RBBIM_CHEVRONLOCATION 0x00001000
+#define RBBIM_CHEVRONSTATE 0x00002000
+
+#define RB_INSERTBANDA (WM_USER + 1)
+#define RB_DELETEBAND (WM_USER + 2)
+#define RB_GETBARINFO (WM_USER + 3)
+#define RB_SETBARINFO (WM_USER + 4)
+#define RB_SETBANDINFOA (WM_USER + 6)
+#define RB_SETPARENT (WM_USER + 7)
+#define RB_HITTEST (WM_USER + 8)
+#define RB_GETRECT (WM_USER + 9)
+#define RB_INSERTBANDW (WM_USER + 10)
+#define RB_SETBANDINFOW (WM_USER + 11)
+#define RB_GETBANDCOUNT (WM_USER + 12)
+#define RB_GETROWCOUNT (WM_USER + 13)
+#define RB_GETROWHEIGHT (WM_USER + 14)
+#define RB_IDTOINDEX (WM_USER + 16)
+#define RB_GETTOOLTIPS (WM_USER + 17)
+#define RB_SETTOOLTIPS (WM_USER + 18)
+#define RB_SETBKCOLOR (WM_USER + 19)
+#define RB_GETBKCOLOR (WM_USER + 20)
+#define RB_SETTEXTCOLOR (WM_USER + 21)
+#define RB_GETTEXTCOLOR (WM_USER + 22)
+#define RB_SIZETORECT (WM_USER + 23)
+#define RB_BEGINDRAG (WM_USER + 24)
+#define RB_ENDDRAG (WM_USER + 25)
+#define RB_DRAGMOVE (WM_USER + 26)
+#define RB_GETBARHEIGHT (WM_USER + 27)
+#define RB_GETBANDINFOW (WM_USER + 28)
+#define RB_GETBANDINFOA (WM_USER + 29)
+#define RB_MINIMIZEBAND (WM_USER + 30)
+#define RB_MAXIMIZEBAND (WM_USER + 31)
+#define RB_GETDROPTARGET CCM_GETDROPTARGET
+#define RB_GETBANDBORDERS (WM_USER + 34)
+#define RB_SHOWBAND (WM_USER + 35)
+#define RB_SETPALETTE (WM_USER + 37)
+#define RB_GETPALETTE (WM_USER + 38)
+#define RB_MOVEBAND (WM_USER + 39)
+#define RB_SETUNICODEFORMAT CCM_SETUNICODEFORMAT
+#define RB_GETUNICODEFORMAT CCM_GETUNICODEFORMAT
+#define RB_GETBANDMARGINS (WM_USER + 40)
+#define RB_SETWINDOWTHEME CCM_SETWINDOWTHEME
+#define RB_SETEXTENDEDSTYLE (WM_USER + 41)
+#define RB_GETEXTENDEDSTYLE (WM_USER + 42)
+#define RB_PUSHCHEVRON (WM_USER + 43)
+#define RB_SETBANDWIDTH (WM_USER + 44)
+
+#define RBN_FIRST (0U - 831U)
+#define RBN_HEIGHTCHANGE (RBN_FIRST - 0)
+#define RBN_GETOBJECT (RBN_FIRST - 1)
+#define RBN_LAYOUTCHANGED (RBN_FIRST - 2)
+#define RBN_AUTOSIZE (RBN_FIRST - 3)
+#define RBN_BEGINDRAG (RBN_FIRST - 4)
+#define RBN_ENDDRAG (RBN_FIRST - 5)
+#define RBN_DELETINGBAND (RBN_FIRST - 6)
+#define RBN_DELETEDBAND (RBN_FIRST - 7)
+#define RBN_CHILDSIZE (RBN_FIRST - 8)
+#define RBN_CHEVRONPUSHED (RBN_FIRST - 10)
+
+#define RBHT_NOWHERE 0x0001
+#define RBHT_CAPTION 0x0002
+#define RBHT_CLIENT 0x0003
+#define RBHT_GRABBER 0x0004
+#define RBHT_CHEVRON 0x0008
+
+typedef struct tagREBARINFO {
+    UINT cbSize;
+    UINT fMask;
+    HIMAGELIST himl;
+} REBARINFO, *LPREBARINFO;
+
+typedef struct tagREBARBANDINFOW {
+    UINT cbSize;
+    UINT fMask;
+    UINT fStyle;
+    COLORREF clrFore;
+    COLORREF clrBack;
+    LPWSTR lpText;
+    UINT cch;
+    int iImage;
+    HWND hwndChild;
+    UINT cxMinChild;
+    UINT cyMinChild;
+    UINT cx;
+    HBITMAP hbmBack;
+    UINT wID;
+    UINT cyChild;
+    UINT cyMaxChild;
+    UINT cyIntegral;
+    UINT cxIdeal;
+    LPARAM lParam;
+    UINT cxHeader;
+    RECT rcChevronLocation;
+    UINT uChevronState;
+} REBARBANDINFOW, *LPREBARBANDINFOW;
+
+typedef struct tagREBARBANDINFOA {
+    UINT cbSize;
+    UINT fMask;
+    UINT fStyle;
+    COLORREF clrFore;
+    COLORREF clrBack;
+    LPSTR lpText;
+    UINT cch;
+    int iImage;
+    HWND hwndChild;
+    UINT cxMinChild;
+    UINT cyMinChild;
+    UINT cx;
+    HBITMAP hbmBack;
+    UINT wID;
+    UINT cyChild;
+    UINT cyMaxChild;
+    UINT cyIntegral;
+    UINT cxIdeal;
+    LPARAM lParam;
+    UINT cxHeader;
+    RECT rcChevronLocation;
+    UINT uChevronState;
+} REBARBANDINFOA, *LPREBARBANDINFOA;
+
+#define REBARBANDINFO_V3_SIZE ((UINT)__builtin_offsetof(REBARBANDINFOW, cyChild))
+#define REBARBANDINFO_V6_SIZE ((UINT)__builtin_offsetof(REBARBANDINFOW, rcChevronLocation))
+
+typedef struct tagNMREBAR {
+    NMHDR hdr;
+    DWORD dwMask;
+    UINT uBand;
+    UINT fStyle;
+    UINT wID;
+    LPARAM lParam;
+} NMREBAR, *LPNMREBAR;
+
+typedef struct tagNMRBAUTOSIZE {
+    NMHDR hdr;
+    BOOL fChanged;
+    RECT rcTarget;
+    RECT rcActual;
+} NMRBAUTOSIZE, *LPNMRBAUTOSIZE;
+
+typedef struct tagNMREBARCHILDSIZE {
+    NMHDR hdr;
+    UINT uBand;
+    UINT wID;
+    RECT rcChild;
+    RECT rcBand;
+} NMREBARCHILDSIZE, *LPNMREBARCHILDSIZE;
+
+typedef struct tagRBHITTESTINFO {
+    POINT pt;
+    UINT flags;
+    int iBand;
+} RBHITTESTINFO, *LPRBHITTESTINFO;
+
 /* ------------------------------------------------------------------ miscellaneous */
 
 WINCOMMCTRLAPI void WINAPI GetEffectiveClientRect(HWND hwnd, LPRECT rect, const INT *info);
