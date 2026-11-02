@@ -767,10 +767,11 @@ static UINT component_selected_by_features(MIME_MSI_PACKAGE *package, PCWSTR nam
         return ERROR_INSTALL_FAILURE;
     if (result == MSICONDITION_FALSE)
         *selected = FALSE;
-    /* source and data source components are not installed, the rest are read as met. a transitive component, which a
-       reinstall tests again, is installed like any other. */
+    /* data source components are not installed, the rest are read as met. a transitive component, which a reinstall
+       tests again, is installed like any other. a component that runs from the source is installed locally, which
+       leaves a component without files, such as a placeholder of a merge module, as it is. */
     int flags = MimeMsiInteger(components, row, attributes);
-    if (*selected && flags != MSI_NULL_INTEGER && (flags & ~(2 | 4 | 8 | 16 | 64 | 128 | 256 | 512 | 1024 | 2048)))
+    if (*selected && flags != MSI_NULL_INTEGER && (flags & ~(1 | 2 | 4 | 8 | 16 | 64 | 128 | 256 | 512 | 1024 | 2048)))
         return ERROR_CALL_NOT_IMPLEMENTED;
     return ERROR_SUCCESS;
 }

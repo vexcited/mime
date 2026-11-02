@@ -49,10 +49,21 @@ ULONG D9SurfaceRelease(D9Surface *s)
     return D9ResourceRelease(&s->base);
 }
 
+/*
+ * a swap chain or a device lets go of its back buffers and depth surface. a program that still holds one, or a device
+ * that still has it bound, keeps it alive until the last release: its contents are gone, the object is not. WPF
+ * releases the swap chain of a window before the surfaces it made of its back buffers.
+ */
 void D9DestroyImplicitSurface(D9Surface *s)
 {
-    if (s)
-        destroy(s);
+    if (!s)
+        return;
+    if (s->base.refs || s->base.binds) {
+        s->base.implicit = FALSE;
+        s->swapchain = nullptr;
+        return;
+    }
+    destroy(s);
 }
 
 /* ------------------------------------------------------------------ views */

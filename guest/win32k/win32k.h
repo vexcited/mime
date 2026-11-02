@@ -791,8 +791,8 @@ void WndInvalidate(WND *w, const RECT *client_rect, BOOLEAN erase, BOOLEAN child
 void WndInvalidateRegion(WND *w, const REGION *screen_rgn, ULONG flags);
 void WndValidate(WND *w, const RECT *client_rect);
 void WndUpdateHostConfig(WND *w, BOOLEAN activate);
-void WndEnsureSurface(WND *w);
-BOOLEAN WndLayerRects(WND *w, const POINT *pos, const SIZE *size); /* top level windows: creates or resizes the surface and the host window. */
+void WndEnsureSurface(WND *w); /* top level windows: creates or resizes the surface and the host window. */
+BOOLEAN WndLayerRects(WND *w, const POINT *pos, const SIZE *size);
 void WndComputeVisRgn(WND *w, BOOLEAN client, ULONG dcx_flags, REGION *out);
 WND *WndFindNeedsPaint(W32THREAD *t, HWND filter);
 void WndActivate(WND *w, BOOLEAN click);
