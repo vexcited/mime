@@ -1571,6 +1571,9 @@ UINT MimeMsiCopyInstalledFile(MIME_MSI_PACKAGE *package, PCWSTR source, PCWSTR t
 {
     if (!package->TransactionActive || (package->Options & MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE))
         return ERROR_FUNCTION_NOT_CALLED;
+    /* a copy onto itself, as a row of the DuplicateFile table can name when two properties are one folder, changes nothing. */
+    if (!_wcsicmp(source, target))
+        return ERROR_SUCCESS;
     WIN32_FILE_ATTRIBUTE_DATA info;
     if (!GetFileAttributesExW(source, GetFileExInfoStandard, &info))
         return GetLastError();
