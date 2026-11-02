@@ -147,6 +147,8 @@ NTSYSCALLAPI NTSTATUS NTAPI NtWriteFileGather(HANDLE handle, HANDLE event, PIO_A
 NTSYSCALLAPI NTSTATUS NTAPI NtReadVirtualMemory(HANDLE process_handle, PVOID base, PVOID buffer, SIZE_T size, PSIZE_T read);
 NTSYSCALLAPI NTSTATUS NTAPI NtReleaseMutant(HANDLE handle, PLONG previous);
 NTSYSCALLAPI NTSTATUS NTAPI NtReleaseSemaphore(HANDLE handle, LONG count, PLONG previous);
+NTSYSCALLAPI NTSTATUS NTAPI NtQuerySemaphore(HANDLE handle, ULONG klass, PVOID info, ULONG length, PULONG returned);
+NTSYSCALLAPI NTSTATUS NTAPI NtQueryEvent(HANDLE handle, ULONG klass, PVOID info, ULONG length, PULONG returned);
 NTSYSCALLAPI NTSTATUS NTAPI NtResetEvent(HANDLE handle, PLONG previous);
 NTSYSCALLAPI NTSTATUS NTAPI NtResumeThread(HANDLE handle, PULONG previous);
 NTSYSCALLAPI NTSTATUS NTAPI NtSuspendThread(HANDLE handle, PULONG previous);

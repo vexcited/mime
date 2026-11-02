@@ -156,6 +156,7 @@ EXPORTS
     GetEnhMetaFilePaletteEntries=_GetEnhMetaFilePaletteEntries@12
     GetEnhMetaFileW=_GetEnhMetaFileW@4
     GetFontData=_GetFontData@20
+    EnableEUDC=_EnableEUDC@4
     GetFontLanguageInfo=_GetFontLanguageInfo@4
     GetFontUnicodeRanges=_GetFontUnicodeRanges@8
     GetGlyphIndicesA=_GetGlyphIndicesA@20

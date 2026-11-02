@@ -515,6 +515,15 @@ WINGDIAPI BOOL WINAPI CreateScalableFontResourceW(DWORD hidden, LPCWSTR resource
     return FALSE;
 }
 
+/*
+ * private characters are drawn from the font of the user's choice when this is on, which it is for every session. No
+ * machine here has such a font, so a program that switches it gets success and nothing changes.
+ */
+WINGDIAPI BOOL WINAPI EnableEUDC(BOOL enable)
+{
+    return TRUE;
+}
+
 WINGDIAPI BOOL WINAPI RemoveFontResourceW(LPCWSTR name)
 {
     return font_resource(name, 0, FALSE);

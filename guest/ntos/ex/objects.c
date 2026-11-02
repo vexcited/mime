@@ -343,6 +343,43 @@ NTSTATUS NTAPI NtReleaseSemaphore(HANDLE handle, LONG count, PLONG previous)
     return STATUS_SUCCESS;
 }
 
+/* the basic information of an event or a semaphore is two longs, and only that class and size are taken. */
+static NTSTATUS query_basic(HANDLE handle, POBJECT_TYPE type, ULONG klass, PVOID info, ULONG length, PULONG returned)
+{
+    if (klass != 0)
+        return STATUS_INVALID_INFO_CLASS;
+    if (length != 2 * sizeof(LONG))
+        return STATUS_INFO_LENGTH_MISMATCH;
+    PDISPATCHER_HEADER object;
+    NTSTATUS status = ObReferenceHandle(handle, type, KeGetPreviousMode(), (PVOID *)&object, nullptr);
+    if (!NT_SUCCESS(status))
+        return status;
+    LONG basic[2];
+    if (type == ExEventType) {
+        basic[0] = object->Type == EventSynchronizationObject ? 1 : 0;
+        basic[1] = object->SignalState;
+    } else {
+        basic[0] = object->SignalState;
+        basic[1] = ((PKSEMAPHORE)object)->Limit;
+    }
+    ObDereferenceObject(object);
+    status = KiCopyToUser(info, basic, sizeof(basic));
+    ULONG size = sizeof(basic);
+    if (NT_SUCCESS(status) && returned)
+        status = KiCopyToUser(returned, &size, sizeof(size));
+    return status;
+}
+
+NTSTATUS NTAPI NtQuerySemaphore(HANDLE handle, ULONG klass, PVOID info, ULONG length, PULONG returned)
+{
+    return query_basic(handle, ExSemaphoreType, klass, info, length, returned);
+}
+
+NTSTATUS NTAPI NtQueryEvent(HANDLE handle, ULONG klass, PVOID info, ULONG length, PULONG returned)
+{
+    return query_basic(handle, ExEventType, klass, info, length, returned);
+}
+
 NTSTATUS NTAPI NtCreateTimer(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, TIMER_TYPE type)
 {
     return create_named(ExTimerType, sizeof(ETIMER), handle, access, attributes, nullptr, init_timer, type, 0);

@@ -17,6 +17,8 @@ void NtAlertThread(void);
 void NtAlertThreadByThreadId(void);
 void NtAllocateLocallyUniqueId(void);
 void NtCompareTokens(void);
+void NtQuerySemaphore(void);
+void NtQueryEvent(void);
 void NtCreateWaitCompletionPacket(void);
 void NtAssociateWaitCompletionPacket(void);
 void NtCancelWaitCompletionPacket(void);
@@ -231,6 +233,12 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtCompareTokens
     KiRegisterService(MIME_SVC_NtCompareTokens, (void *)NtCompareTokens, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtQuerySemaphore
+    KiRegisterService(MIME_SVC_NtQuerySemaphore, (void *)NtQuerySemaphore, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtQueryEvent
+    KiRegisterService(MIME_SVC_NtQueryEvent, (void *)NtQueryEvent, STACK_ARGS(5));
 #endif
 #ifdef MIME_SVC_NtCreateWaitCompletionPacket
     KiRegisterService(MIME_SVC_NtCreateWaitCompletionPacket, (void *)NtCreateWaitCompletionPacket, STACK_ARGS(3));

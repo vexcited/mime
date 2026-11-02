@@ -67,6 +67,8 @@ EXPORTS
     NtAlertThreadByThreadId@4
     NtAllocateLocallyUniqueId@4
     NtCompareTokens@12
+    NtQuerySemaphore@20
+    NtQueryEvent@20
     NtCreateWaitCompletionPacket@12
     NtAssociateWaitCompletionPacket@32
     NtCancelWaitCompletionPacket@8

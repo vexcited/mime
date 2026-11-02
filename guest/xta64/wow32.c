@@ -1080,6 +1080,10 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         oa = attributes32(a[2], &name);
         status = NtCreateSemaphore(&handle, a[1], a[2] ? &oa : nullptr, a[3], a[4]);
         return handle_out(status, a[0], handle);
+    case MIME_SVC_NtQuerySemaphore:
+        return NtQuerySemaphore(handle32(a[0]), a[1], pointer32(a[2]), a[3], pointer32(a[4]));
+    case MIME_SVC_NtQueryEvent:
+        return NtQueryEvent(handle32(a[0]), a[1], pointer32(a[2]), a[3], pointer32(a[4]));
     case MIME_SVC_NtReleaseSemaphore:
         return NtReleaseSemaphore(handle32(a[0]), a[1], pointer32(a[2]));
     case MIME_SVC_NtCreateTimer:

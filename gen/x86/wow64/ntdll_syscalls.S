@@ -462,6 +462,20 @@ _NtCancelWaitCompletionPacket@8:
     calll *%edx
     retl $8
     .p2align 4, 0x90
+    .globl _NtQuerySemaphore@20
+_NtQuerySemaphore@20:
+    movl $0x16a, %eax
+    movl $_Wow64SystemServiceCall, %edx
+    calll *%edx
+    retl $20
+    .p2align 4, 0x90
+    .globl _NtQueryEvent@20
+_NtQueryEvent@20:
+    movl $0x56, %eax
+    movl $_Wow64SystemServiceCall, %edx
+    calll *%edx
+    retl $20
+    .p2align 4, 0x90
     .globl _NtFilterToken@24
 _NtFilterToken@24:
     movl $0xed, %eax
