@@ -251,6 +251,15 @@ EXPORTS
     FindAtomW@4
     FindClose@4
     FindCloseChangeNotification@4
+    DeleteVolumeMountPointA@4
+    DeleteVolumeMountPointW@4
+    FindFirstVolumeMountPointA@12
+    FindFirstVolumeMountPointW@12
+    FindNextVolumeMountPointA@12
+    FindNextVolumeMountPointW@12
+    FindVolumeMountPointClose@4
+    SetVolumeMountPointA@8
+    SetVolumeMountPointW@8
     FindFirstChangeNotificationA@12
     FindFirstChangeNotificationW@12
     FindFirstFileA@8
@@ -386,6 +395,7 @@ EXPORTS
     GetDateFormatA@24
     GetDateFormatEx@28
     GetDateFormatW@24
+    GetDevicePowerState@8
     GetDiskFreeSpaceA@20
     GetDiskFreeSpaceExA@16
     GetDiskFreeSpaceExW@16
@@ -1418,6 +1428,7 @@ EXPORTS
     WerRegisterFile@12
     WerRegisterMemoryBlock@8
     WerRegisterRuntimeExceptionModule@8
+    WerUnregisterRuntimeExceptionModule@8
     WerSetFlags@4
     WideCharToMultiByte@32
     WinExec@8
@@ -1454,6 +1465,8 @@ EXPORTS
     WriteProfileStringW@12
     WriteTapemark@16
     ZombifyActCtx@4
+    _hread@12
+    _hwrite@12
     _lclose@4
     _lcreat@8
     _llseek@12

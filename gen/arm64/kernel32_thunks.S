@@ -1301,6 +1301,60 @@ Kernel32Thunk_FindCloseChangeNotification:
     adrp    x16, __imp_FindCloseChangeNotification
     ldr     x16, [x16, :lo12:__imp_FindCloseChangeNotification]
     br      x16
+    .globl  Kernel32Thunk_DeleteVolumeMountPointA
+    .p2align 4
+Kernel32Thunk_DeleteVolumeMountPointA:
+    adrp    x16, __imp_DeleteVolumeMountPointA
+    ldr     x16, [x16, :lo12:__imp_DeleteVolumeMountPointA]
+    br      x16
+    .globl  Kernel32Thunk_DeleteVolumeMountPointW
+    .p2align 4
+Kernel32Thunk_DeleteVolumeMountPointW:
+    adrp    x16, __imp_DeleteVolumeMountPointW
+    ldr     x16, [x16, :lo12:__imp_DeleteVolumeMountPointW]
+    br      x16
+    .globl  Kernel32Thunk_FindFirstVolumeMountPointA
+    .p2align 4
+Kernel32Thunk_FindFirstVolumeMountPointA:
+    adrp    x16, __imp_FindFirstVolumeMountPointA
+    ldr     x16, [x16, :lo12:__imp_FindFirstVolumeMountPointA]
+    br      x16
+    .globl  Kernel32Thunk_FindFirstVolumeMountPointW
+    .p2align 4
+Kernel32Thunk_FindFirstVolumeMountPointW:
+    adrp    x16, __imp_FindFirstVolumeMountPointW
+    ldr     x16, [x16, :lo12:__imp_FindFirstVolumeMountPointW]
+    br      x16
+    .globl  Kernel32Thunk_FindNextVolumeMountPointA
+    .p2align 4
+Kernel32Thunk_FindNextVolumeMountPointA:
+    adrp    x16, __imp_FindNextVolumeMountPointA
+    ldr     x16, [x16, :lo12:__imp_FindNextVolumeMountPointA]
+    br      x16
+    .globl  Kernel32Thunk_FindNextVolumeMountPointW
+    .p2align 4
+Kernel32Thunk_FindNextVolumeMountPointW:
+    adrp    x16, __imp_FindNextVolumeMountPointW
+    ldr     x16, [x16, :lo12:__imp_FindNextVolumeMountPointW]
+    br      x16
+    .globl  Kernel32Thunk_FindVolumeMountPointClose
+    .p2align 4
+Kernel32Thunk_FindVolumeMountPointClose:
+    adrp    x16, __imp_FindVolumeMountPointClose
+    ldr     x16, [x16, :lo12:__imp_FindVolumeMountPointClose]
+    br      x16
+    .globl  Kernel32Thunk_SetVolumeMountPointA
+    .p2align 4
+Kernel32Thunk_SetVolumeMountPointA:
+    adrp    x16, __imp_SetVolumeMountPointA
+    ldr     x16, [x16, :lo12:__imp_SetVolumeMountPointA]
+    br      x16
+    .globl  Kernel32Thunk_SetVolumeMountPointW
+    .p2align 4
+Kernel32Thunk_SetVolumeMountPointW:
+    adrp    x16, __imp_SetVolumeMountPointW
+    ldr     x16, [x16, :lo12:__imp_SetVolumeMountPointW]
+    br      x16
     .globl  Kernel32Thunk_FindFirstChangeNotificationA
     .p2align 4
 Kernel32Thunk_FindFirstChangeNotificationA:
@@ -2014,6 +2068,12 @@ Kernel32Thunk_GetDateFormatEx:
 Kernel32Thunk_GetDateFormatW:
     adrp    x16, __imp_GetDateFormatW
     ldr     x16, [x16, :lo12:__imp_GetDateFormatW]
+    br      x16
+    .globl  Kernel32Thunk_GetDevicePowerState
+    .p2align 4
+Kernel32Thunk_GetDevicePowerState:
+    adrp    x16, __imp_GetDevicePowerState
+    ldr     x16, [x16, :lo12:__imp_GetDevicePowerState]
     br      x16
     .globl  Kernel32Thunk_GetDiskFreeSpaceA
     .p2align 4
@@ -7697,6 +7757,12 @@ Kernel32Thunk_WerRegisterRuntimeExceptionModule:
     adrp    x16, __imp_WerRegisterRuntimeExceptionModule
     ldr     x16, [x16, :lo12:__imp_WerRegisterRuntimeExceptionModule]
     br      x16
+    .globl  Kernel32Thunk_WerUnregisterRuntimeExceptionModule
+    .p2align 4
+Kernel32Thunk_WerUnregisterRuntimeExceptionModule:
+    adrp    x16, __imp_WerUnregisterRuntimeExceptionModule
+    ldr     x16, [x16, :lo12:__imp_WerUnregisterRuntimeExceptionModule]
+    br      x16
     .globl  Kernel32Thunk_WerSetFlags
     .p2align 4
 Kernel32Thunk_WerSetFlags:
@@ -7912,6 +7978,18 @@ Kernel32Thunk_WriteTapemark:
 Kernel32Thunk_ZombifyActCtx:
     adrp    x16, __imp_ZombifyActCtx
     ldr     x16, [x16, :lo12:__imp_ZombifyActCtx]
+    br      x16
+    .globl  Kernel32Thunk__hread
+    .p2align 4
+Kernel32Thunk__hread:
+    adrp    x16, __imp__hread
+    ldr     x16, [x16, :lo12:__imp__hread]
+    br      x16
+    .globl  Kernel32Thunk__hwrite
+    .p2align 4
+Kernel32Thunk__hwrite:
+    adrp    x16, __imp__hwrite
+    ldr     x16, [x16, :lo12:__imp__hwrite]
     br      x16
     .globl  Kernel32Thunk__lclose
     .p2align 4

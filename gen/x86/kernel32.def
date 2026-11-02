@@ -317,6 +317,15 @@ EXPORTS
     FindAtomW=_Kernel32Thunk_FindAtomW@4
     FindClose=_Kernel32Thunk_FindClose@4
     FindCloseChangeNotification=_Kernel32Thunk_FindCloseChangeNotification@4
+    DeleteVolumeMountPointA=_Kernel32Thunk_DeleteVolumeMountPointA@4
+    DeleteVolumeMountPointW=_Kernel32Thunk_DeleteVolumeMountPointW@4
+    FindFirstVolumeMountPointA=_Kernel32Thunk_FindFirstVolumeMountPointA@12
+    FindFirstVolumeMountPointW=_Kernel32Thunk_FindFirstVolumeMountPointW@12
+    FindNextVolumeMountPointA=_Kernel32Thunk_FindNextVolumeMountPointA@12
+    FindNextVolumeMountPointW=_Kernel32Thunk_FindNextVolumeMountPointW@12
+    FindVolumeMountPointClose=_Kernel32Thunk_FindVolumeMountPointClose@4
+    SetVolumeMountPointA=_Kernel32Thunk_SetVolumeMountPointA@8
+    SetVolumeMountPointW=_Kernel32Thunk_SetVolumeMountPointW@8
     FindFirstChangeNotificationA=_Kernel32Thunk_FindFirstChangeNotificationA@12
     FindFirstChangeNotificationW=_Kernel32Thunk_FindFirstChangeNotificationW@12
     FindFirstFileA=_Kernel32Thunk_FindFirstFileA@8
@@ -456,6 +465,7 @@ EXPORTS
     GetDateFormatA=_Kernel32Thunk_GetDateFormatA@24
     GetDateFormatEx=_Kernel32Thunk_GetDateFormatEx@28
     GetDateFormatW=_Kernel32Thunk_GetDateFormatW@24
+    GetDevicePowerState=_Kernel32Thunk_GetDevicePowerState@8
     GetDiskFreeSpaceA=_Kernel32Thunk_GetDiskFreeSpaceA@20
     GetDiskFreeSpaceExA=_Kernel32Thunk_GetDiskFreeSpaceExA@16
     GetDiskFreeSpaceExW=_Kernel32Thunk_GetDiskFreeSpaceExW@16
@@ -1586,6 +1596,7 @@ EXPORTS
     WerRegisterFile=_Kernel32Thunk_WerRegisterFile@12
     WerRegisterMemoryBlock=_Kernel32Thunk_WerRegisterMemoryBlock@8
     WerRegisterRuntimeExceptionModule=_Kernel32Thunk_WerRegisterRuntimeExceptionModule@8
+    WerUnregisterRuntimeExceptionModule=_Kernel32Thunk_WerUnregisterRuntimeExceptionModule@8
     WerSetFlags=_Kernel32Thunk_WerSetFlags@4
     WideCharToMultiByte=_Kernel32Thunk_WideCharToMultiByte@32
     WinExec=_Kernel32Thunk_WinExec@8
@@ -1622,6 +1633,8 @@ EXPORTS
     WriteProfileStringW=_Kernel32Thunk_WriteProfileStringW@12
     WriteTapemark=_Kernel32Thunk_WriteTapemark@16
     ZombifyActCtx=_Kernel32Thunk_ZombifyActCtx@4
+    _hread=_Kernel32Thunk__hread@12
+    _hwrite=_Kernel32Thunk__hwrite@12
     _lclose=_Kernel32Thunk__lclose@4
     _lcreat=_Kernel32Thunk__lcreat@8
     _llseek=_Kernel32Thunk__llseek@12

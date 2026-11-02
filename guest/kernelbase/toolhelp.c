@@ -736,6 +736,63 @@ WINBASEAPI BOOL WINAPI FindVolumeClose(HANDLE handle)
     return TRUE;
 }
 
+#ifndef ERROR_NOT_A_REPARSE_POINT
+#define ERROR_NOT_A_REPARSE_POINT 4390L
+#endif
+
+/*
+ * volumes of the machine are reached by their drive letter only, nothing is mounted in a folder: a volume has no mount
+ * points to list, none can be made and a folder is never one.
+ */
+WINBASEAPI HANDLE WINAPI FindFirstVolumeMountPointW(LPCWSTR root, LPWSTR name, DWORD length)
+{
+    if (!root || !name) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return INVALID_HANDLE_VALUE;
+    }
+    WCHAR letter = (WCHAR)(root[0] & ~0x20);
+    BOOL drive = (letter == 'C' || letter == 'Z') && root[1] == ':' && root[2] == '\\' && !root[3];
+    if (!drive && volume_index(root) < 0) {
+        KbSetError(ERROR_PATH_NOT_FOUND);
+        return INVALID_HANDLE_VALUE;
+    }
+    KbSetError(ERROR_NO_MORE_FILES);
+    return INVALID_HANDLE_VALUE;
+}
+
+WINBASEAPI BOOL WINAPI FindNextVolumeMountPointW(HANDLE handle, LPWSTR name, DWORD length)
+{
+    KbSetError(ERROR_INVALID_HANDLE);
+    return FALSE;
+}
+
+WINBASEAPI BOOL WINAPI FindVolumeMountPointClose(HANDLE handle)
+{
+    KbSetError(ERROR_INVALID_HANDLE);
+    return FALSE;
+}
+
+WINBASEAPI BOOL WINAPI SetVolumeMountPointW(LPCWSTR mount_point, LPCWSTR volume)
+{
+    if (!mount_point || !volume || volume_index(volume) < 0) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    KbSetError(ERROR_NOT_SUPPORTED);
+    return FALSE;
+}
+
+WINBASEAPI BOOL WINAPI DeleteVolumeMountPointW(LPCWSTR mount_point)
+{
+    if (!mount_point) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    DWORD attributes = GetFileAttributesW(mount_point);
+    KbSetError(attributes == INVALID_FILE_ATTRIBUTES ? ERROR_FILE_NOT_FOUND : ERROR_NOT_A_REPARSE_POINT);
+    return FALSE;
+}
+
 /* ------------------------------------------------------------------ geographical information */
 
 #define GEO_NATION 0x0001

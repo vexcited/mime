@@ -317,6 +317,15 @@ EXPORTS
     FindAtomW=Kernel32Thunk_FindAtomW
     FindClose=Kernel32Thunk_FindClose
     FindCloseChangeNotification=Kernel32Thunk_FindCloseChangeNotification
+    DeleteVolumeMountPointA=Kernel32Thunk_DeleteVolumeMountPointA
+    DeleteVolumeMountPointW=Kernel32Thunk_DeleteVolumeMountPointW
+    FindFirstVolumeMountPointA=Kernel32Thunk_FindFirstVolumeMountPointA
+    FindFirstVolumeMountPointW=Kernel32Thunk_FindFirstVolumeMountPointW
+    FindNextVolumeMountPointA=Kernel32Thunk_FindNextVolumeMountPointA
+    FindNextVolumeMountPointW=Kernel32Thunk_FindNextVolumeMountPointW
+    FindVolumeMountPointClose=Kernel32Thunk_FindVolumeMountPointClose
+    SetVolumeMountPointA=Kernel32Thunk_SetVolumeMountPointA
+    SetVolumeMountPointW=Kernel32Thunk_SetVolumeMountPointW
     FindFirstChangeNotificationA=Kernel32Thunk_FindFirstChangeNotificationA
     FindFirstChangeNotificationW=Kernel32Thunk_FindFirstChangeNotificationW
     FindFirstFileA=Kernel32Thunk_FindFirstFileA
@@ -456,6 +465,7 @@ EXPORTS
     GetDateFormatA=Kernel32Thunk_GetDateFormatA
     GetDateFormatEx=Kernel32Thunk_GetDateFormatEx
     GetDateFormatW=Kernel32Thunk_GetDateFormatW
+    GetDevicePowerState=Kernel32Thunk_GetDevicePowerState
     GetDiskFreeSpaceA=Kernel32Thunk_GetDiskFreeSpaceA
     GetDiskFreeSpaceExA=Kernel32Thunk_GetDiskFreeSpaceExA
     GetDiskFreeSpaceExW=Kernel32Thunk_GetDiskFreeSpaceExW
@@ -1585,6 +1595,7 @@ EXPORTS
     WerRegisterFile=Kernel32Thunk_WerRegisterFile
     WerRegisterMemoryBlock=Kernel32Thunk_WerRegisterMemoryBlock
     WerRegisterRuntimeExceptionModule=Kernel32Thunk_WerRegisterRuntimeExceptionModule
+    WerUnregisterRuntimeExceptionModule=Kernel32Thunk_WerUnregisterRuntimeExceptionModule
     WerSetFlags=Kernel32Thunk_WerSetFlags
     WideCharToMultiByte=Kernel32Thunk_WideCharToMultiByte
     WinExec=Kernel32Thunk_WinExec
@@ -1622,6 +1633,8 @@ EXPORTS
     WriteTapemark=Kernel32Thunk_WriteTapemark
     ZombifyActCtx=Kernel32Thunk_ZombifyActCtx
     __chkstk=ntdll.__chkstk
+    _hread=Kernel32Thunk__hread
+    _hwrite=Kernel32Thunk__hwrite
     _lclose=Kernel32Thunk__lclose
     _lcreat=Kernel32Thunk__lcreat
     _llseek=Kernel32Thunk__llseek

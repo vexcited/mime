@@ -867,6 +867,42 @@ _Kernel32Thunk_FindClose@4:
     .p2align 4
 _Kernel32Thunk_FindCloseChangeNotification@4:
     jmp     *__imp__FindCloseChangeNotification@4
+    .globl  _Kernel32Thunk_DeleteVolumeMountPointA@4
+    .p2align 4
+_Kernel32Thunk_DeleteVolumeMountPointA@4:
+    jmp     *__imp__DeleteVolumeMountPointA@4
+    .globl  _Kernel32Thunk_DeleteVolumeMountPointW@4
+    .p2align 4
+_Kernel32Thunk_DeleteVolumeMountPointW@4:
+    jmp     *__imp__DeleteVolumeMountPointW@4
+    .globl  _Kernel32Thunk_FindFirstVolumeMountPointA@12
+    .p2align 4
+_Kernel32Thunk_FindFirstVolumeMountPointA@12:
+    jmp     *__imp__FindFirstVolumeMountPointA@12
+    .globl  _Kernel32Thunk_FindFirstVolumeMountPointW@12
+    .p2align 4
+_Kernel32Thunk_FindFirstVolumeMountPointW@12:
+    jmp     *__imp__FindFirstVolumeMountPointW@12
+    .globl  _Kernel32Thunk_FindNextVolumeMountPointA@12
+    .p2align 4
+_Kernel32Thunk_FindNextVolumeMountPointA@12:
+    jmp     *__imp__FindNextVolumeMountPointA@12
+    .globl  _Kernel32Thunk_FindNextVolumeMountPointW@12
+    .p2align 4
+_Kernel32Thunk_FindNextVolumeMountPointW@12:
+    jmp     *__imp__FindNextVolumeMountPointW@12
+    .globl  _Kernel32Thunk_FindVolumeMountPointClose@4
+    .p2align 4
+_Kernel32Thunk_FindVolumeMountPointClose@4:
+    jmp     *__imp__FindVolumeMountPointClose@4
+    .globl  _Kernel32Thunk_SetVolumeMountPointA@8
+    .p2align 4
+_Kernel32Thunk_SetVolumeMountPointA@8:
+    jmp     *__imp__SetVolumeMountPointA@8
+    .globl  _Kernel32Thunk_SetVolumeMountPointW@8
+    .p2align 4
+_Kernel32Thunk_SetVolumeMountPointW@8:
+    jmp     *__imp__SetVolumeMountPointW@8
     .globl  _Kernel32Thunk_FindFirstChangeNotificationA@12
     .p2align 4
 _Kernel32Thunk_FindFirstChangeNotificationA@12:
@@ -1343,6 +1379,10 @@ _Kernel32Thunk_GetDateFormatEx@28:
     .p2align 4
 _Kernel32Thunk_GetDateFormatW@24:
     jmp     *__imp__GetDateFormatW@24
+    .globl  _Kernel32Thunk_GetDevicePowerState@8
+    .p2align 4
+_Kernel32Thunk_GetDevicePowerState@8:
+    jmp     *__imp__GetDevicePowerState@8
     .globl  _Kernel32Thunk_GetDiskFreeSpaceA@20
     .p2align 4
 _Kernel32Thunk_GetDiskFreeSpaceA@20:
@@ -5131,6 +5171,10 @@ _Kernel32Thunk_WerRegisterMemoryBlock@8:
     .p2align 4
 _Kernel32Thunk_WerRegisterRuntimeExceptionModule@8:
     jmp     *__imp__WerRegisterRuntimeExceptionModule@8
+    .globl  _Kernel32Thunk_WerUnregisterRuntimeExceptionModule@8
+    .p2align 4
+_Kernel32Thunk_WerUnregisterRuntimeExceptionModule@8:
+    jmp     *__imp__WerUnregisterRuntimeExceptionModule@8
     .globl  _Kernel32Thunk_WerSetFlags@4
     .p2align 4
 _Kernel32Thunk_WerSetFlags@4:
@@ -5275,6 +5319,14 @@ _Kernel32Thunk_WriteTapemark@16:
     .p2align 4
 _Kernel32Thunk_ZombifyActCtx@4:
     jmp     *__imp__ZombifyActCtx@4
+    .globl  _Kernel32Thunk__hread@12
+    .p2align 4
+_Kernel32Thunk__hread@12:
+    jmp     *__imp___hread@12
+    .globl  _Kernel32Thunk__hwrite@12
+    .p2align 4
+_Kernel32Thunk__hwrite@12:
+    jmp     *__imp___hwrite@12
     .globl  _Kernel32Thunk__lclose@4
     .p2align 4
 _Kernel32Thunk__lclose@4:

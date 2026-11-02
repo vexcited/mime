@@ -6,6 +6,7 @@ WINBASEAPI BOOL WINAPI GetVolumePathNamesForVolumeNameW(LPCWSTR volume, LPWSTR n
 WINBASEAPI HANDLE WINAPI FindFirstVolumeW(LPWSTR name, DWORD length);
 WINBASEAPI BOOL WINAPI FindNextVolumeW(HANDLE handle, LPWSTR name, DWORD length);
 WINBASEAPI BOOL WINAPI FindVolumeClose(HANDLE handle);
+WINBASEAPI BOOL WINAPI FindVolumeMountPointClose(HANDLE handle);
 
 /* text that fits the buffer of the caller, with the error windows gives when it does not. */
 static BOOL put_ansi(PCWSTR wide, LPSTR out, DWORD size)
@@ -138,5 +139,52 @@ WINBASEAPI BOOL WINAPI MoveFileWithProgressA(LPCSTR source, LPCSTR destination, 
         ok = MoveFileWithProgressW(from, to, progress, data, flags);
     KbFree(from);
     KbFree(to);
+    return ok;
+}
+
+WINBASEAPI HANDLE WINAPI FindFirstVolumeMountPointW(LPCWSTR root, LPWSTR name, DWORD length);
+WINBASEAPI BOOL WINAPI SetVolumeMountPointW(LPCWSTR mount_point, LPCWSTR volume);
+WINBASEAPI BOOL WINAPI DeleteVolumeMountPointW(LPCWSTR mount_point);
+WINBASEAPI BOOL WINAPI FindNextVolumeMountPointW(HANDLE handle, LPWSTR name, DWORD length);
+
+WINBASEAPI HANDLE WINAPI FindFirstVolumeMountPointA(LPCSTR root, LPSTR name, DWORD length)
+{
+    PWSTR wide = root ? KbAnsiToWide(root) : nullptr;
+    if (root && !wide)
+        return INVALID_HANDLE_VALUE;
+    WCHAR found[MAX_PATH];
+    HANDLE handle = FindFirstVolumeMountPointW(wide, name ? found : nullptr, RTL_NUMBER_OF(found));
+    KbFree(wide);
+    if (handle != INVALID_HANDLE_VALUE && !put_ansi(found, name, length)) {
+        FindVolumeMountPointClose(handle);
+        return INVALID_HANDLE_VALUE;
+    }
+    return handle;
+}
+
+WINBASEAPI BOOL WINAPI FindNextVolumeMountPointA(HANDLE handle, LPSTR name, DWORD length)
+{
+    WCHAR found[MAX_PATH];
+    return FindNextVolumeMountPointW(handle, found, RTL_NUMBER_OF(found)) && put_ansi(found, name, length);
+}
+
+WINBASEAPI BOOL WINAPI SetVolumeMountPointA(LPCSTR mount_point, LPCSTR volume)
+{
+    PWSTR point = mount_point ? KbAnsiToWide(mount_point) : nullptr, name = volume ? KbAnsiToWide(volume) : nullptr;
+    BOOL ok = FALSE;
+    if ((!mount_point || point) && (!volume || name))
+        ok = SetVolumeMountPointW(point, name);
+    KbFree(point);
+    KbFree(name);
+    return ok;
+}
+
+WINBASEAPI BOOL WINAPI DeleteVolumeMountPointA(LPCSTR mount_point)
+{
+    PWSTR point = mount_point ? KbAnsiToWide(mount_point) : nullptr;
+    if (mount_point && !point)
+        return FALSE;
+    BOOL ok = DeleteVolumeMountPointW(point);
+    KbFree(point);
     return ok;
 }

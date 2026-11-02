@@ -303,6 +303,11 @@ DWORD WINAPI WerRegisterRuntimeExceptionModule(PCWSTR dll, PVOID context)
     return S_OK;
 }
 
+DWORD WINAPI WerUnregisterRuntimeExceptionModule(PCWSTR dll, PVOID context)
+{
+    return S_OK;
+}
+
 HRESULT WINAPI WerGetFlags(HANDLE process, PDWORD flags)
 {
     if (!flags)

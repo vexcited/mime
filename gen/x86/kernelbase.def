@@ -251,6 +251,15 @@ EXPORTS
     FindAtomW=_FindAtomW@4
     FindClose=_FindClose@4
     FindCloseChangeNotification=_FindCloseChangeNotification@4
+    DeleteVolumeMountPointA=_DeleteVolumeMountPointA@4
+    DeleteVolumeMountPointW=_DeleteVolumeMountPointW@4
+    FindFirstVolumeMountPointA=_FindFirstVolumeMountPointA@12
+    FindFirstVolumeMountPointW=_FindFirstVolumeMountPointW@12
+    FindNextVolumeMountPointA=_FindNextVolumeMountPointA@12
+    FindNextVolumeMountPointW=_FindNextVolumeMountPointW@12
+    FindVolumeMountPointClose=_FindVolumeMountPointClose@4
+    SetVolumeMountPointA=_SetVolumeMountPointA@8
+    SetVolumeMountPointW=_SetVolumeMountPointW@8
     FindFirstChangeNotificationA=_FindFirstChangeNotificationA@12
     FindFirstChangeNotificationW=_FindFirstChangeNotificationW@12
     FindFirstFileA=_FindFirstFileA@8
@@ -386,6 +395,7 @@ EXPORTS
     GetDateFormatA=_GetDateFormatA@24
     GetDateFormatEx=_GetDateFormatEx@28
     GetDateFormatW=_GetDateFormatW@24
+    GetDevicePowerState=_GetDevicePowerState@8
     GetDiskFreeSpaceA=_GetDiskFreeSpaceA@20
     GetDiskFreeSpaceExA=_GetDiskFreeSpaceExA@16
     GetDiskFreeSpaceExW=_GetDiskFreeSpaceExW@16
@@ -1418,6 +1428,7 @@ EXPORTS
     WerRegisterFile=_WerRegisterFile@12
     WerRegisterMemoryBlock=_WerRegisterMemoryBlock@8
     WerRegisterRuntimeExceptionModule=_WerRegisterRuntimeExceptionModule@8
+    WerUnregisterRuntimeExceptionModule=_WerUnregisterRuntimeExceptionModule@8
     WerSetFlags=_WerSetFlags@4
     WideCharToMultiByte=_WideCharToMultiByte@32
     WinExec=_WinExec@8
@@ -1454,6 +1465,8 @@ EXPORTS
     WriteProfileStringW=_WriteProfileStringW@12
     WriteTapemark=_WriteTapemark@16
     ZombifyActCtx=_ZombifyActCtx@4
+    _hread=__hread@12
+    _hwrite=__hwrite@12
     _lclose=__lclose@4
     _lcreat=__lcreat@8
     _llseek=__llseek@12

@@ -279,6 +279,31 @@ UINT WINAPI _lwrite(HFILE file, LPCCH buffer, UINT count)
     return WriteFile((HANDLE)(LONG_PTR)file, buffer, count, &written, nullptr) ? written : (UINT)HFILE_ERROR;
 }
 
+/*
+ * whether the device of a handle is powered. every device of the machine is, so a handle that is a device or a
+ * file answers on and any other handle is invalid.
+ */
+BOOL WINAPI GetDevicePowerState(HANDLE device, BOOL *on)
+{
+    if (!on || GetFileType(device) == FILE_TYPE_UNKNOWN) {
+        SetLastError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    *on = TRUE;
+    return TRUE;
+}
+
+/* the same calls with a count that is signed: a count below zero is an error. */
+LONG WINAPI _hread(HFILE file, LPVOID buffer, LONG count)
+{
+    return count < 0 ? HFILE_ERROR : (LONG)_lread(file, buffer, (UINT)count);
+}
+
+LONG WINAPI _hwrite(HFILE file, LPCCH buffer, LONG count)
+{
+    return count < 0 ? HFILE_ERROR : (LONG)_lwrite(file, buffer, (UINT)count);
+}
+
 LONG WINAPI _llseek(HFILE file, LONG offset, int origin)
 {
     return (LONG)SetFilePointer((HANDLE)(LONG_PTR)file, offset, nullptr, (DWORD)origin);
