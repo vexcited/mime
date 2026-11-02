@@ -126,9 +126,10 @@ HRESULT D9AllocMemory(D9Memory *memory, const D9Format *f, UINT width, UINT heig
 
 void D9FreeMemory(D9Memory *memory)
 {
-    if (memory->bytes)
+    if (memory->bytes && !memory->external)
         VirtualFree(memory->bytes, 0, MEM_RELEASE);
     memory->bytes = nullptr;
+    memory->external = FALSE;
 }
 
 /* the rectangle must lie within the level and, for compressed formats, on whole blocks. */

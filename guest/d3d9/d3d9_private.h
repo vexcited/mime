@@ -92,6 +92,8 @@ typedef struct D9Memory {
     UINT slice;
     UINT size;
     BOOL locked;
+    /* the bytes belong to the program: a system memory surface made over its memory. */
+    BOOL external;
     DWORD lock_flags;
     RECT lock_rect;
     UINT lock_front, lock_back;
@@ -173,7 +175,7 @@ typedef struct D9Buffer {
 
 D9Texture *D9TextureFrom(IDirect3DBaseTexture9 *iface);
 HRESULT D9CreateTexture(D9Device *device, D3DRESOURCETYPE type, UINT width, UINT height, UINT depth, UINT levels,
-                        DWORD usage, D3DFORMAT format, D3DPOOL pool, D9Texture **out);
+                        DWORD usage, D3DFORMAT format, D3DPOOL pool, HANDLE *shared, D9Texture **out);
 ID3D11ShaderResourceView *D9TextureSrv(D9Texture *texture, BOOL srgb);
 void D9TexturePrepare(D9Texture *texture);
 HRESULT D9UpdateTexture(D9Device *device, D9Texture *source, D9Texture *dest);
@@ -403,7 +405,7 @@ BOOL D9LockRect(const D9Format *f, UINT width, UINT height, const RECT *rect, RE
 BYTE *D9MemoryAt(const D9Memory *memory, const D9Format *f, UINT x, UINT y, UINT z);
 
 HRESULT D9CreateSurface(D9Device *device, UINT width, UINT height, D3DFORMAT format, DWORD usage, D3DPOOL pool,
-                        D3DMULTISAMPLE_TYPE samples, DWORD quality, BOOL lockable, D9Surface **out);
+                        D3DMULTISAMPLE_TYPE samples, DWORD quality, BOOL lockable, void *memory, D9Surface **out);
 D9Surface *D9SurfaceFrom(IDirect3DSurface9 *iface);
 ULONG D9SurfaceAddRef(D9Surface *surface);
 ULONG D9SurfaceRelease(D9Surface *surface);

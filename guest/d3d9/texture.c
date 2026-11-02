@@ -570,7 +570,11 @@ static UINT full_chain(UINT width, UINT height, UINT depth)
     return levels;
 }
 
-static HRESULT make_resource(D9Texture *t)
+/*
+ * a texture of an extended device may be shared with a Direct3D 11 device: a handle that is not null names a shared
+ * texture to open in its place, a null one asks for a texture that can be shared and gets its handle.
+ */
+static HRESULT make_resource(D9Texture *t, HANDLE *shared)
 {
     const D9Format *f = t->base.format;
     DWORD usage = t->base.usage;
@@ -586,6 +590,23 @@ static HRESULT make_resource(D9Texture *t)
     if (t->faces == 6)
         misc |= D3D11_RESOURCE_MISC_TEXTURECUBE;
     ID3D11Device1 *d3d11 = t->base.device->d3d11;
+    if (shared && *shared) {
+        ID3D11Texture2D *opened;
+        HRESULT hr = d3d11->lpVtbl->OpenSharedResource(d3d11, *shared, &IID_ID3D11Texture2D, (void **)&opened);
+        if (FAILED(hr))
+            return D3DERR_INVALIDCALL;
+        D3D11_TEXTURE2D_DESC got;
+        opened->lpVtbl->GetDesc(opened, &got);
+        if (got.Width != t->width || got.Height != t->height || got.ArraySize != 1 || t->d3d_levels != 1 ||
+            got.SampleDesc.Count != 1) {
+            opened->lpVtbl->Release(opened);
+            return D3DERR_INVALIDCALL;
+        }
+        t->resource = (ID3D11Resource *)opened;
+        return D3D_OK;
+    }
+    if (shared)
+        misc |= D3D11_RESOURCE_MISC_SHARED;
     if (t->base.type == D3DRTYPE_VOLUMETEXTURE) {
         D3D11_TEXTURE3D_DESC desc = {t->width, t->height, t->depth, t->d3d_levels, f->resource, D3D11_USAGE_DEFAULT,
                                      bind, 0, misc};
@@ -593,13 +614,22 @@ static HRESULT make_resource(D9Texture *t)
     }
     D3D11_TEXTURE2D_DESC desc = {t->width, t->height, t->d3d_levels, t->faces, f->resource, {1, 0},
                                  D3D11_USAGE_DEFAULT, bind, 0, misc};
-    return d3d11->lpVtbl->CreateTexture2D(d3d11, &desc, nullptr, (ID3D11Texture2D **)&t->resource);
+    HRESULT hr = d3d11->lpVtbl->CreateTexture2D(d3d11, &desc, nullptr, (ID3D11Texture2D **)&t->resource);
+    if (SUCCEEDED(hr) && shared) {
+        IDXGIResource *dxgi;
+        *shared = nullptr;
+        if (SUCCEEDED(t->resource->lpVtbl->QueryInterface(t->resource, &IID_IDXGIResource, (void **)&dxgi))) {
+            hr = dxgi->lpVtbl->GetSharedHandle(dxgi, shared);
+            dxgi->lpVtbl->Release(dxgi);
+        }
+    }
+    return hr;
 }
 
 static UINT mip(UINT size, UINT level) { return D9_MAX(size >> level, 1); }
 
 HRESULT D9CreateTexture(D9Device *device, D3DRESOURCETYPE type, UINT width, UINT height, UINT depth, UINT levels,
-                        DWORD usage, D3DFORMAT format, D3DPOOL pool, D9Texture **out)
+                        DWORD usage, D3DFORMAT format, D3DPOOL pool, HANDLE *shared, D9Texture **out)
 {
     const D9Format *f = D9GetFormat(format);
     if (!width || !height || !depth || f->d3d == D3DFMT_UNKNOWN || (f->flags & D9_FORMAT_NULL))
@@ -645,7 +675,7 @@ HRESULT D9CreateTexture(D9Device *device, D3DRESOURCETYPE type, UINT width, UINT
     if (!t->memory)
         hr = E_OUTOFMEMORY;
     if (SUCCEEDED(hr) && pool != D3DPOOL_SYSTEMMEM && pool != D3DPOOL_SCRATCH)
-        hr = make_resource(t);
+        hr = make_resource(t, pool == D3DPOOL_DEFAULT && type == D3DRTYPE_TEXTURE ? shared : nullptr);
     if (SUCCEEDED(hr) && type == D3DRTYPE_VOLUMETEXTURE) {
         t->volumes = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, t->levels * sizeof(*t->volumes));
         for (UINT l = 0; t->volumes && SUCCEEDED(hr) && l < t->levels; l++) {

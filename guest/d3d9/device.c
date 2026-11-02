@@ -642,7 +642,7 @@ static HRESULT create_texture(D9Device *d, D3DRESOURCETYPE type, UINT width, UIN
         return D3DERR_INVALIDCALL;
     D9Texture *t;
     D9Lock(d);
-    HRESULT hr = D9CreateTexture(d, type, width, height, depth, levels, usage, format, pool, &t);
+    HRESULT hr = D9CreateTexture(d, type, width, height, depth, levels, usage, format, pool, shared, &t);
     D9Unlock(d);
     if (SUCCEEDED(hr))
         *out = &t->iface.base;
@@ -714,9 +714,13 @@ static HRESULT create_surface(D9Device *d, UINT width, UINT height, D3DFORMAT fo
     *out = nullptr;
     if (shared && !d->ex)
         return D3DERR_INVALIDCALL;
+    /* only a system memory surface has a pointer there. */
+    void *memory = shared && (pool == D3DPOOL_SYSTEMMEM || pool == D3DPOOL_SCRATCH) ? *shared : nullptr;
+    if ((ULONG_PTR)memory & 3)
+        return D3DERR_INVALIDCALL;
     D9Surface *s;
     D9Lock(d);
-    HRESULT hr = D9CreateSurface(d, width, height, format, usage, pool, samples, quality, lockable, &s);
+    HRESULT hr = D9CreateSurface(d, width, height, format, usage, pool, samples, quality, lockable, memory, &s);
     D9Unlock(d);
     if (SUCCEEDED(hr))
         *out = &s->iface;

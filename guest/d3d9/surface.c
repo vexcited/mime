@@ -510,8 +510,13 @@ HRESULT D9NewSurface(D9Device *device, D3DFORMAT format, DWORD usage, D3DPOOL po
     return D3D_OK;
 }
 
+/*
+ * a system memory surface of an extended device may be made over memory of the program: its address goes in the place of
+ * the shared handle. the pitch is the format's for the width, and the program keeps the memory for as long as the
+ * surface lives. WPF reads the render target of a layered window into the bits of the bitmap it updates the window from.
+ */
 HRESULT D9CreateSurface(D9Device *device, UINT width, UINT height, D3DFORMAT format, DWORD usage, D3DPOOL pool,
-                        D3DMULTISAMPLE_TYPE samples, DWORD quality, BOOL lockable_flag, D9Surface **out)
+                        D3DMULTISAMPLE_TYPE samples, DWORD quality, BOOL lockable_flag, void *memory, D9Surface **out)
 {
     const D9Format *f = D9GetFormat(format);
     if (!width || !height || f->d3d == D3DFMT_UNKNOWN || samples > D3DMULTISAMPLE_16_SAMPLES)
@@ -532,10 +537,17 @@ HRESULT D9CreateSurface(D9Device *device, UINT width, UINT height, D3DFORMAT for
     /* plain surfaces and lockable depth formats can always be locked, render targets only when asked. */
     s->lockable = lockable_flag || !(usage & (D3DUSAGE_RENDERTARGET | D3DUSAGE_DEPTHSTENCIL)) ||
                   (f->flags & D9_FORMAT_LOCKABLE);
-    if (pool == D3DPOOL_DEFAULT || pool == D3DPOOL_MANAGED)
+    if (pool == D3DPOOL_DEFAULT || pool == D3DPOOL_MANAGED) {
         hr = D9SurfaceMakeTexture(s);
-    else
+    } else if (memory) {
+        s->memory->pitch = D9FormatPitch(f, width);
+        s->memory->slice = s->memory->pitch * D9FormatRows(f, height);
+        s->memory->size = s->memory->slice;
+        s->memory->bytes = memory;
+        s->memory->external = TRUE;
+    } else {
         hr = D9AllocMemory(s->memory, f, width, height, 1);
+    }
     if (FAILED(hr)) {
         destroy(s);
         device->iface.lpVtbl->Release(&device->iface);
