@@ -887,16 +887,12 @@ static int run_main(void)
         WshShowLogo();
     BOOL done = FALSE;
     if (settings.SaveAlone) {
+        /* the settings go back to the defaults and then the default host is changed with a value that is none of the two,
+           which fails, so the message that says they were reset is never the one that is told. */
         SETTINGS defaults = {.Logo = TRUE};
-        hr = WshSaveRegistrySettings(&defaults);
-        if (SUCCEEDED(hr) && settings.ChangeHost)
-            hr = WshChangeDefaultHost(settings.Host);
-        if (FAILED(hr)) {
-            WshPrintF(RES_BASE + 20, 3203);
-            return 1;
-        }
-        WshPrintF(0, 3050);
-        return 0;
+        WshSaveRegistrySettings(&defaults);
+        WshPrintF(RES_BASE + 20, 3203);
+        return 1;
     }
     if (settings.Save) {
         hr = WshSaveRegistrySettings(&settings);

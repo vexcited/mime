@@ -1222,7 +1222,7 @@ static HRESULT STDMETHODCALLTYPE host_sleep(IHost *This, LONG time)
 static HRESULT STDMETHODCALLTYPE host_connect_object(IHost *This, IDispatch *object, BSTR prefix)
 {
     if (!object)
-        return E_POINTER;
+        return E_INVALIDARG;
     GUID none = {};
     HRESULT hr = WshConnectObject(&none, object, prefix);
     if (FAILED(hr)) {
