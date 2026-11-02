@@ -936,7 +936,8 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         v[0] = ctx->point_fade_threshold;
         return 1;
     case GL_POINT_DISTANCE_ATTENUATION:
-        memcpy(v, ctx->point_attenuation, sizeof(ctx->point_attenuation));
+        for (int i = 0; i < 3; i++)
+            v[i] = ctx->point_attenuation[i];
         return 3;
     case GL_PACK_ALIGNMENT:
         v[0] = ctx->pack_alignment;

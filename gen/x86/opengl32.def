@@ -401,6 +401,14 @@ EXPORTS
     glPixelTransferf=_glPixelTransferf@8
     glPixelTransferi=_glPixelTransferi@8
     glPixelZoom=_glPixelZoom@8
+    glPointParameterf=_glPointParameterf@8
+    glPointParameterfARB=_glPointParameterfARB@8
+    glPointParameterfEXT=_glPointParameterfEXT@8
+    glPointParameterfv=_glPointParameterfv@8
+    glPointParameterfvARB=_glPointParameterfvARB@8
+    glPointParameterfvEXT=_glPointParameterfvEXT@8
+    glPointParameteri=_glPointParameteri@8
+    glPointParameteriv=_glPointParameteriv@8
     glPointSize=_glPointSize@4
     glPolygonMode=_glPolygonMode@8
     glPolygonOffset=_glPolygonOffset@8
