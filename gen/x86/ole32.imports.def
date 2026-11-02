@@ -246,3 +246,10 @@ EXPORTS
     WriteClassStg@8
     WriteClassStm@8
     WriteFmtUserTypeStg@12
+    CreateErrorInfo@4
+    SetErrorInfo@8
+    GetErrorInfo@8
+    CoGetInstanceFromFile@32
+    OleCreateDefaultHandler@16
+    OleDoAutoConvert@8
+    StgCreatePropSetStg@12
