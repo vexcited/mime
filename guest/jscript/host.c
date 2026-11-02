@@ -295,6 +295,8 @@ static int map_hresult(HRESULT hr)
 
 static int host_fail(Engine *e, HRESULT hr, EXCEPINFO *ei)
 {
+    if (e->Abort)
+        return RC_THROW;
     if (hr == DISP_E_EXCEPTION) {
         HRESULT sc = E_FAIL;
         BSTR src = nullptr, desc = nullptr;
@@ -1132,7 +1134,12 @@ static HRESULT STDMETHODCALLTYPE jd_invokeex(IDispatchEx *This, DISPID id, LCID 
     int rc = jd_run(d, id, flags, dp, &result);
     e->CurStmt = saved;
     HRESULT hr = S_OK;
-    if (rc == RC_THROW) {
+    if (rc == RC_THROW && e->Abort) {
+        /* the script was stopped: the host is told nothing but that it ended. */
+        if (e->NestedRun == 1)
+            e->Abort = FALSE;
+        hr = E_ABORT;
+    } else if (rc == RC_THROW) {
         hr = DISP_E_EXCEPTION;
         if (ei)
             fill_excepinfo_from_exception(e, ei);

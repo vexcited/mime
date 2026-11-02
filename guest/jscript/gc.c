@@ -233,6 +233,7 @@ static void mark_engine_roots(Marker *m, Engine *e)
     }
     mark_val(m, &e->Exception);
     mark_val(m, &e->RetVal);
+    mark_val(m, &e->GlobalThis);
     mark_push(m, e->LastInput);
     for (NamedItem *it = e->Items; it; it = it->next) {
         mark_push(m, it->name);

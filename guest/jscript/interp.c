@@ -31,6 +31,23 @@ static BOOL stack_low(void)
     return sp < limit + 160 * 1024;
 }
 
+/* the site is asked now and then whether the script may go on. */
+static BOOL poll_site(Engine *e)
+{
+    if (!e->Site)
+        return FALSE;
+    if (!e->PollSite) {
+        IActiveScriptSiteInterruptPoll *poll = nullptr;
+        if (SUCCEEDED(e->Site->lpVtbl->QueryInterface(e->Site, &IID_IActiveScriptSiteInterruptPoll, (void **)&poll)))
+            e->PollSite = poll;
+        else
+            e->PollSite = (IActiveScriptSiteInterruptPoll *)(SIZE_T)1;
+    }
+    if (e->PollSite == (IActiveScriptSiteInterruptPoll *)(SIZE_T)1)
+        return FALSE;
+    return e->PollSite->lpVtbl->QueryContinue(e->PollSite) == S_FALSE;
+}
+
 static int eval_ctx(Env *env, Node *n, Val *out, int ctx);
 static int exec(Env *env, Node *n, Val *completion);
 
@@ -1068,8 +1085,12 @@ static int exec(Env *env, Node *n, Val *completion)
     } else if (n->kind != N_LABEL)
         env->my_count = 0;
     e->CurStmt = n;
-    if (e->Interrupted && (e->Interrupted = FALSE, TRUE))
-        ;
+    if (*(volatile BOOL *)&e->Interrupted || ((++e->Polls & 0xFFF) == 0 && poll_site(e))) {
+        e->Interrupted = FALSE;
+        e->Abort = TRUE;
+        e->Exception = UNDEF;
+        return RC_THROW;
+    }
     switch (n->kind) {
     case N_EMPTY:
         return RC_OK;
@@ -1300,6 +1321,8 @@ static int exec(Env *env, Node *n, Val *completion)
     }
     case N_TRY: {
         rc = exec(env, n->a, completion);
+        if (rc == RC_THROW && e->Abort)
+            return rc;
         if (rc == RC_THROW && n->b) {
             /* the variable of the catch is a variable of the function, as JScript has it. */
             Val exc = e->Exception;

@@ -316,6 +316,8 @@ struct Engine {
     int Magic, CallCtx;
     Val RetVal, GlobalThis;
     BOOL SoftPrim, NoPrim, EnterNotified, Encoded;
+    ULONG Polls;
+    IActiveScriptSiteInterruptPoll *PollSite;
     struct JsDisp *Disps;
     DWORD_PTR ErrCookie;
     BOOL Abort, LastCapturesValid;

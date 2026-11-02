@@ -1172,7 +1172,7 @@ static Node *parse_primary(Parser *p)
             lex_regex(p);
             if (p->failed)
                 return nullptr;
-            n->u.str = p->str;
+            n->u.str = str_intern_str(p->e, p->str);
             lex(p);
             return finish(p, n);
         }

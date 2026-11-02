@@ -227,6 +227,7 @@ HRESULT engine_enter(Engine *e)
 {
     if (e->NestedRun++ == 0) {
         e->Interrupted = FALSE;
+        e->Abort = FALSE;
         e->EnterNotified = FALSE;
         stack_base(e);
     }
@@ -277,6 +278,10 @@ static int run_and_report(Engine *e, Unit *u)
     e->ErrCookie = u->cookie;
     e->Exception = UNDEF;
     int rc = run_program(e, u, nullptr, &result, FALSE);
+    if (rc == RC_THROW && e->Abort) {
+        e->Abort = FALSE;
+        return RC_THROW;
+    }
     if (rc == RC_THROW) {
         fault_from_exception(e);
         engine_report(e);
@@ -446,6 +451,9 @@ void engine_close(Engine *e)
         it->value = UNDEF;
     e->GlobalThis = UNDEF;
     gc_collect(e);
+    if (e->PollSite && e->PollSite != (IActiveScriptSiteInterruptPoll *)(SIZE_T)1)
+        e->PollSite->lpVtbl->Release(e->PollSite);
+    e->PollSite = nullptr;
     if (e->Site) {
         IActiveScriptSite *site = e->Site;
         if (c == SCRIPTSTATE_UNINITIALIZED)
@@ -574,7 +582,9 @@ static HRESULT STDMETHODCALLTYPE script_thread_state(IActiveScript *This, SCRIPT
 
 static HRESULT STDMETHODCALLTYPE script_interrupt(IActiveScript *This, SCRIPTTHREADID id, const EXCEPINFO *info, DWORD flags)
 {
-    ENGINE_OF(Script, This)->Interrupted = TRUE;
+    if (flags & ~SCRIPTINTERRUPT_ALL_FLAGS)
+        return E_INVALIDARG;
+    *(volatile BOOL *)&ENGINE_OF(Script, This)->Interrupted = TRUE;
     return S_OK;
 }
 

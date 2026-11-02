@@ -165,14 +165,27 @@ static int this_time(Engine *e, Val *self, double **slot)
     return RC_OK;
 }
 
+/* the zone as JScript names it: a whole number of hours west of UTC between 5 and 8 is an American zone, any other is
+   UTC and the offset. */
 static void tz_name(double t, WCHAR *out)
 {
-    double off = tz_offset_utc(t) / 60000.0;
-    if (off == 0) {
+    TIME_ZONE_INFORMATION tzi;
+    GetTimeZoneInformation(&tzi);
+    int standard = -(int)(tzi.Bias + tzi.StandardBias);
+    int current = (int)(tz_offset_utc(t) / 60000.0);
+    BOOL daylight = current != standard;
+    int hours = standard / 60;
+    if (standard == 60 * hours && hours >= -8 && hours <= -5) {
+        static const WCHAR *const names[] = {L"EST", L"EDT", L"CST", L"CDT", L"MST", L"MDT", L"PST", L"PDT"};
+        wcscpy(out, names[2 * (-5 - hours) + (daylight ? 1 : 0)]);
+        return;
+    }
+    int off = daylight ? standard + 60 : standard;
+    if (!off) {
         wcscpy(out, L"UTC");
         return;
     }
-    int a = (int)(off < 0 ? -off : off);
+    int a = off < 0 ? -off : off;
     _snwprintf(out, 16, L"UTC%c%02d%02d", off < 0 ? '-' : '+', a / 60, a % 60);
 }
 
@@ -250,280 +263,259 @@ static Str *date_locale(Engine *e, double t, int kind)
 
 /* ------------------------------------------------------------------ parsing */
 
-static int month_of(const WCHAR *w, int len)
+/* the words a date is made of, tried from the last one: a word is any start of one of them. */
+static const struct {
+    PCWSTR Name;
+    int Len, Type, Value;
+} g_date_words[] = {
+    {L"bc", 2, 4, -1}, {L"b.c", 3, 4, -1}, {L"ad", 2, 4, 1}, {L"a.d", 3, 4, 1}, {L"am", 2, 0, -1}, {L"a.m", 3, 0, -1},
+    {L"pm", 2, 0, 1}, {L"p.m", 3, 0, 1}, {L"est", 3, 3, -300}, {L"edt", 3, 3, -240}, {L"cst", 3, 3, -360},
+    {L"cdt", 3, 3, -300}, {L"mst", 3, 3, -420}, {L"mdt", 3, 3, -360}, {L"pst", 3, 3, -480}, {L"pdt", 3, 3, -420},
+    {L"gmt", 3, 3, 0}, {L"utc", 3, 3, 0}, {L"sunday", 6, 2, 0}, {L"monday", 6, 2, 1}, {L"tuesday", 7, 2, 2},
+    {L"wednesday", 9, 2, 3}, {L"thursday", 8, 2, 4}, {L"friday", 6, 2, 5}, {L"saturday", 8, 2, 6},
+    {L"january", 7, 1, 0}, {L"february", 8, 1, 1}, {L"march", 5, 1, 2}, {L"april", 5, 1, 3}, {L"may", 3, 1, 4},
+    {L"june", 4, 1, 5}, {L"july", 4, 1, 6}, {L"august", 6, 1, 7}, {L"september", 9, 1, 8}, {L"october", 7, 1, 9},
+    {L"november", 8, 1, 10}, {L"december", 8, 1, 11},
+};
+
+#define UNSET ((int)0x80000000)
+
+static BOOL ascii_alpha(WCHAR c)
 {
-    static const char *const full[] = {"january", "february", "march", "april", "may", "june", "july", "august",
-                                       "september", "october", "november", "december"};
-    if (len < 3)
-        return -1;
-    for (int m = 0; m < 12; m++) {
-        int fl = (int)strlen(full[m]);
-        if (len > fl)
-            continue;
-        BOOL ok = TRUE;
-        for (int i = 0; i < len; i++)
-            if (towlower(w[i]) != (WCHAR)full[m][i]) {
-                ok = FALSE;
-                break;
-            }
-        if (ok)
-            return m;
-    }
-    return -1;
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
 }
 
-static BOOL word_is(const WCHAR *w, int len, const char *s)
-{
-    if ((int)strlen(s) != len)
-        return FALSE;
-    for (int i = 0; i < len; i++)
-        if (towlower(w[i]) != (WCHAR)s[i])
-            return FALSE;
-    return TRUE;
-}
-
+/* a date as JScript reads it: numbers and words in any order, the numbers by what follows them. */
 static double parse_date(Str *str)
 {
-    const WCHAR *p = str->s, *end = str->s + str->len;
-    double year = -1, month = -1, day = -1;
-    double hour = 0, minute = 0, second = 0, ms = 0;
-    BOOL have_time = FALSE, have_tz = FALSE, pm = FALSE, am = FALSE;
-    double tz_minutes = 0;
-    int nums[3], nnum = 0;
-    int sep_slash = 0;
-    BOOL utc = FALSE;
-    while (p < end) {
-        WCHAR c = *p;
-        if (c == ' ' || c == ',' || c == '\t') {
-            p++;
+    WCHAR *z = js_alloc((str->len + 1) * sizeof(WCHAR));
+    for (ULONG k = 0; k < str->len; k++)
+        z[k] = (WCHAR)towlower(str->s[k]);
+    double result = js_nan;
+    int state = 0, year = UNSET, month = UNSET, day = UNSET, secs = UNSET, zone = UNSET, tz_number = UNSET, zone_set = UNSET;
+    int era = 0, ampm = 0;
+    ULONG i = 0;
+    for (;;) {
+        WCHAR c = z[i++];
+        if (!c)
+            break;
+        if (c <= 0x20)
             continue;
-        }
         if (c == '(') {
             int depth = 1;
-            p++;
-            while (p < end && depth) {
-                if (*p == '(')
+            while (z[i]) {
+                WCHAR d = z[i++];
+                if (d == '(')
                     depth++;
-                else if (*p == ')')
-                    depth--;
-                p++;
+                else if (d == ')' && --depth <= 0)
+                    break;
             }
             continue;
         }
-        if (iswalpha(c)) {
-            const WCHAR *w = p;
-            while (p < end && iswalpha(*p))
-                p++;
-            int len = (int)(p - w);
-            int m = month_of(w, len);
-            if (m >= 0 && month < 0) {
-                month = m;
-                if (p < end && *p == '.')
-                    p++;
-                continue;
-            }
-            if (word_is(w, len, "am") || word_is(w, len, "a")) {
-                am = TRUE;
-                continue;
-            }
-            if (word_is(w, len, "pm") || word_is(w, len, "p")) {
-                pm = TRUE;
-                continue;
-            }
-            if (word_is(w, len, "gmt") || word_is(w, len, "utc") || word_is(w, len, "ut") || word_is(w, len, "z")) {
-                utc = TRUE;
-                have_tz = TRUE;
-                continue;
-            }
-            static const struct {
-                const char *N;
-                int Off;
-            } zones[] = {{"est", -300}, {"edt", -240}, {"cst", -360}, {"cdt", -300}, {"mst", -420}, {"mdt", -360},
-                         {"pst", -480}, {"pdt", -420}};
-            BOOL known = FALSE;
-            for (UINT z = 0; z < 8; z++)
-                if (word_is(w, len, zones[z].N)) {
-                    tz_minutes = zones[z].Off;
-                    have_tz = TRUE;
-                    known = TRUE;
-                }
-            if (known)
-                continue;
-            static const char *const dnames[] = {"sun", "mon", "tue", "wed", "thu", "fri", "sat", "sunday", "monday",
-                                                 "tuesday", "wednesday", "thursday", "friday", "saturday"};
-            BOOL isday = FALSE;
-            for (UINT z = 0; z < 14; z++)
-                if (word_is(w, len, dnames[z]))
-                    isday = TRUE;
-            if (isday)
-                continue;
-            if (word_is(w, len, "bc")) {
-                year = -1e9;
-                continue;
-            }
-            return js_nan;
-        }
-        if ((c == '+' || c == '-') && (have_time || utc) && p + 1 < end && p[1] >= '0' && p[1] <= '9') {
-            int sign = c == '-' ? -1 : 1;
-            p++;
-            int v = 0, digits = 0;
-            while (p < end && *p >= '0' && *p <= '9') {
-                v = v * 10 + (*p - '0');
-                p++;
-                digits++;
-            }
-            int hh, mm;
-            if (p < end && *p == ':') {
-                hh = v;
-                p++;
-                mm = 0;
-                while (p < end && *p >= '0' && *p <= '9')
-                    mm = mm * 10 + (*p++ - '0');
-            } else if (digits <= 2) {
-                hh = v;
-                mm = 0;
-            } else {
-                hh = v / 100;
-                mm = v % 100;
-            }
-            tz_minutes = sign * (hh * 60 + mm);
-            have_tz = TRUE;
-            utc = FALSE;
+        if (c == '+') {
+            if (year != UNSET)
+                state = 3;
             continue;
         }
-        if (c >= '0' && c <= '9') {
-            int v = 0, digits = 0;
-            const WCHAR *start = p;
-            while (p < end && *p >= '0' && *p <= '9') {
-                v = v * 10 + (*p - '0');
-                p++;
-                digits++;
-                if (digits > 9)
-                    return js_nan;
-            }
-            if (p < end && *p == ':' && !have_time) {
-                /* a time. */
-                hour = v;
-                p++;
-                int mm = 0, md = 0;
-                while (p < end && *p >= '0' && *p <= '9') {
-                    mm = mm * 10 + (*p++ - '0');
-                    md++;
+        if (c == '-') {
+            if (year != UNSET)
+                state = 4;
+            continue;
+        }
+        if (c == ',' || c == '/' || c == ':')
+            continue;
+        if (c >= 0x80)
+            goto done;
+        if (ascii_alpha(c)) {
+            ULONG start = i - 1, j = i;
+            while (z[j] < 0x80 && z[j] && (ascii_alpha(z[j]) || z[j] == '.'))
+                j++;
+            int total = (int)(j - start);
+            int len = z[j - 1] == '.' ? total - 1 : total;
+            i = j;
+            while (z[i] && z[i] <= 0x20)
+                i++;
+            if (len == 1) {
+                if (zone_set != UNSET)
+                    goto done;
+                if (c > 'm') {
+                    if (c > 'y') {
+                        if (c != 'z')
+                            goto done;
+                        zone = 0;
+                    } else
+                        zone = 60 * (c - 109);
+                } else {
+                    if (c == 'j' || c < 'a')
+                        goto done;
+                    zone = (c < 'j' ? 5760 : 5820) - 60 * c;
                 }
-                if (!md)
-                    return js_nan;
-                minute = mm;
-                if (p < end && *p == ':') {
-                    p++;
-                    int ss = 0, sd = 0;
-                    while (p < end && *p >= '0' && *p <= '9') {
-                        ss = ss * 10 + (*p++ - '0');
-                        sd++;
+                zone_set = zone;
+                if (z[i] == '+') {
+                    i++;
+                    state = 3;
+                } else if (z[i] == '-') {
+                    i++;
+                    state = 4;
+                } else
+                    state = 0;
+                continue;
+            }
+            int found = -1;
+            for (int k = (int)(sizeof(g_date_words) / sizeof(g_date_words[0])) - 1; k >= 0; k--)
+                if (len <= g_date_words[k].Len && !wcsncmp(z + start, g_date_words[k].Name, len)) {
+                    found = k;
+                    break;
+                }
+            if (found < 0)
+                goto done;
+            int type = g_date_words[found].Type, value = g_date_words[found].Value;
+            if (type == 0) {
+                if (ampm)
+                    goto done;
+                ampm = value;
+            } else if (type == 1) {
+                if (month != UNSET)
+                    goto done;
+                month = value;
+            } else if (type == 3) {
+                if (zone_set != UNSET)
+                    goto done;
+                zone = value;
+                zone_set = value;
+                if (z[i] == '+') {
+                    i++;
+                    state = 3;
+                } else if (z[i] == '-') {
+                    i++;
+                    state = 4;
+                } else
+                    state = 0;
+            } else if (type == 4) {
+                if (era)
+                    goto done;
+                era = value;
+            }
+            continue;
+        }
+        if (c < '0' || c > '9')
+            goto done;
+        {
+            ULONG start = i - 1;
+            int n = c - '0';
+            while (z[i] >= '0' && z[i] <= '9') {
+                n = n * 10 + (z[i] - '0');
+                i++;
+            }
+            if (i - start > 6)
+                goto done;
+            while (z[i] && z[i] <= 0x20)
+                i++;
+            WCHAR next = z[i];
+            switch (state) {
+            case 1:
+                if (n >= 60)
+                    goto done;
+                secs += 60 * n;
+                if (next == ':') {
+                    i++;
+                    state = 2;
+                } else
+                    state = 0;
+                break;
+            case 2:
+                if (n >= 60)
+                    goto done;
+                secs += n;
+                state = 0;
+                break;
+            case 3:
+            case 4: {
+                if (tz_number != UNSET)
+                    goto done;
+                int m = n >= 24 ? n - 40 * (n / 100) : 60 * n;
+                zone_set = 0;
+                zone = 0;
+                tz_number = state == 4 ? -m : m;
+                state = 0;
+                break;
+            }
+            case 5:
+                if (day != UNSET)
+                    goto done;
+                day = n;
+                if (next == '-' || next == '/') {
+                    i++;
+                    state = 6;
+                } else
+                    state = 0;
+                break;
+            case 6:
+                if (year != UNSET)
+                    goto done;
+                year = n;
+                state = 0;
+                break;
+            default:
+                if (n < 70) {
+                    if (next == '-' || next == '/') {
+                        if (month != UNSET)
+                            goto done;
+                        state = 5;
+                        month = n - 1;
+                        i++;
+                    } else if (next == ':') {
+                        if (secs != UNSET || n >= 24)
+                            goto done;
+                        secs = 3600 * n;
+                        state = 1;
+                        i++;
+                    } else {
+                        if (day != UNSET)
+                            goto done;
+                        day = n;
                     }
-                    if (!sd)
-                        return js_nan;
-                    second = ss;
-                    if (p < end && *p == '.') {
-                        p++;
-                        double f = 0.1;
-                        double msv = 0;
-                        while (p < end && *p >= '0' && *p <= '9') {
-                            msv += (*p++ - '0') * f * 1000;
-                            f /= 10;
-                        }
-                        ms = floor(msv);
-                    }
+                } else {
+                    if (year != UNSET)
+                        goto done;
+                    year = n;
                 }
-                have_time = TRUE;
-                continue;
+                break;
             }
-            if (p < end && *p == '/' && nnum < 3) {
-                nums[nnum++] = v;
-                sep_slash = 1;
-                p++;
-                continue;
-            }
-            (void)start;
-            if (nnum && sep_slash && nnum < 3) {
-                nums[nnum++] = v;
-                if (digits >= 3)
-                    nums[nnum - 1] = v | 0x40000000;
-                sep_slash = 0;
-                continue;
-            }
-            if (digits >= 3 || v > 31) {
-                if (year >= 0 && year != -1e9)
-                    return js_nan;
-                year = year == -1e9 ? -v : v;
-                if (digits < 3 && v > 31)
-                    year = v < 50 ? 2000 + v : v < 100 ? 1900 + v : v;
-            } else if (day < 0 && month >= 0) {
-                day = v;
-            } else if (month >= 0 && year < 0) {
-                year = v < 50 ? 2000 + v : v < 100 ? 1900 + v : v;
-            } else if (day < 0) {
-                day = v;
-            } else if (year < 0)
-                year = v < 50 ? 2000 + v : v < 100 ? 1900 + v : v;
-            else
-                return js_nan;
-            continue;
         }
-        if (c == '.' || c == '-' || c == '/') {
-            p++;
-            continue;
+    }
+    if (year == UNSET || month == UNSET || day == UNSET)
+        goto done;
+    if (era) {
+        if (era < 0)
+            year = 1 - year;
+    } else if (year < 100)
+        year += 1900;
+    if (ampm) {
+        if (secs == UNSET)
+            goto done;
+        if ((unsigned)(secs - 43200) <= 0xE0F) {
+            if (ampm < 0)
+                secs -= 43200;
+        } else if (ampm > 0) {
+            if (secs >= 43200)
+                goto done;
+            secs += 43200;
         }
-        return js_nan;
+    } else if (secs == UNSET)
+        secs = 0;
+    if (zone != UNSET)
+        secs += -60 * zone;
+    if (tz_number != UNSET)
+        secs += -60 * tz_number;
+    {
+        double t = make_date(make_day(year, month, day), (double)secs * 1000.0);
+        result = zone == UNSET ? utc_time(t) : t;
+        result = time_clip(result);
     }
-    if (nnum == 3 || (nnum == 2 && sep_slash == 0)) {
-        int a = nums[0], b = nums[1] & 0x3FFFFFFF, cc = nnum == 3 ? nums[2] : -1;
-        if (nnum == 3) {
-            int yv = nums[2] & 0x3FFFFFFF;
-            if (nums[0] > 31) {
-                /* y/m/d */
-                year = a;
-                month = b - 1;
-                day = yv;
-            } else {
-                month = a - 1;
-                day = b;
-                year = yv < 50 ? 2000 + yv : yv < 100 ? 1900 + yv : yv;
-            }
-        } else {
-            month = a - 1;
-            day = b;
-            (void)cc;
-        }
-    } else if (nnum == 2) {
-        month = nums[0] - 1;
-        day = nums[1] & 0x3FFFFFFF;
-    } else if (nnum == 1) {
-        return js_nan;
-    }
-    if (year == -1e9)
-        year = 1;
-    if (year < 0 || month < 0 || day < 0) {
-        if (year < 0 && month >= 0 && day >= 0) {
-            /* a date without a year takes the current one. */
-            SYSTEMTIME st;
-            GetLocalTime(&st);
-            year = st.wYear;
-        } else
-            return js_nan;
-    }
-    if (month > 11 || day < 1 || day > 31 || hour > 24 || minute > 59 || second > 59)
-        return js_nan;
-    if (pm && hour < 12)
-        hour += 12;
-    if (am && hour == 12)
-        hour = 0;
-    double dayv = make_day(year, month, day);
-    double t = make_date(dayv, make_time(hour, minute, second, ms));
-    if (have_tz)
-        t -= tz_minutes * 60000.0;
-    else
-        t = utc_time(t);
-    return time_clip(t);
+done:
+    js_free(z);
+    return result;
 }
 
 /* ------------------------------------------------------------------ the object */
