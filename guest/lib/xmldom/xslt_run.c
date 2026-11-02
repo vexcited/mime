@@ -1005,6 +1005,30 @@ static void copy_namespaces(XsRun *r, XNode *src, XNode *dst)
 
 /* ------------------------------------------------------------------ the instructions */
 
+/* whether the end tag of an element with this body is written even when nothing comes out of it. */
+static BOOL body_forces_end(const XsInst *body, BOOL v6, BOOL copy)
+{
+    for (const XsInst *b = body; b; b = b->next) {
+        switch (b->op) {
+        case XO_APPLY:
+        case XO_FOR_EACH:
+            return TRUE;
+        case XO_COPY_OF:
+            if (!copy)
+                return TRUE;
+            break;
+        case XO_VALUE_OF:
+        case XO_TEXT:
+            if (!v6)
+                return TRUE;
+            break;
+        default:
+            break;
+        }
+    }
+    return FALSE;
+}
+
 static HRESULT run_inst(XsRun *r, XsInst *i, XsFrame *f);
 
 static HRESULT run_list(XsRun *r, XsInst *list, XsFrame *f)
@@ -1191,7 +1215,7 @@ static HRESULT run_inst(XsRun *r, XsInst *i, XsFrame *f)
         HRESULT hr = out_element(r, i->name.qname, i->name.qlen, i->name.uri, &e);
         if (FAILED(hr))
             return hr;
-        if (i->doe || i->body)
+        if (i->doe || body_forces_end(i->body, r->v6, FALSE))
             e->flags |= XF_EXPLICIT;
         for (UINT k = 0; k < i->nnsdecl; k++) {
             XBuf q = {};
@@ -1233,6 +1257,8 @@ static HRESULT run_inst(XsRun *r, XsInst *i, XsFrame *f)
         xb_free(&u);
         if (FAILED(hr))
             return hr;
+        if (body_forces_end(i->body, r->v6, FALSE))
+            e->flags |= XF_EXPLICIT;
         if (i->nsets)
             hr = apply_sets(r, i->sets, i->nsets, f);
         if (SUCCEEDED(hr))
@@ -1333,7 +1359,7 @@ static HRESULT run_inst(XsRun *r, XsInst *i, XsFrame *f)
             if (FAILED(hr))
                 return hr;
             copy_namespaces(r, n, e);
-            if (i->body)
+            if (body_forces_end(i->body, r->v6, TRUE))
                 e->flags |= XF_EXPLICIT;
             if (i->nsets)
                 hr = apply_sets(r, i->sets, i->nsets, f);

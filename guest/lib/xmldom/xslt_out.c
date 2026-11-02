@@ -117,7 +117,7 @@ static BOOL is_uri_attr(const WCHAR *element, UINT elen, const WCHAR *attr, UINT
     static const struct {
         const char *e;
         const char *a;
-    } t[] = {{"a", "href"},     {"a", "name"},       {"applet", "codebase"}, {"area", "href"},   {"base", "href"},
+    } t[] = {{"a", "href"},     {"applet", "codebase"}, {"area", "href"},   {"base", "href"},
              {"blockquote", "cite"}, {"body", "background"}, {"del", "cite"}, {"form", "action"}, {"frame", "longdesc"},
              {"frame", "src"}, {"head", "profile"}, {"iframe", "longdesc"}, {"iframe", "src"},   {"img", "longdesc"},
              {"img", "src"},   {"img", "usemap"},   {"input", "src"},     {"input", "usemap"},   {"ins", "cite"},
@@ -196,10 +196,10 @@ static void put_attr_value(Ser *w, const WCHAR *s, UINT length)
         case '\r':
             if (i + 1 < length && s[i + 1] == '\n')
                 i++;
-            xb_puta(b, "&#xA;");
+            xb_puta(b, w->method == 2 ? "\r\n" : "&#xA;");
             break;
         case '\n':
-            xb_puta(b, "&#xA;");
+            xb_puta(b, w->method == 2 ? "\r\n" : "&#xA;");
             break;
         default:
             if (!put_wide(w, s, length, &i))
@@ -360,9 +360,16 @@ static void write_element(Ser *w, XNode *n, int level)
         push_bind(w, xd_intern(n->doc, prefix, plen), xd_intern(n->doc, a->uri, xd_wlen(a->uri)));
     }
     if (html) {
+        /* an element of a namespace is written the way xml writes it. */
+        if (((n->uri && *n->uri) || n->local) && !n->first) {
+            xb_puta(b, "/>");
+            w->nbinds = base;
+            return;
+        }
         xb_putc(b, '>');
         UINT ll = xd_local_length(n);
         if (!n->uri && in_list(g_void_elements, xd_local(n), ll)) {
+            write_children(w, n, level + 1);
             w->nbinds = base;
             return;
         }

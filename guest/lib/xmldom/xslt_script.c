@@ -6,6 +6,8 @@ typedef struct Site {
     IActiveScriptSite iface;
     LONG refs;
     BSTR error_text;
+    BSTR error_source;
+    BSTR error_linetext;
     ULONG error_line;
     LONG error_col;
     HRESULT error_code;
@@ -82,6 +84,14 @@ static HRESULT STDMETHODCALLTYPE site_state(IActiveScriptSite *This, SCRIPTSTATE
     return S_OK;
 }
 
+static void site_clear_error(Site *s)
+{
+    SysFreeString(s->error_text);
+    SysFreeString(s->error_source);
+    SysFreeString(s->error_linetext);
+    s->error_text = s->error_source = s->error_linetext = nullptr;
+}
+
 static HRESULT STDMETHODCALLTYPE site_error(IActiveScriptSite *This, IActiveScriptError *error)
 {
     Site *s = site_of(This);
@@ -89,17 +99,21 @@ static HRESULT STDMETHODCALLTYPE site_error(IActiveScriptSite *This, IActiveScri
     DWORD64 cookie = 0;
     ULONG line = 0;
     LONG col = 0;
+    if (s->error_text)
+        return S_OK;
     if (SUCCEEDED(error->lpVtbl->GetExceptionInfo(error, &info))) {
         if (info.pfnDeferredFillIn)
             info.pfnDeferredFillIn(&info);
-        if (!s->error_text) {
-            s->error_text = info.bstrDescription ? SysAllocString(info.bstrDescription) : SysAllocString(L"");
-            s->error_code = info.scode ? info.scode : (HRESULT)info.wCode;
-        }
+        s->error_text = info.bstrDescription ? SysAllocString(info.bstrDescription) : SysAllocString(L"");
+        s->error_source = info.bstrSource ? SysAllocString(info.bstrSource) : nullptr;
+        s->error_code = info.scode ? info.scode : (HRESULT)info.wCode;
     }
     error->lpVtbl->GetSourcePosition(error, (DWORD *)&cookie, &line, &col);
     s->error_line = line;
     s->error_col = col;
+    BSTR text = nullptr;
+    if (SUCCEEDED(error->lpVtbl->GetSourceLineText(error, &text)))
+        s->error_linetext = text;
     SysFreeString(info.bstrSource);
     SysFreeString(info.bstrDescription);
     SysFreeString(info.bstrHelpFile);
@@ -245,7 +259,7 @@ static void host_free(XsScriptHost *h)
             s->engine->lpVtbl->Release(s->engine);
         }
         if (s->site) {
-            SysFreeString(s->site->error_text);
+            site_clear_error(s->site);
             xd_free(s->site);
         }
         xd_free(s->uri);
@@ -274,20 +288,44 @@ static void put_number(XBuf *b, UINT v)
         xb_putc(b, d[--n]);
 }
 
+/* an error of the system as the text of its code. */
+static HRESULT system_error(XsRun *r, HRESULT hr)
+{
+    WCHAR text[256];
+    DWORD n = FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, (DWORD)hr, 0x409, text,
+                             RTL_NUMBER_OF(text), nullptr);
+    if (!n)
+        return xsr_error(r, XE_XS_SYSTEM_ERROR, L"Unspecified error", nullptr, nullptr);
+    xse_set_text(r->err, hr, text);
+    return hr;
+}
+
+/* what the engine told the site, worded as the processor words it. */
 static HRESULT script_error(XsRun *r, ScriptSet *s, const WCHAR *what)
 {
     (void)what;
+    Site *site = s->site;
     XBuf b = {};
-    xb_put(&b, s->site->error_text ? s->site->error_text : L"", s->site->error_text ? SysStringLen(s->site->error_text) : 0);
-    xb_puta(&b, "\r\n\r\nline = ");
-    put_number(&b, s->site->error_line + 1);
+    if (site->error_source && site->error_source[0]) {
+        xb_put(&b, site->error_source, SysStringLen(site->error_source));
+        xb_putc(&b, '\n');
+    }
+    if (site->error_text)
+        xb_put(&b, site->error_text, SysStringLen(site->error_text));
+    xb_putc(&b, '\n');
+    xb_puta(&b, "line = ");
+    put_number(&b, site->error_line + 1);
     xb_puta(&b, ", col = ");
-    put_number(&b, (UINT)(s->site->error_col + 1));
+    put_number(&b, (UINT)site->error_col);
     xb_puta(&b, " (line is offset from the start of the script block).\r\n");
+    if (site->error_linetext)
+        xb_put(&b, site->error_linetext, SysStringLen(site->error_linetext));
+    else
+        xb_puta(&b, "Error returned from property or method call.\r\n");
     xb_putc(&b, 0);
-    HRESULT hr = xsr_error(r, 0xC00CE30Au, b.s, nullptr, nullptr);
+    xse_set_text(r->err, (HRESULT)0x80020009, b.s);
     xb_free(&b);
-    return hr;
+    return (HRESULT)0x80020009;
 }
 
 HRESULT xsr_start_scripts(XsRun *r)
@@ -314,15 +352,17 @@ HRESULT xsr_start_scripts(XsRun *r)
         memset(s, 0, sizeof(*s));
         s->uri = xd_wcsdup(sheet->scripts[i].uri, xd_wlen(sheet->scripts[i].uri));
         CLSID clsid;
-        if (FAILED(CLSIDFromProgID(sheet->scripts[i].language, &clsid)))
-            return xsr_error(r, XE_XS_NOT_LANGUAGE, sheet->scripts[i].language, nullptr, nullptr);
-        HRESULT hr = CoCreateInstance(&clsid, nullptr, CLSCTX_INPROC_SERVER, &IID_IActiveScript, (void **)&s->engine);
+        HRESULT hr = CLSIDFromProgID(sheet->scripts[i].language, &clsid);
         if (FAILED(hr))
-            return xsr_error(r, XE_XS_NOT_LANGUAGE, sheet->scripts[i].language, nullptr, nullptr);
+            return r->v6 ? xsr_error(r, XE_XS_NOT_LANGUAGE, sheet->scripts[i].language, nullptr, nullptr)
+                         : system_error(r, hr);
+        hr = CoCreateInstance(&clsid, nullptr, CLSCTX_INPROC_SERVER, &IID_IActiveScript, (void **)&s->engine);
+        if (FAILED(hr))
+            return system_error(r, hr);
         hr = s->engine->lpVtbl->QueryInterface(s->engine, sizeof(void *) == 8 ? &IID_IActiveScriptParse64 : &IID_IActiveScriptParse,
                                                (void **)&s->parse);
         if (FAILED(hr))
-            return xsr_error(r, XE_XS_NOT_LANGUAGE, sheet->scripts[i].language, nullptr, nullptr);
+            return system_error(r, hr);
         s->site = xd_alloc(sizeof(Site));
         if (!s->site)
             return E_OUTOFMEMORY;
@@ -346,7 +386,7 @@ HRESULT xsr_start_scripts(XsRun *r)
         if (FAILED(hr))
             return script_error(r, s, nullptr);
         hr = s->engine->lpVtbl->SetScriptState(s->engine, SCRIPTSTATE_CONNECTED);
-        if (FAILED(hr))
+        if (FAILED(hr) || s->site->error_text)
             return script_error(r, s, nullptr);
         hr = s->engine->lpVtbl->GetScriptDispatch(s->engine, nullptr, &s->dispatch);
         if (FAILED(hr))
@@ -419,6 +459,8 @@ HRESULT xsr_call_extension(XsRun *r, const WCHAR *uri, const WCHAR *local, UINT 
     VariantInit(&result);
     EXCEPINFO ex = {};
     UINT argerr = 0;
+    if (set && set->site)
+        site_clear_error(set->site);
     if (SUCCEEDED(hr)) {
         DISPPARAMS params = {argv, nullptr, count, 0};
         hr = d->lpVtbl->Invoke(d, id, &IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD, &params, &result, &ex, &argerr);
@@ -430,6 +472,14 @@ HRESULT xsr_call_extension(XsRun *r, const WCHAR *uri, const WCHAR *local, UINT 
         VariantClear(&argv[i]);
     if (argv != stack)
         xd_free(argv);
+    if (FAILED(hr) && set && set->site && set->site->error_text) {
+        SysFreeString(ex.bstrSource);
+        SysFreeString(ex.bstrDescription);
+        SysFreeString(ex.bstrHelpFile);
+        script_error(r, set, nullptr);
+        xd_free(name);
+        return E_FAIL;
+    }
     if (FAILED(hr)) {
         WCHAR *desc = nullptr;
         if (hr == DISP_E_EXCEPTION) {
@@ -455,8 +505,16 @@ HRESULT xsr_call_extension(XsRun *r, const WCHAR *uri, const WCHAR *local, UINT 
     SysFreeString(ex.bstrHelpFile);
     memset(out, 0, sizeof(*out));
     BOOL usable = result.vt != VT_EMPTY && result.vt != VT_NULL;
-    if (usable)
-        usable = SUCCEEDED(xsr_variant_to_val(r, &result, out));
+    if (usable) {
+        HRESULT cv = xsr_variant_to_val(r, &result, out);
+        if (FAILED(cv) && !r->v6) {
+            VariantClear(&result);
+            xd_free(name);
+            system_error(r, cv);
+            return E_FAIL;
+        }
+        usable = SUCCEEDED(cv);
+    }
     VariantClear(&result);
     if (!usable) {
         HRESULT e = xsr_error(r, XE_XS_NO_RETURN, name, nullptr, nullptr);

@@ -594,8 +594,25 @@ XNode *xsr_load_document(XsRun *r, const WCHAR *url, UINT len, const WCHAR *base
         }
     XDoc *d = xsr_new_temp_doc(r);
     XNode *root = nullptr;
-    if (d && xd_load_file(d, full))
+    if (d && xd_load_file(d, full)) {
         root = &d->node;
+    } else if (d && !r->v6 && !r->err->id) {
+        /* msxml3 fails the transform where msxml6 yields no document. */
+        if (d->err.line > 0) {
+            XBuf why = {};
+            xb_put(&why, d->err.reason ? d->err.reason : L"", d->err.reason ? xd_wlen(d->err.reason) : 0);
+            if (!why.length || why.s[why.length - 1] != '\n')
+                xb_puta(&why, "\r\n");
+            xb_putc(&why, 0);
+            xsr_error(r, XE_XS_PARSE_ERROR, d->url ? d->url : full, why.s, nullptr);
+            xb_free(&why);
+        } else {
+            WCHAR text[160];
+            if (FormatMessageW(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, 0x800C0006, 0x409, text,
+                               RTL_NUMBER_OF(text), nullptr))
+                xse_set_text(r->err, (HRESULT)0x800C0006, text);
+        }
+    }
     if (r->nloaded == r->caploaded) {
         UINT cap = r->caploaded ? r->caploaded * 2 : 8;
         XsLoaded *v = xd_realloc(r->loaded, cap * sizeof(XsLoaded));
@@ -616,7 +633,9 @@ static HRESULT fn_document(XsRun *r, XpVal *args, UINT count, XpCall *call, XpVa
 {
     out->t = XPV_SET;
     if (!r->req->allow_doc_fn) {
-        xse_set_text(r->err, E_FAIL, L"Operation aborted: AllowDocumentFunction constraint violated.\r\n");
+        xse_set_text(r->err, E_FAIL,
+                     r->v6 ? L"Operation aborted: AllowDocumentFunction constraint violated.\r\n"
+                           : L"Access is denied.\r\nSystem error: AllowDocumentFunction.\r\n");
         return E_FAIL;
     }
     const WCHAR *base_default = r->sheet->url;
@@ -649,6 +668,8 @@ static HRESULT fn_document(XsRun *r, XpVal *args, UINT count, XpCall *call, XpVa
         xb_free(&b);
         if (root)
             xs_add(&out->set, root);
+        else if (r->err->id)
+            return E_FAIL;
     }
     xs_sort(&out->set);
     return S_OK;
@@ -786,7 +807,7 @@ HRESULT xsr_function(void *user, const WCHAR *uri, const WCHAR *local, UINT leng
                         if (lit_eq(nl, nn, *e))
                             yes = TRUE;
                 } else if (nu && !wcscmp(nu, MSXSL_NS) && lit_eq(nl, nn, "script")) {
-                    yes = r->req->allow_script;
+                    yes = !r->v6 && r->req->allow_script;
                 }
             }
             out->t = XPV_BOOL;

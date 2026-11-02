@@ -212,6 +212,7 @@ typedef struct Ctx {
     XsName *used_sets; /* attribute sets used, checked at the end. */
     UINT nused_sets, capused_sets;
     UINT flags;
+    BOOL script_blocked;
 } Ctx;
 
 static BOOL name_eq(const WCHAR *a, UINT al, const WCHAR *b, UINT bl)
@@ -2205,10 +2206,14 @@ static HRESULT compile_script(Ctx *c, XNode *el)
         UINT m = n < 78 ? n : 78;
         memcpy(p, prefix, m * sizeof(WCHAR));
         p[m] = 0;
-        return cerr(c, XE_XS_BAD_PREFIX, p, nullptr, nullptr);
+        return cerr(c, 0xC00CE01Du, p, nullptr, nullptr);
     }
+    for (XNode *k = el->first; k; k = k->next)
+        if (k->type == XN_ELEMENT)
+            return cerr(c, XE_XS_KEYWORD_CONTAIN, el->qname, nullptr, k->qname);
+    /* a blocked script is reported once the whole stylesheet is compiled. */
     if (!c->s->allow_script)
-        return cerr(c, XE_XS_SCRIPT_BLOCKED, nullptr, nullptr, nullptr);
+        c->script_blocked = TRUE;
     XsScript *sc = XS_PUSH(c->s, c->s->scripts, c->s->nscripts, c->s->capscripts, XsScript);
     memset(sc, 0, sizeof(*sc));
     sc->uri = xs_dup(c->s, uri, xd_wlen(uri));
@@ -2556,6 +2561,10 @@ XsSheet *xs_compile(XNode *style, UINT flags, XsError *error)
         /* a document that is not a stylesheet is its own result. */
         s->literal = xd_doc_clone(root->doc, TRUE);
         s->output.omit_decl = 1;
+    }
+    if (SUCCEEDED(hr) && !failed(&c) && c.script_blocked) {
+        cerr(&c, XE_XS_SCRIPT_BLOCKED, nullptr, nullptr, nullptr);
+        hr = E_FAIL;
     }
     if (FAILED(hr) || failed(&c)) {
         if (error) {
