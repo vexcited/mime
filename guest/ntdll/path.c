@@ -71,7 +71,16 @@ static void trim_tail(PWSTR path, SIZE_T root)
         path[--n] = 0;
 }
 
-static NTSTATUS full_path(PCWSTR name, PWSTR out, SIZE_T out_chars, SIZE_T *length)
+/*
+ * the file apis take a name that starts with exactly \\?\ as it is. GetFullPathName is the one that does not: it
+ * normalizes that prefix, its forward slash spelling and what follows it like any other path.
+ */
+static BOOLEAN verbatim_prefix(PCWSTR name)
+{
+    return name[0] == '\\' && (name[1] == '\\' || name[1] == '?') && name[2] == '?' && name[3] == '\\';
+}
+
+static NTSTATUS full_path(PCWSTR name, PWSTR out, SIZE_T out_chars, SIZE_T *length, BOOLEAN for_file_api)
 {
     PRTL_USER_PROCESS_PARAMETERS pp = NtCurrentPeb()->ProcessParameters;
     PCUNICODE_STRING cwd = &pp->CurrentDirectory.DosPath;
@@ -83,8 +92,7 @@ static NTSTATUS full_path(PCWSTR name, PWSTR out, SIZE_T out_chars, SIZE_T *leng
 
     switch (RtlDetermineDosPathNameType_U(name)) {
     case RtlPathTypeLocalDevice:
-        /* \\?\ paths are taken verbatim. */
-        if (name[2] == '?') {
+        if (name[2] == '?' && for_file_api && verbatim_prefix(name)) {
             memcpy(buf, name, (name_len + 1) * sizeof(WCHAR));
             n = name_len;
             goto done;
@@ -177,7 +185,7 @@ NTDLL_EXPORT ULONG NTAPI RtlGetFullPathName_U(PCWSTR name, ULONG size, PWSTR buf
         return 0;
     SIZE_T len;
     WCHAR tmp[MAX_PATH * 4];
-    if (!NT_SUCCESS(full_path(name, tmp, RTL_NUMBER_OF(tmp), &len)))
+    if (!NT_SUCCESS(full_path(name, tmp, RTL_NUMBER_OF(tmp), &len, FALSE)))
         return 0;
     ULONG bytes = (ULONG)(len * sizeof(WCHAR));
     if (bytes + sizeof(WCHAR) > size)
@@ -197,7 +205,7 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDosPathNameToNtPathName_U(PCWSTR dos, PUNICODE_STR
 {
     WCHAR full[MAX_PATH * 4];
     SIZE_T len;
-    if (!dos || !*dos || !NT_SUCCESS(full_path(dos, full, RTL_NUMBER_OF(full), &len)))
+    if (!dos || !*dos || !NT_SUCCESS(full_path(dos, full, RTL_NUMBER_OF(full), &len, TRUE)))
         return FALSE;
     PCWSTR prefix = L"\\??\\";
     PCWSTR rest = full;
@@ -273,7 +281,7 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlSetCurrentDirectory_U(PCUNICODE_STRING dir)
         return STATUS_NAME_TOO_LONG;
     memcpy(name, dir->Buffer, n * sizeof(WCHAR));
     name[n] = 0;
-    NTSTATUS status = full_path(name, full, RTL_NUMBER_OF(full) - 1, &len);
+    NTSTATUS status = full_path(name, full, RTL_NUMBER_OF(full) - 1, &len, TRUE);
     if (!NT_SUCCESS(status))
         return status;
     if (!len || full[len - 1] != '\\') {
