@@ -6,6 +6,7 @@
  */
 #include "shell32_private.h"
 #include <mime/win32/wincodec.h>
+#include <mime/win32/propsys.h>
 
 #ifndef STG_E_FILENOTFOUND
 #define STG_E_FILENOTFOUND ((HRESULT)0x80030002L)
@@ -440,12 +441,140 @@ static BOOL file_error(HRESULT hr)
            hr == HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED) || hr == HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION);
 }
 
+/*
+ * the thumbnail handler of a file type: the class that HKCR\<extension>\ShellEx\{E357FCCD-...} or the same key of the
+ * program id the extension names has. It is made, given the file through the interface it takes (a stream, the item or
+ * the path, in that order) and asked for the bitmap of the size.
+ */
+MIME_DEFINE_GUID(IID_PsThumbnailProvider, 0xE357FCCD, 0xA995, 0x4576, 0xB0, 0x1F, 0x23, 0x46, 0x30, 0x15, 0x4E, 0x96);
+static const WCHAR THUMBNAIL_HANDLER[] = L"\\ShellEx\\{E357FCCD-A995-4576-B01F-234630154E96}";
+
+typedef struct PS_THUMBNAIL_PROVIDER PS_THUMBNAIL_PROVIDER;
+typedef struct {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(PS_THUMBNAIL_PROVIDER *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(PS_THUMBNAIL_PROVIDER *This);
+    ULONG(STDMETHODCALLTYPE *Release)(PS_THUMBNAIL_PROVIDER *This);
+    HRESULT(STDMETHODCALLTYPE *GetThumbnail)(PS_THUMBNAIL_PROVIDER *This, UINT size, HBITMAP *bitmap, DWORD *alpha);
+} PS_THUMBNAIL_PROVIDER_VTBL;
+struct PS_THUMBNAIL_PROVIDER {
+    const PS_THUMBNAIL_PROVIDER_VTBL *lpVtbl;
+};
+
+static BOOL handler_clsid(LPCWSTR path, CLSID *clsid)
+{
+    LPCWSTR extension = wcsrchr(path, L'.');
+    if (!extension || wcschr(extension, L'\\') || wcslen(extension) > 40)
+        return FALSE;
+    WCHAR key[160], text[64];
+    wsprintfW(key, L"%s%s", extension, THUMBNAIL_HANDLER);
+    DWORD size = sizeof(text);
+    if (RegGetValueW(HKEY_CLASSES_ROOT, key, nullptr, RRF_RT_REG_SZ, nullptr, text, &size) == ERROR_SUCCESS &&
+        SUCCEEDED(CLSIDFromString(text, clsid)))
+        return TRUE;
+    WCHAR progid[100];
+    size = sizeof(progid);
+    if (RegGetValueW(HKEY_CLASSES_ROOT, extension, nullptr, RRF_RT_REG_SZ, nullptr, progid, &size) != ERROR_SUCCESS ||
+        !progid[0])
+        return FALSE;
+    wsprintfW(key, L"%s%s", progid, THUMBNAIL_HANDLER);
+    size = sizeof(text);
+    return RegGetValueW(HKEY_CLASSES_ROOT, key, nullptr, RRF_RT_REG_SZ, nullptr, text, &size) == ERROR_SUCCESS &&
+           SUCCEEDED(CLSIDFromString(text, clsid));
+}
+
+static HRESULT initialize_handler(IUnknown *object, LPCWSTR path)
+{
+    IInitializeWithStream *with_stream;
+    if (SUCCEEDED(object->lpVtbl->QueryInterface(object, &IID_IInitializeWithStream, (void **)&with_stream))) {
+        typedef HRESULT(WINAPI * STREAM_ON_FILE)(LPCWSTR, DWORD, DWORD, BOOL, IStream *, IStream **);
+        HMODULE shlwapi = LoadLibraryW(L"shlwapi.dll");
+        STREAM_ON_FILE open_stream = shlwapi ? (STREAM_ON_FILE)GetProcAddress(shlwapi, "SHCreateStreamOnFileEx") : nullptr;
+        IStream *stream = nullptr;
+        HRESULT hr = open_stream ? open_stream(path, STGM_READ | STGM_SHARE_DENY_WRITE, 0, FALSE, nullptr, &stream)
+                                 : HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
+        if (SUCCEEDED(hr)) {
+            hr = with_stream->lpVtbl->Initialize(with_stream, stream, STGM_READ);
+            stream->lpVtbl->Release(stream);
+        }
+        with_stream->lpVtbl->Release(with_stream);
+        return hr;
+    }
+    IInitializeWithFile *with_file;
+    if (SUCCEEDED(object->lpVtbl->QueryInterface(object, &IID_IInitializeWithFile, (void **)&with_file))) {
+        HRESULT hr = with_file->lpVtbl->Initialize(with_file, path, STGM_READ);
+        with_file->lpVtbl->Release(with_file);
+        return hr;
+    }
+    return S_OK;
+}
+
+static HRESULT handler_bitmap(IWICImagingFactory *factory, LPCWSTR path, int request, IWICBitmapSource **out)
+{
+    CLSID clsid;
+    if (!handler_clsid(path, &clsid))
+        return WTS_E_FASTEXTRACTIONNOTSUPPORTED;
+    CO_CREATE create = (CO_CREATE)ole_proc("CoCreateInstance");
+    if (!create)
+        return HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
+    IUnknown *object = nullptr;
+    HRESULT hr = create(&clsid, nullptr, CLSCTX_INPROC_SERVER, &IID_IUnknown, (void **)&object);
+    if (FAILED(hr))
+        return WTS_E_FASTEXTRACTIONNOTSUPPORTED;
+    hr = initialize_handler(object, path);
+    PS_THUMBNAIL_PROVIDER *provider = nullptr;
+    if (SUCCEEDED(hr))
+        hr = object->lpVtbl->QueryInterface(object, &IID_PsThumbnailProvider, (void **)&provider);
+    HBITMAP bitmap = nullptr;
+    DWORD alpha = 0;
+    if (SUCCEEDED(hr))
+        hr = provider->lpVtbl->GetThumbnail(provider, (UINT)request, &bitmap, &alpha);
+    if (SUCCEEDED(hr) && bitmap) {
+        /* an alpha type of 1 (WTSAT_RGB) has no alpha, 2 (WTSAT_ARGB) has. */
+        IWICBitmap *wic;
+        hr = factory->lpVtbl->CreateBitmapFromHBITMAP(factory, bitmap, nullptr,
+                                                      alpha == 2 ? WICBitmapUseAlpha : WICBitmapIgnoreAlpha, &wic);
+        if (SUCCEEDED(hr))
+            *out = (IWICBitmapSource *)wic;
+    } else if (SUCCEEDED(hr)) {
+        hr = WTS_E_FAILEDEXTRACTION;
+    }
+    if (bitmap)
+        DeleteObject(bitmap);
+    if (provider)
+        provider->lpVtbl->Release(provider);
+    object->lpVtbl->Release(object);
+    return hr;
+}
+
 static HRESULT picture_bitmap(LPCWSTR path, int request, int flags, HBITMAP *out)
 {
     WIC wic;
     HRESULT hr = wic_open(&wic);
     if (FAILED(hr))
         return hr;
+    {
+        /* a type with a thumbnail handler gets its own picture, the codecs of the imaging component are for the others. */
+        IWICBitmapSource *handled = nullptr, *pbgra = nullptr, *shaped = nullptr;
+        HRESULT handler = handler_bitmap(wic.Factory, path, request, &handled);
+        if (SUCCEEDED(handler)) {
+            hr = to_pbgra(wic.Factory, handled, &pbgra);
+            if (SUCCEEDED(hr))
+                hr = shape(wic.Factory, pbgra, request, flags, TRUE, &shaped);
+            if (SUCCEEDED(hr))
+                hr = bitmap_from_source(shaped, out);
+            if (FAILED(hr))
+                hr = WTS_E_FAILEDEXTRACTION;
+            release_source(shaped);
+            release_source(pbgra);
+            release_source(handled);
+            wic_close(&wic);
+            return hr;
+        }
+        if (handler != WTS_E_FASTEXTRACTIONNOTSUPPORTED) {
+            wic_close(&wic);
+            return WTS_E_FAILEDEXTRACTION;
+        }
+    }
     IWICBitmapDecoder *decoder = nullptr;
     IWICBitmapFrameDecode *frame = nullptr;
     IWICBitmapSource *upright = nullptr, *picture = nullptr, *pbgra = nullptr, *shaped = nullptr;

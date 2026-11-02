@@ -85,6 +85,7 @@ EXPORTS
     SHGetPathFromIDListEx=_SHGetPathFromIDListEx@16
     SHGetPathFromIDListW=_SHGetPathFromIDListW@8
     SHGetPropertyStoreForWindow=_SHGetPropertyStoreForWindow@12
+    SHGetPropertyStoreFromParsingName=_SHGetPropertyStoreFromParsingName@20
     SHGetSetSettings=_SHGetSetSettings@12 @68
     SHGetSettings=_SHGetSettings@8 @534
     SHGetSpecialFolderLocation=_SHGetSpecialFolderLocation@12

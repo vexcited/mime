@@ -310,3 +310,252 @@ SHSTDAPI HRESULT WINAPI SHGetPropertyStoreForWindow(HWND window, REFIID iid, voi
     store->Interface.lpVtbl->Release(&store->Interface);
     return hr;
 }
+
+/* ------------------------------------------------------------------ the property store of a file */
+
+/*
+ * the store SHGetPropertyStoreFromParsingName makes for a file: what the handler registered for its type has, then the
+ * properties of the file system. The handler is made, given the file through the interface it takes (a stream, then the
+ * path) and kept for the life of the store.
+ */
+typedef struct FILE_STORE {
+    IPropertyStore Interface;
+    LONG Refs;
+    IPropertyStore *Handler;
+    LPWSTR Path;
+    BOOL ReadWrite, HandlerOnly;
+    DWORD HandlerCount;
+} FILE_STORE;
+
+#define FILE_FMT_STORAGE {0xB725F130, 0x47EF, 0x101A, {0xA5, 0xF1, 0x02, 0x60, 0x8C, 0x9E, 0xEB, 0xAC}}
+
+/* System.ItemNameDisplay, FileName, FileExtension, Size, DateModified, DateCreated, FileAttributes, ItemPathDisplay. */
+static const PROPERTYKEY g_file_keys[] = {
+    {FILE_FMT_STORAGE, 10},
+    {{0x41CF5AE0, 0xF75A, 0x4806, {0xBD, 0x87, 0x59, 0xC7, 0xD9, 0x24, 0x8E, 0xB9}}, 100},
+    {{0xE4F10A3C, 0x49E6, 0x405D, {0x82, 0x88, 0xA2, 0x3B, 0xD4, 0xEE, 0xAA, 0x6C}}, 100},
+    {FILE_FMT_STORAGE, 12},
+    {FILE_FMT_STORAGE, 14},
+    {FILE_FMT_STORAGE, 15},
+    {FILE_FMT_STORAGE, 13},
+    {{0xE3E0584C, 0xB788, 0x4A5A, {0xBB, 0x20, 0x7F, 0x5A, 0x44, 0xC9, 0xAC, 0xDD}}, 7},
+};
+
+static BOOL same_key(const PROPERTYKEY *a, const PROPERTYKEY *b)
+{
+    return a->pid == b->pid && !memcmp(&a->fmtid, &b->fmtid, sizeof(GUID));
+}
+
+static FILE_STORE *file_store(IPropertyStore *This)
+{
+    return (FILE_STORE *)This;
+}
+
+static HRESULT STDMETHODCALLTYPE file_query_interface(IPropertyStore *This, REFIID riid, void **object)
+{
+    if (!object)
+        return E_POINTER;
+    if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IPropertyStore)) {
+        *object = This;
+        This->lpVtbl->AddRef(This);
+        return S_OK;
+    }
+    *object = nullptr;
+    return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE file_add_ref(IPropertyStore *This)
+{
+    return (ULONG)InterlockedIncrement(&file_store(This)->Refs);
+}
+
+static ULONG STDMETHODCALLTYPE file_release(IPropertyStore *This)
+{
+    FILE_STORE *store = file_store(This);
+    LONG refs = InterlockedDecrement(&store->Refs);
+    if (!refs) {
+        if (store->Handler)
+            store->Handler->lpVtbl->Release(store->Handler);
+        ShFree(store->Path);
+        ShFree(store);
+    }
+    return (ULONG)refs;
+}
+
+static DWORD file_key_count(FILE_STORE *store)
+{
+    return store->HandlerOnly ? 0 : (DWORD)(sizeof(g_file_keys) / sizeof(g_file_keys[0]));
+}
+
+static HRESULT STDMETHODCALLTYPE file_get_count(IPropertyStore *This, DWORD *count)
+{
+    FILE_STORE *store = file_store(This);
+    if (!count)
+        return E_POINTER;
+    *count = store->HandlerCount + file_key_count(store);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE file_get_at(IPropertyStore *This, DWORD index, PROPERTYKEY *key)
+{
+    FILE_STORE *store = file_store(This);
+    if (!key)
+        return E_POINTER;
+    if (index < store->HandlerCount)
+        return store->Handler->lpVtbl->GetAt(store->Handler, index, key);
+    index -= store->HandlerCount;
+    if (index >= file_key_count(store))
+        return E_INVALIDARG;
+    *key = g_file_keys[index];
+    return S_OK;
+}
+
+static HRESULT file_text(const WCHAR *text, PROPVARIANT *value)
+{
+    value->pwszVal = ShDuplicate(text);
+    if (!value->pwszVal)
+        return E_OUTOFMEMORY;
+    value->vt = VT_LPWSTR;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE file_get_value(IPropertyStore *This, REFPROPERTYKEY key, PROPVARIANT *value)
+{
+    FILE_STORE *store = file_store(This);
+    if (!value)
+        return E_POINTER;
+    memset(value, 0, sizeof(*value));
+    DWORD which = 0;
+    while (which < file_key_count(store) && !same_key(key, &g_file_keys[which]))
+        which++;
+    if (which == file_key_count(store))
+        return store->Handler ? store->Handler->lpVtbl->GetValue(store->Handler, key, value) : S_OK;
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    if (!GetFileAttributesExW(store->Path, GetFileExInfoStandard, &data))
+        return HRESULT_FROM_WIN32(GetLastError());
+    const WCHAR *name = wcsrchr(store->Path, L'\\');
+    name = name ? name + 1 : store->Path;
+    const WCHAR *dot = wcsrchr(name, L'.');
+    switch (which) {
+    case 0:
+    case 1:
+        return file_text(name, value);
+    case 2:
+        return dot ? file_text(dot, value) : S_OK;
+    case 3:
+        value->vt = VT_UI8;
+        value->uhVal.QuadPart = ((ULONGLONG)data.nFileSizeHigh << 32) | data.nFileSizeLow;
+        return S_OK;
+    case 4:
+        value->vt = VT_FILETIME;
+        value->filetime = data.ftLastWriteTime;
+        return S_OK;
+    case 5:
+        value->vt = VT_FILETIME;
+        value->filetime = data.ftCreationTime;
+        return S_OK;
+    case 6:
+        value->vt = VT_UI4;
+        value->ulVal = data.dwFileAttributes;
+        return S_OK;
+    default:
+        return file_text(store->Path, value);
+    }
+}
+
+static HRESULT STDMETHODCALLTYPE file_set_value(IPropertyStore *This, REFPROPERTYKEY key, REFPROPVARIANT value)
+{
+    FILE_STORE *store = file_store(This);
+    if (!store->ReadWrite || !store->Handler)
+        return STG_E_ACCESSDENIED;
+    return store->Handler->lpVtbl->SetValue(store->Handler, key, value);
+}
+
+static HRESULT STDMETHODCALLTYPE file_commit(IPropertyStore *This)
+{
+    FILE_STORE *store = file_store(This);
+    return store->ReadWrite && store->Handler ? store->Handler->lpVtbl->Commit(store->Handler) : S_OK;
+}
+
+static const IPropertyStoreVtbl g_file_store_vtbl = {
+    file_query_interface, file_add_ref, file_release, file_get_count, file_get_at, file_get_value, file_set_value,
+    file_commit,
+};
+
+MIME_DEFINE_GUID(IID_ShInitializeWithStream, 0xB824B49D, 0x22AC, 0x4161, 0xAC, 0x8A, 0x99, 0x16, 0xE8, 0xFA, 0x3F, 0x7F);
+MIME_DEFINE_GUID(IID_ShInitializeWithFile, 0xB7D14566, 0x0509, 0x4CCE, 0xA7, 0x1F, 0x0A, 0x55, 0x42, 0x33, 0xBD, 0x9B);
+
+typedef HRESULT(WINAPI *LOOKUP_HANDLER)(LPCWSTR path, CLSID *clsid);
+typedef HRESULT(WINAPI *STREAM_ON_FILE)(LPCWSTR, DWORD, DWORD, BOOL, IStream *, IStream **);
+
+/* the handler of the file's type, made and given the file. A type with none is not an error. */
+static HRESULT make_handler(FILE_STORE *store)
+{
+    HMODULE propsys = LoadLibraryW(L"propsys.dll");
+    LOOKUP_HANDLER lookup = propsys ? (LOOKUP_HANDLER)GetProcAddress(propsys, "PSLookupPropertyHandlerCLSID") : nullptr;
+    CLSID clsid;
+    if (!lookup || FAILED(lookup(store->Path, &clsid)))
+        return S_OK;
+    IUnknown *object = nullptr;
+    HRESULT hr = CoCreateInstance(&clsid, nullptr, CLSCTX_INPROC_SERVER, &IID_IUnknown, (void **)&object);
+    if (FAILED(hr))
+        return S_OK;
+    IInitializeWithStream *with_stream;
+    IInitializeWithFile *with_file;
+    hr = E_NOINTERFACE;
+    if (SUCCEEDED(object->lpVtbl->QueryInterface(object, &IID_ShInitializeWithStream, (void **)&with_stream))) {
+        HMODULE shlwapi = LoadLibraryW(L"shlwapi.dll");
+        STREAM_ON_FILE open_stream = shlwapi ? (STREAM_ON_FILE)GetProcAddress(shlwapi, "SHCreateStreamOnFileEx") : nullptr;
+        IStream *stream = nullptr;
+        hr = open_stream ? open_stream(store->Path, STGM_READ | STGM_SHARE_DENY_WRITE, 0, FALSE, nullptr, &stream)
+                         : HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
+        if (SUCCEEDED(hr)) {
+            hr = with_stream->lpVtbl->Initialize(with_stream, stream, STGM_READ);
+            stream->lpVtbl->Release(stream);
+        }
+        with_stream->lpVtbl->Release(with_stream);
+    } else if (SUCCEEDED(object->lpVtbl->QueryInterface(object, &IID_ShInitializeWithFile, (void **)&with_file))) {
+        hr = with_file->lpVtbl->Initialize(with_file, store->Path, store->ReadWrite ? STGM_READWRITE : STGM_READ);
+        with_file->lpVtbl->Release(with_file);
+    }
+    if (SUCCEEDED(hr))
+        hr = object->lpVtbl->QueryInterface(object, &IID_IPropertyStore, (void **)&store->Handler);
+    object->lpVtbl->Release(object);
+    if (FAILED(hr))
+        return S_OK;
+    DWORD count = 0;
+    if (SUCCEEDED(store->Handler->lpVtbl->GetCount(store->Handler, &count)))
+        store->HandlerCount = count;
+    return S_OK;
+}
+
+#define GPS_HANDLERPROPERTIESONLY_FLAG 0x1
+#define GPS_READWRITE_FLAG 0x2
+
+SHSTDAPI HRESULT WINAPI SHGetPropertyStoreFromParsingName(PCWSTR path, IBindCtx *context, DWORD flags, REFIID riid,
+                                                          void **out)
+{
+    if (!out)
+        return E_POINTER;
+    *out = nullptr;
+    if (!path || !*path)
+        return E_INVALIDARG;
+    DWORD attributes = GetFileAttributesW(path);
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+        return HRESULT_FROM_WIN32(GetLastError());
+    FILE_STORE *store = ShAllocZero(sizeof(*store));
+    if (!store)
+        return E_OUTOFMEMORY;
+    store->Interface.lpVtbl = &g_file_store_vtbl;
+    store->Refs = 1;
+    store->Path = ShDuplicate(path);
+    store->ReadWrite = (flags & GPS_READWRITE_FLAG) != 0;
+    store->HandlerOnly = (flags & GPS_HANDLERPROPERTIESONLY_FLAG) != 0;
+    HRESULT hr = store->Path ? S_OK : E_OUTOFMEMORY;
+    if (SUCCEEDED(hr) && !(attributes & FILE_ATTRIBUTE_DIRECTORY))
+        hr = make_handler(store);
+    if (SUCCEEDED(hr))
+        hr = store->Interface.lpVtbl->QueryInterface(&store->Interface, riid, out);
+    store->Interface.lpVtbl->Release(&store->Interface);
+    return hr;
+}
