@@ -304,14 +304,16 @@ void WINAPI GlobalMemoryStatus(LPMEMORYSTATUS status)
     MEMORYSTATUSEX ex;
     ex.dwLength = sizeof(ex);
     GlobalMemoryStatusEx(&ex);
+    /* a 32-bit field that cannot hold a value says the largest one it can. */
+    SIZE_T largest = (SIZE_T)-1;
     status->dwLength = sizeof(*status);
     status->dwMemoryLoad = ex.dwMemoryLoad;
-    status->dwTotalPhys = ex.ullTotalPhys;
-    status->dwAvailPhys = ex.ullAvailPhys;
-    status->dwTotalPageFile = ex.ullTotalPageFile;
-    status->dwAvailPageFile = ex.ullAvailPageFile;
-    status->dwTotalVirtual = ex.ullTotalVirtual;
-    status->dwAvailVirtual = ex.ullAvailVirtual;
+    status->dwTotalPhys = ex.ullTotalPhys > largest ? largest : (SIZE_T)ex.ullTotalPhys;
+    status->dwAvailPhys = ex.ullAvailPhys > largest ? largest : (SIZE_T)ex.ullAvailPhys;
+    status->dwTotalPageFile = ex.ullTotalPageFile > largest ? largest : (SIZE_T)ex.ullTotalPageFile;
+    status->dwAvailPageFile = ex.ullAvailPageFile > largest ? largest : (SIZE_T)ex.ullAvailPageFile;
+    status->dwTotalVirtual = ex.ullTotalVirtual > largest ? largest : (SIZE_T)ex.ullTotalVirtual;
+    status->dwAvailVirtual = ex.ullAvailVirtual > largest ? largest : (SIZE_T)ex.ullAvailVirtual;
 }
 
 BOOL WINAPI GetPhysicallyInstalledSystemMemory(PULONGLONG kilobytes)
