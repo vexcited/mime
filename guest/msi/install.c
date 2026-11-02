@@ -1339,6 +1339,7 @@ static UINT copy_planned_file(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *fil
         return error;
     HANDLE source = INVALID_HANDLE_VALUE;
     FILETIME created = {}, accessed = {}, modified = {};
+    DWORD length = file->Size;
     if (!file->Data) {
         source = CreateFileW(file->Source, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
         if (source == INVALID_HANDLE_VALUE && absent(GetLastError())) {
@@ -1355,8 +1356,13 @@ static UINT copy_planned_file(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *fil
         if (source == INVALID_HANDLE_VALUE)
             return GetLastError();
         LARGE_INTEGER size;
+        /*
+         * the file is copied as it is, whatever size the File table gives: a source signed after the table was made is
+         * longer by its signature, and the language packs of Navisworks ship that way.
+         */
         error = !GetFileSizeEx(source, &size) ? GetLastError() :
-                size.QuadPart != file->Size ? ERROR_INSTALL_PACKAGE_INVALID : ERROR_SUCCESS;
+                size.QuadPart > 0xFFFFFFFFu ? ERROR_INSTALL_PACKAGE_INVALID : ERROR_SUCCESS;
+        length = (DWORD)size.QuadPart;
         if (!error && !GetFileTime(source, &created, &accessed, &modified))
             error = GetLastError();
     }
@@ -1371,7 +1377,7 @@ static UINT copy_planned_file(MIME_MSI_PACKAGE *package, MIME_MSI_FILE_PLAN *fil
     BYTE *buffer = file->Data ? nullptr : MimeMsiAllocate(64 * 1024);
     if (!file->Data && !buffer)
         error = ERROR_NOT_ENOUGH_MEMORY;
-    DWORD remaining = file->Size;
+    DWORD remaining = length;
     while (remaining && !error) {
         DWORD wanted = remaining < 64 * 1024 ? remaining : 64 * 1024, read = wanted;
         const BYTE *data = file->Data ? file->Data + file->Size - remaining : buffer;
