@@ -305,6 +305,9 @@ UINT MimeMsiLoadTable(MIME_MSI_DATABASE *database, PCWSTR name, MIME_MSI_TABLE *
             MIME_MSI_COLUMN *column = &table->Columns[i];
             column->Width = (column->Type & 0x0c00) == 0x0c00 ? database->StringWidth :
                             (column->Type & 0x0fff) == 0x0900 ? 2 : column->Type & 0xff;
+            /* an integer that fits a byte, which a table of WiX's declares for its flags, is stored in two like a short one. */
+            if (column->Width == 1 && (column->Type & 0x0c00) == 0x0400)
+                column->Width = 2;
             if (column->Width != 2 && column->Width != 3 && column->Width != 4) {
                 error = ERROR_INSTALL_PACKAGE_INVALID;
                 break;
