@@ -1775,6 +1775,75 @@ bool mime_crypto_random(void *out, size_t size)
 
 #define NTE_BAD_SIGNATURE ((DWORD)0x80090006L)
 
+#define CALG_DSS_SIGN 0x2200
+#define DSS1_MAGIC 0x31535344 /* "DSS1" */
+
+/* a number of a key blob or a signature, little endian bytes, into the big numbers of the shared library. */
+static BOOL bn_from_little(MimeBn *n, const BYTE *little, DWORD size)
+{
+    BYTE big[128];
+    if (size > sizeof(big))
+        return FALSE;
+    for (DWORD i = 0; i < size; i++)
+        big[i] = little[size - 1 - i];
+    return mime_bn_from_bytes(n, big, size);
+}
+
+/*
+ * verifies a DSA signature of the Base DSS provider: the public key blob is the header, DSSPUBKEY (magic DSS1 and the
+ * length of p in bits, 512 to 1024) and then p, q (20 bytes), g and y, all little endian. The signature is r and s of 20
+ * bytes each, little endian, over the SHA-1 value of the hash read as a big endian number, as FIPS 186 has it (read
+ * from the signatures that the session files of Navisworks carry, which verify with their public keys that way).
+ * Only SHA-1 goes with the provider, any other hash is NTE_BAD_ALGID.
+ */
+static BOOL verify_dss(const KEY *k, HASH *h, const BYTE *signature, DWORD length)
+{
+    const BLOBHEADER *header = (const BLOBHEADER *)k->Blob;
+    if (header->bType != PUBLICKEYBLOB || k->Size < sizeof(*header) + 8 ||
+        *(const DWORD *)(k->Blob + sizeof(*header)) != DSS1_MAGIC) {
+        AdvSetError(NTE_BAD_KEY);
+        return FALSE;
+    }
+    DWORD bits = *(const DWORD *)(k->Blob + sizeof(*header) + 4), size = bits / 8;
+    if (bits < 512 || bits > 1024 || (bits & 63) || k->Size < sizeof(*header) + 8 + 3 * size + 20) {
+        AdvSetError(NTE_BAD_KEY);
+        return FALSE;
+    }
+    if (h->Algorithm != CALG_SHA1) {
+        AdvSetError(NTE_BAD_ALGID);
+        return FALSE;
+    }
+    if (length != 40) {
+        AdvSetError(NTE_BAD_SIGNATURE);
+        return FALSE;
+    }
+    MimeBn *n = AdvAlloc(12 * sizeof(MimeBn));
+    if (!n) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    MimeBn *p = n, *q = n + 1, *g = n + 2, *y = n + 3, *r = n + 4, *s = n + 5, *z = n + 6, *w = n + 7, *u1 = n + 8,
+           *u2 = n + 9, *a = n + 10, *b = n + 11;
+    const BYTE *at = k->Blob + sizeof(*header) + 8;
+    BOOL ok = bn_from_little(p, at, size) && bn_from_little(q, at + size, 20) && bn_from_little(g, at + size + 20, size) &&
+              bn_from_little(y, at + 2 * size + 20, size) && bn_from_little(r, signature, 20) &&
+              bn_from_little(s, signature + 20, 20);
+    finish_hash(h);
+    /* r and s are between 0 and q, the value of the hash is taken as it is and reduced with q below. */
+    ok = ok && mime_bn_from_bytes(z, h->Value, h->Size) && !mime_bn_is_zero(q) && !mime_bn_is_zero(r) &&
+         !mime_bn_is_zero(s) && mime_bn_cmp(r, q) < 0 && mime_bn_cmp(s, q) < 0 &&
+         mime_bn_cmp_word(p, 1) > 0 && (p->d[0] & 1) &&
+         mime_bn_mod_inverse(w, s, q) == MIME_CRYPTO_OK && mime_bn_mod_mul(u1, z, w, q) == MIME_CRYPTO_OK &&
+         mime_bn_mod_mul(u2, r, w, q) == MIME_CRYPTO_OK && mime_bn_mod_exp(a, g, u1, p, FALSE) == MIME_CRYPTO_OK &&
+         mime_bn_mod_exp(b, y, u2, p, FALSE) == MIME_CRYPTO_OK && mime_bn_mod_mul(a, a, b, p) == MIME_CRYPTO_OK &&
+         mime_bn_divmod(nullptr, b, a, q) == MIME_CRYPTO_OK && mime_bn_cmp(b, r) == 0;
+    if (!ok)
+        AdvSetError(NTE_BAD_SIGNATURE);
+    SecureZeroMemory(n, 12 * sizeof(MimeBn));
+    AdvFree(n);
+    return ok;
+}
+
 /* the public part of an RSA key blob: exponent, then modulus as little endian bytes. */
 static MimeRsa *rsa_from_blob(const KEY *k)
 {
@@ -1828,6 +1897,8 @@ ADVAPI BOOL WINAPI CryptVerifySignatureW(HCRYPTHASH handle, const BYTE *signatur
         AdvSetError(NTE_BAD_FLAGS);
         return FALSE;
     }
+    if (k->Algorithm == CALG_DSS_SIGN)
+        return verify_dss(k, h, signature, length);
     MimeRsa *rsa = rsa_from_blob(k);
     if (!rsa) {
         AdvSetError(NTE_BAD_KEY);
