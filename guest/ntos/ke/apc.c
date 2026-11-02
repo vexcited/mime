@@ -226,6 +226,7 @@ NTSTATUS NTAPI NtRaiseException(PEXCEPTION_RECORD record, PCONTEXT context, BOOL
 #define STATUS_NO_CALLBACK_ACTIVE ((NTSTATUS)0xC0000258L)
 /* what the kernel code between two callbacks may still need, win32k nests deeply while it sends a message. */
 #define CALLBACK_STACK_RESERVE (12 * 1024)
+#define CALLBACK_STACK_STEP (64 * 1024)
 
 NTSTATUS NTAPI KeUserModeCallback(ULONG api, PVOID input, ULONG input_length, PVOID *output, PULONG output_length)
 {
@@ -236,9 +237,13 @@ NTSTATUS NTAPI KeUserModeCallback(ULONG api, PVOID input, ULONG input_length, PV
         return STATUS_NOT_SUPPORTED;
     if (thread->CallbackDepth > 48)
         return STATUS_STACK_OVERFLOW;
-    /* every nested callback keeps its kernel frames, so the depth limit alone does not keep the stack from ending. */
-    if ((ULONG_PTR)__builtin_frame_address(0) - (ULONG_PTR)thread->StackLimit < CALLBACK_STACK_RESERVE)
-        return STATUS_STACK_OVERFLOW;
+    /*
+     * every nested callback keeps its kernel frames, so the depth limit alone does not keep the stack from ending: the
+     * stack gets more mapped room below it, as much as was reserved for it.
+     */
+    while ((ULONG_PTR)__builtin_frame_address(0) - (ULONG_PTR)thread->StackLimit < CALLBACK_STACK_RESERVE)
+        if (!thread->StackAllocation || !MmGrowKernelStack(thread, CALLBACK_STACK_STEP))
+            return STATUS_STACK_OVERFLOW;
 
     KTRAP_FRAME frame;
     if (!KiSetupUserCallback(&frame, trap, dll->KiUserCallbackDispatcher, api, input, input_length))

@@ -61,35 +61,62 @@ PVOID MmMapPagesInSystem(const ULONG64 *pages, SIZE_T count, ULONG64 attrs)
     return va;
 }
 
-/* with an unmapped guard page below it. */
-PVOID MmAllocateKernelStack(SIZE_T size, PVOID *limit)
+/* with an unmapped guard page below it. the pages of the top of the reserved room are mapped, the rest when it grows. */
+PVOID MmAllocateKernelStack(SIZE_T size, SIZE_T reserve, PVOID *limit, PVOID *top)
 {
-    SIZE_T pages = BYTES_TO_PAGES(size);
-    PUCHAR va = MmAllocateSystemVa(pages + 1);
+    SIZE_T pages = BYTES_TO_PAGES(size), total = BYTES_TO_PAGES(reserve);
+    if (pages > total)
+        total = pages;
+    PUCHAR va = MmAllocateSystemVa(total + 1);
     if (!va)
         return nullptr;
-    for (SIZE_T i = 1; i <= pages; i++) {
+    SIZE_T first = total - pages + 1;
+    for (SIZE_T i = first; i <= total; i++) {
         ULONG64 pa = MmAllocatePage();
         if (!pa) {
-            for (SIZE_T j = 1; j < i; j++)
+            for (SIZE_T j = first; j < i; j++)
                 MmFreePage(MiUnmapPage(MiKernelRoot(), (ULONG_PTR)va + j * PAGE_SIZE, 0) & MM_PTE_ADDR_MASK);
-            MmFreeSystemVa(va, pages + 1);
+            MmFreeSystemVa(va, total + 1);
             return nullptr;
         }
         MiMapPage(MiKernelRoot(), (ULONG_PTR)va + i * PAGE_SIZE, pa, MM_KERNEL_RW);
     }
     if (limit)
-        *limit = va + PAGE_SIZE;
+        *limit = va + first * PAGE_SIZE;
+    if (top)
+        *top = va + (total + 1) * PAGE_SIZE;
     return va;
 }
 
-void MmFreeKernelStack(PVOID allocation, SIZE_T size)
+/* maps more pages below the lowest one the thread has, up to the room that was reserved. */
+BOOLEAN MmGrowKernelStack(PKTHREAD thread, SIZE_T bytes)
 {
-    SIZE_T pages = BYTES_TO_PAGES(size);
+    PUCHAR floor = (PUCHAR)thread->StackAllocation + PAGE_SIZE, limit = thread->StackLimit;
+    SIZE_T pages = BYTES_TO_PAGES(bytes), room = (SIZE_T)(limit - floor) / PAGE_SIZE;
+    if (pages > room)
+        pages = room;
+    if (!pages)
+        return FALSE;
     for (SIZE_T i = 1; i <= pages; i++) {
-        ULONG64 pte = MiUnmapPage(MiKernelRoot(), (ULONG_PTR)allocation + i * PAGE_SIZE, 0);
+        ULONG64 pa = MmAllocatePage();
+        if (!pa) {
+            for (SIZE_T j = 1; j < i; j++)
+                MmFreePage(MiUnmapPage(MiKernelRoot(), (ULONG_PTR)limit - j * PAGE_SIZE, 0) & MM_PTE_ADDR_MASK);
+            return FALSE;
+        }
+        MiMapPage(MiKernelRoot(), (ULONG_PTR)limit - i * PAGE_SIZE, pa, MM_KERNEL_RW);
+    }
+    thread->StackLimit = limit - pages * PAGE_SIZE;
+    return TRUE;
+}
+
+void MmFreeKernelStack(PVOID allocation, PVOID limit, SIZE_T reserve)
+{
+    SIZE_T total = BYTES_TO_PAGES(reserve);
+    for (PUCHAR page = limit; page < (PUCHAR)allocation + (total + 1) * PAGE_SIZE; page += PAGE_SIZE) {
+        ULONG64 pte = MiUnmapPage(MiKernelRoot(), (ULONG_PTR)page, 0);
         if (pte & MM_PTE_VALID)
             MmFreePage(pte & MM_PTE_ADDR_MASK);
     }
-    MmFreeSystemVa(allocation, pages + 1);
+    MmFreeSystemVa(allocation, total + 1);
 }

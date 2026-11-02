@@ -648,8 +648,13 @@ ULONG64 MiDirectoryTableBase(PMMADDRESS_SPACE as);
 PVOID MmAllocateSystemVa(SIZE_T pages);
 void MmFreeSystemVa(PVOID va, SIZE_T pages);
 PVOID MmMapPagesInSystem(const ULONG64 *pages, SIZE_T count, ULONG64 attrs);
-PVOID MmAllocateKernelStack(SIZE_T size, PVOID *limit);
-void MmFreeKernelStack(PVOID allocation, SIZE_T size);
+/*
+ * the room of a kernel stack is reserved at once and mapped from the top as it is used: size bytes now, the rest as nested
+ * user mode callbacks need it. limit is the lowest mapped address, top the stack's top.
+ */
+PVOID MmAllocateKernelStack(SIZE_T size, SIZE_T reserve, PVOID *limit, PVOID *top);
+BOOLEAN MmGrowKernelStack(PKTHREAD thread, SIZE_T bytes);
+void MmFreeKernelStack(PVOID allocation, PVOID limit, SIZE_T reserve);
 
 void ExInitializePool(void);
 SIZE_T ExQueryPoolUsage(void);

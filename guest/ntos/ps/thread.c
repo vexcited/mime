@@ -5,6 +5,8 @@
 #include <mime/wow32.h>
 
 #define KERNEL_STACK_SIZE (64 * 1024)
+/* nested callbacks into user mode keep their kernel frames, about 5 KB for each level of a message sent to a window. */
+#define KERNEL_STACK_RESERVE (512 * 1024)
 #define MIME_DEFAULT_STACK_RESERVE (1024 * 1024)
 /* stack below the guard page kept for stack overflow handlers, a quarter of a small stack. */
 #define MIME_STACK_OVERFLOW_ZONE (32 * 1024)
@@ -48,14 +50,13 @@ void PsInitializeIdleThread(void)
 PVOID PsCreateIdleThread(PKPRCB prcb)
 {
     PETHREAD idle = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(ETHREAD), KI_TAG('I', 'd', 'l', 'e'));
-    PVOID limit;
-    PVOID alloc = idle ? MmAllocateKernelStack(KERNEL_STACK_SIZE, &limit) : nullptr;
+    PVOID limit, top;
+    PVOID alloc = idle ? MmAllocateKernelStack(KERNEL_STACK_SIZE, KERNEL_STACK_SIZE, &limit, &top) : nullptr;
     if (!alloc) {
         if (idle)
             ExFreePool(idle);
         return nullptr;
     }
-    PVOID top = (PUCHAR)limit + KERNEL_STACK_SIZE;
     initialize_idle(idle, top, limit, prcb);
     idle->Tcb.StackAllocation = alloc;
     idle->Tcb.StackAllocationSize = KERNEL_STACK_SIZE;
@@ -66,7 +67,7 @@ void PspThreadDelete(PVOID object)
 {
     PETHREAD thread = object;
     if (thread->Tcb.StackAllocation)
-        MmFreeKernelStack(thread->Tcb.StackAllocation, thread->Tcb.StackAllocationSize);
+        MmFreeKernelStack(thread->Tcb.StackAllocation, thread->Tcb.StackLimit, thread->Tcb.StackAllocationSize);
     if (thread->Cid.UniqueThread)
         PspFreeId(thread->Cid.UniqueThread);
     SepFreeThreadToken(thread);
@@ -96,14 +97,15 @@ NTSTATUS PspCreateThread(PEPROCESS process, BOOLEAN system, PKSTART_ROUTINE rout
     if (!NT_SUCCESS(status))
         return status;
     memset(thread, 0, sizeof(*thread));
-    PVOID limit;
-    PVOID alloc = MmAllocateKernelStack(KERNEL_STACK_SIZE, &limit);
+    PVOID limit, top;
+    PVOID alloc = MmAllocateKernelStack(KERNEL_STACK_SIZE, KERNEL_STACK_RESERVE, &limit, &top);
     if (!alloc) {
         ObDereferenceObject(thread);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     thread->Tcb.StackAllocation = alloc;
-    thread->Tcb.StackAllocationSize = KERNEL_STACK_SIZE;
+    thread->Tcb.StackAllocationSize = KERNEL_STACK_RESERVE;
+    thread->Tcb.StackLimit = limit;
     ObReferenceObject(process);
     thread->Cid.UniqueProcess = process->UniqueProcessId;
     status = PspAllocateId(thread, &thread->Cid.UniqueThread);
@@ -115,7 +117,7 @@ NTSTATUS PspCreateThread(PEPROCESS process, BOOLEAN system, PKSTART_ROUTINE rout
     thread->SystemThread = system;
     thread->StartAddress = (PVOID)routine;
     KeQuerySystemTime((PLARGE_INTEGER)&thread->CreateTime);
-    KiInitializeThread(&thread->Tcb, &process->Pcb, (PUCHAR)limit + KERNEL_STACK_SIZE, limit, routine, context);
+    KiInitializeThread(&thread->Tcb, &process->Pcb, top, limit, routine, context);
 
     ULONG64 s = KiAcquireDispatcherLock();
     InsertTailList(&process->ThreadListHead, &thread->ThreadListEntry);
