@@ -54,6 +54,8 @@ struct XsRun {
     UINT8 *gstate;
     XDoc **temps; /* documents made for fragments and loaded for document(), released at the end */
     UINT ntemps, captemps;
+    WCHAR **autons; /* the namespaces that got a generated prefix, auto-ns1 is the first. */
+    UINT nautons;
     XsLoaded *loaded;
     UINT nloaded, caploaded;
     XsKeyIndex *keys;

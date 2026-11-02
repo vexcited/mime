@@ -1073,6 +1073,62 @@ static HRESULT select_nodes(XsRun *r, XsInst *i, XsFrame *f, XSet *set)
     return hr;
 }
 
+/* the prefix of an attribute in a namespace: its own unless the element holds it for another namespace, else a made one. */
+static HRESULT attribute_prefix(XsRun *r, XBuf *q, const WCHAR *uri)
+{
+    UINT colon = q->length;
+    for (UINT k = 0; k < q->length; k++)
+        if (q->s[k] == ':') {
+            colon = k;
+            break;
+        }
+    BOOL make = colon == q->length;
+    XNode *e = r->cur;
+    if (!make && e && e->type == XN_ELEMENT) {
+        if (e->local && e->local - 1 == (UINT)colon && !memcmp(e->qname, q->s, colon * sizeof(WCHAR)) &&
+            !same_uri(e->uri, uri))
+            make = TRUE;
+        for (XNode *a = e->attrs; a && !make; a = a->next) {
+            if (xd_is_xmlns_attr(a)) {
+                UINT al = xd_atom_len(a->qname);
+                if (al == colon + 6 && !memcmp(a->qname + 6, q->s, colon * sizeof(WCHAR)) && wcscmp(a->value ? a->value : L"", uri))
+                    make = TRUE;
+            } else if (a->local && a->local - 1 == (UINT)colon && !memcmp(a->qname, q->s, colon * sizeof(WCHAR)) &&
+                       !same_uri(a->uri, uri)) {
+                make = TRUE;
+            }
+        }
+    }
+    if (!make)
+        return S_OK;
+    UINT n = 0;
+    while (n < r->nautons && wcscmp(r->autons[n], uri))
+        n++;
+    if (n == r->nautons) {
+        WCHAR **list = xd_realloc(r->autons, (r->nautons + 1) * sizeof(WCHAR *));
+        if (!list)
+            return E_OUTOFMEMORY;
+        r->autons = list;
+        r->autons[r->nautons++] = xd_wcsdup(uri, xd_wlen(uri));
+    }
+    XBuf name = {};
+    xb_puta(&name, "auto-ns");
+    UINT v = n + 1, digits = 0, t = v;
+    while (t) {
+        digits++;
+        t /= 10;
+    }
+    WCHAR num[12];
+    for (UINT k = digits; k--; v /= 10)
+        num[k] = (WCHAR)('0' + v % 10);
+    xb_put(&name, num, digits);
+    xb_putc(&name, ':');
+    xb_put(&name, q->s + (colon == q->length ? 0 : colon + 1), q->length - (colon == q->length ? 0 : colon + 1));
+    xb_free(q);
+    *q = name;
+    return S_OK;
+}
+
 static HRESULT run_inst(XsRun *r, XsInst *i, XsFrame *f)
 {
     switch (i->op) {
@@ -1281,6 +1337,14 @@ static HRESULT run_inst(XsRun *r, XsInst *i, XsFrame *f)
             xb_free(&q);
             xb_free(&u);
             return hr;
+        }
+        if (uri) {
+            hr = attribute_prefix(r, &q, uri);
+            if (FAILED(hr)) {
+                xb_free(&q);
+                xb_free(&u);
+                return hr;
+            }
         }
         XBuf v = {};
         hr = run_to_string(r, i->body, f, &v);
@@ -1566,6 +1630,9 @@ void xsr_free_state(XsRun *r)
         xpv_free(&r->gval[i]);
     xd_free(r->gval);
     xd_free(r->gstate);
+    for (UINT i = 0; i < r->nautons; i++)
+        xd_free(r->autons[i]);
+    xd_free(r->autons);
     for (UINT i = 0; i < r->ntemps; i++)
         xn_release(&r->temps[i]->node);
     xd_free(r->temps);
