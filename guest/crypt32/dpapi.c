@@ -147,7 +147,17 @@ static BOOL key_store(BOOL machine, WCHAR *dir, DWORD capacity, BYTE prekey[20])
             return FALSE;
         mime_hash(&mime_sha1, guid, wcslen(guid) * sizeof(WCHAR), password);
         wcscpy(sid, L"S-1-5-18");
+#ifdef _WIN64
         UINT n = GetSystemDirectoryW(dir, capacity);
+#else
+        /* the keys are the system's, which the lsass of Windows holds for programs of either width, so a 32-bit program
+           names the real System32 and not the folder it is sent to. */
+        UINT n = GetWindowsDirectoryW(dir, capacity);
+        if (n && n + 10 < capacity) {
+            wcscpy(dir + n, L"\\Sysnative");
+            n += 10;
+        }
+#endif
         if (!n || n >= capacity || _snwprintf(dir + n, capacity - n, L"\\Microsoft\\Protect\\S-1-5-18\\User") < 0)
             return FALSE;
     } else {
