@@ -189,3 +189,88 @@ DECLSPEC_EXPORT HRESULT WINAPI UrlMkSetSessionOption(DWORD option, LPVOID buffer
         return buffer && length >= sizeof(DWORD) ? S_OK : E_INVALIDARG;
     return E_INVALIDARG;
 }
+
+/* frees what a callback gave in its bind info and clears it, the size stays. */
+DECLSPEC_EXPORT void WINAPI ReleaseBindInfo(BINDINFO *info)
+{
+    if (!info || !info->cbSize)
+        return;
+    ULONG size = info->cbSize;
+    IUnknown *unknown = size >= sizeof(BINDINFO) ? info->pUnk : nullptr;
+    CoTaskMemFree(info->szExtraInfo);
+    ReleaseStgMedium(&info->stgmedData);
+    CoTaskMemFree(info->szCustomVerb);
+    if (unknown)
+        unknown->lpVtbl->Release(unknown);
+    memset(info, 0, size < sizeof(BINDINFO) ? size : sizeof(BINDINFO));
+    info->cbSize = size;
+}
+
+static LPWSTR TaskDuplicate(LPCWSTR text)
+{
+    if (!text)
+        return nullptr;
+    SIZE_T bytes = ((SIZE_T)lstrlenW(text) + 1) * sizeof(WCHAR);
+    LPWSTR copy = CoTaskMemAlloc(bytes);
+    if (copy)
+        memcpy(copy, text, bytes);
+    return copy;
+}
+
+DECLSPEC_EXPORT HRESULT WINAPI CopyBindInfo(const BINDINFO *source, BINDINFO *dest)
+{
+    if (!source || !dest)
+        return E_POINTER;
+    if (source->cbSize < sizeof(BINDINFO) || dest->cbSize < sizeof(BINDINFO))
+        return E_INVALIDARG;
+    ULONG size = dest->cbSize;
+    memcpy(dest, source, sizeof(BINDINFO));
+    dest->cbSize = size;
+    dest->szExtraInfo = TaskDuplicate(source->szExtraInfo);
+    dest->szCustomVerb = TaskDuplicate(source->szCustomVerb);
+    dest->pUnk = source->pUnk;
+    if (dest->pUnk)
+        dest->pUnk->lpVtbl->AddRef(dest->pUnk);
+    if (source->stgmedData.tymed == TYMED_HGLOBAL && source->stgmedData.hGlobal) {
+        SIZE_T bytes = GlobalSize(source->stgmedData.hGlobal);
+        HGLOBAL copy = GlobalAlloc(GMEM_MOVEABLE, bytes);
+        void *to = copy ? GlobalLock(copy) : nullptr;
+        void *from = GlobalLock(source->stgmedData.hGlobal);
+        if (to && from)
+            memcpy(to, from, bytes);
+        if (to)
+            GlobalUnlock(copy);
+        GlobalUnlock(source->stgmedData.hGlobal);
+        dest->stgmedData.hGlobal = copy;
+        dest->stgmedData.pUnkForRelease = nullptr;
+    } else if (source->stgmedData.tymed == TYMED_ISTREAM || source->stgmedData.tymed == TYMED_ISTORAGE) {
+        if (source->stgmedData.pstm)
+            source->stgmedData.pstm->lpVtbl->AddRef(source->stgmedData.pstm);
+    }
+    return S_OK;
+}
+
+/* the flags internet explorer keeps for an activex control, 0 when it has no entry. */
+DECLSPEC_EXPORT HRESULT WINAPI CompatFlagsFromClsid(CLSID *clsid, LPDWORD compat_flags, LPDWORD misc_status_flags)
+{
+    if (!clsid || !compat_flags || !misc_status_flags)
+        return E_INVALIDARG;
+    *compat_flags = 0;
+    *misc_status_flags = 0;
+    WCHAR guid[40];
+    if (!StringFromGUID2(clsid, guid, 40))
+        return E_INVALIDARG;
+    WCHAR path[128];
+    wsprintfW(path, L"Software\\Microsoft\\Internet Explorer\\ActiveX Compatibility\\%s", guid);
+    HKEY key;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_READ, &key))
+        return S_OK;
+    DWORD size = sizeof(DWORD), type;
+    if (RegQueryValueExW(key, L"Compatibility Flags", nullptr, &type, (BYTE *)compat_flags, &size) || type != REG_DWORD)
+        *compat_flags = 0;
+    size = sizeof(DWORD);
+    if (RegQueryValueExW(key, L"MiscStatus", nullptr, &type, (BYTE *)misc_status_flags, &size) || type != REG_DWORD)
+        *misc_status_flags = 0;
+    RegCloseKey(key);
+    return S_OK;
+}
