@@ -13,6 +13,8 @@ BOOL WtOid(WT_DER item, const BYTE *value, DWORD size);
  * bytes.
  */
 typedef struct {
+    /* the file's mapping, its size, and the start of the file, which holds the headers. the rest is read in views. */
+    HANDLE mapping;
     const BYTE *image;
     DWORD size, checksum, directory, certificate;
     const BYTE *digest_input;
@@ -22,7 +24,7 @@ typedef struct {
     /* the signature file of an app package, checked on its own: its digests are the package's to compare. */
     BOOL p7x;
 } WT_SUBJECT;
-LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
+LONG WtVerifyPe(HANDLE mapping, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifyP7x(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifyCab(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifyInstaller(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);

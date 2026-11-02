@@ -1,4 +1,5 @@
 #include "trust_private.h"
+#include <crypto/crypto.h>
 
 static constexpr BYTE oid_signed[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,7,2};
 static constexpr BYTE oid_indirect[] = {0x2b,6,1,4,1,0x82,0x37,2,1,4};
@@ -12,7 +13,11 @@ static constexpr BYTE oid_token_info[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,0x10
 static constexpr BYTE oid_time[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,5};
 static constexpr BYTE oid_rsa_sha1[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,5};
 static constexpr BYTE oid_rsa_sha256[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,11};
+static constexpr BYTE oid_rsa_sha384[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,12};
+static constexpr BYTE oid_rsa_sha512[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,13};
 static constexpr BYTE oid_sha256[] = {0x60,0x86,0x48,1,0x65,3,4,2,1};
+static constexpr BYTE oid_sha384[] = {0x60,0x86,0x48,1,0x65,3,4,2,2};
+static constexpr BYTE oid_sha512[] = {0x60,0x86,0x48,1,0x65,3,4,2,3};
 static constexpr BYTE oid_sha1[] = {0x2b,0x0e,3,2,0x1a};
 static constexpr BYTE oid_rsa[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,1};
 static constexpr BYTE oid_type[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,3};
@@ -61,6 +66,10 @@ static ALG_ID algorithm(WT_DER sequence)
         return 0;
     if (WtOid(oid, oid_sha256, sizeof(oid_sha256)))
         return CALG_SHA_256;
+    if (WtOid(oid, oid_sha384, sizeof(oid_sha384)))
+        return CALG_SHA_384;
+    if (WtOid(oid, oid_sha512, sizeof(oid_sha512)))
+        return CALG_SHA_512;
     if (WtOid(oid, oid_sha1, sizeof(oid_sha1)))
         return CALG_SHA1;
     return 0;
@@ -68,10 +77,62 @@ static ALG_ID algorithm(WT_DER sequence)
 
 static BOOL hash_matches(ALG_ID alg, WT_BYTES data, WT_BYTES expected)
 {
-    BYTE hash[32];
+    BYTE hash[64];
     DWORD length = sizeof(hash);
     return CryptHashCertificate(0, alg, 0, data.data, data.size, hash, &length) &&
            length == expected.size && !memcmp(hash, expected.data, length);
+}
+
+/* the digest of the image is taken over views of the file, so that a file larger than the address space is no problem. */
+#define VIEW_SIZE 0x1000000
+
+static const MimeHashAlg *crypto_hash(ALG_ID alg)
+{
+    switch (alg) {
+    case CALG_SHA1:
+        return &mime_sha1;
+    case CALG_SHA_256:
+        return &mime_sha256;
+    case CALG_SHA_384:
+        return &mime_sha384;
+    case CALG_SHA_512:
+        return &mime_sha512;
+    }
+    return nullptr;
+}
+
+static BOOL hash_range(const MimeHashAlg *alg, MimeHashCtx *ctx, HANDLE mapping, DWORD start, DWORD end)
+{
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    while (start < end) {
+        DWORD base = start & ~(info.dwAllocationGranularity - 1);
+        DWORD stop = end - base > VIEW_SIZE ? base + VIEW_SIZE : end;
+        const BYTE *view = MapViewOfFile(mapping, FILE_MAP_READ, 0, base, stop - base);
+        if (!view)
+            return FALSE;
+        alg->update(ctx, view + (start - base), stop - start);
+        UnmapViewOfFile(view);
+        start = stop;
+    }
+    return TRUE;
+}
+
+/* the file without the checksum, the certificate directory entry and the certificates. */
+static BOOL image_digest_matches(ALG_ID id, const WT_SUBJECT *subject, WT_BYTES expected)
+{
+    const MimeHashAlg *alg = crypto_hash(id);
+    if (!alg || alg->digest_size != expected.size)
+        return FALSE;
+    MimeHashCtx ctx;
+    BYTE hash[64];
+    alg->init(&ctx);
+    if (!hash_range(alg, &ctx, subject->mapping, 0, subject->checksum) ||
+        !hash_range(alg, &ctx, subject->mapping, subject->checksum + 4, subject->directory) ||
+        !hash_range(alg, &ctx, subject->mapping, subject->directory + 8, subject->certificate))
+        return FALSE;
+    alg->final(&ctx, hash);
+    return !memcmp(hash, expected.data, expected.size);
 }
 
 static LONG file_digest(WT_DER content, const WT_SUBJECT *subject)
@@ -108,17 +169,7 @@ static LONG file_digest(WT_DER content, const WT_SUBJECT *subject)
     if (cabinet)
         return hash_matches(id, (WT_BYTES){subject->digest_input, subject->digest_size}, hash.value) ? 0 :
                TRUST_E_BAD_DIGEST;
-    DWORD checksum = subject->checksum, directory = subject->directory, certificate = subject->certificate;
-    const BYTE *image = subject->image;
-    BYTE *bytes = LocalAlloc(LMEM_FIXED, certificate - 12);
-    if (!bytes)
-        return E_OUTOFMEMORY;
-    memcpy(bytes, image, checksum);
-    memcpy(bytes + checksum, image + checksum + 4, directory - checksum - 4);
-    memcpy(bytes + directory - 4, image + directory + 8, certificate - directory - 8);
-    BOOL ok = hash_matches(id, (WT_BYTES){bytes, certificate - 12}, hash.value);
-    LocalFree(bytes);
-    return ok ? 0 : TRUST_E_BAD_DIGEST;
+    return image_digest_matches(id, subject, hash.value) ? 0 : TRUST_E_BAD_DIGEST;
 }
 
 static DWORD header(BYTE *out, BYTE tag, DWORD length)
@@ -143,6 +194,10 @@ static LONG signature(WT_DER attributes, WT_DER encrypted, ALG_ID alg, PCCERT_CO
     BYTE identifier[] = {0x30,0x0d,6,9,0x2a,0x86,0x48,0x86,0xf7,0x0d,1,1,11,5,0};
     if (alg == CALG_SHA1)
         identifier[12] = 5;
+    else if (alg == CALG_SHA_384)
+        identifier[12] = 12;
+    else if (alg == CALG_SHA_512)
+        identifier[12] = 13;
     if (encrypted.value.size > 8192 || attributes.encoded.size > 65536)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
     BYTE *blob = LocalAlloc(LMEM_FIXED, attributes.encoded.size + encrypted.value.size + 64);
@@ -203,7 +258,9 @@ static BOOL rsa_algorithm(WT_DER sequence, ALG_ID alg)
         return FALSE;
     return WtOid(oid, oid_rsa, sizeof(oid_rsa)) ||
            (alg == CALG_SHA1 && WtOid(oid, oid_rsa_sha1, sizeof(oid_rsa_sha1))) ||
-           (alg == CALG_SHA_256 && WtOid(oid, oid_rsa_sha256, sizeof(oid_rsa_sha256)));
+           (alg == CALG_SHA_256 && WtOid(oid, oid_rsa_sha256, sizeof(oid_rsa_sha256))) ||
+           (alg == CALG_SHA_384 && WtOid(oid, oid_rsa_sha384, sizeof(oid_rsa_sha384))) ||
+           (alg == CALG_SHA_512 && WtOid(oid, oid_rsa_sha512, sizeof(oid_rsa_sha512)));
 }
 
 static BOOL two_digits(const BYTE *text, DWORD *value)

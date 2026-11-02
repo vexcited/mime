@@ -108,6 +108,30 @@ static LONG verify_blob(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
     return WtVerifyP7x(info->pbMemObject, info->cbMemObject, data, chain);
 }
 
+/* the kind of the file comes from its first bytes. cabinets and packages are mapped whole, executables in views. */
+static LONG verify_mapping(HANDLE mapping, DWORD size, const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
+{
+    if (!mapping)
+        return WtVerifyPe(nullptr, 0, data, chain);
+    BYTE magic[8] = {};
+    DWORD got = size < sizeof(magic) ? size : sizeof(magic);
+    const BYTE *start = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, got);
+    if (!start)
+        return HRESULT_FROM_WIN32(GetLastError());
+    memcpy(magic, start, got);
+    UnmapViewOfFile(start);
+    BOOL package = got == 8 && !memcmp(magic, "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", 8);
+    BOOL cabinet = got >= 4 && !memcmp(magic, "MSCF", 4);
+    if (!package && !cabinet)
+        return WtVerifyPe(mapping, size, data, chain);
+    const BYTE *bytes = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+    if (!bytes)
+        return HRESULT_FROM_WIN32(GetLastError());
+    LONG result = package ? WtVerifyInstaller(bytes, size, data, chain) : WtVerifyCab(bytes, size, data, chain);
+    UnmapViewOfFile(bytes);
+    return result;
+}
+
 static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
 {
     WINTRUST_FILE_INFO *info = data->pFile;
@@ -120,30 +144,25 @@ static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
         file = CreateFileW(info->pcwszFilePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return owned ? HRESULT_FROM_WIN32(GetLastError()) : E_INVALIDARG;
-    /* the file is mapped, not read, so its position stays and a large cabinet costs no copy. */
-    static const BYTE empty[1];
+    /*
+     * the file is mapped, not read, so its position stays and a large cabinet costs no copy. an executable is taken in views,
+     * as the setup programs of Autodesk are a gigabyte in a process of 32 bits.
+     */
     LARGE_INTEGER size;
-    const BYTE *bytes = empty;
     HANDLE mapping = nullptr;
     LONG result = 0;
     if (!GetFileSizeEx(file, &size))
         result = HRESULT_FROM_WIN32(GetLastError());
     else if (size.QuadPart < 0 || size.QuadPart > 0xFFFFFFFF)
         result = HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
-    else if (size.QuadPart && (!(mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr)) ||
-                               !(bytes = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0))))
+    else if (size.QuadPart && !(mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr)))
         result = HRESULT_FROM_WIN32(GetLastError());
-    if (mapping)
-        CloseHandle(mapping);
     if (owned)
         CloseHandle(file);
     if (!result)
-        result = size.QuadPart >= 8 && !memcmp(bytes, "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", 8) ?
-                     WtVerifyInstaller(bytes, (DWORD)size.QuadPart, data, chain) :
-                 size.QuadPart >= 4 && !memcmp(bytes, "MSCF", 4) ? WtVerifyCab(bytes, (DWORD)size.QuadPart, data, chain)
-                                                                  : WtVerifyPe(bytes, (DWORD)size.QuadPart, data, chain);
-    if (bytes && bytes != empty)
-        UnmapViewOfFile(bytes);
+        result = verify_mapping(mapping, (DWORD)size.QuadPart, data, chain);
+    if (mapping)
+        CloseHandle(mapping);
     return result;
 }
 

@@ -18,16 +18,35 @@ static BOOL padding_checked(void)
                         RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS && value;
 }
 
-LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain)
+/* the headers of a file are read from its first megabyte, the certificate table from a view of its own. */
+#define HEAD_LIMIT 0x100000
+#define TABLE_LIMIT 0x1000000
+
+static LONG verify_views(HANDLE mapping, const BYTE *bytes, DWORD head, DWORD size, const WINTRUST_DATA *options,
+                         PCCERT_CHAIN_CONTEXT *chain);
+
+LONG WtVerifyPe(HANDLE mapping, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain)
 {
-    if (size < 64 || word(bytes) != 0x5a4d)
+    DWORD head = size < HEAD_LIMIT ? size : HEAD_LIMIT;
+    const BYTE *bytes = head ? MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, head) : nullptr;
+    if (!bytes)
+        return head ? HRESULT_FROM_WIN32(GetLastError()) : TRUST_E_SUBJECT_FORM_UNKNOWN;
+    LONG result = verify_views(mapping, bytes, head, size, options, chain);
+    UnmapViewOfFile(bytes);
+    return result;
+}
+
+static LONG verify_views(HANDLE mapping, const BYTE *bytes, DWORD head, DWORD size, const WINTRUST_DATA *options,
+                         PCCERT_CHAIN_CONTEXT *chain)
+{
+    if (head < 64 || word(bytes) != 0x5a4d)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
     DWORD nt = dword(bytes + 60);
-    if (nt > size - 24 || dword(bytes + nt) != 0x4550)
+    if (nt > head - 24 || dword(bytes + nt) != 0x4550)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
     DWORD optional = nt + 24, optional_size = word(bytes + nt + 20);
     DWORD sections = word(bytes + nt + 6);
-    if (optional_size > size - optional || optional_size < 96 || !sections || sections > 96)
+    if (optional_size > head - optional || optional_size < 96 || !sections || sections > 96)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
     WORD magic = word(bytes + optional);
     DWORD directories = magic == 0x10b ? 96 : magic == 0x20b ? 112 : 0;
@@ -43,8 +62,9 @@ LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCC
     if (!certificate && !certificate_size)
         return TRUST_E_NOSIGNATURE;
     DWORD headers = dword(bytes + optional + 60), table = optional + optional_size;
-    if (headers > size || table > headers || sections > (headers - table) / 40 ||
-        certificate < headers || certificate > size || certificate_size != size - certificate || certificate_size < 8)
+    if (headers > head || table > headers || sections > (headers - table) / 40 ||
+        certificate < headers || certificate > size || certificate_size != size - certificate ||
+        certificate_size < 8 || certificate_size > TABLE_LIMIT)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
     struct { DWORD offset, size; } sorted[96];
     DWORD n = 0;
@@ -70,15 +90,28 @@ LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCC
             return TRUST_E_SUBJECT_FORM_UNKNOWN;
         end += sorted[i].size;
     }
-    DWORD length = dword(bytes + certificate);
-    if (length < 8 || length > certificate_size || word(bytes + certificate + 4) != 0x200 ||
-        word(bytes + certificate + 6) != 2)
-        return TRUST_E_SUBJECT_FORM_UNKNOWN;
-    if (padding_checked())
-        for (DWORD i = length; i < certificate_size; i++)
-            if (bytes[certificate + i])
-                return TRUST_E_SUBJECT_NOT_TRUSTED;
-    WT_SUBJECT subject = {.image = bytes, .size = size, .checksum = optional + 64, .directory = directory,
-                          .certificate = certificate};
-    return WtVerifySignedData((WT_BYTES){bytes + certificate + 8, length - 8}, &subject, options, chain);
+    /* the table is mapped from an allocation boundary, which comes before it. */
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    DWORD start = certificate & ~(info.dwAllocationGranularity - 1);
+    const BYTE *view = MapViewOfFile(mapping, FILE_MAP_READ, 0, start, size - start);
+    if (!view)
+        return HRESULT_FROM_WIN32(GetLastError());
+    const BYTE *table_bytes = view + (certificate - start);
+    DWORD length = dword(table_bytes);
+    LONG result = TRUST_E_SUBJECT_FORM_UNKNOWN;
+    if (length >= 8 && length <= certificate_size && word(table_bytes + 4) == 0x200 && word(table_bytes + 6) == 2) {
+        result = 0;
+        if (padding_checked())
+            for (DWORD i = length; i < certificate_size; i++)
+                if (table_bytes[i])
+                    result = TRUST_E_SUBJECT_NOT_TRUSTED;
+        if (!result) {
+            WT_SUBJECT subject = {.mapping = mapping, .image = bytes, .size = size, .checksum = optional + 64,
+                                  .directory = directory, .certificate = certificate};
+            result = WtVerifySignedData((WT_BYTES){table_bytes + 8, length - 8}, &subject, options, chain);
+        }
+    }
+    UnmapViewOfFile(view);
+    return result;
 }
