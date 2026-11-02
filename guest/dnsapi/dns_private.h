@@ -197,6 +197,7 @@ int DnsWireQuery(BYTE *out, int capacity, WORD id, const char *name, WORD type, 
 BOOL DnsWireParse(const BYTE *message, int length, WORD id, const char *name, WORD type, BOOL *truncated,
                   DNS_ANSWER *answer);
 BOOL DnsNameEqual(const char *a, const char *b);
+BOOL DnsWireQuestion(const BYTE *message, int length, WORD *id, char *name, int capacity, WORD *type);
 
 /* ------------------------------------------------------------------ lookups */
 

@@ -250,6 +250,17 @@ static BOOL read_record(const BYTE *m, int length, int *at, BYTE section, DNS_RR
     return TRUE;
 }
 
+/* the id and the first question of a message, which the answer must repeat. */
+BOOL DnsWireQuestion(const BYTE *m, int length, WORD *id, char *name, int capacity, WORD *type)
+{
+    int next;
+    if (length < 12 || get16(m + 4) < 1 || !read_name(m, length, 12, name, capacity, &next) || next + 4 > length)
+        return FALSE;
+    *id = get16(m);
+    *type = get16(m + next);
+    return TRUE;
+}
+
 BOOL DnsWireParse(const BYTE *m, int length, WORD id, const char *name, WORD type, BOOL *truncated,
                   DNS_ANSWER *answer)
 {

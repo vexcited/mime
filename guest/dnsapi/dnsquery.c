@@ -216,6 +216,83 @@ DNS_STATUS WINAPI DnsQuery_W(PCWSTR name, WORD type, DWORD options, PVOID extra,
     return status;
 }
 
+/* ------------------------------------------------------------------ messages of the caller */
+
+/*
+ * a message as a program holds it before it goes out or after it came in: the wire format with the id and the four
+ * counts of the header in the byte order of the machine. the flags keep their place. Windows hands these two calls the
+ * header like that so that a program fills and reads the counts without swapping them; the order is read from the
+ * DNS_BYTE_FLIP_HEADER_COUNTS macro of windns.h, not from the code of the calls.
+ */
+static void flip_header(BYTE *m)
+{
+    static const int words[] = {0, 4, 6, 8, 10};
+    for (int i = 0; i < 5; i++) {
+        BYTE t = m[words[i]];
+        m[words[i]] = m[words[i] + 1];
+        m[words[i] + 1] = t;
+    }
+}
+
+BOOL WINAPI DnsWriteQuestionToBuffer_W(PVOID buffer, PDWORD size, PCWSTR name, WORD type, WORD xid, BOOL recursion)
+{
+    BYTE message[512];
+    if (!size || !name) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    char *utf8 = narrow(name);
+    if (!utf8) {
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    int length = DnsWireQuery(message, sizeof(message), xid, utf8, type, recursion);
+    DnsRelease(utf8);
+    if (length < 0) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (!buffer || *size < (DWORD)length) {
+        *size = (DWORD)length;
+        SetLastError(ERROR_MORE_DATA);
+        return FALSE;
+    }
+    flip_header(message);
+    memcpy(buffer, message, (size_t)length);
+    *size = (DWORD)length;
+    return TRUE;
+}
+
+DNS_STATUS WINAPI DnsExtractRecordsFromMessage_W(PVOID buffer, WORD length, PDNS_RECORD *records)
+{
+    if (records)
+        *records = nullptr;
+    if (!buffer || !records || length < 12)
+        return ERROR_INVALID_PARAMETER;
+    BYTE *message = DnsAllocate(length);
+    if (!message)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    memcpy(message, buffer, length);
+    flip_header(message);
+    char name[300];
+    WORD id, type;
+    BOOL truncated = FALSE;
+    DNS_ANSWER answer = {};
+    DNS_STATUS status = DNS_ERROR_BAD_PACKET;
+    if (DnsWireQuestion(message, length, &id, name, sizeof(name), &type) &&
+        DnsWireParse(message, length, id, name, type, &truncated, &answer)) {
+        status = answer.status;
+        if (answer.records) {
+            *records = DnsRecordsBuild(answer.records, DnsCharSetUnicode, 0);
+            if (!*records)
+                status = ERROR_NOT_ENOUGH_MEMORY;
+            DnsRrFree(answer.records);
+        }
+    }
+    DnsRelease(message);
+    return status;
+}
+
 /* ------------------------------------------------------------------ DnsQueryEx */
 
 typedef struct PENDING {

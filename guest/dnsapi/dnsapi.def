@@ -5,6 +5,7 @@ EXPORTS
     DnsFlushResolverCacheEntry_A
     DnsFlushResolverCacheEntry_UTF8
     DnsFlushResolverCacheEntry_W
+    DnsExtractRecordsFromMessage_W
     DnsFree
     DnsQueryConfig
     DnsQueryEx
@@ -15,6 +16,7 @@ EXPORTS
     DnsQuery_UTF8
     DnsQuery_W
     DnsRecordListFree
+    DnsWriteQuestionToBuffer_W
     DnsValidateName_A
     DnsValidateName_UTF8
     DnsValidateName_W

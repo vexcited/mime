@@ -5,6 +5,7 @@ EXPORTS
     DnsFlushResolverCacheEntry_A=_DnsFlushResolverCacheEntry_A@4
     DnsFlushResolverCacheEntry_UTF8=_DnsFlushResolverCacheEntry_UTF8@4
     DnsFlushResolverCacheEntry_W=_DnsFlushResolverCacheEntry_W@4
+    DnsExtractRecordsFromMessage_W=_DnsExtractRecordsFromMessage_W@12
     DnsFree=_DnsFree@8
     DnsQueryConfig=_DnsQueryConfig@24
     DnsQueryEx=_DnsQueryEx@12
@@ -15,6 +16,7 @@ EXPORTS
     DnsQuery_UTF8=_DnsQuery_UTF8@24
     DnsQuery_W=_DnsQuery_W@24
     DnsRecordListFree=_DnsRecordListFree@8
+    DnsWriteQuestionToBuffer_W=_DnsWriteQuestionToBuffer_W@24
     DnsValidateName_A=_DnsValidateName_A@8
     DnsValidateName_UTF8=_DnsValidateName_UTF8@8
     DnsValidateName_W=_DnsValidateName_W@8
