@@ -4,21 +4,26 @@
  * the shim of the .NET Framework, both can ask.
  */
 #include <mime/feature.h>
+#include <mime/ntapi.h>
 #include <mime/win32/winbase.h>
 
 typedef struct TRIGGER {
     PCWSTR Folder;  /* Below the drive, with a closing backslash. */
     PCWSTR Feature;
+    BOOL (*Present)(WCHAR drive);
     volatile LONG State;
 } TRIGGER;
 
-enum { TRIGGER_IDLE, TRIGGER_RUNNING, TRIGGER_ENABLED, TRIGGER_GAVE_UP };
+enum { TRIGGER_IDLE, TRIGGER_RUNNING, TRIGGER_ENABLED, TRIGGER_GAVE_UP, TRIGGER_PRESENT };
+
+static BOOL webview2_present(WCHAR drive);
+static BOOL netfx_present(WCHAR drive);
 
 /* The folders programs look into for what a feature holds. */
 static TRIGGER g_triggers[] = {
-    {L"\\Program Files (x86)\\Microsoft\\EdgeWebView\\", MIME_FEATURE_WEBVIEW2, TRIGGER_IDLE},
-    {L"\\Windows\\Microsoft.NET\\", MIME_FEATURE_NETFX4, TRIGGER_IDLE},
-    {L"\\Windows\\assembly\\", MIME_FEATURE_NETFX4, TRIGGER_IDLE},
+    {L"\\Program Files (x86)\\Microsoft\\EdgeWebView\\", MIME_FEATURE_WEBVIEW2, webview2_present, TRIGGER_IDLE},
+    {L"\\Windows\\Microsoft.NET\\", MIME_FEATURE_NETFX4, netfx_present, TRIGGER_IDLE},
+    {L"\\Windows\\assembly\\", MIME_FEATURE_NETFX4, netfx_present, TRIGGER_IDLE},
 };
 
 static WCHAR fold(WCHAR c)
@@ -35,6 +40,88 @@ static BOOL in_folder(PCWSTR path, PCWSTR folder)
         if (fold(*path) != fold(*folder))
             return FALSE;
     return TRUE;
+}
+
+/*
+ * The look at what is on the drive uses the native calls and not the file functions of kernelbase, which would end in
+ * MimeFeatureFault again.
+ */
+static BOOL native_open(PCWSTR path, BOOL directory, HANDLE *handle)
+{
+    WCHAR name[MAX_PATH + 8];
+    UINT length = 0;
+    for (PCWSTR p = L"\\??\\"; *p; p++)
+        name[length++] = *p;
+    for (; *path && length < RTL_NUMBER_OF(name) - 1; path++)
+        name[length++] = *path;
+    name[length] = 0;
+    UNICODE_STRING nt = {(USHORT)(length * sizeof(WCHAR)), (USHORT)(sizeof(name)), name};
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+    if (!directory) {
+        FILE_BASIC_INFORMATION info;
+        return NT_SUCCESS(NtQueryAttributesFile(&oa, &info));
+    }
+    IO_STATUS_BLOCK iosb;
+    return NT_SUCCESS(NtOpenFile(handle, FILE_LIST_DIRECTORY | SYNCHRONIZE, &oa, &iosb, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                 FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT));
+}
+
+/* The runtime is a folder named after its version that holds msedgewebview2.exe. */
+static BOOL webview2_present(WCHAR drive)
+{
+    WCHAR application[MAX_PATH];
+    UINT base = 0;
+    application[base++] = drive;
+    application[base++] = L':';
+    for (PCWSTR p = L"\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application"; *p; p++)
+        application[base++] = *p;
+    application[base] = 0;
+    HANDLE dir;
+    if (!native_open(application, TRUE, &dir))
+        return FALSE;
+    BOOL found = FALSE;
+    UCHAR buffer[1024];
+    BOOLEAN restart = TRUE;
+    while (!found) {
+        IO_STATUS_BLOCK iosb;
+        if (!NT_SUCCESS(NtQueryDirectoryFile(dir, nullptr, nullptr, nullptr, &iosb, buffer, sizeof(buffer), FileNamesInformation, FALSE, nullptr, restart)))
+            break;
+        restart = FALSE;
+        for (FILE_NAMES_INFORMATION *e = (FILE_NAMES_INFORMATION *)buffer;;
+             e = (FILE_NAMES_INFORMATION *)((PUCHAR)e + e->NextEntryOffset)) {
+            ULONG n = e->FileNameLength / sizeof(WCHAR);
+            if (n && e->FileName[0] != L'.' && base + 1 + n + 20 < RTL_NUMBER_OF(application)) {
+                UINT length = base;
+                application[length++] = L'\\';
+                for (ULONG i = 0; i < n; i++)
+                    application[length++] = e->FileName[i];
+                for (PCWSTR p = L"\\msedgewebview2.exe"; *p; p++)
+                    application[length++] = *p;
+                application[length] = 0;
+                if (native_open(application, FALSE, nullptr)) {
+                    found = TRUE;
+                    break;
+                }
+            }
+            if (!e->NextEntryOffset)
+                break;
+        }
+    }
+    NtClose(dir);
+    return found;
+}
+
+static BOOL netfx_present(WCHAR drive)
+{
+    WCHAR path[MAX_PATH];
+    UINT length = 0;
+    path[length++] = drive;
+    path[length++] = L':';
+    for (PCWSTR p = L"\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\clr.dll"; *p; p++)
+        path[length++] = *p;
+    path[length] = 0;
+    return native_open(path, FALSE, nullptr);
 }
 
 static PCWSTR skip_prefix(PCWSTR path)
@@ -150,6 +237,11 @@ BOOL MimeFeatureFault(PCWSTR path)
         DWORD last = GetLastError();
         if (GetEnvironmentVariableW(MIME_FEATURE_BUSY_VARIABLE, busy, RTL_NUMBER_OF(busy))) {
             InterlockedExchange(&trigger->State, TRIGGER_GAVE_UP);
+            return FALSE;
+        }
+        /* A file that an installed feature does not have is missing, as on Windows: programs probe for optional ones. */
+        if (trigger->Present(path[0])) {
+            InterlockedExchange(&trigger->State, TRIGGER_PRESENT);
             return FALSE;
         }
         DWORD result = MimeFeatureRequest(trigger->Feature, 0);
