@@ -844,6 +844,8 @@ static NTSTATUS snap_descriptor(PLDR_DATA_TABLE_ENTRY module, IMAGE_IMPORT_DESCR
     IMAGE_THUNK_DATA *lookup = (IMAGE_THUNK_DATA *)(base + (desc->OriginalFirstThunk ? desc->OriginalFirstThunk
                                                                                           : desc->FirstThunk));
     IMAGE_THUNK_DATA *iat = (IMAGE_THUNK_DATA *)(base + desc->FirstThunk);
+    /* every name the library lacks is reported, the first failure is the status. */
+    NTSTATUS first_failure = STATUS_SUCCESS;
     for (; lookup->u1.AddressOfData; lookup++, iat++) {
         PVOID address;
         if (IMAGE_SNAP_BY_ORDINAL(lookup->u1.Ordinal)) {
@@ -851,19 +853,23 @@ static NTSTATUS snap_descriptor(PLDR_DATA_TABLE_ENTRY module, IMAGE_IMPORT_DESCR
             status = resolve_export(dep, nullptr, 0, ordinal, &address, ctx, 0);
             if (!NT_SUCCESS(status)) {
                 report_missing(module, dll_name, nullptr, ordinal, status);
-                return status;
+                if (NT_SUCCESS(first_failure))
+                    first_failure = status;
+                continue;
             }
         } else {
             IMAGE_IMPORT_BY_NAME *by_name = (IMAGE_IMPORT_BY_NAME *)(base + lookup->u1.AddressOfData);
             status = resolve_export(dep, (PCSTR)by_name->Name, by_name->Hint, 0, &address, ctx, 0);
             if (!NT_SUCCESS(status)) {
                 report_missing(module, dll_name, (PCSTR)by_name->Name, 0, status);
-                return status;
+                if (NT_SUCCESS(first_failure))
+                    first_failure = status;
+                continue;
             }
         }
         iat->u1.Function = (ULONG_PTR)address;
     }
-    return STATUS_SUCCESS;
+    return first_failure;
 }
 
 static NTSTATUS snap_imports(PLDR_DATA_TABLE_ENTRY module, LOAD_CONTEXT *ctx)
@@ -883,11 +889,15 @@ static NTSTATUS snap_imports(PLDR_DATA_TABLE_ENTRY module, LOAD_CONTEXT *ctx)
     NTSTATUS status = NtProtectVirtualMemory(NtCurrentProcess(), &protect_base, &protect_size, PAGE_READWRITE, &old);
     if (!NT_SUCCESS(status))
         return status;
+    NTSTATUS first_failure = STATUS_SUCCESS;
     for (; desc->Name; desc++) {
-        status = snap_descriptor(module, desc, ctx);
-        if (!NT_SUCCESS(status))
-            break;
+        NTSTATUS result = snap_descriptor(module, desc, ctx);
+        if (!NT_SUCCESS(result)) {
+            first_failure = NT_SUCCESS(first_failure) ? result : first_failure;
+            /* a library that cannot be loaded is not asked about its names, the rest still say what they lack. */
+        }
     }
+    status = first_failure;
     ULONG ignored;
     NtProtectVirtualMemory(NtCurrentProcess(), &protect_base, &protect_size, old, &ignored);
     NtFlushInstructionCache(NtCurrentProcess(), nullptr, 0);
