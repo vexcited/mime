@@ -399,6 +399,8 @@ BOOLEAN KiSetupUserException(PKTRAP_FRAME frame, PVOID dispatcher, PEXCEPTION_RE
         !NT_SUCCESS(KiCopyToUser((PVOID)ctx_addr, &ctx, sizeof(ctx))))
         return FALSE;
     frame->Rsp = ctx_addr - 0x30;
+    /* the dispatcher runs without the trap flag, the context keeps it. */
+    frame->Rflags &= ~0x100ull;
     frame->Rcx = rec;
     frame->Rdx = ctx_addr;
     frame->Rip = (ULONG64)dispatcher;
