@@ -33,6 +33,7 @@ static struct {
     ULONG Volume;
     ULONG64 FileId;
     LONG Count;
+    LONG ImageCount; /* of the count, the windows of image sections. */
 } g_mapped_files[WB_MAPPED_FILES];
 static volatile LONG g_mapped_total;
 static LONG g_mapped_overflow; /* uses the table had no room for: meanwhile every file counts as mapped. */
@@ -211,6 +212,30 @@ void FsWbMapped(ULONG volume, ULONG64 file_id, LONG delta)
         g_mapped_overflow += delta;
     __atomic_add_fetch(&g_mapped_total, delta, __ATOMIC_SEQ_CST);
     ExReleaseFastMutex(&g_lock);
+}
+
+void FsWbImageMapped(ULONG volume, ULONG64 file_id, LONG delta)
+{
+    ExAcquireFastMutex(&g_lock);
+    for (LONG i = 0; i < WB_MAPPED_FILES; i++)
+        if (g_mapped_files[i].Count && g_mapped_files[i].Volume == volume && g_mapped_files[i].FileId == file_id) {
+            g_mapped_files[i].ImageCount += delta;
+            break;
+        }
+    ExReleaseFastMutex(&g_lock);
+}
+
+BOOLEAN FsWbIsImageMapped(ULONG volume, ULONG64 file_id)
+{
+    if (!__atomic_load_n(&g_mapped_total, __ATOMIC_SEQ_CST))
+        return FALSE;
+    BOOLEAN mapped = FALSE;
+    ExAcquireFastMutex(&g_lock);
+    for (LONG i = 0; i < WB_MAPPED_FILES && !mapped; i++)
+        mapped = g_mapped_files[i].Count && g_mapped_files[i].ImageCount > 0 && g_mapped_files[i].Volume == volume &&
+                 g_mapped_files[i].FileId == file_id;
+    ExReleaseFastMutex(&g_lock);
+    return mapped;
 }
 
 BOOLEAN FsWbAnyMapped(void)

@@ -728,7 +728,7 @@ NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out)
             return STATUS_SUCCESS;
         }
     }
-    if (IoGetFileWindow(file, &pa, &size, &ref)) {
+    if (IoGetImageFileWindow(file, &pa, &size, &ref)) {
         /* processes running the same image share its section, and so its built and relocated pages. */
         PSECTION shared = index >= RTL_NUMBER_OF(g_rom_images) ? find_file_image(pa, size) : nullptr;
         if (shared) {

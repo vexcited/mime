@@ -9,6 +9,7 @@
 
 #define MIMEFS_CHUNK (128 * 1024)
 #define STATUS_USER_MAPPED_FILE ((NTSTATUS)0xC0000243L)
+#define STATUS_CANNOT_DELETE ((NTSTATUS)0xC0000121L)
 #define STATUS_INVALID_VOLUME_LABEL ((NTSTATUS)0xC0000086L)
 
 typedef struct MIMEFS_COUNTERS {
@@ -230,6 +231,7 @@ typedef struct MIMEFS_WINDOW_REF {
     ULONG64 Private;     /* guest address of the section's private window. */
     ULONG Volume;
     ULONG64 FileId;
+    BOOLEAN Image; /* the window of an image section. */
 } MIMEFS_WINDOW_REF;
 
 static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info);
@@ -301,6 +303,18 @@ BOOLEAN IoGetFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *re
     return IoGetFileWindowEx(file, FALSE, 0, pa, size, ref);
 }
 
+BOOLEAN IoGetImageFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref)
+{
+    if (!IoGetFileWindowEx(file, FALSE, 0, pa, size, ref))
+        return FALSE;
+    MIMEFS_WINDOW_REF *r = *ref;
+    if (r) {
+        r->Image = TRUE;
+        FsWbImageMapped(r->Volume, r->FileId, 1);
+    }
+    return TRUE;
+}
+
 void IoReleaseFileWindow(PVOID ref)
 {
     MIMEFS_WINDOW_REF *r = ref;
@@ -310,6 +324,8 @@ void IoReleaseFileWindow(PVOID ref)
         FsCacheClose(r->Cache);
     if (r->Private)
         FsCacheUnmapPrivate(r->Private);
+    if (r->Image)
+        FsWbImageMapped(r->Volume, r->FileId, -1);
     FsWbMapped(r->Volume, r->FileId, -1);
     ExFreePool(r);
 }
@@ -580,6 +596,13 @@ opened:
         if (host)
             HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
         return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+    }
+    if ((file->Flags & FO_DELETE_ON_CLOSE) && action == FILE_OPENED && !directory &&
+        FsWbIsImageMapped(vol->HostVolume, opened.file_id)) {
+        ExFreePool(fcb);
+        if (host)
+            HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
+        return complete(irp, STATUS_CANNOT_DELETE, 0);
     }
     fcb->HostHandle = host;
     fcb->StatOnly = (req_flags & MIME_FS_OPEN_STAT_ONLY) != 0;
@@ -1288,6 +1311,9 @@ static NTSTATUS NTAPI mimefs_set_info(PDEVICE_OBJECT device, PIRP irp)
         if (remove && fcb->Directory && fcb->HostHandle &&
             HalHypercallUnlocked(MIME_HC_FS_DELETE, fcb->HostHandle, 1, 0, 0, 0, 0, nullptr) == MIME_HC_STATUS_NOT_EMPTY)
             return complete(irp, STATUS_DIRECTORY_NOT_EMPTY, 0);
+        /* a file whose image is mapped, a loaded dll or a running program, stays. */
+        if (remove && !fcb->Directory && FsWbIsImageMapped(fcb->Volume, fcb->FileId))
+            return complete(irp, STATUS_CANNOT_DELETE, 0);
         if (!remove && fcb->Directory && fcb->HostHandle)
             HalHypercallUnlocked(MIME_HC_FS_DELETE, fcb->HostHandle, 0, 0, 0, 0, 0, nullptr);
         fcb->DeleteOnClose = remove;

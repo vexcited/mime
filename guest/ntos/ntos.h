@@ -1183,6 +1183,8 @@ NTSTATUS IopSynchronousRequest(PFILE_OBJECT file, UCHAR major, UCHAR minor, PVOI
 NTSTATUS IoRenameFileObject(PFILE_OBJECT file, PCWSTR new_name, BOOLEAN replace);
 const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file);
 BOOLEAN IoGetFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref);
+/* the same for an image section, whose file then cannot be deleted. */
+BOOLEAN IoGetImageFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref);
 /*
  * for a data file section: a window that is the file's own pages both ways. writable asks for one the guest
  * may write, which first extends the file to minimum_size, as Windows does for a section.
@@ -1260,6 +1262,9 @@ void FsWbMapped(ULONG volume, ULONG64 file_id, LONG delta);
 /* the file has more than one name, so a look by any name flushes what its handles buffered by the others. */
 void FsWbNoteLinked(ULONG volume, ULONG64 file_id);
 BOOLEAN FsWbIsMapped(ULONG volume, ULONG64 file_id);
+/* a file whose image section is in use cannot be deleted, as in windows. */
+void FsWbImageMapped(ULONG volume, ULONG64 file_id, LONG delta);
+BOOLEAN FsWbIsImageMapped(ULONG volume, ULONG64 file_id);
 BOOLEAN FsWbAnyMapped(void);
 NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64 offset, PULONG read);
 void IopInitializeCompletion(void);
