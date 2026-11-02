@@ -218,11 +218,12 @@ static UINT run_sequence_row(MSIHANDLE handle, MIME_MSI_PACKAGE *package, MIME_M
     return error;
 }
 
-UINT WINAPI MsiSequenceW(MSIHANDLE handle, LPCWSTR name, int mode)
+/*
+ * a sequence of the user interface stops where it reaches ExecuteAction, which hands the work to the execute sequence the
+ * caller runs next. what follows it in the table, the dialogs of the end, has no window to show here.
+ */
+static UINT run_sequence(MSIHANDLE handle, LPCWSTR name, BOOL ui)
 {
-    MIME_REMOTE(PROXY_SequenceW, UINT, MIME_ARG(handle), MIME_ARG(name), MIME_ARG(mode));
-    if (!name || !*name || mode)
-        return ERROR_INVALID_PARAMETER;
     AcquireSRWLockExclusive(&MimeMsiLock);
     MIME_MSI_PACKAGE *package = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_PACKAGE);
     UINT error = !package ? ERROR_INVALID_HANDLE : package->SequenceRunning ? ERROR_INSTALL_ALREADY_RUNNING : ERROR_SUCCESS;
@@ -272,6 +273,10 @@ UINT WINAPI MsiSequenceW(MSIHANDLE handle, LPCWSTR name, int mode)
     if (!error) {
         for (ULONG sequence = 1; sequence < 32768 && !error && !ended; sequence++)
             for (ULONG row = heads[sequence]; row != UINT32_MAX && !error && !ended; row = next[row]) {
+                if (ui && !wcscmp(package->Database->Strings[MimeMsiCell(table, row, 0)], L"ExecuteAction")) {
+                    ended = TRUE;
+                    break;
+                }
                 error = run_sequence_row(handle, package, table, row);
                 /* an action may end the sequence early with success. */
                 if (error == ERROR_NO_MORE_ITEMS) {
@@ -280,7 +285,7 @@ UINT WINAPI MsiSequenceW(MSIHANDLE handle, LPCWSTR name, int mode)
                 }
             }
         int exit_sequence = error == ERROR_INSTALL_USEREXIT ? -2 : error ? -3 : -1;
-        for (ULONG row = 0; row < table->Rows; row++) {
+        for (ULONG row = 0; !ui && row < table->Rows; row++) {
             if ((int)MimeMsiCell(table, row, 2) - 0x8000 == exit_sequence) {
                 UINT exit_error = run_sequence_row(handle, package, table, row);
                 if (!error)
@@ -309,4 +314,17 @@ UINT WINAPI MsiSequenceW(MSIHANDLE handle, LPCWSTR name, int mode)
     MimeMsiRelease(&package->Object);
     ReleaseSRWLockExclusive(&MimeMsiLock);
     return error;
+}
+
+UINT WINAPI MsiSequenceW(MSIHANDLE handle, LPCWSTR name, int mode)
+{
+    MIME_REMOTE(PROXY_SequenceW, UINT, MIME_ARG(handle), MIME_ARG(name), MIME_ARG(mode));
+    if (!name || !*name || mode)
+        return ERROR_INVALID_PARAMETER;
+    return run_sequence(handle, name, FALSE);
+}
+
+UINT MimeMsiRunInterfaceSequence(MSIHANDLE handle, PCWSTR name)
+{
+    return run_sequence(handle, name, TRUE);
 }

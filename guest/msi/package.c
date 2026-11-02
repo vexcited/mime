@@ -159,9 +159,15 @@ static UINT load_properties(MIME_MSI_PACKAGE *package)
     MimeMsiFree(directory);
     if (!error)
         error = load_source_type(package);
-    if (!error && !(package->Options & MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE) &&
-        MsiQueryProductStateW(MimeMsiGetProperty(package, L"ProductCode")) == INSTALLSTATE_DEFAULT)
-        error = MimeMsiSetProperty(package, L"Installed", L"1");
+    if (!error && !(package->Options & MSIOPENPACKAGEFLAGS_IGNOREMACHINESTATE)) {
+        /* what the machine has of the product, which launch conditions of the packages that need Setup test. */
+        INSTALLSTATE state = MsiQueryProductStateW(MimeMsiGetProperty(package, L"ProductCode"));
+        WCHAR text[8];
+        _snwprintf(text, RTL_NUMBER_OF(text), L"%d", (int)state);
+        error = MimeMsiSetProperty(package, L"ProductState", text);
+        if (!error && state == INSTALLSTATE_DEFAULT)
+            error = MimeMsiSetProperty(package, L"Installed", L"1");
+    }
     return error;
 }
 

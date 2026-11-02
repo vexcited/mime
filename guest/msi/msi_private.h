@@ -241,6 +241,8 @@ UINT MimeMsiCustomActionLookup(MIME_MSI_PACKAGE *package, PCWSTR name, MIME_MSI_
 void MimeMsiCustomActionFree(MIME_MSI_CA_ROW *row);
 UINT MimeMsiRunCustomAction(MSIHANDLE handle, MIME_MSI_PACKAGE *package, MIME_MSI_CA_ROW *row, PWSTR *message);
 UINT MimeMsiRunScript(MSIHANDLE handle, MIME_MSI_PACKAGE *package);
+UINT MimeMsiRunInterfaceSequence(MSIHANDLE handle, PCWSTR name);
+BOOL MimeMsiComponentKeyPathMissing(MIME_MSI_PACKAGE *package, PCWSTR name);
 void MimeMsiClearScript(MIME_MSI_PACKAGE *package);
 UINT MimeMsiRunRollback(MIME_MSI_PACKAGE *package);
 UINT MimeMsiRunCommit(MIME_MSI_PACKAGE *package);

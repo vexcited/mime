@@ -188,6 +188,34 @@ static BOOL key_path_present(PCWSTR path)
     return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
 }
 
+/* a component whose key path is not on the machine is installed again whatever the mode of a reinstall asks for. */
+BOOL MimeMsiComponentKeyPathMissing(MIME_MSI_PACKAGE *package, PCWSTR name)
+{
+    MIME_MSI_TABLE *table;
+    if (MimeMsiLoadTable(package->Database, L"Component", &table))
+        return FALSE;
+    ULONG id = MimeMsiColumn(table, L"Component", TRUE);
+    ULONG key_column = MimeMsiColumn(table, L"KeyPath", TRUE);
+    ULONG attributes_column = MimeMsiColumn(table, L"Attributes", FALSE);
+    if (id == UINT32_MAX || key_column == UINT32_MAX)
+        return FALSE;
+    for (ULONG row = 0; row < table->Rows; row++) {
+        PCWSTR candidate = MimeMsiText(package->Database, table, row, id);
+        if (!candidate || wcscmp(candidate, name))
+            continue;
+        PWSTR directory = nullptr, path = nullptr;
+        BOOL missing = FALSE;
+        if (!MimeMsiComponentDirectory(package, name, &directory) &&
+            !component_key_path(package, name, directory, MimeMsiText(package->Database, table, row, key_column),
+                                attributes_column == UINT32_MAX ? 0 : MimeMsiInteger(table, row, attributes_column), &path))
+            missing = !key_path_present(path);
+        MimeMsiFree(directory);
+        MimeMsiFree(path);
+        return missing;
+    }
+    return FALSE;
+}
+
 static UINT open_component_catalogs(PCWSTR component, HKEY keys[2])
 {
     WCHAR path[128];

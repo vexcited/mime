@@ -328,6 +328,14 @@ static UINT registry_value(PCWSTR text, DWORD length, DWORD *type, BYTE **data, 
 static UINT write_registry_pass(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, ULONG pass)
 {
     UINT error = ERROR_SUCCESS;
+    /* what a component lacks is told before its first value is written, which gives it a key path. */
+    BOOL *missing = MimeMsiAllocate(((SIZE_T)table->Rows + 1) * sizeof(*missing));
+    if (!missing)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    for (ULONG row = 0; row < table->Rows; row++) {
+        PCWSTR component = cell_text(package, table, row, L"Component_");
+        missing[row] = component && MimeMsiComponentKeyPathMissing(package, component);
+    }
     for (ULONG row = 0; row < table->Rows && !error; row++) {
         PCWSTR component = cell_text(package, table, row, L"Component_");
         ULONG action;
@@ -335,14 +343,17 @@ static UINT write_registry_pass(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table
             continue;
         int root_number = cell_number(table, row, L"Root");
         HKEY root = registry_root(package, root_number);
-        if (!root)
-            return ERROR_INSTALL_PACKAGE_INVALID;
+        if (!root) {
+            error = ERROR_INSTALL_PACKAGE_INVALID;
+            break;
+        }
         PCWSTR raw_name = cell_text(package, table, row, L"Name");
         if ((raw_name && !wcscmp(raw_name, L"-")) != (pass == 0))
             continue;
         /* user data is written with the letter u and machine data with m, the scope root follows neither. */
-        if (((root_number == 1 || root_number == 3) && !MimeMsiModeAllows(package, REINSTALLMODE_USERDATA)) ||
-            ((root_number == 0 || root_number == 2) && !MimeMsiModeAllows(package, REINSTALLMODE_MACHINEDATA)))
+        if ((((root_number == 1 || root_number == 3) && !MimeMsiModeAllows(package, REINSTALLMODE_USERDATA)) ||
+             ((root_number == 0 || root_number == 2) && !MimeMsiModeAllows(package, REINSTALLMODE_MACHINEDATA))) &&
+            !missing[row])
             continue;
         error = component_view(package, component, &package->RegistryView);
         PWSTR key = nullptr, name = nullptr, value = nullptr;
@@ -384,6 +395,7 @@ static UINT write_registry_pass(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table
         MimeMsiFree(name);
         MimeMsiFree(value);
     }
+    MimeMsiFree(missing);
     return error;
 }
 

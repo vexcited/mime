@@ -229,15 +229,25 @@ static UINT execute_package(MSIHANDLE handle)
         } else
             error = MimeMsiSetProperty(package, L"ACTION", L"INSTALL");
     }
+    BOOL shown_sequence = FALSE;
     if (!error && level > INSTALLUILEVEL_BASIC) {
-        MIME_MSI_TABLE *ui;
+        MIME_MSI_TABLE *ui, *dialogs;
         UINT status = MimeMsiLoadTable(package->Database, ui_sequence, &ui);
-        if (!status && ui->Rows)
-            error = ERROR_CALL_NOT_IMPLEMENTED;
-        else if (status && status != ERROR_BAD_QUERY_SYNTAX)
+        if (!status && ui->Rows) {
+            /* a package with dialogs needs a window to show them, one that only checks things runs its sequence. */
+            UINT found = MimeMsiLoadTable(package->Database, L"Dialog", &dialogs);
+            if (!found && dialogs->Rows)
+                error = ERROR_CALL_NOT_IMPLEMENTED;
+            else if (found && found != ERROR_BAD_QUERY_SYNTAX)
+                error = found;
+            else
+                shown_sequence = TRUE;
+        } else if (status && status != ERROR_BAD_QUERY_SYNTAX)
             error = status;
     }
     ReleaseSRWLockExclusive(&MimeMsiLock);
+    if (!error && shown_sequence)
+        error = MimeMsiRunInterfaceSequence(handle, ui_sequence);
     if (!error)
         error = MsiSequenceW(handle, execute_sequence, 0);
     AcquireSRWLockExclusive(&MimeMsiLock);
