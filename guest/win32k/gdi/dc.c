@@ -1178,7 +1178,7 @@ int NTAPI NtGdiGetAppClipBox(HDC hdc, LPRECT rect)
         RectOffset(&box, -dc->Origin.x, -dc->Origin.y);
         /* the screen of a program that is not dpi aware has the pixels of 96 dpi. */
         if (ScreenIsSurface(dc->Surface) && DpiVirtual(dc->Awareness))
-            DpiRectConvert(&box, DPI_AWARE_SYSTEM, dc->Awareness);
+            DpiRectConvert(&box, DPI_PHYSICAL, dc->Awareness);
         if (result != NULLREGION) {
             LONG xs[4] = {box.left, box.right, box.left, box.right}, ys[4] = {box.top, box.top, box.bottom, box.bottom};
             for (int i = 0; i < 4; i++) {

@@ -199,17 +199,17 @@ int MetricsGetFor(int index, UINT dpi, ULONG awareness)
     case SM_CYSCREEN:
         return screen(W32Display.Height, awareness);
     case SM_CXVIRTUALSCREEN: {
-        RECT all = MonitorVirtualScreen();
-        return screen(all.right, awareness) - screen(all.left, awareness);
+        RECT all = DpiVirtualScreen(awareness);
+        return all.right - all.left;
     }
     case SM_CYVIRTUALSCREEN: {
-        RECT all = MonitorVirtualScreen();
-        return screen(all.bottom, awareness) - screen(all.top, awareness);
+        RECT all = DpiVirtualScreen(awareness);
+        return all.bottom - all.top;
     }
     case SM_XVIRTUALSCREEN:
-        return screen(MonitorVirtualScreen().left, awareness);
+        return DpiVirtualScreen(awareness).left;
     case SM_YVIRTUALSCREEN:
-        return screen(MonitorVirtualScreen().top, awareness);
+        return DpiVirtualScreen(awareness).top;
     case SM_CMONITORS:
         return (int)MonitorCount();
     case SM_CXVSCROLL:

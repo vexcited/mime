@@ -48,11 +48,27 @@ WND *WndDesktop(void)
     return w;
 }
 
+/* the dpi of the monitor a window is mostly on. */
+UINT WndMonitorDpi(const WND *w)
+{
+    RECT physical;
+    WndPhysicalRect(WndTopLevel((WND *)w) ? WndTopLevel((WND *)w) : w, &physical);
+    return MonitorDpiOfRect(&physical);
+}
+
+/* a distance in the pixels of a window in physical ones, at the scale of the monitor the window is on. */
+LONG WndToPhysical(const WND *w, LONG value)
+{
+    if (w->Awareness >= DPI_AWARE_PER_MONITOR)
+        return value;
+    return DpiLength(value, w->Awareness, DPI_PHYSICAL, WndMonitorDpi(w));
+}
+
 /* the window rectangle in physical pixels. */
 void WndPhysicalRect(const WND *w, RECT *out)
 {
     *out = w->WindowRect;
-    DpiRectConvert(out, w->Awareness, DPI_AWARE_SYSTEM);
+    DpiRectConvert(out, w->Awareness, DPI_PHYSICAL);
 }
 
 BOOLEAN WndCoversMonitor(WND *w)
@@ -76,6 +92,28 @@ static void point_to_caller(const WND *w, POINT *p)
 static void point_from_caller(const WND *w, POINT *p)
 {
     DpiPointConvert(p, DpiCurrentAwareness(), w->Awareness);
+}
+
+/* a distance in the pixels of the calling thread and one of the window, which depend on the monitor of per monitor ones. */
+static UINT scale_dpi(const WND *w, ULONG other)
+{
+    return w->Awareness != other && (w->Awareness >= DPI_AWARE_PER_MONITOR || other >= DPI_AWARE_PER_MONITOR)
+               ? WndMonitorDpi(w)
+               : 96;
+}
+
+static void size_from_caller(const WND *w, POINT *p)
+{
+    UINT dpi = scale_dpi(w, DpiCurrentAwareness());
+    p->x = DpiLength(p->x, DpiCurrentAwareness(), w->Awareness, dpi);
+    p->y = DpiLength(p->y, DpiCurrentAwareness(), w->Awareness, dpi);
+}
+
+static void size_to_caller(const WND *w, POINT *p)
+{
+    UINT dpi = scale_dpi(w, DpiCurrentAwareness());
+    p->x = DpiLength(p->x, w->Awareness, DpiCurrentAwareness(), dpi);
+    p->y = DpiLength(p->y, w->Awareness, DpiCurrentAwareness(), dpi);
 }
 
 BOOLEAN WndIsTopLevel(WND *w)
@@ -528,9 +566,9 @@ static RECT monitor_rect(const WND *w)
 static RECT work_of(const WND *w, const RECT *rect)
 {
     RECT physical = *rect;
-    DpiRectConvert(&physical, w->Awareness, DPI_AWARE_SYSTEM);
+    DpiRectConvert(&physical, w->Awareness, DPI_PHYSICAL);
     RECT work = MonitorWorkOfRect(&physical);
-    DpiRectConvert(&work, DPI_AWARE_SYSTEM, w->Awareness);
+    DpiRectConvert(&work, DPI_PHYSICAL, w->Awareness);
     return work;
 }
 
@@ -843,7 +881,7 @@ UINT WndHostDpi(WND *w)
     WND *top = WndTopLevel(w);
     if (top && top->Awareness >= DPI_AWARE_PER_MONITOR && top->Dpi)
         return top->Dpi;
-    return W32SystemDpi();
+    return top ? WndMonitorDpi(top) : W32SystemDpi();
 }
 
 static void set_tree_dpi(WND *w, UINT dpi)
@@ -1026,11 +1064,17 @@ void WndHostDisplay(WND *w, ULONG monitor)
         return;
     /* the monitors are in physical pixels. */
     RECT rect = w->WindowRect;
-    DpiRectConvert(&rect, w->Awareness, DPI_AWARE_SYSTEM);
+    DpiRectConvert(&rect, w->Awareness, DPI_PHYSICAL);
     LONG now = MonitorFromRectIndex(&rect, FALSE);
     if (now == (LONG)monitor)
         return;
+    /* a window that is not per monitor aware keeps its size, which takes the pixels of the monitor it goes to. */
     LONG width = rect.right - rect.left, height = rect.bottom - rect.top;
+    if (w->Awareness < DPI_AWARE_PER_MONITOR) {
+        UINT dpi = to.Dpi ? to.Dpi : 96;
+        width = DpiLength(w->WindowRect.right - w->WindowRect.left, w->Awareness, DPI_PHYSICAL, dpi);
+        height = DpiLength(w->WindowRect.bottom - w->WindowRect.top, w->Awareness, DPI_PHYSICAL, dpi);
+    }
     LONG dx = 0, dy = 0;
     if (MonitorGet(now < 0 ? 0 : (ULONG)now, &from)) {
         dx = W32Max(rect.left - from.Rect.left, 0);
@@ -1040,7 +1084,7 @@ void WndHostDisplay(WND *w, ULONG monitor)
     x = W32Max(to.Work.left, W32Min(x, to.Work.right - width));
     y = W32Max(to.Work.top, W32Min(y, to.Work.bottom - height));
     POINT at = {x, y};
-    DpiPointConvert(&at, DPI_AWARE_SYSTEM, w->Awareness);
+    DpiPointConvert(&at, DPI_PHYSICAL, w->Awareness);
     WndSetPos(w, nullptr, at.x, at.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     if (alive(w) && (w->Style & WS_MAXIMIZE) && !(w->Flags & WNDF_FULLSCREEN)) {
         RECT max;
@@ -1058,14 +1102,16 @@ void WndHostSize(WND *w, LONG width, LONG height)
         return;
     RECT part, window = w->WindowRect;
     HostPart(w, &part);
-    DpiRectConvert(&window, w->Awareness, DPI_AWARE_SYSTEM);
+    DpiRectConvert(&window, w->Awareness, DPI_PHYSICAL);
     LONG cx = width + (window.right - window.left) - (part.right - part.left);
     LONG cy = height + (window.bottom - window.top) - (part.bottom - part.top);
     if (cx == window.right - window.left && cy == window.bottom - window.top)
         return;
-    POINT size = {cx, cy};
-    DpiPointConvert(&size, DPI_AWARE_SYSTEM, w->Awareness);
-    WndSetPos(w, nullptr, 0, 0, size.x, size.y, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    window.right = window.left + cx;
+    window.bottom = window.top + cy;
+    DpiRectConvert(&window, DPI_PHYSICAL, w->Awareness);
+    WndSetPos(w, nullptr, 0, 0, window.right - window.left, window.bottom - window.top,
+              SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 static void deactivate_minimized(WND *w)
@@ -1360,7 +1406,7 @@ WND *WndChildFromPoint(WND *parent, POINT pt, BOOLEAN skip_disabled)
         /* the desktop is in physical pixels and a top level window in its own. */
         POINT at = pt;
         if (parent == g_desktop)
-            DpiPixelConvert(&at, DPI_AWARE_SYSTEM, c->Awareness);
+            DpiPixelConvert(&at, DPI_PHYSICAL, c->Awareness);
         if (!(c->Style & WS_VISIBLE) || !RectContains(&c->WindowRect, at.x, at.y) || !LayerHitTest(c, at))
             continue;
         if (skip_disabled && (c->Style & WS_DISABLED))
@@ -1970,8 +2016,12 @@ BOOL NTAPI NtUserSetWindowPos(HWND hwnd, HWND after, int x, int y, int cx, int c
     BOOL ok = FALSE;
     if (can_touch(w)) {
         POINT at = {x, y}, size = {cx, cy};
-        point_from_caller(w, &at);
-        point_from_caller(w, &size);
+        /* a top level window is placed on the screen and a child in its parent. */
+        if (WndIsTopLevel(w))
+            point_from_caller(w, &at);
+        else
+            size_from_caller(w, &at);
+        size_from_caller(w, &size);
         WndSetPos(w, (WND *)after, at.x, at.y, size.x, size.y, flags);
         ok = TRUE;
     }
@@ -2551,7 +2601,7 @@ ULONG_PTR NTAPI NtUserCallHwnd(HWND hwnd, ULONG routine)
             break;
         case MIME_HWND_MONITOR: {
             RECT physical = w->WindowRect;
-            DpiRectConvert(&physical, w->Awareness, DPI_AWARE_SYSTEM);
+            DpiRectConvert(&physical, w->Awareness, DPI_PHYSICAL);
             LONG index = MonitorFromRectIndex(&physical, TRUE);
             r = (ULONG_PTR)MonitorHandle(index < 0 ? 0 : (ULONG)index);
             break;
@@ -2618,24 +2668,32 @@ static WND *find_dlg_item(WND *w, UINT_PTR id)
     return nullptr;
 }
 
-/* the points are in the pixels of the calling thread, and a window's in its own: screen points cross in physical ones. */
+/*
+ * the points are in the pixels of the calling thread. a point of a window is a distance from its client corner and
+ * scales by the awareness, a screen point is placed by the monitor it is on, so it goes through the physical screen.
+ */
 static void map_points(WND *from, WND *to, POINT *pts, UINT count)
 {
     ULONG caller = DpiCurrentAwareness();
-    ULONG from_aw = from && from != g_desktop ? from->Awareness : caller;
-    ULONG to_aw = to && to != g_desktop ? to->Awareness : caller;
-    LONG fx = from && from != g_desktop ? from->ClientRect.left : 0;
-    LONG fy = from && from != g_desktop ? from->ClientRect.top : 0;
-    LONG tx = to && to != g_desktop ? to->ClientRect.left : 0;
-    LONG ty = to && to != g_desktop ? to->ClientRect.top : 0;
+    BOOLEAN from_window = from && from != g_desktop, to_window = to && to != g_desktop;
+    ULONG from_aw = from_window ? from->Awareness : caller;
+    ULONG to_aw = to_window ? to->Awareness : caller;
     for (UINT i = 0; i < count; i++) {
-        DpiPointConvert(&pts[i], caller, from_aw);
-        pts[i].x += fx;
-        pts[i].y += fy;
-        DpiPointConvert(&pts[i], from_aw, to_aw);
-        pts[i].x -= tx;
-        pts[i].y -= ty;
-        DpiPointConvert(&pts[i], to_aw, caller);
+        POINT p = pts[i];
+        if (from_window) {
+            UINT mdpi = scale_dpi(from, caller);
+            p = (POINT){DpiLength(p.x, caller, from_aw, mdpi), DpiLength(p.y, caller, from_aw, mdpi)};
+            p.x += from->ClientRect.left;
+            p.y += from->ClientRect.top;
+        }
+        DpiPointConvert(&p, from_aw, to_aw);
+        if (to_window) {
+            p.x -= to->ClientRect.left;
+            p.y -= to->ClientRect.top;
+            UINT mdpi = scale_dpi(to, caller);
+            p = (POINT){DpiLength(p.x, to_aw, caller, mdpi), DpiLength(p.y, to_aw, caller, mdpi)};
+        }
+        pts[i] = p;
     }
 }
 
@@ -2704,8 +2762,9 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         break;
     }
     case MIME_HWNDPARAM_GETCLIENTRECT: {
-        RECT c = {0, 0, w->ClientRect.right - w->ClientRect.left, w->ClientRect.bottom - w->ClientRect.top};
-        rect_to_caller(w, &c);
+        POINT size = {w->ClientRect.right - w->ClientRect.left, w->ClientRect.bottom - w->ClientRect.top};
+        size_to_caller(w, &size);
+        RECT c = {0, 0, size.x, size.y};
         r = NT_SUCCESS(MimeCopyToUser((PVOID)param, &c, sizeof(RECT)));
         break;
     }
@@ -2821,7 +2880,7 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
     }
     case MIME_HWNDPARAM_CHILDFROMPOINT: {
         POINT pt = {(SHORT)LOWORD(param), (SHORT)HIWORD(param)};
-        point_from_caller(w, &pt);
+        size_from_caller(w, &pt);
         pt.x += w->ClientRect.left;
         pt.y += w->ClientRect.top;
         WND *c = WndChildFromPoint(w, pt, FALSE);
@@ -2851,18 +2910,18 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         BOOLEAN ok = TRUE;
         switch (dc.Op) {
         case MIME_DPI_WINDOW_TO_PHYSICAL:
-            DpiPointConvert(&pt, own, DPI_AWARE_SYSTEM);
+            DpiPointConvert(&pt, own, DPI_PHYSICAL);
             break;
         case MIME_DPI_PHYSICAL_TO_WINDOW:
-            DpiPointConvert(&pt, DPI_AWARE_SYSTEM, own);
+            DpiPointConvert(&pt, DPI_PHYSICAL, own);
             break;
         case MIME_DPI_THREAD_TO_PHYSICAL:
             DpiPointConvert(&pt, thread, own);
             ok = !w || RectContains(&w->WindowRect, pt.x, pt.y);
-            DpiPointConvert(&pt, own, DPI_AWARE_SYSTEM);
+            DpiPointConvert(&pt, own, DPI_PHYSICAL);
             break;
         case MIME_DPI_PHYSICAL_TO_THREAD:
-            DpiPointConvert(&pt, DPI_AWARE_SYSTEM, own);
+            DpiPointConvert(&pt, DPI_PHYSICAL, own);
             ok = !w || RectContains(&w->WindowRect, pt.x, pt.y);
             break;
         default:

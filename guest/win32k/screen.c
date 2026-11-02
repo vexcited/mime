@@ -188,8 +188,8 @@ static PLACE place_on_screen(const WND *w)
     RECT physical;
     WndPhysicalRect(w, &physical);
     PLACE p = {{physical.left, physical.top}, 1, 1};
-    if (DpiVirtual(w->Awareness)) {
-        p.Num = (LONG)W32SystemDpi();
+    if (w->Awareness < DPI_AWARE_PER_MONITOR) {
+        p.Num = (LONG)WndMonitorDpi(w);
         p.Den = (LONG)DpiScaleOf(w->Awareness);
     }
     return p;

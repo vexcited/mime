@@ -162,7 +162,7 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
         break;
     case MIME_TWOPARAM_SETCURSORPOS:
         InputCursorPos = (POINT){(LONG)param1, (LONG)param2};
-        DpiPointConvert(&InputCursorPos, DpiCurrentAwareness(), DPI_AWARE_SYSTEM);
+        DpiPointConvert(&InputCursorPos, DpiCurrentAwareness(), DPI_PHYSICAL);
         InputCursorMoved();
         r = 1;
         break;
@@ -199,11 +199,11 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
         break;
     case MIME_TWOPARAM_WINDOWFROMPOINT: {
         POINT pt = {(LONG)param1, (LONG)param2};
-        DpiPixelConvert(&pt, DpiCurrentAwareness(), DPI_AWARE_SYSTEM);
+        DpiPixelConvert(&pt, DpiCurrentAwareness(), DPI_PHYSICAL);
         WND *desktop = WndDesktop();
         for (WND *c = desktop ? desktop->FirstChild : nullptr; c; c = c->Next) {
             POINT at = pt;
-            DpiPixelConvert(&at, DPI_AWARE_SYSTEM, c->Awareness);
+            DpiPixelConvert(&at, DPI_PHYSICAL, c->Awareness);
             if (!(c->Style & WS_VISIBLE) || (c->Style & WS_MINIMIZE) || (c->ExStyle & WS_EX_TRANSPARENT) ||
                 (c->ExStyle & 0x80000000u) || !RectContains(&c->WindowRect, at.x, at.y) || !LayerHitTest(c, at))
                 continue;
@@ -230,7 +230,7 @@ BOOL NTAPI NtUserGetCursorInfo(PCURSORINFO user_info)
     ci.flags = t && t->CursorShowCount >= 0 ? CURSOR_SHOWING : 0;
     ci.hCursor = t ? t->Cursor : nullptr;
     ci.ptScreenPos = InputCursorPos;
-    DpiPixelConvert(&ci.ptScreenPos, DPI_AWARE_SYSTEM, DpiThreadAwareness(t));
+    DpiPixelConvert(&ci.ptScreenPos, DPI_PHYSICAL, DpiThreadAwareness(t));
     UserLeave();
     if (!NT_SUCCESS(MimeCopyToUser(user_info, &ci, sizeof(ci)))) {
         W32SetLastError(ERROR_NOACCESS);

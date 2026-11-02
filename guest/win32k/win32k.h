@@ -773,6 +773,8 @@ static inline HWND WndHandle(WND *w)
 }
 BOOLEAN WndIsTopLevel(WND *w); /* direct child of the desktop. */
 void WndPhysicalRect(const WND *w, RECT *out);
+UINT WndMonitorDpi(const WND *w);
+LONG WndToPhysical(const WND *w, LONG value);
 BOOLEAN WndCoversMonitor(WND *w);
 WND *WndTopLevel(WND *w);
 BOOLEAN WndIsVisible(WND *w);  /* the window and all its ancestors are visible. */
@@ -812,6 +814,8 @@ enum {
     DPI_AWARE_PER_MONITOR_V2,
     DPI_AWARE_GDISCALED, /* unaware, only a thread can have it. */
 };
+/* the coordinate space of the monitors: the one a per monitor program works in. */
+#define DPI_PHYSICAL DPI_AWARE_PER_MONITOR
 ULONG DpiThreadAwareness(const W32THREAD *t);
 ULONG DpiCurrentAwareness(void);
 UINT DpiScaleOf(ULONG awareness);
@@ -820,6 +824,8 @@ LONG DpiScale(LONG value, UINT from, UINT to);
 void DpiRectConvert(RECT *r, ULONG from, ULONG to);
 void DpiPointConvert(POINT *p, ULONG from, ULONG to);
 void DpiPixelConvert(POINT *p, ULONG from, ULONG to);
+LONG DpiLength(LONG value, ULONG from, ULONG to, UINT monitor_dpi);
+RECT DpiVirtualScreen(ULONG awareness);
 RECT DpiWorkArea(ULONG awareness);
 void DpiProcessAwarenessChanged(W32PROCESS *p, ULONG old);
 UINT DpiProcessSetAwareness(W32PROCESS *p, ULONG awareness, BOOLEAN force);
@@ -1087,6 +1093,7 @@ BOOLEAN MonitorGet(ULONG index, MIME_MONITOR_INFO *out);
 LONG MonitorFromRectIndex(const RECT *rect, BOOLEAN nearest);
 RECT MonitorWorkOfRect(const RECT *rect);
 UINT MonitorDpiOfRect(const RECT *rect);
+ULONG MonitorGeneration(void);
 RECT MonitorVirtualScreen(void);
 BOOLEAN MonitorCoveredBy(const RECT *rect);
 LONG MonitorFromDeviceName(PCWSTR name);

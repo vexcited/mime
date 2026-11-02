@@ -128,7 +128,10 @@ static void host_rects(WND *w, const FRAME_METRICS *m, RECT *visible, RECT *inpu
 /* a window relative rectangle in physical pixels, the window's own when it is not stretched. */
 static void host_pixels(const WND *w, RECT *r)
 {
-    DpiRectConvert(r, w->Awareness, DPI_AWARE_SYSTEM);
+    r->left = WndToPhysical(w, r->left);
+    r->top = WndToPhysical(w, r->top);
+    r->right = WndToPhysical(w, r->right);
+    r->bottom = WndToPhysical(w, r->bottom);
 }
 
 /* host bounds include the visible window and its resize border, in physical pixels. */
@@ -212,7 +215,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
     host_pixels(w, &input);
     c->visible = mime_rect(&vis);
     c->input = mime_rect(&input);
-    c->corner_radius = (uint32_t)DpiScale((LONG)corner_radius(w, &m), DpiScaleOf(w->Awareness), W32SystemDpi());
+    c->corner_radius = (uint32_t)WndToPhysical(w, (LONG)corner_radius(w, &m));
     if (w->Flags & WNDF_ACTIVE_FRAME)
         c->flags |= MIME_WIN_ACTIVE;
     if (m.Border && !(w->Style & WS_MAXIMIZE)) {
@@ -248,8 +251,8 @@ void HostConfigure(WND *w, BOOLEAN activate)
     }
     c->owner_id = w->Owner ? window_id(w->Owner) : 0;
     c->dpi = WndHostDpi(w);
-    /* the surface of a window that is not aware is drawn at 96 dpi and stretched by the host. */
-    if (DpiVirtual(w->Awareness))
+    /* the surface of a window that is not per monitor aware is drawn at the dpi of its awareness and stretched by the host. */
+    if (w->Awareness < DPI_AWARE_PER_MONITOR && c->dpi != DpiScaleOf(w->Awareness))
         c->surface_dpi = DpiScaleOf(w->Awareness);
     /* constrain compositor resizing to application limits; apply a maximum only if one was set. */
     if ((w->Style & WS_THICKFRAME) && !(w->Style & WS_MINIMIZE)) {
@@ -257,8 +260,8 @@ void HostConfigure(WND *w, BOOLEAN activate)
         POINT min = w->MinTrack.x ? w->MinTrack : (POINT){MetricsGetFor(SM_CXMINTRACK, dpi, w->Awareness),
                                                           MetricsGetFor(SM_CYMINTRACK, dpi, w->Awareness)};
         POINT max = w->MaxTrack;
-        DpiPointConvert(&min, w->Awareness, DPI_AWARE_SYSTEM);
-        DpiPointConvert(&max, w->Awareness, DPI_AWARE_SYSTEM);
+        min = (POINT){WndToPhysical(w, min.x), WndToPhysical(w, min.y)};
+        max = (POINT){WndToPhysical(w, max.x), WndToPhysical(w, max.y)};
         c->min_width = min.x;
         c->min_height = min.y;
         if (w->MaxTrack.x && w->MaxTrack.x < MetricsGetFor(SM_CXMAXTRACK, dpi, w->Awareness))

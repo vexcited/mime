@@ -647,8 +647,10 @@ static BOOLEAN screen_is_scaled(const DC *dc)
 /* the pixel of the physical screen under a pixel of the dc's screen, the dc's device coordinates without its origin. */
 static void physical_screen_point(const DC *dc, LONG *x, LONG *y)
 {
-    *x = DpiScale(*x, 96, W32SystemDpi()) + dc->Origin.x;
-    *y = DpiScale(*y, 96, W32SystemDpi()) + dc->Origin.y;
+    POINT p = {*x, *y};
+    DpiPixelConvert(&p, dc->Awareness, DPI_PHYSICAL);
+    *x = p.x + dc->Origin.x;
+    *y = p.y + dc->Origin.y;
 }
 
 /* a copy of the part of the screen that starts at x, y of the dc's device. */
@@ -665,14 +667,13 @@ static SURFACE *scaled_screen(DC *dc, LONG x, LONG y, LONG width, LONG height)
     ScreenCompose(&(RECT){left, top, right + 1, bottom + 1});
     const SURFACE *screen = dc->Surface;
     for (LONG j = 0; j < height; j++) {
-        LONG sy = DpiScale(y + j, 96, W32SystemDpi()) + dc->Origin.y;
-        if (sy < 0 || sy >= screen->Height)
-            continue;
-        const ULONG *from = (const ULONG *)(screen->Bits + (LONG_PTR)sy * screen->Stride);
         ULONG *to = (ULONG *)(copy->Bits + (LONG_PTR)j * copy->Stride);
         for (LONG i = 0; i < width; i++) {
-            LONG px = DpiScale(x + i, 96, W32SystemDpi()) + dc->Origin.x;
-            to[i] = px >= 0 && px < screen->Width ? from[px] : 0xFF000000;
+            LONG px = x + i, sy = y + j;
+            physical_screen_point(dc, &px, &sy);
+            to[i] = px >= 0 && px < screen->Width && sy >= 0 && sy < screen->Height
+                        ? ((const ULONG *)(screen->Bits + (LONG_PTR)sy * screen->Stride))[px]
+                        : 0xFF000000;
         }
     }
     return copy;

@@ -11,6 +11,7 @@ static MIME_MONITOR_INFO g_monitors[MIME_MAX_MONITORS];
 static ULONG g_count;
 static MimeMonitor *g_page;
 static BOOLEAN g_changed;
+static ULONG g_generation;
 
 /* \\.\DISPLAYn of a monitor, n counting from 1. */
 static void device_name(ULONG index, WCHAR name[32])
@@ -75,8 +76,16 @@ void MonitorsRefresh(void)
     g_count = count;
     device_name(0, g_monitors[0].Device);
     primary(&g_monitors[0]);
-    if (before_count != g_count || memcmp(before, g_monitors, sizeof(before)))
+    if (before_count != g_count || memcmp(before, g_monitors, sizeof(before))) {
         g_changed = TRUE;
+        g_generation++;
+    }
+}
+
+/* counts the changes of the monitors, so what was worked out from them can be kept. */
+ULONG MonitorGeneration(void)
+{
+    return g_generation;
 }
 
 BOOLEAN MonitorsTakeChanged(void)
@@ -231,8 +240,8 @@ ULONG_PTR MonitorCall(ULONG_PTR param1, ULONG_PTR param2, ULONG routine)
             return 0;
         mi.rcMonitor = m.Rect;
         mi.rcWork = m.Work;
-        DpiRectConvert(&mi.rcMonitor, DPI_AWARE_SYSTEM, DpiCurrentAwareness());
-        DpiRectConvert(&mi.rcWork, DPI_AWARE_SYSTEM, DpiCurrentAwareness());
+        DpiRectConvert(&mi.rcMonitor, DPI_PHYSICAL, DpiCurrentAwareness());
+        DpiRectConvert(&mi.rcWork, DPI_PHYSICAL, DpiCurrentAwareness());
         mi.dwFlags = m.Flags;
         memcpy(mi.szDevice, m.Device, sizeof(mi.szDevice));
         return NT_SUCCESS(MimeCopyToUser((PVOID)param2, &mi, mi.cbSize));
@@ -242,8 +251,8 @@ ULONG_PTR MonitorCall(ULONG_PTR param1, ULONG_PTR param2, ULONG routine)
             count = (ULONG)param2;
         for (ULONG i = 0; i < count; i++) {
             MonitorGet(i, &list[i]);
-            DpiRectConvert(&list[i].Rect, DPI_AWARE_SYSTEM, DpiCurrentAwareness());
-            DpiRectConvert(&list[i].Work, DPI_AWARE_SYSTEM, DpiCurrentAwareness());
+            DpiRectConvert(&list[i].Rect, DPI_PHYSICAL, DpiCurrentAwareness());
+            DpiRectConvert(&list[i].Work, DPI_PHYSICAL, DpiCurrentAwareness());
         }
         if (count && !NT_SUCCESS(MimeCopyToUser((PVOID)param1, list, count * sizeof(list[0]))))
             return 0;

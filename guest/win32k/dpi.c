@@ -27,36 +27,164 @@ UINT DpiScaleOf(ULONG awareness)
     return awareness == DPI_AWARE_UNAWARE ? 96 : W32SystemDpi();
 }
 
-/* whether a window of this awareness is stretched by the host. */
-BOOLEAN DpiVirtual(ULONG awareness)
-{
-    return awareness == DPI_AWARE_UNAWARE && W32SystemDpi() != 96;
-}
-
 LONG DpiScale(LONG value, UINT from, UINT to)
 {
     return from == to ? value : W32MulDiv(value, (LONG)to, (LONG)from);
 }
 
-void DpiRectConvert(RECT *r, ULONG from, ULONG to)
+/*
+ * the virtual screen of a program that works at a dpi. every monitor keeps its place next to the one it touches: its
+ * size scales by the dpi over its own and the offset along the shared edge by the dpi over the one of the monitor it
+ * touches, which is how the layout of CMonitorTopology in win32kbase gives the rectangles a monitor has for a dpi
+ * (GetMonitorRectForDpi: the origin by one dpi, the size by the monitor's own). for the unaware dpi this is the
+ * layout of the compositor in its logical units.
+ */
+typedef struct TOPOLOGY {
+    ULONG Count;
+    RECT Physical[MIME_USER_MAX_MONITORS];
+    RECT Virtual[MIME_USER_MAX_MONITORS];
+    UINT Dpi[MIME_USER_MAX_MONITORS];
+} TOPOLOGY;
+
+static BOOLEAN spans(LONG a0, LONG a1, LONG b0, LONG b1)
 {
-    UINT a = DpiScaleOf(from), b = DpiScaleOf(to);
-    if (a == b)
+    return a0 < b1 && b0 < a1;
+}
+
+static void topology_build(UINT d, TOPOLOGY *t);
+
+/* the layouts are kept for the few dpis programs work at, until the monitors change. the primary monitor follows the
+   display mode, so its size is part of the key. */
+static void topology(UINT d, TOPOLOGY *t)
+{
+    static struct {
+        UINT Dpi;
+        ULONG Generation;
+        LONG Width, Height;
+        TOPOLOGY Layout;
+    } cache[4];
+    static ULONG next;
+    ULONG generation = MonitorGeneration();
+    for (ULONG i = 0; i < RTL_NUMBER_OF(cache); i++)
+        if (cache[i].Dpi == d && cache[i].Generation == generation && cache[i].Width == W32Display.Width &&
+            cache[i].Height == W32Display.Height) {
+            *t = cache[i].Layout;
+            return;
+        }
+    topology_build(d, t);
+    cache[next].Dpi = d;
+    cache[next].Generation = generation;
+    cache[next].Width = W32Display.Width;
+    cache[next].Height = W32Display.Height;
+    cache[next].Layout = *t;
+    next = (next + 1) % RTL_NUMBER_OF(cache);
+}
+
+static void topology_build(UINT d, TOPOLOGY *t)
+{
+    MIME_MONITOR_INFO m;
+    BOOLEAN placed[MIME_USER_MAX_MONITORS] = {};
+    t->Count = 0;
+    for (ULONG i = 0; i < MIME_USER_MAX_MONITORS && MonitorGet(i, &m); i++) {
+        t->Physical[i] = m.Rect;
+        t->Dpi[i] = m.Dpi ? m.Dpi : 96;
+        t->Count++;
+    }
+    for (ULONG i = 0; i < t->Count; i++) {
+        const RECT *p = &t->Physical[i];
+        LONG w = DpiScale(p->right - p->left, t->Dpi[i], d), h = DpiScale(p->bottom - p->top, t->Dpi[i], d);
+        t->Virtual[i] = (RECT){0, 0, w, h};
+    }
+    if (!t->Count)
         return;
-    r->left = DpiScale(r->left, a, b);
-    r->top = DpiScale(r->top, a, b);
-    r->right = DpiScale(r->right, a, b);
-    r->bottom = DpiScale(r->bottom, a, b);
+    t->Virtual[0] = (RECT){0, 0, t->Virtual[0].right, t->Virtual[0].bottom};
+    RectOffset(&t->Virtual[0], DpiScale(t->Physical[0].left, t->Dpi[0], d), DpiScale(t->Physical[0].top, t->Dpi[0], d));
+    placed[0] = TRUE;
+    for (BOOLEAN progress = TRUE; progress;) {
+        progress = FALSE;
+        for (ULONG i = 1; i < t->Count; i++) {
+            if (placed[i])
+                continue;
+            const RECT *m_ = &t->Physical[i];
+            LONG w = t->Virtual[i].right, h = t->Virtual[i].bottom, x, y;
+            for (ULONG j = 0; j < t->Count && !placed[i]; j++) {
+                if (!placed[j])
+                    continue;
+                const RECT *r = &t->Physical[j], *v = &t->Virtual[j];
+                BOOLEAN vertical = spans(m_->top, m_->bottom, r->top, r->bottom);
+                BOOLEAN horizontal = spans(m_->left, m_->right, r->left, r->right);
+                if (m_->left == r->right && vertical) {
+                    x = v->right;
+                    y = v->top + DpiScale(m_->top - r->top, t->Dpi[j], d);
+                } else if (m_->right == r->left && vertical) {
+                    x = v->left - w;
+                    y = v->top + DpiScale(m_->top - r->top, t->Dpi[j], d);
+                } else if (m_->top == r->bottom && horizontal) {
+                    y = v->bottom;
+                    x = v->left + DpiScale(m_->left - r->left, t->Dpi[j], d);
+                } else if (m_->bottom == r->top && horizontal) {
+                    y = v->top - h;
+                    x = v->left + DpiScale(m_->left - r->left, t->Dpi[j], d);
+                } else {
+                    continue;
+                }
+                t->Virtual[i] = (RECT){x, y, x + w, y + h};
+                placed[i] = progress = TRUE;
+            }
+        }
+    }
+    /* a monitor that touches none keeps its corner at its own scale. */
+    for (ULONG i = 1; i < t->Count; i++)
+        if (!placed[i]) {
+            LONG w = t->Virtual[i].right, h = t->Virtual[i].bottom;
+            LONG x = DpiScale(t->Physical[i].left, t->Dpi[i], d), y = DpiScale(t->Physical[i].top, t->Dpi[i], d);
+            t->Virtual[i] = (RECT){x, y, x + w, y + h};
+        }
 }
 
-void DpiPointConvert(POINT *p, ULONG from, ULONG to)
+static LONG64 overlap_area(const RECT *a, const RECT *b)
 {
-    UINT a = DpiScaleOf(from), b = DpiScaleOf(to);
-    p->x = DpiScale(p->x, a, b);
-    p->y = DpiScale(p->y, a, b);
+    LONG w = W32Min(a->right, b->right) - W32Max(a->left, b->left);
+    LONG h = W32Min(a->bottom, b->bottom) - W32Max(a->top, b->top);
+    return w > 0 && h > 0 ? (LONG64)w * h : 0;
 }
 
-/* the pixel of the other grid a point is in, which is how a pointer position becomes a position in coarser pixels. */
+static LONG64 gap_distance(const RECT *r, const RECT *m)
+{
+    LONG dx = r->right <= m->left ? m->left - r->right : r->left >= m->right ? r->left - m->right + 1 : 0;
+    LONG dy = r->bottom <= m->top ? m->top - r->bottom : r->top >= m->bottom ? r->top - m->bottom + 1 : 0;
+    return (LONG64)dx * dx + (LONG64)dy * dy;
+}
+
+/* the monitor a rectangle belongs to: the largest overlap, a point in one, else the nearest. */
+static ULONG pick(const RECT *monitors, ULONG count, const RECT *r)
+{
+    ULONG best = 0;
+    LONG64 best_area = 0;
+    for (ULONG i = 0; i < count; i++) {
+        LONG64 area = overlap_area(r, &monitors[i]);
+        if (r->left == r->right && r->top == r->bottom && r->left >= monitors[i].left && r->left < monitors[i].right &&
+            r->top >= monitors[i].top && r->top < monitors[i].bottom)
+            area = 1;
+        if (area > best_area) {
+            best_area = area;
+            best = i;
+        }
+    }
+    if (best_area)
+        return best;
+    LONG64 nearest = -1;
+    for (ULONG i = 0; i < count; i++) {
+        LONG64 d = gap_distance(r, &monitors[i]);
+        if (nearest < 0 || d < nearest) {
+            nearest = d;
+            best = i;
+        }
+    }
+    return best;
+}
+
+/* the pixel of the other grid, rounding down, which is how a pointer position becomes a position in coarser pixels. */
 static LONG floor_scale(LONG value, UINT from, UINT to)
 {
     LONG64 v = (LONG64)value * to;
@@ -64,20 +192,108 @@ static LONG floor_scale(LONG value, UINT from, UINT to)
     return (LONG)(v % (LONG64)from < 0 ? q - 1 : q);
 }
 
-void DpiPixelConvert(POINT *p, ULONG from, ULONG to)
+/* from the screen of a program at a dpi to the physical one, or back. only the monitor a rectangle is on matters. */
+static void screen_convert(RECT *r, UINT d, BOOLEAN to_physical, BOOLEAN floor)
 {
-    UINT a = DpiScaleOf(from), b = DpiScaleOf(to);
+    TOPOLOGY t;
+    topology(d, &t);
+    if (!t.Count)
+        return;
+    ULONG i = pick(to_physical ? t.Virtual : t.Physical, t.Count, r);
+    const RECT *from = to_physical ? &t.Virtual[i] : &t.Physical[i], *to = to_physical ? &t.Physical[i] : &t.Virtual[i];
+    UINT num = to_physical ? t.Dpi[i] : d, den = to_physical ? d : t.Dpi[i];
+    LONG width = r->right - r->left, height = r->bottom - r->top;
+    LONG x = floor ? floor_scale(r->left - from->left, den, num) : DpiScale(r->left - from->left, den, num);
+    LONG y = floor ? floor_scale(r->top - from->top, den, num) : DpiScale(r->top - from->top, den, num);
+    r->left = to->left + x;
+    r->top = to->top + y;
+    r->right = r->left + DpiScale(width, den, num);
+    r->bottom = r->top + DpiScale(height, den, num);
+}
+
+/* the dpi of the coordinate space of an awareness, 0 for the physical one a per monitor program works in. */
+static UINT space_dpi(ULONG awareness)
+{
+    return awareness == DPI_AWARE_UNAWARE || awareness == DPI_AWARE_GDISCALED ? 96
+           : awareness == DPI_AWARE_SYSTEM                                    ? W32SystemDpi()
+                                                                              : 0;
+}
+
+/* whether the screen of this awareness differs from the physical one, which it does when a monitor has another dpi. */
+BOOLEAN DpiVirtual(ULONG awareness)
+{
+    UINT d = space_dpi(awareness);
+    if (!d)
+        return FALSE;
+    TOPOLOGY t;
+    topology(d, &t);
+    for (ULONG i = 0; i < t.Count; i++)
+        if (t.Dpi[i] != d)
+            return TRUE;
+    return FALSE;
+}
+
+static void convert(RECT *r, ULONG from, ULONG to, BOOLEAN floor)
+{
+    UINT a = space_dpi(from), b = space_dpi(to);
     if (a == b)
         return;
-    p->x = floor_scale(p->x, a, b);
-    p->y = floor_scale(p->y, a, b);
+    if (a)
+        screen_convert(r, a, TRUE, floor);
+    if (b)
+        screen_convert(r, b, FALSE, floor);
+}
+
+/* a screen rectangle between awarenesses, with its size scaled by the dpi of the monitor it is on. */
+void DpiRectConvert(RECT *r, ULONG from, ULONG to)
+{
+    convert(r, from, to, FALSE);
+}
+
+void DpiPointConvert(POINT *p, ULONG from, ULONG to)
+{
+    RECT r = {p->x, p->y, p->x, p->y};
+    convert(&r, from, to, FALSE);
+    *p = (POINT){r.left, r.top};
+}
+
+void DpiPixelConvert(POINT *p, ULONG from, ULONG to)
+{
+    RECT r = {p->x, p->y, p->x, p->y};
+    convert(&r, from, to, TRUE);
+    *p = (POINT){r.left, r.top};
+}
+
+/* a distance between awarenesses at the scale of the monitor it is measured on. */
+LONG DpiLength(LONG value, ULONG from, ULONG to, UINT monitor_dpi)
+{
+    UINT a = space_dpi(from) ? space_dpi(from) : monitor_dpi, b = space_dpi(to) ? space_dpi(to) : monitor_dpi;
+    return DpiScale(value, a, b);
+}
+
+/* the virtual screen of an awareness. */
+RECT DpiVirtualScreen(ULONG awareness)
+{
+    UINT d = space_dpi(awareness);
+    if (!d)
+        return MonitorVirtualScreen();
+    TOPOLOGY t;
+    topology(d, &t);
+    RECT all = t.Count ? t.Virtual[0] : (RECT){0, 0, W32Display.Width, W32Display.Height};
+    for (ULONG i = 1; i < t.Count; i++) {
+        all.left = W32Min(all.left, t.Virtual[i].left);
+        all.top = W32Min(all.top, t.Virtual[i].top);
+        all.right = W32Max(all.right, t.Virtual[i].right);
+        all.bottom = W32Max(all.bottom, t.Virtual[i].bottom);
+    }
+    return all;
 }
 
 /* the work area of the primary monitor in the pixels of an awareness. */
 RECT DpiWorkArea(ULONG awareness)
 {
     RECT work = W32Display.Work;
-    DpiRectConvert(&work, DPI_AWARE_SYSTEM, awareness);
+    DpiRectConvert(&work, DPI_PHYSICAL, awareness);
     return work;
 }
 

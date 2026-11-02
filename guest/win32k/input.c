@@ -110,7 +110,7 @@ SHORT NTAPI NtUserGetAsyncKeyState(int key)
 BOOL NTAPI NtUserGetCursorPos(LPPOINT point)
 {
     POINT p = InputCursorPos;
-    DpiPixelConvert(&p, DPI_AWARE_SYSTEM, DpiCurrentAwareness());
+    DpiPixelConvert(&p, DPI_PHYSICAL, DpiCurrentAwareness());
     return NT_SUCCESS(MimeCopyToUser(point, &p, sizeof(p)));
 }
 
@@ -730,14 +730,14 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
     if (capture) {
         w = capture;
         hit = t->CaptureNc ? (LONG)t->CaptureNc : HTCLIENT;
-        DpiPixelConvert(&pt, DPI_AWARE_SYSTEM, capture->Awareness);
+        DpiPixelConvert(&pt, DPI_PHYSICAL, capture->Awareness);
     } else {
         WND *top = WndLookup((HWND)(ULONG_PTR)ev->window_id);
         if (!top || top->Thread != t || !(top->Style & WS_VISIBLE)) {
             *consumed = TRUE;
             return FALSE;
         }
-        DpiPixelConvert(&pt, DPI_AWARE_SYSTEM, top->Awareness);
+        DpiPixelConvert(&pt, DPI_PHYSICAL, top->Awareness);
         w = hit_test(top, pt, &hit);
         if (!w) {
             *consumed = TRUE;
@@ -864,7 +864,7 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
             WND *top = WndLookup((HWND)(ULONG_PTR)ev->window_id);
             POINT under_pt = {ev->x, ev->y};
             if (top)
-                DpiPixelConvert(&under_pt, DPI_AWARE_SYSTEM, top->Awareness);
+                DpiPixelConvert(&under_pt, DPI_PHYSICAL, top->Awareness);
             WND *under = top && top->Thread == t && (top->Style & WS_VISIBLE) ? WndFromPoint(top, under_pt) : nullptr;
             track_mouse(t, under,
                         under && RectContains(&under->ClientRect, under_pt.x, under_pt.y) ? HTCLIENT : HTNOWHERE);
@@ -1048,14 +1048,14 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
     }
     case MIME_INPUT_WINDOW_FULLSCREEN: {
         RECT rect = {ev->x, ev->y, ev->x + ev->width, ev->y + ev->height};
-        DpiRectConvert(&rect, DPI_AWARE_SYSTEM, w->Awareness);
+        DpiRectConvert(&rect, DPI_PHYSICAL, w->Awareness);
         WndFullscreen(w, (ev->flags & 1) != 0, &rect);
         break;
     }
     case MIME_INPUT_WINDOW_MOVED:
         w->Flags |= WNDF_HOST_MOVING;
         POINT moved = {ev->x, ev->y};
-        DpiPointConvert(&moved, DPI_AWARE_SYSTEM, w->Awareness);
+        DpiPointConvert(&moved, DPI_PHYSICAL, w->Awareness);
         WndSetPos(w, nullptr, moved.x, moved.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         if (!w->Header.Destroyed)
             w->Flags &= ~WNDF_HOST_MOVING;
