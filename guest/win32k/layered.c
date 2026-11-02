@@ -144,6 +144,7 @@ BOOL NTAPI NtUserSetLayeredWindowAttributes(HWND hwnd, COLORREF key, BYTE alpha,
         w->LayerFlags = flags ? flags : LWA_ALPHA;
         w->LayerAlpha = flags & LWA_ALPHA ? alpha : 255;
         w->LayerKey = key & 0xFFFFFF;
+        ScreenSerial++;
         if (was_update || first) {
             /* the window paints itself again, and becomes visible once it has attributes. */
             WndInvalidateRegion(w, nullptr, RDW_INVALIDATE | RDW_FRAME | RDW_ERASE | RDW_ALLCHILDREN);
@@ -307,6 +308,8 @@ int NTAPI NtUserSetWindowRgn(HWND hwnd, HRGN region, BOOL redraw)
                 W32Free(w->Shape);
             }
             w->Shape = shape;
+            ScreenSerial++;
+            ScreenLayersChanged(w);
             /* the system owns the region from now on. */
             if (r)
                 GdiDeleteObject(&r->Header);

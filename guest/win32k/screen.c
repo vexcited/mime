@@ -254,27 +254,6 @@ static void compose_surface(PUCHAR bits, LONG stride, POINT shift, const RECT *r
     }
 }
 
-/* stretch the host image as it appears on screen. */
-static void compose_presented(PUCHAR bits, LONG stride, POINT shift, const RECT *rect, const RECT *c, ULONG width,
-                              ULONG height)
-{
-    RECT r;
-    if (!RectIntersect(&r, rect, c))
-        return;
-    LONG cw = c->right - c->left, ch = c->bottom - c->top;
-    for (LONG y = r.top; y < r.bottom; y++) {
-        const ULONG *src = (const ULONG *)(g_pixels + (SIZE_T)((y - c->top) * (LONG)height / ch) * width * 4);
-        ULONG *dst = (ULONG *)(bits + (LONG_PTR)(y - shift.y) * stride);
-        /* the host made the pixels opaque. */
-        if ((ULONG)cw == width) {
-            memcpy(dst + (r.left - shift.x), src + (r.left - c->left), (SIZE_T)(r.right - r.left) * 4);
-        } else {
-            for (LONG x = r.left; x < r.right; x++)
-                dst[x - shift.x] = src[(x - c->left) * (LONG)width / cw];
-        }
-    }
-}
-
 /* a rectangle of window pixels relative to its top level window, as the canvas has it. */
 static RECT to_canvas(RECT r, const PLACE *place)
 {
@@ -287,25 +266,139 @@ static RECT to_canvas(RECT r, const PLACE *place)
     return r;
 }
 
+/* what a window occupies, its rectangle cut by the region set with SetWindowRgn. */
+static void window_region(const WND *w, REGION *out)
+{
+    RgnInit(out);
+    if (!w->Shape) {
+        RgnSetRect(out, &w->WindowRect);
+        return;
+    }
+    RgnCopy(out, w->Shape);
+    RgnOffset(out, w->WindowRect.left, w->WindowRect.top);
+    RgnCombineRect(out, out, &w->WindowRect, RGN_AND);
+}
+
+static void cut_window(REGION *out, const WND *w)
+{
+    if (!w->Shape) {
+        RgnCombineRect(out, out, &w->WindowRect, RGN_DIFF);
+        return;
+    }
+    REGION r;
+    window_region(w, &r);
+    RgnCombine(out, out, &r, RGN_DIFF);
+    RgnFree(&r);
+}
+
+static void keep_window(REGION *out, const WND *w)
+{
+    if (!w->Shape)
+        return;
+    REGION r;
+    window_region(w, &r);
+    RgnCombine(out, out, &r, RGN_AND);
+    RgnFree(&r);
+}
+
 /*
  * what of the top level window the image of a window shows over, in screen coordinates of the windows: its client area,
- * inside the client areas of its parents, under the windows in front of it and under its own children, as the window
- * manager composes the windows of a tree one over the other. a transparent window, such as the legacy window of a
- * browser, hides nothing. the clip styles are for the drawing of the program and do not change that.
+ * inside the client areas and the regions of its parents, under the windows in front of it and under its own children,
+ * as the window manager composes the windows of a tree one over the other. a window with a region (SetWindowRgn) takes
+ * only that out of the windows behind it and only that from the windows it holds. a transparent window, such as the
+ * legacy window of a browser, hides nothing. the clip styles are for the drawing of the program and do not change that.
  */
 static void layer_area(const WND *top, const WND *window, BOOLEAN children, REGION *out)
 {
     RgnInit(out);
     RgnSetRect(out, &window->ClientRect);
+    keep_window(out, window);
     for (const WND *n = window; n != top && n->Parent; n = n->Parent) {
         for (const WND *s = n->Parent->FirstChild; s && s != n; s = s->Next)
             if ((s->Style & WS_VISIBLE) && !(s->ExStyle & WS_EX_TRANSPARENT))
-                RgnCombineRect(out, out, &s->WindowRect, RGN_DIFF);
+                cut_window(out, s);
         RgnCombineRect(out, out, &n->Parent->ClientRect, RGN_AND);
+        keep_window(out, n->Parent);
     }
     for (const WND *c = children ? window->FirstChild : nullptr; c; c = c->Next)
         if ((c->Style & WS_VISIBLE) && !(c->ExStyle & WS_EX_TRANSPARENT))
-            RgnCombineRect(out, out, &c->WindowRect, RGN_DIFF);
+            cut_window(out, c);
+}
+
+/*
+ * the constant alpha and the color key of a layered top level window, which are the ones of everything it holds: the
+ * window manager composes the window with the images in it first and then makes it transparent as it was asked.
+ */
+typedef struct LAYERFX {
+    ULONG Alpha;
+    BOOLEAN Keyed;
+    ULONG Key;
+} LAYERFX;
+
+static void layer_effects(const WND *top, LAYERFX *fx)
+{
+    *fx = (LAYERFX){.Alpha = 255};
+    if (!(top->ExStyle & WS_EX_LAYERED) || (top->LayerFlags & MIME_LAYER_UPDATE))
+        return;
+    if (top->LayerFlags & LWA_ALPHA)
+        fx->Alpha = top->LayerAlpha;
+    if (top->LayerFlags & LWA_COLORKEY) {
+        fx->Keyed = TRUE;
+        fx->Key = ColorToPixel(top->LayerKey) & 0xFFFFFF;
+    }
+}
+
+static ULONG blend_constant(ULONG src, ULONG dst, ULONG alpha)
+{
+    ULONG b = ((src & 0xFF) * alpha + (dst & 0xFF) * (255 - alpha) + 127) / 255;
+    ULONG g = ((src >> 8 & 0xFF) * alpha + (dst >> 8 & 0xFF) * (255 - alpha) + 127) / 255;
+    ULONG r = ((src >> 16 & 0xFF) * alpha + (dst >> 16 & 0xFF) * (255 - alpha) + 127) / 255;
+    return 0xFF000000 | r << 16 | g << 8 | b;
+}
+
+/* what was on the canvas under a layered window before it was composed, which its alpha and key show through to. */
+typedef struct UNDER {
+    ULONG *Bits;
+    RECT Box; /* canvas pixels. */
+} UNDER;
+
+static ULONG under_pixel(const UNDER *under, LONG x, LONG y)
+{
+    return under->Bits[(SIZE_T)(y - under->Box.top) * (SIZE_T)(under->Box.right - under->Box.left) +
+                       (SIZE_T)(x - under->Box.left)];
+}
+
+/*
+ * stretch the host image as it appears on screen. through the alpha and the key of a layered window it is made over the
+ * pixels under the window, not over the window's own, which the image replaces.
+ */
+static void compose_presented(PUCHAR bits, LONG stride, POINT shift, const RECT *rect, const RECT *c, ULONG width,
+                              ULONG height, const LAYERFX *fx, const UNDER *under)
+{
+    RECT r;
+    if (!RectIntersect(&r, rect, c))
+        return;
+    LONG cw = c->right - c->left, ch = c->bottom - c->top;
+    for (LONG y = r.top; y < r.bottom; y++) {
+        const ULONG *src = (const ULONG *)(g_pixels + (SIZE_T)((y - c->top) * (LONG)height / ch) * width * 4);
+        ULONG *dst = (ULONG *)(bits + (LONG_PTR)(y - shift.y) * stride);
+        /* the host made the pixels opaque. */
+        if (!under && (ULONG)cw == width) {
+            memcpy(dst + (r.left - shift.x), src + (r.left - c->left), (SIZE_T)(r.right - r.left) * 4);
+            continue;
+        }
+        for (LONG x = r.left; x < r.right; x++) {
+            ULONG pixel = src[(ULONG)cw == width ? x - c->left : (x - c->left) * (LONG)width / cw];
+            if (!under) {
+                dst[x - shift.x] = pixel;
+                continue;
+            }
+            ULONG behind = under_pixel(under, x, y);
+            dst[x - shift.x] = fx->Keyed && (pixel & 0xFFFFFF) == fx->Key ? behind
+                               : fx->Alpha == 255                         ? pixel
+                                                                          : blend_constant(pixel, behind, fx->Alpha);
+        }
+    }
 }
 
 typedef struct COMPOSE {
@@ -315,6 +408,8 @@ typedef struct COMPOSE {
     const REGION *Visible; /* of the top level window, canvas pixels. */
     WND *Top;
     const PLACE *Place;
+    const LAYERFX *Effects;
+    const UNDER *Under; /* null when the window is not made transparent. */
 } COMPOSE;
 
 /* the image a window presented over what shows of its client area. */
@@ -344,7 +439,8 @@ static void compose_layer(const COMPOSE *cx, WND *window)
     ULONG64 serial;
     if (!RgnIsEmpty(&shown) && read_presented(top, window, TRUE, &width, &height, &client, &serial))
         for (ULONG i = 0; i < shown.Count; i++)
-            compose_presented(cx->Bits, cx->Stride, cx->Shift, &shown.Rects[i], &c, width, height);
+            compose_presented(cx->Bits, cx->Stride, cx->Shift, &shown.Rects[i], &c, width, height, cx->Effects,
+                              cx->Under);
     RgnFree(&shown);
 }
 
@@ -381,11 +477,37 @@ static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *
             }
         return;
     }
+    BOOLEAN layers = host_pixels && presents_through_host(w);
+    /* a window that is made transparent shows the images in it over what is under it, which is kept from before. */
+    LAYERFX effects;
+    UNDER under = {};
+    layer_effects(w, &effects);
+    BOOLEAN transparent = layers && (effects.Alpha != 255 || effects.Keyed) && vis->Count;
+    if (transparent) {
+        under.Box = vis->Rects[0];
+        for (ULONG i = 1; i < vis->Count; i++) {
+            under.Box.left = W32Min(under.Box.left, vis->Rects[i].left);
+            under.Box.top = W32Min(under.Box.top, vis->Rects[i].top);
+            under.Box.right = W32Max(under.Box.right, vis->Rects[i].right);
+            under.Box.bottom = W32Max(under.Box.bottom, vis->Rects[i].bottom);
+        }
+        LONG box_width = under.Box.right - under.Box.left;
+        under.Bits = W32Alloc((SIZE_T)box_width * (under.Box.bottom - under.Box.top) * 4);
+        if (under.Bits)
+            for (LONG y = under.Box.top; y < under.Box.bottom; y++)
+                memcpy(under.Bits + (SIZE_T)(y - under.Box.top) * box_width,
+                       bits + (LONG_PTR)(y - shift.y) * stride + (LONG_PTR)(under.Box.left - shift.x) * 4,
+                       (SIZE_T)box_width * 4);
+        else
+            transparent = FALSE;
+    }
     if (s)
         for (ULONG i = 0; i < vis->Count; i++)
             compose_surface(bits, stride, shift, &vis->Rects[i], place, w, s);
-    if (!host_pixels || !presents_through_host(w))
+    if (!layers) {
+        W32Free(under.Bits);
         return;
+    }
 
     /* the window's own image under its children's, cut by the window's region. */
     REGION cut;
@@ -402,11 +524,12 @@ static void compose_window(PUCHAR bits, LONG stride, POINT shift, const REGION *
         RgnCombine(&cut, &cut, &shape, RGN_AND);
         RgnFree(&shape);
     }
-    COMPOSE cx = {bits, stride, shift, &cut, w, place};
+    COMPOSE cx = {bits, stride, shift, &cut, w, place, &effects, transparent ? &under : nullptr};
     if (has_connection(w))
         compose_layer(&cx, w);
     compose_tree(&cx, w);
     RgnFree(&cut);
+    W32Free(under.Bits);
 }
 
 /* find the surface-backed rectangle that occludes lower windows. */
