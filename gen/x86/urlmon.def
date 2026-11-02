@@ -31,3 +31,5 @@ EXPORTS
     URLOpenStreamW=_URLOpenStreamW@16
     UrlMkGetSessionOption=_UrlMkGetSessionOption@20
     UrlMkSetSessionOption=_UrlMkSetSessionOption@16
+    DllCanUnloadNow=_DllCanUnloadNow@0
+    DllGetClassObject=_DllGetClassObject@12

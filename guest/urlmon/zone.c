@@ -300,10 +300,10 @@ static HRESULT STDMETHODCALLTYPE sm_ProcessUrlAction(IInternetSecurityManager *i
 {
     if (!url)
         return E_INVALIDARG;
+    /* a url that is not one, such as the empty name of a document made from a string, is on the internet. */
     DWORD zone;
-    HRESULT hr = url_zone(url, &zone);
-    if (FAILED(hr))
-        return hr;
+    if (FAILED(url_zone(url, &zone)))
+        zone = URLZONE_INTERNET;
     DWORD value = action_policy(zone, action);
     if (policy && policy_size >= sizeof(DWORD))
         memcpy(policy, &value, sizeof(value));
@@ -360,4 +360,70 @@ DWORD UrlZoneOf(LPCWSTR url)
     if (FAILED(url_zone(url, &zone)))
         zone = URLZONE_INVALID;
     return zone;
+}
+
+/* CLSID_InternetSecurityManager, the class programs create instead of calling CoInternetCreateSecurityManager. */
+static const CLSID CLSID_InternetSecurityManager = {
+    0x7b8a2d94, 0x0ac9, 0x11d1, {0x89, 0x6c, 0x00, 0xc0, 0x4f, 0xb6, 0xbf, 0xc4}};
+
+static HRESULT STDMETHODCALLTYPE sf_QueryInterface(IClassFactory *iface, REFIID riid, void **out)
+{
+    if (IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_IClassFactory)) {
+        *out = iface;
+        return S_OK;
+    }
+    *out = nullptr;
+    return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE sf_AddRef(IClassFactory *iface)
+{
+    return 2;
+}
+
+static ULONG STDMETHODCALLTYPE sf_Release(IClassFactory *iface)
+{
+    return 1;
+}
+
+static HRESULT STDMETHODCALLTYPE sf_CreateInstance(IClassFactory *iface, IUnknown *outer, REFIID riid, void **out)
+{
+    if (!out)
+        return E_POINTER;
+    *out = nullptr;
+    if (outer)
+        return CLASS_E_NOAGGREGATION;
+    IInternetSecurityManager *manager;
+    HRESULT hr = CoInternetCreateSecurityManager(nullptr, &manager, 0);
+    if (FAILED(hr))
+        return hr;
+    hr = manager->lpVtbl->QueryInterface(manager, riid, out);
+    manager->lpVtbl->Release(manager);
+    return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE sf_LockServer(IClassFactory *iface, BOOL lock)
+{
+    return S_OK;
+}
+
+static const IClassFactoryVtbl security_factory_vtbl = {
+    sf_QueryInterface, sf_AddRef, sf_Release, sf_CreateInstance, sf_LockServer,
+};
+
+static IClassFactory g_security_factory = {&security_factory_vtbl};
+
+DECLSPEC_EXPORT HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void **out)
+{
+    if (!out)
+        return E_POINTER;
+    *out = nullptr;
+    if (!IsEqualCLSID(clsid, &CLSID_InternetSecurityManager))
+        return CLASS_E_CLASSNOTAVAILABLE;
+    return g_security_factory.lpVtbl->QueryInterface(&g_security_factory, riid, out);
+}
+
+DECLSPEC_EXPORT HRESULT WINAPI DllCanUnloadNow(void)
+{
+    return S_FALSE;
 }
