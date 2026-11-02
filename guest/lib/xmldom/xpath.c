@@ -1036,6 +1036,10 @@ static Expr *parse_primary(Parser *ps)
         next_token(ps);
         return x;
     case T_LP: {
+        if (ps->pattern && ps->host && ps->v6 && !ps->in_predicate) {
+            UINT pos = (UINT)(ps->tstart - ps->s);
+            return fail_range(ps, 0xC00CE618u, pos, pos + 1), nullptr;
+        }
         next_token(ps);
         x = parse_or(ps);
         if (!x)
