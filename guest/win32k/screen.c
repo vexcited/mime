@@ -9,6 +9,7 @@
 
 static SURFACE *g_screen;
 static POINT g_screen_origin; /* the screen coordinates of the surface's top left pixel. */
+static REGION g_kept;         /* the part of the surface that shows the desktop, which a drawing in the screen's device context stays in. */
 static MimeWinReadback *g_readback;
 static PUCHAR g_pixels;
 static SIZE_T g_pixels_capacity;
@@ -28,6 +29,7 @@ SURFACE *ScreenSurface(void)
     if (!g_screen) {
         g_screen = SurfaceCreate(width, height, 32, SURF_TOPDOWN);
         g_screen_origin = (POINT){all.left, all.top};
+        RgnClear(&g_kept);
     }
     return g_screen;
 }
@@ -59,7 +61,7 @@ void ScreenVisibleRegion(REGION *out)
         RgnCombineRect(out, out, &r, RGN_OR);
 }
 
-BOOLEAN ScreenIsSurface(const SURFACE *s) { return s && s == g_screen; }
+BOOLEAN ScreenIsSurface(const SURFACE *s) { return s && (s == g_screen || (s->Flags & SURF_VSCREEN)); }
 
 /* src over dst, both premultiplied. */
 static inline ULONG over(ULONG s, ULONG d)
@@ -434,6 +436,167 @@ static ULONG plan_windows(PLAN *plans, const RECT *area, REGION *covered)
     return planned;
 }
 
+
+/*
+ * the screen of a program that is not per monitor aware is the physical one in its own pixels. the surface of its
+ * device context holds that picture: it is made from the screen when the program reads, and what the program draws in
+ * it goes back into the screen, each of its pixels covering the pixels of the physical one that are its, which is
+ * the way the compositor of Windows stretches what such a program draws.
+ */
+static struct {
+    SURFACE *Surface;
+    POINT Origin;
+} g_virtual[2];
+
+static ULONG virtual_index(ULONG awareness)
+{
+    return awareness == DPI_AWARE_UNAWARE ? 0 : 1;
+}
+
+static ULONG virtual_awareness(const SURFACE *s)
+{
+    for (ULONG i = 0; i < 2; i++)
+        if (g_virtual[i].Surface == s)
+            return i ? DPI_AWARE_SYSTEM : DPI_AWARE_UNAWARE;
+    return DPI_AWARE_PER_MONITOR;
+}
+
+SURFACE *ScreenVirtualSurface(ULONG awareness, POINT *origin)
+{
+    ULONG i = virtual_index(awareness);
+    RECT all = DpiVirtualScreen(awareness);
+    LONG width = all.right - all.left, height = all.bottom - all.top;
+    SURFACE *s = g_virtual[i].Surface;
+    if (s && (s->Width != width || s->Height != height || g_virtual[i].Origin.x != all.left ||
+              g_virtual[i].Origin.y != all.top)) {
+        if (s->Header.SelectCount)
+            s->Flags |= SURF_RETIRED;
+        else
+            SurfaceDestroy(s);
+        g_virtual[i].Surface = s = nullptr;
+    }
+    if (!s) {
+        s = SurfaceCreate(width, height, 32, SURF_TOPDOWN);
+        if (s)
+            s->Flags |= SURF_VSCREEN;
+        g_virtual[i].Surface = s;
+        g_virtual[i].Origin = (POINT){all.left, all.top};
+    }
+    *origin = g_virtual[i].Origin;
+    return s;
+}
+
+/* the monitors of that screen in the coordinates of its surface. */
+void ScreenVirtualVisibleRegion(ULONG awareness, REGION *out)
+{
+    RECT monitors[MIME_USER_MAX_MONITORS];
+    POINT origin = g_virtual[virtual_index(awareness)].Origin;
+    ULONG count = DpiVirtualMonitors(awareness, monitors);
+    RgnClear(out);
+    for (ULONG i = 0; i < count; i++) {
+        RectOffset(&monitors[i], -origin.x, -origin.y);
+        RgnCombineRect(out, out, &monitors[i], RGN_OR);
+    }
+}
+
+/* the physical pixels, in the coordinates of the screen surface, that an area of a virtual screen is made of. */
+static RECT physical_area(ULONG awareness, POINT origin, const RECT *area)
+{
+    POINT corners[4] = {{area->left, area->top}, {area->right, area->top}, {area->left, area->bottom},
+                        {area->right, area->bottom}};
+    RECT r = {};
+    for (ULONG i = 0; i < 4; i++) {
+        corners[i].x += origin.x;
+        corners[i].y += origin.y;
+        DpiPointConvert(&corners[i], awareness, DPI_PHYSICAL);
+        corners[i].x -= g_screen_origin.x;
+        corners[i].y -= g_screen_origin.y;
+        if (!i || corners[i].x < r.left)
+            r.left = corners[i].x;
+        if (!i || corners[i].y < r.top)
+            r.top = corners[i].y;
+        if (!i || corners[i].x > r.right)
+            r.right = corners[i].x;
+        if (!i || corners[i].y > r.bottom)
+            r.bottom = corners[i].y;
+    }
+    r.right++;
+    r.bottom++;
+    return r;
+}
+
+static void virtual_refresh(SURFACE *s, ULONG awareness, const RECT *area)
+{
+    SURFACE *screen = ScreenSurface();
+    RECT r, bounds = {0, 0, s->Width, s->Height};
+    if (!screen || !RectIntersect(&r, area, &bounds))
+        return;
+    POINT origin = g_virtual[virtual_index(awareness)].Origin;
+    RECT physical = physical_area(awareness, origin, &r);
+    ScreenCompose(&physical);
+    POINT row[256];
+    for (LONG y = r.top; y < r.bottom; y++) {
+        ULONG *to = (ULONG *)(s->Bits + (LONG_PTR)y * s->Stride);
+        for (LONG x = r.left; x < r.right; x += 256) {
+            ULONG count = (ULONG)W32Min(256, r.right - x);
+            DpiConvertRow(awareness, DPI_PHYSICAL, y + origin.y, x + origin.x, count, row);
+            for (ULONG i = 0; i < count; i++) {
+                LONG sx = row[i].x - g_screen_origin.x, sy = row[i].y - g_screen_origin.y;
+                to[x + (LONG)i] = sx >= 0 && sx < screen->Width && sy >= 0 && sy < screen->Height
+                                      ? ((const ULONG *)(screen->Bits + (LONG_PTR)sy * screen->Stride))[sx]
+                                      : 0xFF000000;
+            }
+        }
+    }
+}
+
+/* a drawing in the screen stays where no window covers it. */
+void ScreenKeep(const RECT *area)
+{
+    RgnCombineRect(&g_kept, &g_kept, area, RGN_OR);
+    ScreenSerial++;
+}
+
+/* what was drawn in the virtual screen goes into the physical one. */
+void ScreenVirtualFlush(SURFACE *s, const RECT *dirty)
+{
+    ULONG awareness = virtual_awareness(s);
+    SURFACE *screen = ScreenSurface();
+    if (awareness == DPI_AWARE_PER_MONITOR || !screen)
+        return;
+    POINT origin = g_virtual[virtual_index(awareness)].Origin;
+    RECT physical = physical_area(awareness, origin, dirty), bounds = {0, 0, screen->Width, screen->Height}, r;
+    if (!RectIntersect(&r, &physical, &bounds))
+        return;
+    POINT row[256];
+    for (LONG y = r.top; y < r.bottom; y++) {
+        ULONG *to = (ULONG *)(screen->Bits + (LONG_PTR)y * screen->Stride);
+        for (LONG x = r.left; x < r.right; x += 256) {
+            ULONG count = (ULONG)W32Min(256, r.right - x);
+            DpiConvertRow(DPI_PHYSICAL, awareness, y + g_screen_origin.y, x + g_screen_origin.x, count, row);
+            for (ULONG i = 0; i < count; i++) {
+                LONG vx = row[i].x - origin.x, vy = row[i].y - origin.y;
+                if (vx >= dirty->left && vx < dirty->right && vy >= dirty->top && vy < dirty->bottom)
+                    to[x + (LONG)i] = ((const ULONG *)(s->Bits + (LONG_PTR)vy * s->Stride))[vx] | 0xFF000000;
+            }
+        }
+    }
+    /* the desktop under it keeps it, windows over it do not. */
+    SurfaceMarkDirty(screen, &r);
+}
+
+/* make the surface of a screen device context current before it is read. */
+void ScreenComposeFor(const SURFACE *s, const RECT *area)
+{
+    if (s == g_screen) {
+        ScreenCompose(area);
+        return;
+    }
+    ULONG awareness = virtual_awareness(s);
+    if (awareness != DPI_AWARE_PER_MONITOR)
+        virtual_refresh((SURFACE *)s, awareness, area);
+}
+
 /* compose area in surface coordinates before a read; output alpha is 0xFF. */
 void ScreenCompose(const RECT *area)
 {
@@ -456,6 +619,21 @@ void ScreenCompose(const RECT *area)
     ULONG background = ColorToPixel(MetricsSysColor(COLOR_BACKGROUND)) | 0xFF000000;
     RgnSetRect(&bare, &r);
     RgnCombine(&bare, &bare, &covered, RGN_DIFF);
+    /*
+     * the desktop shows what was drawn on it until a window covers that part: only what was not bare before is painted,
+     * and what a window covers is not kept.
+     */
+    REGION fresh, under;
+    RgnInit(&fresh);
+    RgnInit(&under);
+    RgnCombine(&fresh, &bare, &g_kept, RGN_DIFF);
+    RgnSetRect(&under, &r);
+    RgnCombine(&under, &under, &bare, RGN_DIFF);
+    RgnCombine(&g_kept, &g_kept, &under, RGN_DIFF);
+    RgnCombine(&g_kept, &g_kept, &bare, RGN_OR);
+    RgnFree(&under);
+    RgnFree(&bare);
+    bare = fresh;
     for (ULONG i = 0; i < bare.Count; i++) {
         const RECT *b = &bare.Rects[i];
         for (LONG y = b->top; y < b->bottom; y++)

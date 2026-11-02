@@ -185,6 +185,18 @@ static BOOLEAN pointer_image(PUCHAR out, ULONG capacity, MIME_CAPTURE_SHAPE *sha
         hx = b->HotspotX;
         hy = b->HotspotY;
     }
+    /*
+     * the pointer is the size of the system's dpi for every program: a cursor of a program that is not aware of it is
+     * stretched to it, as the compositor of Windows shows it.
+     */
+    UINT from = DpiScaleOf(image ? CursorAwareness(g_shown) : DPI_AWARE_UNAWARE), to = W32SystemDpi();
+    LONG source_width = width, source_height = height;
+    if (from && from != to) {
+        width = DpiScale(width, from, to);
+        height = DpiScale(height, from, to);
+        hx = DpiScale(hx, from, to);
+        hy = DpiScale(hy, from, to);
+    }
     shape->Type = SHAPE_COLOR;
     shape->Width = (ULONG)width;
     shape->Height = (ULONG)height;
@@ -196,11 +208,13 @@ static BOOLEAN pointer_image(PUCHAR out, ULONG capacity, MIME_CAPTURE_SHAPE *sha
         return TRUE;
     for (LONG y = 0; y < height; y++) {
         ULONG *row = (ULONG *)(out + (SIZE_T)y * shape->Pitch);
+        LONG sy = (LONG)((LONG64)y * source_height / height);
         for (LONG x = 0; x < width; x++) {
             ULONG px;
+            LONG sx = (LONG)((LONG64)x * source_width / width);
             if (image) {
                 /* our image is premultiplied, windows pointer shapes are not. */
-                px = SurfaceGetPixel(image, x, y);
+                px = SurfaceGetPixel(image, sx, sy);
                 ULONG a = px >> 24;
                 if (a && a != 255) {
                     ULONG r = ((px >> 16 & 0xFF) * 255 + a / 2) / a, g = ((px >> 8 & 0xFF) * 255 + a / 2) / a,
@@ -208,7 +222,7 @@ static BOOLEAN pointer_image(PUCHAR out, ULONG capacity, MIME_CAPTURE_SHAPE *sha
                     px = a << 24 | W32Min(r, 255) << 16 | W32Min(g, 255) << 8 | W32Min(bl, 255);
                 }
             } else {
-                char c = b->Rows[y * width + x];
+                char c = b->Rows[sy * source_width + sx];
                 px = c == '1' ? 0xFF000000 : c == '2' ? 0xFFFFFFFF : 0;
             }
             row[x] = px;

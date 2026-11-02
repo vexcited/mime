@@ -271,6 +271,59 @@ LONG DpiLength(LONG value, ULONG from, ULONG to, UINT monitor_dpi)
     return DpiScale(value, a, b);
 }
 
+/*
+ * the pixels of one row of a screen, count of them from x, in the screen of another awareness, each rounded down as a
+ * pointer position is. a row crosses few monitors, so the one the pixel before was on is tried first.
+ */
+void DpiConvertRow(ULONG from, ULONG to, LONG y, LONG x, ULONG count, POINT *out)
+{
+    UINT a = space_dpi(from), b = space_dpi(to);
+    if (a == b || (a && b)) {
+        for (ULONG i = 0; i < count; i++) {
+            out[i] = (POINT){x + (LONG)i, y};
+            if (a != b)
+                DpiPixelConvert(&out[i], from, to);
+        }
+        return;
+    }
+    TOPOLOGY t;
+    topology(a ? a : b, &t);
+    const RECT *source = a ? t.Virtual : t.Physical;
+    ULONG m = 0;
+    for (ULONG i = 0; i < count; i++) {
+        POINT p = {x + (LONG)i, y};
+        if (p.x < source[m].left || p.x >= source[m].right || p.y < source[m].top || p.y >= source[m].bottom)
+            m = pick(source, t.Count, &(RECT){p.x, p.y, p.x, p.y});
+        UINT monitor_dpi = t.Dpi[m];
+        if (a) {
+            p.x = t.Physical[m].left + floor_scale(p.x - t.Virtual[m].left, a, monitor_dpi);
+            p.y = t.Physical[m].top + floor_scale(p.y - t.Virtual[m].top, a, monitor_dpi);
+        } else {
+            p.x = t.Virtual[m].left + floor_scale(p.x - t.Physical[m].left, monitor_dpi, b);
+            p.y = t.Virtual[m].top + floor_scale(p.y - t.Physical[m].top, monitor_dpi, b);
+        }
+        out[i] = p;
+    }
+}
+
+/* the monitors of the virtual screen of an awareness, one rectangle each. */
+ULONG DpiVirtualMonitors(ULONG awareness, RECT *out)
+{
+    UINT d = space_dpi(awareness);
+    TOPOLOGY t;
+    if (!d) {
+        MIME_MONITOR_INFO m;
+        ULONG n = 0;
+        for (; n < MIME_USER_MAX_MONITORS && MonitorGet(n, &m); n++)
+            out[n] = m.Rect;
+        return n;
+    }
+    topology(d, &t);
+    for (ULONG i = 0; i < t.Count; i++)
+        out[i] = t.Virtual[i];
+    return t.Count;
+}
+
 /* the virtual screen of an awareness. */
 RECT DpiVirtualScreen(ULONG awareness)
 {
@@ -378,9 +431,7 @@ BOOLEAN DpiChildIsolated(const WND *parent, ULONG awareness)
 /* whether the window hears about the dpi of its tree: the top level one does, a child as its top level window allows. */
 BOOLEAN DpiChildMessageEnabled(WND *w)
 {
-    if (w->Awareness == DPI_AWARE_PER_MONITOR_V2)
-        return TRUE;
-    if (w->Awareness != DPI_AWARE_PER_MONITOR)
+    if (w->Awareness < DPI_AWARE_PER_MONITOR)
         return FALSE;
     WND *top = WndTopLevel(w);
     return top == w || (top && (top->Flags & WNDF_DPI_CHILDREN));

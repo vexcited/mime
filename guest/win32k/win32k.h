@@ -150,6 +150,7 @@ void GdiInitializeStockObjects(void);
 #define SURF_TOPDOWN 0x10
 #define SURF_RETIRED 0x20     /* replaced window surface, freed when the last DC releases it. */
 #define SURF_FOREIGN 0x40     /* user bits the caller owns, from D3DKMTCreateDCFromMemory. */
+#define SURF_VSCREEN 0x80     /* the screen in the pixels of a program that is not per monitor aware, see screen.c. */
 
 typedef struct SURFACE {
     GDI_OBJECT Header;
@@ -829,6 +830,8 @@ void DpiPointConvert(POINT *p, ULONG from, ULONG to);
 void DpiPixelConvert(POINT *p, ULONG from, ULONG to);
 LONG DpiLength(LONG value, ULONG from, ULONG to, UINT monitor_dpi);
 RECT DpiVirtualScreen(ULONG awareness);
+ULONG DpiVirtualMonitors(ULONG awareness, RECT *out);
+void DpiConvertRow(ULONG from, ULONG to, LONG y, LONG x, ULONG count, POINT *out);
 RECT DpiWorkArea(ULONG awareness);
 void DpiProcessAwarenessChanged(W32PROCESS *p, ULONG old);
 UINT DpiProcessSetAwareness(W32PROCESS *p, ULONG awareness, BOOLEAN force);
@@ -1124,6 +1127,11 @@ COLORREF MetricsSysColor(int index);
 
 /* screen and desktop DC surface, composed from windows before reads, screen.c. */
 SURFACE *ScreenSurface(void);
+SURFACE *ScreenVirtualSurface(ULONG awareness, POINT *origin);
+void ScreenVirtualVisibleRegion(ULONG awareness, REGION *out);
+void ScreenVirtualFlush(SURFACE *s, const RECT *dirty);
+void ScreenKeep(const RECT *area);
+void ScreenComposeFor(const SURFACE *s, const RECT *area);
 POINT ScreenOrigin(void);
 BOOLEAN ScreenMonitorRect(ULONG index, RECT *out);
 void ScreenVisibleRegion(REGION *out);
@@ -1148,6 +1156,7 @@ void CursorSet(HCURSOR cursor);
 SURFACE *CursorIconImage(HICON icon);
 BOOLEAN CursorValid(HICON icon);
 SURFACE *CursorImage(HICON cursor);
+ULONG CursorAwareness(HICON cursor);
 void CursorHotspot(HICON cursor, LONG *x, LONG *y);
 /* capture.c. */
 void CaptureFreeProcess(W32PROCESS *p);

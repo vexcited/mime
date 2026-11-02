@@ -137,6 +137,11 @@ void SurfaceMarkDirty(SURFACE *s, const RECT *r)
     if (!RectIntersect(&clipped, r, &bounds))
         return;
     RectUnion(&s->Dirty, &s->Dirty, &clipped);
+    /* what a program draws into the screen is part of the screen. */
+    if (s->Flags & SURF_VSCREEN)
+        ScreenVirtualFlush(s, &clipped);
+    else if (ScreenIsSurface(s))
+        ScreenKeep(&clipped);
 }
 
 SURFACE *SurfaceLookup(HBITMAP bitmap)

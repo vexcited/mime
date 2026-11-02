@@ -898,8 +898,7 @@ static void set_tree_dpi(WND *w, UINT dpi)
 /* whether the dpi of the window reaches its children: always for per monitor v2, on request for per monitor. */
 BOOLEAN WndBroadcastsDpi(const WND *w)
 {
-    return w->Awareness == DPI_AWARE_PER_MONITOR_V2 ||
-           (w->Awareness == DPI_AWARE_PER_MONITOR && (w->Flags & WNDF_DPI_CHILDREN));
+    return w->Awareness >= DPI_AWARE_PER_MONITOR && (w->Flags & WNDF_DPI_CHILDREN);
 }
 
 /* the descendants in the order of a tree walk, parents first. */
@@ -1121,17 +1120,20 @@ BOOLEAN WndRestoreDpiChanges(WND *w)
         w->Flags &= ~WNDF_DPI_DEFERRED;
         return TRUE;
     }
-    BOOLEAN ok = set_deferred_dpi(w, FALSE, TRUE);
-    if (known == w->Dpi) {
-        w->Flags &= ~WNDF_DPI_PENDING;
-    } else {
-        w->Flags &= ~WNDF_DPI_PENDING;
-        UserReference(&w->Header);
-        WndNotifyDpiChanged(w, known, nullptr);
+    UserReference(&w->Header);
+    /* the program is asked for the size while the window still has the dpi it knows. */
+    BOOLEAN changed = known != w->Dpi;
+    RECT suggested = {};
+    if (changed && WndIsTopLevel(w))
+        suggested = dpi_candidate_rect(w, known, w->Dpi);
+    BOOLEAN ok = alive(w) && set_deferred_dpi(w, FALSE, TRUE);
+    w->Flags &= ~WNDF_DPI_PENDING;
+    if (changed && alive(w)) {
+        WndNotifyDpiChanged(w, known, WndIsTopLevel(w) ? &suggested : nullptr);
         if (alive(w))
             WndUpdateHostConfig(w, FALSE);
-        UserDereference(&w->Header);
     }
+    UserDereference(&w->Header);
     return ok;
 }
 

@@ -424,13 +424,19 @@ HDC PaintGetDC(WND *w, HRGN clip, ULONG flags)
     SURFACE *s = top && top != WndDesktop() ? top->Surface : nullptr;
     if (!top || top == WndDesktop()) {
         /* screen and desktop DCs use virtual screen coordinates and are composed on read. */
-        SURFACE *screen = ScreenSurface();
+        BOOLEAN virtual_screen = DpiVirtual(dc->Awareness);
+        POINT origin;
+        SURFACE *screen = virtual_screen ? ScreenVirtualSurface(dc->Awareness, &origin) : ScreenSurface();
         if (screen) {
-            POINT origin = ScreenOrigin();
+            if (!virtual_screen)
+                origin = ScreenOrigin();
             DcSetSurface(dc, screen);
             screen->Header.SelectCount++;
             dc->Origin = (POINT){-origin.x, -origin.y};
-            ScreenVisibleRegion(&dc->VisRgn);
+            if (virtual_screen)
+                ScreenVirtualVisibleRegion(dc->Awareness, &dc->VisRgn);
+            else
+                ScreenVisibleRegion(&dc->VisRgn);
             return (HDC)dc->Header.Handle;
         }
     }
@@ -486,6 +492,18 @@ HDC PaintGetMonitorDC(ULONG index)
     DC *dc = DcCreate(DC_WINDOW | DC_CACHE);
     if (!dc)
         return nullptr;
+    /* a program that is not per monitor aware has the monitor in its own pixels. */
+    if (DpiVirtual(dc->Awareness)) {
+        POINT origin;
+        RECT monitors[MIME_USER_MAX_MONITORS];
+        SURFACE *virtual_screen = ScreenVirtualSurface(dc->Awareness, &origin);
+        ULONG count = DpiVirtualMonitors(dc->Awareness, monitors);
+        if (virtual_screen && index < count) {
+            visible = monitors[index];
+            RectOffset(&visible, -origin.x, -origin.y);
+            screen = virtual_screen;
+        }
+    }
     dc->Window = WndDesktop();
     dc->Dpi = dc->Awareness == DPI_AWARE_UNAWARE ? 96 : m.Dpi ? m.Dpi : 96;
     dc->OfMonitor = TRUE;

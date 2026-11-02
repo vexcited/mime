@@ -14,6 +14,7 @@ typedef struct CURICON {
     SURFACE *Image;  /* premultiplied 32 bpp. */
     ULONG System;    /* MIME_CURSOR_* + 1 for system cursors, 0 otherwise. */
     W32PROCESS *Process;
+    UCHAR Awareness; /* of the thread that made it: the pixels its image is in. */
 } CURICON;
 
 static CURICON *lookup(HICON icon)
@@ -36,6 +37,13 @@ SURFACE *CursorImage(HICON cursor)
 {
     CURICON *c = lookup(cursor);
     return c && c->Ready ? c->Image : nullptr;
+}
+
+/* the awareness of the pixels of a cursor, unaware when it is none. */
+ULONG CursorAwareness(HICON cursor)
+{
+    CURICON *c = lookup(cursor);
+    return c ? c->Awareness : DPI_AWARE_UNAWARE;
 }
 
 void CursorHotspot(HICON cursor, LONG *x, LONG *y)
@@ -86,6 +94,7 @@ HICON NTAPI NtUserCreateEmptyCurObject(BOOL icon)
     if (c) {
         c->IsIcon = icon != 0;
         c->Process = W32GetProcess();
+        c->Awareness = (UCHAR)DpiCurrentAwareness();
         h = UserCreateHandle(&c->Header, USER_TYPE_CURSOR);
         if (!h)
             W32Free(c);
