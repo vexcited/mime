@@ -23,6 +23,7 @@ typedef struct TAB {
     HFONT Font;
     HTHEME Theme;
     HWND Tooltips;
+    BOOL Magic; /* told to scale its magic numbers, message 0x200D. */
 } TAB;
 
 static TAB *get_data(HWND hwnd)
@@ -35,6 +36,17 @@ static HFONT tab_font(TAB *t)
     return t->Font ? t->Font : (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 }
 
+/* the edges of the tab, which scale at 192 dpi and above for a themed control. */
+static int edge_x(TAB *t)
+{
+    return CcMagicScale(t->Hwnd, t->Magic, t->Theme != nullptr, GetSystemMetrics(SM_CXEDGE));
+}
+
+static int edge_y(TAB *t)
+{
+    return CcMagicScale(t->Hwnd, t->Magic, t->Theme != nullptr, GetSystemMetrics(SM_CYEDGE));
+}
+
 static int item_height(TAB *t)
 {
     if (t->FixedHeight)
@@ -45,7 +57,7 @@ static int item_height(TAB *t)
     GetTextMetricsW(dc, &tm);
     SelectObject(dc, old);
     ReleaseDC(t->Hwnd, dc);
-    int edge = GetSystemMetrics(SM_CYEDGE);
+    int edge = edge_y(t);
     int icon = 0;
     if (t->Images)
         ImageList_GetIconSize(t->Images, nullptr, &icon);
@@ -75,7 +87,7 @@ static void layout(TAB *t)
 {
     RECT client;
     GetClientRect(t->Hwnd, &client);
-    int h = item_height(t), edge = GetSystemMetrics(SM_CXEDGE);
+    int h = item_height(t), edge = edge_x(t);
     int x = edge;
     int y = (t->Style & TCS_BOTTOM) ? client.bottom - h - edge : edge;
     HDC dc = GetDC(t->Hwnd);
@@ -145,9 +157,9 @@ static void paint(TAB *t, HDC dc)
         RECT pane = client;
         int h = item_height(t);
         if (t->Style & TCS_BOTTOM)
-            pane.bottom -= h + GetSystemMetrics(SM_CYEDGE) - 1;
+            pane.bottom -= h + edge_y(t) - 1;
         else
-            pane.top += h + GetSystemMetrics(SM_CYEDGE) - 1;
+            pane.top += h + edge_y(t) - 1;
         if (t->Theme)
             DrawThemeBackground(t->Theme, dc, CC_TABP_PANE, 0, &pane, nullptr);
         else
@@ -372,6 +384,10 @@ LRESULT CALLBACK TabProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
             EndPaint(hwnd, &ps);
         return 0;
     }
+    case 0x200D: /* scale the magic numbers or not. */
+        t->Magic = wparam != 0;
+        InvalidateRect(hwnd, nullptr, TRUE);
+        return 0;
     case WM_SETFONT:
         t->Font = (HFONT)wparam;
         if (lparam)
@@ -520,7 +536,7 @@ LRESULT CALLBACK TabProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         RECT *r = (RECT *)lparam;
         if (!r)
             return -1;
-        int h = item_height(t), edge = 2 * GetSystemMetrics(SM_CXEDGE);
+        int h = item_height(t), edge = 2 * edge_x(t);
         if (wparam) {
             InflateRect(r, edge, edge);
             if (t->Style & TCS_BOTTOM)
@@ -542,8 +558,8 @@ LRESULT CALLBACK TabProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         int icon = 0;
         if (t->Images)
             ImageList_GetIconSize(t->Images, &icon, nullptr);
-        if (cx < icon + 2 * GetSystemMetrics(SM_CXEDGE))
-            cx = icon + 2 * GetSystemMetrics(SM_CXEDGE);
+        if (cx < icon + 2 * edge_x(t))
+            cx = icon + 2 * edge_x(t);
         t->FixedWidth = cx;
         t->FixedHeight = cy;
         InvalidateRect(hwnd, nullptr, TRUE);

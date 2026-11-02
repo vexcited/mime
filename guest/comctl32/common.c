@@ -250,6 +250,39 @@ void CcDrawThemedEdge(HWND hwnd, HTHEME theme)
     ReleaseDC(hwnd, dc);
 }
 
+/*
+ * the pixel counts a control draws with that were chosen for 96 dpi. comctl32 6 scales them (DPISCALEINFO::ScaleMagicX and Y)
+ * only when the program asked for it with EnableDpiScaledPadding, the control was told so (message 0x200D), a per monitor
+ * v2 window is in a process with PMV2MAGICNUMBERSCALING set, or the control is a themed tab from 192 dpi on.
+ */
+static volatile LONG g_force_magic, g_pmv2_magic = -1;
+
+void WINAPI EnableDpiScaledPadding(BOOL enable)
+{
+    g_force_magic = enable != 0;
+}
+
+int CcMagicScale(HWND hwnd, BOOL forced, BOOL themed, int value)
+{
+    if (!hwnd)
+        return value;
+    UINT dpi = GetWindowDPI(hwnd);
+    if (!dpi)
+        dpi = 96;
+    BOOL on = g_force_magic || forced;
+    if (!on) {
+        if (g_pmv2_magic < 0) {
+            WCHAR buffer[8];
+            g_pmv2_magic = GetEnvironmentVariableW(L"PMV2MAGICNUMBERSCALING", buffer, 8) != 0;
+        }
+        on = g_pmv2_magic && AreDpiAwarenessContextsEqual(GetWindowDpiAwarenessContext(hwnd),
+                                                            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+    if (!on && themed && dpi >= 192)
+        on = TRUE;
+    return on ? MulDiv(value, (int)dpi, 96) : value;
+}
+
 int CcScale(HWND hwnd, int value)
 {
     UINT dpi = hwnd ? GetWindowDPI(hwnd) : 96;

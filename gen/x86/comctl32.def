@@ -1,6 +1,7 @@
 LIBRARY comctl32.dll
 EXPORTS
     CreateMappedBitmap=_CreateMappedBitmap@20 @8
+    EnableDpiScaledPadding=_EnableDpiScaledPadding@4 @20 NONAME
     CreatePropertySheetPageA=_CreatePropertySheetPageA@4 @21
     CreatePropertySheetPageW=_CreatePropertySheetPageW@4 @22
     CreateStatusWindowA=_CreateStatusWindowA@16 @6

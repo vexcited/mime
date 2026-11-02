@@ -84,6 +84,8 @@ BOOL CcFocusCuesHidden(HWND hwnd);
 void CcDrawThemedEdge(HWND hwnd, HTHEME theme);
 /* scales 96 dpi pixels to the window's dpi. */
 int CcScale(HWND hwnd, int value);
+/* a magic number of a control, scaled by the dpi when the control scales them: see CcMagicScale in common.c. */
+int CcMagicScale(HWND hwnd, BOOL forced, BOOL themed, int value);
 
 /* theme part ids of the classes the controls draw. */
 #define CC_PP_BAR 1
