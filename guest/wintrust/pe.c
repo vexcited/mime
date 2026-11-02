@@ -10,6 +10,14 @@ static DWORD dword(const BYTE *p)
     return word(p) | (DWORD)word(p + 2) << 16;
 }
 
+/* imagehlp looks at the zeros after the signature only when the machine asks for it, CVE-2013-3900. */
+static BOOL padding_checked(void)
+{
+    DWORD value = 0, size = sizeof(value);
+    return RegGetValueW(HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Cryptography\\Wintrust\\Config", L"EnableCertPaddingCheck",
+                        RRF_RT_REG_DWORD, nullptr, &value, &size) == ERROR_SUCCESS && value;
+}
+
 LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain)
 {
     if (size < 64 || word(bytes) != 0x5a4d)
@@ -36,8 +44,7 @@ LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCC
         return TRUST_E_NOSIGNATURE;
     DWORD headers = dword(bytes + optional + 60), table = optional + optional_size;
     if (headers > size || table > headers || sections > (headers - table) / 40 ||
-        certificate < headers || certificate > size || certificate_size != size - certificate ||
-        certificate_size < 8 || (certificate & 7) || (certificate_size & 7))
+        certificate < headers || certificate > size || certificate_size != size - certificate || certificate_size < 8)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
     struct { DWORD offset, size; } sorted[96];
     DWORD n = 0;
@@ -64,12 +71,13 @@ LONG WtVerifyPe(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCC
         end += sorted[i].size;
     }
     DWORD length = dword(bytes + certificate);
-    if (length < 8 || length > certificate_size || ((length + 7u) & ~7u) != certificate_size ||
-        word(bytes + certificate + 4) != 0x200 || word(bytes + certificate + 6) != 2)
+    if (length < 8 || length > certificate_size || word(bytes + certificate + 4) != 0x200 ||
+        word(bytes + certificate + 6) != 2)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
-    for (DWORD i = length; i < certificate_size; i++)
-        if (bytes[certificate + i])
-            return TRUST_E_SUBJECT_NOT_TRUSTED;
+    if (padding_checked())
+        for (DWORD i = length; i < certificate_size; i++)
+            if (bytes[certificate + i])
+                return TRUST_E_SUBJECT_NOT_TRUSTED;
     WT_SUBJECT subject = {.image = bytes, .size = size, .checksum = optional + 64, .directory = directory,
                           .certificate = certificate};
     return WtVerifySignedData((WT_BYTES){bytes + certificate + 8, length - 8}, &subject, options, chain);
