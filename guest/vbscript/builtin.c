@@ -2,6 +2,7 @@
  * the functions and constants of vbscript, and Eval and Execute.
  */
 #include "vbs.h"
+#include <mime/win32/scrrun.h>
 
 #define FN(name) static int fn_##name(Frame *f, VARIANT *a, UINT n, VARIANT *r)
 
@@ -1484,6 +1485,27 @@ FN(vartype)
     return R_OK;
 }
 
+/* the name of the class of an automation object that gives its class information, such as Dictionary. */
+static PCWSTR host_class_name(IDispatch *object, WCHAR *buffer, UINT size)
+{
+    IProvideClassInfo *provider;
+    ITypeInfo *info;
+    BSTR name = nullptr;
+    PCWSTR result = nullptr;
+    if (FAILED(object->lpVtbl->QueryInterface(object, &IID_IProvideClassInfo, (void **)&provider)))
+        return nullptr;
+    if (SUCCEEDED(provider->lpVtbl->GetClassInfo(provider, &info))) {
+        if (SUCCEEDED(info->lpVtbl->GetDocumentation(info, MEMBERID_NIL, &name, nullptr, nullptr, nullptr)) && name && name[0]) {
+            _snwprintf(buffer, size, L"%s", name);
+            result = buffer;
+        }
+        SysFreeString(name);
+        info->lpVtbl->Release(info);
+    }
+    provider->lpVtbl->Release(provider);
+    return result;
+}
+
 FN(typename)
 {
     VARIANT *v = plain(&a[0]);
@@ -1516,6 +1538,8 @@ FN(typename)
             name = buf;
         } else if (vt == VT_DISPATCH && regexp_typename(v->pdispVal))
             name = regexp_typename(v->pdispVal);
+        else if (vt == VT_DISPATCH && (name = host_class_name(v->pdispVal, buf, 80)))
+            ;
         else
             name = L"Object";
     } else if (vt == VT_UI1)
