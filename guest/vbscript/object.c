@@ -734,7 +734,7 @@ IDispatch *proc_ref_create(Engine *e, Proc *proc, Instance *me)
 /* ------------------------------------------------------------------ the global namespace */
 
 typedef struct ScriptDispatch {
-    IDispatch Dispatch;
+    IDispatchEx Ex;
     LONG Refs;
     Engine *E;
     Sym **Ids;
@@ -839,16 +839,79 @@ static HRESULT STDMETHODCALLTYPE sd_invoke(IDispatch *This, DISPID id, REFIID ri
     return hr;
 }
 
-static const IDispatchVtbl g_sd_vtbl = {errobj_qi, sd_addref, sd_release, inst_count, inst_typeinfo, sd_names, sd_invoke};
+static HRESULT STDMETHODCALLTYPE sd_qi(IDispatch *This, REFIID riid, void **object)
+{
+    if (IsEqualIID(riid, &IID_IDispatchEx)) {
+        *object = This;
+        sd_addref(This);
+        return S_OK;
+    }
+    return errobj_qi(This, riid, object);
+}
+
+static HRESULT STDMETHODCALLTYPE sdx_id(IDispatchEx *This, BSTR name, DWORD flags, DISPID *id)
+{
+    LPOLESTR n = name;
+    return sd_names((IDispatch *)This, &IID_NULL, &n, 1, 0, id);
+}
+
+static HRESULT STDMETHODCALLTYPE sdx_invoke(IDispatchEx *This, DISPID id, LCID lcid, WORD flags, DISPPARAMS *params,
+                                            VARIANT *result, EXCEPINFO *ex, IUnknown *caller)
+{
+    return sd_invoke((IDispatch *)This, id, &IID_NULL, lcid, flags, params, result, ex, nullptr);
+}
+
+static HRESULT STDMETHODCALLTYPE sdx_delete_name(IDispatchEx *This, BSTR name, DWORD flags)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE sdx_delete_id(IDispatchEx *This, DISPID id)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE sdx_props(IDispatchEx *This, DISPID id, DWORD fetch, DWORD *flags)
+{
+    return E_NOTIMPL;
+}
+
+static HRESULT STDMETHODCALLTYPE sdx_name(IDispatchEx *This, DISPID id, BSTR *name)
+{
+    ScriptDispatch *s = (ScriptDispatch *)This;
+    if (id < 1 || (UINT)id > s->Count)
+        return DISP_E_UNKNOWNNAME;
+    *name = SysAllocString(s->Ids[id - 1]->Name);
+    return *name ? S_OK : E_OUTOFMEMORY;
+}
+
+static HRESULT STDMETHODCALLTYPE sdx_next(IDispatchEx *This, DWORD flags, DISPID id, DISPID *next)
+{
+    *next = DISPID_UNKNOWN;
+    return S_FALSE;
+}
+
+static HRESULT STDMETHODCALLTYPE sdx_parent(IDispatchEx *This, IUnknown **parent)
+{
+    *parent = nullptr;
+    return S_FALSE;
+}
+
+/* the first seven are the methods of IDispatch, which take the object as an IDispatch. */
+static const void *const g_sd_vtbl[] = {
+    sd_qi,     sd_addref,       sd_release,    inst_count, inst_typeinfo, sd_names,
+    sd_invoke, sdx_id,          sdx_invoke,    sdx_delete_name, sdx_delete_id, sdx_props,
+    sdx_name,  sdx_next,        sdx_parent,
+};
 
 IDispatch *script_dispatch_create(Engine *e)
 {
     ScriptDispatch *s = vbs_alloc(sizeof(ScriptDispatch));
-    s->Dispatch.lpVtbl = &g_sd_vtbl;
+    s->Ex.lpVtbl = (const IDispatchExVtbl *)g_sd_vtbl;
     s->Refs = 1;
     s->E = e;
     InterlockedIncrement(&e->Refs);
-    return &s->Dispatch;
+    return (IDispatch *)&s->Ex;
 }
 
 /* ------------------------------------------------------------------ creating objects */

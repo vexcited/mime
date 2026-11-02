@@ -370,6 +370,8 @@ static HRESULT STDMETHODCALLTYPE script_set_site(IActiveScript *This, IActiveScr
         e->Lcid = lcid;
     else
         e->Lcid = GetUserDefaultLCID();
+    if (e->InitDone)
+        notify(e, SCRIPTSTATE_INITIALIZED);
     return S_OK;
 }
 
@@ -394,6 +396,8 @@ static HRESULT STDMETHODCALLTYPE script_set_state(IActiveScript *This, SCRIPTSTA
 {
     Engine *e = ENGINE_OF(Script, This);
     SCRIPTSTATE c = e->State;
+    if (state == SCRIPTSTATE_UNINITIALIZED && c == SCRIPTSTATE_UNINITIALIZED)
+        return S_OK;
     if (c == SCRIPTSTATE_CLOSED || c == SCRIPTSTATE_UNINITIALIZED || !e->Site)
         return E_UNEXPECTED;
     static const int none[] = {-1};
@@ -435,6 +439,14 @@ static HRESULT STDMETHODCALLTYPE script_set_state(IActiveScript *This, SCRIPTSTA
         if (c == SCRIPTSTATE_CONNECTED || c == SCRIPTSTATE_DISCONNECTED || c == SCRIPTSTATE_STARTED || c == SCRIPTSTATE_INITIALIZED)
             notify_all(e, to_uninit);
         (void)none;
+        /* the site goes, the next SetScriptSite starts the script again. */
+        if (e->PollSite && e->PollSite != (IActiveScriptSiteInterruptPoll *)(SIZE_T)1)
+            e->PollSite->lpVtbl->Release(e->PollSite);
+        e->PollSite = nullptr;
+        IActiveScriptSite *site = e->Site;
+        e->Site = nullptr;
+        e->State = SCRIPTSTATE_UNINITIALIZED;
+        site->lpVtbl->Release(site);
         return S_OK;
     default:
         return E_UNEXPECTED;
@@ -634,9 +646,11 @@ static ULONG STDMETHODCALLTYPE parse_release(IActiveScriptParse *This)
 static HRESULT STDMETHODCALLTYPE parse_init_new(IActiveScriptParse *This)
 {
     Engine *e = ENGINE_OF(Parse, This);
-    if (!e->Site || e->State != SCRIPTSTATE_UNINITIALIZED)
+    if (e->InitDone || e->State == SCRIPTSTATE_CLOSED)
         return E_UNEXPECTED;
-    notify(e, SCRIPTSTATE_INITIALIZED);
+    e->InitDone = TRUE;
+    if (e->Site)
+        notify(e, SCRIPTSTATE_INITIALIZED);
     return S_OK;
 }
 
@@ -842,7 +856,7 @@ static HRESULT STDMETHODCALLTYPE safety_get(IObjectSafety *This, REFIID riid, DW
     Engine *e = ENGINE_OF(Safety, This);
     if (!supported || !enabled)
         return E_POINTER;
-    *supported = INTERFACESAFE_FOR_UNTRUSTED_CALLER | INTERFACESAFE_FOR_UNTRUSTED_DATA;
+    *supported = 14;
     *enabled = e->SafetyOptions;
     return S_OK;
 }
@@ -850,10 +864,9 @@ static HRESULT STDMETHODCALLTYPE safety_get(IObjectSafety *This, REFIID riid, DW
 static HRESULT STDMETHODCALLTYPE safety_set(IObjectSafety *This, REFIID riid, DWORD mask, DWORD options)
 {
     Engine *e = ENGINE_OF(Safety, This);
-    DWORD supported = INTERFACESAFE_FOR_UNTRUSTED_CALLER | INTERFACESAFE_FOR_UNTRUSTED_DATA;
-    if (mask & ~supported)
+    if ((e->State != SCRIPTSTATE_UNINITIALIZED && e->State != SCRIPTSTATE_INITIALIZED) || (mask & ~14u))
         return E_FAIL;
-    e->SafetyOptions = (e->SafetyOptions & ~mask) | (options & mask);
+    e->SafetyOptions = (mask & (options | INTERFACESAFE_FOR_UNTRUSTED_CALLER)) | (e->SafetyOptions & ~mask);
     return S_OK;
 }
 

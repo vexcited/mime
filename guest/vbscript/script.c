@@ -236,6 +236,8 @@ static HRESULT STDMETHODCALLTYPE script_set_site(IActiveScript *This, IActiveScr
         e->Lcid = lcid;
     else
         e->Lcid = GetUserDefaultLCID();
+    if (e->InitDone)
+        notify(e, SCRIPTSTATE_INITIALIZED);
     return S_OK;
 }
 
@@ -253,6 +255,8 @@ static HRESULT STDMETHODCALLTYPE script_get_site(IActiveScript *This, REFIID rii
 static HRESULT STDMETHODCALLTYPE script_set_state(IActiveScript *This, SCRIPTSTATE state)
 {
     Engine *e = ENGINE_OF(Script, This);
+    if (state == SCRIPTSTATE_UNINITIALIZED && e->State == SCRIPTSTATE_UNINITIALIZED)
+        return S_OK;
     if (e->State == SCRIPTSTATE_CLOSED || e->State == SCRIPTSTATE_UNINITIALIZED || !e->Site)
         return E_UNEXPECTED;
     switch (state) {
@@ -269,8 +273,14 @@ static HRESULT STDMETHODCALLTYPE script_set_state(IActiveScript *This, SCRIPTSTA
         return S_OK;
     case SCRIPTSTATE_CLOSED:
         return e->Script.lpVtbl->Close(&e->Script);
-    case SCRIPTSTATE_UNINITIALIZED:
+    case SCRIPTSTATE_UNINITIALIZED: {
+        /* the site goes, the next SetScriptSite starts the script again. */
+        notify(e, state);
+        IActiveScriptSite *site = e->Site;
+        e->Site = nullptr;
+        site->lpVtbl->Release(site);
         return S_OK;
+    }
     default:
         return E_UNEXPECTED;
     }
@@ -485,9 +495,11 @@ static ULONG STDMETHODCALLTYPE parse_release(IActiveScriptParse *This)
 static HRESULT STDMETHODCALLTYPE parse_init_new(IActiveScriptParse *This)
 {
     Engine *e = ENGINE_OF(Parse, This);
-    if (!e->Site || e->State != SCRIPTSTATE_UNINITIALIZED)
+    if (e->InitDone || e->State == SCRIPTSTATE_CLOSED)
         return E_UNEXPECTED;
-    notify(e, SCRIPTSTATE_INITIALIZED);
+    e->InitDone = TRUE;
+    if (e->Site)
+        notify(e, SCRIPTSTATE_INITIALIZED);
     return S_OK;
 }
 
@@ -678,7 +690,7 @@ static HRESULT STDMETHODCALLTYPE safety_get(IObjectSafety *This, REFIID riid, DW
     Engine *e = ENGINE_OF(Safety, This);
     if (!supported || !enabled)
         return E_POINTER;
-    *supported = INTERFACESAFE_FOR_UNTRUSTED_CALLER | INTERFACESAFE_FOR_UNTRUSTED_DATA;
+    *supported = 14;
     *enabled = e->SafetyOptions;
     return S_OK;
 }
@@ -686,10 +698,9 @@ static HRESULT STDMETHODCALLTYPE safety_get(IObjectSafety *This, REFIID riid, DW
 static HRESULT STDMETHODCALLTYPE safety_set(IObjectSafety *This, REFIID riid, DWORD mask, DWORD options)
 {
     Engine *e = ENGINE_OF(Safety, This);
-    DWORD supported = INTERFACESAFE_FOR_UNTRUSTED_CALLER | INTERFACESAFE_FOR_UNTRUSTED_DATA;
-    if (mask & ~supported)
+    if ((e->State != SCRIPTSTATE_UNINITIALIZED && e->State != SCRIPTSTATE_INITIALIZED) || (mask & ~14u))
         return E_FAIL;
-    e->SafetyOptions = (e->SafetyOptions & ~mask) | (options & mask);
+    e->SafetyOptions = (mask & (options | INTERFACESAFE_FOR_UNTRUSTED_CALLER)) | (e->SafetyOptions & ~mask);
     return S_OK;
 }
 

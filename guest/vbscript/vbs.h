@@ -348,7 +348,7 @@ struct Engine {
     IDispatch *ErrObject, *ScriptObject;
     ULONG Generation;
     UINT Depth;
-    BOOL Explicit, Interrupted, Closing, InScript;
+    BOOL Explicit, Interrupted, Closing, InScript, InitDone;
     /* the code the host gave when it interrupted the script, which the site is told about. */
     HRESULT InterruptCode;
     DWORD Thread;

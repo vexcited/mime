@@ -265,7 +265,7 @@ struct Engine {
     SCRIPTSTATE State;
     LCID Lcid;
     DWORD SafetyOptions;
-    BOOL Closing, InScript, Interrupted, CompileOnly;
+    BOOL Closing, InScript, Interrupted, CompileOnly, InitDone;
     UINT NestedRun;
     DWORD Thread;
     NamedItem *Items;
