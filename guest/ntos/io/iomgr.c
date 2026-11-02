@@ -641,6 +641,7 @@ void IoInitialize(void)
     init.PutSecurity = file_put_security;
     IoFileObjectTypeObject = ObCreateObjectType(L"File", &init);
     IopInitializeCompletion();
+    IopInitializeWaitPackets();
     IopInitializeNamedPipes();
     IopInitializeConsole();
     IopInitializeAfd();

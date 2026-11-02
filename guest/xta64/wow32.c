@@ -1142,6 +1142,15 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         oa = attributes32(a[2], &name);
         status = NtCreateIoCompletion(&handle, a[1], a[2] ? &oa : nullptr, a[3]);
         return handle_out(status, a[0], handle);
+    case MIME_SVC_NtCreateWaitCompletionPacket:
+        oa = attributes32(a[2], &name);
+        status = NtCreateWaitCompletionPacket(&handle, a[1], a[2] ? &oa : nullptr);
+        return handle_out(status, a[0], handle);
+    case MIME_SVC_NtAssociateWaitCompletionPacket:
+        return NtAssociateWaitCompletionPacket(handle32(a[0]), handle32(a[1]), handle32(a[2]), pointer32(a[3]),
+                                               pointer32(a[4]), a[5], a[6], pointer32(a[7]));
+    case MIME_SVC_NtCancelWaitCompletionPacket:
+        return NtCancelWaitCompletionPacket(handle32(a[0]), (BOOLEAN)a[1]);
     case MIME_SVC_NtSetIoCompletion:
         return NtSetIoCompletion(handle32(a[0]), pointer32(a[1]), pointer32(a[2]), a[3], a[4]);
     case MIME_SVC_NtSetIoCompletionEx:

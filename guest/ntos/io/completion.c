@@ -350,3 +350,201 @@ void IopQueueCompletionApc(PETHREAD thread, PVOID routine, PVOID context, PIO_ST
     if (!KeInsertQueueApc(apc, iosb, nullptr, IO_NO_INCREMENT))
         ExFreePool(apc);
 }
+
+/* ------------------------------------------------------------ wait completion packets */
+
+/*
+ * a packet ties the wait on an object to a port: once the object is signalled, a completion is queued to the port.
+ * a system thread does the wait, and a packet has at most one wait pending.
+ */
+typedef struct WAIT_PACKET WAIT_PACKET;
+
+typedef struct PACKET_WAIT {
+    WAIT_PACKET *Packet;
+    IO_COMPLETION *Port;
+    PVOID Target;
+    PDISPATCHER_HEADER TargetWait;
+    PVOID Key;
+    PVOID ApcContext;
+    NTSTATUS IoStatus;
+    ULONG_PTR Information;
+    KEVENT Cancel;
+} PACKET_WAIT;
+
+struct WAIT_PACKET {
+    KSPIN_LOCK Lock;
+    PACKET_WAIT *Active;
+};
+
+static POBJECT_TYPE WaitPacketObjectType;
+
+/* ends the pending wait of a packet, and tells whether there was one. */
+static BOOLEAN cancel_wait(WAIT_PACKET *packet)
+{
+    KIRQL irql;
+    KeAcquireSpinLock(&packet->Lock, &irql);
+    PACKET_WAIT *wait = packet->Active;
+    packet->Active = nullptr;
+    if (wait)
+        KeSetEvent(&wait->Cancel, IO_NO_INCREMENT, FALSE);
+    KeReleaseSpinLock(&packet->Lock, irql);
+    return wait != nullptr;
+}
+
+static void packet_close(PEPROCESS process, PVOID object, ULONG handle_count)
+{
+    if (handle_count <= 1)
+        cancel_wait(object);
+}
+
+static void NTAPI packet_thread(PVOID context)
+{
+    PACKET_WAIT *wait = context;
+    PVOID objects[2] = {wait->TargetWait, &wait->Cancel};
+    KWAIT_BLOCK blocks[2];
+    NTSTATUS status = KiWaitObjects(2, objects, WaitAny, Executive, KernelMode, FALSE, nullptr, blocks);
+    WAIT_PACKET *packet = wait->Packet;
+    BOOLEAN post = FALSE;
+    if (status == STATUS_WAIT_0) {
+        KIRQL irql;
+        KeAcquireSpinLock(&packet->Lock, &irql);
+        if (packet->Active == wait) {
+            packet->Active = nullptr;
+            post = TRUE;
+        }
+        KeReleaseSpinLock(&packet->Lock, irql);
+    }
+    if (post)
+        queue_packet(wait->Port, wait->Key, wait->ApcContext, wait->IoStatus, wait->Information);
+    ObDereferenceObject(wait->Target);
+    ObDereferenceObject(wait->Port);
+    ObDereferenceObject(packet);
+    ExFreePool(wait);
+    PsTerminateSystemThread(STATUS_SUCCESS);
+}
+
+NTSTATUS NTAPI NtCreateWaitCompletionPacket(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes)
+{
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING name;
+    NTSTATUS status = ObCaptureObjectAttributes(attributes, &oa, &name);
+    if (!NT_SUCCESS(status))
+        return status;
+    WAIT_PACKET *packet;
+    status = ObCreateObject(WaitPacketObjectType, attributes ? &oa : nullptr, KeGetPreviousMode(), sizeof(*packet),
+                            (PVOID *)&packet);
+    if (NT_SUCCESS(status)) {
+        memset(packet, 0, sizeof(*packet));
+        KeInitializeSpinLock(&packet->Lock);
+        HANDLE h;
+        status = ObInsertObjectNamed(packet, attributes ? &oa : nullptr, access ? access : IO_COMPLETION_ALL_ACCESS,
+                                     KeGetPreviousMode(), &h);
+        if (NT_SUCCESS(status))
+            status = ObStoreHandle(handle, h);
+    }
+    KiFreeCapturedString(&name);
+    return status;
+}
+
+NTSTATUS NTAPI NtAssociateWaitCompletionPacket(HANDLE packet_handle, HANDLE port_handle, HANDLE target_handle, PVOID key,
+                                               PVOID apc_context, NTSTATUS io_status, ULONG_PTR information,
+                                               PBOOLEAN already_signaled)
+{
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    WAIT_PACKET *packet;
+    IO_COMPLETION *port;
+    PVOID target;
+    NTSTATUS status = ObReferenceHandle(packet_handle, WaitPacketObjectType, mode, (PVOID *)&packet, nullptr);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = ObReferenceHandle(port_handle, IoCompletionObjectType, mode, (PVOID *)&port, nullptr);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(packet);
+        return status;
+    }
+    status = ObReferenceHandle(target_handle, nullptr, mode, &target, nullptr);
+    PDISPATCHER_HEADER target_wait = NT_SUCCESS(status) ? ObGetWaitObject(target) : nullptr;
+    if (NT_SUCCESS(status) && !target_wait) {
+        ObDereferenceObject(target);
+        status = STATUS_OBJECT_TYPE_MISMATCH;
+    }
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(port);
+        ObDereferenceObject(packet);
+        return status;
+    }
+    if (already_signaled) {
+        BOOLEAN no = FALSE;
+        status = KiCopyToUser(already_signaled, &no, sizeof(no));
+        if (!NT_SUCCESS(status))
+            goto fail;
+    }
+    /* a wait already pending is no place for a second one. */
+    if (packet->Active) {
+        status = STATUS_INVALID_PARAMETER;
+        goto fail;
+    }
+    /* an object that is signalled now completes at once. */
+    LARGE_INTEGER zero = {};
+    PVOID now[1] = {target_wait};
+    KWAIT_BLOCK block;
+    if (KiWaitObjects(1, now, WaitAny, Executive, KernelMode, FALSE, &zero, &block) == STATUS_WAIT_0) {
+        if (already_signaled) {
+            BOOLEAN yes = TRUE;
+            KiCopyToUser(already_signaled, &yes, sizeof(yes));
+        }
+        status = queue_packet(port, key, apc_context, io_status, information);
+        goto fail;
+    }
+    PACKET_WAIT *wait = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*wait), KI_TAG('W', 'p', 'W', 't'));
+    if (!wait) {
+        status = STATUS_INSUFFICIENT_RESOURCES;
+        goto fail;
+    }
+    wait->Packet = packet;
+    wait->Port = port;
+    wait->Target = target;
+    wait->TargetWait = target_wait;
+    wait->Key = key;
+    wait->ApcContext = apc_context;
+    wait->IoStatus = io_status;
+    wait->Information = information;
+    KeInitializeEvent(&wait->Cancel, NotificationEvent, FALSE);
+    KIRQL irql;
+    KeAcquireSpinLock(&packet->Lock, &irql);
+    packet->Active = wait;
+    KeReleaseSpinLock(&packet->Lock, irql);
+    status = PsCreateSystemThread(nullptr, 0, nullptr, nullptr, nullptr, packet_thread, wait);
+    if (NT_SUCCESS(status))
+        return STATUS_SUCCESS;
+    KeAcquireSpinLock(&packet->Lock, &irql);
+    packet->Active = nullptr;
+    KeReleaseSpinLock(&packet->Lock, irql);
+    ExFreePool(wait);
+fail:
+    ObDereferenceObject(target);
+    ObDereferenceObject(port);
+    ObDereferenceObject(packet);
+    return status;
+}
+
+/* a cancelled wait reports STATUS_CANCELLED, a packet that was queued already STATUS_SUCCESS. */
+NTSTATUS NTAPI NtCancelWaitCompletionPacket(HANDLE packet_handle, BOOLEAN remove_signaled)
+{
+    WAIT_PACKET *packet;
+    NTSTATUS status = ObReferenceHandle(packet_handle, WaitPacketObjectType, KeGetPreviousMode(), (PVOID *)&packet, nullptr);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = cancel_wait(packet) ? STATUS_CANCELLED : STATUS_SUCCESS;
+    ObDereferenceObject(packet);
+    return status;
+}
+
+void IopInitializeWaitPackets(void)
+{
+    OBJECT_TYPE_INITIALIZER init = {};
+    init.ValidAccessMask = IO_COMPLETION_ALL_ACCESS;
+    init.CloseProcedure = packet_close;
+    ObSetGenericMapping(&init, 0x20001, 0x20002, 0x120000, 0x1F0003);
+    WaitPacketObjectType = ObCreateObjectType(L"WaitCompletionPacket", &init);
+}

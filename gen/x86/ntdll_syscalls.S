@@ -441,6 +441,27 @@ _NtCompareTokens@12:
     int $0x2e
     retl $12
     .p2align 4, 0x90
+    .globl _NtCreateWaitCompletionPacket@12
+_NtCreateWaitCompletionPacket@12:
+    movl $0xd2, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $12
+    .p2align 4, 0x90
+    .globl _NtAssociateWaitCompletionPacket@32
+_NtAssociateWaitCompletionPacket@32:
+    movl $0x92, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $32
+    .p2align 4, 0x90
+    .globl _NtCancelWaitCompletionPacket@8
+_NtCancelWaitCompletionPacket@8:
+    movl $0x97, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $8
+    .p2align 4, 0x90
     .globl _NtFilterToken@24
 _NtFilterToken@24:
     movl $0xed, %eax

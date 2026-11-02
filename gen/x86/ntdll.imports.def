@@ -67,6 +67,9 @@ EXPORTS
     NtAlertThreadByThreadId@4
     NtAllocateLocallyUniqueId@4
     NtCompareTokens@12
+    NtCreateWaitCompletionPacket@12
+    NtAssociateWaitCompletionPacket@32
+    NtCancelWaitCompletionPacket@8
     NtAllocateVirtualMemory@24
     NtAllocateVirtualMemoryEx@28
     NtApphelpCacheControl@8

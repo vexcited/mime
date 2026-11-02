@@ -1270,6 +1270,7 @@ BOOLEAN FsWbIsImageMapped(ULONG volume, ULONG64 file_id);
 BOOLEAN FsWbAnyMapped(void);
 NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64 offset, PULONG read);
 void IopInitializeCompletion(void);
+void IopInitializeWaitPackets(void);
 void IopInitializeNamedPipes(void);
 void IopQueueCompletionApc(PETHREAD thread, PVOID routine, PVOID context, PIO_STATUS_BLOCK iosb);
 /* wow64 flags a 32-bit status block with bit 0 of the apc routine. internally bit 0 of the block's address carries it. */

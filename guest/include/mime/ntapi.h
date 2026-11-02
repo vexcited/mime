@@ -36,6 +36,9 @@ NTSYSCALLAPI NTSTATUS NTAPI NtRemoveIoCompletion(HANDLE handle, PVOID *key, PVOI
 NTSYSCALLAPI NTSTATUS NTAPI NtRemoveIoCompletionEx(HANDLE handle, PVOID entries, ULONG count, PULONG removed, PLARGE_INTEGER timeout, BOOLEAN alertable);
 NTSYSCALLAPI NTSTATUS NTAPI NtOpenIoCompletion(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);
 NTSYSCALLAPI NTSTATUS NTAPI NtSetIoCompletionEx(HANDLE handle, HANDLE reserve, PVOID key, PVOID apc_context, NTSTATUS status, ULONG_PTR information);
+NTSYSCALLAPI NTSTATUS NTAPI NtCreateWaitCompletionPacket(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);
+NTSYSCALLAPI NTSTATUS NTAPI NtAssociateWaitCompletionPacket(HANDLE packet, HANDLE port, HANDLE target, PVOID key, PVOID apc_context, NTSTATUS status, ULONG_PTR information, PBOOLEAN already_signaled);
+NTSYSCALLAPI NTSTATUS NTAPI NtCancelWaitCompletionPacket(HANDLE packet, BOOLEAN remove_signaled);
 NTSYSCALLAPI NTSTATUS NTAPI NtQueryIoCompletion(HANDLE handle, ULONG klass, PVOID info, ULONG length, PULONG returned);
 NTSYSCALLAPI NTSTATUS NTAPI NtSetContextThread(HANDLE thread, PCONTEXT context);
 NTSYSCALLAPI NTSTATUS NTAPI NtCreateDirectoryObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes);

@@ -17,6 +17,9 @@ void NtAlertThread(void);
 void NtAlertThreadByThreadId(void);
 void NtAllocateLocallyUniqueId(void);
 void NtCompareTokens(void);
+void NtCreateWaitCompletionPacket(void);
+void NtAssociateWaitCompletionPacket(void);
+void NtCancelWaitCompletionPacket(void);
 void NtAllocateVirtualMemory(void);
 void NtAllocateVirtualMemoryEx(void);
 void NtApphelpCacheControl(void);
@@ -228,6 +231,15 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtCompareTokens
     KiRegisterService(MIME_SVC_NtCompareTokens, (void *)NtCompareTokens, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtCreateWaitCompletionPacket
+    KiRegisterService(MIME_SVC_NtCreateWaitCompletionPacket, (void *)NtCreateWaitCompletionPacket, STACK_ARGS(3));
+#endif
+#ifdef MIME_SVC_NtAssociateWaitCompletionPacket
+    KiRegisterService(MIME_SVC_NtAssociateWaitCompletionPacket, (void *)NtAssociateWaitCompletionPacket, STACK_ARGS(8));
+#endif
+#ifdef MIME_SVC_NtCancelWaitCompletionPacket
+    KiRegisterService(MIME_SVC_NtCancelWaitCompletionPacket, (void *)NtCancelWaitCompletionPacket, STACK_ARGS(2));
 #endif
 #ifdef MIME_SVC_NtAllocateVirtualMemory
     KiRegisterService(MIME_SVC_NtAllocateVirtualMemory, (void *)NtAllocateVirtualMemory, STACK_ARGS(6));
