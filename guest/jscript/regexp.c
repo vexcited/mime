@@ -48,7 +48,7 @@ Obj *make_regexp(Engine *e, Str *source, const WCHAR *flags, SIZE_T flag_len, BO
     for (SIZE_T k = 0; k < flag_len; k++) {
         WCHAR c = flags[k];
         BOOL *f = c == 'g' ? &g : c == 'i' ? &i : c == 'm' ? &m : nullptr;
-        if (!f || *f) {
+        if (!f) {
             *bad = TRUE;
             throw_error(e, ERR_REGEXP, 5017, nullptr);
             return nullptr;
@@ -89,8 +89,15 @@ static void remember(Engine *e, Str *input, LONG *caps, UINT groups)
 BOOL regexp_static_get(Engine *e, Str *key, Val *out)
 {
     if (!e->LastInput) {
-        if (key->len == 5 && !wcscmp(key->s, L"index")) {
+        const WCHAR *k = key->s;
+        if ((key->len == 5 && !wcscmp(k, L"index")) || (key->len == 9 && !wcscmp(k, L"lastIndex"))) {
             *out = v_num(-1);
+            return TRUE;
+        }
+        if ((key->len == 2 && (k[0] == '$' && (wcschr(L"123456789&`'+_", k[1])))) || (key->len == 5 && !wcscmp(k, L"input")) ||
+            (key->len == 9 && (!wcscmp(k, L"lastMatch") || !wcscmp(k, L"lastParen"))) ||
+            (key->len == 11 && !wcscmp(k, L"leftContext")) || (key->len == 12 && !wcscmp(k, L"rightContext"))) {
+            *out = v_str(str_empty(e));
             return TRUE;
         }
         return FALSE;
@@ -134,7 +141,7 @@ BOOL regexp_static_get(Engine *e, Str *key, Val *out)
         return TRUE;
     }
     if (key->len == 9 && !wcscmp(k, L"lastIndex")) {
-        *out = v_num(e0);
+        *out = v_num(e0 + (s0 == e0 ? 1 : 0));
         return TRUE;
     }
     if ((key->len == 5 && !wcscmp(k, L"input")) || (key->len == 2 && !wcscmp(k, L"$_"))) {
@@ -200,8 +207,9 @@ int regexp_exec(Engine *e, Obj *re, Str *input, Val *out, BOOL test_only, BOOL *
     }
     *matched = TRUE;
     remember(e, input, caps, rx->Groups);
+    LONG next = caps[1] + (caps[1] == caps[0] ? 1 : 0);
     if (global) {
-        Val z = v_num(caps[1]);
+        Val z = v_num(next);
         obj_put(e, re, S(e, "lastIndex"), &z);
     }
     if (test_only) {
@@ -219,7 +227,7 @@ int regexp_exec(Engine *e, Obj *re, Str *input, Val *out, BOOL test_only, BOOL *
     }
     obj_define(e, a, S(e, "index"), v_num(caps[0]), 0);
     obj_define(e, a, S(e, "input"), v_str(input), 0);
-    obj_define(e, a, S(e, "lastIndex"), v_num(caps[1]), 0);
+    obj_define(e, a, S(e, "lastIndex"), v_num(next), 0);
     js_free(caps);
     return RC_OK;
 }
@@ -244,7 +252,7 @@ static int re_ctor(Engine *e, Val *self, Val *args, int argc, Val *ret, BOOL con
     int rc;
     if (pv.t == T_OBJ && pv.u.o->cls == C_REGEXP) {
         if (fv.t != T_UNDEF)
-            return throw_error(e, ERR_TYPE, 5016, nullptr);
+            return throw_error(e, ERR_TYPE, 5017, nullptr);
         if (!construct) {
             *ret = pv;
             return RC_OK;
@@ -367,6 +375,11 @@ void init_regexp(Engine *e)
     obj_method(e, proto, "exec", re_exec, 1, 0);
     obj_method(e, proto, "toString", re_to_string, 0, 0);
     obj_method(e, proto, "compile", re_compile, 2, 0);
+    obj_define_z(e, proto, "source", v_str(str_empty(e)), PF_DONTENUM | PF_DONTDELETE | PF_READONLY);
+    obj_define_z(e, proto, "global", v_bool(FALSE), PF_DONTENUM | PF_DONTDELETE | PF_READONLY);
+    obj_define_z(e, proto, "ignoreCase", v_bool(FALSE), PF_DONTENUM | PF_DONTDELETE | PF_READONLY);
+    obj_define_z(e, proto, "multiline", v_bool(FALSE), PF_DONTENUM | PF_DONTDELETE | PF_READONLY);
+    obj_define_z(e, proto, "lastIndex", v_num(0), PF_DONTENUM | PF_DONTDELETE);
     obj_define_z(e, e->Global, "RegExp", v_obj(ctor), PF_DONTENUM);
     /* test answers a boolean: the magic of 1 is exec's test only mode, so give it its own function. */
     obj_method(e, proto, "test", re_test, 1, 0);
@@ -524,46 +537,37 @@ int string_split_regexp(Engine *e, Str *s, Obj *re, ULONG limit, Val *ret)
     if (limit == 0)
         return RC_OK;
     LONG *caps = js_alloc((rx->Groups + 1) * 2 * sizeof(LONG));
-    if (s->len == 0) {
-        if (!regex_exec(rx, s->s, 0, 0, caps) || caps[1] != 0)
+    LONG len = (LONG)s->len;
+    if (len == 0) {
+        if (!regex_exec(rx, s->s, 0, 0, caps))
             array_push(e, a, v_str(s));
         js_free(caps);
         return RC_OK;
     }
-    LONG p = 0, q = 0;
-    while (q < (LONG)s->len) {
-        /* the match must start exactly at q for the split position to count. */
-        LONG *c2 = caps;
-        BOOL found = FALSE;
-        LONG from = q;
-        while (from < (LONG)s->len && regex_exec(rx, s->s, s->len, from, c2)) {
-            if (c2[1] == c2[0] && c2[0] >= (LONG)s->len)
+    /* the pieces between the matches, empty ones dropped and the groups left out as windows does. */
+    LONG piece = 0, from = 0;
+    while (from <= len && regex_exec(rx, s->s, s->len, from, caps)) {
+        LONG m0 = caps[0], m1 = caps[1];
+        if (m0 == m1) {
+            if (m0 >= len)
                 break;
-            if (c2[1] == p) {
-                from = c2[0] + 1;
-                if (from <= (LONG)s->len && c2[0] == c2[1]) {
-                    /* an empty match at the end of the last piece is skipped. */
-                    continue;
-                }
+            if (m0 == piece) {
+                from = m0 + 1;
                 continue;
             }
-            found = TRUE;
-            break;
         }
-        if (!found)
-            break;
-        LONG ms = c2[0], me = c2[1];
-        array_push(e, a, v_str(str_new(e, s->s + p, ms - p)));
-        if (a->u.arr.len >= limit) {
-            js_free(caps);
-            return RC_OK;
+        if (m0 > piece) {
+            array_push(e, a, v_str(str_new(e, s->s + piece, (SIZE_T)(m0 - piece))));
+            if (a->u.arr.len >= limit) {
+                js_free(caps);
+                return RC_OK;
+            }
         }
-        p = me;
-        q = me > ms ? me : ms + 1;
-        if (me == ms)
-            q = ms + 1;
+        piece = m1;
+        from = m1;
     }
-    array_push(e, a, v_str(str_new(e, s->s + p, s->len - p)));
+    if (piece < len)
+        array_push(e, a, v_str(str_new(e, s->s + piece, (SIZE_T)(len - piece))));
     js_free(caps);
     return RC_OK;
 }

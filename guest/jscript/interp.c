@@ -309,6 +309,41 @@ static int assign_error(Env *env, Node *t, BOOL compound)
     return throw_error(e, ERR_REFERENCE, 5008, b.s);
 }
 
+/* what cannot be deleted. */
+static int delete_error(Env *env, Node *t)
+{
+    Engine *e = env->e;
+    TextBuf b = {};
+    switch (t->kind) {
+    case N_NUM: tb_add_z(&b, "[number]"); break;
+    case N_STR: tb_add_z(&b, "[string]"); break;
+    case N_THIS: tb_add_z(&b, "this"); break;
+    case N_NULL: tb_add_z(&b, "null"); break;
+    case N_TRUE: tb_add_z(&b, "true"); break;
+    case N_FALSE: tb_add_z(&b, "false"); break;
+    default: {
+        Val v = UNDEF;
+        if (EVAL(env, t, &v))
+            return RC_THROW;
+        if (v.t == T_NUM) {
+            Str *ns = num_to_str(e, v.u.n);
+            tb_add_z(&b, "[number: ");
+            tb_add(&b, ns->s, ns->len);
+            tb_add_z(&b, "]");
+        } else if (v.t == T_UNDEF)
+            tb_add_z(&b, "undefined");
+        else if (v.t == T_NULL)
+            tb_add_z(&b, "null");
+        else if (v.t == T_BOOL)
+            tb_add_z(&b, v.u.b ? "true" : "false");
+        else
+            tb_add_z(&b, "[object]");
+        break;
+    }
+    }
+    return throw_error(e, ERR_TYPE, 5012, b.s);
+}
+
 /* ------------------------------------------------------------------ operators */
 
 static int op_add(Engine *e, Val *a, Val *b, Val *out)
@@ -811,17 +846,7 @@ static int eval_ctx(Env *env, Node *n, Val *out, int ctx)
     case N_FUNC: {
         FuncNode *f = n->u.fn;
         Obj *scope = env->scope;
-        /* JScript makes the name of a function expression a variable of the scope it is written in. */
         Obj *fo = func_new_node(e, f, scope);
-        if (f->name) {
-            Val fv = v_obj(fo);
-            Obj *vs = env->var_scope ? env->var_scope : e->Global;
-            Prop *p = obj_find_own(vs, f->name);
-            if (p)
-                p->v = fv;
-            else
-                obj_add_prop(e, vs, f->name, fv, 0);
-        }
         *out = v_obj(fo);
         return RC_OK;
     }
@@ -902,14 +927,16 @@ static int eval_ctx(Env *env, Node *n, Val *out, int ctx)
                         obj_delete(e, s, t->u.str, &res);
                         break;
                     }
-                    if (s->cls == C_GLOBAL)
+                    if (s->cls == C_GLOBAL) {
+                        Val tmp;
+                        BOOL item = FALSE;
+                        if (!obj_find_own(s, t->u.str) && !lookup_item(e, t->u.str, &tmp, &item) && item)
+                            res = FALSE;
                         break;
+                    }
                 }
-            } else {
-                Val tmp;
-                if ((rc = EVAL(env, t, &tmp)))
-                    return rc;
-            }
+            } else
+                return delete_error(env, t);
             *out = v_bool(res);
             return RC_OK;
         }
@@ -1250,8 +1277,10 @@ static int exec(Env *env, Node *n, Val *completion)
         return RC_BREAK;
     case N_RETURN:
         if (n->a) {
-            if ((rc = EVAL(env, n->a, &e->RetVal)))
+            Val rv;
+            if ((rc = EVAL(env, n->a, &rv)))
                 return rc;
+            e->RetVal = rv;
         } else
             e->RetVal = UNDEF;
         return RC_RETURN;
@@ -1370,9 +1399,10 @@ Obj *func_new_node(Engine *e, FuncNode *f, Obj *scope)
     return fo;
 }
 
-static void hoist(Env *env, FuncNode *f, Obj *vars)
+static void hoist(Env *env, FuncNode *f, Obj *vars, BOOL permanent)
 {
     Engine *e = env->e;
+    int flags = permanent || vars->cls == C_GLOBAL ? PF_DONTDELETE : 0;
     for (ULONG i = 0; i < f->nfuncs; i++) {
         FuncNode *fn = f->funcs[i]->u.fn;
         Obj *fo = func_new_node(e, fn, env->scope);
@@ -1380,11 +1410,11 @@ static void hoist(Env *env, FuncNode *f, Obj *vars)
         if (p)
             p->v = v_obj(fo);
         else
-            obj_add_prop(e, vars, fn->name, v_obj(fo), vars->cls == C_GLOBAL ? PF_DONTDELETE : 0);
+            obj_add_prop(e, vars, fn->name, v_obj(fo), flags);
     }
     for (ULONG i = 0; i < f->nvars; i++)
         if (!obj_find_own(vars, f->vars[i]))
-            obj_add_prop(e, vars, f->vars[i], UNDEF, vars->cls == C_GLOBAL ? PF_DONTDELETE : 0);
+            obj_add_prop(e, vars, f->vars[i], UNDEF, flags);
 }
 
 static Obj *make_arguments(Env *env, Obj *func, Obj *act, Val *args, int argc)
@@ -1430,7 +1460,7 @@ int call_node_function(Engine *e, Obj *func, Val *self, Val *args, int argc, Val
         if (p)
             p->v = v;
         else
-            obj_add_prop(e, act, f->params[i], v, 0);
+            obj_add_prop(e, act, f->params[i], v, PF_DONTDELETE);
     }
     if (f->uses_args || f->uses_eval) {
         Obj *ao = make_arguments(&env, func, act, args, argc);
@@ -1438,8 +1468,8 @@ int call_node_function(Engine *e, Obj *func, Val *self, Val *args, int argc, Val
         if (!obj_find_own(act, S(e, "arguments")))
             obj_add_prop(e, act, S(e, "arguments"), v_obj(ao), PF_DONTENUM);
     }
-    hoist(&env, f, act);
-    CallFrame frame = {e->Frames, func, nullptr};
+    hoist(&env, f, act, TRUE);
+    CallFrame frame = {e->Frames, func, nullptr, act};
     e->Frames = &frame;
     e->Depth++;
     Node *saved_stmt = e->CurStmt;
@@ -1465,7 +1495,7 @@ int run_program(Engine *e, Unit *u, Obj *scope, Val *result, BOOL want_value)
     env.self = e->GlobalThis.t == T_OBJ ? e->GlobalThis : v_obj(e->Global);
     env.want_value = want_value;
     FuncNode *f = u->program;
-    hoist(&env, f, e->Global);
+    hoist(&env, f, e->Global, TRUE);
     Val completion = UNDEF;
     int rc = exec_list(&env, f->body, &completion);
     if (result)
@@ -1496,9 +1526,13 @@ int eval_code(Engine *e, Str *code, Obj *scope, Val *self, Val *out)
     while (vs && (vs->cls == C_WITH || (vs->cls == C_ACTIVATION && (vs->flags & 2))))
         vs = vs->u.scope.outer;
     env.var_scope = vs ? vs : e->Global;
-    hoist(&env, u->program, env.var_scope);
+    Node *outer = e->EvalStmt;
+    if (!outer)
+        e->EvalStmt = e->CurStmt;
+    hoist(&env, u->program, env.var_scope, FALSE);
     Val completion = UNDEF;
     int rc = exec_list(&env, u->program->body, &completion);
+    e->EvalStmt = outer;
     *out = completion;
     return rc == RC_RETURN ? RC_OK : rc;
 }

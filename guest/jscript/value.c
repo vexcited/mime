@@ -711,10 +711,41 @@ Str *num_to_radix(Engine *e, double n, int radix)
     return str_from_ascii(e, out);
 }
 
+#include "casemap.inc"
+
+static WCHAR map_case(const WORD (*table)[2], size_t count, WCHAR c)
+{
+    size_t lo = 0, hi = count;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (table[mid][0] < c)
+            lo = mid + 1;
+        else if (table[mid][0] > c)
+            hi = mid;
+        else
+            return table[mid][1];
+    }
+    return c;
+}
+
+WCHAR js_tolower(WCHAR c)
+{
+    if (c < 0x80)
+        return c >= 'A' && c <= 'Z' ? c + 32 : c;
+    return map_case(g_lower_map, sizeof(g_lower_map) / sizeof(g_lower_map[0]), c);
+}
+
+WCHAR js_toupper(WCHAR c)
+{
+    if (c < 0x80)
+        return c >= 'a' && c <= 'z' ? c - 32 : c;
+    return map_case(g_upper_map, sizeof(g_upper_map) / sizeof(g_upper_map[0]), c);
+}
+
 BOOL is_js_space(WCHAR c)
 {
     return c == 9 || c == 10 || c == 11 || c == 12 || c == 13 || c == 32 || c == 0xA0 || c == 0x2028 || c == 0x2029 ||
-           c == 0xFEFF || c == 0x1680 || (c >= 0x2000 && c <= 0x200A) || c == 0x202F || c == 0x205F || c == 0x3000;
+           c == 0x1680 || (c >= 0x2000 && c <= 0x200A) || c == 0x202F || c == 0x205F || c == 0x3000;
 }
 
 static int hexval(WCHAR c)

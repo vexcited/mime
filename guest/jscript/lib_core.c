@@ -48,9 +48,16 @@ static int object_to_string(Engine *e, Val *self, Val *args, int argc, Val *ret,
 {
     WCHAR buf[64];
     const WCHAR *cls = L"Object";
-    if (self->t == T_OBJ)
-        cls = class_name(self->u.o);
-    else if (self->t == T_STR)
+    if (self->t == T_OBJ) {
+        Obj *o = self->u.o;
+        cls = class_name(o);
+        if (o == e->StringProto)
+            cls = L"Object";
+        else if (o == e->DateProto)
+            cls = L"Date";
+        else if (o == e->RegExpProto)
+            cls = L"RegExp";
+    } else if (self->t == T_STR)
         cls = L"String";
     else if (self->t == T_NUM)
         cls = L"Number";
@@ -125,7 +132,7 @@ static int object_prop_is_enum(Engine *e, Val *self, Val *args, int argc, Val *r
 void init_object(Engine *e)
 {
     Obj *proto = e->ObjectProto;
-    Obj *ctor = obj_native(e, "Object", object_ctor, 1, 0);
+    Obj *ctor = obj_native(e, "Object", object_ctor, 0, 0);
     def_const(e, ctor, "prototype", v_obj(proto));
     def(e, proto, "constructor", v_obj(ctor));
     obj_method(e, proto, "toString", object_to_string, 0, 0);
@@ -173,8 +180,10 @@ static int function_apply(Engine *e, Val *self, Val *args, int argc, Val *ret, B
     if (!is_callable(self))
         return throw_error(e, ERR_TYPE, 5002, nullptr);
     Val t = ARG(0), a = ARG(1);
-    if (a.t == T_UNDEF || a.t == T_NULL)
+    if (argc < 2)
         return call_function(e, self, &t, nullptr, 0, ret);
+    if (a.t == T_UNDEF || a.t == T_NULL)
+        return throw_error(e, ERR_TYPE, 5007, nullptr);
     if (a.t != T_OBJ || (a.u.o->cls != C_ARRAY && a.u.o->cls != C_ARGS))
         return throw_error(e, ERR_TYPE, 5028, nullptr);
     Val lv;

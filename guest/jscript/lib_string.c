@@ -172,6 +172,10 @@ static int string_match(Engine *e, Val *self, Val *args, int argc, Val *ret, BOO
     int rc = this_string(e, self, &s);
     if (rc)
         return rc;
+    if (argc == 0) {
+        *ret = v_null();
+        return RC_OK;
+    }
     Val a = ARG(0);
     Obj *re = regexp_arg(e, &a, &rc);
     if (rc)
@@ -185,6 +189,10 @@ static int string_search(Engine *e, Val *self, Val *args, int argc, Val *ret, BO
     int rc = this_string(e, self, &s);
     if (rc)
         return rc;
+    if (argc == 0) {
+        *ret = v_null();
+        return RC_OK;
+    }
     Val a = ARG(0);
     Obj *re = regexp_arg(e, &a, &rc);
     if (rc)
@@ -304,7 +312,7 @@ static int string_case(Engine *e, Val *self, Val *args, int argc, Val *ret, BOOL
     BOOL upper = e->Magic == 1;
     Str *r = str_alloc(e, s->len);
     for (ULONG i = 0; i < s->len; i++)
-        r->s[i] = upper ? (WCHAR)towupper(s->s[i]) : (WCHAR)towlower(s->s[i]);
+        r->s[i] = upper ? js_toupper(s->s[i]) : js_tolower(s->s[i]);
     *ret = v_str(r);
     return RC_OK;
 }
@@ -410,19 +418,19 @@ void init_string(Engine *e)
     Obj *ctor = obj_native(e, "String", string_ctor, 1, 0);
     obj_define_z(e, ctor, "prototype", v_obj(proto), PF_DONTENUM | PF_DONTDELETE | PF_READONLY);
     obj_define_z(e, proto, "constructor", v_obj(ctor), PF_DONTENUM);
-    obj_method(e, ctor, "fromCharCode", string_from_char_code, 1, 0);
+    obj_method(e, ctor, "fromCharCode", string_from_char_code, 0, 0);
     obj_method(e, proto, "toString", string_to_string, 0, 0);
     obj_method(e, proto, "valueOf", string_to_string, 0, 0);
     obj_method(e, proto, "charAt", string_char_at, 1, 0);
     obj_method(e, proto, "charCodeAt", string_char_at, 1, 1);
     obj_method(e, proto, "concat", string_concat, 1, 0);
-    obj_method(e, proto, "indexOf", string_index_of, 1, 0);
-    obj_method(e, proto, "lastIndexOf", string_index_of, 1, 1);
+    obj_method(e, proto, "indexOf", string_index_of, 2, 0);
+    obj_method(e, proto, "lastIndexOf", string_index_of, 2, 1);
     obj_method(e, proto, "localeCompare", string_locale_compare, 1, 0);
     obj_method(e, proto, "match", string_match, 1, 0);
-    obj_method(e, proto, "replace", string_replace, 2, 0);
-    obj_method(e, proto, "search", string_search, 1, 0);
-    obj_method(e, proto, "slice", string_slice, 2, 0);
+    obj_method(e, proto, "replace", string_replace, 1, 0);
+    obj_method(e, proto, "search", string_search, 0, 0);
+    obj_method(e, proto, "slice", string_slice, 0, 0);
     obj_method(e, proto, "split", string_split, 2, 0);
     obj_method(e, proto, "substring", string_substring, 2, 0);
     obj_method(e, proto, "substr", string_substr, 2, 0);

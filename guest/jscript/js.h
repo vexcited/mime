@@ -246,6 +246,7 @@ typedef struct CallFrame {
     struct CallFrame *prev;
     Obj *func;
     Node *stmt;
+    Obj *act;
 } CallFrame;
 
 typedef struct NameEntry {
@@ -304,6 +305,7 @@ struct Engine {
     CallFrame *Frames;
     UINT Depth;
     Node *CurStmt;
+    Node *EvalStmt;
     int CcOn, CcVersion;
     Val LastMatch[10];
     Str *LastInput;
@@ -371,6 +373,8 @@ const WCHAR *typeof_name(Val *v);
 BOOL is_callable(Val *v);
 BOOL is_nan(double d);
 BOOL is_js_space(WCHAR c);
+WCHAR js_tolower(WCHAR c);
+WCHAR js_toupper(WCHAR c);
 BOOL host_same_object(Obj *a, Obj *b);
 BOOL is_inf(double d);
 extern const double js_nan, js_pnan;

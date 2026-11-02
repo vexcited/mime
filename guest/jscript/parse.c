@@ -135,6 +135,12 @@ static void perr_at(Parser *p, int code, ULONG line, ULONG col)
     p->ecol = col;
 }
 
+/* an error of conditional compilation sits at the current position. */
+static void cc_err(Parser *p, int code)
+{
+    perr_at(p, code, p->line, p->pos - p->line_start);
+}
+
 static Node *new_node(Parser *p, int kind)
 {
     Node *n = arena_alloc(p->u->arena, sizeof(Node));
@@ -149,12 +155,18 @@ static Node *new_node(Parser *p, int kind)
 
 static BOOL ident_start(WCHAR c)
 {
-    return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') || c == L'$' || c == L'_' || (c > 127 && iswalpha(c));
+    return (c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') || c == L'$' || c == L'_' || c == 0xAA || c == 0xB5 ||
+           c == 0xBA || (c > 127 && iswalpha(c));
 }
 
 static BOOL ident_part(WCHAR c)
 {
-    return ident_start(c) || (c >= L'0' && c <= L'9') || (c > 127 && iswalnum(c));
+    if (ident_start(c) || (c >= L'0' && c <= L'9'))
+        return TRUE;
+    /* windows takes nearly everything above the controls, short of the spaces. */
+    if (c < 0xA0 || is_js_space(c) || c == 0xFEFF)
+        return FALSE;
+    return c <= 0x345 || (c >= 0x360 && c <= 0x361) || (c >= 0x370 && c <= 0x20E1) || c >= 0x2100;
 }
 
 static BOOL cc_var_get(Parser *p, const WCHAR *name, SIZE_T len, double *value)
@@ -195,7 +207,7 @@ static double cc_primary(Parser *p)
 {
     cc_skip_space(p);
     if (p->pos >= p->n) {
-        perr(p, 1031);
+        cc_err(p, 1031);
         return 0;
     }
     WCHAR c = p->s[p->pos];
@@ -206,7 +218,7 @@ static double cc_primary(Parser *p)
         if (p->pos < p->n && p->s[p->pos] == ')')
             p->pos++;
         else
-            perr(p, 1006);
+            cc_err(p, 1006);
         return v;
     }
     if (c == '!') {
@@ -253,7 +265,7 @@ static double cc_primary(Parser *p)
             return 0;
         return js_nan;
     }
-    perr(p, 1031);
+    cc_err(p, 1031);
     return 0;
 }
 
@@ -384,11 +396,11 @@ static BOOL cc_directive(Parser *p)
             if (p->pos < p->n && p->s[p->pos] == ')')
                 p->pos++;
             else
-                perr(p, 1006);
+                cc_err(p, 1006);
         } else
-            perr(p, 1005);
+            cc_err(p, 1005);
         if (p->cc_depth >= 31) {
-            perr(p, 1002);
+            cc_err(p, 1002);
             return TRUE;
         }
         CcFrame *f = &p->cc[p->cc_depth++];
@@ -400,8 +412,8 @@ static BOOL cc_directive(Parser *p)
     }
     if (name_is(p, nm, len, L"elif")) {
         p->pos = e2;
-        if (!p->cc_depth || p->cc[p->cc_depth - 1].SeenElse) {
-            perr(p, 1002);
+        if (!p->cc_depth) {
+            cc_err(p, 1002);
             return TRUE;
         }
         CcFrame *f = &p->cc[p->cc_depth - 1];
@@ -414,9 +426,9 @@ static BOOL cc_directive(Parser *p)
             if (p->pos < p->n && p->s[p->pos] == ')')
                 p->pos++;
             else
-                perr(p, 1006);
+                cc_err(p, 1006);
         } else
-            perr(p, 1005);
+            cc_err(p, 1005);
         if (f->Taken)
             f->Active = 0;
         else {
@@ -427,8 +439,8 @@ static BOOL cc_directive(Parser *p)
     }
     if (name_is(p, nm, len, L"else")) {
         p->pos = e2;
-        if (!p->cc_depth || p->cc[p->cc_depth - 1].SeenElse) {
-            perr(p, 1002);
+        if (!p->cc_depth) {
+            cc_err(p, 1002);
             return TRUE;
         }
         CcFrame *f = &p->cc[p->cc_depth - 1];
@@ -440,17 +452,18 @@ static BOOL cc_directive(Parser *p)
     if (name_is(p, nm, len, L"end")) {
         p->pos = e2;
         if (!p->cc_depth) {
-            perr(p, 1002);
+            cc_err(p, 1002);
             return TRUE;
         }
         p->cc_depth--;
         return TRUE;
     }
     if (name_is(p, nm, len, L"set")) {
+        p->cc_on = TRUE;
         p->pos = e2;
         cc_skip_space(p);
         if (p->pos >= p->n || p->s[p->pos] != '@') {
-            perr(p, 1032);
+            cc_err(p, 1032);
             return TRUE;
         }
         p->pos++;
@@ -460,7 +473,7 @@ static BOOL cc_directive(Parser *p)
         SIZE_T vl = p->pos - vs;
         cc_skip_space(p);
         if (p->pos >= p->n || p->s[p->pos] != '=') {
-            perr(p, 1011);
+            cc_err(p, 1011);
             return TRUE;
         }
         p->pos++;
@@ -588,7 +601,7 @@ static void lex_string(Parser *p, WCHAR quote)
         case 'r': PUT('\r'); break;
         case 'b': PUT('\b'); break;
         case 'f': PUT('\f'); break;
-        case 'v': PUT('\v'); break;
+        case 'v': PUT('v'); break;
         case '\r':
             if (p->pos < p->n && s[p->pos] == '\n')
                 p->pos++;
@@ -762,6 +775,10 @@ static void lex(Parser *p)
             ULONG q = st;
             while (q < p->n && ident_part(s[q]))
                 q++;
+            if (q == st && !cc_active(p)) {
+                p->pos++;
+                continue;
+            }
             if (q == st) {
                 perr(p, 1014);
                 return;
@@ -787,10 +804,14 @@ static void lex(Parser *p)
         if (!cc_active(p)) {
             /* the text of an inactive branch is skipped token by token, strings and comments included. */
             if (c == '"' || c == '\'') {
+                ULONG from = p->pos;
                 lex_string(p, c);
                 if (p->failed) {
-                    p->tok = TK_EOF;
-                    return;
+                    p->failed = FALSE;
+                    p->code = 0;
+                    p->pos = from + 1;
+                    while (p->pos < p->n && !is_line_term(s[p->pos]))
+                        p->pos++;
                 }
             } else if (ident_part(c) || c > 127)
                 while (p->pos < p->n && ident_part(s[p->pos]))
@@ -1553,7 +1574,8 @@ static Node *parse_function(Parser *p, BOOL is_decl)
     }
     lex(p);
     f->n.end = p->prev_end;
-    if (is_decl) {
+    /* the name of a function expression is declared in the scope it is written in, as windows does. */
+    if (is_decl || f->name) {
         fn_add_func(p, saved, &f->n);
         /* a function declared in a function is a variable of it. */
         if (f->name)
@@ -2070,6 +2092,12 @@ static WCHAR *line_text(const WCHAR *s, ULONG n, ULONG target_line)
 
 Unit *parse_unit(Engine *e, const WCHAR *text, SIZE_T length, ULONG first_line, DWORD_PTR cookie, int mode, ParseError *err)
 {
+    /* the text ends at the first nul character. */
+    for (SIZE_T k = 0; k < length; k++)
+        if (!text[k]) {
+            length = k;
+            break;
+        }
     Unit *u = js_alloc(sizeof(Unit));
     u->arena = js_alloc(sizeof(struct Arena));
     u->text = js_alloc((length + 1) * sizeof(WCHAR));

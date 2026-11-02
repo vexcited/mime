@@ -435,7 +435,7 @@ static int array_concat(Engine *e, Val *self, Val *args, int argc, Val *ret, BOO
     *ret = v_obj(r);
     double n = 0;
     for (int k = -1; k < argc; k++) {
-        Val item = k < 0 ? v_obj(o) : args[k];
+        Val item = k < 0 ? (self->t == T_OBJ ? v_obj(o) : *self) : args[k];
         if (item.t == T_OBJ && item.u.o->cls == C_ARRAY) {
             Obj *src = item.u.o;
             double len = src->u.arr.len;
@@ -518,23 +518,23 @@ static int array_sort(Engine *e, Val *self, Val *args, int argc, Val *ret, BOOL 
     if (rc)
         return rc;
     Val cmp = ARG(0);
-    if (cmp.t != T_UNDEF && !is_callable(&cmp))
-        return throw_error(e, ERR_TYPE, 5002, nullptr);
+    if (argc > 1 || (argc == 1 && cmp.t != T_NULL && !is_callable(&cmp)))
+        return throw_error(e, ERR_TYPE, 5014, nullptr);
+    if (cmp.t == T_NULL)
+        cmp = UNDEF;
     double len;
     if ((rc = a_len(e, o, &len)))
         return rc;
     Val *vals = gc_alloc(e, (len ? (SIZE_T)len : 1) * sizeof(Val), GC_VALS);
     Val *tmp = gc_alloc(e, (len ? (SIZE_T)len : 1) * sizeof(Val), GC_VALS);
-    ULONG n = 0, undef = 0, total = (ULONG)len;
+    ULONG n = 0, total = (ULONG)len;
     for (double i = 0; i < len; i++) {
         if (!a_has(e, o, i))
             continue;
         Val v;
         if ((rc = a_get(e, o, i, &v)))
             return rc;
-        if (v.t == T_UNDEF)
-            undef++;
-        else
+        if (v.t != T_UNDEF)
             vals[n++] = v;
     }
     SortCtx c = {e, &cmp, 0};
@@ -543,10 +543,6 @@ static int array_sort(Engine *e, Val *self, Val *args, int argc, Val *ret, BOOL 
     ULONG k = 0;
     for (; k < n; k++)
         if ((rc = a_put(e, o, k, &vals[k])))
-            return rc;
-    Val u = UNDEF;
-    for (ULONG i = 0; i < undef; i++, k++)
-        if ((rc = a_put(e, o, k, &u)))
             return rc;
     for (; k < total; k++)
         a_del(e, o, k);

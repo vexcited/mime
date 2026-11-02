@@ -904,8 +904,8 @@ void init_host(Engine *e)
     obj_define_z(e, vctor, "prototype", v_obj(vproto), PF_DONTENUM | PF_DONTDELETE | PF_READONLY);
     obj_define_z(e, vproto, "constructor", v_obj(vctor), PF_DONTENUM);
     obj_method(e, vproto, "dimensions", vbarray_method, 0, 0);
-    obj_method(e, vproto, "lbound", vbarray_method, 1, 1);
-    obj_method(e, vproto, "ubound", vbarray_method, 1, 2);
+    obj_method(e, vproto, "lbound", vbarray_method, 0, 1);
+    obj_method(e, vproto, "ubound", vbarray_method, 0, 2);
     obj_method(e, vproto, "getItem", vbarray_method, 1, 3);
     obj_method(e, vproto, "toArray", vbarray_method, 0, 4);
     obj_define_z(e, g, "VBArray", v_obj(vctor), PF_DONTENUM);

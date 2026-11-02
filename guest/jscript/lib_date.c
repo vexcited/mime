@@ -85,7 +85,7 @@ static double make_day(double year, double month, double date)
     double mn = fmod(m, 12);
     if (mn < 0)
         mn += 12;
-    if (fabs(ym) > 400000)
+    if (fabs(ym) > 1e12)
         return js_nan;
     double day = days_from_year(ym) + g_cum[is_leap(ym)][(int)mn];
     return day + dt - 1;
@@ -511,7 +511,6 @@ static double parse_date(Str *str)
     {
         double t = make_date(make_day(year, month, day), (double)secs * 1000.0);
         result = zone == UNSET ? utc_time(t) : t;
-        result = time_clip(result);
     }
 done:
     js_free(z);
@@ -537,7 +536,7 @@ static double now_ms(void)
 
 static int date_from_components(Engine *e, Val *args, int argc, BOOL utc, double *out)
 {
-    double n[7] = {js_nan, 0, 1, 0, 0, 0, 0};
+    double n[7] = {utc && !argc ? 0 : js_nan, 0, 1, 0, 0, 0, 0};
     for (int i = 0; i < 7 && i < argc; i++) {
         int rc = to_number(e, &args[i], &n[i]);
         if (rc)
@@ -550,7 +549,7 @@ static int date_from_components(Engine *e, Val *args, int argc, BOOL utc, double
             y = 1900 + yi;
     }
     double t = make_date(make_day(y, n[1], n[2]), make_time(n[3], n[4], n[5], n[6]));
-    *out = time_clip(utc ? t : utc_time(t));
+    *out = utc ? t : time_clip(utc_time(t));
     return RC_OK;
 }
 
@@ -571,7 +570,7 @@ static int date_ctor(Engine *e, Val *self, Val *args, int argc, Val *ret, BOOL c
         if (args[0].t == T_VAR && args[0].u.v->v.vt == VT_DATE)
             t = time_clip(utc_time(floor((args[0].u.v->v.date - 25569.0) * MS_DAY + 0.5)));
         else if (p.t == T_STR)
-            t = parse_date(p.u.s);
+            t = time_clip(parse_date(p.u.s));
         else {
             double d;
             if ((rc = to_number(e, &p, &d)))
@@ -677,6 +676,8 @@ static int date_set(Engine *e, Val *self, Val *args, int argc, Val *ret, BOOL co
     int magic = e->Magic;
     BOOL utc = magic & 0x100;
     int field = magic & 0xFF;
+    if (!argc)
+        return throw_error(e, ERR_TYPE, 449, nullptr);
     double a[4];
     int n = 0;
     for (; n < 4 && n < argc; n++)
@@ -685,17 +686,15 @@ static int date_set(Engine *e, Val *self, Val *args, int argc, Val *ret, BOOL co
     double t = *tp;
     if (field == F_GETYEAR + 1) {
         /* setTime. */
-        *tp = time_clip(argc ? a[0] : js_nan);
+        *tp = time_clip(a[0]);
         *ret = v_dbl(*tp);
         return RC_OK;
     }
     if (is_nan(t)) {
-        if (field != F_YEAR && field != F_GETYEAR) {
-            *ret = v_dbl(js_nan);
-            return RC_OK;
-        }
-        t = 0;
-    } else if (!utc)
+        *ret = v_dbl(js_nan);
+        return RC_OK;
+    }
+    if (!utc)
         t = local_time(t);
     double y;
     int mo, d;
@@ -703,11 +702,6 @@ static int date_set(Engine *e, Val *self, Val *args, int argc, Val *ret, BOOL co
     double tw = time_within_day(t);
     double hh = floor(tw / 3600000), mi = fmod(floor(tw / 60000), 60), ss = fmod(floor(tw / 1000), 60), ms = fmod(tw, 1000);
     double year = y, month = mo, date = d;
-    if (!n) {
-        *tp = js_nan;
-        *ret = v_dbl(js_nan);
-        return RC_OK;
-    }
     switch (field) {
     case F_YEAR:
         year = a[0];

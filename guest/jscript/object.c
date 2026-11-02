@@ -168,9 +168,9 @@ Obj *array_new(Engine *e, ULONG len)
 
 int array_set_length(Engine *e, Obj *a, double len)
 {
-    ULONG n = d_to_uint32(len);
-    if ((double)n != len)
+    if (is_nan(len) || len < 0 || len >= 4294967296.0)
         return throw_error(e, ERR_RANGE, 5030, nullptr);
+    ULONG n = (ULONG)len;
     if (n < a->u.arr.len) {
         ULONG top = a->u.arr.len < a->u.arr.cap ? a->u.arr.len : a->u.arr.cap;
         for (ULONG i = n; i < top; i++)
@@ -271,8 +271,32 @@ static BOOL own_lookup(Engine *e, Obj *o, Str *key, Val *out, int *rc)
         *out = p->v;
         return TRUE;
     }
-    if (o->cls == C_FUNCTION && o->u.fn.node && ((key->len == 6 && !wcscmp(key->s, L"caller")) || (key->len == 9 && !wcscmp(key->s, L"arguments")))) {
+    if (o->cls == C_ARGS && key->len == 6 && !wcscmp(key->s, L"caller")) {
+        /* the arguments of the caller, made empty when it never asked for them. */
         *out = v_null();
+        for (CallFrame *f = e->Frames; f; f = f->prev) {
+            if (f->act != o->u.scope.outer)
+                continue;
+            if (f->prev && f->prev->func) {
+                Obj *ca = f->prev->act ? f->prev->act->u.scope.arguments : nullptr;
+                *out = v_obj(ca ? ca : obj_new(e, C_OBJECT, e->ObjectProto));
+            }
+            break;
+        }
+        return TRUE;
+    }
+    if (o->cls == C_FUNCTION && o->u.fn.node && ((key->len == 6 && !wcscmp(key->s, L"caller")) || (key->len == 9 && !wcscmp(key->s, L"arguments")))) {
+        /* only a running function has a caller and arguments. */
+        *out = v_null();
+        for (CallFrame *f = e->Frames; f; f = f->prev) {
+            if (f->func != o)
+                continue;
+            if (key->len == 6)
+                *out = f->prev && f->prev->func ? v_obj(f->prev->func) : v_null();
+            else if (f->act && f->act->u.scope.arguments)
+                *out = v_obj(f->act->u.scope.arguments);
+            break;
+        }
         return TRUE;
     }
     if (o->cls == C_FUNCTION && o->u.fn.node && key->len == 9 && !wcscmp(key->s, L"prototype")) {
@@ -307,8 +331,8 @@ BOOL obj_has_own(Engine *e, Obj *o, Str *key)
     ULONG idx;
     switch (o->cls) {
     case C_ARRAY:
-        if (str_to_index(key, &idx))
-            return idx < o->u.arr.cap && idx < o->u.arr.len && o->u.arr.items[idx].t != T_HOLE;
+        if (str_to_index(key, &idx) && idx < o->u.arr.cap && idx < o->u.arr.len && o->u.arr.items[idx].t != T_HOLE)
+            return TRUE;
         if (key->len == 6 && !wcscmp(key->s, L"length"))
             return TRUE;
         break;
@@ -348,6 +372,9 @@ int obj_put(Engine *e, Obj *o, Str *key, Val *v)
                 o->u.arr.len = idx + 1;
             break;
         }
+        /* the length of windows wraps around on the last index. */
+        if (key->len == 10 && !wcscmp(key->s, L"4294967295"))
+            array_set_length(e, o, 0);
         if (key->len == 6 && !wcscmp(key->s, L"length")) {
             double d;
             int rc = to_number(e, v, &d);
@@ -776,8 +803,9 @@ Obj *make_error(Engine *e, int kind, int code, const WCHAR *detail)
 int throw_value(Engine *e, Val v)
 {
     e->Exception = v;
-    e->ErrLine = e->CurStmt ? e->CurStmt->line : 0;
-    e->ErrCol = e->CurStmt ? e->CurStmt->col : 0;
+    Node *at = e->EvalStmt ? e->EvalStmt : e->CurStmt;
+    e->ErrLine = at ? at->line : 0;
+    e->ErrCol = at ? at->col : 0;
     e->ErrFromHost = FALSE;
     return RC_THROW;
 }

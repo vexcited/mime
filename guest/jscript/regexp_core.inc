@@ -77,18 +77,11 @@ static BOOL class_escape(RNode *n, WCHAR e)
         add_range(n, L'A', L'Z');
         add_range(n, L'a', L'z');
         add_range(n, L'_', L'_');
+        add_range(n, 0x130, 0x130);
         return TRUE;
     case L's':
         add_range(n, 9, 13);
         add_range(n, 32, 32);
-        add_range(n, 0xA0, 0xA0);
-        add_range(n, 0x1680, 0x1680);
-        add_range(n, 0x2000, 0x200A);
-        add_range(n, 0x2028, 0x2029);
-        add_range(n, 0x202F, 0x202F);
-        add_range(n, 0x205F, 0x205F);
-        add_range(n, 0x3000, 0x3000);
-        add_range(n, 0xFEFF, 0xFEFF);
         return TRUE;
     }
     return FALSE;
@@ -211,11 +204,8 @@ static RNode *parse_class(RCompiler *c)
             if (h == L'\\') {
                 WCHAR e = c->S[c->Pos];
                 if (e == L'd' || e == L'w' || e == L's' || e == L'D' || e == L'W' || e == L'S') {
-                    add_range(n, lo, lo);
-                    add_range(n, L'-', L'-');
-                    c->Pos++;
-                    class_escape(n, e | 0x20);
-                    continue;
+                    c->Error = 5021;
+                    return n;
                 }
                 char_escape(c, &hi);
             } else
@@ -360,10 +350,29 @@ static RNode *parse_atom(RCompiler *c)
             return n;
         }
         if (e >= L'1' && e <= L'9') {
+            UINT start = c->Pos;
             LONG v = 0;
             while (c->S[c->Pos] >= L'0' && c->S[c->Pos] <= L'9') {
                 v = v * 10 + (c->S[c->Pos] - L'0');
                 c->Pos++;
+            }
+            if (v > (LONG)c->R->Groups) {
+                /* a number past the groups opened so far is an octal escape or the digit itself. */
+                c->Pos = start;
+                n = new_node(c, RN_CHAR);
+                if (e <= L'7') {
+                    int o = 0, k = 0;
+                    while (k < 3 && c->S[c->Pos] >= L'0' && c->S[c->Pos] <= L'7' && o * 8 + (c->S[c->Pos] - L'0') < 256) {
+                        o = o * 8 + (c->S[c->Pos] - L'0');
+                        c->Pos++;
+                        k++;
+                    }
+                    n->Char = (WCHAR)o;
+                } else {
+                    n->Char = e;
+                    c->Pos++;
+                }
+                return n;
             }
             n = new_node(c, RN_BACKREF);
             n->Index = v;
@@ -397,6 +406,10 @@ static RNode *parse_seq(RCompiler *c)
             return nullptr;
         LONG min, max;
         if (c->Pos < c->Len && quantifier(c, &min, &max)) {
+            if (atom->Type == RN_BOL || atom->Type == RN_EOL || atom->Type == RN_WORDB || atom->Type == RN_NWORDB) {
+                c->Error = 5018;
+                return nullptr;
+            }
             RNode *r = new_node(c, RN_REPEAT);
             r->Min = min;
             r->Max = max;
@@ -493,9 +506,7 @@ typedef struct RMatcher {
 
 static WCHAR lower(WCHAR c)
 {
-    if (c < 128)
-        return (c >= L'A' && c <= L'Z') ? c + 32 : c;
-    return towlower(c);
+    return js_tolower(c);
 }
 
 static BOOL is_word(WCHAR c)
@@ -510,7 +521,7 @@ static BOOL in_class(RNode *n, WCHAR c, BOOL icase)
         if (c >= n->Ranges[i].Lo && c <= n->Ranges[i].Hi)
             hit = TRUE;
         else if (icase) {
-            WCHAR l = lower(c), u = towupper(c);
+            WCHAR l = lower(c), u = js_toupper(c);
             if ((l >= n->Ranges[i].Lo && l <= n->Ranges[i].Hi) || (u >= n->Ranges[i].Lo && u <= n->Ranges[i].Hi))
                 hit = TRUE;
         }
@@ -531,7 +542,7 @@ static BOOL single(RMatcher *m, RNode *n, LONG i)
     WCHAR c = m->S[i];
     switch (n->Type) {
     case RN_CHAR: return m->R->IgnoreCase ? lower(c) == lower(n->Char) : c == n->Char;
-    case RN_ANY: return !is_newline(c);
+    case RN_ANY: return c != L'\n';
     case RN_CLASS: return in_class(n, c, m->R->IgnoreCase);
     }
     return FALSE;
