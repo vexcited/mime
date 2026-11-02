@@ -51,6 +51,7 @@ struct BROWSER {
     LPWSTR Title;
     LPWSTR Status;
     LPWSTR PendingUrl;
+    WCHAR PageFile[MAX_PATH];
     VARIANT_BOOL Flags[FLAG_COUNT];
     DWORD NextCookie;
 };
@@ -610,6 +611,8 @@ static void browser_free(BROWSER *b)
     HeapFree(GetProcessHeap(), 0, b->Title);
     HeapFree(GetProcessHeap(), 0, b->Status);
     HeapFree(GetProcessHeap(), 0, b->PendingUrl);
+    if (b->PageFile[0])
+        DeleteFileW(b->PageFile);
     HeapFree(GetProcessHeap(), 0, b);
 }
 
@@ -621,6 +624,136 @@ static ULONG browser_release(BROWSER *b)
         browser_free(b);
     }
     return (ULONG)refs;
+}
+
+void BrowserAddRef(BROWSER *b)
+{
+    browser_add_ref(b);
+}
+
+void BrowserRelease(BROWSER *b)
+{
+    browser_release(b);
+}
+
+/*
+ * the first base element of a page may name a folder by its path, C:\folder\, as internet explorer reads it. the
+ * engine's url parser takes C: for a scheme, so the path becomes a file url.
+ */
+static LPWSTR fix_base(LPCWSTR html)
+{
+    SIZE_T length = lstrlenW(html);
+    LPWSTR out = HeapAlloc(GetProcessHeap(), 0, (length + 16) * sizeof(WCHAR));
+    if (!out)
+        return nullptr;
+    memcpy(out, html, (length + 1) * sizeof(WCHAR));
+    for (SIZE_T i = 0; i + 5 < length; i++) {
+        if (html[i] != L'<' || (html[i + 1] | 0x20) != L'b' || (html[i + 2] | 0x20) != L'a' || (html[i + 3] | 0x20) != L's' ||
+            (html[i + 4] | 0x20) != L'e' || (html[i + 5] > L' ' && html[i + 5] != L'>'))
+            continue;
+        SIZE_T k = i + 5;
+        while (k < length && html[k] != L'>' && !((html[k] | 0x20) == L'h' && (html[k + 1] | 0x20) == L'r' &&
+                                                  (html[k + 2] | 0x20) == L'e' && (html[k + 3] | 0x20) == L'f'))
+            k++;
+        if (k >= length || html[k] == L'>')
+            break;
+        k += 4;
+        while (k < length && html[k] <= L' ')
+            k++;
+        if (html[k] != L'=')
+            break;
+        k++;
+        while (k < length && html[k] <= L' ')
+            k++;
+        WCHAR quote = html[k] == L'"' || html[k] == L'\'' ? html[k++] : 0;
+        BOOL drive = ((html[k] | 0x20) >= L'a' && (html[k] | 0x20) <= L'z') && html[k + 1] == L':' &&
+                     (html[k + 2] == L'\\' || html[k + 2] == L'/');
+        if (!drive)
+            break;
+        SIZE_T end = k;
+        while (end < length && html[end] != quote && html[end] != L'>' && (quote || html[end] > L' '))
+            end++;
+        SIZE_T o = k;
+        memcpy(out, html, k * sizeof(WCHAR));
+        memcpy(out + o, L"file:///", 8 * sizeof(WCHAR));
+        o += 8;
+        for (SIZE_T j = k; j < end; j++)
+            out[o++] = html[j] == L'\\' ? L'/' : html[j];
+        memcpy(out + o, html + end, (length - end + 1) * sizeof(WCHAR));
+        break;
+    }
+    return out;
+}
+
+/* the page in a file of the temporary folder, so that it can read the files its base element names. */
+static BOOL write_page(BROWSER *b, LPCWSTR html, LPWSTR url, SIZE_T url_size)
+{
+    WCHAR folder[MAX_PATH];
+    if (!GetTempPathW(MAX_PATH, folder))
+        return FALSE;
+    if (b->PageFile[0])
+        DeleteFileW(b->PageFile);
+    static LONG counter;
+    wsprintfW(b->PageFile, L"%sieframe_%08lx_%ld.htm", folder, GetCurrentProcessId(), InterlockedIncrement(&counter));
+    LPWSTR fixed = fix_base(html);
+    if (!fixed)
+        return FALSE;
+    int bytes = WideCharToMultiByte(CP_UTF8, 0, fixed, -1, nullptr, 0, nullptr, nullptr);
+    char *data = bytes ? HeapAlloc(GetProcessHeap(), 0, (SIZE_T)bytes) : nullptr;
+    BOOL ok = FALSE;
+    if (data) {
+        WideCharToMultiByte(CP_UTF8, 0, fixed, -1, data, bytes, nullptr, nullptr);
+        HANDLE file = CreateFileW(b->PageFile, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY,
+                                  nullptr);
+        if (file != INVALID_HANDLE_VALUE) {
+            static const BYTE mark[3] = {0xEF, 0xBB, 0xBF};
+            DWORD written;
+            ok = WriteFile(file, mark, 3, &written, nullptr) && WriteFile(file, data, (DWORD)(bytes - 1), &written, nullptr);
+            CloseHandle(file);
+        }
+    }
+    HeapFree(GetProcessHeap(), 0, data);
+    HeapFree(GetProcessHeap(), 0, fixed);
+    if (!ok)
+        return FALSE;
+    lstrcpyW(url, L"file:///");
+    SIZE_T n = 8;
+    for (const WCHAR *c = b->PageFile; *c && n + 4 < url_size; c++) {
+        if (*c == L'\\')
+            url[n++] = L'/';
+        else if (*c == L' ') {
+            url[n++] = L'%';
+            url[n++] = L'2';
+            url[n++] = L'0';
+        } else
+            url[n++] = *c;
+    }
+    url[n] = 0;
+    return TRUE;
+}
+
+/* a page a program wrote, shown as a navigation to a page of the engine's own. */
+HRESULT BrowserShowHtml(BROWSER *b, LPCWSTR html)
+{
+    if (!b->Host)
+        return E_FAIL;
+    WCHAR url[MAX_PATH * 3];
+    if (!write_page(b, html, url, RTL_NUMBER_OF(url)))
+        return E_FAIL;
+    b->Busy = TRUE;
+    b->ReadyState = READYSTATE_LOADING;
+    if (!b->Url)
+        set_string(&b->Url, L"about:blank");
+    fire(b, DISPID_DOWNLOADBEGIN, nullptr, 0);
+    b->ExpectStart = TRUE;
+    b->HtmlNavigation = TRUE;
+    BOOL accepted = HostNavigate(b->Host, url);
+    if (!accepted) {
+        b->ExpectStart = FALSE;
+        if (b->Window)
+            PostMessageW(b->Window, WM_BROWSER_FINISH, 0, 0);
+    }
+    return S_OK;
 }
 
 #define FACE_UNKNOWN(Face, Type, Member)                                                                               \
@@ -1268,6 +1401,10 @@ static HRESULT STDMETHODCALLTYPE wb_invoke(IWebBrowser2 *self, DISPID id, REFIID
         }
         return S_OK;
     case 203:
+        if (result && b->Host) {
+            V_DISPATCH(result) = DocumentCreate(b);
+            V_VT(result) = V_DISPATCH(result) ? VT_DISPATCH : VT_EMPTY;
+        }
         return S_OK;
     default:
         return DISP_E_MEMBERNOTFOUND;
@@ -1360,8 +1497,8 @@ static HRESULT STDMETHODCALLTYPE wb_get_container(IWebBrowser2 *self, IDispatch 
 
 static HRESULT STDMETHODCALLTYPE wb_get_document(IWebBrowser2 *self, IDispatch **value)
 {
-    /* the document object is the engine's; a program that asks for it gets none. */
-    *value = nullptr;
+    BROWSER *b = BROWSER_FROM(Browser2, self);
+    *value = b->Host ? DocumentCreate(b) : nullptr;
     return S_OK;
 }
 

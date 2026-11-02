@@ -29,6 +29,13 @@ void BrowserNavigationCompleted(BROWSER *browser, LPCWSTR url, BOOL success);
 void BrowserTitleChanged(BROWSER *browser, LPCWSTR title);
 void BrowserHostReady(BROWSER *browser);
 
+void BrowserAddRef(BROWSER *browser);
+void BrowserRelease(BROWSER *browser);
+HRESULT BrowserShowHtml(BROWSER *browser, LPCWSTR html);
+
+/* the document a program writes a page into, in document.c. */
+IDispatch *DocumentCreate(BROWSER *browser);
+
 IClassFactory *BrowserFactory(void);
 extern HINSTANCE g_ieframe;
 
