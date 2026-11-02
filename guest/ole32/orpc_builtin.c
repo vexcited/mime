@@ -314,8 +314,12 @@ static const IClassFactoryVtbl g_gfac_vtbl = {gfac_query, gfac_add_ref, gfac_rel
 static IClassFactory g_gfac = {&g_gfac_vtbl};
 
 /* this file's factory is the class object of the marshaling class. */
+BOOL CatMgrClassObject(REFCLSID clsid, REFIID riid, void **object, HRESULT *hr);
+
 BOOL OrpcBuiltinClassObject(REFCLSID clsid, REFIID iid, void **object, HRESULT *hr)
 {
+    if (CatMgrClassObject(clsid, iid, object, hr))
+        return TRUE;
     if (IsEqualGUID(clsid, &g_clsid_global_options)) {
         *hr = gfac_query(&g_gfac, iid, object);
         return TRUE;
