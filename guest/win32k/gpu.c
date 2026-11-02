@@ -74,6 +74,8 @@ NTSTATUS NTAPI NtGdiMimeGpuOpen(PVOID *base, PULONG size)
             g->BlockCount = 1;
             g->Header = g->Blocks[0].Kernel;
             p->Gpu = g;
+            /* what an OpenGL program presents reaches the host as an image too, which captures read back. */
+            __atomic_add_fetch(&VkProcessCount, 1, __ATOMIC_RELAXED);
         } else if (g) {
             free_block(&g->Blocks[0]);
             W32Free(g);
@@ -204,5 +206,6 @@ void GpuFreeProcess(W32PROCESS *p)
     for (ULONG i = 0; i < g->BlockCount; i++)
         free_block(&g->Blocks[i]);
     p->Gpu = nullptr;
+    __atomic_sub_fetch(&VkProcessCount, 1, __ATOMIC_RELAXED);
     W32Free(g);
 }

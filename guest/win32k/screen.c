@@ -80,7 +80,7 @@ ULONG ScreenSerial;
 /* host Vulkan presentation requires a process connection. */
 static BOOLEAN has_connection(const WND *w)
 {
-    return w->Thread && w->Thread->Process && w->Thread->Process->Vk;
+    return w->Thread && w->Thread->Process && (w->Thread->Process->Vk || w->Thread->Process->Gpu);
 }
 
 /*
