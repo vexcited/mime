@@ -279,7 +279,7 @@ void CmpJournalShutdown(void)
 NTSTATUS CmpJournalAppend(CM_NODE *node, ULONG operation, ULONG type, const WCHAR *name, ULONG chars,
                          const void *data, ULONG length, LARGE_INTEGER last_write)
 {
-    if (!CmpJournalReady || (node->Flags & CM_NODE_VOLATILE))
+    if (!CmpJournalReady || (node->Flags & (CM_NODE_VOLATILE | CM_NODE_APP_HIVE)))
         return STATUS_SUCCESS;
     if (!NT_SUCCESS(CmpJournalStatus))
         return CmpJournalStatus;

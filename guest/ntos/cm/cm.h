@@ -89,6 +89,7 @@ typedef struct CM_VALUE {
 #define CM_NODE_DELETED 0x08
 #define CM_NODE_LINK 0x10
 #define CM_NODE_SD_UNREADABLE 0x20 /* the hive has no usable descriptor for the key */
+#define CM_NODE_APP_HIVE 0x40 /* in a hive loaded for one program, changes stay in memory */
 
 typedef struct CM_NODE {
     struct CM_NODE *Parent;

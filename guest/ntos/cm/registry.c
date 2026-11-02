@@ -96,6 +96,7 @@ static NTSTATUS load_child(PVOID context, ULONG cell)
         return STATUS_INSUFFICIENT_RESOURCES;
     n->Hive = c->Parent->Hive;
     n->Cell = cell;
+    n->Flags |= c->Parent->Flags & CM_NODE_APP_HIVE;
     n->LastWrite = c->Key.LastWrite;
     if (c->Key.Flags & CM_HIVE_KEY_LINK)
         n->Flags |= CM_NODE_LINK;
@@ -563,6 +564,7 @@ static NTSTATUS walk(CM_NODE *start, PWCHAR path, ULONG len, ULONG attributes, C
                 flags |= CM_NODE_VOLATILE;
             else if ((node->Flags & CM_NODE_VOLATILE) && node != CmpRoot)
                 return STATUS_CHILD_MUST_BE_VOLATILE;
+            flags |= node->Flags & CM_NODE_APP_HIVE;
             if (last && (create->Options & REG_OPTION_CREATE_LINK))
                 flags |= CM_NODE_LINK;
             /* the parent's descriptor must grant KEY_CREATE_SUB_KEY, whatever rights the handle to it holds. */
@@ -1359,7 +1361,7 @@ NTSTATUS NTAPI NtFlushKey(HANDLE key)
     NTSTATUS status = lock_key(key, &body, &node);
     if (!NT_SUCCESS(status))
         return status;
-    BOOLEAN is_volatile = (node->Flags & CM_NODE_VOLATILE) != 0;
+    BOOLEAN is_volatile = (node->Flags & (CM_NODE_VOLATILE | CM_NODE_APP_HIVE)) != 0;
     unlock_key(body);
     return CmpJournalFlush(is_volatile);
 }
@@ -1623,10 +1625,83 @@ NTSTATUS NTAPI NtLoadKey2(POBJECT_ATTRIBUTES target, POBJECT_ATTRIBUTES source, 
     return STATUS_PRIVILEGE_NOT_HELD;
 }
 
+#define REG_APP_HIVE_ 0x10
+
+/* the text of an object name as a string with an end, in a pool block. */
+static PWSTR terminated_name(PCUNICODE_STRING name)
+{
+    ULONG chars = name->Length / sizeof(WCHAR);
+    PWSTR text = ExAllocatePool2(POOL_FLAG_NON_PAGED, (chars + 1) * sizeof(WCHAR), KI_TAG('C', 'm', 'L', 'n'));
+    if (text)
+        memcpy(text, name->Buffer, chars * sizeof(WCHAR));
+    return text;
+}
+
+/*
+ * a hive loaded for one program needs no privilege: its root is a key below \Registry\A that the caller names, and
+ * the handle it gets is the only way to it. what is written stays in memory, the file is not changed.
+ */
 NTSTATUS NTAPI NtLoadKeyEx(POBJECT_ATTRIBUTES target, POBJECT_ATTRIBUTES source, ULONG flags, HANDLE trust_key,
                            HANDLE event, ACCESS_MASK access, PHANDLE root, PVOID reserved)
 {
-    return STATUS_PRIVILEGE_NOT_HELD;
+    if (!(flags & REG_APP_HIVE_))
+        return STATUS_PRIVILEGE_NOT_HELD;
+    if (!root || !target || !source)
+        return STATUS_INVALID_PARAMETER;
+    OBJECT_ATTRIBUTES target_oa, source_oa;
+    UNICODE_STRING target_name, source_name;
+    NTSTATUS status = ObCaptureObjectAttributes(target, &target_oa, &target_name);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = ObCaptureObjectAttributes(source, &source_oa, &source_name);
+    if (!NT_SUCCESS(status)) {
+        KiFreeCapturedString(&target_name);
+        return status;
+    }
+    PWSTR target_path = target_oa.ObjectName ? terminated_name(target_oa.ObjectName) : nullptr;
+    PWSTR source_path = source_oa.ObjectName ? terminated_name(source_oa.ObjectName) : nullptr;
+    static const WCHAR below[] = L"\\REGISTRY\\A\\";
+    CM_HIVE *hive = nullptr;
+    if (!target_path || !source_path)
+        status = STATUS_INSUFFICIENT_RESOURCES;
+    else if (target_oa.RootDirectory || wcslen(target_path) <= RTL_NUMBER_OF(below) - 1 ||
+             compare_names(target_path, RTL_NUMBER_OF(below) - 1, below, RTL_NUMBER_OF(below) - 1) != 0 ||
+             wcschr(target_path + RTL_NUMBER_OF(below) - 1, L'\\'))
+        status = STATUS_INVALID_PARAMETER;
+    else
+        status = CmpOpenHive(source_path, &hive);
+    if (NT_SUCCESS(status)) {
+        ExAcquireFastMutex(&CmpLock);
+        CM_NODE *node = CmpOpenPath(target_path, FALSE);
+        if (node || !(node = CmpOpenPath(target_path, TRUE))) {
+            status = node ? STATUS_OBJECT_NAME_COLLISION : STATUS_INSUFFICIENT_RESOURCES;
+            ObDereferenceObject(hive->File);
+            ExFreePool(hive);
+        } else {
+            CM_HIVE_KEY key;
+            if (NT_SUCCESS(CmpReadKey(hive, hive->RootCell, &key)))
+                node->LastWrite = key.LastWrite;
+            node->Hive = hive;
+            node->Cell = hive->RootCell;
+            node->Flags = CM_NODE_APP_HIVE;
+        }
+        PVOID body = nullptr;
+        if (NT_SUCCESS(status))
+            status = new_body(node, &body);
+        CmpUnlock();
+        HANDLE h;
+        if (NT_SUCCESS(status))
+            status = ObInsertObject(body, access ? access : KEY_ALL_ACCESS_, 0, &h);
+        if (NT_SUCCESS(status))
+            status = ObStoreHandle(root, h);
+    }
+    if (target_path)
+        ExFreePool(target_path);
+    if (source_path)
+        ExFreePool(source_path);
+    KiFreeCapturedString(&source_name);
+    KiFreeCapturedString(&target_name);
+    return status;
 }
 
 NTSTATUS NTAPI NtUnloadKey(POBJECT_ATTRIBUTES target)

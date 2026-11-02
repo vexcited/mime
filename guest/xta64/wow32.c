@@ -1397,6 +1397,13 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         }
         return handle_out(status, a[0], handle);
     }
+    case MIME_SVC_NtLoadKeyEx: {
+        UNICODE_STRING source_name;
+        OBJECT_ATTRIBUTES target_oa = attributes32(a[0], &name), source_oa = attributes32(a[1], &source_name);
+        status = NtLoadKeyEx(a[0] ? &target_oa : nullptr, a[1] ? &source_oa : nullptr, a[2], handle32(a[3]), handle32(a[4]),
+                             a[5], &handle, nullptr);
+        return a[6] ? handle_out(status, a[6], handle) : status;
+    }
     case MIME_SVC_NtQueryKey:
         return NtQueryKey(handle32(a[0]), a[1], pointer32(a[2]), a[3], pointer32(a[4]));
     case MIME_SVC_NtQueryValueKey:

@@ -1577,7 +1577,27 @@ LSTATUS WINAPI RegLoadAppKeyW(LPCWSTR file, HKEY *result, REGSAM access, DWORD o
     DWORD attributes = GetFileAttributesW(file);
     if (attributes == INVALID_FILE_ATTRIBUTES)
         return GetLastError();
-    return ERROR_NOT_SUPPORTED;
+    UNICODE_STRING nt_path;
+    if (!RtlDosPathNameToNtPathName_U(file, &nt_path, nullptr, nullptr))
+        return ERROR_PATH_NOT_FOUND;
+    /* the root of the hive is a key of its own below \Registry\A, named at random. */
+    LUID id;
+    NTSTATUS status = NtAllocateLocallyUniqueId(&id);
+    WCHAR name[80];
+    KbFormat(name, RTL_NUMBER_OF(name), L"\\Registry\\A\\{%08x%08x}", id.HighPart, id.LowPart);
+    UNICODE_STRING target_name;
+    RtlInitUnicodeString(&target_name, name);
+    OBJECT_ATTRIBUTES target, source;
+    InitializeObjectAttributes(&target, &target_name, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+    InitializeObjectAttributes(&source, &nt_path, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+    HANDLE root = nullptr;
+    if (NT_SUCCESS(status))
+        status = NtLoadKeyEx(&target, &source, 0x10, nullptr, nullptr, access, &root, nullptr);
+    RtlFreeUnicodeString(&nt_path);
+    if (!NT_SUCCESS(status))
+        return to_error(status);
+    *result = (HKEY)root;
+    return ERROR_SUCCESS;
 }
 
 LSTATUS WINAPI RegLoadAppKeyA(LPCSTR file, HKEY *result, REGSAM access, DWORD options, DWORD reserved)

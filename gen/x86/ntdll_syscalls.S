@@ -1141,6 +1141,13 @@ _NtFlushKey@4:
     int $0x2e
     retl $4
     .p2align 4, 0x90
+    .globl _NtLoadKeyEx@32
+_NtLoadKeyEx@32:
+    movl $0x113, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $32
+    .p2align 4, 0x90
     .globl _NtLoadKey@8
 _NtLoadKey@8:
     movl $0x110, %eax

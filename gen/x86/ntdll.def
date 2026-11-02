@@ -126,6 +126,7 @@ EXPORTS
     NtInitiatePowerAction=_NtInitiatePowerAction@16
     NtIsProcessInJob=_NtIsProcessInJob@8
     NtLoadKey=_NtLoadKey@8
+    NtLoadKeyEx=_NtLoadKeyEx@32
     NtMakeTemporaryObject=_NtMakeTemporaryObject@4
     NtMapViewOfSection=_NtMapViewOfSection@40
     NtMapViewOfSectionEx=_NtMapViewOfSectionEx@36
