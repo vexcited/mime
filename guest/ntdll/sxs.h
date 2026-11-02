@@ -397,6 +397,8 @@ typedef struct SXS_MANIFEST {
 /* utf-8 or utf-16, with or without a bom. */
 NTSTATUS SxspParseManifest(const void *bytes, SIZE_T size, SXS_MANIFEST *manifest);
 void SxspFreeManifest(SXS_MANIFEST *manifest);
+NTSTATUS SxspParseApplicationConfig(const void *bytes, SIZE_T size, NTSTATUS (*add)(PCWSTR value, void *context),
+                                    void *context);
 /* "a.b.c.d", FALSE when malformed. */
 BOOLEAN SxspParseVersion(PCWSTR text, USHORT version[4]);
 

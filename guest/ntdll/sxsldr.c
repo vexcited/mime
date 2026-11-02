@@ -302,7 +302,7 @@ NTSTATUS LdrpSxsInitializeProcess(PVOID image, PCWSTR image_path)
     if (peb->ActivationContextData || !image_path)
         return STATUS_SUCCESS;
     /* the program's manifest: resource 1, or <program>.manifest beside it. */
-    MIME_SXS_GENERATE request = {.Source = image_path, .ResourceName = (PCWSTR)1, .Module = image};
+    MIME_SXS_GENERATE request = {.Source = image_path, .ResourceName = (PCWSTR)1, .Module = image, .ApplicationConfig = TRUE};
     NTSTATUS status = RtlGenerateActivationContext(&request, &data);
     if (status == STATUS_RESOURCE_DATA_NOT_FOUND || status == STATUS_RESOURCE_TYPE_NOT_FOUND ||
         status == STATUS_RESOURCE_NAME_NOT_FOUND || status == STATUS_RESOURCE_LANG_NOT_FOUND)

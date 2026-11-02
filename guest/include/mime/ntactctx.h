@@ -301,6 +301,7 @@ typedef struct _MIME_SXS_GENERATE {
     PVOID Module;              /* a loaded image to read the resource from, or NULL. */
     USHORT ProcessorArchitecture;
     LANGID LangId;
+    BOOLEAN ApplicationConfig; /* the program's <Source>.config adds private paths for probing. */
 } MIME_SXS_GENERATE, *PMIME_SXS_GENERATE;
 
 NTSYSAPI NTSTATUS NTAPI RtlGenerateActivationContext(const MIME_SXS_GENERATE *request, PVOID *data);

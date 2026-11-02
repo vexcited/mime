@@ -1014,3 +1014,50 @@ void SxspFreeManifest(SXS_MANIFEST *manifest)
     pool_free(manifest->Pool);
     memset(manifest, 0, sizeof(*manifest));
 }
+
+/* ------------------------------------------------------------------ application configuration */
+
+static NTSTATUS config_probing(const XML_NODE *assembly_binding, NTSTATUS (*add)(PCWSTR value, void *context),
+                               void *context)
+{
+    for (const XML_NODE *c = assembly_binding->First; c; c = c->Next) {
+        if (!ns_is(c->Ns, NS_ASM_V1) || !is(c, L"probing"))
+            continue;
+        PCWSTR value = attr(c, L"privatePath");
+        if (!value)
+            continue;
+        NTSTATUS status = add(value, context);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
+    return STATUS_SUCCESS;
+}
+
+/*
+ * reads <configuration><windows><assemblyBinding><probing privatePath="...">, the only part of
+ * an application configuration file that probing uses, and hands each value to add.
+ */
+NTSTATUS SxspParseApplicationConfig(const void *bytes, SIZE_T size, NTSTATUS (*add)(PCWSTR value, void *context),
+                                    void *context)
+{
+    PWSTR text;
+    SIZE_T chars;
+    NTSTATUS status = decode(bytes, size, &text, &chars);
+    if (!NT_SUCCESS(status))
+        return status;
+    PVOID pool = nullptr;
+    XML_NODE *root;
+    status = parse_document(text, chars, &pool, &root);
+    if (NT_SUCCESS(status) && (root->Ns || !is(root, L"configuration")))
+        status = STATUS_SXS_CANT_GEN_ACTCTX;
+    for (const XML_NODE *w = NT_SUCCESS(status) ? root->First : nullptr; w && NT_SUCCESS(status); w = w->Next) {
+        if (w->Ns || !is(w, L"windows"))
+            continue;
+        for (const XML_NODE *b = w->First; b && NT_SUCCESS(status); b = b->Next)
+            if (ns_is(b->Ns, NS_ASM_V1) && is(b, L"assemblyBinding"))
+                status = config_probing(b, add, context);
+    }
+    pool_free(pool);
+    RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, text);
+    return status;
+}

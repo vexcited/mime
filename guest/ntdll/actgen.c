@@ -254,11 +254,17 @@ typedef struct GEN_ASSEMBLY {
     PCWSTR SystemFile;
 } GEN_ASSEMBLY;
 
+/* sxs.dll takes the application directory and nine private paths at most. */
+#define GEN_MAX_ROOTS 10
+
 typedef struct GEN {
     GEN_ASSEMBLY *Assemblies;
     ULONG Count, Capacity;
     PCWSTR AppDirectory;
     ULONG ResourceName;
+    /* where private assemblies are probed: the application directory, then the private paths of its configuration. */
+    PWSTR Roots[GEN_MAX_ROOTS];
+    ULONG RootCount;
 } GEN;
 
 static GEN_ASSEMBLY *add_assembly(GEN *g)
@@ -289,6 +295,9 @@ static void free_gen(GEN *g)
         gen_free(a->Language);
     }
     gen_free(g->Assemblies);
+    /* the first root is the application directory, owned by the caller. */
+    for (ULONG i = 1; i < g->RootCount; i++)
+        gen_free(g->Roots[i]);
 }
 
 /* the Windows assemblies mime provides itself, each a single dll in the system directory. */
@@ -381,7 +390,7 @@ static SXS_IDENTITY probed_identity(const SXS_IDENTITY *ref, PCWSTR language)
 }
 
 /*
- * probes a private assembly in the application directory as sxs.dll does:
+ * probes a private assembly in the application directory and the private paths of its configuration, as sxs.dll does:
  * <name>.dll with its manifest as resource 1, <name>.manifest, then the
  * same inside a <name> directory, culture by culture. the first candidate that
  * exists is the assembly: its manifest must parse and, when it has an identity,
@@ -404,9 +413,11 @@ static NTSTATUS probe_private(GEN *g, const SXS_IDENTITY *ref, GEN_ASSEMBLY **fo
         if (!sub)
             return STATUS_NO_MEMORY;
         PCWSTR subdirs[] = {L"", sub};
-        for (ULONG s = 0; s < 2 && !*found; s++) {
+        /* the roots in order, and in each of them the file, then the directory of the assembly. */
+        for (ULONG root_sub = 0; root_sub < g->RootCount * 2 && !*found; root_sub++) {
+            ULONG s = root_sub % 2;
             for (ULONG kind = 0; kind < 2 && !*found; kind++) {
-                PWSTR dir = gen_concat(g->AppDirectory, lang_dir, subdirs[s], nullptr);
+                PWSTR dir = gen_concat(g->Roots[root_sub / 2], lang_dir, subdirs[s], nullptr);
                 PWSTR path = dir ? gen_concat(dir, ref->Name, kind ? L".manifest" : L".dll", nullptr) : nullptr;
                 if (!path) {
                     gen_free(dir);
@@ -1266,6 +1277,134 @@ static NTSTATUS load_root(const MIME_SXS_GENERATE *r, GEN_ASSEMBLY *root, ULONG 
     return status;
 }
 
+/* ------------------------------------------------------------------ application configuration */
+
+static BOOLEAN is_separator(WCHAR c)
+{
+    return c == '\\' || c == '/';
+}
+
+/*
+ * a private path of a configuration file is relative: no colon, no empty part, and ".." only
+ * as the first one or two parts, as sxs.dll checks.
+ */
+static BOOLEAN private_segment_valid(PCWSTR s, SIZE_T n)
+{
+    if (!n || is_separator(s[0]) || is_separator(s[n - 1]))
+        return FALSE;
+    ULONG parents = 0;
+    BOOLEAN named = FALSE;
+    SIZE_T start = 0;
+    for (SIZE_T i = 0; i <= n; i++) {
+        if (i < n && s[i] == ':')
+            return FALSE;
+        if (i < n && !is_separator(s[i]))
+            continue;
+        SIZE_T length = i - start;
+        if (!length)
+            return FALSE;
+        if (length == 2 && s[start] == '.' && s[start + 1] == '.') {
+            if (named || parents >= 2)
+                return FALSE;
+            parents++;
+        } else {
+            named = TRUE;
+        }
+        start = i + 1;
+    }
+    return TRUE;
+}
+
+/* the application directory with the segment added, as GetFullPathName writes it, with a trailing backslash. */
+static PWSTR private_root(PCWSTR app_directory, PCWSTR segment, SIZE_T n)
+{
+    SIZE_T base = wcslen(app_directory);
+    PWSTR path = gen_alloc((base + n + 2) * sizeof(WCHAR));
+    if (!path)
+        return nullptr;
+    memcpy(path, app_directory, base * sizeof(WCHAR));
+    SIZE_T length = base;
+    SIZE_T floor = 0;
+    /* the root of the path, a drive or a share, is not walked out of. */
+    if (base >= 3 && path[1] == ':')
+        floor = 3;
+    for (SIZE_T i = 0, start = 0; i <= n; i++) {
+        if (i < n && !is_separator(segment[i]))
+            continue;
+        SIZE_T part = i - start;
+        if (part == 2 && segment[start] == '.' && segment[start + 1] == '.') {
+            if (length <= floor) {
+                gen_free(path);
+                return nullptr;
+            }
+            length--;
+            while (length > floor && path[length - 1] != '\\')
+                length--;
+        } else if (part && !(part == 1 && segment[start] == '.')) {
+            memcpy(path + length, segment + start, part * sizeof(WCHAR));
+            length += part;
+            path[length++] = '\\';
+        }
+        start = i + 1;
+    }
+    path[length] = 0;
+    return path;
+}
+
+static NTSTATUS add_private_segment(GEN *g, PCWSTR segment, SIZE_T n)
+{
+    if (!private_segment_valid(segment, n))
+        return STATUS_SXS_CANT_GEN_ACTCTX;
+    PWSTR root = private_root(g->Roots[0], segment, n);
+    if (!root)
+        return STATUS_SXS_CANT_GEN_ACTCTX;
+    if (g->RootCount >= GEN_MAX_ROOTS) {
+        gen_free(root);
+        return STATUS_SXS_CANT_GEN_ACTCTX;
+    }
+    g->Roots[g->RootCount++] = root;
+    return STATUS_SUCCESS;
+}
+
+/* the value of a privatePath attribute: segments divided by semicolons. */
+static NTSTATUS add_private_path(PCWSTR value, void *context)
+{
+    GEN *g = context;
+    PCWSTR start = value;
+    for (PCWSTR p = value;; p++) {
+        if (*p && *p != ';')
+            continue;
+        if (*p || p != start) {
+            NTSTATUS status = add_private_segment(g, start, (SIZE_T)(p - start));
+            if (!NT_SUCCESS(status))
+                return status;
+        }
+        if (!*p)
+            return STATUS_SUCCESS;
+        start = p + 1;
+    }
+}
+
+/* <program>.config beside a program, read for the probing of its private assemblies. */
+static NTSTATUS load_application_config(GEN *g, PCWSTR program)
+{
+    PWSTR path = gen_concat(program, L".config", nullptr, nullptr);
+    if (!path)
+        return STATUS_NO_MEMORY;
+    MAPPED_FILE f;
+    NTSTATUS status = map_file(path, &f);
+    if (NT_SUCCESS(status)) {
+        status = SxspParseApplicationConfig(f.View, f.Size, add_private_path, g);
+        if (!NT_SUCCESS(status))
+            DbgPrint("sxs: %ls is not a valid configuration (%08x)\n", path, status);
+        unmap_file(&f);
+    } else if (file_missing(status)) {
+        status = STATUS_SUCCESS;
+    }
+    gen_free(path);
+    return status;
+}
+
 static NTSTATUS generate(const MIME_SXS_GENERATE *request, const void *text, SIZE_T text_size, PVOID *data)
 {
     *data = nullptr;
@@ -1280,8 +1419,11 @@ static NTSTATUS generate(const MIME_SXS_GENERATE *request, const void *text, SIZ
     if (!app_directory)
         return STATUS_NO_MEMORY;
     g.AppDirectory = app_directory;
+    g.Roots[g.RootCount++] = app_directory;
     GEN_ASSEMBLY *root = add_assembly(&g);
     NTSTATUS status = root ? STATUS_SUCCESS : STATUS_NO_MEMORY;
+    if (NT_SUCCESS(status) && request->ApplicationConfig)
+        status = load_application_config(&g, request->Source);
     if (NT_SUCCESS(status)) {
         root->Private = TRUE;
         root->ManifestPathType = ACTCTX_PATH_TYPE_WIN32_FILE;
