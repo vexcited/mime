@@ -150,3 +150,129 @@ ROAPI void WINAPI RoFailFastWithErrorContext(HRESULT error)
 {
     RaiseFailFastException(nullptr, nullptr, 0);
 }
+
+/* nobody keeps restricted error information, so a matching one never exists. */
+ROAPI BOOL WINAPI RoTransformErrorW(HRESULT old_error, HRESULT new_error, UINT length, LPCWSTR message)
+{
+    return FALSE;
+}
+
+ROAPI BOOL WINAPI IsErrorPropagationEnabled(void)
+{
+    return TRUE;
+}
+
+ROAPI HRESULT WINAPI RoReportFailedDelegate(IUnknown *delegate, void *info)
+{
+    return S_OK;
+}
+
+ROAPI HRESULT WINAPI RoGetMatchingRestrictedErrorInfo(HRESULT error, void **info)
+{
+    if (!info)
+        return E_POINTER;
+    *info = nullptr;
+    return E_UNEXPECTED;
+}
+
+/*
+ * an hstring crosses a process as a pad to 8 bytes, a marker, the length of the text in bytes and the characters, or
+ * as the count of characters, the length in bytes and the characters. inside the process the handle itself travels
+ * after the marker, as an extra reference.
+ */
+#define MSHCTX_INPROC_BYTE 3
+
+static ULONG HstringAlign(ULONG offset, ULONG alignment)
+{
+    return (offset + alignment - 1) & ~(alignment - 1);
+}
+
+static BYTE *HstringAlignPointer(BYTE *p)
+{
+    return (BYTE *)(((ULONG_PTR)p + 7) & ~(ULONG_PTR)7);
+}
+
+ROAPI ULONG WINAPI HSTRING_UserSize(ULONG *flags, ULONG start, HSTRING *string)
+{
+    if (!string)
+        return start;
+    ULONG offset = HstringAlign(start, 8);
+    if ((BYTE)*flags == MSHCTX_INPROC_BYTE)
+        return HstringAlign(offset + 4, 8) + 8;
+    UINT32 length = 0;
+    if (*string)
+        WindowsGetStringRawBuffer(*string, &length);
+    return offset + 8 + length * 2;
+}
+
+ROAPI ULONG WINAPI HSTRING_UserSize64(ULONG *flags, ULONG start, HSTRING *string)
+{
+    return HSTRING_UserSize(flags, start, string);
+}
+
+ROAPI BYTE *WINAPI HSTRING_UserMarshal(ULONG *flags, BYTE *buffer, HSTRING *string)
+{
+    if (!string)
+        return buffer;
+    BYTE *p = HstringAlignPointer(buffer);
+    memset(buffer, 0, (SIZE_T)(p - buffer));
+    if ((BYTE)*flags == MSHCTX_INPROC_BYTE) {
+        HSTRING copy = nullptr;
+        if (*string)
+            WindowsDuplicateString(*string, &copy);
+        *(ULONG *)p = 0;
+        *(ULONG *)(p + 4) = 0;
+        *(HSTRING *)(p + 8) = copy;
+        return p + 16;
+    }
+    UINT32 length = 0;
+    LPCWSTR text = *string ? WindowsGetStringRawBuffer(*string, &length) : nullptr;
+    *(ULONG *)p = length;
+    *(ULONG *)(p + 4) = length * 2;
+    if (length)
+        memcpy(p + 8, text, (SIZE_T)length * sizeof(WCHAR));
+    return p + 8 + (SIZE_T)length * sizeof(WCHAR);
+}
+
+ROAPI BYTE *WINAPI HSTRING_UserMarshal64(ULONG *flags, BYTE *buffer, HSTRING *string)
+{
+    return HSTRING_UserMarshal(flags, buffer, string);
+}
+
+ROAPI BYTE *WINAPI HSTRING_UserUnmarshal(ULONG *flags, BYTE *buffer, HSTRING *string)
+{
+    BYTE *p = HstringAlignPointer(buffer);
+    HSTRING old = *string;
+    if ((BYTE)*flags == MSHCTX_INPROC_BYTE) {
+        *string = *(HSTRING *)(p + 8);
+        if (old)
+            WindowsDeleteString(old);
+        return p + 16;
+    }
+    ULONG bytes = *(ULONG *)(p + 4);
+    HSTRING created = nullptr;
+    if (bytes / 2)
+        WindowsCreateString((LPCWSTR)(p + 8), bytes / 2, &created);
+    *string = created;
+    if (old)
+        WindowsDeleteString(old);
+    return p + 8 + bytes;
+}
+
+ROAPI BYTE *WINAPI HSTRING_UserUnmarshal64(ULONG *flags, BYTE *buffer, HSTRING *string)
+{
+    return HSTRING_UserUnmarshal(flags, buffer, string);
+}
+
+ROAPI void WINAPI HSTRING_UserFree(ULONG *flags, HSTRING *string)
+{
+    if (string) {
+        WindowsDeleteString(*string);
+        *string = nullptr;
+    }
+}
+
+ROAPI void WINAPI HSTRING_UserFree64(ULONG *flags, HSTRING *string)
+{
+    HSTRING_UserFree(flags, string);
+}
