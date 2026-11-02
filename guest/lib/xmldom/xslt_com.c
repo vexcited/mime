@@ -5,10 +5,11 @@ static CRITICAL_SECTION g_err_lock;
 static BOOL g_err_ready;
 static DWORD g_err_thread;
 static HRESULT g_err_hr;
+static BOOL g_err_v6;
 static WCHAR *g_err_text;
 
 /* the text of the last failure of a transformation, kept for the exception info of the late bound call. */
-void xd_set_error_text(HRESULT hr, const WCHAR *text)
+void xd_set_error_text(HRESULT hr, const WCHAR *text, BOOL v6)
 {
     if (!g_err_ready) {
         InitializeCriticalSection(&g_err_lock);
@@ -18,11 +19,12 @@ void xd_set_error_text(HRESULT hr, const WCHAR *text)
     xd_free(g_err_text);
     g_err_text = text ? xd_wcsdup(text, xd_wlen(text)) : nullptr;
     g_err_hr = hr;
+    g_err_v6 = v6;
     g_err_thread = GetCurrentThreadId();
     LeaveCriticalSection(&g_err_lock);
 }
 
-WCHAR *xd_take_error_text(HRESULT hr)
+WCHAR *xd_take_error_text(HRESULT hr, BOOL *v6)
 {
     if (!g_err_ready)
         return nullptr;
@@ -30,6 +32,7 @@ WCHAR *xd_take_error_text(HRESULT hr)
     EnterCriticalSection(&g_err_lock);
     if (g_err_text && g_err_thread == GetCurrentThreadId() && g_err_hr == hr) {
         t = g_err_text;
+        *v6 = g_err_v6;
         g_err_text = nullptr;
     }
     LeaveCriticalSection(&g_err_lock);
@@ -42,7 +45,7 @@ static HRESULT fail_with(XsError *e, BOOL v6)
     WCHAR *text = xse_text(e, v6);
     HRESULT hr = e->hr ? e->hr : E_FAIL;
     if (text) {
-        xd_set_error_text(hr, text);
+        xd_set_error_text(hr, text, v6);
         ICreateErrorInfo *create;
         if (SUCCEEDED(CreateErrorInfo(&create))) {
             create->lpVtbl->SetDescription(create, text);
@@ -75,6 +78,8 @@ XsSheet *xs_compile_for(XNode *style, XsError *err)
         flags |= XSF_V6;
     if (style->doc->flags & XDF_ALLOW_SCRIPT)
         flags |= XSF_ALLOW_SCRIPT;
+    if (style->doc->flags & XDF_RESOLVE)
+        flags |= XSF_RESOLVE;
     return xs_compile(style, flags, err);
 }
 

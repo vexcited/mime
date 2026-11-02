@@ -615,8 +615,10 @@ XNode *xsr_load_document(XsRun *r, const WCHAR *url, UINT len, const WCHAR *base
 static HRESULT fn_document(XsRun *r, XpVal *args, UINT count, XpCall *call, XpVal *out)
 {
     out->t = XPV_SET;
-    if (!r->req->allow_doc_fn)
-        return xsr_error(r, 0xC00CE33Cu + 0x100u, nullptr, nullptr, nullptr);
+    if (!r->req->allow_doc_fn) {
+        xse_set_text(r->err, E_FAIL, L"Operation aborted: AllowDocumentFunction constraint violated.\r\n");
+        return E_FAIL;
+    }
     const WCHAR *base_default = r->sheet->url;
     const WCHAR *base2 = nullptr;
     if (count == 2) {

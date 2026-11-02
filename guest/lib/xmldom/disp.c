@@ -329,8 +329,9 @@ static void exception_info(EXCEPINFO *excep, HRESULT hr)
         return;
     memset(excep, 0, sizeof(*excep));
     excep->scode = hr;
-    excep->bstrSource = SysAllocString(L"msxml");
-    WCHAR *taken = xd_take_error_text(hr);
+    BOOL v6 = FALSE;
+    WCHAR *taken = xd_take_error_text(hr, &v6);
+    excep->bstrSource = SysAllocString(taken ? (v6 ? L"msxml6.dll" : L"msxml3.dll") : L"msxml");
     const WCHAR *text = taken ? taken : xd_message((UINT)hr);
     if (!text) {
         switch ((UINT)hr) {

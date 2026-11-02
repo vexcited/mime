@@ -347,6 +347,8 @@ static void write_element(Ser *w, XNode *n, int level)
             continue;
         const WCHAR *prefix = a->qname;
         UINT plen = (UINT)(a->local - 1);
+        if (plen == 3 && !memcmp(prefix, L"xml", 6))
+            continue;
         const WCHAR *cur = bound_uri(w, prefix, plen, 0);
         if (cur && !wcscmp(cur, a->uri))
             continue;

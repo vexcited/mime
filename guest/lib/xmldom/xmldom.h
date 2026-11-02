@@ -226,6 +226,7 @@ typedef struct XEntity {
 struct XDoc {
     XNode node; /* the document node: must stay first. */
     LONG live;  /* referenced nodes, the document node included. */
+    UINT seq;   /* the order documents were made in, for node sets that span several. */
     UINT flags;
     UINT version;       /* bumped on every tree change, live lists resync on it. */
     UINT order_version; /* the version node order was last numbered at. */
@@ -435,6 +436,9 @@ typedef struct XpCall {
 
 /* the stylesheet side of an expression: variables and the functions that are not xpath's own. */
 typedef struct XpHost {
+    /* a result tree fragment used as a node set: kind 0 a path or union, 1 an argument; the text is the expression. */
+    HRESULT (*rtf_error)(void *user, int kind, const WCHAR *name, UINT name_len, UINT arg, const WCHAR *text,
+                         UINT start, UINT end);
     BOOL (*declared)(void *user, const WCHAR *uri, const WCHAR *local, UINT length);
     BOOL (*known)(void *user, const WCHAR *uri, const WCHAR *local, UINT length, UINT args);
     HRESULT (*function)(void *user, const WCHAR *uri, const WCHAR *local, UINT length, XpVal *args, UINT count,
@@ -570,8 +574,8 @@ HRESULT xd_ret_string(BSTR *out, const WCHAR *s, UINT length);
 HRESULT xd_ret_buf(BSTR *out, XBuf *b);
 HRESULT xd_ret_node(XNode *n, void **out);
 /* the text of the last failure of a transformation on this thread, handed out once for the exception info. */
-void xd_set_error_text(HRESULT hr, const WCHAR *text);
-WCHAR *xd_take_error_text(HRESULT hr);
+void xd_set_error_text(HRESULT hr, const WCHAR *text, BOOL v6);
+WCHAR *xd_take_error_text(HRESULT hr, BOOL *v6);
 BOOL xd_list_is_ours(const void *p);
 
 /* ------------------------------------------------------------------ interface tables */

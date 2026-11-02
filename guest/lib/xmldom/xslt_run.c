@@ -151,6 +151,27 @@ static BOOL same_name(const WCHAR *uri1, const WCHAR *l1, UINT n1, const WCHAR *
 
 static HRESULT eval_global(XsRun *r, UINT index);
 
+static HRESULT host_rtf_error(void *user, int kind, const WCHAR *name, UINT name_len, UINT arg, const WCHAR *text,
+                              UINT start, UINT end)
+{
+    XsRun *r = user;
+    WCHAR n[120];
+    UINT m = name_len < 118 ? name_len : 118;
+    memcpy(n, name, m * sizeof(WCHAR));
+    n[m] = 0;
+    if (!r->v6) {
+        xsr_error(r, XE_XS_VAR_NOT_SET, n, nullptr, nullptr);
+        return E_FAIL;
+    }
+    WCHAR num[2] = {(WCHAR)('0' + arg), 0};
+    if (kind == 1)
+        xsr_error(r, XE_XS_ARG_NODESET, num, nullptr, nullptr);
+    else
+        xsr_error(r, XE_XS_NOT_NODESET, nullptr, nullptr, nullptr);
+    r->err->suffix = xse_marked_text(text, xd_wlen(text), start, end);
+    return E_FAIL;
+}
+
 static HRESULT host_variable(void *user, const WCHAR *uri, const WCHAR *local, UINT length, XpVal *out)
 {
     XsRun *r = user;
@@ -915,6 +936,8 @@ static HRESULT apply_set(XsRun *r, const XsName *name, const XsFrame *f, UINT de
 
 /* ------------------------------------------------------------------ copying */
 
+static void copy_namespaces(XsRun *r, XNode *src, XNode *dst);
+
 static HRESULT copy_node_to_output(XsRun *r, XNode *src)
 {
     switch (src->type) {
@@ -940,6 +963,7 @@ static HRESULT copy_node_to_output(XsRun *r, XNode *src)
         if (!c)
             return E_OUTOFMEMORY;
         xd_link(r->cur, c, nullptr);
+        copy_namespaces(r, src, c);
         return S_OK;
     }
     case XN_COMMENT:
@@ -1167,7 +1191,7 @@ static HRESULT run_inst(XsRun *r, XsInst *i, XsFrame *f)
         HRESULT hr = out_element(r, i->name.qname, i->name.qlen, i->name.uri, &e);
         if (FAILED(hr))
             return hr;
-        if (i->doe)
+        if (i->doe || i->body)
             e->flags |= XF_EXPLICIT;
         for (UINT k = 0; k < i->nnsdecl; k++) {
             XBuf q = {};
@@ -1309,6 +1333,8 @@ static HRESULT run_inst(XsRun *r, XsInst *i, XsFrame *f)
             if (FAILED(hr))
                 return hr;
             copy_namespaces(r, n, e);
+            if (i->body)
+                e->flags |= XF_EXPLICIT;
             if (i->nsets)
                 hr = apply_sets(r, i->sets, i->nsets, f);
             if (SUCCEEDED(hr))
@@ -1537,6 +1563,7 @@ HRESULT xs_run(XsRequest *req)
     run.sheet = sheet;
     run.v6 = req->v6;
     run.err = &req->error;
+    run.host.rtf_error = host_rtf_error;
     run.host.known = xsr_known_function;
     run.host.function = xsr_function;
     run.host.variable = host_variable;

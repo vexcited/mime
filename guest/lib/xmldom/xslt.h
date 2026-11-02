@@ -312,6 +312,7 @@ struct XsSheet {
     WCHAR *url;
     BOOL has_strip;
     BOOL allow_script;
+    BOOL resolve_externals;
     XsError error;
     UINT order;
     int next_precedence;
@@ -334,6 +335,7 @@ WCHAR *xs_dup(XsSheet *sheet, const WCHAR *s, UINT len);
 
 #define XSF_V6 0x1
 #define XSF_ALLOW_SCRIPT 0x2
+#define XSF_RESOLVE 0x4
 
 /* ------------------------------------------------------------------ running, xslt_run.c */
 

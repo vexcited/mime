@@ -106,7 +106,11 @@ void xsr_format_numbers(const WCHAR *format, UINT flen, const double *values, UI
             put_roman(out, (UINT)iv, TRUE);
         else {
             UINT width = 1;
-            if (tlen > 1 && tok[tlen - 1] == '1')
+            BOOL digits = tlen > 1;
+            for (UINT q = 0; q < tlen; q++)
+                if (tok[q] < '0' || tok[q] > '9')
+                    digits = FALSE;
+            if (digits && tok[tlen - 1] == '1')
                 width = tlen;
             put_decimal(out, v, width, group_sep, group_size);
         }
@@ -195,8 +199,12 @@ HRESULT xsr_number(XsRun *r, XsInst *inst, XsFrame *f, XBuf *out)
         }
         double d = xpv_number(&v);
         xpv_free(&v);
-        if (xd_isnan(d) || d < 0.5) {
-            xd_format_number(d, out);
+        if (xd_isnan(d)) {
+            xb_puta(out, "-2147483648");
+            return S_OK;
+        }
+        if (d < 0.5) {
+            xd_format_number(d < 0 ? -(double)(UINT64)(-d + 0.5) : 0, out);
             return S_OK;
         }
         values[n++] = (double)(UINT64)(d + 0.5);
@@ -238,20 +246,23 @@ HRESULT xsr_number(XsRun *r, XsInst *inst, XsFrame *f, XBuf *out)
                 values[n++] = sibling_count(r, inst, cur, chain[--k], f);
         } else {
             double c = 0;
-            XNode *root = cur;
-            while (root->parent)
-                root = root->parent;
-            BOOL any_match = FALSE;
+            BOOL any_match = FALSE, found_from = !inst->from;
             for (XNode *a = cur; a; a = prev_in_doc(a)) {
                 if (count_matches(r, inst, cur, a, f)) {
                     c++;
                     any_match = TRUE;
                 }
-                if (from_matches(r, inst, a))
+                if (from_matches(r, inst, a)) {
+                    found_from = TRUE;
                     break;
+                }
             }
-            if (any_match)
+            if (!found_from) {
+                if (!r->v6)
+                    values[n++] = 0;
+            } else if (any_match) {
                 values[n++] = c;
+            }
         }
     }
     if (!n)

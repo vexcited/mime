@@ -453,6 +453,9 @@ static void track_expr(XsSheet *s, XpExpr *x)
 }
 
 /* an expression of the stylesheet. null with the error filled in. */
+static const WCHAR *g_whole;
+static UINT g_whole_len, g_whole_base;
+
 static XpExpr *compile_expr(Ctx *c, const WCHAR *text, UINT len, UINT flags)
 {
     flatten_scope(c, c->scope);
@@ -483,7 +486,10 @@ static XpExpr *compile_expr(Ctx *c, const WCHAR *text, UINT len, UINT flags)
         cerr(c, XE_XS_BAD_FUNCTION, err.p1, nullptr, nullptr);
     else
         cerr(c, id, err.p1[0] ? err.p1 : nullptr, err.p2[0] ? err.p2 : nullptr, nullptr);
-    c->s->error.suffix = xse_marked_text(text, len, err.start, err.end);
+    if (g_whole)
+        c->s->error.suffix = xse_marked_text(g_whole, g_whole_len, g_whole_base + err.start, g_whole_base + err.end);
+    else
+        c->s->error.suffix = xse_marked_text(text, len, err.start, err.end);
     return nullptr;
 }
 
@@ -508,7 +514,7 @@ static XsAvt *parse_avt(Ctx *c, const WCHAR *s, UINT len)
                 continue;
             }
             if (i < len && s[i] == '}') {
-                cerr(c, XE_EXPR_EXPECTED, nullptr, nullptr, nullptr);
+                cerr(c, XE_XPATH_UNEXPECTED, L"'}'", nullptr, nullptr);
                 c->s->error.suffix = xse_marked_text(s, len, i, i + 1);
                 xb_free(&lit);
                 return nullptr;
@@ -533,20 +539,19 @@ static XsAvt *parse_avt(Ctx *c, const WCHAR *s, UINT len)
                 }
                 i++;
             }
-            if (i >= len) {
-                cerr(c, XE_XPATH_INCOMPLETE, L"'}'", c->s->v6 ? L"'EOF'" : L"'eof'", nullptr);
-                c->s->error.suffix = xse_marked_text(s, len, len, len);
-                xb_free(&lit);
-                return nullptr;
-            }
+            g_whole = s;
+            g_whole_len = len;
+            g_whole_base = start;
             XpExpr *x = compile_expr(c, s + start, i - start, 0);
+            g_whole = nullptr;
             if (!x) {
                 xb_free(&lit);
                 return nullptr;
             }
             XsAvtPart *p = XS_PUSH(c->s, avt->parts, avt->n, cap, XsAvtPart);
             p->expr = x;
-            i++;
+            if (i < len)
+                i++;
             continue;
         }
         xb_putc(&lit, s[i++]);
@@ -974,10 +979,13 @@ static void add_uri_list(Ctx *c, XNode *attr, const WCHAR ***list, UINT *n, UINT
             break;
         BOOL found;
         const WCHAR *uri;
-        if (i - start == 8 && is_lit(v + start, 8, "#default"))
+        if (i - start == 8 && is_lit(v + start, 8, "#default")) {
             uri = scope_lookup(c->scope, L"", 0, &found);
-        else
+            if (!found)
+                continue;
+        } else {
             uri = scope_lookup(c->scope, v + start, i - start, &found);
+        }
         if (!found) {
             WCHAR p[80];
             UINT m = i - start < 78 ? i - start : 78;
@@ -1447,8 +1455,11 @@ static HRESULT compile_xsl(Ctx *c, XNode *el, XsInst ***tail)
             if (!inst->select)
                 return E_FAIL;
         }
-        if (!sort_value(c, el, "lang", 0, inst, "", "") && failed(c))
-            return E_FAIL;
+        if (attr_node(el, "lang")) {
+            inst->avt[0] = attr_avt(c, el, "lang");
+            if (!inst->avt[0])
+                return E_FAIL;
+        }
         if (!sort_value(c, el, "data-type", 1, inst, "text", "number") && failed(c))
             return E_FAIL;
         if (!sort_value(c, el, "order", 2, inst, "ascending", "descending") && failed(c))
@@ -1744,6 +1755,9 @@ static HRESULT load_module(Ctx *c, XNode *el, XDoc **out)
 
 static HRESULT include_module(Ctx *c, XNode *el, XsModule *mod, BOOL is_import)
 {
+    /* msxml6 reads other stylesheets only when the document of the stylesheet may resolve externals. */
+    if (c->s->v6 && !(c->s->resolve_externals))
+        return S_OK;
     XDoc *d;
     HRESULT hr = load_module(c, el, &d);
     if (FAILED(hr))
@@ -2487,6 +2501,7 @@ XsSheet *xs_compile(XNode *style, UINT flags, XsError *error)
         return nullptr;
     s->refs = 1;
     s->v6 = (flags & XSF_V6) != 0;
+    s->resolve_externals = (flags & XSF_RESOLVE) != 0;
     s->allow_script = (flags & XSF_ALLOW_SCRIPT) != 0;
     Ctx c = {};
     c.s = s;

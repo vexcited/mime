@@ -421,8 +421,10 @@ HRESULT xsr_call_extension(XsRun *r, const WCHAR *uri, const WCHAR *local, UINT 
     UINT argerr = 0;
     if (SUCCEEDED(hr)) {
         DISPPARAMS params = {argv, nullptr, count, 0};
-        hr = d->lpVtbl->Invoke(d, id, &IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD | DISPATCH_PROPERTYGET, &params,
-                               &result, &ex, &argerr);
+        hr = d->lpVtbl->Invoke(d, id, &IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD, &params, &result, &ex, &argerr);
+        if (hr == DISP_E_MEMBERNOTFOUND || hr == DISP_E_TYPEMISMATCH)
+            hr = d->lpVtbl->Invoke(d, id, &IID_NULL, LOCALE_USER_DEFAULT, DISPATCH_METHOD | DISPATCH_PROPERTYGET, &params,
+                                   &result, &ex, &argerr);
     }
     for (UINT i = 0; i < made; i++)
         VariantClear(&argv[i]);

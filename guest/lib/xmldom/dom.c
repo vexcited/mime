@@ -2,6 +2,7 @@
 #include <xmldom/xmldom.h>
 
 static CRITICAL_SECTION g_lock;
+static LONG g_doc_seq;
 LONG xd_objects;
 
 void xd_init(void)
@@ -138,6 +139,7 @@ XDoc *xd_doc_new(UINT flags)
     doc->node.refs = 1;
     doc->node.subs = 1;
     doc->live = 1;
+    doc->seq = (UINT)InterlockedIncrement(&g_doc_seq);
     doc->flags = flags;
     doc->ready_state = 4;
     doc->max_depth = (flags & XDF_V6) ? 256 : 5000;

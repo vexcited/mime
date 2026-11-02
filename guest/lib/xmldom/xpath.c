@@ -92,10 +92,60 @@ static void merge_sort(XNode **v, XNode **tmp, UINT n)
     memcpy(v, tmp, (SIZE_T)n * sizeof(XNode *));
 }
 
+typedef struct Keyed {
+    UINT64 key;
+    XNode *n;
+} Keyed;
+
+static void keyed_sort(Keyed *v, Keyed *tmp, UINT n)
+{
+    if (n < 2)
+        return;
+    UINT mid = n / 2;
+    keyed_sort(v, tmp, mid);
+    keyed_sort(v + mid, tmp, n - mid);
+    UINT i = 0, j = mid, o = 0;
+    while (i < mid && j < n)
+        tmp[o++] = v[j].key < v[i].key ? v[j++] : v[i++];
+    while (i < mid)
+        tmp[o++] = v[i++];
+    while (j < n)
+        tmp[o++] = v[j++];
+    memcpy(v, tmp, (SIZE_T)n * sizeof(Keyed));
+}
+
+/* a set whose nodes come from several trees: trees in the order their documents were made, then the order in a tree. */
+static void sort_mixed(XSet *s)
+{
+    Keyed *v = xd_alloc_raw((SIZE_T)s->n * 2 * sizeof(Keyed));
+    if (!v)
+        return;
+    for (UINT i = 0; i < s->n; i++) {
+        XNode *root = tree_root(s->v[i]);
+        ensure_order(root);
+        UINT64 tree = ((UINT64)root->doc->seq << 20) | (root->type == XN_DOCUMENT ? 0 : ((UINT64)(ULONG_PTR)root >> 4) & 0xFFFFF);
+        v[i].key = (tree << 32) | s->v[i]->order;
+        v[i].n = s->v[i];
+    }
+    keyed_sort(v, v + s->n, s->n);
+    UINT k = 0;
+    for (UINT i = 0; i < s->n; i++)
+        if (!k || s->v[k - 1] != v[i].n)
+            s->v[k++] = v[i].n;
+    s->n = k;
+    xd_free(v);
+}
+
 static void sort_unique(XSet *s)
 {
     if (s->n < 2)
         return;
+    XNode *first_root = tree_root(s->v[0]);
+    for (UINT i = 1; i < s->n; i++)
+        if (tree_root(s->v[i]) != first_root) {
+            sort_mixed(s);
+            return;
+        }
     ensure_order(tree_root(s->v[0]));
     BOOL sorted = TRUE;
     for (UINT i = 1; i < s->n; i++) {
@@ -189,6 +239,7 @@ struct Expr {
     const WCHAR *uri; /* of a variable or an extension function. */
     const WCHAR *local;
     UINT llen;
+    UINT t0, t1; /* where a variable or a function call is in the text. */
 };
 
 typedef struct Parser {
@@ -1028,6 +1079,8 @@ static Expr *parse_primary(Parser *ps)
         }
         if (ps->host->declared && !ps->host->declared(ps->host->user, x->uri, x->local, x->llen))
             return fail(ps, XE_VAR_UNRESOLVED), nullptr;
+        x->t0 = (UINT)(ps->tstart - ps->s) - 1;
+        x->t1 = (UINT)(ps->tstart - ps->s) + ps->tlen;
         next_token(ps);
         return x;
     }
@@ -1144,6 +1197,8 @@ static Expr *parse_primary(Parser *ps)
             ps->errp1[k] = 0;
             return nullptr;
         }
+        x->t0 = fstart;
+        x->t1 = fend;
         if (!ext && n && (id == F_COUNT || id == F_SUM || id == F_LOCAL_NAME || id == F_NAMESPACE_URI || id == F_NAME) &&
             expr_not_set(args[0])) {
             fail_range(ps, XE_NOT_DOM_NODE, fstart, fend);
@@ -1492,6 +1547,7 @@ typedef struct Env {
     XNode *current;
     const XNs *ns;
     UINT nns;
+    const WCHAR *text;
 } Env;
 
 void xpv_free(XpVal *v)
@@ -1675,6 +1731,8 @@ static BOOL test_node(Step *st, XNode *n)
 {
     switch (st->test) {
     case NT_NODE:
+        if ((n->type == XN_DOCTYPE || (n->type == XN_PI && (n->flags & XF_XMLDECL))) && TlsGetValue(mode_slot()))
+            return FALSE;
         return TRUE;
     case NT_TEXT:
         return n->type == XN_TEXT || n->type == XN_CDATA;
@@ -2117,6 +2175,9 @@ static HRESULT eval_function(Expr *x, Env *env, XpVal *out)
     case F_COUNT: {
         XpVal v = {};
         hr = eval(x->args[0], env, &v);
+        if (SUCCEEDED(hr) && v.rtf && x->args[0]->kind == X_VAR && env->host && env->host->rtf_error)
+            hr = env->host->rtf_error(env->host->user, 1, x->args[0]->local, x->args[0]->llen, 1, env->text, x->t0,
+                                      x->t1);
         if (SUCCEEDED(hr) && v.t != XPV_SET)
             hr = (HRESULT)XE_NOT_NODESET;
         out->t = XPV_NUM;
@@ -2497,6 +2558,11 @@ static HRESULT eval(Expr *x, Env *env, XpVal *out)
             *out = v;
             return S_OK;
         }
+        if (v.rtf && (x->npreds || x->steps) && x->primary->kind == X_VAR && env->host && env->host->rtf_error) {
+            xpv_free(&v);
+            return env->host->rtf_error(env->host->user, 0, x->primary->local, x->primary->llen, 0, env->text,
+                                        x->primary->t0, x->primary->t1);
+        }
         for (UINT p = 0; p < x->npreds && SUCCEEDED(hr); p++)
             hr = apply_predicate(x->preds[p], &v.set, env, FALSE);
         if (SUCCEEDED(hr) && x->steps)
@@ -2744,6 +2810,7 @@ static void env_for(XpExpr *x, XpCall *call, Env *env)
     env->root = tree_root(call->node);
     env->ns = x->ns;
     env->nns = x->nns;
+    env->text = x->text;
     env->host = call->host ? call->host : x->host;
     env->current = call->current;
 }
