@@ -81,6 +81,18 @@ static LONG file_digest(WT_DER content, const WT_SUBJECT *subject)
     if (!WtTake(&input, 0x30, &data) || !WtTake(&input, 0x30, &digest) || input.size)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
     BOOL cabinet = subject->digest_input != nullptr;
+    if (subject->p7x) {
+        /* what is signed is the digest header of the package, which starts with its marker. */
+        WT_BYTES header = data.value;
+        WT_DER type;
+        if (!WtTake(&header, 6, &type) || !WtOid(type, oid_sip_info, sizeof(oid_sip_info)))
+            return TRUST_E_SUBJECT_FORM_UNKNOWN;
+        if (!WtTake(&digest.value, 0x30, &alg) || !WtTake(&digest.value, 4, &hash) || digest.value.size)
+            return TRUST_E_SUBJECT_FORM_UNKNOWN;
+        if (hash.value.size < 4 || memcmp(hash.value.data, "APPX", 4))
+            return TRUST_E_SUBJECT_FORM_UNKNOWN;
+        return algorithm(alg) ? 0 : NTE_BAD_ALGID;
+    }
     /* the second cabinet content format includes additional digests in its link; these are not checked. */
     WT_BYTES probe = data.value;
     if (subject->installer ? !take_oid(&probe, oid_sip_info, sizeof(oid_sip_info))

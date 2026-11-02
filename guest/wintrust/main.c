@@ -96,6 +96,18 @@ WINTRUSTAPI CRYPT_PROVIDER_CERT *WINAPI WTHelperGetProvCertFromChain(CRYPT_PROVI
     return signer && index < signer->csCertChain ? &signer->pasCertChain[index] : nullptr;
 }
 
+/* the signature file of an app package: its subject is named by this identifier. */
+static LONG verify_blob(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
+{
+    static const GUID p7x = {0x5598cff1, 0x68db, 0x4340, {0xb5, 0x7f, 0x1c, 0xac, 0xf8, 0x8c, 0x9a, 0x51}};
+    const WINTRUST_BLOB_INFO *info = data->pBlob;
+    if (!info || info->cbStruct < offsetof(WINTRUST_BLOB_INFO, cbMemSignedMsg) || !info->pbMemObject)
+        return E_INVALIDARG;
+    if (memcmp(&info->gSubject, &p7x, sizeof(p7x)))
+        return TRUST_E_SUBJECT_FORM_UNKNOWN;
+    return WtVerifyP7x(info->pbMemObject, info->cbMemObject, data, chain);
+}
+
 static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
 {
     WINTRUST_FILE_INFO *info = data->pFile;
@@ -150,14 +162,16 @@ LONG WINAPI WinVerifyTrust(HWND window, GUID *action, PVOID input)
         data->dwUIChoice < WTD_UI_ALL || data->dwUIChoice > WTD_UI_NOGOOD || data->fdwRevocationChecks > 1 ||
         (data->cbStruct == sizeof(*data) && data->pSignatureSettings))
         return E_INVALIDARG;
-    if (data->dwUnionChoice != WTD_CHOICE_FILE)
+    if (data->dwUnionChoice != WTD_CHOICE_FILE && data->dwUnionChoice != WTD_CHOICE_BLOB)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
+    LONG (*verify)(const WINTRUST_DATA *, PCCERT_CHAIN_CONTEXT *) =
+        data->dwUnionChoice == WTD_CHOICE_BLOB ? verify_blob : verify_file;
     if (data->dwStateAction != WTD_STATEACTION_VERIFY)
-        return verify_file(data, nullptr);
+        return verify(data, nullptr);
     if (data->hWVTStateData)
         return E_INVALIDARG;
     PCCERT_CHAIN_CONTEXT chain = nullptr;
-    LONG result = verify_file(data, &chain);
+    LONG result = verify(data, &chain);
     if (!state_open(data, chain, result)) {
         if (chain)
             CertFreeCertificateChain(chain);

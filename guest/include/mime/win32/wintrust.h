@@ -38,6 +38,16 @@ typedef struct WINTRUST_FILE_INFO_ {
     GUID *pgKnownSubject;
 } WINTRUST_FILE_INFO, *PWINTRUST_FILE_INFO;
 
+typedef struct _WINTRUST_BLOB_INFO {
+    DWORD cbStruct;
+    GUID gSubject;
+    LPCWSTR pcwszDisplayName;
+    DWORD cbMemObject;
+    BYTE *pbMemObject;
+    DWORD cbMemSignedMsg;
+    BYTE *pbMemSignedMsg;
+} WINTRUST_BLOB_INFO, *PWINTRUST_BLOB_INFO;
+
 typedef struct _WINTRUST_DATA {
     DWORD cbStruct;
     PVOID pPolicyCallbackData;
@@ -45,7 +55,7 @@ typedef struct _WINTRUST_DATA {
     DWORD dwUIChoice;
     DWORD fdwRevocationChecks;
     DWORD dwUnionChoice;
-    union { WINTRUST_FILE_INFO *pFile; PVOID pCatalog; PVOID pBlob; PVOID pSgnr; PVOID pCert; };
+    union { WINTRUST_FILE_INFO *pFile; PVOID pCatalog; WINTRUST_BLOB_INFO *pBlob; PVOID pSgnr; PVOID pCert; };
     DWORD dwStateAction;
     HANDLE hWVTStateData;
     WCHAR *pwszURLReference;
