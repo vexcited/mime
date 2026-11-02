@@ -400,7 +400,7 @@ BOOL DIAMONDAPI FDICopy(HFDI hfdi, char *pszCabinet, char *pszCabPath, int flags
         return FALSE;
     }
     MimeCabSkipContinued(cab);
-    MimeCabSequential(cab);
+    MimeCabOneAtATime(cab);
     cabinet.Cab = cab;
 
     COPY copy = {&cabinet, pfnfdin, pvUser};

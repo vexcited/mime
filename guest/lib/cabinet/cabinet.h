@@ -52,6 +52,8 @@ void MimeCabSet(const MIME_CAB *cab, uint16_t *id, uint16_t *index, uint16_t *fl
 void MimeCabSkipContinued(MIME_CAB *cab);
 /* MimeCabExtract finishes each file before beginning the next where it can, so only one is open at a time. */
 void MimeCabSequential(MIME_CAB *cab);
+/* as MimeCabSequential, and a file that shares data with the one being written waits for it, in a pass of its own. */
+void MimeCabOneAtATime(MIME_CAB *cab);
 
 unsigned MimeCabFolderCount(const MIME_CAB *cab);
 unsigned MimeCabFileCount(const MIME_CAB *cab);

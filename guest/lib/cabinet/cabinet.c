@@ -45,7 +45,8 @@ struct MIME_CAB {
     uint8_t *Head;
     uint16_t Folders, Files, Flags, SetId, Index;
     uint8_t FolderReserve, DataReserve;
-    bool SkipContinued, Sequential;
+    bool SkipContinued;
+    uint8_t Sequential; /* 1 sequential, 2 one file at a time. */
     FOLDER *Folder;
     /* file offsets of the file entries, in stored order. */
     uint32_t *FileAt;
@@ -251,7 +252,12 @@ void MimeCabSkipContinued(MIME_CAB *cab)
 
 void MimeCabSequential(MIME_CAB *cab)
 {
-    cab->Sequential = true;
+    cab->Sequential = 1;
+}
+
+void MimeCabOneAtATime(MIME_CAB *cab)
+{
+    cab->Sequential = 2;
 }
 
 unsigned MimeCabFolderCount(const MIME_CAB *cab)
@@ -1115,9 +1121,10 @@ typedef struct EXTRACT {
     void *Context;
     uint16_t *Order;  /* file indexes sorted by offset. */
     uint16_t *Active; /* positions in Order of the files being written. */
+    uint16_t *Deferred; /* file indexes whose data went by while another file was written, for another pass. */
     void **Contexts;  /* indexed by position in Order. */
     uint32_t *Written;
-    unsigned Count, Next, ActiveCount;
+    unsigned Count, Next, ActiveCount, DeferredCount;
     int Failed, Corrupt;
 } EXTRACT;
 
@@ -1132,11 +1139,17 @@ static int extract_finish(EXTRACT *e, unsigned position_in_order)
     return 0;
 }
 
-/* in sequential mode a file waits for the open ones unless it starts inside one of them. */
+/*
+ * in sequential mode only one file is open at a time, as the notifications of FDICopy come: a file that shares data
+ * with the open one waits for it, and when its data has gone by it is written in another pass over the folder.
+ * otherwise a file waits for the open ones unless it starts inside one of them.
+ */
 static int extract_waits(const EXTRACT *e, const MIME_CAB_FILE *file)
 {
     if (!e->Cab->Sequential)
         return 0;
+    if (e->Cab->Sequential > 1)
+        return e->ActiveCount != 0;
     for (unsigned i = 0; i < e->ActiveCount; i++) {
         MIME_CAB_FILE active;
         MimeCabFile(e->Cab, e->Order[e->Active[i]], &active);
@@ -1157,6 +1170,12 @@ static int extract_piece(void *context, uint32_t offset, const uint8_t *data, si
             MimeCabFile(e->Cab, e->Order[e->Next], &file);
             if ((file.Offset >= end && file.Size) || extract_waits(e, &file))
                 break;
+            /* the data of a file that waited for another is gone, it is written in a pass of its own. */
+            if (e->Cab->Sequential > 1 && file.Size && file.Offset < offset) {
+                e->Deferred[e->DeferredCount++] = e->Order[e->Next];
+                e->Next++;
+                continue;
+            }
             e->Contexts[e->Next] = e->Sink->Begin(e->Context, &file);
             e->Written[e->Next] = 0;
             if (file.Size == 0) {
@@ -1218,7 +1237,7 @@ int MimeCabExtract(MIME_CAB *cab, const MIME_CAB_FILE_SINK *sink, void *context)
             return MIME_CAB_BAD;
     }
     unsigned files = cab->Files ? cab->Files : 1u;
-    uint16_t *order = get(cab, sizeof(uint16_t) * files * 2);
+    uint16_t *order = get(cab, sizeof(uint16_t) * files * 3);
     void **contexts = get(cab, sizeof(void *) * files);
     uint32_t *written = get(cab, sizeof(uint32_t) * files);
     if (!order || !contexts || !written) {
@@ -1255,36 +1274,47 @@ int MimeCabExtract(MIME_CAB *cab, const MIME_CAB_FILE_SINK *sink, void *context)
         }
         if (!e.Count)
             continue;
-        int r = MimeCabFolderRead(cab, folder, extract_piece, &e);
-        if (r == MIME_CAB_STOPPED && e.Corrupt) {
-            result = MIME_CAB_CORRUPT;
-            break;
-        }
-        if (r == MIME_CAB_STOPPED && e.Failed) {
-            result = MIME_CAB_STOPPED;
-            break;
-        }
-        if (r != MIME_CAB_OK) {
-            result = r;
-            break;
-        }
-        /* empty files at the very end get no piece; any file still open or waiting had no data. */
-        MIME_CAB_FILE file;
-        while (e.Next < e.Count) {
-            MimeCabFile(cab, order[e.Next], &file);
-            if (file.Size) {
+        e.Deferred = order + files * 2;
+        for (;;) {
+            e.Next = 0;
+            e.ActiveCount = 0;
+            e.DeferredCount = 0;
+            int r = MimeCabFolderRead(cab, folder, extract_piece, &e);
+            if (r == MIME_CAB_STOPPED && e.Corrupt) {
                 result = MIME_CAB_CORRUPT;
                 break;
             }
-            contexts[e.Next] = sink->Begin(context, &file);
-            if (extract_finish(&e, e.Next)) {
+            if (r == MIME_CAB_STOPPED && e.Failed) {
                 result = MIME_CAB_STOPPED;
                 break;
             }
-            e.Next++;
+            if (r != MIME_CAB_OK) {
+                result = r;
+                break;
+            }
+            /* empty files at the very end get no piece; any file still open or waiting had no data. */
+            MIME_CAB_FILE file;
+            while (e.Next < e.Count) {
+                MimeCabFile(cab, order[e.Next], &file);
+                if (file.Size) {
+                    result = MIME_CAB_CORRUPT;
+                    break;
+                }
+                contexts[e.Next] = sink->Begin(context, &file);
+                if (extract_finish(&e, e.Next)) {
+                    result = MIME_CAB_STOPPED;
+                    break;
+                }
+                e.Next++;
+            }
+            if (result == MIME_CAB_OK && e.ActiveCount)
+                result = MIME_CAB_CORRUPT;
+            if (result != MIME_CAB_OK || !e.DeferredCount)
+                break;
+            /* the files that shared data with another are written by another pass over the folder. */
+            memcpy(order, e.Deferred, sizeof(uint16_t) * e.DeferredCount);
+            e.Count = e.DeferredCount;
         }
-        if (result == MIME_CAB_OK && e.ActiveCount)
-            result = MIME_CAB_CORRUPT;
     }
     put(cab, order);
     put(cab, contexts);
