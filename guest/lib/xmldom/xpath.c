@@ -267,6 +267,7 @@ typedef struct Parser {
     UINT colon; /* offset of the colon in a name, 0 for none. */
     BOOL func_follows;
     int prev;
+    UINT in_predicate; /* inside the brackets of a predicate. */
 } Parser;
 
 enum {
@@ -747,7 +748,9 @@ static BOOL parse_predicates(Parser *ps, Expr ***list, UINT *count, BOOL *positi
         next_token(ps);
         if (n == 64)
             return fail(ps, XE_XPATH_INCOMPLETE);
+        ps->in_predicate++;
         Expr *x = parse_or(ps);
+        ps->in_predicate--;
         if (!x)
             return FALSE;
         if (ps->kind != T_RB)
@@ -1064,8 +1067,13 @@ static Expr *parse_primary(Parser *ps)
         x = new_expr(ps, X_VAR);
         if (!x)
             return nullptr;
-        if (ps->pattern)
+        if (ps->pattern) {
+            if (ps->v6 && !ps->in_predicate) {
+                UINT pos = (UINT)(name - ps->s) - 1;
+                return fail_range(ps, 0xC00CE618u, pos, pos + 1), nullptr;
+            }
             return fail(ps, XE_PATTERN_VAR), nullptr;
+        }
         if (colon) {
             BOOL found;
             x->uri = resolve_prefix(ps, name, colon, &found);
@@ -1096,6 +1104,12 @@ static Expr *parse_primary(Parser *ps)
                 max = (UINT)functions[i].max;
                 break;
             }
+        }
+        /* msxml6 reads a pattern as steps only, a function other than id and key is not a node test. */
+        BOOL is_key_call = name_is(name, len, "key");
+        if (ps->pattern && ps->host && ps->v6 && !ps->in_predicate && id != F_ID && !is_key_call) {
+            fail_range(ps, XE_NODETEST, (UINT)(name - ps->s), (UINT)(name - ps->s) + len);
+            return nullptr;
         }
         if (ps->pattern && ps->host && len == 7 && name_is(name, len, "current")) {
             const WCHAR *close = name + len;
@@ -1158,6 +1172,12 @@ static Expr *parse_primary(Parser *ps)
                     fail(ps, XE_BAD_ARGUMENTS);
                     return nullptr;
                 }
+                /* in msxml6 the arguments of id() and key() in a pattern are strings. */
+                if (ps->pattern && ps->host && ps->v6 && !ps->in_predicate && (id == F_ID || is_key_call) &&
+                    ps->kind != T_STR) {
+                    fail_expected(ps, "STRING");
+                    return nullptr;
+                }
                 Expr *a = parse_or(ps);
                 if (!a)
                     return nullptr;
@@ -1169,7 +1189,7 @@ static Expr *parse_primary(Parser *ps)
                     return nullptr;
                 }
                 if (ps->kind == T_COMMA) {
-                    if (n >= max && !(ps->v6 && min == max)) {
+                    if (n >= max && !ps->v6) {
                         fail_expected(ps, ")");
                         return nullptr;
                     }
@@ -1201,7 +1221,9 @@ static Expr *parse_primary(Parser *ps)
         x->t1 = fend;
         if (!ext && n && (id == F_COUNT || id == F_SUM || id == F_LOCAL_NAME || id == F_NAMESPACE_URI || id == F_NAME) &&
             expr_not_set(args[0])) {
-            fail_range(ps, XE_NOT_DOM_NODE, fstart, fend);
+            fail_range(ps, ps->v6 ? 0xC00CE336u : XE_NOT_DOM_NODE, fstart, fend);
+            if (ps->v6)
+                ps->errp1[0] = '1', ps->errp1[1] = 0;
             return nullptr;
         }
         if (n) {
@@ -1267,7 +1289,10 @@ static Expr *parse_path_expr(Parser *ps)
     if (!primary)
         return nullptr;
     if (ps->host && (ps->kind == T_SLASH || ps->kind == T_DSLASH) && expr_not_set(primary)) {
-        fail_range(ps, XE_NOT_DOM_NODE, pstart, (UINT)(ps->p - ps->s));
+        if (ps->v6)
+            fail_range(ps, XE_NOT_NODESET, pstart, (UINT)(ps->tstart - ps->s));
+        else
+            fail_range(ps, XE_NOT_DOM_NODE, pstart, (UINT)(ps->p - ps->s));
         return nullptr;
     }
     if (ps->host && ps->kind == T_LB && expr_not_set(primary)) {

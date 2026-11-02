@@ -221,7 +221,8 @@ static int shortest_digits(double value, WCHAR *digits, int *point)
         } else {
             Big twice = r;
             big_shl(&twice, 1);
-            digits[n++] = (WCHAR)('0' + (big_cmp(&twice, &s) < 0 ? d : d + 1));
+            /* msxml keeps the lower digit for numbers above 2^53, where whole numbers are further apart than one. */
+            digits[n++] = (WCHAR)('0' + (e > 0 || big_cmp(&twice, &s) < 0 ? d : d + 1));
         }
         break;
     }

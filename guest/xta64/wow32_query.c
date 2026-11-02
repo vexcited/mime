@@ -671,6 +671,7 @@ NTSTATUS Mx32QuerySystemInformation(const ULONG *a)
     case SystemFirmwareTableInformation:
     case SystemBootEnvironmentInformation:
     case SystemHypervisorDetailInformation:
+    case 164:
         return NtQuerySystemInformation(klass, out, length, pointer32(a[3]));
     default:
         return STATUS_INVALID_INFO_CLASS;

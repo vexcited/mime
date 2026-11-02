@@ -719,14 +719,7 @@ static BOOL yes_no(Ctx *c, XNode *el, const char *name, int *out)
     for (; name[k]; k++)
         w[k] = (UCHAR)name[k];
     w[k] = 0;
-    WCHAR val[80];
-    UINT m = n < 78 ? n : 78;
-    memcpy(val, v, m * sizeof(WCHAR));
-    val[m] = 0;
-    if (c->s->v6)
-        cerr(c, XE_XS_ATTR_BAD, w, val, nullptr);
-    else
-        cerr(c, XE_XS_ATTR_ONLY, w, L"yes", L"no");
+    cerr(c, XE_XS_ATTR_ONLY, w, L"yes", L"no");
     return FALSE;
 }
 
@@ -807,9 +800,9 @@ static BOOL declare_local(Ctx *c, XsName *n)
     return TRUE;
 }
 
-static const WCHAR *child_label(XNode *n)
+static const WCHAR *child_label(Ctx *c, XNode *n)
 {
-    return n->type == XN_ELEMENT ? n->qname : L"PCDATA nodes";
+    return n->type == XN_ELEMENT ? n->qname : (c->s->v6 ? L"TEXT nodes" : L"PCDATA nodes");
 }
 
 /* a name from an attribute, resolved: variables, templates, modes and keys use no default namespace. */
@@ -847,7 +840,12 @@ static BOOL attr_qname(Ctx *c, XNode *el, const char *name, XsName *out)
 static BOOL select_node_set(Ctx *c, XNode *attr, XpExpr *x)
 {
     if (x && xp_not_nodeset(x)) {
-        cerr(c, XE_NOT_DOM_NODE, nullptr, nullptr, nullptr);
+        const WCHAR *t = attr->value ? attr->value : L"";
+        BOOL call = c->s->v6 && attr->length > 6 && (!wcsncmp(t, L"count(", 6) || !wcsncmp(t, L"sum(", 4));
+        if (call)
+            cerr(c, XE_XS_ARG_NODESET, L"1", nullptr, nullptr);
+        else
+            cerr(c, c->s->v6 ? XE_XS_NOT_NODESET : XE_NOT_DOM_NODE, nullptr, nullptr, nullptr);
         c->s->error.suffix = xse_marked_text(attr->value ? attr->value : L"", attr->length, 0, attr->length);
         return FALSE;
     }
@@ -861,7 +859,7 @@ static HRESULT compile_sorts_and_params(Ctx *c, XNode *el, XsInst *inst, BOOL al
         if (k->type == XN_COMMENT || k->type == XN_PI || stripped_text(k))
             continue;
         if (k->type != XN_ELEMENT)
-            return cerr(c, XE_XS_KEYWORD_CONTAIN, el->qname, nullptr, L"PCDATA nodes");
+            return cerr(c, XE_XS_KEYWORD_CONTAIN, el->qname, nullptr, (c->s->v6 ? L"TEXT nodes" : L"PCDATA nodes"));
         if (is_xsl(k) && local_is(k, "sort") && allow_sort) {
             c->sort_ok = TRUE;
             HRESULT hr = compile_element(c, k, &sorts);
@@ -937,9 +935,20 @@ static BOOL pattern_attr(Ctx *c, XNode *attr, XpExpr **out)
                 cerr(c, c->s->v6 ? 0xC00CE618u : XE_NOT_DOM_NODE, nullptr, nullptr, nullptr);
             else
                 cerr(c, 0xC00CE60Eu, nullptr, nullptr, nullptr);
-            if (bad_end > bad_start && c->s->v6)
+            if (bad_end > bad_start && (c->s->v6 || (bad_end - bad_start == 10 && !wcsncmp(attr->value + bad_start, L"descendant", 10))))
                 c->s->error.suffix = xse_marked_text(attr->value ? attr->value : L"", attr->length, bad_start, bad_end);
-            else
+            else if (c->s->v6 && !ok && !bad_end && attr->length) {
+                /* msxml6 marks the token the expression starts with. */
+                const WCHAR *t = attr->value;
+                UINT m = 1;
+                if ((t[0] >= '0' && t[0] <= '9') || t[0] == '.')
+                    while (m < attr->length && ((t[m] >= '0' && t[m] <= '9') || t[m] == '.'))
+                        m++;
+                else if (t[0] == '\'' || t[0] == '"')
+                    while (m < attr->length && (t[m - 1] != t[0] || m == 1))
+                        m++;
+                c->s->error.suffix = xse_marked_text(t, attr->length, 0, m);
+            } else
                 c->s->error.suffix = xse_marked_text(attr->value ? attr->value : L"", attr->length, 0, attr->length);
             return FALSE;
         }
@@ -952,6 +961,9 @@ static BOOL is_forward(Ctx *c, XNode *el)
 {
     if (c->forward)
         return TRUE;
+    /* msxml6 takes the version of the stylesheet, not that of an element. */
+    if (c->s->v6)
+        return FALSE;
     for (XNode *n = el; n; n = n->parent) {
         if (n->type != XN_ELEMENT)
             continue;
@@ -1039,7 +1051,7 @@ static HRESULT compile_element_inner(Ctx *c, XNode *el, XsInst ***tail)
         add_uri_list(c, ext, &c->extension, &c->nextension, &c->capextension, FALSE);
     if (failed(c))
         return E_FAIL;
-    if (!is_xsl(el)) {
+    if (!is_xsl(el) && !c->s->v6) {
         XNode *v = xd_attr_find_ns(el, L"version", 7, XSLT_NS);
         if (v && xd_parse_number(v->value, v->length) > 1.0)
             c->forward = TRUE;
@@ -1223,7 +1235,7 @@ static HRESULT empty_content(Ctx *c, XNode *el)
     for (XNode *k = el->first; k; k = k->next) {
         if (k->type == XN_COMMENT || k->type == XN_PI || stripped_text(k))
             continue;
-        return cerr(c, XE_XS_KEYWORD_CONTAIN, el->qname, nullptr, child_label(k));
+        return cerr(c, XE_XS_KEYWORD_CONTAIN, el->qname, nullptr, child_label(c, k));
     }
     return S_OK;
 }
@@ -1260,15 +1272,7 @@ static BOOL sort_value(Ctx *c, XNode *el, const char *name, int index, XsInst *i
             for (k = 0; b[k]; k++)
                 wb[k] = (UCHAR)b[k];
             wb[k] = 0;
-            if (c->s->v6) {
-                WCHAR val[80];
-                UINT m = l < 78 ? l : 78;
-                memcpy(val, v, m * sizeof(WCHAR));
-                val[m] = 0;
-                cerr(c, XE_XS_ATTR_BAD, w, val, nullptr);
-            } else {
-                cerr(c, XE_XS_ATTR_ONLY, w, wa, wb);
-            }
+            cerr(c, XE_XS_ATTR_ONLY, w, wa, wb);
             return FALSE;
         }
     }
@@ -1410,7 +1414,7 @@ static HRESULT compile_xsl(Ctx *c, XNode *el, XsInst ***tail)
             if (k->type == XN_COMMENT || k->type == XN_PI || stripped_text(k))
                 continue;
             if (k->type != XN_ELEMENT)
-                return cerr(c, XE_XS_KEYWORD_CONTAIN, el->qname, nullptr, L"PCDATA nodes");
+                return cerr(c, XE_XS_KEYWORD_CONTAIN, el->qname, nullptr, (c->s->v6 ? L"TEXT nodes" : L"PCDATA nodes"));
             if (!is_xsl(k) || (!local_is(k, "when") && !local_is(k, "otherwise")))
                 return cerr(c, XE_XS_KEYWORD_CONTAIN, el->qname, nullptr, k->qname);
             if (local_is(k, "when")) {
@@ -1420,6 +1424,8 @@ static HRESULT compile_xsl(Ctx *c, XNode *el, XsInst ***tail)
             } else {
                 if (seen_otherwise)
                     return cerr(c, XE_XS_KEYWORD_HERE, k->qname, nullptr, nullptr);
+                if (c->s->v6 && !seen_when)
+                    return cerr(c, XE_XS_CHOOSE_EMPTY, nullptr, nullptr, nullptr);
                 seen_otherwise = TRUE;
             }
             HRESULT hr = compile_element(c, k, &bt);
@@ -2046,7 +2052,7 @@ static HRESULT compile_attribute_set(Ctx *c, XNode *el)
         if (k->type == XN_COMMENT || k->type == XN_PI || stripped_text(k))
             continue;
         if (k->type != XN_ELEMENT)
-            return cerr(c, XE_XS_KEYWORD_CONTAIN, el->qname, nullptr, L"PCDATA nodes");
+            return cerr(c, XE_XS_KEYWORD_CONTAIN, el->qname, nullptr, (c->s->v6 ? L"TEXT nodes" : L"PCDATA nodes"));
         if (!is_xsl(k) || !local_is(k, "attribute"))
             return cerr(c, XE_XS_KEYWORD_CONTAIN, el->qname, nullptr, k->qname);
         HRESULT hr = compile_element(c, k, &tail);
@@ -2287,7 +2293,7 @@ static HRESULT compile_toplevel(Ctx *c, XNode *root, XsModule *mod)
         if (k->type == XN_TEXT || k->type == XN_CDATA) {
             if (stripped_text(k))
                 continue;
-            return cerr(c, XE_XS_KEYWORD_CONTAIN, root->qname, nullptr, L"PCDATA nodes");
+            return cerr(c, XE_XS_KEYWORD_CONTAIN, root->qname, nullptr, (c->s->v6 ? L"TEXT nodes" : L"PCDATA nodes"));
         }
         if (k->type != XN_ELEMENT)
             continue;
@@ -2570,6 +2576,9 @@ XsSheet *xs_compile(XNode *style, UINT flags, XsError *error)
             if (SUCCEEDED(hr))
                 hr = finish(&c);
         }
+    } else if (s->v6) {
+        cerr(&c, 0xC00CE020u, L"{http://www.w3.org/1999/XSL/Transform}version", nullptr, nullptr);
+        hr = E_FAIL;
     } else {
         /* a document that is not a stylesheet is its own result. */
         s->literal = xd_doc_clone(root->doc, TRUE);

@@ -6,6 +6,8 @@ EXPORTS
     CoInternetCreateSecurityManager=_CoInternetCreateSecurityManager@12
     CoInternetGetSession=_CoInternetGetSession@12
     CoInternetParseUrl=_CoInternetParseUrl@28
+    CompatFlagsFromClsid=_CompatFlagsFromClsid@12
+    CopyBindInfo=_CopyBindInfo@8
     CreateAsyncBindCtx=_CreateAsyncBindCtx@16
     CreateAsyncBindCtxEx=_CreateAsyncBindCtxEx@24
     CreateIUriBuilder=_CreateIUriBuilder@16
@@ -20,6 +22,7 @@ EXPORTS
     IsAsyncMoniker=_IsAsyncMoniker@4
     ObtainUserAgentString=_ObtainUserAgentString@12
     RegisterBindStatusCallback=_RegisterBindStatusCallback@16
+    ReleaseBindInfo=_ReleaseBindInfo@4
     RevokeBindStatusCallback=_RevokeBindStatusCallback@8
     URLDownloadToCacheFileA=_URLDownloadToCacheFileA@24
     URLDownloadToCacheFileW=_URLDownloadToCacheFileW@24

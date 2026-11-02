@@ -924,7 +924,7 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     case 164: {
         /* the user mode code integrity state msxml asks for, zero flags are no enforcement. */
         UCHAR state[0x20] = {};
-        return copy_info(info, state, sizeof(state), length, returned);
+        return copy_info(info, state, length < sizeof(state) ? length : sizeof(state), length, returned);
     }
     case SystemHypervisorDetailInformation: {
         /*
