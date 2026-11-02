@@ -28,11 +28,6 @@ WINCRYPT32API BOOL WINAPI CertVerifyValidityNesting(void)
     return NOT_YET(FALSE);
 }
 
-WINCRYPT32API BOOL WINAPI CertVerifySubjectCertificateContext(void)
-{
-    return NOT_YET(FALSE);
-}
-
 WINCRYPT32API BOOL WINAPI CertVerifyRevocation(void)
 {
     return NOT_YET(FALSE);

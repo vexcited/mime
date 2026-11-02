@@ -836,6 +836,66 @@ static DWORD d_signer_info(cr_arena *a, const der_item *item, DWORD flags)
     return 0;
 }
 
+/* ContentInfo: the type and the content inside its [0] wrapper, as it is encoded. */
+static DWORD d_content_info(cr_arena *a, const der_item *item, DWORD flags)
+{
+    TOP(CRYPT_CONTENT_INFO);
+    if (item->tag != ASN_SEQUENCE)
+        return CRYPT_E_ASN1_BADTAG;
+    der_reader r;
+    der_item oid, wrapper;
+    DerOpen(&r, item);
+    DWORD error = DerExpect(&r, ASN_OID, &oid);
+    if (error || (error = dec_oid(a, &oid, &tmp.pszObjId)))
+        return error;
+    if (r.n) {
+        if ((error = DerExpect(&r, 0xa0, &wrapper)))
+            return error;
+        der_reader inner;
+        der_item content;
+        DerOpen(&inner, &wrapper);
+        if (inner.n) {
+            if ((error = DerRead(&inner, &content)))
+                return error;
+            dec_blob(a, content.start, content.total, &tmp.Content);
+        }
+    }
+    if (r.n)
+        return CRYPT_E_ASN1_CORRUPT;
+    STORE();
+    return 0;
+}
+
+/* the indirect data of an authenticode signature: what is signed, and the digest algorithm and value. */
+static DWORD d_spc_indirect(cr_arena *a, const der_item *item, DWORD flags)
+{
+    TOP(SPC_INDIRECT_DATA_CONTENT);
+    if (item->tag != ASN_SEQUENCE)
+        return CRYPT_E_ASN1_BADTAG;
+    der_reader r;
+    der_item data, digest_info, oid, value, algorithm, digest;
+    DerOpen(&r, item);
+    DWORD error = DerExpect(&r, ASN_SEQUENCE, &data);
+    if (error || (error = DerExpect(&r, ASN_SEQUENCE, &digest_info)))
+        return error;
+    der_reader d;
+    DerOpen(&d, &data);
+    if ((error = DerExpect(&d, ASN_OID, &oid)) || (error = dec_oid(a, &oid, &tmp.Data.pszObjId)))
+        return error;
+    if (d.n) {
+        if ((error = DerRead(&d, &value)))
+            return error;
+        dec_blob(a, value.start, value.total, &tmp.Data.Value);
+    }
+    DerOpen(&d, &digest_info);
+    if ((error = DerExpect(&d, ASN_SEQUENCE, &algorithm)) || (error = dec_algid(a, &algorithm, &tmp.DigestAlgorithm)) ||
+        (error = DerExpect(&d, ASN_OCTETSTRING, &digest)))
+        return error;
+    dec_blob(a, digest.content, digest.length, &tmp.Digest);
+    STORE();
+    return 0;
+}
+
 static DWORD d_oid(cr_arena *a, const der_item *item, DWORD flags)
 {
     LPSTR *top = ArenaAlloc(a, sizeof(LPSTR)), oid = nullptr;
@@ -1026,12 +1086,16 @@ static decode_fn decoder_for(LPCSTR type)
             return d_authority_key_id2;
         case 36:
             return d_eku;
+        case 33:
+            return d_content_info;
         case 38:
             return d_multi_uint;
         case 73:
             return d_oid;
         case 500:
             return d_signer_info;
+        case 2003:
+            return d_spc_indirect;
         }
         return nullptr;
     }

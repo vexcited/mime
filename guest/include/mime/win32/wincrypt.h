@@ -1265,6 +1265,8 @@ WINCRYPT32API BOOL WINAPI CertSetStoreProperty(HCERTSTORE hCertStore, DWORD dwPr
                                                const void *pvData);
 WINCRYPT32API BOOL WINAPI CertSaveStore(HCERTSTORE hCertStore, DWORD dwEncodingType, DWORD dwSaveAs,
                                         DWORD dwSaveTo, void *pvSaveToPara, DWORD dwFlags);
+#define CERT_STORE_SIGNATURE_FLAG 0x00000001
+WINCRYPT32API BOOL WINAPI CertVerifySubjectCertificateContext(PCCERT_CONTEXT subject, PCCERT_CONTEXT issuer, DWORD *flags);
 WINCRYPT32API PCCERT_CONTEXT WINAPI CertGetIssuerCertificateFromStore(HCERTSTORE hCertStore,
                                                                       PCCERT_CONTEXT pSubjectContext,
                                                                       PCCERT_CONTEXT pPrevIssuerContext,
@@ -1346,6 +1348,25 @@ WINCRYPT32API BOOL WINAPI CryptHashToBeSigned(HCRYPTPROV_LEGACY hCryptProv, DWOR
 #define CMSG_ENCODED_SIGNER 28
 #define CMSG_ENCODED_MESSAGE 29
 #define CMSG_VERSION_PARAM 30
+
+#define PKCS_CONTENT_INFO ((LPCSTR)33)
+#define SPC_INDIRECT_DATA_CONTENT_STRUCT ((LPCSTR)2003)
+
+typedef struct _CRYPT_CONTENT_INFO {
+    LPSTR pszObjId;
+    CRYPT_DATA_BLOB Content;
+} CRYPT_CONTENT_INFO, *PCRYPT_CONTENT_INFO;
+
+typedef struct _SPC_ATTRIBUTE_TYPE_AND_OPTIONAL_VALUE {
+    LPSTR pszObjId;
+    CRYPT_DATA_BLOB Value;
+} SPC_ATTRIBUTE_TYPE_AND_OPTIONAL_VALUE;
+
+typedef struct _SPC_INDIRECT_DATA_CONTENT {
+    SPC_ATTRIBUTE_TYPE_AND_OPTIONAL_VALUE Data;
+    CRYPT_ALGORITHM_IDENTIFIER DigestAlgorithm;
+    CRYPT_DATA_BLOB Digest;
+} SPC_INDIRECT_DATA_CONTENT, *PSPC_INDIRECT_DATA_CONTENT;
 
 typedef struct _CMSG_SIGNER_INFO {
     DWORD dwVersion;

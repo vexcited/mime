@@ -17,6 +17,7 @@ typedef struct {
     DWORD pending_size, pending_capacity, outside_size, outside_capacity;
     DWORD state;
     BOOL detached;
+    BOOL bare_input; /* the data is the signed data alone, as a message of a type given to open is. */
 } MESSAGE;
 
 enum { MESSAGE_READY, MESSAGE_COLLECTING, MESSAGE_CONTENT, MESSAGE_FAILED };
@@ -219,13 +220,17 @@ static DWORD parse_message(MESSAGE *message, DWORD size)
         if (input.p[i])
             return CRYPT_E_ASN1_CORRUPT;
     message->encoded = outer;
-    DerOpen(&input, &outer);
-    if (DerExpect(&input, ASN_OID, &oid) || oid.length > 64 || DerParseOid(&oid, name, sizeof(name)) ||
-        strcmp(name, "1.2.840.113549.1.7.2") || DerExpect(&input, 0xa0, &wrapper) || input.n)
-        return CRYPT_E_INVALID_MSG_TYPE;
-    DerOpen(&input, &wrapper);
-    if (DerExpect(&input, ASN_SEQUENCE, &message->bare) || input.n)
-        return CRYPT_E_ASN1_CORRUPT;
+    if (message->bare_input) {
+        message->bare = outer;
+    } else {
+        DerOpen(&input, &outer);
+        if (DerExpect(&input, ASN_OID, &oid) || oid.length > 64 || DerParseOid(&oid, name, sizeof(name)) ||
+            strcmp(name, "1.2.840.113549.1.7.2") || DerExpect(&input, 0xa0, &wrapper) || input.n)
+            return CRYPT_E_INVALID_MSG_TYPE;
+        DerOpen(&input, &wrapper);
+        if (DerExpect(&input, ASN_SEQUENCE, &message->bare) || input.n)
+            return CRYPT_E_ASN1_CORRUPT;
+    }
     DerOpen(&input, &message->bare);
     int number;
     if (DerExpect(&input, ASN_INTEGER, &version) || DerParseInt(&version, &number) || number < 1 || number > 5 ||
@@ -657,6 +662,8 @@ HCRYPTMSG WINAPI CryptMsgOpenToDecode(DWORD encoding, DWORD flags, DWORD type, H
     }
     message->state = MESSAGE_COLLECTING;
     message->detached = (flags & CMSG_DETACHED_FLAG) != 0;
+    /* a given type means the data is the content of the type alone, with no ContentInfo around it. */
+    message->bare_input = type == CMSG_SIGNED;
     HCRYPTMSG handle = publish(message);
     if (!handle) {
         free_message(message);

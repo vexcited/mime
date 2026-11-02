@@ -65,6 +65,7 @@ EXPORTS
     CertStrToNameW@28
     CertUnregisterSystemStore@8
     CertVerifyCertificateChainPolicy@16
+    CertVerifySubjectCertificateContext@12
     CertVerifyTimeValidity@8
     CryptAcquireCertificatePrivateKey@24
     CryptBinaryToStringA@20

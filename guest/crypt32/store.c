@@ -550,7 +550,6 @@ PCCERT_CONTEXT WINAPI CertGetSubjectCertificateFromStore(HCERTSTORE hCertStore, 
     return CertFindCertificateInStore(hCertStore, dwCertEncodingType, 0, CERT_FIND_SUBJECT_CERT, pCertId, nullptr);
 }
 
-#define CERT_STORE_SIGNATURE_FLAG 0x00000001
 #define CERT_STORE_TIME_VALIDITY_FLAG 0x00000002
 #define CERT_STORE_REVOCATION_FLAG 0x00000004
 #define CERT_STORE_NO_CRL_FLAG 0x00010000
@@ -588,6 +587,28 @@ PCCERT_CONTEXT WINAPI CertGetIssuerCertificateFromStore(HCERTSTORE hCertStore, P
         flags |= CERT_STORE_NO_CRL_FLAG;
     *pdwFlags = flags;
     return issuer;
+}
+
+/*
+ * the checks of a certificate against its issuer that the flags ask for: a check that passes clears its flag, one that fails
+ * leaves it. no revocation list is looked at, which the flags say as the one for no list to check against.
+ */
+BOOL WINAPI CertVerifySubjectCertificateContext(PCCERT_CONTEXT subject, PCCERT_CONTEXT issuer, DWORD *flags)
+{
+    if (!subject || !flags || (*flags & ~(CERT_STORE_SIGNATURE_FLAG | CERT_STORE_TIME_VALIDITY_FLAG | CERT_STORE_REVOCATION_FLAG))) {
+        SetLastError(E_INVALIDARG);
+        return FALSE;
+    }
+    DWORD value = *flags;
+    if ((value & CERT_STORE_SIGNATURE_FLAG) && issuer &&
+        !CrVerifySignedBlob(subject->pbCertEncoded, subject->cbCertEncoded, &issuer->pCertInfo->SubjectPublicKeyInfo))
+        value &= ~CERT_STORE_SIGNATURE_FLAG;
+    if ((value & CERT_STORE_TIME_VALIDITY_FLAG) && !CertVerifyTimeValidity(nullptr, subject->pCertInfo))
+        value &= ~CERT_STORE_TIME_VALIDITY_FLAG;
+    if (value & CERT_STORE_REVOCATION_FLAG)
+        value |= CERT_STORE_NO_CRL_FLAG;
+    *flags = value;
+    return TRUE;
 }
 
 /* ------------------------------------------------------------------ serialized and pkcs #7 content */
