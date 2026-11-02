@@ -4,24 +4,6 @@
  */
 #include "wsh.h"
 
-PCWSTR WshLastSeparator(PCWSTR path)
-{
-    PCWSTR last = nullptr;
-    for (; path && *path; path++)
-        if (*path == L'\\')
-            last = path;
-    if (last)
-        return last;
-    for (; path && *path; path++)
-        ;
-    return nullptr;
-}
-
-BOOL WshEqualNoCase(PCWSTR a, PCWSTR b, SIZE_T count)
-{
-    return _wcsnicmp(a, b, count) == 0;
-}
-
 BSTR WshLoadString(UINT id)
 {
     WCHAR buffer[2048];
@@ -312,19 +294,9 @@ HRESULT WshReportError(UINT prefix, UINT id, HRESULT code)
     BSTR text = WshLoadString(id), reason = nullptr;
     if (text) {
         WshFormatHResult(code, &reason);
-#if WSH_CONSOLE
         WshPrintF(prefix, 3501, text, reason);
-#else
-        WshPrintF(prefix, 3501, text, reason);
-#endif
     }
     SysFreeString(text);
     SysFreeString(reason);
-    return WSH_E_REPORTED;
-}
-
-HRESULT WshReportError2(UINT prefix, UINT id, PCWSTR first, PCWSTR second)
-{
-    WshPrintF(prefix, id, first, second);
     return WSH_E_REPORTED;
 }

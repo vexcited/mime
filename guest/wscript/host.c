@@ -792,7 +792,8 @@ static HRESULT apply_settings(const SETTINGS *s)
     g_host.Logo = s->Logo;
     g_host.Debug = s->Debug;
     g_host.Unicode = s->Unicode;
-    g_host.CodePage = s->UseCodePage ? s->CodePage : 0;
+    /* the code page of //CP is checked and never used, scripts are read in the ANSI code page whatever it says. */
+    g_host.CodePage = 0;
     g_host.TimeoutSet = s->TimeoutSet;
     g_host.Timeout = s->Timeout;
     return S_OK;

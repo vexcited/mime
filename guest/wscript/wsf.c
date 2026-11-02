@@ -1003,7 +1003,7 @@ static HRESULT STDMETHODCALLTYPE res_ids(IDispatch *This, REFIID riid, LPOLESTR 
     return DISP_E_UNKNOWNNAME;
 }
 
-/* getResource(id): the text of the resource of the job with that id. */
+/* The function getResource takes the id of a resource of the job and gives its text. */
 static HRESULT STDMETHODCALLTYPE res_invoke(IDispatch *This, DISPID id, REFIID riid, LCID lcid, WORD flags, DISPPARAMS *params,
                                             VARIANT *result, EXCEPINFO *excep, UINT *arg_err)
 {

@@ -1,4 +1,5 @@
 1 TYPELIB "@MIME_ROOT@/guest/wscript/wsh_x64.tlb"
+1 ICON "@MIME_ROOT@/guest/wscript/icons/cscript1.ico"
 
 /* the messages of the script host as the mui file of Windows holds them, and from 1024 those of the file parser. */
 STRINGTABLE

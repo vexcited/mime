@@ -165,7 +165,7 @@ typedef struct HOST {
     struct SCRIPT_ENGINE *Engine;
     struct HOST_OBJECT *Object;
     CRITICAL_SECTION Lock;
-    HANDLE TimerThread, TimerEvent, TimerStop;
+    HANDLE TimerThread, TimerEvent;
     DWORD MainThread;
     HINSTANCE Instance;
 } HOST;
@@ -179,14 +179,11 @@ HRESULT WshFormatHResult(HRESULT code, BSTR *out);
 void WshPrintF(UINT prefix, UINT id, ...);
 HRESULT WshPrint(PCWSTR text);
 HRESULT WshReportError(UINT prefix, UINT id, HRESULT code);
-HRESULT WshReportError2(UINT prefix, UINT id, PCWSTR first, PCWSTR second);
 HRESULT WshReportScriptError(ULONG line, LONG column, PCWSTR source, PCWSTR description, PCWSTR text, DWORD code);
 void WshShowLogo(void);
 void WshShowUsage(void);
 int WshRunWithoutArgument(void);
 void WshOnTimeout(void);
-PCWSTR WshLastSeparator(PCWSTR path);
-BOOL WshEqualNoCase(PCWSTR a, PCWSTR b, SIZE_T count);
 
 /* host.c: the run of one script. */
 HRESULT WshExecute(PCWSTR file, int count, PWSTR *arguments, PCWSTR engine, PCWSTR job);
