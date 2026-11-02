@@ -37,7 +37,12 @@ typedef struct _RTL_BITMAP {
 NTSYSAPI void NTAPI RtlInitializeBitMap(PRTL_BITMAP bitmap, PULONG buffer, ULONG size);
 NTSYSAPI void NTAPI RtlSetBits(PRTL_BITMAP bitmap, ULONG start, ULONG count);
 NTSYSAPI void NTAPI RtlClearBits(PRTL_BITMAP bitmap, ULONG start, ULONG count);
+NTSYSAPI ULONG NTAPI RtlFindClearBits(PRTL_BITMAP bitmap, ULONG count, ULONG hint);
 NTSYSAPI ULONG NTAPI RtlFindClearBitsAndSet(PRTL_BITMAP bitmap, ULONG count, ULONG hint);
+NTSYSAPI void NTAPI RtlSetBit(PRTL_BITMAP bitmap, ULONG bit);
+NTSYSAPI void NTAPI RtlClearBit(PRTL_BITMAP bitmap, ULONG bit);
+NTSYSAPI BOOLEAN NTAPI RtlTestBit(PRTL_BITMAP bitmap, ULONG bit);
+NTSYSAPI void NTAPI WinSqmSetDWORD(const GUID *session, ULONG id, ULONG value);
 NTSYSAPI ULONG NTAPI DbgPrompt(PCSTR prompt, PSTR response, ULONG capacity);
 
 typedef BOOLEAN(NTAPI *PDLL_INIT_ROUTINE)(PVOID base, ULONG reason, PCONTEXT context);

@@ -592,3 +592,8 @@ NTDLL_EXPORT USHORT NTAPI RtlCaptureStackBackTrace(ULONG skip, ULONG count, PVOI
     return n;
 }
 #endif
+
+/* the telemetry session of windows is not kept. */
+NTDLL_EXPORT void NTAPI WinSqmSetDWORD(const GUID *session, ULONG id, ULONG value)
+{
+}

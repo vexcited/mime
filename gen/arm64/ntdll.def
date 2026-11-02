@@ -1459,9 +1459,14 @@ EXPORTS
     wcsrchr
     wcsstr
     DbgPrompt
+    RtlClearBit
     RtlClearBits
+    RtlFindClearBits
     RtlFindClearBitsAndSet
     RtlInitializeBitMap
+    RtlSetBit
     RtlSetBits
+    RtlTestBit
     atoi
     atol
+    WinSqmSetDWORD

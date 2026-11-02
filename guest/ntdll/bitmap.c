@@ -48,7 +48,7 @@ static ULONG clear_run(PRTL_BITMAP bitmap, ULONG start, ULONG end, ULONG count)
     return 0xFFFFFFFFu;
 }
 
-NTDLL_EXPORT ULONG NTAPI RtlFindClearBitsAndSet(PRTL_BITMAP bitmap, ULONG count, ULONG hint)
+static ULONG find_clear(PRTL_BITMAP bitmap, ULONG count, ULONG hint)
 {
     ULONG size = bitmap->SizeOfBitMap;
     if (hint >= size)
@@ -62,7 +62,33 @@ NTDLL_EXPORT ULONG NTAPI RtlFindClearBitsAndSet(PRTL_BITMAP bitmap, ULONG count,
         ULONG end = count > size - hint ? size : hint + count;
         found = clear_run(bitmap, 0, end, count);
     }
+    return found;
+}
+
+NTDLL_EXPORT ULONG NTAPI RtlFindClearBits(PRTL_BITMAP bitmap, ULONG count, ULONG hint)
+{
+    return find_clear(bitmap, count, hint);
+}
+
+NTDLL_EXPORT ULONG NTAPI RtlFindClearBitsAndSet(PRTL_BITMAP bitmap, ULONG count, ULONG hint)
+{
+    ULONG found = find_clear(bitmap, count, hint);
     if (found != 0xFFFFFFFFu)
         RtlSetBits(bitmap, found, count);
     return found;
+}
+
+NTDLL_EXPORT void NTAPI RtlSetBit(PRTL_BITMAP bitmap, ULONG bit)
+{
+    bitmap->Buffer[bit / 32] |= 1u << (bit % 32);
+}
+
+NTDLL_EXPORT void NTAPI RtlClearBit(PRTL_BITMAP bitmap, ULONG bit)
+{
+    bitmap->Buffer[bit / 32] &= ~(1u << (bit % 32));
+}
+
+NTDLL_EXPORT BOOLEAN NTAPI RtlTestBit(PRTL_BITMAP bitmap, ULONG bit)
+{
+    return bit < bitmap->SizeOfBitMap && (bitmap->Buffer[bit / 32] & (1u << (bit % 32))) != 0;
 }

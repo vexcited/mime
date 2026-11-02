@@ -662,9 +662,14 @@ EXPORTS
     Wow64Transition DATA
     DbgPrompt=_DbgPrompt@12
     NtSetVolumeInformationFile=_NtSetVolumeInformationFile@20
+    RtlClearBit=_RtlClearBit@8
     RtlClearBits=_RtlClearBits@12
+    RtlFindClearBits=_RtlFindClearBits@12
     RtlFindClearBitsAndSet=_RtlFindClearBitsAndSet@12
     RtlInitializeBitMap=_RtlInitializeBitMap@12
+    RtlSetBit=_RtlSetBit@8
     RtlSetBits=_RtlSetBits@12
+    RtlTestBit=_RtlTestBit@8
     atoi=atoi
     atol=atol
+    WinSqmSetDWORD=_WinSqmSetDWORD@12

@@ -662,9 +662,14 @@ EXPORTS
     Wow64Transition DATA
     DbgPrompt@12
     NtSetVolumeInformationFile@20
+    RtlClearBit@8
     RtlClearBits@12
+    RtlFindClearBits@12
     RtlFindClearBitsAndSet@12
     RtlInitializeBitMap@12
+    RtlSetBit@8
     RtlSetBits@12
+    RtlTestBit@8
     atoi
     atol
+    WinSqmSetDWORD@12
