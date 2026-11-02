@@ -893,7 +893,8 @@ LRESULT CALLBACK TreeViewProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
         relayout(tv);
         return 0;
     case WM_GETFONT:
-        return (LRESULT)tv->Font;
+        /* a tree view made without a font has the icon title font, which TV_OnCreate of Windows gives it with WM_SETFONT. */
+        return (LRESULT)tree_font(tv);
     case WM_SETFOCUS:
     case WM_KILLFOCUS:
         CcNotifyHdr(&tv->Notify, msg == WM_SETFOCUS ? NM_SETFOCUS : NM_KILLFOCUS);
