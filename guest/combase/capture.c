@@ -262,6 +262,19 @@ static BOOL window_bounds(HWND window, RECT *window_rect, RECT *frame)
     return TRUE;
 }
 
+/*
+ * a monitor is captured in its own pixels whatever the awareness of the caller: the server of the capture composes
+ * the monitor and does not know the caller's screen.
+ */
+static BOOL monitor_pixels(HMONITOR monitor, MONITORINFO *info)
+{
+    DPI_AWARENESS_CONTEXT before = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    BOOL ok = GetMonitorInfoW(monitor, info);
+    if (before)
+        SetThreadDpiAwarenessContext(before);
+    return ok;
+}
+
 static SizeInt32 item_size(ITEM *item)
 {
     SizeInt32 size = {0, 0};
@@ -273,7 +286,7 @@ static SizeInt32 item_size(ITEM *item)
         }
     } else {
         MONITORINFO info = {sizeof(info)};
-        if (GetMonitorInfoW(item->Monitor, &info)) {
+        if (monitor_pixels(item->Monitor, &info)) {
             size.Width = info.rcMonitor.right - info.rcMonitor.left;
             size.Height = info.rcMonitor.bottom - info.rcMonitor.top;
         }

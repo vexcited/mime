@@ -655,14 +655,28 @@ void ScreenCompose(const RECT *area)
      * the desktop shows what was drawn on it until a window covers that part: only what was not bare before is painted,
      * and what a window covers is not kept.
      */
-    REGION fresh, under;
+    REGION fresh, under, touched, below;
     RgnInit(&fresh);
     RgnInit(&under);
+    RgnInit(&touched);
+    RgnInit(&below);
+    /*
+     * a window that does not cover, a layered one, blends with what is under it, so the desktop is painted again under
+     * it each time and is not kept: the blend would stay on the screen after the window and add up.
+     */
+    for (ULONG i = 0; i < planned; i++)
+        RgnCombine(&touched, &touched, &plans[i].Visible, RGN_OR);
+    RgnOffset(&touched, -g_screen_origin.x, -g_screen_origin.y);
     RgnCombine(&fresh, &bare, &g_kept, RGN_DIFF);
+    RgnCombine(&below, &bare, &touched, RGN_AND);
+    RgnCombine(&fresh, &fresh, &below, RGN_OR);
     RgnSetRect(&under, &r);
     RgnCombine(&under, &under, &bare, RGN_DIFF);
     RgnCombine(&g_kept, &g_kept, &under, RGN_DIFF);
     RgnCombine(&g_kept, &g_kept, &bare, RGN_OR);
+    RgnCombine(&g_kept, &g_kept, &touched, RGN_DIFF);
+    RgnFree(&below);
+    RgnFree(&touched);
     RgnFree(&under);
     RgnFree(&bare);
     bare = fresh;

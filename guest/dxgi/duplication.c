@@ -423,6 +423,81 @@ BOOL DxgiMonitorNumber(HMONITOR monitor, UINT *number)
     return TRUE;
 }
 
+/* the next launch of the program is aware, as the compatibility layer HIGHDPIAWARE makes it. */
+static void add_highdpiaware_layer(void)
+{
+    typedef LSTATUS(WINAPI * CREATE)(HKEY, PCWSTR, DWORD, PWSTR, DWORD, REGSAM, PVOID, HKEY *, PDWORD);
+    typedef LSTATUS(WINAPI * GET)(HKEY, PCWSTR, PCWSTR, DWORD, PDWORD, PVOID, PDWORD);
+    typedef LSTATUS(WINAPI * SET)(HKEY, PCWSTR, DWORD, DWORD, const BYTE *, DWORD);
+    typedef LSTATUS(WINAPI * CLOSE)(HKEY);
+    static LONG applied;
+    if (InterlockedExchange(&applied, 1))
+        return;
+    HMODULE advapi = LoadLibraryW(L"advapi32.dll");
+    CREATE create = advapi ? (CREATE)(void *)GetProcAddress(advapi, "RegCreateKeyExW") : nullptr;
+    GET get = advapi ? (GET)(void *)GetProcAddress(advapi, "RegGetValueW") : nullptr;
+    SET set = advapi ? (SET)(void *)GetProcAddress(advapi, "RegSetValueExW") : nullptr;
+    CLOSE close = advapi ? (CLOSE)(void *)GetProcAddress(advapi, "RegCloseKey") : nullptr;
+    WCHAR path[MAX_PATH];
+    HKEY key;
+    if (!close || !GetModuleFileNameW(nullptr, path, MAX_PATH) ||
+        create(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers", 0, nullptr, 0,
+               KEY_ALL_ACCESS, nullptr, &key, nullptr))
+        return;
+    static const WCHAR layer[] = L"HIGHDPIAWARE";
+    WCHAR value[512] = L"";
+    DWORD size = sizeof(value);
+    if (get(key, nullptr, path, RRF_RT_REG_SZ, nullptr, value, &size) == ERROR_SUCCESS && value[0]) {
+        for (const WCHAR *p = value; *p; p++) {
+            UINT i = 0;
+            while (layer[i] && p[i] == layer[i])
+                i++;
+            if (!layer[i])
+                goto done;
+        }
+        if (lstrlenW(value) + 1 + RTL_NUMBER_OF(layer) > RTL_NUMBER_OF(value))
+            goto done;
+        lstrcatW(value, L" ");
+    }
+    lstrcatW(value, layer);
+    set(key, path, 0, REG_SZ, (const BYTE *)value, (DWORD)((lstrlenW(value) + 1) * sizeof(WCHAR)));
+done:
+    close(key);
+}
+
+/* the awareness of the process, 0 unaware, 1 system aware, 2 per monitor aware, -1 when it cannot be told. */
+static int process_awareness(void)
+{
+    typedef HRESULT(WINAPI * PROCESS_AWARENESS)(HANDLE, int *);
+    HMODULE shcore = LoadLibraryW(L"shcore.dll");
+    PROCESS_AWARENESS get = shcore ? (PROCESS_AWARENESS)(void *)GetProcAddress(shcore, "GetProcessDpiAwareness") : nullptr;
+    int awareness;
+    return get && SUCCEEDED(get(nullptr, &awareness)) ? awareness : -1;
+}
+
+/*
+ * the plain DuplicateOutput of a program that is not per monitor aware makes it per monitor aware when the monitor does
+ * not scale by 100% (ApplyHighDPIAwareShim of dxgi.dll), so the frames and the program's coordinates are the same pixels.
+ * a program that already chose its awareness keeps it.
+ */
+static void apply_highdpi_shim(HMONITOR monitor)
+{
+    typedef HRESULT(WINAPI * MONITOR_DPI)(HMONITOR, int, UINT *, UINT *);
+    int awareness = process_awareness();
+    if (!monitor || awareness < 0 || awareness == 2)
+        return;
+    HMODULE shcore = LoadLibraryW(L"shcore.dll");
+    MONITOR_DPI get = shcore ? (MONITOR_DPI)(void *)GetProcAddress(shcore, "GetDpiForMonitor") : nullptr;
+    UINT x, y;
+    /* 2 is the raw dpi of the monitor. */
+    if (!get || FAILED(get(monitor, 2, &x, &y)))
+        return;
+    if (awareness == 0 ? x == 96 : x == GetDpiForSystem())
+        return;
+    add_highdpiaware_layer();
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE);
+}
+
 HRESULT DxgiDuplicateOutput(IDXGIOutput *output, DxgiAdapter *adapter, HMONITOR monitor, IUnknown *device, BOOL v1,
                             UINT flags, UINT count, const DXGI_FORMAT *formats, IDXGIOutputDuplication **out)
 {
@@ -430,13 +505,14 @@ HRESULT DxgiDuplicateOutput(IDXGIOutput *output, DxgiAdapter *adapter, HMONITOR 
         return E_INVALIDARG;
     *out = nullptr;
     if (v1) {
-        /* 1 is the only valid flag, and the call needs per monitor dpi awareness. */
+        /* 1 is the only valid flag, and the call needs per monitor dpi awareness of the process. */
         if (flags & ~1u || !count || !formats)
             return E_INVALIDARG;
-        if (GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext()) != DPI_AWARENESS_PER_MONITOR_AWARE)
+        if (process_awareness() != 2)
             return DXGI_ERROR_UNSUPPORTED;
     } else {
         static const DXGI_FORMAT desktop = DXGI_FORMAT_B8G8R8A8_UNORM;
+        apply_highdpi_shim(monitor);
         count = 1;
         formats = &desktop;
     }
