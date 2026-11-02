@@ -1287,3 +1287,17 @@ _NtAdjustPrivilegesToken@24:
     movl %esp, %edx
     int $0x2e
     retl $24
+    .p2align 4, 0x90
+    .globl _NtQuerySecurityAttributesToken@24
+_NtQuerySecurityAttributesToken@24:
+    movl $0x167, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $24
+    .p2align 4, 0x90
+    .globl _NtQuerySecurityPolicy@24
+_NtQuerySecurityPolicy@24:
+    movl $0x169, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $24

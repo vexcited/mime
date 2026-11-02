@@ -466,6 +466,10 @@ NTSYSCALLAPI NTSTATUS NTAPI NtAccessCheck(PSECURITY_DESCRIPTOR sd, HANDLE token,
                                           PACCESS_MASK granted, PNTSTATUS status);
 NTSYSCALLAPI NTSTATUS NTAPI NtQuerySecurityObject(HANDLE handle, SECURITY_INFORMATION info,
                                                   PSECURITY_DESCRIPTOR sd, ULONG length, PULONG needed);
+NTSYSCALLAPI NTSTATUS NTAPI NtQuerySecurityAttributesToken(HANDLE token, PVOID names, ULONG count, PVOID buffer,
+                                                           ULONG length, PULONG needed);
+NTSYSCALLAPI NTSTATUS NTAPI NtQuerySecurityPolicy(PVOID provider, PVOID key, PVOID value_name, PULONG type, PVOID value,
+                                                  PULONG size);
 NTSYSCALLAPI NTSTATUS NTAPI NtAdjustPrivilegesToken(HANDLE token, BOOLEAN disable_all, PTOKEN_PRIVILEGES state,
                                                     ULONG length, PTOKEN_PRIVILEGES previous, PULONG returned);
 NTSYSCALLAPI NTSTATUS NTAPI RtlImpersonateSelf(ULONG level);

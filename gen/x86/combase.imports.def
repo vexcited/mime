@@ -21,6 +21,14 @@ EXPORTS
     RoUninitialize@0
     RoUnregisterForApartmentShutdown@4
     SetRestrictedErrorInfo@4
+    HSTRING_UserFree@8
+    HSTRING_UserMarshal@12
+    HSTRING_UserSize@12
+    HSTRING_UserUnmarshal@12
+    IsErrorPropagationEnabled@0
+    RoGetMatchingRestrictedErrorInfo@8
+    RoReportFailedDelegate@8
+    RoTransformErrorW@16
     WindowsCompareStringOrdinal@12
     WindowsConcatString@12
     WindowsCreateString@12

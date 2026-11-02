@@ -172,7 +172,9 @@ EXPORTS
     NtQueryObject=_NtQueryObject@20
     NtQueryPerformanceCounter=_NtQueryPerformanceCounter@8
     NtQuerySection=_NtQuerySection@20
+    NtQuerySecurityAttributesToken=_NtQuerySecurityAttributesToken@24
     NtQuerySecurityObject=_NtQuerySecurityObject@20
+    NtQuerySecurityPolicy=_NtQuerySecurityPolicy@24
     NtQuerySymbolicLinkObject=_NtQuerySymbolicLinkObject@12
     NtEnumerateSystemEnvironmentValuesEx=_NtEnumerateSystemEnvironmentValuesEx@12
     NtQuerySystemEnvironmentValue=_NtQuerySystemEnvironmentValue@16
