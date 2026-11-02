@@ -19,3 +19,7 @@ EXPORTS
     PrintDlgExA@4
     PrintDlgExW@4
     PrintDlgW@4
+    FindTextW@4
+    FindTextA@4
+    ReplaceTextW@4
+    ReplaceTextA@4

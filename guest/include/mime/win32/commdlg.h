@@ -26,6 +26,66 @@ typedef UINT_PTR(CALLBACK *LPPAGEPAINTHOOK)(HWND, UINT, WPARAM, LPARAM);
 typedef struct _PSP *HPROPSHEETPAGE;
 #endif
 
+/* ------------------------------------------------------------------ find and replace */
+
+typedef UINT_PTR(CALLBACK *LPFRHOOKPROC)(HWND, UINT, WPARAM, LPARAM);
+
+typedef struct tagFINDREPLACEW {
+    DWORD lStructSize;
+    HWND hwndOwner;
+    HINSTANCE hInstance;
+    DWORD Flags;
+    LPWSTR lpstrFindWhat;
+    LPWSTR lpstrReplaceWith;
+    WORD wFindWhatLen;
+    WORD wReplaceWithLen;
+    LPARAM lCustData;
+    LPFRHOOKPROC lpfnHook;
+    LPCWSTR lpTemplateName;
+} FINDREPLACEW, *LPFINDREPLACEW;
+
+typedef struct tagFINDREPLACEA {
+    DWORD lStructSize;
+    HWND hwndOwner;
+    HINSTANCE hInstance;
+    DWORD Flags;
+    LPSTR lpstrFindWhat;
+    LPSTR lpstrReplaceWith;
+    WORD wFindWhatLen;
+    WORD wReplaceWithLen;
+    LPARAM lCustData;
+    LPFRHOOKPROC lpfnHook;
+    LPCSTR lpTemplateName;
+} FINDREPLACEA, *LPFINDREPLACEA;
+
+#define FR_DOWN 0x00000001
+#define FR_WHOLEWORD 0x00000002
+#define FR_MATCHCASE 0x00000004
+#define FR_FINDNEXT 0x00000008
+#define FR_REPLACE 0x00000010
+#define FR_REPLACEALL 0x00000020
+#define FR_DIALOGTERM 0x00000040
+#define FR_SHOWHELP 0x00000080
+#define FR_ENABLEHOOK 0x00000100
+#define FR_ENABLETEMPLATE 0x00000200
+#define FR_NOUPDOWN 0x00000400
+#define FR_NOMATCHCASE 0x00000800
+#define FR_NOWHOLEWORD 0x00001000
+#define FR_ENABLETEMPLATEHANDLE 0x00002000
+#define FR_HIDEUPDOWN 0x00004000
+#define FR_HIDEMATCHCASE 0x00008000
+#define FR_HIDEWHOLEWORD 0x00010000
+#define FR_RAW 0x00020000
+#define FR_SHOWWRAPAROUND 0x00040000
+#define FR_NOWRAPAROUND 0x00080000
+#define FR_WRAPAROUND 0x00100000
+#define FR_MATCHDIAC 0x20000000
+#define FR_MATCHKASHIDA 0x40000000
+#define FR_MATCHALEFHAMZA 0x80000000
+
+#define FINDMSGSTRINGW L"commdlg_FindReplace"
+#define FINDMSGSTRINGA "commdlg_FindReplace"
+
 /* ------------------------------------------------------------------ extended errors */
 
 #define CDERR_DIALOGFAILURE 0xFFFF
@@ -550,6 +610,10 @@ CDAPI HRESULT WINAPI PrintDlgExW(LPPRINTDLGEXW pd);
 CDAPI HRESULT WINAPI PrintDlgExA(LPPRINTDLGEXA pd);
 CDAPI BOOL WINAPI PageSetupDlgW(LPPAGESETUPDLGW psd);
 CDAPI BOOL WINAPI PageSetupDlgA(LPPAGESETUPDLGA psd);
+CDAPI HWND WINAPI FindTextW(LPFINDREPLACEW fr);
+CDAPI HWND WINAPI FindTextA(LPFINDREPLACEA fr);
+CDAPI HWND WINAPI ReplaceTextW(LPFINDREPLACEW fr);
+CDAPI HWND WINAPI ReplaceTextA(LPFINDREPLACEA fr);
 
 #ifdef __i386__
 #pragma pack(pop)
