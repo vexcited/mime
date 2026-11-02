@@ -101,7 +101,8 @@ static void create_shared_folders(const MimePaths *paths)
 static bool create_skeleton(const MimePaths *paths)
 {
     static const char *const folders[] = {
-        "Windows/System32/config", "Windows/System32/drivers", "Windows/System32/en-US", "Windows/SysWOW64",
+        "Windows/System32/config", "Windows/System32/drivers", "Windows/System32/en-US", "Windows/System32/wbem",
+        "Windows/SysWOW64", "Windows/SysWOW64/wbem",
         /* the profiles of the system and of the two service accounts. */
         "Windows/System32/config/systemprofile/AppData/Local/Temp",
         "Windows/System32/config/systemprofile/AppData/Roaming",
