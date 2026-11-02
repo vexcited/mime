@@ -1035,8 +1035,18 @@ static HRESULT run_list(XsRun *r, XsInst *list, XsFrame *f)
 {
     UINT mark = r->sp;
     HRESULT hr = S_OK;
-    for (XsInst *i = list; i && SUCCEEDED(hr); i = i->next)
+    for (XsInst *i = list; i && SUCCEEDED(hr); i = i->next) {
+        /* the elements an instruction wrote end a line when the stylesheet had white space after it and the output is
+         * indented, for the instructions that make or copy elements. */
+        BOOL marks = r->indent && i->ws_after && r->cur &&
+                     (i->op == XO_LRE || i->op == XO_ELEMENT || i->op == XO_COPY || i->op == XO_COPY_OF);
+        XNode *last = marks ? r->cur->last : nullptr;
         hr = run_inst(r, i, f);
+        if (SUCCEEDED(hr) && marks)
+            for (XNode *n = last ? last->next : r->cur->first; n; n = n->next)
+                if (n->type == XN_ELEMENT)
+                    n->flags |= XF_WS_AFTER;
+    }
     pop_to(r, mark);
     return hr;
 }
@@ -1138,8 +1148,17 @@ static HRESULT run_inst(XsRun *r, XsInst *i, XsFrame *f)
     case XO_VALUE_OF: {
         XBuf b = {};
         HRESULT hr = eval_string(r, i->select, f, &b);
-        if (SUCCEEDED(hr))
+        if (SUCCEEDED(hr)) {
             out_text(r, b.s, b.length, i->doe);
+            /* an empty string is an empty text node, which is text next to the element before it when indenting. */
+            if (!b.length && r->indent && (!r->cur->last || r->cur->last->type != XN_TEXT)) {
+                XNode *t = out_new(r, XN_TEXT, nullptr, 0, nullptr);
+                if (t) {
+                    xd_node_set_value(t, L"", 0);
+                    xd_link(r->cur, t, nullptr);
+                }
+            }
+        }
         xb_free(&b);
         return hr;
     }
@@ -1273,6 +1292,8 @@ static HRESULT run_inst(XsRun *r, XsInst *i, XsFrame *f)
             return hr;
         if (i->doe || body_forces_end(i->body, r->v6, FALSE))
             e->flags |= XF_EXPLICIT;
+        if (r->indent && i->ws_inside)
+            e->flags |= XF_WS_INSIDE;
         for (UINT k = 0; k < i->nnsdecl; k++) {
             XBuf q = {};
             if (i->nsdecl[k].prefix[0]) {
@@ -1655,6 +1676,7 @@ HRESULT xs_run(XsRequest *req)
     run.req = req;
     run.sheet = sheet;
     run.v6 = req->v6;
+    run.indent = req->sheet->output.indent == 1;
     run.err = &req->error;
     run.host.rtf_error = host_rtf_error;
     run.host.known = xsr_known_function;

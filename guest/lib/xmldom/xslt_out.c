@@ -39,7 +39,24 @@ typedef struct Ser {
         const WCHAR *uri;
     } *binds;
     UINT nbinds, capbinds;
+    BOOL indent;
+    BOOL pending; /* a line break is due before the next thing written. */
 } Ser;
+
+static void flush_pending(Ser *w)
+{
+    if (!w->pending)
+        return;
+    w->pending = FALSE;
+    if (w->out->length && w->out->s[w->out->length - 1] != '\n')
+        xb_puta(w->out, "\r\n");
+}
+
+/* white space the stylesheet had after a child ends a line, unless text follows. */
+static BOOL child_breaks(const XNode *c)
+{
+    return c->type != XN_TEXT && (c->flags & XF_WS_AFTER) && (!c->next || c->next->type != XN_TEXT);
+}
 
 static void put_ref(XBuf *b, UINT c, BOOL hex)
 {
@@ -270,13 +287,17 @@ static BOOL has_explicit(XNode *n)
 
 static void write_children(Ser *w, XNode *parent, int level)
 {
-    for (XNode *c = parent->first; c; c = c->next)
+    for (XNode *c = parent->first; c; c = c->next) {
         write_node(w, c, level);
+        if (w->indent && child_breaks(c))
+            w->pending = TRUE;
+    }
 }
 
 static void write_element(Ser *w, XNode *n, int level)
 {
     XBuf *b = w->out;
+    flush_pending(w);
     UINT base = w->nbinds;
     const WCHAR *q = n->qname;
     UINT ql = xd_atom_len(q);
@@ -373,7 +394,10 @@ static void write_element(Ser *w, XNode *n, int level)
             w->nbinds = base;
             return;
         }
+        if (w->indent && (n->flags & XF_WS_INSIDE) && !(n->first && n->first->type == XN_TEXT))
+            w->pending = TRUE;
         if (!n->uri && ieq(xd_local(n), ll, "head") && w->cfg) {
+            w->pending = FALSE;
             const WCHAR *enc = w->encoding ? w->encoding : L"UTF-16";
             xb_puta(b, "\r\n<META http-equiv=\"Content-Type\" content=\"text/html");
             if (!w->v6 || w->encoding) {
@@ -390,7 +414,10 @@ static void write_element(Ser *w, XNode *n, int level)
             } else {
                 write_node(w, c, level + 1);
             }
+            if (w->indent && child_breaks(c))
+                w->pending = TRUE;
         }
+        flush_pending(w);
         xb_puta(b, "</");
         xb_put(b, q, ql);
         xb_putc(b, '>');
@@ -403,13 +430,18 @@ static void write_element(Ser *w, XNode *n, int level)
         return;
     }
     xb_putc(b, '>');
+    if (w->indent && (n->flags & XF_WS_INSIDE) && !(n->first && n->first->type == XN_TEXT))
+        w->pending = TRUE;
     BOOL cdata = in_cdata_list(w, n);
     for (XNode *c = n->first; c; c = c->next) {
         if (cdata && (c->type == XN_TEXT || c->type == XN_CDATA) && !(c->flags & XF_EXPLICIT))
             put_cdata(w, c->value ? c->value : L"", c->length);
         else
             write_node(w, c, level + 1);
+        if (w->indent && child_breaks(c))
+            w->pending = TRUE;
     }
+    flush_pending(w);
     xb_puta(b, "</");
     xb_put(b, q, ql);
     xb_putc(b, '>');
@@ -425,14 +457,17 @@ static void write_node(Ser *w, XNode *n, int level)
         break;
     case XN_TEXT:
     case XN_CDATA:
+        flush_pending(w);
         put_text(w, n->value ? n->value : L"", n->length, TRUE, (n->flags & XF_DOE) != 0);
         break;
     case XN_COMMENT:
+        flush_pending(w);
         xb_puta(b, "<!--");
         xb_put(b, n->value ? n->value : L"", n->length);
         xb_puta(b, "-->");
         break;
     case XN_PI:
+        flush_pending(w);
         xb_puta(b, "<?");
         xb_put(b, n->qname, xd_atom_len(n->qname));
         if (n->length) {
@@ -570,6 +605,8 @@ void xs_serialize(const XsOutput *out, XDoc *result, BOOL v6, XBuf *text, const 
         }
         xb_putc(text, '>');
     }
+    w.indent = out && out->indent == 1;
     write_node(&w, &result->node, 0);
+    flush_pending(&w);
     xd_free(w.binds);
 }

@@ -171,6 +171,8 @@ struct XsInst {
     const WCHAR *text;
     UINT tlen;
     BOOL doe;
+    BOOL ws_inside; /* the stylesheet had white space the parser dropped after the start tag of the element. */
+    BOOL ws_after;  /* and after the instruction. */
     XsScope *scope;
     XsAttr *attrs; /* of a literal result element. */
     UINT nattrs;

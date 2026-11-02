@@ -46,6 +46,7 @@ struct XsRun {
     XsRequest *req;
     XsSheet *sheet;
     BOOL v6;
+    BOOL indent; /* xsl:output indent="yes". */
     XDoc *out;
     XNode *cur;
     XsBinding *stack;

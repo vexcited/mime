@@ -1009,7 +1009,19 @@ static BOOL uri_listed(const WCHAR **list, UINT n, const WCHAR *uri)
     return FALSE;
 }
 
+static HRESULT compile_element_inner(Ctx *c, XNode *el, XsInst ***tail);
+
+/* an instruction followed by white space the parser dropped remembers it, for the indent of the output. */
 static HRESULT compile_element(Ctx *c, XNode *el, XsInst ***tail)
+{
+    XsInst **before = *tail;
+    HRESULT hr = compile_element_inner(c, el, tail);
+    if (SUCCEEDED(hr) && *tail != before && (el->flags & XF_WS_AFTER))
+        ((XsInst *)((char *)*tail - offsetof(XsInst, next)))->ws_after = TRUE;
+    return hr;
+}
+
+static HRESULT compile_element_inner(Ctx *c, XNode *el, XsInst ***tail)
 {
     XsScope *saved_scope = c->scope;
     UINT saved_excluded = c->nexcluded, saved_extension = c->nextension;
@@ -1119,6 +1131,7 @@ static const WCHAR *alias_result(Ctx *c, const WCHAR *uri, const WCHAR **prefix)
 static HRESULT compile_lre(Ctx *c, XNode *el, XsInst ***tail)
 {
     XsInst *inst = new_inst(c, XO_LRE);
+    inst->ws_inside = (el->flags & XF_WS_INSIDE) != 0;
     inst->name.qname = xs_dup(c->s, el->qname, xd_atom_len(el->qname));
     inst->name.qlen = xd_atom_len(el->qname);
     inst->name.local = inst->name.qname + el->local;
