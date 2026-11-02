@@ -113,8 +113,7 @@ typedef enum {
     T_STRUCT,
     T_STRING,
     T_PTR,
-    T_IFBODY,
-    T_ARRBODY
+    T_IFBODY
 } KIND;
 
 typedef struct TY TY;
@@ -404,7 +403,8 @@ static HRESULT classify(CTX *c, ITypeInfo *ti, const TYPEDESC *td, int depth, TY
     case VT_VARIANT: t = ty_user(c, USER_VARIANT, sizeof(VARIANT), 8, 8); break;
     case VT_UNKNOWN: t = ty_iface(c, &IID_IUnknown); break;
     case VT_DISPATCH: t = ty_iface(c, &IID_IDispatch); break;
-    case VT_SAFEARRAY: t = ty_new(c, T_ARRBODY); break;
+    /* SAFEARRAY(type) is the pointer to the array, passed by value, and a pointer to that is SAFEARRAY(type)*. */
+    case VT_SAFEARRAY: t = ty_user(c, USER_SAFEARRAY, PSZ, PSZ, 4); break;
     case VT_LPSTR:
     case VT_LPWSTR:
         t = ty_new(c, T_STRING);
@@ -422,8 +422,6 @@ static HRESULT classify(CTX *c, ITypeInfo *ti, const TYPEDESC *td, int depth, TY
             return hr;
         if (target->Kind == T_IFBODY) {
             t = ty_iface(c, &target->Iid);
-        } else if (target->Kind == T_ARRBODY) {
-            t = ty_user(c, USER_SAFEARRAY, PSZ, PSZ, 4);
         } else if (target->Kind == T_PTR) {
             return TYPE_E_UNSUPFORMAT;
         } else {
