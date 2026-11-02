@@ -608,10 +608,16 @@ static BOOLEAN prefers_system32(void)
     return answer == 1;
 }
 
+/* a name with a directory or a drive is a path, any other name is looked up by its base name. */
+static BOOLEAN is_path_name(PCWSTR name)
+{
+    return wcschr(name, '\\') || wcschr(name, '/') || (name[0] && name[1] == ':');
+}
+
 /* windows' desktop search order with safe dll search mode. */
 static NTSTATUS find_dll(PCWSTR name, PCWSTR search_path, PWSTR out, SIZE_T out_chars)
 {
-    if (wcschr(name, '\\') || wcschr(name, '/') || (name[0] && name[1] == ':')) {
+    if (is_path_name(name)) {
         ULONG n = RtlGetFullPathName_U(name, (ULONG)(out_chars * sizeof(WCHAR)), out, nullptr);
         if (!n || n >= out_chars * sizeof(WCHAR))
             return STATUS_OBJECT_PATH_SYNTAX_BAD;
@@ -651,6 +657,70 @@ static NTSTATUS find_dll(PCWSTR name, PCWSTR search_path, PWSTR out, SIZE_T out_
             return STATUS_SUCCESS;
     }
     return STATUS_DLL_NOT_FOUND;
+}
+
+/* the full name a path stands for, where the file system of the processor redirects it. */
+static BOOLEAN full_dll_path(PCWSTR name, PWSTR out, SIZE_T out_chars)
+{
+    if (NT_SUCCESS(find_dll(name, nullptr, out, out_chars)))
+        return TRUE;
+    ULONG n = RtlGetFullPathName_U(name, (ULONG)(out_chars * sizeof(WCHAR)), out, nullptr);
+    return n && n < out_chars * sizeof(WCHAR);
+}
+
+static BOOLEAN query_file_id(PCWSTR dos_path, FILE_ID_INFORMATION *id)
+{
+    HANDLE file;
+    if (!NT_SUCCESS(open_image(dos_path, &file)))
+        return FALSE;
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS status = NtQueryInformationFile(file, &iosb, id, sizeof(*id), FileIdInformation);
+    NtClose(file);
+    return NT_SUCCESS(status);
+}
+
+/* a module with the same base name that came from the same file under another name, a hard link for one. */
+static PLDR_DATA_TABLE_ENTRY find_by_file(PCWSTR path)
+{
+    PCWSTR base_name = path + wcslen(path);
+    while (base_name > path && base_name[-1] != '\\')
+        base_name--;
+    SIZE_T base_chars = wcslen(base_name);
+    FILE_ID_INFORMATION wanted;
+    BOOLEAN have_wanted = FALSE;
+    for (PLIST_ENTRY l = g_ldr.InLoadOrderModuleList.Flink; l != &g_ldr.InLoadOrderModuleList; l = l->Flink) {
+        PLDR_DATA_TABLE_ENTRY e = CONTAINING_RECORD(l, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+        if (e->BaseDllName.Length != base_chars * sizeof(WCHAR) || _wcsnicmp(e->BaseDllName.Buffer, base_name, base_chars))
+            continue;
+        if (!have_wanted) {
+            if (!query_file_id(path, &wanted))
+                return nullptr;
+            have_wanted = TRUE;
+        }
+        WCHAR other[MAX_PATH];
+        SIZE_T chars = e->FullDllName.Length / sizeof(WCHAR);
+        if (chars >= RTL_NUMBER_OF(other))
+            continue;
+        memcpy(other, e->FullDllName.Buffer, chars * sizeof(WCHAR));
+        other[chars] = 0;
+        FILE_ID_INFORMATION id;
+        if (query_file_id(other, &id) && !memcmp(&id, &wanted, sizeof(id)))
+            return e;
+    }
+    return nullptr;
+}
+
+/*
+ * windows finds a module by the base name of a plain name and by the full name of a path, so two files of one name in two
+ * directories are two modules. the native image of an assembly has the name of its il image.
+ */
+static PLDR_DATA_TABLE_ENTRY find_loaded_path(PCWSTR name)
+{
+    WCHAR path[MAX_PATH];
+    if (!full_dll_path(name, path, RTL_NUMBER_OF(path)))
+        return nullptr;
+    PLDR_DATA_TABLE_ENTRY e = find_by_path(path);
+    return e ? e : find_by_file(path);
 }
 
 /* ------------------------------------------------------------------ exports */
@@ -1041,7 +1111,8 @@ static NTSTATUS load_dll(PCWSTR name, LOAD_CONTEXT *ctx, PLDR_DATA_TABLE_ENTRY *
     /* the active activation context may redirect a plain name before searching. */
     WCHAR path[MAX_PATH];
     BOOLEAN redirected = NT_SUCCESS(LdrpSxsRedirectDll(name, path, RTL_NUMBER_OF(path)));
-    PLDR_DATA_TABLE_ENTRY e = redirected ? find_by_path(path) : find_by_name(base_name);
+    BOOLEAN qualified = !redirected && is_path_name(name);
+    PLDR_DATA_TABLE_ENTRY e = redirected ? find_by_path(path) : qualified ? find_loaded_path(name) : find_by_name(base_name);
     if (e) {
         e->ReferenceCount++;
         e->ObsoleteLoadCount++;
@@ -1458,7 +1529,8 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetDllHandleEx(ULONG flags, PCWSTR path, PULONG c
     WCHAR redirected[MAX_PATH];
     BOOLEAN is_redirected = NT_SUCCESS(LdrpSxsRedirectDll(resolved, redirected, RTL_NUMBER_OF(redirected)));
     RtlEnterCriticalSection(&LdrpLoaderLock);
-    PLDR_DATA_TABLE_ENTRY e = is_redirected ? find_by_path(redirected) : find_by_name(file);
+    PLDR_DATA_TABLE_ENTRY e = is_redirected ? find_by_path(redirected)
+                              : is_path_name(resolved) ? find_loaded_path(resolved) : find_by_name(file);
     if (e && !(flags & 2)) /* LDR_GET_DLL_HANDLE_EX_UNCHANGED_REFCOUNT */
         e->ReferenceCount++;
     RtlLeaveCriticalSection(&LdrpLoaderLock);
