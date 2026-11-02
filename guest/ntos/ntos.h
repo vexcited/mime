@@ -1246,6 +1246,8 @@ void FsWbOpen(FS_WB *wb, ULONG volume, ULONG64 file_id, ULONG64 host, PCUNICODE_
 BOOLEAN FsWbWrite(FS_WB *wb, ULONG64 offset, const void *data, ULONG length, NTSTATUS *status);
 /* flushes this handle's buffer and those of the file's other handles. */
 NTSTATUS FsWbSync(FS_WB *wb);
+/* the end of what this handle buffered and the host has not got yet, 0 when nothing. */
+ULONG64 FsWbPendingEnd(FS_WB *wb);
 /* flushes only the file's other handles. */
 void FsWbSyncOthers(FS_WB *wb);
 /* flushes buffers for the file of this name, or for every file below it when it is a directory. */

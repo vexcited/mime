@@ -358,11 +358,15 @@ static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info)
         *info = fcb->OpenInfo;
         return STATUS_SUCCESS;
     }
-    /* other handles flush their buffers for the file first; this one's is counted in. */
+    /*
+     * other handles flush their buffers for the file first; this one's is counted in. what it holds is taken before
+     * the host answers, as the flusher may send it meanwhile and the host's size then is the one it had before.
+     */
     FsWbSyncOthers(&fcb->Wb);
+    ULONG64 pending = FsWbPendingEnd(&fcb->Wb);
     NTSTATUS status = host_status(HalHypercallUnlocked(MIME_HC_FS_QUERY, fcb->HostHandle, HalPhysicalOf(info), 0, 0, 0, 0, nullptr), FALSE);
-    if (NT_SUCCESS(status) && fcb->Wb.Length && fcb->Wb.Start + fcb->Wb.Length > info->size) {
-        info->size = fcb->Wb.Start + fcb->Wb.Length;
+    if (NT_SUCCESS(status) && pending > info->size) {
+        info->size = pending;
         if (info->allocation_size < info->size)
             info->allocation_size = (info->size + 4095) & ~4095ull;
     }

@@ -342,6 +342,16 @@ BOOLEAN FsWbWrite(FS_WB *wb, ULONG64 offset, const void *data, ULONG length, NTS
     return TRUE;
 }
 
+ULONG64 FsWbPendingEnd(FS_WB *wb)
+{
+    if (!wb->Kept)
+        return 0;
+    ExAcquireFastMutex(&g_lock);
+    ULONG64 end = wb->Length ? wb->Start + wb->Length : 0;
+    ExReleaseFastMutex(&g_lock);
+    return end;
+}
+
 void FsWbSyncOthers(FS_WB *wb)
 {
     if (!wb->Host || __atomic_load_n(&g_pending[bucket(wb->Volume, wb->FileId)], __ATOMIC_SEQ_CST) <= (wb->Length ? 1 : 0))
