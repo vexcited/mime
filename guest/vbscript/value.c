@@ -35,10 +35,18 @@ static BOOL is_numeric_type(VARTYPE vt)
     return is_int_type(vt) || vt == VT_R4 || vt == VT_R8 || vt == VT_CY || vt == VT_DATE;
 }
 
+/* the integer types of C have no name in the language: a host may return them and the operators refuse them. */
+static BOOL is_c_int(VARTYPE vt)
+{
+    return vt == VT_INT || vt == VT_UINT;
+}
+
 HRESULT var_binary(int op, VARIANT *l, VARIANT *r, VARIANT *out, LCID lcid)
 {
     HRESULT hr;
     VariantInit(out);
+    if (is_c_int(l->vt) || is_c_int(r->vt))
+        return DISP_E_BADVARTYPE;
     switch (op) {
     case OP_ADD:
     case OP_SUB:
@@ -99,6 +107,8 @@ HRESULT var_binary(int op, VARIANT *l, VARIANT *r, VARIANT *out, LCID lcid)
 HRESULT var_unary(int op, VARIANT *v, VARIANT *out, LCID lcid)
 {
     VariantInit(out);
+    if (is_c_int(v->vt))
+        return DISP_E_BADVARTYPE;
     switch (op) {
     case OP_NEG: {
         HRESULT hr = VarNeg(v, out);

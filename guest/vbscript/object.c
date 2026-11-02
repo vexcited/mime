@@ -79,11 +79,6 @@ static int call_com(Frame *f, IDispatch *d, DISPID id, WORD flags, VARIANT *argv
         return rc;
     }
     free_excep(&ex);
-    /* the integer types of C that the language has no name for are an automation type it does not support. */
-    if (result && (local.vt == VT_INT || local.vt == VT_UINT)) {
-        VariantClear(&local);
-        return raise_error(f, E_VBS_BAD_VARTYPE, nullptr);
-    }
     if (result) {
         if (local.vt == (VT_VARIANT | VT_BYREF)) {
             var_deref(result, &local);
