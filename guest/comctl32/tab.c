@@ -98,7 +98,8 @@ static void layout(TAB *t)
     for (int k = 0; k < t->Count; k++) {
         TAB_ITEM *it = &t->Items[k];
         int w;
-        if (t->FixedWidth) {
+        /* a width given with TCM_SETITEMSIZE is for tabs of one width, the others are as wide as their text. */
+        if (t->FixedWidth && (t->Style & TCS_FIXEDWIDTH)) {
             w = t->FixedWidth;
         } else {
             SIZE size = {};
