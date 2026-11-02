@@ -389,6 +389,8 @@ static NTSTATUS set_virtual_memory32(const ULONG *a)
  * FILE_RENAME_INFORMATION and FILE_LINK_INFORMATION, plain or Ex: flags or
  * a boolean, the root directory, then the name length and characters.
  */
+static void redirect_file32(OBJECT_ATTRIBUTES *oa, UNICODE_STRING *name, WCHAR *buffer, SIZE_T chars);
+
 static NTSTATUS set_rename32(const ULONG *a)
 {
     const ULONG *p = pointer32(a[2]);
@@ -408,6 +410,17 @@ static NTSTATUS set_rename32(const ULONG *a)
     info->Root = handle32(p[1]);
     info->Length = p[2];
     memcpy(info->Name, p + 3, p[2]);
+    /* the new name is redirected like the name of any file, so a path of System32 is a path of SysWOW64. */
+    if (!info->Root && p[2] / sizeof(WCHAR) < 600) {
+        WCHAR moved[600];
+        UNICODE_STRING name = {(USHORT)p[2], (USHORT)p[2], info->Name};
+        OBJECT_ATTRIBUTES oa = {sizeof(oa), nullptr, &name, OBJ_CASE_INSENSITIVE};
+        redirect_file32(&oa, &name, moved, RTL_NUMBER_OF(moved));
+        if (name.Buffer == moved) {
+            info->Length = name.Length;
+            memcpy(info->Name, moved, name.Length);
+        }
+    }
     IO_STATUS_BLOCK io = {};
     NTSTATUS status = NtSetInformationFile(handle32(a[0]), &io, info, (ULONG)size, a[4]);
     Mx32FreeScratch(info);
