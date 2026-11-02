@@ -667,3 +667,6 @@ EXPORTS
     TraceMessage
     TraceMessageVa@24
     UnregisterTraceGuids@8
+    RegRenameKey@12
+    CryptDuplicateHash@16
+    GetEventLogInformation@20

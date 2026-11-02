@@ -804,6 +804,27 @@ ADVAPI BOOL WINAPI CryptDestroyHash(HCRYPTHASH handle)
     return TRUE;
 }
 
+/* the copy hashes on from the state of the original, and each is destroyed on its own. */
+ADVAPI BOOL WINAPI CryptDuplicateHash(HCRYPTHASH handle, DWORD *reserved, DWORD flags, HCRYPTHASH *result)
+{
+    HASH *h = hash_object(handle);
+    if (!h)
+        return FALSE;
+    if (reserved || flags || !result) {
+        AdvSetError(reserved || flags ? NTE_BAD_FLAGS : ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    HASH *copy = AdvAlloc(sizeof(*copy));
+    if (!copy) {
+        AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    memcpy(copy, h, sizeof(*copy));
+    InterlockedIncrement(&h->Provider->References);
+    *result = (HCRYPTHASH)copy;
+    return TRUE;
+}
+
 /* ---------------------------------------------------------------- provider parameters and keys */
 
 #define NTE_NO_KEY ((DWORD)0x8009000DL)

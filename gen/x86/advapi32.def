@@ -667,3 +667,6 @@ EXPORTS
     TraceMessage=ntdll.EtwTraceMessage
     TraceMessageVa=ntdll.EtwTraceMessageVa
     UnregisterTraceGuids=ntdll.EtwUnregisterTraceGuids
+    RegRenameKey=_RegRenameKey@12
+    CryptDuplicateHash=_CryptDuplicateHash@16
+    GetEventLogInformation=_GetEventLogInformation@20

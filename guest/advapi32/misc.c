@@ -123,6 +123,28 @@ static EVENT_LOG *event_log(HANDLE h)
     return log;
 }
 
+/* the information a log can give is whether it is full, and a log that never holds a record is not. */
+ADVAPI BOOL WINAPI GetEventLogInformation(HANDLE h, DWORD level, LPVOID buffer, DWORD size, LPDWORD needed)
+{
+    if (!event_log(h))
+        return FALSE;
+    if (level != 0) {
+        AdvSetError(ERROR_INVALID_LEVEL);
+        return FALSE;
+    }
+    if (!needed) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    *needed = sizeof(DWORD);
+    if (!buffer || size < sizeof(DWORD)) {
+        AdvSetError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    *(DWORD *)buffer = 0;
+    return TRUE;
+}
+
 ADVAPI BOOL WINAPI CloseEventLog(HANDLE h)
 {
     EVENT_LOG *log = event_log(h);
@@ -695,6 +717,94 @@ ADVAPI LSTATUS WINAPI RegEnableReflectionKey(HKEY key)
 #else
     return ERROR_SUCCESS;
 #endif
+}
+
+/*
+ * renames a key, the key itself or a subkey of it. Windows asks the kernel to change the name in place. the kernel
+ * of Mime has no such call, so the key is made again under the new name with a copy of its tree and the old one is
+ * deleted: a handle to the old key stays open on a deleted key, which Windows would have renamed.
+ */
+ADVAPI LSTATUS WINAPI RegRenameKey(HKEY key, LPCWSTR subkey, LPCWSTR new_name)
+{
+    HKEY target = key;
+    LSTATUS error = ERROR_SUCCESS;
+    if (subkey) {
+        error = RegOpenKeyExW(key, subkey, 0, KEY_READ | KEY_WRITE | DELETE, &target);
+        if (error)
+            return error;
+    }
+    HKEY parent = nullptr, created = nullptr;
+    union {
+        ULONG Length;
+        BYTE Bytes[sizeof(ULONG) + 2 * 1024];
+    } info;
+    ULONG returned = 0;
+    if (!new_name || !*new_name || wcschr(new_name, L'\\')) {
+        error = ERROR_INVALID_PARAMETER;
+        goto done;
+    }
+    if (!NT_SUCCESS(NtQueryKey(target, 3, &info, sizeof(info), &returned)) ||
+        info.Length > sizeof(info) - sizeof(ULONG)) {
+        error = ERROR_INVALID_HANDLE;
+        goto done;
+    }
+    {
+        WCHAR *path = (WCHAR *)(info.Bytes + sizeof(ULONG));
+        ULONG chars = info.Length / sizeof(WCHAR);
+        ULONG leaf = chars;
+        while (leaf && path[leaf - 1] != L'\\')
+            leaf--;
+        /* the roots of the registry and of its hives have no parent to rename in. */
+        if (leaf < 2 || leaf <= wcslen(L"\\REGISTRY\\X")) {
+            error = ERROR_ACCESS_DENIED;
+            goto done;
+        }
+        WCHAR old_name[256];
+        if (chars - leaf >= RTL_NUMBER_OF(old_name)) {
+            error = ERROR_INVALID_PARAMETER;
+            goto done;
+        }
+        memcpy(old_name, path + leaf, (chars - leaf) * sizeof(WCHAR));
+        old_name[chars - leaf] = 0;
+        UNICODE_STRING name = {(USHORT)((leaf - 1) * sizeof(WCHAR)), (USHORT)((leaf - 1) * sizeof(WCHAR)), path};
+        OBJECT_ATTRIBUTES attributes;
+        InitializeObjectAttributes(&attributes, &name, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+        NTSTATUS status = NtOpenKey((PHANDLE)&parent, KEY_READ | KEY_WRITE | DELETE, &attributes);
+        if (!NT_SUCCESS(status)) {
+            error = RtlNtStatusToDosError(status);
+            goto done;
+        }
+        HKEY existing;
+        if (!RegOpenKeyExW(parent, new_name, 0, KEY_READ, &existing)) {
+            RegCloseKey(existing);
+            error = ERROR_ALREADY_EXISTS;
+            goto done;
+        }
+        error = RegCreateKeyExW(parent, new_name, 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &created, nullptr);
+        if (error)
+            goto done;
+        error = RegCopyTreeW(target, nullptr, created);
+        RegCloseKey(created);
+        created = nullptr;
+        if (error) {
+            RegDeleteTreeW(parent, new_name);
+            goto done;
+        }
+        if (target != key)
+            RegCloseKey(target);
+        target = key;
+        error = RegDeleteTreeW(parent, old_name);
+        if (error)
+            RegDeleteTreeW(parent, new_name);
+    }
+done:
+    if (created)
+        RegCloseKey(created);
+    if (parent)
+        RegCloseKey(parent);
+    if (target != key)
+        RegCloseKey(target);
+    return error;
 }
 
 ADVAPI LSTATUS WINAPI RegQueryReflectionKey(HKEY key, BOOL *disabled)
