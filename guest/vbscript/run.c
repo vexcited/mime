@@ -92,6 +92,7 @@ LONG error_number_of_hresult(HRESULT hr)
     case 0x8002000D: return 10;
     case 0x8002000C: return 447;
     case 0x8007000E: return 7;
+    case 0x80070057: return 5;
     case 0x80040154: return 429;
     }
     return (LONG)hr;
