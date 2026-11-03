@@ -16,7 +16,7 @@
 #define CACHE_BUCKETS 256
 #define CACHE_IDLE_MAX 256 /* unreferenced entries kept for reopening. */
 #define CACHE_BIG_FILE (16ull << 20)    /* a window of a file this big is closed after CACHE_BIG_IDLE. */
-#define CACHE_BIG_IDLE (30ull * 10000000) /* 30 seconds. */
+#define CACHE_BIG_IDLE (60ull * 10000000) /* a minute. */
 #define CACHE_SMALL_READ 0x10000 /* smaller reads of an unmapped file go to the host directly... */
 #define CACHE_SMALL_READS 32     /* ... until the file has been read this often, then it is mapped. */
 

@@ -10,6 +10,7 @@ static LIST_ENTRY g_free[MM_MAX_ORDER + 1];
 static SIZE_T g_free_pages;
 static SIZE_T g_total_pages;
 static volatile SIZE_T g_freed_since_discard;
+static volatile SIZE_T g_freed_since_sweep; /* pages freed since a trim or sweep handed every free page back. */
 static BOOLEAN g_discard_enabled = TRUE; /* the "nodiscard" kernel option keeps freed memory in the guest, for measuring. */
 static ULONG g_discard_min_order = 4; /* 64 KiB blocks, or the host's memory block. */
 #define DISCARD_BATCH (16ull << 8) /* pages freed between discard passes, 16 MiB. */
@@ -411,6 +412,7 @@ static void free_pages(const ULONG64 *pages, ULONG count, BOOLEAN zero)
     cache_unlock(c);
     KiRestoreInterrupts(state);
     __atomic_add_fetch(&g_freed_since_discard, count, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&g_freed_since_sweep, count, __ATOMIC_RELAXED);
 }
 
 /*
@@ -419,8 +421,14 @@ static void free_pages(const ULONG64 *pages, ULONG count, BOOLEAN zero)
  */
 ULONG64 MmReleaseFreeMemory(void)
 {
+    __atomic_store_n(&g_freed_since_sweep, 0, __ATOMIC_RELAXED);
     drain_all_caches();
     return report_free(HOST_PAGE_ORDER, 0, FALSE, TRUE);
+}
+
+SIZE_T MmFreedSinceSweep(void)
+{
+    return __atomic_load_n(&g_freed_since_sweep, __ATOMIC_RELAXED);
 }
 
 ULONG64 MmGetReleasedBytes(void)

@@ -627,6 +627,7 @@ PMMPFN MiGetPfn(ULONG64 pa);
 SIZE_T MmGetFreePages(void);
 void MmDiscardIdle(void); /* idle loop, interrupts disabled: hands freed memory back to the host. */
 ULONG64 MmReleaseFreeMemory(void); /* a trim: every free page to the host, returns the bytes it dropped. */
+SIZE_T MmFreedSinceSweep(void);    /* pages freed since every free page was last handed back. */
 ULONG64 MmGetReleasedBytes(void);  /* the total of what the host dropped since boot. */
 SIZE_T MmGetTotalPages(void);
 

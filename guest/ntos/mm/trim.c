@@ -13,23 +13,37 @@
 #include <mime/ntrtlsec.h>
 
 #define TRIM_POLL_MS 2000
+#define SWEEP_QUIET_POLLS 15            /* 30 s without a free before the leftovers are handed back. */
+#define SWEEP_MIN_PAGES ((16ull << 20) >> PAGE_SHIFT)
 
 static KEVENT g_wake;
 static PKEVENT g_low, g_high;
 static ULONG g_seen_serial;
 static ULONG g_level;
+static SIZE_T g_sweep_seen;
+static ULONG g_sweep_quiet;
 
-/* windows: 32 MiB for each 4 GiB of memory, at most 64 MiB, and the high threshold is three times that. */
+/*
+ * as the memory manager of windows derives them from the size of the memory: a unit of a 32nd of the pages up to 8 GiB and
+ * a 128th of the pages above that, kept between 1152 pages and 16 GiB, the low threshold twice the unit and the high one
+ * twice the low, each pulled back toward the middle where it would pass the total.
+ */
 static void thresholds(SIZE_T *low, SIZE_T *high)
 {
     SIZE_T total = MmGetTotalPages();
-    SIZE_T l = total / 128;
-    if (l > (64ull << 20) >> PAGE_SHIFT)
-        l = (64ull << 20) >> PAGE_SHIFT;
-    if (l < 256)
-        l = 256;
+    SIZE_T unit = total <= 0x200000 ? total >> 5 : ((total - 0x200000) >> 7) + 0x10000;
+    if (unit < 1152)
+        unit = 1152;
+    if (unit > 0x400000)
+        unit = 0x400000;
+    SIZE_T l = 2 * unit, h;
+    if (l > total)
+        l = total / 2 + unit / 2;
+    h = 2 * l;
+    if (h > total)
+        h = l + (total - l) / 2;
     *low = l;
-    *high = l * 3;
+    *high = h;
 }
 
 /* windows lets everyone read and wait on the two events, and the administrators and the system do all. */
@@ -93,6 +107,24 @@ static void trim(ULONG level)
                 released >> 20, (ULONG64)MmGetFreePages() >> 8);
 }
 
+/*
+ * the pieces too small for the usual hand back (below a huge page of the host) pile up as programs free memory in a
+ * scatter. once nothing has been freed for a while they go too, which splits a huge page of the host only where it holds
+ * no guest memory in use. a busy machine never gets here, its next allocations would only fault them back.
+ */
+static void sweep_when_quiet(void)
+{
+    SIZE_T freed = MmFreedSinceSweep();
+    if (freed != g_sweep_seen)
+        g_sweep_quiet = 0;
+    else if (freed >= SWEEP_MIN_PAGES && ++g_sweep_quiet >= SWEEP_QUIET_POLLS) {
+        ULONG64 released = MmReleaseFreeMemory();
+        KiLogPrintf("mm: quiet, %llu MiB of scattered free memory handed back", released >> 20);
+        g_sweep_quiet = 0;
+    }
+    g_sweep_seen = MmFreedSinceSweep();
+}
+
 static void worker(PVOID context)
 {
     g_low = make_condition(L"\\KernelObjects\\LowMemoryCondition");
@@ -107,6 +139,7 @@ static void worker(PVOID context)
         ULONG serial = __atomic_load_n(&HalSharedPage->memory_serial, __ATOMIC_ACQUIRE);
         g_level = level;
         FsCacheAge(KeQueryInterruptTime());
+        sweep_when_quiet();
         update_conditions();
         if (serial != g_seen_serial) {
             g_seen_serial = serial;
