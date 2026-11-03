@@ -1629,9 +1629,13 @@ static UINT execute_files(MIME_MSI_PACKAGE *package)
             }
             error = extract_cabinet(package, file->Cabinet);
         }
-        for (MIME_MSI_FILE_PLAN *file = package->Files; file && !error; file = file->Next)
-            if (!file->Cabinet)
-                error = copy_planned_file(package, file);
+        for (MIME_MSI_FILE_PLAN *file = package->Files; file && !error; file = file->Next) {
+            if (file->Cabinet)
+                continue;
+            error = copy_planned_file(package, file);
+            if (error)
+                DbgPrint("msi: copying %ws to %ws failed with error %u\n", file->Source ? file->Source : L"(data)", file->Target, error);
+        }
         free_plan(package);
     }
     while (!error && package->Queued) {
