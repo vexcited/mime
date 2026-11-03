@@ -7,6 +7,7 @@
  * type nobody handles.
  */
 #include "shell32_private.h"
+#include <mime/feature.h>
 
 /* ShellExecute's success value, as on windows. */
 #define SE_SUCCESS 42
@@ -357,6 +358,41 @@ static BOOL run_shortcut(SHELLEXECUTEINFOW *info, LPCWSTR path, LPCWSTR paramete
     return ok;
 }
 
+/* the attributes of the file to run and its full path, found as a program name is. */
+static DWORD locate(const SHELLEXECUTEINFOW *info, LPCWSTR target, WCHAR *path)
+{
+    DWORD attributes = INVALID_FILE_ATTRIBUTES;
+    path[0] = 0;
+    BOOL relative = target[0] != L'\\' && target[1] != L':';
+    if (info->lpDirectory && info->lpDirectory[0] && relative &&
+        wcslen(info->lpDirectory) + wcslen(target) + 2 < MAX_PATH) {
+        _snwprintf(path, MAX_PATH, L"%ls\\%ls", info->lpDirectory, target);
+        path[MAX_PATH - 1] = 0;
+        attributes = GetFileAttributesW(path);
+    }
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        DWORD n = GetFullPathNameW(target, MAX_PATH, path, nullptr);
+        attributes = n && n < MAX_PATH ? GetFileAttributesW(path) : INVALID_FILE_ATTRIBUTES;
+    }
+    if (attributes == INVALID_FILE_ATTRIBUTES && !wcschr(target, L'\\')) {
+        DWORD n = SearchPathW(nullptr, target, L".exe", MAX_PATH, path, nullptr);
+        if (n && n < MAX_PATH)
+            attributes = GetFileAttributesW(path);
+        else if (app_path(target, path, MAX_PATH))
+            attributes = GetFileAttributesW(path);
+    }
+    return attributes;
+}
+
+/* whether the name is a program's: it ends in .exe or .com, or has no extension at all. */
+static BOOL program_name(LPCWSTR name)
+{
+    if (has_extension(name, L".exe") || has_extension(name, L".com"))
+        return TRUE;
+    LPCWSTR file = wcsrchr(name, L'\\');
+    return !wcschr(file ? file : name, L'.');
+}
+
 SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
 {
     if (!info || info->cbSize != sizeof(*info)) {
@@ -389,24 +425,14 @@ SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
 
     /* a file: relative to the given directory, else searched like a program name. */
     WCHAR path[MAX_PATH];
-    DWORD attributes = INVALID_FILE_ATTRIBUTES;
-    BOOL relative = target[0] != L'\\' && target[1] != L':';
-    if (info->lpDirectory && info->lpDirectory[0] && relative &&
-        wcslen(info->lpDirectory) + wcslen(target) + 2 < MAX_PATH) {
-        _snwprintf(path, MAX_PATH, L"%ls\\%ls", info->lpDirectory, target);
-        path[MAX_PATH - 1] = 0;
-        attributes = GetFileAttributesW(path);
-    }
-    if (attributes == INVALID_FILE_ATTRIBUTES) {
-        DWORD n = GetFullPathNameW(target, MAX_PATH, path, nullptr);
-        attributes = n && n < MAX_PATH ? GetFileAttributesW(path) : INVALID_FILE_ATTRIBUTES;
-    }
-    if (attributes == INVALID_FILE_ATTRIBUTES && !wcschr(target, L'\\')) {
-        DWORD n = SearchPathW(nullptr, target, L".exe", MAX_PATH, path, nullptr);
-        if (n && n < MAX_PATH)
-            attributes = GetFileAttributesW(path);
-        else if (app_path(target, path, MAX_PATH))
-            attributes = GetFileAttributesW(path);
+    DWORD attributes = locate(info, target, path);
+    if (attributes == INVALID_FILE_ATTRIBUTES && program_name(target)) {
+        /* running a program that a feature on demand holds fetches it, a look at its name did not. */
+        DWORD error = GetLastError();
+        if (MimeFeatureFault(target) || MimeFeatureFault(path))
+            attributes = locate(info, target, path);
+        else
+            SetLastError(error);
     }
     if (attributes == INVALID_FILE_ATTRIBUTES) {
         DWORD error = GetLastError();

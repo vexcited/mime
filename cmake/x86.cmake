@@ -21,7 +21,7 @@ mime_dll(kernel32 x86 BASE 0x75000000 SOURCES guest/kernel32/main.c guest/kernel
     OPTIONS -DMIME_BUILD_KERNEL32 IMPORTS kernelbase ntdll DEF ${gen86}/kernel32.def
     IMPORTS_DEF ${gen86}/kernel32.imports.def)
 
-mime_dll(mscoree x86 BASE 0x03000000 SOURCES guest/mscoree/main.c guest/mscoree/x86/common.S ${gen86}/mscoree_thunks.S OBJECTS x86-chkstk IMPORTS ntdll kernel32)
+mime_dll(mscoree x86 BASE 0x03000000 SOURCES guest/mscoree/main.c guest/kernelbase/features.c guest/mscoree/x86/common.S ${gen86}/mscoree_thunks.S OBJECTS x86-chkstk IMPORTS ntdll kernel32)
 
 set(sources ${stubs86}/win32u_syscalls.S)
 set(imports)

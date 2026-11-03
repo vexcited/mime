@@ -51,12 +51,22 @@ static void set_filetime(FILETIME *ft, LONGLONG v)
     ft->dwHighDateTime = (DWORD)((ULONGLONG)v >> 32);
 }
 
-/* whether the file is one a feature on demand holds and the feature arrived, so that the program looks again. */
+/*
+ * whether the file is one a feature on demand holds and the feature arrived, so that the program looks again. Only a
+ * program that reads the file asks for it, a look at the name does not.
+ */
 static BOOL feature_arrived(const UNICODE_STRING *nt, NTSTATUS status)
 {
     if (status != STATUS_OBJECT_NAME_NOT_FOUND && status != STATUS_OBJECT_PATH_NOT_FOUND)
         return FALSE;
     return MimeFeatureFault(nt->Buffer);
+}
+
+/* whether the open reads the contents of a file or runs it, and does not open a directory. */
+static BOOL reads_file(ACCESS_MASK access, ULONG options)
+{
+    return (options & FILE_NON_DIRECTORY_FILE) &&
+           (access & (GENERIC_READ | GENERIC_EXECUTE | GENERIC_ALL | FILE_READ_DATA | FILE_EXECUTE));
 }
 
 static NTSTATUS open_path(LPCWSTR path, ACCESS_MASK access, ULONG share, ULONG options, PHANDLE handle)
@@ -68,8 +78,6 @@ static NTSTATUS open_path(LPCWSTR path, ACCESS_MASK access, ULONG share, ULONG o
     InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     IO_STATUS_BLOCK iosb;
     NTSTATUS status = NtOpenFile(handle, access | SYNCHRONIZE, &oa, &iosb, share, options | FILE_SYNCHRONOUS_IO_NONALERT);
-    if (!NT_SUCCESS(status) && feature_arrived(&nt, status))
-        status = NtOpenFile(handle, access | SYNCHRONIZE, &oa, &iosb, share, options | FILE_SYNCHRONOUS_IO_NONALERT);
     RtlFreeUnicodeString(&nt);
     return status;
 }
@@ -174,8 +182,8 @@ HANDLE WINAPI CreateFileW(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_AT
     NTSTATUS status = NtCreateFile(&handle, access | SYNCHRONIZE | FILE_READ_ATTRIBUTES, &oa, &iosb, nullptr,
                                    flags & FILE_ATTRIBUTE_VALID_FLAGS & ~(DWORD)FILE_ATTRIBUTE_DIRECTORY, share,
                                    nt_disposition, options, nullptr, 0);
-    /* a program that opens what is not there may be waiting for a feature on demand. */
-    if (!NT_SUCCESS(status) && (nt_disposition == FILE_OPEN || nt_disposition == FILE_OVERWRITE) &&
+    /* a program that reads what is not there may be waiting for a feature on demand. */
+    if (!NT_SUCCESS(status) && nt_disposition == FILE_OPEN && reads_file(access, options) &&
         feature_arrived(&nt, status))
         status = NtCreateFile(&handle, access | SYNCHRONIZE | FILE_READ_ATTRIBUTES, &oa, &iosb, nullptr,
                               flags & FILE_ATTRIBUTE_VALID_FLAGS & ~(DWORD)FILE_ATTRIBUTE_DIRECTORY, share,
@@ -925,7 +933,8 @@ DWORD WINAPI GetFileAttributesW(LPCWSTR name)
     InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     FILE_NETWORK_OPEN_INFORMATION info;
     NTSTATUS status = NtQueryFullAttributesFile(&oa, &info);
-    if (!NT_SUCCESS(status) && feature_arrived(&nt, status))
+    if (!NT_SUCCESS(status) && (status == STATUS_OBJECT_NAME_NOT_FOUND || status == STATUS_OBJECT_PATH_NOT_FOUND) &&
+        MimeFeatureFaultFromRuntime(nt.Buffer, __builtin_return_address(0)))
         status = NtQueryFullAttributesFile(&oa, &info);
     RtlFreeUnicodeString(&nt);
     if (!NT_SUCCESS(status)) {
@@ -961,7 +970,8 @@ BOOL WINAPI GetFileAttributesExW(LPCWSTR name, GET_FILEEX_INFO_LEVELS level, LPV
     InitializeObjectAttributes(&oa, &nt, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
     FILE_NETWORK_OPEN_INFORMATION net;
     NTSTATUS status = NtQueryFullAttributesFile(&oa, &net);
-    if (!NT_SUCCESS(status) && feature_arrived(&nt, status))
+    if (!NT_SUCCESS(status) && (status == STATUS_OBJECT_NAME_NOT_FOUND || status == STATUS_OBJECT_PATH_NOT_FOUND) &&
+        MimeFeatureFaultFromRuntime(nt.Buffer, __builtin_return_address(0)))
         status = NtQueryFullAttributesFile(&oa, &net);
     RtlFreeUnicodeString(&nt);
     if (!NT_SUCCESS(status))
@@ -2121,6 +2131,10 @@ HANDLE WINAPI FindFirstFileExW(LPCWSTR name, FINDEX_INFO_LEVELS level, LPVOID da
     convert_pattern(file, len - dir_len, pattern);
     NTSTATUS status = open_path(dir, FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                 FILE_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT, &f->Directory);
+    if (!NT_SUCCESS(status) && (status == STATUS_OBJECT_NAME_NOT_FOUND || status == STATUS_OBJECT_PATH_NOT_FOUND) &&
+        MimeFeatureFaultFromRuntime(dir, __builtin_return_address(0)))
+        status = open_path(dir, FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           FILE_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT, &f->Directory);
     KbFree(dir);
     if (!NT_SUCCESS(status)) {
         KbFree(pattern);

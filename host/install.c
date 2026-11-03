@@ -117,6 +117,20 @@ static bool create_skeleton(const MimePaths *paths)
         "Program Files (Arm)", /* arm64 windows only. */
 #endif
         "ProgramData", "Users/Public",
+        /*
+         * the folders of the features that are fetched when a program needs them, with no file in them. Windows 11 has
+         * the folders whether or not a feature is on, so a program that looks at them finds them and is not asked
+         * anything. guest/features/handlers.c makes them again when it removes a feature.
+         */
+        "Windows/System32/WindowsPowerShell/v1.0/Modules", "Windows/System32/WindowsPowerShell/v1.0/Examples",
+        "Windows/System32/WindowsPowerShell/v1.0/Schemas", "Windows/System32/WindowsPowerShell/v1.0/en-US",
+        "Windows/SysWOW64/WindowsPowerShell/v1.0/Modules", "Windows/SysWOW64/WindowsPowerShell/v1.0/Examples",
+        "Windows/SysWOW64/WindowsPowerShell/v1.0/Schemas", "Windows/SysWOW64/WindowsPowerShell/v1.0/en-US",
+        "Windows/Microsoft.NET/Framework/v4.0.30319", "Windows/Microsoft.NET/Framework64/v4.0.30319",
+        "Windows/Microsoft.NET/assembly/GAC_32", "Windows/Microsoft.NET/assembly/GAC_64",
+        "Windows/Microsoft.NET/assembly/GAC_MSIL", "Windows/assembly/GAC_32", "Windows/assembly/GAC_64",
+        "Windows/assembly/GAC_MSIL", "Windows/assembly/NativeImages_v4.0.30319_32",
+        "Windows/assembly/NativeImages_v4.0.30319_64", "Program Files (x86)/Microsoft/EdgeWebView/Application",
     };
     return make_dirs(paths, ".", folders, MIME_ARRAY_COUNT(folders));
 }

@@ -589,6 +589,38 @@ static void change_drive(WCHAR letter)
     str_free(&dir);
 }
 
+/* whether the word is the shell that a feature on demand holds, by its name or by a path through its folder. */
+static BOOL feature_program(const WCHAR *name)
+{
+    if (!_wcsicmp(name, L"powershell") || !_wcsicmp(name, L"powershell.exe"))
+        return TRUE;
+    for (const WCHAR *p = name; *p; p++)
+        if (*p == L'\\' && !_wcsnicmp(p, L"\\WindowsPowerShell\\", 19))
+            return TRUE;
+    return FALSE;
+}
+
+/*
+ * a program that is not found may be one a feature on demand holds. Looking for it did not ask for the feature, starting
+ * it does. Returns FALSE when nothing was started.
+ */
+static BOOL start_feature_program(const WCHAR *name, const WCHAR *text, int *result)
+{
+    PROCESS_INFORMATION pi = {};
+    if (!feature_program(name) ||
+        !create_child(nullptr, text, 0, g_io.h[0], g_io.h[1], g_io.h[2], nullptr, 0, FALSE, nullptr, &pi))
+        return FALSE;
+    CloseHandle(pi.hThread);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 0;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    set_errorlevel(code);
+    record_exit_code(code);
+    *result = (int)code;
+    return TRUE;
+}
+
 static int run_external(NODE *n, const WCHAR *text, BOOL as_call)
 {
     STR name;
@@ -621,7 +653,7 @@ static int run_external(NODE *n, const WCHAR *text, BOOL as_call)
             result = 0;
         } else if (name.len == 0) {
             result = 0;
-        } else {
+        } else if (!start_feature_program(name.p, text, &result)) {
             DWORD err = GetLastError();
             (void)err;
             msg_not_recognized(name.p);

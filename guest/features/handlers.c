@@ -5,6 +5,28 @@
 #define WEBVIEW2_CLIENT_STATE L"SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\ClientState\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 #define INSTALL_MINUTES 30
 
+/*
+ * The folders of the feature that Windows has whether or not it is on, as host/install.c makes them on the drive. The
+ * removal takes them with the files, and a program that looks at them must still find them.
+ */
+static void keep_folders(RUN *run, const WCHAR *const *folders, SIZE_T count)
+{
+    SIZE_T root = wcslen(run->Root);
+    for (SIZE_T i = 0; i < count; i++) {
+        WCHAR path[MAX_PATH];
+        _snwprintf(path, RTL_NUMBER_OF(path), L"%ls%ls", run->Root, folders[i]);
+        path[RTL_NUMBER_OF(path) - 1] = 0;
+        for (WCHAR *p = path + root; *p; p++) {
+            if (*p != L'\\')
+                continue;
+            *p = 0;
+            CreateDirectoryW(path, nullptr);
+            *p = L'\\';
+        }
+        CreateDirectoryW(path, nullptr);
+    }
+}
+
 /* ------------------------------------------------------------------ the WebView2 runtime */
 
 static void webview2_application(RUN *run, WCHAR *path, SIZE_T chars)
@@ -157,6 +179,8 @@ static uint32_t webview2_remove(RUN *run)
     _snwprintf(folder, RTL_NUMBER_OF(folder), L"%lsProgram Files (x86)\\Microsoft\\EdgeWebView", run->Root);
     folder[RTL_NUMBER_OF(folder) - 1] = 0;
     DeleteTree(folder);
+    static const WCHAR *const kept[] = {L"Program Files (x86)\\Microsoft\\EdgeWebView\\Application"};
+    keep_folders(run, kept, RTL_NUMBER_OF(kept));
     if (webview2_present(run))
         return ERROR_SHARING_VIOLATION;
     return ERROR_SUCCESS;
@@ -211,6 +235,14 @@ static uint32_t netfx_remove(RUN *run)
         path[RTL_NUMBER_OF(path) - 1] = 0;
         DeleteFileW(path);
     }
+    static const WCHAR *const kept[] = {
+        L"Windows\\Microsoft.NET\\Framework\\v4.0.30319", L"Windows\\Microsoft.NET\\Framework64\\v4.0.30319",
+        L"Windows\\Microsoft.NET\\assembly\\GAC_32", L"Windows\\Microsoft.NET\\assembly\\GAC_64",
+        L"Windows\\Microsoft.NET\\assembly\\GAC_MSIL", L"Windows\\assembly\\GAC_32", L"Windows\\assembly\\GAC_64",
+        L"Windows\\assembly\\GAC_MSIL", L"Windows\\assembly\\NativeImages_v4.0.30319_32",
+        L"Windows\\assembly\\NativeImages_v4.0.30319_64",
+    };
+    keep_folders(run, kept, RTL_NUMBER_OF(kept));
     return netfx_present(run) ? ERROR_SHARING_VIOLATION : ERROR_SUCCESS;
 }
 
@@ -307,6 +339,13 @@ static uint32_t powershell_remove(RUN *run)
         } while (FindNextFileW(find, &data));
         FindClose(find);
     }
+    static const WCHAR *const kept[] = {
+        L"Windows\\System32\\WindowsPowerShell\\v1.0\\Modules", L"Windows\\System32\\WindowsPowerShell\\v1.0\\Examples",
+        L"Windows\\System32\\WindowsPowerShell\\v1.0\\Schemas", L"Windows\\System32\\WindowsPowerShell\\v1.0\\en-US",
+        L"Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\Modules", L"Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\Examples",
+        L"Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\Schemas", L"Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\en-US",
+    };
+    keep_folders(run, kept, RTL_NUMBER_OF(kept));
     return powershell_present(run) ? ERROR_SHARING_VIOLATION : ERROR_SUCCESS;
 }
 

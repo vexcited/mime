@@ -1,34 +1,39 @@
 /*
- * The side of features on demand that programs meet: a file that is missing in the folders of a feature asks
- * features.exe for the feature, and the program that asked tries again. The file is compiled into kernelbase and into
- * the shim of the .NET Framework, both can ask.
+ * The side of features on demand that programs meet: a program that uses a file that is missing in the folders of a
+ * feature asks features.exe for the feature, and tries again. Using is starting a program, loading a library and opening
+ * a file to read it. A look at the name asks for nothing. The file is compiled into kernelbase, shell32 and gdi32, each
+ * can ask.
  */
 #include <mime/feature.h>
 #include <mime/ntapi.h>
 #include <mime/win32/winbase.h>
 
-typedef struct TRIGGER {
-    PCWSTR Folder;  /* Below the drive, with a closing backslash. */
-    PCWSTR Feature;
+typedef struct FEATURE {
+    PCWSTR Name;
     BOOL (*Present)(WCHAR drive);
-    volatile LONG State;
-} TRIGGER;
+} FEATURE;
 
-enum { TRIGGER_IDLE, TRIGGER_RUNNING, TRIGGER_ENABLED, TRIGGER_GAVE_UP, TRIGGER_PRESENT };
+typedef struct TRIGGER {
+    PCWSTR Folder; /* Below the drive, with a closing backslash. */
+    const FEATURE *Feature;
+} TRIGGER;
 
 static BOOL webview2_present(WCHAR drive);
 static BOOL netfx_present(WCHAR drive);
 static BOOL powershell_present(WCHAR drive);
 
+static const FEATURE g_powershell = {MIME_FEATURE_POWERSHELL, powershell_present};
+static const FEATURE g_webview2 = {MIME_FEATURE_WEBVIEW2, webview2_present};
+static const FEATURE g_netfx = {MIME_FEATURE_NETFX4, netfx_present};
+
 /* The folders programs look into for what a feature holds. The assemblies of the shell come before the Framework's cache. */
-static TRIGGER g_triggers[] = {
-    {L"\\Windows\\System32\\WindowsPowerShell\\", MIME_FEATURE_POWERSHELL, powershell_present, TRIGGER_IDLE},
-    {L"\\Windows\\SysWOW64\\WindowsPowerShell\\", MIME_FEATURE_POWERSHELL, powershell_present, TRIGGER_IDLE},
-    {L"\\Windows\\Microsoft.NET\\assembly\\GAC_MSIL\\System.Management.Automation\\", MIME_FEATURE_POWERSHELL,
-     powershell_present, TRIGGER_IDLE},
-    {L"\\Program Files (x86)\\Microsoft\\EdgeWebView\\", MIME_FEATURE_WEBVIEW2, webview2_present, TRIGGER_IDLE},
-    {L"\\Windows\\Microsoft.NET\\", MIME_FEATURE_NETFX4, netfx_present, TRIGGER_IDLE},
-    {L"\\Windows\\assembly\\", MIME_FEATURE_NETFX4, netfx_present, TRIGGER_IDLE},
+static const TRIGGER g_triggers[] = {
+    {L"\\Windows\\System32\\WindowsPowerShell\\", &g_powershell},
+    {L"\\Windows\\SysWOW64\\WindowsPowerShell\\", &g_powershell},
+    {L"\\Windows\\Microsoft.NET\\assembly\\GAC_MSIL\\System.Management.Automation\\", &g_powershell},
+    {L"\\Program Files (x86)\\Microsoft\\EdgeWebView\\", &g_webview2},
+    {L"\\Windows\\Microsoft.NET\\", &g_netfx},
+    {L"\\Windows\\assembly\\", &g_netfx},
 };
 
 static WCHAR fold(WCHAR c)
@@ -266,6 +271,68 @@ static BOOL is_shell_name(PCWSTR name)
     return TRUE;
 }
 
+/* The name of an object that holds what a process learned about a feature: asked, and agreed. */
+static void state_name(PWSTR name, UINT chars, PCWSTR feature, PCWSTR kind)
+{
+    WCHAR pid[16];
+    UINT digits = 0;
+    for (DWORD id = GetCurrentProcessId(); id || !digits; id /= 10)
+        pid[digits++] = (WCHAR)(L'0' + id % 10);
+    UINT length = 0;
+    for (PCWSTR p = L"Local\\MimeFeature."; *p; p++)
+        name[length++] = *p;
+    while (digits)
+        name[length++] = pid[--digits];
+    name[length++] = L'.';
+    for (; *feature && length + 8 < chars; feature++)
+        name[length++] = *feature;
+    name[length++] = L'.';
+    for (; *kind && length + 1 < chars; kind++)
+        name[length++] = *kind;
+    name[length] = 0;
+}
+
+/*
+ * A feature is requested once in a process, whatever the answer, and whichever of its libraries asks: the answer is kept
+ * in two events that live as long as the process. Returns TRUE when the feature arrived.
+ */
+static BOOL ask_once(const FEATURE *feature, WCHAR drive)
+{
+    WCHAR asked_name[96], agreed_name[96];
+    state_name(asked_name, RTL_NUMBER_OF(asked_name), feature->Name, L"Asked");
+    state_name(agreed_name, RTL_NUMBER_OF(agreed_name), feature->Name, L"Agreed");
+    DWORD last = GetLastError();
+    HANDLE asked = CreateEventW(nullptr, TRUE, FALSE, asked_name);
+    if (!asked) {
+        SetLastError(last);
+        return FALSE;
+    }
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        /* Another thread or library is asking, its answer is ours. */
+        WaitForSingleObject(asked, INFINITE);
+        CloseHandle(asked);
+        HANDLE agreed = OpenEventW(SYNCHRONIZE, FALSE, agreed_name);
+        SetLastError(last);
+        if (!agreed)
+            return FALSE;
+        CloseHandle(agreed);
+        return TRUE;
+    }
+    /*
+     * What features.exe sets for the programs it runs, which must not ask for what they are installing. A feature that is
+     * on the drive does not have the file, as on Windows: programs use optional ones and fail when they are not there.
+     */
+    BOOL arrived = FALSE;
+    WCHAR busy[4];
+    if (!GetEnvironmentVariableW(MIME_FEATURE_BUSY_VARIABLE, busy, RTL_NUMBER_OF(busy)) && !feature->Present(drive))
+        arrived = MimeFeatureRequest(feature->Name, 0) == ERROR_SUCCESS;
+    if (arrived)
+        CreateEventW(nullptr, TRUE, TRUE, agreed_name);
+    SetEvent(asked);
+    SetLastError(last);
+    return arrived;
+}
+
 BOOL MimeFeatureFault(PCWSTR path)
 {
     if (!path)
@@ -284,35 +351,46 @@ BOOL MimeFeatureFault(PCWSTR path)
             shell[n + i] = tail[i];
         path = shell;
     }
-    TRIGGER *trigger = nullptr;
+    const TRIGGER *trigger = nullptr;
     for (UINT i = 0; i < RTL_NUMBER_OF(g_triggers) && !trigger; i++)
         if (in_folder(path, g_triggers[i].Folder))
             trigger = &g_triggers[i];
     if (!trigger)
         return FALSE;
-    LONG state = InterlockedCompareExchange(&trigger->State, TRIGGER_RUNNING, TRIGGER_IDLE);
-    if (state == TRIGGER_IDLE) {
-        /* What features.exe sets for the programs it runs, which must not ask for what they are installing. */
-        WCHAR busy[4];
-        DWORD last = GetLastError();
-        if (GetEnvironmentVariableW(MIME_FEATURE_BUSY_VARIABLE, busy, RTL_NUMBER_OF(busy))) {
-            InterlockedExchange(&trigger->State, TRIGGER_GAVE_UP);
+    return ask_once(trigger->Feature, path[0]);
+}
+
+/* Whether the path is the folder of the engine's assembly in the cache, or something below it. */
+static BOOL in_shell_assembly(PCWSTR path)
+{
+    PCWSTR folder = L"\\Windows\\Microsoft.NET\\assembly\\GAC_MSIL\\System.Management.Automation";
+    if (!path[0] || path[1] != L':')
+        return FALSE;
+    PCWSTR p = path + 2;
+    for (; *folder; p++, folder++)
+        if (fold(*p) != fold(*folder))
             return FALSE;
-        }
-        /* A file that an installed feature does not have is missing, as on Windows: programs probe for optional ones. */
-        if (trigger->Present(path[0])) {
-            InterlockedExchange(&trigger->State, TRIGGER_PRESENT);
-            return FALSE;
-        }
-        DWORD result = MimeFeatureRequest(trigger->Feature, 0);
-        InterlockedExchange(&trigger->State, result == ERROR_SUCCESS ? TRIGGER_ENABLED : TRIGGER_GAVE_UP);
-        SetLastError(last);
-        return result == ERROR_SUCCESS;
-    }
-    /* Another thread is asking, its answer is ours. */
-    while (state == TRIGGER_RUNNING) {
-        Sleep(50);
-        state = trigger->State;
-    }
-    return state == TRIGGER_ENABLED;
+    return !*p || *p == L'\\';
+}
+
+/*
+ * The runtime of the Framework looks for an assembly of the cache by the names of its files and folders, and never opens
+ * one that is not there, so loading an assembly of the shell is seen as a look. The look of the runtime itself is the use,
+ * a look of any other program is not.
+ */
+BOOL MimeFeatureFaultFromRuntime(PCWSTR path, PVOID caller)
+{
+    if (!path)
+        return FALSE;
+    path = skip_prefix(path);
+    if (!in_shell_assembly(path))
+        return FALSE;
+    HMODULE module;
+    WCHAR name[MAX_PATH];
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, caller, &module))
+        return FALSE;
+    DWORD n = GetModuleFileNameW(module, name, MAX_PATH);
+    if (!n || n >= MAX_PATH || !in_folder(name, L"\\Windows\\Microsoft.NET\\Framework"))
+        return FALSE;
+    return ask_once(&g_powershell, path[0]);
 }

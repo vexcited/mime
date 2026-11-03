@@ -192,7 +192,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     if(NOT arch STREQUAL "arm64")
         set(mscoree_thunks guest/mscoree/${arch}/common.S ${MIME_GEN}/${arch}/mscoree_thunks.S)
     endif()
-    mime_dll(mscoree ${arch} BASE 0x7FF7B0000000 SOURCES guest/mscoree/main.c ${mscoree_thunks} OBJECTS ${arch}-chkstk
+    mime_dll(mscoree ${arch} BASE 0x7FF7B0000000 SOURCES guest/mscoree/main.c guest/kernelbase/features.c ${mscoree_thunks} OBJECTS ${arch}-chkstk
         IMPORTS ntdll kernel32 DEF ${MIME_GEN}/${arch}/mscoree.def)
 
     mime_sources(sources gdi32 ${arch})

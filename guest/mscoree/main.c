@@ -1,5 +1,6 @@
 #include <mime/win32/winbase.h>
 #include <mime/win32/objidl.h>
+#include <mime/feature.h>
 
 #define CLR_E_SHIM_RUNTIMELOAD ((INT)0x80131701)
 
@@ -217,10 +218,25 @@ static void initialize_failed(void)
     RtlLeaveCriticalSection(&g_initialize_lock);
 }
 
+/*
+ * The runtime is a feature on demand. A program that starts managed code asks for it when its files are not there, a look
+ * at the files does not.
+ */
+static BOOL runtime_arrived(void)
+{
+    WCHAR root[MAX_PATH], path[MAX_PATH];
+    if (!install_root(root))
+        return FALSE;
+    DWORD count = GetFullPathNameW(root, MAX_PATH, path, nullptr);
+    if (!count || count >= MAX_PATH || (path[count - 1] != L'\\' && !append(path, L"\\")))
+        return FALSE;
+    return append(path, L"v4.0.30319\\mscoreei.dll") && MimeFeatureFault(path);
+}
+
 static void initialize_provider(void)
 {
     WCHAR path[MAX_PATH];
-    if (!select_provider(path)) {
+    if (!select_provider(path) && !(runtime_arrived() && select_provider(path))) {
         initialize_failed();
         return;
     }

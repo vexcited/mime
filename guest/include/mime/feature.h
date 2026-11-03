@@ -60,11 +60,22 @@ DWORD MimeFeatureRequest(PCWSTR name, DWORD flags);
 DWORD MimeFeatureRequestFont(PCWSTR family);
 
 /*
- * Called when a program did not find a file. When the path is in the folders of a feature that is not on the drive,
- * the feature is requested and TRUE says to try again. A feature is requested once in a process, whatever the answer,
- * so a program that probes for files costs one request. Takes a DOS path or an NT path.
+ * Called when a program meant to use a file and did not find it: it starts the program, loads the library or opens the
+ * file to read it. When the path is in the folders of a feature that is not on the drive, the feature is requested and
+ * TRUE says to try again. A feature is requested once in a process, whatever the answer, so a program that fails twice
+ * costs one request. Takes a DOS path or an NT path, or the bare name of a program that a feature holds.
+ *
+ * A look at a name is not a use and never calls this: the attributes of a file, the listing of a folder, the open of a
+ * directory and any query of information answer from the drive as it is, as the folders of a feature are there on
+ * Windows. The folders are in the skeleton of the drive.
  */
 BOOL MimeFeatureFault(PCWSTR path);
+
+/*
+ * For the one look that is a use: the runtime of the Framework finds an assembly of the cache by looking at its names.
+ * Caller is the return address of the file function that looked. TRUE says that the shell arrived and to look again.
+ */
+BOOL MimeFeatureFaultFromRuntime(PCWSTR path, PVOID caller);
 
 /* The environment variable features.exe sets for what it runs, so that a missing file in there asks for nothing. */
 #define MIME_FEATURE_BUSY_VARIABLE L"MIME_FEATURE_BUSY"
