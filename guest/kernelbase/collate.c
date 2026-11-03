@@ -156,79 +156,40 @@ static int string_length(LPCWSTR s, int len)
 
 /* the sort order of a locale name or lcid, and whether its language uses Turkish i and I casing. */
 typedef struct SORT_ORDER {
-    UINT Collator;
+    const NLS_SORT_ORDER *Order;
     BOOL Turkic;
 } SORT_ORDER;
 
 #define NO_LOCALE_INDEX 0xFFFFFFFFu
 
-static SORT_ORDER sort_of_locale(UINT locale, PCSTR alternate)
+static SORT_ORDER sort_of_locale(UINT locale)
 {
-    SORT_ORDER o = {0, FALSE};
+    SORT_ORDER o = {KbSortOrderByName(nullptr), FALSE};
     if (locale == NO_LOCALE_INDEX)
         return o;
     PCWSTR language = KbLocaleText(locale, NLS_S_SISO639LANGNAME);
     o.Turkic = !wcscmp(language, L"tr") || !wcscmp(language, L"az");
-    o.Collator = alternate ? KbCollatorByName(alternate) : 0;
-    if (!o.Collator)
-        o.Collator = (UINT)KbLocaleNumber(locale, NLS_N_COLLATOR);
+    o.Order = KbSortOrderByName(KbLocaleText(locale, NLS_S_SSORTLOCALE));
     return o;
-}
-
-/* sorts with their own name, written after an underscore in the locale name. */
-static PCSTR alternate_of_suffix(PCWSTR suffix)
-{
-    static const struct {
-        PCWSTR Suffix;
-        PCSTR Collator;
-    } sorts[] = {{L"phoneb", "de@phonebook"}, {L"tradnl", "es@traditional"}};
-    for (ULONG i = 0; i < RTL_NUMBER_OF(sorts); i++)
-        if (!_wcsicmp(suffix, sorts[i].Suffix))
-            return sorts[i].Collator;
-    return nullptr;
 }
 
 static SORT_ORDER sort_of_name(PCWSTR name)
 {
-    SORT_ORDER none = {0, FALSE};
     if (!name || !*name)
-        return sort_of_locale(KbLocaleFromLcid(LOCALE_USER_DEFAULT, TRUE), nullptr);
+        return sort_of_locale(KbLocaleFromLcid(LOCALE_USER_DEFAULT, TRUE));
     if (!_wcsicmp(name, LOCALE_NAME_SYSTEM_DEFAULT))
-        return sort_of_locale(KbLocaleFromLcid(LOCALE_SYSTEM_DEFAULT, TRUE), nullptr);
-    WCHAR base[LOCALE_NAME_MAX_LENGTH];
-    PCWSTR underscore = wcsrchr(name, '_');
-    PCSTR alternate = nullptr;
-    if (underscore && alternate_of_suffix(underscore + 1)) {
-        alternate = alternate_of_suffix(underscore + 1);
-        SIZE_T n = (SIZE_T)(underscore - name);
-        if (n >= RTL_NUMBER_OF(base))
-            return none;
-        memcpy(base, name, n * sizeof(WCHAR));
-        base[n] = 0;
-        name = base;
-    }
-    return sort_of_locale(KbLocaleFromName(name), alternate);
+        return sort_of_locale(KbLocaleFromLcid(LOCALE_SYSTEM_DEFAULT, TRUE));
+    return sort_of_locale(KbLocaleFromName(name));
 }
 
 static SORT_ORDER sort_of_lcid(LCID lcid)
 {
-    lcid = KbResolveLcid(lcid);
-    PCSTR alternate = nullptr;
-    switch (lcid) {
-    case 0x10407:
-        alternate = "de@phonebook";
-        break;
-    case 0x040A:
-        /* traditional Spanish has its own lcid, 0x040A. */
-        alternate = "es@traditional";
-        break;
-    }
-    return sort_of_locale(KbLocaleFromLcid(lcid, TRUE), alternate);
+    return sort_of_locale(KbLocaleFromLcid(KbResolveLcid(lcid), TRUE));
 }
 
 static int compare_strings(SORT_ORDER order, DWORD flags, LPCWSTR a, int alen, LPCWSTR b, int blen)
 {
-    return KbCompareStrings(order.Collator, order.Turkic, flags, a, alen, b, blen);
+    return KbCompareStrings(order.Order, flags, a, alen, b, blen);
 }
 
 #define COMPARE_FLAGS                                                                                             \
@@ -335,34 +296,21 @@ static int find_nls(SORT_ORDER order, DWORD flags, LPCWSTR source, int source_le
         KbSetError(ERROR_INVALID_PARAMETER);
         return -1;
     }
-    if ((position & (position - 1)) || (compare & ~(DWORD)COMPARE_FLAGS) || (compare & SORT_STRINGSORT)) {
+    if ((position & (position - 1)) || (compare & ~(DWORD)COMPARE_FLAGS) || (compare & (SORT_STRINGSORT | SORT_DIGITSASNUMBERS))) {
         KbSetError(ERROR_INVALID_FLAGS);
         return -1;
     }
-    if (!position)
-        position = FIND_FROMSTART;
     int n = string_length(source, source_len);
     int m = string_length(value, value_len);
-    BOOL backward = position == FIND_FROMEND || position == FIND_ENDSWITH;
-    for (int step = 0; step <= n; step++) {
-        int start = backward ? n - step : step;
-        if (position == FIND_STARTSWITH && start != 0)
-            break;
-        /* the shortest matching span from this start, or the one ending the source. */
-        for (int end = start; end <= n; end++) {
-            if (position == FIND_ENDSWITH && end != n)
-                continue;
-            if (end == start && m)
-                continue;
-            if (compare_strings(order, compare, source + start, end - start, value, m) == CSTR_EQUAL) {
-                if (found_len)
-                    *found_len = end - start;
-                return start;
-            }
-        }
+    int found = 0;
+    int start = NlsSortFindString(order.Order, flags, source, n, value, m, &found);
+    if (start < 0) {
+        KbSetError(ERROR_SUCCESS);
+        return -1;
     }
-    KbSetError(ERROR_SUCCESS);
-    return -1;
+    if (found_len)
+        *found_len = found;
+    return start;
 }
 
 int WINAPI FindNLSString(LCID locale, DWORD flags, LPCWSTR source, int source_len, LPCWSTR value, int value_len,
@@ -456,27 +404,17 @@ static int map_string(SORT_ORDER order, DWORD flags, LPCWSTR src, int src_len, L
     int len = src_len < 0 ? (int)wcslen(src) + 1 : src_len;
     if (sortkey) {
         int key_len = src_len < 0 ? len - 1 : len;
-        return KbSortKey(order.Collator, order.Turkic, flags & ~(DWORD)LCMAP_SORTKEY, src, key_len, (PBYTE)dst, dst_len);
+        return KbSortKey(order.Order, flags & ~(DWORD)LCMAP_SORTKEY, src, key_len, (PBYTE)dst, dst_len);
     }
     if (hash) {
         int key_len = src_len < 0 ? len - 1 : len;
-        int need = KbSortKey(order.Collator, order.Turkic, flags & ~(DWORD)LCMAP_HASH, src, key_len, nullptr, 0);
         if (!dst_len)
             return sizeof(DWORD);
         if (dst_len < (int)sizeof(DWORD)) {
             KbSetError(ERROR_INSUFFICIENT_BUFFER);
             return 0;
         }
-        PBYTE key = KbAlloc((SIZE_T)need);
-        if (!key) {
-            KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-            return 0;
-        }
-        KbSortKey(order.Collator, order.Turkic, flags & ~(DWORD)LCMAP_HASH, src, key_len, key, need);
-        DWORD h = 2166136261u;
-        for (int i = 0; i < need; i++)
-            h = (h ^ key[i]) * 16777619u;
-        KbFree(key);
+        DWORD h = KbSortHash(order.Order, flags & ~(DWORD)LCMAP_HASH, src, key_len);
         memcpy(dst, &h, sizeof(h));
         return sizeof(DWORD);
     }
@@ -1126,8 +1064,14 @@ BOOL WINAPI IsNormalizedString(NORM_FORM form, LPCWSTR src, int src_len)
 
 /* ------------------------------------------------------------------ versions */
 
-#define KB_NLS_VERSION 0x00060305
-#define KB_NLS_DEFINED_VERSION 0x00060305
+static void sort_guid(const NLS_SORT_ORDER *order, GUID *guid)
+{
+    static const BYTE tail[8] = {0x00, 0xB4, 0xD0, 0x00, 0x0B, 0xB1, 0xE1, 0x1E};
+    guid->Data1 = KbSortId(order);
+    guid->Data2 = 0x57EE;
+    guid->Data3 = 0x1E5C;
+    memcpy(guid->Data4, tail, sizeof(tail));
+}
 
 BOOL WINAPI GetNLSVersion(NLS_FUNCTION function, LCID locale, LPNLSVERSIONINFO info)
 {
@@ -1143,11 +1087,11 @@ BOOL WINAPI GetNLSVersion(NLS_FUNCTION function, LCID locale, LPNLSVERSIONINFO i
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    info->dwNLSVersion = KB_NLS_VERSION;
-    info->dwDefinedVersion = KB_NLS_DEFINED_VERSION;
+    info->dwNLSVersion = KbSortVersion();
+    info->dwDefinedVersion = KbSortVersion();
     if (info->dwNLSVersionInfoSize >= sizeof(NLSVERSIONINFO)) {
         info->dwEffectiveId = KbResolveLcid(locale);
-        memset(&info->guidCustomVersion, 0, sizeof(info->guidCustomVersion));
+        sort_guid(sort_of_lcid(locale).Order, &info->guidCustomVersion);
     }
     return TRUE;
 }
@@ -1167,10 +1111,10 @@ BOOL WINAPI GetNLSVersionEx(NLS_FUNCTION function, LPCWSTR name, LPNLSVERSIONINF
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    info->dwNLSVersion = KB_NLS_VERSION;
-    info->dwDefinedVersion = KB_NLS_DEFINED_VERSION;
+    info->dwNLSVersion = KbSortVersion();
+    info->dwDefinedVersion = KbSortVersion();
     info->dwEffectiveId = lcid;
-    memset(&info->guidCustomVersion, 0, sizeof(info->guidCustomVersion));
+    sort_guid(sort_of_name(name).Order, &info->guidCustomVersion);
     return TRUE;
 }
 
@@ -1182,16 +1126,5 @@ BOOL WINAPI IsNLSDefinedString(NLS_FUNCTION function, DWORD flags, LPNLSVERSIONI
     }
     if (length < 0)
         length = (int)wcslen(string);
-    for (int i = 0; i < length; i++) {
-        WCHAR c = string[i];
-        if (c >= 0xD800 && c <= 0xDBFF) {
-            if (i + 1 >= length || string[i + 1] < 0xDC00 || string[i + 1] > 0xDFFF)
-                return FALSE;
-            i++;
-            continue;
-        }
-        if ((c >= 0xDC00 && c <= 0xDFFF) || c == 0xFFFE || c == 0xFFFF || !(KbCharType1(c) & C1_DEFINED))
-            return FALSE;
-    }
-    return TRUE;
+    return KbSortIsDefined(string, length);
 }

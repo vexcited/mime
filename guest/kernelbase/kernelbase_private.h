@@ -5,6 +5,7 @@
 #include <mime/win32/winbase.h>
 #include <mime/win32/winnls.h>
 #include <mime/feature.h>
+#include "nlssort.h"
 
 FORCEINLINE PPEB KbPeb(void)
 {
@@ -150,10 +151,15 @@ ULONG KbUniUpper(ULONG cp);
 ULONG KbUniLower(ULONG cp);
 ULONG KbUniFold(ULONG cp);
 
-/* collation.c: string order by collation elements. */
-int KbCompareStrings(UINT collator, BOOL turkic, DWORD flags, PCWSTR a, int alen, PCWSTR b, int blen);
-UINT KbCollatorByName(const char *name);
-int KbSortKey(UINT collator, BOOL turkic, DWORD flags, PCWSTR src, int len, PBYTE key, int size);
+/* nlssort_data.c: the order of strings of Windows, its sort keys and its hash. */
+const NLS_SORT_ORDER *KbSortOrderByName(PCWSTR name);
+int KbCompareStrings(const NLS_SORT_ORDER *order, DWORD flags, PCWSTR a, int alen, PCWSTR b, int blen);
+int KbSortKey(const NLS_SORT_ORDER *order, DWORD flags, PCWSTR src, int len, PBYTE key, int size);
+int NlsSortFindString(const NLS_SORT_ORDER *order, DWORD flags, PCWSTR source, int n, PCWSTR value, int m, int *found);
+BOOL KbSortIsDefined(PCWSTR text, int length);
+DWORD KbSortId(const NLS_SORT_ORDER *order);
+DWORD KbSortVersion(void);
+DWORD KbSortHash(const NLS_SORT_ORDER *order, DWORD flags, PCWSTR src, int len);
 
 /* character classification shared by string functions. */
 WORD KbCharType1(WCHAR c);
