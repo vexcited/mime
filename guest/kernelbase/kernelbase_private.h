@@ -119,6 +119,7 @@ UINT KbLocaleSpecific(UINT locale);
 const UINT8 *KbLocaleCalendars(UINT locale);
 PCWSTR KbLocaleCalendarText(UINT locale, CALID cal, UINT slot);
 PCWSTR KbLocaleCalendarList(UINT locale, CALID cal, CALTYPE type);
+UINT KbLocaleCalendarEraYears(CALID cal, const UINT16 **years);
 BOOL KbLocaleCalendarFacts(CALID cal, UINT *offset_range, UINT *two_digit_max);
 UINT KbLocaleCalendarTypeKind(CALTYPE type);
 BOOL KbLocaleSupportsCalendar(UINT locale, CALID cal);

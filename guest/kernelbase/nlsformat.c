@@ -1075,73 +1075,62 @@ int WINAPI GetDurationFormat(LCID locale, DWORD flags, const SYSTEMTIME *duratio
 
 /* ------------------------------------------------------------------ the formats of a locale */
 
-#define MAX_FORMATS 12
+#define MAX_FORMATS 40
 
+/* what an enumeration gives: texts and the calendar of each. */
 typedef struct FORMAT_LIST {
     PCWSTR Format[MAX_FORMATS];
-    WCHAR Storage[MAX_FORMATS][80];
+    CALID Calendar[MAX_FORMATS];
     int Count;
 } FORMAT_LIST;
 
-static void add_format(FORMAT_LIST *list, PCWSTR format)
+static void add_format(FORMAT_LIST *list, PCWSTR format, CALID calendar)
 {
-    if (!format || !*format || list->Count >= MAX_FORMATS)
-        return;
-    for (int i = 0; i < list->Count; i++)
-        if (!wcscmp(list->Format[i], format))
-            return;
-    list->Format[list->Count++] = format;
+    if (list->Count < MAX_FORMATS) {
+        list->Format[list->Count] = format;
+        list->Calendar[list->Count++] = calendar;
+    }
 }
 
-/* a copy of the picture with one field rewritten: four or two digit years, or zero padded numbers. */
-static PCWSTR add_variant(FORMAT_LIST *list, PCWSTR picture, WCHAR field, int from, int to)
+/* the strings of a list that ends with an empty one. */
+static void add_strings(FORMAT_LIST *list, PCWSTR strings, CALID calendar)
 {
-    WCHAR *out = list->Storage[list->Count < MAX_FORMATS ? list->Count : MAX_FORMATS - 1];
+    for (; *strings; strings += wcslen(strings) + 1)
+        add_format(list, strings, calendar);
+}
+
+/* the alternatives of a calendar type in a calendar: the list when it has one, else the single value. */
+static void add_calendar_type(FORMAT_LIST *list, UINT l, CALID calendar, CALTYPE type, PCWSTR single)
+{
+    PCWSTR strings = KbLocaleCalendarList(l, calendar, type);
+    if (strings)
+        add_strings(list, strings, calendar);
+    else
+        add_format(list, single, calendar);
+}
+
+/* the calendars of a locale as the enumerations take them: the Gregorian one first, then the others in their order. */
+static int enumeration_calendars(UINT l, CALID *out)
+{
+    const UINT8 *calendars = KbLocaleCalendars(l);
     int n = 0;
-    BOOL quoted = FALSE;
-    for (PCWSTR p = picture; *p && n < 78; p++) {
-        if (*p == '\'')
-            quoted = !quoted;
-        if (!quoted && *p == field) {
-            int run = 1;
-            while (p[run] == field)
-                run++;
-            int count = run == from ? to : run;
-            for (int i = 0; i < count && n < 78; i++)
-                out[n++] = field;
-            p += run - 1;
-            continue;
-        }
-        out[n++] = *p;
-    }
-    out[n] = 0;
-    add_format(list, out);
-    return out;
+    for (int i = 0; i < 8 && calendars[i]; i++)
+        if (calendars[i] == CAL_GREGORIAN)
+            out[n++] = CAL_GREGORIAN;
+    for (int i = 0; i < 8 && calendars[i]; i++)
+        if (calendars[i] != CAL_GREGORIAN)
+            out[n++] = calendars[i];
+    return n;
 }
 
-static void date_format_list(UINT l, CALID calendar, UINT kind, FORMAT_LIST *list)
+/* the formats of a date picture of one kind, 0 short, 1 long, 2 year and month, 3 month and day. */
+static void date_format_list(UINT l, UINT kind, BOOL all_calendars, FORMAT_LIST *list)
 {
-    PCWSTR primary = KbCalendarPicture(l, calendar, kind);
-    add_format(list, primary);
-    if (kind == 0) {
-        add_variant(list, primary, 'y', 4, 2);
-        add_variant(list, primary, 'y', 2, 4);
-        add_variant(list, primary, 'M', 1, 2);
-        add_variant(list, primary, 'd', 1, 2);
-        add_format(list, L"yyyy-MM-dd");
-    } else if (kind == 1) {
-        add_variant(list, primary, 'd', 1, 2);
-    }
-}
-
-static void time_format_list(UINT l, BOOL short_form, FORMAT_LIST *list)
-{
-    PCWSTR primary = KbLocaleText(l, short_form ? NLS_S_SSHORTTIME : NLS_S_STIMEFORMAT);
-    add_format(list, primary);
-    add_variant(list, primary, 'h', 1, 2);
-    add_variant(list, primary, 'H', 1, 2);
-    add_variant(list, primary, 'H', 2, 1);
-    add_variant(list, primary, 'h', 2, 1);
+    static const CALTYPE types[] = {CAL_SSHORTDATE, CAL_SLONGDATE, CAL_SYEARMONTH, CAL_SMONTHDAY};
+    CALID calendars[8];
+    int n = enumeration_calendars(l, calendars);
+    for (int i = 0; i < (all_calendars ? n : 1); i++)
+        add_calendar_type(list, l, calendars[i], types[kind], KbCalendarPicture(l, calendars[i], kind));
 }
 
 static PWSTR narrow_text(UINT cp, PCWSTR text, char *buffer, int size)
@@ -1151,42 +1140,34 @@ static PWSTR narrow_text(UINT cp, PCWSTR text, char *buffer, int size)
     return (PWSTR)buffer;
 }
 
-static CALID list_calendar(UINT l, DWORD flags)
-{
-    CALID calendar = (CALID)KbLocaleNumber(l, NLS_N_ICALENDARTYPE);
-    if (flags & DATE_USE_ALT_CALENDAR) {
-        CALID optional = (CALID)KbLocaleNumber(l, NLS_N_IOPTIONALCALENDAR);
-        if (optional)
-            calendar = optional;
-    }
-    return calendar;
-}
-
 static BOOL enumerate_dates(UINT l, DWORD flags, DATEFMT_ENUMPROCEXEX proc_ex, LPARAM param, DATEFMT_ENUMPROCW proc,
                             UINT cp, DATEFMT_ENUMPROCA proc_a, DATEFMT_ENUMPROCEXW proc_exw, DATEFMT_ENUMPROCEXA proc_exa)
 {
-    UINT kind = (flags & DATE_LONGDATE) ? 1 : (flags & DATE_YEARMONTH) ? 2 : 0;
-    if ((flags & ~(DWORD)(DATE_SHORTDATE | DATE_LONGDATE | DATE_YEARMONTH | DATE_MONTHDAY | DATE_USE_ALT_CALENDAR |
-                          LOCALE_USE_CP_ACP)) ||
-        (flags & DATE_MONTHDAY)) {
-        if (flags & DATE_MONTHDAY)
-            kind = 3;
-        else {
-            KbSetError(ERROR_INVALID_FLAGS);
-            return FALSE;
-        }
+    DWORD what = flags & ~(DWORD)LOCALE_USE_CP_ACP;
+    UINT kind;
+    if (what <= DATE_SHORTDATE)
+        kind = 0;
+    else if (what == DATE_LONGDATE)
+        kind = 1;
+    else if (what == DATE_YEARMONTH)
+        kind = 2;
+    else if (what == DATE_MONTHDAY)
+        kind = 3;
+    else {
+        KbSetError(ERROR_INVALID_FLAGS);
+        return FALSE;
     }
-    CALID calendar = list_calendar(l, flags);
     FORMAT_LIST *list = KbAlloc(sizeof(*list));
     if (!list) {
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
         return FALSE;
     }
     list->Count = 0;
-    date_format_list(l, calendar, kind, list);
+    date_format_list(l, kind, proc_ex || proc_exw || proc_exa, list);
     for (int i = 0; i < list->Count; i++) {
         BOOL more;
         char narrow[160];
+        CALID calendar = list->Calendar[i];
         if (proc_ex)
             more = proc_ex((LPWSTR)list->Format[i], calendar, param);
         else if (proc_exw)
@@ -1269,7 +1250,7 @@ BOOL WINAPI EnumDateFormatsExEx(DATEFMT_ENUMPROCEXEX proc, LPCWSTR name, DWORD f
 static BOOL enumerate_times(UINT l, DWORD flags, TIMEFMT_ENUMPROCEX proc_ex, LPARAM param, TIMEFMT_ENUMPROCW proc,
                             UINT cp, TIMEFMT_ENUMPROCA proc_a)
 {
-    if (flags & ~(DWORD)(TIME_NOSECONDS | TIME_NOMINUTESORSECONDS | LOCALE_USE_CP_ACP)) {
+    if (flags & ~(DWORD)(TIME_NOSECONDS | LOCALE_USE_CP_ACP)) {
         KbSetError(ERROR_INVALID_FLAGS);
         return FALSE;
     }
@@ -1279,7 +1260,7 @@ static BOOL enumerate_times(UINT l, DWORD flags, TIMEFMT_ENUMPROCEX proc_ex, LPA
         return FALSE;
     }
     list->Count = 0;
-    time_format_list(l, (flags & TIME_NOSECONDS) != 0, list);
+    add_strings(list, KbLocaleText(l, (flags & TIME_NOSECONDS) ? NLS_S_SHORTTIMELIST : NLS_S_TIMELIST), 0);
     for (int i = 0; i < list->Count; i++) {
         BOOL more;
         char narrow[160];
@@ -1338,40 +1319,72 @@ static BOOL enumerate_calendar_info(UINT l, CALID calendar, CALTYPE type, CALINF
                                     CALINFO_ENUMPROCW proc, CALINFO_ENUMPROCEXW proc_exw, UINT cp, CALINFO_ENUMPROCA proc_a,
                                     CALINFO_ENUMPROCEXA proc_exa)
 {
-    const UINT8 *list = KbLocaleCalendars(l);
     CALTYPE base = type & ~(CAL_RETURN_NUMBER | CAL_NOUSEROVERRIDE | CAL_USE_CP_ACP);
-    if (calendar != ENUM_ALL_CALENDARS && (!KbValidCalendar(calendar) || !KbLocaleSupportsCalendar(l, calendar))) {
+    if (calendar != ENUM_ALL_CALENDARS && (!KbLocaleSupportsCalendar(l, calendar))) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    for (int i = 0; i < 8 && list[i]; i++) {
-        CALID cal = list[i];
+    FORMAT_LIST *formats = KbAlloc(sizeof(*formats));
+    WCHAR *values = KbAlloc(sizeof(WCHAR) * 24 * 160);
+    if (!formats || !values) {
+        KbFree(formats);
+        KbFree(values);
+        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    formats->Count = 0;
+    const UINT8 *calendars = KbLocaleCalendars(l);
+    int n = 0;
+    while (n < 8 && calendars[n])
+        n++;
+    BOOL ok = TRUE;
+    int used = 0;
+    for (int i = 0; i < n && ok; i++) {
+        CALID cal = calendars[i];
         if (calendar != ENUM_ALL_CALENDARS && cal != calendar)
             continue;
-        WCHAR text[160];
-        UINT kind = base == CAL_SSHORTDATE ? 0 : base == CAL_SLONGDATE ? 1 : base == CAL_SYEARMONTH ? 2 : base == CAL_SMONTHDAY ? 3 : 4;
-        FORMAT_LIST *formats = nullptr;
-        int count = 1;
-        if (kind < 4) {
-            formats = KbAlloc(sizeof(*formats));
-            if (!formats)
-                continue;
-            formats->Count = 0;
-            if (kind == 3)
-                add_format(formats, KbCalendarPicture(l, cal, 3));
-            else
-                date_format_list(l, cal, kind, formats);
-            count = formats->Count;
+        WCHAR *text = values + used++ * 160;
+        /* the type after the abbreviated era is the list of the names of the Japanese eras, and the first year is not listed. */
+        if (base == 61 || (base == 59 && cal != CAL_JAPAN)) {
+            ok = FALSE;
+            KbSetError(ERROR_INVALID_FLAGS);
+            break;
         }
-        for (int k = 0; k < count; k++) {
-            PCWSTR value;
-            if (formats) {
-                value = formats->Format[k];
-            } else {
-                if (!KbCalendarInfo(l, cal, type & ~CAL_RETURN_NUMBER, text, RTL_NUMBER_OF(text), nullptr))
-                    break;
-                value = text;
+        if (base == 59) {
+            PCWSTR names = KbLocaleCalendarList(l, cal, CAL_SERASTRING);
+            if (names)
+                add_strings(formats, names, cal);
+            continue;
+        }
+        if (base == CAL_IYEAROFFSETRANGE) {
+            const UINT16 *years;
+            UINT count = KbLocaleCalendarEraYears(cal, &years);
+            for (UINT k = 0; k < count && formats->Count < MAX_FORMATS && used < 24; k++, text = values + used++ * 160) {
+                KbFormat(text, 160, L"%u", years[k]);
+                add_format(formats, text, cal);
             }
+            continue;
+        }
+        if (!KbCalendarInfo(l, cal, base, text, 160, nullptr)) {
+            ok = FALSE;
+            KbSetError(ERROR_INVALID_FLAGS);
+            break;
+        }
+        if (base == CAL_SSHORTDATE || base == CAL_SLONGDATE || base == CAL_SYEARMONTH || base == CAL_SMONTHDAY ||
+            base == CAL_SERASTRING || base == CAL_SABBREVERASTRING) {
+            PCWSTR strings = KbLocaleCalendarList(l, cal, base);
+            if (strings) {
+                add_strings(formats, strings, cal);
+                continue;
+            }
+        }
+        add_format(formats, text, cal);
+    }
+    BOOL result = ok;
+    if (ok) {
+        for (int i = 0; i < formats->Count; i++) {
+            PCWSTR value = formats->Format[i];
+            CALID cal = formats->Calendar[i];
             char narrow[320];
             BOOL more;
             if (proc_exex)
@@ -1384,14 +1397,13 @@ static BOOL enumerate_calendar_info(UINT l, CALID calendar, CALTYPE type, CALINF
                 more = proc_a((LPSTR)narrow_text(cp, value, narrow, sizeof(narrow)));
             else
                 more = proc((LPWSTR)value);
-            if (!more) {
-                KbFree(formats);
-                return TRUE;
-            }
+            if (!more)
+                break;
         }
-        KbFree(formats);
     }
-    return TRUE;
+    KbFree(formats);
+    KbFree(values);
+    return result;
 }
 
 BOOL WINAPI EnumCalendarInfoW(CALINFO_ENUMPROCW proc, LCID locale, CALID calendar, CALTYPE type)

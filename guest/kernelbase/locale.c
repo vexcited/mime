@@ -30,9 +30,15 @@ PCWSTR KbLocaleName(UINT locale)
     return pool_text(g_nls_heads[locale].Name);
 }
 
+/* the alternate sorts are locales of their own in the table, which the enumerations list apart. */
+static BOOL is_alternate(UINT locale)
+{
+    return g_nls_heads[locale].Neutral == 2;
+}
+
 static BOOL is_neutral(UINT locale)
 {
-    return g_nls_heads[locale].Neutral != 0;
+    return g_nls_heads[locale].Neutral == 1;
 }
 
 BOOL KbLocaleIsNeutral(UINT locale)
@@ -931,25 +937,36 @@ BOOL WINAPI EnumSystemLocalesEx(LOCALE_ENUMPROCEX proc, DWORD flags, LPARAM para
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    if (flags & ~(DWORD)(LOCALE_WINDOWS | LOCALE_SUPPLEMENTAL | LOCALE_ALTERNATE_SORTS | LOCALE_REPLACEMENT |
-                         LOCALE_NEUTRALDATA | LOCALE_SPECIFICDATA)) {
+    if (flags & ~(DWORD)(LOCALE_WINDOWS | LOCALE_SUPPLEMENTAL | LOCALE_ALTERNATE_SORTS | LOCALE_NEUTRALDATA |
+                         LOCALE_SPECIFICDATA)) {
         KbSetError(ERROR_INVALID_FLAGS);
         return FALSE;
     }
-    BOOL all = !(flags & (LOCALE_NEUTRALDATA | LOCALE_SPECIFICDATA));
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_nls_heads); i++) {
-        BOOL neutral = is_neutral(i);
-        if (neutral ? !(all || (flags & LOCALE_NEUTRALDATA)) : !(all || (flags & LOCALE_SPECIFICDATA)))
+    /*
+     * the names in the order of the table, the alternate sorts among them. The locales of Windows come with no flag at all, with
+     * the flag for them, or with the flags for the neutral or the specific ones, which the flag for them overrules; the
+     * invariant locale is with the neutral ones; the
+     * alternate sorts come with no flag at all or with theirs.
+     */
+    BOOL main = !flags || (flags & (LOCALE_WINDOWS | LOCALE_NEUTRALDATA | LOCALE_SPECIFICDATA));
+    BOOL alternates = !flags || (flags & LOCALE_ALTERNATE_SORTS);
+    BOOL filtered = !(flags & LOCALE_WINDOWS);
+    BOOL neutral_only = filtered && (flags & LOCALE_NEUTRALDATA) && !(flags & LOCALE_SPECIFICDATA);
+    BOOL specific_only = filtered && (flags & LOCALE_SPECIFICDATA) && !(flags & LOCALE_NEUTRALDATA);
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_nls_by_name); i++) {
+        UINT locale = g_nls_by_name[i];
+        BOOL neutral = is_neutral(locale);
+        BOOL invariant = !*KbLocaleName(locale);
+        if (is_alternate(locale)) {
+            if (alternates && !proc((LPWSTR)KbLocaleName(locale), LOCALE_ALTERNATE_SORTS, param))
+                return TRUE;
             continue;
-        if (flags && !(flags & (LOCALE_WINDOWS | LOCALE_NEUTRALDATA | LOCALE_SPECIFICDATA | LOCALE_ALTERNATE_SORTS)))
+        }
+        if (!main || ((neutral || invariant) && specific_only) || (!neutral && !invariant && neutral_only))
             continue;
-        if (!proc((LPWSTR)KbLocaleName(i), LOCALE_WINDOWS | (neutral ? LOCALE_NEUTRALDATA : LOCALE_SPECIFICDATA), param))
+        if (!proc((LPWSTR)KbLocaleName(locale), LOCALE_WINDOWS | (neutral ? LOCALE_NEUTRALDATA : LOCALE_SPECIFICDATA), param))
             return TRUE;
     }
-    if (flags & LOCALE_ALTERNATE_SORTS)
-        for (ULONG i = 0; i < RTL_NUMBER_OF(g_alternate_sorts); i++)
-            if (!proc((LPWSTR)g_alternate_sorts[i].Name, LOCALE_ALTERNATE_SORTS | LOCALE_SPECIFICDATA, param))
-                return TRUE;
     return TRUE;
 }
 
@@ -1000,6 +1017,17 @@ PCWSTR KbLocaleCalendarList(UINT locale, CALID cal, CALTYPE type)
             return *list ? list : nullptr;
         }
     return nullptr;
+}
+
+/* the years the eras of a calendar start in, newest first, or none. */
+UINT KbLocaleCalendarEraYears(CALID cal, const UINT16 **years)
+{
+    for (UINT i = 0; i < RTL_NUMBER_OF(g_nls_caleras); i++)
+        if (g_nls_caleras[i].Id == cal) {
+            *years = g_nls_caleras[i].Years;
+            return g_nls_caleras[i].Count;
+        }
+    return 0;
 }
 
 BOOL KbLocaleCalendarFacts(CALID cal, UINT *offset_range, UINT *two_digit_max)
