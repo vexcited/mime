@@ -426,6 +426,7 @@ enum {
     MIME_HC_FS_RENAME = 0x60,   /* (handle, directory handle, pa, chars, MIME_FS_RENAME_*) moves a file or directory to a name in a directory */
     MIME_HC_FS_SET_BASIC = 0x66, /* (handle, MimeFsBasic pa) sets the times and the read only attribute the mask names, see MimeFsBasic */
     MIME_HC_FS_LINK = 0x67,     /* handle, directory handle or 0 for the file's own, pa, chars and MIME_FS_LINK_* flags: makes a hard link to the file in a directory, returns the links the file has now. */
+    MIME_HC_FS_APPEND = 0x6C,   /* handle, unused, pa and len: writes at the end of the file in one step that no other writer can get in the middle of, host programs that append included; returns the offset it was written at, the whole length or nothing is written. */
     MIME_HC_FS_LINKS = 0x68,    /* handle, pa and capacity: every name of the file on its volume as MimeFsLinkName records, returns the bytes they need. */
     MIME_HC_FS_SET_REPARSE = 0x69, /* handle and MimeFsReparse pa: makes the empty file or directory a symbolic link or a junction. */
     MIME_HC_FS_GET_REPARSE = 0x6A, /* handle and MimeFsReparse pa: what the link the handle was opened as says, MIME_HC_STATUS_NOT_REPARSE for any other. */

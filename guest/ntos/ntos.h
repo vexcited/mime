@@ -1325,6 +1325,7 @@ void FsLocksInitialize(void);
 void FsLocksCleanup(PFILE_OBJECT file, PEPROCESS process);
 NTSTATUS FsLocksCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
 NTSTATUS FsLocksCheck(PFILE_OBJECT file, BOOLEAN write, ULONG64 start, ULONG length, ULONG key);
+BOOLEAN FsLocksHeld(PFILE_OBJECT file);
 BOOLEAN MimeFsLockIdentity(PFILE_OBJECT file, PULONG volume, PULONG64 file_id);
 
 /* fsnotify.c: file changes reported to watched directories. */

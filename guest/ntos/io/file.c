@@ -6,6 +6,10 @@
 #define FILE_USE_FILE_POINTER_POSITION 0xFFFFFFFE
 #define FILE_WRITE_TO_END_OF_FILE 0xFFFFFFFF
 #define IO_BOUNCE_SIZE (256 * 1024)
+/* the longest write at the end of a file that no other writer can get into the middle of. */
+#define IO_APPEND_ATOMIC (1024 * 1024)
+/* the offset of a request that writes at the end of the file, as in an irp of windows. */
+#define IO_WRITE_TO_END (-1LL)
 /* the longest scatter or gather request, in pages. */
 #define IO_MAX_SEGMENTS (64 * 1024)
 
@@ -245,8 +249,16 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
     /* writes go to the end of the file when the handle only appends, or when the offset names the end. */
     BOOLEAN to_end = write && ((file->Flags & FO_APPEND_ONLY) ||
                                (byte_offset && offset.LowPart == FILE_WRITE_TO_END_OF_FILE && offset.HighPart == -1));
+    /*
+     * the file system finds the end of the file itself, in the same step as the write, because the size read here
+     * would be out of date when another writer got in between. the others get the size now.
+     */
+    BOOLEAN at_end = to_end && IopIsMimeFs(file);
     lock_file(file);
-    if (to_end) {
+    if (at_end) {
+        ULONG64 size = 0;
+        offset.QuadPart = FsLocksHeld(file) && NT_SUCCESS(IoQueryFileSize(file, &size)) ? (LONGLONG)size : 0;
+    } else if (to_end) {
         ULONG64 size = 0;
         /* a device with no size is written at its current position. */
         offset.QuadPart = NT_SUCCESS(IoQueryFileSize(file, &size)) ? (LONGLONG)size : file->CurrentByteOffset.QuadPart;
@@ -263,8 +275,9 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
         return status;
     }
     PUCHAR bounce = nullptr;
+    ULONG bounce_size = at_end ? IO_APPEND_ATOMIC : IO_BOUNCE_SIZE;
     if (mode == UserMode && length) {
-        bounce = ExAllocatePool2(POOL_FLAG_NON_PAGED, length < IO_BOUNCE_SIZE ? length : IO_BOUNCE_SIZE, KI_TAG('I', 'o', 'B', 'n'));
+        bounce = ExAllocatePool2(POOL_FLAG_NON_PAGED, length < bounce_size ? length : bounce_size, KI_TAG('I', 'o', 'B', 'n'));
         if (!bounce) {
             unlock_file(file);
             ObDereferenceObject(file);
@@ -275,8 +288,8 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
     IO_STATUS_BLOCK io = {};
     while (done < length || length == 0) {
         ULONG chunk = length - done;
-        if (bounce && chunk > IO_BOUNCE_SIZE)
-            chunk = IO_BOUNCE_SIZE;
+        if (bounce && chunk > bounce_size)
+            chunk = bounce_size;
         PVOID buf = bounce ? bounce : (PUCHAR)buffer + done;
         if (write && bounce) {
             status = copy_user(FALSE, buffer, pages, done, bounce, chunk);
@@ -286,7 +299,7 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
         IO_STACK_LOCATION params;
         memset(&params, 0, sizeof(params));
         params.Parameters.Read.Length = chunk;
-        params.Parameters.Read.ByteOffset.QuadPart = offset.QuadPart + done;
+        params.Parameters.Read.ByteOffset.QuadPart = at_end ? IO_WRITE_TO_END : offset.QuadPart + done;
         status = IopSynchronousRequest(file, write ? IRP_MJ_WRITE : IRP_MJ_READ, 0, buf, chunk, &params, &io);
         if (!NT_SUCCESS(status))
             break;
@@ -304,7 +317,8 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
         ExFreePool(bounce);
     if (status == STATUS_END_OF_FILE && done)
         status = STATUS_SUCCESS;
-    if (NT_SUCCESS(status) && (use_position || (file->Flags & FO_SYNCHRONOUS_IO)))
+    /* the file system leaves the position of a handle that wrote at the end where the data ended. */
+    if (NT_SUCCESS(status) && !at_end && (use_position || (file->Flags & FO_SYNCHRONOUS_IO)))
         file->CurrentByteOffset.QuadPart = offset.QuadPart + done;
     unlock_file(file);
     io.Status = status;

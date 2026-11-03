@@ -279,6 +279,20 @@ void FsLocksCleanup(PFILE_OBJECT file, PEPROCESS process)
     finish(&ready);
 }
 
+/* whether any byte range of the file is locked, so a write that cannot name its offset yet need not look for one. */
+BOOLEAN FsLocksHeld(PFILE_OBJECT file)
+{
+    FS_RANGE_LOCK probe = {};
+    if (!MimeFsLockIdentity(file, &probe.Volume, &probe.FileId))
+        return FALSE;
+    BOOLEAN held = FALSE;
+    ExAcquireFastMutex(&g_lock);
+    for (FS_RANGE_LOCK *lock = g_active; lock && !held; lock = lock->Next)
+        held = lock->Volume == probe.Volume && lock->FileId == probe.FileId;
+    ExReleaseFastMutex(&g_lock);
+    return held;
+}
+
 NTSTATUS FsLocksCheck(PFILE_OBJECT file, BOOLEAN write, ULONG64 start, ULONG length, ULONG key)
 {
     FS_RANGE_LOCK range = {.File = file, .Process = PsCurrentProcess(), .Start = start, .Length = length, .Key = key};

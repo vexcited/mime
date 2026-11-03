@@ -895,6 +895,49 @@ static void touch_access(MIMEFS_FCB *fcb)
     ExFreePool(touch);
 }
 
+/* the offset of a write that goes to the end of the file, whatever that is when it happens. */
+#define MIMEFS_WRITE_TO_END (~0ull)
+/* the most one append puts in a single step. */
+#define MIMEFS_APPEND_MAX (1024 * 1024)
+
+/*
+ * the host puts the data at the end of the file in one step, so writers that append never write over each other, and
+ * says where it went. buffers held for the file go first, as the end they would move is not known yet.
+ */
+static NTSTATUS mimefs_append(PIRP irp, PIO_STACK_LOCATION stack, MIMEFS_FCB *fcb, const UCHAR *user, ULONG length)
+{
+    FsCacheInvalidate(fcb->Volume, fcb->FileId);
+    NTSTATUS status = FsWbSync(&fcb->Wb);
+    if (!NT_SUCCESS(status))
+        return complete(irp, status, 0);
+    PUCHAR bounce = ExAllocatePool2(POOL_FLAG_NON_PAGED, length < MIMEFS_APPEND_MAX ? length : MIMEFS_APPEND_MAX, KI_TAG('M', 'f', 'B', 'n'));
+    if (!bounce)
+        return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+    ULONG64 bounce_pa = HalPhysicalOf(bounce);
+    ULONG done = 0;
+    ULONG64 end = 0;
+    while (done < length) {
+        ULONG n = length - done < MIMEFS_APPEND_MAX ? length - done : MIMEFS_APPEND_MAX;
+        memcpy(bounce, user + done, n);
+        ULONG64 start = 0;
+        ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_APPEND, fcb->HostHandle, 0, bounce_pa, n, 0, 0, &start);
+        if (hs != MIME_HC_STATUS_OK) {
+            status = host_status(hs, FALSE);
+            break;
+        }
+        done += n;
+        end = start + n;
+    }
+    ExFreePool(bounce);
+    if (done) {
+        PFILE_OBJECT file = stack->FileObject;
+        if (file->Flags & FO_SYNCHRONOUS_IO)
+            file->CurrentByteOffset.QuadPart = (LONGLONG)end;
+        FsNotifyReport(fcb->Volume, &file->FileName, FILE_ACTION_MODIFIED, FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE);
+    }
+    return complete(irp, status, done);
+}
+
 static NTSTATUS NTAPI mimefs_read_write(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
@@ -921,6 +964,8 @@ static NTSTATUS NTAPI mimefs_read_write(PDEVICE_OBJECT device, PIRP irp)
         memcpy(user, (PUCHAR)HalPhysmap(HalRomPhysical(fcb->Rom)) + offset, n);
         return complete(irp, STATUS_SUCCESS, n);
     }
+    if (write && offset == MIMEFS_WRITE_TO_END)
+        return mimefs_append(irp, stack, fcb, user, length);
     if (write) {
         FsCacheInvalidate(fcb->Volume, fcb->FileId);
         NTSTATUS kept;

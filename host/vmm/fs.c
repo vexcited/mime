@@ -359,6 +359,8 @@ static void free_handle(MimeVm *vm, uint64_t h)
         return;
     if (fh->fd >= 0)
         close(fh->fd);
+    if (fh->append_tried && fh->append_fd >= 0)
+        close(fh->append_fd);
     if (fh->delete_on_close && fh->host_path) {
         MimeFsStat gone;
         MimeFsTimes times = {};
@@ -1143,6 +1145,81 @@ static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
     return MIME_HC_STATUS_OK;
 }
 
+/*
+ * appends are written through a second descriptor of the file opened with O_APPEND, so the kernel puts every write at
+ * the end under the file's own lock: guest writers and host programs that append alike cannot get in each other's
+ * way. the offset the data went to is where the descriptor's position ended up, less what was written.
+ */
+static pthread_mutex_t g_append_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int open_append_fd(const MimeFsHandle *fh)
+{
+#ifdef __linux__
+    char path[64];
+    snprintf(path, sizeof(path), "/proc/self/fd/%d", fh->fd);
+    return open(path, O_WRONLY | O_APPEND | O_CLOEXEC);
+#else
+    char path[MIME_PATH_MAX];
+    if (fcntl(fh->fd, F_GETPATH, path) < 0)
+        return -1;
+    return open(path, O_WRONLY | O_APPEND | O_CLOEXEC);
+#endif
+}
+
+/* the bytes written, or -1 with errno set. */
+static ssize_t append_write(MimeFsHandle *fh, const void *buf, size_t length, uint64_t *start)
+{
+    ssize_t done = 0;
+    pthread_mutex_lock(&g_append_lock);
+    if (!fh->append_tried) {
+        fh->append_tried = true;
+        fh->append_fd = open_append_fd(fh);
+    }
+    if (fh->append_fd >= 0) {
+        while ((size_t)done < length) {
+            ssize_t part = write(fh->append_fd, (const char *)buf + done, length - (size_t)done);
+            if (part < 0 && errno == EINTR)
+                continue;
+            if (part == 0)
+                errno = ENOSPC;
+            if (part <= 0) {
+                if (done == 0)
+                    done = -1;
+                break;
+            }
+            done += part;
+        }
+        off_t end = done > 0 ? lseek(fh->append_fd, 0, SEEK_CUR) : 0;
+        *start = end >= done && done > 0 ? (uint64_t)(end - done) : 0;
+    } else {
+        /* a file that cannot be opened again is appended to at the size it has, which guest writers still agree on. */
+        struct stat st;
+        if (fstat(fh->fd, &st) < 0) {
+            done = -1;
+        } else {
+            *start = (uint64_t)st.st_size;
+            while ((size_t)done < length) {
+                ssize_t part = pwrite(fh->fd, (const char *)buf + done, length - (size_t)done,
+                                      (off_t)(*start + (uint64_t)done));
+                if (part < 0 && errno == EINTR)
+                    continue;
+                if (part == 0)
+                    errno = ENOSPC;
+                if (part <= 0) {
+                    if (done == 0)
+                        done = -1;
+                    break;
+                }
+                done += part;
+            }
+        }
+    }
+    int saved = errno;
+    pthread_mutex_unlock(&g_append_lock);
+    errno = saved;
+    return done;
+}
+
 uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
 {
     uint64_t status = MIME_HC_STATUS_OK;
@@ -1177,6 +1254,7 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         return status;
     }
     case MIME_HC_FS_READ:
+    case MIME_HC_FS_APPEND:
     case MIME_HC_FS_WRITE: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
         void *buf = mime_vm_phys(vm, a[3], a[4]);
@@ -1192,17 +1270,34 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             status = MIME_HC_STATUS_IS_DIRECTORY;
             break;
         }
-        if (nr == MIME_HC_FS_WRITE)
+        if (nr != MIME_HC_FS_READ)
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
         MimeFsStat before = {};
         MimeFsTimes kept = {};
-        bool keeping = nr == MIME_HC_FS_WRITE && (fh->frozen & (MIME_FS_TIME_WRITE | MIME_FS_TIME_CHANGE)) &&
+        bool keeping = nr != MIME_HC_FS_READ && (fh->frozen & (MIME_FS_TIME_WRITE | MIME_FS_TIME_CHANGE)) &&
                        mime_fs_fstat(fh->fd, &before) == 0;
         if (keeping)
             mime_fs_times(fh->host_path, fh->fd, &before, &kept);
         ssize_t n;
         if (nr == MIME_HC_FS_READ) {
             n = pread(fh->fd, buf, (size_t)a[4], (off_t)a[2]);
+        } else if (nr == MIME_HC_FS_APPEND) {
+            uint64_t start = 0;
+            n = append_write(fh, buf, (size_t)a[4], &start);
+            mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
+            if (n > 0) {
+                if (keeping)
+                    times_after_write(fh, &before, &kept);
+                mime_fs_touch_access(fh, false);
+                if ((uint64_t)n < a[4])
+                    mime_warn("fs: append of %llu bytes to %s stopped after %lld bytes: %s", (unsigned long long)a[4],
+                              fh->host_path, (long long)n, strerror(errno));
+            }
+            if (n < 0)
+                status = errno_status(errno);
+            else
+                regs[1] = start;
+            break;
         } else {
             n = 0;
             if (a[4] > 1 && fault_hits(fh->host_path)) {

@@ -81,6 +81,8 @@ typedef struct MimeFsHandle {
     bool no_access_update; /* reads leave the access time alone. */
     bool touch_failed;     /* the host refused to set the access time of this file. */
     int64_t touched_ns;    /* when this handle last set the access time. */
+    int append_fd;         /* the file opened to append, once an append asked for it. */
+    bool append_tried;
 } MimeFsHandle;
 
 /* the host page size: guest memory goes back to the host in these units. */
