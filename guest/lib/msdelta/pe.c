@@ -212,6 +212,7 @@ typedef struct MD_XFORM {
     uint8_t *Hint;
     const MD_RIFT *Used;
     const MD_PE_TARGET *Target;
+    MD_CLI Cli; /* the metadata of the source. */
 } MD_XFORM;
 
 static uint32_t map_rva(const MD_XFORM *x, uint32_t rva)
@@ -257,6 +258,7 @@ static void mark_non_executable(const MD_XFORM *x)
     for (unsigned d = 0; d < 16 && d < pe->DirectoryCount; d++)
         if (pe->DirOffset[d])
             fill_hint(x, pe->DirOffset[d], pe->DirSize[d], 3);
+    MdPeMarkCliMethods(pe, &x->Cli, x->Hint);
 }
 
 /* ------------------------------------------------------------------ imports and exports */
@@ -820,15 +822,18 @@ void MdPeUnbind(MD_PE *pe)
 
 int MdPeTransform(MD_PE *pe, uint32_t file_type, uint64_t flags, const MD_RIFT *used, const MD_PE_TARGET *target)
 {
-    MD_XFORM x = {pe, nullptr, used, target};
+    MD_XFORM x = {pe, nullptr, used, target, {}};
     x.Hint = MdAllocZero(pe->Size);
     if (!x.Hint)
         return MSDELTA_MEMORY;
     int status = MSDELTA_OK;
     bool i386 = file_type == 16;
-    bool cli = pe->DirOffset[14] != 0 || target->HasCli;
-    if (!i386 || cli) {
+    if (!i386) {
         status = MSDELTA_UNSUPPORTED;
+        goto done;
+    }
+    if (!MdPeCli(pe, &x.Cli)) {
+        status = MSDELTA_BAD;
         goto done;
     }
     if (flags & 1ull << 1)
@@ -850,6 +855,10 @@ int MdPeTransform(MD_PE *pe, uint32_t file_type, uint64_t flags, const MD_RIFT *
         } else
             inferred_relocations(&x);
     }
+    if (flags & 1ull << 21)
+        MdPeCliDisassemble(pe, &x.Cli, &target->Map);
+    if (flags & 1ull << 22)
+        MdPeCliMetadata(pe, &x.Cli, &target->Map, used, &target->Cli);
     if (flags & 1ull << 6)
         smash_lock_prefixes(&x);
     if (flags & 1ull << 7)

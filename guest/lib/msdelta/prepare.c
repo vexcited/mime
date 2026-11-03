@@ -11,7 +11,7 @@ static int prepare_executable(uint32_t file_type, uint64_t flags, const uint8_t 
     if (preprocess->Failed || source_size > 0x7FFFFFFF)
         return MSDELTA_BAD;
     MD_PE_TARGET target = {};
-    MD_RIFT used = {}, to_rva = {}, first = {}, second = {}, reversed = {};
+    MD_RIFT used = {}, to_rva = {}, first = {}, second = {}, reversed = {}, cli_rift = {};
     uint8_t *copy = MdAlloc(source_size);
     MD_PE pe;
     int status = MSDELTA_MEMORY;
@@ -32,27 +32,24 @@ static int prepare_executable(uint32_t file_type, uint64_t flags, const uint8_t 
     target.TimeStamp = (uint32_t)MdBitsRead(preprocess, 32);
     if (!MdRiftRead(preprocess, &target.RvaToOffset))
         goto done;
-    /* the metadata of the target, which is empty when the flag bit is clear. */
-    target.HasCli = MdBitsRead(preprocess, 1) != 0;
-    if (target.HasCli) {
-        status = MSDELTA_UNSUPPORTED;
+    /* the metadata of the target, which is empty when the flag bit is clear, then the used table and the map. */
+    if (!MdCliFromBits(preprocess, &target.Cli))
         goto done;
-    }
+    target.HasCli = target.Cli.Present;
     if (!MdRiftRead(preprocess, &used) || preprocess->Failed)
         goto done;
-    if (MdBitsRead(preprocess, 1)) {
-        status = MSDELTA_UNSUPPORTED;
+    if (!MdCliMapFromBits(preprocess, &target.Map))
         goto done;
-    }
     status = MdPeTransform(&pe, file_type, flags, &used, &target);
     if (status != MSDELTA_OK)
         goto done;
     status = MSDELTA_MEMORY;
-    if (!MdRiftMultiply(&first, &to_rva, &used) || !MdRiftMultiply(&second, &first, &target.RvaToOffset) ||
-        !MdRiftReverse(&reversed, &second, 0))
+    MD_CLI source_cli;
+    if (!MdPeCli(&pe, &source_cli) || !MdPeCliCompressionRift(&source_cli, &target.Cli, &target.Map, &pe, &cli_rift))
         goto done;
-    *rift = reversed;
-    memset(&reversed, 0, sizeof(reversed));
+    if (!MdRiftMultiply(&first, &to_rva, &used) || !MdRiftMultiply(&second, &first, &target.RvaToOffset) ||
+        !MdRiftReverse(&reversed, &second, 0) || !MdRiftSum(rift, &reversed, &cli_rift))
+        goto done;
     *prepared = copy;
     *prepared_size = source_size;
     copy = nullptr;
@@ -64,6 +61,8 @@ done:
     MdRiftFree(&first);
     MdRiftFree(&second);
     MdRiftFree(&reversed);
+    MdRiftFree(&cli_rift);
+    MdCliMapFree(&target.Map);
     MdRiftFree(&target.RvaToOffset);
     return status;
 }

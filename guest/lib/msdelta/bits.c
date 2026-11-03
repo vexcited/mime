@@ -481,12 +481,8 @@ int MdHuffmanDecode(const MD_HUFFMAN *h, MD_BITS *bits)
     return -1;
 }
 
-typedef struct MD_INT_FORMAT {
-    MD_HUFFMAN Huffman;
-} MD_INT_FORMAT;
-
 /* the lengths of the 252 symbols are sent as two lists of explicit ones and a rule for the rest. */
-static bool int_format_read(MD_BITS *bits, MD_INT_FORMAT *format)
+bool MdIntFormatRead(MD_BITS *bits, MD_INT_FORMAT *format)
 {
     memset(format, 0, sizeof(*format));
     unsigned positive = (unsigned)MdBitsRead(bits, 8), negative = (unsigned)MdBitsRead(bits, 8);
@@ -524,7 +520,7 @@ static bool int_format_read(MD_BITS *bits, MD_INT_FORMAT *format)
     return !bits->Failed && MdHuffmanBuild(&format->Huffman, lengths, 252);
 }
 
-static int64_t int_format_number(const MD_INT_FORMAT *format, MD_BITS *bits)
+int64_t MdIntFormatNumber(const MD_INT_FORMAT *format, MD_BITS *bits)
 {
     int symbol = MdHuffmanDecode(&format->Huffman, bits);
     if (symbol < 0)
@@ -539,29 +535,38 @@ static int64_t int_format_number(const MD_INT_FORMAT *format, MD_BITS *bits)
     return negative ? (int64_t)~value : (int64_t)value;
 }
 
+/* a table whose numbers come in the formats that are given, without the sort. */
+bool MdRiftReadWith(MD_BITS *bits, MD_RIFT *rift, const MD_INT_FORMAT *lefts, const MD_INT_FORMAT *shifts)
+{
+    memset(rift, 0, sizeof(*rift));
+    uint64_t count = MdBitsReadNumber(bits);
+    if (bits->Failed || count > 0x0FFFFFFFFFFFFFFFull)
+        return false;
+    uint64_t left = 0, shift = 0;
+    for (uint64_t i = 0; i < count; i++) {
+        left += (uint64_t)MdIntFormatNumber(lefts, bits);
+        shift += (uint64_t)MdIntFormatNumber(shifts, bits);
+        if (bits->Failed || !MdRiftAdd(rift, (int64_t)left, (int64_t)(left + shift))) {
+            MdRiftFree(rift);
+            return false;
+        }
+    }
+    return true;
+}
+
 bool MdRiftRead(MD_BITS *bits, MD_RIFT *rift)
 {
     memset(rift, 0, sizeof(*rift));
     if (!MdBitsRead(bits, 1))
         return !bits->Failed;
     MD_INT_FORMAT lefts, shifts;
-    if (!int_format_read(bits, &lefts))
+    if (!MdIntFormatRead(bits, &lefts))
         return false;
-    bool ok = int_format_read(bits, &shifts);
-    uint64_t count = ok ? MdBitsReadNumber(bits) : 0;
-    ok = ok && !bits->Failed && count <= 0x0FFFFFFFFFFFFFFFull;
-    uint64_t left = 0, shift = 0;
-    for (uint64_t i = 0; ok && i < count; i++) {
-        left += (uint64_t)int_format_number(&lefts, bits);
-        shift += (uint64_t)int_format_number(&shifts, bits);
-        ok = !bits->Failed && MdRiftAdd(rift, (int64_t)left, (int64_t)(left + shift));
-    }
+    bool ok = MdIntFormatRead(bits, &shifts) && MdRiftReadWith(bits, rift, &lefts, &shifts);
     MdHuffmanFree(&lefts.Huffman);
     MdHuffmanFree(&shifts.Huffman);
-    if (!ok) {
-        MdRiftFree(rift);
+    if (!ok)
         return false;
-    }
     MdRiftSort(rift);
     return true;
 }

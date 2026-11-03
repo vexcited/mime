@@ -49,6 +49,14 @@ bool MdHuffmanBuild(MD_HUFFMAN *h, const uint8_t *lengths, unsigned symbols);
 int MdHuffmanDecode(const MD_HUFFMAN *h, MD_BITS *bits);
 void MdHuffmanFree(MD_HUFFMAN *h);
 
+/* the formats of the numbers of a rift table: a code of 252 symbols, sent as lengths. */
+typedef struct MD_INT_FORMAT {
+    MD_HUFFMAN Huffman;
+} MD_INT_FORMAT;
+
+bool MdIntFormatRead(MD_BITS *bits, MD_INT_FORMAT *format);
+int64_t MdIntFormatNumber(const MD_INT_FORMAT *format, MD_BITS *bits);
+
 /* ------------------------------------------------------------------ rift tables */
 
 /* a rift table says how positions move: the pair (left, right) starts a stretch that ends before the next left. */
@@ -67,6 +75,7 @@ void MdRiftSort(MD_RIFT *rift);
 bool MdRiftCopy(MD_RIFT *to, const MD_RIFT *from);
 /* the table of a stream: a flag, two formats for the numbers, a count and the pairs. */
 bool MdRiftRead(MD_BITS *bits, MD_RIFT *rift);
+bool MdRiftReadWith(MD_BITS *bits, MD_RIFT *rift, const MD_INT_FORMAT *lefts, const MD_INT_FORMAT *shifts);
 /* the position moved by the stretch that holds it, and the last position of the stretch. */
 int64_t MdRiftMap(const MD_RIFT *rift, int64_t position);
 int64_t MdRiftGetRift(const MD_RIFT *rift, int64_t position, int64_t *last);
@@ -89,6 +98,7 @@ int MdPrepareSource(uint32_t file_type, uint64_t flags, const uint8_t *source, s
 
 /* ------------------------------------------------------------------ portable executables */
 
+struct MD_PE;
 typedef struct MD_PE {
     uint8_t *Image; /* the file, which the transforms change. */
     uint32_t Size;
@@ -120,12 +130,51 @@ uint32_t MdPeMaxSize(const MD_PE *pe, uint32_t rva);
 /* file offsets to relative addresses, one stretch for the headers and one for each section with data. */
 bool MdPeOffsetToRva(const MD_PE *pe, MD_RIFT *rift);
 
+/* ------------------------------------------------------------------ metadata of the common language runtime */
+
+/* where the streams of the metadata are, what its tables hold and how they are laid out. */
+typedef struct MD_CLI {
+    bool Present;
+    uint32_t Offset, Size; /* of the metadata root, in the file. */
+    uint32_t Base;         /* added to the addresses in the tables. */
+    uint32_t Strings[2], UserStrings[2], Blobs[2], Guids[2], Tables[2]; /* offset and size of each stream. */
+    bool WideStrings, WideGuids, WideBlobs;
+    uint64_t Valid;
+    uint32_t Rows[64];
+    /* the layout, which follows from the others. */
+    uint32_t TableOffset[64], RowSize[64];
+    uint32_t ColumnOffset[64][16];
+    bool WideColumn[64][16];
+    uint32_t MaxCodedRows[13];
+    bool LayoutOk;
+} MD_CLI;
+
+/* the maps that say where the rows and the heap entries of the source went in the target. */
+typedef struct MD_CLI_MAP {
+    MD_RIFT Strings, UserStrings, Blobs, Guids, Tables[64];
+} MD_CLI_MAP;
+
+bool MdCliFromImage(MD_CLI *cli, const uint8_t *image, uint32_t size, uint32_t offset, uint32_t length);
+bool MdCliFromBits(MD_BITS *bits, MD_CLI *cli);
+bool MdCliMapFromBits(MD_BITS *bits, MD_CLI_MAP *map);
+void MdCliMapFree(MD_CLI_MAP *map);
+
 typedef struct MD_PE_TARGET {
     uint64_t ImageBase;
     uint32_t GlobalPointer, TimeStamp;
     MD_RIFT RvaToOffset;
-    bool HasCli; /* the target has metadata of the CLI, see mdcli. */
+    bool HasCli;
+    MD_CLI Cli;
+    MD_CLI_MAP Map;
 } MD_PE_TARGET;
+
+/* the metadata of the source, the transforms that follow the map, and the rift table that goes with them. */
+bool MdPeCli(const MD_PE *pe, MD_CLI *cli);
+void MdPeMarkCliMethods(const MD_PE *pe, const MD_CLI *cli, uint8_t *hint);
+void MdPeCliDisassemble(MD_PE *pe, const MD_CLI *cli, const MD_CLI_MAP *map);
+void MdPeCliMetadata(MD_PE *pe, const MD_CLI *cli, const MD_CLI_MAP *map, const MD_RIFT *used, const MD_CLI *target);
+bool MdPeCliCompressionRift(const MD_CLI *source, const MD_CLI *target, const MD_CLI_MAP *map, const MD_PE *transformed,
+                            MD_RIFT *out);
 
 /* the transforms: the source image takes the form the target will have, by the table of how relative addresses move. */
 void MdPeUnbind(MD_PE *pe);
