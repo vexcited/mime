@@ -22,7 +22,10 @@ SHSTDAPI BOOL WINAPI ShellExecuteExA(SHELLEXECUTEINFOA *info)
     wide.dwHotKey = info->dwHotKey;
     wide.hIcon = info->hIcon;
     LPWSTR verb = ShWiden(info->lpVerb), file = ShWiden(info->lpFile), parameters = ShWiden(info->lpParameters),
-           directory = ShWiden(info->lpDirectory), cls = ShWiden(info->lpClass);
+           directory = ShWiden(info->lpDirectory);
+    /* lpClass is read only with the class name mask, callers leave it uninitialized otherwise. */
+    LPCSTR class_name = (info->fMask & SEE_MASK_CLASSNAME) ? info->lpClass : nullptr;
+    LPWSTR cls = ShWiden(class_name);
     wide.lpVerb = verb;
     wide.lpFile = file;
     wide.lpParameters = parameters;
@@ -31,7 +34,7 @@ SHSTDAPI BOOL WINAPI ShellExecuteExA(SHELLEXECUTEINFOA *info)
     BOOL ok = FALSE;
     /* a string that cannot be converted fails the call as if out of memory. */
     if ((info->lpVerb && !verb) || (info->lpFile && !file) || (info->lpParameters && !parameters) ||
-        (info->lpDirectory && !directory) || (info->lpClass && !cls))
+        (info->lpDirectory && !directory) || (class_name && !cls))
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
     else
         ok = ShellExecuteExW(&wide);
