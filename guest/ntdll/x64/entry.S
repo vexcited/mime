@@ -44,6 +44,28 @@ KiUserExceptionDispatcher:
     .seh_endproc
 
 /*
+ * EXCEPTION_DISPOSITION RtlpExecuteHandlerForUnwind(record, frame, context, dispatcher, handler)
+ *
+ * calls a handler of the frame that an unwind is on. an exception raised inside the handler meets this frame
+ * and gets RtlpUnwindHandler, which tells it to go on from the frame under unwind, as the frames between are
+ * unwound already.
+ */
+    .globl  RtlpExecuteHandlerForUnwind
+    .p2align 4
+    .seh_proc RtlpExecuteHandlerForUnwind
+RtlpExecuteHandlerForUnwind:
+    subq    $0x28, %rsp
+    .seh_stackalloc 0x28
+    .seh_handler RtlpUnwindHandler, @unwind, @except
+    .seh_endprologue
+    movq    %r9, 0x20(%rsp)
+    call    *0x50(%rsp)
+    nop                             /* a return address before the epilog would unwind as one. */
+    addq    $0x28, %rsp
+    ret
+    .seh_endproc
+
+/*
  * the kernel leaves the interrupted CONTEXT at the stack pointer, with
  * P1Home to P4Home holding the context, both arguments and the routine,
  * then a machine frame, so an unwind through here resumes the interrupted

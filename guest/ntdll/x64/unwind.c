@@ -654,6 +654,22 @@ NTDLL_EXPORT void NTAPI RtlRestoreContext(PCONTEXT context, PEXCEPTION_RECORD re
     NtContinue(context, FALSE);
 }
 
+EXCEPTION_DISPOSITION NTAPI RtlpExecuteHandlerForUnwind(PEXCEPTION_RECORD record, PVOID frame, PCONTEXT context,
+                                                        PDISPATCHER_CONTEXT dispatcher, PEXCEPTION_ROUTINE handler);
+
+/*
+ * the handler of RtlpExecuteHandlerForUnwind, reached by an exception that a handler called in an unwind raised.
+ * the frames below the one under unwind are unwound already, so the search, and the unwind of the new exception,
+ * go on from the context of that frame.
+ */
+EXCEPTION_DISPOSITION NTAPI RtlpUnwindHandler(PEXCEPTION_RECORD record, PVOID frame, PCONTEXT context,
+                                              PDISPATCHER_CONTEXT dispatcher)
+{
+    PDISPATCHER_CONTEXT outer = *(PDISPATCHER_CONTEXT *)((PUCHAR)frame + 0x20);
+    *dispatcher->ContextRecord = *outer->ContextRecord;
+    return ExceptionCollidedUnwind;
+}
+
 NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPTION_RECORD record, PVOID value,
                                     PCONTEXT original, PVOID history)
 {
@@ -691,7 +707,7 @@ NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPT
             dc.TargetIp = (ULONG64)target_ip;
             dc.HistoryTable = history;
             dc.ScopeIndex = 0;
-            EXCEPTION_DISPOSITION r = handler(record, (PVOID)dc.EstablisherFrame, &c, &dc);
+            EXCEPTION_DISPOSITION r = RtlpExecuteHandlerForUnwind(record, (PVOID)dc.EstablisherFrame, &c, &dc, handler);
             record->ExceptionFlags &= ~(EXCEPTION_COLLIDED_UNWIND | EXCEPTION_TARGET_UNWIND);
             if (r == ExceptionCollidedUnwind) {
                 /*
