@@ -1457,6 +1457,18 @@ void IopInitializeConsole(void);
 void IopInitializeConsoleDevice(void);
 MIME_CONSOLE *ConsoleCreate(ULONG64 request, ULONG run_flags, ULONG size, ULONG cursor);
 MIME_CONSOLE *ConsoleCreateNew(void);
+/* what a console window starts with: the startup information of the process that asked for it. */
+typedef struct CON_STARTUP {
+    ULONG Flags; /* STARTF_ */
+    ULONG ShowWindow;
+    LONG X, Y;
+    ULONG SizeX, SizeY;
+    ULONG CountCharsX, CountCharsY;
+    ULONG FillAttribute;
+} CON_STARTUP;
+MIME_CONSOLE *ConsoleCreateWindow(const CON_STARTUP *startup);
+void ConsoleStartHost(MIME_CONSOLE *console, PEPROCESS parent);
+NTSTATUS PsStartConsoleHost(PEPROCESS parent, ULONG64 console, PULONG pid);
 void ConsoleSetHint(PEPROCESS process, MIME_CONSOLE *console);
 void ConsoleInitialTitle(MIME_CONSOLE *console, PCUNICODE_STRING title);
 MIME_CONSOLE *ConsoleOfPtyHandle(HANDLE handle);

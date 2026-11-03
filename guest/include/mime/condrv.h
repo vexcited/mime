@@ -19,6 +19,7 @@
 #define MIME_CONDRV_CURRENT_OUT L"CurrentOut"     /* its active screen buffer */
 #define MIME_CONDRV_SCREEN_BUFFER L"ScreenBuffer" /* a new screen buffer of that console */
 #define MIME_CONDRV_PTY L"Pty"                    /* a new pseudo console */
+#define MIME_CONDRV_HOST L"Host"                  /* the window host of a console that shows in a window */
 
 #define MIME_CONDRV_IOCTL(n) (((ULONG)0x50 << 16) | ((ULONG)(n) << 2)) /* FILE_DEVICE_CONSOLE, METHOD_BUFFERED */
 
@@ -32,6 +33,7 @@
 #define IOCTL_CONDRV_ALLOC MIME_CONDRV_IOCTL(0x810)     /* in MIME_CONDRV_ALLOC: a console for a process without one */
 #define IOCTL_CONDRV_TITLE MIME_CONDRV_IOCTL(0x811)     /* in MIME_CONDRV_TITLE, out the title: get or set */
 #define IOCTL_CONDRV_CODE_PAGES MIME_CONDRV_IOCTL(0x812) /* in MIME_CONDRV_CODE_PAGES with Set, out the pages */
+#define IOCTL_CONDRV_SELECTION MIME_CONDRV_IOCTL(0x814) /* out MIME_CONDRV_HOST_SELECTION: what the window has selected */
 #define IOCTL_CONDRV_INPUT_EXE MIME_CONDRV_IOCTL(0x813) /* in the exe name whose history and aliases reads use, or nothing to get it */
 
 /* on an input handle. */
@@ -62,6 +64,17 @@
 #define IOCTL_CONDRV_OUT_ACTIVATE MIME_CONDRV_IOCTL(0x84D)    /* makes this the shown buffer */
 #define IOCTL_CONDRV_OUT_FONT MIME_CONDRV_IOCTL(0x84E)        /* out MIME_CONDRV_FONT */
 
+/* on a window host handle, the way conhost.exe serves a console window. */
+#define IOCTL_CONDRV_HOST_ATTACH MIME_CONDRV_IOCTL(0x870)    /* in MIME_CONDRV_HOST_ATTACH, out MIME_CONDRV_HOST_STATE */
+#define IOCTL_CONDRV_HOST_QUERY MIME_CONDRV_IOCTL(0x871)     /* out MIME_CONDRV_HOST_STATE, clears what is pending */
+#define IOCTL_CONDRV_HOST_CELLS MIME_CONDRV_IOCTL(0x872)     /* in MIME_CONDRV_HOST_CELLS, out the cells of rows of the shown buffer */
+#define IOCTL_CONDRV_HOST_INPUT MIME_CONDRV_IOCTL(0x873)     /* in MIME_CONDRV_RECORD records the window made */
+#define IOCTL_CONDRV_HOST_WINDOW MIME_CONDRV_IOCTL(0x874)    /* in MIME_CONDRV_HOST_WINDOW: the user resized or scrolled the window */
+#define IOCTL_CONDRV_HOST_FONT MIME_CONDRV_IOCTL(0x875)      /* in MIME_CONDRV_FONT_SET: the font and the limits of the screen */
+#define IOCTL_CONDRV_HOST_CLOSE MIME_CONDRV_IOCTL(0x876)     /* the user closed the window */
+#define IOCTL_CONDRV_HOST_SELECTION MIME_CONDRV_IOCTL(0x877) /* in MIME_CONDRV_HOST_SELECTION: what the window has selected */
+#define IOCTL_CONDRV_HOST_SETTINGS MIME_CONDRV_IOCTL(0x878)  /* in MIME_CONDRV_HOST_SETTINGS: the properties dialog's choices */
+
 /* on a pseudo console handle. */
 #define IOCTL_CONDRV_PTY_CREATE MIME_CONDRV_IOCTL(0x860)  /* in MIME_CONDRV_PTY_CREATE: size and flags */
 #define IOCTL_CONDRV_PTY_OUTPUT MIME_CONDRV_IOCTL(0x861)  /* out the terminal bytes the console made; waits for some */
@@ -83,6 +96,7 @@
 #define MIME_CONDRV_TTY_ERROR 0x10
 #define MIME_CONDRV_PTY_HOST 0x20 /* the console belongs to a pseudo console */
 #define MIME_CONDRV_HEADLESS 0x40 /* nothing shows it */
+#define MIME_CONDRV_HAS_WINDOW 0x80 /* a window of conhost.exe shows it */
 
 typedef struct MIME_CONDRV_REGISTER {
     ULONG64 CtrlRoutine; /* started on a new thread with the event for each ctrl event */
@@ -292,6 +306,123 @@ typedef struct MIME_CONDRV_STATE {
     ULONG InputBytes; /* waiting to be read */
     ULONG ProcessGroup;
     ULONG InputEvents; /* records waiting to be read */
+    ULONG64 Window;    /* the window of a console that has one, else 0 */
 } MIME_CONDRV_STATE;
+
+/* ---- the window host. */
+
+#define MIME_CONDRV_ALLOC_WINDOW 0x4 /* AllocConsole: a window of conhost.exe when no run terminal is taken */
+
+typedef struct MIME_CONDRV_HOST_ATTACH {
+    ULONG64 Console; /* the id on the command line of conhost.exe */
+    ULONG64 Window;  /* the window handle of the host, which GetConsoleWindow returns */
+    ULONG64 Event;   /* a handle of the host's to an event that is set while the console has changes to tell */
+} MIME_CONDRV_HOST_ATTACH;
+
+/* what changed since the host last asked. */
+#define MIME_CONDRV_CHANGED_TITLE 0x01
+#define MIME_CONDRV_CHANGED_CELLS 0x02
+#define MIME_CONDRV_CHANGED_WINDOW 0x04 /* the window or the buffer size, or the position of the viewport */
+#define MIME_CONDRV_CHANGED_MODE 0x08
+#define MIME_CONDRV_CHANGED_BELL 0x10
+#define MIME_CONDRV_CHANGED_PALETTE 0x20
+#define MIME_CONDRV_CHANGED_FONT 0x40
+#define MIME_CONDRV_CHANGED_END 0x80   /* no process is attached any more: the host closes its window and exits */
+#define MIME_CONDRV_CHANGED_ALL 0x7F
+
+#define MIME_CONDRV_HOST_STARTUP_POSITION 0x1 /* StartX and StartY are given, in pixels */
+#define MIME_CONDRV_HOST_STARTUP_SIZE 0x2     /* SizeX and SizeY are given, in pixels */
+#define MIME_CONDRV_HOST_STARTUP_SHOW 0x4     /* ShowWindow is given */
+
+typedef struct MIME_CONDRV_HOST_STATE {
+    ULONG Changed;
+    ULONG Flags;           /* MIME_CONDRV_... flags of the console */
+    ULONG64 Generation;    /* counts the changes */
+    MIME_CONDRV_COORD Size;   /* the buffer */
+    MIME_CONDRV_RECT Window;  /* the viewport in the buffer */
+    MIME_CONDRV_COORD Cursor;
+    ULONG CursorSize;
+    ULONG CursorVisible;
+    ULONG InputMode;
+    ULONG OutputMode;
+    ULONG Scrolls;         /* rows that scrolled off the top, for positions that must follow the text */
+    ULONG BellCount;
+    USHORT Attributes;
+    USHORT PopupAttributes;
+    ULONG ColorTable[16];  /* 0x00BBGGRR */
+    ULONG HistoryBufferSize, HistoryBuffers, HistoryFlags;
+    ULONG Alternate;       /* 1 while the shown buffer is a program's alternate screen: no scrollback */
+    ULONG QuickEdit;       /* the mouse selects instead of reporting */
+    ULONG InsertMode;
+    ULONG StartupFlags;
+    ULONG ShowWindow;
+    LONG StartX, StartY;
+    ULONG SizeX, SizeY;
+    ULONG TitleLength;
+    WCHAR Title[260];
+} MIME_CONDRV_HOST_STATE;
+
+/* a window of cells of the shown buffer, left to right in rows, top to bottom. */
+typedef struct MIME_CONDRV_HOST_CELLS {
+    LONG Top;
+    ULONG Rows;
+    LONG Left;
+    ULONG Width;
+} MIME_CONDRV_HOST_CELLS;
+
+#define MIME_CONDRV_CELL_LEAD 0x1  /* the left half of a wide character */
+#define MIME_CONDRV_CELL_TRAIL 0x2 /* the right half, with no character of its own */
+#define MIME_CONDRV_CELL_BOLD 0x0001
+#define MIME_CONDRV_CELL_ITALIC 0x0002
+#define MIME_CONDRV_CELL_BLINK 0x0004
+#define MIME_CONDRV_CELL_CONCEAL 0x0008
+#define MIME_CONDRV_CELL_STRIKE 0x0010
+#define MIME_CONDRV_CELL_FAINT 0x0020
+#define MIME_CONDRV_CELL_UNDERLINE_MASK 0x01C0 /* 0 none, 1 single, 2 double, 3 curly, 4 dotted, 5 dashed */
+#define MIME_CONDRV_CELL_UNDERLINE_SHIFT 6
+#define MIME_CONDRV_CELL_OVERLINE 0x0400
+#define MIME_CONDRV_CELL_REVERSE 0x4000
+#define MIME_CONDRV_CELL_UNDERSCORE 0x8000 /* the single underline of the attribute word */
+
+/* the colors are resolved and reverse video is left to the host. */
+typedef struct MIME_CONDRV_HOST_CELL {
+    ULONG Char; /* a code point, 0 for the trail half of a wide character */
+    ULONG Foreground; /* 0x00BBGGRR */
+    ULONG Background;
+    USHORT Style;
+    USHORT Flags;
+} MIME_CONDRV_HOST_CELL;
+
+#define MIME_CONDRV_WINDOW_RESIZE 1 /* the user made the window Columns by Rows cells */
+#define MIME_CONDRV_WINDOW_SCROLL 2 /* the viewport moves to Left and Top */
+typedef struct MIME_CONDRV_HOST_WINDOW {
+    ULONG Op;
+    LONG Columns, Rows;
+    LONG Left, Top;
+} MIME_CONDRV_HOST_WINDOW;
+
+typedef struct MIME_CONDRV_FONT_SET {
+    MIME_CONDRV_COORD Size;    /* the cell, in pixels */
+    ULONG Weight;
+    ULONG Family;
+    ULONG MaxColumns, MaxRows; /* the largest window the screen has room for */
+    WCHAR Face[32];
+} MIME_CONDRV_FONT_SET;
+
+typedef struct MIME_CONDRV_HOST_SELECTION {
+    ULONG Flags; /* CONSOLE_SELECTION_IN_PROGRESS and the others of GetConsoleSelectionInfo */
+    MIME_CONDRV_COORD Anchor;
+    MIME_CONDRV_RECT Rect;
+} MIME_CONDRV_HOST_SELECTION;
+
+/* the choices of the properties dialog that belong to the console. */
+typedef struct MIME_CONDRV_HOST_SETTINGS {
+    ULONG Set;      /* bit 0 the colors and attributes, bit 1 the quick edit and insert modes, bit 2 the history, bit 3 the size */
+    ULONG ColorTable[16];
+    USHORT Attributes, PopupAttributes;
+    ULONG QuickEdit, Insert;
+    ULONG HistoryBufferSize, HistoryBuffers, HistoryFlags;
+    MIME_CONDRV_COORD Size;
+} MIME_CONDRV_HOST_SETTINGS;
 
 #endif

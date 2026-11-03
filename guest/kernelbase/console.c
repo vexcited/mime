@@ -739,12 +739,12 @@ HANDLE KbOpenConsoleDevice(LPCWSTR name, DWORD access, DWORD share, const SECURI
 /* ------------------------------------------------------------------ console management */
 
 /*
- * windows creates a console window. mime has no console host window, so a process descended from a run takes that
- * run's terminal while it is open, and any other gets a console nothing shows.
+ * a process descended from a run takes that run's terminal while it is open, and any other gets a console window
+ * that conhost.exe draws.
  */
 BOOL WINAPI AllocConsole(void)
 {
-    MIME_CONDRV_ALLOC rq = {MIME_CONDRV_ALLOC_RUN_TERMINAL, 0};
+    MIME_CONDRV_ALLOC rq = {MIME_CONDRV_ALLOC_RUN_TERMINAL | MIME_CONDRV_ALLOC_WINDOW, 0};
     NTSTATUS status = process_control(IOCTL_CONDRV_ALLOC, &rq, sizeof(rq), nullptr, 0, nullptr);
     if (!NT_SUCCESS(status)) {
         KbSetError(status == STATUS_ACCESS_DENIED ? ERROR_ACCESS_DENIED : ERROR_NOT_ENOUGH_MEMORY);
@@ -774,10 +774,24 @@ BOOL WINAPI AttachConsole(DWORD process)
     return TRUE;
 }
 
-/* there is no console window, but programs such as qt's logging only ask whether one exists. */
+/*
+ * the window of conhost.exe for a console that has one, which exists a moment after the console does. the terminal of a
+ * run and a pseudo console have no window, but programs such as qt's logging only ask whether one exists.
+ */
 HWND WINAPI GetConsoleWindow(void)
 {
-    return has_console() ? CONSOLE_WINDOW : nullptr;
+    MIME_CONDRV_STATE st;
+    if (!query_state(&st))
+        return nullptr;
+    if (!(st.Flags & MIME_CONDRV_HAS_WINDOW))
+        return CONSOLE_WINDOW;
+    for (int waited = 0; !st.Window && waited < 5000; waited += 10) {
+        LARGE_INTEGER delay = {.QuadPart = -100000};
+        NtDelayExecution(FALSE, &delay);
+        if (!query_state(&st))
+            return nullptr;
+    }
+    return (HWND)(ULONG_PTR)st.Window;
 }
 
 /* a console window is never full screen; without a console the server call fails. */
@@ -1615,7 +1629,20 @@ DECLSPEC_EXPORT BOOL WINAPI GetConsoleSelectionInfo(PCONSOLE_SELECTION_INFO info
         return FALSE;
     }
     memset(info, 0, sizeof(*info));
-    return has_console() || (KbSetError(ERROR_INVALID_HANDLE), FALSE);
+    MIME_CONDRV_HOST_SELECTION s = {};
+    NTSTATUS status = process_control(IOCTL_CONDRV_SELECTION, nullptr, 0, &s, sizeof(s), nullptr);
+    if (!NT_SUCCESS(status)) {
+        KbSetError(ERROR_INVALID_HANDLE);
+        return FALSE;
+    }
+    info->dwFlags = s.Flags;
+    info->dwSelectionAnchor.X = s.Anchor.X;
+    info->dwSelectionAnchor.Y = s.Anchor.Y;
+    info->srSelection.Left = s.Rect.Left;
+    info->srSelection.Top = s.Rect.Top;
+    info->srSelection.Right = s.Rect.Right;
+    info->srSelection.Bottom = s.Rect.Bottom;
+    return TRUE;
 }
 
 DECLSPEC_EXPORT BOOL WINAPI GetNumberOfConsoleMouseButtons(LPDWORD buttons)

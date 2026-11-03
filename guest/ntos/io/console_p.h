@@ -51,7 +51,10 @@ typedef enum {
     CON_BACKEND_RUN,  /* a host run's terminal. */
     CON_BACKEND_PTY,  /* a pseudo console, whose owner carries the bytes. */
     CON_BACKEND_NONE, /* nothing shows it. */
+    CON_BACKEND_WINDOW, /* a window of conhost.exe. */
 } CON_BACKEND;
+
+
 
 typedef struct CON_PTY_CHUNK {
     LIST_ENTRY Links;
@@ -104,6 +107,22 @@ struct _MIME_CONSOLE {
     ULONG LastClickButton;
     ConLineState *Lines;
 
+    /* a console window. */
+    ULONG64 Id;                  /* names the console to the host that starts for it. */
+    struct CON_HANDLE *HostHandle; /* the host once it attached. */
+    ULONG64 HostWindow;
+    PKEVENT HostEvent;           /* the host's event, set while it has changes to read. */
+    ULONG HostPid;               /* the process started as the host. */
+    ULONG HostPending;           /* MIME_CONDRV_CHANGED_ bits the host has not seen. */
+    ULONG64 SeenGeneration;
+    ULONG SeenBells;
+    BOOLEAN Ended;               /* no process is attached any more. */
+    BOOLEAN HostWanted;          /* a host process was started and has not attached yet. */
+    KEVENT HostReady;            /* set once the host attached, or the console has no use for one. */
+    CON_STARTUP Startup;
+    MIME_CONDRV_FONT_SET Font;
+    MIME_CONDRV_HOST_SELECTION Selection;
+
     /* pseudo console. */
     LIST_ENTRY PtyOut;
     ULONG PtyQueued;
@@ -119,6 +138,7 @@ typedef enum {
     CH_INPUT,
     CH_OUTPUT,
     CH_PTY,
+    CH_HOST,
 } CON_HANDLE_KIND;
 
 typedef struct CON_HANDLE {
@@ -151,6 +171,14 @@ void ConClose(MIME_CONSOLE *c);
 NTSTATUS ConAttachProcess(PEPROCESS self, ULONG pid);
 ULONG ConListProcesses(MIME_CONSOLE *c, PULONG out, ULONG max);
 NTSTATUS ConAllocFor(PEPROCESS self, ULONG flags);
+void ConNotify(MIME_CONSOLE *c);
+void ConHostRecords(MIME_CONSOLE *c, MIME_CONDRV_RECORD *r, ULONG count);
+void ConHostWindow(MIME_CONSOLE *c, const MIME_CONDRV_HOST_WINDOW *w);
+void ConHostFillState(MIME_CONSOLE *c, MIME_CONDRV_HOST_STATE *st, BOOLEAN take);
+MIME_CONSOLE *ConFindWindow(ULONG64 id);
+void ConHostDetached(MIME_CONSOLE *c);
+void ConWaitForHost(MIME_CONSOLE *c);
+NTSTATUS ConHostSettings(MIME_CONSOLE *c, const MIME_CONDRV_HOST_SETTINGS *settings);
 void ConSendOutput(MIME_CONSOLE *c, const void *data, ULONG length, ULONG stream);
 void ConWriteInputText(MIME_CONSOLE *c, const WCHAR *text, ULONG count);
 void ConSetTitle(MIME_CONSOLE *c, const WCHAR *title, ULONG count);

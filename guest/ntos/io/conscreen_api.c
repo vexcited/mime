@@ -21,10 +21,29 @@ void CsGetInfo(CsBuffer *b, CsInfo *info)
     /* with no console window, only the buffer limits the window. */
     info->MaxWindow.X = (int16_t)b->Grid.Width;
     info->MaxWindow.Y = (int16_t)b->Grid.Height;
+    if (b->Term->Windowed) {
+        if (b->Term->MaxCols && b->Term->MaxCols < info->MaxWindow.X)
+            info->MaxWindow.X = (int16_t)b->Term->MaxCols;
+        if (b->Term->MaxRows && b->Term->MaxRows < info->MaxWindow.Y)
+            info->MaxWindow.Y = (int16_t)b->Term->MaxRows;
+    }
     info->PopupAttributes = b->PopupAttr;
     memcpy(info->ColorTable, b->ColorTable, sizeof(info->ColorTable));
     info->CursorSize = b->CursorSize;
     info->CursorVisible = b->CursorVisible;
+}
+
+/* the window of a console window follows the shown buffer's viewport. */
+static void window_sync(CsBuffer *b)
+{
+    CsTerminal *t = b->Term;
+    if (!t->Windowed || b != CsDisplayed(t))
+        return;
+    int w = b->Window.Right - b->Window.Left + 1, h = b->Window.Bottom - b->Window.Top + 1;
+    t->Changed |= CS_CHANGED_WINDOW;
+    t->Generation++;
+    t->Cols = w;
+    t->Rows = h;
 }
 
 /* the viewport changed, so its rows are sent to the terminal again. */
@@ -33,6 +52,7 @@ static void window_changed(CsBuffer *b)
     CsTerminal *t = b->Term;
     b->Top = 0;
     b->Bottom = b->Window.Bottom - b->Window.Top;
+    window_sync(b);
     if (b == CsDisplayed(t) && !t->Headless) {
         for (int y = b->Window.Top; y <= b->Window.Bottom; y++)
             CsMark(b, y, b->Window.Left, b->Window.Right, false);
@@ -225,6 +245,8 @@ CsResult CsSetWindow(CsBuffer *b, bool absolute, CsRect w)
     if (r.Right < r.Left || r.Bottom < r.Top)
         return CS_INVALID_PARAMETER;
     int width = r.Right - r.Left + 1, height = r.Bottom - r.Top + 1;
+    if (b->Term->Windowed && ((b->Term->MaxCols && width > b->Term->MaxCols) || (b->Term->MaxRows && height > b->Term->MaxRows)))
+        return CS_INVALID_PARAMETER;
     /* a console that belongs to a terminal has one size for its buffer and window. */
     if (b->Term->TerminalSized && (width != b->Grid.Width || height != b->Grid.Height)) {
         CsResult res = CsResizeBuffer(b, width, height);

@@ -601,6 +601,9 @@ static NTSTATUS NTAPI con_create(PDEVICE_OBJECT device, PIRP irp)
             if (!NT_SUCCESS(status))
                 ConRelease(c);
         }
+    } else if (name_is(&file->FileName, MIME_CONDRV_HOST)) {
+        /* the console is named when the host attaches. */
+        h->Kind = CH_HOST;
     } else if (name_is(&file->FileName, MIME_CONDRV_PTY)) {
         MIME_CONSOLE *c = ConCreateConsole(CON_BACKEND_PTY, 0, MIME_CONDRV_TTY_INPUT | MIME_CONDRV_TTY_OUTPUT | MIME_CONDRV_TTY_ERROR, 0);
         if (!c) {
@@ -649,6 +652,8 @@ static NTSTATUS NTAPI con_close(PDEVICE_OBJECT device, PIRP irp)
         ExReleaseFastMutex(&g_con_lock);
         if (h->Kind == CH_PTY)
             ConClose(c);
+        else if (h->Kind == CH_HOST)
+            ConHostDetached(c);
         ConRelease(c);
     }
     ExFreePool(h);
@@ -892,6 +897,74 @@ static void fill_info(CsBuffer *b, MIME_CONDRV_INFO *out)
     out->Mode = b->Mode;
 }
 
+/* the requests of the window host of a console. */
+static NTSTATUS host_control(MIME_CONSOLE *c, PFILE_OBJECT file, ULONG code, PUCHAR buf, ULONG in_len, ULONG out_len,
+                             PULONG_PTR information)
+{
+    switch (code) {
+    case IOCTL_CONDRV_HOST_QUERY: {
+        if (out_len < sizeof(MIME_CONDRV_HOST_STATE))
+            return STATUS_BUFFER_TOO_SMALL;
+        ExAcquireFastMutex(&g_con_lock);
+        ConHostFillState(c, (MIME_CONDRV_HOST_STATE *)buf, TRUE);
+        if (c->HostEvent)
+            KeClearEvent(c->HostEvent);
+        ExReleaseFastMutex(&g_con_lock);
+        *information = sizeof(MIME_CONDRV_HOST_STATE);
+        return STATUS_SUCCESS;
+    }
+    case IOCTL_CONDRV_HOST_CELLS: {
+        if (in_len < sizeof(MIME_CONDRV_HOST_CELLS))
+            return STATUS_INVALID_PARAMETER;
+        MIME_CONDRV_HOST_CELLS rq = *(MIME_CONDRV_HOST_CELLS *)buf;
+        if (!rq.Width || (ULONG64)rq.Rows * rq.Width > 0x40000 || (ULONG64)rq.Rows * rq.Width * sizeof(CsDrawCell) > out_len)
+            return STATUS_BUFFER_TOO_SMALL;
+        ExAcquireFastMutex(&g_con_lock);
+        CsBuffer *b = CsDisplayed(&c->Term);
+        if (!b)
+            b = c->Main;
+        for (ULONG y = 0; y < rq.Rows; y++)
+            CsDrawRow(b, rq.Top + (LONG)y, rq.Left, (int)rq.Width, (CsDrawCell *)buf + (size_t)y * rq.Width);
+        ExReleaseFastMutex(&g_con_lock);
+        *information = (ULONG_PTR)rq.Rows * rq.Width * sizeof(CsDrawCell);
+        return STATUS_SUCCESS;
+    }
+    case IOCTL_CONDRV_HOST_INPUT:
+        ConHostRecords(c, (MIME_CONDRV_RECORD *)buf, in_len / sizeof(MIME_CONDRV_RECORD));
+        return STATUS_SUCCESS;
+    case IOCTL_CONDRV_HOST_WINDOW:
+        if (in_len < sizeof(MIME_CONDRV_HOST_WINDOW))
+            return STATUS_INVALID_PARAMETER;
+        ConHostWindow(c, (MIME_CONDRV_HOST_WINDOW *)buf);
+        return STATUS_SUCCESS;
+    case IOCTL_CONDRV_HOST_FONT:
+        if (in_len < sizeof(MIME_CONDRV_FONT_SET))
+            return STATUS_INVALID_PARAMETER;
+        ExAcquireFastMutex(&g_con_lock);
+        c->Font = *(MIME_CONDRV_FONT_SET *)buf;
+        c->Term.MaxCols = (int)c->Font.MaxColumns;
+        c->Term.MaxRows = (int)c->Font.MaxRows;
+        c->HostPending |= MIME_CONDRV_CHANGED_FONT;
+        ExReleaseFastMutex(&g_con_lock);
+        return STATUS_SUCCESS;
+    case IOCTL_CONDRV_HOST_CLOSE:
+        ConClose(c);
+        return STATUS_SUCCESS;
+    case IOCTL_CONDRV_HOST_SELECTION:
+        if (in_len < sizeof(MIME_CONDRV_HOST_SELECTION))
+            return STATUS_INVALID_PARAMETER;
+        ExAcquireFastMutex(&g_con_lock);
+        c->Selection = *(MIME_CONDRV_HOST_SELECTION *)buf;
+        ExReleaseFastMutex(&g_con_lock);
+        return STATUS_SUCCESS;
+    case IOCTL_CONDRV_HOST_SETTINGS:
+        if (in_len < sizeof(MIME_CONDRV_HOST_SETTINGS))
+            return STATUS_INVALID_PARAMETER;
+        return ConHostSettings(c, (MIME_CONDRV_HOST_SETTINGS *)buf);
+    }
+    return STATUS_INVALID_DEVICE_REQUEST;
+}
+
 static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
@@ -925,6 +998,35 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
         if (in_len < sizeof(MIME_CONDRV_ALLOC))
             return complete(irp, STATUS_INVALID_PARAMETER, 0);
         return complete(irp, ConAllocFor(self, ((MIME_CONDRV_ALLOC *)buf)->Flags), 0);
+    case IOCTL_CONDRV_HOST_ATTACH: {
+        if (h->Kind != CH_HOST || h->Console || in_len < sizeof(MIME_CONDRV_HOST_ATTACH) || out_len < sizeof(MIME_CONDRV_HOST_STATE))
+            return complete(irp, STATUS_INVALID_PARAMETER, 0);
+        MIME_CONDRV_HOST_ATTACH attach = *(MIME_CONDRV_HOST_ATTACH *)buf;
+        ExAcquireFastMutex(&g_con_lock);
+        MIME_CONSOLE *target = ConFindWindow(attach.Console);
+        if (!target || target->HostHandle || (target->HostPid && target->HostPid != (ULONG)(ULONG_PTR)self->UniqueProcessId)) {
+            ExReleaseFastMutex(&g_con_lock);
+            if (target)
+                ConRelease(target);
+            return complete(irp, STATUS_ACCESS_DENIED, 0);
+        }
+        PKEVENT event = nullptr;
+        if (!NT_SUCCESS(ObReferenceHandle((HANDLE)(ULONG_PTR)attach.Event, ExEventType, UserMode, (PVOID *)&event, nullptr))) {
+            ExReleaseFastMutex(&g_con_lock);
+            ConRelease(target);
+            return complete(irp, STATUS_INVALID_HANDLE, 0);
+        }
+        h->Console = target;
+        target->HostHandle = h;
+        target->HostEvent = event;
+        KeSetEvent(&target->HostReady, 0, FALSE);
+        target->HostWindow = attach.Window;
+        target->HostPending = MIME_CONDRV_CHANGED_ALL | (target->Ended ? MIME_CONDRV_CHANGED_END : 0);
+        ConHostFillState(target, (MIME_CONDRV_HOST_STATE *)buf, TRUE);
+        KeClearEvent(event);
+        ExReleaseFastMutex(&g_con_lock);
+        return complete(irp, STATUS_SUCCESS, sizeof(MIME_CONDRV_HOST_STATE));
+    }
     }
 
     BOOLEAN owned;
@@ -945,6 +1047,7 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
                 st->InputBytes = c->InputBytes;
                 st->InputEvents = c->InputEvents;
                 st->ProcessGroup = self->ConsoleGroup;
+                st->Window = c->HostWindow;
                 ExReleaseFastMutex(&g_con_lock);
             }
             information = sizeof(*st);
@@ -956,6 +1059,8 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
     if (!c)
         return complete(irp, STATUS_INVALID_HANDLE, 0);
 
+    if (code == IOCTL_CONDRV_OUT_INFO || code == IOCTL_CONDRV_OUT_FONT)
+        ConWaitForHost(c);
     BOOLEAN can_read = file->ReadAccess, can_write = file->WriteAccess;
     CsBuffer *b = h->Buffer;
     switch (code) {
@@ -965,6 +1070,30 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
             status = STATUS_INVALID_PARAMETER;
         else
             ConDispatchEvent(c, ((PULONG)buf)[0], ((PULONG)buf)[1]);
+        break;
+    case IOCTL_CONDRV_SELECTION:
+        if (out_len < sizeof(MIME_CONDRV_HOST_SELECTION)) {
+            status = STATUS_BUFFER_TOO_SMALL;
+            break;
+        }
+        ExAcquireFastMutex(&g_con_lock);
+        *(MIME_CONDRV_HOST_SELECTION *)buf = c->Selection;
+        ExReleaseFastMutex(&g_con_lock);
+        information = sizeof(MIME_CONDRV_HOST_SELECTION);
+        break;
+    case IOCTL_CONDRV_HOST_QUERY:
+    case IOCTL_CONDRV_HOST_CELLS:
+    case IOCTL_CONDRV_HOST_INPUT:
+    case IOCTL_CONDRV_HOST_WINDOW:
+    case IOCTL_CONDRV_HOST_FONT:
+    case IOCTL_CONDRV_HOST_CLOSE:
+    case IOCTL_CONDRV_HOST_SELECTION:
+    case IOCTL_CONDRV_HOST_SETTINGS:
+        if (h->Kind != CH_HOST) {
+            status = STATUS_INVALID_HANDLE;
+            break;
+        }
+        status = host_control(c, file, code, buf, in_len, out_len, &information);
         break;
     case IOCTL_CONDRV_PROCESSES: {
         if (out_len < sizeof(ULONG)) {
@@ -1545,6 +1674,15 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
             font->Weight = 400;
             font->Family = 0x36;
             wcscpy(font->Face, L"Consolas");
+            ExAcquireFastMutex(&g_con_lock);
+            if (c->Backend == CON_BACKEND_WINDOW && c->Font.Size.X) {
+                font->Size.X = c->Font.Size.X;
+                font->Size.Y = c->Font.Size.Y;
+                font->Weight = c->Font.Weight;
+                font->Family = c->Font.Family;
+                memcpy(font->Face, c->Font.Face, sizeof(font->Face));
+            }
+            ExReleaseFastMutex(&g_con_lock);
             information = sizeof(*font);
             break;
         }

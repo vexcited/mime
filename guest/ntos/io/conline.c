@@ -639,6 +639,12 @@ struct ConLine {
     size_t ResultLength;
     unsigned ScrollsSeen;
     size_t Lines; /* more than one when an alias made several lines. */
+
+    /* the command history popup of F7, drawn over the screen until a key closes it. */
+    bool Popup;
+    long PopupSelected, PopupTop;
+    CsRect PopupRect;
+    CsCharInfo *PopupSaved;
 };
 
 /* the cells a character takes in the echo when it starts at offset. */
@@ -797,15 +803,31 @@ ConLine *ConLineBegin(CsBuffer *screen, ConLineState *state, const ConChar *exe,
         memcpy(l->Text, initial, initial_length * sizeof(ConChar));
         l->Length = l->Cursor = initial_length;
     }
-    if (l->Length)
-        redraw(l, 0);
+    if (l->Length) {
+        /*
+         * the text a read starts with is already on the screen, ending where the cursor is: the console does not write it
+         * again, it finds where the line starts by going back over it. a program such as PowerShell that completes a word
+         * writes the completed line itself and reads on with it.
+         */
+        unsigned offset = offset_of(l, l->Length);
+        long width = l->Screen->Grid.Width ? l->Screen->Grid.Width : 1;
+        long position = (long)l->Screen->CursorY * width + l->Screen->CursorX - (long)offset;
+        if (position < 0)
+            position = 0;
+        l->StartY = (int)(position / width);
+        l->StartX = (int)(position % width);
+        l->Displayed = offset;
+    }
     return l;
 }
+
+static void popup_close(ConLine *l);
 
 void ConLineEnd(ConLine *l)
 {
     if (!l)
         return;
+    popup_close(l);
     CsFree(l->Text);
     CsFree(l->Exe);
     CsFree(l->Result);
@@ -1092,6 +1114,178 @@ static ExeHistory *current_entry(ConLine *l, const ConChar **text, size_t *lengt
     return h;
 }
 
+/* ------------------------------------------------------------------ the history popup */
+
+#define POPUP_WIDTH 40
+#define POPUP_ROWS 10
+
+static void popup_close(ConLine *l)
+{
+    if (!l->Popup)
+        return;
+    CsRect r = l->PopupRect;
+    if (l->PopupSaved)
+        CsWriteOutput(l->Screen, l->PopupSaved, &r);
+    CsFree(l->PopupSaved);
+    l->PopupSaved = nullptr;
+    l->Popup = false;
+}
+
+/* draws the box and the commands from PopupTop on, the selected one in the colors the other way round. */
+static void popup_draw(ConLine *l, const ExeHistory *h)
+{
+    int width = l->PopupRect.Right - l->PopupRect.Left + 1, height = l->PopupRect.Bottom - l->PopupRect.Top + 1;
+    CsCharInfo *cells = CsAllocate(sizeof(CsCharInfo) * (size_t)width * (size_t)height);
+    if (!cells)
+        return;
+    uint16_t attr = l->Screen->PopupAttr;
+    uint16_t selected = (uint16_t)(((attr & 0x0F) << 4) | ((attr & 0xF0) >> 4));
+    for (int i = 0; i < width * height; i++) {
+        cells[i].Char = ' ';
+        cells[i].Attributes = attr;
+    }
+    for (int x = 1; x < width - 1; x++) {
+        cells[x].Char = 0x2500;
+        cells[(height - 1) * width + x].Char = 0x2500;
+    }
+    for (int y = 1; y < height - 1; y++) {
+        cells[y * width].Char = 0x2502;
+        cells[y * width + width - 1].Char = 0x2502;
+    }
+    cells[0].Char = 0x250C;
+    cells[width - 1].Char = 0x2510;
+    cells[(height - 1) * width].Char = 0x2514;
+    cells[(height - 1) * width + width - 1].Char = 0x2518;
+    for (int row = 0; row < height - 2; row++) {
+        long index = l->PopupTop + row;
+        if (index >= h->Count)
+            break;
+        bool on = index == l->PopupSelected;
+        CsCharInfo *line = cells + (size_t)(row + 1) * (size_t)width + 1;
+        char number[16];
+        int n = 0;
+        long v = index + 1;
+        char digits[12];
+        int d = 0;
+        do {
+            digits[d++] = (char)('0' + v % 10);
+            v /= 10;
+        } while (v);
+        while (d)
+            number[n++] = digits[--d];
+        number[n++] = ':';
+        number[n++] = ' ';
+        int x = 0;
+        for (int i = 0; i < n && x < width - 2; i++)
+            line[x++].Char = (uint16_t)number[i];
+        for (size_t i = 0; i < h->Lengths[index] && x < width - 2; i++) {
+            ConChar c = h->Commands[index][i];
+            line[x++].Char = c < 0x20 ? ' ' : c;
+        }
+        if (on)
+            for (int i = 0; i < width - 2; i++)
+                line[i].Attributes = selected;
+    }
+    CsRect r = l->PopupRect;
+    CsWriteOutput(l->Screen, cells, &r);
+    CsFree(cells);
+}
+
+static void popup_open(ConLine *l)
+{
+    ExeHistory *h = find_history(l->State, l->Exe, l->ExeLength);
+    if (!h || !h->Count || l->Popup)
+        return;
+    CsBuffer *s = l->Screen;
+    int win_w = s->Window.Right - s->Window.Left + 1, win_h = s->Window.Bottom - s->Window.Top + 1;
+    int width = POPUP_WIDTH < win_w - 2 ? POPUP_WIDTH : win_w - 2;
+    long rows = h->Count < POPUP_ROWS ? h->Count : POPUP_ROWS;
+    if (rows > win_h - 2)
+        rows = win_h - 2;
+    int height = (int)rows + 2;
+    if (width < 12 || height < 3)
+        return;
+    l->PopupRect.Left = (int16_t)(s->Window.Left + (win_w - width) / 2);
+    l->PopupRect.Top = (int16_t)(s->Window.Top + (win_h - height) / 2);
+    l->PopupRect.Right = (int16_t)(l->PopupRect.Left + width - 1);
+    l->PopupRect.Bottom = (int16_t)(l->PopupRect.Top + height - 1);
+    l->PopupSaved = CsAllocate(sizeof(CsCharInfo) * (size_t)width * (size_t)height);
+    if (!l->PopupSaved)
+        return;
+    CsRect r = l->PopupRect;
+    CsReadOutput(s, l->PopupSaved, &r);
+    l->Popup = true;
+    l->PopupSelected = h->LastDisplayed >= 0 && h->LastDisplayed < h->Count ? h->LastDisplayed : h->Count - 1;
+    l->PopupTop = l->PopupSelected - rows + 1;
+    if (l->PopupTop < 0)
+        l->PopupTop = 0;
+    popup_draw(l, h);
+}
+
+/* the keys of the popup: the arrows and pages choose, enter runs the command, the side arrows and escape leave it. */
+static ConLineResult popup_key(ConLine *l, const ConKey *key)
+{
+    ExeHistory *h = find_history(l->State, l->Exe, l->ExeLength);
+    if (!h || !h->Count) {
+        popup_close(l);
+        return CONLINE_MORE;
+    }
+    long rows = l->PopupRect.Bottom - l->PopupRect.Top - 1;
+    long selected = l->PopupSelected;
+    switch (key->Vk) {
+    case VK_UP:
+        selected--;
+        break;
+    case VK_DOWN:
+        selected++;
+        break;
+    case VK_PRIOR:
+        selected -= rows;
+        break;
+    case VK_NEXT:
+        selected += rows;
+        break;
+    case VK_HOME:
+        selected = 0;
+        break;
+    case VK_END:
+        selected = h->Count - 1;
+        break;
+    case VK_ESCAPE:
+        popup_close(l);
+        return CONLINE_MORE;
+    case VK_RETURN:
+    case VK_LEFT:
+    case VK_RIGHT:
+    case VK_F9: {
+        long pick = l->PopupSelected;
+        popup_close(l);
+        h->LastDisplayed = pick;
+        h->JustReset = false;
+        set_line(l, h->Commands[pick], h->Lengths[pick]);
+        if (key->Vk == VK_RETURN) {
+            l->Cursor = l->Length;
+            finish(l, true, key->State);
+            return CONLINE_DONE;
+        }
+        return CONLINE_MORE;
+    }
+    default:
+        return CONLINE_MORE;
+    }
+    if (selected < 0)
+        selected = 0;
+    if (selected >= h->Count)
+        selected = h->Count - 1;
+    l->PopupSelected = selected;
+    if (selected < l->PopupTop)
+        l->PopupTop = selected;
+    if (selected >= l->PopupTop + rows)
+        l->PopupTop = selected - rows + 1;
+    popup_draw(l, h);
+    return CONLINE_MORE;
+}
+
 /* false when the key is a character for the line. */
 static bool editing_key(const ConKey *key)
 {
@@ -1184,7 +1378,9 @@ static ConLineResult edit_key(ConLine *l, const ConKey *key)
         insert_char(l, 0x1A);
         break;
     case VK_F7:
-        if (alt) {
+        if (!alt) {
+            popup_open(l);
+        } else {
             ExeHistory *h = find_history(l->State, l->Exe, l->ExeLength);
             if (h) {
                 drop_from(h, 0);
@@ -1214,6 +1410,8 @@ ConLineResult ConLineKey(ConLine *l, const ConKey *key)
         return CONLINE_DONE;
     if (!key->Down)
         return CONLINE_MORE;
+    if (l->Popup)
+        return popup_key(l, key);
     ConChar c = key->Char;
 
     if (!l->Vt && editing_key(key) && (!c || key->Vk == VK_ESCAPE))

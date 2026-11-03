@@ -204,10 +204,12 @@ static CsCell scroll_fill(const CsBuffer *b)
  * moves the cursor down a row, and to the left edge when carriage is set, scrolling when it was on the bottom
  * margin. a terminal showing the buffer scrolls with the line feed it is sent.
  */
-void CsNewline(CsBuffer *b, bool carriage)
+static void newline(CsBuffer *b, bool carriage, bool wrapping)
 {
     int vy = b->CursorY - b->Window.Top;
-    b->Grid.Rows[b->CursorY].Wrapped = false;
+    /* a row that text wrapped out of keeps the mark, which the window uses to flow the text again. */
+    if (!wrapping)
+        b->Grid.Rows[b->CursorY].Wrapped = false;
     if (vy >= 0 && vy == b->Bottom) {
         bool whole = full_margins(b);
         bool slides = whole && b->Window.Bottom < b->Grid.Height - 1 && !b->Main;
@@ -230,6 +232,11 @@ void CsNewline(CsBuffer *b, bool carriage)
     if (carriage)
         b->CursorX = b->Window.Left;
     b->WrapPending = false;
+}
+
+void CsNewline(CsBuffer *b, bool carriage)
+{
+    newline(b, carriage, false);
 }
 
 static void reverse_index(CsBuffer *b)
@@ -257,7 +264,7 @@ static void reverse_index(CsBuffer *b)
 static void wrap_row(CsBuffer *b)
 {
     b->Grid.Rows[b->CursorY].Wrapped = true;
-    CsNewline(b, true);
+    newline(b, true, true);
 }
 
 /* the terminal's autowrap follows the buffer's wrap mode. */
@@ -1914,6 +1921,8 @@ static void legacy_char(CsBuffer *b, uint32_t c)
 
 void CsPutText(CsBuffer *root, const uint16_t *text, size_t count)
 {
+    if (root->Term->Windowed)
+        CsFollowCursor(CsEffective(root));
     for (size_t i = 0; i < count; i++) {
         /* the alternate screen can change the target buffer in the middle of the text. */
         CsBuffer *b = CsEffective(root);
@@ -1956,6 +1965,8 @@ void CsPutText(CsBuffer *root, const uint16_t *text, size_t count)
 void CsPutLegacy(CsBuffer *root, const uint16_t *text, size_t count)
 {
     CsBuffer *b = CsEffective(root);
+    if (b->Term->Windowed)
+        CsFollowCursor(b);
     for (size_t i = 0; i < count; i++) {
         uint32_t c = text[i];
         if (c >= 0xD800 && c <= 0xDBFF && i + 1 < count && text[i + 1] >= 0xDC00 && text[i + 1] <= 0xDFFF) {

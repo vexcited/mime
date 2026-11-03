@@ -235,11 +235,17 @@ typedef struct CsTerminal {
     bool OemGlyphs; /* the output code page has a glyph for each control character. */
     bool TerminalSized; /* buffer and window have one size, as in a console that belongs to a terminal. */
     bool ResizableHost; /* the terminal can be asked to resize. */
+
+    /* a console window: the buffer is bigger than the window, which Cols and Rows then count. */
+    bool Windowed;
+    int MaxCols, MaxRows; /* the largest window the screen has room for, 0 when not known. */
+    uint64_t Generation;  /* counts the calls that changed what the window shows. */
 } CsTerminal;
 
 #define CS_CHANGED_TITLE 0x1
 #define CS_CHANGED_MODES 0x2
 #define CS_CHANGED_BELL 0x4
+#define CS_CHANGED_WINDOW 0x8 /* a program changed the size of the window or the buffer */
 
 /* ---------------------------------------------------------------- terminal */
 
@@ -247,6 +253,33 @@ bool CsTerminalInit(CsTerminal *term, int cols, int rows);
 void CsTerminalDestroy(CsTerminal *term);
 
 void CsTerminalResize(CsTerminal *term, int cols, int rows);
+
+/* makes the terminal a console window: nothing is sent, the window is part of a bigger buffer. */
+void CsTerminalSetWindowed(CsTerminal *term, int max_cols, int max_rows);
+
+/*
+ * the user made the window cols by rows cells. the main buffer takes the new width and its text flows to it, the
+ * alternate screen is the window, any other buffer grows to hold the window.
+ */
+void CsWindowResize(CsTerminal *term, int cols, int rows);
+
+/* the viewport of the shown buffer moves, as far as the buffer allows. */
+void CsWindowScroll(CsTerminal *term, int left, int top);
+
+/* one cell as the window draws it. */
+typedef struct CsDrawCell {
+    uint32_t Char; /* 0 for the trail half of a wide character */
+    uint32_t Foreground, Background; /* 0x00BBGGRR */
+    uint16_t Style;
+    uint16_t Flags; /* CS_DRAW_ */
+} CsDrawCell;
+#define CS_DRAW_LEAD 0x1
+#define CS_DRAW_TRAIL 0x2
+#define CS_DRAW_WRAPPED 0x4 /* on the last cell of a row whose text goes on in the next one */
+void CsDrawRow(CsBuffer *buffer, int y, int left, int count, CsDrawCell *out);
+
+/* the colors a new buffer starts with, which also fill it. */
+void CsSetDefaultAttributes(CsBuffer *buffer, uint16_t attributes);
 
 /* the pointer is valid until the next call into the module. */
 const uint8_t *CsTakeOut(CsTerminal *term, size_t *length);

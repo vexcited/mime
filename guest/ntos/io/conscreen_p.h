@@ -78,6 +78,7 @@ void CsEraseRect(CsBuffer *buffer, int y0, int y1, int x0, int x1);
 void CsScrollRegion(CsBuffer *buffer, int top, int bottom, int count, bool up, CsCell fill);
 void CsMoveCursor(CsBuffer *buffer, int x, int y);
 void CsAdjustWindow(CsBuffer *buffer);
+void CsFollowCursor(CsBuffer *buffer);
 void CsPlaceChar(CsBuffer *buffer, uint32_t codepoint, int width);
 void CsResizeWindowFits(CsBuffer *buffer);
 void CsClearTabs(CsBuffer *buffer);

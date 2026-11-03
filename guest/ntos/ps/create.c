@@ -24,6 +24,7 @@ typedef struct PSP_PARAMS {
     ULONG StartingX, StartingY, CountX, CountY, CountCharsX, CountCharsY, FillAttribute;
     BOOLEAN Detached;
     BOOLEAN NewConsole; /* the process gets a console of its own. */
+    BOOLEAN NoWindow;   /* and nothing shows it. */
     HANDLE PtyHandle;   /* the creator's handle to the pseudo console the process attaches to. */
 } PSP_PARAMS;
 
@@ -300,11 +301,17 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
             ConsoleAttach(process, pty);
             ConsoleInitialTitle(pty, p->WindowTitle.Length ? &p->WindowTitle : image);
             ConsoleDereference(pty);
-        } else if (p->NewConsole) {
-            MIME_CONSOLE *own = ConsoleCreateNew();
+        } else if (p->NewConsole || (!console && !p->NoWindow)) {
+            /* a console of its own, in a window of the user's session unless it was asked for without one. */
+            BOOLEAN window = !p->NoWindow && process->SessionId != 0;
+            CON_STARTUP startup = {p->WindowFlags, p->ShowWindowFlags, (LONG)p->StartingX, (LONG)p->StartingY, p->CountX,
+                                   p->CountY, p->CountCharsX, p->CountCharsY, p->FillAttribute};
+            MIME_CONSOLE *own = window ? ConsoleCreateWindow(&startup) : ConsoleCreateNew();
             if (own) {
                 ConsoleAttach(process, own);
                 ConsoleInitialTitle(own, p->WindowTitle.Length ? &p->WindowTitle : image);
+                if (window)
+                    ConsoleStartHost(own, parent);
                 ConsoleDereference(own);
             }
         } else if (console) {
@@ -419,6 +426,33 @@ NTSTATUS PsStartServiceController(void)
     return STATUS_SUCCESS;
 }
 
+/*
+ * the process that draws a console window, conhost.exe, runs as the program that asked for the console. it finds its
+ * console by the number on its command line.
+ */
+NTSTATUS PsStartConsoleHost(PEPROCESS parent, ULONG64 console, PULONG pid)
+{
+    static const WCHAR prefix[] = L"C:\\Windows\\System32\\conhost.exe 0xffffffff -ForceV1 -Console 0x";
+    WCHAR command[128];
+    SIZE_T n = RTL_NUMBER_OF(prefix) - 1;
+    memcpy(command, prefix, n * sizeof(WCHAR));
+    for (int shift = 60; shift >= 0; shift -= 4)
+        command[n++] = L"0123456789abcdef"[(console >> shift) & 15];
+    command[n] = 0;
+    UNICODE_STRING image = RTL_CONSTANT_STRING(L"C:\\Windows\\System32\\conhost.exe");
+    UNICODE_STRING cwd = RTL_CONSTANT_STRING(L"C:\\Windows\\System32");
+    UNICODE_STRING cmdline = {(USHORT)(n * sizeof(WCHAR)), (USHORT)((n + 1) * sizeof(WCHAR)), command};
+    PSP_PARAMS p = {.Image = image, .CommandLine = cmdline, .CurrentDirectory = cwd, .Detached = TRUE,
+                    .ShowWindowFlags = 1 /* SW_SHOWNORMAL */};
+    PEPROCESS process;
+    NTSTATUS status = create_process(&p, nullptr, 0, nullptr, FALSE, parent, &process, nullptr, nullptr, nullptr, KernelMode);
+    if (!NT_SUCCESS(status))
+        return status;
+    *pid = (ULONG)(ULONG_PTR)process->UniqueProcessId;
+    ObDereferenceObject(process);
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, PCUNICODE_STRING cwd, ULONG64 request_id,
                              MIME_CONSOLE *console, BOOLEAN elevated, PEPROCESS *out)
 {
@@ -519,6 +553,7 @@ static NTSTATUS capture_params(PRTL_USER_PROCESS_PARAMETERS user, PSP_PARAMS *p)
     p->FillAttribute = pp.FillAttribute;
     p->Detached = pp.ConsoleHandle == CONSOLE_DETACHED;
     p->NewConsole = pp.ConsoleHandle == CONSOLE_NEW || pp.ConsoleHandle == CONSOLE_NO_WINDOW;
+    p->NoWindow = pp.ConsoleHandle == CONSOLE_NO_WINDOW;
     if (pp.ConsoleHandle && pp.ConsoleHandle != CONSOLE_DETACHED && !p->NewConsole)
         p->PtyHandle = pp.ConsoleHandle;
     return status;

@@ -857,6 +857,21 @@ void CsRender(CsTerminal *t)
     CsBuffer *b = CsDisplayed(t);
     if (!b)
         return;
+    if (t->Windowed) {
+        /* a window reads the cells itself, so only the marks are cleared. */
+        for (CsBuffer *x = t->Buffers; x; x = x->Next) {
+            if (!x->Dirty)
+                continue;
+            for (int y = x->DirtyTop; y <= x->DirtyBottom && y < x->Grid.Height; y++) {
+                x->Grid.Rows[y].DirtyLeft = 1;
+                x->Grid.Rows[y].DirtyRight = 0;
+                x->Grid.Rows[y].Force = false;
+            }
+            x->Dirty = false;
+        }
+        t->Generation++;
+        return;
+    }
     if (t->Headless) {
         for (CsBuffer *x = t->Buffers; x; x = x->Next) {
             for (int y = 0; y < x->Grid.Height; y++) {
@@ -1106,6 +1121,12 @@ void CsShow(CsTerminal *t, CsBuffer *buffer)
         t->Main = buffer;
     t->Shown = buffer;
     CsBuffer *now = CsDisplayed(t);
+    if (t->Windowed && now) {
+        t->Cols = now->Window.Right - now->Window.Left + 1;
+        t->Rows = now->Window.Bottom - now->Window.Top + 1;
+        t->Generation++;
+        t->Changed |= CS_CHANGED_WINDOW;
+    }
     if (!old || old == now || t->Headless)
         return;
     CsRepaint(t);

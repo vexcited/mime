@@ -14,6 +14,11 @@
 
 FAST_MUTEX g_con_lock;
 static LIST_ENTRY g_consoles;
+static ULONG64 g_next_console = 1;
+
+#define WINDOW_COLUMNS 120
+#define WINDOW_ROWS 30
+#define WINDOW_BUFFER_ROWS 9001
 
 /* ------------------------------------------------------------ memory for the screen module */
 
@@ -110,8 +115,15 @@ MIME_CONSOLE *ConCreateConsole(CON_BACKEND backend, ULONG64 request, ULONG tty_f
     KeInitializeEvent(&c->OutputResumed, NotificationEvent, TRUE);
     KeInitializeEvent(&c->PtyReady, NotificationEvent, FALSE);
     KeInitializeEvent(&c->PtySpace, NotificationEvent, TRUE);
+    KeInitializeEvent(&c->HostReady, NotificationEvent, backend != CON_BACKEND_WINDOW);
     int cols = size & 0xFFFF ? (int)(size & 0xFFFF) : 80;
     int rows = size >> 16 ? (int)(size >> 16) : 25;
+    int buffer_rows = rows;
+    if (backend == CON_BACKEND_WINDOW) {
+        cols = WINDOW_COLUMNS;
+        rows = WINDOW_ROWS;
+        buffer_rows = WINDOW_BUFFER_ROWS;
+    }
     c->Lines = ConLineStateCreate();
     if (!c->Lines || !CsTerminalInit(&c->Term, cols, rows)) {
         ConLineStateDestroy(c->Lines);
@@ -119,11 +131,15 @@ MIME_CONSOLE *ConCreateConsole(CON_BACKEND backend, ULONG64 request, ULONG tty_f
         return nullptr;
     }
     c->Term.Headless = backend == CON_BACKEND_NONE || (backend == CON_BACKEND_RUN && !(c->Flags & (MIME_CONDRV_TTY_OUTPUT | MIME_CONDRV_TTY_ERROR)));
-    if (c->Term.Headless)
+    if (backend == CON_BACKEND_WINDOW) {
+        CsTerminalSetWindowed(&c->Term, 0, 0);
+        c->Flags |= MIME_CONDRV_HAS_WINDOW;
+    } else if (c->Term.Headless) {
         c->Flags |= MIME_CONDRV_HEADLESS;
+    }
     if (backend == CON_BACKEND_PTY)
         c->Flags |= MIME_CONDRV_PTY_HOST;
-    c->Main = CsBufferCreate(&c->Term, cols, rows);
+    c->Main = CsBufferCreate(&c->Term, cols, buffer_rows);
     if (!c->Main) {
         CsTerminalDestroy(&c->Term);
         ConLineStateDestroy(c->Lines);
@@ -133,6 +149,7 @@ MIME_CONSOLE *ConCreateConsole(CON_BACKEND backend, ULONG64 request, ULONG tty_f
     CsShow(&c->Term, c->Main);
     c->Main->Refs = 1;
     ExAcquireFastMutex(&g_con_lock);
+    c->Id = g_next_console++;
     InsertTailList(&g_consoles, &c->Links);
     ExReleaseFastMutex(&g_con_lock);
     return c;
@@ -168,7 +185,9 @@ NTSTATUS ConsoleAttach(PEPROCESS p, MIME_CONSOLE *c)
 {
     ExAcquireFastMutex(&g_con_lock);
     NTSTATUS status = STATUS_ACCESS_DENIED;
-    if (!p->Console) {
+    if (c->Ended) {
+        status = STATUS_INVALID_HANDLE;
+    } else if (!p->Console) {
         p->Console = c;
         p->ConsoleGroup = (ULONG)(ULONG_PTR)p->UniqueProcessId;
         c->References++;
@@ -176,6 +195,20 @@ NTSTATUS ConsoleAttach(PEPROCESS p, MIME_CONSOLE *c)
     }
     ExReleaseFastMutex(&g_con_lock);
     return status;
+}
+
+/* the processes attached to a console. called with the lock held. */
+static ULONG attached_count(MIME_CONSOLE *c)
+{
+    ULONG total = 0;
+    ULONG64 s = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY e = PsActiveProcessHead.Flink; e != &PsActiveProcessHead; e = e->Flink) {
+        PEPROCESS p = CONTAINING_RECORD(e, EPROCESS, ActiveProcessLinks);
+        if (p->Console == c && !p->Exited)
+            total++;
+    }
+    KiReleaseDispatcherLock(s);
+    return total;
 }
 
 void ConsoleDetach(PEPROCESS p)
@@ -186,6 +219,14 @@ void ConsoleDetach(PEPROCESS p)
     /* a hung up pseudo console waits for the last process to leave. */
     if (c && c->Backend == CON_BACKEND_PTY)
         KeSetEvent(&c->PtyReady, 0, FALSE);
+    /* a console window closes with its last process. */
+    if (c && c->Backend == CON_BACKEND_WINDOW && !c->Ended && !attached_count(c)) {
+        c->Ended = TRUE;
+        KeSetEvent(&c->HostReady, 0, FALSE);
+        c->HostPending |= MIME_CONDRV_CHANGED_END;
+        if (c->HostEvent)
+            KeSetEvent(c->HostEvent, 0, FALSE);
+    }
     ExReleaseFastMutex(&g_con_lock);
     if (c)
         ConRelease(c);
@@ -459,6 +500,7 @@ void ConFlush(MIME_CONSOLE *c)
         c->TitleSet = TRUE;
         t->Changed &= ~(unsigned)CS_CHANGED_TITLE;
         CsSetTitle(t, t->Title, n);
+        c->HostPending |= MIME_CONDRV_CHANGED_TITLE;
     }
     size_t n;
     const uint8_t *out = CsTakeOut(t, &n);
@@ -472,6 +514,29 @@ void ConFlush(MIME_CONSOLE *c)
         memcpy(copy, reply, n);
         inject_text(c, copy, (ULONG)n);
     }
+    ConNotify(c);
+}
+
+/* tells the window of a console what changed. called with the lock held. */
+void ConNotify(MIME_CONSOLE *c)
+{
+    CsTerminal *t = &c->Term;
+    if (c->Backend != CON_BACKEND_WINDOW)
+        return;
+    if (t->Generation != c->SeenGeneration) {
+        c->SeenGeneration = t->Generation;
+        c->HostPending |= MIME_CONDRV_CHANGED_CELLS;
+    }
+    if (t->Changed & CS_CHANGED_WINDOW) {
+        t->Changed &= ~(unsigned)CS_CHANGED_WINDOW;
+        c->HostPending |= MIME_CONDRV_CHANGED_WINDOW;
+    }
+    if (t->BellCount != c->SeenBells) {
+        c->SeenBells = t->BellCount;
+        c->HostPending |= MIME_CONDRV_CHANGED_BELL;
+    }
+    if (c->HostPending && c->HostEvent)
+        KeSetEvent(c->HostEvent, 0, FALSE);
 }
 
 void ConSetTitle(MIME_CONSOLE *c, const WCHAR *title, ULONG count)
@@ -482,6 +547,7 @@ void ConSetTitle(MIME_CONSOLE *c, const WCHAR *title, ULONG count)
     c->Title[count] = 0;
     c->TitleSet = TRUE;
     CsSetTitle(&c->Term, title, count);
+    c->HostPending |= MIME_CONDRV_CHANGED_TITLE;
     ConFlush(c);
 }
 
@@ -510,6 +576,8 @@ NTSTATUS ConSetInputMode(MIME_CONSOLE *c, ULONG mode)
         c->AutoPosition = (mode & ENABLE_AUTO_POSITION) != 0;
     }
     apply_mouse(c);
+    c->HostPending |= MIME_CONDRV_CHANGED_MODE;
+    ConNotify(c);
     if ((mode & ~INPUT_MODE_MASK) || ((mode & ENABLE_ECHO_INPUT) && !(mode & ENABLE_LINE_INPUT)))
         return STATUS_INVALID_PARAMETER;
     return STATUS_SUCCESS;
@@ -1056,19 +1124,276 @@ NTSTATUS ConAllocFor(PEPROCESS self, ULONG flags)
         }
     }
     ExReleaseFastMutex(&g_con_lock);
+    BOOLEAN window = FALSE;
+    if (!c && (flags & MIME_CONDRV_ALLOC_WINDOW) && self->SessionId != 0) {
+        c = ConCreateConsole(CON_BACKEND_WINDOW, 0, MIME_CONDRV_TTY_INPUT | MIME_CONDRV_TTY_OUTPUT | MIME_CONDRV_TTY_ERROR, 0);
+        window = c != nullptr;
+    }
     if (!c)
         c = ConCreateConsole(CON_BACKEND_NONE, 0, MIME_CONDRV_TTY_INPUT | MIME_CONDRV_TTY_OUTPUT | MIME_CONDRV_TTY_ERROR, 0);
     if (!c)
         return STATUS_INSUFFICIENT_RESOURCES;
     NTSTATUS status = ConsoleAttach(self, c);
+    if (window) {
+        ConsoleInitialTitle(c, &self->ImagePath);
+        if (NT_SUCCESS(status))
+            ConsoleStartHost(c, self);
+    }
     ConRelease(c);
     return status;
 }
 
-/* a console for a process that asks for a new one at creation. */
+/* a console for a process that asks for a new one at creation, and wants no window. */
 MIME_CONSOLE *ConsoleCreateNew(void)
 {
     return ConCreateConsole(CON_BACKEND_NONE, 0, MIME_CONDRV_TTY_INPUT | MIME_CONDRV_TTY_OUTPUT | MIME_CONDRV_TTY_ERROR, 0);
+}
+
+#define STARTF_USECOUNTCHARS_ 0x8
+#define STARTF_USEFILLATTRIBUTE_ 0x10
+
+/* a console with a window, which a host process draws once it is started with ConsoleStartHost. */
+MIME_CONSOLE *ConsoleCreateWindow(const CON_STARTUP *startup)
+{
+    MIME_CONSOLE *c = ConCreateConsole(CON_BACKEND_WINDOW, 0, MIME_CONDRV_TTY_INPUT | MIME_CONDRV_TTY_OUTPUT | MIME_CONDRV_TTY_ERROR, 0);
+    if (!c)
+        return nullptr;
+    ExAcquireFastMutex(&g_con_lock);
+    if (startup)
+        c->Startup = *startup;
+    CsBuffer *b = c->Main;
+    if ((c->Startup.Flags & STARTF_USEFILLATTRIBUTE_)) {
+        CsSetDefaultAttributes(b, (uint16_t)c->Startup.FillAttribute);
+    }
+    if ((c->Startup.Flags & STARTF_USECOUNTCHARS_) && c->Startup.CountCharsX && c->Startup.CountCharsY) {
+        ULONG x = c->Startup.CountCharsX > 9999 ? 9999 : c->Startup.CountCharsX;
+        ULONG y = c->Startup.CountCharsY > 9999 ? 9999 : c->Startup.CountCharsY;
+        (void)CsResizeBuffer(b, (int)x, (int)y);
+    }
+    ExReleaseFastMutex(&g_con_lock);
+    return c;
+}
+
+/* starts the host process of a console window for the process that created it. */
+void ConsoleStartHost(MIME_CONSOLE *c, PEPROCESS parent)
+{
+    ULONG pid = 0;
+    NTSTATUS status = PsStartConsoleHost(parent, c->Id, &pid);
+    if (!NT_SUCCESS(status)) {
+        KiLogPrintf("cannot start the console host: %08x", status);
+        KeSetEvent(&c->HostReady, 0, FALSE);
+    } else {
+        c->HostPid = pid;
+        c->HostWanted = TRUE;
+    }
+}
+
+/*
+ * what the window of a console decides, its largest size and its font, is not known before its host has attached. a
+ * program that asks that early waits a moment for it, as it would find the host ready on Windows, and a host that does not
+ * come stops being waited for.
+ */
+void ConWaitForHost(MIME_CONSOLE *c)
+{
+    if (c->Backend != CON_BACKEND_WINDOW)
+        return;
+    LARGE_INTEGER limit = {.QuadPart = -(LONGLONG)5000 * 10000};
+    if (KeWaitForSingleObject(&c->HostReady, UserRequest, KernelMode, FALSE, &limit) == STATUS_TIMEOUT)
+        KeSetEvent(&c->HostReady, 0, FALSE);
+}
+
+/* ------------------------------------------------------------ the window host */
+
+MIME_CONSOLE *ConFindWindow(ULONG64 id)
+{
+    MIME_CONSOLE *found = nullptr;
+    for (PLIST_ENTRY e = g_consoles.Flink; e != &g_consoles; e = e->Flink) {
+        MIME_CONSOLE *c = CONTAINING_RECORD(e, MIME_CONSOLE, Links);
+        if (c->Backend == CON_BACKEND_WINDOW && c->Id == id) {
+            found = c;
+            c->References++;
+            break;
+        }
+    }
+    return found;
+}
+
+/* the host has gone: the programs of the console lose their window. */
+void ConHostDetached(MIME_CONSOLE *c)
+{
+    ExAcquireFastMutex(&g_con_lock);
+    BOOLEAN ended = c->Ended;
+    KeSetEvent(&c->HostReady, 0, FALSE);
+    PKEVENT event = c->HostEvent;
+    c->HostHandle = nullptr;
+    c->HostEvent = nullptr;
+    ExReleaseFastMutex(&g_con_lock);
+    if (event)
+        ObDereferenceObject(event);
+    if (!ended)
+        ConClose(c);
+}
+
+/* what the host needs to draw and to size its window. called with the lock held. */
+void ConHostFillState(MIME_CONSOLE *c, MIME_CONDRV_HOST_STATE *st, BOOLEAN take)
+{
+    CsTerminal *t = &c->Term;
+    memset(st, 0, sizeof(*st));
+    CsBuffer *b = CsDisplayed(t);
+    if (!b)
+        b = c->Main;
+    ConNotify(c);
+    st->Changed = c->HostPending;
+    if (take)
+        c->HostPending = 0;
+    st->Flags = c->Flags | (c->Ended ? MIME_CONDRV_CLOSED : 0);
+    st->Generation = t->Generation;
+    st->Size.X = (SHORT)b->Grid.Width;
+    st->Size.Y = (SHORT)b->Grid.Height;
+    st->Window.Left = b->Window.Left;
+    st->Window.Top = b->Window.Top;
+    st->Window.Right = b->Window.Right;
+    st->Window.Bottom = b->Window.Bottom;
+    st->Cursor.X = (SHORT)b->CursorX;
+    st->Cursor.Y = (SHORT)b->CursorY;
+    st->CursorSize = (ULONG)b->CursorSize;
+    st->CursorVisible = b->CursorVisible;
+    st->InputMode = ConGetInputMode(c);
+    st->OutputMode = b->Mode;
+    st->Scrolls = b->Scrolls;
+    st->BellCount = t->BellCount;
+    st->Attributes = b->Attr.Attr;
+    st->PopupAttributes = b->PopupAttr;
+    st->Alternate = b->Main != nullptr;
+    st->QuickEdit = c->QuickEdit;
+    st->InsertMode = c->InsertDefault;
+    memcpy(st->ColorTable, b->ColorTable, sizeof(st->ColorTable));
+    unsigned size, buffers, flags;
+    ConHistoryGetInfo(c->Lines, &size, &buffers, &flags);
+    st->HistoryBufferSize = size;
+    st->HistoryBuffers = buffers;
+    st->HistoryFlags = flags;
+    st->StartupFlags = c->Startup.Flags;
+    st->ShowWindow = c->Startup.ShowWindow;
+    st->StartX = c->Startup.X;
+    st->StartY = c->Startup.Y;
+    st->SizeX = c->Startup.SizeX;
+    st->SizeY = c->Startup.SizeY;
+    ULONG n = (ULONG)wcslen(c->Title);
+    st->TitleLength = n;
+    memcpy(st->Title, c->Title, n * sizeof(WCHAR));
+}
+
+/*
+ * input a window made: keys, the mouse, focus. Ctrl+C is the event it stands for when the input is processed, Ctrl+Break
+ * always is, and neither is a record then. the lock is not held.
+ */
+void ConHostRecords(MIME_CONSOLE *c, MIME_CONDRV_RECORD *r, ULONG count)
+{
+    BOOLEAN ctrl_c = FALSE, ctrl_break = FALSE;
+    ULONG kept = 0;
+    ExAcquireFastMutex(&g_con_lock);
+    BOOLEAN processed = (c->InputMode & ENABLE_PROCESSED_INPUT) != 0;
+    BOOLEAN mouse = (c->InputMode & ENABLE_MOUSE_INPUT) && !c->QuickEdit;
+    BOOLEAN window = (c->InputMode & ENABLE_WINDOW_INPUT) != 0;
+    for (ULONG i = 0; i < count; i++) {
+        MIME_CONDRV_RECORD *k = &r[i];
+        if (k->EventType == CON_KEY_EVENT) {
+            BOOLEAN ctrl = (k->Key.ControlKeyState & (CON_LEFT_CTRL | CON_RIGHT_CTRL)) != 0;
+            if (ctrl && k->Key.VirtualKey == 3 /* VK_CANCEL */) {
+                if (k->Key.KeyDown)
+                    ctrl_break = TRUE;
+                continue;
+            }
+            if (processed && ctrl && k->Key.VirtualKey == 'C' && k->Key.Char == 3 &&
+                !(k->Key.ControlKeyState & (CON_LEFT_ALT | CON_RIGHT_ALT))) {
+                if (k->Key.KeyDown)
+                    ctrl_c = TRUE;
+                continue;
+            }
+        } else if (k->EventType == CON_MOUSE_EVENT) {
+            if (!mouse)
+                continue;
+        } else if (k->EventType == CON_FOCUS_EVENT) {
+            if (!window)
+                continue;
+        } else {
+            continue;
+        }
+        r[kept++] = *k;
+    }
+    if (kept) {
+        ULONG written;
+        ConWriteRecords(c, r, kept, FALSE, &written);
+    }
+    ExReleaseFastMutex(&g_con_lock);
+    if (ctrl_break) {
+        ConAbortReads(c, TRUE);
+        ConDispatchEvent(c, CTRL_BREAK_EVENT, 0);
+    } else if (ctrl_c) {
+        ConAbortReads(c, FALSE);
+        ConDispatchEvent(c, CTRL_C_EVENT, 0);
+    }
+}
+
+/* the choices of the properties dialog. */
+NTSTATUS ConHostSettings(MIME_CONSOLE *c, const MIME_CONDRV_HOST_SETTINGS *s)
+{
+    NTSTATUS status = STATUS_SUCCESS;
+    ExAcquireFastMutex(&g_con_lock);
+    CsBuffer *b = CsDisplayed(&c->Term);
+    if (!b)
+        b = c->Main;
+    if (s->Set & 1) {
+        CsInfo info;
+        CsGetInfo(b, &info);
+        memcpy(info.ColorTable, s->ColorTable, sizeof(info.ColorTable));
+        info.Attributes = s->Attributes;
+        info.PopupAttributes = s->PopupAttributes;
+        if (CsSetInfo(b, &info) != CS_OK)
+            status = STATUS_INVALID_PARAMETER;
+        memcpy(c->Main->ColorTable, s->ColorTable, sizeof(c->Main->ColorTable));
+        c->HostPending |= MIME_CONDRV_CHANGED_PALETTE;
+    }
+    if (s->Set & 2) {
+        c->QuickEdit = s->QuickEdit != 0;
+        c->InsertDefault = s->Insert != 0;
+        apply_mouse(c);
+        c->HostPending |= MIME_CONDRV_CHANGED_MODE;
+    }
+    if ((s->Set & 4) && !ConHistorySetInfo(c->Lines, s->HistoryBufferSize, s->HistoryBuffers, s->HistoryFlags))
+        status = STATUS_INVALID_PARAMETER;
+    if ((s->Set & 8) && CsSetSize(b, (CsCoord){s->Size.X, s->Size.Y}) != CS_OK)
+        status = STATUS_INVALID_PARAMETER;
+    ConFlush(c);
+    ExReleaseFastMutex(&g_con_lock);
+    return status;
+}
+
+/* the user sized or scrolled the window. */
+void ConHostWindow(MIME_CONSOLE *c, const MIME_CONDRV_HOST_WINDOW *w)
+{
+    ExAcquireFastMutex(&g_con_lock);
+    CsTerminal *t = &c->Term;
+    if (w->Op == MIME_CONDRV_WINDOW_RESIZE) {
+        CsWindowResize(t, w->Columns, w->Rows);
+        CsBuffer *b = CsDisplayed(t);
+        if ((c->InputMode & ENABLE_WINDOW_INPUT) && b) {
+            CON_CHUNK *k = ConNewChunk(TRUE, 1);
+            if (k) {
+                MIME_CONDRV_RECORD *r = &k->Record[0];
+                memset(r, 0, sizeof(*r));
+                r->EventType = CON_WINDOW_BUFFER_SIZE_EVENT;
+                r->Value = (ULONG)(USHORT)b->Grid.Width | ((ULONG)(USHORT)b->Grid.Height << 16);
+                k->Length = 1;
+                ConQueueChunk(c, k, FALSE);
+            }
+        }
+    } else if (w->Op == MIME_CONDRV_WINDOW_SCROLL) {
+        CsWindowScroll(t, w->Left, w->Top);
+    }
+    ConFlush(c);
+    ExReleaseFastMutex(&g_con_lock);
 }
 
 void IopInitializeConsole(void)
