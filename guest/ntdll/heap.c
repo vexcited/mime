@@ -32,11 +32,15 @@ typedef struct HEAP_BLOCK {
 } HEAP_BLOCK;
 MIME_STATIC_ASSERT(sizeof(HEAP_BLOCK) == HEAP_GRANULE, "HEAP_BLOCK");
 
-/* free blocks link through their payload. */
-typedef struct HEAP_FREE {
-    HEAP_BLOCK Block;
-    LIST_ENTRY Links;
-} HEAP_FREE;
+/*
+ * free blocks link through the last bytes of their payload, where the used part of a block is the least likely to end.
+ * a program that reads a block it freed, which Windows' heap lets it do for a small block, then finds what it wrote
+ * in the first bytes: the std::map node that its own callback erased, read to find the next one, is such a read.
+ */
+typedef struct HEAP_FREE_LINKS {
+    struct HEAP_BLOCK *Next;
+    struct HEAP_BLOCK *Prev;
+} HEAP_FREE_LINKS;
 
 typedef struct DECLSPEC_ALIGN(16) HEAP_SEGMENT {
     LIST_ENTRY Links;
@@ -60,7 +64,7 @@ typedef struct HEAP {
     RTL_CRITICAL_SECTION Lock;
     LIST_ENTRY Segments;
     LIST_ENTRY LargeBlocks;
-    LIST_ENTRY Bins[HEAP_BINS];
+    HEAP_BLOCK *Bins[HEAP_BINS];
     ULONG64 BinMask[(HEAP_BINS + 63) / 64];
     BOOLEAN Growable;
     BOOLEAN External; /* memory supplied by the caller */
@@ -89,19 +93,36 @@ static HEAP_BLOCK *prev_block(HEAP_BLOCK *b)
     return b->PrevSize ? (HEAP_BLOCK *)((PUCHAR)b - (SIZE_T)b->PrevSize * HEAP_GRANULE) : nullptr;
 }
 
+/* the links follow the size of the block, so a block leaves its bin before its size changes. */
+static HEAP_FREE_LINKS *free_links(HEAP_BLOCK *b)
+{
+    return (HEAP_FREE_LINKS *)((PUCHAR)b + (SIZE_T)b->Size * HEAP_GRANULE - sizeof(HEAP_FREE_LINKS));
+}
+
 static void insert_free(PHEAP heap, HEAP_BLOCK *b)
 {
     ULONG bin = bin_index(b->Size);
     b->Flags &= (UCHAR)~BLOCK_BUSY;
-    InsertHeadList(&heap->Bins[bin], &((HEAP_FREE *)b)->Links);
+    HEAP_FREE_LINKS *links = free_links(b);
+    links->Prev = nullptr;
+    links->Next = heap->Bins[bin];
+    if (links->Next)
+        free_links(links->Next)->Prev = b;
+    heap->Bins[bin] = b;
     heap->BinMask[bin / 64] |= 1ull << (bin % 64);
 }
 
 static void remove_free(PHEAP heap, HEAP_BLOCK *b)
 {
     ULONG bin = bin_index(b->Size);
-    RemoveEntryList(&((HEAP_FREE *)b)->Links);
-    if (IsListEmpty(&heap->Bins[bin]))
+    HEAP_FREE_LINKS *links = free_links(b);
+    if (links->Prev)
+        free_links(links->Prev)->Next = links->Next;
+    else
+        heap->Bins[bin] = links->Next;
+    if (links->Next)
+        free_links(links->Next)->Prev = links->Prev;
+    if (!heap->Bins[bin])
         heap->BinMask[bin / 64] &= ~(1ull << (bin % 64));
 }
 
@@ -160,8 +181,8 @@ static HEAP_BLOCK *find_free(PHEAP heap, ULONG granules)
 {
     ULONG bin = bin_index(granules);
     /* exact small bins hold blocks of one size only. */
-    if (bin < HEAP_SMALL_BINS && !IsListEmpty(&heap->Bins[bin]))
-        return (HEAP_BLOCK *)CONTAINING_RECORD(heap->Bins[bin].Flink, HEAP_FREE, Links);
+    if (bin < HEAP_SMALL_BINS && heap->Bins[bin])
+        return heap->Bins[bin];
     for (ULONG word = bin / 64; word < RTL_NUMBER_OF(heap->BinMask); word++) {
         ULONG64 mask = heap->BinMask[word];
         if (word == bin / 64)
@@ -169,8 +190,7 @@ static HEAP_BLOCK *find_free(PHEAP heap, ULONG granules)
         while (mask) {
             ULONG b = word * 64 + (ULONG)__builtin_ctzll(mask);
             mask &= mask - 1;
-            for (PLIST_ENTRY e = heap->Bins[b].Flink; e != &heap->Bins[b]; e = e->Flink) {
-                HEAP_BLOCK *blk = &CONTAINING_RECORD(e, HEAP_FREE, Links)->Block;
+            for (HEAP_BLOCK *blk = heap->Bins[b]; blk; blk = free_links(blk)->Next) {
                 if (blk->Size >= granules)
                     return blk;
             }
@@ -289,8 +309,6 @@ NTDLL_EXPORT PVOID NTAPI RtlCreateHeap(ULONG flags, PVOID base, SIZE_T reserve, 
     RtlInitializeCriticalSection(&heap->Lock);
     InitializeListHead(&heap->Segments);
     InitializeListHead(&heap->LargeBlocks);
-    for (ULONG i = 0; i < HEAP_BINS; i++)
-        InitializeListHead(&heap->Bins[i]);
     /* the rest of the first region becomes the first segment. */
     SIZE_T header = (sizeof(HEAP) + HEAP_GRANULE - 1) & ~(SIZE_T)(HEAP_GRANULE - 1);
     if (size > header + sizeof(HEAP_SEGMENT) + 4 * HEAP_GRANULE)
