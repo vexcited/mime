@@ -12,6 +12,9 @@ typedef struct NLS_SORT_ORDER {
     uint16_t Max;
     uint16_t Count[9];
     const uint16_t *Entries[9];
+    /* the orders whose only contractions are surrogate pairs have them as one weight of three bytes for each low surrogate of a high one. */
+    const uint16_t *PairIndex;
+    const uint8_t *PairData;
 } NLS_SORT_ORDER;
 
 #define NLS_SORT_THREE_BYTE_WEIGHTS 0x01
@@ -22,6 +25,10 @@ typedef struct NLS_SORT_TABLES {
     const uint32_t *Pages;
     const uint32_t *Expansions;
     const uint8_t *Jamo;
+    /* the weights of a few characters hold an index past the expansions, which Windows reads from what follows them in its file. */
+    uint32_t ExpansionCount;
+    const uint32_t *ExpansionExtra;
+    uint32_t ExpansionExtraCount;
 } NLS_SORT_TABLES;
 
 #define NLS_SORT_IGNORECASE 0x00000001

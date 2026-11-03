@@ -188,6 +188,16 @@ static int map_old_hangul(const SORT_STATE *s, const uint16_t *text, const uint1
     return (int)(pos - text);
 }
 
+static uint32_t expansion_of(const NLS_SORT_TABLES *t, unsigned index)
+{
+    if (index < t->ExpansionCount)
+        return t->Expansions[index];
+    for (uint32_t i = 0; i < t->ExpansionExtraCount; i++)
+        if (t->ExpansionExtra[2 * i] == index)
+            return t->ExpansionExtra[2 * i + 1];
+    return 0;
+}
+
 static void process_special(SORT_STATE *s, uint32_t w)
 {
     uint8_t script = W_SCRIPT(w);
@@ -226,7 +236,7 @@ static void process_special(SORT_STATE *s, uint32_t w)
     case 2: {
         /* the characters an expansion gives are weights as they are in a sort key, and a comparison goes through them. */
         for (;;) {
-            uint32_t entry = s->Tables->Expansions[(w >> 16) & 0xFFFF];
+            uint32_t entry = expansion_of(s->Tables, (w >> 16) & 0xFFFF);
             uint32_t first = weight_of(s, entry & 0xFFFF);
             if (s->Compare && W_SCRIPT(first) <= 12)
                 process_special(s, first);
@@ -388,12 +398,32 @@ static unsigned digit_zero(const uint16_t *ranges, int count, unsigned c)
 }
 
 /* the longest contraction at the position: its weight and the number of characters it takes, or 0. */
+static int order_has_contractions(const NLS_SORT_ORDER *o)
+{
+    int any = o->PairIndex != 0;
+    for (int len = 2; len <= 8; len++)
+        any |= o->Count[len] != 0;
+    return any;
+}
+
 static int find_contraction(SORT_STATE *s, uint32_t *weight, int *twice)
 {
     const NLS_SORT_ORDER *o = s->Order;
     const uint16_t *cur = s->Cur;
     int double_compression = (o->Flags & NLS_SORT_DOUBLE_COMPRESSION) != 0;
     ptrdiff_t remaining = s->End - cur;
+    if (o->PairIndex) {
+        if (remaining >= 2 && (unsigned)cur[0] - 0xD800u < 0x400u && (unsigned)cur[1] - 0xDC00u < 0x400u && o->PairIndex[cur[0] - 0xD800u]) {
+            const uint8_t *p = o->PairData + ((size_t)(o->PairIndex[cur[0] - 0xD800u] - 1) * 1024 + (cur[1] - 0xDC00u)) * 3;
+            uint32_t w = (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16);
+            if (w) {
+                *weight = w | 0x02000000u;
+                *twice = 0;
+                return 2;
+            }
+        }
+        return 0;
+    }
     for (int len = 8; len >= 2; len--) {
         if (!o->Count[len])
             continue;
@@ -599,9 +629,7 @@ static uint8_t *weigh(SORT_STATE *s, const NLS_SORT_TABLES *tables, const NLS_SO
     s->SpecialStart = s->Special = a;
     a += units * 2;
 
-    int has_contractions = 0;
-    for (int len = 2; len <= 8; len++)
-        has_contractions |= order->Count[len] != 0;
+    int has_contractions = order_has_contractions(order);
 
     s->Cur = text + begin;
     while (s->Cur < s->End) {
@@ -748,6 +776,63 @@ int NlsSortKey(const NLS_SORT_TABLES *tables, const NLS_SORT_ORDER *order, uint3
     return result;
 }
 
+/*
+ * strings of letters and digits of the ASCII set, which weigh by their primary weight and their case alone: 0 is returned
+ * when a character is not one of them, or the order has a contraction, and the weights are then done in full.
+ */
+static int compare_plain(const NLS_SORT_TABLES *tables, const NLS_SORT_ORDER *order, uint32_t flags, const uint16_t *a, int alen,
+                         const uint16_t *b, int blen)
+{
+    const uint16_t *map = (flags & NLS_SORT_LINGUISTIC_CASING) ? order->LingPageMap : order->PageMap;
+    uint8_t mask = (flags & NLS_SORT_IGNORECASE) ? 0xE7 : 0xFF;
+    int case_result = 2;
+    int n = alen < blen ? alen : blen;
+    int i;
+    for (i = 0; i < n; i++) {
+        unsigned ca = a[i], cb = b[i];
+        if (ca > 0x7F || cb > 0x7F)
+            return 0;
+        uint32_t wa = tables->Pages[((unsigned)map[0] << 8) | ca], wb = tables->Pages[((unsigned)map[0] << 8) | cb];
+        uint8_t sa = W_SCRIPT(wa), sb = W_SCRIPT(wb);
+        if ((sa != 13 && sa != 14) || (sb != 13 && sb != 14) || W_DIACRITIC(wa) != 2 || W_DIACRITIC(wb) != 2)
+            return 0;
+        if ((uint16_t)wa != (uint16_t)wb) {
+            /* the rest of both strings has to be plain too for the order to be settled here. */
+            for (int j = i + 1; j < alen; j++)
+                if (a[j] > 0x7F)
+                    return 0;
+            for (int j = i + 1; j < blen; j++)
+                if (b[j] > 0x7F)
+                    return 0;
+            return (uint16_t)wa < (uint16_t)wb ? 1 : 3;
+        }
+        if (case_result == 2) {
+            uint8_t ka = W_CASE(wa) & 0x3F & mask, kb = W_CASE(wb) & 0x3F & mask;
+            if (ka != kb)
+                case_result = ka < kb ? 1 : 3;
+        }
+    }
+    for (int j = i; j < alen; j++) {
+        unsigned c = a[j];
+        if (c > 0x7F)
+            return 0;
+        uint32_t w = tables->Pages[((unsigned)map[0] << 8) | c];
+        if ((W_SCRIPT(w) != 13 && W_SCRIPT(w) != 14) || W_DIACRITIC(w) != 2)
+            return 0;
+    }
+    for (int j = i; j < blen; j++) {
+        unsigned c = b[j];
+        if (c > 0x7F)
+            return 0;
+        uint32_t w = tables->Pages[((unsigned)map[0] << 8) | c];
+        if ((W_SCRIPT(w) != 13 && W_SCRIPT(w) != 14) || W_DIACRITIC(w) != 2)
+            return 0;
+    }
+    if (alen != blen)
+        return alen < blen ? 1 : 3;
+    return case_result;
+}
+
 int NlsSortCompare(const NLS_SORT_TABLES *tables, const NLS_SORT_ORDER *order, uint32_t flags, const uint16_t *a, int alen,
                    const uint16_t *b, int blen)
 {
@@ -755,12 +840,16 @@ int NlsSortCompare(const NLS_SORT_TABLES *tables, const NLS_SORT_ORDER *order, u
     uint64_t stack_a[WEIGH_STACK_WORDS], stack_b[WEIGH_STACK_WORDS];
     alen = text_length(a, alen);
     blen = text_length(b, blen);
+    int has_contractions = order_has_contractions(order);
+    if (!has_contractions && !(flags & (NLS_SORT_DIGITSASNUMBERS | NLS_SORT_IGNORENONSPACE | NLS_SORT_IGNOREWIDTH | NLS_SORT_IGNOREKANATYPE |
+                                         NLS_SORT_LINGUISTIC_IGNORECASE | NLS_SORT_LINGUISTIC_IGNOREDIACRITIC | NLS_SORT_IGNORESYMBOLS))) {
+        int r = compare_plain(tables, order, flags, a, alen, b, blen);
+        if (r)
+            return r;
+    }
     flags |= NLS_SORT_COMPARE;
     int begin = 0;
     /* what the two strings start with alike is not weighed, but for a jamo, which goes with what follows it. */
-    int has_contractions = 0;
-    for (int len = 2; len <= 8; len++)
-        has_contractions |= order->Count[len] != 0;
     if (!has_contractions && !(flags & NLS_SORT_DIGITSASNUMBERS)) {
         int p = 0;
         while (p < alen && p < blen && a[p] == b[p] && a[p])
@@ -825,15 +914,17 @@ uint32_t NlsSortHash(const NLS_SORT_TABLES *tables, const NLS_SORT_ORDER *order,
         return 0;
     const uint32_t seed = 0x811C9DC5u;
     uint32_t primary = hash_bytes(seed, s->PrimaryStart, s->Primary), diacritic = seed, letter_case = seed, extra = seed, special = seed;
-    if (!(flags & NLS_SORT_IGNORENONSPACE)) {
+    /* a string with nothing to weigh at the first level hashes as the empty one, whatever else it holds. */
+    int empty = primary == seed;
+    if (!empty && !(flags & NLS_SORT_IGNORENONSPACE)) {
         for (const uint16_t *p = s->DiacriticStart; p < s->Diacritic; p++)
             if (*p > 2)
                 diacritic = 131 * (diacritic ^ (uint8_t)*p);
         extra = hash_bytes(seed, s->ExtraStart, s->ExtraCur);
     }
-    if ((flags & (NLS_SORT_IGNORECASE | NLS_SORT_IGNOREWIDTH)) != (NLS_SORT_IGNORECASE | NLS_SORT_IGNOREWIDTH))
+    if (!empty && (flags & (NLS_SORT_IGNORECASE | NLS_SORT_IGNOREWIDTH)) != (NLS_SORT_IGNORECASE | NLS_SORT_IGNOREWIDTH))
         letter_case = hash_bytes(seed, s->CaseStart, s->Case);
-    if (!s->IgnoreSymbols)
+    if (!empty && !s->IgnoreSymbols)
         special = hash_bytes(seed, s->SpecialStart, s->Special);
     if (arena != stack)
         NLSSORT_FREE(arena);
@@ -900,6 +991,21 @@ int NlsSortFind(const NLS_SORT_TABLES *tables, const NLS_SORT_ORDER *order, uint
     int trailing = 0;
     while (trailing < value_length && find_ignored(&fs, value, value_length - 1 - trailing, value_length))
         trailing++;
+    /* without contractions a plain character weighs by itself, so a start whose primary weight is not the value's is no start. */
+    int has_contractions = order_has_contractions(order);
+    int filter = 0;
+    uint16_t primary = 0;
+    if (!has_contractions) {
+        for (int i = 0; i < value_length; i++)
+            if (!find_ignored(&fs, value, i, value_length)) {
+                uint32_t w = weight_of_char(order, tables, flags, value[i]);
+                if (W_SCRIPT(w) > 13) {
+                    filter = 1;
+                    primary = (uint16_t)w;
+                }
+                break;
+            }
+    }
     for (int step = 0; step <= length; step++) {
         int start = from_end ? length - step : step;
         if (position == NLS_SORT_FIND_STARTSWITH && start > first)
@@ -908,7 +1014,15 @@ int NlsSortFind(const NLS_SORT_TABLES *tables, const NLS_SORT_ORDER *order, uint
             continue;
         if (position == NLS_SORT_FIND_STARTSWITH && start != first)
             continue;
+        if (filter) {
+            uint32_t w = weight_of_char(order, tables, flags, text[start]);
+            uint8_t sc = W_SCRIPT(w);
+            if ((sc > 12 && (uint16_t)w != primary) || (sc >= 7 && sc <= 12))
+                continue;
+        }
         for (int end = start; end <= length; end++) {
+            if (end - start > 8 * value_length + 16)
+                break;
             if (end < length && find_script(&fs, text[end]) == 1 && !find_ignored(&fs, text, end, length))
                 continue;
             if (NlsSortCompare(tables, order, fs.Flags, text + start, end - start, value, value_length) != 2)
@@ -940,13 +1054,13 @@ int NlsSortIsDefined(const NLS_SORT_TABLES *tables, const NLS_SORT_ORDER *order,
             if (c - 0xDB80 <= 0x1D7F)
                 return 0;
             if (c - 0xD800 <= 0x3FF) {
-                if (++i >= length || text[i] - 0xDC00 > 0x3FF)
+                if (++i >= length || (unsigned)text[i] - 0xDC00 > 0x3FF)
                     return 0;
             }
             continue;
         }
         if (c == 0xDB40) {
-            if (i + 1 < length && text[i + 1] - 0xDD00 <= 0xEF) {
+            if (i + 1 < length && (unsigned)text[i + 1] - 0xDD00 <= 0xEF) {
                 i++;
                 continue;
             }
