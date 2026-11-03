@@ -589,15 +589,15 @@ static void change_drive(WCHAR letter)
     str_free(&dir);
 }
 
-/* whether the word is the shell that a feature on demand holds, by its name or by a path through its folder. */
+/*
+ * whether the word may name a program that a feature on demand holds: the shell by its bare name, or any program by
+ * the path that it was given with, which no search of cmd.exe stands in for.
+ */
 static BOOL feature_program(const WCHAR *name)
 {
     if (!_wcsicmp(name, L"powershell") || !_wcsicmp(name, L"powershell.exe"))
         return TRUE;
-    for (const WCHAR *p = name; *p; p++)
-        if (*p == L'\\' && !_wcsnicmp(p, L"\\WindowsPowerShell\\", 19))
-            return TRUE;
-    return FALSE;
+    return wcspbrk(name, L"\\/") != nullptr;
 }
 
 /*
