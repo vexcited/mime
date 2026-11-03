@@ -25,7 +25,7 @@ static void run_states(XDoc *doc)
     }
 }
 
-static HRESULT read_all(IUnknown *object, BYTE **data, UINT *size)
+HRESULT xd_read_stream(IUnknown *object, BYTE **data, UINT *size)
 {
     IStream *stream = nullptr;
     if (FAILED(object->lpVtbl->QueryInterface(object, &IID_IStream, (void **)&stream)) &&
@@ -332,7 +332,7 @@ static HRESULT STDMETHODCALLTYPE d_load(XNode *n, VARIANT source, VARIANT_BOOL *
         IUnknown *obj = (v->vt & VT_BYREF) ? (v->ppunkVal ? *v->ppunkVal : nullptr) : v->punkVal;
         if (!obj)
             return E_INVALIDARG;
-        HRESULT hr = read_all(obj, &data, &size);
+        HRESULT hr = xd_read_stream(obj, &data, &size);
         if (FAILED(hr))
             return hr;
         break;

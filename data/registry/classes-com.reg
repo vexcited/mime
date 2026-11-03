@@ -94,7 +94,7 @@
 [HKCR\AppID\{9BA05972-F6A8-11CF-A442-00A0C90A8F39}]
 "RunAs"="Interactive User"
 
-; the program ids of the document object models of msxml3 and msxml6, and of the installer's automation object.
+; the program ids of the document object models and sax readers of msxml3 and msxml6, and of the installer's automation object.
 [HKCR\MSXML.DOMDocument\CLSID]
 @="{2933BF90-7B36-11D2-B20E-00C04F983E60}"
 [HKCR\Microsoft.XMLDOM\CLSID]
@@ -107,6 +107,12 @@
 @="{88D96A05-F192-11D4-A65F-0040963251E5}"
 [HKCR\Msxml2.FreeThreadedDOMDocument.6.0\CLSID]
 @="{88D96A06-F192-11D4-A65F-0040963251E5}"
+[HKCR\Msxml2.SAXXMLReader\CLSID]
+@="{079AA557-4A18-424A-8EEE-E39F0A8D41B9}"
+[HKCR\Msxml2.SAXXMLReader.3.0\CLSID]
+@="{3124C396-FB13-4836-A6AD-1317F1713688}"
+[HKCR\Msxml2.SAXXMLReader.6.0\CLSID]
+@="{88D96A0C-F192-11D4-A65F-0040963251E5}"
 [HKCR\Msxml2.XSLTemplate\CLSID]
 @="{2933BF94-7B36-11D2-B20E-00C04F983E60}"
 [HKCR\Msxml2.XSLTemplate.3.0\CLSID]

@@ -245,7 +245,22 @@
 @=expand:"%SystemRoot%\\system32\\msxml3.dll"
 "ThreadingModel"="Both"
 
+; SAXXMLReader
+[HKCR\CLSID\{079AA557-4A18-424A-8EEE-E39F0A8D41B9}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msxml3.dll"
+"ThreadingModel"="Both"
+
+; SAXXMLReader30
+[HKCR\CLSID\{3124C396-FB13-4836-A6AD-1317F1713688}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msxml3.dll"
+"ThreadingModel"="Both"
+
 ; msxml6.dll
+; SAXXMLReader60
+[HKCR\CLSID\{88D96A0C-F192-11D4-A65F-0040963251E5}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\msxml6.dll"
+"ThreadingModel"="Both"
+
 ; XSLTemplate60
 [HKCR\CLSID\{88D96A08-F192-11D4-A65F-0040963251E5}\InprocServer32]
 @=expand:"%SystemRoot%\\system32\\msxml6.dll"

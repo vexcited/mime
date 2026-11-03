@@ -540,6 +540,10 @@ extern const XDispSet xd_dispset_impl;
 extern const XDispSet xd_dispset_template;
 extern const XDispSet xd_dispset_processor;
 HRESULT xd_create_template(BOOL v6, REFIID riid, void **out);
+/* the sax reader, sax.c: the flags are those of the class. */
+HRESULT xd_create_sax_reader(UINT flags, REFIID riid, void **out);
+/* every byte a stream gives, from an IStream or an ISequentialStream. */
+HRESULT xd_read_stream(IUnknown *object, BYTE **data, UINT *size);
 
 HRESULT xd_disp_names(const XDispSet *set, REFIID riid, LPOLESTR *names, UINT cnames, LCID lcid, DISPID *ids);
 HRESULT xd_disp_invoke(void *self, const XDispSet *set, DISPID id, REFIID riid, LCID lcid, WORD flags,
@@ -551,10 +555,11 @@ typedef struct XClass {
     const WCHAR *progid; /* may be null. */
     const WCHAR *version_independent;
     const WCHAR *name;
-    UINT kind; /* 0 a document, 1 an xslt template */
+    UINT kind; /* 0 a document, 1 an xslt template, 2 a sax reader */
 } XClass;
 #define XK_DOCUMENT 0
 #define XK_TEMPLATE 1
+#define XK_SAXREADER 2
 
 HRESULT xd_get_class_object(const XClass *classes, UINT count, REFCLSID clsid, REFIID riid, void **out);
 HRESULT xd_can_unload(void);

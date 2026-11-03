@@ -51,6 +51,8 @@ static HRESULT STDMETHODCALLTYPE f_create(Factory *f, IUnknown *outer, REFIID ri
         return CLASS_E_NOAGGREGATION;
     if (f->cls->kind == XK_TEMPLATE)
         return xd_create_template((f->cls->flags & XDF_V6) != 0, riid, out);
+    if (f->cls->kind == XK_SAXREADER)
+        return xd_create_sax_reader(f->cls->flags, riid, out);
     XDoc *doc = xd_doc_new(f->cls->flags);
     if (!doc)
         return E_OUTOFMEMORY;

@@ -1,5 +1,5 @@
 /*
- * msxml6.dll: msxml 6.0 dom documents, with secure defaults: a document type is refused and selections use xpath.
+ * msxml6.dll: msxml 6.0 dom documents and the sax reader, with secure defaults: a document type is refused and selections use xpath.
  * the engine is in guest/lib/xmldom.
  */
 #include <xmldom/xmldom.h>
@@ -11,6 +11,7 @@ static const XClass classes[] = {
     {&CLSID_FreeThreadedDOMDocument60, BASE_FLAGS | XDF_FREE, L"Msxml2.FreeThreadedDOMDocument.6.0", nullptr,
      L"Free Threaded XML DOM Document 6.0"},
     {&CLSID_XSLTemplate60, XDF_V6, L"Msxml2.XSLTemplate.6.0", nullptr, L"XSL Template 6.0", XK_TEMPLATE},
+    {&CLSID_SAXXMLReader60, XDF_V6, L"Msxml2.SAXXMLReader.6.0", nullptr, L"SAX XML Reader 6.0", XK_SAXREADER},
 };
 
 static HMODULE g_module;

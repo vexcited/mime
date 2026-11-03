@@ -1,5 +1,5 @@
 /*
- * msxml3.dll: msxml 3.0 dom documents and the version independent classes that resolve to it. the engine is in
+ * msxml3.dll: msxml 3.0 dom documents, the sax reader and the version independent classes that resolve to it. the engine is in
  * guest/lib/xmldom.
  */
 #include <xmldom/xmldom.h>
@@ -21,6 +21,8 @@ static const XClass classes[] = {
      L"Free Threaded XML DOM Document 2.6"},
     {&CLSID_XSLTemplate, 0, L"Msxml2.XSLTemplate", nullptr, L"XSL Template", XK_TEMPLATE},
     {&CLSID_XSLTemplate30, 0, L"Msxml2.XSLTemplate.3.0", L"Msxml2.XSLTemplate", L"XSL Template 3.0", XK_TEMPLATE},
+    {&CLSID_SAXXMLReader, 0, L"Msxml2.SAXXMLReader", nullptr, L"SAX XML Reader", XK_SAXREADER},
+    {&CLSID_SAXXMLReader30, 0, L"Msxml2.SAXXMLReader.3.0", L"Msxml2.SAXXMLReader", L"SAX XML Reader 3.0", XK_SAXREADER},
 };
 
 static HMODULE g_module;
