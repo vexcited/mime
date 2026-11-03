@@ -166,6 +166,29 @@ static BOOLEAN is_portable_il(PVOID base)
     return !(cor->Flags & COR_32BITREQUIRED) && !cor->NativeHeader.VirtualAddress && !cor->NativeHeader.Size;
 }
 
+/* the kernel maps an image of another machine without a fault when none of its sections can run, as a resource only
+   library is, and the loader leaves such an image alone: no imports, no callbacks, no entry point. */
+static BOOLEAN has_executable_section(PVOID base)
+{
+    PIMAGE_NT_HEADERS nt = LdrpNtHeaders(base);
+    PIMAGE_SECTION_HEADER section = IMAGE_FIRST_SECTION(nt);
+    for (USHORT i = 0; i < nt->FileHeader.NumberOfSections; i++) {
+        if (section[i].Characteristics & IMAGE_SCN_MEM_EXECUTE)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static BOOLEAN is_foreign_image(PVOID base)
+{
+    return LdrpNtHeaders(base)->FileHeader.Machine != LDRP_MACHINE && !is_portable_il(base);
+}
+
+static BOOLEAN skips_native_code(PLDR_DATA_TABLE_ENTRY e)
+{
+    return (e->Flags & LDRP_COR_ILONLY) || is_foreign_image(e->DllBase);
+}
+
 static PVOID heap_alloc(SIZE_T size)
 {
     return RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, HEAP_ZERO_MEMORY, size);
@@ -226,6 +249,8 @@ static PLDR_DATA_TABLE_ENTRY create_entry(PVOID base, PCWSTR full_path)
         e->Flags |= LDRP_COR_ILONLY;
         e->EntryPoint = nullptr;
     }
+    if (is_foreign_image(base))
+        e->EntryPoint = nullptr;
     InitializeListHead(&e->HashLinks);
     InitializeListHead(&e->InInitializationOrderLinks);
     InsertTailList(&g_ldr.InLoadOrderModuleList, &e->InLoadOrderLinks);
@@ -529,7 +554,7 @@ static NTSTATUS map_image(HANDLE file, PVOID *base)
     if (status == STATUS_IMAGE_NOT_AT_BASE)
         status = STATUS_SUCCESS;
     /* the managed runtime consumes portable il without running its native bootstrap. */
-    if (NT_SUCCESS(status) && LdrpNtHeaders(*base)->FileHeader.Machine != LDRP_MACHINE && !is_portable_il(*base)) {
+    if (NT_SUCCESS(status) && is_foreign_image(*base) && has_executable_section(*base)) {
         NtUnmapViewOfSection(NtCurrentProcess(), *base);
         status = STATUS_INVALID_IMAGE_FORMAT;
     }
@@ -883,7 +908,7 @@ static NTSTATUS snap_descriptor(PLDR_DATA_TABLE_ENTRY module, IMAGE_IMPORT_DESCR
 
 static NTSTATUS snap_imports(PLDR_DATA_TABLE_ENTRY module, LOAD_CONTEXT *ctx)
 {
-    if (module->Flags & LDRP_COR_ILONLY)
+    if (skips_native_code(module))
         return STATUS_SUCCESS;
     ULONG size;
     IMAGE_IMPORT_DESCRIPTOR *desc = LdrpImageDirectory(module->DllBase, IMAGE_DIRECTORY_ENTRY_IMPORT, &size);
@@ -917,7 +942,7 @@ static NTSTATUS snap_imports(PLDR_DATA_TABLE_ENTRY module, LOAD_CONTEXT *ctx)
 
 static void register_tls(PLDR_DATA_TABLE_ENTRY e)
 {
-    if (e->Flags & LDRP_COR_ILONLY)
+    if (skips_native_code(e))
         return;
     ULONG size;
     IMAGE_TLS_DIRECTORY *tls = LdrpImageDirectory(e->DllBase, IMAGE_DIRECTORY_ENTRY_TLS, &size);
@@ -1060,7 +1085,7 @@ static void free_thread_tls(void)
 
 static void call_tls_callbacks(PLDR_DATA_TABLE_ENTRY e, ULONG reason)
 {
-    if (e->Flags & LDRP_COR_ILONLY)
+    if (skips_native_code(e))
         return;
     ULONG size;
     IMAGE_TLS_DIRECTORY *tls = LdrpImageDirectory(e->DllBase, IMAGE_DIRECTORY_ENTRY_TLS, &size);
@@ -1123,7 +1148,7 @@ static NTSTATUS init_module(PLDR_DATA_TABLE_ENTRY e, PVOID reserved)
             return status;
     }
     ULONG size;
-    IMAGE_IMPORT_DESCRIPTOR *desc = (e->Flags & LDRP_COR_ILONLY) ? nullptr :
+    IMAGE_IMPORT_DESCRIPTOR *desc = skips_native_code(e) ? nullptr :
                                     LdrpImageDirectory(e->DllBase, IMAGE_DIRECTORY_ENTRY_IMPORT, &size);
     for (; desc && desc->Name; desc++) {
         PCSTR name = (PCSTR)((PUCHAR)e->DllBase + desc->Name);
