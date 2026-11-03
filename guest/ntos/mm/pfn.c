@@ -142,7 +142,7 @@ static ULONG64 report_free(ULONG min_order, ULONG64 limit, BOOLEAN idle, BOOLEAN
     if (!g_discard_enabled || __atomic_exchange_n(&g_report_busy, 1, __ATOMIC_ACQUIRE))
         return 0;
     ULONG64 budget = limit ? limit : ~0ull, done = 0;
-    BOOLEAN left_some = FALSE;
+    BOOLEAN left_some = FALSE, refused = FALSE;
     for (ULONG order = min_order; order <= MM_MAX_ORDER && !left_some; order++) {
         ULONG64 bytes = (1ull << order) << PAGE_SHIFT;
         for (;;) {
@@ -180,13 +180,15 @@ static ULONG64 report_free(ULONG min_order, ULONG64 limit, BOOLEAN idle, BOOLEAN
             pfn_unlock(state);
             if (zero)
                 done += count * bytes;
+            else
+                left_some = refused = TRUE; /* the host said no: a retry would find the same blocks again. */
             if (left_some || budget == 0)
                 break;
         }
         if (budget == 0)
             break;
     }
-    if (!left_some)
+    if (!left_some || refused)
         __atomic_store_n(&g_freed_since_discard, 0, __ATOMIC_RELAXED);
     __atomic_add_fetch(&g_released_bytes, done, __ATOMIC_RELAXED);
     __atomic_store_n(&g_report_busy, 0, __ATOMIC_RELEASE);
