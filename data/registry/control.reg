@@ -36,6 +36,14 @@
 "ACP"="1252"
 "OEMCP"="437"
 
+; the classes of symbolic links that the system follows, as a fresh install has them: a link on a local volume to a local or a
+; network path, and none on a network share. fsutil behavior sets them.
+[HKLM\SYSTEM\CurrentControlSet\Control\FileSystem]
+"SymlinkLocalToLocalEvaluation"=dword:00000001
+"SymlinkLocalToRemoteEvaluation"=dword:00000001
+"SymlinkRemoteToLocalEvaluation"=dword:00000000
+"SymlinkRemoteToRemoteEvaluation"=dword:00000000
+
 ; chrome asks whether the machine is a convertible in slate mode, 1 is the laptop.
 [HKLM\SYSTEM\CurrentControlSet\Control\PriorityControl]
 "ConvertibleSlateMode"=dword:00000001

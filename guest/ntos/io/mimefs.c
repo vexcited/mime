@@ -660,6 +660,13 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
             req->flags = MIME_FS_OPEN_STAT_ONLY;
         req->disposition = MIME_FS_DISP_OPEN;
         ULONG64 probe = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr);
+        if (probe == MIME_HC_STATUS_REPARSE) {
+            /* a link on the way: the open goes on with the name it gives, and the host has replaced the path. */
+            ULONG tag = req->reparse_tag;
+            NTSTATUS status = follow_link(vol, file, req);
+            ExFreePool(req);
+            return complete(irp, status, status == STATUS_REPARSE ? tag : 0);
+        }
         ULONG64 id = req->info_out.file_id;
         if (probe == MIME_HC_STATUS_OK && check) {
             MIMEFS_STORED known = {req->sd_status, req->sd_length, req->sd_distance, req->sd_data};

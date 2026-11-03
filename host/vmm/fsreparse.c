@@ -7,6 +7,10 @@
  *   target        a symbolic link to a file
  *   target/       a symbolic link to a directory
  *   target/.      a junction
+ *   target/./.     a symbolic link made as a file link, to a directory
+ *
+ * a link with none of these is a file link, unless it points to a directory, which makes it a directory link: that is what
+ * a link made by a program of the host is.
  *
  * an absolute target of the drives is a host path: C: is the directory of the drive and Z: the host's root. a relative
  * target stays relative, to the directory of the link. a target the host cannot reach, another drive letter, a network
@@ -38,13 +42,17 @@ static const char *root_of(MimeVm *vm, uint32_t volume)
 /* the text of a link without its kind suffix. */
 static bool split_text(const char *link, char *text, size_t size, bool *junction, bool *directory)
 {
+    bool forced_file = false;
     ssize_t n = readlink(link, text, size - 1);
     if (n <= 0)
         return false;
     size_t length = (size_t)n;
     text[length] = 0;
     *junction = *directory = false;
-    if (length >= 3 && !strcmp(text + length - 2, "/.")) {
+    if (length >= 6 && !strcmp(text + length - 4, "/./.")) {
+        forced_file = true;
+        text[length -= 4] = 0;
+    } else if (length >= 3 && !strcmp(text + length - 2, "/.")) {
         *junction = *directory = true;
         text[length -= 2] = 0;
     } else if (length > 1 && text[length - 1] == '/') {
@@ -54,6 +62,8 @@ static bool split_text(const char *link, char *text, size_t size, bool *junction
         struct stat st;
         *directory = stat(link, &st) == 0 && S_ISDIR(st.st_mode);
     }
+    if (forced_file)
+        *directory = false;
     return true;
 }
 
@@ -195,7 +205,8 @@ uint32_t mime_fs_guest_prefix(const uint16_t *path, uint32_t chars, int componen
 /* ------------------------------------------------------------------ writing a link */
 
 /* the text of a link to the target the guest named, or false when the guest named nothing sensible. */
-static bool link_text(MimeVm *vm, uint32_t volume, const MimeFsReparse *r, bool directory, char *text, size_t size)
+static bool link_text(MimeVm *vm, uint32_t volume, const char *link, const MimeFsReparse *r, bool directory, char *text,
+                      size_t size)
 {
     if (!r->substitute_chars || r->substitute_chars + r->print_chars > MIME_REPARSE_MAX_NAME)
         return false;
@@ -237,6 +248,20 @@ static bool link_text(MimeVm *vm, uint32_t volume, const MimeFsReparse *r, bool 
     if (!n)
         return false;
     const char *suffix = junction ? "/." : directory ? "/" : "";
+    /* a file link to a directory has to say so, or the host's way of telling would take it for a directory link. */
+    if (!junction && !directory) {
+        char where[MIME_PATH_MAX];
+        if (path[0] == '/') {
+            mime_strlcpy(where, path, sizeof(where));
+        } else {
+            mime_strlcpy(where, link, sizeof(where));
+            char *slash = strrchr(where, '/');
+            snprintf(slash ? slash + 1 : where, sizeof(where) - (slash ? (size_t)(slash + 1 - where) : 0), "%s", path);
+        }
+        struct stat st;
+        if (stat(where, &st) == 0 && S_ISDIR(st.st_mode))
+            suffix = "/./.";
+    }
     if (n + strlen(suffix) + 2 >= size)
         return false;
     /* the root has the slash it is made of, so a link to it needs another. */
@@ -307,7 +332,7 @@ uint64_t mime_fs_reparse_set(MimeVm *vm, MimeFsHandle *fh, uint64_t pa)
         return MIME_HC_STATUS_INVALID;
     }
     char text[MIME_PATH_MAX];
-    if (!link_text(vm, fh->volume, &r, directory, text, sizeof(text)))
+    if (!link_text(vm, fh->volume, fh->host_path, &r, directory, text, sizeof(text)))
         return MIME_HC_STATUS_INVALID;
 
     static uint32_t counter;
