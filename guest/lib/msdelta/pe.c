@@ -773,6 +773,118 @@ static void relative_calls(const MD_XFORM *x)
     }
 }
 
+/* ------------------------------------------------------------------ amd64 code */
+
+/* the file offset of an address in the headers or the data of a section, with the bytes the data has from it on. */
+static bool amd64_locate(const MD_PE *pe, uint32_t rva, uint32_t *offset, uint32_t *available)
+{
+    if (pe->HeadersSize > rva) {
+        *offset = rva;
+        *available = pe->HeadersSize - rva;
+        return true;
+    }
+    for (unsigned i = 0; i < pe->SectionCount; i++) {
+        const uint8_t *s = section(pe, i);
+        uint32_t va = rd32(s + 12), raw = rd32(s + 16);
+        if (va <= rva && (uint64_t)va + raw > rva) {
+            *offset = rva - va + rd32(s + 20);
+            *available = va + raw - rva;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* the displacements from the instruction pointer in the functions the table of exceptions lists. */
+static bool disassembly_amd64(const MD_XFORM *x)
+{
+    const MD_PE *pe = x->Pe;
+    if (pe->Machine != 0x8664)
+        return false;
+    uint32_t table = pe->DirOffset[3];
+    if (!table)
+        return true;
+    uint8_t *image = pe->Image;
+    for (uint32_t i = 0, n = pe->DirSize[3] / 12; i < n; i++) {
+        if (!inside(pe, (uint64_t)table + 12ull * i, 12))
+            break;
+        uint32_t begin = rd32(image + table + 12ull * i), end = rd32(image + table + 12ull * i + 4);
+        if (end <= begin)
+            continue;
+        uint32_t length = end - begin, offset, available;
+        if (pe->HeadersSize > begin) {
+            if (pe->HeadersSize < end)
+                continue;
+            offset = begin;
+        } else {
+            if (!amd64_locate(pe, begin, &offset, &available) || available < length)
+                continue;
+        }
+        if (!offset)
+            continue;
+        uint32_t rva = begin;
+        while (length && inside(pe, offset, 1)) {
+            if (x->Hint[offset] & 3) {
+                length--, offset++, rva++;
+                continue;
+            }
+            size_t room = pe->Size - offset;
+            MD_INSN insn = MdAmd64Disassemble(image + offset, room < length ? room : length);
+            unsigned k = 1;
+            while (k < insn.Length && !(x->Hint[offset + k] & 2))
+                k++;
+            if (insn.Length > 1 && k < insn.Length) {
+                length -= k, offset += k, rva += k;
+                continue;
+            }
+            if (insn.Kind == 5 && inside(pe, (uint64_t)offset + insn.Offset, 4)) {
+                uint32_t next = rva + insn.Length;
+                uint32_t target = next + rd32(image + offset + insn.Offset);
+                wr32(image + offset + insn.Offset, map_rva(x, target) - map_rva(x, next));
+            }
+            if (!insn.Length)
+                break;
+            length -= insn.Length, offset += insn.Length, rva += insn.Length;
+        }
+    }
+    return true;
+}
+
+/* the table of exceptions: the bounds of every function, its unwind information, and the handler that information names. */
+static bool exceptions_amd64(const MD_XFORM *x)
+{
+    const MD_PE *pe = x->Pe;
+    if (pe->Machine != 0x8664)
+        return false;
+    uint32_t table = pe->DirOffset[3], size = pe->DirSize[3];
+    if (!table)
+        return true;
+    uint8_t *image = pe->Image;
+    uint32_t n = size / 12;
+    if (pe->Size <= table + 4ull * n)
+        return false;
+    for (uint32_t i = 0; i < n; i++) {
+        uint8_t *entry = image + table + 12ull * i;
+        if (!inside(pe, (uint64_t)table + 12ull * i, 12))
+            break;
+        wr32(entry, map_rva(x, rd32(entry)));
+        wr32(entry + 4, map_rva(x, rd32(entry + 4)));
+        uint32_t unwind = rd32(entry + 8), at = 0, available = 0;
+        bool found = amd64_locate(pe, unwind, &at, &available);
+        if (found && at && (table > at || table + size < at)) {
+            if (table > at && table < at + available)
+                available = at - table;
+            if (available >= 4 && inside(pe, at, 4) && (image[at] & 0x38)) {
+                uint32_t handler = 4 + 4 * (((uint32_t)image[at + 2] + 1) >> 1);
+                if (available > handler + 4 && inside(pe, (uint64_t)at + handler, 4))
+                    wr32(image + at + handler, map_rva(x, rd32(image + at + handler)));
+            }
+        }
+        wr32(entry + 8, map_rva(x, unwind));
+    }
+    return true;
+}
+
 /* ------------------------------------------------------------------ the whole */
 
 void MdPeUnbind(MD_PE *pe)
@@ -827,8 +939,9 @@ int MdPeTransform(MD_PE *pe, uint32_t file_type, uint64_t flags, const MD_RIFT *
     if (!x.Hint)
         return MSDELTA_MEMORY;
     int status = MSDELTA_OK;
-    bool i386 = file_type == 16;
-    if (!i386) {
+    bool i386 = file_type == 16 || (file_type == 32 && pe->Machine == 0x14C);
+    bool amd64 = file_type == 32 && !i386;
+    if (!i386 && !amd64) {
         status = MSDELTA_UNSUPPORTED;
         goto done;
     }
@@ -845,20 +958,26 @@ int MdPeTransform(MD_PE *pe, uint32_t file_type, uint64_t flags, const MD_RIFT *
     if (flags & 1ull << 4)
         resources(&x);
     if (flags & 1ull << 5) {
-        if (pe->Machine != 0x14C) {
-            status = MSDELTA_BAD;
-            goto done;
-        }
         if (pe->DirOffset[5]) {
             if (!relocations(&x))
                 status = MSDELTA_MEMORY;
-        } else
+        } else if (i386 && pe->Machine == 0x14C)
             inferred_relocations(&x);
+        else if (i386) {
+            status = MSDELTA_BAD;
+            goto done;
+        }
     }
     if (flags & 1ull << 21)
         MdPeCliDisassemble(pe, &x.Cli, &target->Map);
     if (flags & 1ull << 22)
         MdPeCliMetadata(pe, &x.Cli, &target->Map, used, &target->Cli);
+    if (amd64) {
+        if (((flags & 1ull << 9) && !disassembly_amd64(&x)) || ((flags & 1ull << 10) && !exceptions_amd64(&x)))
+            status = MSDELTA_BAD;
+        if (status != MSDELTA_OK)
+            goto done;
+    }
     if (flags & 1ull << 6)
         smash_lock_prefixes(&x);
     if (flags & 1ull << 7)

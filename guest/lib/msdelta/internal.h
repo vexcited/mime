@@ -159,6 +159,13 @@ bool MdCliFromBits(MD_BITS *bits, MD_CLI *cli);
 bool MdCliMapFromBits(MD_BITS *bits, MD_CLI_MAP *map);
 void MdCliMapFree(MD_CLI_MAP *map);
 
+/* an instruction of the amd64 processor: its length, where its address operand is, and what the operand is. */
+typedef struct MD_INSN {
+    uint8_t Length, Offset, Kind; /* the kind is 1 when it is no instruction, 5 for a displacement from the instruction pointer. */
+} MD_INSN;
+
+MD_INSN MdAmd64Disassemble(const uint8_t *code, size_t remaining);
+
 typedef struct MD_PE_TARGET {
     uint64_t ImageBase;
     uint32_t GlobalPointer, TimeStamp;
