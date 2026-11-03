@@ -208,6 +208,9 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
         ObDereferenceObject(file);
         return STATUS_INVALID_PARAMETER;
     }
+    /* a request with no event of its own is waited for on the file, which is signaled again when this one is done. */
+    if (!event && !(file->Flags & FO_SKIP_SET_EVENT))
+        KeClearEvent(&file->Event);
     if (IopIsNamedPipe(file)) {
         status = NpfsReadWrite(file, write, event, apc_routine, apc_context, iosb, buffer, length);
         ObDereferenceObject(file);

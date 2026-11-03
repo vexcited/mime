@@ -22,6 +22,9 @@ IO_USER_REQUEST *IopNewUserRequest(PFILE_OBJECT file, HANDLE event, PVOID apc_ro
             return nullptr;
         }
         KeClearEvent(r->Event);
+    } else if (!(file->Flags & FO_SKIP_SET_EVENT)) {
+        /* a request that names no event is waited for on the file, which signals again when this one is done. */
+        KeClearEvent(&file->Event);
     }
     r->Process = PsCurrentProcess();
     ObReferenceObject(r->Process);
