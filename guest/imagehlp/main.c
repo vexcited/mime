@@ -290,12 +290,12 @@ IMAGEHLP PVOID WINAPI ImageDirectoryEntryToDataEx(PVOID base, BOOLEAN image, USH
     PIMAGE_NT_HEADERS nt = ImageNtHeader(base);
     if (!nt)
         return nullptr;
-    PIMAGE_DATA_DIRECTORY dir = &nt->OptionalHeader.DataDirectory[0];
     WORD magic = nt->OptionalHeader.Magic;
     if (magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC && magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC)
         return nullptr;
-    if (magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
-        dir = (PIMAGE_DATA_DIRECTORY)((BYTE *)nt + 24 + 96);
+    /* the directories follow the optional header of the file's own kind, whatever the kind of this build. */
+    PIMAGE_DATA_DIRECTORY dir =
+        (PIMAGE_DATA_DIRECTORY)((BYTE *)nt + 24 + (magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC ? 112 : 96));
     if (entry >= IMAGE_NUMBEROF_DIRECTORY_ENTRIES || !dir[entry].VirtualAddress || !dir[entry].Size)
         return nullptr;
     if (size)
@@ -547,103 +547,217 @@ IMAGEHLP BOOL WINAPI UnMapAndLoad(PLOADED_IMAGE image)
 
 #define CERT_PE_IMAGE_DIGEST_DEBUG_INFO 0x01
 #define CERT_PE_IMAGE_DIGEST_RESOURCES 0x02
-#define CERT_PE_IMAGE_DIGEST_NON_PE_INFO 0x80
+#define CERT_PE_IMAGE_DIGEST_ALL_IMPORT_INFO 0x04
 
 typedef BOOL(WINAPI *DIGEST_FUNCTION)(PVOID handle, PBYTE data, DWORD length);
 
-/* hands a range of the file to the digest function in pieces. */
-static BOOL digest_range(HANDLE file, DIGEST_FUNCTION digest, PVOID handle, DWORD from, DWORD to)
+/* byte ranges of the mapped file that the digest leaves out, by address. */
+typedef struct {
+    const BYTE *Address;
+    DWORD Size;
+} DIGEST_SKIP;
+
+typedef struct {
+    DIGEST_FUNCTION Digest;
+    PVOID Handle;
+    DIGEST_SKIP *Skips;
+    DWORD Count, Capacity;
+    PIMAGE_NT_HEADERS Nt;
+    BYTE *Base;
+} DIGEST;
+
+/* the range goes in before the first one that starts at the same address or later. */
+static void digest_skip(DIGEST *d, const BYTE *address, DWORD size)
 {
-    static BYTE buffer[65536];
-    while (from < to) {
-        DWORD n = to - from < sizeof buffer ? to - from : (DWORD)sizeof buffer;
-        if (!read_at(file, from, buffer, n)) {
-            SetLastError(ERROR_READ_FAULT);
-            return FALSE;
-        }
-        if (!digest(handle, buffer, n))
-            return FALSE;
-        from += n;
+    if (!address)
+        return;
+    if (d->Count == d->Capacity) {
+        DWORD capacity = d->Capacity ? d->Capacity * 2 : 32;
+        DIGEST_SKIP *grown = d->Skips ? HeapReAlloc(GetProcessHeap(), 0, d->Skips, capacity * sizeof(*grown)) :
+                                        HeapAlloc(GetProcessHeap(), 0, capacity * sizeof(*grown));
+        if (!grown)
+            return;
+        d->Skips = grown;
+        d->Capacity = capacity;
     }
-    return TRUE;
+    DWORD at = 0;
+    while (at < d->Count && d->Skips[at].Address < address)
+        at++;
+    memmove(d->Skips + at + 1, d->Skips + at, (d->Count - at) * sizeof(*d->Skips));
+    d->Skips[at].Address = address;
+    d->Skips[at].Size = size;
+    d->Count++;
+}
+
+static void digest_skip_rva(DIGEST *d, ULONG rva, DWORD size)
+{
+    digest_skip(d, ImageRvaToVa(d->Nt, d->Base, rva, nullptr), size);
+}
+
+/* hands the bytes to the digest function but for the skipped ranges, which are the part of the file that may
+ * differ between two copies of the same program: the checksum, the certificates, the resources.
+ */
+static BOOL digest_emit(DIGEST *d, const BYTE *data, DWORD length)
+{
+    for (DWORD i = 0; i < d->Count && length; i++) {
+        const DIGEST_SKIP *skip = &d->Skips[i];
+        if (skip->Address >= data) {
+            DWORD n = (DWORD)(skip->Address - data);
+            if (n > length)
+                n = length;
+            if (n) {
+                if (!d->Digest(d->Handle, (PBYTE)data, n))
+                    return FALSE;
+                data += n;
+                length -= n;
+            }
+        }
+        if (length && skip->Address + skip->Size >= data) {
+            DWORD n = (DWORD)(skip->Address + skip->Size - data);
+            if (n > length)
+                n = length;
+            data += n;
+            length -= n;
+        }
+    }
+    return !length || d->Digest(d->Handle, (PBYTE)data, length);
 }
 
 /*
- * the bytes of a signed image in the order its digest takes them: the headers without the checksum and the
- * certificate directory entry, then the data of each section by file position, then the rest of the file but for the
- * certificates when the level asks for data outside the image. The levels leave out the data of the debug directory
- * and of the resource section unless they name them. The import tables are always in, the level has no effect on them.
+ * the digest of a program as the authenticode hash of the certificate stores takes it (read from imagehlp.dll of
+ * build 26300). The bytes go out in this order: everything before the NT headers, a copy of the NT headers in
+ * which the checksum, the certificate entry, and unless the level asks for them the resource entry, the size of
+ * the image and of the initialized data are zeroed, the section table with the entries that depend on what
+ * was left out zeroed, and the data of the sections in the order of the table.
+ *
+ * The level keeps in what it names, bit 1 the section named .debug, bit 2 the resources and bit 4 the import
+ * tables. Without the last the import descriptors lose their time stamp and forwarder chain and the address
+ * tables are left out. The data after the last section (the certificates and whatever follows) is never in,
+ * the level of non PE information has no effect here.
  */
 IMAGEHLP BOOL WINAPI ImageGetDigestStream(HANDLE file, DWORD level, DIGEST_FUNCTION digest, PVOID handle)
 {
-    SECDIR dir;
-    IMAGE_DOS_HEADER dos;
-    IMAGE_FILE_HEADER header;
-    WORD magic = 0;
-    if (!digest || !open_directory(file, &dir) || !read_at(file, 0, &dos, sizeof dos) ||
-        !read_at(file, (DWORD)dos.e_lfanew + 4, &header, sizeof header)) {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    DWORD optional = (DWORD)dos.e_lfanew + 4 + sizeof header;
-    read_at(file, optional, &magic, 2);
-    BOOL pe64 = magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC;
-    DWORD checksum_at = optional + 64;
-    DWORD headers_size = 0, directories = optional + (pe64 ? 112 : 96);
-    if (!read_at(file, optional + 60, &headers_size, 4)) {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    if (headers_size > dir.FileSize)
-        headers_size = dir.FileSize;
-    /* the rva and size of the resource and debug directories, to find their data in the sections. */
-    DWORD debug[2] = {}, resource[2] = {};
-    read_at(file, directories + 2 * 8, resource, sizeof resource);
-    read_at(file, directories + 6 * 8, debug, sizeof debug);
-    if (!digest_range(file, digest, handle, 0, checksum_at) ||
-        !digest_range(file, digest, handle, checksum_at + 4, dir.DirectoryPosition) ||
-        !digest_range(file, digest, handle, dir.DirectoryPosition + 8, headers_size))
-        return FALSE;
-    IMAGE_SECTION_HEADER sections[96];
-    DWORD count = header.NumberOfSections < 96 ? header.NumberOfSections : 96;
-    if (!read_at(file, optional + header.SizeOfOptionalHeader, sections, count * (DWORD)sizeof(sections[0]))) {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
-    DWORD end = headers_size;
-    for (DWORD done = 0; done < count; done++) {
-        /* the next section by position in the file. */
-        DWORD next = count;
-        for (DWORD i = 0; i < count; i++)
-            if (sections[i].SizeOfRawData && sections[i].PointerToRawData >= end &&
-                (next == count || sections[i].PointerToRawData < sections[next].PointerToRawData))
-                next = i;
-        if (next == count)
-            break;
-        const IMAGE_SECTION_HEADER *s = &sections[next];
-        DWORD from = s->PointerToRawData, to = from + s->SizeOfRawData;
-        if (to > dir.FileSize)
-            to = dir.FileSize;
-        BOOL skip_debug = !(level & CERT_PE_IMAGE_DIGEST_DEBUG_INFO) && debug[0] && debug[0] >= s->VirtualAddress &&
-            debug[0] - s->VirtualAddress < s->SizeOfRawData;
-        BOOL skip_resources = !(level & CERT_PE_IMAGE_DIGEST_RESOURCES) && resource[0] && !memcmp(s->Name, ".rsrc", 6);
-        DWORD cut_from = to, cut_to = to;
-        if (skip_resources) {
-            cut_from = from;
-        } else if (skip_debug) {
-            cut_from = from + (debug[0] - s->VirtualAddress);
-            cut_to = cut_from + debug[1] < to ? cut_from + debug[1] : to;
+    DIGEST d = {.Digest = digest, .Handle = handle};
+    LOADED_IMAGE image = {};
+    BYTE *sections = nullptr;
+    DWORD error = ERROR_INVALID_PARAMETER;
+    BOOL ok = FALSE;
+    image.SizeOfImage = GetFileSize(file, nullptr);
+    if (image.SizeOfImage == INVALID_FILE_SIZE || !digest)
+        goto done;
+    HANDLE mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    if (!mapping)
+        goto done;
+    image.MappedAddress = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+    CloseHandle(mapping);
+    if (!image.MappedAddress || !locate_headers(&image))
+        goto done;
+    BYTE *base = image.MappedAddress;
+    BYTE *end = base + image.SizeOfImage;
+    PIMAGE_NT_HEADERS nt = image.FileHeader;
+    if (image.fDOSImage)
+        goto unmap;
+    WORD magic = nt->OptionalHeader.Magic;
+    if (magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC && magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC)
+        goto unmap;
+    BOOL pe32 = magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC;
+    d.Nt = nt;
+    d.Base = base;
+    error = ERROR_OPERATION_ABORTED;
+    if ((BYTE *)nt != base && !digest_emit(&d, base, (DWORD)((BYTE *)nt - base)))
+        goto unmap;
+
+    /* the copy of the headers and of the section table, which the skipped ranges never touch. */
+    DWORD headers_size = pe32 ? 248 : 264, count = image.NumberOfSections;
+    alignas(8) BYTE headers[264];
+    memcpy(headers, nt, headers_size);
+    sections = HeapAlloc(GetProcessHeap(), 0, 40 * (SIZE_T)count);
+    if (!sections || (BYTE *)(image.Sections + count) > end)
+        goto unmap;
+    memcpy(sections, image.Sections, 40 * (SIZE_T)count);
+    DWORD *directories = (DWORD *)(headers + 24 + (pe32 ? 96 : 112));
+    DWORD *resource = directories + 4, *certificate = directories + 8, *relocation = directories + 10;
+    DWORD resource_rva = resource[0], resource_size = resource[1], relocation_rva = relocation[0],
+          relocation_size = relocation[1], debug_rva = 0;
+    DWORD *size_of_image = (DWORD *)(headers + 80), *size_of_data = (DWORD *)(headers + 32);
+    BOOL debug_found = FALSE;
+    LONG relocation_section = -1;
+    *(DWORD *)(headers + 88) = 0;
+    certificate[0] = certificate[1] = 0;
+    for (DWORD i = 0; i < count; i++) {
+        const IMAGE_SECTION_HEADER *s = &image.Sections[i];
+        BYTE *copy = sections + 40 * i;
+        if (relocation_size && s->VirtualAddress <= relocation_rva &&
+            s->Misc.VirtualSize + s->VirtualAddress >= relocation_size + relocation_rva)
+            relocation_section = (LONG)i;
+        if (resource_size && !(level & CERT_PE_IMAGE_DIGEST_RESOURCES) && s->VirtualAddress <= resource_rva &&
+            s->Misc.VirtualSize + s->VirtualAddress >= resource_size + resource_rva)
+            memset(copy + 8, 0, 16);
+        if (!(level & CERT_PE_IMAGE_DIGEST_DEBUG_INFO) && !strncmp((const char *)s->Name, ".debug", 7)) {
+            debug_rva = s->VirtualAddress;
+            digest_skip(&d, base + s->PointerToRawData, s->SizeOfRawData);
+            memset(copy + 8, 0, 16);
+            debug_found = TRUE;
         }
-        if (!digest_range(file, digest, handle, from, cut_from) ||
-            (cut_to < to && !digest_range(file, digest, handle, cut_to, to)))
-            return FALSE;
-        end = to;
     }
-    if ((level & CERT_PE_IMAGE_DIGEST_NON_PE_INFO) && end < dir.FileSize) {
-        /* what follows the sections, but for the certificates, which a signature cannot cover. */
-        DWORD stop = dir.Size && dir.Offset >= end ? dir.Offset : dir.FileSize;
-        if (!digest_range(file, digest, handle, end, stop))
-            return FALSE;
+    /* what the relocation section is when the removed data came before it: its place and its directory entry go too. */
+    BOOL zero_relocations = FALSE;
+    if (!(level & CERT_PE_IMAGE_DIGEST_RESOURCES)) {
+        zero_relocations = resource_rva < relocation_rva;
+        resource[0] = resource[1] = 0;
+        *size_of_image = *size_of_data = 0;
+        digest_skip_rva(&d, resource_rva, resource_size);
     }
-    return TRUE;
+    if (!(level & CERT_PE_IMAGE_DIGEST_DEBUG_INFO) && debug_found) {
+        *size_of_image = *size_of_data = 0;
+        zero_relocations |= debug_rva < relocation_rva;
+    }
+    if (zero_relocations && relocation_section >= 0) {
+        relocation[0] = 0;
+        memset(sections + 40 * relocation_section + 12, 0, 4);
+        memset(sections + 40 * relocation_section + 20, 0, 4);
+    }
+    if (!digest_emit(&d, headers, headers_size) || !digest_emit(&d, sections, 40 * count))
+        goto unmap;
+
+    if (!(level & CERT_PE_IMAGE_DIGEST_ALL_IMPORT_INFO)) {
+        ULONG import_size = 0, address_size = 0;
+        DWORD *descriptor = ImageDirectoryEntryToDataEx(base, FALSE, IMAGE_DIRECTORY_ENTRY_IMPORT, &import_size, nullptr);
+        if (import_size && descriptor) {
+            void *addresses = ImageDirectoryEntryToDataEx(base, FALSE, IMAGE_DIRECTORY_ENTRY_IAT, &address_size, nullptr);
+            if (addresses)
+                digest_skip(&d, addresses, address_size);
+            for (; (BYTE *)(descriptor + 5) <= end && *descriptor; descriptor += 5) {
+                digest_skip(&d, (BYTE *)(descriptor + 1), 8);
+                if (addresses)
+                    continue;
+                /* without a directory of address tables the thunks of each descriptor are left out. */
+                BYTE *first = ImageRvaToVa(nt, base, *descriptor, nullptr), *at = first;
+                DWORD width = pe32 ? 4 : 8;
+                if (!first)
+                    continue;
+                while (at + width <= end && (pe32 ? *(DWORD *)at : *(UINT64 *)at))
+                    at += width;
+                digest_skip_rva(&d, descriptor[4], (DWORD)(at - first) + width);
+            }
+        }
+    }
+    for (DWORD i = 0; i < count; i++) {
+        const IMAGE_SECTION_HEADER *s = &image.Sections[i];
+        if (s->PointerToRawData > image.SizeOfImage || s->SizeOfRawData > image.SizeOfImage - s->PointerToRawData)
+            goto unmap;
+        if (!digest_emit(&d, base + s->PointerToRawData, s->SizeOfRawData))
+            goto unmap;
+    }
+    error = 0;
+    ok = TRUE;
+unmap:
+    UnmapViewOfFile(image.MappedAddress);
+done:
+    if (d.Skips)
+        HeapFree(GetProcessHeap(), 0, d.Skips);
+    if (sections)
+        HeapFree(GetProcessHeap(), 0, sections);
+    SetLastError(error);
+    return ok;
 }
