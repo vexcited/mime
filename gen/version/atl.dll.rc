@@ -1,0 +1,28 @@
+1 VERSIONINFO
+FILEVERSION 10, 0, 26100, 7309
+PRODUCTVERSION 10, 0, 26100, 7309
+FILEFLAGSMASK 0x3F
+FILEFLAGS 0x0
+FILEOS 0x40004
+FILETYPE 2
+FILESUBTYPE 8
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Microsoft Corporation"
+            VALUE "FileDescription", "ATL Module for Windows"
+            VALUE "FileVersion", "10.0.26100.7309 (WinBuild.160101.0800)"
+            VALUE "InternalName", "ATL.DLL"
+            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "OriginalFilename", "ATL.DLL"
+            VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
+            VALUE "ProductVersion", "10.0.26100.7309"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
