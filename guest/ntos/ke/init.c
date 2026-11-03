@@ -215,6 +215,8 @@ void KiInitializeKernel(MimeBootInfo *boot)
     /* the kernel options no-access-checks, which opens every object to every program, and trace-access. */
     SeAccessEnforced = strstr(boot->cmdline, "no-access-checks") == nullptr;
     SeTraceAccess = strstr(boot->cmdline, "trace-access") != nullptr;
+    extern BOOLEAN IoTraceFiles;
+    IoTraceFiles = strstr(boot->cmdline, "trace-files") != nullptr;
     extern char KiTraceSyscallImage[16];
     const char *trace = strstr(boot->cmdline, "trace-syscalls=");
     extern char KiTraceStackService[40];

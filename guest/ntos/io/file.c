@@ -22,6 +22,9 @@ static NTSTATUS store_iosb(PIO_STATUS_BLOCK user, const IO_STATUS_BLOCK *iosb)
     return STATUS_SUCCESS;
 }
 
+/* the kernel option trace-files logs the name and the status of every open by a program that fails. */
+BOOLEAN IoTraceFiles;
+
 NTSTATUS NTAPI IoCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
                             PLARGE_INTEGER allocation, ULONG file_attributes, ULONG share, ULONG disposition,
                             ULONG options, PVOID ea, ULONG ea_length, ULONG create_file_type, PVOID parameters,
@@ -75,6 +78,15 @@ NTSTATUS NTAPI IoCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     thread->CreateEa = ea_copy;
     thread->CreateEaLength = ea_copy ? ea_length : 0;
     status = IopCreateFile(&h, access, &oa, &local, file_attributes, share, disposition, options, mode);
+    if (!NT_SUCCESS(status) && IoTraceFiles && mode == UserMode) {
+        char text[120];
+        ULONG n = 0, chars = name.Length / sizeof(WCHAR);
+        for (ULONG i = chars > 110 ? chars - 110 : 0; i < chars && n < sizeof(text) - 1; i++)
+            text[n++] = name.Buffer[i] < 0x80 && name.Buffer[i] >= 0x20 ? (char)name.Buffer[i] : '?';
+        text[n] = 0;
+        KiLogPrintf("open of '%s' failed with %08x, %s pid %u", text, status, PsCurrentProcess()->ImageFileName,
+                    (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId);
+    }
     thread->CreateEa = outer_ea;
     thread->CreateEaLength = outer_ea_length;
     if (ea_copy)
