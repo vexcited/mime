@@ -1,11 +1,11 @@
 /*
  * watches the memory of the host and asks the guest to give pages back when it runs short. the guest already hands
- * free pages to the host as it frees them (MIME_HC_MEM_REPORT); this is for the memory it keeps because it is cheap to
+ * free pages to the host as it frees them with MIME_HC_MEM_REPORT. this is for the memory it keeps because it is cheap to
  * keep: file windows the host maps into the process, pages in the processors' caches, the cache of the file system.
  *
  * the host is short when MemAvailable falls below a share of its memory or the kernel's own stall figures for memory
- * (the pressure stall information, which a program may read) say tasks wait for it. leaving a level takes a margin, so
- * a host that sits on the line does not make the guest trim twice a second.
+ * the pressure stall information say tasks wait for it. leaving a level takes a margin, so a host that sits on the line
+ * does not make the guest trim twice a second.
  *   MIME_MEMORY_LOW_MB  MemAvailable under which the host is short, in megabytes; half of it is critical. for tests.
  *   MIME_MEMORY_LOW_FILE  a file holding that number, read every second, so a test can make the host short while it runs.
  */

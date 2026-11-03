@@ -7,7 +7,7 @@
  *
  * windows trims working sets and repurposes the standby list to make room. this memory manager never pages out, so
  * its working sets are the memory its processes hold and have no part to give: what it caches is the idle file windows
- * (fscache.c) and the pages processors keep for their next faults and the free blocks (pfn.c).
+ * in fscache.c and the pages processors keep for their next faults and the free blocks in pfn.c.
  */
 #include "../ntos.h"
 #include <mime/ntrtlsec.h>
@@ -108,9 +108,9 @@ static void trim(ULONG level)
 }
 
 /*
- * the pieces too small for the usual hand back (below a huge page of the host) pile up as programs free memory in a
- * scatter. once nothing has been freed for a while they go too, which splits a huge page of the host only where it holds
- * no guest memory in use. a busy machine never gets here, its next allocations would only fault them back.
+ * pieces smaller than a huge page of the host pile up as programs free memory in a scatter, and the usual hand back
+ * leaves them. once nothing has been freed for a while they go too, which splits the huge pages of the host that are
+ * partly in use. a busy machine never gets here, its next allocations would only fault them back.
  */
 static void sweep_when_quiet(void)
 {
