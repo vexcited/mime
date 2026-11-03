@@ -168,6 +168,17 @@ static void user_exception(PKTRAP_FRAME frame)
 
     EXCEPTION_RECORD record;
     build_record(frame, &record);
+    /* a fast fail ends the process at once, no handler of the program sees it. */
+    if (frame->Vector == 0x29) {
+        PEPROCESS process = PsCurrentProcess();
+        KiLogPrintf("fast fail %llu in process %u (%s)", (ULONGLONG)frame->Rcx,
+                    (ULONG)(ULONG_PTR)process->UniqueProcessId, process->ImageFileName);
+        KiDumpTrapFrame("user context", frame);
+        KiTraceUserFrames(frame);
+        PspTerminateProcess(process, STATUS_STACK_BUFFER_OVERRUN);
+        KiExitToUserMode(frame);
+        return;
+    }
     KiApplyFaultStatus(&record);
     if (KiTraceUserExceptions) {
         KiLogPrintf("first chance exception %08x at %p in %s", record.ExceptionCode, (PVOID)frame->Rip,
