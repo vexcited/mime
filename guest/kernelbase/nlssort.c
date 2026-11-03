@@ -965,8 +965,97 @@ static int find_ignored(const FIND_STATE *f, const uint16_t *text, int i, int n)
     return text[i] == 0xDB40 && i + 1 < n && text[i + 1] >= 0xDD00 && text[i + 1] <= 0xDDEF;
 }
 
-int NlsSortFind(const NLS_SORT_TABLES *tables, const NLS_SORT_ORDER *order, uint32_t flags, const uint16_t *text, int length,
-                const uint16_t *value, int value_length, int *found_length)
+/* whether a character is the first of a contraction of the order, which the tables keep sorted by their characters. */
+static int starts_contraction(const NLS_SORT_ORDER *o, unsigned c)
+{
+    if (o->PairIndex)
+        return c - 0xD800u < 0x400u && o->PairIndex[c - 0xD800u];
+    if (c < o->Min || c > o->Max)
+        return 0;
+    for (int len = 2; len <= 8; len++) {
+        int count = o->Count[len];
+        if (!count)
+            continue;
+        int words = (len + 2 + 1) & ~1;
+        const uint16_t *table = o->Entries[len];
+        int lo = 0, hi = count;
+        while (lo < hi) {
+            int mid = (lo + hi) / 2;
+            if (table[(size_t)mid * words] < c)
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+        if (lo < count && table[(size_t)lo * words] == c)
+            return 1;
+    }
+    return 0;
+}
+
+#define FIND_PRIMARIES 12
+
+/* the primary weights of the contractions that start with a character, added to the list; 0 when they do not fit or are too many to tell. */
+static int contraction_primaries(const NLS_SORT_ORDER *o, unsigned c, uint16_t *list, int *count)
+{
+    if (o->PairIndex)
+        return 0;
+    for (int len = 2; len <= 8; len++) {
+        int n = o->Count[len];
+        if (!n)
+            continue;
+        int words = (len + 2 + 1) & ~1;
+        const uint16_t *table = o->Entries[len];
+        int lo = 0, hi = n;
+        while (lo < hi) {
+            int mid = (lo + hi) / 2;
+            if (table[(size_t)mid * words] < c)
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+        for (; lo < n && table[(size_t)lo * words] == c; lo++) {
+            uint16_t primary = table[(size_t)lo * words + words - 2];
+            if ((primary >> 8) <= 13)
+                return 0;
+            int known = 0;
+            for (int k = 0; k < *count; k++)
+                known |= list[k] == primary;
+            if (known)
+                continue;
+            if (*count == FIND_PRIMARIES)
+                return 0;
+            list[(*count)++] = primary;
+        }
+    }
+    return 1;
+}
+
+/* whether a match can start with a character: the first weight it can give has to be one the value starts with. */
+static int start_possible(const NLS_SORT_ORDER *order, const NLS_SORT_TABLES *tables, uint32_t flags, unsigned c, int next,
+                          const uint16_t *allowed, int allowed_count)
+{
+    uint32_t w = weight_of_char(order, tables, flags, c);
+    uint8_t script = W_SCRIPT(w);
+    uint16_t mine[FIND_PRIMARIES];
+    int count = 0;
+    if (script <= 6)
+        return 1;
+    if (script > 12)
+        mine[count++] = (uint16_t)w;
+    if (starts_contraction(order, c) && !contraction_primaries(order, c, mine, &count))
+        return 1;
+    if ((order->Flags & NLS_SORT_DOUBLE_COMPRESSION) && next >= 0 && starts_contraction(order, (unsigned)next) &&
+        !contraction_primaries(order, (unsigned)next, mine, &count))
+        return 1;
+    for (int i = 0; i < count; i++)
+        for (int k = 0; k < allowed_count; k++)
+            if (mine[i] == allowed[k])
+                return 1;
+    return 0;
+}
+
+static int find_impl(const NLS_SORT_TABLES *tables, const NLS_SORT_ORDER *order, uint32_t flags, const uint16_t *text, int length,
+                     const uint16_t *value, int value_length, int *found_length)
 {
     FIND_STATE fs = {tables, order, flags & ~(NLS_SORT_FIND_FROMSTART | NLS_SORT_FIND_FROMEND | NLS_SORT_FIND_STARTSWITH | NLS_SORT_FIND_ENDSWITH)};
     uint32_t position = flags & (NLS_SORT_FIND_FROMSTART | NLS_SORT_FIND_FROMEND | NLS_SORT_FIND_STARTSWITH | NLS_SORT_FIND_ENDSWITH);
@@ -991,21 +1080,21 @@ int NlsSortFind(const NLS_SORT_TABLES *tables, const NLS_SORT_ORDER *order, uint
     int trailing = 0;
     while (trailing < value_length && find_ignored(&fs, value, value_length - 1 - trailing, value_length))
         trailing++;
-    /* without contractions a plain character weighs by itself, so a start whose primary weight is not the value's is no start. */
-    int has_contractions = order_has_contractions(order);
-    int filter = 0;
-    uint16_t primary = 0;
-    if (!has_contractions) {
-        for (int i = 0; i < value_length; i++)
-            if (!find_ignored(&fs, value, i, value_length)) {
-                uint32_t w = weight_of_char(order, tables, flags, value[i]);
-                if (W_SCRIPT(w) > 13) {
-                    filter = 1;
-                    primary = (uint16_t)w;
-                }
-                break;
+    /* a character that is in no contraction weighs by itself, so a start whose primary weight is not one the value can begin with is no start. */
+    int filter = 0, allowed_count = 0;
+    uint16_t allowed[FIND_PRIMARIES];
+    for (int i = 0; i < value_length; i++)
+        if (!find_ignored(&fs, value, i, value_length)) {
+            uint32_t w = weight_of_char(order, tables, flags, value[i]);
+            if (W_SCRIPT(w) > 13) {
+                allowed[allowed_count++] = (uint16_t)w;
+                filter = !starts_contraction(order, value[i]) || contraction_primaries(order, value[i], allowed, &allowed_count);
+                /* with double compression a pair of the same letter weighs from its second one. */
+                if (filter && (order->Flags & NLS_SORT_DOUBLE_COMPRESSION) && i + 1 < value_length && starts_contraction(order, value[i + 1]))
+                    filter = contraction_primaries(order, value[i + 1], allowed, &allowed_count);
             }
-    }
+            break;
+        }
     for (int step = 0; step <= length; step++) {
         int start = from_end ? length - step : step;
         if (position == NLS_SORT_FIND_STARTSWITH && start > first)
@@ -1014,13 +1103,10 @@ int NlsSortFind(const NLS_SORT_TABLES *tables, const NLS_SORT_ORDER *order, uint
             continue;
         if (position == NLS_SORT_FIND_STARTSWITH && start != first)
             continue;
-        if (filter) {
-            uint32_t w = weight_of_char(order, tables, flags, text[start]);
-            uint8_t sc = W_SCRIPT(w);
-            if ((sc > 12 && (uint16_t)w != primary) || (sc >= 7 && sc <= 12))
-                continue;
-        }
+        if (filter && !start_possible(order, tables, flags, text[start], start + 1 < length ? text[start + 1] : -1, allowed, allowed_count))
+            continue;
         for (int end = start; end <= length; end++) {
+            /* what a value matches is not longer than a few weights for each of its characters. */
             if (end - start > 8 * value_length + 16)
                 break;
             if (end < length && find_script(&fs, text[end]) == 1 && !find_ignored(&fs, text, end, length))
@@ -1041,6 +1127,29 @@ int NlsSortFind(const NLS_SORT_TABLES *tables, const NLS_SORT_ORDER *order, uint
         }
     }
     return -1;
+}
+
+/* a search takes the null character for a character that only another one equals, though a comparison skips it. */
+int NlsSortFind(const NLS_SORT_TABLES *tables, const NLS_SORT_ORDER *order, uint32_t flags, const uint16_t *text, int length,
+                const uint16_t *value, int value_length, int *found_length)
+{
+    int has_null = 0;
+    for (int i = 0; i < length; i++)
+        has_null |= text[i] == 0;
+    for (int i = 0; i < value_length; i++)
+        has_null |= value[i] == 0;
+    if (!has_null)
+        return find_impl(tables, order, flags, text, length, value, value_length, found_length);
+    uint16_t *copy = NlsSortAlloc((size_t)(length + value_length) * sizeof(uint16_t));
+    if (!copy)
+        return -1;
+    for (int i = 0; i < length; i++)
+        copy[i] = text[i] ? text[i] : 0xE000;
+    for (int i = 0; i < value_length; i++)
+        copy[length + i] = value[i] ? value[i] : 0xE000;
+    int result = find_impl(tables, order, flags, copy, length, copy + length, value_length, found_length);
+    NlsSortFree(copy);
+    return result;
 }
 
 /* whether the characters of a string have a place in the order: the ones with a weight, and the few without one that are defined. */

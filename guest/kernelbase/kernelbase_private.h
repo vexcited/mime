@@ -152,6 +152,7 @@ ULONG KbUniLower(ULONG cp);
 ULONG KbUniFold(ULONG cp);
 
 /* nlssort_data.c: the order of strings of Windows, its sort keys and its hash. */
+const NLS_SORT_ORDER *KbSortOrderByExactName(PCWSTR name);
 const NLS_SORT_ORDER *KbSortOrderByName(PCWSTR name);
 int KbCompareStrings(const NLS_SORT_ORDER *order, DWORD flags, PCWSTR a, int alen, PCWSTR b, int blen);
 int KbSortKey(const NLS_SORT_ORDER *order, DWORD flags, PCWSTR src, int len, PBYTE key, int size);

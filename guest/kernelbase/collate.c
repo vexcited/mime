@@ -154,37 +154,64 @@ static int string_length(LPCWSTR s, int len)
 
 /* ------------------------------------------------------------------ sort orders */
 
-/* the sort order of a locale name or lcid, and whether its language uses Turkish i and I casing. */
+/* the sort order of a locale name or lcid, and the locale, whose language may use Turkish i and I casing. */
 typedef struct SORT_ORDER {
     const NLS_SORT_ORDER *Order;
-    BOOL Turkic;
+    UINT Locale;
 } SORT_ORDER;
 
 #define NO_LOCALE_INDEX 0xFFFFFFFFu
 
-static SORT_ORDER sort_of_locale(UINT locale)
+/* the order of a locale is the one of its name, which for every locale of Windows is the one of its sort locale as well. */
+static SORT_ORDER sort_of_locale(UINT locale, PCWSTR name)
 {
-    SORT_ORDER o = {KbSortOrderByName(nullptr), FALSE};
+    SORT_ORDER o = {KbSortOrderByName(nullptr), locale};
+    const NLS_SORT_ORDER *own = name ? KbSortOrderByExactName(name) : nullptr;
+    if (own) {
+        o.Order = own;
+        return o;
+    }
     if (locale == NO_LOCALE_INDEX)
         return o;
-    PCWSTR language = KbLocaleText(locale, NLS_S_SISO639LANGNAME);
-    o.Turkic = !wcscmp(language, L"tr") || !wcscmp(language, L"az");
-    o.Order = KbSortOrderByName(KbLocaleText(locale, NLS_S_SSORTLOCALE));
+    PCWSTR sort_name = KbLocaleText(locale, NLS_S_SNAME);
+    o.Order = KbSortOrderByName(*sort_name ? sort_name : name);
     return o;
+}
+
+static BOOL sort_is_turkic(SORT_ORDER order)
+{
+    if (order.Locale == NO_LOCALE_INDEX)
+        return FALSE;
+    PCWSTR language = KbLocaleText(order.Locale, NLS_S_SISO639LANGNAME);
+    return !wcscmp(language, L"tr") || !wcscmp(language, L"az");
 }
 
 static SORT_ORDER sort_of_name(PCWSTR name)
 {
     if (!name || !*name)
-        return sort_of_locale(KbLocaleFromLcid(LOCALE_USER_DEFAULT, TRUE));
+        return sort_of_locale(KbLocaleFromLcid(LOCALE_USER_DEFAULT, TRUE), nullptr);
     if (!_wcsicmp(name, LOCALE_NAME_SYSTEM_DEFAULT))
-        return sort_of_locale(KbLocaleFromLcid(LOCALE_SYSTEM_DEFAULT, TRUE));
-    return sort_of_locale(KbLocaleFromName(name));
+        return sort_of_locale(KbLocaleFromLcid(LOCALE_SYSTEM_DEFAULT, TRUE), nullptr);
+    return sort_of_locale(KbLocaleFromName(name), name);
+}
+
+/* the order of a name, or nothing when the name is not one of a locale, which costs a single lookup of the name. */
+static BOOL sort_of_checked_name(PCWSTR name, SORT_ORDER *order)
+{
+    if (!name || !*name || !_wcsicmp(name, LOCALE_NAME_SYSTEM_DEFAULT)) {
+        *order = sort_of_name(name);
+        return TRUE;
+    }
+    UINT locale = KbLocaleFromName(name);
+    if (locale == NO_LOCALE_INDEX && !IsValidLocaleName(name))
+        return FALSE;
+    *order = sort_of_locale(locale, name);
+    return TRUE;
 }
 
 static SORT_ORDER sort_of_lcid(LCID lcid)
 {
-    return sort_of_locale(KbLocaleFromLcid(KbResolveLcid(lcid), TRUE));
+    return sort_of_locale(KbLocaleFromLcid(KbResolveLcid(lcid), TRUE), nullptr);
 }
 
 static int compare_strings(SORT_ORDER order, DWORD flags, LPCWSTR a, int alen, LPCWSTR b, int blen)
@@ -196,13 +223,23 @@ static int compare_strings(SORT_ORDER order, DWORD flags, LPCWSTR a, int alen, L
     (NORM_IGNORECASE | NORM_IGNORENONSPACE | NORM_IGNORESYMBOLS | SORT_DIGITSASNUMBERS | LINGUISTIC_IGNORECASE | \
      LINGUISTIC_IGNOREDIACRITIC | SORT_STRINGSORT | NORM_IGNOREKANATYPE | NORM_IGNOREWIDTH | NORM_LINGUISTIC_CASING)
 
+/* a flag of the comparison that Windows takes and does nothing with. */
+#define NLS_IGNORED_FLAG 0x10000000
+
+/* the case flag of the older kind does not go with the one of the linguistic kind, and the same goes for the marks. */
+static BOOL sort_flags_conflict(DWORD flags)
+{
+    return ((flags & NORM_IGNORECASE) && (flags & LINGUISTIC_IGNORECASE)) ||
+           ((flags & NORM_IGNORENONSPACE) && (flags & LINGUISTIC_IGNOREDIACRITIC));
+}
+
 static int compare_checked(SORT_ORDER order, DWORD flags, LPCWSTR a, int alen, LPCWSTR b, int blen)
 {
     if (!a || !b) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    if (flags & ~(DWORD)(COMPARE_FLAGS | LOCALE_USE_CP_ACP)) {
+    if ((flags & ~(DWORD)(COMPARE_FLAGS | NLS_IGNORED_FLAG | LOCALE_USE_CP_ACP)) || sort_flags_conflict(flags)) {
         KbSetError(ERROR_INVALID_FLAGS);
         return 0;
     }
@@ -212,7 +249,8 @@ static int compare_checked(SORT_ORDER order, DWORD flags, LPCWSTR a, int alen, L
 int WINAPI CompareStringEx(LPCWSTR name, DWORD flags, LPCWCH a, int alen, LPCWCH b, int blen,
                            LPNLSVERSIONINFO version, LPVOID reserved, LPARAM param)
 {
-    if (name && *name && !IsValidLocaleName(name) && _wcsicmp(name, LOCALE_NAME_SYSTEM_DEFAULT)) {
+    SORT_ORDER order;
+    if (!sort_of_checked_name(name, &order)) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
@@ -220,7 +258,7 @@ int WINAPI CompareStringEx(LPCWSTR name, DWORD flags, LPCWCH a, int alen, LPCWCH
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    return compare_checked(sort_of_name(name), flags, a, alen, b, blen);
+    return compare_checked(order, flags, a, alen, b, blen);
 }
 
 int WINAPI CompareStringW(LCID locale, DWORD flags, PCNZWCH a, int alen, PCNZWCH b, int blen)
@@ -292,11 +330,12 @@ static int find_nls(SORT_ORDER order, DWORD flags, LPCWSTR source, int source_le
 {
     DWORD position = flags & (FIND_STARTSWITH | FIND_ENDSWITH | FIND_FROMSTART | FIND_FROMEND);
     DWORD compare = flags & ~position;
-    if (!source || !value || !source_len || !value_len || source_len < -1 || value_len < -1) {
+    if (!source || !value || source_len < -1 || value_len < -1) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return -1;
     }
-    if ((position & (position - 1)) || (compare & ~(DWORD)COMPARE_FLAGS) || (compare & (SORT_STRINGSORT | SORT_DIGITSASNUMBERS))) {
+    if ((position & (position - 1)) || (compare & ~(DWORD)COMPARE_FLAGS) || (compare & (SORT_STRINGSORT | SORT_DIGITSASNUMBERS)) ||
+        sort_flags_conflict(compare)) {
         KbSetError(ERROR_INVALID_FLAGS);
         return -1;
     }
@@ -377,7 +416,21 @@ static int map_string(SORT_ORDER order, DWORD flags, LPCWSTR src, int src_len, L
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    if (!flags || (flags & ~(DWORD)LCMAP_VALID)) {
+    /* a hash goes in a buffer of one dword and nothing else. */
+    if ((flags & LCMAP_HASH) && dst_len != (int)sizeof(DWORD)) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (flags & (LCMAP_SORTKEY | LCMAP_HASH)) {
+        /* a key and a hash take the flags of the comparison, and the bytes of a key may be swapped. */
+        DWORD allowed = COMPARE_FLAGS | NLS_IGNORED_FLAG | LOCALE_USE_CP_ACP | LCMAP_SORTKEY | LCMAP_HASH;
+        if (flags & LCMAP_SORTKEY)
+            allowed |= LCMAP_BYTEREV;
+        if ((flags & ~allowed) || ((flags & LCMAP_SORTKEY) && (flags & LCMAP_HASH)) || sort_flags_conflict(flags)) {
+            KbSetError(ERROR_INVALID_FLAGS);
+            return 0;
+        }
+    } else if (!flags || (flags & ~(DWORD)LCMAP_VALID)) {
         KbSetError(ERROR_INVALID_FLAGS);
         return 0;
     }
@@ -404,19 +457,21 @@ static int map_string(SORT_ORDER order, DWORD flags, LPCWSTR src, int src_len, L
     int len = src_len < 0 ? (int)wcslen(src) + 1 : src_len;
     if (sortkey) {
         int key_len = src_len < 0 ? len - 1 : len;
-        return KbSortKey(order.Order, flags & ~(DWORD)LCMAP_SORTKEY, src, key_len, (PBYTE)dst, dst_len);
+        int key_size = KbSortKey(order.Order, flags & ~(DWORD)(LCMAP_SORTKEY | LCMAP_BYTEREV), src, key_len, (PBYTE)dst, dst_len);
+        /* the bytes of each word of the key are swapped, and the last byte of an odd key stays. */
+        if ((flags & LCMAP_BYTEREV) && dst_len && key_size > 0)
+            for (int i = 0; i + 1 < key_size; i += 2) {
+                BYTE b = ((PBYTE)dst)[i];
+                ((PBYTE)dst)[i] = ((PBYTE)dst)[i + 1];
+                ((PBYTE)dst)[i + 1] = b;
+            }
+        return key_size;
     }
     if (hash) {
         int key_len = src_len < 0 ? len - 1 : len;
-        if (!dst_len)
-            return sizeof(DWORD);
-        if (dst_len < (int)sizeof(DWORD)) {
-            KbSetError(ERROR_INSUFFICIENT_BUFFER);
-            return 0;
-        }
         DWORD h = KbSortHash(order.Order, flags & ~(DWORD)LCMAP_HASH, src, key_len);
         memcpy(dst, &h, sizeof(h));
-        return sizeof(DWORD);
+        return (int)h;
     }
     if (dst && src != dst && dst < src + len && src < dst + dst_len) {
         KbSetError(ERROR_INVALID_PARAMETER);
@@ -431,7 +486,7 @@ static int map_string(SORT_ORDER order, DWORD flags, LPCWSTR src, int src_len, L
             return len;
     }
     int out = 0;
-    BOOL turkic = order.Turkic && (flags & LCMAP_LINGUISTIC_CASING);
+    BOOL turkic = (flags & LCMAP_LINGUISTIC_CASING) && sort_is_turkic(order);
     BOOL word_start = TRUE;
     for (int i = 0; i < len; i++) {
         ULONG c = src[i];
@@ -502,11 +557,12 @@ int WINAPI LCMapStringEx(LPCWSTR name, DWORD flags, LPCWSTR src, int src_len, LP
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    if (name && *name && !IsValidLocaleName(name) && _wcsicmp(name, LOCALE_NAME_SYSTEM_DEFAULT)) {
+    SORT_ORDER order;
+    if (!sort_of_checked_name(name, &order)) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    return map_string(sort_of_name(name), flags, src, src_len, dst, dst_len);
+    return map_string(order, flags, src, src_len, dst, dst_len);
 }
 
 int WINAPI LCMapStringW(LCID locale, DWORD flags, LPCWSTR src, int src_len, LPWSTR dst, int dst_len)

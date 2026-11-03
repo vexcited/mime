@@ -12,6 +12,44 @@ void NlsSortFree(void *p)
     KbFree(p);
 }
 
+static const NLS_SORT_ORDER *sort_lookup(const char *text)
+{
+    int lo = 1, hi = (int)RTL_NUMBER_OF(g_nls_sort_ids) - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        const char *a = g_nls_sort_ids[mid].Name, *b = text;
+        while (*a && *a == *b) {
+            a++;
+            b++;
+        }
+        int diff = (int)(unsigned char)*b - (int)(unsigned char)*a;
+        if (!diff)
+            return &g_nls_sort_orders[g_nls_sort_ids[mid].Sort];
+        if (diff > 0)
+            lo = mid + 1;
+        else
+            hi = mid - 1;
+    }
+    return nullptr;
+}
+
+/* the order a name has of its own, which the alternate sorts such as de-DE_phoneb do, or nothing. */
+const NLS_SORT_ORDER *KbSortOrderByExactName(PCWSTR name)
+{
+    char text[88];
+    SIZE_T n = 0;
+    for (; name[n] && n < sizeof(text) - 1; n++) {
+        WCHAR c = name[n];
+        if (c > 0x7F)
+            return nullptr;
+        text[n] = (char)(c >= 'A' && c <= 'Z' ? c + 32 : c);
+    }
+    if (name[n] || !n)
+        return nullptr;
+    text[n] = 0;
+    return sort_lookup(text);
+}
+
 /* the sort order of a sort locale name: the registry of Windows keeps the names with an order each, and a name that is not
  * there is tried again without what follows its last hyphen or underscore, until the default order is left. */
 const NLS_SORT_ORDER *KbSortOrderByName(PCWSTR name)
@@ -30,22 +68,9 @@ const NLS_SORT_ORDER *KbSortOrderByName(PCWSTR name)
     }
     text[n] = 0;
     while (n) {
-        int lo = 1, hi = (int)RTL_NUMBER_OF(g_nls_sort_ids) - 1;
-        while (lo <= hi) {
-            int mid = (lo + hi) / 2;
-            const char *a = g_nls_sort_ids[mid].Name, *b = text;
-            while (*a && *a == *b) {
-                a++;
-                b++;
-            }
-            int diff = (int)(unsigned char)*b - (int)(unsigned char)*a;
-            if (!diff)
-                return &g_nls_sort_orders[g_nls_sort_ids[mid].Sort];
-            if (diff > 0)
-                lo = mid + 1;
-            else
-                hi = mid - 1;
-        }
+        const NLS_SORT_ORDER *found = sort_lookup(text);
+        if (found)
+            return found;
         SIZE_T cut = n;
         while (cut > 1 && text[cut - 1] != '-' && text[cut - 1] != '_')
             cut--;
