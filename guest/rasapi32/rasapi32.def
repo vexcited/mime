@@ -1,0 +1,13 @@
+; the exports of rasapi32.dll of windows with their ordinals, less the ones that are not here yet.
+LIBRARY rasapi32.dll
+EXPORTS
+    RasConnectionNotificationA @68
+    RasConnectionNotificationW @69
+    RasEnumConnectionsA @82
+    RasEnumConnectionsW @83
+    RasEnumEntriesA @86
+    RasEnumEntriesW @87
+    RasGetConnectStatusA @98
+    RasGetConnectStatusW @99
+    RasHangUpA @134
+    RasHangUpW @135
