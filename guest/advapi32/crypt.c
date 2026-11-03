@@ -16,6 +16,7 @@ ADVAPI BOOL WINAPI GetUserNameA(LPSTR buffer, LPDWORD size);
 
 #define NTE_BAD_UID ((DWORD)0x80090001L)
 #define NTE_BAD_KEY ((DWORD)0x80090003L)
+#define NTE_BAD_LEN ((DWORD)0x80090004L)
 #define NTE_BAD_DATA ((DWORD)0x80090005L)
 #define NTE_BAD_VER ((DWORD)0x80090007L)
 #define NTE_BAD_FLAGS ((DWORD)0x80090009L)
@@ -26,6 +27,7 @@ ADVAPI BOOL WINAPI GetUserNameA(LPSTR buffer, LPDWORD size);
 #define NTE_KEYSET_NOT_DEF ((DWORD)0x80090019L)
 #define NTE_PROV_TYPE_NO_MATCH ((DWORD)0x8009001BL)
 
+#define IMPORT_FLAGS 0x2153 /* CRYPT_EXPORTABLE, CRYPT_USER_PROTECTED, CRYPT_NO_SALT, CRYPT_OAEP and the ipsec flags. */
 #define CRYPT_VERIFYCONTEXT 0xF0000000
 #define CRYPT_NEWKEYSET 0x00000008
 #define CRYPT_DELETEKEYSET 0x00000010
@@ -458,7 +460,7 @@ ADVAPI BOOL WINAPI CryptGenRandom(HCRYPTPROV handle, DWORD length, BYTE *buffer)
 }
 
 /* keeps the blob of a public, private or plaintext key; there is no cipher to use it with yet. */
-static BOOL key_import(HCRYPTPROV handle, const BYTE *data, DWORD size, DWORD flags, HCRYPTKEY *result)
+static BOOL key_import(HCRYPTPROV handle, const BYTE *data, DWORD size, DWORD flags, HCRYPTKEY public_key, HCRYPTKEY *result)
 {
     PROVIDER *p = provider(handle);
     if (!p)
@@ -468,17 +470,38 @@ static BOOL key_import(HCRYPTPROV handle, const BYTE *data, DWORD size, DWORD fl
         return FALSE;
     }
     const BLOBHEADER *h = (const BLOBHEADER *)data;
-    if (size < sizeof(*h)) {
-        AdvSetError(NTE_BAD_DATA);
+    /* rsaenh takes exportable, user protected, no salt, oaep and the two ipsec flags, in this order of checks. */
+    if (flags & ~IMPORT_FLAGS) {
+        AdvSetError(NTE_BAD_FLAGS);
         return FALSE;
     }
-    if (h->bVersion < 2 || h->bVersion > 3) {
+    if (size < sizeof(*h)) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (h->bType == PUBLICKEYBLOB && public_key) {
+        AdvSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (h->bVersion != 2) {
         AdvSetError(NTE_BAD_VER);
         return FALSE;
     }
     if (h->bType != PUBLICKEYBLOB && h->bType != PRIVATEKEYBLOB && h->bType != PLAINTEXTKEYBLOB) {
         AdvSetError(NTE_BAD_TYPE);
         return FALSE;
+    }
+    /* an RSA public key is for signing or key exchange and holds the whole modulus after the exponent. */
+    if (h->bType == PUBLICKEYBLOB && p->Type != PROV_DSS && p->Type != PROV_DSS_DH) {
+        if (h->aiKeyAlg != CALG_RSA_SIGN && h->aiKeyAlg != CALG_RSA_KEYX) {
+            AdvSetError(NTE_BAD_DATA);
+            return FALSE;
+        }
+        DWORD bits = size >= sizeof(*h) + 8 ? *(const DWORD *)(data + sizeof(*h) + 4) : 0;
+        if (size < sizeof(*h) + 12 + (bits + 7) / 8) {
+            AdvSetError(NTE_BAD_LEN);
+            return FALSE;
+        }
     }
     KEY *k = AdvAlloc(sizeof(*k) + size);
     if (!k) {
@@ -501,7 +524,7 @@ static BOOL key_import(HCRYPTPROV handle, const BYTE *data, DWORD size, DWORD fl
 ADVAPI BOOL WINAPI CryptImportKey(HCRYPTPROV handle, const BYTE *data, DWORD size, HCRYPTKEY public_key, DWORD flags,
                                   HCRYPTKEY *result)
 {
-    if (!key_import(handle, data, size, flags, result))
+    if (!key_import(handle, data, size, flags, public_key, result))
         return FALSE;
     PROVIDER *p = (PROVIDER *)handle;
     const BLOBHEADER *h = (const BLOBHEADER *)data;
@@ -671,6 +694,21 @@ static BOOL finish_hash(HASH *h)
         SecureZeroMemory(&h->Context, sizeof(h->Context));
         h->Finished = TRUE;
     }
+    return TRUE;
+}
+
+/* the description of a signature is hashed as the bytes of its UTF-16 string, as CryptHashData does, before the value is read. */
+static BOOL hash_description(HASH *h, LPCWSTR description)
+{
+    if (!description)
+        return TRUE;
+    if (h->Finished) {
+        AdvSetError(NTE_BAD_HASH_STATE);
+        return FALSE;
+    }
+    size_t length = wcslen(description);
+    if (length)
+        h->Hash->update(&h->Context, description, length * sizeof(WCHAR));
     return TRUE;
 }
 
@@ -1062,7 +1100,7 @@ ADVAPI BOOL WINAPI CryptGetUserKey(HCRYPTPROV handle, DWORD spec, HCRYPTKEY *key
         return FALSE;
     }
     int slot = spec == AT_KEYEXCHANGE ? SLOT_KEYX : SLOT_SIGN;
-    BOOL ok = c.Blob[slot] != nullptr && key_import(handle, c.Blob[slot], c.Size[slot], c.Exportable[slot], key);
+    BOOL ok = c.Blob[slot] != nullptr && key_import(handle, c.Blob[slot], c.Size[slot], c.Exportable[slot], 0, key);
     if (!c.Blob[slot])
         AdvSetError(NTE_NO_KEY);
     container_free(&c);
@@ -1398,7 +1436,7 @@ ADVAPI BOOL WINAPI CryptGenKey(HCRYPTPROV handle, DWORD algorithm, DWORD flags, 
             }
     }
     if (ok)
-        ok = key_import(handle, blob, size, flags & 1, result);
+        ok = key_import(handle, blob, size, flags & 1, 0, result);
     /* a key pair of a named container stays in it. */
     if (ok && rsa_key && p->Persistent &&
         !container_store_key(p, algorithm == CALG_RSA_KEYX ? SLOT_KEYX : SLOT_SIGN, blob, size, flags & 1)) {
@@ -1730,7 +1768,7 @@ ADVAPI BOOL WINAPI CryptSignHashW(HCRYPTHASH handle, DWORD spec, LPCWSTR descrip
         BYTE *big = AdvAlloc(size);
         if (!big) {
             AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
-        } else {
+        } else if (hash_description(h, description)) {
             finish_hash(h);
             const MimeHashAlg *alg = (flags & CRYPT_NOHASHOID) ? nullptr : h->Hash;
             int status = alg ? mime_rsa_pkcs1_sign(rsa, alg, h->Value, h->Size, big)
@@ -1750,10 +1788,21 @@ ADVAPI BOOL WINAPI CryptSignHashW(HCRYPTHASH handle, DWORD spec, LPCWSTR descrip
     return ok;
 }
 
+/* the description of the narrow calls is converted with the ansi code page first, as advapi32 does. */
+static LPWSTR description_wide(LPCSTR description, WCHAR *buffer, int count)
+{
+    if (!description)
+        return nullptr;
+    if (MultiByteToWideChar(CP_ACP, 0, description, -1, buffer, count) <= 0)
+        buffer[0] = 0;
+    return buffer;
+}
+
 ADVAPI BOOL WINAPI CryptSignHashA(HCRYPTHASH handle, DWORD spec, LPCSTR description, DWORD flags, BYTE *signature,
                                   DWORD *length)
 {
-    return CryptSignHashW(handle, spec, nullptr, flags, signature, length);
+    WCHAR wide[260];
+    return CryptSignHashW(handle, spec, description_wide(description, wide, RTL_NUMBER_OF(wide)), flags, signature, length);
 }
 
 /* ---------------------------------------------------------------- signatures */
@@ -1875,12 +1924,18 @@ static MimeRsa *rsa_from_blob(const KEY *k)
 /*
  * verifies a PKCS#1 v1.5 RSA signature over the hash value, with the hash's object identifier unless CRYPT_NOHASHOID
  * is given. the signature is little endian and reading the value finishes the hash. a signature whose length is not
- * the modulus length, or that does not verify, gives NTE_BAD_SIGNATURE. CRYPT_TYPE2_FORMAT and CRYPT_X931_FORMAT
- * are not supported and give NTE_BAD_FLAGS, a guess at what windows does.
+ * the modulus length, or that does not verify, gives NTE_BAD_SIGNATURE. the description, when there is one, is
+ * hashed first as UTF-16. CRYPT_X931_FORMAT is taken by rsaenh and not supported here, the other flags are
+ * NTE_BAD_FLAGS before anything else is looked at.
  */
 ADVAPI BOOL WINAPI CryptVerifySignatureW(HCRYPTHASH handle, const BYTE *signature, DWORD length, HCRYPTKEY public_key,
                                          LPCWSTR description, DWORD flags)
 {
+    /* CRYPT_X931_FORMAT is the other flag rsaenh takes and is not supported here. */
+    if (flags & ~CRYPT_NOHASHOID) {
+        AdvSetError(NTE_BAD_FLAGS);
+        return FALSE;
+    }
     HASH *h = hash_object(handle);
     if (!h)
         return FALSE;
@@ -1893,12 +1948,8 @@ ADVAPI BOOL WINAPI CryptVerifySignatureW(HCRYPTHASH handle, const BYTE *signatur
         AdvSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    if (flags & ~CRYPT_NOHASHOID) {
-        AdvSetError(NTE_BAD_FLAGS);
-        return FALSE;
-    }
     if (k->Algorithm == CALG_DSS_SIGN)
-        return verify_dss(k, h, signature, length);
+        return hash_description(h, description) && verify_dss(k, h, signature, length);
     MimeRsa *rsa = rsa_from_blob(k);
     if (!rsa) {
         AdvSetError(NTE_BAD_KEY);
@@ -1911,7 +1962,7 @@ ADVAPI BOOL WINAPI CryptVerifySignatureW(HCRYPTHASH handle, const BYTE *signatur
         AdvSetError(ERROR_NOT_ENOUGH_MEMORY);
     } else if (length != size) {
         AdvSetError(NTE_BAD_SIGNATURE);
-    } else {
+    } else if (hash_description(h, description)) {
         finish_hash(h);
         for (DWORD i = 0; i < size; i++)
             big[i] = signature[size - 1 - i];
@@ -1930,5 +1981,7 @@ ADVAPI BOOL WINAPI CryptVerifySignatureW(HCRYPTHASH handle, const BYTE *signatur
 ADVAPI BOOL WINAPI CryptVerifySignatureA(HCRYPTHASH handle, const BYTE *signature, DWORD length, HCRYPTKEY public_key,
                                          LPCSTR description, DWORD flags)
 {
-    return CryptVerifySignatureW(handle, signature, length, public_key, nullptr, flags);
+    WCHAR wide[260];
+    return CryptVerifySignatureW(handle, signature, length, public_key,
+                                 description_wide(description, wide, RTL_NUMBER_OF(wide)), flags);
 }
