@@ -804,6 +804,7 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     mime_camera_init(on_camera);
     if (!mime_vm_start(&g_vm))
         return 1;
+    mime_memory_monitor_start(&g_vm);
     uint64_t started_ns = mime_now_ns();
 
     /*

@@ -49,12 +49,22 @@ DECLSPEC_EXPORT PVOID WINAPI VirtualAllocExNuma(HANDLE process, PVOID address, S
 }
 
 
-/* the machine has memory to spare and is not short of it, so the high condition is set and the low one is not. */
+/* the kernel's two events: low is set while available memory is short or the host asks for memory back, high while it is plentiful. */
 DECLSPEC_EXPORT HANDLE WINAPI CreateMemoryResourceNotification(int kind)
 {
     if (kind != 0 && kind != 1) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }
-    return CreateEventW(nullptr, TRUE, kind == 1, nullptr);
+    UNICODE_STRING name;
+    RtlInitUnicodeString(&name, kind == 0 ? L"\\KernelObjects\\LowMemoryCondition" : L"\\KernelObjects\\HighMemoryCondition");
+    OBJECT_ATTRIBUTES oa;
+    InitializeObjectAttributes(&oa, &name, 0, nullptr, nullptr);
+    HANDLE handle = nullptr;
+    NTSTATUS status = NtOpenEvent(&handle, SYNCHRONIZE | EVENT_QUERY_STATE, &oa);
+    if (!NT_SUCCESS(status)) {
+        SetLastError(RtlNtStatusToDosError(status));
+        return nullptr;
+    }
+    return handle;
 }

@@ -15,6 +15,8 @@
 
 #define CACHE_BUCKETS 256
 #define CACHE_IDLE_MAX 256 /* unreferenced entries kept for reopening. */
+#define CACHE_BIG_FILE (16ull << 20)    /* a window of a file this big is closed after CACHE_BIG_IDLE. */
+#define CACHE_BIG_IDLE (30ull * 10000000) /* 30 seconds. */
 #define CACHE_SMALL_READ 0x10000 /* smaller reads of an unmapped file go to the host directly... */
 #define CACHE_SMALL_READS 32     /* ... until the file has been read this often, then it is mapped. */
 
@@ -29,6 +31,7 @@ struct _MIMEFS_CACHE {
     ULONG64 Window; /* guest physical address, 0 until mapped. */
     ULONG SmallReads; /* reads that went to the host for lack of a window. */
     BOOLEAN Warmed;   /* the host was asked to map the window into the guest's tables. */
+    ULONG64 IdleSince; /* when the last reference went, in 100 ns. */
 };
 
 #define DETACHED (~0ull)
@@ -98,6 +101,40 @@ static void trim(ULONG keep)
     }
 }
 
+ULONG FsCacheTrim(ULONG keep)
+{
+    ExAcquireFastMutex(&g_lock);
+    ULONG before = g_entries;
+    trim(keep);
+    ULONG closed = before - g_entries;
+    ExReleaseFastMutex(&g_lock);
+    return closed;
+}
+
+/*
+ * the windows of closed files stay mapped for a reopen, and every page read through one stays in the host process. a
+ * big file is read once or streamed, so its window is closed after it has been idle for a while and the host keeps the
+ * file in its page cache instead. returns how many windows went.
+ */
+ULONG FsCacheAge(ULONG64 now_100ns)
+{
+    ULONG closed = 0;
+    ExAcquireFastMutex(&g_lock);
+    PLIST_ENTRY e = g_lru.Blink;
+    while (e != &g_lru) {
+        MIMEFS_CACHE *c = CONTAINING_RECORD(e, MIMEFS_CACHE, Lru);
+        e = e->Blink;
+        if (c->References == 0 && c->Window && c->Size >= CACHE_BIG_FILE && now_100ns - c->IdleSince >= CACHE_BIG_IDLE) {
+            if (c->FileId != DETACHED)
+                unhash(c);
+            release(c);
+            closed++;
+        }
+    }
+    ExReleaseFastMutex(&g_lock);
+    return closed;
+}
+
 MIMEFS_CACHE *FsCacheOpen(ULONG volume, const MimeFsInfo *info)
 {
     if (info->size == 0 || info->file_id == DETACHED)
@@ -136,8 +173,12 @@ MIMEFS_CACHE *FsCacheOpen(ULONG volume, const MimeFsInfo *info)
 void FsCacheClose(MIMEFS_CACHE *c)
 {
     ExAcquireFastMutex(&g_lock);
-    if (--c->References == 0 && c->FileId == DETACHED)
-        release(c);
+    if (--c->References == 0) {
+        if (c->FileId == DETACHED)
+            release(c);
+        else
+            c->IdleSince = KeQueryInterruptTime();
+    }
     ExReleaseFastMutex(&g_lock);
 }
 

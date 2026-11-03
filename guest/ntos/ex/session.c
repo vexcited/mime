@@ -108,6 +108,8 @@ static void irq_dpc(PKDPC dpc, PVOID context, PVOID a1, PVOID a2)
         FsNotifyHostInterrupt();
     if (bits & MIME_IRQ_WINDOW)
         MmWindowLostInterrupt();
+    if (bits & MIME_IRQ_MEMORY)
+        MmTrimInterrupt();
     /* the dump reads user stacks, so the session thread does it at passive level. */
     if (bits & MIME_IRQ_DUMP) {
         __atomic_store_n(&g_dump_pending, 1, __ATOMIC_RELEASE);
@@ -238,6 +240,7 @@ void MiSessionInitialize(void)
     ExInitializeFastMutex(&g_console_lock);
     KeInitializeDpc(&g_irq_dpc, irq_dpc, nullptr);
     MmWindowLostInitialize();
+    MmTrimInitialize();
     g_ready = TRUE;
 
     MimeCtrlHeader ready = {MIME_EVT_READY, sizeof(ready)};

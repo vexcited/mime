@@ -170,6 +170,46 @@ static uint64_t clip_provide(MimeVm *vm, uint64_t request, uint64_t pa, uint64_t
     return mime_ui_clipboard_provide((uint32_t)request, src, length, offset, total);
 }
 
+static int range_order(const void *a, const void *b)
+{
+    uint64_t x = ((const MimeReportRun *)a)->pa, y = ((const MimeReportRun *)b)->pa;
+    return x < y ? -1 : x > y;
+}
+
+#define MEM_REPORT_MAX 512
+
+/* free guest pages the host drops, runs that touch merged so each madvise covers as much as it can. */
+static uint64_t mem_report(MimeVm *vm, uint64_t pa, uint64_t count, uint64_t *released)
+{
+    *released = 0;
+    if (!count || count > MEM_REPORT_MAX)
+        return MIME_HC_STATUS_INVALID;
+    const MimeReportRun *list = mime_vm_phys(vm, pa, count * sizeof(MimeReportRun));
+    if (!list)
+        return MIME_HC_STATUS_INVALID;
+    MimeReportRun runs[MEM_REPORT_MAX];
+    uint64_t n = 0;
+    for (uint64_t i = 0; i < count; i++) {
+        uint64_t start = MIME_ALIGN_UP(list[i].pa, (uint64_t)MIME_HOST_PAGE);
+        uint64_t end = MIME_ALIGN_DOWN(list[i].pa + list[i].bytes, (uint64_t)MIME_HOST_PAGE);
+        if (list[i].pa < MIME_RAM_BASE || list[i].pa + list[i].bytes < list[i].pa ||
+            list[i].pa + list[i].bytes > MIME_RAM_BASE + vm->ram_size)
+            return MIME_HC_STATUS_INVALID;
+        if (end > start)
+            runs[n++] = (MimeReportRun){start, end - start};
+    }
+    qsort(runs, n, sizeof(runs[0]), range_order);
+    for (uint64_t i = 0; i < n;) {
+        uint64_t start = runs[i].pa, end = start + runs[i].bytes;
+        for (i++; i < n && runs[i].pa <= end; i++)
+            end = MIME_MAX(end, runs[i].pa + runs[i].bytes);
+        mime_vm_discard(vm, start, end - start);
+        *released += end - start;
+    }
+    __atomic_fetch_add(&vm->memory_released, *released, __ATOMIC_RELAXED);
+    return MIME_HC_STATUS_OK;
+}
+
 void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
 {
     MimeVm *vm = vcpu->vm;
@@ -281,6 +321,9 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
             mime_vm_discard(vm, start, end - start);
         break;
     }
+    case MIME_HC_MEM_REPORT:
+        status = mem_report(vm, regs[1], regs[2], &value);
+        break;
     case MIME_HC_MEM_ADVISE:
         if (regs[1] < MIME_RAM_BASE || regs[1] + regs[2] > MIME_RAM_BASE + vm->ram_size || regs[1] + regs[2] < regs[1])
             status = MIME_HC_STATUS_INVALID;

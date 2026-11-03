@@ -382,12 +382,28 @@ typedef struct MimeRomHeader {
 #define MIME_IRQ_DUMP (1u << 5) /* log the guest's threads, on the host's SIGUSR1. */
 #define MIME_IRQ_FS (1u << 6)   /* the host changed files in a directory the guest watches: MIME_HC_FS_CHANGES. */
 #define MIME_IRQ_WINDOW (1u << 7) /* pages of a file window are gone, the file was shortened: MIME_HC_FS_WINDOW_LOST. */
+#define MIME_IRQ_MEMORY (1u << 8) /* the host's memory pressure changed, see MimeSharedPage.memory_pressure. */
+
+/* how short of memory the host is, in MimeSharedPage.memory_pressure. */
+enum {
+    MIME_MEMORY_NORMAL = 0,
+    MIME_MEMORY_LOW = 1,      /* the guest gives back what it caches and does not need. */
+    MIME_MEMORY_CRITICAL = 2, /* the host is close to swapping or killing: the guest gives back everything it can. */
+};
 
 typedef struct MimeSharedPage {
     volatile uint32_t irq_pending;
     volatile uint32_t guest_ready;
     volatile uint64_t host_filetime; /* refreshed by the host. */
+    volatile uint32_t memory_pressure; /* MIME_MEMORY_*, set before MIME_IRQ_MEMORY is raised. */
+    volatile uint32_t memory_serial;   /* counts the host's requests to trim, so the guest tells a new one from an old one. */
 } MimeSharedPage;
+
+/* one run of free guest pages in a MIME_HC_MEM_REPORT list. */
+typedef struct MimeReportRun {
+    uint64_t pa;
+    uint64_t bytes;
+} MimeReportRun;
 
 /* hypercalls. */
 enum {
@@ -401,6 +417,7 @@ enum {
     MIME_HC_CPU_START = 0x09,   /* (CPU, pc, x0, sp) starts a secondary processor at el1 with interrupts masked */
     MIME_HC_LOCK_WAIT = 0x0A,   /* (pa, ticket) sleeps while the ticket lock word at pa does not serve ticket */
     MIME_HC_LOCK_WAKE = 0x0B,   /* (pa) wakes the processors sleeping on the lock word at pa */
+    MIME_HC_MEM_REPORT = 0x0C,  /* (pa of MimeReportRun[], count) -> bytes released: free guest RAM the host may drop, many runs in one call. They read as zeros until written. */
 
     MIME_HC_FS_OPEN = 0x10,     /* (MimeFsOpen pa) -> handle */
     MIME_HC_FS_CLOSE = 0x11,    /* (handle) */

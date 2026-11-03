@@ -604,6 +604,8 @@ ULONG64 MiSectionSwPte(ULONG protect);
 void MmWindowSectionAttach(PSECTION s);
 void MmWindowSectionDetach(PSECTION s);
 void MmWindowLostInitialize(void);
+void MmTrimInitialize(void);
+void MmTrimInterrupt(void); /* the host asked for memory back or no longer does, see mm/trim.c. */
 void MmWindowLostInterrupt(void);
 void MmWindowLostFault(void);
 void FsCacheWindowLost(ULONG64 ipa, ULONG64 end);
@@ -624,6 +626,8 @@ void MmFreeContiguous(ULONG64 pa, SIZE_T pages);
 PMMPFN MiGetPfn(ULONG64 pa);
 SIZE_T MmGetFreePages(void);
 void MmDiscardIdle(void); /* idle loop, interrupts disabled: hands freed memory back to the host. */
+ULONG64 MmReleaseFreeMemory(void); /* a trim: every free page to the host, returns the bytes it dropped. */
+ULONG64 MmGetReleasedBytes(void);  /* the total of what the host dropped since boot. */
 SIZE_T MmGetTotalPages(void);
 
 ULONG64 *MiWalk(ULONG64 *root, ULONG_PTR va, BOOLEAN create, int level);
@@ -1217,6 +1221,8 @@ NTSTATUS CmEnumerateValues(PCWSTR key_path,
 /* io/fscache.c: the file data cache of the host backed volumes. */
 typedef struct _MIMEFS_CACHE MIMEFS_CACHE;
 void FsCacheInitialize(void);
+ULONG FsCacheAge(ULONG64 now_100ns); /* closes the windows of big files idle for a while, returns how many. */
+ULONG FsCacheTrim(ULONG keep); /* closes the idle file windows down to keep entries, returns how many. */
 MIMEFS_CACHE *FsCacheOpen(ULONG volume, const MimeFsInfo *info);
 void FsCacheClose(MIMEFS_CACHE *cache);
 void FsCacheInvalidate(ULONG volume, ULONG64 file_id);

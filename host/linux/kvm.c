@@ -73,8 +73,11 @@ void mime_host_wake_word(uint32_t *word)
 }
 
 /*
- * exposes the host's RAM size so programs size caches accordingly. pages cost memory only when touched, and
- * MIME_HC_MEM_DISCARD returns free guest pages to the host.
+ * the guest's memory is three quarters of the host's, and never less than 4 GiB on a host that has that much. programs
+ * size their caches by what they are told, so it is as much as the host can spare. the host holds only the pages the
+ * guest uses: untouched pages cost nothing, free pages go back through MIME_HC_MEM_REPORT and a short host asks the guest
+ * to give pages back with MIME_IRQ_MEMORY. the quarter left over is for the desktop and the other programs, since a guest that
+ * touches all of the host's memory would push them into swap before it could be asked to give anything back.
  */
 uint64_t mime_vm_default_ram(void)
 {
@@ -82,6 +85,8 @@ uint64_t mime_vm_default_ram(void)
     if (pages <= 0 || page <= 0)
         return MIME_VMM_FALLBACK_RAM;
     uint64_t mem = (uint64_t)pages * (uint64_t)page;
+    if (mem > (4ull << 30))
+        mem = MIME_MAX(mem / 4 * 3, 4ull << 30);
     return MIME_ALIGN_DOWN(MIME_MIN(mem, MIME_VMM_MAX_RAM), 2ull << 20);
 }
 

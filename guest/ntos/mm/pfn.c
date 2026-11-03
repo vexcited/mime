@@ -115,51 +115,86 @@ static void mark_allocated(ULONG64 index, ULONG64 count)
 }
 
 /*
- * hands free blocks of 64 KiB and more back to the host, which drops their memory until the guest
- * writes them again. a block is off its list while the host works on it, so the lock is not held.
- * a pass is bounded so the kernel lock is never held long. a block larger than a pass goes alone,
- * when the machine idles.
+ * hands free blocks back to the host, which drops their memory until the guest writes them again. the
+ * blocks of a pass are taken off their lists and sent in one report, 255 runs to a hypercall, so the
+ * pfn lock is held only to take and to put back. normally only blocks of 64 KiB and more go, or the
+ * host's memory block when it is larger, as a smaller piece would split a huge page of the host for a
+ * few kilobytes; a trim goes down to single pages. a block larger than a pass goes alone, when the
+ * machine idles, so the kernel lock is never held long.
  */
 #define DISCARD_PASS_BYTES (64ull << 20)
+#define REPORT_RUNS (PAGE_SIZE / sizeof(MimeReportRun))
+#ifdef __x86_64__
+#define HOST_PAGE_ORDER 0 /* 4 KiB host pages. */
+#else
+#define HOST_PAGE_ORDER 2 /* 16 KiB. */
+#endif
+
+static MimeReportRun g_report[REPORT_RUNS] __attribute__((aligned(PAGE_SIZE)));
+static ULONG64 g_report_index[REPORT_RUNS];
+static volatile LONG g_report_busy;
+static volatile ULONG64 g_released_bytes;
+
+/* returns the bytes handed back. budget 0 means no limit, unlocked releases the kernel lock during the host's work. */
+static ULONG64 report_free(ULONG min_order, ULONG64 limit, BOOLEAN idle, BOOLEAN unlocked)
+{
+    if (!g_discard_enabled || __atomic_exchange_n(&g_report_busy, 1, __ATOMIC_ACQUIRE))
+        return 0;
+    ULONG64 budget = limit ? limit : ~0ull, done = 0;
+    BOOLEAN left_some = FALSE;
+    for (ULONG order = min_order; order <= MM_MAX_ORDER && !left_some; order++) {
+        ULONG64 bytes = (1ull << order) << PAGE_SHIFT;
+        for (;;) {
+            ULONG count = 0;
+            ULONG64 state = pfn_lock();
+            /* blocks not handed back yet sit at the head. */
+            while (count < REPORT_RUNS && !IsListEmpty(&g_free[order])) {
+                PMMPFN p = CONTAINING_RECORD(g_free[order].Flink, MMPFN, ListEntry);
+                if (p->Flags & MM_PFN_DISCARDED)
+                    break;
+                if (bytes > budget && !(idle && budget == limit && !count)) {
+                    /* leave the rest for the next idle pass, not every free until then. */
+                    g_freed_since_discard = DISCARD_IDLE;
+                    left_some = TRUE;
+                    break;
+                }
+                budget -= (bytes < budget ? bytes : budget);
+                RemoveEntryList(&p->ListEntry);
+                p->Flags = 0;
+                g_report_index[count] = (ULONG64)(p - g_pfn);
+                g_report[count] = (MimeReportRun){index_to_pa(g_report_index[count]), bytes};
+                count++;
+            }
+            pfn_unlock(state);
+            if (!count)
+                break;
+            ULONG64 released = 0;
+            ULONG64 status = unlocked ? HalHypercallUnlocked(MIME_HC_MEM_REPORT, HalPhysicalOf(g_report), count, 0, 0, 0, 0, &released)
+                                      : HalHypercall(MIME_HC_MEM_REPORT, HalPhysicalOf(g_report), count, 0, 0, 0, 0, &released);
+            /* a report the host refused leaves the memory as it was, so it must not be taken for zeros. */
+            BOOLEAN zero = status == MIME_HC_STATUS_OK;
+            state = pfn_lock();
+            for (ULONG i = 0; i < count; i++)
+                free_block(g_report_index[i], order, zero);
+            pfn_unlock(state);
+            if (zero)
+                done += count * bytes;
+            if (left_some || budget == 0)
+                break;
+        }
+        if (budget == 0)
+            break;
+    }
+    if (!left_some)
+        __atomic_store_n(&g_freed_since_discard, 0, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&g_released_bytes, done, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_report_busy, 0, __ATOMIC_RELEASE);
+    return done;
+}
 
 static void discard_free(BOOLEAN idle)
 {
-    if (!g_discard_enabled)
-        return;
-    ULONG64 budget = DISCARD_PASS_BYTES;
-    for (ULONG order = g_discard_min_order; order <= MM_MAX_ORDER; order++) {
-        for (;;) {
-            ULONG64 state = pfn_lock();
-            PMMPFN p = nullptr;
-            /* blocks not handed back yet sit at the head. */
-            if (!IsListEmpty(&g_free[order])) {
-                p = CONTAINING_RECORD(g_free[order].Flink, MMPFN, ListEntry);
-                if (p->Flags & MM_PFN_DISCARDED)
-                    p = nullptr;
-            }
-            ULONG64 bytes = (1ull << order) << PAGE_SHIFT;
-            if (p && bytes > budget && !(idle && budget == DISCARD_PASS_BYTES)) {
-                /* leave the rest for the next idle pass, not every free until then. */
-                g_freed_since_discard = DISCARD_IDLE;
-                pfn_unlock(state);
-                return;
-            }
-            if (!p) {
-                pfn_unlock(state);
-                break;
-            }
-            budget -= (bytes < budget ? bytes : budget);
-            RemoveEntryList(&p->ListEntry);
-            p->Flags = 0;
-            ULONG64 index = (ULONG64)(p - g_pfn);
-            pfn_unlock(state);
-            HalHypercall(MIME_HC_MEM_DISCARD, index_to_pa(index), bytes, 0, 0, 0, 0, nullptr);
-            state = pfn_lock();
-            free_block(index, order, TRUE);
-            pfn_unlock(state);
-        }
-    }
-    __atomic_store_n(&g_freed_since_discard, 0, __ATOMIC_RELAXED);
+    report_free(g_discard_min_order, DISCARD_PASS_BYTES, idle, FALSE);
 }
 
 void MmDiscardIdle(void)
@@ -265,6 +300,21 @@ static void drain_caches(void)
     }
 }
 
+/* returns the pages the processors keep for their next faults, this one's too. */
+static void drain_all_caches(void)
+{
+    ULONG64 state = KiDisableInterrupts();
+    MM_PAGE_CACHE *c = &g_cache[KeGetCurrentPrcb()->Number];
+    cache_lock(c);
+    ULONG64 lock = pfn_lock();
+    return_run(c->Pages, c->Count);
+    c->Count = 0;
+    pfn_unlock(lock);
+    cache_unlock(c);
+    KiRestoreInterrupts(state);
+    drain_caches();
+}
+
 /* interrupts are off. */
 static ULONG64 cache_pop(MM_PAGE_CACHE *c)
 {
@@ -361,6 +411,21 @@ static void free_pages(const ULONG64 *pages, ULONG count, BOOLEAN zero)
     cache_unlock(c);
     KiRestoreInterrupts(state);
     __atomic_add_fetch(&g_freed_since_discard, count, __ATOMIC_RELAXED);
+}
+
+/*
+ * gives the host every free page, down to single ones, when it asks for memory back. returns the bytes the host
+ * dropped now. the caller is a thread below dispatch level, so the kernel lock is let go while the host works.
+ */
+ULONG64 MmReleaseFreeMemory(void)
+{
+    drain_all_caches();
+    return report_free(HOST_PAGE_ORDER, 0, FALSE, TRUE);
+}
+
+ULONG64 MmGetReleasedBytes(void)
+{
+    return __atomic_load_n(&g_released_bytes, __ATOMIC_RELAXED);
 }
 
 void MmFreePagesQuiet(const ULONG64 *pages, ULONG count)

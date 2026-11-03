@@ -176,6 +176,7 @@ struct MimeVm {
     uint32_t window_count;
     uint64_t window_bytes; /* filled bytes of every window. */
     uint64_t window_clock;
+    uint64_t memory_released; /* bytes of free guest pages the guest reported and the host dropped. */
 
     char host_root_label[8];
 };
@@ -200,6 +201,8 @@ void *mime_vm_phys(MimeVm *vm, uint64_t pa, uint64_t len);
 void mime_vm_discard(MimeVm *vm, uint64_t pa, uint64_t len);
 void mime_vm_advise(MimeVm *vm, uint64_t pa, uint64_t len, uint32_t advice);
 void mime_vm_raise_irq(MimeVm *vm, uint32_t bits);
+/* starts the thread that asks the guest for memory back when the host runs short; linux/memory.c, nothing on macOS. */
+void mime_memory_monitor_start(MimeVm *vm);
 void mime_vm_queue_ctrl(MimeVm *vm, const void *msg, uint32_t size);
 void mime_vm_queue_input(MimeVm *vm, const MimeInputEvent *ev);
 
