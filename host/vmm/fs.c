@@ -684,6 +684,9 @@ static uint64_t fs_open_path(MimeVm *vm, MimeFsOpen *req, const char *path)
             if (fd < 0) {
                 int error = errno;
                 mime_fswatch_self(path, MIME_FSWATCH_UNDO_CREATE);
+                /* another opener made the file between the look and the create, so the one that is there is opened. */
+                if (error == EEXIST && req->disposition != MIME_FS_DISP_CREATE)
+                    return fs_open_path(vm, req, path);
                 req->action_out = error == ENOENT ? 1 : 0;
                 errno = error;
             }
