@@ -62,18 +62,27 @@ static constexpr WCHAR g_system32[] = L"C:\\Windows\\System32\\";
 #endif
 static constexpr WCHAR g_windows[] = L"C:\\Windows\\";
 
-/* modules with static tls, indexed by tls slot. */
+/* modules with static tls, indexed by tls slot. a program such as an Autodesk viewer loads hundreds of them. */
 typedef struct TLS_MODULE {
     PLDR_DATA_TABLE_ENTRY Entry;
     IMAGE_TLS_DIRECTORY *Directory;
 } TLS_MODULE;
-static TLS_MODULE g_tls_modules[64];
+#define TLS_MODULE_MAX 1024
+static TLS_MODULE g_tls_modules[TLS_MODULE_MAX];
 static ULONG g_tls_count;
 
-/* per thread tls slots, linked so a dll loaded later can reach every thread. */
+/* per thread tls slots, linked so a dll loaded later can reach every thread. the array a thread reads is grown as
+   modules come, the arrays it has left are kept until the thread ends because the thread may be reading one. the
+   vector is found from the array, in the slot before it. */
+#define TLS_VECTOR_FIRST 32
+#define TLS_VECTOR_RETIRED 8
 typedef struct TLS_VECTOR {
     LIST_ENTRY Link;
-    PVOID Slots[RTL_NUMBER_OF(g_tls_modules)];
+    PTEB Teb;
+    ULONG Capacity;
+    ULONG RetiredCount;
+    PVOID *Slots;
+    PVOID *Retired[TLS_VECTOR_RETIRED];
 } TLS_VECTOR;
 static LIST_ENTRY g_tls_vectors = {&g_tls_vectors, &g_tls_vectors};
 
@@ -944,14 +953,49 @@ static void release_tls(PLDR_DATA_TABLE_ENTRY e)
         g_tls_modules[i].Directory = nullptr;
         for (PLIST_ENTRY l = g_tls_vectors.Flink; l != &g_tls_vectors; l = l->Flink) {
             TLS_VECTOR *v = CONTAINING_RECORD(l, TLS_VECTOR, Link);
-            heap_free(v->Slots[i]);
-            v->Slots[i] = nullptr;
+            if (i < v->Capacity) {
+                heap_free(v->Slots[i]);
+                v->Slots[i] = nullptr;
+            }
         }
     }
 }
 
+/* an array of slots with the vector in front of the first. */
+static PVOID *make_tls_slots(TLS_VECTOR *v, ULONG capacity)
+{
+    PVOID *block = heap_alloc((capacity + 1) * sizeof(PVOID));
+    if (!block)
+        return nullptr;
+    block[0] = v;
+    return block + 1;
+}
+
+static NTSTATUS grow_tls(TLS_VECTOR *v)
+{
+    ULONG capacity = v->Capacity;
+    while (capacity < g_tls_count)
+        capacity *= 2;
+    if (capacity == v->Capacity)
+        return STATUS_SUCCESS;
+    if (v->RetiredCount >= TLS_VECTOR_RETIRED)
+        return STATUS_NO_MEMORY;
+    PVOID *slots = make_tls_slots(v, capacity);
+    if (!slots)
+        return STATUS_NO_MEMORY;
+    memcpy(slots, v->Slots, v->Capacity * sizeof(PVOID));
+    v->Retired[v->RetiredCount++] = v->Slots;
+    v->Slots = slots;
+    v->Capacity = capacity;
+    v->Teb->ThreadLocalStoragePointer = slots;
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS fill_tls(TLS_VECTOR *v)
 {
+    NTSTATUS status = grow_tls(v);
+    if (!NT_SUCCESS(status))
+        return status;
     for (ULONG i = 0; i < g_tls_count; i++) {
         if (v->Slots[i] || !g_tls_modules[i].Directory)
             continue;
@@ -972,10 +1016,17 @@ static NTSTATUS allocate_thread_tls(void)
         return STATUS_SUCCESS;
     PTEB teb = NtCurrentTeb();
     if (teb->ThreadLocalStoragePointer)
-        return fill_tls(CONTAINING_RECORD(teb->ThreadLocalStoragePointer, TLS_VECTOR, Slots));
+        return fill_tls(((TLS_VECTOR **)teb->ThreadLocalStoragePointer)[-1]);
     TLS_VECTOR *v = heap_alloc(sizeof(*v));
     if (!v)
         return STATUS_NO_MEMORY;
+    v->Teb = teb;
+    v->Capacity = TLS_VECTOR_FIRST;
+    v->Slots = make_tls_slots(v, v->Capacity);
+    if (!v->Slots) {
+        heap_free(v);
+        return STATUS_NO_MEMORY;
+    }
     InsertTailList(&g_tls_vectors, &v->Link);
     teb->ThreadLocalStoragePointer = v->Slots;
     return fill_tls(v);
@@ -997,10 +1048,13 @@ static void free_thread_tls(void)
     if (!slots)
         return;
     teb->ThreadLocalStoragePointer = nullptr;
-    TLS_VECTOR *v = CONTAINING_RECORD(slots, TLS_VECTOR, Slots);
+    TLS_VECTOR *v = ((TLS_VECTOR **)slots)[-1];
     RemoveEntryList(&v->Link);
-    for (ULONG i = 0; i < g_tls_count; i++)
+    for (ULONG i = 0; i < v->Capacity; i++)
         heap_free(v->Slots[i]);
+    heap_free(v->Slots - 1);
+    for (ULONG i = 0; i < v->RetiredCount; i++)
+        heap_free(v->Retired[i] - 1);
     heap_free(v);
 }
 
