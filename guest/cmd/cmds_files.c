@@ -252,6 +252,10 @@ int internal_md(const WCHAR *args, NODE *node)
 
 static BOOL remove_tree(const WCHAR *dir)
 {
+    /* a link to a directory goes alone, what it points to stays. */
+    DWORD top = GetFileAttributesW(dir);
+    if (top != INVALID_FILE_ATTRIBUTES && (top & FILE_ATTRIBUTE_DIRECTORY) && (top & FILE_ATTRIBUTE_REPARSE_POINT))
+        return RemoveDirectoryW(dir);
     STR spec;
     str_init(&spec);
     str_adds(&spec, dir);
