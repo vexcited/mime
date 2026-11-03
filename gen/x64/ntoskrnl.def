@@ -35,6 +35,7 @@ EXPORTS
     ExSemaphoreType DATA
     ExTimerType DATA
     ExWaitHandles
+    ExWaitHandlesAndObject
     ExfAcquirePushLockExclusive
     ExfAcquirePushLockShared
     ExfReleasePushLockExclusive

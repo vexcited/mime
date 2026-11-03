@@ -1012,32 +1012,65 @@ static ULONG pending_bits(W32THREAD *t)
 #define WAIT_TIMED_OUT 0x102u
 #define WAIT_IO 0xC0u
 
+/* the Win32 error a failed wait reports. */
+static ULONG wait_error(NTSTATUS status)
+{
+    switch (status) {
+    case STATUS_INVALID_HANDLE:
+    case STATUS_OBJECT_TYPE_MISMATCH:
+        return ERROR_INVALID_HANDLE;
+    case STATUS_ACCESS_DENIED:
+        return ERROR_ACCESS_DENIED;
+    case STATUS_INSUFFICIENT_RESOURCES:
+    case STATUS_NO_MEMORY:
+        return ERROR_NOT_ENOUGH_MEMORY;
+    case STATUS_ACCESS_VIOLATION:
+        return ERROR_NOACCESS;
+    default:
+        return NT_ERROR(status) ? ERROR_INVALID_PARAMETER : ERROR_GEN_FAILURE;
+    }
+}
+
+/* a handle of -10, -11 or -12 names the standard input, output or error handle of the process. */
+static void resolve_standard_handles(HANDLE *handles, DWORD count)
+{
+    BOOLEAN needed = FALSE;
+    for (DWORD i = 0; i < count; i++)
+        needed |= (ULONG)(ULONG_PTR)handles[i] >= (ULONG)-12 && (ULONG)(ULONG_PTR)handles[i] <= (ULONG)-10;
+    if (!needed)
+        return;
+    PPEB peb = PsGetProcessPeb(PsGetCurrentProcess());
+    PRTL_USER_PROCESS_PARAMETERS params = nullptr;
+    HANDLE standard[3] = {};
+    if (!peb || !NT_SUCCESS(MimeCopyFromUser(&params, &peb->ProcessParameters, sizeof(params))) || !params ||
+        !NT_SUCCESS(MimeCopyFromUser(&standard[0], &params->StandardInput, sizeof(HANDLE))) ||
+        !NT_SUCCESS(MimeCopyFromUser(&standard[1], &params->StandardOutput, sizeof(HANDLE))) ||
+        !NT_SUCCESS(MimeCopyFromUser(&standard[2], &params->StandardError, sizeof(HANDLE))))
+        return;
+    for (DWORD i = 0; i < count; i++) {
+        ULONG low = (ULONG)(ULONG_PTR)handles[i];
+        if (low >= (ULONG)-12 && low <= (ULONG)-10)
+            handles[i] = standard[(ULONG)-10 - low];
+    }
+}
+
 /*
  * wake for matching input received since the last queue check, or any pending matching input with
- * MWMO_INPUTAVAILABLE. user32 handles waiting for all handles.
+ * MWMO_INPUTAVAILABLE. user32 handles waiting for all handles. the handles are waited on by the kernel's own wait, so
+ * every object it accepts is accepted here, and a handle it refuses fails the call with the same error.
  */
 DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *user_handles, DWORD timeout, DWORD mask,
                                               DWORD flags)
 {
     HANDLE handles[WAIT_HANDLES];
-    if (count >= WAIT_HANDLES || (flags & MWMO_WAITALL) ||
+    if (count >= WAIT_HANDLES || (flags & ~0x1Fu) || (flags & MWMO_WAITALL) ||
         (count && !NT_SUCCESS(MimeCopyFromUser(handles, user_handles, count * sizeof(HANDLE))))) {
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return WAIT_FAILED_VALUE;
     }
-    PVOID objects[WAIT_HANDLES];
-    for (DWORD i = 0; i < count; i++) {
-        if (!NT_SUCCESS(ObReferenceObjectByHandle(handles[i], SYNCHRONIZE, nullptr, UserMode, &objects[i], nullptr))) {
-            for (DWORD j = 0; j < i; j++)
-                ObDereferenceObject(objects[j]);
-            W32SetLastError(ERROR_INVALID_HANDLE);
-            return WAIT_FAILED_VALUE;
-        }
-    }
+    resolve_standard_handles(handles, count);
     UserEnter();
     W32THREAD *t = W32GetThread();
-    objects[count] = t ? &t->Event : nullptr;
-    void *blocks = count + 1 > 3 ? W32Alloc((count + 1) * 64) : nullptr;
     LONG64 deadline = timeout == WAIT_FOREVER ? -1 : (LONG64)now_ms() + timeout;
     DWORD result = WAIT_FAILED_VALUE;
     while (t) {
@@ -1067,13 +1100,11 @@ DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *user_ha
             wait.QuadPart = -(delta < 0 ? 0 : delta) * 10000;
             pw = &wait;
         }
-        if (count + 1 > 3 && !blocks)
-            break;
         PaintFlushThread(t);
         t->InWait = TRUE;
         ULONG depth = UserLeaveAll();
-        NTSTATUS status = KeWaitForMultipleObjects(count + 1, objects, WaitAny, UserRequest, UserMode,
-                                                   (flags & MWMO_ALERTABLE) != 0, pw, blocks);
+        NTSTATUS status = ExWaitHandlesAndObject(count, handles, WaitAny, (flags & MWMO_ALERTABLE) != 0, pw, UserMode,
+                                                 &t->Event);
         UserReenter(depth);
         t->InWait = FALSE;
         t->LastRead = W32TickCount();
@@ -1083,6 +1114,10 @@ DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *user_ha
         }
         if (status == STATUS_THREAD_IS_TERMINATING)
             break;
+        if (NT_ERROR(status)) {
+            W32SetLastError(wait_error(status));
+            break;
+        }
         if ((ULONG)status < count) {
             result = WAIT_OBJECT + (ULONG)status;
             break;
@@ -1097,9 +1132,6 @@ DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *user_ha
         }
     }
     UserLeave();
-    W32Free(blocks);
-    for (DWORD i = 0; i < count; i++)
-        ObDereferenceObject(objects[i]);
     return result;
 }
 

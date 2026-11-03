@@ -743,6 +743,9 @@ NTKERNELAPI NTSTATUS NTAPI KeWaitForMultipleObjects(ULONG count, PVOID objects[]
                                                     KWAIT_REASON reason, KPROCESSOR_MODE mode,
                                                     BOOLEAN alertable, PLARGE_INTEGER timeout, PVOID wait_blocks);
 #define KeWaitForMutexObject KeWaitForSingleObject
+/* waits on the objects the handles name, files and processes included, and on one more object after them. */
+NTKERNELAPI NTSTATUS NTAPI ExWaitHandlesAndObject(ULONG count, const HANDLE *handles, WAIT_TYPE type, BOOLEAN alertable,
+                                                  PLARGE_INTEGER timeout, KPROCESSOR_MODE mode, PKEVENT extra);
 NTKERNELAPI NTSTATUS NTAPI KeDelayExecutionThread(KPROCESSOR_MODE mode, BOOLEAN alertable, PLARGE_INTEGER interval);
 NTKERNELAPI void NTAPI KeQuerySystemTime(PLARGE_INTEGER time);
 NTKERNELAPI void NTAPI KeQueryTickCount(PLARGE_INTEGER count);

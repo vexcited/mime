@@ -436,11 +436,15 @@ NTSTATUS NTAPI NtCancelTimer(HANDLE handle, PBOOLEAN current)
     return STATUS_SUCCESS;
 }
 
-/* the objects stay referenced for the duration of the wait. */
-NTSTATUS ExWaitHandles(ULONG count, const HANDLE *handles, WAIT_TYPE type, BOOLEAN alertable, PLARGE_INTEGER timeout,
-                       KPROCESSOR_MODE mode)
+/*
+ * the objects stay referenced for the duration of the wait. the optional extra object is waited on after the handles
+ * and its index is the count, as the message queue of a thread is in a wait for messages.
+ */
+NTSTATUS ExWaitHandlesAndObject(ULONG count, const HANDLE *handles, WAIT_TYPE type, BOOLEAN alertable,
+                                PLARGE_INTEGER timeout, KPROCESSOR_MODE mode, PKEVENT extra)
 {
-    if (count == 0 || count > MAXIMUM_WAIT_OBJECTS)
+    ULONG total = count + (extra ? 1 : 0);
+    if (total == 0 || total > MAXIMUM_WAIT_OBJECTS)
         return STATUS_INVALID_PARAMETER_1;
     PVOID objects[MAXIMUM_WAIT_OBJECTS];
     PVOID waits[MAXIMUM_WAIT_OBJECTS];
@@ -458,20 +462,30 @@ NTSTATUS ExWaitHandles(ULONG count, const HANDLE *handles, WAIT_TYPE type, BOOLE
         }
     }
     if (NT_SUCCESS(status)) {
+        if (extra)
+            waits[count] = extra;
         PKWAIT_BLOCK blocks = nullptr;
-        if (count > THREAD_WAIT_OBJECTS) {
-            blocks = ExAllocatePool2(POOL_FLAG_NON_PAGED, count * sizeof(KWAIT_BLOCK), KI_TAG('E', 'x', 'W', 'b'));
+        if (total > THREAD_WAIT_OBJECTS) {
+            blocks = ExAllocatePool2(POOL_FLAG_NON_PAGED, total * sizeof(KWAIT_BLOCK), KI_TAG('E', 'x', 'W', 'b'));
             if (!blocks)
                 status = STATUS_INSUFFICIENT_RESOURCES;
         }
         if (NT_SUCCESS(status))
-            status = KiWaitObjects(count, waits, type, UserRequest, mode, alertable, timeout, blocks);
+            status = KiWaitObjects(total, waits, type, UserRequest, mode, alertable, timeout, blocks);
         if (blocks)
             ExFreePool(blocks);
     }
     for (ULONG i = 0; i < referenced; i++)
         ObDereferenceObject(objects[i]);
     return status;
+}
+
+NTSTATUS ExWaitHandles(ULONG count, const HANDLE *handles, WAIT_TYPE type, BOOLEAN alertable, PLARGE_INTEGER timeout,
+                       KPROCESSOR_MODE mode)
+{
+    if (count == 0 || count > MAXIMUM_WAIT_OBJECTS)
+        return STATUS_INVALID_PARAMETER_1;
+    return ExWaitHandlesAndObject(count, handles, type, alertable, timeout, mode, nullptr);
 }
 
 NTSTATUS NTAPI NtWaitForSingleObject(HANDLE handle, BOOLEAN alertable, PLARGE_INTEGER timeout)
