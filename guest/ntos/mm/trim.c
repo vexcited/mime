@@ -119,7 +119,7 @@ static void sweep_when_quiet(void)
         g_sweep_quiet = 0;
     else if (freed >= SWEEP_MIN_PAGES && ++g_sweep_quiet >= SWEEP_QUIET_POLLS) {
         ULONG64 released = MmReleaseFreeMemory();
-        KiLogPrintf("mm: quiet, %llu MiB of scattered free memory handed back", released >> 20);
+        KiLogPrintf("mm: quiet, %llu MiB of free memory reported to the host", released >> 20);
         g_sweep_quiet = 0;
     }
     g_sweep_seen = MmFreedSinceSweep();
