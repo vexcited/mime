@@ -814,42 +814,13 @@ WINBASEAPI BOOL WINAPI DeleteVolumeMountPointW(LPCWSTR mount_point)
 #define GEO_NAME 0x0011
 #define GEO_ID 0x0012
 
-typedef struct GEO_DATA {
-    GEOID Id;
-    PCWSTR Iso2;
-    PCWSTR Iso3;
-    PCWSTR Name;
-    PCWSTR Official;
-    PCWSTR Latitude;
-    PCWSTR Longitude;
-    PCWSTR Rfc1766;
-    LCID Lcid;
-    int UnNumber;
-    GEOID Parent;
-    PCWSTR Dialing;
-    PCWSTR Currency;
-    PCWSTR CurrencySymbol;
-} GEO_DATA;
+#include "nls_geodata.h"
 
-/* nations of the supported locales, with the values windows documents for each. */
-static const GEO_DATA g_geos[] = {
-    {244, L"US", L"USA", L"United States", L"United States of America", L"39.45", L"-98.908", L"en-us", 0x0409, 840,
-     39070, L"1", L"USD", L"$"},
-    {242, L"GB", L"GBR", L"United Kingdom", L"United Kingdom of Great Britain and Northern Ireland", L"54.633",
-     L"-3.432", L"en-gb", 0x0809, 826, 10039882, L"44", L"GBP", L"\x00A3"},
-    {84, L"FR", L"FRA", L"France", L"French Republic", L"46.15", L"2.202", L"fr-fr", 0x040C, 250, 10210824, L"33",
-     L"EUR", L"\x20AC"},
-    {94, L"DE", L"DEU", L"Germany", L"Federal Republic of Germany", L"51.164", L"10.454", L"de-de", 0x0407, 276,
-     10210824, L"49", L"EUR", L"\x20AC"},
-    {39, L"CA", L"CAN", L"Canada", L"Canada", L"60.108", L"-113.643", L"en-ca", 0x1009, 124, 23581, L"1", L"CAD",
-     L"$"},
-};
-
-static const GEO_DATA *find_geo(GEOID id)
+static const NLS_GEO *find_geo(GEOID id)
 {
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_geos); i++)
-        if (g_geos[i].Id == id)
-            return &g_geos[i];
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_nls_geos); i++)
+        if (g_nls_geos[i].Id == (UINT32)id)
+            return &g_nls_geos[i];
     return nullptr;
 }
 
@@ -863,23 +834,40 @@ DWORD WINAPI NlsGetCacheUpdateCount(void)
 #define GEOCLASS_REGION_MASK 14
 #define GEOCLASS_NATION_MASK 16
 
-/* there is no region data, so GEOCLASS_REGION_MASK enumerates nothing. */
+/* the nations or the regions, the ones that have a parent given when one is. */
 WINBASEAPI BOOL WINAPI EnumSystemGeoID(DWORD geo_class, GEOID parent, GEO_ENUMPROC proc)
 {
     if (!proc) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    if (geo_class != 0 && geo_class != GEOCLASS_REGION_MASK && geo_class != GEOCLASS_NATION_MASK) {
-        KbSetError(ERROR_INVALID_FLAGS);
+    if (geo_class != GEOCLASS_REGION_MASK && geo_class != GEOCLASS_NATION_MASK && geo_class != 0) {
+        KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    if (geo_class == GEOCLASS_REGION_MASK)
-        return TRUE;
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_geos); i++) {
-        if (parent && g_geos[i].Parent != parent)
+    /* the list of both classes is by number, the two being by number each. */
+    ULONG split = 0;
+    while (split < RTL_NUMBER_OF(g_nls_geos) && g_nls_geos[split].Class == GEOCLASS_NATION_MASK)
+        split++;
+    ULONG i = 0, j = split;
+    while (i < split || j < RTL_NUMBER_OF(g_nls_geos)) {
+        ULONG k;
+        if (geo_class == GEOCLASS_NATION_MASK) {
+            if (i >= split)
+                break;
+            k = i++;
+        } else if (geo_class == GEOCLASS_REGION_MASK) {
+            if (j >= RTL_NUMBER_OF(g_nls_geos))
+                break;
+            k = j++;
+        } else if (j >= RTL_NUMBER_OF(g_nls_geos) || (i < split && g_nls_geos[i].Id < g_nls_geos[j].Id)) {
+            k = i++;
+        } else {
+            k = j++;
+        }
+        if (parent && g_nls_geos[k].Parent != (UINT32)parent)
             continue;
-        if (!proc(g_geos[i].Id))
+        if (!proc((GEOID)g_nls_geos[k].Id))
             break;
     }
     return TRUE;
@@ -888,8 +876,8 @@ WINBASEAPI BOOL WINAPI EnumSystemGeoID(DWORD geo_class, GEOID parent, GEO_ENUMPR
 /* stored under the international settings, by name and by number. */
 WINBASEAPI BOOL WINAPI SetUserGeoID(GEOID id)
 {
-    const GEO_DATA *g = find_geo(id);
-    if (!g) {
+    const NLS_GEO *g = find_geo(id);
+    if (!g || g->Class != GEOCLASS_NATION_MASK) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
@@ -915,44 +903,85 @@ WINBASEAPI BOOL WINAPI SetUserGeoID(GEOID id)
     return TRUE;
 }
 
+/* the language part of the name of the locale of a language, "en" for 0x0409. */
+static PCWSTR geo_language_name(LANGID language, WCHAR *buffer, SIZE_T size)
+{
+    WCHAR name[LOCALE_NAME_MAX_LENGTH];
+    if (!language)
+        language = GetUserDefaultLangID();
+    if (!LCIDToLocaleName(language, name, RTL_NUMBER_OF(name), LOCALE_ALLOW_NEUTRAL_NAMES))
+        return L"en";
+    SIZE_T n = 0;
+    while (name[n] && name[n] != '-' && n + 1 < size) {
+        buffer[n] = name[n];
+        n++;
+    }
+    buffer[n] = 0;
+    return buffer;
+}
+
 WINBASEAPI int WINAPI GetGeoInfoW(GEOID id, GEOTYPE type, LPWSTR data, int length, LANGID language)
 {
-    const GEO_DATA *g = find_geo(id);
+    const NLS_GEO *g = find_geo(id);
     if (!g) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    WCHAR number[16];
+    WCHAR number[48];
     PCWSTR value;
     switch (type) {
     case GEO_NATION:
+        /* only the nations are numbered by themselves. */
+        if (g->Class != GEOCLASS_NATION_MASK)
+            return 0;
+        KbFormat(number, RTL_NUMBER_OF(number), L"%d", g->Id);
+        value = number;
+        break;
     case GEO_ID:
         KbFormat(number, RTL_NUMBER_OF(number), L"%d", g->Id);
         value = number;
         break;
     case GEO_LATITUDE: value = g->Latitude; break;
     case GEO_LONGITUDE: value = g->Longitude; break;
-    case GEO_ISO2:
-    case GEO_NAME: value = g->Iso2; break;
+    case GEO_ISO2: value = g->Iso2; break;
     case GEO_ISO3: value = g->Iso3; break;
-    case GEO_RFC1766: value = g->Rfc1766; break;
-    case GEO_LCID:
-        KbFormat(number, RTL_NUMBER_OF(number), L"%08x", g->Lcid);
+    case GEO_RFC1766: {
+        WCHAR lang[16];
+        PCWSTR l = geo_language_name(language, lang, RTL_NUMBER_OF(lang));
+        KbFormat(number, RTL_NUMBER_OF(number), L"%s-%s", l, g->Iso2);
+        for (WCHAR *c = number; *c; c++)
+            if (*c >= 'A' && *c <= 'Z')
+                *c += 32;
         value = number;
         break;
-    case GEO_FRIENDLYNAME: value = g->Name; break;
+    }
+    case GEO_LCID:
+        KbFormat(number, RTL_NUMBER_OF(number), L"%08x", language ? language : GetUserDefaultLangID());
+        value = number;
+        break;
+    case GEO_FRIENDLYNAME: value = g->Friendly; break;
     case GEO_OFFICIALNAME: value = g->Official; break;
+    case GEO_TIMEZONES:
+    case GEO_OFFICIALLANGUAGES:
+        return 0;
     case GEO_ISO_UN_NUMBER:
         KbFormat(number, RTL_NUMBER_OF(number), L"%03d", g->UnNumber);
         value = number;
         break;
     case GEO_PARENT:
-        KbFormat(number, RTL_NUMBER_OF(number), L"%d", g->Parent);
+        KbFormat(number, RTL_NUMBER_OF(number), L"%03d", g->Parent);
         value = number;
         break;
     case GEO_DIALINGCODE: value = g->Dialing; break;
     case GEO_CURRENCYCODE: value = g->Currency; break;
-    case GEO_CURRENCYSYMBOL: value = g->CurrencySymbol; break;
+    case GEO_CURRENCYSYMBOL: value = g->Symbol; break;
+    case GEO_NAME:
+        value = g->Iso2;
+        if (g->Iso2[0] == 'X' && g->Iso2[1] == 'X' && g->UnNumber) {
+            KbFormat(number, RTL_NUMBER_OF(number), L"%03d", g->UnNumber);
+            value = number;
+        }
+        break;
     default:
         KbSetError(ERROR_INVALID_FLAGS);
         return 0;
