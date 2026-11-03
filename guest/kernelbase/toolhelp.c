@@ -842,7 +842,7 @@ WINBASEAPI BOOL WINAPI EnumSystemGeoID(DWORD geo_class, GEOID parent, GEO_ENUMPR
         return FALSE;
     }
     if (geo_class != GEOCLASS_REGION_MASK && geo_class != GEOCLASS_NATION_MASK && geo_class != 0) {
-        KbSetError(ERROR_INVALID_PARAMETER);
+        KbSetError(ERROR_INVALID_FLAGS);
         return FALSE;
     }
     /* the list of both classes is by number, the two being by number each. */
