@@ -525,6 +525,8 @@ EXPORTS
     SaferCloseLevel@4
     SaferComputeTokenFromLevel@20
     SaferCreateLevel@20
+    SaferGetLevelInformation@20
+    SaferIdentifyLevel@16
     ScSendSynchronousPowerMessage@20
     SetAclInformation@16
     SetEntriesInAclA@16

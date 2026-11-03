@@ -525,6 +525,8 @@ EXPORTS
     SaferCloseLevel=_SaferCloseLevel@4
     SaferComputeTokenFromLevel=_SaferComputeTokenFromLevel@20
     SaferCreateLevel=_SaferCreateLevel@20
+    SaferGetLevelInformation=_SaferGetLevelInformation@20
+    SaferIdentifyLevel=_SaferIdentifyLevel@16
     ScSendSynchronousPowerMessage=_ScSendSynchronousPowerMessage@20
     SetAclInformation=_SetAclInformation@16
     SetEntriesInAclA=_SetEntriesInAclA@16

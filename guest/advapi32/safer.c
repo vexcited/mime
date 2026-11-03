@@ -12,7 +12,7 @@
 typedef struct SAFER_LEVEL {
     struct SAFER_LEVEL *Next;
     HANDLE Handle;
-    DWORD Level;
+    DWORD Level, Scope;
 } SAFER_LEVEL;
 
 static RTL_SRWLOCK g_safer_lock;
@@ -42,10 +42,55 @@ ADVAPI BOOL WINAPI SaferCreateLevel(DWORD scope, DWORD level, DWORD flags, PHAND
     }
     entry->Handle = (HANDLE)(ULONG_PTR)(0x74000000 | ++g_safer_sequence);
     entry->Level = level;
+    entry->Scope = scope;
     entry->Next = g_safer_levels;
     g_safer_levels = entry;
     *result = entry->Handle;
     RtlReleaseSRWLockExclusive(&g_safer_lock);
+    return TRUE;
+}
+
+/*
+ * no policy is set, so every code is identified at the level a user is given by default: unrestricted. the last
+ * argument is nothing or the name of the policy kind, such as the one of scripts.
+ */
+ADVAPI BOOL WINAPI SaferIdentifyLevel(DWORD count, PVOID records, PHANDLE result, PVOID reserved)
+{
+    if (!result || (count && !records))
+        return AdvSetStatus(STATUS_INVALID_PARAMETER);
+    /* the size of SAFER_CODE_PROPERTIES leads the record. */
+    if (count && !*(DWORD *)records)
+        return AdvSetStatus(STATUS_INVALID_PARAMETER);
+    return SaferCreateLevel(1, SAFER_FULLYTRUSTED, 1, result, nullptr);
+}
+
+ADVAPI BOOL WINAPI SaferGetLevelInformation(HANDLE handle, DWORD information, PVOID buffer, DWORD size, PDWORD returned)
+{
+    DWORD value = 0;
+    BOOL found = FALSE;
+    RtlAcquireSRWLockShared(&g_safer_lock);
+    for (SAFER_LEVEL *entry = g_safer_levels; entry; entry = entry->Next) {
+        if (entry->Handle == handle) {
+            value = information == 2 ? entry->Scope : entry->Level;
+            found = TRUE;
+            break;
+        }
+    }
+    RtlReleaseSRWLockShared(&g_safer_lock);
+    if (!found)
+        return AdvSetStatus(STATUS_INVALID_HANDLE);
+    /* the level and the scope are the answers there are, the names and descriptions are not kept. */
+    if (information != 1 && information != 2) {
+        AdvSetError(ERROR_NOT_SUPPORTED);
+        return FALSE;
+    }
+    if (returned)
+        *returned = sizeof(DWORD);
+    if (!buffer || size < sizeof(DWORD)) {
+        AdvSetError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    *(DWORD *)buffer = value;
     return TRUE;
 }
 
