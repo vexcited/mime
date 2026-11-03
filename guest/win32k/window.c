@@ -792,6 +792,11 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
             WndSetFocus(w->Parent && w->Parent != g_desktop ? w->Parent : nullptr);
     }
 
+    /* a child that is positioned without SWP_NOACTIVATE is told so before its window position is final: Windows sends
+     * WM_CHILDACTIVATE from SetWindowPos (xxxSwpActivate), which is how an MDI child that is brought to the top, moved or
+     * sized becomes the active document, and how a program that does the activation itself has it done below. */
+    if (!(pos.flags & SWP_NOACTIVATE) && (w->Style & (WS_CHILD | WS_POPUP)) == WS_CHILD && alive(w))
+        MsgSend(w, WM_CHILDACTIVATE, 0, 0);
     if (!alive(w))
         goto done;
     pos.flags |= (moved ? 0 : SWP_NOMOVE) | (sized ? 0 : SWP_NOSIZE) | (client_moved ? 0 : SWP_NOCLIENTMOVE) |
