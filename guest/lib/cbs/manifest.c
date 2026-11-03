@@ -260,7 +260,8 @@ int CbsManifestParse(CBS_ARENA *arena, const char *file_name, const char *text, 
             file->Destination = copy_attribute(arena, &xml, "destinationPath");
             sha256 = false;
             file->FirstLink = links.Count;
-            if (!file->Name || !file->Destination) {
+            /* a file with no destination goes only into the global assembly cache, its element gac says so. */
+            if (!file->Name) {
                 status = CBS_BAD;
                 break;
             }
@@ -282,12 +283,19 @@ int CbsManifestParse(CBS_ARENA *arena, const char *file_name, const char *text, 
         } else if (depth == 3 && file && !strcmp(parent, "file") && !strcmp(name, "gac")) {
             const char *arch = CbsXmlAttribute(&xml, "clrarch");
             const char *copy = CbsXmlAttribute(&xml, "fileCopy");
-            file->Gac = !arch                 ? CBS_GAC_NONE
-                        : !_stricmp(arch, "msil")  ? CBS_GAC_MSIL
-                        : !_stricmp(arch, "x86")   ? CBS_GAC_X86
-                        : !_stricmp(arch, "amd64") ? CBS_GAC_AMD64
-                        : !_stricmp(arch, "arm64") ? CBS_GAC_ARM64
-                                                   : CBS_GAC_NONE;
+            /* without a processor it is the one of the component. */
+            if (!arch)
+                file->Gac = component->Id.Arch == CBS_ARCH_X86 || component->Id.Arch == CBS_ARCH_WOW64 ? CBS_GAC_X86
+                            : component->Id.Arch == CBS_ARCH_AMD64                                    ? CBS_GAC_AMD64
+                            : component->Id.Arch == CBS_ARCH_ARM64                                    ? CBS_GAC_ARM64
+                                                                                                      : CBS_GAC_MSIL;
+            else
+                file->Gac = !_stricmp(arch, "msil")    ? CBS_GAC_MSIL
+                            : !_stricmp(arch, "x86")   ? CBS_GAC_X86
+                            : !_stricmp(arch, "amd64") ? CBS_GAC_AMD64
+                            : !_stricmp(arch, "arm64") ? CBS_GAC_ARM64
+                                                       : CBS_GAC_NONE;
+            file->GacCulture = copy_attribute(arena, &xml, "managedculture");
             file->GacCopy = !copy || _stricmp(copy, "false");
             file->GacVersion = copy_attribute(arena, &xml, "managedversion");
         } else if (depth == 3 && !strcmp(parent, "directories") && !strcmp(name, "directory")) {

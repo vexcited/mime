@@ -138,21 +138,24 @@ static size_t expand_into(const INSTALL *I, CBS_ARCH arch, const char *in, char 
                 const char *name = in + 2;
                 const char *value = nullptr;
                 const char *suffix = "";
-                if (length == 15 && !memcmp(name, "runtime.windows", 15))
+                if (length == 15 && !_strnicmp(name, "runtime.windows", 15))
                     value = I->Layout->Windows;
-                else if (length == 16 && !memcmp(name, "runtime.system32", 16))
+                else if (length == 16 && !_strnicmp(name, "runtime.system32", 16))
                     value = system_directory(I, arch);
-                else if (length == 11 && !memcmp(name, "runtime.inf", 11)) {
+                else if (length == 11 && !_strnicmp(name, "runtime.inf", 11)) {
                     value = I->Layout->Windows;
                     suffix = "\\inf";
-                } else if (length == 12 && !memcmp(name, "runtime.wbem", 12)) {
+                } else if (length == 12 && !_strnicmp(name, "runtime.wbem", 12)) {
                     value = system_directory(I, arch);
                     suffix = "\\wbem";
-                } else if (length == 19 && !memcmp(name, "runtime.programData", 19))
+                } else if (length == 19 && !_strnicmp(name, "runtime.programData", 19))
                     value = I->Layout->ProgramData;
-                else if (length == 20 && !memcmp(name, "runtime.programFiles", 20))
+                else if (length == 17 && !_strnicmp(name, "runtime.startmenu", 17)) {
+                    value = I->Layout->ProgramData;
+                    suffix = "\\Microsoft\\Windows\\Start Menu";
+                } else if (length == 20 && !_strnicmp(name, "runtime.programFiles", 20))
                     value = I->Layout->ProgramFiles;
-                else if (length == 14 && !memcmp(name, "assembly.empty", 14))
+                else if (length == 14 && !_strnicmp(name, "assembly.empty", 14))
                     value = "";
                 if (value) {
                     size_t a = strlen(value), b = strlen(suffix);
@@ -357,11 +360,12 @@ static bool arch_wanted(const INSTALL *I, const char *file_name)
     bool amd64 = n == 5 && !_strnicmp(file_name, "amd64", 5);
     bool arm64 = n == 5 && !_strnicmp(file_name, "arm64", 5);
     bool wow64 = n == 5 && !_strnicmp(file_name, "wow64", 5);
+    bool msil = n == 4 && !_strnicmp(file_name, "msil", 4);
     if (native == CBS_ARCH_AMD64)
-        return x86 || amd64 || wow64;
+        return x86 || amd64 || wow64 || msil;
     if (native == CBS_ARCH_ARM64)
-        return x86 || arm64 || wow64;
-    return x86;
+        return x86 || arm64 || wow64 || msil;
+    return x86 || msil;
 }
 
 /* the hash named stubs of a servicing package only point at the components that hold the files. */
@@ -528,15 +532,18 @@ static char *gac_directory(INSTALL *I, const CBS_COMPONENT *c, const CBS_FILE_EN
 {
     char folder_name[160];
     const char *version = file->GacVersion ? file->GacVersion : "0.0.0.0";
+    const char *culture = file->GacCulture ? file->GacCulture : "";
     const char *token = c->Id.Token ? c->Id.Token : "";
-    size_t version_length = strlen(version), token_length = strlen(token);
-    if (version_length + token_length + 8 > sizeof(folder_name))
+    size_t version_length = strlen(version), culture_length = strlen(culture), token_length = strlen(token);
+    if (version_length + culture_length + token_length + 8 > sizeof(folder_name))
         return nullptr;
-    /* v4.0_<assembly version>__<token>, the culture between the underscores being neutral. */
+    /* v4.0_<assembly version>_<culture>_<token>, the culture of an assembly for every language being empty. */
     memcpy(folder_name, "v4.0_", 5);
     memcpy(folder_name + 5, version, version_length);
-    memcpy(folder_name + 5 + version_length, "__", 2);
-    memcpy(folder_name + 7 + version_length, token, token_length + 1);
+    folder_name[5 + version_length] = '_';
+    memcpy(folder_name + 6 + version_length, culture, culture_length);
+    folder_name[6 + version_length + culture_length] = '_';
+    memcpy(folder_name + 7 + version_length + culture_length, token, token_length + 1);
     char *path = join(I, I->Layout->Windows, "Microsoft.NET\\Assembly");
     path = path ? join(I, path, gac_folder(file->Gac)) : nullptr;
     path = path ? join(I, path, c->Id.Name) : nullptr;
@@ -558,9 +565,25 @@ static int plan_component(INSTALL *I, const CBS_COMPONENT *c)
         payload[folder] = '\\';
         memcpy(payload + folder + 1, file->Name, name + 1);
         const NAME_ENTRY *entry = find_name(I, payload);
+        if (!entry && I->Layout->SkipMissing)
+            continue;
         if (!entry)
             return CBS_NOT_FOUND;
-        char *directory = expand(I, arch, file->Destination);
+        char *directory;
+        if (file->Destination)
+            directory = expand(I, arch, file->Destination);
+        else if (file->Gac != CBS_GAC_NONE)
+            directory = gac_directory(I, c, file);
+        else {
+            /* a file that only follows the assembly goes where the assembly goes. */
+            const CBS_FILE_ENTRY *assembly = nullptr;
+            for (unsigned g = 0; g < c->FileCount && !assembly; g++)
+                if (c->Files[g].Gac != CBS_GAC_NONE)
+                    assembly = &c->Files[g];
+            if (!assembly)
+                return CBS_BAD;
+            directory = gac_directory(I, c, assembly);
+        }
         if (!directory)
             return CBS_MEMORY;
         PLAN plan = {};
@@ -592,18 +615,23 @@ static int plan_component(INSTALL *I, const CBS_COMPONENT *c)
     /* a file that goes into the cache itself brings along the files of its own directory. */
     for (unsigned f = 0; f < c->FileCount; f++) {
         const CBS_FILE_ENTRY *file = &c->Files[f];
-        if (file->Gac == CBS_GAC_NONE || !file->GacCopy)
+        if (file->Gac == CBS_GAC_NONE || !file->GacCopy || !file->Destination)
             continue;
         char *cache = gac_directory(I, c, file);
         if (!cache)
             return CBS_MEMORY;
         for (unsigned g = 0; g < c->FileCount; g++) {
-            if (path_compare(c->Files[g].Destination, file->Destination))
+            if (!c->Files[g].Destination || path_compare(c->Files[g].Destination, file->Destination))
+                continue;
+            unsigned plan = first;
+            while (plan < I->PlanCount && I->Plans[plan].File != &c->Files[g])
+                plan++;
+            if (plan == I->PlanCount)
                 continue;
             char *link = join(I, cache, base_name(c->Files[g].Name));
             if (!link)
                 return CBS_MEMORY;
-            int status = add_link(I, &I->Plans[first + g], link);
+            int status = add_link(I, &I->Plans[plan], link);
             if (status != CBS_OK)
                 return status;
         }

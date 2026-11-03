@@ -1,5 +1,6 @@
 /* NetfxInstallFromPackage: the windows side of the servicing library, files and registry of the machine. */
 #include "cbs.h"
+#include "../cabinet/cabinet.h"
 #include <mime/feature.h>
 #include "../crypto/crypto.h"
 #include <mime/win32/winnls.h>
@@ -701,6 +702,176 @@ DWORD NetfxInstallFromPackage(PCWSTR package, PCWSTR root, MIME_FEATURE_PROGRESS
     unmap_file(&cabinet_view);
     if (cabinet_path[0])
         DeleteFileW(cabinet_path);
+    unmap_file(&package_view);
+    return error_of(status, &w);
+}
+
+/* ------------------------------------------------------------------ windows powershell */
+
+static bool contains_text(const char *name, const char *part)
+{
+    size_t n = strlen(name), m = strlen(part);
+    for (size_t i = 0; i + m <= n; i++)
+        if (!_strnicmp(name + i, part, m))
+            return true;
+    return false;
+}
+
+/*
+ * the components of the Windows Management Framework that the shell needs: the shell, the engine, its commands and the
+ * modules, in English. what is for remoting, configuration, workflows and the editor stays in the package.
+ */
+static bool powershell_wanted(void *context, const char *name)
+{
+    static const char *const left_out[] = {
+        "dsc",      "workflow",   "pullserver", "wsman",         "-ise",    "_ise",  "gpowershell", "graphicalhost",
+        "editor",   "isecommon",  "activities", "odata",         "cimcmdlets", "management.infrastructure",
+        "-sip",     "-events",    "-message",
+    };
+    (void)context;
+    if (!contains_text(name, "powershell") && !contains_text(name, "system.management.automation") &&
+        !contains_text(name, "packagemanagement"))
+        return false;
+    for (size_t i = 0; i < sizeof(left_out) / sizeof(left_out[0]); i++)
+        if (contains_text(name, left_out[i]))
+            return false;
+    /* the languages other than English are not fetched. */
+    if ((contains_text(name, ".resources_") || contains_text(name, "languagepack") || contains_text(name, "-mui")) &&
+        !contains_text(name, "_en-us_"))
+        return false;
+    return true;
+}
+
+static int cabinet_status(int status)
+{
+    switch (status) {
+    case MIME_CAB_OK:
+        return CBS_OK;
+    case MIME_CAB_UNSUPPORTED:
+        return CBS_UNSUPPORTED;
+    case MIME_CAB_CORRUPT:
+        return CBS_CORRUPT;
+    case MIME_CAB_MEMORY:
+        return CBS_MEMORY;
+    case MIME_CAB_STOPPED:
+        return CBS_STOPPED;
+    default:
+        return CBS_BAD;
+    }
+}
+
+typedef struct HOLD_FILE {
+    const char *Suffix;
+    uint8_t *Data;
+    size_t Size, Used;
+} HOLD_FILE;
+
+static void *hold_begin(void *context, const MIME_CAB_FILE *file)
+{
+    HOLD_FILE *h = context;
+    size_t n = strlen(file->Name), m = strlen(h->Suffix);
+    if (h->Data || n < m || _stricmp(file->Name + n - m, h->Suffix))
+        return nullptr;
+    h->Data = CbsAlloc(file->Size ? file->Size : 1);
+    h->Size = file->Size;
+    h->Used = 0;
+    return h->Data ? h : nullptr;
+}
+
+static int hold_write(void *context, void *file_context, const uint8_t *data, size_t length)
+{
+    HOLD_FILE *h = file_context;
+    (void)context;
+    if (length > h->Size - h->Used)
+        return 1;
+    memcpy(h->Data + h->Used, data, length);
+    h->Used += length;
+    return 0;
+}
+
+static int hold_end(void *context, void *file_context, const MIME_CAB_FILE *file)
+{
+    (void)context;
+    (void)file_context;
+    (void)file;
+    return 0;
+}
+
+DWORD PowerShellInstallFromPackage(PCWSTR package, PCWSTR root, MIME_FEATURE_PROGRESS progress, void *context)
+{
+    if (!package || !root || !*root)
+        return ERROR_INVALID_PARAMETER;
+    CBS_ARCH native = native_arch();
+    /* the package is for the x64 processor, and its Windows 8.1 manifests have no other. */
+    if (native != CBS_ARCH_AMD64)
+        return ERROR_NOT_SUPPORTED;
+    WIN_TARGET w = {};
+    PLACES places;
+    CBS_LAYOUT layout;
+    if (!make_layout(root, native, &places, &layout))
+        return ERROR_BAD_PATHNAME;
+    layout.SkipMissing = true;
+    CBS_TARGET target = {};
+    target.Context = &w;
+    target.CreateDirectory = t_create_directory;
+    target.FileState = t_file_state;
+    target.Begin = t_begin;
+    target.Write = t_write;
+    target.End = t_end;
+    target.Abort = t_abort;
+    target.Link = t_link;
+    target.CreateKey = t_create_key;
+    target.SetValue = t_set_value;
+    target.GetDword = t_get_dword;
+    target.Log = t_log;
+    REPORTER reporter = {};
+    reporter.Progress = progress;
+    reporter.Context = context;
+    reporter.Scale = 1000;
+    set_step(&reporter, "Reading the package");
+
+    VIEW package_view;
+    DWORD error = map_file(package, &package_view);
+    if (error != ERROR_SUCCESS)
+        return error;
+    /* the package is a cabinet that holds the cabinet of the update. */
+    HOLD_FILE hold = {"x64.cab", nullptr, 0, 0};
+    MIME_CAB *outer = nullptr;
+    int status = package_view.Size >= 4 && !memcmp(package_view.Data, "MSCF", 4)
+                     ? cabinet_status(MimeCabOpen(&outer, package_view.Data, package_view.Size, CbsAlloc, CbsFree))
+                     : CBS_BAD;
+    uint8_t *plain = nullptr;
+    size_t plain_size = 0;
+    if (status == CBS_OK) {
+        MimeCabSequential(outer);
+        MIME_CAB_FILE_SINK sink = {hold_begin, hold_write, hold_end};
+        status = cabinet_status(MimeCabExtract(outer, &sink, &hold));
+        if (status == CBS_OK && (!hold.Data || hold.Used != hold.Size))
+            status = CBS_NOT_FOUND;
+    }
+    if (outer)
+        MimeCabClose(outer);
+    if (status == CBS_OK) {
+        /* the update is made into a plain cabinet by the first half of the work, and installed by the second. */
+        reporter.Base = 20;
+        reporter.Span = 480;
+        set_step(&reporter, "Making the files");
+        CBS_PROGRESS make = {install_report, install_step, &reporter};
+        status = CbsExpandIndexedCabinet(hold.Data, hold.Size, native, powershell_wanted, nullptr, &make, &plain,
+                                         &plain_size);
+    }
+    CbsFree(hold.Data);
+    if (status == CBS_OK) {
+        reporter.Base = 500;
+        reporter.Span = 480;
+        reporter.LastDone = reporter.LastTotal = 0;
+        CBS_PROGRESS install = {install_report, install_step, &reporter};
+        status = CbsInstallCabinet(plain, plain_size, &layout, &target, &install);
+        if (status == CBS_OK)
+            tell(&reporter, 1, 1);
+    }
+    CbsFree(plain);
+    close_key(&w);
     unmap_file(&package_view);
     return error_of(status, &w);
 }

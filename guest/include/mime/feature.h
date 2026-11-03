@@ -13,6 +13,7 @@
 /* The names of the catalog, as the command line and the request functions take them. */
 #define MIME_FEATURE_WEBVIEW2 L"WebView2"
 #define MIME_FEATURE_NETFX4 L"NetFx4"
+#define MIME_FEATURE_POWERSHELL L"PowerShell"
 
 /* The program that serves requests, below the windows folder. */
 #define MIME_FEATURE_PROGRAM L"\\System32\\features.exe"
@@ -37,6 +38,14 @@ typedef DWORD (*MIME_FEATURE_INSTALL)(PCWSTR package, PCWSTR root, MIME_FEATURE_
  * ERROR_INVALID_PARAMETER for a null package.
  */
 DWORD NetfxInstallFromPackage(PCWSTR package, PCWSTR root, MIME_FEATURE_PROGRESS progress, void *context);
+
+/*
+ * The Windows PowerShell 5.1 handler. The package is the update of the Windows Management Framework 5.1 for Windows 8.1,
+ * Win8.1AndW2K12R2-KB3191564-x64.msu. It holds the files as patches of each other, which guest/lib/msdelta applies, and
+ * every file is checked against the hash of the index of the package. It writes the shell, its engine and its modules under
+ * Root. Only for x64, ERROR_NOT_SUPPORTED on another processor.
+ */
+DWORD PowerShellInstallFromPackage(PCWSTR package, PCWSTR root, MIME_FEATURE_PROGRESS progress, void *context);
 
 /*
  * Asks features.exe to enable a feature and waits for it. The user is asked first unless the policy decided. Returns a

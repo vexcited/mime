@@ -95,7 +95,7 @@ static DWORD run_and_wait(RUN *run, PWSTR command_line, DWORD *exit_code, PCWSTR
     ULONGLONG start = GetTickCount64(), expected = (ULONGLONG)run->Feature->InstallMB << 20;
     DWORD wait;
     while ((wait = WaitForSingleObject(process.hProcess, 500)) == WAIT_TIMEOUT) {
-        if (expected) {
+        if (expected && folder) {
             ULONGLONG written = folder_bytes(folder);
             /* A version larger than the catalog says stays short of the end until the installer is done. */
             if (written > expected * 99 / 100)
@@ -214,6 +214,98 @@ static uint32_t netfx_remove(RUN *run)
     return netfx_present(run) ? ERROR_SHARING_VIOLATION : ERROR_SUCCESS;
 }
 
+/* ------------------------------------------------------------------ Windows PowerShell */
+
+static BOOL powershell_present(RUN *run)
+{
+    WCHAR path[MAX_PATH];
+    netfx_path(run, L"Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", path, RTL_NUMBER_OF(path));
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES)
+        return FALSE;
+    netfx_path(run, L"Windows\\Microsoft.NET\\assembly\\GAC_MSIL\\System.Management.Automation", path,
+               RTL_NUMBER_OF(path));
+    return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
+}
+
+/* The shell runs on the .NET Framework, which is asked for first when it is not there. */
+static DWORD powershell_framework(RUN *run)
+{
+    if (netfx_present(run))
+        return ERROR_SUCCESS;
+    WCHAR program[MAX_PATH], line[MAX_PATH + 100];
+    DWORD n = GetModuleFileNameW(nullptr, program, RTL_NUMBER_OF(program));
+    if (!n || n >= RTL_NUMBER_OF(program))
+        return ERROR_PATH_NOT_FOUND;
+    PCWSTR arguments = (run->EnableFlags & FEATURE_ENABLE_ASK) ? L"/enable-feature:NetFx4 /caller-name:PowerShell"
+                                                               : L"enable NetFx4";
+    _snwprintf(line, RTL_NUMBER_OF(line), L"\"%ls\" %ls", program, arguments);
+    line[RTL_NUMBER_OF(line) - 1] = 0;
+    RunReport(run, 0, 0, L"Waiting for the .NET Framework");
+    DWORD code;
+    DWORD error = run_and_wait(run, line, &code, nullptr);
+    if (error)
+        return error;
+    if (code)
+        return code;
+    return netfx_present(run) ? ERROR_SUCCESS : FEATURE_ERROR_INSTALL_FAILURE;
+}
+
+static BOOL CALLBACK powershell_progress(void *context, ULONGLONG done, ULONGLONG total, PCWSTR step)
+{
+    RUN *run = context;
+    RunReport(run, done, total, step);
+    return !run->Cancel;
+}
+
+static uint32_t powershell_install(RUN *run, PCWSTR package)
+{
+    DWORD error = powershell_framework(run);
+    if (error)
+        return error;
+    run->Cancellable = TRUE;
+    error = PowerShellInstallFromPackage(package, run->Root, powershell_progress, run);
+    if (error == ERROR_SUCCESS && !powershell_present(run))
+        return FEATURE_ERROR_INSTALL_FAILURE;
+    return error;
+}
+
+/* The folders of the shell, and the entries of the cache of assemblies that the package puts there. */
+static uint32_t powershell_remove(RUN *run)
+{
+    static const WCHAR *const folders[] = {
+        L"Windows\\System32\\WindowsPowerShell", L"Windows\\SysWOW64\\WindowsPowerShell",
+        L"Program Files\\WindowsPowerShell", L"Program Files (x86)\\WindowsPowerShell",
+    };
+    WCHAR path[MAX_PATH];
+    for (SIZE_T i = 0; i < RTL_NUMBER_OF(folders); i++) {
+        netfx_path(run, folders[i], path, RTL_NUMBER_OF(path));
+        DeleteTree(path);
+    }
+    WCHAR cache[MAX_PATH], pattern[MAX_PATH];
+    netfx_path(run, L"Windows\\Microsoft.NET\\assembly\\GAC_MSIL", cache, RTL_NUMBER_OF(cache));
+    _snwprintf(pattern, RTL_NUMBER_OF(pattern), L"%ls\\*", cache);
+    pattern[RTL_NUMBER_OF(pattern) - 1] = 0;
+    WIN32_FIND_DATAW data;
+    HANDLE find = FindFirstFileExW(pattern, FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, 0);
+    if (find != INVALID_HANDLE_VALUE) {
+        do {
+            static const WCHAR *const prefixes[] = {L"Microsoft.PowerShell.", L"Microsoft.PackageManagement",
+                                                    L"System.Management.Automation", L"Policy.1.0.Microsoft.PowerShell.",
+                                                    L"Policy.1.0.System.Management.Automation", L"Microsoft.WSMan."};
+            for (SIZE_T i = 0; i < RTL_NUMBER_OF(prefixes); i++) {
+                if (!_wcsnicmp(data.cFileName, prefixes[i], wcslen(prefixes[i]))) {
+                    _snwprintf(path, RTL_NUMBER_OF(path), L"%ls\\%ls", cache, data.cFileName);
+                    path[RTL_NUMBER_OF(path) - 1] = 0;
+                    DeleteTree(path);
+                    break;
+                }
+            }
+        } while (FindNextFileW(find, &data));
+        FindClose(find);
+    }
+    return powershell_present(run) ? ERROR_SHARING_VIOLATION : ERROR_SUCCESS;
+}
+
 /* ------------------------------------------------------------------ by handler */
 
 uint32_t HandlerAvailable(const FEATURE_DEF *feature)
@@ -225,6 +317,9 @@ uint32_t HandlerAvailable(const FEATURE_DEF *feature)
         /* The stub says it is not supported, the real one refuses a null package for another reason. */
         return NetfxInstallFromPackage(nullptr, nullptr, nullptr, nullptr) == ERROR_NOT_SUPPORTED ? ERROR_NOT_SUPPORTED
                                                                                                      : ERROR_SUCCESS;
+    case FEATURE_HANDLER_POWERSHELL:
+        /* The package has the files of the x64 processor only. */
+        return MACHINE_ARCH == FEATURE_ARCH_X64 ? ERROR_SUCCESS : ERROR_NOT_SUPPORTED;
     case FEATURE_HANDLER_FONTS:
         return ERROR_SUCCESS;
     default:
@@ -239,6 +334,8 @@ BOOL HandlerPresent(RUN *run, const FEATURE_DEF *feature)
         return webview2_present(run);
     case FEATURE_HANDLER_NETFX:
         return netfx_present(run);
+    case FEATURE_HANDLER_POWERSHELL:
+        return powershell_present(run);
     case FEATURE_HANDLER_FONTS:
         return FontsPresent(run, feature);
     default:
@@ -261,6 +358,8 @@ uint32_t HandlerInstall(RUN *run, const FEATURE_DEF *feature, PCWSTR package)
         return webview2_install(run, package);
     case FEATURE_HANDLER_NETFX:
         return netfx_install(run, package);
+    case FEATURE_HANDLER_POWERSHELL:
+        return powershell_install(run, package);
     case FEATURE_HANDLER_FONTS:
         return FontsInstall(run, feature, package);
     default:
@@ -275,6 +374,8 @@ uint32_t HandlerRemove(RUN *run, const FEATURE_DEF *feature)
         return webview2_remove(run);
     case FEATURE_HANDLER_NETFX:
         return netfx_remove(run);
+    case FEATURE_HANDLER_POWERSHELL:
+        return powershell_remove(run);
     case FEATURE_HANDLER_FONTS:
         return FontsRemove(run, feature);
     default:

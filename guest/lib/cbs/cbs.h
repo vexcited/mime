@@ -115,7 +115,7 @@ typedef struct CBS_ID {
 
 typedef struct CBS_FILE_ENTRY {
     const char *Name;        /* relative to the payload folder, with backslashes. */
-    const char *Destination; /* the directory, with variables. */
+    const char *Destination; /* the directory, with variables. null for a file that goes only into the cache. */
     /* the sha-256 of the content, from the digest of the manifest. its hash attribute is of another form of the file. */
     uint8_t Digest[32];
     bool HasDigest;
@@ -123,6 +123,7 @@ typedef struct CBS_FILE_ENTRY {
     CBS_GAC Gac;
     bool GacCopy; /* the file itself goes into the cache, otherwise only links. */
     const char *GacVersion;
+    const char *GacCulture; /* of a satellite assembly, null for the others. */
 } CBS_FILE_ENTRY;
 
 typedef struct CBS_REG_KEY {
@@ -176,6 +177,7 @@ typedef struct CBS_LAYOUT {
     const char *ProgramFiles; /* the folder for 32-bit programs. */
     bool Is64Bit;
     CBS_ARCH Native; /* the processor of the system: x86, amd64 or arm64. */
+    bool SkipMissing; /* a file that the cabinet does not hold is left out, for a cabinet that was made with fewer of them. */
 } CBS_LAYOUT;
 
 /* what the library asks of the system. every call returns 0 on success; the target keeps its own last error. the registry
@@ -217,6 +219,16 @@ typedef struct CBS_PROGRESS {
 /* installs the components that a servicing cabinet holds for the system, see docs/servicing.md. */
 int CbsInstallCabinet(const uint8_t *cabinet, size_t size, const CBS_LAYOUT *layout, const CBS_TARGET *target,
                       const CBS_PROGRESS *progress);
+
+/*
+ * a servicing cabinet of Windows Update, whose files are numbered and listed with the patches that make them in an index,
+ * as a plain cabinet that CbsInstallCabinet takes. only the components for which the filter says yes by their manifest name
+ * are made, and a file that cannot be made, or that does not have the hash of the index, is left out of it.
+ * the plain cabinet is allocated with CbsAlloc.
+ */
+typedef bool (*CBS_COMPONENT_FILTER)(void *context, const char *manifest_name);
+int CbsExpandIndexedCabinet(const uint8_t *cabinet, size_t size, CBS_ARCH native, CBS_COMPONENT_FILTER filter,
+                            void *context, const CBS_PROGRESS *progress, uint8_t **plain, size_t *plain_size);
 
 /* what the system's own part of the framework registers, which the package does not carry. */
 int CbsInstallFrameworkRegistry(const CBS_LAYOUT *layout, const CBS_TARGET *target);

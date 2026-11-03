@@ -24,7 +24,7 @@
 "ComSpec"=expand:"%SystemRoot%\\system32\\cmd.exe"
 "DriverData"="C:\\Windows\\System32\\Drivers\\DriverData"
 "OS"="Windows_NT"
-"Path"=expand:"%SystemRoot%\\system32;%SystemRoot%;%SystemRoot%\\System32\\Wbem"
+"Path"=expand:"%SystemRoot%\\system32;%SystemRoot%;%SystemRoot%\\System32\\Wbem;%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\"
 "PATHEXT"=".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC"
 "TEMP"=expand:"%SystemRoot%\\TEMP"
 "TMP"=expand:"%SystemRoot%\\TEMP"

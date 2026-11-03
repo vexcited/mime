@@ -18,9 +18,14 @@ enum { TRIGGER_IDLE, TRIGGER_RUNNING, TRIGGER_ENABLED, TRIGGER_GAVE_UP, TRIGGER_
 
 static BOOL webview2_present(WCHAR drive);
 static BOOL netfx_present(WCHAR drive);
+static BOOL powershell_present(WCHAR drive);
 
-/* The folders programs look into for what a feature holds. */
+/* The folders programs look into for what a feature holds. The assemblies of the shell come before the Framework's cache. */
 static TRIGGER g_triggers[] = {
+    {L"\\Windows\\System32\\WindowsPowerShell\\", MIME_FEATURE_POWERSHELL, powershell_present, TRIGGER_IDLE},
+    {L"\\Windows\\SysWOW64\\WindowsPowerShell\\", MIME_FEATURE_POWERSHELL, powershell_present, TRIGGER_IDLE},
+    {L"\\Windows\\Microsoft.NET\\assembly\\GAC_MSIL\\System.Management.Automation\\", MIME_FEATURE_POWERSHELL,
+     powershell_present, TRIGGER_IDLE},
     {L"\\Program Files (x86)\\Microsoft\\EdgeWebView\\", MIME_FEATURE_WEBVIEW2, webview2_present, TRIGGER_IDLE},
     {L"\\Windows\\Microsoft.NET\\", MIME_FEATURE_NETFX4, netfx_present, TRIGGER_IDLE},
     {L"\\Windows\\assembly\\", MIME_FEATURE_NETFX4, netfx_present, TRIGGER_IDLE},
@@ -124,6 +129,29 @@ static BOOL netfx_present(WCHAR drive)
     return native_open(path, FALSE, nullptr);
 }
 
+/* The shell is the file and the assembly of its engine in the cache. */
+static BOOL powershell_present(WCHAR drive)
+{
+    WCHAR path[MAX_PATH];
+    UINT length = 0;
+    path[length++] = drive;
+    path[length++] = L':';
+    for (PCWSTR p = L"\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"; *p; p++)
+        path[length++] = *p;
+    path[length] = 0;
+    if (!native_open(path, FALSE, nullptr))
+        return FALSE;
+    length = 2;
+    for (PCWSTR p = L"\\Windows\\Microsoft.NET\\assembly\\GAC_MSIL\\System.Management.Automation"; *p; p++)
+        path[length++] = *p;
+    path[length] = 0;
+    HANDLE directory;
+    if (!native_open(path, TRUE, &directory))
+        return FALSE;
+    NtClose(directory);
+    return TRUE;
+}
+
 static PCWSTR skip_prefix(PCWSTR path)
 {
     if (path[0] == L'\\' && (path[1] == L'?' || path[1] == L'\\') && path[2] == L'?' && path[3] == L'\\')
@@ -219,11 +247,43 @@ DWORD MimeFeatureRequestFont(PCWSTR family)
     return run_program(arguments, caller);
 }
 
+/* A program started by its bare name, which the search of the path did not find. */
+static BOOL is_shell_name(PCWSTR name)
+{
+    for (PCWSTR p = name; *p; p++)
+        if (*p == L'\\' || *p == L'/' || *p == L':')
+            return FALSE;
+    static const WCHAR plain[] = L"powershell", with_extension[] = L"powershell.exe";
+    UINT n = 0;
+    while (name[n])
+        n++;
+    PCWSTR want = n == RTL_NUMBER_OF(plain) - 1 ? plain : n == RTL_NUMBER_OF(with_extension) - 1 ? with_extension : nullptr;
+    if (!want)
+        return FALSE;
+    for (UINT i = 0; i < n; i++)
+        if (fold(name[i]) != want[i])
+            return FALSE;
+    return TRUE;
+}
+
 BOOL MimeFeatureFault(PCWSTR path)
 {
     if (!path)
         return FALSE;
     path = skip_prefix(path);
+    WCHAR shell[MAX_PATH];
+    if (is_shell_name(path)) {
+        UINT n = GetWindowsDirectoryW(shell, MAX_PATH);
+        PCWSTR tail = L"\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+        UINT length = 0;
+        while (tail[length])
+            length++;
+        if (!n || n + length >= MAX_PATH)
+            return FALSE;
+        for (UINT i = 0; i <= length; i++)
+            shell[n + i] = tail[i];
+        path = shell;
+    }
     TRIGGER *trigger = nullptr;
     for (UINT i = 0; i < RTL_NUMBER_OF(g_triggers) && !trigger; i++)
         if (in_folder(path, g_triggers[i].Folder))

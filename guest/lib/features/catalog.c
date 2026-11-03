@@ -39,6 +39,25 @@ static const FEATURE_DEF g_catalog[] = {
         .DownloadMB = 78,
         .Handler = FEATURE_HANDLER_NETFX,
     },
+    {
+        .Name = "PowerShell",
+        .DisplayName = "Windows PowerShell 5.1",
+        .Version = "5.1.14409.1005",
+        .Vendor = "Microsoft Corporation",
+        /*
+         * The update KB3191564 of the Windows Management Framework 5.1 for Windows 8.1 and Windows Server 2012 R2. It is
+         * not a program: Microsoft publishes the hash of the file, which the catalog names, and that is what decides.
+         */
+        .Url = {[FEATURE_ARCH_X64] = "https://go.microsoft.com/fwlink/?linkid=839516"},
+        .Signer = "Microsoft Corporation",
+        .MinSize = 15ull << 20,
+        .MaxSize = 40ull << 20,
+        .DownloadMB = 19,
+        .InstallMB = 130,
+        .Handler = FEATURE_HANDLER_POWERSHELL,
+        .Format = FEATURE_FORMAT_CABINET,
+        .Sha256 = "a8d788fa31b02a999cc676fb546fc782e86c2a0acd837976122a1891ceee42c0",
+    },
 };
 
 /* The fonts, in fontcatalog.c. */

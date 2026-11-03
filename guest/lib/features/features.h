@@ -31,6 +31,8 @@ typedef enum FEATURE_ARCH {
 typedef enum FEATURE_HANDLER {
     FEATURE_HANDLER_WEBVIEW2,
     FEATURE_HANDLER_NETFX,
+    /* Windows PowerShell 5.1 from the update of the Windows Management Framework, whose files are patches of each other. */
+    FEATURE_HANDLER_POWERSHELL,
     /*
      * A set of fonts of Microsoft, installed into the fonts folder and registered under the Fonts key of the
      * registry. Only the real files of the real fonts are installed, each checked against the hash the catalog names,
