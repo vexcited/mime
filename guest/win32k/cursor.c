@@ -70,7 +70,22 @@ static ULONG host_cursor_for_idc(ULONG id)
     case 32649: /* IDC_HAND */
         return MIME_CURSOR_HAND;
     case 32645: /* IDC_SIZENS */
+    case 32652: /* the scroll cursors, as the host has them. */
+    case 32655:
+    case 32656:
         return MIME_CURSOR_SIZE_NS;
+    case 32653:
+    case 32657:
+    case 32658:
+        return MIME_CURSOR_SIZE_WE;
+    case 32654:
+        return MIME_CURSOR_SIZE_ALL;
+    case 32659:
+    case 32662:
+        return MIME_CURSOR_SIZE_NWSE;
+    case 32660:
+    case 32661:
+        return MIME_CURSOR_SIZE_NESW;
     case 32644: /* IDC_SIZEWE */
         return MIME_CURSOR_SIZE_WE;
     case 32642: /* IDC_SIZENWSE */
