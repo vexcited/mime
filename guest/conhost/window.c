@@ -275,9 +275,17 @@ static void update_scroll_bars(void)
     ShowScrollBar(g.Window, SB_HORZ, horizontal);
 }
 
+/* the title of the console, with "Select " in front while text is selected, as the window of Windows shows it. */
 static void apply_title(void)
 {
-    SetWindowTextW(g.Window, g.State.Title);
+    if (!g.Select.Active) {
+        SetWindowTextW(g.Window, g.State.Title);
+        return;
+    }
+    WCHAR text[280];
+    lstrcpyW(text, L"Select ");
+    lstrcpynW(text + 7, g.State.Title, 260);
+    SetWindowTextW(g.Window, text);
 }
 
 static void restart_blink(void)
@@ -655,8 +663,11 @@ static void send_mouse(UINT msg, WPARAM wparam, LPARAM lparam)
     HostSendRecords(&r, 1);
 }
 
+static void apply_title(void);
+
 static void selection_changed(void)
 {
+    apply_title();
     g.Select.Dragging = g.Select.Dragging && g.Select.Active;
     for (int r = 0; r < g.ViewRows; r++)
         render_row(r);

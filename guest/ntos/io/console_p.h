@@ -117,6 +117,7 @@ struct _MIME_CONSOLE {
     ULONG64 SeenGeneration;
     ULONG SeenBells;
     BOOLEAN Ended;               /* no process is attached any more. */
+    KEVENT SelectionDone;        /* clear while the window has a selection, which holds the output of the programs. */
     BOOLEAN HostWanted;          /* a host process was started and has not attached yet. */
     KEVENT HostReady;            /* set once the host attached, or the console has no use for one. */
     CON_STARTUP Startup;

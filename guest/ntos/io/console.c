@@ -116,6 +116,7 @@ MIME_CONSOLE *ConCreateConsole(CON_BACKEND backend, ULONG64 request, ULONG tty_f
     KeInitializeEvent(&c->PtyReady, NotificationEvent, FALSE);
     KeInitializeEvent(&c->PtySpace, NotificationEvent, TRUE);
     KeInitializeEvent(&c->HostReady, NotificationEvent, backend != CON_BACKEND_WINDOW);
+    KeInitializeEvent(&c->SelectionDone, NotificationEvent, TRUE);
     int cols = size & 0xFFFF ? (int)(size & 0xFFFF) : 80;
     int rows = size >> 16 ? (int)(size >> 16) : 25;
     int buffer_rows = rows;
@@ -1123,6 +1124,13 @@ NTSTATUS ConAllocFor(PEPROCESS self, ULONG flags)
             c->References++;
         }
     }
+    /* a run whose output is a pipe or a file has no terminal to give, so a window of its own is better. */
+    if (c && (c->Flags & MIME_CONDRV_HEADLESS)) {
+        ExReleaseFastMutex(&g_con_lock);
+        ConRelease(c);
+        c = nullptr;
+        ExAcquireFastMutex(&g_con_lock);
+    }
     ExReleaseFastMutex(&g_con_lock);
     BOOLEAN window = FALSE;
     if (!c && (flags & MIME_CONDRV_ALLOC_WINDOW) && self->SessionId != 0) {
@@ -1224,6 +1232,7 @@ void ConHostDetached(MIME_CONSOLE *c)
     ExAcquireFastMutex(&g_con_lock);
     BOOLEAN ended = c->Ended;
     KeSetEvent(&c->HostReady, 0, FALSE);
+    KeSetEvent(&c->SelectionDone, 0, FALSE);
     PKEVENT event = c->HostEvent;
     c->HostHandle = nullptr;
     c->HostEvent = nullptr;

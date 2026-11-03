@@ -691,11 +691,13 @@ static NTSTATUS wait_output(MIME_CONSOLE *c)
     for (;;) {
         ExAcquireFastMutex(&g_con_lock);
         BOOLEAN paused = c->OutputPaused;
+        BOOLEAN held = c->Backend == CON_BACKEND_WINDOW && (c->Selection.Flags & 1) && !c->Ended;
         BOOLEAN full = c->Backend == CON_BACKEND_PTY && c->PtyQueued > 256 * 1024 && !(c->Flags & MIME_CONDRV_CLOSED);
         ExReleaseFastMutex(&g_con_lock);
-        if (!paused && !full)
+        if (!paused && !full && !held)
             return STATUS_SUCCESS;
-        NTSTATUS status = KeWaitForSingleObject(paused ? &c->OutputResumed : &c->PtySpace, UserRequest, UserMode, FALSE, nullptr);
+        NTSTATUS status = KeWaitForSingleObject(paused ? &c->OutputResumed : held ? &c->SelectionDone : &c->PtySpace, UserRequest,
+                                                UserMode, FALSE, nullptr);
         if (status != STATUS_SUCCESS)
             return status;
     }
@@ -945,6 +947,7 @@ static NTSTATUS host_control(MIME_CONSOLE *c, PFILE_OBJECT file, ULONG code, PUC
         c->Term.MaxCols = (int)c->Font.MaxColumns;
         c->Term.MaxRows = (int)c->Font.MaxRows;
         c->HostPending |= MIME_CONDRV_CHANGED_FONT;
+        KeSetEvent(&c->HostReady, 0, FALSE);
         ExReleaseFastMutex(&g_con_lock);
         return STATUS_SUCCESS;
     case IOCTL_CONDRV_HOST_CLOSE:
@@ -955,6 +958,11 @@ static NTSTATUS host_control(MIME_CONSOLE *c, PFILE_OBJECT file, ULONG code, PUC
             return STATUS_INVALID_PARAMETER;
         ExAcquireFastMutex(&g_con_lock);
         c->Selection = *(MIME_CONDRV_HOST_SELECTION *)buf;
+        /* a selection holds the programs' output until it is gone, as the window of Windows does. */
+        if (c->Selection.Flags & 1)
+            KeClearEvent(&c->SelectionDone);
+        else
+            KeSetEvent(&c->SelectionDone, 0, FALSE);
         ExReleaseFastMutex(&g_con_lock);
         return STATUS_SUCCESS;
     case IOCTL_CONDRV_HOST_SETTINGS:
@@ -1019,7 +1027,6 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
         h->Console = target;
         target->HostHandle = h;
         target->HostEvent = event;
-        KeSetEvent(&target->HostReady, 0, FALSE);
         target->HostWindow = attach.Window;
         target->HostPending = MIME_CONDRV_CHANGED_ALL | (target->Ended ? MIME_CONDRV_CHANGED_END : 0);
         ConHostFillState(target, (MIME_CONDRV_HOST_STATE *)buf, TRUE);

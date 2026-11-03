@@ -3,6 +3,7 @@
  * menu of the console window of Windows has them, with the edit modes, the size of the buffer and the command history.
  */
 #include "conhost.h"
+#include <rtl.h>
 
 enum {
     ID_QUICK_EDIT = 101,
@@ -145,5 +146,10 @@ void PropertiesShow(HWND owner)
     Builder b = {storage, 0, sizeof(storage)};
     memset(storage, 0, sizeof(storage));
     DLGTEMPLATE *t = build_template(&b);
-    DialogBoxIndirectParamW(GetModuleHandleW(nullptr), t, owner, dialog_proc, 0);
+    INT_PTR result = DialogBoxIndirectParamW(GetModuleHandleW(nullptr), t, owner, dialog_proc, 0);
+    if (result == -1) {
+        char text[80];
+        _snprintf(text, sizeof(text), "conhost: the properties dialog failed with %lu, %u bytes\n", GetLastError(), (unsigned)b.Used);
+        OutputDebugStringA(text);
+    }
 }

@@ -124,6 +124,12 @@ BOOL FontOpen(int dpi)
         faces[face_count++] = chosen;
     for (int i = 0; i < (int)RTL_NUMBER_OF(g_faces); i++)
         faces[face_count++] = g_faces[i];
+    /* "Terminal" is the raster font of Windows, which here is the bitmap font of the window. */
+    if (!lstrcmpiW(chosen, L"Terminal")) {
+        BOOL ok = open_raster(dc);
+        ReleaseDC(nullptr, dc);
+        return ok;
+    }
     for (int i = 0; i < face_count; i++) {
         if (!face_exists(dc, faces[i]))
             continue;
