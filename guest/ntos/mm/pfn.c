@@ -188,8 +188,11 @@ static ULONG64 report_free(ULONG min_order, ULONG64 limit, BOOLEAN idle, BOOLEAN
         if (budget == 0)
             break;
     }
-    if (!left_some || refused)
+    /* a pass that used its whole budget leaves the rest for the next idle pass. */
+    if (refused || (!left_some && budget))
         __atomic_store_n(&g_freed_since_discard, 0, __ATOMIC_RELAXED);
+    else if (limit)
+        __atomic_store_n(&g_freed_since_discard, DISCARD_IDLE, __ATOMIC_RELAXED);
     __atomic_add_fetch(&g_released_bytes, done, __ATOMIC_RELAXED);
     __atomic_store_n(&g_report_busy, 0, __ATOMIC_RELEASE);
     return done;
