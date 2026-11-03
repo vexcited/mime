@@ -119,6 +119,11 @@ BOOL FileMatches(PCWSTR path, const char *sha256);
 
 /* fonts.c */
 uint32_t FontsInstall(RUN *run, const FEATURE_DEF *feature, PCWSTR package);
+/* The bytes of a package file, which the caller frees with HeapFree. */
+DWORD ReadPackage(PCWSTR path, BYTE **data, SIZE_T *size);
+BOOL ManagementPresent(RUN *run);
+uint32_t ManagementInstall(RUN *run, const FEATURE_DEF *feature, PCWSTR package);
+uint32_t ManagementRemove(RUN *run);
 uint32_t FontsRemove(RUN *run, const FEATURE_DEF *feature);
 BOOL FontsPresent(RUN *run, const FEATURE_DEF *feature);
 

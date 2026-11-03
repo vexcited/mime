@@ -33,6 +33,8 @@ typedef enum FEATURE_HANDLER {
     FEATURE_HANDLER_NETFX,
     /* Windows PowerShell 5.1 from the update of the Windows Management Framework, whose files are patches of each other. */
     FEATURE_HANDLER_POWERSHELL,
+    /* The managed library of the Windows Management Infrastructure, in the cache of assemblies, which PowerShell loads. */
+    FEATURE_HANDLER_MANAGEMENT,
     /*
      * A set of fonts of Microsoft, installed into the fonts folder and registered under the Fonts key of the
      * registry. Only the real files of the real fonts are installed, each checked against the hash the catalog names,

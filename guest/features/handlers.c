@@ -227,27 +227,28 @@ static BOOL powershell_present(RUN *run)
     return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES;
 }
 
-/* The shell runs on the .NET Framework, which is asked for first when it is not there. */
-static DWORD powershell_framework(RUN *run)
+/* A feature the shell needs is asked for first when it is not there, by the program itself like a program would. */
+static DWORD powershell_needs(RUN *run, PCWSTR name, PCWSTR title, BOOL (*present)(RUN *run))
 {
-    if (netfx_present(run))
+    if (present(run))
         return ERROR_SUCCESS;
     WCHAR program[MAX_PATH], line[MAX_PATH + 100];
     DWORD n = GetModuleFileNameW(nullptr, program, RTL_NUMBER_OF(program));
     if (!n || n >= RTL_NUMBER_OF(program))
         return ERROR_PATH_NOT_FOUND;
-    PCWSTR arguments = (run->EnableFlags & FEATURE_ENABLE_ASK) ? L"/enable-feature:NetFx4 /caller-name:PowerShell"
-                                                               : L"enable NetFx4";
-    _snwprintf(line, RTL_NUMBER_OF(line), L"\"%ls\" %ls", program, arguments);
+    if (run->EnableFlags & FEATURE_ENABLE_ASK)
+        _snwprintf(line, RTL_NUMBER_OF(line), L"\"%ls\" /enable-feature:%ls /caller-name:PowerShell", program, name);
+    else
+        _snwprintf(line, RTL_NUMBER_OF(line), L"\"%ls\" enable %ls", program, name);
     line[RTL_NUMBER_OF(line) - 1] = 0;
-    RunReport(run, 0, 0, L"Waiting for the .NET Framework");
+    RunReport(run, 0, 0, title);
     DWORD code;
     DWORD error = run_and_wait(run, line, &code, nullptr);
     if (error)
         return error;
     if (code)
         return code;
-    return netfx_present(run) ? ERROR_SUCCESS : FEATURE_ERROR_INSTALL_FAILURE;
+    return present(run) ? ERROR_SUCCESS : FEATURE_ERROR_INSTALL_FAILURE;
 }
 
 static BOOL CALLBACK powershell_progress(void *context, ULONGLONG done, ULONGLONG total, PCWSTR step)
@@ -259,7 +260,10 @@ static BOOL CALLBACK powershell_progress(void *context, ULONGLONG done, ULONGLON
 
 static uint32_t powershell_install(RUN *run, PCWSTR package)
 {
-    DWORD error = powershell_framework(run);
+    DWORD error = powershell_needs(run, L"NetFx4", L"Waiting for the .NET Framework", netfx_present);
+    if (!error)
+        error = powershell_needs(run, L"ManagementInfrastructure", L"Waiting for the Management Infrastructure",
+                                 ManagementPresent);
     if (error)
         return error;
     run->Cancellable = TRUE;
@@ -320,6 +324,7 @@ uint32_t HandlerAvailable(const FEATURE_DEF *feature)
     case FEATURE_HANDLER_POWERSHELL:
         /* The package has the files of the x64 processor only. */
         return MACHINE_ARCH == FEATURE_ARCH_X64 ? ERROR_SUCCESS : ERROR_NOT_SUPPORTED;
+    case FEATURE_HANDLER_MANAGEMENT:
     case FEATURE_HANDLER_FONTS:
         return ERROR_SUCCESS;
     default:
@@ -336,6 +341,8 @@ BOOL HandlerPresent(RUN *run, const FEATURE_DEF *feature)
         return netfx_present(run);
     case FEATURE_HANDLER_POWERSHELL:
         return powershell_present(run);
+    case FEATURE_HANDLER_MANAGEMENT:
+        return ManagementPresent(run);
     case FEATURE_HANDLER_FONTS:
         return FontsPresent(run, feature);
     default:
@@ -360,6 +367,8 @@ uint32_t HandlerInstall(RUN *run, const FEATURE_DEF *feature, PCWSTR package)
         return netfx_install(run, package);
     case FEATURE_HANDLER_POWERSHELL:
         return powershell_install(run, package);
+    case FEATURE_HANDLER_MANAGEMENT:
+        return ManagementInstall(run, feature, package);
     case FEATURE_HANDLER_FONTS:
         return FontsInstall(run, feature, package);
     default:
@@ -376,6 +385,8 @@ uint32_t HandlerRemove(RUN *run, const FEATURE_DEF *feature)
         return netfx_remove(run);
     case FEATURE_HANDLER_POWERSHELL:
         return powershell_remove(run);
+    case FEATURE_HANDLER_MANAGEMENT:
+        return ManagementRemove(run);
     case FEATURE_HANDLER_FONTS:
         return FontsRemove(run, feature);
     default:

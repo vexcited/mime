@@ -265,7 +265,7 @@ static void cab_release(void *memory)
 
 /* ------------------------------------------------------------------ the feature */
 
-static DWORD read_package(PCWSTR path, BYTE **data, SIZE_T *size)
+DWORD ReadPackage(PCWSTR path, BYTE **data, SIZE_T *size)
 {
     HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
     if (file == INVALID_HANDLE_VALUE)
@@ -306,7 +306,7 @@ uint32_t FontsInstall(RUN *run, const FEATURE_DEF *feature, PCWSTR package)
 {
     BYTE *data = nullptr;
     SIZE_T size = 0;
-    DWORD error = read_package(package, &data, &size);
+    DWORD error = ReadPackage(package, &data, &size);
     if (error)
         return error;
     INSTALL *in = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*in));

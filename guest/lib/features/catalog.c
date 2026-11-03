@@ -7,6 +7,15 @@
 #include <string.h>
 #endif
 
+static const FEATURE_FONT management_files[] = {
+    {
+        .File = "Microsoft.Management.Infrastructure.dll",
+        .Member = "runtimes/win10-x64/lib/net451/Microsoft.Management.Infrastructure.dll",
+        .Sha256 = "96b01d1d981c216d417f10fd0c49f6a45299465e70b384202897638c979c7a18",
+        .Size = 133280,
+    },
+};
+
 static const FEATURE_DEF g_catalog[] = {
     {
         .Name = "WebView2",
@@ -57,6 +66,24 @@ static const FEATURE_DEF g_catalog[] = {
         .Handler = FEATURE_HANDLER_POWERSHELL,
         .Format = FEATURE_FORMAT_CABINET,
         .Sha256 = "a8d788fa31b02a999cc676fb546fc782e86c2a0acd837976122a1891ceee42c0",
+    },
+    {
+        .Name = "ManagementInfrastructure",
+        .DisplayName = "Windows Management Infrastructure for PowerShell",
+        .Version = "1.0.0.0",
+        .Vendor = "Microsoft Corporation",
+        /*
+         * The package of NuGet that Microsoft publishes for PowerShell, of which one library is read by range. Windows
+         * has this library as a part of the system and the Management Framework does not carry it.
+         */
+        .Url = {[FEATURE_ARCH_X64] = "https://api.nuget.org/v3-flatcontainer/microsoft.management.infrastructure/1.0.0/microsoft.management.infrastructure.1.0.0.nupkg"},
+        .Format = FEATURE_FORMAT_ZIP,
+        .MinSize = 0ull, .MaxSize = 1099511627776ull,
+        .DownloadMB = 1,
+        .InstallMB = 1,
+        .Handler = FEATURE_HANDLER_MANAGEMENT,
+        .Terms = "This library is Microsoft's. The package names its license at https://github.com/PowerShell/PowerShell-Tests/blob/master/LICENSE.",
+        .Fonts = management_files, .FontCount = 1,
     },
 };
 
@@ -191,7 +218,8 @@ bool FeatureUrlAllowedFor(const FEATURE_DEF *feature, const char *url)
     /* Only what a hash decides may come from anywhere else, and each kind of file from one place. */
     size_t start, length;
     if (feature->Format == FEATURE_FORMAT_ZIP && address_host(url, "https://", &start, &length))
-        return host_is(url, start, length, "github.com") || host_is(url, start, length, "githubusercontent.com");
+        return host_is(url, start, length, "github.com") || host_is(url, start, length, "githubusercontent.com") ||
+               host_is(url, start, length, "api.nuget.org");
     if (feature->Format == FEATURE_FORMAT_WIM && address_host(url, "http://", &start, &length))
         return host_is(url, start, length, "delivery.mp.microsoft.com");
     return false;
