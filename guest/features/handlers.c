@@ -237,8 +237,8 @@ static uint32_t netfx_remove(RUN *run)
     }
     static const WCHAR *const kept[] = {
         L"Windows\\Microsoft.NET\\Framework\\v4.0.30319", L"Windows\\Microsoft.NET\\Framework64\\v4.0.30319",
-        L"Windows\\Microsoft.NET\\assembly\\GAC_32", L"Windows\\Microsoft.NET\\assembly\\GAC_64",
-        L"Windows\\Microsoft.NET\\assembly\\GAC_MSIL", L"Windows\\assembly\\GAC_32", L"Windows\\assembly\\GAC_64",
+        L"Windows\\Microsoft.NET\\Assembly\\GAC_32", L"Windows\\Microsoft.NET\\Assembly\\GAC_64",
+        L"Windows\\Microsoft.NET\\Assembly\\GAC_MSIL", L"Windows\\assembly\\GAC_32", L"Windows\\assembly\\GAC_64",
         L"Windows\\assembly\\GAC_MSIL", L"Windows\\assembly\\NativeImages_v4.0.30319_32",
         L"Windows\\assembly\\NativeImages_v4.0.30319_64",
     };

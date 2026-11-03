@@ -4,14 +4,15 @@
 uint32_t FeatureEnable(const FEATURE_OPS *ops, const FEATURE_DEF *feature, uint32_t flags)
 {
     void *c = ops->Context;
-    FEATURE_POLICY policy = ops->Policy(c, feature);
-    if (policy == FEATURE_POLICY_DENY)
-        return FEATURE_ERROR_ACCESS_DISABLED_BY_POLICY;
+    /* A feature whose files are there is on and nothing is fetched, so a policy that forbids downloads has nothing to refuse. */
     if (ops->Present(c, feature)) {
         if (ops->GetState(c, feature) != FEATURE_STATE_ENABLED)
             ops->SetState(c, feature, FEATURE_STATE_ENABLED, FEATURE_OK, true);
         return FEATURE_OK;
     }
+    FEATURE_POLICY policy = ops->Policy(c, feature);
+    if (policy == FEATURE_POLICY_DENY)
+        return FEATURE_ERROR_ACCESS_DISABLED_BY_POLICY;
     uint32_t available = ops->Available(c, feature);
     if (available != FEATURE_OK)
         return available;

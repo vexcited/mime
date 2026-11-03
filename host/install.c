@@ -6,9 +6,12 @@
 #include "mime_cli.h"
 #include "rom.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static bool make_dirs(const MimePaths *paths, const char *root, const char *const *folders, size_t count)
@@ -21,6 +24,55 @@ static bool make_dirs(const MimePaths *paths, const char *root, const char *cons
             return false;
         }
     }
+    return true;
+}
+
+/*
+ * creates a folder below the drive with the case of what is there: the machine matches names without regard to case and
+ * the installers of the features wrote some of these with another one, so a second folder that differs only by its case
+ * must not appear next to the first.
+ */
+static bool make_dir_nocase(const char *root, const char *relative)
+{
+    char dir[MIME_PATH_MAX];
+    snprintf(dir, sizeof(dir), "%s", root);
+    size_t length = strlen(dir);
+    while (*relative) {
+        char name[256];
+        size_t n = strcspn(relative, "/");
+        if (!n || n >= sizeof(name))
+            return false;
+        memcpy(name, relative, n);
+        name[n] = 0;
+        relative += n + (relative[n] == '/');
+        DIR *handle = opendir(dir);
+        if (handle) {
+            for (struct dirent *entry; (entry = readdir(handle));) {
+                if (!strcasecmp(entry->d_name, name)) {
+                    snprintf(name, sizeof(name), "%s", entry->d_name);
+                    break;
+                }
+            }
+            closedir(handle);
+        }
+        if (length + 1 + strlen(name) + 1 >= sizeof(dir))
+            return false;
+        dir[length++] = '/';
+        memcpy(dir + length, name, strlen(name) + 1);
+        length += strlen(name);
+        if (mkdir(dir, 0755) && errno != EEXIST)
+            return false;
+    }
+    return true;
+}
+
+static bool make_dirs_nocase(const MimePaths *paths, const char *const *folders, size_t count)
+{
+    for (size_t i = 0; i < count; i++)
+        if (!make_dir_nocase(paths->drive_c, folders[i])) {
+            mime_error("cannot create %s: %s", folders[i], strerror(errno));
+            return false;
+        }
     return true;
 }
 
@@ -117,22 +169,26 @@ static bool create_skeleton(const MimePaths *paths)
         "Program Files (Arm)", /* arm64 windows only. */
 #endif
         "ProgramData", "Users/Public",
-        /*
-         * the folders of the features that are fetched when a program needs them, with no file in them. Windows 11 has
-         * the folders whether or not a feature is on, so a program that looks at them finds them and is not asked
-         * anything. guest/features/handlers.c makes them again when it removes a feature.
-         */
+    };
+    if (!make_dirs(paths, ".", folders, MIME_ARRAY_COUNT(folders)))
+        return false;
+    /*
+     * the folders of the features that are fetched when a program needs them, with no file in them. Windows 11 has the
+     * folders whether or not a feature is on, so a program that looks at them finds them and is not asked anything.
+     * guest/features/handlers.c makes them again when it removes a feature.
+     */
+    static const char *const feature_folders[] = {
         "Windows/System32/WindowsPowerShell/v1.0/Modules", "Windows/System32/WindowsPowerShell/v1.0/Examples",
         "Windows/System32/WindowsPowerShell/v1.0/Schemas", "Windows/System32/WindowsPowerShell/v1.0/en-US",
         "Windows/SysWOW64/WindowsPowerShell/v1.0/Modules", "Windows/SysWOW64/WindowsPowerShell/v1.0/Examples",
         "Windows/SysWOW64/WindowsPowerShell/v1.0/Schemas", "Windows/SysWOW64/WindowsPowerShell/v1.0/en-US",
         "Windows/Microsoft.NET/Framework/v4.0.30319", "Windows/Microsoft.NET/Framework64/v4.0.30319",
-        "Windows/Microsoft.NET/assembly/GAC_32", "Windows/Microsoft.NET/assembly/GAC_64",
-        "Windows/Microsoft.NET/assembly/GAC_MSIL", "Windows/assembly/GAC_32", "Windows/assembly/GAC_64",
+        "Windows/Microsoft.NET/Assembly/GAC_32", "Windows/Microsoft.NET/Assembly/GAC_64",
+        "Windows/Microsoft.NET/Assembly/GAC_MSIL", "Windows/assembly/GAC_32", "Windows/assembly/GAC_64",
         "Windows/assembly/GAC_MSIL", "Windows/assembly/NativeImages_v4.0.30319_32",
         "Windows/assembly/NativeImages_v4.0.30319_64", "Program Files (x86)/Microsoft/EdgeWebView/Application",
     };
-    return make_dirs(paths, ".", folders, MIME_ARRAY_COUNT(folders));
+    return make_dirs_nocase(paths, feature_folders, MIME_ARRAY_COUNT(feature_folders));
 }
 
 bool mime_prepare_drive(const MimePaths *paths)
