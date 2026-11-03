@@ -612,7 +612,10 @@ static bool handle_io(MimeVcpu *vcpu)
     struct kvm_regs *r = &run->s.regs.regs;
     uint64_t regs[8] = {r->rax, r->rdi, r->rsi, r->rdx, r->r10, r->r8, r->r9, 0};
     vcpu->exits_hvc[regs[0] & 63]++;
+    uint64_t number = regs[0] & 255, started = __rdtsc();
     mime_hcall_dispatch(vcpu, regs);
+    vcpu->hvc_calls[number]++;
+    vcpu->hvc_ticks[number] += __rdtsc() - started;
     r->rax = regs[0];
     r->rdx = regs[1];
     run->kvm_dirty_regs |= KVM_SYNC_X86_REGS;
@@ -868,9 +871,10 @@ static void dump_state(MimeVcpu *vcpu, const char *why)
     mime_error("  exits %llu: io %llu, interrupted %llu, halt %llu", (unsigned long long)vcpu->exits_total,
                (unsigned long long)vcpu->exits_io, (unsigned long long)vcpu->exits_intr,
                (unsigned long long)vcpu->exits_halt);
-    for (int i = 0; i < 64; i++)
-        if (vcpu->exits_hvc[i])
-            mime_error("  exits hypercall %#x: %llu", i, (unsigned long long)vcpu->exits_hvc[i]);
+    for (int i = 0; i < 256; i++)
+        if (vcpu->hvc_calls[i])
+            mime_error("  hypercall %#x: %llu calls, %llu us in the host", i, (unsigned long long)vcpu->hvc_calls[i],
+                       (unsigned long long)(vm->tsc_hz ? vcpu->hvc_ticks[i] / (vm->tsc_hz / 1000000) : 0));
     mime_error("  rip %#llx rsp %#llx rflags %#llx cs %#x cr2 %#llx cr3 %#llx", (unsigned long long)regs.rip,
                (unsigned long long)regs.rsp, (unsigned long long)regs.rflags, sregs.cs.selector,
                (unsigned long long)sregs.cr2, (unsigned long long)sregs.cr3);

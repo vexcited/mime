@@ -59,6 +59,9 @@ typedef struct MimeVcpu {
     uint64_t exits_wfi;
     uint64_t exits_sysreg;
     uint64_t exits_hvc[64];
+    /* by hypercall number: calls and time spent in the host, in tsc ticks. */
+    uint64_t hvc_calls[256];
+    uint64_t hvc_ticks[256];
 } MimeVcpu;
 
 /* a queued control message waiting for MIME_HC_CTRL_RECV. */
