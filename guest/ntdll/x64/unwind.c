@@ -667,6 +667,8 @@ EXCEPTION_DISPOSITION NTAPI RtlpUnwindHandler(PEXCEPTION_RECORD record, PVOID fr
 {
     PDISPATCHER_CONTEXT outer = *(PDISPATCHER_CONTEXT *)((PUCHAR)frame + 0x20);
     *dispatcher->ContextRecord = *outer->ContextRecord;
+    /* a termination handler that ran is not run again. */
+    dispatcher->ScopeIndex = outer->ScopeIndex;
     return ExceptionCollidedUnwind;
 }
 
@@ -691,6 +693,7 @@ NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPT
     memset(&dc, 0, sizeof(dc));
     unwind_frame(UNW_FLAG_NHANDLER, &c, &dc);
 
+    ULONG carried_scope = 0;
     for (ULONG depth = 0; depth < 4096; depth++) {
         CONTEXT next = c;
         PEXCEPTION_ROUTINE handler = unwind_frame(UNW_FLAG_UHANDLER, &next, &dc);
@@ -706,7 +709,8 @@ NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPT
             dc.ContextRecord = &c;
             dc.TargetIp = (ULONG64)target_ip;
             dc.HistoryTable = history;
-            dc.ScopeIndex = 0;
+            dc.ScopeIndex = carried_scope;
+            carried_scope = 0;
             EXCEPTION_DISPOSITION r = RtlpExecuteHandlerForUnwind(record, (PVOID)dc.EstablisherFrame, &c, &dc, handler);
             record->ExceptionFlags &= ~(EXCEPTION_COLLIDED_UNWIND | EXCEPTION_TARGET_UNWIND);
             if (r == ExceptionCollidedUnwind) {
@@ -715,11 +719,13 @@ NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPT
                  * is unwound from there, and its handlers are told of the collision.
                  */
                 record->ExceptionFlags |= EXCEPTION_COLLIDED_UNWIND;
+                carried_scope = dc.ScopeIndex;
                 continue;
             } else if (r != ExceptionContinueSearch) {
                 RtlRaiseStatus(STATUS_INVALID_DISPOSITION);
             }
         }
+        carried_scope = 0;
         if (target)
             break;
         c = next;
