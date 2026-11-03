@@ -2573,7 +2573,7 @@ static void run_glyph_program(const MimeTtfHinter *hc, HGlyph *g, Code program, 
             g->pts[i] = g->org[i];
 }
 
-static bool load_hglyph(const MimeTtfHinter *h, uint16_t glyph, unsigned depth, int32_t ratio, HGlyph *out);
+static bool load_hglyph(const MimeTtfHinter *h, uint16_t glyph, unsigned depth, int32_t ratio, bool hint, HGlyph *out);
 
 static void phantom_points(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd, HGlyph *g, bool has_outline)
 {
@@ -2637,7 +2637,8 @@ static void scale_and_round_phantoms(const MimeTtfHinter *h, HGlyph *g, bool com
         for (uint32_t i = composite ? n : 0; i < n + 4; i++)
             g->org[i].x += shift;
     }
-    for (uint32_t i = 0; i < n + 4; i++)
+    /* the points of a composite are its components assembled, which only the phantom points are not. */
+    for (uint32_t i = composite ? n : 0; i < n + 4; i++)
         g->pts[i] = g->org[i];
     int64_t upem = h->font->units_per_em;
     int64_t adv = (int16_t)(g->orus[n + 1].x - g->orus[n].x);
@@ -2649,7 +2650,8 @@ static void scale_and_round_phantoms(const MimeTtfHinter *h, HGlyph *g, bool com
     g->pts[n + 3].y = (g->pts[n + 2].y + 32 + (int32_t)((drop + 512) >> 10)) & ~63;
 }
 
-static bool load_simple(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd, int contours, int32_t ratio, HGlyph *out)
+static bool load_simple(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd, int contours, int32_t ratio, bool hint,
+                        HGlyph *out)
 {
     if (contours == 0) {
         if (!hglyph_alloc(h, out, 0, 0))
@@ -2737,12 +2739,13 @@ static bool load_simple(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd,
     phantom_points(h, glyph, gd, out, true);
     scale_and_round_phantoms(h, out, false);
     Code prog = {gd.data + ins_off + 2, ins_len};
-    if (ins_off + 2 + ins_len <= gd.size)
+    if (hint && ins_off + 2 + ins_len <= gd.size)
         run_glyph_program(h, out, prog, false, ratio);
     return true;
 }
 
-static bool load_composite(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd, unsigned depth, int32_t ratio, HGlyph *out)
+static bool load_composite(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable gd, unsigned depth, int32_t ratio, bool hint,
+                           HGlyph *out)
 {
     if (depth >= MAX_COMPONENT_DEPTH)
         return false;
@@ -2808,7 +2811,9 @@ static bool load_composite(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable 
             transformed = true;
         }
         Part *part = &parts[nparts];
-        if (!load_hglyph(h, child, depth + 1, ratio, &part->g))
+        /* a component that is scaled or turned is not fitted to the grid, only the ones a matrix does not change are. */
+        bool fitted = hint && (!transformed || (m[1] == 0 && m[2] == 0 && __builtin_abs(m[0]) == 0x4000 && __builtin_abs(m[3]) == 0x4000));
+        if (!load_hglyph(h, child, depth + 1, ratio, fitted, &part->g))
             goto done;
         HGlyph *pg = &part->g;
         if (transformed) {
@@ -2826,13 +2831,18 @@ static bool load_composite(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable 
             metrics_from = (int32_t)nparts;
         if (flags & 2) {
             int32_t dx = scale_fu_x(h, a1), dy = scale_fu_y(h, a2);
+            /* an offset that scales with the component is made larger by the larger entry of each row of the matrix. */
             if ((flags & 0x800) && !(flags & 0x1000) && transformed) {
-                int32_t sx = scale_fu_x(h, a1), sy = scale_fu_y(h, a2);
-                dx = mul_div(sx, m[0], 0x4000) + mul_div(sy, m[2], 0x4000);
-                dy = mul_div(sx, m[1], 0x4000) + mul_div(sy, m[3], 0x4000);
+                int32_t sx = __builtin_abs(m[0]) > __builtin_abs(m[1]) ? __builtin_abs(m[0]) : __builtin_abs(m[1]);
+                int32_t sy = __builtin_abs(m[2]) > __builtin_abs(m[3]) ? __builtin_abs(m[2]) : __builtin_abs(m[3]);
+                if (sx != 0x4000)
+                    dx = mul_div(dx, sx, 0x4000);
+                if (sy != 0x4000)
+                    dy = mul_div(dy, sy, 0x4000);
             }
+            /* along x the grid is a sixteenth of a pixel with cleartype. */
             if (flags & 4) {
-                dx = (dx + 32) & ~63;
+                dx = round_bearing(h, dx);
                 dy = (dy + 32) & ~63;
             }
             part->dx = dx;
@@ -2889,17 +2899,13 @@ static bool load_composite(const MimeTtfHinter *h, uint16_t glyph, MimeTtfTable 
                 out->org[out->n + i] = mg->org[mg->n + i];
                 out->orus[out->n + i] = mg->orus[mg->n + i];
             }
-            out->pts[out->n + 0].x += parts[metrics_from].dx;
-            out->pts[out->n + 1].x += parts[metrics_from].dx;
-            out->org[out->n + 0].x += parts[metrics_from].dx;
-            out->org[out->n + 1].x += parts[metrics_from].dx;
             out->adv_fu = mg->adv_fu;
             out->lsb_fu = mg->lsb_fu;
         }
         /* the original positions of the composite are the assembled hinted components. */
         for (uint32_t i = 0; i < out->n; i++)
             out->org[i] = out->pts[i];
-        if (last_flags & 0x100) {
+        if (hint && (last_flags & 0x100)) {
             if (off + 2 <= gd.size) {
                 uint32_t ilen = be16(gd.data + off);
                 if (off + 2 + ilen <= gd.size) {
@@ -2917,7 +2923,7 @@ done:
     return ok;
 }
 
-static bool load_hglyph(const MimeTtfHinter *h, uint16_t glyph, unsigned depth, int32_t ratio, HGlyph *out)
+static bool load_hglyph(const MimeTtfHinter *h, uint16_t glyph, unsigned depth, int32_t ratio, bool hint, HGlyph *out)
 {
     memset(out, 0, sizeof(*out));
     MimeTtfTable gd;
@@ -2926,13 +2932,13 @@ static bool load_hglyph(const MimeTtfHinter *h, uint16_t glyph, unsigned depth, 
     bool ok;
     int contours = gd.size >= 10 ? (int16_t)be16(gd.data) : 0;
     if (gd.size == 0)
-        ok = load_simple(h, glyph, gd, 0, ratio, out);
+        ok = load_simple(h, glyph, gd, 0, ratio, hint, out);
     else if (gd.size < 10)
         ok = false;
     else if (contours >= 0)
-        ok = load_simple(h, glyph, gd, contours, ratio, out);
+        ok = load_simple(h, glyph, gd, contours, ratio, hint, out);
     else
-        ok = load_composite(h, glyph, gd, depth, ratio, out);
+        ok = load_composite(h, glyph, gd, depth, ratio, hint, out);
     if (!ok)
         hglyph_free(h, out);
     return ok;
@@ -2964,7 +2970,7 @@ bool mime_ttf_hint_advance(const MimeTtfHinter *h, uint16_t glyph, int32_t *adva
     HGlyph g;
     if (h && h->plain)
         return mime_ttf_hint_advance(h->plain, glyph, advance);
-    if (!h || !load_hglyph(h, glyph, 0, 0x10000, &g))
+    if (!h || !load_hglyph(h, glyph, 0, 0x10000, true, &g))
         return false;
     int32_t adv = g.pts[g.n + 1].x - g.pts[g.n].x;
     hglyph_free(h, &g);
@@ -2975,7 +2981,7 @@ bool mime_ttf_hint_advance(const MimeTtfHinter *h, uint16_t glyph, int32_t *adva
 bool mime_ttf_hint_walk(const MimeTtfHinter *h, uint16_t glyph, const MimeTtfSink *sink)
 {
     HGlyph g;
-    if (!h || !sink || !load_hglyph(h, glyph, 0, phase_ratio(h, glyph), &g))
+    if (!h || !sink || !load_hglyph(h, glyph, 0, phase_ratio(h, glyph), true, &g))
         return false;
     int32_t shift = g.pts[g.n].x;
     uint32_t first = 0;
