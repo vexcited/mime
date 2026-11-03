@@ -164,5 +164,12 @@ INT_PTR UserModalLoop(HWND dialog, HWND owner);
 
 /* mdi.c */
 void UserRegisterMdiClient(void);
+/* the creation of a window with the extended style WS_EX_MDICHILD under an MDI client: a document of the client, made as
+ * a WM_MDICREATE makes it. returns false for a parent that is not a client. */
+BOOL UserMdiCreate(HWND *result, DWORD ex_style, LPCWSTR class_name, LPCWSTR name, DWORD style, int x, int y, int width,
+                   int height, HWND parent, HMENU menu, HINSTANCE instance, LPVOID param);
+/* the creation of a window without that translation. */
+HWND UserCreateWindowRaw(DWORD ex_style, LPCWSTR class_name, LPCWSTR name, DWORD style, int x, int y, int width, int height,
+                         HWND parent, HMENU menu, HINSTANCE instance, LPVOID param);
 
 #endif

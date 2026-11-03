@@ -285,9 +285,8 @@ WINUSERAPI DWORD WINAPI SetClassLongW(HWND hwnd, int index, LONG value)
 
 /* ------------------------------------------------------------------ creation and destruction */
 
-WINUSERAPI HWND WINAPI CreateWindowExW(DWORD ex_style, LPCWSTR class_name, LPCWSTR name, DWORD style, int x, int y,
-                                       int width, int height, HWND parent, HMENU menu, HINSTANCE instance,
-                                       LPVOID param)
+HWND UserCreateWindowRaw(DWORD ex_style, LPCWSTR class_name, LPCWSTR name, DWORD style, int x, int y, int width, int height,
+                         HWND parent, HMENU menu, HINSTANCE instance, LPVOID param)
 {
     UNICODE_STRING cls, title;
     init_ustring(&cls, class_name);
@@ -310,6 +309,18 @@ WINUSERAPI HWND WINAPI CreateWindowExW(DWORD ex_style, LPCWSTR class_name, LPCWS
         SetLastError(ERROR_CANNOT_FIND_WND_CLASS);
     }
     return h;
+}
+
+WINUSERAPI HWND WINAPI CreateWindowExW(DWORD ex_style, LPCWSTR class_name, LPCWSTR name, DWORD style, int x, int y,
+                                       int width, int height, HWND parent, HMENU menu, HINSTANCE instance,
+                                       LPVOID param)
+{
+    /* a window that asks to be a document of an MDI client is made by the client, which activates it. */
+    HWND document;
+    if ((ex_style & WS_EX_MDICHILD) &&
+        UserMdiCreate(&document, ex_style, class_name, name, style, x, y, width, height, parent, menu, instance, param))
+        return document;
+    return UserCreateWindowRaw(ex_style, class_name, name, style, x, y, width, height, parent, menu, instance, param);
 }
 
 WINUSERAPI HWND WINAPI CreateWindowExA(DWORD ex_style, LPCSTR class_name, LPCSTR name, DWORD style, int x, int y,

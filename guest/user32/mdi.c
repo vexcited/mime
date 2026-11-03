@@ -193,14 +193,24 @@ static HWND create_document(HWND client, DWORD ex_style, LPCWSTR class_name, LPC
     created.y = y;
     created.cx = cx;
     created.cy = cy;
-    HWND child = CreateWindowExW(ex_style | WS_EX_MDICHILD, class_name, title, style, x, y, cx, cy, client,
-                                 (HMENU)(UINT_PTR)id, (HINSTANCE)owner, &created);
+    HWND child = UserCreateWindowRaw(ex_style | WS_EX_MDICHILD, class_name, title, style, x, y, cx, cy, client,
+                                     (HMENU)(UINT_PTR)id, (HINSTANCE)owner, &created);
     if (!child)
         return nullptr;
     if (style & WS_MAXIMIZE)
         maximize(client, child);
     activate(client, child);
     return child;
+}
+
+BOOL UserMdiCreate(HWND *result, DWORD ex_style, LPCWSTR class_name, LPCWSTR name, DWORD style, int x, int y, int width,
+                   int height, HWND parent, HMENU menu, HINSTANCE instance, LPVOID param)
+{
+    if (!parent || !is_client(parent))
+        return FALSE;
+    *result = create_document(parent, ex_style, class_name, name, style, x, y, width, height, instance, (LPARAM)param,
+                              nullptr);
+    return TRUE;
 }
 
 /* ------------------------------------------------------------------ the arrangement */
