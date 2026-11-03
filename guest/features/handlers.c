@@ -208,10 +208,63 @@ static BOOL CALLBACK netfx_progress(void *context, ULONGLONG done, ULONGLONG tot
     return !run->Cancel;
 }
 
+/*
+ * The Framework ships the native image of mscorlib only. Windows compiles the others when it installs the Framework, and a
+ * program that loads them without images spends its first seconds in the JIT compiler. Their dependencies are compiled
+ * with them, what is compiled already is skipped.
+ */
+static const PCWSTR netfx_image_roots[] = {
+    L"System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",
+    L"System.Core, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",
+    L"System.Xml, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",
+    L"System.Configuration, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a",
+    L"System.Data, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",
+    L"System.Xml.Linq, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",
+    L"System.Runtime.Serialization, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",
+    L"System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089",
+    L"WindowsBase, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+    L"PresentationCore, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+    L"PresentationFramework, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35",
+};
+
+/* Runs ngen.exe for an assembly of a Framework folder and waits, a program that finds no image compiles the assembly itself. */
+static void netfx_ngen(RUN *run, PCWSTR framework, PCWSTR assembly)
+{
+    WCHAR line[MAX_PATH + 160];
+    _snwprintf(line, RTL_NUMBER_OF(line), L"\"%lsWindows\\Microsoft.NET\\%ls\\v4.0.30319\\ngen.exe\" install \"%ls\" /nologo", run->Root,
+               framework, assembly);
+    line[RTL_NUMBER_OF(line) - 1] = 0;
+    STARTUPINFOW startup = {sizeof(startup)};
+    PROCESS_INFORMATION process;
+    if (!CreateProcessW(nullptr, line, nullptr, nullptr, FALSE, DETACHED_PROCESS | CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process))
+        return;
+    CloseHandle(process.hThread);
+    if (WaitForSingleObject(process.hProcess, INSTALL_MINUTES * 60 * 1000) == WAIT_TIMEOUT)
+        TerminateProcess(process.hProcess, ERROR_TIMEOUT);
+    CloseHandle(process.hProcess);
+}
+
+/* One compiler at a time, started together for both processors the 32-bit one ended at once with an error. */
+static void netfx_native_images(RUN *run)
+{
+    /* the 32-bit programs of the media use the Windows Forms stack and not the 64-bit presentation one. */
+    SIZE_T x86 = 8, total = RTL_NUMBER_OF(netfx_image_roots) + x86;
+    for (SIZE_T i = 0; i < total && !run->Cancel; i++) {
+        RunReport(run, i, total, L"Compiling the native images");
+        if (i < RTL_NUMBER_OF(netfx_image_roots))
+            netfx_ngen(run, L"Framework64", netfx_image_roots[i]);
+        else
+            netfx_ngen(run, L"Framework", netfx_image_roots[i - RTL_NUMBER_OF(netfx_image_roots)]);
+    }
+}
+
 static uint32_t netfx_install(RUN *run, PCWSTR package)
 {
     run->Cancellable = TRUE;
-    return NetfxInstallFromPackage(package, run->Root, netfx_progress, run);
+    uint32_t error = NetfxInstallFromPackage(package, run->Root, netfx_progress, run);
+    if (error == ERROR_SUCCESS)
+        netfx_native_images(run);
+    return error;
 }
 
 /* The folders and the runtime libraries that the Framework puts on the drive. */
