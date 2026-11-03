@@ -341,6 +341,19 @@ static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICOD
                                    &op->Iosb);
     op->Checked = security.Checked;
     op->GrantedAccess = security.GrantedAccess;
+    if (status == STATUS_REPARSE) {
+        /* a link on the way: the file system put the whole name that the open goes on with in the file object. */
+        PWSTR text = file->FileName.Buffer;
+        USHORT length = file->FileName.Length;
+        file->FileName.Buffer = nullptr;
+        file->FileName.Length = file->FileName.MaximumLength = 0;
+        file->DeviceObject = nullptr; /* never opened, no close irp. */
+        ObDereferenceObject(file);
+        complete->Buffer = text;
+        complete->Length = length;
+        complete->MaximumLength = (USHORT)(length + sizeof(WCHAR));
+        return STATUS_REPARSE;
+    }
     if (!NT_SUCCESS(status)) {
         file->DeviceObject = nullptr; /* never opened, no close irp. */
         ObDereferenceObject(file);
@@ -403,6 +416,14 @@ static NTSTATUS file_put_security(PVOID object, PVOID blob)
     return IopSynchronousRequest(file, IRP_MJ_SET_SECURITY, 0, nullptr, 0, &params, nullptr);
 }
 
+/* the open goes on with the name that a link gave, which is a whole one. */
+static NTSTATUS follow_reparse(PUNICODE_STRING name, ULONG attributes, KPROCESSOR_MODE mode, POPEN_PACKET op, PVOID *found)
+{
+    NTSTATUS status = ObLookupObjectName(name, nullptr, attributes, nullptr, mode, op, found);
+    ExFreePool(name->Buffer);
+    return status;
+}
+
 static NTSTATUS create_file(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
                             ULONG file_attributes, ULONG share, ULONG disposition, ULONG options, KPROCESSOR_MODE mode,
                             SD_BLOB *creator, BOOLEAN stat_only, BOOLEAN force_check)
@@ -460,6 +481,8 @@ static NTSTATUS create_file(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
             PVOID found;
             NTSTATUS st = parse_device(rel->DeviceObject, nullptr, attributes->Attributes, &remaining, &remaining, &op, &found);
             ExFreePool(buf);
+            if (st == STATUS_REPARSE)
+                st = follow_reparse(&remaining, attributes->Attributes, mode, &op, &found);
             ObDereferenceObject(related);
             if (iosb)
                 *iosb = op.Iosb;

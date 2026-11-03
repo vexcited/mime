@@ -427,6 +427,9 @@ enum {
     MIME_HC_FS_SET_BASIC = 0x66, /* (handle, MimeFsBasic pa) sets the times and the read only attribute the mask names, see MimeFsBasic */
     MIME_HC_FS_LINK = 0x67,     /* handle, directory handle or 0 for the file's own, pa, chars and MIME_FS_LINK_* flags: makes a hard link to the file in a directory, returns the links the file has now. */
     MIME_HC_FS_LINKS = 0x68,    /* handle, pa and capacity: every name of the file on its volume as MimeFsLinkName records, returns the bytes they need. */
+    MIME_HC_FS_SET_REPARSE = 0x69, /* handle and MimeFsReparse pa: makes the empty file or directory a symbolic link or a junction. */
+    MIME_HC_FS_GET_REPARSE = 0x6A, /* handle and MimeFsReparse pa: what the link the handle was opened as says, MIME_HC_STATUS_NOT_REPARSE for any other. */
+    MIME_HC_FS_DELETE_REPARSE = 0x6B, /* handle and the tag the guest expects: the link becomes the empty file or directory it was made from. */
     MIME_HC_FS_WINDOW_LOST = 0xA0, /* (pa of MimeWindowLost) the next range of window pages whose file lost them, after MIME_IRQ_WINDOW */
 
     MIME_HC_WIN_CREATE = 0x20,  /* (window_id) */
@@ -558,6 +561,9 @@ enum {
     MIME_HC_STATUS_NET_ERROR = 11,
     MIME_HC_STATUS_CROSS_DEVICE = 12,   /* the two names are on different host file systems. */
     MIME_HC_STATUS_TOO_MANY_LINKS = 13, /* the file has as many names as a volume allows. */
+    MIME_HC_STATUS_REPARSE = 14,        /* a component of the path is a link, see the reparse fields of MimeFsOpen. */
+    MIME_HC_STATUS_NOT_REPARSE = 15,    /* the file is not a link. */
+    MIME_HC_STATUS_TAG_MISMATCH = 16,   /* the link has another tag than the one asked about. */
 };
 
 /*
@@ -814,6 +820,7 @@ enum {
     MIME_FS_OPEN_STAT_ONLY = 1u << 4,     /* returns info_out without creating a handle to close. */
     MIME_FS_OPEN_WANT_SD = 1u << 5,       /* also the nearest stored security descriptor, see sd_length: for a guest that checks the open. */
     MIME_FS_OPEN_NO_ACCESS_TIME = 1u << 7, /* reads leave the access time alone: NtfsDisableLastAccessUpdate. */
+    MIME_FS_OPEN_REPARSE_POINT = 1u << 8, /* a link as the last component is opened itself and not followed. */
     MIME_FS_OPEN_BY_ID = 1u << 6,         /* path holds a file id, 8 bytes or 16 with the high half 0, and comes back as the file's volume relative name. */
 };
 
@@ -893,7 +900,31 @@ typedef struct MimeFsInfo {
     uint64_t file_id;
     uint32_t attributes; /* FILE_ATTRIBUTE_* */
     uint32_t links;
+    uint32_t reparse_tag; /* of a link, else 0. */
+    uint32_t pad;
 } MimeFsInfo;
+
+/*
+ * a link as the host keeps it. the host stores a symbolic link or a junction as a symbolic link of its own, so that the
+ * programs of the host see the drive as it is: a file link is the target, a directory link has a slash after it and a
+ * junction has a slash and a dot. a target the host cannot reach is kept as the name the guest gave. fsreparse.c.
+ *
+ * names holds the substitute name and then the print name, in UTF-16 without terminators. flags is SYMLINK_FLAG_RELATIVE
+ * for a symbolic link with a relative target. directory is set for a link to a directory and for a junction.
+ */
+#define MIME_REPARSE_TAG_MOUNT_POINT 0xA0000003u
+#define MIME_REPARSE_TAG_SYMLINK 0xA000000Cu
+#define MIME_REPARSE_MAX_NAME 520
+
+typedef struct MimeFsReparse {
+    uint32_t tag;
+    uint32_t flags;
+    uint32_t directory;
+    uint32_t substitute_chars;
+    uint32_t print_chars;
+    uint32_t pad;
+    uint16_t names[MIME_REPARSE_MAX_NAME];
+} MimeFsReparse;
 
 /*
  * MIME_HC_FS_SET_BASIC sets the times the mask names and the read-only attribute. a change time given is kept as it is;
@@ -939,6 +970,14 @@ typedef struct MimeFsOpen {
     uint32_t sd_distance;
     uint32_t sd_status;
     uint8_t sd_data[512];
+    /*
+     * MIME_HC_STATUS_REPARSE: path_chars of the path are through the link, path holds the substitute name of the link and
+     * then its print name, reparse_flags is SYMLINK_FLAG_RELATIVE for a relative symbolic link.
+     */
+    uint32_t reparse_tag;
+    uint32_t reparse_flags;
+    uint32_t reparse_prefix;
+    uint32_t reparse_substitute;
     uint16_t path[520];
 } MimeFsOpen;
 

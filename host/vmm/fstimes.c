@@ -108,6 +108,15 @@ int mime_fs_stat(const char *path, MimeFsStat *out)
     return 0;
 }
 
+int mime_fs_lstat(const char *path, MimeFsStat *out)
+{
+    struct statx x;
+    if (statx(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW | AT_STATX_SYNC_AS_STAT, STATX_WANTED, &x) != 0)
+        return -1;
+    from_statx(&x, out);
+    return 0;
+}
+
 int mime_fs_fstat(int fd, MimeFsStat *out)
 {
     struct statx x;
@@ -127,6 +136,15 @@ int mime_fs_stat(const char *path, MimeFsStat *out)
 {
     memset(out, 0, sizeof(*out));
     if (stat(path, &out->st) != 0)
+        return -1;
+    from_stat(out);
+    return 0;
+}
+
+int mime_fs_lstat(const char *path, MimeFsStat *out)
+{
+    memset(out, 0, sizeof(*out));
+    if (lstat(path, &out->st) != 0)
         return -1;
     from_stat(out);
     return 0;
@@ -264,7 +282,8 @@ static uint64_t guessed_birth(const struct stat *st)
 void mime_fs_times(const char *path, int fd, const MimeFsStat *s, MimeFsTimes *t)
 {
     TimesRecord record;
-    bool have = record_load(path, fd, &s->st, &record);
+    /* a link has no record: its extended attributes would be the ones of what it points to. */
+    bool have = !S_ISLNK(s->st.st_mode) && record_load(path, fd, &s->st, &record);
     t->access = ts_ticks(s->st.st_atim);
     t->write = ts_ticks(s->st.st_mtim);
     t->creation = have && (record.flags & RECORD_CREATION) ? record.creation

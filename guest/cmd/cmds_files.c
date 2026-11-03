@@ -1382,6 +1382,51 @@ int internal_vol(const WCHAR *args, NODE *node)
     return 0;
 }
 
+/* a junction: a directory that holds the full path of its target, which need not exist. */
+static BOOL make_junction(const WCHAR *link, const WCHAR *target)
+{
+    WCHAR full_link[MAX_PATH * 4], full_target[MAX_PATH * 4];
+    if (!GetFullPathNameW(link, NUM(full_link), full_link, nullptr) ||
+        !GetFullPathNameW(target, NUM(full_target), full_target, nullptr))
+        return FALSE;
+    if (!CreateDirectoryW(full_link, nullptr))
+        return FALSE;
+    BOOL ok = FALSE;
+    HANDLE h = CreateFileW(full_link, GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS,
+                           nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+        UNICODE_STRING substitute;
+        if (RtlDosPathNameToNtPathName_U(full_target, &substitute, nullptr, nullptr)) {
+            USHORT print = (USHORT)(wcslen(full_target) * sizeof(WCHAR));
+            ULONG size = (ULONG)(offsetof(REPARSE_DATA_BUFFER, MountPointReparseBuffer.PathBuffer) + substitute.Length +
+                                 print + 2 * sizeof(WCHAR));
+            REPARSE_DATA_BUFFER *b = xalloc(size);
+            memset(b, 0, size);
+            b->ReparseTag = IO_REPARSE_TAG_MOUNT_POINT;
+            b->ReparseDataLength = (USHORT)(size - REPARSE_DATA_BUFFER_HEADER_SIZE);
+            b->MountPointReparseBuffer.SubstituteNameLength = substitute.Length;
+            b->MountPointReparseBuffer.PrintNameOffset = (USHORT)(substitute.Length + sizeof(WCHAR));
+            b->MountPointReparseBuffer.PrintNameLength = print;
+            BYTE *names = (BYTE *)b->MountPointReparseBuffer.PathBuffer;
+            memcpy(names, substitute.Buffer, substitute.Length);
+            memcpy(names + substitute.Length + sizeof(WCHAR), full_target, print);
+            DWORD returned;
+            ok = DeviceIoControl(h, FSCTL_SET_REPARSE_POINT, b, size, nullptr, 0, &returned, nullptr);
+            xfree(b);
+            RtlFreeUnicodeString(&substitute);
+        }
+        DWORD error = GetLastError();
+        CloseHandle(h);
+        SetLastError(error);
+    }
+    if (!ok) {
+        DWORD error = GetLastError();
+        RemoveDirectoryW(full_link);
+        SetLastError(error);
+    }
+    return ok;
+}
+
 int internal_mklink(const WCHAR *args, NODE *node)
 {
     ARGS a;
@@ -1420,19 +1465,23 @@ int internal_mklink(const WCHAR *args, NODE *node)
     BOOL ok;
     if (hard)
         ok = CreateHardLinkW(names[0], names[1], nullptr);
-    else if (junction) {
-        SetLastError(ERROR_NOT_SUPPORTED);
-        ok = FALSE;
-    } else
-        ok = CreateSymbolicLinkW(names[0], names[1], dir ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0);
+    else if (junction)
+        ok = make_junction(names[0], names[1]);
+    else
+        ok = CreateSymbolicLinkW(names[0], names[1],
+                                 (dir ? SYMBOLIC_LINK_FLAG_DIRECTORY : 0) | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE);
     int result = 0;
     if (ok) {
-        out_fmt(hard ? L"Hardlink created for %ls <<===>> %ls\r\n" : L"symbolic link created for %ls <<===>> %ls\r\n",
+        out_fmt(hard       ? L"Hardlink created for %ls <<===>> %ls\r\n"
+                : junction ? L"Junction created for %ls <<===>> %ls\r\n"
+                           : L"symbolic link created for %ls <<===>> %ls\r\n",
                 names[0], names[1]);
     } else {
         DWORD e = GetLastError();
         if (e == ERROR_PRIVILEGE_NOT_HELD)
             err_s(L"You do not have sufficient privilege to perform this operation.\r\n");
+        else if (e == ERROR_INVALID_FUNCTION && !hard && !junction)
+            err_s(L"The device does not support symbolic links.\r\n");
         else
             print_win_error(e);
         set_errorlevel(1);

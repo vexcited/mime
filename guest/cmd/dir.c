@@ -7,6 +7,8 @@ typedef struct DIRENT {
     ULONGLONG size;
     FILETIME time;
     BOOL is_dir;
+    DWORD tag;     /* of a symbolic link or a junction, else 0. */
+    WCHAR *target; /* what it points to, as the link says. */
 } DIRENT;
 
 typedef struct DIROPT {
@@ -160,6 +162,50 @@ static void pad_left(STR *line, const WCHAR *text, SIZE_T width)
     str_adds(line, text);
 }
 
+/* the name a link points to, the print name when it has one, as dir shows it between brackets. */
+static WCHAR *link_target(const WCHAR *dir, const WCHAR *name)
+{
+    STR path;
+    str_init(&path);
+    str_adds(&path, dir);
+    str_adds(&path, name);
+    HANDLE h = CreateFileW(path.p, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    str_free(&path);
+    if (h == INVALID_HANDLE_VALUE)
+        return xdup(L"...");
+    BYTE *buffer = xalloc(MAXIMUM_REPARSE_DATA_BUFFER_SIZE + 2);
+    DWORD got = 0;
+    WCHAR *result = nullptr;
+    if (DeviceIoControl(h, FSCTL_GET_REPARSE_POINT, nullptr, 0, buffer, MAXIMUM_REPARSE_DATA_BUFFER_SIZE, &got, nullptr)) {
+        REPARSE_DATA_BUFFER *b = (REPARSE_DATA_BUFFER *)buffer;
+        const BYTE *base;
+        USHORT so, sl, po, pl;
+        if (b->ReparseTag == IO_REPARSE_TAG_MOUNT_POINT) {
+            base = (const BYTE *)b->MountPointReparseBuffer.PathBuffer;
+            so = b->MountPointReparseBuffer.SubstituteNameOffset;
+            sl = b->MountPointReparseBuffer.SubstituteNameLength;
+            po = b->MountPointReparseBuffer.PrintNameOffset;
+            pl = b->MountPointReparseBuffer.PrintNameLength;
+        } else {
+            base = (const BYTE *)b->SymbolicLinkReparseBuffer.PathBuffer;
+            so = b->SymbolicLinkReparseBuffer.SubstituteNameOffset;
+            sl = b->SymbolicLinkReparseBuffer.SubstituteNameLength;
+            po = b->SymbolicLinkReparseBuffer.PrintNameOffset;
+            pl = b->SymbolicLinkReparseBuffer.PrintNameLength;
+        }
+        USHORT offset = pl ? po : so, length = pl ? pl : sl;
+        if (base + offset + length <= buffer + got) {
+            result = xalloc(length + sizeof(WCHAR));
+            memcpy(result, base + offset, length);
+            result[length / sizeof(WCHAR)] = 0;
+        }
+    }
+    xfree(buffer);
+    CloseHandle(h);
+    return result ? result : xdup(L"...");
+}
+
 static void show_volume_header(WCHAR letter)
 {
     WCHAR root[4] = {upcase(letter), L':', L'\\', 0};
@@ -251,6 +297,14 @@ static int list_directory(const WCHAR *dir, const WCHAR *pattern, const DIROPT *
             e->name = xdup(fd.cFileName);
             e->attr = fd.dwFileAttributes;
             e->is_dir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            e->tag = 0;
+            e->target = nullptr;
+            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) &&
+                (fd.dwReserved0 == IO_REPARSE_TAG_SYMLINK || fd.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT)) {
+                e->tag = fd.dwReserved0;
+                if (!o->bare && !o->wide)
+                    e->target = link_target(dir, fd.cFileName);
+            }
             e->size = ((ULONGLONG)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
             e->time = o->time_field == 1 ? fd.ftCreationTime : o->time_field == 2 ? fd.ftLastAccessTime : fd.ftLastWriteTime;
         } while (FindNextFileW(h, &fd));
@@ -327,7 +381,11 @@ static int list_directory(const WCHAR *dir, const WCHAR *pattern, const DIROPT *
                 }
             } else {
                 date_time_text(&e->time, &line);
-                if (e->is_dir) {
+                if (e->tag == IO_REPARSE_TAG_MOUNT_POINT) {
+                    str_adds(&line, L"    <JUNCTION>     ");
+                } else if (e->tag == IO_REPARSE_TAG_SYMLINK) {
+                    str_adds(&line, e->is_dir ? L"    <SYMLINKD>     " : L"    <SYMLINK>      ");
+                } else if (e->is_dir) {
                     str_adds(&line, L"    <DIR>          ");
                 } else {
                     STR n;
@@ -346,6 +404,11 @@ static int list_directory(const WCHAR *dir, const WCHAR *pattern, const DIROPT *
                 } else {
                     str_adds(&line, e->name);
                 }
+                if (e->target) {
+                    str_adds(&line, L" [");
+                    str_adds(&line, e->target);
+                    str_addc(&line, L']');
+                }
             }
             str_adds(&line, L"\r\n");
             out_n(line.p, line.len);
@@ -358,8 +421,10 @@ static int list_directory(const WCHAR *dir, const WCHAR *pattern, const DIROPT *
             }
         }
     }
-    for (SIZE_T i = 0; i < count; i++)
+    for (SIZE_T i = 0; i < count; i++) {
         xfree(entries[i].name);
+        xfree(entries[i].target);
+    }
     xfree(entries);
     xfree(sorted);
     totals->files += dir_files;

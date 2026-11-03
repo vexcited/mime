@@ -1849,10 +1849,120 @@ BOOL WINAPI CreateHardLinkA(LPCSTR link, LPCSTR existing, LPSECURITY_ATTRIBUTES 
     return ok;
 }
 
+NTSYSAPI NTSTATUS NTAPI RtlAcquirePrivilege(PULONG privileges, ULONG count, ULONG flags, PVOID *state);
+NTSYSAPI void NTAPI RtlReleasePrivilege(PVOID state);
+
+#define KB_SE_CREATE_SYMBOLIC_LINK_PRIVILEGE 35
+
+/*
+ * the link is made as an empty file or directory that is then given its reparse data. the privilege to make links is
+ * switched on for the call, and without it the file system decides, which lets a program of a machine in developer mode
+ * go on when it says so with SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE. a target that is a full path is kept as the
+ * name of an object, one that is not as it is, and marked relative. the print name is the target as it was given.
+ */
 BOOLEAN WINAPI CreateSymbolicLinkW(LPCWSTR link, LPCWSTR target, DWORD flags)
 {
-    KbSetError(ERROR_PRIVILEGE_NOT_HELD);
-    return FALSE;
+    if (!link || !target) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    KbSetError(0);
+    PVOID state = nullptr;
+    ULONG privilege = KB_SE_CREATE_SYMBOLIC_LINK_PRIVILEGE;
+    NTSTATUS status = RtlAcquirePrivilege(&privilege, 1, 0, &state);
+    if (!NT_SUCCESS(status) && !(flags & SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        KbSetStatus(status);
+        return FALSE;
+    }
+    PWSTR full = nullptr;
+    UNICODE_STRING substitute = {}, nt_link = {};
+    BOOLEAN relative = FALSE, own_substitute = FALSE, ok = FALSE;
+    HANDLE file = nullptr;
+    REPARSE_DATA_BUFFER *buffer = nullptr;
+    switch (RtlDetermineDosPathNameType_U(target)) {
+    case RtlPathTypeDriveRelative:
+        full = KbAlloc(MAX_PATH * 4 * sizeof(WCHAR));
+        if (!full || !GetFullPathNameW(target, MAX_PATH * 4, full, nullptr)) {
+            if (full)
+                KbSetStatus(STATUS_OBJECT_PATH_NOT_FOUND);
+            else
+                KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+            goto done;
+        }
+        target = full;
+        [[fallthrough]];
+    case RtlPathTypeUncAbsolute:
+    case RtlPathTypeDriveAbsolute:
+    case RtlPathTypeLocalDevice:
+    case RtlPathTypeRootLocalDevice:
+        if (!RtlDosPathNameToNtPathName_U(target, &substitute, nullptr, nullptr)) {
+            KbSetError(ERROR_INVALID_PARAMETER);
+            goto done;
+        }
+        own_substitute = TRUE;
+        break;
+    default:
+        /* a path with no drive, or a name, stays what it is and is relative to the directory of the link. */
+        substitute.Buffer = (PWSTR)target;
+        substitute.Length = substitute.MaximumLength = (USHORT)(wcslen(target) * sizeof(WCHAR));
+        relative = TRUE;
+        break;
+    }
+    {
+        ULONG print_bytes = (ULONG)(wcslen(target) * sizeof(WCHAR));
+        ULONG size = (ULONG)(offsetof(REPARSE_DATA_BUFFER, SymbolicLinkReparseBuffer.PathBuffer) + print_bytes +
+                             substitute.Length);
+        buffer = KbAllocZero(size);
+        if (!buffer) {
+            KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+            goto done;
+        }
+        buffer->ReparseTag = IO_REPARSE_TAG_SYMLINK;
+        buffer->ReparseDataLength = (USHORT)(size - REPARSE_DATA_BUFFER_HEADER_SIZE);
+        buffer->SymbolicLinkReparseBuffer.SubstituteNameOffset = (USHORT)print_bytes;
+        buffer->SymbolicLinkReparseBuffer.SubstituteNameLength = substitute.Length;
+        buffer->SymbolicLinkReparseBuffer.PrintNameOffset = 0;
+        buffer->SymbolicLinkReparseBuffer.PrintNameLength = (USHORT)print_bytes;
+        buffer->SymbolicLinkReparseBuffer.Flags = relative ? SYMLINK_FLAG_RELATIVE : 0;
+        memcpy(buffer->SymbolicLinkReparseBuffer.PathBuffer, target, print_bytes);
+        memcpy((PUCHAR)buffer->SymbolicLinkReparseBuffer.PathBuffer + print_bytes, substitute.Buffer, substitute.Length);
+        if (!RtlDosPathNameToNtPathName_U(link, &nt_link, nullptr, nullptr)) {
+            KbSetError(ERROR_PATH_NOT_FOUND);
+            goto done;
+        }
+        OBJECT_ATTRIBUTES oa;
+        InitializeObjectAttributes(&oa, &nt_link, OBJ_CASE_INSENSITIVE, nullptr, nullptr);
+        IO_STATUS_BLOCK iosb;
+        ULONG options = ((flags & SYMBOLIC_LINK_FLAG_DIRECTORY) ? FILE_DIRECTORY_FILE : FILE_NON_DIRECTORY_FILE) |
+                        FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT;
+        status = NtCreateFile(&file, DELETE | FILE_WRITE_ATTRIBUTES | SYNCHRONIZE, &oa, &iosb, nullptr,
+                              FILE_ATTRIBUTE_NORMAL, 0, FILE_CREATE, options, nullptr, 0);
+        if (!NT_SUCCESS(status)) {
+            KbSetStatus(status);
+            goto done;
+        }
+        status = NtFsControlFile(file, nullptr, nullptr, nullptr, &iosb, FSCTL_SET_REPARSE_POINT, buffer, size, nullptr, 0);
+        if (!NT_SUCCESS(status)) {
+            KbSetStatus(status);
+            /* what was made for the link does not stay. */
+            FILE_DISPOSITION_INFORMATION remove = {TRUE};
+            NtSetInformationFile(file, &iosb, &remove, sizeof(remove), FileDispositionInformation);
+            goto done;
+        }
+        ok = TRUE;
+    }
+done:
+    if (state)
+        RtlReleasePrivilege(state);
+    KbFree(full);
+    KbFree(buffer);
+    if (own_substitute)
+        RtlFreeUnicodeString(&substitute);
+    if (nt_link.Buffer)
+        RtlFreeUnicodeString(&nt_link);
+    if (file)
+        NtClose(file);
+    return ok;
 }
 
 BOOLEAN WINAPI CreateSymbolicLinkA(LPCSTR link, LPCSTR target, DWORD flags)

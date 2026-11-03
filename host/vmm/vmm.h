@@ -72,6 +72,7 @@ typedef struct MimeFsHandle {
     int fd;
     uint32_t volume;
     bool is_dir;
+    bool is_link; /* opened as the symbolic link or junction itself, see fsreparse.c. */
     bool delete_on_close;
     char *host_path;
     void *dir_entries; /* cached directory listing. */
@@ -224,6 +225,17 @@ bool mime_fs_path_of_id(MimeVm *vm, uint32_t volume, const uint16_t *id, uint32_
 uint32_t mime_fs_guest_name(MimeVm *vm, uint32_t volume, const char *host, uint16_t *out, size_t capacity);
 bool mime_fs_find_entry(const char *dir, const char *leaf, char *found, size_t size);
 MimeFsHandle *mime_fs_handle(MimeVm *vm, uint64_t h);
+/* fsreparse.c, symbolic links and junctions. */
+int mime_fs_find_link(const char *path, size_t root_length, bool last_is_the_file, size_t *through);
+uint32_t mime_fs_guest_prefix(const uint16_t *path, uint32_t chars, int component);
+bool mime_fs_link_read(MimeVm *vm, const char *link, MimeFsReparse *r);
+bool mime_fs_link_kind(const char *link, uint32_t *tag, bool *directory);
+int mime_fs_open_link(const char *path);
+uint64_t mime_fs_reparse_set(MimeVm *vm, MimeFsHandle *fh, uint64_t pa);
+uint64_t mime_fs_reparse_get(MimeVm *vm, MimeFsHandle *fh, uint64_t pa);
+uint64_t mime_fs_reparse_delete(MimeVm *vm, MimeFsHandle *fh, uint32_t expected);
+uint64_t mime_fs_status_of(int err);
+void mime_fs_match_case(char *path, size_t root_length);
 
 /* fstimes.c, the creation and change times a file keeps for windows. */
 typedef struct MimeFsStat {
@@ -237,6 +249,8 @@ typedef struct MimeFsTimes {
 uint64_t mime_fs_now(void);
 int mime_fs_stat(const char *path, MimeFsStat *out);
 int mime_fs_fstat(int fd, MimeFsStat *out);
+/* the same of a link itself and not of what it points to. */
+int mime_fs_lstat(const char *path, MimeFsStat *out);
 void mime_fs_times(const char *path, int fd, const MimeFsStat *s, MimeFsTimes *t);
 /* a file made by the guest: the creation time is now, kept apart where the host has no birth time. */
 void mime_fs_times_created(const char *path, int fd, const MimeFsStat *s);

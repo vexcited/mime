@@ -42,6 +42,8 @@ typedef struct MIMEFS_FCB {
     BOOLEAN StatOnly;    /* answers one query by name: no host handle, OpenInfo is the answer. */
     MimeFsInfo OpenInfo; /* what the host reported at open. */
     BOOLEAN Directory;
+    BOOLEAN Link;         /* opened as the symbolic link or junction itself, which has no data. */
+    ACCESS_MASK Access;   /* what the handle was given. */
     BOOLEAN DeleteOnClose;
     BOOLEAN DotsDone;
     UCHAR DotIndex;
@@ -373,6 +375,158 @@ static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info)
     return status;
 }
 
+#define KEY_POLICY_NTFS L"\\REGISTRY\\MACHINE\\SOFTWARE\\Policies\\Microsoft\\Windows\\FileSystems\\NTFS"
+#define KEY_APP_MODEL_UNLOCK L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModelUnlock"
+
+/* a class of symbolic links the system follows: the policy decides when it has a say, else the file system key. */
+static BOOLEAN symlink_class_enabled(PCWSTR value, BOOLEAN fallback)
+{
+    static PCWSTR keys[] = {KEY_POLICY_NTFS, KEY_FILE_SYSTEM};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(keys); i++) {
+        ULONG type, data, length = sizeof(data);
+        if (NT_SUCCESS(CmQueryValueUnlessBusy(keys[i], value, &type, &data, &length)) && type == 4 /* REG_DWORD */ &&
+            length >= sizeof(data))
+            return data != 0;
+    }
+    return fallback;
+}
+
+/* with developer mode on a program may make symbolic links without the privilege to. */
+static BOOLEAN developer_mode(void)
+{
+    ULONG type, data, length = sizeof(data);
+    return NT_SUCCESS(CmQueryValueUnlessBusy(KEY_APP_MODEL_UNLOCK, L"AllowDevelopmentWithoutDevLicense", &type, &data,
+                                             &length)) &&
+           type == 4 && length >= sizeof(data) && data != 0;
+}
+
+static BOOLEAN names_start(const WCHAR *name, ULONG chars, PCWSTR prefix)
+{
+    ULONG n = (ULONG)wcslen(prefix);
+    if (chars < n)
+        return FALSE;
+    for (ULONG i = 0; i < n; i++)
+        if (fold(name[i]) != fold(prefix[i]))
+            return FALSE;
+    return TRUE;
+}
+
+#define LINK_NAME_LIMIT 1000
+
+/*
+ * a link was met on the way of an open. the file system answers with the whole name the open goes on with, in the file
+ * object, and the object manager starts again at the root with it. an absolute target stands for itself and the rest of
+ * the path follows it. a relative target is a path from the directory of the link, with . and .. taken out, on the device
+ * of the volume, and a target that begins with a backslash is a path from the root of the volume.
+ */
+static NTSTATUS follow_link(MIMEFS_VOLUME *vol, PFILE_OBJECT file, const MimeFsOpen *req)
+{
+    ULONG tag = req->reparse_tag, sub_chars = req->reparse_substitute, prefix = req->reparse_prefix;
+    const WCHAR *sub = req->path;
+    ULONG name_chars = file->FileName.Length / sizeof(WCHAR);
+    if (!sub_chars || prefix > name_chars || !prefix)
+        return STATUS_OBJECT_PATH_NOT_FOUND;
+    BOOLEAN relative = tag == IO_REPARSE_TAG_SYMLINK && (req->reparse_flags & SYMLINK_FLAG_RELATIVE);
+    if (tag == IO_REPARSE_TAG_SYMLINK) {
+        /* a link of a drive to a network path is another class of links than one to a drive. */
+        BOOLEAN remote = !relative && (names_start(sub, sub_chars, L"\\??\\UNC\\") || names_start(sub, sub_chars, L"\\Device\\Mup"));
+        if (remote ? !symlink_class_enabled(L"SymlinkLocalToRemoteEvaluation", TRUE)
+                   : !symlink_class_enabled(L"SymlinkLocalToLocalEvaluation", TRUE))
+            return STATUS_SYMLINK_CLASS_DISABLED;
+    }
+    const WCHAR *rest = file->FileName.Buffer + prefix;
+    ULONG rest_chars = name_chars - prefix, n = 0;
+    PWCHAR out = ExAllocatePool2(POOL_FLAG_NON_PAGED, (LINK_NAME_LIMIT + 2) * sizeof(WCHAR), KI_TAG('M', 'f', 'L', 'k'));
+    if (!out)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    if (!relative) {
+        if (sub_chars + rest_chars >= LINK_NAME_LIMIT)
+            goto too_long;
+        memcpy(out, sub, sub_chars * sizeof(WCHAR));
+        n = sub_chars;
+        /* the target of a link to a root ends with the backslash that the rest begins with. */
+        if (n && out[n - 1] == '\\' && rest_chars && rest[0] == '\\')
+            n--;
+    } else {
+        struct {
+            const WCHAR *Text;
+            ULONG Chars;
+        } parts[128];
+        ULONG count = 0;
+        /* the directory of the link, unless the target is a path from the root. */
+        if (sub[0] != '\\') {
+            ULONG at = 0, end = prefix;
+            while (end && file->FileName.Buffer[end - 1] == '\\')
+                end--;
+            while (end && file->FileName.Buffer[end - 1] != '\\')
+                end--;
+            while (at < end && count < RTL_NUMBER_OF(parts)) {
+                while (at < end && file->FileName.Buffer[at] == '\\')
+                    at++;
+                ULONG start = at;
+                while (at < end && file->FileName.Buffer[at] != '\\')
+                    at++;
+                if (at > start) {
+                    parts[count].Text = file->FileName.Buffer + start;
+                    parts[count++].Chars = at - start;
+                }
+            }
+        }
+        ULONG at = 0;
+        while (at < sub_chars) {
+            while (at < sub_chars && sub[at] == '\\')
+                at++;
+            ULONG start = at;
+            while (at < sub_chars && sub[at] != '\\')
+                at++;
+            ULONG length = at - start;
+            if (!length || (length == 1 && sub[start] == '.'))
+                continue;
+            if (length == 2 && sub[start] == '.' && sub[start + 1] == '.') {
+                if (count)
+                    count--;
+                continue;
+            }
+            if (count == RTL_NUMBER_OF(parts))
+                goto too_long;
+            parts[count].Text = sub + start;
+            parts[count++].Chars = length;
+        }
+        PCWSTR device = vol->HostVolume == MIME_FS_VOLUME_SYSTEM ? L"\\Device\\HarddiskVolume1" : L"\\Device\\HarddiskVolume2";
+        n = (ULONG)wcslen(device);
+        memcpy(out, device, n * sizeof(WCHAR));
+        for (ULONG i = 0; i < count; i++) {
+            if (n + 1 + parts[i].Chars >= LINK_NAME_LIMIT)
+                goto too_long;
+            out[n++] = '\\';
+            memcpy(out + n, parts[i].Text, parts[i].Chars * sizeof(WCHAR));
+            n += parts[i].Chars;
+        }
+        if (!count)
+            out[n++] = '\\';
+        if (n + rest_chars >= LINK_NAME_LIMIT)
+            goto too_long;
+        /* the root has its backslash already. */
+        if (!count && rest_chars && rest[0] == '\\')
+            n--;
+    }
+    memcpy(out + n, rest, rest_chars * sizeof(WCHAR));
+    n += rest_chars;
+    out[n] = 0;
+    PWCHAR old = file->FileName.Buffer;
+    FsWbNameLock();
+    file->FileName.Buffer = out;
+    file->FileName.Length = (USHORT)(n * sizeof(WCHAR));
+    file->FileName.MaximumLength = (USHORT)((LINK_NAME_LIMIT + 2) * sizeof(WCHAR));
+    FsWbNameUnlock();
+    if (old)
+        ExFreePool(old);
+    return STATUS_REPARSE;
+too_long:
+    ExFreePool(out);
+    return STATUS_NAME_TOO_LONG;
+}
+
 static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
 {
     MIMEFS_VOLUME *vol = device->DeviceExtension;
@@ -441,6 +595,8 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
         req->flags |= MIME_FS_OPEN_DIRECTORY;
     if (options & FILE_NON_DIRECTORY_FILE)
         req->flags |= MIME_FS_OPEN_NON_DIRECTORY;
+    if (options & FILE_OPEN_REPARSE_POINT)
+        req->flags |= MIME_FS_OPEN_REPARSE_POINT;
     if (check)
         req->flags |= MIME_FS_OPEN_WANT_SD;
     if ((req->flags & MIME_FS_OPEN_READ) && access_time_disabled())
@@ -541,6 +697,12 @@ opened:
         FsAttrKeep(vol->HostVolume, &file->FileName, found ? ATTR_KEEP_FILE : missing ? ATTR_KEEP_MISSING : ATTR_KEEP_NOTHING,
                    &req->info_out, keep_token);
     }
+    if (hs == MIME_HC_STATUS_REPARSE) {
+        ULONG tag = req->reparse_tag;
+        NTSTATUS status = follow_link(vol, file, req);
+        ExFreePool(req);
+        return complete(irp, status, status == STATUS_REPARSE ? tag : 0);
+    }
     if (hs != MIME_HC_STATUS_OK) {
         NTSTATUS status = host_status(hs, req->action_out == 1);
         if (SeTraceAccess)
@@ -614,13 +776,15 @@ opened:
     fcb->Volume = vol->HostVolume;
     fcb->FileId = opened.file_id;
     fcb->Directory = directory;
+    fcb->Link = (opened.attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && host != 0;
+    fcb->Access = granted;
     fcb->NoAccessTime = (req_flags & MIME_FS_OPEN_NO_ACCESS_TIME) != 0;
     fcb->Buffered = (req_flags & MIME_FS_OPEN_WRITE) && !(options & (FILE_WRITE_THROUGH | FILE_NO_INTERMEDIATE_BUFFERING));
-    if (!fcb->Directory && !fcb->StatOnly)
+    if (!fcb->Directory && !fcb->StatOnly && !fcb->Link)
         FsWbOpen(&fcb->Wb, vol->HostVolume, opened.file_id, host, &file->FileName);
     if (!fcb->Directory && opened.links > 1)
         FsWbNoteLinked(vol->HostVolume, opened.file_id);
-    if (!fcb->Directory && !fcb->StatOnly) {
+    if (!fcb->Directory && !fcb->StatOnly && !fcb->Link) {
         if (req_flags & MIME_FS_OPEN_WRITE || action != FILE_OPENED)
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
         else
@@ -733,6 +897,9 @@ static NTSTATUS NTAPI mimefs_read_write(PDEVICE_OBJECT device, PIRP irp)
         return complete(irp, STATUS_INVALID_HANDLE, 0);
     if (fcb->Directory)
         return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    /* the link has no data. */
+    if (fcb->Link)
+        return complete(irp, write ? STATUS_ACCESS_DENIED : STATUS_END_OF_FILE, 0);
     ULONG length = stack->Parameters.Read.Length;
     ULONG64 offset = (ULONG64)stack->Parameters.Read.ByteOffset.QuadPart;
     PUCHAR user = irp->UserBuffer;
@@ -960,7 +1127,8 @@ static NTSTATUS NTAPI mimefs_query_info(PDEVICE_OBJECT device, PIRP irp)
             break;
         }
         ((PFILE_ATTRIBUTE_TAG_INFORMATION)out)->FileAttributes = info->attributes;
-        ((PFILE_ATTRIBUTE_TAG_INFORMATION)out)->ReparseTag = 0;
+        ((PFILE_ATTRIBUTE_TAG_INFORMATION)out)->ReparseTag =
+            (info->attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? info->reparse_tag : 0;
         written = sizeof(FILE_ATTRIBUTE_TAG_INFORMATION);
         break;
     case FileEaInformation:
@@ -1042,6 +1210,7 @@ static NTSTATUS NTAPI mimefs_query_info(PDEVICE_OBJECT device, PIRP irp)
         st->EndOfFile.QuadPart = (LONGLONG)info->size;
         st->FileAttributes = info->attributes ? info->attributes : FILE_ATTRIBUTE_NORMAL;
         st->NumberOfLinks = info->links ? info->links : 1;
+        st->ReparseTag = (info->attributes & FILE_ATTRIBUTE_REPARSE_POINT) ? info->reparse_tag : 0;
         st->EffectiveAccess = fcb->Rom ? 0x1200A9 /* read and execute. */
                                        : MimeFsMaximumAccess(fcb->Volume, fcb->HostHandle, &file->FileName, fcb->Directory);
         written = need;
@@ -1477,21 +1646,27 @@ static void write_entry(PUCHAR out, FILE_INFORMATION_CLASS klass, const MimeFsIn
     d->AllocationSize.QuadPart = (LONGLONG)info->allocation_size;
     d->FileAttributes = attrs;
     d->FileNameLength = name_bytes;
+    /* the size of the extended attributes of a link is its tag, which FindFirstFile gives as dwReserved0. */
+    ULONG tag = (attrs & FILE_ATTRIBUTE_REPARSE_POINT) ? info->reparse_tag : 0;
     switch (klass) {
     case FileDirectoryInformation:
         memcpy(d->FileName, name, name_bytes);
         break;
     case FileFullDirectoryInformation:
+        ((PFILE_FULL_DIR_INFORMATION)out)->EaSize = tag;
         memcpy(((PFILE_FULL_DIR_INFORMATION)out)->FileName, name, name_bytes);
         break;
     case FileIdFullDirectoryInformation:
+        ((PFILE_FULL_DIR_INFORMATION)out)->EaSize = tag;
         *(PLARGE_INTEGER)(out + offsetof(FILE_FULL_DIR_INFORMATION, FileName)) = (LARGE_INTEGER){.QuadPart = (LONGLONG)info->file_id};
         memcpy(out + offsetof(FILE_FULL_DIR_INFORMATION, FileName) + 8, name, name_bytes);
         break;
     case FileBothDirectoryInformation:
+        ((PFILE_BOTH_DIR_INFORMATION)out)->EaSize = tag;
         memcpy(((PFILE_BOTH_DIR_INFORMATION)out)->FileName, name, name_bytes);
         break;
     case FileIdBothDirectoryInformation:
+        ((PFILE_ID_BOTH_DIR_INFORMATION)out)->EaSize = tag;
         ((PFILE_ID_BOTH_DIR_INFORMATION)out)->FileId.QuadPart = (LONGLONG)info->file_id;
         memcpy(((PFILE_ID_BOTH_DIR_INFORMATION)out)->FileName, name, name_bytes);
         break;
@@ -2050,12 +2225,245 @@ static NTSTATUS fs_statistics(PIRP irp, MIMEFS_VOLUME *vol, ULONG length, BOOLEA
     return complete(irp, written < total ? STATUS_BUFFER_OVERFLOW : STATUS_SUCCESS, written);
 }
 
+/*
+ * what a buffer of reparse data may hold, in the order that Windows tests it: the size, the tag, the lengths and the
+ * way a symbolic link or a junction names its target.
+ */
+static NTSTATUS validate_reparse(const REPARSE_DATA_BUFFER *b, ULONG length)
+{
+    if (length < REPARSE_DATA_BUFFER_HEADER_SIZE || length > MAXIMUM_REPARSE_DATA_BUFFER_SIZE)
+        return STATUS_IO_REPARSE_DATA_INVALID;
+    ULONG tag = b->ReparseTag;
+    if ((tag & 0x0FFF0000u) || tag <= 2 || (tag & 0xC0000000u) == 0x40000000u || tag == IO_REPARSE_TAG_GLOBAL_REPARSE ||
+        (tag & 0x30000000u) == 0x30000000u)
+        return STATUS_IO_REPARSE_TAG_INVALID;
+    ULONG data = b->ReparseDataLength;
+    BOOLEAN plain = data + REPARSE_DATA_BUFFER_HEADER_SIZE == length;
+    if (!plain && data + REPARSE_GUID_DATA_BUFFER_HEADER_SIZE != length)
+        return STATUS_IO_REPARSE_DATA_INVALID;
+    if (!plain) {
+        /* a buffer with a GUID: the tag of somebody else, and the GUID is not empty. */
+        const UCHAR *guid = (const UCHAR *)b + 8;
+        BOOLEAN empty = TRUE;
+        for (ULONG i = 0; i < 16; i++)
+            empty &= guid[i] == 0;
+        if (tag == IO_REPARSE_TAG_MOUNT_POINT || tag == IO_REPARSE_TAG_SYMLINK || ((tag & 0x80000000u) == 0 && empty))
+            return STATUS_IO_REPARSE_DATA_INVALID;
+        return STATUS_SUCCESS;
+    }
+    if (!(tag & 0x80000000u))
+        return STATUS_IO_REPARSE_DATA_INVALID;
+    if (tag == IO_REPARSE_TAG_MOUNT_POINT) {
+        if (data < 8)
+            return STATUS_IO_REPARSE_DATA_INVALID;
+        ULONG sub = b->MountPointReparseBuffer.SubstituteNameLength, print = b->MountPointReparseBuffer.PrintNameLength;
+        if (b->MountPointReparseBuffer.SubstituteNameOffset != 0 || b->MountPointReparseBuffer.PrintNameOffset != sub + 2)
+            return STATUS_IO_REPARSE_DATA_INVALID;
+        return data == sub + print + 12 ? STATUS_SUCCESS : STATUS_IO_REPARSE_DATA_INVALID;
+    }
+    if (tag == IO_REPARSE_TAG_SYMLINK) {
+        if (data < 12)
+            return STATUS_IO_REPARSE_DATA_INVALID;
+        ULONG so = b->SymbolicLinkReparseBuffer.SubstituteNameOffset, sl = b->SymbolicLinkReparseBuffer.SubstituteNameLength;
+        ULONG po = b->SymbolicLinkReparseBuffer.PrintNameOffset, pl = b->SymbolicLinkReparseBuffer.PrintNameLength;
+        if (so + sl > 0xFFFF || po + pl > 0xFFFF)
+            return STATUS_INTEGER_OVERFLOW;
+        if (length < po + pl + 20 || length < so + sl + 20 || !sl || !pl || (sl & 1) || (pl & 1) || (so & 1) || (po & 1))
+            return STATUS_IO_REPARSE_DATA_INVALID;
+    }
+    return STATUS_SUCCESS;
+}
+
+static void reparse_changed(PFILE_OBJECT file, MIMEFS_FCB *fcb)
+{
+    MimeFsInfo *now = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*now), KI_TAG('M', 'f', 'I', 'n'));
+    FsCacheInvalidate(fcb->Volume, fcb->FileId);
+    if (now) {
+        if (NT_SUCCESS(query(fcb, now))) {
+            fcb->FileId = now->file_id;
+            fcb->OpenInfo = *now;
+        }
+        ExFreePool(now);
+    }
+    FsAttrChanged(fcb->Volume, file->FileName.Buffer, file->FileName.Length / sizeof(WCHAR), TRUE);
+    FsNotifyReport(fcb->Volume, &file->FileName, FILE_ACTION_MODIFIED, FILE_NOTIFY_CHANGE_ATTRIBUTES);
+}
+
+static NTSTATUS reparse_host_status(ULONG64 hs)
+{
+    switch (hs) {
+    case MIME_HC_STATUS_NOT_DIRECTORY: return STATUS_NOT_A_DIRECTORY;
+    case MIME_HC_STATUS_NOT_EMPTY: return STATUS_DIRECTORY_NOT_EMPTY;
+    case MIME_HC_STATUS_INVALID: return STATUS_IO_REPARSE_DATA_INVALID;
+    case MIME_HC_STATUS_NOT_REPARSE: return STATUS_NOT_A_REPARSE_POINT;
+    case MIME_HC_STATUS_TAG_MISMATCH: return STATUS_IO_REPARSE_TAG_MISMATCH;
+    case MIME_HC_STATUS_UNSUPPORTED: return STATUS_NOT_SUPPORTED;
+    default: return host_status(hs, FALSE);
+    }
+}
+
+/* FSCTL_SET_REPARSE_POINT: the empty file or directory becomes a symbolic link or a junction. */
+static NTSTATUS reparse_set(PIRP irp, PFILE_OBJECT file, MIMEFS_FCB *fcb, const REPARSE_DATA_BUFFER *b, ULONG length)
+{
+    if (KeGetPreviousMode() == UserMode && !(fcb->Access & (FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES)))
+        return STATUS_ACCESS_DENIED;
+    NTSTATUS status = validate_reparse(b, length);
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG tag = b->ReparseTag;
+    if (tag != IO_REPARSE_TAG_SYMLINK && tag != IO_REPARSE_TAG_MOUNT_POINT)
+        return STATUS_NOT_SUPPORTED;
+    if (tag == IO_REPARSE_TAG_SYMLINK && KeGetPreviousMode() == UserMode && !SeThreadHasPrivilege(35) && !developer_mode())
+        return STATUS_PRIVILEGE_NOT_HELD;
+    if (!fcb->HostHandle)
+        return STATUS_INVALID_DEVICE_REQUEST;
+    MimeFsReparse *r = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*r), KI_TAG('M', 'f', 'R', 'p'));
+    if (!r)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    memset(r, 0, sizeof(*r));
+    r->tag = tag;
+    r->directory = fcb->Directory;
+    const UCHAR *base = (const UCHAR *)b;
+    ULONG so, sl, po, pl, path;
+    if (tag == IO_REPARSE_TAG_MOUNT_POINT) {
+        so = b->MountPointReparseBuffer.SubstituteNameOffset;
+        sl = b->MountPointReparseBuffer.SubstituteNameLength;
+        po = b->MountPointReparseBuffer.PrintNameOffset;
+        pl = b->MountPointReparseBuffer.PrintNameLength;
+        path = 16;
+    } else {
+        so = b->SymbolicLinkReparseBuffer.SubstituteNameOffset;
+        sl = b->SymbolicLinkReparseBuffer.SubstituteNameLength;
+        po = b->SymbolicLinkReparseBuffer.PrintNameOffset;
+        pl = b->SymbolicLinkReparseBuffer.PrintNameLength;
+        r->flags = b->SymbolicLinkReparseBuffer.Flags & SYMLINK_FLAG_RELATIVE;
+        path = 20;
+    }
+    if (path + so + sl > length || path + po + pl > length || (sl + pl) / sizeof(WCHAR) > MIME_REPARSE_MAX_NAME) {
+        ExFreePool(r);
+        return STATUS_IO_REPARSE_DATA_INVALID;
+    }
+    memcpy(r->names, base + path + so, sl);
+    memcpy(r->names + sl / sizeof(WCHAR), base + path + po, pl);
+    r->substitute_chars = sl / sizeof(WCHAR);
+    r->print_chars = pl / sizeof(WCHAR);
+    if (fcb->Directory)
+        FsWbSyncPath(fcb->Volume, &file->FileName, TRUE);
+    else
+        FsWbSync(&fcb->Wb);
+    ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_SET_REPARSE, fcb->HostHandle, HalPhysicalOf(r), 0, 0, 0, 0, nullptr);
+    ExFreePool(r);
+    status = reparse_host_status(hs);
+    if (NT_SUCCESS(status)) {
+        fcb->Link = TRUE;
+        reparse_changed(file, fcb);
+    }
+    return status;
+}
+
+/* FSCTL_GET_REPARSE_POINT: the data of the link, built the way the one that made it would have. */
+static NTSTATUS reparse_get(PIRP irp, MIMEFS_FCB *fcb, ULONG out_length, PULONG written)
+{
+    if (!fcb->Link || !fcb->HostHandle)
+        return STATUS_NOT_A_REPARSE_POINT;
+    MimeFsReparse *r = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*r), KI_TAG('M', 'f', 'R', 'p'));
+    if (!r)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_GET_REPARSE, fcb->HostHandle, HalPhysicalOf(r), 0, 0, 0, 0, nullptr);
+    NTSTATUS status = reparse_host_status(hs);
+    if (!NT_SUCCESS(status)) {
+        ExFreePool(r);
+        return status;
+    }
+    ULONG sl = r->substitute_chars * sizeof(WCHAR), pl = r->print_chars * sizeof(WCHAR);
+    BOOLEAN junction = r->tag == IO_REPARSE_TAG_MOUNT_POINT;
+    /* a symbolic link keeps the print name first, as CreateSymbolicLink writes it, a junction the substitute name. */
+    ULONG header = junction ? 16 : 20, total = header + sl + pl + (junction ? 4 : 0);
+    PUCHAR whole = ExAllocatePool2(POOL_FLAG_NON_PAGED, total, KI_TAG('M', 'f', 'R', 'q'));
+    if (!whole) {
+        ExFreePool(r);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    memset(whole, 0, total);
+    REPARSE_DATA_BUFFER *b = (REPARSE_DATA_BUFFER *)whole;
+    const WCHAR *sub = r->names, *print = r->names + r->substitute_chars;
+    b->ReparseTag = r->tag;
+    b->ReparseDataLength = (USHORT)(total - REPARSE_DATA_BUFFER_HEADER_SIZE);
+    if (junction) {
+        b->MountPointReparseBuffer.SubstituteNameOffset = 0;
+        b->MountPointReparseBuffer.SubstituteNameLength = (USHORT)sl;
+        b->MountPointReparseBuffer.PrintNameOffset = (USHORT)(sl + 2);
+        b->MountPointReparseBuffer.PrintNameLength = (USHORT)pl;
+        memcpy(whole + header, sub, sl);
+        memcpy(whole + header + sl + 2, print, pl);
+    } else {
+        b->SymbolicLinkReparseBuffer.SubstituteNameOffset = (USHORT)pl;
+        b->SymbolicLinkReparseBuffer.SubstituteNameLength = (USHORT)sl;
+        b->SymbolicLinkReparseBuffer.PrintNameOffset = 0;
+        b->SymbolicLinkReparseBuffer.PrintNameLength = (USHORT)pl;
+        b->SymbolicLinkReparseBuffer.Flags = r->flags;
+        memcpy(whole + header, print, pl);
+        memcpy(whole + header + pl, sub, sl);
+    }
+    ExFreePool(r);
+    if (out_length < REPARSE_DATA_BUFFER_HEADER_SIZE) {
+        ExFreePool(whole);
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    ULONG copy = out_length < total ? out_length : total;
+    memcpy(irp->UserBuffer, whole, copy);
+    ExFreePool(whole);
+    *written = copy;
+    return copy < total ? STATUS_BUFFER_OVERFLOW : STATUS_SUCCESS;
+}
+
+/* FSCTL_DELETE_REPARSE_POINT: the empty file or directory that the link was made from is left. */
+static NTSTATUS reparse_delete(PFILE_OBJECT file, MIMEFS_FCB *fcb, const REPARSE_DATA_BUFFER *b, ULONG length)
+{
+    if (KeGetPreviousMode() == UserMode && !(fcb->Access & (FILE_WRITE_DATA | FILE_WRITE_ATTRIBUTES)))
+        return STATUS_ACCESS_DENIED;
+    if (length < REPARSE_DATA_BUFFER_HEADER_SIZE)
+        return STATUS_IO_REPARSE_DATA_INVALID;
+    ULONG tag = b->ReparseTag;
+    if (!(tag & 0x80000000u) && length < REPARSE_GUID_DATA_BUFFER_HEADER_SIZE)
+        return STATUS_IO_REPARSE_DATA_INVALID;
+    if (b->ReparseDataLength != 0)
+        return STATUS_IO_REPARSE_DATA_INVALID;
+    if (!fcb->Link || !fcb->HostHandle)
+        return STATUS_NOT_A_REPARSE_POINT;
+    ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_DELETE_REPARSE, fcb->HostHandle, tag, 0, 0, 0, 0, nullptr);
+    NTSTATUS status = reparse_host_status(hs);
+    if (NT_SUCCESS(status)) {
+        fcb->Link = FALSE;
+        reparse_changed(file, fcb);
+    }
+    return status;
+}
+
 static NTSTATUS NTAPI mimefs_fs_control(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
     MIMEFS_VOLUME *vol = device->DeviceExtension;
     ULONG length = stack->Parameters.DeviceIoControl.OutputBufferLength;
-    switch (stack->Parameters.DeviceIoControl.IoControlCode) {
+    ULONG code = stack->Parameters.DeviceIoControl.IoControlCode;
+    if (code == FSCTL_SET_REPARSE_POINT || code == FSCTL_GET_REPARSE_POINT || code == FSCTL_DELETE_REPARSE_POINT) {
+        PFILE_OBJECT file = stack->FileObject;
+        MIMEFS_FCB *fcb = file->FsContext;
+        if (!fcb)
+            return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+        if (fcb->Rom || fcb->StatOnly)
+            return complete(irp, code == FSCTL_GET_REPARSE_POINT ? STATUS_NOT_A_REPARSE_POINT : STATUS_ACCESS_DENIED, 0);
+        ULONG in_length = stack->Parameters.DeviceIoControl.InputBufferLength, written = 0;
+        NTSTATUS status;
+        if (code == FSCTL_SET_REPARSE_POINT)
+            status = reparse_set(irp, file, fcb, irp->AssociatedIrp.SystemBuffer, in_length);
+        else if (code == FSCTL_DELETE_REPARSE_POINT)
+            status = reparse_delete(file, fcb, irp->AssociatedIrp.SystemBuffer, in_length);
+        else
+            status = reparse_get(irp, fcb, length, &written);
+        return complete(irp, status, written);
+    }
+    switch (code) {
     case FSCTL_FILESYSTEM_GET_STATISTICS:
         return fs_statistics(irp, vol, length, FALSE);
     case FSCTL_FILESYSTEM_GET_STATISTICS_EX:

@@ -715,7 +715,7 @@ static NTSTATUS query_by_name(POBJECT_ATTRIBUTES attributes, PVOID info, ULONG l
     /* a name only queried is not opened on the host, the open returns the attributes. */
     status = IopCreateFileEx(&h, FILE_READ_ATTRIBUTES | SYNCHRONIZE, &oa, &io, 0,
                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN,
-                             FILE_SYNCHRONOUS_IO_NONALERT, KernelMode, TRUE);
+                             FILE_SYNCHRONOUS_IO_NONALERT | FILE_OPEN_REPARSE_POINT | FILE_OPEN_FOR_BACKUP_INTENT, KernelMode, TRUE);
     if (NT_SUCCESS(status)) {
         PFILE_OBJECT file;
         status = ObReferenceHandle(h, IoFileObjectTypeObject, KernelMode, (PVOID *)&file, nullptr);

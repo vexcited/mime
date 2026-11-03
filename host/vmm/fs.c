@@ -27,6 +27,7 @@
 #define FILE_ATTRIBUTE_READONLY 0x01
 #define FILE_ATTRIBUTE_HIDDEN 0x02
 #define FILE_ATTRIBUTE_DIRECTORY 0x10
+#define FILE_ATTRIBUTE_REPARSE_POINT 0x400
 #define FILE_ATTRIBUTE_ARCHIVE 0x20
 #define FILE_ATTRIBUTE_NORMAL 0x80
 
@@ -44,6 +45,11 @@ static uint64_t errno_status(int err)
     case ENOTEMPTY: return MIME_HC_STATUS_NOT_EMPTY;
     default: return MIME_HC_STATUS_IO_ERROR;
     }
+}
+
+uint64_t mime_fs_status_of(int err)
+{
+    return errno_status(err);
 }
 
 /*
@@ -171,8 +177,18 @@ static void fill_info(const MimeFsStat *s, const char *path, int fd, const char 
     /* a directory is one name on ntfs, where the host counts the entries that point back to it. */
     info->links = dir ? 1 : (uint32_t)st->st_nlink;
     uint32_t attrs = dir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_ARCHIVE;
-    if (!(st->st_mode & S_IWUSR))
+    if (S_ISLNK(st->st_mode)) {
+        /* a link has no data of its own, and the permissions of a host link are not its own to give. */
+        bool linked_dir = false;
+        uint32_t tag = MIME_REPARSE_TAG_SYMLINK;
+        mime_fs_link_kind(path, &tag, &linked_dir);
+        info->size = info->allocation_size = 0;
+        info->links = 1;
+        info->reparse_tag = tag;
+        attrs = FILE_ATTRIBUTE_REPARSE_POINT | (linked_dir ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_ARCHIVE);
+    } else if (!(st->st_mode & S_IWUSR)) {
         attrs |= FILE_ATTRIBUTE_READONLY;
+    }
     if (name && name[0] == '.' && strcmp(name, ".") != 0 && strcmp(name, "..") != 0)
         attrs |= FILE_ATTRIBUTE_HIDDEN;
     info->attributes = attrs;
@@ -225,6 +241,11 @@ static void match_case(char *path, size_t root_length)
             return;
         component = end + 1;
     }
+}
+
+void mime_fs_match_case(char *path, size_t root_length)
+{
+    match_case(path, root_length);
 }
 
 /* converts a guest volume path to a host path, refusing to escape the volume. */
@@ -341,7 +362,7 @@ static void free_handle(MimeVm *vm, uint64_t h)
     if (fh->delete_on_close && fh->host_path) {
         MimeFsStat gone;
         MimeFsTimes times = {};
-        bool known = mime_fs_stat(fh->host_path, &gone) == 0;
+        bool known = (fh->is_link ? mime_fs_lstat(fh->host_path, &gone) : mime_fs_stat(fh->host_path, &gone)) == 0;
         if (known) {
             mime_fs_times(fh->host_path, -1, &gone, &times);
             pthread_mutex_lock(&vm->fs_lock);
@@ -405,6 +426,18 @@ static uint64_t fs_set_basic(MimeVm *vm, MimeFsHandle *fh, uint64_t pa)
     if (!basic || fh->fd < 0)
         return MIME_HC_STATUS_INVALID;
     MimeFsBasic b = *basic;
+    if (fh->is_link) {
+        /* a link keeps the times of the host's link and no attributes of its own. */
+        struct timespec times[2] = {{.tv_nsec = UTIME_OMIT}, {.tv_nsec = UTIME_OMIT}};
+        if (b.mask & MIME_FS_BASIC_ACCESS)
+            times[0] = filetime_to_ts(b.access_time);
+        if (b.mask & MIME_FS_BASIC_WRITE)
+            times[1] = filetime_to_ts(b.write_time);
+        if ((b.mask & (MIME_FS_BASIC_ACCESS | MIME_FS_BASIC_WRITE)) &&
+            utimensat(AT_FDCWD, fh->host_path, times, AT_SYMLINK_NOFOLLOW) != 0)
+            return errno_status(errno);
+        return MIME_HC_STATUS_OK;
+    }
     bool change_kept = (fh->frozen & MIME_FS_TIME_CHANGE) || (b.freeze & MIME_FS_TIME_CHANGE);
     bool changed = false;
     if (b.mask & MIME_FS_BASIC_TOUCH) {
@@ -458,6 +491,75 @@ static void open_fill_sd(MimeVm *vm, MimeFsOpen *req, const char *path);
 /* an open by id gives the name back, as the guest keeps names. */
 static uint64_t fs_open_path(MimeVm *vm, MimeFsOpen *req, const char *path);
 
+/* a link on the way: the guest gets the tag, where the link ends in its path and the names the link holds. */
+static uint64_t fs_reparse_reply(MimeVm *vm, MimeFsOpen *req, const char *path, size_t through, int component)
+{
+    char link[MIME_PATH_MAX];
+    memcpy(link, path, through);
+    link[through] = 0;
+    MimeFsReparse r;
+    if (!mime_fs_link_read(vm, link, &r))
+        return MIME_HC_STATUS_IO_ERROR;
+    uint32_t prefix = mime_fs_guest_prefix(req->path, req->path_chars, component);
+    uint32_t chars = r.substitute_chars + r.print_chars;
+    if (!prefix || chars > MIME_ARRAY_COUNT(req->path))
+        return MIME_HC_STATUS_INVALID;
+    req->reparse_tag = r.tag;
+    req->reparse_flags = r.flags;
+    req->reparse_prefix = prefix;
+    req->reparse_substitute = r.substitute_chars;
+    memcpy(req->path, r.names, chars * sizeof(uint16_t));
+    req->path_chars = chars;
+    return MIME_HC_STATUS_REPARSE;
+}
+
+/* a link opened as itself: no data, the times and name of the link. */
+static uint64_t fs_open_link(MimeVm *vm, MimeFsOpen *req, const char *path, const MimeFsStat *ls)
+{
+    uint32_t tag;
+    bool directory;
+    if (!mime_fs_link_kind(path, &tag, &directory))
+        return MIME_HC_STATUS_NOT_FOUND;
+    if (req->disposition == MIME_FS_DISP_CREATE)
+        return MIME_HC_STATUS_EXISTS;
+    if ((req->flags & MIME_FS_OPEN_DIRECTORY) && !directory)
+        return MIME_HC_STATUS_NOT_DIRECTORY;
+    if ((req->flags & MIME_FS_OPEN_NON_DIRECTORY) && directory)
+        return MIME_HC_STATUS_IS_DIRECTORY;
+    const char *leaf = strrchr(path, '/');
+    leaf = leaf ? leaf + 1 : path;
+    if (req->flags & MIME_FS_OPEN_STAT_ONLY) {
+        fill_info(ls, path, -1, leaf, &req->info_out);
+        req->handle_out = 0;
+        req->action_out = FILE_OPENED;
+        open_fill_sd(vm, req, path);
+        return MIME_HC_STATUS_OK;
+    }
+    int fd = mime_fs_open_link(path);
+    if (fd < 0)
+        return errno_status(errno);
+    MimeFsHandle *fh = mime_xcalloc(1, sizeof(*fh));
+    fh->fd = fd;
+    fh->is_link = true;
+    fh->volume = req->volume;
+    fh->host_path = mime_xstrdup(path);
+    uint64_t h = alloc_handle(vm, fh);
+    if (!h) {
+        close(fd);
+        free(fh->host_path);
+        free(fh);
+        return MIME_HC_STATUS_NO_MEMORY;
+    }
+    MimeFsStat ms;
+    if (mime_fs_fstat(fd, &ms) != 0)
+        ms = *ls;
+    fill_info(&ms, path, fd, leaf, &req->info_out);
+    req->handle_out = h;
+    req->action_out = FILE_OPENED;
+    open_fill_sd(vm, req, path);
+    return MIME_HC_STATUS_OK;
+}
+
 static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
 {
     char path[MIME_PATH_MAX];
@@ -481,12 +583,23 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
     }
     if (!host_path(vm, req->volume, req->path, req->path_chars, path, sizeof(path)))
         return MIME_HC_STATUS_INVALID;
+    /* a link in the path is for the guest to follow, which it does by opening the name its target gives. */
+    size_t through;
+    int component = mime_fs_find_link(path, req->volume == MIME_FS_VOLUME_SYSTEM ? strlen(vm->paths->drive_c) : 0,
+                                      (req->flags & MIME_FS_OPEN_REPARSE_POINT) != 0, &through);
+    if (component)
+        return fs_reparse_reply(vm, req, path, through, component);
     return fs_open_path(vm, req, path);
 }
 
 static uint64_t fs_open_path(MimeVm *vm, MimeFsOpen *req, const char *path)
 {
     MimeFsStat ms;
+    if (req->flags & MIME_FS_OPEN_REPARSE_POINT) {
+        MimeFsStat ls;
+        if (mime_fs_lstat(path, &ls) == 0 && S_ISLNK(ls.st.st_mode))
+            return fs_open_link(vm, req, path, &ls);
+    }
     bool exists = mime_fs_stat(path, &ms) == 0;
     struct stat st = ms.st;
     if (req->flags & MIME_FS_OPEN_STAT_ONLY) {
@@ -658,7 +771,7 @@ static void load_dir(MimeFsHandle *fh)
         char full[MIME_PATH_MAX];
         mime_path_join(full, sizeof(full), fh->host_path, e->d_name);
         MimeFsStat st;
-        if (mime_fs_stat(full, &st) != 0)
+        if (mime_fs_lstat(full, &st) != 0)
             continue;
         if (count == capacity) {
             capacity *= 2;
@@ -687,9 +800,9 @@ static void load_dir(MimeFsHandle *fh)
 #define sd_remove_attribute(path) removexattr((path), SD_ATTRIBUTE, 0)
 #else
 #define SD_ATTRIBUTE "user.mime.security"
-#define sd_get_attribute(path, buf, size) getxattr((path), SD_ATTRIBUTE, (buf), (size))
-#define sd_set_attribute(path, buf, size) setxattr((path), SD_ATTRIBUTE, (buf), (size), 0)
-#define sd_remove_attribute(path) removexattr((path), SD_ATTRIBUTE)
+#define sd_get_attribute(path, buf, size) lgetxattr((path), SD_ATTRIBUTE, (buf), (size))
+#define sd_set_attribute(path, buf, size) lsetxattr((path), SD_ATTRIBUTE, (buf), (size), 0)
+#define sd_remove_attribute(path) lremovexattr((path), SD_ATTRIBUTE)
 #endif
 
 #define SD_MAX_BYTES (64u << 10)
@@ -757,7 +870,7 @@ static ssize_t sd_read_path(const char *path, bool memory_only, void *buf, size_
     if (!g_sd_memory_count)
         return 0;
     struct stat st;
-    if (stat(path, &st) != 0)
+    if (lstat(path, &st) != 0)
         return 0;
     SdMemory *m = sd_memory_find(&st);
     if (!m)
@@ -876,7 +989,7 @@ static uint64_t fs_set_sd(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, uint64_t le
     if (length > SD_MAX_BYTES || (length && !buf))
         return MIME_HC_STATUS_INVALID;
     struct stat st;
-    if (stat(fh->host_path, &st) != 0)
+    if (lstat(fh->host_path, &st) != 0)
         return errno_status(errno);
     if (fh->volume == MIME_FS_VOLUME_SYSTEM) {
         if (!length) {
@@ -1051,6 +1164,8 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             status = MIME_HC_STATUS_INVALID;
             break;
         }
+        if (fh->is_link)
+            return MIME_HC_STATUS_OK;
         /* the flush takes milliseconds and the other files must not wait for it, so it runs on a duplicate. */
         int fd = dup(fh->fd);
         if (fd < 0) {
@@ -1067,6 +1182,10 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         void *buf = mime_vm_phys(vm, a[3], a[4]);
         if (!fh || !buf) {
             status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        if (fh->is_link) {
+            status = nr == MIME_HC_FS_WRITE ? MIME_HC_STATUS_ACCESS_DENIED : MIME_HC_STATUS_OK;
             break;
         }
         if (fh->is_dir) {
@@ -1161,6 +1280,10 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     }
     case MIME_HC_FS_READDIR: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
+        if (fh && fh->is_link) {
+            regs[1] = 0;
+            break;
+        }
         /* batch directory entries to avoid one guest exit per entry. */
         uint64_t want = a[4] ? MIME_MIN(a[4], 64u) : 1;
         MimeFsDirEntry *de = mime_vm_phys(vm, a[3], want * sizeof(MimeFsDirEntry));
@@ -1184,7 +1307,7 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     }
     case MIME_HC_FS_SET_SIZE: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
-        if (!fh || fh->is_dir)
+        if (!fh || fh->is_dir || fh->is_link)
             status = MIME_HC_STATUS_INVALID;
         else {
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
@@ -1272,6 +1395,27 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             mime_fs_times_changed(src->host_path, src->fd);
         break;
     }
+    case MIME_HC_FS_SET_REPARSE:
+    case MIME_HC_FS_GET_REPARSE:
+    case MIME_HC_FS_DELETE_REPARSE: {
+        MimeFsHandle *fh = get_handle(vm, a[1]);
+        if (!fh) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        if (nr == MIME_HC_FS_GET_REPARSE) {
+            status = mime_fs_reparse_get(vm, fh, a[2]);
+            break;
+        }
+        pthread_mutex_lock(&vm->fs_lock);
+        g_sd_generation++;
+        pthread_mutex_unlock(&vm->fs_lock);
+        status = nr == MIME_HC_FS_SET_REPARSE ? mime_fs_reparse_set(vm, fh, a[2])
+                                              : mime_fs_reparse_delete(vm, fh, (uint32_t)a[2]);
+        if (status == MIME_HC_STATUS_OK && fh->host_path)
+            mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
+        break;
+    }
     case MIME_HC_FS_LINKS: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
         status = fh ? mime_fs_links(vm, fh, a[2], a[3], &regs[1]) : MIME_HC_STATUS_INVALID;
@@ -1280,7 +1424,7 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     case MIME_HC_FS_MAP: {
         MimeFsHandle *fh = get_handle(vm, a[1]);
         pthread_mutex_lock(WINDOW_LOCK(vm));
-        status = fh && !fh->is_dir ? mime_window_map(vm, fh->fd, (a[2] & MIME_FS_MAP_WRITABLE) != 0, &regs[1])
+        status = fh && !fh->is_dir && !fh->is_link ? mime_window_map(vm, fh->fd, (a[2] & MIME_FS_MAP_WRITABLE) != 0, &regs[1])
                                     : MIME_HC_STATUS_INVALID;
         pthread_mutex_unlock(WINDOW_LOCK(vm));
         if (fh && status == MIME_HC_STATUS_OK && !fh->no_access_update)

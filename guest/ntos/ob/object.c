@@ -305,8 +305,35 @@ static void remove_from_directory(OBJECT_HEADER *h)
  * symbolic links are followed. when a component has a parse procedure, as devices do, the rest of the
  * path is handed to it, which is how file opens reach file system drivers.
  */
-NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes, POBJECT_TYPE type,
-                            KPROCESSOR_MODE mode, PVOID parse_context, PVOID *object)
+/* the most names a lookup is sent on to, by links of the namespace and by links of the file systems together. */
+#define OB_MAX_REPARSE 63
+
+/*
+ * a parse procedure answered STATUS_REPARSE: the complete name that it gives replaces the path, and the lookup begins again at
+ * the root. the name is a block of the pool that is freed here.
+ */
+static NTSTATUS take_reparse(PUNICODE_STRING name, WCHAR *path, ULONG *length, ULONG attributes, ULONG *reparsed)
+{
+    NTSTATUS status = STATUS_REPARSE;
+    ULONG n = name->Length / sizeof(WCHAR);
+    if (attributes & OBJ_DONT_REPARSE_)
+        status = STATUS_REPARSE_POINT_ENCOUNTERED;
+    else if (++*reparsed > OB_MAX_REPARSE)
+        status = STATUS_REPARSE_POINT_NOT_RESOLVED;
+    else if (n >= 1024)
+        status = STATUS_NAME_TOO_LONG;
+    else {
+        memcpy(path, name->Buffer, name->Length);
+        path[n] = 0;
+        *length = n;
+    }
+    ExFreePool(name->Buffer);
+    name->Buffer = nullptr;
+    return status;
+}
+
+static NTSTATUS lookup_name(PUNICODE_STRING name, HANDLE root, ULONG attributes, POBJECT_TYPE type, KPROCESSOR_MODE mode,
+                            PVOID parse_context, PVOID *object, ULONG *reparsed)
 {
     /* no name means an empty one: the root directory itself, or without a root a name nobody can parse. */
     UNICODE_STRING nothing = {};
@@ -338,8 +365,20 @@ NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes,
             POBJECT_TYPE t = OBJECT_TO_HEADER(current)->Type;
             NTSTATUS st = STATUS_OBJECT_TYPE_MISMATCH;
             if (t->Init.ParseProcedure) {
-                UNICODE_STRING remaining = *name;
-                st = t->Init.ParseProcedure(current, type, attributes, name, &remaining, parse_context, object);
+                UNICODE_STRING complete = *name, remaining = *name;
+                st = t->Init.ParseProcedure(current, type, attributes, &complete, &remaining, parse_context, object);
+                if (st == STATUS_REPARSE) {
+                    /* the name is a whole one, so the lookup is made again without the root. */
+                    ULONG n = 0;
+                    st = take_reparse(&complete, path, &n, attributes, reparsed);
+                    if (st == STATUS_REPARSE) {
+                        UNICODE_STRING again = {(USHORT)(n * 2), (USHORT)(n * 2), path};
+                        ObDereferenceObject(current);
+                        st = lookup_name(&again, nullptr, attributes, type, mode, parse_context, object, reparsed);
+                        ExFreePool(path);
+                        return st;
+                    }
+                }
             }
             ObDereferenceObject(current);
             ExFreePool(path);
@@ -364,7 +403,7 @@ NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes,
     path[len] = 0;
     ULONG pos = 0;
     NTSTATUS status = STATUS_SUCCESS;
-    int reparse = 0, bypass = -1;
+    int bypass = -1;
 
     for (;;) {
         OBJECT_HEADER *ch = OBJECT_TO_HEADER(current);
@@ -375,6 +414,15 @@ NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes,
             status = ch->Type->Init.ParseProcedure(current, type, attributes, &complete, &remaining, parse_context,
                                                    object);
             ObDereferenceObject(current);
+            if (status == STATUS_REPARSE) {
+                status = take_reparse(&complete, path, &len, attributes, reparsed);
+                if (status == STATUS_REPARSE) {
+                    pos = 0;
+                    current = ObRootDirectory;
+                    ObReferenceObject(current);
+                    continue;
+                }
+            }
             break;
         }
         while (pos < len && path[pos] == '\\')
@@ -424,7 +472,9 @@ NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes,
             POBJECT_SYMBOLIC_LINK link = next;
             ULONG tlen = link->Target.Length / sizeof(WCHAR);
             ULONG rest = len - pos;
-            if (tlen + rest >= 1024 || ++reparse > 32) {
+            /* the aliases of the dos devices are not links a program made, and do not count. */
+            BOOLEAN alias = link->Target.Length == 9 * sizeof(WCHAR) && !memcmp(link->Target.Buffer, L"\\GLOBAL??", 9 * sizeof(WCHAR));
+            if (tlen + rest >= 1024 || (!alias && ++*reparsed > OB_MAX_REPARSE)) {
                 status = STATUS_NAME_TOO_LONG;
                 ObDereferenceObject(current);
                 break;
@@ -441,6 +491,13 @@ NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes,
     }
     ExFreePool(path);
     return status;
+}
+
+NTSTATUS ObLookupObjectName(PUNICODE_STRING name, HANDLE root, ULONG attributes, POBJECT_TYPE type,
+                            KPROCESSOR_MODE mode, PVOID parse_context, PVOID *object)
+{
+    ULONG reparsed = 0;
+    return lookup_name(name, root, attributes, type, mode, parse_context, object, &reparsed);
 }
 
 NTSTATUS NTAPI ObReferenceObjectByName(PUNICODE_STRING name, ULONG attributes, PVOID access_state,

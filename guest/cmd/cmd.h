@@ -21,9 +21,6 @@
 #define SW_SHOWMAXIMIZED 3
 #define SW_SHOWMINNOACTIVE 7
 #endif
-#ifndef SYMBOLIC_LINK_FLAG_DIRECTORY
-#define SYMBOLIC_LINK_FLAG_DIRECTORY 1
-#endif
 
 static inline WCHAR *wcspbrk(const WCHAR *s, const WCHAR *set)
 {
