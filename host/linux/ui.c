@@ -19,6 +19,8 @@
 
 #define MAX_WINDOWS 256
 #define MAX_VK_LAYERS 8
+/* where a layer with no visible part waits, far from every screen. */
+#define HIDDEN_LAYER 100000
 
 /* a surface over the window for each window of the guest that presents, stacked by the guest's paint order. */
 typedef struct VkLayer {
@@ -1640,12 +1642,17 @@ static void place_layer(UiWindow *w, VkLayer *l, MimeRect area, uint32_t order)
     bool restack = l->order != order;
     l->order = order;
     if (r.right <= r.left || r.bottom <= r.top) {
-        /* nothing of it shows: an empty buffer takes it off until the next frame. */
-        wl_surface_attach(l->surface, nullptr, 0, 0);
-        wl_surface_commit(l->surface);
-        l->place = r;
+        /*
+         * nothing of it shows: it moves away from the window until the next place. The surface is the driver's, and
+         * a commit of ours between its sync points and its buffer ends the connection with an error of the compositor.
+         */
+        if (memcmp(&r, &l->place, sizeof(r))) {
+            l->place = r;
+            wl_subsurface_set_position(l->subsurface, -HIDDEN_LAYER, -HIDDEN_LAYER);
+        }
         if (restack)
             restack_layers(w);
+        commit_parent(w);
         return;
     }
     if (!restack && !memcmp(&r, &l->place, sizeof(r)))
