@@ -1219,9 +1219,9 @@ static void deactivate_minimized(WND *w)
     InputSetForeground(nullptr);
     if (w->Thread)
         w->Thread->Active = nullptr;
-    MsgSend(w, WM_NCACTIVATE, FALSE, 0);
+    MsgSendEvent(w, WM_NCACTIVATE, FALSE, 0);
     if (alive(w))
-        MsgSend(w, WM_ACTIVATE, MAKEWPARAM(WA_INACTIVE, TRUE), 0);
+        MsgSendEvent(w, WM_ACTIVATE, MAKEWPARAM(WA_INACTIVE, TRUE), 0);
 }
 
 void WndShow(WND *w, int cmd)
@@ -1414,10 +1414,10 @@ void WndActivate(WND *w, BOOLEAN click)
     old = InputForeground;
     if (old && alive(old)) {
         UserReference(&old->Header);
-        MsgSend(old, WM_NCACTIVATE, FALSE, (LPARAM)WndHandle(w));
-        MsgSend(old, WM_ACTIVATE, MAKEWPARAM(WA_INACTIVE, (old->Style & WS_MINIMIZE) != 0), (LPARAM)WndHandle(w));
+        MsgSendEvent(old, WM_NCACTIVATE, FALSE, (LPARAM)WndHandle(w));
+        MsgSendEvent(old, WM_ACTIVATE, MAKEWPARAM(WA_INACTIVE, (old->Style & WS_MINIMIZE) != 0), (LPARAM)WndHandle(w));
         if (old->Thread && w->Thread && old->Thread->Process != w->Thread->Process)
-            MsgSend(old, WM_ACTIVATEAPP, FALSE, (LPARAM)w->Thread->Tid);
+            MsgSendEvent(old, WM_ACTIVATEAPP, FALSE, (LPARAM)w->Thread->Tid);
         if (old->Thread && old->Thread != w->Thread)
             old->Thread->Active = nullptr;
         UserDereference(&old->Header);
@@ -1436,10 +1436,10 @@ void WndActivate(WND *w, BOOLEAN click)
     }
     WndUpdateHostConfig(w, !WndActivatedByHost);
     if (!old || !old->Thread || !w->Thread || old->Thread->Process != w->Thread->Process)
-        MsgSend(w, WM_ACTIVATEAPP, TRUE, old && old->Thread ? (LPARAM)old->Thread->Tid : 0);
-    MsgSend(w, WM_NCACTIVATE, TRUE, (LPARAM)WndHandle(old));
-    MsgSend(w, WM_ACTIVATE, MAKEWPARAM(click ? WA_CLICKACTIVE : WA_ACTIVE, (w->Style & WS_MINIMIZE) != 0),
-            (LPARAM)WndHandle(old));
+        MsgSendEvent(w, WM_ACTIVATEAPP, TRUE, old && old->Thread ? (LPARAM)old->Thread->Tid : 0);
+    MsgSendEvent(w, WM_NCACTIVATE, TRUE, (LPARAM)WndHandle(old));
+    MsgSendEvent(w, WM_ACTIVATE, MAKEWPARAM(click ? WA_CLICKACTIVE : WA_ACTIVE, (w->Style & WS_MINIMIZE) != 0),
+                 (LPARAM)WndHandle(old));
 done:
     UserDereference(&w->Header);
 }

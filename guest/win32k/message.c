@@ -511,6 +511,19 @@ LRESULT MsgSend(WND *w, UINT msg, WPARAM wparam, LPARAM lparam)
     return MsgSendKernel(w, msg, wparam, lparam, MIME_LPARAM_VALUE, 0);
 }
 
+/*
+ * the messages of a change of activation or focus for a window of another thread are queued for that thread, which
+ * sees them in order when it next looks at its messages. The thread that changes the foreground does not wait for
+ * them: the thread that loses it may be waiting for this one, as a program waits for its splash screen to end.
+ */
+LRESULT MsgSendEvent(WND *w, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    W32THREAD *target = w ? w->Thread : nullptr;
+    if (target && target != W32GetThread() && !target->Destroying && !w->Header.Destroyed)
+        return send_to_thread(target, w, msg, wparam, lparam, MIME_LPARAM_VALUE, 0, TRUE, nullptr);
+    return MsgSend(w, msg, wparam, lparam);
+}
+
 /* timers. */
 
 typedef struct TIMER {

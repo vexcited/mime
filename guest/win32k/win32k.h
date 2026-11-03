@@ -943,6 +943,7 @@ void MsgCaptureFree(MSG_CAPTURE *c);
 void MsgCaptureFinish(MSG_CAPTURE *c, LRESULT *result, BOOLEAN completed);
 
 LRESULT MsgSend(WND *w, UINT msg, WPARAM wparam, LPARAM lparam);
+LRESULT MsgSendEvent(WND *w, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT MsgSendKernel(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, ULONG lparam_kind, ULONG lparam_size);
 LRESULT MsgCallWindowProc(WND *w, WNDPROC proc, BOOLEAN ansi, UINT msg, WPARAM wparam, LPARAM lparam,
                           ULONG lparam_kind, ULONG lparam_size);
