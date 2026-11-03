@@ -7,7 +7,7 @@
  *   target        a symbolic link to a file
  *   target/       a symbolic link to a directory
  *   target/.      a junction
- *   target/./.     a symbolic link made as a file link, to a directory
+ *   target/./.    a symbolic link made as a file link, to a directory
  *
  * a link with none of these is a file link, unless it points to a directory, which makes it a directory link: that is what
  * a link made by a program of the host is.
@@ -49,7 +49,7 @@ static bool split_text(const char *link, char *text, size_t size, bool *junction
     size_t length = (size_t)n;
     text[length] = 0;
     *junction = *directory = false;
-    if (length >= 6 && !strcmp(text + length - 4, "/./.")) {
+    if (length >= 5 && !strcmp(text + length - 4, "/./.")) {
         forced_file = true;
         text[length -= 4] = 0;
     } else if (length >= 3 && !strcmp(text + length - 2, "/.")) {
@@ -127,6 +127,9 @@ bool mime_fs_link_read(MimeVm *vm, const char *link, MimeFsReparse *r)
     }
     if (junction)
         r->flags = 0;
+    /* a target that does not fit is not given in part, which would be another path. */
+    if (strlen(substitute) > MIME_REPARSE_MAX_NAME / 2 || strlen(print) > MIME_REPARSE_MAX_NAME / 2)
+        return false;
     put_names(r, substitute, print);
     return true;
 }
