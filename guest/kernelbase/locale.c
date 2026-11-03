@@ -347,9 +347,12 @@ int WINAPI LCIDToLocaleName(LCID locale, LPWSTR name, int size, DWORD flags)
         return 0;
     }
     LCID resolved = KbResolveLcid(locale);
-    /* Dari maps to the Persian locale of Iran. */
-    if ((resolved & 0xFFFF) == 0x008C)
+    /* Dari maps to the Persian locale of Iran, and to the neutral Persian one when neutral names are allowed. */
+    if ((resolved & 0xFFFF) == 0x008C) {
+        if (flags & LOCALE_ALLOW_NEUTRAL_NAMES)
+            return copy_locale_name(L"fa", name, size);
         resolved = (resolved & ~0xFFFFu) | 0x0429;
+    }
     /* alternate sorts have names of their own. */
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_alternate_sorts); i++)
         if (g_alternate_sorts[i].Lcid == resolved)
@@ -648,6 +651,7 @@ typedef struct LOCALE_VALUE {
     PCWSTR Text;  /* string value, or NULL when numeric. */
     DWORD Number;
     BOOL Hex;     /* printed as four hex digits. */
+    BOOL Width3;  /* printed with at least three digits. */
     BOOL Binary;  /* LOCALE_FONTSIGNATURE. */
 } LOCALE_VALUE;
 
@@ -691,6 +695,7 @@ static BOOL locale_value(UINT locale, LCTYPE type, BOOL genitive, LOCALE_VALUE *
     else {
         v->Number = (DWORD)KbLocaleNumber(locale, item->Slot);
         v->Hex = item->Kind == 2;
+        v->Width3 = item->Kind == 3;
     }
     return TRUE;
 }
@@ -748,7 +753,7 @@ static int get_locale_info(UINT locale, LCTYPE lctype, LPWSTR data, int size)
     WCHAR number[16];
     PCWSTR text = v.Text;
     if (!text) {
-        KbFormat(number, RTL_NUMBER_OF(number), v.Hex ? L"%04x" : L"%u", v.Number);
+        KbFormat(number, RTL_NUMBER_OF(number), v.Hex ? L"%04x" : v.Width3 ? L"%03u" : L"%u", v.Number);
         text = number;
     }
     int n = (int)wcslen(text) + 1;
