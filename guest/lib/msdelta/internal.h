@@ -59,7 +59,7 @@ int64_t MdIntFormatNumber(const MD_INT_FORMAT *format, MD_BITS *bits);
 
 /* ------------------------------------------------------------------ rift tables */
 
-/* a rift table says how positions move: the pair (left, right) starts a stretch that ends before the next left. */
+/* a rift table says how positions move: a pair of a left and a right position starts a stretch that ends before the next left. */
 typedef struct MD_RIFT_ENTRY {
     int64_t Left, Right;
 } MD_RIFT_ENTRY;
