@@ -117,7 +117,11 @@ INT KbLocaleNumber(UINT locale, UINT slot);
 BOOL KbLocaleIsNeutral(UINT locale);
 UINT KbLocaleSpecific(UINT locale);
 const UINT8 *KbLocaleCalendars(UINT locale);
-PCWSTR KbLocaleCalendarText(UINT locale, UINT kind, UINT slot);
+PCWSTR KbLocaleCalendarText(UINT locale, CALID cal, UINT slot);
+PCWSTR KbLocaleCalendarList(UINT locale, CALID cal, CALTYPE type);
+BOOL KbLocaleCalendarFacts(CALID cal, UINT *offset_range, UINT *two_digit_max);
+UINT KbLocaleCalendarTypeKind(CALTYPE type);
+BOOL KbLocaleSupportsCalendar(UINT locale, CALID cal);
 
 /* calendar.c: dates in the windows calendars. */
 typedef struct KB_CALDATE {
@@ -127,13 +131,11 @@ typedef struct KB_CALDATE {
 } KB_CALDATE;
 
 BOOL KbValidCalendar(CALID cal);
-BOOL KbLocaleSupportsCalendar(UINT locale, CALID cal);
 BOOL KbCalendarDate(CALID cal, LONG jdn, KB_CALDATE *out);
 LONG KbGregorianToJdn(int year, int month, int day);
 int KbDaysInGregorianMonth(int year, int month);
 PCWSTR KbCalendarMonthName(UINT locale, CALID cal, int month, BOOL abbreviated, BOOL genitive);
 PCWSTR KbCalendarEraName(UINT locale, CALID cal, int era, BOOL abbreviated);
-UINT KbCalendarLocale(UINT locale, CALID cal);
 PCWSTR KbCalendarDayName(UINT locale, CALID cal, int weekday, BOOL abbreviated);
 int KbCalendarInfo(UINT locale, CALID calendar, CALTYPE type, LPWSTR data, int size, LPDWORD value);
 PCWSTR KbCalendarPicture(UINT locale, CALID cal, UINT kind); /* kind: 0 short, 1 long, 2 year and month, 3 month and day. */

@@ -122,27 +122,53 @@ typedef struct DATE_CONTEXT {
     LONG Jdn;
 } DATE_CONTEXT;
 
-static void put_year(TEXT_OUT *o, const DATE_CONTEXT *c, SIZE_T n)
+static void put_year(TEXT_OUT *o, const DATE_CONTEXT *c, SIZE_T n, PCWSTR after)
 {
-    UINT l = c->Locale;
     int year = c->Date.EraYear;
-    if (c->Calendar == CAL_HEBREW && wcsncmp(LS(NLS_S_SISO639LANGNAME), L"he", 2) == 0) {
+    if (c->Calendar == CAL_HEBREW) {
         put_hebrew_number(o, c->Date.Year);
         return;
     }
-    BOOL eras = c->Calendar == CAL_JAPAN || c->Calendar == CAL_TAIWAN;
+    /* the first year of a Japanese era is written with the character for one when the year character follows. */
+    if (c->Calendar == CAL_JAPAN && year == 1 && (*after == 0x5E74 || (*after == '\'' && after[1] == 0x5E74))) {
+        put(o, 0x5143);
+        return;
+    }
     if (n == 1)
-        put_number(o, (UINT)year % 100 + (eras ? (UINT)year - (UINT)year % 100 : 0), 1);
+        put_number(o, (UINT)year % 100, 1);
     else if (n == 2)
         put_number(o, (UINT)year % 100, 2);
     else
-        put_number(o, (UINT)year, eras ? 2 : 4);
+        put_number(o, (UINT)year, 2);
+}
+
+/*
+ * the month is in the form that follows a day number when a day number of one or two digits comes right before it, or is
+ * the next field but the year and the era. The calendars with month names of their own have no such form.
+ */
+static BOOL month_after_day(const DATE_CONTEXT *c, BOOL previous_day, PCWSTR after)
+{
+    if (c->Calendar == CAL_HIJRI || c->Calendar == CAL_UMALQURA || c->Calendar == CAL_HEBREW || c->Calendar == CAL_PERSIAN)
+        return FALSE;
+    if (previous_day)
+        return TRUE;
+    BOOL quoted = FALSE;
+    for (PCWSTR q = after; *q; q++) {
+        if (*q == '\'')
+            quoted = !quoted;
+        else if (!quoted && (*q == 'g' || *q == 'y'))
+            return FALSE;
+        else if (!quoted && *q == 'd')
+            return run_length(q) <= 2;
+    }
+    return FALSE;
 }
 
 static int format_date(UINT l, const DATE_CONTEXT *c, PCWSTR format, LPWSTR buffer, int size, WCHAR mark)
 {
     TEXT_OUT o = {buffer, size, 0};
     const KB_CALDATE *d = &c->Date;
+    BOOL previous_day = FALSE;
     for (PCWSTR p = format; *p;) {
         WCHAR ch = *p;
         if (ch == '\'') {
@@ -162,45 +188,38 @@ static int format_date(UINT l, const DATE_CONTEXT *c, PCWSTR format, LPWSTR buff
         switch (ch) {
         case 'd':
             if (n == 1 || n == 2) {
-                if (c->Calendar == CAL_HEBREW && wcsncmp(LS(NLS_S_SISO639LANGNAME), L"he", 2) == 0)
+                if (c->Calendar == CAL_HEBREW)
                     put_hebrew_number(&o, d->Day);
                 else
                     put_number(&o, (UINT)d->Day, (int)n);
+                previous_day = TRUE;
             } else {
                 int weekday = (d->DayOfWeek + 6) % 7;
                 put_text(&o, KbCalendarDayName(l, c->Calendar, weekday, n == 3));
+                previous_day = FALSE;
             }
             break;
         case 'M':
             if (n <= 2) {
-                if (c->Calendar == CAL_HEBREW && wcsncmp(LS(NLS_S_SISO639LANGNAME), L"he", 2) == 0)
+                if (c->Calendar == CAL_HEBREW)
                     put_hebrew_number(&o, d->Month);
                 else
                     put_number(&o, (UINT)d->Month, (int)n);
             } else {
-                BOOL after_day = FALSE;
-                for (PCWSTR q = format; q < p; q++) {
-                    if (*q == '\'') {
-                        q++;
-                        while (*q && *q != '\'')
-                            q++;
-                        if (!*q)
-                            break;
-                    } else if (*q == 'd' && (q + 1 == p || q[1] != 'd' || q[2] != 'd')) {
-                        after_day = TRUE;
-                    }
-                }
                 int month = d->Month;
                 if (c->Calendar == CAL_HEBREW && !(((7 * d->Year + 1) % 19) < 7) && month >= 7)
                     month++;
-                put_text(&o, KbCalendarMonthName(l, c->Calendar, month, n == 3, after_day && n >= 4));
+                put_text(&o, KbCalendarMonthName(l, c->Calendar, month, n == 3, month_after_day(c, previous_day, p + n)));
             }
+            previous_day = FALSE;
             break;
         case 'y':
-            put_year(&o, c, n);
+            put_year(&o, c, n, p + n);
+            previous_day = FALSE;
             break;
         case 'g':
             put_text(&o, KbCalendarEraName(l, c->Calendar, d->Era, FALSE));
+            previous_day = FALSE;
             break;
         }
         p += n;
@@ -215,7 +234,7 @@ static BOOL date_context(UINT l, CALID calendar, const SYSTEMTIME *date, DATE_CO
         GetLocalTime(&st);
         date = &st;
     }
-    if (date->wYear < 1601 || date->wYear > 30827 || date->wMonth < 1 || date->wMonth > 12 || date->wDay < 1 ||
+    if (date->wYear < 1601 || date->wYear > 32767 || date->wMonth < 1 || date->wMonth > 12 || date->wDay < 1 ||
         date->wDay > KbDaysInGregorianMonth(date->wYear, date->wMonth)) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
@@ -228,6 +247,19 @@ static BOOL date_context(UINT l, CALID calendar, const SYSTEMTIME *date, DATE_CO
         return FALSE;
     }
     return TRUE;
+}
+
+/*
+ * the direction mark of an automatic layout: right to left for the locales that read that way, with the calendars
+ * windows writes right to left, and the Hebrew locales except for the short date of the Gregorian calendar.
+ */
+static WCHAR auto_layout_mark(UINT l, CALID calendar, UINT kind)
+{
+    if (LN(NLS_N_IREADINGLAYOUT) != 1)
+        return 0x200E;
+    if (wcsncmp(LS(NLS_S_SISO639LANGNAME), L"he", 2) == 0)
+        return kind == 0 && calendar != CAL_HEBREW ? 0x200E : 0x200F;
+    return (0xC03042u >> calendar) & 1 ? 0x200F : 0x200E;
 }
 
 static int date_format(UINT l, DWORD flags, const SYSTEMTIME *date, LPCWSTR format, LPWSTR buffer, int size)
@@ -254,102 +286,171 @@ static int date_format(UINT l, DWORD flags, const SYSTEMTIME *date, LPCWSTR form
     DATE_CONTEXT c;
     if (!date_context(l, calendar, date, &c))
         return 0;
-    if (!format) {
-        UINT kind = (flags & DATE_LONGDATE) ? 1 : (flags & DATE_YEARMONTH) ? 2 : 0;
-        format = KbCalendarPicture(l, calendar, kind);
-    }
+    UINT format_kind = format ? 3 : (flags & DATE_LONGDATE) ? 1 : (flags & DATE_YEARMONTH) ? 2 : 0;
+    if (!format)
+        format = KbCalendarPicture(l, calendar, format_kind);
     WCHAR mark = 0;
     if (flags & DATE_LTRREADING)
         mark = 0x200E;
     else if (flags & DATE_RTLREADING)
         mark = 0x200F;
     else if (flags & DATE_AUTOLAYOUT)
-        mark = LN(NLS_N_IREADINGLAYOUT) == 1 ? 0x200F : 0x200E;
-    return format_date(l, &c, format, buffer, size, mark);
+        mark = auto_layout_mark(l, calendar, format_kind);
+    int n = format_date(l, &c, format, buffer, size, mark);
+    /* in the Hebrew locales the marks follow the letters: right to left when the text has Hebrew ones. */
+    BOOL hebrew = wcsncmp(LS(NLS_S_SISO639LANGNAME), L"he", 2) == 0;
+    if ((flags & DATE_AUTOLAYOUT) && n > 0 && size && (calendar == CAL_HEBREW || (calendar == CAL_GREGORIAN && hebrew))) {
+        BOOL letters = FALSE;
+        for (int i = 0; i < n - 1; i++)
+            letters |= (UINT)(buffer[i] - 0x0591) <= 0x63;
+        for (int i = 0; i < n - 1; i++)
+            if (buffer[i] == 0x200E || buffer[i] == 0x200F)
+                buffer[i] = letters ? 0x200F : 0x200E;
+    }
+    return n;
 }
 
 /* ------------------------------------------------------------------ times */
 
+/* the fields that end the text a skipped field takes along: the ones of the picture that come next. */
+static BOOL time_field_stops(WCHAR c, WCHAR stop1, WCHAR stop2, WCHAR stop3, WCHAR stop4)
+{
+    return c == stop1 || c == stop2 || c == stop3 || c == stop4;
+}
+
+#define TIME_BUFFER 256
+
+/*
+ * the picture is written into a buffer of 256 characters as it is read. Text that is not part of a field waits until
+ * a field that is written commits it; a field that is left out throws away the text since the last one, but for the
+ * quoted text, and the text after it up to the next field but for the spaces.
+ */
 static int format_time(UINT l, DWORD flags, const SYSTEMTIME *st, PCWSTR format, LPWSTR buffer, int size)
 {
-    TEXT_OUT o = {buffer, size, 0};
-    BOOL force24 = (flags & TIME_FORCE24HOURFORMAT) != 0;
-    BOOL skip_minutes = (flags & TIME_NOMINUTESORSECONDS) != 0;
-    BOOL skip_seconds = skip_minutes || (flags & TIME_NOSECONDS);
-    BOOL skip_marker = (flags & TIME_NOTIMEMARKER) != 0;
-    int separator_start = -1; /* where literal text after the last emitted field begins. */
-    BOOL drop_literals = FALSE; /* set while the text after a marker left out on request goes with it. */
-    int trailing_start = -1;    /* where the text after skipped fields starts, which goes when no field follows. */
-    for (PCWSTR p = format; *p;) {
+    WCHAR out[TIME_BUFFER];
+    int cur = 0, commit = 0, pending = 0;
+    PCWSTR p = format, segment = format;
+    for (;;) {
         WCHAR c = *p;
-        if (c != 'h' && c != 'H' && c != 'm' && c != 's' && c != 't') {
-            int mark = o.Length;
-            BOOL quoted = c == '\'';
-            if (quoted) {
-                p += put_quoted(&o, p);
-            } else {
-                put(&o, c);
-                p++;
+        if (!c) {
+            out[cur] = 0;
+            break;
+        }
+        if (c == '\'') {
+            for (;;) {
+                WCHAR q = *++p;
+                if (!q)
+                    break;
+                if (q == '\'') {
+                    if (*++p != '\'')
+                        break;
+                }
+                if (cur >= TIME_BUFFER - 1)
+                    goto overflow;
+                out[cur++] = q;
             }
-            if (drop_literals)
-                o.Length = mark;
-            else if (quoted)
-                separator_start = -1;
-            else if (separator_start < 0)
-                separator_start = mark;
             continue;
         }
-        SIZE_T n = run_length(p);
-        /* the marker is the first letter for one t, the shortest form for three and the whole one otherwise. */
-        PCWSTR marker = nullptr;
+        if (c != 'h' && c != 'H' && c != 'm' && c != 's' && c != 't') {
+            if (cur >= TIME_BUFFER - 1)
+                goto overflow;
+            out[cur++] = c;
+            p++;
+            continue;
+        }
+        int extra = 0;
+        for (p++; *p == c; p++)
+            extra++;
+        BOOL skip_marker = c == 't' && (flags & TIME_NOTIMEMARKER);
+        BOOL skip_field = (c == 'm' && (flags & TIME_NOMINUTESORSECONDS)) || (c == 's' && (flags & (TIME_NOMINUTESORSECONDS | TIME_NOSECONDS)));
+        if (!skip_field) {
+            while (pending > 0) {
+                if (cur >= TIME_BUFFER - 1)
+                    goto overflow;
+                out[cur++] = ' ';
+                pending--;
+            }
+        }
+        if (skip_marker) {
+            cur = commit;
+            segment = p;
+            while (*p && !time_field_stops(*p, 'H', 'h', 'm', 's'))
+                p++;
+            continue;
+        }
         if (c == 't') {
             BOOL morning = st->wHour < 12;
-            marker = n == 3 ? LS(morning ? NLS_S_SSHORTESTAM : NLS_S_SSHORTESTPM) : LS(morning ? NLS_S_S1159 : NLS_S_S2359);
-        }
-        BOOL skip = (c == 'm' && skip_minutes) || (c == 's' && skip_seconds) || (c == 't' && (skip_marker || !marker[0]));
-        if (skip) {
-            /* a skipped field takes the text before it along, unless that is quoted. */
-            if (separator_start >= 0)
-                o.Length = separator_start;
-            separator_start = -1;
-            if (c == 't') {
-                /* a marker left out on request takes the text after it along as well, one that is empty does not. */
-                drop_literals = skip_marker;
-            } else if (trailing_start < 0) {
-                trailing_start = o.Length;
+            PCWSTR marker = extra == 2 ? LS(morning ? NLS_S_SSHORTESTAM : NLS_S_SSHORTESTPM) : LS(morning ? NLS_S_S1159 : NLS_S_S2359);
+            if (!marker[0]) {
+                cur = commit;
+            } else {
+                for (PCWSTR m = marker; *m; m++) {
+                    if (cur >= TIME_BUFFER - 1)
+                        goto overflow;
+                    out[cur++] = *m;
+                    if (!extra)
+                        break;
+                }
+                commit = cur;
             }
-            p += n;
+            segment = p;
             continue;
         }
-        UINT hour12 = st->wHour % 12 ? st->wHour % 12 : 12;
-        switch (c) {
-        case 'h':
-            put_number(&o, force24 ? st->wHour : hour12, n > 1 ? 2 : 1);
-            break;
-        case 'H':
-            put_number(&o, st->wHour, n > 1 ? 2 : 1);
-            break;
-        case 'm':
-            put_number(&o, st->wMinute, n > 1 ? 2 : 1);
-            break;
-        case 's':
-            put_number(&o, st->wSecond, n > 1 ? 2 : 1);
-            break;
-        case 't':
-            if (n == 1)
-                put(&o, marker[0]);
-            else
-                put_text(&o, marker);
-            break;
+        if (skip_field) {
+            /* the quoted text since the last field stays, the rest goes along with the field. */
+            BOOL quoted = FALSE;
+            for (PCWSTR q = segment; q != p; q++) {
+                if (*q == '\'')
+                    quoted = !quoted;
+                else if (quoted)
+                    out[commit++] = *q;
+            }
+            pending = 0;
+            segment = p;
+            /* the scan looks at the first character after the field to tell quotes, not at the one it is on: when that
+               is a quote every other character is skipped without a look. */
+            quoted = FALSE;
+            for (; *p; p++) {
+                if (*segment == '\'') {
+                    if (!quoted) {
+                        quoted = TRUE;
+                        continue;
+                    }
+                    quoted = FALSE;
+                } else if (quoted) {
+                    continue;
+                }
+                if (*p == ' ') {
+                    pending++;
+                    continue;
+                }
+                if (c == 'm' ? time_field_stops(*p, 'H', 'h', 't', 't') : time_field_stops(*p, 'H', 'h', 'm', 't'))
+                    break;
+            }
+            cur = commit;
+            continue;
         }
-        separator_start = -1;
-        drop_literals = FALSE;
-        trailing_start = -1;
-        p += n;
+        UINT value = c == 'm' ? st->wMinute : c == 's' ? st->wSecond : c == 'H' ? st->wHour : st->wHour;
+        if (c == 'h' && !(flags & TIME_FORCE24HOURFORMAT))
+            value = value % 12 ? value % 12 : 12;
+        WCHAR digits[16];
+        int n = KbFormat(digits, RTL_NUMBER_OF(digits), extra ? L"%02u" : L"%u", value);
+        if (cur + n >= TIME_BUFFER)
+            goto overflow;
+        for (int i = 0; i < n; i++)
+            out[cur++] = digits[i];
+        commit = cur;
+        segment = p;
     }
-    if (trailing_start >= 0)
-        o.Length = trailing_start;
-    return finish_text(&o);
+    {
+        TEXT_OUT o = {buffer, size, 0};
+        put_text(&o, out);
+        return finish_text(&o);
+    }
+overflow:
+    if (size)
+        KbSetError(ERROR_INVALID_PARAMETER);
+    return 0;
 }
 
 static int time_format(UINT l, DWORD flags, const SYSTEMTIME *time, LPCWSTR format, LPWSTR buffer, int size)
@@ -374,7 +475,7 @@ static int time_format(UINT l, DWORD flags, const SYSTEMTIME *time, LPCWSTR form
     } else {
         GetLocalTime(&st);
     }
-    return format_time(l, flags, &st, format ? format : LS(NLS_S_STIMEFORMAT), buffer, size);
+    return format_time(l, flags, &st, format ? format : LS((flags & (TIME_NOMINUTESORSECONDS | TIME_NOSECONDS)) ? NLS_S_SSHORTTIME : NLS_S_STIMEFORMAT), buffer, size);
 }
 
 /* ------------------------------------------------------------------ date and time entry points */

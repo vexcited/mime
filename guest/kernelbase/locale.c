@@ -1,6 +1,6 @@
 /*
- * locales: identifiers, names, locale information and the default locales. The tables are built from Unicode CLDR and
- * Windows constants.
+ * locales: identifiers, names, locale information and the default locales. The tables are the answers of Windows 11 for
+ * every locale, see docs/nls.md.
  */
 #include "kernelbase_private.h"
 #include "nls_locslots.h"
@@ -648,7 +648,6 @@ typedef struct LOCALE_VALUE {
     PCWSTR Text;  /* string value, or NULL when numeric. */
     DWORD Number;
     BOOL Hex;     /* printed as four hex digits. */
-    BOOL Width3;  /* printed with at least three digits. */
     BOOL Binary;  /* LOCALE_FONTSIGNATURE. */
 } LOCALE_VALUE;
 
@@ -675,9 +674,6 @@ static BOOL locale_value(UINT locale, LCTYPE type, BOOL genitive, LOCALE_VALUE *
         v->Binary = TRUE;
         return TRUE;
     }
-    /* no built-in locale is a custom one. */
-    if (type == 0x7D)
-        return TRUE;
     if (genitive && type >= LOCALE_SMONTHNAME1 && type <= LOCALE_SMONTHNAME12) {
         v->Text = KbLocaleText(locale, NLS_S_GENMONTH1 + (type - LOCALE_SMONTHNAME1));
         return TRUE;
@@ -695,7 +691,6 @@ static BOOL locale_value(UINT locale, LCTYPE type, BOOL genitive, LOCALE_VALUE *
     else {
         v->Number = (DWORD)KbLocaleNumber(locale, item->Slot);
         v->Hex = item->Kind == 2;
-        v->Width3 = item->Kind == 3;
     }
     return TRUE;
 }
@@ -753,7 +748,7 @@ static int get_locale_info(UINT locale, LCTYPE lctype, LPWSTR data, int size)
     WCHAR number[16];
     PCWSTR text = v.Text;
     if (!text) {
-        KbFormat(number, RTL_NUMBER_OF(number), v.Hex ? L"%04x" : v.Width3 ? L"%03u" : L"%u", v.Number);
+        KbFormat(number, RTL_NUMBER_OF(number), v.Hex ? L"%04x" : L"%u", v.Number);
         text = number;
     }
     int n = (int)wcslen(text) + 1;
@@ -964,21 +959,59 @@ const UINT8 *KbLocaleCalendars(UINT locale)
     return &g_nls_callist[locale * 8];
 }
 
-/* NULL when the locale has no such calendar. */
-PCWSTR KbLocaleCalendarText(UINT locale, UINT kind, UINT slot)
+/* the strings of a calendar of a locale, or NULL when the locale does not have the calendar. */
+static const UINT32 *calendar_record(UINT locale, CALID cal)
 {
-    UINT16 key = (UINT16)(locale * 8 + kind);
-    LONG lo = 0, hi = (LONG)RTL_NUMBER_OF(g_nls_calkeys) - 1;
-    while (lo <= hi) {
-        LONG mid = (lo + hi) / 2;
-        if (g_nls_calkeys[mid] == key)
-            return pool_text(g_nls_calrec[mid * NLS_CALREC_SIZE + slot]);
-        if (g_nls_calkeys[mid] < key)
-            lo = mid + 1;
-        else
-            hi = mid - 1;
+    static const UINT8 ids[] = NLS_CALENDAR_IDS;
+    for (UINT column = 0; column < NLS_CALENDAR_COLUMNS; column++) {
+        if (ids[column] != cal)
+            continue;
+        UINT record = g_nls_calindex[locale * NLS_CALENDAR_COLUMNS + column];
+        return record == 0xFFFF ? nullptr : &g_nls_calrec[record * NLS_CALREC_SIZE];
     }
     return nullptr;
+}
+
+/* the string of a slot of a record, the slot being the calendar type for the plain ones. NULL when there is no record. */
+PCWSTR KbLocaleCalendarText(UINT locale, CALID cal, UINT slot)
+{
+    const UINT32 *record = calendar_record(locale, cal);
+    return record ? pool_text(record[slot]) : nullptr;
+}
+
+/*
+ * the alternatives of a type, as strings one after the other that end with an empty one, or NULL when the calendar has
+ * none. They are in the order the enumerations give them.
+ */
+PCWSTR KbLocaleCalendarList(UINT locale, CALID cal, CALTYPE type)
+{
+    static const UINT8 types[] = NLS_CALENDAR_LIST_TYPES;
+    const UINT32 *record = calendar_record(locale, cal);
+    if (!record)
+        return nullptr;
+    for (UINT i = 0; i < RTL_NUMBER_OF(types); i++)
+        if (types[i] == type) {
+            PCWSTR list = pool_text(record[NLS_CALREC_LIST + i]);
+            return *list ? list : nullptr;
+        }
+    return nullptr;
+}
+
+BOOL KbLocaleCalendarFacts(CALID cal, UINT *offset_range, UINT *two_digit_max)
+{
+    for (UINT i = 0; i < RTL_NUMBER_OF(g_nls_calfacts); i++)
+        if (g_nls_calfacts[i].Id == cal) {
+            *offset_range = g_nls_calfacts[i].OffsetRange;
+            *two_digit_max = g_nls_calfacts[i].TwoDigitYearMax;
+            return TRUE;
+        }
+    return FALSE;
+}
+
+/* 0 for a type that is a text, 1 for a number, 0x8000 and an error for a text some calendars lack, else the error. */
+UINT KbLocaleCalendarTypeKind(CALTYPE type)
+{
+    return type >= 1 && type < RTL_NUMBER_OF(g_nls_caltypes) ? g_nls_caltypes[type] : ERROR_INVALID_FLAGS;
 }
 
 /* ------------------------------------------------------------------ preferred languages */
