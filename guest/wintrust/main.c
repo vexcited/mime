@@ -135,7 +135,9 @@ static LONG verify_mapping(HANDLE mapping, DWORD size, const WINTRUST_DATA *data
 static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
 {
     WINTRUST_FILE_INFO *info = data->pFile;
-    if (!info || info->cbStruct != sizeof(*info) || info->pgKnownSubject ||
+    /* pgKnownSubject came later, callers of the older size leave it out and only a larger size is read. */
+    if (!info || info->cbStruct < offsetof(WINTRUST_FILE_INFO, pgKnownSubject) ||
+        (info->cbStruct >= sizeof(*info) && info->pgKnownSubject) ||
         (!info->hFile && (!info->pcwszFilePath || !*info->pcwszFilePath)))
         return E_INVALIDARG;
     HANDLE file = info->hFile;
