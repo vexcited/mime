@@ -3,6 +3,7 @@
  * versions, time, pointer encoding and memory helpers.
  */
 #include "ntdll_private.h"
+#include <mime/ntrtlsec.h>
 
 /* ------------------------------------------------------------------ status to win32 error */
 
@@ -187,6 +188,99 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlGetVersion(RTL_OSVERSIONINFOEXW *info)
         info->wProductType = 1;  /* VER_NT_WORKSTATION */
         info->wReserved = 0;
     }
+    return STATUS_SUCCESS;
+}
+
+/* the VER_ condition values and the type bits that RtlVerifyVersionInfo takes. */
+enum {
+    VERIFY_MINOR = 0x01,
+    VERIFY_MAJOR = 0x02,
+    VERIFY_BUILD = 0x04,
+    VERIFY_PLATFORM = 0x08,
+    VERIFY_SP_MINOR = 0x10,
+    VERIFY_SP_MAJOR = 0x20,
+    VERIFY_SUITE = 0x40,
+    VERIFY_PRODUCT = 0x80,
+};
+enum { COND_EQUAL = 1, COND_GREATER, COND_GREATER_EQUAL, COND_LESS, COND_LESS_EQUAL };
+enum { COND_AND = 6, COND_OR = 7 };
+
+/* the three bits of a type in a mask made by VerSetConditionMask, which sits at the type's highest bit. */
+static ULONG condition_of(ULONGLONG mask, ULONG type)
+{
+    ULONG index = 0;
+    while (type >>= 1)
+        index++;
+    return (ULONG)(mask >> (3 * index)) & 7;
+}
+
+static BOOLEAN compare_version_value(ULONG current, ULONG wanted, ULONG condition)
+{
+    switch (condition) {
+    case COND_EQUAL:
+        return current == wanted;
+    case COND_GREATER:
+        return current > wanted;
+    case COND_GREATER_EQUAL:
+        return current >= wanted;
+    case COND_LESS:
+        return current < wanted;
+    case COND_LESS_EQUAL:
+        return current <= wanted;
+    }
+    return FALSE;
+}
+
+/*
+ * true when the system is what the structure and the conditions of VerSetConditionMask ask for: STATUS_SUCCESS, or
+ * STATUS_REVISION_MISMATCH when it is not, and STATUS_INVALID_PARAMETER when no type is asked for (read from build
+ * 26300). Major and minor version and the service pack versions count as one number, the first of them that
+ * differs decides, and the others are only compared when all the asked ones are equal. WPF's native library calls
+ * this to tell which Windows it runs on, by name from ntdll.dll.
+ */
+NTDLL_EXPORT NTSTATUS NTAPI RtlVerifyVersionInfo(RTL_OSVERSIONINFOEXW *info, ULONG type, ULONGLONG condition)
+{
+    if (!type)
+        return STATUS_INVALID_PARAMETER;
+    RTL_OSVERSIONINFOEXW now = {};
+    now.dwOSVersionInfoSize = sizeof(now);
+    NTSTATUS status = RtlGetVersion(&now);
+    if (!NT_SUCCESS(status))
+        return status;
+    if ((type & VERIFY_SUITE) && info->wSuiteMask) {
+        ULONG c = condition_of(condition, VERIFY_SUITE);
+        if (c != COND_AND && c != COND_OR)
+            return STATUS_INVALID_PARAMETER;
+        USHORT shared = now.wSuiteMask & info->wSuiteMask;
+        if (c == COND_AND ? shared != info->wSuiteMask : !shared)
+            return STATUS_REVISION_MISMATCH;
+    }
+    static const ULONG order[] = {VERIFY_MAJOR, VERIFY_MINOR, VERIFY_SP_MAJOR, VERIFY_SP_MINOR};
+    ULONG current[4] = {now.dwMajorVersion, now.dwMinorVersion, now.wServicePackMajor, now.wServicePackMinor};
+    ULONG wanted[4] = {info->dwMajorVersion, info->dwMinorVersion, info->wServicePackMajor, info->wServicePackMinor};
+    ULONG last = 0;
+    BOOLEAN decided = FALSE;
+    for (int i = 0; i < 4 && !decided; i++) {
+        if (!(type & order[i]))
+            continue;
+        last = condition_of(condition, order[i]);
+        if (current[i] != wanted[i]) {
+            if (!compare_version_value(current[i], wanted[i], last))
+                return STATUS_REVISION_MISMATCH;
+            decided = TRUE;
+        }
+    }
+    if (!decided && last && last != COND_EQUAL && last != COND_GREATER_EQUAL && last != COND_LESS_EQUAL)
+        return STATUS_REVISION_MISMATCH;
+    if ((type & VERIFY_BUILD) &&
+        !compare_version_value(now.dwBuildNumber, info->dwBuildNumber, condition_of(condition, VERIFY_BUILD)))
+        return STATUS_REVISION_MISMATCH;
+    if ((type & VERIFY_PLATFORM) &&
+        !compare_version_value(now.dwPlatformId, info->dwPlatformId, condition_of(condition, VERIFY_PLATFORM)))
+        return STATUS_REVISION_MISMATCH;
+    if ((type & VERIFY_PRODUCT) &&
+        !compare_version_value(now.wProductType, info->wProductType, condition_of(condition, VERIFY_PRODUCT)))
+        return STATUS_REVISION_MISMATCH;
     return STATUS_SUCCESS;
 }
 

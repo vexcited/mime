@@ -611,6 +611,7 @@ EXPORTS
     RtlValidSecurityDescriptor@4
     RtlValidSid@4
     RtlValidateHeap@12
+    RtlVerifyVersionInfo@16
     RtlWaitOnAddress@16
     RtlWakeAddressAll@4
     RtlWakeAddressSingle@4

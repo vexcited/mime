@@ -228,6 +228,7 @@ NTSYSAPI ULONG DbgPrint(PCSTR format, ...);
 NTSYSAPI void NTAPI DbgBreakPoint(void);
 NTSYSAPI void NTAPI DbgUserBreakPoint(void);
 NTSYSAPI NTSTATUS NTAPI RtlGetVersion(RTL_OSVERSIONINFOEXW *info);
+NTSYSAPI NTSTATUS NTAPI RtlVerifyVersionInfo(RTL_OSVERSIONINFOEXW *info, ULONG type, ULONGLONG condition);
 #ifdef _WIN64
 NTSYSAPI NTSTATUS NTAPI RtlWow64GetThreadContext(HANDLE thread, I386_CONTEXT *context);
 NTSYSAPI NTSTATUS NTAPI RtlWow64SetThreadContext(HANDLE thread, const I386_CONTEXT *context);

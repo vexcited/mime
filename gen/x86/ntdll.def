@@ -611,6 +611,7 @@ EXPORTS
     RtlValidSecurityDescriptor=_RtlValidSecurityDescriptor@4
     RtlValidSid=_RtlValidSid@4
     RtlValidateHeap=_RtlValidateHeap@12
+    RtlVerifyVersionInfo=_RtlVerifyVersionInfo@16
     RtlWaitOnAddress=_RtlWaitOnAddress@16
     RtlWakeAddressAll=_RtlWakeAddressAll@4
     RtlWakeAddressSingle=_RtlWakeAddressSingle@4
