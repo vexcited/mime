@@ -1,6 +1,7 @@
 /*
  * the consoles behind \Device\ConDrv. a console has an input buffer of records, a terminal with its screen buffers,
- * and a backend carrying the terminal's bytes: a host run's terminal, a pseudo console, or nothing. a console
+ * and a backend carrying the terminal's bytes: a host run's terminal, a pseudo console, a window that conhost.exe
+ * draws, or nothing. a console
  * program is attached to the console it is created in. a gui program is not, but may attach with AttachConsole or
  * AllocConsole.
  *

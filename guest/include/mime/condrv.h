@@ -4,7 +4,8 @@
  * input and \CurrentOut for the active screen buffer, as are the handles CreateConsoleScreenBuffer opens with
  * \ScreenBuffer. kernelbase drives them with these private device controls plus ReadFile and WriteFile.
  *
- * a console shows on the terminal of a host run, on a pseudo console \Pty whose owner carries its bytes, or nowhere.
+ * a console shows on the terminal of a host run, on a pseudo console \Pty whose owner carries its bytes, in a window of
+ * conhost.exe, which attaches through \Host, or nowhere.
  */
 #ifndef MIME_CONDRV_H
 #define MIME_CONDRV_H
