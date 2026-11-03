@@ -930,6 +930,8 @@ struct D12Device {
     VkSemaphore waiter_wake;
     volatile LONG64 waiter_wakes;
     volatile LONG waiter_stop;
+    DWORD waiter_id;
+    BOOL *waiter_exit;
 
     SRWLOCK garbage_lock;
     D12Garbage *garbage;

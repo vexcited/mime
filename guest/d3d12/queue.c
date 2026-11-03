@@ -45,9 +45,23 @@ static void fence_block(D12Fence *fence, UINT64 value)
         fence->completed = value;
 }
 
+static BOOL grow_array(void **array, UINT *capacity, UINT count, SIZE_T size)
+{
+    if (count < *capacity)
+        return TRUE;
+    UINT grown = *capacity ? *capacity * 2 : 8;
+    void *larger = *array ? HeapReAlloc(GetProcessHeap(), 0, *array, grown * size) : HeapAlloc(GetProcessHeap(), 0, grown * size);
+    if (!larger)
+        return FALSE;
+    *array = larger;
+    *capacity = grown;
+    return TRUE;
+}
+
 /*
  * sets the events of satisfied waits, then waits for any waiting fence's next value or for the wake semaphore,
- * which a new wait signals.
+ * which a new wait signals. A fence nobody waits on any more is let go before the events are set, so a program that
+ * wakes on its event and releases its objects finds nothing of the device still held by this thread.
  */
 static DWORD WINAPI waiter_main(void *param)
 {
@@ -55,6 +69,12 @@ static DWORD WINAPI waiter_main(void *param)
     VkSemaphore *semaphores = nullptr;
     UINT64 *values = nullptr;
     UINT capacity = 0;
+    HANDLE *fired = nullptr;
+    D12Fence **done = nullptr;
+    UINT fired_count = 0, fired_capacity = 0, done_count = 0, done_capacity = 0;
+    BOOL gone = FALSE;
+    device->waiter_id = GetCurrentThreadId();
+    device->waiter_exit = &gone;
     while (!device->waiter_stop) {
         UINT64 wakes = __atomic_load_n((const volatile UINT64 *)&device->waiter_wakes, __ATOMIC_ACQUIRE);
         UINT n = 0;
@@ -65,7 +85,10 @@ static DWORD WINAPI waiter_main(void *param)
             AcquireSRWLockExclusive(&fence->lock);
             for (UINT i = 0; i < fence->wait_count;) {
                 if (fence->waits[i].value <= value) {
-                    SetEvent(fence->waits[i].event);
+                    if (grow_array((void **)&fired, &fired_capacity, fired_count, sizeof(*fired)))
+                        fired[fired_count++] = fence->waits[i].event;
+                    else
+                        SetEvent(fence->waits[i].event);
                     fence->waits[i] = fence->waits[--fence->wait_count];
                 } else {
                     next = D12_MIN(next, fence->waits[i].value);
@@ -77,7 +100,10 @@ static DWORD WINAPI waiter_main(void *param)
             if (empty) {
                 *link = fence->next_waiting;
                 fence->next_waiting = nullptr;
-                fence->iface.lpVtbl->Release(&fence->iface);
+                if (grow_array((void **)&done, &done_capacity, done_count, sizeof(*done)))
+                    done[done_count++] = fence;
+                else
+                    fence->iface.lpVtbl->Release(&fence->iface);
                 continue;
             }
             if (n + 2 > capacity) {
@@ -104,6 +130,14 @@ static DWORD WINAPI waiter_main(void *param)
             link = &fence->next_waiting;
         }
         ReleaseSRWLockExclusive(&device->fence_lock);
+        /* the last reference of a program that has let go of everything is this one, and ends the device here. */
+        for (UINT i = 0; i < done_count; i++)
+            done[i]->iface.lpVtbl->Release(&done[i]->iface);
+        for (UINT i = 0; i < fired_count; i++)
+            SetEvent(fired[i]);
+        done_count = fired_count = 0;
+        if (gone)
+            break;
         VkSemaphore wake = device->waiter_wake;
         UINT64 woken = wakes + 1;
         VkSemaphoreWaitInfo wait = {VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO};
@@ -119,6 +153,8 @@ static DWORD WINAPI waiter_main(void *param)
     }
     HeapFree(GetProcessHeap(), 0, semaphores);
     HeapFree(GetProcessHeap(), 0, values);
+    HeapFree(GetProcessHeap(), 0, fired);
+    HeapFree(GetProcessHeap(), 0, done);
     return 0;
 }
 
@@ -137,6 +173,13 @@ void D12FenceWaiterStop(D12Device *device)
     if (!device->waiter)
         return;
     device->waiter_stop = TRUE;
+    if (GetCurrentThreadId() == device->waiter_id) {
+        /* the waiter let go of the last reference itself, and leaves its loop when this returns. */
+        *device->waiter_exit = TRUE;
+        CloseHandle(device->waiter);
+        device->waiter = nullptr;
+        return;
+    }
     D12FenceWake(device);
     WaitForSingleObject(device->waiter, INFINITE);
     CloseHandle(device->waiter);
