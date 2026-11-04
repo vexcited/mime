@@ -413,6 +413,8 @@ typedef struct GGraphics {
     GBitmap *target;      /* the bitmap of GdipGetImageGraphicsContext. */
     struct GMetafile *meta; /* a recording metafile. */
     INT width, height;    /* the target size in pixels. */
+    /* where the logical origin of hdc was on the device when the graphics was made, as windows' gdi+ draws there. */
+    INT dc_x, dc_y;
     float dpi_x, dpi_y;
     InterpolationMode interpolation;
     SmoothingMode smoothing;
@@ -515,6 +517,7 @@ typedef struct GSurface {
     const ColorPalette *palette;
     /* surfaces made from a device context. */
     HDC hdc;
+    INT dc_x, dc_y;
     HBITMAP dib;
     HDC mem;
     HGDIOBJ old;

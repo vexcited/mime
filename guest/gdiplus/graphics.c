@@ -77,6 +77,8 @@ const MimeVecMatrix *gp_graphics_w2d(GGraphics *g)
             m.dx -= 0.5f;
             m.dy -= 0.5f;
         }
+        m.dx += (float)g->dc_x;
+        m.dy += (float)g->dc_y;
         g->w2d = m;
         g->w2d_valid = TRUE;
     }
@@ -144,6 +146,12 @@ static GpStatus graphics_from_hdc(HDC hdc, HWND hwnd, BOOL owns, GpGraphics **gr
     } else {
         g->width = GetDeviceCaps(hdc, HORZRES);
         g->height = GetDeviceCaps(hdc, VERTRES);
+    }
+    /* winforms paints a parent's background into a child this way, offsetting the viewport of the child's dc. */
+    POINT origin = {0, 0};
+    if (LPtoDP(hdc, &origin, 1)) {
+        g->dc_x = origin.x;
+        g->dc_y = origin.y;
     }
     *graphics = g;
     return Ok;

@@ -273,7 +273,7 @@ static GpStatus gdi_run(GPlayer *p)
     HDC dc = p->dc;
     SetMapMode(dc, MM_TEXT);
     SetWindowOrgEx(dc, 0, 0, nullptr);
-    SetViewportOrgEx(dc, 0, 0, nullptr);
+    SetViewportOrgEx(dc, g->dc_x, g->dc_y, nullptr);
     SetGraphicsMode(dc, GM_ADVANCED);
     dc_apply_clip(dc, g);
     BOOL ok;
@@ -284,7 +284,7 @@ static GpStatus gdi_run(GPlayer *p)
         SetMapMode(dc, MM_ANISOTROPIC);
         SetWindowOrgEx(dc, m->header.X, m->header.Y, nullptr);
         SetWindowExtEx(dc, m->header.Width, m->header.Height, nullptr);
-        SetViewportOrgEx(dc, m->header.X, m->header.Y, nullptr);
+        SetViewportOrgEx(dc, m->header.X + g->dc_x, m->header.Y + g->dc_y, nullptr);
         SetViewportExtEx(dc, m->header.Width, m->header.Height, nullptr);
         ok = EnumMetaFile(dc, (HMETAFILE)m->handle, wmf_proc, (LPARAM)p);
     } else {

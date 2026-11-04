@@ -40,6 +40,7 @@ BOOL gp_clip_narrow(GGraphics *g, RECT *area, const MimeVecMask **mask)
         RECT box;
         if (GetClipBox(g->hdc, &box) == NULLREGION)
             return FALSE;
+        OffsetRect(&box, g->dc_x, g->dc_y);
         if (area->left < box.left)
             area->left = box.left;
         if (area->top < box.top)

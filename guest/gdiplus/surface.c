@@ -108,8 +108,10 @@ GpStatus gp_surface_acquire(GGraphics *g, const RECT *area, GSurface *s)
         return OutOfMemory;
     }
     s->old = SelectObject(s->mem, s->dib);
-    BitBlt(s->mem, 0, 0, s->width, s->height, g->hdc, area->left, area->top, SRCCOPY);
+    BitBlt(s->mem, 0, 0, s->width, s->height, g->hdc, area->left - g->dc_x, area->top - g->dc_y, SRCCOPY);
     s->hdc = g->hdc;
+    s->dc_x = g->dc_x;
+    s->dc_y = g->dc_y;
     s->bits = tile;
     s->stride = s->width * 4;
     s->format = PixelFormat32bppRGB;
@@ -121,7 +123,7 @@ void gp_surface_release(GGraphics *g, GSurface *s, BOOL modified)
 {
     if (s->mem) {
         if (modified && s->write_back)
-            BitBlt(s->hdc, s->x, s->y, s->width, s->height, s->mem, 0, 0, SRCCOPY);
+            BitBlt(s->hdc, s->x - s->dc_x, s->y - s->dc_y, s->width, s->height, s->mem, 0, 0, SRCCOPY);
         SelectObject(s->mem, s->old);
         DeleteDC(s->mem);
     }
