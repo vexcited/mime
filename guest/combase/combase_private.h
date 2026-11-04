@@ -33,6 +33,8 @@ HRESULT CbApiInformationFactory(REFIID riid, void **factory);
 
 /* apartment.c: factories a program registers for itself. */
 HRESULT CbRegisteredFactory(HSTRING class_id, REFIID riid, void **factory);
+/* apartment.c: in process classes of the registry. */
+HRESULT CbRegistryFactory(HSTRING class_id, REFIID riid, void **factory);
 
 /* regionpolicy.c */
 extern const WCHAR CbRegionPolicyClass[];

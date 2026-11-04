@@ -81,6 +81,9 @@ ROAPI HRESULT WINAPI RoGetActivationFactory(HSTRING class_id, REFIID riid, void 
     HRESULT registered = CbRegisteredFactory(class_id, riid, factory);
     if (registered != REGDB_E_CLASSNOTREG)
         return registered;
+    registered = CbRegistryFactory(class_id, riid, factory);
+    if (registered != REGDB_E_CLASSNOTREG)
+        return registered;
     /* log missing classes, to see what programs want next. */
     char text[200];
     int n = _snprintf(text, sizeof(text), "combase: no runtime class %.*ls\n", (int)(length < 120 ? length : 120), name);

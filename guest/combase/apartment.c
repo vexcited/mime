@@ -44,6 +44,59 @@ HRESULT CbRegisteredFactory(HSTRING class_id, REFIID riid, void **factory)
     return hr;
 }
 
+typedef HRESULT(WINAPI *DLL_GET_ACTIVATION_FACTORY)(HSTRING, IActivationFactory **);
+
+/*
+ * an in process class of HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId: the dll named by DllPath gives the
+ * factory and stays loaded. its Threading is not checked, the factory serves every apartment.
+ */
+HRESULT CbRegistryFactory(HSTRING class_id, REFIID riid, void **factory)
+{
+    static const WCHAR root[] = L"SOFTWARE\\Microsoft\\WindowsRuntime\\ActivatableClassId\\";
+    UINT32 length;
+    LPCWSTR name = WindowsGetStringRawBuffer(class_id, &length);
+    WCHAR path[RTL_NUMBER_OF(root) + 256];
+    if (!length || length >= RTL_NUMBER_OF(path) - RTL_NUMBER_OF(root))
+        return REGDB_E_CLASSNOTREG;
+    for (UINT32 i = 0; i < length; i++)
+        if (name[i] == L'\\' || !name[i])
+            return REGDB_E_CLASSNOTREG;
+    memcpy(path, root, sizeof(root));
+    memcpy(path + RTL_NUMBER_OF(root) - 1, name, length * sizeof(WCHAR));
+    path[RTL_NUMBER_OF(root) - 1 + length] = 0;
+    HKEY key;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_QUERY_VALUE, &key))
+        return REGDB_E_CLASSNOTREG;
+    DWORD type, kind = 0, size = sizeof(kind);
+    if (RegQueryValueExW(key, L"ActivationType", nullptr, &type, (BYTE *)&kind, &size) || type != REG_DWORD)
+        kind = 0;
+    WCHAR raw[MAX_PATH], dll[MAX_PATH];
+    size = sizeof(raw) - sizeof(WCHAR);
+    LSTATUS status = RegQueryValueExW(key, L"DllPath", nullptr, &type, (BYTE *)raw, &size);
+    RegCloseKey(key);
+    /* out of process servers are not hosted. */
+    if (kind != 0 || status || (type != REG_SZ && type != REG_EXPAND_SZ))
+        return REGDB_E_CLASSNOTREG;
+    raw[size / sizeof(WCHAR)] = 0;
+    if (!ExpandEnvironmentStringsW(raw, dll, RTL_NUMBER_OF(dll)))
+        return REGDB_E_CLASSNOTREG;
+    HMODULE module = LoadLibraryExW(dll, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!module)
+        return HRESULT_FROM_WIN32(GetLastError());
+    DLL_GET_ACTIVATION_FACTORY get = (DLL_GET_ACTIVATION_FACTORY)(void *)GetProcAddress(module, "DllGetActivationFactory");
+    IActivationFactory *object = nullptr;
+    HRESULT hr = get ? get(class_id, &object) : REGDB_E_CLASSNOTREG;
+    if (SUCCEEDED(hr) && !object)
+        hr = E_POINTER;
+    if (FAILED(hr)) {
+        FreeLibrary(module);
+        return hr;
+    }
+    hr = object->lpVtbl->QueryInterface(object, riid, factory);
+    object->lpVtbl->Release(object);
+    return hr;
+}
+
 ROAPI HRESULT WINAPI RoRegisterActivationFactories(HSTRING *class_ids, PFNGETACTIVATIONFACTORY *factories, UINT32 count,
                                                    RO_REGISTRATION_COOKIE *cookie)
 {

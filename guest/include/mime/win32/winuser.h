@@ -1843,6 +1843,7 @@ WINUSERAPI BOOL WINAPI PeekMessageW(LPMSG msg, HWND hwnd, UINT min, UINT max, UI
 WINUSERAPI BOOL WINAPI TranslateMessage(const MSG *msg);
 WINUSERAPI LRESULT WINAPI DispatchMessageW(const MSG *msg);
 WINUSERAPI BOOL WINAPI WaitMessage(void);
+WINUSERAPI DWORD WINAPI GetQueueStatus(UINT flags);
 WINUSERAPI DWORD WINAPI MsgWaitForMultipleObjects(DWORD count, const HANDLE *handles, BOOL wait_all, DWORD timeout,
                                                   DWORD mask);
 WINUSERAPI DWORD WINAPI MsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *handles, DWORD timeout, DWORD mask,

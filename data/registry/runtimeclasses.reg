@@ -1,0 +1,15 @@
+; the windows runtime classes that the libraries of Mime serve from their DllGetActivationFactory. ActivationType 0 is
+; in process, Threading 0 serves both apartments and TrustLevel 0 is base trust, as Windows registers them.
+
+; CoreMessaging.dll
+[HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.System.DispatcherQueue]
+"ActivationType"=dword:00000000
+"DllPath"=expand:"%SystemRoot%\\system32\\CoreMessaging.dll"
+"Threading"=dword:00000000
+"TrustLevel"=dword:00000000
+
+[HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.System.DispatcherQueueController]
+"ActivationType"=dword:00000000
+"DllPath"=expand:"%SystemRoot%\\system32\\CoreMessaging.dll"
+"Threading"=dword:00000000
+"TrustLevel"=dword:00000000

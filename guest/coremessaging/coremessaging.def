@@ -1,5 +1,9 @@
 LIBRARY CoreMessaging.dll
 EXPORTS
     CreateDispatcherQueueController @18
+    CreateDispatcherQueueForCurrentThread @19
+    DllCanUnloadNow @20 PRIVATE
+    DllGetActivationFactory @21 PRIVATE
+    DllGetClassObject @22 PRIVATE
     GetDispatcherQueueForCurrentThread @23
     ServiceMain @30

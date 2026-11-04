@@ -1,17 +1,18 @@
-/*
- * CoreMessaging.dll: the Windows.System dispatcher queues behind the plain exports. a queue is a hidden window on
- * its thread and TryEnqueue posts it a message, so work runs from that thread's own message loop. a dedicated
- * queue gets a thread of its own running that loop. timers and asynchronous shutdown are not offered.
- */
-#include <mime/win32/winbase.h>
-#include <mime/win32/winuser.h>
-#include <mime/winrt_object.h>
+#include "coremessaging_private.h"
 #include <mime/svcstub.h>
 
 int _fltused = 0x9875;
 
+HINSTANCE CmModule;
+DWORD CmTls = TLS_OUT_OF_INDEXES;
+
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
+    if (reason == DLL_PROCESS_ATTACH) {
+        CmModule = instance;
+        CmTls = TlsAlloc();
+        DisableThreadLibraryCalls(instance);
+    }
     return TRUE;
 }
 
@@ -24,262 +25,168 @@ typedef struct DispatcherQueueOptions {
 #define DQTYPE_THREAD_DEDICATED 1
 #define DQTYPE_THREAD_CURRENT 2
 
-typedef struct IDispatcherQueueHandler IDispatcherQueueHandler;
-#define IDispatcherQueueHandler_METHODS(T)                                                                             \
-    MIME_IUNKNOWN_METHODS(T)                                                                                           \
-    HRESULT(STDMETHODCALLTYPE *Invoke)(T * This);
-MIME_COM_INTERFACE(IDispatcherQueueHandler)
+/* ------------------------------------------------------------------ activation factories */
 
-typedef struct IDispatcherQueue IDispatcherQueue;
-#define IDispatcherQueue_METHODS(T)                                                                                    \
-    MIME_INSPECTABLE_METHODS(T)                                                                                        \
-    HRESULT(STDMETHODCALLTYPE *CreateTimer)(T * This, IInspectable * *result);                                         \
-    HRESULT(STDMETHODCALLTYPE *TryEnqueue)(T * This, IDispatcherQueueHandler * callback, BOOLEAN * result);            \
-    HRESULT(STDMETHODCALLTYPE *TryEnqueueWithPriority)(T * This, INT32 priority, IDispatcherQueueHandler * callback,   \
-                                                       BOOLEAN *result);                                               \
-    HRESULT(STDMETHODCALLTYPE *add_ShutdownStarting)(T * This, IUnknown * handler, EventRegistrationToken * token);    \
-    HRESULT(STDMETHODCALLTYPE *remove_ShutdownStarting)(T * This, EventRegistrationToken token);                       \
-    HRESULT(STDMETHODCALLTYPE *add_ShutdownCompleted)(T * This, IUnknown * handler, EventRegistrationToken * token);   \
-    HRESULT(STDMETHODCALLTYPE *remove_ShutdownCompleted)(T * This, EventRegistrationToken token);
-MIME_COM_INTERFACE(IDispatcherQueue)
+/* the factories are static and never go away. */
+typedef struct FACTORY {
+    CM_OBJECT Object;
+} FACTORY;
 
-typedef struct IDispatcherQueueController IDispatcherQueueController;
-#define IDispatcherQueueController_METHODS(T)                                                                          \
-    MIME_INSPECTABLE_METHODS(T)                                                                                        \
-    HRESULT(STDMETHODCALLTYPE *get_DispatcherQueue)(T * This, IDispatcherQueue * *value);                              \
-    HRESULT(STDMETHODCALLTYPE *ShutdownQueueAsync)(T * This, IInspectable * *operation);
-MIME_COM_INTERFACE(IDispatcherQueueController)
+CM_INSPECTABLE_THUNKS(IActivationFactory)
+CM_INSPECTABLE_THUNKS(IDispatcherQueueStatics)
+CM_INSPECTABLE_THUNKS(IDispatcherQueueControllerStatics)
 
-MIME_DEFINE_GUID(IID_IDispatcherQueue, 0x603E88E4, 0xA338, 0x4FFE, 0xA4, 0x57, 0xA5, 0xCF, 0xB9, 0xCE, 0xB8, 0x99);
-MIME_DEFINE_GUID(IID_IDispatcherQueueController, 0x22F34E66, 0x50DB, 0x4E36, 0xA9, 0x8D, 0x61, 0xC0, 0x1B, 0x38, 0x4D,
-                 0x20);
-
-#define WM_RUN (WM_APP + 1)
-
-typedef struct QUEUE {
-    WRT_OBJECT Base;
-    HWND Window;
-    DWORD Thread;
-    HANDLE Owner;
-    HANDLE Ready;
-    BOOL Dedicated;
-} QUEUE;
-
-typedef struct CONTROLLER {
-    WRT_OBJECT Base;
-    QUEUE *Queue;
-} CONTROLLER;
-
-static const WCHAR QUEUE_CLASS[] = L"Windows.System.DispatcherQueue";
-static const WCHAR CONTROLLER_CLASS[] = L"Windows.System.DispatcherQueueController";
-static const WCHAR WINDOW_CLASS[] = L"DispatcherQueue";
-static INIT_ONCE g_once = INIT_ONCE_STATIC_INIT;
-
-static LRESULT CALLBACK queue_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+static void factory_destroy(WRT_OBJECT *object)
 {
-    if (message == WM_RUN) {
-        IDispatcherQueueHandler *handler = (IDispatcherQueueHandler *)lparam;
-        handler->lpVtbl->Invoke(handler);
-        handler->lpVtbl->Release(handler);
-        return 0;
-    }
-    return DefWindowProcW(window, message, wparam, lparam);
 }
 
-static BOOL CALLBACK register_class(PINIT_ONCE once, PVOID parameter, PVOID *context)
+static HRESULT STDMETHODCALLTYPE factory_activate(IActivationFactory *This, IInspectable **instance)
 {
-    WNDCLASSW wc = {};
-    wc.lpfnWndProc = queue_proc;
-    wc.hInstance = GetModuleHandleW(nullptr);
-    wc.lpszClassName = WINDOW_CLASS;
-    return RegisterClassW(&wc) != 0;
+    if (instance)
+        *instance = nullptr;
+    return E_NOTIMPL;
 }
 
-static HWND make_window(void)
+static HRESULT STDMETHODCALLTYPE statics_get_for_current_thread(IDispatcherQueueStatics *This,
+                                                                IDispatcherQueue **result)
 {
-    InitOnceExecuteOnce(&g_once, register_class, nullptr, nullptr);
-    return CreateWindowExW(0, WINDOW_CLASS, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!result)
+        return E_POINTER;
+    CM_QUEUE *queue = CmQueueForThread();
+    if (queue)
+        CmAddRef((WRT_IFACE *)CmIface(&queue->Object));
+    *result = queue ? (IDispatcherQueue *)CmIface(&queue->Object) : nullptr;
+    return S_OK;
 }
 
-/* creates the window, then runs posted work until the queue goes away. */
-static DWORD WINAPI dedicated_thread(void *param)
-{
-    QUEUE *queue = (QUEUE *)param;
-    queue->Window = make_window();
-    SetEvent(queue->Ready);
-    MSG msg;
-    while (queue->Window && GetMessageW(&msg, nullptr, 0, 0) > 0)
-        DispatchMessageW(&msg);
-    return 0;
-}
-
-WRT_INSPECTABLE_THUNKS(IDispatcherQueue)
-WRT_INSPECTABLE_THUNKS(IDispatcherQueueController)
-
-static void queue_destroy(WRT_OBJECT *object)
-{
-    QUEUE *queue = (QUEUE *)object;
-    if (queue->Window)
-        PostMessageW(queue->Window, WM_QUIT, 0, 0);
-    if (queue->Window && !queue->Dedicated)
-        DestroyWindow(queue->Window);
-    if (queue->Ready)
-        CloseHandle(queue->Ready);
-    HeapFree(GetProcessHeap(), 0, queue);
-}
-
-static HRESULT STDMETHODCALLTYPE queue_create_timer(IDispatcherQueue *This, IInspectable **result)
+/* the thread of a controller made here is an asta. */
+static HRESULT STDMETHODCALLTYPE statics_create_on_dedicated_thread(IDispatcherQueueControllerStatics *This,
+                                                                    IDispatcherQueueController **result)
 {
     if (!result)
         return E_POINTER;
     *result = nullptr;
-    return E_NOTIMPL;
+    return CmControllerOnDedicatedThread(1, result);
 }
 
-static HRESULT enqueue(IDispatcherQueue *This, IDispatcherQueueHandler *callback, BOOLEAN *result)
+static const IActivationFactoryVtbl factory_vtbl = {WRT_INSPECTABLE_ENTRIES(IActivationFactory), factory_activate};
+static const IDispatcherQueueStaticsVtbl queue_statics_vtbl = {WRT_INSPECTABLE_ENTRIES(IDispatcherQueueStatics),
+                                                               statics_get_for_current_thread};
+static const IDispatcherQueueControllerStaticsVtbl controller_statics_vtbl = {
+    WRT_INSPECTABLE_ENTRIES(IDispatcherQueueControllerStatics), statics_create_on_dedicated_thread};
+
+static const WRT_CLASS queue_factory_class = {
+    L"Windows.System.DispatcherQueue", 2, {&IID_IActivationFactory, &IID_IDispatcherQueueStatics}, 0, factory_destroy};
+static const WRT_CLASS controller_factory_class = {L"Windows.System.DispatcherQueueController",
+                                                   2,
+                                                   {&IID_IActivationFactory, &IID_IDispatcherQueueControllerStatics},
+                                                   0,
+                                                   factory_destroy};
+
+static FACTORY g_queue_factory, g_controller_factory;
+static INIT_ONCE g_factories_once = INIT_ONCE_STATIC_INIT;
+
+static BOOL CALLBACK init_factories(PINIT_ONCE once, PVOID parameter, PVOID *context)
 {
-    QUEUE *queue = (QUEUE *)((WRT_IFACE *)This)->Owner;
-    if (!result)
+    const void *queue_vtables[2] = {&factory_vtbl, &queue_statics_vtbl};
+    const void *controller_vtables[2] = {&factory_vtbl, &controller_statics_vtbl};
+    CmInit(&g_queue_factory.Object, &queue_factory_class, queue_vtables);
+    CmInit(&g_controller_factory.Object, &controller_factory_class, controller_vtables);
+    return TRUE;
+}
+
+static BOOL name_is(HSTRING string, LPCWSTR name)
+{
+    UINT32 length;
+    LPCWSTR text = WindowsGetStringRawBuffer(string, &length);
+    return length == wcslen(name) && !memcmp(text, name, length * sizeof(WCHAR));
+}
+
+__declspec(dllexport) HRESULT WINAPI DllGetActivationFactory(HSTRING class_id, IActivationFactory **factory)
+{
+    if (!factory)
         return E_POINTER;
-    *result = FALSE;
-    if (!callback)
-        return E_INVALIDARG;
-    callback->lpVtbl->AddRef(callback);
-    if (!queue->Window || !PostMessageW(queue->Window, WM_RUN, 0, (LPARAM)callback)) {
-        callback->lpVtbl->Release(callback);
-        return S_OK;
-    }
-    *result = TRUE;
+    *factory = nullptr;
+    InitOnceExecuteOnce(&g_factories_once, init_factories, nullptr, nullptr);
+    FACTORY *found = nullptr;
+    if (name_is(class_id, L"Windows.System.DispatcherQueue"))
+        found = &g_queue_factory;
+    else if (name_is(class_id, L"Windows.System.DispatcherQueueController"))
+        found = &g_controller_factory;
+    if (!found)
+        return CLASS_E_CLASSNOTAVAILABLE;
+    CmAddRef((WRT_IFACE *)CmIface(&found->Object));
+    *factory = (IActivationFactory *)CmIface(&found->Object);
     return S_OK;
 }
 
-static HRESULT STDMETHODCALLTYPE queue_try_enqueue(IDispatcherQueue *This, IDispatcherQueueHandler *callback, BOOLEAN *result)
+/* queues keep threads and windows that cannot be unloaded from under them. */
+__declspec(dllexport) HRESULT WINAPI DllCanUnloadNow(void)
 {
-    return enqueue(This, callback, result);
+    return S_FALSE;
 }
 
-static HRESULT STDMETHODCALLTYPE queue_try_enqueue_priority(IDispatcherQueue *This, INT32 priority,
-                                                            IDispatcherQueueHandler *callback, BOOLEAN *result)
+__declspec(dllexport) HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, void **object)
 {
-    /* low, normal and high. */
-    if (priority < -1 || priority > 1) {
-        if (result)
-            *result = FALSE;
-        return E_INVALIDARG;
-    }
-    return enqueue(This, callback, result);
+    if (object)
+        *object = nullptr;
+    return CLASS_E_CLASSNOTAVAILABLE;
 }
 
-static HRESULT STDMETHODCALLTYPE queue_add_event(IDispatcherQueue *This, IUnknown *handler, EventRegistrationToken *token)
-{
-    if (!handler || !token)
-        return E_POINTER;
-    token->value = 1;
-    return S_OK;
-}
+/* ------------------------------------------------------------------ exports */
 
-static HRESULT STDMETHODCALLTYPE queue_remove_event(IDispatcherQueue *This, EventRegistrationToken token)
-{
-    return S_OK;
-}
-
-static const IDispatcherQueueVtbl queue_vtbl = {WRT_INSPECTABLE_ENTRIES(IDispatcherQueue), queue_create_timer,
-                                                queue_try_enqueue, queue_try_enqueue_priority, queue_add_event,
-                                                queue_remove_event, queue_add_event, queue_remove_event};
-static const WRT_CLASS queue_class = {QUEUE_CLASS, 1, {&IID_IDispatcherQueue}, 0, queue_destroy};
-
-static void controller_destroy(WRT_OBJECT *object)
-{
-    CONTROLLER *controller = (CONTROLLER *)object;
-    if (controller->Queue)
-        WrtRelease(&controller->Queue->Base.Ifaces[0]);
-    HeapFree(GetProcessHeap(), 0, controller);
-}
-
-static HRESULT STDMETHODCALLTYPE controller_get_queue(IDispatcherQueueController *This, IDispatcherQueue **value)
-{
-    CONTROLLER *controller = (CONTROLLER *)((WRT_IFACE *)This)->Owner;
-    if (!value)
-        return E_POINTER;
-    *value = (IDispatcherQueue *)&controller->Queue->Base.Ifaces[0];
-    WrtAddRef(&controller->Queue->Base.Ifaces[0]);
-    return S_OK;
-}
-
-static HRESULT STDMETHODCALLTYPE controller_shutdown(IDispatcherQueueController *This, IInspectable **operation)
-{
-    if (!operation)
-        return E_POINTER;
-    *operation = nullptr;
-    return E_NOTIMPL;
-}
-
-static const IDispatcherQueueControllerVtbl controller_vtbl = {WRT_INSPECTABLE_ENTRIES(IDispatcherQueueController),
-                                                               controller_get_queue, controller_shutdown};
-static const WRT_CLASS controller_class = {CONTROLLER_CLASS, 1, {&IID_IDispatcherQueueController}, 0,
-                                           controller_destroy};
-
-static QUEUE *queue_make(BOOL dedicated)
-{
-    QUEUE *queue = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*queue));
-    if (!queue)
-        return nullptr;
-    const void *vtables[1] = {&queue_vtbl};
-    WrtInit(&queue->Base, &queue_class, vtables);
-    queue->Dedicated = dedicated;
-    if (dedicated) {
-        queue->Ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-        HANDLE thread = CreateThread(nullptr, 0, dedicated_thread, queue, 0, &queue->Thread);
-        if (!queue->Ready || !thread) {
-            WrtRelease(&queue->Base.Ifaces[0]);
-            return nullptr;
-        }
-        CloseHandle(thread);
-        WaitForSingleObject(queue->Ready, INFINITE);
-    } else {
-        queue->Window = make_window();
-        queue->Thread = GetCurrentThreadId();
-    }
-    if (!queue->Window) {
-        WrtRelease(&queue->Base.Ifaces[0]);
-        return nullptr;
-    }
-    return queue;
-}
-
-/* the checks run in the same order as on windows 11. */
+/* the checks run in the same order as on windows 11. a thread has one queue, a current one ignores the apartment. */
 __declspec(dllexport) HRESULT WINAPI CreateDispatcherQueueController(DispatcherQueueOptions options, void **result)
 {
     if (!result)
         return E_POINTER;
-    *result = nullptr;
     if (options.dwSize != sizeof(options))
         return E_INVALIDARG;
-    if (options.threadType != DQTYPE_THREAD_DEDICATED && options.threadType != DQTYPE_THREAD_CURRENT)
+    if (options.threadType == DQTYPE_THREAD_DEDICATED)
+        return CmControllerOnDedicatedThread(options.apartmentType, (IDispatcherQueueController **)result);
+    if (options.threadType != DQTYPE_THREAD_CURRENT)
         return E_INVALIDARG;
-    /* the apartment is none, single threaded or multithreaded. */
-    if (options.apartmentType < 0 || options.apartmentType > 2)
-        return E_INVALIDARG;
-    QUEUE *queue = queue_make(options.threadType == DQTYPE_THREAD_DEDICATED);
-    CONTROLLER *controller = queue ? HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*controller)) : nullptr;
-    if (!controller) {
-        if (queue)
-            WrtRelease(&queue->Base.Ifaces[0]);
-        return E_OUTOFMEMORY;
-    }
-    const void *vtables[1] = {&controller_vtbl};
-    WrtInit(&controller->Base, &controller_class, vtables);
-    controller->Queue = queue;
-    *result = &controller->Base.Ifaces[0];
+    *result = nullptr;
+    if (CmQueueForThread())
+        return RPC_E_WRONG_THREAD_;
+    CM_QUEUE *queue;
+    HRESULT hr = CmQueueCreate(FALSE, &queue);
+    if (FAILED(hr))
+        return hr;
+    CM_CONTROLLER *controller;
+    hr = CmControllerCreate(queue, &controller);
+    CmRelease((WRT_IFACE *)CmIface(&queue->Object));
+    if (FAILED(hr))
+        return hr;
+    *result = CmIface(&controller->Object);
     return S_OK;
 }
 
-/* the calling thread's queue is not tracked, so this answers as for a thread that made none. */
 __declspec(dllexport) HRESULT WINAPI GetDispatcherQueueForCurrentThread(void **result)
 {
     if (!result)
         return E_POINTER;
-    *result = nullptr;
+    CM_QUEUE *queue = CmQueueForThread();
+    if (queue)
+        CmAddRef((WRT_IFACE *)CmIface(&queue->Object));
+    *result = queue ? CmIface(&queue->Object) : nullptr;
+    return S_OK;
+}
+
+/* the queue of the thread, made without a controller if it has none: nothing can shut it down. */
+__declspec(dllexport) HRESULT WINAPI CreateDispatcherQueueForCurrentThread(IDispatcherQueue **result)
+{
+    if (!result)
+        return E_POINTER;
+    CM_QUEUE *queue = CmQueueForThread();
+    if (queue) {
+        CmAddRef((WRT_IFACE *)CmIface(&queue->Object));
+    } else {
+        HRESULT hr = CmQueueCreate(FALSE, &queue);
+        if (FAILED(hr))
+            return hr;
+    }
+    *result = (IDispatcherQueue *)CmIface(&queue->Object);
     return S_OK;
 }
 
