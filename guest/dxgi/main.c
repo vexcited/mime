@@ -212,3 +212,9 @@ DXGIAPI HRESULT WINAPI DXGIDeclareAdapterRemovalSupport(void)
     static LONG declared;
     return InterlockedExchange(&declared, 1) ? DXGI_ERROR_INVALID_CALL : S_OK;
 }
+
+/* windows tells the kernel driver through a process wide setting, here the vblanks of an output are never virtualized. */
+DXGIAPI HRESULT WINAPI DXGIDisableVBlankVirtualization(void)
+{
+    return S_OK;
+}

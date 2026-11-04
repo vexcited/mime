@@ -4,4 +4,5 @@ EXPORTS
     CreateDXGIFactory2@12
     CreateDXGIFactory@8
     DXGIDeclareAdapterRemovalSupport@0
+    DXGIDisableVBlankVirtualization@0
     DXGIGetDebugInterface1@12
