@@ -358,6 +358,7 @@ EXPORTS
     GetWindowDisplayAffinity=_GetWindowDisplayAffinity@8
     GetWindowDpiAwarenessContext=_GetWindowDpiAwarenessContext@4
     GetWindowDpiHostingBehavior=_GetWindowDpiHostingBehavior@4
+    GetWindowFeedbackSetting=_GetWindowFeedbackSetting@20
     GetWindowInfo=_GetWindowInfo@8
     GetWindowLongA=_GetWindowLongA@8
     GetWindowLongPtrA=_GetWindowLongPtrA@8
@@ -602,6 +603,7 @@ EXPORTS
     SetWinEventHook=_SetWinEventHook@28
     SetWindowContextHelpId=_SetWindowContextHelpId@8
     SetWindowDisplayAffinity=_SetWindowDisplayAffinity@8
+    SetWindowFeedbackSetting=_SetWindowFeedbackSetting@20
     SetWindowLongA=_SetWindowLongA@12
     SetWindowLongPtrA=_SetWindowLongPtrA@12
     SetWindowLongPtrW=_SetWindowLongPtrW@12

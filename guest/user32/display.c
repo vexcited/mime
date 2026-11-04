@@ -222,6 +222,62 @@ WINUSERAPI BOOL WINAPI PrintWindow(HWND window, HDC dc, UINT flags)
 
 /* ------------------------------------------------------------------ pointers and power */
 
+#define FEEDBACK_MAX 12
+#define GWFS_INCLUDE_ANCESTORS 1
+
+/* the setting of a window, kept as a property holding the value plus one so that zero means none. */
+static void feedback_name(WCHAR name[24], UINT feedback)
+{
+    wsprintfW(name, L"MimeFeedback%u", feedback);
+}
+
+/* the visual feedback of touch and pen input. a window has none set until a program sets one. */
+WINUSERAPI BOOL WINAPI SetWindowFeedbackSetting(HWND window, UINT feedback, DWORD flags, UINT32 size,
+                                                const void *configuration)
+{
+    WCHAR name[24];
+    if (!IsWindow(window)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    if (!feedback || feedback > FEEDBACK_MAX || flags || (configuration ? size != sizeof(BOOL) : size != 0)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    feedback_name(name, feedback);
+    if (!configuration) {
+        RemovePropW(window, name);
+        return TRUE;
+    }
+    return SetPropW(window, name, (HANDLE)(ULONG_PTR)(!!*(const BOOL *)configuration + 1));
+}
+
+WINUSERAPI BOOL WINAPI GetWindowFeedbackSetting(HWND window, UINT feedback, DWORD flags, UINT32 *size,
+                                                void *configuration)
+{
+    WCHAR name[24];
+    if (!IsWindow(window)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    if (!feedback || feedback > FEEDBACK_MAX || (flags & ~GWFS_INCLUDE_ANCESTORS) || !size ||
+        (configuration && *size < sizeof(BOOL))) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    feedback_name(name, feedback);
+    ULONG_PTR value = 0;
+    for (HWND w = window; w && !value; w = flags & GWFS_INCLUDE_ANCESTORS ? GetAncestor(w, GA_PARENT) : nullptr)
+        value = (ULONG_PTR)GetPropW(w, name);
+    if (!value)
+        return FALSE;
+    *size = sizeof(BOOL);
+    if (configuration)
+        *(BOOL *)configuration = (BOOL)(value - 1);
+    return TRUE;
+}
+
+
 #define PT_MOUSE 4
 #define MOUSE_POINTER_ID 1
 
