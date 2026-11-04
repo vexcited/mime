@@ -384,6 +384,9 @@ HRESULT D2dCreateColorContext(D2dFactory *f, D2D1_COLOR_SPACE space, const BYTE 
                               ID2D1ColorContext **out);
 HRESULT D2dColorContextFromFile(D2dFactory *f, const WCHAR *path, ID2D1ColorContext **out);
 HRESULT D2dColorContextFromWic(D2dFactory *f, IWICColorContext *wic, ID2D1ColorContext **out);
+/* converts premultiplied bgra pixels in place between color contexts, for the color management effect. */
+void D2dColorManage(ID2D1ColorContext *source, UINT32 source_intent, ID2D1ColorContext *destination,
+                    UINT32 destination_intent, UINT32 alpha_mode, D2dSurface *surface);
 
 /* ------------------------------------------------------------------ the factory */
 

@@ -1,14 +1,86 @@
 ; the exports of mscms.dll of windows with their ordinals, less the ones that are not here yet.
 LIBRARY mscms.dll
 EXPORTS
-    OpenColorProfileA @69
-    OpenColorProfileW @70
+    AssociateColorProfileWithDeviceA @1
+    DeviceRenameEvent @2
+    AssociateColorProfileWithDeviceW @3
+    CheckBitmapBits @4
+    CheckColors @5
     CloseColorProfile @6
-    IsColorProfileValid @68
-    GetColorProfileHeader @48
+    ConvertColorNameToIndex @21
+    ConvertIndexToColorName @22
+    CreateColorTransformA @23
+    CreateColorTransformW @24
+    CreateDeviceLinkProfile @25
+    CreateMultiProfileTransform @26
+    CreateProfileFromLogColorSpaceA @27
+    CreateProfileFromLogColorSpaceW @28
+    DeleteColorTransform @34
+    DisassociateColorProfileFromDeviceA @35
+    DisassociateColorProfileFromDeviceW @36
+    DllCanUnloadNow @37
+    DllGetClassObject @38
+    EnumColorProfilesA @39
+    EnumColorProfilesW @40
+    GenerateCopyFilePaths @41
+    GetCMMInfo @42
     GetColorDirectoryA @43
     GetColorDirectoryW @44
-    CreateMultiProfileTransform @26
-    DeleteColorTransform @34
+    GetColorProfileElement @45
+    GetColorProfileElementTag @46
+    GetColorProfileFromHandle @47
+    GetColorProfileHeader @48
+    GetCountColorProfileElements @49
+    GetNamedProfileInfo @50
+    GetPS2ColorRenderingDictionary @51
+    GetPS2ColorRenderingIntent @52
+    GetPS2ColorSpaceArray @53
+    GetStandardColorSpaceProfileA @54
+    GetStandardColorSpaceProfileW @55
+    InstallColorProfileA @56
+    InstallColorProfileW @57
+    IsColorProfileTagPresent @67
+    IsColorProfileValid @68
+    OpenColorProfileA @69
+    OpenColorProfileW @70
+    RegisterCMMA @72
+    RegisterCMMW @73
+    SelectCMM @74
+    SetColorProfileElement @75
+    SetColorProfileElementReference @76
+    SetColorProfileElementSize @77
+    SetColorProfileHeader @78
+    SetStandardColorSpaceProfileA @79
+    SetStandardColorSpaceProfileW @80
+    SpoolerCopyFileEvent @81
     TranslateBitmapBits @82
     TranslateColors @83
+    UninstallColorProfileA @84
+    UninstallColorProfileW @85
+    UnregisterCMMA @86
+    UnregisterCMMW @87
+    WcsAssociateColorProfileWithDevice @88
+    WcsCheckColors @89
+    WcsCreateIccProfile @90
+    WcsDisassociateColorProfileFromDevice @91
+    WcsEnumColorProfiles @92
+    WcsEnumColorProfilesSize @93
+    WcsGetCalibrationManagementState @94
+    WcsGetDefaultColorProfile @95
+    WcsGetDefaultColorProfileSize @96
+    WcsGetDefaultRenderingIntent @97
+    WcsGetUsePerUserProfiles @98
+    WcsOpenColorProfileA @100
+    WcsOpenColorProfileW @101
+    WcsSetCalibrationManagementState @102
+    WcsSetDefaultColorProfile @103
+    WcsSetDefaultRenderingIntent @104
+    WcsSetUsePerUserProfiles @105
+    WcsTranslateColors @106
+    ColorProfileAddDisplayAssociation @230
+    ColorProfileRemoveDisplayAssociation @231
+    ColorProfileSetDisplayDefaultAssociation @232
+    ColorProfileGetDisplayList @233
+    ColorProfileGetDisplayDefault @234
+    ColorProfileGetDisplayUserScope @235
+    ColorProfileGetDeviceCapabilities @236

@@ -605,14 +605,13 @@ static HRESULT effect_render(D2dRt *rt, D2dEffect *e, IRect want, D2dImageData *
         break;
     }
     case EFF_COLORMANAGEMENT: {
-        /*
-         * pixels here are 8 bit and drawn as they are stored, so a conversion between color spaces would only lose
-         * precision on its way there and back: the input goes through unchanged.
-         */
         D2dImageData in;
         hr = input_area(rt, e, 0, area, &in, depth);
-        if (SUCCEEDED(hr))
+        if (SUCCEEDED(hr)) {
+            D2dColorManage(*(ID2D1ColorContext **)e->props[0], *pu(e, 1), *(ID2D1ColorContext **)e->props[2], *pu(e, 3),
+                           *pu(e, 4), &in.surface);
             *out = in;
+        }
         break;
     }
     default:
