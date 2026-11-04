@@ -299,6 +299,19 @@ static ULONG code_slots(const UNWIND_CODE *code)
     }
 }
 
+/* the start of the function whose unwind data a chain of parts ends in. */
+static ULONG primary_begin(ULONG64 base, PRUNTIME_FUNCTION f)
+{
+    const UNWIND_INFO *info = (const UNWIND_INFO *)(base + f->UnwindData);
+    ULONG begin = f->BeginAddress;
+    while (info->Flags & UNW_FLAG_CHAININFO) {
+        PRUNTIME_FUNCTION chained = (PRUNTIME_FUNCTION)&info->UnwindCode[(info->CountOfCodes + 1) & ~1];
+        begin = chained->BeginAddress;
+        info = (const UNWIND_INFO *)(base + chained->UnwindData);
+    }
+    return begin;
+}
+
 /*
  * when pc sits in an epilog, the rest of the epilog is emulated instead of
  * the unwind codes: an optional stack release, pops of nonvolatile
@@ -329,14 +342,33 @@ static BOOLEAN in_epilog(ULONG64 pc, ULONG64 base, PRUNTIME_FUNCTION f, const UN
             break;
         }
     }
+    if (p[0] == 0xF2)
+        p++;
     if (p[0] == 0xC3 || (p[0] == 0xF3 && p[1] == 0xC3) || p[0] == 0xC2)
         return TRUE;
-    /* a tail jump leaving the function. */
-    if (p[0] == 0xE9) {
+    /*
+     * a jump ends an epilog when it leaves the function, or goes back to its start. A function split in parts
+     * that chain their unwind data to one primary entry jumps between them with its frame still built, and what
+     * follows such a jump is not an epilog.
+     */
+    if (p[0] == 0xE9 || p[0] == 0xEB) {
         LONG rel;
-        memcpy(&rel, p + 1, 4);
-        ULONG64 target = (ULONG64)p + 5 + (LONG64)rel;
-        return target < base + f->BeginAddress || target >= base + f->EndAddress;
+        ULONG64 target;
+        if (p[0] == 0xE9) {
+            memcpy(&rel, p + 1, 4);
+            target = (ULONG64)p + 5 + (LONG64)rel;
+        } else {
+            target = (ULONG64)p + 2 + (LONG64)(signed char)p[1];
+        }
+        ULONG64 rva = target - base;
+        if (rva >= f->BeginAddress && rva < f->EndAddress)
+            return rva == f->BeginAddress && !(info->Flags & UNW_FLAG_CHAININFO);
+        ULONG64 other_base;
+        PRUNTIME_FUNCTION other = RtlLookupFunctionEntry(target, &other_base, nullptr);
+        if (!other || other_base != base)
+            return TRUE;
+        ULONG primary = primary_begin(base, f);
+        return primary_begin(base, other) != primary || rva == primary;
     }
     if (p[0] == 0xFF && (p[1] & 0x38) == 0x20)
         return TRUE;
