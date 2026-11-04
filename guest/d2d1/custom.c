@@ -2658,6 +2658,25 @@ static int extend(int v, int lo, int hi, D2D1_EXTEND_MODE m)
     return lo + t;
 }
 
+/* the target of a source transform is in the buffer it asked for, as it writes its pixels in that format. */
+static DXGI_FORMAT source_format(const CInfo *info, D2D1_BUFFER_PRECISION fallback)
+{
+    D2D1_BUFFER_PRECISION p = info && info->precision != D2D1_BUFFER_PRECISION_UNKNOWN ? info->precision : fallback;
+    BOOL one = info && info->depth == D2D1_CHANNEL_DEPTH_1;
+    switch (p) {
+    case D2D1_BUFFER_PRECISION_8BPC_UNORM_SRGB:
+        return DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+    case D2D1_BUFFER_PRECISION_16BPC_UNORM:
+        return DXGI_FORMAT_R16G16B16A16_UNORM;
+    case D2D1_BUFFER_PRECISION_16BPC_FLOAT:
+        return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    case D2D1_BUFFER_PRECISION_32BPC_FLOAT:
+        return DXGI_FORMAT_R32G32B32A32_FLOAT;
+    default:
+        return one ? DXGI_FORMAT_A8_UNORM : DXGI_FORMAT_B8G8R8A8_UNORM;
+    }
+}
+
 static HRESULT run_pass(Eval *ev, GNode *n, D2dIRect r, D2dImageData *out)
 {
     UINT32 count = n->ninputs < MAX_SLOTS ? n->ninputs : MAX_SLOTS;
@@ -2680,9 +2699,12 @@ static HRESULT run_pass(Eval *ev, GNode *n, D2dIRect r, D2dImageData *out)
     CInfo *info = n->info;
     if (SUCCEEDED(hr) && n->kind == NODE_SOURCE) {
         D2dBitmap *b;
-        hr = D2dBitmapCreate(ev->e->obj.factory, (UINT32)(r.x1 - r.x0), (UINT32)(r.y1 - r.y0), DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED,
-                             96.0f, 96.0f, D2D1_BITMAP_OPTIONS_TARGET, TRUE, &b);
+        hr = D2dBitmapCreate(ev->e->obj.factory, (UINT32)(r.x1 - r.x0), (UINT32)(r.y1 - r.y0), source_format(info, ev->e->precision),
+                             D2D1_ALPHA_MODE_PREMULTIPLIED, 96.0f, 96.0f, D2D1_BITMAP_OPTIONS_TARGET, TRUE, &b);
         if (SUCCEEDED(hr)) {
+            b->writable = TRUE;
+            /* a buffer of an effect holds its values without the transfer curve of a float bitmap. */
+            b->srgb = TRUE;
             ID2D1SourceTransform *t = (ID2D1SourceTransform *)n->transform;
             hr = t->lpVtbl->Draw(t, (ID2D1Bitmap1 *)b, &want_l, (D2D1_POINT_2U){0, 0});
             const D2dSurface *v = SUCCEEDED(hr) ? D2dBitmapView(b) : nullptr;

@@ -361,6 +361,8 @@ struct D2dBitmap {
     BOOL view_valid;
     BOOL view_dirty;
     BOOL mapped;
+    /* the target of a source transform, which the cpu may map for writing. */
+    BOOL writable;
     /* a dxgi surface that this bitmap mirrors. */
     IDXGISurface *surface;
     ID2D1ColorContext *color_context;

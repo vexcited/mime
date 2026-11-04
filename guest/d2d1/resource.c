@@ -702,7 +702,7 @@ static HRESULT STDMETHODCALLTYPE bm_map(ID2D1Bitmap1 *This, D2D1_MAP_OPTIONS opt
     BSELF;
     if (!mapped)
         return E_POINTER;
-    if (!(b->options & D2D1_BITMAP_OPTIONS_CPU_READ) || b->mapped)
+    if (b->mapped || (!(b->options & D2D1_BITMAP_OPTIONS_CPU_READ) && !(b->writable && !(options & D2D1_MAP_OPTIONS_READ))))
         return D2DERR_INVALID_CALL;
     if (!(options & (D2D1_MAP_OPTIONS_READ | D2D1_MAP_OPTIONS_WRITE)) || ((options & D2D1_MAP_OPTIONS_DISCARD) && !(options & D2D1_MAP_OPTIONS_WRITE)) ||
         ((options & D2D1_MAP_OPTIONS_DISCARD) && (options & D2D1_MAP_OPTIONS_READ)))
