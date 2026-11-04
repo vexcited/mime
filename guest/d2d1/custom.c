@@ -1889,6 +1889,7 @@ static D2dClass g_context_class = {"effect context", g_context_iids, nullptr, nu
 
 struct CEffect {
     D2dObj obj;
+    const void *image_vtbl;
     CReg *reg;
     IUnknown *impl_unknown;
     ID2D1EffectImpl *impl;
@@ -1906,21 +1907,15 @@ struct CEffect {
     LONG busy;
 };
 
-typedef struct CEffectOut {
-    D2dObj obj;
-    CEffect *effect;
-} CEffectOut;
-
-static D2dClass g_custom_class, g_custom_out_class;
+static D2dClass g_custom_class;
 #define CE CEffect *e = (CEffect *)This
 
 void *D2dCustomOf(const void *image)
 {
     if (D2dIsOfClass(image, &g_custom_class))
         return (void *)image;
-    if (D2dIsOfClass(image, &g_custom_out_class))
-        return ((CEffectOut *)image)->effect;
-    return nullptr;
+    void *e = D2dEffectFromImage(image);
+    return D2dIsOfClass(e, &g_custom_class) ? e : nullptr;
 }
 
 static void mark_changed(CEffect *e, D2D1_CHANGE_TYPE change)
@@ -2266,22 +2261,11 @@ static void STDMETHODCALLTYPE ce_get_input(ID2D1Effect *This, UINT32 index, ID2D
 }
 static UINT32 STDMETHODCALLTYPE ce_get_input_count(ID2D1Effect *This) { CE; return e->ninputs; }
 
-static void custom_out_destroy(D2dObj *o) { D2dRelease(((CEffectOut *)o)->effect); }
-static const void *const g_custom_out_vtbl[] = {D2dQueryInterface, D2dAddRef, D2dRelease, D2dResourceGetFactory};
-D2D_IIDS(g_custom_out_iids, &IID_ID2D1Resource, &IID_ID2D1Image);
-static D2dClass g_custom_out_class = {"custom effect output", g_custom_out_iids, custom_out_destroy, nullptr};
-
 static void STDMETHODCALLTYPE ce_get_output(ID2D1Effect *This, ID2D1Image **out)
 {
     CE;
-    if (!out)
-        return;
-    CEffectOut *o = D2dNew(sizeof(*o), g_custom_out_vtbl, &g_custom_out_class, e->obj.factory);
-    *out = (ID2D1Image *)o;
-    if (o) {
-        o->effect = e;
-        D2dAddRef(e);
-    }
+    if (out)
+        D2dEffectQueryImage(&e->obj, &IID_ID2D1Image, (void **)out);
 }
 
 static void custom_destroy(D2dObj *o)
@@ -2314,7 +2298,7 @@ static const void *const g_custom_vtbl[] = {D2dQueryInterface, D2dAddRef, D2dRel
                                             ce_type, ce_index, ce_set_by_name, ce_set, ce_get_by_name, ce_get, ce_value_size,
                                             ce_subprops, ce_set_input, ce_set_input_count, ce_get_input, ce_get_input_count, ce_get_output};
 D2D_IIDS(g_custom_iids, &IID_ID2D1Properties, &IID_ID2D1Effect);
-static D2dClass g_custom_class = {"custom effect", g_custom_iids, custom_destroy, nullptr};
+static D2dClass g_custom_class = {"custom effect", g_custom_iids, custom_destroy, D2dEffectQueryImage};
 
 HRESULT D2dCustomCreate(D2dFactory *f, float dpi, REFCLSID clsid, ID2D1Effect **out)
 {
@@ -2330,6 +2314,7 @@ HRESULT D2dCustomCreate(D2dFactory *f, float dpi, REFCLSID clsid, ID2D1Effect **
         reg_release(r);
         return E_OUTOFMEMORY;
     }
+    e->image_vtbl = d2d_effect_image_vtbl;
     e->reg = r;
     e->ninputs = r->ninputs;
     e->inputs = D2dAllocZero((r->ninputs ? r->ninputs : 1) * sizeof(ID2D1Image *));

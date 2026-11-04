@@ -648,6 +648,13 @@ HRESULT D2dGpuDraw(const D2dGpuPass *p, D2dImageData *out);
 HRESULT D2dGpuCompute(const D2dGpuPass *p, D2dImageData *out);
 /* a custom effect or its output image, nullptr for anything else. */
 void *D2dCustomOf(const void *image);
+/* effects are images too: their ID2D1Image interface sits right after the object header. */
+extern const void *const d2d_effect_image_vtbl[];
+static inline void *D2dEffectFromImage(const void *p)
+{
+    return p && *(const void *const *)p == (const void *)d2d_effect_image_vtbl ? (BYTE *)p - sizeof(D2dObj) : nullptr;
+}
+HRESULT D2dEffectQueryImage(D2dObj *obj, REFIID riid, void **out);
 BOOL D2dIsEffect(const void *p);
 HRESULT D2dCustomBounds(D2dRt *rt, ID2D1Image *image, D2dIRect *b, int depth);
 HRESULT D2dCustomRender(D2dRt *rt, ID2D1Image *image, D2dIRect want, D2dImageData *out, int depth);
