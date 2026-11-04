@@ -2334,14 +2334,18 @@ HRESULT D2dCustomCreate(D2dFactory *f, float dpi, REFCLSID clsid, ID2D1Effect **
         hr = E_FAIL;
     if (SUCCEEDED(hr))
         hr = e->impl_unknown->lpVtbl->QueryInterface(e->impl_unknown, &IID_ID2D1EffectImpl, (void **)&e->impl);
-    if (SUCCEEDED(hr))
-        hr = e->impl->lpVtbl->Initialize(e->impl, (ID2D1EffectContext *)e->context, (ID2D1TransformGraph *)e->graph);
-    /* the default of every property goes through its setter once the effect is initialized. */
+    /*
+     * the defaults are the first values of the properties direct2d keeps. windows calls no setter of a bound property
+     * when it makes an effect: Paint.NET's setters fail before Initialize, and its device feature probe keeps what it
+     * sets there.
+     */
     for (UINT32 i = 0; SUCCEEDED(hr) && i < r->nprops; i++) {
         const CProp *p = &r->props[i];
-        if (p->def && (p->set || !p->get))
+        if (p->def && !p->get)
             hr = set_value(e, i, p->type, p->def, p->def_size, TRUE);
     }
+    if (SUCCEEDED(hr))
+        hr = e->impl->lpVtbl->Initialize(e->impl, (ID2D1EffectContext *)e->context, (ID2D1TransformGraph *)e->graph);
     if (FAILED(hr)) {
         D2dRelease(e);
         return hr;
