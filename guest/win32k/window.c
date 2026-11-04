@@ -1568,6 +1568,9 @@ static void free_window(WND *w)
     for (WND *c = g_desktop ? g_desktop->FirstChild : nullptr; c; c = c->Next)
         if (c->Owner == w)
             c->Owner = nullptr;
+    for (WND *c = g_desktop ? g_desktop->FirstChild : nullptr; c; c = c->Next)
+        if (c->HostOwner == w)
+            c->HostOwner = nullptr;
     if (w->Class)
         w->Class->Windows--;
     W32Free(w->Text);
@@ -2180,6 +2183,7 @@ HWND NTAPI NtUserSetParent(HWND hwnd, HWND parent_h)
             w->Surface = nullptr;
         }
         link_window(p, w, HWND_TOP);
+        w->HostOwner = p == g_desktop && old_parent != g_desktop ? WndTopLevel(old_parent) : nullptr;
         /* keep the position relative to the new parent. */
         RECT nr = r;
         parent_to_screen(p, w->Awareness, &nr);

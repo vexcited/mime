@@ -258,7 +258,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
         host_pixels(w, &drag[i]);
         c->drag[i] = mime_rect(&drag[i]);
     }
-    c->owner_id = w->Owner ? window_id(w->Owner) : 0;
+    c->owner_id = w->Owner ? window_id(w->Owner) : w->HostOwner ? window_id(w->HostOwner) : 0;
     c->dpi = WndHostDpi(w);
     /* the surface of a window that is not per monitor aware is drawn at the dpi of its awareness and stretched by the host. */
     if (w->Awareness < DPI_AWARE_PER_MONITOR && c->dpi != DpiScaleOf(w->Awareness))

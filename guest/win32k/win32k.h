@@ -699,6 +699,7 @@ typedef struct WND {
     USER_OBJECT Header;
     struct WND *Parent;
     struct WND *Owner;
+    struct WND *HostOwner; /* the top level window a child of the desktop was taken from, which its host window hangs from. */
     struct WND *FirstChild; /* top of the z order. */
     struct WND *LastChild;
     struct WND *Next;       /* below this window. */
