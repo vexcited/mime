@@ -165,7 +165,7 @@ set(includes_windowscodecs guest/lib)
 set(objects_bcrypt x86-lib-crypto)
 set(objects_combase x86-lib-crypto:guest/lib/crypto/hash.c)
 set(includes_combase guest/lib)
-set(objects_crypt32 x86-lib-crypto x86-lib-compound)
+set(objects_crypt32 x86-lib-crypto x86-lib-compound x86-lib-cabinet)
 set(objects_secur32 x86-lib-crypto)
 set(objects_advapi32 x86-lib-crypto:guest/lib/crypto/hash.c x86-lib-crypto:guest/lib/crypto/stream.c
         x86-lib-crypto:guest/lib/crypto/bignum.c x86-lib-crypto:guest/lib/crypto/rsa.c

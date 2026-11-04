@@ -3,7 +3,7 @@
  *
  * a chain ending in a self signed certificate is trusted when the engine's Root store holds it: the logical Root
  * store of the current user or local machine, plus the roots the host's bundle seeds into the machine's AuthRoot
- * store, or the engine's exclusive or restricted roots.
+ * store and those automatic root update brings there, or the engine's exclusive or restricted roots.
  */
 #include "crypt32_private.h"
 
@@ -41,17 +41,11 @@ BOOL CrIsSelfIssued(PCCERT_CONTEXT cert)
     return CertCompareCertificateName(cert->dwCertEncodingType, &cert->pCertInfo->Subject, &cert->pCertInfo->Issuer);
 }
 
-/* checks the enhanced key usage extension of a certificate against the requested usages. */
-BOOL CrUsageAllowed(PCCERT_CONTEXT cert, const CERT_USAGE_MATCH *usage)
+/* whether an encoded list of usages allows the requested ones. */
+static BOOL usages_allow(const BYTE *data, DWORD size, const CERT_USAGE_MATCH *usage)
 {
-    if (!usage || !usage->Usage.cUsageIdentifier)
-        return TRUE;
-    const CERT_INFO *info = cert->pCertInfo;
-    PCERT_EXTENSION ext = CertFindExtension(szOID_ENHANCED_KEY_USAGE, info->cExtension, info->rgExtension);
-    if (!ext)
-        return TRUE;
-    DWORD size;
-    CERT_ENHKEY_USAGE *have = CrDecodeAlloc(X509_ENHANCED_KEY_USAGE, ext->Value.pbData, ext->Value.cbData, 0, &size);
+    DWORD n;
+    CERT_ENHKEY_USAGE *have = CrDecodeAlloc(X509_ENHANCED_KEY_USAGE, data, size, 0, &n);
     if (!have)
         return FALSE;
     DWORD matched = 0;
@@ -69,6 +63,37 @@ BOOL CrUsageAllowed(PCCERT_CONTEXT cert, const CERT_USAGE_MATCH *usage)
     if (any)
         return TRUE;
     return usage->dwType == USAGE_MATCH_TYPE_OR ? matched > 0 : matched == usage->Usage.cUsageIdentifier;
+}
+
+/* a property holding an encoded list of usages, in a buffer to free with CrFree. */
+static BYTE *usage_property(PCCERT_CONTEXT cert, DWORD id, DWORD *size)
+{
+    *size = 0;
+    if (!CertGetCertificateContextProperty(cert, id, nullptr, size) || !*size)
+        return nullptr;
+    BYTE *data = CrAlloc(*size);
+    if (data && !CertGetCertificateContextProperty(cert, id, data, size)) {
+        CrFree(data);
+        data = nullptr;
+    }
+    return data;
+}
+
+/* checks the enhanced key usage extension of a certificate, and the usages a property limits it to, against the
+   requested usages. */
+BOOL CrUsageAllowed(PCCERT_CONTEXT cert, const CERT_USAGE_MATCH *usage)
+{
+    if (!usage || !usage->Usage.cUsageIdentifier)
+        return TRUE;
+    const CERT_INFO *info = cert->pCertInfo;
+    PCERT_EXTENSION ext = CertFindExtension(szOID_ENHANCED_KEY_USAGE, info->cExtension, info->rgExtension);
+    if (ext && !usages_allow(ext->Value.pbData, ext->Value.cbData, usage))
+        return FALSE;
+    DWORD size;
+    BYTE *prop = usage_property(cert, CERT_ENHKEY_USAGE_PROP_ID, &size);
+    BOOL ok = !prop || usages_allow(prop, size, usage);
+    CrFree(prop);
+    return ok;
 }
 
 /* ------------------------------------------------------------------ engines */
@@ -314,7 +339,11 @@ static BOOL store_has(HCERTSTORE store, PCCERT_CONTEXT cert)
 /* the engine's own roots replace those of its location. */
 static BOOL is_trusted_root(cr_engine *engine, PCCERT_CONTEXT root)
 {
-    return engine && store_has(engine->roots ? engine->roots : engine->system_roots, root);
+    if (!engine)
+        return FALSE;
+    if (engine->roots)
+        return store_has(engine->roots, root);
+    return store_has(engine->system_roots, root) || store_has(CrAutoRoots(), root);
 }
 
 /* picks the best issuer of subject in a store: a trusted root, a valid signature, a matching key id, a valid time. */
@@ -380,6 +409,101 @@ static DWORD constraint_errors(PCCERT_CONTEXT cert, DWORD position, DWORD ca_bel
     return error;
 }
 
+/* builds the path from the certificate up; returns the number of certificates, each a reference. */
+static DWORD build(cr_engine *engine, PCCERT_CONTEXT cert, const FILETIME *time, HCERTSTORE additional,
+                   PCCERT_CONTEXT *certs, DWORD *errors, DWORD *infos, DWORD *chain_error)
+{
+    memset(errors, 0, MAX_CHAIN * sizeof(DWORD));
+    memset(infos, 0, MAX_CHAIN * sizeof(DWORD));
+    *chain_error = 0;
+    DWORD count = 0;
+    certs[count++] = CertDuplicateCertificateContext(cert);
+    for (;;) {
+        PCCERT_CONTEXT cur = certs[count - 1];
+        if (CrIsSelfIssued(cur)) {
+            DWORD error = check_signature(cur, cur);
+            infos[count - 1] |= CERT_TRUST_HAS_NAME_MATCH_ISSUER | CERT_TRUST_HAS_PREFERRED_ISSUER;
+            if (!error)
+                infos[count - 1] |= CERT_TRUST_IS_SELF_SIGNED;
+            else
+                errors[count - 1] |= CERT_TRUST_IS_NOT_SIGNATURE_VALID;
+            if (!is_trusted_root(engine, cur))
+                errors[count - 1] |= CERT_TRUST_IS_UNTRUSTED_ROOT;
+            break;
+        }
+        if (count == MAX_CHAIN) {
+            *chain_error |= CERT_TRUST_IS_PARTIAL_CHAIN;
+            break;
+        }
+        int score = 0;
+        DWORD status = 0;
+        PCCERT_CONTEXT issuer = find_issuer(additional, engine, cur, certs, count, time, &score, nullptr, &status);
+        if (score < 31)
+            issuer = find_issuer(cur->hCertStore, engine, cur, certs, count, time, &score, issuer, &status);
+        if (score < 31 && engine)
+            issuer = find_issuer(engine->world, engine, cur, certs, count, time, &score, issuer, &status);
+        if (score < 31 && engine && !engine->roots)
+            issuer = find_issuer(CrAutoRoots(), engine, cur, certs, count, time, &score, issuer, &status);
+        if (!issuer) {
+            *chain_error |= CERT_TRUST_IS_PARTIAL_CHAIN;
+            break;
+        }
+        infos[count - 1] |= status | CERT_TRUST_HAS_PREFERRED_ISSUER;
+        if (check_signature(cur, issuer))
+            errors[count - 1] |= CERT_TRUST_IS_NOT_SIGNATURE_VALID;
+        certs[count++] = issuer;
+    }
+    return count;
+}
+
+#define CERT_DISALLOWED_FILETIME_PROP_ID 104
+#define CERT_DISALLOWED_ENHKEY_USAGE_PROP_ID 122
+#define CERT_ROOT_PROGRAM_NOT_BEFORE_FILETIME_PROP_ID 126
+#define CERT_ROOT_PROGRAM_NOT_BEFORE_ENHKEY_USAGE_PROP_ID 127
+
+static BOOL filetime_property(PCCERT_CONTEXT cert, DWORD id, ULONGLONG *out)
+{
+    DWORD size = sizeof(*out);
+    return CertGetCertificateContextProperty(cert, id, out, &size) && size == sizeof(*out);
+}
+
+/* whether a property's list of usages names one of those requested; with no list, whether any is requested. */
+static BOOL usage_listed(PCCERT_CONTEXT cert, DWORD id, const CERT_USAGE_MATCH *usage, BOOL *present)
+{
+    DWORD size;
+    BYTE *prop = usage_property(cert, id, &size);
+    *present = prop != nullptr;
+    if (!prop)
+        return FALSE;
+    CERT_USAGE_MATCH any = {USAGE_MATCH_TYPE_OR, usage->Usage};
+    BOOL listed = usage->Usage.cUsageIdentifier && usages_allow(prop, size, &any);
+    CrFree(prop);
+    return listed;
+}
+
+/*
+ * what the root program's properties on a root say: it is disabled from a date, it may not be trusted for some
+ * usages, and certificates issued after a date are not trusted through it, for some usages or for all.
+ */
+static DWORD root_program_errors(PCCERT_CONTEXT root, PCCERT_CONTEXT leaf, const CERT_USAGE_MATCH *usage)
+{
+    ULONGLONG when;
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    if (filetime_property(root, CERT_DISALLOWED_FILETIME_PROP_ID, &when) &&
+        (!when || ((ULONGLONG)now.dwHighDateTime << 32 | now.dwLowDateTime) >= when))
+        return CERT_TRUST_IS_UNTRUSTED_ROOT;
+    BOOL present;
+    if (usage_listed(root, CERT_DISALLOWED_ENHKEY_USAGE_PROP_ID, usage, &present))
+        return CERT_TRUST_IS_NOT_VALID_FOR_USAGE;
+    const FILETIME *issued = &leaf->pCertInfo->NotBefore;
+    if (filetime_property(root, CERT_ROOT_PROGRAM_NOT_BEFORE_FILETIME_PROP_ID, &when) && when &&
+        ((ULONGLONG)issued->dwHighDateTime << 32 | issued->dwLowDateTime) >= when &&
+        (usage_listed(root, CERT_ROOT_PROGRAM_NOT_BEFORE_ENHKEY_USAGE_PROP_ID, usage, &present) || !present))
+        return CERT_TRUST_IS_NOT_VALID_FOR_USAGE;
+    return 0;
+}
+
 BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEXT pCertContext, LPFILETIME pTime,
                                     HCERTSTORE hAdditionalStore, PCERT_CHAIN_PARA pChainPara, DWORD dwFlags,
                                     LPVOID pvReserved, PCCERT_CHAIN_CONTEXT *ppChainContext)
@@ -408,42 +532,22 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
         return CrFail(ERROR_OUTOFMEMORY);
     }
     PCCERT_CONTEXT certs[MAX_CHAIN];
-    DWORD errors[MAX_CHAIN] = {}, infos[MAX_CHAIN] = {}, chain_error = 0;
-    DWORD count = 0;
-    certs[count++] = CertDuplicateCertificateContext(pCertContext);
-    for (;;) {
-        PCCERT_CONTEXT cur = certs[count - 1];
-        if (CrIsSelfIssued(cur)) {
-            DWORD error = check_signature(cur, cur);
-            infos[count - 1] |= CERT_TRUST_HAS_NAME_MATCH_ISSUER | CERT_TRUST_HAS_PREFERRED_ISSUER;
-            if (!error)
-                infos[count - 1] |= CERT_TRUST_IS_SELF_SIGNED;
-            else
-                errors[count - 1] |= CERT_TRUST_IS_NOT_SIGNATURE_VALID;
-            if (!is_trusted_root(engine, cur))
-                errors[count - 1] |= CERT_TRUST_IS_UNTRUSTED_ROOT;
-            break;
+    DWORD errors[MAX_CHAIN], infos[MAX_CHAIN], chain_error;
+    DWORD count = build(engine, pCertContext, pTime, hAdditionalStore, certs, errors, infos, &chain_error);
+    /* a chain the system roots do not end may end in a root the program trusts. */
+    if (engine && !engine->roots && !(dwFlags & CERT_CHAIN_DISABLE_AUTH_ROOT_AUTO_UPDATE) &&
+        ((chain_error & CERT_TRUST_IS_PARTIAL_CHAIN) || (errors[count - 1] & CERT_TRUST_IS_UNTRUSTED_ROOT))) {
+        PCCERT_CONTEXT top = certs[count - 1];
+        BYTE aki[CR_MAX_HASH];
+        DWORD aki_size = 0;
+        BOOL self = CrIsSelfIssued(top);
+        if (self || !authority_key_id(top, aki, &aki_size))
+            aki_size = 0;
+        if (CrAutoRootUpdate(top, self, aki, aki_size)) {
+            for (DWORD i = 0; i < count; i++)
+                CertFreeCertificateContext(certs[i]);
+            count = build(engine, pCertContext, pTime, hAdditionalStore, certs, errors, infos, &chain_error);
         }
-        if (count == MAX_CHAIN) {
-            chain_error |= CERT_TRUST_IS_PARTIAL_CHAIN;
-            break;
-        }
-        int score = 0;
-        DWORD status = 0;
-        PCCERT_CONTEXT issuer = find_issuer(hAdditionalStore, engine, cur, certs, count, pTime, &score, nullptr,
-                                            &status);
-        if (score < 31)
-            issuer = find_issuer(cur->hCertStore, engine, cur, certs, count, pTime, &score, issuer, &status);
-        if (score < 31 && engine)
-            issuer = find_issuer(engine->world, engine, cur, certs, count, pTime, &score, issuer, &status);
-        if (!issuer) {
-            chain_error |= CERT_TRUST_IS_PARTIAL_CHAIN;
-            break;
-        }
-        infos[count - 1] |= status | CERT_TRUST_HAS_PREFERRED_ISSUER;
-        if (check_signature(cur, issuer))
-            errors[count - 1] |= CERT_TRUST_IS_NOT_SIGNATURE_VALID;
-        certs[count++] = issuer;
     }
     DWORD ca_below = 0;
     BOOL revocation = (dwFlags & (CERT_CHAIN_REVOCATION_CHECK_END_CERT | CERT_CHAIN_REVOCATION_CHECK_CHAIN |
@@ -459,6 +563,8 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
         if (engine && store_has(engine->disallowed, certs[i]))
             errors[i] |= CERT_TRUST_IS_EXPLICIT_DISTRUST;
         BOOL is_root = i + 1 == count && (infos[i] & CERT_TRUST_IS_SELF_SIGNED);
+        if (is_root)
+            errors[i] |= root_program_errors(certs[i], certs[0], &pChainPara->RequestedUsage);
         if (revocation && (i == 0 || (dwFlags & CERT_CHAIN_REVOCATION_CHECK_CHAIN) ||
                            ((dwFlags & CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT) && !is_root)))
             errors[i] |= CERT_TRUST_REVOCATION_STATUS_UNKNOWN | CERT_TRUST_IS_OFFLINE_REVOCATION;

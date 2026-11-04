@@ -285,7 +285,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     set(objects_bcrypt ${arch}-lib-crypto)
     set(objects_combase ${arch}-lib-crypto:guest/lib/crypto/hash.c)
     set(includes_combase guest/lib)
-    set(objects_crypt32 ${arch}-lib-crypto ${arch}-lib-compound)
+    set(objects_crypt32 ${arch}-lib-crypto ${arch}-lib-compound ${arch}-lib-cabinet)
     set(objects_secur32 ${arch}-lib-crypto)
     set(objects_advapi32 ${arch}-lib-crypto:guest/lib/crypto/hash.c ${arch}-lib-crypto:guest/lib/crypto/stream.c
         ${arch}-lib-crypto:guest/lib/crypto/bignum.c ${arch}-lib-crypto:guest/lib/crypto/rsa.c

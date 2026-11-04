@@ -262,4 +262,13 @@ extern LONG CrRegGeneration;
 BOOL CrIsSelfIssued(PCCERT_CONTEXT cert);
 BOOL CrUsageAllowed(PCCERT_CONTEXT cert, const CERT_USAGE_MATCH *usage);
 
+/* ------------------------------------------------------------------ automatic root update, autoroot.c */
+
+#define CERT_CHAIN_DISABLE_AUTH_ROOT_AUTO_UPDATE 0x100
+
+/* the roots this process brought; null before the first. */
+HCERTSTORE CrAutoRoots(void);
+/* looks for a root of the program to end a chain whose top is untrusted; TRUE when one was added. */
+BOOL CrAutoRootUpdate(PCCERT_CONTEXT top, BOOL self_signed, const BYTE *aki, DWORD aki_size);
+
 #endif
