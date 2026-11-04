@@ -825,6 +825,42 @@
 @=expand:"%SystemRoot%\\system32\\uiautomationcore.dll"
 "ThreadingModel"="Both"
 
+; UIAnimation.dll
+; UIAnimationManager
+[HKCR\CLSID\{4C1FC63A-695C-47E8-A339-1A194BE3D0B8}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\UIAnimation.dll"
+"ThreadingModel"="Both"
+
+; UIAnimationManager2
+[HKCR\CLSID\{D25D8842-8884-4A4A-B321-091314379BDD}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\UIAnimation.dll"
+"ThreadingModel"="Both"
+
+; UIAnimationTransitionLibrary
+[HKCR\CLSID\{1D6322AD-AA85-4EF5-A828-86D71067D145}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\UIAnimation.dll"
+"ThreadingModel"="Both"
+
+; UIAnimationTransitionLibrary2
+[HKCR\CLSID\{812F944A-C5C8-4CD9-B0A6-B3DA802F228D}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\UIAnimation.dll"
+"ThreadingModel"="Both"
+
+; UIAnimationTransitionFactory
+[HKCR\CLSID\{8A9B1CDD-FCD7-419C-8B44-42FD17DB1887}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\UIAnimation.dll"
+"ThreadingModel"="Both"
+
+; UIAnimationTransitionFactory2
+[HKCR\CLSID\{84302F97-7F7B-4040-B190-72AC9D18E420}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\UIAnimation.dll"
+"ThreadingModel"="Both"
+
+; UIAnimationTimer
+[HKCR\CLSID\{BFCD4A0C-06B6-4384-B768-0DAA792C380E}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\UIAnimation.dll"
+"ThreadingModel"="Both"
+
 ; scrrun.dll
 ; Scripting.FileSystemObject
 [HKCR\CLSID\{0D43FE01-F093-11CF-8940-00A0C9054228}]
