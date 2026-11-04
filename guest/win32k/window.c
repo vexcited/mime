@@ -333,7 +333,7 @@ void WndSetText(WND *w, PCWSTR text, ULONG chars)
 static void subtract_siblings_above(WND *w, REGION *rgn)
 {
     for (WND *s = w->Prev; s; s = s->Prev)
-        if ((s->Style & WS_VISIBLE))
+        if ((s->Style & WS_VISIBLE) && !(s->ExStyle & WS_EX_TRANSPARENT))
             RgnCombineRect(rgn, rgn, &s->WindowRect, RGN_DIFF);
 }
 
@@ -354,7 +354,7 @@ void WndComputeVisRgn(WND *w, BOOLEAN client, ULONG dcx_flags, REGION *out)
     RgnCombineRect(out, out, &top->WindowRect, RGN_AND);
     if ((dcx_flags & DCX_CLIPCHILDREN) || (w->Style & WS_CLIPCHILDREN))
         for (WND *c = w->FirstChild; c; c = c->Next)
-            if (c->Style & WS_VISIBLE)
+            if ((c->Style & WS_VISIBLE) && !(c->ExStyle & WS_EX_TRANSPARENT))
                 RgnCombineRect(out, out, &c->WindowRect, RGN_DIFF);
     RgnOffset(out, -top->WindowRect.left, -top->WindowRect.top);
     /* the surface may lag behind the window when it could not grow; never draw past it. */
@@ -430,6 +430,11 @@ void WndInvalidateRegion(WND *w, const REGION *screen_rgn, ULONG flags)
         for (WND *c = w->FirstChild; c; c = c->Next)
             if (c->Style & WS_VISIBLE)
                 WndInvalidateRegion(c, &rgn, flags | RDW_FRAME);
+    /* the parent erases under a transparent child, which draws itself again. */
+    if (!children && (flags & RDW_INVALIDATE))
+        for (WND *c = w->FirstChild; c; c = c->Next)
+            if ((c->Style & WS_VISIBLE) && (c->ExStyle & WS_EX_TRANSPARENT))
+                WndInvalidateRegion(c, &rgn, flags | RDW_FRAME);
     RgnFree(&rgn);
 }
 
@@ -472,6 +477,9 @@ static WND *find_paint(WND *w, W32THREAD *t)
 {
     for (; w; w = w->Next) {
         if (!(w->Style & WS_VISIBLE) || (w->Flags & WNDF_DESTROYING))
+            continue;
+        /* a transparent window waits for the siblings beneath it, which it draws over. */
+        if ((w->ExStyle & WS_EX_TRANSPARENT) && w->Next && find_paint(w->Next, t))
             continue;
         if (w->Thread == t && needs_paint(w))
             return w;
