@@ -231,7 +231,7 @@ static int text_height(HWND hwnd, HFONT font, int width)
     HDC dc = GetDC(hwnd);
     HGDIOBJ old = SelectObject(dc, font);
     RECT r = {0, 0, width, 0};
-    DrawTextW(dc, text, n, &r, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX | DT_EXPANDTABS);
+    DrawTextW(dc, text, n, &r, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX | DT_EXPANDTABS | DT_EDITCONTROL);
     SelectObject(dc, old);
     ReleaseDC(hwnd, dc);
     CcFree(text);
@@ -630,14 +630,14 @@ static void build_page(TD_STATE *td)
     }
     LPWSTR text = keep(td, resolve_string(td, c->pszMainInstruction));
     if (text)
-        td->Instruction = child(td, L"Static", text, SS_LEFT | SS_NOPREFIX, -1, td->InstructionFont);
+        td->Instruction = child(td, L"Static", text, SS_LEFT | SS_NOPREFIX | SS_EDITCONTROL, -1, td->InstructionFont);
     text = keep(td, strip_links(resolve_string(td, c->pszContent), links));
     if (text)
-        td->Content = child(td, L"Static", text, SS_LEFT | SS_NOPREFIX, -1, td->ContentFont);
+        td->Content = child(td, L"Static", text, SS_LEFT | SS_NOPREFIX | SS_EDITCONTROL, -1, td->ContentFont);
     text = keep(td, strip_links(resolve_string(td, c->pszExpandedInformation), links));
     td->Expanded = (c->dwFlags & TDF_EXPANDED_BY_DEFAULT) != 0;
     if (text) {
-        HWND info = child(td, L"Static", text, SS_LEFT | SS_NOPREFIX, -1, td->ContentFont);
+        HWND info = child(td, L"Static", text, SS_LEFT | SS_NOPREFIX | SS_EDITCONTROL, -1, td->ContentFont);
         if (c->dwFlags & TDF_EXPAND_FOOTER_AREA)
             td->ExpandedFooter = info;
         else
@@ -702,7 +702,7 @@ static void build_page(TD_STATE *td)
     }
     text = keep(td, strip_links(resolve_string(td, c->pszFooter), links));
     if (text)
-        td->Footer = child(td, L"Static", text, SS_LEFT | SS_NOPREFIX, -1, td->ContentFont);
+        td->Footer = child(td, L"Static", text, SS_LEFT | SS_NOPREFIX | SS_EDITCONTROL, -1, td->ContentFont);
     if (td->Expando) {
         LPWSTR collapsed = keep(td, resolve_string(td, c->pszCollapsedControlText));
         LPWSTR expanded = keep(td, resolve_string(td, c->pszExpandedControlText));
