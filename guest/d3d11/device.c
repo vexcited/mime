@@ -1627,8 +1627,8 @@ static const ID3D11MultithreadVtbl mt_vtbl = {
 
 /* ------------------------------------------------------------------ creation */
 
-/* the first requested level the device supports, at most 11_1. */
-static D3D_FEATURE_LEVEL choose_level(const D3D_FEATURE_LEVEL *levels, UINT count)
+/* the first requested level the device supports, at most 11_1. like windows, 12_0 and 12_1 alone are unsupported. */
+static HRESULT choose_level(const D3D_FEATURE_LEVEL *levels, UINT count, D3D_FEATURE_LEVEL *level)
 {
     static const D3D_FEATURE_LEVEL defaults[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1,
                                                  D3D_FEATURE_LEVEL_10_0, D3D_FEATURE_LEVEL_9_3,
@@ -1637,18 +1637,25 @@ static D3D_FEATURE_LEVEL choose_level(const D3D_FEATURE_LEVEL *levels, UINT coun
         levels = defaults;
         count = RTL_NUMBER_OF(defaults);
     }
-    for (UINT i = 0; i < count; i++)
-        if (levels[i] >= D3D_FEATURE_LEVEL_9_1 && levels[i] <= D3D_FEATURE_LEVEL_11_1)
-            return levels[i];
-    return 0;
+    HRESULT hr = E_INVALIDARG;
+    for (UINT i = 0; i < count; i++) {
+        if (levels[i] >= D3D_FEATURE_LEVEL_9_1 && levels[i] <= D3D_FEATURE_LEVEL_11_1) {
+            *level = levels[i];
+            return S_OK;
+        }
+        if (levels[i] == D3D_FEATURE_LEVEL_12_0 || levels[i] == D3D_FEATURE_LEVEL_12_1)
+            hr = DXGI_ERROR_UNSUPPORTED;
+    }
+    return hr;
 }
 
 HRESULT D3dCreateDevice(IDXGIAdapter *adapter, UINT flags, const D3D_FEATURE_LEVEL *levels, UINT count,
                         D3dDevice **out)
 {
-    D3D_FEATURE_LEVEL level = choose_level(levels, count);
-    if (!level)
-        return E_INVALIDARG;
+    D3D_FEATURE_LEVEL level;
+    HRESULT hr = choose_level(levels, count, &level);
+    if (FAILED(hr))
+        return hr;
     D3dDevice *device = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*device));
     if (!device)
         return E_OUTOFMEMORY;
@@ -1665,7 +1672,7 @@ HRESULT D3dCreateDevice(IDXGIAdapter *adapter, UINT flags, const D3D_FEATURE_LEV
     adapter->lpVtbl->AddRef(adapter);
     InitializeCriticalSection(&device->init_lock);
     InitializeCriticalSection(&device->state_lock);
-    HRESULT hr = init_device(device, adapter);
+    hr = init_device(device, adapter);
     if (FAILED(hr)) {
         D3dLog("d3d11: device creation failed with %08x", hr);
         destroy_device(device);
