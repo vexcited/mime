@@ -1558,11 +1558,51 @@ static void draw_stored(GlContext *ctx, GlProgram *p, GlVertexInput *in, GLenum 
     }
 }
 
+/*
+ * a batch too large for a block of the heap is drawn in pieces that are. what stands alone is cut anywhere on a primitive,
+ * strips go on from the last vertices of the piece before, an even number of them so the winding goes on too.
+ */
+static BOOL draw_in_pieces(GlContext *ctx, GLenum mode, const GlFfVertex *vertices, uint32_t count, uint32_t varying)
+{
+    uint32_t stride = 16 + 16 * (uint32_t)__builtin_popcount(varying & 7);
+    uint32_t most = (32u << 20) / stride, overlap = 0;
+    if (count <= most)
+        return FALSE;
+    switch (mode) {
+    case GL_POINTS:
+    case GL_LINES:
+    case GL_TRIANGLES:
+    case GL_QUADS:
+        most -= most % 12;
+        break;
+    case GL_LINE_STRIP:
+        overlap = 1;
+        break;
+    case GL_TRIANGLE_STRIP:
+    case GL_QUAD_STRIP:
+        most &= ~1u;
+        overlap = 2;
+        break;
+    default:
+        return FALSE;
+    }
+    for (uint32_t start = 0;;) {
+        uint32_t n = count - start < most ? count - start : most;
+        gl_draw_vertices(ctx, mode, vertices + start, n, varying);
+        if (start + n >= count)
+            break;
+        start += n - overlap;
+    }
+    return TRUE;
+}
+
 /* one fixed function draw of vertices that are in a batch of their own. */
 void gl_draw_vertices(GlContext *ctx, GLenum mode, const GlFfVertex *vertices, uint32_t count, uint32_t varying)
 {
     count = gl_whole_primitives(mode, count);
     if (!count)
+        return;
+    if (draw_in_pieces(ctx, mode, vertices, count, varying))
         return;
     gl_device_lock();
     GlVertexInput in;
