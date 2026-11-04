@@ -251,8 +251,8 @@ BOOL WINAPI IsColorProfileValid(HANDLE handle, BOOL *valid)
     }
     EnterCriticalSection(&p->lock);
     const BYTE *d = p->edit.data;
-    BOOL ok = icc_valid(d, p->edit.size);
-    if (ok) {
+    BOOL whole = icc_valid(d, p->edit.size), ok = whole;
+    if (whole) {
         uint32_t cls = icc_be32(d + 12), space = icc_be32(d + 16);
         BOOL lut = icc_tag_index(d, ICC_SIG('A', '2', 'B', '0')) >= 0;
         BOOL matrix = icc_tag_index(d, ICC_SIG('r', 'X', 'Y', 'Z')) >= 0 && icc_tag_index(d, ICC_SIG('r', 'T', 'R', 'C')) >= 0;
@@ -276,7 +276,8 @@ BOOL WINAPI IsColorProfileValid(HANDLE handle, BOOL *valid)
         }
     }
     *valid = ok;
-    return leave(p, TRUE);
+    /* icm32's CMIsProfileValid gives its verdict as its result, which mscms returns, a broken header is only told in *valid. */
+    return leave(p, !whole || ok);
 }
 
 /* the header goes out with every dword in the order of the machine, the reserved bytes too, as windows does. */
