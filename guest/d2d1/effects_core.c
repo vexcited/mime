@@ -187,6 +187,12 @@ HRESULT D2dFxRender(D2dRt *rt, D2dEffect *e, FxRect want, D2dImageData *out, int
     FxRect area = fx_intersect(want, b);
     if (fx_empty(area))
         area = (FxRect){want.x0, want.y0, want.x0, want.y0};
+    if (!fx_empty(area) && !c.keep_float) {
+        hr = FxGpuRender(&c, area, out);
+        if (hr != S_FALSE)
+            return hr;
+        memset(out, 0, sizeof(*out));
+    }
     FxImg im = {area.x0, area.y0, 0, 0, nullptr};
     if (!fx_empty(area)) {
         hr = part->render(&c, area, &im);

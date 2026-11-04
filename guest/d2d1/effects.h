@@ -111,6 +111,18 @@ HRESULT D2dFxRender(D2dRt *rt, D2dEffect *e, FxRect want, D2dImageData *out, int
 HRESULT D2dFxCheckValue(D2dEffect *e, UINT32 index, BYTE *data, UINT32 size);
 HRESULT D2dFxHistogram(D2dEffect *e, BYTE *data, UINT32 size);
 
+/* the color matrix of the effects that are one: rows are the input channels and the offset, columns the outputs. */
+typedef struct FxMatrix {
+    float m[5][4];
+    BOOL straight;
+    BOOL clamp;
+} FxMatrix;
+BOOL FxColorMatrix(D2dEffect *e, FxMatrix *k);
+/* the gaussian kernel of a blur or shadow that runs at full size, false when it is not one. */
+BOOL FxBlurKernel(FxCtx *c, float **kernel, int *reach, BOOL *hard);
+/* the effect drawn by the gpu, S_FALSE when it is left to the cpu. */
+HRESULT FxGpuRender(FxCtx *c, FxRect area, D2dImageData *out);
+
 /* the parts. */
 typedef HRESULT (*FxBoundsFn)(FxCtx *c, FxRect *b);
 typedef HRESULT (*FxRenderFn)(FxCtx *c, FxRect area, FxImg *out);

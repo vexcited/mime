@@ -27,11 +27,7 @@ static inline float sat(float v) { return v > 0.0f ? (v < 1.0f ? v : 1.0f) : 0.0
 static inline float fracf(float v) { return v - D2dFloorF(v); }
 
 /* a color matrix as the color matrix effect takes it: rows are the input channels and the offset, columns the outputs. */
-typedef struct Matrix54 {
-    float m[5][4];
-    BOOL straight;
-    BOOL clamp;
-} Matrix54;
+typedef FxMatrix Matrix54;
 
 static void matrix_identity(Matrix54 *k)
 {
@@ -59,8 +55,10 @@ static void matrix_apply(const Matrix54 *k, float *p)
         premul_out(o, p);
 }
 
+static void temp_tint_gains(float temperature, float tint, float *gr, float *gb);
+
 /* the matrix the color effects that are color matrices in windows build from their properties. */
-static BOOL effect_matrix(D2dEffect *e, Matrix54 *k)
+BOOL FxColorMatrix(D2dEffect *e, FxMatrix *k)
 {
     matrix_identity(k);
     float *f = D2dFxF(e, 0);
@@ -138,6 +136,9 @@ static BOOL effect_matrix(D2dEffect *e, Matrix54 *k)
         k->m[0][0] = k->m[1][1] = k->m[2][2] = g;
         return TRUE;
     }
+    case EFF_TEMPERATURETINT:
+        temp_tint_gains(f[0], D2dFxF(e, 1)[0], &k->m[0][0], &k->m[2][2]);
+        return TRUE;
     default:
         return FALSE;
     }
@@ -747,7 +748,7 @@ HRESULT FxColorRender(FxCtx *c, FxRect area, FxImg *out)
     SIZE_T n = (SIZE_T)out->w * out->h;
     float *px = out->px;
     Matrix54 k;
-    if (effect_matrix(e, &k)) {
+    if (FxColorMatrix(e, &k)) {
         for (SIZE_T i = 0; i < n; i++)
             matrix_apply(&k, px + i * 4);
         return S_OK;
@@ -801,14 +802,6 @@ HRESULT FxColorRender(FxCtx *c, FxRect area, FxImg *out)
         transfer_setup(e, &t, levels);
         for (SIZE_T i = 0; i < n; i++)
             transfer_apply(&t, px + i * 4);
-        break;
-    }
-    case EFF_TEMPERATURETINT: {
-        Matrix54 m;
-        matrix_identity(&m);
-        temp_tint_gains(D2dFxF(e, 0)[0], D2dFxF(e, 1)[0], &m.m[0][0], &m.m[2][2]);
-        for (SIZE_T i = 0; i < n; i++)
-            matrix_apply(&m, px + i * 4);
         break;
     }
     case EFF_RGBTOHUE:

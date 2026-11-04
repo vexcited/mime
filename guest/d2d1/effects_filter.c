@@ -115,6 +115,16 @@ static void blur_params(FxCtx *c, float *sigma, float *range, BOOL *hard)
 /* a large blur runs on an image scaled down by the factor windows' balanced optimization picks. */
 static float blur_reduction(float sigma) { return D2dClampF(8.0f / (sigma + 6.0f), 0.1f, 1.0f); }
 
+BOOL FxBlurKernel(FxCtx *c, float **kernel, int *reach, BOOL *hard)
+{
+    float sigma, range;
+    blur_params(c, &sigma, &range, hard);
+    if (!(sigma > 0.0f) || blur_reduction(sigma) <= 0.5f)
+        return FALSE;
+    *reach = gauss_kernel(sigma, range, kernel);
+    return *reach >= 0;
+}
+
 static HRESULT blur_render(FxCtx *c, FxRect area, FxImg *out)
 {
     D2dEffect *e = c->e;
