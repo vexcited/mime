@@ -126,9 +126,20 @@ void LayerWindowDestroyed(WND *w)
 
 BOOLEAN LayerHitTest(WND *w, POINT pt)
 {
-    if (!w->Shape)
+    LONG x = pt.x - w->WindowRect.left, y = pt.y - w->WindowRect.top;
+    if (w->Shape && !RgnPtIn(w->Shape, x, y))
+        return FALSE;
+    /* a pixel with no alpha, or of the color key, lets the mouse through to the window below. */
+    SURFACE *s = w->Surface;
+    if (!(w->ExStyle & WS_EX_LAYERED) || !w->LayerFlags || !s || s->Bpp != 32 || x < 0 || y < 0 || x >= s->Width ||
+        y >= s->Height)
         return TRUE;
-    return RgnPtIn(w->Shape, pt.x - w->WindowRect.left, pt.y - w->WindowRect.top);
+    ULONG p = ((const ULONG *)(s->Bits + (LONG_PTR)y * s->Stride))[x];
+    if (w->LayerFlags & MIME_LAYER_UPDATE)
+        return (p >> 24) != 0;
+    if ((w->LayerFlags & LWA_COLORKEY) && (p & 0xFFFFFF) == (ColorToPixel(w->LayerKey) & 0xFFFFFF))
+        return FALSE;
+    return TRUE;
 }
 
 void LayerStyleChanged(WND *w)

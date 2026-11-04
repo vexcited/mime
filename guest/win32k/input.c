@@ -738,6 +738,16 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
             return FALSE;
         }
         DpiPixelConvert(&pt, DPI_PHYSICAL, top->Awareness);
+        /* the host gave the event to a layered window whose pixel there is clear: the window below gets it. */
+        if (WndIsTopLevel(top) && (top->ExStyle & WS_EX_LAYERED) && !LayerHitTest(top, pt)) {
+            POINT physical = {ev->x, ev->y};
+            WND *below = WndChildFromPoint(WndDesktop(), physical, FALSE);
+            if (below && below != top && below->Thread == t) {
+                top = below;
+                pt = physical;
+                DpiPixelConvert(&pt, DPI_PHYSICAL, top->Awareness);
+            }
+        }
         w = hit_test(top, pt, &hit);
         if (!w) {
             *consumed = TRUE;

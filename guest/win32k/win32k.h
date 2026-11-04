@@ -1039,7 +1039,7 @@ void HostPresent(WND *w, const RECT *dirty);
 void LayerWindowDestroyed(WND *w);
 SURFACE *LayerPrepare(WND *w, const RECT *dirty); /* surface to present, composed when needed. */
 void LayerStyleChanged(WND *w);
-BOOLEAN LayerHitTest(WND *w, POINT pt); /* FALSE when the window shape excludes the screen point. */
+BOOLEAN LayerHitTest(WND *w, POINT pt); /* FALSE when the window shape or a clear pixel of a layered window lets the screen point through. */
 void MenuFreeProcess(W32PROCESS *p);
 void PropFreeWindow(WND *w);
 ATOM PropAtom(PCWSTR name); /* the atom of a property set by name from user mode, 0 when unused. */
