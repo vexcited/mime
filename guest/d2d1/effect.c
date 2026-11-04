@@ -383,7 +383,7 @@ static D2dEffect *effect_of(void *p)
 /* an ID2D1Effect of this library, built in or custom. */
 BOOL D2dIsEffect(const void *p) { return D2dIsOfClass(p, &g_effect_class) || (p && D2dCustomOf(p) == p); }
 
-static HRESULT bitmap_data(D2dRt *rt, D2dBitmap *b, D2dImageData *out)
+static HRESULT bitmap_data(D2dRt *rt, D2dBitmap *b, IRect want, D2dImageData *out)
 {
     const D2dSurface *v = D2dBitmapView(b);
     if (!v)
@@ -391,13 +391,21 @@ static HRESULT bitmap_data(D2dRt *rt, D2dBitmap *b, D2dImageData *out)
     float sx = rt->dpi_x / b->dpi_x, sy = rt->dpi_y / b->dpi_y;
     int w = sx == 1.0f ? v->w : (int)(v->w * sx + 0.5f), h = sy == 1.0f ? v->h : (int)(v->h * sy + 0.5f);
     IRect r = {0, 0, w, h};
+    if (w == v->w && h == v->h) {
+        /* only the part asked for, so that effects working in bands copy what they read. */
+        r = irect_intersect(r, want);
+        if (irect_empty(r))
+            r = (IRect){0, 0, 0, 0};
+        HRESULT hr = data_new(out, r);
+        if (FAILED(hr))
+            return hr;
+        for (int y = r.y0; y < r.y1; y++)
+            memcpy(D2dSurfaceRow(&out->surface, y - r.y0), D2dSurfaceRow(v, y) + r.x0, (SIZE_T)(r.x1 - r.x0) * 4);
+        return S_OK;
+    }
     HRESULT hr = data_new(out, r);
     if (FAILED(hr))
         return hr;
-    if (w == v->w && h == v->h) {
-        memcpy(out->surface.px, v->px, (SIZE_T)w * h * 4);
-        return S_OK;
-    }
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             float u = (x + 0.5f) / sx - 0.5f, vv = (y + 0.5f) / sy - 0.5f;
@@ -516,7 +524,7 @@ static HRESULT image_get(D2dRt *rt, ID2D1Image *image, IRect want, D2dImageData 
         return D2DERR_CYCLIC_GRAPH;
     D2dBitmap *bm = D2dBitmapOf(image);
     if (bm)
-        return bitmap_data(rt, bm, out);
+        return bitmap_data(rt, bm, want, out);
     D2dEffect *e = effect_of(image);
     if (e)
         return effect_render(rt, e, want, out, depth);
@@ -552,7 +560,7 @@ HRESULT D2dRenderImage(D2dRt *rt, ID2D1Image *image, D2dImageData *out)
     IRect want = {0, 0, rt->draw ? rt->draw->w : 0, rt->draw ? rt->draw->h : 0};
     IRect b;
     if (SUCCEEDED(image_bounds(rt, image, &b, 0)))
-        want = irect_intersect(b, (IRect){want.x0 - 64, want.y0 - 64, want.x1 + 64, want.y1 + 64});
+        want = D2dBitmapOf(image) ? b : irect_intersect(b, (IRect){want.x0 - 64, want.y0 - 64, want.x1 + 64, want.y1 + 64});
     return image_get(rt, image, want, out, 0);
 }
 

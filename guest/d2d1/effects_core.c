@@ -174,6 +174,31 @@ HRESULT D2dFxBounds(D2dRt *rt, D2dEffect *e, FxRect *b, int depth)
     return part_of(e->id)->bounds(&c, b);
 }
 
+static HRESULT render_area(D2dRt *rt, D2dEffect *e, const FxPart *part, FxRect area, D2dImageData *out, int depth)
+{
+    FxCtx c;
+    ctx_init(&c, rt, e, depth);
+    memset(out, 0, sizeof(*out));
+    if (!fx_empty(area) && !c.keep_float) {
+        HRESULT hr = FxGpuRender(&c, area, out);
+        if (hr != S_FALSE)
+            return hr;
+        memset(out, 0, sizeof(*out));
+    }
+    FxImg im = {area.x0, area.y0, 0, 0, nullptr};
+    if (!fx_empty(area)) {
+        HRESULT hr = part->render(&c, area, &im);
+        if (FAILED(hr))
+            return hr;
+    }
+    HRESULT hr = fx_output(&im, c.keep_float, out);
+    FxFree(&im);
+    return hr;
+}
+
+/* the most pixels an effect renders at once: larger areas go in bands of rows, to bound the float images. */
+#define FX_BAND_PIXELS (1 << 20)
+
 HRESULT D2dFxRender(D2dRt *rt, D2dEffect *e, FxRect want, D2dImageData *out, int depth)
 {
     memset(out, 0, sizeof(*out));
@@ -187,20 +212,48 @@ HRESULT D2dFxRender(D2dRt *rt, D2dEffect *e, FxRect want, D2dImageData *out, int
     FxRect area = fx_intersect(want, b);
     if (fx_empty(area))
         area = (FxRect){want.x0, want.y0, want.x0, want.y0};
-    if (!fx_empty(area) && !c.keep_float) {
-        hr = FxGpuRender(&c, area, out);
-        if (hr != S_FALSE)
-            return hr;
-        memset(out, 0, sizeof(*out));
-    }
-    FxImg im = {area.x0, area.y0, 0, 0, nullptr};
-    if (!fx_empty(area)) {
-        hr = part->render(&c, area, &im);
+    int w = area.x1 - area.x0, h = area.y1 - area.y0;
+    /* the histogram counts the whole area and a bitmap source reads its whole source, so they go at once. */
+    if (fx_empty(area) || (UINT64)w * h <= FX_BAND_PIXELS || e->id == EFF_HISTOGRAM || e->id == EFF_BITMAPSOURCE)
+        return render_area(rt, e, part, area, out, depth);
+    out->x = area.x0;
+    out->y = area.y0;
+    if (!D2dSurfaceInit(&out->surface, w, h))
+        return E_OUTOFMEMORY;
+    int rows = FX_BAND_PIXELS / w;
+    if (rows < 16)
+        rows = 16;
+    for (int y = area.y0; y < area.y1 && SUCCEEDED(hr); y += rows) {
+        FxRect band = {area.x0, y, area.x1, y + rows < area.y1 ? y + rows : area.y1};
+        D2dImageData part_out;
+        hr = render_area(rt, e, part, band, &part_out, depth);
         if (FAILED(hr))
-            return hr;
+            break;
+        if (part_out.fpx && !out->fpx) {
+            out->fpx = D2dAllocZero((SIZE_T)w * h * 16);
+            if (!out->fpx)
+                hr = E_OUTOFMEMORY;
+            /* the bands before came in 8 bits. */
+            for (SIZE_T i = 0; out->fpx && i < (SIZE_T)(y - area.y0) * w; i++) {
+                uint32_t p = out->surface.px[i];
+                float *f = out->fpx + i * 4;
+                f[0] = ((p >> 16) & 255) / 255.0f;
+                f[1] = ((p >> 8) & 255) / 255.0f;
+                f[2] = (p & 255) / 255.0f;
+                f[3] = (p >> 24) / 255.0f;
+            }
+        }
+        FxRect have = fx_intersect(band, (FxRect){part_out.x, part_out.y, part_out.x + part_out.surface.w, part_out.y + part_out.surface.h});
+        for (int r = have.y0; SUCCEEDED(hr) && r < have.y1; r++) {
+            SIZE_T src = (SIZE_T)(r - part_out.y) * part_out.surface.w + (have.x0 - part_out.x), dst = (SIZE_T)(r - area.y0) * w + (have.x0 - area.x0);
+            memcpy(out->surface.px + dst, part_out.surface.px + src, (SIZE_T)(have.x1 - have.x0) * 4);
+            if (part_out.fpx)
+                memcpy(out->fpx + dst * 4, part_out.fpx + src * 4, (SIZE_T)(have.x1 - have.x0) * 16);
+        }
+        D2dImageDataFree(&part_out);
     }
-    hr = fx_output(&im, c.keep_float, out);
-    FxFree(&im);
+    if (FAILED(hr))
+        D2dImageDataFree(out);
     return hr;
 }
 
