@@ -13,3 +13,10 @@
 "DllPath"=expand:"%SystemRoot%\\system32\\CoreMessaging.dll"
 "Threading"=dword:00000000
 "TrustLevel"=dword:00000000
+
+; Windows.Graphics.dll
+[HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.Graphics.Display.DisplayInformation]
+"ActivationType"=dword:00000000
+"DllPath"=expand:"%SystemRoot%\\system32\\Windows.Graphics.dll"
+"Threading"=dword:00000000
+"TrustLevel"=dword:00000000

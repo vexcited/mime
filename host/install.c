@@ -163,6 +163,8 @@ static bool create_skeleton(const MimePaths *paths)
         "Windows/ServiceProfiles/NetworkService/AppData/Roaming",
         /* the keys of the machine scope of the data protection api, which a program of any account reads and makes. */
         "Windows/System32/Microsoft/Protect/S-1-5-18/User",
+        /* the color directory, whose srgb profile comes from the ROM and where programs install theirs. */
+        "Windows/System32/spool/drivers/color",
         "Windows/Media", "Windows/SystemResources", "Windows/Fonts", "Windows/Temp", "Program Files",
         "Program Files (x86)",
 #ifdef __aarch64__

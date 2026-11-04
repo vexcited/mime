@@ -1,0 +1,6 @@
+; the exports of Windows.Graphics.dll of windows with their ordinals.
+LIBRARY Windows.Graphics.dll
+EXPORTS
+    DllCanUnloadNow @1 PRIVATE
+    DllGetActivationFactory @2 PRIVATE
+    DllGetClassObject @3 PRIVATE

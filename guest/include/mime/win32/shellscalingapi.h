@@ -84,5 +84,7 @@ SHCOREAPI LONG WINAPI SHDeleteEmptyKeyW(HKEY key, LPCWSTR subkey);
 SHCOREAPI HRESULT WINAPI SetCurrentProcessExplicitAppUserModelID(LPCWSTR id);
 SHCOREAPI HRESULT WINAPI GetCurrentProcessExplicitAppUserModelID(LPWSTR *id);
 SHCOREAPI BOOL WINAPI IsOS(DWORD os);
+/* a Windows.Storage.Streams.IRandomAccessStream on the file, read only or read and write by the FileAccessMode. */
+SHCOREAPI HRESULT WINAPI CreateRandomAccessStreamOnFile(LPCWSTR path, DWORD access, REFIID riid, void **result);
 
 #endif

@@ -358,7 +358,7 @@ typedef struct MimeBootInfo {
 #define MIME_ROM_MAGIC 0x004D4F52454D494Dull /* "MIMEROM". */
 
 typedef struct MimeRomEntry {
-    char path[64]; /* relative to C:, e.g. \Windows\System32\ntdll.dll, NUL padded. */
+    char path[96]; /* relative to C:, e.g. \Windows\System32\ntdll.dll, NUL padded. */
     uint64_t offset; /* from the rom header, page aligned. */
     uint64_t size;
 } MimeRomEntry;

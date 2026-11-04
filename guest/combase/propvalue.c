@@ -1,7 +1,7 @@
 /*
- * Windows.Foundation.PropertyValue: a box holds one scalar, a string, a date or nothing behind IPropertyValue. like
- * the system's boxes, numbers convert to each other where the value fits. arrays, points, sizes and rectangles are
- * not made.
+ * Windows.Foundation.PropertyValue: a box holds one scalar, a string, a date or nothing behind IPropertyValue and
+ * the IReference of its type. like the system's boxes, numbers convert to each other where the value fits. arrays,
+ * points, sizes and rectangles are not made.
  */
 #include "xmldom.h"
 
@@ -262,12 +262,59 @@ static const IPropertyValueVtbl pv_vtbl = {
     pv_no_array, pv_no_array, pv_no_array, pv_no_array, pv_no_array, pv_no_array, pv_no_array, pv_no_array,
     pv_no_array, pv_no_array, pv_no_array, pv_no_array};
 
-static HRESULT STDMETHODCALLTYPE ref_get_value(IReferenceDateTime *This, DateTime *value)
+/* IReference<T> of the type in the box, which writes the value as its type is laid out. */
+static HRESULT STDMETHODCALLTYPE ref_get_value(IReferenceDateTime *This, DateTime *out)
 {
     BOX *b = box_of(This);
-    if (b->Type != PropertyType_DateTime)
+    void *value = out;
+    if (!value)
+        return E_POINTER;
+    switch (b->Type) {
+    case PropertyType_UInt8:
+        *(BYTE *)value = (BYTE)b->Value.Unsigned;
+        break;
+    case PropertyType_Int16:
+        *(INT16 *)value = (INT16)b->Value.Signed;
+        break;
+    case PropertyType_UInt16:
+    case PropertyType_Char16:
+        *(UINT16 *)value = (UINT16)b->Value.Unsigned;
+        break;
+    case PropertyType_Int32:
+        *(INT32 *)value = (INT32)b->Value.Signed;
+        break;
+    case PropertyType_UInt32:
+        *(UINT32 *)value = (UINT32)b->Value.Unsigned;
+        break;
+    case PropertyType_Int64:
+        *(INT64 *)value = b->Value.Signed;
+        break;
+    case PropertyType_UInt64:
+        *(UINT64 *)value = b->Value.Unsigned;
+        break;
+    case PropertyType_Single:
+        *(float *)value = (float)b->Value.Real;
+        break;
+    case PropertyType_Double:
+        *(double *)value = b->Value.Real;
+        break;
+    case PropertyType_Boolean:
+        *(BOOLEAN *)value = b->Value.Boolean;
+        break;
+    case PropertyType_String:
+        return WindowsDuplicateString(b->Value.String, (HSTRING *)value);
+    case PropertyType_Guid:
+        *(GUID *)value = b->Value.Guid;
+        break;
+    case PropertyType_DateTime:
+        *(DateTime *)value = b->Value.Date;
+        break;
+    case PropertyType_TimeSpan:
+        *(TimeSpan *)value = b->Value.Span;
+        break;
+    default:
         return TYPE_MISMATCH;
-    *value = b->Value.Date;
+    }
     return S_OK;
 }
 
@@ -283,8 +330,35 @@ static void box_destroy(WRT_OBJECT *object)
     CbFree(b);
 }
 
+MIME_DEFINE_GUID(IID_IReferenceUInt8, 0xE5198CC8, 0x2873, 0x55F5, 0xB0, 0xA1, 0x84, 0xFF, 0x9E, 0x4A, 0xAD, 0x62);
+MIME_DEFINE_GUID(IID_IReferenceInt16, 0x6EC9E41B, 0x6709, 0x5647, 0x99, 0x18, 0xA1, 0x27, 0x01, 0x10, 0xFC, 0x4E);
+MIME_DEFINE_GUID(IID_IReferenceUInt16, 0x5AB7D2C3, 0x6B62, 0x5E71, 0xA4, 0xB6, 0x2D, 0x49, 0xC4, 0xF2, 0x38, 0xFD);
+MIME_DEFINE_GUID(IID_IReferenceInt32, 0x548CEFBD, 0xBC8A, 0x5FA0, 0x8D, 0xF2, 0x95, 0x74, 0x40, 0xFC, 0x8B, 0xF4);
+MIME_DEFINE_GUID(IID_IReferenceUInt32, 0x513EF3AF, 0xE784, 0x5325, 0xA9, 0x1E, 0x97, 0xC2, 0xB8, 0x11, 0x1C, 0xF3);
+MIME_DEFINE_GUID(IID_IReferenceInt64, 0x4DDA9E24, 0xE69F, 0x5C6A, 0xA0, 0xA6, 0x93, 0x42, 0x73, 0x65, 0xAF, 0x2A);
+MIME_DEFINE_GUID(IID_IReferenceUInt64, 0x6755E376, 0x53BB, 0x568B, 0xA1, 0x1D, 0x17, 0x23, 0x98, 0x68, 0x30, 0x9E);
+MIME_DEFINE_GUID(IID_IReferenceSingle, 0x719CC2BA, 0x3E76, 0x5DEF, 0x9F, 0x1A, 0x38, 0xD8, 0x5A, 0x14, 0x5E, 0xA8);
+MIME_DEFINE_GUID(IID_IReferenceDouble, 0x2F2D6C29, 0x5473, 0x5F3E, 0x92, 0xE7, 0x96, 0x57, 0x2B, 0xB9, 0x90, 0xE2);
+MIME_DEFINE_GUID(IID_IReferenceChar16, 0xFB393EF3, 0xBBAC, 0x5BD5, 0x91, 0x44, 0x84, 0xF2, 0x35, 0x76, 0xF4, 0x15);
+MIME_DEFINE_GUID(IID_IReferenceBoolean, 0x3C00FD60, 0x2950, 0x5939, 0xA2, 0x1A, 0x2D, 0x12, 0xC5, 0xA0, 0x1B, 0x8A);
+MIME_DEFINE_GUID(IID_IReferenceString, 0xFD416DFB, 0x2A07, 0x52EB, 0xAA, 0xE3, 0xDF, 0xCE, 0x14, 0x11, 0x6C, 0x05);
+MIME_DEFINE_GUID(IID_IReferenceGuid, 0x7D50F649, 0x632C, 0x51F9, 0x84, 0x9A, 0xEE, 0x49, 0x42, 0x89, 0x33, 0xEA);
+MIME_DEFINE_GUID(IID_IReferenceTimeSpan, 0x604D0C4C, 0x91DE, 0x5C2A, 0x93, 0x5F, 0x36, 0x2F, 0x13, 0xEA, 0xF8, 0x00);
+
 static const WRT_CLASS box_class = {g_box_class, 1, {&IID_IPropertyValue}, 0, box_destroy};
-static const WRT_CLASS date_box_class = {g_box_class, 2, {&IID_IPropertyValue, &IID_IReferenceDateTime}, 0, box_destroy};
+
+/* a box of a scalar is also the IReference of its type, as the boxes of windows are. */
+#define REF_CLASS(type, iid) [type] = {g_box_class, 2, {&IID_IPropertyValue, &iid}, 0, box_destroy}
+static const WRT_CLASS g_ref_classes[PropertyType_Guid + 1] = {
+    REF_CLASS(PropertyType_UInt8, IID_IReferenceUInt8),       REF_CLASS(PropertyType_Int16, IID_IReferenceInt16),
+    REF_CLASS(PropertyType_UInt16, IID_IReferenceUInt16),     REF_CLASS(PropertyType_Int32, IID_IReferenceInt32),
+    REF_CLASS(PropertyType_UInt32, IID_IReferenceUInt32),     REF_CLASS(PropertyType_Int64, IID_IReferenceInt64),
+    REF_CLASS(PropertyType_UInt64, IID_IReferenceUInt64),     REF_CLASS(PropertyType_Single, IID_IReferenceSingle),
+    REF_CLASS(PropertyType_Double, IID_IReferenceDouble),     REF_CLASS(PropertyType_Char16, IID_IReferenceChar16),
+    REF_CLASS(PropertyType_Boolean, IID_IReferenceBoolean),   REF_CLASS(PropertyType_String, IID_IReferenceString),
+    REF_CLASS(PropertyType_DateTime, IID_IReferenceDateTime), REF_CLASS(PropertyType_TimeSpan, IID_IReferenceTimeSpan),
+    REF_CLASS(PropertyType_Guid, IID_IReferenceGuid),
+};
 
 static BOX *new_box(PropertyType type)
 {
@@ -294,7 +368,10 @@ static BOX *new_box(PropertyType type)
     memset(b, 0, sizeof(*b));
     b->Type = type;
     const void *vtables[2] = {&pv_vtbl, &ref_vtbl};
-    WrtInit(&b->Base, type == PropertyType_DateTime ? &date_box_class : &box_class, vtables);
+    const WRT_CLASS *class = (UINT32)type < RTL_NUMBER_OF(g_ref_classes) && g_ref_classes[type].Count
+                                 ? &g_ref_classes[type]
+                                 : &box_class;
+    WrtInit(&b->Base, class, vtables);
     return b;
 }
 
