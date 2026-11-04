@@ -2,6 +2,9 @@
 #ifndef MIME_WIN32_D2D1_H
 #define MIME_WIN32_D2D1_H
 
+/* methods returning a structure take a pointer to it after the object and return that pointer, as msvc calls them. */
+#define MIME_D2D1_STRUCT_RETURN_BY_POINTER 1
+
 #include <mime/win32/objbase.h>
 #include <mime/win32/dxgi.h>
 #include <mime/win32/dwrite.h>
