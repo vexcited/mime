@@ -223,6 +223,12 @@ static UINT dlg_code(HWND hwnd)
     return hwnd ? (UINT)SendMessageW(hwnd, WM_GETDLGCODE, 0, 0) : 0;
 }
 
+/* the control is told the key it is asked about, as a message in lParam. */
+static UINT dlg_code_for(HWND hwnd, const MSG *msg)
+{
+    return hwnd ? (UINT)SendMessageW(hwnd, WM_GETDLGCODE, msg->wParam, (LPARAM)msg) : 0;
+}
+
 static void set_default_button(HWND dialog, HWND button)
 {
     /* the push button that has the focus is drawn as the default one. */
@@ -1032,7 +1038,7 @@ WINUSERAPI BOOL WINAPI IsDialogMessageW(HWND dialog, LPMSG msg)
         DispatchMessageW(msg);
         return TRUE;
     }
-    UINT code = dlg_code(msg->hwnd == dialog ? nullptr : msg->hwnd);
+    UINT code = dlg_code_for(msg->hwnd == dialog ? nullptr : msg->hwnd, msg);
     if (code & DLGC_WANTMESSAGE) {
         DispatchMessageW(msg);
         return TRUE;

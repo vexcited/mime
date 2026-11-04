@@ -242,7 +242,7 @@ HWND UserCaretInfo(RECT *rect)
     return c->hwnd;
 }
 
-/* only the calling thread's caret is known here. */
+/* the thread is 0 for the foreground thread. only the calling thread's caret is known here. */
 WINUSERAPI BOOL WINAPI GetGUIThreadInfo(DWORD thread, PGUITHREADINFO info)
 {
     if (!info || info->cbSize != sizeof(*info)) {
@@ -250,15 +250,15 @@ WINUSERAPI BOOL WINAPI GetGUIThreadInfo(DWORD thread, PGUITHREADINFO info)
         return FALSE;
     }
     memset((BYTE *)info + sizeof(info->cbSize), 0, sizeof(*info) - sizeof(info->cbSize));
-    if (thread && thread != GetCurrentThreadId()) {
-        HWND foreground = GetForegroundWindow();
-        if (foreground && GetWindowThreadProcessId(foreground, nullptr) == thread)
-            info->hwndActive = foreground;
+    ULONG windows[3];
+    ULONG_PTR found = NtUserCallTwoParam(thread, (ULONG_PTR)windows, MIME_TWOPARAM_THREADWINDOWS);
+    if (!found)
+        return FALSE;
+    info->hwndActive = (HWND)(ULONG_PTR)windows[0];
+    info->hwndFocus = (HWND)(ULONG_PTR)windows[1];
+    info->hwndCapture = (HWND)(ULONG_PTR)windows[2];
+    if (found != 2)
         return TRUE;
-    }
-    info->hwndActive = GetActiveWindow();
-    info->hwndFocus = GetFocus();
-    info->hwndCapture = GetCapture();
     info->hwndCaret = UserCaretInfo(&info->rcCaret);
     CARET *c = owned();
     if (c && !c->hidden)

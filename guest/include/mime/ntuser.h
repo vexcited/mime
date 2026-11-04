@@ -205,6 +205,7 @@ enum {
     MIME_TWOPARAM_CBTMOVESIZE,          /* window, RECT pointer of the place a move or size loop ends at. */
     MIME_TWOPARAM_ALTALONE,             /* 0, 0 -> TRUE when Alt or F10 went down and nothing else was pressed or clicked since. */
     MIME_TWOPARAM_DISPLAYUNIQUENESS,    /* 0, 0 -> the count of display setting changes, never 0. */
+    MIME_TWOPARAM_THREADWINDOWS,        /* thread id or 0 for the foreground thread, ULONG[3] of its active, focus and capture window -> 1, 2 for the calling thread, or 0 with the error. */
 };
 
 /* what MIME_TWOPARAM_GETMONITORS returns per monitor. */

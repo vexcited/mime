@@ -177,6 +177,21 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
     case MIME_TWOPARAM_DISPLAYUNIQUENESS:
         r = MetricsDisplayUniqueness();
         break;
+    case MIME_TWOPARAM_THREADWINDOWS: {
+        W32THREAD *t = nullptr;
+        if (!param1) {
+            t = InputForeground ? InputForeground->Thread : nullptr;
+        } else {
+            t = W32LookupThread((HANDLE)param1);
+            if (!t)
+                W32SetLastError(ERROR_INVALID_PARAMETER);
+        }
+        if (t) {
+            ULONG windows[3] = {(ULONG)(ULONG_PTR)t->Active, (ULONG)(ULONG_PTR)t->Focus, (ULONG)(ULONG_PTR)t->Capture};
+            r = NT_SUCCESS(MimeCopyToUser((PVOID)param2, windows, sizeof(windows))) ? (t == W32GetThread() ? 2 : 1) : 0;
+        }
+        break;
+    }
     case MIME_TWOPARAM_ALTALONE: {
         W32THREAD *t = W32GetThread();
         r = t && t->AltAlone;
