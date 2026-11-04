@@ -55,7 +55,8 @@ static HRESULT WINAPI factory_query(IDWriteFactory2 *This, REFIID riid, void **o
         return E_POINTER;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDWriteFactory) ||
         IsEqualGUID(riid, &IID_IDWriteFactory1) || IsEqualGUID(riid, &IID_IDWriteFactory2) ||
-        IsEqualGUID(riid, &IID_IDWriteFactory3)) {
+        IsEqualGUID(riid, &IID_IDWriteFactory3) || IsEqualGUID(riid, &IID_IDWriteFactory4) ||
+        IsEqualGUID(riid, &IID_IDWriteFactory5) || IsEqualGUID(riid, &IID_IDWriteFactory6)) {
         *out = This;
         This->lpVtbl->AddRef(This);
         return S_OK;
@@ -527,7 +528,100 @@ static HRESULT WINAPI factory3_collection_from_set(IDWriteFactory3 *This, IDWrit
 static HRESULT WINAPI factory3_system_collection(IDWriteFactory3 *This, BOOL downloadable,
                                                  IDWriteFontCollection1 **collection, BOOL check)
 {
-    return factory3_missing("GetSystemFontCollection(1)");
+    if (!collection)
+        return E_POINTER;
+    return DwSystemCollection((DwFactory *)This, (IDWriteFontCollection **)collection);
+}
+
+/*
+ * the methods of versions four to six that make font sets, resources, loaders and text formats by axis values fail
+ * with E_NOTIMPL. The argument counts are those of the real methods, since a stdcall callee pops them in 32 bits.
+ */
+static HRESULT WINAPI factory4_translate(void *This, UINT32 origin_x, UINT32 origin_y, const void *run,
+                                         const void *description, UINT32 formats, UINT32 measuring, const void *transform,
+                                         UINT32 palette, void **layers)
+{
+    return factory3_missing("TranslateColorGlyphRun(4)");
+}
+
+static HRESULT WINAPI factory4_origins(void *This, const void *run, UINT32 origin_x, UINT32 origin_y, void *origins)
+{
+    return factory3_missing("ComputeGlyphOrigins");
+}
+
+static HRESULT WINAPI factory4_origins_transformed(void *This, const void *run, UINT32 measuring, UINT32 origin_x,
+                                                   UINT32 origin_y, const void *transform, void *origins)
+{
+    return factory3_missing("ComputeGlyphOrigins(transform)");
+}
+
+static HRESULT WINAPI factory5_set_builder(void *This, void **builder)
+{
+    return factory3_missing("CreateFontSetBuilder(5)");
+}
+
+static HRESULT WINAPI factory5_memory_loader(void *This, void **loader)
+{
+    return factory3_missing("CreateInMemoryFontFileLoader");
+}
+
+static HRESULT WINAPI factory5_http_loader(void *This, const WCHAR *referrer, const WCHAR *headers, void **loader)
+{
+    return factory3_missing("CreateHttpFontFileLoader");
+}
+
+static HRESULT WINAPI factory5_container(void *This, const void *data, UINT32 size)
+{
+    return factory3_missing("AnalyzeContainerType");
+}
+
+static HRESULT WINAPI factory5_unpack(void *This, UINT32 container, const void *data, UINT32 size, void **stream)
+{
+    return factory3_missing("UnpackFontFile");
+}
+
+static HRESULT WINAPI factory6_face_reference(void *This, void *file, UINT32 index, UINT32 simulations,
+                                              const void *axis_values, UINT32 count, void **reference)
+{
+    return factory3_missing("CreateFontFaceReference(6)");
+}
+
+static HRESULT WINAPI factory6_resource(void *This, void *file, UINT32 index, void **resource)
+{
+    return factory3_missing("CreateFontResource");
+}
+
+static HRESULT WINAPI factory6_system_set(void *This, BOOL downloadable, void **set)
+{
+    return factory3_missing("GetSystemFontSet(6)");
+}
+
+static HRESULT WINAPI factory6_collection_from_set(void *This, void *set, UINT32 model, void **collection)
+{
+    return factory3_missing("CreateFontCollectionFromFontSet(6)");
+}
+
+static HRESULT WINAPI factory6_set_builder(void *This, void **builder)
+{
+    return factory3_missing("CreateFontSetBuilder(6)");
+}
+
+static HRESULT WINAPI factory6_text_format(void *This, const WCHAR *family, void *collection, const void *axis_values,
+                                           UINT32 count, FLOAT size, const WCHAR *locale, void **format)
+{
+    return factory3_missing("CreateTextFormat(6)");
+}
+
+static HRESULT WINAPI factory6_system_collection(IDWriteFactory3 *This, BOOL downloadable,
+                                                 DWRITE_FONT_FAMILY_MODEL model, IDWriteFontCollection2 **collection)
+{
+    if (!collection)
+        return E_POINTER;
+    if (model != DWRITE_FONT_FAMILY_MODEL_TYPOGRAPHIC && model != DWRITE_FONT_FAMILY_MODEL_WEIGHT_STRETCH_STYLE) {
+        *collection = nullptr;
+        return E_INVALIDARG;
+    }
+    return DwSystemCollection((DwFactory *)This, (IDWriteFontCollection **)collection);
 }
 
 static HRESULT WINAPI factory3_download_queue(IDWriteFactory3 *This, IDWriteFontDownloadQueue **queue)
@@ -539,6 +633,9 @@ static HRESULT WINAPI factory3_download_queue(IDWriteFactory3 *This, IDWriteFont
 static const struct {
     IDWriteFactory2Vtbl base;
     void *third[9];
+    void *fourth[3];
+    void *fifth[5];
+    void *sixth[7];
 } g_factory_vtbl = {{
     factory_query,
     factory_addref,
@@ -581,6 +678,24 @@ static const struct {
     (void *)factory3_collection_from_set,
     (void *)factory3_system_collection,
     (void *)factory3_download_queue,
+}, {
+    (void *)factory4_translate,
+    (void *)factory4_origins,
+    (void *)factory4_origins_transformed,
+}, {
+    (void *)factory5_set_builder,
+    (void *)factory5_memory_loader,
+    (void *)factory5_http_loader,
+    (void *)factory5_container,
+    (void *)factory5_unpack,
+}, {
+    (void *)factory6_face_reference,
+    (void *)factory6_resource,
+    (void *)factory6_system_set,
+    (void *)factory6_system_collection,
+    (void *)factory6_collection_from_set,
+    (void *)factory6_set_builder,
+    (void *)factory6_text_format,
 }};
 
 DwFactory *DwFactoryNew(BOOL shared)

@@ -942,6 +942,48 @@ MIME_COM_INTERFACE(IDWriteFontFamily)
     HRESULT(STDMETHODCALLTYPE *GetFontFromFontFace)(T * This, IDWriteFontFace * face, IDWriteFont * *font);
 MIME_COM_INTERFACE(IDWriteFontCollection)
 
+typedef struct IDWriteFontSet1 IDWriteFontSet1;
+typedef struct IDWriteFontList2 IDWriteFontList2;
+typedef struct IDWriteFont3 IDWriteFont3;
+typedef struct IDWriteFontFamily1 IDWriteFontFamily1;
+typedef struct IDWriteFontFamily2 IDWriteFontFamily2;
+typedef struct IDWriteFontCollection2 IDWriteFontCollection2;
+typedef enum DWRITE_LOCALITY { DWRITE_LOCALITY_REMOTE = 0, DWRITE_LOCALITY_PARTIAL = 1, DWRITE_LOCALITY_LOCAL = 2 } DWRITE_LOCALITY;
+typedef enum DWRITE_FONT_FAMILY_MODEL {
+    DWRITE_FONT_FAMILY_MODEL_TYPOGRAPHIC = 0,
+    DWRITE_FONT_FAMILY_MODEL_WEIGHT_STRETCH_STYLE = 1
+} DWRITE_FONT_FAMILY_MODEL;
+
+#define IDWriteFontFamily1_METHODS(T)                                                                                  \
+    IDWriteFontFamily_METHODS(T)                                                                                       \
+    DWRITE_LOCALITY(STDMETHODCALLTYPE *GetFontLocality)(T * This, UINT32 index);                                       \
+    HRESULT(STDMETHODCALLTYPE *GetFont1)(T * This, UINT32 index, IDWriteFont3 * *font);                                \
+    HRESULT(STDMETHODCALLTYPE *GetFontFaceReference)(T * This, UINT32 index, IDWriteFontFaceReference **reference);
+MIME_COM_INTERFACE(IDWriteFontFamily1)
+
+#define IDWriteFontFamily2_METHODS(T)                                                                                  \
+    IDWriteFontFamily1_METHODS(T)                                                                                      \
+    HRESULT(STDMETHODCALLTYPE *GetMatchingFonts2)(T * This, const DWRITE_FONT_AXIS_VALUE *axis_values, UINT32 count,   \
+                                                  IDWriteFontList2 **fonts);                                           \
+    HRESULT(STDMETHODCALLTYPE *GetFontSet)(T * This, IDWriteFontSet1 * *set);
+MIME_COM_INTERFACE(IDWriteFontFamily2)
+
+#define IDWriteFontCollection1_METHODS(T)                                                                              \
+    IDWriteFontCollection_METHODS(T)                                                                                   \
+    HRESULT(STDMETHODCALLTYPE *GetFontSet)(T * This, IDWriteFontSet * *set);                                           \
+    HRESULT(STDMETHODCALLTYPE *GetFontFamily1)(T * This, UINT32 index, IDWriteFontFamily1 * *family);
+MIME_COM_INTERFACE(IDWriteFontCollection1)
+
+#define IDWriteFontCollection2_METHODS(T)                                                                              \
+    IDWriteFontCollection1_METHODS(T)                                                                                  \
+    HRESULT(STDMETHODCALLTYPE *GetFontFamily2)(T * This, UINT32 index, IDWriteFontFamily2 * *family);                  \
+    HRESULT(STDMETHODCALLTYPE *GetMatchingFonts)(T * This, const WCHAR *family_name,                                   \
+                                                 const DWRITE_FONT_AXIS_VALUE *axis_values, UINT32 count,              \
+                                                 IDWriteFontList2 **fonts);                                            \
+    DWRITE_FONT_FAMILY_MODEL(STDMETHODCALLTYPE *GetFontFamilyModel)(T * This);                                         \
+    HRESULT(STDMETHODCALLTYPE *GetFontSet2)(T * This, IDWriteFontSet1 * *set);
+MIME_COM_INTERFACE(IDWriteFontCollection2)
+
 /* ------------------------------------------------------------------ gdi, analysis, fallback */
 
 typedef struct IDWriteBitmapRenderTargetVtbl IDWriteBitmapRenderTargetVtbl;
@@ -1454,6 +1496,13 @@ MIME_DEFINE_GUID(IID_IDWriteFactory2, 0x0439fc60, 0xca44, 0x4994, 0x8d, 0xee, 0x
 MIME_DEFINE_GUID(IID_IDWriteFactory3, 0x9a1b41c3, 0xd3bb, 0x466a, 0x87, 0xfc, 0xfe, 0x67, 0x55, 0x6a, 0x3b, 0x65);
 MIME_DEFINE_GUID(IID_IDWriteFontCollection, 0xa84cee02, 0x3eea, 0x4eee, 0xa8, 0x27, 0x87, 0xc1, 0xa0, 0x2a, 0x0f,
                  0xcc);
+MIME_DEFINE_GUID(IID_IDWriteFactory4, 0x4b0b5bd3, 0x0797, 0x4549, 0x8a, 0xc5, 0xfe, 0x91, 0x5c, 0xc5, 0x38, 0x56);
+MIME_DEFINE_GUID(IID_IDWriteFactory5, 0x958db99a, 0xbe2a, 0x4f09, 0xaf, 0x7d, 0x65, 0x18, 0x98, 0x03, 0xd1, 0xd3);
+MIME_DEFINE_GUID(IID_IDWriteFactory6, 0xf3744d80, 0x21f7, 0x42eb, 0xb3, 0x5d, 0x99, 0x5b, 0xc7, 0x2f, 0xc2, 0x23);
+MIME_DEFINE_GUID(IID_IDWriteFontCollection1, 0x53585141, 0xd9f8, 0x4095, 0x83, 0x21, 0xd7, 0x3c, 0xf6, 0xbd, 0x11, 0x6c);
+MIME_DEFINE_GUID(IID_IDWriteFontCollection2, 0x514039c6, 0x4617, 0x4064, 0xbf, 0x8b, 0x92, 0xea, 0x83, 0xe5, 0x06, 0xe0);
+MIME_DEFINE_GUID(IID_IDWriteFontFamily1, 0xda20d8ef, 0x812a, 0x4c43, 0x98, 0x02, 0x62, 0xec, 0x4a, 0xbd, 0x7a, 0xdf);
+MIME_DEFINE_GUID(IID_IDWriteFontFamily2, 0x3ed49e77, 0xa398, 0x4261, 0xb9, 0xcf, 0xc1, 0x26, 0xc2, 0x13, 0x1e, 0xf3);
 MIME_DEFINE_GUID(IID_IDWriteFontList, 0x1a0d8438, 0x1d97, 0x4ec1, 0xae, 0xf9, 0xa2, 0xfb, 0x86, 0xed, 0x6a, 0xcb);
 MIME_DEFINE_GUID(IID_IDWriteFontFamily, 0xda20d8ef, 0x812a, 0x4c43, 0x98, 0x02, 0x62, 0xec, 0x4a, 0xbd, 0x7a, 0xdd);
 MIME_DEFINE_GUID(IID_IDWriteFont, 0xacd16696, 0x8c14, 0x4f5d, 0x87, 0x7e, 0xfe, 0x3f, 0xc1, 0xd3, 0x27, 0x37);
