@@ -15,6 +15,10 @@ typedef struct AttribEntry {
     } current;
     GLfloat point_size;
     GLuint list_base;
+    GLfloat zoom[2];
+    GlRaster raster;
+    GLint line_stipple_factor;
+    GLushort line_stipple_pattern;
     GLdouble clip_plane[FF_CLIP_PLANES][4];
     GLenum logic_op;
     GLubyte polygon_stipple[128];
@@ -109,6 +113,10 @@ static void save(GlContext *ctx, AttribEntry *e, GLbitfield mask)
     }
     e->point_size = ctx->point_size;
     e->list_base = ctx->dl.base;
+    memcpy(e->zoom, ctx->raster.zoom, sizeof(e->zoom));
+    e->raster = ctx->raster;
+    e->line_stipple_factor = f->line_stipple_factor;
+    e->line_stipple_pattern = f->line_stipple_pattern;
     memcpy(e->clip_plane, f->clip_plane, sizeof(e->clip_plane));
     e->logic_op = f->logic_op;
     memcpy(e->polygon_stipple, f->polygon_stipple, sizeof(e->polygon_stipple));
@@ -201,6 +209,10 @@ static void restore(GlContext *ctx, const AttribEntry *e)
     GlFixed *f = &ctx->ff;
     GLbitfield mask = e->mask;
     if (mask & GL_CURRENT_BIT) {
+        GLfloat zoom[2] = {ctx->raster.zoom[0], ctx->raster.zoom[1]};
+        ctx->raster = e->raster;
+        ctx->raster.zoom[0] = zoom[0];
+        ctx->raster.zoom[1] = zoom[1];
         memcpy(f->current[0], e->current.color, 16);
         memcpy(f->current[1], e->current.normal, 16);
         memcpy(f->current[2], e->current.texcoord, 16);
@@ -212,6 +224,13 @@ static void restore(GlContext *ctx, const AttribEntry *e)
     if (mask & GL_POLYGON_STIPPLE_BIT) {
         memcpy(f->polygon_stipple, e->polygon_stipple, sizeof(f->polygon_stipple));
         gl_ff_capability(ctx, GL_POLYGON_STIPPLE, gl_ff_stored_in(e->enable.stored, GL_POLYGON_STIPPLE));
+    }
+    /* the pixel zoom is part of the pixel mode group, which Coin's pixel pictures and FreeCAD's axis letters change. */
+    if (mask & GL_PIXEL_MODE_BIT)
+        memcpy(ctx->raster.zoom, e->zoom, sizeof(e->zoom));
+    if (mask & GL_LINE_BIT) {
+        f->line_stipple_factor = e->line_stipple_factor;
+        f->line_stipple_pattern = e->line_stipple_pattern;
     }
     if (mask & GL_LIST_BIT)
         ctx->dl.base = e->list_base;
