@@ -69,6 +69,18 @@ static int key_compare(Key a, Key b)
     return 0;
 }
 
+int DwCompareFit(const DwAttributes *a, DWRITE_FONT_SIMULATIONS a_simulations, const DwAttributes *b,
+                 DWRITE_FONT_SIMULATIONS b_simulations, DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STRETCH stretch,
+                 DWRITE_FONT_STYLE style)
+{
+    DwEntry x = {}, y = {};
+    x.attributes = *a;
+    x.simulations = a_simulations;
+    y.attributes = *b;
+    y.simulations = b_simulations;
+    return key_compare(key_of(&x, weight, stretch, style), key_of(&y, weight, stretch, style));
+}
+
 UINT32 DwBestEntry(const DwFamily *family, DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STRETCH stretch,
                    DWRITE_FONT_STYLE style)
 {
@@ -113,6 +125,7 @@ typedef struct Builder {
     DwFamily *families;
     UINT32 count, capacity;
     UINT32 public_count;
+    DWRITE_FONT_FAMILY_MODEL model;
 } Builder;
 
 static DwFamily *family_for(Builder *b, DwStrings *names)
@@ -322,6 +335,148 @@ static DwStrings *family_without_weight(const DwStrings *win32, UINT32 weight, B
     return nullptr;
 }
 
+void DwModelNames(const DwFontData *data, DWRITE_FONT_FAMILY_MODEL model, DwAttributes *attributes,
+                  DwStrings **family, DwStrings **face)
+{
+    DwStrings *wws = DwFontDataNames(data, 21), *typographic = DwFontDataNames(data, 16);
+    DwStrings *win32 = DwFontDataNames(data, 1), *wws_sub = DwFontDataNames(data, 22);
+    DwStrings *typographic_sub = DwFontDataNames(data, 17), *win32_sub = DwFontDataNames(data, 2);
+    DwStrings *family_names, *face_names;
+    /* the typographic model groups by the designer's family, the other by the family of weight, stretch and style. */
+    if (model == DWRITE_FONT_FAMILY_MODEL_TYPOGRAPHIC) {
+        family_names = typographic ? typographic : wws ? wws : win32;
+        face_names = typographic_sub ? typographic_sub : wws_sub ? wws_sub : win32_sub;
+    } else {
+        family_names = wws ? wws : typographic ? typographic : win32;
+        face_names = wws_sub ? wws_sub : typographic_sub ? typographic_sub : win32_sub;
+    }
+    DwStrings *derived = nullptr, *derived_face = nullptr;
+    if (!wws && !typographic && win32) {
+        derived = family_without_weight(win32, attributes->weight, attributes->style != DWRITE_FONT_STYLE_NORMAL,
+                                        &derived_face);
+        if (derived) {
+            family_names = derived;
+            face_names = derived_face;
+            /* a font left at the regular weight by its file has the weight its name gives. */
+            if (attributes->weight == 400)
+                attributes->weight = DwWeightOfName(DwStringsBest(derived_face, L"en-us"));
+        }
+    }
+    if (family_names)
+        DwStringsAddRef(family_names);
+    if (face_names)
+        DwStringsAddRef(face_names);
+    *family = family_names;
+    *face = face_names;
+    DwStringsRelease(derived);
+    DwStringsRelease(derived_face);
+    DwStringsRelease(wws);
+    DwStringsRelease(typographic);
+    DwStringsRelease(win32);
+    DwStringsRelease(wws_sub);
+    DwStringsRelease(typographic_sub);
+    DwStringsRelease(win32_sub);
+}
+
+static DWRITE_FONT_FACE_TYPE face_type_of(const DwFontData *data)
+{
+    return data->collection ? DWRITE_FONT_FACE_TYPE_TRUETYPE_COLLECTION
+           : data->cff      ? DWRITE_FONT_FACE_TYPE_CFF
+                            : DWRITE_FONT_FACE_TYPE_TRUETYPE;
+}
+
+/* a number a font set's builder was given as a property. */
+static BOOL custom_number(DwSetFont *font, DWRITE_FONT_PROPERTY_ID id, UINT32 *value)
+{
+    DwStrings *strings = font ? DwSetFontCustom(font, id) : nullptr;
+    const WCHAR *text = strings ? DwStringsBest(strings, L"en-us") : nullptr;
+    if (!text || !*text)
+        return FALSE;
+    UINT32 v = 0;
+    for (; *text; text++) {
+        if (*text < L'0' || *text > L'9' || v > 100000)
+            return FALSE;
+        v = v * 10 + (UINT32)(*text - L'0');
+    }
+    *value = v;
+    return TRUE;
+}
+
+/* one face of a file, under the names of the model, or those a font set gives it. */
+static void add_face(Builder *b, IDWriteFontFile *file, UINT32 index, DWRITE_FONT_SIMULATIONS simulations,
+                     DwSetFont *font)
+{
+    DwFontData *data;
+    if (FAILED(DwFontDataOpen(file, index, &data)))
+        return;
+    DwEntry entry = {};
+    entry.file = file;
+    entry.face_index = index;
+    entry.face_type = face_type_of(data);
+    entry.simulations = simulations;
+    DwFontDataAttributes(data, &entry.attributes);
+    DwFontDataMetrics(data, &entry.metrics);
+    DwStrings *win32 = DwFontDataNames(data, 1);
+    DwStrings *win32_sub = DwFontDataNames(data, 2);
+    entry.win32_family = win32;
+    entry.win32_subfamily = win32_sub;
+    DwStrings *family_names, *face_names;
+    DwModelNames(data, b->model, &entry.attributes, &family_names, &face_names);
+    if (font) {
+        BOOL typographic = b->model == DWRITE_FONT_FAMILY_MODEL_TYPOGRAPHIC;
+        DwStrings *custom_family = DwSetFontCustom(font, typographic ? DWRITE_FONT_PROPERTY_ID_TYPOGRAPHIC_FAMILY_NAME
+                                                                      : DWRITE_FONT_PROPERTY_ID_WEIGHT_STRETCH_STYLE_FAMILY_NAME);
+        DwStrings *custom_face = DwSetFontCustom(font, typographic ? DWRITE_FONT_PROPERTY_ID_TYPOGRAPHIC_FACE_NAME
+                                                                    : DWRITE_FONT_PROPERTY_ID_WEIGHT_STRETCH_STYLE_FACE_NAME);
+        if (custom_family) {
+            DwStringsRelease(family_names);
+            DwStringsAddRef(custom_family);
+            family_names = custom_family;
+        }
+        if (custom_face) {
+            DwStringsRelease(face_names);
+            DwStringsAddRef(custom_face);
+            face_names = custom_face;
+        }
+        const DwFontKey *key = DwSetFontKey(font);
+        DwAxesToAttributes(key->axes, key->axis_count, &entry.attributes.weight, &entry.attributes.stretch,
+                           &entry.attributes.style);
+        UINT32 v;
+        if (custom_number(font, DWRITE_FONT_PROPERTY_ID_WEIGHT, &v) && v >= 1 && v <= 999)
+            entry.attributes.weight = (DWRITE_FONT_WEIGHT)v;
+        if (custom_number(font, DWRITE_FONT_PROPERTY_ID_STRETCH, &v) && v >= 1 && v <= 9)
+            entry.attributes.stretch = (DWRITE_FONT_STRETCH)v;
+        if (custom_number(font, DWRITE_FONT_PROPERTY_ID_STYLE, &v) && v <= 2)
+            entry.attributes.style = (DWRITE_FONT_STYLE)v;
+    }
+    if (simulations & DWRITE_FONT_SIMULATIONS_BOLD)
+        entry.attributes.weight = DWRITE_FONT_WEIGHT_BOLD;
+    if ((simulations & DWRITE_FONT_SIMULATIONS_OBLIQUE) && entry.attributes.style == DWRITE_FONT_STYLE_NORMAL)
+        entry.attributes.style = DWRITE_FONT_STYLE_OBLIQUE;
+    entry.face_names = face_names;
+    if (family_names) {
+        DwFamily *f = family_for(b, family_names);
+        if (f)
+            push_entry(f, &entry);
+        /* a face whose win32 name differs from its bigger family also gets a family of its own. */
+        if (win32 && !simulations && DwCompareNames(DwStringsBest(win32, L"en-us"), DwStringsBest(family_names, L"en-us"))) {
+            DwFamily *g = family_for(b, win32);
+            if (g) {
+                DwEntry gdi = entry;
+                gdi.gdi_family = TRUE;
+                gdi.face_names = win32_sub ? win32_sub : entry.face_names;
+                push_entry(g, &gdi);
+            }
+        }
+    }
+    /* the entries took references of their own. */
+    DwStringsRelease(family_names);
+    DwStringsRelease(face_names);
+    DwStringsRelease(win32);
+    DwStringsRelease(win32_sub);
+    DwFontDataRelease(data);
+}
+
 static void add_file(Builder *b, IDWriteFontFile *file)
 {
     BOOL supported;
@@ -330,65 +485,8 @@ static void add_file(Builder *b, IDWriteFontFile *file)
     UINT32 faces;
     if (FAILED(file->lpVtbl->Analyze(file, &supported, &file_type, &face_type, &faces)) || !supported)
         return;
-    for (UINT32 index = 0; index < faces; index++) {
-        DwFontData *data;
-        if (FAILED(DwFontDataOpen(file, index, &data)))
-            continue;
-        DwEntry entry = {};
-        entry.file = file;
-        entry.face_index = index;
-        entry.face_type = face_type;
-        DwFontDataAttributes(data, &entry.attributes);
-        DwFontDataMetrics(data, &entry.metrics);
-        DwStrings *wws = DwFontDataNames(data, 21);
-        DwStrings *typographic = DwFontDataNames(data, 16);
-        DwStrings *win32 = DwFontDataNames(data, 1);
-        DwStrings *wws_sub = DwFontDataNames(data, 22);
-        DwStrings *typographic_sub = DwFontDataNames(data, 17);
-        DwStrings *win32_sub = DwFontDataNames(data, 2);
-        entry.win32_family = win32;
-        entry.win32_subfamily = win32_sub;
-        entry.face_names = wws_sub ? wws_sub : typographic_sub ? typographic_sub : win32_sub;
-        DwStrings *family_names = wws ? wws : typographic ? typographic : win32;
-        DwStrings *derived = nullptr, *derived_face = nullptr;
-        if (!wws && !typographic && win32) {
-            derived = family_without_weight(win32, entry.attributes.weight,
-                                            entry.attributes.style != DWRITE_FONT_STYLE_NORMAL, &derived_face);
-            if (derived) {
-                family_names = derived;
-                entry.face_names = derived_face;
-                /* a font left at the regular weight by its file has the weight its name gives. */
-                if (entry.attributes.weight == 400)
-                    entry.attributes.weight = DwWeightOfName(DwStringsBest(derived_face, L"en-us"));
-            }
-        }
-        if (family_names) {
-            DwFamily *f = family_for(b, family_names);
-            if (f)
-                push_entry(f, &entry);
-            /* a face whose win32 name differs from its bigger family also gets a family of its own. */
-            if (win32 && family_names != win32 && DwCompareNames(DwStringsBest(win32, L"en-us"),
-                                                                  DwStringsBest(family_names, L"en-us"))) {
-                DwFamily *g = family_for(b, win32);
-                if (g) {
-                    DwEntry gdi = entry;
-                    gdi.gdi_family = TRUE;
-                    gdi.face_names = win32_sub ? win32_sub : entry.face_names;
-                    push_entry(g, &gdi);
-                }
-            }
-        }
-        /* the entries took references of their own. */
-        DwStringsRelease(derived);
-        DwStringsRelease(derived_face);
-        DwStringsRelease(wws);
-        DwStringsRelease(typographic);
-        DwStringsRelease(win32);
-        DwStringsRelease(wws_sub);
-        DwStringsRelease(typographic_sub);
-        DwStringsRelease(win32_sub);
-        DwFontDataRelease(data);
-    }
+    for (UINT32 index = 0; index < faces; index++)
+        add_face(b, file, index, DWRITE_FONT_SIMULATIONS_NONE, nullptr);
 }
 
 static void sort_families(Builder *b)
@@ -434,7 +532,8 @@ static HRESULT WINAPI collection_query(IDWriteFontCollection *This, REFIID riid,
     if (!out)
         return E_POINTER;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDWriteFontCollection) ||
-        IsEqualGUID(riid, &IID_IDWriteFontCollection1) || IsEqualGUID(riid, &IID_IDWriteFontCollection2)) {
+        IsEqualGUID(riid, &IID_IDWriteFontCollection1) || IsEqualGUID(riid, &IID_IDWriteFontCollection2) ||
+        IsEqualGUID(riid, &IID_IDWriteFontCollection3)) {
         *out = This;
         This->lpVtbl->AddRef(This);
         return S_OK;
@@ -460,6 +559,8 @@ static ULONG WINAPI collection_release(IDWriteFontCollection *This)
             DwStringsRelease(c->families[i].names);
         }
         DwFree(c->families);
+        if (c->set)
+            c->set->lpVtbl->Release(c->set);
         DwFree(c);
     }
     return refs;
@@ -569,19 +670,72 @@ static HRESULT WINAPI collection_from_face(IDWriteFontCollection *This, IDWriteF
     return DwFontCreate((DwCollection *)This, family, entry, font);
 }
 
-/* the font sets and the lists of fonts by axis values are not made: a program that asks gets E_NOTIMPL. */
-static HRESULT WINAPI collection_font_set(IDWriteFontCollection2 *This, IDWriteFontSet **set)
+HRESULT DwCollectionSet(DwCollection *c, UINT32 family, const UINT32 *order, UINT32 count, IDWriteFontSet4 **set)
 {
-    if (set)
-        *set = nullptr;
-    return E_NOTIMPL;
+    *set = nullptr;
+    /* the whole collection is the set it was made of, or the real faces of every family it lists. */
+    if (family == (UINT32)-1) {
+        AcquireSRWLockExclusive(&c->lock);
+        HRESULT hr = S_OK;
+        if (!c->set) {
+            UINT32 total = 0;
+            for (UINT32 i = 0; i < c->public_count; i++)
+                total += c->families[i].count;
+            DwFontKey *keys = DwAlloc((total + 1) * sizeof(*keys));
+            if (keys) {
+                UINT32 n = 0;
+                for (UINT32 i = 0; i < c->public_count; i++) {
+                    for (UINT32 e = 0; e < c->families[i].count; e++) {
+                        const DwEntry *entry = &c->families[i].entries[e];
+                        if (entry->simulations)
+                            continue;
+                        memset(&keys[n], 0, sizeof(keys[n]));
+                        keys[n].file = entry->file;
+                        keys[n].index = entry->face_index;
+                        n++;
+                    }
+                }
+                hr = DwFontSetFromKeys(c->factory, keys, n, &c->set);
+                DwFree(keys);
+            } else {
+                hr = E_OUTOFMEMORY;
+            }
+        }
+        if (SUCCEEDED(hr)) {
+            *set = c->set;
+            (*set)->lpVtbl->AddRef(*set);
+        }
+        ReleaseSRWLockExclusive(&c->lock);
+        return hr;
+    }
+    const DwFamily *f = &c->families[family];
+    if (!order)
+        count = f->count;
+    DwFontKey *keys = DwAlloc((count + 1) * sizeof(*keys));
+    if (!keys)
+        return E_OUTOFMEMORY;
+    for (UINT32 i = 0; i < count; i++) {
+        const DwEntry *entry = &f->entries[order ? order[i] : i];
+        memset(&keys[i], 0, sizeof(keys[i]));
+        keys[i].file = entry->file;
+        keys[i].index = entry->face_index;
+        keys[i].simulations = entry->simulations;
+    }
+    HRESULT hr = DwFontSetFromKeys(c->factory, keys, count, set);
+    DwFree(keys);
+    return hr;
 }
 
 static HRESULT WINAPI collection_font_set1(IDWriteFontCollection2 *This, IDWriteFontSet1 **set)
 {
-    if (set)
-        *set = nullptr;
-    return E_NOTIMPL;
+    if (!set)
+        return E_POINTER;
+    return DwCollectionSet((DwCollection *)This, (UINT32)-1, nullptr, 0, (IDWriteFontSet4 **)set);
+}
+
+static HRESULT WINAPI collection_font_set(IDWriteFontCollection2 *This, IDWriteFontSet **set)
+{
+    return collection_font_set1(This, (IDWriteFontSet1 **)set);
 }
 
 static HRESULT WINAPI collection_family1(IDWriteFontCollection2 *This, UINT32 index, IDWriteFontFamily1 **family)
@@ -594,31 +748,137 @@ static HRESULT WINAPI collection_family2(IDWriteFontCollection2 *This, UINT32 in
     return collection_family((IDWriteFontCollection *)This, index, (IDWriteFontFamily **)family);
 }
 
+static HRESULT list_create(DwCollection *c, UINT32 family, UINT32 *order, UINT32 count, IDWriteFontList **out);
+
 static HRESULT WINAPI collection_matching(IDWriteFontCollection2 *This, const WCHAR *name,
                                           const DWRITE_FONT_AXIS_VALUE *axis_values, UINT32 count,
                                           IDWriteFontList2 **fonts)
 {
-    if (fonts)
-        *fonts = nullptr;
-    return E_NOTIMPL;
+    DwCollection *c = (DwCollection *)This;
+    if (!fonts)
+        return E_POINTER;
+    *fonts = nullptr;
+    if (!name || (count && !axis_values))
+        return E_INVALIDARG;
+    UINT32 index;
+    /* a family the collection does not have gives an empty list. */
+    if (!DwFindFamilyExact(c, name, &index))
+        return list_create(c, (UINT32)-1, nullptr, 0, (IDWriteFontList **)fonts);
+    const DwFamily *family = &c->families[index];
+    UINT32 *order = DwAlloc((family->count + 1) * sizeof(UINT32));
+    if (!order)
+        return E_OUTOFMEMORY;
+    DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL;
+    DWRITE_FONT_STRETCH stretch = DWRITE_FONT_STRETCH_NORMAL;
+    DWRITE_FONT_STYLE style = DWRITE_FONT_STYLE_NORMAL;
+    DwAxesToAttributes(axis_values, count, &weight, &stretch, &style);
+    DwSortEntries(family, weight, stretch, style, order);
+    return list_create(c, index, order, family->count, (IDWriteFontList **)fonts);
 }
 
-/* the families of this collection hold every face that shares a typographic family name. */
 static DWRITE_FONT_FAMILY_MODEL WINAPI collection_model(IDWriteFontCollection2 *This)
 {
-    return DWRITE_FONT_FAMILY_MODEL_TYPOGRAPHIC;
+    return ((DwCollection *)This)->model;
 }
 
-static const IDWriteFontCollection2Vtbl g_collection_vtbl = {
-    (void *)collection_query, (void *)collection_addref, (void *)collection_release, (void *)collection_count,
-    (void *)collection_family, (void *)collection_find, (void *)collection_from_face, collection_font_set,
-    collection_family1, collection_family2, collection_matching, collection_model, collection_font_set1,
+/* the fonts of a collection never go away, so the event is never set. */
+static HANDLE WINAPI collection_expiration(IDWriteFontCollection2 *This)
+{
+    static HANDLE event;
+    if (!event) {
+        HANDLE created = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (created && InterlockedCompareExchangePointer(&event, created, nullptr))
+            CloseHandle(created);
+    }
+    return event;
+}
+
+static const IDWriteFontCollection3Vtbl g_collection_vtbl = {
+    (void *)collection_query,   (void *)collection_addref,     (void *)collection_release,
+    (void *)collection_count,   (void *)collection_family,     (void *)collection_find,
+    (void *)collection_from_face, (void *)collection_font_set, (void *)collection_family1,
+    (void *)collection_family2, (void *)collection_matching,   (void *)collection_model,
+    (void *)collection_font_set1, (void *)collection_expiration,
 };
+
+static void builder_free(Builder *b)
+{
+    for (UINT32 i = 0; i < b->count; i++) {
+        for (UINT32 e = 0; e < b->families[i].count; e++)
+            entry_release(&b->families[i].entries[e]);
+        DwFree(b->families[i].entries);
+        DwStringsRelease(b->families[i].names);
+    }
+    DwFree(b->families);
+}
+
+static HRESULT builder_finish(Builder *b, DwFactory *factory, DwCollection **out)
+{
+    for (UINT32 i = 0; i < b->count; i++) {
+        add_simulations(&b->families[i]);
+        sort_entries(&b->families[i]);
+    }
+    sort_families(b);
+    partition_families(b);
+    DwCollection *c = DwAllocZero(sizeof(*c));
+    if (!c) {
+        builder_free(b);
+        return E_OUTOFMEMORY;
+    }
+    c->lpVtbl = (const IDWriteFontCollectionVtbl *)&g_collection_vtbl;
+    c->refs = 1;
+    c->factory = factory;
+    c->families = b->families;
+    c->count = b->count;
+    c->public_count = b->public_count;
+    c->model = b->model;
+    InitializeSRWLock(&c->lock);
+    *out = c;
+    return S_OK;
+}
+
+HRESULT DwCollectionFromSet(DwFactory *factory, IDWriteFontSet *set, DWRITE_FONT_FAMILY_MODEL model, DwCollection **out)
+{
+    *out = nullptr;
+    if (!set)
+        return E_INVALIDARG;
+    Builder b = {};
+    b.model = model;
+    DwSetFont *const *fonts;
+    UINT32 count;
+    IDWriteFontSet4 *kept = nullptr;
+    if (DwFontSetFonts(set, &fonts, &count)) {
+        for (UINT32 i = 0; i < count; i++) {
+            const DwFontKey *key = DwSetFontKey(fonts[i]);
+            add_face(&b, key->file, key->index, key->simulations, fonts[i]);
+        }
+        set->lpVtbl->QueryInterface(set, &IID_IDWriteFontSet4, (void **)&kept);
+    } else {
+        /* a set of another implementation gives its fonts by reference. */
+        count = set->lpVtbl->GetFontCount(set);
+        for (UINT32 i = 0; i < count; i++) {
+            IDWriteFontFaceReference *reference;
+            if (FAILED(set->lpVtbl->GetFontFaceReference(set, i, &reference)))
+                continue;
+            DwFontKey key;
+            if (DwFaceReferenceKey(reference, &key))
+                add_face(&b, key.file, key.index, key.simulations, nullptr);
+            reference->lpVtbl->Release(reference);
+        }
+    }
+    HRESULT hr = builder_finish(&b, factory, out);
+    if (SUCCEEDED(hr))
+        (*out)->set = kept;
+    else if (kept)
+        kept->lpVtbl->Release(kept);
+    return hr;
+}
 
 HRESULT DwCollectionFromFiles(DwFactory *factory, IDWriteFontFile *const *files, UINT32 count,
                               IDWriteFontFileEnumerator *enumerator, DwCollection **out)
 {
     Builder b = {};
+    b.model = DWRITE_FONT_FAMILY_MODEL_WEIGHT_STRETCH_STYLE;
     for (UINT32 i = 0; i < count; i++)
         add_file(&b, files[i]);
     HRESULT hr = S_OK;
@@ -635,101 +895,42 @@ HRESULT DwCollectionFromFiles(DwFactory *factory, IDWriteFontFile *const *files,
         file->lpVtbl->Release(file);
     }
     if (FAILED(hr)) {
-        for (UINT32 i = 0; i < b.count; i++) {
-            for (UINT32 e = 0; e < b.families[i].count; e++)
-                entry_release(&b.families[i].entries[e]);
-            DwFree(b.families[i].entries);
-            DwStringsRelease(b.families[i].names);
-        }
-        DwFree(b.families);
+        builder_free(&b);
         return hr;
     }
-    for (UINT32 i = 0; i < b.count; i++) {
-        add_simulations(&b.families[i]);
-        sort_entries(&b.families[i]);
-    }
-    sort_families(&b);
-    partition_families(&b);
-    DwCollection *c = DwAllocZero(sizeof(*c));
-    if (!c)
-        return E_OUTOFMEMORY;
-    c->lpVtbl = (const IDWriteFontCollectionVtbl *)&g_collection_vtbl;
-    c->refs = 1;
-    c->factory = factory;
-    c->families = b.families;
-    c->count = b.count;
-    c->public_count = b.public_count;
-    InitializeSRWLock(&c->lock);
-    *out = c;
-    return S_OK;
+    return builder_finish(&b, factory, out);
 }
 
 /* ------------------------------------------------------------------ system collection */
 
-static BOOL is_font_file(const WCHAR *name)
+HRESULT DwSystemCollectionModel(DwFactory *factory, DWRITE_FONT_FAMILY_MODEL model, IDWriteFontCollection **out)
 {
-    size_t n = wcslen(name);
-    return (n > 4 && (!_wcsicmp(name + n - 4, L".ttf") || !_wcsicmp(name + n - 4, L".ttc") ||
-                      !_wcsicmp(name + n - 4, L".otf") || !_wcsicmp(name + n - 4, L".otc")));
+    *out = nullptr;
+    IDWriteFontSet4 *set;
+    HRESULT hr = DwSystemFontSet(factory, &set);
+    if (FAILED(hr))
+        return hr;
+    AcquireSRWLockExclusive(&factory->lock);
+    IDWriteFontCollection **slot =
+        model == DWRITE_FONT_FAMILY_MODEL_TYPOGRAPHIC ? &factory->system_typographic : &factory->system;
+    if (!*slot) {
+        DwCollection *c;
+        hr = DwCollectionFromSet(factory, (IDWriteFontSet *)set, model, &c);
+        if (SUCCEEDED(hr))
+            *slot = (IDWriteFontCollection *)c;
+    }
+    if (SUCCEEDED(hr)) {
+        *out = *slot;
+        (*out)->lpVtbl->AddRef(*out);
+    }
+    ReleaseSRWLockExclusive(&factory->lock);
+    set->lpVtbl->Release(set);
+    return hr;
 }
 
 HRESULT DwSystemCollection(DwFactory *factory, IDWriteFontCollection **out)
 {
-    AcquireSRWLockExclusive(&factory->lock);
-    if (!factory->system) {
-        WCHAR directory[MAX_PATH], pattern[MAX_PATH], path[MAX_PATH];
-        UINT n = GetWindowsDirectoryW(directory, MAX_PATH);
-        IDWriteFontFile **files = nullptr;
-        UINT32 count = 0, capacity = 0;
-        if (n && n < MAX_PATH - 8) {
-            wcscat(directory, L"\\Fonts\\");
-            wcscpy(pattern, directory);
-            wcscat(pattern, L"*");
-            WIN32_FIND_DATAW find;
-            HANDLE h = FindFirstFileW(pattern, &find);
-            if (h != INVALID_HANDLE_VALUE) {
-                do {
-                    if ((find.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || !is_font_file(find.cFileName) ||
-                        wcslen(directory) + wcslen(find.cFileName) >= MAX_PATH)
-                        continue;
-                    wcscpy(path, directory);
-                    wcscat(path, find.cFileName);
-                    IDWriteFontFile *file;
-                    if (FAILED(DwFontFileFromPath(path, &find.ftLastWriteTime, &file)))
-                        continue;
-                    if (count == capacity) {
-                        capacity = capacity ? capacity * 2 : 128;
-                        IDWriteFontFile **grown = DwAlloc(capacity * sizeof(*grown));
-                        if (!grown) {
-                            file->lpVtbl->Release(file);
-                            break;
-                        }
-                        if (count)
-                            memcpy(grown, files, count * sizeof(*grown));
-                        DwFree(files);
-                        files = grown;
-                    }
-                    files[count++] = file;
-                } while (FindNextFileW(h, &find));
-                FindClose(h);
-            }
-        }
-        DwCollection *c;
-        HRESULT hr = DwCollectionFromFiles(factory, files, count, nullptr, &c);
-        for (UINT32 i = 0; i < count; i++)
-            files[i]->lpVtbl->Release(files[i]);
-        DwFree(files);
-        if (FAILED(hr)) {
-            ReleaseSRWLockExclusive(&factory->lock);
-            *out = nullptr;
-            return hr;
-        }
-        factory->system = (IDWriteFontCollection *)c;
-    }
-    *out = factory->system;
-    (*out)->lpVtbl->AddRef(*out);
-    ReleaseSRWLockExclusive(&factory->lock);
-    return S_OK;
+    return DwSystemCollectionModel(factory, DWRITE_FONT_FAMILY_MODEL_WEIGHT_STRETCH_STYLE, out);
 }
 
 DwCollection *DwCollectionOf(DwFactory *factory, IDWriteFontCollection *collection)
@@ -749,7 +950,7 @@ DwCollection *DwCollectionOf(DwFactory *factory, IDWriteFontCollection *collecti
 /* ------------------------------------------------------------------ fonts */
 
 typedef struct DwFont {
-    const IDWriteFont1Vtbl *lpVtbl;
+    const IDWriteFont3Vtbl *lpVtbl;
     LONG refs;
     DwCollection *collection;
     UINT32 family, entry;
@@ -762,7 +963,8 @@ static HRESULT WINAPI font_query(IDWriteFont1 *This, REFIID riid, void **out)
     if (!out)
         return E_POINTER;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDWriteFont) ||
-        IsEqualGUID(riid, &IID_IDWriteFont1)) {
+        IsEqualGUID(riid, &IID_IDWriteFont1) || IsEqualGUID(riid, &IID_IDWriteFont2) ||
+        IsEqualGUID(riid, &IID_IDWriteFont3)) {
         *out = This;
         This->lpVtbl->AddRef(This);
         return S_OK;
@@ -845,6 +1047,14 @@ static UINT32 name_id_of(DWRITE_INFORMATIONAL_STRING_ID id)
     }
 }
 
+DwStrings *DwInformationalStrings(const DwFontData *data, DWRITE_INFORMATIONAL_STRING_ID id)
+{
+    UINT32 name_id = name_id_of(id);
+    if (name_id == 0xffff || id == DWRITE_INFORMATIONAL_STRING_NONE)
+        return nullptr;
+    return DwFontDataNames(data, name_id);
+}
+
 static HRESULT WINAPI font_informational(IDWriteFont1 *This, DWRITE_INFORMATIONAL_STRING_ID id,
                                          IDWriteLocalizedStrings **strings, BOOL *exists)
 {
@@ -867,7 +1077,7 @@ static HRESULT WINAPI font_informational(IDWriteFont1 *This, DWRITE_INFORMATIONA
         DwFontData *data;
         if (FAILED(DwFontDataOpen(e->file, e->face_index, &data)))
             return S_OK;
-        names = DwFontDataNames(data, name_id);
+        names = DwInformationalStrings(data, id);
         DwFontDataRelease(data);
     }
     if (!names)
@@ -949,10 +1159,51 @@ static HRESULT WINAPI font_ranges(IDWriteFont1 *This, UINT32 max, DWRITE_UNICODE
 
 static BOOL WINAPI font_monospaced(IDWriteFont1 *This) { return font_entry((DwFont *)This)->attributes.monospaced; }
 
-static const IDWriteFont1Vtbl g_font_vtbl = {
-    font_query,   font_addref,   font_release,        font_family,   font_weight,      font_stretch,
-    font_style,   font_symbol,   font_face_names,     font_informational, font_simulations, font_metrics,
-    font_has_character, font_create_face, font_metrics1, font_panose, font_ranges,    font_monospaced,
+/* Mime draws no color glyphs, so no font is a color font. */
+static BOOL WINAPI font_color(IDWriteFont1 *This) { return FALSE; }
+
+static BOOL entries_equal(const DwEntry *a, const DwEntry *b)
+{
+    return a->face_index == b->face_index && a->simulations == b->simulations && DwSameFile(a->file, b->file);
+}
+
+BOOL DwFontEntryOf(IDWriteFont *font, DwCollection **collection, const DwEntry **entry);
+
+static BOOL WINAPI font_equals(IDWriteFont1 *This, IDWriteFont *other)
+{
+    DwCollection *c;
+    const DwEntry *e;
+    if (!other || !DwFontEntryOf(other, &c, &e))
+        return FALSE;
+    return entries_equal(font_entry((DwFont *)This), e);
+}
+
+static HRESULT WINAPI font_reference(IDWriteFont1 *This, IDWriteFontFaceReference **reference)
+{
+    DwFont *f = (DwFont *)This;
+    if (!reference)
+        return E_POINTER;
+    const DwEntry *e = font_entry(f);
+    DwFontKey key = {e->file, e->face_index, e->simulations};
+    return DwFaceReferenceCreate(f->collection->factory, &key, (IDWriteFontFaceReference1 **)reference);
+}
+
+static BOOL WINAPI font_has_character3(IDWriteFont1 *This, UINT32 code_point)
+{
+    BOOL exists = FALSE;
+    font_has_character(This, code_point, &exists);
+    return exists;
+}
+
+static DWRITE_LOCALITY WINAPI font_locality(IDWriteFont1 *This) { return DWRITE_LOCALITY_LOCAL; }
+
+static const IDWriteFont3Vtbl g_font_vtbl = {
+    (void *)font_query,         (void *)font_addref,      (void *)font_release,     (void *)font_family,
+    (void *)font_weight,        (void *)font_stretch,     (void *)font_style,       (void *)font_symbol,
+    (void *)font_face_names,    (void *)font_informational, (void *)font_simulations, (void *)font_metrics,
+    (void *)font_has_character, (void *)font_create_face, (void *)font_metrics1,    (void *)font_panose,
+    (void *)font_ranges,        (void *)font_monospaced,  (void *)font_color,       (void *)font_create_face,
+    (void *)font_equals,        (void *)font_reference,   (void *)font_has_character3, (void *)font_locality,
 };
 
 BOOL DwFontEntryOf(IDWriteFont *font, DwCollection **collection, const DwEntry **entry)
@@ -989,19 +1240,22 @@ typedef struct DwFamilyObject {
     UINT32 index;
 } DwFamilyObject;
 
+/* fonts of one family in an order, or none for a family the collection lacks. */
 typedef struct DwFontList {
-    const IDWriteFontListVtbl *lpVtbl;
+    const IDWriteFontList2Vtbl *lpVtbl;
     LONG refs;
     DwCollection *collection;
     UINT32 family;
     UINT32 *order;
+    UINT32 count;
 } DwFontList;
 
 static HRESULT WINAPI list_query(IDWriteFontList *This, REFIID riid, void **out)
 {
     if (!out)
         return E_POINTER;
-    if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDWriteFontList)) {
+    if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDWriteFontList) ||
+        IsEqualGUID(riid, &IID_IDWriteFontList1) || IsEqualGUID(riid, &IID_IDWriteFontList2)) {
         *out = This;
         This->lpVtbl->AddRef(This);
         return S_OK;
@@ -1034,11 +1288,7 @@ static HRESULT WINAPI list_collection(IDWriteFontList *This, IDWriteFontCollecti
     return S_OK;
 }
 
-static UINT32 WINAPI list_count(IDWriteFontList *This)
-{
-    DwFontList *l = (DwFontList *)This;
-    return l->collection->families[l->family].count;
-}
+static UINT32 WINAPI list_count(IDWriteFontList *This) { return ((DwFontList *)This)->count; }
 
 static HRESULT WINAPI list_font(IDWriteFontList *This, UINT32 index, IDWriteFont **font)
 {
@@ -1046,14 +1296,67 @@ static HRESULT WINAPI list_font(IDWriteFontList *This, UINT32 index, IDWriteFont
     if (!font)
         return E_POINTER;
     *font = nullptr;
-    if (index >= l->collection->families[l->family].count)
+    if (index >= l->count)
         return E_INVALIDARG;
     return DwFontCreate(l->collection, l->family, l->order[index], font);
 }
 
-static const IDWriteFontListVtbl g_list_vtbl = {
-    list_query, list_addref, list_release, list_collection, list_count, list_font,
+static DWRITE_LOCALITY WINAPI list_locality(IDWriteFontList *This, UINT32 index) { return DWRITE_LOCALITY_LOCAL; }
+
+static HRESULT entry_reference(DwCollection *c, UINT32 family, UINT32 entry, IDWriteFontFaceReference **reference)
+{
+    if (!reference)
+        return E_POINTER;
+    *reference = nullptr;
+    const DwEntry *e = &c->families[family].entries[entry];
+    DwFontKey key = {e->file, e->face_index, e->simulations};
+    return DwFaceReferenceCreate(c->factory, &key, (IDWriteFontFaceReference1 **)reference);
+}
+
+static HRESULT WINAPI list_reference(IDWriteFontList *This, UINT32 index, IDWriteFontFaceReference **reference)
+{
+    DwFontList *l = (DwFontList *)This;
+    if (reference)
+        *reference = nullptr;
+    if (index >= l->count)
+        return E_INVALIDARG;
+    return entry_reference(l->collection, l->family, l->order[index], reference);
+}
+
+static HRESULT WINAPI list_font_set(IDWriteFontList *This, IDWriteFontSet1 **set)
+{
+    DwFontList *l = (DwFontList *)This;
+    if (!set)
+        return E_POINTER;
+    if (l->family == (UINT32)-1)
+        return DwFontSetFromKeys(l->collection->factory, nullptr, 0, (IDWriteFontSet4 **)set);
+    return DwCollectionSet(l->collection, l->family, l->order, l->count, (IDWriteFontSet4 **)set);
+}
+
+static const IDWriteFontList2Vtbl g_list_vtbl = {
+    (void *)list_query,  (void *)list_addref,   (void *)list_release,  (void *)list_collection,
+    (void *)list_count,  (void *)list_font,     (void *)list_locality, (void *)list_font,
+    (void *)list_reference, (void *)list_font_set,
 };
+
+/* takes the order. */
+static HRESULT list_create(DwCollection *c, UINT32 family, UINT32 *order, UINT32 count, IDWriteFontList **out)
+{
+    DwFontList *l = DwAllocZero(sizeof(*l));
+    if (!l) {
+        DwFree(order);
+        return E_OUTOFMEMORY;
+    }
+    l->lpVtbl = &g_list_vtbl;
+    l->refs = 1;
+    l->collection = c;
+    collection_addref((IDWriteFontCollection *)c);
+    l->family = family;
+    l->order = order;
+    l->count = count;
+    *out = (IDWriteFontList *)l;
+    return S_OK;
+}
 
 static HRESULT WINAPI family_query(IDWriteFontFamily *This, REFIID riid, void **out)
 {
@@ -1134,30 +1437,24 @@ static HRESULT WINAPI family_first(IDWriteFontFamily *This, DWRITE_FONT_WEIGHT w
     return DwFontCreate(f->collection, f->index, DwBestEntry(family, weight, stretch, style), font);
 }
 
-static HRESULT WINAPI family_matching(IDWriteFontFamily *This, DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STRETCH stretch,
-                                      DWRITE_FONT_STYLE style, IDWriteFontList **fonts)
+static HRESULT family_sorted(DwFamilyObject *f, DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STRETCH stretch,
+                             DWRITE_FONT_STYLE style, IDWriteFontList **fonts)
 {
-    DwFamilyObject *f = (DwFamilyObject *)This;
     if (!fonts)
         return E_POINTER;
     *fonts = nullptr;
     const DwFamily *family = &f->collection->families[f->index];
-    DwFontList *l = DwAllocZero(sizeof(*l));
-    if (!l)
+    UINT32 *order = DwAlloc((family->count + 1) * sizeof(UINT32));
+    if (!order)
         return E_OUTOFMEMORY;
-    l->order = DwAlloc(family->count * sizeof(UINT32));
-    if (!l->order) {
-        DwFree(l);
-        return E_OUTOFMEMORY;
-    }
-    DwSortEntries(family, weight, stretch, style, l->order);
-    l->lpVtbl = &g_list_vtbl;
-    l->refs = 1;
-    l->collection = f->collection;
-    collection_addref((IDWriteFontCollection *)f->collection);
-    l->family = f->index;
-    *fonts = (IDWriteFontList *)l;
-    return S_OK;
+    DwSortEntries(family, weight, stretch, style, order);
+    return list_create(f->collection, f->index, order, family->count, fonts);
+}
+
+static HRESULT WINAPI family_matching(IDWriteFontFamily *This, DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STRETCH stretch,
+                                      DWRITE_FONT_STYLE style, IDWriteFontList **fonts)
+{
+    return family_sorted((DwFamilyObject *)This, weight, stretch, style, fonts);
 }
 
 static DWRITE_LOCALITY WINAPI family_locality(IDWriteFontFamily2 *This, UINT32 index)
@@ -1165,19 +1462,19 @@ static DWRITE_LOCALITY WINAPI family_locality(IDWriteFontFamily2 *This, UINT32 i
     return DWRITE_LOCALITY_LOCAL;
 }
 
-/* fonts as font face references and font sets are not made: a program that asks gets E_NOTIMPL. */
 static HRESULT WINAPI family_font3(IDWriteFontFamily2 *This, UINT32 index, IDWriteFont3 **font)
 {
-    if (font)
-        *font = nullptr;
-    return E_NOTIMPL;
+    return family_font((IDWriteFontFamily *)This, index, (IDWriteFont **)font);
 }
 
 static HRESULT WINAPI family_reference(IDWriteFontFamily2 *This, UINT32 index, IDWriteFontFaceReference **reference)
 {
+    DwFamilyObject *f = (DwFamilyObject *)This;
     if (reference)
         *reference = nullptr;
-    return E_NOTIMPL;
+    if (index >= f->collection->families[f->index].count)
+        return E_INVALIDARG;
+    return entry_reference(f->collection, f->index, index, reference);
 }
 
 static HRESULT WINAPI family_matching_axes(IDWriteFontFamily2 *This, const DWRITE_FONT_AXIS_VALUE *axis_values,
@@ -1185,14 +1482,21 @@ static HRESULT WINAPI family_matching_axes(IDWriteFontFamily2 *This, const DWRIT
 {
     if (fonts)
         *fonts = nullptr;
-    return E_NOTIMPL;
+    if (count && !axis_values)
+        return E_INVALIDARG;
+    DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL;
+    DWRITE_FONT_STRETCH stretch = DWRITE_FONT_STRETCH_NORMAL;
+    DWRITE_FONT_STYLE style = DWRITE_FONT_STYLE_NORMAL;
+    DwAxesToAttributes(axis_values, count, &weight, &stretch, &style);
+    return family_sorted((DwFamilyObject *)This, weight, stretch, style, (IDWriteFontList **)fonts);
 }
 
 static HRESULT WINAPI family_font_set(IDWriteFontFamily2 *This, IDWriteFontSet1 **set)
 {
-    if (set)
-        *set = nullptr;
-    return E_NOTIMPL;
+    DwFamilyObject *f = (DwFamilyObject *)This;
+    if (!set)
+        return E_POINTER;
+    return DwCollectionSet(f->collection, f->index, nullptr, 0, (IDWriteFontSet4 **)set);
 }
 
 static const IDWriteFontFamily2Vtbl g_family_vtbl = {

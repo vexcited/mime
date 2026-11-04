@@ -4,7 +4,7 @@
 #include "dw_private.h"
 
 typedef struct DwInterop {
-    const IDWriteGdiInteropVtbl *lpVtbl;
+    const IDWriteGdiInterop1Vtbl *lpVtbl;
     LONG refs;
     DwFactory *factory;
 } DwInterop;
@@ -13,7 +13,8 @@ static HRESULT WINAPI interop_query(IDWriteGdiInterop *This, REFIID riid, void *
 {
     if (!out)
         return E_POINTER;
-    if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDWriteGdiInterop)) {
+    if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDWriteGdiInterop) ||
+        IsEqualGUID(riid, &IID_IDWriteGdiInterop1)) {
         *out = This;
         This->lpVtbl->AddRef(This);
         return S_OK;
@@ -33,9 +34,8 @@ static ULONG WINAPI interop_release(IDWriteGdiInterop *This)
     return refs;
 }
 
-static HRESULT font_for_logfont(DwFactory *factory, const LOGFONTW *lf, IDWriteFont **font)
+static HRESULT font_in_collection(DwFactory *factory, DwCollection *system, const LOGFONTW *lf, IDWriteFont **font)
 {
-    DwCollection *system = DwCollectionOf(factory, nullptr);
     if (!system)
         return E_FAIL;
     WCHAR name[LF_FACESIZE + 1];
@@ -49,6 +49,11 @@ static HRESULT font_for_logfont(DwFactory *factory, const LOGFONTW *lf, IDWriteF
         weight = DWRITE_FONT_WEIGHT_NORMAL;
     return DwCreateFontByName(system, name, weight, DWRITE_FONT_STRETCH_NORMAL,
                               lf->lfItalic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL, font);
+}
+
+static HRESULT font_for_logfont(DwFactory *factory, const LOGFONTW *lf, IDWriteFont **font)
+{
+    return font_in_collection(factory, DwCollectionOf(factory, nullptr), lf, font);
 }
 
 static HRESULT WINAPI interop_from_logfont(IDWriteGdiInterop *This, const LOGFONTW *lf, IDWriteFont **font)
@@ -145,9 +150,115 @@ static HRESULT WINAPI interop_render_target(IDWriteGdiInterop *This, HDC dc, UIN
     return E_NOTIMPL;
 }
 
-static const IDWriteGdiInteropVtbl g_interop_vtbl = {
-    interop_query,        interop_addref,          interop_release,         interop_from_logfont,
-    interop_to_logfont,   interop_face_to_logfont, interop_face_from_hdc,   interop_render_target,
+static HRESULT WINAPI interop_from_logfont1(IDWriteGdiInterop *This, const LOGFONTW *lf,
+                                            IDWriteFontCollection *collection, IDWriteFont **font)
+{
+    DwInterop *interop = (DwInterop *)This;
+    if (!font)
+        return E_POINTER;
+    *font = nullptr;
+    if (!lf)
+        return E_INVALIDARG;
+    DwCollection *c = DwCollectionOf(interop->factory, collection);
+    if (!c)
+        return E_INVALIDARG;
+    return font_in_collection(interop->factory, c, lf, font);
+}
+
+/* the unicode and code page ranges of the OS/2 table. */
+static HRESULT signature_of(DwFontData *data, FONTSIGNATURE *signature)
+{
+    memset(signature, 0, sizeof(*signature));
+    UINT32 size = 0;
+    const BYTE *os2 = DwFontDataTable(data, DW_TAG('O', 'S', '/', '2'), &size);
+    if (!os2 || size < 58)
+        return S_OK;
+    for (int i = 0; i < 4; i++)
+        signature->fsUsb[i] = DwBe32(os2 + 42 + 4 * i);
+    if (DwBe16(os2) >= 1 && size >= 86) {
+        signature->fsCsb[0] = DwBe32(os2 + 78);
+        signature->fsCsb[1] = DwBe32(os2 + 82);
+    }
+    return S_OK;
+}
+
+static HRESULT WINAPI interop_face_signature(IDWriteGdiInterop *This, IDWriteFontFace *face, FONTSIGNATURE *signature)
+{
+    if (!signature)
+        return E_POINTER;
+    memset(signature, 0, sizeof(*signature));
+    DwFace *f = DwFaceFrom(face);
+    if (!f)
+        return E_INVALIDARG;
+    return signature_of(f->data, signature);
+}
+
+static HRESULT WINAPI interop_font_signature(IDWriteGdiInterop *This, IDWriteFont *font, FONTSIGNATURE *signature)
+{
+    if (!signature)
+        return E_POINTER;
+    memset(signature, 0, sizeof(*signature));
+    DwCollection *c;
+    const DwEntry *e;
+    if (!font || !DwFontEntryOf(font, &c, &e))
+        return E_INVALIDARG;
+    DwFontData *data;
+    HRESULT hr = DwFontDataOpen(e->file, e->face_index, &data);
+    if (FAILED(hr))
+        return hr;
+    hr = signature_of(data, signature);
+    DwFontDataRelease(data);
+    return hr;
+}
+
+/* the fonts of the set in the LOGFONT's win32 family, the closest to its weight and italic first. */
+static HRESULT WINAPI interop_matching_logfont(IDWriteGdiInterop *This, const LOGFONTW *lf, IDWriteFontSet *set,
+                                               IDWriteFontSet **subset)
+{
+    if (!subset)
+        return E_POINTER;
+    *subset = nullptr;
+    if (!lf || !set)
+        return E_INVALIDARG;
+    WCHAR name[LF_FACESIZE + 1];
+    memcpy(name, lf->lfFaceName, LF_FACESIZE * sizeof(WCHAR));
+    name[LF_FACESIZE] = 0;
+    DWRITE_FONT_PROPERTY property = {DWRITE_FONT_PROPERTY_ID_WIN32_FAMILY_NAME, name, nullptr};
+    IDWriteFontSet *family;
+    HRESULT hr = set->lpVtbl->GetMatchingFonts(set, &property, 1, &family);
+    if (FAILED(hr))
+        return hr;
+    UINT32 count = family->lpVtbl->GetFontCount(family);
+    if (!count) {
+        *subset = family;
+        return S_OK;
+    }
+    /* the order of a family request, by the names the set gives the family. */
+    IDWriteLocalizedStrings *names;
+    BOOL exists = FALSE;
+    hr = family->lpVtbl->GetFontPropertyValues(family, 0, DWRITE_FONT_PROPERTY_ID_WEIGHT_STRETCH_STYLE_FAMILY_NAME,
+                                               &exists, &names);
+    if (FAILED(hr) || !exists) {
+        *subset = family;
+        return S_OK;
+    }
+    WCHAR wws[256] = {};
+    names->lpVtbl->GetString(names, 0, wws, 256);
+    names->lpVtbl->Release(names);
+    DWRITE_FONT_WEIGHT weight = lf->lfWeight > 0 && lf->lfWeight <= 999 ? (DWRITE_FONT_WEIGHT)lf->lfWeight
+                                                                        : DWRITE_FONT_WEIGHT_NORMAL;
+    hr = family->lpVtbl->GetMatchingFontsByName(family, wws, weight, DWRITE_FONT_STRETCH_NORMAL,
+                                                lf->lfItalic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL,
+                                                subset);
+    family->lpVtbl->Release(family);
+    return hr;
+}
+
+static const IDWriteGdiInterop1Vtbl g_interop_vtbl = {
+    (void *)interop_query,          (void *)interop_addref,        (void *)interop_release,
+    (void *)interop_from_logfont,   (void *)interop_to_logfont,    (void *)interop_face_to_logfont,
+    (void *)interop_face_from_hdc,  (void *)interop_render_target, (void *)interop_from_logfont1,
+    (void *)interop_face_signature, (void *)interop_font_signature, (void *)interop_matching_logfont,
 };
 
 HRESULT DwInteropCreate(DwFactory *factory, IDWriteGdiInterop **out)

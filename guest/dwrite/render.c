@@ -17,7 +17,8 @@ static HRESULT WINAPI params_query(IDWriteRenderingParams2 *This, REFIID riid, v
     if (!out)
         return E_POINTER;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDWriteRenderingParams) ||
-        IsEqualGUID(riid, &IID_IDWriteRenderingParams1) || IsEqualGUID(riid, &IID_IDWriteRenderingParams2)) {
+        IsEqualGUID(riid, &IID_IDWriteRenderingParams1) || IsEqualGUID(riid, &IID_IDWriteRenderingParams2) ||
+        IsEqualGUID(riid, &IID_IDWriteRenderingParams3)) {
         *out = This;
         This->lpVtbl->AddRef(This);
         return S_OK;
@@ -63,20 +64,26 @@ static DWRITE_GRID_FIT_MODE WINAPI params_grid(IDWriteRenderingParams2 *This)
     return ((DwRenderingParams *)This)->grid_fit;
 }
 
-static const IDWriteRenderingParams2Vtbl g_params_vtbl = {
-    params_query, params_addref, params_release, params_gamma,     params_contrast,
-    params_level, params_geometry, params_mode,  params_grayscale, params_grid,
+static DWRITE_RENDERING_MODE1 WINAPI params_mode1(IDWriteRenderingParams2 *This)
+{
+    return ((DwRenderingParams *)This)->mode1;
+}
+
+static const IDWriteRenderingParams3Vtbl g_params_vtbl = {
+    (void *)params_query,     (void *)params_addref, (void *)params_release, (void *)params_gamma,
+    (void *)params_contrast,  (void *)params_level,  (void *)params_geometry, (void *)params_mode,
+    (void *)params_grayscale, (void *)params_grid,   (void *)params_mode1,
 };
 
 HRESULT DwRenderingParamsCreate(FLOAT gamma, FLOAT contrast, FLOAT grayscale_contrast, FLOAT cleartype_level,
-                                DWRITE_PIXEL_GEOMETRY geometry, DWRITE_RENDERING_MODE mode,
+                                DWRITE_PIXEL_GEOMETRY geometry, DWRITE_RENDERING_MODE1 mode,
                                 DWRITE_GRID_FIT_MODE grid_fit, DwRenderingParams **out)
 {
     /* the negated tests also refuse nan. */
     if (!(gamma > 0) || !(contrast >= 0) || !(grayscale_contrast >= 0) || !(cleartype_level >= 0) ||
         !(cleartype_level <= 1))
         return E_INVALIDARG;
-    if ((unsigned)geometry > DWRITE_PIXEL_GEOMETRY_BGR || (unsigned)mode > DWRITE_RENDERING_MODE_OUTLINE ||
+    if ((unsigned)geometry > DWRITE_PIXEL_GEOMETRY_BGR || (unsigned)mode > DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC_DOWNSAMPLED ||
         (unsigned)grid_fit > DWRITE_GRID_FIT_MODE_ENABLED)
         return E_INVALIDARG;
     DwRenderingParams *p = DwAllocZero(sizeof(*p));
@@ -89,7 +96,10 @@ HRESULT DwRenderingParamsCreate(FLOAT gamma, FLOAT contrast, FLOAT grayscale_con
     p->grayscale_contrast = grayscale_contrast;
     p->cleartype_level = cleartype_level;
     p->geometry = geometry;
-    p->mode = mode;
+    /* the older interfaces see the downsampled mode as the symmetric one it refines. */
+    p->mode = mode == DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC_DOWNSAMPLED ? DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC
+                                                                           : (DWRITE_RENDERING_MODE)mode;
+    p->mode1 = mode;
     p->grid_fit = grid_fit;
     *out = p;
     return S_OK;

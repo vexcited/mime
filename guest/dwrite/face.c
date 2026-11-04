@@ -13,7 +13,10 @@ static HRESULT WINAPI face_query(IDWriteFontFace2 *This, REFIID riid, void **out
     if (!out)
         return E_POINTER;
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDWriteFontFace) ||
-        IsEqualGUID(riid, &IID_IDWriteFontFace1) || IsEqualGUID(riid, &IID_IDWriteFontFace2)) {
+        IsEqualGUID(riid, &IID_IDWriteFontFace1) || IsEqualGUID(riid, &IID_IDWriteFontFace2) ||
+        IsEqualGUID(riid, &IID_IDWriteFontFace3) || IsEqualGUID(riid, &IID_IDWriteFontFace4) ||
+        IsEqualGUID(riid, &IID_IDWriteFontFace5) || IsEqualGUID(riid, &IID_IDWriteFontFace6) ||
+        IsEqualGUID(riid, &IID_IDWriteFontFace7)) {
         *out = This;
         This->lpVtbl->AddRef(This);
         return S_OK;
@@ -368,15 +371,310 @@ static HRESULT WINAPI face_recommended2(IDWriteFontFace2 *This, FLOAT em_size, F
     return S_OK;
 }
 
-static const IDWriteFontFace2Vtbl g_face_vtbl = {
-    face_query,         face_addref,        face_release,        face_type,           face_files,
-    face_index,         face_simulations,   face_symbol,         face_metrics,        face_glyph_count,
-    face_design_metrics, face_glyph_indices, face_try_table,     face_release_table,  face_outline,
-    face_recommended,   face_gdi_metrics,   face_gdi_glyph_metrics,
-    face_metrics1,      face_gdi_metrics1,  face_caret,          face_ranges,         face_monospaced,
-    face_design_advances, face_gdi_advances, face_kerning,       face_has_kerning,    face_recommended1,
-    face_vertical_variants, face_has_vertical,
-    face_color,         face_palette_count, face_entry_count,    face_palette,        face_recommended2,
+/* ------------------------------------------------------------------ versions three to seven */
+
+static DwFontKey face_key(const DwFace *f)
+{
+    DwFontKey key = {f->file, f->index, f->simulations};
+    key.axis_count = f->axis_count;
+    if (f->axis_count)
+        memcpy(key.axes, f->axes, f->axis_count * sizeof(f->axes[0]));
+    return key;
+}
+
+static HRESULT WINAPI face_reference(IDWriteFontFace2 *This, IDWriteFontFaceReference **reference)
+{
+    DwFace *f = (DwFace *)This;
+    if (!reference)
+        return E_POINTER;
+    DwFontKey key = face_key(f);
+    return DwFaceReferenceCreate(f->factory, &key, (IDWriteFontFaceReference1 **)reference);
+}
+
+static void WINAPI face_panose(IDWriteFontFace2 *This, DWRITE_PANOSE *panose)
+{
+    DwFace *f = (DwFace *)This;
+    memset(panose, 0, sizeof(*panose));
+    if (f->data->ttf.os2.data && f->data->ttf.os2.size >= 42)
+        memcpy(panose->values, f->data->ttf.os2.data + 32, 10);
+}
+
+/* the attributes of the face's family model, with the instance and the simulations applied. */
+static void face_attributes(const DwFace *f, DwAttributes *a)
+{
+    DwFontDataAttributes(f->data, a);
+    DwStrings *family, *face;
+    DwModelNames(f->data, DWRITE_FONT_FAMILY_MODEL_WEIGHT_STRETCH_STYLE, a, &family, &face);
+    DwStringsRelease(family);
+    DwStringsRelease(face);
+    DwAxesToAttributes(f->axes, f->axis_count, &a->weight, &a->stretch, &a->style);
+    if (f->simulations & DWRITE_FONT_SIMULATIONS_BOLD)
+        a->weight = DWRITE_FONT_WEIGHT_BOLD;
+    if ((f->simulations & DWRITE_FONT_SIMULATIONS_OBLIQUE) && a->style == DWRITE_FONT_STYLE_NORMAL)
+        a->style = DWRITE_FONT_STYLE_OBLIQUE;
+}
+
+static DWRITE_FONT_WEIGHT WINAPI face_weight(IDWriteFontFace2 *This)
+{
+    DwAttributes a;
+    face_attributes((DwFace *)This, &a);
+    return a.weight;
+}
+
+static DWRITE_FONT_STRETCH WINAPI face_stretch(IDWriteFontFace2 *This)
+{
+    DwAttributes a;
+    face_attributes((DwFace *)This, &a);
+    return a.stretch;
+}
+
+static DWRITE_FONT_STYLE WINAPI face_style(IDWriteFontFace2 *This)
+{
+    DwAttributes a;
+    face_attributes((DwFace *)This, &a);
+    return a.style;
+}
+
+static HRESULT model_names(DwFace *f, DWRITE_FONT_FAMILY_MODEL model, BOOL want_family, IDWriteLocalizedStrings **names)
+{
+    if (!names)
+        return E_POINTER;
+    *names = nullptr;
+    if (model != DWRITE_FONT_FAMILY_MODEL_TYPOGRAPHIC && model != DWRITE_FONT_FAMILY_MODEL_WEIGHT_STRETCH_STYLE)
+        return E_INVALIDARG;
+    DwAttributes a;
+    DwFontDataAttributes(f->data, &a);
+    DwStrings *family, *face;
+    DwModelNames(f->data, model, &a, &family, &face);
+    DwStrings *kept = want_family ? family : face;
+    DwStringsRelease(want_family ? face : family);
+    if (!kept)
+        kept = DwStringsNew();
+    if (!kept)
+        return E_OUTOFMEMORY;
+    *names = DwStringsInterface(kept);
+    return S_OK;
+}
+
+static HRESULT WINAPI face_family_names(IDWriteFontFace2 *This, IDWriteLocalizedStrings **names)
+{
+    return model_names((DwFace *)This, DWRITE_FONT_FAMILY_MODEL_WEIGHT_STRETCH_STYLE, TRUE, names);
+}
+
+static HRESULT WINAPI face_face_names(IDWriteFontFace2 *This, IDWriteLocalizedStrings **names)
+{
+    return model_names((DwFace *)This, DWRITE_FONT_FAMILY_MODEL_WEIGHT_STRETCH_STYLE, FALSE, names);
+}
+
+static HRESULT WINAPI face_informational(IDWriteFontFace2 *This, DWRITE_INFORMATIONAL_STRING_ID id,
+                                         IDWriteLocalizedStrings **strings, BOOL *exists)
+{
+    if (!strings || !exists)
+        return E_POINTER;
+    *strings = nullptr;
+    *exists = FALSE;
+    DwStrings *names = DwInformationalStrings(((DwFace *)This)->data, id);
+    if (names) {
+        *strings = DwStringsInterface(names);
+        *exists = TRUE;
+    }
+    return S_OK;
+}
+
+static BOOL WINAPI face_has_character(IDWriteFontFace2 *This, UINT32 code_point)
+{
+    return DwFontDataHasCharacter(((DwFace *)This)->data, code_point);
+}
+
+static HRESULT WINAPI face_recommended3(IDWriteFontFace2 *This, FLOAT em_size, FLOAT dpi_x, FLOAT dpi_y,
+                                        const DWRITE_MATRIX *transform, BOOL sideways, DWRITE_OUTLINE_THRESHOLD threshold,
+                                        DWRITE_MEASURING_MODE measuring, IDWriteRenderingParams *params,
+                                        DWRITE_RENDERING_MODE1 *mode, DWRITE_GRID_FIT_MODE *grid_fit)
+{
+    if (!mode || !grid_fit)
+        return E_POINTER;
+    DWRITE_RENDERING_MODE old;
+    HRESULT hr = face_recommended2(This, em_size, dpi_x, dpi_y, transform, sideways, threshold, measuring, params, &old,
+                                   grid_fit);
+    if (FAILED(hr))
+        return hr;
+    *mode = (DWRITE_RENDERING_MODE1)old;
+    /* a downsampled request of the third parameters stays downsampled where the symmetric mode was chosen. */
+    IDWriteRenderingParams3 *three;
+    if (params && old == DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC &&
+        SUCCEEDED(params->lpVtbl->QueryInterface(params, &IID_IDWriteRenderingParams3, (void **)&three))) {
+        if (three->lpVtbl->GetRenderingMode1(three) == DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC_DOWNSAMPLED)
+            *mode = DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC_DOWNSAMPLED;
+        three->lpVtbl->Release(three);
+    }
+    return S_OK;
+}
+
+/* every file is local. */
+static BOOL WINAPI face_character_local(IDWriteFontFace2 *This, UINT32 code_point) { return TRUE; }
+static BOOL WINAPI face_glyph_local(IDWriteFontFace2 *This, UINT16 glyph) { return TRUE; }
+
+static HRESULT WINAPI face_characters_local(IDWriteFontFace2 *This, const WCHAR *characters, UINT32 count, BOOL enqueue,
+                                            BOOL *local)
+{
+    if (!local)
+        return E_POINTER;
+    *local = TRUE;
+    return count && !characters ? E_INVALIDARG : S_OK;
+}
+
+static HRESULT WINAPI face_glyphs_local(IDWriteFontFace2 *This, const UINT16 *glyphs, UINT32 count, BOOL enqueue,
+                                        BOOL *local)
+{
+    if (!local)
+        return E_POINTER;
+    *local = TRUE;
+    return count && !glyphs ? E_INVALIDARG : S_OK;
+}
+
+/* the outlines are the only image of a glyph that Mime draws. */
+static DWRITE_GLYPH_IMAGE_FORMATS outline_format(const DwFace *f)
+{
+    return f->data->cff ? DWRITE_GLYPH_IMAGE_FORMATS_CFF : DWRITE_GLYPH_IMAGE_FORMATS_TRUETYPE;
+}
+
+static HRESULT WINAPI face_glyph_formats(IDWriteFontFace2 *This, UINT16 glyph, UINT32 ppem_first, UINT32 ppem_last,
+                                         DWRITE_GLYPH_IMAGE_FORMATS *formats)
+{
+    DwFace *f = (DwFace *)This;
+    if (!formats)
+        return E_POINTER;
+    *formats = DWRITE_GLYPH_IMAGE_FORMATS_NONE;
+    if (glyph >= f->data->ttf.num_glyphs)
+        return E_INVALIDARG;
+    *formats = outline_format(f);
+    return S_OK;
+}
+
+static DWRITE_GLYPH_IMAGE_FORMATS WINAPI face_formats(IDWriteFontFace2 *This) { return outline_format((DwFace *)This); }
+
+static HRESULT WINAPI face_image_data(IDWriteFontFace2 *This, UINT16 glyph, UINT32 ppem,
+                                      DWRITE_GLYPH_IMAGE_FORMATS format, DWRITE_GLYPH_IMAGE_DATA *data, void **context)
+{
+    if (!data || !context)
+        return E_POINTER;
+    memset(data, 0, sizeof(*data));
+    *context = nullptr;
+    /* outlines are read with GetGlyphRunOutline, and there are no bitmaps. */
+    return E_INVALIDARG;
+}
+
+static void WINAPI face_release_image(IDWriteFontFace2 *This, void *context) {}
+
+/* the value of each fvar axis, the defaults where the face's instance names none. */
+static UINT32 face_axis_values(const DwFace *f, DWRITE_FONT_AXIS_VALUE *values)
+{
+    DwAxis axes[DW_MAX_AXES];
+    UINT32 count = DwFontDataAxes(f->data, axes, DW_MAX_AXES);
+    for (UINT32 i = 0; i < count; i++) {
+        values[i].axisTag = (DWRITE_FONT_AXIS_TAG)axes[i].tag;
+        values[i].value = axes[i].def;
+        for (UINT32 k = 0; k < f->axis_count; k++) {
+            if (f->axes[k].axisTag == values[i].axisTag)
+                values[i].value = f->axes[k].value;
+        }
+    }
+    return count;
+}
+
+static UINT32 WINAPI face_axis_count(IDWriteFontFace2 *This)
+{
+    DWRITE_FONT_AXIS_VALUE values[DW_MAX_AXES];
+    return face_axis_values((DwFace *)This, values);
+}
+
+static HRESULT WINAPI face_axes(IDWriteFontFace2 *This, DWRITE_FONT_AXIS_VALUE *values, UINT32 count)
+{
+    DWRITE_FONT_AXIS_VALUE all[DW_MAX_AXES];
+    UINT32 n = face_axis_values((DwFace *)This, all);
+    if (count < n || (n && !values))
+        return E_NOT_SUFFICIENT_BUFFER;
+    if (n)
+        memcpy(values, all, n * sizeof(*values));
+    return S_OK;
+}
+
+static BOOL WINAPI face_has_variations(IDWriteFontFace2 *This)
+{
+    DwAxis axes[DW_MAX_AXES];
+    UINT32 count = DwFontDataAxes(((DwFace *)This)->data, axes, DW_MAX_AXES);
+    for (UINT32 i = 0; i < count; i++) {
+        if (axes[i].min < axes[i].max)
+            return TRUE;
+    }
+    return FALSE;
+}
+
+static HRESULT WINAPI face_resource(IDWriteFontFace2 *This, IDWriteFontResource **resource)
+{
+    DwFace *f = (DwFace *)This;
+    return DwFontResourceCreate(f->factory, f->file, f->index, resource);
+}
+
+static BOOL WINAPI face_equals(IDWriteFontFace2 *This, IDWriteFontFace *other)
+{
+    DwFace *f = (DwFace *)This, *g = DwFaceFrom(other);
+    if (!g)
+        return FALSE;
+    if (f == g)
+        return TRUE;
+    DWRITE_FONT_AXIS_VALUE a[DW_MAX_AXES], b[DW_MAX_AXES];
+    UINT32 na = face_axis_values(f, a), nb = face_axis_values(g, b);
+    return f->index == g->index && f->simulations == g->simulations && na == nb && !memcmp(a, b, na * sizeof(*a)) &&
+           DwSameFile(f->file, g->file);
+}
+
+static HRESULT WINAPI face_family_names6(IDWriteFontFace2 *This, DWRITE_FONT_FAMILY_MODEL model,
+                                         IDWriteLocalizedStrings **names)
+{
+    return model_names((DwFace *)This, model, TRUE, names);
+}
+
+static HRESULT WINAPI face_face_names6(IDWriteFontFace2 *This, DWRITE_FONT_FAMILY_MODEL model,
+                                       IDWriteLocalizedStrings **names)
+{
+    return model_names((DwFace *)This, model, FALSE, names);
+}
+
+static DWRITE_PAINT_FEATURE_LEVEL WINAPI face_paint_level(IDWriteFontFace2 *This, DWRITE_GLYPH_IMAGE_FORMATS format)
+{
+    return DWRITE_PAINT_FEATURE_LEVEL_NONE;
+}
+
+static HRESULT WINAPI face_paint_reader(IDWriteFontFace2 *This, DWRITE_GLYPH_IMAGE_FORMATS format,
+                                        DWRITE_PAINT_FEATURE_LEVEL level, IDWritePaintReader **reader)
+{
+    if (!reader)
+        return E_POINTER;
+    *reader = nullptr;
+    return DWRITE_E_NOCOLOR;
+}
+
+static const IDWriteFontFace7Vtbl g_face_vtbl = {
+    (void *)face_query,          (void *)face_addref,         (void *)face_release,         (void *)face_type,
+    (void *)face_files,          (void *)face_index,          (void *)face_simulations,     (void *)face_symbol,
+    (void *)face_metrics,        (void *)face_glyph_count,    (void *)face_design_metrics,  (void *)face_glyph_indices,
+    (void *)face_try_table,      (void *)face_release_table,  (void *)face_outline,         (void *)face_recommended,
+    (void *)face_gdi_metrics,    (void *)face_gdi_glyph_metrics,
+    (void *)face_metrics1,       (void *)face_gdi_metrics1,   (void *)face_caret,           (void *)face_ranges,
+    (void *)face_monospaced,     (void *)face_design_advances, (void *)face_gdi_advances,   (void *)face_kerning,
+    (void *)face_has_kerning,    (void *)face_recommended1,   (void *)face_vertical_variants, (void *)face_has_vertical,
+    (void *)face_color,          (void *)face_palette_count,  (void *)face_entry_count,     (void *)face_palette,
+    (void *)face_recommended2,
+    (void *)face_reference,      (void *)face_panose,         (void *)face_weight,          (void *)face_stretch,
+    (void *)face_style,          (void *)face_family_names,   (void *)face_face_names,      (void *)face_informational,
+    (void *)face_has_character,  (void *)face_recommended3,   (void *)face_character_local, (void *)face_glyph_local,
+    (void *)face_characters_local, (void *)face_glyphs_local,
+    (void *)face_glyph_formats,  (void *)face_formats,        (void *)face_image_data,      (void *)face_release_image,
+    (void *)face_axis_count,     (void *)face_axes,           (void *)face_has_variations,  (void *)face_resource,
+    (void *)face_equals,
+    (void *)face_family_names6,  (void *)face_face_names6,
+    (void *)face_paint_level,    (void *)face_paint_reader,
 };
 
 DwFace *DwFaceFrom(IDWriteFontFace *face)
@@ -401,7 +699,7 @@ HRESULT DwFaceCreate(DwFactory *factory, IDWriteFontFile *file, DWRITE_FONT_FACE
         DwFontDataRelease(data);
         return E_OUTOFMEMORY;
     }
-    f->lpVtbl = &g_face_vtbl;
+    f->lpVtbl = (const IDWriteFontFace2Vtbl *)&g_face_vtbl;
     f->refs = 1;
     f->factory = factory;
     f->data = data;
@@ -417,5 +715,28 @@ HRESULT DwFaceCreate(DwFactory *factory, IDWriteFontFile *file, DWRITE_FONT_FACE
     DwFontDataMetrics(data, &f->metrics);
     DwSimulateMetrics(&f->metrics, simulations);
     *out = (IDWriteFontFace *)f;
+    return S_OK;
+}
+
+HRESULT DwFaceCreateWithAxes(DwFactory *factory, IDWriteFontFile *file, UINT32 index, DWRITE_FONT_SIMULATIONS simulations,
+                             const DWRITE_FONT_AXIS_VALUE *axes, UINT32 axis_count, IDWriteFontFace **out)
+{
+    HRESULT hr = DwFaceCreate(factory, file, DWRITE_FONT_FACE_TYPE_UNKNOWN, index, simulations, out);
+    if (FAILED(hr) || !axis_count)
+        return hr;
+    /* only the axes the face has are kept, clamped to their ranges. */
+    DwFace *f = (DwFace *)*out;
+    DwAxis known[DW_MAX_AXES];
+    UINT32 count = DwFontDataAxes(f->data, known, DW_MAX_AXES);
+    for (UINT32 i = 0; i < axis_count; i++) {
+        for (UINT32 k = 0; k < count && f->axis_count < DW_MAX_AXES; k++) {
+            if ((UINT32)axes[i].axisTag != known[k].tag)
+                continue;
+            FLOAT v = axes[i].value;
+            f->axes[f->axis_count].axisTag = axes[i].axisTag;
+            f->axes[f->axis_count].value = v < known[k].min ? known[k].min : v > known[k].max ? known[k].max : v;
+            f->axis_count++;
+        }
+    }
     return S_OK;
 }

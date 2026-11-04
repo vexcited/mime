@@ -16,10 +16,18 @@ static FLOAT round_f(FLOAT v) { return v >= 0 ? (FLOAT)(INT64)(v + 0.5f) : (FLOA
 
 /* ------------------------------------------------------------------ unknown */
 
+static const IDWriteTextFormat3Vtbl g_layout_format_vtbl;
+
 static HRESULT WINAPI ly_query(IDWriteTextLayout4 *This, REFIID riid, void **out)
 {
     if (!out)
         return E_POINTER;
+    if (IsEqualGUID(riid, &IID_IDWriteTextFormat1) || IsEqualGUID(riid, &IID_IDWriteTextFormat2) ||
+        IsEqualGUID(riid, &IID_IDWriteTextFormat3)) {
+        *out = &L(This)->format_vtbl;
+        This->lpVtbl->AddRef(This);
+        return S_OK;
+    }
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDWriteTextFormat) ||
         IsEqualGUID(riid, &IID_IDWriteTextLayout) || IsEqualGUID(riid, &IID_IDWriteTextLayout1) ||
         IsEqualGUID(riid, &IID_IDWriteTextLayout2) || IsEqualGUID(riid, &IID_IDWriteTextLayout3) ||
@@ -1694,6 +1702,7 @@ HRESULT DwTextLayoutCreate(DwFactory *factory, const WCHAR *text, UINT32 length,
     if (!l)
         return E_OUTOFMEMORY;
     l->lpVtbl = &g_layout_vtbl;
+    l->format_vtbl = &g_layout_format_vtbl;
     l->refs = 1;
     l->factory = factory;
     l->max_width = max_width;
@@ -1771,3 +1780,94 @@ HRESULT DwTextLayoutCreate(DwFactory *factory, const WCHAR *text, UINT32 length,
     *out = (IDWriteTextLayout *)l;
     return S_OK;
 }
+
+/* ------------------------------------------------------------------ the layout as a newer text format */
+
+/* the layout behind its format table, as the interface of its own table. */
+static IDWriteTextLayout4 *layout_of(IDWriteTextFormat3 *format)
+{
+    return (IDWriteTextLayout4 *)((char *)format - offsetof(DwLayout, format_vtbl));
+}
+
+#define LF(This) layout_of(This)
+#define FORWARD0(name, type, method)                                                                                   \
+    static type WINAPI name(IDWriteTextFormat3 *This) { return LF(This)->lpVtbl->method(LF(This)); }
+#define FORWARD1(name, type, method, a)                                                                                \
+    static type WINAPI name(IDWriteTextFormat3 *This, a v) { return LF(This)->lpVtbl->method(LF(This), v); }
+#define FORWARD2(name, type, method, a, b)                                                                             \
+    static type WINAPI name(IDWriteTextFormat3 *This, a v, b w) { return LF(This)->lpVtbl->method(LF(This), v, w); }
+#define FORWARD3(name, type, method, a, b, c)                                                                          \
+    static type WINAPI name(IDWriteTextFormat3 *This, a v, b w, c x)                                                   \
+    {                                                                                                                  \
+        return LF(This)->lpVtbl->method(LF(This), v, w, x);                                                            \
+    }
+
+FORWARD2(lf_query, HRESULT, QueryInterface, REFIID, void **)
+FORWARD0(lf_addref, ULONG, AddRef)
+FORWARD0(lf_release, ULONG, Release)
+FORWARD1(lf_set_text_alignment, HRESULT, SetTextAlignment, DWRITE_TEXT_ALIGNMENT)
+FORWARD1(lf_set_para_alignment, HRESULT, SetParagraphAlignment, DWRITE_PARAGRAPH_ALIGNMENT)
+FORWARD1(lf_set_wrapping, HRESULT, SetWordWrapping, DWRITE_WORD_WRAPPING)
+FORWARD1(lf_set_reading, HRESULT, SetReadingDirection, DWRITE_READING_DIRECTION)
+FORWARD1(lf_set_flow, HRESULT, SetFlowDirection, DWRITE_FLOW_DIRECTION)
+FORWARD1(lf_set_tab, HRESULT, SetIncrementalTabStop, FLOAT)
+FORWARD2(lf_set_trimming, HRESULT, SetTrimming, const DWRITE_TRIMMING *, IDWriteInlineObject *)
+FORWARD3(lf_set_spacing, HRESULT, SetLineSpacing, DWRITE_LINE_SPACING_METHOD, FLOAT, FLOAT)
+FORWARD0(lf_get_text_alignment, DWRITE_TEXT_ALIGNMENT, GetTextAlignment)
+FORWARD0(lf_get_para_alignment, DWRITE_PARAGRAPH_ALIGNMENT, GetParagraphAlignment)
+FORWARD0(lf_get_wrapping, DWRITE_WORD_WRAPPING, GetWordWrapping)
+FORWARD0(lf_get_reading, DWRITE_READING_DIRECTION, GetReadingDirection)
+FORWARD0(lf_get_flow, DWRITE_FLOW_DIRECTION, GetFlowDirection)
+FORWARD0(lf_get_tab, FLOAT, GetIncrementalTabStop)
+FORWARD2(lf_get_trimming, HRESULT, GetTrimming, DWRITE_TRIMMING *, IDWriteInlineObject **)
+FORWARD3(lf_get_spacing, HRESULT, GetLineSpacing, DWRITE_LINE_SPACING_METHOD *, FLOAT *, FLOAT *)
+FORWARD1(lf_get_collection, HRESULT, GetFontCollection, IDWriteFontCollection **)
+FORWARD0(lf_family_length, UINT32, GetFontFamilyNameLength)
+FORWARD2(lf_family_name, HRESULT, GetFontFamilyName, WCHAR *, UINT32)
+FORWARD0(lf_weight, DWRITE_FONT_WEIGHT, GetFontWeight)
+FORWARD0(lf_style, DWRITE_FONT_STYLE, GetFontStyle)
+FORWARD0(lf_stretch, DWRITE_FONT_STRETCH, GetFontStretch)
+FORWARD0(lf_size, FLOAT, GetFontSize)
+FORWARD0(lf_locale_length, UINT32, GetLocaleNameLength)
+FORWARD2(lf_locale_name, HRESULT, GetLocaleName, WCHAR *, UINT32)
+FORWARD1(lf_set_vertical, HRESULT, SetVerticalGlyphOrientation, DWRITE_VERTICAL_GLYPH_ORIENTATION)
+FORWARD0(lf_get_vertical, DWRITE_VERTICAL_GLYPH_ORIENTATION, GetVerticalGlyphOrientation)
+FORWARD1(lf_set_last_line, HRESULT, SetLastLineWrapping, BOOL)
+FORWARD0(lf_get_last_line, BOOL, GetLastLineWrapping)
+FORWARD1(lf_set_optical, HRESULT, SetOpticalAlignment, DWRITE_OPTICAL_ALIGNMENT)
+FORWARD0(lf_get_optical, DWRITE_OPTICAL_ALIGNMENT, GetOpticalAlignment)
+FORWARD1(lf_set_fallback, HRESULT, SetFontFallback, IDWriteFontFallback *)
+FORWARD1(lf_get_fallback, HRESULT, GetFontFallback, IDWriteFontFallback **)
+FORWARD1(lf_set_spacing2, HRESULT, IDWriteTextLayout3_SetLineSpacing, const DWRITE_LINE_SPACING *)
+FORWARD1(lf_get_spacing2, HRESULT, IDWriteTextLayout3_GetLineSpacing, DWRITE_LINE_SPACING *)
+FORWARD0(lf_get_auto, DWRITE_AUTOMATIC_FONT_AXES, GetAutomaticFontAxes)
+FORWARD1(lf_set_auto, HRESULT, SetAutomaticFontAxes, DWRITE_AUTOMATIC_FONT_AXES)
+
+/* the axis values of a format are those of the whole text. */
+static HRESULT WINAPI lf_set_axes(IDWriteTextFormat3 *This, const DWRITE_FONT_AXIS_VALUE *values, UINT32 count)
+{
+    DWRITE_TEXT_RANGE all = {0, ~0u};
+    return LF(This)->lpVtbl->SetFontAxisValues(LF(This), values, count, all);
+}
+
+static UINT32 WINAPI lf_axis_count(IDWriteTextFormat3 *This)
+{
+    return LF(This)->lpVtbl->GetFontAxisValueCount(LF(This), 0);
+}
+
+static HRESULT WINAPI lf_get_axes(IDWriteTextFormat3 *This, DWRITE_FONT_AXIS_VALUE *values, UINT32 count)
+{
+    return LF(This)->lpVtbl->GetFontAxisValues(LF(This), 0, values, count, nullptr);
+}
+
+static const IDWriteTextFormat3Vtbl g_layout_format_vtbl = {
+    lf_query,          lf_addref,         lf_release,          lf_set_text_alignment, lf_set_para_alignment,
+    lf_set_wrapping,   lf_set_reading,    lf_set_flow,         lf_set_tab,            lf_set_trimming,
+    lf_set_spacing,    lf_get_text_alignment, lf_get_para_alignment, lf_get_wrapping, lf_get_reading,
+    lf_get_flow,       lf_get_tab,        lf_get_trimming,     lf_get_spacing,        lf_get_collection,
+    lf_family_length,  lf_family_name,    lf_weight,           lf_style,              lf_stretch,
+    lf_size,           lf_locale_length,  lf_locale_name,      lf_set_vertical,       lf_get_vertical,
+    lf_set_last_line,  lf_get_last_line,  lf_set_optical,      lf_get_optical,        lf_set_fallback,
+    lf_get_fallback,   lf_set_spacing2,   lf_get_spacing2,     lf_set_axes,           lf_axis_count,
+    lf_get_axes,       lf_get_auto,       lf_set_auto,
+};

@@ -495,3 +495,31 @@ UINT32 DwFontDataRanges(const DwFontData *d, DWRITE_UNICODE_RANGE *out, UINT32 m
     }
     return r.count;
 }
+
+/* ------------------------------------------------------------------ variations */
+
+UINT32 DwFontDataAxes(const DwFontData *d, DwAxis *axes, UINT32 max)
+{
+    UINT32 size;
+    const BYTE *fvar = DwFontDataTable(d, DW_TAG('f', 'v', 'a', 'r'), &size);
+    if (!fvar || size < 16 || DwBe16(fvar) != 1)
+        return 0;
+    UINT32 offset = DwBe16(fvar + 4), count = DwBe16(fvar + 8), record = DwBe16(fvar + 10);
+    if (record < 20 || offset > size || (UINT64)count * record > size - offset)
+        return 0;
+    UINT32 n = 0;
+    for (UINT32 i = 0; i < count && n < max; i++) {
+        const BYTE *a = fvar + offset + i * record;
+        UINT32 tag = DwBe32(a);
+        axes[n].tag = ((tag & 0xff) << 24) | ((tag & 0xff00) << 8) | ((tag >> 8) & 0xff00) | (tag >> 24);
+        axes[n].min = (FLOAT)(INT32)DwBe32(a + 4) / 65536.0f;
+        axes[n].def = (FLOAT)(INT32)DwBe32(a + 8) / 65536.0f;
+        axes[n].max = (FLOAT)(INT32)DwBe32(a + 12) / 65536.0f;
+        axes[n].hidden = (DwBe16(a + 16) & 1) != 0;
+        axes[n].name_id = DwBe16(a + 18);
+        if (axes[n].min > axes[n].def || axes[n].def > axes[n].max)
+            continue;
+        n++;
+    }
+    return n;
+}

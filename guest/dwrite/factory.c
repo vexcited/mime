@@ -1,5 +1,5 @@
 /*
- * IDWriteFactory: versions one and two are the same object.
+ * IDWriteFactory: every version, one to eight, is the same object.
  */
 #include "text_private.h"
 
@@ -56,7 +56,8 @@ static HRESULT WINAPI factory_query(IDWriteFactory2 *This, REFIID riid, void **o
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IDWriteFactory) ||
         IsEqualGUID(riid, &IID_IDWriteFactory1) || IsEqualGUID(riid, &IID_IDWriteFactory2) ||
         IsEqualGUID(riid, &IID_IDWriteFactory3) || IsEqualGUID(riid, &IID_IDWriteFactory4) ||
-        IsEqualGUID(riid, &IID_IDWriteFactory5) || IsEqualGUID(riid, &IID_IDWriteFactory6)) {
+        IsEqualGUID(riid, &IID_IDWriteFactory5) || IsEqualGUID(riid, &IID_IDWriteFactory6) ||
+        IsEqualGUID(riid, &IID_IDWriteFactory7) || IsEqualGUID(riid, &IID_IDWriteFactory8)) {
         *out = This;
         This->lpVtbl->AddRef(This);
         return S_OK;
@@ -75,6 +76,10 @@ static ULONG WINAPI factory_release(IDWriteFactory2 *This)
     if (!refs && !f->shared) {
         if (f->system)
             f->system->lpVtbl->Release(f->system);
+        if (f->system_typographic)
+            f->system_typographic->lpVtbl->Release(f->system_typographic);
+        if (f->system_set)
+            f->system_set->lpVtbl->Release(f->system_set);
         if (f->fallback)
             f->fallback->lpVtbl->Release(f->fallback);
         if (f->interop)
@@ -183,7 +188,7 @@ static HRESULT WINAPI factory_unregister_file_loader(IDWriteFactory2 *This, IDWr
     return hr;
 }
 
-static BOOL loader_registered(DwFactory *f, IDWriteFontFileLoader *loader)
+BOOL DwLoaderRegistered(DwFactory *f, IDWriteFontFileLoader *loader)
 {
     if (loader == (IDWriteFontFileLoader *)DwLocalLoader())
         return TRUE;
@@ -241,7 +246,7 @@ static HRESULT WINAPI factory_custom_file_reference(IDWriteFactory2 *This, const
     *file = nullptr;
     if (!loader || (size && !key))
         return E_INVALIDARG;
-    if (!loader_registered(f, loader))
+    if (!DwLoaderRegistered(f, loader))
         return E_INVALIDARG;
     return DwFontFileCreate(loader, key, size, file);
 }
@@ -261,7 +266,7 @@ static HRESULT WINAPI factory_create_face(IDWriteFactory2 *This, DWRITE_FONT_FAC
 /* ------------------------------------------------------------------ rendering parameters and analysis */
 
 static HRESULT make_params(FLOAT gamma, FLOAT contrast, FLOAT grayscale, FLOAT cleartype,
-                           DWRITE_PIXEL_GEOMETRY geometry, DWRITE_RENDERING_MODE mode, DWRITE_GRID_FIT_MODE grid_fit,
+                           DWRITE_PIXEL_GEOMETRY geometry, DWRITE_RENDERING_MODE1 mode, DWRITE_GRID_FIT_MODE grid_fit,
                            void **out)
 {
     DwRenderingParams *p;
@@ -274,7 +279,7 @@ static HRESULT WINAPI factory_rendering_params(IDWriteFactory2 *This, IDWriteRen
 {
     if (!params)
         return E_POINTER;
-    return make_params(2.2f, 1.0f, 1.0f, 1.0f, DWRITE_PIXEL_GEOMETRY_RGB, DWRITE_RENDERING_MODE_DEFAULT,
+    return make_params(2.2f, 1.0f, 1.0f, 1.0f, DWRITE_PIXEL_GEOMETRY_RGB, DWRITE_RENDERING_MODE1_DEFAULT,
                        DWRITE_GRID_FIT_MODE_DEFAULT, (void **)params);
 }
 
@@ -289,8 +294,10 @@ static HRESULT WINAPI factory_custom_params(IDWriteFactory2 *This, FLOAT gamma, 
 {
     if (!params)
         return E_POINTER;
-    return make_params(gamma, contrast, contrast, cleartype, geometry, mode, DWRITE_GRID_FIT_MODE_DEFAULT,
-                       (void **)params);
+    if ((unsigned)mode > DWRITE_RENDERING_MODE_OUTLINE)
+        return E_INVALIDARG;
+    return make_params(gamma, contrast, contrast, cleartype, geometry, (DWRITE_RENDERING_MODE1)mode,
+                       DWRITE_GRID_FIT_MODE_DEFAULT, (void **)params);
 }
 
 static HRESULT WINAPI factory_analysis(IDWriteFactory2 *This, const DWRITE_GLYPH_RUN *run, FLOAT pixels_per_dip,
@@ -399,8 +406,10 @@ static HRESULT WINAPI factory_custom_params1(IDWriteFactory2 *This, FLOAT gamma,
 {
     if (!params)
         return E_POINTER;
-    return make_params(gamma, contrast, grayscale, cleartype, geometry, mode, DWRITE_GRID_FIT_MODE_DEFAULT,
-                       (void **)params);
+    if ((unsigned)mode > DWRITE_RENDERING_MODE_OUTLINE)
+        return E_INVALIDARG;
+    return make_params(gamma, contrast, grayscale, cleartype, geometry, (DWRITE_RENDERING_MODE1)mode,
+                       DWRITE_GRID_FIT_MODE_DEFAULT, (void **)params);
 }
 
 static HRESULT WINAPI factory_fallback(IDWriteFactory2 *This, IDWriteFontFallback **fallback)
@@ -447,7 +456,10 @@ static HRESULT WINAPI factory_custom_params2(IDWriteFactory2 *This, FLOAT gamma,
 {
     if (!params)
         return E_POINTER;
-    return make_params(gamma, contrast, grayscale, cleartype, geometry, mode, grid_fit, (void **)params);
+    if ((unsigned)mode > DWRITE_RENDERING_MODE_OUTLINE)
+        return E_INVALIDARG;
+    return make_params(gamma, contrast, grayscale, cleartype, geometry, (DWRITE_RENDERING_MODE1)mode, grid_fit,
+                       (void **)params);
 }
 
 static HRESULT WINAPI factory_analysis2(IDWriteFactory2 *This, const DWRITE_GLYPH_RUN *run,
@@ -457,23 +469,6 @@ static HRESULT WINAPI factory_analysis2(IDWriteFactory2 *This, const DWRITE_GLYP
                                         IDWriteGlyphRunAnalysis **analysis)
 {
     return DwGlyphRunAnalysisCreate(run, 1.0f, transform, mode, measuring, antialias, origin_x, origin_y, analysis);
-}
-
-static HRESULT WINAPI factory3_missing(const char *name)
-{
-    static const char *seen[16];
-    static LONG seen_count;
-    LONG count = seen_count;
-    for (LONG i = 0; i < count && i < 16; i++)
-        if (seen[i] == name)
-            return E_NOTIMPL;
-    LONG slot = InterlockedIncrement(&seen_count) - 1;
-    if (slot < 16)
-        seen[slot] = name;
-    OutputDebugStringA("dwrite: factory3 ");
-    OutputDebugStringA(name);
-    OutputDebugStringA("\n");
-    return E_NOTIMPL;
 }
 
 static HRESULT WINAPI factory3_analysis(IDWriteFactory3 *This, const DWRITE_GLYPH_RUN *run, const DWRITE_MATRIX *transform,
@@ -493,36 +488,82 @@ static HRESULT WINAPI factory3_params(IDWriteFactory3 *This, FLOAT gamma, FLOAT 
                                       FLOAT cleartype, DWRITE_PIXEL_GEOMETRY geometry, DWRITE_RENDERING_MODE1 mode,
                                       DWRITE_GRID_FIT_MODE grid_fit, IDWriteRenderingParams3 **params)
 {
-    return factory3_missing("CreateCustomRenderingParams3");
+    if (!params)
+        return E_POINTER;
+    return make_params(gamma, contrast, grayscale, cleartype, geometry, mode, grid_fit, (void **)params);
+}
+
+static HRESULT face_reference(DwFactory *f, IDWriteFontFile *file, UINT32 index, DWRITE_FONT_SIMULATIONS simulations,
+                              const DWRITE_FONT_AXIS_VALUE *axes, UINT32 axis_count, IDWriteFontFaceReference1 **out)
+{
+    if (!out)
+        return E_POINTER;
+    *out = nullptr;
+    if (!file || (axis_count && !axes))
+        return E_INVALIDARG;
+    DwFontKey key = {file, index, simulations};
+    key.axis_count = axis_count < DW_MAX_AXES ? axis_count : DW_MAX_AXES;
+    if (key.axis_count)
+        memcpy(key.axes, axes, key.axis_count * sizeof(*axes));
+    return DwFaceReferenceCreate(f, &key, out);
 }
 
 static HRESULT WINAPI factory3_face_reference(IDWriteFactory3 *This, IDWriteFontFile *file, UINT32 index,
                                               DWRITE_FONT_SIMULATIONS simulations, IDWriteFontFaceReference **reference)
 {
-    return factory3_missing("CreateFontFaceReference");
+    return face_reference((DwFactory *)This, file, index, simulations, nullptr, 0,
+                          (IDWriteFontFaceReference1 **)reference);
 }
 
 static HRESULT WINAPI factory3_face_reference_path(IDWriteFactory3 *This, const WCHAR *path, const FILETIME *time,
                                                    UINT32 index, DWRITE_FONT_SIMULATIONS simulations,
                                                    IDWriteFontFaceReference **reference)
 {
-    return factory3_missing("CreateFontFaceReference(path)");
+    if (!reference)
+        return E_POINTER;
+    *reference = nullptr;
+    if (!path)
+        return E_INVALIDARG;
+    IDWriteFontFile *file;
+    HRESULT hr = DwFontFileFromPath(path, time, &file);
+    if (FAILED(hr))
+        return hr;
+    hr = face_reference((DwFactory *)This, file, index, simulations, nullptr, 0, (IDWriteFontFaceReference1 **)reference);
+    file->lpVtbl->Release(file);
+    return hr;
 }
 
 static HRESULT WINAPI factory3_system_set(IDWriteFactory3 *This, IDWriteFontSet **set)
 {
-    return factory3_missing("GetSystemFontSet");
+    if (!set)
+        return E_POINTER;
+    return DwSystemFontSet((DwFactory *)This, (IDWriteFontSet4 **)set);
 }
 
 static HRESULT WINAPI factory3_set_builder(IDWriteFactory3 *This, IDWriteFontSetBuilder **builder)
 {
-    return factory3_missing("CreateFontSetBuilder");
+    return DwFontSetBuilderCreate((DwFactory *)This, (IDWriteFontSetBuilder2 **)builder);
+}
+
+static HRESULT collection_from_set(DwFactory *f, IDWriteFontSet *set, DWRITE_FONT_FAMILY_MODEL model, void **out)
+{
+    if (!out)
+        return E_POINTER;
+    *out = nullptr;
+    if (!set || (model != DWRITE_FONT_FAMILY_MODEL_TYPOGRAPHIC && model != DWRITE_FONT_FAMILY_MODEL_WEIGHT_STRETCH_STYLE))
+        return E_INVALIDARG;
+    DwCollection *c;
+    HRESULT hr = DwCollectionFromSet(f, set, model, &c);
+    if (SUCCEEDED(hr))
+        *out = c;
+    return hr;
 }
 
 static HRESULT WINAPI factory3_collection_from_set(IDWriteFactory3 *This, IDWriteFontSet *set,
                                                    IDWriteFontCollection1 **collection)
 {
-    return factory3_missing("CreateFontCollectionFromFontSet");
+    return collection_from_set((DwFactory *)This, set, DWRITE_FONT_FAMILY_MODEL_WEIGHT_STRETCH_STYLE,
+                               (void **)collection);
 }
 
 static HRESULT WINAPI factory3_system_collection(IDWriteFactory3 *This, BOOL downloadable,
@@ -533,83 +574,149 @@ static HRESULT WINAPI factory3_system_collection(IDWriteFactory3 *This, BOOL dow
     return DwSystemCollection((DwFactory *)This, (IDWriteFontCollection **)collection);
 }
 
-/*
- * the methods of versions four to six that make font sets, resources, loaders and text formats by axis values fail
- * with E_NOTIMPL. The argument counts are those of the real methods, since a stdcall callee pops them in 32 bits.
- */
-static HRESULT WINAPI factory4_translate(void *This, UINT32 origin_x, UINT32 origin_y, const void *run,
-                                         const void *description, UINT32 formats, UINT32 measuring, const void *transform,
-                                         UINT32 palette, void **layers)
+static HRESULT WINAPI factory3_download_queue(IDWriteFactory3 *This, IDWriteFontDownloadQueue **queue)
 {
-    return factory3_missing("TranslateColorGlyphRun(4)");
+    if (!queue)
+        return E_POINTER;
+    return DwFontDownloadQueueCreate(queue);
 }
 
-static HRESULT WINAPI factory4_origins(void *This, const void *run, UINT32 origin_x, UINT32 origin_y, void *origins)
+/* Mime's fonts have no color layers to translate. */
+static HRESULT WINAPI factory4_translate(IDWriteFactory3 *This, D2D1_POINT_2F origin, const DWRITE_GLYPH_RUN *run,
+                                         const DWRITE_GLYPH_RUN_DESCRIPTION *description,
+                                         DWRITE_GLYPH_IMAGE_FORMATS formats, DWRITE_MEASURING_MODE measuring,
+                                         const DWRITE_MATRIX *transform, UINT32 palette, IUnknown **layers)
 {
-    return factory3_missing("ComputeGlyphOrigins");
+    if (!layers)
+        return E_POINTER;
+    *layers = nullptr;
+    if (!run)
+        return E_INVALIDARG;
+    return DWRITE_E_NOCOLOR;
 }
 
-static HRESULT WINAPI factory4_origins_transformed(void *This, const void *run, UINT32 measuring, UINT32 origin_x,
-                                                   UINT32 origin_y, const void *transform, void *origins)
+/* each glyph's origin: the pen moves by the advances, against the line in a right to left run. */
+static HRESULT glyph_origins(const DWRITE_GLYPH_RUN *run, D2D1_POINT_2F origin, D2D1_POINT_2F *origins)
 {
-    return factory3_missing("ComputeGlyphOrigins(transform)");
+    if (!run || (run->glyphCount && !origins))
+        return E_INVALIDARG;
+    FLOAT direction = (run->bidiLevel & 1) ? -1.0f : 1.0f;
+    FLOAT pen = 0;
+    DWRITE_FONT_METRICS metrics = {};
+    if (run->isSideways && run->fontFace)
+        run->fontFace->lpVtbl->GetMetrics(run->fontFace, &metrics);
+    for (UINT32 i = 0; i < run->glyphCount; i++) {
+        FLOAT advance = 0;
+        if (run->glyphAdvances) {
+            advance = run->glyphAdvances[i];
+        } else if (run->fontFace && run->glyphIndices) {
+            DWRITE_GLYPH_METRICS gm;
+            if (SUCCEEDED(run->fontFace->lpVtbl->GetDesignGlyphMetrics(run->fontFace, &run->glyphIndices[i], 1, &gm,
+                                                                       run->isSideways))) {
+                UINT32 design = run->isSideways ? gm.advanceHeight : gm.advanceWidth;
+                DWRITE_FONT_METRICS fm;
+                run->fontFace->lpVtbl->GetMetrics(run->fontFace, &fm);
+                advance = fm.designUnitsPerEm ? (FLOAT)design * run->fontEmSize / fm.designUnitsPerEm : 0;
+            }
+        }
+        FLOAT along = 0, across = 0;
+        if (run->glyphOffsets) {
+            along = run->glyphOffsets[i].advanceOffset;
+            across = run->glyphOffsets[i].ascenderOffset;
+        }
+        /* a right to left glyph is drawn from the left end of its advance. */
+        FLOAT start = direction < 0 ? pen + advance : pen;
+        if (run->isSideways) {
+            origins[i].x = origin.x + across;
+            origins[i].y = origin.y + direction * (start + along);
+        } else {
+            origins[i].x = origin.x + direction * (start + along);
+            origins[i].y = origin.y - across;
+        }
+        pen += advance;
+    }
+    return S_OK;
 }
 
-static HRESULT WINAPI factory5_set_builder(void *This, void **builder)
+static HRESULT WINAPI factory4_origins(IDWriteFactory3 *This, const DWRITE_GLYPH_RUN *run, D2D1_POINT_2F origin,
+                                       D2D1_POINT_2F *origins)
 {
-    return factory3_missing("CreateFontSetBuilder(5)");
+    return glyph_origins(run, origin, origins);
 }
 
-static HRESULT WINAPI factory5_memory_loader(void *This, void **loader)
+static HRESULT WINAPI factory4_origins_transformed(IDWriteFactory3 *This, const DWRITE_GLYPH_RUN *run,
+                                                   DWRITE_MEASURING_MODE measuring, D2D1_POINT_2F origin,
+                                                   const DWRITE_MATRIX *transform, D2D1_POINT_2F *origins)
 {
-    return factory3_missing("CreateInMemoryFontFileLoader");
+    return glyph_origins(run, origin, origins);
 }
 
-static HRESULT WINAPI factory5_http_loader(void *This, const WCHAR *referrer, const WCHAR *headers, void **loader)
+static HRESULT WINAPI factory5_set_builder(IDWriteFactory3 *This, IDWriteFontSetBuilder1 **builder)
 {
-    return factory3_missing("CreateHttpFontFileLoader");
+    return DwFontSetBuilderCreate((DwFactory *)This, (IDWriteFontSetBuilder2 **)builder);
 }
 
-static HRESULT WINAPI factory5_container(void *This, const void *data, UINT32 size)
+static HRESULT WINAPI factory5_memory_loader(IDWriteFactory3 *This, IDWriteInMemoryFontFileLoader **loader)
 {
-    return factory3_missing("AnalyzeContainerType");
+    return DwInMemoryLoaderCreate(loader);
 }
 
-static HRESULT WINAPI factory5_unpack(void *This, UINT32 container, const void *data, UINT32 size, void **stream)
+/* Mime fetches no fonts from the web: remote fonts are refused as the system refuses them offline. */
+static HRESULT WINAPI factory5_http_loader(IDWriteFactory3 *This, const WCHAR *referrer, const WCHAR *headers,
+                                           IDWriteRemoteFontFileLoader **loader)
 {
-    return factory3_missing("UnpackFontFile");
+    if (!loader)
+        return E_POINTER;
+    *loader = nullptr;
+    return E_NOTIMPL;
 }
 
-static HRESULT WINAPI factory6_face_reference(void *This, void *file, UINT32 index, UINT32 simulations,
-                                              const void *axis_values, UINT32 count, void **reference)
+static DWRITE_CONTAINER_TYPE WINAPI factory5_container(IDWriteFactory3 *This, const void *data, UINT32 size)
 {
-    return factory3_missing("CreateFontFaceReference(6)");
+    if (!data || size < 4)
+        return DWRITE_CONTAINER_TYPE_UNKNOWN;
+    UINT32 tag = DwBe32(data);
+    if (tag == DW_TAG('w', 'O', 'F', 'F'))
+        return DWRITE_CONTAINER_TYPE_WOFF;
+    if (tag == DW_TAG('w', 'O', 'F', '2'))
+        return DWRITE_CONTAINER_TYPE_WOFF2;
+    return DWRITE_CONTAINER_TYPE_UNKNOWN;
 }
 
-static HRESULT WINAPI factory6_resource(void *This, void *file, UINT32 index, void **resource)
+static HRESULT WINAPI factory5_unpack(IDWriteFactory3 *This, DWRITE_CONTAINER_TYPE container, const void *data,
+                                      UINT32 size, IDWriteFontFileStream **stream)
 {
-    return factory3_missing("CreateFontResource");
+    if (!stream)
+        return E_POINTER;
+    *stream = nullptr;
+    if (!data && size)
+        return E_INVALIDARG;
+    if (container != factory5_container(This, data, size))
+        return DWRITE_E_FILEFORMAT;
+    if (container == DWRITE_CONTAINER_TYPE_WOFF)
+        return DwUnpackWoff(data, size, stream);
+    /* woff2's brotli streams have no decoder in Mime yet. */
+    return DWRITE_E_FILEFORMAT;
 }
 
-static HRESULT WINAPI factory6_system_set(void *This, BOOL downloadable, void **set)
+static HRESULT WINAPI factory6_face_reference(IDWriteFactory3 *This, IDWriteFontFile *file, UINT32 index,
+                                              DWRITE_FONT_SIMULATIONS simulations, const DWRITE_FONT_AXIS_VALUE *axes,
+                                              UINT32 count, IDWriteFontFaceReference1 **reference)
 {
-    return factory3_missing("GetSystemFontSet(6)");
+    return face_reference((DwFactory *)This, file, index, simulations, axes, count, reference);
 }
 
-static HRESULT WINAPI factory6_collection_from_set(void *This, void *set, UINT32 model, void **collection)
+static HRESULT WINAPI factory6_resource(IDWriteFactory3 *This, IDWriteFontFile *file, UINT32 index,
+                                        IDWriteFontResource **resource)
 {
-    return factory3_missing("CreateFontCollectionFromFontSet(6)");
+    return DwFontResourceCreate((DwFactory *)This, file, index, resource);
 }
 
-static HRESULT WINAPI factory6_set_builder(void *This, void **builder)
+static HRESULT WINAPI factory6_system_set(IDWriteFactory3 *This, BOOL downloadable, IDWriteFontSet1 **set)
 {
-    return factory3_missing("CreateFontSetBuilder(6)");
-}
-
-static HRESULT WINAPI factory6_text_format(void *This, const WCHAR *family, void *collection, const void *axis_values,
-                                           UINT32 count, FLOAT size, const WCHAR *locale, void **format)
-{
-    return factory3_missing("CreateTextFormat(6)");
+    if (!set)
+        return E_POINTER;
+    return DwSystemFontSet((DwFactory *)This, (IDWriteFontSet4 **)set);
 }
 
 static HRESULT WINAPI factory6_system_collection(IDWriteFactory3 *This, BOOL downloadable,
@@ -617,93 +724,144 @@ static HRESULT WINAPI factory6_system_collection(IDWriteFactory3 *This, BOOL dow
 {
     if (!collection)
         return E_POINTER;
-    if (model != DWRITE_FONT_FAMILY_MODEL_TYPOGRAPHIC && model != DWRITE_FONT_FAMILY_MODEL_WEIGHT_STRETCH_STYLE) {
-        *collection = nullptr;
+    *collection = nullptr;
+    if (model != DWRITE_FONT_FAMILY_MODEL_TYPOGRAPHIC && model != DWRITE_FONT_FAMILY_MODEL_WEIGHT_STRETCH_STYLE)
         return E_INVALIDARG;
-    }
-    return DwSystemCollection((DwFactory *)This, (IDWriteFontCollection **)collection);
+    return DwSystemCollectionModel((DwFactory *)This, model, (IDWriteFontCollection **)collection);
 }
 
-static HRESULT WINAPI factory3_download_queue(IDWriteFactory3 *This, IDWriteFontDownloadQueue **queue)
+static HRESULT WINAPI factory6_collection_from_set(IDWriteFactory3 *This, IDWriteFontSet *set,
+                                                   DWRITE_FONT_FAMILY_MODEL model, IDWriteFontCollection2 **collection)
 {
-    return factory3_missing("GetFontDownloadQueue");
+    return collection_from_set((DwFactory *)This, set, model, (void **)collection);
 }
 
-/* the IDWriteFactory2 table followed by the nine IDWriteFactory3 methods, since both are one object. */
-static const struct {
-    IDWriteFactory2Vtbl base;
-    void *third[9];
-    void *fourth[3];
-    void *fifth[5];
-    void *sixth[7];
-} g_factory_vtbl = {{
-    factory_query,
-    factory_addref,
-    factory_release,
-    factory_system_collection,
-    factory_custom_collection,
-    factory_register_collection_loader,
-    factory_unregister_collection_loader,
-    factory_file_reference,
-    factory_custom_file_reference,
-    factory_create_face,
-    factory_rendering_params,
-    factory_monitor_params,
-    factory_custom_params,
-    factory_register_file_loader,
-    factory_unregister_file_loader,
-    factory_text_format,
-    factory_typography,
-    factory_interop,
-    factory_text_layout,
-    factory_gdi_text_layout,
-    factory_ellipsis,
-    factory_analyzer,
-    factory_number_substitution,
-    factory_analysis,
-    factory_eudc,
-    factory_custom_params1,
-    factory_fallback,
-    factory_fallback_builder,
-    factory_translate_color,
-    factory_custom_params2,
-    factory_analysis2,
-}, {
-    (void *)factory3_analysis,
-    (void *)factory3_params,
-    (void *)factory3_face_reference,
-    (void *)factory3_face_reference_path,
-    (void *)factory3_system_set,
-    (void *)factory3_set_builder,
-    (void *)factory3_collection_from_set,
-    (void *)factory3_system_collection,
-    (void *)factory3_download_queue,
-}, {
-    (void *)factory4_translate,
-    (void *)factory4_origins,
-    (void *)factory4_origins_transformed,
-}, {
-    (void *)factory5_set_builder,
-    (void *)factory5_memory_loader,
-    (void *)factory5_http_loader,
-    (void *)factory5_container,
-    (void *)factory5_unpack,
-}, {
-    (void *)factory6_face_reference,
-    (void *)factory6_resource,
-    (void *)factory6_system_set,
-    (void *)factory6_system_collection,
-    (void *)factory6_collection_from_set,
-    (void *)factory6_set_builder,
-    (void *)factory6_text_format,
-}};
+static HRESULT WINAPI factory6_set_builder(IDWriteFactory3 *This, IDWriteFontSetBuilder2 **builder)
+{
+    return DwFontSetBuilderCreate((DwFactory *)This, builder);
+}
+
+/* the weight, stretch and style the axis values stand for choose the font; the format keeps the values. */
+static HRESULT WINAPI factory6_text_format(IDWriteFactory3 *This, const WCHAR *family, IDWriteFontCollection *collection,
+                                           const DWRITE_FONT_AXIS_VALUE *axes, UINT32 count, FLOAT size,
+                                           const WCHAR *locale, IDWriteTextFormat3 **format)
+{
+    if (!format)
+        return E_POINTER;
+    *format = nullptr;
+    if (count && !axes)
+        return E_INVALIDARG;
+    DWRITE_FONT_WEIGHT weight = DWRITE_FONT_WEIGHT_NORMAL;
+    DWRITE_FONT_STRETCH stretch = DWRITE_FONT_STRETCH_NORMAL;
+    DWRITE_FONT_STYLE style = DWRITE_FONT_STYLE_NORMAL;
+    DwAxesToAttributes(axes, count, &weight, &stretch, &style);
+    IDWriteTextFormat *made;
+    HRESULT hr = DwTextFormatCreate((DwFactory *)This, family, collection, weight, style, stretch, size, locale, &made);
+    if (FAILED(hr))
+        return hr;
+    IDWriteTextFormat3 *three;
+    hr = made->lpVtbl->QueryInterface(made, &IID_IDWriteTextFormat3, (void **)&three);
+    made->lpVtbl->Release(made);
+    if (FAILED(hr))
+        return hr;
+    if (count) {
+        hr = three->lpVtbl->SetFontAxisValues(three, axes, count);
+        if (FAILED(hr)) {
+            three->lpVtbl->Release(three);
+            return hr;
+        }
+    }
+    *format = three;
+    return S_OK;
+}
+
+static HRESULT WINAPI factory7_system_set(IDWriteFactory3 *This, BOOL downloadable, IDWriteFontSet2 **set)
+{
+    return factory6_system_set(This, downloadable, (IDWriteFontSet1 **)set);
+}
+
+static HRESULT WINAPI factory7_system_collection(IDWriteFactory3 *This, BOOL downloadable,
+                                                 DWRITE_FONT_FAMILY_MODEL model, IDWriteFontCollection3 **collection)
+{
+    return factory6_system_collection(This, downloadable, model, (IDWriteFontCollection2 **)collection);
+}
+
+static HRESULT WINAPI factory8_translate(IDWriteFactory3 *This, D2D1_POINT_2F origin, const DWRITE_GLYPH_RUN *run,
+                                         const DWRITE_GLYPH_RUN_DESCRIPTION *description,
+                                         DWRITE_GLYPH_IMAGE_FORMATS formats, DWRITE_PAINT_FEATURE_LEVEL level,
+                                         DWRITE_MEASURING_MODE measuring, const DWRITE_MATRIX *transform,
+                                         UINT32 palette, IUnknown **layers)
+{
+    return factory4_translate(This, origin, run, description, formats, measuring, transform, palette, layers);
+}
+
+static const IDWriteFactory8Vtbl g_factory_vtbl = {
+    VTBL_FN(factory_query),
+    VTBL_FN(factory_addref),
+    VTBL_FN(factory_release),
+    VTBL_FN(factory_system_collection),
+    VTBL_FN(factory_custom_collection),
+    VTBL_FN(factory_register_collection_loader),
+    VTBL_FN(factory_unregister_collection_loader),
+    VTBL_FN(factory_file_reference),
+    VTBL_FN(factory_custom_file_reference),
+    VTBL_FN(factory_create_face),
+    VTBL_FN(factory_rendering_params),
+    VTBL_FN(factory_monitor_params),
+    VTBL_FN(factory_custom_params),
+    VTBL_FN(factory_register_file_loader),
+    VTBL_FN(factory_unregister_file_loader),
+    VTBL_FN(factory_text_format),
+    VTBL_FN(factory_typography),
+    VTBL_FN(factory_interop),
+    VTBL_FN(factory_text_layout),
+    VTBL_FN(factory_gdi_text_layout),
+    VTBL_FN(factory_ellipsis),
+    VTBL_FN(factory_analyzer),
+    VTBL_FN(factory_number_substitution),
+    VTBL_FN(factory_analysis),
+    VTBL_FN(factory_eudc),
+    VTBL_FN(factory_custom_params1),
+    VTBL_FN(factory_fallback),
+    VTBL_FN(factory_fallback_builder),
+    VTBL_FN(factory_translate_color),
+    VTBL_FN(factory_custom_params2),
+    VTBL_FN(factory_analysis2),
+    VTBL_FN(factory3_analysis),
+    VTBL_FN(factory3_params),
+    VTBL_FN(factory3_face_reference),
+    VTBL_FN(factory3_face_reference_path),
+    VTBL_FN(factory3_system_set),
+    VTBL_FN(factory3_set_builder),
+    VTBL_FN(factory3_collection_from_set),
+    VTBL_FN(factory3_system_collection),
+    VTBL_FN(factory3_download_queue),
+    VTBL_FN(factory4_translate),
+    VTBL_FN(factory4_origins),
+    VTBL_FN(factory4_origins_transformed),
+    VTBL_FN(factory5_set_builder),
+    VTBL_FN(factory5_memory_loader),
+    VTBL_FN(factory5_http_loader),
+    VTBL_FN(factory5_container),
+    VTBL_FN(factory5_unpack),
+    VTBL_FN(factory6_face_reference),
+    VTBL_FN(factory6_resource),
+    VTBL_FN(factory6_system_set),
+    VTBL_FN(factory6_system_collection),
+    VTBL_FN(factory6_collection_from_set),
+    VTBL_FN(factory6_set_builder),
+    VTBL_FN(factory6_text_format),
+    VTBL_FN(factory7_system_set),
+    VTBL_FN(factory7_system_collection),
+    VTBL_FN(factory8_translate),
+};
 
 DwFactory *DwFactoryNew(BOOL shared)
 {
     DwFactory *f = DwAllocZero(sizeof(*f));
     if (!f)
         return nullptr;
-    f->lpVtbl = &g_factory_vtbl.base;
+    f->lpVtbl = (const IDWriteFactory2Vtbl *)&g_factory_vtbl;
     f->refs = 1;
     f->shared = shared;
     InitializeSRWLock(&f->lock);

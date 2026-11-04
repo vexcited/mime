@@ -115,6 +115,8 @@ typedef struct DwLine {
 
 typedef struct DwLayout {
     const IDWriteTextLayout4Vtbl *lpVtbl;
+    /* the newer text formats, whose methods the layout's own table does not keep in their places. */
+    const IDWriteTextFormat3Vtbl *format_vtbl;
     LONG refs;
     DwFactory *factory;
     DwFmt fmt;

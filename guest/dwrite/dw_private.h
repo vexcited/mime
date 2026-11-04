@@ -140,6 +140,25 @@ void DwFontDataGlyphMetrics(const DwFontData *data, UINT16 glyph, DWRITE_GLYPH_M
 UINT32 DwFontDataRanges(const DwFontData *data, DWRITE_UNICODE_RANGE *ranges, UINT32 max);
 BOOL DwFontDataHasCharacter(const DwFontData *data, UINT32 code_point);
 
+/* ------------------------------------------------------------------ variable fonts */
+
+#define DW_MAX_AXES 16
+
+typedef struct DwAxis {
+    UINT32 tag; /* first letter in the low byte, as the interfaces take tags. */
+    FLOAT min, def, max;
+    BOOL hidden;
+    UINT32 name_id;
+} DwAxis;
+
+/* the axes of the fvar table, 0 for a face that does not vary. */
+UINT32 DwFontDataAxes(const DwFontData *data, DwAxis *axes, UINT32 max);
+/* the weight, width, slant and italic axis values a face's attributes stand for. */
+UINT32 DwAttributeAxes(const DwAttributes *attributes, DWRITE_FONT_AXIS_VALUE *values);
+/* the attributes closest to axis values, starting from the given ones. */
+void DwAxesToAttributes(const DWRITE_FONT_AXIS_VALUE *values, UINT32 count, DWRITE_FONT_WEIGHT *weight,
+                        DWRITE_FONT_STRETCH *stretch, DWRITE_FONT_STYLE *style);
+
 /* ------------------------------------------------------------------ collections */
 
 typedef struct DwEntry {
@@ -171,6 +190,8 @@ typedef struct DwCollection {
     UINT32 count;
     UINT32 public_count; /* the families listed, before those only win32 names find. */
     SRWLOCK lock;
+    DWRITE_FONT_FAMILY_MODEL model;
+    IDWriteFontSet4 *set; /* the set it was made of, or the one made of it when asked. */
 } DwCollection;
 
 HRESULT DwCollectionFromFiles(DwFactory *factory, IDWriteFontFile *const *files, UINT32 count,
@@ -194,6 +215,60 @@ HRESULT DwCreateFontByName(DwCollection *collection, const WCHAR *name, DWRITE_F
 BOOL DwFontEntryOf(IDWriteFont *font, DwCollection **collection, const DwEntry **entry);
 /* matches the face's file and face index. */
 BOOL DwFindEntry(const DwCollection *collection, IDWriteFontFace *face, UINT32 *family, UINT32 *entry);
+/* orders two faces by how well they fit a request, the way a family's fonts are listed. */
+int DwCompareFit(const DwAttributes *a, DWRITE_FONT_SIMULATIONS a_simulations, const DwAttributes *b,
+                 DWRITE_FONT_SIMULATIONS b_simulations, DWRITE_FONT_WEIGHT weight, DWRITE_FONT_STRETCH stretch,
+                 DWRITE_FONT_STYLE style);
+/* the family and face names of a face in a family model, new references, and the weight a legacy name gives. */
+void DwModelNames(const DwFontData *data, DWRITE_FONT_FAMILY_MODEL model, DwAttributes *attributes,
+                  DwStrings **family, DwStrings **face);
+/* the strings behind an informational string id, or nullptr. */
+DwStrings *DwInformationalStrings(const DwFontData *data, DWRITE_INFORMATIONAL_STRING_ID id);
+/* TRUE when both files have the same loader and key. */
+BOOL DwSameFile(IDWriteFontFile *a, IDWriteFontFile *b);
+
+/* ------------------------------------------------------------------ font sets and references */
+
+/* what names a font of a set: its file, face, simulations and the axis values of its instance. */
+typedef struct DwFontKey {
+    IDWriteFontFile *file;
+    UINT32 index;
+    DWRITE_FONT_SIMULATIONS simulations;
+    UINT32 axis_count;
+    DWRITE_FONT_AXIS_VALUE axes[DW_MAX_AXES];
+} DwFontKey;
+
+typedef struct DwSetFont DwSetFont;
+
+/* the key's file gets a reference of the object's own. */
+HRESULT DwFaceReferenceCreate(DwFactory *factory, const DwFontKey *key, IDWriteFontFaceReference1 **reference);
+/* reads the key of any implementation's reference, the file without a reference. */
+BOOL DwFaceReferenceKey(IDWriteFontFaceReference *reference, DwFontKey *key);
+HRESULT DwFontResourceCreate(DwFactory *factory, IDWriteFontFile *file, UINT32 index, IDWriteFontResource **resource);
+/* a set of the fonts of keys, the properties read from the files. */
+HRESULT DwFontSetFromKeys(DwFactory *factory, const DwFontKey *keys, UINT32 count, IDWriteFontSet4 **set);
+HRESULT DwSystemFontSet(DwFactory *factory, IDWriteFontSet4 **set);
+HRESULT DwFontSetBuilderCreate(DwFactory *factory, IDWriteFontSetBuilder2 **builder);
+HRESULT DwInMemoryLoaderCreate(IDWriteInMemoryFontFileLoader **loader);
+/* copies the pairs of locale and text, which may repeat locales. */
+HRESULT DwStringListCreate(const WCHAR *const *locales, const WCHAR *const *texts, UINT32 count,
+                           IDWriteStringList **list);
+/* the fonts of one of Mime's sets, nullptr for a set of another implementation. */
+BOOL DwFontSetFonts(IDWriteFontSet *set, DwSetFont *const **fonts, UINT32 *count);
+const DwFontKey *DwSetFontKey(const DwSetFont *font);
+/* a property the set's builder was given for the font, or nullptr. */
+DwStrings *DwSetFontCustom(DwSetFont *font, DWRITE_FONT_PROPERTY_ID id);
+HRESULT DwCollectionFromSet(DwFactory *factory, IDWriteFontSet *set, DWRITE_FONT_FAMILY_MODEL model,
+                            DwCollection **collection);
+HRESULT DwSystemCollectionModel(DwFactory *factory, DWRITE_FONT_FAMILY_MODEL model, IDWriteFontCollection **collection);
+/* the font set of a collection, one family of it or the fonts in order. */
+HRESULT DwCollectionSet(DwCollection *collection, UINT32 family, const UINT32 *order, UINT32 count,
+                        IDWriteFontSet4 **set);
+HRESULT DwFontDownloadQueueCreate(IDWriteFontDownloadQueue **queue);
+/* the font a woff file holds, as a stream of its own. */
+HRESULT DwUnpackWoff(const void *data, UINT32 size, IDWriteFontFileStream **stream);
+/* a stream over bytes, kept alive by owner or copied when owner is nullptr. */
+HRESULT DwMemoryStreamCreate(const void *data, UINT64 size, IUnknown *owner, BOOL copy, IDWriteFontFileStream **stream);
 
 /* ------------------------------------------------------------------ faces */
 
@@ -207,28 +282,36 @@ typedef struct DwFace {
     DWRITE_FONT_SIMULATIONS simulations;
     UINT32 index;
     DWRITE_FONT_METRICS1 metrics;
+    /* the instance of a variable face: one value for each fvar axis. */
+    UINT32 axis_count;
+    DWRITE_FONT_AXIS_VALUE axes[DW_MAX_AXES];
 } DwFace;
 
 /* GDI's advance of a glyph in design units. */
 int DwGdiAdvanceDesign(const DwFace *f, UINT16 glyph, int ppem, BOOL natural);
 HRESULT DwFaceCreate(DwFactory *factory, IDWriteFontFile *file, DWRITE_FONT_FACE_TYPE type, UINT32 index,
                      DWRITE_FONT_SIMULATIONS simulations, IDWriteFontFace **face);
+/* a face of an instance: the values given replace the defaults of their axes. */
+HRESULT DwFaceCreateWithAxes(DwFactory *factory, IDWriteFontFile *file, UINT32 index, DWRITE_FONT_SIMULATIONS simulations,
+                             const DWRITE_FONT_AXIS_VALUE *axes, UINT32 axis_count, IDWriteFontFace **face);
 /* nullptr for a face of another implementation. */
 DwFace *DwFaceFrom(IDWriteFontFace *face);
 
 /* ------------------------------------------------------------------ rendering */
 
 typedef struct DwRenderingParams {
-    const IDWriteRenderingParams2Vtbl *lpVtbl;
+    const IDWriteRenderingParams3Vtbl *lpVtbl;
     LONG refs;
     FLOAT gamma, enhanced_contrast, grayscale_contrast, cleartype_level;
     DWRITE_PIXEL_GEOMETRY geometry;
     DWRITE_RENDERING_MODE mode;
+    DWRITE_RENDERING_MODE1 mode1;
     DWRITE_GRID_FIT_MODE grid_fit;
 } DwRenderingParams;
 
+/* mode is a DWRITE_RENDERING_MODE1, of which the first seven are those of DWRITE_RENDERING_MODE. */
 HRESULT DwRenderingParamsCreate(FLOAT gamma, FLOAT contrast, FLOAT grayscale_contrast, FLOAT cleartype_level,
-                                DWRITE_PIXEL_GEOMETRY geometry, DWRITE_RENDERING_MODE mode,
+                                DWRITE_PIXEL_GEOMETRY geometry, DWRITE_RENDERING_MODE1 mode,
                                 DWRITE_GRID_FIT_MODE grid_fit, DwRenderingParams **params);
 HRESULT DwGlyphRunAnalysisCreate(const DWRITE_GLYPH_RUN *run, FLOAT pixels_per_dip, const DWRITE_MATRIX *transform,
                                  DWRITE_RENDERING_MODE mode, DWRITE_MEASURING_MODE measuring,
@@ -246,6 +329,8 @@ struct DwFactory {
     BOOL shared;
     SRWLOCK lock;
     IDWriteFontCollection *system;
+    IDWriteFontCollection *system_typographic;
+    IDWriteFontSet4 *system_set;
     IDWriteFontFallback *fallback;
     IDWriteGdiInterop *interop;
     /* registered loaders, as plain arrays of interface pointers. */
@@ -256,6 +341,8 @@ struct DwFactory {
 };
 
 DwFactory *DwFactoryShared(void);
+/* TRUE for the local loader and the loaders registered with the factory. */
+BOOL DwLoaderRegistered(DwFactory *factory, IDWriteFontFileLoader *loader);
 HRESULT DwFallbackCreate(DwFactory *factory, IDWriteFontFallback **fallback);
 HRESULT DwInteropCreate(DwFactory *factory, IDWriteGdiInterop **interop);
 /* the factory's system collection when collection is nullptr. */
