@@ -158,17 +158,43 @@ static BOOL event_folder_changing(FILEDLG *dialog, void *context, LPCWSTR folder
     return allowed;
 }
 
+/* the results are there for OnFileOk to read, as in Windows, and stay until the dialog is shown again. */
+static HRESULT build_results(ITEMDLG *d)
+{
+    UINT count = FdResultCount(d->Dialog);
+    HRESULT hr;
+    LPWSTR *paths = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, count * sizeof(LPWSTR));
+    if (paths) {
+        for (UINT i = 0; i < count; i++)
+            paths[i] = (LPWSTR)FdResultPath(d->Dialog, i);
+        hr = array_from_paths(paths, count, &d->Results);
+        HeapFree(GetProcessHeap(), 0, paths);
+    } else {
+        hr = E_OUTOFMEMORY;
+    }
+    if (SUCCEEDED(hr))
+        hr = item_from_path(FdResultPath(d->Dialog, 0), &d->Result);
+    if (FAILED(hr))
+        release_results(d);
+    return hr;
+}
+
 /* a sink that refuses with S_FALSE or an error other than "not implemented" keeps the dialog open. */
 static BOOL event_file_ok(FILEDLG *dialog, void *context)
 {
     ITEMDLG *d = context;
     IFileDialogEvents *sink;
     BOOL ok = TRUE;
+    release_results(d);
+    if (FdResultCount(d->Dialog))
+        build_results(d);
     FOR_LISTENERS(d, sink) {
         HRESULT hr = sink->lpVtbl->OnFileOk(sink, IFACE(d));
         if (hr == S_FALSE || (FAILED(hr) && hr != E_NOTIMPL))
             ok = FALSE;
     }
+    if (!ok)
+        release_results(d);
     return ok;
 }
 
@@ -296,22 +322,8 @@ static HRESULT STDMETHODCALLTYPE d_show(IFileDialog *This, HWND owner)
     InterlockedIncrement(&d->Refs);
     HRESULT hr = FdShow(d->Dialog, owner);
     d->FileTypeIndex = FdTypeIndex(d->Dialog);
-    if (SUCCEEDED(hr) && FdResultCount(d->Dialog)) {
-        UINT count = FdResultCount(d->Dialog);
-        LPWSTR *paths = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, count * sizeof(LPWSTR));
-        if (paths) {
-            for (UINT i = 0; i < count; i++)
-                paths[i] = (LPWSTR)FdResultPath(d->Dialog, i);
-            hr = array_from_paths(paths, count, &d->Results);
-            HeapFree(GetProcessHeap(), 0, paths);
-        } else {
-            hr = E_OUTOFMEMORY;
-        }
-        if (SUCCEEDED(hr))
-            hr = item_from_path(FdResultPath(d->Dialog, 0), &d->Result);
-        if (FAILED(hr))
-            release_results(d);
-    }
+    if (SUCCEEDED(hr) && FdResultCount(d->Dialog) && !d->Result)
+        hr = build_results(d);
     d_release(This);
     return hr;
 }
