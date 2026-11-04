@@ -32,7 +32,8 @@
     X(ENV_REPLACE, FF_ENV_REPLACE)                                                                                     \
     X(ENV_DECAL, FF_ENV_DECAL)                                                                                         \
     X(ENV_BLEND, FF_ENV_BLEND)                                                                                         \
-    X(ENV_ADD, FF_ENV_ADD)
+    X(ENV_ADD, FF_ENV_ADD)                                                                                             \
+    X(ENV_BITMAP, FF_ENV_BITMAP)
 
 static const char g_vertex_body[] =
     "layout(location = 0) in vec4 aPosition;\n"
@@ -157,6 +158,8 @@ static const char g_fragment_body[] =
     "            if (hasColor) c.rgb = mix(c.rgb, env.rgb, t.rgb);\n"
     "            if (intensity) c.a = mix(c.a, env.a, t.a);\n"
     "            else if (hasAlpha) c.a *= t.a;\n"
+    "        } else if (mode == ENV_BITMAP) {\n"
+    "            if (t.a < 0.5) discard;\n"
     "        } else if (mode == ENV_ADD) {\n"
     "            if (hasColor) c.rgb += t.rgb;\n"
     "            if (intensity) c.a += t.a;\n"
@@ -291,10 +294,28 @@ void gl_ff_prepare(GlContext *ctx, GlProgram *p)
     f->uniforms[FF_U_FLAGS1][0] = (GLfloat)env;
     f->uniforms[FF_U_FLAGS1][1] = (GLfloat)format;
     f->uniforms[FF_U_MISC][0] = gl_point_size(ctx);
+    GLfloat(*u)[4] = f->uniforms;
+    GLfloat window[FF_U_COUNT][4];
+    if (f->window_draw) {
+        static const GLfloat identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        memcpy(window, f->uniforms, sizeof(window));
+        memcpy(&window[FF_U_MVP], f->window_mvp, sizeof(f->window_mvp));
+        memcpy(&window[FF_U_MV], identity, sizeof(identity));
+        if (f->raster_op != FF_RASTER_LINES) {
+            memcpy(&window[FF_U_TEXMAT], identity, sizeof(identity));
+            window[FF_U_FLAGS0][0] = 0;
+            window[FF_U_FLAGS0][3] = 0;
+            window[FF_U_FLAGS1][0] = f->raster_op == FF_RASTER_BITMAP ? FF_ENV_BITMAP : FF_ENV_REPLACE;
+            window[FF_U_FLAGS1][1] = FF_TEX_COLOR | FF_TEX_ALPHA;
+            window[FF_U_FLAGS1][2] = 0;
+            window[FF_U_FLAGS1][3] = 0;
+        }
+        u = window;
+    }
     for (uint32_t i = 0; i < FF_U_COUNT; i++) {
         uint8_t *dst = p->ublock + f->uniform_offset + i * f->uniform_stride;
-        if (memcmp(dst, f->uniforms[i], 16)) {
-            memcpy(dst, f->uniforms[i], 16);
+        if (memcmp(dst, u[i], 16)) {
+            memcpy(dst, u[i], 16);
             p->ublock_dirty = TRUE;
         }
     }

@@ -343,6 +343,14 @@ typedef struct GlFfVertex {
     GLfloat position[4], color[4], normal[4], texcoord[4];
 } GlFfVertex;
 
+/* the current raster position and the pixel zoom, see raster.c. */
+typedef struct GlRaster {
+    BOOL valid;
+    GLfloat position[4]; /* window x, y, depth, and the clip w. */
+    GLfloat color[4];
+    GLfloat zoom[2];
+} GlRaster;
+
 typedef struct GlFixed {
     GLenum matrix_mode;
     GLfloat modelview[FF_MODELVIEW_DEPTH][16];
@@ -391,6 +399,14 @@ typedef struct GlFixed {
     uint32_t uniform_offset, uniform_stride;
     GLfloat uniforms[FF_UNIFORM_SLOTS][4];
     GLfloat constants[4][4];
+
+    /* a draw whose vertices are in window coordinates: pixel rectangles and lines that are wide or stippled. raster_op is
+       a FF_RASTER value of fixed.h. */
+    BOOL window_draw;
+    int raster_op;
+    GLfloat window_mvp[16];
+    GLint line_stipple_factor;
+    GLushort line_stipple_pattern;
 } GlFixed;
 
 /* where a draw reads its vertices: a table of attributes by location, and the values of disabled ones. */
@@ -466,6 +482,8 @@ typedef struct GlContext {
     GLenum generic_type[MIME_GPU_MAX_ATTRIBS];
     GLenum hints[8];
     GLint swap_interval;
+    BOOL unpack_lsb_first, unpack_swap_bytes;
+    GlRaster raster;
 
     /* what the host has. */
     uint32_t dirty;
@@ -567,6 +585,20 @@ void gl_ff_track_color(GlContext *ctx);
 int gl_ff_unused_array(GLenum cap);
 GlProgram *gl_ff_begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate);
 void gl_ff_prepare(GlContext *ctx, GlProgram *p);
+BOOL gl_ff_stored(GlContext *ctx, GLenum cap);
+
+/* raster.c: the raster position, bitmaps and pixel rectangles. */
+void gl_raster_init(GlContext *ctx);
+
+/* lines.c: lines that are wide or stippled are drawn as triangles made on the cpu. */
+BOOL gl_lines_wanted(GlContext *ctx, GLenum mode);
+void gl_lines_draw(GlContext *ctx, GLenum mode, const GlFfVertex *vertices, uint32_t count);
+void gl_lines_draw_arrays(GlContext *ctx, GLenum mode, GLint first, GLsizei count);
+void gl_lines_draw_elements(GlContext *ctx, GLenum mode, GLsizei count, GLenum type, const void *indices, GLint base_vertex);
+void gl_ff_array_vertex(GlContext *ctx, GLint index, GlFfVertex *out);
+
+/* draw.c: a fixed function draw of vertices that are not in the context's batch. */
+void gl_draw_vertices(GlContext *ctx, GLenum mode, const GlFfVertex *vertices, uint32_t count, uint32_t varying);
 
 /* between glBegin and glEnd only the vertex commands run: any other one is a GL_INVALID_OPERATION. */
 #define GL_CONTEXT_OR_RETURN(...)                                                                                      \

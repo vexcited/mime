@@ -87,6 +87,7 @@ void gl_context_init(GlContext *ctx)
     ctx->dirty = DIRTY_ALL;
     ctx->swap_interval = 1;
     gl_ff_init(ctx);
+    gl_raster_init(ctx);
 }
 
 /* ---------------------------------------------------------------- capabilities */
@@ -549,6 +550,12 @@ GLAPI void APIENTRY glPixelStorei(GLenum pname, GLint param)
     case GL_PACK_ALIGNMENT:
         ctx->pack_alignment = param;
         break;
+    case GL_UNPACK_LSB_FIRST:
+        ctx->unpack_lsb_first = param != 0;
+        break;
+    case GL_UNPACK_SWAP_BYTES:
+        ctx->unpack_swap_bytes = param != 0;
+        break;
     case GL_UNPACK_ALIGNMENT:
         ctx->unpack_alignment = param;
         break;
@@ -959,6 +966,30 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         return 1;
     case GL_PACK_ROW_LENGTH:
         v[0] = ctx->pack_row_length;
+        return 1;
+    case GL_UNPACK_SKIP_ROWS:
+        v[0] = ctx->unpack_skip_rows;
+        return 1;
+    case GL_UNPACK_SKIP_PIXELS:
+        v[0] = ctx->unpack_skip_pixels;
+        return 1;
+    case GL_UNPACK_IMAGE_HEIGHT:
+        v[0] = ctx->unpack_image_height;
+        return 1;
+    case GL_UNPACK_SKIP_IMAGES:
+        v[0] = ctx->unpack_skip_images;
+        return 1;
+    case GL_PACK_SKIP_ROWS:
+        v[0] = ctx->pack_skip_rows;
+        return 1;
+    case GL_PACK_SKIP_PIXELS:
+        v[0] = ctx->pack_skip_pixels;
+        return 1;
+    case GL_PACK_SWAP_BYTES:
+    case GL_PACK_LSB_FIRST:
+    case GL_PACK_IMAGE_HEIGHT:
+    case GL_PACK_SKIP_IMAGES:
+        v[0] = 0;
         return 1;
     case GL_ACTIVE_TEXTURE:
         v[0] = GL_TEXTURE0 + ctx->active_texture;

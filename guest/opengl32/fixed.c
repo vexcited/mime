@@ -1329,6 +1329,12 @@ static int stored_index(GLenum cap)
     return -1;
 }
 
+BOOL gl_ff_stored(GlContext *ctx, GLenum cap)
+{
+    int i = stored_index(cap);
+    return i >= 0 && ctx->ff.stored[i];
+}
+
 /* TRUE when cap belongs to the fixed function pipeline, whatever it did. */
 BOOL gl_ff_capability(GlContext *ctx, GLenum cap, BOOL on)
 {
@@ -1506,21 +1512,10 @@ int gl_ff_get(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
             v[i] = t[i];
         return 4;
     }
-    case GL_CURRENT_RASTER_POSITION:
     case GL_CURRENT_RASTER_TEXTURE_COORDS:
         v[0] = v[1] = v[2] = 0;
         v[3] = 1;
         return 4;
-    case GL_CURRENT_RASTER_COLOR:
-        *colors = TRUE;
-        v[0] = v[1] = v[2] = v[3] = 1;
-        return 4;
-    case GL_CURRENT_RASTER_DISTANCE:
-        v[0] = 0;
-        return 1;
-    case GL_CURRENT_RASTER_POSITION_VALID:
-        v[0] = 1;
-        return 1;
     case GL_EDGE_FLAG:
         v[0] = f->edge_flag;
         return 1;
@@ -1606,6 +1601,42 @@ int gl_ff_get(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         return 1;
     case GL_CLIENT_ACTIVE_TEXTURE:
         v[0] = GL_TEXTURE0 + f->client_unit;
+        return 1;
+    case GL_CURRENT_RASTER_POSITION:
+        for (int i = 0; i < 4; i++)
+            v[i] = ctx->raster.position[i];
+        return 4;
+    case GL_CURRENT_RASTER_POSITION_VALID:
+        v[0] = ctx->raster.valid;
+        return 1;
+    case GL_CURRENT_RASTER_DISTANCE:
+        v[0] = 0;
+        return 1;
+    case GL_CURRENT_RASTER_COLOR:
+        for (int i = 0; i < 4; i++)
+            v[i] = ctx->raster.color[i];
+        *colors = TRUE;
+        return 4;
+    case GL_CURRENT_RASTER_SECONDARY_COLOR:
+        v[0] = v[1] = v[2] = 0;
+        v[3] = 1;
+        *colors = TRUE;
+        return 4;
+    case GL_ZOOM_X:
+    case GL_ZOOM_Y:
+        v[0] = ctx->raster.zoom[pname == GL_ZOOM_Y];
+        return 1;
+    case GL_LINE_STIPPLE_PATTERN:
+        v[0] = f->line_stipple_pattern;
+        return 1;
+    case GL_LINE_STIPPLE_REPEAT:
+        v[0] = f->line_stipple_factor;
+        return 1;
+    case GL_UNPACK_LSB_FIRST:
+        v[0] = ctx->unpack_lsb_first;
+        return 1;
+    case GL_UNPACK_SWAP_BYTES:
+        v[0] = ctx->unpack_swap_bytes;
         return 1;
     case GL_VERTEX_ARRAY_SIZE:
     case GL_VERTEX_ARRAY_TYPE:

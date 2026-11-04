@@ -66,158 +66,12 @@ GLAPI void APIENTRY glListBase(GLuint base)
 
 /* ---------------------------------------------------------------- raster position and pixels */
 
-GLAPI void APIENTRY glRasterPos2d(GLdouble x, GLdouble y)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos2dv(const GLdouble *v)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos2f(GLfloat x, GLfloat y)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos2fv(const GLfloat *v)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos2i(GLint x, GLint y)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos2iv(const GLint *v)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos2s(GLshort x, GLshort y)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos2sv(const GLshort *v)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos3d(GLdouble x, GLdouble y, GLdouble z)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos3dv(const GLdouble *v)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos3f(GLfloat x, GLfloat y, GLfloat z)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos3fv(const GLfloat *v)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos3i(GLint x, GLint y, GLint z)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos3iv(const GLint *v)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos3s(GLshort x, GLshort y, GLshort z)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos3sv(const GLshort *v)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos4d(GLdouble x, GLdouble y, GLdouble z, GLdouble w)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos4dv(const GLdouble *v)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos4f(GLfloat x, GLfloat y, GLfloat z, GLfloat w)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos4fv(const GLfloat *v)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos4i(GLint x, GLint y, GLint z, GLint w)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos4iv(const GLint *v)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos4s(GLshort x, GLshort y, GLshort z, GLshort w)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glRasterPos4sv(const GLshort *v)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glBitmap(GLsizei width, GLsizei height, GLfloat xorig, GLfloat yorig, GLfloat xmove, GLfloat ymove, const GLubyte *bitmap)
-{
-    GL_CONTEXT_OR_RETURN();
-    if (width < 0 || height < 0)
-        gl_error(ctx, GL_INVALID_VALUE);
-}
-
-GLAPI void APIENTRY glDrawPixels(GLsizei width, GLsizei height, GLenum format, GLenum type, const GLvoid *pixels)
-{
-    GL_CONTEXT_OR_RETURN();
-    if (width < 0 || height < 0)
-        gl_error(ctx, GL_INVALID_VALUE);
-}
-
-GLAPI void APIENTRY glCopyPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum type)
-{
-    GL_CONTEXT_OR_RETURN();
-    if (width < 0 || height < 0)
-        gl_error(ctx, GL_INVALID_VALUE);
-}
-
 GLAPI void APIENTRY glPixelTransferf(GLenum pname, GLfloat param)
 {
     GL_CONTEXT_OR_RETURN();
 }
 
 GLAPI void APIENTRY glPixelTransferi(GLenum pname, GLint param)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glPixelZoom(GLfloat xfactor, GLfloat yfactor)
 {
     GL_CONTEXT_OR_RETURN();
 }
@@ -419,11 +273,6 @@ GLAPI void APIENTRY glGetClipPlane(GLenum plane, GLdouble *equation)
     }
     for (int i = 0; i < 4; i++)
         equation[i] = 0;
-}
-
-GLAPI void APIENTRY glLineStipple(GLint factor, GLushort pattern)
-{
-    GL_CONTEXT_OR_RETURN();
 }
 
 GLAPI void APIENTRY glPolygonStipple(const GLubyte *mask)

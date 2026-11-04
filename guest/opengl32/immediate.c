@@ -478,3 +478,29 @@ GLAPI void APIENTRY glArrayElement(GLint i)
     if (n)
         gl_ff_vertex(ctx, p[0], p[1], n > 2 ? p[2] : 0, n > 3 ? p[3] : 1);
 }
+
+/* the vertex glArrayElement would send for index i, with the current values for the arrays that are not enabled. */
+void gl_ff_array_vertex(GlContext *ctx, GLint i, GlFfVertex *out)
+{
+    const GlFixed *f = &ctx->ff;
+    const GlVertexArray *vao = ctx->vao;
+    memcpy(out->color, f->current[0], 16);
+    memcpy(out->normal, f->current[1], 16);
+    memcpy(out->texcoord, f->current[2], 16);
+    GLfloat v[4];
+    int n = read_array(ctx, &vao->legacy[1], i, v);
+    if (n) {
+        memcpy(out->color, v, 3 * sizeof(GLfloat));
+        out->color[3] = n > 3 ? v[3] : 1;
+    }
+    n = read_array(ctx, &vao->legacy[2], i, v);
+    if (n)
+        memcpy(out->normal, v, 3 * sizeof(GLfloat));
+    GLfloat t[4] = {0, 0, 0, 1};
+    n = read_array(ctx, &vao->legacy[3], i, t);
+    if (n)
+        memcpy(out->texcoord, t, sizeof(t));
+    GLfloat p[4] = {0, 0, 0, 1};
+    read_array(ctx, &vao->legacy[0], i, p);
+    memcpy(out->position, p, sizeof(p));
+}

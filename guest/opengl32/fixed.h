@@ -30,7 +30,10 @@ enum {
 enum { FF_TEX_COLOR = 1, FF_TEX_ALPHA = 2, FF_TEX_INTENSITY = 4 };
 
 /* texture environment modes as the shader numbers them; 0 is no texturing. */
-enum { FF_ENV_OFF, FF_ENV_MODULATE, FF_ENV_REPLACE, FF_ENV_DECAL, FF_ENV_BLEND, FF_ENV_ADD };
+enum { FF_ENV_OFF, FF_ENV_MODULATE, FF_ENV_REPLACE, FF_ENV_DECAL, FF_ENV_BLEND, FF_ENV_ADD, FF_ENV_BITMAP };
+
+/* what a window draw is: lines, the pixels of glDrawPixels and the bits of glBitmap. */
+enum { FF_RASTER_LINES, FF_RASTER_PIXELS, FF_RASTER_BITMAP };
 
 static_assert(FF_U_COUNT <= FF_UNIFORM_SLOTS, "GlFixed::uniforms is too small");
 

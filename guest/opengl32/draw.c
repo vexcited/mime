@@ -1202,6 +1202,10 @@ static void draw_arrays(GLenum mode, GLint first, GLsizei count, GLsizei instanc
     }
     if (!count || !instances)
         return;
+    if (gl_lines_wanted(ctx, mode)) {
+        gl_lines_draw_arrays(ctx, mode, first, count);
+        return;
+    }
     gl_device_lock();
     GlVertexInput in;
     GlProgram *p = begin_draw(ctx, &in, FALSE);
@@ -1291,6 +1295,10 @@ static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *i
     }
     if (!count || !instances)
         return;
+    if (gl_lines_wanted(ctx, mode)) {
+        gl_lines_draw_elements(ctx, mode, count, type, indices, base_vertex);
+        return;
+    }
     gl_device_lock();
     GlVertexInput in;
     GlProgram *p = begin_draw(ctx, &in, FALSE);
@@ -1436,8 +1444,17 @@ static const GlVertexAttrib g_no_attribs[MIME_GPU_MAX_ATTRIBS];
 void gl_draw_immediate(GlContext *ctx)
 {
     GlFixed *f = &ctx->ff;
-    GLenum mode = f->begin_mode;
     uint32_t count = f->vertex_count;
+    f->vertex_count = 0;
+    if (gl_lines_wanted(ctx, f->begin_mode))
+        gl_lines_draw(ctx, f->begin_mode, f->vertices, count);
+    else
+        gl_draw_vertices(ctx, f->begin_mode, f->vertices, count, f->varying);
+}
+
+/* one fixed function draw of vertices that are in a batch of their own. */
+void gl_draw_vertices(GlContext *ctx, GLenum mode, const GlFfVertex *vertices, uint32_t count, uint32_t varying)
+{
     uint32_t minimum = 1;
     switch (mode) {
     case GL_LINES:
@@ -1468,7 +1485,6 @@ void gl_draw_immediate(GlContext *ctx)
     default:
         break;
     }
-    f->vertex_count = 0;
     if (count < minimum)
         return;
     gl_device_lock();
@@ -1480,15 +1496,15 @@ void gl_draw_immediate(GlContext *ctx)
     }
     /* attributes that vary per vertex go into the vertices, the rest become constants. */
     uint32_t stride = 16, color = 0, normal = 0, texcoord = 0;
-    if (f->varying & 1) {
+    if (varying & 1) {
         color = stride;
         stride += 16;
     }
-    if (f->varying & 2) {
+    if (varying & 2) {
         normal = stride;
         stride += 16;
     }
-    if (f->varying & 4) {
+    if (varying & 4) {
         texcoord = stride;
         stride += 16;
     }
@@ -1501,7 +1517,7 @@ void gl_draw_immediate(GlContext *ctx)
         return;
     }
     for (uint32_t i = 0; i < count; i++) {
-        const GlFfVertex *v = &f->vertices[i];
+        const GlFfVertex *v = &vertices[i];
         uint8_t *d = mem.ptr + (uint64_t)i * stride;
         memcpy(d, v->position, 16);
         if (color)
@@ -1511,9 +1527,9 @@ void gl_draw_immediate(GlContext *ctx)
         if (texcoord)
             memcpy(d + texcoord, v->texcoord, 16);
     }
-    memcpy(constants.ptr, f->vertices[0].color, 16);
-    memcpy(constants.ptr + 16, f->vertices[0].normal, 16);
-    memcpy(constants.ptr + 32, f->vertices[0].texcoord, 16);
+    memcpy(constants.ptr, vertices[0].color, 16);
+    memcpy(constants.ptr + 16, vertices[0].normal, 16);
+    memcpy(constants.ptr + 32, vertices[0].texcoord, 16);
     Source src[MIME_GPU_MAX_ATTRIBS];
     memset(src, 0, sizeof(src));
     const uint32_t at[4] = {0, color, normal, texcoord};
