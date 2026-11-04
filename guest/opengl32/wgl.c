@@ -461,6 +461,11 @@ GLAPI BOOL WINAPI wglDeleteContext(HGLRC rc)
     __atomic_fetch_sub(&ctx->shared->refs, 1, __ATOMIC_ACQ_REL);
     gl_queries_destroy(ctx);
     gl_ff_destroy(ctx);
+    /* the host keeps the state of the last context that sent commands, which the next one must not look at. */
+    gl_device_lock();
+    if (GlDev.owner == ctx)
+        GlDev.owner = nullptr;
+    gl_device_unlock();
     gl_free(ctx);
     return TRUE;
 }
