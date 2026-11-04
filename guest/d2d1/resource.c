@@ -557,23 +557,26 @@ HRESULT D2dBitmapWriteSurface(D2dBitmap *b)
 
 #define BSELF D2dBitmap *b = (D2dBitmap *)This
 
-static D2D1_SIZE_F STDMETHODCALLTYPE bm_size(ID2D1Bitmap1 *This)
+static D2D1_SIZE_F *STDMETHODCALLTYPE bm_size(ID2D1Bitmap1 *This, D2D1_SIZE_F *ret)
 {
     BSELF;
     D2D1_SIZE_F s = {b->width * 96.0f / b->dpi_x, b->height * 96.0f / b->dpi_y};
-    return s;
+    *ret = s;
+    return ret;
 }
-static D2D1_SIZE_U STDMETHODCALLTYPE bm_pixel_size(ID2D1Bitmap1 *This)
+static D2D1_SIZE_U *STDMETHODCALLTYPE bm_pixel_size(ID2D1Bitmap1 *This, D2D1_SIZE_U *ret)
 {
     BSELF;
     D2D1_SIZE_U s = {b->width, b->height};
-    return s;
+    *ret = s;
+    return ret;
 }
-static D2D1_PIXEL_FORMAT STDMETHODCALLTYPE bm_format(ID2D1Bitmap1 *This)
+static D2D1_PIXEL_FORMAT *STDMETHODCALLTYPE bm_format(ID2D1Bitmap1 *This, D2D1_PIXEL_FORMAT *ret)
 {
     BSELF;
     D2D1_PIXEL_FORMAT f = {b->dxgi, b->alpha};
-    return f;
+    *ret = f;
+    return ret;
 }
 static void STDMETHODCALLTYPE bm_dpi(ID2D1Bitmap1 *This, FLOAT *x, FLOAT *y)
 {
@@ -729,11 +732,24 @@ static D2dClass g_bitmap_class = {"bitmap", g_bitmap_iids, bitmap_destroy, nullp
 
 /* ------------------------------------------------------------------ color contexts */
 
+/* the primaries, white point and gamma of a simple color profile, as D2D1_SIMPLE_COLOR_PROFILE lays them out. */
+typedef struct D2dSimpleProfile {
+    D2D1_POINT_2F red, green, blue, white_xz;
+    UINT32 gamma;
+} D2dSimpleProfile;
+
+/* D2D1_COLOR_CONTEXT_TYPE: an icc profile, a simple profile or a dxgi color space. */
+enum { CC_TYPE_ICC = 0, CC_TYPE_SIMPLE = 1, CC_TYPE_DXGI = 2 };
+#define CC_DXGI_CUSTOM 0xffffffffu
+
 typedef struct D2dColorContext {
     D2dObj obj;
     D2D1_COLOR_SPACE space;
     BYTE *profile;
     UINT32 size;
+    UINT32 type;
+    UINT32 dxgi;
+    D2dSimpleProfile simple;
 } D2dColorContext;
 
 static D2dClass g_cc_class;
@@ -748,11 +764,56 @@ static HRESULT STDMETHODCALLTYPE cc_profile(ID2D1ColorContext *This, BYTE *profi
     memcpy(profile, c->profile, c->size);
     return S_OK;
 }
+static UINT32 STDMETHODCALLTYPE cc_type(ID2D1ColorContext *This) { return ((D2dColorContext *)This)->type; }
+static UINT32 STDMETHODCALLTYPE cc_dxgi(ID2D1ColorContext *This) { return ((D2dColorContext *)This)->dxgi; }
+static HRESULT STDMETHODCALLTYPE cc_simple(ID2D1ColorContext *This, D2dSimpleProfile *out)
+{
+    D2dColorContext *c = (D2dColorContext *)This;
+    if (!out)
+        return E_INVALIDARG;
+    if (c->type != CC_TYPE_SIMPLE)
+        return D2DERR_INVALID_CALL;
+    *out = c->simple;
+    return S_OK;
+}
 static const void *const g_cc_vtbl[] = {D2dQueryInterface, D2dAddRef, D2dRelease, D2dResourceGetFactory, cc_space, cc_size,
-                                        cc_profile};
-D2D_IIDS(g_cc_iids, &IID_ID2D1Resource, &IID_ID2D1ColorContext);
+                                        cc_profile, cc_type, cc_dxgi, cc_simple};
+D2D_IIDS(g_cc_iids, &IID_ID2D1Resource, &IID_ID2D1ColorContext, &IID_ID2D1ColorContext1);
 static void cc_destroy(D2dObj *o) { D2dFree(((D2dColorContext *)o)->profile); }
 static D2dClass g_cc_class = {"color context", g_cc_iids, cc_destroy, nullptr};
+
+/* the dxgi color spaces of srgb and scrgb, 0 and 1, are those of the matching d2d spaces. */
+HRESULT D2dCreateColorContextDxgi(D2dFactory *f, UINT32 dxgi, ID2D1ColorContext **out)
+{
+    if (dxgi > 24)
+        return E_INVALIDARG;
+    D2D1_COLOR_SPACE space = dxgi == 0 ? D2D1_COLOR_SPACE_SRGB : dxgi == 1 ? D2D1_COLOR_SPACE_SCRGB : D2D1_COLOR_SPACE_CUSTOM;
+    D2dColorContext *c = D2dNew(sizeof(*c), g_cc_vtbl, &g_cc_class, f);
+    if (!c)
+        return E_OUTOFMEMORY;
+    c->space = space;
+    c->type = CC_TYPE_DXGI;
+    c->dxgi = dxgi;
+    *out = (ID2D1ColorContext *)c;
+    return S_OK;
+}
+
+HRESULT D2dCreateColorContextSimple(D2dFactory *f, const void *profile, ID2D1ColorContext **out)
+{
+    const D2dSimpleProfile *p = profile;
+    /* D2D1_GAMMA1_G22, D2D1_GAMMA1_G10 and D2D1_GAMMA1_G2084. */
+    if (!p || p->gamma > 2)
+        return E_INVALIDARG;
+    D2dColorContext *c = D2dNew(sizeof(*c), g_cc_vtbl, &g_cc_class, f);
+    if (!c)
+        return E_OUTOFMEMORY;
+    c->space = D2D1_COLOR_SPACE_CUSTOM;
+    c->type = CC_TYPE_SIMPLE;
+    c->dxgi = CC_DXGI_CUSTOM;
+    c->simple = *p;
+    *out = (ID2D1ColorContext *)c;
+    return S_OK;
+}
 
 HRESULT D2dCreateColorContext(D2dFactory *f, D2D1_COLOR_SPACE space, const BYTE *profile, UINT32 size,
                               ID2D1ColorContext **out)
@@ -765,6 +826,8 @@ HRESULT D2dCreateColorContext(D2dFactory *f, D2D1_COLOR_SPACE space, const BYTE 
     if (!c)
         return E_OUTOFMEMORY;
     c->space = space;
+    c->type = CC_TYPE_ICC;
+    c->dxgi = space == D2D1_COLOR_SPACE_SRGB ? 0 : space == D2D1_COLOR_SPACE_SCRGB ? 1 : CC_DXGI_CUSTOM;
     if (space == D2D1_COLOR_SPACE_CUSTOM) {
         c->profile = D2dAlloc(size);
         if (!c->profile) {
@@ -909,8 +972,8 @@ static D2D1_COLOR_F *STDMETHODCALLTYPE sb_color(ID2D1SolidColorBrush *This, D2D1
 
 static void STDMETHODCALLTYPE lb_set_start(ID2D1LinearGradientBrush *This, D2D1_POINT_2F p) { BR; b->p0 = p; }
 static void STDMETHODCALLTYPE lb_set_end(ID2D1LinearGradientBrush *This, D2D1_POINT_2F p) { BR; b->p1 = p; }
-static D2D1_POINT_2F STDMETHODCALLTYPE lb_start(ID2D1LinearGradientBrush *This) { BR; return b->p0; }
-static D2D1_POINT_2F STDMETHODCALLTYPE lb_end(ID2D1LinearGradientBrush *This) { BR; return b->p1; }
+static D2D1_POINT_2F *STDMETHODCALLTYPE lb_start(ID2D1LinearGradientBrush *This, D2D1_POINT_2F *ret) { BR; *ret = b->p0; return ret; }
+static D2D1_POINT_2F *STDMETHODCALLTYPE lb_end(ID2D1LinearGradientBrush *This, D2D1_POINT_2F *ret) { BR; *ret = b->p1; return ret; }
 static void STDMETHODCALLTYPE gb_stops(ID2D1LinearGradientBrush *This, ID2D1GradientStopCollection **s)
 {
     BR;
@@ -922,8 +985,8 @@ static void STDMETHODCALLTYPE rb_set_center(ID2D1RadialGradientBrush *This, D2D1
 static void STDMETHODCALLTYPE rb_set_offset(ID2D1RadialGradientBrush *This, D2D1_POINT_2F p) { BR; b->origin = p; }
 static void STDMETHODCALLTYPE rb_set_rx(ID2D1RadialGradientBrush *This, FLOAT v) { BR; b->rx = v; }
 static void STDMETHODCALLTYPE rb_set_ry(ID2D1RadialGradientBrush *This, FLOAT v) { BR; b->ry = v; }
-static D2D1_POINT_2F STDMETHODCALLTYPE rb_center(ID2D1RadialGradientBrush *This) { BR; return b->p0; }
-static D2D1_POINT_2F STDMETHODCALLTYPE rb_offset(ID2D1RadialGradientBrush *This) { BR; return b->origin; }
+static D2D1_POINT_2F *STDMETHODCALLTYPE rb_center(ID2D1RadialGradientBrush *This, D2D1_POINT_2F *ret) { BR; *ret = b->p0; return ret; }
+static D2D1_POINT_2F *STDMETHODCALLTYPE rb_offset(ID2D1RadialGradientBrush *This, D2D1_POINT_2F *ret) { BR; *ret = b->origin; return ret; }
 static FLOAT STDMETHODCALLTYPE rb_rx(ID2D1RadialGradientBrush *This) { BR; return b->rx; }
 static FLOAT STDMETHODCALLTYPE rb_ry(ID2D1RadialGradientBrush *This) { BR; return b->ry; }
 

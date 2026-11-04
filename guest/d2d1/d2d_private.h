@@ -377,6 +377,8 @@ HRESULT D2dBitmapCopyIn(D2dBitmap *b, UINT32 x, UINT32 y, const void *src, UINT3
 /* the dxgi surface read into the bitmap or the bitmap written to the surface. */
 HRESULT D2dBitmapReadSurface(D2dBitmap *b);
 HRESULT D2dBitmapWriteSurface(D2dBitmap *b);
+HRESULT D2dCreateColorContextDxgi(D2dFactory *f, UINT32 dxgi, ID2D1ColorContext **out);
+HRESULT D2dCreateColorContextSimple(D2dFactory *f, const void *profile, ID2D1ColorContext **out);
 HRESULT D2dCreateColorContext(D2dFactory *f, D2D1_COLOR_SPACE space, const BYTE *profile, UINT32 size,
                               ID2D1ColorContext **out);
 

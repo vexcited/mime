@@ -911,7 +911,7 @@ static HRESULT STDMETHODCALLTYPE doc_set_viewport(ID2D1SvgDocument *This, D2D1_S
     d->viewport = size;
     return S_OK;
 }
-static D2D1_SIZE_F STDMETHODCALLTYPE doc_get_viewport(ID2D1SvgDocument *This) { DC; return d->viewport; }
+static D2D1_SIZE_F *STDMETHODCALLTYPE doc_get_viewport(ID2D1SvgDocument *This, D2D1_SIZE_F *ret) { DC; *ret = d->viewport; return ret; }
 static HRESULT STDMETHODCALLTYPE doc_set_root(ID2D1SvgDocument *This, ID2D1SvgElement *root)
 {
     DC;

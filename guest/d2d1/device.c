@@ -786,15 +786,19 @@ static void STDMETHODCALLTYPE cx_draw_svg(ID2D1DeviceContext6 *This, ID2D1SvgDoc
 }
 static HRESULT STDMETHODCALLTYPE cx_color_dxgi(ID2D1DeviceContext6 *This, UINT32 space, ID2D1ColorContext1 **out)
 {
-    if (out)
-        *out = nullptr;
-    return E_NOTIMPL;
+    if (!out)
+        return E_POINTER;
+    *out = nullptr;
+    RT;
+    return D2dCreateColorContextDxgi(rt->obj.factory, space, (ID2D1ColorContext **)out);
 }
 static HRESULT STDMETHODCALLTYPE cx_color_simple(ID2D1DeviceContext6 *This, const void *p, ID2D1ColorContext1 **out)
 {
-    if (out)
-        *out = nullptr;
-    return E_NOTIMPL;
+    if (!out)
+        return E_POINTER;
+    *out = nullptr;
+    RT;
+    return D2dCreateColorContextSimple(rt->obj.factory, p, (ID2D1ColorContext **)out);
 }
 static void STDMETHODCALLTYPE cx_blend_image(ID2D1DeviceContext6 *This, ID2D1Image *image, UINT32 mode, const D2D1_POINT_2F *offset,
                                              const D2D1_RECT_F *source, D2D1_INTERPOLATION_MODE interp)

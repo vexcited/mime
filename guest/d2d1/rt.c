@@ -842,7 +842,7 @@ typedef struct D2dLayer {
     D2D1_SIZE_F size;
 } D2dLayer;
 
-static D2D1_SIZE_F STDMETHODCALLTYPE layer_size(ID2D1Layer *This) { return ((D2dLayer *)This)->size; }
+static D2D1_SIZE_F *STDMETHODCALLTYPE layer_size(ID2D1Layer *This, D2D1_SIZE_F *ret) { *ret = ((D2dLayer *)This)->size; return ret; }
 static const void *const g_layer_vtbl[] = {D2dQueryInterface, D2dAddRef, D2dRelease, D2dResourceGetFactory, layer_size};
 D2D_IIDS(g_layer_iids, &IID_ID2D1Resource, &IID_ID2D1Layer);
 static const D2dClass g_layer_class = {"layer", g_layer_iids, nullptr, nullptr};
@@ -1204,10 +1204,11 @@ static HRESULT STDMETHODCALLTYPE rt_end_draw(ID2D1RenderTarget *This, D2D1_TAG *
         return D2DERR_WRONG_STATE;
     return D2dEndDrawCore(rt, t1, t2);
 }
-static D2D1_PIXEL_FORMAT STDMETHODCALLTYPE rt_get_format(ID2D1RenderTarget *This)
+static D2D1_PIXEL_FORMAT *STDMETHODCALLTYPE rt_get_format(ID2D1RenderTarget *This, D2D1_PIXEL_FORMAT *ret)
 {
     RT;
-    return rt->pixel_format;
+    *ret = rt->pixel_format;
+    return ret;
 }
 static void STDMETHODCALLTYPE rt_set_dpi(ID2D1RenderTarget *This, FLOAT x, FLOAT y)
 {
@@ -1227,17 +1228,19 @@ static void STDMETHODCALLTYPE rt_get_dpi(ID2D1RenderTarget *This, FLOAT *x, FLOA
     *x = rt->dpi_x;
     *y = rt->dpi_y;
 }
-static D2D1_SIZE_F STDMETHODCALLTYPE rt_get_size(ID2D1RenderTarget *This)
+static D2D1_SIZE_F *STDMETHODCALLTYPE rt_get_size(ID2D1RenderTarget *This, D2D1_SIZE_F *ret)
 {
     RT;
     D2D1_SIZE_F s = {rt->pixel_w * 96.0f / rt->dpi_x, rt->pixel_h * 96.0f / rt->dpi_y};
-    return s;
+    *ret = s;
+    return ret;
 }
-static D2D1_SIZE_U STDMETHODCALLTYPE rt_get_pixel_size(ID2D1RenderTarget *This)
+static D2D1_SIZE_U *STDMETHODCALLTYPE rt_get_pixel_size(ID2D1RenderTarget *This, D2D1_SIZE_U *ret)
 {
     RT;
     D2D1_SIZE_U s = {rt->pixel_w, rt->pixel_h};
-    return s;
+    *ret = s;
+    return ret;
 }
 static UINT32 STDMETHODCALLTYPE rt_max_bitmap(ID2D1RenderTarget *This) { return 16384; }
 static BOOL STDMETHODCALLTYPE rt_is_supported(ID2D1RenderTarget *This, const D2D1_RENDER_TARGET_PROPERTIES *p)

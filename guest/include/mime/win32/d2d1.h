@@ -737,9 +737,9 @@ MIME_COM_INTERFACE(ID2D1Image)
 
 #define ID2D1Bitmap_METHODS(T)                                                                                         \
     ID2D1Image_METHODS(T)                                                                                              \
-    D2D1_SIZE_F(STDMETHODCALLTYPE *GetSize)(T * This);                                                                 \
-    D2D1_SIZE_U(STDMETHODCALLTYPE *GetPixelSize)(T * This);                                                            \
-    D2D1_PIXEL_FORMAT(STDMETHODCALLTYPE *GetPixelFormat)(T * This);                                                    \
+    D2D1_SIZE_F *(STDMETHODCALLTYPE *GetSize)(T * This, D2D1_SIZE_F * ret);                                                                 \
+    D2D1_SIZE_U *(STDMETHODCALLTYPE *GetPixelSize)(T * This, D2D1_SIZE_U * ret);                                                            \
+    D2D1_PIXEL_FORMAT *(STDMETHODCALLTYPE *GetPixelFormat)(T * This, D2D1_PIXEL_FORMAT * ret);                                                    \
     void(STDMETHODCALLTYPE *GetDpi)(T * This, FLOAT * dpi_x, FLOAT * dpi_y);                                           \
     HRESULT(STDMETHODCALLTYPE *CopyFromBitmap)(T * This, const D2D1_POINT_2U *dest, ID2D1Bitmap *bitmap,              \
                                                const D2D1_RECT_U *source);                                             \
@@ -831,8 +831,8 @@ MIME_COM_INTERFACE(ID2D1SolidColorBrush)
     ID2D1Brush_METHODS(T)                                                                                              \
     void(STDMETHODCALLTYPE *SetStartPoint)(T * This, D2D1_POINT_2F point);                                             \
     void(STDMETHODCALLTYPE *SetEndPoint)(T * This, D2D1_POINT_2F point);                                               \
-    D2D1_POINT_2F(STDMETHODCALLTYPE *GetStartPoint)(T * This);                                                         \
-    D2D1_POINT_2F(STDMETHODCALLTYPE *GetEndPoint)(T * This);                                                           \
+    D2D1_POINT_2F *(STDMETHODCALLTYPE *GetStartPoint)(T * This, D2D1_POINT_2F * ret);                                                         \
+    D2D1_POINT_2F *(STDMETHODCALLTYPE *GetEndPoint)(T * This, D2D1_POINT_2F * ret);                                                           \
     void(STDMETHODCALLTYPE *GetGradientStopCollection)(T * This, ID2D1GradientStopCollection * *stops);
 MIME_COM_INTERFACE(ID2D1LinearGradientBrush)
 
@@ -842,8 +842,8 @@ MIME_COM_INTERFACE(ID2D1LinearGradientBrush)
     void(STDMETHODCALLTYPE *SetGradientOriginOffset)(T * This, D2D1_POINT_2F offset);                                  \
     void(STDMETHODCALLTYPE *SetRadiusX)(T * This, FLOAT radius);                                                       \
     void(STDMETHODCALLTYPE *SetRadiusY)(T * This, FLOAT radius);                                                       \
-    D2D1_POINT_2F(STDMETHODCALLTYPE *GetCenter)(T * This);                                                             \
-    D2D1_POINT_2F(STDMETHODCALLTYPE *GetGradientOriginOffset)(T * This);                                               \
+    D2D1_POINT_2F *(STDMETHODCALLTYPE *GetCenter)(T * This, D2D1_POINT_2F * ret);                                                             \
+    D2D1_POINT_2F *(STDMETHODCALLTYPE *GetGradientOriginOffset)(T * This, D2D1_POINT_2F * ret);                                               \
     FLOAT(STDMETHODCALLTYPE *GetRadiusX)(T * This);                                                                    \
     FLOAT(STDMETHODCALLTYPE *GetRadiusY)(T * This);                                                                    \
     void(STDMETHODCALLTYPE *GetGradientStopCollection)(T * This, ID2D1GradientStopCollection * *stops);
@@ -981,7 +981,7 @@ MIME_COM_INTERFACE(ID2D1Mesh)
 
 #define ID2D1Layer_METHODS(T)                                                                                          \
     ID2D1Resource_METHODS(T)                                                                                           \
-    D2D1_SIZE_F(STDMETHODCALLTYPE *GetSize)(T * This);
+    D2D1_SIZE_F *(STDMETHODCALLTYPE *GetSize)(T * This, D2D1_SIZE_F * ret);
 MIME_COM_INTERFACE(ID2D1Layer)
 
 #define ID2D1DrawingStateBlock_METHODS(T)                                                                              \
@@ -1081,11 +1081,11 @@ MIME_COM_INTERFACE(ID2D1DrawingStateBlock1)
     void(STDMETHODCALLTYPE *Clear)(T * This, const D2D1_COLOR_F *color);                                               \
     void(STDMETHODCALLTYPE *BeginDraw)(T * This);                                                                      \
     HRESULT(STDMETHODCALLTYPE *EndDraw)(T * This, D2D1_TAG * tag1, D2D1_TAG * tag2);                                   \
-    D2D1_PIXEL_FORMAT(STDMETHODCALLTYPE *GetPixelFormat)(T * This);                                                    \
+    D2D1_PIXEL_FORMAT *(STDMETHODCALLTYPE *GetPixelFormat)(T * This, D2D1_PIXEL_FORMAT * ret);                                                    \
     void(STDMETHODCALLTYPE *SetDpi)(T * This, FLOAT dpi_x, FLOAT dpi_y);                                               \
     void(STDMETHODCALLTYPE *GetDpi)(T * This, FLOAT * dpi_x, FLOAT * dpi_y);                                           \
-    D2D1_SIZE_F(STDMETHODCALLTYPE *GetSize)(T * This);                                                                 \
-    D2D1_SIZE_U(STDMETHODCALLTYPE *GetPixelSize)(T * This);                                                            \
+    D2D1_SIZE_F *(STDMETHODCALLTYPE *GetSize)(T * This, D2D1_SIZE_F * ret);                                                                 \
+    D2D1_SIZE_U *(STDMETHODCALLTYPE *GetPixelSize)(T * This, D2D1_SIZE_U * ret);                                                            \
     UINT32(STDMETHODCALLTYPE *GetMaximumBitmapSize)(T * This);                                                         \
     BOOL(STDMETHODCALLTYPE *IsSupported)(T * This, const D2D1_RENDER_TARGET_PROPERTIES *props);
 MIME_COM_INTERFACE(ID2D1RenderTarget)
@@ -1604,7 +1604,7 @@ MIME_COM_INTERFACE(ID2D1SvgElement)
 #define ID2D1SvgDocument_METHODS(T)                                                                                    \
     ID2D1Resource_METHODS(T)                                                                                           \
     HRESULT(STDMETHODCALLTYPE *SetViewportSize)(T * This, D2D1_SIZE_F size);                                           \
-    D2D1_SIZE_F(STDMETHODCALLTYPE *GetViewportSize)(T * This);                                                         \
+    D2D1_SIZE_F *(STDMETHODCALLTYPE *GetViewportSize)(T * This, D2D1_SIZE_F * ret);                                                         \
     HRESULT(STDMETHODCALLTYPE *SetRoot)(T * This, ID2D1SvgElement * root);                                             \
     void(STDMETHODCALLTYPE *GetRoot)(T * This, ID2D1SvgElement * *root);                                               \
     HRESULT(STDMETHODCALLTYPE *FindElementById)(T * This, const WCHAR *id, ID2D1SvgElement **element);                 \
