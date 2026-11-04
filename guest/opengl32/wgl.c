@@ -6,6 +6,7 @@
  * it is presented.
  */
 #include "opengl32.h"
+#include "dlist.h"
 
 #include <mime/pixelformat.h>
 
@@ -586,12 +587,13 @@ GLAPI PROC WINAPI wglGetProcAddress(LPCSTR name)
 
 GLAPI BOOL WINAPI wglUseFontBitmapsA(HDC dc, DWORD first, DWORD count, DWORD list_base)
 {
-    return FALSE;
+    GlContext *ctx = gl_current();
+    return ctx && gl_dl_font_bitmaps(ctx, dc, first, count, list_base);
 }
 
 GLAPI BOOL WINAPI wglUseFontBitmapsW(HDC dc, DWORD first, DWORD count, DWORD list_base)
 {
-    return FALSE;
+    return wglUseFontBitmapsA(dc, first, count, list_base);
 }
 
 GLAPI BOOL WINAPI wglUseFontOutlinesA(HDC dc, DWORD first, DWORD count, DWORD list_base, FLOAT deviation,

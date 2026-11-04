@@ -131,6 +131,7 @@ typedef struct GlDlBatch {
 
 void gl_draw_batch(GlContext *ctx, GlDlBatch *b);
 void gl_batch_free(GlDlBatch *b);
+BOOL gl_dl_font_bitmaps(GlContext *ctx, HDC dc, DWORD first, DWORD count, DWORD list_base);
 uint32_t gl_whole_primitives(GLenum mode, uint32_t count);
 
 

@@ -1521,3 +1521,71 @@ GLAPI void APIENTRY glCallLists(GLsizei n, GLenum type, const GLvoid *lists)
             call_list(ctx, name);
     }
 }
+
+/* ---------------------------------------------------------------- the glyphs of a font */
+
+/*
+ * wglUseFontBitmaps: a list of a bitmap for each character, the glyph the device context's font draws as one bit pixels, the
+ * origin and the advance of its metrics being the origin and the move of the bitmap. the rows of the glyph come from the top
+ * and a bitmap starts from the bottom, so they are turned over.
+ */
+BOOL gl_dl_font_bitmaps(GlContext *ctx, HDC dc, DWORD first, DWORD count, DWORD list_base)
+{
+    if (ctx->dl.mode || ctx->ff.in_begin || !dc || !count || first > 0xFFFF || count > 0x10000 - first)
+        return FALSE;
+    GLint saved[8] = {ctx->unpack_alignment, ctx->unpack_row_length, ctx->unpack_skip_rows, ctx->unpack_skip_pixels,
+                      ctx->unpack_image_height, ctx->unpack_skip_images, (GLint)ctx->pixel_unpack,
+                      ctx->unpack_lsb_first | (ctx->unpack_swap_bytes << 1)};
+    ctx->unpack_alignment = 1;
+    ctx->unpack_row_length = ctx->unpack_skip_rows = ctx->unpack_skip_pixels = 0;
+    ctx->unpack_image_height = ctx->unpack_skip_images = 0;
+    ctx->pixel_unpack = 0;
+    ctx->unpack_lsb_first = ctx->unpack_swap_bytes = FALSE;
+    static const MAT2 identity = {{0, 1}, {0, 0}, {0, 0}, {0, 1}};
+    BOOL ok = TRUE;
+    for (DWORD i = 0; i < count && ok; i++) {
+        GLYPHMETRICS gm;
+        memset(&gm, 0, sizeof(gm));
+        ULONG size = NtGdiGetGlyphOutline(dc, (WCHAR)(first + i), GGO_BITMAP, &gm, 0, nullptr, (LPMAT2)&identity, FALSE);
+        if (size == GDI_ERROR) {
+            ok = FALSE;
+            break;
+        }
+        uint8_t *rows = nullptr, *flipped = nullptr;
+        UINT w = gm.gmBlackBoxX, h = gm.gmBlackBoxY;
+        if (size && w && h) {
+            rows = gl_alloc(size);
+            flipped = gl_alloc(((size_t)w + 7) / 8 * h);
+            if (!rows || !flipped || NtGdiGetGlyphOutline(dc, (WCHAR)(first + i), GGO_BITMAP, &gm, size, rows,
+                                                           (LPMAT2)&identity, FALSE) == GDI_ERROR) {
+                ok = FALSE;
+            } else {
+                size_t stride = (size / h), row_bytes = ((size_t)w + 7) / 8;
+                for (UINT r = 0; r < h; r++)
+                    memcpy(flipped + r * row_bytes, rows + (size_t)(h - 1 - r) * stride, row_bytes);
+            }
+        }
+        if (ok) {
+            glNewList(list_base + i, GL_COMPILE);
+            if (flipped)
+                gl_dl_custom_glBitmap(ctx, (GLsizei)w, (GLsizei)h, (GLfloat)-gm.gmptGlyphOrigin.x,
+                                      (GLfloat)((int)h - gm.gmptGlyphOrigin.y), (GLfloat)gm.gmCellIncX,
+                                      (GLfloat)gm.gmCellIncY, flipped);
+            else
+                gl_dl_custom_glBitmap(ctx, 0, 0, 0, 0, (GLfloat)gm.gmCellIncX, (GLfloat)gm.gmCellIncY, nullptr);
+            glEndList();
+        }
+        gl_free(rows);
+        gl_free(flipped);
+    }
+    ctx->unpack_alignment = saved[0];
+    ctx->unpack_row_length = saved[1];
+    ctx->unpack_skip_rows = saved[2];
+    ctx->unpack_skip_pixels = saved[3];
+    ctx->unpack_image_height = saved[4];
+    ctx->unpack_skip_images = saved[5];
+    ctx->pixel_unpack = (GLuint)saved[6];
+    ctx->unpack_lsb_first = saved[7] & 1;
+    ctx->unpack_swap_bytes = (saved[7] & 2) != 0;
+    return ok;
+}
