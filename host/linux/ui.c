@@ -867,7 +867,8 @@ static bool has_open_popup(const UiWindow *w)
     return false;
 }
 
-static void destroy_host_window(UiWindow *w)
+/* locked: the caller holds g_windows_lock, which is let go while the host window goes. */
+static void destroy_host_window(UiWindow *w, bool locked)
 {
     if (w->vk) {
         mime_vk_window_lost(w->id);
@@ -880,12 +881,22 @@ static void destroy_host_window(UiWindow *w)
         SDL_DestroyTexture(w->texture);
     if (w->renderer)
         SDL_DestroyRenderer(w->renderer);
-    if (w->window)
-        SDL_DestroyWindow(w->window);
-    mime_gpu_teardown_leave();
+    SDL_Window *window = w->window;
     w->texture = nullptr;
     w->renderer = nullptr;
     w->window = nullptr;
+    if (window) {
+        /*
+         * the destruction roundtrips to the compositor and serves the clipboard requests that are waiting, which wait
+         * for the guest. a processor of the guest that waits for the lock here would hold the guest still.
+         */
+        if (locked)
+            pthread_mutex_unlock(&g_windows_lock);
+        SDL_DestroyWindow(window);
+        if (locked)
+            pthread_mutex_lock(&g_windows_lock);
+    }
+    mime_gpu_teardown_leave();
     w->display = 0;
     w->texture_width = w->texture_height = 0;
 }
@@ -934,7 +945,7 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
     w->renderer = SDL_CreateRenderer(w->window, nullptr);
     if (!w->renderer) {
         mime_warn("cannot create a renderer: %s", SDL_GetError());
-        destroy_host_window(w);
+        destroy_host_window(w, false);
         return false;
     }
     SDL_SetRenderVSync(w->renderer, 0);
@@ -1072,7 +1083,7 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
     UiWindow *owner = cfg->owner_id ? find_window(cfg->owner_id) : nullptr;
     bool want_popup = (cfg->flags & MIME_WIN_TOOL) && owner && owner->window;
     if (w->window && (want_popup != w->popup || (w->popup && w->owner != cfg->owner_id))) {
-        destroy_host_window(w);
+        destroy_host_window(w, false);
         /* the new host window is not shown yet. */
         w->shown = false;
         w->fullscreen = false;
@@ -1361,10 +1372,10 @@ static void destroy_main(void *arg)
     /* popups go first: they cannot outlive the window they hang from. */
     for (int i = 0; i < MAX_WINDOWS; i++)
         if (g_windows[i].used && g_windows[i].popup && g_windows[i].owner == w->id) {
-            destroy_host_window(&g_windows[i]);
+            destroy_host_window(&g_windows[i], true);
             g_windows[i].shown = false;
         }
-    destroy_host_window(w);
+    destroy_host_window(w, true);
     pthread_mutex_lock(&w->lock);
     free(w->pixels);
     w->pixels = nullptr;
@@ -2549,7 +2560,7 @@ void mime_ui_run(void)
     }
     for (int i = 0; i < MAX_WINDOWS; i++)
         if (g_windows[i].used)
-            destroy_host_window(&g_windows[i]);
+            destroy_host_window(&g_windows[i], false);
     SDL_Quit();
 }
 
