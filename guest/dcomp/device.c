@@ -53,6 +53,8 @@ static void device_destroy(DcDevice *device)
     DcGpuRelease(device);
     if (device->d3d)
         device->d3d->lpVtbl->Release(device->d3d);
+    if (device->own_d3d)
+        device->own_d3d->lpVtbl->Release(device->own_d3d);
     DeleteCriticalSection(&device->lock);
     DcObjectCountChange(-1);
     HeapFree(GetProcessHeap(), 0, device);

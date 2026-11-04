@@ -429,6 +429,17 @@ static HRESULT STDMETHODCALLTYPE vis_set_content(void *This, IUnknown *content)
     return S_OK;
 }
 
+void DcVisualSetLayout(IDCompositionVisual3 *visual, const DcLayout *layout)
+{
+    DcVisual *v = vis_impl(visual);
+    DcDeviceLock(v->base.device);
+    if (memcmp(&v->pending.layout, layout, sizeof(*layout))) {
+        v->pending.layout = *layout;
+        DcObjectDirty(&v->base);
+    }
+    DcDeviceUnlock(v->base.device);
+}
+
 /* ------------------------------------------------------------------ the tree */
 
 static UINT child_index(const DcVisual *parent, const DcVisual *child)

@@ -139,11 +139,17 @@ DCOMPAPI HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID iid, void **out
     return CLASS_E_CLASSNOTAVAILABLE;
 }
 
+/* the classes of Windows.UI.Composition, as Windows serves them from this dll. */
 DCOMPAPI HRESULT WINAPI DllGetActivationFactory(void *class_id, void **factory)
 {
-    if (factory)
-        *factory = nullptr;
+    if (!factory)
+        return E_POINTER;
+    *factory = nullptr;
+#ifdef _WIN64
+    return DcWucFactory(class_id, factory);
+#else
     return CLASS_E_CLASSNOTAVAILABLE;
+#endif
 }
 
 /* the presentation manager is not supported. */

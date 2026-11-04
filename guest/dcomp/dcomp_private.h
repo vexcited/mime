@@ -227,6 +227,21 @@ BOOL DcClipValues(const DcObject *clip, UINT64 now, float rect[4], float radii[8
 
 /* ------------------------------------------------------------------ visuals and targets */
 
+/*
+ * how a Windows.UI.Composition sprite shows its brush: the content laid out in a box of the sprite's size by a
+ * stretch and alignment ratios, or a solid color filling the box. the content is clipped to the box.
+ */
+typedef struct DcLayout {
+    BOOL on, solid;
+    float width, height;
+    /* none, fill, uniform and uniform to fill, numbered as CompositionStretch. */
+    int stretch;
+    float align_x, align_y;
+    int interpolation;
+    /* premultiplied red, green, blue and alpha. */
+    float color[4];
+} DcLayout;
+
 typedef struct DcVisualState {
     DcFloat offset_x, offset_y, offset_z, opacity;
     /* none, an object, a 3x2 matrix or a 4x4 matrix. */
@@ -241,6 +256,7 @@ typedef struct DcVisualState {
     D2D_RECT_F clip_rect;
     DcObject *clip;
     DcContent *content;
+    DcLayout layout;
     DcVisual **children;
     UINT child_count, child_capacity;
 } DcVisualState;
@@ -255,6 +271,7 @@ struct DcVisual {
 
 extern const IDCompositionVisual3Vtbl g_visual_vtbl;
 HRESULT DcCreateVisual(DcDevice *device, IDCompositionVisual3 **out);
+void DcVisualSetLayout(IDCompositionVisual3 *visual, const DcLayout *layout);
 
 /* per-window compositor state: a swap chain on the drawing device and its back buffer. */
 typedef struct DcOutput {
@@ -374,6 +391,8 @@ struct DcDevice {
     DcTarget *targets;
     DcContent *contents;
     DcGpu *gpu;
+    /* made by the compositor for trees that show only solid colors. */
+    ID3D11Device *own_d3d;
     UINT64 commit_count;
     DcDevice *next_global;
 };
@@ -403,6 +422,10 @@ void DcGpuRelease(DcDevice *device);
 HRESULT DcReadTarget(DcTarget *target, const RECT *rect, void *pixels, UINT pitch);
 /* a source produced a frame: recompose the targets that show it. */
 void DcSourceFrame(DcDevice *device, IUnknown *source);
+
+/* ------------------------------------------------------------------ Windows.UI.Composition */
+
+HRESULT DcWucFactory(void *class_id, void **factory);
 
 /* ------------------------------------------------------------------ matrices, clocks and the registry */
 

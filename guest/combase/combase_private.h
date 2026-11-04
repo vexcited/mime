@@ -46,11 +46,6 @@ HRESULT CbCaptureItemFactory(REFIID riid, void **factory);
 HRESULT CbCaptureSessionFactory(REFIID riid, void **factory);
 HRESULT CbCapturePoolFactory(REFIID riid, void **factory);
 
-/* composition.c: Windows.UI.Composition, for 64 bit programs. */
-extern const WCHAR CbCompositorControllerClass[], CbCompositorClass[];
-HRESULT CbCompositorControllerFactory(REFIID riid, void **factory);
-HRESULT CbCompositorFactory(REFIID riid, void **factory);
-
 /* async.c: operations that are finished before they are handed out. */
 typedef enum CB_ASYNC_KIND {
     CB_ASYNC_ACTION,

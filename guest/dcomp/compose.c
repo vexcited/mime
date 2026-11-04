@@ -33,6 +33,8 @@ struct DcGpu {
     ID3D11BlendState *blends[BLENDS];
     ID3D11RasterizerState *rasterizer;
     ID3D11Buffer *constants;
+    /* one opaque white texel, which the color matrix turns into a solid color. */
+    ID3D11ShaderResourceView *white;
 };
 
 static void release(IUnknown *object)
@@ -51,6 +53,7 @@ static void gpu_free(DcGpu *gpu)
         release((IUnknown *)gpu->blends[i]);
     release((IUnknown *)gpu->rasterizer);
     release((IUnknown *)gpu->constants);
+    release((IUnknown *)gpu->white);
     release((IUnknown *)gpu->factory);
     release((IUnknown *)gpu->multithread);
     release((IUnknown *)gpu->deferred);
@@ -123,6 +126,23 @@ static DcGpu *gpu_create(ID3D11Device *d3d)
         desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
         ok = SUCCEEDED(d3d->lpVtbl->CreateBuffer(d3d, &desc, nullptr, &gpu->constants));
+    }
+    if (ok) {
+        static const UINT texel = 0xFFFFFFFF;
+        D3D11_TEXTURE2D_DESC desc = {};
+        desc.Width = desc.Height = desc.MipLevels = desc.ArraySize = 1;
+        desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        desc.SampleDesc.Count = 1;
+        desc.Usage = D3D11_USAGE_IMMUTABLE;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA data = {&texel, 4, 4};
+        ID3D11Texture2D *texture;
+        ok = SUCCEEDED(d3d->lpVtbl->CreateTexture2D(d3d, &desc, &data, &texture));
+        if (ok) {
+            ok = SUCCEEDED(
+                d3d->lpVtbl->CreateShaderResourceView(d3d, (ID3D11Resource *)texture, nullptr, &gpu->white));
+            texture->lpVtbl->Release(texture);
+        }
     }
     /* window swap chains come from the factory that made the device's adapter. */
     IDXGIDevice *dxgi;
@@ -316,35 +336,86 @@ static DcDraw *add_draw(DcBuild *c)
     return &c->draws[c->draw_count++];
 }
 
-/* draws the shown part of a content's frame as a quad, with the clips and look gathered by the walk. */
-static void draw_software(DcBuild *c, const DcWalk *w, DcContent *content);
+/*
+ * places content of a size in the box of a sprite's layout: scales and moves the content to visual matrix, a 3x2
+ * affine one, and clips the walk to the box.
+ */
+static void apply_layout(const DcLayout *l, float width, float height, float into[6], DcWalk *w)
+{
+    float cw = width * into[0], ch = height * into[3], kx = 1.0f, ky = 1.0f;
+    if (cw <= 0.0f || ch <= 0.0f)
+        return;
+    if (l->solid || l->stretch == 1) {
+        kx = l->width / cw;
+        ky = l->height / ch;
+    } else if (l->stretch == 2 || l->stretch == 3) {
+        float x = l->width / cw, y = l->height / ch;
+        BOOL smaller = x < y;
+        /* uniform fits the whole content in the box, uniform to fill covers the box. */
+        kx = ky = l->stretch == 2 ? (smaller ? x : y) : (smaller ? y : x);
+    }
+    float ox = (l->width - cw * kx) * l->align_x, oy = (l->height - ch * ky) * l->align_y;
+    into[0] *= kx;
+    into[3] *= ky;
+    into[4] = into[4] * kx + ox;
+    into[5] = into[5] * ky + oy;
+    if (w->clip_count < MAX_CLIPS) {
+        DcClipState *clip = &w->clips[w->clip_count++];
+        memset(clip, 0, sizeof(*clip));
+        clip->m[0] = clip->m[3] = 1.0f;
+        clip->rect[2] = l->width;
+        clip->rect[3] = l->height;
+    }
+}
 
-static void draw_content(DcBuild *c, const DcVisualState *s, const DcWalk *w, DcContent *content)
+/* draws the shown part of a content's frame as a quad, with the clips and look gathered by the walk. */
+static void draw_software(DcBuild *c, const DcVisualState *s, const DcWalk *w, DcContent *content);
+
+static void draw_content(DcBuild *c, const DcVisualState *s, const DcWalk *walk, DcContent *content)
 {
     if (c->bits) {
-        draw_software(c, w, content);
+        draw_software(c, s, walk, content);
         return;
     }
+    const DcLayout *layout = &s->layout;
+    BOOL solid = layout->on && layout->solid;
     DcFrame frame;
-    if (!DcContentFrame(content, c->gpu->device, &frame))
+    if (solid) {
+        memset(&frame, 0, sizeof(frame));
+        frame.view = c->gpu->white;
+        frame.width = frame.height = 1;
+        frame.source = (RECT){0, 0, 1, 1};
+        frame.alpha = DXGI_ALPHA_MODE_PREMULTIPLIED;
+    } else if (!content || !DcContentFrame(content, c->gpu->device, &frame)) {
         return;
+    }
     float width = (float)(frame.source.right - frame.source.left);
     float height = (float)(frame.source.bottom - frame.source.top);
     if (width <= 0 || height <= 0 || !frame.width || !frame.height)
         return;
-    /* unit square to content pixels, then the swap chain's own scale, the walk, and clip space. */
+    /* content pixels to the visual: the swap chain's own scale, then the layout of a sprite. */
+    float into[6] = {1, 0, 0, 1, 0, 0};
+    if (frame.has_matrix) {
+        into[0] = frame.matrix[0];
+        into[3] = frame.matrix[3];
+        into[4] = frame.matrix[4];
+        into[5] = frame.matrix[5];
+    }
+    DcWalk local = *walk;
+    const DcWalk *w = &local;
+    if (layout->on)
+        apply_layout(layout, width, height, into, &local);
+    /* unit square to content pixels, then into the visual, the walk, and clip space. */
     float m[16], step[16];
     DcMatrixIdentity(m);
     m[0] = width;
     m[5] = height;
-    if (frame.has_matrix) {
-        DcMatrixIdentity(step);
-        step[0] = frame.matrix[0];
-        step[5] = frame.matrix[3];
-        step[12] = frame.matrix[4];
-        step[13] = frame.matrix[5];
-        DcMatrixMultiply(m, m, step);
-    }
+    DcMatrixIdentity(step);
+    step[0] = into[0];
+    step[5] = into[3];
+    step[12] = into[4];
+    step[13] = into[5];
+    DcMatrixMultiply(m, m, step);
     DcMatrixMultiply(m, m, w->matrix);
     DcMatrixIdentity(step);
     step[0] = 2.0f / (float)c->width;
@@ -376,15 +447,8 @@ static void draw_content(DcBuild *c, const DcVisualState *s, const DcWalk *w, Dc
     cb[22] = w->opacity;
     cb[23] = frame.alpha == DXGI_ALPHA_MODE_STRAIGHT ? 1.0f : frame.alpha == DXGI_ALPHA_MODE_IGNORE ? 2.0f : 0.0f;
     cb[24] = w->composite == DCOMPOSITION_COMPOSITE_MODE_DESTINATION_INVERT ? 1.0f : 0.0f;
-    cb[25] = w->has_color ? 1.0f : 0.0f;
-    /* clips are in the visual's space, so the swap chain's scale moves the content into it first. */
-    float into[6] = {1, 0, 0, 1, 0, 0};
-    if (frame.has_matrix) {
-        into[0] = frame.matrix[0];
-        into[3] = frame.matrix[3];
-        into[4] = frame.matrix[4];
-        into[5] = frame.matrix[5];
-    }
+    cb[25] = w->has_color || solid ? 1.0f : 0.0f;
+    /* clips are in the visual's space, which the content goes into first. */
     for (UINT i = 0; i < w->clip_count; i++) {
         float t[6];
         affine_multiply(t, into, w->clips[i].m);
@@ -401,6 +465,14 @@ static void draw_content(DcBuild *c, const DcVisualState *s, const DcWalk *w, Dc
     }
     const float identity[20] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0};
     const float *color = w->has_color ? w->color : identity;
+    float fill[20] = {};
+    if (solid) {
+        /* the white texel times nothing, plus the color. */
+        memcpy(fill + 16, layout->color, sizeof(layout->color));
+        if (w->has_color)
+            color_multiply(fill, fill, w->color);
+        color = fill;
+    }
     for (int col = 0; col < 4; col++)
         for (int row = 0; row < 4; row++)
             cb[108 + col * 4 + row] = color[row * 4 + col];
@@ -408,6 +480,8 @@ static void draw_content(DcBuild *c, const DcVisualState *s, const DcWalk *w, Dc
         cb[124 + j] = color[16 + j];
     d->view = frame.view;
     d->linear = w->interpolation != DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
+    if (layout->on && !solid)
+        d->linear = layout->interpolation != DCOMPOSITION_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
     d->blend = w->composite == DCOMPOSITION_COMPOSITE_MODE_DESTINATION_INVERT ? BLEND_INVERT
                : w->composite == DCOMPOSITION_COMPOSITE_MODE_MIN_BLEND        ? BLEND_MIN
                                                                               : BLEND_OVER;
@@ -477,7 +551,7 @@ static void walk(DcBuild *c, const DcVisual *visual, const DcWalk *parent, UINT 
             w.clip_count++;
         }
     }
-    if (s->content)
+    if (s->content || (s->layout.on && s->layout.solid))
         draw_content(c, s, &w, s->content);
     for (UINT i = 0; i < s->child_count; i++)
         walk(c, s->children[i], &w, depth + 1);
@@ -507,33 +581,48 @@ static BOOL clip_pixels(const DcClipState *clip, const float m[16], float r[4])
  * draws a swap chain frame of the software device over the bitmap: scaled and moved, with opacity and
  * axis-aligned clips. rotations, color effects and blend modes other than source over are not drawn.
  */
-static void draw_software(DcBuild *c, const DcWalk *w, DcContent *content)
+static void draw_software(DcBuild *c, const DcVisualState *s, const DcWalk *walk, DcContent *content)
 {
-    MIME_COMPOSITION_FRAME frame;
-    if (content->kind != DCC_SWAPCHAIN || content->source->lpVtbl->GetFrame(content->source, &frame) != S_OK)
-        return;
-    IMimeSoftwareTexture *texture;
-    HRESULT hr = frame.Texture->lpVtbl->QueryInterface(frame.Texture, &IID_IMimeSoftwareTexture, (void **)&texture);
-    frame.Texture->lpVtbl->Release(frame.Texture);
-    if (FAILED(hr))
-        return;
+    const DcLayout *layout = &s->layout;
+    BOOL solid = layout->on && layout->solid;
+    MIME_COMPOSITION_FRAME frame = {};
+    IMimeSoftwareTexture *texture = nullptr;
+    if (solid) {
+        frame.Source = (RECT){0, 0, 1, 1};
+        frame.Matrix._11 = frame.Matrix._22 = 1.0f;
+    } else {
+        if (!content || content->kind != DCC_SWAPCHAIN ||
+            content->source->lpVtbl->GetFrame(content->source, &frame) != S_OK)
+            return;
+        HRESULT hr =
+            frame.Texture->lpVtbl->QueryInterface(frame.Texture, &IID_IMimeSoftwareTexture, (void **)&texture);
+        frame.Texture->lpVtbl->Release(frame.Texture);
+        if (FAILED(hr))
+            return;
+    }
     float width = (float)(frame.Source.right - frame.Source.left);
     float height = (float)(frame.Source.bottom - frame.Source.top);
+    float into[6] = {frame.Matrix._11, 0, 0, frame.Matrix._22, frame.Matrix._31, frame.Matrix._32};
+    DcWalk local = *walk;
+    const DcWalk *w = &local;
+    if (layout->on)
+        apply_layout(layout, width, height, into, &local);
     float m[16], step[16];
     DcMatrixIdentity(m);
     m[0] = width;
     m[5] = height;
     DcMatrixIdentity(step);
-    step[0] = frame.Matrix._11;
-    step[5] = frame.Matrix._22;
-    step[12] = frame.Matrix._31;
-    step[13] = frame.Matrix._32;
+    step[0] = into[0];
+    step[5] = into[3];
+    step[12] = into[4];
+    step[13] = into[5];
     DcMatrixMultiply(m, m, step);
     DcMatrixMultiply(m, m, w->matrix);
     UINT opacity = w->opacity >= 1.0f ? 255 : w->opacity <= 0.0f ? 0 : (UINT)(w->opacity * 255.0f + 0.5f);
     if (width <= 0 || height <= 0 || !opacity || !is_affine(m) || m[1] != 0.0f || m[4] != 0.0f || m[0] <= 0.0f ||
         m[5] <= 0.0f) {
-        texture->lpVtbl->Release(texture);
+        if (texture)
+            texture->lpVtbl->Release(texture);
         return;
     }
     float x0 = m[12], y0 = m[13], sx = width / m[0], sy = height / m[5];
@@ -552,6 +641,21 @@ static void draw_software(DcBuild *c, const DcWalk *w, DcContent *content)
     top = top < 0 ? 0 : top;
     right = right > (int)c->width ? (int)c->width : right;
     bottom = bottom > (int)c->height ? (int)c->height : bottom;
+    if (solid) {
+        UINT b = (UINT)(layout->color[2] * opacity + 0.5f), g = (UINT)(layout->color[1] * opacity + 0.5f);
+        UINT red = (UINT)(layout->color[0] * opacity + 0.5f), a = (UINT)(layout->color[3] * opacity + 0.5f);
+        for (int y = top; y < bottom; y++) {
+            BYTE *d = c->bits + ((SIZE_T)y * c->width + (SIZE_T)left) * 4;
+            for (int x = left; x < right; x++, d += 4) {
+                UINT keep = 255 - a;
+                d[0] = (BYTE)D_MIN(255u, b + d[0] * keep / 255);
+                d[1] = (BYTE)D_MIN(255u, g + d[1] * keep / 255);
+                d[2] = (BYTE)D_MIN(255u, red + d[2] * keep / 255);
+                d[3] = (BYTE)D_MIN(255u, a + d[3] * keep / 255);
+            }
+        }
+        return;
+    }
     BOOL rgba = frame.ViewFormat == DXGI_FORMAT_R8G8B8A8_UNORM;
     BOOL opaque = frame.AlphaMode == DXGI_ALPHA_MODE_IGNORE || frame.ViewFormat == DXGI_FORMAT_B8G8R8X8_UNORM;
     const BYTE *bits;
@@ -678,6 +782,33 @@ static ID3D11Device *tree_device(const DcVisual *visual, UINT depth)
     return nullptr;
 }
 
+static BOOL tree_solid(const DcVisual *visual, UINT depth)
+{
+    const DcVisualState *s = &visual->committed;
+    if (depth > MAX_DEPTH)
+        return FALSE;
+    if (s->layout.on && s->layout.solid)
+        return TRUE;
+    for (UINT i = 0; i < s->child_count; i++)
+        if (tree_solid(s->children[i], depth + 1))
+            return TRUE;
+    return FALSE;
+}
+
+/* a device of the compositor's own for a tree with nothing of a program's device to draw. */
+static ID3D11Device *own_device(DcDevice *d)
+{
+    if (!d->own_d3d) {
+        HMODULE module = LoadLibraryW(L"d3d11.dll");
+        PFN_D3D11_CREATE_DEVICE create =
+            module ? (PFN_D3D11_CREATE_DEVICE)(void *)GetProcAddress(module, "D3D11CreateDevice") : nullptr;
+        if (!create || FAILED(create(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                                     nullptr, 0, D3D11_SDK_VERSION, &d->own_d3d, nullptr, nullptr)))
+            d->own_d3d = nullptr;
+    }
+    return d->own_d3d;
+}
+
 HRESULT DcCompose(DcTarget *t)
 {
     DcDevice *d = t->base.device;
@@ -688,11 +819,21 @@ HRESULT DcCompose(DcTarget *t)
     UINT width = client.right - client.left, height = client.bottom - client.top;
     if (!width || !height)
         return S_FALSE;
-    ID3D11Device *d3d = d->d3d ? d->d3d : t->output.device;
+    /* a device made without one draws with the device of its content, the last one when there is none. */
+    ID3D11Device *d3d = d->d3d;
     if (!d3d && t->root_committed)
         d3d = tree_device(t->root_committed, 0);
     if (!d3d)
+        d3d = t->output.device;
+    if (!d3d && t->root_committed && tree_solid(t->root_committed, 0)) {
+        d3d = own_device(d);
+        if (!d3d)
+            return compose_software(t, width, height);
+    }
+    if (!d3d)
         return S_FALSE;
+    if (t->output.device && t->output.device != d3d)
+        DcOutputRelease(&t->output);
     IDXGIDevice *dxgi;
     if (FAILED(d3d->lpVtbl->QueryInterface(d3d, &IID_IDXGIDevice, (void **)&dxgi)))
         return compose_software(t, width, height);

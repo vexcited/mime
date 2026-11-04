@@ -205,6 +205,9 @@ if(MIME_GUEST_ARCH STREQUAL "x64")
     set(includes_d3d11 third_party/khronos ${MIME_GEN}/shaders)
     set(includes_d3d12 third_party/khronos third_party/SPIRV-Cross)
     set(includes_dcomp ${MIME_GEN}/shaders)
+    # Windows.UI.Composition is served to 64 bit programs only.
+    set(objects_dcomp)
+    set(libs_dcomp)
 endif()
 
 foreach(entry IN LISTS MIME_X86_DLLS)

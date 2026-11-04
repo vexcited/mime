@@ -20,3 +20,16 @@
 "DllPath"=expand:"%SystemRoot%\\system32\\Windows.Graphics.dll"
 "Threading"=dword:00000000
 "TrustLevel"=dword:00000000
+
+; dcomp.dll, for 64 bit programs.
+[HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.UI.Composition.Compositor]
+"ActivationType"=dword:00000000
+"DllPath"=expand:"%SystemRoot%\\system32\\dcomp.dll"
+"Threading"=dword:00000000
+"TrustLevel"=dword:00000000
+
+[HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId\Windows.UI.Composition.Core.CompositorController]
+"ActivationType"=dword:00000000
+"DllPath"=expand:"%SystemRoot%\\system32\\dcomp.dll"
+"Threading"=dword:00000000
+"TrustLevel"=dword:00000000
