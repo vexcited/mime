@@ -597,6 +597,8 @@ typedef struct D2dIRect {
 typedef struct D2dImageData {
     D2dSurface surface;
     int x, y;
+    /* the same pixels as premultiplied rgba floats when they were made with more than 8 bits, or nullptr. */
+    float *fpx;
 } D2dImageData;
 HRESULT D2dRenderImage(D2dRt *rt, ID2D1Image *image, D2dImageData *out);
 void D2dImageDataFree(D2dImageData *d);

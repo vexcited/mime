@@ -1,4 +1,4 @@
-#include "d2d_private.h"
+#include "effects.h"
 #include <float.h>
 #include <stddef.h>
 
@@ -1854,9 +1854,8 @@ static BOOL STDMETHODCALLTYPE cx_precision(ID2D1EffectContext *This, D2D1_BUFFER
 static HRESULT STDMETHODCALLTYPE cx_lut(ID2D1EffectContext1 *This, D2D1_BUFFER_PRECISION p, const UINT32 *extents, const BYTE *data, UINT32 count,
                                         const UINT32 *strides, ID2D1LookupTable3D **out)
 {
-    if (out)
-        *out = nullptr;
-    return E_NOTIMPL;
+    CTX;
+    return D2dLut3DCreate(c->obj.factory, p, extents, data, count, strides, out);
 }
 static HRESULT STDMETHODCALLTYPE cx_color_dxgi(ID2D1EffectContext2 *This, DXGI_COLOR_SPACE_TYPE space, ID2D1ColorContext1 **out)
 {

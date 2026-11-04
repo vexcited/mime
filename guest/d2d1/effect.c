@@ -1,7 +1,7 @@
 /*
- * images: bitmaps, effects and command lists as pixels, and the built in effects that have a renderer here.
+ * images: bitmaps, effects and command lists as pixels, and the properties of the built in effects, which effects_*.c draw.
  */
-#include "d2d_private.h"
+#include "effects.h"
 #include <float.h>
 
 #define INF_EXTENT D2D_INF_EXTENT
@@ -13,23 +13,20 @@ static IRect irect_intersect(IRect a, IRect b)
     IRect r = {a.x0 > b.x0 ? a.x0 : b.x0, a.y0 > b.y0 ? a.y0 : b.y0, a.x1 < b.x1 ? a.x1 : b.x1, a.y1 < b.y1 ? a.y1 : b.y1};
     return r;
 }
-static IRect irect_union(IRect a, IRect b)
-{
-    if (a.x1 <= a.x0 || a.y1 <= a.y0)
-        return b;
-    if (b.x1 <= b.x0 || b.y1 <= b.y0)
-        return a;
-    IRect r = {a.x0 < b.x0 ? a.x0 : b.x0, a.y0 < b.y0 ? a.y0 : b.y0, a.x1 > b.x1 ? a.x1 : b.x1, a.y1 > b.y1 ? a.y1 : b.y1};
-    return r;
-}
 static BOOL irect_empty(IRect r) { return r.x1 <= r.x0 || r.y1 <= r.y0; }
 
-void D2dImageDataFree(D2dImageData *d) { D2dSurfaceFree(&d->surface); }
+void D2dImageDataFree(D2dImageData *d)
+{
+    D2dSurfaceFree(&d->surface);
+    D2dFree(d->fpx);
+    d->fpx = nullptr;
+}
 
 static HRESULT data_new(D2dImageData *d, IRect r)
 {
     d->x = r.x0;
     d->y = r.y0;
+    d->fpx = nullptr;
     int w = r.x1 - r.x0, h = r.y1 - r.y0;
     if (w < 0)
         w = 0;
@@ -136,20 +133,6 @@ HRESULT D2dProxyCreate(D2dFactory *f, const D2dProxyOps *ops, void *ctx, ID2D1Im
 
 /* ------------------------------------------------------------------ effects */
 
-enum {
-    EFF_FLOOD, EFF_COLORMATRIX, EFF_BLUR, EFF_COMPOSITE, EFF_CROP, EFF_AFFINE, EFF_OPACITY, EFF_TINT, EFF_SHADOW,
-    EFF_BRIGHTNESS, EFF_SATURATION, EFF_GRAYSCALE, EFF_INVERT, EFF_SEPIA, EFF_PREMULTIPLY, EFF_UNPREMULTIPLY, EFF_BLEND,
-    EFF_BORDER, EFF_ARITHMETIC, EFF_HUEROTATE, EFF_CONTRAST, EFF_EXPOSURE, EFF_LUMINANCE, EFF_TILE, EFF_COLORMANAGEMENT,
-    /* the effects after this one draw their first input unchanged, or nothing when they have none. */
-    EFF_PASSTHROUGH,
-    EFF_3DTRANSFORM = EFF_PASSTHROUGH, EFF_3DPERSPECTIVE, EFF_ATLAS, EFF_BITMAPSOURCE, EFF_CONVOLVE, EFF_DIRECTIONALBLUR,
-    EFF_DISCRETETRANSFER, EFF_DISPLACEMENT, EFF_DISTANTDIFFUSE, EFF_DISTANTSPECULAR, EFF_DPICOMPENSATION, EFF_GAMMATRANSFER,
-    EFF_SCALE, EFF_HISTOGRAM, EFF_LINEARTRANSFER, EFF_MORPHOLOGY, EFF_OPACITYMETADATA, EFF_POINTDIFFUSE, EFF_POINTSPECULAR,
-    EFF_SPOTDIFFUSE, EFF_SPOTSPECULAR, EFF_TABLETRANSFER, EFF_TURBULENCE, EFF_YCBCR, EFF_RGBTOHUE, EFF_HUETORGB, EFF_CHROMAKEY,
-    EFF_EMBOSS, EFF_POSTERIZE, EFF_SHARPEN, EFF_STRAIGHTEN, EFF_TEMPERATURETINT, EFF_VIGNETTE, EFF_EDGEDETECTION,
-    EFF_HIGHLIGHTSSHADOWS, EFF_LOOKUPTABLE3D, EFF_ALPHAMASK, EFF_CROSSFADE, EFF_WHITELEVEL, EFF_HDRTONEMAP, EFF_COUNT
-};
-
 /* a property of a built in effect with its default: floats for floats and vectors, the first one for integers. */
 typedef struct EffProp {
     const WCHAR *name;
@@ -157,8 +140,6 @@ typedef struct EffProp {
     UINT32 size;
     float def[4];
 } EffProp;
-
-#define EFF_MAX_PROPS 17
 
 typedef struct EffDesc {
     const GUID *clsid;
@@ -169,7 +150,7 @@ typedef struct EffDesc {
     EffProp props[EFF_MAX_PROPS];
 } EffDesc;
 
-#define BIG FLT_MAX
+#define BIG __builtin_inff()
 #define P_F(n, d) {L##n, D2D1_PROPERTY_TYPE_FLOAT, 4, {d}}
 #define P_V2(n, a, b) {L##n, D2D1_PROPERTY_TYPE_VECTOR2, 8, {a, b}}
 #define P_V3(n, a, b, c) {L##n, D2D1_PROPERTY_TYPE_VECTOR3, 12, {a, b, c}}
@@ -188,6 +169,8 @@ typedef struct EffDesc {
 #define GAMMA(c) P_F(c "Amplitude", 1), P_F(c "Exponent", 1), P_F(c "Offset", 0), P_B(c "Disable")
 #define LINEAR(c) P_F(c "YIntercept", 0), P_F(c "Slope", 1), P_B(c "Disable")
 #define P_RECT(n) {L##n, D2D1_PROPERTY_TYPE_VECTOR4, 16, {-BIG, -BIG, BIG, BIG}}
+#define P_RECT0(n) {L##n, D2D1_PROPERTY_TYPE_VECTOR4, 16, {0, 0, BIG, BIG}}
+#define P_I32(n, d) {L##n, D2D1_PROPERTY_TYPE_INT32, 4, {d}}
 
 static const EffDesc g_effects[EFF_COUNT] = {
     [EFF_FLOOD] = {&CLSID_D2D1Flood, L"Flood", L"Source", 0, 0, 0, 1, {P_V4("Color", 0, 0, 0, 1)}},
@@ -206,7 +189,7 @@ static const EffDesc g_effects[EFF_COUNT] = {
     [EFF_INVERT] = {&CLSID_D2D1Invert, L"Invert", L"Color", 1, 1, 1, 0, {}},
     [EFF_SEPIA] = {&CLSID_D2D1Sepia, L"Sepia", L"Color", 1, 1, 1, 2, {P_F("Intensity", 0.5f), P_E("AlphaMode", 1)}},
     [EFF_PREMULTIPLY] = {&CLSID_D2D1Premultiply, L"Premultiply", L"Color", 1, 1, 1, 0, {}},
-    [EFF_UNPREMULTIPLY] = {&CLSID_D2D1UnPremultiply, L"Unpremultiply", L"Color", 1, 1, 1, 0, {}},
+    [EFF_UNPREMULTIPLY] = {&CLSID_D2D1UnPremultiply, L"UnPremultiply", L"Color", 1, 1, 1, 0, {}},
     [EFF_BLEND] = {&CLSID_D2D1Blend, L"Blend", L"Composite", 2, 2, 2, 1, {P_E("Mode", 0)}},
     [EFF_BORDER] = {&CLSID_D2D1Border, L"Border", L"Transform", 1, 1, 1, 2, {P_E("EdgeModeX", 0), P_E("EdgeModeY", 0)}},
     [EFF_ARITHMETIC] = {&CLSID_D2D1ArithmeticComposite, L"Arithmetic Composite", L"Composite", 2, 2, 2, 2,
@@ -214,7 +197,7 @@ static const EffDesc g_effects[EFF_COUNT] = {
     [EFF_HUEROTATE] = {&CLSID_D2D1HueRotation, L"Hue Rotation", L"Color", 1, 1, 1, 1, {P_F("Angle", 0)}},
     [EFF_CONTRAST] = {&CLSID_D2D1Contrast, L"Contrast", L"Photo", 1, 1, 1, 2, {P_F("Contrast", 0), P_B("ClampInput")}},
     [EFF_EXPOSURE] = {&CLSID_D2D1Exposure, L"Exposure", L"Photo", 1, 1, 1, 1, {P_F("ExposureValue", 0)}},
-    [EFF_LUMINANCE] = {&CLSID_D2D1LuminanceToAlpha, L"Luminance To Alpha", L"Color", 1, 1, 1, 0, {}},
+    [EFF_LUMINANCE] = {&CLSID_D2D1LuminanceToAlpha, L"Luminance to Alpha", L"Color", 1, 1, 1, 0, {}},
     [EFF_TILE] = {&CLSID_D2D1Tile, L"Tile", L"Transform", 1, 1, 1, 1, {P_V4("Rect", 0, 0, 100, 100)}},
     [EFF_COLORMANAGEMENT] = {&CLSID_D2D1ColorManagement, L"Color Management", L"Color", 1, 1, 1, 6,
                              {P_CC("SourceColorContext"), P_E("SourceRenderingIntent", 0), P_CC("DestinationColorContext"),
@@ -225,12 +208,12 @@ static const EffDesc g_effects[EFF_COUNT] = {
                            {P_E("InterpolationMode", 1), P_E("BorderMode", 0), P_F("Depth", 1000), P_V2("PerspectiveOrigin", 0, 0),
                             P_V3("LocalOffset", 0, 0, 0), P_V3("GlobalOffset", 0, 0, 0), P_V3("RotationOrigin", 0, 0, 0),
                             P_V3("Rotation", 0, 0, 0)}},
-    [EFF_ATLAS] = {&CLSID_D2D1Atlas, L"Atlas", L"Transform", 1, 1, 1, 2, {P_RECT("InputRect"), P_RECT("InputPaddingRect")}},
+    [EFF_ATLAS] = {&CLSID_D2D1Atlas, L"Atlas", L"Transform", 1, 1, 1, 2, {P_RECT0("InputRect"), P_RECT0("InputPaddingRect")}},
     [EFF_BITMAPSOURCE] = {&CLSID_D2D1BitmapSource, L"Bitmap Source", L"Source", 0, 0, 0, 6,
                           {P_I("WicBitmapSource"), P_V2("Scale", 1, 1), P_E("InterpolationMode", 1), P_B("EnableDPICorrection"),
                            P_E("AlphaMode", 1), P_E("Orientation", 1)}},
     [EFF_CONVOLVE] = {&CLSID_D2D1ConvolveMatrix, L"Convolve Matrix", L"Filter", 1, 1, 1, 11,
-                      {P_F("KernelUnitLength", 1), P_E("ScaleMode", 1), P_U("KernelSizeX", 3), P_U("KernelSizeY", 3), P_BLOB("KernelMatrix"),
+                      {P_V2("KernelUnitLength", 1, 1), P_E("ScaleMode", 1), P_U("KernelSizeX", 3), P_U("KernelSizeY", 3), P_BLOB("KernelMatrix"),
                        P_F("Divisor", 1), P_F("Bias", 0), P_V2("KernelOffset", 0, 0), P_B("PreserveAlpha"), P_E("BorderMode", 0),
                        P_B("ClampOutput")}},
     [EFF_DIRECTIONALBLUR] = {&CLSID_D2D1DirectionalBlur, L"Directional Blur", L"Filter", 1, 1, 1, 4,
@@ -239,14 +222,14 @@ static const EffDesc g_effects[EFF_COUNT] = {
                               {TRANSFER("Red"), TRANSFER("Green"), TRANSFER("Blue"), TRANSFER("Alpha"), P_B("ClampOutput")}},
     [EFF_DISPLACEMENT] = {&CLSID_D2D1DisplacementMap, L"Displacement Map", L"Stylize", 2, 2, 2, 3,
                           {P_F("Scale", 0), P_E("XChannelSelect", 3), P_E("YChannelSelect", 3)}},
-    [EFF_DISTANTDIFFUSE] = {&CLSID_D2D1DistantDiffuse, L"Distant-light Diffuse", L"Lighting", 1, 1, 1, 7,
+    [EFF_DISTANTDIFFUSE] = {&CLSID_D2D1DistantDiffuse, L"Distant-Diffuse", L"Lighting", 1, 1, 1, 7,
                             {P_F("Azimuth", 0), P_F("Elevation", 0), P_F("DiffuseConstant", 1), P_F("SurfaceScale", 1),
                              P_V3("Color", 1, 1, 1), P_V2("KernelUnitLength", 1, 1), P_E("ScaleMode", 1)}},
-    [EFF_DISTANTSPECULAR] = {&CLSID_D2D1DistantSpecular, L"Distant-light Specular", L"Lighting", 1, 1, 1, 8,
+    [EFF_DISTANTSPECULAR] = {&CLSID_D2D1DistantSpecular, L"Distant-Specular", L"Lighting", 1, 1, 1, 8,
                              {P_F("Azimuth", 0), P_F("Elevation", 0), P_F("SpecularExponent", 1), P_F("SpecularConstant", 1),
                               P_F("SurfaceScale", 1), P_V3("Color", 1, 1, 1), P_V2("KernelUnitLength", 1, 1), P_E("ScaleMode", 1)}},
     [EFF_DPICOMPENSATION] = {&CLSID_D2D1DpiCompensation, L"DPI Compensation", L"Transform", 1, 1, 1, 3,
-                             {P_E("InterpolationMode", 1), P_E("BorderMode", 0), P_F("InputDpi", 96)}},
+                             {P_E("InterpolationMode", 1), P_E("BorderMode", 0), P_V2("InputDpi", 96, 96)}},
     [EFF_GAMMATRANSFER] = {&CLSID_D2D1GammaTransfer, L"Gamma Transfer", L"Color", 1, 1, 1, 17,
                            {GAMMA("Red"), GAMMA("Green"), GAMMA("Blue"), GAMMA("Alpha"), P_B("ClampOutput")}},
     [EFF_SCALE] = {&CLSID_D2D1Scale, L"Scale", L"Transform", 1, 1, 1, 5,
@@ -257,42 +240,42 @@ static const EffDesc g_effects[EFF_COUNT] = {
                             {LINEAR("Red"), LINEAR("Green"), LINEAR("Blue"), LINEAR("Alpha"), P_B("ClampOutput")}},
     [EFF_MORPHOLOGY] = {&CLSID_D2D1Morphology, L"Morphology", L"Filter", 1, 1, 1, 3, {P_E("Mode", 0), P_U("Width", 1), P_U("Height", 1)}},
     [EFF_OPACITYMETADATA] = {&CLSID_D2D1OpacityMetadata, L"Opacity Metadata", L"Color", 1, 1, 1, 1, {P_RECT("InputOpaqueRect")}},
-    [EFF_POINTDIFFUSE] = {&CLSID_D2D1PointDiffuse, L"Point-light Diffuse", L"Lighting", 1, 1, 1, 6,
+    [EFF_POINTDIFFUSE] = {&CLSID_D2D1PointDiffuse, L"Point-Diffuse", L"Lighting", 1, 1, 1, 6,
                           {P_V3("LightPosition", 0, 0, 0), P_F("DiffuseConstant", 1), P_F("SurfaceScale", 1), P_V3("Color", 1, 1, 1),
                            P_V2("KernelUnitLength", 1, 1), P_E("ScaleMode", 1)}},
-    [EFF_POINTSPECULAR] = {&CLSID_D2D1PointSpecular, L"Point-light Specular", L"Lighting", 1, 1, 1, 7,
+    [EFF_POINTSPECULAR] = {&CLSID_D2D1PointSpecular, L"Point-Specular", L"Lighting", 1, 1, 1, 7,
                            {P_V3("LightPosition", 0, 0, 0), P_F("SpecularExponent", 1), P_F("SpecularConstant", 1), P_F("SurfaceScale", 1),
                             P_V3("Color", 1, 1, 1), P_V2("KernelUnitLength", 1, 1), P_E("ScaleMode", 1)}},
-    [EFF_SPOTDIFFUSE] = {&CLSID_D2D1SpotDiffuse, L"Spot-light Diffuse", L"Lighting", 1, 1, 1, 9,
+    [EFF_SPOTDIFFUSE] = {&CLSID_D2D1SpotDiffuse, L"Spot-Diffuse", L"Lighting", 1, 1, 1, 9,
                          {P_V3("LightPosition", 0, 0, 0), P_V3("PointsAt", 0, 0, 0), P_F("Focus", 1), P_F("LimitingConeAngle", 90),
                           P_F("DiffuseConstant", 1), P_F("SurfaceScale", 1), P_V3("Color", 1, 1, 1), P_V2("KernelUnitLength", 1, 1),
                           P_E("ScaleMode", 1)}},
-    [EFF_SPOTSPECULAR] = {&CLSID_D2D1SpotSpecular, L"Spot-light Specular", L"Lighting", 1, 1, 1, 10,
+    [EFF_SPOTSPECULAR] = {&CLSID_D2D1SpotSpecular, L"Spot-Specular", L"Lighting", 1, 1, 1, 10,
                           {P_V3("LightPosition", 0, 0, 0), P_V3("PointsAt", 0, 0, 0), P_F("Focus", 1), P_F("LimitingConeAngle", 90),
                            P_F("SpecularExponent", 1), P_F("SpecularConstant", 1), P_F("SurfaceScale", 1), P_V3("Color", 1, 1, 1),
                            P_V2("KernelUnitLength", 1, 1), P_E("ScaleMode", 1)}},
     [EFF_TABLETRANSFER] = {&CLSID_D2D1TableTransfer, L"Table Transfer", L"Color", 1, 1, 1, 9,
                            {TRANSFER("Red"), TRANSFER("Green"), TRANSFER("Blue"), TRANSFER("Alpha"), P_B("ClampOutput")}},
     [EFF_TURBULENCE] = {&CLSID_D2D1Turbulence, L"Turbulence", L"Source", 0, 0, 0, 7,
-                        {P_V2("Offset", 0, 0), P_V2("Size", 0, 0), P_V2("BaseFrequency", 0.01f, 0.01f), P_U("NumOctaves", 1), P_U("Seed", 0),
+                        {P_V2("Offset", 0, 0), P_V2("Size", 512, 512), P_V2("BaseFrequency", 0.01f, 0.01f), P_U("NumOctaves", 1), P_I32("Seed", 0),
                          P_E("Noise", 0), P_B("Stitchable")}},
     [EFF_YCBCR] = {&CLSID_D2D1YCbCr, L"YCbCr", L"Source", 2, 2, 2, 3, {P_E("ChromaSubsampling", 0), P_M("TransformMatrix"), P_E("InterpolationMode", 1)}},
-    [EFF_RGBTOHUE] = {&CLSID_D2D1RgbToHue, L"RGB to Hue", L"Color", 1, 1, 1, 1, {P_E("OutputColorSpace", 0)}},
-    [EFF_HUETORGB] = {&CLSID_D2D1HueToRgb, L"Hue to RGB", L"Color", 1, 1, 1, 1, {P_E("InputColorSpace", 0)}},
+    [EFF_RGBTOHUE] = {&CLSID_D2D1RgbToHue, L"RgbToHue", L"Color", 1, 1, 1, 1, {P_E("OutputColorSpace", 0)}},
+    [EFF_HUETORGB] = {&CLSID_D2D1HueToRgb, L"HueToRgb", L"Color", 1, 1, 1, 1, {P_E("InputColorSpace", 0)}},
     [EFF_CHROMAKEY] = {&CLSID_D2D1ChromaKey, L"Chroma Key", L"Color", 1, 1, 1, 4,
                        {P_V3("Color", 0, 0, 0), P_F("Tolerance", 0.1f), P_B("InvertAlpha"), P_B("Feather")}},
     [EFF_EMBOSS] = {&CLSID_D2D1Emboss, L"Emboss", L"Stylize", 1, 1, 1, 2, {P_F("Height", 1), P_F("Direction", 0)}},
     [EFF_POSTERIZE] = {&CLSID_D2D1Posterize, L"Posterize", L"Stylize", 1, 1, 1, 3,
                        {P_U("RedValueCount", 4), P_U("GreenValueCount", 4), P_U("BlueValueCount", 4)}},
     [EFF_SHARPEN] = {&CLSID_D2D1Sharpen, L"Sharpen", L"Filter", 1, 1, 1, 2, {P_F("Sharpness", 0), P_F("Threshold", 0)}},
-    [EFF_STRAIGHTEN] = {&CLSID_D2D1Straighten, L"Straighten", L"Photo", 1, 1, 1, 3, {P_F("Angle", 0), P_B("MaintainSize"), P_E("ScaleMode", 0)}},
-    [EFF_TEMPERATURETINT] = {&CLSID_D2D1TemperatureTint, L"Temperature and Tint", L"Photo", 1, 1, 1, 2, {P_F("Temperature", 0), P_F("Tint", 0)}},
+    [EFF_STRAIGHTEN] = {&CLSID_D2D1Straighten, L"Straighten", L"Photo", 1, 1, 1, 3, {P_F("Angle", 0), P_B("MaintainSize"), P_E("ScaleMode", 1)}},
+    [EFF_TEMPERATURETINT] = {&CLSID_D2D1TemperatureTint, L"Temperature And Tint", L"Photo", 1, 1, 1, 2, {P_F("Temperature", 0), P_F("Tint", 0)}},
     [EFF_VIGNETTE] = {&CLSID_D2D1Vignette, L"Vignette", L"Stylize", 1, 1, 1, 3,
                       {P_V4("Color", 0, 0, 0, 1), P_F("TransitionSize", 0.1f), P_F("Strength", 0.5f)}},
     [EFF_EDGEDETECTION] = {&CLSID_D2D1EdgeDetection, L"Edge Detection", L"Filter", 1, 1, 1, 5,
                            {P_F("Strength", 0.5f), P_F("BlurRadius", 0), P_E("Mode", 0), P_B("OverlayEdges"), P_E("AlphaMode", 1)}},
     [EFF_HIGHLIGHTSSHADOWS] = {&CLSID_D2D1HighlightsShadows, L"Highlights and Shadows", L"Photo", 1, 1, 1, 5,
-                               {P_F("Highlights", 0), P_F("Shadows", 0), P_F("Clarity", 0), P_E("InputGamma", 0), P_F("MaskBlurRadius", 1.25f)}},
+                               {P_F("Highlights", 0), P_F("Shadows", 0), P_F("Clarity", 0), P_E("InputGamma", 1), P_F("MaskBlurRadius", 1.25f)}},
     [EFF_LOOKUPTABLE3D] = {&CLSID_D2D1LookupTable3D, L"Lookup Table 3D", L"Color", 1, 1, 1, 2, {P_I("Lut"), P_E("AlphaMode", 1)}},
     [EFF_ALPHAMASK] = {&CLSID_D2D1AlphaMask, L"Alpha Mask", L"Composite", 2, 2, 2, 0, {}},
     [EFF_CROSSFADE] = {&CLSID_D2D1CrossFade, L"Cross Fade", L"Composite", 2, 2, 2, 1, {P_F("Weight", 0.5f)}},
@@ -300,24 +283,6 @@ static const EffDesc g_effects[EFF_COUNT] = {
                         {P_F("InputWhiteLevel", 80), P_F("OutputWhiteLevel", 80)}},
     [EFF_HDRTONEMAP] = {&CLSID_D2D1HdrToneMap, L"HDR Tone Map", L"Color", 1, 1, 1, 3,
                         {P_F("InputMaxLuminance", 4000), P_F("OutputMaxLuminance", 300), P_E("DisplayMode", 0)}},
-};
-
-/* a list of floats of a blob property. */
-typedef struct EffBlob {
-    BYTE *data;
-    UINT32 size;
-} EffBlob;
-
-struct D2dEffect {
-    D2dObj obj;
-    const void *image_vtbl;
-    int id;
-    BYTE props[EFF_MAX_PROPS][80];
-    ID2D1Image *inputs[8];
-    UINT32 input_count;
-    BOOL cached;
-    D2D1_BUFFER_PRECISION precision;
-    D2dRt *rt;
 };
 
 static D2dClass g_effect_class;
@@ -381,7 +346,6 @@ static void effect_defaults(D2dEffect *e)
 
 /* ------------------------------------------------------------------ image access */
 
-static float ctx_scale(D2dRt *rt) { return rt->dpi_x / 96.0f; }
 
 static HRESULT image_get(D2dRt *rt, ID2D1Image *image, IRect want, D2dImageData *out, int depth);
 static HRESULT image_bounds(D2dRt *rt, ID2D1Image *image, IRect *b, int depth);
@@ -462,15 +426,22 @@ static HRESULT crop_data(const D2dImageData *src, IRect want, D2dImageData *out)
     HRESULT hr = data_new(out, want);
     if (FAILED(hr))
         return hr;
+    if (src->fpx && out->surface.w > 0 && out->surface.h > 0) {
+        out->fpx = D2dAllocZero((SIZE_T)out->surface.w * out->surface.h * 16);
+        if (!out->fpx)
+            return E_OUTOFMEMORY;
+    }
     for (int y = want.y0; y < want.y1; y++) {
         int sy = y - src->y;
         if (sy < 0 || sy >= src->surface.h)
             continue;
-        for (int x = want.x0; x < want.x1; x++) {
-            int sx = x - src->x;
-            if (sx >= 0 && sx < src->surface.w)
-                D2dSurfaceRow(&out->surface, y - want.y0)[x - want.x0] = D2dSurfaceRow(&src->surface, sy)[sx];
-        }
+        int x0 = want.x0 > src->x ? want.x0 : src->x, x1 = want.x1 < src->x + src->surface.w ? want.x1 : src->x + src->surface.w;
+        if (x1 <= x0)
+            continue;
+        memcpy(D2dSurfaceRow(&out->surface, y - want.y0) + (x0 - want.x0), D2dSurfaceRow(&src->surface, sy) + (x0 - src->x), (SIZE_T)(x1 - x0) * 4);
+        if (out->fpx)
+            memcpy(out->fpx + ((SIZE_T)(y - want.y0) * out->surface.w + (x0 - want.x0)) * 4,
+                   src->fpx + ((SIZE_T)sy * src->surface.w + (x0 - src->x)) * 4, (SIZE_T)(x1 - x0) * 16);
     }
     return S_OK;
 }
@@ -491,186 +462,18 @@ static HRESULT input_area(D2dRt *rt, D2dEffect *e, UINT32 i, IRect want, D2dImag
 }
 
 
-/* straight color of a premultiplied pixel as floats 0..1 */
-static void unpack(uint32_t p, float c[4])
-{
-    float a = (p >> 24) / 255.0f;
-    c[3] = a;
-    if (a > 0) {
-        c[0] = ((p >> 16) & 255) / 255.0f / a;
-        c[1] = ((p >> 8) & 255) / 255.0f / a;
-        c[2] = (p & 255) / 255.0f / a;
-    } else {
-        c[0] = c[1] = c[2] = 0;
-    }
-}
-
-static void gaussian(D2dSurface *s, float sigma)
-{
-    if (!(sigma > 0.0f))
-        return;
-    int radius = (int)(sigma * 3.0f + 0.999f);
-    if (radius < 1)
-        radius = 1;
-    float *k = D2dAlloc((SIZE_T)(2 * radius + 1) * sizeof(float));
-    float *tmp = D2dAlloc((SIZE_T)s->w * s->h * 4 * sizeof(float));
-    if (!k || !tmp) {
-        D2dFree(k);
-        D2dFree(tmp);
-        return;
-    }
-    float sum = 0;
-    for (int i = -radius; i <= radius; i++) {
-        k[i + radius] = D2dExpF(-(i * i) / (2 * sigma * sigma));
-        sum += k[i + radius];
-    }
-    for (int i = 0; i <= 2 * radius; i++)
-        k[i] /= sum;
-    for (int y = 0; y < s->h; y++) {
-        for (int x = 0; x < s->w; x++) {
-            float a[4] = {0, 0, 0, 0};
-            for (int i = -radius; i <= radius; i++) {
-                int xx = x + i;
-                if (xx < 0 || xx >= s->w)
-                    continue;
-                uint32_t p = D2dSurfaceRow(s, y)[xx];
-                float w = k[i + radius];
-                a[0] += ((p >> 24)) * w;
-                a[1] += ((p >> 16) & 255) * w;
-                a[2] += ((p >> 8) & 255) * w;
-                a[3] += (p & 255) * w;
-            }
-            float *t = tmp + ((SIZE_T)y * s->w + x) * 4;
-            t[0] = a[0]; t[1] = a[1]; t[2] = a[2]; t[3] = a[3];
-        }
-    }
-    for (int y = 0; y < s->h; y++) {
-        for (int x = 0; x < s->w; x++) {
-            float a[4] = {0, 0, 0, 0};
-            for (int i = -radius; i <= radius; i++) {
-                int yy = y + i;
-                if (yy < 0 || yy >= s->h)
-                    continue;
-                const float *t = tmp + ((SIZE_T)yy * s->w + x) * 4;
-                float w = k[i + radius];
-                a[0] += t[0] * w; a[1] += t[1] * w; a[2] += t[2] * w; a[3] += t[3] * w;
-            }
-            D2dSurfaceRow(s, y)[x] = ((uint32_t)(a[0] + 0.5f) << 24) | ((uint32_t)(a[1] + 0.5f) << 16) | ((uint32_t)(a[2] + 0.5f) << 8) | (uint32_t)(a[3] + 0.5f);
-        }
-    }
-    D2dFree(k);
-    D2dFree(tmp);
-}
-
-static uint32_t blend_mode_px(uint32_t d, uint32_t s, UINT32 mode)
-{
-    float dc[4], sc[4];
-    unpack(d, dc);
-    unpack(s, sc);
-    float ad = dc[3], as = sc[3], ar = as + ad - as * ad, o[3];
-    for (int i = 0; i < 3; i++) {
-        float cb = dc[i], cs = sc[i], b;
-        switch (mode) {
-        case D2D1_BLEND_MODE_MULTIPLY: b = cb * cs; break;
-        case D2D1_BLEND_MODE_SCREEN: b = cb + cs - cb * cs; break;
-        case D2D1_BLEND_MODE_DARKEN: b = D2dMinF(cb, cs); break;
-        case D2D1_BLEND_MODE_LIGHTEN: b = D2dMaxF(cb, cs); break;
-        case D2D1_BLEND_MODE_LINEAR_BURN: b = D2dMaxF(cb + cs - 1, 0); break;
-        case D2D1_BLEND_MODE_LINEAR_DODGE: b = D2dMinF(cb + cs, 1); break;
-        case D2D1_BLEND_MODE_OVERLAY: b = cb <= 0.5f ? 2 * cb * cs : 1 - 2 * (1 - cb) * (1 - cs); break;
-        case D2D1_BLEND_MODE_HARD_LIGHT: b = cs <= 0.5f ? 2 * cb * cs : 1 - 2 * (1 - cb) * (1 - cs); break;
-        case D2D1_BLEND_MODE_DIFFERENCE: b = cb > cs ? cb - cs : cs - cb; break;
-        case D2D1_BLEND_MODE_EXCLUSION: b = cb + cs - 2 * cb * cs; break;
-        case D2D1_BLEND_MODE_COLOR_BURN: b = cs <= 0 ? 0 : D2dMaxF(1 - (1 - cb) / cs, 0); break;
-        case D2D1_BLEND_MODE_COLOR_DODGE: b = cs >= 1 ? 1 : D2dMinF(cb / (1 - cs), 1); break;
-        case D2D1_BLEND_MODE_SUBTRACT: b = D2dMaxF(cb - cs, 0); break;
-        case D2D1_BLEND_MODE_DIVISION: b = cs <= 0 ? 1 : D2dMinF(cb / cs, 1); break;
-        default: b = cs; break;
-        }
-        /* the standard compositing formula with the blend function in place of the source color. */
-        float co = (1 - as) * ad * cb + (1 - ad) * as * cs + as * ad * b;
-        o[i] = ar > 0 ? co / ar : 0;
-        (void)o;
-        o[i] = co;
-    }
-    return ((uint32_t)(D2dClampF(ar, 0, 1) * 255 + 0.5f) << 24) | ((uint32_t)(D2dClampF(o[0], 0, 1) * 255 + 0.5f) << 16) |
-           ((uint32_t)(D2dClampF(o[1], 0, 1) * 255 + 0.5f) << 8) | (uint32_t)(D2dClampF(o[2], 0, 1) * 255 + 0.5f);
-}
-
-static uint32_t composite_px(uint32_t d, uint32_t s, UINT32 mode)
-{
-    uint32_t sa = s >> 24, da = d >> 24;
-    uint32_t fs, fd;
-    switch (mode) {
-    case D2D1_COMPOSITE_MODE_DESTINATION_OVER: fs = 255 - da; fd = 255; break;
-    case D2D1_COMPOSITE_MODE_SOURCE_IN: fs = da; fd = 0; break;
-    case D2D1_COMPOSITE_MODE_DESTINATION_IN: fs = 0; fd = sa; break;
-    case D2D1_COMPOSITE_MODE_SOURCE_OUT: fs = 255 - da; fd = 0; break;
-    case D2D1_COMPOSITE_MODE_DESTINATION_OUT: fs = 0; fd = 255 - sa; break;
-    case D2D1_COMPOSITE_MODE_SOURCE_ATOP: fs = da; fd = 255 - sa; break;
-    case D2D1_COMPOSITE_MODE_DESTINATION_ATOP: fs = 255 - da; fd = sa; break;
-    case D2D1_COMPOSITE_MODE_XOR: fs = 255 - da; fd = 255 - sa; break;
-    case D2D1_COMPOSITE_MODE_PLUS: fs = 255; fd = 255; break;
-    case D2D1_COMPOSITE_MODE_SOURCE_COPY:
-    case D2D1_COMPOSITE_MODE_BOUNDED_SOURCE_COPY: fs = 255; fd = 0; break;
-    case D2D1_COMPOSITE_MODE_MASK_INVERT: fs = 0; fd = 255 - sa; break;
-    default: fs = 255; fd = 255 - sa; break;
-    }
-    uint32_t out = 0;
-    for (int sh = 0; sh < 32; sh += 8) {
-        uint32_t v = mime_vec_div255(((s >> sh) & 255) * fs) + mime_vec_div255(((d >> sh) & 255) * fd);
-        out |= (v > 255 ? 255 : v) << sh;
-    }
-    return out;
-}
-
 static HRESULT effect_render(D2dRt *rt, D2dEffect *e, IRect want, D2dImageData *out, int depth);
 
 static HRESULT effect_bounds(D2dRt *rt, D2dEffect *e, IRect *b, int depth)
 {
+    if (e->id != EFF_FLOOD && e->id != EFF_COLORMANAGEMENT)
+        return D2dFxBounds(rt, e, b, depth);
     IRect in = {0, 0, 0, 0};
-    BOOL have = FALSE;
-    for (UINT32 i = 0; i < e->input_count; i++) {
-        IRect r = {0, 0, 0, 0};
-        if (e->inputs[i] && SUCCEEDED(image_bounds(rt, e->inputs[i], &r, depth + 1))) {
-            in = have ? irect_union(in, r) : r;
-            have = TRUE;
-        }
-    }
-    float s = ctx_scale(rt);
-    switch (e->id) {
-    case EFF_FLOOD:
-    case EFF_BORDER:
-    case EFF_TILE:
+    if (e->id == EFF_FLOOD) {
         in.x0 = in.y0 = -INF_EXTENT;
         in.x1 = in.y1 = INF_EXTENT;
-        break;
-    case EFF_BLUR:
-    case EFF_SHADOW: {
-        int r = (int)(pf(e, 0)[0] * s * 3.0f + 0.999f);
-        in.x0 -= r; in.y0 -= r; in.x1 += r; in.y1 += r;
-        break;
-    }
-    case EFF_CROP: {
-        const float *v = pf(e, 0);
-        IRect c = {v[0] <= -1e30f ? -INF_EXTENT : (int)D2dFloorF(v[0] * s), v[1] <= -1e30f ? -INF_EXTENT : (int)D2dFloorF(v[1] * s),
-                   v[2] >= 1e30f ? INF_EXTENT : (int)(v[2] * s + 0.999f), v[3] >= 1e30f ? INF_EXTENT : (int)(v[3] * s + 0.999f)};
-        in = irect_intersect(in, c);
-        break;
-    }
-    case EFF_AFFINE: {
-        const float *m = pf(e, 2);
-        D2D1_POINT_2F c[4] = {{(float)in.x0, (float)in.y0}, {(float)in.x1, (float)in.y0}, {(float)in.x1, (float)in.y1}, {(float)in.x0, (float)in.y1}};
-        float x0 = FLT_MAX, y0 = FLT_MAX, x1 = -FLT_MAX, y1 = -FLT_MAX;
-        for (int i = 0; i < 4; i++) {
-            float x = c[i].x * m[0] + c[i].y * m[2] + m[4] * s, y = c[i].x * m[1] + c[i].y * m[3] + m[5] * s;
-            x0 = D2dMinF(x0, x); y0 = D2dMinF(y0, y); x1 = D2dMaxF(x1, x); y1 = D2dMaxF(y1, y);
-        }
-        in.x0 = (int)D2dFloorF(x0); in.y0 = (int)D2dFloorF(y0); in.x1 = (int)(x1 + 0.999f); in.y1 = (int)(y1 + 0.999f);
-        break;
-    }
-    default:
-        break;
+    } else if (e->input_count && e->inputs[0]) {
+        image_bounds(rt, e->inputs[0], &in, depth + 1);
     }
     *b = in;
     return S_OK;
@@ -774,18 +577,14 @@ HRESULT D2dImageBounds(D2dRt *rt, ID2D1Image *image, D2D1_RECT_F *bounds)
 
 static HRESULT effect_render(D2dRt *rt, D2dEffect *e, IRect want, D2dImageData *out, int depth)
 {
-    float s = ctx_scale(rt);
+    if (e->id != EFF_FLOOD && e->id != EFF_COLORMANAGEMENT)
+        return D2dFxRender(rt, e, want, out, depth);
     IRect natural;
     effect_bounds(rt, e, &natural, depth);
     IRect area = irect_intersect(want, natural);
     if (irect_empty(area))
         area = (IRect){want.x0, want.y0, want.x0, want.y0};
     HRESULT hr = S_OK;
-    if (e->id >= EFF_PASSTHROUGH) {
-        if (!e->input_count)
-            return data_new(out, area);
-        return input_area(rt, e, 0, area, out, depth);
-    }
     switch (e->id) {
     case EFF_FLOOD: {
         hr = data_new(out, area);
@@ -795,163 +594,6 @@ static HRESULT effect_render(D2dRt *rt, D2dEffect *e, IRect want, D2dImageData *
         uint32_t px = D2dPackPremul(c[0], c[1], c[2], c[3]);
         for (int i = 0; i < out->surface.w * out->surface.h; i++)
             out->surface.px[i] = px;
-        break;
-    }
-    case EFF_BLUR:
-    case EFF_SHADOW: {
-        float sigma = pf(e, 0)[0] * s;
-        int r = (int)(sigma * 3.0f + 0.999f);
-        IRect src_area = {area.x0 - r, area.y0 - r, area.x1 + r, area.y1 + r};
-        D2dImageData in;
-        hr = input_area(rt, e, 0, src_area, &in, depth);
-        if (FAILED(hr))
-            break;
-        if (e->id == EFF_SHADOW) {
-            const float *c = pf(e, 1);
-            for (int i = 0; i < in.surface.w * in.surface.h; i++) {
-                uint32_t a = in.surface.px[i] >> 24;
-                in.surface.px[i] = D2dPackPremul(c[0], c[1], c[2], c[3] * a / 255.0f);
-            }
-        }
-        gaussian(&in.surface, sigma);
-        hr = crop_data(&in, area, out);
-        D2dImageDataFree(&in);
-        break;
-    }
-    case EFF_COMPOSITE:
-    case EFF_BLEND:
-    case EFF_ARITHMETIC: {
-        hr = data_new(out, area);
-        if (FAILED(hr))
-            break;
-        UINT32 mode = e->id == EFF_ARITHMETIC ? 0 : *pu(e, 0);
-        if (e->input_count == 0)
-            break;
-        D2dImageData base;
-        hr = input_area(rt, e, 0, area, &base, depth);
-        if (FAILED(hr))
-            break;
-        memcpy(out->surface.px, base.surface.px, (SIZE_T)base.surface.w * base.surface.h * 4);
-        D2dImageDataFree(&base);
-        for (UINT32 i = 1; i < e->input_count; i++) {
-            D2dImageData in;
-            hr = input_area(rt, e, i, area, &in, depth);
-            if (FAILED(hr))
-                break;
-            /* the first input is the destination, the later ones the sources. */
-            for (int j = 0; j < out->surface.w * out->surface.h; j++) {
-                uint32_t d = out->surface.px[j], sp = in.surface.px[j];
-                if (e->id == EFF_COMPOSITE) {
-                    out->surface.px[j] = composite_px(d, sp, mode);
-                } else if (e->id == EFF_BLEND) {
-                    /* in blend the first input is the background and the second the foreground. */
-                    out->surface.px[j] = blend_mode_px(d, sp, mode);
-                } else {
-                    const float *k = pf(e, 0);
-                    uint32_t o = 0;
-                    for (int sh = 0; sh < 32; sh += 8) {
-                        float sv = ((sp >> sh) & 255) / 255.0f, dv = ((d >> sh) & 255) / 255.0f;
-                        float v = k[0] * sv * dv + k[1] * sv + k[2] * dv + k[3];
-                        o |= (uint32_t)(D2dClampF(v, 0, 1) * 255 + 0.5f) << sh;
-                    }
-                    uint32_t a = o >> 24;
-                    for (int sh = 0; sh < 24; sh += 8) {
-                        uint32_t c = (o >> sh) & 255;
-                        if (c > a)
-                            o = (o & ~(255u << sh)) | (a << sh);
-                    }
-                    out->surface.px[j] = o;
-                }
-            }
-            D2dImageDataFree(&in);
-        }
-        break;
-    }
-    case EFF_CROP: {
-        D2dImageData in;
-        hr = input_area(rt, e, 0, area, &in, depth);
-        if (FAILED(hr))
-            break;
-        *out = in;
-        break;
-    }
-    case EFF_AFFINE: {
-        D2dImageData in;
-        IRect ib;
-        image_bounds(rt, e->inputs[0] ? e->inputs[0] : nullptr, &ib, depth + 1);
-        hr = input_area(rt, e, 0, ib, &in, depth);
-        if (FAILED(hr))
-            break;
-        hr = data_new(out, area);
-        if (FAILED(hr)) {
-            D2dImageDataFree(&in);
-            break;
-        }
-        D2dMatrix m = {pf(e, 2)[0], pf(e, 2)[1], pf(e, 2)[2], pf(e, 2)[3], pf(e, 2)[4] * s, pf(e, 2)[5] * s}, inv;
-        if (D2dMatInvert(&inv, &m)) {
-            D2dPaint p;
-            D2dMatrix to_dev = m;
-            to_dev._31 += 0;
-            MimeVecRect clamp = {0, 0, in.surface.w, in.surface.h};
-            D2dMatrix tex_to_dev = {m._11, m._12, m._21, m._22, m._31 + in.x * m._11 + in.y * m._21, m._32 + in.x * m._12 + in.y * m._22};
-            D2dMatrix to_out = {1, 0, 0, 1, (float)-area.x0, (float)-area.y0};
-            D2dMatMul(&tex_to_dev, &tex_to_dev, &to_out);
-            extern BOOL D2dPaintTexture(D2dPaint *, const D2dSurface *, const D2dMatrix *, float, D2D1_INTERPOLATION_MODE, D2D1_EXTEND_MODE, D2D1_EXTEND_MODE, const MimeVecRect *);
-            if (D2dPaintTexture(&p, &in.surface, &tex_to_dev, 1.0f, *pu(e, 0) == 0 ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR : D2D1_INTERPOLATION_MODE_LINEAR, D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_CLAMP, &clamp)) {
-                for (int y = 0; y < out->surface.h; y++) {
-                    D2dPaintRow(rt, &p, 0, y, out->surface.w, D2dSurfaceRow(&out->surface, y));
-                    /* pixels that fall outside the source stay transparent. */
-                    for (int x = 0; x < out->surface.w; x++) {
-                        float px = (x + 0.5f) * p.inverse._11 + (y + 0.5f) * p.inverse._21 + p.inverse._31;
-                        float py = (x + 0.5f) * p.inverse._12 + (y + 0.5f) * p.inverse._22 + p.inverse._32;
-                        if (px < 0 || py < 0 || px > in.surface.w || py > in.surface.h)
-                            D2dSurfaceRow(&out->surface, y)[x] = 0;
-                    }
-                }
-            }
-        }
-        D2dImageDataFree(&in);
-        break;
-    }
-    case EFF_BORDER:
-    case EFF_TILE: {
-        D2dImageData in;
-        IRect ib;
-        if (!e->inputs[0] || FAILED(image_bounds(rt, e->inputs[0], &ib, depth + 1))) {
-            hr = data_new(out, area);
-            break;
-        }
-        if (e->id == EFF_TILE) {
-            const float *v = pf(e, 0);
-            IRect t = {(int)D2dFloorF(v[0] * s), (int)D2dFloorF(v[1] * s), (int)(v[2] * s + 0.999f), (int)(v[3] * s + 0.999f)};
-            ib = irect_intersect(ib, t);
-        }
-        hr = input_area(rt, e, 0, ib, &in, depth);
-        if (FAILED(hr))
-            break;
-        hr = data_new(out, area);
-        if (SUCCEEDED(hr) && in.surface.w > 0 && in.surface.h > 0) {
-            int w = in.surface.w, h = in.surface.h;
-            for (int y = area.y0; y < area.y1; y++) {
-                for (int x = area.x0; x < area.x1; x++) {
-                    int sx = x - in.x, sy = y - in.y;
-                    if (e->id == EFF_TILE) {
-                        sx = ((sx % w) + w) % w;
-                        sy = ((sy % h) + h) % h;
-                    } else {
-                        UINT32 mx = *pu(e, 0), my = *pu(e, 1);
-                        if (sx < 0 || sx >= w)
-                            sx = mx == 0 ? (sx < 0 ? 0 : w - 1) : (mx == 1 ? ((sx % w) + w) % w : -1);
-                        if (sy < 0 || sy >= h)
-                            sy = my == 0 ? (sy < 0 ? 0 : h - 1) : (my == 1 ? ((sy % h) + h) % h : -1);
-                        if (sx < 0 || sy < 0)
-                            continue;
-                    }
-                    D2dSurfaceRow(&out->surface, y - area.y0)[x - area.x0] = D2dSurfaceRow(&in.surface, sy)[sx];
-                }
-            }
-        }
-        D2dImageDataFree(&in);
         break;
     }
     case EFF_COLORMANAGEMENT: {
@@ -965,149 +607,8 @@ static HRESULT effect_render(D2dRt *rt, D2dEffect *e, IRect want, D2dImageData *
             *out = in;
         break;
     }
-    default: {
-        /* the per pixel effects. */
-        D2dImageData in;
-        hr = input_area(rt, e, 0, area, &in, depth);
-        if (FAILED(hr))
-            break;
-        for (int i = 0; i < in.surface.w * in.surface.h; i++) {
-            uint32_t p = in.surface.px[i];
-            float c[4];
-            unpack(p, c);
-            float o[4] = {c[0], c[1], c[2], c[3]};
-            switch (e->id) {
-            case EFF_COLORMATRIX:
-            case EFF_GRAYSCALE:
-            case EFF_SEPIA:
-            case EFF_SATURATION:
-            case EFF_HUEROTATE:
-            case EFF_LUMINANCE:
-            case EFF_INVERT:
-            case EFF_BRIGHTNESS:
-            case EFF_CONTRAST:
-            case EFF_EXPOSURE:
-            case EFF_TINT:
-            case EFF_OPACITY: {
-                float m[5][4] = {{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}, {0, 0, 0, 1}, {0, 0, 0, 0}};
-                BOOL straight = TRUE;
-                switch (e->id) {
-                case EFF_COLORMATRIX:
-                    memcpy(m, pf(e, 0), sizeof(m));
-                    straight = *pu(e, 1) == D2D1_COLORMATRIX_ALPHA_MODE_STRAIGHT;
-                    break;
-                case EFF_GRAYSCALE:
-                    for (int r = 0; r < 3; r++) {
-                        m[0][r] = 0.2125f; m[1][r] = 0.7154f; m[2][r] = 0.0721f;
-                    }
-                    break;
-                case EFF_SEPIA: {
-                    float t = D2dClampF(pf(e, 0)[0], 0, 1);
-                    float sepia[3][3] = {{0.393f, 0.349f, 0.272f}, {0.769f, 0.686f, 0.534f}, {0.189f, 0.168f, 0.131f}};
-                    for (int a = 0; a < 3; a++)
-                        for (int b = 0; b < 3; b++)
-                            m[a][b] = (a == b ? 1.0f - t : 0.0f) + t * sepia[a][b];
-                    break;
-                }
-                case EFF_SATURATION: {
-                    float sat = pf(e, 0)[0];
-                    float lr = 0.2125f, lg = 0.7154f, lb = 0.0721f;
-                    m[0][0] = lr * (1 - sat) + sat; m[0][1] = lr * (1 - sat); m[0][2] = lr * (1 - sat);
-                    m[1][0] = lg * (1 - sat); m[1][1] = lg * (1 - sat) + sat; m[1][2] = lg * (1 - sat);
-                    m[2][0] = lb * (1 - sat); m[2][1] = lb * (1 - sat); m[2][2] = lb * (1 - sat) + sat;
-                    break;
-                }
-                case EFF_HUEROTATE: {
-                    float sn, cs;
-                    D2dSinCosF(pf(e, 0)[0] * 0.017453292f, &sn, &cs);
-                    float h[3][3] = {{0.213f + cs * 0.787f - sn * 0.213f, 0.213f - cs * 0.213f + sn * 0.143f, 0.213f - cs * 0.213f - sn * 0.787f},
-                                     {0.715f - cs * 0.715f - sn * 0.715f, 0.715f + cs * 0.285f + sn * 0.140f, 0.715f - cs * 0.715f + sn * 0.715f},
-                                     {0.072f - cs * 0.072f + sn * 0.928f, 0.072f - cs * 0.072f - sn * 0.283f, 0.072f + cs * 0.928f + sn * 0.072f}};
-                    for (int a = 0; a < 3; a++)
-                        for (int b = 0; b < 3; b++)
-                            m[a][b] = h[a][b];
-                    break;
-                }
-                case EFF_LUMINANCE:
-                    m[0][0] = m[1][1] = m[2][2] = 0;
-                    m[0][3] = 0.2125f; m[1][3] = 0.7154f; m[2][3] = 0.0721f; m[3][3] = 0;
-                    break;
-                case EFF_INVERT:
-                    m[0][0] = m[1][1] = m[2][2] = -1;
-                    m[4][0] = m[4][1] = m[4][2] = 1;
-                    break;
-                case EFF_BRIGHTNESS: {
-                    const float *w = pf(e, 0), *bl = pf(e, 1);
-                    float tr[3] = {c[0], c[1], c[2]};
-                    for (int r = 0; r < 3; r++) {
-                        /* a curve through the black and white points of each of the two ends. */
-                        float x = tr[r];
-                        float lo = bl[0], hi = w[0];
-                        float lo2 = bl[1], hi2 = w[1];
-                        (void)lo2;
-                        (void)hi2;
-                        o[r] = lo + (hi - lo) * x;
-                    }
-                    straight = TRUE;
-                    
-                    break;
-                }
-                case EFF_CONTRAST: {
-                    float k = pf(e, 0)[0];
-                    float slope = k > 0 ? 1.0f / (1.0f - D2dMinF(k, 0.999f)) : 1.0f + k;
-                    for (int r = 0; r < 3; r++) {
-                        m[r][r] = slope;
-                        m[4][r] = 0.5f - slope * 0.5f;
-                    }
-                    break;
-                }
-                case EFF_EXPOSURE: {
-                    float g = D2dPowF(2.0f, pf(e, 0)[0]);
-                    for (int r = 0; r < 3; r++)
-                        m[r][r] = g;
-                    break;
-                }
-                case EFF_TINT: {
-                    const float *t = pf(e, 0);
-                    m[0][0] = t[0]; m[1][1] = t[1]; m[2][2] = t[2]; m[3][3] = t[3];
-                    break;
-                }
-                default:
-                    m[3][3] = pf(e, 0)[0];
-                    straight = FALSE;
-                    break;
-                }
-                if (e->id != EFF_BRIGHTNESS) {
-                    float in4[4] = {c[0], c[1], c[2], c[3]};
-                    if (!straight) {
-                        in4[0] *= c[3]; in4[1] *= c[3]; in4[2] *= c[3];
-                    }
-                    for (int k = 0; k < 4; k++)
-                        o[k] = in4[0] * m[0][k] + in4[1] * m[1][k] + in4[2] * m[2][k] + in4[3] * m[3][k] + m[4][k];
-                    if (!straight) {
-                        /* premultiplied in and out. */
-                        o[0] = D2dClampF(o[0], 0, 1); o[1] = D2dClampF(o[1], 0, 1); o[2] = D2dClampF(o[2], 0, 1); o[3] = D2dClampF(o[3], 0, 1);
-                        in.surface.px[i] = ((uint32_t)(o[3] * 255 + 0.5f) << 24) | ((uint32_t)(D2dMinF(o[0], o[3]) * 255 + 0.5f) << 16) |
-                                           ((uint32_t)(D2dMinF(o[1], o[3]) * 255 + 0.5f) << 8) | (uint32_t)(D2dMinF(o[2], o[3]) * 255 + 0.5f);
-                        continue;
-                    }
-                }
-                break;
-            }
-            case EFF_PREMULTIPLY:
-                in.surface.px[i] = D2dPremulPixel(p);
-                continue;
-            case EFF_UNPREMULTIPLY:
-                in.surface.px[i] = D2dUnpremulPixel(p);
-                continue;
-            default:
-                break;
-            }
-            in.surface.px[i] = D2dPackPremul(o[0], o[1], o[2], o[3]);
-        }
-        *out = in;
+    default:
         break;
-    }
     }
     return hr;
 }
@@ -1365,10 +866,19 @@ static HRESULT STDMETHODCALLTYPE ef_set(ID2D1Effect *This, UINT32 index, D2D1_PR
     if (p->type == D2D1_PROPERTY_TYPE_BLOB) {
         if (!size || size % 4)
             return E_INVALIDARG;
+        HRESULT hr = D2dFxCheckValue(e, index, (BYTE *)data, size);
+        if (FAILED(hr))
+            return hr;
         return blob_set(pb(e, (int)index), data, size) ? S_OK : E_OUTOFMEMORY;
     }
     if (size != p->size)
         return E_INVALIDARG;
+    BYTE value[80];
+    memcpy(value, data, size);
+    HRESULT hr = D2dFxCheckValue(e, index, value, size);
+    if (FAILED(hr))
+        return hr;
+    data = value;
     if (p->type == D2D1_PROPERTY_TYPE_COLOR_CONTEXT || p->type == D2D1_PROPERTY_TYPE_IUNKNOWN) {
         IUnknown *now = *(IUnknown *const *)data, *old = *(IUnknown **)e->props[index];
         D2D_ADDREF(now);
@@ -1401,6 +911,8 @@ static HRESULT STDMETHODCALLTYPE ef_get(ID2D1Effect *This, UINT32 index, D2D1_PR
     const EffProp *p = &desc_of(e)->props[index];
     if (type != D2D1_PROPERTY_TYPE_UNKNOWN && type != p->type)
         return E_INVALIDARG;
+    if (e->id == EFF_HISTOGRAM && index == 2)
+        return D2dFxHistogram(e, data, size);
     if (p->type == D2D1_PROPERTY_TYPE_BLOB) {
         const EffBlob *b = pb(e, (int)index);
         if (size < b->size)
@@ -1436,6 +948,8 @@ static UINT32 STDMETHODCALLTYPE ef_value_size(ID2D1Effect *This, UINT32 index)
     }
     if (index >= desc_of(e)->nprops)
         return 0;
+    if (e->id == EFF_HISTOGRAM && index == 2)
+        return *pu(e, 0) * 4;
     return desc_of(e)->props[index].type == D2D1_PROPERTY_TYPE_BLOB ? pb(e, (int)index)->size : desc_of(e)->props[index].size;
 }
 static HRESULT STDMETHODCALLTYPE ef_subprops(ID2D1Effect *This, UINT32 index, ID2D1Properties **out)
@@ -1496,6 +1010,7 @@ static void effect_destroy(D2dObj *o)
             D2dFree(pb(e, (int)i)->data);
         }
     }
+    D2dFree(e->histogram);
 }
 
 static const void *const g_effect_vtbl[] = {D2dQueryInterface, D2dAddRef, D2dRelease, ef_count, ef_name, ef_name_length,

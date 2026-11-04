@@ -2,7 +2,7 @@
  * devices and device contexts: bitmaps with options, color contexts, effects and images, the later interfaces of the
  * context that this library answers or fails.
  */
-#include "d2d_private.h"
+#include "effects.h"
 #include <float.h>
 #include <stddef.h>
 
@@ -759,9 +759,8 @@ static void STDMETHODCALLTYPE cx_unsupported_draw(ID2D1DeviceContext6 *This)
 }
 static HRESULT STDMETHODCALLTYPE cx_lookup(ID2D1DeviceContext6 *This, UINT32 p, const UINT32 *e, const BYTE *d, UINT32 s, const UINT32 *st, void **out)
 {
-    if (out)
-        *out = nullptr;
-    return E_NOTIMPL;
+    RT;
+    return D2dLut3DCreate(rt->obj.factory, (D2D1_BUFFER_PRECISION)p, e, d, s, st, (ID2D1LookupTable3D **)out);
 }
 static HRESULT STDMETHODCALLTYPE cx_image_dxgi(ID2D1DeviceContext6 *This, IDXGISurface *const *s, UINT32 n, D2D1_COLOR_SPACE sp, UINT32 o, void **out)
 {
