@@ -34,6 +34,11 @@ struct GlDlBuilder {
     uint32_t unknown[3];
     uint32_t set; /* the ones set since glBegin. */
     GLfloat current[3][4];
+
+    /* a glBegin whose glEnd came and that is not made a batch yet: the next one of the same kind goes on in the same
+       vertices, so a list of many small shapes is a few draws. what is set meanwhile is not recorded, the vertices that
+       follow have it and a batch that ends has it current. */
+    BOOL pending;
 };
 
 typedef struct OpHeader {
@@ -176,9 +181,13 @@ void gl_dl_destroy(GlContext *ctx)
     ctx->dl.mode = 0;
 }
 
+static void flush_pending(GlContext *ctx);
+
 uint8_t *gl_dl_emit(GlContext *ctx, uint32_t op, size_t payload)
 {
     GlDlBuilder *b = ctx->dl.b;
+    if (b->pending && !ctx->dl.in_begin)
+        flush_pending(ctx);
     size_t total = sizeof(OpHeader) + ((payload + 7) & ~(size_t)7);
     if (b->failed || total > MAX_STREAM || b->size + total > MAX_STREAM) {
         b->failed = TRUE;
@@ -333,7 +342,7 @@ BOOL gl_dl_color(GlContext *ctx, GLfloat r, GLfloat g, GLfloat b_, GLfloat a)
     b->current[0][2] = b_;
     b->current[0][3] = a;
     b->known |= 1;
-    if (ctx->dl.in_begin) {
+    if (ctx->dl.in_begin || b->pending) {
         b->set |= 1;
     } else {
         uint8_t *p = gl_dl_emit(ctx, GL_DL_OP_COLOR, 32);
@@ -350,7 +359,7 @@ BOOL gl_dl_normal(GlContext *ctx, GLfloat x, GLfloat y, GLfloat z)
     b->current[1][1] = y;
     b->current[1][2] = z;
     b->known |= 2;
-    if (ctx->dl.in_begin) {
+    if (ctx->dl.in_begin || b->pending) {
         b->set |= 2;
     } else {
         uint8_t *p = gl_dl_emit(ctx, GL_DL_OP_NORMAL, 32);
@@ -369,7 +378,7 @@ BOOL gl_dl_texcoord(GlContext *ctx, GLuint unit, GLfloat s, GLfloat t, GLfloat r
         b->current[2][2] = r;
         b->current[2][3] = q;
         b->known |= 4;
-        if (ctx->dl.in_begin) {
+        if (ctx->dl.in_begin || b->pending) {
             b->set |= 4;
             return ctx->dl.mode == GL_COMPILE;
         }
@@ -517,6 +526,14 @@ static void emit_batch(GlContext *ctx, GlDlBatch *batch)
 static void begin_batch(GlContext *ctx, GLenum mode)
 {
     GlDlBuilder *b = ctx->dl.b;
+    if (b->pending) {
+        if (b->begin_mode == mode && independent(mode) && b->vertex_count < (1u << 21)) {
+            b->pending = FALSE;
+            ctx->dl.in_begin = TRUE;
+            return;
+        }
+        flush_pending(ctx);
+    }
     ctx->dl.in_begin = TRUE;
     b->begin_mode = mode;
     b->vertex_count = 0;
@@ -524,10 +541,10 @@ static void begin_batch(GlContext *ctx, GLenum mode)
     b->unknown[0] = b->unknown[1] = b->unknown[2] = 0;
 }
 
-static void end_batch(GlContext *ctx)
+/* the pending glBegin made into the batches that draw it. */
+static void bake_pending(GlContext *ctx)
 {
     GlDlBuilder *b = ctx->dl.b;
-    ctx->dl.in_begin = FALSE;
     if (b->failed)
         return;
     uint32_t count = gl_whole_primitives(b->begin_mode, b->vertex_count);
@@ -565,6 +582,33 @@ static void end_batch(GlContext *ctx)
         return;
     }
     emit_batch(ctx, make_batch(b, 0, count, TRUE));
+}
+
+static void flush_pending(GlContext *ctx)
+{
+    GlDlBuilder *b = ctx->dl.b;
+    if (!b->pending)
+        return;
+    b->pending = FALSE;
+    bake_pending(ctx);
+    b->vertex_count = 0;
+    b->set = 0;
+    b->unknown[0] = b->unknown[1] = b->unknown[2] = 0;
+}
+
+static void end_batch(GlContext *ctx)
+{
+    GlDlBuilder *b = ctx->dl.b;
+    ctx->dl.in_begin = FALSE;
+    /* a part of a primitive at the end is dropped now, so the next glBegin of the kind starts on one. */
+    uint32_t whole = gl_whole_primitives(b->begin_mode, b->vertex_count);
+    if (whole < b->vertex_count) {
+        b->vertex_count = whole;
+        for (int a = 0; a < 3; a++)
+            if (b->unknown[a] > whole)
+                b->unknown[a] = whole;
+    }
+    b->pending = TRUE;
 }
 
 /* ---------------------------------------------------------------- the commands recorded by hand */
@@ -1374,6 +1418,7 @@ GLAPI void APIENTRY glEndList(void)
         return;
     }
     GLuint name = ctx->dl.list;
+    flush_pending(ctx);
     ctx->dl.mode = 0;
     ctx->dl.b = nullptr;
     ctx->dl.list = 0;

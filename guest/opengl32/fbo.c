@@ -707,6 +707,10 @@ static BOOL scissor_covers(GlContext *ctx, const GlTarget *t)
 GLAPI void APIENTRY glClear(GLbitfield mask)
 {
     GL_CONTEXT_OR_RETURN();
+    if (mask & ~(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT | GL_ACCUM_BUFFER_BIT)) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
     gl_device_lock();
     take_channel(ctx);
     GlTarget t;

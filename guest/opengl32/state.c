@@ -5,6 +5,8 @@
  */
 #include "opengl32.h"
 
+static int hint_index(GLenum target);
+
 static const char g_extensions[] =
     "GL_ARB_framebuffer_object GL_EXT_framebuffer_object GL_EXT_framebuffer_blit GL_EXT_framebuffer_multisample "
     "GL_EXT_packed_depth_stencil GL_ARB_vertex_array_object GL_ARB_vertex_buffer_object GL_ARB_pixel_buffer_object "
@@ -86,6 +88,8 @@ void gl_context_init(GlContext *ctx)
     ctx->draw_buffer = ctx->read_buffer = GL_BACK;
     ctx->dirty = DIRTY_ALL;
     ctx->swap_interval = 1;
+    for (int i = 0; i < 8; i++)
+        ctx->hints[i] = GL_DONT_CARE;
     gl_ff_init(ctx);
     gl_raster_init(ctx);
 }
@@ -198,9 +202,58 @@ GLAPI GLboolean APIENTRY glIsEnabledi(GLenum cap, GLuint index)
 
 /* ---------------------------------------------------------------- blending */
 
+static BOOL blend_factor_valid(GLenum f, BOOL source)
+{
+    switch (f) {
+    case GL_ZERO:
+    case GL_ONE:
+    case GL_SRC_COLOR:
+    case GL_ONE_MINUS_SRC_COLOR:
+    case GL_DST_COLOR:
+    case GL_ONE_MINUS_DST_COLOR:
+    case GL_SRC_ALPHA:
+    case GL_ONE_MINUS_SRC_ALPHA:
+    case GL_DST_ALPHA:
+    case GL_ONE_MINUS_DST_ALPHA:
+    case GL_CONSTANT_COLOR:
+    case GL_ONE_MINUS_CONSTANT_COLOR:
+    case GL_CONSTANT_ALPHA:
+    case GL_ONE_MINUS_CONSTANT_ALPHA:
+    case GL_SRC1_COLOR:
+    case GL_ONE_MINUS_SRC1_COLOR:
+    case GL_SRC1_ALPHA:
+    case GL_ONE_MINUS_SRC1_ALPHA:
+        return TRUE;
+    case GL_SRC_ALPHA_SATURATE:
+        return source;
+    default:
+        return FALSE;
+    }
+}
+
+static BOOL blend_equation_valid(GLenum e)
+{
+    return e == GL_FUNC_ADD || e == GL_FUNC_SUBTRACT || e == GL_FUNC_REVERSE_SUBTRACT || e == GL_MIN || e == GL_MAX;
+}
+
+static BOOL compare_valid(GLenum f)
+{
+    return f >= GL_NEVER && f <= GL_ALWAYS;
+}
+
+static BOOL stencil_op_valid(GLenum o)
+{
+    return o == GL_KEEP || o == GL_ZERO || o == GL_REPLACE || o == GL_INCR || o == GL_DECR || o == GL_INVERT ||
+           o == GL_INCR_WRAP || o == GL_DECR_WRAP;
+}
+
 GLAPI void APIENTRY glBlendFunc(GLenum src, GLenum dst)
 {
     GL_CONTEXT_OR_RETURN();
+    if (!blend_factor_valid(src, TRUE) || !blend_factor_valid(dst, FALSE)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     ctx->blend.src_rgb = ctx->blend.src_alpha = src;
     ctx->blend.dst_rgb = ctx->blend.dst_alpha = dst;
     ctx->dirty |= DIRTY_PIPELINE;
@@ -209,6 +262,11 @@ GLAPI void APIENTRY glBlendFunc(GLenum src, GLenum dst)
 GLAPI void APIENTRY glBlendFuncSeparate(GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_alpha)
 {
     GL_CONTEXT_OR_RETURN();
+    if (!blend_factor_valid(src_rgb, TRUE) || !blend_factor_valid(dst_rgb, FALSE) || !blend_factor_valid(src_alpha, TRUE) ||
+        !blend_factor_valid(dst_alpha, FALSE)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     ctx->blend.src_rgb = src_rgb;
     ctx->blend.dst_rgb = dst_rgb;
     ctx->blend.src_alpha = src_alpha;
@@ -219,6 +277,10 @@ GLAPI void APIENTRY glBlendFuncSeparate(GLenum src_rgb, GLenum dst_rgb, GLenum s
 GLAPI void APIENTRY glBlendEquation(GLenum mode)
 {
     GL_CONTEXT_OR_RETURN();
+    if (!blend_equation_valid(mode)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     ctx->blend.eq_rgb = ctx->blend.eq_alpha = mode;
     ctx->dirty |= DIRTY_PIPELINE;
 }
@@ -226,6 +288,10 @@ GLAPI void APIENTRY glBlendEquation(GLenum mode)
 GLAPI void APIENTRY glBlendEquationSeparate(GLenum rgb, GLenum alpha)
 {
     GL_CONTEXT_OR_RETURN();
+    if (!blend_equation_valid(rgb) || !blend_equation_valid(alpha)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     ctx->blend.eq_rgb = rgb;
     ctx->blend.eq_alpha = alpha;
     ctx->dirty |= DIRTY_PIPELINE;
@@ -261,6 +327,10 @@ GLAPI void APIENTRY glColorMaski(GLuint index, GLboolean r, GLboolean g, GLboole
 GLAPI void APIENTRY glDepthFunc(GLenum func)
 {
     GL_CONTEXT_OR_RETURN();
+    if (!compare_valid(func)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     ctx->depth_func = func;
     ctx->dirty |= DIRTY_DEPTH;
 }
@@ -320,6 +390,10 @@ static void stencil_faces(GLenum face, int *first, int *last)
 GLAPI void APIENTRY glStencilFuncSeparate(GLenum face, GLenum func, GLint ref, GLuint mask)
 {
     GL_CONTEXT_OR_RETURN();
+    if ((face != GL_FRONT && face != GL_BACK && face != GL_FRONT_AND_BACK) || !compare_valid(func)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     int a, b;
     stencil_faces(face, &a, &b);
     for (int f = a; f <= b; f++) {
@@ -338,6 +412,11 @@ GLAPI void APIENTRY glStencilFunc(GLenum func, GLint ref, GLuint mask)
 GLAPI void APIENTRY glStencilOpSeparate(GLenum face, GLenum fail, GLenum zfail, GLenum zpass)
 {
     GL_CONTEXT_OR_RETURN();
+    if ((face != GL_FRONT && face != GL_BACK && face != GL_FRONT_AND_BACK) || !stencil_op_valid(fail) ||
+        !stencil_op_valid(zfail) || !stencil_op_valid(zpass)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     int a, b;
     stencil_faces(face, &a, &b);
     for (int f = a; f <= b; f++) {
@@ -356,6 +435,10 @@ GLAPI void APIENTRY glStencilOp(GLenum fail, GLenum zfail, GLenum zpass)
 GLAPI void APIENTRY glStencilMaskSeparate(GLenum face, GLuint mask)
 {
     GL_CONTEXT_OR_RETURN();
+    if (face != GL_FRONT && face != GL_BACK && face != GL_FRONT_AND_BACK) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     int a, b;
     stencil_faces(face, &a, &b);
     for (int f = a; f <= b; f++)
@@ -373,6 +456,10 @@ GLAPI void APIENTRY glStencilMask(GLuint mask)
 GLAPI void APIENTRY glCullFace(GLenum mode)
 {
     GL_CONTEXT_OR_RETURN();
+    if (mode != GL_FRONT && mode != GL_BACK && mode != GL_FRONT_AND_BACK) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     ctx->cull_mode = mode;
     ctx->dirty |= DIRTY_RASTER;
 }
@@ -380,6 +467,10 @@ GLAPI void APIENTRY glCullFace(GLenum mode)
 GLAPI void APIENTRY glFrontFace(GLenum mode)
 {
     GL_CONTEXT_OR_RETURN();
+    if (mode != GL_CW && mode != GL_CCW) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     ctx->front_face = mode;
     ctx->dirty |= DIRTY_RASTER;
 }
@@ -387,6 +478,11 @@ GLAPI void APIENTRY glFrontFace(GLenum mode)
 GLAPI void APIENTRY glPolygonMode(GLenum face, GLenum mode)
 {
     GL_CONTEXT_OR_RETURN();
+    if ((face != GL_FRONT && face != GL_BACK && face != GL_FRONT_AND_BACK) ||
+        (mode != GL_POINT && mode != GL_LINE && mode != GL_FILL)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
     ctx->polygon_mode = mode;
     ctx->dirty |= DIRTY_RASTER;
 }
@@ -402,12 +498,20 @@ GLAPI void APIENTRY glPolygonOffset(GLfloat factor, GLfloat units)
 GLAPI void APIENTRY glLineWidth(GLfloat width)
 {
     GL_CONTEXT_OR_RETURN();
+    if (!(width > 0)) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
     ctx->line_width = width;
 }
 
 GLAPI void APIENTRY glPointSize(GLfloat size)
 {
     GL_CONTEXT_OR_RETURN();
+    if (!(size > 0)) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
     ctx->point_size = size;
 }
 
@@ -539,15 +643,70 @@ GLAPI void APIENTRY glScissor(GLint x, GLint y, GLsizei w, GLsizei h)
     ctx->dirty |= DIRTY_SCISSOR;
 }
 
+static int hint_index(GLenum target)
+{
+    switch (target) {
+    case GL_PERSPECTIVE_CORRECTION_HINT:
+        return 0;
+    case GL_POINT_SMOOTH_HINT:
+        return 1;
+    case GL_LINE_SMOOTH_HINT:
+        return 2;
+    case GL_POLYGON_SMOOTH_HINT:
+        return 3;
+    case GL_FOG_HINT:
+        return 4;
+    case GL_GENERATE_MIPMAP_HINT:
+        return 5;
+    case GL_TEXTURE_COMPRESSION_HINT:
+        return 6;
+    case GL_FRAGMENT_SHADER_DERIVATIVE_HINT:
+        return 7;
+    default:
+        return -1;
+    }
+}
+
 GLAPI void APIENTRY glHint(GLenum target, GLenum mode)
 {
+    GL_CONTEXT_OR_RETURN();
+    int i = hint_index(target);
+    if (i < 0 || (mode != GL_DONT_CARE && mode != GL_FASTEST && mode != GL_NICEST)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    ctx->hints[i] = mode;
 }
 
 GLAPI void APIENTRY glPixelStorei(GLenum pname, GLint param)
 {
     GL_CONTEXT_OR_RETURN();
+    /* a negative length or skip is no value, and nothing is changed. */
+    switch (pname) {
+    case GL_UNPACK_ROW_LENGTH:
+    case GL_UNPACK_SKIP_ROWS:
+    case GL_UNPACK_SKIP_PIXELS:
+    case GL_UNPACK_IMAGE_HEIGHT:
+    case GL_UNPACK_SKIP_IMAGES:
+    case GL_PACK_ROW_LENGTH:
+    case GL_PACK_SKIP_ROWS:
+    case GL_PACK_SKIP_PIXELS:
+    case GL_PACK_IMAGE_HEIGHT:
+    case GL_PACK_SKIP_IMAGES:
+        if (param < 0) {
+            gl_error(ctx, GL_INVALID_VALUE);
+            return;
+        }
+        break;
+    default:
+        break;
+    }
     switch (pname) {
     case GL_PACK_ALIGNMENT:
+        if (param != 1 && param != 2 && param != 4 && param != 8) {
+            gl_error(ctx, GL_INVALID_VALUE);
+            return;
+        }
         ctx->pack_alignment = param;
         break;
     case GL_UNPACK_LSB_FIRST:
@@ -557,6 +716,10 @@ GLAPI void APIENTRY glPixelStorei(GLenum pname, GLint param)
         ctx->unpack_swap_bytes = param != 0;
         break;
     case GL_UNPACK_ALIGNMENT:
+        if (param != 1 && param != 2 && param != 4 && param != 8) {
+            gl_error(ctx, GL_INVALID_VALUE);
+            return;
+        }
         ctx->unpack_alignment = param;
         break;
     case GL_UNPACK_ROW_LENGTH:
@@ -583,8 +746,14 @@ GLAPI void APIENTRY glPixelStorei(GLenum pname, GLint param)
     case GL_PACK_SKIP_PIXELS:
         ctx->pack_skip_pixels = param;
         break;
-    default:
+    case GL_PACK_SWAP_BYTES:
+    case GL_PACK_LSB_FIRST:
+    case GL_PACK_IMAGE_HEIGHT:
+    case GL_PACK_SKIP_IMAGES:
         break;
+    default:
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
     }
 }
 
@@ -1074,9 +1243,6 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
     case GL_MAX_FRAGMENT_UNIFORM_BLOCKS:
         v[0] = MIME_GPU_MAX_UNIFORM_BLOCKS;
         return 1;
-    case GL_MAX_CLIP_DISTANCES:
-        v[0] = 8;
-        return 1;
     case GL_MAX_VERTEX_ATTRIB_BINDINGS:
         v[0] = MIME_GPU_MAX_ATTRIBS;
         return 1;
@@ -1094,6 +1260,16 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         return 1;
     case GL_MAX_TEXTURE_COORDS:
         v[0] = 8;
+        return 1;
+    case GL_PERSPECTIVE_CORRECTION_HINT:
+    case GL_POINT_SMOOTH_HINT:
+    case GL_LINE_SMOOTH_HINT:
+    case GL_POLYGON_SMOOTH_HINT:
+    case GL_FOG_HINT:
+    case GL_GENERATE_MIPMAP_HINT:
+    case GL_TEXTURE_COMPRESSION_HINT:
+    case GL_FRAGMENT_SHADER_DERIVATIVE_HINT:
+        v[0] = ctx->hints[hint_index(pname)];
         return 1;
     case GL_TIMESTAMP:
         v[0] = (GLdouble)gl_timestamp();
