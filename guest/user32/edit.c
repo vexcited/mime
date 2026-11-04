@@ -1394,6 +1394,10 @@ static BOOL combo_dropped(EDIT *e) { return e->combo && e->parent && SendMessage
 
 static void sl_char(EDIT *e, WCHAR c)
 {
+    if (c == 1) {
+        SendMessageW(e->hwnd, EM_SETSEL, 0, -1);
+        return;
+    }
     if (e->readonly && c != 3)
         return;
     if (c >= 0x20 && has_style(e, ES_NUMBER) && !digit(c)) {
@@ -1450,6 +1454,10 @@ static void ml_char(EDIT *e, WCHAR c)
 {
     if (c == 0x1B)
         return;
+    if (c == 1) {
+        SendMessageW(e->hwnd, EM_SETSEL, 0, -1);
+        return;
+    }
     BOOL ctrl = key_down(VK_CONTROL), shift = key_down(VK_SHIFT), alt = key_down(VK_MENU);
     if (e->in_dialog && c == L'\t' && !(ctrl && !shift && !alt))
         return;

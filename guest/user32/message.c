@@ -249,7 +249,13 @@ WINUSERAPI BOOL WINAPI PeekMessageA(LPMSG msg, HWND hwnd, UINT min, UINT max, UI
 
 WINUSERAPI BOOL WINAPI TranslateMessage(const MSG *msg)
 {
-    return NtUserTranslateMessage(msg, 0);
+    BOOL translated = NtUserTranslateMessage(msg, 0);
+    if (translated && msg->message == WM_KEYDOWN && msg->hwnd) {
+        WCHAR ch = UserCtrlLetterChar((UINT)msg->wParam);
+        if (ch)
+            PostMessageW(msg->hwnd, WM_CHAR, ch, msg->lParam & 0x41FFFFFF);
+    }
+    return translated;
 }
 
 static LRESULT dispatch(const MSG *msg)

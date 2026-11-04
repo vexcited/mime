@@ -94,6 +94,8 @@ LRESULT UserMessageCall(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, ULONG
 LRESULT UserCallProc(WNDPROC proc, BOOL proc_ansi, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT UserSendMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL ansi);
 WPARAM UserCharWparam(UINT msg, WPARAM wparam, BOOL to_wide);
+/* the control character of a letter typed with Ctrl, or 0. */
+WCHAR UserCtrlLetterChar(UINT vk);
 
 LRESULT CALLBACK ButtonProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT CALLBACK StaticProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);

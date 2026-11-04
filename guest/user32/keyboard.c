@@ -169,6 +169,17 @@ static WCHAR key_char(UINT vk, const BYTE *state)
     return shift ? k->Shifted : k->Normal;
 }
 
+/* the control character of a letter typed with Ctrl, which the host does not send as text, or 0. */
+WCHAR UserCtrlLetterChar(UINT vk)
+{
+    BYTE state[256];
+    if (vk < 'A' || vk > 'Z' || !GetKeyboardState(state))
+        return 0;
+    if (!(state[VK_CONTROL] & 0x80) || (state[VK_MENU] & 0x80))
+        return 0;
+    return key_char(vk, state);
+}
+
 WINUSERAPI UINT WINAPI MapVirtualKeyExW(UINT code, UINT type, HKL layout)
 {
     switch (type) {
@@ -426,6 +437,10 @@ WINUSERAPI UINT WINAPI SendInput(UINT count, LPINPUT inputs, int size)
     }
     BYTE state[256];
     GetKeyboardState(state);
+    /* the keys held by earlier calls of any thread, which the state of this thread has not seen. */
+    static const BYTE held[] = {VK_SHIFT, VK_LSHIFT, VK_RSHIFT, VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_MENU, VK_LMENU, VK_RMENU};
+    for (UINT i = 0; i < sizeof(held); i++)
+        state[held[i]] = (GetAsyncKeyState(held[i]) & 0x8000) ? 0x80 : 0;
     UINT sent = 0;
     for (UINT i = 0; i < count; i++) {
         INPUT in = inputs[i];
