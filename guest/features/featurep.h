@@ -85,6 +85,7 @@ void DeleteTree(PCWSTR path);
 uint32_t HandlerAvailable(const FEATURE_DEF *feature);
 uint32_t HandlerInstall(RUN *run, const FEATURE_DEF *feature, PCWSTR package);
 uint32_t HandlerRemove(RUN *run, const FEATURE_DEF *feature);
+void HandlerComplete(RUN *run, const FEATURE_DEF *feature);
 BOOL HandlerPresent(RUN *run, const FEATURE_DEF *feature);
 void HandlerVersion(RUN *run, const FEATURE_DEF *feature, WCHAR *version, SIZE_T chars);
 

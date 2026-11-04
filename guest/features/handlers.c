@@ -468,6 +468,18 @@ uint32_t HandlerInstall(RUN *run, const FEATURE_DEF *feature, PCWSTR package)
     }
 }
 
+void HandlerComplete(RUN *run, const FEATURE_DEF *feature)
+{
+    if (feature->Handler != FEATURE_HANDLER_NETFX)
+        return;
+    WCHAR path[MAX_PATH];
+    netfx_path(run, L"Windows\\assembly\\NativeImages_v4.0.30319_64\\System", path, RTL_NUMBER_OF(path));
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) {
+        SetEnvironmentVariableW(MIME_FEATURE_BUSY_VARIABLE, L"1");
+        netfx_native_images(run);
+    }
+}
+
 uint32_t HandlerRemove(RUN *run, const FEATURE_DEF *feature)
 {
     switch (feature->Handler) {

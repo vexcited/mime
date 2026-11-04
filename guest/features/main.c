@@ -239,7 +239,11 @@ static DWORD work(RUN *run)
 {
     if (run->Remove)
         return FeatureDisable(&run->Ops, run->Feature);
-    return FeatureEnable(&run->Ops, run->Feature, run->EnableFlags);
+    DWORD error = FeatureEnable(&run->Ops, run->Feature, run->EnableFlags);
+    /* a request from the command line finishes what an older install of the feature left out, a program that waits does not. */
+    if (!error && !(run->EnableFlags & FEATURE_ENABLE_ASK))
+        HandlerComplete(run, run->Feature);
+    return error;
 }
 
 static HANDLE lock_feature(const FEATURE_DEF *feature, BOOL say)
