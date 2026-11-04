@@ -211,6 +211,19 @@ NTSTATUS NTAPI NtFindAtom(PWSTR user_name, ULONG length, PUSHORT user_atom)
     return store_atom(user_atom, (USHORT)(FIRST_STRING_ATOM + index));
 }
 
+/* for win32k, which keys the properties user32 names with global atoms. */
+USHORT NTAPI MimeFindGlobalAtom(PCWSTR name)
+{
+    ULONG chars = (ULONG)wcslen(name);
+    if (!chars || chars > MAX_NAME)
+        return 0;
+    ATOM_TABLE *t = table_of_caller();
+    lock();
+    int index = lookup(t, name, chars);
+    unlock();
+    return index < 0 ? 0 : (USHORT)(FIRST_STRING_ATOM + index);
+}
+
 /* drops one reference; the last frees the atom unless pinned. integer atoms are never stored. */
 NTSTATUS NTAPI NtDeleteAtom(USHORT atom)
 {

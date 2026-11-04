@@ -59,7 +59,8 @@ void FrameGetMetrics(DWORD style, DWORD ex_style, UINT dpi, FRAME_METRICS *m)
         m->VisibleInset = m->Border > 1 ? m->Border - 1 : 0;
         m->Caption = caption ? MetricsGet((ex_style & WS_EX_TOOLWINDOW) ? SM_CYSMCAPTION : SM_CYCAPTION, dpi) : 0;
         m->Top = m->Border + m->Caption;
-        m->ButtonWidth = scale(46, dpi);
+        /* the dwm makes the buttons of a tool window square, 21/22 of its caption. */
+        m->ButtonWidth = (ex_style & WS_EX_TOOLWINDOW) ? (m->Caption * 21 + 11) / 22 : scale(46, dpi);
         m->CornerRadius = 0; /* windows 10 frames are square. */
         return;
     }
@@ -216,8 +217,52 @@ ULONG FrameGetDragRects(WND *w, RECT *rects, ULONG max)
     LONG top = vis.top;
     if ((w->Style & WS_THICKFRAME) && !(w->Style & WS_MAXIMIZE))
         top += scale(4, WndFrameDpi(w)); /* leave the top resize strip to the window. */
-    rects[0] = (RECT){vis.left, top, caption_buttons_left(w), m.Top};
+    /* a client area that took the caption with WM_NCCALCSIZE answers its own hit tests there. */
+    LONG bottom = W32Min(m.Top, w->ClientRect.top - w->WindowRect.top);
+    rects[0] = (RECT){vis.left, top, caption_buttons_left(w), bottom};
     return RectEmpty(&rects[0]) ? 0 : 1;
+}
+
+void FrameGetTitleBarInfo(WND *w, TITLEBARINFOEX *info)
+{
+    memset(&info->rcTitleBar, 0, sizeof(*info) - sizeof(info->cbSize));
+    LONG x = w->WindowRect.left, y = w->WindowRect.top;
+    if (!FrameHasCaption(w->Style, w->ExStyle)) {
+        for (int i = 0; i < 6; i++)
+            info->rgstate[i] = STATE_SYSTEM_INVISIBLE;
+        return;
+    }
+    FRAME_METRICS m;
+    FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
+    RECT vis;
+    FrameGetVisibleRect(w, &vis);
+    info->rcTitleBar = (RECT){vis.left + 1, vis.top + 1, vis.right - 1, m.Top};
+    RectOffset(&info->rcTitleBar, x, y);
+    info->rgstate[0] = STATE_SYSTEM_FOCUSABLE;
+    if (!WndIsVisible(w))
+        info->rgstate[0] |= STATE_SYSTEM_INVISIBLE;
+    info->rgstate[1] = STATE_SYSTEM_INVISIBLE;
+    /* the buttons in the order of the structure: minimize, maximize, help and close. */
+    static const int buttons[4] = {CAPTION_MIN, CAPTION_MAX, CAPTION_HELP, CAPTION_CLOSE};
+    for (int i = 0; i < 4; i++) {
+        RECT r;
+        FrameGetButtonRect(w, buttons[i], &r);
+        if (RectEmpty(&r)) {
+            info->rgstate[2 + i] = STATE_SYSTEM_INVISIBLE;
+            continue;
+        }
+        BOOLEAN enabled = !(w->Style & WS_DISABLED) &&
+                          (buttons[i] == CAPTION_MAX   ? (w->Style & WS_MAXIMIZEBOX) != 0
+                           : buttons[i] == CAPTION_MIN ? (w->Style & WS_MINIMIZEBOX) != 0
+                           : buttons[i] == CAPTION_CLOSE ? !(w->Flags & WNDF_NOCLOSE)
+                                                         : TRUE);
+        if (!enabled)
+            info->rgstate[2 + i] |= STATE_SYSTEM_UNAVAILABLE;
+        if (w->CaptionPressed == buttons[i])
+            info->rgstate[2 + i] |= STATE_SYSTEM_PRESSED;
+        RectOffset(&r, x, y);
+        info->rgrect[2 + i] = r;
+    }
 }
 
 /* ------------------------------------------------------------------ hit testing */
@@ -469,7 +514,7 @@ static const GLYPH_MASK *glyph_mask(BOOLEAN dark, int part, int state, UINT dpi)
 /* dwm color attributes are stored as the value plus one, so zero means unset. */
 static BOOLEAN dwm_color(WND *w, PCWSTR name, ULONG *out)
 {
-    ULONG_PTR v = (ULONG_PTR)PropGetData(w, AtomFind(name));
+    ULONG_PTR v = (ULONG_PTR)PropGetData(w, PropAtom(name));
     if (!v)
         return FALSE;
     *out = (ULONG)(v - 1);
@@ -478,7 +523,7 @@ static BOOLEAN dwm_color(WND *w, PCWSTR name, ULONG *out)
 
 static BOOLEAN dark_frame(WND *w)
 {
-    return PropGetData(w, AtomFind(L"DwmDarkMode")) != nullptr;
+    return PropGetData(w, PropAtom(L"DwmDarkMode")) != nullptr;
 }
 
 BOOLEAN FrameIsDark(WND *w)
@@ -813,6 +858,165 @@ void FramePaint(WND *w)
         PaintPresent(top);
 }
 
+/* ------------------------------------------------------------------ the frame extended into the client area */
+
+/*
+ * dwmapi keeps the margins of DwmExtendFrameIntoClientArea in two properties of 16 bit halves, left and right in
+ * DwmMarginsLR, top and bottom in DwmMarginsTB. a negative margin makes the whole client area a sheet of glass.
+ */
+static BOOLEAN frame_margins(WND *w, LONG margins[4])
+{
+    ULONG_PTR lr = (ULONG_PTR)PropGetData(w, PropAtom(L"DwmMarginsLR"));
+    ULONG_PTR tb = (ULONG_PTR)PropGetData(w, PropAtom(L"DwmMarginsTB"));
+    margins[0] = (SHORT)(lr & 0xFFFF);
+    margins[1] = (SHORT)((lr >> 16) & 0xFFFF);
+    margins[2] = (SHORT)(tb & 0xFFFF);
+    margins[3] = (SHORT)((tb >> 16) & 0xFFFF);
+    return (lr || tb) && is_top_frame(w->Style);
+}
+
+/* the part of the client area, window relative, where the frame shows under what the program draws. */
+BOOLEAN FrameExtension(WND *w, REGION *out)
+{
+    RgnInit(out);
+    LONG margins[4];
+    if (!frame_margins(w, margins))
+        return FALSE;
+    RECT client = w->ClientRect;
+    RectOffset(&client, -w->WindowRect.left, -w->WindowRect.top);
+    if (RectEmpty(&client))
+        return FALSE;
+    RgnSetRect(out, &client);
+    if (margins[0] >= 0 && margins[1] >= 0 && margins[2] >= 0 && margins[3] >= 0) {
+        RECT inner = {client.left + margins[0], client.top + margins[2], client.right - margins[1],
+                      client.bottom - margins[3]};
+        if (!RectEmpty(&inner))
+            RgnCombineRect(out, out, &inner, RGN_DIFF);
+    }
+    if (RgnIsEmpty(out)) {
+        RgnFree(out);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/*
+ * the dwm draws the caption buttons over a client area that took the caption, as long as the frame reaches them: the
+ * top margin, or a sheet of glass.
+ */
+BOOLEAN FrameDwmButtons(WND *w)
+{
+    LONG margins[4];
+    if (!frame_margins(w, margins) || !FrameHasCaption(w->Style, w->ExStyle) || !(w->Style & WS_SYSMENU))
+        return FALSE;
+    RECT close;
+    FrameGetButtonRect(w, CAPTION_CLOSE, &close);
+    LONG client_top = w->ClientRect.top - w->WindowRect.top;
+    if (RectEmpty(&close) || client_top >= close.bottom)
+        return FALSE;
+    return margins[2] < 0 || margins[0] < 0 || margins[1] < 0 || margins[3] < 0 || margins[2] > 0;
+}
+
+/*
+ * what the dwm composes for a window that extended its frame: the caption color under the pixels of the extended part
+ * and the caption buttons over them. dst holds the window's pixels in area, window relative.
+ */
+void FrameCompose(WND *w, SURFACE *dst, const RECT *area)
+{
+    REGION ext;
+    if (!FrameExtension(w, &ext))
+        return;
+    FRAME_COLORS colors;
+    frame_colors(w, &colors);
+    ULONG frame = ColorToPixel(colors.Caption) | 0xFF000000u;
+    RgnCombineRect(&ext, &ext, area, RGN_AND);
+    /* the rest of the window is opaque whatever alpha gdi left there. */
+    REGION rest;
+    RgnInit(&rest);
+    RgnSetRect(&rest, area);
+    RgnCombine(&rest, &rest, &ext, RGN_DIFF);
+    for (ULONG i = 0; i < rest.Count; i++) {
+        const RECT *r = &rest.Rects[i];
+        for (LONG y = r->top; y < r->bottom; y++) {
+            ULONG *row = (ULONG *)(dst->Bits + (LONG_PTR)y * dst->Stride);
+            for (LONG x = r->left; x < r->right; x++)
+                row[x] |= 0xFF000000u;
+        }
+    }
+    RgnFree(&rest);
+    for (ULONG i = 0; i < ext.Count; i++) {
+        const RECT *r = &ext.Rects[i];
+        for (LONG y = r->top; y < r->bottom; y++) {
+            ULONG *row = (ULONG *)(dst->Bits + (LONG_PTR)y * dst->Stride);
+            for (LONG x = r->left; x < r->right; x++) {
+                ULONG s = row[x], a = 255 - (s >> 24);
+                if (!a)
+                    continue;
+                /* gdi leaves its colors at alpha 0, so the sum is held to white. */
+                ULONG out = 0xFF000000u;
+                for (int shift = 0; shift < 24; shift += 8) {
+                    ULONG c = ((s >> shift) & 0xFF) + (((frame >> shift) & 0xFF) * a + 127) / 255;
+                    out |= (c > 255 ? 255 : c) << shift;
+                }
+                row[x] = out;
+            }
+        }
+    }
+    RgnFree(&ext);
+    if (!FrameDwmButtons(w))
+        return;
+    load_theme();
+    REGION clip;
+    RgnInit(&clip);
+    RgnSetRect(&clip, area);
+    BOOLEAN active = (w->Flags & WNDF_ACTIVE_FRAME) != 0;
+    static const int buttons[] = {CAPTION_CLOSE, CAPTION_MAX, CAPTION_MIN, CAPTION_HELP};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(buttons); i++)
+        draw_button(w, dst, &clip, (POINT){0, 0}, buttons[i], WndFrameDpi(w), active, &colors);
+    RgnFree(&clip);
+}
+
+/*
+ * gdi leaves alpha 0 in a window that extended its frame, as windows' redirection surfaces have it, so the black a
+ * program paints there shows the frame. other windows take what gdi draws as opaque.
+ */
+void FrameSurfaceAlpha(WND *w)
+{
+    if (!w->Surface)
+        return;
+    REGION ext;
+    if (FrameExtension(w, &ext)) {
+        RgnFree(&ext);
+        w->Surface->Flags &= ~SURF_DEVICE;
+    } else {
+        w->Surface->Flags |= SURF_DEVICE;
+    }
+}
+
+/* the caption buttons the dwm shows over the client area changed state. */
+static void recompose_buttons(WND *w)
+{
+    if (!w->Surface || !FrameDwmButtons(w))
+        return;
+    RECT all = {0, 0, 0, 0};
+    static const int buttons[] = {CAPTION_CLOSE, CAPTION_MAX, CAPTION_MIN, CAPTION_HELP};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(buttons); i++) {
+        RECT r;
+        FrameGetButtonRect(w, buttons[i], &r);
+        if (RectEmpty(&r))
+            continue;
+        if (RectEmpty(&all))
+            all = r;
+        else
+            RectUnion(&all, &all, &r);
+    }
+    if (RectEmpty(&all))
+        return;
+    SurfaceMarkDirty(w->Surface, &all);
+    if (w->Thread == W32GetThread() && (w->Flags & WNDF_PRESENTED))
+        PaintPresent(w);
+}
+
 /*
  * the visible 1 pixel border takes the color just inside it, so a dark program does not show the light
  * frame the caption color would give. runs before the present, after the program painted.
@@ -854,8 +1058,10 @@ void FrameBleed(WND *w)
 /* ------------------------------------------------------------------ mouse */
 static void repaint_buttons(WND *w)
 {
-    if (WndIsVisible(w))
-        FramePaint(w);
+    if (!WndIsVisible(w))
+        return;
+    FramePaint(w);
+    recompose_buttons(w);
 }
 
 static UINT button_command(WND *w, int button)

@@ -523,6 +523,7 @@ typedef struct GSurface {
     HGDIOBJ old;
     BOOL write_back;
     BOOL direct;
+    BOOL copy_alpha; /* a 32-bit device context, where a source copy writes its alpha as windows' gdi+ does. */
 } GSurface;
 
 void gp_graphics_bounds(const GGraphics *g, RECT *bounds);

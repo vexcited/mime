@@ -17,6 +17,12 @@ void PropFreeWindow(WND *w)
     w->PropCapacity = 0;
 }
 
+/* user32 names properties with global atoms, which the kernel keeps. */
+ATOM PropAtom(PCWSTR name)
+{
+    return MimeFindGlobalAtom(name);
+}
+
 HANDLE PropGetData(WND *w, ATOM atom)
 {
     WND_PROP *p = atom ? find_prop(w, atom) : nullptr;
@@ -28,13 +34,23 @@ static void prop_changed(WND *w, ATOM atom)
 {
     if (!WndIsTopLevel(w))
         return;
-    if (atom == AtomFind(L"DwmCorner") || atom == AtomFind(L"DwmDarkMode") ||
-        atom == AtomFind(L"DwmBorderColor") || atom == AtomFind(L"DwmCaptionColor") ||
-        atom == AtomFind(L"DwmTextColor")) {
-        if (atom != AtomFind(L"DwmCorner"))
+    if (atom == PropAtom(L"DwmCorner") || atom == PropAtom(L"DwmDarkMode") ||
+        atom == PropAtom(L"DwmBorderColor") || atom == PropAtom(L"DwmCaptionColor") ||
+        atom == PropAtom(L"DwmTextColor")) {
+        if (atom != PropAtom(L"DwmCorner"))
             w->Flags |= WNDF_FRAME_DIRTY;
         WndUpdateHostConfig(w, FALSE);
         if (w->Thread)
+            QueueWake(w->Thread, QS_PAINT);
+    }
+    /* the frame under the client area changed: the whole window is composed again. */
+    if ((atom == PropAtom(L"DwmMarginsLR") || atom == PropAtom(L"DwmMarginsTB")) && w->Surface) {
+        FrameSurfaceAlpha(w);
+        RECT all = {0, 0, w->Surface->Width, w->Surface->Height};
+        SurfaceMarkDirty(w->Surface, &all);
+        if (w->Thread == W32GetThread() && (w->Flags & WNDF_PRESENTED))
+            PaintPresent(w);
+        else if (w->Thread)
             QueueWake(w->Thread, QS_PAINT);
     }
 }

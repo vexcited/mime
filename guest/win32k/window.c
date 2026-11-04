@@ -541,6 +541,7 @@ void WndEnsureSurface(WND *w)
         }
     w->Surface = s;
     s->Dirty = (RECT){0, 0, width, height};
+    FrameSurfaceAlpha(w);
     if (!(w->Flags & WNDF_HOST_WINDOW)) {
         HostWindowCreate(w);
         w->Flags |= WNDF_HOST_WINDOW;
@@ -2930,6 +2931,23 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
         wi.atomWindowType = w->Class ? w->Class->Atom : 0;
         wi.wCreatorVersion = 0x0400;
         r = NT_SUCCESS(MimeCopyToUser((PVOID)param, &wi, sizeof(wi)));
+        break;
+    }
+    case MIME_HWNDPARAM_GETTITLEBARINFO: {
+        TITLEBARINFOEX info;
+        if (!NT_SUCCESS(MimeCopyFromUser(&info.cbSize, (PVOID)param, sizeof(info.cbSize))))
+            break;
+        /* GetTitleBarInfo wants the short structure, WM_GETTITLEBARINFOEX the one with the rectangles. */
+        if (info.cbSize != sizeof(TITLEBARINFO) && info.cbSize != sizeof(TITLEBARINFOEX)) {
+            W32SetLastError(ERROR_INVALID_PARAMETER);
+            break;
+        }
+        FrameGetTitleBarInfo(w, &info);
+        rect_to_caller(w, &info.rcTitleBar);
+        for (int i = 0; i < 6; i++)
+            if (!RectEmpty(&info.rgrect[i]))
+                rect_to_caller(w, &info.rgrect[i]);
+        r = NT_SUCCESS(MimeCopyToUser((PVOID)param, &info, info.cbSize));
         break;
     }
     case MIME_HWNDPARAM_SETICON: {

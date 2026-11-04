@@ -61,7 +61,7 @@ static uint32_t corner_radius(WND *w, const FRAME_METRICS *m)
 {
     if (w->Style & WS_MAXIMIZE)
         return 0;
-    switch ((ULONG_PTR)PropGetData(w, AtomFind(L"DwmCorner"))) {
+    switch ((ULONG_PTR)PropGetData(w, PropAtom(L"DwmCorner"))) {
     case 1 + 1: /* DWMWCP_DONOTROUND */
         return 0;
     case 2 + 1: /* DWMWCP_ROUND */
@@ -153,6 +153,34 @@ void HostPart(WND *w, RECT *part)
     host_pixels(w, part);
 }
 
+/* the 1 pixel border the compositor draws over the visible frame, 0xAARRGGBB, 0 for none. */
+ULONG HostBorderColor(WND *w)
+{
+    FRAME_METRICS m;
+    FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
+    if (!m.Border || (w->Style & WS_MAXIMIZE))
+        return 0;
+    BOOLEAN dark = PropGetData(w, PropAtom(L"DwmDarkMode")) != nullptr;
+    ULONG color, themed;
+    COLORREF frame = MetricsSysColor(COLOR_WINDOWFRAME);
+    if (MetricsHighContrast())
+        color = 0xFF000000u | ((frame & 0xFF) << 16) | (frame & 0xFF00) | ((frame >> 16) & 0xFF);
+    else if (FrameBorderColor(dark, (w->Flags & WNDF_ACTIVE_FRAME) != 0, &themed))
+        color = themed;
+    else
+        color = dark ? ((w->Flags & WNDF_ACTIVE_FRAME) ? 0x664C4C4Cu : 0x404C4C4Cu)
+                     : ((w->Flags & WNDF_ACTIVE_FRAME) ? 0x3b000000u : 0x26000000u);
+    ULONG_PTR v = (ULONG_PTR)PropGetData(w, PropAtom(L"DwmBorderColor"));
+    if (v) {
+        ULONG custom = (ULONG)(v - 1);
+        if (custom == 0xFFFFFFFEu)
+            color = 0;
+        else if (custom != 0xFFFFFFFFu)
+            color = 0xFF000000u | ((custom & 0xFF) << 16) | (custom & 0xFF00) | ((custom >> 16) & 0xFF);
+    }
+    return color;
+}
+
 void HostConfigure(WND *w, BOOLEAN activate)
 {
     ScreenSerial++;
@@ -218,26 +246,7 @@ void HostConfigure(WND *w, BOOLEAN activate)
     c->corner_radius = (uint32_t)WndToPhysical(w, (LONG)corner_radius(w, &m));
     if (w->Flags & WNDF_ACTIVE_FRAME)
         c->flags |= MIME_WIN_ACTIVE;
-    if (m.Border && !(w->Style & WS_MAXIMIZE)) {
-        BOOLEAN dark = PropGetData(w, AtomFind(L"DwmDarkMode")) != nullptr;
-        ULONG themed;
-        COLORREF frame = MetricsSysColor(COLOR_WINDOWFRAME);
-        if (MetricsHighContrast())
-            c->border_color = 0xFF000000u | ((frame & 0xFF) << 16) | (frame & 0xFF00) | ((frame >> 16) & 0xFF);
-        else if (FrameBorderColor(dark, (w->Flags & WNDF_ACTIVE_FRAME) != 0, &themed))
-            c->border_color = themed;
-        else
-            c->border_color = dark ? ((w->Flags & WNDF_ACTIVE_FRAME) ? 0x664C4C4Cu : 0x404C4C4Cu)
-                                   : ((w->Flags & WNDF_ACTIVE_FRAME) ? 0x3b000000u : 0x26000000u);
-        ULONG_PTR v = (ULONG_PTR)PropGetData(w, AtomFind(L"DwmBorderColor"));
-        if (v) {
-            uint32_t color = (uint32_t)(v - 1);
-            if (color == 0xFFFFFFFEu)
-                c->border_color = 0;
-            else if (color != 0xFFFFFFFFu)
-                c->border_color = 0xFF000000u | ((color & 0xFF) << 16) | (color & 0xFF00) | ((color >> 16) & 0xFF);
-        }
-    }
+    c->border_color = HostBorderColor(w);
     if (fullscreen) {
         c->corner_radius = 0;
         c->border_color = 0;

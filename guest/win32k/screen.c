@@ -223,13 +223,34 @@ static LONG placed(LONG size, const PLACE *place)
     return (LONG)(((LONG64)size * place->Num + place->Den - 1) / place->Den);
 }
 
+/* a layered or shaped window shows what is under it; the frame the dwm extends into a client area does not. */
+static BOOLEAN see_through(const WND *w)
+{
+    return w->Shape || (w->LayerFlags & (LWA_ALPHA | LWA_COLORKEY | MIME_LAYER_UPDATE));
+}
+
+/* the physical screen rectangle a window shows in, without the invisible resize border, as the host draws it. */
+static void shown_rect(WND *w, RECT *out)
+{
+    WndPhysicalRect(w, out);
+    if (w->Style & WS_CHILD)
+        return;
+    RECT vis;
+    FrameGetVisibleRect(w, &vis);
+    LONG left = out->left, top = out->top;
+    out->left = left + WndToPhysical(w, vis.left);
+    out->top = top + WndToPhysical(w, vis.top);
+    out->right = W32Min(out->right, left + WndToPhysical(w, vis.right));
+    out->bottom = W32Min(out->bottom, top + WndToPhysical(w, vis.bottom));
+}
+
 /* draw a surface rectangle on a canvas whose first pixel has screen coordinates origin. */
 static void compose_surface(PUCHAR bits, LONG stride, POINT shift, const RECT *r, const PLACE *place, WND *w,
                             SURFACE *s)
 {
     LONG ox = place->Origin.x, oy = place->Origin.y;
     /* plain windows are opaque regardless of GDI alpha; layered and shaped windows retain their alpha. */
-    BOOLEAN blend = w->Present || (w->LayerFlags & MIME_LAYER_UPDATE);
+    BOOLEAN blend = see_through(w);
     LONG x0 = W32Max(r->left, ox), x1 = W32Min(r->right, ox + placed(s->Width, place));
     for (LONG y = r->top; y < r->bottom; y++) {
         LONG sy = (LONG)((LONG64)(y - oy) * place->Den / place->Num);
@@ -544,8 +565,9 @@ static BOOLEAN window_covers(WND *w, RECT *out)
         return TRUE;
     }
     SURFACE *s = w->Present ? w->Present : w->Surface;
-    if (!s || w->Present || (w->LayerFlags & MIME_LAYER_UPDATE))
+    if (!s || see_through(w))
         return FALSE;
+    shown_rect(w, &window);
     PLACE place = place_on_screen(w);
     RECT own = {place.Origin.x, place.Origin.y, place.Origin.x + placed(s->Width, &place),
                 place.Origin.y + placed(s->Height, &place)};
@@ -572,7 +594,7 @@ static ULONG plan_windows(PLAN *plans, const RECT *area, REGION *covered)
     for (ULONG i = 0; i < count; i++) {
         WND *w = list[i];
         RECT r, cover, window;
-        WndPhysicalRect(w, &window);
+        shown_rect(w, &window);
         if (!WndIsVisible(w) || (w->Style & WS_MINIMIZE) || !RectIntersect(&r, area, &window))
             continue;
         PLAN *plan = &plans[planned];
@@ -753,6 +775,42 @@ void ScreenComposeFor(const SURFACE *s, const RECT *area)
 }
 
 /* compose area in surface coordinates before a read; output alpha is 0xFF. */
+/* the 1 pixel border of the visible frame, which the host draws over the window. */
+static void draw_border(SURFACE *screen, const REGION *vis, WND *w)
+{
+    ULONG color = HostBorderColor(w);
+    ULONG a = color >> 24;
+    if (!a || (w->Flags & WNDF_FULLSCREEN))
+        return;
+    ULONG pixel = (a << 24) | ((((color >> 16) & 0xFF) * a / 255) << 16) | ((((color >> 8) & 0xFF) * a / 255) << 8) |
+                  ((color & 0xFF) * a / 255);
+    RECT r;
+    shown_rect(w, &r);
+    RectOffset(&r, -g_screen_origin.x, -g_screen_origin.y);
+    RECT edges[4] = {{r.left, r.top, r.right, r.top + 1},
+                     {r.left, r.bottom - 1, r.right, r.bottom},
+                     {r.left, r.top + 1, r.left + 1, r.bottom - 1},
+                     {r.right - 1, r.top + 1, r.right, r.bottom - 1}};
+    REGION clip;
+    RgnInit(&clip);
+    RgnCopy(&clip, vis);
+    RgnOffset(&clip, -g_screen_origin.x, -g_screen_origin.y);
+    for (int e = 0; e < 4; e++) {
+        REGION part;
+        RgnInit(&part);
+        RgnCopy(&part, &clip);
+        RgnCombineRect(&part, &part, &edges[e], RGN_AND);
+        for (ULONG i = 0; i < part.Count; i++)
+            for (LONG y = part.Rects[i].top; y < part.Rects[i].bottom; y++) {
+                ULONG *row = (ULONG *)(screen->Bits + (LONG_PTR)y * screen->Stride);
+                for (LONG x = part.Rects[i].left; x < part.Rects[i].right; x++)
+                    row[x] = over(pixel, row[x]);
+            }
+        RgnFree(&part);
+    }
+    RgnFree(&clip);
+}
+
 void ScreenCompose(const RECT *area)
 {
     SURFACE *screen = ScreenSurface();
@@ -822,6 +880,7 @@ void ScreenCompose(const RECT *area)
         PLACE place = place_on_screen(plans[planned].Window);
         compose_window(screen->Bits, screen->Stride, g_screen_origin, &plans[planned].Visible, plans[planned].Window,
                        &place, TRUE);
+        draw_border(screen, &plans[planned].Visible, plans[planned].Window);
         RgnFree(&plans[planned].Visible);
     }
     W32Free(plans);

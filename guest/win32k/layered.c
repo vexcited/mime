@@ -16,11 +16,22 @@ static inline ULONG premultiply(ULONG p, ULONG a)
     return (pa << 24) | (r << 16) | (g << 8) | b;
 }
 
+static BOOLEAN extended_frame(WND *w)
+{
+    REGION ext;
+    if (!FrameExtension(w, &ext))
+        return FALSE;
+    RgnFree(&ext);
+    return TRUE;
+}
+
 static BOOLEAN needs_compose(WND *w)
 {
     if (w->Shape)
         return TRUE;
-    return (w->LayerFlags & (LWA_ALPHA | LWA_COLORKEY)) && !(w->LayerFlags & MIME_LAYER_UPDATE);
+    if ((w->LayerFlags & (LWA_ALPHA | LWA_COLORKEY)) && !(w->LayerFlags & MIME_LAYER_UPDATE))
+        return TRUE;
+    return !(w->LayerFlags & MIME_LAYER_UPDATE) && extended_frame(w);
 }
 
 static void redraw_all(WND *w)
@@ -39,6 +50,8 @@ static void redraw_all(WND *w)
 SURFACE *LayerPrepare(WND *w, const RECT *dirty)
 {
     SURFACE *s = w->Surface;
+    if (s && !(w->LayerFlags & MIME_LAYER_UPDATE))
+        FrameSurfaceAlpha(w);
     if (!s || !needs_compose(w)) {
         if (w->Present) {
             PaintRetireSurface(w->Present);
@@ -67,13 +80,18 @@ SURFACE *LayerPrepare(WND *w, const RECT *dirty)
         ULONG *dst = (ULONG *)(w->Present->Bits + (LONG_PTR)y * w->Present->Stride);
         for (LONG x = r.left; x < r.right; x++) {
             ULONG p = src[x];
-            if (keyed && (p & 0xFFFFFF) == key)
-                p = 0;
-            else if (alpha != 255)
-                p = premultiply(p, alpha);
-            dst[x] = p;
+            dst[x] = keyed && (p & 0xFFFFFF) == key ? 0 : p;
         }
     }
+    /* the dwm frame goes under the window's pixels before the window's alpha applies to all of it. */
+    if (!(w->LayerFlags & MIME_LAYER_UPDATE))
+        FrameCompose(w, w->Present, &r);
+    if (alpha != 255)
+        for (LONG y = r.top; y < r.bottom; y++) {
+            ULONG *dst = (ULONG *)(w->Present->Bits + (LONG_PTR)y * w->Present->Stride);
+            for (LONG x = r.left; x < r.right; x++)
+                dst[x] = premultiply(dst[x], alpha);
+        }
     if (w->Shape) {
         /* pixels outside the window region are fully transparent. */
         REGION outside;

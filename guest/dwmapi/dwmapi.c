@@ -128,18 +128,18 @@ DWMAPI DwmGetWindowAttribute(HWND hwnd, DWORD attribute, PVOID value, DWORD size
     case DWMWA_CAPTION_BUTTON_BOUNDS: {
         if (size != sizeof(RECT))
             return E_INVALIDARG;
-        /* close, maximize and minimize at the right of the caption, in window coordinates. */
+        /* the caption buttons together, in window coordinates. */
         RECT wr;
         if (!GetWindowRect(hwnd, &wr))
             return HRESULT_FROM_WIN32(GetLastError());
-        int w = wr.right - wr.left, frame = GetSystemMetrics(SM_CXFRAME);
+        TITLEBARINFOEX bar = {sizeof(bar)};
+        SendMessageW(hwnd, WM_GETTITLEBARINFOEX, 0, (LPARAM)&bar);
         RECT *r = value;
-        r->right = w - frame;
-        r->left = r->right - 3 * GetSystemMetrics(SM_CXSIZE);
-        r->top = 0;
-        r->bottom = GetSystemMetrics(SM_CYSIZE) + frame;
-        if (r->left < 0)
-            r->left = 0;
+        SetRectEmpty(r);
+        for (int i = 2; i < 6; i++)
+            if (!(bar.rgstate[i] & STATE_SYSTEM_INVISIBLE) && !IsRectEmpty(&bar.rgrect[i]))
+                UnionRect(r, r, &bar.rgrect[i]);
+        OffsetRect(r, -wr.left, -wr.top);
         return S_OK;
     }
     case DWMWA_CLOAKED: {
@@ -182,10 +182,42 @@ DWMAPI DwmSetWindowAttribute(HWND hwnd, DWORD attribute, LPCVOID value, DWORD si
     return S_OK;
 }
 
+/* a margin in 16 bits: a negative one stands for the sheet of glass. */
+static ULONG_PTR pack_margins(int a, int b)
+{
+    USHORT lo = a < 0 ? 0xFFFF : (USHORT)(a > 0x7FFF ? 0x7FFF : a);
+    USHORT hi = b < 0 ? 0xFFFF : (USHORT)(b > 0x7FFF ? 0x7FFF : b);
+    return (ULONG_PTR)lo | ((ULONG_PTR)hi << 16);
+}
+
+/*
+ * win32k composes the frame under the client area the margins take and the caption buttons over it, reading the
+ * margins from two properties, left and right then top and bottom.
+ */
+static void store_margins(HWND hwnd, LPCWSTR name, ULONG_PTR value)
+{
+    if (value)
+        SetPropW(hwnd, name, (HANDLE)value);
+    else
+        RemovePropW(hwnd, name);
+}
+
+static BOOL read_margins(HWND hwnd, MARGINS *margins)
+{
+    ULONG_PTR lr = (ULONG_PTR)GetPropW(hwnd, L"DwmMarginsLR"), tb = (ULONG_PTR)GetPropW(hwnd, L"DwmMarginsTB");
+    margins->cxLeftWidth = (SHORT)(lr & 0xFFFF);
+    margins->cxRightWidth = (SHORT)((lr >> 16) & 0xFFFF);
+    margins->cyTopHeight = (SHORT)(tb & 0xFFFF);
+    margins->cyBottomHeight = (SHORT)((tb >> 16) & 0xFFFF);
+    return lr || tb;
+}
+
 DWMAPI DwmExtendFrameIntoClientArea(HWND hwnd, const MARGINS *margins)
 {
     if (!is_top_level(hwnd) || !margins)
         return E_INVALIDARG;
+    store_margins(hwnd, L"DwmMarginsLR", pack_margins(margins->cxLeftWidth, margins->cxRightWidth));
+    store_margins(hwnd, L"DwmMarginsTB", pack_margins(margins->cyTopHeight, margins->cyBottomHeight));
     return S_OK;
 }
 
@@ -196,11 +228,33 @@ DWMAPI DwmEnableBlurBehindWindow(HWND hwnd, const DWM_BLURBEHIND *blur)
     return S_OK;
 }
 
-/* the dwm never does caption hit testing for the window. */
+/*
+ * the caption buttons the dwm draws over a client area that took the caption. like windows, only a hit test over one
+ * of them is answered; presses and the mouse leaving are left to DefWindowProc, which tracks the buttons.
+ */
 DWMAPI_(BOOL) DwmDefWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result)
 {
-    if (result)
-        *result = 0;
+    if (msg != WM_NCHITTEST || GetCapture())
+        return FALSE;
+    MARGINS margins;
+    WINDOWINFO info = {sizeof(info)};
+    if (!read_margins(hwnd, &margins) || !GetWindowInfo(hwnd, &info) || info.rcWindow.top != info.rcClient.top)
+        return FALSE;
+    POINT pt = {(SHORT)LOWORD(lparam), (SHORT)HIWORD(lparam)};
+    if (margins.cyTopHeight >= 0 && pt.y > info.rcClient.top + margins.cyTopHeight)
+        return FALSE;
+    TITLEBARINFOEX bar = {sizeof(bar)};
+    SendMessageW(hwnd, WM_GETTITLEBARINFOEX, 0, (LPARAM)&bar);
+    static const LRESULT hits[4] = {HTMINBUTTON, HTMAXBUTTON, HTHELP, HTCLOSE};
+    for (int i = 0; i < 4; i++) {
+        if ((bar.rgstate[2 + i] & (STATE_SYSTEM_INVISIBLE | STATE_SYSTEM_OFFSCREEN)) || !PtInRect(&bar.rgrect[2 + i], pt))
+            continue;
+        TRACKMOUSEEVENT track = {sizeof(track), TME_LEAVE | TME_NONCLIENT, hwnd, 0};
+        TrackMouseEvent(&track);
+        if (result)
+            *result = hits[i];
+        return TRUE;
+    }
     return FALSE;
 }
 

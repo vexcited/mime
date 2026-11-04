@@ -14,6 +14,17 @@ void gp_graphics_bounds(const GGraphics *g, RECT *bounds)
     bounds->bottom = g->height;
 }
 
+/*
+ * a window that extended its frame with DwmExtendFrameIntoClientArea keeps the alpha drawn in it, which the dwm shows
+ * the frame through, so its tile keeps alpha too: what a program clears there with SourceCopy is transparent.
+ */
+static BOOL glass_dc(HDC hdc)
+{
+    HWND window = WindowFromDC(hdc);
+    HWND root = window ? GetAncestor(window, GA_ROOT) : nullptr;
+    return root && (GetPropW(root, L"DwmMarginsLR") || GetPropW(root, L"DwmMarginsTB"));
+}
+
 /* the bits of the dib section selected into hdc, when a surface can use them. */
 static BOOL dc_dib(HDC hdc, BYTE **bits, INT *stride, INT *width, INT *height, PixelFormat *format)
 {
@@ -79,6 +90,7 @@ GpStatus gp_surface_acquire(GGraphics *g, const RECT *area, GSurface *s)
         s->width = w;
         s->height = h;
         s->direct = TRUE;
+        s->copy_alpha = format == PixelFormat32bppRGB;
         return Ok;
     }
     /* a 32-bit tile that starts with the context's contents. */
@@ -114,7 +126,8 @@ GpStatus gp_surface_acquire(GGraphics *g, const RECT *area, GSurface *s)
     s->dc_y = g->dc_y;
     s->bits = tile;
     s->stride = s->width * 4;
-    s->format = PixelFormat32bppRGB;
+    s->format = glass_dc(g->hdc) ? PixelFormat32bppPARGB : PixelFormat32bppRGB;
+    s->copy_alpha = TRUE;
     s->write_back = TRUE;
     return Ok;
 }
@@ -244,6 +257,9 @@ void gp_compose_copy(const GSurface *s, INT x, INT y, INT count, const UINT32 *p
             }
             dst[i] = out;
         }
-        gp_surface_write(s, x + done, y, n, dst);
+        if (s->copy_alpha && s->format == PixelFormat32bppRGB)
+            memcpy((UINT32 *)surface_row(s, y) + (x + done - s->x), dst, (SIZE_T)n * 4);
+        else
+            gp_surface_write(s, x + done, y, n, dst);
     }
 }

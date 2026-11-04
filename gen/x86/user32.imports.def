@@ -340,6 +340,7 @@ EXPORTS
     GetThreadDesktop@4
     GetThreadDpiAwarenessContext@0
     GetThreadDpiHostingBehavior@0
+    GetTitleBarInfo@8
     GetTopWindow@4
     GetTouchInputInfo@16
     GetUnpredictedMessagePos@0

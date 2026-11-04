@@ -1738,6 +1738,12 @@ typedef struct tagSCROLLBARINFO {
     DWORD rgstate[6];
 } SCROLLBARINFO, *PSCROLLBARINFO, *LPSCROLLBARINFO;
 
+typedef struct tagTITLEBARINFO {
+    DWORD cbSize;
+    RECT rcTitleBar;
+    DWORD rgstate[6];
+} TITLEBARINFO, *PTITLEBARINFO, *LPTITLEBARINFO;
+
 typedef struct tagTITLEBARINFOEX {
     DWORD cbSize;
     RECT rcTitleBar;
@@ -2390,6 +2396,8 @@ WINUSERAPI LRESULT WINAPI SendMessageTimeoutW(HWND hwnd, UINT msg, WPARAM wparam
                                               UINT timeout, ULONG_PTR *result);
 WINUSERAPI int WINAPI GetClassNameW(HWND hwnd, LPWSTR buffer, int count);
 WINUSERAPI BOOL WINAPI GetWindowInfo(HWND hwnd, PWINDOWINFO info);
+WINUSERAPI BOOL WINAPI GetTitleBarInfo(HWND hwnd, PTITLEBARINFO info);
+WINUSERAPI HWND WINAPI WindowFromDC(HDC dc);
 WINUSERAPI int WINAPI LoadStringA(HINSTANCE instance, UINT id, LPSTR buffer, int max);
 WINUSERAPI BOOL WINAPI SetWindowTextA(HWND hwnd, LPCSTR text);
 WINUSERAPI int WINAPI GetWindowTextA(HWND hwnd, LPSTR buffer, int count);
@@ -3178,6 +3186,15 @@ WINUSERAPI int WINAPI TranslateAcceleratorW(HWND hwnd, HACCEL accel, LPMSG msg);
 #ifndef STATE_SYSTEM_PRESSED
 #define STATE_SYSTEM_PRESSED 0x00000008
 #define STATE_SYSTEM_INVISIBLE 0x00008000
+#endif
+#ifndef STATE_SYSTEM_OFFSCREEN
+#define STATE_SYSTEM_OFFSCREEN 0x10000
+#endif
+#ifndef STATE_SYSTEM_FOCUSABLE
+#define STATE_SYSTEM_FOCUSABLE 0x100000
+#endif
+#ifndef WM_GETTITLEBARINFOEX
+#define WM_GETTITLEBARINFOEX 0x033F
 #endif
 
 typedef struct tagMENUBARINFO {

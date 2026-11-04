@@ -1815,6 +1815,15 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         FramePaint(w);
         return 0;
 
+    case WM_GETTITLEBARINFOEX: {
+        TITLEBARINFOEX info;
+        if (!read_lparam(&info.cbSize, lparam, sizeof(info.cbSize), user) || info.cbSize != sizeof(info))
+            return 0;
+        FrameGetTitleBarInfo(w, &info);
+        write_lparam(lparam, &info, sizeof(info), user);
+        return 0;
+    }
+
     case WM_NCACTIVATE:
         if (wparam)
             w->Flags |= WNDF_ACTIVE_FRAME;

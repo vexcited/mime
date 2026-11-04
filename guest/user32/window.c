@@ -645,6 +645,11 @@ WINUSERAPI BOOL WINAPI GetWindowInfo(HWND hwnd, PWINDOWINFO info)
     return (BOOL)NtUserCallHwndParam(hwnd, (ULONG_PTR)info, MIME_HWNDPARAM_GETWINDOWINFO);
 }
 
+WINUSERAPI BOOL WINAPI GetTitleBarInfo(HWND hwnd, PTITLEBARINFO info)
+{
+    return (BOOL)NtUserCallHwndParam(hwnd, (ULONG_PTR)info, MIME_HWNDPARAM_GETTITLEBARINFO);
+}
+
 WINUSERAPI int WINAPI MapWindowPoints(HWND from, HWND to, LPPOINT points, UINT count)
 {
     MIME_MAP_POINTS mp = {to, count, points};

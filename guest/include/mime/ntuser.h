@@ -271,6 +271,7 @@ enum {
     MIME_HWNDPARAM_DPICHILDREN,         /* EnableChildWindowDpiMessage: nonzero for the children to hear, zero for not. */
     MIME_HWNDPARAM_CONTROLDPIBEHAVIOR,  /* the DCDC_* mask in the low byte and their values above it. */
     MIME_HWNDPARAM_PRESENTLAYER,        /* MIME_PRESENT_LAYER pointer: where the image the window presents lies in its top level window. */
+    MIME_HWNDPARAM_GETTITLEBARINFO,     /* TITLEBARINFO or TITLEBARINFOEX pointer, told apart by cbSize. */
 };
 
 /* what MIME_HWNDPARAM_DPICONVERT converts a point between. */

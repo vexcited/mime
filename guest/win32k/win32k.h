@@ -880,6 +880,11 @@ void FrameGetButtonRect(WND *w, int button, RECT *r); /* window relative. */
 void FrameGetVisibleRect(WND *w, RECT *r);              /* window relative. */
 ULONG FrameGetDragRects(WND *w, RECT *rects, ULONG max); /* window relative caption areas. */
 LRESULT FrameMouse(WND *w, UINT msg, LONG hit, POINT pt);
+void FrameGetTitleBarInfo(WND *w, TITLEBARINFOEX *info); /* screen coordinates of the window's own pixels. */
+BOOLEAN FrameExtension(WND *w, REGION *out); /* window relative client part the frame was extended into. */
+BOOLEAN FrameDwmButtons(WND *w);             /* the caption buttons are drawn over the client area. */
+void FrameCompose(WND *w, SURFACE *dst, const RECT *area);
+void FrameSurfaceAlpha(WND *w);
 
 /* messages and callbacks. */
 
@@ -1036,6 +1041,7 @@ void LayerStyleChanged(WND *w);
 BOOLEAN LayerHitTest(WND *w, POINT pt); /* FALSE when the window shape excludes the screen point. */
 void MenuFreeProcess(W32PROCESS *p);
 void PropFreeWindow(WND *w);
+ATOM PropAtom(PCWSTR name); /* the atom of a property set by name from user mode, 0 when unused. */
 HANDLE PropGetData(WND *w, ATOM atom);
 void MenuWindowDestroyed(WND *w);
 BOOLEAN MenuCommandEnabled(WND *w, UINT command);
@@ -1113,6 +1119,7 @@ void WndHostDisplay(WND *w, ULONG monitor);
 void WndHostSize(WND *w, LONG width, LONG height);
 BOOLEAN HostMoveSize(WND *w, ULONG edge);
 void HostPart(WND *w, RECT *part);
+ULONG HostBorderColor(WND *w);
 
 /* tray.c: the notification area. */
 void TrayHostEvent(const MimeInputEvent *ev);

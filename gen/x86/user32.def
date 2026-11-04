@@ -342,6 +342,7 @@ EXPORTS
     GetThreadDesktop=_GetThreadDesktop@4
     GetThreadDpiAwarenessContext=_GetThreadDpiAwarenessContext@0
     GetThreadDpiHostingBehavior=_GetThreadDpiHostingBehavior@0
+    GetTitleBarInfo=_GetTitleBarInfo@8
     GetTopWindow=_GetTopWindow@4
     GetTouchInputInfo=_GetTouchInputInfo@16
     GetUnpredictedMessagePos=_GetUnpredictedMessagePos@0
