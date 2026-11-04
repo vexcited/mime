@@ -774,7 +774,8 @@ static NTSTATUS resolve_forwarder(PLDR_DATA_TABLE_ENTRY source, PCSTR forward, P
     for (SIZE_T i = 0; i < n; i++)
         dll[i] = (UCHAR)forward[i];
     dll[n] = 0;
-    if (!wcschr(dll, '.') || (_wcsnicmp(dll, L"api-", 4) && _wcsnicmp(dll, L"ext-", 4)))
+    /* a forward may spell the extension, as mingw's tools write them: "openblas.dll.cblas_caxpy". */
+    if (!wcschr(dll, '.'))
         wcscat(dll, L".dll");
     PLDR_DATA_TABLE_ENTRY target;
     NTSTATUS status = load_dll(dll, ctx, &target);
