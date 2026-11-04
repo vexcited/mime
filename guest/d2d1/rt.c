@@ -672,6 +672,55 @@ static HRESULT STDMETHODCALLTYPE rt_bitmap_from_wic(ID2D1RenderTarget *This, IWI
     return D2dRtBitmapFromWic(rt, s, nullptr, p, (ID2D1Bitmap1 **)out);
 }
 
+/* a bitmap with a copy of the pixels of a locked wic bitmap, in the format of the lock unless the properties name one. */
+static HRESULT bitmap_from_lock(D2dRt *rt, IWICBitmapLock *lock, const D2D1_BITMAP_PROPERTIES *p, ID2D1Bitmap1 **out)
+{
+    static const struct {
+        const GUID *wic;
+        DXGI_FORMAT dxgi;
+        D2D1_ALPHA_MODE alpha;
+    } formats[] = {
+        {&GUID_WICPixelFormat32bppPBGRA, DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED},
+        {&GUID_WICPixelFormat32bppBGRA, DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED},
+        {&GUID_WICPixelFormat32bppBGR, DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE},
+        {&GUID_WICPixelFormat32bppPRGBA, DXGI_FORMAT_R8G8B8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED},
+        {&GUID_WICPixelFormat64bppPRGBAHalf, DXGI_FORMAT_R16G16B16A16_FLOAT, D2D1_ALPHA_MODE_PREMULTIPLIED},
+        {&GUID_WICPixelFormat128bppPRGBAFloat, DXGI_FORMAT_R32G32B32A32_FLOAT, D2D1_ALPHA_MODE_PREMULTIPLIED},
+    };
+    UINT w = 0, h = 0, stride = 0, size = 0;
+    BYTE *data = nullptr;
+    WICPixelFormatGUID format;
+    HRESULT hr = lock->lpVtbl->GetSize(lock, &w, &h);
+    if (SUCCEEDED(hr))
+        hr = lock->lpVtbl->GetStride(lock, &stride);
+    if (SUCCEEDED(hr))
+        hr = lock->lpVtbl->GetDataPointer(lock, &size, &data);
+    if (SUCCEEDED(hr))
+        hr = lock->lpVtbl->GetPixelFormat(lock, &format);
+    if (FAILED(hr))
+        return hr;
+    D2D1_BITMAP_PROPERTIES q = p ? *p : (D2D1_BITMAP_PROPERTIES){{DXGI_FORMAT_UNKNOWN, D2D1_ALPHA_MODE_UNKNOWN}, 0.0f, 0.0f};
+    for (size_t i = 0; i < sizeof(formats) / sizeof(formats[0]); i++) {
+        if (!IsEqualGUID(&format, formats[i].wic))
+            continue;
+        if (q.pixelFormat.format == DXGI_FORMAT_UNKNOWN)
+            q.pixelFormat.format = formats[i].dxgi;
+        if (q.pixelFormat.alphaMode == D2D1_ALPHA_MODE_UNKNOWN)
+            q.pixelFormat.alphaMode = formats[i].alpha;
+        if (!(q.dpiX > 0.0f) || !(q.dpiY > 0.0f))
+            q.dpiX = q.dpiY = 0.0f;
+        D2dFormat f;
+        BOOL srgb;
+        if (!D2dFormatFromDxgi(q.pixelFormat.format, &f, &srgb))
+            return D2DERR_UNSUPPORTED_PIXEL_FORMAT_HR;
+        if (!data || (UINT64)stride * (h ? h - 1 : 0) + (UINT64)w * D2dFormatBytes(f) > size)
+            return E_INVALIDARG;
+        D2D1_SIZE_U sz = {w, h};
+        return D2dRtCreateBitmap(rt, sz, data, stride, nullptr, &q, TRUE, out);
+    }
+    return WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT_HR;
+}
+
 static HRESULT STDMETHODCALLTYPE rt_shared_bitmap(ID2D1RenderTarget *This, REFIID riid, void *data, const D2D1_BITMAP_PROPERTIES *p,
                                                   ID2D1Bitmap **out)
 {
@@ -693,6 +742,8 @@ static HRESULT STDMETHODCALLTYPE rt_shared_bitmap(ID2D1RenderTarget *This, REFII
     }
     if (IsEqualGUID(riid, &IID_IWICBitmapSource) || IsEqualGUID(riid, &IID_IWICBitmap))
         return D2dRtBitmapFromWic(rt, data, nullptr, p, (ID2D1Bitmap1 **)out);
+    if (IsEqualGUID(riid, &IID_IWICBitmapLock))
+        return bitmap_from_lock(rt, data, p, (ID2D1Bitmap1 **)out);
     if (IsEqualGUID(riid, &IID_IDXGISurface)) {
         D2D1_BITMAP_PROPERTIES1 q = default_bitmap_props(rt, p);
         extern HRESULT D2dBitmapFromSurface(D2dRt *, IDXGISurface *, const D2D1_BITMAP_PROPERTIES1 *, ID2D1Bitmap1 **);

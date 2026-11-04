@@ -815,6 +815,81 @@ HRESULT D2dCreateColorContextSimple(D2dFactory *f, const void *profile, ID2D1Col
     return S_OK;
 }
 
+/*
+ * the icc profile windows gives the srgb and scrgb spaces: a version 2 matrix and curves profile with the srgb
+ * primaries adapted to d50, and the srgb curve or a linear one.
+ */
+static void be32(BYTE *p, UINT32 v)
+{
+    p[0] = (BYTE)(v >> 24);
+    p[1] = (BYTE)(v >> 16);
+    p[2] = (BYTE)(v >> 8);
+    p[3] = (BYTE)v;
+}
+static void be16(BYTE *p, UINT32 v)
+{
+    p[0] = (BYTE)(v >> 8);
+    p[1] = (BYTE)v;
+}
+static UINT32 s15(float v) { return (UINT32)(INT32)(v * 65536.0f + (v < 0 ? -0.5f : 0.5f)); }
+
+static BYTE *rgb_profile(BOOL linear, UINT32 *size)
+{
+    static const float xyz[4][3] = {{0.9642f, 1.0f, 0.8249f}, {0.4360747f, 0.2225045f, 0.0139322f}, {0.3850649f, 0.7168786f, 0.0971045f},
+                                    {0.1430804f, 0.0606169f, 0.7141733f}};
+    static const char desc_srgb[] = "sRGB", desc_linear[] = "scRGB", cprt[] = "No copyright, use freely";
+    const char *desc = linear ? desc_linear : desc_srgb;
+    UINT32 points = linear ? 0 : 1024;
+    UINT32 desc_len = 8 + 4 + (UINT32)strlen(desc) + 1 + 8 + 2 + 1 + 67;
+    UINT32 cprt_len = 8 + (UINT32)sizeof(cprt);
+    UINT32 curve_len = 12 + points * 2;
+    /* tags: desc, cprt, wtpt, rXYZ, gXYZ, bXYZ, and the three curves sharing one. */
+    UINT32 table = 128 + 4 + 9 * 12, at = table;
+    UINT32 off_desc = at, off_cprt = (at += (desc_len + 3) & ~3u), off_xyz = (at += (cprt_len + 3) & ~3u);
+    UINT32 off_curve = (at += 4 * 20);
+    at += (curve_len + 3) & ~3u;
+    BYTE *p = D2dAllocZero(at);
+    if (!p)
+        return nullptr;
+    be32(p, at);
+    be32(p + 8, 0x02100000);
+    memcpy(p + 12, "mntrRGB XYZ ", 12);
+    be16(p + 24, 2024);
+    be16(p + 26, 1);
+    be16(p + 28, 1);
+    memcpy(p + 36, "acspMSFT", 8);
+    be32(p + 68, s15(0.9642f));
+    be32(p + 72, s15(1.0f));
+    be32(p + 76, s15(0.8249f));
+    be32(p + 128, 9);
+    static const char tags[9][5] = {"desc", "cprt", "wtpt", "rXYZ", "gXYZ", "bXYZ", "rTRC", "gTRC", "bTRC"};
+    for (UINT32 i = 0; i < 9; i++) {
+        BYTE *t = p + 132 + i * 12;
+        memcpy(t, tags[i], 4);
+        UINT32 off = i == 0 ? off_desc : i == 1 ? off_cprt : i < 6 ? off_xyz + (i - 2) * 20 : off_curve;
+        UINT32 len = i == 0 ? desc_len : i == 1 ? cprt_len : i < 6 ? 20 : curve_len;
+        be32(t + 4, off);
+        be32(t + 8, len);
+    }
+    memcpy(p + off_desc, "desc", 4);
+    be32(p + off_desc + 8, (UINT32)strlen(desc) + 1);
+    memcpy(p + off_desc + 12, desc, strlen(desc));
+    memcpy(p + off_cprt, "text", 4);
+    memcpy(p + off_cprt + 8, cprt, sizeof(cprt));
+    for (UINT32 i = 0; i < 4; i++) {
+        BYTE *x = p + off_xyz + i * 20;
+        memcpy(x, "XYZ ", 4);
+        for (int c = 0; c < 3; c++)
+            be32(x + 8 + c * 4, s15(xyz[i][c]));
+    }
+    memcpy(p + off_curve, "curv", 4);
+    be32(p + off_curve + 8, points);
+    for (UINT32 i = 0; i < points; i++)
+        be16(p + off_curve + 12 + i * 2, (UINT32)(D2dSrgbToLinear((float)i / (float)(points - 1)) * 65535.0f + 0.5f));
+    *size = at;
+    return p;
+}
+
 HRESULT D2dCreateColorContext(D2dFactory *f, D2D1_COLOR_SPACE space, const BYTE *profile, UINT32 size,
                               ID2D1ColorContext **out)
 {
@@ -836,6 +911,12 @@ HRESULT D2dCreateColorContext(D2dFactory *f, D2D1_COLOR_SPACE space, const BYTE 
         }
         memcpy(c->profile, profile, size);
         c->size = size;
+    } else {
+        c->profile = rgb_profile(space == D2D1_COLOR_SPACE_SCRGB, &c->size);
+        if (!c->profile) {
+            D2dRelease(c);
+            return E_OUTOFMEMORY;
+        }
     }
     *out = (ID2D1ColorContext *)c;
     return S_OK;
