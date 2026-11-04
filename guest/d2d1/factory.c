@@ -96,6 +96,7 @@ static HRESULT factory_query_extra(D2dObj *obj, REFIID riid, void **out)
 static void factory_destroy(D2dObj *obj)
 {
     D2dFactory *f = (D2dFactory *)obj;
+    D2dCustomFreeRegistry(f);
     D2dArrayFree(&f->effects);
     DeleteCriticalSection(&f->lock);
 }
@@ -378,16 +379,65 @@ static HRESULT STDMETHODCALLTYPE factory_metafile(ID2D1Factory7 *This, IStream *
     return E_NOTIMPL;
 }
 
-static HRESULT STDMETHODCALLTYPE factory_register_stream(ID2D1Factory7 *This, REFCLSID clsid, IStream *xml,
-                                                         const void *bindings, UINT32 count, void *factory)
-{
-    return E_NOTIMPL;
-}
-
 static HRESULT STDMETHODCALLTYPE factory_register_string(ID2D1Factory7 *This, REFCLSID clsid, const WCHAR *xml,
                                                          const void *bindings, UINT32 count, void *factory)
 {
-    return E_NOTIMPL;
+    if (!clsid || !xml || !factory || (count && !bindings))
+        return E_INVALIDARG;
+    return D2dCustomRegister((D2dFactory *)This, clsid, xml, bindings, count, factory);
+}
+
+/* the stream is xml in utf-16 with its byte order mark or in utf-8. */
+static HRESULT STDMETHODCALLTYPE factory_register_stream(ID2D1Factory7 *This, REFCLSID clsid, IStream *xml,
+                                                         const void *bindings, UINT32 count, void *factory)
+{
+    if (!xml)
+        return E_INVALIDARG;
+    BYTE *data = nullptr;
+    SIZE_T size = 0, cap = 0;
+    HRESULT hr;
+    for (;;) {
+        if (size + 4096 > cap) {
+            cap = cap ? cap * 2 : 8192;
+            BYTE *grown = D2dRealloc(data, cap + 4);
+            if (!grown) {
+                D2dFree(data);
+                return E_OUTOFMEMORY;
+            }
+            data = grown;
+        }
+        ULONG got = 0;
+        hr = xml->lpVtbl->Read(xml, data + size, 4096, &got);
+        if (FAILED(hr)) {
+            D2dFree(data);
+            return hr;
+        }
+        size += got;
+        if (!got)
+            break;
+    }
+    WCHAR *text;
+    if (size >= 2 && data[0] == 0xff && data[1] == 0xfe) {
+        text = (WCHAR *)D2dAlloc(size + 2);
+        if (text) {
+            memcpy(text, data + 2, size - 2);
+            text[(size - 2) / 2] = 0;
+        }
+    } else {
+        SIZE_T skip = size >= 3 && data[0] == 0xef && data[1] == 0xbb && data[2] == 0xbf ? 3 : 0;
+        int n = MultiByteToWideChar(CP_UTF8, 0, (const char *)data + skip, (int)(size - skip), nullptr, 0);
+        text = (WCHAR *)D2dAlloc(((SIZE_T)n + 1) * sizeof(WCHAR));
+        if (text) {
+            MultiByteToWideChar(CP_UTF8, 0, (const char *)data + skip, (int)(size - skip), text, n);
+            text[n] = 0;
+        }
+    }
+    D2dFree(data);
+    if (!text)
+        return E_OUTOFMEMORY;
+    hr = factory_register_string(This, clsid, text, bindings, count, factory);
+    D2dFree(text);
+    return hr;
 }
 
 static HRESULT STDMETHODCALLTYPE factory_unregister(ID2D1Factory7 *This, REFCLSID clsid)

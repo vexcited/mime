@@ -4,11 +4,9 @@
 #include "d2d_private.h"
 #include <float.h>
 
-#define INF_EXTENT (1 << 24)
+#define INF_EXTENT D2D_INF_EXTENT
 
-typedef struct IRect {
-    int x0, y0, x1, y1;
-} IRect;
+typedef D2dIRect IRect;
 
 static IRect irect_intersect(IRect a, IRect b)
 {
@@ -110,6 +108,29 @@ HRESULT D2dCreateCommandList(D2dRt *rt, ID2D1CommandList **out)
         return E_OUTOFMEMORY;
     }
     *out = (ID2D1CommandList *)c;
+    return S_OK;
+}
+
+/* ------------------------------------------------------------------ proxies */
+
+typedef struct D2dProxy {
+    D2dObj obj;
+    const D2dProxyOps *ops;
+    void *ctx;
+} D2dProxy;
+
+static const void *const g_proxy_vtbl[] = {D2dQueryInterface, D2dAddRef, D2dRelease, D2dResourceGetFactory};
+D2D_IIDS(g_proxy_iids, &IID_ID2D1Resource, &IID_ID2D1Image);
+static D2dClass g_proxy_class = {"image proxy", g_proxy_iids, nullptr, nullptr};
+
+HRESULT D2dProxyCreate(D2dFactory *f, const D2dProxyOps *ops, void *ctx, ID2D1Image **out)
+{
+    D2dProxy *p = D2dNew(sizeof(*p), g_proxy_vtbl, &g_proxy_class, f);
+    if (!p)
+        return E_OUTOFMEMORY;
+    p->ops = ops;
+    p->ctx = ctx;
+    *out = (ID2D1Image *)p;
     return S_OK;
 }
 
@@ -262,6 +283,9 @@ static D2dEffect *effect_of(void *p)
         return ((D2dEffOut *)p)->effect;
     return nullptr;
 }
+
+/* an ID2D1Effect of this library, built in or custom. */
+BOOL D2dIsEffect(const void *p) { return D2dIsOfClass(p, &g_effect_class) || (p && D2dCustomOf(p) == p); }
 
 static HRESULT bitmap_data(D2dRt *rt, D2dBitmap *b, D2dImageData *out)
 {
@@ -534,6 +558,12 @@ static HRESULT image_bounds(D2dRt *rt, ID2D1Image *image, IRect *b, int depth)
     D2dEffect *e = effect_of(image);
     if (e)
         return effect_bounds(rt, e, b, depth);
+    if (D2dCustomOf(image))
+        return D2dCustomBounds(rt, image, b, depth);
+    if (D2dIsOfClass(image, &g_proxy_class)) {
+        D2dProxy *p = (D2dProxy *)image;
+        return p->ops->bounds(p->ctx, b, depth);
+    }
     if (D2dIsOfClass(image, &g_cmd_class)) {
         D2dCommandList *c = (D2dCommandList *)image;
         b->x0 = b->y0 = 0;
@@ -555,6 +585,12 @@ static HRESULT image_get(D2dRt *rt, ID2D1Image *image, IRect want, D2dImageData 
     D2dEffect *e = effect_of(image);
     if (e)
         return effect_render(rt, e, want, out, depth);
+    if (D2dCustomOf(image))
+        return D2dCustomRender(rt, image, want, out, depth);
+    if (D2dIsOfClass(image, &g_proxy_class)) {
+        D2dProxy *p = (D2dProxy *)image;
+        return p->ops->get(p->ctx, want, out, depth);
+    }
     if (D2dIsOfClass(image, &g_cmd_class)) {
         D2dCommandList *c = (D2dCommandList *)image;
         IRect r = {0, 0, c->surface.w, c->surface.h};
@@ -564,6 +600,16 @@ static HRESULT image_get(D2dRt *rt, ID2D1Image *image, IRect want, D2dImageData 
         return hr;
     }
     return E_INVALIDARG;
+}
+
+HRESULT D2dImageGet(D2dRt *rt, ID2D1Image *image, D2dIRect want, D2dImageData *out, int depth)
+{
+    return image_get(rt, image, want, out, depth);
+}
+
+HRESULT D2dImageBoundsPx(D2dRt *rt, ID2D1Image *image, D2dIRect *b, int depth)
+{
+    return image_bounds(rt, image, b, depth);
 }
 
 HRESULT D2dRenderImage(D2dRt *rt, ID2D1Image *image, D2dImageData *out)
@@ -930,7 +976,8 @@ void D2dDrawImageCore(D2dRt *rt, ID2D1Image *image, const D2D1_POINT_2F *offset,
         return;
     }
     D2dEffect *eff = effect_of(image);
-    if (!eff && !D2dBitmapOf(image) && !D2dIsOfClass(image, &g_cmd_class)) {
+    if (!eff && !D2dBitmapOf(image) && !D2dIsOfClass(image, &g_cmd_class) && !D2dCustomOf(image) &&
+        !D2dIsOfClass(image, &g_proxy_class)) {
         rt->error = rt->error ? rt->error : E_INVALIDARG;
         return;
     }
@@ -1297,10 +1344,15 @@ static const GUID *const g_unimplemented[] = {
 
 HRESULT D2dCreateEffect(D2dRt *rt, REFCLSID clsid, ID2D1Effect **out)
 {
+    return D2dCreateEffectF(rt->obj.factory, rt->dpi_x, clsid, out);
+}
+
+HRESULT D2dCreateEffectF(D2dFactory *f, float dpi, REFCLSID clsid, ID2D1Effect **out)
+{
     for (int i = 0; i < EFF_COUNT; i++) {
         if (!IsEqualGUID(clsid, g_effects[i].clsid))
             continue;
-        D2dEffect *e = D2dNew(sizeof(*e), g_effect_vtbl, &g_effect_class, rt->obj.factory);
+        D2dEffect *e = D2dNew(sizeof(*e), g_effect_vtbl, &g_effect_class, f);
         if (!e)
             return E_OUTOFMEMORY;
         e->id = i;
@@ -1310,6 +1362,9 @@ HRESULT D2dCreateEffect(D2dRt *rt, REFCLSID clsid, ID2D1Effect **out)
         *out = (ID2D1Effect *)e;
         return S_OK;
     }
+    HRESULT hr = D2dCustomCreate(f, dpi, clsid, out);
+    if (hr != D2DERR_EFFECT_IS_NOT_REGISTERED)
+        return hr;
     for (size_t i = 0; i < sizeof(g_unimplemented) / sizeof(g_unimplemented[0]); i++) {
         if (IsEqualGUID(clsid, g_unimplemented[i]))
             return E_NOTIMPL;
@@ -1325,6 +1380,7 @@ HRESULT D2dEffectEnumerate(D2dFactory *f, CLSID *list, UINT32 count, UINT32 *ret
             list[n] = *g_effects[i].clsid;
         n++;
     }
+    n += D2dCustomList(f, list ? list + (n < count ? n : count) : nullptr, n < count ? count - n : 0);
     UINT32 shown = n < count ? n : count;
     if (returned)
         *returned = list ? shown : 0;
@@ -1339,7 +1395,7 @@ HRESULT D2dEffectUnregister(D2dFactory *f, REFCLSID clsid)
         if (IsEqualGUID(clsid, g_effects[i].clsid))
             return D2DERR_INVALID_CALL;
     }
-    return D2DERR_EFFECT_IS_NOT_REGISTERED;
+    return D2dCustomUnregister(f, clsid);
 }
 
 HRESULT D2dEffectProperties(D2dFactory *f, REFCLSID clsid, ID2D1Properties **out)
@@ -1356,5 +1412,5 @@ HRESULT D2dEffectProperties(D2dFactory *f, REFCLSID clsid, ID2D1Properties **out
             return S_OK;
         }
     }
-    return D2DERR_EFFECT_IS_NOT_REGISTERED;
+    return D2dCustomProperties(f, clsid, out);
 }

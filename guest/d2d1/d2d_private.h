@@ -10,6 +10,7 @@
 #include <mime/win32/wingdi.h>
 #include <mime/win32/winuser.h>
 #include <mime/win32/d2d1.h>
+#include <mime/win32/d2d1effectauthor.h>
 #include <mime/win32/d3d11.h>
 #include <vector/vector.h>
 
@@ -381,6 +382,8 @@ HRESULT D2dCreateColorContextDxgi(D2dFactory *f, UINT32 dxgi, ID2D1ColorContext 
 HRESULT D2dCreateColorContextSimple(D2dFactory *f, const void *profile, ID2D1ColorContext **out);
 HRESULT D2dCreateColorContext(D2dFactory *f, D2D1_COLOR_SPACE space, const BYTE *profile, UINT32 size,
                               ID2D1ColorContext **out);
+HRESULT D2dColorContextFromFile(D2dFactory *f, const WCHAR *path, ID2D1ColorContext **out);
+HRESULT D2dColorContextFromWic(D2dFactory *f, IWICColorContext *wic, ID2D1ColorContext **out);
 
 /* ------------------------------------------------------------------ the factory */
 
@@ -574,6 +577,11 @@ void D2dSvgDraw(D2dRt *rt, ID2D1SvgDocument *document);
 /* ------------------------------------------------------------------ effects and images */
 
 typedef struct D2dEffect D2dEffect;
+/* a rectangle of device pixels, D2D_INF_EXTENT standing for no edge. */
+typedef struct D2dIRect {
+    int x0, y0, x1, y1;
+} D2dIRect;
+#define D2D_INF_EXTENT (1 << 24)
 /* the pixels of an image in device pixels, relative to the origin of the image space. */
 typedef struct D2dImageData {
     D2dSurface surface;
@@ -589,6 +597,60 @@ void D2dDrawImageCore(D2dRt *rt, ID2D1Image *image, const D2D1_POINT_2F *offset,
 HRESULT D2dEffectEnumerate(D2dFactory *f, CLSID *list, UINT32 count, UINT32 *returned, UINT32 *registered);
 HRESULT D2dEffectUnregister(D2dFactory *f, REFCLSID clsid);
 HRESULT D2dEffectProperties(D2dFactory *f, REFCLSID clsid, ID2D1Properties **out);
+HRESULT D2dCreateEffectF(D2dFactory *f, float dpi, REFCLSID clsid, ID2D1Effect **out);
+/* the pixels of an image over an area, and its bounds, depth counting the nesting of effects. */
+HRESULT D2dImageGet(D2dRt *rt, ID2D1Image *image, D2dIRect want, D2dImageData *out, int depth);
+HRESULT D2dImageBoundsPx(D2dRt *rt, ID2D1Image *image, D2dIRect *b, int depth);
+
+/* an image whose bounds and pixels come from callbacks, for the inputs of effects inside transform graphs. */
+typedef struct D2dProxyOps {
+    HRESULT (*bounds)(void *ctx, D2dIRect *b, int depth);
+    HRESULT (*get)(void *ctx, D2dIRect want, D2dImageData *out, int depth);
+} D2dProxyOps;
+HRESULT D2dProxyCreate(D2dFactory *f, const D2dProxyOps *ops, void *ctx, ID2D1Image **out);
+
+/* ------------------------------------------------------------------ custom effects */
+
+HRESULT D2dCustomRegister(D2dFactory *f, REFCLSID clsid, const WCHAR *xml, const void *bindings, UINT32 count,
+                          void *factory);
+HRESULT D2dCustomUnregister(D2dFactory *f, REFCLSID clsid);
+/* the clsids of the registered custom effects, the count of them returned. */
+UINT32 D2dCustomList(D2dFactory *f, CLSID *list, UINT32 max);
+HRESULT D2dCustomProperties(D2dFactory *f, REFCLSID clsid, ID2D1Properties **out);
+HRESULT D2dCustomCreate(D2dFactory *f, float dpi, REFCLSID clsid, ID2D1Effect **out);
+void D2dCustomFreeRegistry(D2dFactory *f);
+
+/* shaders of custom effects run through direct3d 11. kind is 0 for pixel, 1 for vertex and 2 for compute shaders. */
+enum { D2D_SHADER_PIXEL, D2D_SHADER_VERTEX, D2D_SHADER_COMPUTE };
+HRESULT D2dGpuLoadShader(REFGUID id, int kind, const BYTE *code, UINT32 size);
+BOOL D2dGpuShaderLoaded(REFGUID id);
+typedef struct D2dGpuTexture D2dGpuTexture;
+HRESULT D2dGpuTextureCreate(const D2D1_RESOURCE_TEXTURE_PROPERTIES *p, const BYTE *data, const UINT32 *strides, UINT32 size,
+                            D2dGpuTexture **out);
+HRESULT D2dGpuTextureUpdate(D2dGpuTexture *t, const UINT32 *lo, const UINT32 *hi, const UINT32 *strides, UINT32 dims, const BYTE *data,
+                            UINT32 count);
+void D2dGpuTextureFree(D2dGpuTexture *t);
+/* one draw or dispatch: inputs in pixels of the scene, resource textures at their slots, the output rectangle. */
+typedef struct D2dGpuPass {
+    const GUID *shader;
+    const BYTE *cb;
+    UINT32 cb_size;
+    D2dGpuTexture *const *res;
+    const UINT32 *res_slot;
+    UINT32 res_count;
+    const D2dImageData *const *inputs;
+    const UINT32 *filters;
+    UINT32 input_count;
+    D2dIRect out;
+    UINT32 groups[3];
+} D2dGpuPass;
+HRESULT D2dGpuDraw(const D2dGpuPass *p, D2dImageData *out);
+HRESULT D2dGpuCompute(const D2dGpuPass *p, D2dImageData *out);
+/* a custom effect or its output image, nullptr for anything else. */
+void *D2dCustomOf(const void *image);
+BOOL D2dIsEffect(const void *p);
+HRESULT D2dCustomBounds(D2dRt *rt, ID2D1Image *image, D2dIRect *b, int depth);
+HRESULT D2dCustomRender(D2dRt *rt, ID2D1Image *image, D2dIRect want, D2dImageData *out, int depth);
 
 #define D2DERR_UNSUPPORTED_PIXEL_FORMAT_HR WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT_HR
 #define D2DERR_INSUFFICIENT_BUFFER_HR HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER)

@@ -262,9 +262,8 @@ static HRESULT STDMETHODCALLTYPE cx_color_context(ID2D1DeviceContext6 *This, D2D
     *out = nullptr;
     return D2dCreateColorContext(rt->obj.factory, space, profile, size, out);
 }
-static HRESULT STDMETHODCALLTYPE cx_color_context_file(ID2D1DeviceContext6 *This, const WCHAR *path, ID2D1ColorContext **out)
+HRESULT D2dColorContextFromFile(D2dFactory *f, const WCHAR *path, ID2D1ColorContext **out)
 {
-    RT;
     if (!out)
         return E_POINTER;
     *out = nullptr;
@@ -277,15 +276,14 @@ static HRESULT STDMETHODCALLTYPE cx_color_context_file(ID2D1DeviceContext6 *This
     BYTE *data = D2dAlloc(size ? size : 1);
     HRESULT hr = E_OUTOFMEMORY;
     if (data) {
-        hr = ReadFile(h, data, size, &got, nullptr) ? D2dCreateColorContext(rt->obj.factory, D2D1_COLOR_SPACE_CUSTOM, data, got, out) : HRESULT_FROM_WIN32(GetLastError());
+        hr = ReadFile(h, data, size, &got, nullptr) ? D2dCreateColorContext(f, D2D1_COLOR_SPACE_CUSTOM, data, got, out) : HRESULT_FROM_WIN32(GetLastError());
         D2dFree(data);
     }
     CloseHandle(h);
     return hr;
 }
-static HRESULT STDMETHODCALLTYPE cx_color_context_wic(ID2D1DeviceContext6 *This, IWICColorContext *wic, ID2D1ColorContext **out)
+HRESULT D2dColorContextFromWic(D2dFactory *f, IWICColorContext *wic, ID2D1ColorContext **out)
 {
-    RT;
     if (!out)
         return E_POINTER;
     *out = nullptr;
@@ -303,13 +301,23 @@ static HRESULT STDMETHODCALLTYPE cx_color_context_wic(ID2D1DeviceContext6 *This,
             return E_OUTOFMEMORY;
         hr = wic->lpVtbl->GetProfileBytes(wic, size, data, &size);
         if (SUCCEEDED(hr))
-            hr = D2dCreateColorContext(rt->obj.factory, D2D1_COLOR_SPACE_CUSTOM, data, size, out);
+            hr = D2dCreateColorContext(f, D2D1_COLOR_SPACE_CUSTOM, data, size, out);
         D2dFree(data);
         return hr;
     }
     UINT exif = 0;
     wic->lpVtbl->GetExifColorSpace(wic, &exif);
-    return D2dCreateColorContext(rt->obj.factory, exif == 1 ? D2D1_COLOR_SPACE_SRGB : D2D1_COLOR_SPACE_SCRGB, nullptr, 0, out);
+    return D2dCreateColorContext(f, exif == 1 ? D2D1_COLOR_SPACE_SRGB : D2D1_COLOR_SPACE_SCRGB, nullptr, 0, out);
+}
+static HRESULT STDMETHODCALLTYPE cx_color_context_file(ID2D1DeviceContext6 *This, const WCHAR *path, ID2D1ColorContext **out)
+{
+    RT;
+    return D2dColorContextFromFile(rt->obj.factory, path, out);
+}
+static HRESULT STDMETHODCALLTYPE cx_color_context_wic(ID2D1DeviceContext6 *This, IWICColorContext *wic, ID2D1ColorContext **out)
+{
+    RT;
+    return D2dColorContextFromWic(rt->obj.factory, wic, out);
 }
 static HRESULT STDMETHODCALLTYPE cx_bitmap_from_surface(ID2D1DeviceContext6 *This, IDXGISurface *s, const D2D1_BITMAP_PROPERTIES1 *p,
                                                         ID2D1Bitmap1 **out)
