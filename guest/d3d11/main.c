@@ -1,6 +1,7 @@
 /*
- * d3d11.dll exports. every driver type gets the hardware device, and warp gets the software device of warp.c when
- * there is no gpu. the debug layer is missing, as on a pc without the graphics tools.
+ * d3d11.dll exports. warp devices are made on the basic render driver's adapter, the other driver types on the first
+ * adapter. warp runs on the gpu's vulkan device, or is the software device of warp.c when there is no gpu. the debug
+ * layer is missing, as on a pc without the graphics tools.
  */
 #include "d3d11_private.h"
 
@@ -8,7 +9,7 @@ int _fltused = 0x9875;
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved) { return TRUE; }
 
-static HRESULT first_adapter(IDXGIAdapter **adapter)
+static HRESULT default_adapter(D3D_DRIVER_TYPE type, IDXGIAdapter **adapter)
 {
     HMODULE dxgi = LoadLibraryW(L"dxgi.dll");
     HRESULT(WINAPI * create)(REFIID, void **) =
@@ -19,9 +20,30 @@ static HRESULT first_adapter(IDXGIAdapter **adapter)
     HRESULT hr = create(&IID_IDXGIFactory1, (void **)&factory);
     if (FAILED(hr))
         return hr;
-    hr = factory->lpVtbl->EnumAdapters(factory, 0, adapter);
+    IDXGIFactory4 *factory4;
+    if (type != D3D_DRIVER_TYPE_WARP)
+        hr = factory->lpVtbl->EnumAdapters(factory, 0, adapter);
+    else if (SUCCEEDED(hr = factory->lpVtbl->QueryInterface(factory, &IID_IDXGIFactory4, (void **)&factory4))) {
+        hr = factory4->lpVtbl->EnumWarpAdapter(factory4, &IID_IDXGIAdapter, (void **)adapter);
+        factory4->lpVtbl->Release(factory4);
+    }
     factory->lpVtbl->Release(factory);
     return hr == DXGI_ERROR_NOT_FOUND ? E_FAIL : hr;
+}
+
+/* the basic render driver without a gpu behind it. */
+static BOOL software_adapter(IDXGIAdapter *adapter)
+{
+    IMimeDXGIAdapter *mime = nullptr;
+    if (FAILED(adapter->lpVtbl->QueryInterface(adapter, &IID_IMimeDXGIAdapter, (void **)&mime)))
+        return FALSE;
+    MIME_DXGI_VULKAN v = {};
+    mime->lpVtbl->GetVulkan(mime, &v);
+    mime->lpVtbl->Release(mime);
+    IDXGIAdapter1 *adapter1 = (IDXGIAdapter1 *)adapter;
+    DXGI_ADAPTER_DESC1 desc;
+    return !v.PhysicalDevice && SUCCEEDED(adapter1->lpVtbl->GetDesc1(adapter1, &desc)) &&
+           (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE);
 }
 
 D3D11API HRESULT WINAPI D3D11CreateDevice(IDXGIAdapter *adapter, D3D_DRIVER_TYPE type, HMODULE software, UINT flags,
@@ -48,22 +70,27 @@ D3D11API HRESULT WINAPI D3D11CreateDevice(IDXGIAdapter *adapter, D3D_DRIVER_TYPE
     HRESULT hr;
     if (adapter)
         adapter->lpVtbl->AddRef(adapter);
-    else if (FAILED(hr = first_adapter(&adapter))) {
-        if (type == D3D_DRIVER_TYPE_WARP) {
-            ID3D11Device *warp;
-            hr = D3dCreateSoftwareDevice(flags, levels, count, &warp, level);
-            if (FAILED(hr))
-                return hr;
-            if (context)
-                warp->lpVtbl->GetImmediateContext(warp, context);
-            if (device)
-                *device = warp;
-            else
-                warp->lpVtbl->Release(warp);
-            return device ? S_OK : S_FALSE;
-        }
+    else if (FAILED(hr = default_adapter(type, &adapter))) {
         D3dLog("d3d11: no device, no adapter, %08lx", (unsigned long)hr);
         return hr;
+    }
+    if (software_adapter(adapter)) {
+        adapter->lpVtbl->Release(adapter);
+        if (type != D3D_DRIVER_TYPE_WARP && type != D3D_DRIVER_TYPE_UNKNOWN) {
+            D3dLog("d3d11: no device, no gpu");
+            return E_FAIL;
+        }
+        ID3D11Device *warp;
+        hr = D3dCreateSoftwareDevice(flags, levels, count, &warp, level);
+        if (FAILED(hr))
+            return hr;
+        if (context)
+            warp->lpVtbl->GetImmediateContext(warp, context);
+        if (device)
+            *device = warp;
+        else
+            warp->lpVtbl->Release(warp);
+        return device ? S_OK : S_FALSE;
     }
     D3dDevice *object;
     ULONGLONG began = GetTickCount64();

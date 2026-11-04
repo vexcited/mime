@@ -77,10 +77,10 @@ static HRESULT STDMETHODCALLTYPE factory_enum_adapters1(IDXGIFactory7 *iface, UI
     if (!adapter)
         return DXGI_ERROR_INVALID_CALL;
     *adapter = nullptr;
-    const DxgiVulkan *vk = DxgiGetVulkan();
-    if (index >= vk->count)
+    const DxgiGpu *gpu = DxgiGpuAt(index);
+    if (!gpu)
         return DXGI_ERROR_NOT_FOUND;
-    return DxgiCreateAdapter(impl(iface), &vk->gpus[index], &IID_IDXGIAdapter1, (void **)adapter);
+    return DxgiCreateAdapter(impl(iface), gpu, &IID_IDXGIAdapter1, (void **)adapter);
 }
 
 static HRESULT STDMETHODCALLTYPE factory_enum_adapters(IDXGIFactory7 *iface, UINT index, IDXGIAdapter **adapter)
@@ -293,19 +293,19 @@ static HRESULT STDMETHODCALLTYPE factory_enum_adapter_by_luid(IDXGIFactory7 *ifa
     if (!adapter)
         return DXGI_ERROR_INVALID_CALL;
     *adapter = nullptr;
-    const DxgiVulkan *vk = DxgiGetVulkan();
-    for (UINT i = 0; i < vk->count; i++)
-        if (vk->gpus[i].desc.AdapterLuid.LowPart == luid.LowPart &&
-            vk->gpus[i].desc.AdapterLuid.HighPart == luid.HighPart)
-            return DxgiCreateAdapter(impl(iface), &vk->gpus[i], riid, adapter);
+    const DxgiGpu *gpu;
+    for (UINT i = 0; (gpu = DxgiGpuAt(i)); i++)
+        if (gpu->desc.AdapterLuid.LowPart == luid.LowPart && gpu->desc.AdapterLuid.HighPart == luid.HighPart)
+            return DxgiCreateAdapter(impl(iface), gpu, riid, adapter);
     return DXGI_ERROR_NOT_FOUND;
 }
 
 static HRESULT STDMETHODCALLTYPE factory_enum_warp_adapter(IDXGIFactory7 *iface, REFIID riid, void **adapter)
 {
-    if (adapter)
-        *adapter = nullptr;
-    return DXGI_ERROR_NOT_FOUND;
+    if (!adapter)
+        return DXGI_ERROR_INVALID_CALL;
+    *adapter = nullptr;
+    return DxgiCreateAdapter(impl(iface), &DxgiGetVulkan()->warp, riid, adapter);
 }
 
 static HRESULT STDMETHODCALLTYPE factory_check_feature_support(IDXGIFactory7 *iface, DXGI_FEATURE feature,
@@ -325,8 +325,11 @@ static HRESULT STDMETHODCALLTYPE factory_enum_adapter_by_gpu_preference(IDXGIFac
         return DXGI_ERROR_INVALID_CALL;
     *adapter = nullptr;
     const DxgiVulkan *vk = DxgiGetVulkan();
-    if (index >= vk->count)
+    if (index > vk->count)
         return DXGI_ERROR_NOT_FOUND;
+    /* software adapters sort last whatever the preference. */
+    if (index == vk->count)
+        return DxgiCreateAdapter(impl(iface), &vk->warp, riid, adapter);
     /* adapters are already discrete first, minimum power reverses the kinds. */
     const DxgiGpu *order[RTL_NUMBER_OF(vk->gpus)];
     UINT n = 0;

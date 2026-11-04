@@ -102,9 +102,8 @@ static int rank(const DxgiGpu *gpu)
     }
 }
 
-static BOOL CALLBACK init_vulkan(INIT_ONCE *once, void *param, void **context)
+static void find_gpus(DxgiVulkan *vk)
 {
-    DxgiVulkan *vk = &g_vulkan;
     /*
      * load mime's vulkan-1.dll from the system directory by full path. programs that ship their own loader, like
      * Chromium's embedded browsers with an empty driver list, would have it found first by name, leaving no adapters.
@@ -117,17 +116,17 @@ static BOOL CALLBACK init_vulkan(INIT_ONCE *once, void *param, void **context)
         module = LoadLibraryW(path);
     }
     if (!module)
-        return TRUE;
+        return;
     vk->get_instance_proc = (PFN_vkGetInstanceProcAddr)(void *)GetProcAddress(module, "vkGetInstanceProcAddr");
     if (!vk->get_instance_proc)
-        return TRUE;
+        return;
     PFN_vkEnumerateInstanceVersion enumerate_version =
         (PFN_vkEnumerateInstanceVersion)vk->get_instance_proc(nullptr, "vkEnumerateInstanceVersion");
     PFN_vkCreateInstance create = (PFN_vkCreateInstance)vk->get_instance_proc(nullptr, "vkCreateInstance");
     uint32_t version = VK_API_VERSION_1_0;
     if (!enumerate_version || !create || enumerate_version(&version) != VK_SUCCESS ||
         version < VK_API_VERSION_1_3)
-        return TRUE;
+        return;
     vk->api_version = version;
     static const char *const extensions[] = {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
     VkApplicationInfo app = {VK_STRUCTURE_TYPE_APPLICATION_INFO};
@@ -139,7 +138,7 @@ static BOOL CALLBACK init_vulkan(INIT_ONCE *once, void *param, void **context)
     info.enabledExtensionCount = RTL_NUMBER_OF(extensions);
     info.ppEnabledExtensionNames = extensions;
     if (create(&info, nullptr, &vk->instance) != VK_SUCCESS)
-        return TRUE;
+        return;
 
 #define PROC(name) ((PFN_##name)vk->get_instance_proc(vk->instance, #name))
     PFN_vkEnumeratePhysicalDevices enumerate = PROC(vkEnumeratePhysicalDevices);
@@ -170,6 +169,44 @@ static BOOL CALLBACK init_vulkan(INIT_ONCE *once, void *param, void **context)
     }
     for (UINT i = 0; i < vk->count; i++)
         describe(&vk->gpus[i], i);
+}
+
+/*
+ * the basic render driver, windows' warp adapter. with a gpu, its devices run on the first gpu's vulkan device: warp
+ * is complete there and fast, and only its identity tells it apart. a cpu vulkan driver like lavapipe is never used
+ * for it, being slower than the gpu. without a gpu it has no vulkan device, and d3d11 makes the software device of
+ * warp.c on it.
+ */
+static void describe_warp(DxgiVulkan *vk)
+{
+    DxgiGpu *gpu = &vk->warp;
+    DXGI_ADAPTER_DESC3 *desc = &gpu->desc;
+    if (vk->count) {
+        gpu->physical = vk->gpus[0].physical;
+        gpu->properties = vk->gpus[0].properties;
+        gpu->memory = vk->gpus[0].memory;
+    }
+    static const WCHAR name[] = L"Microsoft Basic Render Driver";
+    memcpy(desc->Description, name, sizeof(name));
+    desc->VendorId = 0x1414;
+    desc->DeviceId = 0x8C;
+    /* windows gives the software adapter half of the physical memory as its shared segment. */
+    MEMORYSTATUSEX status = {sizeof(status)};
+    if (GlobalMemoryStatusEx(&status))
+        desc->SharedSystemMemory = (SIZE_T)(status.ullTotalPhys / 2);
+    desc->AdapterLuid.LowPart = 0x0000D3D0 + RTL_NUMBER_OF(vk->gpus);
+    desc->Flags = DXGI_ADAPTER_FLAG3_SOFTWARE;
+    desc->GraphicsPreemptionGranularity = DXGI_GRAPHICS_PREEMPTION_DMA_BUFFER_BOUNDARY;
+    desc->ComputePreemptionGranularity = DXGI_COMPUTE_PREEMPTION_DMA_BUFFER_BOUNDARY;
+    /* the version of d3d10warp.dll. */
+    gpu->umd_version.HighPart = (10 << 16) | 0;
+    gpu->umd_version.LowPart = (26100 << 16) | 9278;
+}
+
+static BOOL CALLBACK init_vulkan(INIT_ONCE *once, void *param, void **context)
+{
+    find_gpus(&g_vulkan);
+    describe_warp(&g_vulkan);
     return TRUE;
 }
 
@@ -177,6 +214,14 @@ const DxgiVulkan *DxgiGetVulkan(void)
 {
     InitOnceExecuteOnce(&g_vulkan_once, init_vulkan, nullptr, nullptr);
     return &g_vulkan;
+}
+
+const DxgiGpu *DxgiGpuAt(UINT index)
+{
+    const DxgiVulkan *vk = DxgiGetVulkan();
+    if (index < vk->count)
+        return &vk->gpus[index];
+    return index == vk->count ? &vk->warp : nullptr;
 }
 
 DXGIAPI HRESULT WINAPI CreateDXGIFactory2(UINT flags, REFIID riid, void **factory)

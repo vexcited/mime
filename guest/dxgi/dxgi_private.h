@@ -29,7 +29,7 @@ typedef struct DxgiGpu {
     LARGE_INTEGER umd_version;
 } DxgiGpu;
 
-/* the process's vulkan instance and its gpus, in adapter order. */
+/* the process's vulkan instance and its gpus, in adapter order, then the basic render driver listed after them. */
 typedef struct DxgiVulkan {
     VkInstance instance;
     PFN_vkGetInstanceProcAddr get_instance_proc;
@@ -37,9 +37,12 @@ typedef struct DxgiVulkan {
     UINT api_version;
     UINT count;
     DxgiGpu gpus[8];
+    DxgiGpu warp;
 } DxgiVulkan;
 
 const DxgiVulkan *DxgiGetVulkan(void);
+/* the adapter at an index of the enumeration, the basic render driver being the last. */
+const DxgiGpu *DxgiGpuAt(UINT index);
 
 struct DxgiFactory {
     IDXGIFactory7 iface;

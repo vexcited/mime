@@ -1,7 +1,7 @@
 /*
- * adapters, one per gpu, and their outputs. the first adapter drives the
- * monitor, like the gpu a windows pc's display hangs off. the others have
- * no outputs.
+ * adapters, one per gpu and the basic render driver, and their outputs. the
+ * first adapter drives the monitor, like the gpu a windows pc's display hangs
+ * off. the others have no outputs.
  */
 #include "dxgi_private.h"
 
@@ -184,11 +184,18 @@ static HRESULT STDMETHODCALLTYPE adapter_query_video_memory_info(IDXGIAdapter4 *
     if (node || !info || group > DXGI_MEMORY_SEGMENT_GROUP_NON_LOCAL)
         return DXGI_ERROR_INVALID_CALL;
     const DxgiGpu *gpu = impl(iface)->gpu;
+    memset(info, 0, sizeof(*info));
+    /* the software adapter's only segment is its share of system memory. */
+    if (gpu == &DxgiGetVulkan()->warp) {
+        if (group == DXGI_MEMORY_SEGMENT_GROUP_LOCAL)
+            info->Budget = gpu->desc.SharedSystemMemory;
+        info->AvailableForReservation = info->Budget / 2;
+        return S_OK;
+    }
     VkPhysicalDeviceMemoryBudgetPropertiesEXT budget = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
     VkPhysicalDeviceMemoryProperties2 memory = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &budget};
     DxgiGetVulkan()->get_memory2(gpu->physical, &memory);
     BOOL integrated = gpu->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
-    memset(info, 0, sizeof(*info));
     for (UINT i = 0; i < memory.memoryProperties.memoryHeapCount; i++) {
         BOOL local = (memory.memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) || integrated;
         if (local != (group == DXGI_MEMORY_SEGMENT_GROUP_LOCAL))

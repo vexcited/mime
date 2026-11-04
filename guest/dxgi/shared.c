@@ -32,6 +32,9 @@ HRESULT DxgiAcquireShared(const DxgiGpu *gpu, const void *create_info, const voi
                           MIME_DXGI_SHARED_VK **out)
 {
     const DxgiVulkan *vk = DxgiGetVulkan();
+    /* the basic render driver's devices share the vulkan device of the gpu they run on. */
+    if (gpu == &vk->warp)
+        gpu = &vk->gpus[0];
     UINT index = (UINT)(gpu - vk->gpus);
     if (index >= vk->count)
         return E_INVALIDARG;
