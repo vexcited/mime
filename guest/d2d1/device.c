@@ -467,6 +467,17 @@ static void STDMETHODCALLTYPE cx_get_device(ID2D1DeviceContext6 *This, ID2D1Devi
 static void set_target_state(D2dRt *rt)
 {
     D2dBitmap *b = rt->target_bitmap;
+    if (!b && rt->kind != D2D_RT_CONTEXT && rt->home_saved) {
+        rt->draw = rt->own_bitmap ? (D2dSurface *)D2dBitmapView(rt->own_bitmap) : &rt->surface;
+        rt->pixel_w = rt->draw ? (UINT32)rt->draw->w : 0;
+        rt->pixel_h = rt->draw ? (UINT32)rt->draw->h : 0;
+        rt->pixel_format = rt->home_format;
+        rt->format = rt->home_fmt;
+        rt->srgb = rt->home_srgb;
+        rt->dpi_x = rt->home_dpi_x;
+        rt->dpi_y = rt->home_dpi_y;
+        return;
+    }
     if (!b) {
         rt->draw = nullptr;
         rt->pixel_w = rt->pixel_h = 0;
@@ -485,12 +496,29 @@ static void set_target_state(D2dRt *rt)
     rt->draw = (D2dSurface *)D2dBitmapView(b);
 }
 
+static void set_target(D2dRt *rt, ID2D1Image *target);
+
 static void STDMETHODCALLTYPE cx_set_target(ID2D1DeviceContext6 *This, ID2D1Image *target)
 {
     RT;
-    if (rt->drawing) {
-        rt->error = rt->error ? rt->error : D2DERR_WRONG_STATE;
-        return;
+    /* clips are kept in device pixels and go on to the new target, layers draw into the target they began on. */
+    BOOL drawing = rt->drawing;
+    if (drawing)
+        D2dRtSwitchTarget(rt, FALSE);
+    set_target(rt, target);
+    if (drawing)
+        D2dRtSwitchTarget(rt, TRUE);
+}
+
+static void set_target(D2dRt *rt, ID2D1Image *target)
+{
+    if (rt->kind != D2D_RT_CONTEXT && !rt->home_saved) {
+        rt->home_saved = TRUE;
+        rt->home_format = rt->pixel_format;
+        rt->home_fmt = rt->format;
+        rt->home_srgb = rt->srgb;
+        rt->home_dpi_x = rt->dpi_x;
+        rt->home_dpi_y = rt->dpi_y;
     }
     D2dBitmap *b = nullptr;
     if (target) {

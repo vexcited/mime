@@ -413,6 +413,8 @@ enum { D2D_RT_BITMAP, D2D_RT_HWND, D2D_RT_DC, D2D_RT_WIC, D2D_RT_DXGI, D2D_RT_CO
 typedef struct D2dLayerRec {
     D2dSurface surface;
     D2dSurface *parent;
+    /* the target of a device context the layer began on, which it goes back to when that is the target again. */
+    void *target;
     MimeVecMask mask;
     MimeVecRect bounds;
     float opacity;
@@ -489,6 +491,12 @@ struct D2dRt {
     D2D1_RENDERING_CONTROLS controls;
     ID2D1Factory *factory_ref;
     D2D1_DEVICE_CONTEXT_OPTIONS context_options;
+    /* a target that is not a device context but is used as one keeps its own surface for a null target. */
+    BOOL home_saved;
+    D2D1_PIXEL_FORMAT home_format;
+    D2dFormat home_fmt;
+    BOOL home_srgb;
+    float home_dpi_x, home_dpi_y;
     /* text. */
     IDWriteFactory *dwrite;
     LONG pending_layers;
@@ -496,6 +504,8 @@ struct D2dRt {
 };
 
 D2dRt *D2dRtOf(void *p);
+/* what a device context draws into now: its target bitmap or command list, nullptr for its own surface. */
+static inline void *D2dRtTargetKey(const D2dRt *rt) { return rt->target_bitmap ? (void *)rt->target_bitmap : (void *)rt->target_image; }
 extern const D2dClass d2d_rt_class;
 HRESULT D2dRtCreate(D2dFactory *f, int kind, const D2D1_RENDER_TARGET_PROPERTIES *props, D2dRt **out);
 HRESULT D2dRtResize(D2dRt *rt, UINT32 w, UINT32 h);
@@ -512,6 +522,7 @@ void D2dClipReset(D2dRt *rt);
 BOOL D2dClipIsEmpty(D2dRt *rt);
 void D2dBeginDrawCore(D2dRt *rt);
 HRESULT D2dEndDrawCore(D2dRt *rt, D2D1_TAG *tag1, D2D1_TAG *tag2);
+void D2dRtSwitchTarget(D2dRt *rt, BOOL begin);
 void D2dClearSurface(D2dRt *rt, const D2D1_COLOR_F *color);
 
 /*

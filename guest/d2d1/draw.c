@@ -769,6 +769,7 @@ void D2dPushLayer(D2dRt *rt, const D2D1_LAYER_PARAMETERS1 *params)
     D2dMatrix world;
     D2dWorldMatrix(rt, &world);
     layer->parent = rt->draw;
+    layer->target = D2dRtTargetKey(rt);
     layer->opacity = params->opacity;
     layer->brush = params->opacityBrush;
     D2D_ADDREF(layer->brush);
@@ -827,6 +828,9 @@ void D2dPopLayer(D2dRt *rt)
     }
     D2dClipRec *rec = (D2dClipRec *)rt->clips.data + --rt->clips.count;
     D2dLayerRec *layer = rec->layer;
+    /* a layer popped after its device context changed target is composed onto the target it began on. */
+    D2dSurface *current = rt->draw;
+    BOOL elsewhere = layer->target != D2dRtTargetKey(rt);
     rt->draw = layer->parent;
     pop_record(rt, rec);
     /* the layer's own pixels are composed with the mask, the opacity and the opacity brush. */
@@ -872,6 +876,11 @@ void D2dPopLayer(D2dRt *rt)
         D2dFree(brow);
         if (have_brush)
             D2dPaintRelease(&brush);
+    }
+    if (elsewhere) {
+        rt->draw = current;
+        if (D2dBitmapOf(layer->target))
+            D2dBitmapCommit(D2dBitmapOf(layer->target));
     }
     D2D_RELEASE(layer->brush);
     mime_vec_mask_free(&layer->mask);

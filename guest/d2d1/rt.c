@@ -494,10 +494,39 @@ void D2dBeginDrawCore(D2dRt *rt)
     rt->drawing = TRUE;
     rt->error = S_OK;
     if (rt->kind == D2D_RT_CONTEXT && !rt->target_bitmap) {
-        rt->draw = nullptr;
+        /* a command list target keeps the surface it was set with. */
+        if (!rt->target_image)
+            rt->draw = nullptr;
         return;
     }
     begin_target(rt);
+}
+
+/* a device context that changes its target while it draws: what was drawn goes to the old target first. */
+void D2dRtSwitchTarget(D2dRt *rt, BOOL begin)
+{
+    D2dBitmap *b = rt->target_bitmap;
+    if (!begin) {
+        if (b) {
+            D2dBitmapCommit(b);
+            D2dBitmapWriteSurface(b);
+            b->bound_as_target = 0;
+        }
+        return;
+    }
+    if (b) {
+        b->bound_as_target = 1;
+        if (b->surface)
+            D2dBitmapReadSurface(b);
+        rt->draw = (D2dSurface *)D2dBitmapView(b);
+    }
+    for (UINT32 i = rt->clips.count; i-- > 0;) {
+        D2dLayerRec *layer = ((D2dClipRec *)rt->clips.data)[i].layer;
+        if (layer && layer->target == D2dRtTargetKey(rt)) {
+            rt->draw = &layer->surface;
+            break;
+        }
+    }
 }
 
 HRESULT D2dEndDrawCore(D2dRt *rt, D2D1_TAG *tag1, D2D1_TAG *tag2)
@@ -519,7 +548,7 @@ HRESULT D2dEndDrawCore(D2dRt *rt, D2D1_TAG *tag1, D2D1_TAG *tag2)
         }
     }
     rt->error = S_OK;
-    if (rt->kind == D2D_RT_CONTEXT && !rt->target_bitmap) {
+    if (rt->kind == D2D_RT_CONTEXT && !rt->target_bitmap && !rt->target_image) {
         rt->drawing = FALSE;
         return hr ? hr : D2DERR_WRONG_STATE;
     }
