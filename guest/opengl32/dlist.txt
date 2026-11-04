@@ -1,0 +1,201 @@
+# the commands a display list compiles, read by tools/gengl.c.
+#
+# one command to a line: its name, then words.
+#   begin          allowed between glBegin and glEnd, any other command in there is a GL_INVALID_OPERATION.
+#   custom         recorded by gl_dl_custom_<name> in dlist.c, which says if the command runs now too.
+#   <arg>=<count>  a pointer argument, <count> elements are copied when the command is issued. <count> is a C expression of
+#                  the other arguments.
+# what is not here runs at once while a list is compiled, as the specification has it: the queries, the client state, the
+# object names and the vertex arrays.
+
+glActiveTexture
+glAlphaFunc
+glBeginQuery
+glBindTexture
+glBlendColor
+glBlendEquation
+glBlendEquationSeparate
+glBlendFunc
+glBlendFuncSeparate
+glClear
+glClearAccum
+glClearColor
+glClearDepth
+glClearDepthf
+glClearIndex
+glClearStencil
+glClipPlane equation=4
+glColorMask
+glColorMaterial
+glCopyPixels
+glCopyTexImage1D
+glCopyTexImage2D
+glCopyTexSubImage1D
+glCopyTexSubImage2D
+glCullFace
+glDepthFunc
+glDepthMask
+glDepthRange
+glDepthRangef
+glDisable
+glDrawBuffer
+glDrawBuffers bufs=n
+glEnable
+glEndQuery
+glFogf
+glFogfv params=gl_dl_fog_count(pname)
+glFogi
+glFogiv params=gl_dl_fog_count(pname)
+glFrontFace
+glFrustum
+glInitNames
+glLightModelf
+glLightModelfv params=gl_dl_light_model_count(pname)
+glLightModeli
+glLightModeliv params=gl_dl_light_model_count(pname)
+glLightf
+glLightfv params=gl_dl_light_count(pname)
+glLighti
+glLightiv params=gl_dl_light_count(pname)
+glLineStipple
+glLineWidth
+glListBase
+glLoadIdentity
+glLoadMatrixd m=16
+glLoadMatrixf m=16
+glLoadName
+glLoadTransposeMatrixd m=16
+glLoadTransposeMatrixdARB m=16
+glLoadTransposeMatrixf m=16
+glLoadTransposeMatrixfARB m=16
+glLogicOp
+glMaterialf begin
+glMaterialfv begin params=gl_dl_material_count(pname)
+glMateriali begin
+glMaterialiv begin params=gl_dl_material_count(pname)
+glMatrixMode
+glMultMatrixd m=16
+glMultMatrixf m=16
+glMultTransposeMatrixd m=16
+glMultTransposeMatrixdARB m=16
+glMultTransposeMatrixf m=16
+glMultTransposeMatrixfARB m=16
+glOrtho
+glPassThrough
+glPixelTransferf
+glPixelTransferi
+glPixelZoom
+glPointParameterf
+glPointParameterfARB
+glPointParameterfEXT
+glPointParameterfv values=gl_dl_point_parameter_count(pname)
+glPointParameterfvARB values=gl_dl_point_parameter_count(pname)
+glPointParameterfvEXT values=gl_dl_point_parameter_count(pname)
+glPointParameteri
+glPointParameteriv values=gl_dl_point_parameter_count(pname)
+glPointSize
+glPolygonMode
+glPolygonOffset
+glPopMatrix
+glPopName
+glPrioritizeTextures textures=n priorities=n
+glPushAttrib
+glPushMatrix
+glPushName
+glReadBuffer
+glRotated
+glRotatef
+glScaled
+glScalef
+glScissor
+glShadeModel
+glStencilFunc
+glStencilFuncSeparate
+glStencilMask
+glStencilMaskSeparate
+glStencilOp
+glStencilOpSeparate
+glTexEnvf
+glTexEnvfv params=gl_dl_tex_env_count(pname)
+glTexEnvi
+glTexEnviv params=gl_dl_tex_env_count(pname)
+glTexGend
+glTexGendv params=gl_dl_tex_gen_count(pname)
+glTexGenf
+glTexGenfv params=gl_dl_tex_gen_count(pname)
+glTexGeni
+glTexGeniv params=gl_dl_tex_gen_count(pname)
+glTexParameterf
+glTexParameterfv params=gl_dl_tex_parameter_count(pname)
+glTexParameteri
+glTexParameteriv params=gl_dl_tex_parameter_count(pname)
+glTranslated
+glTranslatef
+glUniform1f
+glUniform1fv v=n
+glUniform1i
+glUniform1iv v=n
+glUniform1ui
+glUniform1uiv v=n
+glUniform2f
+glUniform2fv v=n*2
+glUniform2i
+glUniform2iv v=n*2
+glUniform2ui
+glUniform2uiv v=n*2
+glUniform3f
+glUniform3fv v=n*3
+glUniform3i
+glUniform3iv v=n*3
+glUniform3ui
+glUniform3uiv v=n*3
+glUniform4f
+glUniform4fv v=n*4
+glUniform4i
+glUniform4iv v=n*4
+glUniform4ui
+glUniform4uiv v=n*4
+glUniformMatrix2fv v=n*4
+glUniformMatrix2x3fv v=n*6
+glUniformMatrix2x4fv v=n*8
+glUniformMatrix3fv v=n*9
+glUniformMatrix3x2fv v=n*6
+glUniformMatrix3x4fv v=n*12
+glUniformMatrix4fv v=n*16
+glUniformMatrix4x2fv v=n*8
+glUniformMatrix4x3fv v=n*12
+glUseProgram
+glViewport
+
+glArrayElement begin custom
+glBegin custom
+glBitmap custom
+glCallList begin custom
+glCallLists begin custom
+glCompressedTexImage2D custom
+glCompressedTexSubImage2D custom
+glDrawArrays custom
+glDrawElements custom
+glDrawPixels custom
+glDrawRangeElements custom
+glEdgeFlag begin custom
+glEdgeFlagv begin custom
+glEnd begin custom
+glMultiDrawArrays custom
+glMultiDrawElements custom
+glPolygonStipple custom
+glPopAttrib custom
+glRectd custom
+glRectdv custom
+glRectf custom
+glRectfv custom
+glRecti custom
+glRectiv custom
+glRects custom
+glRectsv custom
+glTexImage1D custom
+glTexImage2D custom
+glTexImage3D custom
+glTexSubImage1D custom
+glTexSubImage2D custom
+glTexSubImage3D custom

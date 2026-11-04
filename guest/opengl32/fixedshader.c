@@ -23,6 +23,10 @@
     X(U_SHININESS, FF_U_SHININESS)                                                                                     \
     X(U_LIGHT, FF_U_LIGHT)                                                                                             \
     X(U_LIGHT_SIZE, FF_U_LIGHT_SIZE)                                                                                   \
+    X(U_CLIP, FF_U_CLIP)                                                                                               \
+    X(U_FLAGS2, FF_U_FLAGS2)                                                                                           \
+    X(U_STIPPLE, FF_U_STIPPLE)                                                                                         \
+    X(CLIP_PLANES, FF_CLIP_PLANES)                                                                                     \
     X(U_COUNT, FF_U_COUNT)                                                                                             \
     X(LIGHTS, FF_LIGHTS)                                                                                               \
     X(TEX_COLOR, FF_TEX_COLOR)                                                                                         \
@@ -47,6 +51,7 @@ static const char g_vertex_body[] =
     "flat out vec3 vFlatSecondary;\n"
     "out vec4 vTexCoord;\n"
     "out float vFog;\n"
+    "out float gl_ClipDistance[CLIP_PLANES];\n"
     "void main()\n"
     "{\n"
     "    mat4 mvp = mat4(u[U_MVP], u[U_MVP + 1], u[U_MVP + 2], u[U_MVP + 3]);\n"
@@ -57,6 +62,7 @@ static const char g_vertex_body[] =
     "    vTexCoord = texmat * aTexCoord;\n"
     "    vec4 eye = mv * aPosition;\n"
     "    vFog = abs(eye.z);\n"
+    "    for (int i = 0; i < CLIP_PLANES; i++) gl_ClipDistance[i] = dot(u[U_CLIP + i], eye);\n"
     "    vec4 color = aColor;\n"
     "    vec3 secondary = vec3(0.0);\n"
     "    if (u[U_FLAGS0].x != 0.0) {\n"
@@ -135,6 +141,13 @@ static const char g_fragment_body[] =
     "out vec4 fragColor;\n"
     "void main()\n"
     "{\n"
+    "    if (u[U_FLAGS2].x != 0.0) {\n"
+    "        ivec2 sp = ivec2(gl_FragCoord.xy);\n"
+    "        int col = sp.x & 31;\n"
+    "        int row = sp.y & 31;\n"
+    "        float bits = u[U_STIPPLE + (row >> 1)][((row & 1) << 1) + (col >> 4)];\n"
+    "        if (((int(bits) >> (col & 15)) & 1) == 0) discard;\n"
+    "    }\n"
     "    bool shadeFlat = u[U_FLAGS1].z != 0.0;\n"
     "    vec4 c = shadeFlat ? vFlatColor : vColor;\n"
     "    vec3 secondary = shadeFlat ? vFlatSecondary : vSecondary;\n"
@@ -260,7 +273,7 @@ static GlProgram *ff_program(GlContext *ctx)
 }
 
 /* the program for a draw without one, and where it reads its vertices; NULL when nothing is drawn. */
-GlProgram *gl_ff_begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate)
+GlProgram *gl_ff_begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate, GLenum mode)
 {
     GlFixed *f = &ctx->ff;
     /* the other render modes draw nothing, and arrays need a vertex array. */
@@ -277,6 +290,7 @@ GlProgram *gl_ff_begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate)
     in->constants = f->constants;
     in->fixed = TRUE;
     in->flat = f->shade_model == GL_FLAT;
+    f->polygon_draw = mode >= GL_TRIANGLES;
     return p;
 }
 
@@ -294,6 +308,8 @@ void gl_ff_prepare(GlContext *ctx, GlProgram *p)
     f->uniforms[FF_U_FLAGS1][0] = (GLfloat)env;
     f->uniforms[FF_U_FLAGS1][1] = (GLfloat)format;
     f->uniforms[FF_U_MISC][0] = gl_point_size(ctx);
+    f->uniforms[FF_U_FLAGS2][0] =
+        f->polygon_draw && !f->window_draw && ctx->polygon_mode == GL_FILL && gl_ff_stored(ctx, GL_POLYGON_STIPPLE);
     GLfloat(*u)[4] = f->uniforms;
     GLfloat window[FF_U_COUNT][4];
     if (f->window_draw) {
@@ -301,6 +317,9 @@ void gl_ff_prepare(GlContext *ctx, GlProgram *p)
         memcpy(window, f->uniforms, sizeof(window));
         memcpy(&window[FF_U_MVP], f->window_mvp, sizeof(f->window_mvp));
         memcpy(&window[FF_U_MV], identity, sizeof(identity));
+        for (int i = 0; i < FF_CLIP_PLANES; i++)
+            memset(window[FF_U_CLIP + i], 0, 16);
+        window[FF_U_FLAGS2][0] = 0;
         if (f->raster_op != FF_RASTER_LINES) {
             memcpy(&window[FF_U_TEXMAT], identity, sizeof(identity));
             window[FF_U_FLAGS0][0] = 0;

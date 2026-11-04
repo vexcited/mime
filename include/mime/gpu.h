@@ -224,7 +224,8 @@ typedef struct MimeGpuColorTarget {
     uint8_t blend;
     uint8_t rgb_op, alpha_op;
     uint8_t src_rgb, dst_rgb, src_alpha, dst_alpha;
-    uint8_t pad[6];
+    uint8_t logic_op; /* 0 for none, else 1 and the number of the operation counted from GL_CLEAR; blending is off then. */
+    uint8_t pad[5];
 } MimeGpuColorTarget;
 
 typedef struct MimeGpuPipelineDesc {

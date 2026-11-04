@@ -53,7 +53,7 @@ static VkQueue g_queue;
 static uint32_t g_family;
 static VkPhysicalDeviceMemoryProperties g_memory;
 static VkPhysicalDeviceProperties g_props;
-static bool g_polygon_mode, g_depth_clamp, g_clip_control, g_null_descriptor;
+static bool g_polygon_mode, g_depth_clamp, g_clip_control, g_null_descriptor, g_logic_op;
 static PFN_vkGetMemoryHostPointerPropertiesEXT g_host_pointer;
 static VkPipelineCache g_cache;
 static VkShaderModule g_clear_vs, g_clear_fs;
@@ -202,6 +202,7 @@ static void init_device(void)
         .imageCubeArray = all.features.imageCubeArray,
         .largePoints = all.features.largePoints,
         .wideLines = all.features.wideLines,
+        .logicOp = all.features.logicOp,
         .shaderClipDistance = all.features.shaderClipDistance,
         .shaderCullDistance = all.features.shaderCullDistance,
         .sampleRateShading = all.features.sampleRateShading,
@@ -213,6 +214,7 @@ static void init_device(void)
         .multiViewport = all.features.multiViewport,
         .occlusionQueryPrecise = all.features.occlusionQueryPrecise,
     };
+    g_logic_op = all.features.logicOp;
     g_polygon_mode = eds3 && dyn3.extendedDynamicState3PolygonMode;
     g_depth_clamp = eds3 && dyn3.extendedDynamicState3DepthClampEnable;
     g_null_descriptor = robustness && robust.nullDescriptor;
@@ -1808,8 +1810,11 @@ static VkPipeline build_pipeline(Pipeline *pl, uint32_t fill, bool clamp)
             t->blend != 0,          blend_factor(t->src_rgb),   blend_factor(t->dst_rgb), (VkBlendOp)t->rgb_op,
             blend_factor(t->src_alpha), blend_factor(t->dst_alpha), (VkBlendOp)t->alpha_op, write_mask(t->write_mask)};
     }
+    /* the logic operation is one for all the targets, the numbers of GL_CLEAR to GL_SET being the ones of Vulkan. */
+    uint8_t logic = d->color[0].logic_op;
     VkPipelineColorBlendStateCreateInfo cb = {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, nullptr, 0,
-                                              VK_FALSE, VK_LOGIC_OP_COPY, MIME_GPU_MAX_COLORS, blend};
+                                              logic != 0 && g_logic_op, logic ? (VkLogicOp)(logic - 1) : VK_LOGIC_OP_COPY,
+                                              MIME_GPU_MAX_COLORS, blend};
     VkDynamicState dyn[24];
     VkPipelineDynamicStateCreateInfo dynamic = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, nullptr, 0,
                                                 dynamic_count(), dynamic_states(dyn)};

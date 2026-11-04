@@ -256,9 +256,25 @@ typedef struct GlNames {
     GLuint count;
 } GlNames;
 
+/* display lists, dlist.c. */
+typedef struct GlList GlList;
+
+typedef struct GlListEntry {
+    GLuint name;
+    GlList *list;
+} GlListEntry;
+
+typedef struct GlListTable {
+    GL_LOCK lock;
+    GlListEntry *entries;
+    uint32_t cap, used, count; /* cap is a power of two, used counts the removed slots too. */
+    GLuint next;               /* where glGenLists looks first. */
+} GlListTable;
+
 typedef struct GlShared {
     LONG refs;
     GlNames buffers, textures, renderbuffers, programs, shaders;
+    GlListTable lists;
 } GlShared;
 
 #define GL_RESERVED ((void *)1) /* a generated name without its object yet. */
@@ -322,7 +338,8 @@ typedef struct GlBlend {
 #define FF_TEXTURE_DEPTH 10
 #define FF_LIGHTS 8
 #define FF_STORED_CAPS 64
-#define FF_UNIFORM_SLOTS 96
+#define FF_UNIFORM_SLOTS 112
+#define FF_CLIP_PLANES 6
 
 typedef struct GlLight {
     GLfloat ambient[4], diffuse[4], specular[4];
@@ -403,10 +420,17 @@ typedef struct GlFixed {
     /* a draw whose vertices are in window coordinates: pixel rectangles and lines that are wide or stippled. raster_op is
        a FF_RASTER value of fixed.h. */
     BOOL window_draw;
+    BOOL polygon_draw; /* the draw in progress is of polygons, which the stipple applies to. */
     int raster_op;
     GLfloat window_mvp[16];
     GLint line_stipple_factor;
     GLushort line_stipple_pattern;
+
+    /* user clip planes in eye coordinates as they were when glClipPlane took them, the logic operation and the polygon
+       stipple. the enables are the stored capabilities. */
+    GLdouble clip_plane[FF_CLIP_PLANES][4];
+    GLenum logic_op;
+    GLubyte polygon_stipple[128];
 } GlFixed;
 
 /* where a draw reads its vertices: a table of attributes by location, and the values of disabled ones. */
@@ -416,6 +440,18 @@ typedef struct GlVertexInput {
     const GLfloat (*constants)[4]; /* NULL: the generic attribute values of the context. */
     BOOL fixed, flat;
 } GlVertexInput;
+
+/* the display list being compiled, and the one running, see dlist.c. */
+typedef struct GlDlBuilder GlDlBuilder;
+
+typedef struct GlDlState {
+    GLenum mode;       /* 0 outside glNewList, else GL_COMPILE or GL_COMPILE_AND_EXECUTE. */
+    GLuint list;       /* the list glNewList names. */
+    GLuint base;       /* glListBase. */
+    int depth;         /* lists running inside each other. */
+    BOOL in_begin;     /* a glBegin was compiled and its glEnd was not. */
+    GlDlBuilder *b;
+} GlDlState;
 
 typedef struct GlContext {
     GlShared *shared;
@@ -516,6 +552,7 @@ typedef struct GlContext {
     uint32_t dummy_texture;
 
     GlFixed ff;
+    GlDlState dl;
 
     /* glPushAttrib and glPushClientAttrib, see attrib.c. */
     void *attrib_stack, *client_attrib_stack;
@@ -583,9 +620,10 @@ BOOL gl_ff_is_enabled(GlContext *ctx, GLenum cap, BOOL *known);
 int gl_ff_get(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors);
 void gl_ff_track_color(GlContext *ctx);
 int gl_ff_unused_array(GLenum cap);
-GlProgram *gl_ff_begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate);
+GlProgram *gl_ff_begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate, GLenum mode);
 void gl_ff_prepare(GlContext *ctx, GlProgram *p);
 BOOL gl_ff_stored(GlContext *ctx, GLenum cap);
+BOOL gl_ff_stored_in(const BOOL *stored, GLenum cap);
 
 /* raster.c: the raster position, bitmaps and pixel rectangles. */
 void gl_raster_init(GlContext *ctx);
@@ -599,6 +637,10 @@ void gl_ff_array_vertex(GlContext *ctx, GLint index, GlFfVertex *out);
 
 /* draw.c: a fixed function draw of vertices that are not in the context's batch. */
 void gl_draw_vertices(GlContext *ctx, GLenum mode, const GlFfVertex *vertices, uint32_t count, uint32_t varying);
+
+/* display lists, dlist.c. */
+void gl_dl_destroy(GlContext *ctx);
+void gl_dl_shared_destroy(GlShared *shared);
 
 /* between glBegin and glEnd only the vertex commands run: any other one is a GL_INVALID_OPERATION. */
 #define GL_CONTEXT_OR_RETURN(...)                                                                                      \
@@ -615,5 +657,10 @@ void gl_draw_vertices(GlContext *ctx, GLenum mode, const GlFfVertex *vertices, u
     GlContext *ctx = gl_current();                                                                                     \
     if (!ctx)                                                                                                          \
         return __VA_ARGS__;
+
+#ifndef MIME_GL_NO_RENAME
+/* the commands a display list compiles are exported by wrappers that record them, and implemented here under another name. */
+#include "dlist_rename.h"
+#endif
 
 #endif

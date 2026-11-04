@@ -23,7 +23,10 @@ enum {
     FF_U_SHININESS = 27,
     FF_U_LIGHT = 32,       /* FF_U_LIGHT_SIZE slots per light. */
     FF_U_LIGHT_SIZE = 7,   /* ambient, diffuse, specular, position, spot direction and exponent, spot cutoff, attenuation. */
-    FF_U_COUNT = FF_U_LIGHT + FF_LIGHTS * FF_U_LIGHT_SIZE,
+    FF_U_CLIP = FF_U_LIGHT + FF_LIGHTS * FF_U_LIGHT_SIZE, /* FF_CLIP_PLANES planes in eye coordinates, 0 when off. */
+    FF_U_FLAGS2 = FF_U_CLIP + FF_CLIP_PLANES,              /* polygon stipple on. */
+    FF_U_STIPPLE = FF_U_FLAGS2 + 2,                        /* 16 slots, two rows of two halves each. */
+    FF_U_COUNT = FF_U_STIPPLE + 16,
 };
 
 /* bits of the texture format slot. */
@@ -36,6 +39,11 @@ enum { FF_ENV_OFF, FF_ENV_MODULATE, FF_ENV_REPLACE, FF_ENV_DECAL, FF_ENV_BLEND, 
 enum { FF_RASTER_LINES, FF_RASTER_PIXELS, FF_RASTER_BITMAP };
 
 static_assert(FF_U_COUNT <= FF_UNIFORM_SLOTS, "GlFixed::uniforms is too small");
+
+/* in fragops.c. */
+void gl_stipple_pack(const GlContext *ctx, GLfloat (*u)[4]);
+BOOL gl_clip_planes_enabled(GlContext *ctx);
+uint8_t gl_logic_op(GlContext *ctx);
 
 /* in fixed.c. */
 void gl_ff_pack(GlContext *ctx, GLfloat (*u)[4]);

@@ -1,68 +1,8 @@
 /*
- * legacy commands accepted so programs link and start, which draw nothing: display lists, evaluators, the raster
- * position and pixel drawing, color indexes, texture coordinate generation, clip planes, stipples, the logic operation,
- * pixel transfer and the accumulation buffer. what the specification makes an error is still one.
+ * legacy commands accepted so programs link and start, which draw nothing: evaluators, color indexes, texture coordinate
+ * generation, pixel transfer and the accumulation buffer. what the specification makes an error is still one.
  */
 #include "opengl32.h"
-
-/* ---------------------------------------------------------------- display lists */
-
-GLAPI GLuint APIENTRY glGenLists(GLsizei range)
-{
-    GL_CONTEXT_OR_RETURN(0);
-    if (range < 0)
-        gl_error(ctx, GL_INVALID_VALUE);
-    return 0;
-}
-
-GLAPI void APIENTRY glNewList(GLuint list, GLenum mode)
-{
-    GL_CONTEXT_OR_RETURN();
-    if (list == 0 || (mode != GL_COMPILE && mode != GL_COMPILE_AND_EXECUTE)) {
-        gl_error(ctx, list == 0 ? GL_INVALID_VALUE : GL_INVALID_ENUM);
-        return;
-    }
-    /* nothing records commands, so a list cannot be made. */
-    gl_error(ctx, GL_OUT_OF_MEMORY);
-}
-
-GLAPI void APIENTRY glEndList(void)
-{
-    GL_CONTEXT_OR_RETURN();
-    gl_error(ctx, GL_INVALID_OPERATION);
-}
-
-GLAPI GLboolean APIENTRY glIsList(GLuint list)
-{
-    GL_CONTEXT_OR_RETURN(GL_FALSE);
-    return GL_FALSE;
-}
-
-GLAPI void APIENTRY glDeleteLists(GLuint list, GLsizei range)
-{
-    GL_CONTEXT_OR_RETURN();
-    if (range < 0)
-        gl_error(ctx, GL_INVALID_VALUE);
-}
-
-GLAPI void APIENTRY glCallList(GLuint list)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glCallLists(GLsizei n, GLenum type, const GLvoid *lists)
-{
-    GL_CONTEXT_OR_RETURN();
-    if (n < 0)
-        gl_error(ctx, GL_INVALID_VALUE);
-    else if (type < GL_BYTE || type > GL_4_BYTES)
-        gl_error(ctx, GL_INVALID_ENUM);
-}
-
-GLAPI void APIENTRY glListBase(GLuint base)
-{
-    GL_CONTEXT_OR_RETURN();
-}
 
 /* ---------------------------------------------------------------- raster position and pixels */
 
@@ -180,7 +120,7 @@ GLAPI void APIENTRY glIndexubv(const GLubyte *c)
     GL_CONTEXT_ALLOWED_IN_BEGIN();
 }
 
-/* ---------------------------------------------------------------- generation, planes, stipples */
+/* ---------------------------------------------------------------- generation */
 
 GLAPI void APIENTRY glTexGend(GLenum coord, GLenum pname, GLdouble param)
 {
@@ -255,43 +195,6 @@ GLAPI void APIENTRY glGetTexGeniv(GLenum coord, GLenum pname, GLint *params)
     }
     for (int i = 0; i < 4; i++)
         params[i] = (GLint)(i == (coord == GL_S ? 0 : coord == GL_T ? 1 : 4) ? 1 : 0);
-}
-
-GLAPI void APIENTRY glClipPlane(GLenum plane, const GLdouble *equation)
-{
-    GL_CONTEXT_OR_RETURN();
-    if (plane < GL_CLIP_PLANE0 || plane > GL_CLIP_PLANE5)
-        gl_error(ctx, GL_INVALID_ENUM);
-}
-
-GLAPI void APIENTRY glGetClipPlane(GLenum plane, GLdouble *equation)
-{
-    GL_CONTEXT_OR_RETURN();
-    if (plane < GL_CLIP_PLANE0 || plane > GL_CLIP_PLANE5) {
-        gl_error(ctx, GL_INVALID_ENUM);
-        return;
-    }
-    for (int i = 0; i < 4; i++)
-        equation[i] = 0;
-}
-
-GLAPI void APIENTRY glPolygonStipple(const GLubyte *mask)
-{
-    GL_CONTEXT_OR_RETURN();
-}
-
-GLAPI void APIENTRY glGetPolygonStipple(GLubyte *mask)
-{
-    GL_CONTEXT_OR_RETURN();
-    for (int i = 0; i < 128; i++)
-        mask[i] = 0xFF;
-}
-
-GLAPI void APIENTRY glLogicOp(GLenum opcode)
-{
-    GL_CONTEXT_OR_RETURN();
-    if (opcode < GL_CLEAR || opcode > GL_SET)
-        gl_error(ctx, GL_INVALID_ENUM);
 }
 
 /* ---------------------------------------------------------------- evaluators */

@@ -65,6 +65,8 @@ void gl_ff_init(GlContext *ctx)
         l->attenuation[0] = 1;
     }
     f->render_mode = GL_RENDER;
+    f->logic_op = GL_COPY;
+    memset(f->polygon_stipple, 0xFF, sizeof(f->polygon_stipple));
     f->dirty = TRUE;
 }
 
@@ -1335,6 +1337,13 @@ BOOL gl_ff_stored(GlContext *ctx, GLenum cap)
     return i >= 0 && ctx->ff.stored[i];
 }
 
+/* the same capability in a saved copy of the stored ones. */
+BOOL gl_ff_stored_in(const BOOL *stored, GLenum cap)
+{
+    int i = stored_index(cap);
+    return i >= 0 && stored[i];
+}
+
 /* TRUE when cap belongs to the fixed function pipeline, whatever it did. */
 BOOL gl_ff_capability(GlContext *ctx, GLenum cap, BOOL on)
 {
@@ -1379,6 +1388,10 @@ BOOL gl_ff_capability(GlContext *ctx, GLenum cap, BOOL on)
         if (i < 0)
             return FALSE;
         f->stored[i] = on;
+        if (cap == GL_POLYGON_STIPPLE || (cap >= GL_CLIP_PLANE0 && cap < GL_CLIP_PLANE0 + FF_CLIP_PLANES))
+            DIRTY(ctx);
+        else if (cap == GL_COLOR_LOGIC_OP)
+            ctx->dirty |= DIRTY_PIPELINE;
         return TRUE;
     }
     DIRTY(ctx);
@@ -1601,6 +1614,24 @@ int gl_ff_get(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         return 1;
     case GL_CLIENT_ACTIVE_TEXTURE:
         v[0] = GL_TEXTURE0 + f->client_unit;
+        return 1;
+    case GL_LOGIC_OP_MODE:
+        v[0] = f->logic_op;
+        return 1;
+    case GL_MAX_CLIP_PLANES:
+        v[0] = FF_CLIP_PLANES;
+        return 1;
+    case GL_LIST_BASE:
+        v[0] = ctx->dl.base;
+        return 1;
+    case GL_LIST_INDEX:
+        v[0] = ctx->dl.mode ? ctx->dl.list : 0;
+        return 1;
+    case GL_LIST_MODE:
+        v[0] = ctx->dl.mode;
+        return 1;
+    case GL_MAX_LIST_NESTING:
+        v[0] = 64;
         return 1;
     case GL_CURRENT_RASTER_POSITION:
         for (int i = 0; i < 4; i++)
@@ -1851,4 +1882,12 @@ void gl_ff_pack(GlContext *ctx, GLfloat (*u)[4])
         set4(s[5], (GLfloat)cosine_of_cutoff, cutoff != 180, 0, 0);
         set4(s[6], l->attenuation[0], l->attenuation[1], l->attenuation[2], l->enabled);
     }
+    for (int i = 0; i < FF_CLIP_PLANES; i++) {
+        const GLdouble *p = f->clip_plane[i];
+        if (gl_ff_stored(ctx, GL_CLIP_PLANE0 + (GLenum)i))
+            set4(u[FF_U_CLIP + i], (GLfloat)p[0], (GLfloat)p[1], (GLfloat)p[2], (GLfloat)p[3]);
+        else
+            set4(u[FF_U_CLIP + i], 0, 0, 0, 0);
+    }
+    gl_stipple_pack(ctx, u);
 }

@@ -1,5 +1,5 @@
 /* the raster position: where glBitmap and glDrawPixels start, with the color that was current when it was set. */
-#include "opengl32.h"
+#include "dlist.h"
 
 void gl_raster_init(GlContext *ctx)
 {
@@ -14,7 +14,7 @@ void gl_raster_init(GlContext *ctx)
 }
 
 /* the position goes through the matrices and the viewport, and is valid when it is inside the clip volume. */
-static void raster_position(GlContext *ctx, GLfloat x, GLfloat y, GLfloat z, GLfloat w)
+void gl_raster_position(GlContext *ctx, GLfloat x, GLfloat y, GLfloat z, GLfloat w)
 {
     GlFixed *f = &ctx->ff;
     const GLfloat *mv = f->modelview[f->modelview_depth], *pr = f->projection[f->projection_depth];
@@ -26,6 +26,14 @@ static void raster_position(GlContext *ctx, GLfloat x, GLfloat y, GLfloat z, GLf
     GlRaster *r = &ctx->raster;
     GLfloat cw = c[3];
     r->valid = cw > 0 && c[0] >= -cw && c[0] <= cw && c[1] >= -cw && c[1] <= cw && c[2] >= -cw && c[2] <= cw;
+    /* a position cut off by a user clip plane is not valid either. */
+    for (int i = 0; r->valid && i < FF_CLIP_PLANES; i++) {
+        if (!gl_ff_stored(ctx, GL_CLIP_PLANE0 + (GLenum)i))
+            continue;
+        const GLdouble *p = f->clip_plane[i];
+        if (p[0] * e[0] + p[1] * e[1] + p[2] * e[2] + p[3] * e[3] < 0)
+            r->valid = FALSE;
+    }
     if (cw != 0) {
         GLfloat inv = 1 / cw;
         r->position[0] = (GLfloat)ctx->viewport[0] + (c[0] * inv + 1) * 0.5f * (GLfloat)ctx->viewport[2];
@@ -39,7 +47,9 @@ static void raster_position(GlContext *ctx, GLfloat x, GLfloat y, GLfloat z, GLf
 static void set_position(GLfloat x, GLfloat y, GLfloat z, GLfloat w)
 {
     GL_CONTEXT_OR_RETURN();
-    raster_position(ctx, x, y, z, w);
+    if (ctx->dl.mode && gl_dl_rasterpos(ctx, x, y, z, w))
+        return;
+    gl_raster_position(ctx, x, y, z, w);
 }
 
 GLAPI void APIENTRY glRasterPos2d(GLdouble x, GLdouble y)

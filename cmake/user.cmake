@@ -559,10 +559,10 @@ mime_glob(MIME_MMDEVAPI_SOURCES guest/mmdevapi/*.c)
 mime_glob(MIME_OPENGL32_SOURCES guest/opengl32/*.c)
 
 set(opengl32_options -Wno-ignored-attributes -DNTSYSCALLAPI= -DW32KAPI=)
-set(opengl32_includes guest/opengl32 third_party/khronos)
+set(opengl32_includes guest/opengl32 third_party/khronos ${MIME_GEN}/opengl32)
 if(MIME_GUEST_ARCH STREQUAL "arm64")
     mime_dll(opengl32 arm64 BASE 0x7FF550000000 ENTRY /noentry
-        SOURCES ${MIME_OPENGL32_SOURCES} ${MIME_GEN}/opengl32/procs.c ${MIME_GEN}/opengl32/x64_thunks.c
+        SOURCES ${MIME_OPENGL32_SOURCES} ${MIME_GEN}/opengl32/procs.c ${MIME_GEN}/opengl32/dlist_gen.c ${MIME_GEN}/opengl32/x64_thunks.c
         OBJECTS arm64-ntsyscalls arm64-win32ksyscalls ${MIME_RUNTIME_arm64} OPTIONS ${opengl32_options}
         INCLUDES ${opengl32_includes} DEF ${MIME_GEN}/opengl32/exports.def NOIMPLIB)
     mime_dll(opengl32 x64 BASE 0x7FF540000000
@@ -571,7 +571,7 @@ if(MIME_GUEST_ARCH STREQUAL "arm64")
         DEF ${MIME_GEN}/opengl32/x64.def NOIMPLIB)
 else()
     mime_dll(opengl32 x64 BASE 0x7FF550000000 ENTRY /noentry
-        SOURCES ${MIME_OPENGL32_SOURCES} ${MIME_GEN}/opengl32/procs.c
+        SOURCES ${MIME_OPENGL32_SOURCES} ${MIME_GEN}/opengl32/procs.c ${MIME_GEN}/opengl32/dlist_gen.c
         OBJECTS x64-ntsyscalls x64-win32ksyscalls ${MIME_RUNTIME_x64} OPTIONS ${opengl32_options}
         INCLUDES ${opengl32_includes} DEF ${MIME_GEN}/opengl32/native.def NOIMPLIB)
 endif()

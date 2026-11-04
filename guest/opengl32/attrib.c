@@ -14,6 +14,10 @@ typedef struct AttribEntry {
         GLboolean edge_flag;
     } current;
     GLfloat point_size;
+    GLuint list_base;
+    GLdouble clip_plane[FF_CLIP_PLANES][4];
+    GLenum logic_op;
+    GLubyte polygon_stipple[128];
     struct {
         GLfloat width;
     } line;
@@ -104,6 +108,10 @@ static void save(GlContext *ctx, AttribEntry *e, GLbitfield mask)
         e->current.edge_flag = f->edge_flag;
     }
     e->point_size = ctx->point_size;
+    e->list_base = ctx->dl.base;
+    memcpy(e->clip_plane, f->clip_plane, sizeof(e->clip_plane));
+    e->logic_op = f->logic_op;
+    memcpy(e->polygon_stipple, f->polygon_stipple, sizeof(e->polygon_stipple));
     e->line.width = ctx->line_width;
     e->polygon.cull_face = ctx->cull_face;
     e->polygon.offset_fill = ctx->polygon_offset_fill;
@@ -201,6 +209,12 @@ static void restore(GlContext *ctx, const AttribEntry *e)
     }
     if (mask & GL_POINT_BIT)
         ctx->point_size = e->point_size;
+    if (mask & GL_POLYGON_STIPPLE_BIT) {
+        memcpy(f->polygon_stipple, e->polygon_stipple, sizeof(f->polygon_stipple));
+        gl_ff_capability(ctx, GL_POLYGON_STIPPLE, gl_ff_stored_in(e->enable.stored, GL_POLYGON_STIPPLE));
+    }
+    if (mask & GL_LIST_BIT)
+        ctx->dl.base = e->list_base;
     if (mask & GL_LINE_BIT)
         ctx->line_width = e->line.width;
     if (mask & GL_POLYGON_BIT) {
@@ -255,6 +269,9 @@ static void restore(GlContext *ctx, const AttribEntry *e)
         memcpy(ctx->depth_range, e->viewport.range, sizeof(ctx->depth_range));
     }
     if (mask & GL_TRANSFORM_BIT) {
+        memcpy(f->clip_plane, e->clip_plane, sizeof(f->clip_plane));
+        for (int i = 0; i < FF_CLIP_PLANES; i++)
+            gl_ff_capability(ctx, GL_CLIP_PLANE0 + (GLenum)i, gl_ff_stored_in(e->enable.stored, GL_CLIP_PLANE0 + (GLenum)i));
         f->matrix_mode = e->transform.matrix_mode;
         f->normalize = e->transform.normalize;
         f->rescale_normal = e->transform.rescale_normal;
@@ -283,6 +300,9 @@ static void restore(GlContext *ctx, const AttribEntry *e)
         memcpy(f->stored, e->enable.stored, sizeof(f->stored));
     }
     if (mask & GL_COLOR_BUFFER_BIT) {
+        f->logic_op = e->logic_op;
+        gl_ff_capability(ctx, GL_COLOR_LOGIC_OP, gl_ff_stored_in(e->enable.stored, GL_COLOR_LOGIC_OP));
+        gl_ff_capability(ctx, GL_INDEX_LOGIC_OP, gl_ff_stored_in(e->enable.stored, GL_INDEX_LOGIC_OP));
         f->alpha_test = e->color_buffer.alpha_test;
         ctx->dither = e->color_buffer.dither;
         f->alpha_func = e->color_buffer.alpha_func;

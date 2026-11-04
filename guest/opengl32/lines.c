@@ -54,7 +54,9 @@ static void push(Batch *b, const GlFfVertex *v)
 }
 
 typedef struct LineState {
-    GLfloat mvp[16];
+    GLfloat mvp[16], mv[16];
+    GLfloat planes[FF_CLIP_PLANES][4];
+    int plane_count;
     GLint viewport[4];
     GLfloat half_width;
     BOOL stipple, flat;
@@ -114,11 +116,37 @@ static void piece(Batch *out, const LineState *st, const GlFfVertex *a, const Gl
     push(out, &c[2]);
 }
 
+static GLfloat plane_distance(const LineState *st, const GLfloat *plane, const GlFfVertex *v)
+{
+    GLfloat d = 0;
+    for (int r = 0; r < 4; r++) {
+        GLfloat e = st->mv[r] * v->position[0] + st->mv[4 + r] * v->position[1] + st->mv[8 + r] * v->position[2] +
+                    st->mv[12 + r] * v->position[3];
+        d += plane[r] * e;
+    }
+    return d;
+}
+
 static void segment(Batch *out, LineState *st, const GlFfVertex *va, const GlFfVertex *vb)
 {
     GlFfVertex a = *va, b = *vb;
     if (st->flat)
         memcpy(a.color, b.color, sizeof(a.color));
+    /* the user clip planes, which a line made of triangles in window coordinates no longer meets. */
+    for (int i = 0; i < st->plane_count; i++) {
+        GLfloat da = plane_distance(st, st->planes[i], &a), db = plane_distance(st, st->planes[i], &b);
+        if (da < 0 && db < 0)
+            return;
+        if (da < 0) {
+            GlFfVertex clipped;
+            lerp_vertex(&clipped, &a, &b, da / (da - db));
+            a = clipped;
+        } else if (db < 0) {
+            GlFfVertex clipped;
+            lerp_vertex(&clipped, &b, &a, db / (db - da));
+            b = clipped;
+        }
+    }
     GLfloat ca[4], cb[4];
     for (int r = 0; r < 4; r++) {
         ca[r] = st->mvp[r] * a.position[0] + st->mvp[4 + r] * a.position[1] + st->mvp[8 + r] * a.position[2] +
@@ -219,6 +247,14 @@ void gl_lines_draw(GlContext *ctx, GLenum mode, const GlFfVertex *vertices, uint
     LineState st;
     memset(&st, 0, sizeof(st));
     multiply(st.mvp, f->projection[f->projection_depth], f->modelview[f->modelview_depth]);
+    memcpy(st.mv, f->modelview[f->modelview_depth], sizeof(st.mv));
+    for (int i = 0; i < FF_CLIP_PLANES; i++) {
+        if (!gl_ff_stored(ctx, GL_CLIP_PLANE0 + (GLenum)i))
+            continue;
+        for (int k = 0; k < 4; k++)
+            st.planes[st.plane_count][k] = (GLfloat)f->clip_plane[i][k];
+        st.plane_count++;
+    }
     for (int i = 0; i < 4; i++)
         st.viewport[i] = ctx->viewport[i];
     st.half_width = (ctx->line_width > 1.0f ? ctx->line_width : 1.0f) * 0.5f;

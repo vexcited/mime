@@ -8,6 +8,8 @@
  * Metal lacks become indexed triangles or line strips.
  */
 #include "opengl32.h"
+#include "dlist.h"
+#include "fixed.h"
 
 void gl_invalidate_bindings(GlContext *ctx)
 {
@@ -742,6 +744,7 @@ static void emit_pipeline(GlContext *ctx, GlProgram *p, const GlVertexInput *in,
     d.program = p->id;
     d.program_serial = p->serial;
     const GlTarget *t = &ctx->target;
+    uint8_t logic = gl_logic_op(ctx);
     uint8_t mask = (uint8_t)((ctx->color_mask[0] ? 8 : 0) | (ctx->color_mask[1] ? 4 : 0) | (ctx->color_mask[2] ? 2 : 0) |
                              (ctx->color_mask[3] ? 1 : 0));
     for (int i = 0; i < MIME_GPU_MAX_COLORS; i++) {
@@ -750,7 +753,8 @@ static void emit_pipeline(GlContext *ctx, GlProgram *p, const GlVertexInput *in,
         if (!c->format)
             continue;
         c->write_mask = mask;
-        if (ctx->blend.enabled) {
+        c->logic_op = logic;
+        if (ctx->blend.enabled && !logic) {
             c->blend = 1;
             c->rgb_op = blend_op(ctx->blend.eq_rgb);
             c->alpha_op = blend_op(ctx->blend.eq_alpha);
@@ -1162,7 +1166,7 @@ static BOOL convert_primitive(GLenum mode, BOOL flat, const void *indices, GLenu
 }
 
 /* the program a draw uses and an open pass on its target, or NULL when it draws nothing. */
-static GlProgram *begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate)
+static GlProgram *begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate, GLenum mode)
 {
     GlProgram *p = ctx->current_program;
     if (p && immediate)
@@ -1175,7 +1179,7 @@ static GlProgram *begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate)
         if (!gl_program_ready(p))
             return nullptr;
     } else {
-        p = gl_ff_begin_draw(ctx, in, immediate);
+        p = gl_ff_begin_draw(ctx, in, immediate, mode);
         if (!p)
             return nullptr;
     }
@@ -1208,7 +1212,7 @@ static void draw_arrays(GLenum mode, GLint first, GLsizei count, GLsizei instanc
     }
     gl_device_lock();
     GlVertexInput in;
-    GlProgram *p = begin_draw(ctx, &in, FALSE);
+    GlProgram *p = begin_draw(ctx, &in, FALSE, mode);
     if (!p) {
         gl_device_unlock();
         return;
@@ -1301,7 +1305,7 @@ static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *i
     }
     gl_device_lock();
     GlVertexInput in;
-    GlProgram *p = begin_draw(ctx, &in, FALSE);
+    GlProgram *p = begin_draw(ctx, &in, FALSE, mode);
     if (!p) {
         gl_device_unlock();
         return;
@@ -1452,8 +1456,8 @@ void gl_draw_immediate(GlContext *ctx)
         gl_draw_vertices(ctx, f->begin_mode, f->vertices, count, f->varying);
 }
 
-/* one fixed function draw of vertices that are in a batch of their own. */
-void gl_draw_vertices(GlContext *ctx, GLenum mode, const GlFfVertex *vertices, uint32_t count, uint32_t varying)
+/* the number of vertices that make whole primitives, and 0 when there are none. */
+uint32_t gl_whole_primitives(GLenum mode, uint32_t count)
 {
     uint32_t minimum = 1;
     switch (mode) {
@@ -1485,11 +1489,84 @@ void gl_draw_vertices(GlContext *ctx, GLenum mode, const GlFfVertex *vertices, u
     default:
         break;
     }
-    if (count < minimum)
+    return count < minimum ? 0 : count;
+}
+
+/*
+ * the draw of count vertices that are in memory the gpu reads: stride bytes apart, the position first and the color, normal
+ * and texture coordinate at the offsets in at when they are stored, else the three vectors of constants. a batch of a display
+ * list keeps the indices it needs for its primitives.
+ */
+static void draw_stored(GlContext *ctx, GlProgram *p, GlVertexInput *in, GLenum mode, uint32_t count, const GlMem *mem,
+                        BOOL copied, uint32_t stride, const uint32_t at[4], const GlMem *constants, GlDlBatch *batch)
+{
+    Source src[MIME_GPU_MAX_ATTRIBS];
+    memset(src, 0, sizeof(src));
+    for (int l = 0; l < 4; l++) {
+        src[l].used = TRUE;
+        src[l].format = 31;
+        if (l && !at[l]) {
+            src[l].constant = TRUE;
+            src[l].mem = gl_mem(constants);
+            src[l].mem.offset += (uint64_t)(l - 1) * 16;
+            continue;
+        }
+        src[l].copied = copied;
+        src[l].mem = gl_mem(mem);
+        src[l].mem.offset += at[l];
+        src[l].stride = stride;
+    }
+    in->attribs = g_no_attribs;
+    if (!prepare(ctx, p, in, src))
+        return;
+    if (needs_conversion(mode, in->flat)) {
+        GlMem idx = {};
+        uint32_t n = 0, prim = 0;
+        BOOL ok;
+        if (batch) {
+            int slot = in->flat ? 1 : 0;
+            if (!batch->idx[slot].size) {
+                GlMem temporary;
+                if (convert_primitive(mode, in->flat, nullptr, 0, 0, count, &temporary, &n, &prim) &&
+                    gl_heap_alloc((uint64_t)n * 4, &batch->idx[slot])) {
+                    memcpy(batch->idx[slot].ptr, temporary.ptr, (size_t)n * 4);
+                    batch->idx_count[slot] = n;
+                    batch->idx_prim[slot] = prim;
+                }
+            }
+            ok = batch->idx[slot].size != 0;
+            idx = batch->idx[slot];
+            n = batch->idx_count[slot];
+            prim = batch->idx_prim[slot];
+        } else {
+            ok = convert_primitive(mode, in->flat, nullptr, 0, 0, count, &idx, &n, &prim);
+        }
+        if (ok) {
+            MimeGpuDrawIndexed *d = gl_emit(MIME_GPU_DRAW_INDEXED, sizeof(MimeGpuDrawIndexed));
+            d->primitive = prim;
+            d->count = n;
+            d->index_type = 1;
+            d->instances = 1;
+            d->indices = gl_mem(&idx);
+        }
+    } else {
+        MimeGpuDraw *d = gl_emit(MIME_GPU_DRAW, sizeof(MimeGpuDraw));
+        d->primitive = mtl_primitive(mode);
+        d->first = 0;
+        d->count = count;
+        d->instances = 1;
+    }
+}
+
+/* one fixed function draw of vertices that are in a batch of their own. */
+void gl_draw_vertices(GlContext *ctx, GLenum mode, const GlFfVertex *vertices, uint32_t count, uint32_t varying)
+{
+    count = gl_whole_primitives(mode, count);
+    if (!count)
         return;
     gl_device_lock();
     GlVertexInput in;
-    GlProgram *p = begin_draw(ctx, &in, TRUE);
+    GlProgram *p = begin_draw(ctx, &in, TRUE, mode);
     if (!p) {
         gl_device_unlock();
         return;
@@ -1530,45 +1607,94 @@ void gl_draw_vertices(GlContext *ctx, GLenum mode, const GlFfVertex *vertices, u
     memcpy(constants.ptr, vertices[0].color, 16);
     memcpy(constants.ptr + 16, vertices[0].normal, 16);
     memcpy(constants.ptr + 32, vertices[0].texcoord, 16);
-    Source src[MIME_GPU_MAX_ATTRIBS];
-    memset(src, 0, sizeof(src));
     const uint32_t at[4] = {0, color, normal, texcoord};
-    for (int l = 0; l < 4; l++) {
-        src[l].used = TRUE;
-        src[l].format = 31;
-        if (l && !at[l]) {
-            src[l].constant = TRUE;
-            src[l].mem = gl_mem(&constants);
-            src[l].mem.offset += (uint64_t)(l - 1) * 16;
-            continue;
-        }
-        src[l].copied = TRUE;
-        src[l].mem = gl_mem(&mem);
-        src[l].mem.offset += at[l];
-        src[l].stride = stride;
-    }
-    in.attribs = g_no_attribs;
-    if (prepare(ctx, p, &in, src)) {
-        if (needs_conversion(mode, in.flat)) {
-            GlMem idx;
-            uint32_t n, prim;
-            if (convert_primitive(mode, in.flat, nullptr, 0, 0, count, &idx, &n, &prim)) {
-                MimeGpuDrawIndexed *d = gl_emit(MIME_GPU_DRAW_INDEXED, sizeof(MimeGpuDrawIndexed));
-                d->primitive = prim;
-                d->count = n;
-                d->index_type = 1;
-                d->instances = 1;
-                d->indices = gl_mem(&idx);
-            }
-        } else {
-            MimeGpuDraw *d = gl_emit(MIME_GPU_DRAW, sizeof(MimeGpuDraw));
-            d->primitive = mtl_primitive(mode);
-            d->first = 0;
-            d->count = count;
-            d->instances = 1;
-        }
-    }
+    draw_stored(ctx, p, &in, mode, count, &mem, TRUE, stride, at, &constants, nullptr);
     if (heap)
         gl_heap_free(&mem, gl_batch_fence());
+    gl_device_unlock();
+}
+
+/* ---------------------------------------------------------------- display list batches */
+
+void gl_batch_free(GlDlBatch *b)
+{
+    if (!b)
+        return;
+    gl_heap_free(&b->vb, b->last_use);
+    gl_heap_free(&b->idx[0], b->last_use);
+    gl_heap_free(&b->idx[1], b->last_use);
+    gl_free(b->cpu);
+    gl_free(b);
+}
+
+/* the vertices of a batch as a glBegin collects them, with the current values where the list did not know them. */
+static GlFfVertex *batch_vertices(GlContext *ctx, const GlDlBatch *b, uint32_t *varying)
+{
+    GlFfVertex *v = gl_alloc((SIZE_T)b->count * sizeof(GlFfVertex));
+    if (!v)
+        return nullptr;
+    const GlFixed *f = &ctx->ff;
+    for (uint32_t i = 0; i < b->count; i++) {
+        GlFfVertex *d = &v[i];
+        if (b->cpu) {
+            *d = b->cpu[i];
+            continue;
+        }
+        const uint8_t *s = b->vb.ptr + (uint64_t)i * b->stride;
+        memcpy(d->position, s, 16);
+        for (int a = 0; a < 3; a++) {
+            GLfloat *to = a == 0 ? d->color : a == 1 ? d->normal : d->texcoord;
+            if (b->offset[a])
+                memcpy(to, s + b->offset[a], 16);
+            else
+                memcpy(to, b->constant[a], 16);
+        }
+    }
+    for (int a = 0; a < 3; a++) {
+        uint32_t first = (b->dep >> a) & 1 ? b->count : (b->mixed >> a) & 1 ? b->prefix[a] : 0;
+        for (uint32_t i = 0; i < first; i++) {
+            GlFfVertex *d = &v[i];
+            memcpy(a == 0 ? d->color : a == 1 ? d->normal : d->texcoord, f->current[a], 16);
+        }
+    }
+    *varying = b->varying | b->mixed;
+    return v;
+}
+
+/* one fixed function draw of a batch of a display list. */
+void gl_draw_batch(GlContext *ctx, GlDlBatch *b)
+{
+    uint32_t count = gl_whole_primitives(b->mode, b->count);
+    if (!count)
+        return;
+    if (b->cpu || b->mixed || gl_lines_wanted(ctx, b->mode)) {
+        uint32_t varying;
+        GlFfVertex *v = batch_vertices(ctx, b, &varying);
+        if (!v)
+            return;
+        if (gl_lines_wanted(ctx, b->mode))
+            gl_lines_draw(ctx, b->mode, v, count);
+        else
+            gl_draw_vertices(ctx, b->mode, v, count, varying);
+        gl_free(v);
+        return;
+    }
+    gl_device_lock();
+    GlVertexInput in;
+    GlProgram *p = begin_draw(ctx, &in, TRUE, b->mode);
+    if (!p) {
+        gl_device_unlock();
+        return;
+    }
+    GlMem constants;
+    if (!gl_stream_alloc(48, 16, &constants)) {
+        gl_device_unlock();
+        return;
+    }
+    for (int a = 0; a < 3; a++)
+        memcpy(constants.ptr + 16 * a, (b->dep >> a) & 1 ? ctx->ff.current[a] : b->constant[a], 16);
+    const uint32_t at[4] = {0, b->offset[0], b->offset[1], b->offset[2]};
+    draw_stored(ctx, p, &in, b->mode, count, &b->vb, FALSE, b->stride, at, &constants, b);
+    b->last_use = gl_batch_fence();
     gl_device_unlock();
 }
