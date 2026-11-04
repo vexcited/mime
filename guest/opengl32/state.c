@@ -588,6 +588,13 @@ GLAPI void APIENTRY glPixelStoref(GLenum pname, GLfloat param)
 
 /* ---------------------------------------------------------------- flushing */
 
+/* a single buffered window shows what was drawn when the program flushes. */
+static void present_single_buffered(GlContext *ctx)
+{
+    if (ctx->surface && !(ctx->pfd.dwFlags & PFD_DOUBLEBUFFER))
+        wglSwapBuffers(ctx->dc);
+}
+
 GLAPI void APIENTRY glFlush(void)
 {
     GL_CONTEXT_OR_RETURN();
@@ -595,6 +602,7 @@ GLAPI void APIENTRY glFlush(void)
     gl_emit(MIME_GPU_FLUSH, sizeof(MimeGpuCmd));
     gl_publish();
     gl_device_unlock();
+    present_single_buffered(ctx);
 }
 
 GLAPI void APIENTRY glFinish(void)
@@ -605,6 +613,7 @@ GLAPI void APIENTRY glFinish(void)
     uint64_t f = gl_fence();
     gl_device_unlock();
     gl_wait(f);
+    present_single_buffered(ctx);
 }
 
 /* ---------------------------------------------------------------- strings */
@@ -802,7 +811,7 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         v[0] = ctx->draw_fbo ? 8 : ctx->pfd.cStencilBits;
         return 1;
     case GL_DOUBLEBUFFER:
-        v[0] = 1;
+        v[0] = ctx->draw_fbo || (ctx->pfd.dwFlags & PFD_DOUBLEBUFFER);
         return 1;
     case GL_STEREO:
         v[0] = 0;

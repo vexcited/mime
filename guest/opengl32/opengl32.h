@@ -283,6 +283,7 @@ typedef struct GlSurface {
 
 GlSurface *gl_surface_for(HDC dc, int pixel_format);
 void gl_surface_refresh(GlSurface *s, HDC dc);
+BOOL WINAPI wglSwapBuffers(HDC dc);
 
 /* ---------------------------------------------------------------- contexts */
 

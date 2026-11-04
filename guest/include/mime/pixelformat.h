@@ -1,6 +1,7 @@
 /*
  * the pixel formats of every dc, shared by gdi32 and opengl32. the first ones are the gpu formats opengl32 renders
- * through, double buffered with a back buffer that persists across swaps. the generic ones after them match
+ * through, double buffered with a back buffer that persists across swaps, then the same six single buffered, which
+ * present when the program flushes. the generic ones after them match
  * windows' gdi opengl: they can be selected but render nothing.
  */
 #ifndef MIME_PIXELFORMAT_H
@@ -18,6 +19,7 @@ typedef struct MIME_PIXEL_FORMAT {
 } MIME_PIXEL_FORMAT;
 
 #define MIME_PF_GPU_WINDOW (PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER | PFD_SWAP_COPY | 0x8000)
+#define MIME_PF_GPU_SINGLE (PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | 0x8000)
 #define MIME_PF_GENERIC_WINDOW (PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_GENERIC_FORMAT)
 #define MIME_PF_GENERIC_BITMAP (PFD_DRAW_TO_BITMAP | PFD_SUPPORT_GDI | PFD_SUPPORT_OPENGL | PFD_GENERIC_FORMAT)
 
@@ -28,6 +30,12 @@ static const MIME_PIXEL_FORMAT MimePixelFormats[] = {
     {MIME_PF_GPU_WINDOW, 32, 8, 64, 0, 0},
     {MIME_PF_GPU_WINDOW, 32, 0, 64, 0, 0},
     {MIME_PF_GPU_WINDOW, 32, 8, 64, 16, 0},
+    {MIME_PF_GPU_SINGLE, 32, 8, 64, 24, 8},
+    {MIME_PF_GPU_SINGLE, 32, 0, 64, 24, 8},
+    {MIME_PF_GPU_SINGLE, 32, 8, 64, 24, 0},
+    {MIME_PF_GPU_SINGLE, 32, 8, 64, 0, 0},
+    {MIME_PF_GPU_SINGLE, 32, 0, 64, 0, 0},
+    {MIME_PF_GPU_SINGLE, 32, 8, 64, 16, 0},
     {MIME_PF_GENERIC_WINDOW | PFD_SUPPORT_GDI | PFD_DRAW_TO_BITMAP, 32, 0, 64, 32, 8},
     {MIME_PF_GENERIC_WINDOW | PFD_SUPPORT_GDI | PFD_DRAW_TO_BITMAP, 32, 0, 64, 16, 8},
     {MIME_PF_GENERIC_WINDOW | PFD_SUPPORT_GDI | PFD_DRAW_TO_BITMAP, 32, 8, 64, 32, 8},
