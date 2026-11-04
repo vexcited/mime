@@ -77,6 +77,7 @@ typedef struct UiWindow {
 } UiWindow;
 
 static UiWindow g_windows[MAX_WINDOWS];
+/* guest processors take it, so the main thread lets go of it before an SDL call that can dispatch the compositor's events. */
 static pthread_mutex_t g_windows_lock = PTHREAD_MUTEX_INITIALIZER;
 static MimeUiInputSink g_sink;
 static void *g_sink_ctx;
@@ -1272,6 +1273,8 @@ static void flash_main(void *arg)
     FlashCall *call = arg;
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(call->window);
+    /* windows go on this thread alone, so w stays while the lock is let go for the compositor's roundtrips. */
+    pthread_mutex_unlock(&g_windows_lock);
     if (w && w->window) {
         SDL_PropertiesID props = SDL_GetWindowProperties(w->window);
         struct wl_display *display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
@@ -1287,7 +1290,6 @@ static void flash_main(void *arg)
                 SDL_FlashWindow(w->window, call->mode == 2 ? SDL_FLASH_UNTIL_FOCUSED : SDL_FLASH_BRIEFLY);
         }
     }
-    pthread_mutex_unlock(&g_windows_lock);
     free(call);
 }
 
@@ -1831,12 +1833,16 @@ static void attach_main(void *arg)
             a->ok = a->native->display && a->native->window;
             /* the window takes one swapchain: the renderer's goes, and the presenter draws the frame. */
             if (a->ok) {
-                if (w->texture)
-                    SDL_DestroyTexture(w->texture);
-                if (w->renderer)
-                    SDL_DestroyRenderer(w->renderer);
+                SDL_Texture *texture = w->texture;
+                SDL_Renderer *renderer = w->renderer;
                 w->texture = nullptr;
                 w->renderer = nullptr;
+                pthread_mutex_unlock(&g_windows_lock);
+                if (texture)
+                    SDL_DestroyTexture(texture);
+                if (renderer)
+                    SDL_DestroyRenderer(renderer);
+                pthread_mutex_lock(&g_windows_lock);
                 w->texture_width = w->texture_height = 0;
                 pthread_mutex_lock(&w->lock);
                 w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
@@ -1904,7 +1910,11 @@ static void detach_main(void *arg)
             w->vk_whole = false;
             destroy_layers(w);
             if (w->window && !w->renderer) {
-                w->renderer = SDL_CreateRenderer(w->window, nullptr);
+                SDL_Renderer *renderer;
+                pthread_mutex_unlock(&g_windows_lock);
+                renderer = SDL_CreateRenderer(w->window, nullptr);
+                pthread_mutex_lock(&g_windows_lock);
+                w->renderer = renderer;
                 if (w->renderer)
                     SDL_SetRenderVSync(w->renderer, 0);
                 else

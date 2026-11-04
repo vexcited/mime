@@ -188,7 +188,10 @@ uint64_t mime_ui_clipboard_fetch(uint32_t kind, uint32_t generation, void *dst, 
         pthread_mutex_unlock(&g.lock);
         Fetch f = {.kind = kind, .generation = generation, .lock = PTHREAD_MUTEX_INITIALIZER,
                    .cond = PTHREAD_COND_INITIALIZER};
-        /* the main thread never waits for a vcpu, so this cannot deadlock. */
+        /*
+         * the main thread waits for the guest in serve, so a paste served while a processor waits here is held back until
+         * it times out. nothing else a processor takes may be kept by the main thread while it serves.
+         */
         if (!mime_ui_call_main(fetch_main, &f))
             return MIME_HC_STATUS_NOT_FOUND;
         pthread_mutex_lock(&f.lock);
