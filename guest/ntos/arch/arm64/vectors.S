@@ -43,58 +43,85 @@ KiSecondaryStartup:
     b       1b
 
 /*
- * the kernel lock, a ticket lock: the low half serves, the high half hands
- * out tickets. a waiter spins on loads for a few microseconds, then sleeps
- * in the host on the lock word, since a spinning vcpu would take the host
- * core the owner's vcpu needs. a releaser that sees sleepers wakes them.
+ * the kernel lock. its word is odd while held and every release adds one, so a waiter sleeping on the value it saw
+ * wakes on any release since. a free lock goes to whichever processor takes it first, never to one still asleep in
+ * the host, whose wakeup would hold up every processor behind it. a waiter spins on loads for a few microseconds,
+ * then sleeps in the host, and a releaser that sees sleepers wakes one. the processors interrupted while the lock was
+ * held are interrupted once it is let go, see KiSendIpi.
  * clobbers x0 to x2 and x9 to x12.
  */
 #define LOCK_OWNER 4
 #define LOCK_SLEEPERS 8
+#define LOCK_REASON 12
+#define LOCK_SINCE 16
+#define LOCK_HELD 24
 #define LOCK_SPINS 2048
-#define HC_LOCK_WAIT 0x0A
-#define HC_LOCK_WAKE 0x0B
+#define HC_WORD_WAIT 0x0D
+#define HC_WORD_WAKE 0x0E
+#define ICC_SGI1R_EL1 s3_0_c12_c11_5
 
     .globl  KiAcquireKernelLock
     .p2align 2
 KiAcquireKernelLock:
     adrp    x9, KiKernelLock
     add     x9, x9, :lo12:KiKernelLock
-    mov     w10, #0x10000
-    ldadda  w10, w11, [x9]
-    lsr     w12, w11, #16
-    and     w11, w11, #0xFFFF
-    cmp     w11, w12
+    mov     x12, xzr                /* when waiting began, 0 if the lock was free */
+    ldr     w11, [x9]
+    tbnz    w11, #0, 1f
+    add     w10, w11, #1
+    mov     w0, w11
+    casa    w0, w10, [x9]
+    cmp     w0, w11
     b.eq    4f
-1:  mov     w10, #LOCK_SPINS
-2:  yield
-    ldarh   w11, [x9]
-    cmp     w11, w12
-    b.eq    4f
+1:  mrs     x12, cntvct_el0
+2:  mov     w10, #LOCK_SPINS
+3:  yield
+    ldr     w11, [x9]
+    tbz     w11, #0, 6f
     subs    w10, w10, #1
-    b.ne    2b
+    b.ne    3b
     adrp    x1, KiKernelLockPhys
     ldr     x1, [x1, :lo12:KiKernelLockPhys]
-    cbz     x1, 1b
+    cbz     x1, 2b
     mov     w10, #1
-    add     x11, x9, #LOCK_SLEEPERS
-    stadd   w10, [x11]
+    add     x0, x9, #LOCK_SLEEPERS
+    stadd   w10, [x0]
     dmb     ish
-    ldarh   w11, [x9]
-    cmp     w11, w12
-    b.eq    5f
-    mov     x0, #HC_LOCK_WAIT
-    mov     w2, w12
+    ldr     w2, [x9]
+    tbz     w2, #0, 5f
+    mov     x0, #HC_WORD_WAIT
     hvc     #0
 5:  mov     w10, #-1
-    add     x11, x9, #LOCK_SLEEPERS
-    stadd   w10, [x11]
-    ldarh   w11, [x9]
-    cmp     w11, w12
-    b.ne    1b
+    add     x0, x9, #LOCK_SLEEPERS
+    stadd   w10, [x0]
+    b       2b
+6:  add     w10, w11, #1
+    mov     w0, w11
+    casa    w0, w10, [x9]
+    cmp     w0, w11
+    b.ne    2b
 4:  ldr     w10, [x18, #KPCR_NUMBER]
     str     w10, [x9, #LOCK_OWNER]
-    ret
+    mrs     x11, cntvct_el0
+    str     x11, [x9, #LOCK_SINCE]
+    /* lock statistics: KiLockStats has eight counters per processor. */
+    adrp    x0, KiLockStats
+    add     x0, x0, :lo12:KiLockStats
+    add     x0, x0, x10, lsl #6
+    ldr     x1, [x0]
+    add     x1, x1, #1
+    str     x1, [x0]
+    cbz     x12, 7f
+    sub     x11, x11, x12
+    ldp     x1, x2, [x0, #8]
+    add     x1, x1, #1
+    add     x2, x2, x11
+    stp     x1, x2, [x0, #8]
+    ldr     x1, [x0, #24]
+    cmp     x11, x1
+    b.ls    7f
+    str     x11, [x0, #24]
+7:  ret
 
     .globl  KiReleaseKernelLock
     .p2align 2
@@ -106,19 +133,41 @@ KiReleaseKernelLock:
     cmp     w10, w11
     b.eq    1f
     brk     #0x10c
-1:  mov     w10, #-1
+1:  mrs     x10, cntvct_el0
+    ldr     x11, [x9, #LOCK_SINCE]
+    sub     x10, x10, x11
+    ldr     x11, [x9, #LOCK_HELD]
+    add     x11, x11, x10
+    str     x11, [x9, #LOCK_HELD]
+    str     wzr, [x9, #LOCK_REASON]
+    mov     w10, #-1
     str     w10, [x9, #LOCK_OWNER]
-    ldrh    w10, [x9]
+    ldr     w10, [x9]
     add     w10, w10, #1
-    stlrh   w10, [x9]
+    stlr    w10, [x9]
     dmb     ish
     ldr     w10, [x9, #LOCK_SLEEPERS]
     cbz     w10, 2f
-    mov     x0, #HC_LOCK_WAKE
+    mov     x0, #HC_WORD_WAKE
     adrp    x1, KiKernelLockPhys
     ldr     x1, [x1, :lo12:KiKernelLockPhys]
     hvc     #0
-2:  ret
+2:  add     x10, x18, #KPCR_DEFERRED_IPIS
+    ldr     x11, [x10]
+    cbz     x11, 5f
+    swp     xzr, x11, [x10]
+    dsb     ish
+    mov     x12, #(HAL_IPI_INTID << 24)
+    /* one target list per cluster of sixteen. */
+3:  ands    x10, x11, #0xFFFF
+    b.eq    4f
+    orr     x10, x10, x12
+    msr     ICC_SGI1R_EL1, x10
+4:  add     x12, x12, #0x10000
+    lsr     x11, x11, #16
+    cbnz    x11, 3b
+    isb
+5:  ret
 
 .macro VENTRY target
     .p2align 7

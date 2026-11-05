@@ -17,11 +17,46 @@ void KiSwapContext(PKTHREAD old, PKTHREAD next)
     KiSwapContextInternal(&old->KernelSp, next->KernelSp);
 }
 
-/* wfi wakes on a pending interrupt even while masked, so the lock is retaken before handling it. */
+/*
+ * an idle processor lets go of the kernel lock, then spins on its flags for a few microseconds: a dispatch request
+ * meanwhile, see KiRequestDispatch, skips the interrupt, which would cost both sides an exit to the host. only then
+ * does it halt. wfi wakes on a pending interrupt even while masked, and the lock is retaken before handling it. a
+ * wakeup without an interrupt or a request, like the host's, halts again without taking the lock.
+ */
+static ULONG64 g_idle_spin_ticks;
+
+static BOOLEAN irq_pending(void)
+{
+    ULONG64 isr;
+    __asm__ volatile("mrs %0, isr_el1" : "=r"(isr));
+    return (isr & 0x80) != 0;
+}
+
+static BOOLEAN idle_work(PKPRCB prcb)
+{
+    return __atomic_load_n(&prcb->DispatchPending, __ATOMIC_ACQUIRE) || __atomic_load_n(&prcb->DpcPending, __ATOMIC_ACQUIRE) ||
+           irq_pending();
+}
+
 void KiIdleWait(void)
 {
+    PKPRCB prcb = KeGetCurrentPrcb();
+    ULONG64 spin = (KiOptions & KI_OPT_NO_IDLE_SPIN) ? 0 : g_idle_spin_ticks;
+    if (spin)
+        __atomic_store_n(&prcb->IdleState, KI_IDLE_POLLING, __ATOMIC_SEQ_CST);
     KiReleaseKernelLock();
-    __asm__ volatile("wfi");
+    ULONG64 end = HalReadCounter() + spin;
+    while (!idle_work(prcb) && HalReadCounter() < end)
+        __asm__ volatile("yield" ::: "memory");
+    while (!idle_work(prcb)) {
+        /* published before looking again, so a request that came meanwhile is seen or sends the interrupt. */
+        __atomic_store_n(&prcb->IdleState, KI_IDLE_HALTED, __ATOMIC_SEQ_CST);
+        KiMemoryBarrierFull();
+        if (idle_work(prcb))
+            break;
+        __asm__ volatile("wfi" ::: "memory");
+    }
+    __atomic_store_n(&prcb->IdleState, KI_IDLE_RUNNING, __ATOMIC_SEQ_CST);
     KiAcquireKernelLock();
 }
 
@@ -32,6 +67,9 @@ void KiFlushInstructionCache(void)
 
 void KiInitializeProcessorArch(void)
 {
+    ULONG64 frequency;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
+    g_idle_spin_ticks = frequency / 50000; /* 20 microseconds. */
 }
 
 void KiInitializeSwitchFrame(PKTHREAD thread, PKSTART_ROUTINE routine, PVOID context)

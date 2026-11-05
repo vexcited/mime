@@ -195,6 +195,7 @@ void mime_host_volume_label(char *out, size_t size);
 /* sleeps while the guest word at host address word holds value, at most timeout_ns; wakes every sleeper. */
 void mime_host_wait_word(uint32_t *word, uint32_t value, uint64_t timeout_ns);
 void mime_host_wake_word(uint32_t *word);
+void mime_host_wake_word_one(uint32_t *word);
 uint64_t mime_vm_default_ram(void);
 bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size);
 bool mime_vm_start(MimeVm *vm);

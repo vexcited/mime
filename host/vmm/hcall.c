@@ -276,6 +276,22 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
             mime_host_wake_word(word);
         break;
     }
+    case MIME_HC_WORD_WAIT: {
+        uint32_t *word = mime_vm_phys(vm, regs[1], 4);
+        if (!word) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        if (__atomic_load_n(word, __ATOMIC_ACQUIRE) == (uint32_t)regs[2])
+            mime_host_wait_word(word, (uint32_t)regs[2], 1000000);
+        break;
+    }
+    case MIME_HC_WORD_WAKE: {
+        uint32_t *word = mime_vm_phys(vm, regs[1], 4);
+        if (word)
+            mime_host_wake_word_one(word);
+        break;
+    }
     case MIME_HC_CPU_START:
         if (!mime_vcpu_start_secondary(vm, (uint32_t)regs[1], regs[2], regs[3], regs[4]))
             status = MIME_HC_STATUS_INVALID;

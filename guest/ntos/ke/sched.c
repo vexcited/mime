@@ -105,15 +105,47 @@ void KiThreadStartupC(PKSTART_ROUTINE routine, PVOID context)
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
+/* the ready queues change with interrupts off, or an interrupt on this processor would change them midway. */
+static void check_dispatcher_lock(const char *what, PVOID caller)
+{
+    static BOOLEAN said;
+    if (KiInterruptsEnabled() && !said) {
+        said = TRUE;
+        KiLogPrintf("%s with interrupts on, from %p", what, caller);
+    }
+}
+
 /* dispatcher lock held. */
 void KiInsertReadyThread(PKTHREAD thread)
 {
+    check_dispatcher_lock("a thread queued", __builtin_return_address(0));
+    /* a thread queued twice would tie the queue in a loop: said once, and the second time ignored. */
+    if (thread->State == Ready && thread->ReadyListEntry.Flink && thread->ReadyListEntry.Flink != &thread->ReadyListEntry) {
+        static BOOLEAN said;
+        if (!said) {
+            said = TRUE;
+            KiLogPrintf("thread %p is made ready again from %p", thread, __builtin_return_address(0));
+        }
+        return;
+    }
     int prio = thread->Priority;
     thread->State = Ready;
     InsertTailList(&KiReadyListHead[prio], &thread->ReadyListEntry);
     KiReadySummary |= 1u << prio;
     if (SharedUserData)
         SharedUserData->MimeReadyThreads = KiReadySummary;
+}
+
+void KiSendIpi(ULONG processor)
+{
+#ifndef __x86_64__
+    PKPRCB prcb = KeGetCurrentPrcb();
+    if (KiKernelLock[1] == prcb->Number) {
+        __atomic_fetch_or(&prcb->DeferredIpis, 1ull << processor, __ATOMIC_RELAXED);
+        return;
+    }
+#endif
+    HalSendIpi(processor);
 }
 
 /* asks a processor to pick its next thread, waking or interrupting it when it is another one. */
@@ -127,7 +159,7 @@ void KiRequestDispatch(ULONG number)
         if (prcb->IdleState == KI_IDLE_POLLING)
             return;
         prcb->IpiSent++;
-        HalSendIpi(number);
+        KiSendIpi(number);
     }
 }
 
@@ -135,7 +167,7 @@ void KiRequestDispatch(ULONG number)
 void KiInterruptThread(PKTHREAD thread)
 {
     if (thread->State == Running && thread->Processor != KeGetCurrentPrcb()->Number)
-        HalSendIpi(thread->Processor);
+        KiSendIpi(thread->Processor);
 }
 
 /*
@@ -189,6 +221,7 @@ static void set_priority(PKTHREAD thread, int priority)
         return;
     if (thread->State == Ready && !thread->IdleThread) {
         RemoveEntryList(&thread->ReadyListEntry);
+        InitializeListHead(&thread->ReadyListEntry);
         if (IsListEmpty(&KiReadyListHead[old])) {
             KiReadySummary &= ~(1u << old);
             if (SharedUserData)
@@ -279,10 +312,17 @@ void KiStartThread(PKTHREAD thread)
 
 static PKTHREAD select_next(PKPRCB prcb)
 {
+    check_dispatcher_lock("a thread chosen", __builtin_return_address(0));
     if (!KiReadySummary)
         return prcb->IdleThread;
     int prio = 31 - __builtin_clz(KiReadySummary);
+    if (IsListEmpty(&KiReadyListHead[prio])) {
+        KiLogPrintf("ready queue %d empty although marked", prio);
+        KiReadySummary &= ~(1u << prio);
+        return select_next(prcb);
+    }
     PLIST_ENTRY e = RemoveHeadList(&KiReadyListHead[prio]);
+    InitializeListHead(e);
     if (IsListEmpty(&KiReadyListHead[prio])) {
         KiReadySummary &= ~(1u << prio);
         /* user mode skips yields that would find no other thread to run. */
@@ -360,11 +400,16 @@ void KiDispatchPendingWork(void)
     KiReleaseDispatcherLock(s);
 }
 
+/* callers like KeSetEvent come here with interrupts on: the ready queues change with them off. */
 void KiCheckPreemption(void)
 {
     PKPRCB prcb = KeGetCurrentPrcb();
-    if (prcb->DispatchPending && KeGetPcr()->Irql < DISPATCH_LEVEL)
-        preempt_current(prcb);
+    if (prcb->DispatchPending && KeGetPcr()->Irql < DISPATCH_LEVEL) {
+        ULONG64 s = KiAcquireDispatcherLock();
+        if (prcb->DispatchPending)
+            preempt_current(prcb);
+        KiReleaseDispatcherLock(s);
+    }
 }
 
 /* ------------------------------------------------------------------ dpcs */

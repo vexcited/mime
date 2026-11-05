@@ -417,6 +417,8 @@ enum {
     MIME_HC_CPU_START = 0x09,   /* (CPU, pc, x0, sp) starts a secondary processor at el1 with interrupts masked */
     MIME_HC_LOCK_WAIT = 0x0A,   /* (pa, ticket) sleeps while the ticket lock word at pa does not serve ticket */
     MIME_HC_LOCK_WAKE = 0x0B,   /* (pa) wakes the processors sleeping on the lock word at pa */
+    MIME_HC_WORD_WAIT = 0x0D,   /* (pa, value) sleeps while the word at pa holds value, a millisecond at most */
+    MIME_HC_WORD_WAKE = 0x0E,   /* (pa) wakes one processor sleeping on the word at pa */
     MIME_HC_MEM_REPORT = 0x0C,  /* (pa of MimeReportRun[], count) -> bytes released: free guest RAM the host may drop, many runs in one call. They read as zeros until written. */
 
     MIME_HC_FS_OPEN = 0x10,     /* (MimeFsOpen pa) -> handle */

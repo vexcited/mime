@@ -282,7 +282,7 @@ static void check_stalled_dispatch(ULONG64 now)
                         (now - p->PendingSince) / 10000, p->IpiSent, p->IpiReceived);
             p->PendingSince = now;
             p->IpiSent++;
-            HalSendIpi(i);
+            KiSendIpi(i);
         }
     }
 }
