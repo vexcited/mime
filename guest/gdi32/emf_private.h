@@ -32,6 +32,7 @@ typedef struct EMF_DC {
     RECT Clip; /* device bounds of the clip and meta regions. */
     int ArcDirection; /* as recorded, 0 before the first. */
     int Saves;        /* saved states, for the relative levels of RestoreDC. */
+    BOOL Printer; /* the reference device is a printer, which answers the escapes. */
     BOOL DcBrush;
     BOOL DcPen;
     DWORD AppBounds; /* SetBoundsRect flags. */

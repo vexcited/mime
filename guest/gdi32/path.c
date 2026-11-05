@@ -404,6 +404,12 @@ WINGDIAPI int WINAPI DrawEscape(HDC dc, int escape, int in_size, LPCSTR in)
 /* the display driver has no escapes. QUERYESCSUPPORT answers for the ones gdi32 handles itself. */
 WINGDIAPI int WINAPI ExtEscape(HDC dc, int escape, int in_size, LPCSTR in, int out_size, LPSTR out)
 {
+    if (MfDcCount) {
+        BOOL handled;
+        int result = MfExtEscape(dc, escape, in_size, in, out_size, out, &handled);
+        if (handled)
+            return result;
+    }
     if (PrnDcCount) {
         BOOL handled;
         int result = PrnEscape(dc, escape, in_size, in, out_size, out, &handled);

@@ -1999,6 +1999,13 @@ typedef struct tagEMREOF {
     DWORD nSizeLast;
 } EMREOF, *PEMREOF;
 
+typedef struct tagEMREXTESCAPE {
+    EMR emr;
+    INT iEscape;
+    INT cbEscData;
+    BYTE EscData[1];
+} EMREXTESCAPE, *PEMREXTESCAPE;
+
 typedef struct tagEMRGRADIENTFILL {
     EMR emr;
     RECTL rclBounds;

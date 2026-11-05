@@ -102,6 +102,7 @@ BOOL MfRegion(HDC dc, UINT emr, UINT meta, HRGN region, HBRUSH brush, int width,
 BOOL MfComment(HDC dc, UINT size, const BYTE *data);
 BOOL MfSetDCColor(HDC dc, BOOL pen, COLORREF color);
 int MfGetDeviceCaps(HDC dc, int index, BOOL *handled);
+int MfExtEscape(HDC dc, int escape, int in_size, LPCSTR in, int out_size, LPSTR out, BOOL *handled);
 DWORD MfObjectType(HGDIOBJ handle);
 BOOL MfDeleteDC(HDC dc);
 BOOL MfGetBounds(HDC dc, LPRECT rect, UINT flags, UINT *result);
@@ -141,5 +142,6 @@ BOOL PrnIsPrinterDc(HDC dc);
 HDC PrnCreateDC(LPCWSTR driver, LPCWSTR device, const void *mode, BOOL info_only, BOOL *handled);
 BOOL PrnDeleteDC(HDC dc);
 BOOL PrnGetDeviceCaps(HDC dc, int index, int *value);
+BOOL PrnEscapeSupported(int escape);
 int PrnEscape(HDC dc, int escape, int in_size, LPCSTR in, int out_size, LPSTR out, BOOL *handled);
 HDC PrnCreateDCA(LPCSTR driver, LPCSTR device, const void *mode, BOOL info_only, BOOL *handled);

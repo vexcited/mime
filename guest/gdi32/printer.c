@@ -685,6 +685,11 @@ static BOOL supported(int escape)
     return FALSE;
 }
 
+BOOL PrnEscapeSupported(int escape)
+{
+    return supported(escape);
+}
+
 /* answered here since this file is the driver. -1 when the escape is not a printer one. */
 int PrnEscape(HDC dc, int escape, int in_size, LPCSTR in, int out_size, LPSTR out, BOOL *handled)
 {

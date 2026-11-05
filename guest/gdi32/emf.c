@@ -204,6 +204,10 @@ EMF_DC *EmfCreateDC(HDC ref, LPCWSTR file, const RECT *frame, LPCWSTR descriptio
     emf->Dc = dc;
     emf->File = INVALID_HANDLE_VALUE;
     snapshot_caps(emf, ref);
+    {
+        int unused;
+        emf->Printer = PrnDcCount && PrnGetDeviceCaps(ref, HORZRES, &unused);
+    }
     if (screen)
         NtGdiDeleteObjectApp(screen);
     if (file) {
@@ -290,6 +294,54 @@ int MfGetDeviceCaps(HDC dc, int index, BOOL *handled)
         return 0;
     *handled = TRUE;
     return emf->Caps[index];
+}
+
+/*
+ * an escape sent to a metafile dc is recorded, and the ones that ask something are answered by the reference device,
+ * here from what the metafile kept of it. a program that sizes its page with GETPHYSPAGESIZE reads the answer.
+ */
+int MfExtEscape(HDC dc, int escape, int in_size, LPCSTR in, int out_size, LPSTR out, BOOL *handled)
+{
+    *handled = FALSE;
+    EMF_DC *emf = MfDcCount ? EmfDc(dc) : nullptr;
+    if (!emf)
+        return 0;
+    *handled = TRUE;
+    if (escape == QUERYESCSUPPORT) {
+        if (!emf->Printer || !in || in_size < 2)
+            return 0;
+        int query = in_size >= 4 ? *(const int *)in : *(const WORD *)in;
+        return PrnEscapeSupported(query);
+    }
+    if (in_size < 0 || (in_size && !in))
+        return 0;
+    EMREXTESCAPE *r = EmfRecordAlloc(emf, EMR_EXTESCAPE, offsetof(EMREXTESCAPE, EscData) + in_size);
+    if (!r) {
+        emf->Failed = TRUE;
+        return 0;
+    }
+    r->iEscape = escape;
+    r->cbEscData = in_size;
+    if (in_size)
+        memcpy(r->EscData, in, in_size);
+    if (out && out_size >= (int)sizeof(POINT) && emf->Printer) {
+        POINT *p = (POINT *)out;
+        switch (escape) {
+        case GETPHYSPAGESIZE:
+            p->x = emf->Caps[PHYSICALWIDTH];
+            p->y = emf->Caps[PHYSICALHEIGHT];
+            return 1;
+        case GETPRINTINGOFFSET:
+            p->x = emf->Caps[PHYSICALOFFSETX];
+            p->y = emf->Caps[PHYSICALOFFSETY];
+            return 1;
+        case GETSCALINGFACTOR:
+            p->x = emf->Caps[SCALINGFACTORX];
+            p->y = emf->Caps[SCALINGFACTORY];
+            return 1;
+        }
+    }
+    return in_size > 1 ? in_size : 1;
 }
 
 DWORD MfObjectType(HGDIOBJ handle)
