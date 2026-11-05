@@ -37,12 +37,40 @@ static HRESULT data_new(D2dImageData *d, IRect r)
 
 /* ------------------------------------------------------------------ command lists */
 
+/* an image drawn into a command list, kept to be drawn when the list is, in the precision of whoever reads it. */
+typedef struct CmdOp {
+    ID2D1Image *image;
+    int dx, dy;
+    /* the part of the image drawn when a source rectangle was given, else all of it as it is when the list is drawn. */
+    BOOL cut;
+    IRect src;
+    UINT32 composite;
+} CmdOp;
+
+static HRESULT image_bounds(D2dRt *rt, ID2D1Image *image, IRect *b, int depth);
+
+static IRect op_src(D2dRt *rt, const CmdOp *op, int depth)
+{
+    IRect b = {0, 0, 0, 0};
+    HRESULT hr = image_bounds(rt, op->image, &b, depth + 1);
+    if (FAILED(hr))
+        return (IRect){0, 0, 0, 0};
+    if (!op->cut)
+        return b;
+    IRect r = {op->src.x0 > b.x0 ? op->src.x0 : b.x0, op->src.y0 > b.y0 ? op->src.y0 : b.y0, op->src.x1 < b.x1 ? op->src.x1 : b.x1,
+               op->src.y1 < b.y1 ? op->src.y1 : b.y1};
+    return r;
+}
+
 typedef struct D2dCommandList {
     D2dObj obj;
     D2dSurface surface;
     float dpi;
     BOOL closed;
     IRect dirty;
+    D2dArray ops;
+    /* whether anything other than images was drawn into the surface, known once the list is closed. */
+    BOOL scanned, raster;
 } D2dCommandList;
 
 static D2dClass g_cmd_class;
@@ -89,7 +117,27 @@ static HRESULT STDMETHODCALLTYPE cl_close(ID2D1CommandList *This)
     c->closed = TRUE;
     return S_OK;
 }
-static void cl_destroy(D2dObj *o) { D2dSurfaceFree(&((D2dCommandList *)o)->surface); }
+static void cl_destroy(D2dObj *o)
+{
+    D2dCommandList *c = (D2dCommandList *)o;
+    for (UINT32 i = 0; i < c->ops.count; i++)
+        D2D_RELEASE(((CmdOp *)c->ops.data)[i].image);
+    D2dArrayFree(&c->ops);
+    D2dSurfaceFree(&c->surface);
+}
+
+static BOOL cl_raster(D2dCommandList *c)
+{
+    if (!c->scanned) {
+        c->scanned = c->closed;
+        c->raster = FALSE;
+        for (SIZE_T i = 0; i < (SIZE_T)c->surface.w * c->surface.h && !c->raster; i++)
+            c->raster = c->surface.px[i] != 0;
+        if (!c->ops.count)
+            c->raster = TRUE;
+    }
+    return c->raster;
+}
 static const void *const g_cmd_vtbl[] = {D2dQueryInterface, D2dAddRef, D2dRelease, D2dResourceGetFactory, cl_stream, cl_close};
 D2D_IIDS(g_cmd_iids, &IID_ID2D1Resource, &IID_ID2D1Image, &IID_ID2D1CommandList);
 static D2dClass g_cmd_class = {"command list", g_cmd_iids, cl_destroy, nullptr};
@@ -509,12 +557,90 @@ static HRESULT image_bounds(D2dRt *rt, ID2D1Image *image, IRect *b, int depth)
     }
     if (D2dIsOfClass(image, &g_cmd_class)) {
         D2dCommandList *c = (D2dCommandList *)image;
-        b->x0 = b->y0 = 0;
-        b->x1 = c->surface.w;
-        b->y1 = c->surface.h;
+        IRect all = cl_raster(c) ? (IRect){0, 0, c->surface.w, c->surface.h} : (IRect){0, 0, 0, 0};
+        for (UINT32 i = 0; i < c->ops.count; i++) {
+            const CmdOp *op = &((CmdOp *)c->ops.data)[i];
+            IRect src = op_src(rt, op, depth);
+            IRect r = {src.x0 + op->dx, src.y0 + op->dy, src.x1 + op->dx, src.y1 + op->dy};
+            if (irect_empty(all))
+                all = r;
+            else if (!irect_empty(r))
+                all = (IRect){all.x0 < r.x0 ? all.x0 : r.x0, all.y0 < r.y0 ? all.y0 : r.y0, all.x1 > r.x1 ? all.x1 : r.x1, all.y1 > r.y1 ? all.y1 : r.y1};
+        }
+        *b = all;
         return S_OK;
     }
     return E_INVALIDARG;
+}
+
+static inline uint32_t unorm8(float v) { return !(v > 0.0f) ? 0 : v >= 1.0f ? 255 : (uint32_t)(v * 255.0f + 0.5f); }
+
+/* the surface of a command list under the images drawn into it, each composited in floats over want. */
+static HRESULT cl_get(D2dRt *rt, D2dCommandList *c, IRect want, D2dImageData *out, int depth)
+{
+    if (!c->ops.count) {
+        IRect r = {0, 0, c->surface.w, c->surface.h};
+        HRESULT hr = data_new(out, r);
+        if (SUCCEEDED(hr))
+            memcpy(out->surface.px, c->surface.px, (SIZE_T)r.x1 * r.y1 * 4);
+        return hr;
+    }
+    IRect b;
+    image_bounds(rt, (ID2D1Image *)c, &b, depth);
+    IRect r = irect_intersect(want, b);
+    if (irect_empty(r))
+        r = (IRect){want.x0, want.y0, want.x0, want.y0};
+    HRESULT hr = data_new(out, r);
+    int w = out->surface.w, h = out->surface.h;
+    if (FAILED(hr) || !w || !h)
+        return hr;
+    out->fpx = D2dAllocZero((SIZE_T)w * h * 16);
+    if (!out->fpx)
+        return E_OUTOFMEMORY;
+    if (cl_raster(c)) {
+        for (int y = r.y0; y < r.y1; y++) {
+            for (int x = r.x0; x < r.x1; x++) {
+                if (x < 0 || y < 0 || x >= c->surface.w || y >= c->surface.h)
+                    continue;
+                uint32_t p = D2dSurfaceRow(&c->surface, y)[x];
+                float *d = out->fpx + ((SIZE_T)(y - r.y0) * w + (x - r.x0)) * 4;
+                d[0] = (p >> 16 & 255) / 255.0f, d[1] = (p >> 8 & 255) / 255.0f, d[2] = (p & 255) / 255.0f, d[3] = (p >> 24) / 255.0f;
+            }
+        }
+    }
+    for (UINT32 i = 0; i < c->ops.count && SUCCEEDED(hr); i++) {
+        const CmdOp *op = &((CmdOp *)c->ops.data)[i];
+        IRect need = irect_intersect((IRect){r.x0 - op->dx, r.y0 - op->dy, r.x1 - op->dx, r.y1 - op->dy}, op_src(rt, op, depth));
+        if (irect_empty(need))
+            continue;
+        D2dImageData in;
+        hr = image_get(rt, op->image, need, &in, depth + 1);
+        if (FAILED(hr))
+            break;
+        IRect have = irect_intersect(need, (IRect){in.x, in.y, in.x + in.surface.w, in.y + in.surface.h});
+        for (int y = have.y0; y < have.y1; y++) {
+            for (int x = have.x0; x < have.x1; x++) {
+                SIZE_T at = (SIZE_T)(y - in.y) * in.surface.w + (x - in.x);
+                float sv[4];
+                if (in.fpx) {
+                    memcpy(sv, in.fpx + at * 4, 16);
+                } else {
+                    uint32_t p = in.surface.px[at];
+                    sv[0] = (p >> 16 & 255) / 255.0f, sv[1] = (p >> 8 & 255) / 255.0f, sv[2] = (p & 255) / 255.0f, sv[3] = (p >> 24) / 255.0f;
+                }
+                float *d = out->fpx + ((SIZE_T)(y + op->dy - r.y0) * w + (x + op->dx - r.x0)) * 4;
+                float keep = op->composite == D2D1_COMPOSITE_MODE_PLUS ? 1.0f : 1.0f - sv[3];
+                for (int k = 0; k < 4; k++)
+                    d[k] = sv[k] + d[k] * keep;
+            }
+        }
+        D2dImageDataFree(&in);
+    }
+    for (SIZE_T i = 0; i < (SIZE_T)w * h; i++) {
+        const float *f = out->fpx + i * 4;
+        out->surface.px[i] = unorm8(f[3]) << 24 | unorm8(f[0]) << 16 | unorm8(f[1]) << 8 | unorm8(f[2]);
+    }
+    return hr;
 }
 
 static HRESULT image_get(D2dRt *rt, ID2D1Image *image, IRect want, D2dImageData *out, int depth)
@@ -534,14 +660,8 @@ static HRESULT image_get(D2dRt *rt, ID2D1Image *image, IRect want, D2dImageData 
         D2dProxy *p = (D2dProxy *)image;
         return p->ops->get(p->ctx, want, out, depth);
     }
-    if (D2dIsOfClass(image, &g_cmd_class)) {
-        D2dCommandList *c = (D2dCommandList *)image;
-        IRect r = {0, 0, c->surface.w, c->surface.h};
-        HRESULT hr = data_new(out, r);
-        if (SUCCEEDED(hr))
-            memcpy(out->surface.px, c->surface.px, (SIZE_T)r.x1 * r.y1 * 4);
-        return hr;
-    }
+    if (D2dIsOfClass(image, &g_cmd_class))
+        return cl_get(rt, (D2dCommandList *)image, want, out, depth);
     return E_INVALIDARG;
 }
 
@@ -655,8 +775,6 @@ void D2dDrawImageCore(D2dRt *rt, ID2D1Image *image, const D2D1_POINT_2F *offset,
     } else {
         topleft.x = topleft.y = 0.0f;
     }
-    if (irect_empty(src))
-        return;
     /* the area worth rendering: what the target can show of the source, mapped back into image space. */
     D2dMatrix world, inv;
     D2dWorldMatrix(rt, &world);
@@ -664,6 +782,24 @@ void D2dDrawImageCore(D2dRt *rt, ID2D1Image *image, const D2D1_POINT_2F *offset,
     D2dMatrix px_to_user = {1.0f / sx, 0, 0, 1.0f / sy, off.x - topleft.x, off.y - topleft.y};
     D2dMatrix px_to_dev;
     D2dMatMul(&px_to_dev, &px_to_user, &world);
+    /* an image drawn whole into a command list is kept as it is, to be drawn when the list is. */
+    D2dCommandList *list = rt->target_image && D2dIsOfClass(rt->target_image, &g_cmd_class) ? (D2dCommandList *)rt->target_image : nullptr;
+    BOOL moved_only = D2dAbsF(px_to_dev._11 - 1) < 1e-6f && D2dAbsF(px_to_dev._22 - 1) < 1e-6f && px_to_dev._12 == 0 && px_to_dev._21 == 0 &&
+                      D2dAbsF(px_to_dev._31 - D2dFloorF(px_to_dev._31 + 0.5f)) < 1e-4f && D2dAbsF(px_to_dev._32 - D2dFloorF(px_to_dev._32 + 0.5f)) < 1e-4f;
+    if (list && !list->closed && !rt->clip_set && moved_only &&
+        (composite == D2D1_COMPOSITE_MODE_SOURCE_OVER || composite == D2D1_COMPOSITE_MODE_PLUS) && D2dArrayGrow(&list->ops, sizeof(CmdOp), 1)) {
+        CmdOp *op = &((CmdOp *)list->ops.data)[list->ops.count++];
+        op->image = image;
+        image->lpVtbl->AddRef(image);
+        op->dx = (int)D2dFloorF(px_to_dev._31 + 0.5f);
+        op->dy = (int)D2dFloorF(px_to_dev._32 + 0.5f);
+        op->cut = source != nullptr;
+        op->src = src;
+        op->composite = composite;
+        return;
+    }
+    if (irect_empty(src))
+        return;
     IRect want = src;
     if (D2dMatInvert(&inv, &px_to_dev)) {
         D2D1_POINT_2F c[4] = {{0, 0}, {(float)rt->draw->w, 0}, {(float)rt->draw->w, (float)rt->draw->h}, {0, (float)rt->draw->h}};
