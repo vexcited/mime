@@ -183,9 +183,11 @@ set(includes_winhttp guest/lib)
 set(objects_wininet x86-lib-png:guest/lib/png/inflate.c)
 set(includes_wininet guest/lib)
 
-list(APPEND MIME_X86_DLLS d3dcompiler_47:0x4F000000:all_five)
+# the hlsl compiler catches its own faults through msvcrt's _except_handler3.
+set(d3dcompiler_imports ${all_five} msvcrt)
+list(APPEND MIME_X86_DLLS d3dcompiler_47:0x4F000000:d3dcompiler_imports)
 list(APPEND MIME_X86_DLLS wldp:0x31900000:base)
-set(objects_d3dcompiler_47 x86-lib-dxbc:guest/lib/dxbc/container.c x86-lib-dxbc:guest/lib/dxbc/reader.c)
+set(objects_d3dcompiler_47 x86-lib-dxbc:guest/lib/dxbc/container.c x86-lib-dxbc:guest/lib/dxbc/reader.c x86-lib-hlsl x86-div)
 
 mime_dll(vulkan-1 x86 BASE 0x53000000 SOURCES ${MIME_VULKAN_SOURCES} ${MIME_VULKAN_GEN_SOURCES}
     OBJECTS x86-chkstk OPTIONS ${MIME_VULKAN_OPTIONS} INCLUDES ${MIME_VULKAN_INCLUDES}

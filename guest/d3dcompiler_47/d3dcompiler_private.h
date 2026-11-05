@@ -1,7 +1,6 @@
 /*
  * d3dcompiler_47.dll: blobs, dxbc containers, reflection and disassembly
- * of shader model 4 and 5. there is no hlsl compiler: compiling fails like
- * a shader with errors.
+ * of shader model 4 and 5, and the hlsl compiler of guest/lib/hlsl.
  */
 #ifndef D3DCOMPILER_PRIVATE_H
 #define D3DCOMPILER_PRIVATE_H
@@ -13,6 +12,7 @@
 #include <mime/win32/d3dcompiler.h>
 #include "../lib/dxbc/dxbc.h"
 #include "../lib/dxbc/tokens.h"
+#include "../lib/hlsl/hlsl.h"
 
 void *(memcpy)(void *dst, const void *src, size_t n);
 void *(memset)(void *dst, int c, size_t n);
