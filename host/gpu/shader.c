@@ -93,6 +93,64 @@ static int frag_data_count(const char *src)
 }
 
 /* replaces the version directive with a blank line to preserve diagnostic line numbers. */
+/*
+ * where the declarations can go: after the last #extension directive, outside comments, or after the conditional
+ * block that holds it, so that a block left out does not take them along.
+ */
+static char *extensions_end(char *text)
+{
+    char *insert = text;
+    int depth = 0;
+    bool pending = false, in_comment = false;
+    for (char *line = text; *line;) {
+        char *eol = strchr(line, '\n');
+        char *next = eol ? eol + 1 : line + strlen(line);
+        char *q = line;
+        if (in_comment) {
+            char *end = strstr(q, "*/");
+            if (!end || (eol && end > eol)) {
+                line = next;
+                continue;
+            }
+            in_comment = false;
+            q = end + 2;
+        }
+        while (*q == ' ' || *q == '\t' || *q == '\r')
+            q++;
+        if (*q == '#') {
+            char *d = q + 1;
+            while (*d == ' ' || *d == '\t')
+                d++;
+            if (!strncmp(d, "if", 2))
+                depth++;
+            else if (!strncmp(d, "endif", 5) && depth > 0 && --depth == 0 && pending) {
+                insert = next;
+                pending = false;
+            } else if (!strncmp(d, "extension", 9)) {
+                if (depth)
+                    pending = true;
+                else
+                    insert = next;
+            }
+        } else {
+            for (char *c = q; c < (eol ? eol : q + strlen(q)); c++) {
+                if (c[0] == '/' && c[1] == '/')
+                    break;
+                if (c[0] == '/' && c[1] == '*') {
+                    char *end = strstr(c + 2, "*/");
+                    if (!end || (eol && end > eol)) {
+                        in_comment = true;
+                        break;
+                    }
+                    c = end + 1;
+                }
+            }
+        }
+        line = next;
+    }
+    return insert;
+}
+
 static char *lift_source(const char *src, size_t len, bool fragment)
 {
     char *text = malloc(len + 1);
@@ -171,11 +229,7 @@ static char *lift_source(const char *src, size_t len, bool fragment)
         for (char *p = version_line; *p && p != eol; p++)
             *p = ' ';
     }
-    char *insert = text;
-    for (char *p = strstr(text, "#extension"); p; p = strstr(p + 1, "#extension")) {
-        char *eol = strchr(p, '\n');
-        insert = eol ? eol + 1 : p + strlen(p);
-    }
+    char *insert = extensions_end(text);
     buf_str(&out, "#line 1\n");
     if (decl.len && insert != text) {
         buf_add(&out, text, (size_t)(insert - text));
