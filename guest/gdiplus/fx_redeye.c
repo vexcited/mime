@@ -39,7 +39,10 @@ static GpStatus eye_set(void *state, const void *params, UINT size)
     UINT count = ((const RedEyeCorrectionParams *)params)->numberOfAreas;
     if (count == 0 || count > (size - sizeof(RedEyeCorrectionParams)) / sizeof(RECT))
         return InvalidParameter;
-    const RECT *given = (const RECT *)((const BYTE *)params + sizeof(RedEyeCorrectionParams));
+    /* the size counts the areas, but they are read through the pointer, wherever it points. */
+    const RECT *given = ((const RedEyeCorrectionParams *)params)->areas;
+    if (!given)
+        return InvalidParameter;
     for (UINT i = 0; i < count; i++)
         if (given[i].right <= given[i].left || given[i].bottom <= given[i].top)
             return InvalidParameter;
