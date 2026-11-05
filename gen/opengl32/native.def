@@ -1,21 +1,28 @@
 LIBRARY opengl32.dll
 EXPORTS
     glAccum
+    glActiveShaderProgram
     glActiveTexture
     glAlphaFunc
     glAreTexturesResident
     glArrayElement
     glAttachShader
     glBegin
+    glBeginConditionalRender
     glBeginQuery
+    glBeginQueryIndexed
+    glBeginTransformFeedback
     glBindAttribLocation
     glBindBuffer
     glBindBufferBase
     glBindBufferRange
     glBindFragDataLocation
+    glBindFragDataLocationIndexed
     glBindFramebuffer
+    glBindProgramPipeline
     glBindRenderbuffer
     glBindTexture
+    glBindTransformFeedback
     glBindVertexArray
     glBitmap
     glBlendColor
@@ -91,7 +98,11 @@ EXPORTS
     glCopyTexSubImage2D
     glCreateBuffers
     glCreateProgram
+    glCreateProgramPipelines
+    glCreateQueries
     glCreateShader
+    glCreateShaderProgramv
+    glCreateTransformFeedbacks
     glCullFace
     glDebugMessageCallback
     glDebugMessageControl
@@ -100,15 +111,19 @@ EXPORTS
     glDeleteFramebuffers
     glDeleteLists
     glDeleteProgram
+    glDeleteProgramPipelines
     glDeleteQueries
     glDeleteRenderbuffers
     glDeleteShader
     glDeleteSync
     glDeleteTextures
+    glDeleteTransformFeedbacks
     glDeleteVertexArrays
     glDepthFunc
     glDepthMask
     glDepthRange
+    glDepthRangeArrayv
+    glDepthRangeIndexed
     glDepthRangef
     glDetachShader
     glDisable
@@ -128,6 +143,10 @@ EXPORTS
     glDrawPixels
     glDrawRangeElements
     glDrawRangeElementsBaseVertex
+    glDrawTransformFeedback
+    glDrawTransformFeedbackInstanced
+    glDrawTransformFeedbackStream
+    glDrawTransformFeedbackStreamInstanced
     glEdgeFlag
     glEdgeFlagPointer
     glEdgeFlagv
@@ -136,8 +155,11 @@ EXPORTS
     glEnableVertexAttribArray
     glEnablei
     glEnd
+    glEndConditionalRender
     glEndList
     glEndQuery
+    glEndQueryIndexed
+    glEndTransformFeedback
     glEvalCoord1d
     glEvalCoord1dv
     glEvalCoord1f
@@ -169,12 +191,17 @@ EXPORTS
     glGenBuffers
     glGenFramebuffers
     glGenLists
+    glGenProgramPipelines
     glGenQueries
     glGenRenderbuffers
     glGenTextures
+    glGenTransformFeedbacks
     glGenVertexArrays
     glGenerateMipmap
     glGetActiveAttrib
+    glGetActiveSubroutineName
+    glGetActiveSubroutineUniformName
+    glGetActiveSubroutineUniformiv
     glGetActiveUniform
     glGetActiveUniformBlockName
     glGetActiveUniformBlockiv
@@ -189,9 +216,13 @@ EXPORTS
     glGetBufferSubData
     glGetClipPlane
     glGetDebugMessageLog
+    glGetDoublei_v
     glGetDoublev
     glGetError
+    glGetFloati_v
     glGetFloatv
+    glGetFragDataIndex
+    glGetFragDataLocation
     glGetFramebufferAttachmentParameteriv
     glGetInteger64v
     glGetIntegeri_v
@@ -209,7 +240,11 @@ EXPORTS
     glGetPointerv
     glGetPolygonStipple
     glGetProgramInfoLog
+    glGetProgramPipelineInfoLog
+    glGetProgramPipelineiv
+    glGetProgramStageiv
     glGetProgramiv
+    glGetQueryIndexediv
     glGetQueryObjecti64v
     glGetQueryObjectiv
     glGetQueryObjectui64v
@@ -222,6 +257,8 @@ EXPORTS
     glGetShaderiv
     glGetString
     glGetStringi
+    glGetSubroutineIndex
+    glGetSubroutineUniformLocation
     glGetSynciv
     glGetTexEnvfv
     glGetTexEnviv
@@ -233,12 +270,20 @@ EXPORTS
     glGetTexLevelParameteriv
     glGetTexParameterfv
     glGetTexParameteriv
+    glGetTransformFeedbackVarying
+    glGetTransformFeedbacki64_v
+    glGetTransformFeedbacki_v
+    glGetTransformFeedbackiv
     glGetUniformBlockIndex
     glGetUniformLocation
+    glGetUniformSubroutineuiv
+    glGetUniformdv
     glGetUniformfv
     glGetUniformiv
+    glGetUniformuiv
     glGetVertexAttribIiv
     glGetVertexAttribIuiv
+    glGetVertexAttribLdv
     glGetVertexAttribPointerv
     glGetVertexAttribfv
     glGetVertexAttribiv
@@ -264,11 +309,13 @@ EXPORTS
     glIsFramebuffer
     glIsList
     glIsProgram
+    glIsProgramPipeline
     glIsQuery
     glIsRenderbuffer
     glIsShader
     glIsSync
     glIsTexture
+    glIsTransformFeedback
     glIsVertexArray
     glLightModelf
     glLightModelfv
@@ -393,6 +440,9 @@ EXPORTS
     glObjectLabel
     glOrtho
     glPassThrough
+    glPatchParameterfv
+    glPatchParameteri
+    glPauseTransformFeedback
     glPixelMapfv
     glPixelMapuiv
     glPixelMapusv
@@ -419,6 +469,57 @@ EXPORTS
     glPopMatrix
     glPopName
     glPrioritizeTextures
+    glProgramParameteri
+    glProgramUniform1d
+    glProgramUniform1dv
+    glProgramUniform1f
+    glProgramUniform1fv
+    glProgramUniform1i
+    glProgramUniform1iv
+    glProgramUniform1ui
+    glProgramUniform1uiv
+    glProgramUniform2d
+    glProgramUniform2dv
+    glProgramUniform2f
+    glProgramUniform2fv
+    glProgramUniform2i
+    glProgramUniform2iv
+    glProgramUniform2ui
+    glProgramUniform2uiv
+    glProgramUniform3d
+    glProgramUniform3dv
+    glProgramUniform3f
+    glProgramUniform3fv
+    glProgramUniform3i
+    glProgramUniform3iv
+    glProgramUniform3ui
+    glProgramUniform3uiv
+    glProgramUniform4d
+    glProgramUniform4dv
+    glProgramUniform4f
+    glProgramUniform4fv
+    glProgramUniform4i
+    glProgramUniform4iv
+    glProgramUniform4ui
+    glProgramUniform4uiv
+    glProgramUniformMatrix2dv
+    glProgramUniformMatrix2fv
+    glProgramUniformMatrix2x3dv
+    glProgramUniformMatrix2x3fv
+    glProgramUniformMatrix2x4dv
+    glProgramUniformMatrix2x4fv
+    glProgramUniformMatrix3dv
+    glProgramUniformMatrix3fv
+    glProgramUniformMatrix3x2dv
+    glProgramUniformMatrix3x2fv
+    glProgramUniformMatrix3x4dv
+    glProgramUniformMatrix3x4fv
+    glProgramUniformMatrix4dv
+    glProgramUniformMatrix4fv
+    glProgramUniformMatrix4x2dv
+    glProgramUniformMatrix4x2fv
+    glProgramUniformMatrix4x3dv
+    glProgramUniformMatrix4x3fv
     glPushAttrib
     glPushClientAttrib
     glPushDebugGroup
@@ -463,11 +564,15 @@ EXPORTS
     glRenderMode
     glRenderbufferStorage
     glRenderbufferStorageMultisample
+    glResumeTransformFeedback
     glRotated
     glRotatef
     glScaled
     glScalef
     glScissor
+    glScissorArrayv
+    glScissorIndexed
+    glScissorIndexedv
     glSelectBuffer
     glShadeModel
     glShaderSource
@@ -533,26 +638,37 @@ EXPORTS
     glTexSubImage1D
     glTexSubImage2D
     glTexSubImage3D
+    glTransformFeedbackBufferBase
+    glTransformFeedbackBufferRange
+    glTransformFeedbackVaryings
     glTranslated
     glTranslatef
+    glUniform1d
+    glUniform1dv
     glUniform1f
     glUniform1fv
     glUniform1i
     glUniform1iv
     glUniform1ui
     glUniform1uiv
+    glUniform2d
+    glUniform2dv
     glUniform2f
     glUniform2fv
     glUniform2i
     glUniform2iv
     glUniform2ui
     glUniform2uiv
+    glUniform3d
+    glUniform3dv
     glUniform3f
     glUniform3fv
     glUniform3i
     glUniform3iv
     glUniform3ui
     glUniform3uiv
+    glUniform4d
+    glUniform4dv
     glUniform4f
     glUniform4fv
     glUniform4i
@@ -560,18 +676,30 @@ EXPORTS
     glUniform4ui
     glUniform4uiv
     glUniformBlockBinding
+    glUniformMatrix2dv
     glUniformMatrix2fv
+    glUniformMatrix2x3dv
     glUniformMatrix2x3fv
+    glUniformMatrix2x4dv
     glUniformMatrix2x4fv
+    glUniformMatrix3dv
     glUniformMatrix3fv
+    glUniformMatrix3x2dv
     glUniformMatrix3x2fv
+    glUniformMatrix3x4dv
     glUniformMatrix3x4fv
+    glUniformMatrix4dv
     glUniformMatrix4fv
+    glUniformMatrix4x2dv
     glUniformMatrix4x2fv
+    glUniformMatrix4x3dv
     glUniformMatrix4x3fv
+    glUniformSubroutinesuiv
     glUnmapBuffer
     glUseProgram
+    glUseProgramStages
     glValidateProgram
+    glValidateProgramPipeline
     glVertex2d
     glVertex2dv
     glVertex2f
@@ -611,9 +739,21 @@ EXPORTS
     glVertexAttribI4ui
     glVertexAttribI4uiv
     glVertexAttribIPointer
+    glVertexAttribL1d
+    glVertexAttribL1dv
+    glVertexAttribL2d
+    glVertexAttribL2dv
+    glVertexAttribL3d
+    glVertexAttribL3dv
+    glVertexAttribL4d
+    glVertexAttribL4dv
+    glVertexAttribLPointer
     glVertexAttribPointer
     glVertexPointer
     glViewport
+    glViewportArrayv
+    glViewportIndexedf
+    glViewportIndexedfv
     glWaitSync
     wglChoosePixelFormat
     wglChoosePixelFormatARB

@@ -1,21 +1,28 @@
 LIBRARY opengl32.dll
 EXPORTS
     glAccum@8
+    glActiveShaderProgram@8
     glActiveTexture@4
     glAlphaFunc@8
     glAreTexturesResident@12
     glArrayElement@4
     glAttachShader@8
     glBegin@4
+    glBeginConditionalRender@8
     glBeginQuery@8
+    glBeginQueryIndexed@12
+    glBeginTransformFeedback@4
     glBindAttribLocation@12
     glBindBuffer@8
     glBindBufferBase@12
     glBindBufferRange@20
     glBindFragDataLocation@12
+    glBindFragDataLocationIndexed@16
     glBindFramebuffer@8
+    glBindProgramPipeline@4
     glBindRenderbuffer@8
     glBindTexture@8
+    glBindTransformFeedback@8
     glBindVertexArray@4
     glBitmap@28
     glBlendColor@16
@@ -91,7 +98,11 @@ EXPORTS
     glCopyTexSubImage2D@32
     glCreateBuffers@8
     glCreateProgram@0
+    glCreateProgramPipelines@8
+    glCreateQueries@12
     glCreateShader@4
+    glCreateShaderProgramv@12
+    glCreateTransformFeedbacks@8
     glCullFace@4
     glDebugMessageCallback@8
     glDebugMessageControl@24
@@ -100,15 +111,19 @@ EXPORTS
     glDeleteFramebuffers@8
     glDeleteLists@8
     glDeleteProgram@4
+    glDeleteProgramPipelines@8
     glDeleteQueries@8
     glDeleteRenderbuffers@8
     glDeleteShader@4
     glDeleteSync@4
     glDeleteTextures@8
+    glDeleteTransformFeedbacks@8
     glDeleteVertexArrays@8
     glDepthFunc@4
     glDepthMask@4
     glDepthRange@16
+    glDepthRangeArrayv@12
+    glDepthRangeIndexed@20
     glDepthRangef@8
     glDetachShader@8
     glDisable@4
@@ -128,6 +143,10 @@ EXPORTS
     glDrawPixels@20
     glDrawRangeElements@24
     glDrawRangeElementsBaseVertex@28
+    glDrawTransformFeedback@8
+    glDrawTransformFeedbackInstanced@12
+    glDrawTransformFeedbackStream@12
+    glDrawTransformFeedbackStreamInstanced@16
     glEdgeFlag@4
     glEdgeFlagPointer@8
     glEdgeFlagv@4
@@ -136,8 +155,11 @@ EXPORTS
     glEnableVertexAttribArray@4
     glEnablei@8
     glEnd@0
+    glEndConditionalRender@0
     glEndList@0
     glEndQuery@4
+    glEndQueryIndexed@8
+    glEndTransformFeedback@0
     glEvalCoord1d@8
     glEvalCoord1dv@4
     glEvalCoord1f@4
@@ -169,12 +191,17 @@ EXPORTS
     glGenBuffers@8
     glGenFramebuffers@8
     glGenLists@4
+    glGenProgramPipelines@8
     glGenQueries@8
     glGenRenderbuffers@8
     glGenTextures@8
+    glGenTransformFeedbacks@8
     glGenVertexArrays@8
     glGenerateMipmap@4
     glGetActiveAttrib@28
+    glGetActiveSubroutineName@24
+    glGetActiveSubroutineUniformName@24
+    glGetActiveSubroutineUniformiv@20
     glGetActiveUniform@28
     glGetActiveUniformBlockName@20
     glGetActiveUniformBlockiv@16
@@ -189,9 +216,13 @@ EXPORTS
     glGetBufferSubData@16
     glGetClipPlane@8
     glGetDebugMessageLog@32
+    glGetDoublei_v@12
     glGetDoublev@8
     glGetError@0
+    glGetFloati_v@12
     glGetFloatv@8
+    glGetFragDataIndex@8
+    glGetFragDataLocation@8
     glGetFramebufferAttachmentParameteriv@16
     glGetInteger64v@8
     glGetIntegeri_v@12
@@ -209,7 +240,11 @@ EXPORTS
     glGetPointerv@8
     glGetPolygonStipple@4
     glGetProgramInfoLog@16
+    glGetProgramPipelineInfoLog@16
+    glGetProgramPipelineiv@12
+    glGetProgramStageiv@16
     glGetProgramiv@12
+    glGetQueryIndexediv@16
     glGetQueryObjecti64v@12
     glGetQueryObjectiv@12
     glGetQueryObjectui64v@12
@@ -222,6 +257,8 @@ EXPORTS
     glGetShaderiv@12
     glGetString@4
     glGetStringi@8
+    glGetSubroutineIndex@12
+    glGetSubroutineUniformLocation@12
     glGetSynciv@20
     glGetTexEnvfv@12
     glGetTexEnviv@12
@@ -233,12 +270,20 @@ EXPORTS
     glGetTexLevelParameteriv@16
     glGetTexParameterfv@12
     glGetTexParameteriv@12
+    glGetTransformFeedbackVarying@28
+    glGetTransformFeedbacki64_v@16
+    glGetTransformFeedbacki_v@16
+    glGetTransformFeedbackiv@12
     glGetUniformBlockIndex@8
     glGetUniformLocation@8
+    glGetUniformSubroutineuiv@12
+    glGetUniformdv@12
     glGetUniformfv@12
     glGetUniformiv@12
+    glGetUniformuiv@12
     glGetVertexAttribIiv@12
     glGetVertexAttribIuiv@12
+    glGetVertexAttribLdv@12
     glGetVertexAttribPointerv@12
     glGetVertexAttribfv@12
     glGetVertexAttribiv@12
@@ -264,11 +309,13 @@ EXPORTS
     glIsFramebuffer@4
     glIsList@4
     glIsProgram@4
+    glIsProgramPipeline@4
     glIsQuery@4
     glIsRenderbuffer@4
     glIsShader@4
     glIsSync@4
     glIsTexture@4
+    glIsTransformFeedback@4
     glIsVertexArray@4
     glLightModelf@8
     glLightModelfv@8
@@ -393,6 +440,9 @@ EXPORTS
     glObjectLabel@16
     glOrtho@48
     glPassThrough@4
+    glPatchParameterfv@8
+    glPatchParameteri@8
+    glPauseTransformFeedback@0
     glPixelMapfv@12
     glPixelMapuiv@12
     glPixelMapusv@12
@@ -419,6 +469,57 @@ EXPORTS
     glPopMatrix@0
     glPopName@0
     glPrioritizeTextures@12
+    glProgramParameteri@12
+    glProgramUniform1d@16
+    glProgramUniform1dv@16
+    glProgramUniform1f@12
+    glProgramUniform1fv@16
+    glProgramUniform1i@12
+    glProgramUniform1iv@16
+    glProgramUniform1ui@12
+    glProgramUniform1uiv@16
+    glProgramUniform2d@24
+    glProgramUniform2dv@16
+    glProgramUniform2f@16
+    glProgramUniform2fv@16
+    glProgramUniform2i@16
+    glProgramUniform2iv@16
+    glProgramUniform2ui@16
+    glProgramUniform2uiv@16
+    glProgramUniform3d@32
+    glProgramUniform3dv@16
+    glProgramUniform3f@20
+    glProgramUniform3fv@16
+    glProgramUniform3i@20
+    glProgramUniform3iv@16
+    glProgramUniform3ui@20
+    glProgramUniform3uiv@16
+    glProgramUniform4d@40
+    glProgramUniform4dv@16
+    glProgramUniform4f@24
+    glProgramUniform4fv@16
+    glProgramUniform4i@24
+    glProgramUniform4iv@16
+    glProgramUniform4ui@24
+    glProgramUniform4uiv@16
+    glProgramUniformMatrix2dv@20
+    glProgramUniformMatrix2fv@20
+    glProgramUniformMatrix2x3dv@20
+    glProgramUniformMatrix2x3fv@20
+    glProgramUniformMatrix2x4dv@20
+    glProgramUniformMatrix2x4fv@20
+    glProgramUniformMatrix3dv@20
+    glProgramUniformMatrix3fv@20
+    glProgramUniformMatrix3x2dv@20
+    glProgramUniformMatrix3x2fv@20
+    glProgramUniformMatrix3x4dv@20
+    glProgramUniformMatrix3x4fv@20
+    glProgramUniformMatrix4dv@20
+    glProgramUniformMatrix4fv@20
+    glProgramUniformMatrix4x2dv@20
+    glProgramUniformMatrix4x2fv@20
+    glProgramUniformMatrix4x3dv@20
+    glProgramUniformMatrix4x3fv@20
     glPushAttrib@4
     glPushClientAttrib@4
     glPushDebugGroup@16
@@ -463,11 +564,15 @@ EXPORTS
     glRenderMode@4
     glRenderbufferStorage@16
     glRenderbufferStorageMultisample@20
+    glResumeTransformFeedback@0
     glRotated@32
     glRotatef@16
     glScaled@24
     glScalef@12
     glScissor@16
+    glScissorArrayv@12
+    glScissorIndexed@20
+    glScissorIndexedv@8
     glSelectBuffer@8
     glShadeModel@4
     glShaderSource@16
@@ -533,26 +638,37 @@ EXPORTS
     glTexSubImage1D@28
     glTexSubImage2D@36
     glTexSubImage3D@44
+    glTransformFeedbackBufferBase@12
+    glTransformFeedbackBufferRange@20
+    glTransformFeedbackVaryings@16
     glTranslated@24
     glTranslatef@12
+    glUniform1d@12
+    glUniform1dv@12
     glUniform1f@8
     glUniform1fv@12
     glUniform1i@8
     glUniform1iv@12
     glUniform1ui@8
     glUniform1uiv@12
+    glUniform2d@20
+    glUniform2dv@12
     glUniform2f@12
     glUniform2fv@12
     glUniform2i@12
     glUniform2iv@12
     glUniform2ui@12
     glUniform2uiv@12
+    glUniform3d@28
+    glUniform3dv@12
     glUniform3f@16
     glUniform3fv@12
     glUniform3i@16
     glUniform3iv@12
     glUniform3ui@16
     glUniform3uiv@12
+    glUniform4d@36
+    glUniform4dv@12
     glUniform4f@20
     glUniform4fv@12
     glUniform4i@20
@@ -560,18 +676,30 @@ EXPORTS
     glUniform4ui@20
     glUniform4uiv@12
     glUniformBlockBinding@12
+    glUniformMatrix2dv@16
     glUniformMatrix2fv@16
+    glUniformMatrix2x3dv@16
     glUniformMatrix2x3fv@16
+    glUniformMatrix2x4dv@16
     glUniformMatrix2x4fv@16
+    glUniformMatrix3dv@16
     glUniformMatrix3fv@16
+    glUniformMatrix3x2dv@16
     glUniformMatrix3x2fv@16
+    glUniformMatrix3x4dv@16
     glUniformMatrix3x4fv@16
+    glUniformMatrix4dv@16
     glUniformMatrix4fv@16
+    glUniformMatrix4x2dv@16
     glUniformMatrix4x2fv@16
+    glUniformMatrix4x3dv@16
     glUniformMatrix4x3fv@16
+    glUniformSubroutinesuiv@12
     glUnmapBuffer@4
     glUseProgram@4
+    glUseProgramStages@12
     glValidateProgram@4
+    glValidateProgramPipeline@4
     glVertex2d@16
     glVertex2dv@4
     glVertex2f@8
@@ -611,9 +739,21 @@ EXPORTS
     glVertexAttribI4ui@20
     glVertexAttribI4uiv@8
     glVertexAttribIPointer@20
+    glVertexAttribL1d@12
+    glVertexAttribL1dv@8
+    glVertexAttribL2d@20
+    glVertexAttribL2dv@8
+    glVertexAttribL3d@28
+    glVertexAttribL3dv@8
+    glVertexAttribL4d@36
+    glVertexAttribL4dv@8
+    glVertexAttribLPointer@20
     glVertexAttribPointer@24
     glVertexPointer@16
     glViewport@16
+    glViewportArrayv@12
+    glViewportIndexedf@20
+    glViewportIndexedfv@8
     glWaitSync@16
     wglChoosePixelFormat@8
     wglChoosePixelFormatARB@24
