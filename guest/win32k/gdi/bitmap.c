@@ -662,7 +662,12 @@ int NTAPI NtGdiGetDIBitsInternal(HDC hdc, HBITMAP bitmap, UINT start, UINT lines
     DIB_DESC d;
     BITMAPINFO tmp_info;
     tmp_info.bmiHeader = h;
-    if (!describe_dib(&tmp_info, usage, &d) || d.Width != s->Width) {
+    if (!bits) {
+        /* the bitmap in the asked format, with the size of its bits for the caller to allocate. */
+        tmp_info.bmiHeader.biWidth = s->Width;
+        tmp_info.bmiHeader.biHeight = h.biHeight < 0 ? -s->Height : s->Height;
+    }
+    if (!describe_dib(&tmp_info, usage, &d) || (bits && d.Width != s->Width)) {
         UserLeave();
         return 0;
     }
@@ -673,8 +678,12 @@ int NTAPI NtGdiGetDIBitsInternal(HDC hdc, HBITMAP bitmap, UINT start, UINT lines
     if (lines > (UINT)s->Height - start)
         lines = (UINT)s->Height - start;
     if (!bits) {
+        h.biWidth = s->Width;
+        h.biHeight = tmp_info.bmiHeader.biHeight;
+        h.biPlanes = 1;
+        h.biSizeImage = (DWORD)((SIZE_T)d.Stride * d.Height);
         UserLeave();
-        return (int)lines;
+        return NT_SUCCESS(MimeCopyToUser(user_info, &h, sizeof(h))) ? (int)lines : 0;
     }
     PUCHAR buffer = W32Alloc((SIZE_T)d.Stride * lines);
     if (buffer) {
