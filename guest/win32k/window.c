@@ -1415,8 +1415,9 @@ BOOLEAN WndActivatedByHost;
  */
 void WndSendActivateApp(W32THREAD *t, BOOLEAN active, HANDLE other)
 {
-    if (!t || !g_desktop)
+    if (!t || !g_desktop || t->AppActive == active)
         return;
+    t->AppActive = active;
     HWND list[256];
     UINT count = 0;
     for (WND *c = g_desktop->FirstChild; c && count < sizeof(list) / sizeof(list[0]); c = c->Next) {

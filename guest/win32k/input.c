@@ -1007,6 +1007,20 @@ static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND fi
     return emit(out, WndHandle(target), msg, vk, lparam, ev, filter, min, max);
 }
 
+/* a host focus event for a window of the thread that is still waiting in its queue. */
+static BOOLEAN focus_gain_queued(W32THREAD *t)
+{
+    for (PLIST_ENTRY e = t->Input.Flink; e != &t->Input; e = e->Flink) {
+        QUEUED_MESSAGE *q = CONTAINING_RECORD(e, QUEUED_MESSAGE, Links);
+        if (q->Kind != QM_INPUT || q->Input.type != MIME_INPUT_WINDOW_FOCUS || !q->Input.x)
+            continue;
+        WND *gained = WndLookup((HWND)(ULONG_PTR)q->Input.window_id);
+        if (gained && gained->Thread == t)
+            return TRUE;
+    }
+    return FALSE;
+}
+
 BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, UINT min, UINT max, BOOLEAN remove,
                        BOOLEAN *consumed)
 {
@@ -1100,7 +1114,8 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
             MsgSendEvent(w, WM_NCACTIVATE, FALSE, 0);
             if (!w->Header.Destroyed)
                 MsgSendEvent(w, WM_ACTIVATE, WA_INACTIVE, 0);
-            if (!w->Header.Destroyed)
+            /* the host moves its focus from one window to the next with a loss and a gain, which windows never tells the program. */
+            if (!w->Header.Destroyed && !focus_gain_queued(t))
                 WndSendActivateApp(w->Thread, FALSE, nullptr);
             UserDereference(&w->Header);
         }
