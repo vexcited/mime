@@ -113,7 +113,9 @@ typedef struct MimeLazyRegion {
     uint64_t last_use;
 } MimeLazyRegion;
 
-#define MIME_VMM_MAX_FS_HANDLES 4096
+/* guest file handles: chunks of slots made as the guest opens more files at once, up to a million. */
+#define MIME_VMM_FS_CHUNK 4096
+#define MIME_VMM_FS_CHUNKS 256
 #define MIME_VMM_MAX_WINDOWS 1024
 #define MIME_VMM_INPUT_QUEUE 1024
 
@@ -167,7 +169,9 @@ struct MimeVm {
 
     pthread_mutex_t fs_lock;
     pthread_mutex_t window_lock; /* separate Linux window lock for slow memory map changes. */
-    MimeFsHandle *fs_handles[MIME_VMM_MAX_FS_HANDLES];
+    MimeFsHandle **fs_handles[MIME_VMM_FS_CHUNKS];
+    uint32_t fs_handle_slots; /* in the chunks made so far. */
+    uint32_t fs_handle_next;  /* where the search for a free slot starts. */
 #ifdef __linux__
     MimeFileWindow windows[MIME_VMM_MAX_WINDOWS]; /* host files of MIME_HC_FS_MAP, sorted by ipa. */
 #else
@@ -184,7 +188,17 @@ struct MimeVm {
     uint64_t memory_released; /* bytes of free guest pages the guest reported and the host dropped. */
 
     char host_root_label[8];
+
+    /* the emulated microsoft hypervisor arm64 guests see. */
+    uint64_t hv_guest_os_id;
+    uint64_t hv_boot_ns;
 };
+
+/* fs_lock held, index below fs_handle_slots. */
+static inline MimeFsHandle **mime_fs_handle_slot(MimeVm *vm, uint32_t index)
+{
+    return &vm->fs_handles[index / MIME_VMM_FS_CHUNK][index % MIME_VMM_FS_CHUNK];
+}
 
 /* machine.c, shared by every host. */
 uint64_t mime_unix_to_filetime(struct timespec ts);
