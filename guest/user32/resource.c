@@ -519,8 +519,69 @@ static HICON load_icon_file(LPCWSTR path, int cx, int cy, BOOL icon)
     return result;
 }
 
+static ULONG dib_colors(const BITMAPINFOHEADER *h)
+{
+    if (h->biCompression == BI_BITFIELDS)
+        return h->biSize == sizeof(BITMAPINFOHEADER) ? 3 : 0;
+    if (h->biBitCount > 8)
+        return 0;
+    return h->biClrUsed ? h->biClrUsed : 1u << h->biBitCount;
+}
+
+/* a cx or cy that differs from the bitmap stretches it, like LoadImage of windows does. */
+static HBITMAP make_bitmap(const BITMAPINFO *info, const void *bits, SIZE_T have, int cx, int cy, BOOL dib)
+{
+    LONG w = info->bmiHeader.biWidth;
+    LONG h = info->bmiHeader.biHeight < 0 ? -info->bmiHeader.biHeight : info->bmiHeader.biHeight;
+    if (cx <= 0)
+        cx = w;
+    if (cy <= 0)
+        cy = h;
+    HDC screen = GetDC(nullptr);
+    HBITMAP bitmap = nullptr;
+    if (cx == w && cy == h) {
+        if (dib) {
+            void *dib_bits;
+            bitmap = CreateDIBSection(nullptr, info, DIB_RGB_COLORS, &dib_bits, nullptr, 0);
+            if (bitmap) {
+                SIZE_T stride = (SIZE_T)((w * info->bmiHeader.biBitCount + 31) / 32 * 4);
+                memcpy(dib_bits, bits, stride * (SIZE_T)h < have ? stride * (SIZE_T)h : have);
+            }
+        } else {
+            bitmap = CreateDIBitmap(screen, &info->bmiHeader, CBM_INIT, bits, info, DIB_RGB_COLORS);
+        }
+        ReleaseDC(nullptr, screen);
+        return bitmap;
+    }
+    if (dib) {
+        SIZE_T header = info->bmiHeader.biSize + dib_colors(&info->bmiHeader) * sizeof(RGBQUAD);
+        BITMAPINFO *target = UserAlloc(header);
+        if (target) {
+            memcpy(target, info, header);
+            target->bmiHeader.biWidth = cx;
+            target->bmiHeader.biHeight = info->bmiHeader.biHeight < 0 ? -cy : cy;
+            target->bmiHeader.biSizeImage = 0;
+            void *dib_bits;
+            bitmap = CreateDIBSection(nullptr, target, DIB_RGB_COLORS, &dib_bits, nullptr, 0);
+            UserFree(target);
+        }
+    } else {
+        bitmap = CreateCompatibleBitmap(screen, cx, cy);
+    }
+    if (bitmap) {
+        HDC mem = CreateCompatibleDC(screen);
+        HGDIOBJ old = SelectObject(mem, bitmap);
+        SetStretchBltMode(mem, COLORONCOLOR);
+        StretchDIBits(mem, 0, 0, cx, cy, 0, 0, w, h, bits, info, DIB_RGB_COLORS, SRCCOPY);
+        SelectObject(mem, old);
+        DeleteDC(mem);
+    }
+    ReleaseDC(nullptr, screen);
+    return bitmap;
+}
+
 /* the bits sit at the offset the file header gives. the dib section flag makes a dib section. */
-static HBITMAP load_bitmap_file(LPCWSTR path, UINT flags)
+static HBITMAP load_bitmap_file(LPCWSTR path, int cx, int cy, UINT flags)
 {
     DWORD size;
     UCHAR *data = read_file(path, &size);
@@ -539,21 +600,8 @@ static HBITMAP load_bitmap_file(LPCWSTR path, UINT flags)
         SetLastError(ERROR_INVALID_DATA);
         goto done;
     }
-    const void *bits = data + file->bfOffBits;
-    if (flags & LR_CREATEDIBSECTION) {
-        void *dib_bits;
-        bitmap = CreateDIBSection(nullptr, info, DIB_RGB_COLORS, &dib_bits, nullptr, 0);
-        if (bitmap) {
-            LONG h = info->bmiHeader.biHeight < 0 ? -info->bmiHeader.biHeight : info->bmiHeader.biHeight;
-            SIZE_T stride = (SIZE_T)((info->bmiHeader.biWidth * info->bmiHeader.biBitCount + 31) / 32 * 4);
-            SIZE_T have = size - file->bfOffBits;
-            memcpy(dib_bits, bits, stride * (SIZE_T)h < have ? stride * (SIZE_T)h : have);
-        }
-    } else {
-        HDC screen = GetDC(nullptr);
-        bitmap = CreateDIBitmap(screen, &info->bmiHeader, CBM_INIT, bits, info, DIB_RGB_COLORS);
-        ReleaseDC(nullptr, screen);
-    }
+    bitmap = make_bitmap(info, data + file->bfOffBits, size - file->bfOffBits, cx, cy,
+                         (flags & LR_CREATEDIBSECTION) != 0);
 done:
     UserFree(data);
     return bitmap;
@@ -567,7 +615,7 @@ WINUSERAPI HANDLE WINAPI LoadImageW(HINSTANCE instance, LPCWSTR name, UINT type,
             return nullptr;
         }
         if (type == IMAGE_BITMAP)
-            return load_bitmap_file(name, flags);
+            return load_bitmap_file(name, cx, cy, flags);
         UINT dpi = GetDpiForSystem();
         BOOL icon = type == IMAGE_ICON;
         if (!cx && (flags & LR_DEFAULTSIZE))
@@ -584,18 +632,9 @@ WINUSERAPI HANDLE WINAPI LoadImageW(HINSTANCE instance, LPCWSTR name, UINT type,
         const BITMAPINFO *bi = res ? LockResource(LoadResource(instance, res)) : nullptr;
         if (!bi)
             return nullptr;
-        ULONG colors = bi->bmiHeader.biBitCount <= 8 ? (bi->bmiHeader.biClrUsed ? bi->bmiHeader.biClrUsed : 1u << bi->bmiHeader.biBitCount) : 0;
-        if (bi->bmiHeader.biCompression == BI_BITFIELDS)
-            colors = 3;
-        const void *bits = (const UCHAR *)bi + bi->bmiHeader.biSize + colors * sizeof(RGBQUAD);
-        void *dib_bits;
-        HBITMAP bm = CreateDIBSection(nullptr, bi, DIB_RGB_COLORS, &dib_bits, nullptr, 0);
-        if (bm) {
-            LONG h = bi->bmiHeader.biHeight < 0 ? -bi->bmiHeader.biHeight : bi->bmiHeader.biHeight;
-            SIZE_T stride = (SIZE_T)((bi->bmiHeader.biWidth * bi->bmiHeader.biBitCount + 31) / 32 * 4);
-            memcpy(dib_bits, bits, stride * (SIZE_T)h);
-        }
-        return bm;
+        const void *bits = (const UCHAR *)bi + bi->bmiHeader.biSize + dib_colors(&bi->bmiHeader) * sizeof(RGBQUAD);
+        SIZE_T have = SizeofResource(instance, res) - (SIZE_T)((const UCHAR *)bits - (const UCHAR *)bi);
+        return make_bitmap(bi, bits, have, cx, cy, TRUE);
     }
     BOOL icon = type == IMAGE_ICON;
     UINT dpi = GetDpiForSystem();
@@ -706,7 +745,38 @@ WINUSERAPI HANDLE WINAPI CopyImage(HANDLE image, UINT type, int cx, int cy, UINT
 {
     if (type == IMAGE_ICON || type == IMAGE_CURSOR)
         return CopyIcon(image);
-    return nullptr;
+    BITMAP bm;
+    if (type != IMAGE_BITMAP || !GetObjectW(image, sizeof(bm), &bm))
+        return nullptr;
+    if (cx <= 0)
+        cx = bm.bmWidth;
+    if (cy <= 0)
+        cy = bm.bmHeight;
+    HDC screen = GetDC(nullptr);
+    HBITMAP copy;
+    if (flags & LR_CREATEDIBSECTION) {
+        BITMAPINFO info = {{sizeof(BITMAPINFOHEADER), cx, cy, 1, 32, BI_RGB}};
+        void *bits;
+        copy = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    } else if (bm.bmBitsPixel == 1) {
+        copy = CreateBitmap(cx, cy, 1, 1, nullptr);
+    } else {
+        copy = CreateCompatibleBitmap(screen, cx, cy);
+    }
+    if (copy) {
+        HDC src = CreateCompatibleDC(screen), dst = CreateCompatibleDC(screen);
+        HGDIOBJ old_src = SelectObject(src, image), old_dst = SelectObject(dst, copy);
+        SetStretchBltMode(dst, COLORONCOLOR);
+        StretchBlt(dst, 0, 0, cx, cy, src, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+        SelectObject(src, old_src);
+        SelectObject(dst, old_dst);
+        DeleteDC(src);
+        DeleteDC(dst);
+        if (flags & LR_COPYDELETEORG)
+            DeleteObject(image);
+    }
+    ReleaseDC(nullptr, screen);
+    return copy;
 }
 
 WINUSERAPI BOOL WINAPI DrawIconEx(HDC dc, int x, int y, HICON icon, int cx, int cy, UINT step, HBRUSH brush,
