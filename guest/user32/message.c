@@ -394,6 +394,10 @@ WINUSERAPI LRESULT WINAPI DefWindowProcW(HWND hwnd, UINT msg, WPARAM wparam, LPA
         return result;
     if (msg == WM_SYSTIMER && UserCaretTimer(hwnd, wparam))
         return 0;
+    if (msg == WM_PRINT) {
+        UserDefPrint(hwnd, (HDC)wparam, (DWORD)lparam);
+        return 0;
+    }
     /* common controls ask their parent which character set their notifications use. */
     if (msg == WM_NOTIFYFORMAT)
         return lparam == NF_QUERY ? (IsWindowUnicode(hwnd) ? NFR_UNICODE : NFR_ANSI) : 0;

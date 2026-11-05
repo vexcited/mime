@@ -220,6 +220,64 @@ WINUSERAPI BOOL WINAPI PrintWindow(HWND window, HDC dc, UINT flags)
     return ok;
 }
 
+/*
+ * DefWindowProc's WM_PRINT: the device context holds the window from its top left corner. the frame comes from what the
+ * window shows, the client area from WM_ERASEBKGND and WM_PRINTCLIENT at its origin, then the children from the bottom
+ * of the z order up.
+ */
+void UserDefPrint(HWND hwnd, HDC dc, DWORD flags)
+{
+    if (!dc || ((flags & PRF_CHECKVISIBLE) && !IsWindowVisible(hwnd)))
+        return;
+    RECT window, client;
+    GetWindowRect(hwnd, &window);
+    GetClientRect(hwnd, &client);
+    POINT origin = {0, 0};
+    ClientToScreen(hwnd, &origin);
+    int cx = origin.x - window.left, cy = origin.y - window.top;
+    if ((flags & PRF_NONCLIENT) && (cx || cy || client.right != window.right - window.left ||
+                                     client.bottom != window.bottom - window.top)) {
+        MIME_CAPTURE_WINDOW info = {0};
+        if (NtUserMimeCapture(MIME_CAPOP_WINDOW, (ULONG)(ULONG_PTR)hwnd, (PUCHAR)&info, nullptr, 0) >= 0 &&
+            info.Width && info.Height) {
+            SIZE_T size = (SIZE_T)info.Width * info.Height * 4;
+            void *bits = HeapAlloc(GetProcessHeap(), 0, size);
+            if (bits && NtUserMimeCapture(MIME_CAPOP_WINDOW, (ULONG)(ULONG_PTR)hwnd, (PUCHAR)&info, bits, (ULONG)size) >= 0) {
+                int saved = SaveDC(dc);
+                ExcludeClipRect(dc, cx, cy, cx + client.right, cy + client.bottom);
+                BITMAPINFO bmi = {.bmiHeader = {sizeof(BITMAPINFOHEADER), (LONG)info.Width, -(LONG)info.Height, 1, 32,
+                                                BI_RGB}};
+                SetDIBitsToDevice(dc, 0, 0, info.Width, info.Height, 0, 0, 0, info.Height, bits, &bmi, DIB_RGB_COLORS);
+                RestoreDC(dc, saved);
+            }
+            HeapFree(GetProcessHeap(), 0, bits);
+        }
+    }
+    if (flags & (PRF_ERASEBKGND | PRF_CLIENT)) {
+        int saved = SaveDC(dc);
+        OffsetViewportOrgEx(dc, cx, cy, nullptr);
+        IntersectClipRect(dc, 0, 0, client.right, client.bottom);
+        if (flags & PRF_ERASEBKGND)
+            SendMessageW(hwnd, WM_ERASEBKGND, (WPARAM)dc, 0);
+        if (flags & PRF_CLIENT)
+            SendMessageW(hwnd, WM_PRINTCLIENT, (WPARAM)dc, flags);
+        RestoreDC(dc, saved);
+    }
+    if (!(flags & PRF_CHILDREN))
+        return;
+    for (HWND child = GetWindow(GetWindow(hwnd, GW_CHILD), GW_HWNDLAST); child; child = GetWindow(child, GW_HWNDPREV)) {
+        if (!IsWindowVisible(child))
+            continue;
+        RECT r;
+        GetWindowRect(child, &r);
+        int saved = SaveDC(dc);
+        OffsetViewportOrgEx(dc, r.left - window.left, r.top - window.top, nullptr);
+        IntersectClipRect(dc, 0, 0, r.right - r.left, r.bottom - r.top);
+        SendMessageW(child, WM_PRINT, (WPARAM)dc, flags & ~PRF_CHECKVISIBLE);
+        RestoreDC(dc, saved);
+    }
+}
+
 /* ------------------------------------------------------------------ pointers and power */
 
 #define FEEDBACK_MAX 12

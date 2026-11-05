@@ -150,6 +150,7 @@ UINT UserWindowDpi(HWND hwnd);
 BOOL UserScrollBarMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result);
 void UserFreeScrollData(HWND hwnd);
 BOOL UserDefScrollBars(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, LRESULT *result);
+void UserDefPrint(HWND hwnd, HDC dc, DWORD flags);
 
 /* caret.c: blinking, hiding while the window paints, cleanup with the window. */
 BOOL UserCaretTimer(HWND hwnd, WPARAM id);
