@@ -1235,6 +1235,8 @@ HRESULT DwFontCreate(DwCollection *c, UINT32 family, UINT32 entry, IDWriteFont *
 
 typedef struct DwFamilyObject {
     const IDWriteFontFamily2Vtbl *lpVtbl;
+    /* the family as IDWriteFontList1 and 2, whose methods after GetFont differ from a family's. */
+    const IDWriteFontList2Vtbl *list_vtbl;
     LONG refs;
     DwCollection *collection;
     UINT32 index;
@@ -1369,6 +1371,11 @@ static HRESULT WINAPI family_query(IDWriteFontFamily *This, REFIID riid, void **
         This->lpVtbl->AddRef(This);
         return S_OK;
     }
+    if (IsEqualGUID(riid, &IID_IDWriteFontList1) || IsEqualGUID(riid, &IID_IDWriteFontList2)) {
+        *out = &((DwFamilyObject *)This)->list_vtbl;
+        This->lpVtbl->AddRef(This);
+        return S_OK;
+    }
     *out = nullptr;
     return E_NOINTERFACE;
 }
@@ -1499,6 +1506,64 @@ static HRESULT WINAPI family_font_set(IDWriteFontFamily2 *This, IDWriteFontSet1 
     return DwCollectionSet(f->collection, f->index, nullptr, 0, (IDWriteFontSet4 **)set);
 }
 
+#define LIST_FAMILY(list) ((IDWriteFontFamily2 *)((char *)(list) - offsetof(DwFamilyObject, list_vtbl)))
+
+static HRESULT WINAPI family_list_query(IDWriteFontList2 *This, REFIID riid, void **out)
+{
+    return family_query((IDWriteFontFamily *)LIST_FAMILY(This), riid, out);
+}
+
+static ULONG WINAPI family_list_addref(IDWriteFontList2 *This)
+{
+    return family_addref((IDWriteFontFamily *)LIST_FAMILY(This));
+}
+
+static ULONG WINAPI family_list_release(IDWriteFontList2 *This)
+{
+    return family_release((IDWriteFontFamily *)LIST_FAMILY(This));
+}
+
+static HRESULT WINAPI family_list_collection(IDWriteFontList2 *This, IDWriteFontCollection **collection)
+{
+    return family_collection((IDWriteFontFamily *)LIST_FAMILY(This), collection);
+}
+
+static UINT32 WINAPI family_list_count(IDWriteFontList2 *This)
+{
+    return family_count((IDWriteFontFamily *)LIST_FAMILY(This));
+}
+
+static HRESULT WINAPI family_list_font(IDWriteFontList2 *This, UINT32 index, IDWriteFont **font)
+{
+    return family_font((IDWriteFontFamily *)LIST_FAMILY(This), index, font);
+}
+
+static DWRITE_LOCALITY WINAPI family_list_locality(IDWriteFontList2 *This, UINT32 index)
+{
+    return family_locality(LIST_FAMILY(This), index);
+}
+
+static HRESULT WINAPI family_list_font3(IDWriteFontList2 *This, UINT32 index, IDWriteFont3 **font)
+{
+    return family_font3(LIST_FAMILY(This), index, font);
+}
+
+static HRESULT WINAPI family_list_reference(IDWriteFontList2 *This, UINT32 index, IDWriteFontFaceReference **reference)
+{
+    return family_reference(LIST_FAMILY(This), index, reference);
+}
+
+static HRESULT WINAPI family_list_font_set(IDWriteFontList2 *This, IDWriteFontSet1 **set)
+{
+    return family_font_set(LIST_FAMILY(This), set);
+}
+
+static const IDWriteFontList2Vtbl g_family_list_vtbl = {
+    family_list_query,    family_list_addref, family_list_release,   family_list_collection,
+    family_list_count,    family_list_font,   family_list_locality,  family_list_font3,
+    family_list_reference, family_list_font_set,
+};
+
 static const IDWriteFontFamily2Vtbl g_family_vtbl = {
     (void *)family_query, (void *)family_addref, (void *)family_release, (void *)family_collection,
     (void *)family_count, (void *)family_font, (void *)family_names, (void *)family_first,
@@ -1512,6 +1577,7 @@ HRESULT DwFamilyCreate(DwCollection *c, UINT32 index, IDWriteFontFamily **out)
     if (!f)
         return E_OUTOFMEMORY;
     f->lpVtbl = &g_family_vtbl;
+    f->list_vtbl = &g_family_list_vtbl;
     f->refs = 1;
     f->collection = c;
     collection_addref((IDWriteFontCollection *)c);
