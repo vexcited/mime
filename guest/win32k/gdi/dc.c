@@ -344,6 +344,9 @@ HDC NTAPI NtGdiCreateMetafileDC(HDC hdc)
     if (dc) {
         dc->Dpi = ref->Dpi;
         dc->Awareness = ref->Awareness;
+        /* a printer measures the mapping modes in its own pixels. */
+        dc->VirtualPixels = ref->VirtualPixels;
+        dc->VirtualMm = ref->VirtualMm;
         RECT all = {0, 0, W32Display.Width, W32Display.Height};
         RgnSetRect(&dc->VisRgn, &all);
         result = (HDC)dc->Header.Handle;
