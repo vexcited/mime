@@ -86,6 +86,21 @@
 [HKCR\TypeLib\{EAB22AC0-30C1-11CF-A7EB-0000C05BAE0B}\1.1\0\win64]
 @="C:\\Windows\\System32\\explorerframe.dll"
 
+; the accessibility type library, which IAccessible's dispatch reads, kept in oleacc.dll as on Windows.
+[HKCR\TypeLib\{1EA4DBF0-3C3B-11CF-810C-00AA00389B71}\1.1]
+@="Accessibility"
+[HKCR\TypeLib\{1EA4DBF0-3C3B-11CF-810C-00AA00389B71}\1.1\0\win32]
+@="C:\\Windows\\SysWOW64\\oleacc.dll"
+[HKCR\TypeLib\{1EA4DBF0-3C3B-11CF-810C-00AA00389B71}\1.1\0\win64]
+@="C:\\Windows\\System32\\oleacc.dll"
+[HKCR\TypeLib\{1EA4DBF0-3C3B-11CF-810C-00AA00389B71}\1.1\FLAGS]
+@="0"
+[HKCR\Interface\{618736E0-3C3D-11CF-810C-00AA00389B71}]
+@="IAccessible"
+[HKCR\Interface\{618736E0-3C3D-11CF-810C-00AA00389B71}\TypeLib]
+@="{1EA4DBF0-3C3B-11CF-810C-00AA00389B71}"
+"Version"="1.1"
+
 ; the shell windows are served by shell32 run by rundll32, as the interactive user, since Mime has no explorer.
 [HKCR\CLSID\{9BA05972-F6A8-11CF-A442-00A0C90A8F39}]
 "AppID"="{9BA05972-F6A8-11CF-A442-00A0C90A8F39}"
