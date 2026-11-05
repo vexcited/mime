@@ -1673,14 +1673,16 @@ static void type_ahead(LISTBOX *lb, WCHAR c)
         if (!lb->typed_count)
             return;
         lb->typed_count--;
-        if (lb->sort && lb->typed_count) {
+        if ((lb->sort || lb->combo) && lb->typed_count) {
             SetTimer(lb->hwnd, TIMER_TYPEAHEAD, GetDoubleClickTime() * 4, nullptr);
             WCHAR text[257];
             memcpy(text, lb->typed, lb->typed_count * sizeof(WCHAR));
             text[lb->typed_count] = 0;
             int found = search(lb, -1, (LPARAM)text, FALSE);
+            int typed = lb->typed_count;
             if (found >= 0)
                 navigate(lb, found, FALSE, FALSE);
+            lb->typed_count = typed;
         }
         return;
     }
@@ -1705,15 +1707,17 @@ static void type_ahead(LISTBOX *lb, WCHAR c)
     lb->typed[lb->typed_count++] = c;
     WCHAR text[257];
     int start;
-    if (lb->sort) {
+    /* the list of a combo box matches the typed prefix even unsorted, from its current item on. */
+    BOOL incremental = lb->sort || lb->combo;
+    if (incremental) {
         SetTimer(lb->hwnd, TIMER_TYPEAHEAD, GetDoubleClickTime() * 4, nullptr);
-        start = -1;
+        start = lb->sort ? -1 : lb->typed_count == 1 ? lb->caret : lb->caret - 1;
     } else {
         start = lb->caret;
     }
     memcpy(text, lb->typed, lb->typed_count * sizeof(WCHAR));
     text[lb->typed_count] = 0;
-    if (!lb->sort)
+    if (!incremental)
         lb->typed_count = 0;
     int found = search(lb, start, (LPARAM)text, FALSE);
     if (found < 0 && lb->typed_count) {
@@ -1721,10 +1725,21 @@ static void type_ahead(LISTBOX *lb, WCHAR c)
         if (lb->typed_count == 1 && lb->typed[0] == lb->typed[1]) {
             text[1] = 0;
             found = search(lb, lb->caret, (LPARAM)text, FALSE);
+        } else if (lb->combo && !lb->sort && lb->typed_count) {
+            /* a letter that ends no prefix starts a new one. */
+            lb->typed[0] = c;
+            lb->typed_count = 1;
+            text[0] = c;
+            text[1] = 0;
+            found = search(lb, lb->caret, (LPARAM)text, FALSE);
         }
     }
-    if (found >= 0)
+    if (found >= 0) {
+        /* moving resets the typed letters, which the next one goes on from. */
+        int typed = lb->typed_count;
         navigate(lb, found, FALSE, FALSE);
+        lb->typed_count = typed;
+    }
 }
 
 /* ------------------------------------------------------------------ the scroll bars */
