@@ -62,14 +62,17 @@ int internal_start(const WCHAR *args, NODE *node)
         }
         if (*p != L'/')
             break;
-        if (starts_switch(p, L"d", &after)) {
-            const WCHAR *q = skip_space(after);
+        /* cmd matches /D and /I by their first letter, so /Dc:\dir is a directory. */
+        if (p[1] == L'd' || p[1] == L'D') {
+            const WCHAR *q = p + 2;
+            if (!*q || is_space(*q))
+                q = skip_space(q);
             const WCHAR *e = token_end(q);
             xfree(o.directory);
             o.directory = xdupn(q, (SIZE_T)(e - q));
             strip_quotes_inplace(o.directory);
             p = e;
-        } else if (starts_switch(p, L"wait", &after)) {
+        } else if (starts_switch(p, L"wait", &after) || starts_switch(p, L"w", &after)) {
             o.wait = TRUE;
             p = after;
         } else if (starts_switch(p, L"b", &after)) {
@@ -81,9 +84,23 @@ int internal_start(const WCHAR *args, NODE *node)
         } else if (starts_switch(p, L"max", &after)) {
             o.maximized = TRUE;
             p = after;
-        } else if (starts_switch(p, L"i", &after) || starts_switch(p, L"separate", &after) ||
-                   starts_switch(p, L"shared", &after)) {
+        } else if (p[1] == L'i' || p[1] == L'I') {
+            p = token_end(p);
+        } else if (starts_switch(p, L"separate", &after) || starts_switch(p, L"shared", &after)) {
             p = after;
+        } else if (starts_switch(p, L"machine", &after)) {
+            const WCHAR *q = skip_space(after);
+            const WCHAR *e = token_end(q);
+            SIZE_T n = (SIZE_T)(e - q);
+            if (!(n == 3 && !_wcsnicmp(q, L"x86", 3)) && !(n == 5 && !_wcsnicmp(q, L"amd64", 5)) &&
+                !(n == 3 && !_wcsnicmp(q, L"arm", 3)) && !(n == 5 && !_wcsnicmp(q, L"arm64", 5))) {
+                err_fmt(L"The system cannot accept the START command parameter %.*ls.\r\n", (int)n, q);
+                set_errorlevel(1);
+                xfree(o.title);
+                xfree(o.directory);
+                return 1;
+            }
+            p = e;
         } else if (starts_switch(p, L"low", &after)) {
             o.priority = IDLE_PRIORITY_CLASS;
             p = after;
