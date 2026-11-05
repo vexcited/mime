@@ -126,7 +126,11 @@ GpStatus gp_surface_acquire(GGraphics *g, const RECT *area, GSurface *s)
     s->dc_y = g->dc_y;
     s->bits = tile;
     s->stride = s->width * 4;
-    s->format = glass_dc(g->hdc) ? PixelFormat32bppPARGB : PixelFormat32bppRGB;
+    /*
+     * a window on glass and a bitmap of the device keep the alpha drawn, as gdi+ draws on them through gdi: what is
+     * left clear stays clear, so a control that buffers its painting shows the glass under it.
+     */
+    s->format = glass_dc(g->hdc) || GetObjectType(g->hdc) == OBJ_MEMDC ? PixelFormat32bppPARGB : PixelFormat32bppRGB;
     s->copy_alpha = TRUE;
     s->write_back = TRUE;
     return Ok;
