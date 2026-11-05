@@ -1127,5 +1127,11 @@ void PsDumpThreads(void)
                         satisfied[i]);
         ObDereferenceObject(threads[i]);
     }
+    /* the root table of each process, which the host's profiler records with every sample. */
+    for (PLIST_ENTRY p = PsActiveProcessHead.Flink; p != &PsActiveProcessHead; p = p->Flink) {
+        PEPROCESS process = CONTAINING_RECORD(p, EPROCESS, ActiveProcessLinks);
+        KiLogPrintf("process %s %u table %llx", process->ImageFileName, (ULONG)(ULONG_PTR)process->UniqueProcessId,
+                    (unsigned long long)process->Pcb.DirectoryTableBase);
+    }
     NpfsDumpState();
 }
