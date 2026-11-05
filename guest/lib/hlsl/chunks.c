@@ -637,11 +637,31 @@ int ir_container(IrShader *s, const HlBuf *code, HlBuf *out)
 int hl_backend(Hlsl *h, HlProgram *prog, HlFunc *entry)
 {
     if (prog->profile.stage == STAGE_LIBRARY) {
-        hl_error(h, (HlLoc){0, 1, 1}, 3000, "library targets are not supported yet");
-        return -1;
+        /* the functions of a library are not linkable here: the container holds what it binds, which direct2d
+         * keeps as the private data of the full shader beside it. */
+        IrShader *lib = hl_alloc(h, sizeof(IrShader));
+        lib->h = h;
+        lib->prog = prog;
+        lib->profile = prog->profile;
+        lib->profile.stage = STAGE_PIXEL;
+        HlBuf rdef = {};
+        write_rdef(lib, &rdef, h->options->flags | 0x100);
+        uint32_t size = (uint32_t)((rdef.length + 3) & ~(size_t)3), total = 32 + 4 + 8 + size;
+        uint32_t words[9] = {DXBC_FOURCC('D', 'X', 'B', 'C'), 0, 0, 0, 0, 1, total, 1, 36};
+        hl_buf_append(h, &h->output, (const char *)words, 36);
+        uint32_t chunk[2] = {DXBC_FOURCC('R', 'D', 'E', 'F'), size};
+        hl_buf_append(h, &h->output, (const char *)chunk, 8);
+        hl_buf_append(h, &h->output, rdef.data, rdef.length);
+        for (size_t i = rdef.length; i < size; i++)
+            hl_buf_putc(h, &h->output, 0);
+        uint32_t checksum[4];
+        dxbc_checksum(h->output.data, h->output.length, checksum);
+        __builtin_memcpy(h->output.data + 4, checksum, 16);
+        return 0;
     }
-    if (prog->profile.major < 4) {
-        hl_error(h, (HlLoc){0, 1, 1}, 3000, "shader model %u targets are not supported yet", prog->profile.major);
+    bool legacy = prog->profile.major < 4;
+    if (legacy && prog->profile.stage != STAGE_VERTEX && prog->profile.stage != STAGE_PIXEL) {
+        hl_error(h, (HlLoc){0, 1, 1}, 3530, "invalid target '%s'", prog->profile.name);
         return -1;
     }
     IrShader *s = nullptr;
@@ -654,6 +674,7 @@ int hl_backend(Hlsl *h, HlProgram *prog, HlFunc *entry)
         s->profile = prog->profile;
         s->row_major_default = (h->options->flags & HLSL_PACK_MATRIX_ROW_MAJOR) != 0;
         s->refactoring_allowed = !(h->options->flags & HLSL_IEEE_STRICTNESS);
+        s->legacy = legacy;
         s->cbuffer_count = prog->buffer_count;
         s->cbuffers = hl_alloc(h, (prog->buffer_count + 1) * sizeof(IrCbuffer));
         for (uint32_t i = 0; i < prog->buffer_count; i++)
@@ -683,6 +704,8 @@ int hl_backend(Hlsl *h, HlProgram *prog, HlFunc *entry)
     /* a bit no flag uses asks for the ir among the messages, for debugging the compiler. */
     if (h->options->flags & 0x80000000u)
         ir_dump(s, &h->messages);
+    if (legacy)
+        return ir_emit_sm1(s, &h->output);
     HlBuf code = {};
     if (ir_emit_sm4(s, &code))
         return -1;

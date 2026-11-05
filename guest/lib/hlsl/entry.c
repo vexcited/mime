@@ -503,9 +503,9 @@ int lw_entry(Lower *l)
     }
     if (l->failed || h->errors)
         return -1;
-    bool pack_inputs = stage != STAGE_VERTEX;
+    bool pack_inputs = stage != STAGE_VERTEX && !s->legacy;
     pack(l, &in, &s->inputs, pack_inputs, false);
-    pack(l, &out, &s->outputs, stage != STAGE_PIXEL, stage == STAGE_PIXEL);
+    pack(l, &out, &s->outputs, stage != STAGE_PIXEL && !s->legacy, stage == STAGE_PIXEL);
     if (stage == STAGE_COMPUTE) {
         s->inputs.count = 0;
         s->outputs.count = 0;

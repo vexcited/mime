@@ -948,7 +948,7 @@ static bool range_used(const uint8_t *used, uint32_t slot, uint32_t count)
     return false;
 }
 
-static void bind(IrShader *s)
+void ir_bind(IrShader *s)
 {
     Hlsl *h = s->h;
     /* which resources and buffers the remaining code reads. */
@@ -1352,10 +1352,27 @@ static void count_uses(IrShader *s, Alloc *a)
     }
 }
 
+/* register components for the virtual registers, -1 for those without uses; the temps they take. */
+int32_t *ir_allocate(IrShader *s, uint32_t *temps)
+{
+    Alloc a = {.s = s, .h = s->h};
+    a.v = hl_alloc(s->h, (s->vregs + 1) * sizeof(VReg));
+    for (uint32_t v = 0; v <= s->vregs; v++)
+        a.v[v].slot = -1;
+    count_uses(s, &a);
+    build_ranges(&a);
+    allocate(&a);
+    int32_t *slots = hl_alloc(s->h, (s->vregs + 1) * sizeof(int32_t));
+    for (uint32_t v = 0; v <= s->vregs; v++)
+        slots[v] = a.v[v].slot;
+    *temps = a.temps;
+    return slots;
+}
+
 int ir_emit_sm4(IrShader *s, HlBuf *code)
 {
     Hlsl *h = s->h;
-    bind(s);
+    ir_bind(s);
     Alloc a = {.s = s, .h = h};
     a.v = hl_alloc(h, (s->vregs + 1) * sizeof(VReg));
     for (uint32_t v = 0; v <= s->vregs; v++)

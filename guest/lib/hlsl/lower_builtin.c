@@ -682,6 +682,34 @@ static Value mul(Lower *l, HlExpr *e)
 
 /* ------------------------------------------------------------------ intrinsics */
 
+/* tex1D to texCUBEproj of shader models 2 and 3: extra 0 plain, 1 bias, 2 lod, 3 projected, 4 gradients. */
+static Value legacy_tex(Lower *l, HlExpr *e)
+{
+    uint32_t id = e->intrinsic;
+    uint32_t base = id >= I_TEXCUBE ? I_TEXCUBE : id >= I_TEX3D ? I_TEX3D : id >= I_TEX2D ? I_TEX2D : I_TEX1D;
+    uint32_t variant = id - base, dims = base == I_TEX1D ? 1 : base == I_TEX2D ? 2 : 3;
+    static const uint8_t extra[5] = {0, 1, 4, 2, 3};
+    uint32_t kind = extra[variant];
+    if (variant == 0 && e->arg_count == 4)
+        kind = 4;
+    ObjRef o;
+    if (!lw_obj(l, e->args[0], &o))
+        return result(l, e);
+    Value coord = arg(l, e, 1);
+    uint32_t n = kind == 4 ? dims * 3 : kind ? 4 : dims;
+    IrIns *ins = resource_ins(l, OP_SAMPLE, 4, n, &o);
+    uint32_t at = 0;
+    put_group(ins, &at, &coord, kind == 4 || !kind ? dims : 4);
+    if (kind == 4) {
+        Value dx = arg(l, e, 2), dy = arg(l, e, 3);
+        put_group(ins, &at, &dx, dims);
+        put_group(ins, &at, &dy, dims);
+    }
+    ins->extra = kind;
+    ins->sampler = ins->res;
+    return take(l, e->type, ins, 4);
+}
+
 static IrSrc legacy_unsupported(Lower *l, HlExpr *e)
 {
     lw_error(l, e->loc, 3000, "this intrinsic is not supported for this target");
@@ -1184,8 +1212,11 @@ Value lw_intrinsic(Lower *l, HlExpr *e)
     case I_ASDOUBLE: case I_MSAD4:
     default:
         if (id >= I_TEX1D && id <= I_TEXCUBEPROJ) {
-            r.c[0] = legacy_unsupported(l, e);
-            return r;
+            if (!l->s->legacy) {
+                r.c[0] = legacy_unsupported(l, e);
+                return r;
+            }
+            return legacy_tex(l, e);
         }
         lw_error(l, e->loc, 3000, "intrinsic is not supported yet");
         return r;

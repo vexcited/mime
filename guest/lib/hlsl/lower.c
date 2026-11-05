@@ -259,7 +259,7 @@ static IrSrc plain(Lower *l, uint16_t op, IrSrc a)
     return ir_reg(ins->dst[0]);
 }
 
-IrSrc lw_op1(Lower *l, uint16_t op, IrSrc a)
+static IrSrc raw_op1(Lower *l, uint16_t op, IrSrc a)
 {
     if (op != OP_MOV)
         a = plain(l, op, a);
@@ -271,7 +271,7 @@ IrSrc lw_op1(Lower *l, uint16_t op, IrSrc a)
     return ir_reg(ins->dst[0]);
 }
 
-IrSrc lw_op2(Lower *l, uint16_t op, IrSrc a, IrSrc b)
+static IrSrc raw_op2(Lower *l, uint16_t op, IrSrc a, IrSrc b)
 {
     a = plain(l, op, a);
     b = plain(l, op, b);
@@ -311,7 +311,7 @@ IrSrc lw_op2(Lower *l, uint16_t op, IrSrc a, IrSrc b)
     return ir_reg(ins->dst[0]);
 }
 
-IrSrc lw_op3(Lower *l, uint16_t op, IrSrc a, IrSrc b, IrSrc c)
+static IrSrc raw_op3(Lower *l, uint16_t op, IrSrc a, IrSrc b, IrSrc c)
 {
     if (op != OP_MOVC) {
         a = plain(l, op, a);
@@ -340,6 +340,89 @@ IrSrc lw_op3(Lower *l, uint16_t op, IrSrc a, IrSrc b, IrSrc c)
     ins->src[1] = b;
     ins->src[2] = c;
     return ir_reg(ins->dst[0]);
+}
+
+/*
+ * shader models 2 and 3 have floats alone: ints compute as floats, bools are
+ * 1.0 and 0.0, and what has no float form fails.
+ */
+static IrSrc legacy_bool_imm(IrSrc a)
+{
+    if (a.kind == SRC_IMM && a.v == ~0u)
+        return ir_immf(1.0f);
+    return a;
+}
+
+static IrSrc legacy_unsupported(Lower *l, uint16_t op)
+{
+    if (!l->failed)
+        hl_error(l->h, l->frame && l->frame->func ? l->frame->func->loc : (HlLoc){0, 1, 1}, 3000,
+                 "%s needs shader model 4 or later", ir_op_name(op));
+    l->failed = true;
+    return ir_imm(0);
+}
+
+static IrSrc legacy_compare(Lower *l, uint16_t op, IrSrc a, IrSrc b)
+{
+    IrSrc r = raw_op2(l, op, a, b);
+    return r.kind == SRC_IMM ? ir_immf(r.v ? 1.0f : 0.0f) : r;
+}
+
+static IrSrc legacy_op(Lower *l, uint16_t op, uint32_t n, IrSrc a, IrSrc b, IrSrc c)
+{
+    switch (op) {
+    case OP_IADD: return raw_op2(l, OP_ADD, a, b);
+    case OP_IMUL: case OP_UMUL: return raw_op2(l, OP_MUL, a, b);
+    case OP_IMAD: case OP_UMAD: return raw_op3(l, OP_MAD, a, b, c);
+    case OP_IMIN: case OP_UMIN: return raw_op2(l, OP_MIN, a, b);
+    case OP_IMAX: case OP_UMAX: return raw_op2(l, OP_MAX, a, b);
+    case OP_INEG: return lw_neg(l, a, BT_FLOAT);
+    case OP_ITOF: case OP_UTOF: return a;
+    case OP_FTOI: case OP_FTOU: return raw_op1(l, OP_ROUND_Z, a);
+    case OP_ILT: case OP_ULT: case OP_LT: return legacy_compare(l, OP_LT, a, b);
+    case OP_IGE: case OP_UGE: case OP_GE: return legacy_compare(l, OP_GE, a, b);
+    case OP_IEQ: case OP_EQ: return legacy_compare(l, OP_EQ, a, b);
+    case OP_INE: case OP_NE: return legacy_compare(l, OP_NE, a, b);
+    case OP_AND:
+        a = legacy_bool_imm(a), b = legacy_bool_imm(b);
+        if ((a.kind == SRC_IMM && a.v && a.v != 0x3F800000) || (b.kind == SRC_IMM && b.v && b.v != 0x3F800000))
+            return legacy_unsupported(l, op);
+        return raw_op2(l, OP_MUL, a, b);
+    case OP_OR: return raw_op2(l, OP_MAX, legacy_bool_imm(a), legacy_bool_imm(b));
+    case OP_XOR: return lw_abs(l, raw_op2(l, OP_ADD, legacy_bool_imm(a), lw_neg(l, legacy_bool_imm(b), BT_FLOAT)), BT_FLOAT);
+    case OP_NOT: return raw_op2(l, OP_ADD, lw_neg(l, legacy_bool_imm(a), BT_FLOAT), ir_immf(1.0f));
+    case OP_ISHL: case OP_ISHR: case OP_USHR: {
+        if (b.kind != SRC_IMM)
+            return legacy_unsupported(l, op);
+        union { uint32_t u; float f; } k = {.u = b.v};
+        uint32_t shift = (uint32_t)k.f & 31;
+        float scale = (float)(1u << shift);
+        if (op == OP_ISHL)
+            return raw_op2(l, OP_MUL, a, ir_immf(scale));
+        return raw_op1(l, OP_ROUND_NI, raw_op2(l, OP_MUL, a, ir_immf(1.0f / scale)));
+    }
+    case OP_MOVC: return raw_op3(l, OP_MOVC, legacy_bool_imm(a), b, c);
+    case OP_COUNTBITS: case OP_BFREV: case OP_FIRSTBIT_HI: case OP_FIRSTBIT_LO: case OP_FIRSTBIT_SHI:
+    case OP_F32TOF16: case OP_F16TOF32: case OP_UDIV: case OP_IBFE: case OP_UBFE: case OP_BFI:
+        return legacy_unsupported(l, op);
+    default:
+        return n == 1 ? raw_op1(l, op, a) : n == 2 ? raw_op2(l, op, a, b) : raw_op3(l, op, a, b, c);
+    }
+}
+
+IrSrc lw_op1(Lower *l, uint16_t op, IrSrc a)
+{
+    return l->s->legacy ? legacy_op(l, op, 1, a, (IrSrc){}, (IrSrc){}) : raw_op1(l, op, a);
+}
+
+IrSrc lw_op2(Lower *l, uint16_t op, IrSrc a, IrSrc b)
+{
+    return l->s->legacy ? legacy_op(l, op, 2, a, b, (IrSrc){}) : raw_op2(l, op, a, b);
+}
+
+IrSrc lw_op3(Lower *l, uint16_t op, IrSrc a, IrSrc b, IrSrc c)
+{
+    return l->s->legacy ? legacy_op(l, op, 3, a, b, c) : raw_op3(l, op, a, b, c);
 }
 
 IrSrc lw_mov(Lower *l, IrSrc a)
@@ -386,6 +469,8 @@ IrSrc lw_abs(Lower *l, IrSrc a, uint8_t storage)
 
 IrSrc lw_to_bool(Lower *l, IrSrc a, uint8_t storage)
 {
+    if (l->s->legacy)
+        return storage == BT_BOOL ? a : lw_op2(l, OP_NE, a, ir_imm(0));
     switch (storage) {
     case BT_BOOL:
         return a;
@@ -401,6 +486,13 @@ IrSrc lw_convert_scalar(Lower *l, IrSrc a, uint8_t from, uint8_t to)
 {
     from = hl_base_storage(from);
     to = hl_base_storage(to);
+    if (l->s->legacy) {
+        if (to == BT_BOOL && from != BT_BOOL)
+            return lw_op2(l, OP_NE, a, ir_imm(0));
+        if ((to == BT_INT || to == BT_UINT) && from != BT_INT && from != BT_UINT && from != BT_BOOL)
+            return lw_op1(l, OP_ROUND_Z, a);
+        return a;
+    }
     if (from == BT_DOUBLE)
         from = BT_FLOAT;
     if (to == BT_DOUBLE)
@@ -450,9 +542,13 @@ static Value const_value(Lower *l, HlExpr *e)
     for (uint32_t i = 0; i < n; i++) {
         uint8_t base = hl_base_storage(hl_type_component_base(e->type, i));
         HlValue x = e->values[i];
-        /* constants keep bools as 0 and 1; registers as 0 and ~0. */
+        /* constants keep bools as 0 and 1; registers as 0 and ~0, or as floats before shader model 4. */
         if (base == BT_BOOL)
-            x.u = x.u ? ~0u : 0;
+            x.u = x.u ? (l->s->legacy ? 0x3F800000 : ~0u) : 0;
+        else if (l->s->legacy && base == BT_INT)
+            x.f = (float)x.i;
+        else if (l->s->legacy && base == BT_UINT)
+            x.f = (float)x.u;
         v.c[i] = ir_imm(x.u);
     }
     return v;
@@ -794,11 +890,93 @@ void lw_tight_offsets(const HlType *t, uint32_t base, bool row_major_default, ui
     }
 }
 
+/* shader models 2 and 3: every vector, matrix column or row and array element in a register of its own. */
+static uint32_t legacy_regs(const HlType *t, bool rm)
+{
+    switch (t->kind) {
+    case TY_SCALAR:
+    case TY_VECTOR:
+        return 1;
+    case TY_MATRIX:
+        return hl_type_row_major(t, rm) ? t->rows : t->cols;
+    case TY_ARRAY:
+        return t->count * legacy_regs(t->elem, rm);
+    case TY_STRUCT: {
+        uint32_t n = 0;
+        for (uint32_t i = 0; i < t->st->field_count; i++)
+            n += legacy_regs(t->st->fields[i].type, rm);
+        return n;
+    }
+    default:
+        return 0;
+    }
+}
+
+static void legacy_offsets(const HlType *t, uint32_t base, bool rm, uint32_t *out, uint32_t *n)
+{
+    switch (t->kind) {
+    case TY_SCALAR:
+    case TY_VECTOR:
+        for (uint32_t i = 0; i < t->cols; i++)
+            out[(*n)++] = base + i * 4;
+        break;
+    case TY_MATRIX: {
+        bool row = hl_type_row_major(t, rm);
+        for (uint32_t r = 0; r < t->rows; r++)
+            for (uint32_t c = 0; c < t->cols; c++)
+                out[(*n)++] = base + (row ? r * 16 + c * 4 : c * 16 + r * 4);
+        break;
+    }
+    case TY_ARRAY: {
+        uint32_t stride = legacy_regs(t->elem, rm) * 16;
+        for (uint32_t i = 0; i < t->count; i++)
+            legacy_offsets(t->elem, base + i * stride, rm, out, n);
+        break;
+    }
+    case TY_STRUCT:
+        for (uint32_t i = 0; i < t->st->field_count; i++) {
+            legacy_offsets(t->st->fields[i].type, base, rm, out, n);
+            base += legacy_regs(t->st->fields[i].type, rm) * 16;
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+uint32_t lw_legacy_regs(const HlType *t, bool rm) { return legacy_regs(t, rm); }
+
 /* the start of each variable of a constant buffer, by packoffset or packing. */
 static void layout_buffer(Lower *l, HlBuffer *b, uint32_t index)
 {
     bool rm = l->s->row_major_default;
     uint32_t offset = 0;
+    if (l->s->legacy) {
+        for (uint32_t i = 0; i < b->var_count; i++) {
+            HlVar *v = b->vars[i];
+            uint32_t start = offset;
+            for (uint32_t k = 0; k < v->register_count; k++)
+                if (v->registers[k].kind == 'c')
+                    start = v->registers[k].index * 16;
+            VarInfo *vi = hl_alloc(l->h, sizeof(VarInfo));
+            vi->kind = VK_CB;
+            vi->var = v;
+            vi->type = v->type;
+            vi->count = hl_type_components(v->type);
+            vi->buffer = index;
+            vi->offsets = hl_alloc(l->h, (vi->count ? vi->count : 1) * sizeof(uint32_t));
+            uint32_t n = 0;
+            legacy_offsets(v->type, start, rm, vi->offsets, &n);
+            v->lower = vi;
+            v->packoffset = start / 4;
+            v->has_packoffset = true;
+            uint32_t end = start + legacy_regs(v->type, rm) * 16;
+            if (end > offset)
+                offset = end;
+        }
+        b->size = offset;
+        return;
+    }
     for (uint32_t i = 0; i < b->var_count; i++) {
         HlVar *v = b->vars[i];
         uint32_t size = hl_type_cb_size(v->type, rm);
@@ -1076,7 +1254,7 @@ Value lw_expr(Lower *l, HlExpr *e)
             bool inc = e->op == OPR_PREINC || e->op == OPR_POSTINC;
             for (uint32_t i = 0; i < old.count; i++) {
                 uint8_t st = hl_base_storage(hl_type_component_base(lv.type, i));
-                if (st == BT_FLOAT || st == BT_DOUBLE)
+                if (st == BT_FLOAT || st == BT_DOUBLE || l->s->legacy)
                     nv.c[i] = lw_op2(l, OP_ADD, old.c[i], ir_immf(inc ? 1.0f : -1.0f));
                 else
                     nv.c[i] = lw_op2(l, OP_IADD, old.c[i], ir_imm(inc ? 1u : ~0u));
@@ -1239,6 +1417,10 @@ static IrSrc float_mod(Lower *l, IrSrc a, IrSrc b)
 IrSrc lw_binary_scalar(Lower *l, uint8_t op, uint8_t storage, IrSrc a, IrSrc b)
 {
     bool f = storage == BT_FLOAT || storage == BT_DOUBLE, u = storage == BT_UINT;
+    if (l->s->legacy && !f && (op == OPR_DIV || op == OPR_MOD)) {
+        IrSrc q = lw_op1(l, OP_ROUND_Z, lw_op2(l, OP_DIV, a, b));
+        return op == OPR_DIV ? q : lw_op2(l, OP_ADD, a, lw_neg(l, lw_op2(l, OP_MUL, q, b), BT_FLOAT));
+    }
     switch (op) {
     case OPR_ADD:
         return f ? lw_op2(l, OP_ADD, a, b) : lw_op2(l, OP_IADD, a, b);
@@ -1960,6 +2142,15 @@ static const HlAttribute *attr(const HlStmt *s, const char *name)
 static void lower_if(Lower *l, HlStmt *s)
 {
     IrSrc c = lw_scalar(l, s->cond);
+    HlStmt *only = s->body && s->body->kind == S_BLOCK && s->body->stmt_count == 1 ? s->body->stmts[0] : s->body;
+    if (c.kind != SRC_IMM && !s->other && only && only->kind == S_DISCARD) {
+        /* if (c) discard; is a conditional discard. */
+        IrIns *ins = ir_emit(l->s, OP_DISCARD, 0, 1);
+        ins->src[0] = c;
+        ins->flags |= IRF_NZ;
+        l->s->uses_discard = true;
+        return;
+    }
     if (c.kind == SRC_IMM) {
         uint32_t mark = l->undo_count;
         (void)mark;
@@ -2122,7 +2313,7 @@ static void lower_return(Lower *l, HlStmt *s)
         LValue lv = {.kind = LV_REGS, .vi = flag, .count = 1};
         lv.comps = hl_alloc(l->h, sizeof(uint32_t));
         Value one = lw_value(l, nullptr, 1);
-        one.c[0] = ir_imm(~0u);
+        one.c[0] = l->s->legacy ? ir_immf(1.0f) : ir_imm(~0u);
         lw_store(l, &lv, one);
         if (l->loops > f->loops)
             emit_marker(l, OP_BREAK);

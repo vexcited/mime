@@ -666,7 +666,9 @@ void ir_optimize(IrShader *s)
     }
     if (!(s->h->options->flags & HLSL_SKIP_OPTIMIZATION) && fuse_mad(s))
         dead_code(s);
-    fold_output_stores(s);
+    /* shader models 2 and 3 write pixel outputs with whole movs, which the emitter makes. */
+    if (!s->legacy)
+        fold_output_stores(s);
 }
 
 /* ------------------------------------------------------------------ exported for the emitter */

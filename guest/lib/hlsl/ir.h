@@ -205,6 +205,8 @@ typedef struct IrShader {
     bool early_depth;
     bool uses_doubles;
     bool refactoring_allowed;
+    /* shader models 2 and 3: floats alone. */
+    bool legacy;
     bool row_major_default;
     uint32_t uav_count;
     /* statistics for STAT. */
@@ -237,6 +239,10 @@ int ir_lower(IrShader *s, HlFunc *entry);
 void ir_optimize(IrShader *s);
 /* register allocation and the shader model 4 and 5 bytecode with its declarations. */
 int ir_emit_sm4(IrShader *s, HlBuf *code);
+/* shader model 2 and 3 bytecode with its constant table, for direct3d 9. */
+int ir_emit_sm1(IrShader *s, HlBuf *out);
+int32_t *ir_allocate(IrShader *s, uint32_t *temps);
+void ir_bind(IrShader *s);
 /* the container with RDEF, the signatures, SHEX and STAT. */
 int ir_container(IrShader *s, const HlBuf *code, HlBuf *out);
 
