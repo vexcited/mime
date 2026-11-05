@@ -6,7 +6,7 @@
 #include "opengl32.h"
 
 /* unit slots by target. */
-enum { SLOT_2D, SLOT_CUBE, SLOT_3D, SLOT_2D_ARRAY, SLOT_RECT, SLOT_1D, SLOT_2D_MS, SLOT_1D_ARRAY, SLOT_COUNT };
+enum { SLOT_2D, SLOT_CUBE, SLOT_3D, SLOT_2D_ARRAY, SLOT_RECT, SLOT_1D, SLOT_2D_MS, SLOT_1D_ARRAY, SLOT_CUBE_ARRAY, SLOT_COUNT };
 
 enum {
     MTL_TEX_1D = 0,
@@ -15,6 +15,7 @@ enum {
     MTL_TEX_2D_ARRAY = 3,
     MTL_TEX_2D_MS = 4,
     MTL_TEX_CUBE = 5,
+    MTL_TEX_CUBE_ARRAY = 6,
     MTL_TEX_3D = 7,
 };
 
@@ -37,6 +38,8 @@ static int slot_of(GLenum target)
         return SLOT_2D_MS;
     case GL_TEXTURE_1D_ARRAY:
         return SLOT_1D_ARRAY;
+    case GL_TEXTURE_CUBE_MAP_ARRAY:
+        return gl_host_has(MIME_GPU_FEATURE_CUBE_ARRAY) ? SLOT_CUBE_ARRAY : -1;
     default:
         return -1;
     }
@@ -47,6 +50,8 @@ static uint32_t mtl_type_of(GLenum target)
     switch (target) {
     case GL_TEXTURE_CUBE_MAP:
         return MTL_TEX_CUBE;
+    case GL_TEXTURE_CUBE_MAP_ARRAY:
+        return MTL_TEX_CUBE_ARRAY;
     case GL_TEXTURE_3D:
         return MTL_TEX_3D;
     case GL_TEXTURE_2D_ARRAY:
@@ -71,6 +76,11 @@ static int slot_of_sampler(GLenum type)
     case GL_INT_SAMPLER_CUBE:
     case GL_UNSIGNED_INT_SAMPLER_CUBE:
         return SLOT_CUBE;
+    case GL_SAMPLER_CUBE_MAP_ARRAY:
+    case GL_SAMPLER_CUBE_MAP_ARRAY_SHADOW:
+    case GL_INT_SAMPLER_CUBE_MAP_ARRAY:
+    case GL_UNSIGNED_INT_SAMPLER_CUBE_MAP_ARRAY:
+        return SLOT_CUBE_ARRAY;
     case GL_SAMPLER_3D:
     case GL_INT_SAMPLER_3D:
     case GL_UNSIGNED_INT_SAMPLER_3D:
@@ -410,7 +420,8 @@ static void create_host(GlTexture *t, uint32_t levels)
     c->swizzle = sampling_swizzle(t);
     if (old) {
         /* the levels it had move to the new texture. */
-        uint32_t slices = t->mtl_type == MTL_TEX_CUBE ? 6 : t->mtl_type == MTL_TEX_2D_ARRAY ? t->depth : 1;
+        uint32_t slices = t->mtl_type == MTL_TEX_CUBE ? 6
+                          : t->mtl_type == MTL_TEX_2D_ARRAY || t->mtl_type == MTL_TEX_CUBE_ARRAY ? t->depth : 1;
         for (uint32_t l = 0; l < t->levels && l < levels; l++) {
             if (!(t->defined_levels & (1u << l)))
                 continue;
@@ -656,6 +667,10 @@ GLAPI void APIENTRY glTexImage3D(GLenum target, GLint level, GLint internal, GLs
 {
     GL_CONTEXT_OR_RETURN();
     GlTexture *t = bound(ctx, target);
+    if (t && t->target == GL_TEXTURE_CUBE_MAP_ARRAY && (d % 6 || w != h)) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
     if (!t || !define(ctx, t, level, (GLenum)internal, format, type, (uint32_t)w, (uint32_t)h, (uint32_t)d))
         return;
     if (!pixels && !ctx->pixel_unpack)
@@ -774,6 +789,10 @@ GLAPI void APIENTRY glTexStorage3D(GLenum target, GLsizei levels, GLenum interna
     GlTexture *t = bound(ctx, target);
     if (!t)
         return;
+    if (t->target == GL_TEXTURE_CUBE_MAP_ARRAY && (d % 6 || w != h)) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
     uint32_t swizzle;
     BOOL compressed;
     destroy_host(t);

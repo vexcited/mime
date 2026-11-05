@@ -1151,6 +1151,9 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
     case GL_TEXTURE_BINDING_RECTANGLE:
         v[0] = ctx->units[ctx->active_texture][4];
         return 1;
+    case GL_TEXTURE_BINDING_CUBE_MAP_ARRAY:
+        v[0] = ctx->units[ctx->active_texture][8];
+        return 1;
     case GL_ARRAY_BUFFER_BINDING:
         v[0] = ctx->array_buffer;
         return 1;

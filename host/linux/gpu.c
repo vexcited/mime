@@ -56,7 +56,7 @@ static uint32_t g_family;
 static VkPhysicalDeviceMemoryProperties g_memory;
 static VkPhysicalDeviceProperties g_props;
 static bool g_polygon_mode, g_depth_clamp, g_clip_control, g_null_descriptor, g_logic_op;
-static bool g_geometry, g_tessellation, g_xfb, g_queries, g_generated_query, g_fp64, g_dual_blend;
+static bool g_geometry, g_tessellation, g_xfb, g_queries, g_generated_query, g_fp64, g_dual_blend, g_cube_array;
 static uint32_t g_viewports = 1;
 static PFN_vkGetMemoryHostPointerPropertiesEXT g_host_pointer;
 static VkPipelineCache g_cache;
@@ -243,6 +243,7 @@ static void init_device(void)
     g_geometry = all.features.geometryShader;
     g_fp64 = all.features.shaderFloat64;
     g_dual_blend = all.features.dualSrcBlend;
+    g_cube_array = all.features.imageCubeArray;
     g_tessellation = all.features.tessellationShader;
     g_viewports = all.features.multiViewport ? (g_props.limits.maxViewports < MIME_GPU_MAX_VIEWPORTS
                                                     ? g_props.limits.maxViewports
@@ -3801,7 +3802,8 @@ uint64_t mime_gpu_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *channel
     c->hdr->features |= (g_geometry ? MIME_GPU_FEATURE_GEOMETRY : 0) | (g_tessellation ? MIME_GPU_FEATURE_TESSELLATION : 0) |
                         (g_xfb && g_queries ? MIME_GPU_FEATURE_FEEDBACK : 0) |
                         (g_queries ? MIME_GPU_FEATURE_QUERY : 0) | (g_viewports > 1 ? MIME_GPU_FEATURE_VIEWPORTS : 0) |
-                        (g_fp64 ? MIME_GPU_FEATURE_FP64 : 0) | (g_dual_blend ? MIME_GPU_FEATURE_DUAL_BLEND : 0);
+                        (g_fp64 ? MIME_GPU_FEATURE_FP64 : 0) | (g_dual_blend ? MIME_GPU_FEATURE_DUAL_BLEND : 0) |
+                        (g_cube_array ? MIME_GPU_FEATURE_CUBE_ARRAY : 0);
     pthread_mutex_init(&c->lock, nullptr);
     pthread_cond_init(&c->cond, nullptr);
     pthread_mutex_init(&c->retire_lock, nullptr);

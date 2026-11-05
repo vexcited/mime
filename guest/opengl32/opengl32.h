@@ -542,7 +542,7 @@ typedef struct GlContext {
     GLuint elapsed_query;
     GLuint renderbuffer;
     GLuint active_texture;
-    GLuint units[32][8]; /* see texture.c: unit slots by target. */
+    GLuint units[32][12]; /* see texture.c: unit slots by target. */
     GLenum draw_buffer, read_buffer; /* default framebuffer. */
 
     /* fixed state. */
@@ -699,6 +699,7 @@ char *gl_subroutine_rewrite(const char *src, int stage, GlSubroutines **out);
 void gl_subroutines_free(GlSubroutines *s);
 void gl_program_set_int(GlContext *ctx, GlProgram *p, GLint location, GLint value);
 void gl_program_get_int(GlProgram *p, GLint location, GLint *value);
+char *gl_standin_vertex(const char *fragment);
 void gl_program_free_stages_only(GlProgram *p);
 void gl_program_copy_uniforms(GlProgram *dst, const GlProgram *src);
 void gl_program_set_feedback_names(GlProgram *p, GLsizei count, const GLchar *const *names, GLenum mode);

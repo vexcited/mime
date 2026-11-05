@@ -186,6 +186,14 @@ static BOOL in_use(GlBuffer *b)
     return b->last_use && !gl_fence_done(b->last_use);
 }
 
+/* waits for the gpu to be done with a buffer: the fence it waits on may not have been emitted yet. */
+static void wait_use(GlBuffer *b)
+{
+    if (b->last_use > GlDev.fence)
+        gl_fence();
+    gl_wait(b->last_use);
+}
+
 GLAPI void APIENTRY glBufferData(GLenum target, GLsizeiptr size, const void *data, GLenum usage)
 {
     GL_CONTEXT_OR_RETURN();
@@ -241,7 +249,7 @@ GLAPI void APIENTRY glGetBufferSubData(GLenum target, GLintptr offset, GLsizeipt
     }
     /* the gpu writes buffers only through readbacks: they finish before the fence. */
     if (in_use(b))
-        gl_wait(b->last_use);
+        wait_use(b);
     memcpy(data, b->mem.ptr + offset, (SIZE_T)size);
 }
 
@@ -256,7 +264,7 @@ GLAPI void *APIENTRY glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr
     if (!(access & GL_MAP_UNSYNCHRONIZED_BIT) && in_use(b)) {
         uint64_t keep = (access & GL_MAP_INVALIDATE_BUFFER_BIT) ? 0 : b->size;
         if (access & GL_MAP_READ_BIT) {
-            gl_wait(b->last_use);
+            wait_use(b);
         } else if (!rename(b, b->size, keep)) {
             gl_error(ctx, GL_OUT_OF_MEMORY);
             return nullptr;

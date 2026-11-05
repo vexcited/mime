@@ -535,13 +535,15 @@ static void link_stages(GlProgram *p, const char *vs, const char *fs, const char
     if (!gl_program_stages_ok(p, control, evaluation, geometry))
         return;
     /* a separable program of one stage is built with stand-ins for the others. */
+    char *standin = nullptr;
     if (p->separable) {
         if (!vs)
-            vs = "#version 330 core\nvoid main() { gl_Position = vec4(0.0); }\n";
+            vs = fs ? (standin = gl_standin_vertex(fs)) : "#version 330 core\nvoid main() { gl_Position = vec4(0.0); }\n";
         if (!fs)
             fs = "#version 330 core\nvoid main() { }\n";
     }
     gl_program_link_sources(p, vs, fs);
+    gl_free(standin);
 }
 
 GLAPI void APIENTRY glLinkProgram(GLuint name)

@@ -383,9 +383,9 @@ char *gl_subroutine_rewrite(const char *src, int stage, GlSubroutines **out)
             buf_str(&dispatch, ")\n{\n");
             char sel[120];
             if (size)
-                _snprintf(sel, sizeof(sel), "    int k = mime_su_%c_%s[mime_i];\n", g_stage_char[stage], name);
+                _snprintf(sel, sizeof(sel), "    int mime_k = mime_su_%c_%s[mime_i];\n", g_stage_char[stage], name);
             else
-                _snprintf(sel, sizeof(sel), "    int k = mime_su_%c_%s;\n", g_stage_char[stage], name);
+                _snprintf(sel, sizeof(sel), "    int mime_k = mime_su_%c_%s;\n", g_stage_char[stage], name);
             buf_str(&dispatch, sel);
             BOOL is_void = !strncmp(s->types[type].ret, "void", 4) && (!s->types[type].ret[4] || s->types[type].ret[4] == ' ');
             uint32_t emitted = 0;
@@ -393,7 +393,7 @@ char *gl_subroutine_rewrite(const char *src, int stage, GlSubroutines **out)
                 if (!(s->functions[k].types & (1ull << type)))
                     continue;
                 char head[80];
-                _snprintf(head, sizeof(head), "    %sif (k == %u) ", emitted ? "else " : "", k);
+                _snprintf(head, sizeof(head), "    %sif (mime_k == %u) ", emitted ? "else " : "", k);
                 buf_str(&dispatch, head);
                 buf_str(&dispatch, is_void ? "" : "return ");
                 buf_str(&dispatch, s->functions[k].name);

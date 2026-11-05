@@ -262,6 +262,8 @@ static uint32_t gl_type_of(spvc_compiler c, spvc_type t)
         case SpvDim3D:
             return prefix == 1 ? 0x8DCB : prefix == 2 ? 0x8DD3 : 0x8B5F;
         case SpvDimCube:
+            if (arrayed)
+                return depth ? 0x900D : prefix == 1 ? 0x900E : prefix == 2 ? 0x900F : 0x900C;
             return depth ? 0x8DC5 : prefix == 1 ? 0x8DCC : prefix == 2 ? 0x8DD4 : 0x8B60;
         case SpvDimRect:
             return depth ? 0x8B64 : 0x8B63;

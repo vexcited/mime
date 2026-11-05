@@ -69,6 +69,7 @@ static const GlExtension g_extensions[] = {
     {"GL_ARB_shader_subroutine", 0},
     {"GL_ARB_gpu_shader_fp64", MIME_GPU_FEATURE_FP64},
     {"GL_ARB_texture_gather", 0},
+    {"GL_ARB_texture_cube_map_array", MIME_GPU_FEATURE_CUBE_ARRAY},
     {"GL_ARB_blend_func_extended", MIME_GPU_FEATURE_DUAL_BLEND},
 };
 

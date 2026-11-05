@@ -102,6 +102,7 @@ enum {
 };
 
 #define MIME_GPU_FEATURE_QUERY (1ull << 32)     /* QUERY_BEGIN and QUERY_END: occlusion and feedback counters. */
+#define MIME_GPU_FEATURE_CUBE_ARRAY (1ull << 36) /* cube map array textures. */
 #define MIME_GPU_FEATURE_DUAL_BLEND (1ull << 35) /* the second color output of a fragment shader as a blend factor. */
 #define MIME_GPU_FEATURE_FP64 (1ull << 34)      /* 64 bit floats in shaders and vertex attributes. */
 #define MIME_GPU_FEATURE_VIEWPORTS (1ull << 33) /* more than one viewport and scissor, and the indexed commands. */
