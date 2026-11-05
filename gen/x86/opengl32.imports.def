@@ -12,8 +12,12 @@ EXPORTS
     glBindBuffer@8
     glBindBufferBase@12
     glBindBufferRange@20
+    glBindBuffersBase@16
+    glBindBuffersRange@24
     glBindFragDataLocation@12
     glBindFramebuffer@8
+    glBindImageTexture@28
+    glBindImageTextures@12
     glBindRenderbuffer@8
     glBindTexture@8
     glBindVertexArray@4
@@ -116,15 +120,21 @@ EXPORTS
     glDisableVertexAttribArray@4
     glDisablei@8
     glDiscardFramebufferEXT@12
+    glDispatchCompute@12
+    glDispatchComputeIndirect@4
     glDrawArrays@12
+    glDrawArraysIndirect@8
     glDrawArraysInstanced@16
     glDrawArraysInstancedBaseInstance@20
     glDrawBuffer@4
     glDrawBuffers@8
     glDrawElements@16
     glDrawElementsBaseVertex@20
+    glDrawElementsIndirect@12
     glDrawElementsInstanced@20
+    glDrawElementsInstancedBaseInstance@24
     glDrawElementsInstancedBaseVertex@24
+    glDrawElementsInstancedBaseVertexBaseInstance@28
     glDrawPixels@20
     glDrawRangeElements@24
     glDrawRangeElementsBaseVertex@28
@@ -209,6 +219,12 @@ EXPORTS
     glGetPointerv@8
     glGetPolygonStipple@4
     glGetProgramInfoLog@16
+    glGetProgramInterfaceiv@16
+    glGetProgramResourceIndex@12
+    glGetProgramResourceLocation@12
+    glGetProgramResourceLocationIndex@12
+    glGetProgramResourceName@24
+    glGetProgramResourceiv@32
     glGetProgramiv@12
     glGetQueryObjecti64v@12
     glGetQueryObjectiv@12
@@ -306,6 +322,8 @@ EXPORTS
     glMateriali@12
     glMaterialiv@12
     glMatrixMode@4
+    glMemoryBarrier@4
+    glMemoryBarrierByRegion@4
     glMultMatrixd@4
     glMultMatrixf@4
     glMultTransposeMatrixd@4
@@ -313,7 +331,12 @@ EXPORTS
     glMultTransposeMatrixf@4
     glMultTransposeMatrixfARB@4
     glMultiDrawArrays@16
+    glMultiDrawArraysIndirect@16
+    glMultiDrawArraysIndirectCount@20
     glMultiDrawElements@20
+    glMultiDrawElementsBaseVertex@24
+    glMultiDrawElementsIndirect@20
+    glMultiDrawElementsIndirectCount@24
     glMultiTexCoord1d@12
     glMultiTexCoord1dARB@12
     glMultiTexCoord1dv@8
@@ -471,6 +494,7 @@ EXPORTS
     glSelectBuffer@8
     glShadeModel@4
     glShaderSource@16
+    glShaderStorageBlockBinding@12
     glStencilFunc@12
     glStencilFuncSeparate@16
     glStencilMask@4

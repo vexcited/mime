@@ -14,8 +14,12 @@ void APIENTRY glBindAttribLocation(GLuint program, GLuint index, const GLchar *n
 void APIENTRY glBindBuffer(GLenum target, GLuint name);
 void APIENTRY glBindBufferBase(GLenum target, GLuint index, GLuint name);
 void APIENTRY glBindBufferRange(GLenum target, GLuint index, GLuint name, GLintptr offset, GLsizeiptr size);
+void APIENTRY glBindBuffersBase(GLenum target, GLuint first, GLsizei count, const GLuint *buffers);
+void APIENTRY glBindBuffersRange(GLenum target, GLuint first, GLsizei count, const GLuint *buffers,                                        const GLintptr *offsets, const GLsizeiptr *sizes);
 void APIENTRY glBindFragDataLocation(GLuint program, GLuint color, const GLchar *name);
 void APIENTRY glBindFramebuffer(GLenum target, GLuint name);
+void APIENTRY glBindImageTexture(GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer,                                        GLenum access, GLenum format);
+void APIENTRY glBindImageTextures(GLuint first, GLsizei count, const GLuint *textures);
 void APIENTRY glBindRenderbuffer(GLenum target, GLuint name);
 void APIENTRY glBindTexture(GLenum target, GLuint name);
 void APIENTRY glBindVertexArray(GLuint name);
@@ -118,15 +122,21 @@ void APIENTRY glDisableClientState(GLenum array);
 void APIENTRY glDisableVertexAttribArray(GLuint index);
 void APIENTRY glDisablei(GLenum cap, GLuint index);
 void APIENTRY glDiscardFramebufferEXT(GLenum target, GLsizei n, const GLenum *attachments);
+void APIENTRY glDispatchCompute(GLuint x, GLuint y, GLuint z);
+void APIENTRY glDispatchComputeIndirect(GLintptr indirect);
 void APIENTRY glDrawArrays(GLenum mode, GLint first, GLsizei count);
+void APIENTRY glDrawArraysIndirect(GLenum mode, const void *indirect);
 void APIENTRY glDrawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei instances);
 void APIENTRY glDrawArraysInstancedBaseInstance(GLenum mode, GLint first, GLsizei count, GLsizei instances,                                                       GLuint base_instance);
 void APIENTRY glDrawBuffer(GLenum buf);
 void APIENTRY glDrawBuffers(GLsizei n, const GLenum *bufs);
 void APIENTRY glDrawElements(GLenum mode, GLsizei count, GLenum type, const void *indices);
 void APIENTRY glDrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum type, const void *indices,                                              GLint base_vertex);
+void APIENTRY glDrawElementsIndirect(GLenum mode, GLenum type, const void *indirect);
 void APIENTRY glDrawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const void *indices,                                             GLsizei instances);
+void APIENTRY glDrawElementsInstancedBaseInstance(GLenum mode, GLsizei count, GLenum type, const void *indices,                                                         GLsizei instances, GLuint base_instance);
 void APIENTRY glDrawElementsInstancedBaseVertex(GLenum mode, GLsizei count, GLenum type, const void *indices,                                                       GLsizei instances, GLint base_vertex);
+void APIENTRY glDrawElementsInstancedBaseVertexBaseInstance(GLenum mode, GLsizei count, GLenum type,                                                                   const void *indices, GLsizei instances,                                                                   GLint base_vertex, GLuint base_instance);
 void APIENTRY glDrawPixels(GLsizei width, GLsizei height, GLenum format, GLenum type, const GLvoid *pixels);
 void APIENTRY glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type,                                         const void *indices);
 void APIENTRY glDrawRangeElementsBaseVertex(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type,                                                   const void *indices, GLint base_vertex);
@@ -211,6 +221,12 @@ void APIENTRY glGetPixelMapusv(GLenum map, GLushort *values);
 void APIENTRY glGetPointerv(GLenum pname, void **params);
 void APIENTRY glGetPolygonStipple(GLubyte *mask);
 void APIENTRY glGetProgramInfoLog(GLuint name, GLsizei size, GLsizei *length, GLchar *log);
+void APIENTRY glGetProgramInterfaceiv(GLuint program, GLenum iface, GLenum pname, GLint *params);
+GLuint APIENTRY glGetProgramResourceIndex(GLuint program, GLenum iface, const GLchar *name);
+GLint APIENTRY glGetProgramResourceLocation(GLuint program, GLenum iface, const GLchar *name);
+GLint APIENTRY glGetProgramResourceLocationIndex(GLuint program, GLenum iface, const GLchar *name);
+void APIENTRY glGetProgramResourceName(GLuint program, GLenum iface, GLuint index, GLsizei size, GLsizei *length,                                               GLchar *name);
+void APIENTRY glGetProgramResourceiv(GLuint program, GLenum iface, GLuint index, GLsizei prop_count,                                             const GLenum *props, GLsizei size, GLsizei *length, GLint *params);
 void APIENTRY glGetProgramiv(GLuint name, GLenum pname, GLint *params);
 void APIENTRY glGetQueryObjecti64v(GLuint name, GLenum pname, GLint64 *value);
 void APIENTRY glGetQueryObjectiv(GLuint name, GLenum pname, GLint *value);
@@ -308,6 +324,8 @@ void APIENTRY glMaterialfv(GLenum face, GLenum pname, const GLfloat *params);
 void APIENTRY glMateriali(GLenum face, GLenum pname, GLint param);
 void APIENTRY glMaterialiv(GLenum face, GLenum pname, const GLint *params);
 void APIENTRY glMatrixMode(GLenum mode);
+void APIENTRY glMemoryBarrier(GLbitfield barriers);
+void APIENTRY glMemoryBarrierByRegion(GLbitfield barriers);
 void APIENTRY glMultMatrixd(const GLdouble *m);
 void APIENTRY glMultMatrixf(const GLfloat *m);
 void APIENTRY glMultTransposeMatrixd(const GLdouble *m);
@@ -315,7 +333,12 @@ void APIENTRY glMultTransposeMatrixdARB(const GLdouble *m);
 void APIENTRY glMultTransposeMatrixf(const GLfloat *m);
 void APIENTRY glMultTransposeMatrixfARB(const GLfloat *m);
 void APIENTRY glMultiDrawArrays(GLenum mode, const GLint *first, const GLsizei *count, GLsizei n);
+void APIENTRY glMultiDrawArraysIndirect(GLenum mode, const void *indirect, GLsizei count, GLsizei stride);
+void APIENTRY glMultiDrawArraysIndirectCount(GLenum mode, const void *indirect, GLintptr drawcount,                                                    GLsizei maxdrawcount, GLsizei stride);
 void APIENTRY glMultiDrawElements(GLenum mode, const GLsizei *count, GLenum type, const void *const *indices,                                         GLsizei n);
+void APIENTRY glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum type,                                                   const void *const *indices, GLsizei n, const GLint *base_vertex);
+void APIENTRY glMultiDrawElementsIndirect(GLenum mode, GLenum type, const void *indirect, GLsizei count,                                                 GLsizei stride);
+void APIENTRY glMultiDrawElementsIndirectCount(GLenum mode, GLenum type, const void *indirect, GLintptr drawcount,                                                      GLsizei maxdrawcount, GLsizei stride);
 void APIENTRY glMultiTexCoord1d(GLenum target, GLdouble s);
 void APIENTRY glMultiTexCoord1dARB(GLenum target, GLdouble s);
 void APIENTRY glMultiTexCoord1dv(GLenum target, const GLdouble *v);
@@ -473,6 +496,7 @@ void APIENTRY glScissor(GLint x, GLint y, GLsizei w, GLsizei h);
 void APIENTRY glSelectBuffer(GLsizei size, GLuint *buffer);
 void APIENTRY glShadeModel(GLenum mode);
 void APIENTRY glShaderSource(GLuint name, GLsizei count, const GLchar *const *strings, const GLint *lengths);
+void APIENTRY glShaderStorageBlockBinding(GLuint program, GLuint index, GLuint binding);
 void APIENTRY glStencilFunc(GLenum func, GLint ref, GLuint mask);
 void APIENTRY glStencilFuncSeparate(GLenum face, GLenum func, GLint ref, GLuint mask);
 void APIENTRY glStencilMask(GLuint mask);
@@ -664,8 +688,12 @@ const GL_PROC GlProcs[] = {
     {"glBindBuffer", (const void *)glBindBuffer},
     {"glBindBufferBase", (const void *)glBindBufferBase},
     {"glBindBufferRange", (const void *)glBindBufferRange},
+    {"glBindBuffersBase", (const void *)glBindBuffersBase},
+    {"glBindBuffersRange", (const void *)glBindBuffersRange},
     {"glBindFragDataLocation", (const void *)glBindFragDataLocation},
     {"glBindFramebuffer", (const void *)glBindFramebuffer},
+    {"glBindImageTexture", (const void *)glBindImageTexture},
+    {"glBindImageTextures", (const void *)glBindImageTextures},
     {"glBindRenderbuffer", (const void *)glBindRenderbuffer},
     {"glBindTexture", (const void *)glBindTexture},
     {"glBindVertexArray", (const void *)glBindVertexArray},
@@ -768,15 +796,21 @@ const GL_PROC GlProcs[] = {
     {"glDisableVertexAttribArray", (const void *)glDisableVertexAttribArray},
     {"glDisablei", (const void *)glDisablei},
     {"glDiscardFramebufferEXT", (const void *)glDiscardFramebufferEXT},
+    {"glDispatchCompute", (const void *)glDispatchCompute},
+    {"glDispatchComputeIndirect", (const void *)glDispatchComputeIndirect},
     {"glDrawArrays", (const void *)glDrawArrays},
+    {"glDrawArraysIndirect", (const void *)glDrawArraysIndirect},
     {"glDrawArraysInstanced", (const void *)glDrawArraysInstanced},
     {"glDrawArraysInstancedBaseInstance", (const void *)glDrawArraysInstancedBaseInstance},
     {"glDrawBuffer", (const void *)glDrawBuffer},
     {"glDrawBuffers", (const void *)glDrawBuffers},
     {"glDrawElements", (const void *)glDrawElements},
     {"glDrawElementsBaseVertex", (const void *)glDrawElementsBaseVertex},
+    {"glDrawElementsIndirect", (const void *)glDrawElementsIndirect},
     {"glDrawElementsInstanced", (const void *)glDrawElementsInstanced},
+    {"glDrawElementsInstancedBaseInstance", (const void *)glDrawElementsInstancedBaseInstance},
     {"glDrawElementsInstancedBaseVertex", (const void *)glDrawElementsInstancedBaseVertex},
+    {"glDrawElementsInstancedBaseVertexBaseInstance", (const void *)glDrawElementsInstancedBaseVertexBaseInstance},
     {"glDrawPixels", (const void *)glDrawPixels},
     {"glDrawRangeElements", (const void *)glDrawRangeElements},
     {"glDrawRangeElementsBaseVertex", (const void *)glDrawRangeElementsBaseVertex},
@@ -861,6 +895,12 @@ const GL_PROC GlProcs[] = {
     {"glGetPointerv", (const void *)glGetPointerv},
     {"glGetPolygonStipple", (const void *)glGetPolygonStipple},
     {"glGetProgramInfoLog", (const void *)glGetProgramInfoLog},
+    {"glGetProgramInterfaceiv", (const void *)glGetProgramInterfaceiv},
+    {"glGetProgramResourceIndex", (const void *)glGetProgramResourceIndex},
+    {"glGetProgramResourceLocation", (const void *)glGetProgramResourceLocation},
+    {"glGetProgramResourceLocationIndex", (const void *)glGetProgramResourceLocationIndex},
+    {"glGetProgramResourceName", (const void *)glGetProgramResourceName},
+    {"glGetProgramResourceiv", (const void *)glGetProgramResourceiv},
     {"glGetProgramiv", (const void *)glGetProgramiv},
     {"glGetQueryObjecti64v", (const void *)glGetQueryObjecti64v},
     {"glGetQueryObjectiv", (const void *)glGetQueryObjectiv},
@@ -958,6 +998,8 @@ const GL_PROC GlProcs[] = {
     {"glMateriali", (const void *)glMateriali},
     {"glMaterialiv", (const void *)glMaterialiv},
     {"glMatrixMode", (const void *)glMatrixMode},
+    {"glMemoryBarrier", (const void *)glMemoryBarrier},
+    {"glMemoryBarrierByRegion", (const void *)glMemoryBarrierByRegion},
     {"glMultMatrixd", (const void *)glMultMatrixd},
     {"glMultMatrixf", (const void *)glMultMatrixf},
     {"glMultTransposeMatrixd", (const void *)glMultTransposeMatrixd},
@@ -965,7 +1007,12 @@ const GL_PROC GlProcs[] = {
     {"glMultTransposeMatrixf", (const void *)glMultTransposeMatrixf},
     {"glMultTransposeMatrixfARB", (const void *)glMultTransposeMatrixfARB},
     {"glMultiDrawArrays", (const void *)glMultiDrawArrays},
+    {"glMultiDrawArraysIndirect", (const void *)glMultiDrawArraysIndirect},
+    {"glMultiDrawArraysIndirectCount", (const void *)glMultiDrawArraysIndirectCount},
     {"glMultiDrawElements", (const void *)glMultiDrawElements},
+    {"glMultiDrawElementsBaseVertex", (const void *)glMultiDrawElementsBaseVertex},
+    {"glMultiDrawElementsIndirect", (const void *)glMultiDrawElementsIndirect},
+    {"glMultiDrawElementsIndirectCount", (const void *)glMultiDrawElementsIndirectCount},
     {"glMultiTexCoord1d", (const void *)glMultiTexCoord1d},
     {"glMultiTexCoord1dARB", (const void *)glMultiTexCoord1dARB},
     {"glMultiTexCoord1dv", (const void *)glMultiTexCoord1dv},
@@ -1123,6 +1170,7 @@ const GL_PROC GlProcs[] = {
     {"glSelectBuffer", (const void *)glSelectBuffer},
     {"glShadeModel", (const void *)glShadeModel},
     {"glShaderSource", (const void *)glShaderSource},
+    {"glShaderStorageBlockBinding", (const void *)glShaderStorageBlockBinding},
     {"glStencilFunc", (const void *)glStencilFunc},
     {"glStencilFuncSeparate", (const void *)glStencilFuncSeparate},
     {"glStencilMask", (const void *)glStencilMask},
@@ -1301,4 +1349,4 @@ const GL_PROC GlProcs[] = {
     {"wglUseFontOutlinesA", (const void *)wglUseFontOutlinesA},
     {"wglUseFontOutlinesW", (const void *)wglUseFontOutlinesW},
 };
-const ULONG GlProcCount = 648;
+const ULONG GlProcCount = 672;

@@ -12,8 +12,12 @@ EXPORTS
     glBindBuffer
     glBindBufferBase
     glBindBufferRange
+    glBindBuffersBase
+    glBindBuffersRange
     glBindFragDataLocation
     glBindFramebuffer
+    glBindImageTexture
+    glBindImageTextures
     glBindRenderbuffer
     glBindTexture
     glBindVertexArray
@@ -116,15 +120,21 @@ EXPORTS
     glDisableVertexAttribArray
     glDisablei
     glDiscardFramebufferEXT
+    glDispatchCompute
+    glDispatchComputeIndirect
     glDrawArrays
+    glDrawArraysIndirect
     glDrawArraysInstanced
     glDrawArraysInstancedBaseInstance
     glDrawBuffer
     glDrawBuffers
     glDrawElements
     glDrawElementsBaseVertex
+    glDrawElementsIndirect
     glDrawElementsInstanced
+    glDrawElementsInstancedBaseInstance
     glDrawElementsInstancedBaseVertex
+    glDrawElementsInstancedBaseVertexBaseInstance
     glDrawPixels
     glDrawRangeElements
     glDrawRangeElementsBaseVertex
@@ -209,6 +219,12 @@ EXPORTS
     glGetPointerv
     glGetPolygonStipple
     glGetProgramInfoLog
+    glGetProgramInterfaceiv
+    glGetProgramResourceIndex
+    glGetProgramResourceLocation
+    glGetProgramResourceLocationIndex
+    glGetProgramResourceName
+    glGetProgramResourceiv
     glGetProgramiv
     glGetQueryObjecti64v
     glGetQueryObjectiv
@@ -306,6 +322,8 @@ EXPORTS
     glMateriali
     glMaterialiv
     glMatrixMode
+    glMemoryBarrier
+    glMemoryBarrierByRegion
     glMultMatrixd
     glMultMatrixf
     glMultTransposeMatrixd
@@ -313,7 +331,12 @@ EXPORTS
     glMultTransposeMatrixf
     glMultTransposeMatrixfARB
     glMultiDrawArrays
+    glMultiDrawArraysIndirect
+    glMultiDrawArraysIndirectCount
     glMultiDrawElements
+    glMultiDrawElementsBaseVertex
+    glMultiDrawElementsIndirect
+    glMultiDrawElementsIndirectCount
     glMultiTexCoord1d
     glMultiTexCoord1dARB
     glMultiTexCoord1dv
@@ -471,6 +494,7 @@ EXPORTS
     glSelectBuffer
     glShadeModel
     glShaderSource
+    glShaderStorageBlockBinding
     glStencilFunc
     glStencilFuncSeparate
     glStencilMask
