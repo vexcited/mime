@@ -878,6 +878,7 @@ void FrameDrawText(SURFACE *s, const REGION *clip, FONT_INSTANCE *fi, LONG x, LO
                    LONG max_right, ULONG pixel);
 void FrameBleed(WND *w);
 void FrameGetButtonRect(WND *w, int button, RECT *r); /* window relative. */
+BOOLEAN FrameClientOnly(const WND *w);
 void FrameGetVisibleRect(WND *w, RECT *r);              /* window relative. */
 ULONG FrameGetDragRects(WND *w, RECT *rects, ULONG max); /* window relative caption areas. */
 LRESULT FrameMouse(WND *w, UINT msg, LONG hit, POINT pt);

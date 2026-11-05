@@ -158,7 +158,7 @@ ULONG HostBorderColor(WND *w)
 {
     FRAME_METRICS m;
     FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
-    if (!m.Border || (w->Style & WS_MAXIMIZE))
+    if (!m.Border || (w->Style & WS_MAXIMIZE) || FrameClientOnly(w))
         return 0;
     BOOLEAN dark = PropGetData(w, PropAtom(L"DwmDarkMode")) != nullptr;
     ULONG color, themed;
