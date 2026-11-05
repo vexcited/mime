@@ -533,8 +533,20 @@ static HRESULT repeat_render(FxCtx *c, FxRect area, FxImg *out)
         return hr;
     if (e->id == EFF_TILE)
         src_r = fx_intersect(src_r, dip_rect(c, D2dFxF(e, 0), FALSE));
+    /* an input without edges along an axis has nothing to extend there, so it shows as it is. */
+    BOOL open_x = src_r.x0 <= -D2D_INF_EXTENT || src_r.x1 >= D2D_INF_EXTENT, open_y = src_r.y0 <= -D2D_INF_EXTENT || src_r.y1 >= D2D_INF_EXTENT;
+    if (open_x && open_y)
+        return FxInput(c, 0, area, out);
+    if (open_x) {
+        src_r.x0 = area.x0;
+        src_r.x1 = area.x1;
+    }
+    if (open_y) {
+        src_r.y0 = area.y0;
+        src_r.y1 = area.y1;
+    }
     hr = FxNew(out, area);
-    if (FAILED(hr) || !out->px || fx_empty(src_r) || fx_infinite(src_r))
+    if (FAILED(hr) || !out->px || fx_empty(src_r))
         return hr;
     FxImg src;
     hr = FxInput(c, 0, src_r, &src);
@@ -542,9 +554,9 @@ static HRESULT repeat_render(FxCtx *c, FxRect area, FxImg *out)
         return hr;
     UINT32 mx = e->id == EFF_TILE ? 1 : *D2dFxU(e, 0), my = e->id == EFF_TILE ? 1 : *D2dFxU(e, 1);
     for (int y = area.y0; y < area.y1; y++) {
-        int sy = edge_index(y - src.y, src.h, my);
+        int sy = open_y ? y - src.y : edge_index(y - src.y, src.h, my);
         for (int x = area.x0; x < area.x1; x++) {
-            int sx = edge_index(x - src.x, src.w, mx);
+            int sx = open_x ? x - src.x : edge_index(x - src.x, src.w, mx);
             memcpy(fx_px(out, x, y), src.px + ((SIZE_T)sy * src.w + sx) * 4, 16);
         }
     }
