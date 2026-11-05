@@ -234,7 +234,6 @@ static void bind(MvkConnection *c, uint64_t id, uint64_t handle)
 }
 
 static uint64_t await_id(MvkConnection *c, uint64_t id);
-static void unwatch(MvkConnection *c, VkSemaphore semaphore);
 static void stop_watcher(MvkConnection *c);
 
 static uint64_t await_id_aside(MvkConnection *c, uint64_t id);
@@ -2160,7 +2159,7 @@ static void destroy_object(MvkCall *call, int op)
         if (op == MVK_OP_DESTROY_FENCE)
             c->fn.vkDestroyFence(c->device, (VkFence)handle, nullptr);
         else if (op == MVK_OP_DESTROY_SEMAPHORE) {
-            unwatch(c, (VkSemaphore)handle);
+            mvk_unwatch(c, (VkSemaphore)handle);
             c->fn.vkDestroySemaphore(c->device, (VkSemaphore)handle, nullptr);
         }
         else if (op == MVK_OP_DESTROY_EVENT)
@@ -2854,7 +2853,7 @@ static void watch_semaphores(MvkCall *call)
 }
 
 /* a semaphore going away leaves the watches, and the watcher's wait, before it is destroyed. */
-static void unwatch(MvkConnection *c, VkSemaphore semaphore)
+void mvk_unwatch(MvkConnection *c, VkSemaphore semaphore)
 {
     if (!c->watching)
         return;

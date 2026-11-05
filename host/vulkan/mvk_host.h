@@ -186,5 +186,7 @@ void mvk_share_import_memory(MvkCall *call);
 void mvk_share_export_semaphore(MvkCall *call);
 void mvk_share_import_semaphore(MvkCall *call);
 void mvk_mirror_refresh(MvkConnection *c, VkSemaphore semaphore);
+/* stops watching a semaphore before it is destroyed, waiting out a watcher that may still read it. */
+void mvk_unwatch(MvkConnection *c, VkSemaphore semaphore);
 
 #endif
