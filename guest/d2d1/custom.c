@@ -2460,6 +2460,9 @@ typedef struct Eval {
     int depth;
     D2dIRect *bounds;
     BYTE *state;
+    /* the last pixels of each node that feeds more than one other, for the next one that reads them. */
+    UINT32 *users;
+    D2dImageData *kept;
 } Eval;
 
 static HRESULT conn_bounds(Eval *ev, Conn c, D2dIRect *b);
@@ -2611,6 +2614,7 @@ static HRESULT conn_bounds(Eval *ev, Conn c, D2dIRect *b)
 #define INPUT_MARGIN 4096
 
 static HRESULT node_get(Eval *ev, UINT32 index, D2dIRect want, D2dImageData *out);
+static HRESULT node_make(Eval *ev, GNode *n, D2dIRect r, D2dImageData *out);
 
 static HRESULT conn_get(Eval *ev, Conn c, D2dIRect want, D2dImageData *out)
 {
@@ -2841,6 +2845,20 @@ static HRESULT node_get(Eval *ev, UINT32 index, D2dIRect want, D2dImageData *out
                      : rect_and(want, b);
     if (rect_empty(r))
         return empty_data(want, out);
+    D2dImageData *kept = &ev->kept[index];
+    if (kept->surface.px && r.x0 >= kept->x && r.y0 >= kept->y && r.x1 <= kept->x + kept->surface.w && r.y1 <= kept->y + kept->surface.h)
+        return crop(kept, r, out);
+    hr = node_make(ev, n, r, out);
+    if (SUCCEEDED(hr) && ev->users[index] > 1 && out->surface.px) {
+        D2dImageDataFree(kept);
+        hr = crop(out, (D2dIRect){out->x, out->y, out->x + out->surface.w, out->y + out->surface.h}, kept);
+    }
+    return hr;
+}
+
+static HRESULT node_make(Eval *ev, GNode *n, D2dIRect r, D2dImageData *out)
+{
+    HRESULT hr = S_OK;
     switch (n->kind) {
     case NODE_DRAW:
     case NODE_COMPUTE:
@@ -2881,11 +2899,24 @@ static HRESULT node_get(Eval *ev, UINT32 index, D2dIRect want, D2dImageData *out
             return hr;
         if (rect_empty(ib) || ib.x0 <= -D2D_INF_EXTENT || ib.y0 <= -D2D_INF_EXTENT || ib.x1 >= D2D_INF_EXTENT || ib.y1 >= D2D_INF_EXTENT)
             return conn_get(ev, n->in[0], r, out);
+        /* only the part of the input that the output rectangle maps to. */
+        CBorder *bt = (CBorder *)n->node;
+        D2dIRect need = {D2D_INF_EXTENT, D2D_INF_EXTENT, -D2D_INF_EXTENT, -D2D_INF_EXTENT};
+        for (int x = r.x0; x < r.x1; x++) {
+            int sx = extend(x, ib.x0, ib.x1, bt->x);
+            need.x0 = sx < need.x0 ? sx : need.x0;
+            need.x1 = sx + 1 > need.x1 ? sx + 1 : need.x1;
+        }
+        for (int y = r.y0; y < r.y1; y++) {
+            int sy = extend(y, ib.y0, ib.y1, bt->y);
+            need.y0 = sy < need.y0 ? sy : need.y0;
+            need.y1 = sy + 1 > need.y1 ? sy + 1 : need.y1;
+        }
         D2dImageData in;
-        hr = conn_get(ev, n->in[0], ib, &in);
+        hr = conn_get(ev, n->in[0], need, &in);
         D2dImageData full;
         if (SUCCEEDED(hr)) {
-            hr = crop(&in, ib, &full);
+            hr = crop(&in, need, &full);
             D2dImageDataFree(&in);
         }
         if (FAILED(hr))
@@ -2901,11 +2932,10 @@ static HRESULT node_get(Eval *ev, UINT32 index, D2dIRect want, D2dImageData *out
             D2dImageDataFree(out);
             return E_OUTOFMEMORY;
         }
-        CBorder *bt = (CBorder *)n->node;
         for (int y = r.y0; y < r.y1; y++) {
-            int sy = extend(y, ib.y0, ib.y1, bt->y) - ib.y0;
+            int sy = extend(y, ib.y0, ib.y1, bt->y) - need.y0;
             for (int x = r.x0; x < r.x1; x++) {
-                int sx = extend(x, ib.x0, ib.x1, bt->x) - ib.x0;
+                int sx = extend(x, ib.x0, ib.x1, bt->x) - need.x0;
                 D2dSurfaceRow(&out->surface, y - r.y0)[x - r.x0] = D2dSurfaceRow(&full.surface, sy)[sx];
                 if (full.fpx)
                     memcpy(out->fpx + ((SIZE_T)(y - r.y0) * out->surface.w + (x - r.x0)) * 4, full.fpx + ((SIZE_T)sy * full.surface.w + sx) * 4, 16);
@@ -2950,6 +2980,8 @@ static HRESULT custom_prepare(D2dRt *rt, CEffect *e)
     return hr;
 }
 
+static void eval_end(Eval *ev);
+
 static HRESULT eval_begin(D2dRt *rt, CEffect *e, int depth, Eval *ev)
 {
     if (depth > 16)
@@ -2957,20 +2989,32 @@ static HRESULT eval_begin(D2dRt *rt, CEffect *e, int depth, Eval *ev)
     HRESULT hr = custom_prepare(rt, e);
     if (FAILED(hr))
         return hr;
-    *ev = (Eval){rt, e, e->graph, depth, nullptr, nullptr};
+    *ev = (Eval){rt, e, e->graph, depth, nullptr, nullptr, nullptr, nullptr};
     UINT32 n = e->graph->n ? e->graph->n : 1;
     ev->bounds = D2dAllocZero(n * sizeof(D2dIRect));
     ev->state = D2dAllocZero(n);
-    if (!ev->bounds || !ev->state) {
-        D2dFree(ev->bounds);
-        D2dFree(ev->state);
+    ev->users = D2dAllocZero(n * sizeof(UINT32));
+    ev->kept = D2dAllocZero(n * sizeof(D2dImageData));
+    if (!ev->bounds || !ev->state || !ev->users || !ev->kept) {
+        eval_end(ev);
         return E_OUTOFMEMORY;
+    }
+    for (UINT32 i = 0; i < e->graph->n; i++) {
+        const GNode *g = &e->graph->nodes[i];
+        for (UINT32 k = 0; k < g->ninputs; k++) {
+            if (g->in[k].kind == CONN_NODE && g->in[k].index < e->graph->n)
+                ev->users[g->in[k].index]++;
+        }
     }
     return S_OK;
 }
 
 static void eval_end(Eval *ev)
 {
+    for (UINT32 i = 0; ev->kept && i < (ev->g->n ? ev->g->n : 1); i++)
+        D2dImageDataFree(&ev->kept[i]);
+    D2dFree(ev->kept);
+    D2dFree(ev->users);
     D2dFree(ev->bounds);
     D2dFree(ev->state);
 }
