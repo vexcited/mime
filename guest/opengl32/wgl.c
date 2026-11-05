@@ -12,6 +12,10 @@
 
 #define MAX_FRAMES_IN_FLIGHT 2
 
+/* the highest version a context has. */
+#define GL_MAX_MAJOR 4
+#define GL_MAX_MINOR 1
+
 static GlSurface *g_surfaces;
 
 static int dc_pixel_format(HDC dc)
@@ -353,7 +357,7 @@ static HGLRC create_context(HDC dc, GlContext *share, int major, int minor, int 
 
 GLAPI HGLRC WINAPI wglCreateContext(HDC dc)
 {
-    return create_context(dc, nullptr, 3, 0, WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB);
+    return create_context(dc, nullptr, GL_MAX_MAJOR, GL_MAX_MINOR, WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB);
 }
 
 GLAPI HGLRC WINAPI wglCreateLayerContext(HDC dc, int layer)
@@ -383,15 +387,15 @@ GLAPI HGLRC WINAPI wglCreateContextAttribsARB(HDC dc, HGLRC share, const int *at
             break;
         }
     }
-    if (major > 4 || (major == 4 && minor > 1)) {
+    if (major > GL_MAX_MAJOR || (major == GL_MAX_MAJOR && minor > GL_MAX_MINOR)) {
         set_last_error(ERROR_INVALID_VERSION_ARB);
         return nullptr;
     }
-    /* below 3.2 there are no profiles: the context is compatible. */
+    /* below 3.2 there are no profiles: the context is compatible, and a driver gives it the highest version it has. */
     if (major < 3 || (major == 3 && minor < 2)) {
         profile = WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB;
-        major = 3;
-        minor = 0;
+        major = GL_MAX_MAJOR;
+        minor = GL_MAX_MINOR;
     }
     return create_context(dc, (GlContext *)share, major, minor, profile);
 }
