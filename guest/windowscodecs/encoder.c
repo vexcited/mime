@@ -506,12 +506,15 @@ static HRESULT STDMETHODCALLTYPE fenc_write_source(IWICBitmapFrameEncode *This, 
         return hr;
     if (!r.Width || !r.Height)
         return E_INVALIDARG;
+    /* a rectangle as wide as the frame adds its rows after those written, so a frame can be written in bands. */
     if (!f->size_set) {
         f->width = (UINT)r.Width;
         f->height = (UINT)r.Height;
         f->size_set = TRUE;
-    } else if (f->width != (UINT)r.Width || f->height != (UINT)r.Height) {
+    } else if (f->width != (UINT)r.Width) {
         return WINCODEC_ERR_IMAGESIZEOUTOFRANGE;
+    } else if ((UINT)r.Height > f->height - f->rows) {
+        return WINCODEC_ERR_CODECTOOMANYSCANLINES;
     }
     if (!f->format_set) {
         GUID want = sformat;
@@ -579,11 +582,10 @@ static HRESULT STDMETHODCALLTYPE fenc_write_source(IWICBitmapFrameEncode *This, 
     }
     hr = ensure_buffer(f);
     if (SUCCEEDED(hr)) {
-        UINT remaining = f->height - f->rows;
-        WICRect piece = {r.X, r.Y + (INT)f->rows, r.Width, (INT)remaining};
-        hr = use->lpVtbl->CopyPixels(use, &piece, f->stride, f->stride * remaining, f->pixels + (SIZE_T)f->rows * f->stride);
+        UINT lines = (UINT)r.Height;
+        hr = use->lpVtbl->CopyPixels(use, &r, f->stride, f->stride * lines, f->pixels + (SIZE_T)f->rows * f->stride);
         if (SUCCEEDED(hr)) {
-            f->rows = f->height;
+            f->rows += lines;
             f->written = TRUE;
         }
     }
