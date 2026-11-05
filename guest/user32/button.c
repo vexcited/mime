@@ -130,6 +130,78 @@ static void draw_label(HWND hwnd, BUTTON *b, HDC dc, RECT *r, UINT flags, COLORR
     UserFree(text);
 }
 
+static BOOL image_size(HANDLE image, UINT type, SIZE *size)
+{
+    BITMAP bm;
+    if (type == IMAGE_BITMAP) {
+        if (!GetObjectW((HBITMAP)image, sizeof(bm), &bm))
+            return FALSE;
+        *size = (SIZE){bm.bmWidth, bm.bmHeight};
+        return TRUE;
+    }
+    ICONINFO ii;
+    if (!GetIconInfo((HICON)image, &ii))
+        return FALSE;
+    BOOL ok = GetObjectW(ii.hbmColor ? ii.hbmColor : ii.hbmMask, sizeof(bm), &bm) != 0;
+    if (ok)
+        *size = (SIZE){bm.bmWidth, ii.hbmColor ? bm.bmHeight : bm.bmHeight / 2};
+    if (ii.hbmColor)
+        DeleteObject(ii.hbmColor);
+    if (ii.hbmMask)
+        DeleteObject(ii.hbmMask);
+    return ok;
+}
+
+/* the picture of a button with BS_ICON or BS_BITMAP: at its own size, in the place the alignment of the button gives. */
+static void draw_image(HWND hwnd, BUTTON *b, HDC dc, const RECT *r)
+{
+    SIZE size;
+    if (!b->Image || !image_size(b->Image, b->ImageType, &size))
+        return;
+    DWORD style = (DWORD)GetWindowLongW(hwnd, GWL_STYLE);
+    int x = r->left + (r->right - r->left - size.cx) / 2;
+    int y = r->top + (r->bottom - r->top - size.cy) / 2;
+    switch (style & BS_CENTER) {
+    case BS_LEFT:
+        x = r->left;
+        break;
+    case BS_RIGHT:
+        x = r->right - size.cx;
+        break;
+    }
+    switch (style & BS_VCENTER) {
+    case BS_TOP:
+        y = r->top;
+        break;
+    case BS_BOTTOM:
+        y = r->bottom - size.cy;
+        break;
+    }
+    int saved = SaveDC(dc);
+    IntersectClipRect(dc, r->left, r->top, r->right, r->bottom);
+    if (b->ImageType == IMAGE_ICON) {
+        DrawIconEx(dc, x, y, (HICON)b->Image, size.cx, size.cy, 0, nullptr, DI_NORMAL);
+    } else {
+        HDC mem = CreateCompatibleDC(dc);
+        if (mem) {
+            HGDIOBJ old = SelectObject(mem, (HBITMAP)b->Image);
+            BitBlt(dc, x, y, size.cx, size.cy, mem, 0, 0, SRCCOPY);
+            SelectObject(mem, old);
+            DeleteDC(mem);
+        }
+    }
+    RestoreDC(dc, saved);
+}
+
+/* a button with BS_ICON or BS_BITMAP shows its picture and never its text. */
+static void draw_content(HWND hwnd, BUTTON *b, HDC dc, RECT *r, UINT flags, COLORREF color)
+{
+    if (GetWindowLongW(hwnd, GWL_STYLE) & (BS_ICON | BS_BITMAP))
+        draw_image(hwnd, b, dc, r);
+    else
+        draw_label(hwnd, b, dc, r, flags, color);
+}
+
 static void paint_push(HWND hwnd, BUTTON *b, HDC dc, RECT *client, BOOL focused, BOOL disabled)
 {
     UINT dpi = UserWindowDpi(hwnd);
@@ -162,7 +234,7 @@ static void paint_push(HWND hwnd, BUTTON *b, HDC dc, RECT *client, BOOL focused,
             OffsetRect(&content, 1, 1);
         color = GetSysColor(disabled ? COLOR_GRAYTEXT : COLOR_BTNTEXT);
     }
-    draw_label(hwnd, b, dc, &content, text_flags(hwnd, b, 0), color);
+    draw_content(hwnd, b, dc, &content, text_flags(hwnd, b, 0), color);
     if (focused && !(b->UiState & UISF_HIDEFOCUS))
         UserDrawFocusRect(dc, &content);
 }
