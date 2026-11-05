@@ -1274,7 +1274,8 @@ static HRESULT STDMETHODCALLTYPE rt_flush(ID2D1RenderTarget *This, D2D1_TAG *t1,
         *t1 = rt->state.tag1;
     if (t2)
         *t2 = rt->state.tag2;
-    return rt->drawing ? S_OK : S_OK;
+    /* outside of a draw there is nothing to flush, which programs use to learn whether a draw is going on. */
+    return rt->drawing ? rt->error : D2DERR_WRONG_STATE;
 }
 
 HRESULT D2dStateBlockCreate(D2dFactory *f, const D2D1_DRAWING_STATE_DESCRIPTION1 *desc, IDWriteRenderingParams *params, BOOL v1,
