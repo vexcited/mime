@@ -41,6 +41,8 @@ typedef enum FEATURE_HANDLER {
      * never another font under the name of one.
      */
     FEATURE_HANDLER_FONTS,
+    /* The x64 Visual C++ runtime, taken out of Microsoft's redistributable into SysX64 for the x64 programs. */
+    FEATURE_HANDLER_VCRUNTIME,
 } FEATURE_HANDLER;
 
 /* What the file that is fetched for a feature is, and so how it is checked and read. */
@@ -95,7 +97,7 @@ const FEATURE_DEF *FeatureFindProviding(const char *family);
 const FEATURE_FONT *FeatureFindFont(const FEATURE_DEF *feature, const char *file);
 /* The address of the download for a processor. */
 const char *FeatureUrl(const FEATURE_DEF *feature, FEATURE_ARCH arch);
-/* Whether a download may come from this address: https, and a host of microsoft.com. */
+/* Whether a download may come from this address: https, and a host of microsoft.com or aka.ms. */
 bool FeatureUrlAllowed(const char *url);
 /*
  * The same for a feature. What the catalog names the hash of may also come over plain http from the content
