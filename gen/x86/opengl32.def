@@ -160,9 +160,9 @@ EXPORTS
     glFogi=_glFogi@8
     glFogiv=_glFogiv@8
     glFramebufferRenderbuffer=_glFramebufferRenderbuffer@16
+    glFramebufferTexture=_glFramebufferTexture@16
     glFramebufferTexture1D=_glFramebufferTexture1D@20
     glFramebufferTexture2D=_glFramebufferTexture2D@20
-    glFramebufferTexture=_glFramebufferTexture@16
     glFramebufferTextureLayer=_glFramebufferTextureLayer@20
     glFrontFace=_glFrontFace@4
     glFrustum=_glFrustum@48

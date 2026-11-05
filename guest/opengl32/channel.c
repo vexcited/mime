@@ -27,6 +27,11 @@ void gl_device_unlock(void)
 
 static void heap_add_range(uint32_t block, uint64_t offset, uint64_t size);
 
+BOOL gl_host_has(uint64_t features)
+{
+    return GlDev.open && (GlDev.features & features) == features;
+}
+
 BOOL gl_device_open(void)
 {
     if (GlDev.open)
@@ -44,6 +49,7 @@ BOOL gl_device_open(void)
         } else {
             GlDev.base = base;
             GlDev.hdr = base;
+            GlDev.features = GlDev.hdr->features;
             GlDev.ring = (uint8_t *)base + MIME_GPU_HEADER_SIZE;
             GlDev.put = GlDev.published = GlDev.hdr->put;
             GlDev.block_base[0] = base;

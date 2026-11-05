@@ -37,7 +37,8 @@ typedef struct MimeGpuHeader {
     volatile uint64_t done_fence;   /* last fence the GPU completed. */
     volatile uint32_t host_idle;    /* the host sleeps until kicked. */
     volatile uint32_t lost;         /* the host stopped executing this channel after an error. */
-    uint64_t host_pad[5];
+    volatile uint64_t features;     /* MIME_GPU_FEATURE_*, written before the channel is handed to the guest. */
+    uint64_t host_pad[4];
 } MimeGpuHeader;
 
 /* a record is a MimeGpuCmd header followed by its body, padded to 8 bytes. */
@@ -82,6 +83,22 @@ enum {
     MIME_GPU_SET_UNIFORM_BUFFER,
     MIME_GPU_TEXTURE_SWIZZLE,
     MIME_GPU_OP_COUNT
+};
+
+/*
+ * what the host can run beyond the commands above. a host that sets none of them is a plain vertex and fragment
+ * machine, and the guest must not send it a command of a range it did not announce.
+ *
+ * opcodes 64 to 127 belong to compute, storage buffers, images and indirect draws, 128 to 191 to geometry and
+ * tessellation shaders and transform feedback.
+ */
+enum {
+    MIME_GPU_FEATURE_COMPUTE = 1u << 0,   /* compute programs, storage buffers, atomic counters, image load and store. */
+    MIME_GPU_FEATURE_INDIRECT = 1u << 1,  /* indirect draws and dispatches, multi draws. */
+    MIME_GPU_FEATURE_GEOMETRY = 1u << 2,
+    MIME_GPU_FEATURE_TESSELLATION = 1u << 3,
+    MIME_GPU_FEATURE_FEEDBACK = 1u << 4,  /* transform feedback. */
+    MIME_GPU_FEATURE_VIEW = 1u << 5,      /* texture views. */
 };
 
 typedef struct MimeGpuMem {

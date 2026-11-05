@@ -74,6 +74,7 @@ typedef struct GlDevice {
     uint8_t *block_base[MIME_GPU_MAX_BLOCKS];
     uint64_t block_size[MIME_GPU_MAX_BLOCKS];
     uint32_t block_count;
+    uint64_t features; /* MIME_GPU_FEATURE_* the host announced when the channel opened. */
     uint32_t *free_ids[ID_KINDS];
     uint32_t free_count[ID_KINDS], free_cap[ID_KINDS], next_id[ID_KINDS];
 } GlDevice;
@@ -81,6 +82,7 @@ typedef struct GlDevice {
 extern GlDevice GlDev;
 
 BOOL gl_device_open(void);
+BOOL gl_host_has(uint64_t features); /* all of them. false when the channel is not open. */
 void gl_device_lock(void);
 void gl_device_unlock(void);
 uint32_t gl_new_id(int kind);
