@@ -113,6 +113,36 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchException(PEXCEPTION_RECORD record, PCONTE
     return FALSE;
 }
 
+BOOLEAN LdrpUserCallbackExceptions(void)
+{
+    PRTL_USER_PROCESS_PARAMETERS parameters = NtCurrentPeb()->ProcessParameters;
+    return parameters && (parameters->Flags & RTL_USER_PROC_CALLBACK_EXCEPTIONS);
+}
+
+/*
+ * what a kernel callback leaves unhandled goes to the unhandled exception filter, and unless that continues the
+ * execution, ends the process with STATUS_FATAL_USER_CALLBACK_EXCEPTION, as windows does.
+ */
+LONG NTAPI LdrpLogFatalUserCallbackException(PEXCEPTION_RECORD record, PCONTEXT context)
+{
+    EXCEPTION_POINTERS info = {record, context};
+    LONG result = g_unhandled_filter ? g_unhandled_filter(&info) : RtlUnhandledExceptionFilter2(&info, 0);
+    if (result == EXCEPTION_CONTINUE_EXECUTION)
+        return result;
+    EXCEPTION_RECORD fatal = {};
+    fatal.ExceptionCode = STATUS_FATAL_USER_CALLBACK_EXCEPTION;
+    fatal.ExceptionFlags = record->ExceptionFlags | EXCEPTION_NONCONTINUABLE;
+    fatal.ExceptionRecord = record;
+#if defined(__x86_64__)
+    fatal.ExceptionAddress = (PVOID)context->Rip;
+#elif defined(__i386__)
+    fatal.ExceptionAddress = (PVOID)context->Eip;
+#else
+    fatal.ExceptionAddress = (PVOID)context->Pc;
+#endif
+    RtlRaiseStatus(NtRaiseException(&fatal, context, FALSE));
+}
+
 void NTAPI KiUserExceptionDispatcherC(PEXCEPTION_RECORD record, PCONTEXT context)
 {
     NTSTATUS status;

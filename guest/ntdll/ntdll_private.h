@@ -36,6 +36,9 @@ PIMAGE_NT_HEADERS LdrpNtHeaders(PVOID base);
 BOOLEAN LdrpRequestX64Runtime(PCWSTR name);
 #endif
 void NTAPI KiUserExceptionDispatcherC(PEXCEPTION_RECORD record, PCONTEXT context);
+LONG NTAPI LdrpLogFatalUserCallbackException(PEXCEPTION_RECORD record, PCONTEXT context);
+BOOLEAN LdrpUserCallbackExceptions(void);
+LONG NTAPI RtlUnhandledExceptionFilter2(PEXCEPTION_POINTERS pointers, ULONG flags);
 extern void(NTAPI *LdrpWow64PrepareForException)(PEXCEPTION_RECORD record, PCONTEXT context);
 
 #endif

@@ -90,11 +90,19 @@ KiUserApcDispatcher:
     int3
     .seh_endproc
 
+/*
+ * above the stack pointer: the home slots, the arguments at 0x20 and a machine frame with the system call's rip and
+ * rsp. KiUserCallbackDispatcherHandler gets what is raised and not handled in the callback, and the unwinds through.
+ */
     .globl  KiUserCallbackDispatcher
     .p2align 4
+    .seh_proc KiUserCallbackDispatcher
+    .seh_pushframe
+    .seh_stackalloc 0x30
+    .seh_handler KiUserCallbackDispatcherHandler, @unwind, @except
+    .seh_endprologue
 KiUserCallbackDispatcher:
     /* PEB->KernelCallbackTable[api](arguments, length), then NtCallbackReturn. */
-    subq    $0x28, %rsp
     movq    %gs:0x60, %rax          /* TEB->ProcessEnvironmentBlock */
     movq    0x58(%rax), %rax        /* PEB->KernelCallbackTable */
     movl    %ecx, %ecx
@@ -102,11 +110,16 @@ KiUserCallbackDispatcher:
     movq    %rdx, %rcx
     movl    %r8d, %edx
     call    *%rax
+    .globl  KiUserCallbackDispatcherContinue
+KiUserCallbackDispatcherContinue:
     movl    %eax, %r8d              /* status */
     xorl    %ecx, %ecx
     xorl    %edx, %edx
     call    NtCallbackReturn
-    jmp     .
+    movl    %eax, %ecx
+    call    RtlRaiseStatus
+    int3
+    .seh_endproc
 
     .globl  LdrInitializeThunk
     .p2align 4

@@ -435,7 +435,7 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
     const UNWIND_INFO *info = (const UNWIND_INFO *)(base + function->UnwindData);
     ULONG64 offset = pc - base - function->BeginAddress;
     ULONG64 frame_base = 0;
-    BOOLEAN have_frame = FALSE;
+    BOOLEAN have_frame = FALSE, machine_frame = FALSE;
 
     /* the establisher frame is the stack pointer at entry, or the frame register. */
     if (info->FrameRegister) {
@@ -516,8 +516,8 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
                     c->Rsp += 8;
                 c->Rip = *(ULONG64 *)c->Rsp;
                 c->Rsp = *(ULONG64 *)(c->Rsp + 24);
-                *handler_data = nullptr;
-                return nullptr;
+                machine_frame = TRUE;
+                break;
             default: /* epilog descriptors and spare codes have nothing to undo. */
                 break;
             }
@@ -531,8 +531,11 @@ NTDLL_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base,
         offset = ~0ull; /* a chained parent's prolog ran completely. */
     }
 
-    c->Rip = *(ULONG64 *)c->Rsp;
-    c->Rsp += 8;
+    /* a machine frame gave the caller's rip and rsp, the frame still has its handler. */
+    if (!machine_frame) {
+        c->Rip = *(ULONG64 *)c->Rsp;
+        c->Rsp += 8;
+    }
 
     info = (const UNWIND_INFO *)(base + function->UnwindData);
     while (info->Flags & UNW_FLAG_CHAININFO) {
@@ -773,6 +776,27 @@ NTDLL_EXPORT void NTAPI RtlUnwind(PVOID target_frame, PVOID target_ip, PEXCEPTIO
 {
     CONTEXT context;
     RtlUnwindEx(target_frame, target_ip, record, value, &context, nullptr);
+}
+
+extern const char KiUserCallbackDispatcherContinue[];
+
+/*
+ * the handler of KiUserCallbackDispatcher. by default what the callback leaves is fatal. with the process flag, the
+ * callback is unwound and returns the code to the kernel, and an unwind that crosses it ends the callback there.
+ */
+EXCEPTION_DISPOSITION NTAPI KiUserCallbackDispatcherHandler(PEXCEPTION_RECORD record, PVOID frame, PCONTEXT context,
+                                                            PDISPATCHER_CONTEXT dispatcher)
+{
+    if (!LdrpUserCallbackExceptions()) {
+        LdrpLogFatalUserCallbackException(record, context);
+        return ExceptionContinueExecution;
+    }
+    if (!(record->ExceptionFlags & EXCEPTION_UNWIND))
+        RtlUnwindEx(frame, (PVOID)KiUserCallbackDispatcherContinue, record,
+                    (PVOID)(ULONG_PTR)(ULONG)record->ExceptionCode, context, nullptr);
+    if (!(record->ExceptionFlags & EXCEPTION_TARGET_UNWIND))
+        RtlRaiseStatus(NtCallbackReturn(nullptr, 0, record->ExceptionCode));
+    return ExceptionContinueSearch;
 }
 
 /* ------------------------------------------------------------ c language handler */
