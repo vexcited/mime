@@ -148,7 +148,8 @@ NTSTATUS NTAPI NtGdiMimeVkKick(void)
     W32VK *v = process_vk();
     if (!v)
         return STATUS_INVALID_DEVICE_STATE;
-    HalMimeHypercall(MIME_HC_VK_KICK, v->Connection, 0, 0, 0, 0, 0, nullptr);
+    /* the host only wakes its thread for the connection, which needs nothing the kernel lock guards. */
+    HalMimeHypercallUnlocked(MIME_HC_VK_KICK, v->Connection, 0, 0, 0, 0, 0, nullptr);
     return STATUS_SUCCESS;
 }
 
