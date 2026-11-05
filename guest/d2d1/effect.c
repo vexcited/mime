@@ -537,7 +537,7 @@ static HRESULT effect_bounds(D2dRt *rt, D2dEffect *e, IRect *b, int depth)
 
 static HRESULT image_bounds(D2dRt *rt, ID2D1Image *image, IRect *b, int depth)
 {
-    if (depth > 16)
+    if (depth > D2D_MAX_DEPTH)
         return D2DERR_CYCLIC_GRAPH;
     D2dBitmap *bm = D2dBitmapOf(image);
     if (bm) {
@@ -646,7 +646,7 @@ static HRESULT cl_get(D2dRt *rt, D2dCommandList *c, IRect want, D2dImageData *ou
 static HRESULT image_get(D2dRt *rt, ID2D1Image *image, IRect want, D2dImageData *out, int depth)
 {
     memset(out, 0, sizeof(*out));
-    if (depth > 16)
+    if (depth > D2D_MAX_DEPTH)
         return D2DERR_CYCLIC_GRAPH;
     D2dBitmap *bm = D2dBitmapOf(image);
     if (bm)

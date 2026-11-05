@@ -2984,7 +2984,7 @@ static void eval_end(Eval *ev);
 
 static HRESULT eval_begin(D2dRt *rt, CEffect *e, int depth, Eval *ev)
 {
-    if (depth > 16)
+    if (depth > D2D_MAX_DEPTH)
         return D2DERR_CYCLIC_GRAPH;
     HRESULT hr = custom_prepare(rt, e);
     if (FAILED(hr))

@@ -605,6 +605,8 @@ typedef struct D2dIRect {
     int x0, y0, x1, y1;
 } D2dIRect;
 #define D2D_INF_EXTENT (1 << 24)
+/* how deep images may nest, as effects inside the transform graphs of effects; paint.net goes past 16. */
+#define D2D_MAX_DEPTH 64
 /* the pixels of an image in device pixels, relative to the origin of the image space. */
 typedef struct D2dImageData {
     D2dSurface surface;
