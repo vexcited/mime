@@ -12,6 +12,7 @@
 #include <dispatch/dispatch.h>
 #include <objc/message.h>
 #include <objc/runtime.h>
+#include <ctype.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -137,6 +138,10 @@ typedef struct Program {
     dispatch_semaphore_t ready;
     id fn[MIME_GPU_STAGES];
     bool compiled;
+    char *fs_msl;    /* the fragment source, for the logic operation variants. */
+    char fs_entry[64];
+    id logic_fn[16]; /* by operation counted from GL_CLEAR, made on first use. */
+    bool logic_failed[16];
 } Program;
 
 typedef struct Surface {
@@ -586,6 +591,10 @@ static void compile_job(void *arg)
             ok = false;
         }
     }
+    if (ok) {
+        j->p->fs_msl = strdup(r.msl[1]);
+        snprintf(j->p->fs_entry, sizeof(j->p->fs_entry), "%s", r.entry[1]);
+    }
     j->p->compiled = ok;
     /* the info goes to the guest last: a nonzero size tells it the program is done. */
     uint8_t *dst = heap_ptr(j->c, &j->result, j->capacity);
@@ -616,6 +625,16 @@ static void compile_job(void *arg)
     free(j);
 }
 
+static void program_free(Program *p)
+{
+    release(p->fn[0]);
+    release(p->fn[1]);
+    for (int i = 0; i < 16; i++)
+        release(p->logic_fn[i]);
+    free(p->fs_msl);
+    free(p);
+}
+
 static void program_create(Channel *c, const MimeGpuProgramCreate *pc)
 {
     uint64_t body = pc->cmd.size - sizeof(*pc);
@@ -626,9 +645,7 @@ static void program_create(Channel *c, const MimeGpuProgramCreate *pc)
     Program **slotp = SLOT(c, programs, pc->id);
     if (*slotp) {
         dispatch_semaphore_wait((*slotp)->ready, DISPATCH_TIME_FOREVER);
-        release((*slotp)->fn[0]);
-        release((*slotp)->fn[1]);
-        free(*slotp);
+        program_free(*slotp);
     }
     Program *p = calloc(1, sizeof(Program));
     p->ready = dispatch_semaphore_create(0);
@@ -666,9 +683,7 @@ static void program_destroy(Channel *c, uint32_t id_)
         return;
     Program *p = c->programs[id_];
     dispatch_semaphore_wait(p->ready, DISPATCH_TIME_FOREVER);
-    release(p->fn[0]);
-    release(p->fn[1]);
-    free(p);
+    program_free(p);
     c->programs[id_] = nullptr;
 }
 
@@ -689,6 +704,106 @@ static void set_color_target(id att, const MimeGpuColorTarget *t)
     }
 }
 
+/*
+ * metal has no logic operation. apple gpus read the attachment in the fragment shader, so a variant of the program's
+ * fragment function reads the first color target and applies the operation to its 8 bit values, as gl does to an 8 bit
+ * unorm buffer, which is what the guest's framebuffers are. the order is gl's, from GL_CLEAR.
+ */
+static const char *const g_logic_expr[16] = {
+    "0u",     "s & d",     "s & ~d",    "s",      "~s & d",  "d",    "s ^ d",   "s | d",
+    "~(s | d)", "~(s ^ d)", "~d",       "s | ~d", "~s",      "~s | d", "~(s & d)", "255u",
+};
+
+static bool logic_format(uint32_t format)
+{
+    /* r8, rg8, rgba8 and bgra8 unorm, and their srgb forms. */
+    return format == 10 || format == 11 || format == 30 || format == 31 || format == 70 || format == 71 ||
+           format == 80 || format == 81;
+}
+
+static char *logic_source(const char *msl, const char *entry, int op)
+{
+    const char *color = strstr(msl, " [[color(0)]]");
+    const char *fragment = strstr(msl, "fragment ");
+    if (!color || !fragment)
+        return nullptr;
+    const char *name_end = color, *name = color;
+    while (name > msl && (isalnum((unsigned char)name[-1]) || name[-1] == '_'))
+        name--;
+    if (name == name_end)
+        return nullptr;
+    char member[128];
+    snprintf(member, sizeof(member), "%.*s", (int)(name_end - name), name);
+    char signature[96];
+    snprintf(signature, sizeof(signature), " %s(", entry);
+    const char *open = strstr(fragment, signature);
+    if (!open)
+        return nullptr;
+    open += strlen(signature);
+    const char *body = strchr(open, '{');
+    if (!body)
+        return nullptr;
+    char helper[512];
+    snprintf(helper, sizeof(helper),
+             "static inline float4 mime_logic(float4 src, float4 dst)\n"
+             "{\n"
+             "    uint4 s = uint4(rint(saturate(src) * 255.0)), d = uint4(rint(saturate(dst) * 255.0));\n"
+             "    return float4((%s) & 255u) / 255.0;\n"
+             "}\n\n",
+             g_logic_expr[op]);
+    char ret[256];
+    snprintf(ret, sizeof(ret), "{ out.%s = decltype(out.%s)(mime_logic(float4(out.%s), mime_dst)); return out; }",
+             member, member, member);
+    const char *param = *open == ')' ? "float4 mime_dst [[color(0)]]" : "float4 mime_dst [[color(0)]], ";
+    size_t size = strlen(msl) + strlen(helper) + strlen(param) + 1;
+    for (const char *r = strstr(body, "return out;"); r; r = strstr(r + 1, "return out;"))
+        size += strlen(ret);
+    char *out = malloc(size), *o = out;
+    if (!out)
+        return nullptr;
+    size_t head = (size_t)(fragment - msl);
+    memcpy(o, msl, head), o += head;
+    o = stpcpy(o, helper);
+    memcpy(o, fragment, (size_t)(open - fragment)), o += open - fragment;
+    o = stpcpy(o, param);
+    for (const char *from = open;;) {
+        const char *r = strstr(from, "return out;");
+        if (!r || r < body) {
+            if (r && r < body) {
+                memcpy(o, from, (size_t)(r + 11 - from)), o += r + 11 - from;
+                from = r + 11;
+                continue;
+            }
+            o = stpcpy(o, from);
+            break;
+        }
+        memcpy(o, from, (size_t)(r - from)), o += r - from;
+        o = stpcpy(o, ret);
+        from = r + 11;
+    }
+    return out;
+}
+
+/* the program's fragment function with the logic operation, or nil when the target or the source does not allow it. */
+static id logic_function(Program *p, uint8_t logic, uint32_t format)
+{
+    int op = logic - 1;
+    if (op < 0 || op >= 16 || !p->fs_msl || !logic_format(format) || p->logic_failed[op])
+        return nil;
+    if (p->logic_fn[op])
+        return p->logic_fn[op];
+    char *source = logic_source(p->fs_msl, p->fs_entry, op);
+    char *error = nullptr;
+    p->logic_fn[op] = source ? make_function(source, p->fs_entry, &error) : nil;
+    if (!p->logic_fn[op]) {
+        mime_warn("gpu: no logic operation %d for a program: %s", op, error ? error : "its source has no color output");
+        p->logic_failed[op] = true;
+    }
+    free(error);
+    free(source);
+    return p->logic_fn[op];
+}
+
 static void pipeline_create(Channel *c, const MimeGpuPipelineCreate *pc)
 {
     id *slotp = SLOT(c, pipelines, pc->id);
@@ -700,7 +815,14 @@ static void pipeline_create(Channel *c, const MimeGpuPipelineCreate *pc)
         return;
     id desc = MSG(F_id, MSG(F_id, CLS("MTLRenderPipelineDescriptor"), "alloc"), "init");
     MSG(F_v_id, desc, "setVertexFunction:", p->fn[0]);
-    MSG(F_v_id, desc, "setFragmentFunction:", p->fn[1]);
+    id fragment = p->fn[1];
+    /* copy is what drawing does anyway. */
+    if (d->color[0].logic_op && d->color[0].logic_op != 1 + 3) {
+        id logic = logic_function(p, d->color[0].logic_op, d->color[0].format);
+        if (logic)
+            fragment = logic;
+    }
+    MSG(F_v_id, desc, "setFragmentFunction:", fragment);
     id vd = MSG(F_id, CLS("MTLVertexDescriptor"), "vertexDescriptor");
     id attrs = MSG(F_id, vd, "attributes"), layouts = MSG(F_id, vd, "layouts");
     for (int i = 0; i < MIME_GPU_MAX_ATTRIBS; i++) {
