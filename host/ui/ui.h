@@ -59,7 +59,7 @@ void mime_ui_beep(uint32_t type);
  */
 void *mime_ui_metal_layer_create(void *device, bool flipped);
 void mime_ui_metal_layer_place(void *layer, uint32_t window_id, int32_t x, int32_t y, uint32_t width,
-                               uint32_t height, bool sync);
+                               uint32_t height, bool sync, uint32_t order);
 void mime_ui_metal_layer_destroy(void *layer);
 
 /* clipboard text in UTF-16 with windows line endings. */

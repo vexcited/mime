@@ -952,7 +952,7 @@ static void surface_config(Channel *c, const MimeGpuSurfaceConfig *sc)
         s->layer = mime_ui_metal_layer_create(g_device, true);
     s->window_id = sc->window_id;
     s->sync = sc->sync != 0;
-    mime_ui_metal_layer_place(s->layer, sc->window_id, sc->x, sc->y, w, h, s->sync);
+    mime_ui_metal_layer_place(s->layer, sc->window_id, sc->x, sc->y, w, h, s->sync, sc->order);
 }
 
 static void surface_destroy(Channel *c, uint32_t id_)
