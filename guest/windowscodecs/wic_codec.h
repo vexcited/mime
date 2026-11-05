@@ -41,6 +41,12 @@ typedef struct WicCodec {
 
 const WicCodec *WicFindDecoder(const GUID *clsid);
 const WicCodec *WicFindEncoder(const GUID *clsid);
+/* the built in components answer to microsoft's vendor and to the vendor of what windows ships built in. */
+static inline BOOL WicVendorOurs(const GUID *vendor)
+{
+    return IsEqualGUID(vendor, &GUID_VendorMicrosoft) || IsEqualGUID(vendor, &GUID_VendorMicrosoftBuiltIn);
+}
+
 const WicCodec *WicDecoderByContainer(const GUID *container, const GUID *vendor);
 const WicCodec *WicEncoderByContainer(const GUID *container, const GUID *vendor);
 UINT WicDecoderCount(void);

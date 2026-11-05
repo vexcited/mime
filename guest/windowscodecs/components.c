@@ -29,7 +29,7 @@ const WicCodec *WicFindEncoder(const GUID *clsid)
 const WicCodec *WicDecoderByContainer(const GUID *container, const GUID *vendor)
 {
     const WicCodec *found = nullptr;
-    if (vendor && !IsEqualGUID(vendor, &GUID_VendorMicrosoft))
+    if (vendor && !WicVendorOurs(vendor))
         return nullptr;
     for (UINT i = 0; i < WIC_ARRAY_SIZE(g_decoders); i++) {
         if (IsEqualGUID(g_decoders[i].container, container) && (!found || g_decoders[i].versions >= found->versions))
@@ -41,7 +41,7 @@ const WicCodec *WicDecoderByContainer(const GUID *container, const GUID *vendor)
 
 const WicCodec *WicEncoderByContainer(const GUID *container, const GUID *vendor)
 {
-    if (vendor && !IsEqualGUID(vendor, &GUID_VendorMicrosoft))
+    if (vendor && !WicVendorOurs(vendor))
         return nullptr;
     for (UINT i = 0; i < WIC_ARRAY_SIZE(g_encoders); i++) {
         if (IsEqualGUID(g_encoders[i].container, container))

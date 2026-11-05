@@ -661,7 +661,7 @@ HRESULT WicDecoderCreate(const WicCodec *codec, IWICBitmapDecoder **out)
 HRESULT WicDecoderFromStream(IStream *stream, const GUID *vendor, WICDecodeOptions options, IWICBitmapDecoder **out)
 {
     *out = nullptr;
-    if (vendor && !IsEqualGUID(vendor, &GUID_VendorMicrosoft) && !IsEqualGUID(vendor, &GUID_NULL))
+    if (vendor && !WicVendorOurs(vendor) && !IsEqualGUID(vendor, &GUID_NULL))
         return WINCODEC_ERR_COMPONENTNOTFOUND;
     LARGE_INTEGER zero;
     ULARGE_INTEGER start;

@@ -15,7 +15,7 @@ static BOOL known_format(const GUID *f) { return WicFormatShortName(f) != nullpt
 
 HRESULT WicMetaCreateWriter(const GUID *format, const GUID *vendor, DWORD options, IWICMetadataWriter **writer)
 {
-    if (vendor && !IsEqualGUID(vendor, &GUID_VendorMicrosoft) && !IsEqualGUID(vendor, &GUID_NULL))
+    if (vendor && !WicVendorOurs(vendor) && !IsEqualGUID(vendor, &GUID_NULL))
         return WINCODEC_ERR_COMPONENTNOTFOUND;
     if (!known_format(format) && (options & WICMetadataCreationFailUnknown))
         return WINCODEC_ERR_COMPONENTNOTFOUND;
@@ -27,7 +27,7 @@ HRESULT WicMetaCreateWriter(const GUID *format, const GUID *vendor, DWORD option
 HRESULT WicMetaCreateReader(const GUID *format, const GUID *vendor, DWORD options, IStream *stream,
                             IWICMetadataReader **reader)
 {
-    if (vendor && !IsEqualGUID(vendor, &GUID_VendorMicrosoft) && !IsEqualGUID(vendor, &GUID_NULL))
+    if (vendor && !WicVendorOurs(vendor) && !IsEqualGUID(vendor, &GUID_NULL))
         return WINCODEC_ERR_COMPONENTNOTFOUND;
     BOOL known = known_format(format);
     if (!known && (options & WICMetadataCreationFailUnknown))
@@ -94,7 +94,7 @@ HRESULT WicMetaCreateReaderFromContainer(const GUID *container, const GUID *vend
 
 HRESULT WicMetaWriterFromReader(IWICMetadataReader *reader, const GUID *vendor, IWICMetadataWriter **writer)
 {
-    if (vendor && !IsEqualGUID(vendor, &GUID_VendorMicrosoft) && !IsEqualGUID(vendor, &GUID_NULL))
+    if (vendor && !WicVendorOurs(vendor) && !IsEqualGUID(vendor, &GUID_NULL))
         return WINCODEC_ERR_COMPONENTNOTFOUND;
     return WicMetaCopyToWriter(reader, writer);
 }
