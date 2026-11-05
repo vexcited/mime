@@ -773,6 +773,8 @@ SHSTDAPI HRESULT WINAPI SHCreateItemInKnownFolder(REFKNOWNFOLDERID folder, DWORD
                                                   void **object);
 SHSTDAPI HRESULT WINAPI SHCreateItemWithParent(PCIDLIST_ABSOLUTE parent_list, void *parent_folder,
                                                PCUITEMID_CHILD child, REFIID riid, void **object);
+SHSTDAPI HRESULT WINAPI SHCreateShellItem(PCIDLIST_ABSOLUTE parent_list, void *parent_folder, PCUITEMID_CHILD child,
+                                          IShellItem **item);
 SHSTDAPI HRESULT WINAPI SHGetKnownFolderItem(REFKNOWNFOLDERID id, DWORD flags, HANDLE token, REFIID riid,
                                              void **object);
 

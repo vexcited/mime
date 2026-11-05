@@ -705,6 +705,27 @@ SHSTDAPI HRESULT WINAPI SHCreateItemWithParent(PCIDLIST_ABSOLUTE parent_list, vo
     return pidl ? create_item(pidl, riid, object) : E_OUTOFMEMORY;
 }
 
+/* the item of a child of a parent list or folder, or of an absolute list when there is no parent. */
+SHSTDAPI HRESULT WINAPI SHCreateShellItem(PCIDLIST_ABSOLUTE parent_list, void *parent_folder, PCUITEMID_CHILD child,
+                                          IShellItem **item)
+{
+    if (!item)
+        return E_INVALIDARG;
+    *item = nullptr;
+    if (!child)
+        return E_INVALIDARG;
+    PIDLIST_ABSOLUTE folder_list = nullptr;
+    if (!parent_list && parent_folder) {
+        HRESULT hr = SHGetIDListFromObject((IUnknown *)parent_folder, &folder_list);
+        if (FAILED(hr))
+            return hr;
+        parent_list = folder_list;
+    }
+    PIDLIST_ABSOLUTE pidl = parent_list ? ILCombine(parent_list, child) : ILClone((PCUIDLIST_RELATIVE)child);
+    ILFree(folder_list);
+    return pidl ? create_item(pidl, &IID_IShellItem, (void **)item) : E_OUTOFMEMORY;
+}
+
 SHSTDAPI HRESULT WINAPI SHGetIDListFromObject(IUnknown *object, PIDLIST_ABSOLUTE *pidl)
 {
     if (!pidl)
@@ -729,6 +750,13 @@ SHSTDAPI HRESULT WINAPI SHGetIDListFromObject(IUnknown *object, PIDLIST_ABSOLUTE
             ShFree(path);
         }
         item->lpVtbl->Release(item);
+        return hr;
+    }
+    IPersistFolder2 *folder;
+    hr = object->lpVtbl->QueryInterface(object, &IID_IPersistFolder2, (void **)&folder);
+    if (SUCCEEDED(hr)) {
+        hr = folder->lpVtbl->GetCurFolder(folder, pidl);
+        folder->lpVtbl->Release(folder);
         return hr;
     }
     return E_NOINTERFACE;
