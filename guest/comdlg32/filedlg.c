@@ -273,7 +273,7 @@ HRESULT FdSetTitle(FILEDLG *dialog, LPCWSTR text)
 {
     HRESULT hr = set_text(&dialog->Title, text);
     if (SUCCEEDED(hr) && dialog->Hwnd)
-        SetWindowTextW(dialog->Hwnd, dialog->Title ? dialog->Title : L"");
+        SetWindowTextW(dialog->Hwnd, dialog->Title && dialog->Title[0] ? dialog->Title : (dialog->Save ? L"Save As" : L"Open"));
     return hr;
 }
 
@@ -3073,7 +3073,8 @@ static INT_PTR CALLBACK dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
         dialog->UnitX = unit.right ? unit.right : 6;
         dialog->UnitY = unit.bottom ? unit.bottom : 13;
         dialog->Font = (HFONT)SendMessageW(hwnd, WM_GETFONT, 0, 0);
-        SetWindowTextW(hwnd, dialog->Title ? dialog->Title : (dialog->Save ? L"Save As" : L"Open"));
+        /* an empty title, as Paint.NET sets it, leaves the default one. */
+        SetWindowTextW(hwnd, dialog->Title && dialog->Title[0] ? dialog->Title : (dialog->Save ? L"Save As" : L"Open"));
         load_images(dialog);
         make_glyphs(dialog);
         create_controls(dialog);
