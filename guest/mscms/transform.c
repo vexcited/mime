@@ -557,6 +557,11 @@ static uint32_t color_channels(DWORD type)
 
 static BOOL colors(HANDLE handle, COLOR *in, DWORD count, DWORD in_type, COLOR *out, DWORD out_type, BYTE *result)
 {
+    /* the types are checked before the handle is read, a handle that is not one is only safe with a bad type. */
+    if (in_type - 1 > COLOR_NAMED - 1 || (!result && out_type - 1 > COLOR_NAMED - 1)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
     Transform *t = TransformOf(handle);
     if (!t || !in || (!out && !result)) {
         SetLastError(ERROR_INVALID_PARAMETER);
