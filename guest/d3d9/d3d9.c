@@ -30,19 +30,24 @@ IDXGIFactory1 *D9Factory(void)
     return g_factory;
 }
 
-/* walks every adapter's outputs in turn. an adapter without outputs counts as one. */
+/*
+ * walks every adapter's outputs in turn. like windows, which makes an adapter of each display device attached to the
+ * desktop, a gpu without outputs and the basic render driver are none: wpf draws nothing when two adapters stand for
+ * one monitor. only when no adapter has an output does the first gpu count as one, without an output.
+ */
 HRESULT D9GetOutput(UINT index, IDXGIAdapter1 **out_adapter, IDXGIOutput **out_output)
 {
     IDXGIFactory1 *factory = D9Factory();
     if (!factory)
         return D3DERR_NOTAVAILABLE;
-    IDXGIAdapter1 *adapter;
+    IDXGIAdapter1 *adapter, *first = nullptr;
     UINT n = 0;
     for (UINT a = 0; SUCCEEDED(factory->lpVtbl->EnumAdapters1(factory, a, &adapter)); a++) {
         IDXGIOutput *output;
-        UINT o = 0;
-        for (; SUCCEEDED(adapter->lpVtbl->EnumOutputs(adapter, o, &output)); o++) {
+        for (UINT o = 0; SUCCEEDED(adapter->lpVtbl->EnumOutputs(adapter, o, &output)); o++) {
             if (n++ == index) {
+                if (first)
+                    first->lpVtbl->Release(first);
                 *out_adapter = adapter;
                 if (out_output)
                     *out_output = output;
@@ -52,14 +57,20 @@ HRESULT D9GetOutput(UINT index, IDXGIAdapter1 **out_adapter, IDXGIOutput **out_o
             }
             output->lpVtbl->Release(output);
         }
-        if (!o && n++ == index) {
-            *out_adapter = adapter;
-            if (out_output)
-                *out_output = nullptr;
-            return D3D_OK;
-        }
-        adapter->lpVtbl->Release(adapter);
+        DXGI_ADAPTER_DESC1 desc = {};
+        if (!first && SUCCEEDED(adapter->lpVtbl->GetDesc1(adapter, &desc)) && !(desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE))
+            first = adapter;
+        else
+            adapter->lpVtbl->Release(adapter);
     }
+    if (!n && first && !index) {
+        *out_adapter = first;
+        if (out_output)
+            *out_output = nullptr;
+        return D3D_OK;
+    }
+    if (first)
+        first->lpVtbl->Release(first);
     return D3DERR_INVALIDCALL;
 }
 
