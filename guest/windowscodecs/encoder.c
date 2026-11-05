@@ -6,7 +6,7 @@
 #include "wic_meta.h"
 #include "meta_internal.h"
 
-#define MAX_OPTIONS 16
+#define MAX_OPTIONS 24
 #define MAX_PROFILES 8
 
 typedef struct WicEncoder WicEncoder;
@@ -639,7 +639,7 @@ static HRESULT STDMETHODCALLTYPE fenc_commit(IWICBitmapFrameEncode *This)
     return hr;
 }
 
-/* a new tiff frame has its root ifd and a jpeg one its jfif block, as on windows. */
+/* a new tiff or jpeg xr frame has its root ifd and a jpeg one its jfif block, as on windows. */
 static HRESULT fenc_blocks(WicFrameEncoder *f)
 {
     if (f->blocks)
@@ -648,7 +648,8 @@ static HRESULT fenc_blocks(WicFrameEncoder *f)
     HRESULT hr = WicBlockWriterCreate(container, &f->blocks);
     if (FAILED(hr))
         return hr;
-    const GUID *root = IsEqualGUID(container, &GUID_ContainerFormatTiff)   ? &GUID_MetadataFormatIfd
+    BOOL ifd = IsEqualGUID(container, &GUID_ContainerFormatTiff) || IsEqualGUID(container, &GUID_ContainerFormatWmp);
+    const GUID *root = ifd                                                 ? &GUID_MetadataFormatIfd
                        : IsEqualGUID(container, &GUID_ContainerFormatJpeg) ? &GUID_MetadataFormatApp0
                                                                            : nullptr;
     if (!root)

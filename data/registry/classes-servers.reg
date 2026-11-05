@@ -755,6 +755,16 @@
 @=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
 "ThreadingModel"="Both"
 
+; WICWmpDecoder
+[HKCR\CLSID\{A26CEC36-234C-4950-AE16-E34AACE71D0D}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
+; WICWmpEncoder
+[HKCR\CLSID\{AC4CE3CB-E1C1-44CD-8215-5A1665509EC2}\InprocServer32]
+@=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
+"ThreadingModel"="Both"
+
 ; WICUnknownMetadataReader
 [HKCR\CLSID\{699745C2-5066-4B82-A8E3-D40478DBEC8C}\InprocServer32]
 @=expand:"%SystemRoot%\\system32\\windowscodecs.dll"
