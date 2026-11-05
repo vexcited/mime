@@ -110,11 +110,12 @@ int mime_jxr_header(const uint8_t *data, size_t size, const MimeAllocator *alloc
 bool mime_jxr_layout(uint8_t layout, unsigned *bits, unsigned *channels, bool *alpha);
 
 /*
- * decodes into rows of stride bytes in layout. alpha, when not NULL, is a separate alpha codestream for a layout
- * with an alpha channel. a layout with alpha and no alpha plane gets opaque alpha.
+ * decodes into width by height pixels of layout, rows of stride bytes; the codestream must have that size. alpha,
+ * when not NULL, is a separate alpha codestream for a layout with an alpha channel. a layout with alpha and no alpha
+ * plane gets opaque alpha.
  */
 int mime_jxr_decode(const uint8_t *data, size_t size, const uint8_t *alpha, size_t alpha_size, uint8_t layout,
-                    const MimeAllocator *alloc, void *out, size_t stride);
+                    const MimeAllocator *alloc, uint32_t width, uint32_t height, void *out, size_t stride);
 
 typedef struct MimeJxrEncodeParams {
     uint32_t width, height;
@@ -132,7 +133,7 @@ typedef struct MimeJxrEncodeParams {
     bool hard_tiling;
     bool planar_alpha;     /* the alpha plane goes to its own codestream. */
     bool premultiplied;
-    uint16_t tile_cols;    /* 0 for one tile per 256 columns. */
+    uint16_t tile_cols;    /* 0 or 1 for a single tile, which is split when wider than 4096 pixels. */
     uint16_t tile_rows;
 } MimeJxrEncodeParams;
 

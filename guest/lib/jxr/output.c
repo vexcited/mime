@@ -344,15 +344,21 @@ done:
 }
 
 int mime_jxr_decode(const uint8_t *data, size_t size, const uint8_t *alpha, size_t alpha_size, uint8_t layout,
-                    const MimeAllocator *alloc, void *out, size_t stride)
+                    const MimeAllocator *alloc, uint32_t width, uint32_t height, void *out, size_t stride)
 {
     JxrLayout l;
     if (!jxr_find_layout(layout, &l))
         return MIME_JXR_ERR_UNSUPPORTED;
+    if (stride < ((size_t)width * l.bits + 7) / 8)
+        return MIME_JXR_ERR_PARAM;
     JxrImage *im, *aim = nullptr;
     int rc = jxr_image_decode(data, size, alloc, false, &im);
     if (rc)
         return rc;
+    if (im->width != width || im->height != height) {
+        jxr_image_free(im);
+        return MIME_JXR_ERR_FORMAT;
+    }
     if (!layout_matches(im, &l)) {
         jxr_image_free(im);
         return MIME_JXR_ERR_UNSUPPORTED;

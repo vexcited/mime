@@ -138,6 +138,8 @@ static int parse_plane_header(JxrImage *im, JxrPlane *p, JxrBits *b)
         p->len_mantissa = (int)jxr_get(b, 8);
         p->exp_bias = (int8_t)jxr_get(b, 8);
     }
+    if (p->shift_bits > 31 || p->len_mantissa > 23)
+        return MIME_JXR_ERR_UNSUPPORTED;
     jxr_memset(&p->qp, 0, sizeof(p->qp));
     p->qp.nlp = p->qp.nhp = 1;
     p->dc_uniform = jxr_get(b, 1);
@@ -158,6 +160,18 @@ static int parse_plane_header(JxrImage *im, JxrPlane *p, JxrBits *b)
     }
     jxr_align(b);
     return b->error ? MIME_JXR_ERR_FORMAT : MIME_JXR_OK;
+}
+
+bool jxr_image_fits(const JxrImage *im)
+{
+    size_t px = (size_t)im->ext_w * (size_t)im->ext_h, total = 0;
+    for (int k = 0; k < im->nplanes; k++) {
+        size_t n = (size_t)im->plane[k].ncomp + (jxr_chroma_sub(&im->plane[k]) ? 2 : 0);
+        if (px > JXR_MAX_SAMPLES / n)
+            return false;
+        total += px * n;
+    }
+    return total <= JXR_MAX_SAMPLES;
 }
 
 static int plane_alloc(JxrImage *im, JxrPlane *p)
@@ -387,16 +401,20 @@ static void tile_qp_hp(JxrPlane *p, JxrBits *b)
 
 static void mb_lp_index(JxrPlane *p, JxrBits *b, const JxrMbPos *pos)
 {
+    p->lp_qp[pos->mb] = 0;
     if (p->bands != BANDS_DCONLY && p->qp.nlp > 1 && !p->use_dc_qp)
         p->lp_qp[pos->mb] = (uint8_t)jxr_qp_index(b, p->qp.nlp, 0);
-    if (p->use_lp_qp)
-        p->hp_qp[pos->mb] = p->lp_qp[pos->mb];
 }
 
+/* in frequency mode the lp index is known before the hp tile header says whether hp shares it. */
 static void mb_hp_index(JxrPlane *p, JxrBits *b, const JxrMbPos *pos)
 {
-    if (p->bands != BANDS_DCONLY && p->bands != BANDS_NOHP && p->qp.nhp > 1 && !p->use_lp_qp)
+    if (p->use_lp_qp)
+        p->hp_qp[pos->mb] = p->lp_qp[pos->mb];
+    else if (p->bands != BANDS_DCONLY && p->bands != BANDS_NOHP && p->qp.nhp > 1)
         p->hp_qp[pos->mb] = (uint8_t)jxr_qp_index(b, p->qp.nhp, 0);
+    else
+        p->hp_qp[pos->mb] = 0;
 }
 
 static void mb_pos(const JxrImage *im, int tx, int ty, int mbx, int mby, JxrMbPos *pos)
@@ -576,6 +594,11 @@ int jxr_image_decode(const uint8_t *data, size_t size, const MimeAllocator *allo
     if (header_only) {
         *out = im;
         return MIME_JXR_OK;
+    }
+    /* every macroblock costs at least a bit, and the planes must fit. */
+    if ((size_t)im->mbw * (size_t)im->mbh > size * 8 || !jxr_image_fits(im)) {
+        rc = MIME_JXR_ERR_UNSUPPORTED;
+        goto fail;
     }
     int tiles = im->ntx * im->nty;
     int per_tile = im->frequency ? 4 - im->plane[0].bands : 1;

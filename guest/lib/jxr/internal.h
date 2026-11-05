@@ -5,6 +5,8 @@
 
 #define JXR_MAX_COMP 16
 #define JXR_MAX_TILES 4096
+/* int32 samples of all planes of one image, so a forged header can't make us allocate more than a gigabyte. */
+#define JXR_MAX_SAMPLES ((size_t)1 << 28)
 
 #define jxr_memset __builtin_memset
 #define jxr_memcpy __builtin_memcpy
@@ -166,6 +168,8 @@ int jxr_hp_mode(const JxrPlane *p, const int32_t (*lp)[16]);
 void jxr_inverse(JxrImage *im, JxrPlane *p);
 void jxr_forward(JxrImage *im, JxrPlane *p);
 
+/* whether the planes of an image fit in JXR_MAX_SAMPLES, chroma counted at full size for the upsampling. */
+bool jxr_image_fits(const JxrImage *im);
 int jxr_image_decode(const uint8_t *data, size_t size, const MimeAllocator *alloc, bool header_only, JxrImage **out);
 void jxr_image_free(JxrImage *im);
 

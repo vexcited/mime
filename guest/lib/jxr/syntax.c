@@ -387,7 +387,7 @@ static int32_t refine_io(JxrBits *b, int32_t v, int m)
     }
     int32_t ref = (int32_t)jxr_get(b, m);
     if (v > 0)
-        return (v << m) + ref;
+        return (int32_t)((uint32_t)v << m) + ref;
     if (v < 0)
         return (int32_t)((uint32_t)v << m) - ref;
     if (ref && jxr_get(b, 1))
@@ -1035,7 +1035,12 @@ int jxr_qp_index(JxrBits *b, int n, int v)
     static const int bits[17] = {0, 0, 1, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4};
     if (!jxr_io(b, 1, v != 0))
         return 0;
-    return (int)jxr_io(b, bits[n], (uint32_t)(v - 1)) + 1;
+    int q = (int)jxr_io(b, bits[n], (uint32_t)(v - 1)) + 1;
+    if (q >= n) {
+        b->error = true;
+        q = 0;
+    }
+    return q;
 }
 
 /* a dc, lp or hp qp set list, count sets of ncomp values. */

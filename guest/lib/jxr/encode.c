@@ -100,7 +100,7 @@ static int32_t pre_float32(uint32_t f, int len_mantissa, int exp_bias)
             e = 0;
     }
     m = ((m & 0x7fffff) + (1u << (23 - len_mantissa - 1))) >> (23 - len_mantissa);
-    int32_t x = (int32_t)(((uint32_t)e << len_mantissa) | m);
+    int32_t x = (int32_t)(((uint32_t)e << len_mantissa) + m);
     return s ? -x : x;
 }
 
@@ -765,8 +765,8 @@ int mime_jxr_encode(const MimeJxrEncodeParams *e, const MimeAllocator *alloc, ui
     }
     if ((cf == MIME_JXR_CF_YUV420 || cf == MIME_JXR_CF_YUV422) && im->overlap == 2 && im->mbw < 2)
         im->overlap = 1;
-    im->ntx = tile_count(e->tile_cols ? e->tile_cols : (int)((e->width - 1) >> 8) + 1, im->mbw);
-    im->nty = tile_count(e->tile_rows ? e->tile_rows : (int)((e->height - 1) >> 8) + 1, im->mbh);
+    im->ntx = tile_count(e->tile_cols, im->mbw);
+    im->nty = tile_count(e->tile_rows, im->mbh);
     split(im->tile_x, im->ntx, im->mbw);
     split(im->tile_y, im->nty, im->mbh);
     im->tiling = im->ntx > 1 || im->nty > 1;
@@ -798,7 +798,10 @@ int mime_jxr_encode(const MimeJxrEncodeParams *e, const MimeAllocator *alloc, ui
     ap->len_mantissa = p->len_mantissa;
     ap->exp_bias = p->exp_bias;
     choose_qp(ap, MIME_JXR_CF_YONLY, e->alpha_quality);
-    int rc = plane_setup(im, p);
+    im->nplanes = l.alpha ? 2 : 1;
+    bool fits = jxr_image_fits(im);
+    im->nplanes = im->alpha ? 2 : 1;
+    int rc = fits ? plane_setup(im, p) : MIME_JXR_ERR_UNSUPPORTED;
     if (!rc && l.alpha)
         rc = plane_setup(im, ap);
     if (!rc)
