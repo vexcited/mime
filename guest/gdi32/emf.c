@@ -174,11 +174,11 @@ void *EmfRecordAlloc(EMF_DC *emf, DWORD type, DWORD size)
     return r;
 }
 
-/* kept since the reference device may go away first. */
+/* kept since the reference device may go away first. a printer answers in user mode, not through the kernel. */
 static void snapshot_caps(EMF_DC *emf, HDC ref)
 {
     for (int i = 0; i < EMF_CAPS; i++)
-        emf->Caps[i] = NtGdiGetDeviceCaps(ref, i);
+        emf->Caps[i] = GetDeviceCaps(ref, i);
 }
 
 EMF_DC *EmfCreateDC(HDC ref, LPCWSTR file, const RECT *frame, LPCWSTR description, UINT desc_chars)
