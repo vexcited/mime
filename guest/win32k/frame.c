@@ -370,7 +370,9 @@ static const MimeAllocator g_frame_alloc = {frame_alloc, frame_free, nullptr};
 
 /* the classes of the style the frame and the menus read, light and dark. */
 enum { CLASS_WINDOW, CLASS_WINDOW_DARK, CLASS_MENU, CLASS_MENU_DARK, CLASS_COUNT };
-static const char *const g_class_names[CLASS_COUNT] = {"Window", "DarkMode::Window", "Menu", "DarkMode::Menu"};
+/* the dark classes are named DarkMode::Window and DarkMode::Menu, the part before :: being the app. */
+static const char *const g_class_apps[CLASS_COUNT] = {nullptr, "DarkMode", nullptr, "DarkMode"};
+static const char *const g_class_names[CLASS_COUNT] = {"Window", "Window", "Menu", "Menu"};
 
 /* the coverage of a glyph image, to be tinted when drawn. */
 typedef struct GLYPH_MASK {
@@ -435,7 +437,7 @@ static BOOLEAN load_theme(void)
         return FALSE;
     }
     for (int i = 0; i < CLASS_COUNT; i++)
-        g_theme.Class[i] = mime_msstyles_find_class(&g_theme.Theme, nullptr, g_class_names[i]);
+        g_theme.Class[i] = mime_msstyles_find_class(&g_theme.Theme, g_class_apps[i], g_class_names[i]);
     /* a style without dark classes shows the light ones. */
     if (g_theme.Class[CLASS_WINDOW_DARK] < 0)
         g_theme.Class[CLASS_WINDOW_DARK] = g_theme.Class[CLASS_WINDOW];
