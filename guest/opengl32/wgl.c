@@ -116,6 +116,32 @@ static int attrib_of(int format, int attrib, BOOL *ok)
         return p.cAlphaShift;
     case WGL_ACCUM_BITS_ARB:
         return p.cAccumBits;
+    case WGL_ACCUM_RED_BITS_ARB:
+        return p.cAccumRedBits;
+    case WGL_ACCUM_GREEN_BITS_ARB:
+        return p.cAccumGreenBits;
+    case WGL_ACCUM_BLUE_BITS_ARB:
+        return p.cAccumBlueBits;
+    case WGL_ACCUM_ALPHA_BITS_ARB:
+        return p.cAccumAlphaBits;
+    case WGL_NEED_PALETTE_ARB:
+        return !!(p.dwFlags & PFD_NEED_PALETTE);
+    case WGL_NEED_SYSTEM_PALETTE_ARB:
+        return !!(p.dwFlags & PFD_NEED_SYSTEM_PALETTE);
+    case WGL_SWAP_LAYER_BUFFERS_ARB:
+        return !!(p.dwFlags & PFD_SWAP_LAYER_BUFFERS);
+    /* the extension says the main plane always shares them, and is never transparent. */
+    case WGL_SHARE_DEPTH_ARB:
+    case WGL_SHARE_STENCIL_ARB:
+    case WGL_SHARE_ACCUM_ARB:
+        return 1;
+    case WGL_TRANSPARENT_ARB:
+    case WGL_TRANSPARENT_RED_VALUE_ARB:
+    case WGL_TRANSPARENT_GREEN_VALUE_ARB:
+    case WGL_TRANSPARENT_BLUE_VALUE_ARB:
+    case WGL_TRANSPARENT_ALPHA_VALUE_ARB:
+    case WGL_TRANSPARENT_INDEX_VALUE_ARB:
+        return 0;
     case WGL_DEPTH_BITS_ARB:
         return p.cDepthBits;
     case WGL_STENCIL_BITS_ARB:
