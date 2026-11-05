@@ -567,6 +567,9 @@ static inline GlContext *gl_current(void)
 }
 
 void gl_error(GlContext *ctx, GLenum error);
+const char *gl_extension_string(void); /* extensions.c: the space separated list. */
+GLuint gl_extension_count(void);
+const char *gl_extension_at(GLuint index);
 GLfloat gl_point_size(const GlContext *ctx);
 void gl_context_init(GlContext *ctx);
 void gl_queries_destroy(GlContext *ctx);

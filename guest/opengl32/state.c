@@ -7,39 +7,6 @@
 
 static int hint_index(GLenum target);
 
-static const char g_extensions[] =
-    "GL_ARB_framebuffer_object GL_EXT_framebuffer_object GL_EXT_framebuffer_blit GL_EXT_framebuffer_multisample "
-    "GL_EXT_packed_depth_stencil GL_ARB_vertex_array_object GL_ARB_vertex_buffer_object GL_ARB_pixel_buffer_object "
-    "GL_ARB_map_buffer_range GL_ARB_copy_buffer GL_ARB_texture_non_power_of_two GL_ARB_texture_rectangle "
-    "GL_EXT_bgra GL_EXT_texture_format_BGRA8888 GL_ARB_texture_float GL_ARB_half_float_pixel GL_ARB_texture_rg "
-    "GL_ARB_depth_texture GL_EXT_texture_edge_clamp GL_ARB_texture_border_clamp GL_ARB_texture_mirrored_repeat "
-    "GL_EXT_texture_filter_anisotropic GL_ARB_shader_objects GL_ARB_vertex_shader GL_ARB_fragment_shader "
-    "GL_ARB_shading_language_100 GL_ARB_explicit_attrib_location GL_EXT_blend_func_separate GL_EXT_blend_minmax "
-    "GL_EXT_blend_subtract GL_EXT_blend_equation_separate GL_EXT_blend_color GL_ARB_draw_instanced "
-    "GL_ARB_instanced_arrays GL_ARB_draw_elements_base_vertex GL_EXT_texture_sRGB GL_ARB_framebuffer_sRGB "
-    "GL_ARB_texture_storage GL_EXT_texture_compression_s3tc GL_ARB_texture_compression GL_ARB_multitexture "
-    "GL_ARB_depth_buffer_float GL_EXT_stencil_wrap GL_EXT_draw_buffers2 GL_ARB_draw_buffers "
-    "GL_ARB_occlusion_query GL_ARB_get_program_binary GL_KHR_debug";
-
-static const char *extension_list[128];
-static GLint extension_count;
-
-static void split_extensions(void)
-{
-    if (extension_count)
-        return;
-    static char copy[sizeof(g_extensions)];
-    memcpy(copy, g_extensions, sizeof(copy));
-    char *p = copy;
-    while (*p && extension_count < 128) {
-        extension_list[extension_count++] = p;
-        while (*p && *p != ' ')
-            p++;
-        if (*p)
-            *p++ = 0;
-    }
-}
-
 void gl_error(GlContext *ctx, GLenum error)
 {
     if (!ctx->error)
@@ -853,7 +820,7 @@ GLAPI const GLubyte *APIENTRY glGetString(GLenum name)
             gl_error(ctx, GL_INVALID_ENUM);
             return nullptr;
         }
-        return (const GLubyte *)g_extensions;
+        return (const GLubyte *)gl_extension_string();
     default:
         gl_error(ctx, GL_INVALID_ENUM);
         return nullptr;
@@ -863,12 +830,10 @@ GLAPI const GLubyte *APIENTRY glGetString(GLenum name)
 GLAPI const GLubyte *APIENTRY glGetStringi(GLenum name, GLuint index)
 {
     GL_CONTEXT_OR_RETURN(nullptr);
-    split_extensions();
-    if (name != GL_EXTENSIONS || index >= (GLuint)extension_count) {
+    const char *e = name == GL_EXTENSIONS ? gl_extension_at(index) : nullptr;
+    if (!e)
         gl_error(ctx, name != GL_EXTENSIONS ? GL_INVALID_ENUM : GL_INVALID_VALUE);
-        return nullptr;
-    }
-    return (const GLubyte *)extension_list[index];
+    return (const GLubyte *)e;
 }
 
 /* ---------------------------------------------------------------- queries */
@@ -890,8 +855,7 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         v[0] = ctx->minor;
         return 1;
     case GL_NUM_EXTENSIONS:
-        split_extensions();
-        v[0] = extension_count;
+        v[0] = gl_extension_count();
         return 1;
     case GL_CONTEXT_PROFILE_MASK:
         v[0] = ctx->profile == WGL_CONTEXT_CORE_PROFILE_BIT_ARB ? GL_CONTEXT_CORE_PROFILE_BIT
