@@ -12,6 +12,8 @@
 #define MIME_STACK_OVERFLOW_ZONE (32 * 1024)
 
 static LIST_ENTRY g_dead_threads;
+static KEVENT g_reap_event;
+static BOOLEAN g_reaper_started;
 static ETHREAD g_idle_thread;
 
 static void initialize_idle(PETHREAD idle, PVOID stack_top, PVOID stack_limit, PKPRCB prcb)
@@ -41,6 +43,7 @@ static void initialize_idle(PETHREAD idle, PVOID stack_top, PVOID stack_limit, P
 void PsInitializeIdleThread(void)
 {
     InitializeListHead(&g_dead_threads);
+    KeInitializeEvent(&g_reap_event, SynchronizationEvent, FALSE);
     initialize_idle(&g_idle_thread,
                     (PVOID)(MIME_KVA_PHYSMAP + HalBootInfo->boot_stack_phys + HalBootInfo->boot_stack_size),
                     (PVOID)(MIME_KVA_PHYSMAP + HalBootInfo->boot_stack_phys), KeGetCurrentPrcb());
@@ -75,19 +78,39 @@ void PspThreadDelete(PVOID object)
         ObDereferenceObject(thread->Tcb.Process);
 }
 
-/* threads cannot free their own stack; the idle loop releases dead ones. */
-void PspReapDeadThreads(void)
+/*
+ * threads cannot free their own stack, so a system thread releases dead ones. the last reference to a thread can take
+ * its process, sections and files with it, whose teardown waits on locks, which the idle loop must never do: an idle
+ * thread that waits finds nothing else to run and goes on as if the wait were satisfied.
+ */
+static void NTAPI reaper(PVOID context)
 {
     for (;;) {
-        ULONG64 s = KiAcquireDispatcherLock();
-        if (IsListEmpty(&g_dead_threads)) {
+        KeWaitForSingleObject(&g_reap_event, Executive, KernelMode, FALSE, nullptr);
+        for (;;) {
+            ULONG64 s = KiAcquireDispatcherLock();
+            if (IsListEmpty(&g_dead_threads)) {
+                KiReleaseDispatcherLock(s);
+                break;
+            }
+            PETHREAD t = CONTAINING_RECORD(RemoveHeadList(&g_dead_threads), ETHREAD, ThreadListEntry);
             KiReleaseDispatcherLock(s);
-            return;
+            ObDereferenceObject(t);
         }
-        PETHREAD t = CONTAINING_RECORD(RemoveHeadList(&g_dead_threads), ETHREAD, ThreadListEntry);
-        KiReleaseDispatcherLock(s);
-        ObDereferenceObject(t);
     }
+}
+
+void PspStartReaper(void)
+{
+    if (NT_SUCCESS(PsCreateSystemThread(nullptr, 0, nullptr, nullptr, nullptr, reaper, nullptr)))
+        __atomic_store_n(&g_reaper_started, TRUE, __ATOMIC_RELEASE);
+}
+
+/* the idle loop wakes the reaper when threads died. */
+void PspReapDeadThreads(void)
+{
+    if (__atomic_load_n(&g_reaper_started, __ATOMIC_ACQUIRE) && !IsListEmpty(&g_dead_threads))
+        KeSetEvent(&g_reap_event, 0, TRUE);
 }
 
 NTSTATUS PspCreateThread(PEPROCESS process, BOOLEAN system, PKSTART_ROUTINE routine, PVOID context, PETHREAD *out)

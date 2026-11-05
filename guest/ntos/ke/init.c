@@ -277,6 +277,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
 static void KiPhase1Initialization(PVOID context)
 {
     KiBootStamp("phase1");
+    PspStartReaper();
     IoInitialize();
     KiBootStamp("io");
     CmInitSystem1();

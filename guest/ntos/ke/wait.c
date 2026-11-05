@@ -287,6 +287,14 @@ NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASO
         return STATUS_INVALID_PARAMETER;
     if (!blocks)
         blocks = thread->WaitBlock;
+    /* an idle thread has nothing to give its processor to, so its wait would return as if satisfied. */
+    if (thread->IdleThread) {
+        static BOOLEAN said;
+        if (!said) {
+            said = TRUE;
+            KiLogPrintf("an idle thread waits, from %p", __builtin_return_address(0));
+        }
+    }
 
     ULONG64 due = 0;
     if (timeout && timeout->QuadPart != 0) {
