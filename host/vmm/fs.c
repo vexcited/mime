@@ -1092,14 +1092,19 @@ static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
     mime_path_join(target, sizeof(target), dir_path, leaf);
     struct stat there;
     bool exists = lstat(target, &there) == 0;
-    if (!exists) {
+    /* a case-insensitive host finds another file under the new spelling too, so its own is looked up. */
+    if (!exists || !(there.st_dev == from.st_dev && there.st_ino == from.st_ino)) {
         mime_fs_find_entry(dir_path, leaf, found, sizeof(found));
         if (found[0]) {
             char twin[MIME_PATH_MAX];
+            struct stat other;
             mime_path_join(twin, sizeof(twin), dir_path, found);
-            exists = lstat(twin, &there) == 0;
-            if (exists && !(there.st_dev == from.st_dev && there.st_ino == from.st_ino))
-                mime_strlcpy(target, twin, sizeof(target));
+            if (lstat(twin, &other) == 0 && (!exists || (other.st_dev == there.st_dev && other.st_ino == there.st_ino))) {
+                exists = true;
+                there = other;
+                if (!(there.st_dev == from.st_dev && there.st_ino == from.st_ino))
+                    mime_strlcpy(target, twin, sizeof(target));
+            }
         }
     }
     bool same = exists && there.st_dev == from.st_dev && there.st_ino == from.st_ino;

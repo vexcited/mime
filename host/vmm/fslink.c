@@ -507,9 +507,18 @@ uint64_t mime_fs_link(MimeVm *vm, MimeFsHandle *src, MimeFsHandle *dir, const ch
     struct stat there;
     bool exists = lstat(target, &there) == 0;
     mime_strlcpy(twin, target, sizeof(twin));
-    if (!exists && mime_fs_find_entry(dir_path, leaf, found, sizeof(found))) {
-        mime_path_join(twin, sizeof(twin), dir_path, found);
-        exists = lstat(twin, &there) == 0;
+    /* a case-insensitive host finds the entry under the new spelling too, the twin is the spelling it keeps. */
+    bool alias = false;
+    if (mime_fs_find_entry(dir_path, leaf, found, sizeof(found))) {
+        char spelled[MIME_PATH_MAX];
+        struct stat other;
+        mime_path_join(spelled, sizeof(spelled), dir_path, found);
+        if (lstat(spelled, &other) == 0 && (!exists || (other.st_dev == there.st_dev && other.st_ino == there.st_ino))) {
+            alias = exists && strcmp(spelled, target);
+            mime_strlcpy(twin, spelled, sizeof(twin));
+            exists = true;
+            there = other;
+        }
     }
 
     uint64_t status = MIME_HC_STATUS_OK;
@@ -520,20 +529,35 @@ uint64_t mime_fs_link(MimeVm *vm, MimeFsHandle *src, MimeFsHandle *dir, const ch
         if (!strcmp(twin, target))
             goto linked;
         /* the same name in other letters: the new spelling goes in, then the old one goes. */
-        mime_fswatch_self(target, MIME_FSWATCH_CREATE);
-        if (link(src->host_path, target) != 0) {
-            int error = errno;
-            mime_fswatch_self(target, MIME_FSWATCH_UNDO_CREATE);
-            return status_of(error);
-        }
-        mime_fswatch_self(twin, MIME_FSWATCH_REMOVE);
-        if (unlink(twin) != 0) {
-            mime_fswatch_self(twin, MIME_FSWATCH_UNDO_REMOVE);
+        bool respelled;
+        if (alias) {
+            /* one entry under both spellings, a rename changes its letters. */
+            mime_fswatch_self(twin, MIME_FSWATCH_MOVE_FROM);
+            mime_fswatch_self(target, MIME_FSWATCH_MOVE_TO);
+            if (rename(twin, target) != 0) {
+                int error = errno;
+                mime_fswatch_self(twin, MIME_FSWATCH_UNDO_MOVE);
+                mime_fswatch_self(target, MIME_FSWATCH_UNDO_MOVE);
+                return status_of(error);
+            }
+            respelled = true;
         } else {
+            mime_fswatch_self(target, MIME_FSWATCH_CREATE);
+            if (link(src->host_path, target) != 0) {
+                int error = errno;
+                mime_fswatch_self(target, MIME_FSWATCH_UNDO_CREATE);
+                return status_of(error);
+            }
+            mime_fswatch_self(twin, MIME_FSWATCH_REMOVE);
+            respelled = unlink(twin) == 0;
+            if (!respelled)
+                mime_fswatch_self(twin, MIME_FSWATCH_UNDO_REMOVE);
+        }
+        if (respelled) {
             /* the handles that were open by the old spelling follow the name. */
             pthread_mutex_lock(&vm->fs_lock);
-            for (uint32_t i = 0; i < MIME_VMM_MAX_FS_HANDLES; i++) {
-                MimeFsHandle *fh = vm->fs_handles[i];
+            for (uint32_t i = 0; i < vm->fs_handle_slots; i++) {
+                MimeFsHandle *fh = *mime_fs_handle_slot(vm, i);
                 if (fh && fh->host_path && !strcmp(fh->host_path, twin)) {
                     free(fh->host_path);
                     fh->host_path = mime_xstrdup(target);
@@ -560,24 +584,33 @@ uint64_t mime_fs_link(MimeVm *vm, MimeFsHandle *src, MimeFsHandle *dir, const ch
             mime_fswatch_self(temporary, MIME_FSWATCH_UNDO_CREATE);
             return status_of(error);
         }
+        /* a case-insensitive host keeps the spelling of the entry it replaces, the new one is given after. */
+        const char *into = alias ? twin : target;
         mime_fswatch_self(temporary, MIME_FSWATCH_MOVE_FROM);
-        mime_fswatch_self(target, MIME_FSWATCH_MOVE_TO);
-        if (rename(temporary, target) != 0) {
+        mime_fswatch_self(into, MIME_FSWATCH_MOVE_TO);
+        if (rename(temporary, into) != 0) {
             int error = errno;
             mime_fswatch_self(temporary, MIME_FSWATCH_UNDO_MOVE);
-            mime_fswatch_self(target, MIME_FSWATCH_UNDO_MOVE);
+            mime_fswatch_self(into, MIME_FSWATCH_UNDO_MOVE);
             unlink(temporary);
             return status_of(error);
         }
-        if (strcmp(twin, target)) {
+        if (alias) {
+            mime_fswatch_self(twin, MIME_FSWATCH_MOVE_FROM);
+            mime_fswatch_self(target, MIME_FSWATCH_MOVE_TO);
+            if (rename(twin, target) != 0) {
+                mime_fswatch_self(twin, MIME_FSWATCH_UNDO_MOVE);
+                mime_fswatch_self(target, MIME_FSWATCH_UNDO_MOVE);
+            }
+        } else if (strcmp(twin, target)) {
             mime_fswatch_self(twin, MIME_FSWATCH_REMOVE);
             if (unlink(twin) != 0)
                 mime_fswatch_self(twin, MIME_FSWATCH_UNDO_REMOVE);
         }
         /* a handle open on the replaced file must not take the new name with it when it closes. */
         pthread_mutex_lock(&vm->fs_lock);
-        for (uint32_t i = 0; i < MIME_VMM_MAX_FS_HANDLES; i++) {
-            MimeFsHandle *fh = vm->fs_handles[i];
+        for (uint32_t i = 0; i < vm->fs_handle_slots; i++) {
+            MimeFsHandle *fh = *mime_fs_handle_slot(vm, i);
             if (fh && fh->host_path && (!strcmp(fh->host_path, target) || !strcmp(fh->host_path, twin)))
                 fh->delete_on_close = false;
         }
