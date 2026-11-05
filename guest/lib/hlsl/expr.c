@@ -1280,10 +1280,14 @@ static HlExpr *primary(Parser *p)
         return number(p, t);
     }
     if (t->kind == TK_STRING) {
-        next(p);
-        while (peek(p)->kind == TK_STRING)
-            next(p);
+        HlBuf text = {};
+        while (peek(p)->kind == TK_STRING) {
+            HlToken *s = next(p);
+            if (s->length >= 2)
+                hl_buf_append(h, &text, s->text + 1, s->length - 2);
+        }
         HlExpr *e = new_expr(p, E_CONST, hl_type_string(h), loc);
+        e->text = text.data ? text.data : "";
         return e;
     }
     if (t->kind == TK_CHAR) {

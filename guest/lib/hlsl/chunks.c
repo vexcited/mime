@@ -567,16 +567,24 @@ static void write_stat(IrShader *s, HlBuf *out)
 int ir_container(IrShader *s, const HlBuf *code, HlBuf *out)
 {
     Hlsl *h = s->h;
-    uint8_t read_masks[64] = {}, write_masks[64] = {};
+    uint8_t read_masks[64] = {}, write_masks[64] = {}, patch_masks[64] = {};
+    bool hull = s->profile.stage == STAGE_HULL;
     for (uint32_t i = 0; i < s->count; i++) {
         const IrIns *ins = &s->ins[i];
         if (ins->op == IR_NOP)
             continue;
-        for (uint32_t k = 0; k < ins->src_count; k++)
+        bool fork = hull && i >= s->fork_start;
+        for (uint32_t k = 0; k < ins->src_count; k++) {
             if (ins->src[k].kind == SRC_IN && ins->src[k].v < 64)
                 read_masks[ins->src[k].v] |= 1u << ins->src[k].comp;
+            if (ins->src[k].kind == SRC_PATCH && ins->src[k].v < 64)
+                patch_masks[ins->src[k].v] |= 1u << ins->src[k].comp;
+        }
+        uint8_t *writes = fork ? patch_masks : write_masks;
         if (ins->op == IR_STORE && ins->store.kind == DST_OUT && ins->store.v < 64)
-            write_masks[ins->store.v] |= 1u << ins->store.comp;
+            writes[ins->store.v] |= 1u << ins->store.comp;
+        if (ins->to_output && ins->output.kind == DST_OUT && ins->output.v < 64)
+            writes[ins->output.v] |= 1u << ins->output.comp;
     }
     HlBuf chunks[8] = {};
     uint32_t tags[8], count = 0;
@@ -584,8 +592,16 @@ int ir_container(IrShader *s, const HlBuf *code, HlBuf *out)
     tags[count++] = DXBC_FOURCC('R', 'D', 'E', 'F');
     write_signature(s, &s->inputs, false, &chunks[count], read_masks, write_masks);
     tags[count++] = DXBC_FOURCC('I', 'S', 'G', 'N');
+    if (s->profile.stage == STAGE_DOMAIN) {
+        write_signature(s, &s->patch_constants, false, &chunks[count], patch_masks, patch_masks);
+        tags[count++] = DXBC_FOURCC('P', 'C', 'S', 'G');
+    }
     write_signature(s, &s->outputs, true, &chunks[count], read_masks, write_masks);
     tags[count++] = DXBC_FOURCC('O', 'S', 'G', 'N');
+    if (hull) {
+        write_signature(s, &s->patch_constants, true, &chunks[count], patch_masks, patch_masks);
+        tags[count++] = DXBC_FOURCC('P', 'C', 'S', 'G');
+    }
     hl_buf_append(h, &chunks[count], code->data, code->length);
     tags[count++] = s->profile.major >= 5 ? DXBC_FOURCC('S', 'H', 'E', 'X') : DXBC_FOURCC('S', 'H', 'D', 'R');
     write_stat(s, &chunks[count]);

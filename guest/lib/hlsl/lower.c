@@ -285,6 +285,10 @@ IrSrc lw_op2(Lower *l, uint16_t op, IrSrc a, IrSrc b)
         return a;
     if (op == OP_IMUL && ir_is_imm(&a) && a.v == 1)
         return b;
+    if (op == OP_ADD && ir_is_imm(&b) && !(b.v & 0x7FFFFFFF))
+        return a;
+    if (op == OP_ADD && ir_is_imm(&a) && !(a.v & 0x7FFFFFFF))
+        return b;
     if (op == OP_MUL && ir_is_imm(&b) && b.v == 0x3F800000)
         return a;
     if (op == OP_MUL && ir_is_imm(&a) && a.v == 0x3F800000)
@@ -322,6 +326,8 @@ IrSrc lw_op3(Lower *l, uint16_t op, IrSrc a, IrSrc b, IrSrc c)
     if (op == OP_MOVC && b.kind == c.kind && b.v == c.v && b.mod == c.mod && b.comp == c.comp && b.index == c.index &&
         b.rel == c.rel && b.kind != SRC_X)
         return b;
+    if (op == OP_MAD && ((ir_is_imm(&a) && !(a.v & 0x7FFFFFFF)) || (ir_is_imm(&b) && !(b.v & 0x7FFFFFFF))))
+        return c;
     if (op == OP_MAD && ir_is_imm(&a) && ir_is_imm(&b)) {
         uint32_t m;
         fold_op(OP_MUL, &a, &b, nullptr, &m);
@@ -561,6 +567,8 @@ static bool immutable(Lower *l, const IrSrc *s)
     case SRC_SV:
     case SRC_CB:
     case SRC_ICB:
+    case SRC_PATCH:
+    case SRC_OUT_CP:
         return !s->rel || !is_home(l, s->rel);
     case SRC_REG:
         return !is_home(l, s->v);

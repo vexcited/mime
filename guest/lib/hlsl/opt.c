@@ -7,7 +7,7 @@ bool ir_is_marker(uint16_t op)
     switch (op) {
     case OP_IF: case OP_ELSE: case OP_ENDIF: case OP_LOOP: case OP_ENDLOOP: case OP_BREAK: case OP_BREAKC:
     case OP_CONTINUE: case OP_CONTINUEC: case OP_SWITCH: case OP_CASE: case OP_DEFAULT: case OP_ENDSWITCH:
-    case OP_RET: case OP_RETC:
+    case OP_RET: case OP_RETC: case OP_HS_FORK_PHASE:
         return true;
     default:
         return false;
@@ -17,7 +17,7 @@ bool ir_is_marker(uint16_t op)
 /* instructions kept whatever their results: stores, flow, synchronization, atomics and the like. */
 bool ir_has_side_effects(const IrIns *ins)
 {
-    if (ir_is_marker(ins->op))
+    if (ir_is_marker(ins->op) || ins->to_output)
         return true;
     switch (ins->op) {
     case IR_STORE: case OP_DISCARD: case OP_EMIT: case OP_EMITTHENCUT: case OP_CUT: case OP_EMIT_STREAM:
@@ -395,6 +395,8 @@ static bool propagate_copies(IrShader *s)
             case SRC_SV:
             case SRC_CB:
             case SRC_ICB:
+            case SRC_PATCH:
+            case SRC_OUT_CP:
                 ok = !v.rel || defs[v.rel] == 1;
                 break;
             case SRC_REG:
@@ -430,14 +432,237 @@ static bool propagate_copies(IrShader *s)
     return changed;
 }
 
+/* mul then add of its single use becomes mad, when nothing between redefines the mul's sources. */
+static bool fuse_mad(IrShader *s)
+{
+    Hlsl *h = s->h;
+    uint32_t *defs = hl_alloc(h, (s->vregs + 1) * sizeof(uint32_t));
+    uint32_t *uses = hl_alloc(h, (s->vregs + 1) * sizeof(uint32_t));
+    uint32_t *def_at = hl_alloc(h, (s->vregs + 1) * sizeof(uint32_t));
+    uint32_t list[MAX_USES];
+    for (uint32_t i = 0; i < s->count; i++) {
+        IrIns *ins = &s->ins[i];
+        if (ins->op == IR_NOP)
+            continue;
+        for (uint32_t k = 0; k < ins->dst_count; k++) {
+            defs[ins->dst[k]]++;
+            def_at[ins->dst[k]] = i;
+        }
+        uint32_t n = ins_uses(ins, list, MAX_USES);
+        for (uint32_t k = 0; k < n; k++)
+            uses[list[k]]++;
+    }
+    bool changed = false;
+    for (uint32_t i = 0; i < s->count; i++) {
+        IrIns *add = &s->ins[i];
+        if (add->op != OP_ADD || (add->flags & IRF_PRECISE))
+            continue;
+        for (uint32_t side = 0; side < 2; side++) {
+            IrSrc *t = &add->src[side];
+            if (t->kind != SRC_REG || (t->mod & MODIFIER_ABS) || defs[t->v] != 1 || uses[t->v] != 1)
+                continue;
+            uint32_t at = def_at[t->v];
+            IrIns *mul = &s->ins[at];
+            if (mul->op != OP_MUL || at > i || (mul->flags & (IRF_SAT | IRF_PRECISE)))
+                continue;
+            /* straight code between them, with the sources unchanged. */
+            bool ok = true;
+            for (uint32_t j = at + 1; j < i && ok; j++) {
+                const IrIns *x = &s->ins[j];
+                if (x->op == IR_NOP)
+                    continue;
+                if (ir_is_marker(x->op)) {
+                    ok = false;
+                    break;
+                }
+                for (uint32_t k = 0; k < x->dst_count; k++)
+                    for (uint32_t m = 0; m < 2; m++)
+                        if ((mul->src[m].kind == SRC_REG && mul->src[m].v == x->dst[k]) || mul->src[m].rel == x->dst[k])
+                            ok = false;
+            }
+            if (!ok)
+                continue;
+            IrSrc a = mul->src[0], b = mul->src[1], c = add->src[1 - side];
+            if (t->mod & MODIFIER_NEG)
+                a.mod ^= MODIFIER_NEG;
+            IrSrc *src = hl_alloc(h, 3 * sizeof(IrSrc));
+            src[0] = a;
+            src[1] = b;
+            src[2] = c;
+            add->op = OP_MAD;
+            add->src = src;
+            add->src_count = 3;
+            mul->op = IR_NOP;
+            changed = true;
+            break;
+        }
+    }
+    return changed;
+}
+
+static bool vector_op(uint16_t op)
+{
+    switch (op) {
+    case OP_SAMPLE: case OP_SAMPLE_B: case OP_SAMPLE_D: case OP_SAMPLE_L: case OP_SAMPLE_C: case OP_SAMPLE_C_LZ:
+    case OP_LD: case OP_LD_MS: case OP_LD_UAV_TYPED: case OP_LD_STRUCTURED: case OP_LD_RAW: case OP_GATHER4:
+    case OP_GATHER4_C: case OP_GATHER4_PO: case OP_GATHER4_PO_C: case OP_RESINFO: case OP_LOD: case OP_SAMPLE_POS:
+    case OP_BUFINFO: case OP_SAMPLE_INFO: case OP_SINCOS: case OP_UDIV: case OP_IMUL: case OP_UMUL: case OP_DP2:
+    case OP_DP3: case OP_DP4: case OP_EVAL_CENTROID: case OP_EVAL_SAMPLE_INDEX: case OP_EVAL_SNAPPED:
+        return true;
+    default:
+        return op >= IR_STORE || op >= OP_ATOMIC_AND;
+    }
+}
+
+static bool cse_candidate(const IrIns *ins)
+{
+    if (ins->op == IR_NOP || ins->dst_count != 1 || ins->to_output || ins->res_kind || ir_has_side_effects(ins) ||
+        ins->group_count)
+        return false;
+    switch (ins->op) {
+    case OP_SINCOS: case OP_UDIV: case OP_DERIV_RTX: case OP_DERIV_RTY: case OP_DERIV_RTX_COARSE:
+    case OP_DERIV_RTX_FINE: case OP_DERIV_RTY_COARSE: case OP_DERIV_RTY_FINE: case OP_EVAL_CENTROID:
+    case OP_EVAL_SAMPLE_INDEX: case OP_EVAL_SNAPPED:
+        return false;
+    default:
+        return ins->op < IR_STORE;
+    }
+}
+
+static bool same_src(const IrSrc *a, const IrSrc *b)
+{
+    return a->kind == b->kind && a->mod == b->mod && a->comp == b->comp && a->v == b->v && a->index == b->index &&
+           a->rel == b->rel;
+}
+
+/* the same pure instruction twice in straight code, over values that do not change, computes once. */
+static bool common_subexpressions(IrShader *s)
+{
+    Hlsl *h = s->h;
+    uint32_t *defs = hl_alloc(h, (s->vregs + 1) * sizeof(uint32_t));
+    uint32_t *rename = hl_alloc(h, (s->vregs + 1) * sizeof(uint32_t));
+    for (uint32_t i = 0; i < s->count; i++)
+        if (s->ins[i].op != IR_NOP)
+            for (uint32_t k = 0; k < s->ins[i].dst_count; k++)
+                defs[s->ins[i].dst[k]]++;
+    uint32_t window[256], count = 0;
+    bool changed = false;
+    for (uint32_t i = 0; i < s->count; i++) {
+        IrIns *ins = &s->ins[i];
+        if (ins->op == IR_NOP)
+            continue;
+        if (ir_is_marker(ins->op)) {
+            count = 0;
+            continue;
+        }
+        for (uint32_t k = 0; k < ins->src_count; k++) {
+            IrSrc *src = &ins->src[k];
+            if (src->kind == SRC_REG && rename[src->v])
+                src->v = rename[src->v];
+            if (src->rel && rename[src->rel])
+                src->rel = rename[src->rel];
+        }
+        if (ins->op == IR_STORE && ins->store.rel && rename[ins->store.rel])
+            ins->store.rel = rename[ins->store.rel];
+        if (!cse_candidate(ins) || defs[ins->dst[0]] != 1)
+            continue;
+        bool stable = true;
+        for (uint32_t k = 0; k < ins->src_count && stable; k++) {
+            const IrSrc *src = &ins->src[k];
+            if (src->kind == SRC_X || src->kind == SRC_TGSM || src->kind == SRC_UAV)
+                stable = false;
+            if (src->kind == SRC_REG && defs[src->v] != 1)
+                stable = false;
+            if (src->rel && defs[src->rel] != 1)
+                stable = false;
+        }
+        if (!stable)
+            continue;
+        uint32_t found = 0;
+        for (uint32_t w = 0; w < count && !found; w++) {
+            const IrIns *o = &s->ins[window[w]];
+            if (o->op != ins->op || o->flags != ins->flags || o->src_count != ins->src_count || o->op == IR_NOP)
+                continue;
+            bool same = true;
+            for (uint32_t k = 0; k < ins->src_count && same; k++)
+                same = same_src(&o->src[k], &ins->src[k]);
+            if (same)
+                found = o->dst[0];
+        }
+        if (found) {
+            rename[ins->dst[0]] = found;
+            ins->op = IR_NOP;
+            changed = true;
+            continue;
+        }
+        if (count < 256)
+            window[count++] = i;
+        else
+            count = 0;
+    }
+    return changed;
+}
+
+/* a result whose only use is a store to an output in the same straight code writes the output itself. */
+static void fold_output_stores(IrShader *s)
+{
+    Hlsl *h = s->h;
+    uint32_t *defs = hl_alloc(h, (s->vregs + 1) * sizeof(uint32_t));
+    uint32_t *uses = hl_alloc(h, (s->vregs + 1) * sizeof(uint32_t));
+    uint32_t *def_at = hl_alloc(h, (s->vregs + 1) * sizeof(uint32_t));
+    uint32_t list[MAX_USES];
+    for (uint32_t i = 0; i < s->count; i++) {
+        IrIns *ins = &s->ins[i];
+        if (ins->op == IR_NOP)
+            continue;
+        for (uint32_t k = 0; k < ins->dst_count; k++) {
+            defs[ins->dst[k]]++;
+            def_at[ins->dst[k]] = i;
+        }
+        uint32_t n = ins_uses(ins, list, MAX_USES);
+        for (uint32_t k = 0; k < n; k++)
+            uses[list[k]]++;
+    }
+    for (uint32_t i = 0; i < s->count; i++) {
+        IrIns *st = &s->ins[i];
+        if (st->op != IR_STORE || (st->store.kind != DST_OUT && st->store.kind != DST_SPECIAL))
+            continue;
+        IrSrc *v = &st->src[0];
+        if (v->kind != SRC_REG || v->mod || defs[v->v] != 1 || uses[v->v] != 1)
+            continue;
+        uint32_t at = def_at[v->v];
+        IrIns *def = &s->ins[at];
+        if (at > i || def->dst_count != 1 || vector_op(def->op) || def->to_output)
+            continue;
+        bool ok = true;
+        for (uint32_t j = at + 1; j < i && ok; j++) {
+            const IrIns *x = &s->ins[j];
+            if (x->op == IR_NOP)
+                continue;
+            if (ir_is_marker(x->op) || (x->op == IR_STORE && x->store.kind == st->store.kind && x->store.v == st->store.v &&
+                                        x->store.comp == st->store.comp))
+                ok = false;
+        }
+        if (!ok)
+            continue;
+        def->to_output = true;
+        def->output = st->store;
+        st->op = IR_NOP;
+    }
+}
+
 void ir_optimize(IrShader *s)
 {
     for (int round = 0; round < 8; round++) {
         bool changed = propagate_copies(s);
+        changed |= common_subexpressions(s);
         changed |= dead_code(s);
         if (!changed)
             break;
     }
+    if (!(s->h->options->flags & HLSL_SKIP_OPTIMIZATION) && fuse_mad(s))
+        dead_code(s);
+    fold_output_stores(s);
 }
 
 /* ------------------------------------------------------------------ exported for the emitter */

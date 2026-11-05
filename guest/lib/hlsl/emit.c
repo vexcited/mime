@@ -255,6 +255,10 @@ typedef struct Emit {
     /* scratch registers for gathered vector operands. */
     uint32_t scratch_base, scratch_used, scratch_max;
     bool sm51;
+    /* the instruction being written, for results that go to outputs. */
+    const IrIns *current;
+    /* hull shaders: 0 in the control point phase, 1 in the fork phase. */
+    uint32_t phase;
 } Emit;
 
 static uint32_t swizzle_bits(const uint8_t sw[4]) { return sw[0] | sw[1] << 2 | sw[2] << 4 | (uint32_t)sw[3] << 6; }
@@ -323,13 +327,19 @@ static void put_source(Emit *e, const IrSrc *src, const uint8_t sw[4], bool sele
         }
         put_indexed(e, TOKEN_OPERAND(COMP_4, selection, bits, OPERAND_CONSTANT_BUFFER, 2), imm, rel, 2, src->mod);
         return;
-    case SRC_IN: {
+    case SRC_IN:
+    case SRC_OUT_CP: {
         uint8_t stage = e->s->profile.stage;
-        if (stage == STAGE_GEOMETRY) {
+        if (stage == STAGE_GEOMETRY || stage == STAGE_HULL || stage == STAGE_DOMAIN) {
+            uint32_t type = OPERAND_INPUT;
+            if (src->kind == SRC_OUT_CP)
+                type = OPERAND_OUTPUT_CONTROL_POINT;
+            else if (stage == STAGE_DOMAIN || (stage == STAGE_HULL && e->phase))
+                type = OPERAND_INPUT_CONTROL_POINT;
             imm[0] = src->index;
             rel[0] = src->rel;
             imm[1] = src->v;
-            put_indexed(e, TOKEN_OPERAND(COMP_4, selection, bits, OPERAND_INPUT, 2), imm, rel, 2, src->mod);
+            put_indexed(e, TOKEN_OPERAND(COMP_4, selection, bits, type, 2), imm, rel, 2, src->mod);
             return;
         }
         imm[0] = src->v;
@@ -345,6 +355,10 @@ static void put_source(Emit *e, const IrSrc *src, const uint8_t sw[4], bool sele
         put_indexed(e, head, imm, rel, 0, src->mod);
         return;
     }
+    case SRC_PATCH:
+        imm[0] = src->v;
+        put_indexed(e, TOKEN_OPERAND(COMP_4, selection, bits, OPERAND_INPUT_PATCH_CONSTANT, 1), imm, rel, 1, src->mod);
+        return;
     case SRC_ICB:
         imm[0] = src->index;
         rel[0] = src->rel;
@@ -380,6 +394,8 @@ static bool same_register(Emit *e, const IrSrc *a, const IrSrc *b)
         return reg_of(e, a->v) == reg_of(e, b->v);
     case SRC_CB:
     case SRC_X:
+    case SRC_OUT_CP:
+    case SRC_PATCH:
         return a->v == b->v && a->index == b->index && a->rel == b->rel;
     case SRC_IN:
         return a->v == b->v && a->index == b->index && a->rel == b->rel;
@@ -491,8 +507,21 @@ static void put_dst_temp(Emit *e, uint32_t reg, uint32_t mask)
 
 static void put_null(Emit *e) { put(e->h, e->w, TOKEN_OPERAND(COMP_0, 0, 0, OPERAND_NULL, 0)); }
 
+static void put_output(Emit *e, const IrDst *d)
+{
+    uint32_t imm[2] = {d->v}, rel[2] = {};
+    if (d->kind == DST_SPECIAL)
+        put(e->h, e->w, TOKEN_OPERAND(COMP_1, 0, 0, d->v, 0));
+    else
+        put_indexed(e, TOKEN_OPERAND(COMP_4, SELECT_MASK, 1u << d->comp, OPERAND_OUTPUT, 1), imm, rel, 1, 0);
+}
+
 static void put_dst_vreg(Emit *e, uint32_t v)
 {
+    if (e->current && e->current->to_output && v == e->current->dst[0]) {
+        put_output(e, &e->current->output);
+        return;
+    }
     if (!v || e->a->v[v].slot < 0) {
         put_null(e);
         return;
@@ -611,6 +640,7 @@ static void emit_ins(Emit *e, const IrIns *ins)
 {
     Hlsl *h = e->h;
     e->scratch_used = 0;
+    e->current = ins;
     uint16_t op = ins->op;
     if (op == IR_NOP)
         return;
@@ -668,7 +698,7 @@ static void emit_ins(Emit *e, const IrIns *ins)
     if (op == OP_MOV && ins->dst_count == 1 && ins->src[0].kind == SRC_REG && !ins->src[0].mod && !(ins->flags & IRF_SAT) &&
         e->a->v[ins->dst[0]].slot >= 0 && e->a->v[ins->dst[0]].slot == e->a->v[ins->src[0].v].slot)
         return;
-    if (op == OP_MOV && ins->dst_count == 1 && e->a->v[ins->dst[0]].slot < 0)
+    if (op == OP_MOV && ins->dst_count == 1 && e->a->v[ins->dst[0]].slot < 0 && !ins->to_output)
         return;
 
     switch (op) {
@@ -1121,11 +1151,114 @@ static uint32_t interpolation(uint32_t interp, uint32_t component_type)
     return np ? INTERP_LINEAR_NOPERSPECTIVE : INTERP_LINEAR;
 }
 
-static void declare_io(Emit *e, uint8_t input_mask[64])
+typedef struct Masks {
+    uint8_t in[64], sv[64], out_cp[64], patch[64];
+} Masks;
+
+static void scan_masks(const IrIns *ins, Masks *m)
+{
+    for (uint32_t k = 0; k < ins->src_count; k++) {
+        const IrSrc *src = &ins->src[k];
+        if (src->v >= 64)
+            continue;
+        if (src->kind == SRC_IN)
+            m->in[src->v] |= 1u << src->comp;
+        else if (src->kind == SRC_SV)
+            m->sv[src->v] |= 1u << src->comp;
+        else if (src->kind == SRC_OUT_CP)
+            m->out_cp[src->v] |= 1u << src->comp;
+        else if (src->kind == SRC_PATCH)
+            m->patch[src->v] |= 1u << src->comp;
+    }
+}
+
+/* control points and patch constants of hull and domain shaders, read through their own operands. */
+static void declare_patch_inputs(Emit *e, const IrSignature *sig, const uint8_t *mask, uint32_t type, uint32_t points)
+{
+    Hlsl *h = e->h;
+    for (uint32_t i = 0; i < sig->count; i++) {
+        const IrElement *el = &sig->elements[i];
+        if (el->reg >= 64 || !(el->mask & mask[el->reg]))
+            continue;
+        bool siv = type == OPERAND_INPUT_PATCH_CONSTANT && el->decl_sysval;
+        uint32_t at = begin(e, siv ? OP_DCL_INPUT_SIV : OP_DCL_INPUT);
+        if (type == OPERAND_INPUT_PATCH_CONSTANT) {
+            put(h, e->w, TOKEN_OPERAND(COMP_4, SELECT_MASK, el->mask & mask[el->reg], type, 1));
+        } else {
+            put(h, e->w, TOKEN_OPERAND(COMP_4, SELECT_MASK, el->mask & mask[el->reg], type, 2));
+            put(h, e->w, points);
+        }
+        put(h, e->w, el->reg);
+        if (siv)
+            put(h, e->w, el->decl_sysval);
+        finish(e, at);
+    }
+}
+
+static void declare_sv_inputs(Emit *e, const uint8_t *sv_mask)
+{
+    Hlsl *h = e->h;
+    for (uint32_t t = 0; t < 64; t++) {
+        if (!sv_mask[t])
+            continue;
+        bool scalar = t == OPERAND_INPUT_THREAD_ID_IN_GROUP_FLATTENED || t == OPERAND_INPUT_PRIMITIVEID ||
+                      t == OPERAND_INPUT_COVERAGE_MASK || t == OPERAND_INPUT_GS_INSTANCE_ID ||
+                      t == OPERAND_OUTPUT_CONTROL_POINT_ID || t == OPERAND_INNER_COVERAGE;
+        uint32_t at = begin(e, OP_DCL_INPUT);
+        if (scalar)
+            put(h, e->w, TOKEN_OPERAND(COMP_1, 0, 0, t, 0));
+        else
+            put(h, e->w, TOKEN_OPERAND(COMP_4, SELECT_MASK, sv_mask[t], t, 0));
+        finish(e, at);
+    }
+}
+
+static void declare_outputs(Emit *e, const IrSignature *sig)
+{
+    Hlsl *h = e->h;
+    for (uint32_t i = 0; i < sig->count; i++) {
+        const IrElement *el = &sig->elements[i];
+        if (el->operand) {
+            uint32_t at = begin(e, OP_DCL_OUTPUT);
+            put(h, e->w, TOKEN_OPERAND(COMP_1, 0, 0, el->operand, 0));
+            finish(e, at);
+            continue;
+        }
+        uint32_t sv = el->decl_sysval ? el->decl_sysval : el->sysval;
+        bool siv = sv && sv != SV_TARGET;
+        uint32_t at = begin(e, siv ? OP_DCL_OUTPUT_SIV : OP_DCL_OUTPUT);
+        put(h, e->w, TOKEN_OPERAND(COMP_4, SELECT_MASK, el->mask, OPERAND_OUTPUT, 1));
+        put(h, e->w, el->reg);
+        if (siv)
+            put(h, e->w, sv);
+        finish(e, at);
+    }
+}
+
+static void declare_io(Emit *e, Masks *m)
 {
     Hlsl *h = e->h;
     IrShader *s = e->s;
     uint8_t stage = s->profile.stage;
+    uint8_t *input_mask = m->in;
+    if (stage == STAGE_HULL || stage == STAGE_DOMAIN) {
+        if (stage == STAGE_HULL && !e->phase) {
+            declare_patch_inputs(e, &s->inputs, m->in, OPERAND_INPUT, s->input_control_points);
+            declare_sv_inputs(e, m->sv);
+            declare_outputs(e, &s->outputs);
+        } else if (stage == STAGE_HULL) {
+            declare_patch_inputs(e, &s->inputs, m->in, OPERAND_INPUT_CONTROL_POINT, s->input_control_points);
+            declare_patch_inputs(e, &s->outputs, m->out_cp, OPERAND_OUTPUT_CONTROL_POINT, s->output_control_points);
+            declare_sv_inputs(e, m->sv);
+            declare_outputs(e, &s->patch_constants);
+        } else {
+            declare_patch_inputs(e, &s->inputs, m->in, OPERAND_INPUT_CONTROL_POINT, s->input_control_points);
+            declare_patch_inputs(e, &s->patch_constants, m->patch, OPERAND_INPUT_PATCH_CONSTANT, 0);
+            declare_sv_inputs(e, m->sv);
+            declare_outputs(e, &s->outputs);
+        }
+        return;
+    }
     for (uint32_t i = 0; i < s->inputs.count; i++) {
         const IrElement *el = &s->inputs.elements[i];
         if (el->reg >= 64)
@@ -1166,19 +1299,7 @@ static void declare_io(Emit *e, uint8_t input_mask[64])
         finish(e, at);
     }
     /* system values with operands of their own. */
-    for (uint32_t t = 0; t < 64; t++) {
-        if (!s->sv_mask[t])
-            continue;
-        bool scalar = t == OPERAND_INPUT_THREAD_ID_IN_GROUP_FLATTENED || t == OPERAND_INPUT_PRIMITIVEID ||
-                      t == OPERAND_INPUT_COVERAGE_MASK || t == OPERAND_INPUT_GS_INSTANCE_ID ||
-                      t == OPERAND_OUTPUT_CONTROL_POINT_ID || t == OPERAND_INNER_COVERAGE;
-        uint32_t at = begin(e, OP_DCL_INPUT);
-        if (scalar)
-            put(h, e->w, TOKEN_OPERAND(COMP_1, 0, 0, t, 0));
-        else
-            put(h, e->w, TOKEN_OPERAND(COMP_4, SELECT_MASK, s->sv_mask[t], t, 0));
-        finish(e, at);
-    }
+    declare_sv_inputs(e, m->sv);
     if (stage == STAGE_GEOMETRY) {
         uint32_t at = begin(e, OP_DCL_GS_INPUT_PRIMITIVE | s->gs_input_primitive << 11);
         finish(e, at);
@@ -1191,22 +1312,7 @@ static void declare_io(Emit *e, uint8_t input_mask[64])
         at = begin(e, OP_DCL_GS_OUTPUT_TOPOLOGY | s->gs_output_topology << 11);
         finish(e, at);
     }
-    for (uint32_t i = 0; i < s->outputs.count; i++) {
-        const IrElement *el = &s->outputs.elements[i];
-        if (el->operand) {
-            uint32_t at = begin(e, OP_DCL_OUTPUT);
-            put(h, e->w, TOKEN_OPERAND(COMP_1, 0, 0, el->operand, 0));
-            finish(e, at);
-            continue;
-        }
-        bool siv = el->sysval && el->sysval != SV_TARGET;
-        uint32_t at = begin(e, siv ? OP_DCL_OUTPUT_SIV : OP_DCL_OUTPUT);
-        put(h, e->w, TOKEN_OPERAND(COMP_4, SELECT_MASK, el->mask, OPERAND_OUTPUT, 1));
-        put(h, e->w, el->reg);
-        if (siv)
-            put(h, e->w, el->sysval);
-        finish(e, at);
-    }
+    declare_outputs(e, &s->outputs);
     if (stage == STAGE_GEOMETRY) {
         uint32_t at = begin(e, OP_DCL_MAX_OUTPUT_VERTEX_COUNT);
         put(h, e->w, s->gs_max_vertices);
@@ -1257,25 +1363,25 @@ int ir_emit_sm4(IrShader *s, HlBuf *code)
     build_ranges(&a);
     allocate(&a);
 
-    Words body = {}, decls = {};
-    Emit e = {.s = s, .h = h, .a = &a, .w = &body, .scratch_base = a.temps};
+    Words bodies[2] = {}, decls = {};
+    Emit e = {.s = s, .h = h, .a = &a, .w = &bodies[0], .scratch_base = a.temps};
     e.sm51 = s->profile.major == 5 && s->profile.minor == 1;
-    uint8_t input_mask[64] = {};
-    __builtin_memset(s->sv_mask, 0, sizeof(s->sv_mask));
+    Masks masks[2] = {};
     for (uint32_t i = 0; i < s->count; i++) {
         const IrIns *ins = &s->ins[i];
         if (ins->op == IR_NOP)
             continue;
-        for (uint32_t k = 0; k < ins->src_count; k++) {
-            if (ins->src[k].kind == SRC_IN && ins->src[k].v < 64)
-                input_mask[ins->src[k].v] |= 1u << ins->src[k].comp;
-            if (ins->src[k].kind == SRC_SV && ins->src[k].v < 64)
-                s->sv_mask[ins->src[k].v] |= 1u << ins->src[k].comp;
+        if (ins->op == OP_HS_FORK_PHASE) {
+            e.phase = 1;
+            e.w = &bodies[1];
+            continue;
         }
+        scan_masks(ins, &masks[e.phase]);
         emit_ins(&e, ins);
     }
     uint32_t temps = a.temps + e.scratch_max;
     s->temp_count = temps;
+    bool hull = s->profile.stage == STAGE_HULL;
 
     /* declarations, in the order fxc writes them. */
     e.w = &decls;
@@ -1295,6 +1401,10 @@ int ir_emit_sm4(IrShader *s, HlBuf *code)
         flags |= 1u << 14;
     if (s->tgsm_count && s->profile.major < 5)
         flags |= 1u << 14;
+    if (hull) {
+        uint32_t at = begin(&e, OP_HS_DECLS);
+        finish(&e, at);
+    }
     if (flags || s->profile.major >= 5) {
         uint32_t at = begin(&e, OP_DCL_GLOBAL_FLAGS | flags);
         finish(&e, at);
@@ -1341,18 +1451,50 @@ int ir_emit_sm4(IrShader *s, HlBuf *code)
             if (!seen)
                 declare_resource(&e, r);
         }
-    declare_io(&e, input_mask);
-    if (temps) {
-        uint32_t at = begin(&e, OP_DCL_TEMPS);
-        put(h, &decls, temps);
+    if (hull || s->profile.stage == STAGE_DOMAIN) {
+        uint32_t at = begin(&e, OP_DCL_INPUT_CONTROL_POINT_COUNT | s->input_control_points << 11);
         finish(&e, at);
+        if (hull) {
+            at = begin(&e, OP_DCL_OUTPUT_CONTROL_POINT_COUNT | s->output_control_points << 11);
+            finish(&e, at);
+        }
+        at = begin(&e, OP_DCL_TESS_DOMAIN | s->tess_domain << 11);
+        finish(&e, at);
+        if (hull) {
+            at = begin(&e, OP_DCL_TESS_PARTITIONING | s->tess_partitioning << 11);
+            finish(&e, at);
+            at = begin(&e, OP_DCL_TESS_OUTPUT_PRIMITIVE | s->tess_output_primitive << 11);
+            finish(&e, at);
+            at = begin(&e, OP_DCL_HS_MAX_TESSFACTOR);
+            union { float f; uint32_t u; } factor = {.f = s->max_tess_factor};
+            put(h, &decls, factor.u);
+            finish(&e, at);
+        }
     }
-    for (uint32_t i = 0; i < s->indexable_count; i++) {
-        uint32_t at = begin(&e, OP_DCL_INDEXABLE_TEMP);
-        put(h, &decls, i);
-        put(h, &decls, s->indexables[i].size);
-        put(h, &decls, 4);
-        finish(&e, at);
+    /* each phase of a hull shader declares its own inputs, outputs and temps. */
+    for (uint32_t phase = 0; phase < (hull ? 2u : 1u); phase++) {
+        e.phase = phase;
+        if (hull) {
+            uint32_t at = begin(&e, phase ? OP_HS_FORK_PHASE : OP_HS_CONTROL_POINT_PHASE);
+            finish(&e, at);
+        }
+        declare_io(&e, &masks[phase]);
+        if (temps) {
+            uint32_t at = begin(&e, OP_DCL_TEMPS);
+            put(h, &decls, temps);
+            finish(&e, at);
+        }
+        for (uint32_t i = 0; i < s->indexable_count; i++) {
+            uint32_t at = begin(&e, OP_DCL_INDEXABLE_TEMP);
+            put(h, &decls, i);
+            put(h, &decls, s->indexables[i].size);
+            put(h, &decls, 4);
+            finish(&e, at);
+        }
+        if (hull) {
+            for (uint32_t k = 0; k < bodies[phase].count; k++)
+                put(h, &decls, bodies[phase].data[k]);
+        }
     }
     for (uint32_t i = 0; i < s->tgsm_count; i++) {
         const IrTgsm *g = &s->tgsm[i];
@@ -1373,10 +1515,14 @@ int ir_emit_sm4(IrShader *s, HlBuf *code)
     static const uint32_t program_type[] = {[STAGE_PIXEL] = 0, [STAGE_VERTEX] = 1, [STAGE_GEOMETRY] = 2,
                                             [STAGE_HULL] = 3,  [STAGE_DOMAIN] = 4, [STAGE_COMPUTE] = 5};
     uint32_t version = program_type[s->profile.stage] << 16 | (uint32_t)s->profile.major << 4 | s->profile.minor;
-    uint32_t total = 2 + decls.count + body.count;
+    Words *body = &bodies[0];
+    if (hull)
+        body = &bodies[1], body->count = 0;
+    uint32_t total = 2 + decls.count + body->count;
     uint32_t header[2] = {version, total};
     hl_buf_append(h, code, (const char *)header, 8);
     hl_buf_append(h, code, (const char *)decls.data, decls.count * 4);
-    hl_buf_append(h, code, (const char *)body.data, body.count * 4);
+    if (body->count)
+        hl_buf_append(h, code, (const char *)body->data, body->count * 4);
     return 0;
 }

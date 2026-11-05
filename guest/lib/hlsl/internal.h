@@ -413,8 +413,9 @@ struct HlExpr {
     HlFunc *func;
     /* E_INTRINSIC and E_METHOD: the intrinsic; E_OBJECT_PROPERTY: which. */
     uint32_t intrinsic;
-    /* E_CONST: one value per component, of the type's base. */
+    /* E_CONST: one value per component, of the type's base; strings their text. */
     HlValue *values;
+    const char *text;
     /* E_SWIZZLE: flat components of a; E_FIELD: the field index. */
     uint8_t swizzle[16];
     uint32_t field;

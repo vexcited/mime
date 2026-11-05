@@ -99,6 +99,9 @@ typedef struct IrIns {
     uint32_t extra;
     /* the result is an int, for resinfo and sample_info's _uint forms. */
     bool uint_result;
+    /* the single result goes straight to this output instead of dst[0]. */
+    bool to_output;
+    IrDst output;
 } IrIns;
 
 /* a resource the shader names: the variable and the element of an array of them. */
@@ -148,6 +151,8 @@ typedef struct IrElement {
     /* arrays take a register per element. */
     uint32_t rows;
     uint8_t start;
+    /* the system value declarations name: tessellation factors count each edge apart. */
+    uint32_t decl_sysval;
 } IrElement;
 
 typedef struct IrSignature {

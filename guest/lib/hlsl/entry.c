@@ -12,7 +12,7 @@ typedef struct Slot {
     uint32_t operand;
 } Slot;
 
-enum { SLOT_NONE, SLOT_REG, SLOT_SV };
+enum { SLOT_NONE, SLOT_REG, SLOT_SV, SLOT_PATCH };
 
 static const struct {
     const char *name;
@@ -158,6 +158,8 @@ static void add_element(Lower *l, PendingList *list, const char *semantic, uint3
         keep = sv == SV_VERTEX_ID || sv == SV_INSTANCE_ID;
     else if (stage == STAGE_PIXEL && !output)
         keep = sv && sv != SV_VERTEX_ID && sv != SV_INSTANCE_ID;
+    else if ((stage == STAGE_HULL && output) || (stage == STAGE_DOMAIN && !output && (sv == 0x100 || sv == 0x101)))
+        keep = sv == 0x100 || sv == 0x101 || (output && (sv == SV_POSITION || sv == SV_CLIP_DISTANCE || sv == SV_CULL_DISTANCE));
     else if (stage == STAGE_PIXEL && output)
         keep = sv == SV_TARGET || sv == SV_DEPTH || sv == SV_COVERAGE || sv == SV_DEPTH_GREATER_EQUAL ||
                sv == SV_DEPTH_LESS_EQUAL || sv == SV_STENCIL_REF;
@@ -294,10 +296,10 @@ static void pack(Lower *l, PendingList *list, IrSignature *sig, bool packed, boo
         HL_PUSH(l->h, sig->elements, sig->count, sig->capacity, list->items[i].e);
 }
 
-static Slot *slots_of(Lower *l, PendingList *list, uint32_t start, uint32_t components)
+static Slot *slots_of(Lower *l, PendingList *list, uint32_t start, uint32_t end, uint32_t components)
 {
     Slot *slots = hl_alloc(l->h, (components ? components : 1) * sizeof(Slot));
-    for (uint32_t i = start; i < list->count; i++) {
+    for (uint32_t i = start; i < end && i < list->count; i++) {
         Pending *p = &list->items[i];
         for (uint32_t c = 0; c < p->count; c++) {
             uint32_t at = p->first + c;
@@ -336,6 +338,8 @@ static Value input_value(Lower *l, const HlType *t, const Slot *slots, uint32_t 
         const Slot *s = &slots[i];
         if (s->kind == SLOT_REG)
             v.c[i] = (IrSrc){.kind = SRC_IN, .v = s->reg, .comp = s->comp};
+        else if (s->kind == SLOT_PATCH)
+            v.c[i] = (IrSrc){.kind = SRC_PATCH, .v = s->reg, .comp = s->comp};
         else if (s->kind == SLOT_SV)
             v.c[i] = (IrSrc){.kind = SRC_SV, .v = s->operand, .comp = s->comp};
         else
@@ -407,6 +411,9 @@ static uint32_t gs_primitive(uint32_t storage)
     return 0;
 }
 
+static int lower_hull(Lower *l);
+static int lower_domain(Lower *l);
+
 int lw_entry(Lower *l)
 {
     Hlsl *h = l->h;
@@ -441,10 +448,10 @@ int lw_entry(Lower *l)
     }
     if (stage == STAGE_PIXEL && func_attr(f, "earlydepthstencil"))
         s->early_depth = true;
-    if (stage == STAGE_HULL || stage == STAGE_DOMAIN) {
-        hl_error(h, f->loc, 3000, "hull and domain shaders are not supported yet");
-        return -1;
-    }
+    if (stage == STAGE_HULL)
+        return lower_hull(l);
+    if (stage == STAGE_DOMAIN)
+        return lower_domain(l);
 
     lw_globals(l);
     PendingList in = {}, out = {};
@@ -519,14 +526,14 @@ int lw_entry(Lower *l)
             vi->type = p->type;
             p->lower = vi;
             if (stream)
-                l->stream_slots = slots_of(l, &out, out_starts[i], hl_type_components(p->type->elem));
+                l->stream_slots = slots_of(l, &out, out_starts[i], out_starts[i + 1], hl_type_components(p->type->elem));
             continue;
         }
         if (stage == STAGE_GEOMETRY && p->type->kind == TY_ARRAY && (p->storage & ST_IN)) {
             /* vertices of the input primitive: inputs read at a vertex index. */
             const HlType *elem = p->type->elem;
             uint32_t n = hl_type_components(elem);
-            Slot *sl = slots_of(l, &in, starts[i], n);
+            Slot *sl = slots_of(l, &in, starts[i], starts[i + 1], n);
             VarInfo *vi = hl_alloc(h, sizeof(VarInfo));
             vi->kind = VK_VERTICES;
             vi->var = p;
@@ -548,7 +555,7 @@ int lw_entry(Lower *l)
         param_info[i] = vi;
         uint32_t n = hl_type_components(p->type);
         if ((p->storage & ST_IN) && !(p->storage & ST_UNIFORM)) {
-            slots[i] = slots_of(l, &in, starts[i], n);
+            slots[i] = slots_of(l, &in, starts[i], starts[i + 1], n);
             var_store(l, vi, input_value(l, p->type, slots[i], n));
         } else {
             Value zero = lw_value(l, p->type, n);
@@ -557,7 +564,7 @@ int lw_entry(Lower *l)
             var_store(l, vi, zero);
         }
         if (p->storage & ST_OUT)
-            out_slots[i] = slots_of(l, &out, out_starts[i], n);
+            out_slots[i] = slots_of(l, &out, out_starts[i], out_starts[i + 1], n);
     }
     Value ret = lw_entry_body(l, f);
     for (uint32_t i = 0; i < params; i++) {
@@ -567,9 +574,296 @@ int lw_entry(Lower *l)
         write_outputs(l, var_value(l, param_info[i]), out_slots[i]);
     }
     if (f->ret->kind != TY_VOID) {
-        Slot *rs = slots_of(l, &out, out_starts[params], hl_type_components(f->ret));
+        Slot *rs = slots_of(l, &out, out_starts[params], out.count, hl_type_components(f->ret));
         write_outputs(l, ret, rs);
     }
+    ir_emit(s, OP_RET, 0, 0);
+    return l->failed || h->errors ? -1 : 0;
+}
+
+/* tessellation factors: the signature's kind by domain, and each edge's own name in declarations. */
+static void tess_factors(IrShader *s, IrSignature *sig)
+{
+    for (uint32_t i = 0; i < sig->count; i++) {
+        IrElement *e = &sig->elements[i];
+        e->decl_sysval = e->sysval;
+        if (e->sysval != 0x100 && e->sysval != 0x101)
+            continue;
+        bool inside = e->sysval == 0x101;
+        switch (s->tess_domain) {
+        case 1:
+            e->sysval = e->index ? SV_FINAL_LINE_DENSITY_TESSFACTOR : SV_FINAL_LINE_DETAIL_TESSFACTOR;
+            e->decl_sysval = 21 + (e->index ? 1 : 0);
+            break;
+        case 3:
+            e->sysval = inside ? SV_FINAL_QUAD_INSIDE_TESSFACTOR : SV_FINAL_QUAD_EDGE_TESSFACTOR;
+            e->decl_sysval = inside ? 15 + e->index : 11 + e->index;
+            break;
+        default:
+            e->sysval = inside ? SV_FINAL_TRI_INSIDE_TESSFACTOR : SV_FINAL_TRI_EDGE_TESSFACTOR;
+            e->decl_sysval = inside ? 20 : 17 + e->index;
+            break;
+        }
+    }
+}
+
+static const char *attr_string(const HlAttribute *a)
+{
+    return a && a->arg_count && a->args[0]->kind == E_CONST && a->args[0]->text ? a->args[0]->text : nullptr;
+}
+
+/* patches read at a control point index, from the slots of their element type. */
+static VarInfo *patch_info(Lower *l, HlVar *p, const Slot *sl, uint8_t kind)
+{
+    const HlType *elem = p->type->elem;
+    uint32_t n = hl_type_components(elem);
+    VarInfo *vi = hl_alloc(l->h, sizeof(VarInfo));
+    vi->kind = kind;
+    vi->var = p;
+    vi->type = p->type;
+    vi->count = n * p->type->samples;
+    vi->vertex_components = n;
+    vi->in_reg = hl_alloc(l->h, (n ? n : 1) * sizeof(uint32_t));
+    vi->in_comp = hl_alloc(l->h, (n ? n : 1) * sizeof(uint8_t));
+    for (uint32_t c = 0; c < n; c++) {
+        vi->in_reg[c] = sl[c].reg;
+        vi->in_comp[c] = sl[c].comp;
+    }
+    return vi;
+}
+
+static bool is_patch(const HlType *t, uint8_t object)
+{
+    return t->kind == TY_OBJECT && t->object == object;
+}
+
+/* the components of a parameter as one element list section: the list grows by its elements. */
+static void param_elements(Lower *l, PendingList *list, HlVar *p, const HlType *t, bool output)
+{
+    uint32_t first = 0, offset = 0;
+    walk_type(l, list, t, p->semantic, &offset, &first, p->interp, output, p->loc, p->name);
+}
+
+static Value param_input(Lower *l, HlVar *p, PendingList *list, uint32_t start, uint32_t end, uint8_t kind)
+{
+    uint32_t n = hl_type_components(p->type);
+    Slot *sl = slots_of(l, list, start, end, n);
+    if (kind == SLOT_PATCH)
+        for (uint32_t c = 0; c < n; c++)
+            if (sl[c].kind == SLOT_REG)
+                sl[c].kind = SLOT_PATCH;
+    return input_value(l, p->type, sl, n);
+}
+
+void lw_statics(Lower *l);
+
+/* hull shaders: the control point code, then the patch constant function as a fork phase. */
+static int lower_hull(Lower *l)
+{
+    Hlsl *h = l->h;
+    IrShader *s = l->s;
+    HlFunc *f = l->entry;
+    const char *domain = attr_string(func_attr(f, "domain"));
+    const char *partitioning = attr_string(func_attr(f, "partitioning"));
+    const char *topology = attr_string(func_attr(f, "outputtopology"));
+    const char *patch_name = attr_string(func_attr(f, "patchconstantfunc"));
+    const HlAttribute *points = func_attr(f, "outputcontrolpoints");
+    if (!domain || !partitioning || !topology || !patch_name || !points) {
+        hl_error(h, f->loc, 3000, "%s: hull shaders need domain, partitioning, outputtopology, outputcontrolpoints and patchconstantfunc attributes", f->name);
+        return -1;
+    }
+    s->tess_domain = hl_streq(domain, "isoline") ? 1 : hl_streq(domain, "quad") ? 3 : hl_streq(domain, "tri") ? 2 : 0;
+    s->tess_partitioning = hl_streq(partitioning, "integer") ? 1 : hl_streq(partitioning, "pow2") ? 2 :
+                           hl_streq(partitioning, "fractional_odd") ? 3 : hl_streq(partitioning, "fractional_even") ? 4 : 0;
+    s->tess_output_primitive = hl_streq(topology, "point") ? 1 : hl_streq(topology, "line") ? 2 :
+                               hl_streq(topology, "triangle_cw") ? 3 : hl_streq(topology, "triangle_ccw") ? 4 : 0;
+    if (!s->tess_domain || !s->tess_partitioning || !s->tess_output_primitive) {
+        hl_error(h, f->loc, 3000, "%s: invalid tessellation attribute", f->name);
+        return -1;
+    }
+    s->output_control_points = attr_uint(l, points, 0, 1);
+    const HlAttribute *max = func_attr(f, "maxtessfactor");
+    s->max_tess_factor = 64.0f;
+    if (max && max->arg_count && max->args[0]->kind == E_CONST) {
+        HlExpr *a = max->args[0];
+        s->max_tess_factor = hl_base_float(a->type->base) ? a->values[0].f : (float)a->values[0].i;
+    }
+    HlFunc *pf = nullptr;
+    for (uint32_t i = 0; i < l->prog->func_count; i++) {
+        HlFunc *g = l->prog->funcs[i];
+        if (hl_streq(g->name, patch_name) && (g->body || g->definition))
+            pf = g->body ? g : g->definition;
+    }
+    if (!pf) {
+        hl_error(h, f->loc, 3000, "%s: patch constant function '%s' not found", f->name, patch_name);
+        return -1;
+    }
+    lw_globals(l);
+    PendingList in = {}, out = {}, pc = {};
+    uint32_t params = f->param_count;
+    uint32_t *starts = hl_alloc(h, (params + 1) * sizeof(uint32_t));
+    const HlType *patch_type = nullptr;
+    uint32_t patch_start = 0, patch_end = 0;
+    for (uint32_t i = 0; i < params; i++) {
+        HlVar *p = f->params[i];
+        starts[i] = in.count;
+        if (is_patch(p->type, OBJ_INPUT_PATCH)) {
+            patch_type = p->type;
+            patch_start = in.count;
+            param_elements(l, &in, p, p->type->elem, false);
+            patch_end = in.count;
+            s->input_control_points = p->type->samples;
+        } else if (p->storage & ST_IN && p->type->kind != TY_OBJECT) {
+            param_elements(l, &in, p, p->type, false);
+        }
+    }
+    starts[params] = in.count;
+    if (!patch_type) {
+        hl_error(h, f->loc, 3000, "%s: hull shaders take an InputPatch", f->name);
+        return -1;
+    }
+    if (f->ret->kind != TY_VOID)
+        param_elements(l, &out, &(HlVar){.semantic = f->semantic, .loc = f->loc, .name = f->name}, f->ret, true);
+    {
+        uint32_t first = 0, offset = 0;
+        walk_type(l, &pc, pf->ret, pf->semantic, &offset, &first, 0, true, pf->loc, pf->name);
+    }
+    if (l->failed || h->errors)
+        return -1;
+    pack(l, &in, &s->inputs, true, false);
+    pack(l, &out, &s->outputs, true, false);
+    pack(l, &pc, &s->patch_constants, true, false);
+    tess_factors(s, &s->patch_constants);
+
+    /* the control point phase. */
+    lw_statics(l);
+    for (uint32_t i = 0; i < params; i++) {
+        HlVar *p = f->params[i];
+        if (is_patch(p->type, OBJ_INPUT_PATCH)) {
+            p->lower = patch_info(l, p, slots_of(l, &in, starts[i], starts[i + 1], hl_type_components(p->type->elem)), VK_VERTICES);
+            continue;
+        }
+        if (!(p->storage & ST_IN) || p->type->kind == TY_OBJECT)
+            continue;
+        VarInfo *vi = lw_new_local(l, p, p->type);
+        p->lower = vi;
+        var_store(l, vi, param_input(l, p, &in, starts[i], starts[i + 1], SLOT_REG));
+    }
+    Value ret = lw_entry_body(l, f);
+    if (f->ret->kind != TY_VOID)
+        write_outputs(l, ret, slots_of(l, &out, 0, out.count, hl_type_components(f->ret)));
+    ir_emit(s, OP_RET, 0, 0);
+
+    /* the patch constant phase: inputs at vicp, the control points made at vocp. */
+    s->fork_start = s->count;
+    ir_emit(s, OP_HS_FORK_PHASE, 0, 0);
+    for (uint32_t i = 0; i < l->prog->global_count; i++)
+        if ((l->prog->globals[i]->storage & ST_STATIC) && !hl_type_has_object(l->prog->globals[i]->type))
+            l->prog->globals[i]->lower = nullptr;
+    lw_statics(l);
+    for (uint32_t i = 0; i < pf->param_count; i++) {
+        HlVar *p = pf->params[i];
+        if (is_patch(p->type, OBJ_INPUT_PATCH)) {
+            p->lower = patch_info(l, p, slots_of(l, &in, patch_start, patch_end, hl_type_components(p->type->elem)), VK_VERTICES);
+            continue;
+        }
+        if (is_patch(p->type, OBJ_OUTPUT_PATCH)) {
+            p->lower = patch_info(l, p, slots_of(l, &out, 0, out.count, hl_type_components(p->type->elem)), VK_CONTROL_POINTS);
+            continue;
+        }
+        if (p->type->kind == TY_OBJECT)
+            continue;
+        PendingList one = {};
+        param_elements(l, &one, p, p->type, false);
+        for (uint32_t k = 0; k < one.count; k++)
+            if (!one.items[k].operand) {
+                hl_error(h, p->loc, 3000, "'%s': patch constant functions take patches and system values", p->name);
+                return -1;
+            } else {
+                s->sv_mask[one.items[k].operand & 63] |= one.items[k].e.mask;
+            }
+        VarInfo *vi = lw_new_local(l, p, p->type);
+        p->lower = vi;
+        var_store(l, vi, param_input(l, p, &one, 0, one.count, SLOT_REG));
+    }
+    Value pret = lw_entry_body(l, pf);
+    if (pf->ret->kind != TY_VOID)
+        write_outputs(l, pret, slots_of(l, &pc, 0, pc.count, hl_type_components(pf->ret)));
+    ir_emit(s, OP_RET, 0, 0);
+    return l->failed || h->errors ? -1 : 0;
+}
+
+/* domain shaders: control points at vicp, patch constants at vpc, and the domain location. */
+static int lower_domain(Lower *l)
+{
+    Hlsl *h = l->h;
+    IrShader *s = l->s;
+    HlFunc *f = l->entry;
+    const char *domain = attr_string(func_attr(f, "domain"));
+    s->tess_domain = !domain ? 0 : hl_streq(domain, "isoline") ? 1 : hl_streq(domain, "quad") ? 3 : hl_streq(domain, "tri") ? 2 : 0;
+    if (!s->tess_domain) {
+        hl_error(h, f->loc, 3000, "%s: domain shaders need a domain attribute", f->name);
+        return -1;
+    }
+    lw_globals(l);
+    PendingList cp = {}, pc = {}, out = {};
+    uint32_t params = f->param_count;
+    uint32_t *starts = hl_alloc(h, (params + 1) * sizeof(uint32_t));
+    uint32_t *out_starts = hl_alloc(h, (params + 1) * sizeof(uint32_t));
+    for (uint32_t i = 0; i < params; i++) {
+        HlVar *p = f->params[i];
+        starts[i] = pc.count;
+        if (is_patch(p->type, OBJ_OUTPUT_PATCH)) {
+            param_elements(l, &cp, p, p->type->elem, false);
+            s->input_control_points = p->type->samples;
+        } else if ((p->storage & ST_IN) && p->type->kind != TY_OBJECT) {
+            param_elements(l, &pc, p, p->type, false);
+        }
+    }
+    starts[params] = pc.count;
+    for (uint32_t i = 0; i < params; i++) {
+        HlVar *p = f->params[i];
+        out_starts[i] = out.count;
+        if ((p->storage & ST_OUT) && p->type->kind != TY_OBJECT)
+            param_elements(l, &out, p, p->type, true);
+    }
+    out_starts[params] = out.count;
+    if (f->ret->kind != TY_VOID)
+        param_elements(l, &out, &(HlVar){.semantic = f->semantic, .loc = f->loc, .name = f->name}, f->ret, true);
+    if (l->failed || h->errors)
+        return -1;
+    pack(l, &cp, &s->inputs, true, false);
+    pack(l, &pc, &s->patch_constants, true, false);
+    pack(l, &out, &s->outputs, true, false);
+    tess_factors(s, &s->patch_constants);
+    lw_statics(l);
+    VarInfo **outs = hl_alloc(h, (params + 1) * sizeof(VarInfo *));
+    for (uint32_t i = 0; i < params; i++) {
+        HlVar *p = f->params[i];
+        if (is_patch(p->type, OBJ_OUTPUT_PATCH) || is_patch(p->type, OBJ_INPUT_PATCH)) {
+            p->lower = patch_info(l, p, slots_of(l, &cp, 0, cp.count, hl_type_components(p->type->elem)), VK_VERTICES);
+            continue;
+        }
+        if (p->type->kind == TY_OBJECT)
+            continue;
+        VarInfo *vi = lw_new_local(l, p, p->type);
+        p->lower = vi;
+        if ((p->storage & ST_IN)) {
+            for (uint32_t k = starts[i]; k < starts[i + 1]; k++)
+                if (pc.items[k].operand)
+                    s->sv_mask[pc.items[k].operand & 63] |= pc.items[k].e.mask;
+            var_store(l, vi, param_input(l, p, &pc, starts[i], starts[i + 1], SLOT_PATCH));
+        }
+        if (p->storage & ST_OUT)
+            outs[i] = vi;
+    }
+    Value ret = lw_entry_body(l, f);
+    for (uint32_t i = 0; i < params; i++)
+        if (outs[i])
+            write_outputs(l, var_value(l, outs[i]), slots_of(l, &out, out_starts[i], out_starts[i + 1],
+                                                             hl_type_components(f->params[i]->type)));
+    if (f->ret->kind != TY_VOID)
+        write_outputs(l, ret, slots_of(l, &out, out_starts[params], out.count, hl_type_components(f->ret)));
     ir_emit(s, OP_RET, 0, 0);
     return l->failed || h->errors ? -1 : 0;
 }
