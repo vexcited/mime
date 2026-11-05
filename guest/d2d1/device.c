@@ -501,7 +501,7 @@ static void set_target(D2dRt *rt, ID2D1Image *target);
 static void STDMETHODCALLTYPE cx_set_target(ID2D1DeviceContext6 *This, ID2D1Image *target)
 {
     RT;
-    /* clips are kept in device pixels and go on to the new target, layers draw into the target they began on. */
+    /* clips and layers belong to the target they were pushed on. */
     BOOL drawing = rt->drawing;
     if (drawing)
         D2dRtSwitchTarget(rt, FALSE);

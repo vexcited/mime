@@ -475,6 +475,10 @@ struct D2dRt {
     MimeVecMask clip;
     BOOL clip_set;
     UINT32 clip_depth;
+    /* the clip of the target drawing began on, put aside while another target is drawn to. */
+    MimeVecMask home_clip;
+    BOOL home_clip_set;
+    void *home_clip_target;
     /* targets. */
     HWND hwnd;
     HDC dc;
@@ -528,6 +532,7 @@ BOOL D2dClipIsEmpty(D2dRt *rt);
 void D2dBeginDrawCore(D2dRt *rt);
 HRESULT D2dEndDrawCore(D2dRt *rt, D2D1_TAG *tag1, D2D1_TAG *tag2);
 void D2dRtSwitchTarget(D2dRt *rt, BOOL begin);
+void D2dRtFreeHomeClip(D2dRt *rt);
 void D2dClearSurface(D2dRt *rt, const D2D1_COLOR_F *color);
 
 /*

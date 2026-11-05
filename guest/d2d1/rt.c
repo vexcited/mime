@@ -502,10 +502,46 @@ void D2dBeginDrawCore(D2dRt *rt)
     begin_target(rt);
 }
 
+/*
+ * windows keeps the clip and layer stack in each target, a bitmap or a command list, so a target switched to while
+ * drawing starts with its own stack, empty for a new command list, and the stack of the first target comes back with it.
+ */
+static void switch_clip(D2dRt *rt, BOOL begin)
+{
+    void *key = D2dRtTargetKey(rt);
+    if (!begin) {
+        if (rt->home_clip_target)
+            return;
+        rt->home_clip_target = key ? key : rt;
+        rt->home_clip_set = rt->clip_set;
+        if (rt->clip_set)
+            rt->home_clip = rt->clip;
+        rt->clip_set = FALSE;
+        return;
+    }
+    if (rt->home_clip_target != (key ? key : rt))
+        return;
+    D2dClipReset(rt);
+    rt->clip_set = rt->home_clip_set;
+    if (rt->home_clip_set)
+        rt->clip = rt->home_clip;
+    rt->home_clip_set = FALSE;
+    rt->home_clip_target = nullptr;
+}
+
+void D2dRtFreeHomeClip(D2dRt *rt)
+{
+    if (rt->home_clip_set)
+        mime_vec_mask_free(&rt->home_clip);
+    rt->home_clip_set = FALSE;
+    rt->home_clip_target = nullptr;
+}
+
 /* a device context that changes its target while it draws: what was drawn goes to the old target first. */
 void D2dRtSwitchTarget(D2dRt *rt, BOOL begin)
 {
     D2dBitmap *b = rt->target_bitmap;
+    switch_clip(rt, begin);
     if (!begin) {
         if (b) {
             D2dBitmapCommit(b);
@@ -557,6 +593,7 @@ HRESULT D2dEndDrawCore(D2dRt *rt, D2D1_TAG *tag1, D2D1_TAG *tag2)
         rt->target_bitmap->bound_as_target = 0;
     rt->drawing = FALSE;
     D2dClipReset(rt);
+    D2dRtFreeHomeClip(rt);
     return hr;
 }
 
