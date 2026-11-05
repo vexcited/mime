@@ -95,34 +95,131 @@ static inline int carry(X86Cpu *c)
 
 /* ------------------------------------------------------------ atomics */
 
-static int cas(uint64_t addr, int size, uint64_t expected, uint64_t desired)
+static uint32_t g_split_lock;
+
+/*
+ * x86 lets a locked access sit at any address, arm64 atomics fault unless it is aligned. one inside an aligned 8 or
+ * 16 bytes is done on them whole. a split lock across 16 bytes has no arm64 atomic, a lock keeps the ones xta64 runs
+ * apart. the value is read before taking it, so a fault on an unmapped page leaves it free.
+ */
+static int cas_unaligned(uint64_t addr, int size, uint64_t expected, uint64_t desired, uint64_t *old)
 {
+    uint64_t mask = x86_mask(size);
+    expected &= mask;
+    desired &= mask;
+    unsigned off = (unsigned)(addr & 7);
+    if (off + (unsigned)size <= 8) {
+        uint64_t *word = (uint64_t *)(uintptr_t)(addr & ~7ull);
+        unsigned shift = off * 8;
+        uint64_t cur = __atomic_load_n(word, __ATOMIC_RELAXED);
+        for (;;) {
+            *old = (cur >> shift) & mask;
+            if (*old != expected)
+                return 0;
+            uint64_t next = (cur & ~(mask << shift)) | (desired << shift);
+            if (__atomic_compare_exchange_n(word, &cur, next, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+                return 1;
+        }
+    }
+    off = (unsigned)(addr & 15);
+    if (off + (unsigned)size <= 16) {
+        unsigned __int128 *word = (unsigned __int128 *)(uintptr_t)(addr & ~15ull);
+        unsigned shift = off * 8;
+        unsigned __int128 m = (unsigned __int128)mask << shift;
+        unsigned __int128 cur = ((unsigned __int128)rd64((uint64_t)(uintptr_t)word + 8) << 64) |
+                                rd64((uint64_t)(uintptr_t)word);
+        for (;;) {
+            *old = (uint64_t)(cur >> shift) & mask;
+            if (*old != expected)
+                return 0;
+            unsigned __int128 next = (cur & ~m) | ((unsigned __int128)desired << shift);
+            if (__atomic_compare_exchange_n(word, &cur, next, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+                return 1;
+        }
+    }
+    *old = rdn(addr, size);
+    while (__atomic_exchange_n(&g_split_lock, 1, __ATOMIC_ACQUIRE))
+        __builtin_arm_yield();
+    *old = rdn(addr, size);
+    int ok = *old == expected;
+    if (ok)
+        wrn(addr, size, desired);
+    __atomic_store_n(&g_split_lock, 0, __ATOMIC_RELEASE);
+    return ok;
+}
+
+/* compares and swaps, *old gets the value memory had. */
+static int cas_old(uint64_t addr, int size, uint64_t expected, uint64_t desired, uint64_t *old)
+{
+    if (addr & (uint64_t)(size - 1))
+        return cas_unaligned(addr, size, expected, desired, old);
+    int ok;
     switch (size) {
     case 1: {
         uint8_t e = (uint8_t)expected;
-        return __atomic_compare_exchange_n((uint8_t *)(uintptr_t)addr, &e, (uint8_t)desired, 0, __ATOMIC_SEQ_CST,
-                                           __ATOMIC_SEQ_CST);
+        ok = __atomic_compare_exchange_n((uint8_t *)(uintptr_t)addr, &e, (uint8_t)desired, 0, __ATOMIC_SEQ_CST,
+                                         __ATOMIC_SEQ_CST);
+        *old = e;
+        break;
     }
     case 2: {
         uint16_t e = (uint16_t)expected;
-        return __atomic_compare_exchange_n((uint16_t *)(uintptr_t)addr, &e, (uint16_t)desired, 0, __ATOMIC_SEQ_CST,
-                                           __ATOMIC_SEQ_CST);
+        ok = __atomic_compare_exchange_n((uint16_t *)(uintptr_t)addr, &e, (uint16_t)desired, 0, __ATOMIC_SEQ_CST,
+                                         __ATOMIC_SEQ_CST);
+        *old = e;
+        break;
     }
     case 4: {
         uint32_t e = (uint32_t)expected;
-        return __atomic_compare_exchange_n((uint32_t *)(uintptr_t)addr, &e, (uint32_t)desired, 0, __ATOMIC_SEQ_CST,
-                                           __ATOMIC_SEQ_CST);
+        ok = __atomic_compare_exchange_n((uint32_t *)(uintptr_t)addr, &e, (uint32_t)desired, 0, __ATOMIC_SEQ_CST,
+                                         __ATOMIC_SEQ_CST);
+        *old = e;
+        break;
     }
     default: {
         uint64_t e = expected;
-        return __atomic_compare_exchange_n((uint64_t *)(uintptr_t)addr, &e, desired, 0, __ATOMIC_SEQ_CST,
-                                           __ATOMIC_SEQ_CST);
+        ok = __atomic_compare_exchange_n((uint64_t *)(uintptr_t)addr, &e, desired, 0, __ATOMIC_SEQ_CST,
+                                         __ATOMIC_SEQ_CST);
+        *old = e;
+        break;
     }
     }
+    return ok;
+}
+
+uint64_t x86_jit_cas(uint64_t addr, uint64_t size, uint64_t expected, uint64_t desired)
+{
+    uint64_t old;
+    cas_old(addr, (int)size, expected, desired, &old);
+    return old;
+}
+
+uint64_t x86_jit_atomic(uint64_t addr, uint64_t op_size, uint64_t operand)
+{
+    int size = (int)(op_size & 0xFF), op = (int)(op_size >> 8);
+    uint64_t mask = x86_mask(size), old = rdn(addr, size);
+    for (;;) {
+        uint64_t v = op == X86_ATOMIC_ADD ? old + operand : op == X86_ATOMIC_CLR ? old & ~operand
+                   : op == X86_ATOMIC_EOR ? old ^ operand : op == X86_ATOMIC_SET ? old | operand : operand;
+        if (cas_old(addr, size, old, v & mask, &old))
+            return old;
+    }
+}
+
+static int cas(uint64_t addr, int size, uint64_t expected, uint64_t desired)
+{
+    uint64_t old;
+    return cas_old(addr, size, expected, desired, &old);
 }
 
 static uint64_t xchg_mem(uint64_t addr, int size, uint64_t v)
 {
+    if (addr & (uint64_t)(size - 1)) {
+        uint64_t old = rdn(addr, size);
+        while (!cas_old(addr, size, old, v, &old))
+            ;
+        return old;
+    }
     switch (size) {
     case 1: return __atomic_exchange_n((uint8_t *)(uintptr_t)addr, (uint8_t)v, __ATOMIC_SEQ_CST);
     case 2: return __atomic_exchange_n((uint16_t *)(uintptr_t)addr, (uint16_t)v, __ATOMIC_SEQ_CST);
@@ -649,42 +746,54 @@ static void cpuid(X86Cpu *c)
 {
     uint32_t leaf = (uint32_t)c->r[X86_RAX], sub = (uint32_t)c->r[X86_RCX];
     uint32_t r[4] = {0, 0, 0, 0}; /* eax, ebx, ecx, edx */
-    /* the processor of the machine, as the x64 emulation of windows reports an arm64 one: the qualcomm vendor
-     * and the armv8 family of the oryon. */
-    static const char brand[] = "Qualcomm(R) Snapdragon(TM) X Elite - X1E-80-100\0\0\0\0\0\0\0\0\0\0\0\0";
+    /*
+     * what xtajit64.dll's tables hold: authenticamd up to leaf 13, family 0x600f01, "virtual cpu" at the clock
+     * rdtsc counts in, right aligned, and no hypervisor bit or 0x40000000 leaves though the kernel is the root
+     * partition of one. the features are those the translator has, so prism's rdtscp, clmul, aes and sse4.2
+     * stay clear.
+     */
+    static const char brand[48] = "                          Virtual CPU @ 3.80GHz";
+    uint32_t cpus = *(volatile const uint32_t *)0x7FFE03C0; /* ActiveProcessorCount of the shared user data. */
+    cpus = cpus ? (cpus > 255 ? 255 : cpus) : 1;
     switch (leaf) {
     case 0:
-        r[0] = 0x16;
-        r[1] = 0x6C617551; /* Qual */
-        r[3] = 0x6D6D6F63; /* comm */
-        r[2] = 0x20202020;
+    case 0x80000000:
+        r[0] = leaf ? 0x80000008 : 0xD;
+        r[1] = 0x68747541; /* Auth */
+        r[3] = 0x69746E65; /* enti */
+        r[2] = 0x444D4163; /* cAMD */
         break;
     case 1:
-        r[0] = 0x00000812; /* family 8, model 1, stepping 2 of the oryon */
-        r[1] = (8u << 8) | (1u << 16);
+        r[0] = 0x00600F01;
+        r[1] = cpus << 16 | 8u << 8; /* 64 byte clflush lines. */
         r[2] = (1u << 0) | (1u << 9) | (1u << 13) | (1u << 19) | (1u << 23); /* sse3 ssse3 cx16 sse4.1 popcnt */
-        r[3] = 0x078BFBFFu & ~(1u << 28); /* fpu .. sse2, without htt */
+        r[3] = 0x17888111u; /* fpu tsc cx8 cmov clflush mmx fxsr sse sse2 htt */
         break;
     case 7:
         break;
-    case 0x80000000:
-        r[0] = 0x80000008;
-        break;
     case 0x80000001:
-        r[2] = (1u << 0) | (1u << 8); /* lahf in 64 bit mode, prefetchw */
-        r[3] = (1u << 11) | (1u << 20) | (c->mode64 ? (1u << 29) : 0); /* syscall, nx, long mode */
+        r[0] = 0x00600F01;
+        r[2] = (c->mode64 ? (1u << 0) : 0) | (1u << 8); /* lahf in 64 bit mode, prefetchw */
+        r[3] = (1u << 20) | (c->mode64 ? (1u << 11) | (1u << 29) : 0); /* nx, syscall and long mode */
         break;
     case 0x80000002:
     case 0x80000003:
     case 0x80000004:
         put_string(r, brand + (leaf - 0x80000002) * 16);
-        { uint32_t t = r[1]; r[1] = r[1]; (void)t; }
+        break;
+    case 0x80000005:
+        r[2] = 0x20040140; /* 32K l1 data, 4 way, 64 byte lines */
+        r[3] = 0x20020140; /* 32K l1 code, 2 way */
         break;
     case 0x80000006:
-        r[2] = (256u << 16) | (8u << 12) | 64; /* 256K l2, 8 way, 64 byte lines */
+        r[2] = 0x02006140; /* 512K l2, 8 way, 64 byte lines */
+        break;
+    case 0x80000007:
+        r[3] = 1u << 8; /* invariant tsc */
         break;
     case 0x80000008:
-        r[0] = 0x3027;
+        r[0] = 0x2020;
+        r[2] = (cpus - 1) | (uint32_t)(31 - __builtin_clz(2 * cpus - 1)) << 12;
         break;
     case 4:
         if (sub < 4) {
@@ -893,7 +1002,7 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
             x86_ldmxcsr(c, rd32(addr));
             return;
         case 3:
-            wr32(addr, c->mxcsr);
+            wr32(addr, x86_mxcsr(c));
             return;
         case 7: /* clflush */
             return;
@@ -922,12 +1031,7 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
         }
         uint64_t addr = x86_ea(c, i);
         uint64_t old;
-        switch (sz) {
-        case 1: { uint8_t e = (uint8_t)acc; __atomic_compare_exchange_n((uint8_t *)(uintptr_t)addr, &e, (uint8_t)src, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); old = e; break; }
-        case 2: { uint16_t e = (uint16_t)acc; __atomic_compare_exchange_n((uint16_t *)(uintptr_t)addr, &e, (uint16_t)src, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); old = e; break; }
-        case 4: { uint32_t e = (uint32_t)acc; __atomic_compare_exchange_n((uint32_t *)(uintptr_t)addr, &e, (uint32_t)src, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); old = e; break; }
-        default: { uint64_t e = acc; __atomic_compare_exchange_n((uint64_t *)(uintptr_t)addr, &e, src, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST); old = e; break; }
-        }
+        cas_old(addr, sz, acc, src, &old);
         alu(c, ALU_CMP, sz, acc, old);
         if (old != acc)
             set_reg(c, X86_RAX, sz, 1, old);
@@ -982,11 +1086,17 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
             return;
         }
         uint64_t addr = x86_ea(c, i), old;
-        switch (sz) {
-        case 1: old = __atomic_fetch_add((uint8_t *)(uintptr_t)addr, (uint8_t)src, __ATOMIC_SEQ_CST); break;
-        case 2: old = __atomic_fetch_add((uint16_t *)(uintptr_t)addr, (uint16_t)src, __ATOMIC_SEQ_CST); break;
-        case 4: old = __atomic_fetch_add((uint32_t *)(uintptr_t)addr, (uint32_t)src, __ATOMIC_SEQ_CST); break;
-        default: old = __atomic_fetch_add((uint64_t *)(uintptr_t)addr, src, __ATOMIC_SEQ_CST); break;
+        if (addr & (uint64_t)(sz - 1)) {
+            old = rdn(addr, sz);
+            while (!cas_old(addr, sz, old, old + src, &old))
+                ;
+        } else {
+            switch (sz) {
+            case 1: old = __atomic_fetch_add((uint8_t *)(uintptr_t)addr, (uint8_t)src, __ATOMIC_SEQ_CST); break;
+            case 2: old = __atomic_fetch_add((uint16_t *)(uintptr_t)addr, (uint16_t)src, __ATOMIC_SEQ_CST); break;
+            case 4: old = __atomic_fetch_add((uint32_t *)(uintptr_t)addr, (uint32_t)src, __ATOMIC_SEQ_CST); break;
+            default: old = __atomic_fetch_add((uint64_t *)(uintptr_t)addr, src, __ATOMIC_SEQ_CST); break;
+            }
         }
         alu(c, ALU_ADD, sz, old, src);
         write_greg(c, i, sz, old);
@@ -1020,8 +1130,7 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
         } else { /* cmpxchg8b */
             uint64_t expected = ((c->r[X86_RDX] & 0xFFFFFFFF) << 32) | (c->r[X86_RAX] & 0xFFFFFFFF);
             uint64_t desired = ((c->r[X86_RCX] & 0xFFFFFFFF) << 32) | (c->r[X86_RBX] & 0xFFFFFFFF);
-            int ok = __atomic_compare_exchange_n((uint64_t *)(uintptr_t)addr, &expected, desired, 0, __ATOMIC_SEQ_CST,
-                                                 __ATOMIC_SEQ_CST);
+            int ok = cas_old(addr, 8, expected, desired, &expected);
             uint32_t f = x86_arith_flags(c) & ~X86_ZF;
             if (ok) {
                 f |= X86_ZF;
@@ -1127,6 +1236,19 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
         set_reg(c, reg, size, 1, v);
         return;
     }
+    case 0x06: /* push es */
+    case 0x0E: /* push cs */
+    case 0x16: /* push ss */
+    case 0x1E: /* push ds */
+        /* invalid in 64-bit code, which the decoder already refused. */
+        push(c, size, selector(c, op >> 3));
+        return;
+    case 0x07: /* pop es */
+    case 0x17: /* pop ss */
+    case 0x1F: /* pop ds */
+        /* the flat segments of a 32-bit program take their selector back unchanged. */
+        pop(c, size);
+        return;
     case 0x60: { /* pushad */
         uint64_t sp = c->r[X86_RSP];
         for (int r = 0; r < 8; r++)
@@ -1506,38 +1628,13 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
 /* ------------------------------------------------------------ block cache */
 
 #define BLOCK_MAX 32
-#define JIT_BATCH 16      /* translations made visible together. */
+#define JIT_BATCH X86_JIT_BATCH
 #define JIT_BATCH_AGE 64   /* runs of waiting blocks before the batch is made visible anyway. */
-#define BLOCK_BUCKETS 16384
+#define TABLE_FIRST 4096
 #define PAGE_BUCKETS 4096
 
-/* a chain slot linked to a block, unlinked when the block is dropped. */
-typedef struct X86Link {
-    struct X86Link *next;
-    X86ChainSlot *slot;
-} X86Link;
-
-typedef struct X86Block {
-    struct X86Block *next;
-    struct X86Block *page_next; /* the next block starting in a page of the same page bucket. */
-    uint64_t rip;
-    uint64_t end;           /* the address after the last instruction. */
-    X86Native native;
-    struct X86Block *fallback; /* x64 code of a native block, for when the native function declines. */
-    struct X86Block *succ[2];  /* the blocks that last followed this one, to skip the hash lookup. */
-    uint64_t succ_rip[2];
-    uint32_t *jit;          /* translated arm64 code. */
-    uint32_t *jit_ready;    /* translated code waiting for the next batch to become visible to fetch. */
-    uint16_t *jit_offsets;  /* code offset of each instruction and of the end. */
-    X86Link *links;
-    uint32_t runs;          /* runs before translation, ~0u once translation failed. */
-    uint32_t count;
-    uint32_t dropped;       /* the code changed: the block only lives on in references to it. */
-    X86Insn insns[];
-} X86Block;
-
 typedef struct X86BlockCache {
-    X86Block *buckets[BLOCK_BUCKETS];
+    X86Table table;         /* first: translated code finds it through the cpu's blocks. */
     X86Block *pages[PAGE_BUCKETS]; /* the blocks by the page they start in, to find the ones a code change hits. */
     uint8_t *arena;
     size_t arena_used;
@@ -1651,15 +1748,81 @@ static X86Native native_at(uint64_t rip)
     return nullptr;
 }
 
-static uint32_t block_bucket(uint64_t rip) { return (uint32_t)((rip ^ (rip >> 14)) & (BLOCK_BUCKETS - 1)); }
-
 static uint32_t page_bucket(uint64_t page) { return (uint32_t)((page ^ (page >> 12)) & (PAGE_BUCKETS - 1)); }
+
+static void table_put(X86Table *t, X86Block *b)
+{
+    for (uint64_t h = x86_slot_hash(b->rip) & t->mask;; h = (h + 1) & t->mask) {
+        if (!t->slots[h].block) {
+            t->slots[h] = (X86Slot){b->rip, b->jit ? b->jit + X86_JIT_PROLOGUE : nullptr, b, 0};
+            return;
+        }
+    }
+}
+
+/* keeps at most half of the slots used, so a probe meets a free one soon. */
+static int table_reserve(X86Table *t)
+{
+    if (t->slots && (t->used + 1) * 2 <= t->mask + 1)
+        return 1;
+    uint64_t size = t->slots ? (t->mask + 1) * 2 : TABLE_FIRST;
+    X86Slot *slots = x86_alloc(size * sizeof(X86Slot)), *old = t->slots;
+    if (!slots)
+        return 0;
+    __builtin_memset(slots, 0, size * sizeof(X86Slot));
+    uint64_t old_size = old ? t->mask + 1 : 0;
+    t->slots = slots;
+    t->mask = size - 1;
+    for (uint64_t k = 0; k < old_size; k++)
+        if (old[k].block)
+            table_put(t, old[k].block);
+    if (old)
+        x86_free(old, old_size * sizeof(X86Slot));
+    return 1;
+}
+
+/* takes the block's slot out, moving the later slots of its run back so that every probe still finds them. */
+static void table_remove(X86Table *t, const X86Block *b)
+{
+    if (!t->slots)
+        return;
+    uint64_t i = x86_slot_hash(b->rip) & t->mask;
+    while (t->slots[i].block != b) {
+        if (!t->slots[i].block)
+            return;
+        i = (i + 1) & t->mask;
+    }
+    for (uint64_t j = (i + 1) & t->mask; t->slots[j].block; j = (j + 1) & t->mask) {
+        uint64_t home = x86_slot_hash(t->slots[j].rip) & t->mask;
+        /* the slot at j may move to i when its home is not in the cyclic range (i, j]. */
+        if (((j - home) & t->mask) >= ((j - i) & t->mask)) {
+            t->slots[i] = t->slots[j];
+            i = j;
+        }
+    }
+    t->slots[i] = (X86Slot){};
+    t->used--;
+}
+
+static X86Slot *table_find(X86Table *t, const X86Block *b)
+{
+    if (!t->slots)
+        return nullptr;
+    for (uint64_t h = x86_slot_hash(b->rip) & t->mask;; h = (h + 1) & t->mask) {
+        if (t->slots[h].block == b)
+            return &t->slots[h];
+        if (!t->slots[h].block)
+            return nullptr;
+    }
+}
 
 static void insert(X86BlockCache *bc, X86Block *b)
 {
-    uint32_t h = block_bucket(b->rip), p = page_bucket(b->rip >> 12);
-    b->next = bc->buckets[h];
-    bc->buckets[h] = b;
+    uint32_t p = page_bucket(b->rip >> 12);
+    if (table_reserve(&bc->table)) {
+        table_put(&bc->table, b);
+        bc->table.used++;
+    }
     b->page_next = bc->pages[p];
     bc->pages[p] = b;
 }
@@ -1678,8 +1841,15 @@ static X86Block *translate(X86Cpu *c, X86BlockCache *bc, uint64_t rip, int allow
         return b;
     }
     X86Insn buf[BLOCK_MAX];
-    uint32_t n = 0;
-    uint64_t pc = rip;
+    uint32_t n;
+    uint64_t pc;
+    /* watched before it is read, so a write after the read is never missed. */
+    uint64_t watched = rip & ~0xFFFull;
+    if (c->env && c->env->code_watch)
+        c->env->code_watch(c, watched);
+decode:
+    n = 0;
+    pc = rip;
     c->insn_rip = rip;
     while (n < BLOCK_MAX && (n == 0 || pc != c->exit_rip)) {
         c->insn_rip = pc;
@@ -1691,14 +1861,38 @@ static X86Block *translate(X86Cpu *c, X86BlockCache *bc, uint64_t rip, int allow
             break;
         }
         pc += buf[n].len;
-        if (x86_ends_block(&buf[n++]))
+        const X86Insn *last = &buf[n++];
+        /*
+         * a conditional branch goes on into the code after it, which the translator runs straight on with an exit for
+         * the branch taken. only within the block's first page, so nothing past the code that can run is read.
+         */
+        if (x86_ends_block(last) && (!x86_is_jcc(last) || ((pc - 1) ^ rip) & ~0xFFFull))
             break;
     }
+    /* a block running on into the next page reads it again once that page is watched too. */
+    if (c->env && c->env->code_watch && ((pc - 1) & ~0xFFFull) != watched) {
+        watched = (pc - 1) & ~0xFFFull;
+        c->env->code_watch(c, watched);
+        goto decode;
+    }
     if (c->env && c->env->code_seen) {
-        c->env->code_seen(c, rip);
-        /* a block running on into the next page may cross into another region. */
-        if (pc > rip && ((pc - 1) ^ rip) >> 12)
-            c->env->code_seen(c, pc - 1);
+        if (!c->env->code_seen(c, rip)) {
+            c->insn_rip = rip;
+            x86_fault(c, X86_STATUS_ACCESS_VIOLATION, 8, rip);
+        }
+        /* a block running on into the next page may cross into another region, which ends it before the crossing. */
+        uint64_t page = (rip | 0xFFF) + 1;
+        if (pc > page && !c->env->code_seen(c, page)) {
+            uint32_t kept = 0;
+            pc = rip;
+            while (kept < n && pc + buf[kept].len <= page)
+                pc += buf[kept++].len;
+            if (!kept) {
+                c->insn_rip = rip;
+                x86_fault(c, X86_STATUS_ACCESS_VIOLATION, 8, page);
+            }
+            n = kept;
+        }
     }
     X86Block *b = cache_alloc(bc, sizeof(X86Block) + n * sizeof(X86Insn));
     __builtin_memset(b, 0, sizeof(*b));
@@ -1747,14 +1941,14 @@ void x86_free_blocks(X86Cpu *c)
         a = next;
     }
     free_code(bc);
+    if (bc->table.slots)
+        x86_free(bc->table.slots, (bc->table.mask + 1) * sizeof(X86Slot));
     x86_free(bc, sizeof(*bc));
     c->blocks = nullptr;
 }
 
 void x86_flush_blocks(X86Cpu *c)
 {
-    if (c->targets)
-        __builtin_memset(c->targets, 0, X86_TARGET_COUNT * sizeof(X86Target));
     X86BlockCache *bc = c->blocks;
     if (!bc)
         return;
@@ -1765,22 +1959,28 @@ void x86_flush_blocks(X86Cpu *c)
         a = next;
     }
     free_code(bc);
+    X86Table table = bc->table;
+    if (table.slots)
+        __builtin_memset(table.slots, 0, (table.mask + 1) * sizeof(X86Slot));
+    table.used = 0;
     uint32_t drops = bc->drops;
     __builtin_memset(bc, 0, sizeof(*bc));
+    bc->table = table;
     bc->drops = drops + 1;
 }
 
 static int overlaps(const X86Block *b, uint64_t start, uint64_t end) { return b->rip < end && start < b->end; }
 
-static void drop_block(X86Cpu *c, X86Block *b)
+static void drop_block(X86BlockCache *bc, X86Block *b)
 {
     b->dropped = 1;
-    for (X86Link *l = b->links; l; l = l->next)
+    for (X86Link *l = b->links; l; l = l->next) {
+        x86_code_write_begin();
         __atomic_store_n(&l->slot->code, nullptr, __ATOMIC_RELAXED);
+        x86_code_write_end(l->slot, sizeof(*l->slot));
+    }
     b->links = nullptr;
-    X86Target *t = c->targets ? (X86Target *)c->targets + x86_target_index(b->rip) : nullptr;
-    if (t && t->block == b)
-        t->rip = 0;
+    table_remove(&bc->table, b);
 }
 
 /* the blocks starting in one page bucket that overlap [start, end) leave the cache. */
@@ -1793,13 +1993,9 @@ static void drop_bucket(X86Cpu *c, X86BlockCache *bc, uint32_t p, uint64_t start
             continue;
         }
         *q = b->page_next;
-        X86Block **h = &bc->buckets[block_bucket(b->rip)];
-        while (*h != b)
-            h = &(*h)->next;
-        *h = b->next;
-        drop_block(c, b);
+        drop_block(bc, b);
         if (b->fallback)
-            drop_block(c, b->fallback);
+            drop_block(bc, b->fallback);
         bc->drops++;
     }
 }
@@ -1842,40 +2038,24 @@ static void code_changed(X86Cpu *c)
         x86_flush_blocks(c);
 }
 
-static inline X86Block *lookup(X86Cpu *c, uint64_t rip)
+/* the block at rip, made when there is none, and its translated code past the prologue when visible. */
+static inline X86Block *lookup(X86Cpu *c, uint64_t rip, const uint32_t **code)
 {
     X86BlockCache *bc = block_cache(c);
-    for (X86Block *b = bc->buckets[block_bucket(rip)]; b; b = b->next) {
-        if (b->rip == rip)
-            return b;
-    }
-    return translate(c, bc, rip, 1);
-}
-
-/* tries the previous block's successors before the hash lookup. */
-static inline X86Block *next_block(X86Cpu *c, X86Block *prev, uint64_t rip)
-{
-    if (prev) {
-        if (prev->succ_rip[0] == rip && prev->succ[0] && !prev->succ[0]->dropped)
-            return prev->succ[0];
-        if (prev->succ_rip[1] == rip && prev->succ[1] && !prev->succ[1]->dropped) {
-            /* most recent first. */
-            X86Block *b = prev->succ[1];
-            prev->succ[1] = prev->succ[0];
-            prev->succ_rip[1] = prev->succ_rip[0];
-            prev->succ[0] = b;
-            prev->succ_rip[0] = rip;
-            return b;
+    const X86Table *t = &bc->table;
+    if (t->slots) {
+        for (uint64_t h = x86_slot_hash(rip) & t->mask;; h = (h + 1) & t->mask) {
+            const X86Slot *s = &t->slots[h];
+            if (!s->block)
+                break;
+            if (s->rip == rip) {
+                *code = s->code;
+                return s->block;
+            }
         }
     }
-    X86Block *b = lookup(c, rip);
-    if (prev) {
-        prev->succ[1] = prev->succ[0];
-        prev->succ_rip[1] = prev->succ_rip[0];
-        prev->succ[0] = b;
-        prev->succ_rip[0] = rip;
-    }
-    return b;
+    *code = nullptr;
+    return translate(c, bc, rip, 1);
 }
 
 void x86_exec_insn(X86Cpu *c, const X86Insn *i)
@@ -1884,6 +2064,7 @@ void x86_exec_insn(X86Cpu *c, const X86Insn *i)
 }
 
 uint32_t x86_jit_threshold = 16;
+uint32_t x86_jit_batch = JIT_BATCH;
 
 #define CODE_ARENA_SIZE (4u << 20)
 #define JIT_MAX_WORDS 8192u
@@ -1898,6 +2079,9 @@ static void jit_publish(X86BlockCache *bc)
         X86Block *b = bc->pending[k];
         b->jit = b->jit_ready;
         b->jit_ready = nullptr;
+        X86Slot *s = table_find(&bc->table, b);
+        if (s)
+            s->code = b->jit + X86_JIT_PROLOGUE;
     }
     bc->pending_count = 0;
     bc->pending_age = 0;
@@ -1925,105 +2109,110 @@ static void jit_block(X86Cpu *c, X86Block *b)
         bc->code_used = 64;
     }
     uint16_t *offsets = cache_alloc(bc, (b->count + 1) * sizeof(uint16_t));
+    uint16_t *held = cache_alloc(bc, b->count * sizeof(uint16_t));
     uint32_t *code = (uint32_t *)(bc->code + bc->code_used);
     x86_code_write_begin();
-    uint32_t words = x86_jit_translate(c, b->rip, b->insns, b->count, code, JIT_MAX_WORDS, offsets);
+    uint32_t words = x86_jit_translate(c, b->rip, b->insns, b->count, code, JIT_MAX_WORDS, offsets, held);
     if (!words)
         return;
     bc->code_used += (words * 4 + 63) & ~(size_t)63;
     b->jit_offsets = offsets;
+    b->jit_xmm = held;
     b->jit_ready = code;
     if (!bc->pending_count)
         bc->pending_start = (uint8_t *)code;
     bc->pending[bc->pending_count++] = b;
-    if (bc->pending_count == JIT_BATCH)
+    if (bc->pending_count >= x86_jit_batch || bc->pending_count == JIT_BATCH)
         jit_publish(bc);
 }
 
-void x86_jit_fault(X86Cpu *c, uint64_t pc, const uint64_t *x)
+void x86_jit_fault(X86Cpu *c, uint64_t pc, const uint64_t *x, const void *v)
 {
     const X86Block *b = c->jit_block;
     if (!b || pc < (uint64_t)(uintptr_t)b->jit)
         return;
-    uint64_t offset = (pc - (uint64_t)(uintptr_t)b->jit) / 4;
-    if (offset < b->jit_offsets[b->count]) {
-        c->insn_rip = x86_jit_fault_rip(b->rip, b->insns, b->count, b->jit_offsets, (uint32_t)offset);
-        /* translated code keeps rax to rdi in x20 to x27. */
-        for (int k = 0; k < 8; k++)
-            c->r[k] = x[20 + k];
+    uint32_t offset = (uint32_t)((pc - (uint64_t)(uintptr_t)b->jit) / 4);
+    if (offset >= b->jit_offsets[b->count])
+        return;
+    uint32_t k = 0;
+    while (k + 1 < b->count && offset >= b->jit_offsets[k + 1])
+        k++;
+    c->insn_rip = x86_jit_fault_rip(b->rip, b->insns, b->count, b->jit_offsets, offset);
+    /* translated code keeps rax to rdi in x20 to x27, r8 to r15 in x0 to x7 and the xmm it holds in v16 to v31. */
+    for (int n = 0; n < 8; n++) {
+        c->r[n] = x[20 + n];
+        c->r[8 + n] = x[n];
     }
+    for (int n = 0; n < 16; n++)
+        if (v && (b->jit_xmm[k] & 1u << n))
+            __builtin_memcpy(&c->xmm[n], (const uint8_t *)v + (16 + n) * 16, 16);
 }
 
 void x86_run(X86Cpu *c)
 {
-    X86Block *prev = nullptr;
     X86ChainSlot *pending = nullptr; /* the slot the last translated run left through, to link to what follows. */
     c->jit_block = nullptr; /* in case a fault in translated code restarted the run. */
     uint32_t drops = block_cache(c)->drops;
     while (c->rip != c->exit_rip) {
         if (c->suspend_pending && *c->suspend_pending && c->env->suspend) {
             c->env->suspend(c);
-            prev = nullptr;
             pending = nullptr;
         }
+        if (c->code_writes && *c->code_writes != c->code_writes_seen)
+            c->env->code_written(c);
         if (c->code_epoch && *c->code_epoch != c->blocks_epoch)
             code_changed(c);
         /* nested runs share the blocks, so this run's may have gone too. */
         if (block_cache(c)->drops != drops) {
             drops = ((X86BlockCache *)c->blocks)->drops;
-            prev = nullptr;
             pending = nullptr;
         }
         if (c->trace)
             c->trace[(*c->trace_pos)++ % X86_TRACE_SIZE] = c->rip;
-        X86Block *b = next_block(c, prev, c->rip);
-        if (b->native) {
-            pending = nullptr;
-            c->insn_rip = c->rip;
-            if (b->native(c)) {
-                c->steps++;
-                prev = b;
-                continue;
-            }
-            if (!b->fallback)
-                b->fallback = translate(c, block_cache(c), c->rip, 0);
-            b = b->fallback;
-        }
-        if (!b->jit && b->runs < ~0u && ++b->runs > x86_jit_threshold)
-            jit_block(c, b);
-        else if (b->jit_ready && ++((X86BlockCache *)c->blocks)->pending_age > JIT_BATCH_AGE)
-            jit_publish(c->blocks);
-        if (b->jit) {
-            /* computed exits find it here next time, without coming back. */
-            if (!c->targets)
-                c->targets = x86_alloc(X86_TARGET_COUNT * sizeof(X86Target));
-            if (c->targets) {
-                X86Target *t = (X86Target *)c->targets + x86_target_index(b->rip);
-                if (t->rip != b->rip) {
-                    t->rip = 0;
-                    t->block = b;
-                    t->code = b->jit + X86_JIT_PROLOGUE;
-                    __atomic_store_n(&t->rip, b->rip, __ATOMIC_RELEASE);
+        const uint32_t *code;
+        X86Block *b = lookup(c, c->rip, &code);
+        /* a block whose translation the table holds runs without its header being read here. */
+        if (!code) {
+            if (b->native) {
+                pending = nullptr;
+                c->insn_rip = c->rip;
+                if (b->native(c)) {
+                    c->steps++;
+                    continue;
                 }
+                if (!b->fallback)
+                    b->fallback = translate(c, block_cache(c), c->rip, 0);
+                b = b->fallback;
             }
+            if (!b->jit && b->runs < ~0u && ++b->runs > x86_jit_threshold)
+                jit_block(c, b);
+            else if (b->jit_ready && ++((X86BlockCache *)c->blocks)->pending_age > JIT_BATCH_AGE)
+                jit_publish(c->blocks);
+            code = b->jit ? b->jit + X86_JIT_PROLOGUE : nullptr;
         }
         if (pending) {
             /* chained blocks run without passing here, so the trace only shows where runs entered. */
-            if (b->jit && pending->rip == b->rip) {
+            if (code && pending->rip == b->rip) {
                 X86Link *l = cache_alloc(c->blocks, sizeof(X86Link));
                 l->slot = pending;
                 l->next = b->links;
                 b->links = l;
+                /* the slot lies in the translated code, which a host may keep from being written meanwhile. */
+                x86_code_write_begin();
                 pending->block = b;
                 __atomic_store_n(&pending->code, b->jit + X86_JIT_PROLOGUE, __ATOMIC_RELEASE);
+                x86_code_write_end(pending, sizeof(*pending));
             }
             pending = nullptr;
         }
         uint32_t first = 0;
-        if (b->jit) {
+        if (code) {
             c->jit_block = b;
             c->exit_slot = nullptr;
-            first = ((uint32_t (*)(X86Cpu *))(void *)b->jit)(c);
+            /* the table only grows, and so moves, in the dispatcher. */
+            c->jit_slots = ((X86BlockCache *)c->blocks)->table.slots;
+            c->jit_mask = ((X86BlockCache *)c->blocks)->table.mask;
+            first = ((uint32_t (*)(X86Cpu *))(void *)(code - X86_JIT_PROLOGUE))(c);
             /* chained exits ran on into other blocks: the last one is where the run stopped. */
             b = (X86Block *)c->jit_block;
             c->jit_block = nullptr;
@@ -2040,7 +2229,6 @@ void x86_run(X86Cpu *c)
             exec(c, i);
         }
         c->steps += (uint64_t)(i - start);
-        prev = b;
     }
 }
 

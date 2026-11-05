@@ -61,8 +61,8 @@ static BOOLEAN arena_string(USER_ARENA *a, PUNICODE_STRING dst, const WCHAR *src
 }
 
 /*
- * the 32-bit peb of a wow64 process, below 2 GiB, mirroring what the 64-bit peb says about the process.
- * wow64.dll adds the 32-bit process parameters.
+ * the 32-bit peb of a 32-bit process, below 2 GiB, mirroring what the 64-bit peb says about the process.
+ * the 32-bit layer adds the 32-bit process parameters.
  */
 static NTSTATUS setup_wow64_peb(PEPROCESS process)
 {
@@ -351,20 +351,30 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
         }
         process->NtdllBase = ntdll;
     }
-    /* a 32-bit program also gets the 32-bit ntdll, at its base. */
+    /* a 32-bit program also gets the 32-bit ntdll, at its base, so a parent can patch it before the child runs. */
     PVOID ntdll32 = nullptr;
-    if (NT_SUCCESS(status) && PspIsWow64Process(process) && PspWow64NtdllSection) {
+    if (NT_SUCCESS(status) && process->Machine == IMAGE_FILE_MACHINE_I386 && PspWow64NtdllSection) {
         SIZE_T ntdll32_view = 0;
         status = MiMapViewOfSection(PspWow64NtdllSection, process, &ntdll32, 0, &ntdll32_view, PAGE_EXECUTE_WRITECOPY, 0);
         if (status == STATUS_IMAGE_NOT_AT_BASE)
             status = STATUS_SUCCESS;
     }
+    /* so does an x64 one on arm64 with the x64 ntdll. elsewhere than its base, xta64 maps and relocates its own. */
+    if (NT_SUCCESS(status) && process->Machine == IMAGE_FILE_MACHINE_AMD64 && PspX64NtdllSection) {
+        SIZE_T view = 0;
+        NTSTATUS mapped = MiMapViewOfSection(PspX64NtdllSection, process, &ntdll32, 0, &view, PAGE_EXECUTE_WRITECOPY, 0);
+        if (mapped == STATUS_IMAGE_NOT_AT_BASE)
+            MiUnmapViewOfSection(process, ntdll32);
+        if (mapped != STATUS_SUCCESS)
+            ntdll32 = nullptr;
+    }
     if (NT_SUCCESS(status))
         status = setup_peb(process, p);
-    /* wow64.dll finds the 32-bit ntdll through a spare peb pointer. */
+    /* wow64.dll and xta64 find the guest ntdll through a spare peb pointer. */
     if (NT_SUCCESS(status) && ntdll32)
         process->Peb->SparePointers[0] = ntdll32;
-    if (NT_SUCCESS(status) && PspIsWow64Process(process))
+    /* every 32-bit process has its 32-bit peb, which wow64.dll on x64 and xta64 on arm64 complete. */
+    if (NT_SUCCESS(status) && process->Machine == IMAGE_FILE_MACHINE_I386)
         status = setup_wow64_peb(process);
     KiAttachProcess(saved);
 

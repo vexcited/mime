@@ -393,6 +393,20 @@ static SIZE_T count_committed(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR en
     return committed;
 }
 
+/*
+ * a write to x86 code xta64 translated, see MIME_VM_CODE_WATCH. the address space lock orders the entries, and the
+ * count is published after the page so xta64 never reads an entry before it is there.
+ */
+static void code_log(PMMADDRESS_SPACE as, ULONG_PTR page)
+{
+    MIME_CODE_LOG *log = as->CodeLog;
+    if (!log)
+        return;
+    ULONG64 n = log->Written;
+    log->Pages[n % MIME_CODE_LOG_PAGES] = page;
+    __atomic_store_n(&log->Written, n + 1, __ATOMIC_RELEASE);
+}
+
 /* works a table at a time so translations are flushed once per table. returns how many pages were committed. */
 static SIZE_T release_pages(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
 {
@@ -412,6 +426,8 @@ static SIZE_T release_pages(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
         for (SIZE_T i = 0; i < count; i++) {
             ULONG64 e = old[i];
             committed += pte_committed(e);
+            if (e & MM_PTE_SW_CODE)
+                code_log(as, va + (i << PAGE_SHIFT));
             if ((e & MM_PTE_VALID) && !(e & MM_PTE_SW_SHARED)) {
                 freed[n++] = e & MM_PTE_ADDR_MASK;
                 if (as->CommittedPages)
@@ -456,6 +472,10 @@ static ULONG64 reprotect_pte(ULONG64 v, ULONG protect, BOOLEAN watch)
             if (!written)
                 attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_WATCH;
         }
+        /* translated code stays watched while it can be written; a page that cannot be written needs no watch. */
+        if ((v & MM_PTE_SW_CODE) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY |
+                                                PAGE_EXECUTE_WRITECOPY)))
+            attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_CODE;
         return (v & MM_PTE_ADDR_MASK) | attrs | MM_PTE_VALID | MM_PTE_PAGE;
     }
     return sw_pte(protect) | (v & MM_SWPTE_SECTION);
@@ -506,6 +526,8 @@ static void reset_range(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
             if ((old[i] & MM_PTE_VALID) && !(old[i] & MM_PTE_SW_SHARED)) {
                 values[i] = sw_pte(MiPteToProtect(old[i])) | (old[i] & MM_SWPTE_SECTION);
                 any = TRUE;
+                if (old[i] & MM_PTE_SW_CODE)
+                    code_log(as, va + (i << PAGE_SHIFT));
             }
         }
         if (!any)
@@ -1409,11 +1431,19 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
             ULONG64 pa = MmAllocatePageNoZero();
             if (pa) {
                 memcpy(HalPhysmap(pa), HalPhysmap(v & MM_PTE_ADDR_MASK), PAGE_SIZE);
-                ULONG64 attrs = MI_PTE_SET_RW(v & ~(MM_PTE_ADDR_MASK | MM_PTE_SW_COW | MM_PTE_SW_SHARED));
+                if (v & MM_PTE_SW_CODE)
+                    code_log(as, page);
+                ULONG64 attrs = MI_PTE_SET_RW(v & ~(MM_PTE_ADDR_MASK | MM_PTE_SW_COW | MM_PTE_SW_SHARED | MM_PTE_SW_CODE));
                 MiWritePte(as->Root, page, pa | attrs, as->Asid);
                 as->CommittedPages++;
                 handled = TRUE;
             }
+        } else if ((v & MM_PTE_VALID) && write && (v & MM_PTE_SW_CODE)) {
+            /* a write watch the page also has makes it writable on the next fault. */
+            code_log(as, page);
+            ULONG64 attrs = v & ~MM_PTE_SW_CODE;
+            MiUpgradePte(as->Root, page, (attrs & MM_PTE_SW_WATCH) ? attrs : MI_PTE_SET_RW(attrs), as->Asid);
+            handled = TRUE;
         } else if ((v & MM_PTE_VALID) && write && (v & MM_PTE_SW_WATCH)) {
             /* first write since the last reset: the page is now writable. */
             MiUpgradePte(as->Root, page, MI_PTE_SET_RW(v & ~MM_PTE_SW_WATCH), as->Asid);
@@ -1450,6 +1480,11 @@ void MmDeleteAddressSpace(PMMADDRESS_SPACE as)
         as->VadCapacity = 0;
     }
     return_commit(as, as->CommitCharge);
+    if (as->CodeLogPage) {
+        as->CodeLog = nullptr;
+        MmFreePage(as->CodeLogPage);
+        as->CodeLogPage = 0;
+    }
     free_tables(as->Root, 0);
     MmFreePage(as->RootPhys);
     MiFlushTlbAsid(as->Asid);
@@ -2018,9 +2053,100 @@ NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_IN
  * mime never pages out or trims the working set, so prefetching, priorities and working set removal only
  * check their arguments. call targets are not tracked either, since no image is checked against them.
  */
+/* -------------------------------------------------------- translated code watching */
+
+static BOOLEAN code_watchable(ULONG64 v)
+{
+    return (v & MM_PTE_VALID) && MI_PTE_IS_USER(v) && !(v & MM_PTE_SW_CODE) &&
+           (MiPteToProtect(v) & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY));
+}
+
+static void watch_code(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
+{
+    ULONG64 values[512];
+    PTE_CURSOR c = {as->Root, start, end};
+    SIZE_T count;
+    ULONG_PTR va;
+    for (ULONG64 *pte; (pte = cursor_next(&c, &va, &count));) {
+        BOOLEAN any = FALSE;
+        for (SIZE_T i = 0; i < count; i++) {
+            values[i] = pte[i];
+            if (code_watchable(pte[i])) {
+                values[i] = MI_PTE_SET_RO(pte[i]) | MM_PTE_SW_CODE;
+                any = TRUE;
+            }
+        }
+        if (any)
+            MiRewritePtes(pte, va, count, values, as->Asid);
+    }
+}
+
+/* the log lives in a page of its own above 4 GB, out of the way of 32-bit programs. */
+static NTSTATUS map_code_log(PMMADDRESS_SPACE as)
+{
+    if (as->CodeLog)
+        return STATUS_SUCCESS;
+    ULONG64 pa = MmAllocatePage();
+    if (!pa)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    ULONG_PTR va;
+    NTSTATUS status = MiFindFreeRangeEx(as, PAGE_SIZE, 0, 0x100000000ull, 0, TRUE, &va);
+    PMMVAD vad = NT_SUCCESS(status) ? vad_create(va, va + PAGE_SIZE, MiVadShared, PAGE_READONLY, 0) : nullptr;
+    if (vad && !NT_SUCCESS(MiInsertVad(as, vad))) {
+        vad_destroy(vad);
+        vad = nullptr;
+    }
+    if (!vad) {
+        MmFreePage(pa);
+        return NT_SUCCESS(status) ? STATUS_INSUFFICIENT_RESOURCES : status;
+    }
+    MiMapPage(as->Root, va, pa, MiProtectToPte(PAGE_READONLY, TRUE) | MM_PTE_SW_SHARED);
+    as->CodeLogPage = pa;
+    as->CodeLogVa = va;
+    as->CodeLog = HalPhysmap(pa);
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS code_watch_service(HANDLE process_handle, ULONG klass, ULONG_PTR count, PVOID entries, PVOID info,
+                                   ULONG length)
+{
+    if (process_handle != NtCurrentProcess())
+        return STATUS_INVALID_PARAMETER_1;
+    BOOLEAN user = KeGetPreviousMode() == UserMode;
+    PMMADDRESS_SPACE as = &PsCurrentProcess()->AddressSpace;
+    if (klass == MIME_VM_CODE_LOG) {
+        if (length != sizeof(PVOID) || !info)
+            return STATUS_INVALID_PARAMETER_6;
+        MiLockAddressSpace(as);
+        NTSTATUS status = map_code_log(as);
+        ULONG_PTR va = as->CodeLogVa;
+        MiUnlockAddressSpace(as);
+        if (!NT_SUCCESS(status))
+            return status;
+        return user ? KiCopyToUser(info, &va, sizeof(va)) : (*(ULONG_PTR *)info = va, STATUS_SUCCESS);
+    }
+    for (ULONG_PTR i = 0; i < count; i++) {
+        MEMORY_RANGE_ENTRY r;
+        NTSTATUS status = user ? KiCopyFromUser(&r, (PUCHAR)entries + i * sizeof(r), sizeof(r))
+                               : (r = ((PMEMORY_RANGE_ENTRY)entries)[i], STATUS_SUCCESS);
+        if (!NT_SUCCESS(status))
+            return status;
+        ULONG_PTR start = (ULONG_PTR)r.VirtualAddress & ~(ULONG_PTR)(PAGE_SIZE - 1);
+        ULONG_PTR end = ROUND_TO_PAGES((ULONG_PTR)r.VirtualAddress + r.NumberOfBytes);
+        if (!r.NumberOfBytes || end <= start || end - 1 > MM_HIGHEST_USER_ADDRESS)
+            return STATUS_INVALID_PARAMETER_4;
+        MiLockAddressSpace(as);
+        watch_code(as, start, end);
+        MiUnlockAddressSpace(as);
+    }
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS NTAPI NtSetInformationVirtualMemory(HANDLE process_handle, ULONG klass, ULONG_PTR count, PVOID entries,
                                              PVOID info, ULONG length)
 {
+    if (klass == MIME_VM_CODE_WATCH || klass == MIME_VM_CODE_LOG)
+        return code_watch_service(process_handle, klass, count, entries, info, length);
     if (klass >= VmInformationClassMax)
         return STATUS_INVALID_PARAMETER_2;
     if (klass == VmCfgCallTargetInformation) {
@@ -2209,9 +2335,26 @@ NTSTATUS NTAPI MmCopyVirtualMemory(PEPROCESS from_process, PVOID from, PEPROCESS
     return (NTSTATUS)0x8000000D /* STATUS_PARTIAL_COPY. */;
 }
 
-NTSTATUS NTAPI NtFlushInstructionCache(HANDLE process, PVOID base, SIZE_T size)
+/* the code another process wrote, as WriteProcessMemory does with a flush after it, is logged for its translator. */
+NTSTATUS NTAPI NtFlushInstructionCache(HANDLE process_handle, PVOID base, SIZE_T size)
 {
     KiFlushInstructionCache();
+    PEPROCESS process;
+    if (process_handle != NtCurrentProcess() && NT_SUCCESS(reference_process(process_handle, PROCESS_VM_WRITE, &process))) {
+        PMMADDRESS_SPACE as = &process->AddressSpace;
+        if (as->CodeLog) {
+            ULONG_PTR start = (ULONG_PTR)base & ~(ULONG_PTR)(PAGE_SIZE - 1);
+            ULONG_PTR end = ROUND_TO_PAGES((ULONG_PTR)base + size);
+            MiLockAddressSpace(as);
+            if (!base || !size || end <= start || end - start > 64 * PAGE_SIZE)
+                code_log(as, MIME_CODE_LOG_ALL);
+            else
+                for (ULONG_PTR page = start; page < end; page += PAGE_SIZE)
+                    code_log(as, page);
+            MiUnlockAddressSpace(as);
+        }
+        ObDereferenceObject(process);
+    }
     return STATUS_SUCCESS;
 }
 

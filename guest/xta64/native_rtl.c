@@ -60,6 +60,8 @@
 /* raises in the x64 code that called the export, see main.c. */
 #define RtlRaiseStatus MxRaiseStatus
 #define DbgPrint MxDbgPrint
+#define RtlCaptureStackBackTrace MxCaptureStackBackTrace
+#define LdrFindEntryForAddress MxFindEntryForAddress
 
 #include "../ntdll/heap.c"
 #include "../ntdll/sync.c"
@@ -67,4 +69,15 @@
 ULONG MxDbgPrint(PCSTR format, ...)
 {
     return 0;
+}
+
+/* the report of an invalid free is not printed, so it names no callers. */
+USHORT NTAPI MxCaptureStackBackTrace(ULONG skip, ULONG count, PVOID *frames, PULONG hash)
+{
+    return 0;
+}
+
+NTSTATUS NTAPI MxFindEntryForAddress(PVOID address, PLDR_DATA_TABLE_ENTRY *entry)
+{
+    return STATUS_NOT_FOUND;
 }

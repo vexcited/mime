@@ -263,7 +263,7 @@ ULONG MiPteToProtect(ULONG64 pte)
             return (ULONG)((pte & MM_SWPTE_PROT_MASK) >> MM_SWPTE_PROT_SHIFT);
         return 0;
     }
-    BOOLEAN ro = !(pte & (MM_PTE_RW | MM_PTE_SW_WATCH));
+    BOOLEAN ro = !(pte & (MM_PTE_RW | MM_PTE_SW_WATCH | MM_PTE_SW_CODE));
     BOOLEAN exec = !(pte & MM_PTE_NX);
     ULONG protect;
     if (pte & MM_PTE_SW_COW)

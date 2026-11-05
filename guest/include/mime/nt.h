@@ -926,6 +926,21 @@ typedef enum _VIRTUAL_MEMORY_INFORMATION_CLASS {
     VmInformationClassMax
 } VIRTUAL_MEMORY_INFORMATION_CLASS;
 
+/*
+ * mime's own classes of NtSetInformationVirtualMemory, for xta64. the watch class takes ranges of x86 code: a
+ * writable page among them is mapped read only, still reported with its protection, and its first write makes it
+ * writable again and is logged. the log class maps the log, read only, and gives its address in a pointer.
+ */
+#define MIME_VM_CODE_WATCH 0x100
+#define MIME_VM_CODE_LOG 0x101
+#define MIME_CODE_LOG_PAGES 510
+#define MIME_CODE_LOG_ALL 1 /* an entry that stands for every page. */
+typedef struct MIME_CODE_LOG {
+    volatile ULONG64 Written; /* entries so far, entry n at Pages[n % MIME_CODE_LOG_PAGES]. */
+    ULONG64 Reserved;
+    ULONG64 Pages[MIME_CODE_LOG_PAGES];
+} MIME_CODE_LOG;
+
 #define SEC_FILE 0x00800000
 #define SEC_IMAGE 0x01000000
 #define SEC_RESERVE 0x04000000

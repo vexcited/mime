@@ -157,7 +157,7 @@ static int rounding(X86Cpu *c)
 static double fround(double v, int mode)
 {
     switch (mode) {
-    case 0: return __builtin_rint(v);
+    case 0: return __builtin_roundeven(v);
     case 1: return __builtin_floor(v);
     case 2: return __builtin_ceil(v);
     default: return __builtin_trunc(v);
@@ -277,7 +277,8 @@ void x86_fxsave(X86Cpu *c, uint8_t *area)
     __builtin_memcpy(area + 6, &c->fop, 2);
     __builtin_memcpy(area + 8, &c->fpu_ip, 8);
     __builtin_memcpy(area + 16, &c->fpu_dp, 8);
-    __builtin_memcpy(area + 24, &c->mxcsr, 4);
+    uint32_t mxcsr = x86_mxcsr(c);
+    __builtin_memcpy(area + 24, &mxcsr, 4);
     uint32_t mask = 0xFFFF;
     __builtin_memcpy(area + 28, &mask, 4);
     for (int i = 0; i < 8; i++) {
@@ -305,7 +306,7 @@ void x86_fxrstor(X86Cpu *c, const uint8_t *area)
     __builtin_memcpy(&c->fpu_dp, area + 16, 8);
     uint32_t mxcsr;
     __builtin_memcpy(&mxcsr, area + 24, 4);
-    c->mxcsr = mxcsr & 0xFFFF;
+    x86_set_mxcsr(c, mxcsr & 0xFFFF);
     for (int i = 0; i < 8; i++) {
         const uint8_t *slot = area + 32 + 16 * i;
         __builtin_memcpy(&c->mm[i], slot, 8);

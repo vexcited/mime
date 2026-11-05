@@ -31,8 +31,22 @@ static int finish(X86Cpu *c, ULONG64 value)
     return 1;
 }
 
-static int call6(X86Cpu *c, void *fn, int args)
+/*
+ * arm64 atomics fault on an address that crosses 16 bytes, x86 ones take any. a lock the program put at such an
+ * address is left to the x64 code of the export, whose locked instructions the interpreter handles anywhere.
+ */
+static int misaligned(X86Cpu *c, unsigned aligned)
 {
+    for (int i = 0; aligned; i++, aligned >>= 1)
+        if ((aligned & 1) && (arg(c, i) & 7))
+            return 1;
+    return 0;
+}
+
+static int call6(X86Cpu *c, void *fn, int args, unsigned aligned)
+{
+    if (misaligned(c, aligned))
+        return 0;
     ULONG64 a[6] = {};
     for (int i = 0; i < args; i++)
         a[i] = arg(c, i);
@@ -42,12 +56,14 @@ static int call6(X86Cpu *c, void *fn, int args)
     return finish(c, result);
 }
 
-#define NATIVE(name, args)                                                                                             \
+/* aligned has a bit for each argument that points to a lock, which must be 8 byte aligned. */
+#define NATIVE_ALIGNED(name, args, aligned)                                                                            \
     void Mx##name(void);                                                                                               \
     static int hook_##name(X86Cpu *c)                                                                                  \
     {                                                                                                                  \
-        return call6(c, (void *)Mx##name, args);                                                                       \
+        return call6(c, (void *)Mx##name, args, aligned);                                                              \
     }
+#define NATIVE(name, args) NATIVE_ALIGNED(name, args, 0)
 
 NATIVE(RtlCreateHeap, 6)
 NATIVE(RtlDestroyHeap, 1)
@@ -62,32 +78,39 @@ NATIVE(RtlCompactHeap, 2)
 NATIVE(RtlGetProcessHeaps, 2)
 NATIVE(RtlSetHeapInformation, 4)
 NATIVE(RtlQueryHeapInformation, 5)
-NATIVE(RtlInitializeCriticalSectionEx, 3)
-NATIVE(RtlInitializeCriticalSectionAndSpinCount, 2)
-NATIVE(RtlInitializeCriticalSection, 1)
-NATIVE(RtlSetCriticalSectionSpinCount, 2)
-NATIVE(RtlDeleteCriticalSection, 1)
-NATIVE(RtlEnterCriticalSection, 1)
-NATIVE(RtlTryEnterCriticalSection, 1)
-NATIVE(RtlLeaveCriticalSection, 1)
-NATIVE(RtlIsCriticalSectionLocked, 1)
-NATIVE(RtlIsCriticalSectionLockedByThread, 1)
-NATIVE(RtlInitializeSRWLock, 1)
-NATIVE(RtlTryAcquireSRWLockExclusive, 1)
-NATIVE(RtlAcquireSRWLockExclusive, 1)
-NATIVE(RtlReleaseSRWLockExclusive, 1)
-NATIVE(RtlTryAcquireSRWLockShared, 1)
-NATIVE(RtlAcquireSRWLockShared, 1)
-NATIVE(RtlReleaseSRWLockShared, 1)
-NATIVE(RtlInitializeConditionVariable, 1)
-NATIVE(RtlWakeConditionVariable, 1)
-NATIVE(RtlWakeAllConditionVariable, 1)
-NATIVE(RtlSleepConditionVariableCS, 3)
-NATIVE(RtlSleepConditionVariableSRW, 4)
-NATIVE(RtlRunOnceInitialize, 1)
-NATIVE(RtlRunOnceBeginInitialize, 3)
-NATIVE(RtlRunOnceComplete, 3)
-NATIVE(RtlWaitOnAddress, 4)
+NATIVE_ALIGNED(RtlInitializeCriticalSectionEx, 3, 1)
+NATIVE_ALIGNED(RtlInitializeCriticalSectionAndSpinCount, 2, 1)
+NATIVE_ALIGNED(RtlInitializeCriticalSection, 1, 1)
+NATIVE_ALIGNED(RtlSetCriticalSectionSpinCount, 2, 1)
+NATIVE_ALIGNED(RtlDeleteCriticalSection, 1, 1)
+NATIVE_ALIGNED(RtlEnterCriticalSection, 1, 1)
+NATIVE_ALIGNED(RtlTryEnterCriticalSection, 1, 1)
+NATIVE_ALIGNED(RtlLeaveCriticalSection, 1, 1)
+NATIVE_ALIGNED(RtlIsCriticalSectionLocked, 1, 1)
+NATIVE_ALIGNED(RtlIsCriticalSectionLockedByThread, 1, 1)
+NATIVE_ALIGNED(RtlInitializeSRWLock, 1, 1)
+NATIVE_ALIGNED(RtlTryAcquireSRWLockExclusive, 1, 1)
+NATIVE_ALIGNED(RtlAcquireSRWLockExclusive, 1, 1)
+NATIVE_ALIGNED(RtlReleaseSRWLockExclusive, 1, 1)
+NATIVE_ALIGNED(RtlTryAcquireSRWLockShared, 1, 1)
+NATIVE_ALIGNED(RtlAcquireSRWLockShared, 1, 1)
+NATIVE_ALIGNED(RtlReleaseSRWLockShared, 1, 1)
+NATIVE_ALIGNED(RtlInitializeConditionVariable, 1, 1)
+NATIVE_ALIGNED(RtlWakeConditionVariable, 1, 1)
+NATIVE_ALIGNED(RtlWakeAllConditionVariable, 1, 1)
+NATIVE_ALIGNED(RtlSleepConditionVariableCS, 3, 3)
+NATIVE_ALIGNED(RtlSleepConditionVariableSRW, 4, 3)
+NATIVE_ALIGNED(RtlRunOnceInitialize, 1, 1)
+NATIVE_ALIGNED(RtlRunOnceBeginInitialize, 3, 1)
+NATIVE_ALIGNED(RtlRunOnceComplete, 3, 1)
+/* the value waited on may be any size up to 8, so it only has to stay within 16 bytes. */
+void MxRtlWaitOnAddress(void);
+static int hook_RtlWaitOnAddress(X86Cpu *c)
+{
+    if ((arg(c, 0) & 15) + arg(c, 2) > 16)
+        return 0;
+    return call6(c, (void *)MxRtlWaitOnAddress, 4, 0);
+}
 NATIVE(RtlWakeAddressSingle, 1)
 NATIVE(RtlWakeAddressAll, 1)
 NATIVE(RtlInitializeSListHead, 1)

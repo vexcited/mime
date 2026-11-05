@@ -515,6 +515,9 @@ typedef struct _MMADDRESS_SPACE {
     ULONG NextFaultStream;
     /* counts lock-free faults in progress. the Lock holder sets the writer bit and waits for them to leave. */
     volatile ULONG FaultGate;
+    MIME_CODE_LOG *CodeLog; /* the written code pages xta64 reads, see MIME_VM_CODE_WATCH. */
+    ULONG64 CodeLogPage;
+    ULONG_PTR CodeLogVa;
 } MMADDRESS_SPACE, *PMMADDRESS_SPACE;
 
 #define MI_GATE_WRITER 0x80000000u
@@ -1153,11 +1156,13 @@ void PspFreeId(HANDLE id);
 NTSTATUS PsReferenceProcessHandle(HANDLE handle, ACCESS_MASK access, PEPROCESS *process);
 NTSTATUS PsReferenceThreadHandle(HANDLE handle, ACCESS_MASK access, PETHREAD *thread);
 void PspReapDeadThreads(void);
+void PspStartReaper(void);
 extern PSP_SYSTEM_DLL PspNativeSystemDll;
 extern PSP_SYSTEM_DLL PspX86SystemDll;
 NTSTATUS PspInitializeSystemDll(void);
 PPSP_SYSTEM_DLL PspSystemDllForMachine(USHORT machine);
 extern PSECTION PspWow64NtdllSection;
+extern PSECTION PspX64NtdllSection;
 
 /* ------------------------------------------------------------------ se */
 

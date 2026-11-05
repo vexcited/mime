@@ -232,7 +232,7 @@ ULONG MiPteToProtect(ULONG64 pte)
         return 0;
     }
     BOOLEAN user = (pte & MM_PTE_AP_EL0) != 0;
-    BOOLEAN ro = (pte & MM_PTE_AP_RO) != 0 && !(pte & MM_PTE_SW_WATCH);
+    BOOLEAN ro = (pte & MM_PTE_AP_RO) != 0 && !(pte & (MM_PTE_SW_WATCH | MM_PTE_SW_CODE));
     /* a user page hidden from user mode keeps its user execute permission. */
     BOOLEAN exec = (user || (pte & MM_PTE_NG)) ? !(pte & MM_PTE_UXN) : !(pte & MM_PTE_PXN);
     ULONG protect;

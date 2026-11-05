@@ -122,9 +122,14 @@ BOOLEAN MxFillPeb32(PVOID memory)
     return TRUE;
 }
 
+/* the 32-bit peb the kernel made for the process, which other processes find through ProcessWow64Information. */
 PVOID MxCreatePeb32(void)
 {
-    PVOID peb = allocate32(0x1000);
+    ULONG_PTR made = 0;
+    if (!NT_SUCCESS(NtQueryInformationProcess(NtCurrentProcess(), ProcessWow64Information, &made, sizeof(made),
+                                              nullptr)))
+        made = 0;
+    PVOID peb = made ? (PVOID)made : allocate32(0x1000);
     return peb && MxFillPeb32(peb) ? peb : nullptr;
 }
 
