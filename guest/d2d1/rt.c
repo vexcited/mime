@@ -359,20 +359,20 @@ static void begin_target(D2dRt *rt)
     case D2D_RT_DC: {
         if (!rt->dc || !rt->surface.px)
             return;
-        if (rt->pixel_format.alphaMode == D2D1_ALPHA_MODE_IGNORE) {
-            HDC mem;
-            HBITMAP bmp;
-            void *bits;
-            HGDIOBJ old;
-            if (dib_dc(rt->surface.w, rt->surface.h, &mem, &bmp, &bits, &old)) {
-                BitBlt(mem, 0, 0, rt->surface.w, rt->surface.h, rt->dc, rt->dc_rect.left, rt->dc_rect.top, SRCCOPY);
-                const uint32_t *src = bits;
-                for (int i = 0; i < rt->surface.w * rt->surface.h; i++)
-                    rt->surface.px[i] = src[i] | 0xff000000u;
-                SelectObject(mem, old);
-                DeleteObject(bmp);
-                DeleteDC(mem);
-            }
+        HDC mem;
+        HBITMAP bmp;
+        void *bits;
+        HGDIOBJ old;
+        /* the dc's pixels are the starting content, a premultiplied target keeps their alpha. */
+        if (dib_dc(rt->surface.w, rt->surface.h, &mem, &bmp, &bits, &old)) {
+            BitBlt(mem, 0, 0, rt->surface.w, rt->surface.h, rt->dc, rt->dc_rect.left, rt->dc_rect.top, SRCCOPY);
+            const uint32_t *src = bits;
+            uint32_t fill = rt->pixel_format.alphaMode == D2D1_ALPHA_MODE_IGNORE ? 0xff000000u : 0;
+            for (int i = 0; i < rt->surface.w * rt->surface.h; i++)
+                rt->surface.px[i] = src[i] | fill;
+            SelectObject(mem, old);
+            DeleteObject(bmp);
+            DeleteDC(mem);
         } else {
             memset(rt->surface.px, 0, (SIZE_T)rt->surface.w * rt->surface.h * 4);
         }
@@ -446,26 +446,9 @@ static void present_target(D2dRt *rt)
         if (!dib_dc(rt->surface.w, rt->surface.h, &mem, &bmp, &bits, &old))
             return;
         uint32_t *dst = bits;
-        int n = rt->surface.w * rt->surface.h;
-        if (rt->pixel_format.alphaMode == D2D1_ALPHA_MODE_IGNORE) {
-            for (int i = 0; i < n; i++)
-                dst[i] = rt->surface.px[i];
-            BitBlt(rt->dc, rt->dc_rect.left, rt->dc_rect.top, rt->surface.w, rt->surface.h, mem, 0, 0, SRCCOPY);
-        } else {
-            /* premultiplied pixels are composed over the dc by hand. */
-            BitBlt(mem, 0, 0, rt->surface.w, rt->surface.h, rt->dc, rt->dc_rect.left, rt->dc_rect.top, SRCCOPY);
-            for (int i = 0; i < n; i++) {
-                uint32_t s = rt->surface.px[i], d = dst[i] | 0xff000000u;
-                if (!(s >> 24))
-                    continue;
-                uint32_t ia = 255 - (s >> 24);
-                uint32_t r = mime_vec_div255(((d >> 16) & 255) * ia) + ((s >> 16) & 255);
-                uint32_t g = mime_vec_div255(((d >> 8) & 255) * ia) + ((s >> 8) & 255);
-                uint32_t b = mime_vec_div255((d & 255) * ia) + (s & 255);
-                dst[i] = 0xff000000u | ((r > 255 ? 255 : r) << 16) | ((g > 255 ? 255 : g) << 8) | (b > 255 ? 255 : b);
-            }
-            BitBlt(rt->dc, rt->dc_rect.left, rt->dc_rect.top, rt->surface.w, rt->surface.h, mem, 0, 0, SRCCOPY);
-        }
+        for (int i = 0; i < rt->surface.w * rt->surface.h; i++)
+            dst[i] = rt->surface.px[i];
+        BitBlt(rt->dc, rt->dc_rect.left, rt->dc_rect.top, rt->surface.w, rt->surface.h, mem, 0, 0, SRCCOPY);
         SelectObject(mem, old);
         DeleteObject(bmp);
         DeleteDC(mem);
