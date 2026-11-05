@@ -1180,7 +1180,8 @@ static void declare_patch_inputs(Emit *e, const IrSignature *sig, const uint8_t 
         const IrElement *el = &sig->elements[i];
         if (el->reg >= 64 || !(el->mask & mask[el->reg]))
             continue;
-        bool siv = type == OPERAND_INPUT_PATCH_CONSTANT && el->decl_sysval;
+        uint32_t sv = el->decl_sysval ? el->decl_sysval : el->sysval;
+        bool siv = sv && type != OPERAND_OUTPUT_CONTROL_POINT;
         uint32_t at = begin(e, siv ? OP_DCL_INPUT_SIV : OP_DCL_INPUT);
         if (type == OPERAND_INPUT_PATCH_CONSTANT) {
             put(h, e->w, TOKEN_OPERAND(COMP_4, SELECT_MASK, el->mask & mask[el->reg], type, 1));
@@ -1190,7 +1191,7 @@ static void declare_patch_inputs(Emit *e, const IrSignature *sig, const uint8_t 
         }
         put(h, e->w, el->reg);
         if (siv)
-            put(h, e->w, el->decl_sysval);
+            put(h, e->w, sv);
         finish(e, at);
     }
 }

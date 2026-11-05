@@ -167,7 +167,8 @@ static void add_element(Lower *l, PendingList *list, const char *semantic, uint3
         keep = sv == SV_POSITION || sv == SV_CLIP_DISTANCE || sv == SV_CULL_DISTANCE ||
                sv == SV_RENDER_TARGET_ARRAY_INDEX || sv == SV_VIEWPORT_ARRAY_INDEX;
     else if (stage == STAGE_GEOMETRY || stage == STAGE_HULL || stage == STAGE_DOMAIN)
-        keep = false;
+        keep = sv == SV_POSITION || sv == SV_CLIP_DISTANCE || sv == SV_CULL_DISTANCE ||
+               sv == SV_RENDER_TARGET_ARRAY_INDEX || sv == SV_VIEWPORT_ARRAY_INDEX;
     p.e.sysval = keep ? sv : 0;
     if (stage == STAGE_PIXEL && !output && sv == SV_POSITION)
         p.e.interp = IM_NOPERSPECTIVE | 0x100;
