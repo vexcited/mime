@@ -1383,12 +1383,25 @@ MX_EXPORT DECLSPEC_NORETURN void KiUserCallbackDispatcher(ULONG api, PVOID argum
         frame.CallbackResult = nullptr;
         frame.CallbackLength = 0;
         frame.CallbackStatus = STATUS_UNSUCCESSFUL;
+        /* the 32-bit dispatcher's registration is left behind when the callback returns. */
+        ULONG exceptions = *(PULONG)t->teb32;
         emulate(t, &frame);
+        *(PULONG)t->teb32 = exceptions;
         PVOID result = Mx32CallbackResult(&callback, frame.CallbackResult, &frame.CallbackLength);
         NtCallbackReturn(result, result ? frame.CallbackLength : 0, frame.CallbackStatus);
         mx_fatal(STATUS_UNSUCCESSFUL, "x86 callback returned");
     }
-    push64(c, MX_EXIT_ADDRESS);
+    /* the home slots with the arguments, then a machine frame of the system call, as the x64 kernel lays them out. */
+    ULONG64 *machine = (ULONG64 *)(c->r[X86_RSP] - 0x30);
+    machine[0] = frame.outer ? frame.outer->cpu.rip : MX_EXIT_ADDRESS;
+    machine[1] = 0x33;
+    machine[2] = 0x202;
+    machine[3] = frame.outer ? frame.outer->cpu.r[X86_RSP] : c->r[X86_RSP];
+    machine[4] = 0x2b;
+    ULONG64 *home = machine - 6;
+    home[4] = (ULONG64)arguments;
+    home[5] = (ULONG64)length | (ULONG64)api << 32;
+    c->r[X86_RSP] = (ULONG64)home;
     c->r[X86_RCX] = api;
     c->r[X86_RDX] = (ULONG64)arguments;
     c->r[X86_R8] = length;

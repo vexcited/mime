@@ -408,20 +408,27 @@ BOOLEAN KiSetupUserException(PKTRAP_FRAME frame, PVOID dispatcher, PEXCEPTION_RE
     return TRUE;
 }
 
-/* KiUserCallbackDispatcher(api, arguments, length), entered as if called, below the arguments. */
+/*
+ * the layout of windows' KiUserCallbackDispatcher: from its sp, the home slots, the api index and the arguments with
+ * their length, then a machine frame with the rip and rsp of the system call, which its unwind codes describe. the
+ * registers carry the arguments too, for xta64's way in.
+ */
 BOOLEAN KiSetupUserCallback(PKTRAP_FRAME frame, const KTRAP_FRAME *trap, PVOID dispatcher, ULONG api,
                             const void *input, ULONG input_length)
 {
     ULONG64 args = (trap->Rsp - 0x80 - input_length) & ~15ull;
     if (input_length && !NT_SUCCESS(KiCopyToUser((PVOID)args, input, input_length)))
         return FALSE;
-    ULONG64 sp = args - 0x30;
-    ULONG64 zero = 0;
-    if (!NT_SUCCESS(KiCopyToUser((PVOID)(sp - 8), &zero, sizeof(zero))))
+    ULONG64 machine = args - 0x30;
+    ULONG64 sp = machine - 0x30;
+    ULONG64 mframe[5] = {trap->Rip, trap->Cs, trap->Rflags, trap->Rsp, trap->Ss};
+    ULONG64 home[6] = {0, 0, 0, 0, args, (ULONG64)input_length | (ULONG64)api << 32};
+    if (!NT_SUCCESS(KiCopyToUser((PVOID)machine, mframe, sizeof(mframe))) ||
+        !NT_SUCCESS(KiCopyToUser((PVOID)sp, home, sizeof(home))))
         return FALSE;
     memset(frame, 0, sizeof(*frame));
     frame->Rip = (ULONG64)dispatcher;
-    frame->Rsp = sp - 8;
+    frame->Rsp = sp;
     frame->Rcx = api;
     frame->Rdx = args;
     frame->R8 = input_length;
