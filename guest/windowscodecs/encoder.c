@@ -639,6 +639,33 @@ static HRESULT STDMETHODCALLTYPE fenc_commit(IWICBitmapFrameEncode *This)
     return hr;
 }
 
+/* a new tiff frame has its root ifd and a jpeg one its jfif block, as on windows. */
+static HRESULT fenc_blocks(WicFrameEncoder *f)
+{
+    if (f->blocks)
+        return S_OK;
+    const GUID *container = f->encoder->codec->container;
+    HRESULT hr = WicBlockWriterCreate(container, &f->blocks);
+    if (FAILED(hr))
+        return hr;
+    const GUID *root = IsEqualGUID(container, &GUID_ContainerFormatTiff)   ? &GUID_MetadataFormatIfd
+                       : IsEqualGUID(container, &GUID_ContainerFormatJpeg) ? &GUID_MetadataFormatApp0
+                                                                           : nullptr;
+    if (!root)
+        return S_OK;
+    IWICMetadataWriter *w;
+    hr = WicMetaHandlerCreate(root, &w);
+    if (SUCCEEDED(hr)) {
+        hr = f->blocks->lpVtbl->AddWriter(f->blocks, w);
+        w->lpVtbl->Release(w);
+    }
+    if (FAILED(hr)) {
+        f->blocks->lpVtbl->Release(f->blocks);
+        f->blocks = nullptr;
+    }
+    return hr;
+}
+
 static HRESULT STDMETHODCALLTYPE fenc_get_metadata_writer(IWICBitmapFrameEncode *This, IWICMetadataQueryWriter **query)
 {
     WicFrameEncoder *f = fenc_from(This);
@@ -649,9 +676,7 @@ static HRESULT STDMETHODCALLTYPE fenc_get_metadata_writer(IWICBitmapFrameEncode 
         return WINCODEC_ERR_NOTINITIALIZED;
     if (!f->encoder->ops->frame_metadata)
         return WINCODEC_ERR_UNSUPPORTEDOPERATION;
-    HRESULT hr = S_OK;
-    if (!f->blocks)
-        hr = WicBlockWriterCreate(f->encoder->codec->container, &f->blocks);
+    HRESULT hr = fenc_blocks(f);
     if (SUCCEEDED(hr))
         hr = WicMetaQueryWriterFromBlocks(f->blocks, query);
     return hr;
@@ -667,11 +692,9 @@ static HRESULT STDMETHODCALLTYPE fenc_query_interface(IWICBitmapFrameEncode *Thi
         *object = nullptr;
         if (!f->encoder->ops->frame_metadata)
             return E_NOINTERFACE;
-        if (!f->blocks) {
-            HRESULT hr = WicBlockWriterCreate(f->encoder->codec->container, &f->blocks);
-            if (FAILED(hr))
-                return hr;
-        }
+        HRESULT hr = fenc_blocks(f);
+        if (FAILED(hr))
+            return hr;
         return f->blocks->lpVtbl->QueryInterface(f->blocks, riid, object);
     }
     return WicQueryInterface(This, riid, object);

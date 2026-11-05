@@ -221,6 +221,15 @@ static HRESULT ifd_from(const GUID *format, const MimeTiffIfd *ifd, UINT depth, 
         }
         if (sub)
             continue;
+        IWICMetadataReader *xmp;
+        if (e.tag == 700 && e.data && e.size && SUCCEEDED(WicXmpFromPacket(e.data, e.size, &xmp))) {
+            WicPvInit(&value);
+            value.vt = VT_UNKNOWN;
+            value.punkVal = (IUnknown *)xmp;
+            WicMetaAdd(reader, nullptr, &id, &value);
+            xmp->lpVtbl->Release(xmp);
+            continue;
+        }
         if (FAILED(entry_value(&e, &value)))
             continue;
         WicMetaAdd(reader, nullptr, &id, &value);
@@ -408,6 +417,23 @@ static HRESULT build_ifd(WriteState *ws, IWICMetadataReader *reader, WriteIfd *w
             if (!v->punkVal || depth >= MAX_DEPTH ||
                 FAILED(v->punkVal->lpVtbl->QueryInterface(v->punkVal, &IID_IWICMetadataReader, (void **)&sub)))
                 continue;
+            GUID sf;
+            if (tag == 700 && SUCCEEDED(sub->lpVtbl->GetMetadataFormat(sub, &sf)) && IsEqualGUID(&sf, &GUID_MetadataFormatXMP)) {
+                /* windows writes an xmp block as bytes of the packet. */
+                BYTE *packet = nullptr;
+                SIZE_T length = 0;
+                HRESULT hr = WicXmpToPacket(sub, FALSE, &packet, &length);
+                sub->lpVtbl->Release(sub);
+                if (FAILED(hr))
+                    continue;
+                ws_adopt(ws, packet);
+                e.type = MIME_TIFF_TYPE_BYTE;
+                e.count = (uint32_t)length;
+                e.data = packet;
+                if (!add_entry(w, &e))
+                    return E_OUTOFMEMORY;
+                continue;
+            }
             /* retain only directory-pointer entries here. */
             if (tag != MIME_TIFF_TAG_EXIF_IFD && tag != MIME_TIFF_TAG_GPS_IFD && tag != MIME_TIFF_TAG_INTEROP_IFD) {
                 sub->lpVtbl->Release(sub);

@@ -757,13 +757,18 @@ static UINT16 ifd_pointer_tag(const GUID *parent, const GUID *child)
     return 0;
 }
 
-static HRESULT make_block(const Cursor *cur, const Segment *seg, IWICMetadataReader **out)
+/* adds a block named by the segment to the cursor, a new one or the given writer. */
+static HRESULT make_block(const Cursor *cur, const Segment *seg, IWICMetadataWriter *given, IWICMetadataReader **out)
 {
     const GUID *format = seg->kind == SEG_NAME && !seg->prefix ? segment_format(seg) : nullptr;
     if (!format)
         return WINCODEC_ERR_PROPERTYNOTFOUND;
-    IWICMetadataWriter *w;
-    HRESULT hr = WicMetaHandlerCreate(format, &w);
+    IWICMetadataWriter *w = given;
+    HRESULT hr = S_OK;
+    if (w)
+        w->lpVtbl->AddRef(w);
+    else
+        hr = WicMetaHandlerCreate(format, &w);
     if (FAILED(hr))
         return hr;
     if (cur->blocks) {
@@ -801,6 +806,122 @@ static HRESULT make_block(const Cursor *cur, const Segment *seg, IWICMetadataRea
     return S_OK;
 }
 
+static const WicClass g_query_reader_class, g_query_writer_class;
+
+/*
+ * windows takes a query object given as a value for the handler it is on, and refuses other objects. a block reader
+ * may only replace the blocks of the root.
+ */
+static HRESULT value_object(const PROPVARIANT *value, IWICMetadataWriter **handler, IWICMetadataBlockReader **blocks)
+{
+    *handler = nullptr;
+    *blocks = nullptr;
+    IUnknown *unk = value->punkVal;
+    if (!unk)
+        return E_INVALIDARG;
+    IWICMetadataQueryReader *qr = nullptr;
+    if (SUCCEEDED(unk->lpVtbl->QueryInterface(unk, &IID_IWICMetadataQueryReader, (void **)&qr))) {
+        WicQuery *other = (WicQuery *)WicSlotBase(qr);
+        HRESULT hr = WINCODEC_ERR_PROPERTYUNEXPECTEDTYPE;
+        if ((other->base.cls == &g_query_reader_class || other->base.cls == &g_query_writer_class) && other->handler &&
+            SUCCEEDED(other->handler->lpVtbl->QueryInterface(other->handler, &IID_IWICMetadataWriter, (void **)handler)))
+            hr = S_OK;
+        qr->lpVtbl->Release(qr);
+        return hr;
+    }
+    if (SUCCEEDED(unk->lpVtbl->QueryInterface(unk, &IID_IWICMetadataBlockReader, (void **)blocks)))
+        return S_OK;
+    return WINCODEC_ERR_PROPERTYUNEXPECTEDTYPE;
+}
+
+/* the item id of the last segment, and its schema for a prefixed name. */
+static HRESULT segment_id(const Cursor *cur, const Segment *last, PROPVARIANT *id, PROPVARIANT *schema)
+{
+    WicPvInit(id);
+    WicPvInit(schema);
+    if (last->kind == SEG_ITEM)
+        return PropVariantCopy(id, &last->id);
+    SIZE_T n = last->name_length;
+    id->vt = VT_LPWSTR;
+    id->pwszVal = CoTaskMemAlloc((n + 1) * sizeof(WCHAR));
+    if (!id->pwszVal) {
+        id->vt = VT_EMPTY;
+        return E_OUTOFMEMORY;
+    }
+    memcpy(id->pwszVal, last->name, n * sizeof(WCHAR));
+    id->pwszVal[n] = 0;
+    if (!last->prefix)
+        return S_OK;
+    GUID hf;
+    cur->handler->lpVtbl->GetMetadataFormat(cur->handler, &hf);
+    const WCHAR *uri = WicSchemaUri(&hf, last->prefix, last->prefix_length);
+    if (!uri)
+        return WINCODEC_ERR_PROPERTYNOTFOUND;
+    SIZE_T len = wcslen(uri) + 1;
+    schema->pwszVal = CoTaskMemAlloc(len * sizeof(WCHAR));
+    if (!schema->pwszVal)
+        return E_OUTOFMEMORY;
+    memcpy(schema->pwszVal, uri, len * sizeof(WCHAR));
+    schema->vt = VT_LPWSTR;
+    return S_OK;
+}
+
+/* a block given for the last segment: it replaces the block found there or is added. */
+static HRESULT set_block(Cursor *cur, const Segment *last, IWICMetadataWriter *w)
+{
+    const GUID *format = last->kind == SEG_NAME && !last->prefix ? segment_format(last) : nullptr;
+    GUID wf;
+    HRESULT hr = w->lpVtbl->GetMetadataFormat(w, &wf);
+    if (FAILED(hr))
+        return hr;
+    if (format && !IsEqualGUID(format, &wf))
+        return WINCODEC_ERR_PROPERTYUNEXPECTEDTYPE;
+    Found f;
+    BOOL found = look(cur, last, &f);
+    if (cur->blocks) {
+        if (!cur->bwriter) {
+            hr = WINCODEC_ERR_UNSUPPORTEDOPERATION;
+        } else if (found) {
+            hr = cur->bwriter->lpVtbl->SetWriterByIndex(cur->bwriter, f.block_index, w);
+        } else if (!format) {
+            hr = WINCODEC_ERR_PROPERTYNOTFOUND;
+        } else {
+            hr = cur->bwriter->lpVtbl->AddWriter(cur->bwriter, w);
+        }
+        if (found && f.block)
+            f.block->lpVtbl->Release(f.block);
+        return hr;
+    }
+    if (found && f.block)
+        f.block->lpVtbl->Release(f.block);
+    IWICMetadataWriter *parent = nullptr;
+    hr = cur->handler->lpVtbl->QueryInterface(cur->handler, &IID_IWICMetadataWriter, (void **)&parent);
+    if (FAILED(hr))
+        return hr;
+    PROPVARIANT value;
+    WicPvInit(&value);
+    value.vt = VT_UNKNOWN;
+    value.punkVal = (IUnknown *)w;
+    if (found) {
+        const WicMetaItem *item = WicMetaItemAt(cur->handler, f.item);
+        hr = parent->lpVtbl->SetValueByIndex(parent, f.item, &item->schema, &item->id, &value);
+    } else if (format) {
+        IWICMetadataReader *added;
+        hr = make_block(cur, last, w, &added);
+        if (SUCCEEDED(hr))
+            added->lpVtbl->Release(added);
+    } else {
+        PROPVARIANT id, schema;
+        hr = segment_id(cur, last, &id, &schema);
+        if (SUCCEEDED(hr))
+            hr = parent->lpVtbl->SetValue(parent, &schema, &id, &value);
+        PropVariantClear(&id);
+        PropVariantClear(&schema);
+    }
+    parent->lpVtbl->Release(parent);
+    return hr;
+}
+
 static HRESULT STDMETHODCALLTYPE q_set_by_name(void *This, LPCWSTR name, const PROPVARIANT *value)
 {
     WicQuery *q = query_of(This);
@@ -814,6 +935,10 @@ static HRESULT STDMETHODCALLTYPE q_set_by_name(void *This, LPCWSTR name, const P
         path_free(&path);
         return hr;
     }
+    IWICMetadataWriter *given = nullptr;
+    IWICMetadataBlockReader *given_blocks = nullptr;
+    if (value->vt == VT_UNKNOWN)
+        hr = value_object(value, &given, &given_blocks);
     Cursor cur;
     cursor_start(q, path.absolute, &cur);
     for (UINT i = 0; i + 1 < path.count && SUCCEEDED(hr); i++) {
@@ -822,75 +947,37 @@ static HRESULT STDMETHODCALLTYPE q_set_by_name(void *This, LPCWSTR name, const P
         if (look(&cur, &path.seg[i], &f) && f.block) {
             next = f.block;
         } else {
-            hr = make_block(&cur, &path.seg[i], &next);
+            hr = make_block(&cur, &path.seg[i], nullptr, &next);
         }
         if (SUCCEEDED(hr))
             cursor_set_handler(&cur, next);
     }
-    if (SUCCEEDED(hr)) {
-        if (!cur.handler) {
-            hr = WINCODEC_ERR_INVALIDQUERYREQUEST;
-        } else {
-            IWICMetadataWriter *w = nullptr;
-            hr = cur.handler->lpVtbl->QueryInterface(cur.handler, &IID_IWICMetadataWriter, (void **)&w);
-            if (SUCCEEDED(hr)) {
-                const Segment *last = &path.seg[path.count - 1];
-                PROPVARIANT id, schema;
-                WicPvInit(&id);
-                WicPvInit(&schema);
-                if (last->kind == SEG_ITEM) {
-                    hr = PropVariantCopy(&id, &last->id);
-                } else {
-                    const GUID *format = segment_format(last);
-                    GUID hf;
-                    cur.handler->lpVtbl->GetMetadataFormat(cur.handler, &hf);
-                    if (format && value->vt == VT_UNKNOWN) {
-                        hr = WINCODEC_ERR_UNSUPPORTEDOPERATION;
-                    } else {
-                        SIZE_T n = last->name_length;
-                        id.vt = VT_LPWSTR;
-                        id.pwszVal = CoTaskMemAlloc((n + 1) * sizeof(WCHAR));
-                        if (!id.pwszVal) {
-                            hr = E_OUTOFMEMORY;
-                        } else {
-                            memcpy(id.pwszVal, last->name, n * sizeof(WCHAR));
-                            id.pwszVal[n] = 0;
-                        }
-                        if (SUCCEEDED(hr) && last->prefix) {
-                            const WCHAR *uri = WicSchemaUri(&hf, last->prefix, last->prefix_length);
-                            if (!uri) {
-                                hr = WINCODEC_ERR_PROPERTYNOTFOUND;
-                            } else {
-                                schema.vt = VT_LPWSTR;
-                                schema.pwszVal = WicStrDup(uri);
-                                if (!schema.pwszVal)
-                                    hr = E_OUTOFMEMORY;
-                                else {
-                                    /* move the string from the library heap to the task allocator. */
-                                    SIZE_T len = wcslen(uri) + 1;
-                                    WCHAR *task = CoTaskMemAlloc(len * sizeof(WCHAR));
-                                    if (task) {
-                                        memcpy(task, uri, len * sizeof(WCHAR));
-                                        WicFree(schema.pwszVal);
-                                        schema.pwszVal = task;
-                                    } else {
-                                        WicFree(schema.pwszVal);
-                                        schema.vt = VT_EMPTY;
-                                        hr = E_OUTOFMEMORY;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if (SUCCEEDED(hr))
-                    hr = w->lpVtbl->SetValue(w, &schema, &id, value);
-                PropVariantClear(&id);
-                PropVariantClear(&schema);
-                w->lpVtbl->Release(w);
-            }
+    const Segment *last = &path.seg[path.count - 1];
+    if (FAILED(hr)) {
+    } else if (given_blocks) {
+        hr = cur.handler || !cur.bwriter ? WINCODEC_ERR_PROPERTYUNEXPECTEDTYPE
+                                         : cur.bwriter->lpVtbl->InitializeFromBlockReader(cur.bwriter, given_blocks);
+    } else if (given) {
+        hr = set_block(&cur, last, given);
+    } else if (!cur.handler) {
+        hr = WINCODEC_ERR_PROPERTYUNEXPECTEDTYPE;
+    } else {
+        IWICMetadataWriter *w = nullptr;
+        hr = cur.handler->lpVtbl->QueryInterface(cur.handler, &IID_IWICMetadataWriter, (void **)&w);
+        if (SUCCEEDED(hr)) {
+            PROPVARIANT id, schema;
+            hr = segment_id(&cur, last, &id, &schema);
+            if (SUCCEEDED(hr))
+                hr = w->lpVtbl->SetValue(w, &schema, &id, value);
+            PropVariantClear(&id);
+            PropVariantClear(&schema);
+            w->lpVtbl->Release(w);
         }
     }
+    if (given)
+        given->lpVtbl->Release(given);
+    if (given_blocks)
+        given_blocks->lpVtbl->Release(given_blocks);
     cursor_done(&cur);
     path_free(&path);
     return hr;
@@ -1016,42 +1103,36 @@ HRESULT WicMetaQueryWriterFromBlocks(IWICMetadataBlockWriter *blocks, IWICMetada
     return hr;
 }
 
+/* windows puts the query writers of the factory on a handler, not on a list of blocks. */
 HRESULT WicMetaQueryWriterCreate(const GUID *format, const GUID *vendor, IWICMetadataQueryWriter **out)
 {
-    IWICMetadataBlockWriter *blocks;
-    HRESULT hr = WicBlockWriterCreate(format, &blocks);
+    IWICMetadataWriter *handler;
+    HRESULT hr = WicMetaCreateWriter(format, vendor, 0, &handler);
     if (FAILED(hr))
         return hr;
-    hr = WicMetaQueryWriterFromBlocks(blocks, out);
-    blocks->lpVtbl->Release(blocks);
+    GUID f;
+    hr = handler->lpVtbl->GetMetadataFormat(handler, &f);
+    if (SUCCEEDED(hr))
+        hr = query_create(nullptr, nullptr, (IWICMetadataReader *)handler, L"/", &f, TRUE, (void **)out);
+    handler->lpVtbl->Release(handler);
     return hr;
 }
 
 HRESULT WicMetaQueryWriterFromReader(IWICMetadataQueryReader *reader, const GUID *vendor, IWICMetadataQueryWriter **out)
 {
-    GUID container;
-    HRESULT hr = reader->lpVtbl->GetContainerFormat(reader, &container);
-    if (FAILED(hr))
-        return hr;
     WicQuery *q = (WicQuery *)WicSlotBase(reader);
     if (q->base.cls != &g_query_reader_class && q->base.cls != &g_query_writer_class)
         return WINCODEC_ERR_UNSUPPORTEDOPERATION;
-    IWICMetadataBlockWriter *bw;
-    hr = WicBlockWriterCreate(&container, &bw);
+    if (!q->handler)
+        return WINCODEC_ERR_UNEXPECTEDMETADATATYPE;
+    IWICMetadataWriter *copy;
+    HRESULT hr = WicMetaWriterFromReader(q->handler, vendor, &copy);
     if (FAILED(hr))
         return hr;
-    if (q->blocks) {
-        hr = bw->lpVtbl->InitializeFromBlockReader(bw, q->blocks);
-    } else if (q->handler) {
-        IWICMetadataWriter *copy;
-        hr = WicMetaCopyToWriter(q->handler, &copy);
-        if (SUCCEEDED(hr)) {
-            hr = bw->lpVtbl->AddWriter(bw, copy);
-            copy->lpVtbl->Release(copy);
-        }
-    }
+    GUID f;
+    hr = copy->lpVtbl->GetMetadataFormat(copy, &f);
     if (SUCCEEDED(hr))
-        hr = WicMetaQueryWriterFromBlocks(bw, out);
-    bw->lpVtbl->Release(bw);
+        hr = query_create(nullptr, nullptr, (IWICMetadataReader *)copy, L"/", &f, TRUE, (void **)out);
+    copy->lpVtbl->Release(copy);
     return hr;
 }

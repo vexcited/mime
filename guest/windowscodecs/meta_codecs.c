@@ -380,6 +380,21 @@ HRESULT WicJpegSegments(IWICMetadataBlockReader *blocks, JpegSegmentList **out)
                     }
                     sub->lpVtbl->Release(sub);
                 }
+            } else if (IsEqualGUID(&f, &GUID_MetadataFormatUnknown)) {
+                /* a whole segment from its marker; windows writes its length. */
+                UINT items = WicMetaCount(r);
+                for (UINT k = 0; k < items; k++) {
+                    const WicMetaItem *item = WicMetaItemAt(r, k);
+                    const BLOB *b = &item->value.blob;
+                    if (item->value.vt != VT_BLOB || b->cbSize < 4 || b->cbSize - 4 > 65533 || b->pBlobData[0] != 0xFF ||
+                        ((b->pBlobData[1] < 0xE0 || b->pBlobData[1] > 0xEF) && b->pBlobData[1] != 0xFE))
+                        continue;
+                    l->segments[l->count].marker = b->pBlobData[1];
+                    l->segments[l->count].data = b->pBlobData + 4;
+                    l->segments[l->count].size = b->cbSize - 4;
+                    l->count++;
+                    break;
+                }
             } else if (IsEqualGUID(&f, &GUID_MetadataFormatJpegComment)) {
                 char *text;
                 if (WicMetaGetAnsi(r, L"TextEntry", &text)) {

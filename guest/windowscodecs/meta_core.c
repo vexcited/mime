@@ -163,8 +163,52 @@ static HRESULT STDMETHODCALLTYPE mh_get_by_index(void *This, UINT index, PROPVAR
     return hr;
 }
 
+/* an ifd keeps its tags as ushort whatever integer type they are given in. */
+static const PROPVARIANT *ifd_tag(const WicMetaHandler *h, const PROPVARIANT *id, PROPVARIANT *tag)
+{
+    const GUID *f = &h->format;
+    if (!id || (!IsEqualGUID(f, &GUID_MetadataFormatIfd) && !IsEqualGUID(f, &GUID_MetadataFormatExif) &&
+                !IsEqualGUID(f, &GUID_MetadataFormatGps) && !IsEqualGUID(f, &GUID_MetadataFormatInterop) &&
+                !IsEqualGUID(f, &GUID_MetadataFormatSubIfd) && !IsEqualGUID(f, &GUID_MetadataFormatThumbnail)))
+        return id;
+    LONGLONG v;
+    switch (id->vt) {
+    case VT_UI1:
+        v = id->bVal;
+        break;
+    case VT_I1:
+        v = id->cVal;
+        break;
+    case VT_I2:
+        v = id->iVal;
+        break;
+    case VT_UI4:
+    case VT_UINT:
+        v = id->ulVal;
+        break;
+    case VT_I4:
+    case VT_INT:
+        v = id->lVal;
+        break;
+    case VT_UI8:
+    case VT_I8:
+        v = id->hVal.QuadPart;
+        break;
+    default:
+        return id;
+    }
+    if (v < 0 || v > 0xffff)
+        return id;
+    WicPvInit(tag);
+    tag->vt = VT_UI2;
+    tag->uiVal = (USHORT)v;
+    return tag;
+}
+
 static int find_item(WicMetaHandler *h, const PROPVARIANT *schema, const PROPVARIANT *id)
 {
+    PROPVARIANT tag;
+    id = ifd_tag(h, id, &tag);
     for (UINT i = 0; i < h->count; i++) {
         WicMetaItem *item = &h->items[i];
         if (id && !WicPvIsEmpty(id) && !WicPvSame(&item->id, id))
@@ -360,6 +404,8 @@ static HRESULT store_item(WicMetaItem *item, const PROPVARIANT *schema, const PR
 static HRESULT set_value(WicMetaHandler *h, const PROPVARIANT *schema, const PROPVARIANT *id, const PROPVARIANT *value)
 {
     HRESULT hr;
+    PROPVARIANT tag;
+    id = ifd_tag(h, id, &tag);
     EnterCriticalSection(&h->lock);
     int k = find_item(h, schema, id);
     if (k >= 0) {
