@@ -18,11 +18,12 @@
 
 /* first match wins. */
 static const PCWSTR bundles[] = {
+    L"\\??\\C:\\ProgramData\\Mime\\roots.pem",                          /* macos, its keychain's roots. */
     L"\\??\\Z:\\etc\\ssl\\certs\\ca-certificates.crt",                 /* debian, ubuntu, arch, gentoo. */
     L"\\??\\Z:\\etc\\pki\\tls\\certs\\ca-bundle.crt",                  /* fedora, rhel. */
     L"\\??\\Z:\\etc\\pki\\ca-trust\\extracted\\pem\\tls-ca-bundle.pem", /* fedora without the link. */
     L"\\??\\Z:\\etc\\ssl\\ca-bundle.pem",                             /* opensuse. */
-    L"\\??\\Z:\\etc\\ssl\\cert.pem",                                  /* alpine, macos. */
+    L"\\??\\Z:\\etc\\ssl\\cert.pem",                                  /* alpine, macos without the export. */
 };
 
 static PUCHAR read_bundle(PULONG size)

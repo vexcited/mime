@@ -13,6 +13,9 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <Security/Security.h>
+#endif
 
 static bool make_dirs(const MimePaths *paths, const char *root, const char *const *folders, size_t count)
 {
@@ -193,6 +196,56 @@ static bool create_skeleton(const MimePaths *paths)
     return make_dirs_nocase(paths, feature_folders, MIME_ARRAY_COUNT(feature_folders));
 }
 
+#ifdef __APPLE__
+static void put_base64(FILE *f, const uint8_t *data, size_t size)
+{
+    static const char digits[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t column = 0;
+    for (size_t i = 0; i < size; i += 3) {
+        uint32_t v = (uint32_t)data[i] << 16 | (i + 1 < size ? (uint32_t)data[i + 1] << 8 : 0) |
+                     (i + 2 < size ? data[i + 2] : 0);
+        char out[4] = {digits[v >> 18 & 63], digits[v >> 12 & 63], i + 1 < size ? digits[v >> 6 & 63] : '=',
+                       i + 2 < size ? digits[v & 63] : '='};
+        fwrite(out, 1, 4, f);
+        if ((column += 4) == 64) {
+            fputc('\n', f);
+            column = 0;
+        }
+    }
+    if (column)
+        fputc('\n', f);
+}
+
+/*
+ * the roots macos trusts, for the machine's AuthRoot store. they live in the system keychain: the /etc/ssl/cert.pem
+ * bundle the kernel reads otherwise lags behind it and lacks roots that sites are signed under. written at every start,
+ * so the machine follows the system's updates.
+ */
+static void export_roots(const MimePaths *paths)
+{
+    CFArrayRef anchors = nullptr;
+    if (SecTrustCopyAnchorCertificates(&anchors) != errSecSuccess || !anchors)
+        return;
+    char path[MIME_PATH_MAX], temporary[MIME_PATH_MAX];
+    snprintf(path, sizeof(path), "%s/ProgramData/Mime/roots.pem", paths->drive_c);
+    snprintf(temporary, sizeof(temporary), "%s.%d", path, (int)getpid());
+    FILE *f = make_dir_nocase(paths->drive_c, "ProgramData/Mime") ? fopen(temporary, "w") : nullptr;
+    for (CFIndex i = 0; f && i < CFArrayGetCount(anchors); i++) {
+        CFDataRef der = SecCertificateCopyData((SecCertificateRef)CFArrayGetValueAtIndex(anchors, i));
+        if (!der)
+            continue;
+        fputs("-----BEGIN CERTIFICATE-----\n", f);
+        put_base64(f, CFDataGetBytePtr(der), (size_t)CFDataGetLength(der));
+        fputs("-----END CERTIFICATE-----\n", f);
+        CFRelease(der);
+    }
+    CFRelease(anchors);
+    if (f && fclose(f) == 0 && rename(temporary, path) == 0)
+        return;
+    unlink(temporary);
+}
+#endif
+
 bool mime_prepare_drive(const MimePaths *paths)
 {
     if (!create_skeleton(paths))
@@ -209,5 +262,8 @@ bool mime_prepare_drive(const MimePaths *paths)
     }
     create_name_files(paths);
     create_shared_folders(paths);
+#ifdef __APPLE__
+    export_roots(paths);
+#endif
     return create_profile(paths);
 }
