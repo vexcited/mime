@@ -219,6 +219,14 @@ void gp_compose_over(const GSurface *s, INT x, INT y, INT count, const UINT32 *p
             d[i] = over(pargb[i], d[i]);
         return;
     }
+    /* a 32 bit dib of a memory dc keeps the pixels left clear, so the glass shows around a buffered icon. */
+    if (s->copy_alpha && s->format == PixelFormat32bppRGB) {
+        UINT32 *d = (UINT32 *)row + px;
+        for (INT i = 0; i < count; i++)
+            if (pargb[i] >> 24)
+                d[i] = over(pargb[i], d[i] | 0xff000000u) | 0xff000000u;
+        return;
+    }
     for (INT done = 0; done < count; done += 256) {
         INT n = count - done > 256 ? 256 : count - done;
         /* a fully transparent chunk leaves the destination alone. */
