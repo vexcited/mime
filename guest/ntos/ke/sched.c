@@ -360,11 +360,16 @@ void KiDispatchPendingWork(void)
     KiReleaseDispatcherLock(s);
 }
 
+/* a switch keeps no interrupt flag of its own: the thread that is switched back in gets what the switch left. */
 void KiCheckPreemption(void)
 {
+    if (!KeGetCurrentPrcb()->DispatchPending || KeGetPcr()->Irql >= DISPATCH_LEVEL)
+        return;
+    ULONG64 s = KiAcquireDispatcherLock();
     PKPRCB prcb = KeGetCurrentPrcb();
-    if (prcb->DispatchPending && KeGetPcr()->Irql < DISPATCH_LEVEL)
+    if (prcb->DispatchPending)
         preempt_current(prcb);
+    KiReleaseDispatcherLock(s);
 }
 
 /* ------------------------------------------------------------------ dpcs */
