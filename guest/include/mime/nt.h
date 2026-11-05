@@ -2196,6 +2196,16 @@ typedef struct _KUSER_SHARED_DATA {
 } KUSER_SHARED_DATA, *PKUSER_SHARED_DATA;
 #define USER_SHARED_DATA ((volatile KUSER_SHARED_DATA *const)0x7FFE0000)
 
+/* an arm64 machine, whose hardware the x64 and x86 programs it translates see as well, as windows shows them. */
+FORCEINLINE BOOLEAN MimeArm64Machine(void)
+{
+#if defined(__aarch64__)
+    return TRUE;
+#else
+    return USER_SHARED_DATA->ImageNumberHigh == IMAGE_FILE_MACHINE_ARM64;
+#endif
+}
+
 /* user mode reads the performance counter itself: the processor's counter with the kernel's bias and shift. */
 #ifndef NTSYSCALLAPI
 #ifdef MIME_KERNEL

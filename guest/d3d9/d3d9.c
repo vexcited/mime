@@ -1,6 +1,8 @@
 /* IDirect3D9Ex: one adapter per monitor as dxgi lists outputs, their modes, formats and caps, and device creation. */
 #include "d3d9_private.h"
 
+#include <mime/dxgi_mime.h>
+
 typedef struct D9Direct3D {
     IDirect3D9Ex iface;
     LONG refs;
@@ -404,11 +406,11 @@ static HRESULT STDMETHODCALLTYPE d3d_get_adapter_identifier(IDirect3D9Ex *iface,
     a->lpVtbl->CheckInterfaceSupport(a, &IID_IDXGIDevice, &version);
     a->lpVtbl->Release(a);
     memset(id, 0, sizeof(*id));
-    const char *driver = desc.VendorId == 0x10DE   ? (sizeof(void *) == 8 ? "nvldumdx.dll" : "nvldumd.dll")
-                         : desc.VendorId == 0x1002 ? (sizeof(void *) == 8 ? "aticfx64.dll" : "aticfx32.dll")
-                         : desc.VendorId == 0x8086 ? (sizeof(void *) == 8 ? "igdumdim64.dll" : "igdumdim32.dll")
-                         : desc.VendorId == 0x5143 ? "d3d9on12.dll"
-                                                   : "d3d9.dll";
+    const char *driver = desc.VendorId == 0x10DE                 ? (sizeof(void *) == 8 ? "nvldumdx.dll" : "nvldumd.dll")
+                         : desc.VendorId == 0x1002               ? (sizeof(void *) == 8 ? "aticfx64.dll" : "aticfx32.dll")
+                         : desc.VendorId == 0x8086               ? (sizeof(void *) == 8 ? "igdumdim64.dll" : "igdumdim32.dll")
+                         : desc.VendorId == DXGI_VENDOR_QUALCOMM ? "d3d9on12.dll"
+                                                                 : "d3d9.dll";
     lstrcpynA(id->Driver, driver, sizeof(id->Driver));
     WideCharToMultiByte(CP_ACP, 0, desc.Description, -1, id->Description, sizeof(id->Description), nullptr, nullptr);
     if (output) {

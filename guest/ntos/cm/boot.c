@@ -273,7 +273,7 @@ static void display_adapter(void)
 #if defined(__aarch64__)
         set_sz(keys[i], L"DriverDesc", REG_SZ, L"Qualcomm(R) Adreno(TM) X1-85 GPU");
         set_sz(keys[i], L"ProviderName", REG_SZ, L"Qualcomm");
-        set_sz(keys[i], L"DriverVersion", REG_SZ, L"31.0.82.0");
+        set_sz(keys[i], L"DriverVersion", REG_SZ, L"31.0.63.7");
         set_sz(keys[i], L"DriverDate", REG_SZ, L"6-12-2025");
         set_sz(keys[i], L"MatchingDeviceId", REG_SZ, L"ACPI\\VEN_QCOM&DEV_0C36&SUBSYS_10280C69&REV_0086");
         set_sz(keys[i], L"InfPath", REG_SZ, L"oem12.inf");
