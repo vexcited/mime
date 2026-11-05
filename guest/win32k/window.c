@@ -1409,6 +1409,27 @@ void WndCenterOnOwner(WND *w)
 /* the host already focused and raised this window; do not ask it to raise again. */
 BOOLEAN WndActivatedByHost;
 
+/*
+ * WM_ACTIVATEAPP goes to every top level window of the thread that loses the activation and of the one that gets it,
+ * and only when the active thread changes, as windows does.
+ */
+void WndSendActivateApp(W32THREAD *t, BOOLEAN active, HANDLE other)
+{
+    if (!t || !g_desktop)
+        return;
+    HWND list[256];
+    UINT count = 0;
+    for (WND *c = g_desktop->FirstChild; c && count < sizeof(list) / sizeof(list[0]); c = c->Next) {
+        if (c->Thread == t && !(c->Flags & WNDF_DESTROYING))
+            list[count++] = WndHandle(c);
+    }
+    for (UINT i = 0; i < count; i++) {
+        WND *c = WndLookup(list[i]);
+        if (c && alive(c))
+            MsgSendEvent(c, WM_ACTIVATEAPP, active, (LPARAM)other);
+    }
+}
+
 void WndActivate(WND *w, BOOLEAN click)
 {
     if (w)
@@ -1430,8 +1451,8 @@ void WndActivate(WND *w, BOOLEAN click)
         UserReference(&old->Header);
         MsgSendEvent(old, WM_NCACTIVATE, FALSE, (LPARAM)WndHandle(w));
         MsgSendEvent(old, WM_ACTIVATE, MAKEWPARAM(WA_INACTIVE, (old->Style & WS_MINIMIZE) != 0), (LPARAM)WndHandle(w));
-        if (old->Thread && w->Thread && old->Thread->Process != w->Thread->Process)
-            MsgSendEvent(old, WM_ACTIVATEAPP, FALSE, (LPARAM)w->Thread->Tid);
+        if (old->Thread && old->Thread != w->Thread)
+            WndSendActivateApp(old->Thread, FALSE, w->Thread ? w->Thread->Tid : nullptr);
         if (old->Thread && old->Thread != w->Thread)
             old->Thread->Active = nullptr;
         UserDereference(&old->Header);
@@ -1449,8 +1470,8 @@ void WndActivate(WND *w, BOOLEAN click)
         raise_owned(w);
     }
     WndUpdateHostConfig(w, !WndActivatedByHost);
-    if (!old || !old->Thread || !w->Thread || old->Thread->Process != w->Thread->Process)
-        MsgSendEvent(w, WM_ACTIVATEAPP, TRUE, old && old->Thread ? (LPARAM)old->Thread->Tid : 0);
+    if (!old || old->Thread != w->Thread)
+        WndSendActivateApp(w->Thread, TRUE, old && old->Thread ? old->Thread->Tid : nullptr);
     MsgSendEvent(w, WM_NCACTIVATE, TRUE, (LPARAM)WndHandle(old));
     MsgSendEvent(w, WM_ACTIVATE, MAKEWPARAM(click ? WA_CLICKACTIVE : WA_ACTIVE, (w->Style & WS_MINIMIZE) != 0),
                  (LPARAM)WndHandle(old));

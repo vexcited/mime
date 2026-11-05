@@ -1101,7 +1101,7 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
             if (!w->Header.Destroyed)
                 MsgSendEvent(w, WM_ACTIVATE, WA_INACTIVE, 0);
             if (!w->Header.Destroyed)
-                MsgSendEvent(w, WM_ACTIVATEAPP, FALSE, 0);
+                WndSendActivateApp(w->Thread, FALSE, nullptr);
             UserDereference(&w->Header);
         }
         break;

@@ -803,6 +803,7 @@ BOOLEAN WndLayerRects(WND *w, const POINT *pos, const SIZE *size);
 void WndComputeVisRgn(WND *w, BOOLEAN client, ULONG dcx_flags, REGION *out);
 WND *WndFindNeedsPaint(W32THREAD *t, HWND filter);
 void WndActivate(WND *w, BOOLEAN click);
+void WndSendActivateApp(W32THREAD *t, BOOLEAN active, HANDLE other);
 extern BOOLEAN WndActivatedByHost;
 void WndSetFocus(WND *w);
 void WndCenterOnOwner(WND *w);
