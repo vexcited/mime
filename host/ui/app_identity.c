@@ -328,7 +328,9 @@ static bool start_proxy(AppIdentity *app, const char *image)
 
 static void ensure_proxy(AppIdentity *app, const char *image)
 {
-    if (app->fd >= 0 || mime_now_ns() < app->retry_after)
+    /* a run in the background has no dock entries, whose apps would come forward. */
+    const char *background = getenv("MIME_BACKGROUND");
+    if (app->fd >= 0 || mime_now_ns() < app->retry_after || (background && *background && strcmp(background, "0")))
         return;
     app->retry_after = mime_now_ns() + 5000000000ull;
     if (!start_proxy(app, image))

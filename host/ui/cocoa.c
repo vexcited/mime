@@ -138,6 +138,8 @@ static uint32_t g_cursor;
 static bool g_cursor_hidden;
 static bool g_pointer_in_guest;
 static bool g_fullscreen_presentation;
+/* MIME_BACKGROUND: windows open behind the user's apps and never take the focus, for test runs on a desktop in use. */
+static bool g_background;
 static void cursor_main(void *arg);
 
 static void restore_host_cursor(void)
@@ -1215,7 +1217,7 @@ static void app_action(void *ctx, uint32_t process_id, uint32_t action)
             if ((w->config.flags & MIME_WIN_MINIMIZED) || MSG_BOOL(w->window, "isMiniaturized") ||
                 (w->state_pending && w->state_command == 6)) {
                 request_window_state(w, 9);
-            } else {
+            } else if (!g_background) {
                 MSG_V_BOOL(g_app, "activateIgnoringOtherApps:", YES);
                 MSG_V_ID(w->window, "makeKeyAndOrderFront:", nil);
             }
@@ -1254,10 +1256,19 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     g_sink = sink;
     g_sink_ctx = ctx;
     g_colorspace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    g_background = getenv("MIME_BACKGROUND") && *getenv("MIME_BACKGROUND") && strcmp(getenv("MIME_BACKGROUND"), "0");
     register_app_class();
     /* per-program companion processes provide the dock entries. */
     MSG_V_INT(g_app, "setActivationPolicy:", 1);
     MSG_V(g_app, "finishLaunching");
+    /*
+     * the guest's timers and wakeups are the host's: App Nap and timer coalescing would delay every one of them while
+     * the app is not in front, input included. idle system sleep stays allowed.
+     */
+    id process = MSG_ID(CLS("NSProcessInfo"), "processInfo");
+    id activity = ((id (*)(id, SEL, unsigned long long, id))objc_msgSend)(
+        process, SEL_("beginActivityWithOptions:reason:"), 0x00EFFFFFull | 0xFF00000000ull, nsstring("a running machine"));
+    MSG_ID(activity, "retain");
     register_classes();
     update_screen_metrics();
     mime_app_init(nullptr, app_action, nullptr);
@@ -1640,7 +1651,10 @@ static void config_main(void *arg)
             w->suppress_state = false;
         }
         opening = !w->shown || !MSG_BOOL(w->window, "isVisible");
-        if (cfg->flags & MIME_WIN_ACTIVATE) {
+        if (g_background) {
+            if (opening)
+                MSG_V_ID(w->window, "orderBack:", nil);
+        } else if (cfg->flags & MIME_WIN_ACTIVATE) {
             MSG_V_BOOL(g_app, "activateIgnoringOtherApps:", YES);
             MSG_V_ID(w->window, "makeKeyAndOrderFront:", nil);
         } else if (opening) {
