@@ -1024,6 +1024,82 @@ static void show_keyboard_cues(HWND dialog)
     SendMessageW(dialog, WM_CHANGEUISTATE, MAKEWPARAM(UIS_CLEAR, UISF_HIDEFOCUS | UISF_HIDEACCEL), 0);
 }
 
+/* the controls of a dialog in the order mnemonics are looked for, going into control parents. */
+static UINT collect_controls(HWND parent, HWND *out, UINT count, UINT max)
+{
+    for (HWND c = GetWindow(parent, GW_CHILD); c && count < max; c = GetWindow(c, GW_HWNDNEXT)) {
+        if (GetWindowLongW(c, GWL_EXSTYLE) & WS_EX_CONTROLPARENT)
+            count = collect_controls(c, out, count, max);
+        else
+            out[count++] = c;
+    }
+    return count;
+}
+
+static BOOL has_mnemonic(HWND control, WCHAR key)
+{
+    WCHAR text[256];
+    if (!GetWindowTextW(control, text, 256))
+        return FALSE;
+    for (WCHAR *p = text; *p; p++) {
+        if (*p != '&')
+            continue;
+        if (p[1] == '&') {
+            p++;
+            continue;
+        }
+        return p[1] && (WCHAR)(ULONG_PTR)CharUpperW((LPWSTR)(ULONG_PTR)p[1]) == key;
+    }
+    return FALSE;
+}
+
+/*
+ * a key that is the mnemonic of a control: a label gives the focus to the control after it, a push button is clicked,
+ * a check or radio box gets the focus and is clicked. the search starts after the focus and wraps.
+ */
+static BOOL goto_mnemonic(HWND dialog, HWND focus, WCHAR key)
+{
+    HWND controls[256];
+    UINT count = collect_controls(dialog, controls, 0, 256), start = 0;
+    key = (WCHAR)(ULONG_PTR)CharUpperW((LPWSTR)(ULONG_PTR)key);
+    for (UINT i = 0; i < count; i++) {
+        if (controls[i] == focus || IsChild(controls[i], focus))
+            start = i + 1;
+    }
+    for (UINT n = 0; n < count; n++) {
+        HWND c = controls[(start + n) % count];
+        if (!IsWindowVisible(c) || !IsWindowEnabled(c))
+            continue;
+        UINT code = dlg_code(c);
+        if (!(code & (DLGC_STATIC | DLGC_BUTTON | DLGC_DEFPUSHBUTTON | DLGC_UNDEFPUSHBUTTON | DLGC_RADIOBUTTON)))
+            continue;
+        if ((code & DLGC_STATIC) && (GetWindowLongW(c, GWL_STYLE) & SS_NOPREFIX))
+            continue;
+        if (!has_mnemonic(c, key))
+            continue;
+        show_keyboard_cues(dialog);
+        if (code & DLGC_STATIC) {
+            /* the label of a group box or a static names the next control that takes the focus. */
+            UINT k = (start + n) % count;
+            for (UINT m = 1; m < count; m++) {
+                HWND next = controls[(k + m) % count];
+                UINT next_code = dlg_code(next);
+                if (IsWindowVisible(next) && IsWindowEnabled(next) && !(next_code & DLGC_STATIC)) {
+                    dialog_set_focus(dialog, next);
+                    break;
+                }
+            }
+        } else if (code & (DLGC_DEFPUSHBUTTON | DLGC_UNDEFPUSHBUTTON)) {
+            SendMessageW(c, BM_CLICK, 0, 0);
+        } else {
+            dialog_set_focus(dialog, c);
+            SendMessageW(c, BM_CLICK, 0, 0);
+        }
+        return TRUE;
+    }
+    return FALSE;
+}
+
 WINUSERAPI BOOL WINAPI IsDialogMessageW(HWND dialog, LPMSG msg)
 {
     if (!dialog || (msg->hwnd != dialog && !IsChild(dialog, msg->hwnd)))
@@ -1031,9 +1107,16 @@ WINUSERAPI BOOL WINAPI IsDialogMessageW(HWND dialog, LPMSG msg)
     HWND focus = GetFocus();
     if (msg->message == WM_SYSKEYDOWN && msg->wParam == VK_MENU)
         SendMessageW(dialog, WM_CHANGEUISTATE, MAKEWPARAM(UIS_CLEAR, UISF_HIDEACCEL), 0);
+    if (msg->message == WM_SYSCHAR && msg->wParam > ' ' && goto_mnemonic(dialog, focus, (WCHAR)msg->wParam))
+        return TRUE;
+    /* DefWindowProc opens the menu at the key down of Alt and a letter, so a mnemonic of the dialog is taken there. */
+    if (msg->message == WM_SYSKEYDOWN && (msg->lParam & (1 << 29)) && GetKeyState(VK_CONTROL) >= 0 &&
+        ((msg->wParam >= '0' && msg->wParam <= 'Z') || (msg->wParam >= VK_OEM_1 && msg->wParam <= VK_OEM_8))) {
+        WCHAR ch = (WCHAR)MapVirtualKeyW((UINT)msg->wParam, MAPVK_VK_TO_CHAR);
+        if (ch > ' ' && goto_mnemonic(dialog, focus, ch))
+            return TRUE;
+    }
     if (msg->message != WM_KEYDOWN && msg->message != WM_CHAR) {
-        if (msg->message == WM_SYSCHAR || msg->message == WM_SYSKEYDOWN || msg->message == WM_KEYUP)
-            ;
         TranslateMessage(msg);
         DispatchMessageW(msg);
         return TRUE;
@@ -1043,6 +1126,10 @@ WINUSERAPI BOOL WINAPI IsDialogMessageW(HWND dialog, LPMSG msg)
         DispatchMessageW(msg);
         return TRUE;
     }
+    /* a character the control does not want can be the mnemonic of another one. */
+    if (msg->message == WM_CHAR && msg->wParam > ' ' && !(code & (DLGC_WANTCHARS | DLGC_WANTALLKEYS)) &&
+        goto_mnemonic(dialog, focus, (WCHAR)msg->wParam))
+        return TRUE;
     if (msg->message == WM_KEYDOWN) {
         switch (msg->wParam) {
         case VK_TAB:
