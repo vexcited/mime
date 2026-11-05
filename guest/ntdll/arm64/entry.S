@@ -250,3 +250,28 @@ RtlpCallConsolidate:
     add     sp, sp, #0x430
     ret
     .seh_endproc
+
+/*
+ * EXCEPTION_DISPOSITION RtlpExecuteHandlerForUnwind(record, frame, context, dispatcher, handler)
+ *
+ * calls a handler of the frame that an unwind is on. an exception raised inside the handler meets this frame and gets
+ * RtlpUnwindHandler, which tells it to go on from the frame under unwind, as the frames between are unwound already.
+ * the dispatcher context is kept 16 bytes below the frame's establisher, the stack pointer its caller gets back.
+ */
+    .globl  RtlpExecuteHandlerForUnwind
+    .p2align 4
+    .seh_proc RtlpExecuteHandlerForUnwind
+RtlpExecuteHandlerForUnwind:
+    stp     x29, x30, [sp, #-32]!
+    .seh_save_fplr_x 32
+    .seh_handler RtlpUnwindHandler, @unwind, @except
+    .seh_endprologue
+    str     x3, [sp, #16]
+    blr     x4
+    nop                             /* a return address before the epilog would unwind as one. */
+    .seh_startepilogue
+    ldp     x29, x30, [sp], #32
+    .seh_save_fplr_x 32
+    .seh_endepilogue
+    ret
+    .seh_endproc

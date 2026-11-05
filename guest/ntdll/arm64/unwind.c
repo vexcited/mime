@@ -362,6 +362,10 @@ NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, P
             if (dc.EstablisherFrame > nested_frame)
                 nested_frame = dc.EstablisherFrame;
             break;
+        case ExceptionCollidedUnwind:
+            /* the handler left the context of the frame an unwind is on: the walk goes on from that frame. */
+            c = frame_context;
+            break;
         default: {
             EXCEPTION_RECORD invalid = {};
             invalid.ExceptionCode = STATUS_INVALID_DISPOSITION;
@@ -434,6 +438,24 @@ NTDLL_EXPORT void NTAPI RtlRestoreContext(PCONTEXT context, PEXCEPTION_RECORD re
     RtlpResumeContext(context);
 }
 
+EXCEPTION_DISPOSITION NTAPI RtlpExecuteHandlerForUnwind(PEXCEPTION_RECORD record, PVOID frame, PCONTEXT context,
+                                                        PDISPATCHER_CONTEXT dispatcher, PEXCEPTION_ROUTINE handler);
+
+/*
+ * the handler of RtlpExecuteHandlerForUnwind, reached by an exception that a handler called in an unwind raised, or by
+ * an unwind of its own. the frames below the one under unwind are unwound already, so the search, and the unwind of
+ * the new exception, go on from the context of that frame.
+ */
+EXCEPTION_DISPOSITION NTAPI RtlpUnwindHandler(PEXCEPTION_RECORD record, PVOID frame, PCONTEXT context,
+                                              PDISPATCHER_CONTEXT dispatcher)
+{
+    PDISPATCHER_CONTEXT outer = *(PDISPATCHER_CONTEXT *)((PUCHAR)frame - 16);
+    *dispatcher->ContextRecord = *outer->ContextRecord;
+    /* a termination handler that ran is not run again. */
+    dispatcher->ScopeIndex = outer->ScopeIndex;
+    return ExceptionCollidedUnwind;
+}
+
 NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPTION_RECORD record, PVOID value,
                                     PCONTEXT original, PVOID history)
 {
@@ -457,6 +479,7 @@ NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPT
     if (!unwind_frame(UNW_FLAG_NHANDLER, &c, &dc, &handler))
         RtlRaiseStatus(STATUS_BAD_FUNCTION_TABLE);
 
+    ULONG carried_scope = 0;
     for (ULONG depth = 0; depth < 4096; depth++) {
         CONTEXT next = c;
         if (!unwind_frame(UNW_FLAG_UHANDLER, &next, &dc, &handler) || !made_progress(&c, &next)) {
@@ -477,16 +500,23 @@ NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPT
             dc.NonVolatileRegisters = (PUCHAR)&c.X19;
             dc.TargetPc = (ULONG64)target_ip;
             dc.HistoryTable = history;
-            dc.ScopeIndex = 0;
-            EXCEPTION_DISPOSITION r = handler(record, (PVOID)dc.EstablisherFrame, &c, &dc);
+            dc.ScopeIndex = carried_scope;
+            carried_scope = 0;
+            EXCEPTION_DISPOSITION r = RtlpExecuteHandlerForUnwind(record, (PVOID)dc.EstablisherFrame, &c, &dc, handler);
             record->ExceptionFlags &= ~(EXCEPTION_COLLIDED_UNWIND | EXCEPTION_TARGET_UNWIND);
             if (r == ExceptionCollidedUnwind) {
-                /* another unwind went through this frame: continue from where it stopped. */
+                /*
+                 * the handler left the context of another frame in the dispatcher context, which is c. that frame is
+                 * unwound from there, and its handlers are told of the collision.
+                 */
                 record->ExceptionFlags |= EXCEPTION_COLLIDED_UNWIND;
+                carried_scope = dc.ScopeIndex;
+                continue;
             } else if (r != ExceptionContinueSearch) {
                 RtlRaiseStatus(STATUS_INVALID_DISPOSITION);
             }
         }
+        carried_scope = 0;
         if (target)
             break;
         c = next;
