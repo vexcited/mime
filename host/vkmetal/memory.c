@@ -17,6 +17,71 @@ static id heap_buffer(id heap, uint64_t size, NSUInteger options)
                    size, options, 0);
 }
 
+/* ------------------------------------------------------------------ the allocations by address. */
+
+/* the first allocation that ends above the address, called with the lock held. */
+static uint32_t memory_search(VkDevice device, uint64_t address)
+{
+    uint32_t lo = 0, hi = device->memory_count;
+    while (lo < hi) {
+        uint32_t mid = (lo + hi) / 2;
+        VkDeviceMemory m = device->memories[mid];
+        if (m->gpu + m->size <= address)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    return lo;
+}
+
+static void memory_register(VkDevice device, VkDeviceMemory m)
+{
+    if (!m->gpu)
+        return;
+    pthread_mutex_lock(&device->memory_lock);
+    if (device->memory_count == device->memory_capacity) {
+        uint32_t capacity = device->memory_capacity ? device->memory_capacity * 2 : 256;
+        void *grown = realloc(device->memories, capacity * sizeof(*device->memories));
+        if (grown) {
+            device->memories = grown;
+            device->memory_capacity = capacity;
+        }
+    }
+    if (device->memory_count < device->memory_capacity) {
+        uint32_t at = memory_search(device, m->gpu);
+        memmove(device->memories + at + 1, device->memories + at, (device->memory_count - at) * sizeof(m));
+        device->memories[at] = m;
+        device->memory_count++;
+    }
+    pthread_mutex_unlock(&device->memory_lock);
+}
+
+static void memory_unregister(VkDevice device, VkDeviceMemory m)
+{
+    pthread_mutex_lock(&device->memory_lock);
+    uint32_t at = m->gpu ? memory_search(device, m->gpu) : device->memory_count;
+    if (at < device->memory_count && device->memories[at] == m) {
+        device->memory_count--;
+        memmove(device->memories + at, device->memories + at + 1, (device->memory_count - at) * sizeof(m));
+    }
+    for (VkmTexel *t = m->texels, *next; t; t = next) {
+        next = t->next;
+        vkm_release_later(device, t->texture, false);
+        free(t);
+    }
+    m->texels = nullptr;
+    pthread_mutex_unlock(&device->memory_lock);
+}
+
+VkDeviceMemory vkm_memory_at(VkDevice device, uint64_t address)
+{
+    pthread_mutex_lock(&device->memory_lock);
+    uint32_t at = memory_search(device, address);
+    VkDeviceMemory m = at < device->memory_count && device->memories[at]->gpu <= address ? device->memories[at] : nullptr;
+    pthread_mutex_unlock(&device->memory_lock);
+    return m;
+}
+
 static VKAPI_ATTR VkResult VKAPI_CALL AllocateMemory(VkDevice device, const VkMemoryAllocateInfo *info,
                                                      const VkAllocationCallbacks *a, VkDeviceMemory *out)
 {
@@ -83,6 +148,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL AllocateMemory(VkDevice device, const VkMe
     }
     m->gpu = m->buffer ? M_U64(m->buffer, "gpuAddress") : 0;
     vkm_resident(device, m->heap ? m->heap : m->buffer ? m->buffer : m->texture);
+    memory_register(device, m);
     *out = m;
     return VK_SUCCESS;
 }
@@ -91,6 +157,7 @@ static VKAPI_ATTR void VKAPI_CALL FreeMemory(VkDevice device, VkDeviceMemory m, 
 {
     if (!m)
         return;
+    memory_unregister(device, m);
     id resident = m->heap ? m->heap : m->buffer ? m->buffer : m->texture;
     vkm_release_later(device, m->texture, m->texture == resident);
     vkm_release_later(device, m->buffer, m->buffer == resident);
@@ -249,6 +316,24 @@ static VKAPI_ATTR uint64_t VKAPI_CALL GetBufferOpaqueCaptureAddress(VkDevice dev
 
 /* ------------------------------------------------------------------ buffer views. */
 
+/* a texture of texels over the memory from the offset on, the range bytes long. */
+static id texel_texture(VkDeviceMemory m, uint64_t offset, uint64_t range, const VkmFormat *f)
+{
+    uint64_t texels = MIME_MAX(range / f->bytes, (uint64_t)1);
+    void *pool = objc_autoreleasePoolPush();
+    bool cpu = m->type == VKM_MEMORY_HOST;
+    id desc = MTL_MSG(id (*)(id, SEL, NSUInteger, NSUInteger, NSUInteger, NSUInteger), MTL_CLASS("MTLTextureDescriptor"),
+                      "textureBufferDescriptorWithPixelFormat:width:resourceOptions:usage:", f->pixel, texels,
+                      (cpu ? MTLResourceStorageModeShared : MTLResourceStorageModePrivate) | g_untracked,
+                      MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite |
+                          ((f->caps & VKM_CAP_ATOMIC) ? MTLTextureUsageShaderAtomic : 0));
+    id texture = MTL_MSG(id (*)(id, SEL, id, NSUInteger, NSUInteger), m->buffer,
+                         "newTextureWithDescriptor:offset:bytesPerRow:", desc, offset,
+                         MIME_ALIGN_UP(texels * f->bytes, (uint64_t)16));
+    objc_autoreleasePoolPop(pool);
+    return texture;
+}
+
 static VKAPI_ATTR VkResult VKAPI_CALL CreateBufferView(VkDevice device, const VkBufferViewCreateInfo *info,
                                                        const VkAllocationCallbacks *a, VkBufferView *out)
 {
@@ -260,20 +345,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateBufferView(VkDevice device, const Vk
     if (!v)
         return VK_ERROR_OUT_OF_HOST_MEMORY;
     uint64_t range = info->range == VK_WHOLE_SIZE ? b->size - info->offset : info->range;
-    uint64_t texels = range / f->bytes;
-    void *pool = objc_autoreleasePoolPush();
-    VkDeviceMemory m = b->memory;
-    bool cpu = m->type == VKM_MEMORY_HOST;
-    id desc = MTL_MSG(id (*)(id, SEL, NSUInteger, NSUInteger, NSUInteger, NSUInteger), MTL_CLASS("MTLTextureDescriptor"),
-                      "textureBufferDescriptorWithPixelFormat:width:resourceOptions:usage:", f->pixel,
-                      MIME_MAX(texels, (uint64_t)1),
-                      (cpu ? MTLResourceStorageModeShared : MTLResourceStorageModePrivate) | g_untracked,
-                      MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite |
-                          ((f->caps & VKM_CAP_ATOMIC) ? MTLTextureUsageShaderAtomic : 0));
-    v->texture = MTL_MSG(id (*)(id, SEL, id, NSUInteger, NSUInteger), m->buffer,
-                         "newTextureWithDescriptor:offset:bytesPerRow:", desc, b->offset + info->offset,
-                         MIME_ALIGN_UP(MIME_MAX(texels, (uint64_t)1) * f->bytes, (uint64_t)16));
-    objc_autoreleasePoolPop(pool);
+    v->texture = texel_texture(b->memory, b->offset + info->offset, range, f);
     if (!v->texture) {
         free(v);
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
@@ -281,6 +353,44 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateBufferView(VkDevice device, const Vk
     v->rid = M_RID(v->texture, "gpuResourceID");
     *out = v;
     return VK_SUCCESS;
+}
+
+/*
+ * the texture of a texel buffer descriptor that a descriptor buffer takes by address, made once for each address,
+ * range and format, and kept with its memory until that is freed: descriptor buffers have no view to destroy.
+ */
+MTLResourceID vkm_texel_rid(VkDevice device, uint64_t address, uint64_t range, VkFormat format)
+{
+    MTLResourceID none = {0};
+    const VkmFormat *f = vkm_format(format);
+    VkDeviceMemory m = address ? vkm_memory_at(device, address) : nullptr;
+    if (!m || !f->pixel || !f->bytes || !m->buffer)
+        return none;
+    if (range == VK_WHOLE_SIZE || address + range > m->gpu + m->size)
+        range = m->gpu + m->size - address;
+    pthread_mutex_lock(&device->memory_lock);
+    for (VkmTexel *t = m->texels; t; t = t->next)
+        if (t->address == address && t->range == range && t->format == format) {
+            MTLResourceID rid = t->rid;
+            pthread_mutex_unlock(&device->memory_lock);
+            return rid;
+        }
+    VkmTexel *t = vkm_zalloc(sizeof(*t));
+    if (t)
+        t->texture = texel_texture(m, address - m->gpu, range, f);
+    if (!t || !t->texture) {
+        free(t);
+        pthread_mutex_unlock(&device->memory_lock);
+        return none;
+    }
+    t->address = address;
+    t->range = range;
+    t->format = format;
+    t->rid = M_RID(t->texture, "gpuResourceID");
+    t->next = m->texels;
+    m->texels = t;
+    pthread_mutex_unlock(&device->memory_lock);
+    return t->rid;
 }
 
 static VKAPI_ATTR void VKAPI_CALL DestroyBufferView(VkDevice device, VkBufferView v, const VkAllocationCallbacks *a)
@@ -521,6 +631,24 @@ static VKAPI_ATTR void VKAPI_CALL GetImageSubresourceLayout(VkDevice device, VkI
                                                            const VkImageSubresource *sub, VkSubresourceLayout *out)
 {
     *out = (VkSubresourceLayout){0, image->size, image->row_pitch, image->size, image->size};
+}
+
+static VKAPI_ATTR void VKAPI_CALL GetImageSubresourceLayout2(VkDevice device, VkImage image,
+                                                            const VkImageSubresource2 *sub, VkSubresourceLayout2 *out)
+{
+    GetImageSubresourceLayout(device, image, &sub->imageSubresource, &out->subresourceLayout);
+}
+
+static VKAPI_ATTR void VKAPI_CALL GetDeviceImageSubresourceLayout(VkDevice device,
+                                                                 const VkDeviceImageSubresourceInfo *info,
+                                                                 VkSubresourceLayout2 *out)
+{
+    VkImage image;
+    out->subresourceLayout = (VkSubresourceLayout){};
+    if (CreateImage(device, info->pCreateInfo, nullptr, &image) != VK_SUCCESS)
+        return;
+    GetImageSubresourceLayout2(device, image, info->pSubresource, out);
+    DestroyImage(device, image, nullptr);
 }
 
 /* ------------------------------------------------------------------ image views. */
@@ -820,6 +948,8 @@ const VkmEntry vkm_memory_entries[] = {
     VKM_ENTRY(BindImageMemory2),
     VKM_ALIAS("vkBindImageMemory2KHR", BindImageMemory2),
     VKM_ENTRY(GetImageSubresourceLayout),
+    VKM_ALIAS("vkGetImageSubresourceLayout2KHR", GetImageSubresourceLayout2),
+    VKM_ALIAS("vkGetDeviceImageSubresourceLayoutKHR", GetDeviceImageSubresourceLayout),
     VKM_ENTRY(CreateImageView),
     VKM_ENTRY(DestroyImageView),
     VKM_ENTRY(CreateSampler),

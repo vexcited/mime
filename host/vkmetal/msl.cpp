@@ -50,7 +50,8 @@ static uint32_t constant_value(CompilerMSL &c, const SpecializationConstant &s, 
 
 extern "C" bool vkm_msl(const uint32_t *spirv, size_t words, const char *entry, int model,
                         const VkmMslBinding *bindings, uint32_t binding_count, uint32_t set_mask,
-                        const VkmMslSpec *spec, uint32_t spec_count, VkmMslResult *out)
+                        const VkmMslSpec *spec, uint32_t spec_count, const uint8_t *widen, bool dual_source,
+                        VkmMslResult *out)
 {
     memset(out, 0, sizeof(*out));
     try {
@@ -86,6 +87,11 @@ extern "C" bool vkm_msl(const uint32_t *spirv, size_t words, const char *entry, 
         push.binding = kPushConstBinding;
         push.msl_buffer = VKM_BUFFER_PUSH;
         c.add_msl_resource_binding(push);
+        for (uint32_t i = 0; i < binding_count; i++)
+            if (bindings[i].set == VKM_EMU_SET) {
+                c.add_discrete_descriptor_set(VKM_EMU_SET);
+                break;
+            }
         for (uint32_t i = 0; i < binding_count; i++) {
             const VkmMslBinding &b = bindings[i];
             MSLResourceBinding r;
@@ -98,6 +104,29 @@ extern "C" bool vkm_msl(const uint32_t *spirv, size_t words, const char *entry, 
             r.msl_sampler = b.kind == VKM_MSL_COMBINED ? b.sampler_slot : b.slot;
             c.add_msl_resource_binding(r);
         }
+
+        /*
+         * metal reads unsigned 8 and 16 bit attributes into unsigned types only, where direct3d gives them to signed
+         * inputs too, zero extended: the input is declared unsigned and cast to the shader's type.
+         */
+        for (uint32_t loc = 0; widen && loc < VKM_VERTEX_ATTRIBUTES; loc++)
+            if (widen[loc]) {
+                MSLShaderInterfaceVariable v;
+                v.location = loc;
+                v.format = widen[loc] == VKM_WIDEN_UINT8 ? MSL_SHADER_VARIABLE_FORMAT_UINT8
+                                                        : MSL_SHADER_VARIABLE_FORMAT_UINT16;
+                c.add_msl_shader_input(v);
+            }
+
+        /* direct3d blends with the second render target's output, metal with the second index of the first. */
+        if (dual_source && execution == spv::ExecutionModelFragment)
+            for (auto &o : c.get_shader_resources().stage_outputs)
+                if (c.has_decoration(o.id, spv::DecorationLocation) &&
+                    c.get_decoration(o.id, spv::DecorationLocation) == 1 &&
+                    !c.get_decoration(o.id, spv::DecorationIndex)) {
+                    c.set_decoration(o.id, spv::DecorationLocation, 0);
+                    c.set_decoration(o.id, spv::DecorationIndex, 1);
+                }
 
         for (auto &s : c.get_specialization_constants())
             for (uint32_t i = 0; i < spec_count; i++)

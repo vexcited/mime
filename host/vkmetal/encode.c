@@ -198,6 +198,8 @@ static uint64_t now_ns(void)
 
 static uint32_t query_values(VkQueryPool pool)
 {
+    if (pool->type == VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT)
+        return 2;
     return pool->type == VK_QUERY_TYPE_PIPELINE_STATISTICS ? MIME_MAX(__builtin_popcount(pool->statistics), 1) : 1;
 }
 
@@ -207,6 +209,12 @@ static void query_reset(Enc *e, const VkmOpQuery *o)
     uint32_t n = query_values(pool);
     for (uint32_t i = 0; i < o->count && o->first + i < pool->count; i++)
         pool->written[o->first + i] = 0;
+    /* statistics the host adds as it encodes start from zero then too. */
+    if (pool->type == VK_QUERY_TYPE_PIPELINE_STATISTICS) {
+        uint32_t count = MIME_MIN(o->count, pool->count > o->first ? pool->count - o->first : 0);
+        memset(&pool->values[(uint64_t)o->first * n], 0, (size_t)count * 8 * n);
+        return;
+    }
     MTL_MSG(void (*)(id, SEL, id, NSRange, uint8_t), compute(e), "fillBuffer:range:value:", pool->buffer,
             (NSRange){(NSUInteger)o->first * 8 * n, (NSUInteger)o->count * 8 * n}, 0);
 }
@@ -241,6 +249,39 @@ static void timestamp(Enc *e, const VkmOpQuery *o)
     if (!o->flags && pool->type == VK_QUERY_TYPE_TIMESTAMP && o->first < pool->count)
         pool->values[o->first] = now_ns();
     vkm_query_written(pool, o->first, o->count, e->q, e->value);
+}
+
+/* ------------------------------------------------------------------ generated commands. */
+
+static void dispatch_barrier(id encoder)
+{
+    MTL_MSG(void (*)(id, SEL, uint64_t, uint64_t, NSUInteger), encoder,
+            "barrierAfterEncoderStages:beforeEncoderStages:visibilityOptions:",
+            (uint64_t)(MTLStageDispatch | MTLStageBlit), (uint64_t)(MTLStageDispatch | MTLStageBlit),
+            MTL4VisibilityOptionDevice);
+}
+
+/* the generation kernel sees what the encoder wrote before, and the commands it encodes see what it wrote. */
+static void generate(Enc *e, const VkmOpGenerate *o)
+{
+    id c = compute(e);
+    dispatch_barrier(c);
+    M_V_ID(c, "setComputePipelineState:", o->pipeline);
+    set_address(e->q->tables[1], 0, o->params);
+    set_address(e->q->tables[1], 1, o->icb);
+    MTL_MSG(void (*)(id, SEL, MTLSize, MTLSize), c, "dispatchThreads:threadsPerThreadgroup:",
+            (MTLSize){o->threads, 1, 1}, (MTLSize){64, 1, 1});
+    dispatch_barrier(c);
+}
+
+static void execute(Enc *e, const VkmOpExecute *o)
+{
+    id encoder = o->dispatch ? compute(e) : e->render;
+    if (!encoder)
+        return;
+    for (uint32_t i = 0; i < o->chunks; i++)
+        MTL_MSG(void (*)(id, SEL, id, uint64_t), encoder, "executeCommandsInBuffer:indirectBuffer:", o->icb,
+                o->ranges + (uint64_t)i * 8);
 }
 
 /* ------------------------------------------------------------------ the replay. */
@@ -414,10 +455,7 @@ static void replay(Enc *e, const VkmOp *op)
         break;
     case VKM_OP_BARRIER:
         if (e->compute)
-            MTL_MSG(void (*)(id, SEL, uint64_t, uint64_t, NSUInteger), e->compute,
-                    "barrierAfterEncoderStages:beforeEncoderStages:visibilityOptions:",
-                    (uint64_t)(MTLStageDispatch | MTLStageBlit), (uint64_t)(MTLStageDispatch | MTLStageBlit),
-                    MTL4VisibilityOptionDevice);
+            dispatch_barrier(e->compute);
         break;
     case VKM_OP_TIMESTAMP: timestamp(e, (const VkmOpQuery *)op); break;
     case VKM_OP_QUERY_RESET: query_reset(e, (const VkmOpQuery *)op); break;
@@ -428,6 +466,25 @@ static void replay(Enc *e, const VkmOp *op)
         __atomic_store_n(&((VkEvent)(void *)o->pool)->set, o->first, __ATOMIC_RELEASE);
         break;
     }
+    case VKM_OP_GENERATE: generate(e, (const VkmOpGenerate *)op); break;
+    case VKM_OP_STATS: {
+        const VkmOpStats *o = (const void *)op;
+        VkQueryPool pool = o->pool;
+        uint32_t n = query_values(pool), k = 0;
+        if (o->query >= pool->count)
+            break;
+        for (uint32_t b = 0; b < VKM_STATS; b++)
+            if (pool->statistics & (1u << b))
+                pool->values[(uint64_t)o->query * n + k++] += o->add[b];
+        break;
+    }
+    case VKM_OP_VERTEX_BARRIER:
+        if (r)
+            MTL_MSG(void (*)(id, SEL, uint64_t, uint64_t, NSUInteger), r,
+                    "barrierAfterEncoderStages:beforeEncoderStages:visibilityOptions:", (uint64_t)MTLStageVertex,
+                    (uint64_t)MTLStageVertex, MTL4VisibilityOptionDevice);
+        break;
+    case VKM_OP_EXECUTE: execute(e, (const VkmOpExecute *)op); break;
     default: break;
     }
 }

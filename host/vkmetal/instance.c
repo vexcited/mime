@@ -20,6 +20,11 @@ static const VkExtensionProperties g_device_extensions[] = {
     {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_SWAPCHAIN_SPEC_VERSION},
     {VK_EXT_ROBUSTNESS_2_EXTENSION_NAME, VK_EXT_ROBUSTNESS_2_SPEC_VERSION},
     {VK_EXT_SHADER_OBJECT_EXTENSION_NAME, VK_EXT_SHADER_OBJECT_SPEC_VERSION},
+    {VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME, VK_EXT_DESCRIPTOR_BUFFER_SPEC_VERSION},
+    {VK_KHR_MAINTENANCE_5_EXTENSION_NAME, VK_KHR_MAINTENANCE_5_SPEC_VERSION},
+    {VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME, VK_EXT_TRANSFORM_FEEDBACK_SPEC_VERSION},
+    {VK_EXT_DEVICE_GENERATED_COMMANDS_EXTENSION_NAME, VK_EXT_DEVICE_GENERATED_COMMANDS_SPEC_VERSION},
+    {VK_EXT_MUTABLE_DESCRIPTOR_TYPE_EXTENSION_NAME, VK_EXT_MUTABLE_DESCRIPTOR_TYPE_SPEC_VERSION},
     {VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME, VK_EXT_DEPTH_CLIP_ENABLE_SPEC_VERSION},
     {VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_SPEC_VERSION},
     {VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME, VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_SPEC_VERSION},
@@ -40,6 +45,14 @@ static const VkExtensionProperties g_device_extensions[] = {
     {VK_GOOGLE_USER_TYPE_EXTENSION_NAME, VK_GOOGLE_USER_TYPE_SPEC_VERSION},
     {VK_GOOGLE_DECORATE_STRING_EXTENSION_NAME, VK_GOOGLE_DECORATE_STRING_SPEC_VERSION},
 };
+
+bool vkm_device_extension(const char *name)
+{
+    for (size_t k = 0; k < MIME_ARRAY_COUNT(g_device_extensions); k++)
+        if (!strcmp(name, g_device_extensions[k].extensionName))
+            return true;
+    return false;
+}
 
 static VkResult enumerate(const void *list, size_t size, uint32_t n, uint32_t *count, void *out)
 {
@@ -192,6 +205,7 @@ static const VkPhysicalDeviceFeatures g_features = {
     .fullDrawIndexUint32 = VK_TRUE,
     .imageCubeArray = VK_TRUE,
     .independentBlend = VK_TRUE,
+    .geometryShader = VK_TRUE,
     .sampleRateShading = VK_TRUE,
     .dualSrcBlend = VK_TRUE,
     .multiDrawIndirect = VK_TRUE,
@@ -207,6 +221,7 @@ static const VkPhysicalDeviceFeatures g_features = {
     .textureCompressionASTC_LDR = VK_TRUE,
     .textureCompressionBC = VK_TRUE,
     .occlusionQueryPrecise = VK_TRUE,
+    .pipelineStatisticsQuery = VK_TRUE,
     .vertexPipelineStoresAndAtomics = VK_TRUE,
     .fragmentStoresAndAtomics = VK_TRUE,
     .shaderImageGatherExtended = VK_TRUE,
@@ -378,6 +393,17 @@ static void fill_features(VkBaseOutStructure *chain)
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_FEATURES:
             ((VkPhysicalDeviceMaintenance4Features *)s)->maintenance4 = VK_TRUE;
             break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT:
+            ((VkPhysicalDeviceTransformFeedbackFeaturesEXT *)s)->transformFeedback = VK_TRUE;
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES:
+            ((VkPhysicalDeviceMaintenance5Features *)s)->maintenance5 = VK_TRUE;
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_FEATURES_EXT: {
+            VkPhysicalDeviceDeviceGeneratedCommandsFeaturesEXT *x = (void *)s;
+            x->deviceGeneratedCommands = x->dynamicGeneratedPipelineLayout = VK_TRUE;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES:
             ((VkPhysicalDeviceShaderDemoteToHelperInvocationFeatures *)s)->shaderDemoteToHelperInvocation = VK_TRUE;
             break;
@@ -408,6 +434,16 @@ static void fill_features(VkBaseOutStructure *chain)
         }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_FEATURES_EXT:
             ((VkPhysicalDeviceShaderObjectFeaturesEXT *)s)->shaderObject = VK_TRUE;
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT: {
+            VkPhysicalDeviceDescriptorBufferFeaturesEXT *x = (void *)s;
+            x->descriptorBuffer = VK_TRUE;
+            x->descriptorBufferCaptureReplay = x->descriptorBufferImageLayoutIgnored = VK_FALSE;
+            x->descriptorBufferPushDescriptors = VK_FALSE;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MUTABLE_DESCRIPTOR_TYPE_FEATURES_EXT:
+            ((VkPhysicalDeviceMutableDescriptorTypeFeaturesEXT *)s)->mutableDescriptorType = VK_TRUE;
             break;
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT:
             ((VkPhysicalDeviceDepthClipEnableFeaturesEXT *)s)->depthClipEnable = VK_TRUE;
@@ -525,6 +561,11 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceProperties(VkPhysicalDevice p
                 .maxFragmentOutputAttachments = VKM_COLORS,
                 .maxFragmentDualSrcAttachments = 1,
                 .maxFragmentCombinedOutputResources = MAX_DESCRIPTORS,
+                .maxGeometryShaderInvocations = 32,
+                .maxGeometryInputComponents = 128,
+                .maxGeometryOutputComponents = 128,
+                .maxGeometryOutputVertices = 1024,
+                .maxGeometryTotalOutputComponents = 1024,
                 .maxComputeSharedMemorySize = (uint32_t)M_U(p->mtl, "maxThreadgroupMemoryLength"),
                 .maxComputeWorkGroupCount = {0x7fffffff, 65535, 65535},
                 .maxComputeWorkGroupInvocations = 1024,
@@ -770,6 +811,38 @@ static void fill_properties(VkPhysicalDevice p, VkBaseOutStructure *chain)
             x->robustUniformBufferAccessSizeAlignment = 4;
             break;
         }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT: {
+            /*
+             * every descriptor is the 8 bytes of a set's argument buffer slot. a combined image sampler is two, and an
+             * array of them is its images then its samplers, as single array false asks.
+             */
+            VkPhysicalDeviceDescriptorBufferPropertiesEXT *x = (void *)s;
+            x->combinedImageSamplerDescriptorSingleArray = VK_FALSE;
+            x->bufferlessPushDescriptors = VK_FALSE;
+            x->allowSamplerImageViewPostSubmitCreation = VK_TRUE;
+            x->descriptorBufferOffsetAlignment = 64;
+            x->maxDescriptorBufferBindings = VKM_SETS;
+            x->maxResourceDescriptorBufferBindings = VKM_SETS;
+            x->maxSamplerDescriptorBufferBindings = VKM_SETS;
+            x->maxEmbeddedImmutableSamplerBindings = VKM_SETS;
+            x->maxEmbeddedImmutableSamplers = 2032;
+            x->bufferCaptureReplayDescriptorDataSize = x->imageCaptureReplayDescriptorDataSize = 0;
+            x->imageViewCaptureReplayDescriptorDataSize = x->samplerCaptureReplayDescriptorDataSize = 0;
+            x->accelerationStructureCaptureReplayDescriptorDataSize = 0;
+            x->samplerDescriptorSize = 8;
+            x->combinedImageSamplerDescriptorSize = 16;
+            x->sampledImageDescriptorSize = x->storageImageDescriptorSize = 8;
+            x->uniformTexelBufferDescriptorSize = x->robustUniformTexelBufferDescriptorSize = 8;
+            x->storageTexelBufferDescriptorSize = x->robustStorageTexelBufferDescriptorSize = 8;
+            x->uniformBufferDescriptorSize = x->robustUniformBufferDescriptorSize = 8;
+            x->storageBufferDescriptorSize = x->robustStorageBufferDescriptorSize = 8;
+            x->inputAttachmentDescriptorSize = 8;
+            x->accelerationStructureDescriptorSize = 8;
+            x->maxSamplerDescriptorBufferRange = x->maxResourceDescriptorBufferRange = 1ull << 32;
+            x->samplerDescriptorBufferAddressSpaceSize = x->resourceDescriptorBufferAddressSpaceSize = 1ull << 40;
+            x->descriptorBufferAddressSpaceSize = 1ull << 40;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_OBJECT_PROPERTIES_EXT: {
             VkPhysicalDeviceShaderObjectPropertiesEXT *x = (void *)s;
             memcpy(x->shaderBinaryUUID, p->uuid, VK_UUID_SIZE);
@@ -788,6 +861,49 @@ static void fill_properties(VkPhysicalDevice p, VkBaseOutStructure *chain)
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_PROPERTIES_EXT:
             ((VkPhysicalDeviceExtendedDynamicState3PropertiesEXT *)s)->dynamicPrimitiveTopologyUnrestricted = VK_TRUE;
             break;
+        /* stream output is one stream, written by the geometry stage's emulation. */
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT: {
+            VkPhysicalDeviceTransformFeedbackPropertiesEXT *x = (void *)s;
+            x->maxTransformFeedbackStreams = 1;
+            x->maxTransformFeedbackBuffers = 4;
+            x->maxTransformFeedbackBufferSize = 1ull << 31;
+            x->maxTransformFeedbackStreamDataSize = 512;
+            x->maxTransformFeedbackBufferDataSize = 512;
+            x->maxTransformFeedbackBufferDataStride = 2048;
+            x->transformFeedbackQueries = VK_TRUE;
+            x->transformFeedbackStreamsLinesTriangles = VK_FALSE;
+            x->transformFeedbackRasterizationStreamSelect = VK_FALSE;
+            x->transformFeedbackDraw = VK_TRUE;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_PROPERTIES: {
+            VkPhysicalDeviceMaintenance5Properties *x = (void *)s;
+            x->earlyFragmentMultisampleCoverageAfterSampleCounting = VK_TRUE;
+            x->earlyFragmentSampleMaskTestBeforeSampleCounting = VK_TRUE;
+            x->depthStencilSwizzleOneSupport = VK_FALSE;
+            x->polygonModePointSize = VK_TRUE;
+            x->nonStrictSinglePixelWideLinesUseParallelogram = VK_FALSE;
+            x->nonStrictWideLinesUseParallelogram = VK_FALSE;
+            break;
+        }
+        /* generated commands are encoded into indirect command buffers, without execution sets. */
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT: {
+            VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT *x = (void *)s;
+            x->maxIndirectPipelineCount = x->maxIndirectShaderObjectCount = 0;
+            x->maxIndirectSequenceCount = 1u << 20;
+            x->maxIndirectCommandsTokenCount = VKM_DGC_TOKENS;
+            x->maxIndirectCommandsTokenOffset = 2047;
+            x->maxIndirectCommandsIndirectStride = 2048;
+            x->supportedIndirectCommandsInputModes =
+                VK_INDIRECT_COMMANDS_INPUT_MODE_VULKAN_INDEX_BUFFER_EXT | VK_INDIRECT_COMMANDS_INPUT_MODE_DXGI_INDEX_BUFFER_EXT;
+            x->supportedIndirectCommandsShaderStages =
+                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+            x->supportedIndirectCommandsShaderStagesPipelineBinding = 0;
+            x->supportedIndirectCommandsShaderStagesShaderBinding = 0;
+            x->deviceGeneratedCommandsTransformFeedback = VK_FALSE;
+            x->deviceGeneratedCommandsMultiDrawIndirectCount = VK_FALSE;
+            break;
+        }
         default:
             break;
         }

@@ -67,6 +67,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateCommandPool(VkDevice device, const V
 
 static void buffer_reset(VkCommandBuffer cmd)
 {
+    for (VkmIcb *b = cmd->icbs; b; b = b->next)
+        b->used = false;
     cmd->cmd_size = 0;
     vkm_chunks_release(cmd->device, cmd->chunks);
     cmd->chunks = nullptr;
@@ -76,6 +78,12 @@ static void buffer_reset(VkCommandBuffer cmd)
 
 static void buffer_free(VkCommandBuffer cmd)
 {
+    for (VkmIcb *b = cmd->icbs, *next; b; b = next) {
+        next = b->next;
+        vkm_unresident(cmd->device, b->icb);
+        mtl_release(b->icb);
+        free(b);
+    }
     vkm_chunks_release(cmd->device, cmd->chunks);
     free(cmd->cmds);
     free(cmd->state->legacy);
@@ -509,9 +517,12 @@ static VKAPI_ATTR void VKAPI_CALL CmdBindShadersEXT(VkCommandBuffer cmd, uint32_
             s->fs = code;
             s->pipeline_dirty = true;
             break;
+        case VK_SHADER_STAGE_GEOMETRY_BIT:
+            s->gs = code;
+            break;
         case VK_SHADER_STAGE_COMPUTE_BIT:
             s->cs = code;
-            s->compute = code ? vkm_compute_pipeline(cmd->device, code) : nullptr;
+            s->compute = code ? vkm_compute_pipeline(cmd->device, code, false) : nullptr;
             break;
         default:
             break;
@@ -629,6 +640,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdBindPipeline(VkCommandBuffer cmd, VkPipelin
     }
     s->vs = p->has[0] ? &p->stages[0] : nullptr;
     s->fs = p->has[1] ? &p->stages[1] : nullptr;
+    s->gs = p->has[2] ? &p->stages[2] : nullptr;
     apply_static(s, p->gfx);
 }
 
@@ -681,6 +693,34 @@ static VKAPI_ATTR void VKAPI_CALL CmdBindDescriptorSets2(VkCommandBuffer cmd, co
                               info->descriptorSetCount, info->pDescriptorSets, 0, nullptr);
 }
 
+/* descriptor buffers: a set is the argument buffer at the address of a bound buffer plus an offset. */
+static VKAPI_ATTR void VKAPI_CALL CmdBindDescriptorBuffersEXT(VkCommandBuffer cmd, uint32_t count,
+                                                              const VkDescriptorBufferBindingInfoEXT *infos)
+{
+    for (uint32_t i = 0; i < count && i < VKM_SETS; i++)
+        STATE(cmd)->descriptor_buffers[i] = infos[i].address;
+}
+
+static VKAPI_ATTR void VKAPI_CALL CmdSetDescriptorBufferOffsetsEXT(VkCommandBuffer cmd, VkPipelineBindPoint bind,
+                                                                   VkPipelineLayout layout, uint32_t first,
+                                                                   uint32_t count, const uint32_t *indices,
+                                                                   const VkDeviceSize *offsets)
+{
+    VkmGfxState *s = STATE(cmd);
+    int point = bind == VK_PIPELINE_BIND_POINT_COMPUTE ? VKM_COMPUTE : VKM_GFX;
+    for (uint32_t i = 0; i < count && first + i < VKM_SETS; i++)
+        s->sets[point][first + i] = indices[i] < VKM_SETS ? s->descriptor_buffers[indices[i]] + offsets[i] : 0;
+}
+
+static VKAPI_ATTR void VKAPI_CALL CmdBindDescriptorBufferEmbeddedSamplersEXT(VkCommandBuffer cmd,
+                                                                             VkPipelineBindPoint bind,
+                                                                             VkPipelineLayout layout, uint32_t set)
+{
+    int point = bind == VK_PIPELINE_BIND_POINT_COMPUTE ? VKM_COMPUTE : VKM_GFX;
+    if (set < VKM_SETS && set < layout->set_count && layout->sets[set])
+        STATE(cmd)->sets[point][set] = layout->sets[set]->embedded_gpu;
+}
+
 static VKAPI_ATTR void VKAPI_CALL CmdPushConstants(VkCommandBuffer cmd, VkPipelineLayout layout,
                                                    VkShaderStageFlags stages, uint32_t offset, uint32_t size,
                                                    const void *data)
@@ -728,6 +768,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdBindIndexBuffer2(VkCommandBuffer cmd, VkBuf
 {
     VkmGfxState *s = STATE(cmd);
     s->index_address = buffer ? buffer->gpu + offset : 0;
+    s->index_host = buffer && buffer->memory && buffer->memory->map ? buffer->memory->map + buffer->offset + offset : nullptr;
     s->index_size = buffer ? (size == VK_WHOLE_SIZE ? buffer->size - offset : size) : 0;
     s->index_type = type == VK_INDEX_TYPE_UINT32 ? MTLIndexTypeUInt32 : MTLIndexTypeUInt16;
 }
@@ -1056,6 +1097,12 @@ static VKAPI_ATTR void VKAPI_CALL GetRenderAreaGranularity(VkDevice device, VkRe
     *out = (VkExtent2D){1, 1};
 }
 
+static VKAPI_ATTR void VKAPI_CALL GetRenderingAreaGranularity(VkDevice device, const VkRenderingAreaInfo *info,
+                                                             VkExtent2D *out)
+{
+    *out = (VkExtent2D){1, 1};
+}
+
 static VKAPI_ATTR VkResult VKAPI_CALL CreateFramebuffer(VkDevice device, const VkFramebufferCreateInfo *info,
                                                         const VkAllocationCallbacks *a, VkFramebuffer *out)
 {
@@ -1231,17 +1278,137 @@ static uint16_t input_format(const VkmInput *in)
     }
 }
 
+static bool src1_factor(uint8_t f)
+{
+    return f >= VK_BLEND_FACTOR_SRC1_COLOR && f <= VK_BLEND_FACTOR_ONE_MINUS_SRC1_ALPHA;
+}
+
+static bool uses_src1(const VkmBlend *b)
+{
+    return src1_factor(b->src_color) || src1_factor(b->dst_color) || src1_factor(b->src_alpha) ||
+           src1_factor(b->dst_alpha);
+}
+
+static uint8_t narrow_unsigned(VkFormat format)
+{
+    switch (format) {
+    case VK_FORMAT_R8_UINT:
+    case VK_FORMAT_R8G8_UINT:
+    case VK_FORMAT_R8G8B8_UINT:
+    case VK_FORMAT_R8G8B8A8_UINT:
+    case VK_FORMAT_B8G8R8A8_UINT:
+    case VK_FORMAT_A8B8G8R8_UINT_PACK32: return VKM_WIDEN_UINT8;
+    case VK_FORMAT_R16_UINT:
+    case VK_FORMAT_R16G16_UINT:
+    case VK_FORMAT_R16G16B16_UINT:
+    case VK_FORMAT_R16G16B16A16_UINT: return VKM_WIDEN_UINT16;
+    default: return VKM_WIDEN_NONE;
+    }
+}
+
 /* the binding missing vertex attributes read zeros from. */
 #define ZERO_BINDING (VKM_VERTEX_BINDINGS - 1)
 
-static id resolve_pipeline(VkCommandBuffer cmd, bool *zero)
+/* the word fragment shaders count their invocations in, for the active pipeline statistics query. */
+static uint64_t stats_counter(const VkmGfxState *s)
+{
+    VkQueryPool pool = s->stats;
+    uint32_t bit = VK_QUERY_PIPELINE_STATISTIC_FRAGMENT_SHADER_INVOCATIONS_BIT;
+    if (!pool || !(pool->statistics & bit) || s->stats_query >= pool->count)
+        return 0;
+    uint32_t n = __builtin_popcount(pool->statistics), k = __builtin_popcount(pool->statistics & (bit - 1));
+    return M_U64(pool->buffer, "gpuAddress") + ((uint64_t)s->stats_query * n + k) * 8;
+}
+
+/* what the host knows a draw or dispatch adds to the active statistics query. */
+static void count_stats(VkCommandBuffer cmd, const uint64_t add[VKM_STATS])
+{
+    VkmGfxState *s = STATE(cmd);
+    if (!s->stats)
+        return;
+    VkmOpStats *o = vkm_emit(cmd, VKM_OP_STATS, sizeof(*o));
+    if (!o)
+        return;
+    o->pool = s->stats;
+    o->query = s->stats_query;
+    memcpy(o->add, add, sizeof(o->add));
+}
+
+static uint32_t topology_primitives(VkPrimitiveTopology topology, uint32_t n)
+{
+    switch (topology) {
+    case VK_PRIMITIVE_TOPOLOGY_POINT_LIST: return n;
+    case VK_PRIMITIVE_TOPOLOGY_LINE_LIST: return n / 2;
+    case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP: return n > 1 ? n - 1 : 0;
+    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST: return n / 3;
+    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP:
+    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN: return n > 2 ? n - 2 : 0;
+    case VK_PRIMITIVE_TOPOLOGY_LINE_LIST_WITH_ADJACENCY: return n / 4;
+    case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY: return n > 3 ? n - 3 : 0;
+    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST_WITH_ADJACENCY: return n / 6;
+    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY: return n > 5 ? (n - 4) / 2 : 0;
+    default: return 0;
+    }
+}
+
+static void count_draw(VkCommandBuffer cmd, uint32_t vertices, uint32_t instances)
+{
+    VkmGfxState *s = STATE(cmd);
+    if (!s->stats)
+        return;
+    uint64_t prims = (uint64_t)topology_primitives(s->dyn.topology, vertices) * instances, all = (uint64_t)vertices * instances;
+    uint64_t add[VKM_STATS] = {all, prims, all};
+    if (s->gs) {
+        add[3] = prims * MIME_MAX(s->gs->gs.invocations, 1u);
+        add[4] = add[3];
+        prims = add[3];
+    }
+    add[5] = add[6] = prims;
+    count_stats(cmd, add);
+}
+
+/* the stages a draw runs; the geometry stage's emulation draws with vertex functions of its own. */
+typedef struct Stages {
+    const VkmCode *vs, *fs;
+    uint8_t topology_class, discard;
+} Stages;
+
+static id resolve_pipeline(VkCommandBuffer cmd, const Stages *st, bool *zero)
 {
     VkmGfxState *s = STATE(cmd);
     const VkmDynamic *d = &s->dyn;
+    const VkmCode *vs = st->vs, *fs = st->fs;
+    if (fs && (fs->outputs & 2) && s->colors[0] && d->blend[0].enable && uses_src1(&d->blend[0])) {
+        const VkmCode *dual = vkm_code_dual(cmd->device, fs);
+        if (dual)
+            fs = dual;
+    }
+    if (fs && stats_counter(s)) {
+        const VkmCode *counted = vkm_code_counted(cmd->device, fs);
+        if (counted)
+            fs = counted;
+    }
+    /* a signed input fed an unsigned 8 or 16 bit format reads it through a variant declaring it unsigned. */
+    uint8_t widen[VKM_VERTEX_ATTRIBUTES] = {};
+    bool widened = false;
+    for (uint32_t i = 0; i < d->vertex.attribute_count; i++) {
+        const VkVertexInputAttributeDescription2EXT *a = &d->vertex.attributes[i];
+        if (a->location >= VKM_VERTEX_ATTRIBUTES || !(vs->inputs & (1u << a->location)) ||
+            vs->input[a->location].kind != 1)
+            continue;
+        uint8_t w = narrow_unsigned(a->format);
+        widen[a->location] = w;
+        widened |= w != VKM_WIDEN_NONE;
+    }
+    if (widened) {
+        const VkmCode *variant = vkm_code_widened(cmd->device, vs, widen);
+        if (variant)
+            vs = variant;
+    }
     VkmPipelineKey key;
     memset(&key, 0, sizeof(key));
-    key.vs = s->vs->hash;
-    key.fs = s->fs ? s->fs->hash : 0;
+    key.vs = vs->hash;
+    key.fs = fs ? fs->hash : 0;
     for (uint32_t i = 0; i < s->color_count; i++) {
         key.colors[i] = s->colors[i];
         if (!s->colors[i])
@@ -1251,14 +1418,15 @@ static id resolve_pipeline(VkCommandBuffer cmd, bool *zero)
             key.blend[i] = (VkmBlend){0, d->blend[i].write};
     }
     key.samples = (uint8_t)s->samples;
-    key.topology_class = (uint8_t)vkm_topology_class(d->topology);
-    key.discard = d->discard;
+    key.icb = s->icb;
+    key.topology_class = st->topology_class;
+    key.discard = st->discard;
     key.alpha_to_coverage = d->alpha_to_coverage;
     key.alpha_to_one = d->alpha_to_one;
     uint32_t covered = 0;
     for (uint32_t i = 0; i < d->vertex.attribute_count && key.attribute_count < VKM_VERTEX_ATTRIBUTES; i++) {
         const VkVertexInputAttributeDescription2EXT *a = &d->vertex.attributes[i];
-        if (a->location >= VKM_VERTEX_ATTRIBUTES || !(s->vs->inputs & (1u << a->location)) ||
+        if (a->location >= VKM_VERTEX_ATTRIBUTES || !(vs->inputs & (1u << a->location)) ||
             a->binding >= ZERO_BINDING)
             continue;
         key.attributes[key.attribute_count++] = (typeof(key.attributes[0])){(uint8_t)a->location, (uint8_t)a->binding,
@@ -1267,9 +1435,9 @@ static id resolve_pipeline(VkCommandBuffer cmd, bool *zero)
     }
     *zero = false;
     for (uint32_t loc = 0; loc < VKM_VERTEX_ATTRIBUTES; loc++)
-        if ((s->vs->inputs & (1u << loc)) && !(covered & (1u << loc))) {
+        if ((vs->inputs & (1u << loc)) && !(covered & (1u << loc))) {
             key.attributes[key.attribute_count++] =
-                (typeof(key.attributes[0])){(uint8_t)loc, ZERO_BINDING, input_format(&s->vs->input[loc]), 0};
+                (typeof(key.attributes[0])){(uint8_t)loc, ZERO_BINDING, input_format(&vs->input[loc]), 0};
             *zero = true;
         }
     for (uint32_t i = 0; i < d->vertex.binding_count; i++) {
@@ -1285,7 +1453,7 @@ static id resolve_pipeline(VkCommandBuffer cmd, bool *zero)
         key.bindings[b->binding].divisor = b->divisor;
     }
     key.bindings[ZERO_BINDING].rate = MTLVertexStepFunctionConstant;
-    return vkm_render_pipeline(cmd->device, &key, s->vs, s->fs);
+    return vkm_render_pipeline(cmd->device, &key, vs, fs);
 }
 
 static void emit_buffer(VkCommandBuffer cmd, int point, uint32_t index, uint64_t address, uint32_t stride)
@@ -1330,15 +1498,15 @@ static uint32_t cull_mode(uint8_t cull)
 }
 
 /* the state of a draw that differs from the last one; false when nothing can be drawn. */
-static bool prepare_draw(VkCommandBuffer cmd)
+static bool prepare_stages(VkCommandBuffer cmd, const Stages *st)
 {
     VkmGfxState *s = STATE(cmd);
     const VkmDynamic *d = &s->dyn;
-    if (!s->rendering || !s->vs || d->cull == VK_CULL_MODE_FRONT_AND_BACK)
+    if (!s->rendering || !st->vs || (d->cull == VK_CULL_MODE_FRONT_AND_BACK && !st->discard))
         return false;
     bool zero = false;
     if (s->pipeline_dirty || !s->set_pipeline) {
-        id pipeline = resolve_pipeline(cmd, &zero);
+        id pipeline = resolve_pipeline(cmd, st, &zero);
         if (!pipeline)
             return false;
         if (pipeline != s->set_pipeline) {
@@ -1420,7 +1588,10 @@ static bool prepare_draw(VkCommandBuffer cmd)
         s->constants_dirty = false;
     }
     emit_bindings(cmd, VKM_GFX);
-    for (uint32_t i = 0; i < d->vertex.binding_count; i++) {
+    uint64_t counter = st->fs ? stats_counter(s) : 0;
+    if (counter && st->fs->counted)
+        emit_buffer(cmd, VKM_GFX, VKM_BUFFER_AUX, counter, ~0u);
+    for (uint32_t i = 0; i < d->vertex.binding_count && st->vs->inputs; i++) {
         uint32_t b = d->vertex.bindings[i].binding;
         if (b < ZERO_BINDING && s->vertex[b].address)
             emit_buffer(cmd, VKM_GFX, VKM_BUFFER_VERTEX + b, s->vertex[b].address, d->strides[b]);
@@ -1429,9 +1600,380 @@ static bool prepare_draw(VkCommandBuffer cmd)
     return true;
 }
 
+static bool prepare_draw(VkCommandBuffer cmd)
+{
+    VkmGfxState *s = STATE(cmd);
+    Stages st = {s->vs, s->fs, (uint8_t)vkm_topology_class(s->dyn.topology), s->dyn.discard};
+    return prepare_stages(cmd, &st);
+}
+
+/*
+ * metal draws no triangle fans, so a fan is the list of its triangles, vertices i + 1, i + 2 and the first, in the
+ * order vulkan gives them. the indices are made when the draw is recorded: an indexed fan reads the ones bound then,
+ * cut by a restart index when restarts are on.
+ */
+static void draw_fan(VkCommandBuffer cmd, uint32_t count, uint32_t instances, uint32_t first, int32_t base_vertex,
+                     uint32_t first_instance, bool indexed)
+{
+    VkmGfxState *s = STATE(cmd);
+    bool wide = s->index_type == MTLIndexTypeUInt32;
+    if (indexed && (!s->index_host || ((uint64_t)first + count) * (wide ? 4 : 2) > s->index_size))
+        return;
+    if (count < 3)
+        return;
+    uint64_t gpu;
+    uint32_t *out = vkm_upload(cmd, (uint64_t)(count - 2) * 12, 4, &gpu, nullptr, nullptr);
+    if (!out)
+        return;
+    uint32_t restart = wide ? 0xFFFFFFFFu : 0xFFFFu, n = 0, hub = 0, run = 0, previous = 0;
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t v = !indexed ? i : wide ? ((const uint32_t *)s->index_host)[first + i] :
+                                           ((const uint16_t *)s->index_host)[first + i];
+        if (indexed && s->dyn.restart && v == restart) {
+            run = 0;
+            continue;
+        }
+        if (!run)
+            hub = v;
+        else if (run >= 2) {
+            out[n++] = previous;
+            out[n++] = v;
+            out[n++] = hub;
+        }
+        previous = v;
+        run++;
+    }
+    if (!n || !prepare_draw(cmd))
+        return;
+    VkmOpDraw *o = vkm_emit(cmd, VKM_OP_DRAW_INDEXED, sizeof(*o));
+    if (!o)
+        return;
+    o->primitive = MTLPrimitiveTypeTriangle;
+    o->index_type = MTLIndexTypeUInt32;
+    o->count = n;
+    o->instances = instances;
+    o->base_vertex = indexed ? base_vertex : (int32_t)first;
+    o->base_instance = first_instance;
+    o->index = gpu;
+    o->index_length = (uint64_t)n * 4;
+}
+
+/* the primitives a topology makes of a count of vertices, and how far apart their first vertices are. */
+static uint32_t primitives(VkPrimitiveTopology topology, uint32_t count, uint32_t vertices, uint32_t *step,
+                           bool *swap)
+{
+    *swap = false;
+    switch (topology) {
+    case VK_PRIMITIVE_TOPOLOGY_POINT_LIST: *step = 1; return vertices == 1 ? count : 0;
+    case VK_PRIMITIVE_TOPOLOGY_LINE_LIST: *step = 2; return vertices == 2 ? count / 2 : 0;
+    case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP: *step = 1; return vertices == 2 && count >= 2 ? count - 1 : 0;
+    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST: *step = 3; return vertices == 3 ? count / 3 : 0;
+    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP:
+        *step = 1;
+        *swap = true;
+        return vertices == 3 && count >= 3 ? count - 2 : 0;
+    case VK_PRIMITIVE_TOPOLOGY_LINE_LIST_WITH_ADJACENCY: *step = 4; return vertices == 4 ? count / 4 : 0;
+    case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY: *step = 1; return vertices == 4 && count >= 4 ? count - 3 : 0;
+    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST_WITH_ADJACENCY: *step = 6; return vertices == 6 ? count / 6 : 0;
+    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY:
+        *step = 2;
+        return vertices == 6 && count >= 6 ? (count - 4) / 2 : 0;
+    default: return 0;
+    }
+}
+
+/* the records a vertex shader writes an instance: one a vertex index the draw reads. */
+static uint32_t record_slots(VkmGfxState *s, bool indexed, uint32_t first, uint32_t count)
+{
+    if (!indexed)
+        return count;
+    uint32_t top = 0;
+    bool wide = s->index_type == MTLIndexTypeUInt32;
+    uint32_t restart = wide ? ~0u : 0xffffu;
+    if (s->index_host && ((uint64_t)first + count) * (wide ? 4 : 2) <= s->index_size) {
+        for (uint32_t i = 0; i < count; i++) {
+            uint32_t v = wide ? ((const uint32_t *)s->index_host)[first + i] : ((const uint16_t *)s->index_host)[first + i];
+            if (v != restart)
+                top = MIME_MAX(top, v);
+        }
+        return top + 1;
+    }
+    /* indices only the gpu sees go as far as the vertex buffers do. */
+    const VkmDynamic *d = &s->dyn;
+    top = wide ? 1u << 20 : 1u << 16;
+    for (uint32_t i = 0; i < d->vertex.binding_count; i++) {
+        const VkVertexInputBindingDescription2EXT *b = &d->vertex.bindings[i];
+        if (b->binding < ZERO_BINDING && b->inputRate == VK_VERTEX_INPUT_RATE_VERTEX && d->strides[b->binding])
+            top = MIME_MIN(top, (uint32_t)MIME_MIN(s->vertex[b->binding].size / d->strides[b->binding], 1u << 24));
+    }
+    return MIME_MAX(top, 1u);
+}
+
+/* a stream output step: what stream output took of the records, or the counters at its end. */
+static void xfb_pass(VkCommandBuffer cmd, VkmXfbParams *p, const VkmXfb *layout)
+{
+    VkmGfxState *s = STATE(cmd);
+    id pipeline = vkm_meta_xfb(cmd->device, s->colors, s->samples);
+    uint64_t gpu;
+    VkmXfbParams *x = vkm_upload(cmd, sizeof(*x), 16, &gpu, nullptr, nullptr);
+    if (!pipeline || !x)
+        return;
+    for (uint32_t b = 0; b < 4; b++) {
+        p->buffers[b] = s->xfb[b].address;
+        p->sizes[b] = (uint32_t)MIME_MIN(s->xfb[b].size, (uint64_t)UINT32_MAX);
+        if (!p->counters[b] && p->mode != 2)
+            p->counters[b] = s->xfb_counters[b];
+    }
+    p->state = s->xfb_state;
+    if (s->xfb_query && s->xfb_query_index < s->xfb_query->count)
+        p->query = M_U64(s->xfb_query->buffer, "gpuAddress") + (uint64_t)s->xfb_query_index * 16;
+    if (layout) {
+        memcpy(p->strides, layout->strides, sizeof(p->strides));
+        p->entry_count = layout->count;
+        memcpy(p->entries, layout->entries, sizeof(p->entries));
+    }
+    *x = *p;
+    VkmOpObject *o = vkm_emit(cmd, VKM_OP_PIPELINE, sizeof(*o));
+    if (o)
+        o->object = pipeline;
+    s->set_pipeline = pipeline;
+    s->pipeline_dirty = true;
+    emit_buffer(cmd, VKM_GFX, 0, gpu, ~0u);
+    s->set_buffers[VKM_GFX][0] = 0;
+    VkmOpDraw *d = vkm_emit(cmd, VKM_OP_DRAW, sizeof(*d));
+    if (d) {
+        d->primitive = MTLPrimitiveTypePoint;
+        d->count = d->instances = 1;
+    }
+    vkm_emit(cmd, VKM_OP_VERTEX_BARRIER, sizeof(VkmOp));
+}
+
+/* the words of the buffer a vertex shader writes its records to, and its header. */
+static uint32_t *records_begin(VkCommandBuffer cmd, bool indexed, uint32_t count, uint32_t instances, uint32_t first,
+                               int32_t base_vertex, uint32_t first_instance, uint64_t extra, uint64_t *emu,
+                               uint64_t *in_words)
+{
+    VkmGfxState *s = STATE(cmd);
+    uint32_t cap = record_slots(s, indexed, first, count);
+    *in_words = (uint64_t)instances * cap * s->vs->record_words;
+    uint64_t words = VKM_GS_HEADER + *in_words + extra;
+    if (words * 4 > (1ull << 30)) {
+        VKM_ERROR("a draw of %llu words of records", (unsigned long long)words);
+        return nullptr;
+    }
+    uint32_t *h = vkm_upload(cmd, words * 4, 16, emu, nullptr, nullptr);
+    if (!h)
+        return nullptr;
+    memset(h, 0, VKM_GS_HEADER * 4);
+    uint32_t index_size = s->index_type == MTLIndexTypeUInt32 ? 4 : 2;
+    h[VKM_GS_VBASE] = indexed ? (uint32_t)base_vertex : first;
+    h[VKM_GS_CAP] = cap;
+    h[VKM_GS_IN_BASE] = VKM_GS_HEADER;
+    h[VKM_GS_IN_STRIDE] = s->vs->record_words;
+    h[VKM_GS_BASE_INSTANCE] = first_instance;
+    h[VKM_GS_IN_BUILTINS] = s->vs->record_builtins;
+    h[VKM_GS_INDEX_TYPE] = indexed ? (index_size == 4 ? 2 : 1) : 0;
+    h[VKM_GS_INDEX_FIRST] = indexed ? first + (uint32_t)(s->index_address & 3) / index_size : 0;
+    return h;
+}
+
+/* the vertex shader with rasterization off, writing its records. */
+static bool records_pass(VkCommandBuffer cmd, const VkmCode *capture, bool indexed, uint32_t count,
+                         uint32_t instances, uint32_t first, int32_t base_vertex, uint32_t first_instance, uint64_t emu)
+{
+    VkmGfxState *s = STATE(cmd);
+    uint32_t index_size = s->index_type == MTLIndexTypeUInt32 ? 4 : 2;
+    s->pipeline_dirty = true;
+    Stages st = {capture, nullptr, (uint8_t)vkm_topology_class(s->dyn.topology), 1};
+    if (!prepare_stages(cmd, &st))
+        return false;
+    emit_buffer(cmd, VKM_GFX, VKM_BUFFER_AUX, emu, ~0u);
+    VkmOpDraw *o = vkm_emit(cmd, indexed ? VKM_OP_DRAW_INDEXED : VKM_OP_DRAW, sizeof(*o));
+    if (!o)
+        return false;
+    o->primitive = vkm_primitive(s->dyn.topology);
+    o->count = count;
+    o->instances = instances;
+    o->first = first;
+    o->base_instance = first_instance;
+    if (indexed) {
+        o->index_type = s->index_type;
+        o->base_vertex = base_vertex;
+        o->index = s->index_address + (uint64_t)first * index_size;
+        o->index_length = s->index_size > (uint64_t)first * index_size ? s->index_size - (uint64_t)first * index_size : 0;
+    }
+    vkm_emit(cmd, VKM_OP_VERTEX_BARRIER, sizeof(VkmOp));
+    return true;
+}
+
+/* the vertices of a primitive of a list or strip topology, as stream output takes them. */
+static uint32_t stream_vertices(VkPrimitiveTopology topology, uint32_t *step, bool *swap)
+{
+    *swap = topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    switch (topology) {
+    case VK_PRIMITIVE_TOPOLOGY_POINT_LIST: *step = 1; return 1;
+    case VK_PRIMITIVE_TOPOLOGY_LINE_LIST: *step = 2; return 2;
+    case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP: *step = 1; return 2;
+    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST: *step = 3; return 3;
+    case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP: *step = 1; return 3;
+    default: return 0;
+    }
+}
+
+/* a draw whose vertex shader's outputs stream out: its records, then what stream output takes of them. */
+static void draw_streamed(VkCommandBuffer cmd, bool indexed, uint32_t count, uint32_t instances, uint32_t first,
+                          int32_t base_vertex, uint32_t first_instance)
+{
+    VkmGfxState *s = STATE(cmd);
+    const VkmCode *capture = vkm_code_capture(cmd->device, s->vs);
+    uint32_t step;
+    bool swap;
+    uint32_t verts = stream_vertices(s->dyn.topology, &step, &swap);
+    if (!capture || !verts || (indexed && !s->index_address))
+        return;
+    uint64_t emu, in_words;
+    uint32_t *h = records_begin(cmd, indexed, count, instances, first, base_vertex, first_instance, 0, &emu, &in_words);
+    if (!h || !records_pass(cmd, capture, indexed, count, instances, first, base_vertex, first_instance, emu))
+        goto done;
+    VkmXfbParams p = {};
+    p.emu = emu;
+    p.mode = 0;
+    p.verts = verts;
+    p.prims = topology_primitives(s->dyn.topology, count);
+    p.instances = instances;
+    p.mul = step;
+    p.swap = swap;
+    p.index = s->index_address;
+    p.index_type = h[VKM_GS_INDEX_TYPE];
+    p.index_first = indexed ? first : 0;
+    p.cap = h[VKM_GS_CAP];
+    p.in_base = VKM_GS_HEADER;
+    p.in_stride = s->vs->record_words;
+    xfb_pass(cmd, &p, s->vs->xfb);
+done:
+    s->pipeline_dirty = true;
+    s->set_buffers[VKM_GFX][VKM_BUFFER_AUX] = 0;
+}
+
+/*
+ * a draw through a geometry shader: the vertex shader writes the records of its vertices with rasterization off,
+ * the geometry shader runs a vertex function a primitive and invocation that writes its own and their strips, and
+ * its replay draws them through the fragment shader. barriers between the three keep them in order inside the pass.
+ */
+static void draw_geometry(VkCommandBuffer cmd, bool indexed, uint32_t count, uint32_t instances, uint32_t first,
+                          int32_t base_vertex, uint32_t first_instance)
+{
+    VkmGfxState *s = STATE(cmd);
+    const VkmCode *gs = s->gs, *capture = vkm_code_capture(cmd->device, s->vs);
+    if (!capture || !gs->expand || !gs->replay || (indexed && !s->index_address))
+        return;
+    const VkmGsInfo *g = &gs->gs;
+    uint32_t step;
+    bool swap;
+    uint32_t prims = primitives(s->dyn.topology, count, g->in_vertices, &step, &swap);
+    if (!prims)
+        return;
+    uint64_t invocations = (uint64_t)prims * g->invocations;
+    uint64_t out_words = (uint64_t)instances * invocations * g->max_vertices * g->out_stride;
+    uint64_t idx_words = g->out_kind ? (uint64_t)instances * invocations * g->max_vertices * 2 : 0;
+    uint64_t count_words = (uint64_t)instances * invocations;
+    if (invocations * instances > UINT32_MAX / (2 * g->max_vertices)) {
+        VKM_ERROR("a geometry shader draw of %llu invocations", (unsigned long long)(invocations * instances));
+        return;
+    }
+    uint64_t emu, in_words;
+    uint32_t *h = records_begin(cmd, indexed, count, instances, first, base_vertex, first_instance,
+                                out_words + idx_words + count_words, &emu, &in_words);
+    if (!h)
+        return;
+    uint64_t index_at = s->index_address & ~3ull;
+    h[VKM_GS_PRIMS] = prims;
+    h[VKM_GS_MUL] = step;
+    h[VKM_GS_SWAP] = swap;
+    h[VKM_GS_OUT_BASE] = (uint32_t)(VKM_GS_HEADER + in_words);
+    h[VKM_GS_IDX_BASE] = (uint32_t)(VKM_GS_HEADER + in_words + out_words);
+    h[VKM_GS_COUNT_BASE] = (uint32_t)(VKM_GS_HEADER + in_words + out_words + idx_words);
+    VkmOpDraw *o;
+    Stages st;
+    if (!records_pass(cmd, capture, indexed, count, instances, first, base_vertex, first_instance, emu))
+        goto done;
+
+    /* the geometry shader's. */
+    s->pipeline_dirty = true;
+    st = (Stages){gs->expand, nullptr, MTLPrimitiveTopologyClassPoint, 1};
+    if (!prepare_stages(cmd, &st))
+        goto done;
+    emit_buffer(cmd, VKM_GFX, VKM_BUFFER_VERTEX, emu, ~0u);
+    emit_buffer(cmd, VKM_GFX, VKM_BUFFER_VERTEX + 1, indexed ? index_at : emu, ~0u);
+    if (!(o = vkm_emit(cmd, VKM_OP_DRAW, sizeof(*o))))
+        goto done;
+    o->primitive = MTLPrimitiveTypePoint;
+    o->count = (uint32_t)invocations;
+    o->instances = instances;
+    vkm_emit(cmd, VKM_OP_VERTEX_BARRIER, sizeof(VkmOp));
+    if (s->xfb_state && gs->xfb) {
+        VkmXfbParams p = {};
+        p.emu = emu;
+        p.mode = 1;
+        p.verts = g->out_kind + 1;
+        p.instances = instances;
+        p.invocations = (uint32_t)invocations;
+        p.max_vertices = g->max_vertices;
+        p.out_base = h[VKM_GS_OUT_BASE];
+        p.out_stride = g->out_stride;
+        p.idx_base = h[VKM_GS_IDX_BASE];
+        p.counts_base = h[VKM_GS_COUNT_BASE];
+        p.strip = g->out_kind != 0;
+        xfb_pass(cmd, &p, gs->xfb);
+    }
+
+    /* and the draw of what it emitted. */
+    static const uint8_t classes[] = {MTLPrimitiveTopologyClassPoint, MTLPrimitiveTopologyClassLine,
+                                      MTLPrimitiveTopologyClassTriangle};
+    static const uint8_t strips[] = {MTLPrimitiveTypePoint, MTLPrimitiveTypeLineStrip, MTLPrimitiveTypeTriangleStrip};
+    s->pipeline_dirty = true;
+    st = (Stages){gs->replay, s->fs, classes[g->out_kind], s->dyn.discard};
+    if (!s->dyn.discard && prepare_stages(cmd, &st)) {
+        emit_buffer(cmd, VKM_GFX, VKM_BUFFER_VERTEX, emu, ~0u);
+        uint64_t total = (uint64_t)instances * invocations * g->max_vertices;
+        if ((o = vkm_emit(cmd, g->out_kind ? VKM_OP_DRAW_INDEXED : VKM_OP_DRAW, sizeof(*o)))) {
+            o->primitive = strips[g->out_kind];
+            o->instances = 1;
+            if (g->out_kind) {
+                o->index_type = MTLIndexTypeUInt32;
+                o->count = (uint32_t)(total * 2);
+                o->index = emu + (uint64_t)h[VKM_GS_IDX_BASE] * 4;
+                o->index_length = idx_words * 4;
+            } else {
+                o->count = (uint32_t)total;
+            }
+        }
+    }
+done:
+    s->pipeline_dirty = true;
+    for (uint32_t i = VKM_BUFFER_AUX; i <= VKM_BUFFER_VERTEX + 1; i++)
+        s->set_buffers[VKM_GFX][i] = 0;
+}
+
 static VKAPI_ATTR void VKAPI_CALL CmdDraw(VkCommandBuffer cmd, uint32_t vertices, uint32_t instances, uint32_t first,
                                           uint32_t first_instance)
 {
+    VkmGfxState *s = STATE(cmd);
+    count_draw(cmd, vertices, instances);
+    if (s->gs) {
+        if (vertices && instances)
+            draw_geometry(cmd, false, vertices, instances, first, 0, first_instance);
+        return;
+    }
+    if (vertices && instances && s->xfb_state && s->vs && s->vs->xfb) {
+        draw_streamed(cmd, false, vertices, instances, first, 0, first_instance);
+        if (s->dyn.discard)
+            return;
+    }
+    if (vertices && instances && STATE(cmd)->dyn.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN) {
+        draw_fan(cmd, vertices, instances, first, 0, first_instance, false);
+        return;
+    }
     if (!vertices || !instances || !prepare_draw(cmd))
         return;
     VkmOpDraw *o = vkm_emit(cmd, VKM_OP_DRAW, sizeof(*o));
@@ -1448,6 +1990,21 @@ static VKAPI_ATTR void VKAPI_CALL CmdDrawIndexed(VkCommandBuffer cmd, uint32_t i
                                                  uint32_t first, int32_t base_vertex, uint32_t first_instance)
 {
     VkmGfxState *s = STATE(cmd);
+    count_draw(cmd, indices, instances);
+    if (s->gs) {
+        if (indices && instances)
+            draw_geometry(cmd, true, indices, instances, first, base_vertex, first_instance);
+        return;
+    }
+    if (indices && instances && s->xfb_state && s->vs && s->vs->xfb) {
+        draw_streamed(cmd, true, indices, instances, first, base_vertex, first_instance);
+        if (s->dyn.discard)
+            return;
+    }
+    if (indices && instances && s->index_address && s->dyn.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN) {
+        draw_fan(cmd, indices, instances, first, base_vertex, first_instance, true);
+        return;
+    }
     if (!indices || !instances || !s->index_address || !prepare_draw(cmd))
         return;
     VkmOpDraw *o = vkm_emit(cmd, VKM_OP_DRAW_INDEXED, sizeof(*o));
@@ -1464,10 +2021,22 @@ static VKAPI_ATTR void VKAPI_CALL CmdDrawIndexed(VkCommandBuffer cmd, uint32_t i
     o->index_length = s->index_size > (uint64_t)first * size ? s->index_size - (uint64_t)first * size : 0;
 }
 
+static bool indirect_geometry(VkCommandBuffer cmd)
+{
+    if (!STATE(cmd)->gs)
+        return false;
+    static bool told;
+    if (!told) {
+        told = true;
+        VKM_ERROR("no indirect draws through a geometry shader");
+    }
+    return true;
+}
+
 static VKAPI_ATTR void VKAPI_CALL CmdDrawIndirect(VkCommandBuffer cmd, VkBuffer buffer, VkDeviceSize offset,
                                                   uint32_t count, uint32_t stride)
 {
-    if (!count || !prepare_draw(cmd))
+    if (!count || indirect_geometry(cmd) || !prepare_draw(cmd))
         return;
     VkmOpDraw *o = vkm_emit(cmd, VKM_OP_DRAW_INDIRECT, sizeof(*o));
     if (!o)
@@ -1482,7 +2051,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdDrawIndexedIndirect(VkCommandBuffer cmd, Vk
                                                          uint32_t count, uint32_t stride)
 {
     VkmGfxState *s = STATE(cmd);
-    if (!count || !s->index_address || !prepare_draw(cmd))
+    if (!count || !s->index_address || indirect_geometry(cmd) || !prepare_draw(cmd))
         return;
     VkmOpDraw *o = vkm_emit(cmd, VKM_OP_DRAW_INDEXED_INDIRECT, sizeof(*o));
     if (!o)
@@ -1519,6 +2088,12 @@ static VKAPI_ATTR void VKAPI_CALL CmdDispatch(VkCommandBuffer cmd, uint32_t x, u
 {
     if (!x || !y || !z || !prepare_dispatch(cmd))
         return;
+    VkmGfxState *s = STATE(cmd);
+    if (s->stats) {
+        uint64_t add[VKM_STATS] = {};
+        add[10] = (uint64_t)x * y * z * s->cs->local.width * s->cs->local.height * s->cs->local.depth;
+        count_stats(cmd, add);
+    }
     VkmOpDispatch *o = vkm_emit(cmd, VKM_OP_DISPATCH, sizeof(*o));
     if (o) {
         o->x = x;
@@ -1540,6 +2115,365 @@ static VKAPI_ATTR void VKAPI_CALL CmdDispatchIndirect(VkCommandBuffer cmd, VkBuf
     VkmOpDispatch *o = vkm_emit(cmd, VKM_OP_DISPATCH_INDIRECT, sizeof(*o));
     if (o)
         o->indirect = buffer->gpu + offset;
+}
+
+/* ------------------------------------------------------------------ transform feedback. */
+
+static void *emit_before_pass(VkCommandBuffer cmd, uint32_t op, size_t size);
+
+static VKAPI_ATTR void VKAPI_CALL CmdBindTransformFeedbackBuffersEXT(VkCommandBuffer cmd, uint32_t first,
+                                                                     uint32_t count, const VkBuffer *buffers,
+                                                                     const VkDeviceSize *offsets,
+                                                                     const VkDeviceSize *sizes)
+{
+    VkmGfxState *s = STATE(cmd);
+    for (uint32_t i = 0; i < count && first + i < 4; i++) {
+        VkBuffer b = buffers[i];
+        uint64_t offset = offsets[i];
+        s->xfb[first + i].address = b ? b->gpu + offset : 0;
+        s->xfb[first + i].size = !b ? 0 : !sizes || sizes[i] == VK_WHOLE_SIZE ? b->size - offset : sizes[i];
+    }
+}
+
+static void counters_of(uint64_t out[4], uint32_t first, uint32_t count, const VkBuffer *buffers,
+                        const VkDeviceSize *offsets)
+{
+    memset(out, 0, sizeof(uint64_t) * 4);
+    for (uint32_t i = 0; buffers && i < count && first + i < 4; i++)
+        if (buffers[i])
+            out[first + i] = buffers[i]->gpu + (offsets ? offsets[i] : 0);
+}
+
+/* the offsets start at the counters, or at zero, when the first draw writes. */
+static VKAPI_ATTR void VKAPI_CALL CmdBeginTransformFeedbackEXT(VkCommandBuffer cmd, uint32_t first, uint32_t count,
+                                                               const VkBuffer *counters, const VkDeviceSize *offsets)
+{
+    VkmGfxState *s = STATE(cmd);
+    uint64_t gpu;
+    uint32_t *state = vkm_upload(cmd, 32, 16, &gpu, nullptr, nullptr);
+    if (!state)
+        return;
+    memset(state, 0, 32);
+    s->xfb_state = gpu;
+    counters_of(s->xfb_counters, first, count, counters, offsets);
+}
+
+static VKAPI_ATTR void VKAPI_CALL CmdEndTransformFeedbackEXT(VkCommandBuffer cmd, uint32_t first, uint32_t count,
+                                                             const VkBuffer *counters, const VkDeviceSize *offsets)
+{
+    VkmGfxState *s = STATE(cmd);
+    if (!s->xfb_state)
+        return;
+    VkmXfbParams p = {.mode = 2};
+    counters_of(p.counters, first, count, counters, offsets);
+    if (s->rendering)
+        xfb_pass(cmd, &p, nullptr);
+    s->xfb_state = 0;
+}
+
+/* a draw of the vertices stream output wrote: their count comes from the counter, before the render pass. */
+static void *emit_before_pass(VkCommandBuffer cmd, uint32_t op, size_t size);
+
+static VKAPI_ATTR void VKAPI_CALL CmdDrawIndirectByteCountEXT(VkCommandBuffer cmd, uint32_t instances,
+                                                              uint32_t first_instance, VkBuffer counter,
+                                                              VkDeviceSize counter_offset, uint32_t vertex_offset,
+                                                              uint32_t stride)
+{
+    VkmGfxState *s = STATE(cmd);
+    if (!instances || !s->rendering || indirect_geometry(cmd))
+        return;
+    struct {
+        uint64_t counter, out;
+        uint32_t vertex_offset, stride, instances, first_instance;
+    } *p;
+    uint64_t params, args;
+    id pipeline = vkm_meta_byte_count(cmd->device);
+    p = vkm_upload(cmd, sizeof(*p), 16, &params, nullptr, nullptr);
+    if (!pipeline || !p || !vkm_upload(cmd, 16, 16, &args, nullptr, nullptr))
+        return;
+    *p = (typeof(*p)){counter->gpu + counter_offset, args, vertex_offset, stride, instances, first_instance};
+    VkmOpGenerate *g = emit_before_pass(cmd, VKM_OP_GENERATE, sizeof(*g));
+    if (!g) {
+        VKM_ERROR("a draw of stream output in a render pass another command buffer began");
+        return;
+    }
+    g->pipeline = pipeline;
+    g->threads = 1;
+    g->params = g->icb = params;
+    if (!prepare_draw(cmd))
+        return;
+    VkmOpDraw *o = vkm_emit(cmd, VKM_OP_DRAW_INDIRECT, sizeof(*o));
+    if (!o)
+        return;
+    o->primitive = vkm_primitive(s->dyn.topology);
+    o->indirect = args;
+    o->draws = 1;
+    o->stride = 16;
+}
+
+/* ------------------------------------------------------------------ generated commands. */
+
+/* more sequences than this are cut, the indirect command buffer being one command a sequence. */
+#define DGC_MAX (1u << 20)
+
+static VKAPI_ATTR VkResult VKAPI_CALL CreateIndirectCommandsLayoutEXT(VkDevice device,
+                                                                      const VkIndirectCommandsLayoutCreateInfoEXT *info,
+                                                                      const VkAllocationCallbacks *a,
+                                                                      VkIndirectCommandsLayoutEXT *out)
+{
+    if (info->tokenCount > VKM_DGC_TOKENS)
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+    VkIndirectCommandsLayoutEXT l = vkm_zalloc(sizeof(*l));
+    if (!l)
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+    l->stride = info->indirectStride;
+    l->token_count = info->tokenCount;
+    for (uint32_t i = 0; i < info->tokenCount; i++) {
+        const VkIndirectCommandsLayoutTokenEXT *t = &info->pTokens[i];
+        VkmDgcToken *k = &l->tokens[i];
+        k->offset = t->offset;
+        switch (t->type) {
+        case VK_INDIRECT_COMMANDS_TOKEN_TYPE_PUSH_CONSTANT_EXT:
+        case VK_INDIRECT_COMMANDS_TOKEN_TYPE_SEQUENCE_INDEX_EXT: {
+            const VkPushConstantRange *r = &t->data.pPushConstant->updateRange;
+            if (r->offset + r->size > VKM_PUSH_SIZE || ((r->offset | r->size | t->offset) & 3))
+                goto unsupported;
+            k->type = t->type == VK_INDIRECT_COMMANDS_TOKEN_TYPE_PUSH_CONSTANT_EXT ? VKM_DGC_PUSH : VKM_DGC_SEQUENCE;
+            k->dst = r->offset;
+            k->size = r->size;
+            l->pushes = true;
+            break;
+        }
+        case VK_INDIRECT_COMMANDS_TOKEN_TYPE_VERTEX_BUFFER_EXT:
+            k->type = VKM_DGC_VERTEX;
+            k->dst = t->data.pVertexBuffer->vertexBindingUnit;
+            break;
+        case VK_INDIRECT_COMMANDS_TOKEN_TYPE_INDEX_BUFFER_EXT:
+            k->type = VKM_DGC_INDEX;
+            k->dst = t->data.pIndexBuffer->mode == VK_INDIRECT_COMMANDS_INPUT_MODE_DXGI_INDEX_BUFFER_EXT;
+            break;
+        case VK_INDIRECT_COMMANDS_TOKEN_TYPE_DRAW_EXT: k->type = VKM_DGC_DRAW; break;
+        case VK_INDIRECT_COMMANDS_TOKEN_TYPE_DRAW_INDEXED_EXT: k->type = VKM_DGC_DRAW_INDEXED; break;
+        case VK_INDIRECT_COMMANDS_TOKEN_TYPE_DISPATCH_EXT:
+            k->type = VKM_DGC_DISPATCH;
+            l->dispatch = true;
+            break;
+        default:
+            goto unsupported;
+        }
+        if (t->offset & 3)
+            goto unsupported;
+    }
+    *out = l;
+    return VK_SUCCESS;
+unsupported:
+    VKM_ERROR("no generated commands for this layout");
+    free(l);
+    return VK_ERROR_OUT_OF_HOST_MEMORY;
+}
+
+static VKAPI_ATTR void VKAPI_CALL DestroyIndirectCommandsLayoutEXT(VkDevice device, VkIndirectCommandsLayoutEXT l,
+                                                                   const VkAllocationCallbacks *a)
+{
+    free(l);
+}
+
+/* the preprocess memory holds each sequence's push constants. */
+static VKAPI_ATTR void VKAPI_CALL GetGeneratedCommandsMemoryRequirementsEXT(
+    VkDevice device, const VkGeneratedCommandsMemoryRequirementsInfoEXT *info, VkMemoryRequirements2 *out)
+{
+    VkIndirectCommandsLayoutEXT l = info->indirectCommandsLayout;
+    uint32_t max = MIME_MIN(info->maxSequenceCount, DGC_MAX);
+    out->memoryRequirements.size = l && l->pushes ? (VkDeviceSize)max * VKM_PUSH_SIZE : 0;
+    out->memoryRequirements.alignment = 256;
+    out->memoryRequirements.memoryTypeBits = (1u << VKM_MEMORY_TYPES) - 1;
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL CreateIndirectExecutionSetEXT(VkDevice device,
+                                                                    const VkIndirectExecutionSetCreateInfoEXT *info,
+                                                                    const VkAllocationCallbacks *a,
+                                                                    VkIndirectExecutionSetEXT *out)
+{
+    return VK_ERROR_OUT_OF_HOST_MEMORY;
+}
+
+static VKAPI_ATTR void VKAPI_CALL DestroyIndirectExecutionSetEXT(VkDevice device, VkIndirectExecutionSetEXT set,
+                                                                 const VkAllocationCallbacks *a)
+{
+}
+
+static VKAPI_ATTR void VKAPI_CALL UpdateIndirectExecutionSetPipelineEXT(
+    VkDevice device, VkIndirectExecutionSetEXT set, uint32_t count, const VkWriteIndirectExecutionSetPipelineEXT *w)
+{
+}
+
+static VKAPI_ATTR void VKAPI_CALL UpdateIndirectExecutionSetShaderEXT(VkDevice device, VkIndirectExecutionSetEXT set,
+                                                                      uint32_t count,
+                                                                      const VkWriteIndirectExecutionSetShaderEXT *w)
+{
+}
+
+/* the commands are generated where they run. */
+static VKAPI_ATTR void VKAPI_CALL CmdPreprocessGeneratedCommandsEXT(VkCommandBuffer cmd,
+                                                                    const VkGeneratedCommandsInfoEXT *info,
+                                                                    VkCommandBuffer state)
+{
+}
+
+static VkmIcb *icb_get(VkCommandBuffer cmd, bool dispatch, uint32_t count)
+{
+    for (VkmIcb *b = cmd->icbs; b; b = b->next)
+        if (!b->used && b->dispatch == dispatch && b->capacity >= count) {
+            b->used = true;
+            return b;
+        }
+    uint32_t capacity = 64;
+    while (capacity < count)
+        capacity *= 2;
+    id desc = mtl_new("MTLIndirectCommandBufferDescriptor");
+    M_V_B(desc, "setInheritPipelineState:", true);
+    M_V_B(desc, "setInheritBuffers:", false);
+    if (dispatch) {
+        M_V_U(desc, "setCommandTypes:", MTLIndirectCommandTypeConcurrentDispatch);
+        M_V_U(desc, "setMaxKernelBufferBindCount:", VKM_BUFFER_VERTEX);
+    } else {
+        M_V_U(desc, "setCommandTypes:", MTLIndirectCommandTypeDraw | MTLIndirectCommandTypeDrawIndexed);
+        M_V_U(desc, "setMaxVertexBufferBindCount:", VKM_BUFFER_VERTEX + VKM_VERTEX_BINDINGS);
+        M_V_U(desc, "setMaxFragmentBufferBindCount:", VKM_BUFFER_VERTEX);
+        M_V_B(desc, "setSupportDynamicAttributeStride:", true);
+    }
+    id icb = MTL_MSG(id (*)(id, SEL, id, NSUInteger, NSUInteger), cmd->device->mtl,
+                     "newIndirectCommandBufferWithDescriptor:maxCommandCount:options:", desc, capacity,
+                     MTLResourceStorageModePrivate);
+    mtl_release(desc);
+    VkmIcb *b = icb ? vkm_zalloc(sizeof(*b)) : nullptr;
+    if (!b) {
+        VKM_ERROR("no indirect command buffer of %u commands", capacity);
+        mtl_release(icb);
+        return nullptr;
+    }
+    b->icb = icb;
+    b->rid = M_RID(icb, "gpuResourceID");
+    b->capacity = capacity;
+    b->dispatch = dispatch;
+    b->used = true;
+    b->next = cmd->icbs;
+    cmd->icbs = b;
+    vkm_resident(cmd->device, icb);
+    return b;
+}
+
+/* an op ahead of the render pass being recorded, where a compute encoder runs it. */
+static void *emit_before_pass(VkCommandBuffer cmd, uint32_t op, size_t size)
+{
+    VkmGfxState *s = STATE(cmd);
+    if (s->begin >= cmd->cmd_size || ((const VkmOp *)(cmd->cmds + s->begin))->op != VKM_OP_BEGIN_RENDER)
+        return nullptr;
+    size = MIME_ALIGN_UP(size, (size_t)8);
+    size_t end = cmd->cmd_size;
+    if (!vkm_emit(cmd, 0, size))
+        return nullptr;
+    memmove(cmd->cmds + s->begin + size, cmd->cmds + s->begin, end - s->begin);
+    VkmOp *o = (VkmOp *)(cmd->cmds + s->begin);
+    memset(o, 0, size);
+    o->op = op;
+    o->size = (uint32_t)size;
+    s->begin += size;
+    return o;
+}
+
+/*
+ * each sequence is a command of an indirect command buffer, which a kernel encodes from the arguments with the
+ * state bound now and what the sequence's tokens change. the commands inherit the pipeline, resolved for indirect
+ * command buffers. a render pass cannot run the kernel, so it runs before the pass begins: what it reads was
+ * written before the pass, as nothing inside one makes indirect arguments visible to it.
+ */
+static VKAPI_ATTR void VKAPI_CALL CmdExecuteGeneratedCommandsEXT(VkCommandBuffer cmd, VkBool32 preprocessed,
+                                                                 const VkGeneratedCommandsInfoEXT *info)
+{
+    VkmGfxState *s = STATE(cmd);
+    VkIndirectCommandsLayoutEXT l = info->indirectCommandsLayout;
+    uint32_t max = MIME_MIN(info->maxSequenceCount, DGC_MAX);
+    if (!l || !max)
+        return;
+    bool dispatch = l->dispatch;
+    int point = dispatch ? VKM_COMPUTE : VKM_GFX;
+    id normal = s->compute;
+    if (dispatch) {
+        if (!s->cs || !s->compute || !(s->compute = vkm_compute_pipeline(cmd->device, s->cs, true)) ||
+            !prepare_dispatch(cmd))
+            goto done;
+    } else {
+        s->icb = s->pipeline_dirty = true;
+        bool ready = prepare_draw(cmd);
+        s->icb = false;
+        s->pipeline_dirty = true;
+        if (!ready)
+            return;
+    }
+    uint32_t chunks = (max + VKM_DGC_CHUNK - 1) / VKM_DGC_CHUNK;
+    uint64_t params_gpu, ranges_gpu, rid_gpu;
+    VkmDgcParams *p = vkm_upload(cmd, sizeof(*p), 16, &params_gpu, nullptr, nullptr);
+    void *ranges = vkm_upload(cmd, (uint64_t)chunks * 8, 8, &ranges_gpu, nullptr, nullptr);
+    MTLResourceID *rid = vkm_upload(cmd, sizeof(*rid), 8, &rid_gpu, nullptr, nullptr);
+    VkmIcb *icb = icb_get(cmd, dispatch, max);
+    id generator = vkm_meta_generate(cmd->device, dispatch);
+    if (!p || !ranges || !rid || !icb || !generator)
+        goto done;
+    memset(p, 0, sizeof(*p));
+    p->args = info->indirectAddress;
+    p->count = info->sequenceCountAddress;
+    p->ranges = ranges_gpu;
+    p->stride = l->stride;
+    p->max_count = max;
+    p->token_count = l->token_count;
+    memcpy(p->tokens, l->tokens, sizeof(p->tokens));
+    memcpy(p->buffers, s->set_buffers[point], sizeof(p->buffers));
+    memcpy(p->strides, s->set_strides, sizeof(p->strides));
+    memcpy(p->push, s->push, sizeof(p->push));
+    if (l->pushes) {
+        p->pushes = info->preprocessAddress;
+        if ((!p->pushes || info->preprocessSize < (uint64_t)max * VKM_PUSH_SIZE) &&
+            !vkm_upload(cmd, (uint64_t)max * VKM_PUSH_SIZE, 256, &p->pushes, nullptr, nullptr))
+            goto done;
+    }
+    if (dispatch) {
+        p->local[0] = (uint32_t)s->cs->local.width;
+        p->local[1] = (uint32_t)s->cs->local.height;
+        p->local[2] = (uint32_t)s->cs->local.depth;
+    } else {
+        p->primitive = vkm_primitive(s->dyn.topology);
+        p->index = s->index_address;
+        p->index_wide = s->index_type == MTLIndexTypeUInt32;
+    }
+    *rid = icb->rid;
+    VkmOpGenerate *g = dispatch ? vkm_emit(cmd, VKM_OP_GENERATE, sizeof(*g))
+                                : emit_before_pass(cmd, VKM_OP_GENERATE, sizeof(*g));
+    if (!g) {
+        if (!dispatch)
+            VKM_ERROR("generated draws in a render pass another command buffer began");
+        goto done;
+    }
+    g->pipeline = generator;
+    g->threads = max;
+    g->params = params_gpu;
+    g->icb = rid_gpu;
+    if (dispatch) {
+        /* the kernel took the compute encoder's pipeline and first two buffers. */
+        s->set_compute = nullptr;
+        s->set_buffers[VKM_COMPUTE][0] = s->set_buffers[VKM_COMPUTE][1] = 0;
+        if (!prepare_dispatch(cmd))
+            goto done;
+    }
+    VkmOpExecute *x = vkm_emit(cmd, VKM_OP_EXECUTE, sizeof(*x));
+    if (x) {
+        x->icb = icb->icb;
+        x->dispatch = dispatch;
+        x->chunks = chunks;
+        x->ranges = ranges_gpu;
+    }
+done:
+    s->compute = normal;
 }
 
 const VkmEntry vkm_cmd_entries[] = {
@@ -1632,6 +2566,7 @@ const VkmEntry vkm_cmd_entries[] = {
     VKM_ALIAS("vkCreateRenderPass2KHR", CreateRenderPass2),
     VKM_ENTRY(DestroyRenderPass),
     VKM_ENTRY(GetRenderAreaGranularity),
+    VKM_ALIAS("vkGetRenderingAreaGranularityKHR", GetRenderingAreaGranularity),
     VKM_ENTRY(CreateFramebuffer),
     VKM_ENTRY(DestroyFramebuffer),
     VKM_ENTRY(CmdBeginRenderPass),
@@ -1643,6 +2578,9 @@ const VkmEntry vkm_cmd_entries[] = {
     VKM_ENTRY(CmdEndRenderPass),
     VKM_ENTRY(CmdEndRenderPass2),
     VKM_ALIAS("vkCmdEndRenderPass2KHR", CmdEndRenderPass2),
+    VKM_ENTRY(CmdBindDescriptorBuffersEXT),
+    VKM_ENTRY(CmdSetDescriptorBufferOffsetsEXT),
+    VKM_ENTRY(CmdBindDescriptorBufferEmbeddedSamplersEXT),
     VKM_ENTRY(CmdDraw),
     VKM_ENTRY(CmdDrawIndexed),
     VKM_ENTRY(CmdDrawIndirect),
@@ -1650,5 +2588,18 @@ const VkmEntry vkm_cmd_entries[] = {
     VKM_ENTRY(CmdDispatch),
     VKM_ENTRY(CmdDispatchBase),
     VKM_ENTRY(CmdDispatchIndirect),
+    VKM_ENTRY(CmdBindTransformFeedbackBuffersEXT),
+    VKM_ENTRY(CmdBeginTransformFeedbackEXT),
+    VKM_ENTRY(CmdEndTransformFeedbackEXT),
+    VKM_ENTRY(CmdDrawIndirectByteCountEXT),
+    VKM_ENTRY(CreateIndirectCommandsLayoutEXT),
+    VKM_ENTRY(DestroyIndirectCommandsLayoutEXT),
+    VKM_ENTRY(GetGeneratedCommandsMemoryRequirementsEXT),
+    VKM_ENTRY(CreateIndirectExecutionSetEXT),
+    VKM_ENTRY(DestroyIndirectExecutionSetEXT),
+    VKM_ENTRY(UpdateIndirectExecutionSetPipelineEXT),
+    VKM_ENTRY(UpdateIndirectExecutionSetShaderEXT),
+    VKM_ENTRY(CmdPreprocessGeneratedCommandsEXT),
+    VKM_ENTRY(CmdExecuteGeneratedCommandsEXT),
     {nullptr, nullptr},
 };

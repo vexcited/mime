@@ -18258,6 +18258,12 @@ case OpGroupNonUniform##op: \
 		SPIRV_CROSS_THROW("Invalid opcode for subgroup.");
 	}
 
+	// A subgroup operation must run in every lane that reaches it. Forwarded, it can land in the right operand of a
+	// short-circuiting || or &&, which SPIR-V's logical operators are not, and the lanes the left operand decides
+	// leave the exchange: a quad swap then reads inactive lanes.
+	if (expression_is_forwarded(id))
+		force_temporary_and_recompile(id);
+
 	register_control_dependent_expression(id);
 }
 
