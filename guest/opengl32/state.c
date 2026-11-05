@@ -1250,7 +1250,8 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
             v[0] = b;
             return 1;
         }
-        return gl_ff_get(ctx, pname, v, colors);
+        int n = gl_compute_get(ctx, pname, v);
+        return n ? n : gl_ff_get(ctx, pname, v, colors);
     }
     }
 }
@@ -1333,6 +1334,8 @@ GLAPI void APIENTRY glGetIntegeri_v(GLenum target, GLuint index, GLint *data)
                     (GLint)(binding->whole && buffer ? buffer->size : binding->size);
         return;
     }
+    if (gl_compute_get_indexed(ctx, target, index, data))
+        return;
     glGetIntegerv(target, data);
 }
 

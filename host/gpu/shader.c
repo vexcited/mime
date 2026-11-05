@@ -295,6 +295,28 @@ static uint32_t gl_type_of(spvc_compiler c, spvc_type t)
     }
 }
 
+/* GL_IMAGE_1D and the integer and unsigned forms follow each other in the same order of dimensions. */
+static uint32_t gl_image_type_of(spvc_compiler c, spvc_type t)
+{
+    spvc_basetype sampled = spvc_type_get_basetype(spvc_compiler_get_type_handle(c, spvc_type_get_image_sampled_type(t)));
+    uint32_t base = sampled == SPVC_BASETYPE_INT32 ? 0x9057 : sampled == SPVC_BASETYPE_UINT32 ? 0x9062 : 0x904C;
+    bool arrayed = spvc_type_get_image_arrayed(t), ms = spvc_type_get_image_multisampled(t);
+    switch (spvc_type_get_image_dimension(t)) {
+    case SpvDim1D:
+        return base + (arrayed ? 6 : 0);
+    case SpvDim3D:
+        return base + 2;
+    case SpvDimCube:
+        return base + (arrayed ? 8 : 4);
+    case SpvDimRect:
+        return base + 3;
+    case SpvDimBuffer:
+        return base + 5;
+    default:
+        return base + (ms ? (arrayed ? 10 : 9) : arrayed ? 7 : 1);
+    }
+}
+
 static unsigned array_size_of(spvc_type t)
 {
     if (spvc_type_get_num_array_dimensions(t) == 0)
@@ -324,7 +346,19 @@ typedef struct Program {
         MimeGpuUniformBlockInfo info;
     } blocks[MIME_GPU_MAX_UNIFORM_BLOCKS];
     unsigned block_count;
-    MimeShaderBinding bindings[1 + MIME_GPU_MAX_UNIFORM_BLOCKS + MIME_GPU_STAGES * MIME_GPU_MAX_TEXTURES];
+    struct {
+        char *name;
+        MimeGpuStorageBlockInfo info;
+    } storage[MIME_GPU_MAX_STORAGE_BLOCKS];
+    unsigned storage_count, image_count;
+    struct {
+        char *name;
+        MimeGpuCounterInfo info;
+    } counters[64];
+    unsigned counter_count;
+    uint32_t local_size[3];
+    MimeShaderBinding bindings[1 + MIME_GPU_MAX_UNIFORM_BLOCKS + MIME_GPU_STAGES * MIME_GPU_MAX_TEXTURES +
+                               MIME_GPU_MAX_STORAGE_BLOCKS + MIME_GPU_MAX_IMAGES + MIME_GPU_MAX_COUNTER_BUFFERS];
     unsigned binding_count;
     Buf log;
 } Program;
@@ -365,6 +399,7 @@ static Uniform *add_uniform(Program *p, const char *name)
     memset(u, 0, sizeof(*u));
     u->name = strdup(name);
     u->info.texture[0] = u->info.texture[1] = -1;
+    u->info.binding = -1;
     return u;
 }
 
@@ -411,7 +446,8 @@ static const spvc_reflected_resource *resources(spvc_compiler c, spvc_resource_t
     spvc_resources res;
     const spvc_reflected_resource *list = nullptr;
     *count = 0;
-    if (type == SPVC_RESOURCE_TYPE_UNIFORM_BUFFER || type == SPVC_RESOURCE_TYPE_SAMPLED_IMAGE) {
+    if (type == SPVC_RESOURCE_TYPE_UNIFORM_BUFFER || type == SPVC_RESOURCE_TYPE_SAMPLED_IMAGE ||
+        type == SPVC_RESOURCE_TYPE_STORAGE_BUFFER || type == SPVC_RESOURCE_TYPE_STORAGE_IMAGE) {
         spvc_set active;
         if (spvc_compiler_get_active_interface_variables(c, &active) != SPVC_SUCCESS ||
             spvc_compiler_create_shader_resources_for_active_variables(c, &res, active) != SPVC_SUCCESS)
@@ -554,8 +590,115 @@ static void match_varyings(spvc_compiler vs, spvc_compiler fs)
     free(outs);
 }
 
+
+/*
+ * the binding of layout(binding = n) on the declaration of name, read from the preprocessed source, or -1. glslang gives
+ * every resource a binding, so the decoration cannot tell an explicit one from an assigned one.
+ */
+static int explicit_binding(const char *source, const char *name)
+{
+    size_t length = strlen(name);
+    for (const char *s = strstr(source, "layout"); s; s = strstr(s + 6, "layout")) {
+        if ((s != source && is_ident(s[-1])) || is_ident(s[6]))
+            continue;
+        const char *q = s + 6;
+        while (*q == ' ' || *q == '\t' || *q == '\n' || *q == '\r')
+            q++;
+        if (*q != '(')
+            continue;
+        const char *qualifiers = q + 1, *close = strchr(q, ')');
+        if (!close)
+            break;
+        const char *decl = close + 1, *end = decl;
+        while (*end && *end != ';' && *end != '{')
+            end++;
+        bool named = false;
+        for (const char *d = decl; d < end;) {
+            if (!is_ident(*d)) {
+                d++;
+                continue;
+            }
+            const char *start = d;
+            while (d < end && is_ident(*d))
+                d++;
+            named |= (size_t)(d - start) == length && !memcmp(start, name, length);
+        }
+        if (!named)
+            continue;
+        for (const char *b = qualifiers; b < close; b++) {
+            if (!(b == qualifiers || !is_ident(b[-1])) || strncmp(b, "binding", 7) || is_ident(b[7]))
+                continue;
+            const char *v = b + 7;
+            while (v < close && (*v == ' ' || *v == '\t'))
+                v++;
+            if (v < close && *v == '=')
+                return atoi(v + 1);
+        }
+    }
+    return -1;
+}
+
+/* shader storage blocks take a slot each by name, images a slot each by name, both shared by the stages. */
+static bool bind_storage(Program *p, spvc_compiler c, int stage, const char *source)
+{
+    size_t n;
+    const spvc_reflected_resource *ssbo = resources(c, SPVC_RESOURCE_TYPE_STORAGE_BUFFER, &n);
+    for (size_t i = 0; i < n; i++) {
+        const char *name = spvc_compiler_get_name(c, ssbo[i].base_type_id);
+        if (!name || !*name)
+            name = ssbo[i].name;
+        spvc_type t = spvc_compiler_get_type_handle(c, ssbo[i].base_type_id);
+        size_t size = 0;
+        spvc_compiler_get_declared_struct_size(c, t, &size);
+        unsigned index;
+        for (index = 0; index < p->storage_count; index++)
+            if (!strcmp(p->storage[index].name, name))
+                break;
+        if (index == MIME_GPU_MAX_STORAGE_BLOCKS) {
+            buf_str(&p->log, "shader storage block count exceeds implementation limits\n");
+            return false;
+        }
+        if (index == p->storage_count) {
+            p->storage[index].name = strdup(name);
+            p->storage[index].info.binding = explicit_binding(source, name);
+            p->storage_count++;
+        }
+        p->storage[index].info.bytes = (uint32_t)size;
+        p->storage[index].info.stages |= 1u << stage;
+        p->storage[index].info.variables = spvc_type_get_num_member_types(t);
+        spvc_compiler_set_decoration(c, ssbo[i].id, SpvDecorationDescriptorSet, 0);
+        spvc_compiler_set_decoration(c, ssbo[i].id, SpvDecorationBinding, MIME_SHADER_STORAGE_BINDING(index));
+        add_binding(p, MIME_SHADER_STORAGE_BINDING(index), 1, stage, MIME_SHADER_STORAGE, index, 0, (uint32_t)size);
+    }
+    const spvc_reflected_resource *img = resources(c, SPVC_RESOURCE_TYPE_STORAGE_IMAGE, &n);
+    for (size_t i = 0; i < n; i++) {
+        spvc_type t = spvc_compiler_get_type_handle(c, img[i].type_id);
+        unsigned count = array_size_of(t) ? array_size_of(t) : 1;
+        char name[256];
+        snprintf(name, sizeof(name), array_size_of(t) ? "%s[0]" : "%s", img[i].name);
+        Uniform *u = find_uniform(p, name);
+        if (!u) {
+            if (p->image_count + count > MIME_GPU_MAX_IMAGES) {
+                buf_str(&p->log, "images exceed the image units\n");
+                return false;
+            }
+            u = add_uniform(p, name);
+            u->info.gl_type = gl_image_type_of(c, t);
+            u->info.array_size = count;
+            u->info.texture[0] = (int32_t)p->image_count;
+            u->info.binding = explicit_binding(source, img[i].name);
+            p->image_count += count;
+        }
+        unsigned slot = (unsigned)u->info.texture[0];
+        spvc_compiler_set_decoration(c, img[i].id, SpvDecorationDescriptorSet, 0);
+        spvc_compiler_set_decoration(c, img[i].id, SpvDecorationBinding, MIME_SHADER_IMAGE_BINDING(slot));
+        add_binding(p, MIME_SHADER_IMAGE_BINDING(slot), count, stage, MIME_SHADER_IMAGE, slot, u->info.gl_type, 0);
+    }
+    return true;
+}
+
 /* loose uniforms use buffer zero; named blocks occupy distinct slots below vertex buffers. */
-static bool bind_resources(Program *p, spvc_compiler c, int stage, SpvExecutionModel model)
+static bool bind_resources(Program *p, spvc_compiler c, int stage, SpvExecutionModel model, const char *source)
 {
     size_t n;
     const spvc_reflected_resource *ubo = resources(c, SPVC_RESOURCE_TYPE_UNIFORM_BUFFER, &n);
@@ -634,9 +777,15 @@ static bool bind_resources(Program *p, spvc_compiler c, int stage, SpvExecutionM
         u->info.gl_type = gl_type_of(c, t);
         u->info.array_size = count;
         u->info.texture[stage] = (int32_t)slot;
+        if (u->info.binding < 0)
+            u->info.binding = explicit_binding(source, img[i].name);
         slot += count;
     }
+#ifndef __APPLE__
+    return bind_storage(p, c, stage, source);
+#else
     return true;
+#endif
 }
 
 #ifdef __APPLE__
@@ -767,6 +916,15 @@ static void write_info(Program *p, bool ok, MimeShaderResult *out)
     info.block_offset = (uint32_t)b.len;
     for (unsigned i = 0; i < info.block_count; i++)
         buf_add(&b, &p->blocks[i].info, sizeof(MimeGpuUniformBlockInfo));
+    info.storage_count = ok ? p->storage_count : 0;
+    info.storage_offset = (uint32_t)b.len;
+    for (unsigned i = 0; i < info.storage_count; i++)
+        buf_add(&b, &p->storage[i].info, sizeof(MimeGpuStorageBlockInfo));
+    info.counter_count = ok ? p->counter_count : 0;
+    info.counter_offset = (uint32_t)b.len;
+    for (unsigned i = 0; i < info.counter_count; i++)
+        buf_add(&b, &p->counters[i].info, sizeof(MimeGpuCounterInfo));
+    memcpy(info.local_size, p->local_size, sizeof(info.local_size));
     info.uniform_bytes = (p->uniform_bytes + 15) & ~15u; /* Metal rounds the struct up to its alignment. */
     for (unsigned i = 0; i < info.attrib_count; i++) {
         ((MimeGpuAttribInfo *)(b.data + info.attrib_offset))[i].name_offset = (uint32_t)b.len;
@@ -779,6 +937,14 @@ static void write_info(Program *p, bool ok, MimeShaderResult *out)
     for (unsigned i = 0; i < info.block_count; i++) {
         ((MimeGpuUniformBlockInfo *)(b.data + info.block_offset))[i].name_offset = (uint32_t)b.len;
         buf_add(&b, p->blocks[i].name, strlen(p->blocks[i].name) + 1);
+    }
+    for (unsigned i = 0; i < info.storage_count; i++) {
+        ((MimeGpuStorageBlockInfo *)(b.data + info.storage_offset))[i].name_offset = (uint32_t)b.len;
+        buf_add(&b, p->storage[i].name, strlen(p->storage[i].name) + 1);
+    }
+    for (unsigned i = 0; i < info.counter_count; i++) {
+        ((MimeGpuCounterInfo *)(b.data + info.counter_offset))[i].name_offset = (uint32_t)b.len;
+        buf_add(&b, p->counters[i].name, strlen(p->counters[i].name) + 1);
     }
     info.log_offset = (uint32_t)b.len;
     info.log_bytes = (uint32_t)p->log.len;
@@ -839,8 +1005,10 @@ bool mime_shader_compile(const char *vs, size_t vs_len, const char *fs, size_t f
     if (!assign_attribs(&p, vc, bindings, bindings_len, glslang_shader_get_preprocessed_code(vsh)))
         goto done;
     match_varyings(vc, fc);
-    if (!bind_resources(&p, vc, MIME_GPU_STAGE_VERTEX, SpvExecutionModelVertex) ||
-        !bind_resources(&p, fc, MIME_GPU_STAGE_FRAGMENT, SpvExecutionModelFragment))
+    if (!bind_resources(&p, vc, MIME_GPU_STAGE_VERTEX, SpvExecutionModelVertex,
+                        glslang_shader_get_preprocessed_code(vsh)) ||
+        !bind_resources(&p, fc, MIME_GPU_STAGE_FRAGMENT, SpvExecutionModelFragment,
+                        glslang_shader_get_preprocessed_code(fsh)))
         goto done;
 #ifdef __APPLE__
     out->msl[0] = compile_msl(&p, vc, "vertex");
@@ -896,9 +1064,91 @@ done:
     free(p.attribs);
     for (unsigned i = 0; i < p.block_count; i++)
         free(p.blocks[i].name);
+    for (unsigned i = 0; i < p.storage_count; i++)
+        free(p.storage[i].name);
+    for (unsigned i = 0; i < p.counter_count; i++)
+        free(p.counters[i].name);
     free(p.log.data);
     return ok;
 }
+
+#ifndef __APPLE__
+bool mime_shader_compile_compute(const char *cs, size_t cs_len, MimeShaderResult *out)
+{
+    memset(out, 0, sizeof(*out));
+    pthread_once(&g_once, init_glslang);
+    Program p = {};
+    bool ok = false;
+    char *text = lift_source(cs, cs_len, false);
+    glslang_shader_t *sh = parse_stage(&p, GLSLANG_STAGE_COMPUTE, text, "compute");
+    glslang_program_t *prog = nullptr;
+    spvc_context ctx = nullptr;
+    if (!sh)
+        goto done;
+    prog = glslang_program_create();
+    glslang_program_add_shader(prog, sh);
+    if (!glslang_program_link(prog, GLSLANG_MSG_SPV_RULES_BIT | GLSLANG_MSG_VULKAN_RULES_BIT)) {
+        buf_str(&p.log, glslang_program_get_info_log(prog));
+        goto done;
+    }
+    size_t words;
+    uint32_t *spv = stage_spirv(prog, GLSLANG_STAGE_COMPUTE, &words);
+    out->spirv[0] = spv;
+    out->spirv_words[0] = words;
+    spvc_context_create(&ctx);
+    spvc_compiler cc = msl_compiler(ctx, spv, words, false);
+    if (!cc) {
+        buf_fmt(&p.log, "spir-v: %s\n", spvc_context_get_last_error_string(ctx));
+        goto done;
+    }
+    if (!bind_resources(&p, cc, MIME_GPU_STAGE_VERTEX, SpvExecutionModelGLCompute,
+                        glslang_shader_get_preprocessed_code(sh)))
+        goto done;
+    for (unsigned i = 0; i < 3; i++)
+        p.local_size[i] = spvc_compiler_get_execution_mode_argument_by_index(cc, SpvExecutionModeLocalSize, i);
+    patch_spirv(cc, out->spirv[0], out->spirv_words[0]);
+    if (p.binding_count) {
+        out->bindings = malloc(p.binding_count * sizeof(MimeShaderBinding));
+        memcpy(out->bindings, p.bindings, p.binding_count * sizeof(MimeShaderBinding));
+        out->binding_count = p.binding_count;
+    }
+    snprintf(out->entry[0], sizeof(out->entry[0]), "main");
+    ok = true;
+
+done:
+    if (ctx)
+        spvc_context_destroy(ctx);
+    if (prog)
+        glslang_program_delete(prog);
+    if (sh)
+        glslang_shader_delete(sh);
+    free(text);
+    if (!ok) {
+        free(out->spirv[0]);
+        out->spirv[0] = nullptr;
+        free(out->bindings);
+        out->bindings = nullptr;
+        out->binding_count = 0;
+    }
+    write_info(&p, ok, out);
+    out->ok = ok;
+    for (unsigned i = 0; i < p.uniform_count; i++)
+        free(p.uniforms[i].name);
+    for (unsigned i = 0; i < p.block_count; i++)
+        free(p.blocks[i].name);
+    for (unsigned i = 0; i < p.storage_count; i++)
+        free(p.storage[i].name);
+    free(p.uniforms);
+    free(p.log.data);
+    return ok;
+}
+#else
+bool mime_shader_compile_compute(const char *cs, size_t cs_len, MimeShaderResult *out)
+{
+    memset(out, 0, sizeof(*out));
+    return false;
+}
+#endif
 
 void mime_shader_free(MimeShaderResult *r)
 {

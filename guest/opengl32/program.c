@@ -31,7 +31,7 @@ static GLuint new_name(GlContext *ctx)
 GLAPI GLuint APIENTRY glCreateShader(GLenum type)
 {
     GL_CONTEXT_OR_RETURN(0);
-    if (type != GL_VERTEX_SHADER && type != GL_FRAGMENT_SHADER) {
+    if (type != GL_VERTEX_SHADER && type != GL_FRAGMENT_SHADER && !(type == GL_COMPUTE_SHADER && gl_host_has(MIME_GPU_FEATURE_COMPUTE))) {
         gl_error(ctx, GL_INVALID_ENUM);
         return 0;
     }
@@ -192,6 +192,11 @@ static void free_reflection(GlProgram *p)
     gl_free(p->blocks);
     p->blocks = nullptr;
     p->block_count = 0;
+    for (uint32_t i = 0; i < p->storage_count; i++)
+        gl_free(p->storage[i].name);
+    gl_free(p->storage);
+    p->storage = nullptr;
+    p->storage_count = 0;
     gl_free(p->uniforms);
     gl_free(p->attribs);
     gl_free(p->ublock);
@@ -328,7 +333,7 @@ GLAPI void APIENTRY glBindFragDataLocation(GLuint program, GLuint color, const G
 }
 
 /* sends both stages to the host compiler; the program is usable once gl_program_ready says so. */
-BOOL gl_program_link_sources(GlProgram *p, const char *vs, const char *fs)
+static BOOL link_program(GlProgram *p, const char *vs, const char *fs, BOOL compute)
 {
     static uint32_t link_serial;
     gl_program_ready(p);
@@ -337,8 +342,9 @@ BOOL gl_program_link_sources(GlProgram *p, const char *vs, const char *fs)
     gl_device_lock();
     p->serial = ++link_serial;
     gl_device_unlock();
-    if (!vs || !fs) {
-        p->log = gl_strdup(vs ? "no fragment shader\n" : "no vertex shader\n");
+    p->compute = compute;
+    if (compute ? !vs : (!vs || !fs)) {
+        p->log = gl_strdup(compute ? "no compute shader\n" : vs ? "no fragment shader\n" : "no vertex shader\n");
         p->linked = TRUE;
         return FALSE;
     }
@@ -350,10 +356,10 @@ BOOL gl_program_link_sources(GlProgram *p, const char *vs, const char *fs)
     if (!p->id)
         p->id = gl_new_id(ID_PROGRAM);
     ((MimeGpuProgramInfo *)p->info.ptr)->size = 0;
-    uint32_t vn = (uint32_t)strlen(vs), fn = (uint32_t)strlen(fs);
+    uint32_t vn = (uint32_t)strlen(vs), fn = compute ? 0 : (uint32_t)strlen(fs);
     gl_device_lock();
-    MimeGpuProgramCreate *c =
-        gl_emit(MIME_GPU_PROGRAM_CREATE, (uint32_t)sizeof(MimeGpuProgramCreate) + vn + fn + p->bindings_len);
+    MimeGpuProgramCreate *c = gl_emit(compute ? MIME_GPU_COMPUTE_PROGRAM_CREATE : MIME_GPU_PROGRAM_CREATE,
+                                      (uint32_t)sizeof(MimeGpuProgramCreate) + vn + fn + p->bindings_len);
     c->id = p->id;
     c->vertex_bytes = vn;
     c->fragment_bytes = fn;
@@ -371,6 +377,11 @@ BOOL gl_program_link_sources(GlProgram *p, const char *vs, const char *fs)
     return TRUE;
 }
 
+BOOL gl_program_link_sources(GlProgram *p, const char *vs, const char *fs)
+{
+    return link_program(p, vs, fs, FALSE);
+}
+
 GLAPI void APIENTRY glLinkProgram(GLuint name)
 {
     GL_CONTEXT_OR_RETURN();
@@ -379,15 +390,28 @@ GLAPI void APIENTRY glLinkProgram(GLuint name)
         gl_error(ctx, GL_INVALID_VALUE);
         return;
     }
-    const char *vs = nullptr, *fs = nullptr;
+    const char *vs = nullptr, *fs = nullptr, *cs = nullptr;
     for (uint32_t i = 0; i < p->shader_count; i++) {
         GlShader *s = p->shaders[i];
         if (s->type == GL_VERTEX_SHADER && !vs)
             vs = s->source;
         else if (s->type == GL_FRAGMENT_SHADER && !fs)
             fs = s->source;
+        else if (s->type == GL_COMPUTE_SHADER && !cs)
+            cs = s->source;
     }
-    gl_program_link_sources(p, vs, fs);
+    if (cs && (vs || fs)) {
+        gl_program_ready(p);
+        free_reflection(p);
+        p->linked = TRUE;
+        p->link_status = FALSE;
+        p->log = gl_strdup("a compute shader cannot be linked with other stages\n");
+        return;
+    }
+    if (cs)
+        link_program(p, cs, nullptr, TRUE);
+    else
+        link_program(p, vs, fs, FALSE);
 }
 
 /* reads the host's reflection once the link finished. */
@@ -434,8 +458,26 @@ static void take_reflection(GlProgram *p)
         x->matrix_stride = u[i].matrix_stride;
         x->texture[0] = u[i].texture[0];
         x->texture[1] = u[i].texture[1];
-        if (x->texture[0] >= 0 || x->texture[1] >= 0)
+        x->binding = u[i].binding;
+        if (x->texture[0] >= 0 || x->texture[1] >= 0) {
             x->units = gl_alloc((SIZE_T)x->size * sizeof(GLint));
+            /* layout(binding = n) is the first value of the uniform. */
+            for (GLint e = 0; x->units && x->binding >= 0 && e < x->size; e++)
+                x->units[e] = x->binding + e;
+        }
+    }
+    p->local_size[0] = info->local_size[0];
+    p->local_size[1] = info->local_size[1];
+    p->local_size[2] = info->local_size[2];
+    const MimeGpuStorageBlockInfo *sb = (const MimeGpuStorageBlockInfo *)(base + info->storage_offset);
+    p->storage = gl_alloc((info->storage_count + 1) * sizeof(GlStorageBlock));
+    for (uint32_t i = 0; i < info->storage_count; i++) {
+        GlStorageBlock *block = &p->storage[p->storage_count++];
+        block->name = gl_strdup((const char *)base + sb[i].name_offset);
+        block->bytes = sb[i].bytes;
+        block->stages = sb[i].stages;
+        block->variables = sb[i].variables;
+        block->binding = sb[i].binding >= 0 ? (GLuint)sb[i].binding : 0;
     }
     p->ublock_size = info->uniform_bytes;
     const MimeGpuUniformBlockInfo *blocks = (const MimeGpuUniformBlockInfo *)(base + info->block_offset);
@@ -555,6 +597,17 @@ GLAPI void APIENTRY glGetProgramiv(GLuint name, GLenum pname, GLint *params)
         break;
     }
     case GL_PROGRAM_BINARY_LENGTH:
+        *params = 0;
+        break;
+    case GL_COMPUTE_WORK_GROUP_SIZE:
+        if (!p->compute || !p->link_status) {
+            gl_error(ctx, GL_INVALID_OPERATION);
+            break;
+        }
+        for (int i = 0; i < 3; i++)
+            params[i] = (GLint)p->local_size[i];
+        break;
+    case GL_ACTIVE_ATOMIC_COUNTER_BUFFERS:
         *params = 0;
         break;
     default:

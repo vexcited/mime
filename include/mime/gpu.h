@@ -82,6 +82,12 @@ enum {
     MIME_GPU_DRAW_INDEXED,        /* MimeGpuDrawIndexed */
     MIME_GPU_SET_UNIFORM_BUFFER,
     MIME_GPU_TEXTURE_SWIZZLE,
+    /* 64 to 127: MIME_GPU_FEATURE_COMPUTE. */
+    MIME_GPU_COMPUTE_PROGRAM_CREATE = 64, /* MimeGpuProgramCreate: the compute source is in vertex_bytes. */
+    MIME_GPU_DISPATCH,                    /* MimeGpuDispatch */
+    MIME_GPU_SET_STORAGE_BUFFER,          /* MimeGpuSetStorageBuffer */
+    MIME_GPU_SET_IMAGE,                   /* MimeGpuSetImage */
+    MIME_GPU_MEMORY_BARRIER,              /* MimeGpuCmd: every write reaches every later access. */
     MIME_GPU_OP_COUNT
 };
 
@@ -196,7 +202,28 @@ typedef struct MimeGpuProgramInfo {
     uint32_t uniform_bytes;                 /* size of the uniform block. */
     uint32_t pad;
     uint32_t block_count, block_offset;
+    uint32_t storage_count, storage_offset; /* MimeGpuStorageBlockInfo array. */
+    uint32_t local_size[3];                 /* compute: the work group size. */
+    uint32_t counter_count, counter_offset; /* MimeGpuCounterInfo array. */
 } MimeGpuProgramInfo;
+
+/* a shader storage block. the declared size leaves out a trailing unsized array. */
+typedef struct MimeGpuStorageBlockInfo {
+    uint32_t name_offset;
+    uint32_t bytes;
+    uint32_t stages;
+    int32_t binding; /* layout(binding), -1 without one. */
+    uint32_t variables;
+    uint32_t pad;
+} MimeGpuStorageBlockInfo;
+
+/* an atomic counter buffer: the counters share a binding and sit at offsets of their own. */
+typedef struct MimeGpuCounterInfo {
+    uint32_t name_offset;
+    uint32_t binding;
+    uint32_t offset;
+    uint32_t stages;
+} MimeGpuCounterInfo;
 
 typedef struct MimeGpuUniformBlockInfo {
     uint32_t name_offset;
@@ -221,7 +248,10 @@ typedef struct MimeGpuUniformInfo {
     uint32_t offset;      /* in the uniform block, samplers have none. */
     uint32_t array_stride;
     uint32_t matrix_stride;
-    int32_t texture[MIME_GPU_STAGES]; /* samplers: texture and sampler index of element 0, -1 if unused. */
+    int32_t texture[MIME_GPU_STAGES]; /* samplers: texture and sampler index of element 0, -1 if unused. images: the
+                                         image slot in texture[0]. */
+    int32_t binding;                  /* samplers and images: layout(binding), -1 without one. */
+    uint32_t pad;
 } MimeGpuUniformInfo;
 
 typedef struct MimeGpuVertexAttrib {
@@ -416,6 +446,33 @@ typedef struct MimeGpuDraw {
     uint32_t instances, base_instance;
     uint32_t pad;
 } MimeGpuDraw;
+
+#define MIME_GPU_MAX_STORAGE_BLOCKS 16
+#define MIME_GPU_MAX_IMAGES 16
+
+typedef struct MimeGpuDispatch {
+    MimeGpuCmd cmd;
+    uint32_t program;
+    uint32_t x, y, z;
+} MimeGpuDispatch;
+
+/* the block slot is the index of the block in the program, as for uniform blocks. */
+typedef struct MimeGpuSetStorageBuffer {
+    MimeGpuCmd cmd;
+    uint32_t slot, pad;
+    MimeGpuMem mem;
+    uint64_t size; /* 0 unbinds. */
+} MimeGpuSetStorageBuffer;
+
+typedef struct MimeGpuSetImage {
+    MimeGpuCmd cmd;
+    uint32_t slot;
+    uint32_t id;    /* texture, 0 unbinds. */
+    uint32_t level;
+    uint32_t layer;
+    uint32_t layered;
+    uint32_t pad;
+} MimeGpuSetImage;
 
 typedef struct MimeGpuDrawIndexed {
     MimeGpuCmd cmd;

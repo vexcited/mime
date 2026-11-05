@@ -58,6 +58,16 @@ static const GlExtension g_extensions[] = {
     {"GL_ARB_occlusion_query", 0},
     {"GL_ARB_get_program_binary", 0},
     {"GL_KHR_debug", 0},
+    {"GL_ARB_compute_shader", MIME_GPU_FEATURE_COMPUTE},
+    {"GL_ARB_shader_storage_buffer_object", MIME_GPU_FEATURE_COMPUTE},
+    {"GL_ARB_shader_image_load_store", MIME_GPU_FEATURE_COMPUTE},
+    {"GL_ARB_shader_image_size", MIME_GPU_FEATURE_COMPUTE},
+    {"GL_ARB_program_interface_query", MIME_GPU_FEATURE_COMPUTE},
+    {"GL_ARB_buffer_storage", 0},
+    {"GL_ARB_draw_indirect", 0},
+    {"GL_ARB_multi_draw_indirect", 0},
+    {"GL_ARB_indirect_parameters", 0},
+    {"GL_ARB_base_instance", 0},
 };
 
 #define EXTENSION_MAX 512

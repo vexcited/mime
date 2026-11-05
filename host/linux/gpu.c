@@ -53,7 +53,7 @@ static VkQueue g_queue;
 static uint32_t g_family;
 static VkPhysicalDeviceMemoryProperties g_memory;
 static VkPhysicalDeviceProperties g_props;
-static bool g_polygon_mode, g_depth_clamp, g_clip_control, g_null_descriptor, g_logic_op;
+static bool g_polygon_mode, g_depth_clamp, g_clip_control, g_null_descriptor, g_logic_op, g_storage;
 static PFN_vkGetMemoryHostPointerPropertiesEXT g_host_pointer;
 static VkPipelineCache g_cache;
 static VkShaderModule g_clear_vs, g_clear_fs;
@@ -210,11 +210,14 @@ static void init_device(void)
         .vertexPipelineStoresAndAtomics = all.features.vertexPipelineStoresAndAtomics,
         .shaderImageGatherExtended = all.features.shaderImageGatherExtended,
         .shaderStorageImageExtendedFormats = all.features.shaderStorageImageExtendedFormats,
+        .shaderStorageImageReadWithoutFormat = all.features.shaderStorageImageReadWithoutFormat,
+        .shaderStorageImageWriteWithoutFormat = all.features.shaderStorageImageWriteWithoutFormat,
         .geometryShader = all.features.geometryShader,
         .multiViewport = all.features.multiViewport,
         .occlusionQueryPrecise = all.features.occlusionQueryPrecise,
     };
     g_logic_op = all.features.logicOp;
+    g_storage = all.features.fragmentStoresAndAtomics && all.features.vertexPipelineStoresAndAtomics;
     g_polygon_mode = eds3 && dyn3.extendedDynamicState3PolygonMode;
     g_depth_clamp = eds3 && dyn3.extendedDynamicState3DepthClampEnable;
     g_null_descriptor = robustness && robust.nullDescriptor;
@@ -643,6 +646,8 @@ typedef struct Program {
     MimeShaderBinding *bindings;
     uint32_t binding_count;
     bool has_uniforms;
+    bool compute;
+    VkPipeline compute_pipeline;
 } Program;
 
 typedef struct Pipeline {
@@ -770,6 +775,11 @@ typedef struct Channel {
         uint32_t uniform_buffer_mask[MIME_GPU_STAGES];
         Binding tex[MIME_GPU_STAGES][MIME_GPU_MAX_TEXTURES];
         uint32_t tex_mask[MIME_GPU_STAGES];
+        struct {
+            MimeGpuMem mem;
+            uint64_t size;
+        } storage[MIME_GPU_MAX_STORAGE_BLOCKS];
+        MimeGpuSetImage images[MIME_GPU_MAX_IMAGES];
         VkDescriptorSet set;
         uint32_t dirty;
     } st;
@@ -1251,6 +1261,36 @@ static VkImageView attachment_view(Texture *t, uint32_t level, uint32_t slice)
     return view;
 }
 
+/* a view of one level for image load and store: all layers when layered, else the one layer as a 2d image. */
+static VkImageView storage_view(Texture *t, uint32_t level, uint32_t layer, bool layered)
+{
+    if (!(t->aspect & VK_IMAGE_ASPECT_COLOR_BIT) || level >= t->levels)
+        return VK_NULL_HANDLE;
+    bool single = !layered && (t->type == TEXTURE_2D_ARRAY || t->type == TEXTURE_CUBE || t->type == TEXTURE_CUBE_ARRAY);
+    if (single && layer >= t->layers)
+        return VK_NULL_HANDLE;
+    uint32_t key = 0x80000000u | (layered || !single ? 0x40000000u : 0) | (level & 0xFF) << 16 | (single ? layer & 0xFFFF : 0);
+    for (uint32_t i = 0; i < t->view_count; i++)
+        if (t->views[i].key == key)
+            return t->views[i].view;
+    VkImageViewType type = single ? VK_IMAGE_VIEW_TYPE_2D
+                           : t->type == TEXTURE_CUBE || t->type == TEXTURE_CUBE_ARRAY ? VK_IMAGE_VIEW_TYPE_2D_ARRAY
+                                                                                     : t->view_type;
+    VkImageViewCreateInfo info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = t->image,
+        .viewType = type,
+        .format = t->format,
+        .subresourceRange = {t->aspect, level, 1, single ? layer : 0, single ? 1 : VK_REMAINING_ARRAY_LAYERS},
+    };
+    VkImageView view = VK_NULL_HANDLE;
+    if (g_vk.fn.vkCreateImageView(g_vk.device, &info, nullptr, &view) != VK_SUCCESS)
+        return VK_NULL_HANDLE;
+    t->views = realloc(t->views, (t->view_count + 1) * sizeof(View));
+    t->views[t->view_count++] = (View){key, view};
+    return view;
+}
+
 static void texture_free(Channel *c, Texture *t)
 {
     if (c) {
@@ -1296,6 +1336,8 @@ static bool texture_make(Texture *t, uint32_t type, uint32_t mtl_format, uint32_
     VkFormatProperties props;
     g_vk.fn.vkGetPhysicalDeviceFormatProperties(g_vk.physical_device, format, &props);
     VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    if (g_storage && t->samples == 1 && (props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT))
+        usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     if (target || t->samples > 1) {
         if (t->aspect & VK_IMAGE_ASPECT_COLOR_BIT) {
             if (props.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)
@@ -1467,6 +1509,7 @@ typedef struct CompileJob {
     Program *p;
     char *vs, *fs, *bindings;
     size_t vs_len, fs_len, bindings_len;
+    bool compute;
     MimeGpuMem result;
     uint32_t capacity;
 } CompileJob;
@@ -1500,7 +1543,7 @@ static void append_program_error(MimeShaderResult *result, const char *message)
 
 static bool program_objects(Program *p, MimeShaderResult *r)
 {
-    for (int s = 0; s < MIME_GPU_STAGES; s++) {
+    for (int s = 0; s < (p->compute ? 1 : MIME_GPU_STAGES); s++) {
         VkShaderModuleCreateInfo info = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0, r->spirv_words[s] * 4,
                                          r->spirv[s]};
         if (g_vk.fn.vkCreateShaderModule(g_vk.device, &info, nullptr, &p->module[s]) != VK_SUCCESS)
@@ -1513,9 +1556,13 @@ static bool program_objects(Program *p, MimeShaderResult *r)
         b[i].descriptorCount = m->count;
         b[i].descriptorType = m->kind == MIME_SHADER_UNIFORMS ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
                               : m->kind == MIME_SHADER_BLOCK  ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
-                                                              : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        b[i].stageFlags = ((m->stages & 1) ? VK_SHADER_STAGE_VERTEX_BIT : 0) |
-                          ((m->stages & 2) ? VK_SHADER_STAGE_FRAGMENT_BIT : 0);
+                              : m->kind == MIME_SHADER_STORAGE || m->kind == MIME_SHADER_COUNTER
+                                  ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+                              : m->kind == MIME_SHADER_IMAGE ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                                                             : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        b[i].stageFlags = p->compute ? VK_SHADER_STAGE_COMPUTE_BIT
+                                     : ((m->stages & 1) ? VK_SHADER_STAGE_VERTEX_BIT : 0) |
+                                           ((m->stages & 2) ? VK_SHADER_STAGE_FRAGMENT_BIT : 0);
         p->has_uniforms |= m->kind == MIME_SHADER_UNIFORMS;
     }
     VkDescriptorSetLayoutCreateInfo set = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0,
@@ -1530,13 +1577,24 @@ static bool program_objects(Program *p, MimeShaderResult *r)
     p->bindings = r->bindings;
     p->binding_count = r->binding_count;
     r->bindings = nullptr;
+    if (p->compute) {
+        VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        ci.stage = (VkPipelineShaderStageCreateInfo){VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
+                                                    VK_SHADER_STAGE_COMPUTE_BIT, p->module[0], "main"};
+        ci.layout = p->layout;
+        if (g_vk.fn.vkCreateComputePipelines(g_vk.device, g_cache, 1, &ci, nullptr, &p->compute_pipeline) != VK_SUCCESS)
+            return false;
+    }
     return true;
 }
 
 static void compile_job(CompileJob *j)
 {
     MimeShaderResult r;
-    mime_shader_compile(j->vs, j->vs_len, j->fs, j->fs_len, j->bindings, j->bindings_len, &r);
+    if (j->compute)
+        mime_shader_compile_compute(j->vs, j->vs_len, &r);
+    else
+        mime_shader_compile(j->vs, j->vs_len, j->fs, j->fs_len, j->bindings, j->bindings_len, &r);
     bool ok = r.ok && program_objects(j->p, &r);
     if (r.ok && !ok)
         append_program_error(&r, "the gpu rejected a translated program");
@@ -1625,6 +1683,8 @@ static void program_wait(Program *p)
 static void program_free(Program *p)
 {
     program_wait(p);
+    if (p->compute_pipeline)
+        g_vk.fn.vkDestroyPipeline(g_vk.device, p->compute_pipeline, nullptr);
     for (int s = 0; s < MIME_GPU_STAGES; s++)
         if (p->module[s])
             g_vk.fn.vkDestroyShaderModule(g_vk.device, p->module[s], nullptr);
@@ -1638,7 +1698,7 @@ static void program_free(Program *p)
     free(p);
 }
 
-static void program_create(Channel *c, const MimeGpuProgramCreate *pc)
+static void program_create(Channel *c, const MimeGpuProgramCreate *pc, bool compute)
 {
     uint64_t body = pc->cmd.size - sizeof(*pc);
     if ((uint64_t)pc->vertex_bytes + pc->fragment_bytes + pc->bindings_bytes > body) {
@@ -1655,11 +1715,13 @@ static void program_create(Channel *c, const MimeGpuProgramCreate *pc)
     Program *p = calloc(1, sizeof(Program));
     pthread_mutex_init(&p->lock, nullptr);
     pthread_cond_init(&p->cond, nullptr);
+    p->compute = compute;
     *slotp = p;
     const char *data = (const char *)(pc + 1);
     CompileJob *j = calloc(1, sizeof(CompileJob));
     j->c = c;
     j->p = p;
+    j->compute = compute;
     j->vs = strndup(data, pc->vertex_bytes);
     j->vs_len = strlen(j->vs);
     j->fs = strndup(data + pc->vertex_bytes, pc->fragment_bytes);
@@ -2205,8 +2267,10 @@ static VkDescriptorSet allocate_set(Channel *c, VkDescriptorSetLayout layout)
                 {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, SETS_PER_POOL},
                 {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, SETS_PER_POOL * 4},
                 {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SETS_PER_POOL * 16},
+                {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, SETS_PER_POOL * 4},
+                {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, SETS_PER_POOL * 4},
             };
-            VkDescriptorPoolCreateInfo pi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, SETS_PER_POOL, 3,
+            VkDescriptorPoolCreateInfo pi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, SETS_PER_POOL, 5,
                                              sizes};
             if (g_vk.fn.vkCreateDescriptorPool(g_vk.device, &pi, nullptr, &pool) != VK_SUCCESS)
                 return VK_NULL_HANDLE;
@@ -2236,14 +2300,57 @@ static bool write_set(Channel *c, Program *p)
     VkDescriptorSet set = allocate_set(c, p->set_layout);
     if (!set)
         return false;
-    VkWriteDescriptorSet writes[1 + MIME_GPU_MAX_UNIFORM_BLOCKS + MIME_GPU_STAGES * MIME_GPU_MAX_TEXTURES];
-    VkDescriptorBufferInfo buffers[1 + MIME_GPU_MAX_UNIFORM_BLOCKS];
-    VkDescriptorImageInfo images[MIME_GPU_STAGES * MIME_GPU_MAX_TEXTURES];
+    VkWriteDescriptorSet writes[1 + MIME_GPU_MAX_UNIFORM_BLOCKS + MIME_GPU_STAGES * MIME_GPU_MAX_TEXTURES +
+                                MIME_GPU_MAX_STORAGE_BLOCKS + MIME_GPU_MAX_IMAGES + MIME_GPU_MAX_COUNTER_BUFFERS];
+    VkDescriptorBufferInfo buffers[1 + MIME_GPU_MAX_UNIFORM_BLOCKS + MIME_GPU_MAX_STORAGE_BLOCKS +
+                                   MIME_GPU_MAX_COUNTER_BUFFERS];
+    VkDescriptorImageInfo images[MIME_GPU_STAGES * MIME_GPU_MAX_TEXTURES + MIME_GPU_MAX_IMAGES];
     uint32_t nw = 0, nb = 0, ni = 0;
     for (uint32_t i = 0; i < p->binding_count; i++) {
         const MimeShaderBinding *m = &p->bindings[i];
-        VkWriteDescriptorSet *w = &writes[nw++];
+        if (nw == sizeof(writes) / sizeof(writes[0]))
+            break;
+        VkWriteDescriptorSet *w = &writes[nw];
         *w = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, set, m->binding, 0, m->count};
+        if (m->kind == MIME_SHADER_STORAGE || m->kind == MIME_SHADER_COUNTER) {
+            /* a storage buffer nothing is bound to is left unwritten: a program that reads it is undefined as in GL. */
+            if (m->slot >= MIME_GPU_MAX_STORAGE_BLOCKS || !c->st.storage[m->slot].size)
+                continue;
+            uint64_t off, range = c->st.storage[m->slot].size;
+            VkBuffer buf = heap(c, &c->st.storage[m->slot].mem, range, &off);
+            if (!buf)
+                continue;
+            w->descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            buffers[nb] = (VkDescriptorBufferInfo){buf, off, range};
+            w->pBufferInfo = &buffers[nb++];
+            nw++;
+            continue;
+        }
+        if (m->kind == MIME_SHADER_IMAGE) {
+            w->descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            w->pImageInfo = &images[ni];
+            uint32_t first = ni;
+            bool any = false;
+            for (uint32_t e = 0; e < m->count; e++) {
+                uint32_t unit = m->slot + e;
+                VkImageView view = VK_NULL_HANDLE;
+                if (unit < MIME_GPU_MAX_IMAGES && c->st.images[unit].id) {
+                    const MimeGpuSetImage *im = &c->st.images[unit];
+                    Texture *t = texture_of(c, im->id, false, false);
+                    if (t && (t->aspect & VK_IMAGE_ASPECT_COLOR_BIT))
+                        view = storage_view(t, im->level, im->layer, im->layered != 0);
+                }
+                any |= view != VK_NULL_HANDLE;
+                images[ni++] = (VkDescriptorImageInfo){VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_GENERAL};
+            }
+            if (!any) {
+                ni = first;
+                continue;
+            }
+            nw++;
+            continue;
+        }
+        nw++;
         if (m->kind == MIME_SHADER_UNIFORMS) {
             w->descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
             uint32_t bytes = m->bytes > c->st.uniform_bytes ? m->bytes : c->st.uniform_bytes;
@@ -2734,6 +2841,40 @@ static void draw_indexed(Channel *c, const MimeGpuDrawIndexed *d)
                              d->base_vertex, d->base_instance);
 }
 
+/* compute and the draws that follow it share nothing but the batch: the pass resumes at the next draw. */
+static void dispatch(Channel *c, const MimeGpuDispatch *d)
+{
+    Program *p = program_ready(c, d->program);
+    if (!p || !p->compute || !p->compute_pipeline || !d->x || !d->y || !d->z)
+        return;
+    end_rendering(c);
+    barrier(c);
+    c->st.set = VK_NULL_HANDLE;
+    c->st.program = nullptr;
+    if (!place_resources(c, p))
+        return;
+    VkCommandBuffer cb = cbuf(c);
+    g_vk.fn.vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, p->compute_pipeline);
+    uint32_t dynamic = c->st.uniform_offset;
+    g_vk.fn.vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, p->layout, 0, 1, &c->st.set,
+                                    p->has_uniforms ? 1 : 0, &dynamic);
+    g_vk.fn.vkCmdDispatch(cb, d->x, d->y, d->z);
+    c->wrote = true;
+    /* the set belongs to the compute program: the next draw writes its own. */
+    c->st.set = VK_NULL_HANDLE;
+    c->st.program = nullptr;
+    c->st.uniforms_placed = false;
+    c->st.dirty |= DIRTY_SET | DIRTY_UNIFORMS;
+}
+
+/* glMemoryBarrier: every write reaches every later access, inside passes too, so the pass ends and resumes. */
+static void memory_barrier(Channel *c)
+{
+    end_rendering(c);
+    c->wrote = true;
+    barrier(c);
+}
+
 #define BODY(type) ((const type *)cmd)
 #define NEED(type)                                                                                                     \
     if (cmd->size < sizeof(type)) {                                                                                    \
@@ -2794,7 +2935,7 @@ static void execute(Channel *c, const MimeGpuCmd *cmd)
     }
     case MIME_GPU_PROGRAM_CREATE:
         NEED(MimeGpuProgramCreate);
-        program_create(c, BODY(MimeGpuProgramCreate));
+        program_create(c, BODY(MimeGpuProgramCreate), false);
         break;
     case MIME_GPU_PROGRAM_DESTROY:
         NEED(MimeGpuObject);
@@ -2936,6 +3077,40 @@ static void execute(Channel *c, const MimeGpuCmd *cmd)
         }
         break;
     }
+    case MIME_GPU_COMPUTE_PROGRAM_CREATE:
+        NEED(MimeGpuProgramCreate);
+        program_create(c, BODY(MimeGpuProgramCreate), true);
+        break;
+    case MIME_GPU_DISPATCH:
+        NEED(MimeGpuDispatch);
+        dispatch(c, BODY(MimeGpuDispatch));
+        break;
+    case MIME_GPU_SET_STORAGE_BUFFER: {
+        NEED(MimeGpuSetStorageBuffer);
+        const MimeGpuSetStorageBuffer *b = BODY(MimeGpuSetStorageBuffer);
+        if (b->slot >= MIME_GPU_MAX_STORAGE_BLOCKS) {
+            lose(c, "storage buffer slot");
+            return;
+        }
+        c->st.storage[b->slot].mem = b->mem;
+        c->st.storage[b->slot].size = b->size;
+        c->st.dirty |= DIRTY_SET;
+        break;
+    }
+    case MIME_GPU_SET_IMAGE: {
+        NEED(MimeGpuSetImage);
+        const MimeGpuSetImage *im = BODY(MimeGpuSetImage);
+        if (im->slot >= MIME_GPU_MAX_IMAGES) {
+            lose(c, "image slot");
+            return;
+        }
+        c->st.images[im->slot] = *im;
+        c->st.dirty |= DIRTY_SET;
+        break;
+    }
+    case MIME_GPU_MEMORY_BARRIER:
+        memory_barrier(c);
+        break;
     case MIME_GPU_DRAW:
         NEED(MimeGpuDraw);
         draw(c, BODY(MimeGpuDraw));
@@ -3111,6 +3286,7 @@ uint64_t mime_gpu_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *channel
     Channel *c = calloc(1, sizeof(Channel));
     c->vm = vm;
     c->hdr = (MimeGpuHeader *)base;
+    c->hdr->features = g_storage ? MIME_GPU_FEATURE_COMPUTE : 0;
     c->ring = base + MIME_GPU_HEADER_SIZE;
     pthread_mutex_init(&c->lock, nullptr);
     pthread_cond_init(&c->cond, nullptr);
