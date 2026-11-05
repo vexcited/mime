@@ -354,6 +354,7 @@ LRESULT CALLBACK TabProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
     }
     case WM_CREATE:
         t->Theme = OpenThemeData(hwnd, L"Tab");
+        SetWindowLongW(hwnd, GWL_STYLE, GetWindowLongW(hwnd, GWL_STYLE) | WS_CLIPSIBLINGS);
         return 0;
     case WM_DESTROY:
         if (t->Theme)
