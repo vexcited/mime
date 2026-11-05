@@ -4,6 +4,7 @@
  */
 #include "../../ntos.h"
 #include "../../cm/cm.h"
+#include <mime/hyperv.h>
 
 KI_PROCESSOR_IDS KiProcessorIds;
 
@@ -44,6 +45,7 @@ void KiSetProcessorFeatures(BOOLEAN *features)
     features[12] = TRUE; /* PF_NX_ENABLED */
     features[23] = TRUE; /* PF_FASTFAIL_AVAILABLE */
     features[19] = field(p->Pfr0, 20) != 0xF;                         /* PF_ARM_NEON_INSTRUCTIONS_AVAILABLE */
+    features[21] = TRUE;                                               /* PF_VIRT_FIRMWARE_ENABLED */
     features[29] = TRUE;                                               /* PF_ARM_V8_INSTRUCTIONS_AVAILABLE */
     features[30] = field(p->Isar0, 4) != 0 && field(p->Isar0, 8) != 0; /* PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE */
     features[31] = field(p->Isar0, 16) != 0;                           /* PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE */
@@ -126,12 +128,50 @@ ULONG64 KiProcessorSmbiosId(void)
     return KiProcessorIds.Midr;
 }
 
-/* arm64 programs see no hypervisor. */
+/*
+ * the arm64 machine is microsoft's root partition, under its hypervisor, so programs see it in the system
+ * information even though the x64 emulation reports none in cpuid, as prism does.
+ */
 BOOLEAN KiQueryHypervisorLeaves(ULONG leaves[][4], ULONG count)
 {
-    return FALSE;
+    static const ULONG hypervisor[7][4] = {
+        {0x4000000B, 0x7263694D, 0x666F736F, 0x76482074}, /* Microsoft Hv, and the last leaf. */
+        {0x31237648, 0, 0, 0},                            /* Hv#1 */
+        {MIME_NT_BUILD_NUMBER, 0x000A0000, 0, 9457},      /* version 10.0 and the update. */
+        {0x99F77FFF, 0x19, 0, 0x10},                      /* root privileges, register fast input. */
+        {0, 0, 0, 0},                                     /* enlightenments. */
+        {64, 64, 0, 0},                                   /* processor limits. */
+        {0xF, 0, 0, 0},                                   /* apic overlay, msr bitmaps, counters and slat. */
+    };
+    if (count > RTL_NUMBER_OF(hypervisor))
+        count = RTL_NUMBER_OF(hypervisor);
+    memcpy(leaves, hypervisor, count * sizeof(hypervisor[0]));
+    return TRUE;
 }
 
 void KiIdentifyToHypervisor(void)
 {
+    ULONG leaves[1][4];
+    static ULONG64 buffer[512] __attribute__((aligned(PAGE_SIZE)));
+    static struct {
+        ULONG64 Partition;
+        ULONG Vp;
+        UCHAR Vtl;
+        UCHAR Rsvd[3];
+        struct {
+            ULONG Name;
+            UCHAR Rsvd[12];
+            ULONG64 Value[2];
+        } Register;
+    } *request = (void *)buffer;
+    if (!KiQueryHypervisorLeaves(leaves, 1))
+        return;
+    /* the guest os id, through the register hypercall, as windows' kernel does it on arm64. */
+    request->Partition = MIME_HV_PARTITION_SELF;
+    request->Vp = 0;
+    request->Vtl = MIME_HV_VTL_ROOT;
+    request->Register.Name = MIME_HV_REG_GUEST_OS_ID;
+    request->Register.Value[0] = 0x0001040A00000000ull | MIME_NT_BUILD_NUMBER;
+    ULONG64 input = MIME_HV_CALL_SET_VP_REGISTERS | MIME_HV_REP_VALUE(1, 0);
+    HalHyperVCall(input, HalPhysicalOf(request), 0);
 }

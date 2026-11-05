@@ -43,6 +43,8 @@ void HalInitialize(MimeBootInfo *boot);
 void HalLog(const char *text, SIZE_T length);
 DECLSPEC_NORETURN void HalPanic(const char *text);
 ULONG64 HalPhysicalOf(const void *va);
+/* the emulated microsoft hypervisor of arm64, by SMCCC function and hypercall input value. */
+ULONG64 HalHyperVCall(ULONG64 input, ULONG64 in, ULONG64 out);
 void *HalPhysmap(ULONG64 pa);
 ULONG64 HalReadCounter(void);
 void HalArmTimer(ULONG64 deadline_counter);
@@ -403,6 +405,7 @@ DECLSPEC_NORETURN void PsShutdownSystem(ULONG action);
 void KiReadProcessorIds(void);
 BOOLEAN KiQueryHypervisorLeaves(ULONG leaves[][4], ULONG count);
 void KiIdentifyToHypervisor(void);
+void KiPrepareHypervisor(void);
 void KiSetProcessorFeatures(BOOLEAN *features);
 PCSTR KiProcessorVendor(void);
 USHORT KiProcessorModel(void);

@@ -52,6 +52,8 @@ typedef struct MimeVcpu {
     /* where a secondary starts, set by MIME_HC_CPU_START. */
     bool started;
     uint64_t start_pc, start_x0, start_sp;
+    /* the guest-visible microsoft hypervisor state of this processor. */
+    uint64_t hv_assist_page, hv_reference_tsc, hv_crash_ctl, hv_crash[5];
     /* exit statistics, printed with the SIGUSR1 state dump. */
     uint64_t exits_total;
     uint64_t exits_vtimer;
@@ -222,6 +224,10 @@ bool mime_vcpu_start_secondary(MimeVm *vm, uint32_t index, uint64_t pc, uint64_t
 
 /* hcall.c */
 void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8]);
+void mime_hv_dispatch(MimeVcpu *vcpu, bool legacy, uint64_t regs[18]);
+#ifndef __linux__
+uint64_t mime_vcpu_sysreg(MimeVcpu *vcpu, uint32_t reg);
+#endif
 
 /* fs.c */
 uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8]);

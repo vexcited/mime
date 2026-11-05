@@ -106,6 +106,7 @@ void HalEndOfInterrupt(ULONG vector)
 /* x2apic mode, with the timer in tsc deadline mode. */
 void HalInitializeProcessor(void)
 {
+    KiPrepareHypervisor();
     KiWriteMsr(MSR_APIC_BASE, KiReadMsr(MSR_APIC_BASE) | (1ull << 11) | (1ull << 10));
     KeGetPcr()->ApicId = (ULONG)KiReadMsr(MSR_X2APIC_ID);
     KiWriteMsr(MSR_X2APIC_TPR, 0);

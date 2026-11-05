@@ -717,6 +717,16 @@ static void *vcpu_main(void *arg)
         case KVM_EXIT_HLT:
             vcpu->exits_halt++;
             break;
+        case KVM_EXIT_HYPERV:
+            if (vcpu->run->hyperv.type == KVM_EXIT_HYPERV_HCALL) {
+                uint64_t regs[18] = {};
+                regs[0] = vcpu->run->hyperv.u.hcall.input;
+                regs[1] = vcpu->run->hyperv.u.hcall.params[0];
+                regs[2] = vcpu->run->hyperv.u.hcall.params[1];
+                mime_hv_dispatch(vcpu, true, regs);
+                vcpu->run->hyperv.u.hcall.result = regs[0];
+            }
+            break;
         case KVM_EXIT_MMIO:
             if (!vcpu->run->mmio.is_write)
                 memset(vcpu->run->mmio.data, 0xFF, sizeof(vcpu->run->mmio.data));

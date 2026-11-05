@@ -7,6 +7,7 @@
 
 static ULONG g_leaf1[4], g_leaf7[4], g_ext1[4], g_max_ext;
 static char g_vendor[13];
+static ULONG64 g_hypercall_page;
 
 void KiReadProcessorIds(void)
 {
@@ -40,6 +41,16 @@ BOOLEAN KiQueryHypervisorLeaves(ULONG leaves[][4], ULONG count)
     return TRUE;
 }
 
+void KiPrepareHypervisor(void)
+{
+    ULONG leaves[1][4];
+    if (!KiQueryHypervisorLeaves(leaves, 1))
+        return;
+    KiWriteMsr(0x40000000, 0x0001040A00000000ull | MIME_NT_BUILD_NUMBER);
+    if (g_hypercall_page)
+        KiWriteMsr(0x40000001, g_hypercall_page | 1);
+}
+
 /*
  * on microsoft's hypervisor windows identifies itself through the guest os id
  * register, which enables hypercalls: microsoft, windows nt, 10.0 and the build.
@@ -47,8 +58,17 @@ BOOLEAN KiQueryHypervisorLeaves(ULONG leaves[][4], ULONG count)
 void KiIdentifyToHypervisor(void)
 {
     ULONG leaves[1][4];
-    if (KiQueryHypervisorLeaves(leaves, 1))
-        KiWriteMsr(0x40000000, 0x0001040A00000000ull | MIME_NT_BUILD_NUMBER);
+    if (!KiQueryHypervisorLeaves(leaves, 1))
+        return;
+    KiPrepareHypervisor();
+    /* the hypercall page, executable through the system address space, which the hypervisor writes the stub in. */
+    ULONG64 pa = MmAllocateContiguous(1);
+    PVOID va = pa ? MmAllocateSystemVa(1) : nullptr;
+    if (!va)
+        return;
+    MiMapPage(MiKernelRoot(), (ULONG_PTR)va, pa, MM_PTE_ACCESSED | MM_PTE_DIRTY);
+    g_hypercall_page = pa;
+    KiWriteMsr(0x40000001, pa | 1);
 }
 
 static BOOLEAN bit(const ULONG *regs, int reg, int n)
@@ -73,7 +93,7 @@ void KiSetProcessorFeatures(BOOLEAN *features)
     features[14] = bit(l1, 2, 13);             /* PF_COMPARE_EXCHANGE128 */
     features[17] = bit(l1, 2, 26);             /* PF_XSAVE_ENABLED */
     features[20] = TRUE;                       /* PF_SECOND_LEVEL_ADDRESS_TRANSLATION */
-    features[21] = FALSE;                      /* PF_VIRT_FIRMWARE_ENABLED */
+    features[21] = bit(l1, 2, 31);             /* PF_VIRT_FIRMWARE_ENABLED */
     features[22] = bit(l7, 1, 0);              /* PF_RDWRFSGSBASE_AVAILABLE */
     features[23] = TRUE;                       /* PF_FASTFAIL_AVAILABLE */
     features[24] = bit(l1, 2, 30);             /* PF_RDRAND_INSTRUCTION_AVAILABLE */

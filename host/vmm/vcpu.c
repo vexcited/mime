@@ -1,5 +1,8 @@
 #include "vmm.h"
 #include "../gpu/gpu.h"
+#include "../../guest/xta64/x86.h"
+
+#include <mime/hyperv.h>
 
 #include <Hypervisor/Hypervisor.h>
 #include <pthread.h>
@@ -48,6 +51,11 @@ static void set_sys(MimeVcpu *vcpu, hv_sys_reg_t reg, uint64_t v)
     hv_return_t r = hv_vcpu_set_sys_reg((hv_vcpu_t)vcpu->handle, reg, v);
     if (r != HV_SUCCESS)
         mime_warn("hv_vcpu_set_sys_reg(%#x) failed: %#x", (unsigned)reg, r);
+}
+
+uint64_t mime_vcpu_sysreg(MimeVcpu *vcpu, uint32_t reg)
+{
+    return get_sys(vcpu, (hv_sys_reg_t)reg);
 }
 
 static void dump_backtrace(MimeVcpu *vcpu);
@@ -242,13 +250,17 @@ static bool handle_exception(MimeVcpu *vcpu)
 
     switch (ec) {
     case EC_HVC64: {
-        uint64_t regs[8];
-        for (int i = 0; i < 8; i++)
+        uint64_t regs[18];
+        for (int i = 0; i < 18; i++)
             regs[i] = get_reg(vcpu, (hv_reg_t)(HV_REG_X0 + i));
+        uint64_t immediate = syndrome & 0xFFFF;
         vcpu->exits_hvc[regs[0] & 63]++;
-        mime_hcall_dispatch(vcpu, regs);
-        set_reg(vcpu, HV_REG_X0, regs[0]);
-        set_reg(vcpu, HV_REG_X1, regs[1]);
+        if (immediate == 1 || (immediate == 0 && regs[0] == MIME_HV_SMCCC_HYPERCALL))
+            mime_hv_dispatch(vcpu, immediate == 1, regs);
+        else
+            mime_hcall_dispatch(vcpu, regs);
+        for (int i = 0; i < 18; i++)
+            set_reg(vcpu, (hv_reg_t)(HV_REG_X0 + i), regs[i]);
         return true;
     }
     case EC_WFX:

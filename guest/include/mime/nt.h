@@ -2306,6 +2306,7 @@ typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemLogicalProcessorInformation = 73,
     SystemFirmwareTableInformation = 76,
     SystemBootEnvironmentInformation = 90,
+    SystemHypervisorInformation = 91,
     SystemSecureBootInformation = 145,
     SystemProcessorFeaturesInformation = 154,
     SystemHypervisorDetailInformation = 185,
@@ -2430,6 +2431,14 @@ typedef struct _SYSTEM_PROCESSOR_INFORMATION {
     USHORT MaximumProcessors;
     ULONG ProcessorFeatureBits;
 } SYSTEM_PROCESSOR_INFORMATION, *PSYSTEM_PROCESSOR_INFORMATION;
+
+typedef struct _SYSTEM_HYPERVISOR_QUERY_INFORMATION {
+    BOOLEAN HypervisorConnected;
+    BOOLEAN HypervisorDebuggingEnabled;
+    BOOLEAN HypervisorPresent;
+    BOOLEAN Spare0[5];
+    ULONGLONG EnabledEnlightenments;
+} SYSTEM_HYPERVISOR_QUERY_INFORMATION, *PSYSTEM_HYPERVISOR_QUERY_INFORMATION;
 
 typedef enum _PROCESSINFOCLASS {
     ProcessBasicInformation = 0,
