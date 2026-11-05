@@ -333,7 +333,11 @@ WOW64API NTSTATUS NTAPI Wow64KiUserCallbackDispatcher(ULONG api, ULONG arguments
     frame.Callback = TRUE;
     frame.Status = STATUS_UNSUCCESSFUL;
     ULONG args[3] = {api, arguments, length};
+    /* the 32-bit dispatcher's registration is left behind when the callback returns, the list is the caller's again. */
+    PULONG exceptions = (PULONG)Wow64CurrentTeb32();
+    ULONG list = *exceptions;
     call32(&frame, g.CallbackDispatcher, args, 3, arguments - 32);
+    *exceptions = list;
     *result = frame.Result;
     *result_length = frame.ResultLength;
     return frame.Status;
