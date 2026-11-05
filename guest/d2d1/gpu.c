@@ -487,7 +487,7 @@ typedef struct PassObjects {
     UINT32 slots;
     ID3D11Buffer *cb[2];
     ID3D11Texture2D *target, *staging;
-    ID3D11Buffer *vb;
+    ID3D11Buffer *vb, *buffer, *buffer_staging;
     ID3D11RenderTargetView *rtv;
     ID3D11UnorderedAccessView *uav;
 } PassObjects;
@@ -504,6 +504,8 @@ static void pass_release(PassObjects *o)
     D2D_RELEASE(o->target);
     D2D_RELEASE(o->staging);
     D2D_RELEASE(o->vb);
+    D2D_RELEASE(o->buffer);
+    D2D_RELEASE(o->buffer_staging);
     D2D_RELEASE(o->rtv);
     D2D_RELEASE(o->uav);
 }
@@ -513,8 +515,12 @@ static HRESULT upload_input(const D2dImageData *d, ID3D11Texture2D **tex, ID3D11
     static const uint32_t clear = 0;
     BOOL empty = !d || d->surface.w <= 0 || d->surface.h <= 0;
     UINT32 w = empty ? 1 : (UINT32)d->surface.w, h = empty ? 1 : (UINT32)d->surface.h;
-    D3D11_TEXTURE2D_DESC desc = {w, h, 1, 1, DXGI_FORMAT_B8G8R8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE, 0, 0};
-    D3D11_SUBRESOURCE_DATA init = {empty ? (const void *)&clear : (const void *)d->surface.px, w * 4, w * h * 4};
+    BOOL wide = !empty && d->fpx;
+    D3D11_TEXTURE2D_DESC desc = {w, h, 1, 1, wide ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM, {1, 0},
+                                 D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE, 0, 0};
+    UINT32 texel = wide ? 16 : 4;
+    const void *px = empty ? (const void *)&clear : wide ? (const void *)d->fpx : (const void *)d->surface.px;
+    D3D11_SUBRESOURCE_DATA init = {px, w * texel, w * h * texel};
     HRESULT hr = g_device->lpVtbl->CreateTexture2D(g_device, &desc, &init, tex);
     if (SUCCEEDED(hr))
         hr = g_device->lpVtbl->CreateShaderResourceView(g_device, (ID3D11Resource *)*tex, nullptr, srv);
@@ -565,7 +571,9 @@ static HRESULT bind_textures(const D2dGpuPass *p, PassObjects *o)
     return hr;
 }
 
-/* reads the target back as premultiplied bgra, swapping red and blue when it holds rgba. */
+static inline uint32_t unorm8(float v) { return !(v > 0.0f) ? 0 : v >= 1.0f ? 255 : (uint32_t)(v * 255.0f + 0.5f); }
+
+/* reads the target back as premultiplied bgra, swapping red and blue when it holds rgba, with the floats of a float one. */
 static HRESULT read_back(PassObjects *o, UINT32 w, UINT32 h, DXGI_FORMAT format, D2dIRect r, D2dImageData *out)
 {
     D3D11_TEXTURE2D_DESC sd = {w, h, 1, 1, format, {1, 0}, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ, 0};
@@ -579,16 +587,24 @@ static HRESULT read_back(PassObjects *o, UINT32 w, UINT32 h, DXGI_FORMAT format,
         return hr;
     out->x = r.x0;
     out->y = r.y0;
-    if (!D2dSurfaceInit(&out->surface, (int)w, (int)h)) {
+    BOOL wide = format == DXGI_FORMAT_R32G32B32A32_FLOAT;
+    if (!D2dSurfaceInit(&out->surface, (int)w, (int)h) || (wide && !(out->fpx = D2dAlloc((SIZE_T)w * h * 16)))) {
         g_context->lpVtbl->Unmap(g_context, (ID3D11Resource *)o->staging, 0);
+        D2dImageDataFree(out);
         return E_OUTOFMEMORY;
     }
     for (UINT32 y = 0; y < h; y++) {
-        const uint32_t *src = (const uint32_t *)((const BYTE *)map.pData + (SIZE_T)y * map.RowPitch);
+        const BYTE *row = (const BYTE *)map.pData + (SIZE_T)y * map.RowPitch;
         uint32_t *dst = D2dSurfaceRow(&out->surface, (int)y);
-        if (format == DXGI_FORMAT_B8G8R8A8_UNORM) {
-            memcpy(dst, src, (SIZE_T)w * 4);
+        if (wide) {
+            float *f = out->fpx + (SIZE_T)y * w * 4;
+            memcpy(f, row, (SIZE_T)w * 16);
+            for (UINT32 x = 0; x < w; x++, f += 4)
+                dst[x] = unorm8(f[3]) << 24 | unorm8(f[0]) << 16 | unorm8(f[1]) << 8 | unorm8(f[2]);
+        } else if (format == DXGI_FORMAT_B8G8R8A8_UNORM) {
+            memcpy(dst, row, (SIZE_T)w * 4);
         } else {
+            const uint32_t *src = (const uint32_t *)row;
             for (UINT32 x = 0; x < w; x++) {
                 uint32_t p = src[x];
                 dst[x] = (p & 0xff00ff00u) | (p & 0xff) << 16 | (p >> 16 & 0xff);
@@ -634,7 +650,8 @@ HRESULT D2dGpuDraw(const D2dGpuPass *p, D2dImageData *out)
     if (SUCCEEDED(hr) && p->cb_size)
         hr = make_cb(p->cb, p->cb_size, &o.cb[0]);
     if (SUCCEEDED(hr)) {
-        D3D11_TEXTURE2D_DESC d = {w, h, 1, 1, DXGI_FORMAT_B8G8R8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET, 0, 0};
+        D3D11_TEXTURE2D_DESC d = {w, h, 1, 1, p->wide ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM, {1, 0},
+                                  D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET, 0, 0};
         hr = g_device->lpVtbl->CreateTexture2D(g_device, &d, nullptr, &o.target);
     }
     if (SUCCEEDED(hr))
@@ -707,11 +724,44 @@ HRESULT D2dGpuDraw(const D2dGpuPass *p, D2dImageData *out)
         c->lpVtbl->OMSetRenderTargets(c, 1, &o.rtv, nullptr);
         c->lpVtbl->Draw(c, 4, 0);
         unbind();
-        hr = read_back(&o, w, h, DXGI_FORMAT_B8G8R8A8_UNORM, r, out);
+        hr = read_back(&o, w, h, p->wide ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM, r, out);
     }
     pass_release(&o);
     gpu_leave();
     return hr;
+}
+
+/* the analysis buffer: four floats for each pixel of the output rectangle, given back to the transform. */
+static HRESULT analysis_buffer(PassObjects *o, UINT32 size)
+{
+    UINT32 width = 64;
+    while (width < size && width < 0x80000000u)
+        width <<= 1;
+    D3D11_BUFFER_DESC d = {width, D3D11_USAGE_DEFAULT, D3D11_BIND_UNORDERED_ACCESS, 0, D3D11_RESOURCE_MISC_BUFFER_STRUCTURED, 4};
+    HRESULT hr = g_device->lpVtbl->CreateBuffer(g_device, &d, nullptr, &o->buffer);
+    if (FAILED(hr))
+        return hr;
+    D3D11_UNORDERED_ACCESS_VIEW_DESC ud = {DXGI_FORMAT_UNKNOWN, D3D11_UAV_DIMENSION_BUFFER};
+    ud.Buffer.NumElements = width / 4;
+    hr = g_device->lpVtbl->CreateUnorderedAccessView(g_device, (ID3D11Resource *)o->buffer, &ud, &o->uav);
+    if (FAILED(hr))
+        return hr;
+    D3D11_BUFFER_DESC sd = {width, D3D11_USAGE_STAGING, 0, D3D11_CPU_ACCESS_READ, 0, 0};
+    return g_device->lpVtbl->CreateBuffer(g_device, &sd, nullptr, &o->buffer_staging);
+}
+
+static HRESULT read_analysis(PassObjects *o, UINT32 size, BYTE **data)
+{
+    g_context->lpVtbl->CopyResource(g_context, (ID3D11Resource *)o->buffer_staging, (ID3D11Resource *)o->buffer);
+    D3D11_MAPPED_SUBRESOURCE map;
+    HRESULT hr = g_context->lpVtbl->Map(g_context, (ID3D11Resource *)o->buffer_staging, 0, D3D11_MAP_READ, 0, &map);
+    if (FAILED(hr))
+        return hr;
+    *data = D2dAlloc(size);
+    if (*data)
+        memcpy(*data, map.pData, size);
+    g_context->lpVtbl->Unmap(g_context, (ID3D11Resource *)o->buffer_staging, 0);
+    return *data ? S_OK : E_OUTOFMEMORY;
 }
 
 HRESULT D2dGpuCompute(const D2dGpuPass *p, D2dImageData *out)
@@ -726,6 +776,8 @@ HRESULT D2dGpuCompute(const D2dGpuPass *p, D2dImageData *out)
     }
     if (w > 16384 || h > 16384)
         return D2DERR_INTERMEDIATE_TOO_LARGE;
+    BOOL analysis = p->analysis != nullptr;
+    UINT32 analysis_size = w * h * 16;
     gpu_enter();
     PassObjects o = {};
     HRESULT hr = gpu_device();
@@ -738,35 +790,41 @@ HRESULT D2dGpuCompute(const D2dGpuPass *p, D2dImageData *out)
         hr = bind_textures(p, &o);
     if (SUCCEEDED(hr)) {
         /*
-         * the system constants: the rectangle to fill in the output texture, then for each input how an output
-         * texel maps to its texture coordinates, as scale and offset in x and then in y.
+         * the system constants as windows lays them out: the output rectangle in the scene and the offset from the
+         * scene to the output texture, then for each input the scale and offset from the scene to its texture
+         * coordinates in x and then in y. an analysis pass only gets the mappings of its inputs.
          */
-        UINT32 size = 16 + p->input_count * 16;
-        BYTE *sys = D2dAllocZero(size);
+        UINT32 head = analysis ? 0 : 24, size = head + p->input_count * 16;
+        BYTE *sys = D2dAllocZero(size ? size : 16);
         if (!sys) {
             hr = E_OUTOFMEMORY;
         } else {
-            INT32 rect[4] = {0, 0, (INT32)w, (INT32)h};
-            memcpy(sys, rect, 16);
+            if (!analysis) {
+                INT32 rect[6] = {r.x0, r.y0, r.x1, r.y1, -r.x0, -r.y0};
+                memcpy(sys, rect, 24);
+            }
             for (UINT32 i = 0; i < p->input_count; i++) {
                 const D2dImageData *in = p->inputs[i];
                 float iw = in && in->surface.w > 0 ? (float)in->surface.w : 1.0f, ih = in && in->surface.h > 0 ? (float)in->surface.h : 1.0f;
                 float ix = in ? (float)in->x : 0.0f, iy = in ? (float)in->y : 0.0f;
-                float k[4] = {1.0f / iw, ((float)r.x0 - ix) / iw, 1.0f / ih, ((float)r.y0 - iy) / ih};
-                memcpy(sys + 16 + i * 16, k, 16);
+                float k[4] = {1.0f / iw, -ix / iw, 1.0f / ih, -iy / ih};
+                memcpy(sys + head + i * 16, k, 16);
             }
-            hr = make_cb(sys, size, &o.cb[0]);
+            hr = make_cb(sys, size ? size : 16, &o.cb[0]);
             D2dFree(sys);
         }
     }
     if (SUCCEEDED(hr) && p->cb_size)
         hr = make_cb(p->cb, p->cb_size, &o.cb[1]);
-    if (SUCCEEDED(hr)) {
-        D3D11_TEXTURE2D_DESC d = {w, h, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_UNORDERED_ACCESS, 0, 0};
+    DXGI_FORMAT format = p->wide ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
+    if (SUCCEEDED(hr) && analysis) {
+        hr = analysis_buffer(&o, analysis_size);
+    } else if (SUCCEEDED(hr)) {
+        D3D11_TEXTURE2D_DESC d = {w, h, 1, 1, format, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_UNORDERED_ACCESS, 0, 0};
         hr = g_device->lpVtbl->CreateTexture2D(g_device, &d, nullptr, &o.target);
+        if (SUCCEEDED(hr))
+            hr = g_device->lpVtbl->CreateUnorderedAccessView(g_device, (ID3D11Resource *)o.target, nullptr, &o.uav);
     }
-    if (SUCCEEDED(hr))
-        hr = g_device->lpVtbl->CreateUnorderedAccessView(g_device, (ID3D11Resource *)o.target, nullptr, &o.uav);
     if (SUCCEEDED(hr)) {
         ID3D11DeviceContext *c = g_context;
         static const UINT zero[4] = {};
@@ -780,7 +838,14 @@ HRESULT D2dGpuCompute(const D2dGpuPass *p, D2dImageData *out)
         c->lpVtbl->CSSetUnorderedAccessViews(c, 0, 1, &o.uav, nullptr);
         c->lpVtbl->Dispatch(c, p->groups[0], p->groups[1], p->groups[2]);
         unbind();
-        hr = read_back(&o, w, h, DXGI_FORMAT_R8G8B8A8_UNORM, r, out);
+        if (analysis) {
+            *p->analysis_size = analysis_size;
+            hr = read_analysis(&o, analysis_size, p->analysis);
+            out->x = r.x0;
+            out->y = r.y0;
+        } else {
+            hr = read_back(&o, w, h, format, r, out);
+        }
     }
     pass_release(&o);
     gpu_leave();

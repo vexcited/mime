@@ -1391,6 +1391,8 @@ typedef struct GNode {
     int kind;
     /* the transform interface of nodes the effect wrote, for the mapping of rectangles. */
     ID2D1Transform *transform;
+    /* the transform hands the results of its pass to this instead of making an image. */
+    ID2D1AnalysisTransform *analysis;
     CInfo *info;
     UINT32 ninputs;
     Conn *in;
@@ -1423,6 +1425,7 @@ static int graph_find(CGraph *g, ID2D1TransformNode *node)
 static void gnode_free(GNode *n)
 {
     D2D_RELEASE(n->transform);
+    D2D_RELEASE(n->analysis);
     D2dReleaseObj(n->info);
     D2D_RELEASE(n->node);
     D2dFree(n->in);
@@ -1437,7 +1440,7 @@ static HRESULT STDMETHODCALLTYPE gr_add(ID2D1TransformGraph *This, ID2D1Transfor
         return E_INVALIDARG;
     if (graph_find(g, node) >= 0)
         return E_INVALIDARG;
-    GNode n = {node, NODE_OTHER, nullptr, nullptr, node->lpVtbl->GetInputCount(node), nullptr};
+    GNode n = {node, NODE_OTHER, nullptr, nullptr, nullptr, node->lpVtbl->GetInputCount(node), nullptr};
     if (D2dIsOfClass(node, &g_blend_class))
         n.kind = NODE_BLEND;
     else if (D2dIsOfClass(node, &g_border_class))
@@ -1468,6 +1471,8 @@ static HRESULT STDMETHODCALLTYPE gr_add(ID2D1TransformGraph *This, ID2D1Transfor
             return E_INVALIDARG;
         }
         n.transform = iface;
+        if (n.kind != NODE_SOURCE)
+            node->lpVtbl->QueryInterface(node, &IID_ID2D1AnalysisTransform, (void **)&n.analysis);
     }
     if (SUCCEEDED(hr) && n.ninputs) {
         n.in = D2dAllocZero(n.ninputs * sizeof(Conn));
@@ -2398,14 +2403,53 @@ static HRESULT crop(const D2dImageData *src, D2dIRect r, D2dImageData *out)
         return S_OK;
     if (!D2dSurfaceInit(&out->surface, r.x1 - r.x0, r.y1 - r.y0))
         return E_OUTOFMEMORY;
+    if (src->fpx && !(out->fpx = D2dAllocZero((SIZE_T)out->surface.w * out->surface.h * 16))) {
+        D2dImageDataFree(out);
+        return E_OUTOFMEMORY;
+    }
     for (int y = r.y0; y < r.y1; y++) {
         int sy = y - src->y;
         if (sy < 0 || sy >= src->surface.h)
             continue;
         int x0 = r.x0 > src->x ? r.x0 : src->x, x1 = r.x1 < src->x + src->surface.w ? r.x1 : src->x + src->surface.w;
-        if (x1 > x0)
-            memcpy(D2dSurfaceRow(&out->surface, y - r.y0) + (x0 - r.x0), D2dSurfaceRow(&src->surface, sy) + (x0 - src->x), (SIZE_T)(x1 - x0) * 4);
+        if (x1 <= x0)
+            continue;
+        memcpy(D2dSurfaceRow(&out->surface, y - r.y0) + (x0 - r.x0), D2dSurfaceRow(&src->surface, sy) + (x0 - src->x), (SIZE_T)(x1 - x0) * 4);
+        if (src->fpx)
+            memcpy(out->fpx + ((SIZE_T)(y - r.y0) * out->surface.w + (x0 - r.x0)) * 4,
+                   src->fpx + ((SIZE_T)sy * src->surface.w + (x0 - src->x)) * 4, (SIZE_T)(x1 - x0) * 16);
     }
+    return S_OK;
+}
+
+static float *pixel_f(const D2dImageData *d, SIZE_T i, float *tmp)
+{
+    if (d->fpx)
+        return d->fpx + i * 4;
+    uint32_t p = d->surface.px[i];
+    tmp[0] = (p >> 16 & 255) / 255.0f;
+    tmp[1] = (p >> 8 & 255) / 255.0f;
+    tmp[2] = (p & 255) / 255.0f;
+    tmp[3] = (p >> 24) / 255.0f;
+    return tmp;
+}
+
+static uint32_t unorm8(float v) { return !(v > 0.0f) ? 0 : v >= 1.0f ? 255 : (uint32_t)(v * 255.0f + 0.5f); }
+
+/* gives 8 bit image data its floats, for a node that mixes inputs of both kinds. */
+static HRESULT widen(D2dImageData *d)
+{
+    if (d->fpx || d->surface.w <= 0 || d->surface.h <= 0)
+        return S_OK;
+    SIZE_T n = (SIZE_T)d->surface.w * d->surface.h;
+    float *f = D2dAlloc(n * 16);
+    if (!f)
+        return E_OUTOFMEMORY;
+    for (SIZE_T i = 0; i < n; i++) {
+        float tmp[4];
+        memcpy(f + i * 4, pixel_f(d, i, tmp), 16);
+    }
+    d->fpx = f;
     return S_OK;
 }
 
@@ -2617,25 +2661,24 @@ static float blend_op(D2D1_BLEND_OPERATION op, float s, float d)
 }
 
 /* each input blended in order onto transparent black, the way a blend transform draws them. */
-static void blend_into(D2dSurface *dst, const D2dSurface *src, const D2D1_BLEND_DESCRIPTION *bd)
+static void blend_into(D2dImageData *dst, const D2dImageData *src, const D2D1_BLEND_DESCRIPTION *bd)
 {
-    SIZE_T n = (SIZE_T)dst->w * dst->h;
+    SIZE_T n = (SIZE_T)dst->surface.w * dst->surface.h;
     for (SIZE_T i = 0; i < n; i++) {
-        uint32_t sp = src->px[i], dp = dst->px[i];
-        float s[4] = {(sp >> 16 & 255) / 255.0f, (sp >> 8 & 255) / 255.0f, (sp & 255) / 255.0f, (sp >> 24) / 255.0f};
-        float d[4] = {(dp >> 16 & 255) / 255.0f, (dp >> 8 & 255) / 255.0f, (dp & 255) / 255.0f, (dp >> 24) / 255.0f};
-        float o[4];
+        float st[4], dt[4], o[4];
+        const float *sp = pixel_f(src, i, st), *dp = pixel_f(dst, i, dt);
         for (int c = 0; c < 3; c++)
-            o[c] = blend_op(bd->blendOperation, s[c] * blend_factor(bd->sourceBlend, s, d, bd->blendFactor, c),
-                            d[c] * blend_factor(bd->destinationBlend, s, d, bd->blendFactor, c));
-        o[3] = blend_op(bd->blendOperationAlpha, s[3] * blend_factor(bd->sourceBlendAlpha, s, d, bd->blendFactor, 3),
-                        d[3] * blend_factor(bd->destinationBlendAlpha, s, d, bd->blendFactor, 3));
-        uint32_t v = 0;
-        for (int c = 0; c < 4; c++) {
-            float x = D2dClampF(o[c], 0.0f, 1.0f) * 255.0f + 0.5f;
-            v |= (uint32_t)x << (c == 3 ? 24 : 16 - 8 * c);
+            o[c] = blend_op(bd->blendOperation, sp[c] * blend_factor(bd->sourceBlend, sp, dp, bd->blendFactor, c),
+                            dp[c] * blend_factor(bd->destinationBlend, sp, dp, bd->blendFactor, c));
+        o[3] = blend_op(bd->blendOperationAlpha, sp[3] * blend_factor(bd->sourceBlendAlpha, sp, dp, bd->blendFactor, 3),
+                        dp[3] * blend_factor(bd->destinationBlendAlpha, sp, dp, bd->blendFactor, 3));
+        if (dst->fpx) {
+            memcpy(dst->fpx + i * 4, o, 16);
+        } else {
+            for (int c = 0; c < 4; c++)
+                o[c] = D2dClampF(o[c], 0.0f, 1.0f);
         }
-        dst->px[i] = v;
+        dst->surface.px[i] = unorm8(o[3]) << 24 | unorm8(o[0]) << 16 | unorm8(o[1]) << 8 | unorm8(o[2]);
     }
 }
 
@@ -2681,6 +2724,26 @@ static DXGI_FORMAT source_format(const CInfo *info, D2D1_BUFFER_PRECISION fallba
     }
 }
 
+static BOOL is_wide(D2D1_BUFFER_PRECISION p)
+{
+    return p == D2D1_BUFFER_PRECISION_16BPC_UNORM || p == D2D1_BUFFER_PRECISION_16BPC_FLOAT || p == D2D1_BUFFER_PRECISION_32BPC_FLOAT;
+}
+
+/* the buffer a pass draws into: what the transform asked for, else the most precise of its inputs, else the effect's. */
+static BOOL pass_wide(Eval *ev, const CInfo *info, const D2dImageData *const *inputs, UINT32 count)
+{
+    if (info && info->precision != D2D1_BUFFER_PRECISION_UNKNOWN)
+        return is_wide(info->precision);
+    for (UINT32 i = 0; i < count; i++) {
+        if (inputs[i]->fpx)
+            return TRUE;
+    }
+    D2D1_BUFFER_PRECISION p = ev->e->precision;
+    if (p == D2D1_BUFFER_PRECISION_UNKNOWN && ev->rt)
+        p = ev->rt->controls.bufferPrecision;
+    return is_wide(p);
+}
+
 static HRESULT run_pass(Eval *ev, GNode *n, D2dIRect r, D2dImageData *out)
 {
     UINT32 count = n->ninputs < MAX_SLOTS ? n->ninputs : MAX_SLOTS;
@@ -2715,12 +2778,19 @@ static HRESULT run_pass(Eval *ev, GNode *n, D2dIRect r, D2dImageData *out)
             if (SUCCEEDED(hr) && !v)
                 hr = E_OUTOFMEMORY;
             if (SUCCEEDED(hr)) {
-                D2dImageData whole = {*v, r.x0, r.y0};
+                D2dImageData whole = {*v, r.x0, r.y0, D2dBitmapFloats(b)};
                 hr = crop(&whole, r, out);
+                D2dFree(whole.fpx);
             }
             D2dRelease(b);
         }
     } else if (SUCCEEDED(hr) && info && info->has_shader) {
+        UINT32 groups[3] = {1, 1, 1};
+        /* the transform may set its constants while it counts its thread groups, so they are read after. */
+        if (n->kind == NODE_COMPUTE) {
+            ID2D1ComputeTransform *t = (ID2D1ComputeTransform *)n->transform;
+            hr = t->lpVtbl->CalculateThreadgroups(t, &want_l, &groups[0], &groups[1], &groups[2]);
+        }
         D2dGpuTexture *res[MAX_SLOTS];
         UINT32 slots[MAX_SLOTS], nres = 0;
         for (UINT32 k = 0; k < MAX_SLOTS; k++) {
@@ -2729,15 +2799,25 @@ static HRESULT run_pass(Eval *ev, GNode *n, D2dIRect r, D2dImageData *out)
                 slots[nres++] = k;
             }
         }
-        D2dGpuPass pass = {&info->shader, info->cb, info->cb_size, res, slots, nres, inputs, info->filter, count, r, {1, 1, 1}};
-        if (n->kind == NODE_COMPUTE) {
-            ID2D1ComputeTransform *t = (ID2D1ComputeTransform *)n->transform;
-            hr = t->lpVtbl->CalculateThreadgroups(t, &want_l, &pass.groups[0], &pass.groups[1], &pass.groups[2]);
-            if (SUCCEEDED(hr))
-                hr = D2dGpuCompute(&pass, out);
-        } else {
-            hr = D2dGpuDraw(&pass, out);
+        BYTE *results = nullptr;
+        UINT32 results_size = 0;
+        D2dGpuPass pass = {&info->shader, info->cb, info->cb_size, res, slots, nres, inputs, info->filter, count, r,
+                           {groups[0], groups[1], groups[2]}, pass_wide(ev, info, inputs, count)};
+        if (n->analysis && n->kind == NODE_COMPUTE) {
+            pass.analysis = &results;
+            pass.analysis_size = &results_size;
         }
+        if (SUCCEEDED(hr))
+            hr = n->kind == NODE_COMPUTE ? D2dGpuCompute(&pass, out) : D2dGpuDraw(&pass, out);
+        if (SUCCEEDED(hr) && results) {
+            hr = n->analysis->lpVtbl->ProcessAnalysisResults(n->analysis, results, results_size);
+            D2dImageDataFree(out);
+            empty_data(r, out);
+        }
+        D2dFree(results);
+    } else if (SUCCEEDED(hr) && n->kind == NODE_DRAW && count) {
+        /* a draw transform that set no pixel shader passes its first input through. */
+        hr = crop(&data[0], r, out);
     } else if (SUCCEEDED(hr)) {
         hr = empty_data(r, out);
     }
@@ -2753,10 +2833,14 @@ static HRESULT node_get(Eval *ev, UINT32 index, D2dIRect want, D2dImageData *out
     HRESULT hr = node_bounds(ev, index, &b);
     if (FAILED(hr))
         return hr;
-    D2dIRect r = rect_and(want, b);
+    GNode *n = &ev->g->nodes[index];
+    /* an analysis looks at all of its input however little of the output is drawn, as windows runs it whole. */
+    D2dIRect r = n->analysis && !rect_empty(b) && b.x0 > -D2D_INF_EXTENT && b.y0 > -D2D_INF_EXTENT && b.x1 < D2D_INF_EXTENT &&
+                         b.y1 < D2D_INF_EXTENT
+                     ? b
+                     : rect_and(want, b);
     if (rect_empty(r))
         return empty_data(want, out);
-    GNode *n = &ev->g->nodes[index];
     switch (n->kind) {
     case NODE_DRAW:
     case NODE_COMPUTE:
@@ -2767,20 +2851,28 @@ static HRESULT node_get(Eval *ev, UINT32 index, D2dIRect want, D2dImageData *out
             return E_OUTOFMEMORY;
         out->x = r.x0;
         out->y = r.y0;
-        for (UINT32 i = 0; i < n->ninputs; i++) {
+        D2dImageData *cut = D2dAllocZero((n->ninputs ? n->ninputs : 1) * sizeof(D2dImageData));
+        if (!cut)
+            return E_OUTOFMEMORY;
+        BOOL wide = FALSE;
+        for (UINT32 i = 0; i < n->ninputs && SUCCEEDED(hr); i++) {
             D2dImageData in;
             hr = conn_get(ev, n->in[i], r, &in);
-            if (FAILED(hr))
-                return hr;
-            D2dImageData cut;
-            hr = crop(&in, r, &cut);
-            D2dImageDataFree(&in);
-            if (FAILED(hr))
-                return hr;
-            blend_into(&out->surface, &cut.surface, &((CBlend *)n->node)->desc);
-            D2dImageDataFree(&cut);
+            if (SUCCEEDED(hr)) {
+                hr = crop(&in, r, &cut[i]);
+                D2dImageDataFree(&in);
+                wide |= cut[i].fpx != nullptr;
+            }
         }
-        return S_OK;
+        if (SUCCEEDED(hr) && wide)
+            hr = widen(out);
+        for (UINT32 i = 0; i < n->ninputs; i++) {
+            if (SUCCEEDED(hr))
+                blend_into(out, &cut[i], &((CBlend *)n->node)->desc);
+            D2dImageDataFree(&cut[i]);
+        }
+        D2dFree(cut);
+        return hr;
     }
     case NODE_BORDER: {
         D2dIRect ib;
@@ -2804,11 +2896,20 @@ static HRESULT node_get(Eval *ev, UINT32 index, D2dIRect want, D2dImageData *out
         }
         out->x = r.x0;
         out->y = r.y0;
+        if (full.fpx && !(out->fpx = D2dAlloc((SIZE_T)out->surface.w * out->surface.h * 16))) {
+            D2dImageDataFree(&full);
+            D2dImageDataFree(out);
+            return E_OUTOFMEMORY;
+        }
         CBorder *bt = (CBorder *)n->node;
         for (int y = r.y0; y < r.y1; y++) {
             int sy = extend(y, ib.y0, ib.y1, bt->y) - ib.y0;
-            for (int x = r.x0; x < r.x1; x++)
-                D2dSurfaceRow(&out->surface, y - r.y0)[x - r.x0] = D2dSurfaceRow(&full.surface, sy)[extend(x, ib.x0, ib.x1, bt->x) - ib.x0];
+            for (int x = r.x0; x < r.x1; x++) {
+                int sx = extend(x, ib.x0, ib.x1, bt->x) - ib.x0;
+                D2dSurfaceRow(&out->surface, y - r.y0)[x - r.x0] = D2dSurfaceRow(&full.surface, sy)[sx];
+                if (full.fpx)
+                    memcpy(out->fpx + ((SIZE_T)(y - r.y0) * out->surface.w + (x - r.x0)) * 4, full.fpx + ((SIZE_T)sy * full.surface.w + sx) * 4, 16);
+            }
         }
         D2dImageDataFree(&full);
         return S_OK;
@@ -2910,13 +3011,8 @@ HRESULT D2dCustomRender(D2dRt *rt, ID2D1Image *image, D2dIRect want, D2dImageDat
         if (e->graph->passthrough >= 0) {
             hr = conn_get(&ev, (Conn){CONN_EFFECT, (UINT32)e->graph->passthrough}, want, out);
         } else if (e->graph->output >= 0) {
-            /* every transform learns its input rectangles before it is asked for pixels. */
-            for (UINT32 i = 0; i < e->graph->n && SUCCEEDED(hr); i++) {
-                D2dIRect b;
-                hr = node_bounds(&ev, i, &b);
-            }
-            if (SUCCEEDED(hr))
-                hr = node_get(&ev, (UINT32)e->graph->output, want, out);
+            /* only the transforms the output reaches learn their rectangles, as nodes left unconnected are never run. */
+            hr = node_get(&ev, (UINT32)e->graph->output, want, out);
         } else {
             hr = D2DERR_INVALID_GRAPH_CONFIGURATION;
         }

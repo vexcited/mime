@@ -376,6 +376,8 @@ HRESULT D2dBitmapCreate(D2dFactory *f, UINT32 w, UINT32 h, DXGI_FORMAT format, D
 const D2dSurface *D2dBitmapView(D2dBitmap *b);
 /* after drawing into the view of a bitmap that is a target, writes the view back to the native pixels. */
 void D2dBitmapCommit(D2dBitmap *b);
+/* the premultiplied rgba floats of a float bitmap as it stores them, nullptr for other formats. */
+float *D2dBitmapFloats(D2dBitmap *b);
 HRESULT D2dBitmapCopyIn(D2dBitmap *b, UINT32 x, UINT32 y, const void *src, UINT32 pitch, UINT32 w, UINT32 h);
 /* the dxgi surface read into the bitmap or the bitmap written to the surface. */
 HRESULT D2dBitmapReadSurface(D2dBitmap *b);
@@ -666,6 +668,11 @@ typedef struct D2dGpuPass {
     UINT32 input_count;
     D2dIRect out;
     UINT32 groups[3];
+    /* the output holds floats, as an intermediate of more than 8 bits does. */
+    BOOL wide;
+    /* for an analysis transform, where the bytes the shader wrote go instead of an image. */
+    BYTE **analysis;
+    UINT32 *analysis_size;
 } D2dGpuPass;
 HRESULT D2dGpuDraw(const D2dGpuPass *p, D2dImageData *out);
 HRESULT D2dGpuCompute(const D2dGpuPass *p, D2dImageData *out);
