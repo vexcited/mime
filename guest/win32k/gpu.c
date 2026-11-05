@@ -159,7 +159,7 @@ NTSTATUS NTAPI NtGdiMimeGpuWait(ULONG64 fence, ULONG timeout_ms)
         if (timeout_ms != 0xFFFFFFFF && now >= deadline)
             return STATUS_TIMEOUT;
         LARGE_INTEGER t = {.QuadPart = -100000}; /* 10 ms. */
-        NTSTATUS s = KeWaitForSingleObject(event, UserRequest, UserMode, TRUE, &t);
+        NTSTATUS s = KeWaitForSingleObject(event, UserRequest, UserMode, FALSE, &t);
         if (s != STATUS_SUCCESS && s != STATUS_TIMEOUT)
             return s;
     }
