@@ -136,8 +136,8 @@ static BOOLEAN follows_call(ULONG_PTR ra)
 {
     if (!MiIsCodeAddress(ra) || !MmIsAddressValid((PVOID)(ra - 8)))
         return FALSE;
-    const UCHAR *c = (const UCHAR *)ra;
 #ifdef __x86_64__
+    const UCHAR *c = (const UCHAR *)ra;
     if (c[-5] == 0xE8)
         return TRUE;
     static constexpr int lengths[] = {2, 3, 4, 6, 7};

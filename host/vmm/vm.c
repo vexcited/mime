@@ -50,6 +50,11 @@ void mime_host_wake_word(uint32_t *word)
     os_sync_wake_by_address_all(word, 4, OS_SYNC_WAKE_BY_ADDRESS_NONE);
 }
 
+void mime_host_wake_word_one(uint32_t *word)
+{
+    os_sync_wake_by_address_any(word, 4, OS_SYNC_WAKE_BY_ADDRESS_NONE);
+}
+
 /* macOS compresses and swaps the memory itself. */
 void mime_memory_monitor_start(MimeVm *vm) {}
 

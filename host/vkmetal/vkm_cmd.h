@@ -122,6 +122,10 @@ enum {
     VKM_OP_QUERY_RESET,
     VKM_OP_QUERY_COPY,
     VKM_OP_EVENT,
+    VKM_OP_GENERATE,       /* generated commands encoded into an indirect command buffer. */
+    VKM_OP_EXECUTE,        /* and run. */
+    VKM_OP_VERTEX_BARRIER, /* what vertex functions wrote, seen by the next ones of the render pass. */
+    VKM_OP_STATS,          /* pipeline statistics the host counts. */
 };
 
 typedef struct VkmOp {
@@ -273,6 +277,55 @@ typedef struct VkmOpBarrier {
     uint64_t after, before; /* MTLStages. */
 } VkmOpBarrier;
 
+/* what a draw or dispatch adds to a pipeline statistics query, by VkQueryPipelineStatisticFlagBits bit. */
+#define VKM_STATS 11
+
+typedef struct VkmOpStats {
+    VkmOp head;
+    VkQueryPool pool;
+    uint32_t query;
+    uint64_t add[VKM_STATS];
+} VkmOpStats;
+
+typedef struct VkmOpGenerate {
+    VkmOp head;
+    id pipeline;
+    uint32_t threads;
+    uint64_t params, icb; /* gpu addresses of the VkmDgcParams and of the buffer's resource id. */
+} VkmOpGenerate;
+
+typedef struct VkmOpExecute {
+    VkmOp head;
+    id icb;
+    bool dispatch;
+    uint32_t chunks;
+    uint64_t ranges; /* gpu address of the chunks' MTLIndirectCommandBufferExecutionRange. */
+} VkmOpExecute;
+
+/* the most commands one execution range runs. */
+#define VKM_DGC_CHUNK 16384u
+
+/* what the stream output vertex function reads, laid out as meta.c's Xfb. */
+typedef struct VkmXfbParams {
+    uint64_t emu, index, buffers[4], counters[4], query, state;
+    uint32_t sizes[4], starts[4], strides[4];
+    uint32_t mode, verts, prims, instances, mul, swap, index_type, index_first, cap, in_base, in_stride;
+    uint32_t invocations, max_vertices, out_base, out_stride, idx_base, counts_base, strip, entry_count;
+    struct {
+        uint32_t buffer, offset, word, count;
+    } entries[32];
+} VkmXfbParams;
+
+/* what the generation kernel reads, laid out as meta.c's Params. */
+typedef struct VkmDgcParams {
+    uint64_t args, count, pushes, ranges, index;
+    uint64_t buffers[31];
+    uint32_t strides[31];
+    uint32_t stride, max_count, token_count, primitive, index_wide, local[3];
+    VkmDgcToken tokens[VKM_DGC_TOKENS];
+    uint32_t push[VKM_PUSH_SIZE / 4];
+} VkmDgcParams;
+
 typedef struct VkmOpQuery {
     VkmOp head;
     VkQueryPool pool;
@@ -289,7 +342,7 @@ enum { VKM_GFX, VKM_COMPUTE };
 /* what the next draw or dispatch is made from, and what the command list already set. */
 struct VkmGfxState {
     VkmDynamic dyn;
-    const VkmCode *vs, *fs, *cs;
+    const VkmCode *vs, *fs, *cs, *gs;
     id compute;            /* the bound compute pipeline state. */
     bool pipeline_dirty, depth_dirty, raster_dirty, viewport_dirty, scissor_dirty, ref_dirty, constants_dirty;
 
@@ -301,6 +354,7 @@ struct VkmGfxState {
     bool has_depth, has_stencil;
 
     uint64_t sets[2][VKM_SETS];
+    uint64_t descriptor_buffers[VKM_SETS]; /* the addresses vkCmdBindDescriptorBuffersEXT gave. */
     uint8_t push[VKM_PUSH_SIZE];
     bool push_dirty[2];
     struct {
@@ -308,6 +362,8 @@ struct VkmGfxState {
     } vertex[VKM_VERTEX_BINDINGS];
     uint64_t index_address, index_size;
     uint32_t index_type; /* MTLIndexType. */
+    const uint8_t *index_host; /* the indices as the host sees them, or NULL when only the gpu does. */
+    bool icb; /* the next pipeline is resolved for indirect command buffers. */
 
     /* the state the list has set since the encoder began. */
     id set_pipeline, set_depth, set_compute;
@@ -315,6 +371,18 @@ struct VkmGfxState {
     uint32_t set_strides[31];
 
     void *legacy; /* the render pass and subpass of vkCmdBeginRenderPass. */
+
+    /* transform feedback: the bound buffers, and the gpu block of the running offsets once it begins. */
+    struct {
+        uint64_t address, size;
+    } xfb[4];
+    uint64_t xfb_counters[4], xfb_state;
+    VkQueryPool xfb_query;
+    uint32_t xfb_query_index;
+
+    /* a pipeline statistics query: the host counts what it knows, fragment shaders count themselves. */
+    VkQueryPool stats;
+    uint32_t stats_query;
 
     /* an occlusion query that spans render passes. */
     VkQueryPool occlusion;

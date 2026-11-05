@@ -17,6 +17,9 @@ typedef struct MIME_DXGI_VULKAN {
     UINT ApiVersion;
 } MIME_DXGI_VULKAN;
 
+/* the adreno's vendor as dxgi gives it, the four characters of the acpi VEN_QCOM. */
+#define DXGI_VENDOR_QUALCOMM 0x4D4F4351
+
 #define MIME_VK_MAX_QUEUES 16
 #define MIME_VK_PROFILE_BYTES 1024
 

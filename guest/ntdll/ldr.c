@@ -1210,6 +1210,10 @@ static NTSTATUS load_dll(PCWSTR name, LOAD_CONTEXT *ctx, PLDR_DATA_TABLE_ENTRY *
         return STATUS_SUCCESS;
     }
     NTSTATUS status = redirected ? STATUS_SUCCESS : find_dll(name, ctx->SearchPath, path, RTL_NUMBER_OF(path));
+#if defined(__x86_64__) && !defined(MIME_X64_NATIVE)
+    if (status == STATUS_DLL_NOT_FOUND && !qualified && LdrpRequestX64Runtime(base_name))
+        status = find_dll(name, ctx->SearchPath, path, RTL_NUMBER_OF(path));
+#endif
     if (!NT_SUCCESS(status))
         return status;
     HANDLE file;

@@ -43,6 +43,8 @@ void HalInitialize(MimeBootInfo *boot);
 void HalLog(const char *text, SIZE_T length);
 DECLSPEC_NORETURN void HalPanic(const char *text);
 ULONG64 HalPhysicalOf(const void *va);
+/* the emulated microsoft hypervisor of arm64, by SMCCC function and hypercall input value. */
+ULONG64 HalHyperVCall(ULONG64 input, ULONG64 in, ULONG64 out);
 void *HalPhysmap(ULONG64 pa);
 ULONG64 HalReadCounter(void);
 void HalArmTimer(ULONG64 deadline_counter);
@@ -62,7 +64,6 @@ void HalSendIpiMask(ULONG64 mask);
 void HalSendFlushIpi(ULONG64 mask);
 #endif
 void HalDisarmTimer(void);
-#define HAL_IPI_INTID 1 /* the sgi asking a processor to reschedule. */
 ULONG64 HalCounterToHns(ULONG64 counter_delta);
 ULONG64 HalHnsToCounter(ULONG64 hns);
 
@@ -221,6 +222,7 @@ typedef struct _KPRCB {
     ULONG64 IpiSent, IpiReceived;
     ULONG64 PendingSince; /* interrupt time an idle processor was asked to dispatch, 0 when not. */
     ULONG64 TimerArmed;   /* counter value the timer is set to, 0 when unset. on x64 it fires once. */
+    ULONG64 DeferredIpis; /* processors to interrupt once this one lets go of the kernel lock, see KiSendIpi. */
 } KPRCB, *PKPRCB;
 
 #ifdef __x86_64__
@@ -265,6 +267,9 @@ typedef struct _KPCR {
 #endif
 
 MIME_STATIC_ASSERT(offsetof(KPCR, Prcb.Number) == KPCR_NUMBER, "pcr number");
+#ifndef __x86_64__
+MIME_STATIC_ASSERT(offsetof(KPCR, Prcb.DeferredIpis) == KPCR_DEFERRED_IPIS, "pcr deferred ipis");
+#endif
 MIME_STATIC_ASSERT(offsetof(KPCR, UserMode) == KPCR_USER_MODE, "pcr user mode");
 
 extern KPCR KiBootPcr;
@@ -291,7 +296,7 @@ FORCEINLINE PKTHREAD KiCurrentThread(void)
  * only around wfi. user mode runs on every processor at once, while kernel code keeps uniprocessor
  * rules: masking interrupts excludes every other kernel path.
  */
-extern volatile ULONG KiKernelLock[8]; /* ticket lock, owner, sleepers in the host, holder, time taken, ticks held. */
+extern volatile ULONG KiKernelLock[8]; /* lock word, owner, sleepers in the host, holder, time taken, ticks held. */
 extern ULONG64 KiLongHoldTicks;
 void KiNoteLongHold(ULONG64 held);
 extern ULONG64 HalHypercallCalls[64], HalHypercallTicks[64], HalHypercallLongest[64], HalHypercallLockedTicks[64];
@@ -330,6 +335,8 @@ void KiInitializeProcessor(PKPCR pcr);
 void KiStartProcessors(void);
 void KiSecondaryStartup(void);
 void KiRequestDispatch(ULONG processor);
+/* interrupts a processor, once the kernel lock is let go when this one holds it: it would only wait for it. */
+void KiSendIpi(ULONG processor);
 void KiInitializeScheduler(void);
 void KiInitializeThread(PKTHREAD thread, PKPROCESS process, PVOID stack_top, PVOID stack_limit,
                         PKSTART_ROUTINE routine, PVOID context);
@@ -403,6 +410,7 @@ DECLSPEC_NORETURN void PsShutdownSystem(ULONG action);
 void KiReadProcessorIds(void);
 BOOLEAN KiQueryHypervisorLeaves(ULONG leaves[][4], ULONG count);
 void KiIdentifyToHypervisor(void);
+void KiPrepareHypervisor(void);
 void KiSetProcessorFeatures(BOOLEAN *features);
 PCSTR KiProcessorVendor(void);
 USHORT KiProcessorModel(void);
@@ -507,6 +515,9 @@ typedef struct _MMADDRESS_SPACE {
     ULONG NextFaultStream;
     /* counts lock-free faults in progress. the Lock holder sets the writer bit and waits for them to leave. */
     volatile ULONG FaultGate;
+    MIME_CODE_LOG *CodeLog; /* the written code pages xta64 reads, see MIME_VM_CODE_WATCH. */
+    ULONG64 CodeLogPage;
+    ULONG_PTR CodeLogVa;
 } MMADDRESS_SPACE, *PMMADDRESS_SPACE;
 
 #define MI_GATE_WRITER 0x80000000u
@@ -1145,11 +1156,13 @@ void PspFreeId(HANDLE id);
 NTSTATUS PsReferenceProcessHandle(HANDLE handle, ACCESS_MASK access, PEPROCESS *process);
 NTSTATUS PsReferenceThreadHandle(HANDLE handle, ACCESS_MASK access, PETHREAD *thread);
 void PspReapDeadThreads(void);
+void PspStartReaper(void);
 extern PSP_SYSTEM_DLL PspNativeSystemDll;
 extern PSP_SYSTEM_DLL PspX86SystemDll;
 NTSTATUS PspInitializeSystemDll(void);
 PPSP_SYSTEM_DLL PspSystemDllForMachine(USHORT machine);
 extern PSECTION PspWow64NtdllSection;
+extern PSECTION PspX64NtdllSection;
 
 /* ------------------------------------------------------------------ se */
 

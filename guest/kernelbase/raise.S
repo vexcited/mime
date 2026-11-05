@@ -28,8 +28,9 @@ RaiseException:
     add     x9, sp, #0x3A0
     str     x9, [sp, #0x100]        /* Sp as the caller left it. */
     str     x30, [sp, #0x108]       /* Pc: resume after the call. */
-    mov     w9, #0x0007             /* CONTEXT_FULL. */
-    movk    w9, #0x0040, lsl #16
+    /* CONTEXT_FULL, and CONTEXT_UNWOUND_TO_CALL as the pc is a return address: scopes are looked up at the call. */
+    mov     w9, #0x0007
+    movk    w9, #0x2040, lsl #16
     str     w9, [sp, #0x000]
     mrs     x9, nzcv
     str     w9, [sp, #0x004]

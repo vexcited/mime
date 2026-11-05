@@ -1,5 +1,8 @@
 #include "vmm.h"
 #include "../gpu/gpu.h"
+#include "../../guest/xta64/x86.h"
+
+#include <mime/hyperv.h>
 
 #include <Hypervisor/Hypervisor.h>
 #include <pthread.h>
@@ -48,6 +51,11 @@ static void set_sys(MimeVcpu *vcpu, hv_sys_reg_t reg, uint64_t v)
     hv_return_t r = hv_vcpu_set_sys_reg((hv_vcpu_t)vcpu->handle, reg, v);
     if (r != HV_SUCCESS)
         mime_warn("hv_vcpu_set_sys_reg(%#x) failed: %#x", (unsigned)reg, r);
+}
+
+uint64_t mime_vcpu_sysreg(MimeVcpu *vcpu, uint32_t reg)
+{
+    return get_sys(vcpu, (hv_sys_reg_t)reg);
 }
 
 static void dump_backtrace(MimeVcpu *vcpu);
@@ -144,12 +152,23 @@ static volatile bool g_dump_requested;
 /*
  * a sampling profiler: kill -PROF starts it and stops it. while on, a thread kicks every vCPU each millisecond and
  * the vCPU records where it was, with ttbr0 telling the guest processes apart; stopping writes the samples to
- * profile.txt in the state directory, one "vcpu pc cpsr ttbr0 lr" line each, to symbolize with the guest's binaries.
+ * profile.txt in the state directory, one "vcpu pc cpsr ttbr0 lr x86" line each, to symbolize with the guest's binaries.
+ * x86 is the x86 address of the block xta64's translated code runs, read through the cpu translated code keeps in
+ * x19: it only means something for samples in translated code.
  */
 typedef struct ProfileSample {
-    uint64_t pc, ttbr0, lr;
+    uint64_t pc, ttbr0, lr, x86;
     uint32_t cpsr, vcpu;
 } ProfileSample;
+
+static uint64_t profile_x86(MimeVcpu *vcpu)
+{
+    uint64_t block, rip;
+    if (!guest_read64(vcpu, get_reg(vcpu, HV_REG_X19) + offsetof(X86Cpu, jit_block), &block) || !block ||
+        !guest_read64(vcpu, block, &rip))
+        return 0;
+    return rip;
+}
 
 #define PROFILE_SAMPLES (1u << 22)
 
@@ -169,8 +188,9 @@ static void profile_record(MimeVcpu *vcpu)
     uint32_t at = __atomic_fetch_add(&g_sample_count, 1, __ATOMIC_RELAXED);
     if (!g_samples || at >= PROFILE_SAMPLES)
         return;
+    uint32_t cpsr = (uint32_t)get_reg(vcpu, HV_REG_CPSR);
     g_samples[at] = (ProfileSample){get_reg(vcpu, HV_REG_PC), get_sys(vcpu, HV_SYS_REG_TTBR0_EL1),
-                                    get_reg(vcpu, HV_REG_LR), (uint32_t)get_reg(vcpu, HV_REG_CPSR), vcpu->index};
+                                    get_reg(vcpu, HV_REG_LR), (cpsr & 0xF) ? 0 : profile_x86(vcpu), cpsr, vcpu->index};
 }
 
 static void profile_write(void)
@@ -182,8 +202,9 @@ static void profile_write(void)
         return;
     uint32_t n = g_sample_count < PROFILE_SAMPLES ? g_sample_count : PROFILE_SAMPLES;
     for (uint32_t i = 0; i < n; i++)
-        fprintf(f, "%u %llx %x %llx %llx\n", g_samples[i].vcpu, (unsigned long long)g_samples[i].pc, g_samples[i].cpsr,
-                (unsigned long long)g_samples[i].ttbr0, (unsigned long long)g_samples[i].lr);
+        fprintf(f, "%u %llx %x %llx %llx %llx\n", g_samples[i].vcpu, (unsigned long long)g_samples[i].pc,
+                g_samples[i].cpsr, (unsigned long long)g_samples[i].ttbr0, (unsigned long long)g_samples[i].lr,
+                (unsigned long long)g_samples[i].x86);
     fclose(f);
     mime_info("profile: %u samples in %s", n, path);
 }
@@ -242,13 +263,17 @@ static bool handle_exception(MimeVcpu *vcpu)
 
     switch (ec) {
     case EC_HVC64: {
-        uint64_t regs[8];
-        for (int i = 0; i < 8; i++)
+        uint64_t regs[18];
+        for (int i = 0; i < 18; i++)
             regs[i] = get_reg(vcpu, (hv_reg_t)(HV_REG_X0 + i));
+        uint64_t immediate = syndrome & 0xFFFF;
         vcpu->exits_hvc[regs[0] & 63]++;
-        mime_hcall_dispatch(vcpu, regs);
-        set_reg(vcpu, HV_REG_X0, regs[0]);
-        set_reg(vcpu, HV_REG_X1, regs[1]);
+        if (immediate == 1 || (immediate == 0 && regs[0] == MIME_HV_SMCCC_HYPERCALL))
+            mime_hv_dispatch(vcpu, immediate == 1, regs);
+        else
+            mime_hcall_dispatch(vcpu, regs);
+        for (int i = 0; i < 18; i++)
+            set_reg(vcpu, (hv_reg_t)(HV_REG_X0 + i), regs[i]);
         return true;
     }
     case EC_WFX:

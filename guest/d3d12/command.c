@@ -778,6 +778,28 @@ static void emit_shading_rate(D12CommandList *list)
     device->vk.vkCmdSetFragmentShadingRateKHR(list->cmd, &size, ops);
 }
 
+/*
+ * a copy, fill or clear that the program follows with a draw or dispatch reading the same resource, without a
+ * barrier as its implicit state promotion lets it think, is done before the work starts. drivers order them on
+ * Windows, and a gpu that runs them at once, as Metal does, would read what was there before.
+ */
+static void copy_fence(D12CommandList *list)
+{
+    if (!list->copied)
+        return;
+    end_rendering(list);
+    VkMemoryBarrier2 b = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    b.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+    b.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    b.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    b.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.memoryBarrierCount = 1;
+    dep.pMemoryBarriers = &b;
+    vk_of(list)->vkCmdPipelineBarrier2(list->cmd, &dep);
+    list->copied = FALSE;
+}
+
 static BOOL prepare_draw(D12CommandList *list)
 {
     D12Device *device = list->child.device;
@@ -785,6 +807,7 @@ static BOOL prepare_draw(D12CommandList *list)
     D12PipelineState *p = list->pipeline;
     if (!list->open || !p || p->compute || !list->graphics.root)
         return FALSE;
+    copy_fence(list);
     BOOL so = p->stream_output && device->has_transform_feedback;
     /* a pipeline with other attachment formats than the current rendering needs a new rendering. */
     BOOL layout = list->rendering && (list->render_rt_count != p->rt_count || list->render_depth_format != p->depth_format ||
@@ -833,6 +856,7 @@ static BOOL prepare_dispatch(D12CommandList *list)
     if (!list->open || !p || !p->compute || !list->compute.root)
         return FALSE;
     end_rendering(list);
+    copy_fence(list);
     if (list->bound_cs != p->pipeline) {
         vk_of(list)->vkCmdBindPipeline(list->cmd, VK_PIPELINE_BIND_POINT_COMPUTE, p->pipeline);
         list->bound_cs = p->pipeline;
@@ -1027,6 +1051,7 @@ static void STDMETHODCALLTYPE list_copy_buffer_region(ID3D12GraphicsCommandList1
         return;
     end_rendering(list);
     VkBufferCopy region = {s->offset + src_offset, d->offset + dst_offset, bytes};
+    list->copied = TRUE;
     vk_of(list)->vkCmdCopyBuffer(list->cmd, s->buffer, d->buffer, 1, &region);
 }
 
@@ -1114,6 +1139,7 @@ static void copy_image(D12CommandList *list, D12Resource *s, D12Resource *d, con
     BOOL src_color = region->srcSubresource.aspectMask == VK_IMAGE_ASPECT_COLOR_BIT;
     BOOL dst_color = region->dstSubresource.aspectMask == VK_IMAGE_ASPECT_COLOR_BIT;
     if (src_color == dst_color || list->child.device->has_maintenance8) {
+        list->copied = TRUE;
         vk->vkCmdCopyImage(list->cmd, s->image, VK_IMAGE_LAYOUT_GENERAL, d->image, VK_IMAGE_LAYOUT_GENERAL, 1, region);
         return;
     }
@@ -1128,10 +1154,12 @@ static void copy_image(D12CommandList *list, D12Resource *s, D12Resource *d, con
         !scratch_buffer(list->allocator, address, &buffer, &offset))
         return;
     VkBufferImageCopy through = {offset, 0, 0, region->srcSubresource, region->srcOffset, region->extent};
+    list->copied = TRUE;
     vk->vkCmdCopyImageToBuffer(list->cmd, s->image, VK_IMAGE_LAYOUT_GENERAL, buffer, 1, &through);
     transfer_barrier(list);
     through.imageSubresource = region->dstSubresource;
     through.imageOffset = region->dstOffset;
+    list->copied = TRUE;
     vk->vkCmdCopyBufferToImage(list->cmd, buffer, d->image, VK_IMAGE_LAYOUT_GENERAL, 1, &through);
 }
 
@@ -1151,6 +1179,7 @@ static void STDMETHODCALLTYPE list_copy_texture_region(ID3D12GraphicsCommandList
         if (!d->image || !s->buffer)
             return;
         VkBufferImageCopy region = footprint_region(s, &src->PlacedFootprint, d, dst->SubresourceIndex, at, box, TRUE);
+        list->copied = TRUE;
         if (region.imageExtent.width && region.imageExtent.height && region.imageExtent.depth)
             vk->vkCmdCopyBufferToImage(list->cmd, s->buffer, d->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
     } else if (dst->Type == D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT &&
@@ -1164,6 +1193,7 @@ static void STDMETHODCALLTYPE list_copy_texture_region(ID3D12GraphicsCommandList
         UINT block = f->vk != VK_FORMAT_UNDEFINED ? f->block : 1, block_bytes = f->vk != VK_FORMAT_UNDEFINED ? f->block_bytes : 4;
         region.bufferOffset += (UINT64)z * fp.Footprint.RowPitch * (fp.Footprint.Height / block) +
                                (UINT64)(y / block) * fp.Footprint.RowPitch + (UINT64)(x / block) * block_bytes;
+        list->copied = TRUE;
         if (region.imageExtent.width && region.imageExtent.height && region.imageExtent.depth)
             vk->vkCmdCopyImageToBuffer(list->cmd, s->image, VK_IMAGE_LAYOUT_GENERAL, d->buffer, 1, &region);
     } else if (dst->Type == D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX &&
@@ -1203,6 +1233,7 @@ static void STDMETHODCALLTYPE list_copy_resource(ID3D12GraphicsCommandList10 *if
     D12Vk *vk = vk_of(list);
     if (d->buffer && s->buffer) {
         VkBufferCopy region = {s->offset, d->offset, D12_MIN(s->desc.Width, d->desc.Width)};
+        list->copied = TRUE;
         vk->vkCmdCopyBuffer(list->cmd, s->buffer, d->buffer, 1, &region);
         return;
     }
@@ -1246,6 +1277,7 @@ static void STDMETHODCALLTYPE list_copy_tiles(ID3D12GraphicsCommandList10 *iface
         VkDeviceSize at = b->offset + buffer_offset + (VkDeviceSize)i * 65536;
         if (!r->image) {
             VkBufferCopy region = {to_buffer ? place.opaque : at, to_buffer ? at : place.opaque, 65536};
+            list->copied = TRUE;
             vk->vkCmdCopyBuffer(list->cmd, to_buffer ? r->buffer : b->buffer, to_buffer ? b->buffer : r->buffer, 1,
                                 &region);
             continue;
@@ -1255,6 +1287,7 @@ static void STDMETHODCALLTYPE list_copy_tiles(ID3D12GraphicsCommandList10 *iface
             continue;
         VkBufferImageCopy region = {at, r->tile_shape.width, r->tile_shape.height,
                                     {VK_IMAGE_ASPECT_COLOR_BIT, place.mip, place.layer, 1}, place.at, place.extent};
+        list->copied = TRUE;
         if (to_buffer)
             vk->vkCmdCopyImageToBuffer(list->cmd, r->image, VK_IMAGE_LAYOUT_GENERAL, b->buffer, 1, &region);
         else
@@ -1278,6 +1311,7 @@ static void resolve(D12CommandList *list, D12Resource *d, UINT dst_sub, UINT dst
         region.srcOffset = (VkOffset3D){rect->left, rect->top, 0};
         region.extent = (VkExtent3D){(UINT)(rect->right - rect->left), (UINT)(rect->bottom - rect->top), 1};
     }
+    list->copied = TRUE;
     vk_of(list)->vkCmdResolveImage(list->cmd, s->image, VK_IMAGE_LAYOUT_GENERAL, d->image, VK_IMAGE_LAYOUT_GENERAL, 1,
                                    &region);
 }
@@ -1309,6 +1343,7 @@ static void code_feedback(D12CommandList *list, D12Resource *d, UINT dst_sub, D1
     VkExtent3D b = D12MipExtent(bytes, byte_layers.mipLevel);
     VkOffset3D size = {(INT)D12_MIN(e.width, b.width), (INT)D12_MIN(e.height, b.height), 1};
     VkImageBlit blit = {decode ? map_layers : byte_layers, {{0}, size}, decode ? byte_layers : map_layers, {{0}, size}};
+    list->copied = TRUE;
     vk_of(list)->vkCmdBlitImage(list->cmd, s->image, VK_IMAGE_LAYOUT_GENERAL, d->image, VK_IMAGE_LAYOUT_GENERAL, 1,
                                 &blit, VK_FILTER_NEAREST);
 }
@@ -1599,6 +1634,7 @@ static void STDMETHODCALLTYPE list_clear_render_target_view(ID3D12GraphicsComman
         range.layerCount = 1;
     }
     order_targets(list, &t->resource->image, 1);
+    list->copied = TRUE;
     vk_of(list)->vkCmdClearColorImage(list->cmd, t->resource->image, VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
 }
 
@@ -1643,6 +1679,7 @@ static void fill_pattern(D12CommandList *list, VkBuffer buffer, VkDeviceSize off
         for (UINT i = 0; i < 4; i++)
             w[i] = pattern[i % pattern_size];
         memcpy(&word, w, 4);
+        list->copied = TRUE;
         vk->vkCmdFillBuffer(list->cmd, buffer, offset, size & ~3ull, word);
         return;
     }
@@ -1654,6 +1691,7 @@ static void fill_pattern(D12CommandList *list, VkBuffer buffer, VkDeviceSize off
         VkDeviceSize n = D12_MIN((VkDeviceSize)chunk_size, size - done) & ~3ull;
         if (!n)
             break;
+        list->copied = TRUE;
         vk->vkCmdUpdateBuffer(list->cmd, buffer, offset + done, n, chunk);
         done += n;
     }
@@ -1708,6 +1746,7 @@ static void clear_uav_rects(D12CommandList *list, const D12DescriptorInfo *info,
                                                                      volume ? 1 : info->range.layerCount};
                 region.imageOffset = (VkOffset3D){left, y, (INT)z};
                 region.imageExtent = (VkExtent3D){(UINT)(right - left), (UINT)D12_MIN((LONG)rows, bottom - y), 1};
+                list->copied = TRUE;
                 vk_of(list)->vkCmdCopyBufferToImage(list->cmd, buffer, r->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
             }
     }
@@ -1763,6 +1802,7 @@ static void clear_uav(D12CommandList *list, D3D12_CPU_DESCRIPTOR_HANDLE cpu, con
         clear_uav_rects(list, info, uints, floats, rect_count, rects);
         return;
     }
+    list->copied = TRUE;
     vk_of(list)->vkCmdClearColorImage(list->cmd, r->image, VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
 }
 
@@ -2382,6 +2422,7 @@ static void atomic_copy(D12CommandList *list, ID3D12Resource *dst, UINT64 dst_of
         return;
     end_rendering(list);
     VkBufferCopy region = {s->offset + src_offset, d->offset + dst_offset, size};
+    list->copied = TRUE;
     vk_of(list)->vkCmdCopyBuffer(list->cmd, s->buffer, d->buffer, 1, &region);
 }
 
@@ -2424,6 +2465,7 @@ static void STDMETHODCALLTYPE list_write_buffer_immediate(ID3D12GraphicsCommandL
         memcpy(&value, p + 8, 4);
         VkBuffer buffer;
         VkDeviceSize offset;
+        list->copied = TRUE;
         if (D12AddressLookup(list->child.device, address, &buffer, &offset, nullptr))
             vk_of(list)->vkCmdUpdateBuffer(list->cmd, buffer, offset, 4, &value);
     }
@@ -2538,6 +2580,7 @@ static VkPipeline prepare_rays(D12CommandList *list)
         return VK_NULL_HANDLE;
     D12Vk *vk = vk_of(list);
     end_rendering(list);
+    copy_fence(list);
     if (list->bound_rt != pipeline) {
         vk->vkCmdBindPipeline(list->cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipeline);
         list->bound_rt = pipeline;

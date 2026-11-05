@@ -141,7 +141,7 @@ typedef struct Parser {
     ULONG FirstLine;
     Token *Tokens;
     UINT Count, Capacity, Index;
-    void *Jump[10];
+    void *Jump[21]; /* the registers arm64 keeps, x64 and x86 need fewer. */
     LONG ErrorNumber;
     ULONG ErrorLine, ErrorCol;
     BOOL InClass, InProc, InSub, InFunction, InProperty;

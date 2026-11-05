@@ -94,7 +94,7 @@ static int reduce(double x, double *r)
     /* pi/2 split in 33-bit parts, so n times each part is exact for moderate n. */
     static const double pio2_1 = 1.57079632673412561417e+00, pio2_2 = 6.07710050630396597660e-11,
                         pio2_3 = 2.02226624871116645580e-21, pio2_3t = 8.47842766036889956997e-32;
-    double n = __builtin_rint(x * 6.36619772367581382433e-01);
+    double n = __builtin_roundeven(x * 6.36619772367581382433e-01);
     *r = (((x - n * pio2_1) - n * pio2_2) - n * pio2_3) - n * pio2_3t;
     return (int)((int64_t)n & 3);
 }
@@ -198,7 +198,7 @@ double xm_exp2(double x)
         return 1.0 / 0.0;
     if (x < -1080)
         return 0;
-    double n = __builtin_rint(x);
+    double n = __builtin_roundeven(x);
     double f = (x - n) * 6.93147180559945286227e-01; /* in [-ln2/2, ln2/2] */
     double sum = 1, term = 1;
     for (int k = 1; k < 30; k++) {

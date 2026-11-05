@@ -188,9 +188,14 @@ static void paint(HWND hwnd, STATIC_DATA *s, HDC dc)
         if (s->Image && GetObjectW(s->Image, sizeof(bm), &bm)) {
             HDC mem = CreateCompatibleDC(dc);
             HGDIOBJ old = SelectObject(mem, s->Image);
-            int x = (style & SS_CENTERIMAGE) ? (client.right - bm.bmWidth) / 2 : 0;
-            int y = (style & SS_CENTERIMAGE) ? (client.bottom - bm.bmHeight) / 2 : 0;
-            BitBlt(dc, x, y, bm.bmWidth, bm.bmHeight, mem, 0, 0, SRCCOPY);
+            if ((style & SS_REALSIZECONTROL) && !(style & SS_CENTERIMAGE)) {
+                SetStretchBltMode(dc, COLORONCOLOR);
+                StretchBlt(dc, 0, 0, client.right, client.bottom, mem, 0, 0, bm.bmWidth, bm.bmHeight, SRCCOPY);
+            } else {
+                int x = (style & SS_CENTERIMAGE) ? (client.right - bm.bmWidth) / 2 : 0;
+                int y = (style & SS_CENTERIMAGE) ? (client.bottom - bm.bmHeight) / 2 : 0;
+                BitBlt(dc, x, y, bm.bmWidth, bm.bmHeight, mem, 0, 0, SRCCOPY);
+            }
             SelectObject(mem, old);
             DeleteDC(mem);
         }

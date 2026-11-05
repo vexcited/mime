@@ -585,6 +585,19 @@ enum {
     MTL4AlphaToOneStateEnabled = 0x1,
 };
 
+/* MTL4IndirectCommandBufferSupportState. */
+enum {
+    MTL4IndirectCommandBufferSupportStateDisabled = 0x0,
+    MTL4IndirectCommandBufferSupportStateEnabled = 0x1,
+};
+
+/* MTLIndirectCommandType. */
+enum {
+    MTLIndirectCommandTypeDraw = 0x1,
+    MTLIndirectCommandTypeDrawIndexed = 0x2,
+    MTLIndirectCommandTypeConcurrentDispatch = 0x20,
+};
+
 /* MTL4VisibilityOptions. */
 enum {
     MTL4VisibilityOptionNone = 0x0,

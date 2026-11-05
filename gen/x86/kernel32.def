@@ -565,6 +565,7 @@ EXPORTS
     GetLogicalProcessorInformationEx=kernelbase.GetLogicalProcessorInformationEx
     GetLongPathNameA=_Kernel32Thunk_GetLongPathNameA@12
     GetLongPathNameW=_Kernel32Thunk_GetLongPathNameW@12
+    GetMachineTypeAttributes=kernelbase.GetMachineTypeAttributes
     GetMaximumProcessorCount=_Kernel32Thunk_GetMaximumProcessorCount@4
     GetMaximumProcessorGroupCount=_Kernel32Thunk_GetMaximumProcessorGroupCount@0
     GetMemoryErrorHandlingCapabilities=_Kernel32Thunk_GetMemoryErrorHandlingCapabilities@4

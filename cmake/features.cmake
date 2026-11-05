@@ -9,7 +9,8 @@ mime_objects(${features_arch}-features ${features_arch} SOURCES ${features_sourc
 set(features_libs ${MIME_LIB_${features_arch}}/ntdll.lib ${MIME_LIB_${features_arch}}/kernel32.lib
     ${MIME_LIB_${features_arch}}/advapi32.lib ${MIME_LIB_${features_arch}}/user32.lib
     ${MIME_LIB_${features_arch}}/comctl32.lib ${MIME_LIB_${features_arch}}/gdi32.lib ${MIME_LIB_${features_arch}}/winhttp.lib
-    ${MIME_LIB_${features_arch}}/wintrust.lib ${MIME_LIB_${features_arch}}/crypt32.lib)
+    ${MIME_LIB_${features_arch}}/wintrust.lib ${MIME_LIB_${features_arch}}/crypt32.lib
+    ${MIME_LIB_${features_arch}}/msi.lib)
 foreach(features_name features dism fondue)
     mime_link(${MIME_OUT_${features_arch}}/${features_name}.exe ${features_arch}
         OBJECTS ${features_arch}-features ${features_arch}-toolutil ${features_arch}-chkstk ${features_arch}-lib-cbs ${features_arch}-lib-msdelta

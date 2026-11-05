@@ -128,6 +128,11 @@ uint32_t ManagementRemove(RUN *run);
 uint32_t FontsRemove(RUN *run, const FEATURE_DEF *feature);
 BOOL FontsPresent(RUN *run, const FEATURE_DEF *feature);
 
+/* vcruntime.c */
+uint32_t VcRuntimeInstall(RUN *run, PCWSTR package);
+BOOL VcRuntimePresent(RUN *run);
+uint32_t VcRuntimeRemove(RUN *run);
+
 /* trust.c */
 DWORD VerifyPackage(RUN *run, const FEATURE_DEF *feature, PCWSTR path);
 

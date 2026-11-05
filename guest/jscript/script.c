@@ -227,13 +227,7 @@ void engine_report(Engine *e)
 
 static void stack_base(Engine *e)
 {
-    SIZE_T base;
-#ifdef _WIN64
-    __asm__ volatile("movq %%gs:8, %0" : "=r"(base));
-#else
-    __asm__ volatile("movl %%fs:4, %0" : "=r"(base));
-#endif
-    e->StackBase = (void *)base;
+    e->StackBase = NtCurrentTeb()->NtTib.StackBase;
 }
 
 HRESULT engine_enter(Engine *e)

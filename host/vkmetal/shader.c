@@ -5,6 +5,8 @@
  */
 #include "vkm_cmd.h"
 
+#include <stdio.h>
+
 typedef struct Library {
     struct Library *next;
     uint64_t hash;
@@ -36,6 +38,17 @@ static id library_get(VkDevice device, const char *source, uint64_t hash)
             return library;
         }
     pthread_mutex_unlock(&g_lock);
+    /* MIME_VK_DUMP names a folder that gets every source made, by its hash, to read what a shader became. */
+    const char *dump = getenv("MIME_VK_DUMP");
+    if (dump && *dump) {
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/%016llx.metal", dump, (unsigned long long)hash);
+        FILE *f = fopen(path, "w");
+        if (f) {
+            fputs(source, f);
+            fclose(f);
+        }
+    }
     void *pool = objc_autoreleasePoolPush();
     id desc = mtl_new("MTL4LibraryDescriptor");
     id options = compile_options();
@@ -102,9 +115,106 @@ static uint8_t msl_kind(VkDescriptorType type)
     case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
     case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
     case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
-    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER: return VKM_MSL_IMAGE;
+    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+    /* every type a mutable binding holds is a texture, whose views the shaders declare at the same binding. */
+    case VK_DESCRIPTOR_TYPE_MUTABLE_EXT: return VKM_MSL_IMAGE;
     default: return VKM_MSL_BUFFER;
     }
+}
+
+struct VkmSource {
+    uint32_t *spirv;
+    size_t words;
+    char entry[128];
+    VkmMslBinding *bindings;
+    uint32_t binding_count, set_mask;
+    VkmMslSpec *spec;
+    uint32_t spec_count;
+};
+
+static VkResult compile_msl(VkDevice device, const uint32_t *spirv, size_t words, const char *entry, int model,
+                            VkShaderStageFlagBits stage, const VkmMslBinding *bindings, uint32_t count,
+                            uint32_t set_mask, const VkmMslSpec *spec, uint32_t spec_count, const uint8_t *widen,
+                            bool dual_source, VkmCode *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->stage = stage;
+    VkmMslResult r;
+    if (!vkm_msl(spirv, words, entry, model, bindings, count, set_mask, spec, spec_count, widen, dual_source, &r)) {
+        VKM_ERROR("a shader does not translate to MSL: %s", r.error);
+        return VK_ERROR_INVALID_SHADER_NV;
+    }
+    out->hash = vkm_hash(r.source, strlen(r.source), vkm_hash(r.entry, strlen(r.entry), 0));
+    out->library = library_get(device, r.source, out->hash);
+    free(r.source);
+    if (!out->library)
+        return VK_ERROR_INVALID_SHADER_NV;
+    out->function = vkm_function(out->library, r.entry);
+    out->local = r.local;
+    out->inputs = r.inputs;
+    memcpy(out->input, r.input, sizeof(out->input));
+    out->outputs = r.outputs;
+    out->writes_depth = r.writes_depth;
+    out->writes_stencil = r.writes_stencil;
+    return VK_SUCCESS;
+}
+
+/* a vertex function of the geometry stage's emulation, with the buffers it binds after the layout's. */
+static VkResult variant(VkDevice device, VkShaderStageFlagBits stage, const uint32_t *spirv, size_t words,
+                        const char *entry, const VkmMslBinding *bindings, uint32_t count, uint32_t set_mask,
+                        const VkmMslSpec *spec, uint32_t spec_count, const VkmMslBinding *extra, uint32_t extra_count,
+                        VkmCode **out)
+{
+    VkmMslBinding *all = vkm_zalloc(sizeof(*all) * (count + extra_count));
+    VkmCode *code = vkm_zalloc(sizeof(*code));
+    if (!all || !code) {
+        free(all);
+        free(code);
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+    }
+    if (count)
+        memcpy(all, bindings, sizeof(*all) * count);
+    memcpy(all + count, extra, sizeof(*all) * extra_count);
+    VkResult r = compile_msl(device, spirv, words, entry, execution_model(stage), stage, all, count + extra_count,
+                             set_mask, spec, spec_count, nullptr, false, code);
+    free(all);
+    if (r != VK_SUCCESS) {
+        free(code);
+        return r;
+    }
+    *out = code;
+    return VK_SUCCESS;
+}
+
+static const VkmMslBinding g_gs_buffers[] = {
+    {VKM_EMU_SET, 0, 1, VKM_BUFFER_VERTEX, VKM_BUFFER_VERTEX, VKM_MSL_BUFFER},
+    {VKM_EMU_SET, 1, 1, VKM_BUFFER_VERTEX + 1, VKM_BUFFER_VERTEX + 1, VKM_MSL_BUFFER},
+};
+
+static VkResult compile_geometry(VkDevice device, const uint32_t *spirv, size_t words, const char *entry,
+                                 const VkmMslBinding *bindings, uint32_t count, uint32_t set_mask,
+                                 const VkmMslSpec *spec, uint32_t spec_count, VkmCode *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->stage = VK_SHADER_STAGE_GEOMETRY_BIT;
+    VkmGsInfo expand = {}, replay = {};
+    VkResult r = VK_ERROR_INVALID_SHADER_NV;
+    if (vkm_spirv_geometry(spirv, words, false, &expand) && vkm_spirv_geometry(spirv, words, true, &replay)) {
+        r = variant(device, VK_SHADER_STAGE_VERTEX_BIT, expand.code, expand.words, entry, bindings, count, set_mask, spec, spec_count, g_gs_buffers,
+                    2, &out->expand);
+        if (r == VK_SUCCESS)
+            r = variant(device, VK_SHADER_STAGE_VERTEX_BIT, replay.code, replay.words, entry, bindings, count, set_mask, spec, spec_count,
+                        g_gs_buffers, 1, &out->replay);
+    } else {
+        VKM_ERROR("a geometry shader its emulation cannot rewrite");
+    }
+    free(expand.code);
+    free(replay.code);
+    out->gs = expand;
+    out->gs.code = nullptr;
+    if (r != VK_SUCCESS)
+        vkm_code_free(out);
+    return r;
 }
 
 VkResult vkm_compile(VkDevice device, const uint32_t *spirv, size_t size, const char *entry,
@@ -121,8 +231,8 @@ VkResult vkm_compile(VkDevice device, const uint32_t *spirv, size_t size, const 
         if (layout->sets[s])
             count += layout->sets[s]->count;
     VkmMslBinding *bindings = vkm_zalloc(sizeof(*bindings) * MIME_MAX(count, 1u));
-    VkmMslSpec *values = spec ? vkm_zalloc(sizeof(*values) * MIME_MAX(spec->mapEntryCount, 1u)) : nullptr;
-    if (!bindings || (spec && !values)) {
+    VkmMslSpec *values = vkm_zalloc(sizeof(*values) * MIME_MAX(spec ? spec->mapEntryCount : 0, 1u));
+    if (!bindings || !values) {
         free(bindings);
         free(values);
         return VK_ERROR_OUT_OF_HOST_MEMORY;
@@ -146,33 +256,170 @@ VkResult vkm_compile(VkDevice device, const uint32_t *spirv, size_t size, const 
         memcpy(&v, (const uint8_t *)spec->pData + e->offset, MIME_MIN(e->size, sizeof(v)));
         values[spec_count++] = (VkmMslSpec){e->constantID, (uint32_t)e->size, v};
     }
-    VkmMslResult r;
-    bool ok = vkm_msl(spirv, size / 4, entry ? entry : "main", model, bindings, count, set_mask, values, spec_count, &r);
+    if (!entry)
+        entry = "main";
+    VkResult r;
+    if (stage == VK_SHADER_STAGE_GEOMETRY_BIT)
+        r = compile_geometry(device, spirv, size / 4, entry, bindings, count, set_mask, values, spec_count, out);
+    else
+        r = compile_msl(device, spirv, size / 4, entry, model, stage, bindings, count, set_mask, values, spec_count,
+                        nullptr, false, out);
+    VkmXfb xfb;
+    if (r == VK_SUCCESS && (stage == VK_SHADER_STAGE_VERTEX_BIT || stage == VK_SHADER_STAGE_GEOMETRY_BIT) &&
+        vkm_spirv_xfb(spirv, size / 4, &xfb) && (out->xfb = malloc(sizeof(xfb))))
+        *out->xfb = xfb;
+    VkmSource *src = nullptr;
+    if (r == VK_SUCCESS && (stage == VK_SHADER_STAGE_VERTEX_BIT || stage == VK_SHADER_STAGE_FRAGMENT_BIT) &&
+        (src = vkm_zalloc(sizeof(*src))) &&
+        (src->spirv = malloc(size))) {
+        memcpy(src->spirv, spirv, size);
+        src->words = size / 4;
+        snprintf(src->entry, sizeof(src->entry), "%s", entry);
+        src->bindings = bindings;
+        src->binding_count = count;
+        src->set_mask = set_mask;
+        src->spec = values;
+        src->spec_count = spec_count;
+        out->source = src;
+        return r;
+    }
+    free(src);
     free(values);
     free(bindings);
-    if (!ok) {
-        VKM_ERROR("a shader does not translate to MSL: %s", r.error);
-        return VK_ERROR_INVALID_SHADER_NV;
+    return r;
+}
+
+static pthread_mutex_t g_capture_lock = PTHREAD_MUTEX_INITIALIZER;
+
+const VkmCode *vkm_code_capture(VkDevice device, const VkmCode *vs)
+{
+    if (!vs || !vs->source)
+        return nullptr;
+    VkmCode *code = (VkmCode *)vs;
+    pthread_mutex_lock(&g_capture_lock);
+    if (!code->capture && code->record_words != ~0u) {
+        VkmSource *src = code->source;
+        uint32_t *spirv = nullptr, words = 0, builtins = 0;
+        size_t length = 0;
+        VkmCode *c = nullptr;
+        static const VkmMslBinding emu = {VKM_EMU_SET, 0, 1, VKM_BUFFER_AUX, VKM_BUFFER_AUX, VKM_MSL_BUFFER};
+        if (vkm_spirv_capture(src->spirv, src->words, &spirv, &length, &words, &builtins) &&
+            variant(device, VK_SHADER_STAGE_VERTEX_BIT, spirv, length, src->entry, src->bindings, src->binding_count,
+                    src->set_mask, src->spec, src->spec_count, &emu, 1, &c) == VK_SUCCESS) {
+            code->capture = c;
+            code->record_words = words;
+            code->record_builtins = builtins;
+        } else {
+            VKM_ERROR("a vertex shader its outputs cannot be captured from");
+            code->record_words = ~0u;
+        }
+        free(spirv);
     }
-    out->hash = vkm_hash(r.source, strlen(r.source), vkm_hash(r.entry, strlen(r.entry), 0));
-    out->library = library_get(device, r.source, out->hash);
-    free(r.source);
-    if (!out->library)
-        return VK_ERROR_INVALID_SHADER_NV;
-    out->function = vkm_function(out->library, r.entry);
-    out->local = r.local;
-    out->inputs = r.inputs;
-    memcpy(out->input, r.input, sizeof(out->input));
-    out->outputs = r.outputs;
-    out->writes_depth = r.writes_depth;
-    out->writes_stencil = r.writes_stencil;
-    return VK_SUCCESS;
+    pthread_mutex_unlock(&g_capture_lock);
+    return code->capture;
+}
+
+const VkmCode *vkm_code_counted(VkDevice device, const VkmCode *fs)
+{
+    if (!fs || !fs->source)
+        return nullptr;
+    VkmCode *code = (VkmCode *)fs;
+    pthread_mutex_lock(&g_capture_lock);
+    if (!code->counted && !code->count_failed) {
+        VkmSource *src = code->source;
+        uint32_t *spirv = nullptr;
+        size_t length = 0;
+        VkmCode *c = nullptr;
+        static const VkmMslBinding counter = {VKM_EMU_SET, 0, 1, VKM_BUFFER_AUX, VKM_BUFFER_AUX, VKM_MSL_BUFFER};
+        if (vkm_spirv_count(src->spirv, src->words, &spirv, &length) &&
+            variant(device, VK_SHADER_STAGE_FRAGMENT_BIT, spirv, length, src->entry, src->bindings,
+                    src->binding_count, src->set_mask, src->spec, src->spec_count, &counter, 1, &c) == VK_SUCCESS) {
+            code->counted = c;
+        } else {
+            code->count_failed = true;
+        }
+        free(spirv);
+    }
+    pthread_mutex_unlock(&g_capture_lock);
+    return code->counted;
+}
+
+const VkmCode *vkm_code_widened(VkDevice device, const VkmCode *vs, const uint8_t *widen)
+{
+    if (!vs || !vs->source)
+        return nullptr;
+    VkmCode *code = (VkmCode *)vs;
+    pthread_mutex_lock(&g_capture_lock);
+    VkmWidened *w = code->widened;
+    while (w && memcmp(w->widen, widen, sizeof(w->widen)))
+        w = w->next;
+    if (!w && (w = vkm_zalloc(sizeof(*w)))) {
+        VkmSource *src = code->source;
+        memcpy(w->widen, widen, sizeof(w->widen));
+        w->code = vkm_zalloc(sizeof(*w->code));
+        if (w->code &&
+            compile_msl(device, src->spirv, src->words, src->entry, execution_model(VK_SHADER_STAGE_VERTEX_BIT),
+                        VK_SHADER_STAGE_VERTEX_BIT, src->bindings, src->binding_count, src->set_mask, src->spec,
+                        src->spec_count, widen, false, w->code) != VK_SUCCESS) {
+            free(w->code);
+            w->code = nullptr;
+        }
+        w->next = code->widened;
+        code->widened = w;
+    }
+    pthread_mutex_unlock(&g_capture_lock);
+    return w ? w->code : nullptr;
+}
+
+const VkmCode *vkm_code_dual(VkDevice device, const VkmCode *fs)
+{
+    if (!fs || !fs->source)
+        return nullptr;
+    VkmCode *code = (VkmCode *)fs;
+    pthread_mutex_lock(&g_capture_lock);
+    if (!code->dual && !code->dual_failed) {
+        VkmSource *src = code->source;
+        VkmCode *c = vkm_zalloc(sizeof(*c));
+        if (c && compile_msl(device, src->spirv, src->words, src->entry,
+                             execution_model(VK_SHADER_STAGE_FRAGMENT_BIT), VK_SHADER_STAGE_FRAGMENT_BIT, src->bindings,
+                             src->binding_count, src->set_mask, src->spec, src->spec_count, nullptr, true,
+                             c) == VK_SUCCESS) {
+            code->dual = c;
+        } else {
+            free(c);
+            code->dual_failed = true;
+        }
+    }
+    pthread_mutex_unlock(&g_capture_lock);
+    return code->dual;
 }
 
 void vkm_code_free(VkmCode *code)
 {
+    while (code->widened) {
+        VkmWidened *w = code->widened;
+        code->widened = w->next;
+        if (w->code) {
+            vkm_code_free(w->code);
+            free(w->code);
+        }
+        free(w);
+    }
     mtl_release(code->function);
     mtl_release(code->library);
+    VkmCode *variants[] = {code->capture, code->expand, code->replay, code->counted, code->dual};
+    for (size_t i = 0; i < MIME_ARRAY_COUNT(variants); i++)
+        if (variants[i]) {
+            vkm_code_free(variants[i]);
+            free(variants[i]);
+        }
+    free(code->xfb);
+    if (code->source) {
+        free(code->source->spirv);
+        free(code->source->bindings);
+        free(code->source->spec);
+        free(code->source);
+    }
     memset(code, 0, sizeof(*code));
 }
 
@@ -261,6 +508,8 @@ static id make_render_pipeline(VkDevice device, const VkmPipelineKey *key, const
     M_V_I(desc, "setAlphaToOneState:", key->alpha_to_one ? MTL4AlphaToOneStateEnabled : MTL4AlphaToOneStateDisabled);
     M_V_B(desc, "setRasterizationEnabled:", !key->discard);
     M_V_U(desc, "setInputPrimitiveTopology:", key->topology_class);
+    if (key->icb)
+        M_V_I(desc, "setSupportIndirectCommandBuffers:", MTL4IndirectCommandBufferSupportStateEnabled);
     id colors = M_ID(desc, "colorAttachments");
     for (uint32_t i = 0; i < VKM_COLORS; i++) {
         if (!key->colors[i])
@@ -312,10 +561,10 @@ id vkm_render_pipeline(VkDevice device, const VkmPipelineKey *key, const VkmCode
     return state;
 }
 
-id vkm_compute_pipeline(VkDevice device, const VkmCode *code)
+id vkm_compute_pipeline(VkDevice device, const VkmCode *code, bool icb)
 {
     uint64_t hash = code->hash ^ ((uint64_t)code->local.width << 40 | (uint64_t)code->local.height << 20 |
-                                  (uint64_t)code->local.depth);
+                                  (uint64_t)code->local.depth) ^ (icb ? 1ull << 63 : 0);
     pthread_mutex_lock(&g_lock);
     id state = vkm_cache_find(g_compute, &hash, sizeof(hash), hash);
     pthread_mutex_unlock(&g_lock);
@@ -325,6 +574,8 @@ id vkm_compute_pipeline(VkDevice device, const VkmCode *code)
     id desc = mtl_new("MTL4ComputePipelineDescriptor");
     M_V_ID(desc, "setComputeFunctionDescriptor:", code->function);
     MTL_MSG(void (*)(id, SEL, MTLSize), desc, "setRequiredThreadsPerThreadgroup:", code->local);
+    if (icb)
+        M_V_I(desc, "setSupportIndirectCommandBuffers:", MTL4IndirectCommandBufferSupportStateEnabled);
     id error = nullptr;
     state = MTL_MSG(id (*)(id, SEL, id, id, id *), device->compiler,
                     "newComputePipelineStateWithDescriptor:compilerTaskOptions:error:", desc, nullptr, &error);
@@ -677,7 +928,7 @@ static void pipeline_free(VkPipeline p)
 {
     if (!p)
         return;
-    for (int i = 0; i < 2; i++)
+    for (int i = 0; i < 3; i++)
         if (p->has[i])
             vkm_code_free(&p->stages[i]);
     free(p->gfx);
@@ -707,6 +958,11 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateGraphicsPipelines(VkDevice device, V
             r = stage_compile(device, fs, info->layout, &p->stages[1]);
             p->has[1] = r == VK_SUCCESS;
         }
+        const VkPipelineShaderStageCreateInfo *gs = stage_of(info, VK_SHADER_STAGE_GEOMETRY_BIT);
+        if (r == VK_SUCCESS && gs) {
+            r = stage_compile(device, gs, info->layout, &p->stages[2]);
+            p->has[2] = r == VK_SUCCESS;
+        }
         if (r != VK_SUCCESS) {
             pipeline_free(p);
             result = r;
@@ -730,7 +986,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateComputePipelines(VkDevice device, Vk
         p->bind = VK_PIPELINE_BIND_POINT_COMPUTE;
         VkResult r = stage_compile(device, &infos[i].stage, infos[i].layout, &p->stages[0]);
         p->has[0] = r == VK_SUCCESS;
-        if (r == VK_SUCCESS && !(p->compute = mtl_retain(vkm_compute_pipeline(device, &p->stages[0]))))
+        if (r == VK_SUCCESS && !(p->compute = mtl_retain(vkm_compute_pipeline(device, &p->stages[0], false))))
             r = VK_ERROR_INVALID_SHADER_NV;
         if (r != VK_SUCCESS) {
             pipeline_free(p);

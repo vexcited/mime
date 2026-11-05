@@ -484,6 +484,7 @@ EXPORTS
     GetLogicalProcessorInformationEx=_GetLogicalProcessorInformationEx@12
     GetLongPathNameA=_GetLongPathNameA@12
     GetLongPathNameW=_GetLongPathNameW@12
+    GetMachineTypeAttributes=_GetMachineTypeAttributes@8
     GetMaximumProcessorCount=_GetMaximumProcessorCount@4
     GetMaximumProcessorGroupCount=_GetMaximumProcessorGroupCount@0
     GetMemoryErrorHandlingCapabilities=_GetMemoryErrorHandlingCapabilities@4

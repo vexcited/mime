@@ -14,15 +14,16 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved) { return TRU
 /*
  * the user mode driver version as windows numbers it, read by programs through CheckInterfaceSupport. on x64 the
  * host gpu's package is told as windows tells one, nvidia's in the last digit of the major and the minor, so 580.95
- * is 32.0.15.8095. the arm64 machine's adreno package is 31.0.63.7.
+ * is 32.0.15.8095. the arm64 machine's adreno package is 31.0.63.7, which its translated programs see too.
  */
 static LARGE_INTEGER umd_version(const VkPhysicalDeviceProperties *p)
 {
     LARGE_INTEGER v;
-#if defined(__aarch64__)
     v.HighPart = (31 << 16);
     v.LowPart = (63 << 16) | 7;
-#else
+    if (MimeArm64Machine())
+        return v;
+#if !defined(__aarch64__)
     UINT a = 31, b = 0, c, d;
     if (p->vendorID == 0x10DE) {
         UINT n = (p->driverVersion >> 22) * 100 + ((p->driverVersion >> 14) & 0xFF);
@@ -40,27 +41,27 @@ static LARGE_INTEGER umd_version(const VkPhysicalDeviceProperties *p)
 }
 
 /*
- * on arm64 the adapter presents the reference machine, a qualcomm adreno x1-85, whatever the host gpu is. on x64 the
- * host gpu is real hardware the guest runs, so it is described as itself.
+ * an arm64 machine presents the reference machine, a qualcomm adreno x1-85, whatever the host gpu is, to its x64 and
+ * x86 programs as well. the adreno is an acpi device, whose vendor and device windows give as the four characters of
+ * VEN_QCOM and DEV_0C36. on x64 the host gpu is real hardware the guest runs, so it is described as itself.
  */
 static void identify(const VkPhysicalDeviceProperties *p, DXGI_ADAPTER_DESC3 *desc)
 {
-#if defined(__aarch64__)
-    static const WCHAR name[] = L"Qualcomm(R) Adreno(TM) X1-85 GPU";
-    memcpy(desc->Description, name, sizeof(name));
-    desc->VendorId = 0x5143;
-    desc->DeviceId = 0x0C36;
-    desc->SubSysId = 0x10280C69;
-    desc->Revision = 0x0086;
-    (void)p;
-#else
+    if (MimeArm64Machine()) {
+        static const WCHAR name[] = L"Qualcomm(R) Adreno(TM) X1-85 GPU";
+        memcpy(desc->Description, name, sizeof(name));
+        desc->VendorId = DXGI_VENDOR_QUALCOMM;
+        desc->DeviceId = 0x36334330; /* "0C36" */
+        desc->SubSysId = 0x10280C69;
+        desc->Revision = 0x0086;
+        return;
+    }
     MultiByteToWideChar(CP_UTF8, 0, p->deviceName, -1, desc->Description, 128);
     desc->Description[127] = 0;
     desc->VendorId = p->vendorID;
     desc->DeviceId = p->deviceID;
     desc->Revision = 0;
     desc->SubSysId = 0;
-#endif
 }
 
 static void describe(DxgiGpu *gpu, UINT index)

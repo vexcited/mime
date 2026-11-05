@@ -4551,4 +4551,4 @@ static const MX_NATIVE_FN g_functions[] = {
     x_wglUseFontOutlinesW,
 };
 
-const MX_NATIVE_TABLE MimeX64Thunks = {647, 0, g_functions};
+const MX_NATIVE_TABLE OpenGL32X64Thunks = {647, 0, g_functions};

@@ -110,6 +110,13 @@ void FrameClientFromWindow(RECT *r, DWORD style, DWORD ex_style, UINT dpi)
         r->bottom = r->top;
 }
 
+/* a window whose WM_NCCALCSIZE took the whole frame as client area, as borderless toolkit windows do: no frame shows. */
+BOOLEAN FrameClientOnly(const WND *w)
+{
+    return w->ClientRect.left == w->WindowRect.left && w->ClientRect.top == w->WindowRect.top &&
+           w->ClientRect.right == w->WindowRect.right && w->ClientRect.bottom == w->WindowRect.bottom;
+}
+
 void FrameGetVisibleRect(WND *w, RECT *r)
 {
     LONG width = w->WindowRect.right - w->WindowRect.left;
@@ -124,6 +131,8 @@ void FrameGetVisibleRect(WND *w, RECT *r)
         *r = (RECT){m.Border, m.Border, width - m.Border, height - m.Border};
         return;
     }
+    if (FrameClientOnly(w))
+        return;
     r->left = m.VisibleInset;
     r->right = width - m.VisibleInset;
     r->bottom = height - m.VisibleInset;
@@ -1028,7 +1037,7 @@ void FrameBleed(WND *w)
         return;
     FRAME_METRICS m;
     FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
-    if (!m.VisibleInset)
+    if (!m.VisibleInset || FrameClientOnly(w))
         return;
     RECT vis;
     FrameGetVisibleRect(w, &vis);

@@ -85,6 +85,23 @@ static const FEATURE_DEF g_catalog[] = {
         .Terms = "This library is Microsoft's. The package names its license at https://github.com/PowerShell/PowerShell-Tests/blob/master/LICENSE.",
         .Fonts = management_files, .FontCount = 1,
     },
+    {
+        .Name = "VCRuntime.x64",
+        .DisplayName = "Microsoft Visual C++ Runtime for x64 programs",
+        .Version = "Latest",
+        .Vendor = "Microsoft Corporation",
+        /*
+         * The redistributable of the latest runtime, which holds the arm64x runtime and the x64 one. Windows on arm
+         * installs the first, mime runs x64 programs with x64 system dlls and takes the second out of it.
+         */
+        .Url = {[FEATURE_ARCH_X64] = "https://aka.ms/vc14/vc_redist.x64.exe"},
+        .Signer = "Microsoft Corporation",
+        .MinSize = 10ull << 20,
+        .MaxSize = 100ull << 20,
+        .DownloadMB = 19,
+        .InstallMB = 15,
+        .Handler = FEATURE_HANDLER_VCRUNTIME,
+    },
 };
 
 /* The fonts, in fontcatalog.c. */
@@ -180,7 +197,10 @@ bool FeatureUrlAllowed(const char *url)
             return false;
         n++;
     }
-    static const char domain[] = ".microsoft.com";
+    /* aka.ms is Microsoft's link shortener, it only redirects. */
+    static const char domain[] = ".microsoft.com", shortener[] = "aka.ms";
+    if (n == sizeof(shortener) - 1 && equal_nocase(host, shortener, n))
+        return true;
     return n > sizeof(domain) - 1 && equal_nocase(host + n - (sizeof(domain) - 1), domain, sizeof(domain) - 1);
 }
 

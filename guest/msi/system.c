@@ -43,7 +43,8 @@ BOOL MimeMsiIs64BitPackage(MIME_MSI_PACKAGE *package)
     MIME_MSI_SUMMARY_VALUE value;
     BOOL is64 = FALSE;
     if (!MimeMsiSummaryProperty(package->Database, 7, &value) && value.Type == 30 && value.Text) {
-        is64 = !_wcsnicmp(value.Text, L"x64", 3) || !_wcsnicmp(value.Text, L"Intel64", 7) || !_wcsnicmp(value.Text, L"AMD64", 5);
+        is64 = !_wcsnicmp(value.Text, L"x64", 3) || !_wcsnicmp(value.Text, L"Intel64", 7) || !_wcsnicmp(value.Text, L"AMD64", 5) ||
+               !_wcsnicmp(value.Text, L"Arm64", 5);
         MimeMsiFree(value.Text);
     }
     return is64;

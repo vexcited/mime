@@ -432,6 +432,11 @@ typedef enum D12DescriptorKind {
     D12_DESC_RECORD,
 } D12DescriptorKind;
 
+/* the view dimensions of shader resource and unordered access views, which share their numbers up to 3d. */
+#define D12_NULL_DIMENSIONS 11
+/* the images the stand ins of null views are views of: 1d, 2d and cube, 3d, multisampled 2d. */
+#define D12_NULL_IMAGES 4
+
 /* what cpu only heaps keep beside a view's bytes, for ClearUnorderedAccessView. */
 typedef struct D12DescriptorInfo {
     D12Resource *resource;
@@ -760,6 +765,8 @@ typedef struct D12CommandList {
     int pushed_compute;
     D12DescriptorHeap *heaps[2];
     BOOL heaps_dirty;
+    /* a copy, fill or clear was recorded since the last draw, dispatch or barrier the list made after one. */
+    BOOL copied;
 
     /* the input assembler. */
     D3D_PRIMITIVE_TOPOLOGY topology;
@@ -853,6 +860,7 @@ struct D12Device {
     VkPhysicalDeviceDescriptorBufferPropertiesEXT db;
     BOOL has_depth_clip, has_custom_border, has_transform_feedback, has_conditional, has_divisor, has_zero_divisor;
     BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation, has_statistics, has_so_queries;
+    BOOL has_null_descriptor;
     BOOL has_conservative, has_line_rasterization, has_patch_points, has_unused_attachments;
     /* shader model 6: 16-bit arithmetic, wave operations in every stage, mesh and amplification shaders. */
     BOOL has_native16, has_waves, has_mesh;
@@ -914,6 +922,11 @@ struct D12Device {
     UINT atomic_stride;
     UINT sampler_size;
     BYTE null_descriptors[D12_DESC_RECORD][64];
+    /* the null views of each dimension, shader resource then unordered access: stand ins of it without null descriptors. */
+    BYTE null_views[2][D12_NULL_DIMENSIONS][64];
+    VkImage null_images[D12_NULL_IMAGES];
+    D12Allocation null_image_memory[D12_NULL_IMAGES];
+    VkImageView null_image_views[D12_NULL_DIMENSIONS];
     SRWLOCK texel_lock;
     D12TexelEntry *texels;
     UINT texel_count, texel_capacity;

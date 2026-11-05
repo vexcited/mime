@@ -2,6 +2,7 @@
  * arm64 side of the hal: hvc hypercalls, the generic timer and the gicv3.
  */
 #include "../../ntos.h"
+#include <mime/hyperv.h>
 
 ULONG64 HalHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULONG64 a5, ULONG64 a6,
                      PULONG64 value)
@@ -16,6 +17,16 @@ ULONG64 HalHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4,
     __asm__ volatile("hvc #0" : "+r"(x0), "+r"(x1) : "r"(x2), "r"(x3), "r"(x4), "r"(x5), "r"(x6) : "memory");
     if (value)
         *value = x1;
+    return x0;
+}
+
+ULONG64 HalHyperVCall(ULONG64 input, ULONG64 in, ULONG64 out)
+{
+    register ULONG64 x0 __asm__("x0") = MIME_HV_SMCCC_HYPERCALL;
+    register ULONG64 x1 __asm__("x1") = input;
+    register ULONG64 x2 __asm__("x2") = in;
+    register ULONG64 x3 __asm__("x3") = out;
+    __asm__ volatile("hvc #0" : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3) :: "memory");
     return x0;
 }
 

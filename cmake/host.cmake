@@ -70,7 +70,7 @@ if(APPLE)
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party;${CMAKE_SOURCE_DIR}/third_party/glslang")
     target_link_libraries(mime PRIVATE "-framework Hypervisor" "-framework AppKit" "-framework QuartzCore"
         "-framework CoreGraphics" "-framework ImageIO" "-framework Metal" "-framework IOSurface" "-framework Carbon"
-        "-framework AudioToolbox" "-framework CoreAudio" objc)
+        "-framework AudioToolbox" "-framework CoreAudio" "-framework Security" objc)
     set_target_properties(mime PROPERTIES LINKER_LANGUAGE CXX)
     add_custom_command(TARGET mime POST_BUILD
         COMMAND codesign -s - -f --entitlements ${CMAKE_SOURCE_DIR}/host/mime.entitlements $<TARGET_FILE:mime>

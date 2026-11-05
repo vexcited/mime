@@ -20,7 +20,8 @@ static void usage(void)
     printf("  mime apps --installed                  list the installed programs\n");
     printf("  mime uninstall <id>                    run the uninstaller of an installed program, or of an app\n");
     printf("  mime features                          list the features mime fetches from Microsoft when a program\n");
-    printf("                                         needs them: the .NET Framework, WebView2 and the fonts\n");
+    printf("                                         needs them: the .NET Framework, WebView2, the fonts and the\n");
+    printf("                                         Visual C++ runtime of x64 programs\n");
     printf("  mime features enable <name> [--source file]\n");
     printf("                                         get a feature now; with --source the file is taken from the\n");
     printf("                                         disk and checked the same way\n");

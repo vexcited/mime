@@ -121,7 +121,14 @@ struct VkDevice_T {
     struct VkmGrave *graves;
     uint32_t grave_count, grave_capacity;
     pthread_mutex_t grave_lock;
+    /* the allocations by gpu address, for the descriptors of descriptor buffers that only give one. */
+    struct VkDeviceMemory_T **memories;
+    uint32_t memory_count, memory_capacity;
+    pthread_mutex_t memory_lock;
 };
+
+/* instance.c: whether the device advertises the extension. */
+bool vkm_device_extension(const char *name);
 
 void vkm_resident(VkDevice device, id allocation);
 /*
@@ -145,6 +152,15 @@ enum {
     VKM_MEMORY_TYPES = 2,
 };
 
+/* a texture over part of a buffer, which a texel buffer descriptor made from an address needs. */
+typedef struct VkmTexel {
+    struct VkmTexel *next;
+    uint64_t address, range;
+    VkFormat format;
+    id texture;
+    MTLResourceID rid;
+} VkmTexel;
+
 struct VkDeviceMemory_T {
     id buffer;  /* over the whole allocation. */
     id heap;    /* to place images in; none for host pointer imports. */
@@ -153,7 +169,12 @@ struct VkDeviceMemory_T {
     uint8_t *map;
     uint64_t size, gpu;
     uint32_t type;
+    VkmTexel *texels; /* under the device's memory lock. */
 };
+
+/* the allocation a gpu address lies in, or NULL. */
+VkDeviceMemory vkm_memory_at(VkDevice device, uint64_t address);
+MTLResourceID vkm_texel_rid(VkDevice device, uint64_t address, uint64_t range, VkFormat format);
 
 struct VkBuffer_T {
     uint64_t size;
@@ -228,6 +249,10 @@ struct VkDescriptorSetLayout_T {
     VkmBinding *bindings;
     uint32_t slots;
     VkDescriptorSetLayoutCreateFlags flags;
+    /* the immutable samplers of a layout that embeds them, for a descriptor buffer to bind. */
+    VkDevice device;
+    id embedded;
+    uint64_t embedded_gpu;
 };
 
 struct VkDescriptorPool_T {
@@ -265,7 +290,55 @@ const VkmBinding *vkm_set_binding(VkDescriptorSetLayout layout, uint32_t binding
 
 /* ------------------------------------------------------------------ shaders. */
 
+/* spirv.c: the geometry stage as vertex functions, and the words of the buffer they share. */
+#define VKM_GS_BUILTINS 24
+enum {
+    VKM_GS_VBASE,         /* the vertex index of a vertex shader's first record. */
+    VKM_GS_CAP,           /* records an instance. */
+    VKM_GS_IN_BASE,       /* the word of the first. */
+    VKM_GS_IN_STRIDE,     /* words a record. */
+    VKM_GS_BASE_INSTANCE,
+    VKM_GS_IN_BUILTINS,   /* the word of a record's built-ins. */
+    VKM_GS_PRIMS,         /* primitives an instance. */
+    VKM_GS_MUL,           /* vertices from one primitive to the next. */
+    VKM_GS_SWAP,          /* odd triangles of strips swap their first two vertices. */
+    VKM_GS_INDEX_TYPE,    /* 0 for none, 1 for 16 bits, 2 for 32. */
+    VKM_GS_INDEX_FIRST,
+    VKM_GS_OUT_BASE,      /* the word of the geometry shader's first record. */
+    VKM_GS_IDX_BASE,      /* the word of its first index. */
+    VKM_GS_COUNT_BASE,    /* the word of the vertices each invocation emitted, for points. */
+    VKM_GS_HEADER = 16,
+};
+
+typedef struct VkmGsInfo {
+    uint32_t in_vertices, out_kind; /* points, line or triangle strips. */
+    uint32_t max_vertices, invocations;
+    uint32_t out_stride, out_builtins;
+    uint32_t *code;
+    size_t words;
+} VkmGsInfo;
+
+bool vkm_spirv_capture(const uint32_t *spirv, size_t words, uint32_t **out, size_t *out_words, uint32_t *record_words,
+                       uint32_t *builtins);
+bool vkm_spirv_geometry(const uint32_t *spirv, size_t words, bool replay, VkmGsInfo *info);
+bool vkm_spirv_count(const uint32_t *spirv, size_t words, uint32_t **out, size_t *out_words);
+
+/* what stream output takes of a stage's records: each output's buffer, byte offset, first word and words. */
+typedef struct VkmXfb {
+    uint32_t count;
+    uint32_t strides[4];
+    struct {
+        uint32_t buffer, offset, word, count;
+    } entries[32];
+} VkmXfb;
+
+bool vkm_spirv_xfb(const uint32_t *spirv, size_t words, VkmXfb *out);
+
+typedef struct VkmSource VkmSource;
+
 /* a stage compiled to Metal, shared by every shader made from the same MSL. */
+typedef struct VkmWidened VkmWidened;
+
 typedef struct VkmCode {
     VkShaderStageFlagBits stage;
     id library;
@@ -276,7 +349,29 @@ typedef struct VkmCode {
     uint32_t outputs; /* fragment outputs written. */
     bool writes_depth, writes_stencil;
     uint64_t hash; /* of the MSL and its entry point. */
+    /* a vertex shader keeps its SPIR-V for the variant writing records, made when a geometry shader needs it. */
+    VkmSource *source;
+    struct VkmCode *capture;
+    uint32_t record_words, record_builtins;
+    /* a vertex shader's variants reading narrow unsigned attributes into its signed inputs. */
+    VkmWidened *widened;
+    /* a fragment shader's variant giving its output 1 as the second source of dual source blending. */
+    struct VkmCode *dual;
+    bool dual_failed;
+    /* a fragment shader's variant counting its invocations for pipeline statistics. */
+    struct VkmCode *counted;
+    bool count_failed;
+    /* a geometry shader is the two vertex functions of its emulation. */
+    struct VkmCode *expand, *replay;
+    VkmGsInfo gs;
+    VkmXfb *xfb; /* the stream output of a vertex or geometry shader, or NULL. */
 } VkmCode;
+
+struct VkmWidened {
+    uint8_t widen[VKM_VERTEX_ATTRIBUTES]; /* VKM_WIDEN_*. */
+    VkmCode *code;                        /* null when it did not compile. */
+    VkmWidened *next;
+};
 
 typedef struct VkmLayoutView {
     uint32_t set_count;
@@ -288,6 +383,11 @@ VkResult vkm_compile(VkDevice device, const uint32_t *spirv, size_t size, const 
                      VkShaderStageFlagBits stage, const VkSpecializationInfo *spec, const VkmLayoutView *layout,
                      VkmCode *out);
 void vkm_code_free(VkmCode *code);
+/* the vertex shader writing its outputs to records, or NULL. */
+const VkmCode *vkm_code_capture(VkDevice device, const VkmCode *vs);
+const VkmCode *vkm_code_counted(VkDevice device, const VkmCode *fs);
+const VkmCode *vkm_code_widened(VkDevice device, const VkmCode *vs, const uint8_t *widen);
+const VkmCode *vkm_code_dual(VkDevice device, const VkmCode *fs);
 /* a library of MSL written for the driver itself. */
 id vkm_library(VkDevice device, const char *source);
 id vkm_function(id library, const char *name);
@@ -322,7 +422,8 @@ typedef struct VkmPipelineKey {
     VkmBlend blend[VKM_COLORS];
     uint8_t samples, topology_class, discard, alpha_to_coverage, alpha_to_one;
     uint8_t attribute_count;
-    uint16_t pad;
+    uint8_t icb; /* the pipeline runs from indirect command buffers too. */
+    uint8_t pad;
     struct {
         uint8_t location, binding;
         uint16_t format;
@@ -353,13 +454,46 @@ typedef struct VkmGfxStatic VkmGfxStatic;
 
 struct VkPipeline_T {
     VkPipelineBindPoint bind;
-    VkmCode stages[2]; /* vertex and fragment, or compute in the first. */
-    bool has[2];
+    VkmCode stages[3]; /* vertex, fragment and geometry, or compute in the first. */
+    bool has[3];
     id compute; /* MTLComputePipelineState. */
     VkmGfxStatic *gfx;
 };
 
-id vkm_compute_pipeline(VkDevice device, const VkmCode *code);
+id vkm_compute_pipeline(VkDevice device, const VkmCode *code, bool icb);
+
+/* a step of each sequence of device generated commands, what the generation kernel reads. */
+enum {
+    VKM_DGC_PUSH = 1,
+    VKM_DGC_VERTEX,
+    VKM_DGC_INDEX,
+    VKM_DGC_SEQUENCE,
+    VKM_DGC_DRAW,
+    VKM_DGC_DRAW_INDEXED,
+    VKM_DGC_DISPATCH,
+};
+
+#define VKM_DGC_TOKENS 16
+
+typedef struct VkmDgcToken {
+    uint32_t type, offset;
+    uint32_t dst, size; /* the push constant bytes, the vertex binding, or the index buffer's input mode. */
+} VkmDgcToken;
+
+struct VkIndirectCommandsLayoutEXT_T {
+    uint32_t stride, token_count;
+    bool pushes, dispatch;
+    VkmDgcToken tokens[VKM_DGC_TOKENS];
+};
+
+/* indirect command buffers a command buffer's generated commands are encoded into, kept until it is reset. */
+typedef struct VkmIcb {
+    struct VkmIcb *next;
+    id icb;
+    MTLResourceID rid;
+    uint32_t capacity;
+    bool dispatch, used;
+} VkmIcb;
 
 /* render passes, as the dynamic rendering their subpasses begin. */
 typedef struct VkmSubpass {
@@ -454,6 +588,7 @@ struct VkCommandBuffer_T {
     uint8_t *cmds;
     size_t cmd_size, cmd_capacity;
     VkmChunk *chunks; /* upload memory the commands use. */
+    VkmIcb *icbs;
     VkmGfxState *state;
     VkResult status;
 };
@@ -490,6 +625,11 @@ id vkm_meta_clear(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t m
                   uint32_t samples, bool layered);
 id vkm_meta_blit(VkDevice device, uint32_t format, uint32_t source_type, bool depth, uint32_t samples);
 id vkm_meta_depth_state(VkDevice device, bool depth, bool stencil);
+/* the kernel encoding generated draws or dispatches into an indirect command buffer, one thread a sequence. */
+id vkm_meta_generate(VkDevice device, bool dispatch);
+/* the vertex function writing a draw's stream output, and the kernel making a draw of what it wrote. */
+id vkm_meta_xfb(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t samples);
+id vkm_meta_byte_count(VkDevice device);
 
 /* ------------------------------------------------------------------ entry points. */
 

@@ -6,6 +6,8 @@
 
 static uint32_t values_of(VkQueryType type, VkQueryPipelineStatisticFlags statistics)
 {
+    if (type == VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT)
+        return 2;
     return type == VK_QUERY_TYPE_PIPELINE_STATISTICS ? MIME_MAX(__builtin_popcount(statistics), 1) : 1;
 }
 
@@ -15,7 +17,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateQueryPool(VkDevice device, const VkQ
     switch (info->queryType) {
     case VK_QUERY_TYPE_OCCLUSION:
     case VK_QUERY_TYPE_TIMESTAMP:
-    case VK_QUERY_TYPE_PIPELINE_STATISTICS: break;
+    case VK_QUERY_TYPE_PIPELINE_STATISTICS:
+    case VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT: break;
     default: return VK_ERROR_FEATURE_NOT_PRESENT;
     }
     VkQueryPool pool = vkm_zalloc(sizeof(*pool));

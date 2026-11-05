@@ -88,6 +88,12 @@ static BOOL visible_frame(HWND hwnd, RECT *r)
         InflateRect(r, -border, -border);
         return TRUE;
     }
+    /* a client area over the whole window leaves no frame to leave out. */
+    RECT client;
+    POINT origin = {0, 0};
+    if (GetClientRect(hwnd, &client) && ClientToScreen(hwnd, &origin) && origin.x == r->left && origin.y == r->top &&
+        client.right == r->right - r->left && client.bottom == r->bottom - r->top)
+        return TRUE;
     int inset = border > 1 ? border - 1 : 0;
     r->left += inset;
     r->right -= inset;

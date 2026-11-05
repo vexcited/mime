@@ -794,51 +794,54 @@ GLAPI void APIENTRY glFinish(void)
 
 /* ---------------------------------------------------------------- strings */
 
-#if defined(__aarch64__)
-/* the reference machine's gpu. */
-#define GL_VENDOR_TEXT "Qualcomm"
-#define GL_RENDERER_TEXT "Qualcomm Adreno X1-85"
-#define GL_BUILD_TEXT "31.0.63.7"
-#else
-/* on x64 the host gpu is real hardware: its vendor decides what the strings name. */
-#define GL_BUILD_TEXT "31.0.101.5333"
+/*
+ * an arm64 machine's gpu is the reference machine's, which its x64 and x86 programs see too. on x64 the host gpu is
+ * real hardware: its vendor decides what the strings name.
+ */
+#define ADRENO_BUILD "31.0.63.7"
+#define HOST_BUILD "31.0.101.5333"
+
 static const char *gl_vendor_text(void)
 {
+    if (MimeArm64Machine())
+        return "Qualcomm";
+#if !defined(__aarch64__)
     uint32_t regs[4];
     __asm__ volatile("cpuid" : "=a"(regs[0]), "=b"(regs[1]), "=c"(regs[2]), "=d"(regs[3]) : "a"(0), "c"(0));
     if (*(const uint32_t *)"Auth" == regs[1] && *(const uint32_t *)"enti" == regs[3])
         return "AuthenticAMD";
+#endif
     return "Intel";
 }
 
 static const char *gl_renderer_text(void)
 {
+    if (MimeArm64Machine())
+        return "Qualcomm Adreno X1-85";
     const char *vendor = gl_vendor_text();
     return vendor[0] == 'A' ? "AMD Radeon(TM) Graphics" : "Intel(R) Arc(TM) Graphics";
 }
-#endif
+
+#define GL_VERSIONS(build)                                                                                         \
+    {"3.0 - Build " build, "3.2 - Build " build, "3.3 - Build " build, "4.0 - Build " build, "4.1 - Build " build}
+
+static const char *gl_version_text(int major, int minor)
+{
+    static const char *const versions[2][5] = {GL_VERSIONS(HOST_BUILD), GL_VERSIONS(ADRENO_BUILD)};
+    int k = major == 4 ? (minor ? 4 : 3) : major == 3 && minor >= 2 ? (minor == 3 ? 2 : 1) : 0;
+    return versions[MimeArm64Machine() ? 1 : 0][k];
+}
 
 GLAPI const GLubyte *APIENTRY glGetString(GLenum name)
 {
     GL_CONTEXT_OR_RETURN(nullptr);
     switch (name) {
-#ifdef __aarch64__
-    case GL_VENDOR:
-        return (const GLubyte *)GL_VENDOR_TEXT;
-    case GL_RENDERER:
-        return (const GLubyte *)GL_RENDERER_TEXT;
-#else
     case GL_VENDOR:
         return (const GLubyte *)gl_vendor_text();
     case GL_RENDERER:
         return (const GLubyte *)gl_renderer_text();
-#endif
     case GL_VERSION:
-        if (ctx->major == 4)
-            return (const GLubyte *)(ctx->minor ? "4.1 - Build " GL_BUILD_TEXT : "4.0 - Build " GL_BUILD_TEXT);
-        if (ctx->major == 3 && ctx->minor >= 2)
-            return (const GLubyte *)(ctx->minor == 3 ? "3.3 - Build " GL_BUILD_TEXT : "3.2 - Build " GL_BUILD_TEXT);
-        return (const GLubyte *)"3.0 - Build " GL_BUILD_TEXT;
+        return (const GLubyte *)gl_version_text(ctx->major, ctx->minor);
     case GL_SHADING_LANGUAGE_VERSION:
         if (ctx->major == 4)
             return (const GLubyte *)"4.10";

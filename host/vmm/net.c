@@ -52,6 +52,8 @@ typedef struct NetSocket {
     bool queued; /* in the ring. */
     bool remote;  /* connected, or connecting, to another host than this one. */
     bool severed; /* a remote connection aborted when the machine went offline. */
+    uint64_t polled; /* the poll that listed it first, and where. */
+    uint32_t polled_at;
 } NetSocket;
 
 typedef struct NetResolve {
@@ -676,14 +678,32 @@ static uint64_t net_poll(MimeVm *vm, uint64_t pa, uint64_t count, bool arm, uint
         return MIME_HC_STATUS_INVALID;
     struct pollfd fds[NET_MAX_POLL];
     NetSocket *socks[NET_MAX_POLL];
+    /*
+     * select lists a socket once for each of its sets. macos reports a descriptor that is listed twice in one of its
+     * entries only, so the others are not polled and take its answer.
+     */
+    static uint64_t generation;
+    generation++;
     for (uint64_t i = 0; i < count; i++) {
         socks[i] = lookup(entries[i].socket);
         fds[i].fd = socks[i] ? socks[i]->fd : -1;
         fds[i].events = POLLIN | POLLOUT;
         fds[i].revents = 0;
+        if (socks[i] && socks[i]->polled == generation) {
+            fds[i].fd = -1;
+        } else if (socks[i]) {
+            socks[i]->polled = generation;
+            socks[i]->polled_at = (uint32_t)i;
+        }
     }
     if (count)
         poll(fds, (nfds_t)count, 0);
+    for (uint64_t i = 0; i < count; i++) {
+        if (socks[i] && socks[i]->polled_at != i) {
+            fds[i].fd = socks[i]->fd;
+            fds[i].revents = fds[socks[i]->polled_at].revents;
+        }
+    }
     uint64_t ready = 0;
 #ifdef __APPLE__
     struct kevent changes[2 * NET_MAX_POLL];

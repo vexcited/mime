@@ -2,6 +2,7 @@
  * arm64 interrupts and exceptions.
  */
 #include "../../ntos.h"
+#include <mime/hyperv.h>
 
 void KiInterruptHandler(PKTRAP_FRAME frame)
 {
@@ -89,6 +90,64 @@ static NTSTATUS exception_code(PKTRAP_FRAME frame, ULONG ec)
 
 extern BOOLEAN KiTraceUserExceptions;
 
+/* carries an EL0 hypercall to EL2 for the program, its x0 to x17 registers in and out. */
+static void user_hypercall(PKTRAP_FRAME frame)
+{
+    register ULONG64 x0 __asm__("x0") = frame->X[0];
+    register ULONG64 x1 __asm__("x1") = frame->X[1];
+    register ULONG64 x2 __asm__("x2") = frame->X[2];
+    register ULONG64 x3 __asm__("x3") = frame->X[3];
+    register ULONG64 x4 __asm__("x4") = frame->X[4];
+    register ULONG64 x5 __asm__("x5") = frame->X[5];
+    register ULONG64 x6 __asm__("x6") = frame->X[6];
+    register ULONG64 x7 __asm__("x7") = frame->X[7];
+    register ULONG64 x8 __asm__("x8") = frame->X[8];
+    register ULONG64 x9 __asm__("x9") = frame->X[9];
+    register ULONG64 x10 __asm__("x10") = frame->X[10];
+    register ULONG64 x11 __asm__("x11") = frame->X[11];
+    register ULONG64 x12 __asm__("x12") = frame->X[12];
+    register ULONG64 x13 __asm__("x13") = frame->X[13];
+    register ULONG64 x14 __asm__("x14") = frame->X[14];
+    register ULONG64 x15 __asm__("x15") = frame->X[15];
+    register ULONG64 x16 __asm__("x16") = frame->X[16];
+    register ULONG64 x17 __asm__("x17") = frame->X[17];
+    __asm__ volatile("hvc #0"
+                     : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5), "+r"(x6), "+r"(x7),
+                       "+r"(x8), "+r"(x9), "+r"(x10), "+r"(x11), "+r"(x12), "+r"(x13), "+r"(x14), "+r"(x15),
+                       "+r"(x16), "+r"(x17)
+                     :
+                     : "memory");
+    frame->X[0] = x0;
+    frame->X[1] = x1;
+    frame->X[2] = x2;
+    frame->X[3] = x3;
+    frame->X[4] = x4;
+    frame->X[5] = x5;
+    frame->X[6] = x6;
+    frame->X[7] = x7;
+    frame->X[8] = x8;
+    frame->X[9] = x9;
+    frame->X[10] = x10;
+    frame->X[11] = x11;
+    frame->X[12] = x12;
+    frame->X[13] = x13;
+    frame->X[14] = x14;
+    frame->X[15] = x15;
+    frame->X[16] = x16;
+    frame->X[17] = x17;
+}
+
+/* hvc #0 to the hypervisor from a program. the framework reports it as an unknown exception, which the instruction tells apart. */
+static BOOLEAN user_hvc(PKTRAP_FRAME frame, ULONG ec)
+{
+    if (ec != 0x16 && ec != 0x00)
+        return FALSE;
+    ULONG instruction;
+    if (!NT_SUCCESS(KiCopyFromUser(&instruction, (const void *)frame->Pc, sizeof(instruction))))
+        return FALSE;
+    return instruction == 0xD4000002 && frame->X[0] == MIME_HV_SMCCC_HYPERCALL;
+}
+
 void KiUserExceptionHandler(PKTRAP_FRAME frame)
 {
     PKTHREAD thread = KiCurrentThread();
@@ -96,6 +155,13 @@ void KiUserExceptionHandler(PKTRAP_FRAME frame)
     thread->PreviousMode = UserMode;
     ULONG ec = (ULONG)(frame->Esr >> 26) & 0x3F;
     KiEnableInterrupts();
+
+    if (user_hvc(frame, ec)) {
+        user_hypercall(frame);
+        frame->Pc += 4;
+        KiExitToUserMode(frame);
+        return;
+    }
 
     if (ec == 0x20 || ec == 0x24) {
         ULONG dfsc = (ULONG)frame->Esr & 0x3F;

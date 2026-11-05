@@ -138,6 +138,8 @@ static uint32_t g_cursor;
 static bool g_cursor_hidden;
 static bool g_pointer_in_guest;
 static bool g_fullscreen_presentation;
+/* MIME_BACKGROUND: windows open behind the user's apps and never take the focus, for test runs on a desktop in use. */
+static bool g_background;
 static void cursor_main(void *arg);
 
 static void restore_host_cursor(void)
@@ -254,6 +256,13 @@ static MimeRect visible_part(const MimeWinConfig *c)
     if (v.right <= v.left || v.bottom <= v.top)
         v = (MimeRect){0, 0, c->rect.right - c->rect.left, c->rect.bottom - c->rect.top};
     return v;
+}
+
+/* host pixels per surface pixel: a window that does not know the display's dpi draws at a lower one and is stretched. */
+static double surface_stretch(const MimeWinConfig *c)
+{
+    double dpi = c->dpi ? c->dpi : 96.0 * g_scale;
+    return c->surface_dpi && dpi > c->surface_dpi ? dpi / c->surface_dpi : 1.0;
 }
 
 /* host window bounds: visible rectangle plus resize border. */
@@ -1215,7 +1224,7 @@ static void app_action(void *ctx, uint32_t process_id, uint32_t action)
             if ((w->config.flags & MIME_WIN_MINIMIZED) || MSG_BOOL(w->window, "isMiniaturized") ||
                 (w->state_pending && w->state_command == 6)) {
                 request_window_state(w, 9);
-            } else {
+            } else if (!g_background) {
                 MSG_V_BOOL(g_app, "activateIgnoringOtherApps:", YES);
                 MSG_V_ID(w->window, "makeKeyAndOrderFront:", nil);
             }
@@ -1254,10 +1263,19 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     g_sink = sink;
     g_sink_ctx = ctx;
     g_colorspace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    g_background = getenv("MIME_BACKGROUND") && *getenv("MIME_BACKGROUND") && strcmp(getenv("MIME_BACKGROUND"), "0");
     register_app_class();
     /* per-program companion processes provide the dock entries. */
     MSG_V_INT(g_app, "setActivationPolicy:", 1);
     MSG_V(g_app, "finishLaunching");
+    /*
+     * the guest's timers and wakeups are the host's: App Nap and timer coalescing would delay every one of them while
+     * the app is not in front, input included. idle system sleep stays allowed.
+     */
+    id process = MSG_ID(CLS("NSProcessInfo"), "processInfo");
+    id activity = ((id (*)(id, SEL, unsigned long long, id))objc_msgSend)(
+        process, SEL_("beginActivityWithOptions:reason:"), 0x00EFFFFFull | 0xFF00000000ull, nsstring("a running machine"));
+    MSG_ID(activity, "retain");
     register_classes();
     update_screen_metrics();
     mime_app_init(nullptr, app_action, nullptr);
@@ -1292,6 +1310,7 @@ void mime_ui_get_display(MimeDisplayInfo *info)
     info->work_width = (uint32_t)(g_work_points.size.width * g_scale);
     info->work_height = (uint32_t)(g_work_points.size.height * g_scale);
     info->dpi = (uint32_t)(96.0 * g_scale + 0.5);
+    info->flags |= MIME_DISPLAY_STRETCH;
     NSInteger fps = ((NSInteger(*)(id, SEL))objc_msgSend)(primary, SEL_("maximumFramesPerSecond"));
     info->refresh_hz = fps > 0 ? (uint32_t)fps : 60;
     g_display = *info;
@@ -1578,6 +1597,7 @@ static void config_main(void *arg)
     }
     bool cropping_changed = memcmp(&w->config.visible, &cfg->visible, sizeof(cfg->visible)) != 0 ||
                             memcmp(&w->config.input, &cfg->input, sizeof(cfg->input)) != 0 ||
+                            w->config.surface_dpi != cfg->surface_dpi || w->config.dpi != cfg->dpi ||
                             w->config.rect.right - w->config.rect.left != cfg->rect.right - cfg->rect.left ||
                             w->config.rect.bottom - w->config.rect.top != cfg->rect.bottom - cfg->rect.top;
     w->config = *cfg;
@@ -1640,7 +1660,10 @@ static void config_main(void *arg)
             w->suppress_state = false;
         }
         opening = !w->shown || !MSG_BOOL(w->window, "isVisible");
-        if (cfg->flags & MIME_WIN_ACTIVATE) {
+        if (g_background) {
+            if (opening)
+                MSG_V_ID(w->window, "orderBack:", nil);
+        } else if (cfg->flags & MIME_WIN_ACTIVATE) {
             MSG_V_BOOL(g_app, "activateIgnoringOtherApps:", YES);
             MSG_V_ID(w->window, "makeKeyAndOrderFront:", nil);
         } else if (opening) {
@@ -1746,8 +1769,12 @@ static void present_main(void *arg)
         return;
     }
     MimeRect v = w->config.visible;
+    double stretch = w->configured ? surface_stretch(&w->config) : 1.0;
     if (!w->configured || v.right <= v.left || v.bottom <= v.top)
         v = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
+    else if (stretch != 1.0)
+        v = (MimeRect){(int32_t)lround(v.left / stretch), (int32_t)lround(v.top / stretch),
+                       (int32_t)lround(v.right / stretch), (int32_t)lround(v.bottom / stretch)};
     v.left = MIME_MAX(v.left, 0);
     v.top = MIME_MAX(v.top, 0);
     v.right = MIME_MIN(v.right, (int32_t)w->width);
@@ -1769,6 +1796,9 @@ static void present_main(void *arg)
     MSG_V_BOOL(ca, "setDisableActions:", YES);
     NSRect crop = {{v.left / width, v.top / height}, {(v.right - v.left) / width, (v.bottom - v.top) / height}};
     ((void (*)(id, SEL, NSRect))objc_msgSend)(layer, SEL_("setContentsRect:"), crop);
+    /* a stretched surface has fewer pixels per point, whole multiples repeat them and others blend them. */
+    MSG_V_DBL(layer, "setContentsScale:", g_scale / stretch);
+    MSG_V_ID(layer, "setMagnificationFilter:", nsstring(stretch == floor(stretch) ? "nearest" : "linear"));
     if (MSG_ID(layer, "contents") != (id)surface)
         MSG_V_ID(layer, "setContents:", (id)surface);
     else
@@ -2222,6 +2252,7 @@ typedef struct MetalLayer {
     int32_t x, y;
     uint32_t width, height;
     bool sync;
+    uint32_t order; /* place in the paint order of the window's tree, the front ones highest. */
 } MetalLayer;
 
 #define MAX_METAL_LAYERS 64
@@ -2246,13 +2277,16 @@ static void metal_layout(MetalLayer *m)
         MimeRect v = w->config.visible;
         if (!w->configured || v.right <= v.left || v.bottom <= v.top)
             v = (MimeRect){0, 0, 0, 0};
-        double width = m->width / g_scale, height = m->height / g_scale;
-        double x = (m->x - v.left) / g_scale, y = (m->y - v.top) / g_scale;
+        /* the guest places the layer in the pixels of the program, fewer for a window that is stretched. */
+        double k = surface_stretch(&w->config);
+        double width = m->width * k / g_scale, height = m->height * k / g_scale;
+        double x = (m->x * k - v.left) / g_scale, y = (m->y * k - v.top) / g_scale;
         ((void (*)(id, SEL, NSRect))objc_msgSend)(m->layer, SEL_("setBounds:"), CGRectMake(0, 0, width, height));
         ((void (*)(id, SEL, NSPoint))objc_msgSend)(m->layer, SEL_("setPosition:"),
                                                    CGPointMake(x + width / 2, y + height / 2));
         ((void (*)(id, SEL, NSSize))objc_msgSend)(m->layer, SEL_("setDrawableSize:"), CGSizeMake(m->width, m->height));
         MSG_V_BOOL(m->layer, "setDisplaySyncEnabled:", m->sync);
+        MSG_V_DBL(m->layer, "setZPosition:", (double)m->order);
         MSG_V_BOOL(m->layer, "setHidden:", NO);
     }
     MSG_V(ca, "commit");
@@ -2320,10 +2354,10 @@ static void metal_place_main(void *arg)
 }
 
 void mime_ui_metal_layer_place(void *layer, uint32_t window_id, int32_t x, int32_t y, uint32_t width,
-                               uint32_t height, bool sync)
+                               uint32_t height, bool sync, uint32_t order)
 {
     MetalLayer *p = mime_xmalloc(sizeof(*p));
-    *p = (MetalLayer){layer, window_id, x, y, width, height, sync};
+    *p = (MetalLayer){layer, window_id, x, y, width, height, sync, order};
     on_main(metal_place_main, p);
 }
 
@@ -2344,9 +2378,14 @@ void mime_ui_metal_layer_destroy(void *layer)
 
 /* ---------------------------------------------------------------- Vulkan presenters. */
 
-/* the layer each window's vulkan presenter draws in, over the client area; host/vulkan/vkwsi.c. */
+/*
+ * a layer for each window of the guest that presents with vulkan, over its part of the client area and stacked by
+ * the guest's paint order, as a browser's views each present to a window of their own; host/vulkan/vkwsi.c.
+ */
 typedef struct VkLayer {
     uint32_t window_id;
+    uint32_t source;
+    uint32_t order;
     void *layer;
     MimeRect place;
 } VkLayer;
@@ -2354,34 +2393,36 @@ typedef struct VkLayer {
 static VkLayer g_vk_layers[MAX_METAL_LAYERS];
 static pthread_mutex_t g_vk_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static VkLayer *vk_layer(uint32_t window_id)
+static VkLayer *vk_layer(uint32_t window_id, uint32_t source)
 {
     for (int i = 0; i < MAX_METAL_LAYERS; i++)
-        if (g_vk_layers[i].layer && g_vk_layers[i].window_id == window_id)
+        if (g_vk_layers[i].layer && g_vk_layers[i].window_id == window_id && g_vk_layers[i].source == source)
             return &g_vk_layers[i];
     return nullptr;
 }
 
-static void vk_place(void *layer, uint32_t window_id, MimeRect r)
+static void vk_place(const VkLayer *v)
 {
-    mime_ui_metal_layer_place(layer, window_id, r.left, r.top, (uint32_t)MIME_MAX(r.right - r.left, 1),
-                              (uint32_t)MIME_MAX(r.bottom - r.top, 1), true);
+    MimeRect r = v->place;
+    mime_ui_metal_layer_place(v->layer, v->window_id, r.left, r.top, (uint32_t)MIME_MAX(r.right - r.left, 1),
+                              (uint32_t)MIME_MAX(r.bottom - r.top, 1), true, v->order);
 }
 
 /* the first placement is done before the first frame, which would go nowhere on a layer outside the window. */
-static void vk_place_now(void *layer, uint32_t window_id, MimeRect r)
+static void vk_place_now(const VkLayer *v)
 {
+    MimeRect r = v->place;
     MetalLayer *p = mime_xmalloc(sizeof(*p));
-    *p = (MetalLayer){layer, window_id, r.left, r.top, (uint32_t)MIME_MAX(r.right - r.left, 1),
-                      (uint32_t)MIME_MAX(r.bottom - r.top, 1), true};
+    *p = (MetalLayer){v->layer, v->window_id, r.left, r.top, (uint32_t)MIME_MAX(r.right - r.left, 1),
+                      (uint32_t)MIME_MAX(r.bottom - r.top, 1), true, v->order};
     if (pthread_main_np())
         metal_place_main(p);
     else
         dispatch_sync_f(dispatch_get_main_queue(), p, metal_place_main);
 }
 
-/* the Vulkan driver sets the layer's device and pixel format with the first swapchain on it. */
-bool mime_ui_vk_layers(void) { return false; }
+/* every window of the guest that presents gets a layer of its own. */
+bool mime_ui_vk_layers(void) { return true; }
 
 bool mime_ui_vk_attach(uint32_t id_, uint32_t source, MimeRect client, uint32_t order, MimeUiNative *native)
 {
@@ -2391,20 +2432,19 @@ bool mime_ui_vk_attach(uint32_t id_, uint32_t source, MimeRect client, uint32_t 
     if (!exists)
         return false;
     pthread_mutex_lock(&g_vk_lock);
-    VkLayer *v = vk_layer(id_);
-    bool made = false;
+    VkLayer *v = vk_layer(id_, source), made = {0};
     for (int i = 0; i < MAX_METAL_LAYERS && !v; i++)
         if (!g_vk_layers[i].layer) {
             v = &g_vk_layers[i];
-            *v = (VkLayer){id_, mime_ui_metal_layer_create(nullptr, false), client};
-            made = true;
+            *v = (VkLayer){id_, source, order, mime_ui_metal_layer_create(nullptr, false), client};
+            made = *v;
         }
     void *layer = v ? v->layer : nullptr;
     pthread_mutex_unlock(&g_vk_lock);
     if (!layer)
         return false;
-    if (made)
-        vk_place_now(layer, id_, client);
+    if (made.layer)
+        vk_place_now(&made);
     *native = (MimeUiNative){.metal = true, .subsurface = true, .surface = layer};
     return true;
 }
@@ -2412,7 +2452,7 @@ bool mime_ui_vk_attach(uint32_t id_, uint32_t source, MimeRect client, uint32_t 
 void mime_ui_vk_detach(uint32_t id_, uint32_t source)
 {
     pthread_mutex_lock(&g_vk_lock);
-    VkLayer *v = vk_layer(id_);
+    VkLayer *v = vk_layer(id_, source);
     void *layer = v ? v->layer : nullptr;
     if (v)
         memset(v, 0, sizeof(*v));
@@ -2439,10 +2479,11 @@ bool mime_ui_vk_frame(uint32_t id_, uint32_t source, MimeRect full, MimeRect cli
     frame->pixel_width = (uint32_t)MIME_MAX(client.right - client.left, 0);
     frame->pixel_height = (uint32_t)MIME_MAX(client.bottom - client.top, 0);
     pthread_mutex_lock(&g_vk_lock);
-    VkLayer *v = vk_layer(id_);
-    if (v && memcmp(&v->place, &client, sizeof(client))) {
+    VkLayer *v = vk_layer(id_, source);
+    if (v && (memcmp(&v->place, &client, sizeof(client)) || v->order != order)) {
         v->place = client;
-        vk_place(v->layer, id_, client);
+        v->order = order;
+        vk_place(v);
     }
     pthread_mutex_unlock(&g_vk_lock);
     return true;
@@ -2500,5 +2541,12 @@ static void screens_changed(id self, SEL cmd, id note)
         g_sink(g_sink_ctx, &ev);
 }
 
-/* Vulkan presents on macOS go to Metal layers, which keep no image to read back yet. */
-bool mime_ui_window_readback(MimeWinReadback *r, void *pixels) { return false; }
+/* vkwsi.c keeps the last image each presenter showed. */
+bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
+                      uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client, uint64_t *serial);
+
+bool mime_ui_window_readback(MimeWinReadback *r, void *pixels)
+{
+    return mvk_wsi_readback(r->window_id, r->source, pixels, r->capacity_width, r->capacity_height, r->stride, &r->width,
+                            &r->height, &r->client, &r->serial);
+}

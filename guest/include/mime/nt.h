@@ -926,6 +926,21 @@ typedef enum _VIRTUAL_MEMORY_INFORMATION_CLASS {
     VmInformationClassMax
 } VIRTUAL_MEMORY_INFORMATION_CLASS;
 
+/*
+ * mime's own classes of NtSetInformationVirtualMemory, for xta64. the watch class takes ranges of x86 code: a
+ * writable page among them is mapped read only, still reported with its protection, and its first write makes it
+ * writable again and is logged. the log class maps the log, read only, and gives its address in a pointer.
+ */
+#define MIME_VM_CODE_WATCH 0x100
+#define MIME_VM_CODE_LOG 0x101
+#define MIME_CODE_LOG_PAGES 510
+#define MIME_CODE_LOG_ALL 1 /* an entry that stands for every page. */
+typedef struct MIME_CODE_LOG {
+    volatile ULONG64 Written; /* entries so far, entry n at Pages[n % MIME_CODE_LOG_PAGES]. */
+    ULONG64 Reserved;
+    ULONG64 Pages[MIME_CODE_LOG_PAGES];
+} MIME_CODE_LOG;
+
 #define SEC_FILE 0x00800000
 #define SEC_IMAGE 0x01000000
 #define SEC_RESERVE 0x04000000
@@ -2196,6 +2211,16 @@ typedef struct _KUSER_SHARED_DATA {
 } KUSER_SHARED_DATA, *PKUSER_SHARED_DATA;
 #define USER_SHARED_DATA ((volatile KUSER_SHARED_DATA *const)0x7FFE0000)
 
+/* an arm64 machine, whose hardware the x64 and x86 programs it translates see as well, as windows shows them. */
+FORCEINLINE BOOLEAN MimeArm64Machine(void)
+{
+#if defined(__aarch64__)
+    return TRUE;
+#else
+    return USER_SHARED_DATA->ImageNumberHigh == IMAGE_FILE_MACHINE_ARM64;
+#endif
+}
+
 /* user mode reads the performance counter itself: the processor's counter with the kernel's bias and shift. */
 #ifndef NTSYSCALLAPI
 #ifdef MIME_KERNEL
@@ -2296,6 +2321,7 @@ typedef enum _SYSTEM_INFORMATION_CLASS {
     SystemLogicalProcessorInformation = 73,
     SystemFirmwareTableInformation = 76,
     SystemBootEnvironmentInformation = 90,
+    SystemHypervisorInformation = 91,
     SystemSecureBootInformation = 145,
     SystemProcessorFeaturesInformation = 154,
     SystemHypervisorDetailInformation = 185,
@@ -2420,6 +2446,14 @@ typedef struct _SYSTEM_PROCESSOR_INFORMATION {
     USHORT MaximumProcessors;
     ULONG ProcessorFeatureBits;
 } SYSTEM_PROCESSOR_INFORMATION, *PSYSTEM_PROCESSOR_INFORMATION;
+
+typedef struct _SYSTEM_HYPERVISOR_QUERY_INFORMATION {
+    BOOLEAN HypervisorConnected;
+    BOOLEAN HypervisorDebuggingEnabled;
+    BOOLEAN HypervisorPresent;
+    BOOLEAN Spare0[5];
+    ULONGLONG EnabledEnlightenments;
+} SYSTEM_HYPERVISOR_QUERY_INFORMATION, *PSYSTEM_HYPERVISOR_QUERY_INFORMATION;
 
 typedef enum _PROCESSINFOCLASS {
     ProcessBasicInformation = 0,

@@ -14,6 +14,7 @@
 #define MIME_FEATURE_WEBVIEW2 L"WebView2"
 #define MIME_FEATURE_NETFX4 L"NetFx4"
 #define MIME_FEATURE_POWERSHELL L"PowerShell"
+#define MIME_FEATURE_VCRUNTIME_X64 L"VCRuntime.x64"
 
 /* The program that serves requests, below the windows folder. */
 #define MIME_FEATURE_PROGRAM L"\\System32\\features.exe"

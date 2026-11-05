@@ -76,11 +76,15 @@ typedef struct X86Env {
     uint64_t (*timestamp)(X86Cpu *cpu);
     /* the code at [address, address + size) changed: drops translations. */
     void (*code_changed)(X86Cpu *cpu, uint64_t address, uint64_t size);
-    /* a block was decoded from the code at address. */
-    void (*code_seen)(X86Cpu *cpu, uint64_t address);
+    /* a block was decoded from the code at address. 0 when the page may not execute it. */
+    int (*code_seen)(X86Cpu *cpu, uint64_t address);
     /* the readable region decoded code at address came from, or 0 when unknown. */
     int (*code_bounds)(X86Cpu *cpu, uint64_t address, uint64_t *start, uint64_t *end);
     void (*suspend)(X86Cpu *cpu);
+    /* code is about to be decoded from the page: writes to it are logged at code_writes from then on. */
+    void (*code_watch)(X86Cpu *cpu, uint64_t page);
+    /* catches up with the code writes logged since code_writes_seen. */
+    void (*code_written)(X86Cpu *cpu);
 } X86Env;
 
 /*
@@ -128,6 +132,8 @@ struct X86Cpu {
     void *user;          /* the environment's per thread data. */
     void *blocks;
     const volatile uint32_t *code_epoch; /* bumped by the environment when code may have changed, or NULL. */
+    const volatile uint64_t *code_writes; /* counts the writes to watched code, see code_watch, or NULL. */
+    uint64_t code_writes_seen;
     const X86CodeRange *code_ranges;     /* the range each epoch changed, or NULL. */
     uint32_t blocks_epoch;
     uint64_t *trace;     /* when set, the start of the last X86_TRACE_SIZE blocks run. */
@@ -135,7 +141,9 @@ struct X86Cpu {
     uint64_t steps;      /* executed instructions, for statistics. */
     const void *jit_block; /* the translated block running, for faults in its code. */
     void *exit_slot;       /* the chain slot translated code last left through unlinked, or null. */
-    void *targets;         /* X86Target entries: translated code by address, for exits to computed addresses. */
+    /* the block table's slots and mask, copied in before translated code runs, which looks computed addresses up there. */
+    const void *jit_slots;
+    uint64_t jit_mask;
 };
 
 typedef struct X86Insn {
@@ -166,6 +174,12 @@ typedef struct X86Insn {
 
 /* returns 0 for undefined encodings. */
 int x86_decode(X86Insn *insn, const uint8_t *code, uint64_t address, int mode64);
+
+/* jcc with an 8 or 32 bit offset. */
+static inline int x86_is_jcc(const X86Insn *i)
+{
+    return (i->map == 0 && i->opcode >= 0x70 && i->opcode <= 0x7F) || (i->map == 1 && i->opcode >= 0x80 && i->opcode <= 0x8F);
+}
 
 /* runs x86 code from cpu->rip until it reaches cpu->exit_rip. */
 void x86_run(X86Cpu *cpu);
@@ -210,15 +224,24 @@ void x86_free_code(void *p, size_t size);
 void x86_code_write_begin(void);
 void x86_code_write_end(void *p, size_t size);
 
+#define X86_MXCSR_IE 1u
+/* mxcsr with the exception flags the host's floating point raised, and its setting, which starts them anew. */
+uint32_t x86_mxcsr(X86Cpu *cpu);
+void x86_set_mxcsr(X86Cpu *cpu, uint32_t value);
+
 /* runs of a block before it is translated to arm64 code, ~0u never translates. */
 extern uint32_t x86_jit_threshold;
+/* translations made visible together, at most X86_JIT_BATCH. the differential tests run each at once. */
+#define X86_JIT_BATCH 16
+extern uint32_t x86_jit_batch;
 
 /*
  * a native fault at pc while the cpu ran: when pc is in translated code,
  * insn_rip becomes the x86 instruction it belongs to and the registers the
- * code kept in native ones come back from x, the faulting context's.
+ * code kept in native ones come back from x and v, the faulting context's
+ * general and vector registers, 32 of 16 bytes.
  */
-void x86_jit_fault(X86Cpu *cpu, uint64_t pc, const uint64_t *x);
+void x86_jit_fault(X86Cpu *cpu, uint64_t pc, const uint64_t *x, const void *v);
 
 /* fxsave layout, used by fxsave, fxrstor and thread contexts. */
 void x86_fxsave(X86Cpu *cpu, uint8_t *area);

@@ -187,28 +187,26 @@ list(APPEND MIME_X86_DLLS d3dcompiler_47:0x4F000000:all_five)
 list(APPEND MIME_X86_DLLS wldp:0x31900000:base)
 set(objects_d3dcompiler_47 x86-lib-dxbc:guest/lib/dxbc/container.c x86-lib-dxbc:guest/lib/dxbc/reader.c)
 
-if(MIME_GUEST_ARCH STREQUAL "x64")
-    mime_dll(vulkan-1 x86 BASE 0x53000000 SOURCES ${MIME_VULKAN_SOURCES} ${MIME_VULKAN_GEN_SOURCES}
-        OBJECTS x86-chkstk OPTIONS ${MIME_VULKAN_OPTIONS} INCLUDES ${MIME_VULKAN_INCLUDES}
-        IMPORTS ntdll kernel32 win32u user32)
-    list(APPEND MIME_X86_DLLS dxgi:0x52000000:all_five d3d11:0x50000000:all_five
-        d3d10core:0x4E000000:base d3d10_1core:0x4D000000:base d3d10:0x4C000000:all_five d3d10_1:0x4B000000:all_five
-        d3d12:0x4A000000:all_five d3d9:0x49000000:all_five dcomp:0x13000000:all_five)
-    set(objects_dxgi x86-lib-privdata)
-    set(objects_d3d11 x86-lib-privdata x86-lib-dxbc)
-    set(objects_d3d10 x86-lib-dxbc:guest/lib/dxbc/container.c)
-    set(objects_d3d10_1 x86-d3d10:guest/d3d10/create.c)
-    set(objects_d3d10_1core x86-d3d10core:guest/d3d10core/kmt.c)
-    set(objects_d3d12 x86-lib-privdata x86-lib-dxbc x86-lib-dxil x86-d3d11:guest/d3d11/format.c x86-d3d11:guest/d3d11/vkprofile.c x86-d3d11:guest/d3d11/gfxshare.c)
-    set(objects_d3d9 x86-lib-privdata x86-lib-dxbc:guest/lib/dxbc/container.c)
-    set(includes_dxgi third_party/khronos)
-    set(includes_d3d11 third_party/khronos ${MIME_GEN}/shaders)
-    set(includes_d3d12 third_party/khronos third_party/SPIRV-Cross)
-    set(includes_dcomp ${MIME_GEN}/shaders)
-    # Windows.UI.Composition is served to 64 bit programs only.
-    set(objects_dcomp)
-    set(libs_dcomp)
-endif()
+mime_dll(vulkan-1 x86 BASE 0x53000000 SOURCES ${MIME_VULKAN_SOURCES} ${MIME_VULKAN_GEN_SOURCES}
+    OBJECTS x86-chkstk OPTIONS ${MIME_VULKAN_OPTIONS} INCLUDES ${MIME_VULKAN_INCLUDES}
+    IMPORTS ntdll kernel32 win32u user32)
+list(APPEND MIME_X86_DLLS dxgi:0x52000000:all_five d3d11:0x50000000:all_five
+    d3d10core:0x4E000000:base d3d10_1core:0x4D000000:base d3d10:0x4C000000:all_five d3d10_1:0x4B000000:all_five
+    d3d12:0x4A000000:all_five d3d9:0x49000000:all_five dcomp:0x13000000:all_five)
+set(objects_dxgi x86-lib-privdata)
+set(objects_d3d11 x86-lib-privdata x86-lib-dxbc)
+set(objects_d3d10 x86-lib-dxbc:guest/lib/dxbc/container.c)
+set(objects_d3d10_1 x86-d3d10:guest/d3d10/create.c)
+set(objects_d3d10_1core x86-d3d10core:guest/d3d10core/kmt.c)
+set(objects_d3d12 x86-lib-privdata x86-lib-dxbc x86-lib-dxil x86-d3d11:guest/d3d11/format.c x86-d3d11:guest/d3d11/vkprofile.c x86-d3d11:guest/d3d11/gfxshare.c)
+set(objects_d3d9 x86-lib-privdata x86-lib-dxbc:guest/lib/dxbc/container.c)
+set(includes_dxgi third_party/khronos)
+set(includes_d3d11 third_party/khronos ${MIME_GEN}/shaders)
+set(includes_d3d12 third_party/khronos third_party/SPIRV-Cross)
+set(includes_dcomp ${MIME_GEN}/shaders)
+# Windows.UI.Composition is served to 64 bit programs only.
+set(objects_dcomp)
+set(libs_dcomp)
 
 foreach(entry IN LISTS MIME_X86_DLLS)
     string(REPLACE ":" ";" entry ${entry})
@@ -226,12 +224,10 @@ foreach(entry IN LISTS MIME_X86_DLLS)
         INCLUDES ${includes_${name}} IMPORTS ${${imports}} DEPENDS ${depends_${name}})
 endforeach()
 
-if(MIME_GUEST_ARCH STREQUAL "x64")
-    mime_sources(sources d3d8 x86)
-    mime_dll(d3d8 x86 BASE 0x32000000 SOURCES ${sources} OBJECTS x86-chkstk x86-lib-privdata
-        DEF ${CMAKE_SOURCE_DIR}/guest/d3d8/d3d8.def IMPORTS_DEF ${CMAKE_SOURCE_DIR}/guest/d3d8/d3d8.imports.def
-        IMPORTS ntdll kernel32 user32 gdi32 d3d9)
-endif()
+mime_sources(sources d3d8 x86)
+mime_dll(d3d8 x86 BASE 0x32000000 SOURCES ${sources} OBJECTS x86-chkstk x86-lib-privdata
+    DEF ${CMAKE_SOURCE_DIR}/guest/d3d8/d3d8.def IMPORTS_DEF ${CMAKE_SOURCE_DIR}/guest/d3d8/d3d8.imports.def
+    IMPORTS ntdll kernel32 user32 gdi32 d3d9)
 
 foreach(entry riched20:0x18000000 msftedit:0x17000000)
     string(REPLACE ":" ";" entry ${entry})

@@ -926,6 +926,16 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
         UCHAR state[0x20] = {};
         return copy_info(info, state, length < sizeof(state) ? length : sizeof(state), length, returned);
     }
+    case SystemHypervisorInformation: {
+        /* the root partition answers both: it is connected to, and runs under, its hypervisor. */
+        ULONG leaves[1][4];
+        if (!KiQueryHypervisorLeaves(leaves, 1))
+            return STATUS_NOT_SUPPORTED;
+        SYSTEM_HYPERVISOR_QUERY_INFORMATION hypervisor = {};
+        hypervisor.HypervisorConnected = TRUE;
+        hypervisor.HypervisorPresent = TRUE;
+        return copy_info(info, &hypervisor, sizeof(hypervisor), length, returned);
+    }
     case SystemHypervisorDetailInformation: {
         /*
          * the hypervisor leaves in windows' order: vendor and maximum, interface,

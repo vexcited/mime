@@ -692,6 +692,17 @@ static VKAPI_ATTR void VKAPI_CALL CmdBeginQuery(VkCommandBuffer cmd, VkQueryPool
                                                 VkQueryControlFlags flags)
 {
     VkmGfxState *s = STATE(cmd);
+    if (pool->type == VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT) {
+        s->xfb_query = pool;
+        s->xfb_query_index = query;
+        return;
+    }
+    if (pool->type == VK_QUERY_TYPE_PIPELINE_STATISTICS) {
+        s->stats = pool;
+        s->stats_query = query;
+        s->pipeline_dirty = true;
+        return;
+    }
     if (pool->type != VK_QUERY_TYPE_OCCLUSION)
         return;
     s->occlusion = pool;
@@ -721,6 +732,12 @@ static VKAPI_ATTR void VKAPI_CALL CmdEndQuery(VkCommandBuffer cmd, VkQueryPool p
         }
         s->occlusion = nullptr;
     }
+    if (pool->type == VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT && s->xfb_query == pool)
+        s->xfb_query = nullptr;
+    if (pool->type == VK_QUERY_TYPE_PIPELINE_STATISTICS && s->stats == pool) {
+        s->stats = nullptr;
+        s->pipeline_dirty = true;
+    }
     /* the query's result is there once this command buffer has run. */
     VkmOpQuery *o = vkm_emit(cmd, VKM_OP_TIMESTAMP, sizeof(*o));
     if (o) {
@@ -729,6 +746,20 @@ static VKAPI_ATTR void VKAPI_CALL CmdEndQuery(VkCommandBuffer cmd, VkQueryPool p
         o->count = 1;
         o->flags = 1;
     }
+}
+
+/* stream output queries count stream zero, the only one there is. */
+static VKAPI_ATTR void VKAPI_CALL CmdBeginQueryIndexedEXT(VkCommandBuffer cmd, VkQueryPool pool, uint32_t query,
+                                                          VkQueryControlFlags flags, uint32_t index)
+{
+    if (!index)
+        CmdBeginQuery(cmd, pool, query, flags);
+}
+
+static VKAPI_ATTR void VKAPI_CALL CmdEndQueryIndexedEXT(VkCommandBuffer cmd, VkQueryPool pool, uint32_t query,
+                                                        uint32_t index)
+{
+    CmdEndQuery(cmd, pool, query);
 }
 
 static VKAPI_ATTR void VKAPI_CALL CmdWriteTimestamp2(VkCommandBuffer cmd, VkPipelineStageFlags2 stage,
@@ -801,6 +832,8 @@ const VkmEntry vkm_xfer_entries[] = {
     VKM_ENTRY(CmdWaitEvents2),
     VKM_ENTRY(CmdResetQueryPool),
     VKM_ENTRY(CmdBeginQuery),
+    VKM_ENTRY(CmdBeginQueryIndexedEXT),
+    VKM_ENTRY(CmdEndQueryIndexedEXT),
     VKM_ENTRY(CmdEndQuery),
     VKM_ENTRY(CmdWriteTimestamp),
     VKM_ENTRY(CmdWriteTimestamp2),

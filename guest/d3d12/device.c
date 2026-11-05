@@ -183,6 +183,7 @@ static HRESULT create_vulkan_device(D12Device *device, IDXGIAdapter *adapter, co
     COPY(has_logic_op);
     COPY(has_depth_bounds);
     COPY(has_geometry);
+    COPY(has_null_descriptor);
     COPY(has_tessellation);
     COPY(has_statistics);
     COPY(has_so_queries);

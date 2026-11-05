@@ -32,5 +32,8 @@
 /* KPCR.Prcb.Number. */
 #define KPCR_NUMBER 0x28
 #define KPCR_USER_MODE 0x11
+#define KPCR_DEFERRED_IPIS 0xC8
+
+#define HAL_IPI_INTID 1 /* the sgi asking a processor to reschedule. */
 
 #endif

@@ -49,8 +49,9 @@ static int pixel_kind(uint32_t pixel)
 
 static const char *const g_kind_type[] = {"float", "int", "uint"};
 
-static id render_pipeline(VkDevice device, const char *source, bool fragment, const uint32_t colors[VKM_COLORS],
-                          uint32_t mask, uint32_t samples)
+/* a pipeline of meta_vs and meta_fs, or of meta_vs alone writing buffers with nothing rasterized. */
+static id pipeline_of(VkDevice device, const char *source, bool fragment, const uint32_t colors[VKM_COLORS],
+                      uint32_t mask, uint32_t samples, bool raster)
 {
     id library = vkm_library(device, source);
     if (!library)
@@ -63,7 +64,9 @@ static id render_pipeline(VkDevice device, const char *source, bool fragment, co
     if (fs)
         M_V_ID(desc, "setFragmentFunctionDescriptor:", fs);
     M_V_U(desc, "setRasterSampleCount:", MIME_MAX(samples, 1u));
-    M_V_U(desc, "setInputPrimitiveTopology:", MTLPrimitiveTopologyClassTriangle);
+    M_V_U(desc, "setInputPrimitiveTopology:", raster ? MTLPrimitiveTopologyClassTriangle : MTLPrimitiveTopologyClassPoint);
+    if (!raster)
+        M_V_B(desc, "setRasterizationEnabled:", false);
     id attachments = M_ID(desc, "colorAttachments");
     for (uint32_t i = 0; i < VKM_COLORS; i++) {
         if (!colors[i])
@@ -83,6 +86,12 @@ static id render_pipeline(VkDevice device, const char *source, bool fragment, co
     mtl_release(library);
     objc_autoreleasePoolPop(pool);
     return state;
+}
+
+static id render_pipeline(VkDevice device, const char *source, bool fragment, const uint32_t colors[VKM_COLORS],
+                          uint32_t mask, uint32_t samples)
+{
+    return pipeline_of(device, source, fragment, colors, mask, samples, true);
 }
 
 /* ------------------------------------------------------------------ clears. */
@@ -249,4 +258,328 @@ id vkm_sampler_linear(VkDevice device)
 id vkm_sampler_nearest(VkDevice device)
 {
     return sampler(device, false);
+}
+
+/* ------------------------------------------------------------------ generated commands. */
+
+/*
+ * a thread a sequence: its push constants are the bound ones with what its tokens change, its vertex and index
+ * buffers too, and it encodes its draw or dispatch with every buffer the stages read, since the commands inherit
+ * only the pipeline. the first thread of each chunk writes the range of the sequences the count lets run.
+ */
+static const char g_generate[] =
+    "#include <metal_stdlib>\n"
+    "using namespace metal;\n"
+    "struct Token { uint type, offset, dst, size; };\n"
+    "struct Params {\n"
+    "    ulong args, count, pushes, ranges, index;\n"
+    "    ulong buffers[31];\n"
+    "    uint strides[31];\n"
+    "    uint stride, max_count, token_count, primitive, index_wide, local[3];\n"
+    "    Token tokens[16];\n"
+    "    uint push[64];\n"
+    "};\n"
+    "struct Icb { command_buffer cmds; };\n"
+    "template <typename T> static device T *at(ulong address) { return reinterpret_cast<device T *>(address); }\n"
+    "static uint sequences(constant Params &p, uint i) {\n"
+    "    uint count = p.max_count;\n"
+    "    if (p.count)\n"
+    "        count = min(count, *at<const uint>(p.count));\n"
+    "    if (i % CHUNK == 0) {\n"
+    "        device uint *r = at<uint>(p.ranges) + i / CHUNK * 2;\n"
+    "        r[0] = i;\n"
+    "        r[1] = count > i ? min(CHUNK, count - i) : 0u;\n"
+    "    }\n"
+    "    return count;\n"
+    "}\n"
+    "static ulong pushes(constant Params &p, uint i, device const uint *a) {\n"
+    "    if (!p.pushes)\n"
+    "        return p.buffers[8];\n"
+    "    ulong address = p.pushes + (ulong)i * 256;\n"
+    "    device uint *b = at<uint>(address);\n"
+    "    for (uint n = 0; n < 64; n++)\n"
+    "        b[n] = p.push[n];\n"
+    "    for (uint t = 0; t < p.token_count; t++) {\n"
+    "        Token k = p.tokens[t];\n"
+    "        if (k.type == 1)\n"
+    "            for (uint n = 0; n < k.size / 4; n++)\n"
+    "                b[k.dst / 4 + n] = a[k.offset / 4 + n];\n"
+    "        else if (k.type == 4)\n"
+    "            b[k.dst / 4] = i;\n"
+    "    }\n"
+    "    return address;\n"
+    "}\n"
+    "kernel void meta_draw(constant Params &p [[buffer(0)]], device const Icb &icb [[buffer(1)]],\n"
+    "                      uint i [[thread_position_in_grid]]) {\n"
+    "    if (i >= p.max_count)\n"
+    "        return;\n"
+    "    uint count = sequences(p, i);\n"
+    "    if (i >= count)\n"
+    "        return;\n"
+    "    render_command cmd(icb.cmds, i);\n"
+    "    cmd.reset();\n"
+    "    device const uint *a = at<const uint>(p.args + (ulong)i * p.stride), *w = a;\n"
+    "    ulong vbs[21];\n"
+    "    uint strides[21];\n"
+    "    for (uint b = 0; b < 21; b++) {\n"
+    "        vbs[b] = p.buffers[10 + b];\n"
+    "        strides[b] = p.strides[10 + b];\n"
+    "    }\n"
+    "    ulong index = p.index;\n"
+    "    bool wide = p.index_wide;\n"
+    "    uint draw = 0;\n"
+    "    for (uint t = 0; t < p.token_count; t++) {\n"
+    "        Token k = p.tokens[t];\n"
+    "        device const uint *v = a + k.offset / 4;\n"
+    "        if (k.type == 2 && k.dst < 20) {\n"
+    "            vbs[k.dst] = ulong(v[0]) | ulong(v[1]) << 32;\n"
+    "            strides[k.dst] = v[3];\n"
+    "        } else if (k.type == 3) {\n"
+    "            index = ulong(v[0]) | ulong(v[1]) << 32;\n"
+    "            wide = k.dst ? v[3] == 42 : v[3] == 1;\n"
+    "        } else if (k.type == 5 || k.type == 6) {\n"
+    "            draw = k.type;\n"
+    "            w = v;\n"
+    "        }\n"
+    "    }\n"
+    "    if (!draw || !w[0] || !w[1] || (draw == 6 && !index))\n"
+    "        return;\n"
+    "    ulong push = pushes(p, i, a);\n"
+    "    for (uint b = 0; b < 10; b++) {\n"
+    "        ulong v = b == 8 ? push : p.buffers[b];\n"
+    "        if (v) {\n"
+    "            cmd.set_vertex_buffer(at<char>(v), b);\n"
+    "            cmd.set_fragment_buffer(at<char>(v), b);\n"
+    "        }\n"
+    "    }\n"
+    "    for (uint b = 0; b < 21; b++)\n"
+    "        if (vbs[b])\n"
+    "            cmd.set_vertex_buffer(at<char>(vbs[b]), (size_t)strides[b], 10 + b);\n"
+    "    primitive_type type = primitive_type(p.primitive);\n"
+    "    if (draw == 5)\n"
+    "        cmd.draw_primitives(type, w[2], w[0], w[1], w[3]);\n"
+    "    else if (wide)\n"
+    "        cmd.draw_indexed_primitives(type, w[0], at<uint>(index) + w[2], w[1], w[3], w[4]);\n"
+    "    else\n"
+    "        cmd.draw_indexed_primitives(type, w[0], at<ushort>(index) + w[2], w[1], w[3], w[4]);\n"
+    "}\n"
+    "kernel void meta_dispatch(constant Params &p [[buffer(0)]], device const Icb &icb [[buffer(1)]],\n"
+    "                          uint i [[thread_position_in_grid]]) {\n"
+    "    if (i >= p.max_count)\n"
+    "        return;\n"
+    "    uint count = sequences(p, i);\n"
+    "    if (i >= count)\n"
+    "        return;\n"
+    "    compute_command cmd(icb.cmds, i);\n"
+    "    cmd.reset();\n"
+    "    device const uint *a = at<const uint>(p.args + (ulong)i * p.stride), *w = nullptr;\n"
+    "    for (uint t = 0; t < p.token_count; t++)\n"
+    "        if (p.tokens[t].type == 7)\n"
+    "            w = a + p.tokens[t].offset / 4;\n"
+    "    if (!w || !w[0] || !w[1] || !w[2])\n"
+    "        return;\n"
+    "    ulong push = pushes(p, i, a);\n"
+    "    for (uint b = 0; b < 10; b++) {\n"
+    "        ulong v = b == 8 ? push : p.buffers[b];\n"
+    "        if (v)\n"
+    "            cmd.set_kernel_buffer(at<char>(v), b);\n"
+    "    }\n"
+    "    cmd.concurrent_dispatch_threadgroups(uint3(w[0], w[1], w[2]), uint3(p.local[0], p.local[1], p.local[2]));\n"
+    "}\n";
+
+id vkm_meta_generate(VkDevice device, bool dispatch)
+{
+    struct {
+        uint32_t tag, dispatch;
+    } key = {3, dispatch};
+    id state = cached(&key, sizeof(key));
+    if (state)
+        return state;
+    char source[sizeof(g_generate) + 64];
+    snprintf(source, sizeof(source), "#define CHUNK %uu\n%s", VKM_DGC_CHUNK, g_generate);
+    id library = vkm_library(device, source);
+    if (!library)
+        return nullptr;
+    void *pool = objc_autoreleasePoolPush();
+    id function = vkm_function(library, dispatch ? "meta_dispatch" : "meta_draw");
+    id desc = mtl_new("MTL4ComputePipelineDescriptor");
+    M_V_ID(desc, "setComputeFunctionDescriptor:", function);
+    id error = nullptr;
+    state = MTL_MSG(id (*)(id, SEL, id, id, id *), device->compiler,
+                    "newComputePipelineStateWithDescriptor:compilerTaskOptions:error:", desc, nullptr, &error);
+    if (!state)
+        VKM_ERROR("no generation pipeline: %s", mtl_error_text(error));
+    mtl_release(desc);
+    mtl_release(function);
+    mtl_release(library);
+    objc_autoreleasePoolPop(pool);
+    return state ? cache(&key, sizeof(key), state) : nullptr;
+}
+
+/* ------------------------------------------------------------------ stream output. */
+
+/*
+ * one invocation writes a draw's stream output in primitive order from the records of its last stage before
+ * rasterization: a primitive goes whole into every buffer or, once one has no room, it and all after it are only
+ * counted. the offsets go on from draw to draw in a state block, starting at the counters or the bound offsets.
+ */
+static const char g_xfb[] =
+    "#include <metal_stdlib>\n"
+    "using namespace metal;\n"
+    "struct Entry { uint buffer, offset, word, count; };\n"
+    "struct Xfb {\n"
+    "    ulong emu, index, buffers[4], counters[4], query, state;\n"
+    "    uint sizes[4], starts[4], strides[4];\n"
+    "    uint mode, verts, prims, instances, mul, swap, index_type, index_first, cap, in_base, in_stride;\n"
+    "    uint invocations, max_vertices, out_base, out_stride, idx_base, counts_base, strip, entry_count;\n"
+    "    Entry entries[32];\n"
+    "};\n"
+    "struct State { uint offsets[4]; uint ready; };\n"
+    "template <typename T> static device T *at(ulong a) { return reinterpret_cast<device T *>(a); }\n"
+    "struct Out {\n"
+    "    device const Xfb &x;\n"
+    "    device State &s;\n"
+    "    uint written, needed;\n"
+    "    bool full;\n"
+    "    void primitive(device const uint *const rec[3]) {\n"
+    "        needed++;\n"
+    "        for (uint b = 0; b < 4 && !full; b++)\n"
+    "            if (x.strides[b] && s.offsets[b] + x.verts * x.strides[b] > x.sizes[b])\n"
+    "                full = true;\n"
+    "        if (full)\n"
+    "            return;\n"
+    "        for (uint k = 0; k < x.verts; k++)\n"
+    "            for (uint e = 0; e < x.entry_count; e++) {\n"
+    "                Entry n = x.entries[e];\n"
+    "                device uint *dst = at<uint>(x.buffers[n.buffer] + s.offsets[n.buffer] +\n"
+    "                                            k * x.strides[n.buffer] + n.offset);\n"
+    "                for (uint c = 0; c < n.count; c++)\n"
+    "                    dst[c] = rec[k][n.word + c];\n"
+    "            }\n"
+    "        for (uint b = 0; b < 4; b++)\n"
+    "            s.offsets[b] += x.verts * x.strides[b];\n"
+    "        written++;\n"
+    "    }\n"
+    "};\n"
+    "vertex void meta_vs(device const Xfb &x [[buffer(0)]]) {\n"
+    "    device State &s = *at<State>(x.state);\n"
+    "    if (x.mode == 2) {\n"
+    "        for (uint b = 0; b < 4 && s.ready; b++)\n"
+    "            if (x.counters[b])\n"
+    "                *at<uint>(x.counters[b]) = s.offsets[b];\n"
+    "        return;\n"
+    "    }\n"
+    "    if (!s.ready) {\n"
+    "        for (uint b = 0; b < 4; b++)\n"
+    "            s.offsets[b] = x.counters[b] ? *at<uint>(x.counters[b]) : x.starts[b];\n"
+    "        s.ready = 1;\n"
+    "    }\n"
+    "    device const uint *emu = at<const uint>(x.emu);\n"
+    "    device const uint *rec[3] = {emu, emu, emu};\n"
+    "    Out o = {x, s, 0, 0, false};\n"
+    "    if (x.mode == 0) {\n"
+    "        for (uint i = 0; i < x.instances; i++)\n"
+    "            for (uint p = 0; p < x.prims; p++) {\n"
+    "                for (uint k = 0; k < x.verts; k++) {\n"
+    "                    uint pos = x.mul * p + ((k < 2 && x.swap && (p & 1)) ? 1 - k : k);\n"
+    "                    uint slot = pos;\n"
+    "                    if (x.index_type == 2)\n"
+    "                        slot = at<const uint>(x.index)[x.index_first + pos];\n"
+    "                    else if (x.index_type == 1)\n"
+    "                        slot = at<const ushort>(x.index)[x.index_first + pos];\n"
+    "                    rec[k] = emu + x.in_base + (i * x.cap + (slot < x.cap ? slot : 0)) * x.in_stride;\n"
+    "                }\n"
+    "                o.primitive(rec);\n"
+    "            }\n"
+    "    } else {\n"
+    "        uint total = x.instances * x.invocations, span = 2 * x.max_vertices;\n"
+    "        for (uint g = 0; g < total; g++) {\n"
+    "            if (!x.strip) {\n"
+    "                for (uint t = 0; t < emu[x.counts_base + g]; t++) {\n"
+    "                    rec[0] = emu + x.out_base + (g * x.max_vertices + t) * x.out_stride;\n"
+    "                    o.primitive(rec);\n"
+    "                }\n"
+    "                continue;\n"
+    "            }\n"
+    "            uint run = 0, last[3] = {0, 0, 0};\n"
+    "            for (uint t = 0; t < span; t++) {\n"
+    "                uint r = emu[x.idx_base + g * span + t];\n"
+    "                if (r == 0xffffffffu) {\n"
+    "                    run = 0;\n"
+    "                    continue;\n"
+    "                }\n"
+    "                last[0] = last[1];\n"
+    "                last[1] = last[2];\n"
+    "                last[2] = r;\n"
+    "                if (++run < x.verts)\n"
+    "                    continue;\n"
+    "                uint first = 3 - x.verts;\n"
+    "                bool odd = x.verts == 3 && ((run - 3) & 1);\n"
+    "                for (uint k = 0; k < x.verts; k++) {\n"
+    "                    uint v = odd && k < 2 ? last[first + 1 - k] : last[first + k];\n"
+    "                    rec[k] = emu + x.out_base + v * x.out_stride;\n"
+    "                }\n"
+    "                o.primitive(rec);\n"
+    "            }\n"
+    "        }\n"
+    "    }\n"
+    "    if (x.query) {\n"
+    "        device uint *q = at<uint>(x.query);\n"
+    "        q[0] += o.written;\n"
+    "        q[2] += o.needed;\n"
+    "    }\n"
+    "}\n";
+
+id vkm_meta_xfb(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t samples)
+{
+    struct {
+        uint32_t tag;
+        uint32_t colors[VKM_COLORS];
+        uint32_t samples;
+    } key = {4, {}, samples};
+    memcpy(key.colors, colors, sizeof(key.colors));
+    id state = cached(&key, sizeof(key));
+    if (state)
+        return state;
+    state = pipeline_of(device, g_xfb, false, colors, 0, samples, false);
+    return state ? cache(&key, sizeof(key), state) : nullptr;
+}
+
+/* the vertex count of a draw of what stream output wrote, from its counter. */
+static const char g_byte_count[] =
+    "#include <metal_stdlib>\n"
+    "using namespace metal;\n"
+    "struct P { ulong counter, out; uint vertex_offset, stride, instances, first_instance; };\n"
+    "kernel void meta_count(constant P &p [[buffer(0)]]) {\n"
+    "    uint bytes = *reinterpret_cast<device const uint *>(p.counter);\n"
+    "    device uint *o = reinterpret_cast<device uint *>(p.out);\n"
+    "    o[0] = bytes > p.vertex_offset && p.stride ? (bytes - p.vertex_offset) / p.stride : 0;\n"
+    "    o[1] = p.instances;\n"
+    "    o[2] = 0;\n"
+    "    o[3] = p.first_instance;\n"
+    "}\n";
+
+id vkm_meta_byte_count(VkDevice device)
+{
+    uint32_t key = 5;
+    id state = cached(&key, sizeof(key));
+    if (state)
+        return state;
+    id library = vkm_library(device, g_byte_count);
+    if (!library)
+        return nullptr;
+    void *pool = objc_autoreleasePoolPush();
+    id function = vkm_function(library, "meta_count");
+    id desc = mtl_new("MTL4ComputePipelineDescriptor");
+    M_V_ID(desc, "setComputeFunctionDescriptor:", function);
+    id error = nullptr;
+    state = MTL_MSG(id (*)(id, SEL, id, id, id *), device->compiler,
+                    "newComputePipelineStateWithDescriptor:compilerTaskOptions:error:", desc, nullptr, &error);
+    if (!state)
+        VKM_ERROR("no byte count pipeline: %s", mtl_error_text(error));
+    mtl_release(desc);
+    mtl_release(function);
+    mtl_release(library);
+    objc_autoreleasePoolPop(pool);
+    return state ? cache(&key, sizeof(key), state) : nullptr;
 }

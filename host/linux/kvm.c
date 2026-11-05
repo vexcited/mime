@@ -72,6 +72,11 @@ void mime_host_wake_word(uint32_t *word)
     syscall(SYS_futex, word, FUTEX_WAKE_PRIVATE, INT32_MAX, nullptr, nullptr, 0);
 }
 
+void mime_host_wake_word_one(uint32_t *word)
+{
+    syscall(SYS_futex, word, FUTEX_WAKE_PRIVATE, 1, nullptr, nullptr, 0);
+}
+
 /*
  * the guest's memory is three quarters of the host's, and never less than 4 GiB on a host that has that much. programs
  * size their caches by what they are told, so it is as much as the host can spare. the host holds only the pages the
@@ -716,6 +721,16 @@ static void *vcpu_main(void *arg)
             break;
         case KVM_EXIT_HLT:
             vcpu->exits_halt++;
+            break;
+        case KVM_EXIT_HYPERV:
+            if (vcpu->run->hyperv.type == KVM_EXIT_HYPERV_HCALL) {
+                uint64_t regs[18] = {};
+                regs[0] = vcpu->run->hyperv.u.hcall.input;
+                regs[1] = vcpu->run->hyperv.u.hcall.params[0];
+                regs[2] = vcpu->run->hyperv.u.hcall.params[1];
+                mime_hv_dispatch(vcpu, true, regs);
+                vcpu->run->hyperv.u.hcall.result = regs[0];
+            }
             break;
         case KVM_EXIT_MMIO:
             if (!vcpu->run->mmio.is_write)

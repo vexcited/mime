@@ -648,4 +648,4 @@ EXPORTS
     wglUseFontBitmapsW
     wglUseFontOutlinesA
     wglUseFontOutlinesW
-    MimeX64Thunks DATA
+    OpenGL32X64Thunks DATA

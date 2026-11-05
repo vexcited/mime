@@ -259,6 +259,7 @@ void mvk_share_import_semaphore(MvkCall *call)
             result = c->fn.vkCreateSemaphore(c->device, &info, nullptr, &semaphore);
             if (result == VK_SUCCESS) {
                 mvk_forget(c, (uint64_t)old);
+                mvk_unwatch(c, old);
                 c->fn.vkDestroySemaphore(c->device, old, nullptr);
                 mvk_bind(c, semaphore_id, (uint64_t)semaphore);
                 mvk_track(c, (uint64_t)semaphore, MVK_KIND_VkSemaphore);

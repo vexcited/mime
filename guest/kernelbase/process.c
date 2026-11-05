@@ -1471,6 +1471,22 @@ BOOL WINAPI IsWow64Process2(HANDLE process, USHORT *process_machine, USHORT *nat
     return TRUE;
 }
 
+/* arm64 runs x64 programs translated and x86 ones in wow64, x64 runs x86 ones in wow64. */
+HRESULT WINAPI GetMachineTypeAttributes(USHORT machine, MACHINE_ATTRIBUTES *attributes)
+{
+    if (!attributes)
+        return E_INVALIDARG;
+    USHORT native = USER_SHARED_DATA->ImageNumberHigh;
+    *attributes = 0;
+    if (machine == native)
+        *attributes = UserEnabled | KernelEnabled;
+    else if (machine == IMAGE_FILE_MACHINE_I386)
+        *attributes = UserEnabled | Wow64Container;
+    else if (machine == IMAGE_FILE_MACHINE_AMD64 && native == IMAGE_FILE_MACHINE_ARM64)
+        *attributes = UserEnabled;
+    return S_OK;
+}
+
 /*
  * sets the machine the thread's guest code targets, the process machine by default, and returns the previous one.
  * Guess: the setting is per process here, not per thread.

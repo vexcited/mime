@@ -63,16 +63,6 @@ s128 __modti3(s128 n, s128 d)
     return n < 0 ? -(s128)r : (s128)r;
 }
 
-void *x86_alloc_code(size_t size)
-{
-    PVOID base = nullptr;
-    SIZE_T bytes = size;
-    if (!NT_SUCCESS(NtAllocateVirtualMemory(NtCurrentProcess(), &base, 0, &bytes, MEM_COMMIT | MEM_RESERVE,
-                                            PAGE_EXECUTE_READWRITE)))
-        return nullptr;
-    return base;
-}
-
 void x86_free_code(void *p, size_t size)
 {
     PVOID base = p;

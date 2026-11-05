@@ -22,8 +22,8 @@
 
 #include <stddef.h>
 
-/* x19 holds the cpu, x9 addresses, x10 to x15, x5 and x6 values. x14 is only free between uses of ea. */
-enum { CPU = 19, ADDR = 9, T0 = 10, T1 = 11, T2 = 12, T3 = 13, T4 = 14, T5 = 15, S0 = 5, S1 = 6, XZR = 31 };
+/* x19 holds the cpu, x9 addresses, x10 to x15 and x8 values. x14 is only free between uses of ea. */
+enum { CPU = 19, ADDR = 9, T0 = 10, T1 = 11, T2 = 12, T3 = 13, T4 = 14, T5 = 15, S0 = 8, XZR = 31 };
 enum { EQ = 0, NE = 1, HS = 2, LO = 3, MI = 4, PL = 5, VS = 6, VC = 7, HI = 8, LS = 9, GE = 10, LT = 11, GT = 12, LE = 13 };
 
 typedef struct Emit {
@@ -164,38 +164,51 @@ static void patch19(Emit *e, uint32_t *at)
 /* ------------------------------------------------------------ block frame */
 
 /*
- * the registers 0 to 7, rax to rdi, live in x20 to x27 while translated code runs: loaded by the prologue, stored
- * by every exit and around calls into the interpreter, and kept through chained exits. the others stay in the cpu.
+ * every x86 register lives in a host one while translated code runs: rax to rdi in x20 to x27, which calls keep, and
+ * r8 to r15 in x0 to x7, which a call to c code saves and reloads around it. loaded by the prologue, stored by every
+ * exit and around calls into the interpreter, and kept through chained exits.
  */
 enum { HOST_REGS = 20 };
-static int host_reg(int reg) { return reg < 8 ? HOST_REGS + reg : -1; }
+static int host_reg(int reg) { return reg < 0 ? -1 : reg < 8 ? HOST_REGS + reg : reg - 8; }
 
-/* stores or loads the host registers' x86 values to or from the cpu. */
+/* stp or ldp of two registers at a scaled offset of base. */
+static void pair(Emit *e, int store, int rt, int rt2, int rn, uint32_t off)
+{
+    put(e, (store ? 0xA9000000u : 0xA9400000u) | (off / 8) << 15 | (uint32_t)rt2 << 10 | (uint32_t)rn << 5 | (uint32_t)rt);
+}
+
+/* stores or loads r8 to r15, the x86 registers a call may clobber, to or from the cpu. */
+static void sync_high(Emit *e, int store)
+{
+    for (int k = 0; k < 4; k++)
+        pair(e, store, 2 * k, 2 * k + 1, CPU, OFF_R(8 + 2 * k));
+}
+
+/* stores or loads every host register's x86 value to or from the cpu. */
 static void sync_regs(Emit *e, int store)
 {
     for (int k = 0; k < 4; k++)
-        put(e, (store ? 0xA9000000u : 0xA9400000u) | (uint32_t)(k * 2) << 15 | (uint32_t)(HOST_REGS + 2 * k + 1) << 10 |
-                   (uint32_t)CPU << 5 | (uint32_t)(HOST_REGS + 2 * k)); /* stp or ldp x2k, x2k+1, [x19, #16k] */
+        pair(e, store, HOST_REGS + 2 * k, HOST_REGS + 2 * k + 1, CPU, OFF_R(2 * k));
+    sync_high(e, store);
 }
 
 static void prologue(Emit *e)
 {
     put(e, 0xA9BB7BF3u); /* stp x19, x30, [sp, #-80]! */
     for (int k = 0; k < 4; k++)
-        put(e, 0xA9000000u | (uint32_t)(2 + 2 * k) << 15 | (uint32_t)(HOST_REGS + 2 * k + 1) << 10 | 31u << 5 |
-                   (uint32_t)(HOST_REGS + 2 * k)); /* stp x2k, x2k+1, [sp, #16 + 16k] */
+        pair(e, 1, HOST_REGS + 2 * k, HOST_REGS + 2 * k + 1, 31, 16 + 16 * (uint32_t)k);
     mov_reg(e, 8, CPU, 0);
     sync_regs(e, 0);
 }
 
-/* stores the registers back and returns x0 to the dispatcher. */
-static void epilogue(Emit *e)
+/* stores the registers back and returns index to the dispatcher. */
+static void epilogue(Emit *e, uint32_t index)
 {
     sync_regs(e, 1);
     for (int k = 0; k < 4; k++)
-        put(e, 0xA9400000u | (uint32_t)(2 + 2 * k) << 15 | (uint32_t)(HOST_REGS + 2 * k + 1) << 10 | 31u << 5 |
-                   (uint32_t)(HOST_REGS + 2 * k)); /* ldp x2k, x2k+1, [sp, #16 + 16k] */
+        pair(e, 0, HOST_REGS + 2 * k, HOST_REGS + 2 * k + 1, 31, 16 + 16 * (uint32_t)k);
     put(e, 0xA8C57BF3u); /* ldp x19, x30, [sp], #80 */
+    mov_imm(e, 0, index);
     put(e, 0xD65F03C0u); /* ret */
 }
 
@@ -208,8 +221,7 @@ static void exit_to(Emit *e, int rip_reg, uint64_t rip, uint32_t index)
         mov_imm(e, T4, rip);
         str(e, 8, T4, CPU, offsetof(X86Cpu, rip));
     }
-    mov_imm(e, 0, index);
-    epilogue(e);
+    epilogue(e, index);
 }
 
 
@@ -227,9 +239,80 @@ typedef struct Ctx {
     int nzcv_set;   /* set by an emitter that left arm64 flags describing its x86 ones. */
     const X86Insn *insn;
     uint64_t start; /* the block's address. */
+    uint16_t xloaded; /* the xmm registers held in v16 to v31, see the xmm cache. */
+    uint16_t xdirty;  /* the ones changed there and not yet stored. */
 } Ctx;
 
+static uint32_t OFF_X(int reg) { return (uint32_t)(offsetof(X86Cpu, xmm) + (uint32_t)reg * 16); }
+
+/*
+ * the xmm cache: within a block, xmm n lives in v16 + n from its first use on, and the block's exits store the ones it
+ * changed. c code called meanwhile may change v16 to v31 and reads the cpu's xmm, so the changed ones are stored
+ * before such a call and the held ones loaded again after it. a fault restores the held ones from the faulting
+ * context, see x86_jit_fault.
+ */
+enum { XCACHE = 16 };
+
+static void vldr(Emit *e, int bytes, int vt, int rn, uint32_t off);
+static void vstr(Emit *e, int bytes, int vt, int rn, uint32_t off);
+static void vmov(Emit *e, int vd, int vn);
+
+static int xget(Ctx *x, int n)
+{
+    if (!(x->xloaded & 1u << n)) {
+        vldr(x->e, 16, XCACHE + n, CPU, OFF_X(n));
+        x->xloaded |= (uint16_t)(1u << n);
+    }
+    return XCACHE + n;
+}
+
+/* vt = the low bytes of xmm n, the rest of vt cleared. */
+static void xload(Ctx *x, int bytes, int vt, int n)
+{
+    int r = xget(x, n);
+    if (bytes == 16)
+        vmov(x->e, vt, r);
+    else
+        put(x->e, (bytes == 8 ? 0x1E604000u : 0x1E204000u) | (uint32_t)r << 5 | (uint32_t)vt); /* fmov d or s */
+}
+
+static void xstore(Ctx *x, int vt, int n)
+{
+    vmov(x->e, XCACHE + n, vt);
+    x->xloaded |= (uint16_t)(1u << n);
+    x->xdirty |= (uint16_t)(1u << n);
+}
+
+/* stores the changed registers. a path that may not run keeps them marked: storing again later does no harm. */
+static void xstore_dirty(Ctx *x)
+{
+    for (int n = 0; n < 16; n++)
+        if (x->xdirty & 1u << n)
+            vstr(x->e, 16, XCACHE + n, CPU, OFF_X(n));
+}
+
+static void xreload(Ctx *x)
+{
+    for (int n = 0; n < 16; n++)
+        if (x->xloaded & 1u << n)
+            vldr(x->e, 16, XCACHE + n, CPU, OFF_X(n));
+}
+
+/* around a call to c code, which keeps none of x0 to x7 and v16 to v31. */
+static void call_begin(Ctx *x)
+{
+    sync_high(x->e, 1);
+    xstore_dirty(x);
+}
+
+static void call_end(Ctx *x)
+{
+    sync_high(x->e, 0);
+    xreload(x);
+}
+
 static void emit_fallback(Ctx *x, const X86Insn *i);
+static void add_imm(Emit *e, int size, int rd, int rn, int64_t imm);
 
 static uint32_t *cbz_x(Emit *e, int rt)
 {
@@ -257,8 +340,8 @@ static void chain_checks(Ctx *x, uint32_t **suspended, uint32_t **stale)
 }
 
 /*
- * leaves for an address in rip_reg, or in the cpu's rip when rip_reg is -1: straight into the translated block
- * there when the target cache has it, otherwise back to the dispatcher.
+ * leaves for an address in rip_reg, or in the cpu's rip when rip_reg is -1: straight into the block translated there
+ * when the block table has one, otherwise back to the dispatcher. x16, x17 and t1 to t5 are free at an exit.
  */
 static void exit_computed(Ctx *x, int rip_reg)
 {
@@ -268,28 +351,38 @@ static void exit_computed(Ctx *x, int rip_reg)
         ldr(e, 8, T0, CPU, offsetof(X86Cpu, rip));
         rip_reg = T0;
     }
-    ldr(e, 8, 16, CPU, offsetof(X86Cpu, targets));
-    uint32_t *no_table = cbz_x(e, 16);
-    put(e, 0xCA400000u | (uint32_t)rip_reg << 16 | 12u << 10 | (uint32_t)rip_reg << 5 | 17); /* eor x17, rip, rip, lsr #12 */
-    ubfm(e, 8, 17, 17, 0, X86_TARGET_BITS - 1);
-    add_shifted(e, 16, 16, 17, 5);
-    ldr(e, 8, 17, 16, offsetof(X86Target, rip));
-    put(e, 0xEB00001Fu | (uint32_t)rip_reg << 16 | 17u << 5); /* cmp x17, rip */
-    uint32_t *miss = b_cond(e, NE);
+    ldr(e, 8, 17, CPU, offsetof(X86Cpu, jit_slots));
+    ldr(e, 8, T5, CPU, offsetof(X86Cpu, jit_mask));
+    uint32_t *no_table = cbz_x(e, 17);
+    put(e, 0xCA400000u | (uint32_t)rip_reg << 16 | 4u << 10 | (uint32_t)rip_reg << 5 | T1);  /* eor t1, rip, rip, lsr #4 */
+    put(e, 0xCA400000u | (uint32_t)rip_reg << 16 | 15u << 10 | (uint32_t)T1 << 5 | T1);      /* eor t1, t1, rip, lsr #15 */
+    rrr(e, OP_AND, 8, T1, T1, T5);
+    uint32_t *probe = e->p;
+    add_shifted(e, T2, 17, T1, 5);
+    put(e, 0xA9400000u | 16u << 10 | (uint32_t)T2 << 5 | T3); /* ldp t3, x16, [t2]: the slot's rip and code */
+    put(e, 0xEB00001Fu | (uint32_t)rip_reg << 16 | (uint32_t)T3 << 5); /* cmp t3, rip */
+    uint32_t *other = b_cond(e, NE);
+    uint32_t *untranslated = cbz_x(e, 16);
     uint32_t *suspended, *stale;
     chain_checks(x, &suspended, &stale);
-    ldr(e, 8, 17, 16, offsetof(X86Target, block));
-    str(e, 8, 17, CPU, offsetof(X86Cpu, jit_block));
-    ldr(e, 8, 16, 16, offsetof(X86Target, code));
+    ldr(e, 8, T4, T2, offsetof(X86Slot, block));
+    str(e, 8, T4, CPU, offsetof(X86Cpu, jit_block));
     put(e, 0xD61F0200u); /* br x16 */
+    /* another address in the slot: the next one, unless this one is free. */
+    patch19(e, other);
+    ldr(e, 8, T4, T2, offsetof(X86Slot, block));
+    uint32_t *free_slot = cbz_x(e, T4);
+    add_imm(e, 8, T1, T1, 1);
+    rrr(e, OP_AND, 8, T1, T1, T5);
+    put(e, 0x14000000u | ((uint32_t)(probe - e->p) & 0x3FFFFFFu)); /* b probe */
     patch19(e, no_table);
-    patch19(e, miss);
+    patch19(e, free_slot);
+    patch19(e, untranslated);
     patch19(e, suspended);
     patch19(e, stale);
     if (!stored)
         str(e, 8, rip_reg, CPU, offsetof(X86Cpu, rip));
-    mov_imm(e, 0, x->count);
-    epilogue(e);
+    epilogue(e, x->count);
 }
 
 /*
@@ -322,8 +415,7 @@ static void exit_const(Ctx *x, uint64_t rip, uint32_t index)
     uint32_t *address_slot = e->p;
     put(e, 0x10000000u | 17); /* adr x17, slot */
     str(e, 8, 17, CPU, offsetof(X86Cpu, exit_slot));
-    mov_imm(e, 0, index);
-    epilogue(e);
+    epilogue(e, index);
     if ((e->p - e->code) & 1)
         put(e, 0xD503201Fu); /* nop: the slot's words are 8 byte aligned. */
     patch19(e, load_code);
@@ -528,11 +620,7 @@ static int alu_size(const X86Insn *i)
     return op == 0x80 || op == 0x84 || op == 0xA8 || op == 0xF6 ? 1 : i->opsize;
 }
 
-static int is_jcc(const X86Insn *i)
-{
-    return (i->map == 0 && i->opcode >= 0x70 && i->opcode <= 0x7F) ||
-           (i->map == 1 && i->opcode >= 0x80 && i->opcode <= 0x8F);
-}
+static int is_jcc(const X86Insn *i) { return x86_is_jcc(i); }
 
 /* instructions setting every arithmetic flag without reading any. */
 static int writes_flags(const X86Insn *i)
@@ -561,7 +649,7 @@ static int ignores_flags(const X86Insn *i)
                (op == 0xFF && ((i->modrm >> 3) & 7) >= 2) || ((op == 0xF6 || op == 0xF7) && ((i->modrm >> 3) & 7) == 2) ||
                (op >= 0xA0 && op <= 0xA3) || op == 0xC9;
     if (i->map == 1)
-        return op == 0x1F || op == 0xB6 || op == 0xB7 || op == 0xBE || op == 0xBF || (op >= 0x10 && op <= 0x17) ||
+        return op == 0x1F || op == 0x18 || op == 0x0D || op == 0xB6 || op == 0xB7 || op == 0xBE || op == 0xBF || (op >= 0x10 && op <= 0x17) ||
                (op >= 0x28 && op <= 0x2D) || (op >= 0x50 && op <= 0x7F) || op == 0xC2 || op == 0xC6 || op >= 0xC8;
     return 1; /* the 0f 38 and 0f 3a maps. */
 }
@@ -610,7 +698,7 @@ static int live_before(const X86Insn *i, int live)
  * the flags the code at addr may read before setting them. only the pages
  * of the block are read, which are known to be mapped.
  */
-static int flags_read_at(X86Cpu *cpu, uint64_t addr, uint64_t lo, uint64_t hi)
+static int flags_read_from(X86Cpu *cpu, uint64_t addr, uint64_t lo, uint64_t hi, int depth)
 {
     int ours = LIVE_ALL, read = 0;
     for (int n = 0; n < 8 && ours; n++) {
@@ -622,11 +710,24 @@ static int flags_read_at(X86Cpu *cpu, uint64_t addr, uint64_t lo, uint64_t hi)
             break;
         read |= live_before(&i, 0) & ours;
         ours &= live_before(&i, ours);
-        if (x86_ends_block(&i))
+        if (x86_ends_block(&i)) {
+            /* a branch or a jump goes on where it leads, a few steps deep: a compare there ends the flags' life. */
+            uint64_t next = addr + i.len, target = cpu->mode64 ? next + i.imm : (uint32_t)(next + i.imm);
+            if (depth > 0 && ours && is_jcc(&i))
+                return read | (ours & (flags_read_from(cpu, next, lo, hi, depth - 1) |
+                                       flags_read_from(cpu, target, lo, hi, depth - 1)));
+            if (depth > 0 && ours && i.map == 0 && (i.opcode == 0xE9 || i.opcode == 0xEB))
+                return read | (ours & flags_read_from(cpu, target, lo, hi, depth - 1));
             break;
+        }
         addr += i.len;
     }
     return read | ours;
+}
+
+static int flags_read_at(X86Cpu *cpu, uint64_t addr, uint64_t lo, uint64_t hi)
+{
+    return flags_read_from(cpu, addr, lo, hi, 2);
 }
 
 /* ------------------------------------------------------------ flags */
@@ -730,6 +831,11 @@ static int emit_alu_wide(Ctx *x, const X86Insn *i, int kind, int size)
         ra = T0;
     }
     uint64_t imm = i->imm & size_mask(size);
+    /*
+     * a small negative immediate is the other operation, whose arm64 c flag is then the x86 carry of this one: an add of
+     * -k carries when the subtraction of k does not borrow. so the flags still read as this operation's.
+     */
+    int flag_kind = kind;
     int imm12 = -1; /* the add or sub immediate form, when the flags allow it. */
     if (has_imm && !record && !carry && (kind == ALU_ADD || kind == ALU_SUB || kind == ALU_CMP)) {
         if (imm < 4096)
@@ -784,7 +890,7 @@ static int emit_alu_wide(Ctx *x, const X86Insn *i, int kind, int size)
     if (record)
         record_flags(x, kind, size, ra, rb, T2);
     if (set)
-        set_nzcv(x, kind == ALU_ADC ? ALU_ADD : kind == ALU_SBB ? ALU_SUB : kind);
+        set_nzcv(x, flag_kind == ALU_ADC ? ALU_ADD : flag_kind == ALU_SBB ? ALU_SUB : flag_kind);
     if (compare)
         return 1;
     if (a_reg < 0)
@@ -892,32 +998,37 @@ static void carry_t3(Ctx *x)
         ldr(e, 8, T3, CPU, offsetof(X86Cpu, lf_carry));
         uint32_t *done = b_always(e);
         patch19(e, other);
+        call_begin(x);
         mov_reg(e, 8, 0, CPU);
         call(e, (const void *)x86_arith_flags);
         ubfm(e, 4, T3, 0, 0, 0); /* cf, bit 0 */
+        call_end(x);
         patch26(e, done);
     }
 }
 
 /*
- * w0 = x86 condition cc, from the arm64 flags when they describe it or from
+ * t3 = x86 condition cc, from the arm64 flags when they describe it or from
  * the lazy flags. returns whether the arm64 flags survived.
  */
-static int condition_w0(Ctx *x, int cc)
+static int condition_t3(Ctx *x, int cc)
 {
     Emit *e = x->e;
     int cond = x->nzcv_alu >= 0 ? arm_cond(x->nzcv_alu, cc) : -1;
     if (cond >= 0) {
-        cset(e, 0, cond);
+        cset(e, T3, cond);
         return 1;
     }
     if (cond == -2 || cond == -3) {
-        mov_imm(e, 0, cond == -3);
+        mov_imm(e, T3, cond == -3);
         return 1;
     }
+    call_begin(x);
     mov_reg(e, 8, 0, CPU);
     mov_imm(e, 1, (uint64_t)cc);
     call(e, (const void *)x86_cond);
+    mov_reg(e, 4, T3, 0);
+    call_end(x);
     return 0;
 }
 
@@ -939,12 +1050,36 @@ static void emit_jcc(Ctx *x, const X86Insn *i)
     if (cond >= 0) {
         taken = b_cond(e, cond);
     } else {
-        condition_w0(x, cc);
-        taken = cbnz_w(e, 0);
+        condition_t3(x, cc);
+        taken = cbnz_w(e, T3);
     }
     exit_const(x, x->next, x->count);
     patch19(e, taken);
     exit_const(x, target, x->count);
+}
+
+/* a conditional branch before the block's end: the branch taken leaves the block, the code after it runs on. */
+static int emit_side_exit(Ctx *x, const X86Insn *i)
+{
+    Emit *e = x->e;
+    int cc = i->opcode & 15;
+    uint64_t target = branch_target(x, x->next + i->imm);
+    int cond = x->nzcv_alu >= 0 ? arm_cond(x->nzcv_alu, cc) : -1;
+    x->keep = 1;
+    if (cond == -2)
+        return 1;
+    uint32_t *stay = nullptr;
+    if (cond >= 0)
+        stay = b_cond(e, cond ^ 1);
+    else if (cond == -1) {
+        x->keep = condition_t3(x, cc);
+        stay = cbz_x(e, T3);
+    }
+    /* the arm64 flags still describe the branch's condition on the way out, which the stores leave alone. */
+    xstore_dirty(x);
+    exit_const(x, target, x->count);
+    patch19(e, stay);
+    return 1;
 }
 
 /* inc and dec keep the carry flag, read before their own flags replace the arm64 ones. */
@@ -1006,17 +1141,21 @@ static int emit_shift(Ctx *x, const X86Insn *i)
     int size = (op & 1) ? i->opsize : 1, sub = (i->modrm >> 3) & 7;
     if ((x->flags_live && (sub < 4 || op >= 0xD2)) || sub == 2 || sub == 3 || (sub < 2 && size < 4)) {
         /* the interpreter's shift, without its decoding: flags read later stay exact. */
-        load_rm(x, i, size, 2);
+        load_rm(x, i, size, T0);
         if (op <= 0xC1)
-            mov_imm(e, 3, i->imm & 0xFF);
+            mov_imm(e, T1, i->imm & 0xFF);
         else if (op <= 0xD1)
-            mov_imm(e, 3, 1);
+            mov_imm(e, T1, 1);
         else
-            load_reg(e, 1, 3, X86_RCX, 1);
+            load_reg(e, 1, T1, X86_RCX, 1);
+        call_begin(x);
+        mov_reg(e, 8, 2, T0);
+        mov_reg(e, 8, 3, T1);
         mov_reg(e, 8, 0, CPU);
         mov_imm(e, 1, (uint64_t)sub << 8 | (uint64_t)size);
         call(e, (const void *)x86_jit_shift);
         mov_reg(e, 8, T2, 0);
+        call_end(x);
         store_rm(x, i, size, T2, 0);
         return 1;
     }
@@ -1103,7 +1242,6 @@ static void push_value(Ctx *x, int value)
 
 enum { V0 = 0, V1 = 1, V2 = 2, V3 = 3 };
 
-static uint32_t OFF_X(int reg) { return (uint32_t)(offsetof(X86Cpu, xmm) + (uint32_t)reg * 16); }
 
 /* vector loads and stores of 4, 8 or 16 bytes. narrower loads clear the rest of the register. */
 static void vldr(Emit *e, int bytes, int vt, int rn, uint32_t off)
@@ -1123,11 +1261,11 @@ static void v3(Emit *e, uint32_t op, int vd, int vn, int vm)
     put(e, op | (uint32_t)vm << 16 | (uint32_t)vn << 5 | (uint32_t)vd);
 }
 
-/* ins vd.lane[dst], vn.lane[src] for lanes of 4 or 8 bytes. */
+/* ins vd.lane[dst], vn.lane[src] for lanes of 2, 4 or 8 bytes. */
 static void ins(Emit *e, int bytes, int vd, int dst, int vn, int src)
 {
-    uint32_t imm5 = bytes == 8 ? ((uint32_t)dst << 4 | 8) : ((uint32_t)dst << 3 | 4);
-    uint32_t imm4 = bytes == 8 ? (uint32_t)src << 3 : (uint32_t)src << 2;
+    uint32_t imm5 = bytes == 8 ? ((uint32_t)dst << 4 | 8) : bytes == 4 ? ((uint32_t)dst << 3 | 4) : ((uint32_t)dst << 2 | 2);
+    uint32_t imm4 = bytes == 8 ? (uint32_t)src << 3 : bytes == 4 ? (uint32_t)src << 2 : (uint32_t)src << 1;
     put(e, 0x6E000400u | imm5 << 16 | imm4 << 11 | (uint32_t)vn << 5 | (uint32_t)vd);
 }
 
@@ -1143,7 +1281,7 @@ static void vmov(Emit *e, int vd, int vn) { v3(e, V_ORR, vd, vn, vn); }
 static void load_xsrc(Ctx *x, const X86Insn *i, int bytes, int vt)
 {
     if (i->mod == 3) {
-        vldr(x->e, 16, vt, CPU, OFF_X(i->rm));
+        xload(x, 16, vt, i->rm);
     } else {
         ea(x, i);
         vldr(x->e, bytes, vt, ADDR, 0);
@@ -1182,6 +1320,200 @@ static uint32_t *packed_nan_check(Ctx *x, int dbl, int v)
     return nan_guard(x, EQ);
 }
 
+/*
+ * the integer operations of sse2 on xmm registers, each one or a few neon instructions on the whole register.
+ * returns -1 for the ones it does not cover.
+ */
+#define N_ADD 0x4E208400u
+#define N_SUB 0x6E208400u
+#define N_SQADD 0x4E200C00u
+#define N_UQADD 0x6E200C00u
+#define N_SQSUB 0x4E202C00u
+#define N_UQSUB 0x6E202C00u
+#define N_CMGT 0x4E203400u
+#define N_CMEQ 0x6E208C00u
+#define N_SMAX 0x4E206400u
+#define N_SMIN 0x4E206C00u
+#define N_UMAX 0x6E206400u
+#define N_UMIN 0x6E206C00u
+#define N_URHADD 0x6E201400u
+#define N_MUL 0x4E209C00u
+#define N_ZIP1 0x4E003800u
+#define N_ZIP2 0x4E007800u
+#define N_UZP2 0x4E005800u
+#define N_ADDP 0x4E20BC00u
+#define N_USHL 0x6E204400u
+#define N_SSHL 0x4E204400u
+#define N_SMULL 0x0E20C000u
+#define N_SMULL2 0x4E20C000u
+#define N_UMULL 0x2E20C000u
+#define N_UMULL2 0x6E20C000u
+
+static void vzero(Emit *e, int vd) { put(e, 0x6F00E400u | (uint32_t)vd); } /* movi vd.2d, #0 */
+
+/* vd = op(vn, vm) on lanes of 1 << size bytes. */
+static void vop(Emit *e, uint32_t op, int size, int vd, int vn, int vm) { v3(e, op | (uint32_t)size << 22, vd, vn, vm); }
+
+/* lanes of 2, 4 or 8 bytes shifted by a constant: kind 0 logical right, 1 arithmetic right, 2 left. */
+static void shift_const(Emit *e, int v, int bytes, int kind, unsigned n)
+{
+    unsigned bits = (unsigned)bytes * 8;
+    if (kind == 1 && n >= bits)
+        n = bits;
+    if (!n)
+        return;
+    if (kind != 1 && n >= bits) {
+        vzero(e, v);
+        return;
+    }
+    if (kind == 2)
+        put(e, 0x4F005400u | (bits + n) << 16 | (uint32_t)v << 5 | (uint32_t)v); /* shl */
+    else
+        put(e, (kind ? 0x4F000400u : 0x6F000400u) | (2 * bits - n) << 16 | (uint32_t)v << 5 | (uint32_t)v); /* sshr, ushr */
+}
+
+static int emit_simd_int(Ctx *x, const X86Insn *i)
+{
+    Emit *e = x->e;
+    uint8_t op = i->opcode;
+    static const struct {
+        uint8_t op;
+        uint8_t size;
+        uint32_t neon;
+    } same[] = {
+        {0xFC, 0, N_ADD}, {0xFD, 1, N_ADD}, {0xFE, 2, N_ADD}, {0xD4, 3, N_ADD},
+        {0xF8, 0, N_SUB}, {0xF9, 1, N_SUB}, {0xFA, 2, N_SUB}, {0xFB, 3, N_SUB},
+        {0xEC, 0, N_SQADD}, {0xED, 1, N_SQADD}, {0xDC, 0, N_UQADD}, {0xDD, 1, N_UQADD},
+        {0xE8, 0, N_SQSUB}, {0xE9, 1, N_SQSUB}, {0xD8, 0, N_UQSUB}, {0xD9, 1, N_UQSUB},
+        {0x64, 0, N_CMGT}, {0x65, 1, N_CMGT}, {0x66, 2, N_CMGT},
+        {0x74, 0, N_CMEQ}, {0x75, 1, N_CMEQ}, {0x76, 2, N_CMEQ},
+        {0xDA, 0, N_UMIN}, {0xDE, 0, N_UMAX}, {0xEA, 1, N_SMIN}, {0xEE, 1, N_SMAX},
+        {0xE0, 0, N_URHADD}, {0xE3, 1, N_URHADD}, {0xD5, 1, N_MUL},
+        {0x60, 0, N_ZIP1}, {0x61, 1, N_ZIP1}, {0x62, 2, N_ZIP1}, {0x6C, 3, N_ZIP1},
+        {0x68, 0, N_ZIP2}, {0x69, 1, N_ZIP2}, {0x6A, 2, N_ZIP2}, {0x6D, 3, N_ZIP2},
+    };
+    for (uint32_t k = 0; k < sizeof(same) / sizeof(same[0]); k++) {
+        if (same[k].op != op)
+            continue;
+        xload(x, 16, V0, i->reg);
+        load_xsrc(x, i, 16, V1);
+        vop(e, same[k].neon, same[k].size, V0, V0, V1);
+        xstore(x, V0, i->reg);
+        return 1;
+    }
+    switch (op) {
+    case 0x63: case 0x67: case 0x6B: { /* packsswb, packuswb, packssdw: the destination's lanes, then the source's. */
+        int size = op == 0x6B ? 1 : 0;
+        uint32_t lo = op == 0x67 ? 0x2E212800u : 0x0E214800u; /* sqxtun, sqxtn */
+        xload(x, 16, V0, i->reg);
+        load_xsrc(x, i, 16, V1);
+        put(e, lo | (uint32_t)size << 22 | (uint32_t)V0 << 5 | V2);
+        put(e, lo | 0x40000000u | (uint32_t)size << 22 | (uint32_t)V1 << 5 | V2); /* the 2 forms fill the upper half */
+        xstore(x, V2, i->reg);
+        return 1;
+    }
+    case 0xE4: case 0xE5: /* pmulhuw, pmulhw: the upper halves of the products. */
+        xload(x, 16, V0, i->reg);
+        load_xsrc(x, i, 16, V1);
+        vop(e, op == 0xE5 ? N_SMULL : N_UMULL, 1, V2, V0, V1);
+        vop(e, op == 0xE5 ? N_SMULL2 : N_UMULL2, 1, V3, V0, V1);
+        vop(e, N_UZP2, 1, V0, V2, V3);
+        xstore(x, V0, i->reg);
+        return 1;
+    case 0xF5: /* pmaddwd */
+        xload(x, 16, V0, i->reg);
+        load_xsrc(x, i, 16, V1);
+        vop(e, N_SMULL, 1, V2, V0, V1);
+        vop(e, N_SMULL2, 1, V3, V0, V1);
+        vop(e, N_ADDP, 2, V0, V2, V3);
+        xstore(x, V0, i->reg);
+        return 1;
+    case 0xF4: /* pmuludq: the even dwords */
+        xload(x, 16, V0, i->reg);
+        load_xsrc(x, i, 16, V1);
+        put(e, 0x0EA12800u | (uint32_t)V0 << 5 | V2); /* xtn v2.2s, v0.2d */
+        put(e, 0x0EA12800u | (uint32_t)V1 << 5 | V3);
+        vop(e, N_UMULL, 2, V0, V2, V3);
+        xstore(x, V0, i->reg);
+        return 1;
+    case 0xF6: /* psadbw: the sum of each half's absolute differences */
+        xload(x, 16, V0, i->reg);
+        load_xsrc(x, i, 16, V1);
+        vop(e, 0x6E207400u, 0, V0, V0, V1); /* uabd */
+        for (int size = 0; size < 3; size++)
+            put(e, 0x6E202800u | (uint32_t)size << 22 | (uint32_t)V0 << 5 | V0); /* uaddlp */
+        xstore(x, V0, i->reg);
+        return 1;
+    case 0xD1: case 0xD2: case 0xD3: case 0xE1: case 0xE2: case 0xF1: case 0xF2: case 0xF3: {
+        /* shifts by the low quadword of the source: counts past the lane width clear it or fill it with the sign. */
+        int size = (op & 3) == 1 ? 1 : (op & 3) == 2 ? 2 : 3, bits = 8 << size;
+        int right = op < 0xF0, arith = (op & 0xF0) == 0xE0;
+        x->keep = 0; /* the clamp's compare replaces the arm64 flags. */
+        xload(x, 16, V0, i->reg);
+        load_xsrc(x, i, 16, V1);
+        put(e, 0x9E660000u | (uint32_t)V1 << 5 | 16); /* fmov x16, d1 */
+        mov_imm(e, 17, (uint64_t)bits);
+        put(e, 0xEB00001Fu | 17u << 16 | 16u << 5); /* cmp x16, x17 */
+        put(e, 0x9A800000u | 17u << 16 | (uint32_t)LS << 12 | 16u << 5 | 16); /* csel x16, x16, x17, ls */
+        if (right)
+            put(e, 0xCB1003F0u); /* neg x16, x16 */
+        put(e, 0x4E000C00u | (1u << size) << 16 | 16u << 5 | V1); /* dup v1, x16 */
+        vop(e, arith ? N_SSHL : N_USHL, size, V0, V0, V1);
+        xstore(x, V0, i->reg);
+        return 1;
+    }
+    case 0x71: case 0x72: case 0x73: { /* shifts by an immediate */
+        int sub = (i->modrm >> 3) & 7;
+        unsigned n = (unsigned)(i->imm & 0xFF);
+        if (i->mod != 3)
+            return 0;
+        xload(x, 16, V0, i->rm);
+        if (op == 0x73 && (sub == 3 || sub == 7)) { /* psrldq, pslldq: whole bytes */
+            if (n >= 16) {
+                vzero(e, V0);
+            } else if (n) {
+                vzero(e, V3);
+                if (sub == 3)
+                    put(e, 0x6E000000u | (uint32_t)V3 << 16 | n << 11 | (uint32_t)V0 << 5 | V0); /* ext v0, v0, v3, #n */
+                else
+                    put(e, 0x6E000000u | (uint32_t)V0 << 16 | (16 - n) << 11 | (uint32_t)V3 << 5 | V0); /* ext v0, v3, v0 */
+            }
+        } else if (sub == 2 || sub == 6 || (sub == 4 && op != 0x73)) {
+            shift_const(e, V0, op == 0x71 ? 2 : op == 0x72 ? 4 : 8, sub == 2 ? 0 : sub == 4 ? 1 : 2, n);
+        } else {
+            return 0;
+        }
+        xstore(x, V0, i->rm);
+        return 1;
+    }
+    case 0xD7: /* pmovmskb: the top bit of every byte */
+        if (i->mod != 3)
+            return 0;
+        xload(x, 16, V0, i->rm);
+        put(e, 0x4E20A800u | (uint32_t)V0 << 5 | V0); /* cmlt v0.16b, v0.16b, #0 */
+        mov_imm(e, 16, 0x8040201008040201ull);
+        put(e, 0x4E080C00u | 16u << 5 | V1); /* dup v1.2d, x16 */
+        v3(e, V_AND, V0, V0, V1);
+        for (int k = 0; k < 3; k++)
+            vop(e, N_ADDP, 0, V0, V0, V0);
+        put(e, 0x0E023C00u | (uint32_t)V0 << 5 | T0); /* umov w10, v0.h[0] */
+        store_reg(e, 8, T0, i->reg, 1);
+        return 1;
+    case 0x70: /* pshuflw, pshufhw */
+        if (i->mandatory != 0xF2 && i->mandatory != 0xF3)
+            return -1;
+        load_xsrc(x, i, 16, V1);
+        vmov(e, V2, V1);
+        for (int k = 0; k < 4; k++) {
+            int base = i->mandatory == 0xF3 ? 4 : 0;
+            ins(e, 2, V2, base + k, V1, base + ((int)(i->imm >> (2 * k)) & 3));
+        }
+        xstore(x, V2, i->reg);
+        return 1;
+    }
+    return -1;
+}
+
 static int emit_sse(Ctx *x, const X86Insn *i)
 {
     Emit *e = x->e;
@@ -1192,26 +1524,31 @@ static int emit_sse(Ctx *x, const X86Insn *i)
     uint32_t sz = dbl ? 1u << 22 : 0;
     uint32_t *ok = nullptr, *done = nullptr;
     x->keep = 1; /* every case but the arithmetic, conversions to integers and compares. */
+    if (pfx == 0x66 || op == 0x70) {
+        int r = emit_simd_int(x, i);
+        if (r >= 0)
+            return r;
+    }
     switch (op) {
     case 0x10: /* movups, movupd, movss, movsd */
         if (scalar && i->mod == 3) {
-            vldr(e, 16, V0, CPU, OFF_X(i->reg));
-            vldr(e, 16, V1, CPU, OFF_X(i->rm));
+            xload(x, 16, V0, i->reg);
+            xload(x, 16, V1, i->rm);
             ins(e, lane, V0, 0, V1, 0);
-            vstr(e, 16, V0, CPU, OFF_X(i->reg));
+            xstore(x, V0, i->reg);
         } else {
             load_xsrc(x, i, scalar ? lane : 16, V0);
-            vstr(e, 16, V0, CPU, OFF_X(i->reg));
+            xstore(x, V0, i->reg);
         }
         return 1;
     case 0x11:
-        vldr(e, 16, V0, CPU, OFF_X(i->reg));
+        xload(x, 16, V0, i->reg);
         if (i->mod == 3 && scalar) {
-            vldr(e, 16, V1, CPU, OFF_X(i->rm));
+            xload(x, 16, V1, i->rm);
             ins(e, lane, V1, 0, V0, 0);
-            vstr(e, 16, V1, CPU, OFF_X(i->rm));
+            xstore(x, V1, i->rm);
         } else if (i->mod == 3) {
-            vstr(e, 16, V0, CPU, OFF_X(i->rm));
+            xstore(x, V0, i->rm);
         } else {
             ea(x, i);
             vstr(e, scalar ? lane : 16, V0, ADDR, 0);
@@ -1222,15 +1559,15 @@ static int emit_sse(Ctx *x, const X86Insn *i)
         if ((op == 0x28 && scalar) || (op == 0x6F && pfx != 0x66 && pfx != 0xF3))
             return 0;
         load_xsrc(x, i, 16, V0);
-        vstr(e, 16, V0, CPU, OFF_X(i->reg));
+        xstore(x, V0, i->reg);
         return 1;
     case 0x29:
     case 0x7F:
         if ((op == 0x29 && scalar) || (op == 0x7F && pfx != 0x66 && pfx != 0xF3))
             return 0;
-        vldr(e, 16, V0, CPU, OFF_X(i->reg));
+        xload(x, 16, V0, i->reg);
         if (i->mod == 3)
-            vstr(e, 16, V0, CPU, OFF_X(i->rm));
+            xstore(x, V0, i->rm);
         else {
             ea(x, i);
             vstr(e, 16, V0, ADDR, 0);
@@ -1239,9 +1576,9 @@ static int emit_sse(Ctx *x, const X86Insn *i)
     case 0xD6: /* movq xmm/m64, xmm */
         if (pfx != 0x66)
             return 0;
-        vldr(e, 8, V0, CPU, OFF_X(i->reg));
+        xload(x, 8, V0, i->reg);
         if (i->mod == 3)
-            vstr(e, 16, V0, CPU, OFF_X(i->rm));
+            xstore(x, V0, i->rm);
         else {
             ea(x, i);
             vstr(e, 8, V0, ADDR, 0);
@@ -1250,10 +1587,10 @@ static int emit_sse(Ctx *x, const X86Insn *i)
     case 0x7E:
         if (pfx == 0xF3) { /* movq xmm, xmm/m64 */
             if (i->mod == 3)
-                vldr(e, 8, V0, CPU, OFF_X(i->rm));
+                xload(x, 8, V0, i->rm);
             else
                 load_xsrc(x, i, 8, V0);
-            vstr(e, 16, V0, CPU, OFF_X(i->reg));
+            xstore(x, V0, i->reg);
             return 1;
         }
         if (pfx != 0x66)
@@ -1261,12 +1598,12 @@ static int emit_sse(Ctx *x, const X86Insn *i)
         /* movd, movq rm, xmm */
         if (i->mod == 3) {
             if (i->rex & 8)
-                ldr(e, 8, T0, CPU, OFF_X(i->reg));
+                put(e, 0x9E660000u | (uint32_t)xget(x, i->reg) << 5 | T0); /* fmov x10, d */
             else
-                ldr(e, 4, T0, CPU, OFF_X(i->reg));
+                put(e, 0x1E260000u | (uint32_t)xget(x, i->reg) << 5 | T0); /* fmov w10, s */
             store_reg(e, 8, T0, i->rm, 1);
         } else {
-            vldr(e, (i->rex & 8) ? 8 : 4, V0, CPU, OFF_X(i->reg));
+            xload(x, (i->rex & 8) ? 8 : 4, V0, i->reg);
             ea(x, i);
             vstr(e, (i->rex & 8) ? 8 : 4, V0, ADDR, 0);
         }
@@ -1284,36 +1621,36 @@ static int emit_sse(Ctx *x, const X86Insn *i)
         } else {
             load_xsrc(x, i, (i->rex & 8) ? 8 : 4, V0);
         }
-        vstr(e, 16, V0, CPU, OFF_X(i->reg));
+        xstore(x, V0, i->reg);
         return 1;
     case 0x14: /* unpcklps, unpcklpd */
     case 0x15:
         if (scalar)
             return 0;
-        vldr(e, 16, V0, CPU, OFF_X(i->reg));
+        xload(x, 16, V0, i->reg);
         load_xsrc(x, i, 16, V1);
         v3(e, (op == 0x14 ? 0x0E003800u : 0x0E007800u) | 0x40000000u | (dbl ? 3u : 2u) << 22, V0, V0, V1);
-        vstr(e, 16, V0, CPU, OFF_X(i->reg));
+        xstore(x, V0, i->reg);
         return 1;
     case 0x54: case 0x55: case 0x56: case 0x57: /* andps, andnps, orps, xorps and the pd forms */
     case 0xDB: case 0xDF: case 0xEB: case 0xEF: { /* pand, pandn, por, pxor */
         if (op >= 0xDB ? pfx != 0x66 : scalar)
             return 0;
         int k = op >= 0xDB ? (op == 0xDB ? 0 : op == 0xDF ? 1 : op == 0xEB ? 2 : 3) : op - 0x54;
-        vldr(e, 16, V0, CPU, OFF_X(i->reg));
+        xload(x, 16, V0, i->reg);
         load_xsrc(x, i, 16, V1);
         if (k == 1)
             v3(e, V_BIC, V0, V1, V0); /* ~dst & src */
         else
             v3(e, k == 0 ? V_AND : k == 2 ? V_ORR : V_EOR, V0, V0, V1);
-        vstr(e, 16, V0, CPU, OFF_X(i->reg));
+        xstore(x, V0, i->reg);
         return 1;
     }
     case 0x58: case 0x59: case 0x5C: case 0x5E: case 0x51: { /* add, mul, sub, div, sqrt */
         x->keep = 0;
         static const uint32_t vec[] = {0x4E20D400u, 0x6E20DC00u, 0, 0, 0x4EA0D400u, 0, 0x6E20FC00u};
         static const uint32_t sca[] = {0x1E202800u, 0x1E200800u, 0, 0, 0x1E203800u, 0, 0x1E201800u};
-        vldr(e, 16, V0, CPU, OFF_X(i->reg));
+        xload(x, 16, V0, i->reg);
         load_xsrc(x, i, scalar ? lane : 16, V1);
         if (scalar) {
             if (op == 0x51)
@@ -1332,13 +1669,13 @@ static int emit_sse(Ctx *x, const X86Insn *i)
             nan_join(x, ok, &done);
             vmov(e, V0, V2);
         }
-        vstr(e, 16, V0, CPU, OFF_X(i->reg));
+        xstore(x, V0, i->reg);
         patch26(e, done);
         return 1;
     }
     case 0x5D: /* min: a < b ? a : b, the second operand for nans and equal values. */
     case 0x5F: /* max: a > b ? a : b */
-        vldr(e, 16, V0, CPU, OFF_X(i->reg));
+        xload(x, 16, V0, i->reg);
         load_xsrc(x, i, scalar ? lane : 16, V1);
         if (op == 0x5D)
             v3(e, 0x6EA0E400u | sz, V2, V1, V0); /* fcmgt v2, b, a */
@@ -1349,11 +1686,11 @@ static int emit_sse(Ctx *x, const X86Insn *i)
             ins(e, lane, V0, 0, V2, 0);
         else
             vmov(e, V0, V2);
-        vstr(e, 16, V0, CPU, OFF_X(i->reg));
+        xstore(x, V0, i->reg);
         return 1;
     case 0xC2: { /* cmpps, cmppd, cmpss, cmpsd */
         int pred = (int)(i->imm & 7);
-        vldr(e, 16, V0, CPU, OFF_X(i->reg));
+        xload(x, 16, V0, i->reg);
         load_xsrc(x, i, scalar ? lane : 16, V1);
         switch (pred & 3) {
         case 0: v3(e, 0x4E20E400u | sz, V2, V0, V1); break; /* eq: fcmeq */
@@ -1372,7 +1709,7 @@ static int emit_sse(Ctx *x, const X86Insn *i)
             ins(e, lane, V0, 0, V2, 0);
         else
             vmov(e, V0, V2);
-        vstr(e, 16, V0, CPU, OFF_X(i->reg));
+        xstore(x, V0, i->reg);
         return 1;
     }
     case 0x2E: /* ucomiss, ucomisd */
@@ -1380,7 +1717,7 @@ static int emit_sse(Ctx *x, const X86Insn *i)
         if (scalar)
             return 0;
         x->keep = 0;
-        vldr(e, 16, V0, CPU, OFF_X(i->reg));
+        xload(x, 16, V0, i->reg);
         load_xsrc(x, i, lane, V1);
         put(e, (dbl ? 0x1E602000u : 0x1E202000u) | (uint32_t)V1 << 16 | (uint32_t)V0 << 5);
         put(e, 0x1A9F07E0u | (uint32_t)(EQ ^ 1) << 12 | T0); /* cset t0, eq */
@@ -1405,9 +1742,9 @@ static int emit_sse(Ctx *x, const X86Insn *i)
         int wide = (i->rex & 8) != 0;
         load_rm(x, i, wide ? 8 : 4, T0);
         put(e, (wide ? 0x80000000u : 0) | (dbl ? 0x1E620000u : 0x1E220000u) | (uint32_t)T0 << 5 | V2);
-        vldr(e, 16, V0, CPU, OFF_X(i->reg));
+        xload(x, 16, V0, i->reg);
         ins(e, lane, V0, 0, V2, 0);
-        vstr(e, 16, V0, CPU, OFF_X(i->reg));
+        xstore(x, V0, i->reg);
         return 1;
     }
     case 0x2C: { /* cvttss2si, cvttsd2si: nans and out of range values take the interpreter's indefinite value. */
@@ -1438,11 +1775,29 @@ static int emit_sse(Ctx *x, const X86Insn *i)
     case 0x5A: /* cvtss2sd, cvtsd2ss */
         if (!scalar)
             return 0;
-        vldr(e, 16, V0, CPU, OFF_X(i->reg));
+        xload(x, 16, V0, i->reg);
         load_xsrc(x, i, lane, V1);
         put(e, (dbl ? 0x1E624000u : 0x1E22C000u) | (uint32_t)V1 << 5 | V2);
         ins(e, dbl ? 4 : 8, V0, 0, V2, 0);
-        vstr(e, 16, V0, CPU, OFF_X(i->reg));
+        xstore(x, V0, i->reg);
+        return 1;
+    case 0x5B: /* cvtdq2ps, cvtps2dq, cvttps2dq */
+        if (pfx == 0xF2)
+            return 0;
+        load_xsrc(x, i, 16, V1);
+        if (!pfx) {
+            put(e, 0x4E21D800u | (uint32_t)V1 << 5 | V3); /* scvtf, in fpcr's rounding as mxcsr's */
+        } else {
+            if (pfx == 0x66)
+                put(e, 0x6EA19800u | (uint32_t)V1 << 5 | V1); /* frinti */
+            put(e, 0x4EA1B800u | (uint32_t)V1 << 5 | V3);     /* fcvtzs */
+            /* nans and values from 2^31 up saturate elsewhere than at the indefinite value. */
+            put(e, 0x4F0265E0u | V0);                         /* movi 0x4f000000, 2^31 */
+            v3(e, 0x6EA0E400u, V0, V0, V1);                   /* fcmgt: in range */
+            put(e, 0x4F046400u | V2);                         /* movi 0x80000000 */
+            v3(e, 0x6EE01C00u, V3, V2, V0);                   /* bif */
+        }
+        xstore(x, V3, i->reg);
         return 1;
     case 0x70: { /* pshufd */
         if (pfx != 0x66)
@@ -1450,7 +1805,7 @@ static int emit_sse(Ctx *x, const X86Insn *i)
         load_xsrc(x, i, 16, V1);
         for (int k = 0; k < 4; k++)
             ins(e, 4, V2, k, V1, (int)(i->imm >> (2 * k)) & 3);
-        vstr(e, 16, V2, CPU, OFF_X(i->reg));
+        xstore(x, V2, i->reg);
         return 1;
     }
     case 0x72: { /* psrld, psrad, pslld by an immediate */
@@ -1458,7 +1813,7 @@ static int emit_sse(Ctx *x, const X86Insn *i)
         if (pfx != 0x66 || i->mod != 3 || (sub != 2 && sub != 4 && sub != 6))
             return 0;
         unsigned n = (unsigned)(i->imm & 0xFF);
-        vldr(e, 16, V0, CPU, OFF_X(i->rm));
+        xload(x, 16, V0, i->rm);
         if (sub == 4) {
             if (n > 32)
                 n = 32;
@@ -1472,13 +1827,13 @@ static int emit_sse(Ctx *x, const X86Insn *i)
             else
                 put(e, 0x4F005400u | (32u + n) << 16 | (uint32_t)V0 << 5 | V0); /* shl */
         }
-        vstr(e, 16, V0, CPU, OFF_X(i->rm));
+        xstore(x, V0, i->rm);
         return 1;
     }
     case 0xC6: { /* shufps, shufpd */
         if (pfx != 0 && pfx != 0x66)
             return 0;
-        vldr(e, 16, V0, CPU, OFF_X(i->reg));
+        xload(x, 16, V0, i->reg);
         load_xsrc(x, i, 16, V1);
         unsigned imm = (unsigned)i->imm;
         if (pfx == 0x66) {
@@ -1488,22 +1843,22 @@ static int emit_sse(Ctx *x, const X86Insn *i)
             for (int k = 0; k < 4; k++)
                 ins(e, 4, V2, k, k < 2 ? V0 : V1, (int)(imm >> (2 * k)) & 3);
         }
-        vstr(e, 16, V2, CPU, OFF_X(i->reg));
+        xstore(x, V2, i->reg);
         return 1;
     }
     case 0x12: /* movlps, movlpd, movhlps */
     case 0x16: /* movhps, movhpd, movlhps */
         if (scalar || (pfx == 0x66 && i->mod == 3))
             return 0;
-        vldr(e, 16, V0, CPU, OFF_X(i->reg));
+        xload(x, 16, V0, i->reg);
         if (i->mod == 3) {
-            vldr(e, 16, V1, CPU, OFF_X(i->rm));
+            xload(x, 16, V1, i->rm);
             ins(e, 8, V0, op == 0x16, V1, op == 0x12);
         } else {
             load_xsrc(x, i, 8, V1);
             ins(e, 8, V0, op == 0x16, V1, 0);
         }
-        vstr(e, 16, V0, CPU, OFF_X(i->reg));
+        xstore(x, V0, i->reg);
         return 1;
     case 0x13: /* movlps, movlpd store */
     case 0x17: /* movhps, movhpd store */
@@ -1511,15 +1866,205 @@ static int emit_sse(Ctx *x, const X86Insn *i)
             return 0;
         ea(x, i);
         if (op == 0x13) {
-            vldr(e, 8, V0, CPU, OFF_X(i->reg));
+            xload(x, 8, V0, i->reg);
         } else {
-            vldr(e, 16, V0, CPU, OFF_X(i->reg));
+            xload(x, 16, V0, i->reg);
             ins(e, 8, V0, 0, V0, 1);
         }
         vstr(e, 8, V0, ADDR, 0);
         return 1;
     }
     return 0;
+}
+
+/* ------------------------------------------------------------ atomics */
+
+enum { LSE_ADD = X86_ATOMIC_ADD, LSE_CLR = X86_ATOMIC_CLR, LSE_EOR = X86_ATOMIC_EOR, LSE_SET = X86_ATOMIC_SET,
+       LSE_SWP = X86_ATOMIC_SWP };
+
+/* ldaddal and the others: rt = [rn], [rn] = [rn] op rs. */
+static void lse(Emit *e, int op, int size, int rs, int rn, int rt)
+{
+    put(e, (uint32_t)log2_size(size) << 30 | 0x38E00000u | (uint32_t)rs << 16 | (uint32_t)op << 12 |
+               (uint32_t)rn << 5 | (uint32_t)rt);
+}
+
+/* a misaligned address, which arm64 atomics fault on: the branch to atomic_call. */
+static uint32_t *misaligned(Emit *e, int size)
+{
+    if (size == 1)
+        return nullptr;
+    int k = log2_size(size);
+    ubfm(e, 8, T4, ADDR, k, k - 1); /* lsl t4, addr, #(64 - k) */
+    uint32_t *at = e->p;
+    put(e, 0xB5000000u | T4); /* cbnz */
+    return at;
+}
+
+/*
+ * the misaligned case through the interpreter's atomics: fn(addr, a1, a2, a3) with the address in ADDR, its result to
+ * rd. the registers go to the cpu around it like for the interpreter, which a fault in it reads. t0 to t5 are lost.
+ */
+static void atomic_call(Ctx *x, const void *fn, uint64_t a1, int a2, int a3, int rd)
+{
+    Emit *e = x->e;
+    mov_imm(e, T4, x->addr);
+    str(e, 8, T4, CPU, offsetof(X86Cpu, rip));
+    str(e, 8, T4, CPU, offsetof(X86Cpu, insn_rip));
+    sync_regs(e, 1);
+    xstore_dirty(x);
+    if (a3 >= 0)
+        mov_reg(e, 8, 3, a3);
+    mov_reg(e, 8, 2, a2);
+    mov_reg(e, 8, 0, ADDR);
+    mov_imm(e, 1, a1);
+    call(e, fn);
+    mov_reg(e, 8, rd, 0);
+    sync_regs(e, 0);
+    xreload(x);
+}
+
+/*
+ * the locked read modify write instructions, and xadd, cmpxchg and xchg on memory, which lock by themselves. the old
+ * value comes to t0 from one arm64 atomic, the flags from it after.
+ */
+static int emit_atomic(Ctx *x, const X86Insn *i)
+{
+    Emit *e = x->e;
+    uint8_t op = i->opcode;
+    int sub = (i->modrm >> 3) & 7;
+    if (i->map == 0 && (op == 0x86 || op == 0x87) && i->mod == 3 && !i->lock) {
+        int size = op == 0x86 ? 1 : i->opsize;
+        load_reg(e, size, T0, i->rm, i->rex);
+        load_reg(e, size, T1, i->reg, i->rex);
+        store_reg(e, size, T1, i->rm, i->rex);
+        store_reg(e, size, T0, i->reg, i->rex);
+        return x->keep = 1, 1;
+    }
+    if (i->mod == 3)
+        return 0;
+    if (i->map == 0 && (op == 0x86 || op == 0x87)) {
+        int size = op == 0x86 ? 1 : i->opsize;
+        ea(x, i);
+        load_reg(e, size, T1, i->reg, i->rex);
+        uint32_t *slow = misaligned(e, size);
+        lse(e, LSE_SWP, size, T1, ADDR, T0);
+        uint32_t *done = b_always(e);
+        patch19(e, slow);
+        atomic_call(x, (const void *)x86_jit_atomic, (uint64_t)LSE_SWP << 8 | (uint64_t)size, T1, -1, T0);
+        patch26(e, done);
+        store_reg(e, size, T0, i->reg, i->rex);
+        return x->keep = 1, 1;
+    }
+    if (i->map == 1 && (op == 0xB0 || op == 0xB1)) { /* cmpxchg */
+        int size = op == 0xB0 ? 1 : i->opsize;
+        ea(x, i);
+        load_reg(e, size, T0, X86_RAX, 1);
+        load_reg(e, size, T1, i->reg, i->rex);
+        mov_reg(e, 8, T3, T0);
+        uint32_t *slow = misaligned(e, size);
+        put(e, (uint32_t)log2_size(size) << 30 | 0x08E0FC00u | (uint32_t)T3 << 16 | (uint32_t)ADDR << 5 | T1); /* casal */
+        uint32_t *done = b_always(e);
+        patch19(e, slow);
+        atomic_call(x, (const void *)x86_jit_cas, (uint64_t)size, T3, T1, T3);
+        load_reg(e, size, T0, X86_RAX, 1);
+        patch26(e, done);
+        /* the flags of cmp rax, old. a failure loads the old value into the accumulator. */
+        mov_reg(e, 8, T1, T3);
+        alu_core(x, ALU_SUB, size);
+        uint32_t *same = b_cond(e, EQ);
+        store_reg(e, size, T1, X86_RAX, 1);
+        patch19(e, same);
+        return 1;
+    }
+    if (i->map == 1 && (op == 0xC0 || op == 0xC1)) { /* xadd */
+        int size = op == 0xC0 ? 1 : i->opsize;
+        ea(x, i);
+        load_reg(e, size, T1, i->reg, i->rex);
+        uint32_t *slow = misaligned(e, size);
+        lse(e, LSE_ADD, size, T1, ADDR, T0);
+        uint32_t *done = b_always(e);
+        patch19(e, slow);
+        atomic_call(x, (const void *)x86_jit_atomic, (uint64_t)LSE_ADD << 8 | (uint64_t)size, T1, -1, T0);
+        load_reg(e, size, T1, i->reg, i->rex);
+        patch26(e, done);
+        alu_core(x, ALU_ADD, size);
+        store_reg(e, size, T0, i->reg, i->rex);
+        return 1;
+    }
+    if (!i->lock || i->map != 0)
+        return 0;
+    if ((op == 0xFE || op == 0xFF) && sub < 2) { /* inc, dec */
+        int size = op == 0xFE ? 1 : i->opsize, dec = sub;
+        if (x->flags_lazy & LIVE_CF)
+            carry_t3(x);
+        ea(x, i);
+        mov_imm(e, T1, 1);
+        mov_imm(e, T5, dec ? ~0ull : 1);
+        uint32_t *slow = misaligned(e, size);
+        lse(e, LSE_ADD, size, T5, ADDR, T0);
+        uint32_t *done = b_always(e);
+        patch19(e, slow);
+        put(e, 0xF81F0FE0u | T3); /* str t3, [sp, #-16]!: the carry outlives the call */
+        atomic_call(x, (const void *)x86_jit_atomic, (uint64_t)LSE_ADD << 8 | (uint64_t)size, T5, -1, T0);
+        put(e, 0xF84107E0u | T3); /* ldr t3, [sp], #16 */
+        mov_imm(e, T1, 1);
+        patch26(e, done);
+        if (size >= 4) {
+            rrr(e, dec ? OP_SUBS : OP_ADDS, size, T2, T0, T1);
+        } else {
+            int sh = 32 - size * 8;
+            rrr(e, dec ? OP_SUB : OP_ADD, 4, T2, T0, T1);
+            narrow(e, size, T2);
+            ubfm(e, 4, S0, T0, (32 - sh) & 31, 31 - sh);
+            put(e, (dec ? OP_SUBS : OP_ADDS) | (uint32_t)sh << 10 | (uint32_t)T1 << 16 | (uint32_t)S0 << 5 | XZR);
+        }
+        if (x->flags_lazy) {
+            mov_imm(e, T4, X86_LF(dec ? X86_LF_DEC : X86_LF_INC, log2_size(size)));
+            str(e, 4, T4, CPU, offsetof(X86Cpu, lf_op));
+            str(e, 8, T2, CPU, offsetof(X86Cpu, lf_res));
+            if (x->flags_lazy & LIVE_CF)
+                str(e, 8, T3, CPU, offsetof(X86Cpu, lf_carry));
+        }
+        set_nzcv(x, ALU_INCDEC);
+        return 1;
+    }
+    /* add, or, and, sub and xor into memory. */
+    int kind, size;
+    if (op < 0x40 && (op & 7) <= 1)
+        kind = op >> 3, size = op & 1 ? i->opsize : 1;
+    else if (op == 0x80 || op == 0x81 || op == 0x83)
+        kind = sub, size = op == 0x80 ? 1 : i->opsize;
+    else
+        return 0;
+    if (kind != ALU_ADD && kind != ALU_OR && kind != ALU_AND && kind != ALU_SUB && kind != ALU_XOR)
+        return 0;
+    ea(x, i);
+    if (op < 0x40)
+        load_reg(e, size, T1, i->reg, i->rex);
+    else
+        mov_imm(e, T1, i->imm & size_mask(size));
+    int lop = LSE_ADD, rs = T1;
+    if (kind == ALU_SUB)
+        rrr(e, OP_SUB, 8, rs = T5, XZR, T1);
+    else if (kind == ALU_AND)
+        put(e, 0xAA2003E0u | (uint32_t)T1 << 16 | (rs = T5)), lop = LSE_CLR; /* mvn */
+    else if (kind == ALU_OR)
+        lop = LSE_SET;
+    else if (kind == ALU_XOR)
+        lop = LSE_EOR;
+    uint32_t *slow = misaligned(e, size);
+    lse(e, lop, size, rs, ADDR, T0);
+    uint32_t *done = b_always(e);
+    patch19(e, slow);
+    atomic_call(x, (const void *)x86_jit_atomic, (uint64_t)lop << 8 | (uint64_t)size, rs, -1, T0);
+    if (op < 0x40)
+        load_reg(e, size, T1, i->reg, i->rex);
+    else
+        mov_imm(e, T1, i->imm & size_mask(size));
+    patch26(e, done);
+    alu_core(x, kind, size);
+    return 1;
 }
 
 /* ------------------------------------------------------------ general instructions */
@@ -1530,15 +2075,18 @@ static int emit_one(Ctx *x, const X86Insn *i)
     Emit *e = x->e;
     uint8_t op = i->opcode;
     int size = i->opsize;
+    if (is_jcc(i))
+        return emit_side_exit(x, i);
     int kind = alu_op(i);
     if (kind < 0)
         kind = carry_op(i);
     if (kind >= 0)
         return emit_alu(x, i, kind);
-    if (i->lock)
-        return 0;
+    if (i->lock || (i->map == 1 && (op == 0xB0 || op == 0xB1 || op == 0xC0 || op == 0xC1)) ||
+        (i->map == 0 && (op == 0x86 || op == 0x87)))
+        return emit_atomic(x, i);
     if (i->map == 1) {
-        if (op == 0x1F)
+        if (op == 0x1F || op == 0x18 || op == 0x0D) /* nop, prefetch */
             return x->keep = 1, 1;
         if (op == 0xB6 || op == 0xB7 || op == 0xBE || op == 0xBF) { /* movzx, movsx */
             int src = op & 1 ? 2 : 1;
@@ -1559,8 +2107,8 @@ static int emit_one(Ctx *x, const X86Insn *i)
             return x->keep = 1, 1;
         }
         if (op >= 0x90 && op <= 0x9F) { /* setcc */
-            x->keep = condition_w0(x, op & 15);
-            store_rm(x, i, 1, 0, 0);
+            x->keep = condition_t3(x, op & 15);
+            store_rm(x, i, 1, T3, 0);
             return 1;
         }
         if (op >= 0x40 && op <= 0x4F) { /* cmovcc */
@@ -1568,7 +2116,7 @@ static int emit_one(Ctx *x, const X86Insn *i)
             int cond = x->nzcv_alu >= 0 ? arm_cond(x->nzcv_alu, cc) : -1;
             x->keep = cond != -1;
             if (cond == -1)
-                condition_w0(x, cc);
+                condition_t3(x, cc);
             load_rm(x, i, size, T1);
             load_reg(e, size, T0, i->reg, i->rex);
             if (cond == -2 || cond == -3) {
@@ -1576,7 +2124,7 @@ static int emit_one(Ctx *x, const X86Insn *i)
                     mov_reg(e, 8, T0, T1);
             } else {
                 if (cond == -1) {
-                    put(e, 0x7100001Fu); /* cmp w0, #0 */
+                    put(e, 0x7100001Fu | (uint32_t)T3 << 5); /* cmp w13, #0 */
                     cond = NE;
                 }
                 put(e, (size == 8 ? 0x9A800000u : 0x1A800000u) | (uint32_t)T0 << 16 | (uint32_t)cond << 12 |
@@ -1593,6 +2141,30 @@ static int emit_one(Ctx *x, const X86Insn *i)
             return 1;
         }
         return emit_sse(x, i);
+    }
+    if (i->map == 2 && op == 0x00 && i->mandatory == 0x66) { /* pshufb: indexes with the top bit set give zero, like tbl's past the table */
+        xload(x, 16, V0, i->reg);
+        load_xsrc(x, i, 16, V1);
+        put(e, 0x4F00E400u | 4u << 16 | 0xFu << 5 | V3); /* movi v3.16b, #0x8f */
+        v3(e, V_AND, V1, V1, V3);
+        put(e, 0x4E000000u | (uint32_t)V1 << 16 | (uint32_t)V0 << 5 | V0); /* tbl v0.16b, {v0.16b}, v1.16b */
+        xstore(x, V0, i->reg);
+        return x->keep = 1, 1;
+    }
+    if (i->map == 2 && op == 0x04 && i->mandatory == 0x66) { /* pmaddubsw: unsigned bytes by signed ones, pairs added with saturation */
+        xload(x, 16, V0, i->reg);
+        load_xsrc(x, i, 16, V1);
+        put(e, 0x2F08A400u | (uint32_t)V0 << 5 | V2); /* uxtl v2.8h, v0.8b */
+        put(e, 0x6F08A400u | (uint32_t)V0 << 5 | V3); /* uxtl2 v3.8h, v0.16b */
+        put(e, 0x0F08A400u | (uint32_t)V1 << 5 | 4);  /* sxtl v4.8h, v1.8b */
+        put(e, 0x4F08A400u | (uint32_t)V1 << 5 | 5);  /* sxtl2 v5.8h, v1.16b */
+        vop(e, N_MUL, 1, V2, V2, 4);
+        vop(e, N_MUL, 1, V3, V3, 5);
+        vop(e, 0x4E001800u, 1, 4, V2, V3); /* uzp1: the even products */
+        vop(e, N_UZP2, 1, 5, V2, V3);      /* the odd ones */
+        vop(e, N_SQADD, 1, V0, 4, 5);
+        xstore(x, V0, i->reg);
+        return x->keep = 1, 1;
     }
     if (i->map != 0)
         return 0;
@@ -1866,6 +2438,20 @@ static int emit_branch(Ctx *x, const X86Insn *i)
         if ((sub != 2 && sub != 4) || i->p66)
             return 0;
         load_rm(x, i, w, T0);
+        if (i->mod != 3 && i->base == -2 && x->cpu->mode64) {
+            /*
+             * a pointer beside the code that leads to a bare jmp rax is control flow guard's dispatch without the
+             * checks, which every indirect call of a module goes through: going to rax from here spares the one
+             * shared branch, which predicts badly.
+             */
+            put(e, 0x79400000u | (uint32_t)T0 << 5 | T1); /* ldrh t1, [t0] */
+            mov_imm(e, T2, 0xE0FF);
+            rrr(e, OP_EOR, 4, T1, T1, T2);
+            uint32_t *other = e->p;
+            put(e, 0x35000000u | T1); /* cbnz w */
+            mov_reg(e, 8, T0, host_reg(X86_RAX));
+            patch19(e, other);
+        }
         if (sub == 2) {
             mov_imm(e, T1, x->next);
             push_value(x, T1);
@@ -1884,10 +2470,12 @@ static void emit_fallback(Ctx *x, const X86Insn *i)
     mov_imm(e, T4, x->addr);
     str(e, 8, T4, CPU, offsetof(X86Cpu, rip));
     sync_regs(e, 1);
+    xstore_dirty(x);
     mov_reg(e, 8, 0, CPU);
     mov_imm(e, 1, (uint64_t)(uintptr_t)i);
     call(e, (const void *)x86_exec_insn);
     sync_regs(e, 0);
+    xreload(x);
     x->nzcv_alu = -1;
 }
 
@@ -1931,7 +2519,7 @@ static int flags_live_after(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uin
 }
 
 uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint32_t count, uint32_t *code,
-                           uint32_t capacity, uint16_t *offsets)
+                           uint32_t capacity, uint16_t *offsets, uint16_t *xmm_held)
 {
     Emit e = {code, code + capacity, code, 0};
     uint8_t live[64], lazy[64];
@@ -1942,7 +2530,19 @@ uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint
         end_addr += insns[k].len;
     /* liveness of the flags each instruction sets. */
     int flags_live = flags_live_after(cpu, rip, insns, count, end_addr);
+    uint64_t lo = rip & ~0xFFFull, hi = ((end_addr - 1) | 0xFFFull) + 1, region_lo, region_hi;
+    if (cpu->env && cpu->env->code_bounds && cpu->env->code_bounds(cpu, rip, &region_lo, &region_hi) && region_lo <= lo &&
+        hi <= region_hi)
+        lo = region_lo, hi = region_hi;
+    uint64_t starts[64], a = rip;
+    for (uint32_t k = 0; k < count; a += insns[k++].len)
+        starts[k] = a;
     for (uint32_t k = count; k-- > 0;) {
+        /* a branch before the end: the flags its target reads too. */
+        if (k + 1 < count && is_jcc(&insns[k])) {
+            uint64_t next = starts[k] + insns[k].len;
+            flags_live |= flags_read_at(cpu, cpu->mode64 ? next + insns[k].imm : (uint32_t)(next + insns[k].imm), lo, hi);
+        }
         live[k] = (uint8_t)flags_live;
         flags_live = live_before(&insns[k], flags_live);
     }
@@ -1953,7 +2553,7 @@ uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint
         if (kind >= 0 && arm_cond(kind, insns[k + 1].opcode & 15) != -1)
             lazy[k] = live[k + 1];
     }
-    Ctx x = {&e, cpu, rip, rip, 0, count, 0, 0, -1, 0, 0, nullptr, rip};
+    Ctx x = {&e, cpu, rip, rip, 0, count, 0, 0, -1, 0, 0, nullptr, rip, 0, 0};
     prologue(&e);
     uint32_t end = count;
     if (nests(&insns[count - 1]))
@@ -1962,6 +2562,7 @@ uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint
     for (uint32_t k = 0; k < end; k++) {
         const X86Insn *i = &insns[k];
         offsets[k] = (uint16_t)(e.p - code);
+        xmm_held[k] = x.xloaded;
         x.addr = addr;
         x.next = addr + i->len;
         x.index = k;
@@ -1969,6 +2570,9 @@ uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint
         x.flags_live = live[k];
         x.flags_lazy = lazy[k];
         if (k == count - 1 && x86_ends_block(i)) {
+            /* the stores leave the arm64 flags alone, which a conditional branch may still test. */
+            xstore_dirty(&x);
+            x.xdirty = 0;
             if (!emit_branch(&x, i)) {
                 emit_fallback(&x, i);
                 /* the interpreter set rip to wherever the instruction went. */
@@ -1982,6 +2586,10 @@ uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint
         addr = x.next;
     }
     offsets[end] = (uint16_t)(e.p - code);
+    if (end < count)
+        xmm_held[end] = x.xloaded;
+    xstore_dirty(&x);
+    x.xdirty = 0;
     exit_const(&x, addr, end);
     if (end < count)
         offsets[count] = (uint16_t)(e.p - code);

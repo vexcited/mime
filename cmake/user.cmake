@@ -107,8 +107,9 @@ function(mime_dll name arch)
         set(script RESOURCE_SCRIPT ${MIME_GEN}/resources/${name}.rc)
     endif()
     # a library of types that is laid out for the processor of the dll.
-    if(EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/${name}_${arch}.rc)
-        set(script RESOURCE_SCRIPT ${CMAKE_SOURCE_DIR}/guest/${name}/${name}_${arch}.rc)
+    mime_arch_script(arch_script ${CMAKE_SOURCE_DIR}/guest/${name}/${name} ${arch})
+    if(arch_script)
+        set(script RESOURCE_SCRIPT ${arch_script})
     endif()
     if(arch STREQUAL "x86")
         set(def ${arg_DEF})
@@ -538,8 +539,9 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
                 set(host_flags /subsystem:${host_subsystem},6.0 /entry:entry /base:0x00400000 /dynamicbase
                     /stack:0x100000,0x4000)
             endif()
+            mime_arch_script(host_script ${CMAKE_SOURCE_DIR}/guest/wscript/${host} ${arch})
             mime_link(${MIME_OUT_${arch}}/${host}.exe ${arch} OBJECTS ${arch}-${host} ${arch}-chkstk LIBS ${host_libs}
-                FLAGS ${host_flags} RESOURCE ${host}.exe RESOURCE_SCRIPT ${CMAKE_SOURCE_DIR}/guest/wscript/${host}_${arch}.rc
+                FLAGS ${host_flags} RESOURCE ${host}.exe RESOURCE_SCRIPT ${host_script}
                 ROM ${MIME_ROM_${arch}}/${host}.exe GROUPS guest)
         endforeach()
     endif()

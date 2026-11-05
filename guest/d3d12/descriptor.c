@@ -295,6 +295,112 @@ VkSampler D12Sampler(D12Device *device, const D3D12_SAMPLER_DESC2 *desc, const B
 static HRESULT create_heap(D12Device *device, const D3D12_DESCRIPTOR_HEAP_DESC *desc, BOOL internal,
                            D12DescriptorHeap **out);
 
+/*
+ * without null descriptors, as on macOS, a null view is a zeroed stand in of its dimension: Metal reads resource id 0
+ * as whatever texture holds that id, and a shader reads a view as the kind of texture it declares.
+ */
+static HRESULT null_image(D12Device *device, UINT index, VkImageType type, UINT layers, VkSampleCountFlagBits samples)
+{
+    D12Vk *vk = &device->vk;
+    VkImageCreateInfo info = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    info.flags = layers == 6 ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0;
+    info.imageType = type;
+    info.format = VK_FORMAT_R8G8B8A8_UNORM;
+    info.extent = (VkExtent3D){1, 1, 1};
+    info.mipLevels = 1;
+    info.arrayLayers = layers;
+    info.samples = samples;
+    info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                 (samples == VK_SAMPLE_COUNT_1_BIT ? VK_IMAGE_USAGE_STORAGE_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+    if (vk->vkCreateImage(vk->device, &info, nullptr, &device->null_images[index]) != VK_SUCCESS)
+        return E_FAIL;
+    VkMemoryRequirements req;
+    vk->vkGetImageMemoryRequirements(vk->device, device->null_images[index], &req);
+    HRESULT hr = D12Alloc(device, D12_MEMORY_DEVICE, req.memoryTypeBits, req.size, req.alignment, TRUE,
+                          &device->null_image_memory[index]);
+    if (FAILED(hr))
+        return hr;
+    D12Allocation *a = &device->null_image_memory[index];
+    return vk->vkBindImageMemory(vk->device, device->null_images[index], a->heap->memory, a->offset) == VK_SUCCESS
+               ? S_OK
+               : E_FAIL;
+}
+
+static HRESULT null_views(D12Device *device)
+{
+    D12Vk *vk = &device->vk;
+    for (UINT i = 0; i < D12_NULL_DIMENSIONS; i++) {
+        memcpy(device->null_views[0][i], device->null_descriptors[D12_DESC_SAMPLED_IMAGE], 64);
+        memcpy(device->null_views[1][i], device->null_descriptors[D12_DESC_STORAGE_IMAGE], 64);
+    }
+    memcpy(device->null_views[0][D3D12_SRV_DIMENSION_BUFFER], device->null_descriptors[D12_DESC_UNIFORM_TEXEL], 64);
+    memcpy(device->null_views[1][D3D12_UAV_DIMENSION_BUFFER], device->null_descriptors[D12_DESC_STORAGE_TEXEL], 64);
+    if (device->has_null_descriptor)
+        return S_OK;
+    HRESULT hr;
+    if (FAILED(hr = null_image(device, 0, VK_IMAGE_TYPE_1D, 1, VK_SAMPLE_COUNT_1_BIT)) ||
+        FAILED(hr = null_image(device, 1, VK_IMAGE_TYPE_2D, 6, VK_SAMPLE_COUNT_1_BIT)) ||
+        FAILED(hr = null_image(device, 2, VK_IMAGE_TYPE_3D, 1, VK_SAMPLE_COUNT_1_BIT)) ||
+        FAILED(hr = null_image(device, 3, VK_IMAGE_TYPE_2D, 1, VK_SAMPLE_COUNT_4_BIT)))
+        return hr;
+    /* each dimension: its image, view type and layers. the numbers are those of both kinds of view. */
+    static const struct {
+        UINT image;
+        VkImageViewType type;
+        UINT layers;
+    } DIMENSIONS[D12_NULL_DIMENSIONS] = {
+        [D3D12_SRV_DIMENSION_TEXTURE1D] = {0, VK_IMAGE_VIEW_TYPE_1D, 1},
+        [D3D12_SRV_DIMENSION_TEXTURE1DARRAY] = {0, VK_IMAGE_VIEW_TYPE_1D_ARRAY, 1},
+        [D3D12_SRV_DIMENSION_TEXTURE2D] = {1, VK_IMAGE_VIEW_TYPE_2D, 1},
+        [D3D12_SRV_DIMENSION_TEXTURE2DARRAY] = {1, VK_IMAGE_VIEW_TYPE_2D_ARRAY, 1},
+        [D3D12_SRV_DIMENSION_TEXTURE2DMS] = {3, VK_IMAGE_VIEW_TYPE_2D, 1},
+        [D3D12_SRV_DIMENSION_TEXTURE2DMSARRAY] = {3, VK_IMAGE_VIEW_TYPE_2D_ARRAY, 1},
+        [D3D12_SRV_DIMENSION_TEXTURE3D] = {2, VK_IMAGE_VIEW_TYPE_3D, 1},
+        [D3D12_SRV_DIMENSION_TEXTURECUBE] = {1, VK_IMAGE_VIEW_TYPE_CUBE, 6},
+        [D3D12_SRV_DIMENSION_TEXTURECUBEARRAY] = {1, VK_IMAGE_VIEW_TYPE_CUBE_ARRAY, 6},
+    };
+    for (UINT i = 0; i < D12_NULL_DIMENSIONS; i++) {
+        if (!DIMENSIONS[i].layers)
+            continue;
+        VkImageViewCreateInfo view = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        view.image = device->null_images[DIMENSIONS[i].image];
+        view.viewType = DIMENSIONS[i].type;
+        view.format = VK_FORMAT_R8G8B8A8_UNORM;
+        view.subresourceRange = (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, DIMENSIONS[i].layers};
+        if (vk->vkCreateImageView(vk->device, &view, nullptr, &device->null_image_views[i]) != VK_SUCCESS)
+            return E_FAIL;
+        image_descriptor(device, VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, device->null_image_views[i], device->null_views[0][i]);
+        /* a multisampled image has no storage view, the unordered access view of that number is another. */
+        if (DIMENSIONS[i].image != 3)
+            image_descriptor(device, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, device->null_image_views[i],
+                             device->null_views[1][i]);
+    }
+    texel_descriptor(device, FALSE, device->null_address, 256, VK_FORMAT_R32_UINT,
+                     device->null_views[0][D3D12_SRV_DIMENSION_BUFFER]);
+    texel_descriptor(device, TRUE, device->null_address, 256, VK_FORMAT_R32_UINT,
+                     device->null_views[1][D3D12_UAV_DIMENSION_BUFFER]);
+    /* the images enter the general layout, and the buffer the texel views read is zeroed. */
+    VkCommandBuffer cmd = D12InitCommands(device);
+    VkImageMemoryBarrier2 barriers[D12_NULL_IMAGES];
+    for (UINT i = 0; i < D12_NULL_IMAGES; i++) {
+        barriers[i] = (VkImageMemoryBarrier2){VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        barriers[i].dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        barriers[i].dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
+        barriers[i].newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        barriers[i].srcQueueFamilyIndex = barriers[i].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barriers[i].image = device->null_images[i];
+        barriers[i].subresourceRange =
+            (VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, VK_REMAINING_ARRAY_LAYERS};
+    }
+    VkDependencyInfo dependency = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dependency.imageMemoryBarrierCount = D12_NULL_IMAGES;
+    dependency.pImageMemoryBarriers = barriers;
+    vk->vkCmdPipelineBarrier2(cmd, &dependency);
+    vk->vkCmdFillBuffer(cmd, device->null_buffer.heap->buffer, device->null_buffer.offset, 256, 0);
+    D12InitDone(device);
+    return S_OK;
+}
+
 HRESULT D12DescriptorsInit(D12Device *device)
 {
     D12Vk *vk = &device->vk;
@@ -402,11 +508,13 @@ HRESULT D12DescriptorsInit(D12Device *device)
                        device->null_descriptors[D12_DESC_STORAGE_TEXEL]);
     memcpy(device->null_descriptors[D12_DESC_NONE], device->null_descriptors[D12_DESC_SAMPLED_IMAGE], 64);
 
-    /* what null views' records point to: never written and never really read. */
+    /* what null views' records point to: zeros, which the stand ins of null texel views read. */
     HRESULT hr = D12Alloc(device, D12_MEMORY_DEVICE, ~0u, 256, 256, FALSE, &device->null_buffer);
     if (FAILED(hr))
         return hr;
     device->null_address = device->null_buffer.heap->va + device->null_buffer.offset;
+    if (FAILED(hr = null_views(device)))
+        return hr;
     for (UINT i = 0; i < 2; i++) {
         D3D12_DESCRIPTOR_HEAP_DESC desc = {i ? D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER : D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
                                            1, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE, 1};
@@ -421,6 +529,14 @@ static void heap_destroy(D12DescriptorHeap *heap);
 void D12DescriptorsDestroy(D12Device *device)
 {
     D12Vk *vk = &device->vk;
+    for (UINT i = 0; i < D12_NULL_DIMENSIONS; i++)
+        if (device->null_image_views[i])
+            vk->vkDestroyImageView(vk->device, device->null_image_views[i], nullptr);
+    for (UINT i = 0; i < D12_NULL_IMAGES; i++)
+        if (device->null_images[i]) {
+            vk->vkDestroyImage(vk->device, device->null_images[i], nullptr);
+            D12Free(device, &device->null_image_memory[i]);
+        }
     for (UINT i = 0; i < 2; i++)
         if (device->dummy_heaps[i]) {
             heap_destroy(device->dummy_heaps[i]);
@@ -855,9 +971,8 @@ void D12CreateSrv(D12Device *device, D12Resource *resource, const D3D12_SHADER_R
         return;
     }
     if (!resource) {
-        BOOL buffer = desc && desc->ViewDimension == D3D12_SRV_DIMENSION_BUFFER;
-        write_view(device, dest, device->null_descriptors[buffer ? D12_DESC_UNIFORM_TEXEL : D12_DESC_SAMPLED_IMAGE],
-                   &record, nullptr);
+        UINT dimension = desc && desc->ViewDimension < D12_NULL_DIMENSIONS ? desc->ViewDimension : 0;
+        write_view(device, dest, device->null_views[0][dimension], &record, nullptr);
         return;
     }
     D3D12_SHADER_RESOURCE_VIEW_DESC d;
@@ -958,9 +1073,8 @@ void D12CreateUav(D12Device *device, D12Resource *resource, D12Resource *counter
 {
     DxbcRecord record = null_record(device);
     if (!resource) {
-        BOOL buffer = desc && desc->ViewDimension == D3D12_UAV_DIMENSION_BUFFER;
-        write_view(device, dest, device->null_descriptors[buffer ? D12_DESC_STORAGE_TEXEL : D12_DESC_STORAGE_IMAGE],
-                   &record, nullptr);
+        UINT dimension = desc && desc->ViewDimension < D12_NULL_DIMENSIONS ? desc->ViewDimension : 0;
+        write_view(device, dest, device->null_views[1][dimension], &record, nullptr);
         return;
     }
     D3D12_UNORDERED_ACCESS_VIEW_DESC d;

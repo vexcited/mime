@@ -128,27 +128,23 @@ static int compare(int pred, double a, double b)
 static inline double round_mode(double v, int mode)
 {
     switch (mode & 3) {
-    case 0: return __builtin_rint(v);
+    case 0: return __builtin_roundeven(v);
     case 1: return __builtin_floor(v);
     case 2: return __builtin_ceil(v);
     default: return __builtin_trunc(v);
     }
 }
 
-/* conversion to integer: the indefinite value when out of range. */
-static int64_t to_int(double v, int size, int mode)
+/* conversion to integer: the indefinite value and the invalid flag when out of range. */
+static int64_t to_int(X86Cpu *c, double v, int size, int mode)
 {
-    if (isnan_d(v))
+    double r = isnan_d(v) ? v : round_mode(v, mode);
+    if (isnan_d(v) || (size == 8 ? r >= 9223372036854775808.0 || r < -9223372036854775808.0 :
+                                   r >= 2147483648.0 || r < -2147483648.0)) {
+        c->mxcsr |= X86_MXCSR_IE;
         return size == 8 ? INT64_MIN : INT32_MIN;
-    double r = round_mode(v, mode);
-    if (size == 8) {
-        if (r >= 9223372036854775808.0 || r < -9223372036854775808.0)
-            return INT64_MIN;
-        return (int64_t)r;
     }
-    if (r >= 2147483648.0 || r < -2147483648.0)
-        return INT32_MIN;
-    return (int32_t)r;
+    return size == 8 ? (int64_t)r : (int32_t)r;
 }
 
 static void set_compare_flags(X86Cpu *c, double a, double b)
@@ -166,11 +162,51 @@ static void set_compare_flags(X86Cpu *c, double a, double b)
     c->lf_op = X86_LF_NONE;
 }
 
+/*
+ * the exception flags of mxcsr are the ones arm64 collects in fpsr, as the floating point of the interpreter and of
+ * translated code runs on the host: invalid, divide by zero, overflow, underflow and inexact are the same bits in
+ * another order. they are folded in when mxcsr is read and cleared with it when it is written.
+ */
+static const struct {
+    uint32_t fpsr, mxcsr;
+} g_host_flags[] = {{1u << 0, X86_MXCSR_IE}, {1u << 1, 1u << 2}, {1u << 2, 1u << 3}, {1u << 3, 1u << 4}, {1u << 4, 1u << 5}};
+
+uint32_t x86_mxcsr(X86Cpu *c)
+{
+    uint64_t fpsr;
+    __asm__ volatile("mrs %0, fpsr" : "=r"(fpsr));
+    for (unsigned k = 0; k < sizeof(g_host_flags) / sizeof(g_host_flags[0]); k++)
+        if (fpsr & g_host_flags[k].fpsr)
+            c->mxcsr |= g_host_flags[k].mxcsr;
+    return c->mxcsr;
+}
+
+/*
+ * the rounding and flushing of mxcsr become fpcr's, as the host runs the program's floating point: x86 rounds down
+ * and up where arm64 numbers them up and down. arm64 flushes inputs and results alike, which is mxcsr's flush to zero
+ * with denormals are zero.
+ */
+void x86_set_mxcsr(X86Cpu *c, uint32_t v)
+{
+    static const uint64_t ROUNDING[4] = {0, 2, 1, 3};
+    uint64_t fpsr, fpcr;
+    __asm__ volatile("mrs %0, fpsr" : "=r"(fpsr));
+    fpsr &= ~(uint64_t)0x9F;
+    __asm__ volatile("msr fpsr, %0" ::"r"(fpsr));
+    __asm__ volatile("mrs %0, fpcr" : "=r"(fpcr));
+    fpcr &= ~((3ull << 22) | (1ull << 24));
+    fpcr |= ROUNDING[(v >> 13) & 3] << 22;
+    if ((v & 0x8040) == 0x8040)
+        fpcr |= 1ull << 24;
+    __asm__ volatile("msr fpcr, %0" ::"r"(fpcr));
+    c->mxcsr = v;
+}
+
 void x86_ldmxcsr(X86Cpu *c, uint32_t v)
 {
     if (v & 0xFFFF0000u)
         x86_fault(c, X86_STATUS_ACCESS_VIOLATION, 0, ~0ull);
-    c->mxcsr = v;
+    x86_set_mxcsr(c, v);
 }
 
 /* ------------------------------------------------------------ integer simd */
@@ -919,17 +955,17 @@ void x86_exec_sse(X86Cpu *c, const X86Insn *i)
             load_xmm_src(c, i, &s, pfx == 0xF3 ? 4 : 8);
             double v = pfx == 0xF3 ? (double)s.f[0] : s.fd[0];
             int size = (i->rex & 8) ? 8 : 4;
-            int64_t r = to_int(v, size, mode);
+            int64_t r = to_int(c, v, size, mode);
             c->r[i->reg] = size == 8 ? (uint64_t)r : (uint32_t)r;
         } else { /* cvt(t)ps2pi, cvt(t)pd2pi */
             load_xmm_src(c, i, &s, pfx == 0x66 ? 16 : 8);
             uint32_t lo, hi;
             if (pfx == 0x66) {
-                lo = (uint32_t)to_int(s.fd[0], 4, mode);
-                hi = (uint32_t)to_int(s.fd[1], 4, mode);
+                lo = (uint32_t)to_int(c, s.fd[0], 4, mode);
+                hi = (uint32_t)to_int(c, s.fd[1], 4, mode);
             } else {
-                lo = (uint32_t)to_int(s.f[0], 4, mode);
-                hi = (uint32_t)to_int(s.f[1], 4, mode);
+                lo = (uint32_t)to_int(c, s.f[0], 4, mode);
+                hi = (uint32_t)to_int(c, s.f[1], 4, mode);
             }
             enter_mmx(c);
             c->mm[i->reg & 7] = ((uint64_t)hi << 32) | lo;
@@ -1023,7 +1059,7 @@ void x86_exec_sse(X86Cpu *c, const X86Insn *i)
         if (pfx == 0x66 || pfx == 0xF3) { /* cvtps2dq, cvttps2dq */
             int mode = pfx == 0xF3 ? 3 : (int)((c->mxcsr >> 13) & 3);
             for (k = 0; k < 4; k++)
-                d->sd[k] = (int32_t)to_int(s.f[k], 4, mode);
+                d->sd[k] = (int32_t)to_int(c, s.f[k], 4, mode);
         } else if (pfx == 0) { /* cvtdq2ps */
             for (k = 0; k < 4; k++)
                 d->f[k] = (float)s.sd[k];
@@ -1212,8 +1248,8 @@ void x86_exec_sse(X86Cpu *c, const X86Insn *i)
             t.fd[1] = s.sd[1];
         } else if (pfx == 0x66 || pfx == 0xF2) { /* cvttpd2dq, cvtpd2dq */
             int mode = pfx == 0x66 ? 3 : (int)((c->mxcsr >> 13) & 3);
-            t.sd[0] = (int32_t)to_int(s.fd[0], 4, mode);
-            t.sd[1] = (int32_t)to_int(s.fd[1], 4, mode);
+            t.sd[0] = (int32_t)to_int(c, s.fd[0], 4, mode);
+            t.sd[1] = (int32_t)to_int(c, s.fd[1], 4, mode);
             t.q[1] = 0;
         } else {
             x86_undefined(c);

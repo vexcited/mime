@@ -7,30 +7,6 @@
 
 #include <time.h>
 
-static const char *const g_device_extensions[] = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-    VK_EXT_ROBUSTNESS_2_EXTENSION_NAME,
-    VK_EXT_SHADER_OBJECT_EXTENSION_NAME,
-    VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME,
-    VK_KHR_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME,
-    VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME,
-    VK_EXT_EXTENDED_DYNAMIC_STATE_EXTENSION_NAME,
-    VK_EXT_EXTENDED_DYNAMIC_STATE_2_EXTENSION_NAME,
-    VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME,
-    VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME,
-    VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME,
-    VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME,
-    VK_EXT_EXTERNAL_MEMORY_METAL_EXTENSION_NAME,
-    VK_EXT_METAL_OBJECTS_EXTENSION_NAME,
-    VK_EXT_MEMORY_BUDGET_EXTENSION_NAME,
-    VK_EXT_SAMPLER_FILTER_MINMAX_EXTENSION_NAME,
-    VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME,
-    VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME,
-    VK_GOOGLE_HLSL_FUNCTIONALITY_1_EXTENSION_NAME,
-    VK_GOOGLE_USER_TYPE_EXTENSION_NAME,
-    VK_GOOGLE_DECORATE_STRING_EXTENSION_NAME,
-};
-
 /* ------------------------------------------------------------------ hashing and caches. */
 
 uint64_t vkm_hash(const void *data, size_t size, uint64_t seed)
@@ -353,10 +329,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physical, co
                                                    const VkAllocationCallbacks *a, VkDevice *out)
 {
     for (uint32_t i = 0; i < info->enabledExtensionCount; i++) {
-        bool known = false;
-        for (size_t k = 0; k < MIME_ARRAY_COUNT(g_device_extensions); k++)
-            known |= !strcmp(info->ppEnabledExtensionNames[i], g_device_extensions[k]);
-        if (!known) {
+        if (!vkm_device_extension(info->ppEnabledExtensionNames[i])) {
             VKM_ERROR("no device extension %s", info->ppEnabledExtensionNames[i]);
             return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
@@ -371,6 +344,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physical, co
     pthread_mutex_init(&device->chunk_lock, nullptr);
     pthread_mutex_init(&device->init_lock, nullptr);
     pthread_mutex_init(&device->grave_lock, nullptr);
+    pthread_mutex_init(&device->memory_lock, nullptr);
     id error = nullptr;
     id compiler_desc = mtl_new("MTL4CompilerDescriptor");
     device->compiler =
@@ -442,6 +416,7 @@ VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device, const VkAllocationCall
         mtl_release(c->buffer);
         free(c);
     }
+    free(device->memories);
     mtl_release(device->zero);
     mtl_release(q->tables[0]);
     mtl_release(q->tables[1]);

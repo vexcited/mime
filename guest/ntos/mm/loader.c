@@ -321,6 +321,22 @@ PSP_SYSTEM_DLL PspNativeSystemDll;
 PSP_SYSTEM_DLL PspX86SystemDll;
 /* the 32-bit ntdll of wow64 programs, mapped by the kernel at their birth so that its stubs can be patched before they run. */
 PSECTION PspWow64NtdllSection;
+/* the x64 ntdll of x64 programs on arm64, mapped at their birth for the same reason. */
+PSECTION PspX64NtdllSection;
+
+static PSECTION guest_ntdll_section(PCWSTR name)
+{
+    UNICODE_STRING path;
+    RtlInitUnicodeString(&path, name);
+    PFILE_OBJECT file;
+    PSECTION section = nullptr;
+    if (NT_SUCCESS(IopOpenFileObject(&path, FILE_READ_DATA | FILE_EXECUTE | SYNCHRONIZE, FILE_NON_DIRECTORY_FILE, &file))) {
+        if (!NT_SUCCESS(MiCreateImageSection(file, &section)))
+            section = nullptr;
+        ObDereferenceObject(file);
+    }
+    return section;
+}
 
 /* creates a system dll's image section once; every process maps it at its preferred base. */
 static NTSTATUS load_system_dll(PCWSTR path_string, PPSP_SYSTEM_DLL dll)
@@ -359,15 +375,10 @@ NTSTATUS PspInitializeSystemDll(void)
     if (MIME_NATIVE_MACHINE != IMAGE_FILE_MACHINE_AMD64 &&
         !NT_SUCCESS(load_system_dll(L"\\SystemRoot\\System32\\xta64.dll", &PspX86SystemDll)))
         memset(&PspX86SystemDll, 0, sizeof(PspX86SystemDll));
-    if (MIME_NATIVE_MACHINE == IMAGE_FILE_MACHINE_AMD64) {
-        UNICODE_STRING path = RTL_CONSTANT_STRING(L"\\SystemRoot\\SysWOW64\\ntdll.dll");
-        PFILE_OBJECT file;
-        if (NT_SUCCESS(IopOpenFileObject(&path, FILE_READ_DATA | FILE_EXECUTE | SYNCHRONIZE, FILE_NON_DIRECTORY_FILE, &file))) {
-            if (!NT_SUCCESS(MiCreateImageSection(file, &PspWow64NtdllSection)))
-                PspWow64NtdllSection = nullptr;
-            ObDereferenceObject(file);
-        }
-    }
+    if (MIME_NATIVE_MACHINE == IMAGE_FILE_MACHINE_AMD64 || PspX86SystemDll.Section)
+        PspWow64NtdllSection = guest_ntdll_section(L"\\SystemRoot\\SysWOW64\\ntdll.dll");
+    if (MIME_NATIVE_MACHINE != IMAGE_FILE_MACHINE_AMD64 && PspX86SystemDll.Section)
+        PspX64NtdllSection = guest_ntdll_section(L"\\SystemRoot\\SysX64\\ntdll.dll");
     return STATUS_SUCCESS;
 }
 

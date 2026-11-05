@@ -610,10 +610,12 @@ static NTSTATUS open_client(PFILE_OBJECT file, PIO_STACK_LOCATION stack)
     PIO_SECURITY_CONTEXT context = stack->Parameters.Create.SecurityContext;
     /* a client does not create instances, so the right to is not held against it when it asks to write. */
     ACCESS_MASK asked = context ? ObMapGenericAccess(IoFileObjectTypeObject, context->DesiredAccess) : 0;
-    asked &= ~(ACCESS_MASK)FILE_CREATE_PIPE_INSTANCE;
-    NTSTATUS allowed = check_pipe(stack, p, asked, TRUE);
+    NTSTATUS allowed = check_pipe(stack, p, asked & ~(ACCESS_MASK)FILE_CREATE_PIPE_INSTANCE, TRUE);
     if (!NT_SUCCESS(allowed))
         return allowed;
+    /* the handle still has the append right it asked for, the write end of CreatePipe is 0x120196 on windows. */
+    if (context && context->Checked)
+        context->GrantedAccess |= asked & FILE_CREATE_PIPE_INSTANCE;
     NP_INSTANCE *in = listening_instance(p);
     if (!in)
         return STATUS_PIPE_NOT_AVAILABLE;

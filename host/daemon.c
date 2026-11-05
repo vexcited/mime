@@ -17,6 +17,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#ifdef __APPLE__
+#include <sys/sysctl.h>
+#endif
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -766,8 +769,16 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     /* every guest file handle and file window holds a descriptor. */
     struct rlimit files;
     if (getrlimit(RLIMIT_NOFILE, &files) == 0) {
-#ifdef OPEN_MAX
+#ifdef __APPLE__
+        /* programs like Steam's downloader keep thousands of files open, past OPEN_MAX: macOS allows its per process limit. */
+        int per_process = 0;
+        size_t size = sizeof(per_process);
         files.rlim_cur = MIME_MIN(files.rlim_max, (rlim_t)OPEN_MAX);
+        if (sysctlbyname("kern.maxfilesperproc", &per_process, &size, nullptr, 0) == 0 && per_process > OPEN_MAX) {
+            struct rlimit wide = {MIME_MIN(files.rlim_max, (rlim_t)per_process), files.rlim_max};
+            if (setrlimit(RLIMIT_NOFILE, &wide) == 0)
+                files = wide;
+        }
 #else
         files.rlim_cur = files.rlim_max;
 #endif

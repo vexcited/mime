@@ -33,7 +33,7 @@ typedef struct MX_JUMP {
     ULONG64 regs[21];
 } MX_JUMP;
 
-int mx_setjmp(MX_JUMP *jump);
+[[gnu::returns_twice]] int mx_setjmp(MX_JUMP *jump);
 DECLSPEC_NORETURN void mx_longjmp(MX_JUMP *jump, int value);
 extern UCHAR mx_svc_nt[];
 extern UCHAR mx_svc_win32k[];
@@ -56,6 +56,7 @@ typedef struct MX_THREAD {
     uint64_t trace[X86_TRACE_SIZE]; /* the last blocks run, for crash reports. */
     uint32_t trace_pos;
     uint64_t fault_trace[16];       /* the blocks before the last fault. */
+    MX_JUMP *conversion;            /* where a fault converting a 32-bit system call returns its status. */
 } MX_THREAD;
 
 static struct {
@@ -69,6 +70,15 @@ static struct {
 } g_guest;
 
 static volatile uint32_t g_code_epoch = 1;
+/*
+ * the pages the kernel watches for writes, see MIME_VM_CODE_WATCH. a slot holds the page it last watched, so a page
+ * pushed out of its slot is only asked for again, which is harmless.
+ */
+#define WATCH_SLOTS 65536
+#define WATCH_PAGE 0x1000ull
+static const MIME_CODE_LOG *g_code_log;
+static ULONG64 g_code_log_seen;
+static volatile ULONG64 *g_watched;
 static X86CodeRange g_code_ranges[X86_CODE_LOG];
 
 static X86Env g_env;
@@ -161,13 +171,31 @@ static DECLSPEC_NORETURN void mx_fatal(NTSTATUS status, const char *what)
         ;
 }
 
-void *x86_alloc(size_t size)
+/*
+ * the translator's own memory. a 32-bit program has the 2 GB below, so it goes above 4 GB as prism's does, else the
+ * code it translates and its own allocations would share the program's room.
+ */
+static PVOID alloc_pages(SIZE_T size, ULONG protect)
 {
     PVOID base = nullptr;
-    SIZE_T n = size;
-    if (!NT_SUCCESS(NtAllocateVirtualMemory(NtCurrentProcess(), &base, 0, &n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)))
+    MEM_ADDRESS_REQUIREMENTS above = {.LowestStartingAddress = (PVOID)0x100000000ull};
+    MEM_EXTENDED_PARAMETER ext = {.Type = MemExtendedParameterAddressRequirements, .Pointer = &above};
+    NTSTATUS status = NtAllocateVirtualMemoryEx(NtCurrentProcess(), &base, &size, MEM_RESERVE | MEM_COMMIT, protect,
+                                                g_guest.is32 ? &ext : nullptr, g_guest.is32 ? 1 : 0);
+    return NT_SUCCESS(status) ? base : nullptr;
+}
+
+void *x86_alloc(size_t size)
+{
+    PVOID base = alloc_pages(size, PAGE_READWRITE);
+    if (!base)
         mx_fatal(STATUS_NO_MEMORY, "out of memory");
     return base;
+}
+
+void *x86_alloc_code(size_t size)
+{
+    return alloc_pages(size, PAGE_EXECUTE_READWRITE);
 }
 
 void x86_free(void *p, size_t size)
@@ -191,7 +219,7 @@ static void cpu_to_context(X86Cpu *c, AMD64_CONTEXT *ctx)
     ctx->SegDs = ctx->SegEs = ctx->SegSs = ctx->SegGs = 0x2B;
     ctx->SegFs = 0x53;
     x86_fxsave(c, (uint8_t *)&ctx->FltSave);
-    ctx->MxCsr = c->mxcsr;
+    ctx->MxCsr = x86_mxcsr(c);
 }
 
 static void context_to_cpu(const AMD64_CONTEXT *ctx, X86Cpu *c)
@@ -210,7 +238,7 @@ static void context_to_cpu(const AMD64_CONTEXT *ctx, X86Cpu *c)
     }
     if ((flags & CONTEXT_AMD64_FLOATING_POINT) == CONTEXT_AMD64_FLOATING_POINT) {
         x86_fxrstor(c, (const uint8_t *)&ctx->FltSave);
-        c->mxcsr = ctx->MxCsr;
+        x86_set_mxcsr(c, ctx->MxCsr);
     }
 }
 
@@ -260,10 +288,15 @@ static void context32_to_cpu(const I386_CONTEXT *ctx, X86Cpu *c)
 static void init_frame(MX_FRAME *f, MX_THREAD *t)
 {
     x86_init_cpu(&f->cpu, &g_env, !g_guest.is32);
+    /* a callback or an apc runs with the thread's mxcsr, as the floating point of the host still has it. */
+    if (t->frame)
+        f->cpu.mxcsr = t->frame->cpu.mxcsr;
     f->cpu.fs_base = (ULONG_PTR)t->teb32;
     f->cpu.gs_base = (ULONG64)NtCurrentTeb();
     f->cpu.blocks = t->blocks;
     f->cpu.code_epoch = &g_code_epoch;
+    f->cpu.code_writes = g_code_log ? &g_code_log->Written : nullptr;
+    f->cpu.code_writes_seen = g_code_log_seen;
     f->cpu.code_ranges = g_code_ranges;
     f->cpu.blocks_epoch = g_code_epoch;
     f->cpu.exit_rip = g_guest.is32 ? 0xFFFF0000u : MX_EXIT_ADDRESS;
@@ -278,12 +311,34 @@ static void init_frame(MX_FRAME *f, MX_THREAD *t)
 static void emulate(MX_THREAD *t, MX_FRAME *f)
 {
     ULONG critical = t->suspend.Critical;
+    /* a fault of the code a system call calls back is that code's, not one of the call's conversion. */
+    MX_JUMP *conversion = t->conversion;
+    t->conversion = nullptr;
     t->frame = f;
     __atomic_store_n(&t->suspend.Critical, 1, __ATOMIC_RELEASE);
     mx_setjmp(&f->restart);
     x86_run(&f->cpu);
     t->frame = f->outer;
+    t->conversion = conversion;
     suspend_gate(t, critical);
+}
+
+/*
+ * the conversion reads the program's pointers in this process. a fault there is the status of the call, as the kernel
+ * answers such a pointer, rather than a native exception no 32-bit handler could take.
+ */
+static NTSTATUS guarded_call32(MX_THREAD *t, ULONG number, const ULONG *a)
+{
+    MX_JUMP guard;
+    int fault = mx_setjmp(&guard);
+    if (fault) {
+        t->conversion = nullptr;
+        return (NTSTATUS)fault;
+    }
+    t->conversion = &guard;
+    NTSTATUS status = Mx32SystemCall(number, a);
+    t->conversion = nullptr;
+    return status;
 }
 
 /* a stack pointer for code nested in an emulation that is in a system call. */
@@ -441,10 +496,8 @@ static void code_unlock(void)
     __atomic_store_n(&g_code_lock, 0, __ATOMIC_RELEASE);
 }
 
-/* an empty range drops every block. */
-static void env_code_changed(X86Cpu *c, uint64_t address, uint64_t size)
+static void code_changed_locked(uint64_t address, uint64_t size)
 {
-    code_lock();
     /* the blocks left keep their regions. */
     if (!size) {
         g_code_count = 0;
@@ -454,28 +507,143 @@ static void env_code_changed(X86Cpu *c, uint64_t address, uint64_t size)
     r->start = address;
     r->end = address + size;
     __atomic_add_fetch(&g_code_epoch, 1, __ATOMIC_SEQ_CST);
+}
+
+/* an empty range drops every block. */
+static void env_code_changed(X86Cpu *c, uint64_t address, uint64_t size)
+{
+    code_lock();
+    code_changed_locked(address, size);
     code_unlock();
 }
 
-static void env_code_seen(X86Cpu *c, uint64_t address)
+/*
+ * the pages the kernel watches for writes, see MIME_VM_CODE_WATCH. a slot holds the page it last watched, so a page
+ * pushed out of its slot is only asked for again, which is harmless.
+ */
+
+static ULONG watch_slot(ULONG64 page)
+{
+    return (ULONG)(((page >> 12) * 0x9E3779B97F4A7C15ull) >> 48);
+}
+
+static void unwatch(ULONG64 page)
+{
+    ULONG slot = watch_slot(page);
+    if (__atomic_load_n(&g_watched[slot], __ATOMIC_RELAXED) == page)
+        __atomic_store_n(&g_watched[slot], 0, __ATOMIC_RELAXED);
+}
+
+/* the slot is filled first: a write after the call is logged and empties it, so no write is missed. */
+static void env_code_watch(X86Cpu *c, uint64_t page)
+{
+    if (!g_watched)
+        return;
+    ULONG slot = watch_slot(page);
+    if (__atomic_load_n(&g_watched[slot], __ATOMIC_RELAXED) == page)
+        return;
+    __atomic_store_n(&g_watched[slot], page, __ATOMIC_SEQ_CST);
+    MEMORY_RANGE_ENTRY r = {(PVOID)page, WATCH_PAGE};
+    NtSetInformationVirtualMemory(NtCurrentProcess(), MIME_VM_CODE_WATCH, 1, &r, nullptr, 0);
+}
+
+/* the written pages drop their blocks, runs of them at once, and are watched again when code is decoded there. */
+static void env_code_written(X86Cpu *c)
+{
+    code_lock();
+    ULONG64 now = __atomic_load_n(&g_code_log->Written, __ATOMIC_ACQUIRE);
+    BOOLEAN all = now - g_code_log_seen > MIME_CODE_LOG_PAGES;
+    ULONG64 start = 0, end = 0;
+    for (ULONG64 k = g_code_log_seen; !all && k < now; k++) {
+        ULONG64 page = g_code_log->Pages[k % MIME_CODE_LOG_PAGES];
+        if (page == MIME_CODE_LOG_ALL) {
+            all = TRUE;
+            break;
+        }
+        unwatch(page);
+        if (page == end) {
+            end += WATCH_PAGE;
+            continue;
+        }
+        if (end)
+            code_changed_locked(start, end - start);
+        start = page;
+        end = page + WATCH_PAGE;
+    }
+    /* the kernel went round the log while it was read. */
+    if (!all && __atomic_load_n(&g_code_log->Written, __ATOMIC_ACQUIRE) - g_code_log_seen > MIME_CODE_LOG_PAGES)
+        all = TRUE;
+    if (all) {
+        for (ULONG i = 0; i < WATCH_SLOTS; i++)
+            g_watched[i] = 0;
+        code_changed_locked(0, 0);
+    } else if (end) {
+        code_changed_locked(start, end - start);
+    }
+    g_code_log_seen = now;
+    code_unlock();
+    c->code_writes_seen = now;
+}
+
+static int env_code_seen(X86Cpu *c, uint64_t address)
 {
     LONG n = __atomic_load_n(&g_code_count, __ATOMIC_ACQUIRE);
     for (LONG i = 0; i < n; i++)
         if (address >= g_code[i].Start && address < g_code[i].End)
-            return;
+            return 1;
     MEMORY_BASIC_INFORMATION info;
     if (!NT_SUCCESS(NtQueryVirtualMemory(NtCurrentProcess(), (PVOID)address, MemoryBasicInformation, &info,
                                          sizeof(info), nullptr))) {
         g_code_overflow = TRUE;
-        return;
+        return 1;
     }
+    /*
+     * x64 code runs only from pages that may execute, as data execution prevention always has it for 64-bit programs.
+     * 32-bit programs are left alone: their policy only opts in images that ask for it.
+     */
+    if (c->mode64 && !(info.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)))
+        return 0;
     code_lock();
-    if (g_code_count < CODE_REGIONS) {
-        g_code[g_code_count].Start = (ULONG64)info.BaseAddress;
-        g_code[g_code_count].End = (ULONG64)info.BaseAddress + info.RegionSize;
-        __atomic_store_n(&g_code_count, g_code_count + 1, __ATOMIC_RELEASE);
+    /* a region forgotten by a protection change leaves its slot for the next. */
+    LONG slot = 0;
+    while (slot < g_code_count && g_code[slot].End)
+        slot++;
+    if (slot < CODE_REGIONS) {
+        g_code[slot].Start = (ULONG64)info.BaseAddress;
+        __atomic_store_n(&g_code[slot].End, (ULONG64)info.BaseAddress + info.RegionSize, __ATOMIC_RELEASE);
+        if (slot == g_code_count)
+            __atomic_store_n(&g_code_count, g_code_count + 1, __ATOMIC_RELEASE);
     } else {
         g_code_overflow = TRUE;
+    }
+    code_unlock();
+    return 1;
+}
+
+/* the regions in [start, end) are asked again, a page that lost its execute permission is then refused. */
+static void forget_code(ULONG64 start, ULONG64 end)
+{
+    /* a page that stops being writable loses its watch. */
+    if (g_watched) {
+        if (end - start > 256 * WATCH_PAGE)
+            for (ULONG i = 0; i < WATCH_SLOTS; i++)
+                g_watched[i] = 0;
+        else
+            for (ULONG64 page = start & ~0xFFFull; page < end; page += WATCH_PAGE)
+                unwatch(page);
+    }
+    BOOLEAN hit = FALSE;
+    LONG n = __atomic_load_n(&g_code_count, __ATOMIC_ACQUIRE);
+    for (LONG i = 0; i < n && !hit; i++)
+        hit = start < g_code[i].End && g_code[i].Start < end;
+    if (!hit)
+        return;
+    code_lock();
+    for (LONG i = 0; i < g_code_count; i++) {
+        if (start < g_code[i].End && g_code[i].Start < end) {
+            __atomic_store_n(&g_code[i].End, 0, __ATOMIC_RELEASE);
+            g_code[i].Start = 0;
+        }
     }
     code_unlock();
 }
@@ -663,12 +831,24 @@ static void native_call(X86Cpu *c, ULONG number, const ULONG64 *a)
     c->xmm[0].q[1] = 0;
 }
 
+/* a thread that ends itself gives back what it translated first, as nothing of it runs after. */
+static void release_thread(MX_THREAD *t, X86Cpu *c)
+{
+    x86_free_blocks(c);
+    t->blocks = nullptr;
+    /* a callback the kernel still makes from the exit starts on blocks of its own. */
+    for (MX_FRAME *f = t->frame; f; f = f->outer)
+        f->cpu.blocks = nullptr;
+}
+
 static void env_syscall(X86Cpu *c)
 {
     MX_THREAD *t = c->user;
     ULONG number = (ULONG)c->r[X86_RAX];
     if (!c->mode64) {
         const ULONG *a = (const ULONG *)(ULONG_PTR)(ULONG)c->r[X86_RDX] + 1;
+        if (number == MIME_SVC_NtTerminateThread && (!a[0] || a[0] == 0xFFFFFFFEu))
+            release_thread(t, c);
         if (number == MIME_SVC_NtGetContextThread || number == MIME_SVC_NtSetContextThread) {
             HANDLE handle = (HANDLE)(LONG_PTR)(LONG)a[0];
             I386_CONTEXT *context = (void *)(ULONG_PTR)a[1];
@@ -688,6 +868,13 @@ static void env_syscall(X86Cpu *c)
             }
             if (!(NT_SUCCESS(status) && setting && target == c))
                 c->r[X86_RAX] = (ULONG)status;
+            return;
+        }
+        if (number == MIME_SVC_NtQueryPerformanceCounter && a[0]) {
+            *(ULONG64 *)(ULONG_PTR)a[0] = MimeReadQpc();
+            if (a[1])
+                *(ULONG64 *)(ULONG_PTR)a[1] = USER_SHARED_DATA->QpcFrequency;
+            c->r[X86_RAX] = 0;
             return;
         }
         if (number == MIME_SVC_NtContinue) {
@@ -746,7 +933,7 @@ static void env_syscall(X86Cpu *c)
         NtCurrentTeb()->LastErrorValue = *last_error;
         NtCurrentTeb()->ExceptionCode = 0;
         suspend_gate(t, 0);
-        NTSTATUS status = Mx32SystemCall(number, a);
+        NTSTATUS status = guarded_call32(t, number, a);
         suspend_gate(t, 1);
         *last_error = NtCurrentTeb()->LastErrorValue;
         c->r[X86_RAX] = (ULONG)status;
@@ -774,6 +961,7 @@ static void env_syscall(X86Cpu *c)
                 ULONG old = a[4] ? *(const ULONG *)(ULONG_PTR)a[4] : 0;
                 if ((a[3] | old) & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))
                     code_range_changed(c, range_start, range_end);
+                forget_code(range_start, range_end);
             }
             break;
         default:
@@ -851,6 +1039,10 @@ static void env_syscall(X86Cpu *c)
     case MIME_SVC_NtGetContextThread:
         c->r[X86_RAX] = (ULONG64)(LONG64)get_context(c, (HANDLE)a[0], (AMD64_CONTEXT *)a[1]);
         return;
+    case MIME_SVC_NtTerminateThread:
+        if (!a[0] || (HANDLE)a[0] == NtCurrentThread())
+            release_thread(t, c);
+        break;
     case MIME_SVC_NtSetContextThread:
         if ((HANDLE)a[0] == NtCurrentThread()) {
             AMD64_CONTEXT ctx;
@@ -907,16 +1099,20 @@ static void env_syscall(X86Cpu *c)
     case MIME_SVC_NtUnmapViewOfSectionEx:
         if (other)
             break;
-        if (range_end > range_start)
+        if (range_end > range_start) {
             code_range_changed(c, range_start, range_end);
-        else
+            if (number != MIME_SVC_NtFlushInstructionCache)
+                forget_code(range_start, range_end);
+        } else {
             env_code_changed(c, 0, 0);
+        }
         break;
     case MIME_SVC_NtProtectVirtualMemory:
         if (NT_SUCCESS((NTSTATUS)result) && !other) {
             ULONG old = a[4] ? *(PULONG)a[4] : 0;
             if (((ULONG)a[3] | old) & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY))
                 code_range_changed(c, range_start, range_end);
+            forget_code(range_start, range_end);
         }
         break;
     default:
@@ -970,8 +1166,27 @@ static void relocate(PVOID base)
     }
 }
 
+static void map_entries(PVOID base)
+{
+    g_guest.ntdll = base;
+    g_guest.ldr_initialize_thunk = (ULONG64)image_export(base, "LdrInitializeThunk");
+    g_guest.user_thread_start = (ULONG64)image_export(base, "RtlUserThreadStart");
+    g_guest.exception_dispatcher = (ULONG64)image_export(base, "KiUserExceptionDispatcher");
+    g_guest.callback_dispatcher = (ULONG64)image_export(base, "KiUserCallbackDispatcher");
+    if (!g_guest.is32)
+        MxInstallNatives(base, TRUE);
+    if (!g_guest.ldr_initialize_thunk || !g_guest.user_thread_start || !g_guest.exception_dispatcher ||
+        (!g_guest.is32 && !g_guest.callback_dispatcher))
+        mx_fatal(STATUS_ENTRYPOINT_NOT_FOUND, "the x64 ntdll.dll lacks an entry point");
+}
+
 static void map_x64_ntdll(void)
 {
+    PVOID base = NtCurrentPeb()->SparePointers[0];
+    if (base) {
+        map_entries(base);
+        return;
+    }
     UNICODE_STRING path;
     RtlInitUnicodeString(&path, g_guest.is32 ? L"\\SystemRoot\\SysWOW64\\ntdll.dll" : L"\\SystemRoot\\SysX64\\ntdll.dll");
     OBJECT_ATTRIBUTES oa;
@@ -987,7 +1202,6 @@ static void map_x64_ntdll(void)
     NtClose(file);
     if (!NT_SUCCESS(status))
         mx_fatal(status, "invalid x64 ntdll.dll");
-    PVOID base = nullptr;
     SIZE_T size = 0;
     status = NtMapViewOfSection(section, NtCurrentProcess(), &base, 0, 0, nullptr, &size, ViewShare, 0,
                                 PAGE_EXECUTE_WRITECOPY);
@@ -996,16 +1210,7 @@ static void map_x64_ntdll(void)
         relocate(base);
     else if (!NT_SUCCESS(status))
         mx_fatal(status, "cannot map the x64 ntdll.dll");
-    g_guest.ntdll = base;
-    g_guest.ldr_initialize_thunk = (ULONG64)image_export(base, "LdrInitializeThunk");
-    g_guest.user_thread_start = (ULONG64)image_export(base, "RtlUserThreadStart");
-    g_guest.exception_dispatcher = (ULONG64)image_export(base, "KiUserExceptionDispatcher");
-    g_guest.callback_dispatcher = (ULONG64)image_export(base, "KiUserCallbackDispatcher");
-    if (!g_guest.is32)
-        MxInstallNatives(base, TRUE);
-    if (!g_guest.ldr_initialize_thunk || !g_guest.user_thread_start || !g_guest.exception_dispatcher ||
-        (!g_guest.is32 && !g_guest.callback_dispatcher))
-        mx_fatal(STATUS_ENTRYPOINT_NOT_FOUND, "the x64 ntdll.dll lacks an entry point");
+    map_entries(base);
 }
 
 static void process_init(void)
@@ -1016,6 +1221,14 @@ static void process_init(void)
     g_env.code_changed = env_code_changed;
     g_env.code_seen = env_code_seen;
     g_env.code_bounds = env_code_bounds;
+    g_env.code_watch = env_code_watch;
+    g_env.code_written = env_code_written;
+    PVOID log = nullptr;
+    MEMORY_RANGE_ENTRY none = {};
+    if (NT_SUCCESS(NtSetInformationVirtualMemory(NtCurrentProcess(), MIME_VM_CODE_LOG, 1, &none, &log, sizeof(log)))) {
+        g_watched = x86_alloc(WATCH_SLOTS * sizeof(ULONG64));
+        g_code_log = log;
+    }
     g_env.suspend = env_suspend;
     PIMAGE_DOS_HEADER dos = NtCurrentPeb()->ImageBaseAddress;
     PIMAGE_NT_HEADERS32 nt = (void *)((PUCHAR)dos + dos->e_lfanew);
@@ -1129,12 +1342,17 @@ MX_EXPORT DECLSPEC_NORETURN void KiUserExceptionDispatcher(EXCEPTION_RECORD *rec
                  (PVOID)context->Pc);
         mx_fatal(record->ExceptionCode, "unhandled native exception");
     }
+    NTSTATUS code = record->ExceptionCode;
+    if (t->conversion && (code == STATUS_ACCESS_VIOLATION || code == STATUS_IN_PAGE_ERROR ||
+                          code == STATUS_GUARD_PAGE_VIOLATION || code == STATUS_STACK_OVERFLOW))
+        mx_longjmp(t->conversion, (int)code);
     MX_FRAME *f = t->frame;
     EXCEPTION_RECORD x64;
     memcpy(&x64, record, sizeof(x64));
     x64.ExceptionRecord = nullptr;
     /* the faulting instruction runs again if the program resumes. */
-    x86_jit_fault(&f->cpu, context->Pc, context->X);
+    x86_jit_fault(&f->cpu, context->Pc, context->X,
+                  (context->ContextFlags & CONTEXT_ARM64_FLOATING_POINT) == CONTEXT_ARM64_FLOATING_POINT ? context->V : nullptr);
     f->cpu.rip = f->cpu.insn_rip;
     if (x64.ExceptionCode == STATUS_ACCESS_VIOLATION && x64.NumberParameters >= 2 && x64.ExceptionInformation[0] == 8)
         x64.ExceptionInformation[0] = 0; /* the translator executes nothing from the faulting page. */

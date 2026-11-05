@@ -20,14 +20,9 @@ typedef struct Env {
 /* true when the stack of the thread is nearly used up. */
 static BOOL stack_low(void)
 {
-    SIZE_T sp, limit;
     char marker;
-    sp = (SIZE_T)&marker;
-#ifdef _WIN64
-    __asm__ volatile("movq %%gs:0x1478, %0" : "=r"(limit));
-#else
-    __asm__ volatile("movl %%fs:0xE0C, %0" : "=r"(limit));
-#endif
+    SIZE_T sp = (SIZE_T)&marker;
+    SIZE_T limit = (SIZE_T)NtCurrentTeb()->DeallocationStack;
     return sp < limit + 160 * 1024;
 }
 

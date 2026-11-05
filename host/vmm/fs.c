@@ -323,25 +323,39 @@ static bool is_private_registry(MimeVm *vm, const char *path)
  */
 static MimeFsHandle *get_handle(MimeVm *vm, uint64_t h)
 {
-    if (h == 0 || h > MIME_VMM_MAX_FS_HANDLES)
-        return nullptr;
+    MimeFsHandle *fh = nullptr;
     pthread_mutex_lock(&vm->fs_lock);
-    MimeFsHandle *fh = vm->fs_handles[h - 1];
+    if (h && h <= vm->fs_handle_slots)
+        fh = *mime_fs_handle_slot(vm, (uint32_t)(h - 1));
     pthread_mutex_unlock(&vm->fs_lock);
     return fh;
 }
 
+/* a free slot after the last one taken, or a new chunk of them. 0 when a million files are open. */
 static uint64_t alloc_handle(MimeVm *vm, MimeFsHandle *fh)
 {
     uint64_t h = 0;
     pthread_mutex_lock(&vm->fs_lock);
-    for (uint32_t i = 0; i < MIME_VMM_MAX_FS_HANDLES; i++) {
-        if (!vm->fs_handles[i]) {
-            vm->fs_handles[i] = fh;
+    for (uint32_t n = 0; n < vm->fs_handle_slots; n++) {
+        uint32_t i = (vm->fs_handle_next + n) % vm->fs_handle_slots;
+        MimeFsHandle **slot = mime_fs_handle_slot(vm, i);
+        if (!*slot) {
+            *slot = fh;
             h = i + 1;
             break;
         }
     }
+    if (!h && vm->fs_handle_slots < MIME_VMM_FS_CHUNK * MIME_VMM_FS_CHUNKS) {
+        MimeFsHandle **chunk = calloc(MIME_VMM_FS_CHUNK, sizeof(*chunk));
+        if (chunk) {
+            vm->fs_handles[vm->fs_handle_slots / MIME_VMM_FS_CHUNK] = chunk;
+            chunk[0] = fh;
+            h = vm->fs_handle_slots + 1;
+            vm->fs_handle_slots += MIME_VMM_FS_CHUNK;
+        }
+    }
+    if (h)
+        vm->fs_handle_next = (uint32_t)(h % vm->fs_handle_slots);
     pthread_mutex_unlock(&vm->fs_lock);
     return h;
 }
@@ -349,12 +363,13 @@ static uint64_t alloc_handle(MimeVm *vm, MimeFsHandle *fh)
 static void free_handle(MimeVm *vm, uint64_t h)
 {
     MimeFsHandle *fh = nullptr;
-    if (h && h <= MIME_VMM_MAX_FS_HANDLES) {
-        pthread_mutex_lock(&vm->fs_lock);
-        fh = vm->fs_handles[h - 1];
-        vm->fs_handles[h - 1] = nullptr;
-        pthread_mutex_unlock(&vm->fs_lock);
+    pthread_mutex_lock(&vm->fs_lock);
+    if (h && h <= vm->fs_handle_slots) {
+        MimeFsHandle **slot = mime_fs_handle_slot(vm, (uint32_t)(h - 1));
+        fh = *slot;
+        *slot = nullptr;
     }
+    pthread_mutex_unlock(&vm->fs_lock);
     if (!fh)
         return;
     if (fh->fd >= 0)
@@ -1077,14 +1092,19 @@ static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
     mime_path_join(target, sizeof(target), dir_path, leaf);
     struct stat there;
     bool exists = lstat(target, &there) == 0;
-    if (!exists) {
+    /* a case-insensitive host finds another file under the new spelling too, so its own is looked up. */
+    if (!exists || !(there.st_dev == from.st_dev && there.st_ino == from.st_ino)) {
         mime_fs_find_entry(dir_path, leaf, found, sizeof(found));
         if (found[0]) {
             char twin[MIME_PATH_MAX];
+            struct stat other;
             mime_path_join(twin, sizeof(twin), dir_path, found);
-            exists = lstat(twin, &there) == 0;
-            if (exists && !(there.st_dev == from.st_dev && there.st_ino == from.st_ino))
-                mime_strlcpy(target, twin, sizeof(target));
+            if (lstat(twin, &other) == 0 && (!exists || (other.st_dev == there.st_dev && other.st_ino == there.st_ino))) {
+                exists = true;
+                there = other;
+                if (!(there.st_dev == from.st_dev && there.st_ino == from.st_ino))
+                    mime_strlcpy(target, twin, sizeof(target));
+            }
         }
     }
     bool same = exists && there.st_dev == from.st_dev && there.st_ino == from.st_ino;
@@ -1128,8 +1148,8 @@ static uint64_t fs_rename(MimeVm *vm, const uint64_t a[8])
     char *old = mime_xstrdup(src->host_path);
     pthread_mutex_lock(&vm->fs_lock);
     g_sd_generation++;
-    for (uint32_t i = 0; i < MIME_VMM_MAX_FS_HANDLES; i++) {
-        MimeFsHandle *fh = vm->fs_handles[i];
+    for (uint32_t i = 0; i < vm->fs_handle_slots; i++) {
+        MimeFsHandle *fh = *mime_fs_handle_slot(vm, i);
         if (!fh || !fh->host_path)
             continue;
         if (exists && !same && !strcmp(fh->host_path, target)) {
@@ -1573,7 +1593,7 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
 void mime_fs_close_all(MimeVm *vm)
 {
     mime_fswatch_stop();
-    for (uint32_t i = 0; i < MIME_VMM_MAX_FS_HANDLES; i++) {
+    for (uint32_t i = 0; i < vm->fs_handle_slots; i++) {
         MimeFsHandle *fh = get_handle(vm, i + 1);
         if (fh) {
             fh->delete_on_close = false;
