@@ -61,6 +61,119 @@ static PWSTR profile_path(PCWSTR name)
     return path;
 }
 
+
+/*
+ * win.ini, system.ini and the other files named under IniFileMapping do not keep their entries in the file: the key of
+ * the file says where in the registry each section, or each key of a section, lives. a section of a file has a subkey
+ * of that name, whose value for the key (or, failing that, its default value) is the place, or a value of the file's key
+ * named like the section does, or the default value of the file's key. the place is "USR:" and a path under the current
+ * user, "SYS:" and a path under HKLM\SOFTWARE, with ! to write the file too and @ to never read it. what the registry
+ * does not have is read from the file.
+ */
+typedef struct {
+    HKEY Root;
+    WCHAR Path[512];
+    BOOL Both, NoFile;
+} PROFILE_MAP;
+
+static BOOL map_string(HKEY key, PCWSTR name, PWSTR out, DWORD chars)
+{
+    DWORD type, size = (chars - 1) * sizeof(WCHAR);
+    if (RegQueryValueExW(key, name, nullptr, &type, (LPBYTE)out, &size) != ERROR_SUCCESS || type != REG_SZ)
+        return FALSE;
+    out[size / sizeof(WCHAR)] = 0;
+    return out[0] != 0;
+}
+
+static BOOL map_place(PWSTR text, PROFILE_MAP *map)
+{
+    map->Both = map->NoFile = FALSE;
+    for (;; text++) {
+        if (*text == L'!')
+            map->Both = TRUE;
+        else if (*text == L'@')
+            map->NoFile = TRUE;
+        else if (*text != L'#')
+            break;
+    }
+    PCWSTR prefix = L"SOFTWARE\\";
+    if (!_wcsnicmp(text, L"USR:", 4)) {
+        map->Root = HKEY_CURRENT_USER;
+        text += 4;
+        prefix = L"";
+    } else if (!_wcsnicmp(text, L"SYS:", 4)) {
+        map->Root = HKEY_LOCAL_MACHINE;
+        text += 4;
+    } else {
+        return FALSE;
+    }
+    /* the places have doubled separators in some entries. */
+    SIZE_T n = wcslen(prefix);
+    memcpy(map->Path, prefix, n * sizeof(WCHAR));
+    for (; *text && n + 1 < RTL_NUMBER_OF(map->Path); text++)
+        if (*text != L'\\' || n == 0 || map->Path[n - 1] != L'\\')
+            map->Path[n++] = *text;
+    map->Path[n] = 0;
+    return TRUE;
+}
+
+static BOOL find_map(PCWSTR filename, PCWSTR section, PCWSTR key, PROFILE_MAP *map)
+{
+    if (!section || !key)
+        return FALSE;
+    PCWSTR leaf = filename ? filename : L"win.ini";
+    PCWSTR slash = wcsrchr(leaf, L'\\');
+    if (slash) {
+        WCHAR windows[MAX_PATH];
+        UINT n = GetWindowsDirectoryW(windows, RTL_NUMBER_OF(windows));
+        if (!n || n >= RTL_NUMBER_OF(windows) || (SIZE_T)(slash - leaf) != n || _wcsnicmp(leaf, windows, n))
+            return FALSE;
+        leaf = slash + 1;
+    }
+    if (!*leaf || wcslen(leaf) > 64)
+        return FALSE;
+    WCHAR path[200], place[512];
+    KbFormat(path, RTL_NUMBER_OF(path), L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\IniFileMapping\\%s", leaf);
+    HKEY file;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, path, 0, KEY_READ, &file) != ERROR_SUCCESS)
+        return FALSE;
+    BOOL found = FALSE;
+    HKEY sub;
+    if (wcslen(section) < 100 && RegOpenKeyExW(file, section, 0, KEY_READ, &sub) == ERROR_SUCCESS) {
+        found = map_string(sub, key, place, RTL_NUMBER_OF(place)) || map_string(sub, nullptr, place, RTL_NUMBER_OF(place));
+        RegCloseKey(sub);
+    }
+    if (!found)
+        found = map_string(file, section, place, RTL_NUMBER_OF(place)) || map_string(file, nullptr, place, RTL_NUMBER_OF(place));
+    RegCloseKey(file);
+    return found && map_place(place, map);
+}
+
+/* reads a mapped entry: TRUE when the registry has it. */
+static BOOL read_mapped(const PROFILE_MAP *map, PCWSTR key, PWSTR text, DWORD chars)
+{
+    HKEY hkey;
+    if (RegOpenKeyExW(map->Root, map->Path, 0, KEY_READ, &hkey) != ERROR_SUCCESS)
+        return FALSE;
+    DWORD type, size = (chars - 1) * sizeof(WCHAR);
+    BYTE data[2048];
+    BOOL ok = FALSE;
+    DWORD capacity = size < sizeof(data) ? size : (DWORD)sizeof(data);
+    DWORD got = capacity;
+    if (RegQueryValueExW(hkey, key, nullptr, &type, data, &got) == ERROR_SUCCESS) {
+        if (type == REG_SZ || type == REG_EXPAND_SZ) {
+            memcpy(text, data, got);
+            text[got / sizeof(WCHAR)] = 0;
+            ok = TRUE;
+        } else if (type == REG_DWORD && got >= sizeof(DWORD)) {
+            KbFormat(text, chars, L"%u", *(DWORD *)data);
+            ok = TRUE;
+        }
+    }
+    RegCloseKey(hkey);
+    return ok;
+}
+
 static BOOL load_profile(PCWSTR path, PROFILE *profile, BOOL missing_ok)
 {
     memset(profile, 0, sizeof(*profile));
@@ -213,6 +326,14 @@ DWORD WINAPI GetPrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR fall
     BOOL multiple = !section || !key;
     if (multiple && size > 1)
         out[1] = 0;
+    PROFILE_MAP map;
+    WCHAR mapped[512];
+    if (!multiple && find_map(filename, section, key, &map) && read_mapped(&map, key, mapped, RTL_NUMBER_OF(mapped))) {
+        SIZE_T length = wcslen(mapped);
+        DWORD used = copy_value(mapped, length, out, size);
+        KbSetError(length >= size ? ERROR_MORE_DATA : ERROR_SUCCESS);
+        return used;
+    }
     PWSTR path = profile_path(filename);
     PROFILE profile = {};
     BOOL loaded = path && load_profile(path, &profile, FALSE);
@@ -483,6 +604,27 @@ BOOL WINAPI WritePrivateProfileStringW(LPCWSTR section, LPCWSTR key, LPCWSTR val
         (value && wcslen(value) > PROFILE_LIMIT)) {
         KbSetError(ERROR_FILE_TOO_LARGE);
         return FALSE;
+    }
+    PROFILE_MAP map;
+    if (find_map(filename, section, key, &map)) {
+        HKEY hkey;
+        LSTATUS status = RegCreateKeyExW(map.Root, map.Path, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &hkey, nullptr);
+        if (status == ERROR_SUCCESS) {
+            status = value ? RegSetValueExW(hkey, key, 0, REG_SZ, (const BYTE *)value,
+                                            (DWORD)((wcslen(value) + 1) * sizeof(WCHAR)))
+                           : RegDeleteValueW(hkey, key);
+            RegCloseKey(hkey);
+            if (!value && status == ERROR_FILE_NOT_FOUND)
+                status = ERROR_SUCCESS;
+        }
+        if (status != ERROR_SUCCESS) {
+            KbSetError(status);
+            return FALSE;
+        }
+        if (!map.Both) {
+            KbSetError(ERROR_SUCCESS);
+            return TRUE;
+        }
     }
     STRING_EDIT edit = {section, key, value};
     return write_locked(filename, write_string, &edit);

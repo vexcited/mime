@@ -125,3 +125,85 @@
 
 ; the settings of the script hosts. The user keeps their own below HKCU, which the hosts create when //S saves them.
 [HKLM\SOFTWARE\Microsoft\Windows Script Host\Settings]
+
+; where the entries of win.ini, system.ini and control.ini live. GetProfileString and the other profile functions read these
+; files from the registry, and what the registry lacks from the file.
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\IniFileMapping\control.ini]
+"Color Schemes"="#USR:Control Panel\\Color Schemes"
+"Current"="#USR:Control Panel\\Current"
+"Custom Colors"="#USR:Control Panel\\Custom Colors"
+"don't load"="USR:Control Panel\\don't load"
+"drivers.desc"="SYS:Microsoft\\Windows NT\\CurrentVersion\\drivers.desc"
+"MMCPL"="USR:Control Panel\\MMCPL"
+"Patterns"="#USR:Control Panel\\Patterns"
+"related.desc"="SYS:Microsoft\\Windows NT\\CurrentVersion\\related.desc"
+"Screen Saver.3DText"="USR:Control Panel\\Screen Saver.3DText"
+"Userinstallable.drivers"="SYS:Microsoft\\Windows NT\\CurrentVersion\\Userinstallable.drivers"
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\IniFileMapping\system.ini]
+"drivers32"="SYS:Microsoft\\Windows NT\\CurrentVersion\\Drivers32"
+"MCI"="SYS:Microsoft\\Windows NT\\CurrentVersion\\MCI"
+"MCI32"="SYS:Microsoft\\Windows NT\\CurrentVersion\\MCI32"
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\IniFileMapping\system.ini\boot]
+@="SYS:Microsoft\\Windows NT\\CurrentVersion\\WOW\\boot"
+"ScreenSaverActive"="USR:Control Panel\\Desktop"
+"ScreenSaverIsSecure"="USR:Control Panel\\Desktop"
+"SCRNSAVE.EXE"="USR:Control Panel\\Desktop"
+"Shell"="SYS:Microsoft\\Windows NT\\CurrentVersion\\Winlogon"
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\IniFileMapping\win.ini]
+"AeDebug"="SYS:Microsoft\\Windows NT\\CurrentVersion\\AeDebug"
+"CLOCK"="#USR:SOFTWARE\\\\MICROSOFT\\\\CLOCK"
+"COLORS"="#USR:CONTROL PANEL\\\\COLORS"
+"CONSOLE"="USR:CONSOLE"
+"CURSORS"="#USR:CONTROL PANEL\\\\CURSORS"
+"DESKTOP"="#USR:CONTROL PANEL\\\\DESKTOP"
+"Devices"="USR:Software\\Microsoft\\Windows NT\\CurrentVersion\\Devices"
+"EMBEDDING"="!#SYS:MICROSOFT\\\\WINDOWS NT\\\\CURRENTVERSION\\\\EMBEDDING"
+"EXTENSIONS"="#USR:SOFTWARE\\\\MICROSOFT\\\\WINDOWS NT\\\\CURRENTVERSION\\\\EXTENSIONS"
+"Fonts"="#SYS:Microsoft\\Windows NT\\CurrentVersion\\Fonts"
+"FontSubstitutes"="#SYS:Microsoft\\Windows NT\\CurrentVersion\\FontSubstitutes"
+"GRE_INITIALIZE"="SYS:MICROSOFT\\\\WINDOWS NT\\\\CURRENTVERSION\\\\GRE_INITIALIZE"
+"Intl"="#USR:Control Panel\\International"
+"IOPROCS"="#USR:CONTROL PANEL\\\\IOPROCS"
+"MCI EXTENSIONS"="SYS:MICROSOFT\\\\WINDOWS NT\\\\CURRENTVERSION\\\\MCI EXTENSIONS"
+"MODULECOMPATIBILITY"="SYS:MICROSOFT\\\\WINDOWS NT\\\\CURRENTVERSION\\\\MODULECOMPATIBILITY"
+"MSCHARMAP"="#USR:SOFTWARE\\\\MICROSOFT\\\\CHARMAP"
+"NET_FILES"="USR:SOFTWARE\\\\MICROSOFT\\\\WINDOWS NT\\\\CURRENTVERSION\\\\NETWORK\\\\PERSISTENT CONNECTIONS"
+"NWCS"="SYS:MICROSOFT\\\\WINDOWS NT\\\\CURRENTVERSION\\\\NWCS"
+"Ports"="SYS:Microsoft\\Windows NT\\CurrentVersion\\Ports"
+"PrinterPorts"="USR:Software\\Microsoft\\Windows NT\\CurrentVersion\\PrinterPorts"
+"SOUNDS"="#USR:CONTROL PANEL\\\\SOUNDS"
+"TRUETYPE"="#USR:SOFTWARE\\\\MICROSOFT\\\\WINDOWS NT\\\\CURRENTVERSION\\\\TRUETYPE"
+"TWAIN"="#USR:SOFTWARE\\\\MICROSOFT\\\\WINDOWS NT\\\\CURRENTVERSION\\\\TWAIN"
+"WINDOWS HELP"="USR:SOFTWARE\\\\MICROSOFT\\\\WINDOWS HELP"
+"Winlogon"="SYS:Microsoft\\Windows NT\\CurrentVersion\\Winlogon"
+
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\IniFileMapping\win.ini\Windows]
+@="USR:Software\\Microsoft\\Windows NT\\CurrentVersion\\Windows"
+"APPINIT_DLLS"="SYS:MICROSOFT\\\\WINDOWS NT\\\\CURRENTVERSION\\\\WINDOWS"
+"Beep"="#USR:Control Panel\\Sound"
+"CoolSwitch"="USR:Control Panel\\Desktop"
+"DEFAULTSEPARATEVDM"="\\\\REGISTRY\\\\MACHINE\\\\SYSTEM\\\\CURRENTCONTROLSET\\\\CONTROL\\\\WOW"
+"DEVICENOTSELECTEDTIMEOUT"="#SYS:MICROSOFT\\\\WINDOWS NT\\\\CURRENTVERSION\\\\WINDOWS"
+"DoubleClickHeight"="#USR:Control Panel\\Mouse"
+"DoubleClickSpeed"="#USR:Control Panel\\Mouse"
+"DoubleClickWidth"="#USR:Control Panel\\Mouse"
+"DragFullWindows"="USR:Control Panel\\Desktop"
+"InitialKeyboardIndicators"="USR:Control Panel\\Keyboard"
+"LowPowerActive"="#USR:Control Panel\\Desktop"
+"LowPowerTimeOut"="#USR:Control Panel\\Desktop"
+"MouseSpeed"="#USR:Control Panel\\Mouse"
+"MouseThreshold1"="#USR:Control Panel\\Mouse"
+"MouseThreshold2"="#USR:Control Panel\\Mouse"
+"PowerOffActive"="#USR:Control Panel\\Desktop"
+"PowerOffTimeOut"="#USR:Control Panel\\Desktop"
+"ScreenSaveActive"="#USR:Control Panel\\Desktop"
+"ScreenSaveTimeOut"="#USR:Control Panel\\Desktop"
+"SnapToDefaultButton"="#USR:Control Panel\\Mouse"
+"Spooler"="#SYS:Microsoft\\Windows NT\\CurrentVersion\\Windows"
+"SWAPDISK"="SYS:MICROSOFT\\\\WINDOWS NT\\\\CURRENTVERSION\\\\WINDOWS"
+"SwapMouseButtons"="#USR:Control Panel\\Mouse"
+"TRANSMISSIONRETRYTIMEOUT"="#SYS:MICROSOFT\\\\WINDOWS NT\\\\CURRENTVERSION\\\\WINDOWS"
+

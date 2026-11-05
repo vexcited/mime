@@ -44,3 +44,14 @@
 [HKU\.DEFAULT\Environment]
 "TEMP"=expand:"%USERPROFILE%\\AppData\\Local\\Temp"
 "TMP"=expand:"%USERPROFILE%\\AppData\\Local\\Temp"
+
+; the printers of the user for programs that read them from win.ini: the default one, and each with its port. the only
+; printer is the one winspool.dll has.
+[HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows]
+"Device"="Microsoft Print to PDF,winspool,PORTPROMPT:"
+
+[HKCU\Software\Microsoft\Windows NT\CurrentVersion\Devices]
+"Microsoft Print to PDF"="winspool,PORTPROMPT:"
+
+[HKCU\Software\Microsoft\Windows NT\CurrentVersion\PrinterPorts]
+"Microsoft Print to PDF"="winspool,PORTPROMPT:,15,45"
