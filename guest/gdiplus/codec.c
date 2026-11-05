@@ -771,7 +771,8 @@ static GpStatus decode_frame(WicSession *w, GFrameSource *s, UINT index, GBitmap
         PixelFormat format = gp_format_of(&wic_format, &target);
         IWICBitmapSource *source = (IWICBitmapSource *)frame;
         IWICFormatConverter *conv = nullptr;
-        if (!guid_equal(&wic_format, target)) {
+        BOOL two_bits = guid_equal(&wic_format, &GUID_WICPixelFormat2bppIndexed);
+        if (!guid_equal(&wic_format, target) && !two_bits) {
             if (SUCCEEDED(w->factory->lpVtbl->CreateFormatConverter(w->factory, &conv)) &&
                 SUCCEEDED(conv->lpVtbl->Initialize(conv, (IWICBitmapSource *)frame, target, WICBitmapDitherTypeNone,
                                                    nullptr, 0.0, WICBitmapPaletteTypeCustom)))
@@ -784,6 +785,14 @@ static GpStatus decode_frame(WicSession *w, GFrameSource *s, UINT index, GBitmap
         if (st == Ok) {
             UINT stride = (UINT)b->stride;
             HRESULT hr = source->lpVtbl->CopyPixels(source, nullptr, stride, stride * height, b->bits);
+            /* the indices keep their values in four bits, from the end of each row as it grows. */
+            for (UINT y = 0; SUCCEEDED(hr) && two_bits && y < height; y++) {
+                BYTE *row = b->bits + (SIZE_T)y * stride;
+                for (UINT x = width; x-- > 0;) {
+                    BYTE index = (row[x / 4] >> (6 - 2 * (x % 4))) & 3;
+                    row[x / 2] = x % 2 ? (BYTE)((row[x / 2] & 0xf0) | index) : (BYTE)((row[x / 2] & 0x0f) | index << 4);
+                }
+            }
             if (FAILED(hr))
                 st = hr == E_OUTOFMEMORY ? OutOfMemory : (hr == WINCODEC_ERR_BADIMAGE || hr == WINCODEC_ERR_BADHEADER ? InvalidParameter : GenericError);
         }
