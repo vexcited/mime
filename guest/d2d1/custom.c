@@ -2705,7 +2705,7 @@ static int extend(int v, int lo, int hi, D2D1_EXTEND_MODE m)
     return lo + t;
 }
 
-/* the target of a source transform is in the buffer it asked for, as it writes its pixels in that format. */
+/* the target of a source transform is in the buffer it asked for, as it writes its pixels in that format. windows keeps one channel in red. */
 static DXGI_FORMAT source_format(const CInfo *info, D2D1_BUFFER_PRECISION fallback)
 {
     D2D1_BUFFER_PRECISION p = info && info->precision != D2D1_BUFFER_PRECISION_UNKNOWN ? info->precision : fallback;
@@ -2720,7 +2720,7 @@ static DXGI_FORMAT source_format(const CInfo *info, D2D1_BUFFER_PRECISION fallba
     case D2D1_BUFFER_PRECISION_32BPC_FLOAT:
         return DXGI_FORMAT_R32G32B32A32_FLOAT;
     default:
-        return one ? DXGI_FORMAT_A8_UNORM : DXGI_FORMAT_B8G8R8A8_UNORM;
+        return one ? DXGI_FORMAT_R8_UNORM : DXGI_FORMAT_B8G8R8A8_UNORM;
     }
 }
 
