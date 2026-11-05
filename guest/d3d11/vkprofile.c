@@ -303,7 +303,8 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
     p->has_null_descriptor = r->robust.nullDescriptor;
     p->d3d11 = ok11 && core && r->object.shaderObject && f12->descriptorBindingSampledImageUpdateAfterBind &&
                f12->descriptorBindingUniformBufferUpdateAfterBind;
-    p->d3d12 = ok12 && core && r->robust.nullDescriptor && r->db.descriptorBuffer && r->mutable_type.mutableDescriptorType &&
+    /* without null descriptors, direct3d 12 writes stand ins of each view dimension, see its descriptor.c. */
+    p->d3d12 = ok12 && core && r->db.descriptorBuffer && r->mutable_type.mutableDescriptorType &&
                f12->bufferDeviceAddress && f12->shaderSampledImageArrayNonUniformIndexing &&
                base.properties.limits.maxPushConstantsSize >= MIME_VK_D3D12_PUSH_SIZE;
     if (!p->d3d11)
