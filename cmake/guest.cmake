@@ -104,6 +104,16 @@ function(mime_resource name arch)
         DEPENDS ${inputs} ${includes} cmake/concat.cmake VERBATIM)
 endfunction()
 
+function(mime_arch_script out prefix arch)
+    set(script)
+    if(EXISTS ${prefix}_${arch}.rc)
+        set(script ${prefix}_${arch}.rc)
+    elseif(arch STREQUAL "arm64" AND EXISTS ${prefix}_x64.rc)
+        set(script ${prefix}_x64.rc)
+    endif()
+    set(${out} ${script} PARENT_SCOPE)
+endfunction()
+
 set(MIME_LINK_FLAGS /nologo /debug:dwarf /build-id /nodefaultlib /opt:ref /incremental:no /filealign:0x1000
     /version:10.0 /osversion:10.0 /Brepro /release)
 
