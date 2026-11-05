@@ -2389,10 +2389,12 @@ static void wide(Compiler *c, const DxbcInstruction *ins, uint32_t op, Kind k, i
     }
 }
 
-/* udiv: quotient and remainder, all ones for both on division by zero. */
+/* udiv: quotient and remainder, all ones for both on division by zero. both read their sources before either
+ * destination is written, as a destination may be a source. */
 static void udiv(Compiler *c, const DxbcInstruction *ins)
 {
     const DxbcOperand *d0 = &ins->operands[0], *d1 = &ins->operands[1];
+    uint32_t results[2] = {};
     for (int which = 0; which < 2; which++) {
         const DxbcOperand *d = which ? d1 : d0;
         if (d->type == OPERAND_NULL)
@@ -2404,22 +2406,28 @@ static void udiv(Compiler *c, const DxbcInstruction *ins)
         uint32_t zero = spv_op2(&c->b, SpvOpIEqual, c->t_bvec[n], b, splat_const(c, K_UINT, n, 0));
         uint32_t safe = spv_op3(&c->b, SpvOpSelect, u, zero, splat_const(c, K_UINT, n, 1), b);
         uint32_t r = spv_op2(&c->b, which ? SpvOpUMod : SpvOpUDiv, u, a, safe);
-        r = spv_op3(&c->b, SpvOpSelect, u, zero, splat_const(c, K_UINT, n, ~0u), r);
-        store(c, ins, d, r, K_UINT);
+        results[which] = spv_op3(&c->b, SpvOpSelect, u, zero, splat_const(c, K_UINT, n, ~0u), r);
     }
+    for (int which = 0; which < 2; which++)
+        if (results[which])
+            store(c, ins, which ? d1 : d0, results[which], K_UINT);
 }
 
+/* both read the source before either destination is written. */
 static void sin_cos(Compiler *c, const DxbcInstruction *ins)
 {
+    uint32_t results[2] = {};
     for (int which = 0; which < 2; which++) {
         const DxbcOperand *d = &ins->operands[which];
         if (d->type == OPERAND_NULL)
             continue;
         uint8_t mask = dst_mask(d);
         uint32_t a = load(c, &ins->operands[2], mask, K_FLOAT);
-        uint32_t r = spv_glsl(&c->b, vec_type(c, K_FLOAT, popcount(mask)), which ? GLSLstd450Cos : GLSLstd450Sin, &a, 1);
-        store(c, ins, d, r, K_FLOAT);
+        results[which] = spv_glsl(&c->b, vec_type(c, K_FLOAT, popcount(mask)), which ? GLSLstd450Cos : GLSLstd450Sin, &a, 1);
     }
+    for (int which = 0; which < 2; which++)
+        if (results[which])
+            store(c, ins, &ins->operands[which], results[which], K_FLOAT);
 }
 
 static void movc(Compiler *c, const DxbcInstruction *ins)
@@ -2433,6 +2441,7 @@ static void movc(Compiler *c, const DxbcInstruction *ins)
 
 static void swapc(Compiler *c, const DxbcInstruction *ins)
 {
+    uint32_t results[2] = {};
     for (int which = 0; which < 2; which++) {
         const DxbcOperand *d = &ins->operands[which];
         if (d->type == OPERAND_NULL)
@@ -2441,9 +2450,11 @@ static void swapc(Compiler *c, const DxbcInstruction *ins)
         uint32_t n = popcount(mask);
         uint32_t cond = nonzero(c, load(c, &ins->operands[2], mask, K_UINT), n);
         uint32_t a = load(c, &ins->operands[3], mask, K_FLOAT), b = load(c, &ins->operands[4], mask, K_FLOAT);
-        uint32_t r = spv_op3(&c->b, SpvOpSelect, vec_type(c, K_FLOAT, n), cond, which ? a : b, which ? b : a);
-        store(c, ins, d, r, K_FLOAT);
+        results[which] = spv_op3(&c->b, SpvOpSelect, vec_type(c, K_FLOAT, n), cond, which ? a : b, which ? b : a);
     }
+    for (int which = 0; which < 2; which++)
+        if (results[which])
+            store(c, ins, &ins->operands[which], results[which], K_FLOAT);
 }
 
 static void mad(Compiler *c, const DxbcInstruction *ins, Kind k)
