@@ -294,7 +294,10 @@ HDC PrnCreateDC(LPCWSTR driver, LPCWSTR device, const void *mode, BOOL info_only
 {
     *handled = FALSE;
     BOOL named = driver && (!_wcsicmp(driver, g_winspool) || !_wcsicmp(driver, L"winspool.drv"));
-    if (!device || !*device || (driver && !named))
+    if (!device || !*device)
+        return nullptr;
+    /* the driver does not name the printer, the device does: only the display is named by the driver. */
+    if (driver && !named && (!_wcsicmp(driver, L"DISPLAY") || !_wcsnicmp(driver, L"\\\\.\\DISPLAY", 11)))
         return nullptr;
     if (!named) {
         if (!spool_load())
