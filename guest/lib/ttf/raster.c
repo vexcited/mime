@@ -537,6 +537,107 @@ static int line_crossings(const Seg *segs, size_t n, int axis, double c, Cross *
     return k;
 }
 
+/*
+ * the segments each line of an axis may cross, in their order, so the crossings come in the same order as from all the
+ * segments. a segment goes to the lines whose centre is near its extent, which line_crossings then tests exactly.
+ */
+typedef struct Buckets {
+    uint32_t *start; /* lines + 1 offsets into list. */
+    uint32_t *list;
+    int lines;
+} Buckets;
+
+static void seg_lines(const Seg *s, int axis, int lines, int *first, int *last)
+{
+    double a0 = axis ? s->x0 : s->y0, a1 = axis ? s->x1 : s->y1;
+    double lo = a0 < a1 ? a0 : a1, hi = a0 < a1 ? a1 : a0;
+    if (a0 == a1) {
+        *first = 0, *last = -1;
+        return;
+    }
+    /* a nan crosses every line, as the exact test lets it. */
+    if (lo != lo || hi != hi) {
+        *first = 0, *last = lines - 1;
+        return;
+    }
+    int f = dfloor(lo - 0.5), l = dceil(hi - 0.5);
+    *first = f < 0 ? 0 : f >= lines ? lines : f;
+    *last = l < 0 ? -1 : l >= lines ? lines - 1 : l;
+}
+
+static bool buckets_build(const MimeAllocator *alloc, const Seg *segs, size_t n, int axis, int lines, Buckets *b)
+{
+    b->lines = lines;
+    b->list = nullptr;
+    b->start = mime_alloc(alloc, ((size_t)lines + 1) * sizeof(uint32_t));
+    if (!b->start)
+        return false;
+    __builtin_memset(b->start, 0, ((size_t)lines + 1) * sizeof(uint32_t));
+    int (*range)[2] = mime_alloc(alloc, (n ? n : 1) * sizeof(*range));
+    if (!range) {
+        mime_free(alloc, b->start);
+        b->start = nullptr;
+        return false;
+    }
+    size_t total = 0;
+    for (size_t i = 0; i < n; i++) {
+        seg_lines(&segs[i], axis, lines, &range[i][0], &range[i][1]);
+        for (int k = range[i][0]; k <= range[i][1]; k++)
+            b->start[k + 1]++;
+        total += range[i][1] >= range[i][0] ? (size_t)(range[i][1] - range[i][0] + 1) : 0;
+    }
+    if (total > 0xFFFFFFFFu || !(b->list = mime_alloc(alloc, (total ? total : 1) * sizeof(uint32_t)))) {
+        mime_free(alloc, range);
+        mime_free(alloc, b->start);
+        b->start = nullptr;
+        return false;
+    }
+    for (int k = 0; k < lines; k++)
+        b->start[k + 1] += b->start[k];
+    /* start[k] runs ahead while filling, then is shifted back. */
+    for (size_t i = 0; i < n; i++)
+        for (int k = range[i][0]; k <= range[i][1]; k++)
+            b->list[b->start[k]++] = (uint32_t)i;
+    mime_free(alloc, range);
+    for (int k = lines; k > 0; k--)
+        b->start[k] = b->start[k - 1];
+    b->start[0] = 0;
+    return true;
+}
+
+static void buckets_free(const MimeAllocator *alloc, Buckets *b)
+{
+    if (b->start)
+        mime_free(alloc, b->start);
+    if (b->list)
+        mime_free(alloc, b->list);
+    b->start = b->list = nullptr;
+}
+
+/* line_crossings at the centre of a line, through its bucket when there is one. */
+static int crossings_at(const Seg *segs, size_t n, const Buckets *b, int axis, int line, Cross *out)
+{
+    double c = line + 0.5;
+    if (!b || !b->start || line < 0 || line >= b->lines)
+        return line_crossings(segs, n, axis, c, out);
+    int k = 0;
+    for (uint32_t j = b->start[line]; j < b->start[line + 1]; j++) {
+        const Seg *s = &segs[b->list[j]];
+        double a0 = axis ? s->x0 : s->y0, a1 = axis ? s->x1 : s->y1;
+        double b0 = axis ? s->y0 : s->x0, b1 = axis ? s->y1 : s->x1;
+        if (a0 == a1)
+            continue;
+        double lo = a0 < a1 ? a0 : a1, hi = a0 < a1 ? a1 : a0;
+        if (c < lo || c >= hi)
+            continue;
+        out[k].x = b0 + (c - a0) * (b1 - b0) / (a1 - a0);
+        out[k].dir = a1 > a0 ? 1 : -1;
+        k++;
+    }
+    cross_sort(out, k);
+    return k;
+}
+
 /* tolerance for a centre exactly on an edge. */
 #define SCAN_EPS 1e-7
 /* the curves are flattened finer than the display ones, a sample can be decided by a hundredth of a pixel. */
@@ -562,11 +663,12 @@ static unsigned scan_rules(const MimeTtfScan *s)
 }
 
 /* true when the crossings at the line next to a dropout show the contours go on. */
-static bool continues(const Seg *segs, size_t n, Cross *tmp, int axis, int line, int lines, double lo, double hi)
+static bool continues(const Seg *segs, size_t n, const Buckets *b, Cross *tmp, int axis, int line, int lines, double lo,
+                      double hi)
 {
     if (line < 0 || line >= lines)
         return false;
-    int k = line_crossings(segs, n, axis, line + 0.5, tmp);
+    int k = crossings_at(segs, n, b, axis, line, tmp);
     int hit = 0;
     for (int i = 0; i < k; i++)
         if (tmp[i].x >= lo - STUB_MARGIN && tmp[i].x <= hi + STUB_MARGIN)
@@ -614,10 +716,16 @@ static bool scan_core(const MimeTtfFont *font, const MimeAllocator *alloc, uint1
     const Seg *segs = list.v;
     size_t n = list.count;
 
+    unsigned rules = scan_rules(scan);
+    Buckets buckets[2] = {};
+    buckets_build(alloc, segs, n, 0, height, &buckets[0]);
+    if (!(rules & 2))
+        buckets_build(alloc, segs, n, 1, width, &buckets[1]);
+
     /* rule 1 and 2: samples whose centre is inside or on the outline are on. */
     bool any_run = false;
     for (int y = 0; y < height; y++) {
-        int k = line_crossings(segs, n, 0, y + 0.5, cross);
+        int k = crossings_at(segs, n, &buckets[0], 0, y, cross);
         int wind = 0;
         double start = 0;
         for (int i = 0; i < k; i++) {
@@ -654,13 +762,13 @@ static bool scan_core(const MimeTtfFont *font, const MimeAllocator *alloc, uint1
         }
     }
 
-    unsigned rules = scan_rules(scan);
     if (!(rules & 2)) {
         bool smart = (rules & 4) != 0, stubs = (rules & 1) != 0;
         for (int pass = 0; pass < 2; pass++) {
             int lines = pass ? width : height, along = pass ? height : width;
+            const Buckets *b = &buckets[pass];
             for (int line = 0; line < lines; line++) {
-                int k = line_crossings(segs, n, pass, line + 0.5, cross);
+                int k = crossings_at(segs, n, b, pass, line, cross);
                 int wind = 0;
                 double start = 0;
                 double span[64][2];
@@ -687,8 +795,8 @@ static bool scan_core(const MimeTtfFont *font, const MimeAllocator *alloc, uint1
                     int nr = first - 1;
                     if (pass == 0 ? (nr < 0 || nr + 1 >= along) : (nr < -1 || nr + 1 > along))
                         continue;
-                    if (stubs && !(continues(segs, n, tmp, pass, line - 1, lines, nr, nr + 1.0 + SCAN_EPS) &&
-                                   continues(segs, n, tmp, pass, line + 1, lines, nr, nr + 1.0 + SCAN_EPS)))
+                    if (stubs && !(continues(segs, n, b, tmp, pass, line - 1, lines, nr, nr + 1.0 + SCAN_EPS) &&
+                                   continues(segs, n, b, tmp, pass, line + 1, lines, nr, nr + 1.0 + SCAN_EPS)))
                         continue;
                     uint8_t *base = pass ? out + (size_t)line : out + (size_t)line * (size_t)stride;
                     size_t step = pass ? (size_t)stride : 1;
@@ -714,6 +822,8 @@ static bool scan_core(const MimeTtfFont *font, const MimeAllocator *alloc, uint1
             }
         }
     }
+    buckets_free(alloc, &buckets[0]);
+    buckets_free(alloc, &buckets[1]);
     mime_free(alloc, cross);
     mime_free(alloc, list.v);
     return true;

@@ -107,11 +107,13 @@ HRESULT DwRenderingParamsCreate(FLOAT gamma, FLOAT contrast, FLOAT grayscale_con
 
 /* ------------------------------------------------------------------ rasterizer allocator */
 
+
+
+/* ------------------------------------------------------------------ glyph run analysis */
+
 static void *ttf_alloc(void *ctx, size_t size) { return DwAlloc(size); }
 static void ttf_free(void *ctx, void *p) { DwFree(p); }
 static const MimeAllocator g_ttf_alloc = {ttf_alloc, ttf_free, nullptr};
-
-/* ------------------------------------------------------------------ glyph run analysis */
 
 typedef struct DwAnalysis {
     const IDWriteGlyphRunAnalysisVtbl *lpVtbl;
@@ -127,6 +129,11 @@ typedef struct DwAnalysis {
     BOOL grayscale; /* the aliased texture holds coverage instead of on and off. */
     int over_y; /* ClearType rows a pixel is scanned in, five for the symmetric modes. */
     MimeTtfHinter *hinter; /* outlines are hinted for the size when it is set. */
+    /* each glyph drawn for one texture type, which the bounds and then the texture both ask for. */
+    SRWLOCK lock;
+    DWRITE_TEXTURE_TYPE cache_type;
+    MimeTtfBitmap *cache;
+    UINT8 *cached; /* 0 not drawn yet, 1 drawn, 2 failed. */
 } DwAnalysis;
 
 static HRESULT WINAPI analysis_query(IDWriteGlyphRunAnalysis *This, REFIID riid, void **out)
@@ -147,11 +154,23 @@ static ULONG WINAPI analysis_addref(IDWriteGlyphRunAnalysis *This)
     return InterlockedIncrement(&((DwAnalysis *)This)->refs);
 }
 
+static void cache_free(DwAnalysis *a)
+{
+    for (UINT32 i = 0; a->cache && a->cached && i < a->count; i++)
+        if (a->cached[i] == 1)
+            mime_ttf_bitmap_free(&g_ttf_alloc, &a->cache[i]);
+    DwFree(a->cache);
+    DwFree(a->cached);
+    a->cache = nullptr;
+    a->cached = nullptr;
+}
+
 static ULONG WINAPI analysis_release(IDWriteGlyphRunAnalysis *This)
 {
     DwAnalysis *a = (DwAnalysis *)This;
     ULONG refs = InterlockedDecrement(&a->refs);
     if (!refs) {
+        cache_free(a);
         ((IDWriteFontFace *)a->face)->lpVtbl->Release((IDWriteFontFace *)a->face);
         DwFree(a->glyphs);
         DwFree(a->x);
@@ -248,6 +267,44 @@ static BOOL glyph_clear_type(const DwAnalysis *a, UINT32 i, MimeTtfBitmap *bm)
     return mime_ttf_cleartype_bitmap(&a->face->data->ttf, &g_ttf_alloc, a->glyphs[i], &p, a->over_y, &scan, bm);
 }
 
+static BOOL draw_glyph(const DwAnalysis *a, DWRITE_TEXTURE_TYPE type, UINT32 i, MimeTtfBitmap *bm)
+{
+    if (type == DWRITE_TEXTURE_CLEARTYPE_3x1)
+        return glyph_clear_type(a, i, bm);
+    MimeTtfRenderParams p;
+    MimeTtfScan scan;
+    scan_params(a, i, &p, &scan);
+    return mime_ttf_scan_bitmap(&a->face->data->ttf, &g_ttf_alloc, a->glyphs[i], &p, &scan, bm);
+}
+
+/* the glyph's bitmap, drawn once for its texture type. the caller frees it when owned, which it is without a cache. */
+static BOOL glyph_bitmap(DwAnalysis *a, DWRITE_TEXTURE_TYPE type, UINT32 i, MimeTtfBitmap *bm, BOOL *owned)
+{
+    *owned = FALSE;
+    AcquireSRWLockExclusive(&a->lock);
+    if (a->cache && a->cache_type != type)
+        cache_free(a);
+    if (!a->cache) {
+        a->cache = DwAlloc(a->count * sizeof(*a->cache));
+        a->cached = DwAllocZero(a->count);
+        if (!a->cache || !a->cached)
+            cache_free(a);
+        a->cache_type = type;
+    }
+    if (!a->cache) {
+        ReleaseSRWLockExclusive(&a->lock);
+        *owned = TRUE;
+        return draw_glyph(a, type, i, bm);
+    }
+    if (!a->cached[i])
+        a->cached[i] = draw_glyph(a, type, i, &a->cache[i]) ? 1 : 2;
+    BOOL ok = a->cached[i] == 1;
+    if (ok)
+        *bm = a->cache[i];
+    ReleaseSRWLockExclusive(&a->lock);
+    return ok;
+}
+
 static HRESULT WINAPI analysis_bounds(IDWriteGlyphRunAnalysis *This, DWRITE_TEXTURE_TYPE type, RECT *bounds)
 {
     DwAnalysis *a = (DwAnalysis *)This;
@@ -262,7 +319,8 @@ static HRESULT WINAPI analysis_bounds(IDWriteGlyphRunAnalysis *This, DWRITE_TEXT
         BOOL any = FALSE;
         for (UINT32 i = 0; i < a->count; i++) {
             MimeTtfBitmap bm;
-            if (!glyph_clear_type(a, i, &bm))
+            BOOL owned;
+            if (!glyph_bitmap(a, type, i, &bm, &owned))
                 continue;
             if (bm.data) {
                 if (!any) {
@@ -278,7 +336,8 @@ static HRESULT WINAPI analysis_bounds(IDWriteGlyphRunAnalysis *This, DWRITE_TEXT
                     if (bm.y1 > bounds->bottom) bounds->bottom = bm.y1;
                 }
             }
-            mime_ttf_bitmap_free(&g_ttf_alloc, &bm);
+            if (owned)
+                mime_ttf_bitmap_free(&g_ttf_alloc, &bm);
         }
         return S_OK;
     }
@@ -286,11 +345,9 @@ static HRESULT WINAPI analysis_bounds(IDWriteGlyphRunAnalysis *This, DWRITE_TEXT
         memset(bounds, 0, sizeof(*bounds));
         BOOL any = FALSE;
         for (UINT32 i = 0; i < a->count; i++) {
-            MimeTtfRenderParams p;
-            MimeTtfScan scan;
             MimeTtfBitmap bm;
-            scan_params(a, i, &p, &scan);
-            if (!mime_ttf_scan_bitmap(&a->face->data->ttf, &g_ttf_alloc, a->glyphs[i], &p, &scan, &bm))
+            BOOL owned;
+            if (!glyph_bitmap(a, type, i, &bm, &owned))
                 continue;
             if (bm.data) {
                 if (!any) {
@@ -306,7 +363,8 @@ static HRESULT WINAPI analysis_bounds(IDWriteGlyphRunAnalysis *This, DWRITE_TEXT
                     if (bm.y1 > bounds->bottom) bounds->bottom = bm.y1;
                 }
             }
-            mime_ttf_bitmap_free(&g_ttf_alloc, &bm);
+            if (owned)
+                mime_ttf_bitmap_free(&g_ttf_alloc, &bm);
         }
         return S_OK;
     }
@@ -341,16 +399,9 @@ static HRESULT WINAPI analysis_texture(IDWriteGlyphRunAnalysis *This, DWRITE_TEX
     if (type == DWRITE_TEXTURE_CLEARTYPE_3x1 || !a->grayscale) {
         for (UINT32 i = 0; i < a->count; i++) {
             MimeTtfBitmap bm;
-            if (type == DWRITE_TEXTURE_CLEARTYPE_3x1) {
-                if (!glyph_clear_type(a, i, &bm))
-                    continue;
-            } else {
-                MimeTtfRenderParams p;
-                MimeTtfScan scan;
-                scan_params(a, i, &p, &scan);
-                if (!mime_ttf_scan_bitmap(&a->face->data->ttf, &g_ttf_alloc, a->glyphs[i], &p, &scan, &bm))
-                    continue;
-            }
+            BOOL owned;
+            if (!glyph_bitmap(a, type, i, &bm, &owned))
+                continue;
             for (int row = 0; bm.data && row < bm.y1 - bm.y0; row++) {
                 int y = bm.y0 + row - bounds->top;
                 if (y < 0 || y >= height)
@@ -368,7 +419,8 @@ static HRESULT WINAPI analysis_texture(IDWriteGlyphRunAnalysis *This, DWRITE_TEX
                         dst[x] = 255;
                 }
             }
-            mime_ttf_bitmap_free(&g_ttf_alloc, &bm);
+            if (owned)
+                mime_ttf_bitmap_free(&g_ttf_alloc, &bm);
         }
         return S_OK;
     }
