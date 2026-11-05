@@ -20,6 +20,7 @@ EXPORTS
     glBindImageTextures@12
     glBindRenderbuffer@8
     glBindTexture@8
+    glBindTextures@12
     glBindVertexArray@4
     glBitmap@28
     glBlendColor@16
@@ -36,6 +37,8 @@ EXPORTS
     glCheckFramebufferStatus@4
     glClear@4
     glClearAccum@16
+    glClearBufferData@20
+    glClearBufferSubData@28
     glClearBufferfi@16
     glClearBufferfv@12
     glClearBufferiv@12
@@ -44,6 +47,8 @@ EXPORTS
     glClearDepthf@4
     glClearIndex@4
     glClearStencil@4
+    glClearTexImage@20
+    glClearTexSubImage@44
     glClientActiveTexture@4
     glClientActiveTextureARB@4
     glClientWaitSync@16
@@ -88,6 +93,7 @@ EXPORTS
     glCompressedTexImage2D@32
     glCompressedTexSubImage2D@36
     glCopyBufferSubData@20
+    glCopyImageSubData@60
     glCopyPixels@20
     glCopyTexImage1D@28
     glCopyTexImage2D@32
@@ -206,6 +212,8 @@ EXPORTS
     glGetInteger64v@8
     glGetIntegeri_v@12
     glGetIntegerv@8
+    glGetInternalformati64v@20
+    glGetInternalformativ@20
     glGetLightfv@12
     glGetLightiv@12
     glGetMapdv@12
@@ -273,7 +281,12 @@ EXPORTS
     glIndexubv@4
     glInitNames@0
     glInterleavedArrays@12
+    glInvalidateBufferData@4
+    glInvalidateBufferSubData@12
     glInvalidateFramebuffer@12
+    glInvalidateSubFramebuffer@28
+    glInvalidateTexImage@8
+    glInvalidateTexSubImage@32
     glIsBuffer@4
     glIsEnabled@4
     glIsEnabledi@8
@@ -553,6 +566,7 @@ EXPORTS
     glTexParameteri@12
     glTexParameteriv@12
     glTexStorage2D@20
+    glTexStorage2DMultisample@24
     glTexStorage3D@24
     glTexSubImage1D@28
     glTexSubImage2D@36

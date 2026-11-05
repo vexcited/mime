@@ -22,6 +22,7 @@ void APIENTRY glBindImageTexture(GLuint unit, GLuint texture, GLint level, GLboo
 void APIENTRY glBindImageTextures(GLuint first, GLsizei count, const GLuint *textures);
 void APIENTRY glBindRenderbuffer(GLenum target, GLuint name);
 void APIENTRY glBindTexture(GLenum target, GLuint name);
+void APIENTRY glBindTextures(GLuint first, GLsizei count, const GLuint *textures);
 void APIENTRY glBindVertexArray(GLuint name);
 void APIENTRY glBitmap(GLsizei width, GLsizei height, GLfloat xorig, GLfloat yorig, GLfloat xmove, GLfloat ymove, const GLubyte *bitmap);
 void APIENTRY glBlendColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a);
@@ -38,6 +39,8 @@ void APIENTRY glCallLists(GLsizei n, GLenum type, const GLvoid *lists);
 GLenum APIENTRY glCheckFramebufferStatus(GLenum target);
 void APIENTRY glClear(GLbitfield mask);
 void APIENTRY glClearAccum(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
+void APIENTRY glClearBufferData(GLenum target, GLenum internal, GLenum format, GLenum type, const void *data);
+void APIENTRY glClearBufferSubData(GLenum target, GLenum internal, GLintptr offset, GLsizeiptr size, GLenum format,                                          GLenum type, const void *data);
 void APIENTRY glClearBufferfi(GLenum buffer, GLint index, GLfloat depth, GLint stencil);
 void APIENTRY glClearBufferfv(GLenum buffer, GLint index, const GLfloat *value);
 void APIENTRY glClearBufferiv(GLenum buffer, GLint index, const GLint *value);
@@ -46,6 +49,8 @@ void APIENTRY glClearDepth(GLdouble d);
 void APIENTRY glClearDepthf(GLfloat d);
 void APIENTRY glClearIndex(GLfloat c);
 void APIENTRY glClearStencil(GLint s);
+void APIENTRY glClearTexImage(GLuint texture, GLint level, GLenum format, GLenum type, const void *data);
+void APIENTRY glClearTexSubImage(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                        GLsizei d, GLenum format, GLenum type, const void *data);
 void APIENTRY glClientActiveTexture(GLenum texture);
 void APIENTRY glClientActiveTextureARB(GLenum texture);
 GLenum APIENTRY glClientWaitSync(GLsync handle, GLbitfield flags, GLuint64 timeout);
@@ -90,6 +95,7 @@ void APIENTRY glCompileShader(GLuint name);
 void APIENTRY glCompressedTexImage2D(GLenum target, GLint level, GLenum internal, GLsizei w, GLsizei h,                                            GLint border, GLsizei size, const void *data);
 void APIENTRY glCompressedTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h,                                               GLenum format, GLsizei size, const void *data);
 void APIENTRY glCopyBufferSubData(GLenum read_target, GLenum write_target, GLintptr read_offset,                                         GLintptr write_offset, GLsizeiptr size);
+void APIENTRY glCopyImageSubData(GLuint src, GLenum src_target, GLint src_level, GLint sx, GLint sy, GLint sz,                                        GLuint dst, GLenum dst_target, GLint dst_level, GLint dx, GLint dy, GLint dz,                                        GLsizei w, GLsizei h, GLsizei d);
 void APIENTRY glCopyPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum type);
 void APIENTRY glCopyTexImage1D(GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, GLsizei width, GLint border);
 void APIENTRY glCopyTexImage2D(GLenum target, GLint level, GLenum internal, GLint x, GLint y, GLsizei w,                                      GLsizei h, GLint border);
@@ -208,6 +214,8 @@ void APIENTRY glGetFramebufferAttachmentParameteriv(GLenum target, GLenum point,
 void APIENTRY glGetInteger64v(GLenum pname, GLint64 *data);
 void APIENTRY glGetIntegeri_v(GLenum target, GLuint index, GLint *data);
 void APIENTRY glGetIntegerv(GLenum pname, GLint *data);
+void APIENTRY glGetInternalformati64v(GLenum target, GLenum internal, GLenum pname, GLsizei size, GLint64 *params);
+void APIENTRY glGetInternalformativ(GLenum target, GLenum internal, GLenum pname, GLsizei size, GLint *params);
 void APIENTRY glGetLightfv(GLenum l, GLenum pname, GLfloat *params);
 void APIENTRY glGetLightiv(GLenum l, GLenum pname, GLint *params);
 void APIENTRY glGetMapdv(GLenum target, GLenum query, GLdouble *v);
@@ -275,7 +283,12 @@ void APIENTRY glIndexub(GLubyte c);
 void APIENTRY glIndexubv(const GLubyte *c);
 void APIENTRY glInitNames(void);
 void APIENTRY glInterleavedArrays(GLenum format, GLsizei stride, const void *pointer);
+void APIENTRY glInvalidateBufferData(GLuint buffer);
+void APIENTRY glInvalidateBufferSubData(GLuint buffer, GLintptr offset, GLsizeiptr length);
 void APIENTRY glInvalidateFramebuffer(GLenum target, GLsizei n, const GLenum *attachments);
+void APIENTRY glInvalidateSubFramebuffer(GLenum target, GLsizei n, const GLenum *attachments, GLint x, GLint y,                                                GLsizei w, GLsizei h);
+void APIENTRY glInvalidateTexImage(GLuint texture, GLint level);
+void APIENTRY glInvalidateTexSubImage(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                             GLsizei d);
 GLboolean APIENTRY glIsBuffer(GLuint name);
 GLboolean APIENTRY glIsEnabled(GLenum cap);
 GLboolean APIENTRY glIsEnabledi(GLenum cap, GLuint index);
@@ -555,6 +568,7 @@ void APIENTRY glTexParameterfv(GLenum target, GLenum pname, const GLfloat *param
 void APIENTRY glTexParameteri(GLenum target, GLenum pname, GLint param);
 void APIENTRY glTexParameteriv(GLenum target, GLenum pname, const GLint *params);
 void APIENTRY glTexStorage2D(GLenum target, GLsizei levels, GLenum internal, GLsizei w, GLsizei h);
+void APIENTRY glTexStorage2DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                               GLboolean fixed);
 void APIENTRY glTexStorage3D(GLenum target, GLsizei levels, GLenum internal, GLsizei w, GLsizei h, GLsizei d);
 void APIENTRY glTexSubImage1D(GLenum target, GLint level, GLint x, GLsizei w, GLenum format, GLenum type,                                     const void *pixels);
 void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h, GLenum format,                                     GLenum type, const void *pixels);
@@ -696,6 +710,7 @@ const GL_PROC GlProcs[] = {
     {"glBindImageTextures", (const void *)glBindImageTextures},
     {"glBindRenderbuffer", (const void *)glBindRenderbuffer},
     {"glBindTexture", (const void *)glBindTexture},
+    {"glBindTextures", (const void *)glBindTextures},
     {"glBindVertexArray", (const void *)glBindVertexArray},
     {"glBitmap", (const void *)glBitmap},
     {"glBlendColor", (const void *)glBlendColor},
@@ -712,6 +727,8 @@ const GL_PROC GlProcs[] = {
     {"glCheckFramebufferStatus", (const void *)glCheckFramebufferStatus},
     {"glClear", (const void *)glClear},
     {"glClearAccum", (const void *)glClearAccum},
+    {"glClearBufferData", (const void *)glClearBufferData},
+    {"glClearBufferSubData", (const void *)glClearBufferSubData},
     {"glClearBufferfi", (const void *)glClearBufferfi},
     {"glClearBufferfv", (const void *)glClearBufferfv},
     {"glClearBufferiv", (const void *)glClearBufferiv},
@@ -720,6 +737,8 @@ const GL_PROC GlProcs[] = {
     {"glClearDepthf", (const void *)glClearDepthf},
     {"glClearIndex", (const void *)glClearIndex},
     {"glClearStencil", (const void *)glClearStencil},
+    {"glClearTexImage", (const void *)glClearTexImage},
+    {"glClearTexSubImage", (const void *)glClearTexSubImage},
     {"glClientActiveTexture", (const void *)glClientActiveTexture},
     {"glClientActiveTextureARB", (const void *)glClientActiveTextureARB},
     {"glClientWaitSync", (const void *)glClientWaitSync},
@@ -764,6 +783,7 @@ const GL_PROC GlProcs[] = {
     {"glCompressedTexImage2D", (const void *)glCompressedTexImage2D},
     {"glCompressedTexSubImage2D", (const void *)glCompressedTexSubImage2D},
     {"glCopyBufferSubData", (const void *)glCopyBufferSubData},
+    {"glCopyImageSubData", (const void *)glCopyImageSubData},
     {"glCopyPixels", (const void *)glCopyPixels},
     {"glCopyTexImage1D", (const void *)glCopyTexImage1D},
     {"glCopyTexImage2D", (const void *)glCopyTexImage2D},
@@ -882,6 +902,8 @@ const GL_PROC GlProcs[] = {
     {"glGetInteger64v", (const void *)glGetInteger64v},
     {"glGetIntegeri_v", (const void *)glGetIntegeri_v},
     {"glGetIntegerv", (const void *)glGetIntegerv},
+    {"glGetInternalformati64v", (const void *)glGetInternalformati64v},
+    {"glGetInternalformativ", (const void *)glGetInternalformativ},
     {"glGetLightfv", (const void *)glGetLightfv},
     {"glGetLightiv", (const void *)glGetLightiv},
     {"glGetMapdv", (const void *)glGetMapdv},
@@ -949,7 +971,12 @@ const GL_PROC GlProcs[] = {
     {"glIndexubv", (const void *)glIndexubv},
     {"glInitNames", (const void *)glInitNames},
     {"glInterleavedArrays", (const void *)glInterleavedArrays},
+    {"glInvalidateBufferData", (const void *)glInvalidateBufferData},
+    {"glInvalidateBufferSubData", (const void *)glInvalidateBufferSubData},
     {"glInvalidateFramebuffer", (const void *)glInvalidateFramebuffer},
+    {"glInvalidateSubFramebuffer", (const void *)glInvalidateSubFramebuffer},
+    {"glInvalidateTexImage", (const void *)glInvalidateTexImage},
+    {"glInvalidateTexSubImage", (const void *)glInvalidateTexSubImage},
     {"glIsBuffer", (const void *)glIsBuffer},
     {"glIsEnabled", (const void *)glIsEnabled},
     {"glIsEnabledi", (const void *)glIsEnabledi},
@@ -1229,6 +1256,7 @@ const GL_PROC GlProcs[] = {
     {"glTexParameteri", (const void *)glTexParameteri},
     {"glTexParameteriv", (const void *)glTexParameteriv},
     {"glTexStorage2D", (const void *)glTexStorage2D},
+    {"glTexStorage2DMultisample", (const void *)glTexStorage2DMultisample},
     {"glTexStorage3D", (const void *)glTexStorage3D},
     {"glTexSubImage1D", (const void *)glTexSubImage1D},
     {"glTexSubImage2D", (const void *)glTexSubImage2D},
@@ -1349,4 +1377,4 @@ const GL_PROC GlProcs[] = {
     {"wglUseFontOutlinesA", (const void *)wglUseFontOutlinesA},
     {"wglUseFontOutlinesW", (const void *)wglUseFontOutlinesW},
 };
-const ULONG GlProcCount = 672;
+const ULONG GlProcCount = 686;

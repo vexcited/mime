@@ -139,6 +139,12 @@ static void x_glBindTexture(MX_NATIVE_CALL *c)
     glBindTexture((GLenum)I(c, 0), (GLuint)I(c, 1));
 }
 
+void APIENTRY glBindTextures(GLuint first, GLsizei count, const GLuint *textures);
+static void x_glBindTextures(MX_NATIVE_CALL *c)
+{
+    glBindTextures((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLuint *)I(c, 2));
+}
+
 void APIENTRY glBindVertexArray(GLuint name);
 static void x_glBindVertexArray(MX_NATIVE_CALL *c)
 {
@@ -235,6 +241,18 @@ static void x_glClearAccum(MX_NATIVE_CALL *c)
     glClearAccum(F(c, 0), F(c, 1), F(c, 2), F(c, 3));
 }
 
+void APIENTRY glClearBufferData(GLenum target, GLenum internal, GLenum format, GLenum type, const void *data);
+static void x_glClearBufferData(MX_NATIVE_CALL *c)
+{
+    glClearBufferData((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3), (const void *)I(c, 4));
+}
+
+void APIENTRY glClearBufferSubData(GLenum target, GLenum internal, GLintptr offset, GLsizeiptr size, GLenum format,                                          GLenum type, const void *data);
+static void x_glClearBufferSubData(MX_NATIVE_CALL *c)
+{
+    glClearBufferSubData((GLenum)I(c, 0), (GLenum)I(c, 1), (GLintptr)I(c, 2), (GLsizeiptr)I(c, 3), (GLenum)I(c, 4), (GLenum)I(c, 5), (const void *)I(c, 6));
+}
+
 void APIENTRY glClearBufferfi(GLenum buffer, GLint index, GLfloat depth, GLint stencil);
 static void x_glClearBufferfi(MX_NATIVE_CALL *c)
 {
@@ -281,6 +299,18 @@ void APIENTRY glClearStencil(GLint s);
 static void x_glClearStencil(MX_NATIVE_CALL *c)
 {
     glClearStencil((GLint)I(c, 0));
+}
+
+void APIENTRY glClearTexImage(GLuint texture, GLint level, GLenum format, GLenum type, const void *data);
+static void x_glClearTexImage(MX_NATIVE_CALL *c)
+{
+    glClearTexImage((GLuint)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3), (const void *)I(c, 4));
+}
+
+void APIENTRY glClearTexSubImage(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                        GLsizei d, GLenum format, GLenum type, const void *data);
+static void x_glClearTexSubImage(MX_NATIVE_CALL *c)
+{
+    glClearTexSubImage((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7), (GLenum)I(c, 8), (GLenum)I(c, 9), (const void *)I(c, 10));
 }
 
 void APIENTRY glClientActiveTexture(GLenum texture);
@@ -545,6 +575,12 @@ void APIENTRY glCopyBufferSubData(GLenum read_target, GLenum write_target, GLint
 static void x_glCopyBufferSubData(MX_NATIVE_CALL *c)
 {
     glCopyBufferSubData((GLenum)I(c, 0), (GLenum)I(c, 1), (GLintptr)I(c, 2), (GLintptr)I(c, 3), (GLsizeiptr)I(c, 4));
+}
+
+void APIENTRY glCopyImageSubData(GLuint src, GLenum src_target, GLint src_level, GLint sx, GLint sy, GLint sz,                                        GLuint dst, GLenum dst_target, GLint dst_level, GLint dx, GLint dy, GLint dz,                                        GLsizei w, GLsizei h, GLsizei d);
+static void x_glCopyImageSubData(MX_NATIVE_CALL *c)
+{
+    glCopyImageSubData((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLint)I(c, 5), (GLuint)I(c, 6), (GLenum)I(c, 7), (GLint)I(c, 8), (GLint)I(c, 9), (GLint)I(c, 10), (GLint)I(c, 11), (GLsizei)I(c, 12), (GLsizei)I(c, 13), (GLsizei)I(c, 14));
 }
 
 void APIENTRY glCopyPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum type);
@@ -1255,6 +1291,18 @@ static void x_glGetIntegerv(MX_NATIVE_CALL *c)
     glGetIntegerv((GLenum)I(c, 0), (GLint *)I(c, 1));
 }
 
+void APIENTRY glGetInternalformati64v(GLenum target, GLenum internal, GLenum pname, GLsizei size, GLint64 *params);
+static void x_glGetInternalformati64v(MX_NATIVE_CALL *c)
+{
+    glGetInternalformati64v((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLint64 *)I(c, 4));
+}
+
+void APIENTRY glGetInternalformativ(GLenum target, GLenum internal, GLenum pname, GLsizei size, GLint *params);
+static void x_glGetInternalformativ(MX_NATIVE_CALL *c)
+{
+    glGetInternalformativ((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLint *)I(c, 4));
+}
+
 void APIENTRY glGetLightfv(GLenum l, GLenum pname, GLfloat *params);
 static void x_glGetLightfv(MX_NATIVE_CALL *c)
 {
@@ -1657,10 +1705,40 @@ static void x_glInterleavedArrays(MX_NATIVE_CALL *c)
     glInterleavedArrays((GLenum)I(c, 0), (GLsizei)I(c, 1), (const void *)I(c, 2));
 }
 
+void APIENTRY glInvalidateBufferData(GLuint buffer);
+static void x_glInvalidateBufferData(MX_NATIVE_CALL *c)
+{
+    glInvalidateBufferData((GLuint)I(c, 0));
+}
+
+void APIENTRY glInvalidateBufferSubData(GLuint buffer, GLintptr offset, GLsizeiptr length);
+static void x_glInvalidateBufferSubData(MX_NATIVE_CALL *c)
+{
+    glInvalidateBufferSubData((GLuint)I(c, 0), (GLintptr)I(c, 1), (GLsizeiptr)I(c, 2));
+}
+
 void APIENTRY glInvalidateFramebuffer(GLenum target, GLsizei n, const GLenum *attachments);
 static void x_glInvalidateFramebuffer(MX_NATIVE_CALL *c)
 {
     glInvalidateFramebuffer((GLenum)I(c, 0), (GLsizei)I(c, 1), (const GLenum *)I(c, 2));
+}
+
+void APIENTRY glInvalidateSubFramebuffer(GLenum target, GLsizei n, const GLenum *attachments, GLint x, GLint y,                                                GLsizei w, GLsizei h);
+static void x_glInvalidateSubFramebuffer(MX_NATIVE_CALL *c)
+{
+    glInvalidateSubFramebuffer((GLenum)I(c, 0), (GLsizei)I(c, 1), (const GLenum *)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6));
+}
+
+void APIENTRY glInvalidateTexImage(GLuint texture, GLint level);
+static void x_glInvalidateTexImage(MX_NATIVE_CALL *c)
+{
+    glInvalidateTexImage((GLuint)I(c, 0), (GLint)I(c, 1));
+}
+
+void APIENTRY glInvalidateTexSubImage(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                             GLsizei d);
+static void x_glInvalidateTexSubImage(MX_NATIVE_CALL *c)
+{
+    glInvalidateTexSubImage((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7));
 }
 
 GLboolean APIENTRY glIsBuffer(GLuint name);
@@ -3337,6 +3415,12 @@ static void x_glTexStorage2D(MX_NATIVE_CALL *c)
     glTexStorage2D((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4));
 }
 
+void APIENTRY glTexStorage2DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                               GLboolean fixed);
+static void x_glTexStorage2DMultisample(MX_NATIVE_CALL *c)
+{
+    glTexStorage2DMultisample((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLboolean)I(c, 5));
+}
+
 void APIENTRY glTexStorage3D(GLenum target, GLsizei levels, GLenum internal, GLsizei w, GLsizei h, GLsizei d);
 static void x_glTexStorage3D(MX_NATIVE_CALL *c)
 {
@@ -4066,6 +4150,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glBindImageTextures,
     x_glBindRenderbuffer,
     x_glBindTexture,
+    x_glBindTextures,
     x_glBindVertexArray,
     x_glBitmap,
     x_glBlendColor,
@@ -4082,6 +4167,8 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glCheckFramebufferStatus,
     x_glClear,
     x_glClearAccum,
+    x_glClearBufferData,
+    x_glClearBufferSubData,
     x_glClearBufferfi,
     x_glClearBufferfv,
     x_glClearBufferiv,
@@ -4090,6 +4177,8 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glClearDepthf,
     x_glClearIndex,
     x_glClearStencil,
+    x_glClearTexImage,
+    x_glClearTexSubImage,
     x_glClientActiveTexture,
     x_glClientActiveTextureARB,
     x_glClientWaitSync,
@@ -4134,6 +4223,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glCompressedTexImage2D,
     x_glCompressedTexSubImage2D,
     x_glCopyBufferSubData,
+    x_glCopyImageSubData,
     x_glCopyPixels,
     x_glCopyTexImage1D,
     x_glCopyTexImage2D,
@@ -4252,6 +4342,8 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGetInteger64v,
     x_glGetIntegeri_v,
     x_glGetIntegerv,
+    x_glGetInternalformati64v,
+    x_glGetInternalformativ,
     x_glGetLightfv,
     x_glGetLightiv,
     x_glGetMapdv,
@@ -4319,7 +4411,12 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glIndexubv,
     x_glInitNames,
     x_glInterleavedArrays,
+    x_glInvalidateBufferData,
+    x_glInvalidateBufferSubData,
     x_glInvalidateFramebuffer,
+    x_glInvalidateSubFramebuffer,
+    x_glInvalidateTexImage,
+    x_glInvalidateTexSubImage,
     x_glIsBuffer,
     x_glIsEnabled,
     x_glIsEnabledi,
@@ -4599,6 +4696,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glTexParameteri,
     x_glTexParameteriv,
     x_glTexStorage2D,
+    x_glTexStorage2DMultisample,
     x_glTexStorage3D,
     x_glTexSubImage1D,
     x_glTexSubImage2D,
@@ -4719,4 +4817,4 @@ static const MX_NATIVE_FN g_functions[] = {
     x_wglUseFontOutlinesW,
 };
 
-const MX_NATIVE_TABLE OpenGL32X64Thunks = {671, 0, g_functions};
+const MX_NATIVE_TABLE OpenGL32X64Thunks = {685, 0, g_functions};

@@ -20,6 +20,7 @@ EXPORTS
     glBindImageTextures=_glBindImageTextures@12
     glBindRenderbuffer=_glBindRenderbuffer@8
     glBindTexture=_glBindTexture@8
+    glBindTextures=_glBindTextures@12
     glBindVertexArray=_glBindVertexArray@4
     glBitmap=_glBitmap@28
     glBlendColor=_glBlendColor@16
@@ -36,6 +37,8 @@ EXPORTS
     glCheckFramebufferStatus=_glCheckFramebufferStatus@4
     glClear=_glClear@4
     glClearAccum=_glClearAccum@16
+    glClearBufferData=_glClearBufferData@20
+    glClearBufferSubData=_glClearBufferSubData@28
     glClearBufferfi=_glClearBufferfi@16
     glClearBufferfv=_glClearBufferfv@12
     glClearBufferiv=_glClearBufferiv@12
@@ -44,6 +47,8 @@ EXPORTS
     glClearDepthf=_glClearDepthf@4
     glClearIndex=_glClearIndex@4
     glClearStencil=_glClearStencil@4
+    glClearTexImage=_glClearTexImage@20
+    glClearTexSubImage=_glClearTexSubImage@44
     glClientActiveTexture=_glClientActiveTexture@4
     glClientActiveTextureARB=_glClientActiveTextureARB@4
     glClientWaitSync=_glClientWaitSync@16
@@ -88,6 +93,7 @@ EXPORTS
     glCompressedTexImage2D=_glCompressedTexImage2D@32
     glCompressedTexSubImage2D=_glCompressedTexSubImage2D@36
     glCopyBufferSubData=_glCopyBufferSubData@20
+    glCopyImageSubData=_glCopyImageSubData@60
     glCopyPixels=_glCopyPixels@20
     glCopyTexImage1D=_glCopyTexImage1D@28
     glCopyTexImage2D=_glCopyTexImage2D@32
@@ -206,6 +212,8 @@ EXPORTS
     glGetInteger64v=_glGetInteger64v@8
     glGetIntegeri_v=_glGetIntegeri_v@12
     glGetIntegerv=_glGetIntegerv@8
+    glGetInternalformati64v=_glGetInternalformati64v@20
+    glGetInternalformativ=_glGetInternalformativ@20
     glGetLightfv=_glGetLightfv@12
     glGetLightiv=_glGetLightiv@12
     glGetMapdv=_glGetMapdv@12
@@ -273,7 +281,12 @@ EXPORTS
     glIndexubv=_glIndexubv@4
     glInitNames=_glInitNames@0
     glInterleavedArrays=_glInterleavedArrays@12
+    glInvalidateBufferData=_glInvalidateBufferData@4
+    glInvalidateBufferSubData=_glInvalidateBufferSubData@12
     glInvalidateFramebuffer=_glInvalidateFramebuffer@12
+    glInvalidateSubFramebuffer=_glInvalidateSubFramebuffer@28
+    glInvalidateTexImage=_glInvalidateTexImage@8
+    glInvalidateTexSubImage=_glInvalidateTexSubImage@32
     glIsBuffer=_glIsBuffer@4
     glIsEnabled=_glIsEnabled@4
     glIsEnabledi=_glIsEnabledi@8
@@ -553,6 +566,7 @@ EXPORTS
     glTexParameteri=_glTexParameteri@12
     glTexParameteriv=_glTexParameteriv@12
     glTexStorage2D=_glTexStorage2D@20
+    glTexStorage2DMultisample=_glTexStorage2DMultisample@24
     glTexStorage3D=_glTexStorage3D@24
     glTexSubImage1D=_glTexSubImage1D@28
     glTexSubImage2D=_glTexSubImage2D@36
