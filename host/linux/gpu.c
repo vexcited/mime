@@ -1246,13 +1246,13 @@ static VkImageView attachment_view(Texture *t, uint32_t level, uint32_t slice)
         .viewType = t->type == TEXTURE_1D || t->type == TEXTURE_1D_ARRAY ? VK_IMAGE_VIEW_TYPE_1D
                                                                         : VK_IMAGE_VIEW_TYPE_2D,
         .format = t->format,
-        .subresourceRange = {t->aspect, level, 1, layered3d ? 0 : slice, 1},
+        .subresourceRange = {t->aspect, level, 1, slice, 1},
     };
     VkImageView view = VK_NULL_HANDLE;
     if (layered3d) {
         /* a slice of a 3d texture renders through a 2d array view of it. */
         info.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-        info.subresourceRange.baseArrayLayer = 0;
+        info.subresourceRange.baseArrayLayer = slice;
     }
     if (g_vk.fn.vkCreateImageView(g_vk.device, &info, nullptr, &view) != VK_SUCCESS)
         return VK_NULL_HANDLE;
@@ -1465,7 +1465,7 @@ static void texture_copy(Channel *c, const MimeGpuTextureCopy *t, bool upload)
         .bufferRowLength = row_texels,
         .bufferImageHeight = rows,
         .imageSubresource = {aspect, t->level, layered ? slice : 0, layered ? (t->depth > 1 ? t->depth : 1) : 1},
-        .imageOffset = {(int32_t)t->x, height == 1 && tex->height == 1 ? 0 : (int32_t)t->y, layered ? 0 : (int32_t)t->z},
+        .imageOffset = {(int32_t)t->x, height == 1 && tex->height == 1 ? 0 : (int32_t)t->y, layered ? 0 : (int32_t)(t->z + t->slice)},
         .imageExtent = {t->width, height, layered ? 1 : (t->depth ? t->depth : 1)},
     };
     if (upload)
@@ -2867,6 +2867,27 @@ static void dispatch(Channel *c, const MimeGpuDispatch *d)
     c->st.dirty |= DIRTY_SET | DIRTY_UNIFORMS;
 }
 
+static void copy_image(Channel *c, const MimeGpuCopyImage *ci)
+{
+    end_rendering(c);
+    Texture *src = texture_of(c, ci->src, false, false), *dst = texture_of(c, ci->dst, false, false);
+    if (!src || !dst || ci->src_level >= src->levels || ci->dst_level >= dst->levels || src->samples != dst->samples ||
+        src->format != dst->format)
+        return;
+    barrier(c);
+    bool s3 = src->type == TEXTURE_3D, d3 = dst->type == TEXTURE_3D;
+    /* layers of an array or cube are array layers; a 3d image counts its slices in the extent. */
+    VkImageCopy region = {
+        {src->aspect, ci->src_level, s3 ? 0 : ci->src_z, s3 ? 1 : (d3 ? ci->depth : ci->depth)},
+        {(int32_t)ci->src_x, (int32_t)ci->src_y, s3 ? (int32_t)ci->src_z : 0},
+        {dst->aspect, ci->dst_level, d3 ? 0 : ci->dst_z, d3 ? 1 : ci->depth},
+        {(int32_t)ci->dst_x, (int32_t)ci->dst_y, d3 ? (int32_t)ci->dst_z : 0},
+        {ci->width, ci->height, s3 || d3 ? ci->depth : 1},
+    };
+    g_vk.fn.vkCmdCopyImage(cbuf(c), src->image, VK_IMAGE_LAYOUT_GENERAL, dst->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+    c->wrote = true;
+}
+
 /* glMemoryBarrier: every write reaches every later access, inside passes too, so the pass ends and resumes. */
 static void memory_barrier(Channel *c)
 {
@@ -3110,6 +3131,10 @@ static void execute(Channel *c, const MimeGpuCmd *cmd)
     }
     case MIME_GPU_MEMORY_BARRIER:
         memory_barrier(c);
+        break;
+    case MIME_GPU_COPY_IMAGE:
+        NEED(MimeGpuCopyImage);
+        copy_image(c, BODY(MimeGpuCopyImage));
         break;
     case MIME_GPU_DRAW:
         NEED(MimeGpuDraw);

@@ -88,6 +88,7 @@ enum {
     MIME_GPU_SET_STORAGE_BUFFER,          /* MimeGpuSetStorageBuffer */
     MIME_GPU_SET_IMAGE,                   /* MimeGpuSetImage */
     MIME_GPU_MEMORY_BARRIER,              /* MimeGpuCmd: every write reaches every later access. */
+    MIME_GPU_COPY_IMAGE,                  /* MimeGpuCopyImage */
     MIME_GPU_OP_COUNT
 };
 
@@ -473,6 +474,17 @@ typedef struct MimeGpuSetImage {
     uint32_t layered;
     uint32_t pad;
 } MimeGpuSetImage;
+
+/* a region between two images of one format. z is a slice of a 3d image and a layer of an array or a cube. */
+typedef struct MimeGpuCopyImage {
+    MimeGpuCmd cmd;
+    uint32_t src, dst;
+    uint32_t src_level, dst_level;
+    uint32_t src_x, src_y, src_z;
+    uint32_t dst_x, dst_y, dst_z;
+    uint32_t width, height, depth;
+    uint32_t src_3d, dst_3d;
+} MimeGpuCopyImage;
 
 typedef struct MimeGpuDrawIndexed {
     MimeGpuCmd cmd;

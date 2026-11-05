@@ -68,6 +68,11 @@ static const GlExtension g_extensions[] = {
     {"GL_ARB_multi_draw_indirect", 0},
     {"GL_ARB_indirect_parameters", 0},
     {"GL_ARB_base_instance", 0},
+    {"GL_ARB_clear_buffer_object", 0},
+    {"GL_ARB_clear_texture", 0},
+    {"GL_ARB_copy_image", MIME_GPU_FEATURE_COMPUTE},
+    {"GL_ARB_invalidate_subdata", 0},
+    {"GL_ARB_internalformat_query", 0},
 };
 
 #define EXTENSION_MAX 512

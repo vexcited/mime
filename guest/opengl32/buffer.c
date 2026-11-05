@@ -503,3 +503,151 @@ GLAPI void APIENTRY glCopyBufferSubData(GLenum read_target, GLenum write_target,
     dst->dirty_index_range = TRUE;
     ctx->dirty |= DIRTY_VERTEX;
 }
+
+/* ---------------------------------------------------------------- clearing and invalidating */
+
+typedef struct ClearFormat {
+    GLenum internal;
+    uint8_t components, bytes; /* of each component. */
+} ClearFormat;
+
+static const ClearFormat g_clear_formats[] = {
+    {GL_R8, 1, 1},      {GL_R8UI, 1, 1},     {GL_R8I, 1, 1},      {GL_R16, 1, 2},      {GL_R16UI, 1, 2},
+    {GL_R16I, 1, 2},    {GL_R32F, 1, 4},     {GL_R32UI, 1, 4},    {GL_R32I, 1, 4},     {GL_RG8, 2, 1},
+    {GL_RG8UI, 2, 1},   {GL_RG8I, 2, 1},     {GL_RG16, 2, 2},     {GL_RG16UI, 2, 2},   {GL_RG16I, 2, 2},
+    {GL_RG32F, 2, 4},   {GL_RG32UI, 2, 4},   {GL_RG32I, 2, 4},    {GL_RGB32F, 3, 4},   {GL_RGB32UI, 3, 4},
+    {GL_RGB32I, 3, 4},  {GL_RGBA8, 4, 1},    {GL_RGBA8UI, 4, 1},  {GL_RGBA8I, 4, 1},   {GL_RGBA16, 4, 2},
+    {GL_RGBA16UI, 4, 2}, {GL_RGBA16I, 4, 2}, {GL_RGBA32F, 4, 4}, {GL_RGBA32UI, 4, 4}, {GL_RGBA32I, 4, 4},
+};
+
+static uint32_t type_bytes_of(GLenum type)
+{
+    switch (type) {
+    case GL_UNSIGNED_BYTE:
+    case GL_BYTE:
+        return 1;
+    case GL_UNSIGNED_SHORT:
+    case GL_SHORT:
+        return 2;
+    case GL_UNSIGNED_INT:
+    case GL_INT:
+    case GL_FLOAT:
+        return 4;
+    default:
+        return 0;
+    }
+}
+
+static uint32_t format_components(GLenum format)
+{
+    switch (format) {
+    case GL_RED:
+    case GL_RED_INTEGER:
+        return 1;
+    case GL_RG:
+    case GL_RG_INTEGER:
+        return 2;
+    case GL_RGB:
+    case GL_RGB_INTEGER:
+        return 3;
+    case GL_RGBA:
+    case GL_RGBA_INTEGER:
+        return 4;
+    default:
+        return 0;
+    }
+}
+
+/*
+ * the bytes of one element of the internal format from the value the call gives, whose components must have the size the
+ * format stores them in. a value of fewer components than the format has fills the rest with zero, alpha with one.
+ */
+static BOOL clear_element(GLenum internal, GLenum format, GLenum type, const void *data, uint8_t *out, uint32_t *bytes)
+{
+    const ClearFormat *f = nullptr;
+    for (size_t i = 0; i < sizeof(g_clear_formats) / sizeof(g_clear_formats[0]); i++)
+        if (g_clear_formats[i].internal == internal)
+            f = &g_clear_formats[i];
+    if (!f)
+        return FALSE;
+    *bytes = (uint32_t)f->components * f->bytes;
+    memset(out, 0, *bytes);
+    if (!data)
+        return TRUE;
+    uint32_t have = format_components(format), size = type_bytes_of(type);
+    if (!have || size != f->bytes)
+        return FALSE;
+    for (uint32_t c = 0; c < f->components; c++) {
+        if (c < have)
+            memcpy(out + c * f->bytes, (const uint8_t *)data + c * size, size);
+        else if (c == 3 && (type == GL_FLOAT || f->bytes == 4)) {
+            GLfloat one = 1.0f;
+            GLuint integer_one = 1;
+            if (type == GL_FLOAT)
+                memcpy(out + c * 4, &one, 4);
+            else
+                memcpy(out + c * 4, &integer_one, 4);
+        }
+    }
+    return TRUE;
+}
+
+GLAPI void APIENTRY glClearBufferSubData(GLenum target, GLenum internal, GLintptr offset, GLsizeiptr size, GLenum format,
+                                         GLenum type, const void *data)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlBuffer *b = gl_bound_buffer(ctx, target);
+    if (!b) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    uint8_t element[16];
+    uint32_t bytes;
+    if (!clear_element(internal, format, type, data, element, &bytes)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    if (offset < 0 || size < 0 || (uint64_t)(offset + size) > b->size || (offset % bytes) || (size % bytes)) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    if (b->mapped && !(b->map_access & GL_MAP_PERSISTENT_BIT)) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    if (!size)
+        return;
+    /* the gpu may be reading or writing it: the fill waits, there is nothing to rename. */
+    if (b->last_use && !gl_fence_done(b->last_use))
+        buffer_wait(b);
+    for (GLsizeiptr at = 0; at < size; at += bytes)
+        memcpy(b->mem.ptr + offset + at, element, bytes);
+    b->dirty_index_range = TRUE;
+    ctx->dirty |= DIRTY_VERTEX;
+}
+
+GLAPI void APIENTRY glClearBufferData(GLenum target, GLenum internal, GLenum format, GLenum type, const void *data)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlBuffer *b = gl_bound_buffer(ctx, target);
+    if (!b) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    glClearBufferSubData(target, internal, 0, (GLsizeiptr)b->size, format, type, data);
+}
+
+GLAPI void APIENTRY glInvalidateBufferData(GLuint buffer)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (!gl_buffer(ctx, buffer))
+        gl_error(ctx, GL_INVALID_VALUE);
+}
+
+GLAPI void APIENTRY glInvalidateBufferSubData(GLuint buffer, GLintptr offset, GLsizeiptr length)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlBuffer *b = gl_buffer(ctx, buffer);
+    if (!b || offset < 0 || length < 0 || (uint64_t)(offset + length) > b->size)
+        gl_error(ctx, GL_INVALID_VALUE);
+}
