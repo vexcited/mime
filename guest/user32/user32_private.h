@@ -92,6 +92,8 @@ BOOL UserConvBegin(CONV *c, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT UserConvEnd(CONV *c, LRESULT result);
 LRESULT UserMessageCall(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, ULONG_PTR info, DWORD type, BOOL ansi);
 LRESULT UserCallProc(WNDPROC proc, BOOL proc_ansi, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
+BOOL UserDirectProc(HWND hwnd, UINT msg, BOOL send, WNDPROC *proc, BOOL *ansi);
+LRESULT UserCallDirect(WNDPROC proc, BOOL proc_ansi, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 LRESULT UserSendMessage(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, BOOL ansi);
 WPARAM UserCharWparam(UINT msg, WPARAM wparam, BOOL to_wide);
 /* the control character of a letter typed with Ctrl, or 0. */

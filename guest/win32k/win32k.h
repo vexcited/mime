@@ -962,6 +962,8 @@ BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flag
 void MsgProcessSent(W32THREAD *t);
 ULONG MsgInSendFlags(W32THREAD *t);
 BOOLEAN MsgReply(W32THREAD *t, LRESULT result);
+BOOLEAN MsgDirectProc(WND *w, UINT msg, BOOLEAN send, WNDPROC *proc, BOOLEAN *ansi);
+void MsgPaintDispatched(WND *w);
 BOOLEAN MsgFilterMatches(HWND hwnd, UINT msg, HWND filter, UINT min, UINT max);
 void TimerProcessExpired(W32THREAD *t, LONG64 *next_due);
 void TimerRemoveWindow(WND *w);

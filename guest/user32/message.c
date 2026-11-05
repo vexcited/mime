@@ -258,6 +258,31 @@ WINUSERAPI BOOL WINAPI TranslateMessage(const MSG *msg)
     return translated;
 }
 
+/*
+ * like windows, a window procedure of the thread is called from here for DispatchMessage and for a send no
+ * WH_CALLWNDPROC or WH_CALLWNDPROCRET hook watches, so what it raises reaches the caller as from any call.
+ */
+BOOL UserDirectProc(HWND hwnd, UINT msg, BOOL send, WNDPROC *proc, BOOL *ansi)
+{
+    if (!hwnd || (msg & 0xFFFE0000u))
+        return FALSE;
+    MIME_DIRECT_PROC direct = {msg, send ? MIME_DIRECT_SEND : 0, 0};
+    if (!NtUserCallHwndParam(hwnd, (ULONG_PTR)&direct, MIME_HWNDPARAM_DIRECTPROC))
+        return FALSE;
+    *proc = (WNDPROC)(ULONG_PTR)direct.Proc;
+    *ansi = (direct.Flags & MIME_DIRECT_ANSI) != 0;
+    return TRUE;
+}
+
+LRESULT UserCallDirect(WNDPROC proc, BOOL proc_ansi, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    LRESULT result = UserCallProc(proc, proc_ansi, hwnd, msg, wparam, lparam);
+    /* scroll bar state lives in properties, released with the window. */
+    if (msg == WM_NCDESTROY)
+        UserFreeScrollData(hwnd);
+    return result;
+}
+
 static LRESULT dispatch(const MSG *msg)
 {
     /* host drag and drop, run in the process that takes the drop. */
@@ -272,7 +297,14 @@ static LRESULT dispatch(const MSG *msg)
     }
     if (!msg->hwnd)
         return 0;
-    return NtUserDispatchMessage(msg);
+    WNDPROC proc;
+    BOOL ansi;
+    if (!UserDirectProc(msg->hwnd, msg->message, FALSE, &proc, &ansi))
+        return NtUserDispatchMessage(msg);
+    LRESULT result = UserCallDirect(proc, ansi, msg->hwnd, msg->message, msg->wParam, msg->lParam);
+    if (msg->message == WM_PAINT)
+        NtUserCallHwnd(msg->hwnd, MIME_HWND_PAINTDISPATCHED);
+    return result;
 }
 
 WINUSERAPI LRESULT WINAPI DispatchMessageW(const MSG *msg)

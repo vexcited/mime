@@ -459,12 +459,18 @@ LRESULT UserMessageCall(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, ULONG
 {
     if (msg == WM_COPYGLOBALDATA && type != MIME_MSGCALL_DEFWINDOWPROC && type != MIME_MSGCALL_BROADCAST)
         return send_global_copy(hwnd, wparam, (HGLOBAL)lparam, info, type);
+    WNDPROC proc = nullptr;
+    BOOL proc_ansi = FALSE;
+    BOOL direct = type == MIME_MSGCALL_SEND && UserDirectProc(hwnd, msg, TRUE, &proc, &proc_ansi);
+    if (direct && (!ansi || proc_ansi))
+        return UserCallDirect(proc, proc_ansi && !ansi, hwnd, msg, wparam, lparam);
     if (!ansi)
         return NtUserMessageCall(hwnd, msg, wparam, lparam, info, type, FALSE);
     CONV c;
     if (!UserConvBegin(&c, hwnd, msg, wparam, lparam))
         return c.refused ? c.refusal : 0;
-    LRESULT r = NtUserMessageCall(hwnd, msg, c.wparam, c.lparam, info, type, FALSE);
+    LRESULT r = direct ? UserCallDirect(proc, FALSE, hwnd, msg, c.wparam, c.lparam)
+                       : NtUserMessageCall(hwnd, msg, c.wparam, c.lparam, info, type, FALSE);
     if (type == MIME_MSGCALL_SENDTIMEOUT) {
         /* the procedure's answer is in the structure, the return only says one came. */
         MIME_SEND_TIMEOUT *st = (MIME_SEND_TIMEOUT *)info;

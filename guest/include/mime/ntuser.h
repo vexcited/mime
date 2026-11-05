@@ -239,6 +239,7 @@ enum {
     MIME_HWND_ISCHILDDPIMESSAGE,        /* whether the children of the window hear about dpi changes. */
     MIME_HWND_ISDIALOG,                 /* whether the dialog manager made the window. */
     MIME_HWND_GETCONTROLDPIBEHAVIOR,    /* DCDC_* of a control. */
+    MIME_HWND_PAINTDISPATCHED,          /* after user32 dispatched WM_PAINT itself: the frame of a window left unpainted. */
 };
 
 enum {
@@ -273,6 +274,7 @@ enum {
     MIME_HWNDPARAM_CONTROLDPIBEHAVIOR,  /* the DCDC_* mask in the low byte and their values above it. */
     MIME_HWNDPARAM_PRESENTLAYER,        /* MIME_PRESENT_LAYER pointer: where the image the window presents lies in its top level window. */
     MIME_HWNDPARAM_GETTITLEBARINFO,     /* TITLEBARINFO or TITLEBARINFOEX pointer, told apart by cbSize. */
+    MIME_HWNDPARAM_DIRECTPROC,          /* MIME_DIRECT_PROC pointer: whether user32 calls the procedure itself. */
 };
 
 /* what MIME_HWNDPARAM_DPICONVERT converts a point between. */
@@ -347,6 +349,15 @@ typedef struct MIME_SET_ICON {
     UINT Which; /* ICON_BIG or ICON_SMALL */
     HICON Icon;
 } MIME_SET_ICON;
+
+/* what MIME_HWNDPARAM_DIRECTPROC asks of a message and answers, with fields of the same size in both processors. */
+#define MIME_DIRECT_SEND 0x1 /* a send, which a WH_CALLWNDPROC or WH_CALLWNDPROCRET hook keeps in the kernel. */
+#define MIME_DIRECT_ANSI 0x2 /* answered: the procedure takes ansi. */
+typedef struct MIME_DIRECT_PROC {
+    ULONG Msg;
+    ULONG Flags;
+    ULONG64 Proc;
+} MIME_DIRECT_PROC;
 
 typedef struct MIME_MAP_POINTS {
     HWND To;

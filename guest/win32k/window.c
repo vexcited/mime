@@ -2742,6 +2742,9 @@ ULONG_PTR NTAPI NtUserCallHwnd(HWND hwnd, ULONG routine)
         case MIME_HWND_GETDPIHOSTING:
             r = w->Hosting;
             break;
+        case MIME_HWND_PAINTDISPATCHED:
+            MsgPaintDispatched(w);
+            break;
         case MIME_HWND_ISDIALOG:
             r = (w->Flags & WNDF_DIALOG) != 0;
             break;
@@ -2882,6 +2885,18 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
     case MIME_HWNDPARAM_GETWINDOW:
         r = (ULONG_PTR)WndHandle(get_window_rel(w, (UINT)param));
         break;
+    case MIME_HWNDPARAM_DIRECTPROC: {
+        MIME_DIRECT_PROC direct;
+        WNDPROC proc;
+        BOOLEAN ansi;
+        if (!NT_SUCCESS(MimeCopyFromUser(&direct, (PVOID)param, sizeof(direct))) ||
+            !MsgDirectProc(w, direct.Msg, (direct.Flags & MIME_DIRECT_SEND) != 0, &proc, &ansi))
+            break;
+        direct.Proc = (ULONG64)(ULONG_PTR)proc;
+        direct.Flags = ansi ? MIME_DIRECT_ANSI : 0;
+        r = NT_SUCCESS(MimeCopyToUser((PVOID)param, &direct, sizeof(direct)));
+        break;
+    }
     case MIME_HWNDPARAM_GETWINDOWRECT: {
         RECT rect = w->WindowRect;
         rect_to_caller(w, &rect);

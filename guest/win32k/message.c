@@ -1135,6 +1135,33 @@ DWORD NTAPI NtUserMsgWaitForMultipleObjectsEx(DWORD count, const HANDLE *user_ha
     return result;
 }
 
+/*
+ * like windows, user32 calls the procedure of a window of the thread itself for DispatchMessage and for a send that
+ * no WH_CALLWNDPROC or WH_CALLWNDPROCRET hook watches. a procedure of the kernel and a message only the kernel answers
+ * stay here.
+ */
+BOOLEAN MsgDirectProc(WND *w, UINT msg, BOOLEAN send, WNDPROC *proc, BOOLEAN *ansi)
+{
+    W32THREAD *t = W32GetThread();
+    if (!t || w->Thread != t || w->Header.Destroyed || !w->Proc)
+        return FALSE;
+    if (send && (MsgRuleFor(msg).Class == MC_KERNEL || HookActive(WH_CALLWNDPROC, t) ||
+                 HookActive(WH_CALLWNDPROCRET, t)))
+        return FALSE;
+    *proc = w->Proc;
+    *ansi = w->Ansi;
+    return TRUE;
+}
+
+void MsgPaintDispatched(WND *w)
+{
+    if (!w->Header.Destroyed && (w->Flags & WNDF_FRAME_DIRTY) && RgnIsEmpty(&w->Update)) {
+        /* the application painted without BeginPaint; draw the frame ourselves so it does not spin. */
+        w->Flags &= ~WNDF_FRAME_DIRTY;
+        FramePaint(w);
+    }
+}
+
 LRESULT NTAPI NtUserDispatchMessage(const MSG *user_msg)
 {
     MSG m;
@@ -1146,12 +1173,8 @@ LRESULT NTAPI NtUserDispatchMessage(const MSG *user_msg)
     LRESULT r = 0;
     if (w && w->Thread == t) {
         r = MsgCallWindowProc(w, w->Proc, w->Ansi, m.message, m.wParam, m.lParam, MIME_LPARAM_VALUE, 0);
-        if (m.message == WM_PAINT && !w->Header.Destroyed && (w->Flags & WNDF_FRAME_DIRTY) &&
-            RgnIsEmpty(&w->Update)) {
-            /* the application painted without BeginPaint; draw the frame ourselves so it does not spin. */
-            w->Flags &= ~WNDF_FRAME_DIRTY;
-            FramePaint(w);
-        }
+        if (m.message == WM_PAINT)
+            MsgPaintDispatched(w);
     }
     UserLeave();
     return r;
