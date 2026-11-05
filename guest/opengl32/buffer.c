@@ -28,6 +28,8 @@ static GLuint *binding_of(GlContext *ctx, GLenum target)
         return &ctx->copy_write;
     case GL_UNIFORM_BUFFER:
         return &ctx->uniform_buffer;
+    case GL_TRANSFORM_FEEDBACK_BUFFER:
+        return &ctx->st.xfb_buffer;
     default:
         return nullptr;
     }
@@ -86,6 +88,7 @@ GLAPI void APIENTRY glDeleteBuffers(GLsizei n, const GLuint *buffers)
             ctx->vao->element_buffer = 0;
         if (ctx->uniform_buffer == name)
             ctx->uniform_buffer = 0;
+        gl_xfb_buffer_deleted(ctx, name);
         for (int i = 0; i < MIME_GPU_MAX_UNIFORM_BLOCKS; i++)
             if (ctx->uniform_bindings[i].name == name)
                 memset(&ctx->uniform_bindings[i], 0, sizeof(ctx->uniform_bindings[i]));
@@ -122,6 +125,10 @@ GLAPI void APIENTRY glBindBuffer(GLenum target, GLuint name)
 GLAPI void APIENTRY glBindBufferBase(GLenum target, GLuint index, GLuint name)
 {
     GL_CONTEXT_OR_RETURN();
+    if (target == GL_TRANSFORM_FEEDBACK_BUFFER) {
+        gl_xfb_bind(ctx, index, name, 0, 0, TRUE);
+        return;
+    }
     if (target != GL_UNIFORM_BUFFER || index >= MIME_GPU_MAX_UNIFORM_BLOCKS) {
         gl_error(ctx, target != GL_UNIFORM_BUFFER ? GL_INVALID_ENUM : GL_INVALID_VALUE);
         return;
@@ -137,6 +144,13 @@ GLAPI void APIENTRY glBindBufferBase(GLenum target, GLuint index, GLuint name)
 GLAPI void APIENTRY glBindBufferRange(GLenum target, GLuint index, GLuint name, GLintptr offset, GLsizeiptr size)
 {
     GL_CONTEXT_OR_RETURN();
+    if (target == GL_TRANSFORM_FEEDBACK_BUFFER) {
+        if (name && size <= 0)
+            gl_error(ctx, GL_INVALID_VALUE);
+        else
+            gl_xfb_bind(ctx, index, name, offset, size, FALSE);
+        return;
+    }
     if (target != GL_UNIFORM_BUFFER || index >= MIME_GPU_MAX_UNIFORM_BLOCKS ||
         (name && (offset < 0 || size <= 0 || (offset & 255)))) {
         gl_error(ctx, target != GL_UNIFORM_BUFFER ? GL_INVALID_ENUM : GL_INVALID_VALUE);

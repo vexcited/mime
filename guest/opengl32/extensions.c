@@ -58,6 +58,18 @@ static const GlExtension g_extensions[] = {
     {"GL_ARB_occlusion_query", 0},
     {"GL_ARB_get_program_binary", 0},
     {"GL_KHR_debug", 0},
+    {"GL_ARB_tessellation_shader", MIME_GPU_FEATURE_TESSELLATION},
+    {"GL_ARB_transform_feedback2", MIME_GPU_FEATURE_FEEDBACK},
+    {"GL_ARB_transform_feedback3", MIME_GPU_FEATURE_FEEDBACK},
+    {"GL_ARB_transform_feedback_instanced", MIME_GPU_FEATURE_FEEDBACK},
+    {"GL_ARB_transform_feedback_overflow_query", MIME_GPU_FEATURE_FEEDBACK},
+    {"GL_ARB_occlusion_query2", MIME_GPU_FEATURE_QUERY},
+    {"GL_ARB_viewport_array", MIME_GPU_FEATURE_VIEWPORTS},
+    {"GL_ARB_separate_shader_objects", 0},
+    {"GL_ARB_shader_subroutine", 0},
+    {"GL_ARB_gpu_shader_fp64", MIME_GPU_FEATURE_FP64},
+    {"GL_ARB_texture_gather", 0},
+    {"GL_ARB_blend_func_extended", MIME_GPU_FEATURE_DUAL_BLEND},
 };
 
 #define EXTENSION_MAX 512

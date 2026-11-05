@@ -103,6 +103,7 @@ static void attrib_pointer(GLuint index, GLint size, GLenum type, BOOL normalize
     a->type = type;
     a->normalized = normalized;
     a->integer = integer;
+    a->is_long = FALSE;
     a->stride = stride;
     a->pointer = pointer;
     a->buffer = ctx->array_buffer;
@@ -118,6 +119,18 @@ GLAPI void APIENTRY glVertexAttribPointer(GLuint index, GLint size, GLenum type,
 GLAPI void APIENTRY glVertexAttribIPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void *pointer)
 {
     attrib_pointer(index, size, type, FALSE, TRUE, stride, pointer);
+}
+
+GLAPI void APIENTRY glVertexAttribLPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void *pointer)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (type != GL_DOUBLE) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    attrib_pointer(index, size, type, FALSE, FALSE, stride, pointer);
+    if (index < MIME_GPU_MAX_ATTRIBS && size >= 1 && size <= 4)
+        ctx->vao->attribs[index].is_long = TRUE;
 }
 
 GLAPI void APIENTRY glEnableVertexAttribArray(GLuint index)
@@ -257,6 +270,46 @@ GLAPI void APIENTRY glVertexAttribI4uiv(GLuint i, const GLuint *v)
     glVertexAttribI4ui(i, v[0], v[1], v[2], v[3]);
 }
 
+GLAPI void APIENTRY glVertexAttribL1d(GLuint i, GLdouble x)
+{
+    generic(i, (GLfloat)x, 0, 0, 1);
+}
+
+GLAPI void APIENTRY glVertexAttribL2d(GLuint i, GLdouble x, GLdouble y)
+{
+    generic(i, (GLfloat)x, (GLfloat)y, 0, 1);
+}
+
+GLAPI void APIENTRY glVertexAttribL3d(GLuint i, GLdouble x, GLdouble y, GLdouble z)
+{
+    generic(i, (GLfloat)x, (GLfloat)y, (GLfloat)z, 1);
+}
+
+GLAPI void APIENTRY glVertexAttribL4d(GLuint i, GLdouble x, GLdouble y, GLdouble z, GLdouble w)
+{
+    generic(i, (GLfloat)x, (GLfloat)y, (GLfloat)z, (GLfloat)w);
+}
+
+GLAPI void APIENTRY glVertexAttribL1dv(GLuint i, const GLdouble *v)
+{
+    glVertexAttribL1d(i, v[0]);
+}
+
+GLAPI void APIENTRY glVertexAttribL2dv(GLuint i, const GLdouble *v)
+{
+    glVertexAttribL2d(i, v[0], v[1]);
+}
+
+GLAPI void APIENTRY glVertexAttribL3dv(GLuint i, const GLdouble *v)
+{
+    glVertexAttribL3d(i, v[0], v[1], v[2]);
+}
+
+GLAPI void APIENTRY glVertexAttribL4dv(GLuint i, const GLdouble *v)
+{
+    glVertexAttribL4d(i, v[0], v[1], v[2], v[3]);
+}
+
 GLAPI void APIENTRY glGetVertexAttribiv(GLuint index, GLenum pname, GLint *params)
 {
     GL_CONTEXT_OR_RETURN();
@@ -283,6 +336,9 @@ GLAPI void APIENTRY glGetVertexAttribiv(GLuint index, GLenum pname, GLint *param
         break;
     case GL_VERTEX_ATTRIB_ARRAY_INTEGER:
         *params = a->integer;
+        break;
+    case GL_VERTEX_ATTRIB_ARRAY_LONG:
+        *params = a->is_long;
         break;
     case GL_VERTEX_ATTRIB_ARRAY_DIVISOR:
         *params = (GLint)a->divisor;
@@ -347,6 +403,23 @@ GLAPI void APIENTRY glGetVertexAttribIuiv(GLuint index, GLenum pname, GLuint *pa
     }
 }
 
+GLAPI void APIENTRY glGetVertexAttribLdv(GLuint index, GLenum pname, GLdouble *params)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (index >= MIME_GPU_MAX_ATTRIBS) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    if (pname == GL_CURRENT_VERTEX_ATTRIB) {
+        for (unsigned int i = 0; i < 4; ++i)
+            params[i] = generic_component(ctx, index, i);
+    } else {
+        GLint value = 0;
+        glGetVertexAttribiv(index, pname, &value);
+        *params = value;
+    }
+}
+
 GLAPI void APIENTRY glGetVertexAttribPointerv(GLuint index, GLenum pname, void **pointer)
 {
     GL_CONTEXT_OR_RETURN();
@@ -384,6 +457,8 @@ static uint8_t vertex_format(const GlVertexAttrib *a)
 {
     int n = a->size == GL_BGRA ? 4 : a->size;
     BOOL norm = a->normalized && !a->integer;
+    if (a->is_long)
+        return (uint8_t)(120 + n - 1);
     switch (a->type) {
     case GL_FLOAT:
     case GL_DOUBLE:
@@ -604,9 +679,9 @@ static BOOL copy_attrib(const GlVertexAttrib *a, const uint8_t *base, uint32_t f
 {
     uint32_t elem = element_bytes(a);
     uint32_t src_stride = a->stride ? (uint32_t)a->stride : elem;
-    BOOL dbl = a->type == GL_DOUBLE || widened(a);
+    BOOL dbl = (a->type == GL_DOUBLE && !a->is_long) || widened(a);
     uint32_t out_elem = dbl ? (uint32_t)a->size * 4 : elem;
-    uint32_t stride = (out_elem + 3) & ~3u;
+    uint32_t stride = a->is_long ? (out_elem + 7) & ~7u : (out_elem + 3) & ~3u;
     GlMem mem;
     if (!gl_stream_alloc((uint64_t)stride * (count ? count : 1), 16, &mem))
         return FALSE;
@@ -614,7 +689,7 @@ static BOOL copy_attrib(const GlVertexAttrib *a, const uint8_t *base, uint32_t f
     for (uint32_t v = 0; v < count; v++) {
         uint8_t *d = mem.ptr + (uint64_t)v * stride;
         const uint8_t *p = src + (uint64_t)v * src_stride;
-        if (a->type == GL_DOUBLE) {
+        if (a->type == GL_DOUBLE && !a->is_long) {
             for (int c = 0; c < a->size; c++) {
                 double x;
                 memcpy(&x, p + c * 8, 8);
@@ -701,7 +776,8 @@ static BOOL setup_vertices(GlContext *ctx, GlProgram *p, const GlVertexInput *in
                 return FALSE;
             b->last_use = batch;
             uint64_t offset = (uint64_t)(ULONG_PTR)a->pointer;
-            BOOL direct = !(offset & 3) && !(stride & 3) && a->type != GL_DOUBLE && !widened(a);
+            uint32_t mask = a->is_long ? 7 : 3;
+            BOOL direct = !(offset & mask) && !(stride & mask) && (a->type != GL_DOUBLE || a->is_long) && !widened(a);
             if (direct) {
                 s->mem = gl_mem(&b->mem);
                 s->mem.offset += offset;
@@ -731,7 +807,9 @@ static BOOL needs_copy(const GlVertexInput *in)
         if (!a->enabled || a->divisor)
             continue;
         uint32_t stride = a->stride ? (uint32_t)a->stride : element_bytes(a);
-        if (!a->buffer || ((ULONG_PTR)a->pointer & 3) || (stride & 3) || a->type == GL_DOUBLE || widened(a))
+        uint32_t mask = a->is_long ? 7 : 3;
+        if (!a->buffer || ((ULONG_PTR)a->pointer & mask) || (stride & mask) || (a->type == GL_DOUBLE && !a->is_long) ||
+            widened(a))
             return TRUE;
     }
     return FALSE;
@@ -767,6 +845,7 @@ static void emit_pipeline(GlContext *ctx, GlProgram *p, const GlVertexInput *in,
     d.depth_format = t->depth_format;
     d.stencil_format = t->stencil_format;
     d.samples = t->samples ? t->samples : 1;
+    d.topology = gl_pipeline_topology(ctx, p);
     for (int l = 0; l < MIME_GPU_MAX_ATTRIBS; l++) {
         if (!src[l].used)
             continue;
@@ -833,7 +912,7 @@ static void emit_raster(GlContext *ctx)
     /* rows are flipped on the way to Metal, which reverses the winding. */
     r->winding = ctx->front_face == GL_CCW ? 0 : 1;
     r->fill = ctx->polygon_mode == GL_LINE ? 1 : 0;
-    r->depth_clip = !ctx->depth_clamp;
+    r->depth_clip = (!ctx->depth_clamp ? 1 : 0) | (ctx->st.rasterizer_discard ? 2 : 0);
     if (ctx->polygon_offset_fill) {
         r->depth_bias = ctx->offset_units;
         r->slope_scale = ctx->offset_factor;
@@ -923,6 +1002,8 @@ static BOOL prepare(GlContext *ctx, GlProgram *p, const GlVertexInput *in, const
             r->height = ctx->target.height;
         }
     }
+    gl_stage_emit_viewports(ctx, dirty);
+    gl_xfb_prepare(ctx);
     if (dirty & DIRTY_BLEND_COLOR) {
         MimeGpuSetBlendColor *b = gl_emit(MIME_GPU_SET_BLEND_COLOR, sizeof(MimeGpuSetBlendColor));
         memcpy(b->rgba, ctx->blend_color, sizeof(b->rgba));
@@ -969,6 +1050,8 @@ static BOOL prepare(GlContext *ctx, GlProgram *p, const GlVertexInput *in, const
 
 static uint32_t mtl_primitive(GLenum mode)
 {
+    if (mode > GL_POLYGON)
+        return gl_primitive_of(mode);
     switch (mode) {
     case GL_POINTS:
         return 0;
@@ -1171,6 +1254,17 @@ static GlProgram *begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate, 
     GlProgram *p = ctx->current_program;
     if (p && immediate)
         return nullptr;
+    if (ctx->st.skip)
+        return nullptr;
+    if (!p && ctx->st.pipeline && !immediate)
+        p = gl_pipeline_resolve(ctx);
+    if (mode > GL_POLYGON && (!p || !gl_draw_mode_fits(ctx, p, mode))) {
+        if (!p)
+            gl_error(ctx, GL_INVALID_OPERATION);
+        return nullptr;
+    }
+    if (p && mode <= GL_POLYGON && !gl_draw_mode_fits(ctx, p, mode))
+        return nullptr;
     if (p) {
         in->attribs = ctx->vao->attribs;
         in->mask = p->attrib_mask;
@@ -1200,7 +1294,7 @@ static void draw_arrays(GLenum mode, GLint first, GLsizei count, GLsizei instanc
         gl_error(ctx, GL_INVALID_VALUE);
         return;
     }
-    if (mode > GL_POLYGON) {
+    if (!gl_draw_mode_valid(ctx, mode)) {
         gl_error(ctx, GL_INVALID_ENUM);
         return;
     }
@@ -1293,7 +1387,7 @@ static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *i
         gl_error(ctx, GL_INVALID_ENUM);
         return;
     }
-    if (mode > GL_POLYGON) {
+    if (!gl_draw_mode_valid(ctx, mode)) {
         gl_error(ctx, GL_INVALID_ENUM);
         return;
     }
@@ -1438,6 +1532,32 @@ GLAPI void APIENTRY glMultiDrawElements(GLenum mode, const GLsizei *count, GLenu
 {
     for (GLsizei i = 0; i < n; i++)
         draw_elements(mode, count[i], type, indices[i], 1, 0, 0);
+}
+
+/* draws the vertices a transform feedback captured, as many as its byte counters say. */
+void gl_draw_feedback(GlContext *ctx, GLenum mode, uint32_t object, uint32_t buffer, uint32_t stride, GLsizei instances)
+{
+    gl_device_lock();
+    GlVertexInput in;
+    GlProgram *p = begin_draw(ctx, &in, FALSE, mode);
+    if (!p) {
+        gl_device_unlock();
+        return;
+    }
+    DrawRange r = {0, 0, (uint32_t)instances, 0, 0};
+    Source src[MIME_GPU_MAX_ATTRIBS];
+    /* the count is the host's to know, so nothing can be copied for it. */
+    if (needs_copy(&in) || !setup_vertices(ctx, p, &in, &r, src) || !prepare(ctx, p, &in, src)) {
+        gl_device_unlock();
+        return;
+    }
+    MimeGpuDrawXfb *d = gl_emit(MIME_GPU_DRAW_XFB, sizeof(MimeGpuDrawXfb));
+    d->primitive = mtl_primitive(mode);
+    d->object = object;
+    d->buffer = buffer;
+    d->stride = stride;
+    d->instances = (uint32_t)instances;
+    gl_device_unlock();
 }
 
 /* ---------------------------------------------------------------- glBegin and glEnd */

@@ -101,6 +101,25 @@ enum {
     MIME_GPU_FEATURE_VIEW = 1u << 5,      /* texture views. */
 };
 
+#define MIME_GPU_FEATURE_QUERY (1ull << 32)     /* QUERY_BEGIN and QUERY_END: occlusion and feedback counters. */
+#define MIME_GPU_FEATURE_DUAL_BLEND (1ull << 35) /* the second color output of a fragment shader as a blend factor. */
+#define MIME_GPU_FEATURE_FP64 (1ull << 34)      /* 64 bit floats in shaders and vertex attributes. */
+#define MIME_GPU_FEATURE_VIEWPORTS (1ull << 33) /* more than one viewport and scissor, and the indexed commands. */
+
+enum {
+    MIME_GPU_PROGRAM_STAGES = 128, /* MimeGpuProgramStages: more stages for the PROGRAM_CREATE of the same id that follows. */
+    MIME_GPU_XFB_BUFFERS,          /* MimeGpuXfbBuffers */
+    MIME_GPU_XFB_CONTROL,          /* MimeGpuXfbControl */
+    MIME_GPU_QUERY_BEGIN,          /* MimeGpuQuery */
+    MIME_GPU_QUERY_END,            /* MimeGpuQuery */
+    MIME_GPU_SET_VIEWPORT_INDEXED, /* MimeGpuSetViewportIndexed */
+    MIME_GPU_SET_SCISSOR_INDEXED,  /* MimeGpuSetScissorIndexed */
+    MIME_GPU_DRAW_XFB,             /* MimeGpuDrawXfb */
+};
+
+#define MIME_GPU_MAX_XFB_BUFFERS 4
+#define MIME_GPU_MAX_VIEWPORTS 16
+
 typedef struct MimeGpuMem {
     uint32_t block;
     uint32_t pad;
@@ -187,6 +206,45 @@ typedef struct MimeGpuProgramCreate {
     uint32_t pad;
 } MimeGpuProgramCreate;
 
+/*
+ * the stages of a program besides the vertex and fragment ones, and the varyings transform feedback captures. the body is
+ * the tessellation control, tessellation evaluation and geometry sources, then the names of the varyings, each ended by a
+ * NUL. a name may be gl_NextBuffer or gl_SkipComponents1 to 4. the PROGRAM_CREATE of the same id follows at once.
+ */
+typedef struct MimeGpuProgramStages {
+    MimeGpuCmd cmd;
+    uint32_t id;
+    uint32_t control_bytes, evaluation_bytes, geometry_bytes;
+    uint32_t feedback_bytes;
+    uint32_t feedback_separate; /* the varyings go to buffers of their own. */
+    uint32_t fragment_bytes;    /* "name\0location\0index\0" for each output the application placed, after the varyings. */
+    uint32_t pad;
+} MimeGpuProgramStages;
+
+/* what the host found in the extra stages, appended to the program info. */
+typedef struct MimeGpuStageInfo {
+    uint32_t stages;            /* bit 0 vertex, 1 fragment, 2 tess control, 3 tess evaluation, 4 geometry. */
+    uint32_t geometry_input;    /* GL_POINTS, GL_LINES, GL_LINES_ADJACENCY, GL_TRIANGLES or GL_TRIANGLES_ADJACENCY. */
+    uint32_t geometry_output;   /* GL_POINTS, GL_LINE_STRIP or GL_TRIANGLE_STRIP. */
+    uint32_t geometry_vertices; /* max_vertices. */
+    uint32_t geometry_invocations;
+    uint32_t control_vertices;  /* vertices of a patch the control shader writes. */
+    uint32_t evaluation_mode;   /* GL_TRIANGLES, GL_QUADS or GL_ISOLINES. */
+    uint32_t evaluation_spacing;
+    uint32_t evaluation_ccw;
+    uint32_t evaluation_point_mode;
+    uint32_t feedback_count, feedback_offset; /* MimeGpuFeedbackInfo array. */
+    uint32_t feedback_stride[MIME_GPU_MAX_XFB_BUFFERS]; /* bytes of a vertex in each buffer. */
+    uint32_t feedback_buffers;
+} MimeGpuStageInfo;
+
+typedef struct MimeGpuFeedbackInfo {
+    uint32_t name_offset;
+    uint32_t gl_type;
+    uint32_t size;      /* array elements. */
+    uint32_t buffer;
+} MimeGpuFeedbackInfo;
+
 typedef struct MimeGpuProgramInfo {
     uint32_t status;        /* 0 linked, 1 failed: the log says why. */
     uint32_t size;          /* bytes written, 0 while pending. */
@@ -196,6 +254,7 @@ typedef struct MimeGpuProgramInfo {
     uint32_t uniform_bytes;                 /* size of the uniform block. */
     uint32_t pad;
     uint32_t block_count, block_offset;
+    MimeGpuStageInfo stage;
 } MimeGpuProgramInfo;
 
 typedef struct MimeGpuUniformBlockInfo {
@@ -250,7 +309,7 @@ typedef struct MimeGpuPipelineDesc {
     uint32_t program_serial;
     uint16_t depth_format, stencil_format;
     uint32_t samples;
-    uint32_t topology; /* MTLPrimitiveTopologyClass */
+    uint32_t topology; /* MTLPrimitiveTopologyClass; 4 is patches, whose size is in bits 8 to 15. */
     MimeGpuColorTarget color[MIME_GPU_MAX_COLORS];
     MimeGpuVertexAttrib attribs[MIME_GPU_MAX_ATTRIBS]; /* by location. */
     MimeGpuVertexLayout layouts[MIME_GPU_MAX_ATTRIBS]; /* by slot. */
@@ -365,7 +424,7 @@ typedef struct MimeGpuSetRaster {
     uint8_t cull;      /* MTLCullMode */
     uint8_t winding;   /* MTLWinding of front faces as rendered. */
     uint8_t fill;      /* MTLTriangleFillMode */
-    uint8_t depth_clip;
+    uint8_t depth_clip; /* bit 0 clips depth, bit 1 discards primitives before rasterization. */
     float depth_bias, slope_scale, bias_clamp;
 } MimeGpuSetRaster;
 
@@ -411,11 +470,74 @@ typedef struct MimeGpuSetTexture {
 
 typedef struct MimeGpuDraw {
     MimeGpuCmd cmd;
-    uint32_t primitive; /* MTLPrimitiveType */
+    uint32_t primitive; /* MTLPrimitiveType; 6 to 10 are Vulkan's adjacency and patch topologies when the host has geometry. */
     uint32_t first, count;
     uint32_t instances, base_instance;
     uint32_t pad;
 } MimeGpuDraw;
+
+typedef struct MimeGpuSetViewportIndexed {
+    MimeGpuCmd cmd;
+    uint32_t index;
+    float x, y, width, height, znear, zfar;
+    uint32_t pad;
+} MimeGpuSetViewportIndexed;
+
+typedef struct MimeGpuSetScissorIndexed {
+    MimeGpuCmd cmd;
+    uint32_t index;
+    int32_t x, y;
+    uint32_t width, height;
+    uint32_t pad;
+} MimeGpuSetScissorIndexed;
+
+/* the buffers transform feedback writes, by binding index; a size of 0 leaves the binding empty. */
+typedef struct MimeGpuXfbBuffers {
+    MimeGpuCmd cmd;
+    uint32_t count;
+    uint32_t pad;
+    struct {
+        MimeGpuMem mem;
+        uint64_t size;
+    } buffer[MIME_GPU_MAX_XFB_BUFFERS];
+} MimeGpuXfbBuffers;
+
+enum { MIME_GPU_XFB_BEGIN = 0, MIME_GPU_XFB_PAUSE, MIME_GPU_XFB_RESUME, MIME_GPU_XFB_END };
+
+/* the object holds the byte counters of its buffers, which a later draw of the captured vertices reads. */
+typedef struct MimeGpuXfbControl {
+    MimeGpuCmd cmd;
+    uint32_t action;
+    uint32_t object;
+} MimeGpuXfbControl;
+
+enum {
+    MIME_GPU_QUERY_SAMPLES = 0,   /* samples passed, exact. */
+    MIME_GPU_QUERY_ANY_SAMPLES,   /* any samples passed: 0 or 1. */
+    MIME_GPU_QUERY_PRIMITIVES,    /* primitives generated by a stream. */
+    MIME_GPU_QUERY_WRITTEN,       /* primitives a stream wrote to the feedback buffers. */
+    MIME_GPU_QUERY_OVERFLOW,      /* 1 when a stream had more primitives than the buffers took. */
+};
+
+/* the result is two quadwords at result: the value, then 1 once it is there. begin sets the type and the stream. */
+typedef struct MimeGpuQuery {
+    MimeGpuCmd cmd;
+    uint32_t id;
+    uint32_t type;
+    uint32_t stream;
+    uint32_t pad;
+    MimeGpuMem result;
+} MimeGpuQuery;
+
+typedef struct MimeGpuDrawXfb {
+    MimeGpuCmd cmd;
+    uint32_t primitive;
+    uint32_t object;
+    uint32_t buffer;
+    uint32_t stride;
+    uint32_t instances;
+    uint32_t pad;
+} MimeGpuDrawXfb;
 
 typedef struct MimeGpuDrawIndexed {
     MimeGpuCmd cmd;

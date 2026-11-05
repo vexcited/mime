@@ -493,6 +493,8 @@ GLAPI BOOL WINAPI wglDeleteContext(HGLRC rc)
         gl_dl_shared_destroy(ctx->shared);
     gl_dl_destroy(ctx);
     gl_queries_destroy(ctx);
+    gl_stage_context_destroy(ctx);
+    gl_pipeline_context_destroy(ctx);
     gl_ff_destroy(ctx);
     /* the host keeps the state of the last context that sent commands, which the next one must not look at. */
     gl_device_lock();

@@ -99,6 +99,9 @@ static BOOL *capability(GlContext *ctx, GLenum cap, uint32_t *dirty)
     case GL_PROGRAM_POINT_SIZE:
         *dirty = 0;
         return &ctx->program_point_size;
+    case GL_RASTERIZER_DISCARD:
+        *dirty = DIRTY_RASTER;
+        return &ctx->st.rasterizer_discard;
     case GL_PRIMITIVE_RESTART_FIXED_INDEX:
     case GL_PRIMITIVE_RESTART:
         *dirty = 0;
@@ -314,6 +317,7 @@ GLAPI void APIENTRY glDepthRange(GLdouble n, GLdouble f)
     GL_CONTEXT_OR_RETURN();
     ctx->depth_range[0] = n < 0 ? 0 : n > 1 ? 1 : n;
     ctx->depth_range[1] = f < 0 ? 0 : f > 1 ? 1 : f;
+    gl_stage_depth_changed(ctx);
     ctx->dirty |= DIRTY_VIEWPORT;
 }
 
@@ -593,6 +597,7 @@ GLAPI void APIENTRY glViewport(GLint x, GLint y, GLsizei w, GLsizei h)
     ctx->viewport[1] = y;
     ctx->viewport[2] = w;
     ctx->viewport[3] = h;
+    gl_stage_viewport_changed(ctx);
     ctx->dirty |= DIRTY_VIEWPORT;
 }
 
@@ -607,6 +612,7 @@ GLAPI void APIENTRY glScissor(GLint x, GLint y, GLsizei w, GLsizei h)
     ctx->scissor[1] = y;
     ctx->scissor[2] = w;
     ctx->scissor[3] = h;
+    gl_stage_scissor_changed(ctx);
     ctx->dirty |= DIRTY_SCISSOR;
 }
 
@@ -1250,6 +1256,11 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
             v[0] = b;
             return 1;
         }
+        {
+            int n = gl_stage_get(ctx, pname, v);
+            if (n)
+                return n;
+        }
         return gl_ff_get(ctx, pname, v, colors);
     }
     }
@@ -1331,6 +1342,12 @@ GLAPI void APIENTRY glGetIntegeri_v(GLenum target, GLuint index, GLint *data)
             *data = target == GL_UNIFORM_BUFFER_BINDING ? (GLint)binding->name :
                     target == GL_UNIFORM_BUFFER_START ? (GLint)binding->offset :
                     (GLint)(binding->whole && buffer ? buffer->size : binding->size);
+        return;
+    }
+    GLint64 indexed;
+    if (gl_xfb_get_indexed(ctx, target, index, &indexed)) {
+        if (data)
+            *data = (GLint)indexed;
         return;
     }
     glGetIntegerv(target, data);

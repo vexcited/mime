@@ -60,7 +60,7 @@ typedef struct GlMem {
     uint64_t size;
 } GlMem;
 
-enum { ID_TEXTURE, ID_PROGRAM, ID_PIPELINE, ID_DEPTH_STENCIL, ID_SAMPLER, ID_SURFACE, ID_KINDS };
+enum { ID_TEXTURE, ID_PROGRAM, ID_PIPELINE, ID_DEPTH_STENCIL, ID_SAMPLER, ID_SURFACE, ID_XFB, ID_QUERY, ID_KINDS };
 
 typedef struct GlDevice {
     GL_LOCK lock;
@@ -207,6 +207,8 @@ typedef struct GlAttrib {
     uint32_t slots;
 } GlAttrib;
 
+typedef struct GlSubroutines GlSubroutines;
+
 typedef struct GlProgram {
     GLuint name;
     uint32_t id;           /* host program, 0 before a link. */
@@ -214,6 +216,8 @@ typedef struct GlProgram {
     uint32_t shader_count;
     char *bindings;        /* glBindAttribLocation, "name\0location\0" pairs. */
     uint32_t bindings_len;
+    char *frag_bindings;   /* glBindFragDataLocationIndexed, "name\0location\0index\0". */
+    uint32_t frag_bindings_len;
     GlMem info;            /* MimeGpuProgramInfo written by the host. */
     BOOL linking, linked, link_status, deleted;
     char *log;
@@ -228,13 +232,32 @@ typedef struct GlProgram {
     uint32_t ublock_size;
     BOOL ublock_dirty;
     uint32_t serial;       /* changes with each link. */
+
+    /* stages besides the vertex and fragment ones, transform feedback and separable programs, see stages.c. */
+    char *stage_source[3]; /* tessellation control, tessellation evaluation and geometry, as linked. */
+    char **feedback_names; /* glTransformFeedbackVaryings, used by the next link. */
+    uint32_t feedback_name_count;
+    GLenum feedback_mode;
+    MimeGpuStageInfo stage;
+    struct GlFeedbackVarying {
+        char *name;
+        GLenum type;
+        GLint size;
+        GLuint buffer;
+    } *feedback;
+    uint32_t feedback_count;
+    BOOL separable;
+    char *main_source[2];   /* the vertex and fragment sources of the last link, null when it had none. */
+    uint32_t stage_mask;    /* bit 0 vertex, 1 tessellation control, 2 evaluation, 3 geometry, 4 fragment. */
+    uint32_t uniform_version; /* changes whenever a uniform is written. */
+    GlSubroutines *subroutines[5]; /* by stage, see subroutine.c. */
 } GlProgram;
 
 typedef struct GlVertexAttrib {
     BOOL enabled;
     GLint size;
     GLenum type;
-    BOOL normalized, integer;
+    BOOL normalized, integer, is_long;
     GLsizei stride;
     const void *pointer;
     GLuint buffer;
@@ -455,6 +478,45 @@ typedef struct GlDlState {
     GlDlBuilder *b;
 } GlDlState;
 
+/* one transform feedback object: the buffers it writes and where it stands. */
+typedef struct GlXfb {
+    GLuint name;
+    GLuint buffer[MIME_GPU_MAX_XFB_BUFFERS];
+    GLintptr offset[MIME_GPU_MAX_XFB_BUFFERS];
+    GLsizeiptr size[MIME_GPU_MAX_XFB_BUFFERS]; /* 0 with a buffer is all of it. */
+    BOOL active, paused;
+    uint32_t id; /* the host keeps its byte counters under this number. */
+    GLenum mode;
+    uint32_t stride; /* bytes of a captured vertex in buffer 0, from the program it was begun with. */
+    uint32_t count;  /* buffers the program writes. */
+    MimeGpuMem sent[MIME_GPU_MAX_XFB_BUFFERS];
+    uint64_t sent_size[MIME_GPU_MAX_XFB_BUFFERS];
+    BOOL sent_valid;
+} GlXfb;
+
+/* state of the stages and queries added after OpenGL 3, see stages.c and feedback.c. */
+typedef struct GlStages {
+    GLint patch_vertices;
+    GLfloat patch_outer[4], patch_inner[2];
+    BOOL rasterizer_discard;
+    /* viewports and scissors that differ from the plain ones, by index. */
+    GLfloat viewport[MIME_GPU_MAX_VIEWPORTS][4];
+    GLdouble depth_range[MIME_GPU_MAX_VIEWPORTS][2];
+    GLint scissor[MIME_GPU_MAX_VIEWPORTS][4];
+    uint32_t viewport_mask, scissor_mask;
+    GlNames xfbs;
+    GlXfb *xfb, default_xfb;
+    GLuint xfb_buffer;
+    GLuint active_query[8][4]; /* by query kind and stream. */
+    GLuint condition;          /* the query conditional rendering looks at. */
+    GLenum condition_mode;
+    BOOL skip;                 /* the condition says draws do nothing. */
+    GlNames pipelines;         /* program pipeline objects. */
+    GLuint pipeline_name;
+    struct GlPipeline *pipeline;
+    GLuint active_program;     /* glActiveShaderProgram of the default pipeline. */
+} GlStages;
+
 typedef struct GlContext {
     GlShared *shared;
     int pixel_format;
@@ -555,6 +617,7 @@ typedef struct GlContext {
 
     GlFixed ff;
     GlDlState dl;
+    GlStages st;
 
     /* glPushAttrib and glPushClientAttrib, see attrib.c. */
     void *attrib_stack, *client_attrib_stack;
@@ -612,6 +675,41 @@ GlProgram *gl_program(GlContext *ctx, GLuint name);
 BOOL gl_program_ready(GlProgram *p);
 BOOL gl_program_link_sources(GlProgram *p, const char *vs, const char *fs);
 void gl_program_free_internal(GlProgram *p);
+
+/* stages, stages.c, feedback.c and pipeline.c. */
+BOOL gl_draw_mode_valid(GlContext *ctx, GLenum mode);
+BOOL gl_draw_mode_fits(GlContext *ctx, GlProgram *p, GLenum mode); /* raises the error when the program does not take it. */
+uint32_t gl_pipeline_topology(GlContext *ctx, const GlProgram *p);
+uint32_t gl_primitive_of(GLenum mode);
+void gl_program_send_stages(GlProgram *p);   /* with the device lock held, before the program's create command. */
+void gl_program_take_stages(GlProgram *p, const uint8_t *base, const MimeGpuProgramInfo *info);
+void gl_program_free_stages(GlProgram *p);
+BOOL gl_program_query_stage(GlProgram *p, GLenum pname, GLint *value);
+int gl_stage_get(GlContext *ctx, GLenum pname, GLdouble *v);
+void gl_stage_context_destroy(GlContext *ctx);
+void gl_xfb_prepare(GlContext *ctx);               /* before a draw: the buffers the host captures into. */
+BOOL gl_xfb_get_indexed(GlContext *ctx, GLenum target, GLuint index, GLint64 *value);
+BOOL gl_xfb_bind(GlContext *ctx, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size, BOOL whole);
+void gl_xfb_buffer_deleted(GlContext *ctx, GLuint buffer);
+GlProgram *gl_pipeline_active_program(GlContext *ctx);
+GlProgram *gl_pipeline_resolve(GlContext *ctx);
+GlProgram *gl_draw_program(GlContext *ctx);   /* the program draws use: the one in use, else the pipeline's. */
+void gl_pipeline_context_destroy(GlContext *ctx);
+char *gl_subroutine_rewrite(const char *src, int stage, GlSubroutines **out);
+void gl_subroutines_free(GlSubroutines *s);
+void gl_program_set_int(GlContext *ctx, GlProgram *p, GLint location, GLint value);
+void gl_program_get_int(GlProgram *p, GLint location, GLint *value);
+void gl_program_free_stages_only(GlProgram *p);
+void gl_program_copy_uniforms(GlProgram *dst, const GlProgram *src);
+void gl_program_set_feedback_names(GlProgram *p, GLsizei count, const GLchar *const *names, GLenum mode);
+void gl_stage_viewport_changed(GlContext *ctx);
+void gl_stage_scissor_changed(GlContext *ctx);
+void gl_stage_depth_changed(GlContext *ctx);
+BOOL gl_program_stages_ok(GlProgram *p, const char *control, const char *evaluation, const char *geometry);
+void gl_program_set_stage_sources(GlProgram *p, const char *control, const char *evaluation, const char *geometry);
+void gl_stage_emit_viewports(GlContext *ctx, uint32_t dirty); /* the indexed viewports and scissors, after the plain ones. */
+BOOL gl_query_target_known(GLenum target);
+void gl_draw_feedback(GlContext *ctx, GLenum mode, uint32_t object, uint32_t buffer, uint32_t stride, GLsizei instances);
 
 /* draws, draw.c. */
 void gl_invalidate_bindings(GlContext *ctx);

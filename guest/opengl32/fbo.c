@@ -711,6 +711,8 @@ GLAPI void APIENTRY glClear(GLbitfield mask)
         gl_error(ctx, GL_INVALID_VALUE);
         return;
     }
+    if (ctx->st.skip)
+        return;
     gl_device_lock();
     take_channel(ctx);
     GlTarget t;
@@ -816,6 +818,8 @@ GLAPI void APIENTRY glBlitFramebuffer(GLint sx0, GLint sy0, GLint sx1, GLint sy1
                                       GLint dy1, GLbitfield mask, GLenum filter)
 {
     GL_CONTEXT_OR_RETURN();
+    if (ctx->st.skip)
+        return;
     GlTarget src, dst;
     const void *so, *dow;
     uint32_t ss, ds;
