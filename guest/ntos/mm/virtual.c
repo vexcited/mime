@@ -261,7 +261,9 @@ static void vad_destroy(PMMVAD vad)
 NTSTATUS MiFindFreeRangeEx(PMMADDRESS_SPACE as, SIZE_T size, ULONG_PTR alignment, ULONG_PTR lowest,
                            ULONG_PTR highest, BOOLEAN top_down, ULONG_PTR *out)
 {
-    ULONG_PTR maximum = as->AllocationLimit ? as->AllocationLimit : MM_HIGHEST_USER_ADDRESS + 1;
+    /* a search from above a 32-bit program's limit is native code's, which windows lets past it too. */
+    ULONG_PTR maximum = as->AllocationLimit && lowest < as->AllocationLimit ? as->AllocationLimit
+                                                                            : MM_HIGHEST_USER_ADDRESS + 1;
     if (!highest || highest + 1 > maximum)
         highest = maximum - 1;
     if (lowest < MM_LOWEST_USER_ADDRESS)
@@ -849,7 +851,8 @@ NTSTATUS MiAllocateVirtualEx(PEPROCESS process, PVOID *base_io, SIZE_T *size_io,
     }
     SIZE_T bytes = end - start;
     if (searching) {
-        ULONG_PTR limit = as->AllocationLimit ? as->AllocationLimit - 1 : MM_HIGHEST_USER_ADDRESS;
+        ULONG_PTR limit = as->AllocationLimit && lowest < as->AllocationLimit ? as->AllocationLimit - 1
+                                                                                : MM_HIGHEST_USER_ADDRESS;
         if (limit > MM_HIGHEST_USER_ADDRESS)
             limit = MM_HIGHEST_USER_ADDRESS;
         if (zero_bits) {
