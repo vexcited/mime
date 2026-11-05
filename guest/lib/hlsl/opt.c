@@ -564,6 +564,10 @@ static bool common_subexpressions(IrShader *s)
         }
         if (ins->op == IR_STORE && ins->store.rel && rename[ins->store.rel])
             ins->store.rel = rename[ins->store.rel];
+        if (ins->res_rel && rename[ins->res_rel])
+            ins->res_rel = rename[ins->res_rel];
+        if (ins->sampler_rel && rename[ins->sampler_rel])
+            ins->sampler_rel = rename[ins->sampler_rel];
         if (!cse_candidate(ins) || defs[ins->dst[0]] != 1)
             continue;
         bool stable = true;

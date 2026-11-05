@@ -321,7 +321,7 @@ static void put_source(Emit *e, const IrSrc *src, const uint8_t sw[4], bool sele
             rel[2] = rel[1];
             rel[1] = 0;
             imm[1] = imm[0];
-            imm[0] = e->s->cbuffers[src->v].slot;
+            imm[0] = src->v;
             put_indexed(e, TOKEN_OPERAND(COMP_4, selection, bits, OPERAND_CONSTANT_BUFFER, 3), imm, rel, 3, src->mod);
             return;
         }
@@ -1425,7 +1425,7 @@ int ir_emit_sm4(IrShader *s, HlBuf *code)
         uint32_t at = begin(&e, OP_DCL_CONSTANT_BUFFER | (cb->dynamic ? 1u << 11 : 0));
         if (e.sm51) {
             put(h, &decls, TOKEN_OPERAND(COMP_4, SELECT_SWIZZLE, 0xE4, OPERAND_CONSTANT_BUFFER, 3));
-            put(h, &decls, cb->slot);
+            put(h, &decls, i);
             put(h, &decls, cb->slot);
             put(h, &decls, cb->slot);
             put(h, &decls, size);

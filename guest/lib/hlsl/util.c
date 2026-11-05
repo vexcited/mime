@@ -15,6 +15,9 @@ struct HlChunk {
 
 static void *raw_alloc(Hlsl *h, size_t size)
 {
+    h->allocated += size;
+    if (h->allocated > HL_MAX_MEMORY)
+        hl_abort(h, "out of memory: the shader is too large to compile");
     void *p = mime_alloc(&h->alloc, size);
     if (!p)
         hl_fatal(h);
@@ -394,9 +397,14 @@ static void location(Hlsl *h, HlLoc loc)
 void hl_error(Hlsl *h, HlLoc loc, uint32_t code, const char *format, ...)
 {
     /* fxc stops at some point; so does a runaway source. */
-    if (h->errors >= 1000)
+    if (h->errors >= HL_MAX_ERRORS)
         return;
     h->errors++;
+    if (h->errors == HL_MAX_ERRORS) {
+        location(h, loc);
+        hl_buf_puts(h, &h->messages, "error X3000: too many errors, compilation aborted\n");
+        return;
+    }
     location(h, loc);
     hl_buf_printf(h, &h->messages, "error X%u: ", code);
     va_list ap;
@@ -449,6 +457,15 @@ void hl_note(Hlsl *h, HlLoc loc, const char *format, ...)
 }
 
 /* ------------------------------------------------------------------ the context */
+
+[[noreturn]] void hl_abort(Hlsl *h, const char *what)
+{
+    /* the messages may not grow past the cap either. */
+    h->allocated = 0;
+    h->errors++;
+    hl_buf_printf(h, &h->messages, "%s(1,1): error X3000: %s\n", h->source_name ? h->source_name : "", what);
+    hl_fatal(h);
+}
 
 Hlsl *hlsl_new(const MimeAllocator *alloc, void (*fatal)(void *ctx), void *fatal_ctx)
 {

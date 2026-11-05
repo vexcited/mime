@@ -209,6 +209,9 @@ typedef struct IrShader {
     uint32_t uav_count;
     /* statistics for STAT. */
     uint32_t temp_count;
+    /* variables lowered as indexable temps, which a second lowering may keep in registers. */
+    HlVar **demoted;
+    uint32_t demoted_count, demoted_capacity;
 } IrShader;
 
 static inline IrSrc ir_reg(uint32_t v) { return (IrSrc){.kind = SRC_REG, .v = v}; }

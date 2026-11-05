@@ -6,6 +6,8 @@ uint32_t ir_new_vreg(IrShader *s) { return ++s->vregs; }
 
 IrIns *ir_emit(IrShader *s, uint16_t op, uint32_t dst_count, uint32_t src_count)
 {
+    if (s->count >= HL_MAX_INSTRUCTIONS)
+        hl_abort(s->h, "the shader is too large: it makes more than a million instructions");
     HL_GROW(s->h, s->ins, s->count, s->capacity);
     IrIns *ins = &s->ins[s->count++];
     __builtin_memset(ins, 0, sizeof(*ins));
@@ -677,6 +679,8 @@ static VarInfo *new_x(Lower *l, HlVar *var, HlType *type)
         if (vi->xcomp[i] + 1u > comps)
             comps = vi->xcomp[i] + 1u;
     IrIndexable x = {regs ? regs : 1, comps};
+    if (var)
+        HL_PUSH(l->h, l->s->demoted, l->s->demoted_count, l->s->demoted_capacity, var);
     HL_PUSH(l->h, l->s->indexables, l->s->indexable_count, l->s->indexable_capacity, x);
     vi->x = l->s->indexable_count - 1;
     return vi;
@@ -1676,6 +1680,8 @@ Value lw_load(Lower *l, LValue *lv)
         IrSrc rel = {};
         if (lv->has_dynamic)
             rel = lw_mov(l, lv->dynamic);
+        if (rel.kind != SRC_NONE && rel.kind != SRC_IMM && vi->var)
+            vi->var->x_dynamic = true;
         for (uint32_t i = 0; i < lv->count; i++) {
             uint32_t c = lv->comps[i];
             IrSrc src = {.kind = SRC_X, .v = vi->x, .index = vi->xreg[c], .comp = vi->xcomp[c]};
@@ -1759,6 +1765,8 @@ void lw_store(Lower *l, LValue *lv, Value v)
         IrSrc rel = {};
         if (lv->has_dynamic)
             rel = lw_mov(l, lv->dynamic);
+        if (rel.kind != SRC_NONE && rel.kind != SRC_IMM && vi->var)
+            vi->var->x_dynamic = true;
         for (uint32_t i = 0; i < lv->count && i < v.count; i++) {
             uint32_t c = lv->comps[i];
             IrIns *ins = ir_emit(l->s, IR_STORE, 0, 1);
@@ -1990,7 +1998,7 @@ static bool try_unroll(Lower *l, HlStmt *s, uint32_t limit)
             if (!c.v)
                 return true;
         }
-        if (iteration >= limit || l->s->count - ins_mark > 65536)
+        if (iteration >= limit || l->s->count - ins_mark > 65536 || l->s->count > HL_MAX_INSTRUCTIONS / 4)
             goto fail;
         lower_stmt(l, s->body);
         if (l->failed)
@@ -2022,8 +2030,9 @@ static void lower_loop(Lower *l, HlStmt *s)
         }
         if (try_unroll(l, s, limit))
             return;
-        if (unroll && !(unroll->arg_count))
-            hl_warning(l->h, s->loc, 3557, "loop doesn't seem to do anything, consider removing [unroll]");
+        if (unroll)
+            hl_warning(l->h, s->loc, 3511, "unable to unroll loop, loop does not appear to terminate in a timely manner (%u iterations), it stays a loop",
+                       unroll->arg_count ? unroll->args[0]->values[0].u : 1024);
     }
     forget_all(l);
     emit_marker(l, OP_LOOP);

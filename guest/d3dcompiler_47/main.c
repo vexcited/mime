@@ -308,7 +308,7 @@ static HRESULT run_hlsl(LPCVOID data, SIZE_T size, LPCSTR name, const D3D_SHADER
     DcText text = {};
     if (messages)
         DcTextAppend(&text, messages, length);
-    if (rc == -2) {
+    if (rc == -2 && !text.length) {
         if (name)
             DcTextPrintf(&text, "%s(1,1): ", name);
         else

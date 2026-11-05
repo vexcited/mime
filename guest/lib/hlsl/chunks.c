@@ -644,19 +644,45 @@ int hl_backend(Hlsl *h, HlProgram *prog, HlFunc *entry)
         hl_error(h, (HlLoc){0, 1, 1}, 3000, "shader model %u targets are not supported yet", prog->profile.major);
         return -1;
     }
-    IrShader *s = hl_alloc(h, sizeof(IrShader));
-    s->h = h;
-    s->prog = prog;
-    s->profile = prog->profile;
-    s->row_major_default = (h->options->flags & HLSL_PACK_MATRIX_ROW_MAJOR) != 0;
-    s->refactoring_allowed = !(h->options->flags & HLSL_IEEE_STRICTNESS);
-    s->cbuffer_count = prog->buffer_count;
-    s->cbuffers = hl_alloc(h, (prog->buffer_count + 1) * sizeof(IrCbuffer));
-    for (uint32_t i = 0; i < prog->buffer_count; i++)
-        s->cbuffers[i].buffer = prog->buffers[i];
-    if (ir_lower(s, entry))
-        return -1;
+    IrShader *s = nullptr;
+    h->messages_mark = h->messages.length;
+    /* loops that unrolled may leave arrays indexed by constants alone: lowered again, they stay in registers. */
+    for (int attempt = 0; attempt < 2; attempt++) {
+        s = hl_alloc(h, sizeof(IrShader));
+        s->h = h;
+        s->prog = prog;
+        s->profile = prog->profile;
+        s->row_major_default = (h->options->flags & HLSL_PACK_MATRIX_ROW_MAJOR) != 0;
+        s->refactoring_allowed = !(h->options->flags & HLSL_IEEE_STRICTNESS);
+        s->cbuffer_count = prog->buffer_count;
+        s->cbuffers = hl_alloc(h, (prog->buffer_count + 1) * sizeof(IrCbuffer));
+        for (uint32_t i = 0; i < prog->buffer_count; i++)
+            s->cbuffers[i].buffer = prog->buffers[i];
+        uint32_t errors = h->errors;
+        for (uint32_t i = 0; i < prog->global_count; i++)
+            if (prog->globals[i]->storage & ST_STATIC)
+                prog->globals[i]->lower = nullptr;
+        if (ir_lower(s, entry))
+            return -1;
+        bool again = false;
+        for (uint32_t i = 0; i < s->demoted_count; i++)
+            if (!s->demoted[i]->x_dynamic && s->demoted[i]->dynamic_index) {
+                s->demoted[i]->dynamic_index = false;
+                again = true;
+            }
+        if (!again || attempt || h->errors != errors)
+            break;
+        /* the messages of the first lowering are said again by the second. */
+        h->messages.length = h->messages_mark;
+        if (h->messages.data)
+            h->messages.data[h->messages.length] = 0;
+    }
+    if (h->options->flags & 0x40000000u)
+        ir_dump(s, &h->messages);
     ir_optimize(s);
+    /* a bit no flag uses asks for the ir among the messages, for debugging the compiler. */
+    if (h->options->flags & 0x80000000u)
+        ir_dump(s, &h->messages);
     HlBuf code = {};
     if (ir_emit_sm4(s, &code))
         return -1;

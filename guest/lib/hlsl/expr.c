@@ -1165,9 +1165,10 @@ static uint32_t parse_args(Parser *p, HlExpr ***out)
     uint32_t count = 0, capacity = 0;
     if (!at_punct(p, ')')) {
         for (;;) {
+            uint32_t before = p->pos;
             HlExpr *a = parse_assignment(p);
             HL_PUSH(p->h, args, count, capacity, a);
-            if (!accept_punct(p, ','))
+            if (!accept_punct(p, ',') || p->pos == before || hl_too_many_errors(p->h))
                 break;
         }
     }
@@ -1552,12 +1553,19 @@ HlExpr *init_list(Parser *p, HlLoc loc)
     HlExpr *e = new_expr(p, E_INIT_LIST, hl_type_void(p->h), loc);
     expect_punct(p, '{');
     uint32_t capacity = 0;
-    while (!at_punct(p, '}') && peek(p)->kind != TK_EOF) {
+    if (++p->nesting > 200) {
+        hl_error(p->h, loc, 3000, "initializers are nested too deeply");
+        p->nesting--;
+        return e;
+    }
+    while (!at_punct(p, '}') && peek(p)->kind != TK_EOF && !hl_too_many_errors(p->h)) {
+        uint32_t before = p->pos;
         HlExpr *a = at_punct(p, '{') ? init_list(p, peek(p)->loc) : parse_assignment(p);
         HL_PUSH(p->h, e->args, e->arg_count, capacity, a);
-        if (!accept_punct(p, ','))
+        if (!accept_punct(p, ',') || p->pos == before)
             break;
     }
+    p->nesting--;
     expect_punct(p, '}');
     return e;
 }

@@ -10,6 +10,8 @@ void parse_typedef_or_struct(Parser *p);
 
 void syntax_error(Parser *p, HlToken *t)
 {
+    if (hl_too_many_errors(p->h))
+        return;
     hl_error(p->h, t->loc, 3000, "syntax error: unexpected %s", t->kind == TK_EOF ? "end of file" :
              hl_sprintf(p->h, "token '%s'", hl_token_text(p->h, t)));
 }
@@ -415,9 +417,10 @@ void parse_attributes(Parser *p, HlAttribute **attrs, uint32_t *count)
         if (accept_punct(p, '(')) {
             uint32_t arg_capacity = 0;
             while (!at_punct(p, ')') && peek(p)->kind != TK_EOF) {
+                uint32_t before = p->pos;
                 HlExpr *e = parse_assignment(p);
                 HL_PUSH(p->h, a.args, a.arg_count, arg_capacity, e);
-                if (!accept_punct(p, ','))
+                if (!accept_punct(p, ',') || p->pos == before)
                     break;
             }
             expect_punct(p, ')');
@@ -801,6 +804,30 @@ static void parse_declarators(Parser *p, Specifiers *s, HlToken *first_name, HlB
         }
         if (global || buffer)
             v->type = default_major(p, v->type);
+        if (global && !buffer && v->type->kind == TY_OBJECT &&
+            (v->type->object == OBJ_CONSTANT_BUFFER || v->type->object == OBJ_TEXTURE_BUFFER)) {
+            /* ConstantBuffer<T>: a constant buffer of its own, whose one variable is the T named by the buffer. */
+            HlBuffer *b = hl_alloc(h, sizeof(HlBuffer));
+            b->name = v->name;
+            b->tbuffer = v->type->object == OBJ_TEXTURE_BUFFER;
+            b->loc = v->loc;
+            b->registers = v->registers;
+            b->register_count = v->register_count;
+            b->object = v;
+            v->type = default_major(p, v->type->elem ? v->type->elem : hl_type_vector(h, BT_FLOAT, 4));
+            v->storage |= ST_UNIFORM;
+            HL_PUSH(h, p->prog->buffers, p->prog->buffer_count, p->prog->buffer_capacity, b);
+            add_to_buffer(p, b, v);
+            HL_PUSH(h, p->prog->globals, p->prog->global_count, p->prog->global_capacity, v);
+            if (can_declare(p, v->name, name->loc, false)) {
+                Symbol *sym = declare(p, v->name, SYM_VAR);
+                sym->var = v;
+            }
+            name = nullptr;
+            if (!accept_punct(p, ','))
+                break;
+            continue;
+        }
         bool is_object = hl_type_has_object(v->type);
         if (buffer) {
             if (is_object) {
@@ -875,7 +902,13 @@ static HlStruct *parse_struct_body(Parser *p, const char *name, HlLoc loc, bool 
         s->type = hl_type_struct(h, st);
     }
     p->klass = st;
-    while (!at_punct(p, '}') && peek(p)->kind != TK_EOF) {
+    uint32_t last = ~0u;
+    while (!at_punct(p, '}') && peek(p)->kind != TK_EOF && !hl_too_many_errors(h)) {
+        /* every round reads something, even after errors. */
+        if (p->pos == last)
+            next(p);
+        last = p->pos;
+        uint32_t before = p->pos;
         if (accept_punct(p, ';'))
             continue;
         Specifiers s = {};
@@ -916,6 +949,8 @@ static HlStruct *parse_struct_body(Parser *p, const char *name, HlLoc loc, bool 
             expect_punct(p, ';');
             break;
         }
+        if (p->pos == before)
+            next(p);
     }
     expect_punct(p, '}');
     p->klass = outer;
@@ -946,7 +981,11 @@ static void parse_cbuffer(Parser *p, bool tbuffer)
         if (p->prog->buffers[i]->name == b->name)
             redefinition(p, b->name, name->loc);
     HL_PUSH(h, p->prog->buffers, p->prog->buffer_count, p->prog->buffer_capacity, b);
-    while (!at_punct(p, '}') && peek(p)->kind != TK_EOF) {
+    uint32_t last = ~0u;
+    while (!at_punct(p, '}') && peek(p)->kind != TK_EOF && !hl_too_many_errors(h)) {
+        if (p->pos == last)
+            next(p);
+        last = p->pos;
         if (accept_punct(p, ';'))
             continue;
         uint32_t before = p->pos;
@@ -986,9 +1025,14 @@ static bool parse_params(Parser *p, HlFunc *f)
     expect_punct(p, '(');
     if (at_ident(p, p->k.k_void) && hl_is_punct(peek_at(p, 1), ')'))
         next(p);
-    while (!at_punct(p, ')') && peek(p)->kind != TK_EOF) {
+    while (!at_punct(p, ')') && peek(p)->kind != TK_EOF && !hl_too_many_errors(h)) {
+        uint32_t before = p->pos;
         Specifiers s = {};
         parse_specifiers(p, &s);
+        if (p->pos == before) {
+            next(p);
+            continue;
+        }
         if (s.type->kind == TY_ERROR) {
             while (!at_punct(p, ')') && !at_punct(p, ',') && peek(p)->kind != TK_EOF)
                 next(p);
@@ -1295,13 +1339,13 @@ HlStmt *parse_block(Parser *p)
         return b;
     }
     uint32_t capacity = 0;
-    while (!at_punct(p, '}') && peek(p)->kind != TK_EOF) {
+    while (!at_punct(p, '}') && peek(p)->kind != TK_EOF && !hl_too_many_errors(h)) {
         uint32_t before = p->pos;
         HlStmt *s = parse_statement(p);
         HL_PUSH(h, b->stmts, b->stmt_count, capacity, s);
         if (p->pos == before)
             next(p);
-        if (h->errors >= 1000)
+        if (hl_too_many_errors(h))
             break;
     }
     expect_punct(p, '}');
@@ -1696,7 +1740,7 @@ void parse_program(Parser *p)
         parse_global(p);
         if (p->pos == before)
             next(p);
-        if (h->errors >= 1000)
+        if (hl_too_many_errors(h))
             break;
     }
 }

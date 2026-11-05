@@ -38,6 +38,9 @@ typedef struct Pp {
     uint32_t *stack;
     uint32_t *stack_conds;
     uint32_t depth, stack_capacity;
+    /* the work of all expansions, against sources that expand without end. */
+    uint32_t steps, nesting;
+    bool stopped;
     const char *k_defined, *k_va_args, *k_include, *k_define, *k_undef, *k_if, *k_ifdef, *k_ifndef, *k_elif,
         *k_else, *k_endif, *k_line, *k_pragma, *k_error, *k_once, *k_pack_matrix, *k_warning, *k_message;
 } Pp;
@@ -1300,10 +1303,19 @@ static HlToken *preprocess_tokens(Pp *pp, HlToken *t, bool directives)
 {
     Hlsl *h = pp->h;
     HlToken head = {}, *tail = &head;
-    uint32_t steps = 0;
+    if (pp->nesting >= HL_MAX_EXPANSION_DEPTH) {
+        hl_error(h, t->loc, 1009, "macro expansion is nested too deeply");
+        return t;
+    }
+    pp->nesting++;
     while (t->kind != TK_EOF) {
-        if (++steps > (64u << 20)) {
-            hl_error(h, t->loc, 1009, "macro expansion is too large");
+        /* every token any expansion looks at counts, across nested expansions too. */
+        if (++pp->steps > 4 * HL_MAX_TOKENS || pp->stopped) {
+            if (!pp->stopped)
+                hl_error(h, t->loc, 1009, "macro expansion is too large");
+            pp->stopped = true;
+            while (t->kind != TK_EOF)
+                t = t->next;
             break;
         }
         if (t->kind == TK_FILE_END) {
@@ -1325,6 +1337,7 @@ static HlToken *preprocess_tokens(Pp *pp, HlToken *t, bool directives)
         t = t->next;
     }
     tail->next = t;
+    pp->nesting--;
     if (directives && pp->cond_count > (pp->depth ? pp->stack_conds[0] : 0))
         hl_error(h, pp->conds[pp->cond_count - 1].loc, 1004, "unexpected end of file in conditional");
     return head.next ? head.next : t;

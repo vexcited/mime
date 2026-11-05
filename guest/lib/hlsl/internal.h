@@ -8,6 +8,13 @@
 
 #define HL_ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 
+/* limits that keep a broken or hostile source from taking the machine: fxc stops early too. */
+#define HL_MAX_ERRORS 100
+#define HL_MAX_MEMORY ((size_t)384 << 20)
+#define HL_MAX_TOKENS (1u << 20)
+#define HL_MAX_EXPANSION_DEPTH 256
+#define HL_MAX_INSTRUCTIONS (1u << 20)
+
 typedef struct HlBuf {
     char *data;
     size_t length, capacity;
@@ -48,11 +55,14 @@ struct Hlsl {
     void *fatal_ctx;
     HlChunk *chunks;
     uint8_t *at, *end;
+    size_t allocated;
 
     const char **interned;
     uint32_t intern_count, intern_capacity;
 
     HlBuf messages;
+    /* where the messages of the backend begin. */
+    size_t messages_mark;
     HlBuf output;
     uint32_t errors;
     bool warnings_are_errors;
@@ -75,6 +85,9 @@ struct Hlsl {
 };
 
 [[noreturn]] void hl_fatal(Hlsl *h);
+/* too large or too broken to go on: the error, then the fatal unwind. */
+[[noreturn]] void hl_abort(Hlsl *h, const char *what);
+static inline bool hl_too_many_errors(const Hlsl *h) { return h->errors >= HL_MAX_ERRORS; }
 /* zeroed; never NULL. */
 void *hl_alloc(Hlsl *h, size_t size);
 void *hl_realloc(Hlsl *h, void *p, size_t old_size, size_t size);
@@ -487,6 +500,8 @@ struct HlVar {
     bool assigned, used;
     /* an index that is not a constant reads it: it lives in an indexable array. */
     bool dynamic_index;
+    /* the lowering indexed it with a value that did not fold. */
+    bool x_dynamic;
     /* the lowering's data. */
     void *lower;
     uint32_t id;
