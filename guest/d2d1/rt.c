@@ -335,6 +335,24 @@ static BOOL dib_dc(int w, int h, HDC *dc, HBITMAP *bmp, void **bits, HGDIOBJ *ol
     return TRUE;
 }
 
+/* the pixels a wic lock really covers, which may be fewer than the target has when the bitmap is not windows' own. */
+static void lock_extent(D2dRt *rt, IWICBitmapLock *lock, UINT stride, UINT size, UINT32 *cols, UINT32 *rows)
+{
+    UINT lw = (UINT)rt->surface.w, lh = (UINT)rt->surface.h, bytes = D2dFormatBytes(rt->format);
+    if (FAILED(lock->lpVtbl->GetSize(lock, &lw, &lh)))
+        lw = (UINT)rt->surface.w, lh = (UINT)rt->surface.h;
+    *cols = lw < (UINT)rt->surface.w ? lw : (UINT)rt->surface.w;
+    *rows = lh < (UINT)rt->surface.h ? lh : (UINT)rt->surface.h;
+    if (bytes && stride && *cols > stride / bytes)
+        *cols = stride / bytes;
+    if (!stride || !bytes) {
+        *rows = 0;
+    } else if (*rows && ((UINT64)(*rows - 1) * stride + (UINT64)*cols * bytes > size)) {
+        UINT64 fit = size >= (UINT64)*cols * bytes ? (size - (UINT64)*cols * bytes) / stride + 1 : 0;
+        *rows = (UINT32)fit;
+    }
+}
+
 static void begin_target(D2dRt *rt)
 {
     switch (rt->kind) {
@@ -368,8 +386,10 @@ static void begin_target(D2dRt *rt)
             BYTE *data;
             lock->lpVtbl->GetStride(lock, &stride);
             lock->lpVtbl->GetDataPointer(lock, &size, &data);
-            for (int y = 0; y < rt->surface.h; y++)
-                D2dFormatLoad(rt->format, rt->pixel_format.alphaMode, rt->srgb, data + (SIZE_T)y * stride, D2dSurfaceRow(&rt->surface, y), (UINT32)rt->surface.w);
+            UINT32 cols, rows;
+            lock_extent(rt, lock, stride, size, &cols, &rows);
+            for (UINT32 y = 0; y < rows; y++)
+                D2dFormatLoad(rt->format, rt->pixel_format.alphaMode, rt->srgb, data + (SIZE_T)y * stride, D2dSurfaceRow(&rt->surface, y), cols);
             lock->lpVtbl->Release(lock);
         }
         break;
@@ -459,8 +479,10 @@ static void present_target(D2dRt *rt)
             BYTE *data;
             lock->lpVtbl->GetStride(lock, &stride);
             lock->lpVtbl->GetDataPointer(lock, &size, &data);
-            for (int y = 0; y < rt->surface.h; y++)
-                D2dFormatStore(rt->format, rt->pixel_format.alphaMode, rt->srgb, D2dSurfaceRow(&rt->surface, y), data + (SIZE_T)y * stride, (UINT32)rt->surface.w);
+            UINT32 cols, rows;
+            lock_extent(rt, lock, stride, size, &cols, &rows);
+            for (UINT32 y = 0; y < rows; y++)
+                D2dFormatStore(rt->format, rt->pixel_format.alphaMode, rt->srgb, D2dSurfaceRow(&rt->surface, y), data + (SIZE_T)y * stride, cols);
             lock->lpVtbl->Release(lock);
         }
         break;
