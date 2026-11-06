@@ -1681,6 +1681,12 @@ static void x_glGetActiveUniformBlockiv(MX_NATIVE_CALL *c)
     glGetActiveUniformBlockiv((GLuint)I(c, 0), (GLuint)I(c, 1), (GLenum)I(c, 2), (GLint *)I(c, 3));
 }
 
+void APIENTRY glGetActiveUniformName(GLuint name, GLuint index, GLsizei size, GLsizei *length, GLchar *out);
+static void x_glGetActiveUniformName(MX_NATIVE_CALL *c)
+{
+    glGetActiveUniformName((GLuint)I(c, 0), (GLuint)I(c, 1), (GLsizei)I(c, 2), (GLsizei *)I(c, 3), (GLchar *)I(c, 4));
+}
+
 void APIENTRY glGetActiveUniformsiv(GLuint name, GLsizei count, const GLuint *indices, GLenum pname,                                           GLint *params);
 static void x_glGetActiveUniformsiv(MX_NATIVE_CALL *c)
 {
@@ -2369,6 +2375,12 @@ GLuint APIENTRY glGetUniformBlockIndex(GLuint program, const GLchar *name);
 static void x_glGetUniformBlockIndex(MX_NATIVE_CALL *c)
 {
     c->rax = (unsigned long long)(ULONG_PTR)glGetUniformBlockIndex((GLuint)I(c, 0), (const GLchar *)I(c, 1));
+}
+
+void APIENTRY glGetUniformIndices(GLuint name, GLsizei count, const GLchar *const *names, GLuint *indices);
+static void x_glGetUniformIndices(MX_NATIVE_CALL *c)
+{
+    glGetUniformIndices((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLchar *const *)I(c, 2), (GLuint *)I(c, 3));
 }
 
 GLint APIENTRY glGetUniformLocation(GLuint name, const GLchar *uniform);
@@ -7107,6 +7119,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGetActiveUniform,
     x_glGetActiveUniformBlockName,
     x_glGetActiveUniformBlockiv,
+    x_glGetActiveUniformName,
     x_glGetActiveUniformsiv,
     x_glGetAttachedShaders,
     x_glGetAttribLocation,
@@ -7222,6 +7235,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGetTransformFeedbacki_v,
     x_glGetTransformFeedbackiv,
     x_glGetUniformBlockIndex,
+    x_glGetUniformIndices,
     x_glGetUniformLocation,
     x_glGetUniformSubroutineuiv,
     x_glGetUniformdv,
@@ -7967,4 +7981,4 @@ static const MX_NATIVE_FN g_functions[] = {
     x_wglUseFontOutlinesW,
 };
 
-const MX_NATIVE_TABLE OpenGL32X64Thunks = {1135, 0, g_functions};
+const MX_NATIVE_TABLE OpenGL32X64Thunks = {1137, 0, g_functions};

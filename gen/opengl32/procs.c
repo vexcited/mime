@@ -279,6 +279,7 @@ void APIENTRY glGetActiveSubroutineUniformiv(GLuint program, GLenum shadertype, 
 void APIENTRY glGetActiveUniform(GLuint name, GLuint index, GLsizei size, GLsizei *length, GLint *count,                                        GLenum *type, GLchar *out);
 void APIENTRY glGetActiveUniformBlockName(GLuint program, GLuint index, GLsizei size, GLsizei *length, GLchar *name);
 void APIENTRY glGetActiveUniformBlockiv(GLuint program, GLuint index, GLenum pname, GLint *params);
+void APIENTRY glGetActiveUniformName(GLuint name, GLuint index, GLsizei size, GLsizei *length, GLchar *out);
 void APIENTRY glGetActiveUniformsiv(GLuint name, GLsizei count, const GLuint *indices, GLenum pname,                                           GLint *params);
 void APIENTRY glGetAttachedShaders(GLuint program, GLsizei max, GLsizei *count, GLuint *shaders);
 GLint APIENTRY glGetAttribLocation(GLuint name, const GLchar *attrib);
@@ -394,6 +395,7 @@ void APIENTRY glGetTransformFeedbacki64_v(GLuint xfb, GLenum pname, GLuint index
 void APIENTRY glGetTransformFeedbacki_v(GLuint xfb, GLenum pname, GLuint index, GLint *param);
 void APIENTRY glGetTransformFeedbackiv(GLuint xfb, GLenum pname, GLint *param);
 GLuint APIENTRY glGetUniformBlockIndex(GLuint program, const GLchar *name);
+void APIENTRY glGetUniformIndices(GLuint name, GLsizei count, const GLchar *const *names, GLuint *indices);
 GLint APIENTRY glGetUniformLocation(GLuint name, const GLchar *uniform);
 void APIENTRY glGetUniformSubroutineuiv(GLenum shadertype, GLint location, GLuint *params);
 void APIENTRY glGetUniformdv(GLuint name, GLint location, GLdouble *params);
@@ -1458,6 +1460,7 @@ const GL_PROC GlProcs[] = {
     {"glGetActiveUniformARB", (const void *)glGetActiveUniform},
     {"glGetActiveUniformBlockName", (const void *)glGetActiveUniformBlockName},
     {"glGetActiveUniformBlockiv", (const void *)glGetActiveUniformBlockiv},
+    {"glGetActiveUniformName", (const void *)glGetActiveUniformName},
     {"glGetActiveUniformsiv", (const void *)glGetActiveUniformsiv},
     {"glGetAttachedObjectsARB", (const void *)glGetAttachedShaders},
     {"glGetAttachedShaders", (const void *)glGetAttachedShaders},
@@ -1586,6 +1589,7 @@ const GL_PROC GlProcs[] = {
     {"glGetTransformFeedbacki_v", (const void *)glGetTransformFeedbacki_v},
     {"glGetTransformFeedbackiv", (const void *)glGetTransformFeedbackiv},
     {"glGetUniformBlockIndex", (const void *)glGetUniformBlockIndex},
+    {"glGetUniformIndices", (const void *)glGetUniformIndices},
     {"glGetUniformLocation", (const void *)glGetUniformLocation},
     {"glGetUniformLocationARB", (const void *)glGetUniformLocation},
     {"glGetUniformSubroutineuiv", (const void *)glGetUniformSubroutineuiv},
@@ -2369,4 +2373,4 @@ const GL_PROC GlProcs[] = {
     {"wglUseFontOutlinesA", (const void *)wglUseFontOutlinesA},
     {"wglUseFontOutlinesW", (const void *)wglUseFontOutlinesW},
 };
-const ULONG GlProcCount = 1228;
+const ULONG GlProcCount = 1230;

@@ -315,7 +315,7 @@ typedef struct MimeGpuUniformInfo {
     int32_t texture[MIME_GPU_STAGES]; /* samplers: texture and sampler index of element 0, -1 if unused. images: the
                                          image slot in texture[0]. */
     int32_t binding;                  /* samplers and images: layout(binding), -1 without one. */
-    uint32_t pad;
+    uint32_t block;                   /* a member of a named uniform block: the block's index plus one, else 0. */
 } MimeGpuUniformInfo;
 
 typedef struct MimeGpuVertexAttrib {

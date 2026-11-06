@@ -277,6 +277,7 @@ EXPORTS
     glGetActiveUniform@28
     glGetActiveUniformBlockName@20
     glGetActiveUniformBlockiv@16
+    glGetActiveUniformName@20
     glGetActiveUniformsiv@20
     glGetAttachedShaders@16
     glGetAttribLocation@8
@@ -392,6 +393,7 @@ EXPORTS
     glGetTransformFeedbacki_v@16
     glGetTransformFeedbackiv@12
     glGetUniformBlockIndex@8
+    glGetUniformIndices@16
     glGetUniformLocation@8
     glGetUniformSubroutineuiv@12
     glGetUniformdv@12

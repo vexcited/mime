@@ -670,6 +670,7 @@ static void take_reflection(GlProgram *p)
         x->texture[0] = u[i].texture[0];
         x->texture[1] = u[i].texture[1];
         x->binding = u[i].binding;
+        x->block = u[i].block;
         if (x->texture[0] >= 0 || x->texture[1] >= 0) {
             x->units = gl_alloc((SIZE_T)x->size * sizeof(GLint));
             /* layout(binding = n) is the first value of the uniform. */
@@ -928,6 +929,12 @@ GLAPI void APIENTRY glGetActiveUniformsiv(GLuint name, GLsizei count, const GLui
             params[i] = (GLint)strlen(u->name) + 1;
             break;
         case GL_UNIFORM_BLOCK_INDEX:
+            params[i] = (GLint)u->block - 1;
+            break;
+        case GL_UNIFORM_IS_ROW_MAJOR:
+            params[i] = 0;
+            break;
+        case GL_UNIFORM_ATOMIC_COUNTER_BUFFER_INDEX:
             params[i] = -1;
             break;
         case GL_UNIFORM_OFFSET:
@@ -966,6 +973,8 @@ GLAPI GLint APIENTRY glGetUniformLocation(GLuint name, const GLchar *uniform)
     }
     for (uint32_t i = 0; i < p->uniform_count; i++) {
         GlUniform *u = &p->uniforms[i];
+        if (u->block)
+            continue;
         if (u->base_len == n && !strncmp(u->name, uniform, n) && element < u->size)
             return (GLint)(i * 4096 + (uint32_t)element);
         /* a struct member path written in full. */
@@ -1018,6 +1027,16 @@ GLAPI void APIENTRY glGetActiveUniformBlockiv(GLuint program, GLuint index, GLen
     case GL_UNIFORM_BLOCK_BINDING: *params = (GLint)block->binding; break;
     case GL_UNIFORM_BLOCK_DATA_SIZE: *params = (GLint)block->bytes; break;
     case GL_UNIFORM_BLOCK_NAME_LENGTH: *params = (GLint)strlen(block->name) + 1; break;
+    case GL_UNIFORM_BLOCK_ACTIVE_UNIFORMS:
+        *params = 0;
+        for (uint32_t i = 0; i < p->uniform_count; i++)
+            *params += p->uniforms[i].block == index + 1;
+        break;
+    case GL_UNIFORM_BLOCK_ACTIVE_UNIFORM_INDICES:
+        for (uint32_t i = 0; i < p->uniform_count; i++)
+            if (p->uniforms[i].block == index + 1)
+                *params++ = (GLint)i;
+        break;
     case GL_UNIFORM_BLOCK_REFERENCED_BY_VERTEX_SHADER: *params = (block->stages & 1) != 0; break;
     case GL_UNIFORM_BLOCK_REFERENCED_BY_FRAGMENT_SHADER: *params = (block->stages & 2) != 0; break;
     case GL_UNIFORM_BLOCK_REFERENCED_BY_TESS_CONTROL_SHADER: *params = (block->stages & 4) != 0; break;
@@ -2190,4 +2209,38 @@ GLAPI void APIENTRY glProgramBinary(GLuint name, GLenum format, const void *bina
     p->frag_bindings = tables[1];
     p->frag_bindings_len = table_len[1];
     glLinkProgram(name);
+}
+
+/* ---------------------------------------------------------------- uniform names and indices */
+
+GLAPI void APIENTRY glGetUniformIndices(GLuint name, GLsizei count, const GLchar *const *names, GLuint *indices)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlProgram *p = gl_program(ctx, name);
+    if (!p || !gl_program_ready(p) || count < 0) {
+        gl_error(ctx, p ? GL_INVALID_VALUE : GL_INVALID_VALUE);
+        return;
+    }
+    for (GLsizei i = 0; i < count; i++) {
+        indices[i] = GL_INVALID_INDEX;
+        SIZE_T n = strlen(names[i]);
+        for (uint32_t k = 0; k < p->uniform_count; k++) {
+            const GlUniform *u = &p->uniforms[k];
+            if (!strcmp(u->name, names[i]) || (u->base_len == n && !strncmp(u->name, names[i], n))) {
+                indices[i] = k;
+                break;
+            }
+        }
+    }
+}
+
+GLAPI void APIENTRY glGetActiveUniformName(GLuint name, GLuint index, GLsizei size, GLsizei *length, GLchar *out)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlProgram *p = gl_program(ctx, name);
+    if (!p || !gl_program_ready(p) || index >= p->uniform_count || size < 0) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    copy_name(p->uniforms[index].name, size, length, out);
 }

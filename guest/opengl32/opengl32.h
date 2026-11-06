@@ -191,6 +191,7 @@ typedef struct GlUniform {
     int32_t texture[MIME_GPU_STAGES];
     GLint *units;    /* samplers: the texture unit of each element, images: the image unit. */
     int32_t binding; /* layout(binding), -1 without one. */
+    uint32_t block;  /* a member of a named uniform block: its index plus one. */
 } GlUniform;
 
 typedef struct GlStorageBlock {

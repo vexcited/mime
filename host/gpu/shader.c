@@ -408,7 +408,8 @@ static Uniform *add_uniform(Program *p, const char *name)
 }
 
 /* flattens block members using OpenGL naming rules. */
-static void reflect_struct(Program *p, spvc_compiler c, spvc_type_id type_id, const char *prefix, uint32_t base)
+static void reflect_struct(Program *p, spvc_compiler c, spvc_type_id type_id, const char *prefix, uint32_t base,
+                           uint32_t block)
 {
     spvc_type t = spvc_compiler_get_type_handle(c, type_id);
     unsigned n = spvc_type_get_num_member_types(t);
@@ -431,7 +432,7 @@ static void reflect_struct(Program *p, spvc_compiler c, spvc_type_id type_id, co
                     snprintf(name, sizeof(name), "%s%s[%u].", prefix, mname, e);
                 else
                     snprintf(name, sizeof(name), "%s%s.", prefix, mname);
-                reflect_struct(p, c, spvc_type_get_base_type_id(mt), name, base + offset + e * astride);
+                reflect_struct(p, c, spvc_type_get_base_type_id(mt), name, base + offset + e * astride, block);
             }
             continue;
         }
@@ -442,6 +443,7 @@ static void reflect_struct(Program *p, spvc_compiler c, spvc_type_id type_id, co
         u->info.offset = base + offset;
         u->info.array_stride = astride;
         u->info.matrix_stride = mstride;
+        u->info.block = block;
     }
 }
 
@@ -715,7 +717,7 @@ static bool bind_resources(Program *p, spvc_compiler c, int stage, int bit, SpvE
         spvc_compiler_get_declared_struct_size(c, spvc_compiler_get_type_handle(c, ubo[i].base_type_id), &size);
         uint32_t slot = 0;
         if (loose) {
-            reflect_struct(p, c, ubo[i].base_type_id, "", 0);
+            reflect_struct(p, c, ubo[i].base_type_id, "", 0, 0);
             if (size > p->uniform_bytes)
                 p->uniform_bytes = (uint32_t)size;
         } else {
@@ -734,6 +736,12 @@ static bool bind_resources(Program *p, spvc_compiler c, int stage, int bit, SpvE
             p->blocks[index].info.bytes = (uint32_t)size;
             p->blocks[index].info.stages |= (uint32_t)bit;
             slot = index + 1;
+            /* the members are active uniforms named by the block when it has an instance name. */
+            char prefix[256] = "";
+            const char *instance = spvc_compiler_get_name(c, ubo[i].id);
+            if (instance && *instance)
+                snprintf(prefix, sizeof(prefix), "%s.", name);
+            reflect_struct(p, c, ubo[i].base_type_id, prefix, 0, index + 1);
         }
         spvc_compiler_set_decoration(c, ubo[i].id, SpvDecorationDescriptorSet, 0);
         spvc_compiler_set_decoration(c, ubo[i].id, SpvDecorationBinding, slot);
