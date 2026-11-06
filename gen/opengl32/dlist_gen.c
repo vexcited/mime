@@ -91,6 +91,7 @@ void APIENTRY gl_do_glPointParameteriv(GLenum pname, const GLint *values);
 void APIENTRY gl_do_glPointSize(GLfloat size);
 void APIENTRY gl_do_glPolygonMode(GLenum face, GLenum mode);
 void APIENTRY gl_do_glPolygonOffset(GLfloat factor, GLfloat units);
+void APIENTRY gl_do_glPolygonOffsetClamp(GLfloat factor, GLfloat units, GLfloat clamp);
 void APIENTRY gl_do_glPopMatrix(void);
 void APIENTRY gl_do_glPopName(void);
 void APIENTRY gl_do_glPrioritizeTextures(GLsizei n, const GLuint *textures, const GLclampf *priorities);
@@ -1688,10 +1689,26 @@ static void run_glPolygonOffset(const uint8_t *p)
     gl_do_glPolygonOffset(gl_dl_get_f(p, 0), gl_dl_get_f(p, 1));
 }
 
+static void rec_glPolygonOffsetClamp(GlContext *ctx, GLfloat factor, GLfloat units, GLfloat clamp)
+{
+    size_t at = 3 * 8;
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 88, at);
+    if (!p)
+        return;
+    gl_dl_put_f(p, 0, factor);
+    gl_dl_put_f(p, 1, units);
+    gl_dl_put_f(p, 2, clamp);
+}
+
+static void run_glPolygonOffsetClamp(const uint8_t *p)
+{
+    gl_do_glPolygonOffsetClamp(gl_dl_get_f(p, 0), gl_dl_get_f(p, 1), gl_dl_get_f(p, 2));
+}
+
 static void rec_glPopMatrix(GlContext *ctx)
 {
     size_t at = 0 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 88, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 89, at);
     if (!p)
         return;
 }
@@ -1704,7 +1721,7 @@ static void run_glPopMatrix(const uint8_t *p)
 static void rec_glPopName(GlContext *ctx)
 {
     size_t at = 0 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 89, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 90, at);
     if (!p)
         return;
 }
@@ -1721,7 +1738,7 @@ static void rec_glPrioritizeTextures(GlContext *ctx, GLsizei n, const GLuint *te
     at += gl_dl_blob(bytes_textures);
     size_t at_priorities = at, bytes_priorities = priorities ? gl_dl_bytes((long long)(n), sizeof(GLclampf)) : 0;
     at += gl_dl_blob(bytes_priorities);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 90, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 91, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)n);
@@ -1743,7 +1760,7 @@ static void run_glPrioritizeTextures(const uint8_t *p)
 static void rec_glPushAttrib(GlContext *ctx, GLbitfield mask)
 {
     size_t at = 1 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 91, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 92, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)mask);
@@ -1757,7 +1774,7 @@ static void run_glPushAttrib(const uint8_t *p)
 static void rec_glPushMatrix(GlContext *ctx)
 {
     size_t at = 0 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 92, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 93, at);
     if (!p)
         return;
 }
@@ -1770,7 +1787,7 @@ static void run_glPushMatrix(const uint8_t *p)
 static void rec_glPushName(GlContext *ctx, GLuint name)
 {
     size_t at = 1 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 93, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 94, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)name);
@@ -1784,7 +1801,7 @@ static void run_glPushName(const uint8_t *p)
 static void rec_glReadBuffer(GlContext *ctx, GLenum buf)
 {
     size_t at = 1 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 94, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 95, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)buf);
@@ -1798,7 +1815,7 @@ static void run_glReadBuffer(const uint8_t *p)
 static void rec_glRotated(GlContext *ctx, GLdouble angle, GLdouble x, GLdouble y, GLdouble z)
 {
     size_t at = 4 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 95, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 96, at);
     if (!p)
         return;
     gl_dl_put_d(p, 0, angle);
@@ -1815,7 +1832,7 @@ static void run_glRotated(const uint8_t *p)
 static void rec_glRotatef(GlContext *ctx, GLfloat angle, GLfloat x, GLfloat y, GLfloat z)
 {
     size_t at = 4 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 96, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 97, at);
     if (!p)
         return;
     gl_dl_put_f(p, 0, angle);
@@ -1832,7 +1849,7 @@ static void run_glRotatef(const uint8_t *p)
 static void rec_glScaled(GlContext *ctx, GLdouble x, GLdouble y, GLdouble z)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 97, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 98, at);
     if (!p)
         return;
     gl_dl_put_d(p, 0, x);
@@ -1848,7 +1865,7 @@ static void run_glScaled(const uint8_t *p)
 static void rec_glScalef(GlContext *ctx, GLfloat x, GLfloat y, GLfloat z)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 98, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 99, at);
     if (!p)
         return;
     gl_dl_put_f(p, 0, x);
@@ -1864,7 +1881,7 @@ static void run_glScalef(const uint8_t *p)
 static void rec_glScissor(GlContext *ctx, GLint x, GLint y, GLsizei w, GLsizei h)
 {
     size_t at = 4 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 99, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 100, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)x);
@@ -1881,7 +1898,7 @@ static void run_glScissor(const uint8_t *p)
 static void rec_glShadeModel(GlContext *ctx, GLenum mode)
 {
     size_t at = 1 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 100, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 101, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)mode);
@@ -1895,7 +1912,7 @@ static void run_glShadeModel(const uint8_t *p)
 static void rec_glStencilFunc(GlContext *ctx, GLenum func, GLint ref, GLuint mask)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 101, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 102, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)func);
@@ -1911,7 +1928,7 @@ static void run_glStencilFunc(const uint8_t *p)
 static void rec_glStencilFuncSeparate(GlContext *ctx, GLenum face, GLenum func, GLint ref, GLuint mask)
 {
     size_t at = 4 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 102, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 103, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)face);
@@ -1928,7 +1945,7 @@ static void run_glStencilFuncSeparate(const uint8_t *p)
 static void rec_glStencilMask(GlContext *ctx, GLuint mask)
 {
     size_t at = 1 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 103, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 104, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)mask);
@@ -1942,7 +1959,7 @@ static void run_glStencilMask(const uint8_t *p)
 static void rec_glStencilMaskSeparate(GlContext *ctx, GLenum face, GLuint mask)
 {
     size_t at = 2 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 104, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 105, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)face);
@@ -1957,7 +1974,7 @@ static void run_glStencilMaskSeparate(const uint8_t *p)
 static void rec_glStencilOp(GlContext *ctx, GLenum fail, GLenum zfail, GLenum zpass)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 105, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 106, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)fail);
@@ -1973,7 +1990,7 @@ static void run_glStencilOp(const uint8_t *p)
 static void rec_glStencilOpSeparate(GlContext *ctx, GLenum face, GLenum fail, GLenum zfail, GLenum zpass)
 {
     size_t at = 4 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 106, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 107, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)face);
@@ -1990,7 +2007,7 @@ static void run_glStencilOpSeparate(const uint8_t *p)
 static void rec_glTexEnvf(GlContext *ctx, GLenum target, GLenum pname, GLfloat param)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 107, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 108, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)target);
@@ -2008,7 +2025,7 @@ static void rec_glTexEnvfv(GlContext *ctx, GLenum target, GLenum pname, const GL
     size_t at = 3 * 8;
     size_t at_params = at, bytes_params = params ? gl_dl_bytes((long long)(gl_dl_tex_env_count(pname)), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_params);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 108, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 109, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)target);
@@ -2027,7 +2044,7 @@ static void run_glTexEnvfv(const uint8_t *p)
 static void rec_glTexEnvi(GlContext *ctx, GLenum target, GLenum pname, GLint param)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 109, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 110, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)target);
@@ -2045,7 +2062,7 @@ static void rec_glTexEnviv(GlContext *ctx, GLenum target, GLenum pname, const GL
     size_t at = 3 * 8;
     size_t at_params = at, bytes_params = params ? gl_dl_bytes((long long)(gl_dl_tex_env_count(pname)), sizeof(GLint)) : 0;
     at += gl_dl_blob(bytes_params);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 110, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 111, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)target);
@@ -2064,7 +2081,7 @@ static void run_glTexEnviv(const uint8_t *p)
 static void rec_glTexGend(GlContext *ctx, GLenum coord, GLenum pname, GLdouble param)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 111, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 112, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)coord);
@@ -2082,7 +2099,7 @@ static void rec_glTexGendv(GlContext *ctx, GLenum coord, GLenum pname, const GLd
     size_t at = 3 * 8;
     size_t at_params = at, bytes_params = params ? gl_dl_bytes((long long)(gl_dl_tex_gen_count(pname)), sizeof(GLdouble)) : 0;
     at += gl_dl_blob(bytes_params);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 112, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 113, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)coord);
@@ -2101,7 +2118,7 @@ static void run_glTexGendv(const uint8_t *p)
 static void rec_glTexGenf(GlContext *ctx, GLenum coord, GLenum pname, GLfloat param)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 113, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 114, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)coord);
@@ -2119,7 +2136,7 @@ static void rec_glTexGenfv(GlContext *ctx, GLenum coord, GLenum pname, const GLf
     size_t at = 3 * 8;
     size_t at_params = at, bytes_params = params ? gl_dl_bytes((long long)(gl_dl_tex_gen_count(pname)), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_params);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 114, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 115, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)coord);
@@ -2138,7 +2155,7 @@ static void run_glTexGenfv(const uint8_t *p)
 static void rec_glTexGeni(GlContext *ctx, GLenum coord, GLenum pname, GLint param)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 115, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 116, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)coord);
@@ -2156,7 +2173,7 @@ static void rec_glTexGeniv(GlContext *ctx, GLenum coord, GLenum pname, const GLi
     size_t at = 3 * 8;
     size_t at_params = at, bytes_params = params ? gl_dl_bytes((long long)(gl_dl_tex_gen_count(pname)), sizeof(GLint)) : 0;
     at += gl_dl_blob(bytes_params);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 116, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 117, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)coord);
@@ -2175,7 +2192,7 @@ static void run_glTexGeniv(const uint8_t *p)
 static void rec_glTexParameterf(GlContext *ctx, GLenum target, GLenum pname, GLfloat param)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 117, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 118, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)target);
@@ -2193,7 +2210,7 @@ static void rec_glTexParameterfv(GlContext *ctx, GLenum target, GLenum pname, co
     size_t at = 3 * 8;
     size_t at_params = at, bytes_params = params ? gl_dl_bytes((long long)(gl_dl_tex_parameter_count(pname)), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_params);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 118, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 119, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)target);
@@ -2212,7 +2229,7 @@ static void run_glTexParameterfv(const uint8_t *p)
 static void rec_glTexParameteri(GlContext *ctx, GLenum target, GLenum pname, GLint param)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 119, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 120, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)target);
@@ -2230,7 +2247,7 @@ static void rec_glTexParameteriv(GlContext *ctx, GLenum target, GLenum pname, co
     size_t at = 3 * 8;
     size_t at_params = at, bytes_params = params ? gl_dl_bytes((long long)(gl_dl_tex_parameter_count(pname)), sizeof(GLint)) : 0;
     at += gl_dl_blob(bytes_params);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 120, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 121, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)target);
@@ -2249,7 +2266,7 @@ static void run_glTexParameteriv(const uint8_t *p)
 static void rec_glTranslated(GlContext *ctx, GLdouble x, GLdouble y, GLdouble z)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 121, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 122, at);
     if (!p)
         return;
     gl_dl_put_d(p, 0, x);
@@ -2265,7 +2282,7 @@ static void run_glTranslated(const uint8_t *p)
 static void rec_glTranslatef(GlContext *ctx, GLfloat x, GLfloat y, GLfloat z)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 122, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 123, at);
     if (!p)
         return;
     gl_dl_put_f(p, 0, x);
@@ -2281,7 +2298,7 @@ static void run_glTranslatef(const uint8_t *p)
 static void rec_glUniform1f(GlContext *ctx, GLint l, GLfloat a)
 {
     size_t at = 2 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 123, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 124, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2298,7 +2315,7 @@ static void rec_glUniform1fv(GlContext *ctx, GLint l, GLsizei n, const GLfloat *
     size_t at = 3 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 124, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 125, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2317,7 +2334,7 @@ static void run_glUniform1fv(const uint8_t *p)
 static void rec_glUniform1i(GlContext *ctx, GLint l, GLint a)
 {
     size_t at = 2 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 125, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 126, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2334,7 +2351,7 @@ static void rec_glUniform1iv(GlContext *ctx, GLint l, GLsizei n, const GLint *v)
     size_t at = 3 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n), sizeof(GLint)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 126, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 127, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2353,7 +2370,7 @@ static void run_glUniform1iv(const uint8_t *p)
 static void rec_glUniform1ui(GlContext *ctx, GLint l, GLuint a)
 {
     size_t at = 2 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 127, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 128, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2370,7 +2387,7 @@ static void rec_glUniform1uiv(GlContext *ctx, GLint l, GLsizei n, const GLuint *
     size_t at = 3 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n), sizeof(GLuint)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 128, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 129, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2389,7 +2406,7 @@ static void run_glUniform1uiv(const uint8_t *p)
 static void rec_glUniform2f(GlContext *ctx, GLint l, GLfloat a, GLfloat b)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 129, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 130, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2407,7 +2424,7 @@ static void rec_glUniform2fv(GlContext *ctx, GLint l, GLsizei n, const GLfloat *
     size_t at = 3 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*2), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 130, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 131, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2426,7 +2443,7 @@ static void run_glUniform2fv(const uint8_t *p)
 static void rec_glUniform2i(GlContext *ctx, GLint l, GLint a, GLint b)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 131, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 132, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2444,7 +2461,7 @@ static void rec_glUniform2iv(GlContext *ctx, GLint l, GLsizei n, const GLint *v)
     size_t at = 3 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*2), sizeof(GLint)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 132, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 133, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2463,7 +2480,7 @@ static void run_glUniform2iv(const uint8_t *p)
 static void rec_glUniform2ui(GlContext *ctx, GLint l, GLuint a, GLuint b)
 {
     size_t at = 3 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 133, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 134, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2481,7 +2498,7 @@ static void rec_glUniform2uiv(GlContext *ctx, GLint l, GLsizei n, const GLuint *
     size_t at = 3 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*2), sizeof(GLuint)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 134, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 135, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2500,7 +2517,7 @@ static void run_glUniform2uiv(const uint8_t *p)
 static void rec_glUniform3f(GlContext *ctx, GLint l, GLfloat a, GLfloat b, GLfloat c)
 {
     size_t at = 4 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 135, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 136, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2519,7 +2536,7 @@ static void rec_glUniform3fv(GlContext *ctx, GLint l, GLsizei n, const GLfloat *
     size_t at = 3 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*3), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 136, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 137, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2538,7 +2555,7 @@ static void run_glUniform3fv(const uint8_t *p)
 static void rec_glUniform3i(GlContext *ctx, GLint l, GLint a, GLint b, GLint c)
 {
     size_t at = 4 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 137, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 138, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2557,7 +2574,7 @@ static void rec_glUniform3iv(GlContext *ctx, GLint l, GLsizei n, const GLint *v)
     size_t at = 3 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*3), sizeof(GLint)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 138, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 139, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2576,7 +2593,7 @@ static void run_glUniform3iv(const uint8_t *p)
 static void rec_glUniform3ui(GlContext *ctx, GLint l, GLuint a, GLuint b, GLuint c)
 {
     size_t at = 4 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 139, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 140, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2595,7 +2612,7 @@ static void rec_glUniform3uiv(GlContext *ctx, GLint l, GLsizei n, const GLuint *
     size_t at = 3 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*3), sizeof(GLuint)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 140, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 141, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2614,7 +2631,7 @@ static void run_glUniform3uiv(const uint8_t *p)
 static void rec_glUniform4f(GlContext *ctx, GLint l, GLfloat a, GLfloat b, GLfloat c, GLfloat d)
 {
     size_t at = 5 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 141, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 142, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2634,7 +2651,7 @@ static void rec_glUniform4fv(GlContext *ctx, GLint l, GLsizei n, const GLfloat *
     size_t at = 3 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*4), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 142, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 143, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2653,7 +2670,7 @@ static void run_glUniform4fv(const uint8_t *p)
 static void rec_glUniform4i(GlContext *ctx, GLint l, GLint a, GLint b, GLint c, GLint d)
 {
     size_t at = 5 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 143, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 144, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2673,7 +2690,7 @@ static void rec_glUniform4iv(GlContext *ctx, GLint l, GLsizei n, const GLint *v)
     size_t at = 3 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*4), sizeof(GLint)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 144, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 145, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2692,7 +2709,7 @@ static void run_glUniform4iv(const uint8_t *p)
 static void rec_glUniform4ui(GlContext *ctx, GLint l, GLuint a, GLuint b, GLuint c, GLuint d)
 {
     size_t at = 5 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 145, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 146, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2712,7 +2729,7 @@ static void rec_glUniform4uiv(GlContext *ctx, GLint l, GLsizei n, const GLuint *
     size_t at = 3 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*4), sizeof(GLuint)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 146, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 147, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2733,7 +2750,7 @@ static void rec_glUniformMatrix2fv(GlContext *ctx, GLint l, GLsizei n, GLboolean
     size_t at = 4 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*4), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 147, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 148, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2755,7 +2772,7 @@ static void rec_glUniformMatrix2x3fv(GlContext *ctx, GLint l, GLsizei n, GLboole
     size_t at = 4 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*6), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 148, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 149, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2777,7 +2794,7 @@ static void rec_glUniformMatrix2x4fv(GlContext *ctx, GLint l, GLsizei n, GLboole
     size_t at = 4 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*8), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 149, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 150, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2799,7 +2816,7 @@ static void rec_glUniformMatrix3fv(GlContext *ctx, GLint l, GLsizei n, GLboolean
     size_t at = 4 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*9), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 150, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 151, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2821,7 +2838,7 @@ static void rec_glUniformMatrix3x2fv(GlContext *ctx, GLint l, GLsizei n, GLboole
     size_t at = 4 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*6), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 151, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 152, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2843,7 +2860,7 @@ static void rec_glUniformMatrix3x4fv(GlContext *ctx, GLint l, GLsizei n, GLboole
     size_t at = 4 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*12), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 152, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 153, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2865,7 +2882,7 @@ static void rec_glUniformMatrix4fv(GlContext *ctx, GLint l, GLsizei n, GLboolean
     size_t at = 4 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*16), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 153, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 154, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2887,7 +2904,7 @@ static void rec_glUniformMatrix4x2fv(GlContext *ctx, GLint l, GLsizei n, GLboole
     size_t at = 4 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*8), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 154, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 155, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2909,7 +2926,7 @@ static void rec_glUniformMatrix4x3fv(GlContext *ctx, GLint l, GLsizei n, GLboole
     size_t at = 4 * 8;
     size_t at_v = at, bytes_v = v ? gl_dl_bytes((long long)(n*12), sizeof(GLfloat)) : 0;
     at += gl_dl_blob(bytes_v);
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 155, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 156, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)l);
@@ -2929,7 +2946,7 @@ static void run_glUniformMatrix4x3fv(const uint8_t *p)
 static void rec_glUseProgram(GlContext *ctx, GLuint name)
 {
     size_t at = 1 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 156, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 157, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)name);
@@ -2943,7 +2960,7 @@ static void run_glUseProgram(const uint8_t *p)
 static void rec_glViewport(GlContext *ctx, GLint x, GLint y, GLsizei w, GLsizei h)
 {
     size_t at = 4 * 8;
-    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 157, at);
+    uint8_t *p = gl_dl_emit(ctx, GL_DL_FIRST_GENERATED + 158, at);
     if (!p)
         return;
     gl_dl_put_i(p, 0, (uint64_t)(int64_t)x);
@@ -3046,6 +3063,7 @@ const GlDlRun gl_dl_run[] = {
     run_glPointSize,
     run_glPolygonMode,
     run_glPolygonOffset,
+    run_glPolygonOffsetClamp,
     run_glPopMatrix,
     run_glPopName,
     run_glPrioritizeTextures,
@@ -3117,7 +3135,7 @@ const GlDlRun gl_dl_run[] = {
     run_glUseProgram,
     run_glViewport,
 };
-const uint32_t gl_dl_run_count = 158;
+const uint32_t gl_dl_run_count = 159;
 
 GLAPI void APIENTRY glActiveTexture(GLenum texture)
 {
@@ -4701,6 +4719,24 @@ GLAPI void APIENTRY glPolygonOffset(GLfloat factor, GLfloat units)
             return;
     }
     gl_do_glPolygonOffset(factor, units);
+}
+
+GLAPI void APIENTRY glPolygonOffsetClamp(GLfloat factor, GLfloat units, GLfloat clamp)
+{
+    GlContext *ctx = gl_current();
+    if (ctx && ctx->dl.mode) {
+        BOOL run;
+        if (ctx->dl.in_begin && !0) {
+            gl_dl_error(ctx, GL_INVALID_OPERATION);
+            run = ctx->dl.mode == GL_COMPILE_AND_EXECUTE;
+        } else {
+            rec_glPolygonOffsetClamp(ctx, factor, units, clamp);
+            run = ctx->dl.mode == GL_COMPILE_AND_EXECUTE;
+        }
+        if (!run)
+            return;
+    }
+    gl_do_glPolygonOffsetClamp(factor, units, clamp);
 }
 
 GLAPI void APIENTRY glPopMatrix(void)
