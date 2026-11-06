@@ -128,6 +128,9 @@ enum {
 #define MIME_GPU_MAX_XFB_BUFFERS 4
 #define MIME_GPU_MAX_VIEWPORTS 16
 
+/* a viewport with a negative height flips the rows, and MimeGpuSetRaster says when depth runs 0 to 1: glClipControl. */
+#define MIME_GPU_FEATURE_CLIP_CONTROL (1ull << 40)
+
 typedef struct MimeGpuMem {
     uint32_t block;
     uint32_t pad;
@@ -457,6 +460,8 @@ typedef struct MimeGpuSetRaster {
     uint8_t winding;   /* MTLWinding of front faces as rendered. */
     uint8_t fill;      /* MTLTriangleFillMode */
     uint8_t depth_clip; /* bit 0 clips depth, bit 1 discards primitives before rasterization. */
+    uint8_t zero_to_one; /* clip space depth runs 0 to 1 and not -1 to 1, with MIME_GPU_FEATURE_CLIP_CONTROL. */
+    uint8_t pad[3];
     float depth_bias, slope_scale, bias_clamp;
 } MimeGpuSetRaster;
 

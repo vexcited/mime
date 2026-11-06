@@ -559,6 +559,7 @@ GLAPI void APIENTRY glPolygonOffset(GLfloat factor, GLfloat units)
     GL_CONTEXT_OR_RETURN();
     ctx->offset_factor = factor;
     ctx->offset_units = units;
+    ctx->offset_clamp = 0;
     ctx->dirty |= DIRTY_RASTER;
 }
 
@@ -968,7 +969,7 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
                                                                 : GL_CONTEXT_COMPATIBILITY_PROFILE_BIT;
         return 1;
     case GL_CONTEXT_FLAGS:
-        v[0] = 0;
+        v[0] = ctx->flags;
         return 1;
     case GL_PROVOKING_VERTEX:
         v[0] = ctx->provoking_vertex;
@@ -1393,6 +1394,8 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
                 return n;
         }
         int n = gl_compute_get(ctx, pname, v);
+        if (!n)
+            n = gl_dsa_get(ctx, pname, v);
         return n ? n : gl_ff_get(ctx, pname, v, colors);
     }
     }
@@ -1484,6 +1487,14 @@ GLAPI void APIENTRY glGetIntegeri_v(GLenum target, GLuint index, GLint *data)
     }
     if (gl_compute_get_indexed(ctx, target, index, data))
         return;
+    GLint64 binding_value;
+    if ((target >= GL_VERTEX_BINDING_DIVISOR && target <= GL_VERTEX_BINDING_STRIDE) || target == GL_VERTEX_BINDING_BUFFER) {
+        if (!gl_vertex_binding_get(ctx, target, index, &binding_value))
+            gl_error(ctx, GL_INVALID_VALUE);
+        else if (data)
+            *data = (GLint)binding_value;
+        return;
+    }
     glGetIntegerv(target, data);
 }
 

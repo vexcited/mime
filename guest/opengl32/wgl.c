@@ -378,7 +378,7 @@ GLAPI HGLRC WINAPI wglCreateLayerContext(HDC dc, int layer)
 
 GLAPI HGLRC WINAPI wglCreateContextAttribsARB(HDC dc, HGLRC share, const int *attribs)
 {
-    int major = 1, minor = 0, profile = WGL_CONTEXT_CORE_PROFILE_BIT_ARB;
+    int major = 1, minor = 0, profile = WGL_CONTEXT_CORE_PROFILE_BIT_ARB, flags = 0, reset = WGL_NO_RESET_NOTIFICATION_ARB;
     for (const int *a = attribs; a && a[0]; a += 2) {
         switch (a[0]) {
         case WGL_CONTEXT_MAJOR_VERSION_ARB:
@@ -389,6 +389,12 @@ GLAPI HGLRC WINAPI wglCreateContextAttribsARB(HDC dc, HGLRC share, const int *at
             break;
         case WGL_CONTEXT_PROFILE_MASK_ARB:
             profile = a[1];
+            break;
+        case WGL_CONTEXT_FLAGS_ARB:
+            flags = a[1];
+            break;
+        case WGL_CONTEXT_RESET_NOTIFICATION_STRATEGY_ARB:
+            reset = a[1];
             break;
         default:
             break;
@@ -406,7 +412,20 @@ GLAPI HGLRC WINAPI wglCreateContextAttribsARB(HDC dc, HGLRC share, const int *at
         major = GL_MAX_MAJOR;
         minor = GL_MAX_MINOR;
     }
-    return create_context(dc, (GlContext *)share, major, minor, profile);
+    if ((flags & ~(WGL_CONTEXT_DEBUG_BIT_ARB | WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB | WGL_CONTEXT_ROBUST_ACCESS_BIT_ARB)) ||
+        (reset != WGL_NO_RESET_NOTIFICATION_ARB && reset != WGL_LOSE_CONTEXT_ON_RESET_ARB)) {
+        set_last_error(ERROR_INVALID_PARAMETER);
+        return nullptr;
+    }
+    HGLRC rc = create_context(dc, (GlContext *)share, major, minor, profile);
+    GlContext *created = (GlContext *)rc;
+    if (created) {
+        created->flags = ((flags & WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB) ? GL_CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT : 0) |
+                         ((flags & WGL_CONTEXT_DEBUG_BIT_ARB) ? GL_CONTEXT_FLAG_DEBUG_BIT : 0) |
+                         ((flags & WGL_CONTEXT_ROBUST_ACCESS_BIT_ARB) ? GL_CONTEXT_FLAG_ROBUST_ACCESS_BIT : 0);
+        created->reset_strategy = reset == WGL_LOSE_CONTEXT_ON_RESET_ARB ? GL_LOSE_CONTEXT_ON_RESET : GL_NO_RESET_NOTIFICATION;
+    }
+    return rc;
 }
 
 static void release_current(void)
@@ -596,7 +615,7 @@ GLAPI int WINAPI wglGetSwapIntervalEXT(void)
 
 static constexpr char g_wgl_extensions[] = "WGL_ARB_extensions_string WGL_EXT_extensions_string WGL_ARB_pixel_format "
                                        "WGL_ARB_create_context WGL_ARB_create_context_profile WGL_EXT_swap_control "
-                                       "WGL_ARB_make_current_read";
+                                       "WGL_ARB_make_current_read WGL_ARB_create_context_robustness";
 
 GLAPI const char *WINAPI wglGetExtensionsStringARB(HDC dc)
 {

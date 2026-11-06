@@ -107,6 +107,7 @@ static void attrib_pointer(GLuint index, GLint size, GLenum type, BOOL normalize
     a->stride = stride;
     a->pointer = pointer;
     a->buffer = ctx->array_buffer;
+    gl_vao_legacy_pointer(ctx->vao, index);
     ctx->dirty |= DIRTY_VERTEX | DIRTY_PIPELINE;
 }
 
@@ -163,6 +164,7 @@ GLAPI void APIENTRY glVertexAttribDivisor(GLuint index, GLuint divisor)
         return;
     }
     ctx->vao->attribs[index].divisor = divisor;
+    gl_vao_legacy_divisor(ctx->vao, index);
     ctx->dirty |= DIRTY_VERTEX | DIRTY_PIPELINE;
 }
 
@@ -345,6 +347,12 @@ GLAPI void APIENTRY glGetVertexAttribiv(GLuint index, GLenum pname, GLint *param
         break;
     case GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING:
         *params = (GLint)a->buffer;
+        break;
+    case GL_VERTEX_ATTRIB_BINDING:
+        *params = ctx->vao->attrib_binding[index] ? ctx->vao->attrib_binding[index] - 1 : (GLint)index;
+        break;
+    case GL_VERTEX_ATTRIB_RELATIVE_OFFSET:
+        *params = ctx->vao->relative_offset[index];
         break;
     case GL_CURRENT_VERTEX_ATTRIB:
         for (int i = 0; i < 4; i++)
@@ -913,9 +921,16 @@ static void emit_raster(GlContext *ctx)
     r->winding = ctx->front_face == GL_CCW ? 0 : 1;
     r->fill = ctx->polygon_mode == GL_LINE ? 1 : 0;
     r->depth_clip = (!ctx->depth_clamp ? 1 : 0) | (ctx->st.rasterizer_discard ? 2 : 0);
+    if (!ctx->ff.window_draw) {
+        /* the rows are flipped by the viewport and the facing is the one in clip space. */
+        if (ctx->clip_upper_left)
+            r->winding ^= 1;
+        r->zero_to_one = ctx->clip_zero_to_one;
+    }
     if (ctx->polygon_offset_fill) {
         r->depth_bias = ctx->offset_units;
         r->slope_scale = ctx->offset_factor;
+        r->bias_clamp = ctx->offset_clamp;
     }
 }
 
@@ -988,6 +1003,10 @@ static BOOL prepare(GlContext *ctx, GlProgram *p, const GlVertexInput *in, const
         v->y = (float)ctx->viewport[1];
         v->width = (float)ctx->viewport[2];
         v->height = (float)ctx->viewport[3];
+        if (ctx->clip_upper_left && !ctx->ff.window_draw && v->height > 0) {
+            v->y += v->height;
+            v->height = -v->height;
+        }
         v->znear = (float)ctx->depth_range[0];
         v->zfar = (float)ctx->depth_range[1];
     }

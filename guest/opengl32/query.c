@@ -166,6 +166,10 @@ GLAPI GLboolean APIENTRY glIsQuery(GLuint name)
 GLAPI void APIENTRY glCreateQueries(GLenum target, GLsizei count, GLuint *names)
 {
     GL_CONTEXT_OR_RETURN();
+    if (count < 0) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
     if (!gl_query_target_known(target)) {
         gl_error(ctx, GL_INVALID_ENUM);
         return;
@@ -484,4 +488,10 @@ GLAPI void APIENTRY glEndConditionalRender(void)
     }
     ctx->st.condition = 0;
     ctx->st.skip = FALSE;
+}
+
+/* a query object of the target for a name that has none, as glCreateQueries makes it. */
+BOOL gl_query_create(GlContext *ctx, GLuint name, GLenum target)
+{
+    return query(ctx, name, target) != nullptr;
 }

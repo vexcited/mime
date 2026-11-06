@@ -87,6 +87,7 @@
 #define glPointSize gl_do_glPointSize
 #define glPolygonMode gl_do_glPolygonMode
 #define glPolygonOffset gl_do_glPolygonOffset
+#define glPolygonOffsetClamp gl_do_glPolygonOffsetClamp
 #define glPopMatrix gl_do_glPopMatrix
 #define glPopName gl_do_glPopName
 #define glPrioritizeTextures gl_do_glPrioritizeTextures
@@ -278,6 +279,7 @@ void APIENTRY gl_do_glPointParameteriv(GLenum pname, const GLint *values);
 void APIENTRY gl_do_glPointSize(GLfloat size);
 void APIENTRY gl_do_glPolygonMode(GLenum face, GLenum mode);
 void APIENTRY gl_do_glPolygonOffset(GLfloat factor, GLfloat units);
+void APIENTRY gl_do_glPolygonOffsetClamp(GLfloat factor, GLfloat units, GLfloat clamp);
 void APIENTRY gl_do_glPopMatrix(void);
 void APIENTRY gl_do_glPopName(void);
 void APIENTRY gl_do_glPrioritizeTextures(GLsizei n, const GLuint *textures, const GLclampf *priorities);

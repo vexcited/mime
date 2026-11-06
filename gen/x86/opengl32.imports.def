@@ -26,9 +26,12 @@ EXPORTS
     glBindProgramPipeline@4
     glBindRenderbuffer@8
     glBindTexture@8
+    glBindTextureUnit@8
     glBindTextures@12
     glBindTransformFeedback@8
     glBindVertexArray@4
+    glBindVertexBuffer@16
+    glBindVertexBuffers@20
     glBitmap@28
     glBlendColor@16
     glBlendEquation@4
@@ -40,12 +43,14 @@ EXPORTS
     glBlendFuncSeparatei@20
     glBlendFunci@12
     glBlitFramebuffer@40
+    glBlitNamedFramebuffer@48
     glBufferData@16
     glBufferStorage@16
     glBufferSubData@16
     glCallList@4
     glCallLists@12
     glCheckFramebufferStatus@4
+    glCheckNamedFramebufferStatus@8
     glClampColor@8
     glClear@4
     glClearAccum@16
@@ -58,12 +63,19 @@ EXPORTS
     glClearDepth@8
     glClearDepthf@4
     glClearIndex@4
+    glClearNamedBufferData@20
+    glClearNamedBufferSubData@28
+    glClearNamedFramebufferfi@20
+    glClearNamedFramebufferfv@16
+    glClearNamedFramebufferiv@16
+    glClearNamedFramebufferuiv@16
     glClearStencil@4
     glClearTexImage@20
     glClearTexSubImage@44
     glClientActiveTexture@4
     glClientActiveTextureARB@4
     glClientWaitSync@16
+    glClipControl@8
     glClipPlane@8
     glColor3b@12
     glColor3bv@4
@@ -108,20 +120,31 @@ EXPORTS
     glCompileShader@4
     glCompressedTexImage2D@32
     glCompressedTexSubImage2D@36
+    glCompressedTextureSubImage1D@28
+    glCompressedTextureSubImage2D@36
+    glCompressedTextureSubImage3D@44
     glCopyBufferSubData@20
     glCopyImageSubData@60
+    glCopyNamedBufferSubData@20
     glCopyPixels@20
     glCopyTexImage1D@28
     glCopyTexImage2D@32
     glCopyTexSubImage1D@24
     glCopyTexSubImage2D@32
+    glCopyTextureSubImage1D@24
+    glCopyTextureSubImage2D@32
+    glCopyTextureSubImage3D@36
     glCreateBuffers@8
+    glCreateFramebuffers@8
     glCreateProgram@0
     glCreateProgramPipelines@8
     glCreateQueries@12
+    glCreateRenderbuffers@8
     glCreateShader@4
     glCreateShaderProgramv@12
+    glCreateTextures@12
     glCreateTransformFeedbacks@8
+    glCreateVertexArrays@8
     glCullFace@4
     glDebugMessageCallback@8
     glDebugMessageControl@24
@@ -149,6 +172,7 @@ EXPORTS
     glDetachShader@8
     glDisable@4
     glDisableClientState@4
+    glDisableVertexArrayAttrib@8
     glDisableVertexAttribArray@4
     glDisablei@8
     glDiscardFramebufferEXT@12
@@ -179,6 +203,7 @@ EXPORTS
     glEdgeFlagv@4
     glEnable@4
     glEnableClientState@4
+    glEnableVertexArrayAttrib@8
     glEnableVertexAttribArray@4
     glEnablei@8
     glEnd@0
@@ -204,6 +229,7 @@ EXPORTS
     glFinish@0
     glFlush@0
     glFlushMappedBufferRange@12
+    glFlushMappedNamedBufferRange@12
     glFogCoordPointer@12
     glFogCoordd@8
     glFogCoorddv@4
@@ -213,6 +239,7 @@ EXPORTS
     glFogfv@8
     glFogi@8
     glFogiv@8
+    glFramebufferParameteri@12
     glFramebufferRenderbuffer@16
     glFramebufferTexture@16
     glFramebufferTexture1D@20
@@ -230,6 +257,7 @@ EXPORTS
     glGenTransformFeedbacks@8
     glGenVertexArrays@8
     glGenerateMipmap@4
+    glGenerateTextureMipmap@4
     glGetActiveAttrib@28
     glGetActiveSubroutineName@24
     glGetActiveSubroutineUniformName@24
@@ -247,6 +275,8 @@ EXPORTS
     glGetBufferPointerv@12
     glGetBufferSubData@16
     glGetClipPlane@8
+    glGetCompressedTextureImage@16
+    glGetCompressedTextureSubImage@40
     glGetDebugMessageLog@32
     glGetDoublei_v@12
     glGetDoublev@8
@@ -256,6 +286,9 @@ EXPORTS
     glGetFragDataIndex@8
     glGetFragDataLocation@8
     glGetFramebufferAttachmentParameteriv@16
+    glGetFramebufferParameteriv@12
+    glGetGraphicsResetStatus@0
+    glGetGraphicsResetStatusARB@0
     glGetHandleARB@4
     glGetInfoLogARB@16
     glGetInteger64v@8
@@ -271,6 +304,13 @@ EXPORTS
     glGetMaterialfv@12
     glGetMaterialiv@12
     glGetMultisamplefv@12
+    glGetNamedBufferParameteri64v@12
+    glGetNamedBufferParameteriv@12
+    glGetNamedBufferPointerv@12
+    glGetNamedBufferSubData@16
+    glGetNamedFramebufferAttachmentParameteriv@16
+    glGetNamedFramebufferParameteriv@12
+    glGetNamedRenderbufferParameteriv@12
     glGetObjectParameterfvARB@12
     glGetObjectParameterivARB@12
     glGetPixelMapfv@8
@@ -289,6 +329,10 @@ EXPORTS
     glGetProgramResourceiv@32
     glGetProgramStageiv@16
     glGetProgramiv@12
+    glGetQueryBufferObjecti64v@16
+    glGetQueryBufferObjectiv@16
+    glGetQueryBufferObjectui64v@16
+    glGetQueryBufferObjectuiv@16
     glGetQueryIndexediv@16
     glGetQueryObjecti64v@12
     glGetQueryObjectiv@12
@@ -315,6 +359,14 @@ EXPORTS
     glGetTexLevelParameteriv@16
     glGetTexParameterfv@12
     glGetTexParameteriv@12
+    glGetTextureImage@24
+    glGetTextureLevelParameterfv@16
+    glGetTextureLevelParameteriv@16
+    glGetTextureParameterIiv@12
+    glGetTextureParameterIuiv@12
+    glGetTextureParameterfv@12
+    glGetTextureParameteriv@12
+    glGetTextureSubImage@48
     glGetTransformFeedbackVarying@28
     glGetTransformFeedbacki64_v@16
     glGetTransformFeedbacki_v@16
@@ -326,6 +378,9 @@ EXPORTS
     glGetUniformfv@12
     glGetUniformiv@12
     glGetUniformuiv@12
+    glGetVertexArrayIndexed64iv@16
+    glGetVertexArrayIndexediv@16
+    glGetVertexArrayiv@12
     glGetVertexAttribIiv@12
     glGetVertexAttribIuiv@12
     glGetVertexAttribLdv@12
@@ -333,6 +388,42 @@ EXPORTS
     glGetVertexAttribdv@12
     glGetVertexAttribfv@12
     glGetVertexAttribiv@12
+    glGetnColorTable@20
+    glGetnColorTableARB@20
+    glGetnCompressedTexImage@16
+    glGetnCompressedTexImageARB@16
+    glGetnConvolutionFilter@20
+    glGetnConvolutionFilterARB@20
+    glGetnHistogram@24
+    glGetnHistogramARB@24
+    glGetnMapdv@16
+    glGetnMapdvARB@16
+    glGetnMapfv@16
+    glGetnMapfvARB@16
+    glGetnMapiv@16
+    glGetnMapivARB@16
+    glGetnMinmax@24
+    glGetnMinmaxARB@24
+    glGetnPixelMapfv@12
+    glGetnPixelMapfvARB@12
+    glGetnPixelMapuiv@12
+    glGetnPixelMapuivARB@12
+    glGetnPixelMapusv@12
+    glGetnPixelMapusvARB@12
+    glGetnPolygonStipple@8
+    glGetnPolygonStippleARB@8
+    glGetnSeparableFilter@32
+    glGetnSeparableFilterARB@32
+    glGetnTexImage@24
+    glGetnTexImageARB@24
+    glGetnUniformdv@16
+    glGetnUniformdvARB@16
+    glGetnUniformfv@16
+    glGetnUniformfvARB@16
+    glGetnUniformiv@16
+    glGetnUniformivARB@16
+    glGetnUniformuiv@16
+    glGetnUniformuivARB@16
     glHint@8
     glIndexMask@4
     glIndexPointer@12
@@ -351,6 +442,8 @@ EXPORTS
     glInvalidateBufferData@4
     glInvalidateBufferSubData@12
     glInvalidateFramebuffer@12
+    glInvalidateNamedFramebufferData@12
+    glInvalidateNamedFramebufferSubData@28
     glInvalidateSubFramebuffer@28
     glInvalidateTexImage@8
     glInvalidateTexSubImage@32
@@ -399,6 +492,8 @@ EXPORTS
     glMapGrid1f@12
     glMapGrid2d@40
     glMapGrid2f@24
+    glMapNamedBuffer@8
+    glMapNamedBufferRange@16
     glMaterialf@12
     glMaterialfv@12
     glMateriali@12
@@ -492,6 +587,18 @@ EXPORTS
     glMultiTexCoordP3uiv@12
     glMultiTexCoordP4ui@12
     glMultiTexCoordP4uiv@12
+    glNamedBufferData@16
+    glNamedBufferStorage@16
+    glNamedBufferSubData@16
+    glNamedFramebufferDrawBuffer@8
+    glNamedFramebufferDrawBuffers@12
+    glNamedFramebufferParameteri@12
+    glNamedFramebufferReadBuffer@8
+    glNamedFramebufferRenderbuffer@16
+    glNamedFramebufferTexture@16
+    glNamedFramebufferTextureLayer@20
+    glNamedRenderbufferStorage@16
+    glNamedRenderbufferStorageMultisample@20
     glNewList@8
     glNormal3b@12
     glNormal3bv@4
@@ -531,6 +638,8 @@ EXPORTS
     glPointSize@4
     glPolygonMode@8
     glPolygonOffset@8
+    glPolygonOffsetClamp@12
+    glPolygonOffsetClampEXT@12
     glPolygonStipple@4
     glPopAttrib@0
     glPopClientAttrib@0
@@ -623,6 +732,8 @@ EXPORTS
     glRasterPos4sv@4
     glReadBuffer@4
     glReadPixels@28
+    glReadnPixels@32
+    glReadnPixelsARB@32
     glRectd@32
     glRectdv@8
     glRectf@16
@@ -734,12 +845,28 @@ EXPORTS
     glTexParameterfv@12
     glTexParameteri@12
     glTexParameteriv@12
+    glTexStorage1D@16
     glTexStorage2D@20
     glTexStorage2DMultisample@24
     glTexStorage3D@24
     glTexSubImage1D@28
     glTexSubImage2D@36
     glTexSubImage3D@44
+    glTextureBarrier@0
+    glTextureParameterIiv@12
+    glTextureParameterIuiv@12
+    glTextureParameterf@12
+    glTextureParameterfv@12
+    glTextureParameteri@12
+    glTextureParameteriv@12
+    glTextureStorage1D@16
+    glTextureStorage2D@20
+    glTextureStorage2DMultisample@24
+    glTextureStorage3D@24
+    glTextureStorage3DMultisample@28
+    glTextureSubImage1D@28
+    glTextureSubImage2D@36
+    glTextureSubImage3D@44
     glTransformFeedbackBufferBase@12
     glTransformFeedbackBufferRange@20
     glTransformFeedbackVaryings@16
@@ -798,6 +925,7 @@ EXPORTS
     glUniformMatrix4x3fv@16
     glUniformSubroutinesuiv@12
     glUnmapBuffer@4
+    glUnmapNamedBuffer@4
     glUseProgram@4
     glUseProgramStages@12
     glValidateProgram@4
@@ -826,6 +954,14 @@ EXPORTS
     glVertex4iv@4
     glVertex4s@16
     glVertex4sv@4
+    glVertexArrayAttribBinding@12
+    glVertexArrayAttribFormat@24
+    glVertexArrayAttribIFormat@20
+    glVertexArrayAttribLFormat@20
+    glVertexArrayBindingDivisor@12
+    glVertexArrayElementBuffer@8
+    glVertexArrayVertexBuffer@20
+    glVertexArrayVertexBuffers@24
     glVertexAttrib1d@12
     glVertexAttrib1dv@8
     glVertexAttrib1f@8
@@ -862,7 +998,9 @@ EXPORTS
     glVertexAttrib4ubv@8
     glVertexAttrib4uiv@8
     glVertexAttrib4usv@8
+    glVertexAttribBinding@8
     glVertexAttribDivisor@8
+    glVertexAttribFormat@20
     glVertexAttribI1i@8
     glVertexAttribI1iv@8
     glVertexAttribI1ui@8
@@ -883,6 +1021,7 @@ EXPORTS
     glVertexAttribI4ui@20
     glVertexAttribI4uiv@8
     glVertexAttribI4usv@8
+    glVertexAttribIFormat@16
     glVertexAttribIPointer@20
     glVertexAttribL1d@12
     glVertexAttribL1dv@8
@@ -892,6 +1031,7 @@ EXPORTS
     glVertexAttribL3dv@8
     glVertexAttribL4d@36
     glVertexAttribL4dv@8
+    glVertexAttribLFormat@16
     glVertexAttribLPointer@20
     glVertexAttribP1ui@16
     glVertexAttribP1uiv@16
@@ -902,6 +1042,7 @@ EXPORTS
     glVertexAttribP4ui@16
     glVertexAttribP4uiv@16
     glVertexAttribPointer@24
+    glVertexBindingDivisor@8
     glVertexP2ui@8
     glVertexP2uiv@8
     glVertexP3ui@8

@@ -705,7 +705,7 @@ typedef struct Pipeline {
     bool valid;
     MimeGpuPipelineDesc desc;
     Program *program;
-    VkPipeline variants[4]; /* fill mode times depth clamp, when they are not dynamic. */
+    VkPipeline variants[8]; /* fill mode times depth clamp, when they are not dynamic, times the depth range of clip space. */
 } Pipeline;
 
 typedef struct Surface {
@@ -2098,7 +2098,7 @@ static VkPrimitiveTopology class_topology(uint32_t topology_class)
                                  : VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 }
 
-static VkPipeline build_pipeline(Pipeline *pl, uint32_t fill, bool clamp)
+static VkPipeline build_pipeline(Pipeline *pl, uint32_t fill, bool clamp, bool zero_to_one)
 {
     const MimeGpuPipelineDesc *d = &pl->desc;
     Program *p = pl->program;
@@ -2150,7 +2150,7 @@ static VkPipeline build_pipeline(Pipeline *pl, uint32_t fill, bool clamp)
     VkPipelineTessellationStateCreateInfo tess = {VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO, nullptr, 0,
                                                   patch_points ? patch_points : 3};
     VkPipelineViewportDepthClipControlCreateInfoEXT clip = {
-        VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_DEPTH_CLIP_CONTROL_CREATE_INFO_EXT, nullptr, VK_TRUE};
+        VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_DEPTH_CLIP_CONTROL_CREATE_INFO_EXT, nullptr, !zero_to_one};
     VkPipelineViewportStateCreateInfo viewport = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
                                                   g_clip_control ? &clip : nullptr, 0, g_viewports, nullptr, g_viewports,
                                                   nullptr};
@@ -2211,7 +2211,7 @@ static VkPipeline build_pipeline(Pipeline *pl, uint32_t fill, bool clamp)
 
 static void pipeline_drop(Channel *c, Pipeline *pl)
 {
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 8; i++)
         if (pl->variants[i])
             defer(c, (Garbage){.pipeline = pl->variants[i]});
     memset(pl, 0, sizeof(*pl));
@@ -2232,14 +2232,15 @@ static void pipeline_create(Channel *c, const MimeGpuPipelineCreate *pc)
     pl->program = p;
     pl->valid = true;
     /* prebuilds the most common pipeline variant. */
-    pl->variants[0] = build_pipeline(pl, 0, false);
+    pl->variants[0] = build_pipeline(pl, 0, false, false);
 }
 
-static VkPipeline pipeline_variant(Pipeline *pl, uint32_t fill, bool clamp)
+static VkPipeline pipeline_variant(Pipeline *pl, uint32_t fill, bool clamp, bool zero_to_one)
 {
-    uint32_t i = (g_polygon_mode ? 0 : fill ? 2 : 0) + (g_depth_clamp ? 0 : clamp ? 1 : 0);
+    zero_to_one = zero_to_one && g_clip_control;
+    uint32_t i = (g_polygon_mode ? 0 : fill ? 2 : 0) + (g_depth_clamp ? 0 : clamp ? 1 : 0) + (zero_to_one ? 4 : 0);
     if (!pl->variants[i] && pl->program)
-        pl->variants[i] = build_pipeline(pl, g_polygon_mode ? 0 : fill, g_depth_clamp ? false : clamp);
+        pl->variants[i] = build_pipeline(pl, g_polygon_mode ? 0 : fill, g_depth_clamp ? false : clamp, zero_to_one);
     return pl->variants[i];
 }
 
@@ -2751,7 +2752,7 @@ static bool flush_state(Channel *c)
     if (!pl || !pl->valid || !pl->program || !c->pass_live)
         return false;
     bool clamp = !(c->st.raster.depth_clip & 1);
-    VkPipeline pipeline = pipeline_variant(pl, c->st.raster.fill, clamp);
+    VkPipeline pipeline = pipeline_variant(pl, c->st.raster.fill, clamp, c->st.raster.zero_to_one);
     if (!pipeline)
         return false;
     if (!c->rendering) {
@@ -2813,7 +2814,7 @@ static bool flush_state(Channel *c)
             vs[i] = (c->st.viewport_own_mask & (1u << i)) ? c->st.viewport_own[i] : c->st.viewport;
             if (vs[i].width <= 0)
                 vs[i].width = 1;
-            if (vs[i].height <= 0)
+            if (vs[i].height == 0)
                 vs[i].height = 1;
         }
         g_vk.fn.vkCmdSetViewport(cb, 0, g_viewports, vs);
@@ -3996,7 +3997,7 @@ uint64_t mime_gpu_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *channel
     Channel *c = calloc(1, sizeof(Channel));
     c->vm = vm;
     c->hdr = (MimeGpuHeader *)base;
-    c->hdr->features = g_storage ? MIME_GPU_FEATURE_COMPUTE : 0;
+    c->hdr->features = (g_storage ? MIME_GPU_FEATURE_COMPUTE : 0) | (g_clip_control ? MIME_GPU_FEATURE_CLIP_CONTROL : 0);
     c->ring = base + MIME_GPU_HEADER_SIZE;
     c->hdr->features |= (g_geometry ? MIME_GPU_FEATURE_GEOMETRY : 0) | (g_tessellation ? MIME_GPU_FEATURE_TESSELLATION : 0) |
                         (g_xfb && g_queries ? MIME_GPU_FEATURE_FEEDBACK : 0) |
@@ -4122,7 +4123,7 @@ void mime_gpu_close(uint64_t channel)
     for (uint32_t i = 0; i < c->textures_cap; i++)
         texture_free(nullptr, &c->textures[i]);
     for (uint32_t i = 0; i < c->pipelines_cap; i++)
-        for (int k = 0; k < 4; k++)
+        for (int k = 0; k < 8; k++)
             if (c->pipelines[i].variants[k])
                 g_vk.fn.vkDestroyPipeline(g_vk.device, c->pipelines[i].variants[k], nullptr);
     for (uint32_t i = 0; i < c->programs_cap; i++)

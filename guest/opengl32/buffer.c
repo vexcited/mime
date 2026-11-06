@@ -56,9 +56,20 @@ GLAPI void APIENTRY glGenBuffers(GLsizei n, GLuint *buffers)
         buffers[i] = gl_name_new(&ctx->shared->buffers);
 }
 
+static GlBuffer *make(GlContext *ctx, GLuint name);
+
 GLAPI void APIENTRY glCreateBuffers(GLsizei n, GLuint *buffers)
 {
-    glGenBuffers(n, buffers);
+    GL_CONTEXT_OR_RETURN();
+    if (n < 0) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    for (GLsizei i = 0; i < n; i++) {
+        buffers[i] = gl_name_new(&ctx->shared->buffers);
+        if (!make(ctx, buffers[i]))
+            gl_error(ctx, GL_OUT_OF_MEMORY);
+    }
 }
 
 static GlBuffer *make(GlContext *ctx, GLuint name)
