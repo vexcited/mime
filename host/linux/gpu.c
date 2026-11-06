@@ -3672,7 +3672,6 @@ static void execute(Channel *c, const MimeGpuCmd *cmd)
         NEED(MimeGpuSetViewport);
         const MimeGpuSetViewport *v = BODY(MimeGpuSetViewport);
         c->st.viewport = (VkViewport){v->x, v->y, v->width, v->height, v->znear, v->zfar};
-        c->st.viewport_own_mask = 0;
         c->st.dirty |= DIRTY_VIEWPORT;
         break;
     }
@@ -3700,7 +3699,6 @@ static void execute(Channel *c, const MimeGpuCmd *cmd)
         NEED(MimeGpuRect);
         c->st.scissor = *BODY(MimeGpuRect);
         c->st.has_scissor = true;
-        c->st.scissor_own_mask = 0;
         c->st.dirty |= DIRTY_SCISSOR;
         break;
     case MIME_GPU_SET_BLEND_COLOR:

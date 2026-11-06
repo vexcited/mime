@@ -755,6 +755,7 @@ GLAPI void APIENTRY glClear(GLbitfield mask)
                 r->width = t.width;
                 r->height = t.height;
             }
+            gl_stage_emit_viewports(ctx, DIRTY_SCISSOR);
             ctx->dirty &= ~DIRTY_SCISSOR;
         }
         MimeGpuClear *c = gl_emit(MIME_GPU_CLEAR, sizeof(MimeGpuClear));
