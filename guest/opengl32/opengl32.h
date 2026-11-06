@@ -197,7 +197,18 @@ typedef struct GlStorageBlock {
     char *name;
     uint32_t bytes, stages, variables;
     GLuint binding;
+    uint32_t slot; /* the block's place in the host program. */
 } GlStorageBlock;
+
+/* the atomic counters of one binding, which the host keeps in a storage block of its own. */
+typedef struct GlCounterBuffer {
+    uint32_t slot, binding, stages, bytes, counters;
+} GlCounterBuffer;
+
+typedef struct GlCounter {
+    char *name;
+    uint32_t binding, offset, size, stages;
+} GlCounter;
 
 typedef struct GlUniformBlock {
     char *name;
@@ -267,6 +278,10 @@ typedef struct GlProgram {
     uint32_t local_size[3];
     GlStorageBlock *storage;
     uint32_t storage_count;
+    GlCounterBuffer *counter_buffers;
+    uint32_t counter_buffer_count;
+    GlCounter *counters;
+    uint32_t counter_count;
 } GlProgram;
 
 typedef struct GlVertexAttrib {
@@ -564,8 +579,9 @@ typedef struct GlContext {
     /* bindings. */
     GLuint array_buffer, pixel_pack, pixel_unpack, copy_read, copy_write, uniform_buffer;
     GlBufferBinding uniform_bindings[MIME_GPU_MAX_UNIFORM_BLOCKS];
-    GLuint storage_buffer, dispatch_indirect_buffer, draw_indirect_buffer, parameter_buffer;
+    GLuint atomic_buffer, storage_buffer, dispatch_indirect_buffer, draw_indirect_buffer, parameter_buffer;
     GlBufferBinding storage_bindings[MIME_GPU_MAX_STORAGE_BLOCKS];
+    GlBufferBinding atomic_bindings[MIME_GPU_MAX_ATOMIC_BINDINGS];
     struct {
         GLuint texture;
         GLint level, layer;
@@ -676,6 +692,8 @@ static inline GlContext *gl_current(void)
 }
 
 void gl_error(GlContext *ctx, GLenum error);
+int gl_atomics_get(GlContext *ctx, GLenum pname, GLdouble *v);
+BOOL gl_atomics_get_indexed(GlContext *ctx, GLenum target, GLuint index, GLint *data);
 GlBlend *gl_blend_at(GlContext *ctx, unsigned index);       /* the state of a draw buffer. */
 GLboolean *gl_color_mask_at(GlContext *ctx, unsigned index);
 const char *gl_extension_string(void); /* extensions.c: the space separated list. */

@@ -278,7 +278,7 @@ typedef struct MimeGpuStorageBlockInfo {
     uint32_t stages;
     int32_t binding; /* layout(binding), -1 without one. */
     uint32_t variables;
-    uint32_t pad;
+    uint32_t atomic; /* the block holds the atomic counters of the binding, see MimeGpuCounterInfo. */
 } MimeGpuStorageBlockInfo;
 
 /* an atomic counter buffer: the counters share a binding and sit at offsets of their own. */
@@ -287,6 +287,8 @@ typedef struct MimeGpuCounterInfo {
     uint32_t binding;
     uint32_t offset;
     uint32_t stages;
+    uint32_t array_size;
+    uint32_t pad;
 } MimeGpuCounterInfo;
 
 typedef struct MimeGpuUniformBlockInfo {
@@ -577,6 +579,7 @@ typedef struct MimeGpuDrawXfb {
 } MimeGpuDrawXfb;
 #define MIME_GPU_MAX_STORAGE_BLOCKS 16
 #define MIME_GPU_MAX_IMAGES 16
+#define MIME_GPU_MAX_ATOMIC_BINDINGS 8 /* atomic counter buffer binding points. */
 
 typedef struct MimeGpuDispatch {
     MimeGpuCmd cmd;

@@ -94,6 +94,8 @@ static const GlExtension g_extensions[] = {
     {"GL_KHR_robustness", 0},
     {"GL_ARB_polygon_offset_clamp", 0},
     {"GL_EXT_polygon_offset_clamp", 0},
+    {"GL_ARB_shader_atomic_counters", MIME_GPU_FEATURE_COMPUTE},
+    {"GL_ARB_shader_atomic_counter_ops", MIME_GPU_FEATURE_COMPUTE},
 };
 
 #define EXTENSION_MAX 512

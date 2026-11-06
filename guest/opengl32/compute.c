@@ -33,27 +33,32 @@ GLAPI void APIENTRY glShaderStorageBlockBinding(GLuint program, GLuint index, GL
     p->storage[index].binding = binding;
 }
 
-/* sends the buffer of each storage block of the program. the device lock must be held. */
+static void emit_binding(GlContext *ctx, uint32_t slot, const GlBufferBinding *binding)
+{
+    GlBuffer *buffer = gl_buffer(ctx, binding->name);
+    MimeGpuSetStorageBuffer *c = gl_emit(MIME_GPU_SET_STORAGE_BUFFER, sizeof(MimeGpuSetStorageBuffer));
+    c->slot = slot;
+    if (!buffer || !buffer->mem.ptr || binding->offset >= buffer->size)
+        return;
+    if (buffer->mapped && !(buffer->map_access & GL_MAP_PERSISTENT_BIT))
+        return;
+    uint64_t size = binding->whole ? buffer->size : binding->size;
+    if (size > buffer->size - binding->offset)
+        size = buffer->size - binding->offset;
+    c->mem = gl_mem(&buffer->mem);
+    c->mem.offset += binding->offset;
+    c->size = size;
+    buffer->gpu_write = TRUE;
+    buffer->last_use = gl_batch_fence();
+}
+
+/* sends the buffer of each storage block and atomic counter binding of the program. the device lock must be held. */
 BOOL gl_emit_storage(GlContext *ctx, GlProgram *p)
 {
-    for (uint32_t i = 0; i < p->storage_count; i++) {
-        const GlBufferBinding *binding = &ctx->storage_bindings[p->storage[i].binding];
-        GlBuffer *buffer = gl_buffer(ctx, binding->name);
-        MimeGpuSetStorageBuffer *c = gl_emit(MIME_GPU_SET_STORAGE_BUFFER, sizeof(MimeGpuSetStorageBuffer));
-        c->slot = i;
-        if (!buffer || !buffer->mem.ptr || binding->offset >= buffer->size)
-            continue;
-        if (buffer->mapped && !(buffer->map_access & GL_MAP_PERSISTENT_BIT))
-            continue;
-        uint64_t size = binding->whole ? buffer->size : binding->size;
-        if (size > buffer->size - binding->offset)
-            size = buffer->size - binding->offset;
-        c->mem = gl_mem(&buffer->mem);
-        c->mem.offset += binding->offset;
-        c->size = size;
-        buffer->gpu_write = TRUE;
-        buffer->last_use = gl_batch_fence();
-    }
+    for (uint32_t i = 0; i < p->storage_count; i++)
+        emit_binding(ctx, p->storage[i].slot, &ctx->storage_bindings[p->storage[i].binding]);
+    for (uint32_t i = 0; i < p->counter_buffer_count; i++)
+        emit_binding(ctx, p->counter_buffers[i].slot, &ctx->atomic_bindings[p->counter_buffers[i].binding]);
     return TRUE;
 }
 
@@ -283,7 +288,7 @@ int gl_compute_get(GlContext *ctx, GLenum pname, GLdouble *v)
         v[2] = 64;
         return 3;
     default:
-        return 0;
+        return gl_atomics_get(ctx, pname, v);
     }
 }
 
@@ -334,7 +339,7 @@ BOOL gl_compute_get_indexed(GlContext *ctx, GLenum target, GLuint index, GLint *
         return TRUE;
     }
     default:
-        return FALSE;
+        return gl_atomics_get_indexed(ctx, target, index, data);
     }
 }
 
@@ -382,6 +387,8 @@ static uint32_t resource_count(GlProgram *p, GLenum iface)
         return p->storage_count;
     case GL_PROGRAM_INPUT:
         return p->compute ? 0 : p->attrib_count;
+    case GL_ATOMIC_COUNTER_BUFFER:
+        return p->counter_buffer_count;
     default:
         return 0;
     }
@@ -435,6 +442,10 @@ GLAPI void APIENTRY glGetProgramInterfaceiv(GLuint program, GLenum iface, GLenum
             for (uint32_t i = 0; i < n; i++)
                 if ((GLint)p->storage[i].variables > value)
                     value = (GLint)p->storage[i].variables;
+        if (iface == GL_ATOMIC_COUNTER_BUFFER)
+            for (uint32_t i = 0; i < n; i++)
+                if ((GLint)p->counter_buffers[i].counters > value)
+                    value = (GLint)p->counter_buffers[i].counters;
         break;
     default:
         gl_error(ctx, GL_INVALID_OPERATION);
@@ -503,8 +514,10 @@ static BOOL resource_property(GlProgram *p, GLenum iface, uint32_t index, GLenum
     const GlUniform *u = iface == GL_UNIFORM ? &p->uniforms[index] : nullptr;
     switch (prop) {
     case GL_NAME_LENGTH:
+        if (iface == GL_ATOMIC_COUNTER_BUFFER)
+            return FALSE;
         *out = (GLint)strlen(resource_name(p, iface, index)) + 1;
-        return iface != GL_ATOMIC_COUNTER_BUFFER;
+        return TRUE;
     case GL_TYPE:
         *out = u ? (GLint)u->type : iface == GL_PROGRAM_INPUT ? (GLint)p->attribs[index].type : 0;
         return u || iface == GL_PROGRAM_INPUT;
@@ -535,6 +548,8 @@ static BOOL resource_property(GlProgram *p, GLenum iface, uint32_t index, GLenum
             *out = (GLint)p->blocks[index].binding;
         else if (iface == GL_SHADER_STORAGE_BLOCK)
             *out = (GLint)p->storage[index].binding;
+        else if (iface == GL_ATOMIC_COUNTER_BUFFER)
+            *out = (GLint)p->counter_buffers[index].binding;
         else
             return FALSE;
         return TRUE;
@@ -543,6 +558,8 @@ static BOOL resource_property(GlProgram *p, GLenum iface, uint32_t index, GLenum
             *out = (GLint)p->blocks[index].bytes;
         else if (iface == GL_SHADER_STORAGE_BLOCK)
             *out = (GLint)p->storage[index].bytes;
+        else if (iface == GL_ATOMIC_COUNTER_BUFFER)
+            *out = (GLint)p->counter_buffers[index].bytes;
         else
             return FALSE;
         return TRUE;
@@ -551,6 +568,8 @@ static BOOL resource_property(GlProgram *p, GLenum iface, uint32_t index, GLenum
             *out = (GLint)p->storage[index].variables;
         else if (iface == GL_UNIFORM_BLOCK)
             *out = 0;
+        else if (iface == GL_ATOMIC_COUNTER_BUFFER)
+            *out = (GLint)p->counter_buffers[index].counters;
         else
             return FALSE;
         return TRUE;
@@ -560,9 +579,10 @@ static BOOL resource_property(GlProgram *p, GLenum iface, uint32_t index, GLenum
         GLint bit = prop == GL_REFERENCED_BY_VERTEX_SHADER ? 1 : prop == GL_REFERENCED_BY_FRAGMENT_SHADER ? 2 : 4;
         GLint mask = iface == GL_UNIFORM_BLOCK ? (GLint)p->blocks[index].stages
                      : iface == GL_SHADER_STORAGE_BLOCK ? (GLint)p->storage[index].stages
+                     : iface == GL_ATOMIC_COUNTER_BUFFER ? (GLint)p->counter_buffers[index].stages
                      : iface == GL_PROGRAM_INPUT        ? 1
                                                         : stage_mask;
-        if (p->compute && (iface == GL_UNIFORM_BLOCK || iface == GL_SHADER_STORAGE_BLOCK))
+        if (p->compute && (iface == GL_UNIFORM_BLOCK || iface == GL_SHADER_STORAGE_BLOCK || iface == GL_ATOMIC_COUNTER_BUFFER))
             mask = 4;
         *out = (mask & bit) != 0;
         return TRUE;

@@ -6,6 +6,7 @@
  * OpenGL's depth range directly.
  */
 #include "shader.h"
+#include "glsl_atomics.h"
 
 #include <glslang/Include/glslang_c_interface.h>
 #include <glslang/Public/resource_limits_c.h>
@@ -382,6 +383,33 @@ static void add_binding(Program *p, uint32_t binding, uint32_t count, uint32_t m
     p->bindings[p->binding_count++] = (MimeShaderBinding){binding, count, mask, kind, slot, gl_type, bytes};
 }
 
+/* lifts the source of a stage and takes its atomic counters into the program. */
+static char *lift_stage(Program *p, const char *src, size_t len, bool fragment, uint32_t bit)
+{
+    MimeAtomicDecl decls[MIME_ATOMICS_MAX];
+    unsigned count = 0;
+    char *rewritten = mime_glsl_atomics(src, len, decls, &count);
+    char *text = rewritten ? lift_source(rewritten, strlen(rewritten), fragment) : lift_source(src, len, fragment);
+    free(rewritten);
+    for (unsigned i = 0; i < count; i++) {
+        unsigned k;
+        for (k = 0; k < p->counter_count; k++)
+            if (!strcmp(p->counters[k].name, decls[i].name) && p->counters[k].info.binding == decls[i].binding)
+                break;
+        if (k == p->counter_count) {
+            if (k == sizeof(p->counters) / sizeof(p->counters[0]))
+                continue;
+            p->counters[k].name = strdup(decls[i].name);
+            p->counters[k].info.binding = decls[i].binding;
+            p->counters[k].info.offset = decls[i].offset;
+            p->counters[k].info.array_size = decls[i].count;
+            p->counter_count++;
+        }
+        p->counters[k].info.stages |= bit;
+    }
+    return text;
+}
+
 static Uniform *find_uniform(Program *p, const char *name)
 {
     for (unsigned i = 0; i < p->uniform_count; i++)
@@ -665,6 +693,7 @@ static bool bind_storage(Program *p, spvc_compiler c, int stage, int bit, const 
         if (index == p->storage_count) {
             p->storage[index].name = strdup(name);
             p->storage[index].info.binding = explicit_binding(source, name);
+            p->storage[index].info.atomic = !strncmp(name, "mime_acb_", 9);
             p->storage_count++;
         }
         p->storage[index].info.bytes = (uint32_t)size;
@@ -983,7 +1012,8 @@ bool mime_shader_compile_stages(const char *vs, size_t vs_len, const char *fs, s
     pthread_once(&g_once, init_glslang);
     Program p = {};
     bool ok = false;
-    char *vtext = lift_source(vs, vs_len, false), *ftext = lift_source(fs, fs_len, true);
+    char *vtext = lift_stage(&p, vs, vs_len, false, MIME_SHADER_BIT_VERTEX),
+         *ftext = lift_stage(&p, fs, fs_len, true, MIME_SHADER_BIT_FRAGMENT);
     glslang_shader_t *vsh = parse_stage(&p, GLSLANG_STAGE_VERTEX, vtext, "vertex");
     glslang_shader_t *fsh = vsh ? parse_stage(&p, GLSLANG_STAGE_FRAGMENT, ftext, "fragment") : nullptr;
     glslang_program_t *prog = nullptr;
@@ -1012,7 +1042,7 @@ bool mime_shader_compile_stages(const char *vs, size_t vs_len, const char *fs, s
             buf_fmt(&p.log, "%s shaders need Vulkan\n", xlabel[x]);
             goto done;
 #endif
-            xtext[x] = lift_source(src[x], len[x], false);
+            xtext[x] = lift_stage(&p, src[x], len[x], false, (uint32_t)xbit[x]);
             xsh[x] = parse_stage(&p, xstage[x], xtext[x], xlabel[x]);
             if (!xsh[x])
                 goto done;
@@ -1161,7 +1191,7 @@ bool mime_shader_compile_compute(const char *cs, size_t cs_len, MimeShaderResult
     pthread_once(&g_once, init_glslang);
     Program p = {};
     bool ok = false;
-    char *text = lift_source(cs, cs_len, false);
+    char *text = lift_stage(&p, cs, cs_len, false, MIME_SHADER_BIT_VERTEX);
     glslang_shader_t *sh = parse_stage(&p, GLSLANG_STAGE_COMPUTE, text, "compute");
     glslang_program_t *prog = nullptr;
     spvc_context ctx = nullptr;
@@ -1220,6 +1250,8 @@ done:
         free(p.blocks[i].name);
     for (unsigned i = 0; i < p.storage_count; i++)
         free(p.storage[i].name);
+    for (unsigned i = 0; i < p.counter_count; i++)
+        free(p.counters[i].name);
     free(p.uniforms);
     free(p.log.data);
     return ok;
