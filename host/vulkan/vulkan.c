@@ -600,6 +600,7 @@ static HostInstance *instance_make(VkInstanceCreateInfo info, MvkDecoder *d, VkR
         return nullptr;
     }
     mvk_load_dispatch(&b->fn, b->gipa, b->instance, nullptr, nullptr);
+    mvk_budget_hook(b);
     hi->refs = 1;
     return hi;
 }
@@ -1055,6 +1056,7 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
             c->timelines = timeline.timelineSemaphore;
             PFN_vkGetDeviceProcAddr gdpa = (PFN_vkGetDeviceProcAddr)c->gipa(c->instance, "vkGetDeviceProcAddr");
             mvk_load_dispatch(&c->fn, c->gipa, c->instance, gdpa, c->device);
+            mvk_budget_hook(c);
             if (c->host_import && c->fn.vkCreateBuffer) {
                 g_create_buffer = c->fn.vkCreateBuffer;
                 c->fn.vkCreateBuffer = create_importable_buffer;
@@ -1249,6 +1251,7 @@ static void shell_destroy(MvkConnection *s)
     s->fn.vkDeviceWaitIdle(s->device);
     mvk_video_close(s);
     mime_gpu_teardown_enter();
+    mvk_budget_forget(s->device);
     s->fn.vkDestroyDevice(s->device, nullptr);
     mime_gpu_teardown_leave();
     free(s);
@@ -1637,6 +1640,7 @@ static void destroy_device(MvkCall *call)
     c->fn.vkDeviceWaitIdle(c->device);
     mvk_video_close(c);
     destroy_leftovers(c);
+    mvk_budget_forget(c->device);
     c->fn.vkDestroyDevice(c->device, nullptr);
     bind(c, id, 0);
     c->device = VK_NULL_HANDLE;
@@ -3189,6 +3193,7 @@ bool mvk_internal_instance(MvkConnection *c, uint32_t api)
     if (create(&info, nullptr, &c->instance) != VK_SUCCESS)
         return false;
     mvk_load_dispatch(&c->fn, c->gipa, c->instance, nullptr, nullptr);
+    mvk_budget_hook(c);
     pthread_mutex_init(&c->queue_lock, nullptr);
     pthread_mutex_init(&c->live_lock, nullptr);
     return true;
@@ -3203,6 +3208,7 @@ void mvk_internal_device(MvkConnection *c, VkPhysicalDevice physical, VkDevice d
     c->host_import = true;
     PFN_vkGetDeviceProcAddr gdpa = (PFN_vkGetDeviceProcAddr)c->gipa(c->instance, "vkGetDeviceProcAddr");
     mvk_load_dispatch(&c->fn, c->gipa, c->instance, gdpa, device);
+    mvk_budget_hook(c);
     VkPhysicalDeviceExternalMemoryHostPropertiesEXT host = {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
     VkPhysicalDeviceProperties2 props = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &host};
@@ -3367,6 +3373,7 @@ void mime_vk_close(uint64_t index)
         mvk_video_close(c);
         destroy_leftovers(c);
         mime_gpu_teardown_enter();
+        mvk_budget_forget(c->device);
         c->fn.vkDestroyDevice(c->device, nullptr);
         mime_gpu_teardown_leave();
     }

@@ -142,6 +142,13 @@ uint64_t mvk_dispatch_id(const void *object);
 bool mvk_internal_instance(MvkConnection *c, uint32_t api);
 void mvk_internal_device(MvkConnection *c, VkPhysicalDevice physical, VkDevice device, uint32_t family);
 
+/* budget.c: device local memory is refused once it would leave the desktop less than its margin. */
+/* after the dispatch table is loaded: allocations of the device go through the budget, and the guest sees it. */
+void mvk_budget_hook(MvkConnection *c);
+void mvk_budget_forget(VkDevice device);
+/* whether size bytes of device local memory fit now, for what the driver allocates itself. */
+bool mvk_budget_fits(MvkConnection *c, VkDeviceSize size);
+
 /* vkwsi.c: surfaces and swapchains. */
 extern const char *const mvk_wsi_instance_extensions[];
 bool mvk_wsi_device_extension(const char *name);

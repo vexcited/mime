@@ -960,6 +960,41 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
     return true;
 }
 
+/* a hidden window keeps nothing of its size: its renderer goes, and comes back when it shows. */
+static void drop_renderer(UiWindow *w)
+{
+    pthread_mutex_lock(&g_windows_lock);
+    SDL_Texture *texture = w->texture;
+    SDL_Renderer *renderer = w->renderer;
+    w->texture = nullptr;
+    w->renderer = nullptr;
+    w->texture_width = w->texture_height = 0;
+    pthread_mutex_unlock(&g_windows_lock);
+    if (texture)
+        SDL_DestroyTexture(texture);
+    if (renderer)
+        SDL_DestroyRenderer(renderer);
+}
+
+static void restore_renderer(UiWindow *w)
+{
+    if (w->renderer || w->vk_whole || !w->window)
+        return;
+    SDL_Renderer *renderer = SDL_CreateRenderer(w->window, nullptr);
+    if (!renderer) {
+        mime_warn("cannot create a renderer: %s", SDL_GetError());
+        return;
+    }
+    SDL_SetRenderVSync(renderer, 0);
+    pthread_mutex_lock(&g_windows_lock);
+    w->renderer = renderer;
+    pthread_mutex_unlock(&g_windows_lock);
+    pthread_mutex_lock(&w->lock);
+    w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
+    w->has_dirty = w->pixels != nullptr;
+    pthread_mutex_unlock(&w->lock);
+}
+
 /* draws the visible surface inside the host window, leaving the resize border clear. */
 static void draw(UiWindow *w)
 {
@@ -1149,10 +1184,16 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
         else
             SDL_HideWindow(w->window);
         w->shown = (cfg->flags & MIME_WIN_VISIBLE) != 0;
+        mime_vk_window_hidden(w->id);
+        if (w->shown)
+            restore_renderer(w);
+        else
+            drop_renderer(w);
         return;
     }
     if (cfg->flags & MIME_WIN_VISIBLE) {
         bool opening = !w->shown;
+        restore_renderer(w);
         if (opening)
             SDL_ShowWindow(w->window);
         if (SDL_GetWindowFlags(w->window) & SDL_WINDOW_MINIMIZED)
@@ -1163,6 +1204,8 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
     } else if (w->shown) {
         SDL_HideWindow(w->window);
         w->shown = false;
+        mime_vk_window_hidden(w->id);
+        drop_renderer(w);
     }
     bool fullscreen = (cfg->flags & (MIME_WIN_FULLSCREEN | MIME_WIN_VISIBLE)) == (MIME_WIN_FULLSCREEN | MIME_WIN_VISIBLE);
     /* matches the guest's maximized state on the window's monitor. */

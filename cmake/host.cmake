@@ -51,8 +51,9 @@ endif()
 mime_glob(vulkan_host_sources host/vulkan/*.c)
 set_source_files_properties(host/vulkan/gamma.c PROPERTIES
     INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/glslang")
-set_source_files_properties(host/vulkan/vulkan.c host/vulkan/vkshare.c host/vulkan/vkwsi.c host/vulkan/video.c
-    host/vulkan/video_h264.c host/vulkan/video_h265.c host/vulkan/video_vp9.c host/vulkan/video_av1.c PROPERTIES
+set_source_files_properties(host/vulkan/vulkan.c host/vulkan/budget.c host/vulkan/vkshare.c host/vulkan/vkwsi.c
+    host/vulkan/video.c host/vulkan/video_h264.c host/vulkan/video_h265.c host/vulkan/video_vp9.c
+    host/vulkan/video_av1.c PROPERTIES
     COMPILE_OPTIONS -Wno-missing-field-initializers
     INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${vulkan_gen}")
 

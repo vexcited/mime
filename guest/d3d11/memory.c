@@ -1,7 +1,7 @@
 /*
- * memory: large sub-allocated blocks, kept for the device's life. a buffer block is one vulkan buffer over the
- * whole block, so a direct3d buffer is just a range and needs no vulkan object or round trip of its own. image
- * blocks hold images bound at offsets.
+ * memory: large sub-allocated blocks, given back once they stay empty a while. a buffer block is one vulkan buffer
+ * over the whole block, so a direct3d buffer is just a range and needs no vulkan object or round trip of its own.
+ * image blocks hold images bound at offsets.
  *
  * the ring is upload memory for one command buffer: binding tables and UpdateSubresource bytes. a chunk is reused
  * once the submissions that used it are done.
@@ -10,6 +10,9 @@
 
 #define BLOCK_SIZE (64ull << 20)
 #define RING_CHUNK_SIZE (4ull << 20)
+/* a block empty this long is given back, looked for at most this often. */
+#define EMPTY_MS 2000
+#define SWEEP_MS 500
 
 typedef struct D3dRange {
     VkDeviceSize offset, size;
@@ -26,6 +29,8 @@ struct D3dBlock {
     VkDeviceSize size;
     D3dRange *free;
     UINT free_count, free_capacity;
+    /* since when nothing is in the block, 0 while something is. */
+    ULONGLONG empty_since;
 };
 
 struct D3dRingChunk {
@@ -132,9 +137,69 @@ static BOOL take_range(D3dBlock *block, VkDeviceSize size, VkDeviceSize align, V
                 return FALSE;
         }
         *out = start;
+        block->empty_since = 0;
         return TRUE;
     }
     return FALSE;
+}
+
+static BOOL block_empty(const D3dBlock *block)
+{
+    return block->free_count == 1 && !block->free[0].offset && block->free[0].size == block->size;
+}
+
+static void destroy_block(D3dDevice *device, D3dBlock *block)
+{
+    D3dVk *vk = &device->vk;
+    if (block->buffer)
+        vk->vkDestroyBuffer(vk->device, block->buffer, nullptr);
+    vk->vkFreeMemory(vk->device, block->memory, nullptr);
+    HeapFree(GetProcessHeap(), 0, block->free);
+    HeapFree(GetProcessHeap(), 0, block);
+}
+
+/* under the memory lock. */
+static UINT sweep_blocks(D3dDevice *device, BOOL now)
+{
+    ULONGLONG tick = GetTickCount64();
+    UINT freed = 0;
+    device->blocks_swept = tick;
+    for (D3dBlock **link = &device->blocks; *link;) {
+        D3dBlock *block = *link;
+        if (block->empty_since && (now || tick - block->empty_since >= EMPTY_MS)) {
+            *link = block->next;
+            destroy_block(device, block);
+            freed++;
+        } else {
+            link = &block->next;
+        }
+    }
+    return freed;
+}
+
+void D3dMemorySweep(D3dDevice *device, BOOL now)
+{
+    if (!now && GetTickCount64() - device->blocks_swept < SWEEP_MS)
+        return;
+    if (now) {
+        /* ring chunks the gpu is done with go back to their blocks. */
+        UINT64 completed = D3dCompleted(device);
+        AcquireSRWLockExclusive(&device->ring_lock);
+        for (D3dRingChunk **link = &device->ring_chunks; *link;) {
+            D3dRingChunk *chunk = *link;
+            if (chunk->serial <= completed) {
+                *link = chunk->next;
+                D3dFree(device, &chunk->alloc);
+                HeapFree(GetProcessHeap(), 0, chunk);
+            } else {
+                link = &chunk->next;
+            }
+        }
+        ReleaseSRWLockExclusive(&device->ring_lock);
+    }
+    AcquireSRWLockExclusive(&device->memory_lock);
+    sweep_blocks(device, now);
+    ReleaseSRWLockExclusive(&device->memory_lock);
 }
 
 static D3dBlock *new_block(D3dDevice *device, D3dMemoryKind kind, BOOL image, UINT type, VkDeviceSize size)
@@ -194,7 +259,13 @@ static HRESULT allocate(D3dDevice *device, D3dMemoryKind kind, BOOL image, UINT 
             break;
         }
     if (!block) {
-        block = new_block(device, kind, image, type, D3D_MAX(BLOCK_SIZE, D3D_ALIGN(size, 1 << 16)));
+        VkDeviceSize whole = D3D_ALIGN(size, 1 << 16);
+        block = new_block(device, kind, image, type, D3D_MAX(BLOCK_SIZE, whole));
+        /* near the end of the budget, empty blocks go back and a block just big enough may still fit. */
+        if (!block && sweep_blocks(device, TRUE))
+            block = new_block(device, kind, image, type, D3D_MAX(BLOCK_SIZE, whole));
+        if (!block && whole < BLOCK_SIZE)
+            block = new_block(device, kind, image, type, whole);
         if (!block || !take_range(block, size, align, &offset)) {
             ReleaseSRWLockExclusive(&device->memory_lock);
             return E_OUTOFMEMORY;
@@ -294,7 +365,10 @@ void D3dFree(D3dDevice *device, D3dAllocation *alloc)
         return;
     }
     AcquireSRWLockExclusive(&device->memory_lock);
-    add_free(alloc->block, alloc->offset, alloc->size);
+    D3dBlock *block = alloc->block;
+    add_free(block, alloc->offset, alloc->size);
+    if (block_empty(block))
+        block->empty_since = GetTickCount64();
     ReleaseSRWLockExclusive(&device->memory_lock);
     memset(alloc, 0, sizeof(*alloc));
 }
@@ -542,15 +616,10 @@ VkDescriptorSet D3dRingTableSet(D3dDevice *device, D3dRingChunk *chunk)
 
 void D3dMemoryDestroy(D3dDevice *device)
 {
-    D3dVk *vk = &device->vk;
     while (device->blocks) {
         D3dBlock *block = device->blocks;
         device->blocks = block->next;
-        if (block->buffer)
-            vk->vkDestroyBuffer(vk->device, block->buffer, nullptr);
-        vk->vkFreeMemory(vk->device, block->memory, nullptr);
-        HeapFree(GetProcessHeap(), 0, block->free);
-        HeapFree(GetProcessHeap(), 0, block);
+        destroy_block(device, block);
     }
     if (device->ring_current) {
         device->ring_current->next = device->ring_chunks;

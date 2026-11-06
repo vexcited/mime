@@ -40,6 +40,31 @@ void D3dChildRelease(D3dChild *child)
 
 /* ------------------------------------------------------------------ the queue and timeline */
 
+HRESULT D3dCheckResult(D3dDevice *device, VkResult result)
+{
+    switch (result) {
+    case VK_SUCCESS:
+    case VK_SUBOPTIMAL_KHR:
+        return S_OK;
+    case VK_ERROR_OUT_OF_HOST_MEMORY:
+    case VK_ERROR_OUT_OF_DEVICE_MEMORY:
+        return E_OUTOFMEMORY;
+    case VK_ERROR_DEVICE_LOST:
+        break;
+    default:
+        return E_FAIL;
+    }
+    if (InterlockedCompareExchange((volatile LONG *)&device->removed, DXGI_ERROR_DEVICE_REMOVED, S_OK) == S_OK) {
+        D3dLog("d3d11: the device was lost");
+        AcquireSRWLockShared(&device->removed_lock);
+        for (UINT i = 0; i < D3D_REMOVED_EVENTS; i++)
+            if (device->removed_events[i].event)
+                SetEvent(device->removed_events[i].event);
+        ReleaseSRWLockShared(&device->removed_lock);
+    }
+    return DXGI_ERROR_DEVICE_REMOVED;
+}
+
 UINT64 D3dCompleted(D3dDevice *device)
 {
     UINT64 value = device->completed;
@@ -63,9 +88,12 @@ void D3dWaitSerial(D3dDevice *device, UINT64 serial)
     wait.semaphoreCount = 1;
     wait.pSemaphores = &device->timeline;
     wait.pValues = &serial;
-    if (device->vk.vkWaitSemaphores(device->vk.device, &wait, UINT64_MAX) == VK_SUCCESS && serial > device->completed) {
+    VkResult r = device->vk.vkWaitSemaphores(device->vk.device, &wait, UINT64_MAX);
+    if (r == VK_SUCCESS && serial > device->completed) {
         device->completed = serial;
         D3dCollectGarbage(device);
+    } else if (r != VK_SUCCESS) {
+        D3dCheckResult(device, r);
     }
 }
 
@@ -112,8 +140,11 @@ UINT64 D3dSubmit(D3dDevice *device, VkCommandBuffer cmd, const VkSemaphoreSubmit
     submit.pCommandBufferInfos = buffers;
     submit.signalSemaphoreInfoCount = signal ? 2 : 1;
     submit.pSignalSemaphoreInfos = signals;
-    if (device->vk.vkQueueSubmit2(device->queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS)
-        D3dLog("d3d11: vkQueueSubmit2 failed");
+    VkResult submitted = device->vk.vkQueueSubmit2(device->queue, 1, &submit, VK_NULL_HANDLE);
+    if (submitted != VK_SUCCESS) {
+        D3dLog("d3d11: vkQueueSubmit2 failed (%d)", (int)submitted);
+        D3dCheckResult(device, submitted);
+    }
     device->next_serial = serial + 1;
     device->renames = 0;
     ReleaseSRWLockExclusive(device->queue_lock);
@@ -343,6 +374,9 @@ static void destroy_device(D3dDevice *device)
         vk->vkDestroySemaphore(vk->device, device->timeline, nullptr);
         release_vulkan_device(device);
     }
+    for (UINT i = 0; i < D3D_REMOVED_EVENTS; i++)
+        if (device->removed_events[i].event)
+            CloseHandle(device->removed_events[i].event);
     if (device->adapter)
         device->adapter->lpVtbl->Release(device->adapter);
     MimePrivateClear(&device->data);
@@ -1121,7 +1155,10 @@ static D3D_FEATURE_LEVEL STDMETHODCALLTYPE device_get_feature_level(ID3D11Device
 
 static UINT STDMETHODCALLTYPE device_get_creation_flags(ID3D11Device5 *iface) { return impl(iface)->flags; }
 
-static HRESULT STDMETHODCALLTYPE device_get_device_removed_reason(ID3D11Device5 *iface) { return S_OK; }
+static HRESULT STDMETHODCALLTYPE device_get_device_removed_reason(ID3D11Device5 *iface)
+{
+    return impl(iface)->removed;
+}
 
 static void STDMETHODCALLTYPE device_get_immediate_context(ID3D11Device5 *iface, ID3D11DeviceContext **context)
 {
@@ -1245,17 +1282,49 @@ static void STDMETHODCALLTYPE device_read_from_subresource(ID3D11Device5 *iface,
     D3dLog("d3d11: ReadFromSubresource needs mappable default resources, which the device does not report");
 }
 
+/* the event is set when the device is lost, at once if it was already. */
 static HRESULT STDMETHODCALLTYPE device_register_device_removed_event(ID3D11Device5 *iface, HANDLE event,
                                                                       DWORD *cookie)
 {
     static LONG next;
+    D3dDevice *device = impl(iface);
     if (!event || !cookie)
         return E_INVALIDARG;
-    *cookie = (DWORD)InterlockedIncrement(&next);
-    return S_OK;
+    HANDLE copy;
+    if (!DuplicateHandle(GetCurrentProcess(), event, GetCurrentProcess(), &copy, 0, FALSE, DUPLICATE_SAME_ACCESS))
+        return E_INVALIDARG;
+    HRESULT hr = E_OUTOFMEMORY;
+    AcquireSRWLockExclusive(&device->removed_lock);
+    for (UINT i = 0; i < D3D_REMOVED_EVENTS; i++)
+        if (!device->removed_events[i].event) {
+            device->removed_events[i].event = copy;
+            device->removed_events[i].cookie = *cookie = (DWORD)InterlockedIncrement(&next);
+            hr = S_OK;
+            break;
+        }
+    ReleaseSRWLockExclusive(&device->removed_lock);
+    if (FAILED(hr))
+        CloseHandle(copy);
+    else if (device->removed != S_OK)
+        SetEvent(copy);
+    return hr;
 }
 
-static void STDMETHODCALLTYPE device_unregister_device_removed(ID3D11Device5 *iface, DWORD cookie) {}
+static void STDMETHODCALLTYPE device_unregister_device_removed(ID3D11Device5 *iface, DWORD cookie)
+{
+    D3dDevice *device = impl(iface);
+    HANDLE event = nullptr;
+    AcquireSRWLockExclusive(&device->removed_lock);
+    for (UINT i = 0; i < D3D_REMOVED_EVENTS; i++)
+        if (cookie && device->removed_events[i].cookie == cookie) {
+            event = device->removed_events[i].event;
+            device->removed_events[i].event = nullptr;
+            device->removed_events[i].cookie = 0;
+        }
+    ReleaseSRWLockExclusive(&device->removed_lock);
+    if (event)
+        CloseHandle(event);
+}
 
 static HRESULT STDMETHODCALLTYPE device_open_shared_fence(ID3D11Device5 *iface, HANDLE handle, REFIID riid,
                                                           void **fence)
@@ -1458,7 +1527,18 @@ static HRESULT STDMETHODCALLTYPE dxgi_enqueue_set_event(IDXGIDevice4 *iface, HAN
     return SetEvent(event) ? S_OK : E_INVALIDARG;
 }
 
-static void STDMETHODCALLTYPE dxgi_trim(IDXGIDevice4 *iface) {}
+/* what the device keeps for later goes back: empty blocks and the upload chunks the gpu is done with. */
+static void STDMETHODCALLTYPE dxgi_trim(IDXGIDevice4 *iface)
+{
+    D3dDevice *device = dxgi_impl(iface);
+    /* what was released waits for the next submission, which may not come for a while. */
+    EnterCriticalSection(&device->immediate->lock);
+    D3dContextFlush(device->immediate);
+    UINT64 serial = D3dSubmit(device, VK_NULL_HANDLE, nullptr, nullptr);
+    LeaveCriticalSection(&device->immediate->lock);
+    D3dWaitSerial(device, serial);
+    D3dMemorySweep(device, TRUE);
+}
 
 static HRESULT STDMETHODCALLTYPE dxgi_offer_resources1(IDXGIDevice4 *iface, UINT count,
                                                        IDXGIResource *const *resources,

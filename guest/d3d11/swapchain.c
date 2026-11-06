@@ -139,15 +139,17 @@ static VkFormat choose_format(D3dSwapChain *sc)
     return count ? formats[0].format : VK_FORMAT_B8G8R8A8_UNORM;
 }
 
-static BOOL create_swapchain(D3dSwapChain *sc, VkPresentModeKHR mode)
+/* VK_NOT_READY when the window has no area to show anything in. */
+static VkResult create_swapchain(D3dSwapChain *sc, VkPresentModeKHR mode)
 {
     D3dDevice *device = sc->device;
     D3dVk *vk = &device->vk;
     VkSurfaceCapabilitiesKHR caps;
-    if (vk->vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk->physical, sc->surface, &caps) != VK_SUCCESS)
-        return FALSE;
+    VkResult r = vk->vkGetPhysicalDeviceSurfaceCapabilitiesKHR(vk->physical, sc->surface, &caps);
+    if (r != VK_SUCCESS)
+        return r;
     if (!caps.currentExtent.width || !caps.currentExtent.height)
-        return FALSE;
+        return VK_NOT_READY;
     VkPresentModeKHR modes[8];
     UINT count = RTL_NUMBER_OF(modes);
     vk->vkGetPhysicalDeviceSurfacePresentModesKHR(vk->physical, sc->surface, &count, modes);
@@ -162,7 +164,8 @@ static BOOL create_swapchain(D3dSwapChain *sc, VkPresentModeKHR mode)
     sc->format = choose_format(sc);
     VkSwapchainCreateInfoKHR info = {VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
     info.surface = sc->surface;
-    info.minImageCount = D3D_MAX(caps.minImageCount, 3);
+    /* the host copies a presented image out at once, so two are enough to draw one while the other shows. */
+    info.minImageCount = D3D_MAX(caps.minImageCount, 2);
     if (caps.maxImageCount)
         info.minImageCount = D3D_MIN(info.minImageCount, caps.maxImageCount);
     info.imageFormat = sc->format;
@@ -178,8 +181,15 @@ static BOOL create_swapchain(D3dSwapChain *sc, VkPresentModeKHR mode)
     info.clipped = TRUE;
     info.oldSwapchain = sc->swapchain;
     VkSwapchainKHR swapchain;
-    if (vk->vkCreateSwapchainKHR(vk->device, &info, nullptr, &swapchain) != VK_SUCCESS)
-        return FALSE;
+    r = vk->vkCreateSwapchainKHR(vk->device, &info, nullptr, &swapchain);
+    /* the old one may be what keeps the new one from fitting. */
+    if (r == VK_ERROR_OUT_OF_DEVICE_MEMORY && sc->swapchain) {
+        destroy_swapchain(sc);
+        info.oldSwapchain = VK_NULL_HANDLE;
+        r = vk->vkCreateSwapchainKHR(vk->device, &info, nullptr, &swapchain);
+    }
+    if (r != VK_SUCCESS)
+        return r;
     destroy_swapchain(sc);
     sc->swapchain = swapchain;
     sc->extent = caps.currentExtent;
@@ -190,7 +200,16 @@ static BOOL create_swapchain(D3dSwapChain *sc, VkPresentModeKHR mode)
     VkSemaphoreCreateInfo sem = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     for (UINT i = 0; i < images; i++)
         vk->vkCreateSemaphore(vk->device, &sem, nullptr, &sc->present[i]);
-    return TRUE;
+    return VK_SUCCESS;
+}
+
+/* a window with no area shows nothing and is not an error; other failures are the program's to know. */
+static HRESULT present_failed(D3dSwapChain *sc, VkResult r)
+{
+    D3dContextFlush(sc->device->immediate);
+    if (r == VK_NOT_READY || r == VK_ERROR_SURFACE_LOST_KHR || r == VK_TIMEOUT)
+        return S_OK;
+    return D3dCheckResult(sc->device, r);
 }
 
 static HRESULT create_back_buffer(D3dSwapChain *sc)
@@ -229,15 +248,16 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
     D3dContext *c = device->immediate;
     if (interval > 4)
         return DXGI_ERROR_INVALID_CALL;
+    if (device->removed != S_OK)
+        return DXGI_ERROR_DEVICE_REMOVED;
     if (IsIconic(sc->window))
         return DXGI_STATUS_OCCLUDED;
     if (flags & DXGI_PRESENT_TEST)
         return S_OK;
     VkPresentModeKHR mode = interval ? VK_PRESENT_MODE_FIFO_KHR : VK_PRESENT_MODE_IMMEDIATE_KHR;
-    if ((!sc->swapchain || sc->mode != mode) && !create_swapchain(sc, mode)) {
-        D3dContextFlush(c);
-        return S_OK;
-    }
+    VkResult made = VK_SUCCESS;
+    if ((!sc->swapchain || sc->mode != mode) && (made = create_swapchain(sc, mode)) != VK_SUCCESS)
+        return present_failed(sc, made);
 
     UINT slot = sc->present_count % SEMAPHORES;
     D3dWaitSerial(device, sc->acquire_serial[slot]);
@@ -250,17 +270,13 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
                                            &index);
     if (r == VK_ERROR_OUT_OF_DATE_KHR) {
         /* the window was resized. */
-        if (!create_swapchain(sc, mode)) {
-            D3dContextFlush(c);
-            return S_OK;
-        }
+        if ((made = create_swapchain(sc, mode)) != VK_SUCCESS)
+            return present_failed(sc, made);
         r = vk->vkAcquireNextImageKHR(vk->device, sc->swapchain, UINT64_MAX, sc->acquire[slot], VK_NULL_HANDLE,
                                       &index);
     }
-    if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR) {
-        D3dContextFlush(c);
-        return S_OK;
-    }
+    if (r != VK_SUCCESS && r != VK_SUBOPTIMAL_KHR)
+        return present_failed(sc, r);
 
     VkCommandBuffer cmd = D3dContextCommands(c, TRUE);
     if (!cmd)
@@ -332,8 +348,10 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
     info.pSwapchains = &sc->swapchain;
     info.pImageIndices = &index;
     AcquireSRWLockExclusive(device->queue_lock);
-    vk->vkQueuePresentKHR(device->queue, &info);
+    VkResult presented = vk->vkQueuePresentKHR(device->queue, &info);
     ReleaseSRWLockExclusive(device->queue_lock);
+    if (presented == VK_ERROR_DEVICE_LOST)
+        return D3dCheckResult(device, presented);
 
     /* keep the gpu at most the latency's worth of frames behind. */
     UINT latency = sc->desc.Flags & DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT ? sc->max_latency
@@ -345,7 +363,7 @@ static HRESULT present(D3dSwapChain *sc, UINT interval, UINT flags)
         D3dWaitSerial(device, sc->frame_serials[(sc->present_count - latency - 1) % 16]);
     if (sc->latency)
         ReleaseSemaphore(sc->latency, 1, nullptr);
-    return S_OK;
+    return device->removed != S_OK ? DXGI_ERROR_DEVICE_REMOVED : S_OK;
 }
 
 /* ------------------------------------------------------------------ composition */
@@ -424,6 +442,8 @@ static HRESULT present_composition(D3dSwapChain *sc, UINT interval, UINT flags, 
         return DXGI_ERROR_INVALID_CALL;
     if ((flags & DXGI_PRESENT_ALLOW_TEARING) && (interval || !(sc->desc.Flags & DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING)))
         return DXGI_ERROR_INVALID_CALL;
+    if (device->removed != S_OK)
+        return DXGI_ERROR_DEVICE_REMOVED;
     if (params) {
         /* dirty rects must be non-empty and inside the buffer. a scroll needs dirty rects and a scroll rect. */
         RECT buffer = {0, 0, (LONG)sc->desc.Width, (LONG)sc->desc.Height};
@@ -500,7 +520,7 @@ static HRESULT present_composition(D3dSwapChain *sc, UINT interval, UINT flags, 
     LeaveCriticalSection(&sc->frame_lock);
     if (sc->latency)
         ReleaseSemaphore(sc->latency, 1, nullptr);
-    return S_OK;
+    return device->removed != S_OK ? DXGI_ERROR_DEVICE_REMOVED : S_OK;
 }
 
 /* called after the device lock is released, so listeners may draw with the device. */
@@ -814,8 +834,11 @@ static HRESULT STDMETHODCALLTYPE sc_resize_buffers(IDXGISwapChain4 *iface, UINT 
         sc->resolved = nullptr;
     }
     sc->source_width = sc->source_height = 0;
-    if (sc->swapchain && choose_format(sc) != sc->format)
-        create_swapchain(sc, sc->mode);
+    if (sc->swapchain && choose_format(sc) != sc->format) {
+        VkResult r = create_swapchain(sc, sc->mode);
+        if (r != VK_SUCCESS && r != VK_NOT_READY)
+            return D3dCheckResult(sc->device, r);
+    }
     return S_OK;
 }
 

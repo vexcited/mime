@@ -483,6 +483,7 @@ void D3dCollectGarbage(D3dDevice *device)
     }
     device->garbage_count = kept;
     ReleaseSRWLockExclusive(&device->garbage_lock);
+    D3dMemorySweep(device, FALSE);
 }
 
 void D3dHeapDestroy(D3dDevice *device)

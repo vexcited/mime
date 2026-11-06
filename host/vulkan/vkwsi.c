@@ -34,8 +34,11 @@ typedef unsigned long VisualID;
 #define MAX_HOST_IMAGES 16
 #define FRAMES 3
 #define MAX_PRESENTERS 128
-#define MAX_GRAVE 64
 #define ACQUIRE_TIMEOUT_NS 100000000ull
+/* a swapchain that stopped presenting this long gives the host swapchain's settings to another one. */
+#define OWNER_IDLE_NS 500000000ull
+/* a capture keeps a copy of each frame this long, for the captures that follow it. */
+#define LAST_KEEP_NS 5000000000ull
 
 const char *const mvk_wsi_instance_extensions[] = {
     VK_KHR_SURFACE_EXTENSION_NAME,
@@ -58,6 +61,7 @@ typedef struct Presenter Presenter;
 typedef struct Swapchain {
     struct Swapchain *next;
     uint64_t id;
+    uint64_t serial; /* unique for the life of the process, unlike the address. */
     Presenter *presenter;
     VkFormat format;
     VkExtent2D extent;
@@ -130,6 +134,9 @@ struct Presenter {
     VkExtent2D extent;
     VkPresentModeKHR wanted_mode;
     bool stale;
+    /* the swapchain whose settings the host swapchain follows, and when it last presented. */
+    uint64_t owner;
+    uint64_t owner_seen;
     uint32_t count;
     VkImage images[MAX_HOST_IMAGES];
     VkSemaphore done[MAX_HOST_IMAGES];
@@ -153,7 +160,12 @@ struct Presenter {
     VkDeviceMemory staging_memory;
     uint8_t *staging_map;
 
-    /* the last image the guest presented, kept for captures of the screen, and where it shows. */
+    /* the guest image last presented, which stays as it is until the guest draws into it again. */
+    Swapchain *shown_from;
+    uint32_t shown_index;
+    VkExtent2D shown_extent;
+    /* the last image the guest presented, kept for captures of the screen until want_last_until, and where it shows. */
+    uint64_t want_last_until;
     VkImage last;
     VkDeviceMemory last_memory;
     VkExtent2D last_extent;
@@ -175,10 +187,6 @@ struct Presenter {
     uint8_t *readback_map;
     VkDeviceSize readback_size;
     bool readback_coherent;
-
-    /* semaphores a present may still wait for when the window went: freed once the device is idle. */
-    VkSemaphore grave[MAX_GRAVE];
-    uint32_t grave_count;
 
     GammaPass gamma;
 };
@@ -222,6 +230,7 @@ typedef struct MvkWsi {
 
 static pthread_mutex_t g_presenters_lock = PTHREAD_MUTEX_INITIALIZER;
 static Presenter *g_presenters[MAX_PRESENTERS];
+static uint64_t g_swapchain_serial;
 
 static MvkWsi *wsi_of(MvkConnection *c)
 {
@@ -373,7 +382,8 @@ void mvk_wsi_create_swapchain(MvkCall *call)
     VkResult result = VK_ERROR_INITIALIZATION_FAILED;
     Swapchain *s = calloc(1, sizeof(*s));
     if (!d->error && c->device && s && count && count <= MAX_IMAGES && family_count <= 16 && view_count <= 16) {
-        *s = (Swapchain){.id = id, .format = format, .extent = extent, .mode = mode, .count = count,
+        *s = (Swapchain){.id = id, .serial = __atomic_add_fetch(&g_swapchain_serial, 1, __ATOMIC_RELAXED),
+                         .format = format, .extent = extent, .mode = mode, .count = count,
                          .premultiplied = composite == VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR};
         /* a mutable swapchain's views may differ in format; otherwise only usage the format allows. */
         bool mutable = (flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR) != 0;
@@ -464,18 +474,14 @@ static void gamma_drop_views(MvkConnection *c, Presenter *p)
     g->views_of = VK_NULL_HANDLE;
 }
 
-/* the host swapchain goes; its semaphores wait in the grave unless the device is idle. */
-static void drop_swapchain(MvkConnection *c, Presenter *p, bool idle)
+/* the host swapchain goes once no present waits for its semaphores. */
+static void drop_swapchain(MvkConnection *c, Presenter *p)
 {
     MvkWsi *w = c->wsi;
     gamma_drop_views(c, p);
     for (uint32_t i = 0; i < p->count; i++) {
-        if (!p->done[i])
-            continue;
-        if (idle)
+        if (p->done[i])
             c->fn.vkDestroySemaphore(c->device, p->done[i], nullptr);
-        else if (p->grave_count < MAX_GRAVE)
-            p->grave[p->grave_count++] = p->done[i];
         p->done[i] = VK_NULL_HANDLE;
     }
     if (p->swapchain)
@@ -484,10 +490,64 @@ static void drop_swapchain(MvkConnection *c, Presenter *p, bool idle)
     p->count = 0;
 }
 
-static void drop_surface(MvkConnection *c, Presenter *p, bool idle)
+static void drop_last(MvkConnection *c, Presenter *p)
+{
+    if (p->last)
+        c->fn.vkDestroyImage(c->device, p->last, nullptr);
+    if (p->last_memory)
+        c->fn.vkFreeMemory(c->device, p->last_memory, nullptr);
+    if (p->readback)
+        c->fn.vkDestroyBuffer(c->device, p->readback, nullptr);
+    if (p->readback_memory)
+        c->fn.vkFreeMemory(c->device, p->readback_memory, nullptr);
+    p->last = VK_NULL_HANDLE;
+    p->last_memory = VK_NULL_HANDLE;
+    p->last_valid = false;
+    p->readback = VK_NULL_HANDLE;
+    p->readback_memory = VK_NULL_HANDLE;
+    p->readback_map = nullptr;
+    p->readback_size = 0;
+    p->readback_serial = 0;
+}
+
+static void drop_gdi(MvkConnection *c, Presenter *p)
+{
+    if (p->gdi)
+        c->fn.vkDestroyImage(c->device, p->gdi, nullptr);
+    if (p->gdi_memory)
+        c->fn.vkFreeMemory(c->device, p->gdi_memory, nullptr);
+    if (p->staging)
+        c->fn.vkDestroyBuffer(c->device, p->staging, nullptr);
+    if (p->staging_memory)
+        c->fn.vkFreeMemory(c->device, p->staging_memory, nullptr);
+    p->gdi = VK_NULL_HANDLE;
+    p->gdi_memory = p->staging_memory = VK_NULL_HANDLE;
+    p->staging = VK_NULL_HANDLE;
+    p->staging_map = nullptr;
+    p->gdi_valid = false;
+}
+
+static void gamma_drop_compose(MvkConnection *c, GammaPass *g);
+
+/* the window shows nothing for now: what is the window's size goes, and comes back at the next present that shows. */
+static void drop_window_images(MvkConnection *c, Presenter *p)
 {
     wait_frames(c, p);
-    drop_swapchain(c, p, idle);
+    drop_swapchain(c, p);
+    drop_last(c, p);
+    drop_gdi(c, p);
+    gamma_drop_compose(c, &p->gamma);
+}
+
+static bool has_window_images(const Presenter *p)
+{
+    return p->swapchain || p->last || p->gdi || p->gamma.compose;
+}
+
+static void drop_surface(MvkConnection *c, Presenter *p)
+{
+    wait_frames(c, p);
+    drop_window_images(c, p);
     if (p->surface)
         c->wsi->DestroySurface(c->instance, p->surface, nullptr);
     p->surface = VK_NULL_HANDLE;
@@ -500,9 +560,7 @@ static void gamma_destroy(MvkConnection *c, Presenter *p);
 static void destroy_presenter(MvkConnection *c, Presenter *p)
 {
     pthread_mutex_lock(&p->lock);
-    drop_surface(c, p, true);
-    for (uint32_t i = 0; i < p->grave_count; i++)
-        c->fn.vkDestroySemaphore(c->device, p->grave[i], nullptr);
+    drop_surface(c, p);
     for (uint32_t i = 0; i < FRAMES; i++) {
         if (p->frames[i].fence)
             c->fn.vkDestroyFence(c->device, p->frames[i].fence, nullptr);
@@ -511,22 +569,6 @@ static void destroy_presenter(MvkConnection *c, Presenter *p)
     }
     if (p->pool)
         c->fn.vkDestroyCommandPool(c->device, p->pool, nullptr);
-    if (p->gdi)
-        c->fn.vkDestroyImage(c->device, p->gdi, nullptr);
-    if (p->gdi_memory)
-        c->fn.vkFreeMemory(c->device, p->gdi_memory, nullptr);
-    if (p->staging)
-        c->fn.vkDestroyBuffer(c->device, p->staging, nullptr);
-    if (p->staging_memory)
-        c->fn.vkFreeMemory(c->device, p->staging_memory, nullptr);
-    if (p->last)
-        c->fn.vkDestroyImage(c->device, p->last, nullptr);
-    if (p->last_memory)
-        c->fn.vkFreeMemory(c->device, p->last_memory, nullptr);
-    if (p->readback)
-        c->fn.vkDestroyBuffer(c->device, p->readback, nullptr);
-    if (p->readback_memory)
-        c->fn.vkFreeMemory(c->device, p->readback_memory, nullptr);
     gamma_destroy(c, p);
     bool attached = p->attached;
     pthread_mutex_unlock(&p->lock);
@@ -597,12 +639,32 @@ void mime_vk_window_lost(uint32_t id)
         p->generation++;
         p->attached = false;
         /* the presenting thread's last present may still use the host swapchain: the queues go idle first. */
-        if (p->surface) {
+        if (p->surface || has_window_images(p)) {
             MvkConnection *c = p->conn;
             pthread_mutex_lock(&c->queue_lock);
             c->fn.vkDeviceWaitIdle(c->device);
             pthread_mutex_unlock(&c->queue_lock);
-            drop_surface(c, p, true);
+            drop_surface(c, p);
+        }
+        pthread_mutex_unlock(&p->lock);
+    }
+    pthread_mutex_unlock(&g_presenters_lock);
+}
+
+void mime_vk_window_hidden(uint32_t id)
+{
+    pthread_mutex_lock(&g_presenters_lock);
+    for (int i = 0; i < MAX_PRESENTERS; i++) {
+        Presenter *p = g_presenters[i];
+        if (!p || p->window != id)
+            continue;
+        pthread_mutex_lock(&p->lock);
+        if (has_window_images(p)) {
+            MvkConnection *c = p->conn;
+            pthread_mutex_lock(&c->queue_lock);
+            c->fn.vkDeviceWaitIdle(c->device);
+            pthread_mutex_unlock(&c->queue_lock);
+            drop_window_images(c, p);
         }
         pthread_mutex_unlock(&p->lock);
     }
@@ -710,6 +772,16 @@ static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExte
         premultiplied = false;
     if (!(caps.supportedCompositeAlpha & alpha))
         alpha = (VkCompositeAlphaFlagBitsKHR)(caps.supportedCompositeAlpha & -caps.supportedCompositeAlpha);
+    /* the old swapchain goes first when both would not fit. */
+    VkDeviceSize bytes = (VkDeviceSize)count * extent.width * extent.height * 4;
+    if (p->swapchain && !mvk_budget_fits(c, bytes)) {
+        pthread_mutex_lock(&c->queue_lock);
+        c->fn.vkQueueWaitIdle(queue);
+        pthread_mutex_unlock(&c->queue_lock);
+        drop_swapchain(c, p);
+    }
+    if (!p->swapchain && !mvk_budget_fits(c, bytes))
+        return false;
     VkSwapchainCreateInfoKHR info = {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface = p->surface,
@@ -728,12 +800,12 @@ static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExte
     };
     VkSwapchainKHR swapchain;
     VkResult r = w->CreateSwapchain(c->device, &info, nullptr, &swapchain);
-    /* destroy the old swapchain once no work uses it, even if replacement failed. */
+    /* the old swapchain, retired by the new one, goes once no work uses it, even if replacement failed. */
     if (p->swapchain) {
         pthread_mutex_lock(&c->queue_lock);
         c->fn.vkQueueWaitIdle(queue);
         pthread_mutex_unlock(&c->queue_lock);
-        drop_swapchain(c, p, true);
+        drop_swapchain(c, p);
     }
     if (r != VK_SUCCESS) {
         mime_warn("vulkan: cannot make a %ux%u swapchain on window %#x (%d)", extent.width, extent.height, p->window,
@@ -790,19 +862,7 @@ static bool make_gdi(MvkConnection *c, Presenter *p, uint32_t width, uint32_t he
     if (p->gdi && p->gdi_width == width && p->gdi_height == height && p->gdi_format == format)
         return true;
     wait_frames(c, p);
-    if (p->gdi)
-        c->fn.vkDestroyImage(c->device, p->gdi, nullptr);
-    if (p->gdi_memory)
-        c->fn.vkFreeMemory(c->device, p->gdi_memory, nullptr);
-    if (p->staging)
-        c->fn.vkDestroyBuffer(c->device, p->staging, nullptr);
-    if (p->staging_memory)
-        c->fn.vkFreeMemory(c->device, p->staging_memory, nullptr);
-    p->gdi = VK_NULL_HANDLE;
-    p->gdi_memory = p->staging_memory = VK_NULL_HANDLE;
-    p->staging = VK_NULL_HANDLE;
-    p->staging_map = nullptr;
-    p->gdi_valid = false;
+    drop_gdi(c, p);
     VkImageCreateInfo ii = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
@@ -857,9 +917,6 @@ static bool make_last(MvkConnection *c, Presenter *p, VkExtent2D extent, VkForma
     p->last_memory = VK_NULL_HANDLE;
     p->last_valid = false;
     p->readback_serial = 0;
-    pthread_mutex_lock(&p->info_lock);
-    p->info_valid = false;
-    pthread_mutex_unlock(&p->info_lock);
     VkImageCreateInfo ii = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .imageType = VK_IMAGE_TYPE_2D,
@@ -1424,17 +1481,20 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
         barrier(c, cmd, p->last, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT);
-        p->last_valid = true;
-        p->last_client = client;
-        p->last_serial++;
-        pthread_mutex_lock(&p->info_lock);
-        p->info_valid = true;
-        p->info_width = p->last_extent.width;
-        p->info_height = p->last_extent.height;
-        p->info_client = client;
-        p->info_serial = p->last_serial;
-        pthread_mutex_unlock(&p->info_lock);
     }
+    p->last_valid = p->last != VK_NULL_HANDLE;
+    p->shown_from = s;
+    p->shown_index = index;
+    p->shown_extent = s->extent;
+    p->last_client = client;
+    p->last_serial++;
+    pthread_mutex_lock(&p->info_lock);
+    p->info_valid = true;
+    p->info_width = s->extent.width;
+    p->info_height = s->extent.height;
+    p->info_client = client;
+    p->info_serial = p->last_serial;
+    pthread_mutex_unlock(&p->info_lock);
     barrier(c, cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
             VK_ACCESS_TRANSFER_READ_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
     if (gamma)
@@ -1509,8 +1569,17 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
                  uint32_t index, const MimeUiFrame *frame, MimeRect client)
 {
     MvkWsi *w = c->wsi;
-    if (!p->surface || !frame->shown || !frame->pixel_width || !frame->pixel_height)
+    if (!p->surface)
         return false;
+    if (!frame->shown || !frame->pixel_width || !frame->pixel_height) {
+        if (has_window_images(p)) {
+            pthread_mutex_lock(&c->queue_lock);
+            c->fn.vkQueueWaitIdle(queue);
+            pthread_mutex_unlock(&c->queue_lock);
+            drop_window_images(c, p);
+        }
+        return false;
+    }
     if (p->checked_family != family) {
         VkBool32 ok = VK_FALSE;
         w->SurfaceSupport(c->physical_device, family, p->surface, &ok);
@@ -1521,13 +1590,23 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
         return false;
     VkExtent2D want = {frame->pixel_width, frame->pixel_height};
     bool srgb = is_srgb(s->format);
+    /* swapchains that share the window take turns at its settings only once the one that has them stops. */
+    uint64_t now = mime_now_ns();
+    bool owner = !p->owner || p->owner == s->serial || now - p->owner_seen > OWNER_IDLE_NS;
+    if (owner) {
+        p->owner = s->serial;
+        p->owner_seen = now;
+    }
     for (int attempt = 0; attempt < 2; attempt++) {
-        if (!p->swapchain || p->stale || p->srgb != srgb || p->wanted_mode != s->mode ||
-            p->extent.width != want.width || p->extent.height != want.height ||
-            p->premultiplied_wanted != s->premultiplied) {
+        bool settings = !p->swapchain || (owner && (p->srgb != srgb || p->wanted_mode != s->mode ||
+                                                    p->premultiplied_wanted != s->premultiplied));
+        if (settings || p->stale || p->extent.width != want.width || p->extent.height != want.height) {
             wait_frames(c, p);
-            p->premultiplied_wanted = s->premultiplied;
-            if (!make_swapchain(c, p, queue, want, srgb, s->mode, s->premultiplied))
+            bool mine = owner || !p->swapchain;
+            bool encoded = mine ? srgb : p->srgb, premultiplied = mine ? s->premultiplied : p->premultiplied_wanted;
+            VkPresentModeKHR mode = mine ? s->mode : p->wanted_mode;
+            p->premultiplied_wanted = premultiplied;
+            if (!make_swapchain(c, p, queue, want, encoded, mode, premultiplied))
                 return false;
         }
         Frame *f = &p->frames[p->frame];
@@ -1546,7 +1625,7 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
         p->frame = (p->frame + 1) % FRAMES;
 
         /* the guest surface, through the staging buffer once no frame reads it. */
-        VkFormat gdi_format = srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM;
+        VkFormat gdi_format = p->srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM;
         bool upload = false;
         if (!frame->subsurface && p->shadow &&
             (p->shadow_has_dirty || !p->gdi_valid || p->gdi_format != gdi_format)) {
@@ -1564,7 +1643,13 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
                 upload = true;
             }
         }
-        make_last(c, p, s->extent, srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM);
+        /* the copy for captures lives only while captures ask for it. */
+        if (now < p->want_last_until)
+            make_last(c, p, s->extent, srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM);
+        else if (p->last || p->readback) {
+            wait_frames(c, p);
+            drop_last(c, p);
+        }
         p->last_queue = queue;
         bool gamma = gamma_prepare(c, p);
         record(c, p, f, target, s, index, frame, client, upload, gamma);
@@ -1852,12 +1937,29 @@ void mvk_wsi_acquire(MvkCall *call)
         s->pending[index] = false;
 }
 
+/* no presenter keeps the images of a swapchain that goes. */
+static void forget_shown(Swapchain *s)
+{
+    pthread_mutex_lock(&g_presenters_lock);
+    for (int i = 0; i < MAX_PRESENTERS; i++) {
+        Presenter *p = g_presenters[i];
+        if (!p || p->shown_from != s)
+            continue;
+        pthread_mutex_lock(&p->lock);
+        if (p->shown_from == s)
+            p->shown_from = nullptr;
+        pthread_mutex_unlock(&p->lock);
+    }
+    pthread_mutex_unlock(&g_presenters_lock);
+}
+
 static void free_swapchain(MvkConnection *c, Swapchain *s)
 {
     mvk_wsi_drain(c);
     pthread_mutex_lock(&c->queue_lock);
     c->fn.vkDeviceWaitIdle(c->device);
     pthread_mutex_unlock(&c->queue_lock);
+    forget_shown(s);
     if (s->presenter)
         presenter_put(c, s->presenter);
     destroy_swapchain_images(c, s);
@@ -1911,6 +2013,7 @@ MvkImageChain *mvk_wsi_chain_create(MvkConnection *c, VkImage image, VkFormat fo
     Swapchain *s = calloc(1, sizeof(*s));
     if (!s)
         return nullptr;
+    s->serial = __atomic_add_fetch(&g_swapchain_serial, 1, __ATOMIC_RELAXED);
     s->format = format;
     s->extent = extent;
     s->mode = VK_PRESENT_MODE_FIFO_KHR;
@@ -2006,6 +2109,77 @@ static void copy_opaque(void *pixels, uint32_t stride, const uint8_t *from, uint
     }
 }
 
+/* runs commands on the queue of the last present and waits for them, under the presenter's lock. */
+static bool run_once(MvkConnection *c, Presenter *p, void (*fill)(MvkConnection *c, Presenter *p, VkCommandBuffer cmd))
+{
+    VkCommandBuffer cmd;
+    VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, p->pool,
+                                      VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
+    if (c->fn.vkAllocateCommandBuffers(c->device, &ai, &cmd) != VK_SUCCESS)
+        return false;
+    VkFence fence;
+    VkFenceCreateInfo fi = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    if (c->fn.vkCreateFence(c->device, &fi, nullptr, &fence) != VK_SUCCESS) {
+        c->fn.vkFreeCommandBuffers(c->device, p->pool, 1, &cmd);
+        return false;
+    }
+    VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
+                                      VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+    c->fn.vkBeginCommandBuffer(cmd, &begin);
+    fill(c, p, cmd);
+    c->fn.vkEndCommandBuffer(cmd);
+    VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 0, nullptr, nullptr, 1, &cmd, 0, nullptr};
+    bool ok = submit_locked(c, p->last_queue, &submit, fence) == VK_SUCCESS &&
+              c->fn.vkWaitForFences(c->device, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
+    c->fn.vkDestroyFence(c->device, fence, nullptr);
+    c->fn.vkFreeCommandBuffers(c->device, p->pool, 1, &cmd);
+    return ok;
+}
+
+static void copy_shown(MvkConnection *c, Presenter *p, VkCommandBuffer cmd)
+{
+    Swapchain *s = p->shown_from;
+    VkImage src = s->images[p->shown_index];
+    VkExtent2D e = p->shown_extent;
+    barrier(c, cmd, src, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0,
+            VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    barrier(c, cmd, p->last, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    blit(c, cmd, src, (Box){0, 0, e.width, e.height}, e.width, e.height, p->last, (Box){0, 0, e.width, e.height},
+         e.width, e.height, s->flip);
+    barrier(c, cmd, p->last, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT);
+    barrier(c, cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            VK_ACCESS_TRANSFER_READ_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+}
+
+/* the first capture of a window that keeps no copy takes the guest image it last presented, still as it was shown. */
+static bool keep_shown(MvkConnection *c, Presenter *p)
+{
+    Swapchain *s = p->shown_from;
+    if (!s || !s->images[p->shown_index] || !p->pool || !p->last_queue)
+        return false;
+    VkFormat format = is_srgb(s->format) ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM;
+    if (!make_last(c, p, p->shown_extent, format) || !run_once(c, p, copy_shown))
+        return false;
+    p->last_valid = true;
+    return true;
+}
+
+static void copy_last(MvkConnection *c, Presenter *p, VkCommandBuffer cmd)
+{
+    /* the present that wrote the image went first on this queue. */
+    barrier(c, cmd, p->last, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT);
+    VkBufferImageCopy copy = {
+        .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+        .imageExtent = {p->last_extent.width, p->last_extent.height, 1},
+    };
+    c->fn.vkCmdCopyImageToBuffer(cmd, p->last, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, p->readback, 1, &copy);
+}
+
 /*
  * copies the last presented image into BGRA rows if capacity permits. returns its size and window-relative
  * client rectangle, or false if the window has no image.
@@ -2048,7 +2222,8 @@ bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t c
         return ok;
     }
     pthread_mutex_lock(&p->lock);
-    if (!p->last_valid || !p->pool || !p->last_queue)
+    p->want_last_until = mime_now_ns() + LAST_KEEP_NS;
+    if ((!p->last_valid && !keep_shown(c, p)) || !p->pool || !p->last_queue)
         goto out;
     *width = p->last_extent.width;
     *height = p->last_extent.height;
@@ -2098,33 +2273,7 @@ bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t c
             goto out;
         p->readback_size = size;
     }
-    VkCommandBuffer cmd;
-    VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, nullptr, p->pool,
-                                      VK_COMMAND_BUFFER_LEVEL_PRIMARY, 1};
-    if (c->fn.vkAllocateCommandBuffers(c->device, &ai, &cmd) != VK_SUCCESS)
-        goto out;
-    VkFence fence;
-    VkFenceCreateInfo fi = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
-    if (c->fn.vkCreateFence(c->device, &fi, nullptr, &fence) != VK_SUCCESS) {
-        c->fn.vkFreeCommandBuffers(c->device, p->pool, 1, &cmd);
-        goto out;
-    }
-    VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, nullptr,
-                                      VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
-    c->fn.vkBeginCommandBuffer(cmd, &begin);
-    /* the present that wrote the image went first on this queue. */
-    barrier(c, cmd, p->last, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_PIPELINE_STAGE_TRANSFER_BIT);
-    VkBufferImageCopy copy = {
-        .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-        .imageExtent = {p->last_extent.width, p->last_extent.height, 1},
-    };
-    c->fn.vkCmdCopyImageToBuffer(cmd, p->last, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, p->readback, 1, &copy);
-    c->fn.vkEndCommandBuffer(cmd);
-    VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, nullptr, 0, nullptr, nullptr, 1, &cmd, 0, nullptr};
-    if (submit_locked(c, p->last_queue, &submit, fence) == VK_SUCCESS &&
-        c->fn.vkWaitForFences(c->device, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS) {
+    if (run_once(c, p, copy_last)) {
         if (!p->readback_coherent) {
             VkMappedMemoryRange range = {VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE, nullptr, p->readback_memory, 0,
                                          VK_WHOLE_SIZE};
@@ -2134,8 +2283,6 @@ bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t c
         p->readback_serial = p->last_serial;
         ok = true;
     }
-    c->fn.vkDestroyFence(c->device, fence, nullptr);
-    c->fn.vkFreeCommandBuffers(c->device, p->pool, 1, &cmd);
 out:
     pthread_mutex_unlock(&p->lock);
     presenter_put(c, p);

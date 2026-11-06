@@ -686,6 +686,8 @@ struct D3dDevice {
 
     SRWLOCK memory_lock;
     D3dBlock *blocks;
+    /* when empty blocks were last looked for, to give back the ones that stayed empty. */
+    ULONGLONG blocks_swept;
     UINT buffer_types[D3D_MEMORY_KINDS];
     UINT image_type_device;
 
@@ -742,7 +744,19 @@ struct D3dDevice {
     SRWLOCK cbv_lock;
     struct D3dCbvEntry *cbv;
     UINT cbv_count, cbv_capacity;
+
+    /* the reason GetDeviceRemovedReason gives once the gpu lost the device, and the events that hear of it. */
+    volatile HRESULT removed;
+    SRWLOCK removed_lock;
+#define D3D_REMOVED_EVENTS 8
+    struct {
+        HANDLE event;
+        DWORD cookie;
+    } removed_events[D3D_REMOVED_EVENTS];
 };
+
+/* notes a lost device from a vulkan result; returns the result as an HRESULT for the program. */
+HRESULT D3dCheckResult(D3dDevice *device, VkResult result);
 
 void D3dDefer(D3dDevice *device, UINT64 serial, D3dGarbageType type, UINT64 handle);
 void D3dDeferFree(D3dDevice *device, UINT64 serial, D3dAllocation *alloc);
@@ -781,6 +795,8 @@ void D3dRingTrim(D3dDevice *device, const D3dRingSlice *slice, VkDeviceSize rese
 void D3dRingChunkRelease(D3dDevice *device, D3dRingChunk *chunk, UINT64 serial);
 void D3dRingRetire(D3dDevice *device, UINT64 serial);
 VkDescriptorSet D3dRingTableSet(D3dDevice *device, D3dRingChunk *chunk);
+/* gives back blocks that stayed empty a while, or every empty block and idle chunk now. */
+void D3dMemorySweep(D3dDevice *device, BOOL now);
 void D3dMemoryDestroy(D3dDevice *device);
 
 /*

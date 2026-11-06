@@ -42,6 +42,8 @@ bool mime_ui_vk_copy(uint32_t id, uint8_t *dst, uint32_t width, uint32_t height,
 
 /* called on the main thread before destroying a window the presenter may own. */
 void mime_vk_window_lost(uint32_t id);
+/* called on the main thread when a window hides: its presenters free what is the window's size until it shows. */
+void mime_vk_window_hidden(uint32_t id);
 
 /*
  * serializes device and window-surface teardown: concurrent destruction can deadlock the NVIDIA driver's internal
