@@ -113,6 +113,9 @@ typedef struct GlBuffer {
     uint64_t map_offset, map_length;
     BOOL dirty_index_range;
     uint32_t max_index[3]; /* cached per index type: u8, u16, u32. */
+    BOOL immutable;        /* made by glBufferStorage. */
+    GLbitfield storage_flags;
+    BOOL gpu_write;        /* a shader may write it: it is never moved to new memory while the gpu works. */
 } GlBuffer;
 
 typedef struct GlSamplerState {
@@ -184,8 +187,15 @@ typedef struct GlUniform {
     GLint size;
     uint32_t offset, array_stride, matrix_stride;
     int32_t texture[MIME_GPU_STAGES];
-    GLint *units;    /* samplers: the texture unit of each element. */
+    GLint *units;    /* samplers: the texture unit of each element, images: the image unit. */
+    int32_t binding; /* layout(binding), -1 without one. */
 } GlUniform;
+
+typedef struct GlStorageBlock {
+    char *name;
+    uint32_t bytes, stages, variables;
+    GLuint binding;
+} GlStorageBlock;
 
 typedef struct GlUniformBlock {
     char *name;
@@ -251,6 +261,10 @@ typedef struct GlProgram {
     uint32_t stage_mask;    /* bit 0 vertex, 1 tessellation control, 2 evaluation, 3 geometry, 4 fragment. */
     uint32_t uniform_version; /* changes whenever a uniform is written. */
     GlSubroutines *subroutines[5]; /* by stage, see subroutine.c. */
+    BOOL compute;
+    uint32_t local_size[3];
+    GlStorageBlock *storage;
+    uint32_t storage_count;
 } GlProgram;
 
 typedef struct GlVertexAttrib {
@@ -531,6 +545,14 @@ typedef struct GlContext {
     /* bindings. */
     GLuint array_buffer, pixel_pack, pixel_unpack, copy_read, copy_write, uniform_buffer;
     GlBufferBinding uniform_bindings[MIME_GPU_MAX_UNIFORM_BLOCKS];
+    GLuint storage_buffer, dispatch_indirect_buffer, draw_indirect_buffer, parameter_buffer;
+    GlBufferBinding storage_bindings[MIME_GPU_MAX_STORAGE_BLOCKS];
+    struct {
+        GLuint texture;
+        GLint level, layer;
+        GLboolean layered;
+        GLenum access, format;
+    } image_units[MIME_GPU_MAX_IMAGES];
     GlVertexArray default_vao;
     GlVertexArray *vao;
     GlNames vaos;
@@ -669,6 +691,15 @@ void gl_unpack_row(uint32_t dst_format, uint8_t *dst, GLenum format, GLenum type
 void gl_pack_row(uint32_t src_format, const uint8_t *src, GLenum format, GLenum type, uint8_t *dst, uint32_t width);
 BOOL gl_read_pixels_into(GlContext *ctx, GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum type,
                          void *pixels);
+
+/* compute.c: shader storage buffers, images, dispatches and barriers. */
+BOOL gl_is_image_type(GLenum type);
+BOOL gl_emit_storage(GlContext *ctx, GlProgram *p); /* the device lock must be held. */
+void gl_emit_images(GlContext *ctx, GlProgram *p);
+void gl_emit_compute_state(GlContext *ctx, GlProgram *p); /* draw.c */
+int gl_compute_get(GlContext *ctx, GLenum pname, GLdouble *v);
+BOOL gl_compute_get_indexed(GlContext *ctx, GLenum target, GLuint index, GLint *data);
+BOOL gl_buffer_read_ready(GlBuffer *b); /* waits for the gpu to finish writing a buffer a shader may write. */
 
 /* programs, program.c. */
 GlProgram *gl_program(GlContext *ctx, GLuint name);

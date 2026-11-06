@@ -367,6 +367,7 @@ void gl_xfb_prepare(GlContext *ctx)
         if (!b || !b->mem.ptr || (uint64_t)x->offset[i] > b->size)
             continue;
         b->last_use = gl_batch_fence();
+        b->gpu_write = TRUE;
         mem[i] = gl_mem(&b->mem);
         mem[i].offset += (uint64_t)x->offset[i];
         size[i] = x->size[i] ? (uint64_t)x->size[i] : b->size - (uint64_t)x->offset[i];

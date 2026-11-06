@@ -71,6 +71,21 @@ static const GlExtension g_extensions[] = {
     {"GL_ARB_texture_gather", 0},
     {"GL_ARB_texture_cube_map_array", MIME_GPU_FEATURE_CUBE_ARRAY},
     {"GL_ARB_blend_func_extended", MIME_GPU_FEATURE_DUAL_BLEND},
+    {"GL_ARB_compute_shader", MIME_GPU_FEATURE_COMPUTE},
+    {"GL_ARB_shader_storage_buffer_object", MIME_GPU_FEATURE_COMPUTE},
+    {"GL_ARB_shader_image_load_store", MIME_GPU_FEATURE_COMPUTE},
+    {"GL_ARB_shader_image_size", MIME_GPU_FEATURE_COMPUTE},
+    {"GL_ARB_program_interface_query", MIME_GPU_FEATURE_COMPUTE},
+    {"GL_ARB_buffer_storage", 0},
+    {"GL_ARB_draw_indirect", 0},
+    {"GL_ARB_multi_draw_indirect", 0},
+    {"GL_ARB_indirect_parameters", 0},
+    {"GL_ARB_base_instance", 0},
+    {"GL_ARB_clear_buffer_object", 0},
+    {"GL_ARB_clear_texture", 0},
+    {"GL_ARB_copy_image", MIME_GPU_FEATURE_COMPUTE},
+    {"GL_ARB_invalidate_subdata", 0},
+    {"GL_ARB_internalformat_query", 0},
 };
 
 #define EXTENSION_MAX 512

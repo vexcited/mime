@@ -28,6 +28,14 @@ static GLuint *binding_of(GlContext *ctx, GLenum target)
         return &ctx->copy_write;
     case GL_UNIFORM_BUFFER:
         return &ctx->uniform_buffer;
+    case GL_SHADER_STORAGE_BUFFER:
+        return gl_host_has(MIME_GPU_FEATURE_COMPUTE) ? &ctx->storage_buffer : nullptr;
+    case GL_DISPATCH_INDIRECT_BUFFER:
+        return gl_host_has(MIME_GPU_FEATURE_COMPUTE) ? &ctx->dispatch_indirect_buffer : nullptr;
+    case GL_DRAW_INDIRECT_BUFFER:
+        return &ctx->draw_indirect_buffer;
+    case GL_PARAMETER_BUFFER:
+        return &ctx->parameter_buffer;
     case GL_TRANSFORM_FEEDBACK_BUFFER:
         return &ctx->st.xfb_buffer;
     default:
@@ -89,9 +97,20 @@ GLAPI void APIENTRY glDeleteBuffers(GLsizei n, const GLuint *buffers)
         if (ctx->uniform_buffer == name)
             ctx->uniform_buffer = 0;
         gl_xfb_buffer_deleted(ctx, name);
+        if (ctx->storage_buffer == name)
+            ctx->storage_buffer = 0;
+        if (ctx->dispatch_indirect_buffer == name)
+            ctx->dispatch_indirect_buffer = 0;
+        if (ctx->draw_indirect_buffer == name)
+            ctx->draw_indirect_buffer = 0;
+        if (ctx->parameter_buffer == name)
+            ctx->parameter_buffer = 0;
         for (int i = 0; i < MIME_GPU_MAX_UNIFORM_BLOCKS; i++)
             if (ctx->uniform_bindings[i].name == name)
                 memset(&ctx->uniform_bindings[i], 0, sizeof(ctx->uniform_bindings[i]));
+        for (int i = 0; i < MIME_GPU_MAX_STORAGE_BLOCKS; i++)
+            if (ctx->storage_bindings[i].name == name)
+                memset(&ctx->storage_bindings[i], 0, sizeof(ctx->storage_bindings[i]));
         for (int a = 0; a < MIME_GPU_MAX_ATTRIBS; a++)
             if (ctx->vao->attribs[a].buffer == name)
                 ctx->vao->attribs[a].buffer = 0;
@@ -122,6 +141,51 @@ GLAPI void APIENTRY glBindBuffer(GLenum target, GLuint name)
         ctx->dirty |= DIRTY_VERTEX;
 }
 
+/* the indexed binding of a target, with the generic binding it also sets, or NULL for a target that has none. */
+static GlBufferBinding *indexed_binding(GlContext *ctx, GLenum target, GLuint index, GLuint **generic, GLuint *limit)
+{
+    switch (target) {
+    case GL_UNIFORM_BUFFER:
+        *generic = &ctx->uniform_buffer;
+        *limit = MIME_GPU_MAX_UNIFORM_BLOCKS;
+        return index < MIME_GPU_MAX_UNIFORM_BLOCKS ? &ctx->uniform_bindings[index] : nullptr;
+    case GL_SHADER_STORAGE_BUFFER:
+        if (!gl_host_has(MIME_GPU_FEATURE_COMPUTE))
+            return nullptr;
+        *generic = &ctx->storage_buffer;
+        *limit = MIME_GPU_MAX_STORAGE_BLOCKS;
+        return index < MIME_GPU_MAX_STORAGE_BLOCKS ? &ctx->storage_bindings[index] : nullptr;
+    default:
+        *limit = 0;
+        return nullptr;
+    }
+}
+
+static BOOL bind_indexed(GlContext *ctx, GLenum target, GLuint index, GLuint name, GLintptr offset, GLsizeiptr size,
+                         BOOL whole)
+{
+    GLuint *generic = nullptr, limit = 0;
+    GlBufferBinding *slot = indexed_binding(ctx, target, index, &generic, &limit);
+    if (!slot) {
+        gl_error(ctx, limit ? GL_INVALID_VALUE : GL_INVALID_ENUM);
+        return FALSE;
+    }
+    if (!whole && name && (offset < 0 || size <= 0 || (offset & 255))) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return FALSE;
+    }
+    if (name && !make(ctx, name)) {
+        gl_error(ctx, GL_OUT_OF_MEMORY);
+        return FALSE;
+    }
+    *generic = name;
+    if (whole)
+        *slot = (GlBufferBinding){.name = name, .whole = TRUE};
+    else
+        *slot = (GlBufferBinding){name, name ? (uint64_t)offset : 0, name ? (uint64_t)size : 0, FALSE};
+    return TRUE;
+}
+
 GLAPI void APIENTRY glBindBufferBase(GLenum target, GLuint index, GLuint name)
 {
     GL_CONTEXT_OR_RETURN();
@@ -129,16 +193,7 @@ GLAPI void APIENTRY glBindBufferBase(GLenum target, GLuint index, GLuint name)
         gl_xfb_bind(ctx, index, name, 0, 0, TRUE);
         return;
     }
-    if (target != GL_UNIFORM_BUFFER || index >= MIME_GPU_MAX_UNIFORM_BLOCKS) {
-        gl_error(ctx, target != GL_UNIFORM_BUFFER ? GL_INVALID_ENUM : GL_INVALID_VALUE);
-        return;
-    }
-    if (name && !make(ctx, name)) {
-        gl_error(ctx, GL_OUT_OF_MEMORY);
-        return;
-    }
-    ctx->uniform_buffer = name;
-    ctx->uniform_bindings[index] = (GlBufferBinding){.name = name, .whole = TRUE};
+    bind_indexed(ctx, target, index, name, 0, 0, TRUE);
 }
 
 GLAPI void APIENTRY glBindBufferRange(GLenum target, GLuint index, GLuint name, GLintptr offset, GLsizeiptr size)
@@ -151,24 +206,79 @@ GLAPI void APIENTRY glBindBufferRange(GLenum target, GLuint index, GLuint name, 
             gl_xfb_bind(ctx, index, name, offset, size, FALSE);
         return;
     }
-    if (target != GL_UNIFORM_BUFFER || index >= MIME_GPU_MAX_UNIFORM_BLOCKS ||
-        (name && (offset < 0 || size <= 0 || (offset & 255)))) {
-        gl_error(ctx, target != GL_UNIFORM_BUFFER ? GL_INVALID_ENUM : GL_INVALID_VALUE);
+    bind_indexed(ctx, target, index, name, offset, size, FALSE);
+}
+
+GLAPI void APIENTRY glBindBuffersBase(GLenum target, GLuint first, GLsizei count, const GLuint *buffers)
+{
+    GL_CONTEXT_OR_RETURN();
+    GLuint *generic, limit;
+    if (!indexed_binding(ctx, target, 0, &generic, &limit)) {
+        gl_error(ctx, GL_INVALID_ENUM);
         return;
     }
-    if (name && !make(ctx, name)) {
-        gl_error(ctx, GL_OUT_OF_MEMORY);
+    if (count < 0 || first + (GLuint)count > limit) {
+        gl_error(ctx, GL_INVALID_OPERATION);
         return;
     }
-    ctx->uniform_buffer = name;
-    ctx->uniform_bindings[index] = (GlBufferBinding){name, name ? (uint64_t)offset : 0,
-                                                   name ? (uint64_t)size : 0, FALSE};
+    for (GLsizei i = 0; i < count; i++)
+        if (!bind_indexed(ctx, target, first + (GLuint)i, buffers ? buffers[i] : 0, 0, 0, TRUE))
+            return;
+}
+
+GLAPI void APIENTRY glBindBuffersRange(GLenum target, GLuint first, GLsizei count, const GLuint *buffers,
+                                       const GLintptr *offsets, const GLsizeiptr *sizes)
+{
+    GL_CONTEXT_OR_RETURN();
+    GLuint *generic, limit;
+    if (!indexed_binding(ctx, target, 0, &generic, &limit)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    if (count < 0 || first + (GLuint)count > limit) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    for (GLsizei i = 0; i < count; i++) {
+        GLuint name = buffers ? buffers[i] : 0;
+        if (name && (!offsets || !sizes)) {
+            gl_error(ctx, GL_INVALID_VALUE);
+            return;
+        }
+        if (!bind_indexed(ctx, target, first + (GLuint)i, name, name ? offsets[i] : 0, name ? sizes[i] : 0, FALSE))
+            return;
+    }
+}
+
+static BOOL in_use(GlBuffer *b)
+{
+    return b->last_use && !gl_fence_done(b->last_use);
+}
+
+/* a fence not emitted yet is emitted first, or the wait would be for a command nobody sent. */
+static void buffer_wait(GlBuffer *b)
+{
+    if (!b->last_use || gl_fence_done(b->last_use))
+        return;
+    if (b->last_use > GlDev.fence)
+        gl_fence();
+    gl_wait(b->last_use);
+}
+
+/* waits for a buffer a shader may write, so that the cpu reads what the gpu wrote. */
+BOOL gl_buffer_read_ready(GlBuffer *b)
+{
+    if (b->gpu_write && in_use(b))
+        buffer_wait(b);
+    return TRUE;
 }
 
 /* new storage of size, keeping the first keep bytes. */
 static BOOL rename(GlBuffer *b, uint64_t size, uint64_t keep)
 {
     GlMem mem;
+    if (keep && b->gpu_write)
+        gl_buffer_read_ready(b);
     if (!gl_heap_alloc(size ? size : 1, &mem))
         return FALSE;
     if (keep && b->mem.ptr)
@@ -181,25 +291,12 @@ static BOOL rename(GlBuffer *b, uint64_t size, uint64_t keep)
     return TRUE;
 }
 
-static BOOL in_use(GlBuffer *b)
-{
-    return b->last_use && !gl_fence_done(b->last_use);
-}
-
-/* waits for the gpu to be done with a buffer: the fence it waits on may not have been emitted yet. */
-static void wait_use(GlBuffer *b)
-{
-    if (b->last_use > GlDev.fence)
-        gl_fence();
-    gl_wait(b->last_use);
-}
-
 GLAPI void APIENTRY glBufferData(GLenum target, GLsizeiptr size, const void *data, GLenum usage)
 {
     GL_CONTEXT_OR_RETURN();
     GlBuffer *b = gl_bound_buffer(ctx, target);
-    if (!b || size < 0) {
-        gl_error(ctx, b ? GL_INVALID_VALUE : GL_INVALID_OPERATION);
+    if (!b || size < 0 || b->immutable) {
+        gl_error(ctx, b && !b->immutable ? GL_INVALID_VALUE : GL_INVALID_OPERATION);
         return;
     }
     b->usage = usage;
@@ -215,9 +312,33 @@ GLAPI void APIENTRY glBufferData(GLenum target, GLsizeiptr size, const void *dat
     ctx->dirty |= DIRTY_VERTEX;
 }
 
+#define STORAGE_FLAGS (GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT | \
+                       GL_DYNAMIC_STORAGE_BIT | GL_CLIENT_STORAGE_BIT)
+
 GLAPI void APIENTRY glBufferStorage(GLenum target, GLsizeiptr size, const void *data, GLbitfield flags)
 {
-    glBufferData(target, size, data, GL_STATIC_DRAW);
+    GL_CONTEXT_OR_RETURN();
+    GlBuffer *b = gl_bound_buffer(ctx, target);
+    if (!b || b->immutable) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    if (size <= 0 || (flags & ~STORAGE_FLAGS) || ((flags & GL_MAP_PERSISTENT_BIT) && !(flags & (GL_MAP_READ_BIT | GL_MAP_WRITE_BIT))) ||
+        ((flags & GL_MAP_COHERENT_BIT) && !(flags & GL_MAP_PERSISTENT_BIT))) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    if (!rename(b, (uint64_t)size, 0)) {
+        gl_error(ctx, GL_OUT_OF_MEMORY);
+        return;
+    }
+    if (data)
+        memcpy(b->mem.ptr, data, (SIZE_T)size);
+    b->usage = GL_STATIC_DRAW;
+    b->immutable = TRUE;
+    b->storage_flags = flags;
+    b->dirty_index_range = TRUE;
+    ctx->dirty |= DIRTY_VERTEX;
 }
 
 GLAPI void APIENTRY glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void *data)
@@ -228,9 +349,14 @@ GLAPI void APIENTRY glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr s
         gl_error(ctx, b ? GL_INVALID_VALUE : GL_INVALID_OPERATION);
         return;
     }
+    if (b->immutable && !(b->storage_flags & GL_DYNAMIC_STORAGE_BIT)) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
     if (!size || !data)
         return;
-    if (in_use(b) && !rename(b, b->size, b->size)) {
+    /* a buffer that stays mapped keeps its memory. */
+    if (in_use(b) && !(b->immutable && (b->storage_flags & GL_MAP_PERSISTENT_BIT)) && !rename(b, b->size, b->size)) {
         gl_error(ctx, GL_OUT_OF_MEMORY);
         return;
     }
@@ -247,9 +373,9 @@ GLAPI void APIENTRY glGetBufferSubData(GLenum target, GLintptr offset, GLsizeipt
         gl_error(ctx, b ? GL_INVALID_VALUE : GL_INVALID_OPERATION);
         return;
     }
-    /* the gpu writes buffers only through readbacks: they finish before the fence. */
+    /* the gpu writes buffers only through readbacks and shaders: they finish before the fence. */
     if (in_use(b))
-        wait_use(b);
+        buffer_wait(b);
     memcpy(data, b->mem.ptr + offset, (SIZE_T)size);
 }
 
@@ -261,10 +387,18 @@ GLAPI void *APIENTRY glMapBufferRange(GLenum target, GLintptr offset, GLsizeiptr
         gl_error(ctx, !b || b->mapped ? GL_INVALID_OPERATION : GL_INVALID_VALUE);
         return nullptr;
     }
-    if (!(access & GL_MAP_UNSYNCHRONIZED_BIT) && in_use(b)) {
+    if (b->immutable) {
+        GLbitfield need = access & (GL_MAP_READ_BIT | GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT);
+        if ((need & ~b->storage_flags) || !(access & (GL_MAP_READ_BIT | GL_MAP_WRITE_BIT))) {
+            gl_error(ctx, GL_INVALID_OPERATION);
+            return nullptr;
+        }
+    }
+    BOOL persistent = (access & GL_MAP_PERSISTENT_BIT) != 0;
+    if (!persistent && !(access & GL_MAP_UNSYNCHRONIZED_BIT) && in_use(b)) {
         uint64_t keep = (access & GL_MAP_INVALIDATE_BUFFER_BIT) ? 0 : b->size;
-        if (access & GL_MAP_READ_BIT) {
-            wait_use(b);
+        if ((access & GL_MAP_READ_BIT) || b->immutable) {
+            buffer_wait(b);
         } else if (!rename(b, b->size, keep)) {
             gl_error(ctx, GL_OUT_OF_MEMORY);
             return nullptr;
@@ -333,6 +467,12 @@ GLAPI void APIENTRY glGetBufferParameteriv(GLenum target, GLenum pname, GLint *p
     case GL_BUFFER_ACCESS_FLAGS:
         *params = (GLint)b->map_access;
         break;
+    case GL_BUFFER_IMMUTABLE_STORAGE:
+        *params = b->immutable;
+        break;
+    case GL_BUFFER_STORAGE_FLAGS:
+        *params = (GLint)b->storage_flags;
+        break;
     case GL_BUFFER_MAP_OFFSET:
         *params = (GLint)b->map_offset;
         break;
@@ -376,4 +516,152 @@ GLAPI void APIENTRY glCopyBufferSubData(GLenum read_target, GLenum write_target,
     memmove(dst->mem.ptr + write_offset, src->mem.ptr + read_offset, (SIZE_T)size);
     dst->dirty_index_range = TRUE;
     ctx->dirty |= DIRTY_VERTEX;
+}
+
+/* ---------------------------------------------------------------- clearing and invalidating */
+
+typedef struct ClearFormat {
+    GLenum internal;
+    uint8_t components, bytes; /* of each component. */
+} ClearFormat;
+
+static const ClearFormat g_clear_formats[] = {
+    {GL_R8, 1, 1},      {GL_R8UI, 1, 1},     {GL_R8I, 1, 1},      {GL_R16, 1, 2},      {GL_R16UI, 1, 2},
+    {GL_R16I, 1, 2},    {GL_R32F, 1, 4},     {GL_R32UI, 1, 4},    {GL_R32I, 1, 4},     {GL_RG8, 2, 1},
+    {GL_RG8UI, 2, 1},   {GL_RG8I, 2, 1},     {GL_RG16, 2, 2},     {GL_RG16UI, 2, 2},   {GL_RG16I, 2, 2},
+    {GL_RG32F, 2, 4},   {GL_RG32UI, 2, 4},   {GL_RG32I, 2, 4},    {GL_RGB32F, 3, 4},   {GL_RGB32UI, 3, 4},
+    {GL_RGB32I, 3, 4},  {GL_RGBA8, 4, 1},    {GL_RGBA8UI, 4, 1},  {GL_RGBA8I, 4, 1},   {GL_RGBA16, 4, 2},
+    {GL_RGBA16UI, 4, 2}, {GL_RGBA16I, 4, 2}, {GL_RGBA32F, 4, 4}, {GL_RGBA32UI, 4, 4}, {GL_RGBA32I, 4, 4},
+};
+
+static uint32_t type_bytes_of(GLenum type)
+{
+    switch (type) {
+    case GL_UNSIGNED_BYTE:
+    case GL_BYTE:
+        return 1;
+    case GL_UNSIGNED_SHORT:
+    case GL_SHORT:
+        return 2;
+    case GL_UNSIGNED_INT:
+    case GL_INT:
+    case GL_FLOAT:
+        return 4;
+    default:
+        return 0;
+    }
+}
+
+static uint32_t format_components(GLenum format)
+{
+    switch (format) {
+    case GL_RED:
+    case GL_RED_INTEGER:
+        return 1;
+    case GL_RG:
+    case GL_RG_INTEGER:
+        return 2;
+    case GL_RGB:
+    case GL_RGB_INTEGER:
+        return 3;
+    case GL_RGBA:
+    case GL_RGBA_INTEGER:
+        return 4;
+    default:
+        return 0;
+    }
+}
+
+/*
+ * the bytes of one element of the internal format from the value the call gives, whose components must have the size the
+ * format stores them in. a value of fewer components than the format has fills the rest with zero, alpha with one.
+ */
+static BOOL clear_element(GLenum internal, GLenum format, GLenum type, const void *data, uint8_t *out, uint32_t *bytes)
+{
+    const ClearFormat *f = nullptr;
+    for (size_t i = 0; i < sizeof(g_clear_formats) / sizeof(g_clear_formats[0]); i++)
+        if (g_clear_formats[i].internal == internal)
+            f = &g_clear_formats[i];
+    if (!f)
+        return FALSE;
+    *bytes = (uint32_t)f->components * f->bytes;
+    memset(out, 0, *bytes);
+    if (!data)
+        return TRUE;
+    uint32_t have = format_components(format), size = type_bytes_of(type);
+    if (!have || size != f->bytes)
+        return FALSE;
+    for (uint32_t c = 0; c < f->components; c++) {
+        if (c < have)
+            memcpy(out + c * f->bytes, (const uint8_t *)data + c * size, size);
+        else if (c == 3 && (type == GL_FLOAT || f->bytes == 4)) {
+            GLfloat one = 1.0f;
+            GLuint integer_one = 1;
+            if (type == GL_FLOAT)
+                memcpy(out + c * 4, &one, 4);
+            else
+                memcpy(out + c * 4, &integer_one, 4);
+        }
+    }
+    return TRUE;
+}
+
+GLAPI void APIENTRY glClearBufferSubData(GLenum target, GLenum internal, GLintptr offset, GLsizeiptr size, GLenum format,
+                                         GLenum type, const void *data)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlBuffer *b = gl_bound_buffer(ctx, target);
+    if (!b) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    uint8_t element[16];
+    uint32_t bytes;
+    if (!clear_element(internal, format, type, data, element, &bytes)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    if (offset < 0 || size < 0 || (uint64_t)(offset + size) > b->size || (offset % bytes) || (size % bytes)) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    if (b->mapped && !(b->map_access & GL_MAP_PERSISTENT_BIT)) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    if (!size)
+        return;
+    /* the gpu may be reading or writing it: the fill waits, there is nothing to rename. */
+    if (b->last_use && !gl_fence_done(b->last_use))
+        buffer_wait(b);
+    for (GLsizeiptr at = 0; at < size; at += bytes)
+        memcpy(b->mem.ptr + offset + at, element, bytes);
+    b->dirty_index_range = TRUE;
+    ctx->dirty |= DIRTY_VERTEX;
+}
+
+GLAPI void APIENTRY glClearBufferData(GLenum target, GLenum internal, GLenum format, GLenum type, const void *data)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlBuffer *b = gl_bound_buffer(ctx, target);
+    if (!b) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    glClearBufferSubData(target, internal, 0, (GLsizeiptr)b->size, format, type, data);
+}
+
+GLAPI void APIENTRY glInvalidateBufferData(GLuint buffer)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (!gl_buffer(ctx, buffer))
+        gl_error(ctx, GL_INVALID_VALUE);
+}
+
+GLAPI void APIENTRY glInvalidateBufferSubData(GLuint buffer, GLintptr offset, GLsizeiptr length)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlBuffer *b = gl_buffer(ctx, buffer);
+    if (!b || offset < 0 || length < 0 || (uint64_t)(offset + length) > b->size)
+        gl_error(ctx, GL_INVALID_VALUE);
 }

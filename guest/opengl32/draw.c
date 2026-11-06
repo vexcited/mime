@@ -923,7 +923,7 @@ static void emit_textures(GlContext *ctx, GlProgram *p)
 {
     for (uint32_t i = 0; i < p->uniform_count; i++) {
         GlUniform *u = &p->uniforms[i];
-        if (!u->units)
+        if (!u->units || gl_is_image_type(u->type))
             continue;
         for (GLint e = 0; e < u->size; e++) {
             GlTexture *t = gl_unit_texture(ctx, (GLuint)u->units[e], u->type);
@@ -969,7 +969,8 @@ static BOOL prepare(GlContext *ctx, GlProgram *p, const GlVertexInput *in, const
         GlUniformBlock *block = &p->blocks[i];
         GlBufferBinding *binding = &ctx->uniform_bindings[block->binding];
         GlBuffer *buffer = gl_buffer(ctx, binding->name);
-        if (!buffer || buffer->mapped || !buffer->mem.ptr || binding->offset > buffer->size ||
+        if (!buffer || (buffer->mapped && !(buffer->map_access & GL_MAP_PERSISTENT_BIT)) || !buffer->mem.ptr ||
+            binding->offset > buffer->size ||
             block->bytes > buffer->size - binding->offset || (!binding->whole && block->bytes > binding->size)) {
             gl_error(ctx, GL_INVALID_OPERATION);
             return FALSE;
@@ -1032,6 +1033,8 @@ static BOOL prepare(GlContext *ctx, GlProgram *p, const GlVertexInput *in, const
         command->mem.offset += binding->offset;
         buffer->last_use = gl_batch_fence();
     }
+    gl_emit_storage(ctx, p);
+    gl_emit_images(ctx, p);
     for (int l = 0; l < MIME_GPU_MAX_ATTRIBS; l++) {
         if (!src[l].used)
             continue;
@@ -1044,6 +1047,36 @@ static BOOL prepare(GlContext *ctx, GlProgram *p, const GlVertexInput *in, const
     }
     ctx->dirty = 0;
     return TRUE;
+}
+
+/* the state a dispatch needs: the loose uniforms, textures and uniform blocks of the compute program. */
+void gl_emit_compute_state(GlContext *ctx, GlProgram *p)
+{
+    if (ctx->uniforms_of != p || ctx->uniforms_serial != p->serial || p->ublock_dirty) {
+        uint32_t n = p->ublock_size > 4096 ? 4096 : p->ublock_size;
+        if (n) {
+            MimeGpuSetUniforms *u = gl_emit(MIME_GPU_SET_UNIFORMS, (uint32_t)sizeof(MimeGpuSetUniforms) + n);
+            u->bytes = n;
+            memcpy(u + 1, p->ublock, n);
+        }
+        p->ublock_dirty = FALSE;
+        ctx->uniforms_of = p;
+        ctx->uniforms_serial = p->serial;
+    }
+    emit_textures(ctx, p);
+    for (uint32_t i = 0; i < p->block_count; i++) {
+        GlUniformBlock *block = &p->blocks[i];
+        GlBufferBinding *binding = &ctx->uniform_bindings[block->binding];
+        GlBuffer *buffer = gl_buffer(ctx, binding->name);
+        if (!buffer || !buffer->mem.ptr || binding->offset > buffer->size || block->bytes > buffer->size - binding->offset)
+            continue;
+        MimeGpuSetUniformBuffer *command = gl_emit(MIME_GPU_SET_UNIFORM_BUFFER, sizeof(MimeGpuSetUniformBuffer));
+        command->slot = i;
+        command->stages = block->stages;
+        command->mem = gl_mem(&buffer->mem);
+        command->mem.offset += binding->offset;
+        buffer->last_use = gl_batch_fence();
+    }
 }
 
 /* ---------------------------------------------------------------- draws */
@@ -1532,6 +1565,150 @@ GLAPI void APIENTRY glMultiDrawElements(GLenum mode, const GLsizei *count, GLenu
 {
     for (GLsizei i = 0; i < n; i++)
         draw_elements(mode, count[i], type, indices[i], 1, 0, 0);
+}
+
+GLAPI void APIENTRY glDrawElementsInstancedBaseInstance(GLenum mode, GLsizei count, GLenum type, const void *indices,
+                                                        GLsizei instances, GLuint base_instance)
+{
+    draw_elements(mode, count, type, indices, instances, 0, base_instance);
+}
+
+GLAPI void APIENTRY glDrawElementsInstancedBaseVertexBaseInstance(GLenum mode, GLsizei count, GLenum type,
+                                                                  const void *indices, GLsizei instances,
+                                                                  GLint base_vertex, GLuint base_instance)
+{
+    draw_elements(mode, count, type, indices, instances, base_vertex, base_instance);
+}
+
+GLAPI void APIENTRY glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum type,
+                                                  const void *const *indices, GLsizei n, const GLint *base_vertex)
+{
+    for (GLsizei i = 0; i < n; i++)
+        draw_elements(mode, count[i], type, indices[i], 1, base_vertex[i], 0);
+}
+
+/* ---------------------------------------------------------------- indirect draws */
+
+/*
+ * the commands are read here, once the gpu is done with a buffer a shader wrote, and become direct draws. the host needs
+ * nothing for them, and a buffer written by a shader costs a wait.
+ */
+typedef struct DrawArraysCommand {
+    GLuint count, instances, first, base_instance;
+} DrawArraysCommand;
+
+typedef struct DrawElementsCommand {
+    GLuint count, instances, first_index;
+    GLint base_vertex;
+    GLuint base_instance;
+} DrawElementsCommand;
+
+static GlBuffer *indirect_buffer(GlContext *ctx, GLintptr offset, GLsizei stride, GLsizei count, uint32_t size)
+{
+    GlBuffer *b = gl_buffer(ctx, ctx->draw_indirect_buffer);
+    if (!b || !b->mem.ptr) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return nullptr;
+    }
+    if (offset < 0 || (offset & 3) || stride < 0 || (stride & 3) || count < 0) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return nullptr;
+    }
+    uint32_t step = stride ? (uint32_t)stride : size;
+    if (count && (uint64_t)offset + (uint64_t)(count - 1) * step + size > b->size) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return nullptr;
+    }
+    gl_buffer_read_ready(b);
+    return b;
+}
+
+static void indirect_arrays(GlContext *ctx, GLenum mode, GLintptr offset, GLsizei count, GLsizei stride)
+{
+    GlBuffer *b = indirect_buffer(ctx, offset, stride, count, sizeof(DrawArraysCommand));
+    if (!b)
+        return;
+    uint32_t step = stride ? (uint32_t)stride : sizeof(DrawArraysCommand);
+    for (GLsizei i = 0; i < count; i++) {
+        DrawArraysCommand c;
+        memcpy(&c, b->mem.ptr + offset + (uint64_t)i * step, sizeof(c));
+        draw_arrays(mode, (GLint)c.first, (GLsizei)c.count, (GLsizei)c.instances, c.base_instance);
+    }
+}
+
+static void indirect_elements(GlContext *ctx, GLenum mode, GLenum type, GLintptr offset, GLsizei count, GLsizei stride)
+{
+    if (type != GL_UNSIGNED_BYTE && type != GL_UNSIGNED_SHORT && type != GL_UNSIGNED_INT) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    GlBuffer *b = indirect_buffer(ctx, offset, stride, count, sizeof(DrawElementsCommand));
+    if (!b)
+        return;
+    uint32_t step = stride ? (uint32_t)stride : sizeof(DrawElementsCommand);
+    for (GLsizei i = 0; i < count; i++) {
+        DrawElementsCommand c;
+        memcpy(&c, b->mem.ptr + offset + (uint64_t)i * step, sizeof(c));
+        draw_elements(mode, (GLsizei)c.count, type, (const void *)(ULONG_PTR)((uint64_t)c.first_index * index_size(type)),
+                      (GLsizei)c.instances, c.base_vertex, c.base_instance);
+    }
+}
+
+GLAPI void APIENTRY glDrawArraysIndirect(GLenum mode, const void *indirect)
+{
+    GL_CONTEXT_OR_RETURN();
+    indirect_arrays(ctx, mode, (GLintptr)indirect, 1, 0);
+}
+
+GLAPI void APIENTRY glDrawElementsIndirect(GLenum mode, GLenum type, const void *indirect)
+{
+    GL_CONTEXT_OR_RETURN();
+    indirect_elements(ctx, mode, type, (GLintptr)indirect, 1, 0);
+}
+
+GLAPI void APIENTRY glMultiDrawArraysIndirect(GLenum mode, const void *indirect, GLsizei count, GLsizei stride)
+{
+    GL_CONTEXT_OR_RETURN();
+    indirect_arrays(ctx, mode, (GLintptr)indirect, count, stride);
+}
+
+GLAPI void APIENTRY glMultiDrawElementsIndirect(GLenum mode, GLenum type, const void *indirect, GLsizei count,
+                                                GLsizei stride)
+{
+    GL_CONTEXT_OR_RETURN();
+    indirect_elements(ctx, mode, type, (GLintptr)indirect, count, stride);
+}
+
+/* the count the parameter buffer holds at offset, capped by maxdrawcount. */
+static GLsizei parameter_count(GlContext *ctx, GLintptr offset, GLsizei max)
+{
+    GlBuffer *b = gl_buffer(ctx, ctx->parameter_buffer);
+    if (!b || !b->mem.ptr || offset < 0 || (offset & 3) || (uint64_t)offset + 4 > b->size) {
+        gl_error(ctx, !b ? GL_INVALID_OPERATION : GL_INVALID_VALUE);
+        return -1;
+    }
+    gl_buffer_read_ready(b);
+    GLuint n;
+    memcpy(&n, b->mem.ptr + offset, sizeof(n));
+    return n < (GLuint)max ? (GLsizei)n : max;
+}
+
+GLAPI void APIENTRY glMultiDrawArraysIndirectCount(GLenum mode, const void *indirect, GLintptr drawcount,
+                                                   GLsizei maxdrawcount, GLsizei stride)
+{
+    GL_CONTEXT_OR_RETURN();
+    GLsizei n = parameter_count(ctx, drawcount, maxdrawcount);
+    if (n >= 0)
+        indirect_arrays(ctx, mode, (GLintptr)indirect, n, stride);
+}
+
+GLAPI void APIENTRY glMultiDrawElementsIndirectCount(GLenum mode, GLenum type, const void *indirect, GLintptr drawcount,
+                                                     GLsizei maxdrawcount, GLsizei stride)
+{
+    GL_CONTEXT_OR_RETURN();
+    GLsizei n = parameter_count(ctx, drawcount, maxdrawcount);
+    if (n >= 0)
+        indirect_elements(ctx, mode, type, (GLintptr)indirect, n, stride);
 }
 
 /* draws the vertices a transform feedback captured, as many as its byte counters say. */

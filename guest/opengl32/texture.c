@@ -1368,3 +1368,145 @@ GLAPI void APIENTRY glGetTexImage(GLenum target, GLint level, GLenum format, GLe
     glBindFramebuffer(GL_READ_FRAMEBUFFER, saved);
     glDeleteFramebuffers(1, &fbo);
 }
+
+/* ---------------------------------------------------------------- bindings and storage of OpenGL 4.4 and 4.5 */
+
+void APIENTRY glTexSubImage3D(GLenum target, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h, GLsizei d,
+                              GLenum format, GLenum type, const void *pixels);
+
+GLAPI void APIENTRY glBindTextures(GLuint first, GLsizei count, const GLuint *textures)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (count < 0 || first + (GLuint)count > 32) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    for (GLsizei i = 0; textures && i < count; i++)
+        if (textures[i] && !gl_texture(ctx, textures[i])) {
+            gl_error(ctx, GL_INVALID_OPERATION);
+            return;
+        }
+    for (GLsizei i = 0; i < count; i++) {
+        GLuint name = textures ? textures[i] : 0;
+        GlTexture *t = gl_texture(ctx, name);
+        GLuint *unit = ctx->units[first + (GLuint)i];
+        if (!t) {
+            for (int s = 0; s < SLOT_COUNT; s++)
+                unit[s] = 0;
+            continue;
+        }
+        int s = slot_of(t->target);
+        if (s >= 0)
+            unit[s] = name;
+    }
+    ctx->dirty |= DIRTY_TEXTURES;
+}
+
+GLAPI void APIENTRY glTexStorage2DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,
+                                              GLboolean fixed)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (target != GL_TEXTURE_2D_MULTISAMPLE) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    if (w < 1 || h < 1 || samples < 1) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    glTexImage2DMultisample(target, samples, internal, w, h, fixed);
+}
+
+/*
+ * fills a region of a level with one pixel through the upload path, with the pixel store of the call and the texture bound
+ * on the way: the texture goes into the slot of its target on the active unit, and the old one is put back.
+ */
+GLAPI void APIENTRY glClearTexSubImage(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,
+                                       GLsizei d, GLenum format, GLenum type, const void *data)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlTexture *t = gl_texture(ctx, texture);
+    if (!t || !t->id || level < 0 || (uint32_t)level >= t->levels || t->compressed) {
+        gl_error(ctx, !t || !t->id || t->compressed ? GL_INVALID_OPERATION : GL_INVALID_VALUE);
+        return;
+    }
+    uint32_t pixel = gl_client_pixel_bytes(format, type);
+    if (!pixel) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    uint32_t lw = t->width >> level ? t->width >> level : 1, lh = t->height >> level ? t->height >> level : 1;
+    uint32_t ld = t->target == GL_TEXTURE_3D ? (t->depth >> level ? t->depth >> level : 1) : t->depth ? t->depth : 1;
+    BOOL cube = t->target == GL_TEXTURE_CUBE_MAP;
+    if (cube)
+        ld = 6;
+    if (x < 0 || y < 0 || z < 0 || w < 0 || h < 0 || d < 0 || (uint32_t)(x + w) > lw || (uint32_t)(y + h) > lh ||
+        (uint32_t)(z + d) > ld) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    if (!w || !h || !d)
+        return;
+    uint8_t *pixels = gl_alloc((SIZE_T)pixel * (SIZE_T)w * (SIZE_T)h);
+    if (!pixels) {
+        gl_error(ctx, GL_OUT_OF_MEMORY);
+        return;
+    }
+    if (data)
+        for (SIZE_T i = 0; i < (SIZE_T)w * (SIZE_T)h; i++)
+            memcpy(pixels + i * pixel, data, pixel);
+
+    int slot = slot_of(t->target);
+    GLuint old = slot >= 0 ? ctx->units[ctx->active_texture][slot] : 0;
+    GLuint old_unpack = ctx->pixel_unpack;
+    GLint store[7] = {ctx->unpack_alignment, ctx->unpack_row_length, ctx->unpack_skip_rows, ctx->unpack_skip_pixels,
+                      ctx->unpack_image_height, ctx->unpack_skip_images, 0};
+    ctx->units[ctx->active_texture][slot] = texture;
+    ctx->pixel_unpack = 0;
+    ctx->unpack_alignment = 1;
+    ctx->unpack_row_length = ctx->unpack_skip_rows = ctx->unpack_skip_pixels = 0;
+    ctx->unpack_image_height = ctx->unpack_skip_images = 0;
+    switch (t->target) {
+    case GL_TEXTURE_1D:
+        glTexSubImage1D(GL_TEXTURE_1D, level, x, w, format, type, pixels);
+        break;
+    case GL_TEXTURE_CUBE_MAP:
+        for (GLint face = z; face < z + d; face++)
+            glTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + (GLenum)face, level, x, y, w, h, format, type, pixels);
+        break;
+    case GL_TEXTURE_3D:
+    case GL_TEXTURE_2D_ARRAY:
+        /* the same pixels for every slice: one call for each, as an array's slices sit apart. */
+        for (GLint slice = z; slice < z + d; slice++)
+            glTexSubImage3D(t->target, level, x, y, slice, w, h, 1, format, type, pixels);
+        break;
+    default:
+        glTexSubImage2D(t->target, level, x, y, w, h, format, type, pixels);
+        break;
+    }
+    ctx->unpack_alignment = store[0];
+    ctx->unpack_row_length = store[1];
+    ctx->unpack_skip_rows = store[2];
+    ctx->unpack_skip_pixels = store[3];
+    ctx->unpack_image_height = store[4];
+    ctx->unpack_skip_images = store[5];
+    ctx->pixel_unpack = old_unpack;
+    ctx->units[ctx->active_texture][slot] = old;
+    gl_free(pixels);
+}
+
+GLAPI void APIENTRY glClearTexImage(GLuint texture, GLint level, GLenum format, GLenum type, const void *data)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlTexture *t = gl_texture(ctx, texture);
+    if (!t || !t->id || level < 0 || (uint32_t)level >= t->levels) {
+        gl_error(ctx, !t || !t->id ? GL_INVALID_OPERATION : GL_INVALID_VALUE);
+        return;
+    }
+    GLsizei w = (GLsizei)(t->width >> level ? t->width >> level : 1);
+    GLsizei h = (GLsizei)(t->height >> level ? t->height >> level : 1);
+    GLsizei d = t->target == GL_TEXTURE_CUBE_MAP ? 6
+                : t->target == GL_TEXTURE_3D     ? (GLsizei)(t->depth >> level ? t->depth >> level : 1)
+                                                 : (GLsizei)t->depth;
+    glClearTexSubImage(texture, level, 0, 0, 0, w, h, d, format, type, data);
+}
