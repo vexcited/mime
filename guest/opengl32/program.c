@@ -2311,3 +2311,10 @@ GLAPI void APIENTRY glGetActiveUniformName(GLuint name, GLuint index, GLsizei si
     }
     copy_name(p->uniforms[index].name, size, length, out);
 }
+
+/* this driver has no binary format of shaders: GL_NUM_SHADER_BINARY_FORMATS is 0, and every format is refused. */
+GLAPI void APIENTRY glShaderBinary(GLsizei count, const GLuint *shaders, GLenum format, const void *binary, GLsizei size)
+{
+    GL_CONTEXT_OR_RETURN();
+    gl_error(ctx, GL_INVALID_ENUM);
+}

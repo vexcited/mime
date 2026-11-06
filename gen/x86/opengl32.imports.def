@@ -813,6 +813,7 @@ EXPORTS
     glSecondaryColorPointer@16
     glSelectBuffer@8
     glShadeModel@4
+    glShaderBinary@20
     glShaderSource@16
     glShaderStorageBlockBinding@12
     glStencilFunc@12

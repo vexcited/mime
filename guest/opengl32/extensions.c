@@ -99,6 +99,19 @@ static const GlExtension g_extensions[] = {
     {"GL_ARB_texture_buffer_object", MIME_GPU_FEATURE_TEXEL_BUFFER},
     {"GL_ARB_texture_buffer_range", MIME_GPU_FEATURE_TEXEL_BUFFER},
     {"GL_ARB_texture_view", MIME_GPU_FEATURE_TEXTURE_VIEW},
+    {"GL_ARB_sampler_objects", 0},
+    {"GL_ARB_direct_state_access", 0},
+    {"GL_ARB_uniform_buffer_object", 0},
+    {"GL_ARB_multi_bind", 0},
+    {"GL_ARB_draw_buffers_blend", 0},
+    {"GL_ARB_vertex_type_2_10_10_10_rev", 0},
+    {"GL_ARB_ES2_compatibility", 0},
+    {"GL_ARB_timer_query", 0},
+    {"GL_ARB_sync", 0},
+    {"GL_ARB_texture_swizzle", 0},
+    {"GL_ARB_depth_clamp", 0},
+    {"GL_ARB_conditional_render_inverted", MIME_GPU_FEATURE_QUERY},
+    {"GL_ARB_vertex_attrib_64bit", MIME_GPU_FEATURE_FP64},
 };
 
 #define EXTENSION_MAX 512

@@ -4897,6 +4897,12 @@ static void x_glShadeModel(MX_NATIVE_CALL *c)
     glShadeModel((GLenum)I(c, 0));
 }
 
+void APIENTRY glShaderBinary(GLsizei count, const GLuint *shaders, GLenum format, const void *binary, GLsizei size);
+static void x_glShaderBinary(MX_NATIVE_CALL *c)
+{
+    glShaderBinary((GLsizei)I(c, 0), (const GLuint *)I(c, 1), (GLenum)I(c, 2), (const void *)I(c, 3), (GLsizei)I(c, 4));
+}
+
 void APIENTRY glShaderSource(GLuint name, GLsizei count, const GLchar *const *strings, const GLint *lengths);
 static void x_glShaderSource(MX_NATIVE_CALL *c)
 {
@@ -7715,6 +7721,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glSecondaryColorPointer,
     x_glSelectBuffer,
     x_glShadeModel,
+    x_glShaderBinary,
     x_glShaderSource,
     x_glShaderStorageBlockBinding,
     x_glStencilFunc,
@@ -8051,4 +8058,4 @@ static const MX_NATIVE_FN g_functions[] = {
     x_wglUseFontOutlinesW,
 };
 
-const MX_NATIVE_TABLE OpenGL32X64Thunks = {1147, 0, g_functions};
+const MX_NATIVE_TABLE OpenGL32X64Thunks = {1148, 0, g_functions};

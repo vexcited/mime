@@ -813,6 +813,7 @@ EXPORTS
     glSecondaryColorPointer
     glSelectBuffer
     glShadeModel
+    glShaderBinary
     glShaderSource
     glShaderStorageBlockBinding
     glStencilFunc
@@ -1158,7 +1159,11 @@ EXPORTS
     glBlendColorEXT
     glBlendEquationEXT
     glBlendEquationSeparateEXT
+    glBlendEquationSeparateiARB
+    glBlendEquationiARB
     glBlendFuncSeparateEXT
+    glBlendFuncSeparateiARB
+    glBlendFunciARB
     glBlitFramebufferEXT
     glBufferDataARB
     glBufferSubDataARB

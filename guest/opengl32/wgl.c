@@ -14,7 +14,7 @@
 
 /* the highest version a context has. */
 #define GL_MAX_MAJOR 4
-#define GL_MAX_MINOR 1
+#define GL_MAX_MINOR 5
 
 static GlSurface *g_surfaces;
 

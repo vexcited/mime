@@ -815,6 +815,7 @@ void APIENTRY glSecondaryColorP3uiv(GLenum type, const GLuint *color);
 void APIENTRY glSecondaryColorPointer(GLint size, GLenum type, GLsizei stride, const void *pointer);
 void APIENTRY glSelectBuffer(GLsizei size, GLuint *buffer);
 void APIENTRY glShadeModel(GLenum mode);
+void APIENTRY glShaderBinary(GLsizei count, const GLuint *shaders, GLenum format, const void *binary, GLsizei size);
 void APIENTRY glShaderSource(GLuint name, GLsizei count, const GLchar *const *strings, const GLint *lengths);
 void APIENTRY glShaderStorageBlockBinding(GLuint program, GLuint index, GLuint binding);
 void APIENTRY glStencilFunc(GLenum func, GLint ref, GLuint mask);
@@ -1201,12 +1202,16 @@ const GL_PROC GlProcs[] = {
     {"glBlendEquationSeparate", (const void *)glBlendEquationSeparate},
     {"glBlendEquationSeparateEXT", (const void *)glBlendEquationSeparate},
     {"glBlendEquationSeparatei", (const void *)glBlendEquationSeparatei},
+    {"glBlendEquationSeparateiARB", (const void *)glBlendEquationSeparatei},
     {"glBlendEquationi", (const void *)glBlendEquationi},
+    {"glBlendEquationiARB", (const void *)glBlendEquationi},
     {"glBlendFunc", (const void *)glBlendFunc},
     {"glBlendFuncSeparate", (const void *)glBlendFuncSeparate},
     {"glBlendFuncSeparateEXT", (const void *)glBlendFuncSeparate},
     {"glBlendFuncSeparatei", (const void *)glBlendFuncSeparatei},
+    {"glBlendFuncSeparateiARB", (const void *)glBlendFuncSeparatei},
     {"glBlendFunci", (const void *)glBlendFunci},
+    {"glBlendFunciARB", (const void *)glBlendFunci},
     {"glBlitFramebuffer", (const void *)glBlitFramebuffer},
     {"glBlitFramebufferEXT", (const void *)glBlitFramebuffer},
     {"glBlitNamedFramebuffer", (const void *)glBlitNamedFramebuffer},
@@ -2039,6 +2044,7 @@ const GL_PROC GlProcs[] = {
     {"glSecondaryColorPointer", (const void *)glSecondaryColorPointer},
     {"glSelectBuffer", (const void *)glSelectBuffer},
     {"glShadeModel", (const void *)glShadeModel},
+    {"glShaderBinary", (const void *)glShaderBinary},
     {"glShaderSource", (const void *)glShaderSource},
     {"glShaderSourceARB", (const void *)glShaderSource},
     {"glShaderStorageBlockBinding", (const void *)glShaderStorageBlockBinding},
@@ -2400,4 +2406,4 @@ const GL_PROC GlProcs[] = {
     {"wglUseFontOutlinesA", (const void *)wglUseFontOutlinesA},
     {"wglUseFontOutlinesW", (const void *)wglUseFontOutlinesW},
 };
-const ULONG GlProcCount = 1247;
+const ULONG GlProcCount = 1252;
