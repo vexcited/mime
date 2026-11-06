@@ -54,6 +54,7 @@ typedef struct UiWindow {
     int state_command;
     SDL_DisplayID display; /* the display last reported to the guest. */
     bool maximized;        /* the compositor has the window maximized. */
+    bool bogus_size;       /* the compositor gave a size no display could show, which is not acted on. */
     int want_w, want_h;    /* the last size asked of the compositor, in SDL window coordinates. */
     uint64_t want_ms;      /* time of the last size request. */
     uint64_t fullscreen_ms; /* when the guest last asked for or left fullscreen. */
@@ -842,6 +843,32 @@ static SDL_HitTestResult hit_test(SDL_Window *window, const SDL_Point *point, vo
     return SDL_HITTEST_NORMAL;
 }
 
+/*
+ * kwin configures a window it minimizes or restores 100000 pixels wider and taller than it is. a buffer of that size
+ * is tens of gigabytes, which the nvidia driver tries to take from system memory at once when video memory cannot
+ * hold it, and the host runs out within a second. a size past twice the largest display, or past 16384, is taken for
+ * such a size.
+ */
+static int sane_limit(void)
+{
+    int largest = 0, n = 0;
+    SDL_DisplayID *ids = SDL_GetDisplays(&n);
+    for (int i = 0; ids && i < n; i++) {
+        SDL_Rect r;
+        float scale = SDL_GetDisplayContentScale(ids[i]);
+        if (SDL_GetDisplayBounds(ids[i], &r))
+            largest = MIME_MAX(largest, (int)lround(MIME_MAX(r.w, r.h) * (scale > 1.0f ? scale : 1.0f)));
+    }
+    SDL_free(ids);
+    return MIME_MIN(MIME_MAX(largest * 2, 4096), 16384);
+}
+
+static bool sane_size(int width, int height)
+{
+    int limit = sane_limit();
+    return width <= limit && height <= limit;
+}
+
 static void update_pixel_size(UiWindow *w)
 {
     int width = 0, height = 0, logical_width = 0, logical_height = 0;
@@ -849,6 +876,12 @@ static void update_pixel_size(UiWindow *w)
         SDL_GetWindowSizeInPixels(w->window, &width, &height);
         SDL_GetWindowSize(w->window, &logical_width, &logical_height);
     }
+    bool bogus = !sane_size(width, height);
+    if (bogus && !w->bogus_size)
+        mime_info("window %u: the compositor sized it %dx%d, which no display shows, ignored", w->id, width, height);
+    w->bogus_size = bogus;
+    if (bogus)
+        return;
     pthread_mutex_lock(&w->lock);
     w->pixel_width = (uint32_t)MIME_MAX(width, 0);
     w->pixel_height = (uint32_t)MIME_MAX(height, 0);
@@ -998,7 +1031,8 @@ static void restore_renderer(UiWindow *w)
 /* draws the visible surface inside the host window, leaving the resize border clear. */
 static void draw(UiWindow *w)
 {
-    if (!w->renderer && !w->vk_whole)
+    /* presenting would make the renderer's buffers that size. */
+    if ((!w->renderer && !w->vk_whole) || w->bogus_size)
         return;
     pthread_mutex_lock(&w->lock);
     w->present_queued = false;
@@ -1163,6 +1197,13 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
         int dh = (cfg->rect.bottom - cfg->rect.top) - (host.bottom - host.top);
         int min_w = limit_of(cfg->min_width, dw, scale), min_h = limit_of(cfg->min_height, dh, scale);
         int max_w = limit_of(cfg->max_width, dw, scale), max_h = limit_of(cfg->max_height, dh, scale);
+        /* no window is let grow past what a display could show, whatever the compositor proposes. */
+        float density = SDL_GetWindowPixelDensity(w->window);
+        int cap = (int)(sane_limit() / (density > 1.0f ? density : 1.0f));
+        max_w = max_w > 0 ? MIME_MIN(max_w, cap) : cap;
+        max_h = max_h > 0 ? MIME_MIN(max_h, cap) : cap;
+        min_w = MIME_MIN(min_w, max_w);
+        min_h = MIME_MIN(min_h, max_h);
         SDL_SetWindowMinimumSize(w->window, min_w, min_h);
         SDL_SetWindowMaximumSize(w->window, max_w, max_h);
     }
@@ -2315,7 +2356,7 @@ static Uint32 size_timer(void *data, SDL_TimerID timer, Uint32 interval)
  */
 static void report_size(UiWindow *w)
 {
-    if (!w->window || w->popup || w->fullscreen || !w->configured || !w->shown)
+    if (!w->window || w->popup || w->fullscreen || !w->configured || !w->shown || w->bogus_size)
         return;
     uint64_t now = now_ms();
     int logical_w, logical_h;
