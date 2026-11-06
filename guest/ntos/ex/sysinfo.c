@@ -340,6 +340,35 @@ static ULONG smb_build(PUCHAR buffer, ULONG capacity)
  * acpi.sys serves the tables it mapped. like wdm, a too small buffer gets the
  * required size in TableBufferLength.
  */
+/*
+ * the reference machine's MADT lists its own processors. the copy a program reads lists the machine's: the first local
+ * APIC entries are enabled with the APIC ids the processors report in CPUID, the index of each, the others disabled,
+ * and the checksum is made again.
+ */
+static void fit_madt(UCHAR *madt, ULONG size)
+{
+    ULONG cpus = HalBootInfo->cpu_count, n = 0;
+    for (ULONG at = 44; at + 2 <= size && madt[at + 1] >= 2 && at + madt[at + 1] <= size; at += madt[at + 1]) {
+        if (madt[at] != 0 || madt[at + 1] < 8)
+            continue;
+        ULONG flags;
+        memcpy(&flags, madt + at + 4, sizeof(flags));
+        if (n < cpus) {
+            madt[at + 3] = (UCHAR)n;
+            flags |= 1;
+        } else {
+            flags &= ~1u;
+        }
+        memcpy(madt + at + 4, &flags, sizeof(flags));
+        n++;
+    }
+    UCHAR sum = 0;
+    madt[9] = 0;
+    for (ULONG i = 0; i < size; i++)
+        sum += madt[i];
+    madt[9] = (UCHAR)-sum;
+}
+
 static NTSTATUS query_acpi_tables(PVOID info, ULONG length, ULONG header_size, SYSTEM_FIRMWARE_TABLE_INFORMATION *header,
                                   PULONG returned)
 {
@@ -387,6 +416,8 @@ static NTSTATUS query_acpi_tables(PVOID info, ULONG length, ULONG header_size, S
     header->TableBufferLength = table->Size;
     memcpy(out, header, header_size);
     memcpy(out + header_size, table->Data, table->Size);
+    if (table->Signature == 0x43495041)
+        fit_madt(out + header_size, table->Size);
     NTSTATUS status = copy_info(info, out, need, length, returned);
     ExFreePool(out);
     return status;
@@ -785,7 +816,7 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
         b.AllocationGranularity = 0x10000;
         b.MinimumUserModeAddress = 0x10000;
         b.MaximumUserModeAddress = 0x7FFFFFFEFFFF;
-        b.ActiveProcessorsAffinityMask = (1ull << HalBootInfo->cpu_count) - 1;
+        b.ActiveProcessorsAffinityMask = HalBootInfo->cpu_count >= 64 ? ~0ull : (1ull << HalBootInfo->cpu_count) - 1;
         b.NumberOfProcessors = (CCHAR)HalBootInfo->cpu_count;
         return copy_info(info, &b, sizeof(b), length, returned);
     }
@@ -862,7 +893,7 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     case SystemPerformanceInformation: {
         UCHAR perf[0x158] = {};
         /* no paging file: the host swaps guest memory, so the limit is ram plus the host's swap. */
-        ULONG64 free = MmGetFreePages();
+        ULONG64 free = MmGetAvailablePages();
         *(PULONG)(perf + 0x4C) = (ULONG)free;                       /* AvailablePages */
         *(PULONG)(perf + 0x50) = (ULONG)MmGetCommittedPages();      /* CommittedPages */
         *(PULONG)(perf + 0x54) = (ULONG)MmGetCommitLimitPages();    /* CommitLimit */

@@ -636,6 +636,12 @@ ULONG64 MmAllocateContiguous(SIZE_T pages); /* zeroed run. */
 void MmFreeContiguous(ULONG64 pa, SIZE_T pages);
 PMMPFN MiGetPfn(ULONG64 pa);
 SIZE_T MmGetFreePages(void);
+/* free pages a program could have now, counting only what the host would back of the memory it holds nothing for. */
+SIZE_T MmGetAvailablePages(void);
+void MiAddResident(LONG64 pages); /* private pages of processes that memory backs, for the commit figures. */
+SIZE_T MmGetUnbackablePages(void);
+ULONG64 MmGetAllocationFailures(void);
+void MmReturnCredit(void);
 void MmDiscardIdle(void); /* idle loop, interrupts disabled: hands freed memory back to the host. */
 ULONG64 MmReleaseFreeMemory(void); /* a trim: every free page to the host, returns the bytes it dropped. */
 SIZE_T MmFreedSinceSweep(void);    /* pages freed since every free page was last handed back. */

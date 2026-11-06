@@ -89,6 +89,7 @@ void mime_vm_init_boot(MimeVm *vm)
 {
     vm->shared = (MimeSharedPage *)(vm->ram + MIME_LAYOUT_SHARED);
     vm->boot = (MimeBootInfo *)(vm->ram + MIME_LAYOUT_BOOT_INFO);
+    mime_memory_publish(vm);
     MimeBootInfo *boot = vm->boot;
     boot->magic = MIME_BOOT_MAGIC;
     boot->version = MIME_ABI_VERSION;

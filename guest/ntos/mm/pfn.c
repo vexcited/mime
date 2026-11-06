@@ -15,6 +15,31 @@ static BOOLEAN g_discard_enabled = TRUE; /* the "nodiscard" kernel option keeps 
 static ULONG g_discard_min_order = 4; /* 64 KiB blocks, or the host's memory block. */
 #define DISCARD_BATCH (16ull << 8) /* pages freed between discard passes, 16 MiB. */
 #define DISCARD_IDLE (1ull << 8)   /* pages freed before an idle discard, 1 MiB. */
+#ifdef __x86_64__
+#define HOST_PAGE_ORDER 0 /* 4 KiB host pages. */
+#else
+#define HOST_PAGE_ORDER 2 /* 16 KiB. */
+#endif
+
+/*
+ * the host backs guest RAM a block at a time, a 2 MiB huge page or a host page, when the guest first writes it, and
+ * has nothing for a block it was never given or that was handed back whole. a bit per block says the host may hold
+ * memory for it. taking a page of a block without its bit spends a block of credit, which the host grants with
+ * MIME_HC_MEM_GRANT only while it can spare the memory, so the guest runs out before the host does. every page of a
+ * block without its bit is free, and free blocks that start in one sit on g_spare, so allocations take memory the
+ * host already backs first.
+ */
+static LIST_ENTRY g_spare[MM_MAX_ORDER + 1];
+static ULONG g_block_order;
+static ULONG *g_backed;
+static ULONG64 g_unbacked;          /* blocks without their bit. */
+static ULONG64 g_credit;            /* blocks granted and not taken yet. */
+static volatile ULONG64 g_refusals; /* allocations that found nothing the host would back. */
+static volatile LONG g_granting;
+static volatile ULONG64 g_refused_until;
+#define CREDIT_LOW (16ull << 20)
+#define CREDIT_CHUNK (64ull << 20)
+#define REFUSED_HNS (20ull * 10000) /* a host that said no is asked again 20 ms later. */
 
 /*
  * ticket lock over the free lists and counters, taken with interrupts off. user page faults run
@@ -50,6 +75,80 @@ static ULONG64 index_to_pa(ULONG64 index)
     return g_ram_base + (index << PAGE_SHIFT);
 }
 
+static BOOLEAN block_backed(ULONG64 block)
+{
+    return !g_backed || ((g_backed[block / 32] >> (block % 32)) & 1);
+}
+
+static void publish_credit(void)
+{
+    __atomic_store_n(&HalSharedPage->memory_credit, g_credit << (g_block_order + PAGE_SHIFT), __ATOMIC_RELEASE);
+}
+
+/* the pfn lock is held. spends credit for the blocks of a range the host has nothing for yet, or fails. */
+static BOOLEAN charge(ULONG64 index, ULONG64 count)
+{
+    if (!g_backed)
+        return TRUE;
+    ULONG64 first = index >> g_block_order, last = (index + count - 1) >> g_block_order, need = 0;
+    for (ULONG64 b = first; b <= last; b++)
+        need += !block_backed(b);
+    if (!need)
+        return TRUE;
+    if (need > g_credit)
+        return FALSE;
+    for (ULONG64 b = first; b <= last; b++)
+        g_backed[b / 32] |= 1u << (b % 32);
+    g_credit -= need;
+    g_unbacked -= need;
+    publish_credit();
+    return TRUE;
+}
+
+/* the pfn lock is held. a block handed back whole to the host costs it nothing until it is charged again. */
+static void uncharge(ULONG64 index, ULONG order)
+{
+    if (!g_backed || order < g_block_order)
+        return;
+    ULONG64 first = index >> g_block_order, last = (index + (1ull << order) - 1) >> g_block_order;
+    for (ULONG64 b = first; b <= last; b++) {
+        if (block_backed(b)) {
+            g_backed[b / 32] &= ~(1u << (b % 32));
+            g_unbacked++;
+        }
+    }
+}
+
+/*
+ * asks the host for credit once it runs low, enough for blocks at least. the caller holds no pfn lock. one
+ * processor asks at a time, the others go on with what is left, and a host that refused is let be for a while.
+ */
+static void grant(ULONG64 blocks)
+{
+    ULONG64 block_bytes = PAGE_SIZE << g_block_order;
+    ULONG64 low = CREDIT_LOW / block_bytes;
+    if (low < blocks)
+        low = blocks;
+    if (!g_backed || !__atomic_load_n(&g_unbacked, __ATOMIC_RELAXED) || __atomic_load_n(&g_credit, __ATOMIC_RELAXED) >= low)
+        return;
+    if (KiQueryInterruptTime() < __atomic_load_n(&g_refused_until, __ATOMIC_RELAXED))
+        return;
+    if (__atomic_exchange_n(&g_granting, 1, __ATOMIC_ACQUIRE))
+        return;
+    ULONG64 want = blocks * block_bytes > CREDIT_CHUNK ? blocks * block_bytes : CREDIT_CHUNK;
+    ULONG64 granted = 0;
+    if (HalHypercall(MIME_HC_MEM_GRANT, want, 0, 0, 0, 0, 0, &granted) != MIME_HC_STATUS_OK)
+        granted = 0;
+    ULONG64 got = granted / block_bytes;
+    ULONG64 state = pfn_lock();
+    g_credit += got;
+    publish_credit();
+    pfn_unlock(state);
+    if (got < blocks || !got)
+        __atomic_store_n(&g_refused_until, KiQueryInterruptTime() + REFUSED_HNS, __ATOMIC_RELAXED);
+    __atomic_store_n(&g_granting, 0, __ATOMIC_RELEASE);
+}
+
 /*
  * a block handed back to the host reads as zeros and costs no host memory. it stays so while it merges
  * only with blocks like it, and its halves stay zero after a split. such blocks sit at the tail of the
@@ -59,7 +158,9 @@ static void insert_free(PMMPFN p, ULONG order, BOOLEAN discarded)
 {
     p->Flags = MM_PFN_FREE | (discarded ? MM_PFN_DISCARDED : 0);
     p->Order = (UCHAR)order;
-    if (discarded)
+    if (!block_backed((ULONG64)(p - g_pfn) >> g_block_order))
+        InsertTailList(&g_spare[order], &p->ListEntry);
+    else if (discarded)
         InsertTailList(&g_free[order], &p->ListEntry);
     else
         InsertHeadList(&g_free[order], &p->ListEntry);
@@ -83,15 +184,32 @@ static void free_block(ULONG64 index, ULONG order, BOOLEAN discarded)
     insert_free(&g_pfn[index], order, discarded);
 }
 
-/* *zeroed tells whether the block is known to hold zeros. */
-static BOOLEAN alloc_block(ULONG order, ULONG64 *out_index, BOOLEAN *zeroed)
+/*
+ * *zeroed tells whether the block is known to hold zeros. the first need pages of the block are charged, a block the
+ * host backs is taken before one it does not, and with no credit left only those are.
+ */
+static BOOLEAN alloc_block(ULONG order, ULONG64 need, ULONG64 *out_index, BOOLEAN *zeroed)
 {
+    PMMPFN p = nullptr;
     ULONG o = order;
-    while (o <= MM_MAX_ORDER && IsListEmpty(&g_free[o]))
-        o++;
-    if (o > MM_MAX_ORDER)
+    for (int k = 0; k < 2 && !p; k++) {
+        PLIST_ENTRY lists = k ? g_spare : g_free;
+        for (o = order; o <= MM_MAX_ORDER; o++) {
+            if (IsListEmpty(&lists[o]))
+                continue;
+            PMMPFN head = CONTAINING_RECORD(lists[o].Flink, MMPFN, ListEntry);
+            if (charge((ULONG64)(head - g_pfn), need)) {
+                p = head;
+                break;
+            }
+            /* a spare block always needs credit, so a larger one would fail too. */
+            if (k)
+                break;
+        }
+    }
+    if (!p)
         return FALSE;
-    PMMPFN p = CONTAINING_RECORD(RemoveHeadList(&g_free[o]), MMPFN, ListEntry);
+    RemoveEntryList(&p->ListEntry);
     ULONG64 index = (ULONG64)(p - g_pfn);
     BOOLEAN discarded = (p->Flags & MM_PFN_DISCARDED) != 0;
     p->Flags = 0;
@@ -125,11 +243,6 @@ static void mark_allocated(ULONG64 index, ULONG64 count)
  */
 #define DISCARD_PASS_BYTES (64ull << 20)
 #define REPORT_RUNS (PAGE_SIZE / sizeof(MimeReportRun))
-#ifdef __x86_64__
-#define HOST_PAGE_ORDER 0 /* 4 KiB host pages. */
-#else
-#define HOST_PAGE_ORDER 2 /* 16 KiB. */
-#endif
 
 static MimeReportRun g_report[REPORT_RUNS] __attribute__((aligned(PAGE_SIZE)));
 static ULONG64 g_report_index[REPORT_RUNS];
@@ -175,8 +288,11 @@ static ULONG64 report_free(ULONG min_order, ULONG64 limit, BOOLEAN idle, BOOLEAN
             /* a report the host refused leaves the memory as it was, so it must not be taken for zeros. */
             BOOLEAN zero = status == MIME_HC_STATUS_OK;
             state = pfn_lock();
-            for (ULONG i = 0; i < count; i++)
+            for (ULONG i = 0; i < count; i++) {
+                if (zero)
+                    uncharge(g_report_index[i], order);
                 free_block(g_report_index[i], order, zero);
+            }
             pfn_unlock(state);
             if (zero)
                 done += count * bytes;
@@ -268,7 +384,7 @@ static ULONG take_run(ULONG64 *pages)
     for (int order = 5; order >= 0 && got < CACHE_RUN;) {
         ULONG64 index;
         BOOLEAN zero;
-        if (got + (1u << order) > CACHE_RUN || !alloc_block((ULONG)order, &index, &zero)) {
+        if (got + (1u << order) > CACHE_RUN || !alloc_block((ULONG)order, 1ull << order, &index, &zero)) {
             order--;
             continue;
         }
@@ -325,6 +441,7 @@ static void drain_all_caches(void)
 static ULONG64 cache_pop(MM_PAGE_CACHE *c)
 {
     if (!c->Count) {
+        grant(1);
         ULONG64 state = pfn_lock();
         c->Count = take_run(c->Pages);
         pfn_unlock(state);
@@ -336,8 +453,10 @@ static ULONG64 cache_pop(MM_PAGE_CACHE *c)
             state = pfn_lock();
             c->Count = take_run(c->Pages);
             pfn_unlock(state);
-            if (!c->Count)
+            if (!c->Count) {
+                __atomic_add_fetch(&g_refusals, 1, __ATOMIC_RELAXED);
                 return 0;
+            }
         }
     }
     return c->Pages[--c->Count];
@@ -473,16 +592,17 @@ ULONG64 MmAllocateContiguous(SIZE_T pages)
         order++;
     if (order > MM_MAX_ORDER)
         return 0;
+    grant(((pages - 1) >> g_block_order) + 2);
     ULONG64 state = pfn_lock();
     ULONG64 index;
     BOOLEAN zeroed;
-    BOOLEAN ok = alloc_block(order, &index, &zeroed);
+    BOOLEAN ok = alloc_block(order, pages, &index, &zeroed);
     if (!ok) {
         /* cached pages may be what keeps a run from forming. */
         pfn_unlock(state);
         drain_caches();
         state = pfn_lock();
-        ok = alloc_block(order, &index, &zeroed);
+        ok = alloc_block(order, pages, &index, &zeroed);
     }
     if (ok) {
         for (ULONG64 i = pages; i < (1ull << order); i++)
@@ -491,8 +611,10 @@ ULONG64 MmAllocateContiguous(SIZE_T pages)
         g_free_pages -= pages;
     }
     pfn_unlock(state);
-    if (!ok)
+    if (!ok) {
+        __atomic_add_fetch(&g_refusals, 1, __ATOMIC_RELAXED);
         return 0;
+    }
     ULONG64 pa = index_to_pa(index);
     if (!zeroed)
         memset(HalPhysmap(pa), 0, pages << PAGE_SHIFT);
@@ -516,6 +638,48 @@ SIZE_T MmGetFreePages(void)
 SIZE_T MmGetTotalPages(void)
 {
     return g_total_pages;
+}
+
+/* pages of free blocks the host has nothing for, and how many of them it could still back. */
+static void spare_pages(ULONG64 *spare, ULONG64 *backable)
+{
+    *spare = __atomic_load_n(&g_unbacked, __ATOMIC_RELAXED) << g_block_order;
+    *backable = (__atomic_load_n(&g_credit, __ATOMIC_RELAXED) << g_block_order) +
+                (__atomic_load_n(&HalSharedPage->memory_grantable, __ATOMIC_ACQUIRE) >> PAGE_SHIFT);
+}
+
+/* free memory a program could have now: what the host backs already, and as much of the rest as it would grant. */
+SIZE_T MmGetAvailablePages(void)
+{
+    SIZE_T free = MmGetFreePages();
+    ULONG64 spare, backable;
+    spare_pages(&spare, &backable);
+    if (spare > free)
+        spare = free;
+    return free - spare + (spare < backable ? spare : backable);
+}
+
+/* the free memory the host could not back now, which the commit limit leaves out. */
+SIZE_T MmGetUnbackablePages(void)
+{
+    ULONG64 spare, backable;
+    spare_pages(&spare, &backable);
+    return spare > backable ? spare - backable : 0;
+}
+
+/* counts allocations that found no page, so a fault can tell whether it failed for want of memory. */
+ULONG64 MmGetAllocationFailures(void)
+{
+    return __atomic_load_n(&g_refusals, __ATOMIC_RELAXED);
+}
+
+/* the host is short: the credit not spent yet goes back, and every block is asked for again. */
+void MmReturnCredit(void)
+{
+    ULONG64 state = pfn_lock();
+    g_credit = 0;
+    publish_credit();
+    pfn_unlock(state);
 }
 
 PVOID NTAPI MmAllocateContiguousPages(SIZE_T bytes)
@@ -556,8 +720,10 @@ void MmInitialize(MimeBootInfo *boot)
 {
     g_ram_base = boot->ram_base;
     g_ram_pages = boot->ram_size >> PAGE_SHIFT;
-    for (int i = 0; i <= MM_MAX_ORDER; i++)
+    for (int i = 0; i <= MM_MAX_ORDER; i++) {
         InitializeListHead(&g_free[i]);
+        InitializeListHead(&g_spare[i]);
+    }
 
     /* the pfn database follows what the loader used. the host's ram starts zeroed, so it needs no clearing. */
     ULONG64 db_phys = boot->first_free_phys;
@@ -567,9 +733,23 @@ void MmInitialize(MimeBootInfo *boot)
     HalHypercall(MIME_HC_MEM_ADVISE, db_phys, db_bytes, MIME_MEM_SPARSE, 0, 0, 0, nullptr);
     if (boot->memory_block_shift > PAGE_SHIFT + 4 && boot->memory_block_shift - PAGE_SHIFT <= MM_MAX_ORDER)
         g_discard_min_order = boot->memory_block_shift - PAGE_SHIFT;
-    ULONG64 start = (db_phys + db_bytes - g_ram_base) >> PAGE_SHIFT;
+    g_block_order = boot->memory_block_shift > PAGE_SHIFT ? boot->memory_block_shift - PAGE_SHIFT : 0;
+    if (g_block_order < HOST_PAGE_ORDER || g_block_order > MM_MAX_ORDER)
+        g_block_order = HOST_PAGE_ORDER;
+    ULONG64 blocks = (g_ram_pages + (1ull << g_block_order) - 1) >> g_block_order;
+    ULONG64 map_bytes = ROUND_TO_PAGES((blocks + 31) / 32 * sizeof(ULONG));
+    ULONG *backed = (ULONG *)HalPhysmap(db_phys + db_bytes);
+    ULONG64 start = (db_phys + db_bytes + map_bytes - g_ram_base) >> PAGE_SHIFT;
     for (ULONG64 i = 0; i < start; i++)
         g_pfn[i].Flags = MM_PFN_RESERVED;
+    /* what the loader used, and a last block the RAM ends in the middle of, are the host's already. */
+    ULONG64 used = (start + (1ull << g_block_order) - 1) >> g_block_order;
+    for (ULONG64 b = 0; b < blocks; b++)
+        if (b < used || (b == blocks - 1 && (g_ram_pages & ((1ull << g_block_order) - 1))))
+            backed[b / 32] |= 1u << (b % 32);
+        else
+            g_unbacked++;
+    g_backed = backed;
     /* the host never backed this memory, so it is all zeros. */
     for (ULONG64 i = start; i < g_ram_pages;) {
         ULONG order = MM_MAX_ORDER;

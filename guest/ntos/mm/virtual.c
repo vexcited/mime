@@ -68,19 +68,36 @@ BOOLEAN MiProtectionIsValid(ULONG protect)
 /* ----------------------------------------------------------------- commit charge */
 
 /*
- * private commit is charged against the machine's limit, its memory plus the host's swap, so commit
- * fails when a program asks for more than could ever be backed.
+ * private commit is charged against the machine's limit, its memory, as on a windows machine without a paging file: the
+ * host grants no memory past its floor, so its swap is no paging file for the guest. the free memory the host could not
+ * back now counts as charged already, as the commit of other processes does on windows, so commit fails when a program
+ * asks for more than the host can give.
  */
 static volatile LONG64 g_commit_pages, g_commit_peak;
+static volatile LONG64 g_resident_pages; /* private pages backed by memory, of every process. */
+
+void MiAddResident(LONG64 pages)
+{
+    __atomic_add_fetch(&g_resident_pages, pages, __ATOMIC_RELAXED);
+}
 
 static LONG64 commit_limit(void)
 {
-    return (LONG64)(MmGetTotalPages() + (HalBootInfo->swap_size >> PAGE_SHIFT));
+    return (LONG64)MmGetTotalPages();
+}
+
+/* what the machine has promised: the memory in use, the commit not touched yet, and what the host could not back. */
+static LONG64 committed(LONG64 charged)
+{
+    LONG64 resident = __atomic_load_n(&g_resident_pages, __ATOMIC_RELAXED);
+    LONG64 untouched = charged > resident ? charged - resident : 0;
+    LONG64 in_use = (LONG64)(MmGetTotalPages() - MmGetFreePages());
+    return untouched + in_use + (LONG64)MmGetUnbackablePages();
 }
 
 SIZE_T MmGetCommittedPages(void)
 {
-    return (SIZE_T)__atomic_load_n(&g_commit_pages, __ATOMIC_RELAXED);
+    return (SIZE_T)committed(__atomic_load_n(&g_commit_pages, __ATOMIC_RELAXED));
 }
 
 SIZE_T MmGetPeakCommittedPages(void)
@@ -102,7 +119,7 @@ static BOOLEAN charge_commit(PMMADDRESS_SPACE as, SIZE_T pages)
     BOOLEAN in_job = process->Job != nullptr;
     if (in_job && !PspJobChargeCommit(process, as->CommitCharge, pages))
         return FALSE;
-    LONG64 total = __atomic_add_fetch(&g_commit_pages, (LONG64)pages, __ATOMIC_SEQ_CST);
+    LONG64 total = committed(__atomic_add_fetch(&g_commit_pages, (LONG64)pages, __ATOMIC_SEQ_CST));
     if (total > commit_limit()) {
         __atomic_sub_fetch(&g_commit_pages, (LONG64)pages, __ATOMIC_SEQ_CST);
         if (in_job)
@@ -432,8 +449,10 @@ static SIZE_T release_pages(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
                 code_log(as, va + (i << PAGE_SHIFT));
             if ((e & MM_PTE_VALID) && !(e & MM_PTE_SW_SHARED)) {
                 freed[n++] = e & MM_PTE_ADDR_MASK;
-                if (as->CommittedPages)
+                if (as->CommittedPages) {
                     as->CommittedPages--;
+                    MiAddResident(-1);
+                }
             }
         }
         if (n)
@@ -540,8 +559,10 @@ static void reset_range(PMMADDRESS_SPACE as, ULONG_PTR start, ULONG_PTR end)
         for (SIZE_T i = 0; i < count; i++) {
             if ((old[i] & MM_PTE_VALID) && !(old[i] & MM_PTE_SW_SHARED)) {
                 freed[n++] = old[i] & MM_PTE_ADDR_MASK;
-                if (as->CommittedPages)
+                if (as->CommittedPages) {
                     as->CommittedPages--;
+                    MiAddResident(-1);
+                }
             }
         }
         if (n)
@@ -1104,8 +1125,10 @@ static BOOLEAN section_fault(PMMADDRESS_SPACE as, PMMVAD vad, ULONG_PTR page, UL
     BOOLEAN shared;
     if (!MiSectionFaultPage(vad, page, protect, &pa, &shared))
         return FALSE;
-    if (!shared)
+    if (!shared) {
         as->CommittedPages++;
+        MiAddResident(1);
+    }
     *pte = pa | MiSectionPteAttrs(vad->Section, protect, pa, shared) | MM_PTE_VALID | MM_PTE_PAGE;
     KiDataSyncBarrier();
     KiInstructionBarrier();
@@ -1125,6 +1148,7 @@ static BOOLEAN map_zero_page(PMMADDRESS_SPACE as, ULONG64 *pte, ULONG64 v, BOOLE
     if (clean && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)))
         attrs = MI_PTE_SET_RO(attrs) | MM_PTE_SW_WATCH;
     *pte = pa | attrs | MM_PTE_VALID | MM_PTE_PAGE;
+    MiAddResident(1);
     if (++as->CommittedPages > as->PeakCommittedPages)
         as->PeakCommittedPages = as->CommittedPages;
     return TRUE;
@@ -1311,6 +1335,7 @@ static BOOLEAN fast_fault(PMMADDRESS_SPACE as, ULONG_PTR page, BOOLEAN write, BO
         MmFreeZeroedPagesQuiet(spare, unused);
 
     if (mapped) {
+        MiAddResident(mapped);
         SIZE_T now = __atomic_add_fetch(&as->CommittedPages, mapped, __ATOMIC_RELAXED);
         SIZE_T peak = __atomic_load_n(&as->PeakCommittedPages, __ATOMIC_RELAXED);
         while (now > peak && !__atomic_compare_exchange_n(&as->PeakCommittedPages, &peak, now, FALSE,
@@ -1395,8 +1420,7 @@ static void guard_fault(ULONG_PTR page)
     thread->Tcb.FaultStatus = own ? STATUS_STACK_OVERFLOW : STATUS_GUARD_PAGE_VIOLATION;
 }
 
-/* returns FALSE for real access violations. */
-BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_MODE mode)
+static BOOLEAN access_fault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_MODE mode)
 {
     if (va > MM_HIGHEST_USER_ADDRESS)
         return FALSE;
@@ -1439,6 +1463,7 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
                 ULONG64 attrs = MI_PTE_SET_RW(v & ~(MM_PTE_ADDR_MASK | MM_PTE_SW_COW | MM_PTE_SW_SHARED | MM_PTE_SW_CODE));
                 MiWritePte(as->Root, page, pa | attrs, as->Asid);
                 as->CommittedPages++;
+                MiAddResident(1);
                 handled = TRUE;
             }
         } else if ((v & MM_PTE_VALID) && write && (v & MM_PTE_SW_CODE)) {
@@ -1466,6 +1491,31 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
     return handled;
 }
 
+/*
+ * returns FALSE for real access violations. a user fault that found no page the host would back waits for one, as a
+ * fault waits for the paging file on windows, and fails with STATUS_NO_MEMORY after about a second.
+ */
+#define FAULT_MEMORY_TRIES 20
+#define FAULT_MEMORY_WAIT_HNS (50ll * 10000)
+
+BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_MODE mode)
+{
+    ULONG64 failures = MmGetAllocationFailures();
+    for (ULONG tries = 0;; tries++) {
+        if (access_fault(va, write, execute, mode))
+            return TRUE;
+        if (mode != UserMode || MmGetAllocationFailures() == failures)
+            return FALSE;
+        if (tries == FAULT_MEMORY_TRIES) {
+            KiCurrentThread()->FaultStatus = STATUS_NO_MEMORY;
+            return FALSE;
+        }
+        failures = MmGetAllocationFailures();
+        LARGE_INTEGER wait = {.QuadPart = -FAULT_MEMORY_WAIT_HNS};
+        KeDelayExecutionThread(KernelMode, FALSE, &wait);
+    }
+}
+
 void MmDeleteAddressSpace(PMMADDRESS_SPACE as)
 {
     if (!as->Root)
@@ -1476,6 +1526,8 @@ void MmDeleteAddressSpace(PMMADDRESS_SPACE as)
         MiRemoveVad(as, v);
         vad_destroy(v);
     }
+    /* what the releases did not count off. */
+    MiAddResident(-(LONG64)as->CommittedPages);
     if (as->Spans) {
         ExFreePool(as->Spans);
         as->Spans = nullptr;

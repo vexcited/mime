@@ -8,6 +8,11 @@
  * does not make the guest trim twice a second.
  *   MIME_MEMORY_LOW_MB  MemAvailable under which the host is short, in megabytes; half of it is critical. for tests.
  *   MIME_MEMORY_LOW_FILE  a file holding that number, read every second, so a test can make the host short while it runs.
+ *
+ * the guest sees all of the host's memory, but a page it has not written yet costs the host nothing, so before it starts
+ * on a host memory block it asks for it with MIME_HC_MEM_GRANT. a grant never takes MemAvailable below a floor left for
+ * the desktop: past it the guest's allocations and commits fail as they would on a Windows machine out of memory, and
+ * the host never has to swap or kill for the guest.
  */
 #include "../vmm/vmm.h"
 
@@ -58,6 +63,159 @@ static bool read_host(HostMemory *m)
         fclose(f);
     }
     return true;
+}
+
+static pthread_mutex_t g_grant_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_meminfo = -1;
+static uint64_t g_floor;
+
+/* MemAvailable in bytes. the kernel works it out on each read, so it counts what the GPU driver and every other program took. */
+static uint64_t available_bytes(void)
+{
+    if (g_meminfo < 0)
+        g_meminfo = open("/proc/meminfo", O_RDONLY | O_CLOEXEC);
+    char text[512];
+    ssize_t n = g_meminfo >= 0 ? pread(g_meminfo, text, sizeof(text) - 1, 0) : -1;
+    if (n <= 0)
+        return 0;
+    text[n] = 0;
+    unsigned long long total = 0, avail = 0;
+    const char *t = strstr(text, "MemTotal:");
+    const char *a = strstr(text, "MemAvailable:");
+    if (t)
+        sscanf(t, "MemTotal: %llu kB", &total);
+    if (!a || sscanf(a, "MemAvailable: %llu kB", &avail) != 1)
+        return 0;
+    if (!g_floor)
+        g_floor = MIME_MAX(640ull << 20, (uint64_t)total * 1024 / 100 * 6);
+    return (uint64_t)avail * 1024;
+}
+
+/*
+ * a machine started in a cgroup with a memory limit, a systemd scope with MemoryMax= or MemoryHigh= for one, gets no
+ * more than its limits leave: what each ancestor with a limit still has, its page cache counted as free since the
+ * kernel drops that first. a margin stays for what the host process itself allocates in it.
+ */
+#define CGROUP_LEVELS 16
+#define CGROUP_MARGIN (256ull << 20)
+
+typedef struct CgroupLimit {
+    int max, high, current, stat;
+} CgroupLimit;
+
+static CgroupLimit g_limits[CGROUP_LEVELS];
+static int g_limit_count = -1;
+
+static uint64_t read_number(int fd)
+{
+    char text[32];
+    ssize_t n = fd >= 0 ? pread(fd, text, sizeof(text) - 1, 0) : -1;
+    if (n <= 0 || text[0] == 'm')
+        return UINT64_MAX;
+    text[n] = 0;
+    return strtoull(text, nullptr, 10);
+}
+
+static uint64_t read_file_cache(int fd)
+{
+    char text[256];
+    ssize_t n = fd >= 0 ? pread(fd, text, sizeof(text) - 1, 0) : -1;
+    if (n <= 0)
+        return 0;
+    text[n] = 0;
+    const char *f = strstr(text, "\nfile ");
+    return f ? strtoull(f + 6, nullptr, 10) : 0;
+}
+
+static void open_limits(void)
+{
+    g_limit_count = 0;
+    char line[512] = {}, path[640];
+    FILE *f = fopen("/proc/self/cgroup", "r");
+    if (!f)
+        return;
+    while (fgets(line, sizeof(line), f) && strncmp(line, "0::", 3))
+        ;
+    fclose(f);
+    if (strncmp(line, "0::", 3))
+        return;
+    char *group = line + 3;
+    group[strcspn(group, "\n")] = 0;
+    while (*group && g_limit_count < CGROUP_LEVELS) {
+        CgroupLimit l;
+        snprintf(path, sizeof(path), "/sys/fs/cgroup%s/memory.max", group);
+        l.max = open(path, O_RDONLY | O_CLOEXEC);
+        snprintf(path, sizeof(path), "/sys/fs/cgroup%s/memory.high", group);
+        l.high = open(path, O_RDONLY | O_CLOEXEC);
+        if (MIME_MIN(read_number(l.max), read_number(l.high)) != UINT64_MAX) {
+            snprintf(path, sizeof(path), "/sys/fs/cgroup%s/memory.current", group);
+            l.current = open(path, O_RDONLY | O_CLOEXEC);
+            snprintf(path, sizeof(path), "/sys/fs/cgroup%s/memory.stat", group);
+            l.stat = open(path, O_RDONLY | O_CLOEXEC);
+            g_limits[g_limit_count++] = l;
+        } else {
+            if (l.max >= 0)
+                close(l.max);
+            if (l.high >= 0)
+                close(l.high);
+        }
+        char *slash = strrchr(group, '/');
+        if (!slash)
+            break;
+        *slash = 0;
+    }
+}
+
+static uint64_t cgroup_room(void)
+{
+    if (g_limit_count < 0)
+        open_limits();
+    uint64_t room = UINT64_MAX;
+    for (int i = 0; i < g_limit_count; i++) {
+        uint64_t limit = MIME_MIN(read_number(g_limits[i].max), read_number(g_limits[i].high));
+        uint64_t current = read_number(g_limits[i].current), cache = read_file_cache(g_limits[i].stat);
+        uint64_t used = current > cache ? current - cache : 0;
+        uint64_t left = limit > used + CGROUP_MARGIN ? limit - used - CGROUP_MARGIN : 0;
+        room = MIME_MIN(room, left);
+    }
+    return room;
+}
+
+/* the lock is held. what the guest was granted and has not touched yet is still counted as free. */
+static uint64_t grantable(MimeVm *vm)
+{
+    uint64_t avail = available_bytes();
+    avail = avail > g_floor ? avail - g_floor : 0;
+    avail = MIME_MIN(avail, cgroup_room());
+    uint64_t credit = __atomic_load_n(&vm->shared->memory_credit, __ATOMIC_ACQUIRE);
+    return avail > credit ? avail - credit : 0;
+}
+
+uint64_t mime_memory_grant(MimeVm *vm, uint64_t want)
+{
+    pthread_mutex_lock(&g_grant_lock);
+    uint64_t can = grantable(vm);
+    uint64_t granted = MIME_MIN(want, can);
+    __atomic_store_n(&vm->shared->memory_grantable, can - granted, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(&g_grant_lock);
+    return granted;
+}
+
+uint64_t mime_memory_room(void)
+{
+    pthread_mutex_lock(&g_grant_lock);
+    uint64_t avail = available_bytes();
+    avail = avail > g_floor ? avail - g_floor : 0;
+    avail = MIME_MIN(avail, cgroup_room());
+    pthread_mutex_unlock(&g_grant_lock);
+    return avail;
+}
+
+void mime_memory_publish(MimeVm *vm)
+{
+    pthread_mutex_lock(&g_grant_lock);
+    __atomic_store_n(&vm->shared->memory_grantable, grantable(vm), __ATOMIC_RELEASE);
+    pthread_mutex_unlock(&g_grant_lock);
 }
 
 static uint64_t resident_mb(void)
@@ -126,6 +284,7 @@ static void *monitor_main(void *arg)
         nanosleep(&nap, nullptr);
         if (vm->stopping)
             return nullptr;
+        mime_memory_publish(vm);
         HostMemory m;
         if (!read_host(&m))
             continue;

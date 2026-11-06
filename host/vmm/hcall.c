@@ -207,6 +207,8 @@ static uint64_t mem_report(MimeVm *vm, uint64_t pa, uint64_t count, uint64_t *re
         *released += end - start;
     }
     __atomic_fetch_add(&vm->memory_released, *released, __ATOMIC_RELAXED);
+    /* the guest counts what it handed back as free only through what the host could grant again. */
+    mime_memory_publish(vm);
     return MIME_HC_STATUS_OK;
 }
 
@@ -339,6 +341,9 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     }
     case MIME_HC_MEM_REPORT:
         status = mem_report(vm, regs[1], regs[2], &value);
+        break;
+    case MIME_HC_MEM_GRANT:
+        value = mime_memory_grant(vm, regs[1]);
         break;
     case MIME_HC_MEM_ADVISE:
         if (regs[1] < MIME_RAM_BASE || regs[1] + regs[2] > MIME_RAM_BASE + vm->ram_size || regs[1] + regs[2] < regs[1])

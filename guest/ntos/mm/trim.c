@@ -77,7 +77,7 @@ static void update_conditions(void)
 {
     if (!g_low || !g_high)
         return;
-    SIZE_T low, high, free = MmGetFreePages();
+    SIZE_T low, high, free = MmGetAvailablePages();
     thresholds(&low, &high);
     BOOLEAN is_low = free <= low || g_level != MIME_MEMORY_NORMAL;
     BOOLEAN is_high = free > high && g_level == MIME_MEMORY_NORMAL;
@@ -102,6 +102,7 @@ static void trim(ULONG level)
 {
     /* low keeps a few windows for the files that are opened again at once, critical keeps none. */
     ULONG windows = FsCacheTrim(level >= MIME_MEMORY_CRITICAL ? 0 : 16);
+    MmReturnCredit();
     ULONG64 released = MmReleaseFreeMemory();
     KiLogPrintf("mm: trim for host pressure %u, %u file windows closed, %llu MiB handed back (%llu MiB free)", level, windows,
                 released >> 20, (ULONG64)MmGetFreePages() >> 8);

@@ -11,6 +11,7 @@
 #include "../identity.h"
 
 #include <errno.h>
+#include <sched.h>
 #include <fcntl.h>
 #include <linux/futex.h>
 #include <linux/kvm.h>
@@ -78,11 +79,10 @@ void mime_host_wake_word_one(uint32_t *word)
 }
 
 /*
- * the guest's memory is three quarters of the host's, and never less than 4 GiB on a host that has that much. programs
- * size their caches by what they are told, so it is as much as the host can spare. the host holds only the pages the
- * guest uses: untouched pages cost nothing, free pages go back through MIME_HC_MEM_REPORT and a short host asks the guest
- * to give pages back with MIME_IRQ_MEMORY. the quarter left over is for the desktop and the other programs, since a guest that
- * touches all of the host's memory would push them into swap before it could be asked to give anything back.
+ * the guest's memory is all of the host's. programs size their caches by what they are told, so they get what a native
+ * machine would tell them. none of it is reserved: the host backs a page when the guest first writes it, the guest asks
+ * for each new host block with MIME_HC_MEM_GRANT, which keeps a floor for the desktop, and free pages go back through
+ * MIME_HC_MEM_REPORT.
  */
 uint64_t mime_vm_default_ram(void)
 {
@@ -90,18 +90,17 @@ uint64_t mime_vm_default_ram(void)
     if (pages <= 0 || page <= 0)
         return MIME_VMM_FALLBACK_RAM;
     uint64_t mem = (uint64_t)pages * (uint64_t)page;
-    if (mem > (4ull << 30))
-        mem = MIME_MAX(mem / 4 * 3, 4ull << 30);
     return MIME_ALIGN_DOWN(MIME_MIN(mem, MIME_VMM_MAX_RAM), 2ull << 20);
 }
 
+/* every processor the machine may run on, up to the 64 of the guest's one processor group. */
 static uint32_t host_cpu_count(void)
 {
-    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    cpu_set_t set;
+    long n = sched_getaffinity(0, sizeof(set), &set) == 0 ? CPU_COUNT(&set) : sysconf(_SC_NPROCESSORS_ONLN);
     if (n < 1)
         n = 1;
-    /* the logical processors the firm tables of the reference laptop describe, at most. */
-    return (uint32_t)MIME_MIN((uint64_t)n, MIME_MIN(MIME_VMM_MAX_VCPUS, 22));
+    return (uint32_t)MIME_MIN((uint64_t)n, MIME_VMM_MAX_VCPUS);
 }
 
 /* checks whether transparent huge pages are always enabled or enabled on request. */

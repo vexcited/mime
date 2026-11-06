@@ -223,6 +223,11 @@ void mime_vm_advise(MimeVm *vm, uint64_t pa, uint64_t len, uint32_t advice);
 void mime_vm_raise_irq(MimeVm *vm, uint32_t bits);
 /* starts the thread that asks the guest for memory back when the host runs short; linux/memory.c, nothing on macOS. */
 void mime_memory_monitor_start(MimeVm *vm);
+/* host memory for guest RAM it has not used yet: what the host grants of want bytes, and what it could still grant. */
+uint64_t mime_memory_grant(MimeVm *vm, uint64_t want);
+void mime_memory_publish(MimeVm *vm);
+/* what the host process itself may still allocate before the desktop's floor or its cgroup's limit. */
+uint64_t mime_memory_room(void);
 void mime_vm_queue_ctrl(MimeVm *vm, const void *msg, uint32_t size);
 void mime_vm_queue_input(MimeVm *vm, const MimeInputEvent *ev);
 

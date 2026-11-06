@@ -792,6 +792,16 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
             close(wide);
     }
 
+#ifdef __linux__
+    /* should the host run out of memory anyway, the kernel ends the machine before the desktop and its programs. */
+    int oom = open("/proc/self/oom_score_adj", O_WRONLY | O_CLOEXEC);
+    if (oom >= 0) {
+        if (write(oom, "500", 3) != 3)
+            mime_info("cannot raise the machine's oom score");
+        close(oom);
+    }
+#endif
+
     if (!mime_paths_ensure(paths) || !listen_socket(paths))
         return 1;
     char pid[32];
@@ -801,11 +811,7 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     atexit(cleanup_files);
 
     mime_audio_prepare();
-    uint64_t ram = mime_vm_default_ram();
-    const char *ram_env = getenv("MIME_RAM_MB");
-    if (ram_env && atoi(ram_env) >= 256)
-        ram = MIME_MIN((uint64_t)atoi(ram_env) << 20, MIME_VMM_MAX_RAM);
-    if (!mime_vm_create(&g_vm, paths, ram))
+    if (!mime_vm_create(&g_vm, paths, mime_vm_default_ram()))
         return 1;
     uint64_t created_ns = mime_now_ns();
 

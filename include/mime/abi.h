@@ -333,7 +333,7 @@ typedef struct MimeBootInfo {
 
     char system_root[64]; /* "C:\\Windows". */
     char cmdline[256];
-    /* the host's swap: the guest has no paging file and reports RAM plus this as its commit limit. */
+    /* the host's swap. the guest has no paging file: its commit limit is its memory, the host grants none past its floor. */
     uint64_t swap_size;
     /* the host's time zone: its IANA id, and the key of the Windows zone it is under Time Zones, empty when unknown. */
     char timezone_name[64];
@@ -397,6 +397,13 @@ typedef struct MimeSharedPage {
     volatile uint64_t host_filetime; /* refreshed by the host. */
     volatile uint32_t memory_pressure; /* MIME_MEMORY_*, set before MIME_IRQ_MEMORY is raised. */
     volatile uint32_t memory_serial;   /* counts the host's requests to trim, so the guest tells a new one from an old one. */
+    /*
+     * guest RAM costs the host nothing until the guest writes it, so the guest asks for each host memory block it starts
+     * to use with MIME_HC_MEM_GRANT. the host writes what it could still grant, the guest what it was granted and has
+     * not used yet.
+     */
+    volatile uint64_t memory_grantable;
+    volatile uint64_t memory_credit;
 } MimeSharedPage;
 
 /* one run of free guest pages in a MIME_HC_MEM_REPORT list. */
@@ -420,6 +427,7 @@ enum {
     MIME_HC_WORD_WAIT = 0x0D,   /* (pa, value) sleeps while the word at pa holds value, a millisecond at most */
     MIME_HC_WORD_WAKE = 0x0E,   /* (pa) wakes one processor sleeping on the word at pa */
     MIME_HC_MEM_REPORT = 0x0C,  /* (pa of MimeReportRun[], count) -> bytes released: free guest RAM the host may drop, many runs in one call. They read as zeros until written. */
+    MIME_HC_MEM_GRANT = 0x0F,   /* (bytes) -> bytes of host memory the guest may start to use, less when the host is short. */
 
     MIME_HC_FS_OPEN = 0x10,     /* (MimeFsOpen pa) -> handle */
     MIME_HC_FS_CLOSE = 0x11,    /* (handle) */

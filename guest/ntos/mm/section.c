@@ -1089,8 +1089,10 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
         if (!MiMapPage(as->Root, pva, pa, attrs))
             status = STATUS_INSUFFICIENT_RESOURCES;
     }
-    if (relocated && !lazy)
+    if (relocated && !lazy) {
         as->CommittedPages += pages;
+        MiAddResident((LONG64)pages);
+    }
     if (private_pages)
         ExFreePool(private_pages);
     if (!NT_SUCCESS(status)) {

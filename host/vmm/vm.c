@@ -58,6 +58,21 @@ void mime_host_wake_word_one(uint32_t *word)
 /* macOS compresses and swaps the memory itself. */
 void mime_memory_monitor_start(MimeVm *vm) {}
 
+uint64_t mime_memory_grant(MimeVm *vm, uint64_t want)
+{
+    return want;
+}
+
+uint64_t mime_memory_room(void)
+{
+    return UINT64_MAX >> 1;
+}
+
+void mime_memory_publish(MimeVm *vm)
+{
+    vm->shared->memory_grantable = UINT64_MAX >> 1;
+}
+
 /* the framework backs guest RAM in host pages already. */
 void mime_vm_advise(MimeVm *vm, uint64_t pa, uint64_t len, uint32_t advice)
 {
