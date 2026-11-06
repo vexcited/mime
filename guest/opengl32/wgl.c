@@ -332,7 +332,7 @@ static HGLRC create_context(HDC dc, GlContext *share, int major, int minor, int 
         set_last_error(ERROR_INVALID_PIXEL_FORMAT);
         return nullptr;
     }
-    if (!gpu_format(format) || !gl_device_open()) {
+    if (!gl_device_open()) {
         set_last_error(ERROR_NOT_SUPPORTED);
         return nullptr;
     }
@@ -348,6 +348,13 @@ static HGLRC create_context(HDC dc, GlContext *share, int major, int minor, int 
     }
     ctx->pixel_format = format;
     MimeDescribePixelFormat(format, &ctx->pfd);
+    ctx->software = !gpu_format(format);
+    /* Microsoft's software renderer has OpenGL 1.1 and no profiles. */
+    if (ctx->software) {
+        major = 1;
+        minor = 1;
+        profile = WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB;
+    }
     ctx->major = major;
     ctx->minor = minor;
     ctx->profile = profile;
@@ -387,7 +394,9 @@ GLAPI HGLRC WINAPI wglCreateContextAttribsARB(HDC dc, HGLRC share, const int *at
             break;
         }
     }
-    if (major > GL_MAX_MAJOR || (major == GL_MAX_MAJOR && minor > GL_MAX_MINOR)) {
+    int format = dc_pixel_format(dc);
+    BOOL generic = format && !gpu_format(format);
+    if (generic ? (major > 1 || (major == 1 && minor > 1)) : (major > GL_MAX_MAJOR || (major == GL_MAX_MAJOR && minor > GL_MAX_MINOR))) {
         set_last_error(ERROR_INVALID_VERSION_ARB);
         return nullptr;
     }

@@ -474,6 +474,7 @@ typedef struct GlContext {
     int pixel_format;
     PIXELFORMATDESCRIPTOR pfd;
     int major, minor, profile;
+    BOOL software; /* a pixel format of Microsoft's software renderer. */
     HDC dc;
     GlSurface *surface;
     DWORD thread;

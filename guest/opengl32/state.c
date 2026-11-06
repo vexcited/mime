@@ -804,12 +804,16 @@ GLAPI const GLubyte *APIENTRY glGetString(GLenum name)
     GL_CONTEXT_OR_RETURN(nullptr);
     switch (name) {
     case GL_VENDOR:
-        return (const GLubyte *)gl_vendor_text();
+        return (const GLubyte *)(ctx->software ? "Microsoft Corporation" : gl_vendor_text());
     case GL_RENDERER:
-        return (const GLubyte *)gl_renderer_text();
+        return (const GLubyte *)(ctx->software ? "GDI Generic" : gl_renderer_text());
     case GL_VERSION:
-        return (const GLubyte *)gl_version_text(ctx->major, ctx->minor);
+        return (const GLubyte *)(ctx->software ? "1.1.0" : gl_version_text(ctx->major, ctx->minor));
     case GL_SHADING_LANGUAGE_VERSION:
+        if (ctx->software) {
+            gl_error(ctx, GL_INVALID_ENUM);
+            return nullptr;
+        }
         if (ctx->major == 4)
             return (const GLubyte *)"4.10";
         if (ctx->major == 3 && ctx->minor >= 2)
@@ -820,7 +824,7 @@ GLAPI const GLubyte *APIENTRY glGetString(GLenum name)
             gl_error(ctx, GL_INVALID_ENUM);
             return nullptr;
         }
-        return (const GLubyte *)gl_extension_string();
+        return (const GLubyte *)(ctx->software ? "GL_WIN_swap_hint GL_EXT_bgra GL_EXT_paletted_texture" : gl_extension_string());
     default:
         gl_error(ctx, GL_INVALID_ENUM);
         return nullptr;
