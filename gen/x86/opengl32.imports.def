@@ -305,6 +305,7 @@ EXPORTS
     glGetGraphicsResetStatusARB@0
     glGetHandleARB@4
     glGetInfoLogARB@16
+    glGetInteger64i_v@12
     glGetInteger64v@8
     glGetIntegeri_v@12
     glGetIntegerv@8
@@ -325,8 +326,10 @@ EXPORTS
     glGetNamedFramebufferAttachmentParameteriv@16
     glGetNamedFramebufferParameteriv@12
     glGetNamedRenderbufferParameteriv@12
+    glGetObjectLabel@20
     glGetObjectParameterfvARB@12
     glGetObjectParameterivARB@12
+    glGetObjectPtrLabel@16
     glGetPixelMapfv@8
     glGetPixelMapuiv@8
     glGetPixelMapusv@8
@@ -637,6 +640,7 @@ EXPORTS
     glNormalP3uiv@8
     glNormalPointer@12
     glObjectLabel@16
+    glObjectPtrLabel@12
     glOrtho@48
     glPassThrough@4
     glPatchParameterfv@8

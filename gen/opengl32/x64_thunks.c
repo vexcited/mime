@@ -1849,6 +1849,12 @@ static void x_glGetInfoLogARB(MX_NATIVE_CALL *c)
     glGetInfoLogARB((GLuint)I(c, 0), (GLsizei)I(c, 1), (GLsizei *)I(c, 2), (GLchar *)I(c, 3));
 }
 
+void APIENTRY glGetInteger64i_v(GLenum target, GLuint index, GLint64 *data);
+static void x_glGetInteger64i_v(MX_NATIVE_CALL *c)
+{
+    glGetInteger64i_v((GLenum)I(c, 0), (GLuint)I(c, 1), (GLint64 *)I(c, 2));
+}
+
 void APIENTRY glGetInteger64v(GLenum pname, GLint64 *data);
 static void x_glGetInteger64v(MX_NATIVE_CALL *c)
 {
@@ -1969,6 +1975,12 @@ static void x_glGetNamedRenderbufferParameteriv(MX_NATIVE_CALL *c)
     glGetNamedRenderbufferParameteriv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
 }
 
+void APIENTRY glGetObjectLabel(GLenum identifier, GLuint name, GLsizei size, GLsizei *length, GLchar *label);
+static void x_glGetObjectLabel(MX_NATIVE_CALL *c)
+{
+    glGetObjectLabel((GLenum)I(c, 0), (GLuint)I(c, 1), (GLsizei)I(c, 2), (GLsizei *)I(c, 3), (GLchar *)I(c, 4));
+}
+
 void APIENTRY glGetObjectParameterfvARB(GLuint object, GLenum pname, GLfloat *params);
 static void x_glGetObjectParameterfvARB(MX_NATIVE_CALL *c)
 {
@@ -1979,6 +1991,12 @@ void APIENTRY glGetObjectParameterivARB(GLuint object, GLenum pname, GLint *para
 static void x_glGetObjectParameterivARB(MX_NATIVE_CALL *c)
 {
     glGetObjectParameterivARB((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+void APIENTRY glGetObjectPtrLabel(const void *ptr, GLsizei size, GLsizei *length, GLchar *label);
+static void x_glGetObjectPtrLabel(MX_NATIVE_CALL *c)
+{
+    glGetObjectPtrLabel((const void *)I(c, 0), (GLsizei)I(c, 1), (GLsizei *)I(c, 2), (GLchar *)I(c, 3));
 }
 
 void APIENTRY glGetPixelMapfv(GLenum map, GLfloat *values);
@@ -3839,6 +3857,12 @@ void APIENTRY glObjectLabel(GLenum identifier, GLuint name, GLsizei length, cons
 static void x_glObjectLabel(MX_NATIVE_CALL *c)
 {
     glObjectLabel((GLenum)I(c, 0), (GLuint)I(c, 1), (GLsizei)I(c, 2), (const GLchar *)I(c, 3));
+}
+
+void APIENTRY glObjectPtrLabel(const void *ptr, GLsizei length, const GLchar *label);
+static void x_glObjectPtrLabel(MX_NATIVE_CALL *c)
+{
+    glObjectPtrLabel((const void *)I(c, 0), (GLsizei)I(c, 1), (const GLchar *)I(c, 2));
 }
 
 void APIENTRY glOrtho(GLdouble left, GLdouble right, GLdouble bottom, GLdouble top_, GLdouble near_val,                             GLdouble far_val);
@@ -7147,6 +7171,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGetGraphicsResetStatusARB,
     x_glGetHandleARB,
     x_glGetInfoLogARB,
+    x_glGetInteger64i_v,
     x_glGetInteger64v,
     x_glGetIntegeri_v,
     x_glGetIntegerv,
@@ -7167,8 +7192,10 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGetNamedFramebufferAttachmentParameteriv,
     x_glGetNamedFramebufferParameteriv,
     x_glGetNamedRenderbufferParameteriv,
+    x_glGetObjectLabel,
     x_glGetObjectParameterfvARB,
     x_glGetObjectParameterivARB,
+    x_glGetObjectPtrLabel,
     x_glGetPixelMapfv,
     x_glGetPixelMapuiv,
     x_glGetPixelMapusv,
@@ -7479,6 +7506,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glNormalP3uiv,
     x_glNormalPointer,
     x_glObjectLabel,
+    x_glObjectPtrLabel,
     x_glOrtho,
     x_glPassThrough,
     x_glPatchParameterfv,
@@ -7981,4 +8009,4 @@ static const MX_NATIVE_FN g_functions[] = {
     x_wglUseFontOutlinesW,
 };
 
-const MX_NATIVE_TABLE OpenGL32X64Thunks = {1137, 0, g_functions};
+const MX_NATIVE_TABLE OpenGL32X64Thunks = {1141, 0, g_functions};

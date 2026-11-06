@@ -892,14 +892,26 @@ static const char *gl_renderer_text(void)
     return vendor[0] == 'A' ? "AMD Radeon(TM) Graphics" : "Intel(R) Arc(TM) Graphics";
 }
 
-#define GL_VERSIONS(build)                                                                                         \
-    {"3.0 - Build " build, "3.2 - Build " build, "3.3 - Build " build, "4.0 - Build " build, "4.1 - Build " build}
-
 static const char *gl_version_text(int major, int minor)
 {
-    static const char *const versions[2][5] = {GL_VERSIONS(HOST_BUILD), GL_VERSIONS(ADRENO_BUILD)};
-    int k = major == 4 ? (minor ? 4 : 3) : major == 3 && minor >= 2 ? (minor == 3 ? 2 : 1) : 0;
-    return versions[MimeArm64Machine() ? 1 : 0][k];
+    static char text[2][5][8][64];
+    int arm = MimeArm64Machine() ? 1 : 0;
+    char *t = text[arm][major & 3 | (major == 4 ? 4 : 0)][minor & 7];
+    if (!t[0])
+        _snprintf(t, 64, "%d.%d.0 - Build %s", major, minor, arm ? ADRENO_BUILD : HOST_BUILD);
+    return t;
+}
+
+static const char *gl_glsl_text(int major, int minor)
+{
+    static char text[8];
+    if (major == 4) {
+        _snprintf(text, sizeof(text), "4.%d0", minor);
+        return text;
+    }
+    if (major == 3 && minor >= 2)
+        return minor == 3 ? "3.30" : "1.50";
+    return "1.30";
 }
 
 GLAPI const GLubyte *APIENTRY glGetString(GLenum name)
@@ -917,11 +929,7 @@ GLAPI const GLubyte *APIENTRY glGetString(GLenum name)
             gl_error(ctx, GL_INVALID_ENUM);
             return nullptr;
         }
-        if (ctx->major == 4)
-            return (const GLubyte *)"4.10";
-        if (ctx->major == 3 && ctx->minor >= 2)
-            return (const GLubyte *)(ctx->minor == 3 ? "3.30" : "1.50");
-        return (const GLubyte *)"1.30";
+        return (const GLubyte *)gl_glsl_text(ctx->major, ctx->minor);
     case GL_EXTENSIONS:
         if (ctx->profile == WGL_CONTEXT_CORE_PROFILE_BIT_ARB) {
             gl_error(ctx, GL_INVALID_ENUM);
@@ -1548,6 +1556,3 @@ GLAPI void APIENTRY glPopDebugGroup(void)
 {
 }
 
-GLAPI void APIENTRY glObjectLabel(GLenum identifier, GLuint name, GLsizei length, const GLchar *label)
-{
-}

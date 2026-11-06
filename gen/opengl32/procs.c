@@ -307,6 +307,7 @@ GLenum APIENTRY glGetGraphicsResetStatus(void);
 GLenum APIENTRY glGetGraphicsResetStatusARB(void);
 GLuint APIENTRY glGetHandleARB(GLenum pname);
 void APIENTRY glGetInfoLogARB(GLuint object, GLsizei size, GLsizei *length, GLchar *log);
+void APIENTRY glGetInteger64i_v(GLenum target, GLuint index, GLint64 *data);
 void APIENTRY glGetInteger64v(GLenum pname, GLint64 *data);
 void APIENTRY glGetIntegeri_v(GLenum target, GLuint index, GLint *data);
 void APIENTRY glGetIntegerv(GLenum pname, GLint *data);
@@ -327,8 +328,10 @@ void APIENTRY glGetNamedBufferSubData(GLuint buffer, GLintptr offset, GLsizeiptr
 void APIENTRY glGetNamedFramebufferAttachmentParameteriv(GLuint framebuffer, GLenum attachment, GLenum pname,                                                                GLint *params);
 void APIENTRY glGetNamedFramebufferParameteriv(GLuint framebuffer, GLenum pname, GLint *params);
 void APIENTRY glGetNamedRenderbufferParameteriv(GLuint renderbuffer, GLenum pname, GLint *params);
+void APIENTRY glGetObjectLabel(GLenum identifier, GLuint name, GLsizei size, GLsizei *length, GLchar *label);
 void APIENTRY glGetObjectParameterfvARB(GLuint object, GLenum pname, GLfloat *params);
 void APIENTRY glGetObjectParameterivARB(GLuint object, GLenum pname, GLint *params);
+void APIENTRY glGetObjectPtrLabel(const void *ptr, GLsizei size, GLsizei *length, GLchar *label);
 void APIENTRY glGetPixelMapfv(GLenum map, GLfloat *values);
 void APIENTRY glGetPixelMapuiv(GLenum map, GLuint *values);
 void APIENTRY glGetPixelMapusv(GLenum map, GLushort *values);
@@ -639,6 +642,7 @@ void APIENTRY glNormalP3ui(GLenum type, GLuint coords);
 void APIENTRY glNormalP3uiv(GLenum type, const GLuint *coords);
 void APIENTRY glNormalPointer(GLenum type, GLsizei stride, const void *pointer);
 void APIENTRY glObjectLabel(GLenum identifier, GLuint name, GLsizei length, const GLchar *label);
+void APIENTRY glObjectPtrLabel(const void *ptr, GLsizei length, const GLchar *label);
 void APIENTRY glOrtho(GLdouble left, GLdouble right, GLdouble bottom, GLdouble top_, GLdouble near_val,                             GLdouble far_val);
 void APIENTRY glPassThrough(GLfloat token);
 void APIENTRY glPatchParameterfv(GLenum pname, const GLfloat *values);
@@ -1281,13 +1285,17 @@ const GL_PROC GlProcs[] = {
     {"glCompileShader", (const void *)glCompileShader},
     {"glCompileShaderARB", (const void *)glCompileShader},
     {"glCompressedTexImage1D", (const void *)glCompressedTexImage1D},
+    {"glCompressedTexImage1DARB", (const void *)glCompressedTexImage1D},
     {"glCompressedTexImage2D", (const void *)glCompressedTexImage2D},
     {"glCompressedTexImage2DARB", (const void *)glCompressedTexImage2D},
     {"glCompressedTexImage3D", (const void *)glCompressedTexImage3D},
+    {"glCompressedTexImage3DARB", (const void *)glCompressedTexImage3D},
     {"glCompressedTexSubImage1D", (const void *)glCompressedTexSubImage1D},
+    {"glCompressedTexSubImage1DARB", (const void *)glCompressedTexSubImage1D},
     {"glCompressedTexSubImage2D", (const void *)glCompressedTexSubImage2D},
     {"glCompressedTexSubImage2DARB", (const void *)glCompressedTexSubImage2D},
     {"glCompressedTexSubImage3D", (const void *)glCompressedTexSubImage3D},
+    {"glCompressedTexSubImage3DARB", (const void *)glCompressedTexSubImage3D},
     {"glCompressedTextureSubImage1D", (const void *)glCompressedTextureSubImage1D},
     {"glCompressedTextureSubImage2D", (const void *)glCompressedTextureSubImage2D},
     {"glCompressedTextureSubImage3D", (const void *)glCompressedTextureSubImage3D},
@@ -1431,6 +1439,7 @@ const GL_PROC GlProcs[] = {
     {"glFramebufferTexture2D", (const void *)glFramebufferTexture2D},
     {"glFramebufferTexture2DEXT", (const void *)glFramebufferTexture2D},
     {"glFramebufferTexture3D", (const void *)glFramebufferTexture3D},
+    {"glFramebufferTexture3DEXT", (const void *)glFramebufferTexture3D},
     {"glFramebufferTextureLayer", (const void *)glFramebufferTextureLayer},
     {"glFrontFace", (const void *)glFrontFace},
     {"glFrustum", (const void *)glFrustum},
@@ -1478,6 +1487,7 @@ const GL_PROC GlProcs[] = {
     {"glGetBufferSubDataARB", (const void *)glGetBufferSubData},
     {"glGetClipPlane", (const void *)glGetClipPlane},
     {"glGetCompressedTexImage", (const void *)glGetCompressedTexImage},
+    {"glGetCompressedTexImageARB", (const void *)glGetCompressedTexImage},
     {"glGetCompressedTextureImage", (const void *)glGetCompressedTextureImage},
     {"glGetCompressedTextureSubImage", (const void *)glGetCompressedTextureSubImage},
     {"glGetDebugMessageLog", (const void *)glGetDebugMessageLog},
@@ -1495,6 +1505,7 @@ const GL_PROC GlProcs[] = {
     {"glGetGraphicsResetStatusARB", (const void *)glGetGraphicsResetStatusARB},
     {"glGetHandleARB", (const void *)glGetHandleARB},
     {"glGetInfoLogARB", (const void *)glGetInfoLogARB},
+    {"glGetInteger64i_v", (const void *)glGetInteger64i_v},
     {"glGetInteger64v", (const void *)glGetInteger64v},
     {"glGetIntegerIndexedvEXT", (const void *)glGetIntegeri_v},
     {"glGetIntegeri_v", (const void *)glGetIntegeri_v},
@@ -1516,8 +1527,10 @@ const GL_PROC GlProcs[] = {
     {"glGetNamedFramebufferAttachmentParameteriv", (const void *)glGetNamedFramebufferAttachmentParameteriv},
     {"glGetNamedFramebufferParameteriv", (const void *)glGetNamedFramebufferParameteriv},
     {"glGetNamedRenderbufferParameteriv", (const void *)glGetNamedRenderbufferParameteriv},
+    {"glGetObjectLabel", (const void *)glGetObjectLabel},
     {"glGetObjectParameterfvARB", (const void *)glGetObjectParameterfvARB},
     {"glGetObjectParameterivARB", (const void *)glGetObjectParameterivARB},
+    {"glGetObjectPtrLabel", (const void *)glGetObjectPtrLabel},
     {"glGetPixelMapfv", (const void *)glGetPixelMapfv},
     {"glGetPixelMapuiv", (const void *)glGetPixelMapuiv},
     {"glGetPixelMapusv", (const void *)glGetPixelMapusv},
@@ -1845,6 +1858,7 @@ const GL_PROC GlProcs[] = {
     {"glNormalP3uiv", (const void *)glNormalP3uiv},
     {"glNormalPointer", (const void *)glNormalPointer},
     {"glObjectLabel", (const void *)glObjectLabel},
+    {"glObjectPtrLabel", (const void *)glObjectPtrLabel},
     {"glOrtho", (const void *)glOrtho},
     {"glPassThrough", (const void *)glPassThrough},
     {"glPatchParameterfv", (const void *)glPatchParameterfv},
@@ -2373,4 +2387,4 @@ const GL_PROC GlProcs[] = {
     {"wglUseFontOutlinesA", (const void *)wglUseFontOutlinesA},
     {"wglUseFontOutlinesW", (const void *)wglUseFontOutlinesW},
 };
-const ULONG GlProcCount = 1230;
+const ULONG GlProcCount = 1240;

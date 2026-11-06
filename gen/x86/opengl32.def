@@ -305,6 +305,7 @@ EXPORTS
     glGetGraphicsResetStatusARB=_glGetGraphicsResetStatusARB@0
     glGetHandleARB=_glGetHandleARB@4
     glGetInfoLogARB=_glGetInfoLogARB@16
+    glGetInteger64i_v=_glGetInteger64i_v@12
     glGetInteger64v=_glGetInteger64v@8
     glGetIntegeri_v=_glGetIntegeri_v@12
     glGetIntegerv=_glGetIntegerv@8
@@ -325,8 +326,10 @@ EXPORTS
     glGetNamedFramebufferAttachmentParameteriv=_glGetNamedFramebufferAttachmentParameteriv@16
     glGetNamedFramebufferParameteriv=_glGetNamedFramebufferParameteriv@12
     glGetNamedRenderbufferParameteriv=_glGetNamedRenderbufferParameteriv@12
+    glGetObjectLabel=_glGetObjectLabel@20
     glGetObjectParameterfvARB=_glGetObjectParameterfvARB@12
     glGetObjectParameterivARB=_glGetObjectParameterivARB@12
+    glGetObjectPtrLabel=_glGetObjectPtrLabel@16
     glGetPixelMapfv=_glGetPixelMapfv@8
     glGetPixelMapuiv=_glGetPixelMapuiv@8
     glGetPixelMapusv=_glGetPixelMapusv@8
@@ -637,6 +640,7 @@ EXPORTS
     glNormalP3uiv=_glNormalP3uiv@8
     glNormalPointer=_glNormalPointer@12
     glObjectLabel=_glObjectLabel@16
+    glObjectPtrLabel=_glObjectPtrLabel@12
     glOrtho=_glOrtho@48
     glPassThrough=_glPassThrough@4
     glPatchParameterfv=_glPatchParameterfv@8
