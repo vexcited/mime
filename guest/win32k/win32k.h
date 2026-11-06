@@ -565,6 +565,7 @@ typedef struct W32THREAD {
     ULONG_PTR ExtraInfo;
     HWND Focus;
     HWND Active;
+    BOOLEAN AppActive;       /* WM_ACTIVATEAPP told the thread's windows that the thread is the active one. */
     HWND Capture;
     ULONG CaptureNc;  /* nc hit code of a capture held by the frame. */
     UCHAR KeyState[256]; /* bit 7 down, bit 0 toggled, as seen by this thread. */
