@@ -98,6 +98,7 @@ static const GlExtension g_extensions[] = {
     {"GL_ARB_shader_atomic_counter_ops", MIME_GPU_FEATURE_COMPUTE},
     {"GL_ARB_texture_buffer_object", MIME_GPU_FEATURE_TEXEL_BUFFER},
     {"GL_ARB_texture_buffer_range", MIME_GPU_FEATURE_TEXEL_BUFFER},
+    {"GL_ARB_texture_view", MIME_GPU_FEATURE_TEXTURE_VIEW},
 };
 
 #define EXTENSION_MAX 512

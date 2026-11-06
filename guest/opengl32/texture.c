@@ -170,6 +170,16 @@ static uint32_t sampling_swizzle(const GlTexture *t)
     return result;
 }
 
+uint32_t gl_texture_sampling_swizzle(const GlTexture *t)
+{
+    return sampling_swizzle(t);
+}
+
+uint32_t gl_mtl_type_of(GLenum target)
+{
+    return mtl_type_of(target);
+}
+
 uint32_t gl_mtl_format(GLenum internal, GLenum format, GLenum type, uint32_t *swizzle, BOOL *compressed)
 {
     *swizzle = 0;
@@ -783,7 +793,7 @@ GLAPI void APIENTRY glTexStorage1D(GLenum target, GLsizei levels, GLenum interna
         return;
     }
     GlTexture *t = bound(ctx, target);
-    if (!t) {
+    if (!t || t->immutable_levels) {
         gl_error(ctx, GL_INVALID_OPERATION);
         return;
     }
@@ -805,6 +815,7 @@ GLAPI void APIENTRY glTexStorage1D(GLenum target, GLsizei levels, GLenum interna
     t->height = t->depth = 1;
     create_host(t, (uint32_t)levels);
     t->defined_levels = (uint16_t)((1u << levels) - 1);
+    t->immutable_levels = (uint32_t)levels;
     t->sampler_id = 0;
     ctx->dirty |= DIRTY_TEXTURES;
 }
@@ -813,7 +824,7 @@ GLAPI void APIENTRY glTexStorage2D(GLenum target, GLsizei levels, GLenum interna
 {
     GL_CONTEXT_OR_RETURN();
     GlTexture *t = bound(ctx, target);
-    if (!t || levels < 1) {
+    if (!t || levels < 1 || t->immutable_levels) {
         gl_error(ctx, GL_INVALID_OPERATION);
         return;
     }
@@ -832,6 +843,7 @@ GLAPI void APIENTRY glTexStorage2D(GLenum target, GLsizei levels, GLenum interna
     t->depth = t->target == GL_TEXTURE_CUBE_MAP ? 6 : 1;
     create_host(t, (uint32_t)levels);
     t->defined_levels = (uint16_t)((1u << levels) - 1);
+    t->immutable_levels = (uint32_t)levels;
     t->sampler_id = 0;
     ctx->dirty |= DIRTY_TEXTURES;
 }
@@ -842,6 +854,10 @@ GLAPI void APIENTRY glTexStorage3D(GLenum target, GLsizei levels, GLenum interna
     GlTexture *t = bound(ctx, target);
     if (!t)
         return;
+    if (t->immutable_levels) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
     if (t->target == GL_TEXTURE_CUBE_MAP_ARRAY && (d % 6 || w != h)) {
         gl_error(ctx, GL_INVALID_VALUE);
         return;
@@ -858,6 +874,7 @@ GLAPI void APIENTRY glTexStorage3D(GLenum target, GLsizei levels, GLenum interna
     t->depth = (uint32_t)d;
     create_host(t, (uint32_t)levels);
     t->defined_levels = (uint16_t)((1u << levels) - 1);
+    t->immutable_levels = (uint32_t)levels;
     ctx->dirty |= DIRTY_TEXTURES;
 }
 
@@ -1086,6 +1103,8 @@ GLAPI void APIENTRY glGetTexParameteriv(GLenum target, GLenum pname, GLint *para
         gl_error(ctx, GL_INVALID_OPERATION);
         return;
     }
+    if (gl_textureview_param(t, pname, params))
+        return;
     switch (pname) {
     case GL_TEXTURE_SWIZZLE_R:
     case GL_TEXTURE_SWIZZLE_G:
@@ -1519,7 +1538,14 @@ GLAPI void APIENTRY glTexStorage2DMultisample(GLenum target, GLsizei samples, GL
         gl_error(ctx, GL_INVALID_VALUE);
         return;
     }
+    GlTexture *t = bound(ctx, target);
+    if (t && t->immutable_levels) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
     glTexImage2DMultisample(target, samples, internal, w, h, fixed);
+    if (t)
+        t->immutable_levels = 1;
 }
 
 /*
