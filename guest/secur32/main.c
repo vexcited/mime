@@ -13,6 +13,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
 {
     if (reason == DLL_PROCESS_ATTACH)
         SecTlsCallData = TlsAlloc();
+    else if (reason == DLL_PROCESS_DETACH && !reserved && SecTlsCallData != TLS_OUT_OF_INDEXES)
+        TlsFree(SecTlsCallData);
     return TRUE;
 }
 

@@ -21,6 +21,8 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)
 {
     if (reason == DLL_PROCESS_ATTACH)
         g_thread_ref = TlsAlloc();
+    else if (reason == DLL_PROCESS_DETACH && !reserved && g_thread_ref != TLS_OUT_OF_INDEXES)
+        TlsFree(g_thread_ref);
     return TRUE;
 }
 

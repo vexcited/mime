@@ -77,6 +77,7 @@ static_assert(offsetof(OLE_THREAD, CurrentContext) == (sizeof(void *) == 4 ? 0x3
 OLE_THREAD *OleThreadState(BOOL create);
 void OleThreadDetach(void);
 void OleProcessAttach(void);
+void OleProcessFree(void);
 
 /* com.c */
 void OleMtaUsage(LONG delta);

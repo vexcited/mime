@@ -873,6 +873,10 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
         }
         break;
     }
+    case DLL_PROCESS_DETACH:
+        if (!reserved && g_tls != TLS_OUT_OF_INDEXES)
+            TlsFree(g_tls);
+        break;
     }
     return TRUE;
 }

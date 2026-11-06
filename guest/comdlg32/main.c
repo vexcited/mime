@@ -11,6 +11,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     if (reason == DLL_PROCESS_ATTACH) {
         g_comdlg32 = instance;
         DlgProcessAttach();
+    } else if (reason == DLL_PROCESS_DETACH && !reserved) {
+        DlgProcessFree();
     }
     return TRUE;
 }

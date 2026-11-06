@@ -45,6 +45,11 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
         break;
     case DLL_PROCESS_DETACH:
         MsvcrtProcessDetach();
+        /* a FreeLibrary gives the slot back, or loading and freeing the dll again and again runs out of them. */
+        if (!reserved && g_tls != TLS_OUT_OF_INDEXES) {
+            TlsFree(g_tls);
+            g_tls = TLS_OUT_OF_INDEXES;
+        }
         break;
     }
     return TRUE;

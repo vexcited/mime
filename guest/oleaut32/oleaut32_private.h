@@ -70,6 +70,7 @@ ULONGLONG AutCallEx(void *function, const ULONG_PTR *slots, ULONG count, ULONG f
 extern ULONG g_process_nls_flags;
 
 void AutErrorAttach(void);
+void AutErrorFree(void);
 void AutErrorDetach(void);
 
 #endif

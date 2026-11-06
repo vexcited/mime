@@ -17,6 +17,13 @@ static DWORD error_slot = TLS_OUT_OF_INDEXES;
 MIME_DEFINE_GUID(error_iid, 0x1cf2b120, 0x547d, 0x101b, 0x8e, 0x65, 0x08, 0, 0x2b, 0x2b, 0xd1, 0x19);
 MIME_DEFINE_GUID(create_iid, 0x22f03340, 0x547d, 0x101b, 0x8e, 0x65, 0x08, 0, 0x2b, 0x2b, 0xd1, 0x19);
 void AutErrorAttach(void) { error_slot = TlsAlloc(); }
+/* a FreeLibrary gives the slot back, or a program that loads and frees the dll again and again runs out of them. */
+void AutErrorFree(void)
+{
+    if (error_slot != TLS_OUT_OF_INDEXES)
+        TlsFree(error_slot);
+    error_slot = TLS_OUT_OF_INDEXES;
+}
 void AutErrorDetach(void)
 {
     if (error_slot == TLS_OUT_OF_INDEXES) return;

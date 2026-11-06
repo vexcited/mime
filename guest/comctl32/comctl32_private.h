@@ -24,6 +24,7 @@ WINUSERAPI HWND WINAPI CreateDialogIndirectParamA(HINSTANCE instance, LPCDLGTEMP
 extern HINSTANCE Comctl32Instance;
 
 void SubclassProcessAttach(void);
+void SubclassProcessFree(void);
 
 /* registers the classes the ICC bits select. */
 void RegisterControlClasses(DWORD icc);

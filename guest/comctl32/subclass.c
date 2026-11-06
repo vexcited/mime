@@ -41,6 +41,14 @@ void SubclassProcessAttach(void)
     g_frame_tls = TlsAlloc();
 }
 
+/* a FreeLibrary gives the slot back, or a program that loads and frees the dll again and again runs out of them. */
+void SubclassProcessFree(void)
+{
+    if (g_frame_tls != TLS_OUT_OF_INDEXES)
+        TlsFree(g_frame_tls);
+    g_frame_tls = TLS_OUT_OF_INDEXES;
+}
+
 static SUBCLASS_HEADER *find_header(HWND hwnd)
 {
     SUBCLASS_HEADER *header;

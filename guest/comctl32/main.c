@@ -74,6 +74,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
         Comctl32Instance = instance;
         SubclassProcessAttach();
         RegisterControlClasses(0xFFFFFFFF);
+    } else if (reason == DLL_PROCESS_DETACH && !reserved) {
+        SubclassProcessFree();
     }
     return TRUE;
 }

@@ -1483,6 +1483,10 @@ void NTAPI LdrpInitialize(PCONTEXT context)
 NTDLL_EXPORT void NTAPI LdrShutdownThread(void)
 {
     RtlEnterCriticalSection(&LdrpLoaderLock);
+    /* the exe is in no initialization list, its tls callbacks go first as they came last on attach. */
+    PLDR_DATA_TABLE_ENTRY exe = find_by_base(NtCurrentPeb()->ImageBaseAddress);
+    if (exe)
+        call_tls_callbacks(exe, DLL_THREAD_DETACH);
     for (PLIST_ENTRY l = g_ldr.InInitializationOrderModuleList.Blink; l != &g_ldr.InInitializationOrderModuleList;
          l = l->Blink) {
         PLDR_DATA_TABLE_ENTRY e = CONTAINING_RECORD(l, LDR_DATA_TABLE_ENTRY, InInitializationOrderLinks);

@@ -12,6 +12,8 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
         CmModule = instance;
         CmTls = TlsAlloc();
         DisableThreadLibraryCalls(instance);
+    } else if (reason == DLL_PROCESS_DETACH && !reserved && CmTls != TLS_OUT_OF_INDEXES) {
+        TlsFree(CmTls);
     }
     return TRUE;
 }

@@ -18,6 +18,14 @@ void OleProcessAttach(void)
     g_tls = TlsAlloc();
 }
 
+/* a FreeLibrary gives the slot back, or a program that loads and frees the dll again and again runs out of them. */
+void OleProcessFree(void)
+{
+    if (g_tls != TLS_OUT_OF_INDEXES)
+        TlsFree(g_tls);
+    g_tls = TLS_OUT_OF_INDEXES;
+}
+
 OLE_THREAD *OleThreadState(BOOL create)
 {
     if (g_tls == TLS_OUT_OF_INDEXES)

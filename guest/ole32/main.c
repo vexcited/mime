@@ -9,6 +9,10 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     case DLL_THREAD_DETACH:
         OleThreadDetach();
         break;
+    case DLL_PROCESS_DETACH:
+        if (!reserved)
+            OleProcessFree();
+        break;
     }
     return TRUE;
 }

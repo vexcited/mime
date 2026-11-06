@@ -8,6 +8,14 @@ void DlgProcessAttach(void)
     g_error_tls = TlsAlloc();
 }
 
+/* a FreeLibrary gives the slot back, or a program that loads and frees the dll again and again runs out of them. */
+void DlgProcessFree(void)
+{
+    if (g_error_tls != TLS_OUT_OF_INDEXES)
+        TlsFree(g_error_tls);
+    g_error_tls = TLS_OUT_OF_INDEXES;
+}
+
 void DlgSetError(DWORD error)
 {
     if (g_error_tls != TLS_OUT_OF_INDEXES)
