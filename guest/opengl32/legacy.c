@@ -348,4 +348,5 @@ GLAPI void APIENTRY glCopyTexImage1D(GLenum target, GLint level, GLenum internal
 GLAPI void APIENTRY glCopyTexSubImage1D(GLenum target, GLint level, GLint xoffset, GLint x, GLint y, GLsizei width)
 {
     GL_CONTEXT_OR_RETURN();
+    glCopyTexSubImage2D(target, level, xoffset, 0, x, y, width, 1);
 }

@@ -165,6 +165,8 @@ typedef struct GlAttachment {
 
 typedef struct GlFramebuffer {
     GLuint name;
+    GLint default_width, default_height, default_layers, default_samples; /* glFramebufferParameteri. */
+    GLboolean default_fixed_locations;
     GlAttachment color[MIME_GPU_MAX_COLORS];
     GlAttachment depth, stencil;
     GLenum draw_buffers[MIME_GPU_MAX_COLORS];
@@ -259,11 +261,23 @@ typedef struct GlVertexAttrib {
 #define FF_UNITS 8
 #define FF_ARRAYS (3 + FF_UNITS)
 
+/* ARB_vertex_attrib_binding: the buffer, offset, stride and divisor of a binding index, which attributes point to. */
+typedef struct GlVertexBinding {
+    GLuint buffer;
+    GLintptr offset;
+    GLsizei stride;
+    GLuint divisor;
+} GlVertexBinding;
+
 typedef struct GlVertexArray {
     GLuint name;
     GlVertexAttrib attribs[MIME_GPU_MAX_ATTRIBS];
     GlVertexAttrib legacy[FF_ARRAYS];
     GLuint element_buffer;
+    GlVertexBinding bindings[MIME_GPU_MAX_ATTRIBS];
+    uint8_t attrib_binding[MIME_GPU_MAX_ATTRIBS]; /* the binding index plus one, 0 for the attribute's own. */
+    uint16_t relative_offset[MIME_GPU_MAX_ATTRIBS];
+    uint16_t long_mask; /* attributes set by glVertexAttribLFormat. */
 } GlVertexArray;
 
 /* names of one kind in a share group. */
@@ -474,6 +488,9 @@ typedef struct GlContext {
     int pixel_format;
     PIXELFORMATDESCRIPTOR pfd;
     int major, minor, profile;
+    GLbitfield flags;          /* GL_CONTEXT_FLAG_* from WGL_CONTEXT_FLAGS_ARB. */
+    GLenum reset_strategy;     /* GL_NO_RESET_NOTIFICATION or GL_LOSE_CONTEXT_ON_RESET. */
+    BOOL clip_upper_left, clip_zero_to_one; /* glClipControl. */
     HDC dc;
     GlSurface *surface;
     DWORD thread;
@@ -528,7 +545,7 @@ typedef struct GlContext {
     GLenum cull_mode, front_face;
     GLenum polygon_mode;
     BOOL polygon_offset_fill;
-    GLfloat offset_factor, offset_units;
+    GLfloat offset_factor, offset_units, offset_clamp;
     BOOL dither, multisample, sample_alpha_to_coverage, program_point_size, primitive_restart, depth_clamp;
     BOOL framebuffer_srgb;
     GLfloat line_width, point_size;
@@ -613,6 +630,20 @@ GlBuffer *gl_bound_buffer(GlContext *ctx, GLenum target);
 
 /* textures, texture.c. */
 GlTexture *gl_texture(GlContext *ctx, GLuint name);
+GlTexture *gl_texture_create(GlContext *ctx, GLuint name, GLenum target);
+GLuint *gl_texture_slot(GlContext *ctx, GLenum target);
+void gl_texture_copy_sub(GlContext *ctx, GlTexture *t, GLint level, uint32_t slice, GLint dx, GLint dy, GLint x, GLint y,
+                         GLsizei w, GLsizei h);
+BOOL gl_texture_read_compressed(GlContext *ctx, GlTexture *t, GLint level, uint32_t slice, GLint x, GLint y, GLsizei w,
+                                GLsizei h, uint8_t *dst);
+BOOL gl_query_create(GlContext *ctx, GLuint name, GLenum target);
+
+/* vertex array objects and the binding model, vattrib.c. */
+GlVertexArray *gl_vao_get(GlContext *ctx, GLuint name);
+void gl_vao_legacy_pointer(GlVertexArray *v, GLuint index);
+void gl_vao_legacy_divisor(GlVertexArray *v, GLuint index);
+int gl_dsa_get(GlContext *ctx, GLenum pname, GLdouble *v); /* dsa.c: the limits and state of the 4.x additions. */
+BOOL gl_vertex_binding_get(GlContext *ctx, GLenum pname, GLuint index, GLint64 *value);
 GlTexture *gl_unit_texture(GlContext *ctx, GLuint unit, GLenum sampler_type);
 uint32_t gl_texture_sampler(GlTexture *t);
 BOOL gl_texture_ready(GlContext *ctx, GlTexture *t);

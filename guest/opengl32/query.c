@@ -206,3 +206,9 @@ GLAPI void APIENTRY glGetQueryObjectiv(GLuint name, GLenum pname, GLint *value)
     if (value && result(ctx, name, pname, &number))
         *value = number > 0x7fffffffu ? 0x7fffffff : (GLint)number;
 }
+
+/* a query object of the target for a name that has none, as glCreateQueries makes it. */
+BOOL gl_query_create(GlContext *ctx, GLuint name, GLenum target)
+{
+    return query(ctx, name, target) != nullptr;
+}

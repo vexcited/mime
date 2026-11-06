@@ -116,6 +116,13 @@ static GlTexture *bound(GlContext *ctx, GLenum target)
     return s < 0 ? nullptr : gl_texture(ctx, ctx->units[ctx->active_texture][s]);
 }
 
+/* the name bound to the target on the active unit, for the calls that bind a texture and put the old one back. */
+GLuint *gl_texture_slot(GlContext *ctx, GLenum target)
+{
+    int s = slot_of(target);
+    return s < 0 ? nullptr : &ctx->units[ctx->active_texture][s];
+}
+
 /* ---------------------------------------------------------------- formats */
 
 #define SWIZZLE(r, g, b, a) ((uint32_t)(r) | (uint32_t)(g) << 8 | (uint32_t)(b) << 16 | (uint32_t)(a) << 24)
@@ -316,6 +323,12 @@ static GlTexture *make(GlContext *ctx, GLuint name, GLenum target)
     t->component_swizzle[3] = GL_ALPHA;
     gl_name_set(&ctx->shared->textures, name, t);
     return t;
+}
+
+/* a texture object of the target for a name that has none, as glCreateTextures makes it. */
+GlTexture *gl_texture_create(GlContext *ctx, GLuint name, GLenum target)
+{
+    return slot_of(target) < 0 ? nullptr : make(ctx, name, target);
 }
 
 GLAPI void APIENTRY glBindTexture(GLenum target, GLuint name)
@@ -741,6 +754,40 @@ GLAPI void APIENTRY glCompressedTexSubImage2D(GLenum target, GLint level, GLint 
         upload_compressed(ctx, t, level, slice, x, y, (uint32_t)w, (uint32_t)h, size, data);
 }
 
+GLAPI void APIENTRY glTexStorage1D(GLenum target, GLsizei levels, GLenum internal, GLsizei w)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (target != GL_TEXTURE_1D) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    GlTexture *t = bound(ctx, target);
+    if (!t) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    if (levels < 1 || w < 1) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    uint32_t swizzle;
+    BOOL compressed;
+    destroy_host(t);
+    t->mtl_format = gl_mtl_format(internal, GL_RGBA, GL_UNSIGNED_BYTE, &swizzle, &compressed);
+    if (!t->mtl_format)
+        t->mtl_format = 70;
+    t->mtl_type = MTL_TEX_1D;
+    t->internal_format = internal;
+    t->swizzle = swizzle;
+    t->compressed = compressed;
+    t->width = (uint32_t)w;
+    t->height = t->depth = 1;
+    create_host(t, (uint32_t)levels);
+    t->defined_levels = (uint16_t)((1u << levels) - 1);
+    t->sampler_id = 0;
+    ctx->dirty |= DIRTY_TEXTURES;
+}
+
 GLAPI void APIENTRY glTexStorage2D(GLenum target, GLsizei levels, GLenum internal, GLsizei w, GLsizei h)
 {
     GL_CONTEXT_OR_RETURN();
@@ -856,6 +903,13 @@ GLAPI void APIENTRY glCopyTexImage2D(GLenum target, GLint level, GLenum internal
     uint32_t slice;
     face_of(target, &slice);
     copy_from_framebuffer(ctx, t, level, slice, 0, 0, x, y, w, h);
+}
+
+/* a region of the read framebuffer into a slice of a level of the texture. */
+void gl_texture_copy_sub(GlContext *ctx, GlTexture *t, GLint level, uint32_t slice, GLint dx, GLint dy, GLint x, GLint y,
+                         GLsizei w, GLsizei h)
+{
+    copy_from_framebuffer(ctx, t, level, slice, dx, dy, x, y, w, h);
 }
 
 GLAPI void APIENTRY glCopyTexSubImage2D(GLenum target, GLint level, GLint dx, GLint dy, GLint x, GLint y, GLsizei w,
@@ -1243,6 +1297,42 @@ uint32_t gl_dummy_texture(GlContext *ctx)
     u->row_bytes = u->image_bytes = 4;
     gl_device_unlock();
     return id;
+}
+
+/* the blocks of a region of a compressed level of a layer, rows packed, into dst. */
+BOOL gl_texture_read_compressed(GlContext *ctx, GlTexture *t, GLint level, uint32_t slice, GLint x, GLint y, GLsizei w,
+                                GLsizei h, uint8_t *dst)
+{
+    if (!t->id || !t->compressed || w <= 0 || h <= 0)
+        return FALSE;
+    uint32_t bx = ((uint32_t)w + 3) / 4, by = ((uint32_t)h + 3) / 4, row = bx * block_bytes(t->mtl_format);
+    uint64_t total = (uint64_t)row * by;
+    GlMem mem;
+    BOOL temp = !gl_stream_alloc(total, 256, &mem);
+    if (temp && !gl_heap_alloc(total, &mem))
+        return FALSE;
+    outside_pass(ctx);
+    gl_device_lock();
+    MimeGpuTextureCopy *c = gl_emit(MIME_GPU_TEXTURE_READ, sizeof(MimeGpuTextureCopy));
+    c->id = t->id;
+    c->surface = MIME_GPU_COPY_TEXTURE;
+    c->level = (uint32_t)level;
+    c->slice = slice;
+    c->x = (uint32_t)x;
+    c->y = (uint32_t)y;
+    c->width = (uint32_t)w;
+    c->height = (uint32_t)h;
+    c->depth = 1;
+    c->mem = gl_mem(&mem);
+    c->row_bytes = row;
+    c->image_bytes = (uint32_t)total;
+    uint64_t fence = gl_fence();
+    gl_device_unlock();
+    gl_wait(fence);
+    memcpy(dst, mem.ptr, (SIZE_T)total);
+    if (temp)
+        gl_heap_free(&mem, fence);
+    return TRUE;
 }
 
 /* ---------------------------------------------------------------- readback */

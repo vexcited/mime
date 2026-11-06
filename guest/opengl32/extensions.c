@@ -73,6 +73,14 @@ static const GlExtension g_extensions[] = {
     {"GL_ARB_copy_image", MIME_GPU_FEATURE_COMPUTE},
     {"GL_ARB_invalidate_subdata", 0},
     {"GL_ARB_internalformat_query", 0},
+    {"GL_ARB_vertex_attrib_binding", 0},
+    {"GL_ARB_clip_control", MIME_GPU_FEATURE_CLIP_CONTROL},
+    {"GL_ARB_get_texture_sub_image", 0},
+    {"GL_ARB_texture_barrier", 0},
+    {"GL_ARB_robustness", 0},
+    {"GL_KHR_robustness", 0},
+    {"GL_ARB_polygon_offset_clamp", 0},
+    {"GL_EXT_polygon_offset_clamp", 0},
 };
 
 #define EXTENSION_MAX 512

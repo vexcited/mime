@@ -96,6 +96,7 @@ glPointParameteriv values=gl_dl_point_parameter_count(pname)
 glPointSize
 glPolygonMode
 glPolygonOffset
+glPolygonOffsetClamp
 glPopMatrix
 glPopName
 glPrioritizeTextures textures=n priorities=n
