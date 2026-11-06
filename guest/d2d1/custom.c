@@ -1528,12 +1528,32 @@ static HRESULT STDMETHODCALLTYPE gr_output(ID2D1TransformGraph *This, ID2D1Trans
     return S_OK;
 }
 
+/* the node of an effect has the inputs the effect has when it is connected, which may have changed since it was added. */
+static HRESULT gnode_sync_inputs(GNode *n)
+{
+    if (n->kind != NODE_EFFECT)
+        return S_OK;
+    UINT32 count = n->node->lpVtbl->GetInputCount(n->node);
+    if (count <= n->ninputs)
+        return S_OK;
+    Conn *in = D2dRealloc(n->in, count * sizeof(Conn));
+    if (!in)
+        return E_OUTOFMEMORY;
+    memset(in + n->ninputs, 0, (count - n->ninputs) * sizeof(Conn));
+    n->in = in;
+    n->ninputs = count;
+    return S_OK;
+}
+
 static HRESULT STDMETHODCALLTYPE gr_connect(ID2D1TransformGraph *This, ID2D1TransformNode *from, ID2D1TransformNode *to, UINT32 input)
 {
     GRAPH;
     int a = graph_find(g, from), b = graph_find(g, to);
     if (a < 0 || b < 0)
         return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    HRESULT hr = gnode_sync_inputs(&g->nodes[b]);
+    if (FAILED(hr))
+        return hr;
     if (input >= g->nodes[b].ninputs)
         return E_INVALIDARG;
     g->nodes[b].in[input] = (Conn){CONN_NODE, (UINT32)a};
@@ -1546,6 +1566,9 @@ static HRESULT STDMETHODCALLTYPE gr_connect_input(ID2D1TransformGraph *This, UIN
     int b = graph_find(g, node);
     if (b < 0)
         return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    HRESULT hr = gnode_sync_inputs(&g->nodes[b]);
+    if (FAILED(hr))
+        return hr;
     if (input >= g->nodes[b].ninputs || effect_input >= g->inputs)
         return E_INVALIDARG;
     g->nodes[b].in[input] = (Conn){CONN_EFFECT, effect_input};
