@@ -270,6 +270,7 @@ EXPORTS
     glGenVertexArrays=_glGenVertexArrays@8
     glGenerateMipmap=_glGenerateMipmap@4
     glGenerateTextureMipmap=_glGenerateTextureMipmap@4
+    glGetActiveAtomicCounterBufferiv=_glGetActiveAtomicCounterBufferiv@16
     glGetActiveAttrib=_glGetActiveAttrib@28
     glGetActiveSubroutineName=_glGetActiveSubroutineName@24
     glGetActiveSubroutineUniformName=_glGetActiveSubroutineUniformName@24
@@ -820,6 +821,8 @@ EXPORTS
     glStencilMaskSeparate=_glStencilMaskSeparate@8
     glStencilOp=_glStencilOp@12
     glStencilOpSeparate=_glStencilOpSeparate@16
+    glTexBuffer=_glTexBuffer@12
+    glTexBufferRange=_glTexBufferRange@20
     glTexCoord1d=_glTexCoord1d@8
     glTexCoord1dv=_glTexCoord1dv@4
     glTexCoord1f=_glTexCoord1f@4
@@ -891,6 +894,8 @@ EXPORTS
     glTexSubImage2D=_glTexSubImage2D@36
     glTexSubImage3D=_glTexSubImage3D@44
     glTextureBarrier=_glTextureBarrier@0
+    glTextureBuffer=_glTextureBuffer@12
+    glTextureBufferRange=_glTextureBufferRange@20
     glTextureParameterIiv=_glTextureParameterIiv@12
     glTextureParameterIuiv=_glTextureParameterIuiv@12
     glTextureParameterf=_glTextureParameterf@12

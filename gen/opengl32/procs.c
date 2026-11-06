@@ -272,6 +272,7 @@ void APIENTRY glGenTransformFeedbacks(GLsizei n, GLuint *ids);
 void APIENTRY glGenVertexArrays(GLsizei n, GLuint *arrays);
 void APIENTRY glGenerateMipmap(GLenum target);
 void APIENTRY glGenerateTextureMipmap(GLuint texture);
+void APIENTRY glGetActiveAtomicCounterBufferiv(GLuint program, GLuint index, GLenum pname, GLint *params);
 void APIENTRY glGetActiveAttrib(GLuint name, GLuint index, GLsizei size, GLsizei *length, GLint *count,                                       GLenum *type, GLchar *out);
 void APIENTRY glGetActiveSubroutineName(GLuint program, GLenum shadertype, GLuint index, GLsizei bufsize,                                                GLsizei *length, GLchar *name);
 void APIENTRY glGetActiveSubroutineUniformName(GLuint program, GLenum shadertype, GLuint index, GLsizei bufsize,                                                       GLsizei *length, GLchar *name);
@@ -822,6 +823,8 @@ void APIENTRY glStencilMask(GLuint mask);
 void APIENTRY glStencilMaskSeparate(GLenum face, GLuint mask);
 void APIENTRY glStencilOp(GLenum fail, GLenum zfail, GLenum zpass);
 void APIENTRY glStencilOpSeparate(GLenum face, GLenum fail, GLenum zfail, GLenum zpass);
+void APIENTRY glTexBuffer(GLenum target, GLenum internal, GLuint buffer);
+void APIENTRY glTexBufferRange(GLenum target, GLenum internal, GLuint buffer, GLintptr offset, GLsizeiptr size);
 void APIENTRY glTexCoord1d(GLdouble s);
 void APIENTRY glTexCoord1dv(const GLdouble *v);
 void APIENTRY glTexCoord1f(GLfloat s);
@@ -893,6 +896,8 @@ void APIENTRY glTexSubImage1D(GLenum target, GLint level, GLint x, GLsizei w, GL
 void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h, GLenum format,                                     GLenum type, const void *pixels);
 void APIENTRY glTexSubImage3D(GLenum target, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                     GLsizei d, GLenum format, GLenum type, const void *pixels);
 void APIENTRY glTextureBarrier(void);
+void APIENTRY glTextureBuffer(GLuint texture, GLenum internal, GLuint buffer);
+void APIENTRY glTextureBufferRange(GLuint texture, GLenum internal, GLuint buffer, GLintptr offset, GLsizeiptr size);
 void APIENTRY glTextureParameterIiv(GLuint texture, GLenum pname, const GLint *params);
 void APIENTRY glTextureParameterIuiv(GLuint texture, GLenum pname, const GLuint *params);
 void APIENTRY glTextureParameterf(GLuint texture, GLenum pname, GLfloat param);
@@ -1460,6 +1465,7 @@ const GL_PROC GlProcs[] = {
     {"glGenerateMipmap", (const void *)glGenerateMipmap},
     {"glGenerateMipmapEXT", (const void *)glGenerateMipmap},
     {"glGenerateTextureMipmap", (const void *)glGenerateTextureMipmap},
+    {"glGetActiveAtomicCounterBufferiv", (const void *)glGetActiveAtomicCounterBufferiv},
     {"glGetActiveAttrib", (const void *)glGetActiveAttrib},
     {"glGetActiveAttribARB", (const void *)glGetActiveAttrib},
     {"glGetActiveSubroutineName", (const void *)glGetActiveSubroutineName},
@@ -2041,6 +2047,9 @@ const GL_PROC GlProcs[] = {
     {"glStencilMaskSeparate", (const void *)glStencilMaskSeparate},
     {"glStencilOp", (const void *)glStencilOp},
     {"glStencilOpSeparate", (const void *)glStencilOpSeparate},
+    {"glTexBuffer", (const void *)glTexBuffer},
+    {"glTexBufferARB", (const void *)glTexBuffer},
+    {"glTexBufferRange", (const void *)glTexBufferRange},
     {"glTexCoord1d", (const void *)glTexCoord1d},
     {"glTexCoord1dv", (const void *)glTexCoord1dv},
     {"glTexCoord1f", (const void *)glTexCoord1f},
@@ -2112,6 +2121,8 @@ const GL_PROC GlProcs[] = {
     {"glTexSubImage2D", (const void *)glTexSubImage2D},
     {"glTexSubImage3D", (const void *)glTexSubImage3D},
     {"glTextureBarrier", (const void *)glTextureBarrier},
+    {"glTextureBuffer", (const void *)glTextureBuffer},
+    {"glTextureBufferRange", (const void *)glTextureBufferRange},
     {"glTextureParameterIiv", (const void *)glTextureParameterIiv},
     {"glTextureParameterIuiv", (const void *)glTextureParameterIuiv},
     {"glTextureParameterf", (const void *)glTextureParameterf},
@@ -2387,4 +2398,4 @@ const GL_PROC GlProcs[] = {
     {"wglUseFontOutlinesA", (const void *)wglUseFontOutlinesA},
     {"wglUseFontOutlinesW", (const void *)wglUseFontOutlinesW},
 };
-const ULONG GlProcCount = 1240;
+const ULONG GlProcCount = 1246;

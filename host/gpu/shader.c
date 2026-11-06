@@ -6,6 +6,7 @@
  * OpenGL's depth range directly.
  */
 #include "shader.h"
+#include "glsl_atomics.h"
 #include "glsl_compat.h"
 
 #include <glslang/Include/glslang_c_interface.h>
@@ -281,7 +282,7 @@ static uint32_t gl_type_of(spvc_compiler c, spvc_type t)
         case SpvDimRect:
             return depth ? 0x8B64 : 0x8B63;
         case SpvDimBuffer:
-            return 0x8DC2;
+            return prefix == 1 ? 0x8DD0 : prefix == 2 ? 0x8DD8 : 0x8DC2;
         default:
             if (spvc_type_get_image_multisampled(t))
                 return 0x9108;
@@ -395,6 +396,72 @@ static void add_binding(Program *p, uint32_t binding, uint32_t count, uint32_t m
     p->bindings[p->binding_count++] = (MimeShaderBinding){binding, count, mask, kind, slot, gl_type, bytes};
 }
 
+/*
+ * Vulkan has no sampler for a texel buffer: samplerBuffer becomes textureBuffer, which texelFetch takes alone, and
+ * textureSize on it needs the samplerless functions.
+ */
+static char *texel_buffers(char *text)
+{
+    static const char *const names[3][2] = {
+        {"samplerBuffer", "textureBuffer"}, {"isamplerBuffer", "itextureBuffer"}, {"usamplerBuffer", "utextureBuffer"}};
+    if (!strstr(text, "samplerBuffer"))
+        return text;
+    Buf out = {};
+    const char *eol = strchr(text, '\n');
+    if (eol) {
+        buf_add(&out, text, (size_t)(eol - text + 1));
+        buf_str(&out, "#extension GL_EXT_samplerless_texture_functions : enable\n");
+        text = (char *)eol + 1;
+    }
+    for (const char *p = text; *p;) {
+        bool done = false;
+        for (int k = 0; k < 3 && !done; k++) {
+            size_t n = strlen(names[k][0]);
+            if (!strncmp(p, names[k][0], n) && !is_ident(p[n]) && (p == text || !is_ident(p[-1]))) {
+                buf_str(&out, names[k][1]);
+                p += n;
+                done = true;
+            }
+        }
+        if (!done)
+            buf_add(&out, p++, 1);
+    }
+    return out.data;
+}
+
+/* lifts the source of a stage and takes its atomic counters into the program. */
+static char *lift_stage(Program *p, const char *src, size_t len, bool fragment, uint32_t bit, const MimeGlslCompat *compat)
+{
+    MimeAtomicDecl decls[MIME_ATOMICS_MAX];
+    unsigned count = 0;
+    char *rewritten = mime_glsl_atomics(src, len, decls, &count);
+    char *text = rewritten ? lift_source(rewritten, strlen(rewritten), fragment, compat) : lift_source(src, len, fragment, compat);
+    free(rewritten);
+    if (text) {
+        char *replaced = texel_buffers(text);
+        if (replaced != text)
+            free(text);
+        text = replaced;
+    }
+    for (unsigned i = 0; i < count; i++) {
+        unsigned k;
+        for (k = 0; k < p->counter_count; k++)
+            if (!strcmp(p->counters[k].name, decls[i].name) && p->counters[k].info.binding == decls[i].binding)
+                break;
+        if (k == p->counter_count) {
+            if (k == sizeof(p->counters) / sizeof(p->counters[0]))
+                continue;
+            p->counters[k].name = strdup(decls[i].name);
+            p->counters[k].info.binding = decls[i].binding;
+            p->counters[k].info.offset = decls[i].offset;
+            p->counters[k].info.array_size = decls[i].count;
+            p->counter_count++;
+        }
+        p->counters[k].info.stages |= bit;
+    }
+    return text;
+}
+
 static Uniform *find_uniform(Program *p, const char *name)
 {
     for (unsigned i = 0; i < p->uniform_count; i++)
@@ -466,6 +533,7 @@ static const spvc_reflected_resource *resources(spvc_compiler c, spvc_resource_t
     const spvc_reflected_resource *list = nullptr;
     *count = 0;
     if (type == SPVC_RESOURCE_TYPE_UNIFORM_BUFFER || type == SPVC_RESOURCE_TYPE_SAMPLED_IMAGE ||
+        type == SPVC_RESOURCE_TYPE_SEPARATE_IMAGE ||
         type == SPVC_RESOURCE_TYPE_STORAGE_BUFFER || type == SPVC_RESOURCE_TYPE_STORAGE_IMAGE) {
         spvc_set active;
         if (spvc_compiler_get_active_interface_variables(c, &active) != SPVC_SUCCESS ||
@@ -680,6 +748,7 @@ static bool bind_storage(Program *p, spvc_compiler c, int stage, int bit, const 
         if (index == p->storage_count) {
             p->storage[index].name = strdup(name);
             p->storage[index].info.binding = explicit_binding(source, name);
+            p->storage[index].info.atomic = !strncmp(name, "mime_acb_", 9);
             p->storage_count++;
         }
         p->storage[index].info.bytes = (uint32_t)size;
@@ -770,9 +839,15 @@ static bool bind_resources(Program *p, spvc_compiler c, int stage, int bit, SpvE
 #endif
     }
 
-    const spvc_reflected_resource *img = resources(c, SPVC_RESOURCE_TYPE_SAMPLED_IMAGE, &n);
+    for (int pass = 0; pass < 2; pass++) {
+    const spvc_reflected_resource *img =
+        resources(c, pass ? SPVC_RESOURCE_TYPE_SEPARATE_IMAGE : SPVC_RESOURCE_TYPE_SAMPLED_IMAGE, &n);
     for (size_t i = 0; i < n; i++) {
         spvc_type t = spvc_compiler_get_type_handle(c, img[i].type_id);
+        /* the images that are not combined with a sampler are the texel buffers, which are sampled without one. */
+        if (pass && spvc_type_get_image_dimension(t) != SpvDimBuffer)
+            continue;
+        bool texel = pass != 0;
         unsigned count = array_size_of(t) ? array_size_of(t) : 1;
         unsigned slot = p->next_slot[stage];
         char uname[256];
@@ -799,8 +874,8 @@ static bool bind_resources(Program *p, spvc_compiler c, int stage, int bit, SpvE
 #else
         spvc_compiler_set_decoration(c, img[i].id, SpvDecorationDescriptorSet, 0);
         spvc_compiler_set_decoration(c, img[i].id, SpvDecorationBinding, MIME_SHADER_TEXTURE_BINDING(stage, slot));
-        add_binding(p, MIME_SHADER_TEXTURE_BINDING(stage, slot), count, bit, MIME_SHADER_TEXTURE, slot,
-                    gl_type_of(c, t), 0);
+        add_binding(p, MIME_SHADER_TEXTURE_BINDING(stage, slot), count, bit,
+                    texel ? MIME_SHADER_TEXEL : MIME_SHADER_TEXTURE, slot, gl_type_of(c, t), 0);
 #endif
         Uniform *u = add_uniform(p, uname);
         u->info.gl_type = gl_type_of(c, t);
@@ -811,6 +886,7 @@ static bool bind_resources(Program *p, spvc_compiler c, int stage, int bit, SpvE
         }
         if (u->info.binding < 0)
             u->info.binding = explicit_binding(source, img[i].name);
+    }
     }
 #ifndef __APPLE__
     return bind_storage(p, c, stage, bit, source);
@@ -1011,7 +1087,8 @@ bool mime_shader_compile_stages(const char *vs, size_t vs_len, const char *fs, s
         mime_glsl_compat_analyze(vs, vs_len, fs, fs_len, &compat, kind, kind == 2 ? frag_data_count(fcopy) : 1);
         free(fcopy);
     }
-    char *vtext = lift_source(vs, vs_len, false, &compat), *ftext = lift_source(fs, fs_len, true, &compat);
+    char *vtext = lift_stage(&p, vs, vs_len, false, MIME_SHADER_BIT_VERTEX, &compat),
+         *ftext = lift_stage(&p, fs, fs_len, true, MIME_SHADER_BIT_FRAGMENT, &compat);
     glslang_shader_t *vsh = parse_stage(&p, GLSLANG_STAGE_VERTEX, vtext, "vertex");
     glslang_shader_t *fsh = vsh ? parse_stage(&p, GLSLANG_STAGE_FRAGMENT, ftext, "fragment") : nullptr;
     glslang_program_t *prog = nullptr;
@@ -1040,7 +1117,7 @@ bool mime_shader_compile_stages(const char *vs, size_t vs_len, const char *fs, s
             buf_fmt(&p.log, "%s shaders need Vulkan\n", xlabel[x]);
             goto done;
 #endif
-            xtext[x] = lift_source(src[x], len[x], false, nullptr);
+            xtext[x] = lift_stage(&p, src[x], len[x], false, (uint32_t)xbit[x], nullptr);
             xsh[x] = parse_stage(&p, xstage[x], xtext[x], xlabel[x]);
             if (!xsh[x])
                 goto done;
@@ -1190,7 +1267,7 @@ bool mime_shader_compile_compute(const char *cs, size_t cs_len, MimeShaderResult
     pthread_once(&g_once, init_glslang);
     Program p = {};
     bool ok = false;
-    char *text = lift_source(cs, cs_len, false, nullptr);
+    char *text = lift_stage(&p, cs, cs_len, false, MIME_SHADER_BIT_VERTEX, nullptr);
     glslang_shader_t *sh = parse_stage(&p, GLSLANG_STAGE_COMPUTE, text, "compute");
     glslang_program_t *prog = nullptr;
     spvc_context ctx = nullptr;
@@ -1249,6 +1326,8 @@ done:
         free(p.blocks[i].name);
     for (unsigned i = 0; i < p.storage_count; i++)
         free(p.storage[i].name);
+    for (unsigned i = 0; i < p.counter_count; i++)
+        free(p.counters[i].name);
     free(p.uniforms);
     free(p.log.data);
     return ok;

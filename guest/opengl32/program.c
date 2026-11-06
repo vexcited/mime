@@ -208,6 +208,13 @@ static void free_reflection(GlProgram *p)
     gl_free(p->storage);
     p->storage = nullptr;
     p->storage_count = 0;
+    for (uint32_t i = 0; i < p->counter_count; i++)
+        gl_free(p->counters[i].name);
+    gl_free(p->counters);
+    gl_free(p->counter_buffers);
+    p->counters = nullptr;
+    p->counter_buffers = nullptr;
+    p->counter_count = p->counter_buffer_count = 0;
     gl_free(p->uniforms);
     gl_free(p->attribs);
     gl_free(p->ublock);
@@ -716,13 +723,40 @@ static void take_reflection(GlProgram *p)
     p->local_size[2] = info->local_size[2];
     const MimeGpuStorageBlockInfo *sb = (const MimeGpuStorageBlockInfo *)(base + info->storage_offset);
     p->storage = gl_alloc((info->storage_count + 1) * sizeof(GlStorageBlock));
+    p->counter_buffers = gl_alloc((info->storage_count + 1) * sizeof(GlCounterBuffer));
     for (uint32_t i = 0; i < info->storage_count; i++) {
+        if (sb[i].atomic) {
+            GlCounterBuffer *buffer = &p->counter_buffers[p->counter_buffer_count++];
+            buffer->slot = i;
+            buffer->binding = sb[i].binding >= 0 ? (GLuint)sb[i].binding : 0;
+            buffer->stages = sb[i].stages;
+            continue;
+        }
         GlStorageBlock *block = &p->storage[p->storage_count++];
         block->name = gl_strdup((const char *)base + sb[i].name_offset);
         block->bytes = sb[i].bytes;
         block->stages = sb[i].stages;
         block->variables = sb[i].variables;
         block->binding = sb[i].binding >= 0 ? (GLuint)sb[i].binding : 0;
+        block->slot = i;
+    }
+    const MimeGpuCounterInfo *ci = (const MimeGpuCounterInfo *)(base + info->counter_offset);
+    p->counters = gl_alloc((info->counter_count + 1) * sizeof(GlCounter));
+    for (uint32_t i = 0; i < info->counter_count; i++) {
+        GlCounter *counter = &p->counters[p->counter_count++];
+        counter->name = gl_strdup((const char *)base + ci[i].name_offset);
+        counter->binding = ci[i].binding;
+        counter->offset = ci[i].offset;
+        counter->size = ci[i].array_size ? ci[i].array_size : 1;
+        counter->stages = ci[i].stages;
+        for (uint32_t b = 0; b < p->counter_buffer_count; b++) {
+            GlCounterBuffer *buffer = &p->counter_buffers[b];
+            if (buffer->binding != counter->binding)
+                continue;
+            buffer->counters++;
+            if (counter->offset + 4 * counter->size > buffer->bytes)
+                buffer->bytes = counter->offset + 4 * counter->size;
+        }
     }
     p->ublock_size = info->uniform_bytes;
     const MimeGpuUniformBlockInfo *blocks = (const MimeGpuUniformBlockInfo *)(base + info->block_offset);
@@ -856,7 +890,7 @@ GLAPI void APIENTRY glGetProgramiv(GLuint name, GLenum pname, GLint *params)
             params[i] = (GLint)p->local_size[i];
         break;
     case GL_ACTIVE_ATOMIC_COUNTER_BUFFERS:
-        *params = 0;
+        *params = (GLint)p->counter_buffer_count;
         break;
     default:
         if (!gl_program_query_stage(p, pname, params))

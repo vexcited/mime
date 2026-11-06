@@ -1407,6 +1407,8 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         int n = gl_compute_get(ctx, pname, v);
         if (!n)
             n = gl_dsa_get(ctx, pname, v);
+        if (!n)
+            n = gl_texbuffer_get(ctx, pname, v);
         return n ? n : gl_ff_get(ctx, pname, v, colors);
     }
     }

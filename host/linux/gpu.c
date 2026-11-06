@@ -682,6 +682,9 @@ typedef struct Texture {
     uint32_t swizzle;
     View *views;
     uint32_t view_count;
+    VkBufferView buffer_view; /* a texture buffer, which has no image. */
+    uint32_t base_level, base_layer; /* a view of another texture's storage starts here in it. */
+    int *refs;                       /* the textures that share the image, null for one that is alone. */
 } Texture;
 
 typedef struct Program {
@@ -730,6 +733,7 @@ typedef struct Garbage {
     uint64_t value;
     VkImage image;
     VkImageView view;
+    VkBufferView buffer_view;
     VkPipeline pipeline;
     Alloc mem;
 } Garbage;
@@ -895,6 +899,11 @@ static Channel *g_channels[MAX_CHANNELS];
 
 /* dummy textures for samplers with nothing bound, by view type, and their sampler. */
 static Texture g_dummy[8];
+
+static bool is_image_buffer(uint32_t gl_type)
+{
+    return gl_type == 0x9051 || gl_type == 0x905C || gl_type == 0x9067;
+}
 static VkSampler g_default_sampler;
 
 static Channel *find_channel(uint64_t id_)
@@ -976,6 +985,8 @@ static void destroy_garbage(Garbage *g)
 {
     if (g->view)
         g_vk.fn.vkDestroyImageView(g_vk.device, g->view, nullptr);
+    if (g->buffer_view)
+        g_vk.fn.vkDestroyBufferView(g_vk.device, g->buffer_view, nullptr);
     if (g->image)
         g_vk.fn.vkDestroyImage(g_vk.device, g->image, nullptr);
     if (g->pipeline)
@@ -1319,7 +1330,8 @@ static VkImageView sampled_view(Texture *t)
         .viewType = t->view_type,
         .format = t->format,
         .components = m,
-        .subresourceRange = {aspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS},
+        .subresourceRange = {aspect, t->base_level, t->refs ? t->levels : VK_REMAINING_MIP_LEVELS, t->base_layer,
+                             t->refs ? t->layers : VK_REMAINING_ARRAY_LAYERS},
     };
     VkImageView view = VK_NULL_HANDLE;
     g_vk.fn.vkCreateImageView(g_vk.device, &info, nullptr, &view);
@@ -1340,7 +1352,7 @@ static VkImageView attachment_view(Texture *t, uint32_t level, uint32_t slice)
         .viewType = t->type == TEXTURE_1D || t->type == TEXTURE_1D_ARRAY ? VK_IMAGE_VIEW_TYPE_1D
                                                                         : VK_IMAGE_VIEW_TYPE_2D,
         .format = t->format,
-        .subresourceRange = {t->aspect, level, 1, slice, 1},
+        .subresourceRange = {t->aspect, t->base_level + level, 1, t->base_layer + slice, 1},
     };
     VkImageView view = VK_NULL_HANDLE;
     if (layered3d) {
@@ -1375,7 +1387,8 @@ static VkImageView storage_view(Texture *t, uint32_t level, uint32_t layer, bool
         .image = t->image,
         .viewType = type,
         .format = t->format,
-        .subresourceRange = {t->aspect, level, 1, single ? layer : 0, single ? 1 : VK_REMAINING_ARRAY_LAYERS},
+        .subresourceRange = {t->aspect, t->base_level + level, 1, t->base_layer + (single ? layer : 0),
+                             single ? 1 : (t->refs ? t->layers : VK_REMAINING_ARRAY_LAYERS)},
     };
     VkImageView view = VK_NULL_HANDLE;
     if (g_vk.fn.vkCreateImageView(g_vk.device, &info, nullptr, &view) != VK_SUCCESS)
@@ -1387,21 +1400,34 @@ static VkImageView storage_view(Texture *t, uint32_t level, uint32_t layer, bool
 
 static void texture_free(Channel *c, Texture *t)
 {
+    /* the image goes with the last texture that reads it. */
+    bool image = t->image != VK_NULL_HANDLE;
+    if (t->refs) {
+        if (--*t->refs > 0)
+            image = false;
+        else
+            free(t->refs);
+    }
     if (c) {
         for (uint32_t i = 0; i < t->view_count; i++)
             defer(c, (Garbage){.view = t->views[i].view});
         if (t->sampled)
             defer(c, (Garbage){.view = t->sampled});
-        if (t->image)
+        if (t->buffer_view)
+            defer(c, (Garbage){.buffer_view = t->buffer_view});
+        if (image)
             defer(c, (Garbage){.image = t->image, .mem = t->mem});
     } else {
         for (uint32_t i = 0; i < t->view_count; i++)
             g_vk.fn.vkDestroyImageView(g_vk.device, t->views[i].view, nullptr);
         if (t->sampled)
             g_vk.fn.vkDestroyImageView(g_vk.device, t->sampled, nullptr);
-        if (t->image)
+        if (t->buffer_view)
+            g_vk.fn.vkDestroyBufferView(g_vk.device, t->buffer_view, nullptr);
+        if (image) {
             g_vk.fn.vkDestroyImage(g_vk.device, t->image, nullptr);
-        release_alloc(&t->mem);
+            release_alloc(&t->mem);
+        }
     }
     free(t->views);
     memset(t, 0, sizeof(*t));
@@ -1443,6 +1469,10 @@ static bool texture_make(Texture *t, uint32_t type, uint32_t mtl_format, uint32_
     VkImageCreateInfo info = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .flags = (type == TEXTURE_CUBE || type == TEXTURE_CUBE_ARRAY ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0) |
+                 (type == TEXTURE_2D_ARRAY && t->layers >= 6 && t->width == t->height && t->samples == 1
+                      ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT
+                      : 0) |
+                 (t->aspect & VK_IMAGE_ASPECT_COLOR_BIT ? VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0) |
                  (type == TEXTURE_3D && (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
                       ? VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT
                       : 0),
@@ -1511,6 +1541,66 @@ static void texture_create(Channel *c, const MimeGpuTextureCreate *t)
     x->swizzle = t->swizzle;
     x->sampled = sampled_view(x);
     c->st.dirty |= DIRTY_TEXTURES;
+}
+
+/* a texture id that reads texels from the heap. */
+static void texture_buffer_create(Channel *c, const MimeGpuTextureBuffer *t)
+{
+    Texture *x = SLOT(c, textures, t->id);
+    texture_free(c, x);
+    VkFormat format = pixel_format(t->format);
+    uint64_t off, size = t->size;
+    VkBuffer buf = format ? heap(c, &t->mem, size, &off) : VK_NULL_HANDLE;
+    if (!buf || !size) {
+        mime_warn("gpu: texture buffer %u (format %u) has no memory", t->id, t->format);
+        return;
+    }
+    VkBufferViewCreateInfo info = {VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO, nullptr, 0, buf, format, off, size};
+    if (g_vk.fn.vkCreateBufferView(g_vk.device, &info, nullptr, &x->buffer_view) != VK_SUCCESS) {
+        x->buffer_view = VK_NULL_HANDLE;
+        return;
+    }
+    x->format = format;
+    x->mtl_format = t->format;
+    c->st.dirty |= DIRTY_TEXTURES | DIRTY_SET;
+}
+
+/* a texture id that reads part of the storage of another one. the image lives until the last of them is gone. */
+static void texture_view_create(Channel *c, const MimeGpuTextureView *v)
+{
+    Texture *src = texture_of(c, v->source, false, false);
+    VkFormat format = pixel_format(v->format);
+    if (!src || !format || v->id == v->source)
+        return;
+    Texture *x = SLOT(c, textures, v->id);
+    src = &c->textures[v->source];
+    if (in_pass(c, v->id, false))
+        end_rendering(c);
+    texture_free(c, x);
+    memset(x, 0, sizeof(*x));
+    x->image = src->image;
+    x->format = format;
+    x->aspect = format_aspects(format);
+    x->mtl_format = v->format;
+    x->type = v->type;
+    x->view_type = view_type(v->type);
+    x->base_level = src->base_level + v->min_level;
+    x->base_layer = src->base_layer + v->min_layer;
+    x->levels = v->levels ? v->levels : 1;
+    x->layers = v->layers ? v->layers : 1;
+    x->width = (src->width >> v->min_level) ? src->width >> v->min_level : 1;
+    x->height = (src->height >> v->min_level) ? src->height >> v->min_level : 1;
+    x->depth = (src->depth >> v->min_level) ? src->depth >> v->min_level : 1;
+    x->samples = src->samples;
+    x->swizzle = v->swizzle;
+    if (!src->refs) {
+        src->refs = malloc(sizeof(int));
+        *src->refs = 1;
+    }
+    x->refs = src->refs;
+    (*x->refs)++;
+    x->sampled = sampled_view(x);
+    c->st.dirty |= DIRTY_TEXTURES | DIRTY_SET;
 }
 
 static VkSemaphore surface_acquire(Channel *c, Surface *s);
@@ -1666,7 +1756,10 @@ static bool program_objects(Program *p, MimeShaderResult *r)
                               : m->kind == MIME_SHADER_BLOCK  ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
                               : m->kind == MIME_SHADER_STORAGE || m->kind == MIME_SHADER_COUNTER
                                   ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
-                              : m->kind == MIME_SHADER_IMAGE ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                              : m->kind == MIME_SHADER_IMAGE
+                                  ? (is_image_buffer(m->gl_type) ? VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER
+                                                                 : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                              : m->kind == MIME_SHADER_TEXEL ? VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER
                                                              : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         b[i].stageFlags = p->compute ? VK_SHADER_STAGE_COMPUTE_BIT
                           : ((m->stages & MIME_SHADER_BIT_VERTEX) ? VK_SHADER_STAGE_VERTEX_BIT : 0) |
@@ -2575,8 +2668,10 @@ static VkDescriptorSet allocate_set(Channel *c, VkDescriptorSetLayout layout)
                 {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, SETS_PER_POOL * 16},
                 {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, SETS_PER_POOL * 4},
                 {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, SETS_PER_POOL * 4},
+                {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, SETS_PER_POOL * 4},
+                {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, SETS_PER_POOL * 4},
             };
-            VkDescriptorPoolCreateInfo pi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, SETS_PER_POOL, 5,
+            VkDescriptorPoolCreateInfo pi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, SETS_PER_POOL, 7,
                                              sizes};
             if (g_vk.fn.vkCreateDescriptorPool(g_vk.device, &pi, nullptr, &pool) != VK_SUCCESS)
                 return VK_NULL_HANDLE;
@@ -2584,6 +2679,19 @@ static VkDescriptorSet allocate_set(Channel *c, VkDescriptorSetLayout layout)
         b->pools[b->pool_count++] = pool;
     }
     return VK_NULL_HANDLE;
+}
+
+/* the texel buffers a sampler or an image of buffer type reads when nothing is bound: zeros. */
+static VkBufferView g_dummy_texel[3]; /* float, signed and unsigned. */
+static VkBuffer g_dummy_texel_buffer;
+
+static VkBufferView dummy_texel_for(uint32_t gl_type)
+{
+    switch (gl_type) {
+    case 0x8DD0: case 0x905C: return g_dummy_texel[1];
+    case 0x8DD8: case 0x9067: return g_dummy_texel[2];
+    default: return g_dummy_texel[0];
+    }
 }
 
 static Texture *dummy_for(uint32_t gl_type)
@@ -2611,7 +2719,8 @@ static bool write_set(Channel *c, Program *p)
     VkDescriptorBufferInfo buffers[1 + MIME_GPU_MAX_UNIFORM_BLOCKS + MIME_GPU_MAX_STORAGE_BLOCKS +
                                    MIME_GPU_MAX_COUNTER_BUFFERS];
     VkDescriptorImageInfo images[MIME_GPU_STAGES * MIME_GPU_MAX_TEXTURES + MIME_GPU_MAX_IMAGES];
-    uint32_t nw = 0, nb = 0, ni = 0;
+    VkBufferView texels[MIME_GPU_STAGES * MIME_GPU_MAX_TEXTURES + MIME_GPU_MAX_IMAGES];
+    uint32_t nw = 0, nb = 0, ni = 0, nt = 0;
     for (uint32_t i = 0; i < p->binding_count; i++) {
         const MimeShaderBinding *m = &p->bindings[i];
         if (nw == sizeof(writes) / sizeof(writes[0]))
@@ -2629,6 +2738,32 @@ static bool write_set(Channel *c, Program *p)
             w->descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
             buffers[nb] = (VkDescriptorBufferInfo){buf, off, range};
             w->pBufferInfo = &buffers[nb++];
+            nw++;
+            continue;
+        }
+        if (m->kind == MIME_SHADER_TEXEL || (m->kind == MIME_SHADER_IMAGE && is_image_buffer(m->gl_type))) {
+            bool sampler = m->kind == MIME_SHADER_TEXEL;
+            w->descriptorType = sampler ? VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER;
+            w->pTexelBufferView = &texels[nt];
+            int stage = sampler ? (int)(m->binding - 16) / MIME_GPU_MAX_TEXTURES : 0;
+            uint32_t first = nt;
+            bool any = false;
+            for (uint32_t e = 0; e < m->count; e++) {
+                uint32_t unit = m->slot + e;
+                uint32_t id = 0;
+                if (sampler && unit < MIME_GPU_MAX_TEXTURES)
+                    id = c->st.tex[stage][unit].id;
+                else if (!sampler && unit < MIME_GPU_MAX_IMAGES)
+                    id = c->st.images[unit].id;
+                Texture *t = id && id < c->textures_cap ? &c->textures[id] : nullptr;
+                VkBufferView view = t ? t->buffer_view : VK_NULL_HANDLE;
+                any |= view != VK_NULL_HANDLE;
+                texels[nt++] = view ? view : dummy_texel_for(m->gl_type);
+            }
+            if (!sampler && !any) {
+                nt = first;
+                continue;
+            }
             nw++;
             continue;
         }
@@ -3567,6 +3702,14 @@ static void execute(Channel *c, const MimeGpuCmd *cmd)
             texture_free(c, &c->textures[BODY(MimeGpuObject)->id]);
         }
         break;
+    case MIME_GPU_TEXTURE_BUFFER:
+        NEED(MimeGpuTextureBuffer);
+        texture_buffer_create(c, BODY(MimeGpuTextureBuffer));
+        break;
+    case MIME_GPU_TEXTURE_VIEW:
+        NEED(MimeGpuTextureView);
+        texture_view_create(c, BODY(MimeGpuTextureView));
+        break;
     case MIME_GPU_TEXTURE_SWIZZLE:
         NEED(MimeGpuTextureSwizzle);
         texture_swizzle(c, BODY(MimeGpuTextureSwizzle)->id, BODY(MimeGpuTextureSwizzle)->swizzle);
@@ -3926,6 +4069,7 @@ static bool add_block(Channel *c, uint32_t index, uint64_t pa, uint64_t size)
                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
                                  VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                 VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT |
                                  (g_xfb ? VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT : 0),
                              VK_SHARING_MODE_EXCLUSIVE};
     VkBuffer buffer;
@@ -3979,6 +4123,26 @@ static void init_dummies(Channel *c)
             g_vk.fn.vkCmdClearColorImage(cbuf(c), g_dummy[t].image, VK_IMAGE_LAYOUT_GENERAL, &black, 1, &all);
         }
     }
+    VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, 64,
+                             VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT |
+                                 VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                             VK_SHARING_MODE_EXCLUSIVE};
+    static Alloc texel_mem;
+    if (g_vk.fn.vkCreateBuffer(g_vk.device, &bi, nullptr, &g_dummy_texel_buffer) == VK_SUCCESS) {
+        VkMemoryRequirements req;
+        g_vk.fn.vkGetBufferMemoryRequirements(g_vk.device, g_dummy_texel_buffer, &req);
+        if (allocate(&req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &texel_mem) &&
+            g_vk.fn.vkBindBufferMemory(g_vk.device, g_dummy_texel_buffer, texel_mem.memory, texel_mem.offset) == VK_SUCCESS) {
+            g_vk.fn.vkCmdFillBuffer(cbuf(c), g_dummy_texel_buffer, 0, 64, 0);
+            static const VkFormat formats[3] = {VK_FORMAT_R32G32B32A32_SFLOAT, VK_FORMAT_R32G32B32A32_SINT,
+                                                VK_FORMAT_R32G32B32A32_UINT};
+            for (int i = 0; i < 3; i++) {
+                VkBufferViewCreateInfo vi = {VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO, nullptr, 0, g_dummy_texel_buffer,
+                                             formats[i], 0, 64};
+                g_vk.fn.vkCreateBufferView(g_vk.device, &vi, nullptr, &g_dummy_texel[i]);
+            }
+        }
+    }
     c->wrote = true;
     commit(c, 0);
     wait_value(c, c->submitted);
@@ -4003,7 +4167,8 @@ uint64_t mime_gpu_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *channel
                         (g_xfb && g_queries ? MIME_GPU_FEATURE_FEEDBACK : 0) |
                         (g_queries ? MIME_GPU_FEATURE_QUERY : 0) | (g_viewports > 1 ? MIME_GPU_FEATURE_VIEWPORTS : 0) |
                         (g_fp64 ? MIME_GPU_FEATURE_FP64 : 0) | (g_dual_blend ? MIME_GPU_FEATURE_DUAL_BLEND : 0) |
-                        (g_cube_array ? MIME_GPU_FEATURE_CUBE_ARRAY : 0);
+                        (g_cube_array ? MIME_GPU_FEATURE_CUBE_ARRAY : 0) | MIME_GPU_FEATURE_TEXEL_BUFFER |
+                        MIME_GPU_FEATURE_TEXTURE_VIEW;
     pthread_mutex_init(&c->lock, nullptr);
     pthread_cond_init(&c->cond, nullptr);
     pthread_mutex_init(&c->retire_lock, nullptr);

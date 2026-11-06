@@ -1639,6 +1639,12 @@ static void x_glGenerateTextureMipmap(MX_NATIVE_CALL *c)
     glGenerateTextureMipmap((GLuint)I(c, 0));
 }
 
+void APIENTRY glGetActiveAtomicCounterBufferiv(GLuint program, GLuint index, GLenum pname, GLint *params);
+static void x_glGetActiveAtomicCounterBufferiv(MX_NATIVE_CALL *c)
+{
+    glGetActiveAtomicCounterBufferiv((GLuint)I(c, 0), (GLuint)I(c, 1), (GLenum)I(c, 2), (GLint *)I(c, 3));
+}
+
 void APIENTRY glGetActiveAttrib(GLuint name, GLuint index, GLsizei size, GLsizei *length, GLint *count,                                       GLenum *type, GLchar *out);
 static void x_glGetActiveAttrib(MX_NATIVE_CALL *c)
 {
@@ -4939,6 +4945,18 @@ static void x_glStencilOpSeparate(MX_NATIVE_CALL *c)
     glStencilOpSeparate((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3));
 }
 
+void APIENTRY glTexBuffer(GLenum target, GLenum internal, GLuint buffer);
+static void x_glTexBuffer(MX_NATIVE_CALL *c)
+{
+    glTexBuffer((GLenum)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glTexBufferRange(GLenum target, GLenum internal, GLuint buffer, GLintptr offset, GLsizeiptr size);
+static void x_glTexBufferRange(MX_NATIVE_CALL *c)
+{
+    glTexBufferRange((GLenum)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLintptr)I(c, 3), (GLsizeiptr)I(c, 4));
+}
+
 void APIENTRY glTexCoord1d(GLdouble s);
 static void x_glTexCoord1d(MX_NATIVE_CALL *c)
 {
@@ -5363,6 +5381,18 @@ void APIENTRY glTextureBarrier(void);
 static void x_glTextureBarrier(MX_NATIVE_CALL *c)
 {
     glTextureBarrier();
+}
+
+void APIENTRY glTextureBuffer(GLuint texture, GLenum internal, GLuint buffer);
+static void x_glTextureBuffer(MX_NATIVE_CALL *c)
+{
+    glTextureBuffer((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glTextureBufferRange(GLuint texture, GLenum internal, GLuint buffer, GLintptr offset, GLsizeiptr size);
+static void x_glTextureBufferRange(MX_NATIVE_CALL *c)
+{
+    glTextureBufferRange((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLintptr)I(c, 3), (GLsizeiptr)I(c, 4));
 }
 
 void APIENTRY glTextureParameterIiv(GLuint texture, GLenum pname, const GLint *params);
@@ -7136,6 +7166,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGenVertexArrays,
     x_glGenerateMipmap,
     x_glGenerateTextureMipmap,
+    x_glGetActiveAtomicCounterBufferiv,
     x_glGetActiveAttrib,
     x_glGetActiveSubroutineName,
     x_glGetActiveSubroutineUniformName,
@@ -7686,6 +7717,8 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glStencilMaskSeparate,
     x_glStencilOp,
     x_glStencilOpSeparate,
+    x_glTexBuffer,
+    x_glTexBufferRange,
     x_glTexCoord1d,
     x_glTexCoord1dv,
     x_glTexCoord1f,
@@ -7757,6 +7790,8 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glTexSubImage2D,
     x_glTexSubImage3D,
     x_glTextureBarrier,
+    x_glTextureBuffer,
+    x_glTextureBufferRange,
     x_glTextureParameterIiv,
     x_glTextureParameterIuiv,
     x_glTextureParameterf,
@@ -8009,4 +8044,4 @@ static const MX_NATIVE_FN g_functions[] = {
     x_wglUseFontOutlinesW,
 };
 
-const MX_NATIVE_TABLE OpenGL32X64Thunks = {1141, 0, g_functions};
+const MX_NATIVE_TABLE OpenGL32X64Thunks = {1146, 0, g_functions};

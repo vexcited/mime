@@ -30,6 +30,10 @@ static GLuint *binding_of(GlContext *ctx, GLenum target)
         return &ctx->uniform_buffer;
     case GL_SHADER_STORAGE_BUFFER:
         return gl_host_has(MIME_GPU_FEATURE_COMPUTE) ? &ctx->storage_buffer : nullptr;
+    case GL_ATOMIC_COUNTER_BUFFER:
+        return gl_host_has(MIME_GPU_FEATURE_COMPUTE) ? &ctx->atomic_buffer : nullptr;
+    case GL_TEXTURE_BUFFER:
+        return gl_host_has(MIME_GPU_FEATURE_TEXEL_BUFFER) ? &ctx->texture_buffer : nullptr;
     case GL_DISPATCH_INDIRECT_BUFFER:
         return gl_host_has(MIME_GPU_FEATURE_COMPUTE) ? &ctx->dispatch_indirect_buffer : nullptr;
     case GL_DRAW_INDIRECT_BUFFER:
@@ -110,6 +114,13 @@ GLAPI void APIENTRY glDeleteBuffers(GLsizei n, const GLuint *buffers)
         gl_xfb_buffer_deleted(ctx, name);
         if (ctx->storage_buffer == name)
             ctx->storage_buffer = 0;
+        if (ctx->atomic_buffer == name)
+            ctx->atomic_buffer = 0;
+        if (ctx->texture_buffer == name)
+            ctx->texture_buffer = 0;
+        for (int i = 0; i < MIME_GPU_MAX_ATOMIC_BINDINGS; i++)
+            if (ctx->atomic_bindings[i].name == name)
+                memset(&ctx->atomic_bindings[i], 0, sizeof(ctx->atomic_bindings[i]));
         if (ctx->dispatch_indirect_buffer == name)
             ctx->dispatch_indirect_buffer = 0;
         if (ctx->draw_indirect_buffer == name)
@@ -166,6 +177,12 @@ static GlBufferBinding *indexed_binding(GlContext *ctx, GLenum target, GLuint in
         *generic = &ctx->storage_buffer;
         *limit = MIME_GPU_MAX_STORAGE_BLOCKS;
         return index < MIME_GPU_MAX_STORAGE_BLOCKS ? &ctx->storage_bindings[index] : nullptr;
+    case GL_ATOMIC_COUNTER_BUFFER:
+        if (!gl_host_has(MIME_GPU_FEATURE_COMPUTE))
+            return nullptr;
+        *generic = &ctx->atomic_buffer;
+        *limit = MIME_GPU_MAX_ATOMIC_BINDINGS;
+        return index < MIME_GPU_MAX_ATOMIC_BINDINGS ? &ctx->atomic_bindings[index] : nullptr;
     default:
         *limit = 0;
         return nullptr;
