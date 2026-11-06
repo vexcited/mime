@@ -36,6 +36,8 @@ static GLuint *binding_of(GlContext *ctx, GLenum target)
         return &ctx->draw_indirect_buffer;
     case GL_PARAMETER_BUFFER:
         return &ctx->parameter_buffer;
+    case GL_TRANSFORM_FEEDBACK_BUFFER:
+        return &ctx->st.xfb_buffer;
     default:
         return nullptr;
     }
@@ -94,6 +96,7 @@ GLAPI void APIENTRY glDeleteBuffers(GLsizei n, const GLuint *buffers)
             ctx->vao->element_buffer = 0;
         if (ctx->uniform_buffer == name)
             ctx->uniform_buffer = 0;
+        gl_xfb_buffer_deleted(ctx, name);
         if (ctx->storage_buffer == name)
             ctx->storage_buffer = 0;
         if (ctx->dispatch_indirect_buffer == name)
@@ -186,12 +189,23 @@ static BOOL bind_indexed(GlContext *ctx, GLenum target, GLuint index, GLuint nam
 GLAPI void APIENTRY glBindBufferBase(GLenum target, GLuint index, GLuint name)
 {
     GL_CONTEXT_OR_RETURN();
+    if (target == GL_TRANSFORM_FEEDBACK_BUFFER) {
+        gl_xfb_bind(ctx, index, name, 0, 0, TRUE);
+        return;
+    }
     bind_indexed(ctx, target, index, name, 0, 0, TRUE);
 }
 
 GLAPI void APIENTRY glBindBufferRange(GLenum target, GLuint index, GLuint name, GLintptr offset, GLsizeiptr size)
 {
     GL_CONTEXT_OR_RETURN();
+    if (target == GL_TRANSFORM_FEEDBACK_BUFFER) {
+        if (name && size <= 0)
+            gl_error(ctx, GL_INVALID_VALUE);
+        else
+            gl_xfb_bind(ctx, index, name, offset, size, FALSE);
+        return;
+    }
     bind_indexed(ctx, target, index, name, offset, size, FALSE);
 }
 

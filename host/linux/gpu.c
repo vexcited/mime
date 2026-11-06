@@ -9,10 +9,12 @@
 #include "../gpu/gpu.h"
 #include "../gpu/shader.h"
 #include "../vulkan/mvk_host.h"
+#include "spirv_patch.h"
 
 #include <glslang/Include/glslang_c_interface.h>
 #include <glslang/Public/resource_limits_c.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -54,6 +56,8 @@ static uint32_t g_family;
 static VkPhysicalDeviceMemoryProperties g_memory;
 static VkPhysicalDeviceProperties g_props;
 static bool g_polygon_mode, g_depth_clamp, g_clip_control, g_null_descriptor, g_logic_op, g_storage;
+static bool g_geometry, g_tessellation, g_xfb, g_queries, g_generated_query, g_fp64, g_dual_blend, g_cube_array;
+static uint32_t g_viewports = 1;
 static PFN_vkGetMemoryHostPointerPropertiesEXT g_host_pointer;
 static VkPipelineCache g_cache;
 static VkShaderModule g_clear_vs, g_clear_fs;
@@ -157,7 +161,7 @@ static void init_device(void)
         free(list);
         return;
     }
-    const char *names[8];
+    const char *names[14];
     uint32_t n = 0;
     names[n++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
     if (has_extension(list, ne, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
@@ -171,6 +175,12 @@ static void init_device(void)
     bool robustness = has_extension(list, ne, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
     if (robustness)
         names[n++] = VK_EXT_ROBUSTNESS_2_EXTENSION_NAME;
+    bool xfb_ext = has_extension(list, ne, VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME);
+    if (xfb_ext)
+        names[n++] = VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME;
+    bool pgq_ext = xfb_ext && has_extension(list, ne, VK_EXT_PRIMITIVES_GENERATED_QUERY_EXTENSION_NAME);
+    if (pgq_ext)
+        names[n++] = VK_EXT_PRIMITIVES_GENERATED_QUERY_EXTENSION_NAME;
     free(list);
     if (!g_clip_control)
         mime_warn("gpu: no VK_EXT_depth_clip_control: depth keeps vulkan's range");
@@ -186,6 +196,17 @@ static void init_device(void)
                                                              : robustness ? (void *)&robust : nullptr};
     VkPhysicalDeviceVulkan12Features v12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &v13};
     VkPhysicalDeviceFeatures2 all = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &v12};
+    VkPhysicalDeviceTransformFeedbackFeaturesEXT xfbf = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT};
+    VkPhysicalDevicePrimitivesGeneratedQueryFeaturesEXT pgqf = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRIMITIVES_GENERATED_QUERY_FEATURES_EXT};
+    if (xfb_ext) {
+        xfbf.pNext = all.pNext;
+        all.pNext = &xfbf;
+    }
+    if (pgq_ext) {
+        pgqf.pNext = all.pNext;
+        all.pNext = &pgqf;
+    }
     g_vk.fn.vkGetPhysicalDeviceFeatures2(physical, &all);
     if (!v13.dynamicRendering || !v13.synchronization2 || !v12.timelineSemaphore) {
         mime_warn("gpu: opengl needs dynamic rendering and timeline semaphores");
@@ -213,10 +234,25 @@ static void init_device(void)
         .shaderStorageImageReadWithoutFormat = all.features.shaderStorageImageReadWithoutFormat,
         .shaderStorageImageWriteWithoutFormat = all.features.shaderStorageImageWriteWithoutFormat,
         .geometryShader = all.features.geometryShader,
+        .tessellationShader = all.features.tessellationShader,
+        .shaderTessellationAndGeometryPointSize = all.features.shaderTessellationAndGeometryPointSize,
+        .shaderFloat64 = all.features.shaderFloat64,
+        .shaderInt64 = all.features.shaderInt64,
         .multiViewport = all.features.multiViewport,
         .occlusionQueryPrecise = all.features.occlusionQueryPrecise,
     };
     g_logic_op = all.features.logicOp;
+    g_geometry = all.features.geometryShader;
+    g_fp64 = all.features.shaderFloat64;
+    g_dual_blend = all.features.dualSrcBlend;
+    g_cube_array = all.features.imageCubeArray;
+    g_tessellation = all.features.tessellationShader;
+    g_viewports = all.features.multiViewport ? (g_props.limits.maxViewports < MIME_GPU_MAX_VIEWPORTS
+                                                    ? g_props.limits.maxViewports
+                                                    : MIME_GPU_MAX_VIEWPORTS)
+                                             : 1;
+    g_xfb = xfb_ext && xfbf.transformFeedback;
+    g_queries = v12.hostQueryReset && all.features.occlusionQueryPrecise;
     g_storage = all.features.fragmentStoresAndAtomics && all.features.vertexPipelineStoresAndAtomics;
     g_polygon_mode = eds3 && dyn3.extendedDynamicState3PolygonMode;
     g_depth_clamp = eds3 && dyn3.extendedDynamicState3DepthClampEnable;
@@ -239,7 +275,16 @@ static void init_device(void)
     v12_on.samplerMirrorClampToEdge = v12.samplerMirrorClampToEdge;
     v12_on.scalarBlockLayout = v12.scalarBlockLayout;
     v12_on.uniformBufferStandardLayout = v12.uniformBufferStandardLayout;
-    VkPhysicalDeviceFeatures2 on = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &v12_on, want};
+    v12_on.hostQueryReset = v12.hostQueryReset;
+    v12_on.shaderOutputViewportIndex = v12.shaderOutputViewportIndex;
+    v12_on.shaderOutputLayer = v12.shaderOutputLayer;
+    g_generated_query = pgq_ext && pgqf.primitivesGeneratedQuery;
+    VkPhysicalDevicePrimitivesGeneratedQueryFeaturesEXT pgq_on = {
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRIMITIVES_GENERATED_QUERY_FEATURES_EXT, &v12_on, g_generated_query,
+        g_generated_query && pgqf.primitivesGeneratedQueryWithRasterizerDiscard};
+    VkPhysicalDeviceTransformFeedbackFeaturesEXT xfb_on = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT,
+                                                           &pgq_on, g_xfb};
+    VkPhysicalDeviceFeatures2 on = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, g_xfb ? (void *)&xfb_on : &v12_on, want};
     float priority = 1.0f;
     VkDeviceQueueCreateInfo queue = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, nullptr, 0, g_family, 1, &priority};
     VkDeviceCreateInfo info = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &on, 0, 1, &queue, 0, nullptr, n, names, nullptr};
@@ -424,6 +469,9 @@ static VkFormat vertex_format(uint32_t f)
         [42] = VK_FORMAT_B8G8R8A8_UNORM, [45] = VK_FORMAT_R8_UINT, [46] = VK_FORMAT_R8_SINT,
         [47] = VK_FORMAT_R8_UNORM, [48] = VK_FORMAT_R8_SNORM, [49] = VK_FORMAT_R16_UINT, [50] = VK_FORMAT_R16_SINT,
         [51] = VK_FORMAT_R16_UNORM, [52] = VK_FORMAT_R16_SNORM, [53] = VK_FORMAT_R16_SFLOAT,
+        /* 64 bit components, for the double attributes of glVertexAttribLPointer. */
+        [120] = VK_FORMAT_R64_SFLOAT, [121] = VK_FORMAT_R64G64_SFLOAT, [122] = VK_FORMAT_R64G64B64_SFLOAT,
+        [123] = VK_FORMAT_R64G64B64A64_SFLOAT,
     };
     VkFormat v = f < sizeof(table) / sizeof(table[0]) ? table[f] : VK_FORMAT_UNDEFINED;
     VkFormatProperties props;
@@ -641,6 +689,9 @@ typedef struct Program {
     pthread_cond_t cond;
     bool done, compiled;
     VkShaderModule module[MIME_GPU_STAGES];
+    VkShaderModule extra[MIME_SHADER_EXTRAS]; /* tessellation control, tessellation evaluation, geometry. */
+    bool has_tess, has_geometry;
+    uint32_t geometry_class; /* topology class of the geometry shader's input, as MimeGpuPipelineDesc has it. */
     VkDescriptorSetLayout set_layout;
     VkPipelineLayout layout;
     MimeShaderBinding *bindings;
@@ -764,6 +815,10 @@ typedef struct Channel {
         VkViewport viewport;
         MimeGpuRect scissor;
         bool has_scissor;
+        /* viewports and scissors that differ from the one the plain commands set for all. */
+        VkViewport viewport_own[MIME_GPU_MAX_VIEWPORTS];
+        MimeGpuRect scissor_own[MIME_GPU_MAX_VIEWPORTS];
+        uint32_t viewport_own_mask, scissor_own_mask;
         float blend[4];
         MimeGpuMem vb[MIME_GPU_MAX_ATTRIBS];
         uint32_t vb_mask;
@@ -787,6 +842,38 @@ typedef struct Channel {
     VkPipeline clear_pipelines[16];
     uint64_t clear_keys[16];
     VkPipelineLayout clear_layout;
+
+    /* queries and transform feedback, see the scopes below. */
+    struct HostQuery *queries;
+    uint32_t queries_cap;
+    uint32_t active_queries[16];
+    uint32_t active_query_count;
+    VkQueryPool query_pool[3];
+    uint32_t *query_free[3];
+    uint32_t query_free_count[3];
+    struct QueryDone *query_done;
+    uint32_t query_done_count, query_done_cap;
+    pthread_mutex_t query_lock;
+    struct {
+        bool requested, inside, has_counter;
+        uint32_t object, count;
+        struct {
+            MimeGpuMem mem;
+            uint64_t size;
+        } buffer[MIME_GPU_MAX_XFB_BUFFERS];
+        VkBuffer counters;
+        VkDeviceMemory counters_memory;
+    } xfb;
+
+    /* the other stages sent for the program the next PROGRAM_CREATE makes. */
+    struct {
+        bool valid;
+        uint32_t id;
+        char *extra[MIME_SHADER_EXTRAS];
+        char *feedback, *fragment;
+        size_t feedback_len, fragment_len;
+        bool separate;
+    } stages;
 } Channel;
 
 enum {
@@ -1015,6 +1102,10 @@ static void image_layout(Channel *c, VkImage image, VkImageAspectFlags aspect, V
 }
 
 static void end_rendering(Channel *c);
+static void scopes_suspend(Channel *c);
+static void scopes_resume(Channel *c);
+static void queries_finish(Channel *c, uint64_t completed);
+static void xfb_enter(Channel *c);
 
 static void signal_fence(Channel *c, uint64_t value)
 {
@@ -1107,6 +1198,9 @@ static void *retire_main(void *arg)
             c->fence_head++;
         }
         pthread_cond_broadcast(&c->retire_cond);
+        pthread_mutex_unlock(&c->retire_lock);
+        queries_finish(c, value);
+        pthread_mutex_lock(&c->retire_lock);
         if (signal) {
             pthread_mutex_unlock(&c->retire_lock);
             signal_fence(c, signal);
@@ -1509,6 +1603,10 @@ typedef struct CompileJob {
     Program *p;
     char *vs, *fs, *bindings;
     size_t vs_len, fs_len, bindings_len;
+    char *extra[MIME_SHADER_EXTRAS];
+    char *feedback, *fragment;
+    size_t feedback_len, fragment_len;
+    bool feedback_separate;
     bool compute;
     MimeGpuMem result;
     uint32_t capacity;
@@ -1549,6 +1647,16 @@ static bool program_objects(Program *p, MimeShaderResult *r)
         if (g_vk.fn.vkCreateShaderModule(g_vk.device, &info, nullptr, &p->module[s]) != VK_SUCCESS)
             return false;
     }
+    for (int x = 0; x < MIME_SHADER_EXTRAS; x++) {
+        if (!r->spirv_extra[x])
+            continue;
+        VkShaderModuleCreateInfo info = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0,
+                                         r->extra_words[x] * 4, r->spirv_extra[x]};
+        if (g_vk.fn.vkCreateShaderModule(g_vk.device, &info, nullptr, &p->extra[x]) != VK_SUCCESS)
+            return false;
+    }
+    p->has_tess = p->extra[MIME_SHADER_CONTROL] && p->extra[MIME_SHADER_EVALUATION];
+    p->has_geometry = p->extra[MIME_SHADER_GEOMETRY] != VK_NULL_HANDLE;
     VkDescriptorSetLayoutBinding *b = calloc(r->binding_count ? r->binding_count : 1, sizeof(*b));
     for (uint32_t i = 0; i < r->binding_count; i++) {
         const MimeShaderBinding *m = &r->bindings[i];
@@ -1561,8 +1669,11 @@ static bool program_objects(Program *p, MimeShaderResult *r)
                               : m->kind == MIME_SHADER_IMAGE ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
                                                              : VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         b[i].stageFlags = p->compute ? VK_SHADER_STAGE_COMPUTE_BIT
-                                     : ((m->stages & 1) ? VK_SHADER_STAGE_VERTEX_BIT : 0) |
-                                           ((m->stages & 2) ? VK_SHADER_STAGE_FRAGMENT_BIT : 0);
+                          : ((m->stages & MIME_SHADER_BIT_VERTEX) ? VK_SHADER_STAGE_VERTEX_BIT : 0) |
+                              ((m->stages & MIME_SHADER_BIT_FRAGMENT) ? VK_SHADER_STAGE_FRAGMENT_BIT : 0) |
+                          ((m->stages & MIME_SHADER_BIT_CONTROL) ? VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT : 0) |
+                          ((m->stages & MIME_SHADER_BIT_EVALUATION) ? VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT : 0) |
+                          ((m->stages & MIME_SHADER_BIT_GEOMETRY) ? VK_SHADER_STAGE_GEOMETRY_BIT : 0);
         p->has_uniforms |= m->kind == MIME_SHADER_UNIFORMS;
     }
     VkDescriptorSetLayoutCreateInfo set = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0,
@@ -1588,15 +1699,133 @@ static bool program_objects(Program *p, MimeShaderResult *r)
     return true;
 }
 
+/* appends the stage fields the host found to the info the guest reads, after the data it has. */
+static void append_stage_info(MimeShaderResult *r, const MimeGpuStageInfo *stage, const SpirvFeedback *fb)
+{
+    MimeGpuProgramInfo *info = (MimeGpuProgramInfo *)r->info;
+    size_t base = r->info_size, names = 0;
+    for (uint32_t i = 0; i < fb->count; i++)
+        names += strlen(fb->names[i]) + 1;
+    size_t size = (base + fb->count * sizeof(MimeGpuFeedbackInfo) + names + 7) & ~(size_t)7;
+    uint8_t *data = realloc(r->info, size);
+    if (!data)
+        return;
+    memset(data + base, 0, size - base);
+    info = (MimeGpuProgramInfo *)data;
+    info->stage = *stage;
+    info->stage.feedback_count = fb->count;
+    info->stage.feedback_offset = (uint32_t)base;
+    info->stage.feedback_buffers = fb->buffers;
+    memcpy(info->stage.feedback_stride, fb->stride, sizeof(fb->stride));
+    MimeGpuFeedbackInfo *list = (MimeGpuFeedbackInfo *)(data + base);
+    size_t at = base + fb->count * sizeof(MimeGpuFeedbackInfo);
+    for (uint32_t i = 0; i < fb->count; i++) {
+        list[i] = fb->info[i];
+        list[i].name_offset = (uint32_t)at;
+        size_t n = strlen(fb->names[i]) + 1;
+        memcpy(data + at, fb->names[i], n);
+        at += n;
+    }
+    info->size = (uint32_t)size;
+    r->info = data;
+    r->info_size = (uint32_t)size;
+}
+
+/* what the extra stages of a compiled program add to the host's view of it. */
+static bool stage_details(Program *p, MimeShaderResult *r, CompileJob *j, MimeGpuStageInfo *stage, SpirvFeedback *fb)
+{
+    stage->stages = MIME_SHADER_BIT_VERTEX | MIME_SHADER_BIT_FRAGMENT;
+    for (int x = 0; x < MIME_SHADER_EXTRAS; x++) {
+        if (!r->spirv_extra[x])
+            continue;
+        stage->stages |= MIME_SHADER_BIT_CONTROL << x;
+        spirv_modes(r->spirv_extra[x], r->extra_words[x], stage);
+    }
+    if (r->spirv_extra[MIME_SHADER_GEOMETRY]) {
+        switch (stage->geometry_input) {
+        case 0x0:
+            p->geometry_class = 1;
+            break;
+        case 0x1:
+        case 0xA:
+            p->geometry_class = 2;
+            break;
+        default:
+            p->geometry_class = 3;
+            break;
+        }
+    }
+    if (!j->feedback_len)
+        return true;
+    /* the last stage before rasterization captures. */
+    int capture = r->spirv_extra[MIME_SHADER_GEOMETRY]     ? -1 - MIME_SHADER_GEOMETRY
+                  : r->spirv_extra[MIME_SHADER_EVALUATION] ? -1 - MIME_SHADER_EVALUATION
+                                                           : 0;
+    uint32_t **spirv = capture < 0 ? &r->spirv_extra[-1 - capture] : &r->spirv[0];
+    size_t *words = capture < 0 ? &r->extra_words[-1 - capture] : &r->spirv_words[0];
+    uint32_t *patched;
+    size_t patched_words;
+    char error[200];
+    if (!spirv_feedback(*spirv, *words, j->feedback, j->feedback_len, j->feedback_separate, &patched, &patched_words,
+                        fb, error, sizeof(error))) {
+        append_program_error(r, error);
+        return false;
+    }
+    free(*spirv);
+    *spirv = patched;
+    *words = patched_words;
+    return true;
+}
+
 static void compile_job(CompileJob *j)
 {
     MimeShaderResult r;
+    MimeShaderStages extra = {j->extra[MIME_SHADER_CONTROL],    j->extra[MIME_SHADER_EVALUATION],
+                              j->extra[MIME_SHADER_GEOMETRY],
+                              j->extra[MIME_SHADER_CONTROL] ? strlen(j->extra[MIME_SHADER_CONTROL]) : 0,
+                              j->extra[MIME_SHADER_EVALUATION] ? strlen(j->extra[MIME_SHADER_EVALUATION]) : 0,
+                              j->extra[MIME_SHADER_GEOMETRY] ? strlen(j->extra[MIME_SHADER_GEOMETRY]) : 0};
+    bool has_extra = j->extra[0] || j->extra[1] || j->extra[2];
     if (j->compute)
         mime_shader_compile_compute(j->vs, j->vs_len, &r);
     else
-        mime_shader_compile(j->vs, j->vs_len, j->fs, j->fs_len, j->bindings, j->bindings_len, &r);
-    bool ok = r.ok && program_objects(j->p, &r);
-    if (r.ok && !ok)
+        mime_shader_compile_stages(j->vs, j->vs_len, j->fs, j->fs_len, has_extra ? &extra : nullptr, j->bindings,
+                                   j->bindings_len, &r);
+    MimeGpuStageInfo stage = {};
+    SpirvFeedback fb = {};
+    bool ok = r.ok;
+    if (ok && !j->compute && j->fragment_len) {
+        uint32_t *patched;
+        size_t patched_words;
+        if (spirv_bind_outputs(r.spirv[1], r.spirv_words[1], j->fragment, j->fragment_len, &patched, &patched_words)) {
+            free(r.spirv[1]);
+            r.spirv[1] = patched;
+            r.spirv_words[1] = patched_words;
+        }
+    }
+    if (ok && !j->compute && (has_extra || j->feedback_len)) {
+        ok = stage_details(j->p, &r, j, &stage, &fb);
+        append_stage_info(&r, &stage, &fb);
+    }
+    const char *dump = getenv("MIME_GPU_DUMP_SPIRV");
+    if (dump && r.ok) {
+        static unsigned serial;
+        unsigned n = __atomic_fetch_add(&serial, 1, __ATOMIC_RELAXED);
+        const char *stage_names[] = {"vert", "frag", "tesc", "tese", "geom"};
+        for (int k = 0; k < 5; k++) {
+            const uint32_t *w = k < 2 ? r.spirv[k] : r.spirv_extra[k - 2];
+            size_t words = k < 2 ? r.spirv_words[k] : r.extra_words[k - 2];
+            char path[300];
+            snprintf(path, sizeof(path), "%s/p%u-%s.spv", dump, n, stage_names[k]);
+            FILE *f = w ? fopen(path, "wb") : nullptr;
+            if (f) {
+                fwrite(w, 4, words, f);
+                fclose(f);
+            }
+        }
+    }
+    ok = ok && program_objects(j->p, &r);
+    if (r.ok && !ok && !((MimeGpuProgramInfo *)r.info)->log_bytes)
         append_program_error(&r, "the gpu rejected a translated program");
     /* the info goes to the guest last: a nonzero size tells it the program is done. */
     uint8_t *dst = heap_ptr(j->c, &j->result, j->capacity);
@@ -1609,6 +1838,7 @@ static void compile_job(CompileJob *j)
             /* the guest asks again with room for it. */
             MimeGpuProgramInfo small = *info;
             small.attrib_count = small.uniform_count = small.block_count = small.log_bytes = 0;
+            small.stage.feedback_count = 0;
             memcpy(dst + sizeof(uint32_t) * 2, (uint8_t *)&small + sizeof(uint32_t) * 2,
                    sizeof(small) - sizeof(uint32_t) * 2);
             ((MimeGpuProgramInfo *)dst)->status = small.status;
@@ -1627,6 +1857,10 @@ static void compile_job(CompileJob *j)
     free(j->vs);
     free(j->fs);
     free(j->bindings);
+    for (int x = 0; x < MIME_SHADER_EXTRAS; x++)
+        free(j->extra[x]);
+    free(j->feedback);
+    free(j->fragment);
     free(j);
 }
 
@@ -1688,6 +1922,9 @@ static void program_free(Program *p)
     for (int s = 0; s < MIME_GPU_STAGES; s++)
         if (p->module[s])
             g_vk.fn.vkDestroyShaderModule(g_vk.device, p->module[s], nullptr);
+    for (int x = 0; x < MIME_SHADER_EXTRAS; x++)
+        if (p->extra[x])
+            g_vk.fn.vkDestroyShaderModule(g_vk.device, p->extra[x], nullptr);
     if (p->layout)
         g_vk.fn.vkDestroyPipelineLayout(g_vk.device, p->layout, nullptr);
     if (p->set_layout)
@@ -1731,7 +1968,57 @@ static void program_create(Channel *c, const MimeGpuProgramCreate *pc, bool comp
     j->bindings_len = pc->bindings_bytes;
     j->result = pc->result;
     j->capacity = pc->result_capacity;
+    if (c->stages.valid && c->stages.id == pc->id) {
+        memcpy(j->extra, c->stages.extra, sizeof(j->extra));
+        j->feedback = c->stages.feedback;
+        j->feedback_len = c->stages.feedback_len;
+        j->fragment = c->stages.fragment;
+        j->fragment_len = c->stages.fragment_len;
+        j->feedback_separate = c->stages.separate;
+    } else {
+        for (int x = 0; x < MIME_SHADER_EXTRAS; x++)
+            free(c->stages.extra[x]);
+        free(c->stages.feedback);
+        free(c->stages.fragment);
+    }
+    memset(&c->stages, 0, sizeof(c->stages));
     compile_async(j);
+}
+
+static void program_stages(Channel *c, const MimeGpuProgramStages *ps)
+{
+    uint64_t body = ps->cmd.size - sizeof(*ps);
+    uint64_t total = (uint64_t)ps->control_bytes + ps->evaluation_bytes + ps->geometry_bytes + ps->feedback_bytes +
+                     ps->fragment_bytes;
+    if (total > body) {
+        lose(c, "bad program stages record");
+        return;
+    }
+    for (int x = 0; x < MIME_SHADER_EXTRAS; x++)
+        free(c->stages.extra[x]);
+    free(c->stages.feedback);
+    free(c->stages.fragment);
+    memset(&c->stages, 0, sizeof(c->stages));
+    const char *data = (const char *)(ps + 1);
+    const uint32_t sizes[MIME_SHADER_EXTRAS] = {ps->control_bytes, ps->evaluation_bytes, ps->geometry_bytes};
+    for (int x = 0; x < MIME_SHADER_EXTRAS; x++) {
+        if (sizes[x])
+            c->stages.extra[x] = strndup(data, sizes[x]);
+        data += sizes[x];
+    }
+    if (ps->feedback_bytes) {
+        c->stages.feedback = malloc(ps->feedback_bytes);
+        memcpy(c->stages.feedback, data, ps->feedback_bytes);
+        c->stages.feedback_len = ps->feedback_bytes;
+    }
+    if (ps->fragment_bytes) {
+        c->stages.fragment = malloc(ps->fragment_bytes);
+        memcpy(c->stages.fragment, data + ps->feedback_bytes, ps->fragment_bytes);
+        c->stages.fragment_len = ps->fragment_bytes;
+    }
+    c->stages.separate = ps->feedback_separate != 0;
+    c->stages.id = ps->id;
+    c->stages.valid = true;
 }
 
 static Program *program_ready(Channel *c, uint32_t id_)
@@ -1778,13 +2065,14 @@ static const VkDynamicState g_dynamic[] = {
     VK_DYNAMIC_STATE_STENCIL_OP,
     VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE,
     VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE,
+    VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE,
     VK_DYNAMIC_STATE_POLYGON_MODE_EXT,
     VK_DYNAMIC_STATE_DEPTH_CLAMP_ENABLE_EXT,
 };
 
 static uint32_t dynamic_count(void)
 {
-    uint32_t n = 17;
+    uint32_t n = 18;
     if (g_polygon_mode)
         n++;
     if (g_depth_clamp)
@@ -1794,8 +2082,8 @@ static uint32_t dynamic_count(void)
 
 static const VkDynamicState *dynamic_states(VkDynamicState *buf)
 {
-    uint32_t n = 17;
-    memcpy(buf, g_dynamic, sizeof(VkDynamicState) * 17);
+    uint32_t n = 18;
+    memcpy(buf, g_dynamic, sizeof(VkDynamicState) * 18);
     if (g_polygon_mode)
         buf[n++] = VK_DYNAMIC_STATE_POLYGON_MODE_EXT;
     if (g_depth_clamp)
@@ -1814,11 +2102,18 @@ static VkPipeline build_pipeline(Pipeline *pl, uint32_t fill, bool clamp)
 {
     const MimeGpuPipelineDesc *d = &pl->desc;
     Program *p = pl->program;
-    VkPipelineShaderStageCreateInfo stages[2] = {
+    VkPipelineShaderStageCreateInfo stages[5] = {
         {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, p->module[0], "main"},
-        {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, p->module[1],
-         "main"},
     };
+    uint32_t stage_count = 1;
+    static const VkShaderStageFlagBits extra_stage[MIME_SHADER_EXTRAS] = {
+        VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT, VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT, VK_SHADER_STAGE_GEOMETRY_BIT};
+    for (int x = 0; x < MIME_SHADER_EXTRAS; x++)
+        if (p->extra[x])
+            stages[stage_count++] = (VkPipelineShaderStageCreateInfo){
+                VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, extra_stage[x], p->extra[x], "main"};
+    stages[stage_count++] = (VkPipelineShaderStageCreateInfo){
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, p->module[1], "main"};
     VkVertexInputBindingDescription binds[MIME_GPU_MAX_ATTRIBS];
     VkVertexInputBindingDivisorDescription divisors[MIME_GPU_MAX_ATTRIBS];
     VkVertexInputAttributeDescription attrs[MIME_GPU_MAX_ATTRIBS];
@@ -1846,12 +2141,19 @@ static VkPipeline build_pipeline(Pipeline *pl, uint32_t fill, bool clamp)
                                                           nullptr, nd, divisors};
     VkPipelineVertexInputStateCreateInfo vertex = {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
                                                    nd ? &divisor : nullptr, 0, nb, binds, na, attrs};
+    VkPrimitiveTopology topology = p->has_tess       ? VK_PRIMITIVE_TOPOLOGY_PATCH_LIST
+                                   : p->has_geometry ? class_topology(p->geometry_class)
+                                                     : class_topology(d->topology & 0xFF);
     VkPipelineInputAssemblyStateCreateInfo assembly = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-                                                       nullptr, 0, class_topology(d->topology), VK_FALSE};
+                                                       nullptr, 0, topology, VK_FALSE};
+    uint32_t patch_points = (d->topology >> 8) & 0xFF;
+    VkPipelineTessellationStateCreateInfo tess = {VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO, nullptr, 0,
+                                                  patch_points ? patch_points : 3};
     VkPipelineViewportDepthClipControlCreateInfoEXT clip = {
         VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_DEPTH_CLIP_CONTROL_CREATE_INFO_EXT, nullptr, VK_TRUE};
     VkPipelineViewportStateCreateInfo viewport = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-                                                  g_clip_control ? &clip : nullptr, 0, 1, nullptr, 1, nullptr};
+                                                  g_clip_control ? &clip : nullptr, 0, g_viewports, nullptr, g_viewports,
+                                                  nullptr};
     VkPipelineRasterizationStateCreateInfo raster = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
         .depthClampEnable = clamp,
@@ -1887,10 +2189,11 @@ static VkPipeline build_pipeline(Pipeline *pl, uint32_t fill, bool clamp)
     VkGraphicsPipelineCreateInfo info = {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = &rendering,
-        .stageCount = 2,
+        .stageCount = stage_count,
         .pStages = stages,
         .pVertexInputState = &vertex,
         .pInputAssemblyState = &assembly,
+        .pTessellationState = p->has_tess ? &tess : nullptr,
         .pViewportState = &viewport,
         .pRasterizationState = &raster,
         .pMultisampleState = &ms,
@@ -2187,6 +2490,7 @@ static bool begin_rendering(Channel *c)
     c->wrote = true;
     c->st.dirty = DIRTY_ALL;
     c->st.bound = VK_NULL_HANDLE;
+    scopes_resume(c);
     return true;
 }
 
@@ -2202,6 +2506,7 @@ static void end_rendering(Channel *c)
         if (!clears || !begin_rendering(c))
             return;
     }
+    scopes_suspend(c);
     g_vk.fn.vkCmdEndRendering(cbuf(c));
     c->rendering = false;
     /* resumed rendering loads the previous contents. */
@@ -2362,8 +2667,10 @@ static bool write_set(Channel *c, Program *p)
             /* the stage that uses the block holds its buffer; both stages share the slot. */
             uint32_t index = m->binding - 1;
             const MimeGpuMem *mem = nullptr;
+            /* the stages after the vertex one read the buffer the vertex stage has. */
+            uint32_t stages = (m->stages & 3) | ((m->stages & ~3u) ? 1u : 0);
             for (int s = 0; s < MIME_GPU_STAGES && !mem; s++)
-                if ((m->stages & (1u << s)) && (c->st.uniform_buffer_mask[s] & (1u << index)))
+                if ((stages & (1u << s)) && (c->st.uniform_buffer_mask[s] & (1u << index)))
                     mem = &c->st.uniform_buffers[s][index];
             uint64_t off = 0, range = m->bytes ? m->bytes : 16;
             VkBuffer buf = mem ? heap(c, mem, range, &off) : VK_NULL_HANDLE;
@@ -2443,7 +2750,7 @@ static bool flush_state(Channel *c)
     Pipeline *pl = c->st.pipeline;
     if (!pl || !pl->valid || !pl->program || !c->pass_live)
         return false;
-    bool clamp = !c->st.raster.depth_clip;
+    bool clamp = !(c->st.raster.depth_clip & 1);
     VkPipeline pipeline = pipeline_variant(pl, c->st.raster.fill, clamp);
     if (!pipeline)
         return false;
@@ -2464,6 +2771,7 @@ static bool flush_state(Channel *c)
         c->st.program = pl->program;
         d |= DIRTY_SET;
     }
+    xfb_enter(c);
     if (d & (DIRTY_DEPTH | DIRTY_PIPELINE)) {
         const MimeGpuDepthStencilCreate *ds = &c->st.depth;
         bool has_depth = c->pass_depth != VK_FORMAT_UNDEFINED, has_stencil = c->pass_stencil != VK_FORMAT_UNDEFINED;
@@ -2489,6 +2797,7 @@ static bool flush_state(Channel *c)
         g_vk.fn.vkCmdSetCullMode(cb, (VkCullModeFlags)r->cull);
         /* both count windings on the framebuffer, where rows run the same way here. */
         g_vk.fn.vkCmdSetFrontFace(cb, r->winding ? VK_FRONT_FACE_COUNTER_CLOCKWISE : VK_FRONT_FACE_CLOCKWISE);
+        g_vk.fn.vkCmdSetRasterizerDiscardEnable(cb, (r->depth_clip & 2) != 0);
         bool bias = r->depth_bias != 0.0f || r->slope_scale != 0.0f;
         g_vk.fn.vkCmdSetDepthBiasEnable(cb, bias);
         if (bias)
@@ -2499,26 +2808,34 @@ static bool flush_state(Channel *c)
             g_vk.fn.vkCmdSetDepthClampEnableEXT(cb, clamp);
     }
     if (d & DIRTY_VIEWPORT) {
-        VkViewport v = c->st.viewport;
-        if (v.width <= 0)
-            v.width = 1;
-        if (v.height <= 0)
-            v.height = 1;
-        g_vk.fn.vkCmdSetViewport(cb, 0, 1, &v);
+        VkViewport vs[MIME_GPU_MAX_VIEWPORTS];
+        for (uint32_t i = 0; i < g_viewports; i++) {
+            vs[i] = (c->st.viewport_own_mask & (1u << i)) ? c->st.viewport_own[i] : c->st.viewport;
+            if (vs[i].width <= 0)
+                vs[i].width = 1;
+            if (vs[i].height <= 0)
+                vs[i].height = 1;
+        }
+        g_vk.fn.vkCmdSetViewport(cb, 0, g_viewports, vs);
     }
     if (d & DIRTY_SCISSOR) {
-        int64_t x0 = 0, y0 = 0, x1 = c->pass.width, y1 = c->pass.height;
-        if (c->st.has_scissor) {
-            x0 = c->st.scissor.x > 0 ? c->st.scissor.x : 0;
-            y0 = c->st.scissor.y > 0 ? c->st.scissor.y : 0;
-            int64_t r = (int64_t)c->st.scissor.x + c->st.scissor.width, b = (int64_t)c->st.scissor.y + c->st.scissor.height;
-            x1 = r < x1 ? r : x1;
-            y1 = b < y1 ? b : y1;
+        VkRect2D rects[MIME_GPU_MAX_VIEWPORTS];
+        for (uint32_t i = 0; i < g_viewports; i++) {
+            bool own = (c->st.scissor_own_mask & (1u << i)) != 0;
+            const MimeGpuRect *sc = own ? &c->st.scissor_own[i] : &c->st.scissor;
+            int64_t x0 = 0, y0 = 0, x1 = c->pass.width, y1 = c->pass.height;
+            if (own || c->st.has_scissor) {
+                x0 = sc->x > 0 ? sc->x : 0;
+                y0 = sc->y > 0 ? sc->y : 0;
+                int64_t r = (int64_t)sc->x + sc->width, b = (int64_t)sc->y + sc->height;
+                x1 = r < x1 ? r : x1;
+                y1 = b < y1 ? b : y1;
+            }
+            rects[i] = (VkRect2D){{0, 0}, {0, 0}};
+            if (x1 > x0 && y1 > y0)
+                rects[i] = (VkRect2D){{(int32_t)x0, (int32_t)y0}, {(uint32_t)(x1 - x0), (uint32_t)(y1 - y0)}};
         }
-        VkRect2D sr = {{0, 0}, {0, 0}};
-        if (x1 > x0 && y1 > y0)
-            sr = (VkRect2D){{(int32_t)x0, (int32_t)y0}, {(uint32_t)(x1 - x0), (uint32_t)(y1 - y0)}};
-        g_vk.fn.vkCmdSetScissor(cb, 0, 1, &sr);
+        g_vk.fn.vkCmdSetScissor(cb, 0, g_viewports, rects);
     }
     if (d & DIRTY_BLEND)
         g_vk.fn.vkCmdSetBlendConstants(cb, c->st.blend);
@@ -2809,11 +3126,13 @@ static bool draw_ready(Channel *c)
 static void set_topology(Channel *c, uint32_t primitive)
 {
     VkCommandBuffer cb = cbuf(c);
-    VkPrimitiveTopology t = (VkPrimitiveTopology)(primitive <= 4 ? primitive : 3);
+    VkPrimitiveTopology t = (VkPrimitiveTopology)(primitive <= 4 ? primitive : primitive <= 10 ? primitive : 3);
     g_vk.fn.vkCmdSetPrimitiveTopology(cb, t);
     /* Metal restarts strips at the largest index, always. */
     g_vk.fn.vkCmdSetPrimitiveRestartEnable(cb, t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP ||
-                                                   t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
+                                                   t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP ||
+                                                   t == VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY ||
+                                                   t == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP_WITH_ADJACENCY);
 }
 
 static void draw(Channel *c, const MimeGpuDraw *d)
@@ -2839,6 +3158,326 @@ static void draw_indexed(Channel *c, const MimeGpuDrawIndexed *d)
     g_vk.fn.vkCmdBindIndexBuffer(cbuf(c), buf, base, d->index_type ? VK_INDEX_TYPE_UINT32 : VK_INDEX_TYPE_UINT16);
     g_vk.fn.vkCmdDrawIndexed(cbuf(c), d->count, d->instances ? d->instances : 1, (uint32_t)((off - base) / size),
                              d->base_vertex, d->base_instance);
+}
+
+
+/* ---------------------------------------------------------------- queries and transform feedback */
+
+/*
+ * a query or transform feedback the guest has begun lives across the host's rendering instances: each one ends it when
+ * it ends and begins it again when it resumes. a query gets a slot of the pool for each stretch, and the guest's result
+ * is their sum, written once the batch of the last stretch has completed. transform feedback ends the same way, saving
+ * the byte counters of its buffers, and resumes from them.
+ */
+#define QUERY_SLOTS 2048
+
+typedef struct HostQuery {
+    bool used, active, inside;
+    uint32_t type, stream;
+    uint32_t *slots;
+    uint32_t slot_count, slot_cap;
+} HostQuery;
+
+typedef struct QueryDone {
+    uint64_t value; /* the batch whose completion makes the result final. */
+    uint32_t type, kind;
+    uint32_t *slots;
+    uint32_t slot_count;
+    MimeGpuMem result;
+} QueryDone;
+
+/* 0 occlusion, 1 captured vertices, 2 generated primitives: Vulkan allows one active query of a type and stream. */
+static int query_kind(uint32_t type)
+{
+    return type == MIME_GPU_QUERY_SAMPLES || type == MIME_GPU_QUERY_ANY_SAMPLES ? 0
+           : type == MIME_GPU_QUERY_PRIMITIVES && g_generated_query                ? 2
+                                                                                   : 1;
+}
+
+static bool query_pool_ready(Channel *c, int kind)
+{
+    if (c->query_pool[kind])
+        return true;
+    VkQueryPoolCreateInfo qi = {VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO, nullptr, 0,
+                                kind == 2   ? VK_QUERY_TYPE_PRIMITIVES_GENERATED_EXT
+                                : kind == 1 ? VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT
+                                            : VK_QUERY_TYPE_OCCLUSION,
+                                QUERY_SLOTS};
+    if (!g_queries || (kind && !g_xfb) ||
+        g_vk.fn.vkCreateQueryPool(g_vk.device, &qi, nullptr, &c->query_pool[kind]) != VK_SUCCESS) {
+        c->query_pool[kind] = VK_NULL_HANDLE;
+        return false;
+    }
+    c->query_free[kind] = malloc(QUERY_SLOTS * sizeof(uint32_t));
+    for (uint32_t i = 0; i < QUERY_SLOTS; i++)
+        c->query_free[kind][i] = QUERY_SLOTS - 1 - i;
+    c->query_free_count[kind] = QUERY_SLOTS;
+    return true;
+}
+
+static HostQuery *query_of(Channel *c, uint32_t id)
+{
+    return SLOT(c, queries, id);
+}
+
+/* begins a slot inside the rendering that is open. */
+static void query_enter(Channel *c, uint32_t id)
+{
+    HostQuery *q = query_of(c, id);
+    int kind = query_kind(q->type);
+    if (q->inside || !c->rendering || !query_pool_ready(c, kind))
+        return;
+    pthread_mutex_lock(&c->query_lock);
+    uint32_t slot = c->query_free_count[kind] ? c->query_free[kind][--c->query_free_count[kind]] : UINT32_MAX;
+    pthread_mutex_unlock(&c->query_lock);
+    if (slot == UINT32_MAX)
+        return;
+    g_vk.fn.vkResetQueryPool(g_vk.device, c->query_pool[kind], slot, 1);
+    if (kind != 1)
+        g_vk.fn.vkCmdBeginQuery(cbuf(c), c->query_pool[kind], slot,
+                                q->type == MIME_GPU_QUERY_SAMPLES ? VK_QUERY_CONTROL_PRECISE_BIT : 0);
+    else
+        g_vk.fn.vkCmdBeginQueryIndexedEXT(cbuf(c), c->query_pool[kind], slot, 0, q->stream);
+    if (q->slot_count == q->slot_cap) {
+        q->slot_cap = q->slot_cap ? q->slot_cap * 2 : 8;
+        q->slots = realloc(q->slots, q->slot_cap * sizeof(uint32_t));
+    }
+    q->slots[q->slot_count++] = slot;
+    q->inside = true;
+}
+
+static void query_leave(Channel *c, uint32_t id)
+{
+    HostQuery *q = query_of(c, id);
+    if (!q->inside)
+        return;
+    int kind = query_kind(q->type);
+    uint32_t slot = q->slots[q->slot_count - 1];
+    if (kind != 1)
+        g_vk.fn.vkCmdEndQuery(cbuf(c), c->query_pool[kind], slot);
+    else
+        g_vk.fn.vkCmdEndQueryIndexedEXT(cbuf(c), c->query_pool[kind], slot, q->stream);
+    q->inside = false;
+}
+
+static void xfb_leave(Channel *c)
+{
+    if (!c->xfb.inside)
+        return;
+    VkBuffer counters[MIME_GPU_MAX_XFB_BUFFERS];
+    VkDeviceSize offsets[MIME_GPU_MAX_XFB_BUFFERS];
+    for (uint32_t i = 0; i < c->xfb.count; i++) {
+        counters[i] = c->xfb.counters;
+        offsets[i] = ((VkDeviceSize)c->xfb.object * MIME_GPU_MAX_XFB_BUFFERS + i) * 16;
+    }
+    g_vk.fn.vkCmdEndTransformFeedbackEXT(cbuf(c), 0, c->xfb.count, counters, offsets);
+    c->xfb.inside = false;
+    c->xfb.has_counter = true;
+}
+
+static void scopes_suspend(Channel *c)
+{
+    for (uint32_t i = 0; i < c->active_query_count; i++)
+        query_leave(c, c->active_queries[i]);
+    xfb_leave(c);
+}
+
+static void scopes_resume(Channel *c)
+{
+    for (uint32_t i = 0; i < c->active_query_count; i++)
+        query_enter(c, c->active_queries[i]);
+}
+
+static bool xfb_counters_ready(Channel *c)
+{
+    if (c->xfb.counters)
+        return true;
+    VkBufferCreateInfo bi = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, nullptr, 0, 256ull * MIME_GPU_MAX_XFB_BUFFERS * 16,
+                             VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT, VK_SHARING_MODE_EXCLUSIVE};
+    if (g_vk.fn.vkCreateBuffer(g_vk.device, &bi, nullptr, &c->xfb.counters) != VK_SUCCESS)
+        return false;
+    VkMemoryRequirements req;
+    g_vk.fn.vkGetBufferMemoryRequirements(g_vk.device, c->xfb.counters, &req);
+    int32_t t = memory_type(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (t < 0)
+        t = memory_type(req.memoryTypeBits, 0);
+    VkMemoryAllocateInfo ai = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, (uint32_t)t};
+    if (t < 0 || g_vk.fn.vkAllocateMemory(g_vk.device, &ai, nullptr, &c->xfb.counters_memory) != VK_SUCCESS ||
+        g_vk.fn.vkBindBufferMemory(g_vk.device, c->xfb.counters, c->xfb.counters_memory, 0) != VK_SUCCESS) {
+        g_vk.fn.vkDestroyBuffer(g_vk.device, c->xfb.counters, nullptr);
+        c->xfb.counters = VK_NULL_HANDLE;
+        return false;
+    }
+    return true;
+}
+
+/* the first draw after a begin or a resume starts the capture, inside the rendering and after the pipeline is bound. */
+static void xfb_enter(Channel *c)
+{
+    if (!c->xfb.requested || c->xfb.inside || !g_xfb || !xfb_counters_ready(c))
+        return;
+    VkBuffer buffers[MIME_GPU_MAX_XFB_BUFFERS], counters[MIME_GPU_MAX_XFB_BUFFERS];
+    VkDeviceSize offsets[MIME_GPU_MAX_XFB_BUFFERS], sizes[MIME_GPU_MAX_XFB_BUFFERS],
+        counter_offsets[MIME_GPU_MAX_XFB_BUFFERS];
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < c->xfb.count; i++) {
+        uint64_t off = 0;
+        VkBuffer b = c->xfb.buffer[i].size ? heap(c, &c->xfb.buffer[i].mem, c->xfb.buffer[i].size, &off) : VK_NULL_HANDLE;
+        if (!b) {
+            /* an empty binding still needs a buffer: the first block, one word of it. */
+            b = c->blocks[0];
+            off = 0;
+            sizes[i] = 4;
+        } else {
+            sizes[i] = c->xfb.buffer[i].size;
+        }
+        buffers[i] = b;
+        offsets[i] = off;
+        counters[i] = c->xfb.has_counter ? c->xfb.counters : VK_NULL_HANDLE;
+        counter_offsets[i] = ((VkDeviceSize)c->xfb.object * MIME_GPU_MAX_XFB_BUFFERS + i) * 16;
+        n++;
+    }
+    if (!n)
+        return;
+    g_vk.fn.vkCmdBindTransformFeedbackBuffersEXT(cbuf(c), 0, n, buffers, offsets, sizes);
+    g_vk.fn.vkCmdBeginTransformFeedbackEXT(cbuf(c), 0, n, c->xfb.has_counter ? counters : nullptr,
+                                           c->xfb.has_counter ? counter_offsets : nullptr);
+    c->xfb.inside = true;
+    c->wrote = true;
+}
+
+static void xfb_buffers(Channel *c, const MimeGpuXfbBuffers *b)
+{
+    c->xfb.count = b->count > MIME_GPU_MAX_XFB_BUFFERS ? MIME_GPU_MAX_XFB_BUFFERS : b->count;
+    for (uint32_t i = 0; i < MIME_GPU_MAX_XFB_BUFFERS; i++) {
+        c->xfb.buffer[i].mem = b->buffer[i].mem;
+        c->xfb.buffer[i].size = b->buffer[i].size;
+    }
+}
+
+static void xfb_control(Channel *c, const MimeGpuXfbControl *x)
+{
+    switch (x->action) {
+    case MIME_GPU_XFB_BEGIN:
+        c->xfb.object = x->object < 256 ? x->object : 0;
+        c->xfb.has_counter = false;
+        c->xfb.requested = true;
+        break;
+    case MIME_GPU_XFB_RESUME:
+        c->xfb.object = x->object < 256 ? x->object : 0;
+        c->xfb.requested = true;
+        break;
+    case MIME_GPU_XFB_PAUSE:
+    case MIME_GPU_XFB_END:
+        c->xfb.requested = false;
+        /* what was captured is read by later draws and copies: the rendering ends so a barrier can separate them. */
+        if (c->xfb.inside)
+            end_rendering(c);
+        break;
+    }
+}
+
+static void query_begin(Channel *c, const MimeGpuQuery *m)
+{
+    HostQuery *q = query_of(c, m->id);
+    q->used = true;
+    q->active = true;
+    q->inside = false;
+    q->type = m->type;
+    q->stream = m->stream;
+    q->slot_count = 0;
+    if (c->active_query_count < 16)
+        c->active_queries[c->active_query_count++] = m->id;
+    if (c->rendering)
+        query_enter(c, m->id);
+}
+
+static void query_write(Channel *c, const MimeGpuMem *mem, uint64_t value)
+{
+    uint64_t *p = heap_ptr(c, mem, 16);
+    if (!p)
+        return;
+    p[0] = value;
+    __atomic_store_n(&p[1], 1, __ATOMIC_RELEASE);
+}
+
+static void query_end(Channel *c, const MimeGpuQuery *m)
+{
+    HostQuery *q = query_of(c, m->id);
+    if (!q->active)
+        return;
+    query_leave(c, m->id);
+    q->active = false;
+    for (uint32_t i = 0; i < c->active_query_count; i++) {
+        if (c->active_queries[i] == m->id) {
+            c->active_queries[i] = c->active_queries[--c->active_query_count];
+            break;
+        }
+    }
+    if (!q->slot_count) {
+        query_write(c, &m->result, 0);
+        return;
+    }
+    /* the slots are read once the batch holding the last stretch has completed. */
+    pthread_mutex_lock(&c->query_lock);
+    if (c->query_done_count == c->query_done_cap) {
+        c->query_done_cap = c->query_done_cap ? c->query_done_cap * 2 : 16;
+        c->query_done = realloc(c->query_done, c->query_done_cap * sizeof(QueryDone));
+    }
+    c->query_done[c->query_done_count++] = (QueryDone){c->submitted + 1, q->type, (uint32_t)query_kind(q->type), q->slots,
+                                                       q->slot_count, m->result};
+    pthread_mutex_unlock(&c->query_lock);
+    q->slots = nullptr;
+    q->slot_cap = q->slot_count = 0;
+}
+
+/* sums the slots of every query that is final and hands the result to the guest. */
+static void queries_finish(Channel *c, uint64_t completed)
+{
+    for (;;) {
+        QueryDone d;
+        pthread_mutex_lock(&c->query_lock);
+        uint32_t i = 0;
+        while (i < c->query_done_count && c->query_done[i].value > completed)
+            i++;
+        if (i == c->query_done_count) {
+            pthread_mutex_unlock(&c->query_lock);
+            return;
+        }
+        d = c->query_done[i];
+        c->query_done[i] = c->query_done[--c->query_done_count];
+        pthread_mutex_unlock(&c->query_lock);
+        uint64_t sum = 0;
+        for (uint32_t k = 0; k < d.slot_count; k++) {
+            uint64_t r[2] = {0, 0};
+            g_vk.fn.vkGetQueryPoolResults(g_vk.device, c->query_pool[d.kind], d.slots[k], 1, sizeof(r), r, sizeof(r),
+                                          VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+            /* a feedback stream query answers written, then needed. */
+            if (d.type == MIME_GPU_QUERY_OVERFLOW)
+                sum |= r[1] > r[0];
+            else
+                sum += d.type == MIME_GPU_QUERY_PRIMITIVES && d.kind == 1 ? r[1] : r[0];
+        }
+        if (d.type == MIME_GPU_QUERY_ANY_SAMPLES)
+            sum = sum != 0;
+        query_write(c, &d.result, sum);
+        pthread_mutex_lock(&c->query_lock);
+        for (uint32_t k = 0; k < d.slot_count; k++)
+            c->query_free[d.kind][c->query_free_count[d.kind]++] = d.slots[k];
+        pthread_mutex_unlock(&c->query_lock);
+        free(d.slots);
+    }
+}
+
+static void draw_xfb(Channel *c, const MimeGpuDrawXfb *d)
+{
+    if (!g_xfb || !xfb_counters_ready(c) || !draw_ready(c))
+        return;
+    set_topology(c, d->primitive);
+    VkDeviceSize offset = ((VkDeviceSize)(d->object < 256 ? d->object : 0) * MIME_GPU_MAX_XFB_BUFFERS +
+                           (d->buffer < MIME_GPU_MAX_XFB_BUFFERS ? d->buffer : 0)) * 16;
+    g_vk.fn.vkCmdDrawIndirectByteCountEXT(cbuf(c), d->instances ? d->instances : 1, 0, c->xfb.counters, offset, 0,
+                                          d->stride ? d->stride : 4);
 }
 
 /* compute and the draws that follow it share nothing but the batch: the pass resumes at the next draw. */
@@ -2958,6 +3597,10 @@ static void execute(Channel *c, const MimeGpuCmd *cmd)
         NEED(MimeGpuProgramCreate);
         program_create(c, BODY(MimeGpuProgramCreate), false);
         break;
+    case MIME_GPU_PROGRAM_STAGES:
+        NEED(MimeGpuProgramStages);
+        program_stages(c, BODY(MimeGpuProgramStages));
+        break;
     case MIME_GPU_PROGRAM_DESTROY:
         NEED(MimeGpuObject);
         program_destroy(c, BODY(MimeGpuObject)->id);
@@ -3032,6 +3675,26 @@ static void execute(Channel *c, const MimeGpuCmd *cmd)
         c->st.dirty |= DIRTY_VIEWPORT;
         break;
     }
+    case MIME_GPU_SET_VIEWPORT_INDEXED: {
+        NEED(MimeGpuSetViewportIndexed);
+        const MimeGpuSetViewportIndexed *v = BODY(MimeGpuSetViewportIndexed);
+        if (v->index < MIME_GPU_MAX_VIEWPORTS) {
+            c->st.viewport_own[v->index] = (VkViewport){v->x, v->y, v->width, v->height, v->znear, v->zfar};
+            c->st.viewport_own_mask |= 1u << v->index;
+            c->st.dirty |= DIRTY_VIEWPORT;
+        }
+        break;
+    }
+    case MIME_GPU_SET_SCISSOR_INDEXED: {
+        NEED(MimeGpuSetScissorIndexed);
+        const MimeGpuSetScissorIndexed *v = BODY(MimeGpuSetScissorIndexed);
+        if (v->index < MIME_GPU_MAX_VIEWPORTS) {
+            c->st.scissor_own[v->index] = (MimeGpuRect){{}, v->x, v->y, v->width, v->height};
+            c->st.scissor_own_mask |= 1u << v->index;
+            c->st.dirty |= DIRTY_SCISSOR;
+        }
+        break;
+    }
     case MIME_GPU_SET_SCISSOR:
         NEED(MimeGpuRect);
         c->st.scissor = *BODY(MimeGpuRect);
@@ -3076,8 +3739,9 @@ static void execute(Channel *c, const MimeGpuCmd *cmd)
             lose(c, "uniform buffer slot");
             return;
         }
+        uint32_t stages = (binding->stages & 3) | ((binding->stages & ~3u) ? 1u : 0);
         for (int stage = 0; stage < MIME_GPU_STAGES; stage++) {
-            if (!(binding->stages & (1u << stage)))
+            if (!(stages & (1u << stage)))
                 continue;
             c->st.uniform_buffers[stage][binding->slot] = binding->mem;
             c->st.uniform_buffer_mask[stage] |= 1u << binding->slot;
@@ -3143,6 +3807,26 @@ static void execute(Channel *c, const MimeGpuCmd *cmd)
     case MIME_GPU_DRAW_INDEXED:
         NEED(MimeGpuDrawIndexed);
         draw_indexed(c, BODY(MimeGpuDrawIndexed));
+        break;
+    case MIME_GPU_XFB_BUFFERS:
+        NEED(MimeGpuXfbBuffers);
+        xfb_buffers(c, BODY(MimeGpuXfbBuffers));
+        break;
+    case MIME_GPU_XFB_CONTROL:
+        NEED(MimeGpuXfbControl);
+        xfb_control(c, BODY(MimeGpuXfbControl));
+        break;
+    case MIME_GPU_QUERY_BEGIN:
+        NEED(MimeGpuQuery);
+        query_begin(c, BODY(MimeGpuQuery));
+        break;
+    case MIME_GPU_QUERY_END:
+        NEED(MimeGpuQuery);
+        query_end(c, BODY(MimeGpuQuery));
+        break;
+    case MIME_GPU_DRAW_XFB:
+        NEED(MimeGpuDrawXfb);
+        draw_xfb(c, BODY(MimeGpuDrawXfb));
         break;
     default:
         lose(c, "unknown command");
@@ -3240,7 +3924,8 @@ static bool add_block(Channel *c, uint32_t index, uint64_t pa, uint64_t size)
                              size,
                              VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                  VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-                                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+                                 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                                 (g_xfb ? VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT : 0),
                              VK_SHARING_MODE_EXCLUSIVE};
     VkBuffer buffer;
     if (g_vk.fn.vkCreateBuffer(g_vk.device, &bi, nullptr, &buffer) != VK_SUCCESS)
@@ -3313,9 +3998,15 @@ uint64_t mime_gpu_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *channel
     c->hdr = (MimeGpuHeader *)base;
     c->hdr->features = g_storage ? MIME_GPU_FEATURE_COMPUTE : 0;
     c->ring = base + MIME_GPU_HEADER_SIZE;
+    c->hdr->features |= (g_geometry ? MIME_GPU_FEATURE_GEOMETRY : 0) | (g_tessellation ? MIME_GPU_FEATURE_TESSELLATION : 0) |
+                        (g_xfb && g_queries ? MIME_GPU_FEATURE_FEEDBACK : 0) |
+                        (g_queries ? MIME_GPU_FEATURE_QUERY : 0) | (g_viewports > 1 ? MIME_GPU_FEATURE_VIEWPORTS : 0) |
+                        (g_fp64 ? MIME_GPU_FEATURE_FP64 : 0) | (g_dual_blend ? MIME_GPU_FEATURE_DUAL_BLEND : 0) |
+                        (g_cube_array ? MIME_GPU_FEATURE_CUBE_ARRAY : 0);
     pthread_mutex_init(&c->lock, nullptr);
     pthread_cond_init(&c->cond, nullptr);
     pthread_mutex_init(&c->retire_lock, nullptr);
+    pthread_mutex_init(&c->query_lock, nullptr);
     pthread_cond_init(&c->retire_cond, nullptr);
     bool ok = add_block(c, 0, pa, size);
     VkCommandPoolCreateInfo pi = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, nullptr,
