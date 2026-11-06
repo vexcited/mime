@@ -260,6 +260,7 @@ void APIENTRY glGenTransformFeedbacks(GLsizei n, GLuint *ids);
 void APIENTRY glGenVertexArrays(GLsizei n, GLuint *arrays);
 void APIENTRY glGenerateMipmap(GLenum target);
 void APIENTRY glGenerateTextureMipmap(GLuint texture);
+void APIENTRY glGetActiveAtomicCounterBufferiv(GLuint program, GLuint index, GLenum pname, GLint *params);
 void APIENTRY glGetActiveAttrib(GLuint name, GLuint index, GLsizei size, GLsizei *length, GLint *count,                                       GLenum *type, GLchar *out);
 void APIENTRY glGetActiveSubroutineName(GLuint program, GLenum shadertype, GLuint index, GLsizei bufsize,                                                GLsizei *length, GLchar *name);
 void APIENTRY glGetActiveSubroutineUniformName(GLuint program, GLenum shadertype, GLuint index, GLsizei bufsize,                                                       GLsizei *length, GLchar *name);
@@ -1405,6 +1406,7 @@ const GL_PROC GlProcs[] = {
     {"glGenerateMipmap", (const void *)glGenerateMipmap},
     {"glGenerateMipmapEXT", (const void *)glGenerateMipmap},
     {"glGenerateTextureMipmap", (const void *)glGenerateTextureMipmap},
+    {"glGetActiveAtomicCounterBufferiv", (const void *)glGetActiveAtomicCounterBufferiv},
     {"glGetActiveAttrib", (const void *)glGetActiveAttrib},
     {"glGetActiveAttribARB", (const void *)glGetActiveAttrib},
     {"glGetActiveSubroutineName", (const void *)glGetActiveSubroutineName},
@@ -2305,4 +2307,4 @@ const GL_PROC GlProcs[] = {
     {"wglUseFontOutlinesA", (const void *)wglUseFontOutlinesA},
     {"wglUseFontOutlinesW", (const void *)wglUseFontOutlinesW},
 };
-const ULONG GlProcCount = 1196;
+const ULONG GlProcCount = 1197;

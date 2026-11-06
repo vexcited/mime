@@ -258,6 +258,7 @@ EXPORTS
     glGenVertexArrays@8
     glGenerateMipmap@4
     glGenerateTextureMipmap@4
+    glGetActiveAtomicCounterBufferiv@16
     glGetActiveAttrib@28
     glGetActiveSubroutineName@24
     glGetActiveSubroutineUniformName@24

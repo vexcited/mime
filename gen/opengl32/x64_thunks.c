@@ -1567,6 +1567,12 @@ static void x_glGenerateTextureMipmap(MX_NATIVE_CALL *c)
     glGenerateTextureMipmap((GLuint)I(c, 0));
 }
 
+void APIENTRY glGetActiveAtomicCounterBufferiv(GLuint program, GLuint index, GLenum pname, GLint *params);
+static void x_glGetActiveAtomicCounterBufferiv(MX_NATIVE_CALL *c)
+{
+    glGetActiveAtomicCounterBufferiv((GLuint)I(c, 0), (GLuint)I(c, 1), (GLenum)I(c, 2), (GLint *)I(c, 3));
+}
+
 void APIENTRY glGetActiveAttrib(GLuint name, GLuint index, GLsizei size, GLsizei *length, GLint *count,                                       GLenum *type, GLchar *out);
 static void x_glGetActiveAttrib(MX_NATIVE_CALL *c)
 {
@@ -6896,6 +6902,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGenVertexArrays,
     x_glGenerateMipmap,
     x_glGenerateTextureMipmap,
+    x_glGetActiveAtomicCounterBufferiv,
     x_glGetActiveAttrib,
     x_glGetActiveSubroutineName,
     x_glGetActiveSubroutineUniformName,
@@ -7743,4 +7750,4 @@ static const MX_NATIVE_FN g_functions[] = {
     x_wglUseFontOutlinesW,
 };
 
-const MX_NATIVE_TABLE OpenGL32X64Thunks = {1103, 0, g_functions};
+const MX_NATIVE_TABLE OpenGL32X64Thunks = {1104, 0, g_functions};
