@@ -787,6 +787,8 @@ EXPORTS
     glStencilMaskSeparate@8
     glStencilOp@12
     glStencilOpSeparate@16
+    glTexBuffer@12
+    glTexBufferRange@20
     glTexCoord1d@8
     glTexCoord1dv@4
     glTexCoord1f@4
@@ -854,6 +856,8 @@ EXPORTS
     glTexSubImage2D@36
     glTexSubImage3D@44
     glTextureBarrier@0
+    glTextureBuffer@12
+    glTextureBufferRange@20
     glTextureParameterIiv@12
     glTextureParameterIuiv@12
     glTextureParameterf@12

@@ -789,6 +789,8 @@ void APIENTRY glStencilMask(GLuint mask);
 void APIENTRY glStencilMaskSeparate(GLenum face, GLuint mask);
 void APIENTRY glStencilOp(GLenum fail, GLenum zfail, GLenum zpass);
 void APIENTRY glStencilOpSeparate(GLenum face, GLenum fail, GLenum zfail, GLenum zpass);
+void APIENTRY glTexBuffer(GLenum target, GLenum internal, GLuint buffer);
+void APIENTRY glTexBufferRange(GLenum target, GLenum internal, GLuint buffer, GLintptr offset, GLsizeiptr size);
 void APIENTRY glTexCoord1d(GLdouble s);
 void APIENTRY glTexCoord1dv(const GLdouble *v);
 void APIENTRY glTexCoord1f(GLfloat s);
@@ -856,6 +858,8 @@ void APIENTRY glTexSubImage1D(GLenum target, GLint level, GLint x, GLsizei w, GL
 void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h, GLenum format,                                     GLenum type, const void *pixels);
 void APIENTRY glTexSubImage3D(GLenum target, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                     GLsizei d, GLenum format, GLenum type, const void *pixels);
 void APIENTRY glTextureBarrier(void);
+void APIENTRY glTextureBuffer(GLuint texture, GLenum internal, GLuint buffer);
+void APIENTRY glTextureBufferRange(GLuint texture, GLenum internal, GLuint buffer, GLintptr offset, GLsizeiptr size);
 void APIENTRY glTextureParameterIiv(GLuint texture, GLenum pname, const GLint *params);
 void APIENTRY glTextureParameterIuiv(GLuint texture, GLenum pname, const GLuint *params);
 void APIENTRY glTextureParameterf(GLuint texture, GLenum pname, GLfloat param);
@@ -1965,6 +1969,8 @@ const GL_PROC GlProcs[] = {
     {"glStencilMaskSeparate", (const void *)glStencilMaskSeparate},
     {"glStencilOp", (const void *)glStencilOp},
     {"glStencilOpSeparate", (const void *)glStencilOpSeparate},
+    {"glTexBuffer", (const void *)glTexBuffer},
+    {"glTexBufferRange", (const void *)glTexBufferRange},
     {"glTexCoord1d", (const void *)glTexCoord1d},
     {"glTexCoord1dv", (const void *)glTexCoord1dv},
     {"glTexCoord1f", (const void *)glTexCoord1f},
@@ -2032,6 +2038,8 @@ const GL_PROC GlProcs[] = {
     {"glTexSubImage2D", (const void *)glTexSubImage2D},
     {"glTexSubImage3D", (const void *)glTexSubImage3D},
     {"glTextureBarrier", (const void *)glTextureBarrier},
+    {"glTextureBuffer", (const void *)glTextureBuffer},
+    {"glTextureBufferRange", (const void *)glTextureBufferRange},
     {"glTextureParameterIiv", (const void *)glTextureParameterIiv},
     {"glTextureParameterIuiv", (const void *)glTextureParameterIuiv},
     {"glTextureParameterf", (const void *)glTextureParameterf},
@@ -2307,4 +2315,4 @@ const GL_PROC GlProcs[] = {
     {"wglUseFontOutlinesA", (const void *)wglUseFontOutlinesA},
     {"wglUseFontOutlinesW", (const void *)wglUseFontOutlinesW},
 };
-const ULONG GlProcCount = 1197;
+const ULONG GlProcCount = 1201;
