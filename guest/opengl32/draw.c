@@ -103,9 +103,11 @@ static void attrib_pointer(GLuint index, GLint size, GLenum type, BOOL normalize
     a->type = type;
     a->normalized = normalized;
     a->integer = integer;
+    a->is_long = FALSE;
     a->stride = stride;
     a->pointer = pointer;
     a->buffer = ctx->array_buffer;
+    gl_vao_legacy_pointer(ctx->vao, index);
     ctx->dirty |= DIRTY_VERTEX | DIRTY_PIPELINE;
 }
 
@@ -118,6 +120,18 @@ GLAPI void APIENTRY glVertexAttribPointer(GLuint index, GLint size, GLenum type,
 GLAPI void APIENTRY glVertexAttribIPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void *pointer)
 {
     attrib_pointer(index, size, type, FALSE, TRUE, stride, pointer);
+}
+
+GLAPI void APIENTRY glVertexAttribLPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void *pointer)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (type != GL_DOUBLE) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    attrib_pointer(index, size, type, FALSE, FALSE, stride, pointer);
+    if (index < MIME_GPU_MAX_ATTRIBS && size >= 1 && size <= 4)
+        ctx->vao->attribs[index].is_long = TRUE;
 }
 
 GLAPI void APIENTRY glEnableVertexAttribArray(GLuint index)
@@ -150,6 +164,7 @@ GLAPI void APIENTRY glVertexAttribDivisor(GLuint index, GLuint divisor)
         return;
     }
     ctx->vao->attribs[index].divisor = divisor;
+    gl_vao_legacy_divisor(ctx->vao, index);
     ctx->dirty |= DIRTY_VERTEX | DIRTY_PIPELINE;
 }
 
@@ -257,6 +272,46 @@ GLAPI void APIENTRY glVertexAttribI4uiv(GLuint i, const GLuint *v)
     glVertexAttribI4ui(i, v[0], v[1], v[2], v[3]);
 }
 
+GLAPI void APIENTRY glVertexAttribL1d(GLuint i, GLdouble x)
+{
+    generic(i, (GLfloat)x, 0, 0, 1);
+}
+
+GLAPI void APIENTRY glVertexAttribL2d(GLuint i, GLdouble x, GLdouble y)
+{
+    generic(i, (GLfloat)x, (GLfloat)y, 0, 1);
+}
+
+GLAPI void APIENTRY glVertexAttribL3d(GLuint i, GLdouble x, GLdouble y, GLdouble z)
+{
+    generic(i, (GLfloat)x, (GLfloat)y, (GLfloat)z, 1);
+}
+
+GLAPI void APIENTRY glVertexAttribL4d(GLuint i, GLdouble x, GLdouble y, GLdouble z, GLdouble w)
+{
+    generic(i, (GLfloat)x, (GLfloat)y, (GLfloat)z, (GLfloat)w);
+}
+
+GLAPI void APIENTRY glVertexAttribL1dv(GLuint i, const GLdouble *v)
+{
+    glVertexAttribL1d(i, v[0]);
+}
+
+GLAPI void APIENTRY glVertexAttribL2dv(GLuint i, const GLdouble *v)
+{
+    glVertexAttribL2d(i, v[0], v[1]);
+}
+
+GLAPI void APIENTRY glVertexAttribL3dv(GLuint i, const GLdouble *v)
+{
+    glVertexAttribL3d(i, v[0], v[1], v[2]);
+}
+
+GLAPI void APIENTRY glVertexAttribL4dv(GLuint i, const GLdouble *v)
+{
+    glVertexAttribL4d(i, v[0], v[1], v[2], v[3]);
+}
+
 GLAPI void APIENTRY glGetVertexAttribiv(GLuint index, GLenum pname, GLint *params)
 {
     GL_CONTEXT_OR_RETURN();
@@ -284,11 +339,20 @@ GLAPI void APIENTRY glGetVertexAttribiv(GLuint index, GLenum pname, GLint *param
     case GL_VERTEX_ATTRIB_ARRAY_INTEGER:
         *params = a->integer;
         break;
+    case GL_VERTEX_ATTRIB_ARRAY_LONG:
+        *params = a->is_long;
+        break;
     case GL_VERTEX_ATTRIB_ARRAY_DIVISOR:
         *params = (GLint)a->divisor;
         break;
     case GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING:
         *params = (GLint)a->buffer;
+        break;
+    case GL_VERTEX_ATTRIB_BINDING:
+        *params = ctx->vao->attrib_binding[index] ? ctx->vao->attrib_binding[index] - 1 : (GLint)index;
+        break;
+    case GL_VERTEX_ATTRIB_RELATIVE_OFFSET:
+        *params = ctx->vao->relative_offset[index];
         break;
     case GL_CURRENT_VERTEX_ATTRIB:
         for (int i = 0; i < 4; i++)
@@ -347,6 +411,23 @@ GLAPI void APIENTRY glGetVertexAttribIuiv(GLuint index, GLenum pname, GLuint *pa
     }
 }
 
+GLAPI void APIENTRY glGetVertexAttribLdv(GLuint index, GLenum pname, GLdouble *params)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (index >= MIME_GPU_MAX_ATTRIBS) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    if (pname == GL_CURRENT_VERTEX_ATTRIB) {
+        for (unsigned int i = 0; i < 4; ++i)
+            params[i] = generic_component(ctx, index, i);
+    } else {
+        GLint value = 0;
+        glGetVertexAttribiv(index, pname, &value);
+        *params = value;
+    }
+}
+
 GLAPI void APIENTRY glGetVertexAttribPointerv(GLuint index, GLenum pname, void **pointer)
 {
     GL_CONTEXT_OR_RETURN();
@@ -384,6 +465,8 @@ static uint8_t vertex_format(const GlVertexAttrib *a)
 {
     int n = a->size == GL_BGRA ? 4 : a->size;
     BOOL norm = a->normalized && !a->integer;
+    if (a->is_long)
+        return (uint8_t)(120 + n - 1);
     switch (a->type) {
     case GL_FLOAT:
     case GL_DOUBLE:
@@ -604,9 +687,9 @@ static BOOL copy_attrib(const GlVertexAttrib *a, const uint8_t *base, uint32_t f
 {
     uint32_t elem = element_bytes(a);
     uint32_t src_stride = a->stride ? (uint32_t)a->stride : elem;
-    BOOL dbl = a->type == GL_DOUBLE || widened(a);
+    BOOL dbl = (a->type == GL_DOUBLE && !a->is_long) || widened(a);
     uint32_t out_elem = dbl ? (uint32_t)a->size * 4 : elem;
-    uint32_t stride = (out_elem + 3) & ~3u;
+    uint32_t stride = a->is_long ? (out_elem + 7) & ~7u : (out_elem + 3) & ~3u;
     GlMem mem;
     if (!gl_stream_alloc((uint64_t)stride * (count ? count : 1), 16, &mem))
         return FALSE;
@@ -614,7 +697,7 @@ static BOOL copy_attrib(const GlVertexAttrib *a, const uint8_t *base, uint32_t f
     for (uint32_t v = 0; v < count; v++) {
         uint8_t *d = mem.ptr + (uint64_t)v * stride;
         const uint8_t *p = src + (uint64_t)v * src_stride;
-        if (a->type == GL_DOUBLE) {
+        if (a->type == GL_DOUBLE && !a->is_long) {
             for (int c = 0; c < a->size; c++) {
                 double x;
                 memcpy(&x, p + c * 8, 8);
@@ -648,7 +731,7 @@ static BOOL setup_vertices(GlContext *ctx, GlProgram *p, const GlVertexInput *in
         const GlVertexAttrib *a = &in->attribs[l];
         Source *s = &src[l];
         s->used = TRUE;
-        if (!a->enabled && in->constants) {
+        if (!a->enabled && in->constants && (!in->constant_mask || (in->constant_mask >> l & 1))) {
             GlMem mem;
             if (!gl_stream_alloc(16, 16, &mem))
                 return FALSE;
@@ -701,7 +784,8 @@ static BOOL setup_vertices(GlContext *ctx, GlProgram *p, const GlVertexInput *in
                 return FALSE;
             b->last_use = batch;
             uint64_t offset = (uint64_t)(ULONG_PTR)a->pointer;
-            BOOL direct = !(offset & 3) && !(stride & 3) && a->type != GL_DOUBLE && !widened(a);
+            uint32_t mask = a->is_long ? 7 : 3;
+            BOOL direct = !(offset & mask) && !(stride & mask) && (a->type != GL_DOUBLE || a->is_long) && !widened(a);
             if (direct) {
                 s->mem = gl_mem(&b->mem);
                 s->mem.offset += offset;
@@ -731,7 +815,9 @@ static BOOL needs_copy(const GlVertexInput *in)
         if (!a->enabled || a->divisor)
             continue;
         uint32_t stride = a->stride ? (uint32_t)a->stride : element_bytes(a);
-        if (!a->buffer || ((ULONG_PTR)a->pointer & 3) || (stride & 3) || a->type == GL_DOUBLE || widened(a))
+        uint32_t mask = a->is_long ? 7 : 3;
+        if (!a->buffer || ((ULONG_PTR)a->pointer & mask) || (stride & mask) || (a->type == GL_DOUBLE && !a->is_long) ||
+            widened(a))
             return TRUE;
     }
     return FALSE;
@@ -745,28 +831,29 @@ static void emit_pipeline(GlContext *ctx, GlProgram *p, const GlVertexInput *in,
     d.program_serial = p->serial;
     const GlTarget *t = &ctx->target;
     uint8_t logic = gl_logic_op(ctx);
-    uint8_t mask = (uint8_t)((ctx->color_mask[0] ? 8 : 0) | (ctx->color_mask[1] ? 4 : 0) | (ctx->color_mask[2] ? 2 : 0) |
-                             (ctx->color_mask[3] ? 1 : 0));
     for (int i = 0; i < MIME_GPU_MAX_COLORS; i++) {
         MimeGpuColorTarget *c = &d.color[i];
         c->format = t->color_format[i];
         if (!c->format)
             continue;
-        c->write_mask = mask;
+        const GLboolean *m = gl_color_mask_at(ctx, (unsigned)i);
+        c->write_mask = (uint8_t)((m[0] ? 8 : 0) | (m[1] ? 4 : 0) | (m[2] ? 2 : 0) | (m[3] ? 1 : 0));
         c->logic_op = logic;
-        if (ctx->blend.enabled && !logic) {
+        const GlBlend *blend = gl_blend_at(ctx, (unsigned)i);
+        if (blend->enabled && !logic) {
             c->blend = 1;
-            c->rgb_op = blend_op(ctx->blend.eq_rgb);
-            c->alpha_op = blend_op(ctx->blend.eq_alpha);
-            c->src_rgb = blend_factor(ctx->blend.src_rgb);
-            c->dst_rgb = blend_factor(ctx->blend.dst_rgb);
-            c->src_alpha = blend_factor(ctx->blend.src_alpha);
-            c->dst_alpha = blend_factor(ctx->blend.dst_alpha);
+            c->rgb_op = blend_op(blend->eq_rgb);
+            c->alpha_op = blend_op(blend->eq_alpha);
+            c->src_rgb = blend_factor(blend->src_rgb);
+            c->dst_rgb = blend_factor(blend->dst_rgb);
+            c->src_alpha = blend_factor(blend->src_alpha);
+            c->dst_alpha = blend_factor(blend->dst_alpha);
         }
     }
     d.depth_format = t->depth_format;
     d.stencil_format = t->stencil_format;
     d.samples = t->samples ? t->samples : 1;
+    d.topology = gl_pipeline_topology(ctx, p);
     for (int l = 0; l < MIME_GPU_MAX_ATTRIBS; l++) {
         if (!src[l].used)
             continue;
@@ -833,10 +920,17 @@ static void emit_raster(GlContext *ctx)
     /* rows are flipped on the way to Metal, which reverses the winding. */
     r->winding = ctx->front_face == GL_CCW ? 0 : 1;
     r->fill = ctx->polygon_mode == GL_LINE ? 1 : 0;
-    r->depth_clip = !ctx->depth_clamp;
+    r->depth_clip = (!ctx->depth_clamp ? 1 : 0) | (ctx->st.rasterizer_discard ? 2 : 0);
+    if (!ctx->ff.window_draw) {
+        /* the rows are flipped by the viewport and the facing is the one in clip space. */
+        if (ctx->clip_upper_left)
+            r->winding ^= 1;
+        r->zero_to_one = ctx->clip_zero_to_one;
+    }
     if (ctx->polygon_offset_fill) {
         r->depth_bias = ctx->offset_units;
         r->slope_scale = ctx->offset_factor;
+        r->bias_clamp = ctx->offset_clamp;
     }
 }
 
@@ -844,14 +938,14 @@ static void emit_textures(GlContext *ctx, GlProgram *p)
 {
     for (uint32_t i = 0; i < p->uniform_count; i++) {
         GlUniform *u = &p->uniforms[i];
-        if (!u->units)
+        if (!u->units || gl_is_image_type(u->type))
             continue;
         for (GLint e = 0; e < u->size; e++) {
             GlTexture *t = gl_unit_texture(ctx, (GLuint)u->units[e], u->type);
             uint32_t id, sampler;
             if (gl_texture_ready(ctx, t)) {
                 id = t->id;
-                sampler = gl_texture_sampler(t);
+                sampler = gl_unit_sampler(ctx, (GLuint)u->units[e], t);
             } else {
                 id = gl_dummy_texture(ctx);
                 static GlTexture plain;
@@ -890,7 +984,8 @@ static BOOL prepare(GlContext *ctx, GlProgram *p, const GlVertexInput *in, const
         GlUniformBlock *block = &p->blocks[i];
         GlBufferBinding *binding = &ctx->uniform_bindings[block->binding];
         GlBuffer *buffer = gl_buffer(ctx, binding->name);
-        if (!buffer || buffer->mapped || !buffer->mem.ptr || binding->offset > buffer->size ||
+        if (!buffer || (buffer->mapped && !(buffer->map_access & GL_MAP_PERSISTENT_BIT)) || !buffer->mem.ptr ||
+            binding->offset > buffer->size ||
             block->bytes > buffer->size - binding->offset || (!binding->whole && block->bytes > binding->size)) {
             gl_error(ctx, GL_INVALID_OPERATION);
             return FALSE;
@@ -908,6 +1003,10 @@ static BOOL prepare(GlContext *ctx, GlProgram *p, const GlVertexInput *in, const
         v->y = (float)ctx->viewport[1];
         v->width = (float)ctx->viewport[2];
         v->height = (float)ctx->viewport[3];
+        if (ctx->clip_upper_left && !ctx->ff.window_draw && v->height > 0) {
+            v->y += v->height;
+            v->height = -v->height;
+        }
         v->znear = (float)ctx->depth_range[0];
         v->zfar = (float)ctx->depth_range[1];
     }
@@ -923,6 +1022,8 @@ static BOOL prepare(GlContext *ctx, GlProgram *p, const GlVertexInput *in, const
             r->height = ctx->target.height;
         }
     }
+    gl_stage_emit_viewports(ctx, dirty);
+    gl_xfb_prepare(ctx);
     if (dirty & DIRTY_BLEND_COLOR) {
         MimeGpuSetBlendColor *b = gl_emit(MIME_GPU_SET_BLEND_COLOR, sizeof(MimeGpuSetBlendColor));
         memcpy(b->rgba, ctx->blend_color, sizeof(b->rgba));
@@ -951,6 +1052,8 @@ static BOOL prepare(GlContext *ctx, GlProgram *p, const GlVertexInput *in, const
         command->mem.offset += binding->offset;
         buffer->last_use = gl_batch_fence();
     }
+    gl_emit_storage(ctx, p);
+    gl_emit_images(ctx, p);
     for (int l = 0; l < MIME_GPU_MAX_ATTRIBS; l++) {
         if (!src[l].used)
             continue;
@@ -965,10 +1068,42 @@ static BOOL prepare(GlContext *ctx, GlProgram *p, const GlVertexInput *in, const
     return TRUE;
 }
 
+/* the state a dispatch needs: the loose uniforms, textures and uniform blocks of the compute program. */
+void gl_emit_compute_state(GlContext *ctx, GlProgram *p)
+{
+    if (ctx->uniforms_of != p || ctx->uniforms_serial != p->serial || p->ublock_dirty) {
+        uint32_t n = p->ublock_size > 4096 ? 4096 : p->ublock_size;
+        if (n) {
+            MimeGpuSetUniforms *u = gl_emit(MIME_GPU_SET_UNIFORMS, (uint32_t)sizeof(MimeGpuSetUniforms) + n);
+            u->bytes = n;
+            memcpy(u + 1, p->ublock, n);
+        }
+        p->ublock_dirty = FALSE;
+        ctx->uniforms_of = p;
+        ctx->uniforms_serial = p->serial;
+    }
+    emit_textures(ctx, p);
+    for (uint32_t i = 0; i < p->block_count; i++) {
+        GlUniformBlock *block = &p->blocks[i];
+        GlBufferBinding *binding = &ctx->uniform_bindings[block->binding];
+        GlBuffer *buffer = gl_buffer(ctx, binding->name);
+        if (!buffer || !buffer->mem.ptr || binding->offset > buffer->size || block->bytes > buffer->size - binding->offset)
+            continue;
+        MimeGpuSetUniformBuffer *command = gl_emit(MIME_GPU_SET_UNIFORM_BUFFER, sizeof(MimeGpuSetUniformBuffer));
+        command->slot = i;
+        command->stages = block->stages;
+        command->mem = gl_mem(&buffer->mem);
+        command->mem.offset += binding->offset;
+        buffer->last_use = gl_batch_fence();
+    }
+}
+
 /* ---------------------------------------------------------------- draws */
 
 static uint32_t mtl_primitive(GLenum mode)
 {
+    if (mode > GL_POLYGON)
+        return gl_primitive_of(mode);
     switch (mode) {
     case GL_POINTS:
         return 0;
@@ -1169,15 +1304,31 @@ static BOOL convert_primitive(GLenum mode, BOOL flat, const void *indices, GLenu
 static GlProgram *begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate, GLenum mode)
 {
     GlProgram *p = ctx->current_program;
-    if (p && immediate)
+    in->constant_mask = 0;
+    /* a program takes the draws of glBegin and glEnd only when it reads the built-in vertex variables, which they feed. */
+    if (p && immediate && (!gl_program_ready(p) || !p->cg_attribs))
+        return nullptr;
+    if (ctx->st.skip)
+        return nullptr;
+    if (!p && ctx->st.pipeline && !immediate)
+        p = gl_pipeline_resolve(ctx);
+    if (mode > GL_POLYGON && (!p || !gl_draw_mode_fits(ctx, p, mode))) {
+        if (!p)
+            gl_error(ctx, GL_INVALID_OPERATION);
+        return nullptr;
+    }
+    if (p && mode <= GL_POLYGON && !gl_draw_mode_fits(ctx, p, mode))
         return nullptr;
     if (p) {
         in->attribs = ctx->vao->attribs;
         in->mask = p->attrib_mask;
         in->constants = nullptr;
+        in->constant_mask = 0;
         in->fixed = in->flat = FALSE;
         if (!gl_program_ready(p))
             return nullptr;
+        if (p->cg_attribs)
+            gl_cg_input(ctx, p, in);
     } else {
         p = gl_ff_begin_draw(ctx, in, immediate, mode);
         if (!p)
@@ -1190,6 +1341,8 @@ static GlProgram *begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate, 
         return nullptr;
     if (in->fixed)
         gl_ff_prepare(ctx, p);
+    else if (p->cg_slots)
+        gl_cg_prepare(ctx, p);
     return p;
 }
 
@@ -1200,7 +1353,7 @@ static void draw_arrays(GLenum mode, GLint first, GLsizei count, GLsizei instanc
         gl_error(ctx, GL_INVALID_VALUE);
         return;
     }
-    if (mode > GL_POLYGON) {
+    if (!gl_draw_mode_valid(ctx, mode)) {
         gl_error(ctx, GL_INVALID_ENUM);
         return;
     }
@@ -1293,7 +1446,7 @@ static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *i
         gl_error(ctx, GL_INVALID_ENUM);
         return;
     }
-    if (mode > GL_POLYGON) {
+    if (!gl_draw_mode_valid(ctx, mode)) {
         gl_error(ctx, GL_INVALID_ENUM);
         return;
     }
@@ -1440,6 +1593,176 @@ GLAPI void APIENTRY glMultiDrawElements(GLenum mode, const GLsizei *count, GLenu
         draw_elements(mode, count[i], type, indices[i], 1, 0, 0);
 }
 
+GLAPI void APIENTRY glDrawElementsInstancedBaseInstance(GLenum mode, GLsizei count, GLenum type, const void *indices,
+                                                        GLsizei instances, GLuint base_instance)
+{
+    draw_elements(mode, count, type, indices, instances, 0, base_instance);
+}
+
+GLAPI void APIENTRY glDrawElementsInstancedBaseVertexBaseInstance(GLenum mode, GLsizei count, GLenum type,
+                                                                  const void *indices, GLsizei instances,
+                                                                  GLint base_vertex, GLuint base_instance)
+{
+    draw_elements(mode, count, type, indices, instances, base_vertex, base_instance);
+}
+
+GLAPI void APIENTRY glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum type,
+                                                  const void *const *indices, GLsizei n, const GLint *base_vertex)
+{
+    for (GLsizei i = 0; i < n; i++)
+        draw_elements(mode, count[i], type, indices[i], 1, base_vertex[i], 0);
+}
+
+/* ---------------------------------------------------------------- indirect draws */
+
+/*
+ * the commands are read here, once the gpu is done with a buffer a shader wrote, and become direct draws. the host needs
+ * nothing for them, and a buffer written by a shader costs a wait.
+ */
+typedef struct DrawArraysCommand {
+    GLuint count, instances, first, base_instance;
+} DrawArraysCommand;
+
+typedef struct DrawElementsCommand {
+    GLuint count, instances, first_index;
+    GLint base_vertex;
+    GLuint base_instance;
+} DrawElementsCommand;
+
+static GlBuffer *indirect_buffer(GlContext *ctx, GLintptr offset, GLsizei stride, GLsizei count, uint32_t size)
+{
+    GlBuffer *b = gl_buffer(ctx, ctx->draw_indirect_buffer);
+    if (!b || !b->mem.ptr) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return nullptr;
+    }
+    if (offset < 0 || (offset & 3) || stride < 0 || (stride & 3) || count < 0) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return nullptr;
+    }
+    uint32_t step = stride ? (uint32_t)stride : size;
+    if (count && (uint64_t)offset + (uint64_t)(count - 1) * step + size > b->size) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return nullptr;
+    }
+    gl_buffer_read_ready(b);
+    return b;
+}
+
+static void indirect_arrays(GlContext *ctx, GLenum mode, GLintptr offset, GLsizei count, GLsizei stride)
+{
+    GlBuffer *b = indirect_buffer(ctx, offset, stride, count, sizeof(DrawArraysCommand));
+    if (!b)
+        return;
+    uint32_t step = stride ? (uint32_t)stride : sizeof(DrawArraysCommand);
+    for (GLsizei i = 0; i < count; i++) {
+        DrawArraysCommand c;
+        memcpy(&c, b->mem.ptr + offset + (uint64_t)i * step, sizeof(c));
+        draw_arrays(mode, (GLint)c.first, (GLsizei)c.count, (GLsizei)c.instances, c.base_instance);
+    }
+}
+
+static void indirect_elements(GlContext *ctx, GLenum mode, GLenum type, GLintptr offset, GLsizei count, GLsizei stride)
+{
+    if (type != GL_UNSIGNED_BYTE && type != GL_UNSIGNED_SHORT && type != GL_UNSIGNED_INT) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    GlBuffer *b = indirect_buffer(ctx, offset, stride, count, sizeof(DrawElementsCommand));
+    if (!b)
+        return;
+    uint32_t step = stride ? (uint32_t)stride : sizeof(DrawElementsCommand);
+    for (GLsizei i = 0; i < count; i++) {
+        DrawElementsCommand c;
+        memcpy(&c, b->mem.ptr + offset + (uint64_t)i * step, sizeof(c));
+        draw_elements(mode, (GLsizei)c.count, type, (const void *)(ULONG_PTR)((uint64_t)c.first_index * index_size(type)),
+                      (GLsizei)c.instances, c.base_vertex, c.base_instance);
+    }
+}
+
+GLAPI void APIENTRY glDrawArraysIndirect(GLenum mode, const void *indirect)
+{
+    GL_CONTEXT_OR_RETURN();
+    indirect_arrays(ctx, mode, (GLintptr)indirect, 1, 0);
+}
+
+GLAPI void APIENTRY glDrawElementsIndirect(GLenum mode, GLenum type, const void *indirect)
+{
+    GL_CONTEXT_OR_RETURN();
+    indirect_elements(ctx, mode, type, (GLintptr)indirect, 1, 0);
+}
+
+GLAPI void APIENTRY glMultiDrawArraysIndirect(GLenum mode, const void *indirect, GLsizei count, GLsizei stride)
+{
+    GL_CONTEXT_OR_RETURN();
+    indirect_arrays(ctx, mode, (GLintptr)indirect, count, stride);
+}
+
+GLAPI void APIENTRY glMultiDrawElementsIndirect(GLenum mode, GLenum type, const void *indirect, GLsizei count,
+                                                GLsizei stride)
+{
+    GL_CONTEXT_OR_RETURN();
+    indirect_elements(ctx, mode, type, (GLintptr)indirect, count, stride);
+}
+
+/* the count the parameter buffer holds at offset, capped by maxdrawcount. */
+static GLsizei parameter_count(GlContext *ctx, GLintptr offset, GLsizei max)
+{
+    GlBuffer *b = gl_buffer(ctx, ctx->parameter_buffer);
+    if (!b || !b->mem.ptr || offset < 0 || (offset & 3) || (uint64_t)offset + 4 > b->size) {
+        gl_error(ctx, !b ? GL_INVALID_OPERATION : GL_INVALID_VALUE);
+        return -1;
+    }
+    gl_buffer_read_ready(b);
+    GLuint n;
+    memcpy(&n, b->mem.ptr + offset, sizeof(n));
+    return n < (GLuint)max ? (GLsizei)n : max;
+}
+
+GLAPI void APIENTRY glMultiDrawArraysIndirectCount(GLenum mode, const void *indirect, GLintptr drawcount,
+                                                   GLsizei maxdrawcount, GLsizei stride)
+{
+    GL_CONTEXT_OR_RETURN();
+    GLsizei n = parameter_count(ctx, drawcount, maxdrawcount);
+    if (n >= 0)
+        indirect_arrays(ctx, mode, (GLintptr)indirect, n, stride);
+}
+
+GLAPI void APIENTRY glMultiDrawElementsIndirectCount(GLenum mode, GLenum type, const void *indirect, GLintptr drawcount,
+                                                     GLsizei maxdrawcount, GLsizei stride)
+{
+    GL_CONTEXT_OR_RETURN();
+    GLsizei n = parameter_count(ctx, drawcount, maxdrawcount);
+    if (n >= 0)
+        indirect_elements(ctx, mode, type, (GLintptr)indirect, n, stride);
+}
+
+/* draws the vertices a transform feedback captured, as many as its byte counters say. */
+void gl_draw_feedback(GlContext *ctx, GLenum mode, uint32_t object, uint32_t buffer, uint32_t stride, GLsizei instances)
+{
+    gl_device_lock();
+    GlVertexInput in;
+    GlProgram *p = begin_draw(ctx, &in, FALSE, mode);
+    if (!p) {
+        gl_device_unlock();
+        return;
+    }
+    DrawRange r = {0, 0, (uint32_t)instances, 0, 0};
+    Source src[MIME_GPU_MAX_ATTRIBS];
+    /* the count is the host's to know, so nothing can be copied for it. */
+    if (needs_copy(&in) || !setup_vertices(ctx, p, &in, &r, src) || !prepare(ctx, p, &in, src)) {
+        gl_device_unlock();
+        return;
+    }
+    MimeGpuDrawXfb *d = gl_emit(MIME_GPU_DRAW_XFB, sizeof(MimeGpuDrawXfb));
+    d->primitive = mtl_primitive(mode);
+    d->object = object;
+    d->buffer = buffer;
+    d->stride = stride;
+    d->instances = (uint32_t)instances;
+    gl_device_unlock();
+}
+
 /* ---------------------------------------------------------------- glBegin and glEnd */
 
 static const GlVertexAttrib g_no_attribs[MIME_GPU_MAX_ATTRIBS];
@@ -1493,6 +1816,39 @@ uint32_t gl_whole_primitives(GLenum mode, uint32_t count)
 }
 
 /*
+ * the vertices of glBegin are laid out for the fixed function program: position, color, normal and texture coordinate at 0
+ * to 3. a program that reads the built-in inputs has them at the locations they alias, and gets the others from the current
+ * values.
+ */
+static void remap_stored(GlContext *ctx, GlProgram *p, Source *src)
+{
+    Source stored[4];
+    memcpy(stored, src, sizeof(stored));
+    memset(src, 0, sizeof(Source) * MIME_GPU_MAX_ATTRIBS);
+    static const uint8_t location[4] = {0, 3, 2, 8};
+    for (int i = 0; i < 4; i++)
+        if (p->attrib_mask >> location[i] & 1)
+            src[location[i]] = stored[i];
+    for (uint32_t m = p->attrib_mask, l; m; m &= m - 1) {
+        l = (uint32_t)__builtin_ctz(m);
+        if (src[l].used)
+            continue;
+        GlMem mem;
+        if (!gl_stream_alloc(16, 16, &mem))
+            continue;
+        GLfloat value[4];
+        if (!gl_cg_current(ctx, l, value))
+            for (int c = 0; c < 4; c++)
+                value[c] = ctx->generic[l][c];
+        memcpy(mem.ptr, value, 16);
+        src[l].used = TRUE;
+        src[l].constant = TRUE;
+        src[l].mem = gl_mem(&mem);
+        src[l].format = 31;
+    }
+}
+
+/*
  * the draw of count vertices that are in memory the gpu reads: stride bytes apart, the position first and the color, normal
  * and texture coordinate at the offsets in at when they are stored, else the three vectors of constants. a batch of a display
  * list keeps the indices it needs for its primitives.
@@ -1517,6 +1873,8 @@ static void draw_stored(GlContext *ctx, GlProgram *p, GlVertexInput *in, GLenum 
         src[l].stride = stride;
     }
     in->attribs = g_no_attribs;
+    if (p->cg_attribs)
+        remap_stored(ctx, p, src);
     if (!prepare(ctx, p, in, src))
         return;
     if (needs_conversion(mode, in->flat)) {

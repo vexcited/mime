@@ -82,7 +82,7 @@ else()
     find_package(Threads REQUIRED)
     mime_glob(host_sources host/*.c host/linux/*.c host/vmm/*.c host/camera/*.c)
     list(FILTER host_sources EXCLUDE REGEX "/host/vmm/(vm|vcpu|lazy|loader|window)[.]c$")
-    list(APPEND host_sources host/gpu/shader.c host/ui/pe_icon.c)
+    list(APPEND host_sources host/gpu/shader.c host/gpu/glsl_compat.c host/ui/pe_icon.c)
 
     add_executable(mime ${host_sources} ${vulkan_host_sources} ${MIME_BUILD_GEN}/rom.S $<TARGET_OBJECTS:mvk-host>
         $<TARGET_OBJECTS:shaderc>)

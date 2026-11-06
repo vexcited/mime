@@ -1,0 +1,14 @@
+# names that are answered with the function of another name and that tools/genglaliases.py does not find by itself.
+glCreateShaderObjectARB glCreateShader
+glCreateProgramObjectARB glCreateProgram
+glAttachObjectARB glAttachShader
+glUseProgramObjectARB glUseProgram
+glGetAttachedObjectsARB glGetAttachedShaders
+glShaderSourceARB glShaderSource
+glGetShaderSourceARB glGetShaderSource
+glColorMaskIndexedEXT glColorMaski
+glEnableIndexedEXT glEnablei
+glDisableIndexedEXT glDisablei
+glIsEnabledIndexedEXT glIsEnabledi
+glGetBooleanIndexedvEXT glGetBooleani_v
+glGetIntegerIndexedvEXT glGetIntegeri_v

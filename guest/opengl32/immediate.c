@@ -155,6 +155,11 @@ static void client_state(GLenum array, BOOL on)
         return;
     }
     ctx->ff.unused_arrays[unused] = on;
+    /* the secondary color and fog coordinate arrays feed the built-in inputs of GLSL, which alias attributes 4 and 5. */
+    if (array == GL_SECONDARY_COLOR_ARRAY || array == GL_FOG_COORD_ARRAY) {
+        ctx->vao->attribs[array == GL_FOG_COORD_ARRAY ? 5 : 4].enabled = on;
+        ctx->dirty |= DIRTY_VERTEX | DIRTY_PIPELINE;
+    }
 }
 
 GLAPI void APIENTRY glEnableClientState(GLenum array)

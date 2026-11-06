@@ -25,6 +25,12 @@ static void x_glAccum(MX_NATIVE_CALL *c)
     glAccum((GLenum)I(c, 0), F(c, 1));
 }
 
+void APIENTRY glActiveShaderProgram(GLuint pipeline, GLuint program);
+static void x_glActiveShaderProgram(MX_NATIVE_CALL *c)
+{
+    glActiveShaderProgram((GLuint)I(c, 0), (GLuint)I(c, 1));
+}
+
 void APIENTRY glActiveTexture(GLenum texture);
 static void x_glActiveTexture(MX_NATIVE_CALL *c)
 {
@@ -61,10 +67,28 @@ static void x_glBegin(MX_NATIVE_CALL *c)
     glBegin((GLenum)I(c, 0));
 }
 
+void APIENTRY glBeginConditionalRender(GLuint name, GLenum mode);
+static void x_glBeginConditionalRender(MX_NATIVE_CALL *c)
+{
+    glBeginConditionalRender((GLuint)I(c, 0), (GLenum)I(c, 1));
+}
+
 void APIENTRY glBeginQuery(GLenum target, GLuint name);
 static void x_glBeginQuery(MX_NATIVE_CALL *c)
 {
     glBeginQuery((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glBeginQueryIndexed(GLenum target, GLuint index, GLuint name);
+static void x_glBeginQueryIndexed(MX_NATIVE_CALL *c)
+{
+    glBeginQueryIndexed((GLenum)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glBeginTransformFeedback(GLenum mode);
+static void x_glBeginTransformFeedback(MX_NATIVE_CALL *c)
+{
+    glBeginTransformFeedback((GLenum)I(c, 0));
 }
 
 void APIENTRY glBindAttribLocation(GLuint program, GLuint index, const GLchar *name);
@@ -91,10 +115,28 @@ static void x_glBindBufferRange(MX_NATIVE_CALL *c)
     glBindBufferRange((GLenum)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2), (GLintptr)I(c, 3), (GLsizeiptr)I(c, 4));
 }
 
+void APIENTRY glBindBuffersBase(GLenum target, GLuint first, GLsizei count, const GLuint *buffers);
+static void x_glBindBuffersBase(MX_NATIVE_CALL *c)
+{
+    glBindBuffersBase((GLenum)I(c, 0), (GLuint)I(c, 1), (GLsizei)I(c, 2), (const GLuint *)I(c, 3));
+}
+
+void APIENTRY glBindBuffersRange(GLenum target, GLuint first, GLsizei count, const GLuint *buffers,                                        const GLintptr *offsets, const GLsizeiptr *sizes);
+static void x_glBindBuffersRange(MX_NATIVE_CALL *c)
+{
+    glBindBuffersRange((GLenum)I(c, 0), (GLuint)I(c, 1), (GLsizei)I(c, 2), (const GLuint *)I(c, 3), (const GLintptr *)I(c, 4), (const GLsizeiptr *)I(c, 5));
+}
+
 void APIENTRY glBindFragDataLocation(GLuint program, GLuint color, const GLchar *name);
 static void x_glBindFragDataLocation(MX_NATIVE_CALL *c)
 {
     glBindFragDataLocation((GLuint)I(c, 0), (GLuint)I(c, 1), (const GLchar *)I(c, 2));
+}
+
+void APIENTRY glBindFragDataLocationIndexed(GLuint program, GLuint colorNumber, GLuint index, const GLchar *name);
+static void x_glBindFragDataLocationIndexed(MX_NATIVE_CALL *c)
+{
+    glBindFragDataLocationIndexed((GLuint)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2), (const GLchar *)I(c, 3));
 }
 
 void APIENTRY glBindFramebuffer(GLenum target, GLuint name);
@@ -103,10 +145,40 @@ static void x_glBindFramebuffer(MX_NATIVE_CALL *c)
     glBindFramebuffer((GLenum)I(c, 0), (GLuint)I(c, 1));
 }
 
+void APIENTRY glBindImageTexture(GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer,                                        GLenum access, GLenum format);
+static void x_glBindImageTexture(MX_NATIVE_CALL *c)
+{
+    glBindImageTexture((GLuint)I(c, 0), (GLuint)I(c, 1), (GLint)I(c, 2), (GLboolean)I(c, 3), (GLint)I(c, 4), (GLenum)I(c, 5), (GLenum)I(c, 6));
+}
+
+void APIENTRY glBindImageTextures(GLuint first, GLsizei count, const GLuint *textures);
+static void x_glBindImageTextures(MX_NATIVE_CALL *c)
+{
+    glBindImageTextures((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLuint *)I(c, 2));
+}
+
+void APIENTRY glBindProgramPipeline(GLuint pipeline);
+static void x_glBindProgramPipeline(MX_NATIVE_CALL *c)
+{
+    glBindProgramPipeline((GLuint)I(c, 0));
+}
+
 void APIENTRY glBindRenderbuffer(GLenum target, GLuint name);
 static void x_glBindRenderbuffer(MX_NATIVE_CALL *c)
 {
     glBindRenderbuffer((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glBindSampler(GLuint unit, GLuint sampler);
+static void x_glBindSampler(MX_NATIVE_CALL *c)
+{
+    glBindSampler((GLuint)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glBindSamplers(GLuint first, GLsizei count, const GLuint *samplers);
+static void x_glBindSamplers(MX_NATIVE_CALL *c)
+{
+    glBindSamplers((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLuint *)I(c, 2));
 }
 
 void APIENTRY glBindTexture(GLenum target, GLuint name);
@@ -115,10 +187,40 @@ static void x_glBindTexture(MX_NATIVE_CALL *c)
     glBindTexture((GLenum)I(c, 0), (GLuint)I(c, 1));
 }
 
+void APIENTRY glBindTextureUnit(GLuint unit, GLuint texture);
+static void x_glBindTextureUnit(MX_NATIVE_CALL *c)
+{
+    glBindTextureUnit((GLuint)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glBindTextures(GLuint first, GLsizei count, const GLuint *textures);
+static void x_glBindTextures(MX_NATIVE_CALL *c)
+{
+    glBindTextures((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLuint *)I(c, 2));
+}
+
+void APIENTRY glBindTransformFeedback(GLenum target, GLuint id);
+static void x_glBindTransformFeedback(MX_NATIVE_CALL *c)
+{
+    glBindTransformFeedback((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
 void APIENTRY glBindVertexArray(GLuint name);
 static void x_glBindVertexArray(MX_NATIVE_CALL *c)
 {
     glBindVertexArray((GLuint)I(c, 0));
+}
+
+void APIENTRY glBindVertexBuffer(GLuint binding, GLuint buffer, GLintptr offset, GLsizei stride);
+static void x_glBindVertexBuffer(MX_NATIVE_CALL *c)
+{
+    glBindVertexBuffer((GLuint)I(c, 0), (GLuint)I(c, 1), (GLintptr)I(c, 2), (GLsizei)I(c, 3));
+}
+
+void APIENTRY glBindVertexBuffers(GLuint first, GLsizei count, const GLuint *buffers, const GLintptr *offsets,                                         const GLsizei *strides);
+static void x_glBindVertexBuffers(MX_NATIVE_CALL *c)
+{
+    glBindVertexBuffers((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLuint *)I(c, 2), (const GLintptr *)I(c, 3), (const GLsizei *)I(c, 4));
 }
 
 void APIENTRY glBitmap(GLsizei width, GLsizei height, GLfloat xorig, GLfloat yorig, GLfloat xmove, GLfloat ymove, const GLubyte *bitmap);
@@ -145,6 +247,18 @@ static void x_glBlendEquationSeparate(MX_NATIVE_CALL *c)
     glBlendEquationSeparate((GLenum)I(c, 0), (GLenum)I(c, 1));
 }
 
+void APIENTRY glBlendEquationSeparatei(GLuint buf, GLenum rgb, GLenum alpha);
+static void x_glBlendEquationSeparatei(MX_NATIVE_CALL *c)
+{
+    glBlendEquationSeparatei((GLuint)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2));
+}
+
+void APIENTRY glBlendEquationi(GLuint buf, GLenum mode);
+static void x_glBlendEquationi(MX_NATIVE_CALL *c)
+{
+    glBlendEquationi((GLuint)I(c, 0), (GLenum)I(c, 1));
+}
+
 void APIENTRY glBlendFunc(GLenum src, GLenum dst);
 static void x_glBlendFunc(MX_NATIVE_CALL *c)
 {
@@ -157,10 +271,28 @@ static void x_glBlendFuncSeparate(MX_NATIVE_CALL *c)
     glBlendFuncSeparate((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3));
 }
 
+void APIENTRY glBlendFuncSeparatei(GLuint buf, GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_alpha);
+static void x_glBlendFuncSeparatei(MX_NATIVE_CALL *c)
+{
+    glBlendFuncSeparatei((GLuint)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3), (GLenum)I(c, 4));
+}
+
+void APIENTRY glBlendFunci(GLuint buf, GLenum src, GLenum dst);
+static void x_glBlendFunci(MX_NATIVE_CALL *c)
+{
+    glBlendFunci((GLuint)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2));
+}
+
 void APIENTRY glBlitFramebuffer(GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GLint dy0, GLint dx1,                                       GLint dy1, GLbitfield mask, GLenum filter);
 static void x_glBlitFramebuffer(MX_NATIVE_CALL *c)
 {
     glBlitFramebuffer((GLint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLint)I(c, 5), (GLint)I(c, 6), (GLint)I(c, 7), (GLbitfield)I(c, 8), (GLenum)I(c, 9));
+}
+
+void APIENTRY glBlitNamedFramebuffer(GLuint read, GLuint draw, GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0,                                            GLint dy0, GLint dx1, GLint dy1, GLbitfield mask, GLenum filter);
+static void x_glBlitNamedFramebuffer(MX_NATIVE_CALL *c)
+{
+    glBlitNamedFramebuffer((GLuint)I(c, 0), (GLuint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLint)I(c, 5), (GLint)I(c, 6), (GLint)I(c, 7), (GLint)I(c, 8), (GLint)I(c, 9), (GLbitfield)I(c, 10), (GLenum)I(c, 11));
 }
 
 void APIENTRY glBufferData(GLenum target, GLsizeiptr size, const void *data, GLenum usage);
@@ -199,6 +331,18 @@ static void x_glCheckFramebufferStatus(MX_NATIVE_CALL *c)
     c->rax = (unsigned long long)(ULONG_PTR)glCheckFramebufferStatus((GLenum)I(c, 0));
 }
 
+GLenum APIENTRY glCheckNamedFramebufferStatus(GLuint framebuffer, GLenum target);
+static void x_glCheckNamedFramebufferStatus(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glCheckNamedFramebufferStatus((GLuint)I(c, 0), (GLenum)I(c, 1));
+}
+
+void APIENTRY glClampColor(GLenum target, GLenum clamp);
+static void x_glClampColor(MX_NATIVE_CALL *c)
+{
+    glClampColor((GLenum)I(c, 0), (GLenum)I(c, 1));
+}
+
 void APIENTRY glClear(GLbitfield mask);
 static void x_glClear(MX_NATIVE_CALL *c)
 {
@@ -209,6 +353,18 @@ void APIENTRY glClearAccum(GLfloat red, GLfloat green, GLfloat blue, GLfloat alp
 static void x_glClearAccum(MX_NATIVE_CALL *c)
 {
     glClearAccum(F(c, 0), F(c, 1), F(c, 2), F(c, 3));
+}
+
+void APIENTRY glClearBufferData(GLenum target, GLenum internal, GLenum format, GLenum type, const void *data);
+static void x_glClearBufferData(MX_NATIVE_CALL *c)
+{
+    glClearBufferData((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3), (const void *)I(c, 4));
+}
+
+void APIENTRY glClearBufferSubData(GLenum target, GLenum internal, GLintptr offset, GLsizeiptr size, GLenum format,                                          GLenum type, const void *data);
+static void x_glClearBufferSubData(MX_NATIVE_CALL *c)
+{
+    glClearBufferSubData((GLenum)I(c, 0), (GLenum)I(c, 1), (GLintptr)I(c, 2), (GLsizeiptr)I(c, 3), (GLenum)I(c, 4), (GLenum)I(c, 5), (const void *)I(c, 6));
 }
 
 void APIENTRY glClearBufferfi(GLenum buffer, GLint index, GLfloat depth, GLint stencil);
@@ -227,6 +383,12 @@ void APIENTRY glClearBufferiv(GLenum buffer, GLint index, const GLint *value);
 static void x_glClearBufferiv(MX_NATIVE_CALL *c)
 {
     glClearBufferiv((GLenum)I(c, 0), (GLint)I(c, 1), (const GLint *)I(c, 2));
+}
+
+void APIENTRY glClearBufferuiv(GLenum buffer, GLint index, const GLuint *value);
+static void x_glClearBufferuiv(MX_NATIVE_CALL *c)
+{
+    glClearBufferuiv((GLenum)I(c, 0), (GLint)I(c, 1), (const GLuint *)I(c, 2));
 }
 
 void APIENTRY glClearColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a);
@@ -253,10 +415,58 @@ static void x_glClearIndex(MX_NATIVE_CALL *c)
     glClearIndex(F(c, 0));
 }
 
+void APIENTRY glClearNamedBufferData(GLuint buffer, GLenum internal, GLenum format, GLenum type, const void *data);
+static void x_glClearNamedBufferData(MX_NATIVE_CALL *c)
+{
+    glClearNamedBufferData((GLuint)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3), (const void *)I(c, 4));
+}
+
+void APIENTRY glClearNamedBufferSubData(GLuint buffer, GLenum internal, GLintptr offset, GLsizeiptr size,                                               GLenum format, GLenum type, const void *data);
+static void x_glClearNamedBufferSubData(MX_NATIVE_CALL *c)
+{
+    glClearNamedBufferSubData((GLuint)I(c, 0), (GLenum)I(c, 1), (GLintptr)I(c, 2), (GLsizeiptr)I(c, 3), (GLenum)I(c, 4), (GLenum)I(c, 5), (const void *)I(c, 6));
+}
+
+void APIENTRY glClearNamedFramebufferfi(GLuint framebuffer, GLenum buffer, GLint drawbuffer, GLfloat depth,                                               GLint stencil);
+static void x_glClearNamedFramebufferfi(MX_NATIVE_CALL *c)
+{
+    glClearNamedFramebufferfi((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint)I(c, 2), F(c, 3), (GLint)I(c, 4));
+}
+
+void APIENTRY glClearNamedFramebufferfv(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLfloat *value);
+static void x_glClearNamedFramebufferfv(MX_NATIVE_CALL *c)
+{
+    glClearNamedFramebufferfv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint)I(c, 2), (const GLfloat *)I(c, 3));
+}
+
+void APIENTRY glClearNamedFramebufferiv(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLint *value);
+static void x_glClearNamedFramebufferiv(MX_NATIVE_CALL *c)
+{
+    glClearNamedFramebufferiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint)I(c, 2), (const GLint *)I(c, 3));
+}
+
+void APIENTRY glClearNamedFramebufferuiv(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLuint *value);
+static void x_glClearNamedFramebufferuiv(MX_NATIVE_CALL *c)
+{
+    glClearNamedFramebufferuiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint)I(c, 2), (const GLuint *)I(c, 3));
+}
+
 void APIENTRY glClearStencil(GLint s);
 static void x_glClearStencil(MX_NATIVE_CALL *c)
 {
     glClearStencil((GLint)I(c, 0));
+}
+
+void APIENTRY glClearTexImage(GLuint texture, GLint level, GLenum format, GLenum type, const void *data);
+static void x_glClearTexImage(MX_NATIVE_CALL *c)
+{
+    glClearTexImage((GLuint)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3), (const void *)I(c, 4));
+}
+
+void APIENTRY glClearTexSubImage(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                        GLsizei d, GLenum format, GLenum type, const void *data);
+static void x_glClearTexSubImage(MX_NATIVE_CALL *c)
+{
+    glClearTexSubImage((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7), (GLenum)I(c, 8), (GLenum)I(c, 9), (const void *)I(c, 10));
 }
 
 void APIENTRY glClientActiveTexture(GLenum texture);
@@ -275,6 +485,12 @@ GLenum APIENTRY glClientWaitSync(GLsync handle, GLbitfield flags, GLuint64 timeo
 static void x_glClientWaitSync(MX_NATIVE_CALL *c)
 {
     c->rax = (unsigned long long)(ULONG_PTR)glClientWaitSync((GLsync)I(c, 0), (GLbitfield)I(c, 1), (GLuint64)I(c, 2));
+}
+
+void APIENTRY glClipControl(GLenum origin, GLenum depth);
+static void x_glClipControl(MX_NATIVE_CALL *c)
+{
+    glClipControl((GLenum)I(c, 0), (GLenum)I(c, 1));
 }
 
 void APIENTRY glClipPlane(GLenum plane, const GLdouble *equation);
@@ -481,7 +697,7 @@ static void x_glColorMask(MX_NATIVE_CALL *c)
     glColorMask((GLboolean)I(c, 0), (GLboolean)I(c, 1), (GLboolean)I(c, 2), (GLboolean)I(c, 3));
 }
 
-void APIENTRY glColorMaski(GLuint index, GLboolean r, GLboolean g, GLboolean b, GLboolean a);
+void APIENTRY glColorMaski(GLuint buf, GLboolean r, GLboolean g, GLboolean b, GLboolean a);
 static void x_glColorMaski(MX_NATIVE_CALL *c)
 {
     glColorMaski((GLuint)I(c, 0), (GLboolean)I(c, 1), (GLboolean)I(c, 2), (GLboolean)I(c, 3), (GLboolean)I(c, 4));
@@ -491,6 +707,30 @@ void APIENTRY glColorMaterial(GLenum face, GLenum mode);
 static void x_glColorMaterial(MX_NATIVE_CALL *c)
 {
     glColorMaterial((GLenum)I(c, 0), (GLenum)I(c, 1));
+}
+
+void APIENTRY glColorP3ui(GLenum type, GLuint color);
+static void x_glColorP3ui(MX_NATIVE_CALL *c)
+{
+    glColorP3ui((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glColorP3uiv(GLenum type, const GLuint *color);
+static void x_glColorP3uiv(MX_NATIVE_CALL *c)
+{
+    glColorP3uiv((GLenum)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glColorP4ui(GLenum type, GLuint color);
+static void x_glColorP4ui(MX_NATIVE_CALL *c)
+{
+    glColorP4ui((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glColorP4uiv(GLenum type, const GLuint *color);
+static void x_glColorP4uiv(MX_NATIVE_CALL *c)
+{
+    glColorP4uiv((GLenum)I(c, 0), (const GLuint *)I(c, 1));
 }
 
 void APIENTRY glColorPointer(GLint size, GLenum type, GLsizei stride, const void *pointer);
@@ -505,10 +745,28 @@ static void x_glCompileShader(MX_NATIVE_CALL *c)
     glCompileShader((GLuint)I(c, 0));
 }
 
+void APIENTRY glCompressedTexImage1D(GLenum target, GLint level, GLenum internal, GLsizei w, GLint border,                                            GLsizei size, const void *data);
+static void x_glCompressedTexImage1D(MX_NATIVE_CALL *c)
+{
+    glCompressedTexImage1D((GLenum)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (const void *)I(c, 6));
+}
+
 void APIENTRY glCompressedTexImage2D(GLenum target, GLint level, GLenum internal, GLsizei w, GLsizei h,                                            GLint border, GLsizei size, const void *data);
 static void x_glCompressedTexImage2D(MX_NATIVE_CALL *c)
 {
     glCompressedTexImage2D((GLenum)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLint)I(c, 5), (GLsizei)I(c, 6), (const void *)I(c, 7));
+}
+
+void APIENTRY glCompressedTexImage3D(GLenum target, GLint level, GLenum internal, GLsizei w, GLsizei h, GLsizei d,                                            GLint border, GLsizei size, const void *data);
+static void x_glCompressedTexImage3D(MX_NATIVE_CALL *c)
+{
+    glCompressedTexImage3D((GLenum)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5), (GLint)I(c, 6), (GLsizei)I(c, 7), (const void *)I(c, 8));
+}
+
+void APIENTRY glCompressedTexSubImage1D(GLenum target, GLint level, GLint x, GLsizei w, GLenum format, GLsizei size,                                               const void *data);
+static void x_glCompressedTexSubImage1D(MX_NATIVE_CALL *c)
+{
+    glCompressedTexSubImage1D((GLenum)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLsizei)I(c, 3), (GLenum)I(c, 4), (GLsizei)I(c, 5), (const void *)I(c, 6));
 }
 
 void APIENTRY glCompressedTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h,                                               GLenum format, GLsizei size, const void *data);
@@ -517,10 +775,46 @@ static void x_glCompressedTexSubImage2D(MX_NATIVE_CALL *c)
     glCompressedTexSubImage2D((GLenum)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5), (GLenum)I(c, 6), (GLsizei)I(c, 7), (const void *)I(c, 8));
 }
 
+void APIENTRY glCompressedTexSubImage3D(GLenum target, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                               GLsizei d, GLenum format, GLsizei size, const void *data);
+static void x_glCompressedTexSubImage3D(MX_NATIVE_CALL *c)
+{
+    glCompressedTexSubImage3D((GLenum)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7), (GLenum)I(c, 8), (GLsizei)I(c, 9), (const void *)I(c, 10));
+}
+
+void APIENTRY glCompressedTextureSubImage1D(GLuint texture, GLint level, GLint x, GLsizei w, GLenum format,                                                   GLsizei size, const void *data);
+static void x_glCompressedTextureSubImage1D(MX_NATIVE_CALL *c)
+{
+    glCompressedTextureSubImage1D((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLsizei)I(c, 3), (GLenum)I(c, 4), (GLsizei)I(c, 5), (const void *)I(c, 6));
+}
+
+void APIENTRY glCompressedTextureSubImage2D(GLuint texture, GLint level, GLint x, GLint y, GLsizei w, GLsizei h,                                                   GLenum format, GLsizei size, const void *data);
+static void x_glCompressedTextureSubImage2D(MX_NATIVE_CALL *c)
+{
+    glCompressedTextureSubImage2D((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5), (GLenum)I(c, 6), (GLsizei)I(c, 7), (const void *)I(c, 8));
+}
+
+void APIENTRY glCompressedTextureSubImage3D(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w,                                                   GLsizei h, GLsizei d, GLenum format, GLsizei size, const void *data);
+static void x_glCompressedTextureSubImage3D(MX_NATIVE_CALL *c)
+{
+    glCompressedTextureSubImage3D((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7), (GLenum)I(c, 8), (GLsizei)I(c, 9), (const void *)I(c, 10));
+}
+
 void APIENTRY glCopyBufferSubData(GLenum read_target, GLenum write_target, GLintptr read_offset,                                         GLintptr write_offset, GLsizeiptr size);
 static void x_glCopyBufferSubData(MX_NATIVE_CALL *c)
 {
     glCopyBufferSubData((GLenum)I(c, 0), (GLenum)I(c, 1), (GLintptr)I(c, 2), (GLintptr)I(c, 3), (GLsizeiptr)I(c, 4));
+}
+
+void APIENTRY glCopyImageSubData(GLuint src, GLenum src_target, GLint src_level, GLint sx, GLint sy, GLint sz,                                        GLuint dst, GLenum dst_target, GLint dst_level, GLint dx, GLint dy, GLint dz,                                        GLsizei w, GLsizei h, GLsizei d);
+static void x_glCopyImageSubData(MX_NATIVE_CALL *c)
+{
+    glCopyImageSubData((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLint)I(c, 5), (GLuint)I(c, 6), (GLenum)I(c, 7), (GLint)I(c, 8), (GLint)I(c, 9), (GLint)I(c, 10), (GLint)I(c, 11), (GLsizei)I(c, 12), (GLsizei)I(c, 13), (GLsizei)I(c, 14));
+}
+
+void APIENTRY glCopyNamedBufferSubData(GLuint read, GLuint write, GLintptr read_offset, GLintptr write_offset,                                              GLsizeiptr size);
+static void x_glCopyNamedBufferSubData(MX_NATIVE_CALL *c)
+{
+    glCopyNamedBufferSubData((GLuint)I(c, 0), (GLuint)I(c, 1), (GLintptr)I(c, 2), (GLintptr)I(c, 3), (GLsizeiptr)I(c, 4));
 }
 
 void APIENTRY glCopyPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum type);
@@ -553,10 +847,40 @@ static void x_glCopyTexSubImage2D(MX_NATIVE_CALL *c)
     glCopyTexSubImage2D((GLenum)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLint)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7));
 }
 
+void APIENTRY glCopyTexSubImage3D(GLenum target, GLint level, GLint dx, GLint dy, GLint dz, GLint x, GLint y, GLsizei w,                                         GLsizei h);
+static void x_glCopyTexSubImage3D(MX_NATIVE_CALL *c)
+{
+    glCopyTexSubImage3D((GLenum)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLint)I(c, 5), (GLint)I(c, 6), (GLsizei)I(c, 7), (GLsizei)I(c, 8));
+}
+
+void APIENTRY glCopyTextureSubImage1D(GLuint texture, GLint level, GLint x, GLint sx, GLint sy, GLsizei w);
+static void x_glCopyTextureSubImage1D(MX_NATIVE_CALL *c)
+{
+    glCopyTextureSubImage1D((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5));
+}
+
+void APIENTRY glCopyTextureSubImage2D(GLuint texture, GLint level, GLint x, GLint y, GLint sx, GLint sy, GLsizei w,                                             GLsizei h);
+static void x_glCopyTextureSubImage2D(MX_NATIVE_CALL *c)
+{
+    glCopyTextureSubImage2D((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLint)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7));
+}
+
+void APIENTRY glCopyTextureSubImage3D(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLint sx, GLint sy,                                             GLsizei w, GLsizei h);
+static void x_glCopyTextureSubImage3D(MX_NATIVE_CALL *c)
+{
+    glCopyTextureSubImage3D((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLint)I(c, 5), (GLint)I(c, 6), (GLsizei)I(c, 7), (GLsizei)I(c, 8));
+}
+
 void APIENTRY glCreateBuffers(GLsizei n, GLuint *buffers);
 static void x_glCreateBuffers(MX_NATIVE_CALL *c)
 {
     glCreateBuffers((GLsizei)I(c, 0), (GLuint *)I(c, 1));
+}
+
+void APIENTRY glCreateFramebuffers(GLsizei n, GLuint *framebuffers);
+static void x_glCreateFramebuffers(MX_NATIVE_CALL *c)
+{
+    glCreateFramebuffers((GLsizei)I(c, 0), (GLuint *)I(c, 1));
 }
 
 GLuint APIENTRY glCreateProgram(void);
@@ -565,10 +889,58 @@ static void x_glCreateProgram(MX_NATIVE_CALL *c)
     c->rax = (unsigned long long)(ULONG_PTR)glCreateProgram();
 }
 
+void APIENTRY glCreateProgramPipelines(GLsizei n, GLuint *pipelines);
+static void x_glCreateProgramPipelines(MX_NATIVE_CALL *c)
+{
+    glCreateProgramPipelines((GLsizei)I(c, 0), (GLuint *)I(c, 1));
+}
+
+void APIENTRY glCreateQueries(GLenum target, GLsizei count, GLuint *names);
+static void x_glCreateQueries(MX_NATIVE_CALL *c)
+{
+    glCreateQueries((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLuint *)I(c, 2));
+}
+
+void APIENTRY glCreateRenderbuffers(GLsizei n, GLuint *renderbuffers);
+static void x_glCreateRenderbuffers(MX_NATIVE_CALL *c)
+{
+    glCreateRenderbuffers((GLsizei)I(c, 0), (GLuint *)I(c, 1));
+}
+
+void APIENTRY glCreateSamplers(GLsizei count, GLuint *samplers);
+static void x_glCreateSamplers(MX_NATIVE_CALL *c)
+{
+    glCreateSamplers((GLsizei)I(c, 0), (GLuint *)I(c, 1));
+}
+
 GLuint APIENTRY glCreateShader(GLenum type);
 static void x_glCreateShader(MX_NATIVE_CALL *c)
 {
     c->rax = (unsigned long long)(ULONG_PTR)glCreateShader((GLenum)I(c, 0));
+}
+
+GLuint APIENTRY glCreateShaderProgramv(GLenum type, GLsizei count, const GLchar *const *strings);
+static void x_glCreateShaderProgramv(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glCreateShaderProgramv((GLenum)I(c, 0), (GLsizei)I(c, 1), (const GLchar *const *)I(c, 2));
+}
+
+void APIENTRY glCreateTextures(GLenum target, GLsizei n, GLuint *textures);
+static void x_glCreateTextures(MX_NATIVE_CALL *c)
+{
+    glCreateTextures((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLuint *)I(c, 2));
+}
+
+void APIENTRY glCreateTransformFeedbacks(GLsizei n, GLuint *ids);
+static void x_glCreateTransformFeedbacks(MX_NATIVE_CALL *c)
+{
+    glCreateTransformFeedbacks((GLsizei)I(c, 0), (GLuint *)I(c, 1));
+}
+
+void APIENTRY glCreateVertexArrays(GLsizei n, GLuint *arrays);
+static void x_glCreateVertexArrays(MX_NATIVE_CALL *c)
+{
+    glCreateVertexArrays((GLsizei)I(c, 0), (GLuint *)I(c, 1));
 }
 
 void APIENTRY glCullFace(GLenum mode);
@@ -613,10 +985,22 @@ static void x_glDeleteLists(MX_NATIVE_CALL *c)
     glDeleteLists((GLuint)I(c, 0), (GLsizei)I(c, 1));
 }
 
+void APIENTRY glDeleteObjectARB(GLuint object);
+static void x_glDeleteObjectARB(MX_NATIVE_CALL *c)
+{
+    glDeleteObjectARB((GLuint)I(c, 0));
+}
+
 void APIENTRY glDeleteProgram(GLuint name);
 static void x_glDeleteProgram(MX_NATIVE_CALL *c)
 {
     glDeleteProgram((GLuint)I(c, 0));
+}
+
+void APIENTRY glDeleteProgramPipelines(GLsizei n, const GLuint *pipelines);
+static void x_glDeleteProgramPipelines(MX_NATIVE_CALL *c)
+{
+    glDeleteProgramPipelines((GLsizei)I(c, 0), (const GLuint *)I(c, 1));
 }
 
 void APIENTRY glDeleteQueries(GLsizei count, const GLuint *names);
@@ -629,6 +1013,12 @@ void APIENTRY glDeleteRenderbuffers(GLsizei n, const GLuint *names);
 static void x_glDeleteRenderbuffers(MX_NATIVE_CALL *c)
 {
     glDeleteRenderbuffers((GLsizei)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glDeleteSamplers(GLsizei count, const GLuint *samplers);
+static void x_glDeleteSamplers(MX_NATIVE_CALL *c)
+{
+    glDeleteSamplers((GLsizei)I(c, 0), (const GLuint *)I(c, 1));
 }
 
 void APIENTRY glDeleteShader(GLuint name);
@@ -647,6 +1037,12 @@ void APIENTRY glDeleteTextures(GLsizei n, const GLuint *textures);
 static void x_glDeleteTextures(MX_NATIVE_CALL *c)
 {
     glDeleteTextures((GLsizei)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glDeleteTransformFeedbacks(GLsizei n, const GLuint *ids);
+static void x_glDeleteTransformFeedbacks(MX_NATIVE_CALL *c)
+{
+    glDeleteTransformFeedbacks((GLsizei)I(c, 0), (const GLuint *)I(c, 1));
 }
 
 void APIENTRY glDeleteVertexArrays(GLsizei n, const GLuint *arrays);
@@ -673,10 +1069,28 @@ static void x_glDepthRange(MX_NATIVE_CALL *c)
     glDepthRange(D(c, 0), D(c, 1));
 }
 
+void APIENTRY glDepthRangeArrayv(GLuint first, GLsizei count, const GLdouble *v);
+static void x_glDepthRangeArrayv(MX_NATIVE_CALL *c)
+{
+    glDepthRangeArrayv((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLdouble *)I(c, 2));
+}
+
+void APIENTRY glDepthRangeIndexed(GLuint index, GLdouble n, GLdouble f);
+static void x_glDepthRangeIndexed(MX_NATIVE_CALL *c)
+{
+    glDepthRangeIndexed((GLuint)I(c, 0), D(c, 1), D(c, 2));
+}
+
 void APIENTRY glDepthRangef(GLfloat n, GLfloat f);
 static void x_glDepthRangef(MX_NATIVE_CALL *c)
 {
     glDepthRangef(F(c, 0), F(c, 1));
+}
+
+void APIENTRY glDetachObjectARB(GLuint container, GLuint attached);
+static void x_glDetachObjectARB(MX_NATIVE_CALL *c)
+{
+    glDetachObjectARB((GLuint)I(c, 0), (GLuint)I(c, 1));
 }
 
 void APIENTRY glDetachShader(GLuint program, GLuint name);
@@ -697,6 +1111,12 @@ static void x_glDisableClientState(MX_NATIVE_CALL *c)
     glDisableClientState((GLenum)I(c, 0));
 }
 
+void APIENTRY glDisableVertexArrayAttrib(GLuint array, GLuint index);
+static void x_glDisableVertexArrayAttrib(MX_NATIVE_CALL *c)
+{
+    glDisableVertexArrayAttrib((GLuint)I(c, 0), (GLuint)I(c, 1));
+}
+
 void APIENTRY glDisableVertexAttribArray(GLuint index);
 static void x_glDisableVertexAttribArray(MX_NATIVE_CALL *c)
 {
@@ -715,10 +1135,28 @@ static void x_glDiscardFramebufferEXT(MX_NATIVE_CALL *c)
     glDiscardFramebufferEXT((GLenum)I(c, 0), (GLsizei)I(c, 1), (const GLenum *)I(c, 2));
 }
 
+void APIENTRY glDispatchCompute(GLuint x, GLuint y, GLuint z);
+static void x_glDispatchCompute(MX_NATIVE_CALL *c)
+{
+    glDispatchCompute((GLuint)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glDispatchComputeIndirect(GLintptr indirect);
+static void x_glDispatchComputeIndirect(MX_NATIVE_CALL *c)
+{
+    glDispatchComputeIndirect((GLintptr)I(c, 0));
+}
+
 void APIENTRY glDrawArrays(GLenum mode, GLint first, GLsizei count);
 static void x_glDrawArrays(MX_NATIVE_CALL *c)
 {
     glDrawArrays((GLenum)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2));
+}
+
+void APIENTRY glDrawArraysIndirect(GLenum mode, const void *indirect);
+static void x_glDrawArraysIndirect(MX_NATIVE_CALL *c)
+{
+    glDrawArraysIndirect((GLenum)I(c, 0), (const void *)I(c, 1));
 }
 
 void APIENTRY glDrawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei instances);
@@ -757,16 +1195,34 @@ static void x_glDrawElementsBaseVertex(MX_NATIVE_CALL *c)
     glDrawElementsBaseVertex((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (const void *)I(c, 3), (GLint)I(c, 4));
 }
 
+void APIENTRY glDrawElementsIndirect(GLenum mode, GLenum type, const void *indirect);
+static void x_glDrawElementsIndirect(MX_NATIVE_CALL *c)
+{
+    glDrawElementsIndirect((GLenum)I(c, 0), (GLenum)I(c, 1), (const void *)I(c, 2));
+}
+
 void APIENTRY glDrawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const void *indices,                                             GLsizei instances);
 static void x_glDrawElementsInstanced(MX_NATIVE_CALL *c)
 {
     glDrawElementsInstanced((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (const void *)I(c, 3), (GLsizei)I(c, 4));
 }
 
+void APIENTRY glDrawElementsInstancedBaseInstance(GLenum mode, GLsizei count, GLenum type, const void *indices,                                                         GLsizei instances, GLuint base_instance);
+static void x_glDrawElementsInstancedBaseInstance(MX_NATIVE_CALL *c)
+{
+    glDrawElementsInstancedBaseInstance((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (const void *)I(c, 3), (GLsizei)I(c, 4), (GLuint)I(c, 5));
+}
+
 void APIENTRY glDrawElementsInstancedBaseVertex(GLenum mode, GLsizei count, GLenum type, const void *indices,                                                       GLsizei instances, GLint base_vertex);
 static void x_glDrawElementsInstancedBaseVertex(MX_NATIVE_CALL *c)
 {
     glDrawElementsInstancedBaseVertex((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (const void *)I(c, 3), (GLsizei)I(c, 4), (GLint)I(c, 5));
+}
+
+void APIENTRY glDrawElementsInstancedBaseVertexBaseInstance(GLenum mode, GLsizei count, GLenum type,                                                                   const void *indices, GLsizei instances,                                                                   GLint base_vertex, GLuint base_instance);
+static void x_glDrawElementsInstancedBaseVertexBaseInstance(MX_NATIVE_CALL *c)
+{
+    glDrawElementsInstancedBaseVertexBaseInstance((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (const void *)I(c, 3), (GLsizei)I(c, 4), (GLint)I(c, 5), (GLuint)I(c, 6));
 }
 
 void APIENTRY glDrawPixels(GLsizei width, GLsizei height, GLenum format, GLenum type, const GLvoid *pixels);
@@ -785,6 +1241,30 @@ void APIENTRY glDrawRangeElementsBaseVertex(GLenum mode, GLuint start, GLuint en
 static void x_glDrawRangeElementsBaseVertex(MX_NATIVE_CALL *c)
 {
     glDrawRangeElementsBaseVertex((GLenum)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2), (GLsizei)I(c, 3), (GLenum)I(c, 4), (const void *)I(c, 5), (GLint)I(c, 6));
+}
+
+void APIENTRY glDrawTransformFeedback(GLenum mode, GLuint id);
+static void x_glDrawTransformFeedback(MX_NATIVE_CALL *c)
+{
+    glDrawTransformFeedback((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glDrawTransformFeedbackInstanced(GLenum mode, GLuint id, GLsizei instances);
+static void x_glDrawTransformFeedbackInstanced(MX_NATIVE_CALL *c)
+{
+    glDrawTransformFeedbackInstanced((GLenum)I(c, 0), (GLuint)I(c, 1), (GLsizei)I(c, 2));
+}
+
+void APIENTRY glDrawTransformFeedbackStream(GLenum mode, GLuint id, GLuint stream);
+static void x_glDrawTransformFeedbackStream(MX_NATIVE_CALL *c)
+{
+    glDrawTransformFeedbackStream((GLenum)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glDrawTransformFeedbackStreamInstanced(GLenum mode, GLuint id, GLuint stream, GLsizei instances);
+static void x_glDrawTransformFeedbackStreamInstanced(MX_NATIVE_CALL *c)
+{
+    glDrawTransformFeedbackStreamInstanced((GLenum)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2), (GLsizei)I(c, 3));
 }
 
 void APIENTRY glEdgeFlag(GLboolean flag);
@@ -817,6 +1297,12 @@ static void x_glEnableClientState(MX_NATIVE_CALL *c)
     glEnableClientState((GLenum)I(c, 0));
 }
 
+void APIENTRY glEnableVertexArrayAttrib(GLuint array, GLuint index);
+static void x_glEnableVertexArrayAttrib(MX_NATIVE_CALL *c)
+{
+    glEnableVertexArrayAttrib((GLuint)I(c, 0), (GLuint)I(c, 1));
+}
+
 void APIENTRY glEnableVertexAttribArray(GLuint index);
 static void x_glEnableVertexAttribArray(MX_NATIVE_CALL *c)
 {
@@ -835,6 +1321,12 @@ static void x_glEnd(MX_NATIVE_CALL *c)
     glEnd();
 }
 
+void APIENTRY glEndConditionalRender(void);
+static void x_glEndConditionalRender(MX_NATIVE_CALL *c)
+{
+    glEndConditionalRender();
+}
+
 void APIENTRY glEndList(void);
 static void x_glEndList(MX_NATIVE_CALL *c)
 {
@@ -845,6 +1337,18 @@ void APIENTRY glEndQuery(GLenum target);
 static void x_glEndQuery(MX_NATIVE_CALL *c)
 {
     glEndQuery((GLenum)I(c, 0));
+}
+
+void APIENTRY glEndQueryIndexed(GLenum target, GLuint index);
+static void x_glEndQueryIndexed(MX_NATIVE_CALL *c)
+{
+    glEndQueryIndexed((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glEndTransformFeedback(void);
+static void x_glEndTransformFeedback(MX_NATIVE_CALL *c)
+{
+    glEndTransformFeedback();
 }
 
 void APIENTRY glEvalCoord1d(GLdouble u);
@@ -949,6 +1453,42 @@ static void x_glFlushMappedBufferRange(MX_NATIVE_CALL *c)
     glFlushMappedBufferRange((GLenum)I(c, 0), (GLintptr)I(c, 1), (GLsizeiptr)I(c, 2));
 }
 
+void APIENTRY glFlushMappedNamedBufferRange(GLuint buffer, GLintptr offset, GLsizeiptr length);
+static void x_glFlushMappedNamedBufferRange(MX_NATIVE_CALL *c)
+{
+    glFlushMappedNamedBufferRange((GLuint)I(c, 0), (GLintptr)I(c, 1), (GLsizeiptr)I(c, 2));
+}
+
+void APIENTRY glFogCoordPointer(GLenum type, GLsizei stride, const void *pointer);
+static void x_glFogCoordPointer(MX_NATIVE_CALL *c)
+{
+    glFogCoordPointer((GLenum)I(c, 0), (GLsizei)I(c, 1), (const void *)I(c, 2));
+}
+
+void APIENTRY glFogCoordd(GLdouble coord);
+static void x_glFogCoordd(MX_NATIVE_CALL *c)
+{
+    glFogCoordd(D(c, 0));
+}
+
+void APIENTRY glFogCoorddv(const GLdouble *coord);
+static void x_glFogCoorddv(MX_NATIVE_CALL *c)
+{
+    glFogCoorddv((const GLdouble *)I(c, 0));
+}
+
+void APIENTRY glFogCoordf(GLfloat coord);
+static void x_glFogCoordf(MX_NATIVE_CALL *c)
+{
+    glFogCoordf(F(c, 0));
+}
+
+void APIENTRY glFogCoordfv(const GLfloat *coord);
+static void x_glFogCoordfv(MX_NATIVE_CALL *c)
+{
+    glFogCoordfv((const GLfloat *)I(c, 0));
+}
+
 void APIENTRY glFogf(GLenum pname, GLfloat param);
 static void x_glFogf(MX_NATIVE_CALL *c)
 {
@@ -973,6 +1513,12 @@ static void x_glFogiv(MX_NATIVE_CALL *c)
     glFogiv((GLenum)I(c, 0), (const GLint *)I(c, 1));
 }
 
+void APIENTRY glFramebufferParameteri(GLenum target, GLenum pname, GLint param);
+static void x_glFramebufferParameteri(MX_NATIVE_CALL *c)
+{
+    glFramebufferParameteri((GLenum)I(c, 0), (GLenum)I(c, 1), (GLint)I(c, 2));
+}
+
 void APIENTRY glFramebufferRenderbuffer(GLenum target, GLenum point, GLenum rbtarget, GLuint rb);
 static void x_glFramebufferRenderbuffer(MX_NATIVE_CALL *c)
 {
@@ -995,6 +1541,12 @@ void APIENTRY glFramebufferTexture2D(GLenum target, GLenum point, GLenum textarg
 static void x_glFramebufferTexture2D(MX_NATIVE_CALL *c)
 {
     glFramebufferTexture2D((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLuint)I(c, 3), (GLint)I(c, 4));
+}
+
+void APIENTRY glFramebufferTexture3D(GLenum target, GLenum point, GLenum textarget, GLuint texture, GLint level,                                            GLint zoffset);
+static void x_glFramebufferTexture3D(MX_NATIVE_CALL *c)
+{
+    glFramebufferTexture3D((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLuint)I(c, 3), (GLint)I(c, 4), (GLint)I(c, 5));
 }
 
 void APIENTRY glFramebufferTextureLayer(GLenum target, GLenum point, GLuint texture, GLint level, GLint layer);
@@ -1033,6 +1585,12 @@ static void x_glGenLists(MX_NATIVE_CALL *c)
     c->rax = (unsigned long long)(ULONG_PTR)glGenLists((GLsizei)I(c, 0));
 }
 
+void APIENTRY glGenProgramPipelines(GLsizei n, GLuint *pipelines);
+static void x_glGenProgramPipelines(MX_NATIVE_CALL *c)
+{
+    glGenProgramPipelines((GLsizei)I(c, 0), (GLuint *)I(c, 1));
+}
+
 void APIENTRY glGenQueries(GLsizei count, GLuint *names);
 static void x_glGenQueries(MX_NATIVE_CALL *c)
 {
@@ -1045,10 +1603,22 @@ static void x_glGenRenderbuffers(MX_NATIVE_CALL *c)
     glGenRenderbuffers((GLsizei)I(c, 0), (GLuint *)I(c, 1));
 }
 
+void APIENTRY glGenSamplers(GLsizei count, GLuint *samplers);
+static void x_glGenSamplers(MX_NATIVE_CALL *c)
+{
+    glGenSamplers((GLsizei)I(c, 0), (GLuint *)I(c, 1));
+}
+
 void APIENTRY glGenTextures(GLsizei n, GLuint *textures);
 static void x_glGenTextures(MX_NATIVE_CALL *c)
 {
     glGenTextures((GLsizei)I(c, 0), (GLuint *)I(c, 1));
+}
+
+void APIENTRY glGenTransformFeedbacks(GLsizei n, GLuint *ids);
+static void x_glGenTransformFeedbacks(MX_NATIVE_CALL *c)
+{
+    glGenTransformFeedbacks((GLsizei)I(c, 0), (GLuint *)I(c, 1));
 }
 
 void APIENTRY glGenVertexArrays(GLsizei n, GLuint *arrays);
@@ -1063,10 +1633,40 @@ static void x_glGenerateMipmap(MX_NATIVE_CALL *c)
     glGenerateMipmap((GLenum)I(c, 0));
 }
 
+void APIENTRY glGenerateTextureMipmap(GLuint texture);
+static void x_glGenerateTextureMipmap(MX_NATIVE_CALL *c)
+{
+    glGenerateTextureMipmap((GLuint)I(c, 0));
+}
+
+void APIENTRY glGetActiveAtomicCounterBufferiv(GLuint program, GLuint index, GLenum pname, GLint *params);
+static void x_glGetActiveAtomicCounterBufferiv(MX_NATIVE_CALL *c)
+{
+    glGetActiveAtomicCounterBufferiv((GLuint)I(c, 0), (GLuint)I(c, 1), (GLenum)I(c, 2), (GLint *)I(c, 3));
+}
+
 void APIENTRY glGetActiveAttrib(GLuint name, GLuint index, GLsizei size, GLsizei *length, GLint *count,                                       GLenum *type, GLchar *out);
 static void x_glGetActiveAttrib(MX_NATIVE_CALL *c)
 {
     glGetActiveAttrib((GLuint)I(c, 0), (GLuint)I(c, 1), (GLsizei)I(c, 2), (GLsizei *)I(c, 3), (GLint *)I(c, 4), (GLenum *)I(c, 5), (GLchar *)I(c, 6));
+}
+
+void APIENTRY glGetActiveSubroutineName(GLuint program, GLenum shadertype, GLuint index, GLsizei bufsize,                                                GLsizei *length, GLchar *name);
+static void x_glGetActiveSubroutineName(MX_NATIVE_CALL *c)
+{
+    glGetActiveSubroutineName((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLsizei)I(c, 3), (GLsizei *)I(c, 4), (GLchar *)I(c, 5));
+}
+
+void APIENTRY glGetActiveSubroutineUniformName(GLuint program, GLenum shadertype, GLuint index, GLsizei bufsize,                                                       GLsizei *length, GLchar *name);
+static void x_glGetActiveSubroutineUniformName(MX_NATIVE_CALL *c)
+{
+    glGetActiveSubroutineUniformName((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLsizei)I(c, 3), (GLsizei *)I(c, 4), (GLchar *)I(c, 5));
+}
+
+void APIENTRY glGetActiveSubroutineUniformiv(GLuint program, GLenum shadertype, GLuint index, GLenum pname,                                                     GLint *values);
+static void x_glGetActiveSubroutineUniformiv(MX_NATIVE_CALL *c)
+{
+    glGetActiveSubroutineUniformiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLenum)I(c, 3), (GLint *)I(c, 4));
 }
 
 void APIENTRY glGetActiveUniform(GLuint name, GLuint index, GLsizei size, GLsizei *length, GLint *count,                                        GLenum *type, GLchar *out);
@@ -1085,6 +1685,12 @@ void APIENTRY glGetActiveUniformBlockiv(GLuint program, GLuint index, GLenum pna
 static void x_glGetActiveUniformBlockiv(MX_NATIVE_CALL *c)
 {
     glGetActiveUniformBlockiv((GLuint)I(c, 0), (GLuint)I(c, 1), (GLenum)I(c, 2), (GLint *)I(c, 3));
+}
+
+void APIENTRY glGetActiveUniformName(GLuint name, GLuint index, GLsizei size, GLsizei *length, GLchar *out);
+static void x_glGetActiveUniformName(MX_NATIVE_CALL *c)
+{
+    glGetActiveUniformName((GLuint)I(c, 0), (GLuint)I(c, 1), (GLsizei)I(c, 2), (GLsizei *)I(c, 3), (GLchar *)I(c, 4));
 }
 
 void APIENTRY glGetActiveUniformsiv(GLuint name, GLsizei count, const GLuint *indices, GLenum pname,                                           GLint *params);
@@ -1147,10 +1753,34 @@ static void x_glGetClipPlane(MX_NATIVE_CALL *c)
     glGetClipPlane((GLenum)I(c, 0), (GLdouble *)I(c, 1));
 }
 
+void APIENTRY glGetCompressedTexImage(GLenum target, GLint level, void *image);
+static void x_glGetCompressedTexImage(MX_NATIVE_CALL *c)
+{
+    glGetCompressedTexImage((GLenum)I(c, 0), (GLint)I(c, 1), (void *)I(c, 2));
+}
+
+void APIENTRY glGetCompressedTextureImage(GLuint texture, GLint level, GLsizei size, void *pixels);
+static void x_glGetCompressedTextureImage(MX_NATIVE_CALL *c)
+{
+    glGetCompressedTextureImage((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (void *)I(c, 3));
+}
+
+void APIENTRY glGetCompressedTextureSubImage(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w,                                                    GLsizei h, GLsizei d, GLsizei size, void *pixels);
+static void x_glGetCompressedTextureSubImage(MX_NATIVE_CALL *c)
+{
+    glGetCompressedTextureSubImage((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7), (GLsizei)I(c, 8), (void *)I(c, 9));
+}
+
 GLuint APIENTRY glGetDebugMessageLog(GLuint count, GLsizei size, GLenum *sources, GLenum *types, GLuint *ids,                                            GLenum *severities, GLsizei *lengths, GLchar *log);
 static void x_glGetDebugMessageLog(MX_NATIVE_CALL *c)
 {
     c->rax = (unsigned long long)(ULONG_PTR)glGetDebugMessageLog((GLuint)I(c, 0), (GLsizei)I(c, 1), (GLenum *)I(c, 2), (GLenum *)I(c, 3), (GLuint *)I(c, 4), (GLenum *)I(c, 5), (GLsizei *)I(c, 6), (GLchar *)I(c, 7));
+}
+
+void APIENTRY glGetDoublei_v(GLenum target, GLuint index, GLdouble *data);
+static void x_glGetDoublei_v(MX_NATIVE_CALL *c)
+{
+    glGetDoublei_v((GLenum)I(c, 0), (GLuint)I(c, 1), (GLdouble *)I(c, 2));
 }
 
 void APIENTRY glGetDoublev(GLenum pname, GLdouble *data);
@@ -1165,16 +1795,70 @@ static void x_glGetError(MX_NATIVE_CALL *c)
     c->rax = (unsigned long long)(ULONG_PTR)glGetError();
 }
 
+void APIENTRY glGetFloati_v(GLenum target, GLuint index, GLfloat *data);
+static void x_glGetFloati_v(MX_NATIVE_CALL *c)
+{
+    glGetFloati_v((GLenum)I(c, 0), (GLuint)I(c, 1), (GLfloat *)I(c, 2));
+}
+
 void APIENTRY glGetFloatv(GLenum pname, GLfloat *data);
 static void x_glGetFloatv(MX_NATIVE_CALL *c)
 {
     glGetFloatv((GLenum)I(c, 0), (GLfloat *)I(c, 1));
 }
 
+GLint APIENTRY glGetFragDataIndex(GLuint program, const GLchar *name);
+static void x_glGetFragDataIndex(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glGetFragDataIndex((GLuint)I(c, 0), (const GLchar *)I(c, 1));
+}
+
+GLint APIENTRY glGetFragDataLocation(GLuint program, const GLchar *name);
+static void x_glGetFragDataLocation(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glGetFragDataLocation((GLuint)I(c, 0), (const GLchar *)I(c, 1));
+}
+
 void APIENTRY glGetFramebufferAttachmentParameteriv(GLenum target, GLenum point, GLenum pname, GLint *params);
 static void x_glGetFramebufferAttachmentParameteriv(MX_NATIVE_CALL *c)
 {
     glGetFramebufferAttachmentParameteriv((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLint *)I(c, 3));
+}
+
+void APIENTRY glGetFramebufferParameteriv(GLenum target, GLenum pname, GLint *params);
+static void x_glGetFramebufferParameteriv(MX_NATIVE_CALL *c)
+{
+    glGetFramebufferParameteriv((GLenum)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+GLenum APIENTRY glGetGraphicsResetStatus(void);
+static void x_glGetGraphicsResetStatus(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glGetGraphicsResetStatus();
+}
+
+GLenum APIENTRY glGetGraphicsResetStatusARB(void);
+static void x_glGetGraphicsResetStatusARB(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glGetGraphicsResetStatusARB();
+}
+
+GLuint APIENTRY glGetHandleARB(GLenum pname);
+static void x_glGetHandleARB(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glGetHandleARB((GLenum)I(c, 0));
+}
+
+void APIENTRY glGetInfoLogARB(GLuint object, GLsizei size, GLsizei *length, GLchar *log);
+static void x_glGetInfoLogARB(MX_NATIVE_CALL *c)
+{
+    glGetInfoLogARB((GLuint)I(c, 0), (GLsizei)I(c, 1), (GLsizei *)I(c, 2), (GLchar *)I(c, 3));
+}
+
+void APIENTRY glGetInteger64i_v(GLenum target, GLuint index, GLint64 *data);
+static void x_glGetInteger64i_v(MX_NATIVE_CALL *c)
+{
+    glGetInteger64i_v((GLenum)I(c, 0), (GLuint)I(c, 1), (GLint64 *)I(c, 2));
 }
 
 void APIENTRY glGetInteger64v(GLenum pname, GLint64 *data);
@@ -1193,6 +1877,18 @@ void APIENTRY glGetIntegerv(GLenum pname, GLint *data);
 static void x_glGetIntegerv(MX_NATIVE_CALL *c)
 {
     glGetIntegerv((GLenum)I(c, 0), (GLint *)I(c, 1));
+}
+
+void APIENTRY glGetInternalformati64v(GLenum target, GLenum internal, GLenum pname, GLsizei size, GLint64 *params);
+static void x_glGetInternalformati64v(MX_NATIVE_CALL *c)
+{
+    glGetInternalformati64v((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLint64 *)I(c, 4));
+}
+
+void APIENTRY glGetInternalformativ(GLenum target, GLenum internal, GLenum pname, GLsizei size, GLint *params);
+static void x_glGetInternalformativ(MX_NATIVE_CALL *c)
+{
+    glGetInternalformativ((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLint *)I(c, 4));
 }
 
 void APIENTRY glGetLightfv(GLenum l, GLenum pname, GLfloat *params);
@@ -1237,6 +1933,78 @@ static void x_glGetMaterialiv(MX_NATIVE_CALL *c)
     glGetMaterialiv((GLenum)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
 }
 
+void APIENTRY glGetMultisamplefv(GLenum pname, GLuint index, GLfloat *val);
+static void x_glGetMultisamplefv(MX_NATIVE_CALL *c)
+{
+    glGetMultisamplefv((GLenum)I(c, 0), (GLuint)I(c, 1), (GLfloat *)I(c, 2));
+}
+
+void APIENTRY glGetNamedBufferParameteri64v(GLuint buffer, GLenum pname, GLint64 *params);
+static void x_glGetNamedBufferParameteri64v(MX_NATIVE_CALL *c)
+{
+    glGetNamedBufferParameteri64v((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint64 *)I(c, 2));
+}
+
+void APIENTRY glGetNamedBufferParameteriv(GLuint buffer, GLenum pname, GLint *params);
+static void x_glGetNamedBufferParameteriv(MX_NATIVE_CALL *c)
+{
+    glGetNamedBufferParameteriv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+void APIENTRY glGetNamedBufferPointerv(GLuint buffer, GLenum pname, void **params);
+static void x_glGetNamedBufferPointerv(MX_NATIVE_CALL *c)
+{
+    glGetNamedBufferPointerv((GLuint)I(c, 0), (GLenum)I(c, 1), (void **)I(c, 2));
+}
+
+void APIENTRY glGetNamedBufferSubData(GLuint buffer, GLintptr offset, GLsizeiptr size, void *data);
+static void x_glGetNamedBufferSubData(MX_NATIVE_CALL *c)
+{
+    glGetNamedBufferSubData((GLuint)I(c, 0), (GLintptr)I(c, 1), (GLsizeiptr)I(c, 2), (void *)I(c, 3));
+}
+
+void APIENTRY glGetNamedFramebufferAttachmentParameteriv(GLuint framebuffer, GLenum attachment, GLenum pname,                                                                GLint *params);
+static void x_glGetNamedFramebufferAttachmentParameteriv(MX_NATIVE_CALL *c)
+{
+    glGetNamedFramebufferAttachmentParameteriv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLint *)I(c, 3));
+}
+
+void APIENTRY glGetNamedFramebufferParameteriv(GLuint framebuffer, GLenum pname, GLint *params);
+static void x_glGetNamedFramebufferParameteriv(MX_NATIVE_CALL *c)
+{
+    glGetNamedFramebufferParameteriv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+void APIENTRY glGetNamedRenderbufferParameteriv(GLuint renderbuffer, GLenum pname, GLint *params);
+static void x_glGetNamedRenderbufferParameteriv(MX_NATIVE_CALL *c)
+{
+    glGetNamedRenderbufferParameteriv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+void APIENTRY glGetObjectLabel(GLenum identifier, GLuint name, GLsizei size, GLsizei *length, GLchar *label);
+static void x_glGetObjectLabel(MX_NATIVE_CALL *c)
+{
+    glGetObjectLabel((GLenum)I(c, 0), (GLuint)I(c, 1), (GLsizei)I(c, 2), (GLsizei *)I(c, 3), (GLchar *)I(c, 4));
+}
+
+void APIENTRY glGetObjectParameterfvARB(GLuint object, GLenum pname, GLfloat *params);
+static void x_glGetObjectParameterfvARB(MX_NATIVE_CALL *c)
+{
+    glGetObjectParameterfvARB((GLuint)I(c, 0), (GLenum)I(c, 1), (GLfloat *)I(c, 2));
+}
+
+void APIENTRY glGetObjectParameterivARB(GLuint object, GLenum pname, GLint *params);
+static void x_glGetObjectParameterivARB(MX_NATIVE_CALL *c)
+{
+    glGetObjectParameterivARB((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+void APIENTRY glGetObjectPtrLabel(const void *ptr, GLsizei size, GLsizei *length, GLchar *label);
+static void x_glGetObjectPtrLabel(MX_NATIVE_CALL *c)
+{
+    glGetObjectPtrLabel((const void *)I(c, 0), (GLsizei)I(c, 1), (GLsizei *)I(c, 2), (GLchar *)I(c, 3));
+}
+
 void APIENTRY glGetPixelMapfv(GLenum map, GLfloat *values);
 static void x_glGetPixelMapfv(MX_NATIVE_CALL *c)
 {
@@ -1267,16 +2035,106 @@ static void x_glGetPolygonStipple(MX_NATIVE_CALL *c)
     glGetPolygonStipple((GLubyte *)I(c, 0));
 }
 
+void APIENTRY glGetProgramBinary(GLuint name, GLsizei size, GLsizei *length, GLenum *format, void *binary);
+static void x_glGetProgramBinary(MX_NATIVE_CALL *c)
+{
+    glGetProgramBinary((GLuint)I(c, 0), (GLsizei)I(c, 1), (GLsizei *)I(c, 2), (GLenum *)I(c, 3), (void *)I(c, 4));
+}
+
 void APIENTRY glGetProgramInfoLog(GLuint name, GLsizei size, GLsizei *length, GLchar *log);
 static void x_glGetProgramInfoLog(MX_NATIVE_CALL *c)
 {
     glGetProgramInfoLog((GLuint)I(c, 0), (GLsizei)I(c, 1), (GLsizei *)I(c, 2), (GLchar *)I(c, 3));
 }
 
+void APIENTRY glGetProgramInterfaceiv(GLuint program, GLenum iface, GLenum pname, GLint *params);
+static void x_glGetProgramInterfaceiv(MX_NATIVE_CALL *c)
+{
+    glGetProgramInterfaceiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLint *)I(c, 3));
+}
+
+void APIENTRY glGetProgramPipelineInfoLog(GLuint pipeline, GLsizei size, GLsizei *length, GLchar *log);
+static void x_glGetProgramPipelineInfoLog(MX_NATIVE_CALL *c)
+{
+    glGetProgramPipelineInfoLog((GLuint)I(c, 0), (GLsizei)I(c, 1), (GLsizei *)I(c, 2), (GLchar *)I(c, 3));
+}
+
+void APIENTRY glGetProgramPipelineiv(GLuint pipeline, GLenum pname, GLint *params);
+static void x_glGetProgramPipelineiv(MX_NATIVE_CALL *c)
+{
+    glGetProgramPipelineiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+GLuint APIENTRY glGetProgramResourceIndex(GLuint program, GLenum iface, const GLchar *name);
+static void x_glGetProgramResourceIndex(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glGetProgramResourceIndex((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLchar *)I(c, 2));
+}
+
+GLint APIENTRY glGetProgramResourceLocation(GLuint program, GLenum iface, const GLchar *name);
+static void x_glGetProgramResourceLocation(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glGetProgramResourceLocation((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLchar *)I(c, 2));
+}
+
+GLint APIENTRY glGetProgramResourceLocationIndex(GLuint program, GLenum iface, const GLchar *name);
+static void x_glGetProgramResourceLocationIndex(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glGetProgramResourceLocationIndex((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLchar *)I(c, 2));
+}
+
+void APIENTRY glGetProgramResourceName(GLuint program, GLenum iface, GLuint index, GLsizei size, GLsizei *length,                                               GLchar *name);
+static void x_glGetProgramResourceName(MX_NATIVE_CALL *c)
+{
+    glGetProgramResourceName((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLsizei)I(c, 3), (GLsizei *)I(c, 4), (GLchar *)I(c, 5));
+}
+
+void APIENTRY glGetProgramResourceiv(GLuint program, GLenum iface, GLuint index, GLsizei prop_count,                                             const GLenum *props, GLsizei size, GLsizei *length, GLint *params);
+static void x_glGetProgramResourceiv(MX_NATIVE_CALL *c)
+{
+    glGetProgramResourceiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLsizei)I(c, 3), (const GLenum *)I(c, 4), (GLsizei)I(c, 5), (GLsizei *)I(c, 6), (GLint *)I(c, 7));
+}
+
+void APIENTRY glGetProgramStageiv(GLuint program, GLenum shadertype, GLenum pname, GLint *values);
+static void x_glGetProgramStageiv(MX_NATIVE_CALL *c)
+{
+    glGetProgramStageiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLint *)I(c, 3));
+}
+
 void APIENTRY glGetProgramiv(GLuint name, GLenum pname, GLint *params);
 static void x_glGetProgramiv(MX_NATIVE_CALL *c)
 {
     glGetProgramiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+void APIENTRY glGetQueryBufferObjecti64v(GLuint id, GLuint buffer, GLenum pname, GLintptr offset);
+static void x_glGetQueryBufferObjecti64v(MX_NATIVE_CALL *c)
+{
+    glGetQueryBufferObjecti64v((GLuint)I(c, 0), (GLuint)I(c, 1), (GLenum)I(c, 2), (GLintptr)I(c, 3));
+}
+
+void APIENTRY glGetQueryBufferObjectiv(GLuint id, GLuint buffer, GLenum pname, GLintptr offset);
+static void x_glGetQueryBufferObjectiv(MX_NATIVE_CALL *c)
+{
+    glGetQueryBufferObjectiv((GLuint)I(c, 0), (GLuint)I(c, 1), (GLenum)I(c, 2), (GLintptr)I(c, 3));
+}
+
+void APIENTRY glGetQueryBufferObjectui64v(GLuint id, GLuint buffer, GLenum pname, GLintptr offset);
+static void x_glGetQueryBufferObjectui64v(MX_NATIVE_CALL *c)
+{
+    glGetQueryBufferObjectui64v((GLuint)I(c, 0), (GLuint)I(c, 1), (GLenum)I(c, 2), (GLintptr)I(c, 3));
+}
+
+void APIENTRY glGetQueryBufferObjectuiv(GLuint id, GLuint buffer, GLenum pname, GLintptr offset);
+static void x_glGetQueryBufferObjectuiv(MX_NATIVE_CALL *c)
+{
+    glGetQueryBufferObjectuiv((GLuint)I(c, 0), (GLuint)I(c, 1), (GLenum)I(c, 2), (GLintptr)I(c, 3));
+}
+
+void APIENTRY glGetQueryIndexediv(GLenum target, GLuint index, GLenum pname, GLint *value);
+static void x_glGetQueryIndexediv(MX_NATIVE_CALL *c)
+{
+    glGetQueryIndexediv((GLenum)I(c, 0), (GLuint)I(c, 1), (GLenum)I(c, 2), (GLint *)I(c, 3));
 }
 
 void APIENTRY glGetQueryObjecti64v(GLuint name, GLenum pname, GLint64 *value);
@@ -1315,6 +2173,30 @@ static void x_glGetRenderbufferParameteriv(MX_NATIVE_CALL *c)
     glGetRenderbufferParameteriv((GLenum)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
 }
 
+void APIENTRY glGetSamplerParameterIiv(GLuint sampler, GLenum pname, GLint *params);
+static void x_glGetSamplerParameterIiv(MX_NATIVE_CALL *c)
+{
+    glGetSamplerParameterIiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+void APIENTRY glGetSamplerParameterIuiv(GLuint sampler, GLenum pname, GLuint *params);
+static void x_glGetSamplerParameterIuiv(MX_NATIVE_CALL *c)
+{
+    glGetSamplerParameterIuiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint *)I(c, 2));
+}
+
+void APIENTRY glGetSamplerParameterfv(GLuint sampler, GLenum pname, GLfloat *params);
+static void x_glGetSamplerParameterfv(MX_NATIVE_CALL *c)
+{
+    glGetSamplerParameterfv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLfloat *)I(c, 2));
+}
+
+void APIENTRY glGetSamplerParameteriv(GLuint sampler, GLenum pname, GLint *params);
+static void x_glGetSamplerParameteriv(MX_NATIVE_CALL *c)
+{
+    glGetSamplerParameteriv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
 void APIENTRY glGetShaderInfoLog(GLuint name, GLsizei size, GLsizei *length, GLchar *log);
 static void x_glGetShaderInfoLog(MX_NATIVE_CALL *c)
 {
@@ -1349,6 +2231,18 @@ const GLubyte* APIENTRY glGetStringi(GLenum name, GLuint index);
 static void x_glGetStringi(MX_NATIVE_CALL *c)
 {
     c->rax = (unsigned long long)(ULONG_PTR)glGetStringi((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+GLuint APIENTRY glGetSubroutineIndex(GLuint program, GLenum shadertype, const GLchar *name);
+static void x_glGetSubroutineIndex(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glGetSubroutineIndex((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLchar *)I(c, 2));
+}
+
+GLint APIENTRY glGetSubroutineUniformLocation(GLuint program, GLenum shadertype, const GLchar *name);
+static void x_glGetSubroutineUniformLocation(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glGetSubroutineUniformLocation((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLchar *)I(c, 2));
 }
 
 void APIENTRY glGetSynciv(GLsync handle, GLenum pname, GLsizei size, GLsizei *length, GLint *values);
@@ -1405,6 +2299,18 @@ static void x_glGetTexLevelParameteriv(MX_NATIVE_CALL *c)
     glGetTexLevelParameteriv((GLenum)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLint *)I(c, 3));
 }
 
+void APIENTRY glGetTexParameterIiv(GLenum target, GLenum pname, GLint *params);
+static void x_glGetTexParameterIiv(MX_NATIVE_CALL *c)
+{
+    glGetTexParameterIiv((GLenum)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+void APIENTRY glGetTexParameterIuiv(GLenum target, GLenum pname, GLuint *params);
+static void x_glGetTexParameterIuiv(MX_NATIVE_CALL *c)
+{
+    glGetTexParameterIuiv((GLenum)I(c, 0), (GLenum)I(c, 1), (GLuint *)I(c, 2));
+}
+
 void APIENTRY glGetTexParameterfv(GLenum target, GLenum pname, GLfloat *params);
 static void x_glGetTexParameterfv(MX_NATIVE_CALL *c)
 {
@@ -1417,16 +2323,106 @@ static void x_glGetTexParameteriv(MX_NATIVE_CALL *c)
     glGetTexParameteriv((GLenum)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
 }
 
+void APIENTRY glGetTextureImage(GLuint texture, GLint level, GLenum format, GLenum type, GLsizei size, void *pixels);
+static void x_glGetTextureImage(MX_NATIVE_CALL *c)
+{
+    glGetTextureImage((GLuint)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3), (GLsizei)I(c, 4), (void *)I(c, 5));
+}
+
+void APIENTRY glGetTextureLevelParameterfv(GLuint texture, GLint level, GLenum pname, GLfloat *params);
+static void x_glGetTextureLevelParameterfv(MX_NATIVE_CALL *c)
+{
+    glGetTextureLevelParameterfv((GLuint)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLfloat *)I(c, 3));
+}
+
+void APIENTRY glGetTextureLevelParameteriv(GLuint texture, GLint level, GLenum pname, GLint *params);
+static void x_glGetTextureLevelParameteriv(MX_NATIVE_CALL *c)
+{
+    glGetTextureLevelParameteriv((GLuint)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLint *)I(c, 3));
+}
+
+void APIENTRY glGetTextureParameterIiv(GLuint texture, GLenum pname, GLint *params);
+static void x_glGetTextureParameterIiv(MX_NATIVE_CALL *c)
+{
+    glGetTextureParameterIiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+void APIENTRY glGetTextureParameterIuiv(GLuint texture, GLenum pname, GLuint *params);
+static void x_glGetTextureParameterIuiv(MX_NATIVE_CALL *c)
+{
+    glGetTextureParameterIuiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint *)I(c, 2));
+}
+
+void APIENTRY glGetTextureParameterfv(GLuint texture, GLenum pname, GLfloat *params);
+static void x_glGetTextureParameterfv(MX_NATIVE_CALL *c)
+{
+    glGetTextureParameterfv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLfloat *)I(c, 2));
+}
+
+void APIENTRY glGetTextureParameteriv(GLuint texture, GLenum pname, GLint *params);
+static void x_glGetTextureParameteriv(MX_NATIVE_CALL *c)
+{
+    glGetTextureParameteriv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+void APIENTRY glGetTextureSubImage(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                          GLsizei d, GLenum format, GLenum type, GLsizei size, void *pixels);
+static void x_glGetTextureSubImage(MX_NATIVE_CALL *c)
+{
+    glGetTextureSubImage((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7), (GLenum)I(c, 8), (GLenum)I(c, 9), (GLsizei)I(c, 10), (void *)I(c, 11));
+}
+
+void APIENTRY glGetTransformFeedbackVarying(GLuint program, GLuint index, GLsizei size, GLsizei *length,                                                   GLsizei *count, GLenum *type, GLchar *name);
+static void x_glGetTransformFeedbackVarying(MX_NATIVE_CALL *c)
+{
+    glGetTransformFeedbackVarying((GLuint)I(c, 0), (GLuint)I(c, 1), (GLsizei)I(c, 2), (GLsizei *)I(c, 3), (GLsizei *)I(c, 4), (GLenum *)I(c, 5), (GLchar *)I(c, 6));
+}
+
+void APIENTRY glGetTransformFeedbacki64_v(GLuint xfb, GLenum pname, GLuint index, GLint64 *param);
+static void x_glGetTransformFeedbacki64_v(MX_NATIVE_CALL *c)
+{
+    glGetTransformFeedbacki64_v((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLint64 *)I(c, 3));
+}
+
+void APIENTRY glGetTransformFeedbacki_v(GLuint xfb, GLenum pname, GLuint index, GLint *param);
+static void x_glGetTransformFeedbacki_v(MX_NATIVE_CALL *c)
+{
+    glGetTransformFeedbacki_v((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLint *)I(c, 3));
+}
+
+void APIENTRY glGetTransformFeedbackiv(GLuint xfb, GLenum pname, GLint *param);
+static void x_glGetTransformFeedbackiv(MX_NATIVE_CALL *c)
+{
+    glGetTransformFeedbackiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
 GLuint APIENTRY glGetUniformBlockIndex(GLuint program, const GLchar *name);
 static void x_glGetUniformBlockIndex(MX_NATIVE_CALL *c)
 {
     c->rax = (unsigned long long)(ULONG_PTR)glGetUniformBlockIndex((GLuint)I(c, 0), (const GLchar *)I(c, 1));
 }
 
+void APIENTRY glGetUniformIndices(GLuint name, GLsizei count, const GLchar *const *names, GLuint *indices);
+static void x_glGetUniformIndices(MX_NATIVE_CALL *c)
+{
+    glGetUniformIndices((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLchar *const *)I(c, 2), (GLuint *)I(c, 3));
+}
+
 GLint APIENTRY glGetUniformLocation(GLuint name, const GLchar *uniform);
 static void x_glGetUniformLocation(MX_NATIVE_CALL *c)
 {
     c->rax = (unsigned long long)(ULONG_PTR)glGetUniformLocation((GLuint)I(c, 0), (const GLchar *)I(c, 1));
+}
+
+void APIENTRY glGetUniformSubroutineuiv(GLenum shadertype, GLint location, GLuint *params);
+static void x_glGetUniformSubroutineuiv(MX_NATIVE_CALL *c)
+{
+    glGetUniformSubroutineuiv((GLenum)I(c, 0), (GLint)I(c, 1), (GLuint *)I(c, 2));
+}
+
+void APIENTRY glGetUniformdv(GLuint name, GLint location, GLdouble *params);
+static void x_glGetUniformdv(MX_NATIVE_CALL *c)
+{
+    glGetUniformdv((GLuint)I(c, 0), (GLint)I(c, 1), (GLdouble *)I(c, 2));
 }
 
 void APIENTRY glGetUniformfv(GLuint name, GLint location, GLfloat *params);
@@ -1441,6 +2437,30 @@ static void x_glGetUniformiv(MX_NATIVE_CALL *c)
     glGetUniformiv((GLuint)I(c, 0), (GLint)I(c, 1), (GLint *)I(c, 2));
 }
 
+void APIENTRY glGetUniformuiv(GLuint name, GLint location, GLuint *params);
+static void x_glGetUniformuiv(MX_NATIVE_CALL *c)
+{
+    glGetUniformuiv((GLuint)I(c, 0), (GLint)I(c, 1), (GLuint *)I(c, 2));
+}
+
+void APIENTRY glGetVertexArrayIndexed64iv(GLuint array, GLuint index, GLenum pname, GLint64 *param);
+static void x_glGetVertexArrayIndexed64iv(MX_NATIVE_CALL *c)
+{
+    glGetVertexArrayIndexed64iv((GLuint)I(c, 0), (GLuint)I(c, 1), (GLenum)I(c, 2), (GLint64 *)I(c, 3));
+}
+
+void APIENTRY glGetVertexArrayIndexediv(GLuint array, GLuint index, GLenum pname, GLint *param);
+static void x_glGetVertexArrayIndexediv(MX_NATIVE_CALL *c)
+{
+    glGetVertexArrayIndexediv((GLuint)I(c, 0), (GLuint)I(c, 1), (GLenum)I(c, 2), (GLint *)I(c, 3));
+}
+
+void APIENTRY glGetVertexArrayiv(GLuint array, GLenum pname, GLint *param);
+static void x_glGetVertexArrayiv(MX_NATIVE_CALL *c)
+{
+    glGetVertexArrayiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
 void APIENTRY glGetVertexAttribIiv(GLuint index, GLenum pname, GLint *params);
 static void x_glGetVertexAttribIiv(MX_NATIVE_CALL *c)
 {
@@ -1453,10 +2473,22 @@ static void x_glGetVertexAttribIuiv(MX_NATIVE_CALL *c)
     glGetVertexAttribIuiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint *)I(c, 2));
 }
 
+void APIENTRY glGetVertexAttribLdv(GLuint index, GLenum pname, GLdouble *params);
+static void x_glGetVertexAttribLdv(MX_NATIVE_CALL *c)
+{
+    glGetVertexAttribLdv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLdouble *)I(c, 2));
+}
+
 void APIENTRY glGetVertexAttribPointerv(GLuint index, GLenum pname, void **pointer);
 static void x_glGetVertexAttribPointerv(MX_NATIVE_CALL *c)
 {
     glGetVertexAttribPointerv((GLuint)I(c, 0), (GLenum)I(c, 1), (void **)I(c, 2));
+}
+
+void APIENTRY glGetVertexAttribdv(GLuint index, GLenum pname, GLdouble *params);
+static void x_glGetVertexAttribdv(MX_NATIVE_CALL *c)
+{
+    glGetVertexAttribdv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLdouble *)I(c, 2));
 }
 
 void APIENTRY glGetVertexAttribfv(GLuint index, GLenum pname, GLfloat *params);
@@ -1469,6 +2501,222 @@ void APIENTRY glGetVertexAttribiv(GLuint index, GLenum pname, GLint *params);
 static void x_glGetVertexAttribiv(MX_NATIVE_CALL *c)
 {
     glGetVertexAttribiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+void APIENTRY glGetnColorTable(GLenum target, GLenum format, GLenum type, GLsizei size, void *table);
+static void x_glGetnColorTable(MX_NATIVE_CALL *c)
+{
+    glGetnColorTable((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (void *)I(c, 4));
+}
+
+void APIENTRY glGetnColorTableARB(GLenum target, GLenum format, GLenum type, GLsizei size, void *table);
+static void x_glGetnColorTableARB(MX_NATIVE_CALL *c)
+{
+    glGetnColorTableARB((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (void *)I(c, 4));
+}
+
+void APIENTRY glGetnCompressedTexImage(GLenum target, GLint level, GLsizei size, void *pixels);
+static void x_glGetnCompressedTexImage(MX_NATIVE_CALL *c)
+{
+    glGetnCompressedTexImage((GLenum)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (void *)I(c, 3));
+}
+
+void APIENTRY glGetnCompressedTexImageARB(GLenum target, GLint level, GLsizei size, void *pixels);
+static void x_glGetnCompressedTexImageARB(MX_NATIVE_CALL *c)
+{
+    glGetnCompressedTexImageARB((GLenum)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (void *)I(c, 3));
+}
+
+void APIENTRY glGetnConvolutionFilter(GLenum target, GLenum format, GLenum type, GLsizei size, void *image);
+static void x_glGetnConvolutionFilter(MX_NATIVE_CALL *c)
+{
+    glGetnConvolutionFilter((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (void *)I(c, 4));
+}
+
+void APIENTRY glGetnConvolutionFilterARB(GLenum target, GLenum format, GLenum type, GLsizei size, void *image);
+static void x_glGetnConvolutionFilterARB(MX_NATIVE_CALL *c)
+{
+    glGetnConvolutionFilterARB((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (void *)I(c, 4));
+}
+
+void APIENTRY glGetnHistogram(GLenum target, GLboolean reset, GLenum format, GLenum type, GLsizei size, void *values);
+static void x_glGetnHistogram(MX_NATIVE_CALL *c)
+{
+    glGetnHistogram((GLenum)I(c, 0), (GLboolean)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3), (GLsizei)I(c, 4), (void *)I(c, 5));
+}
+
+void APIENTRY glGetnHistogramARB(GLenum target, GLboolean reset, GLenum format, GLenum type, GLsizei size, void *values);
+static void x_glGetnHistogramARB(MX_NATIVE_CALL *c)
+{
+    glGetnHistogramARB((GLenum)I(c, 0), (GLboolean)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3), (GLsizei)I(c, 4), (void *)I(c, 5));
+}
+
+void APIENTRY glGetnMapdv(GLenum target, GLenum query, GLsizei size, GLdouble *v);
+static void x_glGetnMapdv(MX_NATIVE_CALL *c)
+{
+    glGetnMapdv((GLenum)I(c, 0), (GLenum)I(c, 1), (GLsizei)I(c, 2), (GLdouble *)I(c, 3));
+}
+
+void APIENTRY glGetnMapdvARB(GLenum target, GLenum query, GLsizei size, GLdouble *v);
+static void x_glGetnMapdvARB(MX_NATIVE_CALL *c)
+{
+    glGetnMapdvARB((GLenum)I(c, 0), (GLenum)I(c, 1), (GLsizei)I(c, 2), (GLdouble *)I(c, 3));
+}
+
+void APIENTRY glGetnMapfv(GLenum target, GLenum query, GLsizei size, GLfloat *v);
+static void x_glGetnMapfv(MX_NATIVE_CALL *c)
+{
+    glGetnMapfv((GLenum)I(c, 0), (GLenum)I(c, 1), (GLsizei)I(c, 2), (GLfloat *)I(c, 3));
+}
+
+void APIENTRY glGetnMapfvARB(GLenum target, GLenum query, GLsizei size, GLfloat *v);
+static void x_glGetnMapfvARB(MX_NATIVE_CALL *c)
+{
+    glGetnMapfvARB((GLenum)I(c, 0), (GLenum)I(c, 1), (GLsizei)I(c, 2), (GLfloat *)I(c, 3));
+}
+
+void APIENTRY glGetnMapiv(GLenum target, GLenum query, GLsizei size, GLint *v);
+static void x_glGetnMapiv(MX_NATIVE_CALL *c)
+{
+    glGetnMapiv((GLenum)I(c, 0), (GLenum)I(c, 1), (GLsizei)I(c, 2), (GLint *)I(c, 3));
+}
+
+void APIENTRY glGetnMapivARB(GLenum target, GLenum query, GLsizei size, GLint *v);
+static void x_glGetnMapivARB(MX_NATIVE_CALL *c)
+{
+    glGetnMapivARB((GLenum)I(c, 0), (GLenum)I(c, 1), (GLsizei)I(c, 2), (GLint *)I(c, 3));
+}
+
+void APIENTRY glGetnMinmax(GLenum target, GLboolean reset, GLenum format, GLenum type, GLsizei size, void *values);
+static void x_glGetnMinmax(MX_NATIVE_CALL *c)
+{
+    glGetnMinmax((GLenum)I(c, 0), (GLboolean)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3), (GLsizei)I(c, 4), (void *)I(c, 5));
+}
+
+void APIENTRY glGetnMinmaxARB(GLenum target, GLboolean reset, GLenum format, GLenum type, GLsizei size, void *values);
+static void x_glGetnMinmaxARB(MX_NATIVE_CALL *c)
+{
+    glGetnMinmaxARB((GLenum)I(c, 0), (GLboolean)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3), (GLsizei)I(c, 4), (void *)I(c, 5));
+}
+
+void APIENTRY glGetnPixelMapfv(GLenum map, GLsizei size, GLfloat *values);
+static void x_glGetnPixelMapfv(MX_NATIVE_CALL *c)
+{
+    glGetnPixelMapfv((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLfloat *)I(c, 2));
+}
+
+void APIENTRY glGetnPixelMapfvARB(GLenum map, GLsizei size, GLfloat *values);
+static void x_glGetnPixelMapfvARB(MX_NATIVE_CALL *c)
+{
+    glGetnPixelMapfvARB((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLfloat *)I(c, 2));
+}
+
+void APIENTRY glGetnPixelMapuiv(GLenum map, GLsizei size, GLuint *values);
+static void x_glGetnPixelMapuiv(MX_NATIVE_CALL *c)
+{
+    glGetnPixelMapuiv((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLuint *)I(c, 2));
+}
+
+void APIENTRY glGetnPixelMapuivARB(GLenum map, GLsizei size, GLuint *values);
+static void x_glGetnPixelMapuivARB(MX_NATIVE_CALL *c)
+{
+    glGetnPixelMapuivARB((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLuint *)I(c, 2));
+}
+
+void APIENTRY glGetnPixelMapusv(GLenum map, GLsizei size, GLushort *values);
+static void x_glGetnPixelMapusv(MX_NATIVE_CALL *c)
+{
+    glGetnPixelMapusv((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLushort *)I(c, 2));
+}
+
+void APIENTRY glGetnPixelMapusvARB(GLenum map, GLsizei size, GLushort *values);
+static void x_glGetnPixelMapusvARB(MX_NATIVE_CALL *c)
+{
+    glGetnPixelMapusvARB((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLushort *)I(c, 2));
+}
+
+void APIENTRY glGetnPolygonStipple(GLsizei size, GLubyte *pattern);
+static void x_glGetnPolygonStipple(MX_NATIVE_CALL *c)
+{
+    glGetnPolygonStipple((GLsizei)I(c, 0), (GLubyte *)I(c, 1));
+}
+
+void APIENTRY glGetnPolygonStippleARB(GLsizei size, GLubyte *pattern);
+static void x_glGetnPolygonStippleARB(MX_NATIVE_CALL *c)
+{
+    glGetnPolygonStippleARB((GLsizei)I(c, 0), (GLubyte *)I(c, 1));
+}
+
+void APIENTRY glGetnSeparableFilter(GLenum target, GLenum format, GLenum type, GLsizei row_size, void *row,                                           GLsizei column_size, void *column, void *span);
+static void x_glGetnSeparableFilter(MX_NATIVE_CALL *c)
+{
+    glGetnSeparableFilter((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (void *)I(c, 4), (GLsizei)I(c, 5), (void *)I(c, 6), (void *)I(c, 7));
+}
+
+void APIENTRY glGetnSeparableFilterARB(GLenum target, GLenum format, GLenum type, GLsizei row_size, void *row,                                              GLsizei column_size, void *column, void *span);
+static void x_glGetnSeparableFilterARB(MX_NATIVE_CALL *c)
+{
+    glGetnSeparableFilterARB((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (void *)I(c, 4), (GLsizei)I(c, 5), (void *)I(c, 6), (void *)I(c, 7));
+}
+
+void APIENTRY glGetnTexImage(GLenum target, GLint level, GLenum format, GLenum type, GLsizei size, void *pixels);
+static void x_glGetnTexImage(MX_NATIVE_CALL *c)
+{
+    glGetnTexImage((GLenum)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3), (GLsizei)I(c, 4), (void *)I(c, 5));
+}
+
+void APIENTRY glGetnTexImageARB(GLenum target, GLint level, GLenum format, GLenum type, GLsizei size, void *pixels);
+static void x_glGetnTexImageARB(MX_NATIVE_CALL *c)
+{
+    glGetnTexImageARB((GLenum)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3), (GLsizei)I(c, 4), (void *)I(c, 5));
+}
+
+void APIENTRY glGetnUniformdv(GLuint program, GLint location, GLsizei size, GLdouble *params);
+static void x_glGetnUniformdv(MX_NATIVE_CALL *c)
+{
+    glGetnUniformdv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLdouble *)I(c, 3));
+}
+
+void APIENTRY glGetnUniformdvARB(GLuint program, GLint location, GLsizei size, GLdouble *params);
+static void x_glGetnUniformdvARB(MX_NATIVE_CALL *c)
+{
+    glGetnUniformdvARB((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLdouble *)I(c, 3));
+}
+
+void APIENTRY glGetnUniformfv(GLuint program, GLint location, GLsizei size, GLfloat *params);
+static void x_glGetnUniformfv(MX_NATIVE_CALL *c)
+{
+    glGetnUniformfv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLfloat *)I(c, 3));
+}
+
+void APIENTRY glGetnUniformfvARB(GLuint program, GLint location, GLsizei size, GLfloat *params);
+static void x_glGetnUniformfvARB(MX_NATIVE_CALL *c)
+{
+    glGetnUniformfvARB((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLfloat *)I(c, 3));
+}
+
+void APIENTRY glGetnUniformiv(GLuint program, GLint location, GLsizei size, GLint *params);
+static void x_glGetnUniformiv(MX_NATIVE_CALL *c)
+{
+    glGetnUniformiv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLint *)I(c, 3));
+}
+
+void APIENTRY glGetnUniformivARB(GLuint program, GLint location, GLsizei size, GLint *params);
+static void x_glGetnUniformivARB(MX_NATIVE_CALL *c)
+{
+    glGetnUniformivARB((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLint *)I(c, 3));
+}
+
+void APIENTRY glGetnUniformuiv(GLuint program, GLint location, GLsizei size, GLuint *params);
+static void x_glGetnUniformuiv(MX_NATIVE_CALL *c)
+{
+    glGetnUniformuiv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLuint *)I(c, 3));
+}
+
+void APIENTRY glGetnUniformuivARB(GLuint program, GLint location, GLsizei size, GLuint *params);
+static void x_glGetnUniformuivARB(MX_NATIVE_CALL *c)
+{
+    glGetnUniformuivARB((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLuint *)I(c, 3));
 }
 
 void APIENTRY glHint(GLenum target, GLenum mode);
@@ -1561,10 +2809,52 @@ static void x_glInterleavedArrays(MX_NATIVE_CALL *c)
     glInterleavedArrays((GLenum)I(c, 0), (GLsizei)I(c, 1), (const void *)I(c, 2));
 }
 
+void APIENTRY glInvalidateBufferData(GLuint buffer);
+static void x_glInvalidateBufferData(MX_NATIVE_CALL *c)
+{
+    glInvalidateBufferData((GLuint)I(c, 0));
+}
+
+void APIENTRY glInvalidateBufferSubData(GLuint buffer, GLintptr offset, GLsizeiptr length);
+static void x_glInvalidateBufferSubData(MX_NATIVE_CALL *c)
+{
+    glInvalidateBufferSubData((GLuint)I(c, 0), (GLintptr)I(c, 1), (GLsizeiptr)I(c, 2));
+}
+
 void APIENTRY glInvalidateFramebuffer(GLenum target, GLsizei n, const GLenum *attachments);
 static void x_glInvalidateFramebuffer(MX_NATIVE_CALL *c)
 {
     glInvalidateFramebuffer((GLenum)I(c, 0), (GLsizei)I(c, 1), (const GLenum *)I(c, 2));
+}
+
+void APIENTRY glInvalidateNamedFramebufferData(GLuint framebuffer, GLsizei n, const GLenum *attachments);
+static void x_glInvalidateNamedFramebufferData(MX_NATIVE_CALL *c)
+{
+    glInvalidateNamedFramebufferData((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLenum *)I(c, 2));
+}
+
+void APIENTRY glInvalidateNamedFramebufferSubData(GLuint framebuffer, GLsizei n, const GLenum *attachments, GLint x,                                                         GLint y, GLsizei w, GLsizei h);
+static void x_glInvalidateNamedFramebufferSubData(MX_NATIVE_CALL *c)
+{
+    glInvalidateNamedFramebufferSubData((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLenum *)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6));
+}
+
+void APIENTRY glInvalidateSubFramebuffer(GLenum target, GLsizei n, const GLenum *attachments, GLint x, GLint y,                                                GLsizei w, GLsizei h);
+static void x_glInvalidateSubFramebuffer(MX_NATIVE_CALL *c)
+{
+    glInvalidateSubFramebuffer((GLenum)I(c, 0), (GLsizei)I(c, 1), (const GLenum *)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6));
+}
+
+void APIENTRY glInvalidateTexImage(GLuint texture, GLint level);
+static void x_glInvalidateTexImage(MX_NATIVE_CALL *c)
+{
+    glInvalidateTexImage((GLuint)I(c, 0), (GLint)I(c, 1));
+}
+
+void APIENTRY glInvalidateTexSubImage(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                             GLsizei d);
+static void x_glInvalidateTexSubImage(MX_NATIVE_CALL *c)
+{
+    glInvalidateTexSubImage((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7));
 }
 
 GLboolean APIENTRY glIsBuffer(GLuint name);
@@ -1603,6 +2893,12 @@ static void x_glIsProgram(MX_NATIVE_CALL *c)
     c->rax = (unsigned long long)(ULONG_PTR)glIsProgram((GLuint)I(c, 0));
 }
 
+GLboolean APIENTRY glIsProgramPipeline(GLuint pipeline);
+static void x_glIsProgramPipeline(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glIsProgramPipeline((GLuint)I(c, 0));
+}
+
 GLboolean APIENTRY glIsQuery(GLuint name);
 static void x_glIsQuery(MX_NATIVE_CALL *c)
 {
@@ -1613,6 +2909,12 @@ GLboolean APIENTRY glIsRenderbuffer(GLuint name);
 static void x_glIsRenderbuffer(MX_NATIVE_CALL *c)
 {
     c->rax = (unsigned long long)(ULONG_PTR)glIsRenderbuffer((GLuint)I(c, 0));
+}
+
+GLboolean APIENTRY glIsSampler(GLuint sampler);
+static void x_glIsSampler(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glIsSampler((GLuint)I(c, 0));
 }
 
 GLboolean APIENTRY glIsShader(GLuint name);
@@ -1631,6 +2933,12 @@ GLboolean APIENTRY glIsTexture(GLuint name);
 static void x_glIsTexture(MX_NATIVE_CALL *c)
 {
     c->rax = (unsigned long long)(ULONG_PTR)glIsTexture((GLuint)I(c, 0));
+}
+
+GLboolean APIENTRY glIsTransformFeedback(GLuint id);
+static void x_glIsTransformFeedback(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glIsTransformFeedback((GLuint)I(c, 0));
 }
 
 GLboolean APIENTRY glIsVertexArray(GLuint name);
@@ -1825,6 +3133,18 @@ static void x_glMapGrid2f(MX_NATIVE_CALL *c)
     glMapGrid2f((GLint)I(c, 0), F(c, 1), F(c, 2), (GLint)I(c, 3), F(c, 4), F(c, 5));
 }
 
+void* APIENTRY glMapNamedBuffer(GLuint buffer, GLenum access);
+static void x_glMapNamedBuffer(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glMapNamedBuffer((GLuint)I(c, 0), (GLenum)I(c, 1));
+}
+
+void* APIENTRY glMapNamedBufferRange(GLuint buffer, GLintptr offset, GLsizeiptr length, GLbitfield access);
+static void x_glMapNamedBufferRange(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glMapNamedBufferRange((GLuint)I(c, 0), (GLintptr)I(c, 1), (GLsizeiptr)I(c, 2), (GLbitfield)I(c, 3));
+}
+
 void APIENTRY glMaterialf(GLenum face, GLenum pname, GLfloat param);
 static void x_glMaterialf(MX_NATIVE_CALL *c)
 {
@@ -1853,6 +3173,24 @@ void APIENTRY glMatrixMode(GLenum mode);
 static void x_glMatrixMode(MX_NATIVE_CALL *c)
 {
     glMatrixMode((GLenum)I(c, 0));
+}
+
+void APIENTRY glMemoryBarrier(GLbitfield barriers);
+static void x_glMemoryBarrier(MX_NATIVE_CALL *c)
+{
+    glMemoryBarrier((GLbitfield)I(c, 0));
+}
+
+void APIENTRY glMemoryBarrierByRegion(GLbitfield barriers);
+static void x_glMemoryBarrierByRegion(MX_NATIVE_CALL *c)
+{
+    glMemoryBarrierByRegion((GLbitfield)I(c, 0));
+}
+
+void APIENTRY glMinSampleShading(GLfloat value);
+static void x_glMinSampleShading(MX_NATIVE_CALL *c)
+{
+    glMinSampleShading(F(c, 0));
 }
 
 void APIENTRY glMultMatrixd(const GLdouble *m);
@@ -1897,10 +3235,40 @@ static void x_glMultiDrawArrays(MX_NATIVE_CALL *c)
     glMultiDrawArrays((GLenum)I(c, 0), (const GLint *)I(c, 1), (const GLsizei *)I(c, 2), (GLsizei)I(c, 3));
 }
 
+void APIENTRY glMultiDrawArraysIndirect(GLenum mode, const void *indirect, GLsizei count, GLsizei stride);
+static void x_glMultiDrawArraysIndirect(MX_NATIVE_CALL *c)
+{
+    glMultiDrawArraysIndirect((GLenum)I(c, 0), (const void *)I(c, 1), (GLsizei)I(c, 2), (GLsizei)I(c, 3));
+}
+
+void APIENTRY glMultiDrawArraysIndirectCount(GLenum mode, const void *indirect, GLintptr drawcount,                                                    GLsizei maxdrawcount, GLsizei stride);
+static void x_glMultiDrawArraysIndirectCount(MX_NATIVE_CALL *c)
+{
+    glMultiDrawArraysIndirectCount((GLenum)I(c, 0), (const void *)I(c, 1), (GLintptr)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4));
+}
+
 void APIENTRY glMultiDrawElements(GLenum mode, const GLsizei *count, GLenum type, const void *const *indices,                                         GLsizei n);
 static void x_glMultiDrawElements(MX_NATIVE_CALL *c)
 {
     glMultiDrawElements((GLenum)I(c, 0), (const GLsizei *)I(c, 1), (GLenum)I(c, 2), (const void *const *)I(c, 3), (GLsizei)I(c, 4));
+}
+
+void APIENTRY glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum type,                                                   const void *const *indices, GLsizei n, const GLint *base_vertex);
+static void x_glMultiDrawElementsBaseVertex(MX_NATIVE_CALL *c)
+{
+    glMultiDrawElementsBaseVertex((GLenum)I(c, 0), (const GLsizei *)I(c, 1), (GLenum)I(c, 2), (const void *const *)I(c, 3), (GLsizei)I(c, 4), (const GLint *)I(c, 5));
+}
+
+void APIENTRY glMultiDrawElementsIndirect(GLenum mode, GLenum type, const void *indirect, GLsizei count,                                                 GLsizei stride);
+static void x_glMultiDrawElementsIndirect(MX_NATIVE_CALL *c)
+{
+    glMultiDrawElementsIndirect((GLenum)I(c, 0), (GLenum)I(c, 1), (const void *)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4));
+}
+
+void APIENTRY glMultiDrawElementsIndirectCount(GLenum mode, GLenum type, const void *indirect, GLintptr drawcount,                                                      GLsizei maxdrawcount, GLsizei stride);
+static void x_glMultiDrawElementsIndirectCount(MX_NATIVE_CALL *c)
+{
+    glMultiDrawElementsIndirectCount((GLenum)I(c, 0), (GLenum)I(c, 1), (const void *)I(c, 2), (GLintptr)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5));
 }
 
 void APIENTRY glMultiTexCoord1d(GLenum target, GLdouble s);
@@ -2287,6 +3655,126 @@ static void x_glMultiTexCoord4svARB(MX_NATIVE_CALL *c)
     glMultiTexCoord4svARB((GLenum)I(c, 0), (const GLshort *)I(c, 1));
 }
 
+void APIENTRY glMultiTexCoordP1ui(GLenum texture, GLenum type, GLuint coords);
+static void x_glMultiTexCoordP1ui(MX_NATIVE_CALL *c)
+{
+    glMultiTexCoordP1ui((GLenum)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glMultiTexCoordP1uiv(GLenum texture, GLenum type, const GLuint *coords);
+static void x_glMultiTexCoordP1uiv(MX_NATIVE_CALL *c)
+{
+    glMultiTexCoordP1uiv((GLenum)I(c, 0), (GLenum)I(c, 1), (const GLuint *)I(c, 2));
+}
+
+void APIENTRY glMultiTexCoordP2ui(GLenum texture, GLenum type, GLuint coords);
+static void x_glMultiTexCoordP2ui(MX_NATIVE_CALL *c)
+{
+    glMultiTexCoordP2ui((GLenum)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glMultiTexCoordP2uiv(GLenum texture, GLenum type, const GLuint *coords);
+static void x_glMultiTexCoordP2uiv(MX_NATIVE_CALL *c)
+{
+    glMultiTexCoordP2uiv((GLenum)I(c, 0), (GLenum)I(c, 1), (const GLuint *)I(c, 2));
+}
+
+void APIENTRY glMultiTexCoordP3ui(GLenum texture, GLenum type, GLuint coords);
+static void x_glMultiTexCoordP3ui(MX_NATIVE_CALL *c)
+{
+    glMultiTexCoordP3ui((GLenum)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glMultiTexCoordP3uiv(GLenum texture, GLenum type, const GLuint *coords);
+static void x_glMultiTexCoordP3uiv(MX_NATIVE_CALL *c)
+{
+    glMultiTexCoordP3uiv((GLenum)I(c, 0), (GLenum)I(c, 1), (const GLuint *)I(c, 2));
+}
+
+void APIENTRY glMultiTexCoordP4ui(GLenum texture, GLenum type, GLuint coords);
+static void x_glMultiTexCoordP4ui(MX_NATIVE_CALL *c)
+{
+    glMultiTexCoordP4ui((GLenum)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glMultiTexCoordP4uiv(GLenum texture, GLenum type, const GLuint *coords);
+static void x_glMultiTexCoordP4uiv(MX_NATIVE_CALL *c)
+{
+    glMultiTexCoordP4uiv((GLenum)I(c, 0), (GLenum)I(c, 1), (const GLuint *)I(c, 2));
+}
+
+void APIENTRY glNamedBufferData(GLuint buffer, GLsizeiptr size, const void *data, GLenum usage);
+static void x_glNamedBufferData(MX_NATIVE_CALL *c)
+{
+    glNamedBufferData((GLuint)I(c, 0), (GLsizeiptr)I(c, 1), (const void *)I(c, 2), (GLenum)I(c, 3));
+}
+
+void APIENTRY glNamedBufferStorage(GLuint buffer, GLsizeiptr size, const void *data, GLbitfield flags);
+static void x_glNamedBufferStorage(MX_NATIVE_CALL *c)
+{
+    glNamedBufferStorage((GLuint)I(c, 0), (GLsizeiptr)I(c, 1), (const void *)I(c, 2), (GLbitfield)I(c, 3));
+}
+
+void APIENTRY glNamedBufferSubData(GLuint buffer, GLintptr offset, GLsizeiptr size, const void *data);
+static void x_glNamedBufferSubData(MX_NATIVE_CALL *c)
+{
+    glNamedBufferSubData((GLuint)I(c, 0), (GLintptr)I(c, 1), (GLsizeiptr)I(c, 2), (const void *)I(c, 3));
+}
+
+void APIENTRY glNamedFramebufferDrawBuffer(GLuint framebuffer, GLenum buf);
+static void x_glNamedFramebufferDrawBuffer(MX_NATIVE_CALL *c)
+{
+    glNamedFramebufferDrawBuffer((GLuint)I(c, 0), (GLenum)I(c, 1));
+}
+
+void APIENTRY glNamedFramebufferDrawBuffers(GLuint framebuffer, GLsizei n, const GLenum *bufs);
+static void x_glNamedFramebufferDrawBuffers(MX_NATIVE_CALL *c)
+{
+    glNamedFramebufferDrawBuffers((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLenum *)I(c, 2));
+}
+
+void APIENTRY glNamedFramebufferParameteri(GLuint framebuffer, GLenum pname, GLint param);
+static void x_glNamedFramebufferParameteri(MX_NATIVE_CALL *c)
+{
+    glNamedFramebufferParameteri((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint)I(c, 2));
+}
+
+void APIENTRY glNamedFramebufferReadBuffer(GLuint framebuffer, GLenum src);
+static void x_glNamedFramebufferReadBuffer(MX_NATIVE_CALL *c)
+{
+    glNamedFramebufferReadBuffer((GLuint)I(c, 0), (GLenum)I(c, 1));
+}
+
+void APIENTRY glNamedFramebufferRenderbuffer(GLuint framebuffer, GLenum attachment, GLenum rbtarget, GLuint renderbuffer);
+static void x_glNamedFramebufferRenderbuffer(MX_NATIVE_CALL *c)
+{
+    glNamedFramebufferRenderbuffer((GLuint)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLuint)I(c, 3));
+}
+
+void APIENTRY glNamedFramebufferTexture(GLuint framebuffer, GLenum attachment, GLuint texture, GLint level);
+static void x_glNamedFramebufferTexture(MX_NATIVE_CALL *c)
+{
+    glNamedFramebufferTexture((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLint)I(c, 3));
+}
+
+void APIENTRY glNamedFramebufferTextureLayer(GLuint framebuffer, GLenum attachment, GLuint texture, GLint level,                                                    GLint layer);
+static void x_glNamedFramebufferTextureLayer(MX_NATIVE_CALL *c)
+{
+    glNamedFramebufferTextureLayer((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4));
+}
+
+void APIENTRY glNamedRenderbufferStorage(GLuint renderbuffer, GLenum internal, GLsizei w, GLsizei h);
+static void x_glNamedRenderbufferStorage(MX_NATIVE_CALL *c)
+{
+    glNamedRenderbufferStorage((GLuint)I(c, 0), (GLenum)I(c, 1), (GLsizei)I(c, 2), (GLsizei)I(c, 3));
+}
+
+void APIENTRY glNamedRenderbufferStorageMultisample(GLuint renderbuffer, GLsizei samples, GLenum internal, GLsizei w,                                                           GLsizei h);
+static void x_glNamedRenderbufferStorageMultisample(MX_NATIVE_CALL *c)
+{
+    glNamedRenderbufferStorageMultisample((GLuint)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4));
+}
+
 void APIENTRY glNewList(GLuint list, GLenum mode);
 static void x_glNewList(MX_NATIVE_CALL *c)
 {
@@ -2353,6 +3841,18 @@ static void x_glNormal3sv(MX_NATIVE_CALL *c)
     glNormal3sv((const GLshort *)I(c, 0));
 }
 
+void APIENTRY glNormalP3ui(GLenum type, GLuint coords);
+static void x_glNormalP3ui(MX_NATIVE_CALL *c)
+{
+    glNormalP3ui((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glNormalP3uiv(GLenum type, const GLuint *coords);
+static void x_glNormalP3uiv(MX_NATIVE_CALL *c)
+{
+    glNormalP3uiv((GLenum)I(c, 0), (const GLuint *)I(c, 1));
+}
+
 void APIENTRY glNormalPointer(GLenum type, GLsizei stride, const void *pointer);
 static void x_glNormalPointer(MX_NATIVE_CALL *c)
 {
@@ -2365,6 +3865,12 @@ static void x_glObjectLabel(MX_NATIVE_CALL *c)
     glObjectLabel((GLenum)I(c, 0), (GLuint)I(c, 1), (GLsizei)I(c, 2), (const GLchar *)I(c, 3));
 }
 
+void APIENTRY glObjectPtrLabel(const void *ptr, GLsizei length, const GLchar *label);
+static void x_glObjectPtrLabel(MX_NATIVE_CALL *c)
+{
+    glObjectPtrLabel((const void *)I(c, 0), (GLsizei)I(c, 1), (const GLchar *)I(c, 2));
+}
+
 void APIENTRY glOrtho(GLdouble left, GLdouble right, GLdouble bottom, GLdouble top_, GLdouble near_val,                             GLdouble far_val);
 static void x_glOrtho(MX_NATIVE_CALL *c)
 {
@@ -2375,6 +3881,24 @@ void APIENTRY glPassThrough(GLfloat token);
 static void x_glPassThrough(MX_NATIVE_CALL *c)
 {
     glPassThrough(F(c, 0));
+}
+
+void APIENTRY glPatchParameterfv(GLenum pname, const GLfloat *values);
+static void x_glPatchParameterfv(MX_NATIVE_CALL *c)
+{
+    glPatchParameterfv((GLenum)I(c, 0), (const GLfloat *)I(c, 1));
+}
+
+void APIENTRY glPatchParameteri(GLenum pname, GLint value);
+static void x_glPatchParameteri(MX_NATIVE_CALL *c)
+{
+    glPatchParameteri((GLenum)I(c, 0), (GLint)I(c, 1));
+}
+
+void APIENTRY glPauseTransformFeedback(void);
+static void x_glPauseTransformFeedback(MX_NATIVE_CALL *c)
+{
+    glPauseTransformFeedback();
 }
 
 void APIENTRY glPixelMapfv(GLenum map, GLsizei mapsize, const GLfloat *values);
@@ -2491,6 +4015,18 @@ static void x_glPolygonOffset(MX_NATIVE_CALL *c)
     glPolygonOffset(F(c, 0), F(c, 1));
 }
 
+void APIENTRY glPolygonOffsetClamp(GLfloat factor, GLfloat units, GLfloat clamp);
+static void x_glPolygonOffsetClamp(MX_NATIVE_CALL *c)
+{
+    glPolygonOffsetClamp(F(c, 0), F(c, 1), F(c, 2));
+}
+
+void APIENTRY glPolygonOffsetClampEXT(GLfloat factor, GLfloat units, GLfloat clamp);
+static void x_glPolygonOffsetClampEXT(MX_NATIVE_CALL *c)
+{
+    glPolygonOffsetClampEXT(F(c, 0), F(c, 1), F(c, 2));
+}
+
 void APIENTRY glPolygonStipple(const GLubyte *mask);
 static void x_glPolygonStipple(MX_NATIVE_CALL *c)
 {
@@ -2527,10 +4063,334 @@ static void x_glPopName(MX_NATIVE_CALL *c)
     glPopName();
 }
 
+void APIENTRY glPrimitiveRestartIndex(GLuint index);
+static void x_glPrimitiveRestartIndex(MX_NATIVE_CALL *c)
+{
+    glPrimitiveRestartIndex((GLuint)I(c, 0));
+}
+
 void APIENTRY glPrioritizeTextures(GLsizei n, const GLuint *textures, const GLclampf *priorities);
 static void x_glPrioritizeTextures(MX_NATIVE_CALL *c)
 {
     glPrioritizeTextures((GLsizei)I(c, 0), (const GLuint *)I(c, 1), (const GLclampf *)I(c, 2));
+}
+
+void APIENTRY glProgramBinary(GLuint name, GLenum format, const void *binary, GLsizei size);
+static void x_glProgramBinary(MX_NATIVE_CALL *c)
+{
+    glProgramBinary((GLuint)I(c, 0), (GLenum)I(c, 1), (const void *)I(c, 2), (GLsizei)I(c, 3));
+}
+
+void APIENTRY glProgramParameteri(GLuint program, GLenum pname, GLint value);
+static void x_glProgramParameteri(MX_NATIVE_CALL *c)
+{
+    glProgramParameteri((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint)I(c, 2));
+}
+
+void APIENTRY glProgramUniform1d(GLuint program, GLint l, GLdouble a);
+static void x_glProgramUniform1d(MX_NATIVE_CALL *c)
+{
+    glProgramUniform1d((GLuint)I(c, 0), (GLint)I(c, 1), D(c, 2));
+}
+
+void APIENTRY glProgramUniform1dv(GLuint program, GLint l, GLsizei count, const GLdouble *v);
+static void x_glProgramUniform1dv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform1dv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLdouble *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform1f(GLuint program, GLint l, GLfloat a);
+static void x_glProgramUniform1f(MX_NATIVE_CALL *c)
+{
+    glProgramUniform1f((GLuint)I(c, 0), (GLint)I(c, 1), F(c, 2));
+}
+
+void APIENTRY glProgramUniform1fv(GLuint program, GLint l, GLsizei count, const GLfloat *v);
+static void x_glProgramUniform1fv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform1fv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLfloat *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform1i(GLuint program, GLint l, GLint a);
+static void x_glProgramUniform1i(MX_NATIVE_CALL *c)
+{
+    glProgramUniform1i((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2));
+}
+
+void APIENTRY glProgramUniform1iv(GLuint program, GLint l, GLsizei count, const GLint *v);
+static void x_glProgramUniform1iv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform1iv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLint *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform1ui(GLuint program, GLint l, GLuint a);
+static void x_glProgramUniform1ui(MX_NATIVE_CALL *c)
+{
+    glProgramUniform1ui((GLuint)I(c, 0), (GLint)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glProgramUniform1uiv(GLuint program, GLint l, GLsizei count, const GLuint *v);
+static void x_glProgramUniform1uiv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform1uiv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLuint *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform2d(GLuint program, GLint l, GLdouble a, GLdouble b);
+static void x_glProgramUniform2d(MX_NATIVE_CALL *c)
+{
+    glProgramUniform2d((GLuint)I(c, 0), (GLint)I(c, 1), D(c, 2), D(c, 3));
+}
+
+void APIENTRY glProgramUniform2dv(GLuint program, GLint l, GLsizei count, const GLdouble *v);
+static void x_glProgramUniform2dv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform2dv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLdouble *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform2f(GLuint program, GLint l, GLfloat a, GLfloat b);
+static void x_glProgramUniform2f(MX_NATIVE_CALL *c)
+{
+    glProgramUniform2f((GLuint)I(c, 0), (GLint)I(c, 1), F(c, 2), F(c, 3));
+}
+
+void APIENTRY glProgramUniform2fv(GLuint program, GLint l, GLsizei count, const GLfloat *v);
+static void x_glProgramUniform2fv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform2fv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLfloat *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform2i(GLuint program, GLint l, GLint a, GLint b);
+static void x_glProgramUniform2i(MX_NATIVE_CALL *c)
+{
+    glProgramUniform2i((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3));
+}
+
+void APIENTRY glProgramUniform2iv(GLuint program, GLint l, GLsizei count, const GLint *v);
+static void x_glProgramUniform2iv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform2iv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLint *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform2ui(GLuint program, GLint l, GLuint a, GLuint b);
+static void x_glProgramUniform2ui(MX_NATIVE_CALL *c)
+{
+    glProgramUniform2ui((GLuint)I(c, 0), (GLint)I(c, 1), (GLuint)I(c, 2), (GLuint)I(c, 3));
+}
+
+void APIENTRY glProgramUniform2uiv(GLuint program, GLint l, GLsizei count, const GLuint *v);
+static void x_glProgramUniform2uiv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform2uiv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLuint *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform3d(GLuint program, GLint l, GLdouble a, GLdouble b, GLdouble c);
+static void x_glProgramUniform3d(MX_NATIVE_CALL *c)
+{
+    glProgramUniform3d((GLuint)I(c, 0), (GLint)I(c, 1), D(c, 2), D(c, 3), D(c, 4));
+}
+
+void APIENTRY glProgramUniform3dv(GLuint program, GLint l, GLsizei count, const GLdouble *v);
+static void x_glProgramUniform3dv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform3dv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLdouble *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform3f(GLuint program, GLint l, GLfloat a, GLfloat b, GLfloat c);
+static void x_glProgramUniform3f(MX_NATIVE_CALL *c)
+{
+    glProgramUniform3f((GLuint)I(c, 0), (GLint)I(c, 1), F(c, 2), F(c, 3), F(c, 4));
+}
+
+void APIENTRY glProgramUniform3fv(GLuint program, GLint l, GLsizei count, const GLfloat *v);
+static void x_glProgramUniform3fv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform3fv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLfloat *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform3i(GLuint program, GLint l, GLint a, GLint b, GLint c);
+static void x_glProgramUniform3i(MX_NATIVE_CALL *c)
+{
+    glProgramUniform3i((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4));
+}
+
+void APIENTRY glProgramUniform3iv(GLuint program, GLint l, GLsizei count, const GLint *v);
+static void x_glProgramUniform3iv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform3iv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLint *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform3ui(GLuint program, GLint l, GLuint a, GLuint b, GLuint c);
+static void x_glProgramUniform3ui(MX_NATIVE_CALL *c)
+{
+    glProgramUniform3ui((GLuint)I(c, 0), (GLint)I(c, 1), (GLuint)I(c, 2), (GLuint)I(c, 3), (GLuint)I(c, 4));
+}
+
+void APIENTRY glProgramUniform3uiv(GLuint program, GLint l, GLsizei count, const GLuint *v);
+static void x_glProgramUniform3uiv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform3uiv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLuint *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform4d(GLuint program, GLint l, GLdouble a, GLdouble b, GLdouble c, GLdouble d);
+static void x_glProgramUniform4d(MX_NATIVE_CALL *c)
+{
+    glProgramUniform4d((GLuint)I(c, 0), (GLint)I(c, 1), D(c, 2), D(c, 3), D(c, 4), D(c, 5));
+}
+
+void APIENTRY glProgramUniform4dv(GLuint program, GLint l, GLsizei count, const GLdouble *v);
+static void x_glProgramUniform4dv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform4dv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLdouble *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform4f(GLuint program, GLint l, GLfloat a, GLfloat b, GLfloat c, GLfloat d);
+static void x_glProgramUniform4f(MX_NATIVE_CALL *c)
+{
+    glProgramUniform4f((GLuint)I(c, 0), (GLint)I(c, 1), F(c, 2), F(c, 3), F(c, 4), F(c, 5));
+}
+
+void APIENTRY glProgramUniform4fv(GLuint program, GLint l, GLsizei count, const GLfloat *v);
+static void x_glProgramUniform4fv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform4fv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLfloat *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform4i(GLuint program, GLint l, GLint a, GLint b, GLint c, GLint d);
+static void x_glProgramUniform4i(MX_NATIVE_CALL *c)
+{
+    glProgramUniform4i((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLint)I(c, 5));
+}
+
+void APIENTRY glProgramUniform4iv(GLuint program, GLint l, GLsizei count, const GLint *v);
+static void x_glProgramUniform4iv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform4iv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLint *)I(c, 3));
+}
+
+void APIENTRY glProgramUniform4ui(GLuint program, GLint l, GLuint a, GLuint b, GLuint c, GLuint d);
+static void x_glProgramUniform4ui(MX_NATIVE_CALL *c)
+{
+    glProgramUniform4ui((GLuint)I(c, 0), (GLint)I(c, 1), (GLuint)I(c, 2), (GLuint)I(c, 3), (GLuint)I(c, 4), (GLuint)I(c, 5));
+}
+
+void APIENTRY glProgramUniform4uiv(GLuint program, GLint l, GLsizei count, const GLuint *v);
+static void x_glProgramUniform4uiv(MX_NATIVE_CALL *c)
+{
+    glProgramUniform4uiv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (const GLuint *)I(c, 3));
+}
+
+void APIENTRY glProgramUniformMatrix2dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+static void x_glProgramUniformMatrix2dv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix2dv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLdouble *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix2fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+static void x_glProgramUniformMatrix2fv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix2fv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLfloat *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix2x3dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+static void x_glProgramUniformMatrix2x3dv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix2x3dv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLdouble *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix2x3fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+static void x_glProgramUniformMatrix2x3fv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix2x3fv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLfloat *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix2x4dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+static void x_glProgramUniformMatrix2x4dv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix2x4dv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLdouble *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix2x4fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+static void x_glProgramUniformMatrix2x4fv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix2x4fv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLfloat *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix3dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+static void x_glProgramUniformMatrix3dv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix3dv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLdouble *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix3fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+static void x_glProgramUniformMatrix3fv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix3fv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLfloat *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix3x2dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+static void x_glProgramUniformMatrix3x2dv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix3x2dv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLdouble *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix3x2fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+static void x_glProgramUniformMatrix3x2fv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix3x2fv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLfloat *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix3x4dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+static void x_glProgramUniformMatrix3x4dv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix3x4dv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLdouble *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix3x4fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+static void x_glProgramUniformMatrix3x4fv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix3x4fv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLfloat *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix4dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+static void x_glProgramUniformMatrix4dv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix4dv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLdouble *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix4fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+static void x_glProgramUniformMatrix4fv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix4fv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLfloat *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix4x2dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+static void x_glProgramUniformMatrix4x2dv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix4x2dv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLdouble *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix4x2fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+static void x_glProgramUniformMatrix4x2fv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix4x2fv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLfloat *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix4x3dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+static void x_glProgramUniformMatrix4x3dv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix4x3dv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLdouble *)I(c, 4));
+}
+
+void APIENTRY glProgramUniformMatrix4x3fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+static void x_glProgramUniformMatrix4x3fv(MX_NATIVE_CALL *c)
+{
+    glProgramUniformMatrix4x3fv((GLuint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLboolean)I(c, 3), (const GLfloat *)I(c, 4));
+}
+
+void APIENTRY glProvokingVertex(GLenum mode);
+static void x_glProvokingVertex(MX_NATIVE_CALL *c)
+{
+    glProvokingVertex((GLenum)I(c, 0));
 }
 
 void APIENTRY glPushAttrib(GLbitfield mask);
@@ -2725,6 +4585,18 @@ static void x_glReadPixels(MX_NATIVE_CALL *c)
     glReadPixels((GLint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLsizei)I(c, 3), (GLenum)I(c, 4), (GLenum)I(c, 5), (void *)I(c, 6));
 }
 
+void APIENTRY glReadnPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum type, GLsizei size,                                   void *pixels);
+static void x_glReadnPixels(MX_NATIVE_CALL *c)
+{
+    glReadnPixels((GLint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLsizei)I(c, 3), (GLenum)I(c, 4), (GLenum)I(c, 5), (GLsizei)I(c, 6), (void *)I(c, 7));
+}
+
+void APIENTRY glReadnPixelsARB(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum type, GLsizei size,                                      void *pixels);
+static void x_glReadnPixelsARB(MX_NATIVE_CALL *c)
+{
+    glReadnPixelsARB((GLint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLsizei)I(c, 3), (GLenum)I(c, 4), (GLenum)I(c, 5), (GLsizei)I(c, 6), (void *)I(c, 7));
+}
+
 void APIENTRY glRectd(GLdouble x1, GLdouble y1, GLdouble x2, GLdouble y2);
 static void x_glRectd(MX_NATIVE_CALL *c)
 {
@@ -2797,6 +4669,12 @@ static void x_glRenderbufferStorageMultisample(MX_NATIVE_CALL *c)
     glRenderbufferStorageMultisample((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4));
 }
 
+void APIENTRY glResumeTransformFeedback(void);
+static void x_glResumeTransformFeedback(MX_NATIVE_CALL *c)
+{
+    glResumeTransformFeedback();
+}
+
 void APIENTRY glRotated(GLdouble angle, GLdouble x, GLdouble y, GLdouble z);
 static void x_glRotated(MX_NATIVE_CALL *c)
 {
@@ -2807,6 +4685,54 @@ void APIENTRY glRotatef(GLfloat angle, GLfloat x, GLfloat y, GLfloat z);
 static void x_glRotatef(MX_NATIVE_CALL *c)
 {
     glRotatef(F(c, 0), F(c, 1), F(c, 2), F(c, 3));
+}
+
+void APIENTRY glSampleCoverage(GLfloat value, GLboolean invert);
+static void x_glSampleCoverage(MX_NATIVE_CALL *c)
+{
+    glSampleCoverage(F(c, 0), (GLboolean)I(c, 1));
+}
+
+void APIENTRY glSampleMaski(GLuint index, GLbitfield mask);
+static void x_glSampleMaski(MX_NATIVE_CALL *c)
+{
+    glSampleMaski((GLuint)I(c, 0), (GLbitfield)I(c, 1));
+}
+
+void APIENTRY glSamplerParameterIiv(GLuint sampler, GLenum pname, const GLint *params);
+static void x_glSamplerParameterIiv(MX_NATIVE_CALL *c)
+{
+    glSamplerParameterIiv((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLint *)I(c, 2));
+}
+
+void APIENTRY glSamplerParameterIuiv(GLuint sampler, GLenum pname, const GLuint *params);
+static void x_glSamplerParameterIuiv(MX_NATIVE_CALL *c)
+{
+    glSamplerParameterIuiv((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLuint *)I(c, 2));
+}
+
+void APIENTRY glSamplerParameterf(GLuint sampler, GLenum pname, GLfloat param);
+static void x_glSamplerParameterf(MX_NATIVE_CALL *c)
+{
+    glSamplerParameterf((GLuint)I(c, 0), (GLenum)I(c, 1), F(c, 2));
+}
+
+void APIENTRY glSamplerParameterfv(GLuint sampler, GLenum pname, const GLfloat *params);
+static void x_glSamplerParameterfv(MX_NATIVE_CALL *c)
+{
+    glSamplerParameterfv((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLfloat *)I(c, 2));
+}
+
+void APIENTRY glSamplerParameteri(GLuint sampler, GLenum pname, GLint param);
+static void x_glSamplerParameteri(MX_NATIVE_CALL *c)
+{
+    glSamplerParameteri((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint)I(c, 2));
+}
+
+void APIENTRY glSamplerParameteriv(GLuint sampler, GLenum pname, const GLint *params);
+static void x_glSamplerParameteriv(MX_NATIVE_CALL *c)
+{
+    glSamplerParameteriv((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLint *)I(c, 2));
 }
 
 void APIENTRY glScaled(GLdouble x, GLdouble y, GLdouble z);
@@ -2827,6 +4753,138 @@ static void x_glScissor(MX_NATIVE_CALL *c)
     glScissor((GLint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLsizei)I(c, 3));
 }
 
+void APIENTRY glScissorArrayv(GLuint first, GLsizei count, const GLint *v);
+static void x_glScissorArrayv(MX_NATIVE_CALL *c)
+{
+    glScissorArrayv((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLint *)I(c, 2));
+}
+
+void APIENTRY glScissorIndexed(GLuint index, GLint left, GLint bottom, GLsizei width, GLsizei height);
+static void x_glScissorIndexed(MX_NATIVE_CALL *c)
+{
+    glScissorIndexed((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4));
+}
+
+void APIENTRY glScissorIndexedv(GLuint index, const GLint *v);
+static void x_glScissorIndexedv(MX_NATIVE_CALL *c)
+{
+    glScissorIndexedv((GLuint)I(c, 0), (const GLint *)I(c, 1));
+}
+
+void APIENTRY glSecondaryColor3b(GLbyte red, GLbyte green, GLbyte blue);
+static void x_glSecondaryColor3b(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3b((GLbyte)I(c, 0), (GLbyte)I(c, 1), (GLbyte)I(c, 2));
+}
+
+void APIENTRY glSecondaryColor3bv(const GLbyte *v);
+static void x_glSecondaryColor3bv(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3bv((const GLbyte *)I(c, 0));
+}
+
+void APIENTRY glSecondaryColor3d(GLdouble red, GLdouble green, GLdouble blue);
+static void x_glSecondaryColor3d(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3d(D(c, 0), D(c, 1), D(c, 2));
+}
+
+void APIENTRY glSecondaryColor3dv(const GLdouble *v);
+static void x_glSecondaryColor3dv(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3dv((const GLdouble *)I(c, 0));
+}
+
+void APIENTRY glSecondaryColor3f(GLfloat red, GLfloat green, GLfloat blue);
+static void x_glSecondaryColor3f(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3f(F(c, 0), F(c, 1), F(c, 2));
+}
+
+void APIENTRY glSecondaryColor3fv(const GLfloat *v);
+static void x_glSecondaryColor3fv(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3fv((const GLfloat *)I(c, 0));
+}
+
+void APIENTRY glSecondaryColor3i(GLint red, GLint green, GLint blue);
+static void x_glSecondaryColor3i(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3i((GLint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2));
+}
+
+void APIENTRY glSecondaryColor3iv(const GLint *v);
+static void x_glSecondaryColor3iv(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3iv((const GLint *)I(c, 0));
+}
+
+void APIENTRY glSecondaryColor3s(GLshort red, GLshort green, GLshort blue);
+static void x_glSecondaryColor3s(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3s((GLshort)I(c, 0), (GLshort)I(c, 1), (GLshort)I(c, 2));
+}
+
+void APIENTRY glSecondaryColor3sv(const GLshort *v);
+static void x_glSecondaryColor3sv(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3sv((const GLshort *)I(c, 0));
+}
+
+void APIENTRY glSecondaryColor3ub(GLubyte red, GLubyte green, GLubyte blue);
+static void x_glSecondaryColor3ub(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3ub((GLubyte)I(c, 0), (GLubyte)I(c, 1), (GLubyte)I(c, 2));
+}
+
+void APIENTRY glSecondaryColor3ubv(const GLubyte *v);
+static void x_glSecondaryColor3ubv(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3ubv((const GLubyte *)I(c, 0));
+}
+
+void APIENTRY glSecondaryColor3ui(GLuint red, GLuint green, GLuint blue);
+static void x_glSecondaryColor3ui(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3ui((GLuint)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glSecondaryColor3uiv(const GLuint *v);
+static void x_glSecondaryColor3uiv(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3uiv((const GLuint *)I(c, 0));
+}
+
+void APIENTRY glSecondaryColor3us(GLushort red, GLushort green, GLushort blue);
+static void x_glSecondaryColor3us(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3us((GLushort)I(c, 0), (GLushort)I(c, 1), (GLushort)I(c, 2));
+}
+
+void APIENTRY glSecondaryColor3usv(const GLushort *v);
+static void x_glSecondaryColor3usv(MX_NATIVE_CALL *c)
+{
+    glSecondaryColor3usv((const GLushort *)I(c, 0));
+}
+
+void APIENTRY glSecondaryColorP3ui(GLenum type, GLuint color);
+static void x_glSecondaryColorP3ui(MX_NATIVE_CALL *c)
+{
+    glSecondaryColorP3ui((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glSecondaryColorP3uiv(GLenum type, const GLuint *color);
+static void x_glSecondaryColorP3uiv(MX_NATIVE_CALL *c)
+{
+    glSecondaryColorP3uiv((GLenum)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glSecondaryColorPointer(GLint size, GLenum type, GLsizei stride, const void *pointer);
+static void x_glSecondaryColorPointer(MX_NATIVE_CALL *c)
+{
+    glSecondaryColorPointer((GLint)I(c, 0), (GLenum)I(c, 1), (GLsizei)I(c, 2), (const void *)I(c, 3));
+}
+
 void APIENTRY glSelectBuffer(GLsizei size, GLuint *buffer);
 static void x_glSelectBuffer(MX_NATIVE_CALL *c)
 {
@@ -2839,10 +4897,22 @@ static void x_glShadeModel(MX_NATIVE_CALL *c)
     glShadeModel((GLenum)I(c, 0));
 }
 
+void APIENTRY glShaderBinary(GLsizei count, const GLuint *shaders, GLenum format, const void *binary, GLsizei size);
+static void x_glShaderBinary(MX_NATIVE_CALL *c)
+{
+    glShaderBinary((GLsizei)I(c, 0), (const GLuint *)I(c, 1), (GLenum)I(c, 2), (const void *)I(c, 3), (GLsizei)I(c, 4));
+}
+
 void APIENTRY glShaderSource(GLuint name, GLsizei count, const GLchar *const *strings, const GLint *lengths);
 static void x_glShaderSource(MX_NATIVE_CALL *c)
 {
     glShaderSource((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLchar *const *)I(c, 2), (const GLint *)I(c, 3));
+}
+
+void APIENTRY glShaderStorageBlockBinding(GLuint program, GLuint index, GLuint binding);
+static void x_glShaderStorageBlockBinding(MX_NATIVE_CALL *c)
+{
+    glShaderStorageBlockBinding((GLuint)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2));
 }
 
 void APIENTRY glStencilFunc(GLenum func, GLint ref, GLuint mask);
@@ -2879,6 +4949,18 @@ void APIENTRY glStencilOpSeparate(GLenum face, GLenum fail, GLenum zfail, GLenum
 static void x_glStencilOpSeparate(MX_NATIVE_CALL *c)
 {
     glStencilOpSeparate((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLenum)I(c, 3));
+}
+
+void APIENTRY glTexBuffer(GLenum target, GLenum internal, GLuint buffer);
+static void x_glTexBuffer(MX_NATIVE_CALL *c)
+{
+    glTexBuffer((GLenum)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glTexBufferRange(GLenum target, GLenum internal, GLuint buffer, GLintptr offset, GLsizeiptr size);
+static void x_glTexBufferRange(MX_NATIVE_CALL *c)
+{
+    glTexBufferRange((GLenum)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLintptr)I(c, 3), (GLsizeiptr)I(c, 4));
 }
 
 void APIENTRY glTexCoord1d(GLdouble s);
@@ -3073,6 +5155,54 @@ static void x_glTexCoord4sv(MX_NATIVE_CALL *c)
     glTexCoord4sv((const GLshort *)I(c, 0));
 }
 
+void APIENTRY glTexCoordP1ui(GLenum type, GLuint coords);
+static void x_glTexCoordP1ui(MX_NATIVE_CALL *c)
+{
+    glTexCoordP1ui((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glTexCoordP1uiv(GLenum type, const GLuint *coords);
+static void x_glTexCoordP1uiv(MX_NATIVE_CALL *c)
+{
+    glTexCoordP1uiv((GLenum)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glTexCoordP2ui(GLenum type, GLuint coords);
+static void x_glTexCoordP2ui(MX_NATIVE_CALL *c)
+{
+    glTexCoordP2ui((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glTexCoordP2uiv(GLenum type, const GLuint *coords);
+static void x_glTexCoordP2uiv(MX_NATIVE_CALL *c)
+{
+    glTexCoordP2uiv((GLenum)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glTexCoordP3ui(GLenum type, GLuint coords);
+static void x_glTexCoordP3ui(MX_NATIVE_CALL *c)
+{
+    glTexCoordP3ui((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glTexCoordP3uiv(GLenum type, const GLuint *coords);
+static void x_glTexCoordP3uiv(MX_NATIVE_CALL *c)
+{
+    glTexCoordP3uiv((GLenum)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glTexCoordP4ui(GLenum type, GLuint coords);
+static void x_glTexCoordP4ui(MX_NATIVE_CALL *c)
+{
+    glTexCoordP4ui((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glTexCoordP4uiv(GLenum type, const GLuint *coords);
+static void x_glTexCoordP4uiv(MX_NATIVE_CALL *c)
+{
+    glTexCoordP4uiv((GLenum)I(c, 0), (const GLuint *)I(c, 1));
+}
+
 void APIENTRY glTexCoordPointer(GLint size, GLenum type, GLsizei stride, const void *pointer);
 static void x_glTexCoordPointer(MX_NATIVE_CALL *c)
 {
@@ -3163,6 +5293,24 @@ static void x_glTexImage3D(MX_NATIVE_CALL *c)
     glTexImage3D((GLenum)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5), (GLint)I(c, 6), (GLenum)I(c, 7), (GLenum)I(c, 8), (const void *)I(c, 9));
 }
 
+void APIENTRY glTexImage3DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h, GLsizei d,                                             GLboolean fixed);
+static void x_glTexImage3DMultisample(MX_NATIVE_CALL *c)
+{
+    glTexImage3DMultisample((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5), (GLboolean)I(c, 6));
+}
+
+void APIENTRY glTexParameterIiv(GLenum target, GLenum pname, const GLint *params);
+static void x_glTexParameterIiv(MX_NATIVE_CALL *c)
+{
+    glTexParameterIiv((GLenum)I(c, 0), (GLenum)I(c, 1), (const GLint *)I(c, 2));
+}
+
+void APIENTRY glTexParameterIuiv(GLenum target, GLenum pname, const GLuint *params);
+static void x_glTexParameterIuiv(MX_NATIVE_CALL *c)
+{
+    glTexParameterIuiv((GLenum)I(c, 0), (GLenum)I(c, 1), (const GLuint *)I(c, 2));
+}
+
 void APIENTRY glTexParameterf(GLenum target, GLenum pname, GLfloat param);
 static void x_glTexParameterf(MX_NATIVE_CALL *c)
 {
@@ -3187,16 +5335,34 @@ static void x_glTexParameteriv(MX_NATIVE_CALL *c)
     glTexParameteriv((GLenum)I(c, 0), (GLenum)I(c, 1), (const GLint *)I(c, 2));
 }
 
+void APIENTRY glTexStorage1D(GLenum target, GLsizei levels, GLenum internal, GLsizei w);
+static void x_glTexStorage1D(MX_NATIVE_CALL *c)
+{
+    glTexStorage1D((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3));
+}
+
 void APIENTRY glTexStorage2D(GLenum target, GLsizei levels, GLenum internal, GLsizei w, GLsizei h);
 static void x_glTexStorage2D(MX_NATIVE_CALL *c)
 {
     glTexStorage2D((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4));
 }
 
+void APIENTRY glTexStorage2DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                               GLboolean fixed);
+static void x_glTexStorage2DMultisample(MX_NATIVE_CALL *c)
+{
+    glTexStorage2DMultisample((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLboolean)I(c, 5));
+}
+
 void APIENTRY glTexStorage3D(GLenum target, GLsizei levels, GLenum internal, GLsizei w, GLsizei h, GLsizei d);
 static void x_glTexStorage3D(MX_NATIVE_CALL *c)
 {
     glTexStorage3D((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5));
+}
+
+void APIENTRY glTexStorage3DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                               GLsizei d, GLboolean fixed);
+static void x_glTexStorage3DMultisample(MX_NATIVE_CALL *c)
+{
+    glTexStorage3DMultisample((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5), (GLboolean)I(c, 6));
 }
 
 void APIENTRY glTexSubImage1D(GLenum target, GLint level, GLint x, GLsizei w, GLenum format, GLenum type,                                     const void *pixels);
@@ -3217,6 +5383,132 @@ static void x_glTexSubImage3D(MX_NATIVE_CALL *c)
     glTexSubImage3D((GLenum)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7), (GLenum)I(c, 8), (GLenum)I(c, 9), (const void *)I(c, 10));
 }
 
+void APIENTRY glTextureBarrier(void);
+static void x_glTextureBarrier(MX_NATIVE_CALL *c)
+{
+    glTextureBarrier();
+}
+
+void APIENTRY glTextureBuffer(GLuint texture, GLenum internal, GLuint buffer);
+static void x_glTextureBuffer(MX_NATIVE_CALL *c)
+{
+    glTextureBuffer((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glTextureBufferRange(GLuint texture, GLenum internal, GLuint buffer, GLintptr offset, GLsizeiptr size);
+static void x_glTextureBufferRange(MX_NATIVE_CALL *c)
+{
+    glTextureBufferRange((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLintptr)I(c, 3), (GLsizeiptr)I(c, 4));
+}
+
+void APIENTRY glTextureParameterIiv(GLuint texture, GLenum pname, const GLint *params);
+static void x_glTextureParameterIiv(MX_NATIVE_CALL *c)
+{
+    glTextureParameterIiv((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLint *)I(c, 2));
+}
+
+void APIENTRY glTextureParameterIuiv(GLuint texture, GLenum pname, const GLuint *params);
+static void x_glTextureParameterIuiv(MX_NATIVE_CALL *c)
+{
+    glTextureParameterIuiv((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLuint *)I(c, 2));
+}
+
+void APIENTRY glTextureParameterf(GLuint texture, GLenum pname, GLfloat param);
+static void x_glTextureParameterf(MX_NATIVE_CALL *c)
+{
+    glTextureParameterf((GLuint)I(c, 0), (GLenum)I(c, 1), F(c, 2));
+}
+
+void APIENTRY glTextureParameterfv(GLuint texture, GLenum pname, const GLfloat *params);
+static void x_glTextureParameterfv(MX_NATIVE_CALL *c)
+{
+    glTextureParameterfv((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLfloat *)I(c, 2));
+}
+
+void APIENTRY glTextureParameteri(GLuint texture, GLenum pname, GLint param);
+static void x_glTextureParameteri(MX_NATIVE_CALL *c)
+{
+    glTextureParameteri((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint)I(c, 2));
+}
+
+void APIENTRY glTextureParameteriv(GLuint texture, GLenum pname, const GLint *params);
+static void x_glTextureParameteriv(MX_NATIVE_CALL *c)
+{
+    glTextureParameteriv((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLint *)I(c, 2));
+}
+
+void APIENTRY glTextureStorage1D(GLuint texture, GLsizei levels, GLenum internal, GLsizei w);
+static void x_glTextureStorage1D(MX_NATIVE_CALL *c)
+{
+    glTextureStorage1D((GLuint)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3));
+}
+
+void APIENTRY glTextureStorage2D(GLuint texture, GLsizei levels, GLenum internal, GLsizei w, GLsizei h);
+static void x_glTextureStorage2D(MX_NATIVE_CALL *c)
+{
+    glTextureStorage2D((GLuint)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4));
+}
+
+void APIENTRY glTextureStorage2DMultisample(GLuint texture, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                                   GLboolean fixed);
+static void x_glTextureStorage2DMultisample(MX_NATIVE_CALL *c)
+{
+    glTextureStorage2DMultisample((GLuint)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLboolean)I(c, 5));
+}
+
+void APIENTRY glTextureStorage3D(GLuint texture, GLsizei levels, GLenum internal, GLsizei w, GLsizei h, GLsizei d);
+static void x_glTextureStorage3D(MX_NATIVE_CALL *c)
+{
+    glTextureStorage3D((GLuint)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5));
+}
+
+void APIENTRY glTextureStorage3DMultisample(GLuint texture, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                                   GLsizei d, GLboolean fixed);
+static void x_glTextureStorage3DMultisample(MX_NATIVE_CALL *c)
+{
+    glTextureStorage3DMultisample((GLuint)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5), (GLboolean)I(c, 6));
+}
+
+void APIENTRY glTextureSubImage1D(GLuint texture, GLint level, GLint x, GLsizei w, GLenum format, GLenum type,                                         const void *pixels);
+static void x_glTextureSubImage1D(MX_NATIVE_CALL *c)
+{
+    glTextureSubImage1D((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLsizei)I(c, 3), (GLenum)I(c, 4), (GLenum)I(c, 5), (const void *)I(c, 6));
+}
+
+void APIENTRY glTextureSubImage2D(GLuint texture, GLint level, GLint x, GLint y, GLsizei w, GLsizei h,                                         GLenum format, GLenum type, const void *pixels);
+static void x_glTextureSubImage2D(MX_NATIVE_CALL *c)
+{
+    glTextureSubImage2D((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5), (GLenum)I(c, 6), (GLenum)I(c, 7), (const void *)I(c, 8));
+}
+
+void APIENTRY glTextureSubImage3D(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                         GLsizei d, GLenum format, GLenum type, const void *pixels);
+static void x_glTextureSubImage3D(MX_NATIVE_CALL *c)
+{
+    glTextureSubImage3D((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7), (GLenum)I(c, 8), (GLenum)I(c, 9), (const void *)I(c, 10));
+}
+
+void APIENTRY glTextureView(GLuint texture, GLenum target, GLuint origtexture, GLenum internal, GLuint minlevel,                                   GLuint numlevels, GLuint minlayer, GLuint numlayers);
+static void x_glTextureView(MX_NATIVE_CALL *c)
+{
+    glTextureView((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLenum)I(c, 3), (GLuint)I(c, 4), (GLuint)I(c, 5), (GLuint)I(c, 6), (GLuint)I(c, 7));
+}
+
+void APIENTRY glTransformFeedbackBufferBase(GLuint xfb, GLuint index, GLuint buffer);
+static void x_glTransformFeedbackBufferBase(MX_NATIVE_CALL *c)
+{
+    glTransformFeedbackBufferBase((GLuint)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glTransformFeedbackBufferRange(GLuint xfb, GLuint index, GLuint buffer, GLintptr offset,                                                    GLsizeiptr size);
+static void x_glTransformFeedbackBufferRange(MX_NATIVE_CALL *c)
+{
+    glTransformFeedbackBufferRange((GLuint)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2), (GLintptr)I(c, 3), (GLsizeiptr)I(c, 4));
+}
+
+void APIENTRY glTransformFeedbackVaryings(GLuint program, GLsizei count, const GLchar *const *varyings,                                                 GLenum mode);
+static void x_glTransformFeedbackVaryings(MX_NATIVE_CALL *c)
+{
+    glTransformFeedbackVaryings((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLchar *const *)I(c, 2), (GLenum)I(c, 3));
+}
+
 void APIENTRY glTranslated(GLdouble x, GLdouble y, GLdouble z);
 static void x_glTranslated(MX_NATIVE_CALL *c)
 {
@@ -3227,6 +5519,18 @@ void APIENTRY glTranslatef(GLfloat x, GLfloat y, GLfloat z);
 static void x_glTranslatef(MX_NATIVE_CALL *c)
 {
     glTranslatef(F(c, 0), F(c, 1), F(c, 2));
+}
+
+void APIENTRY glUniform1d(GLint l, GLdouble a);
+static void x_glUniform1d(MX_NATIVE_CALL *c)
+{
+    glUniform1d((GLint)I(c, 0), D(c, 1));
+}
+
+void APIENTRY glUniform1dv(GLint l, GLsizei n, const GLdouble *v);
+static void x_glUniform1dv(MX_NATIVE_CALL *c)
+{
+    glUniform1dv((GLint)I(c, 0), (GLsizei)I(c, 1), (const GLdouble *)I(c, 2));
 }
 
 void APIENTRY glUniform1f(GLint l, GLfloat a);
@@ -3265,6 +5569,18 @@ static void x_glUniform1uiv(MX_NATIVE_CALL *c)
     glUniform1uiv((GLint)I(c, 0), (GLsizei)I(c, 1), (const GLuint *)I(c, 2));
 }
 
+void APIENTRY glUniform2d(GLint l, GLdouble a, GLdouble b);
+static void x_glUniform2d(MX_NATIVE_CALL *c)
+{
+    glUniform2d((GLint)I(c, 0), D(c, 1), D(c, 2));
+}
+
+void APIENTRY glUniform2dv(GLint l, GLsizei n, const GLdouble *v);
+static void x_glUniform2dv(MX_NATIVE_CALL *c)
+{
+    glUniform2dv((GLint)I(c, 0), (GLsizei)I(c, 1), (const GLdouble *)I(c, 2));
+}
+
 void APIENTRY glUniform2f(GLint l, GLfloat a, GLfloat b);
 static void x_glUniform2f(MX_NATIVE_CALL *c)
 {
@@ -3301,6 +5617,18 @@ static void x_glUniform2uiv(MX_NATIVE_CALL *c)
     glUniform2uiv((GLint)I(c, 0), (GLsizei)I(c, 1), (const GLuint *)I(c, 2));
 }
 
+void APIENTRY glUniform3d(GLint l, GLdouble a, GLdouble b, GLdouble c);
+static void x_glUniform3d(MX_NATIVE_CALL *c)
+{
+    glUniform3d((GLint)I(c, 0), D(c, 1), D(c, 2), D(c, 3));
+}
+
+void APIENTRY glUniform3dv(GLint l, GLsizei n, const GLdouble *v);
+static void x_glUniform3dv(MX_NATIVE_CALL *c)
+{
+    glUniform3dv((GLint)I(c, 0), (GLsizei)I(c, 1), (const GLdouble *)I(c, 2));
+}
+
 void APIENTRY glUniform3f(GLint l, GLfloat a, GLfloat b, GLfloat c);
 static void x_glUniform3f(MX_NATIVE_CALL *c)
 {
@@ -3335,6 +5663,18 @@ void APIENTRY glUniform3uiv(GLint l, GLsizei n, const GLuint *v);
 static void x_glUniform3uiv(MX_NATIVE_CALL *c)
 {
     glUniform3uiv((GLint)I(c, 0), (GLsizei)I(c, 1), (const GLuint *)I(c, 2));
+}
+
+void APIENTRY glUniform4d(GLint l, GLdouble a, GLdouble b, GLdouble c, GLdouble d);
+static void x_glUniform4d(MX_NATIVE_CALL *c)
+{
+    glUniform4d((GLint)I(c, 0), D(c, 1), D(c, 2), D(c, 3), D(c, 4));
+}
+
+void APIENTRY glUniform4dv(GLint l, GLsizei n, const GLdouble *v);
+static void x_glUniform4dv(MX_NATIVE_CALL *c)
+{
+    glUniform4dv((GLint)I(c, 0), (GLsizei)I(c, 1), (const GLdouble *)I(c, 2));
 }
 
 void APIENTRY glUniform4f(GLint l, GLfloat a, GLfloat b, GLfloat c, GLfloat d);
@@ -3379,10 +5719,22 @@ static void x_glUniformBlockBinding(MX_NATIVE_CALL *c)
     glUniformBlockBinding((GLuint)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2));
 }
 
+void APIENTRY glUniformMatrix2dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
+static void x_glUniformMatrix2dv(MX_NATIVE_CALL *c)
+{
+    glUniformMatrix2dv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLdouble *)I(c, 3));
+}
+
 void APIENTRY glUniformMatrix2fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
 static void x_glUniformMatrix2fv(MX_NATIVE_CALL *c)
 {
     glUniformMatrix2fv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLfloat *)I(c, 3));
+}
+
+void APIENTRY glUniformMatrix2x3dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
+static void x_glUniformMatrix2x3dv(MX_NATIVE_CALL *c)
+{
+    glUniformMatrix2x3dv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLdouble *)I(c, 3));
 }
 
 void APIENTRY glUniformMatrix2x3fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
@@ -3391,10 +5743,22 @@ static void x_glUniformMatrix2x3fv(MX_NATIVE_CALL *c)
     glUniformMatrix2x3fv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLfloat *)I(c, 3));
 }
 
+void APIENTRY glUniformMatrix2x4dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
+static void x_glUniformMatrix2x4dv(MX_NATIVE_CALL *c)
+{
+    glUniformMatrix2x4dv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLdouble *)I(c, 3));
+}
+
 void APIENTRY glUniformMatrix2x4fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
 static void x_glUniformMatrix2x4fv(MX_NATIVE_CALL *c)
 {
     glUniformMatrix2x4fv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLfloat *)I(c, 3));
+}
+
+void APIENTRY glUniformMatrix3dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
+static void x_glUniformMatrix3dv(MX_NATIVE_CALL *c)
+{
+    glUniformMatrix3dv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLdouble *)I(c, 3));
 }
 
 void APIENTRY glUniformMatrix3fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
@@ -3403,10 +5767,22 @@ static void x_glUniformMatrix3fv(MX_NATIVE_CALL *c)
     glUniformMatrix3fv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLfloat *)I(c, 3));
 }
 
+void APIENTRY glUniformMatrix3x2dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
+static void x_glUniformMatrix3x2dv(MX_NATIVE_CALL *c)
+{
+    glUniformMatrix3x2dv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLdouble *)I(c, 3));
+}
+
 void APIENTRY glUniformMatrix3x2fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
 static void x_glUniformMatrix3x2fv(MX_NATIVE_CALL *c)
 {
     glUniformMatrix3x2fv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLfloat *)I(c, 3));
+}
+
+void APIENTRY glUniformMatrix3x4dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
+static void x_glUniformMatrix3x4dv(MX_NATIVE_CALL *c)
+{
+    glUniformMatrix3x4dv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLdouble *)I(c, 3));
 }
 
 void APIENTRY glUniformMatrix3x4fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
@@ -3415,10 +5791,22 @@ static void x_glUniformMatrix3x4fv(MX_NATIVE_CALL *c)
     glUniformMatrix3x4fv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLfloat *)I(c, 3));
 }
 
+void APIENTRY glUniformMatrix4dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
+static void x_glUniformMatrix4dv(MX_NATIVE_CALL *c)
+{
+    glUniformMatrix4dv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLdouble *)I(c, 3));
+}
+
 void APIENTRY glUniformMatrix4fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
 static void x_glUniformMatrix4fv(MX_NATIVE_CALL *c)
 {
     glUniformMatrix4fv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLfloat *)I(c, 3));
+}
+
+void APIENTRY glUniformMatrix4x2dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
+static void x_glUniformMatrix4x2dv(MX_NATIVE_CALL *c)
+{
+    glUniformMatrix4x2dv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLdouble *)I(c, 3));
 }
 
 void APIENTRY glUniformMatrix4x2fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
@@ -3427,10 +5815,22 @@ static void x_glUniformMatrix4x2fv(MX_NATIVE_CALL *c)
     glUniformMatrix4x2fv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLfloat *)I(c, 3));
 }
 
+void APIENTRY glUniformMatrix4x3dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
+static void x_glUniformMatrix4x3dv(MX_NATIVE_CALL *c)
+{
+    glUniformMatrix4x3dv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLdouble *)I(c, 3));
+}
+
 void APIENTRY glUniformMatrix4x3fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
 static void x_glUniformMatrix4x3fv(MX_NATIVE_CALL *c)
 {
     glUniformMatrix4x3fv((GLint)I(c, 0), (GLsizei)I(c, 1), (GLboolean)I(c, 2), (const GLfloat *)I(c, 3));
+}
+
+void APIENTRY glUniformSubroutinesuiv(GLenum shadertype, GLsizei count, const GLuint *indices);
+static void x_glUniformSubroutinesuiv(MX_NATIVE_CALL *c)
+{
+    glUniformSubroutinesuiv((GLenum)I(c, 0), (GLsizei)I(c, 1), (const GLuint *)I(c, 2));
 }
 
 GLboolean APIENTRY glUnmapBuffer(GLenum target);
@@ -3439,16 +5839,34 @@ static void x_glUnmapBuffer(MX_NATIVE_CALL *c)
     c->rax = (unsigned long long)(ULONG_PTR)glUnmapBuffer((GLenum)I(c, 0));
 }
 
+GLboolean APIENTRY glUnmapNamedBuffer(GLuint buffer);
+static void x_glUnmapNamedBuffer(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glUnmapNamedBuffer((GLuint)I(c, 0));
+}
+
 void APIENTRY glUseProgram(GLuint name);
 static void x_glUseProgram(MX_NATIVE_CALL *c)
 {
     glUseProgram((GLuint)I(c, 0));
 }
 
+void APIENTRY glUseProgramStages(GLuint pipeline, GLbitfield stages, GLuint program);
+static void x_glUseProgramStages(MX_NATIVE_CALL *c)
+{
+    glUseProgramStages((GLuint)I(c, 0), (GLbitfield)I(c, 1), (GLuint)I(c, 2));
+}
+
 void APIENTRY glValidateProgram(GLuint name);
 static void x_glValidateProgram(MX_NATIVE_CALL *c)
 {
     glValidateProgram((GLuint)I(c, 0));
+}
+
+void APIENTRY glValidateProgramPipeline(GLuint pipeline);
+static void x_glValidateProgramPipeline(MX_NATIVE_CALL *c)
+{
+    glValidateProgramPipeline((GLuint)I(c, 0));
 }
 
 void APIENTRY glVertex2d(GLdouble x, GLdouble y);
@@ -3595,6 +6013,66 @@ static void x_glVertex4sv(MX_NATIVE_CALL *c)
     glVertex4sv((const GLshort *)I(c, 0));
 }
 
+void APIENTRY glVertexArrayAttribBinding(GLuint array, GLuint index, GLuint binding);
+static void x_glVertexArrayAttribBinding(MX_NATIVE_CALL *c)
+{
+    glVertexArrayAttribBinding((GLuint)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glVertexArrayAttribFormat(GLuint array, GLuint index, GLint size, GLenum type, GLboolean normalized,                                               GLuint relative);
+static void x_glVertexArrayAttribFormat(MX_NATIVE_CALL *c)
+{
+    glVertexArrayAttribFormat((GLuint)I(c, 0), (GLuint)I(c, 1), (GLint)I(c, 2), (GLenum)I(c, 3), (GLboolean)I(c, 4), (GLuint)I(c, 5));
+}
+
+void APIENTRY glVertexArrayAttribIFormat(GLuint array, GLuint index, GLint size, GLenum type, GLuint relative);
+static void x_glVertexArrayAttribIFormat(MX_NATIVE_CALL *c)
+{
+    glVertexArrayAttribIFormat((GLuint)I(c, 0), (GLuint)I(c, 1), (GLint)I(c, 2), (GLenum)I(c, 3), (GLuint)I(c, 4));
+}
+
+void APIENTRY glVertexArrayAttribLFormat(GLuint array, GLuint index, GLint size, GLenum type, GLuint relative);
+static void x_glVertexArrayAttribLFormat(MX_NATIVE_CALL *c)
+{
+    glVertexArrayAttribLFormat((GLuint)I(c, 0), (GLuint)I(c, 1), (GLint)I(c, 2), (GLenum)I(c, 3), (GLuint)I(c, 4));
+}
+
+void APIENTRY glVertexArrayBindingDivisor(GLuint array, GLuint binding, GLuint divisor);
+static void x_glVertexArrayBindingDivisor(MX_NATIVE_CALL *c)
+{
+    glVertexArrayBindingDivisor((GLuint)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glVertexArrayElementBuffer(GLuint array, GLuint buffer);
+static void x_glVertexArrayElementBuffer(MX_NATIVE_CALL *c)
+{
+    glVertexArrayElementBuffer((GLuint)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glVertexArrayVertexBuffer(GLuint array, GLuint binding, GLuint buffer, GLintptr offset, GLsizei stride);
+static void x_glVertexArrayVertexBuffer(MX_NATIVE_CALL *c)
+{
+    glVertexArrayVertexBuffer((GLuint)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2), (GLintptr)I(c, 3), (GLsizei)I(c, 4));
+}
+
+void APIENTRY glVertexArrayVertexBuffers(GLuint array, GLuint first, GLsizei count, const GLuint *buffers,                                                const GLintptr *offsets, const GLsizei *strides);
+static void x_glVertexArrayVertexBuffers(MX_NATIVE_CALL *c)
+{
+    glVertexArrayVertexBuffers((GLuint)I(c, 0), (GLuint)I(c, 1), (GLsizei)I(c, 2), (const GLuint *)I(c, 3), (const GLintptr *)I(c, 4), (const GLsizei *)I(c, 5));
+}
+
+void APIENTRY glVertexAttrib1d(GLuint index, GLdouble x);
+static void x_glVertexAttrib1d(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib1d((GLuint)I(c, 0), D(c, 1));
+}
+
+void APIENTRY glVertexAttrib1dv(GLuint index, const GLdouble *v);
+static void x_glVertexAttrib1dv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib1dv((GLuint)I(c, 0), (const GLdouble *)I(c, 1));
+}
+
 void APIENTRY glVertexAttrib1f(GLuint i, GLfloat x);
 static void x_glVertexAttrib1f(MX_NATIVE_CALL *c)
 {
@@ -3605,6 +6083,30 @@ void APIENTRY glVertexAttrib1fv(GLuint i, const GLfloat *v);
 static void x_glVertexAttrib1fv(MX_NATIVE_CALL *c)
 {
     glVertexAttrib1fv((GLuint)I(c, 0), (const GLfloat *)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib1s(GLuint index, GLshort x);
+static void x_glVertexAttrib1s(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib1s((GLuint)I(c, 0), (GLshort)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib1sv(GLuint index, const GLshort *v);
+static void x_glVertexAttrib1sv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib1sv((GLuint)I(c, 0), (const GLshort *)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib2d(GLuint index, GLdouble x, GLdouble y);
+static void x_glVertexAttrib2d(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib2d((GLuint)I(c, 0), D(c, 1), D(c, 2));
+}
+
+void APIENTRY glVertexAttrib2dv(GLuint index, const GLdouble *v);
+static void x_glVertexAttrib2dv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib2dv((GLuint)I(c, 0), (const GLdouble *)I(c, 1));
 }
 
 void APIENTRY glVertexAttrib2f(GLuint i, GLfloat x, GLfloat y);
@@ -3619,6 +6121,30 @@ static void x_glVertexAttrib2fv(MX_NATIVE_CALL *c)
     glVertexAttrib2fv((GLuint)I(c, 0), (const GLfloat *)I(c, 1));
 }
 
+void APIENTRY glVertexAttrib2s(GLuint index, GLshort x, GLshort y);
+static void x_glVertexAttrib2s(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib2s((GLuint)I(c, 0), (GLshort)I(c, 1), (GLshort)I(c, 2));
+}
+
+void APIENTRY glVertexAttrib2sv(GLuint index, const GLshort *v);
+static void x_glVertexAttrib2sv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib2sv((GLuint)I(c, 0), (const GLshort *)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib3d(GLuint index, GLdouble x, GLdouble y, GLdouble z);
+static void x_glVertexAttrib3d(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib3d((GLuint)I(c, 0), D(c, 1), D(c, 2), D(c, 3));
+}
+
+void APIENTRY glVertexAttrib3dv(GLuint index, const GLdouble *v);
+static void x_glVertexAttrib3dv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib3dv((GLuint)I(c, 0), (const GLdouble *)I(c, 1));
+}
+
 void APIENTRY glVertexAttrib3f(GLuint i, GLfloat x, GLfloat y, GLfloat z);
 static void x_glVertexAttrib3f(MX_NATIVE_CALL *c)
 {
@@ -3631,10 +6157,76 @@ static void x_glVertexAttrib3fv(MX_NATIVE_CALL *c)
     glVertexAttrib3fv((GLuint)I(c, 0), (const GLfloat *)I(c, 1));
 }
 
+void APIENTRY glVertexAttrib3s(GLuint index, GLshort x, GLshort y, GLshort z);
+static void x_glVertexAttrib3s(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib3s((GLuint)I(c, 0), (GLshort)I(c, 1), (GLshort)I(c, 2), (GLshort)I(c, 3));
+}
+
+void APIENTRY glVertexAttrib3sv(GLuint index, const GLshort *v);
+static void x_glVertexAttrib3sv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib3sv((GLuint)I(c, 0), (const GLshort *)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib4Nbv(GLuint index, const GLbyte *v);
+static void x_glVertexAttrib4Nbv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4Nbv((GLuint)I(c, 0), (const GLbyte *)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib4Niv(GLuint index, const GLint *v);
+static void x_glVertexAttrib4Niv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4Niv((GLuint)I(c, 0), (const GLint *)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib4Nsv(GLuint index, const GLshort *v);
+static void x_glVertexAttrib4Nsv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4Nsv((GLuint)I(c, 0), (const GLshort *)I(c, 1));
+}
+
 void APIENTRY glVertexAttrib4Nub(GLuint i, GLubyte x, GLubyte y, GLubyte z, GLubyte w);
 static void x_glVertexAttrib4Nub(MX_NATIVE_CALL *c)
 {
     glVertexAttrib4Nub((GLuint)I(c, 0), (GLubyte)I(c, 1), (GLubyte)I(c, 2), (GLubyte)I(c, 3), (GLubyte)I(c, 4));
+}
+
+void APIENTRY glVertexAttrib4Nubv(GLuint index, const GLubyte *v);
+static void x_glVertexAttrib4Nubv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4Nubv((GLuint)I(c, 0), (const GLubyte *)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib4Nuiv(GLuint index, const GLuint *v);
+static void x_glVertexAttrib4Nuiv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4Nuiv((GLuint)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib4Nusv(GLuint index, const GLushort *v);
+static void x_glVertexAttrib4Nusv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4Nusv((GLuint)I(c, 0), (const GLushort *)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib4bv(GLuint index, const GLbyte *v);
+static void x_glVertexAttrib4bv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4bv((GLuint)I(c, 0), (const GLbyte *)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib4d(GLuint index, GLdouble x, GLdouble y, GLdouble z, GLdouble w);
+static void x_glVertexAttrib4d(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4d((GLuint)I(c, 0), D(c, 1), D(c, 2), D(c, 3), D(c, 4));
+}
+
+void APIENTRY glVertexAttrib4dv(GLuint index, const GLdouble *v);
+static void x_glVertexAttrib4dv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4dv((GLuint)I(c, 0), (const GLdouble *)I(c, 1));
 }
 
 void APIENTRY glVertexAttrib4f(GLuint i, GLfloat x, GLfloat y, GLfloat z, GLfloat w);
@@ -3649,10 +6241,136 @@ static void x_glVertexAttrib4fv(MX_NATIVE_CALL *c)
     glVertexAttrib4fv((GLuint)I(c, 0), (const GLfloat *)I(c, 1));
 }
 
+void APIENTRY glVertexAttrib4iv(GLuint index, const GLint *v);
+static void x_glVertexAttrib4iv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4iv((GLuint)I(c, 0), (const GLint *)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib4s(GLuint index, GLshort x, GLshort y, GLshort z, GLshort w);
+static void x_glVertexAttrib4s(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4s((GLuint)I(c, 0), (GLshort)I(c, 1), (GLshort)I(c, 2), (GLshort)I(c, 3), (GLshort)I(c, 4));
+}
+
+void APIENTRY glVertexAttrib4sv(GLuint index, const GLshort *v);
+static void x_glVertexAttrib4sv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4sv((GLuint)I(c, 0), (const GLshort *)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib4ubv(GLuint index, const GLubyte *v);
+static void x_glVertexAttrib4ubv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4ubv((GLuint)I(c, 0), (const GLubyte *)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib4uiv(GLuint index, const GLuint *v);
+static void x_glVertexAttrib4uiv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4uiv((GLuint)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glVertexAttrib4usv(GLuint index, const GLushort *v);
+static void x_glVertexAttrib4usv(MX_NATIVE_CALL *c)
+{
+    glVertexAttrib4usv((GLuint)I(c, 0), (const GLushort *)I(c, 1));
+}
+
+void APIENTRY glVertexAttribBinding(GLuint index, GLuint binding);
+static void x_glVertexAttribBinding(MX_NATIVE_CALL *c)
+{
+    glVertexAttribBinding((GLuint)I(c, 0), (GLuint)I(c, 1));
+}
+
 void APIENTRY glVertexAttribDivisor(GLuint index, GLuint divisor);
 static void x_glVertexAttribDivisor(MX_NATIVE_CALL *c)
 {
     glVertexAttribDivisor((GLuint)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glVertexAttribFormat(GLuint index, GLint size, GLenum type, GLboolean normalized, GLuint relative);
+static void x_glVertexAttribFormat(MX_NATIVE_CALL *c)
+{
+    glVertexAttribFormat((GLuint)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLboolean)I(c, 3), (GLuint)I(c, 4));
+}
+
+void APIENTRY glVertexAttribI1i(GLuint index, GLint x);
+static void x_glVertexAttribI1i(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI1i((GLuint)I(c, 0), (GLint)I(c, 1));
+}
+
+void APIENTRY glVertexAttribI1iv(GLuint index, const GLint *v);
+static void x_glVertexAttribI1iv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI1iv((GLuint)I(c, 0), (const GLint *)I(c, 1));
+}
+
+void APIENTRY glVertexAttribI1ui(GLuint index, GLuint x);
+static void x_glVertexAttribI1ui(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI1ui((GLuint)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glVertexAttribI1uiv(GLuint index, const GLuint *v);
+static void x_glVertexAttribI1uiv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI1uiv((GLuint)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glVertexAttribI2i(GLuint index, GLint x, GLint y);
+static void x_glVertexAttribI2i(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI2i((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2));
+}
+
+void APIENTRY glVertexAttribI2iv(GLuint index, const GLint *v);
+static void x_glVertexAttribI2iv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI2iv((GLuint)I(c, 0), (const GLint *)I(c, 1));
+}
+
+void APIENTRY glVertexAttribI2ui(GLuint index, GLuint x, GLuint y);
+static void x_glVertexAttribI2ui(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI2ui((GLuint)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2));
+}
+
+void APIENTRY glVertexAttribI2uiv(GLuint index, const GLuint *v);
+static void x_glVertexAttribI2uiv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI2uiv((GLuint)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glVertexAttribI3i(GLuint index, GLint x, GLint y, GLint z);
+static void x_glVertexAttribI3i(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI3i((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3));
+}
+
+void APIENTRY glVertexAttribI3iv(GLuint index, const GLint *v);
+static void x_glVertexAttribI3iv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI3iv((GLuint)I(c, 0), (const GLint *)I(c, 1));
+}
+
+void APIENTRY glVertexAttribI3ui(GLuint index, GLuint x, GLuint y, GLuint z);
+static void x_glVertexAttribI3ui(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI3ui((GLuint)I(c, 0), (GLuint)I(c, 1), (GLuint)I(c, 2), (GLuint)I(c, 3));
+}
+
+void APIENTRY glVertexAttribI3uiv(GLuint index, const GLuint *v);
+static void x_glVertexAttribI3uiv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI3uiv((GLuint)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glVertexAttribI4bv(GLuint index, const GLbyte *v);
+static void x_glVertexAttribI4bv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI4bv((GLuint)I(c, 0), (const GLbyte *)I(c, 1));
 }
 
 void APIENTRY glVertexAttribI4i(GLuint i, GLint x, GLint y, GLint z, GLint w);
@@ -3667,6 +6385,18 @@ static void x_glVertexAttribI4iv(MX_NATIVE_CALL *c)
     glVertexAttribI4iv((GLuint)I(c, 0), (const GLint *)I(c, 1));
 }
 
+void APIENTRY glVertexAttribI4sv(GLuint index, const GLshort *v);
+static void x_glVertexAttribI4sv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI4sv((GLuint)I(c, 0), (const GLshort *)I(c, 1));
+}
+
+void APIENTRY glVertexAttribI4ubv(GLuint index, const GLubyte *v);
+static void x_glVertexAttribI4ubv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI4ubv((GLuint)I(c, 0), (const GLubyte *)I(c, 1));
+}
+
 void APIENTRY glVertexAttribI4ui(GLuint i, GLuint x, GLuint y, GLuint z, GLuint w);
 static void x_glVertexAttribI4ui(MX_NATIVE_CALL *c)
 {
@@ -3679,16 +6409,178 @@ static void x_glVertexAttribI4uiv(MX_NATIVE_CALL *c)
     glVertexAttribI4uiv((GLuint)I(c, 0), (const GLuint *)I(c, 1));
 }
 
+void APIENTRY glVertexAttribI4usv(GLuint index, const GLushort *v);
+static void x_glVertexAttribI4usv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribI4usv((GLuint)I(c, 0), (const GLushort *)I(c, 1));
+}
+
+void APIENTRY glVertexAttribIFormat(GLuint index, GLint size, GLenum type, GLuint relative);
+static void x_glVertexAttribIFormat(MX_NATIVE_CALL *c)
+{
+    glVertexAttribIFormat((GLuint)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLuint)I(c, 3));
+}
+
 void APIENTRY glVertexAttribIPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void *pointer);
 static void x_glVertexAttribIPointer(MX_NATIVE_CALL *c)
 {
     glVertexAttribIPointer((GLuint)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (const void *)I(c, 4));
 }
 
+void APIENTRY glVertexAttribL1d(GLuint i, GLdouble x);
+static void x_glVertexAttribL1d(MX_NATIVE_CALL *c)
+{
+    glVertexAttribL1d((GLuint)I(c, 0), D(c, 1));
+}
+
+void APIENTRY glVertexAttribL1dv(GLuint i, const GLdouble *v);
+static void x_glVertexAttribL1dv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribL1dv((GLuint)I(c, 0), (const GLdouble *)I(c, 1));
+}
+
+void APIENTRY glVertexAttribL2d(GLuint i, GLdouble x, GLdouble y);
+static void x_glVertexAttribL2d(MX_NATIVE_CALL *c)
+{
+    glVertexAttribL2d((GLuint)I(c, 0), D(c, 1), D(c, 2));
+}
+
+void APIENTRY glVertexAttribL2dv(GLuint i, const GLdouble *v);
+static void x_glVertexAttribL2dv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribL2dv((GLuint)I(c, 0), (const GLdouble *)I(c, 1));
+}
+
+void APIENTRY glVertexAttribL3d(GLuint i, GLdouble x, GLdouble y, GLdouble z);
+static void x_glVertexAttribL3d(MX_NATIVE_CALL *c)
+{
+    glVertexAttribL3d((GLuint)I(c, 0), D(c, 1), D(c, 2), D(c, 3));
+}
+
+void APIENTRY glVertexAttribL3dv(GLuint i, const GLdouble *v);
+static void x_glVertexAttribL3dv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribL3dv((GLuint)I(c, 0), (const GLdouble *)I(c, 1));
+}
+
+void APIENTRY glVertexAttribL4d(GLuint i, GLdouble x, GLdouble y, GLdouble z, GLdouble w);
+static void x_glVertexAttribL4d(MX_NATIVE_CALL *c)
+{
+    glVertexAttribL4d((GLuint)I(c, 0), D(c, 1), D(c, 2), D(c, 3), D(c, 4));
+}
+
+void APIENTRY glVertexAttribL4dv(GLuint i, const GLdouble *v);
+static void x_glVertexAttribL4dv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribL4dv((GLuint)I(c, 0), (const GLdouble *)I(c, 1));
+}
+
+void APIENTRY glVertexAttribLFormat(GLuint index, GLint size, GLenum type, GLuint relative);
+static void x_glVertexAttribLFormat(MX_NATIVE_CALL *c)
+{
+    glVertexAttribLFormat((GLuint)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLuint)I(c, 3));
+}
+
+void APIENTRY glVertexAttribLPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void *pointer);
+static void x_glVertexAttribLPointer(MX_NATIVE_CALL *c)
+{
+    glVertexAttribLPointer((GLuint)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (const void *)I(c, 4));
+}
+
+void APIENTRY glVertexAttribP1ui(GLuint index, GLenum type, GLboolean normalized, GLuint value);
+static void x_glVertexAttribP1ui(MX_NATIVE_CALL *c)
+{
+    glVertexAttribP1ui((GLuint)I(c, 0), (GLenum)I(c, 1), (GLboolean)I(c, 2), (GLuint)I(c, 3));
+}
+
+void APIENTRY glVertexAttribP1uiv(GLuint index, GLenum type, GLboolean normalized, const GLuint *value);
+static void x_glVertexAttribP1uiv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribP1uiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLboolean)I(c, 2), (const GLuint *)I(c, 3));
+}
+
+void APIENTRY glVertexAttribP2ui(GLuint index, GLenum type, GLboolean normalized, GLuint value);
+static void x_glVertexAttribP2ui(MX_NATIVE_CALL *c)
+{
+    glVertexAttribP2ui((GLuint)I(c, 0), (GLenum)I(c, 1), (GLboolean)I(c, 2), (GLuint)I(c, 3));
+}
+
+void APIENTRY glVertexAttribP2uiv(GLuint index, GLenum type, GLboolean normalized, const GLuint *value);
+static void x_glVertexAttribP2uiv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribP2uiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLboolean)I(c, 2), (const GLuint *)I(c, 3));
+}
+
+void APIENTRY glVertexAttribP3ui(GLuint index, GLenum type, GLboolean normalized, GLuint value);
+static void x_glVertexAttribP3ui(MX_NATIVE_CALL *c)
+{
+    glVertexAttribP3ui((GLuint)I(c, 0), (GLenum)I(c, 1), (GLboolean)I(c, 2), (GLuint)I(c, 3));
+}
+
+void APIENTRY glVertexAttribP3uiv(GLuint index, GLenum type, GLboolean normalized, const GLuint *value);
+static void x_glVertexAttribP3uiv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribP3uiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLboolean)I(c, 2), (const GLuint *)I(c, 3));
+}
+
+void APIENTRY glVertexAttribP4ui(GLuint index, GLenum type, GLboolean normalized, GLuint value);
+static void x_glVertexAttribP4ui(MX_NATIVE_CALL *c)
+{
+    glVertexAttribP4ui((GLuint)I(c, 0), (GLenum)I(c, 1), (GLboolean)I(c, 2), (GLuint)I(c, 3));
+}
+
+void APIENTRY glVertexAttribP4uiv(GLuint index, GLenum type, GLboolean normalized, const GLuint *value);
+static void x_glVertexAttribP4uiv(MX_NATIVE_CALL *c)
+{
+    glVertexAttribP4uiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLboolean)I(c, 2), (const GLuint *)I(c, 3));
+}
+
 void APIENTRY glVertexAttribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride,                                           const void *pointer);
 static void x_glVertexAttribPointer(MX_NATIVE_CALL *c)
 {
     glVertexAttribPointer((GLuint)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLboolean)I(c, 3), (GLsizei)I(c, 4), (const void *)I(c, 5));
+}
+
+void APIENTRY glVertexBindingDivisor(GLuint binding, GLuint divisor);
+static void x_glVertexBindingDivisor(MX_NATIVE_CALL *c)
+{
+    glVertexBindingDivisor((GLuint)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glVertexP2ui(GLenum type, GLuint value);
+static void x_glVertexP2ui(MX_NATIVE_CALL *c)
+{
+    glVertexP2ui((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glVertexP2uiv(GLenum type, const GLuint *value);
+static void x_glVertexP2uiv(MX_NATIVE_CALL *c)
+{
+    glVertexP2uiv((GLenum)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glVertexP3ui(GLenum type, GLuint value);
+static void x_glVertexP3ui(MX_NATIVE_CALL *c)
+{
+    glVertexP3ui((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glVertexP3uiv(GLenum type, const GLuint *value);
+static void x_glVertexP3uiv(MX_NATIVE_CALL *c)
+{
+    glVertexP3uiv((GLenum)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glVertexP4ui(GLenum type, GLuint value);
+static void x_glVertexP4ui(MX_NATIVE_CALL *c)
+{
+    glVertexP4ui((GLenum)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glVertexP4uiv(GLenum type, const GLuint *value);
+static void x_glVertexP4uiv(MX_NATIVE_CALL *c)
+{
+    glVertexP4uiv((GLenum)I(c, 0), (const GLuint *)I(c, 1));
 }
 
 void APIENTRY glVertexPointer(GLint size, GLenum type, GLsizei stride, const void *pointer);
@@ -3703,10 +6595,124 @@ static void x_glViewport(MX_NATIVE_CALL *c)
     glViewport((GLint)I(c, 0), (GLint)I(c, 1), (GLsizei)I(c, 2), (GLsizei)I(c, 3));
 }
 
+void APIENTRY glViewportArrayv(GLuint first, GLsizei count, const GLfloat *v);
+static void x_glViewportArrayv(MX_NATIVE_CALL *c)
+{
+    glViewportArrayv((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLfloat *)I(c, 2));
+}
+
+void APIENTRY glViewportIndexedf(GLuint index, GLfloat x, GLfloat y, GLfloat w, GLfloat h);
+static void x_glViewportIndexedf(MX_NATIVE_CALL *c)
+{
+    glViewportIndexedf((GLuint)I(c, 0), F(c, 1), F(c, 2), F(c, 3), F(c, 4));
+}
+
+void APIENTRY glViewportIndexedfv(GLuint index, const GLfloat *v);
+static void x_glViewportIndexedfv(MX_NATIVE_CALL *c)
+{
+    glViewportIndexedfv((GLuint)I(c, 0), (const GLfloat *)I(c, 1));
+}
+
 void APIENTRY glWaitSync(GLsync handle, GLbitfield flags, GLuint64 timeout);
 static void x_glWaitSync(MX_NATIVE_CALL *c)
 {
     glWaitSync((GLsync)I(c, 0), (GLbitfield)I(c, 1), (GLuint64)I(c, 2));
+}
+
+void APIENTRY glWindowPos2d(GLdouble x, GLdouble y);
+static void x_glWindowPos2d(MX_NATIVE_CALL *c)
+{
+    glWindowPos2d(D(c, 0), D(c, 1));
+}
+
+void APIENTRY glWindowPos2dv(const GLdouble *v);
+static void x_glWindowPos2dv(MX_NATIVE_CALL *c)
+{
+    glWindowPos2dv((const GLdouble *)I(c, 0));
+}
+
+void APIENTRY glWindowPos2f(GLfloat x, GLfloat y);
+static void x_glWindowPos2f(MX_NATIVE_CALL *c)
+{
+    glWindowPos2f(F(c, 0), F(c, 1));
+}
+
+void APIENTRY glWindowPos2fv(const GLfloat *v);
+static void x_glWindowPos2fv(MX_NATIVE_CALL *c)
+{
+    glWindowPos2fv((const GLfloat *)I(c, 0));
+}
+
+void APIENTRY glWindowPos2i(GLint x, GLint y);
+static void x_glWindowPos2i(MX_NATIVE_CALL *c)
+{
+    glWindowPos2i((GLint)I(c, 0), (GLint)I(c, 1));
+}
+
+void APIENTRY glWindowPos2iv(const GLint *v);
+static void x_glWindowPos2iv(MX_NATIVE_CALL *c)
+{
+    glWindowPos2iv((const GLint *)I(c, 0));
+}
+
+void APIENTRY glWindowPos2s(GLshort x, GLshort y);
+static void x_glWindowPos2s(MX_NATIVE_CALL *c)
+{
+    glWindowPos2s((GLshort)I(c, 0), (GLshort)I(c, 1));
+}
+
+void APIENTRY glWindowPos2sv(const GLshort *v);
+static void x_glWindowPos2sv(MX_NATIVE_CALL *c)
+{
+    glWindowPos2sv((const GLshort *)I(c, 0));
+}
+
+void APIENTRY glWindowPos3d(GLdouble x, GLdouble y, GLdouble z);
+static void x_glWindowPos3d(MX_NATIVE_CALL *c)
+{
+    glWindowPos3d(D(c, 0), D(c, 1), D(c, 2));
+}
+
+void APIENTRY glWindowPos3dv(const GLdouble *v);
+static void x_glWindowPos3dv(MX_NATIVE_CALL *c)
+{
+    glWindowPos3dv((const GLdouble *)I(c, 0));
+}
+
+void APIENTRY glWindowPos3f(GLfloat x, GLfloat y, GLfloat z);
+static void x_glWindowPos3f(MX_NATIVE_CALL *c)
+{
+    glWindowPos3f(F(c, 0), F(c, 1), F(c, 2));
+}
+
+void APIENTRY glWindowPos3fv(const GLfloat *v);
+static void x_glWindowPos3fv(MX_NATIVE_CALL *c)
+{
+    glWindowPos3fv((const GLfloat *)I(c, 0));
+}
+
+void APIENTRY glWindowPos3i(GLint x, GLint y, GLint z);
+static void x_glWindowPos3i(MX_NATIVE_CALL *c)
+{
+    glWindowPos3i((GLint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2));
+}
+
+void APIENTRY glWindowPos3iv(const GLint *v);
+static void x_glWindowPos3iv(MX_NATIVE_CALL *c)
+{
+    glWindowPos3iv((const GLint *)I(c, 0));
+}
+
+void APIENTRY glWindowPos3s(GLshort x, GLshort y, GLshort z);
+static void x_glWindowPos3s(MX_NATIVE_CALL *c)
+{
+    glWindowPos3s((GLshort)I(c, 0), (GLshort)I(c, 1), (GLshort)I(c, 2));
+}
+
+void APIENTRY glWindowPos3sv(const GLshort *v);
+static void x_glWindowPos3sv(MX_NATIVE_CALL *c)
+{
+    glWindowPos3sv((const GLshort *)I(c, 0));
 }
 
 int APIENTRY wglChoosePixelFormat(HDC dc, const PIXELFORMATDESCRIPTOR *want);
@@ -3903,48 +6909,84 @@ static void x_wglUseFontOutlinesW(MX_NATIVE_CALL *c)
 
 static const MX_NATIVE_FN g_functions[] = {
     x_glAccum,
+    x_glActiveShaderProgram,
     x_glActiveTexture,
     x_glAlphaFunc,
     x_glAreTexturesResident,
     x_glArrayElement,
     x_glAttachShader,
     x_glBegin,
+    x_glBeginConditionalRender,
     x_glBeginQuery,
+    x_glBeginQueryIndexed,
+    x_glBeginTransformFeedback,
     x_glBindAttribLocation,
     x_glBindBuffer,
     x_glBindBufferBase,
     x_glBindBufferRange,
+    x_glBindBuffersBase,
+    x_glBindBuffersRange,
     x_glBindFragDataLocation,
+    x_glBindFragDataLocationIndexed,
     x_glBindFramebuffer,
+    x_glBindImageTexture,
+    x_glBindImageTextures,
+    x_glBindProgramPipeline,
     x_glBindRenderbuffer,
+    x_glBindSampler,
+    x_glBindSamplers,
     x_glBindTexture,
+    x_glBindTextureUnit,
+    x_glBindTextures,
+    x_glBindTransformFeedback,
     x_glBindVertexArray,
+    x_glBindVertexBuffer,
+    x_glBindVertexBuffers,
     x_glBitmap,
     x_glBlendColor,
     x_glBlendEquation,
     x_glBlendEquationSeparate,
+    x_glBlendEquationSeparatei,
+    x_glBlendEquationi,
     x_glBlendFunc,
     x_glBlendFuncSeparate,
+    x_glBlendFuncSeparatei,
+    x_glBlendFunci,
     x_glBlitFramebuffer,
+    x_glBlitNamedFramebuffer,
     x_glBufferData,
     x_glBufferStorage,
     x_glBufferSubData,
     x_glCallList,
     x_glCallLists,
     x_glCheckFramebufferStatus,
+    x_glCheckNamedFramebufferStatus,
+    x_glClampColor,
     x_glClear,
     x_glClearAccum,
+    x_glClearBufferData,
+    x_glClearBufferSubData,
     x_glClearBufferfi,
     x_glClearBufferfv,
     x_glClearBufferiv,
+    x_glClearBufferuiv,
     x_glClearColor,
     x_glClearDepth,
     x_glClearDepthf,
     x_glClearIndex,
+    x_glClearNamedBufferData,
+    x_glClearNamedBufferSubData,
+    x_glClearNamedFramebufferfi,
+    x_glClearNamedFramebufferfv,
+    x_glClearNamedFramebufferiv,
+    x_glClearNamedFramebufferuiv,
     x_glClearStencil,
+    x_glClearTexImage,
+    x_glClearTexSubImage,
     x_glClientActiveTexture,
     x_glClientActiveTextureARB,
     x_glClientWaitSync,
+    x_glClipControl,
     x_glClipPlane,
     x_glColor3b,
     x_glColor3bv,
@@ -3981,19 +7023,45 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glColorMask,
     x_glColorMaski,
     x_glColorMaterial,
+    x_glColorP3ui,
+    x_glColorP3uiv,
+    x_glColorP4ui,
+    x_glColorP4uiv,
     x_glColorPointer,
     x_glCompileShader,
+    x_glCompressedTexImage1D,
     x_glCompressedTexImage2D,
+    x_glCompressedTexImage3D,
+    x_glCompressedTexSubImage1D,
     x_glCompressedTexSubImage2D,
+    x_glCompressedTexSubImage3D,
+    x_glCompressedTextureSubImage1D,
+    x_glCompressedTextureSubImage2D,
+    x_glCompressedTextureSubImage3D,
     x_glCopyBufferSubData,
+    x_glCopyImageSubData,
+    x_glCopyNamedBufferSubData,
     x_glCopyPixels,
     x_glCopyTexImage1D,
     x_glCopyTexImage2D,
     x_glCopyTexSubImage1D,
     x_glCopyTexSubImage2D,
+    x_glCopyTexSubImage3D,
+    x_glCopyTextureSubImage1D,
+    x_glCopyTextureSubImage2D,
+    x_glCopyTextureSubImage3D,
     x_glCreateBuffers,
+    x_glCreateFramebuffers,
     x_glCreateProgram,
+    x_glCreateProgramPipelines,
+    x_glCreateQueries,
+    x_glCreateRenderbuffers,
+    x_glCreateSamplers,
     x_glCreateShader,
+    x_glCreateShaderProgramv,
+    x_glCreateTextures,
+    x_glCreateTransformFeedbacks,
+    x_glCreateVertexArrays,
     x_glCullFace,
     x_glDebugMessageCallback,
     x_glDebugMessageControl,
@@ -4001,45 +7069,67 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glDeleteBuffers,
     x_glDeleteFramebuffers,
     x_glDeleteLists,
+    x_glDeleteObjectARB,
     x_glDeleteProgram,
+    x_glDeleteProgramPipelines,
     x_glDeleteQueries,
     x_glDeleteRenderbuffers,
+    x_glDeleteSamplers,
     x_glDeleteShader,
     x_glDeleteSync,
     x_glDeleteTextures,
+    x_glDeleteTransformFeedbacks,
     x_glDeleteVertexArrays,
     x_glDepthFunc,
     x_glDepthMask,
     x_glDepthRange,
+    x_glDepthRangeArrayv,
+    x_glDepthRangeIndexed,
     x_glDepthRangef,
+    x_glDetachObjectARB,
     x_glDetachShader,
     x_glDisable,
     x_glDisableClientState,
+    x_glDisableVertexArrayAttrib,
     x_glDisableVertexAttribArray,
     x_glDisablei,
     x_glDiscardFramebufferEXT,
+    x_glDispatchCompute,
+    x_glDispatchComputeIndirect,
     x_glDrawArrays,
+    x_glDrawArraysIndirect,
     x_glDrawArraysInstanced,
     x_glDrawArraysInstancedBaseInstance,
     x_glDrawBuffer,
     x_glDrawBuffers,
     x_glDrawElements,
     x_glDrawElementsBaseVertex,
+    x_glDrawElementsIndirect,
     x_glDrawElementsInstanced,
+    x_glDrawElementsInstancedBaseInstance,
     x_glDrawElementsInstancedBaseVertex,
+    x_glDrawElementsInstancedBaseVertexBaseInstance,
     x_glDrawPixels,
     x_glDrawRangeElements,
     x_glDrawRangeElementsBaseVertex,
+    x_glDrawTransformFeedback,
+    x_glDrawTransformFeedbackInstanced,
+    x_glDrawTransformFeedbackStream,
+    x_glDrawTransformFeedbackStreamInstanced,
     x_glEdgeFlag,
     x_glEdgeFlagPointer,
     x_glEdgeFlagv,
     x_glEnable,
     x_glEnableClientState,
+    x_glEnableVertexArrayAttrib,
     x_glEnableVertexAttribArray,
     x_glEnablei,
     x_glEnd,
+    x_glEndConditionalRender,
     x_glEndList,
     x_glEndQuery,
+    x_glEndQueryIndexed,
+    x_glEndTransformFeedback,
     x_glEvalCoord1d,
     x_glEvalCoord1dv,
     x_glEvalCoord1f,
@@ -4057,29 +7147,46 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glFinish,
     x_glFlush,
     x_glFlushMappedBufferRange,
+    x_glFlushMappedNamedBufferRange,
+    x_glFogCoordPointer,
+    x_glFogCoordd,
+    x_glFogCoorddv,
+    x_glFogCoordf,
+    x_glFogCoordfv,
     x_glFogf,
     x_glFogfv,
     x_glFogi,
     x_glFogiv,
+    x_glFramebufferParameteri,
     x_glFramebufferRenderbuffer,
     x_glFramebufferTexture,
     x_glFramebufferTexture1D,
     x_glFramebufferTexture2D,
+    x_glFramebufferTexture3D,
     x_glFramebufferTextureLayer,
     x_glFrontFace,
     x_glFrustum,
     x_glGenBuffers,
     x_glGenFramebuffers,
     x_glGenLists,
+    x_glGenProgramPipelines,
     x_glGenQueries,
     x_glGenRenderbuffers,
+    x_glGenSamplers,
     x_glGenTextures,
+    x_glGenTransformFeedbacks,
     x_glGenVertexArrays,
     x_glGenerateMipmap,
+    x_glGenerateTextureMipmap,
+    x_glGetActiveAtomicCounterBufferiv,
     x_glGetActiveAttrib,
+    x_glGetActiveSubroutineName,
+    x_glGetActiveSubroutineUniformName,
+    x_glGetActiveSubroutineUniformiv,
     x_glGetActiveUniform,
     x_glGetActiveUniformBlockName,
     x_glGetActiveUniformBlockiv,
+    x_glGetActiveUniformName,
     x_glGetActiveUniformsiv,
     x_glGetAttachedShaders,
     x_glGetAttribLocation,
@@ -4090,14 +7197,29 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGetBufferPointerv,
     x_glGetBufferSubData,
     x_glGetClipPlane,
+    x_glGetCompressedTexImage,
+    x_glGetCompressedTextureImage,
+    x_glGetCompressedTextureSubImage,
     x_glGetDebugMessageLog,
+    x_glGetDoublei_v,
     x_glGetDoublev,
     x_glGetError,
+    x_glGetFloati_v,
     x_glGetFloatv,
+    x_glGetFragDataIndex,
+    x_glGetFragDataLocation,
     x_glGetFramebufferAttachmentParameteriv,
+    x_glGetFramebufferParameteriv,
+    x_glGetGraphicsResetStatus,
+    x_glGetGraphicsResetStatusARB,
+    x_glGetHandleARB,
+    x_glGetInfoLogARB,
+    x_glGetInteger64i_v,
     x_glGetInteger64v,
     x_glGetIntegeri_v,
     x_glGetIntegerv,
+    x_glGetInternalformati64v,
+    x_glGetInternalformativ,
     x_glGetLightfv,
     x_glGetLightiv,
     x_glGetMapdv,
@@ -4105,25 +7227,58 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGetMapiv,
     x_glGetMaterialfv,
     x_glGetMaterialiv,
+    x_glGetMultisamplefv,
+    x_glGetNamedBufferParameteri64v,
+    x_glGetNamedBufferParameteriv,
+    x_glGetNamedBufferPointerv,
+    x_glGetNamedBufferSubData,
+    x_glGetNamedFramebufferAttachmentParameteriv,
+    x_glGetNamedFramebufferParameteriv,
+    x_glGetNamedRenderbufferParameteriv,
+    x_glGetObjectLabel,
+    x_glGetObjectParameterfvARB,
+    x_glGetObjectParameterivARB,
+    x_glGetObjectPtrLabel,
     x_glGetPixelMapfv,
     x_glGetPixelMapuiv,
     x_glGetPixelMapusv,
     x_glGetPointerv,
     x_glGetPolygonStipple,
+    x_glGetProgramBinary,
     x_glGetProgramInfoLog,
+    x_glGetProgramInterfaceiv,
+    x_glGetProgramPipelineInfoLog,
+    x_glGetProgramPipelineiv,
+    x_glGetProgramResourceIndex,
+    x_glGetProgramResourceLocation,
+    x_glGetProgramResourceLocationIndex,
+    x_glGetProgramResourceName,
+    x_glGetProgramResourceiv,
+    x_glGetProgramStageiv,
     x_glGetProgramiv,
+    x_glGetQueryBufferObjecti64v,
+    x_glGetQueryBufferObjectiv,
+    x_glGetQueryBufferObjectui64v,
+    x_glGetQueryBufferObjectuiv,
+    x_glGetQueryIndexediv,
     x_glGetQueryObjecti64v,
     x_glGetQueryObjectiv,
     x_glGetQueryObjectui64v,
     x_glGetQueryObjectuiv,
     x_glGetQueryiv,
     x_glGetRenderbufferParameteriv,
+    x_glGetSamplerParameterIiv,
+    x_glGetSamplerParameterIuiv,
+    x_glGetSamplerParameterfv,
+    x_glGetSamplerParameteriv,
     x_glGetShaderInfoLog,
     x_glGetShaderPrecisionFormat,
     x_glGetShaderSource,
     x_glGetShaderiv,
     x_glGetString,
     x_glGetStringi,
+    x_glGetSubroutineIndex,
+    x_glGetSubroutineUniformLocation,
     x_glGetSynciv,
     x_glGetTexEnvfv,
     x_glGetTexEnviv,
@@ -4133,17 +7288,76 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGetTexImage,
     x_glGetTexLevelParameterfv,
     x_glGetTexLevelParameteriv,
+    x_glGetTexParameterIiv,
+    x_glGetTexParameterIuiv,
     x_glGetTexParameterfv,
     x_glGetTexParameteriv,
+    x_glGetTextureImage,
+    x_glGetTextureLevelParameterfv,
+    x_glGetTextureLevelParameteriv,
+    x_glGetTextureParameterIiv,
+    x_glGetTextureParameterIuiv,
+    x_glGetTextureParameterfv,
+    x_glGetTextureParameteriv,
+    x_glGetTextureSubImage,
+    x_glGetTransformFeedbackVarying,
+    x_glGetTransformFeedbacki64_v,
+    x_glGetTransformFeedbacki_v,
+    x_glGetTransformFeedbackiv,
     x_glGetUniformBlockIndex,
+    x_glGetUniformIndices,
     x_glGetUniformLocation,
+    x_glGetUniformSubroutineuiv,
+    x_glGetUniformdv,
     x_glGetUniformfv,
     x_glGetUniformiv,
+    x_glGetUniformuiv,
+    x_glGetVertexArrayIndexed64iv,
+    x_glGetVertexArrayIndexediv,
+    x_glGetVertexArrayiv,
     x_glGetVertexAttribIiv,
     x_glGetVertexAttribIuiv,
+    x_glGetVertexAttribLdv,
     x_glGetVertexAttribPointerv,
+    x_glGetVertexAttribdv,
     x_glGetVertexAttribfv,
     x_glGetVertexAttribiv,
+    x_glGetnColorTable,
+    x_glGetnColorTableARB,
+    x_glGetnCompressedTexImage,
+    x_glGetnCompressedTexImageARB,
+    x_glGetnConvolutionFilter,
+    x_glGetnConvolutionFilterARB,
+    x_glGetnHistogram,
+    x_glGetnHistogramARB,
+    x_glGetnMapdv,
+    x_glGetnMapdvARB,
+    x_glGetnMapfv,
+    x_glGetnMapfvARB,
+    x_glGetnMapiv,
+    x_glGetnMapivARB,
+    x_glGetnMinmax,
+    x_glGetnMinmaxARB,
+    x_glGetnPixelMapfv,
+    x_glGetnPixelMapfvARB,
+    x_glGetnPixelMapuiv,
+    x_glGetnPixelMapuivARB,
+    x_glGetnPixelMapusv,
+    x_glGetnPixelMapusvARB,
+    x_glGetnPolygonStipple,
+    x_glGetnPolygonStippleARB,
+    x_glGetnSeparableFilter,
+    x_glGetnSeparableFilterARB,
+    x_glGetnTexImage,
+    x_glGetnTexImageARB,
+    x_glGetnUniformdv,
+    x_glGetnUniformdvARB,
+    x_glGetnUniformfv,
+    x_glGetnUniformfvARB,
+    x_glGetnUniformiv,
+    x_glGetnUniformivARB,
+    x_glGetnUniformuiv,
+    x_glGetnUniformuivARB,
     x_glHint,
     x_glIndexMask,
     x_glIndexPointer,
@@ -4159,18 +7373,28 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glIndexubv,
     x_glInitNames,
     x_glInterleavedArrays,
+    x_glInvalidateBufferData,
+    x_glInvalidateBufferSubData,
     x_glInvalidateFramebuffer,
+    x_glInvalidateNamedFramebufferData,
+    x_glInvalidateNamedFramebufferSubData,
+    x_glInvalidateSubFramebuffer,
+    x_glInvalidateTexImage,
+    x_glInvalidateTexSubImage,
     x_glIsBuffer,
     x_glIsEnabled,
     x_glIsEnabledi,
     x_glIsFramebuffer,
     x_glIsList,
     x_glIsProgram,
+    x_glIsProgramPipeline,
     x_glIsQuery,
     x_glIsRenderbuffer,
+    x_glIsSampler,
     x_glIsShader,
     x_glIsSync,
     x_glIsTexture,
+    x_glIsTransformFeedback,
     x_glIsVertexArray,
     x_glLightModelf,
     x_glLightModelfv,
@@ -4203,11 +7427,16 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glMapGrid1f,
     x_glMapGrid2d,
     x_glMapGrid2f,
+    x_glMapNamedBuffer,
+    x_glMapNamedBufferRange,
     x_glMaterialf,
     x_glMaterialfv,
     x_glMateriali,
     x_glMaterialiv,
     x_glMatrixMode,
+    x_glMemoryBarrier,
+    x_glMemoryBarrierByRegion,
+    x_glMinSampleShading,
     x_glMultMatrixd,
     x_glMultMatrixf,
     x_glMultTransposeMatrixd,
@@ -4215,7 +7444,12 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glMultTransposeMatrixf,
     x_glMultTransposeMatrixfARB,
     x_glMultiDrawArrays,
+    x_glMultiDrawArraysIndirect,
+    x_glMultiDrawArraysIndirectCount,
     x_glMultiDrawElements,
+    x_glMultiDrawElementsBaseVertex,
+    x_glMultiDrawElementsIndirect,
+    x_glMultiDrawElementsIndirectCount,
     x_glMultiTexCoord1d,
     x_glMultiTexCoord1dARB,
     x_glMultiTexCoord1dv,
@@ -4280,6 +7514,26 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glMultiTexCoord4sARB,
     x_glMultiTexCoord4sv,
     x_glMultiTexCoord4svARB,
+    x_glMultiTexCoordP1ui,
+    x_glMultiTexCoordP1uiv,
+    x_glMultiTexCoordP2ui,
+    x_glMultiTexCoordP2uiv,
+    x_glMultiTexCoordP3ui,
+    x_glMultiTexCoordP3uiv,
+    x_glMultiTexCoordP4ui,
+    x_glMultiTexCoordP4uiv,
+    x_glNamedBufferData,
+    x_glNamedBufferStorage,
+    x_glNamedBufferSubData,
+    x_glNamedFramebufferDrawBuffer,
+    x_glNamedFramebufferDrawBuffers,
+    x_glNamedFramebufferParameteri,
+    x_glNamedFramebufferReadBuffer,
+    x_glNamedFramebufferRenderbuffer,
+    x_glNamedFramebufferTexture,
+    x_glNamedFramebufferTextureLayer,
+    x_glNamedRenderbufferStorage,
+    x_glNamedRenderbufferStorageMultisample,
     x_glNewList,
     x_glNormal3b,
     x_glNormal3bv,
@@ -4291,10 +7545,16 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glNormal3iv,
     x_glNormal3s,
     x_glNormal3sv,
+    x_glNormalP3ui,
+    x_glNormalP3uiv,
     x_glNormalPointer,
     x_glObjectLabel,
+    x_glObjectPtrLabel,
     x_glOrtho,
     x_glPassThrough,
+    x_glPatchParameterfv,
+    x_glPatchParameteri,
+    x_glPauseTransformFeedback,
     x_glPixelMapfv,
     x_glPixelMapuiv,
     x_glPixelMapusv,
@@ -4314,13 +7574,69 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glPointSize,
     x_glPolygonMode,
     x_glPolygonOffset,
+    x_glPolygonOffsetClamp,
+    x_glPolygonOffsetClampEXT,
     x_glPolygonStipple,
     x_glPopAttrib,
     x_glPopClientAttrib,
     x_glPopDebugGroup,
     x_glPopMatrix,
     x_glPopName,
+    x_glPrimitiveRestartIndex,
     x_glPrioritizeTextures,
+    x_glProgramBinary,
+    x_glProgramParameteri,
+    x_glProgramUniform1d,
+    x_glProgramUniform1dv,
+    x_glProgramUniform1f,
+    x_glProgramUniform1fv,
+    x_glProgramUniform1i,
+    x_glProgramUniform1iv,
+    x_glProgramUniform1ui,
+    x_glProgramUniform1uiv,
+    x_glProgramUniform2d,
+    x_glProgramUniform2dv,
+    x_glProgramUniform2f,
+    x_glProgramUniform2fv,
+    x_glProgramUniform2i,
+    x_glProgramUniform2iv,
+    x_glProgramUniform2ui,
+    x_glProgramUniform2uiv,
+    x_glProgramUniform3d,
+    x_glProgramUniform3dv,
+    x_glProgramUniform3f,
+    x_glProgramUniform3fv,
+    x_glProgramUniform3i,
+    x_glProgramUniform3iv,
+    x_glProgramUniform3ui,
+    x_glProgramUniform3uiv,
+    x_glProgramUniform4d,
+    x_glProgramUniform4dv,
+    x_glProgramUniform4f,
+    x_glProgramUniform4fv,
+    x_glProgramUniform4i,
+    x_glProgramUniform4iv,
+    x_glProgramUniform4ui,
+    x_glProgramUniform4uiv,
+    x_glProgramUniformMatrix2dv,
+    x_glProgramUniformMatrix2fv,
+    x_glProgramUniformMatrix2x3dv,
+    x_glProgramUniformMatrix2x3fv,
+    x_glProgramUniformMatrix2x4dv,
+    x_glProgramUniformMatrix2x4fv,
+    x_glProgramUniformMatrix3dv,
+    x_glProgramUniformMatrix3fv,
+    x_glProgramUniformMatrix3x2dv,
+    x_glProgramUniformMatrix3x2fv,
+    x_glProgramUniformMatrix3x4dv,
+    x_glProgramUniformMatrix3x4fv,
+    x_glProgramUniformMatrix4dv,
+    x_glProgramUniformMatrix4fv,
+    x_glProgramUniformMatrix4x2dv,
+    x_glProgramUniformMatrix4x2fv,
+    x_glProgramUniformMatrix4x3dv,
+    x_glProgramUniformMatrix4x3fv,
+    x_glProvokingVertex,
     x_glPushAttrib,
     x_glPushClientAttrib,
     x_glPushDebugGroup,
@@ -4353,6 +7669,8 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glRasterPos4sv,
     x_glReadBuffer,
     x_glReadPixels,
+    x_glReadnPixels,
+    x_glReadnPixelsARB,
     x_glRectd,
     x_glRectdv,
     x_glRectf,
@@ -4365,20 +7683,55 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glRenderMode,
     x_glRenderbufferStorage,
     x_glRenderbufferStorageMultisample,
+    x_glResumeTransformFeedback,
     x_glRotated,
     x_glRotatef,
+    x_glSampleCoverage,
+    x_glSampleMaski,
+    x_glSamplerParameterIiv,
+    x_glSamplerParameterIuiv,
+    x_glSamplerParameterf,
+    x_glSamplerParameterfv,
+    x_glSamplerParameteri,
+    x_glSamplerParameteriv,
     x_glScaled,
     x_glScalef,
     x_glScissor,
+    x_glScissorArrayv,
+    x_glScissorIndexed,
+    x_glScissorIndexedv,
+    x_glSecondaryColor3b,
+    x_glSecondaryColor3bv,
+    x_glSecondaryColor3d,
+    x_glSecondaryColor3dv,
+    x_glSecondaryColor3f,
+    x_glSecondaryColor3fv,
+    x_glSecondaryColor3i,
+    x_glSecondaryColor3iv,
+    x_glSecondaryColor3s,
+    x_glSecondaryColor3sv,
+    x_glSecondaryColor3ub,
+    x_glSecondaryColor3ubv,
+    x_glSecondaryColor3ui,
+    x_glSecondaryColor3uiv,
+    x_glSecondaryColor3us,
+    x_glSecondaryColor3usv,
+    x_glSecondaryColorP3ui,
+    x_glSecondaryColorP3uiv,
+    x_glSecondaryColorPointer,
     x_glSelectBuffer,
     x_glShadeModel,
+    x_glShaderBinary,
     x_glShaderSource,
+    x_glShaderStorageBlockBinding,
     x_glStencilFunc,
     x_glStencilFuncSeparate,
     x_glStencilMask,
     x_glStencilMaskSeparate,
     x_glStencilOp,
     x_glStencilOpSeparate,
+    x_glTexBuffer,
+    x_glTexBufferRange,
     x_glTexCoord1d,
     x_glTexCoord1dv,
     x_glTexCoord1f,
@@ -4411,6 +7764,14 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glTexCoord4iv,
     x_glTexCoord4s,
     x_glTexCoord4sv,
+    x_glTexCoordP1ui,
+    x_glTexCoordP1uiv,
+    x_glTexCoordP2ui,
+    x_glTexCoordP2uiv,
+    x_glTexCoordP3ui,
+    x_glTexCoordP3uiv,
+    x_glTexCoordP4ui,
+    x_glTexCoordP4uiv,
     x_glTexCoordPointer,
     x_glTexEnvf,
     x_glTexEnvfv,
@@ -4426,35 +7787,70 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glTexImage2D,
     x_glTexImage2DMultisample,
     x_glTexImage3D,
+    x_glTexImage3DMultisample,
+    x_glTexParameterIiv,
+    x_glTexParameterIuiv,
     x_glTexParameterf,
     x_glTexParameterfv,
     x_glTexParameteri,
     x_glTexParameteriv,
+    x_glTexStorage1D,
     x_glTexStorage2D,
+    x_glTexStorage2DMultisample,
     x_glTexStorage3D,
+    x_glTexStorage3DMultisample,
     x_glTexSubImage1D,
     x_glTexSubImage2D,
     x_glTexSubImage3D,
+    x_glTextureBarrier,
+    x_glTextureBuffer,
+    x_glTextureBufferRange,
+    x_glTextureParameterIiv,
+    x_glTextureParameterIuiv,
+    x_glTextureParameterf,
+    x_glTextureParameterfv,
+    x_glTextureParameteri,
+    x_glTextureParameteriv,
+    x_glTextureStorage1D,
+    x_glTextureStorage2D,
+    x_glTextureStorage2DMultisample,
+    x_glTextureStorage3D,
+    x_glTextureStorage3DMultisample,
+    x_glTextureSubImage1D,
+    x_glTextureSubImage2D,
+    x_glTextureSubImage3D,
+    x_glTextureView,
+    x_glTransformFeedbackBufferBase,
+    x_glTransformFeedbackBufferRange,
+    x_glTransformFeedbackVaryings,
     x_glTranslated,
     x_glTranslatef,
+    x_glUniform1d,
+    x_glUniform1dv,
     x_glUniform1f,
     x_glUniform1fv,
     x_glUniform1i,
     x_glUniform1iv,
     x_glUniform1ui,
     x_glUniform1uiv,
+    x_glUniform2d,
+    x_glUniform2dv,
     x_glUniform2f,
     x_glUniform2fv,
     x_glUniform2i,
     x_glUniform2iv,
     x_glUniform2ui,
     x_glUniform2uiv,
+    x_glUniform3d,
+    x_glUniform3dv,
     x_glUniform3f,
     x_glUniform3fv,
     x_glUniform3i,
     x_glUniform3iv,
     x_glUniform3ui,
     x_glUniform3uiv,
+    x_glUniform4d,
+    x_glUniform4dv,
     x_glUniform4f,
     x_glUniform4fv,
     x_glUniform4i,
@@ -4462,18 +7858,31 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glUniform4ui,
     x_glUniform4uiv,
     x_glUniformBlockBinding,
+    x_glUniformMatrix2dv,
     x_glUniformMatrix2fv,
+    x_glUniformMatrix2x3dv,
     x_glUniformMatrix2x3fv,
+    x_glUniformMatrix2x4dv,
     x_glUniformMatrix2x4fv,
+    x_glUniformMatrix3dv,
     x_glUniformMatrix3fv,
+    x_glUniformMatrix3x2dv,
     x_glUniformMatrix3x2fv,
+    x_glUniformMatrix3x4dv,
     x_glUniformMatrix3x4fv,
+    x_glUniformMatrix4dv,
     x_glUniformMatrix4fv,
+    x_glUniformMatrix4x2dv,
     x_glUniformMatrix4x2fv,
+    x_glUniformMatrix4x3dv,
     x_glUniformMatrix4x3fv,
+    x_glUniformSubroutinesuiv,
     x_glUnmapBuffer,
+    x_glUnmapNamedBuffer,
     x_glUseProgram,
+    x_glUseProgramStages,
     x_glValidateProgram,
+    x_glValidateProgramPipeline,
     x_glVertex2d,
     x_glVertex2dv,
     x_glVertex2f,
@@ -4498,25 +7907,123 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glVertex4iv,
     x_glVertex4s,
     x_glVertex4sv,
+    x_glVertexArrayAttribBinding,
+    x_glVertexArrayAttribFormat,
+    x_glVertexArrayAttribIFormat,
+    x_glVertexArrayAttribLFormat,
+    x_glVertexArrayBindingDivisor,
+    x_glVertexArrayElementBuffer,
+    x_glVertexArrayVertexBuffer,
+    x_glVertexArrayVertexBuffers,
+    x_glVertexAttrib1d,
+    x_glVertexAttrib1dv,
     x_glVertexAttrib1f,
     x_glVertexAttrib1fv,
+    x_glVertexAttrib1s,
+    x_glVertexAttrib1sv,
+    x_glVertexAttrib2d,
+    x_glVertexAttrib2dv,
     x_glVertexAttrib2f,
     x_glVertexAttrib2fv,
+    x_glVertexAttrib2s,
+    x_glVertexAttrib2sv,
+    x_glVertexAttrib3d,
+    x_glVertexAttrib3dv,
     x_glVertexAttrib3f,
     x_glVertexAttrib3fv,
+    x_glVertexAttrib3s,
+    x_glVertexAttrib3sv,
+    x_glVertexAttrib4Nbv,
+    x_glVertexAttrib4Niv,
+    x_glVertexAttrib4Nsv,
     x_glVertexAttrib4Nub,
+    x_glVertexAttrib4Nubv,
+    x_glVertexAttrib4Nuiv,
+    x_glVertexAttrib4Nusv,
+    x_glVertexAttrib4bv,
+    x_glVertexAttrib4d,
+    x_glVertexAttrib4dv,
     x_glVertexAttrib4f,
     x_glVertexAttrib4fv,
+    x_glVertexAttrib4iv,
+    x_glVertexAttrib4s,
+    x_glVertexAttrib4sv,
+    x_glVertexAttrib4ubv,
+    x_glVertexAttrib4uiv,
+    x_glVertexAttrib4usv,
+    x_glVertexAttribBinding,
     x_glVertexAttribDivisor,
+    x_glVertexAttribFormat,
+    x_glVertexAttribI1i,
+    x_glVertexAttribI1iv,
+    x_glVertexAttribI1ui,
+    x_glVertexAttribI1uiv,
+    x_glVertexAttribI2i,
+    x_glVertexAttribI2iv,
+    x_glVertexAttribI2ui,
+    x_glVertexAttribI2uiv,
+    x_glVertexAttribI3i,
+    x_glVertexAttribI3iv,
+    x_glVertexAttribI3ui,
+    x_glVertexAttribI3uiv,
+    x_glVertexAttribI4bv,
     x_glVertexAttribI4i,
     x_glVertexAttribI4iv,
+    x_glVertexAttribI4sv,
+    x_glVertexAttribI4ubv,
     x_glVertexAttribI4ui,
     x_glVertexAttribI4uiv,
+    x_glVertexAttribI4usv,
+    x_glVertexAttribIFormat,
     x_glVertexAttribIPointer,
+    x_glVertexAttribL1d,
+    x_glVertexAttribL1dv,
+    x_glVertexAttribL2d,
+    x_glVertexAttribL2dv,
+    x_glVertexAttribL3d,
+    x_glVertexAttribL3dv,
+    x_glVertexAttribL4d,
+    x_glVertexAttribL4dv,
+    x_glVertexAttribLFormat,
+    x_glVertexAttribLPointer,
+    x_glVertexAttribP1ui,
+    x_glVertexAttribP1uiv,
+    x_glVertexAttribP2ui,
+    x_glVertexAttribP2uiv,
+    x_glVertexAttribP3ui,
+    x_glVertexAttribP3uiv,
+    x_glVertexAttribP4ui,
+    x_glVertexAttribP4uiv,
     x_glVertexAttribPointer,
+    x_glVertexBindingDivisor,
+    x_glVertexP2ui,
+    x_glVertexP2uiv,
+    x_glVertexP3ui,
+    x_glVertexP3uiv,
+    x_glVertexP4ui,
+    x_glVertexP4uiv,
     x_glVertexPointer,
     x_glViewport,
+    x_glViewportArrayv,
+    x_glViewportIndexedf,
+    x_glViewportIndexedfv,
     x_glWaitSync,
+    x_glWindowPos2d,
+    x_glWindowPos2dv,
+    x_glWindowPos2f,
+    x_glWindowPos2fv,
+    x_glWindowPos2i,
+    x_glWindowPos2iv,
+    x_glWindowPos2s,
+    x_glWindowPos2sv,
+    x_glWindowPos3d,
+    x_glWindowPos3dv,
+    x_glWindowPos3f,
+    x_glWindowPos3fv,
+    x_glWindowPos3i,
+    x_glWindowPos3iv,
+    x_glWindowPos3s,
+    x_glWindowPos3sv,
     x_wglChoosePixelFormat,
     x_wglChoosePixelFormatARB,
     x_wglCopyContext,
@@ -4551,4 +8058,4 @@ static const MX_NATIVE_FN g_functions[] = {
     x_wglUseFontOutlinesW,
 };
 
-const MX_NATIVE_TABLE OpenGL32X64Thunks = {647, 0, g_functions};
+const MX_NATIVE_TABLE OpenGL32X64Thunks = {1148, 0, g_functions};

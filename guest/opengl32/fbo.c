@@ -300,6 +300,13 @@ GLAPI void APIENTRY glFramebufferTexture1D(GLenum target, GLenum point, GLenum t
     set_attachment(ctx, target, point, ATTACH_TEXTURE, texture, level, 0);
 }
 
+GLAPI void APIENTRY glFramebufferTexture3D(GLenum target, GLenum point, GLenum textarget, GLuint texture, GLint level,
+                                           GLint zoffset)
+{
+    GL_CONTEXT_OR_RETURN();
+    set_attachment(ctx, target, point, ATTACH_TEXTURE, texture, level, zoffset);
+}
+
 GLAPI void APIENTRY glFramebufferTextureLayer(GLenum target, GLenum point, GLuint texture, GLint level, GLint layer)
 {
     GL_CONTEXT_OR_RETURN();
@@ -711,6 +718,8 @@ GLAPI void APIENTRY glClear(GLbitfield mask)
         gl_error(ctx, GL_INVALID_VALUE);
         return;
     }
+    if (ctx->st.skip)
+        return;
     gl_device_lock();
     take_channel(ctx);
     GlTarget t;
@@ -753,6 +762,7 @@ GLAPI void APIENTRY glClear(GLbitfield mask)
                 r->width = t.width;
                 r->height = t.height;
             }
+            gl_stage_emit_viewports(ctx, DIRTY_SCISSOR);
             ctx->dirty &= ~DIRTY_SCISSOR;
         }
         MimeGpuClear *c = gl_emit(MIME_GPU_CLEAR, sizeof(MimeGpuClear));
@@ -770,44 +780,34 @@ GLAPI void APIENTRY glClear(GLbitfield mask)
     gl_device_unlock();
 }
 
-GLAPI void APIENTRY glClearBufferfv(GLenum buffer, GLint index, const GLfloat *value)
-{
-    GL_CONTEXT_OR_RETURN();
-    GLfloat saved[4];
-    GLdouble saved_depth = ctx->clear_depth;
-    memcpy(saved, ctx->clear_color, sizeof(saved));
-    if (buffer == GL_COLOR) {
-        memcpy(ctx->clear_color, value, sizeof(saved));
-        glClear(GL_COLOR_BUFFER_BIT);
-    } else if (buffer == GL_DEPTH) {
-        ctx->clear_depth = value[0];
-        glClear(GL_DEPTH_BUFFER_BIT);
-    }
-    memcpy(ctx->clear_color, saved, sizeof(saved));
-    ctx->clear_depth = saved_depth;
-}
+void APIENTRY glClearNamedFramebufferiv(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLint *value);
+void APIENTRY glClearNamedFramebufferuiv(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLuint *value);
+void APIENTRY glClearNamedFramebufferfv(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLfloat *value);
+void APIENTRY glClearNamedFramebufferfi(GLuint framebuffer, GLenum buffer, GLint drawbuffer, GLfloat depth, GLint stencil);
 
+/* a clear of one buffer of the draw framebuffer: the named forms leave the other draw buffers out. */
 GLAPI void APIENTRY glClearBufferiv(GLenum buffer, GLint index, const GLint *value)
 {
     GL_CONTEXT_OR_RETURN();
-    if (buffer == GL_STENCIL) {
-        GLint saved = ctx->clear_stencil;
-        ctx->clear_stencil = value[0];
-        glClear(GL_STENCIL_BUFFER_BIT);
-        ctx->clear_stencil = saved;
-    }
+    glClearNamedFramebufferiv(ctx->draw_fbo, buffer, index, value);
+}
+
+GLAPI void APIENTRY glClearBufferuiv(GLenum buffer, GLint index, const GLuint *value)
+{
+    GL_CONTEXT_OR_RETURN();
+    glClearNamedFramebufferuiv(ctx->draw_fbo, buffer, index, value);
+}
+
+GLAPI void APIENTRY glClearBufferfv(GLenum buffer, GLint index, const GLfloat *value)
+{
+    GL_CONTEXT_OR_RETURN();
+    glClearNamedFramebufferfv(ctx->draw_fbo, buffer, index, value);
 }
 
 GLAPI void APIENTRY glClearBufferfi(GLenum buffer, GLint index, GLfloat depth, GLint stencil)
 {
     GL_CONTEXT_OR_RETURN();
-    GLdouble sd = ctx->clear_depth;
-    GLint ss = ctx->clear_stencil;
-    ctx->clear_depth = depth;
-    ctx->clear_stencil = stencil;
-    glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-    ctx->clear_depth = sd;
-    ctx->clear_stencil = ss;
+    glClearNamedFramebufferfi(ctx->draw_fbo, buffer, index, depth, stencil);
 }
 
 /* ---------------------------------------------------------------- blits */
@@ -816,6 +816,8 @@ GLAPI void APIENTRY glBlitFramebuffer(GLint sx0, GLint sy0, GLint sx1, GLint sy1
                                       GLint dy1, GLbitfield mask, GLenum filter)
 {
     GL_CONTEXT_OR_RETURN();
+    if (ctx->st.skip)
+        return;
     GlTarget src, dst;
     const void *so, *dow;
     uint32_t ss, ds;

@@ -7,39 +7,6 @@
 
 static int hint_index(GLenum target);
 
-static const char g_extensions[] =
-    "GL_ARB_framebuffer_object GL_EXT_framebuffer_object GL_EXT_framebuffer_blit GL_EXT_framebuffer_multisample "
-    "GL_EXT_packed_depth_stencil GL_ARB_vertex_array_object GL_ARB_vertex_buffer_object GL_ARB_pixel_buffer_object "
-    "GL_ARB_map_buffer_range GL_ARB_copy_buffer GL_ARB_texture_non_power_of_two GL_ARB_texture_rectangle "
-    "GL_EXT_bgra GL_EXT_texture_format_BGRA8888 GL_ARB_texture_float GL_ARB_half_float_pixel GL_ARB_texture_rg "
-    "GL_ARB_depth_texture GL_EXT_texture_edge_clamp GL_ARB_texture_border_clamp GL_ARB_texture_mirrored_repeat "
-    "GL_EXT_texture_filter_anisotropic GL_ARB_shader_objects GL_ARB_vertex_shader GL_ARB_fragment_shader "
-    "GL_ARB_shading_language_100 GL_ARB_explicit_attrib_location GL_EXT_blend_func_separate GL_EXT_blend_minmax "
-    "GL_EXT_blend_subtract GL_EXT_blend_equation_separate GL_EXT_blend_color GL_ARB_draw_instanced "
-    "GL_ARB_instanced_arrays GL_ARB_draw_elements_base_vertex GL_EXT_texture_sRGB GL_ARB_framebuffer_sRGB "
-    "GL_ARB_texture_storage GL_EXT_texture_compression_s3tc GL_ARB_texture_compression GL_ARB_multitexture "
-    "GL_ARB_depth_buffer_float GL_EXT_stencil_wrap GL_EXT_draw_buffers2 GL_ARB_draw_buffers "
-    "GL_ARB_occlusion_query GL_ARB_get_program_binary GL_KHR_debug";
-
-static const char *extension_list[128];
-static GLint extension_count;
-
-static void split_extensions(void)
-{
-    if (extension_count)
-        return;
-    static char copy[sizeof(g_extensions)];
-    memcpy(copy, g_extensions, sizeof(copy));
-    char *p = copy;
-    while (*p && extension_count < 128) {
-        extension_list[extension_count++] = p;
-        while (*p && *p != ' ')
-            p++;
-        if (*p)
-            *p++ = 0;
-    }
-}
-
 void gl_error(GlContext *ctx, GLenum error)
 {
     if (!ctx->error)
@@ -59,11 +26,14 @@ void gl_context_init(GlContext *ctx)
     ctx->vao = &ctx->default_vao;
     ctx->depth_range[1] = 1.0;
     ctx->clear_depth = 1.0;
-    ctx->blend.src_rgb = ctx->blend.src_alpha = GL_ONE;
-    ctx->blend.dst_rgb = ctx->blend.dst_alpha = GL_ZERO;
-    ctx->blend.eq_rgb = ctx->blend.eq_alpha = GL_FUNC_ADD;
-    for (int i = 0; i < 4; i++)
-        ctx->color_mask[i] = GL_TRUE;
+    for (unsigned b = 0; b < MIME_GPU_MAX_COLORS; b++) {
+        GlBlend *blend = gl_blend_at(ctx, b);
+        blend->src_rgb = blend->src_alpha = GL_ONE;
+        blend->dst_rgb = blend->dst_alpha = GL_ZERO;
+        blend->eq_rgb = blend->eq_alpha = GL_FUNC_ADD;
+        for (int i = 0; i < 4; i++)
+            gl_color_mask_at(ctx, b)[i] = GL_TRUE;
+    }
     ctx->depth_mask = GL_TRUE;
     ctx->depth_func = GL_LESS;
     for (int f = 0; f < 2; f++) {
@@ -88,6 +58,12 @@ void gl_context_init(GlContext *ctx)
     ctx->draw_buffer = ctx->read_buffer = GL_BACK;
     ctx->dirty = DIRTY_ALL;
     ctx->swap_interval = 1;
+    ctx->provoking_vertex = GL_LAST_VERTEX_CONVENTION;
+    ctx->clamp[0] = GL_TRUE;
+    ctx->clamp[1] = ctx->clamp[2] = GL_FIXED_ONLY;
+    ctx->sample_coverage = 1.0f;
+    ctx->sample_mask = ~0u;
+    ctx->ff.secondary[3] = 1.0f;
     for (int i = 0; i < 8; i++)
         ctx->hints[i] = GL_DONT_CARE;
     gl_ff_init(ctx);
@@ -132,6 +108,9 @@ static BOOL *capability(GlContext *ctx, GLenum cap, uint32_t *dirty)
     case GL_PROGRAM_POINT_SIZE:
         *dirty = 0;
         return &ctx->program_point_size;
+    case GL_RASTERIZER_DISCARD:
+        *dirty = DIRTY_RASTER;
+        return &ctx->st.rasterizer_discard;
     case GL_PRIMITIVE_RESTART_FIXED_INDEX:
     case GL_PRIMITIVE_RESTART:
         *dirty = 0;
@@ -144,10 +123,26 @@ static BOOL *capability(GlContext *ctx, GLenum cap, uint32_t *dirty)
     }
 }
 
+GlBlend *gl_blend_at(GlContext *ctx, unsigned index)
+{
+    return index == 0 ? &ctx->blend : &ctx->blend_n[index];
+}
+
+GLboolean *gl_color_mask_at(GlContext *ctx, unsigned index)
+{
+    return index == 0 ? ctx->color_mask : ctx->color_mask_n[index];
+}
+
 static void set_capability(GLenum cap, BOOL on)
 {
     GL_CONTEXT_OR_RETURN();
     uint32_t dirty = 0;
+    if (cap == GL_BLEND) {
+        for (unsigned i = 0; i < MIME_GPU_MAX_COLORS; i++)
+            gl_blend_at(ctx, i)->enabled = on;
+        ctx->dirty |= DIRTY_PIPELINE;
+        return;
+    }
     BOOL *p = capability(ctx, cap, &dirty);
     if (!p) {
         if (!gl_ff_capability(ctx, cap, on))
@@ -185,19 +180,41 @@ GLAPI GLboolean APIENTRY glIsEnabled(GLenum cap)
     return *p ? GL_TRUE : GL_FALSE;
 }
 
+static void set_indexed(GLenum cap, GLuint index, BOOL on)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (cap != GL_BLEND) {
+        set_capability(cap, on);
+        return;
+    }
+    if (index >= MIME_GPU_MAX_COLORS) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    gl_blend_at(ctx, index)->enabled = on;
+    ctx->dirty |= DIRTY_PIPELINE;
+}
+
 GLAPI void APIENTRY glEnablei(GLenum cap, GLuint index)
 {
-    glEnable(cap);
+    set_indexed(cap, index, TRUE);
 }
 
 GLAPI void APIENTRY glDisablei(GLenum cap, GLuint index)
 {
-    glDisable(cap);
+    set_indexed(cap, index, FALSE);
 }
 
 GLAPI GLboolean APIENTRY glIsEnabledi(GLenum cap, GLuint index)
 {
-    return glIsEnabled(cap);
+    GL_CONTEXT_OR_RETURN(GL_FALSE);
+    if (cap != GL_BLEND)
+        return glIsEnabled(cap);
+    if (index >= MIME_GPU_MAX_COLORS) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return GL_FALSE;
+    }
+    return gl_blend_at(ctx, index)->enabled ? GL_TRUE : GL_FALSE;
 }
 
 /* ---------------------------------------------------------------- blending */
@@ -247,6 +264,37 @@ static BOOL stencil_op_valid(GLenum o)
            o == GL_INCR_WRAP || o == GL_DECR_WRAP;
 }
 
+static void blend_funcs(GlContext *ctx, int index, GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_alpha)
+{
+    if (!blend_factor_valid(src_rgb, TRUE) || !blend_factor_valid(dst_rgb, FALSE) || !blend_factor_valid(src_alpha, TRUE) ||
+        !blend_factor_valid(dst_alpha, FALSE)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    for (unsigned i = index < 0 ? 0 : (unsigned)index; i < (index < 0 ? MIME_GPU_MAX_COLORS : (unsigned)index + 1); i++) {
+        GlBlend *b = gl_blend_at(ctx, i);
+        b->src_rgb = src_rgb;
+        b->dst_rgb = dst_rgb;
+        b->src_alpha = src_alpha;
+        b->dst_alpha = dst_alpha;
+    }
+    ctx->dirty |= DIRTY_PIPELINE;
+}
+
+static void blend_equations(GlContext *ctx, int index, GLenum rgb, GLenum alpha)
+{
+    if (!blend_equation_valid(rgb) || !blend_equation_valid(alpha)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    for (unsigned i = index < 0 ? 0 : (unsigned)index; i < (index < 0 ? MIME_GPU_MAX_COLORS : (unsigned)index + 1); i++) {
+        GlBlend *b = gl_blend_at(ctx, i);
+        b->eq_rgb = rgb;
+        b->eq_alpha = alpha;
+    }
+    ctx->dirty |= DIRTY_PIPELINE;
+}
+
 GLAPI void APIENTRY glBlendFunc(GLenum src, GLenum dst)
 {
     GL_CONTEXT_OR_RETURN();
@@ -254,47 +302,56 @@ GLAPI void APIENTRY glBlendFunc(GLenum src, GLenum dst)
         gl_error(ctx, GL_INVALID_ENUM);
         return;
     }
-    ctx->blend.src_rgb = ctx->blend.src_alpha = src;
-    ctx->blend.dst_rgb = ctx->blend.dst_alpha = dst;
-    ctx->dirty |= DIRTY_PIPELINE;
+    blend_funcs(ctx, -1, src, dst, src, dst);
 }
 
 GLAPI void APIENTRY glBlendFuncSeparate(GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_alpha)
 {
     GL_CONTEXT_OR_RETURN();
-    if (!blend_factor_valid(src_rgb, TRUE) || !blend_factor_valid(dst_rgb, FALSE) || !blend_factor_valid(src_alpha, TRUE) ||
-        !blend_factor_valid(dst_alpha, FALSE)) {
-        gl_error(ctx, GL_INVALID_ENUM);
-        return;
-    }
-    ctx->blend.src_rgb = src_rgb;
-    ctx->blend.dst_rgb = dst_rgb;
-    ctx->blend.src_alpha = src_alpha;
-    ctx->blend.dst_alpha = dst_alpha;
-    ctx->dirty |= DIRTY_PIPELINE;
+    blend_funcs(ctx, -1, src_rgb, dst_rgb, src_alpha, dst_alpha);
 }
 
 GLAPI void APIENTRY glBlendEquation(GLenum mode)
 {
     GL_CONTEXT_OR_RETURN();
-    if (!blend_equation_valid(mode)) {
-        gl_error(ctx, GL_INVALID_ENUM);
-        return;
-    }
-    ctx->blend.eq_rgb = ctx->blend.eq_alpha = mode;
-    ctx->dirty |= DIRTY_PIPELINE;
+    blend_equations(ctx, -1, mode, mode);
 }
 
 GLAPI void APIENTRY glBlendEquationSeparate(GLenum rgb, GLenum alpha)
 {
     GL_CONTEXT_OR_RETURN();
-    if (!blend_equation_valid(rgb) || !blend_equation_valid(alpha)) {
-        gl_error(ctx, GL_INVALID_ENUM);
-        return;
+    blend_equations(ctx, -1, rgb, alpha);
+}
+
+#define BUFFER_OR_RETURN()                                                                                             \
+    GL_CONTEXT_OR_RETURN();                                                                                            \
+    if (buf >= MIME_GPU_MAX_COLORS) {                                                                                  \
+        gl_error(ctx, GL_INVALID_VALUE);                                                                               \
+        return;                                                                                                        \
     }
-    ctx->blend.eq_rgb = rgb;
-    ctx->blend.eq_alpha = alpha;
-    ctx->dirty |= DIRTY_PIPELINE;
+
+GLAPI void APIENTRY glBlendFunci(GLuint buf, GLenum src, GLenum dst)
+{
+    BUFFER_OR_RETURN();
+    blend_funcs(ctx, (int)buf, src, dst, src, dst);
+}
+
+GLAPI void APIENTRY glBlendFuncSeparatei(GLuint buf, GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_alpha)
+{
+    BUFFER_OR_RETURN();
+    blend_funcs(ctx, (int)buf, src_rgb, dst_rgb, src_alpha, dst_alpha);
+}
+
+GLAPI void APIENTRY glBlendEquationi(GLuint buf, GLenum mode)
+{
+    BUFFER_OR_RETURN();
+    blend_equations(ctx, (int)buf, mode, mode);
+}
+
+GLAPI void APIENTRY glBlendEquationSeparatei(GLuint buf, GLenum rgb, GLenum alpha)
+{
+    BUFFER_OR_RETURN();
+    blend_equations(ctx, (int)buf, rgb, alpha);
 }
 
 GLAPI void APIENTRY glBlendColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a)
@@ -310,16 +367,25 @@ GLAPI void APIENTRY glBlendColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a)
 GLAPI void APIENTRY glColorMask(GLboolean r, GLboolean g, GLboolean b, GLboolean a)
 {
     GL_CONTEXT_OR_RETURN();
-    ctx->color_mask[0] = r;
-    ctx->color_mask[1] = g;
-    ctx->color_mask[2] = b;
-    ctx->color_mask[3] = a;
+    for (unsigned i = 0; i < MIME_GPU_MAX_COLORS; i++) {
+        GLboolean *m = gl_color_mask_at(ctx, i);
+        m[0] = r;
+        m[1] = g;
+        m[2] = b;
+        m[3] = a;
+    }
     ctx->dirty |= DIRTY_PIPELINE;
 }
 
-GLAPI void APIENTRY glColorMaski(GLuint index, GLboolean r, GLboolean g, GLboolean b, GLboolean a)
+GLAPI void APIENTRY glColorMaski(GLuint buf, GLboolean r, GLboolean g, GLboolean b, GLboolean a)
 {
-    glColorMask(r, g, b, a);
+    BUFFER_OR_RETURN();
+    GLboolean *m = gl_color_mask_at(ctx, buf);
+    m[0] = r;
+    m[1] = g;
+    m[2] = b;
+    m[3] = a;
+    ctx->dirty |= DIRTY_PIPELINE;
 }
 
 /* ---------------------------------------------------------------- depth and stencil */
@@ -347,6 +413,7 @@ GLAPI void APIENTRY glDepthRange(GLdouble n, GLdouble f)
     GL_CONTEXT_OR_RETURN();
     ctx->depth_range[0] = n < 0 ? 0 : n > 1 ? 1 : n;
     ctx->depth_range[1] = f < 0 ? 0 : f > 1 ? 1 : f;
+    gl_stage_depth_changed(ctx);
     ctx->dirty |= DIRTY_VIEWPORT;
 }
 
@@ -492,6 +559,7 @@ GLAPI void APIENTRY glPolygonOffset(GLfloat factor, GLfloat units)
     GL_CONTEXT_OR_RETURN();
     ctx->offset_factor = factor;
     ctx->offset_units = units;
+    ctx->offset_clamp = 0;
     ctx->dirty |= DIRTY_RASTER;
 }
 
@@ -626,6 +694,7 @@ GLAPI void APIENTRY glViewport(GLint x, GLint y, GLsizei w, GLsizei h)
     ctx->viewport[1] = y;
     ctx->viewport[2] = w;
     ctx->viewport[3] = h;
+    gl_stage_viewport_changed(ctx);
     ctx->dirty |= DIRTY_VIEWPORT;
 }
 
@@ -640,6 +709,7 @@ GLAPI void APIENTRY glScissor(GLint x, GLint y, GLsizei w, GLsizei h)
     ctx->scissor[1] = y;
     ctx->scissor[2] = w;
     ctx->scissor[3] = h;
+    gl_stage_scissor_changed(ctx);
     ctx->dirty |= DIRTY_SCISSOR;
 }
 
@@ -822,14 +892,26 @@ static const char *gl_renderer_text(void)
     return vendor[0] == 'A' ? "AMD Radeon(TM) Graphics" : "Intel(R) Arc(TM) Graphics";
 }
 
-#define GL_VERSIONS(build)                                                                                         \
-    {"3.0 - Build " build, "3.2 - Build " build, "3.3 - Build " build, "4.0 - Build " build, "4.1 - Build " build}
-
 static const char *gl_version_text(int major, int minor)
 {
-    static const char *const versions[2][5] = {GL_VERSIONS(HOST_BUILD), GL_VERSIONS(ADRENO_BUILD)};
-    int k = major == 4 ? (minor ? 4 : 3) : major == 3 && minor >= 2 ? (minor == 3 ? 2 : 1) : 0;
-    return versions[MimeArm64Machine() ? 1 : 0][k];
+    static char text[2][5][8][64];
+    int arm = MimeArm64Machine() ? 1 : 0;
+    char *t = text[arm][major & 3 | (major == 4 ? 4 : 0)][minor & 7];
+    if (!t[0])
+        _snprintf(t, 64, "%d.%d.0 - Build %s", major, minor, arm ? ADRENO_BUILD : HOST_BUILD);
+    return t;
+}
+
+static const char *gl_glsl_text(int major, int minor)
+{
+    static char text[8];
+    if (major == 4) {
+        _snprintf(text, sizeof(text), "4.%d0", minor);
+        return text;
+    }
+    if (major == 3 && minor >= 2)
+        return minor == 3 ? "3.30" : "1.50";
+    return "1.30";
 }
 
 GLAPI const GLubyte *APIENTRY glGetString(GLenum name)
@@ -837,23 +919,23 @@ GLAPI const GLubyte *APIENTRY glGetString(GLenum name)
     GL_CONTEXT_OR_RETURN(nullptr);
     switch (name) {
     case GL_VENDOR:
-        return (const GLubyte *)gl_vendor_text();
+        return (const GLubyte *)(ctx->software ? "Microsoft Corporation" : gl_vendor_text());
     case GL_RENDERER:
-        return (const GLubyte *)gl_renderer_text();
+        return (const GLubyte *)(ctx->software ? "GDI Generic" : gl_renderer_text());
     case GL_VERSION:
-        return (const GLubyte *)gl_version_text(ctx->major, ctx->minor);
+        return (const GLubyte *)(ctx->software ? "1.1.0" : gl_version_text(ctx->major, ctx->minor));
     case GL_SHADING_LANGUAGE_VERSION:
-        if (ctx->major == 4)
-            return (const GLubyte *)"4.10";
-        if (ctx->major == 3 && ctx->minor >= 2)
-            return (const GLubyte *)(ctx->minor == 3 ? "3.30" : "1.50");
-        return (const GLubyte *)"1.30";
+        if (ctx->software) {
+            gl_error(ctx, GL_INVALID_ENUM);
+            return nullptr;
+        }
+        return (const GLubyte *)gl_glsl_text(ctx->major, ctx->minor);
     case GL_EXTENSIONS:
         if (ctx->profile == WGL_CONTEXT_CORE_PROFILE_BIT_ARB) {
             gl_error(ctx, GL_INVALID_ENUM);
             return nullptr;
         }
-        return (const GLubyte *)g_extensions;
+        return (const GLubyte *)(ctx->software ? "GL_WIN_swap_hint GL_EXT_bgra GL_EXT_paletted_texture" : gl_extension_string());
     default:
         gl_error(ctx, GL_INVALID_ENUM);
         return nullptr;
@@ -863,12 +945,10 @@ GLAPI const GLubyte *APIENTRY glGetString(GLenum name)
 GLAPI const GLubyte *APIENTRY glGetStringi(GLenum name, GLuint index)
 {
     GL_CONTEXT_OR_RETURN(nullptr);
-    split_extensions();
-    if (name != GL_EXTENSIONS || index >= (GLuint)extension_count) {
+    const char *e = name == GL_EXTENSIONS ? gl_extension_at(index) : nullptr;
+    if (!e)
         gl_error(ctx, name != GL_EXTENSIONS ? GL_INVALID_ENUM : GL_INVALID_VALUE);
-        return nullptr;
-    }
-    return (const GLubyte *)extension_list[index];
+    return (const GLubyte *)e;
 }
 
 /* ---------------------------------------------------------------- queries */
@@ -890,15 +970,45 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         v[0] = ctx->minor;
         return 1;
     case GL_NUM_EXTENSIONS:
-        split_extensions();
-        v[0] = extension_count;
+        v[0] = gl_extension_count();
         return 1;
     case GL_CONTEXT_PROFILE_MASK:
         v[0] = ctx->profile == WGL_CONTEXT_CORE_PROFILE_BIT_ARB ? GL_CONTEXT_CORE_PROFILE_BIT
                                                                 : GL_CONTEXT_COMPATIBILITY_PROFILE_BIT;
         return 1;
     case GL_CONTEXT_FLAGS:
-        v[0] = 0;
+        v[0] = ctx->flags;
+        return 1;
+    case GL_PROVOKING_VERTEX:
+        v[0] = ctx->provoking_vertex;
+        return 1;
+    case GL_CLAMP_VERTEX_COLOR:
+    case GL_CLAMP_FRAGMENT_COLOR:
+    case GL_CLAMP_READ_COLOR:
+        v[0] = ctx->clamp[pname - GL_CLAMP_VERTEX_COLOR];
+        return 1;
+    case GL_SAMPLE_COVERAGE_VALUE:
+        v[0] = ctx->sample_coverage;
+        return 1;
+    case GL_SAMPLE_COVERAGE_INVERT:
+        v[0] = ctx->sample_coverage_invert;
+        return 1;
+    case GL_SAMPLE_MASK_VALUE:
+        v[0] = ctx->sample_mask;
+        return 1;
+    case GL_MIN_SAMPLE_SHADING_VALUE:
+        v[0] = ctx->min_sample_shading;
+        return 1;
+    case GL_PRIMITIVE_RESTART_INDEX:
+        v[0] = ctx->restart_index;
+        return 1;
+    case GL_CURRENT_SECONDARY_COLOR:
+        *colors = TRUE;
+        for (int i = 0; i < 4; i++)
+            v[i] = ctx->ff.secondary[i];
+        return 4;
+    case GL_CURRENT_FOG_COORD:
+        v[0] = ctx->ff.fog_coord;
         return 1;
     case GL_MAX_TEXTURE_SIZE:
     case GL_MAX_RENDERBUFFER_SIZE:
@@ -1181,6 +1291,9 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
     case GL_TEXTURE_BINDING_RECTANGLE:
         v[0] = ctx->units[ctx->active_texture][4];
         return 1;
+    case GL_TEXTURE_BINDING_CUBE_MAP_ARRAY:
+        v[0] = ctx->units[ctx->active_texture][8];
+        return 1;
     case GL_ARRAY_BUFFER_BINDING:
         v[0] = ctx->array_buffer;
         return 1;
@@ -1233,7 +1346,10 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         return 1;
     case GL_NUM_SHADER_BINARY_FORMATS:
     case GL_NUM_PROGRAM_BINARY_FORMATS:
-        v[0] = 0;
+        v[0] = 1;
+        return 1;
+    case GL_PROGRAM_BINARY_FORMATS:
+        v[0] = 0x4D494D31;
         return 1;
     case GL_MAX_UNIFORM_BLOCK_SIZE:
         v[0] = 16384;
@@ -1254,9 +1370,6 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         return 1;
     case GL_MAX_LABEL_LENGTH:
         v[0] = 256;
-        return 1;
-    case GL_PRIMITIVE_RESTART_INDEX:
-        v[0] = 0xFFFFFFFF;
         return 1;
     case GL_MAX_LIGHTS:
         v[0] = 8;
@@ -1286,7 +1399,17 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
             v[0] = b;
             return 1;
         }
-        return gl_ff_get(ctx, pname, v, colors);
+        {
+            int n = gl_stage_get(ctx, pname, v);
+            if (n)
+                return n;
+        }
+        int n = gl_compute_get(ctx, pname, v);
+        if (!n)
+            n = gl_dsa_get(ctx, pname, v);
+        if (!n)
+            n = gl_texbuffer_get(ctx, pname, v);
+        return n ? n : gl_ff_get(ctx, pname, v, colors);
     }
     }
 }
@@ -1369,6 +1492,22 @@ GLAPI void APIENTRY glGetIntegeri_v(GLenum target, GLuint index, GLint *data)
                     (GLint)(binding->whole && buffer ? buffer->size : binding->size);
         return;
     }
+    GLint64 indexed;
+    if (gl_xfb_get_indexed(ctx, target, index, &indexed)) {
+        if (data)
+            *data = (GLint)indexed;
+        return;
+    }
+    if (gl_compute_get_indexed(ctx, target, index, data))
+        return;
+    GLint64 binding_value;
+    if ((target >= GL_VERTEX_BINDING_DIVISOR && target <= GL_VERTEX_BINDING_STRIDE) || target == GL_VERTEX_BINDING_BUFFER) {
+        if (!gl_vertex_binding_get(ctx, target, index, &binding_value))
+            gl_error(ctx, GL_INVALID_VALUE);
+        else if (data)
+            *data = (GLint)binding_value;
+        return;
+    }
     glGetIntegerv(target, data);
 }
 
@@ -1419,6 +1558,3 @@ GLAPI void APIENTRY glPopDebugGroup(void)
 {
 }
 
-GLAPI void APIENTRY glObjectLabel(GLenum identifier, GLuint name, GLsizei length, const GLchar *label)
-{
-}

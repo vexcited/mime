@@ -1318,6 +1318,7 @@ static const GLenum g_stored_caps[] = {
     GL_MAP2_VERTEX_3,      GL_MAP2_VERTEX_4,      GL_TEXTURE_CUBE_MAP,  GL_POINT_SPRITE,      GL_POLYGON_OFFSET_LINE,
     GL_POLYGON_OFFSET_POINT, GL_SAMPLE_COVERAGE,  GL_SAMPLE_ALPHA_TO_ONE, GL_TEXTURE_CUBE_MAP_SEAMLESS,
     GL_DEBUG_OUTPUT,       GL_DEBUG_OUTPUT_SYNCHRONOUS, GL_RASTERIZER_DISCARD, GL_CLIP_DISTANCE0, GL_CLIP_DISTANCE1,
+    GL_VERTEX_PROGRAM_TWO_SIDE,
 };
 
 #define STORED_CAPS (sizeof(g_stored_caps) / sizeof(g_stored_caps[0]))
@@ -1890,4 +1891,14 @@ void gl_ff_pack(GlContext *ctx, GLfloat (*u)[4])
             set4(u[FF_U_CLIP + i], 0, 0, 0, 0);
     }
     gl_stipple_pack(ctx, u);
+}
+
+double gl_ff_root(double x)
+{
+    return root(x);
+}
+
+double gl_ff_cosine(double degrees)
+{
+    return cosine(degrees);
 }

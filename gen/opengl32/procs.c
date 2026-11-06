@@ -3,48 +3,84 @@
 #include "opengl32.h"
 
 void APIENTRY glAccum(GLenum op, GLfloat value);
+void APIENTRY glActiveShaderProgram(GLuint pipeline, GLuint program);
 void APIENTRY glActiveTexture(GLenum texture);
 void APIENTRY glAlphaFunc(GLenum func, GLfloat ref);
 GLboolean APIENTRY glAreTexturesResident(GLsizei n, const GLuint *textures, GLboolean *residences);
 void APIENTRY glArrayElement(GLint i);
 void APIENTRY glAttachShader(GLuint program, GLuint name);
 void APIENTRY glBegin(GLenum mode);
+void APIENTRY glBeginConditionalRender(GLuint name, GLenum mode);
 void APIENTRY glBeginQuery(GLenum target, GLuint name);
+void APIENTRY glBeginQueryIndexed(GLenum target, GLuint index, GLuint name);
+void APIENTRY glBeginTransformFeedback(GLenum mode);
 void APIENTRY glBindAttribLocation(GLuint program, GLuint index, const GLchar *name);
 void APIENTRY glBindBuffer(GLenum target, GLuint name);
 void APIENTRY glBindBufferBase(GLenum target, GLuint index, GLuint name);
 void APIENTRY glBindBufferRange(GLenum target, GLuint index, GLuint name, GLintptr offset, GLsizeiptr size);
+void APIENTRY glBindBuffersBase(GLenum target, GLuint first, GLsizei count, const GLuint *buffers);
+void APIENTRY glBindBuffersRange(GLenum target, GLuint first, GLsizei count, const GLuint *buffers,                                        const GLintptr *offsets, const GLsizeiptr *sizes);
 void APIENTRY glBindFragDataLocation(GLuint program, GLuint color, const GLchar *name);
+void APIENTRY glBindFragDataLocationIndexed(GLuint program, GLuint colorNumber, GLuint index, const GLchar *name);
 void APIENTRY glBindFramebuffer(GLenum target, GLuint name);
+void APIENTRY glBindImageTexture(GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer,                                        GLenum access, GLenum format);
+void APIENTRY glBindImageTextures(GLuint first, GLsizei count, const GLuint *textures);
+void APIENTRY glBindProgramPipeline(GLuint pipeline);
 void APIENTRY glBindRenderbuffer(GLenum target, GLuint name);
+void APIENTRY glBindSampler(GLuint unit, GLuint sampler);
+void APIENTRY glBindSamplers(GLuint first, GLsizei count, const GLuint *samplers);
 void APIENTRY glBindTexture(GLenum target, GLuint name);
+void APIENTRY glBindTextureUnit(GLuint unit, GLuint texture);
+void APIENTRY glBindTextures(GLuint first, GLsizei count, const GLuint *textures);
+void APIENTRY glBindTransformFeedback(GLenum target, GLuint id);
 void APIENTRY glBindVertexArray(GLuint name);
+void APIENTRY glBindVertexBuffer(GLuint binding, GLuint buffer, GLintptr offset, GLsizei stride);
+void APIENTRY glBindVertexBuffers(GLuint first, GLsizei count, const GLuint *buffers, const GLintptr *offsets,                                         const GLsizei *strides);
 void APIENTRY glBitmap(GLsizei width, GLsizei height, GLfloat xorig, GLfloat yorig, GLfloat xmove, GLfloat ymove, const GLubyte *bitmap);
 void APIENTRY glBlendColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a);
 void APIENTRY glBlendEquation(GLenum mode);
 void APIENTRY glBlendEquationSeparate(GLenum rgb, GLenum alpha);
+void APIENTRY glBlendEquationSeparatei(GLuint buf, GLenum rgb, GLenum alpha);
+void APIENTRY glBlendEquationi(GLuint buf, GLenum mode);
 void APIENTRY glBlendFunc(GLenum src, GLenum dst);
 void APIENTRY glBlendFuncSeparate(GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_alpha);
+void APIENTRY glBlendFuncSeparatei(GLuint buf, GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_alpha);
+void APIENTRY glBlendFunci(GLuint buf, GLenum src, GLenum dst);
 void APIENTRY glBlitFramebuffer(GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0, GLint dy0, GLint dx1,                                       GLint dy1, GLbitfield mask, GLenum filter);
+void APIENTRY glBlitNamedFramebuffer(GLuint read, GLuint draw, GLint sx0, GLint sy0, GLint sx1, GLint sy1, GLint dx0,                                            GLint dy0, GLint dx1, GLint dy1, GLbitfield mask, GLenum filter);
 void APIENTRY glBufferData(GLenum target, GLsizeiptr size, const void *data, GLenum usage);
 void APIENTRY glBufferStorage(GLenum target, GLsizeiptr size, const void *data, GLbitfield flags);
 void APIENTRY glBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, const void *data);
 void APIENTRY glCallList(GLuint list);
 void APIENTRY glCallLists(GLsizei n, GLenum type, const GLvoid *lists);
 GLenum APIENTRY glCheckFramebufferStatus(GLenum target);
+GLenum APIENTRY glCheckNamedFramebufferStatus(GLuint framebuffer, GLenum target);
+void APIENTRY glClampColor(GLenum target, GLenum clamp);
 void APIENTRY glClear(GLbitfield mask);
 void APIENTRY glClearAccum(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
+void APIENTRY glClearBufferData(GLenum target, GLenum internal, GLenum format, GLenum type, const void *data);
+void APIENTRY glClearBufferSubData(GLenum target, GLenum internal, GLintptr offset, GLsizeiptr size, GLenum format,                                          GLenum type, const void *data);
 void APIENTRY glClearBufferfi(GLenum buffer, GLint index, GLfloat depth, GLint stencil);
 void APIENTRY glClearBufferfv(GLenum buffer, GLint index, const GLfloat *value);
 void APIENTRY glClearBufferiv(GLenum buffer, GLint index, const GLint *value);
+void APIENTRY glClearBufferuiv(GLenum buffer, GLint index, const GLuint *value);
 void APIENTRY glClearColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a);
 void APIENTRY glClearDepth(GLdouble d);
 void APIENTRY glClearDepthf(GLfloat d);
 void APIENTRY glClearIndex(GLfloat c);
+void APIENTRY glClearNamedBufferData(GLuint buffer, GLenum internal, GLenum format, GLenum type, const void *data);
+void APIENTRY glClearNamedBufferSubData(GLuint buffer, GLenum internal, GLintptr offset, GLsizeiptr size,                                               GLenum format, GLenum type, const void *data);
+void APIENTRY glClearNamedFramebufferfi(GLuint framebuffer, GLenum buffer, GLint drawbuffer, GLfloat depth,                                               GLint stencil);
+void APIENTRY glClearNamedFramebufferfv(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLfloat *value);
+void APIENTRY glClearNamedFramebufferiv(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLint *value);
+void APIENTRY glClearNamedFramebufferuiv(GLuint framebuffer, GLenum buffer, GLint drawbuffer, const GLuint *value);
 void APIENTRY glClearStencil(GLint s);
+void APIENTRY glClearTexImage(GLuint texture, GLint level, GLenum format, GLenum type, const void *data);
+void APIENTRY glClearTexSubImage(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                        GLsizei d, GLenum format, GLenum type, const void *data);
 void APIENTRY glClientActiveTexture(GLenum texture);
 void APIENTRY glClientActiveTextureARB(GLenum texture);
 GLenum APIENTRY glClientWaitSync(GLsync handle, GLbitfield flags, GLuint64 timeout);
+void APIENTRY glClipControl(GLenum origin, GLenum depth);
 void APIENTRY glClipPlane(GLenum plane, const GLdouble *equation);
 void APIENTRY glColor3b(GLbyte red, GLbyte green, GLbyte blue);
 void APIENTRY glColor3bv(const GLbyte *v);
@@ -79,21 +115,47 @@ void APIENTRY glColor4uiv(const GLuint *v);
 void APIENTRY glColor4us(GLushort red, GLushort green, GLushort blue, GLushort alpha);
 void APIENTRY glColor4usv(const GLushort *v);
 void APIENTRY glColorMask(GLboolean r, GLboolean g, GLboolean b, GLboolean a);
-void APIENTRY glColorMaski(GLuint index, GLboolean r, GLboolean g, GLboolean b, GLboolean a);
+void APIENTRY glColorMaski(GLuint buf, GLboolean r, GLboolean g, GLboolean b, GLboolean a);
 void APIENTRY glColorMaterial(GLenum face, GLenum mode);
+void APIENTRY glColorP3ui(GLenum type, GLuint color);
+void APIENTRY glColorP3uiv(GLenum type, const GLuint *color);
+void APIENTRY glColorP4ui(GLenum type, GLuint color);
+void APIENTRY glColorP4uiv(GLenum type, const GLuint *color);
 void APIENTRY glColorPointer(GLint size, GLenum type, GLsizei stride, const void *pointer);
 void APIENTRY glCompileShader(GLuint name);
+void APIENTRY glCompressedTexImage1D(GLenum target, GLint level, GLenum internal, GLsizei w, GLint border,                                            GLsizei size, const void *data);
 void APIENTRY glCompressedTexImage2D(GLenum target, GLint level, GLenum internal, GLsizei w, GLsizei h,                                            GLint border, GLsizei size, const void *data);
+void APIENTRY glCompressedTexImage3D(GLenum target, GLint level, GLenum internal, GLsizei w, GLsizei h, GLsizei d,                                            GLint border, GLsizei size, const void *data);
+void APIENTRY glCompressedTexSubImage1D(GLenum target, GLint level, GLint x, GLsizei w, GLenum format, GLsizei size,                                               const void *data);
 void APIENTRY glCompressedTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h,                                               GLenum format, GLsizei size, const void *data);
+void APIENTRY glCompressedTexSubImage3D(GLenum target, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                               GLsizei d, GLenum format, GLsizei size, const void *data);
+void APIENTRY glCompressedTextureSubImage1D(GLuint texture, GLint level, GLint x, GLsizei w, GLenum format,                                                   GLsizei size, const void *data);
+void APIENTRY glCompressedTextureSubImage2D(GLuint texture, GLint level, GLint x, GLint y, GLsizei w, GLsizei h,                                                   GLenum format, GLsizei size, const void *data);
+void APIENTRY glCompressedTextureSubImage3D(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w,                                                   GLsizei h, GLsizei d, GLenum format, GLsizei size, const void *data);
 void APIENTRY glCopyBufferSubData(GLenum read_target, GLenum write_target, GLintptr read_offset,                                         GLintptr write_offset, GLsizeiptr size);
+void APIENTRY glCopyImageSubData(GLuint src, GLenum src_target, GLint src_level, GLint sx, GLint sy, GLint sz,                                        GLuint dst, GLenum dst_target, GLint dst_level, GLint dx, GLint dy, GLint dz,                                        GLsizei w, GLsizei h, GLsizei d);
+void APIENTRY glCopyNamedBufferSubData(GLuint read, GLuint write, GLintptr read_offset, GLintptr write_offset,                                              GLsizeiptr size);
 void APIENTRY glCopyPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum type);
 void APIENTRY glCopyTexImage1D(GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, GLsizei width, GLint border);
 void APIENTRY glCopyTexImage2D(GLenum target, GLint level, GLenum internal, GLint x, GLint y, GLsizei w,                                      GLsizei h, GLint border);
 void APIENTRY glCopyTexSubImage1D(GLenum target, GLint level, GLint xoffset, GLint x, GLint y, GLsizei width);
 void APIENTRY glCopyTexSubImage2D(GLenum target, GLint level, GLint dx, GLint dy, GLint x, GLint y, GLsizei w,                                         GLsizei h);
+void APIENTRY glCopyTexSubImage3D(GLenum target, GLint level, GLint dx, GLint dy, GLint dz, GLint x, GLint y, GLsizei w,                                         GLsizei h);
+void APIENTRY glCopyTextureSubImage1D(GLuint texture, GLint level, GLint x, GLint sx, GLint sy, GLsizei w);
+void APIENTRY glCopyTextureSubImage2D(GLuint texture, GLint level, GLint x, GLint y, GLint sx, GLint sy, GLsizei w,                                             GLsizei h);
+void APIENTRY glCopyTextureSubImage3D(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLint sx, GLint sy,                                             GLsizei w, GLsizei h);
 void APIENTRY glCreateBuffers(GLsizei n, GLuint *buffers);
+void APIENTRY glCreateFramebuffers(GLsizei n, GLuint *framebuffers);
 GLuint APIENTRY glCreateProgram(void);
+void APIENTRY glCreateProgramPipelines(GLsizei n, GLuint *pipelines);
+void APIENTRY glCreateQueries(GLenum target, GLsizei count, GLuint *names);
+void APIENTRY glCreateRenderbuffers(GLsizei n, GLuint *renderbuffers);
+void APIENTRY glCreateSamplers(GLsizei count, GLuint *samplers);
 GLuint APIENTRY glCreateShader(GLenum type);
+GLuint APIENTRY glCreateShaderProgramv(GLenum type, GLsizei count, const GLchar *const *strings);
+void APIENTRY glCreateTextures(GLenum target, GLsizei n, GLuint *textures);
+void APIENTRY glCreateTransformFeedbacks(GLsizei n, GLuint *ids);
+void APIENTRY glCreateVertexArrays(GLsizei n, GLuint *arrays);
 void APIENTRY glCullFace(GLenum mode);
 void APIENTRY glDebugMessageCallback(GLDEBUGPROC callback, const void *user);
 void APIENTRY glDebugMessageControl(GLenum source, GLenum type, GLenum severity, GLsizei count,                                           const GLuint *ids, GLboolean enabled);
@@ -101,45 +163,67 @@ void APIENTRY glDebugMessageInsert(GLenum source, GLenum type, GLuint id, GLenum
 void APIENTRY glDeleteBuffers(GLsizei n, const GLuint *buffers);
 void APIENTRY glDeleteFramebuffers(GLsizei n, const GLuint *names);
 void APIENTRY glDeleteLists(GLuint list, GLsizei range);
+void APIENTRY glDeleteObjectARB(GLuint object);
 void APIENTRY glDeleteProgram(GLuint name);
+void APIENTRY glDeleteProgramPipelines(GLsizei n, const GLuint *pipelines);
 void APIENTRY glDeleteQueries(GLsizei count, const GLuint *names);
 void APIENTRY glDeleteRenderbuffers(GLsizei n, const GLuint *names);
+void APIENTRY glDeleteSamplers(GLsizei count, const GLuint *samplers);
 void APIENTRY glDeleteShader(GLuint name);
 void APIENTRY glDeleteSync(GLsync handle);
 void APIENTRY glDeleteTextures(GLsizei n, const GLuint *textures);
+void APIENTRY glDeleteTransformFeedbacks(GLsizei n, const GLuint *ids);
 void APIENTRY glDeleteVertexArrays(GLsizei n, const GLuint *arrays);
 void APIENTRY glDepthFunc(GLenum func);
 void APIENTRY glDepthMask(GLboolean flag);
 void APIENTRY glDepthRange(GLdouble n, GLdouble f);
+void APIENTRY glDepthRangeArrayv(GLuint first, GLsizei count, const GLdouble *v);
+void APIENTRY glDepthRangeIndexed(GLuint index, GLdouble n, GLdouble f);
 void APIENTRY glDepthRangef(GLfloat n, GLfloat f);
+void APIENTRY glDetachObjectARB(GLuint container, GLuint attached);
 void APIENTRY glDetachShader(GLuint program, GLuint name);
 void APIENTRY glDisable(GLenum cap);
 void APIENTRY glDisableClientState(GLenum array);
+void APIENTRY glDisableVertexArrayAttrib(GLuint array, GLuint index);
 void APIENTRY glDisableVertexAttribArray(GLuint index);
 void APIENTRY glDisablei(GLenum cap, GLuint index);
 void APIENTRY glDiscardFramebufferEXT(GLenum target, GLsizei n, const GLenum *attachments);
+void APIENTRY glDispatchCompute(GLuint x, GLuint y, GLuint z);
+void APIENTRY glDispatchComputeIndirect(GLintptr indirect);
 void APIENTRY glDrawArrays(GLenum mode, GLint first, GLsizei count);
+void APIENTRY glDrawArraysIndirect(GLenum mode, const void *indirect);
 void APIENTRY glDrawArraysInstanced(GLenum mode, GLint first, GLsizei count, GLsizei instances);
 void APIENTRY glDrawArraysInstancedBaseInstance(GLenum mode, GLint first, GLsizei count, GLsizei instances,                                                       GLuint base_instance);
 void APIENTRY glDrawBuffer(GLenum buf);
 void APIENTRY glDrawBuffers(GLsizei n, const GLenum *bufs);
 void APIENTRY glDrawElements(GLenum mode, GLsizei count, GLenum type, const void *indices);
 void APIENTRY glDrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum type, const void *indices,                                              GLint base_vertex);
+void APIENTRY glDrawElementsIndirect(GLenum mode, GLenum type, const void *indirect);
 void APIENTRY glDrawElementsInstanced(GLenum mode, GLsizei count, GLenum type, const void *indices,                                             GLsizei instances);
+void APIENTRY glDrawElementsInstancedBaseInstance(GLenum mode, GLsizei count, GLenum type, const void *indices,                                                         GLsizei instances, GLuint base_instance);
 void APIENTRY glDrawElementsInstancedBaseVertex(GLenum mode, GLsizei count, GLenum type, const void *indices,                                                       GLsizei instances, GLint base_vertex);
+void APIENTRY glDrawElementsInstancedBaseVertexBaseInstance(GLenum mode, GLsizei count, GLenum type,                                                                   const void *indices, GLsizei instances,                                                                   GLint base_vertex, GLuint base_instance);
 void APIENTRY glDrawPixels(GLsizei width, GLsizei height, GLenum format, GLenum type, const GLvoid *pixels);
 void APIENTRY glDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type,                                         const void *indices);
 void APIENTRY glDrawRangeElementsBaseVertex(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type,                                                   const void *indices, GLint base_vertex);
+void APIENTRY glDrawTransformFeedback(GLenum mode, GLuint id);
+void APIENTRY glDrawTransformFeedbackInstanced(GLenum mode, GLuint id, GLsizei instances);
+void APIENTRY glDrawTransformFeedbackStream(GLenum mode, GLuint id, GLuint stream);
+void APIENTRY glDrawTransformFeedbackStreamInstanced(GLenum mode, GLuint id, GLuint stream, GLsizei instances);
 void APIENTRY glEdgeFlag(GLboolean flag);
 void APIENTRY glEdgeFlagPointer(GLsizei stride, const void *pointer);
 void APIENTRY glEdgeFlagv(const GLboolean *flag);
 void APIENTRY glEnable(GLenum cap);
 void APIENTRY glEnableClientState(GLenum array);
+void APIENTRY glEnableVertexArrayAttrib(GLuint array, GLuint index);
 void APIENTRY glEnableVertexAttribArray(GLuint index);
 void APIENTRY glEnablei(GLenum cap, GLuint index);
 void APIENTRY glEnd(void);
+void APIENTRY glEndConditionalRender(void);
 void APIENTRY glEndList(void);
 void APIENTRY glEndQuery(GLenum target);
+void APIENTRY glEndQueryIndexed(GLenum target, GLuint index);
+void APIENTRY glEndTransformFeedback(void);
 void APIENTRY glEvalCoord1d(GLdouble u);
 void APIENTRY glEvalCoord1dv(const GLdouble *u);
 void APIENTRY glEvalCoord1f(GLfloat u);
@@ -157,29 +241,46 @@ GLsync APIENTRY glFenceSync(GLenum condition, GLbitfield flags);
 void APIENTRY glFinish(void);
 void APIENTRY glFlush(void);
 void APIENTRY glFlushMappedBufferRange(GLenum target, GLintptr offset, GLsizeiptr length);
+void APIENTRY glFlushMappedNamedBufferRange(GLuint buffer, GLintptr offset, GLsizeiptr length);
+void APIENTRY glFogCoordPointer(GLenum type, GLsizei stride, const void *pointer);
+void APIENTRY glFogCoordd(GLdouble coord);
+void APIENTRY glFogCoorddv(const GLdouble *coord);
+void APIENTRY glFogCoordf(GLfloat coord);
+void APIENTRY glFogCoordfv(const GLfloat *coord);
 void APIENTRY glFogf(GLenum pname, GLfloat param);
 void APIENTRY glFogfv(GLenum pname, const GLfloat *params);
 void APIENTRY glFogi(GLenum pname, GLint param);
 void APIENTRY glFogiv(GLenum pname, const GLint *params);
+void APIENTRY glFramebufferParameteri(GLenum target, GLenum pname, GLint param);
 void APIENTRY glFramebufferRenderbuffer(GLenum target, GLenum point, GLenum rbtarget, GLuint rb);
 void APIENTRY glFramebufferTexture(GLenum target, GLenum point, GLuint texture, GLint level);
 void APIENTRY glFramebufferTexture1D(GLenum target, GLenum point, GLenum textarget, GLuint texture, GLint level);
 void APIENTRY glFramebufferTexture2D(GLenum target, GLenum point, GLenum textarget, GLuint texture, GLint level);
+void APIENTRY glFramebufferTexture3D(GLenum target, GLenum point, GLenum textarget, GLuint texture, GLint level,                                            GLint zoffset);
 void APIENTRY glFramebufferTextureLayer(GLenum target, GLenum point, GLuint texture, GLint level, GLint layer);
 void APIENTRY glFrontFace(GLenum mode);
 void APIENTRY glFrustum(GLdouble left, GLdouble right, GLdouble bottom, GLdouble top_, GLdouble near_val,                               GLdouble far_val);
 void APIENTRY glGenBuffers(GLsizei n, GLuint *buffers);
 void APIENTRY glGenFramebuffers(GLsizei n, GLuint *names);
 GLuint APIENTRY glGenLists(GLsizei range);
+void APIENTRY glGenProgramPipelines(GLsizei n, GLuint *pipelines);
 void APIENTRY glGenQueries(GLsizei count, GLuint *names);
 void APIENTRY glGenRenderbuffers(GLsizei n, GLuint *names);
+void APIENTRY glGenSamplers(GLsizei count, GLuint *samplers);
 void APIENTRY glGenTextures(GLsizei n, GLuint *textures);
+void APIENTRY glGenTransformFeedbacks(GLsizei n, GLuint *ids);
 void APIENTRY glGenVertexArrays(GLsizei n, GLuint *arrays);
 void APIENTRY glGenerateMipmap(GLenum target);
+void APIENTRY glGenerateTextureMipmap(GLuint texture);
+void APIENTRY glGetActiveAtomicCounterBufferiv(GLuint program, GLuint index, GLenum pname, GLint *params);
 void APIENTRY glGetActiveAttrib(GLuint name, GLuint index, GLsizei size, GLsizei *length, GLint *count,                                       GLenum *type, GLchar *out);
+void APIENTRY glGetActiveSubroutineName(GLuint program, GLenum shadertype, GLuint index, GLsizei bufsize,                                                GLsizei *length, GLchar *name);
+void APIENTRY glGetActiveSubroutineUniformName(GLuint program, GLenum shadertype, GLuint index, GLsizei bufsize,                                                       GLsizei *length, GLchar *name);
+void APIENTRY glGetActiveSubroutineUniformiv(GLuint program, GLenum shadertype, GLuint index, GLenum pname,                                                     GLint *values);
 void APIENTRY glGetActiveUniform(GLuint name, GLuint index, GLsizei size, GLsizei *length, GLint *count,                                        GLenum *type, GLchar *out);
 void APIENTRY glGetActiveUniformBlockName(GLuint program, GLuint index, GLsizei size, GLsizei *length, GLchar *name);
 void APIENTRY glGetActiveUniformBlockiv(GLuint program, GLuint index, GLenum pname, GLint *params);
+void APIENTRY glGetActiveUniformName(GLuint name, GLuint index, GLsizei size, GLsizei *length, GLchar *out);
 void APIENTRY glGetActiveUniformsiv(GLuint name, GLsizei count, const GLuint *indices, GLenum pname,                                           GLint *params);
 void APIENTRY glGetAttachedShaders(GLuint program, GLsizei max, GLsizei *count, GLuint *shaders);
 GLint APIENTRY glGetAttribLocation(GLuint name, const GLchar *attrib);
@@ -190,14 +291,29 @@ void APIENTRY glGetBufferParameteriv(GLenum target, GLenum pname, GLint *params)
 void APIENTRY glGetBufferPointerv(GLenum target, GLenum pname, void **params);
 void APIENTRY glGetBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, void *data);
 void APIENTRY glGetClipPlane(GLenum plane, GLdouble *equation);
+void APIENTRY glGetCompressedTexImage(GLenum target, GLint level, void *image);
+void APIENTRY glGetCompressedTextureImage(GLuint texture, GLint level, GLsizei size, void *pixels);
+void APIENTRY glGetCompressedTextureSubImage(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w,                                                    GLsizei h, GLsizei d, GLsizei size, void *pixels);
 GLuint APIENTRY glGetDebugMessageLog(GLuint count, GLsizei size, GLenum *sources, GLenum *types, GLuint *ids,                                            GLenum *severities, GLsizei *lengths, GLchar *log);
+void APIENTRY glGetDoublei_v(GLenum target, GLuint index, GLdouble *data);
 void APIENTRY glGetDoublev(GLenum pname, GLdouble *data);
 GLenum APIENTRY glGetError(void);
+void APIENTRY glGetFloati_v(GLenum target, GLuint index, GLfloat *data);
 void APIENTRY glGetFloatv(GLenum pname, GLfloat *data);
+GLint APIENTRY glGetFragDataIndex(GLuint program, const GLchar *name);
+GLint APIENTRY glGetFragDataLocation(GLuint program, const GLchar *name);
 void APIENTRY glGetFramebufferAttachmentParameteriv(GLenum target, GLenum point, GLenum pname, GLint *params);
+void APIENTRY glGetFramebufferParameteriv(GLenum target, GLenum pname, GLint *params);
+GLenum APIENTRY glGetGraphicsResetStatus(void);
+GLenum APIENTRY glGetGraphicsResetStatusARB(void);
+GLuint APIENTRY glGetHandleARB(GLenum pname);
+void APIENTRY glGetInfoLogARB(GLuint object, GLsizei size, GLsizei *length, GLchar *log);
+void APIENTRY glGetInteger64i_v(GLenum target, GLuint index, GLint64 *data);
 void APIENTRY glGetInteger64v(GLenum pname, GLint64 *data);
 void APIENTRY glGetIntegeri_v(GLenum target, GLuint index, GLint *data);
 void APIENTRY glGetIntegerv(GLenum pname, GLint *data);
+void APIENTRY glGetInternalformati64v(GLenum target, GLenum internal, GLenum pname, GLsizei size, GLint64 *params);
+void APIENTRY glGetInternalformativ(GLenum target, GLenum internal, GLenum pname, GLsizei size, GLint *params);
 void APIENTRY glGetLightfv(GLenum l, GLenum pname, GLfloat *params);
 void APIENTRY glGetLightiv(GLenum l, GLenum pname, GLint *params);
 void APIENTRY glGetMapdv(GLenum target, GLenum query, GLdouble *v);
@@ -205,25 +321,58 @@ void APIENTRY glGetMapfv(GLenum target, GLenum query, GLfloat *v);
 void APIENTRY glGetMapiv(GLenum target, GLenum query, GLint *v);
 void APIENTRY glGetMaterialfv(GLenum face, GLenum pname, GLfloat *params);
 void APIENTRY glGetMaterialiv(GLenum face, GLenum pname, GLint *params);
+void APIENTRY glGetMultisamplefv(GLenum pname, GLuint index, GLfloat *val);
+void APIENTRY glGetNamedBufferParameteri64v(GLuint buffer, GLenum pname, GLint64 *params);
+void APIENTRY glGetNamedBufferParameteriv(GLuint buffer, GLenum pname, GLint *params);
+void APIENTRY glGetNamedBufferPointerv(GLuint buffer, GLenum pname, void **params);
+void APIENTRY glGetNamedBufferSubData(GLuint buffer, GLintptr offset, GLsizeiptr size, void *data);
+void APIENTRY glGetNamedFramebufferAttachmentParameteriv(GLuint framebuffer, GLenum attachment, GLenum pname,                                                                GLint *params);
+void APIENTRY glGetNamedFramebufferParameteriv(GLuint framebuffer, GLenum pname, GLint *params);
+void APIENTRY glGetNamedRenderbufferParameteriv(GLuint renderbuffer, GLenum pname, GLint *params);
+void APIENTRY glGetObjectLabel(GLenum identifier, GLuint name, GLsizei size, GLsizei *length, GLchar *label);
+void APIENTRY glGetObjectParameterfvARB(GLuint object, GLenum pname, GLfloat *params);
+void APIENTRY glGetObjectParameterivARB(GLuint object, GLenum pname, GLint *params);
+void APIENTRY glGetObjectPtrLabel(const void *ptr, GLsizei size, GLsizei *length, GLchar *label);
 void APIENTRY glGetPixelMapfv(GLenum map, GLfloat *values);
 void APIENTRY glGetPixelMapuiv(GLenum map, GLuint *values);
 void APIENTRY glGetPixelMapusv(GLenum map, GLushort *values);
 void APIENTRY glGetPointerv(GLenum pname, void **params);
 void APIENTRY glGetPolygonStipple(GLubyte *mask);
+void APIENTRY glGetProgramBinary(GLuint name, GLsizei size, GLsizei *length, GLenum *format, void *binary);
 void APIENTRY glGetProgramInfoLog(GLuint name, GLsizei size, GLsizei *length, GLchar *log);
+void APIENTRY glGetProgramInterfaceiv(GLuint program, GLenum iface, GLenum pname, GLint *params);
+void APIENTRY glGetProgramPipelineInfoLog(GLuint pipeline, GLsizei size, GLsizei *length, GLchar *log);
+void APIENTRY glGetProgramPipelineiv(GLuint pipeline, GLenum pname, GLint *params);
+GLuint APIENTRY glGetProgramResourceIndex(GLuint program, GLenum iface, const GLchar *name);
+GLint APIENTRY glGetProgramResourceLocation(GLuint program, GLenum iface, const GLchar *name);
+GLint APIENTRY glGetProgramResourceLocationIndex(GLuint program, GLenum iface, const GLchar *name);
+void APIENTRY glGetProgramResourceName(GLuint program, GLenum iface, GLuint index, GLsizei size, GLsizei *length,                                               GLchar *name);
+void APIENTRY glGetProgramResourceiv(GLuint program, GLenum iface, GLuint index, GLsizei prop_count,                                             const GLenum *props, GLsizei size, GLsizei *length, GLint *params);
+void APIENTRY glGetProgramStageiv(GLuint program, GLenum shadertype, GLenum pname, GLint *values);
 void APIENTRY glGetProgramiv(GLuint name, GLenum pname, GLint *params);
+void APIENTRY glGetQueryBufferObjecti64v(GLuint id, GLuint buffer, GLenum pname, GLintptr offset);
+void APIENTRY glGetQueryBufferObjectiv(GLuint id, GLuint buffer, GLenum pname, GLintptr offset);
+void APIENTRY glGetQueryBufferObjectui64v(GLuint id, GLuint buffer, GLenum pname, GLintptr offset);
+void APIENTRY glGetQueryBufferObjectuiv(GLuint id, GLuint buffer, GLenum pname, GLintptr offset);
+void APIENTRY glGetQueryIndexediv(GLenum target, GLuint index, GLenum pname, GLint *value);
 void APIENTRY glGetQueryObjecti64v(GLuint name, GLenum pname, GLint64 *value);
 void APIENTRY glGetQueryObjectiv(GLuint name, GLenum pname, GLint *value);
 void APIENTRY glGetQueryObjectui64v(GLuint name, GLenum pname, GLuint64 *value);
 void APIENTRY glGetQueryObjectuiv(GLuint name, GLenum pname, GLuint *value);
 void APIENTRY glGetQueryiv(GLenum target, GLenum pname, GLint *value);
 void APIENTRY glGetRenderbufferParameteriv(GLenum target, GLenum pname, GLint *params);
+void APIENTRY glGetSamplerParameterIiv(GLuint sampler, GLenum pname, GLint *params);
+void APIENTRY glGetSamplerParameterIuiv(GLuint sampler, GLenum pname, GLuint *params);
+void APIENTRY glGetSamplerParameterfv(GLuint sampler, GLenum pname, GLfloat *params);
+void APIENTRY glGetSamplerParameteriv(GLuint sampler, GLenum pname, GLint *params);
 void APIENTRY glGetShaderInfoLog(GLuint name, GLsizei size, GLsizei *length, GLchar *log);
 void APIENTRY glGetShaderPrecisionFormat(GLenum shader_type, GLenum precision, GLint *range, GLint *prec);
 void APIENTRY glGetShaderSource(GLuint name, GLsizei size, GLsizei *length, GLchar *source);
 void APIENTRY glGetShaderiv(GLuint name, GLenum pname, GLint *params);
 const GLubyte* APIENTRY glGetString(GLenum name);
 const GLubyte* APIENTRY glGetStringi(GLenum name, GLuint index);
+GLuint APIENTRY glGetSubroutineIndex(GLuint program, GLenum shadertype, const GLchar *name);
+GLint APIENTRY glGetSubroutineUniformLocation(GLuint program, GLenum shadertype, const GLchar *name);
 void APIENTRY glGetSynciv(GLsync handle, GLenum pname, GLsizei size, GLsizei *length, GLint *values);
 void APIENTRY glGetTexEnvfv(GLenum target, GLenum pname, GLfloat *params);
 void APIENTRY glGetTexEnviv(GLenum target, GLenum pname, GLint *params);
@@ -233,17 +382,76 @@ void APIENTRY glGetTexGeniv(GLenum coord, GLenum pname, GLint *params);
 void APIENTRY glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type, void *pixels);
 void APIENTRY glGetTexLevelParameterfv(GLenum target, GLint level, GLenum pname, GLfloat *params);
 void APIENTRY glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint *params);
+void APIENTRY glGetTexParameterIiv(GLenum target, GLenum pname, GLint *params);
+void APIENTRY glGetTexParameterIuiv(GLenum target, GLenum pname, GLuint *params);
 void APIENTRY glGetTexParameterfv(GLenum target, GLenum pname, GLfloat *params);
 void APIENTRY glGetTexParameteriv(GLenum target, GLenum pname, GLint *params);
+void APIENTRY glGetTextureImage(GLuint texture, GLint level, GLenum format, GLenum type, GLsizei size, void *pixels);
+void APIENTRY glGetTextureLevelParameterfv(GLuint texture, GLint level, GLenum pname, GLfloat *params);
+void APIENTRY glGetTextureLevelParameteriv(GLuint texture, GLint level, GLenum pname, GLint *params);
+void APIENTRY glGetTextureParameterIiv(GLuint texture, GLenum pname, GLint *params);
+void APIENTRY glGetTextureParameterIuiv(GLuint texture, GLenum pname, GLuint *params);
+void APIENTRY glGetTextureParameterfv(GLuint texture, GLenum pname, GLfloat *params);
+void APIENTRY glGetTextureParameteriv(GLuint texture, GLenum pname, GLint *params);
+void APIENTRY glGetTextureSubImage(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                          GLsizei d, GLenum format, GLenum type, GLsizei size, void *pixels);
+void APIENTRY glGetTransformFeedbackVarying(GLuint program, GLuint index, GLsizei size, GLsizei *length,                                                   GLsizei *count, GLenum *type, GLchar *name);
+void APIENTRY glGetTransformFeedbacki64_v(GLuint xfb, GLenum pname, GLuint index, GLint64 *param);
+void APIENTRY glGetTransformFeedbacki_v(GLuint xfb, GLenum pname, GLuint index, GLint *param);
+void APIENTRY glGetTransformFeedbackiv(GLuint xfb, GLenum pname, GLint *param);
 GLuint APIENTRY glGetUniformBlockIndex(GLuint program, const GLchar *name);
+void APIENTRY glGetUniformIndices(GLuint name, GLsizei count, const GLchar *const *names, GLuint *indices);
 GLint APIENTRY glGetUniformLocation(GLuint name, const GLchar *uniform);
+void APIENTRY glGetUniformSubroutineuiv(GLenum shadertype, GLint location, GLuint *params);
+void APIENTRY glGetUniformdv(GLuint name, GLint location, GLdouble *params);
 void APIENTRY glGetUniformfv(GLuint name, GLint location, GLfloat *params);
 void APIENTRY glGetUniformiv(GLuint name, GLint location, GLint *params);
+void APIENTRY glGetUniformuiv(GLuint name, GLint location, GLuint *params);
+void APIENTRY glGetVertexArrayIndexed64iv(GLuint array, GLuint index, GLenum pname, GLint64 *param);
+void APIENTRY glGetVertexArrayIndexediv(GLuint array, GLuint index, GLenum pname, GLint *param);
+void APIENTRY glGetVertexArrayiv(GLuint array, GLenum pname, GLint *param);
 void APIENTRY glGetVertexAttribIiv(GLuint index, GLenum pname, GLint *params);
 void APIENTRY glGetVertexAttribIuiv(GLuint index, GLenum pname, GLuint *params);
+void APIENTRY glGetVertexAttribLdv(GLuint index, GLenum pname, GLdouble *params);
 void APIENTRY glGetVertexAttribPointerv(GLuint index, GLenum pname, void **pointer);
+void APIENTRY glGetVertexAttribdv(GLuint index, GLenum pname, GLdouble *params);
 void APIENTRY glGetVertexAttribfv(GLuint index, GLenum pname, GLfloat *params);
 void APIENTRY glGetVertexAttribiv(GLuint index, GLenum pname, GLint *params);
+void APIENTRY glGetnColorTable(GLenum target, GLenum format, GLenum type, GLsizei size, void *table);
+void APIENTRY glGetnColorTableARB(GLenum target, GLenum format, GLenum type, GLsizei size, void *table);
+void APIENTRY glGetnCompressedTexImage(GLenum target, GLint level, GLsizei size, void *pixels);
+void APIENTRY glGetnCompressedTexImageARB(GLenum target, GLint level, GLsizei size, void *pixels);
+void APIENTRY glGetnConvolutionFilter(GLenum target, GLenum format, GLenum type, GLsizei size, void *image);
+void APIENTRY glGetnConvolutionFilterARB(GLenum target, GLenum format, GLenum type, GLsizei size, void *image);
+void APIENTRY glGetnHistogram(GLenum target, GLboolean reset, GLenum format, GLenum type, GLsizei size, void *values);
+void APIENTRY glGetnHistogramARB(GLenum target, GLboolean reset, GLenum format, GLenum type, GLsizei size, void *values);
+void APIENTRY glGetnMapdv(GLenum target, GLenum query, GLsizei size, GLdouble *v);
+void APIENTRY glGetnMapdvARB(GLenum target, GLenum query, GLsizei size, GLdouble *v);
+void APIENTRY glGetnMapfv(GLenum target, GLenum query, GLsizei size, GLfloat *v);
+void APIENTRY glGetnMapfvARB(GLenum target, GLenum query, GLsizei size, GLfloat *v);
+void APIENTRY glGetnMapiv(GLenum target, GLenum query, GLsizei size, GLint *v);
+void APIENTRY glGetnMapivARB(GLenum target, GLenum query, GLsizei size, GLint *v);
+void APIENTRY glGetnMinmax(GLenum target, GLboolean reset, GLenum format, GLenum type, GLsizei size, void *values);
+void APIENTRY glGetnMinmaxARB(GLenum target, GLboolean reset, GLenum format, GLenum type, GLsizei size, void *values);
+void APIENTRY glGetnPixelMapfv(GLenum map, GLsizei size, GLfloat *values);
+void APIENTRY glGetnPixelMapfvARB(GLenum map, GLsizei size, GLfloat *values);
+void APIENTRY glGetnPixelMapuiv(GLenum map, GLsizei size, GLuint *values);
+void APIENTRY glGetnPixelMapuivARB(GLenum map, GLsizei size, GLuint *values);
+void APIENTRY glGetnPixelMapusv(GLenum map, GLsizei size, GLushort *values);
+void APIENTRY glGetnPixelMapusvARB(GLenum map, GLsizei size, GLushort *values);
+void APIENTRY glGetnPolygonStipple(GLsizei size, GLubyte *pattern);
+void APIENTRY glGetnPolygonStippleARB(GLsizei size, GLubyte *pattern);
+void APIENTRY glGetnSeparableFilter(GLenum target, GLenum format, GLenum type, GLsizei row_size, void *row,                                           GLsizei column_size, void *column, void *span);
+void APIENTRY glGetnSeparableFilterARB(GLenum target, GLenum format, GLenum type, GLsizei row_size, void *row,                                              GLsizei column_size, void *column, void *span);
+void APIENTRY glGetnTexImage(GLenum target, GLint level, GLenum format, GLenum type, GLsizei size, void *pixels);
+void APIENTRY glGetnTexImageARB(GLenum target, GLint level, GLenum format, GLenum type, GLsizei size, void *pixels);
+void APIENTRY glGetnUniformdv(GLuint program, GLint location, GLsizei size, GLdouble *params);
+void APIENTRY glGetnUniformdvARB(GLuint program, GLint location, GLsizei size, GLdouble *params);
+void APIENTRY glGetnUniformfv(GLuint program, GLint location, GLsizei size, GLfloat *params);
+void APIENTRY glGetnUniformfvARB(GLuint program, GLint location, GLsizei size, GLfloat *params);
+void APIENTRY glGetnUniformiv(GLuint program, GLint location, GLsizei size, GLint *params);
+void APIENTRY glGetnUniformivARB(GLuint program, GLint location, GLsizei size, GLint *params);
+void APIENTRY glGetnUniformuiv(GLuint program, GLint location, GLsizei size, GLuint *params);
+void APIENTRY glGetnUniformuivARB(GLuint program, GLint location, GLsizei size, GLuint *params);
 void APIENTRY glHint(GLenum target, GLenum mode);
 void APIENTRY glIndexMask(GLuint mask);
 void APIENTRY glIndexPointer(GLenum type, GLsizei stride, const void *pointer);
@@ -259,18 +467,28 @@ void APIENTRY glIndexub(GLubyte c);
 void APIENTRY glIndexubv(const GLubyte *c);
 void APIENTRY glInitNames(void);
 void APIENTRY glInterleavedArrays(GLenum format, GLsizei stride, const void *pointer);
+void APIENTRY glInvalidateBufferData(GLuint buffer);
+void APIENTRY glInvalidateBufferSubData(GLuint buffer, GLintptr offset, GLsizeiptr length);
 void APIENTRY glInvalidateFramebuffer(GLenum target, GLsizei n, const GLenum *attachments);
+void APIENTRY glInvalidateNamedFramebufferData(GLuint framebuffer, GLsizei n, const GLenum *attachments);
+void APIENTRY glInvalidateNamedFramebufferSubData(GLuint framebuffer, GLsizei n, const GLenum *attachments, GLint x,                                                         GLint y, GLsizei w, GLsizei h);
+void APIENTRY glInvalidateSubFramebuffer(GLenum target, GLsizei n, const GLenum *attachments, GLint x, GLint y,                                                GLsizei w, GLsizei h);
+void APIENTRY glInvalidateTexImage(GLuint texture, GLint level);
+void APIENTRY glInvalidateTexSubImage(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                             GLsizei d);
 GLboolean APIENTRY glIsBuffer(GLuint name);
 GLboolean APIENTRY glIsEnabled(GLenum cap);
 GLboolean APIENTRY glIsEnabledi(GLenum cap, GLuint index);
 GLboolean APIENTRY glIsFramebuffer(GLuint name);
 GLboolean APIENTRY glIsList(GLuint list);
 GLboolean APIENTRY glIsProgram(GLuint name);
+GLboolean APIENTRY glIsProgramPipeline(GLuint pipeline);
 GLboolean APIENTRY glIsQuery(GLuint name);
 GLboolean APIENTRY glIsRenderbuffer(GLuint name);
+GLboolean APIENTRY glIsSampler(GLuint sampler);
 GLboolean APIENTRY glIsShader(GLuint name);
 GLboolean APIENTRY glIsSync(GLsync handle);
 GLboolean APIENTRY glIsTexture(GLuint name);
+GLboolean APIENTRY glIsTransformFeedback(GLuint id);
 GLboolean APIENTRY glIsVertexArray(GLuint name);
 void APIENTRY glLightModelf(GLenum pname, GLfloat param);
 void APIENTRY glLightModelfv(GLenum pname, const GLfloat *params);
@@ -303,11 +521,16 @@ void APIENTRY glMapGrid1d(GLint un, GLdouble u1, GLdouble u2);
 void APIENTRY glMapGrid1f(GLint un, GLfloat u1, GLfloat u2);
 void APIENTRY glMapGrid2d(GLint un, GLdouble u1, GLdouble u2, GLint vn, GLdouble v1, GLdouble v2);
 void APIENTRY glMapGrid2f(GLint un, GLfloat u1, GLfloat u2, GLint vn, GLfloat v1, GLfloat v2);
+void* APIENTRY glMapNamedBuffer(GLuint buffer, GLenum access);
+void* APIENTRY glMapNamedBufferRange(GLuint buffer, GLintptr offset, GLsizeiptr length, GLbitfield access);
 void APIENTRY glMaterialf(GLenum face, GLenum pname, GLfloat param);
 void APIENTRY glMaterialfv(GLenum face, GLenum pname, const GLfloat *params);
 void APIENTRY glMateriali(GLenum face, GLenum pname, GLint param);
 void APIENTRY glMaterialiv(GLenum face, GLenum pname, const GLint *params);
 void APIENTRY glMatrixMode(GLenum mode);
+void APIENTRY glMemoryBarrier(GLbitfield barriers);
+void APIENTRY glMemoryBarrierByRegion(GLbitfield barriers);
+void APIENTRY glMinSampleShading(GLfloat value);
 void APIENTRY glMultMatrixd(const GLdouble *m);
 void APIENTRY glMultMatrixf(const GLfloat *m);
 void APIENTRY glMultTransposeMatrixd(const GLdouble *m);
@@ -315,7 +538,12 @@ void APIENTRY glMultTransposeMatrixdARB(const GLdouble *m);
 void APIENTRY glMultTransposeMatrixf(const GLfloat *m);
 void APIENTRY glMultTransposeMatrixfARB(const GLfloat *m);
 void APIENTRY glMultiDrawArrays(GLenum mode, const GLint *first, const GLsizei *count, GLsizei n);
+void APIENTRY glMultiDrawArraysIndirect(GLenum mode, const void *indirect, GLsizei count, GLsizei stride);
+void APIENTRY glMultiDrawArraysIndirectCount(GLenum mode, const void *indirect, GLintptr drawcount,                                                    GLsizei maxdrawcount, GLsizei stride);
 void APIENTRY glMultiDrawElements(GLenum mode, const GLsizei *count, GLenum type, const void *const *indices,                                         GLsizei n);
+void APIENTRY glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count, GLenum type,                                                   const void *const *indices, GLsizei n, const GLint *base_vertex);
+void APIENTRY glMultiDrawElementsIndirect(GLenum mode, GLenum type, const void *indirect, GLsizei count,                                                 GLsizei stride);
+void APIENTRY glMultiDrawElementsIndirectCount(GLenum mode, GLenum type, const void *indirect, GLintptr drawcount,                                                      GLsizei maxdrawcount, GLsizei stride);
 void APIENTRY glMultiTexCoord1d(GLenum target, GLdouble s);
 void APIENTRY glMultiTexCoord1dARB(GLenum target, GLdouble s);
 void APIENTRY glMultiTexCoord1dv(GLenum target, const GLdouble *v);
@@ -380,6 +608,26 @@ void APIENTRY glMultiTexCoord4s(GLenum target, GLshort s, GLshort t, GLshort r, 
 void APIENTRY glMultiTexCoord4sARB(GLenum target, GLshort s, GLshort t, GLshort r, GLshort q);
 void APIENTRY glMultiTexCoord4sv(GLenum target, const GLshort *v);
 void APIENTRY glMultiTexCoord4svARB(GLenum target, const GLshort *v);
+void APIENTRY glMultiTexCoordP1ui(GLenum texture, GLenum type, GLuint coords);
+void APIENTRY glMultiTexCoordP1uiv(GLenum texture, GLenum type, const GLuint *coords);
+void APIENTRY glMultiTexCoordP2ui(GLenum texture, GLenum type, GLuint coords);
+void APIENTRY glMultiTexCoordP2uiv(GLenum texture, GLenum type, const GLuint *coords);
+void APIENTRY glMultiTexCoordP3ui(GLenum texture, GLenum type, GLuint coords);
+void APIENTRY glMultiTexCoordP3uiv(GLenum texture, GLenum type, const GLuint *coords);
+void APIENTRY glMultiTexCoordP4ui(GLenum texture, GLenum type, GLuint coords);
+void APIENTRY glMultiTexCoordP4uiv(GLenum texture, GLenum type, const GLuint *coords);
+void APIENTRY glNamedBufferData(GLuint buffer, GLsizeiptr size, const void *data, GLenum usage);
+void APIENTRY glNamedBufferStorage(GLuint buffer, GLsizeiptr size, const void *data, GLbitfield flags);
+void APIENTRY glNamedBufferSubData(GLuint buffer, GLintptr offset, GLsizeiptr size, const void *data);
+void APIENTRY glNamedFramebufferDrawBuffer(GLuint framebuffer, GLenum buf);
+void APIENTRY glNamedFramebufferDrawBuffers(GLuint framebuffer, GLsizei n, const GLenum *bufs);
+void APIENTRY glNamedFramebufferParameteri(GLuint framebuffer, GLenum pname, GLint param);
+void APIENTRY glNamedFramebufferReadBuffer(GLuint framebuffer, GLenum src);
+void APIENTRY glNamedFramebufferRenderbuffer(GLuint framebuffer, GLenum attachment, GLenum rbtarget, GLuint renderbuffer);
+void APIENTRY glNamedFramebufferTexture(GLuint framebuffer, GLenum attachment, GLuint texture, GLint level);
+void APIENTRY glNamedFramebufferTextureLayer(GLuint framebuffer, GLenum attachment, GLuint texture, GLint level,                                                    GLint layer);
+void APIENTRY glNamedRenderbufferStorage(GLuint renderbuffer, GLenum internal, GLsizei w, GLsizei h);
+void APIENTRY glNamedRenderbufferStorageMultisample(GLuint renderbuffer, GLsizei samples, GLenum internal, GLsizei w,                                                           GLsizei h);
 void APIENTRY glNewList(GLuint list, GLenum mode);
 void APIENTRY glNormal3b(GLbyte nx, GLbyte ny, GLbyte nz);
 void APIENTRY glNormal3bv(const GLbyte *v);
@@ -391,10 +639,16 @@ void APIENTRY glNormal3i(GLint nx, GLint ny, GLint nz);
 void APIENTRY glNormal3iv(const GLint *v);
 void APIENTRY glNormal3s(GLshort nx, GLshort ny, GLshort nz);
 void APIENTRY glNormal3sv(const GLshort *v);
+void APIENTRY glNormalP3ui(GLenum type, GLuint coords);
+void APIENTRY glNormalP3uiv(GLenum type, const GLuint *coords);
 void APIENTRY glNormalPointer(GLenum type, GLsizei stride, const void *pointer);
 void APIENTRY glObjectLabel(GLenum identifier, GLuint name, GLsizei length, const GLchar *label);
+void APIENTRY glObjectPtrLabel(const void *ptr, GLsizei length, const GLchar *label);
 void APIENTRY glOrtho(GLdouble left, GLdouble right, GLdouble bottom, GLdouble top_, GLdouble near_val,                             GLdouble far_val);
 void APIENTRY glPassThrough(GLfloat token);
+void APIENTRY glPatchParameterfv(GLenum pname, const GLfloat *values);
+void APIENTRY glPatchParameteri(GLenum pname, GLint value);
+void APIENTRY glPauseTransformFeedback(void);
 void APIENTRY glPixelMapfv(GLenum map, GLsizei mapsize, const GLfloat *values);
 void APIENTRY glPixelMapuiv(GLenum map, GLsizei mapsize, const GLuint *values);
 void APIENTRY glPixelMapusv(GLenum map, GLsizei mapsize, const GLushort *values);
@@ -414,13 +668,69 @@ void APIENTRY glPointParameteriv(GLenum pname, const GLint *values);
 void APIENTRY glPointSize(GLfloat size);
 void APIENTRY glPolygonMode(GLenum face, GLenum mode);
 void APIENTRY glPolygonOffset(GLfloat factor, GLfloat units);
+void APIENTRY glPolygonOffsetClamp(GLfloat factor, GLfloat units, GLfloat clamp);
+void APIENTRY glPolygonOffsetClampEXT(GLfloat factor, GLfloat units, GLfloat clamp);
 void APIENTRY glPolygonStipple(const GLubyte *mask);
 void APIENTRY glPopAttrib(void);
 void APIENTRY glPopClientAttrib(void);
 void APIENTRY glPopDebugGroup(void);
 void APIENTRY glPopMatrix(void);
 void APIENTRY glPopName(void);
+void APIENTRY glPrimitiveRestartIndex(GLuint index);
 void APIENTRY glPrioritizeTextures(GLsizei n, const GLuint *textures, const GLclampf *priorities);
+void APIENTRY glProgramBinary(GLuint name, GLenum format, const void *binary, GLsizei size);
+void APIENTRY glProgramParameteri(GLuint program, GLenum pname, GLint value);
+void APIENTRY glProgramUniform1d(GLuint program, GLint l, GLdouble a);
+void APIENTRY glProgramUniform1dv(GLuint program, GLint l, GLsizei count, const GLdouble *v);
+void APIENTRY glProgramUniform1f(GLuint program, GLint l, GLfloat a);
+void APIENTRY glProgramUniform1fv(GLuint program, GLint l, GLsizei count, const GLfloat *v);
+void APIENTRY glProgramUniform1i(GLuint program, GLint l, GLint a);
+void APIENTRY glProgramUniform1iv(GLuint program, GLint l, GLsizei count, const GLint *v);
+void APIENTRY glProgramUniform1ui(GLuint program, GLint l, GLuint a);
+void APIENTRY glProgramUniform1uiv(GLuint program, GLint l, GLsizei count, const GLuint *v);
+void APIENTRY glProgramUniform2d(GLuint program, GLint l, GLdouble a, GLdouble b);
+void APIENTRY glProgramUniform2dv(GLuint program, GLint l, GLsizei count, const GLdouble *v);
+void APIENTRY glProgramUniform2f(GLuint program, GLint l, GLfloat a, GLfloat b);
+void APIENTRY glProgramUniform2fv(GLuint program, GLint l, GLsizei count, const GLfloat *v);
+void APIENTRY glProgramUniform2i(GLuint program, GLint l, GLint a, GLint b);
+void APIENTRY glProgramUniform2iv(GLuint program, GLint l, GLsizei count, const GLint *v);
+void APIENTRY glProgramUniform2ui(GLuint program, GLint l, GLuint a, GLuint b);
+void APIENTRY glProgramUniform2uiv(GLuint program, GLint l, GLsizei count, const GLuint *v);
+void APIENTRY glProgramUniform3d(GLuint program, GLint l, GLdouble a, GLdouble b, GLdouble c);
+void APIENTRY glProgramUniform3dv(GLuint program, GLint l, GLsizei count, const GLdouble *v);
+void APIENTRY glProgramUniform3f(GLuint program, GLint l, GLfloat a, GLfloat b, GLfloat c);
+void APIENTRY glProgramUniform3fv(GLuint program, GLint l, GLsizei count, const GLfloat *v);
+void APIENTRY glProgramUniform3i(GLuint program, GLint l, GLint a, GLint b, GLint c);
+void APIENTRY glProgramUniform3iv(GLuint program, GLint l, GLsizei count, const GLint *v);
+void APIENTRY glProgramUniform3ui(GLuint program, GLint l, GLuint a, GLuint b, GLuint c);
+void APIENTRY glProgramUniform3uiv(GLuint program, GLint l, GLsizei count, const GLuint *v);
+void APIENTRY glProgramUniform4d(GLuint program, GLint l, GLdouble a, GLdouble b, GLdouble c, GLdouble d);
+void APIENTRY glProgramUniform4dv(GLuint program, GLint l, GLsizei count, const GLdouble *v);
+void APIENTRY glProgramUniform4f(GLuint program, GLint l, GLfloat a, GLfloat b, GLfloat c, GLfloat d);
+void APIENTRY glProgramUniform4fv(GLuint program, GLint l, GLsizei count, const GLfloat *v);
+void APIENTRY glProgramUniform4i(GLuint program, GLint l, GLint a, GLint b, GLint c, GLint d);
+void APIENTRY glProgramUniform4iv(GLuint program, GLint l, GLsizei count, const GLint *v);
+void APIENTRY glProgramUniform4ui(GLuint program, GLint l, GLuint a, GLuint b, GLuint c, GLuint d);
+void APIENTRY glProgramUniform4uiv(GLuint program, GLint l, GLsizei count, const GLuint *v);
+void APIENTRY glProgramUniformMatrix2dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+void APIENTRY glProgramUniformMatrix2fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+void APIENTRY glProgramUniformMatrix2x3dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+void APIENTRY glProgramUniformMatrix2x3fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+void APIENTRY glProgramUniformMatrix2x4dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+void APIENTRY glProgramUniformMatrix2x4fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+void APIENTRY glProgramUniformMatrix3dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+void APIENTRY glProgramUniformMatrix3fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+void APIENTRY glProgramUniformMatrix3x2dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+void APIENTRY glProgramUniformMatrix3x2fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+void APIENTRY glProgramUniformMatrix3x4dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+void APIENTRY glProgramUniformMatrix3x4fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+void APIENTRY glProgramUniformMatrix4dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+void APIENTRY glProgramUniformMatrix4fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+void APIENTRY glProgramUniformMatrix4x2dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+void APIENTRY glProgramUniformMatrix4x2fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+void APIENTRY glProgramUniformMatrix4x3dv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLdouble *v);
+void APIENTRY glProgramUniformMatrix4x3fv(GLuint program, GLint l, GLsizei count, GLboolean t, const GLfloat *v);
+void APIENTRY glProvokingVertex(GLenum mode);
 void APIENTRY glPushAttrib(GLbitfield mask);
 void APIENTRY glPushClientAttrib(GLbitfield mask);
 void APIENTRY glPushDebugGroup(GLenum source, GLuint id, GLsizei length, const GLchar *message);
@@ -453,6 +763,8 @@ void APIENTRY glRasterPos4s(GLshort x, GLshort y, GLshort z, GLshort w);
 void APIENTRY glRasterPos4sv(const GLshort *v);
 void APIENTRY glReadBuffer(GLenum buf);
 void APIENTRY glReadPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum type, void *pixels);
+void APIENTRY glReadnPixels(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum type, GLsizei size,                                   void *pixels);
+void APIENTRY glReadnPixelsARB(GLint x, GLint y, GLsizei w, GLsizei h, GLenum format, GLenum type, GLsizei size,                                      void *pixels);
 void APIENTRY glRectd(GLdouble x1, GLdouble y1, GLdouble x2, GLdouble y2);
 void APIENTRY glRectdv(const GLdouble *v1, const GLdouble *v2);
 void APIENTRY glRectf(GLfloat x1, GLfloat y1, GLfloat x2, GLfloat y2);
@@ -465,20 +777,55 @@ void APIENTRY glReleaseShaderCompiler(void);
 GLint APIENTRY glRenderMode(GLenum mode);
 void APIENTRY glRenderbufferStorage(GLenum target, GLenum internal, GLsizei w, GLsizei h);
 void APIENTRY glRenderbufferStorageMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w,                                                      GLsizei h);
+void APIENTRY glResumeTransformFeedback(void);
 void APIENTRY glRotated(GLdouble angle, GLdouble x, GLdouble y, GLdouble z);
 void APIENTRY glRotatef(GLfloat angle, GLfloat x, GLfloat y, GLfloat z);
+void APIENTRY glSampleCoverage(GLfloat value, GLboolean invert);
+void APIENTRY glSampleMaski(GLuint index, GLbitfield mask);
+void APIENTRY glSamplerParameterIiv(GLuint sampler, GLenum pname, const GLint *params);
+void APIENTRY glSamplerParameterIuiv(GLuint sampler, GLenum pname, const GLuint *params);
+void APIENTRY glSamplerParameterf(GLuint sampler, GLenum pname, GLfloat param);
+void APIENTRY glSamplerParameterfv(GLuint sampler, GLenum pname, const GLfloat *params);
+void APIENTRY glSamplerParameteri(GLuint sampler, GLenum pname, GLint param);
+void APIENTRY glSamplerParameteriv(GLuint sampler, GLenum pname, const GLint *params);
 void APIENTRY glScaled(GLdouble x, GLdouble y, GLdouble z);
 void APIENTRY glScalef(GLfloat x, GLfloat y, GLfloat z);
 void APIENTRY glScissor(GLint x, GLint y, GLsizei w, GLsizei h);
+void APIENTRY glScissorArrayv(GLuint first, GLsizei count, const GLint *v);
+void APIENTRY glScissorIndexed(GLuint index, GLint left, GLint bottom, GLsizei width, GLsizei height);
+void APIENTRY glScissorIndexedv(GLuint index, const GLint *v);
+void APIENTRY glSecondaryColor3b(GLbyte red, GLbyte green, GLbyte blue);
+void APIENTRY glSecondaryColor3bv(const GLbyte *v);
+void APIENTRY glSecondaryColor3d(GLdouble red, GLdouble green, GLdouble blue);
+void APIENTRY glSecondaryColor3dv(const GLdouble *v);
+void APIENTRY glSecondaryColor3f(GLfloat red, GLfloat green, GLfloat blue);
+void APIENTRY glSecondaryColor3fv(const GLfloat *v);
+void APIENTRY glSecondaryColor3i(GLint red, GLint green, GLint blue);
+void APIENTRY glSecondaryColor3iv(const GLint *v);
+void APIENTRY glSecondaryColor3s(GLshort red, GLshort green, GLshort blue);
+void APIENTRY glSecondaryColor3sv(const GLshort *v);
+void APIENTRY glSecondaryColor3ub(GLubyte red, GLubyte green, GLubyte blue);
+void APIENTRY glSecondaryColor3ubv(const GLubyte *v);
+void APIENTRY glSecondaryColor3ui(GLuint red, GLuint green, GLuint blue);
+void APIENTRY glSecondaryColor3uiv(const GLuint *v);
+void APIENTRY glSecondaryColor3us(GLushort red, GLushort green, GLushort blue);
+void APIENTRY glSecondaryColor3usv(const GLushort *v);
+void APIENTRY glSecondaryColorP3ui(GLenum type, GLuint color);
+void APIENTRY glSecondaryColorP3uiv(GLenum type, const GLuint *color);
+void APIENTRY glSecondaryColorPointer(GLint size, GLenum type, GLsizei stride, const void *pointer);
 void APIENTRY glSelectBuffer(GLsizei size, GLuint *buffer);
 void APIENTRY glShadeModel(GLenum mode);
+void APIENTRY glShaderBinary(GLsizei count, const GLuint *shaders, GLenum format, const void *binary, GLsizei size);
 void APIENTRY glShaderSource(GLuint name, GLsizei count, const GLchar *const *strings, const GLint *lengths);
+void APIENTRY glShaderStorageBlockBinding(GLuint program, GLuint index, GLuint binding);
 void APIENTRY glStencilFunc(GLenum func, GLint ref, GLuint mask);
 void APIENTRY glStencilFuncSeparate(GLenum face, GLenum func, GLint ref, GLuint mask);
 void APIENTRY glStencilMask(GLuint mask);
 void APIENTRY glStencilMaskSeparate(GLenum face, GLuint mask);
 void APIENTRY glStencilOp(GLenum fail, GLenum zfail, GLenum zpass);
 void APIENTRY glStencilOpSeparate(GLenum face, GLenum fail, GLenum zfail, GLenum zpass);
+void APIENTRY glTexBuffer(GLenum target, GLenum internal, GLuint buffer);
+void APIENTRY glTexBufferRange(GLenum target, GLenum internal, GLuint buffer, GLintptr offset, GLsizeiptr size);
 void APIENTRY glTexCoord1d(GLdouble s);
 void APIENTRY glTexCoord1dv(const GLdouble *v);
 void APIENTRY glTexCoord1f(GLfloat s);
@@ -511,6 +858,14 @@ void APIENTRY glTexCoord4i(GLint s, GLint t, GLint r, GLint q);
 void APIENTRY glTexCoord4iv(const GLint *v);
 void APIENTRY glTexCoord4s(GLshort s, GLshort t, GLshort r, GLshort q);
 void APIENTRY glTexCoord4sv(const GLshort *v);
+void APIENTRY glTexCoordP1ui(GLenum type, GLuint coords);
+void APIENTRY glTexCoordP1uiv(GLenum type, const GLuint *coords);
+void APIENTRY glTexCoordP2ui(GLenum type, GLuint coords);
+void APIENTRY glTexCoordP2uiv(GLenum type, const GLuint *coords);
+void APIENTRY glTexCoordP3ui(GLenum type, GLuint coords);
+void APIENTRY glTexCoordP3uiv(GLenum type, const GLuint *coords);
+void APIENTRY glTexCoordP4ui(GLenum type, GLuint coords);
+void APIENTRY glTexCoordP4uiv(GLenum type, const GLuint *coords);
 void APIENTRY glTexCoordPointer(GLint size, GLenum type, GLsizei stride, const void *pointer);
 void APIENTRY glTexEnvf(GLenum target, GLenum pname, GLfloat param);
 void APIENTRY glTexEnvfv(GLenum target, GLenum pname, const GLfloat *params);
@@ -526,35 +881,70 @@ void APIENTRY glTexImage1D(GLenum target, GLint level, GLint internal, GLsizei w
 void APIENTRY glTexImage2D(GLenum target, GLint level, GLint internal, GLsizei w, GLsizei h, GLint border,                                  GLenum format, GLenum type, const void *pixels);
 void APIENTRY glTexImage2DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                             GLboolean fixed);
 void APIENTRY glTexImage3D(GLenum target, GLint level, GLint internal, GLsizei w, GLsizei h, GLsizei d,                                  GLint border, GLenum format, GLenum type, const void *pixels);
+void APIENTRY glTexImage3DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h, GLsizei d,                                             GLboolean fixed);
+void APIENTRY glTexParameterIiv(GLenum target, GLenum pname, const GLint *params);
+void APIENTRY glTexParameterIuiv(GLenum target, GLenum pname, const GLuint *params);
 void APIENTRY glTexParameterf(GLenum target, GLenum pname, GLfloat param);
 void APIENTRY glTexParameterfv(GLenum target, GLenum pname, const GLfloat *params);
 void APIENTRY glTexParameteri(GLenum target, GLenum pname, GLint param);
 void APIENTRY glTexParameteriv(GLenum target, GLenum pname, const GLint *params);
+void APIENTRY glTexStorage1D(GLenum target, GLsizei levels, GLenum internal, GLsizei w);
 void APIENTRY glTexStorage2D(GLenum target, GLsizei levels, GLenum internal, GLsizei w, GLsizei h);
+void APIENTRY glTexStorage2DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                               GLboolean fixed);
 void APIENTRY glTexStorage3D(GLenum target, GLsizei levels, GLenum internal, GLsizei w, GLsizei h, GLsizei d);
+void APIENTRY glTexStorage3DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                               GLsizei d, GLboolean fixed);
 void APIENTRY glTexSubImage1D(GLenum target, GLint level, GLint x, GLsizei w, GLenum format, GLenum type,                                     const void *pixels);
 void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h, GLenum format,                                     GLenum type, const void *pixels);
 void APIENTRY glTexSubImage3D(GLenum target, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                     GLsizei d, GLenum format, GLenum type, const void *pixels);
+void APIENTRY glTextureBarrier(void);
+void APIENTRY glTextureBuffer(GLuint texture, GLenum internal, GLuint buffer);
+void APIENTRY glTextureBufferRange(GLuint texture, GLenum internal, GLuint buffer, GLintptr offset, GLsizeiptr size);
+void APIENTRY glTextureParameterIiv(GLuint texture, GLenum pname, const GLint *params);
+void APIENTRY glTextureParameterIuiv(GLuint texture, GLenum pname, const GLuint *params);
+void APIENTRY glTextureParameterf(GLuint texture, GLenum pname, GLfloat param);
+void APIENTRY glTextureParameterfv(GLuint texture, GLenum pname, const GLfloat *params);
+void APIENTRY glTextureParameteri(GLuint texture, GLenum pname, GLint param);
+void APIENTRY glTextureParameteriv(GLuint texture, GLenum pname, const GLint *params);
+void APIENTRY glTextureStorage1D(GLuint texture, GLsizei levels, GLenum internal, GLsizei w);
+void APIENTRY glTextureStorage2D(GLuint texture, GLsizei levels, GLenum internal, GLsizei w, GLsizei h);
+void APIENTRY glTextureStorage2DMultisample(GLuint texture, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                                   GLboolean fixed);
+void APIENTRY glTextureStorage3D(GLuint texture, GLsizei levels, GLenum internal, GLsizei w, GLsizei h, GLsizei d);
+void APIENTRY glTextureStorage3DMultisample(GLuint texture, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                                   GLsizei d, GLboolean fixed);
+void APIENTRY glTextureSubImage1D(GLuint texture, GLint level, GLint x, GLsizei w, GLenum format, GLenum type,                                         const void *pixels);
+void APIENTRY glTextureSubImage2D(GLuint texture, GLint level, GLint x, GLint y, GLsizei w, GLsizei h,                                         GLenum format, GLenum type, const void *pixels);
+void APIENTRY glTextureSubImage3D(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                         GLsizei d, GLenum format, GLenum type, const void *pixels);
+void APIENTRY glTextureView(GLuint texture, GLenum target, GLuint origtexture, GLenum internal, GLuint minlevel,                                   GLuint numlevels, GLuint minlayer, GLuint numlayers);
+void APIENTRY glTransformFeedbackBufferBase(GLuint xfb, GLuint index, GLuint buffer);
+void APIENTRY glTransformFeedbackBufferRange(GLuint xfb, GLuint index, GLuint buffer, GLintptr offset,                                                    GLsizeiptr size);
+void APIENTRY glTransformFeedbackVaryings(GLuint program, GLsizei count, const GLchar *const *varyings,                                                 GLenum mode);
 void APIENTRY glTranslated(GLdouble x, GLdouble y, GLdouble z);
 void APIENTRY glTranslatef(GLfloat x, GLfloat y, GLfloat z);
+void APIENTRY glUniform1d(GLint l, GLdouble a);
+void APIENTRY glUniform1dv(GLint l, GLsizei n, const GLdouble *v);
 void APIENTRY glUniform1f(GLint l, GLfloat a);
 void APIENTRY glUniform1fv(GLint l, GLsizei n, const GLfloat *v);
 void APIENTRY glUniform1i(GLint l, GLint a);
 void APIENTRY glUniform1iv(GLint l, GLsizei n, const GLint *v);
 void APIENTRY glUniform1ui(GLint l, GLuint a);
 void APIENTRY glUniform1uiv(GLint l, GLsizei n, const GLuint *v);
+void APIENTRY glUniform2d(GLint l, GLdouble a, GLdouble b);
+void APIENTRY glUniform2dv(GLint l, GLsizei n, const GLdouble *v);
 void APIENTRY glUniform2f(GLint l, GLfloat a, GLfloat b);
 void APIENTRY glUniform2fv(GLint l, GLsizei n, const GLfloat *v);
 void APIENTRY glUniform2i(GLint l, GLint a, GLint b);
 void APIENTRY glUniform2iv(GLint l, GLsizei n, const GLint *v);
 void APIENTRY glUniform2ui(GLint l, GLuint a, GLuint b);
 void APIENTRY glUniform2uiv(GLint l, GLsizei n, const GLuint *v);
+void APIENTRY glUniform3d(GLint l, GLdouble a, GLdouble b, GLdouble c);
+void APIENTRY glUniform3dv(GLint l, GLsizei n, const GLdouble *v);
 void APIENTRY glUniform3f(GLint l, GLfloat a, GLfloat b, GLfloat c);
 void APIENTRY glUniform3fv(GLint l, GLsizei n, const GLfloat *v);
 void APIENTRY glUniform3i(GLint l, GLint a, GLint b, GLint c);
 void APIENTRY glUniform3iv(GLint l, GLsizei n, const GLint *v);
 void APIENTRY glUniform3ui(GLint l, GLuint a, GLuint b, GLuint c);
 void APIENTRY glUniform3uiv(GLint l, GLsizei n, const GLuint *v);
+void APIENTRY glUniform4d(GLint l, GLdouble a, GLdouble b, GLdouble c, GLdouble d);
+void APIENTRY glUniform4dv(GLint l, GLsizei n, const GLdouble *v);
 void APIENTRY glUniform4f(GLint l, GLfloat a, GLfloat b, GLfloat c, GLfloat d);
 void APIENTRY glUniform4fv(GLint l, GLsizei n, const GLfloat *v);
 void APIENTRY glUniform4i(GLint l, GLint a, GLint b, GLint c, GLint d);
@@ -562,18 +952,31 @@ void APIENTRY glUniform4iv(GLint l, GLsizei n, const GLint *v);
 void APIENTRY glUniform4ui(GLint l, GLuint a, GLuint b, GLuint c, GLuint d);
 void APIENTRY glUniform4uiv(GLint l, GLsizei n, const GLuint *v);
 void APIENTRY glUniformBlockBinding(GLuint program, GLuint index, GLuint binding);
+void APIENTRY glUniformMatrix2dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
 void APIENTRY glUniformMatrix2fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
+void APIENTRY glUniformMatrix2x3dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
 void APIENTRY glUniformMatrix2x3fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
+void APIENTRY glUniformMatrix2x4dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
 void APIENTRY glUniformMatrix2x4fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
+void APIENTRY glUniformMatrix3dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
 void APIENTRY glUniformMatrix3fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
+void APIENTRY glUniformMatrix3x2dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
 void APIENTRY glUniformMatrix3x2fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
+void APIENTRY glUniformMatrix3x4dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
 void APIENTRY glUniformMatrix3x4fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
+void APIENTRY glUniformMatrix4dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
 void APIENTRY glUniformMatrix4fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
+void APIENTRY glUniformMatrix4x2dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
 void APIENTRY glUniformMatrix4x2fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
+void APIENTRY glUniformMatrix4x3dv(GLint l, GLsizei n, GLboolean t, const GLdouble *v);
 void APIENTRY glUniformMatrix4x3fv(GLint l, GLsizei n, GLboolean t, const GLfloat *v);
+void APIENTRY glUniformSubroutinesuiv(GLenum shadertype, GLsizei count, const GLuint *indices);
 GLboolean APIENTRY glUnmapBuffer(GLenum target);
+GLboolean APIENTRY glUnmapNamedBuffer(GLuint buffer);
 void APIENTRY glUseProgram(GLuint name);
+void APIENTRY glUseProgramStages(GLuint pipeline, GLbitfield stages, GLuint program);
 void APIENTRY glValidateProgram(GLuint name);
+void APIENTRY glValidateProgramPipeline(GLuint pipeline);
 void APIENTRY glVertex2d(GLdouble x, GLdouble y);
 void APIENTRY glVertex2dv(const GLdouble *v);
 void APIENTRY glVertex2f(GLfloat x, GLfloat y);
@@ -598,25 +1001,123 @@ void APIENTRY glVertex4i(GLint x, GLint y, GLint z, GLint w);
 void APIENTRY glVertex4iv(const GLint *v);
 void APIENTRY glVertex4s(GLshort x, GLshort y, GLshort z, GLshort w);
 void APIENTRY glVertex4sv(const GLshort *v);
+void APIENTRY glVertexArrayAttribBinding(GLuint array, GLuint index, GLuint binding);
+void APIENTRY glVertexArrayAttribFormat(GLuint array, GLuint index, GLint size, GLenum type, GLboolean normalized,                                               GLuint relative);
+void APIENTRY glVertexArrayAttribIFormat(GLuint array, GLuint index, GLint size, GLenum type, GLuint relative);
+void APIENTRY glVertexArrayAttribLFormat(GLuint array, GLuint index, GLint size, GLenum type, GLuint relative);
+void APIENTRY glVertexArrayBindingDivisor(GLuint array, GLuint binding, GLuint divisor);
+void APIENTRY glVertexArrayElementBuffer(GLuint array, GLuint buffer);
+void APIENTRY glVertexArrayVertexBuffer(GLuint array, GLuint binding, GLuint buffer, GLintptr offset, GLsizei stride);
+void APIENTRY glVertexArrayVertexBuffers(GLuint array, GLuint first, GLsizei count, const GLuint *buffers,                                                const GLintptr *offsets, const GLsizei *strides);
+void APIENTRY glVertexAttrib1d(GLuint index, GLdouble x);
+void APIENTRY glVertexAttrib1dv(GLuint index, const GLdouble *v);
 void APIENTRY glVertexAttrib1f(GLuint i, GLfloat x);
 void APIENTRY glVertexAttrib1fv(GLuint i, const GLfloat *v);
+void APIENTRY glVertexAttrib1s(GLuint index, GLshort x);
+void APIENTRY glVertexAttrib1sv(GLuint index, const GLshort *v);
+void APIENTRY glVertexAttrib2d(GLuint index, GLdouble x, GLdouble y);
+void APIENTRY glVertexAttrib2dv(GLuint index, const GLdouble *v);
 void APIENTRY glVertexAttrib2f(GLuint i, GLfloat x, GLfloat y);
 void APIENTRY glVertexAttrib2fv(GLuint i, const GLfloat *v);
+void APIENTRY glVertexAttrib2s(GLuint index, GLshort x, GLshort y);
+void APIENTRY glVertexAttrib2sv(GLuint index, const GLshort *v);
+void APIENTRY glVertexAttrib3d(GLuint index, GLdouble x, GLdouble y, GLdouble z);
+void APIENTRY glVertexAttrib3dv(GLuint index, const GLdouble *v);
 void APIENTRY glVertexAttrib3f(GLuint i, GLfloat x, GLfloat y, GLfloat z);
 void APIENTRY glVertexAttrib3fv(GLuint i, const GLfloat *v);
+void APIENTRY glVertexAttrib3s(GLuint index, GLshort x, GLshort y, GLshort z);
+void APIENTRY glVertexAttrib3sv(GLuint index, const GLshort *v);
+void APIENTRY glVertexAttrib4Nbv(GLuint index, const GLbyte *v);
+void APIENTRY glVertexAttrib4Niv(GLuint index, const GLint *v);
+void APIENTRY glVertexAttrib4Nsv(GLuint index, const GLshort *v);
 void APIENTRY glVertexAttrib4Nub(GLuint i, GLubyte x, GLubyte y, GLubyte z, GLubyte w);
+void APIENTRY glVertexAttrib4Nubv(GLuint index, const GLubyte *v);
+void APIENTRY glVertexAttrib4Nuiv(GLuint index, const GLuint *v);
+void APIENTRY glVertexAttrib4Nusv(GLuint index, const GLushort *v);
+void APIENTRY glVertexAttrib4bv(GLuint index, const GLbyte *v);
+void APIENTRY glVertexAttrib4d(GLuint index, GLdouble x, GLdouble y, GLdouble z, GLdouble w);
+void APIENTRY glVertexAttrib4dv(GLuint index, const GLdouble *v);
 void APIENTRY glVertexAttrib4f(GLuint i, GLfloat x, GLfloat y, GLfloat z, GLfloat w);
 void APIENTRY glVertexAttrib4fv(GLuint i, const GLfloat *v);
+void APIENTRY glVertexAttrib4iv(GLuint index, const GLint *v);
+void APIENTRY glVertexAttrib4s(GLuint index, GLshort x, GLshort y, GLshort z, GLshort w);
+void APIENTRY glVertexAttrib4sv(GLuint index, const GLshort *v);
+void APIENTRY glVertexAttrib4ubv(GLuint index, const GLubyte *v);
+void APIENTRY glVertexAttrib4uiv(GLuint index, const GLuint *v);
+void APIENTRY glVertexAttrib4usv(GLuint index, const GLushort *v);
+void APIENTRY glVertexAttribBinding(GLuint index, GLuint binding);
 void APIENTRY glVertexAttribDivisor(GLuint index, GLuint divisor);
+void APIENTRY glVertexAttribFormat(GLuint index, GLint size, GLenum type, GLboolean normalized, GLuint relative);
+void APIENTRY glVertexAttribI1i(GLuint index, GLint x);
+void APIENTRY glVertexAttribI1iv(GLuint index, const GLint *v);
+void APIENTRY glVertexAttribI1ui(GLuint index, GLuint x);
+void APIENTRY glVertexAttribI1uiv(GLuint index, const GLuint *v);
+void APIENTRY glVertexAttribI2i(GLuint index, GLint x, GLint y);
+void APIENTRY glVertexAttribI2iv(GLuint index, const GLint *v);
+void APIENTRY glVertexAttribI2ui(GLuint index, GLuint x, GLuint y);
+void APIENTRY glVertexAttribI2uiv(GLuint index, const GLuint *v);
+void APIENTRY glVertexAttribI3i(GLuint index, GLint x, GLint y, GLint z);
+void APIENTRY glVertexAttribI3iv(GLuint index, const GLint *v);
+void APIENTRY glVertexAttribI3ui(GLuint index, GLuint x, GLuint y, GLuint z);
+void APIENTRY glVertexAttribI3uiv(GLuint index, const GLuint *v);
+void APIENTRY glVertexAttribI4bv(GLuint index, const GLbyte *v);
 void APIENTRY glVertexAttribI4i(GLuint i, GLint x, GLint y, GLint z, GLint w);
 void APIENTRY glVertexAttribI4iv(GLuint i, const GLint *v);
+void APIENTRY glVertexAttribI4sv(GLuint index, const GLshort *v);
+void APIENTRY glVertexAttribI4ubv(GLuint index, const GLubyte *v);
 void APIENTRY glVertexAttribI4ui(GLuint i, GLuint x, GLuint y, GLuint z, GLuint w);
 void APIENTRY glVertexAttribI4uiv(GLuint i, const GLuint *v);
+void APIENTRY glVertexAttribI4usv(GLuint index, const GLushort *v);
+void APIENTRY glVertexAttribIFormat(GLuint index, GLint size, GLenum type, GLuint relative);
 void APIENTRY glVertexAttribIPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void *pointer);
+void APIENTRY glVertexAttribL1d(GLuint i, GLdouble x);
+void APIENTRY glVertexAttribL1dv(GLuint i, const GLdouble *v);
+void APIENTRY glVertexAttribL2d(GLuint i, GLdouble x, GLdouble y);
+void APIENTRY glVertexAttribL2dv(GLuint i, const GLdouble *v);
+void APIENTRY glVertexAttribL3d(GLuint i, GLdouble x, GLdouble y, GLdouble z);
+void APIENTRY glVertexAttribL3dv(GLuint i, const GLdouble *v);
+void APIENTRY glVertexAttribL4d(GLuint i, GLdouble x, GLdouble y, GLdouble z, GLdouble w);
+void APIENTRY glVertexAttribL4dv(GLuint i, const GLdouble *v);
+void APIENTRY glVertexAttribLFormat(GLuint index, GLint size, GLenum type, GLuint relative);
+void APIENTRY glVertexAttribLPointer(GLuint index, GLint size, GLenum type, GLsizei stride, const void *pointer);
+void APIENTRY glVertexAttribP1ui(GLuint index, GLenum type, GLboolean normalized, GLuint value);
+void APIENTRY glVertexAttribP1uiv(GLuint index, GLenum type, GLboolean normalized, const GLuint *value);
+void APIENTRY glVertexAttribP2ui(GLuint index, GLenum type, GLboolean normalized, GLuint value);
+void APIENTRY glVertexAttribP2uiv(GLuint index, GLenum type, GLboolean normalized, const GLuint *value);
+void APIENTRY glVertexAttribP3ui(GLuint index, GLenum type, GLboolean normalized, GLuint value);
+void APIENTRY glVertexAttribP3uiv(GLuint index, GLenum type, GLboolean normalized, const GLuint *value);
+void APIENTRY glVertexAttribP4ui(GLuint index, GLenum type, GLboolean normalized, GLuint value);
+void APIENTRY glVertexAttribP4uiv(GLuint index, GLenum type, GLboolean normalized, const GLuint *value);
 void APIENTRY glVertexAttribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride,                                           const void *pointer);
+void APIENTRY glVertexBindingDivisor(GLuint binding, GLuint divisor);
+void APIENTRY glVertexP2ui(GLenum type, GLuint value);
+void APIENTRY glVertexP2uiv(GLenum type, const GLuint *value);
+void APIENTRY glVertexP3ui(GLenum type, GLuint value);
+void APIENTRY glVertexP3uiv(GLenum type, const GLuint *value);
+void APIENTRY glVertexP4ui(GLenum type, GLuint value);
+void APIENTRY glVertexP4uiv(GLenum type, const GLuint *value);
 void APIENTRY glVertexPointer(GLint size, GLenum type, GLsizei stride, const void *pointer);
 void APIENTRY glViewport(GLint x, GLint y, GLsizei w, GLsizei h);
+void APIENTRY glViewportArrayv(GLuint first, GLsizei count, const GLfloat *v);
+void APIENTRY glViewportIndexedf(GLuint index, GLfloat x, GLfloat y, GLfloat w, GLfloat h);
+void APIENTRY glViewportIndexedfv(GLuint index, const GLfloat *v);
 void APIENTRY glWaitSync(GLsync handle, GLbitfield flags, GLuint64 timeout);
+void APIENTRY glWindowPos2d(GLdouble x, GLdouble y);
+void APIENTRY glWindowPos2dv(const GLdouble *v);
+void APIENTRY glWindowPos2f(GLfloat x, GLfloat y);
+void APIENTRY glWindowPos2fv(const GLfloat *v);
+void APIENTRY glWindowPos2i(GLint x, GLint y);
+void APIENTRY glWindowPos2iv(const GLint *v);
+void APIENTRY glWindowPos2s(GLshort x, GLshort y);
+void APIENTRY glWindowPos2sv(const GLshort *v);
+void APIENTRY glWindowPos3d(GLdouble x, GLdouble y, GLdouble z);
+void APIENTRY glWindowPos3dv(const GLdouble *v);
+void APIENTRY glWindowPos3f(GLfloat x, GLfloat y, GLfloat z);
+void APIENTRY glWindowPos3fv(const GLfloat *v);
+void APIENTRY glWindowPos3i(GLint x, GLint y, GLint z);
+void APIENTRY glWindowPos3iv(const GLint *v);
+void APIENTRY glWindowPos3s(GLshort x, GLshort y, GLshort z);
+void APIENTRY glWindowPos3sv(const GLshort *v);
 int APIENTRY wglChoosePixelFormat(HDC dc, const PIXELFORMATDESCRIPTOR *want);
 BOOL APIENTRY wglChoosePixelFormatARB(HDC dc, const int *iattribs, const FLOAT *fattribs, UINT max, int *formats,                                            UINT *count);
 BOOL APIENTRY wglCopyContext(HGLRC src, HGLRC dst, UINT mask);
@@ -653,48 +1154,103 @@ BOOL APIENTRY wglUseFontOutlinesW(HDC dc, DWORD first, DWORD count, DWORD list_b
 
 const GL_PROC GlProcs[] = {
     {"glAccum", (const void *)glAccum},
+    {"glActiveShaderProgram", (const void *)glActiveShaderProgram},
     {"glActiveTexture", (const void *)glActiveTexture},
+    {"glActiveTextureARB", (const void *)glActiveTexture},
     {"glAlphaFunc", (const void *)glAlphaFunc},
     {"glAreTexturesResident", (const void *)glAreTexturesResident},
     {"glArrayElement", (const void *)glArrayElement},
+    {"glAttachObjectARB", (const void *)glAttachShader},
     {"glAttachShader", (const void *)glAttachShader},
     {"glBegin", (const void *)glBegin},
+    {"glBeginConditionalRender", (const void *)glBeginConditionalRender},
     {"glBeginQuery", (const void *)glBeginQuery},
+    {"glBeginQueryARB", (const void *)glBeginQuery},
+    {"glBeginQueryIndexed", (const void *)glBeginQueryIndexed},
+    {"glBeginTransformFeedback", (const void *)glBeginTransformFeedback},
     {"glBindAttribLocation", (const void *)glBindAttribLocation},
+    {"glBindAttribLocationARB", (const void *)glBindAttribLocation},
     {"glBindBuffer", (const void *)glBindBuffer},
+    {"glBindBufferARB", (const void *)glBindBuffer},
     {"glBindBufferBase", (const void *)glBindBufferBase},
     {"glBindBufferRange", (const void *)glBindBufferRange},
+    {"glBindBuffersBase", (const void *)glBindBuffersBase},
+    {"glBindBuffersRange", (const void *)glBindBuffersRange},
     {"glBindFragDataLocation", (const void *)glBindFragDataLocation},
+    {"glBindFragDataLocationIndexed", (const void *)glBindFragDataLocationIndexed},
     {"glBindFramebuffer", (const void *)glBindFramebuffer},
+    {"glBindFramebufferEXT", (const void *)glBindFramebuffer},
+    {"glBindImageTexture", (const void *)glBindImageTexture},
+    {"glBindImageTextures", (const void *)glBindImageTextures},
+    {"glBindProgramPipeline", (const void *)glBindProgramPipeline},
     {"glBindRenderbuffer", (const void *)glBindRenderbuffer},
+    {"glBindRenderbufferEXT", (const void *)glBindRenderbuffer},
+    {"glBindSampler", (const void *)glBindSampler},
+    {"glBindSamplers", (const void *)glBindSamplers},
     {"glBindTexture", (const void *)glBindTexture},
+    {"glBindTextureUnit", (const void *)glBindTextureUnit},
+    {"glBindTextures", (const void *)glBindTextures},
+    {"glBindTransformFeedback", (const void *)glBindTransformFeedback},
     {"glBindVertexArray", (const void *)glBindVertexArray},
+    {"glBindVertexBuffer", (const void *)glBindVertexBuffer},
+    {"glBindVertexBuffers", (const void *)glBindVertexBuffers},
     {"glBitmap", (const void *)glBitmap},
     {"glBlendColor", (const void *)glBlendColor},
+    {"glBlendColorEXT", (const void *)glBlendColor},
     {"glBlendEquation", (const void *)glBlendEquation},
+    {"glBlendEquationEXT", (const void *)glBlendEquation},
     {"glBlendEquationSeparate", (const void *)glBlendEquationSeparate},
+    {"glBlendEquationSeparateEXT", (const void *)glBlendEquationSeparate},
+    {"glBlendEquationSeparatei", (const void *)glBlendEquationSeparatei},
+    {"glBlendEquationSeparateiARB", (const void *)glBlendEquationSeparatei},
+    {"glBlendEquationi", (const void *)glBlendEquationi},
+    {"glBlendEquationiARB", (const void *)glBlendEquationi},
     {"glBlendFunc", (const void *)glBlendFunc},
     {"glBlendFuncSeparate", (const void *)glBlendFuncSeparate},
+    {"glBlendFuncSeparateEXT", (const void *)glBlendFuncSeparate},
+    {"glBlendFuncSeparatei", (const void *)glBlendFuncSeparatei},
+    {"glBlendFuncSeparateiARB", (const void *)glBlendFuncSeparatei},
+    {"glBlendFunci", (const void *)glBlendFunci},
+    {"glBlendFunciARB", (const void *)glBlendFunci},
     {"glBlitFramebuffer", (const void *)glBlitFramebuffer},
+    {"glBlitFramebufferEXT", (const void *)glBlitFramebuffer},
+    {"glBlitNamedFramebuffer", (const void *)glBlitNamedFramebuffer},
     {"glBufferData", (const void *)glBufferData},
+    {"glBufferDataARB", (const void *)glBufferData},
     {"glBufferStorage", (const void *)glBufferStorage},
     {"glBufferSubData", (const void *)glBufferSubData},
+    {"glBufferSubDataARB", (const void *)glBufferSubData},
     {"glCallList", (const void *)glCallList},
     {"glCallLists", (const void *)glCallLists},
     {"glCheckFramebufferStatus", (const void *)glCheckFramebufferStatus},
+    {"glCheckFramebufferStatusEXT", (const void *)glCheckFramebufferStatus},
+    {"glCheckNamedFramebufferStatus", (const void *)glCheckNamedFramebufferStatus},
+    {"glClampColor", (const void *)glClampColor},
     {"glClear", (const void *)glClear},
     {"glClearAccum", (const void *)glClearAccum},
+    {"glClearBufferData", (const void *)glClearBufferData},
+    {"glClearBufferSubData", (const void *)glClearBufferSubData},
     {"glClearBufferfi", (const void *)glClearBufferfi},
     {"glClearBufferfv", (const void *)glClearBufferfv},
     {"glClearBufferiv", (const void *)glClearBufferiv},
+    {"glClearBufferuiv", (const void *)glClearBufferuiv},
     {"glClearColor", (const void *)glClearColor},
     {"glClearDepth", (const void *)glClearDepth},
     {"glClearDepthf", (const void *)glClearDepthf},
     {"glClearIndex", (const void *)glClearIndex},
+    {"glClearNamedBufferData", (const void *)glClearNamedBufferData},
+    {"glClearNamedBufferSubData", (const void *)glClearNamedBufferSubData},
+    {"glClearNamedFramebufferfi", (const void *)glClearNamedFramebufferfi},
+    {"glClearNamedFramebufferfv", (const void *)glClearNamedFramebufferfv},
+    {"glClearNamedFramebufferiv", (const void *)glClearNamedFramebufferiv},
+    {"glClearNamedFramebufferuiv", (const void *)glClearNamedFramebufferuiv},
     {"glClearStencil", (const void *)glClearStencil},
+    {"glClearTexImage", (const void *)glClearTexImage},
+    {"glClearTexSubImage", (const void *)glClearTexSubImage},
     {"glClientActiveTexture", (const void *)glClientActiveTexture},
     {"glClientActiveTextureARB", (const void *)glClientActiveTextureARB},
     {"glClientWaitSync", (const void *)glClientWaitSync},
+    {"glClipControl", (const void *)glClipControl},
     {"glClipPlane", (const void *)glClipPlane},
     {"glColor3b", (const void *)glColor3b},
     {"glColor3bv", (const void *)glColor3bv},
@@ -729,67 +1285,135 @@ const GL_PROC GlProcs[] = {
     {"glColor4us", (const void *)glColor4us},
     {"glColor4usv", (const void *)glColor4usv},
     {"glColorMask", (const void *)glColorMask},
+    {"glColorMaskIndexedEXT", (const void *)glColorMaski},
     {"glColorMaski", (const void *)glColorMaski},
     {"glColorMaterial", (const void *)glColorMaterial},
+    {"glColorP3ui", (const void *)glColorP3ui},
+    {"glColorP3uiv", (const void *)glColorP3uiv},
+    {"glColorP4ui", (const void *)glColorP4ui},
+    {"glColorP4uiv", (const void *)glColorP4uiv},
     {"glColorPointer", (const void *)glColorPointer},
     {"glCompileShader", (const void *)glCompileShader},
+    {"glCompileShaderARB", (const void *)glCompileShader},
+    {"glCompressedTexImage1D", (const void *)glCompressedTexImage1D},
+    {"glCompressedTexImage1DARB", (const void *)glCompressedTexImage1D},
     {"glCompressedTexImage2D", (const void *)glCompressedTexImage2D},
+    {"glCompressedTexImage2DARB", (const void *)glCompressedTexImage2D},
+    {"glCompressedTexImage3D", (const void *)glCompressedTexImage3D},
+    {"glCompressedTexImage3DARB", (const void *)glCompressedTexImage3D},
+    {"glCompressedTexSubImage1D", (const void *)glCompressedTexSubImage1D},
+    {"glCompressedTexSubImage1DARB", (const void *)glCompressedTexSubImage1D},
     {"glCompressedTexSubImage2D", (const void *)glCompressedTexSubImage2D},
+    {"glCompressedTexSubImage2DARB", (const void *)glCompressedTexSubImage2D},
+    {"glCompressedTexSubImage3D", (const void *)glCompressedTexSubImage3D},
+    {"glCompressedTexSubImage3DARB", (const void *)glCompressedTexSubImage3D},
+    {"glCompressedTextureSubImage1D", (const void *)glCompressedTextureSubImage1D},
+    {"glCompressedTextureSubImage2D", (const void *)glCompressedTextureSubImage2D},
+    {"glCompressedTextureSubImage3D", (const void *)glCompressedTextureSubImage3D},
     {"glCopyBufferSubData", (const void *)glCopyBufferSubData},
+    {"glCopyImageSubData", (const void *)glCopyImageSubData},
+    {"glCopyNamedBufferSubData", (const void *)glCopyNamedBufferSubData},
     {"glCopyPixels", (const void *)glCopyPixels},
     {"glCopyTexImage1D", (const void *)glCopyTexImage1D},
     {"glCopyTexImage2D", (const void *)glCopyTexImage2D},
     {"glCopyTexSubImage1D", (const void *)glCopyTexSubImage1D},
     {"glCopyTexSubImage2D", (const void *)glCopyTexSubImage2D},
+    {"glCopyTexSubImage3D", (const void *)glCopyTexSubImage3D},
+    {"glCopyTextureSubImage1D", (const void *)glCopyTextureSubImage1D},
+    {"glCopyTextureSubImage2D", (const void *)glCopyTextureSubImage2D},
+    {"glCopyTextureSubImage3D", (const void *)glCopyTextureSubImage3D},
     {"glCreateBuffers", (const void *)glCreateBuffers},
+    {"glCreateFramebuffers", (const void *)glCreateFramebuffers},
     {"glCreateProgram", (const void *)glCreateProgram},
+    {"glCreateProgramObjectARB", (const void *)glCreateProgram},
+    {"glCreateProgramPipelines", (const void *)glCreateProgramPipelines},
+    {"glCreateQueries", (const void *)glCreateQueries},
+    {"glCreateRenderbuffers", (const void *)glCreateRenderbuffers},
+    {"glCreateSamplers", (const void *)glCreateSamplers},
     {"glCreateShader", (const void *)glCreateShader},
+    {"glCreateShaderObjectARB", (const void *)glCreateShader},
+    {"glCreateShaderProgramv", (const void *)glCreateShaderProgramv},
+    {"glCreateTextures", (const void *)glCreateTextures},
+    {"glCreateTransformFeedbacks", (const void *)glCreateTransformFeedbacks},
+    {"glCreateVertexArrays", (const void *)glCreateVertexArrays},
     {"glCullFace", (const void *)glCullFace},
     {"glDebugMessageCallback", (const void *)glDebugMessageCallback},
     {"glDebugMessageControl", (const void *)glDebugMessageControl},
     {"glDebugMessageInsert", (const void *)glDebugMessageInsert},
     {"glDeleteBuffers", (const void *)glDeleteBuffers},
+    {"glDeleteBuffersARB", (const void *)glDeleteBuffers},
     {"glDeleteFramebuffers", (const void *)glDeleteFramebuffers},
+    {"glDeleteFramebuffersEXT", (const void *)glDeleteFramebuffers},
     {"glDeleteLists", (const void *)glDeleteLists},
+    {"glDeleteObjectARB", (const void *)glDeleteObjectARB},
     {"glDeleteProgram", (const void *)glDeleteProgram},
+    {"glDeleteProgramPipelines", (const void *)glDeleteProgramPipelines},
     {"glDeleteQueries", (const void *)glDeleteQueries},
+    {"glDeleteQueriesARB", (const void *)glDeleteQueries},
     {"glDeleteRenderbuffers", (const void *)glDeleteRenderbuffers},
+    {"glDeleteRenderbuffersEXT", (const void *)glDeleteRenderbuffers},
+    {"glDeleteSamplers", (const void *)glDeleteSamplers},
     {"glDeleteShader", (const void *)glDeleteShader},
     {"glDeleteSync", (const void *)glDeleteSync},
     {"glDeleteTextures", (const void *)glDeleteTextures},
+    {"glDeleteTransformFeedbacks", (const void *)glDeleteTransformFeedbacks},
     {"glDeleteVertexArrays", (const void *)glDeleteVertexArrays},
     {"glDepthFunc", (const void *)glDepthFunc},
     {"glDepthMask", (const void *)glDepthMask},
     {"glDepthRange", (const void *)glDepthRange},
+    {"glDepthRangeArrayv", (const void *)glDepthRangeArrayv},
+    {"glDepthRangeIndexed", (const void *)glDepthRangeIndexed},
     {"glDepthRangef", (const void *)glDepthRangef},
+    {"glDetachObjectARB", (const void *)glDetachObjectARB},
     {"glDetachShader", (const void *)glDetachShader},
     {"glDisable", (const void *)glDisable},
     {"glDisableClientState", (const void *)glDisableClientState},
+    {"glDisableIndexedEXT", (const void *)glDisablei},
+    {"glDisableVertexArrayAttrib", (const void *)glDisableVertexArrayAttrib},
     {"glDisableVertexAttribArray", (const void *)glDisableVertexAttribArray},
     {"glDisablei", (const void *)glDisablei},
     {"glDiscardFramebufferEXT", (const void *)glDiscardFramebufferEXT},
+    {"glDispatchCompute", (const void *)glDispatchCompute},
+    {"glDispatchComputeIndirect", (const void *)glDispatchComputeIndirect},
     {"glDrawArrays", (const void *)glDrawArrays},
+    {"glDrawArraysIndirect", (const void *)glDrawArraysIndirect},
     {"glDrawArraysInstanced", (const void *)glDrawArraysInstanced},
+    {"glDrawArraysInstancedARB", (const void *)glDrawArraysInstanced},
     {"glDrawArraysInstancedBaseInstance", (const void *)glDrawArraysInstancedBaseInstance},
     {"glDrawBuffer", (const void *)glDrawBuffer},
     {"glDrawBuffers", (const void *)glDrawBuffers},
+    {"glDrawBuffersARB", (const void *)glDrawBuffers},
     {"glDrawElements", (const void *)glDrawElements},
     {"glDrawElementsBaseVertex", (const void *)glDrawElementsBaseVertex},
+    {"glDrawElementsIndirect", (const void *)glDrawElementsIndirect},
     {"glDrawElementsInstanced", (const void *)glDrawElementsInstanced},
+    {"glDrawElementsInstancedARB", (const void *)glDrawElementsInstanced},
+    {"glDrawElementsInstancedBaseInstance", (const void *)glDrawElementsInstancedBaseInstance},
     {"glDrawElementsInstancedBaseVertex", (const void *)glDrawElementsInstancedBaseVertex},
+    {"glDrawElementsInstancedBaseVertexBaseInstance", (const void *)glDrawElementsInstancedBaseVertexBaseInstance},
     {"glDrawPixels", (const void *)glDrawPixels},
     {"glDrawRangeElements", (const void *)glDrawRangeElements},
     {"glDrawRangeElementsBaseVertex", (const void *)glDrawRangeElementsBaseVertex},
+    {"glDrawTransformFeedback", (const void *)glDrawTransformFeedback},
+    {"glDrawTransformFeedbackInstanced", (const void *)glDrawTransformFeedbackInstanced},
+    {"glDrawTransformFeedbackStream", (const void *)glDrawTransformFeedbackStream},
+    {"glDrawTransformFeedbackStreamInstanced", (const void *)glDrawTransformFeedbackStreamInstanced},
     {"glEdgeFlag", (const void *)glEdgeFlag},
     {"glEdgeFlagPointer", (const void *)glEdgeFlagPointer},
     {"glEdgeFlagv", (const void *)glEdgeFlagv},
     {"glEnable", (const void *)glEnable},
     {"glEnableClientState", (const void *)glEnableClientState},
+    {"glEnableIndexedEXT", (const void *)glEnablei},
+    {"glEnableVertexArrayAttrib", (const void *)glEnableVertexArrayAttrib},
     {"glEnableVertexAttribArray", (const void *)glEnableVertexAttribArray},
     {"glEnablei", (const void *)glEnablei},
     {"glEnd", (const void *)glEnd},
+    {"glEndConditionalRender", (const void *)glEndConditionalRender},
     {"glEndList", (const void *)glEndList},
     {"glEndQuery", (const void *)glEndQuery},
+    {"glEndQueryARB", (const void *)glEndQuery},
+    {"glEndQueryIndexed", (const void *)glEndQueryIndexed},
+    {"glEndTransformFeedback", (const void *)glEndTransformFeedback},
     {"glEvalCoord1d", (const void *)glEvalCoord1d},
     {"glEvalCoord1dv", (const void *)glEvalCoord1dv},
     {"glEvalCoord1f", (const void *)glEvalCoord1f},
@@ -807,47 +1431,99 @@ const GL_PROC GlProcs[] = {
     {"glFinish", (const void *)glFinish},
     {"glFlush", (const void *)glFlush},
     {"glFlushMappedBufferRange", (const void *)glFlushMappedBufferRange},
+    {"glFlushMappedNamedBufferRange", (const void *)glFlushMappedNamedBufferRange},
+    {"glFogCoordPointer", (const void *)glFogCoordPointer},
+    {"glFogCoordd", (const void *)glFogCoordd},
+    {"glFogCoorddv", (const void *)glFogCoorddv},
+    {"glFogCoordf", (const void *)glFogCoordf},
+    {"glFogCoordfv", (const void *)glFogCoordfv},
     {"glFogf", (const void *)glFogf},
     {"glFogfv", (const void *)glFogfv},
     {"glFogi", (const void *)glFogi},
     {"glFogiv", (const void *)glFogiv},
+    {"glFramebufferParameteri", (const void *)glFramebufferParameteri},
     {"glFramebufferRenderbuffer", (const void *)glFramebufferRenderbuffer},
+    {"glFramebufferRenderbufferEXT", (const void *)glFramebufferRenderbuffer},
     {"glFramebufferTexture", (const void *)glFramebufferTexture},
     {"glFramebufferTexture1D", (const void *)glFramebufferTexture1D},
+    {"glFramebufferTexture1DEXT", (const void *)glFramebufferTexture1D},
     {"glFramebufferTexture2D", (const void *)glFramebufferTexture2D},
+    {"glFramebufferTexture2DEXT", (const void *)glFramebufferTexture2D},
+    {"glFramebufferTexture3D", (const void *)glFramebufferTexture3D},
+    {"glFramebufferTexture3DEXT", (const void *)glFramebufferTexture3D},
     {"glFramebufferTextureLayer", (const void *)glFramebufferTextureLayer},
     {"glFrontFace", (const void *)glFrontFace},
     {"glFrustum", (const void *)glFrustum},
     {"glGenBuffers", (const void *)glGenBuffers},
+    {"glGenBuffersARB", (const void *)glGenBuffers},
     {"glGenFramebuffers", (const void *)glGenFramebuffers},
+    {"glGenFramebuffersEXT", (const void *)glGenFramebuffers},
     {"glGenLists", (const void *)glGenLists},
+    {"glGenProgramPipelines", (const void *)glGenProgramPipelines},
     {"glGenQueries", (const void *)glGenQueries},
+    {"glGenQueriesARB", (const void *)glGenQueries},
     {"glGenRenderbuffers", (const void *)glGenRenderbuffers},
+    {"glGenRenderbuffersEXT", (const void *)glGenRenderbuffers},
+    {"glGenSamplers", (const void *)glGenSamplers},
     {"glGenTextures", (const void *)glGenTextures},
+    {"glGenTransformFeedbacks", (const void *)glGenTransformFeedbacks},
     {"glGenVertexArrays", (const void *)glGenVertexArrays},
     {"glGenerateMipmap", (const void *)glGenerateMipmap},
+    {"glGenerateMipmapEXT", (const void *)glGenerateMipmap},
+    {"glGenerateTextureMipmap", (const void *)glGenerateTextureMipmap},
+    {"glGetActiveAtomicCounterBufferiv", (const void *)glGetActiveAtomicCounterBufferiv},
     {"glGetActiveAttrib", (const void *)glGetActiveAttrib},
+    {"glGetActiveAttribARB", (const void *)glGetActiveAttrib},
+    {"glGetActiveSubroutineName", (const void *)glGetActiveSubroutineName},
+    {"glGetActiveSubroutineUniformName", (const void *)glGetActiveSubroutineUniformName},
+    {"glGetActiveSubroutineUniformiv", (const void *)glGetActiveSubroutineUniformiv},
     {"glGetActiveUniform", (const void *)glGetActiveUniform},
+    {"glGetActiveUniformARB", (const void *)glGetActiveUniform},
     {"glGetActiveUniformBlockName", (const void *)glGetActiveUniformBlockName},
     {"glGetActiveUniformBlockiv", (const void *)glGetActiveUniformBlockiv},
+    {"glGetActiveUniformName", (const void *)glGetActiveUniformName},
     {"glGetActiveUniformsiv", (const void *)glGetActiveUniformsiv},
+    {"glGetAttachedObjectsARB", (const void *)glGetAttachedShaders},
     {"glGetAttachedShaders", (const void *)glGetAttachedShaders},
     {"glGetAttribLocation", (const void *)glGetAttribLocation},
+    {"glGetAttribLocationARB", (const void *)glGetAttribLocation},
+    {"glGetBooleanIndexedvEXT", (const void *)glGetBooleani_v},
     {"glGetBooleani_v", (const void *)glGetBooleani_v},
     {"glGetBooleanv", (const void *)glGetBooleanv},
     {"glGetBufferParameteri64v", (const void *)glGetBufferParameteri64v},
     {"glGetBufferParameteriv", (const void *)glGetBufferParameteriv},
+    {"glGetBufferParameterivARB", (const void *)glGetBufferParameteriv},
     {"glGetBufferPointerv", (const void *)glGetBufferPointerv},
+    {"glGetBufferPointervARB", (const void *)glGetBufferPointerv},
     {"glGetBufferSubData", (const void *)glGetBufferSubData},
+    {"glGetBufferSubDataARB", (const void *)glGetBufferSubData},
     {"glGetClipPlane", (const void *)glGetClipPlane},
+    {"glGetCompressedTexImage", (const void *)glGetCompressedTexImage},
+    {"glGetCompressedTexImageARB", (const void *)glGetCompressedTexImage},
+    {"glGetCompressedTextureImage", (const void *)glGetCompressedTextureImage},
+    {"glGetCompressedTextureSubImage", (const void *)glGetCompressedTextureSubImage},
     {"glGetDebugMessageLog", (const void *)glGetDebugMessageLog},
+    {"glGetDoublei_v", (const void *)glGetDoublei_v},
     {"glGetDoublev", (const void *)glGetDoublev},
     {"glGetError", (const void *)glGetError},
+    {"glGetFloati_v", (const void *)glGetFloati_v},
     {"glGetFloatv", (const void *)glGetFloatv},
+    {"glGetFragDataIndex", (const void *)glGetFragDataIndex},
+    {"glGetFragDataLocation", (const void *)glGetFragDataLocation},
     {"glGetFramebufferAttachmentParameteriv", (const void *)glGetFramebufferAttachmentParameteriv},
+    {"glGetFramebufferAttachmentParameterivEXT", (const void *)glGetFramebufferAttachmentParameteriv},
+    {"glGetFramebufferParameteriv", (const void *)glGetFramebufferParameteriv},
+    {"glGetGraphicsResetStatus", (const void *)glGetGraphicsResetStatus},
+    {"glGetGraphicsResetStatusARB", (const void *)glGetGraphicsResetStatusARB},
+    {"glGetHandleARB", (const void *)glGetHandleARB},
+    {"glGetInfoLogARB", (const void *)glGetInfoLogARB},
+    {"glGetInteger64i_v", (const void *)glGetInteger64i_v},
     {"glGetInteger64v", (const void *)glGetInteger64v},
+    {"glGetIntegerIndexedvEXT", (const void *)glGetIntegeri_v},
     {"glGetIntegeri_v", (const void *)glGetIntegeri_v},
     {"glGetIntegerv", (const void *)glGetIntegerv},
+    {"glGetInternalformati64v", (const void *)glGetInternalformati64v},
+    {"glGetInternalformativ", (const void *)glGetInternalformativ},
     {"glGetLightfv", (const void *)glGetLightfv},
     {"glGetLightiv", (const void *)glGetLightiv},
     {"glGetMapdv", (const void *)glGetMapdv},
@@ -855,25 +1531,63 @@ const GL_PROC GlProcs[] = {
     {"glGetMapiv", (const void *)glGetMapiv},
     {"glGetMaterialfv", (const void *)glGetMaterialfv},
     {"glGetMaterialiv", (const void *)glGetMaterialiv},
+    {"glGetMultisamplefv", (const void *)glGetMultisamplefv},
+    {"glGetNamedBufferParameteri64v", (const void *)glGetNamedBufferParameteri64v},
+    {"glGetNamedBufferParameteriv", (const void *)glGetNamedBufferParameteriv},
+    {"glGetNamedBufferPointerv", (const void *)glGetNamedBufferPointerv},
+    {"glGetNamedBufferSubData", (const void *)glGetNamedBufferSubData},
+    {"glGetNamedFramebufferAttachmentParameteriv", (const void *)glGetNamedFramebufferAttachmentParameteriv},
+    {"glGetNamedFramebufferParameteriv", (const void *)glGetNamedFramebufferParameteriv},
+    {"glGetNamedRenderbufferParameteriv", (const void *)glGetNamedRenderbufferParameteriv},
+    {"glGetObjectLabel", (const void *)glGetObjectLabel},
+    {"glGetObjectParameterfvARB", (const void *)glGetObjectParameterfvARB},
+    {"glGetObjectParameterivARB", (const void *)glGetObjectParameterivARB},
+    {"glGetObjectPtrLabel", (const void *)glGetObjectPtrLabel},
     {"glGetPixelMapfv", (const void *)glGetPixelMapfv},
     {"glGetPixelMapuiv", (const void *)glGetPixelMapuiv},
     {"glGetPixelMapusv", (const void *)glGetPixelMapusv},
     {"glGetPointerv", (const void *)glGetPointerv},
     {"glGetPolygonStipple", (const void *)glGetPolygonStipple},
+    {"glGetProgramBinary", (const void *)glGetProgramBinary},
     {"glGetProgramInfoLog", (const void *)glGetProgramInfoLog},
+    {"glGetProgramInterfaceiv", (const void *)glGetProgramInterfaceiv},
+    {"glGetProgramPipelineInfoLog", (const void *)glGetProgramPipelineInfoLog},
+    {"glGetProgramPipelineiv", (const void *)glGetProgramPipelineiv},
+    {"glGetProgramResourceIndex", (const void *)glGetProgramResourceIndex},
+    {"glGetProgramResourceLocation", (const void *)glGetProgramResourceLocation},
+    {"glGetProgramResourceLocationIndex", (const void *)glGetProgramResourceLocationIndex},
+    {"glGetProgramResourceName", (const void *)glGetProgramResourceName},
+    {"glGetProgramResourceiv", (const void *)glGetProgramResourceiv},
+    {"glGetProgramStageiv", (const void *)glGetProgramStageiv},
     {"glGetProgramiv", (const void *)glGetProgramiv},
+    {"glGetQueryBufferObjecti64v", (const void *)glGetQueryBufferObjecti64v},
+    {"glGetQueryBufferObjectiv", (const void *)glGetQueryBufferObjectiv},
+    {"glGetQueryBufferObjectui64v", (const void *)glGetQueryBufferObjectui64v},
+    {"glGetQueryBufferObjectuiv", (const void *)glGetQueryBufferObjectuiv},
+    {"glGetQueryIndexediv", (const void *)glGetQueryIndexediv},
     {"glGetQueryObjecti64v", (const void *)glGetQueryObjecti64v},
     {"glGetQueryObjectiv", (const void *)glGetQueryObjectiv},
+    {"glGetQueryObjectivARB", (const void *)glGetQueryObjectiv},
     {"glGetQueryObjectui64v", (const void *)glGetQueryObjectui64v},
     {"glGetQueryObjectuiv", (const void *)glGetQueryObjectuiv},
+    {"glGetQueryObjectuivARB", (const void *)glGetQueryObjectuiv},
     {"glGetQueryiv", (const void *)glGetQueryiv},
+    {"glGetQueryivARB", (const void *)glGetQueryiv},
     {"glGetRenderbufferParameteriv", (const void *)glGetRenderbufferParameteriv},
+    {"glGetRenderbufferParameterivEXT", (const void *)glGetRenderbufferParameteriv},
+    {"glGetSamplerParameterIiv", (const void *)glGetSamplerParameterIiv},
+    {"glGetSamplerParameterIuiv", (const void *)glGetSamplerParameterIuiv},
+    {"glGetSamplerParameterfv", (const void *)glGetSamplerParameterfv},
+    {"glGetSamplerParameteriv", (const void *)glGetSamplerParameteriv},
     {"glGetShaderInfoLog", (const void *)glGetShaderInfoLog},
     {"glGetShaderPrecisionFormat", (const void *)glGetShaderPrecisionFormat},
     {"glGetShaderSource", (const void *)glGetShaderSource},
+    {"glGetShaderSourceARB", (const void *)glGetShaderSource},
     {"glGetShaderiv", (const void *)glGetShaderiv},
     {"glGetString", (const void *)glGetString},
     {"glGetStringi", (const void *)glGetStringi},
+    {"glGetSubroutineIndex", (const void *)glGetSubroutineIndex},
+    {"glGetSubroutineUniformLocation", (const void *)glGetSubroutineUniformLocation},
     {"glGetSynciv", (const void *)glGetSynciv},
     {"glGetTexEnvfv", (const void *)glGetTexEnvfv},
     {"glGetTexEnviv", (const void *)glGetTexEnviv},
@@ -883,17 +1597,79 @@ const GL_PROC GlProcs[] = {
     {"glGetTexImage", (const void *)glGetTexImage},
     {"glGetTexLevelParameterfv", (const void *)glGetTexLevelParameterfv},
     {"glGetTexLevelParameteriv", (const void *)glGetTexLevelParameteriv},
+    {"glGetTexParameterIiv", (const void *)glGetTexParameterIiv},
+    {"glGetTexParameterIuiv", (const void *)glGetTexParameterIuiv},
     {"glGetTexParameterfv", (const void *)glGetTexParameterfv},
     {"glGetTexParameteriv", (const void *)glGetTexParameteriv},
+    {"glGetTextureImage", (const void *)glGetTextureImage},
+    {"glGetTextureLevelParameterfv", (const void *)glGetTextureLevelParameterfv},
+    {"glGetTextureLevelParameteriv", (const void *)glGetTextureLevelParameteriv},
+    {"glGetTextureParameterIiv", (const void *)glGetTextureParameterIiv},
+    {"glGetTextureParameterIuiv", (const void *)glGetTextureParameterIuiv},
+    {"glGetTextureParameterfv", (const void *)glGetTextureParameterfv},
+    {"glGetTextureParameteriv", (const void *)glGetTextureParameteriv},
+    {"glGetTextureSubImage", (const void *)glGetTextureSubImage},
+    {"glGetTransformFeedbackVarying", (const void *)glGetTransformFeedbackVarying},
+    {"glGetTransformFeedbacki64_v", (const void *)glGetTransformFeedbacki64_v},
+    {"glGetTransformFeedbacki_v", (const void *)glGetTransformFeedbacki_v},
+    {"glGetTransformFeedbackiv", (const void *)glGetTransformFeedbackiv},
     {"glGetUniformBlockIndex", (const void *)glGetUniformBlockIndex},
+    {"glGetUniformIndices", (const void *)glGetUniformIndices},
     {"glGetUniformLocation", (const void *)glGetUniformLocation},
+    {"glGetUniformLocationARB", (const void *)glGetUniformLocation},
+    {"glGetUniformSubroutineuiv", (const void *)glGetUniformSubroutineuiv},
+    {"glGetUniformdv", (const void *)glGetUniformdv},
     {"glGetUniformfv", (const void *)glGetUniformfv},
+    {"glGetUniformfvARB", (const void *)glGetUniformfv},
     {"glGetUniformiv", (const void *)glGetUniformiv},
+    {"glGetUniformivARB", (const void *)glGetUniformiv},
+    {"glGetUniformuiv", (const void *)glGetUniformuiv},
+    {"glGetVertexArrayIndexed64iv", (const void *)glGetVertexArrayIndexed64iv},
+    {"glGetVertexArrayIndexediv", (const void *)glGetVertexArrayIndexediv},
+    {"glGetVertexArrayiv", (const void *)glGetVertexArrayiv},
     {"glGetVertexAttribIiv", (const void *)glGetVertexAttribIiv},
     {"glGetVertexAttribIuiv", (const void *)glGetVertexAttribIuiv},
+    {"glGetVertexAttribLdv", (const void *)glGetVertexAttribLdv},
     {"glGetVertexAttribPointerv", (const void *)glGetVertexAttribPointerv},
+    {"glGetVertexAttribdv", (const void *)glGetVertexAttribdv},
     {"glGetVertexAttribfv", (const void *)glGetVertexAttribfv},
     {"glGetVertexAttribiv", (const void *)glGetVertexAttribiv},
+    {"glGetnColorTable", (const void *)glGetnColorTable},
+    {"glGetnColorTableARB", (const void *)glGetnColorTableARB},
+    {"glGetnCompressedTexImage", (const void *)glGetnCompressedTexImage},
+    {"glGetnCompressedTexImageARB", (const void *)glGetnCompressedTexImageARB},
+    {"glGetnConvolutionFilter", (const void *)glGetnConvolutionFilter},
+    {"glGetnConvolutionFilterARB", (const void *)glGetnConvolutionFilterARB},
+    {"glGetnHistogram", (const void *)glGetnHistogram},
+    {"glGetnHistogramARB", (const void *)glGetnHistogramARB},
+    {"glGetnMapdv", (const void *)glGetnMapdv},
+    {"glGetnMapdvARB", (const void *)glGetnMapdvARB},
+    {"glGetnMapfv", (const void *)glGetnMapfv},
+    {"glGetnMapfvARB", (const void *)glGetnMapfvARB},
+    {"glGetnMapiv", (const void *)glGetnMapiv},
+    {"glGetnMapivARB", (const void *)glGetnMapivARB},
+    {"glGetnMinmax", (const void *)glGetnMinmax},
+    {"glGetnMinmaxARB", (const void *)glGetnMinmaxARB},
+    {"glGetnPixelMapfv", (const void *)glGetnPixelMapfv},
+    {"glGetnPixelMapfvARB", (const void *)glGetnPixelMapfvARB},
+    {"glGetnPixelMapuiv", (const void *)glGetnPixelMapuiv},
+    {"glGetnPixelMapuivARB", (const void *)glGetnPixelMapuivARB},
+    {"glGetnPixelMapusv", (const void *)glGetnPixelMapusv},
+    {"glGetnPixelMapusvARB", (const void *)glGetnPixelMapusvARB},
+    {"glGetnPolygonStipple", (const void *)glGetnPolygonStipple},
+    {"glGetnPolygonStippleARB", (const void *)glGetnPolygonStippleARB},
+    {"glGetnSeparableFilter", (const void *)glGetnSeparableFilter},
+    {"glGetnSeparableFilterARB", (const void *)glGetnSeparableFilterARB},
+    {"glGetnTexImage", (const void *)glGetnTexImage},
+    {"glGetnTexImageARB", (const void *)glGetnTexImageARB},
+    {"glGetnUniformdv", (const void *)glGetnUniformdv},
+    {"glGetnUniformdvARB", (const void *)glGetnUniformdvARB},
+    {"glGetnUniformfv", (const void *)glGetnUniformfv},
+    {"glGetnUniformfvARB", (const void *)glGetnUniformfvARB},
+    {"glGetnUniformiv", (const void *)glGetnUniformiv},
+    {"glGetnUniformivARB", (const void *)glGetnUniformivARB},
+    {"glGetnUniformuiv", (const void *)glGetnUniformuiv},
+    {"glGetnUniformuivARB", (const void *)glGetnUniformuivARB},
     {"glHint", (const void *)glHint},
     {"glIndexMask", (const void *)glIndexMask},
     {"glIndexPointer", (const void *)glIndexPointer},
@@ -909,18 +1685,33 @@ const GL_PROC GlProcs[] = {
     {"glIndexubv", (const void *)glIndexubv},
     {"glInitNames", (const void *)glInitNames},
     {"glInterleavedArrays", (const void *)glInterleavedArrays},
+    {"glInvalidateBufferData", (const void *)glInvalidateBufferData},
+    {"glInvalidateBufferSubData", (const void *)glInvalidateBufferSubData},
     {"glInvalidateFramebuffer", (const void *)glInvalidateFramebuffer},
+    {"glInvalidateNamedFramebufferData", (const void *)glInvalidateNamedFramebufferData},
+    {"glInvalidateNamedFramebufferSubData", (const void *)glInvalidateNamedFramebufferSubData},
+    {"glInvalidateSubFramebuffer", (const void *)glInvalidateSubFramebuffer},
+    {"glInvalidateTexImage", (const void *)glInvalidateTexImage},
+    {"glInvalidateTexSubImage", (const void *)glInvalidateTexSubImage},
     {"glIsBuffer", (const void *)glIsBuffer},
+    {"glIsBufferARB", (const void *)glIsBuffer},
     {"glIsEnabled", (const void *)glIsEnabled},
+    {"glIsEnabledIndexedEXT", (const void *)glIsEnabledi},
     {"glIsEnabledi", (const void *)glIsEnabledi},
     {"glIsFramebuffer", (const void *)glIsFramebuffer},
+    {"glIsFramebufferEXT", (const void *)glIsFramebuffer},
     {"glIsList", (const void *)glIsList},
     {"glIsProgram", (const void *)glIsProgram},
+    {"glIsProgramPipeline", (const void *)glIsProgramPipeline},
     {"glIsQuery", (const void *)glIsQuery},
+    {"glIsQueryARB", (const void *)glIsQuery},
     {"glIsRenderbuffer", (const void *)glIsRenderbuffer},
+    {"glIsRenderbufferEXT", (const void *)glIsRenderbuffer},
+    {"glIsSampler", (const void *)glIsSampler},
     {"glIsShader", (const void *)glIsShader},
     {"glIsSync", (const void *)glIsSync},
     {"glIsTexture", (const void *)glIsTexture},
+    {"glIsTransformFeedback", (const void *)glIsTransformFeedback},
     {"glIsVertexArray", (const void *)glIsVertexArray},
     {"glLightModelf", (const void *)glLightModelf},
     {"glLightModelfv", (const void *)glLightModelfv},
@@ -933,6 +1724,7 @@ const GL_PROC GlProcs[] = {
     {"glLineStipple", (const void *)glLineStipple},
     {"glLineWidth", (const void *)glLineWidth},
     {"glLinkProgram", (const void *)glLinkProgram},
+    {"glLinkProgramARB", (const void *)glLinkProgram},
     {"glListBase", (const void *)glListBase},
     {"glLoadIdentity", (const void *)glLoadIdentity},
     {"glLoadMatrixd", (const void *)glLoadMatrixd},
@@ -948,16 +1740,22 @@ const GL_PROC GlProcs[] = {
     {"glMap2d", (const void *)glMap2d},
     {"glMap2f", (const void *)glMap2f},
     {"glMapBuffer", (const void *)glMapBuffer},
+    {"glMapBufferARB", (const void *)glMapBuffer},
     {"glMapBufferRange", (const void *)glMapBufferRange},
     {"glMapGrid1d", (const void *)glMapGrid1d},
     {"glMapGrid1f", (const void *)glMapGrid1f},
     {"glMapGrid2d", (const void *)glMapGrid2d},
     {"glMapGrid2f", (const void *)glMapGrid2f},
+    {"glMapNamedBuffer", (const void *)glMapNamedBuffer},
+    {"glMapNamedBufferRange", (const void *)glMapNamedBufferRange},
     {"glMaterialf", (const void *)glMaterialf},
     {"glMaterialfv", (const void *)glMaterialfv},
     {"glMateriali", (const void *)glMateriali},
     {"glMaterialiv", (const void *)glMaterialiv},
     {"glMatrixMode", (const void *)glMatrixMode},
+    {"glMemoryBarrier", (const void *)glMemoryBarrier},
+    {"glMemoryBarrierByRegion", (const void *)glMemoryBarrierByRegion},
+    {"glMinSampleShading", (const void *)glMinSampleShading},
     {"glMultMatrixd", (const void *)glMultMatrixd},
     {"glMultMatrixf", (const void *)glMultMatrixf},
     {"glMultTransposeMatrixd", (const void *)glMultTransposeMatrixd},
@@ -965,7 +1763,14 @@ const GL_PROC GlProcs[] = {
     {"glMultTransposeMatrixf", (const void *)glMultTransposeMatrixf},
     {"glMultTransposeMatrixfARB", (const void *)glMultTransposeMatrixfARB},
     {"glMultiDrawArrays", (const void *)glMultiDrawArrays},
+    {"glMultiDrawArraysIndirect", (const void *)glMultiDrawArraysIndirect},
+    {"glMultiDrawArraysIndirectCount", (const void *)glMultiDrawArraysIndirectCount},
+    {"glMultiDrawArraysIndirectCountARB", (const void *)glMultiDrawArraysIndirectCount},
     {"glMultiDrawElements", (const void *)glMultiDrawElements},
+    {"glMultiDrawElementsBaseVertex", (const void *)glMultiDrawElementsBaseVertex},
+    {"glMultiDrawElementsIndirect", (const void *)glMultiDrawElementsIndirect},
+    {"glMultiDrawElementsIndirectCount", (const void *)glMultiDrawElementsIndirectCount},
+    {"glMultiDrawElementsIndirectCountARB", (const void *)glMultiDrawElementsIndirectCount},
     {"glMultiTexCoord1d", (const void *)glMultiTexCoord1d},
     {"glMultiTexCoord1dARB", (const void *)glMultiTexCoord1dARB},
     {"glMultiTexCoord1dv", (const void *)glMultiTexCoord1dv},
@@ -1030,6 +1835,26 @@ const GL_PROC GlProcs[] = {
     {"glMultiTexCoord4sARB", (const void *)glMultiTexCoord4sARB},
     {"glMultiTexCoord4sv", (const void *)glMultiTexCoord4sv},
     {"glMultiTexCoord4svARB", (const void *)glMultiTexCoord4svARB},
+    {"glMultiTexCoordP1ui", (const void *)glMultiTexCoordP1ui},
+    {"glMultiTexCoordP1uiv", (const void *)glMultiTexCoordP1uiv},
+    {"glMultiTexCoordP2ui", (const void *)glMultiTexCoordP2ui},
+    {"glMultiTexCoordP2uiv", (const void *)glMultiTexCoordP2uiv},
+    {"glMultiTexCoordP3ui", (const void *)glMultiTexCoordP3ui},
+    {"glMultiTexCoordP3uiv", (const void *)glMultiTexCoordP3uiv},
+    {"glMultiTexCoordP4ui", (const void *)glMultiTexCoordP4ui},
+    {"glMultiTexCoordP4uiv", (const void *)glMultiTexCoordP4uiv},
+    {"glNamedBufferData", (const void *)glNamedBufferData},
+    {"glNamedBufferStorage", (const void *)glNamedBufferStorage},
+    {"glNamedBufferSubData", (const void *)glNamedBufferSubData},
+    {"glNamedFramebufferDrawBuffer", (const void *)glNamedFramebufferDrawBuffer},
+    {"glNamedFramebufferDrawBuffers", (const void *)glNamedFramebufferDrawBuffers},
+    {"glNamedFramebufferParameteri", (const void *)glNamedFramebufferParameteri},
+    {"glNamedFramebufferReadBuffer", (const void *)glNamedFramebufferReadBuffer},
+    {"glNamedFramebufferRenderbuffer", (const void *)glNamedFramebufferRenderbuffer},
+    {"glNamedFramebufferTexture", (const void *)glNamedFramebufferTexture},
+    {"glNamedFramebufferTextureLayer", (const void *)glNamedFramebufferTextureLayer},
+    {"glNamedRenderbufferStorage", (const void *)glNamedRenderbufferStorage},
+    {"glNamedRenderbufferStorageMultisample", (const void *)glNamedRenderbufferStorageMultisample},
     {"glNewList", (const void *)glNewList},
     {"glNormal3b", (const void *)glNormal3b},
     {"glNormal3bv", (const void *)glNormal3bv},
@@ -1041,10 +1866,16 @@ const GL_PROC GlProcs[] = {
     {"glNormal3iv", (const void *)glNormal3iv},
     {"glNormal3s", (const void *)glNormal3s},
     {"glNormal3sv", (const void *)glNormal3sv},
+    {"glNormalP3ui", (const void *)glNormalP3ui},
+    {"glNormalP3uiv", (const void *)glNormalP3uiv},
     {"glNormalPointer", (const void *)glNormalPointer},
     {"glObjectLabel", (const void *)glObjectLabel},
+    {"glObjectPtrLabel", (const void *)glObjectPtrLabel},
     {"glOrtho", (const void *)glOrtho},
     {"glPassThrough", (const void *)glPassThrough},
+    {"glPatchParameterfv", (const void *)glPatchParameterfv},
+    {"glPatchParameteri", (const void *)glPatchParameteri},
+    {"glPauseTransformFeedback", (const void *)glPauseTransformFeedback},
     {"glPixelMapfv", (const void *)glPixelMapfv},
     {"glPixelMapuiv", (const void *)glPixelMapuiv},
     {"glPixelMapusv", (const void *)glPixelMapusv},
@@ -1064,13 +1895,69 @@ const GL_PROC GlProcs[] = {
     {"glPointSize", (const void *)glPointSize},
     {"glPolygonMode", (const void *)glPolygonMode},
     {"glPolygonOffset", (const void *)glPolygonOffset},
+    {"glPolygonOffsetClamp", (const void *)glPolygonOffsetClamp},
+    {"glPolygonOffsetClampEXT", (const void *)glPolygonOffsetClampEXT},
     {"glPolygonStipple", (const void *)glPolygonStipple},
     {"glPopAttrib", (const void *)glPopAttrib},
     {"glPopClientAttrib", (const void *)glPopClientAttrib},
     {"glPopDebugGroup", (const void *)glPopDebugGroup},
     {"glPopMatrix", (const void *)glPopMatrix},
     {"glPopName", (const void *)glPopName},
+    {"glPrimitiveRestartIndex", (const void *)glPrimitiveRestartIndex},
     {"glPrioritizeTextures", (const void *)glPrioritizeTextures},
+    {"glProgramBinary", (const void *)glProgramBinary},
+    {"glProgramParameteri", (const void *)glProgramParameteri},
+    {"glProgramUniform1d", (const void *)glProgramUniform1d},
+    {"glProgramUniform1dv", (const void *)glProgramUniform1dv},
+    {"glProgramUniform1f", (const void *)glProgramUniform1f},
+    {"glProgramUniform1fv", (const void *)glProgramUniform1fv},
+    {"glProgramUniform1i", (const void *)glProgramUniform1i},
+    {"glProgramUniform1iv", (const void *)glProgramUniform1iv},
+    {"glProgramUniform1ui", (const void *)glProgramUniform1ui},
+    {"glProgramUniform1uiv", (const void *)glProgramUniform1uiv},
+    {"glProgramUniform2d", (const void *)glProgramUniform2d},
+    {"glProgramUniform2dv", (const void *)glProgramUniform2dv},
+    {"glProgramUniform2f", (const void *)glProgramUniform2f},
+    {"glProgramUniform2fv", (const void *)glProgramUniform2fv},
+    {"glProgramUniform2i", (const void *)glProgramUniform2i},
+    {"glProgramUniform2iv", (const void *)glProgramUniform2iv},
+    {"glProgramUniform2ui", (const void *)glProgramUniform2ui},
+    {"glProgramUniform2uiv", (const void *)glProgramUniform2uiv},
+    {"glProgramUniform3d", (const void *)glProgramUniform3d},
+    {"glProgramUniform3dv", (const void *)glProgramUniform3dv},
+    {"glProgramUniform3f", (const void *)glProgramUniform3f},
+    {"glProgramUniform3fv", (const void *)glProgramUniform3fv},
+    {"glProgramUniform3i", (const void *)glProgramUniform3i},
+    {"glProgramUniform3iv", (const void *)glProgramUniform3iv},
+    {"glProgramUniform3ui", (const void *)glProgramUniform3ui},
+    {"glProgramUniform3uiv", (const void *)glProgramUniform3uiv},
+    {"glProgramUniform4d", (const void *)glProgramUniform4d},
+    {"glProgramUniform4dv", (const void *)glProgramUniform4dv},
+    {"glProgramUniform4f", (const void *)glProgramUniform4f},
+    {"glProgramUniform4fv", (const void *)glProgramUniform4fv},
+    {"glProgramUniform4i", (const void *)glProgramUniform4i},
+    {"glProgramUniform4iv", (const void *)glProgramUniform4iv},
+    {"glProgramUniform4ui", (const void *)glProgramUniform4ui},
+    {"glProgramUniform4uiv", (const void *)glProgramUniform4uiv},
+    {"glProgramUniformMatrix2dv", (const void *)glProgramUniformMatrix2dv},
+    {"glProgramUniformMatrix2fv", (const void *)glProgramUniformMatrix2fv},
+    {"glProgramUniformMatrix2x3dv", (const void *)glProgramUniformMatrix2x3dv},
+    {"glProgramUniformMatrix2x3fv", (const void *)glProgramUniformMatrix2x3fv},
+    {"glProgramUniformMatrix2x4dv", (const void *)glProgramUniformMatrix2x4dv},
+    {"glProgramUniformMatrix2x4fv", (const void *)glProgramUniformMatrix2x4fv},
+    {"glProgramUniformMatrix3dv", (const void *)glProgramUniformMatrix3dv},
+    {"glProgramUniformMatrix3fv", (const void *)glProgramUniformMatrix3fv},
+    {"glProgramUniformMatrix3x2dv", (const void *)glProgramUniformMatrix3x2dv},
+    {"glProgramUniformMatrix3x2fv", (const void *)glProgramUniformMatrix3x2fv},
+    {"glProgramUniformMatrix3x4dv", (const void *)glProgramUniformMatrix3x4dv},
+    {"glProgramUniformMatrix3x4fv", (const void *)glProgramUniformMatrix3x4fv},
+    {"glProgramUniformMatrix4dv", (const void *)glProgramUniformMatrix4dv},
+    {"glProgramUniformMatrix4fv", (const void *)glProgramUniformMatrix4fv},
+    {"glProgramUniformMatrix4x2dv", (const void *)glProgramUniformMatrix4x2dv},
+    {"glProgramUniformMatrix4x2fv", (const void *)glProgramUniformMatrix4x2fv},
+    {"glProgramUniformMatrix4x3dv", (const void *)glProgramUniformMatrix4x3dv},
+    {"glProgramUniformMatrix4x3fv", (const void *)glProgramUniformMatrix4x3fv},
+    {"glProvokingVertex", (const void *)glProvokingVertex},
     {"glPushAttrib", (const void *)glPushAttrib},
     {"glPushClientAttrib", (const void *)glPushClientAttrib},
     {"glPushDebugGroup", (const void *)glPushDebugGroup},
@@ -1103,6 +1990,8 @@ const GL_PROC GlProcs[] = {
     {"glRasterPos4sv", (const void *)glRasterPos4sv},
     {"glReadBuffer", (const void *)glReadBuffer},
     {"glReadPixels", (const void *)glReadPixels},
+    {"glReadnPixels", (const void *)glReadnPixels},
+    {"glReadnPixelsARB", (const void *)glReadnPixelsARB},
     {"glRectd", (const void *)glRectd},
     {"glRectdv", (const void *)glRectdv},
     {"glRectf", (const void *)glRectf},
@@ -1114,21 +2003,60 @@ const GL_PROC GlProcs[] = {
     {"glReleaseShaderCompiler", (const void *)glReleaseShaderCompiler},
     {"glRenderMode", (const void *)glRenderMode},
     {"glRenderbufferStorage", (const void *)glRenderbufferStorage},
+    {"glRenderbufferStorageEXT", (const void *)glRenderbufferStorage},
     {"glRenderbufferStorageMultisample", (const void *)glRenderbufferStorageMultisample},
+    {"glRenderbufferStorageMultisampleEXT", (const void *)glRenderbufferStorageMultisample},
+    {"glResumeTransformFeedback", (const void *)glResumeTransformFeedback},
     {"glRotated", (const void *)glRotated},
     {"glRotatef", (const void *)glRotatef},
+    {"glSampleCoverage", (const void *)glSampleCoverage},
+    {"glSampleMaski", (const void *)glSampleMaski},
+    {"glSamplerParameterIiv", (const void *)glSamplerParameterIiv},
+    {"glSamplerParameterIuiv", (const void *)glSamplerParameterIuiv},
+    {"glSamplerParameterf", (const void *)glSamplerParameterf},
+    {"glSamplerParameterfv", (const void *)glSamplerParameterfv},
+    {"glSamplerParameteri", (const void *)glSamplerParameteri},
+    {"glSamplerParameteriv", (const void *)glSamplerParameteriv},
     {"glScaled", (const void *)glScaled},
     {"glScalef", (const void *)glScalef},
     {"glScissor", (const void *)glScissor},
+    {"glScissorArrayv", (const void *)glScissorArrayv},
+    {"glScissorIndexed", (const void *)glScissorIndexed},
+    {"glScissorIndexedv", (const void *)glScissorIndexedv},
+    {"glSecondaryColor3b", (const void *)glSecondaryColor3b},
+    {"glSecondaryColor3bv", (const void *)glSecondaryColor3bv},
+    {"glSecondaryColor3d", (const void *)glSecondaryColor3d},
+    {"glSecondaryColor3dv", (const void *)glSecondaryColor3dv},
+    {"glSecondaryColor3f", (const void *)glSecondaryColor3f},
+    {"glSecondaryColor3fv", (const void *)glSecondaryColor3fv},
+    {"glSecondaryColor3i", (const void *)glSecondaryColor3i},
+    {"glSecondaryColor3iv", (const void *)glSecondaryColor3iv},
+    {"glSecondaryColor3s", (const void *)glSecondaryColor3s},
+    {"glSecondaryColor3sv", (const void *)glSecondaryColor3sv},
+    {"glSecondaryColor3ub", (const void *)glSecondaryColor3ub},
+    {"glSecondaryColor3ubv", (const void *)glSecondaryColor3ubv},
+    {"glSecondaryColor3ui", (const void *)glSecondaryColor3ui},
+    {"glSecondaryColor3uiv", (const void *)glSecondaryColor3uiv},
+    {"glSecondaryColor3us", (const void *)glSecondaryColor3us},
+    {"glSecondaryColor3usv", (const void *)glSecondaryColor3usv},
+    {"glSecondaryColorP3ui", (const void *)glSecondaryColorP3ui},
+    {"glSecondaryColorP3uiv", (const void *)glSecondaryColorP3uiv},
+    {"glSecondaryColorPointer", (const void *)glSecondaryColorPointer},
     {"glSelectBuffer", (const void *)glSelectBuffer},
     {"glShadeModel", (const void *)glShadeModel},
+    {"glShaderBinary", (const void *)glShaderBinary},
     {"glShaderSource", (const void *)glShaderSource},
+    {"glShaderSourceARB", (const void *)glShaderSource},
+    {"glShaderStorageBlockBinding", (const void *)glShaderStorageBlockBinding},
     {"glStencilFunc", (const void *)glStencilFunc},
     {"glStencilFuncSeparate", (const void *)glStencilFuncSeparate},
     {"glStencilMask", (const void *)glStencilMask},
     {"glStencilMaskSeparate", (const void *)glStencilMaskSeparate},
     {"glStencilOp", (const void *)glStencilOp},
     {"glStencilOpSeparate", (const void *)glStencilOpSeparate},
+    {"glTexBuffer", (const void *)glTexBuffer},
+    {"glTexBufferARB", (const void *)glTexBuffer},
+    {"glTexBufferRange", (const void *)glTexBufferRange},
     {"glTexCoord1d", (const void *)glTexCoord1d},
     {"glTexCoord1dv", (const void *)glTexCoord1dv},
     {"glTexCoord1f", (const void *)glTexCoord1f},
@@ -1161,6 +2089,14 @@ const GL_PROC GlProcs[] = {
     {"glTexCoord4iv", (const void *)glTexCoord4iv},
     {"glTexCoord4s", (const void *)glTexCoord4s},
     {"glTexCoord4sv", (const void *)glTexCoord4sv},
+    {"glTexCoordP1ui", (const void *)glTexCoordP1ui},
+    {"glTexCoordP1uiv", (const void *)glTexCoordP1uiv},
+    {"glTexCoordP2ui", (const void *)glTexCoordP2ui},
+    {"glTexCoordP2uiv", (const void *)glTexCoordP2uiv},
+    {"glTexCoordP3ui", (const void *)glTexCoordP3ui},
+    {"glTexCoordP3uiv", (const void *)glTexCoordP3uiv},
+    {"glTexCoordP4ui", (const void *)glTexCoordP4ui},
+    {"glTexCoordP4uiv", (const void *)glTexCoordP4uiv},
     {"glTexCoordPointer", (const void *)glTexCoordPointer},
     {"glTexEnvf", (const void *)glTexEnvf},
     {"glTexEnvfv", (const void *)glTexEnvfv},
@@ -1176,54 +2112,124 @@ const GL_PROC GlProcs[] = {
     {"glTexImage2D", (const void *)glTexImage2D},
     {"glTexImage2DMultisample", (const void *)glTexImage2DMultisample},
     {"glTexImage3D", (const void *)glTexImage3D},
+    {"glTexImage3DMultisample", (const void *)glTexImage3DMultisample},
+    {"glTexParameterIiv", (const void *)glTexParameterIiv},
+    {"glTexParameterIuiv", (const void *)glTexParameterIuiv},
     {"glTexParameterf", (const void *)glTexParameterf},
     {"glTexParameterfv", (const void *)glTexParameterfv},
     {"glTexParameteri", (const void *)glTexParameteri},
     {"glTexParameteriv", (const void *)glTexParameteriv},
+    {"glTexStorage1D", (const void *)glTexStorage1D},
     {"glTexStorage2D", (const void *)glTexStorage2D},
+    {"glTexStorage2DMultisample", (const void *)glTexStorage2DMultisample},
     {"glTexStorage3D", (const void *)glTexStorage3D},
+    {"glTexStorage3DMultisample", (const void *)glTexStorage3DMultisample},
     {"glTexSubImage1D", (const void *)glTexSubImage1D},
     {"glTexSubImage2D", (const void *)glTexSubImage2D},
     {"glTexSubImage3D", (const void *)glTexSubImage3D},
+    {"glTextureBarrier", (const void *)glTextureBarrier},
+    {"glTextureBuffer", (const void *)glTextureBuffer},
+    {"glTextureBufferRange", (const void *)glTextureBufferRange},
+    {"glTextureParameterIiv", (const void *)glTextureParameterIiv},
+    {"glTextureParameterIuiv", (const void *)glTextureParameterIuiv},
+    {"glTextureParameterf", (const void *)glTextureParameterf},
+    {"glTextureParameterfv", (const void *)glTextureParameterfv},
+    {"glTextureParameteri", (const void *)glTextureParameteri},
+    {"glTextureParameteriv", (const void *)glTextureParameteriv},
+    {"glTextureStorage1D", (const void *)glTextureStorage1D},
+    {"glTextureStorage2D", (const void *)glTextureStorage2D},
+    {"glTextureStorage2DMultisample", (const void *)glTextureStorage2DMultisample},
+    {"glTextureStorage3D", (const void *)glTextureStorage3D},
+    {"glTextureStorage3DMultisample", (const void *)glTextureStorage3DMultisample},
+    {"glTextureSubImage1D", (const void *)glTextureSubImage1D},
+    {"glTextureSubImage2D", (const void *)glTextureSubImage2D},
+    {"glTextureSubImage3D", (const void *)glTextureSubImage3D},
+    {"glTextureView", (const void *)glTextureView},
+    {"glTransformFeedbackBufferBase", (const void *)glTransformFeedbackBufferBase},
+    {"glTransformFeedbackBufferRange", (const void *)glTransformFeedbackBufferRange},
+    {"glTransformFeedbackVaryings", (const void *)glTransformFeedbackVaryings},
     {"glTranslated", (const void *)glTranslated},
     {"glTranslatef", (const void *)glTranslatef},
+    {"glUniform1d", (const void *)glUniform1d},
+    {"glUniform1dv", (const void *)glUniform1dv},
     {"glUniform1f", (const void *)glUniform1f},
+    {"glUniform1fARB", (const void *)glUniform1f},
     {"glUniform1fv", (const void *)glUniform1fv},
+    {"glUniform1fvARB", (const void *)glUniform1fv},
     {"glUniform1i", (const void *)glUniform1i},
+    {"glUniform1iARB", (const void *)glUniform1i},
     {"glUniform1iv", (const void *)glUniform1iv},
+    {"glUniform1ivARB", (const void *)glUniform1iv},
     {"glUniform1ui", (const void *)glUniform1ui},
     {"glUniform1uiv", (const void *)glUniform1uiv},
+    {"glUniform2d", (const void *)glUniform2d},
+    {"glUniform2dv", (const void *)glUniform2dv},
     {"glUniform2f", (const void *)glUniform2f},
+    {"glUniform2fARB", (const void *)glUniform2f},
     {"glUniform2fv", (const void *)glUniform2fv},
+    {"glUniform2fvARB", (const void *)glUniform2fv},
     {"glUniform2i", (const void *)glUniform2i},
+    {"glUniform2iARB", (const void *)glUniform2i},
     {"glUniform2iv", (const void *)glUniform2iv},
+    {"glUniform2ivARB", (const void *)glUniform2iv},
     {"glUniform2ui", (const void *)glUniform2ui},
     {"glUniform2uiv", (const void *)glUniform2uiv},
+    {"glUniform3d", (const void *)glUniform3d},
+    {"glUniform3dv", (const void *)glUniform3dv},
     {"glUniform3f", (const void *)glUniform3f},
+    {"glUniform3fARB", (const void *)glUniform3f},
     {"glUniform3fv", (const void *)glUniform3fv},
+    {"glUniform3fvARB", (const void *)glUniform3fv},
     {"glUniform3i", (const void *)glUniform3i},
+    {"glUniform3iARB", (const void *)glUniform3i},
     {"glUniform3iv", (const void *)glUniform3iv},
+    {"glUniform3ivARB", (const void *)glUniform3iv},
     {"glUniform3ui", (const void *)glUniform3ui},
     {"glUniform3uiv", (const void *)glUniform3uiv},
+    {"glUniform4d", (const void *)glUniform4d},
+    {"glUniform4dv", (const void *)glUniform4dv},
     {"glUniform4f", (const void *)glUniform4f},
+    {"glUniform4fARB", (const void *)glUniform4f},
     {"glUniform4fv", (const void *)glUniform4fv},
+    {"glUniform4fvARB", (const void *)glUniform4fv},
     {"glUniform4i", (const void *)glUniform4i},
+    {"glUniform4iARB", (const void *)glUniform4i},
     {"glUniform4iv", (const void *)glUniform4iv},
+    {"glUniform4ivARB", (const void *)glUniform4iv},
     {"glUniform4ui", (const void *)glUniform4ui},
     {"glUniform4uiv", (const void *)glUniform4uiv},
     {"glUniformBlockBinding", (const void *)glUniformBlockBinding},
+    {"glUniformMatrix2dv", (const void *)glUniformMatrix2dv},
     {"glUniformMatrix2fv", (const void *)glUniformMatrix2fv},
+    {"glUniformMatrix2fvARB", (const void *)glUniformMatrix2fv},
+    {"glUniformMatrix2x3dv", (const void *)glUniformMatrix2x3dv},
     {"glUniformMatrix2x3fv", (const void *)glUniformMatrix2x3fv},
+    {"glUniformMatrix2x4dv", (const void *)glUniformMatrix2x4dv},
     {"glUniformMatrix2x4fv", (const void *)glUniformMatrix2x4fv},
+    {"glUniformMatrix3dv", (const void *)glUniformMatrix3dv},
     {"glUniformMatrix3fv", (const void *)glUniformMatrix3fv},
+    {"glUniformMatrix3fvARB", (const void *)glUniformMatrix3fv},
+    {"glUniformMatrix3x2dv", (const void *)glUniformMatrix3x2dv},
     {"glUniformMatrix3x2fv", (const void *)glUniformMatrix3x2fv},
+    {"glUniformMatrix3x4dv", (const void *)glUniformMatrix3x4dv},
     {"glUniformMatrix3x4fv", (const void *)glUniformMatrix3x4fv},
+    {"glUniformMatrix4dv", (const void *)glUniformMatrix4dv},
     {"glUniformMatrix4fv", (const void *)glUniformMatrix4fv},
+    {"glUniformMatrix4fvARB", (const void *)glUniformMatrix4fv},
+    {"glUniformMatrix4x2dv", (const void *)glUniformMatrix4x2dv},
     {"glUniformMatrix4x2fv", (const void *)glUniformMatrix4x2fv},
+    {"glUniformMatrix4x3dv", (const void *)glUniformMatrix4x3dv},
     {"glUniformMatrix4x3fv", (const void *)glUniformMatrix4x3fv},
+    {"glUniformSubroutinesuiv", (const void *)glUniformSubroutinesuiv},
     {"glUnmapBuffer", (const void *)glUnmapBuffer},
+    {"glUnmapBufferARB", (const void *)glUnmapBuffer},
+    {"glUnmapNamedBuffer", (const void *)glUnmapNamedBuffer},
     {"glUseProgram", (const void *)glUseProgram},
+    {"glUseProgramObjectARB", (const void *)glUseProgram},
+    {"glUseProgramStages", (const void *)glUseProgramStages},
     {"glValidateProgram", (const void *)glValidateProgram},
+    {"glValidateProgramARB", (const void *)glValidateProgram},
+    {"glValidateProgramPipeline", (const void *)glValidateProgramPipeline},
     {"glVertex2d", (const void *)glVertex2d},
     {"glVertex2dv", (const void *)glVertex2dv},
     {"glVertex2f", (const void *)glVertex2f},
@@ -1248,25 +2254,124 @@ const GL_PROC GlProcs[] = {
     {"glVertex4iv", (const void *)glVertex4iv},
     {"glVertex4s", (const void *)glVertex4s},
     {"glVertex4sv", (const void *)glVertex4sv},
+    {"glVertexArrayAttribBinding", (const void *)glVertexArrayAttribBinding},
+    {"glVertexArrayAttribFormat", (const void *)glVertexArrayAttribFormat},
+    {"glVertexArrayAttribIFormat", (const void *)glVertexArrayAttribIFormat},
+    {"glVertexArrayAttribLFormat", (const void *)glVertexArrayAttribLFormat},
+    {"glVertexArrayBindingDivisor", (const void *)glVertexArrayBindingDivisor},
+    {"glVertexArrayElementBuffer", (const void *)glVertexArrayElementBuffer},
+    {"glVertexArrayVertexBuffer", (const void *)glVertexArrayVertexBuffer},
+    {"glVertexArrayVertexBuffers", (const void *)glVertexArrayVertexBuffers},
+    {"glVertexAttrib1d", (const void *)glVertexAttrib1d},
+    {"glVertexAttrib1dv", (const void *)glVertexAttrib1dv},
     {"glVertexAttrib1f", (const void *)glVertexAttrib1f},
     {"glVertexAttrib1fv", (const void *)glVertexAttrib1fv},
+    {"glVertexAttrib1s", (const void *)glVertexAttrib1s},
+    {"glVertexAttrib1sv", (const void *)glVertexAttrib1sv},
+    {"glVertexAttrib2d", (const void *)glVertexAttrib2d},
+    {"glVertexAttrib2dv", (const void *)glVertexAttrib2dv},
     {"glVertexAttrib2f", (const void *)glVertexAttrib2f},
     {"glVertexAttrib2fv", (const void *)glVertexAttrib2fv},
+    {"glVertexAttrib2s", (const void *)glVertexAttrib2s},
+    {"glVertexAttrib2sv", (const void *)glVertexAttrib2sv},
+    {"glVertexAttrib3d", (const void *)glVertexAttrib3d},
+    {"glVertexAttrib3dv", (const void *)glVertexAttrib3dv},
     {"glVertexAttrib3f", (const void *)glVertexAttrib3f},
     {"glVertexAttrib3fv", (const void *)glVertexAttrib3fv},
+    {"glVertexAttrib3s", (const void *)glVertexAttrib3s},
+    {"glVertexAttrib3sv", (const void *)glVertexAttrib3sv},
+    {"glVertexAttrib4Nbv", (const void *)glVertexAttrib4Nbv},
+    {"glVertexAttrib4Niv", (const void *)glVertexAttrib4Niv},
+    {"glVertexAttrib4Nsv", (const void *)glVertexAttrib4Nsv},
     {"glVertexAttrib4Nub", (const void *)glVertexAttrib4Nub},
+    {"glVertexAttrib4Nubv", (const void *)glVertexAttrib4Nubv},
+    {"glVertexAttrib4Nuiv", (const void *)glVertexAttrib4Nuiv},
+    {"glVertexAttrib4Nusv", (const void *)glVertexAttrib4Nusv},
+    {"glVertexAttrib4bv", (const void *)glVertexAttrib4bv},
+    {"glVertexAttrib4d", (const void *)glVertexAttrib4d},
+    {"glVertexAttrib4dv", (const void *)glVertexAttrib4dv},
     {"glVertexAttrib4f", (const void *)glVertexAttrib4f},
     {"glVertexAttrib4fv", (const void *)glVertexAttrib4fv},
+    {"glVertexAttrib4iv", (const void *)glVertexAttrib4iv},
+    {"glVertexAttrib4s", (const void *)glVertexAttrib4s},
+    {"glVertexAttrib4sv", (const void *)glVertexAttrib4sv},
+    {"glVertexAttrib4ubv", (const void *)glVertexAttrib4ubv},
+    {"glVertexAttrib4uiv", (const void *)glVertexAttrib4uiv},
+    {"glVertexAttrib4usv", (const void *)glVertexAttrib4usv},
+    {"glVertexAttribBinding", (const void *)glVertexAttribBinding},
     {"glVertexAttribDivisor", (const void *)glVertexAttribDivisor},
+    {"glVertexAttribDivisorARB", (const void *)glVertexAttribDivisor},
+    {"glVertexAttribFormat", (const void *)glVertexAttribFormat},
+    {"glVertexAttribI1i", (const void *)glVertexAttribI1i},
+    {"glVertexAttribI1iv", (const void *)glVertexAttribI1iv},
+    {"glVertexAttribI1ui", (const void *)glVertexAttribI1ui},
+    {"glVertexAttribI1uiv", (const void *)glVertexAttribI1uiv},
+    {"glVertexAttribI2i", (const void *)glVertexAttribI2i},
+    {"glVertexAttribI2iv", (const void *)glVertexAttribI2iv},
+    {"glVertexAttribI2ui", (const void *)glVertexAttribI2ui},
+    {"glVertexAttribI2uiv", (const void *)glVertexAttribI2uiv},
+    {"glVertexAttribI3i", (const void *)glVertexAttribI3i},
+    {"glVertexAttribI3iv", (const void *)glVertexAttribI3iv},
+    {"glVertexAttribI3ui", (const void *)glVertexAttribI3ui},
+    {"glVertexAttribI3uiv", (const void *)glVertexAttribI3uiv},
+    {"glVertexAttribI4bv", (const void *)glVertexAttribI4bv},
     {"glVertexAttribI4i", (const void *)glVertexAttribI4i},
     {"glVertexAttribI4iv", (const void *)glVertexAttribI4iv},
+    {"glVertexAttribI4sv", (const void *)glVertexAttribI4sv},
+    {"glVertexAttribI4ubv", (const void *)glVertexAttribI4ubv},
     {"glVertexAttribI4ui", (const void *)glVertexAttribI4ui},
     {"glVertexAttribI4uiv", (const void *)glVertexAttribI4uiv},
+    {"glVertexAttribI4usv", (const void *)glVertexAttribI4usv},
+    {"glVertexAttribIFormat", (const void *)glVertexAttribIFormat},
     {"glVertexAttribIPointer", (const void *)glVertexAttribIPointer},
+    {"glVertexAttribL1d", (const void *)glVertexAttribL1d},
+    {"glVertexAttribL1dv", (const void *)glVertexAttribL1dv},
+    {"glVertexAttribL2d", (const void *)glVertexAttribL2d},
+    {"glVertexAttribL2dv", (const void *)glVertexAttribL2dv},
+    {"glVertexAttribL3d", (const void *)glVertexAttribL3d},
+    {"glVertexAttribL3dv", (const void *)glVertexAttribL3dv},
+    {"glVertexAttribL4d", (const void *)glVertexAttribL4d},
+    {"glVertexAttribL4dv", (const void *)glVertexAttribL4dv},
+    {"glVertexAttribLFormat", (const void *)glVertexAttribLFormat},
+    {"glVertexAttribLPointer", (const void *)glVertexAttribLPointer},
+    {"glVertexAttribP1ui", (const void *)glVertexAttribP1ui},
+    {"glVertexAttribP1uiv", (const void *)glVertexAttribP1uiv},
+    {"glVertexAttribP2ui", (const void *)glVertexAttribP2ui},
+    {"glVertexAttribP2uiv", (const void *)glVertexAttribP2uiv},
+    {"glVertexAttribP3ui", (const void *)glVertexAttribP3ui},
+    {"glVertexAttribP3uiv", (const void *)glVertexAttribP3uiv},
+    {"glVertexAttribP4ui", (const void *)glVertexAttribP4ui},
+    {"glVertexAttribP4uiv", (const void *)glVertexAttribP4uiv},
     {"glVertexAttribPointer", (const void *)glVertexAttribPointer},
+    {"glVertexBindingDivisor", (const void *)glVertexBindingDivisor},
+    {"glVertexP2ui", (const void *)glVertexP2ui},
+    {"glVertexP2uiv", (const void *)glVertexP2uiv},
+    {"glVertexP3ui", (const void *)glVertexP3ui},
+    {"glVertexP3uiv", (const void *)glVertexP3uiv},
+    {"glVertexP4ui", (const void *)glVertexP4ui},
+    {"glVertexP4uiv", (const void *)glVertexP4uiv},
     {"glVertexPointer", (const void *)glVertexPointer},
     {"glViewport", (const void *)glViewport},
+    {"glViewportArrayv", (const void *)glViewportArrayv},
+    {"glViewportIndexedf", (const void *)glViewportIndexedf},
+    {"glViewportIndexedfv", (const void *)glViewportIndexedfv},
     {"glWaitSync", (const void *)glWaitSync},
+    {"glWindowPos2d", (const void *)glWindowPos2d},
+    {"glWindowPos2dv", (const void *)glWindowPos2dv},
+    {"glWindowPos2f", (const void *)glWindowPos2f},
+    {"glWindowPos2fv", (const void *)glWindowPos2fv},
+    {"glWindowPos2i", (const void *)glWindowPos2i},
+    {"glWindowPos2iv", (const void *)glWindowPos2iv},
+    {"glWindowPos2s", (const void *)glWindowPos2s},
+    {"glWindowPos2sv", (const void *)glWindowPos2sv},
+    {"glWindowPos3d", (const void *)glWindowPos3d},
+    {"glWindowPos3dv", (const void *)glWindowPos3dv},
+    {"glWindowPos3f", (const void *)glWindowPos3f},
+    {"glWindowPos3fv", (const void *)glWindowPos3fv},
+    {"glWindowPos3i", (const void *)glWindowPos3i},
+    {"glWindowPos3iv", (const void *)glWindowPos3iv},
+    {"glWindowPos3s", (const void *)glWindowPos3s},
+    {"glWindowPos3sv", (const void *)glWindowPos3sv},
     {"wglChoosePixelFormat", (const void *)wglChoosePixelFormat},
     {"wglChoosePixelFormatARB", (const void *)wglChoosePixelFormatARB},
     {"wglCopyContext", (const void *)wglCopyContext},
@@ -1301,4 +2406,4 @@ const GL_PROC GlProcs[] = {
     {"wglUseFontOutlinesA", (const void *)wglUseFontOutlinesA},
     {"wglUseFontOutlinesW", (const void *)wglUseFontOutlinesW},
 };
-const ULONG GlProcCount = 648;
+const ULONG GlProcCount = 1252;
