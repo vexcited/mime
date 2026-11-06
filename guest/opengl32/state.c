@@ -59,8 +59,8 @@ void gl_context_init(GlContext *ctx)
     ctx->dirty = DIRTY_ALL;
     ctx->swap_interval = 1;
     ctx->provoking_vertex = GL_LAST_VERTEX_CONVENTION;
-    ctx->clamp[0] = ctx->clamp[1] = GL_TRUE;
-    ctx->clamp[2] = GL_FIXED_ONLY;
+    ctx->clamp[0] = GL_TRUE;
+    ctx->clamp[1] = ctx->clamp[2] = GL_FIXED_ONLY;
     ctx->sample_coverage = 1.0f;
     ctx->sample_mask = ~0u;
     ctx->ff.secondary[3] = 1.0f;

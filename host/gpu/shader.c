@@ -6,6 +6,7 @@
  * OpenGL's depth range directly.
  */
 #include "shader.h"
+#include "glsl_compat.h"
 
 #include <glslang/Include/glslang_c_interface.h>
 #include <glslang/Public/resource_limits_c.h>
@@ -151,7 +152,7 @@ static char *extensions_end(char *text)
     return insert;
 }
 
-static char *lift_source(const char *src, size_t len, bool fragment)
+static char *lift_source(const char *src, size_t len, bool fragment, const MimeGlslCompat *compat)
 {
     char *text = malloc(len + 1);
     memcpy(text, src, len);
@@ -214,7 +215,7 @@ static char *lift_source(const char *src, size_t len, bool fragment)
 
     /* the declarations of the replaced fragment outputs go after the last #extension line. */
     Buf decl = {};
-    if (fragment && lift) {
+    if (fragment && (lift || uses(text, "gl_FragColor") || uses(text, "gl_FragData"))) {
         if (uses(text, "gl_FragColor")) {
             buf_str(&out, "#define gl_FragColor mime_FragColor\n");
             buf_str(&decl, "layout(location = 0) out vec4 mime_FragColor;\n");
@@ -222,6 +223,14 @@ static char *lift_source(const char *src, size_t len, bool fragment)
             buf_str(&out, "#define gl_FragData mime_FragData\n");
             buf_fmt(&decl, "layout(location = 0) out vec4 mime_FragData[%d];\n", frag_data_count(text));
         }
+    }
+
+    bool builtins = compat && compat->active;
+    if (builtins) {
+        const typeof(compat->stage[0]) *stage = &compat->stage[fragment ? 1 : 0];
+        mime_glsl_compat_blank(compat, fragment, text);
+        buf_str(&out, stage->header);
+        buf_str(&decl, stage->decl);
     }
 
     if (version_line) {
@@ -239,6 +248,10 @@ static char *lift_source(const char *src, size_t len, bool fragment)
         if (decl.len)
             buf_add(&out, decl.data, decl.len);
         buf_str(&out, text);
+    }
+    if (builtins) {
+        buf_str(&out, "\n");
+        buf_str(&out, compat->stage[fragment ? 1 : 0].tail);
     }
     free(decl.data);
     free(text);
@@ -983,7 +996,14 @@ bool mime_shader_compile_stages(const char *vs, size_t vs_len, const char *fs, s
     pthread_once(&g_once, init_glslang);
     Program p = {};
     bool ok = false;
-    char *vtext = lift_source(vs, vs_len, false), *ftext = lift_source(fs, fs_len, true);
+    MimeGlslCompat compat;
+    {
+        char *fcopy = strndup(fs, fs_len);
+        int kind = uses(fcopy, "gl_FragColor") ? 1 : uses(fcopy, "gl_FragData") ? 2 : 0;
+        mime_glsl_compat_analyze(vs, vs_len, fs, fs_len, &compat, kind, kind == 2 ? frag_data_count(fcopy) : 1);
+        free(fcopy);
+    }
+    char *vtext = lift_source(vs, vs_len, false, &compat), *ftext = lift_source(fs, fs_len, true, &compat);
     glslang_shader_t *vsh = parse_stage(&p, GLSLANG_STAGE_VERTEX, vtext, "vertex");
     glslang_shader_t *fsh = vsh ? parse_stage(&p, GLSLANG_STAGE_FRAGMENT, ftext, "fragment") : nullptr;
     glslang_program_t *prog = nullptr;
@@ -1012,7 +1032,7 @@ bool mime_shader_compile_stages(const char *vs, size_t vs_len, const char *fs, s
             buf_fmt(&p.log, "%s shaders need Vulkan\n", xlabel[x]);
             goto done;
 #endif
-            xtext[x] = lift_source(src[x], len[x], false);
+            xtext[x] = lift_source(src[x], len[x], false, nullptr);
             xsh[x] = parse_stage(&p, xstage[x], xtext[x], xlabel[x]);
             if (!xsh[x])
                 goto done;
@@ -1121,6 +1141,7 @@ done:
     }
     free(vtext);
     free(ftext);
+    mime_glsl_compat_free(&compat);
     if (!ok) {
         for (int s = 0; s < MIME_GPU_STAGES; s++) {
             free(out->msl[s]);
@@ -1161,7 +1182,7 @@ bool mime_shader_compile_compute(const char *cs, size_t cs_len, MimeShaderResult
     pthread_once(&g_once, init_glslang);
     Program p = {};
     bool ok = false;
-    char *text = lift_source(cs, cs_len, false);
+    char *text = lift_source(cs, cs_len, false, nullptr);
     glslang_shader_t *sh = parse_stage(&p, GLSLANG_STAGE_COMPUTE, text, "compute");
     glslang_program_t *prog = nullptr;
     spvc_context ctx = nullptr;

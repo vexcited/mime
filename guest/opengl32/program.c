@@ -6,6 +6,8 @@
  */
 #include "opengl32.h"
 
+#include <mime/glcompat.h>
+
 #define INFO_CAPACITY (128u << 10)
 
 void shape_of(GLenum type, int *cols, int *rows, int *class);
@@ -217,6 +219,7 @@ static void free_reflection(GlProgram *p)
     p->log = nullptr;
     p->uniform_count = p->attrib_count = 0;
     p->attrib_mask = 0;
+    p->cg_attribs = p->cg_slots = 0;
 }
 
 static void destroy_program(GlContext *ctx, GlProgram *p)
@@ -578,6 +581,18 @@ GLAPI void APIENTRY glLinkProgram(GLuint name)
         if (!source[k])
             source[k] = s->source;
     }
+    if (ctx->profile == WGL_CONTEXT_CORE_PROFILE_BIT_ARB) {
+        for (int k = 0; k < 5; k++) {
+            if (!source[k] || !gl_cg_core_violation(source[k]))
+                continue;
+            gl_program_ready(p);
+            free_reflection(p);
+            p->linked = TRUE;
+            p->link_status = FALSE;
+            p->log = gl_strdup("a built-in variable of the compatibility profile is used in a core profile context\n");
+            return;
+        }
+    }
     char *rewritten[5] = {};
     for (int k = 0; k < 5; k++) {
         GlSubroutines *info = nullptr;
@@ -640,8 +655,17 @@ static void take_reflection(GlProgram *p)
     const MimeGpuAttribInfo *a = (const MimeGpuAttribInfo *)(base + info->attrib_offset);
     p->attribs = gl_alloc((info->attrib_count + 1) * sizeof(GlAttrib));
     for (uint32_t i = 0; i < info->attrib_count; i++) {
+        /* the inputs the host made for the built-in variables of GLSL are not the program's own. */
+        const char *attribute_name = (const char *)base + a[i].name_offset;
+        if (!strncmp(attribute_name, MIME_GLC_PREFIX, sizeof(MIME_GLC_PREFIX) - 1)) {
+            if (a[i].location < MIME_GPU_MAX_ATTRIBS) {
+                p->cg_attribs |= 1u << a[i].location;
+                p->attrib_mask |= 1u << a[i].location;
+            }
+            continue;
+        }
         GlAttrib *x = &p->attribs[p->attrib_count++];
-        x->name = gl_strdup((const char *)base + a[i].name_offset);
+        x->name = gl_strdup(attribute_name);
         x->type = a[i].gl_type;
         x->size = (GLint)a[i].array_size;
         x->location = (GLint)a[i].location;
@@ -658,6 +682,15 @@ static void take_reflection(GlProgram *p)
     const MimeGpuUniformInfo *u = (const MimeGpuUniformInfo *)(base + info->uniform_offset);
     p->uniforms = gl_alloc((info->uniform_count + 1) * sizeof(GlUniform));
     for (uint32_t i = 0; i < info->uniform_count; i++) {
+        const char *uniform_name = (const char *)base + u[i].name_offset;
+        if (!strncmp(uniform_name, MIME_GLC_PREFIX, sizeof(MIME_GLC_PREFIX) - 1)) {
+            if (!strncmp(uniform_name, MIME_GLC_ARRAY, sizeof(MIME_GLC_ARRAY) - 1)) {
+                p->cg_offset = u[i].offset;
+                p->cg_stride = u[i].array_stride ? u[i].array_stride : 16;
+                p->cg_slots = u[i].array_size;
+            }
+            continue;
+        }
         GlUniform *x = &p->uniforms[p->uniform_count++];
         x->name = gl_strdup((const char *)base + u[i].name_offset);
         SIZE_T n = strlen(x->name);

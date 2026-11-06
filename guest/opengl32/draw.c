@@ -731,7 +731,7 @@ static BOOL setup_vertices(GlContext *ctx, GlProgram *p, const GlVertexInput *in
         const GlVertexAttrib *a = &in->attribs[l];
         Source *s = &src[l];
         s->used = TRUE;
-        if (!a->enabled && in->constants) {
+        if (!a->enabled && in->constants && (!in->constant_mask || (in->constant_mask >> l & 1))) {
             GlMem mem;
             if (!gl_stream_alloc(16, 16, &mem))
                 return FALSE;
@@ -1304,7 +1304,9 @@ static BOOL convert_primitive(GLenum mode, BOOL flat, const void *indices, GLenu
 static GlProgram *begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate, GLenum mode)
 {
     GlProgram *p = ctx->current_program;
-    if (p && immediate)
+    in->constant_mask = 0;
+    /* a program takes the draws of glBegin and glEnd only when it reads the built-in vertex variables, which they feed. */
+    if (p && immediate && (!gl_program_ready(p) || !p->cg_attribs))
         return nullptr;
     if (ctx->st.skip)
         return nullptr;
@@ -1321,9 +1323,12 @@ static GlProgram *begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate, 
         in->attribs = ctx->vao->attribs;
         in->mask = p->attrib_mask;
         in->constants = nullptr;
+        in->constant_mask = 0;
         in->fixed = in->flat = FALSE;
         if (!gl_program_ready(p))
             return nullptr;
+        if (p->cg_attribs)
+            gl_cg_input(ctx, p, in);
     } else {
         p = gl_ff_begin_draw(ctx, in, immediate, mode);
         if (!p)
@@ -1336,6 +1341,8 @@ static GlProgram *begin_draw(GlContext *ctx, GlVertexInput *in, BOOL immediate, 
         return nullptr;
     if (in->fixed)
         gl_ff_prepare(ctx, p);
+    else if (p->cg_slots)
+        gl_cg_prepare(ctx, p);
     return p;
 }
 
@@ -1809,6 +1816,39 @@ uint32_t gl_whole_primitives(GLenum mode, uint32_t count)
 }
 
 /*
+ * the vertices of glBegin are laid out for the fixed function program: position, color, normal and texture coordinate at 0
+ * to 3. a program that reads the built-in inputs has them at the locations they alias, and gets the others from the current
+ * values.
+ */
+static void remap_stored(GlContext *ctx, GlProgram *p, Source *src)
+{
+    Source stored[4];
+    memcpy(stored, src, sizeof(stored));
+    memset(src, 0, sizeof(Source) * MIME_GPU_MAX_ATTRIBS);
+    static const uint8_t location[4] = {0, 3, 2, 8};
+    for (int i = 0; i < 4; i++)
+        if (p->attrib_mask >> location[i] & 1)
+            src[location[i]] = stored[i];
+    for (uint32_t m = p->attrib_mask, l; m; m &= m - 1) {
+        l = (uint32_t)__builtin_ctz(m);
+        if (src[l].used)
+            continue;
+        GlMem mem;
+        if (!gl_stream_alloc(16, 16, &mem))
+            continue;
+        GLfloat value[4];
+        if (!gl_cg_current(ctx, l, value))
+            for (int c = 0; c < 4; c++)
+                value[c] = ctx->generic[l][c];
+        memcpy(mem.ptr, value, 16);
+        src[l].used = TRUE;
+        src[l].constant = TRUE;
+        src[l].mem = gl_mem(&mem);
+        src[l].format = 31;
+    }
+}
+
+/*
  * the draw of count vertices that are in memory the gpu reads: stride bytes apart, the position first and the color, normal
  * and texture coordinate at the offsets in at when they are stored, else the three vectors of constants. a batch of a display
  * list keeps the indices it needs for its primitives.
@@ -1833,6 +1873,8 @@ static void draw_stored(GlContext *ctx, GlProgram *p, GlVertexInput *in, GLenum 
         src[l].stride = stride;
     }
     in->attribs = g_no_attribs;
+    if (p->cg_attribs)
+        remap_stored(ctx, p, src);
     if (!prepare(ctx, p, in, src))
         return;
     if (needs_conversion(mode, in->flat)) {
