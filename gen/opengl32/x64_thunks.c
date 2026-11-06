@@ -169,6 +169,18 @@ static void x_glBindRenderbuffer(MX_NATIVE_CALL *c)
     glBindRenderbuffer((GLenum)I(c, 0), (GLuint)I(c, 1));
 }
 
+void APIENTRY glBindSampler(GLuint unit, GLuint sampler);
+static void x_glBindSampler(MX_NATIVE_CALL *c)
+{
+    glBindSampler((GLuint)I(c, 0), (GLuint)I(c, 1));
+}
+
+void APIENTRY glBindSamplers(GLuint first, GLsizei count, const GLuint *samplers);
+static void x_glBindSamplers(MX_NATIVE_CALL *c)
+{
+    glBindSamplers((GLuint)I(c, 0), (GLsizei)I(c, 1), (const GLuint *)I(c, 2));
+}
+
 void APIENTRY glBindTexture(GLenum target, GLuint name);
 static void x_glBindTexture(MX_NATIVE_CALL *c)
 {
@@ -371,6 +383,12 @@ void APIENTRY glClearBufferiv(GLenum buffer, GLint index, const GLint *value);
 static void x_glClearBufferiv(MX_NATIVE_CALL *c)
 {
     glClearBufferiv((GLenum)I(c, 0), (GLint)I(c, 1), (const GLint *)I(c, 2));
+}
+
+void APIENTRY glClearBufferuiv(GLenum buffer, GLint index, const GLuint *value);
+static void x_glClearBufferuiv(MX_NATIVE_CALL *c)
+{
+    glClearBufferuiv((GLenum)I(c, 0), (GLint)I(c, 1), (const GLuint *)I(c, 2));
 }
 
 void APIENTRY glClearColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a);
@@ -727,16 +745,40 @@ static void x_glCompileShader(MX_NATIVE_CALL *c)
     glCompileShader((GLuint)I(c, 0));
 }
 
+void APIENTRY glCompressedTexImage1D(GLenum target, GLint level, GLenum internal, GLsizei w, GLint border,                                            GLsizei size, const void *data);
+static void x_glCompressedTexImage1D(MX_NATIVE_CALL *c)
+{
+    glCompressedTexImage1D((GLenum)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (const void *)I(c, 6));
+}
+
 void APIENTRY glCompressedTexImage2D(GLenum target, GLint level, GLenum internal, GLsizei w, GLsizei h,                                            GLint border, GLsizei size, const void *data);
 static void x_glCompressedTexImage2D(MX_NATIVE_CALL *c)
 {
     glCompressedTexImage2D((GLenum)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLint)I(c, 5), (GLsizei)I(c, 6), (const void *)I(c, 7));
 }
 
+void APIENTRY glCompressedTexImage3D(GLenum target, GLint level, GLenum internal, GLsizei w, GLsizei h, GLsizei d,                                            GLint border, GLsizei size, const void *data);
+static void x_glCompressedTexImage3D(MX_NATIVE_CALL *c)
+{
+    glCompressedTexImage3D((GLenum)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5), (GLint)I(c, 6), (GLsizei)I(c, 7), (const void *)I(c, 8));
+}
+
+void APIENTRY glCompressedTexSubImage1D(GLenum target, GLint level, GLint x, GLsizei w, GLenum format, GLsizei size,                                               const void *data);
+static void x_glCompressedTexSubImage1D(MX_NATIVE_CALL *c)
+{
+    glCompressedTexSubImage1D((GLenum)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLsizei)I(c, 3), (GLenum)I(c, 4), (GLsizei)I(c, 5), (const void *)I(c, 6));
+}
+
 void APIENTRY glCompressedTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h,                                               GLenum format, GLsizei size, const void *data);
 static void x_glCompressedTexSubImage2D(MX_NATIVE_CALL *c)
 {
     glCompressedTexSubImage2D((GLenum)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5), (GLenum)I(c, 6), (GLsizei)I(c, 7), (const void *)I(c, 8));
+}
+
+void APIENTRY glCompressedTexSubImage3D(GLenum target, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                               GLsizei d, GLenum format, GLsizei size, const void *data);
+static void x_glCompressedTexSubImage3D(MX_NATIVE_CALL *c)
+{
+    glCompressedTexSubImage3D((GLenum)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7), (GLenum)I(c, 8), (GLsizei)I(c, 9), (const void *)I(c, 10));
 }
 
 void APIENTRY glCompressedTextureSubImage1D(GLuint texture, GLint level, GLint x, GLsizei w, GLenum format,                                                   GLsizei size, const void *data);
@@ -805,6 +847,12 @@ static void x_glCopyTexSubImage2D(MX_NATIVE_CALL *c)
     glCopyTexSubImage2D((GLenum)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLint)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7));
 }
 
+void APIENTRY glCopyTexSubImage3D(GLenum target, GLint level, GLint dx, GLint dy, GLint dz, GLint x, GLint y, GLsizei w,                                         GLsizei h);
+static void x_glCopyTexSubImage3D(MX_NATIVE_CALL *c)
+{
+    glCopyTexSubImage3D((GLenum)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLint)I(c, 5), (GLint)I(c, 6), (GLsizei)I(c, 7), (GLsizei)I(c, 8));
+}
+
 void APIENTRY glCopyTextureSubImage1D(GLuint texture, GLint level, GLint x, GLint sx, GLint sy, GLsizei w);
 static void x_glCopyTextureSubImage1D(MX_NATIVE_CALL *c)
 {
@@ -857,6 +905,12 @@ void APIENTRY glCreateRenderbuffers(GLsizei n, GLuint *renderbuffers);
 static void x_glCreateRenderbuffers(MX_NATIVE_CALL *c)
 {
     glCreateRenderbuffers((GLsizei)I(c, 0), (GLuint *)I(c, 1));
+}
+
+void APIENTRY glCreateSamplers(GLsizei count, GLuint *samplers);
+static void x_glCreateSamplers(MX_NATIVE_CALL *c)
+{
+    glCreateSamplers((GLsizei)I(c, 0), (GLuint *)I(c, 1));
 }
 
 GLuint APIENTRY glCreateShader(GLenum type);
@@ -959,6 +1013,12 @@ void APIENTRY glDeleteRenderbuffers(GLsizei n, const GLuint *names);
 static void x_glDeleteRenderbuffers(MX_NATIVE_CALL *c)
 {
     glDeleteRenderbuffers((GLsizei)I(c, 0), (const GLuint *)I(c, 1));
+}
+
+void APIENTRY glDeleteSamplers(GLsizei count, const GLuint *samplers);
+static void x_glDeleteSamplers(MX_NATIVE_CALL *c)
+{
+    glDeleteSamplers((GLsizei)I(c, 0), (const GLuint *)I(c, 1));
 }
 
 void APIENTRY glDeleteShader(GLuint name);
@@ -1483,6 +1543,12 @@ static void x_glFramebufferTexture2D(MX_NATIVE_CALL *c)
     glFramebufferTexture2D((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLuint)I(c, 3), (GLint)I(c, 4));
 }
 
+void APIENTRY glFramebufferTexture3D(GLenum target, GLenum point, GLenum textarget, GLuint texture, GLint level,                                            GLint zoffset);
+static void x_glFramebufferTexture3D(MX_NATIVE_CALL *c)
+{
+    glFramebufferTexture3D((GLenum)I(c, 0), (GLenum)I(c, 1), (GLenum)I(c, 2), (GLuint)I(c, 3), (GLint)I(c, 4), (GLint)I(c, 5));
+}
+
 void APIENTRY glFramebufferTextureLayer(GLenum target, GLenum point, GLuint texture, GLint level, GLint layer);
 static void x_glFramebufferTextureLayer(MX_NATIVE_CALL *c)
 {
@@ -1535,6 +1601,12 @@ void APIENTRY glGenRenderbuffers(GLsizei n, GLuint *names);
 static void x_glGenRenderbuffers(MX_NATIVE_CALL *c)
 {
     glGenRenderbuffers((GLsizei)I(c, 0), (GLuint *)I(c, 1));
+}
+
+void APIENTRY glGenSamplers(GLsizei count, GLuint *samplers);
+static void x_glGenSamplers(MX_NATIVE_CALL *c)
+{
+    glGenSamplers((GLsizei)I(c, 0), (GLuint *)I(c, 1));
 }
 
 void APIENTRY glGenTextures(GLsizei n, GLuint *textures);
@@ -1667,6 +1739,12 @@ void APIENTRY glGetClipPlane(GLenum plane, GLdouble *equation);
 static void x_glGetClipPlane(MX_NATIVE_CALL *c)
 {
     glGetClipPlane((GLenum)I(c, 0), (GLdouble *)I(c, 1));
+}
+
+void APIENTRY glGetCompressedTexImage(GLenum target, GLint level, void *image);
+static void x_glGetCompressedTexImage(MX_NATIVE_CALL *c)
+{
+    glGetCompressedTexImage((GLenum)I(c, 0), (GLint)I(c, 1), (void *)I(c, 2));
 }
 
 void APIENTRY glGetCompressedTextureImage(GLuint texture, GLint level, GLsizei size, void *pixels);
@@ -1927,6 +2005,12 @@ static void x_glGetPolygonStipple(MX_NATIVE_CALL *c)
     glGetPolygonStipple((GLubyte *)I(c, 0));
 }
 
+void APIENTRY glGetProgramBinary(GLuint name, GLsizei size, GLsizei *length, GLenum *format, void *binary);
+static void x_glGetProgramBinary(MX_NATIVE_CALL *c)
+{
+    glGetProgramBinary((GLuint)I(c, 0), (GLsizei)I(c, 1), (GLsizei *)I(c, 2), (GLenum *)I(c, 3), (void *)I(c, 4));
+}
+
 void APIENTRY glGetProgramInfoLog(GLuint name, GLsizei size, GLsizei *length, GLchar *log);
 static void x_glGetProgramInfoLog(MX_NATIVE_CALL *c)
 {
@@ -2059,6 +2143,30 @@ static void x_glGetRenderbufferParameteriv(MX_NATIVE_CALL *c)
     glGetRenderbufferParameteriv((GLenum)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
 }
 
+void APIENTRY glGetSamplerParameterIiv(GLuint sampler, GLenum pname, GLint *params);
+static void x_glGetSamplerParameterIiv(MX_NATIVE_CALL *c)
+{
+    glGetSamplerParameterIiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+void APIENTRY glGetSamplerParameterIuiv(GLuint sampler, GLenum pname, GLuint *params);
+static void x_glGetSamplerParameterIuiv(MX_NATIVE_CALL *c)
+{
+    glGetSamplerParameterIuiv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint *)I(c, 2));
+}
+
+void APIENTRY glGetSamplerParameterfv(GLuint sampler, GLenum pname, GLfloat *params);
+static void x_glGetSamplerParameterfv(MX_NATIVE_CALL *c)
+{
+    glGetSamplerParameterfv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLfloat *)I(c, 2));
+}
+
+void APIENTRY glGetSamplerParameteriv(GLuint sampler, GLenum pname, GLint *params);
+static void x_glGetSamplerParameteriv(MX_NATIVE_CALL *c)
+{
+    glGetSamplerParameteriv((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
 void APIENTRY glGetShaderInfoLog(GLuint name, GLsizei size, GLsizei *length, GLchar *log);
 static void x_glGetShaderInfoLog(MX_NATIVE_CALL *c)
 {
@@ -2159,6 +2267,18 @@ void APIENTRY glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname,
 static void x_glGetTexLevelParameteriv(MX_NATIVE_CALL *c)
 {
     glGetTexLevelParameteriv((GLenum)I(c, 0), (GLint)I(c, 1), (GLenum)I(c, 2), (GLint *)I(c, 3));
+}
+
+void APIENTRY glGetTexParameterIiv(GLenum target, GLenum pname, GLint *params);
+static void x_glGetTexParameterIiv(MX_NATIVE_CALL *c)
+{
+    glGetTexParameterIiv((GLenum)I(c, 0), (GLenum)I(c, 1), (GLint *)I(c, 2));
+}
+
+void APIENTRY glGetTexParameterIuiv(GLenum target, GLenum pname, GLuint *params);
+static void x_glGetTexParameterIuiv(MX_NATIVE_CALL *c)
+{
+    glGetTexParameterIuiv((GLenum)I(c, 0), (GLenum)I(c, 1), (GLuint *)I(c, 2));
 }
 
 void APIENTRY glGetTexParameterfv(GLenum target, GLenum pname, GLfloat *params);
@@ -2753,6 +2873,12 @@ GLboolean APIENTRY glIsRenderbuffer(GLuint name);
 static void x_glIsRenderbuffer(MX_NATIVE_CALL *c)
 {
     c->rax = (unsigned long long)(ULONG_PTR)glIsRenderbuffer((GLuint)I(c, 0));
+}
+
+GLboolean APIENTRY glIsSampler(GLuint sampler);
+static void x_glIsSampler(MX_NATIVE_CALL *c)
+{
+    c->rax = (unsigned long long)(ULONG_PTR)glIsSampler((GLuint)I(c, 0));
 }
 
 GLboolean APIENTRY glIsShader(GLuint name);
@@ -3907,6 +4033,12 @@ static void x_glPrioritizeTextures(MX_NATIVE_CALL *c)
     glPrioritizeTextures((GLsizei)I(c, 0), (const GLuint *)I(c, 1), (const GLclampf *)I(c, 2));
 }
 
+void APIENTRY glProgramBinary(GLuint name, GLenum format, const void *binary, GLsizei size);
+static void x_glProgramBinary(MX_NATIVE_CALL *c)
+{
+    glProgramBinary((GLuint)I(c, 0), (GLenum)I(c, 1), (const void *)I(c, 2), (GLsizei)I(c, 3));
+}
+
 void APIENTRY glProgramParameteri(GLuint program, GLenum pname, GLint value);
 static void x_glProgramParameteri(MX_NATIVE_CALL *c)
 {
@@ -4525,6 +4657,42 @@ static void x_glSampleMaski(MX_NATIVE_CALL *c)
     glSampleMaski((GLuint)I(c, 0), (GLbitfield)I(c, 1));
 }
 
+void APIENTRY glSamplerParameterIiv(GLuint sampler, GLenum pname, const GLint *params);
+static void x_glSamplerParameterIiv(MX_NATIVE_CALL *c)
+{
+    glSamplerParameterIiv((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLint *)I(c, 2));
+}
+
+void APIENTRY glSamplerParameterIuiv(GLuint sampler, GLenum pname, const GLuint *params);
+static void x_glSamplerParameterIuiv(MX_NATIVE_CALL *c)
+{
+    glSamplerParameterIuiv((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLuint *)I(c, 2));
+}
+
+void APIENTRY glSamplerParameterf(GLuint sampler, GLenum pname, GLfloat param);
+static void x_glSamplerParameterf(MX_NATIVE_CALL *c)
+{
+    glSamplerParameterf((GLuint)I(c, 0), (GLenum)I(c, 1), F(c, 2));
+}
+
+void APIENTRY glSamplerParameterfv(GLuint sampler, GLenum pname, const GLfloat *params);
+static void x_glSamplerParameterfv(MX_NATIVE_CALL *c)
+{
+    glSamplerParameterfv((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLfloat *)I(c, 2));
+}
+
+void APIENTRY glSamplerParameteri(GLuint sampler, GLenum pname, GLint param);
+static void x_glSamplerParameteri(MX_NATIVE_CALL *c)
+{
+    glSamplerParameteri((GLuint)I(c, 0), (GLenum)I(c, 1), (GLint)I(c, 2));
+}
+
+void APIENTRY glSamplerParameteriv(GLuint sampler, GLenum pname, const GLint *params);
+static void x_glSamplerParameteriv(MX_NATIVE_CALL *c)
+{
+    glSamplerParameteriv((GLuint)I(c, 0), (GLenum)I(c, 1), (const GLint *)I(c, 2));
+}
+
 void APIENTRY glScaled(GLdouble x, GLdouble y, GLdouble z);
 static void x_glScaled(MX_NATIVE_CALL *c)
 {
@@ -5065,6 +5233,24 @@ static void x_glTexImage3D(MX_NATIVE_CALL *c)
     glTexImage3D((GLenum)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5), (GLint)I(c, 6), (GLenum)I(c, 7), (GLenum)I(c, 8), (const void *)I(c, 9));
 }
 
+void APIENTRY glTexImage3DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h, GLsizei d,                                             GLboolean fixed);
+static void x_glTexImage3DMultisample(MX_NATIVE_CALL *c)
+{
+    glTexImage3DMultisample((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5), (GLboolean)I(c, 6));
+}
+
+void APIENTRY glTexParameterIiv(GLenum target, GLenum pname, const GLint *params);
+static void x_glTexParameterIiv(MX_NATIVE_CALL *c)
+{
+    glTexParameterIiv((GLenum)I(c, 0), (GLenum)I(c, 1), (const GLint *)I(c, 2));
+}
+
+void APIENTRY glTexParameterIuiv(GLenum target, GLenum pname, const GLuint *params);
+static void x_glTexParameterIuiv(MX_NATIVE_CALL *c)
+{
+    glTexParameterIuiv((GLenum)I(c, 0), (GLenum)I(c, 1), (const GLuint *)I(c, 2));
+}
+
 void APIENTRY glTexParameterf(GLenum target, GLenum pname, GLfloat param);
 static void x_glTexParameterf(MX_NATIVE_CALL *c)
 {
@@ -5111,6 +5297,12 @@ void APIENTRY glTexStorage3D(GLenum target, GLsizei levels, GLenum internal, GLs
 static void x_glTexStorage3D(MX_NATIVE_CALL *c)
 {
     glTexStorage3D((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5));
+}
+
+void APIENTRY glTexStorage3DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                               GLsizei d, GLboolean fixed);
+static void x_glTexStorage3DMultisample(MX_NATIVE_CALL *c)
+{
+    glTexStorage3DMultisample((GLenum)I(c, 0), (GLsizei)I(c, 1), (GLenum)I(c, 2), (GLsizei)I(c, 3), (GLsizei)I(c, 4), (GLsizei)I(c, 5), (GLboolean)I(c, 6));
 }
 
 void APIENTRY glTexSubImage1D(GLenum target, GLint level, GLint x, GLsizei w, GLenum format, GLenum type,                                     const void *pixels);
@@ -6663,6 +6855,8 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glBindImageTextures,
     x_glBindProgramPipeline,
     x_glBindRenderbuffer,
+    x_glBindSampler,
+    x_glBindSamplers,
     x_glBindTexture,
     x_glBindTextureUnit,
     x_glBindTextures,
@@ -6697,6 +6891,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glClearBufferfi,
     x_glClearBufferfv,
     x_glClearBufferiv,
+    x_glClearBufferuiv,
     x_glClearColor,
     x_glClearDepth,
     x_glClearDepthf,
@@ -6756,8 +6951,12 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glColorP4uiv,
     x_glColorPointer,
     x_glCompileShader,
+    x_glCompressedTexImage1D,
     x_glCompressedTexImage2D,
+    x_glCompressedTexImage3D,
+    x_glCompressedTexSubImage1D,
     x_glCompressedTexSubImage2D,
+    x_glCompressedTexSubImage3D,
     x_glCompressedTextureSubImage1D,
     x_glCompressedTextureSubImage2D,
     x_glCompressedTextureSubImage3D,
@@ -6769,6 +6968,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glCopyTexImage2D,
     x_glCopyTexSubImage1D,
     x_glCopyTexSubImage2D,
+    x_glCopyTexSubImage3D,
     x_glCopyTextureSubImage1D,
     x_glCopyTextureSubImage2D,
     x_glCopyTextureSubImage3D,
@@ -6778,6 +6978,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glCreateProgramPipelines,
     x_glCreateQueries,
     x_glCreateRenderbuffers,
+    x_glCreateSamplers,
     x_glCreateShader,
     x_glCreateShaderProgramv,
     x_glCreateTextures,
@@ -6795,6 +6996,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glDeleteProgramPipelines,
     x_glDeleteQueries,
     x_glDeleteRenderbuffers,
+    x_glDeleteSamplers,
     x_glDeleteShader,
     x_glDeleteSync,
     x_glDeleteTextures,
@@ -6882,6 +7084,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glFramebufferTexture,
     x_glFramebufferTexture1D,
     x_glFramebufferTexture2D,
+    x_glFramebufferTexture3D,
     x_glFramebufferTextureLayer,
     x_glFrontFace,
     x_glFrustum,
@@ -6891,6 +7094,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGenProgramPipelines,
     x_glGenQueries,
     x_glGenRenderbuffers,
+    x_glGenSamplers,
     x_glGenTextures,
     x_glGenTransformFeedbacks,
     x_glGenVertexArrays,
@@ -6913,6 +7117,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGetBufferPointerv,
     x_glGetBufferSubData,
     x_glGetClipPlane,
+    x_glGetCompressedTexImage,
     x_glGetCompressedTextureImage,
     x_glGetCompressedTextureSubImage,
     x_glGetDebugMessageLog,
@@ -6956,6 +7161,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGetPixelMapusv,
     x_glGetPointerv,
     x_glGetPolygonStipple,
+    x_glGetProgramBinary,
     x_glGetProgramInfoLog,
     x_glGetProgramInterfaceiv,
     x_glGetProgramPipelineInfoLog,
@@ -6978,6 +7184,10 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGetQueryObjectuiv,
     x_glGetQueryiv,
     x_glGetRenderbufferParameteriv,
+    x_glGetSamplerParameterIiv,
+    x_glGetSamplerParameterIuiv,
+    x_glGetSamplerParameterfv,
+    x_glGetSamplerParameteriv,
     x_glGetShaderInfoLog,
     x_glGetShaderPrecisionFormat,
     x_glGetShaderSource,
@@ -6995,6 +7205,8 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glGetTexImage,
     x_glGetTexLevelParameterfv,
     x_glGetTexLevelParameteriv,
+    x_glGetTexParameterIiv,
+    x_glGetTexParameterIuiv,
     x_glGetTexParameterfv,
     x_glGetTexParameteriv,
     x_glGetTextureImage,
@@ -7094,6 +7306,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glIsProgramPipeline,
     x_glIsQuery,
     x_glIsRenderbuffer,
+    x_glIsSampler,
     x_glIsShader,
     x_glIsSync,
     x_glIsTexture,
@@ -7286,6 +7499,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glPopName,
     x_glPrimitiveRestartIndex,
     x_glPrioritizeTextures,
+    x_glProgramBinary,
     x_glProgramParameteri,
     x_glProgramUniform1d,
     x_glProgramUniform1dv,
@@ -7389,6 +7603,12 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glRotatef,
     x_glSampleCoverage,
     x_glSampleMaski,
+    x_glSamplerParameterIiv,
+    x_glSamplerParameterIuiv,
+    x_glSamplerParameterf,
+    x_glSamplerParameterfv,
+    x_glSamplerParameteri,
+    x_glSamplerParameteriv,
     x_glScaled,
     x_glScalef,
     x_glScissor,
@@ -7479,6 +7699,9 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glTexImage2D,
     x_glTexImage2DMultisample,
     x_glTexImage3D,
+    x_glTexImage3DMultisample,
+    x_glTexParameterIiv,
+    x_glTexParameterIuiv,
     x_glTexParameterf,
     x_glTexParameterfv,
     x_glTexParameteri,
@@ -7487,6 +7710,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glTexStorage2D,
     x_glTexStorage2DMultisample,
     x_glTexStorage3D,
+    x_glTexStorage3DMultisample,
     x_glTexSubImage1D,
     x_glTexSubImage2D,
     x_glTexSubImage3D,
@@ -7743,4 +7967,4 @@ static const MX_NATIVE_FN g_functions[] = {
     x_wglUseFontOutlinesW,
 };
 
-const MX_NATIVE_TABLE OpenGL32X64Thunks = {1103, 0, g_functions};
+const MX_NATIVE_TABLE OpenGL32X64Thunks = {1135, 0, g_functions};

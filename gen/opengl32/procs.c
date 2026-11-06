@@ -27,6 +27,8 @@ void APIENTRY glBindImageTexture(GLuint unit, GLuint texture, GLint level, GLboo
 void APIENTRY glBindImageTextures(GLuint first, GLsizei count, const GLuint *textures);
 void APIENTRY glBindProgramPipeline(GLuint pipeline);
 void APIENTRY glBindRenderbuffer(GLenum target, GLuint name);
+void APIENTRY glBindSampler(GLuint unit, GLuint sampler);
+void APIENTRY glBindSamplers(GLuint first, GLsizei count, const GLuint *samplers);
 void APIENTRY glBindTexture(GLenum target, GLuint name);
 void APIENTRY glBindTextureUnit(GLuint unit, GLuint texture);
 void APIENTRY glBindTextures(GLuint first, GLsizei count, const GLuint *textures);
@@ -61,6 +63,7 @@ void APIENTRY glClearBufferSubData(GLenum target, GLenum internal, GLintptr offs
 void APIENTRY glClearBufferfi(GLenum buffer, GLint index, GLfloat depth, GLint stencil);
 void APIENTRY glClearBufferfv(GLenum buffer, GLint index, const GLfloat *value);
 void APIENTRY glClearBufferiv(GLenum buffer, GLint index, const GLint *value);
+void APIENTRY glClearBufferuiv(GLenum buffer, GLint index, const GLuint *value);
 void APIENTRY glClearColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a);
 void APIENTRY glClearDepth(GLdouble d);
 void APIENTRY glClearDepthf(GLfloat d);
@@ -120,8 +123,12 @@ void APIENTRY glColorP4ui(GLenum type, GLuint color);
 void APIENTRY glColorP4uiv(GLenum type, const GLuint *color);
 void APIENTRY glColorPointer(GLint size, GLenum type, GLsizei stride, const void *pointer);
 void APIENTRY glCompileShader(GLuint name);
+void APIENTRY glCompressedTexImage1D(GLenum target, GLint level, GLenum internal, GLsizei w, GLint border,                                            GLsizei size, const void *data);
 void APIENTRY glCompressedTexImage2D(GLenum target, GLint level, GLenum internal, GLsizei w, GLsizei h,                                            GLint border, GLsizei size, const void *data);
+void APIENTRY glCompressedTexImage3D(GLenum target, GLint level, GLenum internal, GLsizei w, GLsizei h, GLsizei d,                                            GLint border, GLsizei size, const void *data);
+void APIENTRY glCompressedTexSubImage1D(GLenum target, GLint level, GLint x, GLsizei w, GLenum format, GLsizei size,                                               const void *data);
 void APIENTRY glCompressedTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h,                                               GLenum format, GLsizei size, const void *data);
+void APIENTRY glCompressedTexSubImage3D(GLenum target, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                               GLsizei d, GLenum format, GLsizei size, const void *data);
 void APIENTRY glCompressedTextureSubImage1D(GLuint texture, GLint level, GLint x, GLsizei w, GLenum format,                                                   GLsizei size, const void *data);
 void APIENTRY glCompressedTextureSubImage2D(GLuint texture, GLint level, GLint x, GLint y, GLsizei w, GLsizei h,                                                   GLenum format, GLsizei size, const void *data);
 void APIENTRY glCompressedTextureSubImage3D(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w,                                                   GLsizei h, GLsizei d, GLenum format, GLsizei size, const void *data);
@@ -133,6 +140,7 @@ void APIENTRY glCopyTexImage1D(GLenum target, GLint level, GLenum internalformat
 void APIENTRY glCopyTexImage2D(GLenum target, GLint level, GLenum internal, GLint x, GLint y, GLsizei w,                                      GLsizei h, GLint border);
 void APIENTRY glCopyTexSubImage1D(GLenum target, GLint level, GLint xoffset, GLint x, GLint y, GLsizei width);
 void APIENTRY glCopyTexSubImage2D(GLenum target, GLint level, GLint dx, GLint dy, GLint x, GLint y, GLsizei w,                                         GLsizei h);
+void APIENTRY glCopyTexSubImage3D(GLenum target, GLint level, GLint dx, GLint dy, GLint dz, GLint x, GLint y, GLsizei w,                                         GLsizei h);
 void APIENTRY glCopyTextureSubImage1D(GLuint texture, GLint level, GLint x, GLint sx, GLint sy, GLsizei w);
 void APIENTRY glCopyTextureSubImage2D(GLuint texture, GLint level, GLint x, GLint y, GLint sx, GLint sy, GLsizei w,                                             GLsizei h);
 void APIENTRY glCopyTextureSubImage3D(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLint sx, GLint sy,                                             GLsizei w, GLsizei h);
@@ -142,6 +150,7 @@ GLuint APIENTRY glCreateProgram(void);
 void APIENTRY glCreateProgramPipelines(GLsizei n, GLuint *pipelines);
 void APIENTRY glCreateQueries(GLenum target, GLsizei count, GLuint *names);
 void APIENTRY glCreateRenderbuffers(GLsizei n, GLuint *renderbuffers);
+void APIENTRY glCreateSamplers(GLsizei count, GLuint *samplers);
 GLuint APIENTRY glCreateShader(GLenum type);
 GLuint APIENTRY glCreateShaderProgramv(GLenum type, GLsizei count, const GLchar *const *strings);
 void APIENTRY glCreateTextures(GLenum target, GLsizei n, GLuint *textures);
@@ -159,6 +168,7 @@ void APIENTRY glDeleteProgram(GLuint name);
 void APIENTRY glDeleteProgramPipelines(GLsizei n, const GLuint *pipelines);
 void APIENTRY glDeleteQueries(GLsizei count, const GLuint *names);
 void APIENTRY glDeleteRenderbuffers(GLsizei n, const GLuint *names);
+void APIENTRY glDeleteSamplers(GLsizei count, const GLuint *samplers);
 void APIENTRY glDeleteShader(GLuint name);
 void APIENTRY glDeleteSync(GLsync handle);
 void APIENTRY glDeleteTextures(GLsizei n, const GLuint *textures);
@@ -246,6 +256,7 @@ void APIENTRY glFramebufferRenderbuffer(GLenum target, GLenum point, GLenum rbta
 void APIENTRY glFramebufferTexture(GLenum target, GLenum point, GLuint texture, GLint level);
 void APIENTRY glFramebufferTexture1D(GLenum target, GLenum point, GLenum textarget, GLuint texture, GLint level);
 void APIENTRY glFramebufferTexture2D(GLenum target, GLenum point, GLenum textarget, GLuint texture, GLint level);
+void APIENTRY glFramebufferTexture3D(GLenum target, GLenum point, GLenum textarget, GLuint texture, GLint level,                                            GLint zoffset);
 void APIENTRY glFramebufferTextureLayer(GLenum target, GLenum point, GLuint texture, GLint level, GLint layer);
 void APIENTRY glFrontFace(GLenum mode);
 void APIENTRY glFrustum(GLdouble left, GLdouble right, GLdouble bottom, GLdouble top_, GLdouble near_val,                               GLdouble far_val);
@@ -255,6 +266,7 @@ GLuint APIENTRY glGenLists(GLsizei range);
 void APIENTRY glGenProgramPipelines(GLsizei n, GLuint *pipelines);
 void APIENTRY glGenQueries(GLsizei count, GLuint *names);
 void APIENTRY glGenRenderbuffers(GLsizei n, GLuint *names);
+void APIENTRY glGenSamplers(GLsizei count, GLuint *samplers);
 void APIENTRY glGenTextures(GLsizei n, GLuint *textures);
 void APIENTRY glGenTransformFeedbacks(GLsizei n, GLuint *ids);
 void APIENTRY glGenVertexArrays(GLsizei n, GLuint *arrays);
@@ -277,6 +289,7 @@ void APIENTRY glGetBufferParameteriv(GLenum target, GLenum pname, GLint *params)
 void APIENTRY glGetBufferPointerv(GLenum target, GLenum pname, void **params);
 void APIENTRY glGetBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, void *data);
 void APIENTRY glGetClipPlane(GLenum plane, GLdouble *equation);
+void APIENTRY glGetCompressedTexImage(GLenum target, GLint level, void *image);
 void APIENTRY glGetCompressedTextureImage(GLuint texture, GLint level, GLsizei size, void *pixels);
 void APIENTRY glGetCompressedTextureSubImage(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w,                                                    GLsizei h, GLsizei d, GLsizei size, void *pixels);
 GLuint APIENTRY glGetDebugMessageLog(GLuint count, GLsizei size, GLenum *sources, GLenum *types, GLuint *ids,                                            GLenum *severities, GLsizei *lengths, GLchar *log);
@@ -320,6 +333,7 @@ void APIENTRY glGetPixelMapuiv(GLenum map, GLuint *values);
 void APIENTRY glGetPixelMapusv(GLenum map, GLushort *values);
 void APIENTRY glGetPointerv(GLenum pname, void **params);
 void APIENTRY glGetPolygonStipple(GLubyte *mask);
+void APIENTRY glGetProgramBinary(GLuint name, GLsizei size, GLsizei *length, GLenum *format, void *binary);
 void APIENTRY glGetProgramInfoLog(GLuint name, GLsizei size, GLsizei *length, GLchar *log);
 void APIENTRY glGetProgramInterfaceiv(GLuint program, GLenum iface, GLenum pname, GLint *params);
 void APIENTRY glGetProgramPipelineInfoLog(GLuint pipeline, GLsizei size, GLsizei *length, GLchar *log);
@@ -342,6 +356,10 @@ void APIENTRY glGetQueryObjectui64v(GLuint name, GLenum pname, GLuint64 *value);
 void APIENTRY glGetQueryObjectuiv(GLuint name, GLenum pname, GLuint *value);
 void APIENTRY glGetQueryiv(GLenum target, GLenum pname, GLint *value);
 void APIENTRY glGetRenderbufferParameteriv(GLenum target, GLenum pname, GLint *params);
+void APIENTRY glGetSamplerParameterIiv(GLuint sampler, GLenum pname, GLint *params);
+void APIENTRY glGetSamplerParameterIuiv(GLuint sampler, GLenum pname, GLuint *params);
+void APIENTRY glGetSamplerParameterfv(GLuint sampler, GLenum pname, GLfloat *params);
+void APIENTRY glGetSamplerParameteriv(GLuint sampler, GLenum pname, GLint *params);
 void APIENTRY glGetShaderInfoLog(GLuint name, GLsizei size, GLsizei *length, GLchar *log);
 void APIENTRY glGetShaderPrecisionFormat(GLenum shader_type, GLenum precision, GLint *range, GLint *prec);
 void APIENTRY glGetShaderSource(GLuint name, GLsizei size, GLsizei *length, GLchar *source);
@@ -359,6 +377,8 @@ void APIENTRY glGetTexGeniv(GLenum coord, GLenum pname, GLint *params);
 void APIENTRY glGetTexImage(GLenum target, GLint level, GLenum format, GLenum type, void *pixels);
 void APIENTRY glGetTexLevelParameterfv(GLenum target, GLint level, GLenum pname, GLfloat *params);
 void APIENTRY glGetTexLevelParameteriv(GLenum target, GLint level, GLenum pname, GLint *params);
+void APIENTRY glGetTexParameterIiv(GLenum target, GLenum pname, GLint *params);
+void APIENTRY glGetTexParameterIuiv(GLenum target, GLenum pname, GLuint *params);
 void APIENTRY glGetTexParameterfv(GLenum target, GLenum pname, GLfloat *params);
 void APIENTRY glGetTexParameteriv(GLenum target, GLenum pname, GLint *params);
 void APIENTRY glGetTextureImage(GLuint texture, GLint level, GLenum format, GLenum type, GLsizei size, void *pixels);
@@ -458,6 +478,7 @@ GLboolean APIENTRY glIsProgram(GLuint name);
 GLboolean APIENTRY glIsProgramPipeline(GLuint pipeline);
 GLboolean APIENTRY glIsQuery(GLuint name);
 GLboolean APIENTRY glIsRenderbuffer(GLuint name);
+GLboolean APIENTRY glIsSampler(GLuint sampler);
 GLboolean APIENTRY glIsShader(GLuint name);
 GLboolean APIENTRY glIsSync(GLsync handle);
 GLboolean APIENTRY glIsTexture(GLuint name);
@@ -650,6 +671,7 @@ void APIENTRY glPopMatrix(void);
 void APIENTRY glPopName(void);
 void APIENTRY glPrimitiveRestartIndex(GLuint index);
 void APIENTRY glPrioritizeTextures(GLsizei n, const GLuint *textures, const GLclampf *priorities);
+void APIENTRY glProgramBinary(GLuint name, GLenum format, const void *binary, GLsizei size);
 void APIENTRY glProgramParameteri(GLuint program, GLenum pname, GLint value);
 void APIENTRY glProgramUniform1d(GLuint program, GLint l, GLdouble a);
 void APIENTRY glProgramUniform1dv(GLuint program, GLint l, GLsizei count, const GLdouble *v);
@@ -753,6 +775,12 @@ void APIENTRY glRotated(GLdouble angle, GLdouble x, GLdouble y, GLdouble z);
 void APIENTRY glRotatef(GLfloat angle, GLfloat x, GLfloat y, GLfloat z);
 void APIENTRY glSampleCoverage(GLfloat value, GLboolean invert);
 void APIENTRY glSampleMaski(GLuint index, GLbitfield mask);
+void APIENTRY glSamplerParameterIiv(GLuint sampler, GLenum pname, const GLint *params);
+void APIENTRY glSamplerParameterIuiv(GLuint sampler, GLenum pname, const GLuint *params);
+void APIENTRY glSamplerParameterf(GLuint sampler, GLenum pname, GLfloat param);
+void APIENTRY glSamplerParameterfv(GLuint sampler, GLenum pname, const GLfloat *params);
+void APIENTRY glSamplerParameteri(GLuint sampler, GLenum pname, GLint param);
+void APIENTRY glSamplerParameteriv(GLuint sampler, GLenum pname, const GLint *params);
 void APIENTRY glScaled(GLdouble x, GLdouble y, GLdouble z);
 void APIENTRY glScalef(GLfloat x, GLfloat y, GLfloat z);
 void APIENTRY glScissor(GLint x, GLint y, GLsizei w, GLsizei h);
@@ -843,6 +871,9 @@ void APIENTRY glTexImage1D(GLenum target, GLint level, GLint internal, GLsizei w
 void APIENTRY glTexImage2D(GLenum target, GLint level, GLint internal, GLsizei w, GLsizei h, GLint border,                                  GLenum format, GLenum type, const void *pixels);
 void APIENTRY glTexImage2DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                             GLboolean fixed);
 void APIENTRY glTexImage3D(GLenum target, GLint level, GLint internal, GLsizei w, GLsizei h, GLsizei d,                                  GLint border, GLenum format, GLenum type, const void *pixels);
+void APIENTRY glTexImage3DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h, GLsizei d,                                             GLboolean fixed);
+void APIENTRY glTexParameterIiv(GLenum target, GLenum pname, const GLint *params);
+void APIENTRY glTexParameterIuiv(GLenum target, GLenum pname, const GLuint *params);
 void APIENTRY glTexParameterf(GLenum target, GLenum pname, GLfloat param);
 void APIENTRY glTexParameterfv(GLenum target, GLenum pname, const GLfloat *params);
 void APIENTRY glTexParameteri(GLenum target, GLenum pname, GLint param);
@@ -851,6 +882,7 @@ void APIENTRY glTexStorage1D(GLenum target, GLsizei levels, GLenum internal, GLs
 void APIENTRY glTexStorage2D(GLenum target, GLsizei levels, GLenum internal, GLsizei w, GLsizei h);
 void APIENTRY glTexStorage2DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                               GLboolean fixed);
 void APIENTRY glTexStorage3D(GLenum target, GLsizei levels, GLenum internal, GLsizei w, GLsizei h, GLsizei d);
+void APIENTRY glTexStorage3DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,                                               GLsizei d, GLboolean fixed);
 void APIENTRY glTexSubImage1D(GLenum target, GLint level, GLint x, GLsizei w, GLenum format, GLenum type,                                     const void *pixels);
 void APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h, GLenum format,                                     GLenum type, const void *pixels);
 void APIENTRY glTexSubImage3D(GLenum target, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                     GLsizei d, GLenum format, GLenum type, const void *pixels);
@@ -1140,6 +1172,8 @@ const GL_PROC GlProcs[] = {
     {"glBindProgramPipeline", (const void *)glBindProgramPipeline},
     {"glBindRenderbuffer", (const void *)glBindRenderbuffer},
     {"glBindRenderbufferEXT", (const void *)glBindRenderbuffer},
+    {"glBindSampler", (const void *)glBindSampler},
+    {"glBindSamplers", (const void *)glBindSamplers},
     {"glBindTexture", (const void *)glBindTexture},
     {"glBindTextureUnit", (const void *)glBindTextureUnit},
     {"glBindTextures", (const void *)glBindTextures},
@@ -1182,6 +1216,7 @@ const GL_PROC GlProcs[] = {
     {"glClearBufferfi", (const void *)glClearBufferfi},
     {"glClearBufferfv", (const void *)glClearBufferfv},
     {"glClearBufferiv", (const void *)glClearBufferiv},
+    {"glClearBufferuiv", (const void *)glClearBufferuiv},
     {"glClearColor", (const void *)glClearColor},
     {"glClearDepth", (const void *)glClearDepth},
     {"glClearDepthf", (const void *)glClearDepthf},
@@ -1243,10 +1278,14 @@ const GL_PROC GlProcs[] = {
     {"glColorPointer", (const void *)glColorPointer},
     {"glCompileShader", (const void *)glCompileShader},
     {"glCompileShaderARB", (const void *)glCompileShader},
+    {"glCompressedTexImage1D", (const void *)glCompressedTexImage1D},
     {"glCompressedTexImage2D", (const void *)glCompressedTexImage2D},
     {"glCompressedTexImage2DARB", (const void *)glCompressedTexImage2D},
+    {"glCompressedTexImage3D", (const void *)glCompressedTexImage3D},
+    {"glCompressedTexSubImage1D", (const void *)glCompressedTexSubImage1D},
     {"glCompressedTexSubImage2D", (const void *)glCompressedTexSubImage2D},
     {"glCompressedTexSubImage2DARB", (const void *)glCompressedTexSubImage2D},
+    {"glCompressedTexSubImage3D", (const void *)glCompressedTexSubImage3D},
     {"glCompressedTextureSubImage1D", (const void *)glCompressedTextureSubImage1D},
     {"glCompressedTextureSubImage2D", (const void *)glCompressedTextureSubImage2D},
     {"glCompressedTextureSubImage3D", (const void *)glCompressedTextureSubImage3D},
@@ -1258,6 +1297,7 @@ const GL_PROC GlProcs[] = {
     {"glCopyTexImage2D", (const void *)glCopyTexImage2D},
     {"glCopyTexSubImage1D", (const void *)glCopyTexSubImage1D},
     {"glCopyTexSubImage2D", (const void *)glCopyTexSubImage2D},
+    {"glCopyTexSubImage3D", (const void *)glCopyTexSubImage3D},
     {"glCopyTextureSubImage1D", (const void *)glCopyTextureSubImage1D},
     {"glCopyTextureSubImage2D", (const void *)glCopyTextureSubImage2D},
     {"glCopyTextureSubImage3D", (const void *)glCopyTextureSubImage3D},
@@ -1268,6 +1308,7 @@ const GL_PROC GlProcs[] = {
     {"glCreateProgramPipelines", (const void *)glCreateProgramPipelines},
     {"glCreateQueries", (const void *)glCreateQueries},
     {"glCreateRenderbuffers", (const void *)glCreateRenderbuffers},
+    {"glCreateSamplers", (const void *)glCreateSamplers},
     {"glCreateShader", (const void *)glCreateShader},
     {"glCreateShaderObjectARB", (const void *)glCreateShader},
     {"glCreateShaderProgramv", (const void *)glCreateShaderProgramv},
@@ -1290,6 +1331,7 @@ const GL_PROC GlProcs[] = {
     {"glDeleteQueriesARB", (const void *)glDeleteQueries},
     {"glDeleteRenderbuffers", (const void *)glDeleteRenderbuffers},
     {"glDeleteRenderbuffersEXT", (const void *)glDeleteRenderbuffers},
+    {"glDeleteSamplers", (const void *)glDeleteSamplers},
     {"glDeleteShader", (const void *)glDeleteShader},
     {"glDeleteSync", (const void *)glDeleteSync},
     {"glDeleteTextures", (const void *)glDeleteTextures},
@@ -1386,6 +1428,7 @@ const GL_PROC GlProcs[] = {
     {"glFramebufferTexture1DEXT", (const void *)glFramebufferTexture1D},
     {"glFramebufferTexture2D", (const void *)glFramebufferTexture2D},
     {"glFramebufferTexture2DEXT", (const void *)glFramebufferTexture2D},
+    {"glFramebufferTexture3D", (const void *)glFramebufferTexture3D},
     {"glFramebufferTextureLayer", (const void *)glFramebufferTextureLayer},
     {"glFrontFace", (const void *)glFrontFace},
     {"glFrustum", (const void *)glFrustum},
@@ -1399,6 +1442,7 @@ const GL_PROC GlProcs[] = {
     {"glGenQueriesARB", (const void *)glGenQueries},
     {"glGenRenderbuffers", (const void *)glGenRenderbuffers},
     {"glGenRenderbuffersEXT", (const void *)glGenRenderbuffers},
+    {"glGenSamplers", (const void *)glGenSamplers},
     {"glGenTextures", (const void *)glGenTextures},
     {"glGenTransformFeedbacks", (const void *)glGenTransformFeedbacks},
     {"glGenVertexArrays", (const void *)glGenVertexArrays},
@@ -1430,6 +1474,7 @@ const GL_PROC GlProcs[] = {
     {"glGetBufferSubData", (const void *)glGetBufferSubData},
     {"glGetBufferSubDataARB", (const void *)glGetBufferSubData},
     {"glGetClipPlane", (const void *)glGetClipPlane},
+    {"glGetCompressedTexImage", (const void *)glGetCompressedTexImage},
     {"glGetCompressedTextureImage", (const void *)glGetCompressedTextureImage},
     {"glGetCompressedTextureSubImage", (const void *)glGetCompressedTextureSubImage},
     {"glGetDebugMessageLog", (const void *)glGetDebugMessageLog},
@@ -1475,6 +1520,7 @@ const GL_PROC GlProcs[] = {
     {"glGetPixelMapusv", (const void *)glGetPixelMapusv},
     {"glGetPointerv", (const void *)glGetPointerv},
     {"glGetPolygonStipple", (const void *)glGetPolygonStipple},
+    {"glGetProgramBinary", (const void *)glGetProgramBinary},
     {"glGetProgramInfoLog", (const void *)glGetProgramInfoLog},
     {"glGetProgramInterfaceiv", (const void *)glGetProgramInterfaceiv},
     {"glGetProgramPipelineInfoLog", (const void *)glGetProgramPipelineInfoLog},
@@ -1501,6 +1547,10 @@ const GL_PROC GlProcs[] = {
     {"glGetQueryivARB", (const void *)glGetQueryiv},
     {"glGetRenderbufferParameteriv", (const void *)glGetRenderbufferParameteriv},
     {"glGetRenderbufferParameterivEXT", (const void *)glGetRenderbufferParameteriv},
+    {"glGetSamplerParameterIiv", (const void *)glGetSamplerParameterIiv},
+    {"glGetSamplerParameterIuiv", (const void *)glGetSamplerParameterIuiv},
+    {"glGetSamplerParameterfv", (const void *)glGetSamplerParameterfv},
+    {"glGetSamplerParameteriv", (const void *)glGetSamplerParameteriv},
     {"glGetShaderInfoLog", (const void *)glGetShaderInfoLog},
     {"glGetShaderPrecisionFormat", (const void *)glGetShaderPrecisionFormat},
     {"glGetShaderSource", (const void *)glGetShaderSource},
@@ -1519,6 +1569,8 @@ const GL_PROC GlProcs[] = {
     {"glGetTexImage", (const void *)glGetTexImage},
     {"glGetTexLevelParameterfv", (const void *)glGetTexLevelParameterfv},
     {"glGetTexLevelParameteriv", (const void *)glGetTexLevelParameteriv},
+    {"glGetTexParameterIiv", (const void *)glGetTexParameterIiv},
+    {"glGetTexParameterIuiv", (const void *)glGetTexParameterIuiv},
     {"glGetTexParameterfv", (const void *)glGetTexParameterfv},
     {"glGetTexParameteriv", (const void *)glGetTexParameteriv},
     {"glGetTextureImage", (const void *)glGetTextureImage},
@@ -1626,6 +1678,7 @@ const GL_PROC GlProcs[] = {
     {"glIsQueryARB", (const void *)glIsQuery},
     {"glIsRenderbuffer", (const void *)glIsRenderbuffer},
     {"glIsRenderbufferEXT", (const void *)glIsRenderbuffer},
+    {"glIsSampler", (const void *)glIsSampler},
     {"glIsShader", (const void *)glIsShader},
     {"glIsSync", (const void *)glIsSync},
     {"glIsTexture", (const void *)glIsTexture},
@@ -1822,6 +1875,7 @@ const GL_PROC GlProcs[] = {
     {"glPopName", (const void *)glPopName},
     {"glPrimitiveRestartIndex", (const void *)glPrimitiveRestartIndex},
     {"glPrioritizeTextures", (const void *)glPrioritizeTextures},
+    {"glProgramBinary", (const void *)glProgramBinary},
     {"glProgramParameteri", (const void *)glProgramParameteri},
     {"glProgramUniform1d", (const void *)glProgramUniform1d},
     {"glProgramUniform1dv", (const void *)glProgramUniform1dv},
@@ -1927,6 +1981,12 @@ const GL_PROC GlProcs[] = {
     {"glRotatef", (const void *)glRotatef},
     {"glSampleCoverage", (const void *)glSampleCoverage},
     {"glSampleMaski", (const void *)glSampleMaski},
+    {"glSamplerParameterIiv", (const void *)glSamplerParameterIiv},
+    {"glSamplerParameterIuiv", (const void *)glSamplerParameterIuiv},
+    {"glSamplerParameterf", (const void *)glSamplerParameterf},
+    {"glSamplerParameterfv", (const void *)glSamplerParameterfv},
+    {"glSamplerParameteri", (const void *)glSamplerParameteri},
+    {"glSamplerParameteriv", (const void *)glSamplerParameteriv},
     {"glScaled", (const void *)glScaled},
     {"glScalef", (const void *)glScalef},
     {"glScissor", (const void *)glScissor},
@@ -2018,6 +2078,9 @@ const GL_PROC GlProcs[] = {
     {"glTexImage2D", (const void *)glTexImage2D},
     {"glTexImage2DMultisample", (const void *)glTexImage2DMultisample},
     {"glTexImage3D", (const void *)glTexImage3D},
+    {"glTexImage3DMultisample", (const void *)glTexImage3DMultisample},
+    {"glTexParameterIiv", (const void *)glTexParameterIiv},
+    {"glTexParameterIuiv", (const void *)glTexParameterIuiv},
     {"glTexParameterf", (const void *)glTexParameterf},
     {"glTexParameterfv", (const void *)glTexParameterfv},
     {"glTexParameteri", (const void *)glTexParameteri},
@@ -2026,6 +2089,7 @@ const GL_PROC GlProcs[] = {
     {"glTexStorage2D", (const void *)glTexStorage2D},
     {"glTexStorage2DMultisample", (const void *)glTexStorage2DMultisample},
     {"glTexStorage3D", (const void *)glTexStorage3D},
+    {"glTexStorage3DMultisample", (const void *)glTexStorage3DMultisample},
     {"glTexSubImage1D", (const void *)glTexSubImage1D},
     {"glTexSubImage2D", (const void *)glTexSubImage2D},
     {"glTexSubImage3D", (const void *)glTexSubImage3D},
@@ -2305,4 +2369,4 @@ const GL_PROC GlProcs[] = {
     {"wglUseFontOutlinesA", (const void *)wglUseFontOutlinesA},
     {"wglUseFontOutlinesW", (const void *)wglUseFontOutlinesW},
 };
-const ULONG GlProcCount = 1196;
+const ULONG GlProcCount = 1228;

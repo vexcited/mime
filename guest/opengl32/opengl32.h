@@ -326,7 +326,7 @@ typedef struct GlListTable {
 
 typedef struct GlShared {
     LONG refs;
-    GlNames buffers, textures, renderbuffers, programs, shaders;
+    GlNames buffers, textures, renderbuffers, programs, shaders, samplers;
     GlListTable lists;
 } GlShared;
 
@@ -584,6 +584,7 @@ typedef struct GlContext {
     GLuint renderbuffer;
     GLuint active_texture;
     GLuint units[32][12]; /* see texture.c: unit slots by target. */
+    GLuint sampler_units[32]; /* the sampler object bound to each unit, 0 for none. */
     GLenum draw_buffer, read_buffer; /* default framebuffer. */
 
     /* fixed state. */
@@ -718,6 +719,8 @@ int gl_dsa_get(GlContext *ctx, GLenum pname, GLdouble *v); /* dsa.c: the limits 
 BOOL gl_vertex_binding_get(GlContext *ctx, GLenum pname, GLuint index, GLint64 *value);
 GlTexture *gl_unit_texture(GlContext *ctx, GLuint unit, GLenum sampler_type);
 uint32_t gl_texture_sampler(GlTexture *t);
+uint32_t gl_sampler_state_id(const GlSamplerState *s, uint32_t levels, GLint base_level, GLint max_level);
+uint32_t gl_unit_sampler(GlContext *ctx, GLuint unit, GlTexture *t); /* the sampler object bound to the unit or the texture's. */
 BOOL gl_texture_ready(GlContext *ctx, GlTexture *t);
 uint32_t gl_mtl_format(GLenum internal_format, GLenum format, GLenum type, uint32_t *swizzle, BOOL *compressed);
 BOOL gl_format_is_depth(uint32_t mtl_format);

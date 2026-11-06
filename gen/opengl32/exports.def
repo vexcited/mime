@@ -25,6 +25,8 @@ EXPORTS
     glBindImageTextures
     glBindProgramPipeline
     glBindRenderbuffer
+    glBindSampler
+    glBindSamplers
     glBindTexture
     glBindTextureUnit
     glBindTextures
@@ -59,6 +61,7 @@ EXPORTS
     glClearBufferfi
     glClearBufferfv
     glClearBufferiv
+    glClearBufferuiv
     glClearColor
     glClearDepth
     glClearDepthf
@@ -118,8 +121,12 @@ EXPORTS
     glColorP4uiv
     glColorPointer
     glCompileShader
+    glCompressedTexImage1D
     glCompressedTexImage2D
+    glCompressedTexImage3D
+    glCompressedTexSubImage1D
     glCompressedTexSubImage2D
+    glCompressedTexSubImage3D
     glCompressedTextureSubImage1D
     glCompressedTextureSubImage2D
     glCompressedTextureSubImage3D
@@ -131,6 +138,7 @@ EXPORTS
     glCopyTexImage2D
     glCopyTexSubImage1D
     glCopyTexSubImage2D
+    glCopyTexSubImage3D
     glCopyTextureSubImage1D
     glCopyTextureSubImage2D
     glCopyTextureSubImage3D
@@ -140,6 +148,7 @@ EXPORTS
     glCreateProgramPipelines
     glCreateQueries
     glCreateRenderbuffers
+    glCreateSamplers
     glCreateShader
     glCreateShaderProgramv
     glCreateTextures
@@ -157,6 +166,7 @@ EXPORTS
     glDeleteProgramPipelines
     glDeleteQueries
     glDeleteRenderbuffers
+    glDeleteSamplers
     glDeleteShader
     glDeleteSync
     glDeleteTextures
@@ -244,6 +254,7 @@ EXPORTS
     glFramebufferTexture
     glFramebufferTexture1D
     glFramebufferTexture2D
+    glFramebufferTexture3D
     glFramebufferTextureLayer
     glFrontFace
     glFrustum
@@ -253,6 +264,7 @@ EXPORTS
     glGenProgramPipelines
     glGenQueries
     glGenRenderbuffers
+    glGenSamplers
     glGenTextures
     glGenTransformFeedbacks
     glGenVertexArrays
@@ -275,6 +287,7 @@ EXPORTS
     glGetBufferPointerv
     glGetBufferSubData
     glGetClipPlane
+    glGetCompressedTexImage
     glGetCompressedTextureImage
     glGetCompressedTextureSubImage
     glGetDebugMessageLog
@@ -318,6 +331,7 @@ EXPORTS
     glGetPixelMapusv
     glGetPointerv
     glGetPolygonStipple
+    glGetProgramBinary
     glGetProgramInfoLog
     glGetProgramInterfaceiv
     glGetProgramPipelineInfoLog
@@ -340,6 +354,10 @@ EXPORTS
     glGetQueryObjectuiv
     glGetQueryiv
     glGetRenderbufferParameteriv
+    glGetSamplerParameterIiv
+    glGetSamplerParameterIuiv
+    glGetSamplerParameterfv
+    glGetSamplerParameteriv
     glGetShaderInfoLog
     glGetShaderPrecisionFormat
     glGetShaderSource
@@ -357,6 +375,8 @@ EXPORTS
     glGetTexImage
     glGetTexLevelParameterfv
     glGetTexLevelParameteriv
+    glGetTexParameterIiv
+    glGetTexParameterIuiv
     glGetTexParameterfv
     glGetTexParameteriv
     glGetTextureImage
@@ -456,6 +476,7 @@ EXPORTS
     glIsProgramPipeline
     glIsQuery
     glIsRenderbuffer
+    glIsSampler
     glIsShader
     glIsSync
     glIsTexture
@@ -648,6 +669,7 @@ EXPORTS
     glPopName
     glPrimitiveRestartIndex
     glPrioritizeTextures
+    glProgramBinary
     glProgramParameteri
     glProgramUniform1d
     glProgramUniform1dv
@@ -751,6 +773,12 @@ EXPORTS
     glRotatef
     glSampleCoverage
     glSampleMaski
+    glSamplerParameterIiv
+    glSamplerParameterIuiv
+    glSamplerParameterf
+    glSamplerParameterfv
+    glSamplerParameteri
+    glSamplerParameteriv
     glScaled
     glScalef
     glScissor
@@ -841,6 +869,9 @@ EXPORTS
     glTexImage2D
     glTexImage2DMultisample
     glTexImage3D
+    glTexImage3DMultisample
+    glTexParameterIiv
+    glTexParameterIuiv
     glTexParameterf
     glTexParameterfv
     glTexParameteri
@@ -849,6 +880,7 @@ EXPORTS
     glTexStorage2D
     glTexStorage2DMultisample
     glTexStorage3D
+    glTexStorage3DMultisample
     glTexSubImage1D
     glTexSubImage2D
     glTexSubImage3D

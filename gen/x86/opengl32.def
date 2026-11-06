@@ -25,6 +25,8 @@ EXPORTS
     glBindImageTextures=_glBindImageTextures@12
     glBindProgramPipeline=_glBindProgramPipeline@4
     glBindRenderbuffer=_glBindRenderbuffer@8
+    glBindSampler=_glBindSampler@8
+    glBindSamplers=_glBindSamplers@12
     glBindTexture=_glBindTexture@8
     glBindTextureUnit=_glBindTextureUnit@8
     glBindTextures=_glBindTextures@12
@@ -59,6 +61,7 @@ EXPORTS
     glClearBufferfi=_glClearBufferfi@16
     glClearBufferfv=_glClearBufferfv@12
     glClearBufferiv=_glClearBufferiv@12
+    glClearBufferuiv=_glClearBufferuiv@12
     glClearColor=_glClearColor@16
     glClearDepth=_glClearDepth@8
     glClearDepthf=_glClearDepthf@4
@@ -118,8 +121,12 @@ EXPORTS
     glColorP4uiv=_glColorP4uiv@8
     glColorPointer=_glColorPointer@16
     glCompileShader=_glCompileShader@4
+    glCompressedTexImage1D=_glCompressedTexImage1D@28
     glCompressedTexImage2D=_glCompressedTexImage2D@32
+    glCompressedTexImage3D=_glCompressedTexImage3D@36
+    glCompressedTexSubImage1D=_glCompressedTexSubImage1D@28
     glCompressedTexSubImage2D=_glCompressedTexSubImage2D@36
+    glCompressedTexSubImage3D=_glCompressedTexSubImage3D@44
     glCompressedTextureSubImage1D=_glCompressedTextureSubImage1D@28
     glCompressedTextureSubImage2D=_glCompressedTextureSubImage2D@36
     glCompressedTextureSubImage3D=_glCompressedTextureSubImage3D@44
@@ -131,6 +138,7 @@ EXPORTS
     glCopyTexImage2D=_glCopyTexImage2D@32
     glCopyTexSubImage1D=_glCopyTexSubImage1D@24
     glCopyTexSubImage2D=_glCopyTexSubImage2D@32
+    glCopyTexSubImage3D=_glCopyTexSubImage3D@36
     glCopyTextureSubImage1D=_glCopyTextureSubImage1D@24
     glCopyTextureSubImage2D=_glCopyTextureSubImage2D@32
     glCopyTextureSubImage3D=_glCopyTextureSubImage3D@36
@@ -140,6 +148,7 @@ EXPORTS
     glCreateProgramPipelines=_glCreateProgramPipelines@8
     glCreateQueries=_glCreateQueries@12
     glCreateRenderbuffers=_glCreateRenderbuffers@8
+    glCreateSamplers=_glCreateSamplers@8
     glCreateShader=_glCreateShader@4
     glCreateShaderProgramv=_glCreateShaderProgramv@12
     glCreateTextures=_glCreateTextures@12
@@ -157,6 +166,7 @@ EXPORTS
     glDeleteProgramPipelines=_glDeleteProgramPipelines@8
     glDeleteQueries=_glDeleteQueries@8
     glDeleteRenderbuffers=_glDeleteRenderbuffers@8
+    glDeleteSamplers=_glDeleteSamplers@8
     glDeleteShader=_glDeleteShader@4
     glDeleteSync=_glDeleteSync@4
     glDeleteTextures=_glDeleteTextures@8
@@ -244,6 +254,7 @@ EXPORTS
     glFramebufferTexture=_glFramebufferTexture@16
     glFramebufferTexture1D=_glFramebufferTexture1D@20
     glFramebufferTexture2D=_glFramebufferTexture2D@20
+    glFramebufferTexture3D=_glFramebufferTexture3D@24
     glFramebufferTextureLayer=_glFramebufferTextureLayer@20
     glFrontFace=_glFrontFace@4
     glFrustum=_glFrustum@48
@@ -253,6 +264,7 @@ EXPORTS
     glGenProgramPipelines=_glGenProgramPipelines@8
     glGenQueries=_glGenQueries@8
     glGenRenderbuffers=_glGenRenderbuffers@8
+    glGenSamplers=_glGenSamplers@8
     glGenTextures=_glGenTextures@8
     glGenTransformFeedbacks=_glGenTransformFeedbacks@8
     glGenVertexArrays=_glGenVertexArrays@8
@@ -275,6 +287,7 @@ EXPORTS
     glGetBufferPointerv=_glGetBufferPointerv@12
     glGetBufferSubData=_glGetBufferSubData@16
     glGetClipPlane=_glGetClipPlane@8
+    glGetCompressedTexImage=_glGetCompressedTexImage@12
     glGetCompressedTextureImage=_glGetCompressedTextureImage@16
     glGetCompressedTextureSubImage=_glGetCompressedTextureSubImage@40
     glGetDebugMessageLog=_glGetDebugMessageLog@32
@@ -318,6 +331,7 @@ EXPORTS
     glGetPixelMapusv=_glGetPixelMapusv@8
     glGetPointerv=_glGetPointerv@8
     glGetPolygonStipple=_glGetPolygonStipple@4
+    glGetProgramBinary=_glGetProgramBinary@20
     glGetProgramInfoLog=_glGetProgramInfoLog@16
     glGetProgramInterfaceiv=_glGetProgramInterfaceiv@16
     glGetProgramPipelineInfoLog=_glGetProgramPipelineInfoLog@16
@@ -340,6 +354,10 @@ EXPORTS
     glGetQueryObjectuiv=_glGetQueryObjectuiv@12
     glGetQueryiv=_glGetQueryiv@12
     glGetRenderbufferParameteriv=_glGetRenderbufferParameteriv@12
+    glGetSamplerParameterIiv=_glGetSamplerParameterIiv@12
+    glGetSamplerParameterIuiv=_glGetSamplerParameterIuiv@12
+    glGetSamplerParameterfv=_glGetSamplerParameterfv@12
+    glGetSamplerParameteriv=_glGetSamplerParameteriv@12
     glGetShaderInfoLog=_glGetShaderInfoLog@16
     glGetShaderPrecisionFormat=_glGetShaderPrecisionFormat@16
     glGetShaderSource=_glGetShaderSource@16
@@ -357,6 +375,8 @@ EXPORTS
     glGetTexImage=_glGetTexImage@20
     glGetTexLevelParameterfv=_glGetTexLevelParameterfv@16
     glGetTexLevelParameteriv=_glGetTexLevelParameteriv@16
+    glGetTexParameterIiv=_glGetTexParameterIiv@12
+    glGetTexParameterIuiv=_glGetTexParameterIuiv@12
     glGetTexParameterfv=_glGetTexParameterfv@12
     glGetTexParameteriv=_glGetTexParameteriv@12
     glGetTextureImage=_glGetTextureImage@24
@@ -456,6 +476,7 @@ EXPORTS
     glIsProgramPipeline=_glIsProgramPipeline@4
     glIsQuery=_glIsQuery@4
     glIsRenderbuffer=_glIsRenderbuffer@4
+    glIsSampler=_glIsSampler@4
     glIsShader=_glIsShader@4
     glIsSync=_glIsSync@4
     glIsTexture=_glIsTexture@4
@@ -648,6 +669,7 @@ EXPORTS
     glPopName=_glPopName@0
     glPrimitiveRestartIndex=_glPrimitiveRestartIndex@4
     glPrioritizeTextures=_glPrioritizeTextures@12
+    glProgramBinary=_glProgramBinary@16
     glProgramParameteri=_glProgramParameteri@12
     glProgramUniform1d=_glProgramUniform1d@16
     glProgramUniform1dv=_glProgramUniform1dv@16
@@ -751,6 +773,12 @@ EXPORTS
     glRotatef=_glRotatef@16
     glSampleCoverage=_glSampleCoverage@8
     glSampleMaski=_glSampleMaski@8
+    glSamplerParameterIiv=_glSamplerParameterIiv@12
+    glSamplerParameterIuiv=_glSamplerParameterIuiv@12
+    glSamplerParameterf=_glSamplerParameterf@12
+    glSamplerParameterfv=_glSamplerParameterfv@12
+    glSamplerParameteri=_glSamplerParameteri@12
+    glSamplerParameteriv=_glSamplerParameteriv@12
     glScaled=_glScaled@24
     glScalef=_glScalef@12
     glScissor=_glScissor@16
@@ -841,6 +869,9 @@ EXPORTS
     glTexImage2D=_glTexImage2D@36
     glTexImage2DMultisample=_glTexImage2DMultisample@24
     glTexImage3D=_glTexImage3D@40
+    glTexImage3DMultisample=_glTexImage3DMultisample@28
+    glTexParameterIiv=_glTexParameterIiv@12
+    glTexParameterIuiv=_glTexParameterIuiv@12
     glTexParameterf=_glTexParameterf@12
     glTexParameterfv=_glTexParameterfv@12
     glTexParameteri=_glTexParameteri@12
@@ -849,6 +880,7 @@ EXPORTS
     glTexStorage2D=_glTexStorage2D@20
     glTexStorage2DMultisample=_glTexStorage2DMultisample@24
     glTexStorage3D=_glTexStorage3D@24
+    glTexStorage3DMultisample=_glTexStorage3DMultisample@28
     glTexSubImage1D=_glTexSubImage1D@28
     glTexSubImage2D=_glTexSubImage2D@36
     glTexSubImage3D=_glTexSubImage3D@44

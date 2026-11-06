@@ -25,6 +25,8 @@ EXPORTS
     glBindImageTextures@12
     glBindProgramPipeline@4
     glBindRenderbuffer@8
+    glBindSampler@8
+    glBindSamplers@12
     glBindTexture@8
     glBindTextureUnit@8
     glBindTextures@12
@@ -59,6 +61,7 @@ EXPORTS
     glClearBufferfi@16
     glClearBufferfv@12
     glClearBufferiv@12
+    glClearBufferuiv@12
     glClearColor@16
     glClearDepth@8
     glClearDepthf@4
@@ -118,8 +121,12 @@ EXPORTS
     glColorP4uiv@8
     glColorPointer@16
     glCompileShader@4
+    glCompressedTexImage1D@28
     glCompressedTexImage2D@32
+    glCompressedTexImage3D@36
+    glCompressedTexSubImage1D@28
     glCompressedTexSubImage2D@36
+    glCompressedTexSubImage3D@44
     glCompressedTextureSubImage1D@28
     glCompressedTextureSubImage2D@36
     glCompressedTextureSubImage3D@44
@@ -131,6 +138,7 @@ EXPORTS
     glCopyTexImage2D@32
     glCopyTexSubImage1D@24
     glCopyTexSubImage2D@32
+    glCopyTexSubImage3D@36
     glCopyTextureSubImage1D@24
     glCopyTextureSubImage2D@32
     glCopyTextureSubImage3D@36
@@ -140,6 +148,7 @@ EXPORTS
     glCreateProgramPipelines@8
     glCreateQueries@12
     glCreateRenderbuffers@8
+    glCreateSamplers@8
     glCreateShader@4
     glCreateShaderProgramv@12
     glCreateTextures@12
@@ -157,6 +166,7 @@ EXPORTS
     glDeleteProgramPipelines@8
     glDeleteQueries@8
     glDeleteRenderbuffers@8
+    glDeleteSamplers@8
     glDeleteShader@4
     glDeleteSync@4
     glDeleteTextures@8
@@ -244,6 +254,7 @@ EXPORTS
     glFramebufferTexture@16
     glFramebufferTexture1D@20
     glFramebufferTexture2D@20
+    glFramebufferTexture3D@24
     glFramebufferTextureLayer@20
     glFrontFace@4
     glFrustum@48
@@ -253,6 +264,7 @@ EXPORTS
     glGenProgramPipelines@8
     glGenQueries@8
     glGenRenderbuffers@8
+    glGenSamplers@8
     glGenTextures@8
     glGenTransformFeedbacks@8
     glGenVertexArrays@8
@@ -275,6 +287,7 @@ EXPORTS
     glGetBufferPointerv@12
     glGetBufferSubData@16
     glGetClipPlane@8
+    glGetCompressedTexImage@12
     glGetCompressedTextureImage@16
     glGetCompressedTextureSubImage@40
     glGetDebugMessageLog@32
@@ -318,6 +331,7 @@ EXPORTS
     glGetPixelMapusv@8
     glGetPointerv@8
     glGetPolygonStipple@4
+    glGetProgramBinary@20
     glGetProgramInfoLog@16
     glGetProgramInterfaceiv@16
     glGetProgramPipelineInfoLog@16
@@ -340,6 +354,10 @@ EXPORTS
     glGetQueryObjectuiv@12
     glGetQueryiv@12
     glGetRenderbufferParameteriv@12
+    glGetSamplerParameterIiv@12
+    glGetSamplerParameterIuiv@12
+    glGetSamplerParameterfv@12
+    glGetSamplerParameteriv@12
     glGetShaderInfoLog@16
     glGetShaderPrecisionFormat@16
     glGetShaderSource@16
@@ -357,6 +375,8 @@ EXPORTS
     glGetTexImage@20
     glGetTexLevelParameterfv@16
     glGetTexLevelParameteriv@16
+    glGetTexParameterIiv@12
+    glGetTexParameterIuiv@12
     glGetTexParameterfv@12
     glGetTexParameteriv@12
     glGetTextureImage@24
@@ -456,6 +476,7 @@ EXPORTS
     glIsProgramPipeline@4
     glIsQuery@4
     glIsRenderbuffer@4
+    glIsSampler@4
     glIsShader@4
     glIsSync@4
     glIsTexture@4
@@ -648,6 +669,7 @@ EXPORTS
     glPopName@0
     glPrimitiveRestartIndex@4
     glPrioritizeTextures@12
+    glProgramBinary@16
     glProgramParameteri@12
     glProgramUniform1d@16
     glProgramUniform1dv@16
@@ -751,6 +773,12 @@ EXPORTS
     glRotatef@16
     glSampleCoverage@8
     glSampleMaski@8
+    glSamplerParameterIiv@12
+    glSamplerParameterIuiv@12
+    glSamplerParameterf@12
+    glSamplerParameterfv@12
+    glSamplerParameteri@12
+    glSamplerParameteriv@12
     glScaled@24
     glScalef@12
     glScissor@16
@@ -841,6 +869,9 @@ EXPORTS
     glTexImage2D@36
     glTexImage2DMultisample@24
     glTexImage3D@40
+    glTexImage3DMultisample@28
+    glTexParameterIiv@12
+    glTexParameterIuiv@12
     glTexParameterf@12
     glTexParameterfv@12
     glTexParameteri@12
@@ -849,6 +880,7 @@ EXPORTS
     glTexStorage2D@20
     glTexStorage2DMultisample@24
     glTexStorage3D@24
+    glTexStorage3DMultisample@28
     glTexSubImage1D@28
     glTexSubImage2D@36
     glTexSubImage3D@44

@@ -749,6 +749,8 @@ GLAPI void APIENTRY glValidateProgram(GLuint name)
 {
 }
 
+static SIZE_T binary_size(const GlProgram *p);
+
 GLAPI void APIENTRY glGetProgramiv(GLuint name, GLenum pname, GLint *params)
 {
     GL_CONTEXT_OR_RETURN();
@@ -809,7 +811,7 @@ GLAPI void APIENTRY glGetProgramiv(GLuint name, GLenum pname, GLint *params)
         break;
     }
     case GL_PROGRAM_BINARY_LENGTH:
-        *params = 0;
+        *params = p->link_status ? (GLint)binary_size(p) : 0;
         break;
     case GL_COMPUTE_WORK_GROUP_SIZE:
         if (!p->compute || !p->link_status) {
@@ -2036,4 +2038,156 @@ GLAPI void APIENTRY glProgramUniformMatrix4x3dv(GLuint program, GLint l, GLsizei
     GlProgram *p = named_program(ctx, program);
     if (p)
         put_matrix(ctx, p, l, count, 4, 3, t, v, TRUE);
+}
+
+/* ---------------------------------------------------------------- program binaries */
+
+/*
+ * the binary of a program is its shader sources and the bindings made before the link, in a format of this driver: a
+ * program loaded from it links again on the host. a binary kept from another driver version or another driver does not load.
+ */
+#define PROGRAM_BINARY_FORMAT 0x4D494D31
+static const char g_binary_magic[8] = {'M', 'I', 'M', 'E', 'P', 'B', '1', 0};
+
+static SIZE_T binary_size(const GlProgram *p)
+{
+    SIZE_T n = 8 + 4 + 4 + p->bindings_len + 4 + p->frag_bindings_len;
+    for (uint32_t i = 0; i < p->shader_count; i++)
+        n += 8 + (p->shaders[i]->source ? strlen(p->shaders[i]->source) : 0);
+    return n;
+}
+
+static uint8_t *binary_put(uint8_t *at, const void *data, SIZE_T size)
+{
+    if (size)
+        memcpy(at, data, size);
+    return at + size;
+}
+
+GLAPI void APIENTRY glGetProgramBinary(GLuint name, GLsizei size, GLsizei *length, GLenum *format, void *binary)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlProgram *p = gl_program(ctx, name);
+    if (!p) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    gl_program_ready(p);
+    SIZE_T need = binary_size(p);
+    if (!p->link_status || size < 0 || (SIZE_T)size < need) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    uint8_t *at = binary;
+    at = binary_put(at, g_binary_magic, 8);
+    uint32_t v = p->shader_count;
+    at = binary_put(at, &v, 4);
+    for (uint32_t i = 0; i < p->shader_count; i++) {
+        const char *source = p->shaders[i]->source ? p->shaders[i]->source : "";
+        uint32_t head[2] = {p->shaders[i]->type, (uint32_t)strlen(source)};
+        at = binary_put(at, head, 8);
+        at = binary_put(at, source, head[1]);
+    }
+    v = p->bindings_len;
+    at = binary_put(at, &v, 4);
+    at = binary_put(at, p->bindings, p->bindings_len);
+    v = p->frag_bindings_len;
+    at = binary_put(at, &v, 4);
+    at = binary_put(at, p->frag_bindings, p->frag_bindings_len);
+    if (length)
+        *length = (GLsizei)need;
+    if (format)
+        *format = PROGRAM_BINARY_FORMAT;
+}
+
+GLAPI void APIENTRY glProgramBinary(GLuint name, GLenum format, const void *binary, GLsizei size)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlProgram *p = gl_program(ctx, name);
+    if (!p) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    if (format != PROGRAM_BINARY_FORMAT) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    const uint8_t *at = binary, *end = at + (size > 0 ? size : 0);
+    uint32_t count = 0;
+    BOOL ok = size >= 12 && !memcmp(at, g_binary_magic, 8);
+    if (ok) {
+        memcpy(&count, at + 8, 4);
+        at += 12;
+        ok = count >= 1 && count <= 8;
+    }
+    GlShader *loaded[8] = {};
+    for (uint32_t i = 0; ok && i < count; i++) {
+        uint32_t head[2];
+        ok = end - at >= 8;
+        if (!ok)
+            break;
+        memcpy(head, at, 8);
+        at += 8;
+        ok = (SIZE_T)(end - at) >= head[1];
+        if (!ok)
+            break;
+        GlShader *s = gl_alloc(sizeof(GlShader));
+        if (!s) {
+            ok = FALSE;
+            break;
+        }
+        s->type = head[0];
+        s->refs = 1;
+        s->deleted = TRUE;
+        s->source = gl_alloc(head[1] + 1);
+        if (s->source)
+            memcpy(s->source, at, head[1]);
+        loaded[i] = s;
+        at += head[1];
+    }
+    char *tables[2] = {};
+    uint32_t table_len[2] = {};
+    for (int t = 0; ok && t < 2; t++) {
+        ok = end - at >= 4;
+        if (!ok)
+            break;
+        memcpy(&table_len[t], at, 4);
+        at += 4;
+        ok = (SIZE_T)(end - at) >= table_len[t];
+        if (!ok)
+            break;
+        if (table_len[t]) {
+            tables[t] = gl_alloc(table_len[t]);
+            if (tables[t])
+                memcpy(tables[t], at, table_len[t]);
+        }
+        at += table_len[t];
+    }
+    if (!ok) {
+        for (uint32_t i = 0; i < 8; i++)
+            if (loaded[i]) {
+                gl_free(loaded[i]->source);
+                gl_free(loaded[i]);
+            }
+        gl_free(tables[0]);
+        gl_free(tables[1]);
+        gl_program_ready(p);
+        free_reflection(p);
+        p->linked = TRUE;
+        p->link_status = FALSE;
+        gl_free(p->log);
+        p->log = gl_strdup("the program binary is not one this driver made\n");
+        return;
+    }
+    while (p->shader_count)
+        release_shader(ctx, p->shaders[--p->shader_count]);
+    for (uint32_t i = 0; i < count; i++)
+        p->shaders[p->shader_count++] = loaded[i];
+    gl_free(p->bindings);
+    gl_free(p->frag_bindings);
+    p->bindings = tables[0];
+    p->bindings_len = table_len[0];
+    p->frag_bindings = tables[1];
+    p->frag_bindings_len = table_len[1];
+    glLinkProgram(name);
 }

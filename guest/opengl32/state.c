@@ -1338,7 +1338,10 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         return 1;
     case GL_NUM_SHADER_BINARY_FORMATS:
     case GL_NUM_PROGRAM_BINARY_FORMATS:
-        v[0] = 0;
+        v[0] = 1;
+        return 1;
+    case GL_PROGRAM_BINARY_FORMATS:
+        v[0] = 0x4D494D31;
         return 1;
     case GL_MAX_UNIFORM_BLOCK_SIZE:
         v[0] = 16384;

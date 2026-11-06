@@ -945,7 +945,7 @@ static void emit_textures(GlContext *ctx, GlProgram *p)
             uint32_t id, sampler;
             if (gl_texture_ready(ctx, t)) {
                 id = t->id;
-                sampler = gl_texture_sampler(t);
+                sampler = gl_unit_sampler(ctx, (GLuint)u->units[e], t);
             } else {
                 id = gl_dummy_texture(ctx);
                 static GlTexture plain;

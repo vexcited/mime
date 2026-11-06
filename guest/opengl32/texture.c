@@ -582,7 +582,7 @@ static void upload(GlContext *ctx, GlTexture *t, GLint level, uint32_t slice, in
     gl_device_unlock();
 }
 
-static void upload_compressed(GlContext *ctx, GlTexture *t, GLint level, uint32_t slice, int32_t x, int32_t y,
+static void upload_compressed(GlContext *ctx, GlTexture *t, GLint level, uint32_t slice, int32_t x, int32_t y, uint32_t z,
                               uint32_t w, uint32_t h, GLsizei size, const void *data)
 {
     const uint8_t *src = unpack_source(ctx, data);
@@ -605,6 +605,7 @@ static void upload_compressed(GlContext *ctx, GlTexture *t, GLint level, uint32_
     c->slice = slice;
     c->x = (uint32_t)x;
     c->y = (uint32_t)y;
+    c->z = z;
     c->width = bx * 4 > (t->width >> level) ? w : bx * 4;
     c->height = by * 4 > (t->height >> level) ? h : by * 4;
     c->depth = 1;
@@ -755,7 +756,7 @@ GLAPI void APIENTRY glCompressedTexImage2D(GLenum target, GLint level, GLenum in
     uint32_t slice;
     face_of(target, &slice);
     if (t->compressed)
-        upload_compressed(ctx, t, level, slice, 0, 0, (uint32_t)w, (uint32_t)h, size, data);
+        upload_compressed(ctx, t, level, slice, 0, 0, 0, (uint32_t)w, (uint32_t)h, size, data);
 }
 
 GLAPI void APIENTRY glCompressedTexSubImage2D(GLenum target, GLint level, GLint x, GLint y, GLsizei w, GLsizei h,
@@ -766,7 +767,7 @@ GLAPI void APIENTRY glCompressedTexSubImage2D(GLenum target, GLint level, GLint 
     uint32_t slice;
     face_of(target, &slice);
     if (t && t->compressed)
-        upload_compressed(ctx, t, level, slice, x, y, (uint32_t)w, (uint32_t)h, size, data);
+        upload_compressed(ctx, t, level, slice, x, y, 0, (uint32_t)w, (uint32_t)h, size, data);
 }
 
 GLAPI void APIENTRY glTexStorage1D(GLenum target, GLsizei levels, GLenum internal, GLsizei w)
@@ -1221,15 +1222,12 @@ static uint8_t compare_function(GLenum func)
     }
 }
 
-/* the host sampler state of a texture's parameters. */
-uint32_t gl_texture_sampler(GlTexture *t)
+/* the host sampler state of sampling parameters over a texture of the levels. */
+uint32_t gl_sampler_state_id(const GlSamplerState *s, uint32_t levels, GLint base_level, GLint max_level)
 {
-    if (t->sampler_id)
-        return t->sampler_id;
-    GlSamplerState *s = &t->sampler;
     MimeGpuSamplerCreate d;
     memset(&d, 0, sizeof(d));
-    BOOL mips = t->levels > 1;
+    BOOL mips = levels > 1;
     switch (s->min_filter) {
     case GL_NEAREST:
         d.min_filter = 0;
@@ -1264,10 +1262,10 @@ uint32_t gl_texture_sampler(GlTexture *t)
     d.max_anisotropy = (uint8_t)(s->max_anisotropy < 1 ? 1 : s->max_anisotropy > 16 ? 16 : s->max_anisotropy);
     if (d.max_anisotropy > 1 && !d.mip_filter)
         d.max_anisotropy = 1;
-    d.lod_min = s->min_lod < (GLfloat)t->base_level ? (GLfloat)t->base_level : s->min_lod;
+    d.lod_min = s->min_lod < (GLfloat)base_level ? (GLfloat)base_level : s->min_lod;
     if (d.lod_min < 0)
         d.lod_min = 0;
-    d.lod_max = s->max_lod > (GLfloat)t->max_level ? (GLfloat)t->max_level : s->max_lod;
+    d.lod_max = s->max_lod > (GLfloat)max_level ? (GLfloat)max_level : s->max_lod;
     if (d.lod_max < d.lod_min)
         d.lod_max = d.lod_min;
     BOOL created;
@@ -1280,8 +1278,15 @@ uint32_t gl_texture_sampler(GlTexture *t)
         c->id = id;
         gl_device_unlock();
     }
-    t->sampler_id = id;
     return id;
+}
+
+/* the host sampler state of a texture's parameters. */
+uint32_t gl_texture_sampler(GlTexture *t)
+{
+    if (!t->sampler_id)
+        t->sampler_id = gl_sampler_state_id(&t->sampler, t->levels, t->base_level, t->max_level);
+    return t->sampler_id;
 }
 
 BOOL gl_texture_ready(GlContext *ctx, GlTexture *t)
@@ -1599,4 +1604,212 @@ GLAPI void APIENTRY glClearTexImage(GLuint texture, GLint level, GLenum format, 
                 : t->target == GL_TEXTURE_3D     ? (GLsizei)(t->depth >> level ? t->depth >> level : 1)
                                                  : (GLsizei)t->depth;
     glClearTexSubImage(texture, level, 0, 0, 0, w, h, d, format, type, data);
+}
+
+/* ---------------------------------------------------------------- the rest of OpenGL 1.2 to 3.2 textures */
+
+/* the blocks of a compressed image into a level, a slice or z plane at a time. */
+static void compressed_image(GlContext *ctx, GlTexture *t, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,
+                             GLsizei d, GLsizei size, const void *data)
+{
+    uint32_t bx = ((uint32_t)w + 3) / 4, by = ((uint32_t)h + 3) / 4;
+    uint32_t layer = bx * by * block_bytes(t->mtl_format);
+    if (!d || (uint64_t)size < (uint64_t)layer * (uint64_t)d) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    if (!data && !ctx->pixel_unpack)
+        return;
+    for (GLsizei k = 0; k < d; k++) {
+        const uint8_t *src = (const uint8_t *)data + (uint64_t)k * layer;
+        if (t->target == GL_TEXTURE_3D)
+            upload_compressed(ctx, t, level, 0, x, y, (uint32_t)(z + k), (uint32_t)w, (uint32_t)h, (GLsizei)layer, src);
+        else
+            upload_compressed(ctx, t, level, (uint32_t)(z + k), x, y, 0, (uint32_t)w, (uint32_t)h, (GLsizei)layer, src);
+    }
+}
+
+GLAPI void APIENTRY glCompressedTexImage3D(GLenum target, GLint level, GLenum internal, GLsizei w, GLsizei h, GLsizei d,
+                                           GLint border, GLsizei size, const void *data)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlTexture *t = bound(ctx, target);
+    if (!t || w < 0 || h < 0 || d < 0 || border) {
+        gl_error(ctx, t ? GL_INVALID_VALUE : GL_INVALID_OPERATION);
+        return;
+    }
+    if (target != GL_TEXTURE_3D && target != GL_TEXTURE_2D_ARRAY && target != GL_TEXTURE_CUBE_MAP_ARRAY) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    if (!define(ctx, t, level, internal, 0, 0, (uint32_t)w, (uint32_t)h, (uint32_t)d) || !t->compressed) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    compressed_image(ctx, t, level, 0, 0, 0, w, h, d, size, data);
+}
+
+GLAPI void APIENTRY glCompressedTexSubImage3D(GLenum target, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,
+                                              GLsizei d, GLenum format, GLsizei size, const void *data)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlTexture *t = bound(ctx, target);
+    if (!t || !t->id) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    if (!t->compressed || w < 0 || h < 0 || d < 0 || x < 0 || y < 0 || z < 0) {
+        gl_error(ctx, t->compressed ? GL_INVALID_VALUE : GL_INVALID_OPERATION);
+        return;
+    }
+    compressed_image(ctx, t, level, x, y, z, w, h, d, size, data);
+}
+
+GLAPI void APIENTRY glCompressedTexImage1D(GLenum target, GLint level, GLenum internal, GLsizei w, GLint border,
+                                           GLsizei size, const void *data)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlTexture *t = bound(ctx, target);
+    if (!t || target != GL_TEXTURE_1D || w < 0 || border) {
+        gl_error(ctx, t && target == GL_TEXTURE_1D ? GL_INVALID_VALUE : GL_INVALID_ENUM);
+        return;
+    }
+    if (!define(ctx, t, level, internal, 0, 0, (uint32_t)w, 1, 1) || !t->compressed) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    compressed_image(ctx, t, level, 0, 0, 0, w, 1, 1, size, data);
+}
+
+GLAPI void APIENTRY glCompressedTexSubImage1D(GLenum target, GLint level, GLint x, GLsizei w, GLenum format, GLsizei size,
+                                              const void *data)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlTexture *t = bound(ctx, target);
+    if (!t || !t->id || target != GL_TEXTURE_1D || !t->compressed) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    compressed_image(ctx, t, level, x, 0, 0, w, 1, 1, size, data);
+}
+
+GLAPI void APIENTRY glGetCompressedTexImage(GLenum target, GLint level, void *image)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlTexture *t = bound(ctx, target);
+    uint32_t slice = 0;
+    face_of(target, &slice);
+    if (!t || !t->id || !t->compressed || level < 0 || level >= (GLint)t->levels) {
+        gl_error(ctx, t && t->id && !t->compressed ? GL_INVALID_OPERATION : GL_INVALID_VALUE);
+        return;
+    }
+    uint32_t w = t->width >> level ? t->width >> level : 1, h = t->height >> level ? t->height >> level : 1;
+    uint32_t layer = ((w + 3) / 4) * ((h + 3) / 4) * block_bytes(t->mtl_format);
+    uint8_t *dst = image;
+    if (ctx->pixel_pack) {
+        GlBuffer *b = gl_buffer(ctx, ctx->pixel_pack);
+        dst = b && b->mem.ptr ? b->mem.ptr + (ULONG_PTR)image : nullptr;
+    }
+    if (!dst)
+        return;
+    uint32_t count = 1;
+    if (t->target == GL_TEXTURE_CUBE_MAP && target == GL_TEXTURE_CUBE_MAP)
+        count = 6;
+    else if (t->target == GL_TEXTURE_2D_ARRAY || t->target == GL_TEXTURE_CUBE_MAP_ARRAY)
+        count = t->depth;
+    else if (t->target == GL_TEXTURE_3D)
+        count = t->depth >> level ? t->depth >> level : 1;
+    for (uint32_t k = 0; k < count; k++)
+        gl_texture_read_compressed(ctx, t, level, count == 1 ? slice : k, 0, 0, (GLsizei)w, (GLsizei)h, dst + (uint64_t)k * layer);
+}
+
+GLAPI void APIENTRY glCopyTexSubImage3D(GLenum target, GLint level, GLint dx, GLint dy, GLint dz, GLint x, GLint y, GLsizei w,
+                                        GLsizei h)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlTexture *t = bound(ctx, target);
+    if (!t || !t->id) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    if (dx < 0 || dy < 0 || dz < 0 || w < 0 || h < 0 || (uint32_t)dz >= (t->target == GL_TEXTURE_3D ? t->depth >> level : t->depth)) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    copy_from_framebuffer(ctx, t, level, (uint32_t)dz, dx, dy, x, y, w, h);
+}
+
+/* multisample array textures are not made by the hosts. */
+GLAPI void APIENTRY glTexImage3DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h, GLsizei d,
+                                            GLboolean fixed)
+{
+    GL_CONTEXT_OR_RETURN();
+    gl_error(ctx, GL_INVALID_ENUM);
+}
+
+GLAPI void APIENTRY glTexStorage3DMultisample(GLenum target, GLsizei samples, GLenum internal, GLsizei w, GLsizei h,
+                                              GLsizei d, GLboolean fixed)
+{
+    GL_CONTEXT_OR_RETURN();
+    gl_error(ctx, GL_INVALID_ENUM);
+}
+
+/* ---------------------------------------------------------------- integer texture parameters */
+
+GLAPI void APIENTRY glTexParameterIiv(GLenum target, GLenum pname, const GLint *params)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlTexture *t = bound(ctx, target);
+    if (!t) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    GLfloat v[4] = {(GLfloat)params[0]};
+    if (pname == GL_TEXTURE_BORDER_COLOR || pname == GL_TEXTURE_SWIZZLE_RGBA)
+        for (int i = 0; i < 4; i++)
+            v[i] = (GLfloat)params[i];
+    tex_parameter(ctx, t, pname, v);
+}
+
+GLAPI void APIENTRY glTexParameterIuiv(GLenum target, GLenum pname, const GLuint *params)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlTexture *t = bound(ctx, target);
+    if (!t) {
+        gl_error(ctx, GL_INVALID_OPERATION);
+        return;
+    }
+    GLfloat v[4] = {(GLfloat)params[0]};
+    if (pname == GL_TEXTURE_BORDER_COLOR || pname == GL_TEXTURE_SWIZZLE_RGBA)
+        for (int i = 0; i < 4; i++)
+            v[i] = (GLfloat)params[i];
+    tex_parameter(ctx, t, pname, v);
+}
+
+GLAPI void APIENTRY glGetTexParameterIiv(GLenum target, GLenum pname, GLint *params)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlTexture *t = bound(ctx, target);
+    if (t && pname == GL_TEXTURE_BORDER_COLOR) {
+        for (int i = 0; i < 4; i++)
+            params[i] = (GLint)t->sampler.border[i];
+        return;
+    }
+    glGetTexParameteriv(target, pname, params);
+}
+
+GLAPI void APIENTRY glGetTexParameterIuiv(GLenum target, GLenum pname, GLuint *params)
+{
+    GL_CONTEXT_OR_RETURN();
+    GlTexture *t = bound(ctx, target);
+    if (t && pname == GL_TEXTURE_BORDER_COLOR) {
+        for (int i = 0; i < 4; i++)
+            params[i] = (GLuint)t->sampler.border[i];
+        return;
+    }
+    GLint v[4] = {};
+    glGetTexParameteriv(target, pname, v);
+    int count = pname == GL_TEXTURE_SWIZZLE_RGBA ? 4 : 1;
+    for (int i = 0; i < count; i++)
+        params[i] = (GLuint)v[i];
 }
