@@ -73,9 +73,9 @@ typedef struct AttribEntry {
         BOOL alpha_test, blend, dither;
         GLenum alpha_func;
         GLfloat alpha_ref;
-        GlBlend blend_state;
+        GlBlend blend_state, blend_n[MIME_GPU_MAX_COLORS];
         GLfloat blend_color[4];
-        GLboolean mask[4];
+        GLboolean mask[4], mask_n[MIME_GPU_MAX_COLORS][4];
         GLfloat clear[4];
         GLenum draw_buffer;
     } color_buffer;
@@ -190,6 +190,8 @@ static void save(GlContext *ctx, AttribEntry *e, GLbitfield mask)
     e->color_buffer.alpha_func = f->alpha_func;
     e->color_buffer.alpha_ref = f->alpha_ref;
     e->color_buffer.blend_state = ctx->blend;
+    memcpy(e->color_buffer.blend_n, ctx->blend_n, sizeof(ctx->blend_n));
+    memcpy(e->color_buffer.mask_n, ctx->color_mask_n, sizeof(ctx->color_mask_n));
     memcpy(e->color_buffer.blend_color, ctx->blend_color, 16);
     memcpy(e->color_buffer.mask, ctx->color_mask, sizeof(ctx->color_mask));
     memcpy(e->color_buffer.clear, ctx->clear_color, 16);
@@ -328,6 +330,8 @@ static void restore(GlContext *ctx, const AttribEntry *e)
         f->alpha_ref = e->color_buffer.alpha_ref;
         ctx->blend = e->color_buffer.blend_state;
         ctx->blend.enabled = e->color_buffer.blend;
+        memcpy(ctx->blend_n, e->color_buffer.blend_n, sizeof(ctx->blend_n));
+        memcpy(ctx->color_mask_n, e->color_buffer.mask_n, sizeof(ctx->color_mask_n));
         memcpy(ctx->blend_color, e->color_buffer.blend_color, 16);
         memcpy(ctx->color_mask, e->color_buffer.mask, sizeof(ctx->color_mask));
         memcpy(ctx->clear_color, e->color_buffer.clear, 16);

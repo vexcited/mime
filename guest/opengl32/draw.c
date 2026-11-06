@@ -745,23 +745,23 @@ static void emit_pipeline(GlContext *ctx, GlProgram *p, const GlVertexInput *in,
     d.program_serial = p->serial;
     const GlTarget *t = &ctx->target;
     uint8_t logic = gl_logic_op(ctx);
-    uint8_t mask = (uint8_t)((ctx->color_mask[0] ? 8 : 0) | (ctx->color_mask[1] ? 4 : 0) | (ctx->color_mask[2] ? 2 : 0) |
-                             (ctx->color_mask[3] ? 1 : 0));
     for (int i = 0; i < MIME_GPU_MAX_COLORS; i++) {
         MimeGpuColorTarget *c = &d.color[i];
         c->format = t->color_format[i];
         if (!c->format)
             continue;
-        c->write_mask = mask;
+        const GLboolean *m = gl_color_mask_at(ctx, (unsigned)i);
+        c->write_mask = (uint8_t)((m[0] ? 8 : 0) | (m[1] ? 4 : 0) | (m[2] ? 2 : 0) | (m[3] ? 1 : 0));
         c->logic_op = logic;
-        if (ctx->blend.enabled && !logic) {
+        const GlBlend *blend = gl_blend_at(ctx, (unsigned)i);
+        if (blend->enabled && !logic) {
             c->blend = 1;
-            c->rgb_op = blend_op(ctx->blend.eq_rgb);
-            c->alpha_op = blend_op(ctx->blend.eq_alpha);
-            c->src_rgb = blend_factor(ctx->blend.src_rgb);
-            c->dst_rgb = blend_factor(ctx->blend.dst_rgb);
-            c->src_alpha = blend_factor(ctx->blend.src_alpha);
-            c->dst_alpha = blend_factor(ctx->blend.dst_alpha);
+            c->rgb_op = blend_op(blend->eq_rgb);
+            c->alpha_op = blend_op(blend->eq_alpha);
+            c->src_rgb = blend_factor(blend->src_rgb);
+            c->dst_rgb = blend_factor(blend->dst_rgb);
+            c->src_alpha = blend_factor(blend->src_alpha);
+            c->dst_alpha = blend_factor(blend->dst_alpha);
         }
     }
     d.depth_format = t->depth_format;

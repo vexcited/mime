@@ -26,11 +26,14 @@ void gl_context_init(GlContext *ctx)
     ctx->vao = &ctx->default_vao;
     ctx->depth_range[1] = 1.0;
     ctx->clear_depth = 1.0;
-    ctx->blend.src_rgb = ctx->blend.src_alpha = GL_ONE;
-    ctx->blend.dst_rgb = ctx->blend.dst_alpha = GL_ZERO;
-    ctx->blend.eq_rgb = ctx->blend.eq_alpha = GL_FUNC_ADD;
-    for (int i = 0; i < 4; i++)
-        ctx->color_mask[i] = GL_TRUE;
+    for (unsigned b = 0; b < MIME_GPU_MAX_COLORS; b++) {
+        GlBlend *blend = gl_blend_at(ctx, b);
+        blend->src_rgb = blend->src_alpha = GL_ONE;
+        blend->dst_rgb = blend->dst_alpha = GL_ZERO;
+        blend->eq_rgb = blend->eq_alpha = GL_FUNC_ADD;
+        for (int i = 0; i < 4; i++)
+            gl_color_mask_at(ctx, b)[i] = GL_TRUE;
+    }
     ctx->depth_mask = GL_TRUE;
     ctx->depth_func = GL_LESS;
     for (int f = 0; f < 2; f++) {
@@ -55,6 +58,12 @@ void gl_context_init(GlContext *ctx)
     ctx->draw_buffer = ctx->read_buffer = GL_BACK;
     ctx->dirty = DIRTY_ALL;
     ctx->swap_interval = 1;
+    ctx->provoking_vertex = GL_LAST_VERTEX_CONVENTION;
+    ctx->clamp[0] = ctx->clamp[1] = GL_TRUE;
+    ctx->clamp[2] = GL_FIXED_ONLY;
+    ctx->sample_coverage = 1.0f;
+    ctx->sample_mask = ~0u;
+    ctx->ff.secondary[3] = 1.0f;
     for (int i = 0; i < 8; i++)
         ctx->hints[i] = GL_DONT_CARE;
     gl_ff_init(ctx);
@@ -111,10 +120,26 @@ static BOOL *capability(GlContext *ctx, GLenum cap, uint32_t *dirty)
     }
 }
 
+GlBlend *gl_blend_at(GlContext *ctx, unsigned index)
+{
+    return index == 0 ? &ctx->blend : &ctx->blend_n[index];
+}
+
+GLboolean *gl_color_mask_at(GlContext *ctx, unsigned index)
+{
+    return index == 0 ? ctx->color_mask : ctx->color_mask_n[index];
+}
+
 static void set_capability(GLenum cap, BOOL on)
 {
     GL_CONTEXT_OR_RETURN();
     uint32_t dirty = 0;
+    if (cap == GL_BLEND) {
+        for (unsigned i = 0; i < MIME_GPU_MAX_COLORS; i++)
+            gl_blend_at(ctx, i)->enabled = on;
+        ctx->dirty |= DIRTY_PIPELINE;
+        return;
+    }
     BOOL *p = capability(ctx, cap, &dirty);
     if (!p) {
         if (!gl_ff_capability(ctx, cap, on))
@@ -152,19 +177,41 @@ GLAPI GLboolean APIENTRY glIsEnabled(GLenum cap)
     return *p ? GL_TRUE : GL_FALSE;
 }
 
+static void set_indexed(GLenum cap, GLuint index, BOOL on)
+{
+    GL_CONTEXT_OR_RETURN();
+    if (cap != GL_BLEND) {
+        set_capability(cap, on);
+        return;
+    }
+    if (index >= MIME_GPU_MAX_COLORS) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return;
+    }
+    gl_blend_at(ctx, index)->enabled = on;
+    ctx->dirty |= DIRTY_PIPELINE;
+}
+
 GLAPI void APIENTRY glEnablei(GLenum cap, GLuint index)
 {
-    glEnable(cap);
+    set_indexed(cap, index, TRUE);
 }
 
 GLAPI void APIENTRY glDisablei(GLenum cap, GLuint index)
 {
-    glDisable(cap);
+    set_indexed(cap, index, FALSE);
 }
 
 GLAPI GLboolean APIENTRY glIsEnabledi(GLenum cap, GLuint index)
 {
-    return glIsEnabled(cap);
+    GL_CONTEXT_OR_RETURN(GL_FALSE);
+    if (cap != GL_BLEND)
+        return glIsEnabled(cap);
+    if (index >= MIME_GPU_MAX_COLORS) {
+        gl_error(ctx, GL_INVALID_VALUE);
+        return GL_FALSE;
+    }
+    return gl_blend_at(ctx, index)->enabled ? GL_TRUE : GL_FALSE;
 }
 
 /* ---------------------------------------------------------------- blending */
@@ -214,6 +261,37 @@ static BOOL stencil_op_valid(GLenum o)
            o == GL_INCR_WRAP || o == GL_DECR_WRAP;
 }
 
+static void blend_funcs(GlContext *ctx, int index, GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_alpha)
+{
+    if (!blend_factor_valid(src_rgb, TRUE) || !blend_factor_valid(dst_rgb, FALSE) || !blend_factor_valid(src_alpha, TRUE) ||
+        !blend_factor_valid(dst_alpha, FALSE)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    for (unsigned i = index < 0 ? 0 : (unsigned)index; i < (index < 0 ? MIME_GPU_MAX_COLORS : (unsigned)index + 1); i++) {
+        GlBlend *b = gl_blend_at(ctx, i);
+        b->src_rgb = src_rgb;
+        b->dst_rgb = dst_rgb;
+        b->src_alpha = src_alpha;
+        b->dst_alpha = dst_alpha;
+    }
+    ctx->dirty |= DIRTY_PIPELINE;
+}
+
+static void blend_equations(GlContext *ctx, int index, GLenum rgb, GLenum alpha)
+{
+    if (!blend_equation_valid(rgb) || !blend_equation_valid(alpha)) {
+        gl_error(ctx, GL_INVALID_ENUM);
+        return;
+    }
+    for (unsigned i = index < 0 ? 0 : (unsigned)index; i < (index < 0 ? MIME_GPU_MAX_COLORS : (unsigned)index + 1); i++) {
+        GlBlend *b = gl_blend_at(ctx, i);
+        b->eq_rgb = rgb;
+        b->eq_alpha = alpha;
+    }
+    ctx->dirty |= DIRTY_PIPELINE;
+}
+
 GLAPI void APIENTRY glBlendFunc(GLenum src, GLenum dst)
 {
     GL_CONTEXT_OR_RETURN();
@@ -221,47 +299,56 @@ GLAPI void APIENTRY glBlendFunc(GLenum src, GLenum dst)
         gl_error(ctx, GL_INVALID_ENUM);
         return;
     }
-    ctx->blend.src_rgb = ctx->blend.src_alpha = src;
-    ctx->blend.dst_rgb = ctx->blend.dst_alpha = dst;
-    ctx->dirty |= DIRTY_PIPELINE;
+    blend_funcs(ctx, -1, src, dst, src, dst);
 }
 
 GLAPI void APIENTRY glBlendFuncSeparate(GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_alpha)
 {
     GL_CONTEXT_OR_RETURN();
-    if (!blend_factor_valid(src_rgb, TRUE) || !blend_factor_valid(dst_rgb, FALSE) || !blend_factor_valid(src_alpha, TRUE) ||
-        !blend_factor_valid(dst_alpha, FALSE)) {
-        gl_error(ctx, GL_INVALID_ENUM);
-        return;
-    }
-    ctx->blend.src_rgb = src_rgb;
-    ctx->blend.dst_rgb = dst_rgb;
-    ctx->blend.src_alpha = src_alpha;
-    ctx->blend.dst_alpha = dst_alpha;
-    ctx->dirty |= DIRTY_PIPELINE;
+    blend_funcs(ctx, -1, src_rgb, dst_rgb, src_alpha, dst_alpha);
 }
 
 GLAPI void APIENTRY glBlendEquation(GLenum mode)
 {
     GL_CONTEXT_OR_RETURN();
-    if (!blend_equation_valid(mode)) {
-        gl_error(ctx, GL_INVALID_ENUM);
-        return;
-    }
-    ctx->blend.eq_rgb = ctx->blend.eq_alpha = mode;
-    ctx->dirty |= DIRTY_PIPELINE;
+    blend_equations(ctx, -1, mode, mode);
 }
 
 GLAPI void APIENTRY glBlendEquationSeparate(GLenum rgb, GLenum alpha)
 {
     GL_CONTEXT_OR_RETURN();
-    if (!blend_equation_valid(rgb) || !blend_equation_valid(alpha)) {
-        gl_error(ctx, GL_INVALID_ENUM);
-        return;
+    blend_equations(ctx, -1, rgb, alpha);
+}
+
+#define BUFFER_OR_RETURN()                                                                                             \
+    GL_CONTEXT_OR_RETURN();                                                                                            \
+    if (buf >= MIME_GPU_MAX_COLORS) {                                                                                  \
+        gl_error(ctx, GL_INVALID_VALUE);                                                                               \
+        return;                                                                                                        \
     }
-    ctx->blend.eq_rgb = rgb;
-    ctx->blend.eq_alpha = alpha;
-    ctx->dirty |= DIRTY_PIPELINE;
+
+GLAPI void APIENTRY glBlendFunci(GLuint buf, GLenum src, GLenum dst)
+{
+    BUFFER_OR_RETURN();
+    blend_funcs(ctx, (int)buf, src, dst, src, dst);
+}
+
+GLAPI void APIENTRY glBlendFuncSeparatei(GLuint buf, GLenum src_rgb, GLenum dst_rgb, GLenum src_alpha, GLenum dst_alpha)
+{
+    BUFFER_OR_RETURN();
+    blend_funcs(ctx, (int)buf, src_rgb, dst_rgb, src_alpha, dst_alpha);
+}
+
+GLAPI void APIENTRY glBlendEquationi(GLuint buf, GLenum mode)
+{
+    BUFFER_OR_RETURN();
+    blend_equations(ctx, (int)buf, mode, mode);
+}
+
+GLAPI void APIENTRY glBlendEquationSeparatei(GLuint buf, GLenum rgb, GLenum alpha)
+{
+    BUFFER_OR_RETURN();
+    blend_equations(ctx, (int)buf, rgb, alpha);
 }
 
 GLAPI void APIENTRY glBlendColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a)
@@ -277,16 +364,25 @@ GLAPI void APIENTRY glBlendColor(GLfloat r, GLfloat g, GLfloat b, GLfloat a)
 GLAPI void APIENTRY glColorMask(GLboolean r, GLboolean g, GLboolean b, GLboolean a)
 {
     GL_CONTEXT_OR_RETURN();
-    ctx->color_mask[0] = r;
-    ctx->color_mask[1] = g;
-    ctx->color_mask[2] = b;
-    ctx->color_mask[3] = a;
+    for (unsigned i = 0; i < MIME_GPU_MAX_COLORS; i++) {
+        GLboolean *m = gl_color_mask_at(ctx, i);
+        m[0] = r;
+        m[1] = g;
+        m[2] = b;
+        m[3] = a;
+    }
     ctx->dirty |= DIRTY_PIPELINE;
 }
 
-GLAPI void APIENTRY glColorMaski(GLuint index, GLboolean r, GLboolean g, GLboolean b, GLboolean a)
+GLAPI void APIENTRY glColorMaski(GLuint buf, GLboolean r, GLboolean g, GLboolean b, GLboolean a)
 {
-    glColorMask(r, g, b, a);
+    BUFFER_OR_RETURN();
+    GLboolean *m = gl_color_mask_at(ctx, buf);
+    m[0] = r;
+    m[1] = g;
+    m[2] = b;
+    m[3] = a;
+    ctx->dirty |= DIRTY_PIPELINE;
 }
 
 /* ---------------------------------------------------------------- depth and stencil */
@@ -868,6 +964,37 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
     case GL_CONTEXT_FLAGS:
         v[0] = 0;
         return 1;
+    case GL_PROVOKING_VERTEX:
+        v[0] = ctx->provoking_vertex;
+        return 1;
+    case GL_CLAMP_VERTEX_COLOR:
+    case GL_CLAMP_FRAGMENT_COLOR:
+    case GL_CLAMP_READ_COLOR:
+        v[0] = ctx->clamp[pname - GL_CLAMP_VERTEX_COLOR];
+        return 1;
+    case GL_SAMPLE_COVERAGE_VALUE:
+        v[0] = ctx->sample_coverage;
+        return 1;
+    case GL_SAMPLE_COVERAGE_INVERT:
+        v[0] = ctx->sample_coverage_invert;
+        return 1;
+    case GL_SAMPLE_MASK_VALUE:
+        v[0] = ctx->sample_mask;
+        return 1;
+    case GL_MIN_SAMPLE_SHADING_VALUE:
+        v[0] = ctx->min_sample_shading;
+        return 1;
+    case GL_PRIMITIVE_RESTART_INDEX:
+        v[0] = ctx->restart_index;
+        return 1;
+    case GL_CURRENT_SECONDARY_COLOR:
+        *colors = TRUE;
+        for (int i = 0; i < 4; i++)
+            v[i] = ctx->ff.secondary[i];
+        return 4;
+    case GL_CURRENT_FOG_COORD:
+        v[0] = ctx->ff.fog_coord;
+        return 1;
     case GL_MAX_TEXTURE_SIZE:
     case GL_MAX_RENDERBUFFER_SIZE:
     case GL_MAX_RECTANGLE_TEXTURE_SIZE:
@@ -1222,9 +1349,6 @@ static int get_values(GlContext *ctx, GLenum pname, GLdouble *v, BOOL *colors)
         return 1;
     case GL_MAX_LABEL_LENGTH:
         v[0] = 256;
-        return 1;
-    case GL_PRIMITIVE_RESTART_INDEX:
-        v[0] = 0xFFFFFFFF;
         return 1;
     case GL_MAX_LIGHTS:
         v[0] = 8;

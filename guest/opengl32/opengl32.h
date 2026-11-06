@@ -394,6 +394,7 @@ typedef struct GlFixed {
     /* current values: color, normal and the texture coordinate of unit 0 stay together for the vertex copy. */
     GLfloat current[3][4];
     GLfloat texcoord[FF_UNITS][4];
+    GLfloat secondary[4], fog_coord; /* kept, not read by the pipeline. */
     GLboolean edge_flag;
 
     /* between glBegin and glEnd. */
@@ -514,9 +515,9 @@ typedef struct GlContext {
     GLdouble depth_range[2];
     BOOL scissor_test;
     GLint scissor[4];
-    GlBlend blend;
+    GlBlend blend, blend_n[MIME_GPU_MAX_COLORS]; /* blend is draw buffer 0, blend_n[0] is not used. */
     GLfloat blend_color[4];
-    GLboolean color_mask[4];
+    GLboolean color_mask[4], color_mask_n[MIME_GPU_MAX_COLORS][4];
     BOOL depth_test;
     GLboolean depth_mask;
     GLenum depth_func;
@@ -545,6 +546,11 @@ typedef struct GlContext {
     GLint swap_interval;
     BOOL unpack_lsb_first, unpack_swap_bytes;
     GlRaster raster;
+    GLenum provoking_vertex, clamp[3]; /* GL_CLAMP_VERTEX_COLOR, GL_CLAMP_FRAGMENT_COLOR, GL_CLAMP_READ_COLOR. */
+    GLfloat sample_coverage, min_sample_shading;
+    GLboolean sample_coverage_invert;
+    GLbitfield sample_mask;
+    GLuint restart_index;
 
     /* what the host has. */
     uint32_t dirty;
@@ -590,6 +596,8 @@ static inline GlContext *gl_current(void)
 }
 
 void gl_error(GlContext *ctx, GLenum error);
+GlBlend *gl_blend_at(GlContext *ctx, unsigned index);       /* the state of a draw buffer. */
+GLboolean *gl_color_mask_at(GlContext *ctx, unsigned index);
 const char *gl_extension_string(void); /* extensions.c: the space separated list. */
 GLuint gl_extension_count(void);
 const char *gl_extension_at(GLuint index);

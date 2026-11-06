@@ -26,8 +26,12 @@ EXPORTS
     glBlendColor@16
     glBlendEquation@4
     glBlendEquationSeparate@8
+    glBlendEquationSeparatei@12
+    glBlendEquationi@8
     glBlendFunc@8
     glBlendFuncSeparate@16
+    glBlendFuncSeparatei@20
+    glBlendFunci@12
     glBlitFramebuffer@40
     glBufferData@16
     glBufferStorage@16
@@ -35,6 +39,7 @@ EXPORTS
     glCallList@4
     glCallLists@12
     glCheckFramebufferStatus@4
+    glClampColor@8
     glClear@4
     glClearAccum@16
     glClearBufferData@20
@@ -88,6 +93,10 @@ EXPORTS
     glColorMask@16
     glColorMaski@20
     glColorMaterial@8
+    glColorP3ui@8
+    glColorP3uiv@8
+    glColorP4ui@8
+    glColorP4uiv@8
     glColorPointer@16
     glCompileShader@4
     glCompressedTexImage2D@32
@@ -109,6 +118,7 @@ EXPORTS
     glDeleteBuffers@8
     glDeleteFramebuffers@8
     glDeleteLists@8
+    glDeleteObjectARB@4
     glDeleteProgram@4
     glDeleteQueries@8
     glDeleteRenderbuffers@8
@@ -120,6 +130,7 @@ EXPORTS
     glDepthMask@4
     glDepthRange@16
     glDepthRangef@8
+    glDetachObjectARB@8
     glDetachShader@8
     glDisable@4
     glDisableClientState@4
@@ -171,6 +182,11 @@ EXPORTS
     glFinish@0
     glFlush@0
     glFlushMappedBufferRange@12
+    glFogCoordPointer@12
+    glFogCoordd@8
+    glFogCoorddv@4
+    glFogCoordf@4
+    glFogCoordfv@4
     glFogf@8
     glFogfv@8
     glFogi@8
@@ -209,6 +225,8 @@ EXPORTS
     glGetError@0
     glGetFloatv@8
     glGetFramebufferAttachmentParameteriv@16
+    glGetHandleARB@4
+    glGetInfoLogARB@16
     glGetInteger64v@8
     glGetIntegeri_v@12
     glGetIntegerv@8
@@ -221,6 +239,9 @@ EXPORTS
     glGetMapiv@12
     glGetMaterialfv@12
     glGetMaterialiv@12
+    glGetMultisamplefv@12
+    glGetObjectParameterfvARB@12
+    glGetObjectParameterivARB@12
     glGetPixelMapfv@8
     glGetPixelMapuiv@8
     glGetPixelMapusv@8
@@ -264,6 +285,7 @@ EXPORTS
     glGetVertexAttribIiv@12
     glGetVertexAttribIuiv@12
     glGetVertexAttribPointerv@12
+    glGetVertexAttribdv@12
     glGetVertexAttribfv@12
     glGetVertexAttribiv@12
     glHint@8
@@ -337,6 +359,7 @@ EXPORTS
     glMatrixMode@4
     glMemoryBarrier@4
     glMemoryBarrierByRegion@4
+    glMinSampleShading@4
     glMultMatrixd@4
     glMultMatrixf@4
     glMultTransposeMatrixd@4
@@ -414,6 +437,14 @@ EXPORTS
     glMultiTexCoord4sARB@20
     glMultiTexCoord4sv@8
     glMultiTexCoord4svARB@8
+    glMultiTexCoordP1ui@12
+    glMultiTexCoordP1uiv@12
+    glMultiTexCoordP2ui@12
+    glMultiTexCoordP2uiv@12
+    glMultiTexCoordP3ui@12
+    glMultiTexCoordP3uiv@12
+    glMultiTexCoordP4ui@12
+    glMultiTexCoordP4uiv@12
     glNewList@8
     glNormal3b@12
     glNormal3bv@4
@@ -425,6 +456,8 @@ EXPORTS
     glNormal3iv@4
     glNormal3s@12
     glNormal3sv@4
+    glNormalP3ui@8
+    glNormalP3uiv@8
     glNormalPointer@12
     glObjectLabel@16
     glOrtho@48
@@ -454,7 +487,9 @@ EXPORTS
     glPopDebugGroup@0
     glPopMatrix@0
     glPopName@0
+    glPrimitiveRestartIndex@4
     glPrioritizeTextures@12
+    glProvokingVertex@4
     glPushAttrib@4
     glPushClientAttrib@4
     glPushDebugGroup@16
@@ -501,9 +536,30 @@ EXPORTS
     glRenderbufferStorageMultisample@20
     glRotated@32
     glRotatef@16
+    glSampleCoverage@8
+    glSampleMaski@8
     glScaled@24
     glScalef@12
     glScissor@16
+    glSecondaryColor3b@12
+    glSecondaryColor3bv@4
+    glSecondaryColor3d@24
+    glSecondaryColor3dv@4
+    glSecondaryColor3f@12
+    glSecondaryColor3fv@4
+    glSecondaryColor3i@12
+    glSecondaryColor3iv@4
+    glSecondaryColor3s@12
+    glSecondaryColor3sv@4
+    glSecondaryColor3ub@12
+    glSecondaryColor3ubv@4
+    glSecondaryColor3ui@12
+    glSecondaryColor3uiv@4
+    glSecondaryColor3us@12
+    glSecondaryColor3usv@4
+    glSecondaryColorP3ui@8
+    glSecondaryColorP3uiv@8
+    glSecondaryColorPointer@16
     glSelectBuffer@8
     glShadeModel@4
     glShaderSource@16
@@ -546,6 +602,14 @@ EXPORTS
     glTexCoord4iv@4
     glTexCoord4s@16
     glTexCoord4sv@4
+    glTexCoordP1ui@8
+    glTexCoordP1uiv@8
+    glTexCoordP2ui@8
+    glTexCoordP2uiv@8
+    glTexCoordP3ui@8
+    glTexCoordP3uiv@8
+    glTexCoordP4ui@8
+    glTexCoordP4uiv@8
     glTexCoordPointer@16
     glTexEnvf@12
     glTexEnvfv@12
@@ -634,25 +698,98 @@ EXPORTS
     glVertex4iv@4
     glVertex4s@16
     glVertex4sv@4
+    glVertexAttrib1d@12
+    glVertexAttrib1dv@8
     glVertexAttrib1f@8
     glVertexAttrib1fv@8
+    glVertexAttrib1s@8
+    glVertexAttrib1sv@8
+    glVertexAttrib2d@20
+    glVertexAttrib2dv@8
     glVertexAttrib2f@12
     glVertexAttrib2fv@8
+    glVertexAttrib2s@12
+    glVertexAttrib2sv@8
+    glVertexAttrib3d@28
+    glVertexAttrib3dv@8
     glVertexAttrib3f@16
     glVertexAttrib3fv@8
+    glVertexAttrib3s@16
+    glVertexAttrib3sv@8
+    glVertexAttrib4Nbv@8
+    glVertexAttrib4Niv@8
+    glVertexAttrib4Nsv@8
     glVertexAttrib4Nub@20
+    glVertexAttrib4Nubv@8
+    glVertexAttrib4Nuiv@8
+    glVertexAttrib4Nusv@8
+    glVertexAttrib4bv@8
+    glVertexAttrib4d@36
+    glVertexAttrib4dv@8
     glVertexAttrib4f@20
     glVertexAttrib4fv@8
+    glVertexAttrib4iv@8
+    glVertexAttrib4s@20
+    glVertexAttrib4sv@8
+    glVertexAttrib4ubv@8
+    glVertexAttrib4uiv@8
+    glVertexAttrib4usv@8
     glVertexAttribDivisor@8
+    glVertexAttribI1i@8
+    glVertexAttribI1iv@8
+    glVertexAttribI1ui@8
+    glVertexAttribI1uiv@8
+    glVertexAttribI2i@12
+    glVertexAttribI2iv@8
+    glVertexAttribI2ui@12
+    glVertexAttribI2uiv@8
+    glVertexAttribI3i@16
+    glVertexAttribI3iv@8
+    glVertexAttribI3ui@16
+    glVertexAttribI3uiv@8
+    glVertexAttribI4bv@8
     glVertexAttribI4i@20
     glVertexAttribI4iv@8
+    glVertexAttribI4sv@8
+    glVertexAttribI4ubv@8
     glVertexAttribI4ui@20
     glVertexAttribI4uiv@8
+    glVertexAttribI4usv@8
     glVertexAttribIPointer@20
+    glVertexAttribP1ui@16
+    glVertexAttribP1uiv@16
+    glVertexAttribP2ui@16
+    glVertexAttribP2uiv@16
+    glVertexAttribP3ui@16
+    glVertexAttribP3uiv@16
+    glVertexAttribP4ui@16
+    glVertexAttribP4uiv@16
     glVertexAttribPointer@24
+    glVertexP2ui@8
+    glVertexP2uiv@8
+    glVertexP3ui@8
+    glVertexP3uiv@8
+    glVertexP4ui@8
+    glVertexP4uiv@8
     glVertexPointer@16
     glViewport@16
     glWaitSync@16
+    glWindowPos2d@16
+    glWindowPos2dv@4
+    glWindowPos2f@8
+    glWindowPos2fv@4
+    glWindowPos2i@8
+    glWindowPos2iv@4
+    glWindowPos2s@8
+    glWindowPos2sv@4
+    glWindowPos3d@24
+    glWindowPos3dv@4
+    glWindowPos3f@12
+    glWindowPos3fv@4
+    glWindowPos3i@12
+    glWindowPos3iv@4
+    glWindowPos3s@12
+    glWindowPos3sv@4
     wglChoosePixelFormat@8
     wglChoosePixelFormatARB@24
     wglCopyContext@12
