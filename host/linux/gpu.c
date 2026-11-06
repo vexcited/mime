@@ -1324,8 +1324,11 @@ static VkImageView sampled_view(Texture *t)
         *out[i] = s < 6 ? by[s] : component(s);
     }
     VkImageAspectFlags aspect = t->aspect & VK_IMAGE_ASPECT_DEPTH_BIT ? VK_IMAGE_ASPECT_DEPTH_BIT : t->aspect;
+    /* a view in another format than the image's may not support storage, which sampling does not need. */
+    VkImageViewUsageCreateInfo usage = {VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO, nullptr, VK_IMAGE_USAGE_SAMPLED_BIT};
     VkImageViewCreateInfo info = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext = &usage,
         .image = t->image,
         .viewType = t->view_type,
         .format = t->format,
@@ -1648,7 +1651,8 @@ static void texture_copy(Channel *c, const MimeGpuTextureCopy *t, bool upload)
         .bufferOffset = off,
         .bufferRowLength = row_texels,
         .bufferImageHeight = rows,
-        .imageSubresource = {aspect, t->level, layered ? slice : 0, layered ? (t->depth > 1 ? t->depth : 1) : 1},
+        .imageSubresource = {aspect, tex->base_level + t->level, tex->base_layer + (layered ? slice : 0),
+                             layered ? (t->depth > 1 ? t->depth : 1) : 1},
         .imageOffset = {(int32_t)t->x, height == 1 && tex->height == 1 ? 0 : (int32_t)t->y, layered ? 0 : (int32_t)(t->z + t->slice)},
         .imageExtent = {t->width, height, layered ? 1 : (t->depth ? t->depth : 1)},
     };
@@ -1670,9 +1674,9 @@ static void texture_mipmaps(Channel *c, uint32_t id_)
     for (uint32_t level = 1; level < t->levels; level++) {
         int32_t nw = w > 1 ? w / 2 : 1, nh = h > 1 ? h / 2 : 1, nd = d > 1 ? d / 2 : 1;
         VkImageBlit region = {
-            .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, t->layers},
+            .srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, t->base_level + level - 1, t->base_layer, t->layers},
             .srcOffsets = {{0, 0, 0}, {w, h, d}},
-            .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, t->layers},
+            .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, t->base_level + level, t->base_layer, t->layers},
             .dstOffsets = {{0, 0, 0}, {nw, nh, nd}},
         };
         g_vk.fn.vkCmdBlitImage(cbuf(c), t->image, VK_IMAGE_LAYOUT_GENERAL, t->image, VK_IMAGE_LAYOUT_GENERAL, 1, &region,
@@ -3195,7 +3199,8 @@ static void blit(Channel *c, const MimeGpuBlit *b)
         if (!aspect)
             return;
     }
-    VkImageSubresourceLayers ss = {aspect, b->src.level, b->src.slice, 1}, ds = {aspect, b->dst.level, b->dst.slice, 1};
+    VkImageSubresourceLayers ss = {aspect, src->base_level + b->src.level, src->base_layer + b->src.slice, 1},
+                             ds = {aspect, dst->base_level + b->dst.level, dst->base_layer + b->dst.slice, 1};
     VkCommandBuffer cb = cbuf(c);
     if (sw == dw && sh == dh && sw > 0 && sh > 0 && src->samples == dst->samples && src->format == dst->format) {
         VkImageCopy region = {ss, {b->src_x0, b->src_y0, 0}, ds, {b->dst_x0, b->dst_y0, 0}, {(uint32_t)sw, (uint32_t)sh, 1}};
@@ -3653,9 +3658,9 @@ static void copy_image(Channel *c, const MimeGpuCopyImage *ci)
     bool s3 = src->type == TEXTURE_3D, d3 = dst->type == TEXTURE_3D;
     /* layers of an array or cube are array layers; a 3d image counts its slices in the extent. */
     VkImageCopy region = {
-        {src->aspect, ci->src_level, s3 ? 0 : ci->src_z, s3 ? 1 : (d3 ? ci->depth : ci->depth)},
+        {src->aspect, src->base_level + ci->src_level, src->base_layer + (s3 ? 0 : ci->src_z), s3 ? 1 : ci->depth},
         {(int32_t)ci->src_x, (int32_t)ci->src_y, s3 ? (int32_t)ci->src_z : 0},
-        {dst->aspect, ci->dst_level, d3 ? 0 : ci->dst_z, d3 ? 1 : ci->depth},
+        {dst->aspect, dst->base_level + ci->dst_level, dst->base_layer + (d3 ? 0 : ci->dst_z), d3 ? 1 : ci->depth},
         {(int32_t)ci->dst_x, (int32_t)ci->dst_y, d3 ? (int32_t)ci->dst_z : 0},
         {ci->width, ci->height, s3 || d3 ? ci->depth : 1},
     };

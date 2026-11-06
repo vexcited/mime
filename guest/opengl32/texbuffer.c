@@ -81,7 +81,7 @@ static uint64_t range_of(const GlTexture *t, const GlBuffer *b, uint64_t *offset
     uint64_t size = t->tb.ranged ? (uint64_t)t->tb.size : b->size - *offset;
     if (size > b->size - *offset)
         size = b->size - *offset;
-    uint32_t texel = gl_format_bytes(t->tb.mtl);
+    uint32_t texel = gl_mtl_texel_bytes(t->tb.mtl);
     return texel ? size - size % texel : 0;
 }
 
@@ -173,7 +173,7 @@ static void attach(GlContext *ctx, GlTexture *t, GLenum internal, GLuint buffer,
     t->internal_format = internal;
     t->mtl_format = mtl;
     uint64_t start, bytes = range_of(t, b, &start);
-    t->width = (uint32_t)(bytes / gl_format_bytes(mtl));
+    t->width = (uint32_t)(bytes / gl_mtl_texel_bytes(mtl));
     t->height = t->depth = 1;
     t->defined_levels = 1;
     ctx->dirty |= DIRTY_TEXTURES;

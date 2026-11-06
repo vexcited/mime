@@ -145,6 +145,11 @@ typedef struct GlTexture {
     GlSamplerState sampler;
     uint32_t sampler_id;  /* 0 when the state changed. */
     GLint base_level, max_level;
+    uint32_t immutable_levels; /* glTexStorage or glTextureView made it, with this many levels. */
+    struct {
+        BOOL is;
+        GLuint min_level, levels, min_layer, layers;
+    } view;                    /* see textureview.c. */
     /* a buffer texture, see texbuffer.c. */
     struct {
         GLuint buffer;
@@ -716,6 +721,10 @@ static inline GlContext *gl_current(void)
 
 void gl_error(GlContext *ctx, GLenum error);
 int gl_texbuffer_get(GlContext *ctx, GLenum pname, GLdouble *v);
+BOOL gl_textureview_param(const GlTexture *t, GLenum pname, GLint *value);
+uint32_t gl_texture_sampling_swizzle(const GlTexture *t);
+uint32_t gl_mtl_type_of(GLenum target);
+uint32_t gl_mtl_texel_bytes(uint32_t mtl);
 BOOL gl_texbuffer_ready(GlContext *ctx, GlTexture *t);
 BOOL gl_texbuffer_param(GlContext *ctx, const GlTexture *t, GLenum pname, GLint *value);
 int gl_atomics_get(GlContext *ctx, GLenum pname, GLdouble *v);
