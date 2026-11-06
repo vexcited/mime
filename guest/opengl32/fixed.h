@@ -46,6 +46,8 @@ BOOL gl_clip_planes_enabled(GlContext *ctx);
 uint8_t gl_logic_op(GlContext *ctx);
 
 /* in fixed.c. */
+double gl_ff_root(double x);
+double gl_ff_cosine(double degrees);
 void gl_ff_pack(GlContext *ctx, GLfloat (*u)[4]);
 BOOL gl_ff_texture_state(GlContext *ctx, uint32_t *env, uint32_t *format);
 

@@ -241,6 +241,10 @@ typedef struct GlProgram {
     GlAttrib *attribs;
     uint32_t attrib_count;
     uint32_t attrib_mask;  /* locations the vertex stage reads. */
+    /* the fixed function built-ins of GLSL the program reads, see compatglsl.c: the locations of its built-in inputs and
+       the array of uniforms they are read from. */
+    uint32_t cg_attribs;
+    uint32_t cg_offset, cg_stride, cg_slots;
     uint8_t *ublock;
     uint32_t ublock_size;
     BOOL ublock_dirty;
@@ -494,6 +498,7 @@ typedef struct GlVertexInput {
     uint32_t mask;
     const GLfloat (*constants)[4]; /* NULL: the generic attribute values of the context. */
     BOOL fixed, flat;
+    uint32_t constant_mask; /* with constants: the locations they are for, 0 for all of them. */
 } GlVertexInput;
 
 /* the display list being compiled, and the one running, see dlist.c. */
@@ -665,6 +670,12 @@ typedef struct GlContext {
 
     GlFixed ff;
     GlDlState dl;
+
+    /* the inputs of a draw with a program that reads the built-in vertex variables. */
+    struct {
+        GlVertexAttrib attribs[MIME_GPU_MAX_ATTRIBS];
+        GLfloat constants[MIME_GPU_MAX_ATTRIBS][4];
+    } cg;
     GlStages st;
 
     /* glPushAttrib and glPushClientAttrib, see attrib.c. */
@@ -786,6 +797,12 @@ void gl_program_set_stage_sources(GlProgram *p, const char *control, const char 
 void gl_stage_emit_viewports(GlContext *ctx, uint32_t dirty); /* the indexed viewports and scissors, after the plain ones. */
 BOOL gl_query_target_known(GLenum target);
 void gl_draw_feedback(GlContext *ctx, GLenum mode, uint32_t object, uint32_t buffer, uint32_t stride, GLsizei instances);
+
+/* the fixed function built-in variables of GLSL, compatglsl.c. */
+void gl_cg_input(GlContext *ctx, GlProgram *p, GlVertexInput *in);
+void gl_cg_prepare(GlContext *ctx, GlProgram *p);
+BOOL gl_cg_current(GlContext *ctx, uint32_t location, GLfloat out[4]);
+BOOL gl_cg_core_violation(const char *source);
 
 /* draws, draw.c. */
 void gl_invalidate_bindings(GlContext *ctx);

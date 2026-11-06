@@ -773,14 +773,20 @@ static void legacy_pointer(GLint size, GLenum type, GLsizei stride, GLint min_si
         gl_error(ctx, GL_INVALID_ENUM);
 }
 
+void APIENTRY glVertexAttribPointer(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride,
+                                    const void *pointer);
+
+/* both arrays are the generic attributes the built-in inputs alias, 4 and 5, read when a program uses those inputs. */
 GLAPI void APIENTRY glSecondaryColorPointer(GLint size, GLenum type, GLsizei stride, const void *pointer)
 {
     legacy_pointer(size, type, stride, 3, 3);
+    glVertexAttribPointer(4, size, type, type != GL_FLOAT && type != GL_DOUBLE && type != GL_HALF_FLOAT, stride, pointer);
 }
 
 GLAPI void APIENTRY glFogCoordPointer(GLenum type, GLsizei stride, const void *pointer)
 {
     legacy_pointer(1, type, stride, 1, 1);
+    glVertexAttribPointer(5, 1, type, GL_FALSE, stride, pointer);
 }
 
 /* ---------------------------------------------------------------- state kept for queries */
@@ -802,7 +808,7 @@ GLAPI void APIENTRY glClampColor(GLenum target, GLenum clamp)
         gl_error(ctx, GL_INVALID_ENUM);
         return;
     }
-    if (clamp != GL_TRUE && clamp != GL_FALSE && (clamp != GL_FIXED_ONLY || target != GL_CLAMP_READ_COLOR)) {
+    if (clamp != GL_TRUE && clamp != GL_FALSE && (clamp != GL_FIXED_ONLY || target == GL_CLAMP_VERTEX_COLOR)) {
         gl_error(ctx, GL_INVALID_ENUM);
         return;
     }
