@@ -872,6 +872,7 @@ EXPORTS
     glTextureSubImage1D@28
     glTextureSubImage2D@36
     glTextureSubImage3D@44
+    glTextureView@32
     glTransformFeedbackBufferBase@12
     glTransformFeedbackBufferRange@20
     glTransformFeedbackVaryings@16

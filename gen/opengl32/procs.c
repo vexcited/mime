@@ -874,6 +874,7 @@ void APIENTRY glTextureStorage3DMultisample(GLuint texture, GLsizei samples, GLe
 void APIENTRY glTextureSubImage1D(GLuint texture, GLint level, GLint x, GLsizei w, GLenum format, GLenum type,                                         const void *pixels);
 void APIENTRY glTextureSubImage2D(GLuint texture, GLint level, GLint x, GLint y, GLsizei w, GLsizei h,                                         GLenum format, GLenum type, const void *pixels);
 void APIENTRY glTextureSubImage3D(GLuint texture, GLint level, GLint x, GLint y, GLint z, GLsizei w, GLsizei h,                                         GLsizei d, GLenum format, GLenum type, const void *pixels);
+void APIENTRY glTextureView(GLuint texture, GLenum target, GLuint origtexture, GLenum internal, GLuint minlevel,                                   GLuint numlevels, GLuint minlayer, GLuint numlayers);
 void APIENTRY glTransformFeedbackBufferBase(GLuint xfb, GLuint index, GLuint buffer);
 void APIENTRY glTransformFeedbackBufferRange(GLuint xfb, GLuint index, GLuint buffer, GLintptr offset,                                                    GLsizeiptr size);
 void APIENTRY glTransformFeedbackVaryings(GLuint program, GLsizei count, const GLchar *const *varyings,                                                 GLenum mode);
@@ -2054,6 +2055,7 @@ const GL_PROC GlProcs[] = {
     {"glTextureSubImage1D", (const void *)glTextureSubImage1D},
     {"glTextureSubImage2D", (const void *)glTextureSubImage2D},
     {"glTextureSubImage3D", (const void *)glTextureSubImage3D},
+    {"glTextureView", (const void *)glTextureView},
     {"glTransformFeedbackBufferBase", (const void *)glTransformFeedbackBufferBase},
     {"glTransformFeedbackBufferRange", (const void *)glTransformFeedbackBufferRange},
     {"glTransformFeedbackVaryings", (const void *)glTransformFeedbackVaryings},
@@ -2315,4 +2317,4 @@ const GL_PROC GlProcs[] = {
     {"wglUseFontOutlinesA", (const void *)wglUseFontOutlinesA},
     {"wglUseFontOutlinesW", (const void *)wglUseFontOutlinesW},
 };
-const ULONG GlProcCount = 1201;
+const ULONG GlProcCount = 1202;

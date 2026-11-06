@@ -5251,6 +5251,12 @@ static void x_glTextureSubImage3D(MX_NATIVE_CALL *c)
     glTextureSubImage3D((GLuint)I(c, 0), (GLint)I(c, 1), (GLint)I(c, 2), (GLint)I(c, 3), (GLint)I(c, 4), (GLsizei)I(c, 5), (GLsizei)I(c, 6), (GLsizei)I(c, 7), (GLenum)I(c, 8), (GLenum)I(c, 9), (const void *)I(c, 10));
 }
 
+void APIENTRY glTextureView(GLuint texture, GLenum target, GLuint origtexture, GLenum internal, GLuint minlevel,                                   GLuint numlevels, GLuint minlayer, GLuint numlayers);
+static void x_glTextureView(MX_NATIVE_CALL *c)
+{
+    glTextureView((GLuint)I(c, 0), (GLenum)I(c, 1), (GLuint)I(c, 2), (GLenum)I(c, 3), (GLuint)I(c, 4), (GLuint)I(c, 5), (GLuint)I(c, 6), (GLuint)I(c, 7));
+}
+
 void APIENTRY glTransformFeedbackBufferBase(GLuint xfb, GLuint index, GLuint buffer);
 static void x_glTransformFeedbackBufferBase(MX_NATIVE_CALL *c)
 {
@@ -7540,6 +7546,7 @@ static const MX_NATIVE_FN g_functions[] = {
     x_glTextureSubImage1D,
     x_glTextureSubImage2D,
     x_glTextureSubImage3D,
+    x_glTextureView,
     x_glTransformFeedbackBufferBase,
     x_glTransformFeedbackBufferRange,
     x_glTransformFeedbackVaryings,
@@ -7778,4 +7785,4 @@ static const MX_NATIVE_FN g_functions[] = {
     x_wglUseFontOutlinesW,
 };
 
-const MX_NATIVE_TABLE OpenGL32X64Thunks = {1108, 0, g_functions};
+const MX_NATIVE_TABLE OpenGL32X64Thunks = {1109, 0, g_functions};
