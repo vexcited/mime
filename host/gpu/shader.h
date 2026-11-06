@@ -19,8 +19,12 @@
 #define MIME_SHADER_COUNTER_BINDING(slot) (576u + (uint32_t)(slot))
 #define MIME_GPU_MAX_COUNTER_BUFFERS 8
 
+/*
+ * a texel buffer sampler (kind MIME_SHADER_TEXEL) takes the binding a sampler of its place would have, and an image
+ * buffer is a MIME_SHADER_IMAGE of type GL_IMAGE_BUFFER.
+ */
 enum { MIME_SHADER_UNIFORMS, MIME_SHADER_BLOCK, MIME_SHADER_TEXTURE, MIME_SHADER_STORAGE, MIME_SHADER_IMAGE,
-       MIME_SHADER_COUNTER };
+       MIME_SHADER_COUNTER, MIME_SHADER_TEXEL };
 
 typedef struct MimeShaderBinding {
     uint32_t binding;

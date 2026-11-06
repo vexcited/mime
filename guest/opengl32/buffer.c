@@ -32,6 +32,8 @@ static GLuint *binding_of(GlContext *ctx, GLenum target)
         return gl_host_has(MIME_GPU_FEATURE_COMPUTE) ? &ctx->storage_buffer : nullptr;
     case GL_ATOMIC_COUNTER_BUFFER:
         return gl_host_has(MIME_GPU_FEATURE_COMPUTE) ? &ctx->atomic_buffer : nullptr;
+    case GL_TEXTURE_BUFFER:
+        return gl_host_has(MIME_GPU_FEATURE_TEXEL_BUFFER) ? &ctx->texture_buffer : nullptr;
     case GL_DISPATCH_INDIRECT_BUFFER:
         return gl_host_has(MIME_GPU_FEATURE_COMPUTE) ? &ctx->dispatch_indirect_buffer : nullptr;
     case GL_DRAW_INDIRECT_BUFFER:
@@ -114,6 +116,8 @@ GLAPI void APIENTRY glDeleteBuffers(GLsizei n, const GLuint *buffers)
             ctx->storage_buffer = 0;
         if (ctx->atomic_buffer == name)
             ctx->atomic_buffer = 0;
+        if (ctx->texture_buffer == name)
+            ctx->texture_buffer = 0;
         for (int i = 0; i < MIME_GPU_MAX_ATOMIC_BINDINGS; i++)
             if (ctx->atomic_bindings[i].name == name)
                 memset(&ctx->atomic_bindings[i], 0, sizeof(ctx->atomic_bindings[i]));

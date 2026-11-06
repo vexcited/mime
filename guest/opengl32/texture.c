@@ -6,7 +6,7 @@
 #include "opengl32.h"
 
 /* unit slots by target. */
-enum { SLOT_2D, SLOT_CUBE, SLOT_3D, SLOT_2D_ARRAY, SLOT_RECT, SLOT_1D, SLOT_2D_MS, SLOT_1D_ARRAY, SLOT_CUBE_ARRAY, SLOT_COUNT };
+enum { SLOT_2D, SLOT_CUBE, SLOT_3D, SLOT_2D_ARRAY, SLOT_RECT, SLOT_1D, SLOT_2D_MS, SLOT_1D_ARRAY, SLOT_CUBE_ARRAY, SLOT_BUFFER, SLOT_COUNT };
 
 enum {
     MTL_TEX_1D = 0,
@@ -40,6 +40,8 @@ static int slot_of(GLenum target)
         return SLOT_1D_ARRAY;
     case GL_TEXTURE_CUBE_MAP_ARRAY:
         return gl_host_has(MIME_GPU_FEATURE_CUBE_ARRAY) ? SLOT_CUBE_ARRAY : -1;
+    case GL_TEXTURE_BUFFER:
+        return gl_host_has(MIME_GPU_FEATURE_TEXEL_BUFFER) ? SLOT_BUFFER : -1;
     default:
         return -1;
     }
@@ -100,6 +102,10 @@ static int slot_of_sampler(GLenum type)
         return SLOT_2D_MS;
     case GL_SAMPLER_1D_ARRAY:
         return SLOT_1D_ARRAY;
+    case GL_SAMPLER_BUFFER:
+    case GL_INT_SAMPLER_BUFFER:
+    case GL_UNSIGNED_INT_SAMPLER_BUFFER:
+        return SLOT_BUFFER;
     default:
         return SLOT_2D;
     }
@@ -1149,6 +1155,8 @@ GLAPI void APIENTRY glGetTexLevelParameteriv(GLenum target, GLint level, GLenum 
     }
     BOOL defined = (t->defined_levels >> level) & 1;
     uint32_t w = t->width >> level ? t->width >> level : 1, h = t->height >> level ? t->height >> level : 1;
+    if (t->target == GL_TEXTURE_BUFFER && gl_texbuffer_param(ctx, t, pname, params))
+        return;
     switch (pname) {
     case GL_TEXTURE_WIDTH:
         *params = defined ? (GLint)w : 0;
@@ -1284,8 +1292,15 @@ uint32_t gl_texture_sampler(GlTexture *t)
     return id;
 }
 
+GlTexture *gl_texture_bound(GlContext *ctx, GLenum target)
+{
+    return bound(ctx, target);
+}
+
 BOOL gl_texture_ready(GlContext *ctx, GlTexture *t)
 {
+    if (t && t->target == GL_TEXTURE_BUFFER)
+        return gl_texbuffer_ready(ctx, t);
     return t && t->id && (t->defined_levels & 1);
 }
 

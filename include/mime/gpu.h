@@ -114,6 +114,15 @@ enum {
 #define MIME_GPU_FEATURE_FP64 (1ull << 34)      /* 64 bit floats in shaders and vertex attributes. */
 #define MIME_GPU_FEATURE_VIEWPORTS (1ull << 33) /* more than one viewport and scissor, and the indexed commands. */
 
+#define MIME_GPU_FEATURE_TEXEL_BUFFER (1ull << 48) /* texture buffers: TEXTURE_BUFFER. */
+#define MIME_GPU_FEATURE_TEXTURE_VIEW (1ull << 49) /* TEXTURE_VIEW. */
+
+/* 192 to 255: texture buffers and views. */
+enum {
+    MIME_GPU_TEXTURE_BUFFER = 192, /* MimeGpuTextureBuffer */
+    MIME_GPU_TEXTURE_VIEW,         /* MimeGpuTextureView */
+};
+
 enum {
     MIME_GPU_PROGRAM_STAGES = 128, /* MimeGpuProgramStages: more stages for the PROGRAM_CREATE of the same id that follows. */
     MIME_GPU_XFB_BUFFERS,          /* MimeGpuXfbBuffers */
@@ -164,6 +173,27 @@ typedef struct MimeGpuTextureCreate {
     uint32_t usage;
     uint32_t swizzle; /* four Metal swizzle bytes, red first. */
 } MimeGpuTextureCreate;
+
+/* a texture id that reads texels from a range of the heap: the id is replaced when it had an image or another range. */
+typedef struct MimeGpuTextureBuffer {
+    MimeGpuCmd cmd;
+    uint32_t id;
+    uint32_t format; /* MTLPixelFormat */
+    MimeGpuMem mem;
+    uint64_t size;
+} MimeGpuTextureBuffer;
+
+/* a texture id that reads the levels and layers of another texture's storage as another type and format. */
+typedef struct MimeGpuTextureView {
+    MimeGpuCmd cmd;
+    uint32_t id, source;
+    uint32_t type;   /* MTLTextureType */
+    uint32_t format; /* MTLPixelFormat */
+    uint32_t min_level, levels;
+    uint32_t min_layer, layers;
+    uint32_t swizzle;
+    uint32_t pad;
+} MimeGpuTextureView;
 
 typedef struct MimeGpuTextureSwizzle {
     MimeGpuCmd cmd;

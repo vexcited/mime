@@ -145,6 +145,16 @@ typedef struct GlTexture {
     GlSamplerState sampler;
     uint32_t sampler_id;  /* 0 when the state changed. */
     GLint base_level, max_level;
+    /* a buffer texture, see texbuffer.c. */
+    struct {
+        GLuint buffer;
+        GLenum format;
+        uint32_t mtl, host_mtl;
+        GLintptr offset;
+        GLsizeiptr size;
+        BOOL ranged;
+        GlMem host; /* the heap range the host texture was made over. */
+    } tb;
 } GlTexture;
 
 typedef struct GlRenderbuffer {
@@ -579,7 +589,7 @@ typedef struct GlContext {
     /* bindings. */
     GLuint array_buffer, pixel_pack, pixel_unpack, copy_read, copy_write, uniform_buffer;
     GlBufferBinding uniform_bindings[MIME_GPU_MAX_UNIFORM_BLOCKS];
-    GLuint atomic_buffer, storage_buffer, dispatch_indirect_buffer, draw_indirect_buffer, parameter_buffer;
+    GLuint texture_buffer, atomic_buffer, storage_buffer, dispatch_indirect_buffer, draw_indirect_buffer, parameter_buffer;
     GlBufferBinding storage_bindings[MIME_GPU_MAX_STORAGE_BLOCKS];
     GlBufferBinding atomic_bindings[MIME_GPU_MAX_ATOMIC_BINDINGS];
     struct {
@@ -692,6 +702,9 @@ static inline GlContext *gl_current(void)
 }
 
 void gl_error(GlContext *ctx, GLenum error);
+int gl_texbuffer_get(GlContext *ctx, GLenum pname, GLdouble *v);
+BOOL gl_texbuffer_ready(GlContext *ctx, GlTexture *t);
+BOOL gl_texbuffer_param(GlContext *ctx, const GlTexture *t, GLenum pname, GLint *value);
 int gl_atomics_get(GlContext *ctx, GLenum pname, GLdouble *v);
 BOOL gl_atomics_get_indexed(GlContext *ctx, GLenum target, GLuint index, GLint *data);
 GlBlend *gl_blend_at(GlContext *ctx, unsigned index);       /* the state of a draw buffer. */

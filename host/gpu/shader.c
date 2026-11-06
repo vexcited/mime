@@ -269,7 +269,7 @@ static uint32_t gl_type_of(spvc_compiler c, spvc_type t)
         case SpvDimRect:
             return depth ? 0x8B64 : 0x8B63;
         case SpvDimBuffer:
-            return 0x8DC2;
+            return prefix == 1 ? 0x8DD0 : prefix == 2 ? 0x8DD8 : 0x8DC2;
         default:
             if (spvc_type_get_image_multisampled(t))
                 return 0x9108;
@@ -383,6 +383,39 @@ static void add_binding(Program *p, uint32_t binding, uint32_t count, uint32_t m
     p->bindings[p->binding_count++] = (MimeShaderBinding){binding, count, mask, kind, slot, gl_type, bytes};
 }
 
+/*
+ * Vulkan has no sampler for a texel buffer: samplerBuffer becomes textureBuffer, which texelFetch takes alone, and
+ * textureSize on it needs the samplerless functions.
+ */
+static char *texel_buffers(char *text)
+{
+    static const char *const names[3][2] = {
+        {"samplerBuffer", "textureBuffer"}, {"isamplerBuffer", "itextureBuffer"}, {"usamplerBuffer", "utextureBuffer"}};
+    if (!strstr(text, "samplerBuffer"))
+        return text;
+    Buf out = {};
+    const char *eol = strchr(text, '\n');
+    if (eol) {
+        buf_add(&out, text, (size_t)(eol - text + 1));
+        buf_str(&out, "#extension GL_EXT_samplerless_texture_functions : enable\n");
+        text = (char *)eol + 1;
+    }
+    for (const char *p = text; *p;) {
+        bool done = false;
+        for (int k = 0; k < 3 && !done; k++) {
+            size_t n = strlen(names[k][0]);
+            if (!strncmp(p, names[k][0], n) && !is_ident(p[n]) && (p == text || !is_ident(p[-1]))) {
+                buf_str(&out, names[k][1]);
+                p += n;
+                done = true;
+            }
+        }
+        if (!done)
+            buf_add(&out, p++, 1);
+    }
+    return out.data;
+}
+
 /* lifts the source of a stage and takes its atomic counters into the program. */
 static char *lift_stage(Program *p, const char *src, size_t len, bool fragment, uint32_t bit)
 {
@@ -391,6 +424,12 @@ static char *lift_stage(Program *p, const char *src, size_t len, bool fragment, 
     char *rewritten = mime_glsl_atomics(src, len, decls, &count);
     char *text = rewritten ? lift_source(rewritten, strlen(rewritten), fragment) : lift_source(src, len, fragment);
     free(rewritten);
+    if (text) {
+        char *replaced = texel_buffers(text);
+        if (replaced != text)
+            free(text);
+        text = replaced;
+    }
     for (unsigned i = 0; i < count; i++) {
         unsigned k;
         for (k = 0; k < p->counter_count; k++)
@@ -479,6 +518,7 @@ static const spvc_reflected_resource *resources(spvc_compiler c, spvc_resource_t
     const spvc_reflected_resource *list = nullptr;
     *count = 0;
     if (type == SPVC_RESOURCE_TYPE_UNIFORM_BUFFER || type == SPVC_RESOURCE_TYPE_SAMPLED_IMAGE ||
+        type == SPVC_RESOURCE_TYPE_SEPARATE_IMAGE ||
         type == SPVC_RESOURCE_TYPE_STORAGE_BUFFER || type == SPVC_RESOURCE_TYPE_STORAGE_IMAGE) {
         spvc_set active;
         if (spvc_compiler_get_active_interface_variables(c, &active) != SPVC_SUCCESS ||
@@ -778,9 +818,15 @@ static bool bind_resources(Program *p, spvc_compiler c, int stage, int bit, SpvE
 #endif
     }
 
-    const spvc_reflected_resource *img = resources(c, SPVC_RESOURCE_TYPE_SAMPLED_IMAGE, &n);
+    for (int pass = 0; pass < 2; pass++) {
+    const spvc_reflected_resource *img =
+        resources(c, pass ? SPVC_RESOURCE_TYPE_SEPARATE_IMAGE : SPVC_RESOURCE_TYPE_SAMPLED_IMAGE, &n);
     for (size_t i = 0; i < n; i++) {
         spvc_type t = spvc_compiler_get_type_handle(c, img[i].type_id);
+        /* the images that are not combined with a sampler are the texel buffers, which are sampled without one. */
+        if (pass && spvc_type_get_image_dimension(t) != SpvDimBuffer)
+            continue;
+        bool texel = pass != 0;
         unsigned count = array_size_of(t) ? array_size_of(t) : 1;
         unsigned slot = p->next_slot[stage];
         char uname[256];
@@ -807,8 +853,8 @@ static bool bind_resources(Program *p, spvc_compiler c, int stage, int bit, SpvE
 #else
         spvc_compiler_set_decoration(c, img[i].id, SpvDecorationDescriptorSet, 0);
         spvc_compiler_set_decoration(c, img[i].id, SpvDecorationBinding, MIME_SHADER_TEXTURE_BINDING(stage, slot));
-        add_binding(p, MIME_SHADER_TEXTURE_BINDING(stage, slot), count, bit, MIME_SHADER_TEXTURE, slot,
-                    gl_type_of(c, t), 0);
+        add_binding(p, MIME_SHADER_TEXTURE_BINDING(stage, slot), count, bit,
+                    texel ? MIME_SHADER_TEXEL : MIME_SHADER_TEXTURE, slot, gl_type_of(c, t), 0);
 #endif
         Uniform *u = add_uniform(p, uname);
         u->info.gl_type = gl_type_of(c, t);
@@ -819,6 +865,7 @@ static bool bind_resources(Program *p, spvc_compiler c, int stage, int bit, SpvE
         }
         if (u->info.binding < 0)
             u->info.binding = explicit_binding(source, img[i].name);
+    }
     }
 #ifndef __APPLE__
     return bind_storage(p, c, stage, bit, source);

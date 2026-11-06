@@ -81,6 +81,11 @@ void gl_emit_images(GlContext *ctx, GlProgram *p)
             GlTexture *t = gl_texture(ctx, ctx->image_units[unit].texture);
             if (!t || !gl_texture_ready(ctx, t))
                 continue;
+            if (t->target == GL_TEXTURE_BUFFER) {
+                GlBuffer *b = gl_buffer(ctx, t->tb.buffer);
+                if (b)
+                    b->gpu_write = TRUE;
+            }
             c->id = t->id;
             c->level = (uint32_t)ctx->image_units[unit].level;
             c->layer = (uint32_t)ctx->image_units[unit].layer;
