@@ -431,11 +431,13 @@ static D2dEffect *effect_of(void *p)
 /* an ID2D1Effect of this library, built in or custom. */
 BOOL D2dIsEffect(const void *p) { return D2dIsOfClass(p, &g_effect_class) || (p && D2dCustomOf(p) == p); }
 
+/* a float bitmap feeds its stored values to effects, beside the 8 bit view. */
 static HRESULT bitmap_data(D2dRt *rt, D2dBitmap *b, IRect want, D2dImageData *out)
 {
     const D2dSurface *v = D2dBitmapView(b);
     if (!v)
         return E_OUTOFMEMORY;
+    BOOL wide = D2dBitmapIsFloat(b);
     float sx = rt->dpi_x / b->dpi_x, sy = rt->dpi_y / b->dpi_y;
     int w = sx == 1.0f ? v->w : (int)(v->w * sx + 0.5f), h = sy == 1.0f ? v->h : (int)(v->h * sy + 0.5f);
     IRect r = {0, 0, w, h};
@@ -447,13 +449,30 @@ static HRESULT bitmap_data(D2dRt *rt, D2dBitmap *b, IRect want, D2dImageData *ou
         HRESULT hr = data_new(out, r);
         if (FAILED(hr))
             return hr;
-        for (int y = r.y0; y < r.y1; y++)
-            memcpy(D2dSurfaceRow(&out->surface, y - r.y0), D2dSurfaceRow(v, y) + r.x0, (SIZE_T)(r.x1 - r.x0) * 4);
+        int n = r.x1 - r.x0;
+        if (wide && n > 0 && !(out->fpx = D2dAlloc((SIZE_T)n * (r.y1 - r.y0) * 16))) {
+            D2dImageDataFree(out);
+            return E_OUTOFMEMORY;
+        }
+        for (int y = r.y0; y < r.y1; y++) {
+            memcpy(D2dSurfaceRow(&out->surface, y - r.y0), D2dSurfaceRow(v, y) + r.x0, (SIZE_T)n * 4);
+            if (out->fpx)
+                D2dBitmapFloatRow(b, (UINT32)r.x0, (UINT32)y, (UINT32)n, out->fpx + (SIZE_T)(y - r.y0) * n * 4);
+        }
         return S_OK;
     }
     HRESULT hr = data_new(out, r);
     if (FAILED(hr))
         return hr;
+    float *f = nullptr;
+    if (wide && w > 0 && h > 0) {
+        f = D2dBitmapFloats(b);
+        if (!f || !(out->fpx = D2dAlloc((SIZE_T)w * h * 16))) {
+            D2dFree(f);
+            D2dImageDataFree(out);
+            return E_OUTOFMEMORY;
+        }
+    }
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             float u = (x + 0.5f) / sx - 0.5f, vv = (y + 0.5f) / sy - 0.5f;
@@ -464,15 +483,24 @@ static HRESULT bitmap_data(D2dRt *rt, D2dBitmap *b, IRect want, D2dImageData *ou
             i1 = i1 < 0 ? 0 : (i1 >= v->w ? v->w - 1 : i1);
             j0 = j0 < 0 ? 0 : (j0 >= v->h ? v->h - 1 : j0);
             j1 = j1 < 0 ? 0 : (j1 >= v->h ? v->h - 1 : j1);
-            uint32_t p[4] = {v->px[(SIZE_T)j0 * v->w + i0], v->px[(SIZE_T)j0 * v->w + i1], v->px[(SIZE_T)j1 * v->w + i0], v->px[(SIZE_T)j1 * v->w + i1]};
+            SIZE_T at[4] = {(SIZE_T)j0 * v->w + i0, (SIZE_T)j0 * v->w + i1, (SIZE_T)j1 * v->w + i0, (SIZE_T)j1 * v->w + i1};
+            float k[4] = {(1 - fu) * (1 - fv), fu * (1 - fv), (1 - fu) * fv, fu * fv};
             uint32_t o = 0;
             for (int s = 0; s < 32; s += 8) {
-                float t = ((p[0] >> s) & 255) * (1 - fu) * (1 - fv) + ((p[1] >> s) & 255) * fu * (1 - fv) + ((p[2] >> s) & 255) * (1 - fu) * fv + ((p[3] >> s) & 255) * fu * fv;
+                float t = 0;
+                for (int q = 0; q < 4; q++)
+                    t += ((v->px[at[q]] >> s) & 255) * k[q];
                 o |= (uint32_t)(t + 0.5f) << s;
             }
             D2dSurfaceRow(&out->surface, y)[x] = o;
+            if (f) {
+                float *d = out->fpx + ((SIZE_T)y * w + x) * 4;
+                for (int c = 0; c < 4; c++)
+                    d[c] = f[at[0] * 4 + c] * k[0] + f[at[1] * 4 + c] * k[1] + f[at[2] * 4 + c] * k[2] + f[at[3] * 4 + c] * k[3];
+            }
         }
     }
+    D2dFree(f);
     return S_OK;
 }
 

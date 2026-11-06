@@ -378,6 +378,9 @@ const D2dSurface *D2dBitmapView(D2dBitmap *b);
 void D2dBitmapCommit(D2dBitmap *b);
 /* the premultiplied rgba floats of a float bitmap as it stores them, nullptr for other formats. */
 float *D2dBitmapFloats(D2dBitmap *b);
+BOOL D2dBitmapIsFloat(const D2dBitmap *b);
+/* n premultiplied rgba floats of a row of a float bitmap. */
+void D2dBitmapFloatRow(const D2dBitmap *b, UINT32 x0, UINT32 y, UINT32 n, float *d);
 HRESULT D2dBitmapCopyIn(D2dBitmap *b, UINT32 x, UINT32 y, const void *src, UINT32 pitch, UINT32 w, UINT32 h);
 /* the dxgi surface read into the bitmap or the bitmap written to the surface. */
 HRESULT D2dBitmapReadSurface(D2dBitmap *b);

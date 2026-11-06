@@ -412,27 +412,32 @@ const D2dSurface *D2dBitmapView(D2dBitmap *b)
     return &b->view;
 }
 
+BOOL D2dBitmapIsFloat(const D2dBitmap *b) { return b->format == D2D_FMT_RGBA32F || b->format == D2D_FMT_RGBA16F; }
+
+void D2dBitmapFloatRow(const D2dBitmap *b, UINT32 x0, UINT32 y, UINT32 n, float *d)
+{
+    const BYTE *row = b->native + (SIZE_T)y * b->stride;
+    for (UINT32 x = x0; x < x0 + n; x++, d += 4) {
+        for (int c = 0; c < 4; c++)
+            d[c] = b->format == D2D_FMT_RGBA32F ? ((const float *)row)[x * 4 + c] : half_to_float(((const uint16_t *)row)[x * 4 + c]);
+        if (b->alpha == D2D1_ALPHA_MODE_STRAIGHT) {
+            for (int c = 0; c < 3; c++)
+                d[c] *= d[3];
+        } else if (b->alpha == D2D1_ALPHA_MODE_IGNORE) {
+            d[3] = 1.0f;
+        }
+    }
+}
+
 float *D2dBitmapFloats(D2dBitmap *b)
 {
-    if (b->format != D2D_FMT_RGBA32F && b->format != D2D_FMT_RGBA16F)
+    if (!D2dBitmapIsFloat(b))
         return nullptr;
     float *out = D2dAlloc((SIZE_T)b->width * b->height * 16);
     if (!out)
         return nullptr;
-    for (UINT32 y = 0; y < b->height; y++) {
-        const BYTE *row = b->native + (SIZE_T)y * b->stride;
-        float *d = out + (SIZE_T)y * b->width * 4;
-        for (UINT32 x = 0; x < b->width; x++, d += 4) {
-            for (int c = 0; c < 4; c++)
-                d[c] = b->format == D2D_FMT_RGBA32F ? ((const float *)row)[x * 4 + c] : half_to_float(((const uint16_t *)row)[x * 4 + c]);
-            if (b->alpha == D2D1_ALPHA_MODE_STRAIGHT) {
-                for (int c = 0; c < 3; c++)
-                    d[c] *= d[3];
-            } else if (b->alpha == D2D1_ALPHA_MODE_IGNORE) {
-                d[3] = 1.0f;
-            }
-        }
-    }
+    for (UINT32 y = 0; y < b->height; y++)
+        D2dBitmapFloatRow(b, 0, y, b->width, out + (SIZE_T)y * b->width * 4);
     return out;
 }
 
