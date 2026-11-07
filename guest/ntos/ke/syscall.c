@@ -601,6 +601,16 @@ NTSTATUS KiCaptureUnicodeStringValue(PUNICODE_STRING copy, UNICODE_STRING s)
     return STATUS_SUCCESS;
 }
 
+/* the checks windows makes on a caller's return length before it looks at anything else. */
+NTSTATUS KiProbeReturnLength(PULONG returned)
+{
+    if (!returned || KeGetPreviousMode() != UserMode)
+        return STATUS_SUCCESS;
+    if ((ULONG_PTR)returned & (sizeof(ULONG) - 1))
+        return STATUS_DATATYPE_MISALIGNMENT;
+    return KiIsUserRange(returned, sizeof(ULONG)) ? STATUS_SUCCESS : STATUS_ACCESS_VIOLATION;
+}
+
 void KiFreeCapturedString(PUNICODE_STRING s)
 {
     if (s->Buffer)

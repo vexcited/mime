@@ -157,6 +157,9 @@ NTSTATUS Mx32QueryInformationProcess(const ULONG *a)
     ULONG klass = a[1], length = a[3];
     PULONG out = pointer32(a[2]);
     NTSTATUS status;
+    /* the return length is checked first, as the native service does. */
+    if (a[4] & 3)
+        return STATUS_DATATYPE_MISALIGNMENT;
     switch (klass) {
     case ProcessBasicInformation: {
         /* the plain record, or the extended one: its size, the record, then flags. */
@@ -190,6 +193,16 @@ NTSTATUS Mx32QueryInformationProcess(const ULONG *a)
             out[0] = (ULONG)port;
         if (NT_SUCCESS(status) || status == STATUS_INFO_LENGTH_MISMATCH)
             store32(a[4], sizeof(ULONG));
+        return status;
+    }
+    case ProcessDebugObjectHandle: {
+        HANDLE object = nullptr;
+        status = NtQueryInformationProcess(process, klass, &object, sizeof(object), nullptr);
+        if (length != sizeof(ULONG))
+            status = STATUS_INFO_LENGTH_MISMATCH;
+        else if (NT_SUCCESS(status) || status == STATUS_PORT_NOT_SET)
+            out[0] = (ULONG)(ULONG_PTR)object;
+        store32(a[4], sizeof(ULONG));
         return status;
     }
     case ProcessWow64Information:
@@ -323,6 +336,8 @@ NTSTATUS Mx32QueryInformationThread(const ULONG *a)
     ULONG klass = a[1], length = a[3];
     PULONG out = pointer32(a[2]);
     NTSTATUS status;
+    if (a[4] & 3)
+        return STATUS_DATATYPE_MISALIGNMENT;
     switch (klass) {
     case ThreadBasicInformation: {
         store32(a[4], 28);
