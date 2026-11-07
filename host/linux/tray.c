@@ -203,6 +203,15 @@ static int method_secondary(sd_bus_message *m, void *userdata, sd_bus_error *err
     return item_click(m, userdata, error, MIME_TRAY_EVENT_SECONDARY);
 }
 
+/* plasma hands the item an activation token before a click, which lets the window it brings up take the focus. */
+static int method_token(sd_bus_message *m, void *userdata, sd_bus_error *error)
+{
+    const char *token = nullptr;
+    if (sd_bus_message_read(m, "s", &token) >= 0 && token && *token)
+        mime_ui_set_activation_token(token);
+    return sd_bus_reply_method_return(m, nullptr);
+}
+
 static int method_scroll(sd_bus_message *m, void *userdata, sd_bus_error *error)
 {
     Item *item = userdata;
@@ -221,6 +230,7 @@ static const sd_bus_vtable item_vtable[] = {
     SD_BUS_METHOD("Activate", "ii", nullptr, method_activate, SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("SecondaryActivate", "ii", nullptr, method_secondary, SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("Scroll", "is", nullptr, method_scroll, SD_BUS_VTABLE_UNPRIVILEGED),
+    SD_BUS_METHOD("ProvideXdgActivationToken", "s", nullptr, method_token, SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_PROPERTY("Category", "s", item_property, 0, 0),
     SD_BUS_PROPERTY("Id", "s", item_property, 0, 0),
     SD_BUS_PROPERTY("Title", "s", item_property, 0, 0),
