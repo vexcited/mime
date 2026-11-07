@@ -1211,14 +1211,18 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
     SDL_SetWindowTitle(w->window, title);
     MimeRect host = host_part(cfg);
     double scale = config_scale(cfg);
-    /* during interactive resizing, use the compositor's size rather than the last size reported to the guest. */
-    if (size_changed && w->interactive_until <= now_ms()) {
+    /*
+     * during interactive resizing, use the compositor's size rather than the last size reported to the guest. a
+     * minimized window keeps its size: the guest's is that of its icon, and kwin would place it elsewhere on restore.
+     */
+    bool minimized = (cfg->flags & MIME_WIN_MINIMIZED) != 0;
+    if (size_changed && w->interactive_until <= now_ms() && !minimized) {
         w->want_w = MIME_MAX(1, (int)lround((host.right - host.left) / scale));
         w->want_h = MIME_MAX(1, (int)lround((host.bottom - host.top) / scale));
         w->want_ms = now_ms();
         SDL_SetWindowSize(w->window, w->want_w, w->want_h);
     }
-    if (!w->popup && (limits_changed || fresh)) {
+    if (!w->popup && (limits_changed || fresh) && !minimized) {
         /* the compositor sizes a window the guest lets be sized, within the limits of its program. */
         SDL_SetWindowResizable(w->window, (cfg->flags & MIME_WIN_RESIZABLE) != 0);
         int dw = (cfg->rect.right - cfg->rect.left) - (host.right - host.left);
