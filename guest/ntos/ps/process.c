@@ -186,8 +186,9 @@ static void process_delete(PVOID object)
     PEPROCESS process = object;
     if (process->AddressSpace.Root)
         MmDeleteAddressSpace(&process->AddressSpace);
-    if (process->ImageSection)
-        ObDereferenceObject(process->ImageSection);
+    PSECTION image = __atomic_exchange_n(&process->ImageSection, nullptr, __ATOMIC_ACQ_REL);
+    if (image)
+        ObDereferenceObject(image);
     if (process->UniqueProcessId)
         PspFreeId(process->UniqueProcessId);
     SepFreeProcessToken(process);
@@ -263,6 +264,10 @@ void PspProcessExit(PEPROCESS process)
     KiCurrentThread()->ApcStateProcess = &PsInitialSystemProcess->Pcb;
     KiSwitchAddressSpace(&PsInitialSystemProcess->Pcb);
     MmDeleteAddressSpace(&process->AddressSpace);
+    /* the program's file is no longer mapped once it has exited, even while handles keep the process. */
+    PSECTION image = __atomic_exchange_n(&process->ImageSection, nullptr, __ATOMIC_ACQ_REL);
+    if (image)
+        ObDereferenceObject(image);
     process->Exited = TRUE;
     KeQuerySystemTime((PLARGE_INTEGER)&process->ExitTime);
     ConsoleProcessExit(process);

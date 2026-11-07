@@ -1050,6 +1050,7 @@ typedef struct _EPROCESS {
     PVOID NtdllBase;            /* base of the system dll. */
     PPSP_SYSTEM_DLL SystemDll;
     USHORT Machine;             /* of the program image. */
+    USHORT Subsystem;           /* of the program image, kept after the image section is let go at exit. */
     PVOID Wow64Peb;             /* the 32-bit peb of a wow64 process. */
     CHAR ImageFileName[16];
     WCHAR ImagePathBuffer[MIME_IMAGE_NAME_CHARS];
