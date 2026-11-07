@@ -522,6 +522,24 @@ static DWORD validate_account(const WCHAR *account, const WCHAR *service)
 
 /* ------------------------------------------------------------------ create and change */
 
+/*
+ * a driver's image is loaded by the kernel, which reads NT paths: a full DOS path is kept as \??\ and the path, as
+ * windows' manager stores it. other paths stay as they are.
+ */
+static const WCHAR *driver_image_path(DWORD type, const WCHAR *path, WCHAR *buffer, SIZE_T capacity)
+{
+    if (!path || !(type & SERVICE_DRIVER))
+        return path;
+    BOOL dos = ((path[0] >= L'A' && path[0] <= L'Z') || (path[0] >= L'a' && path[0] <= L'z')) && path[1] == L':' &&
+               (path[2] == L'\\' || path[2] == L'/');
+    SIZE_T length = wcslen(path);
+    if (!dos || length + 5 > capacity)
+        return path;
+    wcscpy(buffer, L"\\??\\");
+    wcscat(buffer, path);
+    return buffer;
+}
+
 DWORD DbCreate(const WCHAR *name, const WCHAR *display, DWORD type, DWORD start, DWORD error_control, const WCHAR *path,
                const WCHAR *group, DWORD *tag, const WCHAR *dependencies, DWORD dependencies_chars,
                const WCHAR *account, const WCHAR *password, SERVICE **out)
@@ -577,8 +595,10 @@ DWORD DbCreate(const WCHAR *name, const WCHAR *display, DWORD type, DWORD start,
         error = DbWriteDword(key, L"Start", start);
     if (!error)
         error = DbWriteDword(key, L"ErrorControl", error_control);
+    WCHAR nt_path[MAX_PATH + 8];
     if (!error)
-        error = DbWriteString(key, L"ImagePath", path, REG_EXPAND_SZ);
+        error = DbWriteString(key, L"ImagePath", driver_image_path(type, path, nt_path, RTL_NUMBER_OF(nt_path)),
+                              REG_EXPAND_SZ);
     if (!error && display && *display)
         error = DbWriteString(key, L"DisplayName", display, REG_SZ);
     if (!error && group && *group)
@@ -687,8 +707,10 @@ DWORD DbChange(SERVICE *s, DWORD type, DWORD start, DWORD error_control, const W
     }
     if (!error && error_control != SERVICE_NO_CHANGE)
         error = DbWriteDword(key, L"ErrorControl", error_control);
+    WCHAR nt_path[MAX_PATH + 8];
     if (!error && path)
-        error = DbWriteString(key, L"ImagePath", path, REG_EXPAND_SZ);
+        error = DbWriteString(key, L"ImagePath", driver_image_path(new_type, path, nt_path, RTL_NUMBER_OF(nt_path)),
+                              REG_EXPAND_SZ);
     if (!error && group) {
         if (*group)
             error = DbWriteString(key, L"Group", group, REG_SZ);
