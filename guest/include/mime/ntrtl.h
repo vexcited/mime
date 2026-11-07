@@ -162,6 +162,14 @@ NTSYSAPI NTSTATUS NTAPI RtlQueryEnvironmentVariable(PWSTR env, PCWSTR name, SIZE
 NTSYSAPI NTSTATUS NTAPI RtlQueryEnvironmentVariable_U(PWSTR env, PCUNICODE_STRING name, PUNICODE_STRING value);
 NTSYSAPI NTSTATUS NTAPI RtlCreateEnvironment(BOOLEAN clone, PWSTR *out);
 NTSYSAPI NTSTATUS NTAPI RtlDestroyEnvironment(PWSTR env);
+NTSYSAPI NTSTATUS NTAPI RtlCreateProcessParameters(PRTL_USER_PROCESS_PARAMETERS *out, PUNICODE_STRING image, PUNICODE_STRING dll_path, PUNICODE_STRING current_directory, PUNICODE_STRING command_line, PVOID environment, PUNICODE_STRING window_title, PUNICODE_STRING desktop_info, PUNICODE_STRING shell_info, PUNICODE_STRING runtime_data);
+NTSYSAPI NTSTATUS NTAPI RtlCreateProcessParametersEx(PRTL_USER_PROCESS_PARAMETERS *out, PUNICODE_STRING image, PUNICODE_STRING dll_path, PUNICODE_STRING current_directory, PUNICODE_STRING command_line, PVOID environment, PUNICODE_STRING window_title, PUNICODE_STRING desktop_info, PUNICODE_STRING shell_info, PUNICODE_STRING runtime_data, ULONG flags);
+NTSYSAPI NTSTATUS NTAPI RtlCreateUserProcess(PUNICODE_STRING nt_image, ULONG attributes, PRTL_USER_PROCESS_PARAMETERS parameters, PVOID process_sd, PVOID thread_sd, HANDLE parent, BOOLEAN inherit_handles, HANDLE debug_port, HANDLE token, PRTL_USER_PROCESS_INFORMATION info);
+NTSYSAPI NTSTATUS NTAPI RtlCreateUserProcessEx(PUNICODE_STRING nt_image, PRTL_USER_PROCESS_PARAMETERS parameters, BOOLEAN inherit_handles, PRTL_USER_PROCESS_EXTENDED_PARAMETERS extended, PRTL_USER_PROCESS_INFORMATION info);
+NTSYSAPI NTSTATUS NTAPI RtlCreateUserThread(HANDLE process, PVOID sd, BOOLEAN suspended, ULONG zero_bits, SIZE_T maximum_stack, SIZE_T committed_stack, PVOID start, PVOID parameter, PHANDLE thread, PCLIENT_ID client_id);
+NTSYSAPI NTSTATUS NTAPI RtlDestroyProcessParameters(PRTL_USER_PROCESS_PARAMETERS pp);
+NTSYSAPI PRTL_USER_PROCESS_PARAMETERS NTAPI RtlNormalizeProcessParams(PRTL_USER_PROCESS_PARAMETERS pp);
+NTSYSAPI PRTL_USER_PROCESS_PARAMETERS NTAPI RtlDeNormalizeProcessParams(PRTL_USER_PROCESS_PARAMETERS pp);
 NTSYSAPI NTSTATUS NTAPI RtlSetEnvironmentVariable(PWSTR *env_ptr, PCUNICODE_STRING name, PCUNICODE_STRING value);
 NTSYSAPI NTSTATUS NTAPI RtlSetCurrentEnvironment(PWSTR env, PWSTR *old);
 NTSYSAPI NTSTATUS NTAPI RtlExpandEnvironmentStrings(PWSTR env, PCWSTR src, SIZE_T src_chars, PWSTR dst, SIZE_T dst_chars, PSIZE_T return_chars);

@@ -314,10 +314,15 @@ EXPORTS
     RtlCreateAndSetSD@20
     RtlCreateEnvironment@8
     RtlCreateHeap@24
+    RtlCreateProcessParameters@40
+    RtlCreateProcessParametersEx@44
     RtlCreateSecurityDescriptor@8
     RtlCreateServiceSid@12
     RtlCreateUnicodeString@8
     RtlCreateUnicodeStringFromAsciiz@8
+    RtlCreateUserProcess@40
+    RtlCreateUserProcessEx@20
+    RtlCreateUserThread@40
     RtlCreateUserSecurityObject@28
     RtlCreateVirtualAccountSid@16
     RtlDeactivateActivationContext@8
@@ -330,6 +335,8 @@ EXPORTS
     RtlDeriveCapabilitySidsFromName@12
     RtlDestroyEnvironment@4
     RtlDestroyHeap@4
+    RtlDeNormalizeProcessParams@4
+    RtlDestroyProcessParameters@4
     RtlDetermineDosPathNameType_U@4
     RtlDispatchException@8
     RtlDispatchFrameException@8
@@ -676,6 +683,7 @@ EXPORTS
     RtlFindClearBits@12
     RtlFindClearBitsAndSet@12
     RtlInitializeBitMap@12
+    RtlNormalizeProcessParams@4
     RtlSetBit@8
     RtlSetBits@12
     RtlTestBit@8
