@@ -28,6 +28,8 @@
 #define ROUND_TO_PAGES(n) (((ULONG_PTR)(n) + PAGE_SIZE - 1) & ~(ULONG_PTR)(PAGE_SIZE - 1))
 #define PAGE_ALIGN(va) ((PVOID)((ULONG_PTR)(va) & ~(ULONG_PTR)(PAGE_SIZE - 1)))
 #define BYTE_OFFSET(va) ((ULONG)((ULONG_PTR)(va) & (PAGE_SIZE - 1)))
+#define ADDRESS_AND_SIZE_TO_SPAN_PAGES(va, size)                                                                     \
+    ((SIZE_T)((((ULONG_PTR)(va) & (PAGE_SIZE - 1)) + (SIZE_T)(size) + PAGE_SIZE - 1) >> PAGE_SHIFT))
 
 struct _KTHREAD;
 struct _KPROCESS;
@@ -926,6 +928,20 @@ NTKERNELAPI void NTAPI IoDetachDevice(PDEVICE_OBJECT target);
 NTKERNELAPI NTSTATUS NTAPI IoGetDeviceObjectPointer(PUNICODE_STRING name, ACCESS_MASK access, PFILE_OBJECT *file,
                                                     PDEVICE_OBJECT *device);
 NTKERNELAPI PMDL NTAPI IoAllocateMdl(PVOID va, ULONG length, BOOLEAN secondary, BOOLEAN charge, PIRP irp);
+typedef enum _MEMORY_CACHING_TYPE { MmNonCached, MmCached, MmWriteCombined } MEMORY_CACHING_TYPE;
+typedef enum _LOCK_OPERATION { IoReadAccess, IoWriteAccess, IoModifyAccess } LOCK_OPERATION;
+extern NTKERNELAPI ULONG_PTR MmUserProbeAddress;
+NTKERNELAPI void NTAPI MmBuildMdlForNonPagedPool(PMDL mdl);
+NTKERNELAPI void NTAPI MmProbeAndLockPages(PMDL mdl, KPROCESSOR_MODE mode, LOCK_OPERATION operation);
+NTKERNELAPI void NTAPI MmUnlockPages(PMDL mdl);
+NTKERNELAPI PVOID NTAPI MmMapLockedPagesSpecifyCache(PMDL mdl, KPROCESSOR_MODE mode, MEMORY_CACHING_TYPE cache,
+                                                     PVOID address, ULONG bugcheck, ULONG priority);
+NTKERNELAPI PVOID NTAPI MmMapLockedPages(PMDL mdl, KPROCESSOR_MODE mode);
+NTKERNELAPI void NTAPI MmUnmapLockedPages(PVOID base, PMDL mdl);
+NTKERNELAPI NTSTATUS NTAPI MmProtectMdlSystemAddress(PMDL mdl, ULONG protect);
+NTKERNELAPI SIZE_T NTAPI MmSizeOfMdl(PVOID base, SIZE_T length);
+NTKERNELAPI PMDL NTAPI MmCreateMdl(PMDL mdl, PVOID base, SIZE_T length);
+NTKERNELAPI DECLSPEC_NORETURN void NTAPI ExRaiseStatus(NTSTATUS status);
 NTKERNELAPI void NTAPI IoFreeMdl(PMDL mdl);
 NTKERNELAPI NTSTATUS NTAPI IoCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
                                         PIO_STATUS_BLOCK iosb, PLARGE_INTEGER allocation, ULONG file_attributes,
