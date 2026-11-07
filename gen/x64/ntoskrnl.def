@@ -239,9 +239,11 @@ EXPORTS
     MmAllocatePageNoZero
     MmAllocateSystemVa
     MmAllocateZeroedPages
+    MmBuildMdlForNonPagedPool
     MmCopyToProcessFast
     MmCopyVirtualMemory
     MmCreateAddressSpace
+    MmCreateMdl
     MmCreatePhysicalSection @20 NONAME
     MmCreateSharedSection
     MmDeleteAddressSpace
@@ -267,15 +269,22 @@ EXPORTS
     MmInitialize
     MmIsAddressValid
     MmLoadSystemImage
+    MmMapLockedPages
+    MmMapLockedPagesSpecifyCache
     MmMapPagesInSystem
     MmMapSharedSectionUser
     MmMapViewInSystemSpace
     MmMapWritableSection
+    MmProbeAndLockPages
+    MmProtectMdlSystemAddress
     MmQueryVmCounters
     MmSectionObjectType DATA
     MmSectionType DATA
     MmSetProcessCallbackTable
+    MmSizeOfMdl
     MmSystemRangeStart DATA
+    MmUnlockPages
+    MmUnmapLockedPages
     MmUnmapViewInSystemSpace
     MmUserProbeAddress DATA
     MmWindowLostFault
