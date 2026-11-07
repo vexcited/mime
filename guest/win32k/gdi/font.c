@@ -300,9 +300,13 @@ static void register_face(FONT_FILE *file, const FONT_SOURCE *src, ULONG64 dir_o
     ExFreePool(names);
 }
 
+/* counts the fonts added, after which the characters of the linked fonts are looked up again: a font may come first. */
+static ULONG g_font_generation;
+
 static void register_source(FONT_FILE *file, const FONT_SOURCE *src)
 {
     UCHAR header[12];
+    g_font_generation++;
     file->FirstFace = g_face_count;
     if (!source_read(src, 0, header, sizeof(header)))
         return;
@@ -731,9 +735,8 @@ static UCHAR smooth_of(const LOGFONTW *lf)
     return type == 2 ? FONT_SMOOTH_CLEARTYPE : FONT_SMOOTH_GRAY;
 }
 
-FONT_INSTANCE *FontRealize(const LOGFONTW *lf, UINT dpi)
+static FONT_INSTANCE *realize_face(FONT_FACE *face, const LOGFONTW *lf, UINT dpi)
 {
-    FONT_FACE *face = FontMatchFace(lf);
     if (!face || !FontLoadFace(face))
         return nullptr;
     const MimeTtfMetrics *m = &face->Metrics;
@@ -779,6 +782,131 @@ FONT_INSTANCE *FontRealize(const LOGFONTW *lf, UINT dpi)
     compute_metrics(fi, lf);
     InsertTailList(&g_instances, &fi->Links);
     return fi;
+}
+
+FONT_INSTANCE *FontRealize(const LOGFONTW *lf, UINT dpi)
+{
+    return realize_face(FontMatchFace(lf), lf, dpi);
+}
+
+/*
+ * font linking, the SystemLink key of windows: a character the face lacks is drawn by the first font of its script
+ * that has it, at the same size. the han characters go to the japanese fonts first, as on an english windows.
+ */
+static const WCHAR *const g_link_families[FONT_LINKS] = {
+    L"Tahoma", L"Leelawadee UI", L"Microsoft Sans Serif", L"Malgun Gothic", L"Gulim", L"Batang", L"Yu Gothic UI",
+    L"Meiryo UI", L"MS UI Gothic", L"Microsoft JhengHei UI", L"Microsoft YaHei UI", L"SimSun", L"PMingLiU", L"Segoe UI",
+    L"Segoe UI Symbol", L"Arial", L"Nirmala UI", L"Ebrima", L"Gadugi", L"Myanmar Text", L"Sylfaen", L"Segoe UI Historic",
+    L"Segoe UI Emoji", L"Cambria Math", MIME_FALLBACK_FONT,
+};
+static const UCHAR g_link_thai[] = {0, 1, 2};
+static const UCHAR g_link_hangul[] = {3, 4, 5};
+static const UCHAR g_link_han[] = {6, 7, 8, 9, 10, 3, 11, 12, 4, 5};
+static const UCHAR g_link_general[] = {13, 0, 14, 15, 2, 16, 17, 18, 1, 19, 20, 21, 22, 23, 24,
+                                       6, 7, 8, 9, 10, 3, 11, 12, 4, 5};
+
+static BOOLEAN is_han(ULONG c)
+{
+    return (c >= 0x2E80 && c <= 0x9FFF) || (c >= 0xF900 && c <= 0xFAFF) || (c >= 0xFF00 && c <= 0xFFEF) ||
+           (c >= 0x20000 && c <= 0x3FFFF);
+}
+
+static BOOLEAN is_hangul(ULONG c)
+{
+    return (c >= 0x1100 && c <= 0x11FF) || (c >= 0x3130 && c <= 0x318F) || (c >= 0xA960 && c <= 0xA97F) ||
+           (c >= 0xAC00 && c <= 0xD7FF);
+}
+
+static const UCHAR g_link_quality[] = {
+    [FONT_SMOOTH_ALIASED] = NONANTIALIASED_QUALITY,
+    [FONT_SMOOTH_GRAY] = ANTIALIASED_QUALITY,
+    [FONT_SMOOTH_CLEARTYPE] = CLEARTYPE_QUALITY,
+    [FONT_SMOOTH_NATURAL] = CLEARTYPE_NATURAL_QUALITY,
+};
+
+static FONT_INSTANCE *linked(FONT_INSTANCE *fi, ULONG slot)
+{
+    if (!fi->LinkedTried[slot]) {
+        fi->LinkedTried[slot] = TRUE;
+        FONT_FACE *face = match_family(g_link_families[slot], fi->Weight, fi->Italic);
+        /* the instances are everyone's, so a font private to a process is no link. */
+        if (face && face != fi->Face && !face->File->OwnerPid) {
+            LOGFONTW lf = {};
+            lf.lfHeight = -fi->EmPixels;
+            lf.lfWeight = fi->Weight;
+            lf.lfItalic = fi->Italic;
+            lf.lfQuality = fi->Smooth < RTL_NUMBER_OF(g_link_quality) ? g_link_quality[fi->Smooth] : DEFAULT_QUALITY;
+            fi->Linked[slot] = realize_face(face, &lf, 96);
+        }
+    }
+    return fi->Linked[slot];
+}
+
+/* the glyph + 1 of a character with the linked font that has it from bit 17, 0 for none. */
+static ULONG link_entry(FONT_INSTANCE *fi, ULONG codepoint)
+{
+    USHORT index = mime_ttf_glyph_index(&fi->Face->Ttf, codepoint);
+    if (index || fi->Face->Symbol || codepoint < 0x20 || (codepoint >= 0xD800 && codepoint < 0xE000))
+        return (ULONG)index + 1;
+    const UCHAR *order = g_link_general;
+    ULONG count = RTL_NUMBER_OF(g_link_general);
+    if (codepoint >= 0x0E00 && codepoint <= 0x0E7F) {
+        order = g_link_thai;
+        count = RTL_NUMBER_OF(g_link_thai);
+    } else if (is_hangul(codepoint)) {
+        order = g_link_hangul;
+        count = RTL_NUMBER_OF(g_link_hangul);
+    } else if (is_han(codepoint)) {
+        order = g_link_han;
+        count = RTL_NUMBER_OF(g_link_han);
+    }
+    for (int pass = 0; pass < 2; pass++) {
+        for (ULONG i = 0; i < count; i++) {
+            FONT_INSTANCE *l = linked(fi, order[i]);
+            USHORT found = l ? mime_ttf_glyph_index(&l->Face->Ttf, codepoint) : 0;
+            if (found)
+                return ((ULONG)(order[i] + 1) << 17) | ((ULONG)found + 1);
+        }
+        if (order == g_link_general)
+            break;
+        order = g_link_general;
+        count = RTL_NUMBER_OF(g_link_general);
+    }
+    return 1;
+}
+
+static ULONG char_entry(FONT_INSTANCE *fi, ULONG codepoint)
+{
+    if (fi->Generation != g_font_generation) {
+        fi->Generation = g_font_generation;
+        for (ULONG i = 0; i < FONT_LINKS; i++)
+            if (!fi->Linked[i])
+                fi->LinkedTried[i] = FALSE;
+        for (ULONG p = 0; p < 256; p++)
+            for (ULONG c = 0; fi->CharPages[p] && c < 256; c++)
+                if (fi->CharPages[p][c] == 1 || fi->CharPages[p][c] >> 17)
+                    fi->CharPages[p][c] = 0;
+    }
+    if (codepoint > 0xFFFF)
+        return link_entry(fi, codepoint);
+    ULONG **page = &fi->CharPages[codepoint >> 8];
+    if (!*page) {
+        *page = W32Alloc(256 * sizeof(ULONG));
+        if (!*page)
+            return link_entry(fi, codepoint);
+    }
+    ULONG *entry = &(*page)[codepoint & 0xFF];
+    if (!*entry)
+        *entry = link_entry(fi, codepoint);
+    return *entry;
+}
+
+USHORT FontLinkedGlyph(FONT_INSTANCE *fi, ULONG codepoint, FONT_INSTANCE **owner)
+{
+    ULONG entry = char_entry(fi, codepoint);
+    ULONG slot = entry >> 17;
+    *owner = slot && fi->Linked[slot - 1] ? fi->Linked[slot - 1] : fi;
+    return (USHORT)((entry & 0x1FFFF) - 1);
 }
 
 /* the interpreter for the size of an instance, null when the size is drawn unhinted. */
@@ -969,20 +1097,13 @@ static BOOLEAN render_glyph(FONT_INSTANCE *fi, USHORT index, GLYPH *g)
     return TRUE;
 }
 
+/* the face's own glyph, without the linked fonts, as GetGlyphIndices gives it. */
 USHORT FontGlyphIndex(FONT_INSTANCE *fi, ULONG codepoint)
 {
     if (codepoint > 0xFFFF)
         return mime_ttf_glyph_index(&fi->Face->Ttf, codepoint);
-    ULONG **page = &fi->CharPages[codepoint >> 8];
-    if (!*page) {
-        *page = W32Alloc(256 * sizeof(ULONG));
-        if (!*page)
-            return mime_ttf_glyph_index(&fi->Face->Ttf, codepoint);
-    }
-    ULONG *entry = &(*page)[codepoint & 0xFF];
-    if (!*entry)
-        *entry = (ULONG)mime_ttf_glyph_index(&fi->Face->Ttf, codepoint) + 1;
-    return (USHORT)(*entry - 1);
+    ULONG entry = char_entry(fi, codepoint);
+    return entry >> 17 ? 0 : (USHORT)(entry - 1);
 }
 
 const GLYPH *FontGetGlyphIndex(FONT_INSTANCE *fi, USHORT index)
@@ -1007,7 +1128,9 @@ const GLYPH *FontGetGlyphIndex(FONT_INSTANCE *fi, USHORT index)
 
 const GLYPH *FontGetGlyph(FONT_INSTANCE *fi, ULONG codepoint)
 {
-    return FontGetGlyphIndex(fi, FontGlyphIndex(fi, codepoint));
+    FONT_INSTANCE *owner;
+    USHORT index = FontLinkedGlyph(fi, codepoint, &owner);
+    return FontGetGlyphIndex(owner, index);
 }
 
 void FontGetFaceName(FONT_INSTANCE *fi, PWSTR name, ULONG chars)

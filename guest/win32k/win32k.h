@@ -398,6 +398,8 @@ enum {
     FONT_SMOOTH_NATURAL, /* ClearType with the widths of the font itself. */
 };
 
+#define FONT_LINKS 25
+
 typedef struct FONT_INSTANCE {
     LIST_ENTRY Links;
     struct FONT_FACE *Face;
@@ -424,8 +426,12 @@ typedef struct FONT_INSTANCE {
     struct MimeTtfHinter *HinterCt; /* the same for ClearType. */
     BOOLEAN HinterCtTried;
     BOOLEAN CtVertical; /* ClearType also smooths down, five rows to a pixel. */
-    ULONG *CharPages[256]; /* glyph index + 1 for code points by high byte, BMP only, 0 when unknown. */
-    GLYPH *Pages[256];     /* rendered glyphs by glyph index high byte. */
+    /* by high byte, BMP only, 0 when unknown: glyph index + 1, and from bit 17 the linked font that has it. */
+    ULONG *CharPages[256];
+    GLYPH *Pages[256]; /* rendered glyphs by glyph index high byte. */
+    struct FONT_INSTANCE *Linked[FONT_LINKS]; /* the fonts that draw the characters the face lacks, at its size. */
+    UCHAR LinkedTried[FONT_LINKS];
+    ULONG Generation; /* of the fonts when the links were looked for. */
 } FONT_INSTANCE;
 
 void FontInitialize(void);
@@ -433,6 +439,8 @@ FONT_INSTANCE *FontRealize(const LOGFONTW *lf, UINT dpi);
 const GLYPH *FontGetGlyph(FONT_INSTANCE *fi, ULONG codepoint);
 const GLYPH *FontGetGlyphIndex(FONT_INSTANCE *fi, USHORT index);
 USHORT FontGlyphIndex(FONT_INSTANCE *fi, ULONG codepoint); /* 0 for missing glyphs. */
+/* the glyph of a character in the font or in the font linked to it that has it, and the font it is in. */
+USHORT FontLinkedGlyph(FONT_INSTANCE *fi, ULONG codepoint, FONT_INSTANCE **owner);
 void FontGlyphAbcFloat(FONT_INSTANCE *fi, USHORT index, ABCFLOAT *abc);
 struct MimeTtfHinter *FontHinter(FONT_INSTANCE *fi);
 struct MimeTtfHinter *FontHinterAliased(FONT_INSTANCE *fi);

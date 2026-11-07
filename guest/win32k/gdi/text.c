@@ -100,12 +100,13 @@ static void TextDrawTransformed(DC *dc, FONT_INSTANCE *fi, const REGION *clip, L
     ULONG i = 0, index = 0;
     while (i < count) {
         ULONG start = i;
-        USHORT glyph = (options & ETO_GLYPH_INDEX) ? text[i++] : FontGlyphIndex(fi, next_char(text, count, &i));
-        const GLYPH *g = FontGetGlyphIndex(fi, glyph);
+        FONT_INSTANCE *owner = fi;
+        USHORT glyph = (options & ETO_GLYPH_INDEX) ? text[i++] : FontLinkedGlyph(fi, next_char(text, count, &i), &owner);
+        const GLYPH *g = FontGetGlyphIndex(owner, glyph);
         LONG gx, gy;
         text_point(&gm, ox, oy, pen, baseline, &gx, &gy);
         LONG left, top, w, h;
-        UCHAR *cov = FontRenderTransformed(fi, glyph, &gm, &left, &top, &w, &h);
+        UCHAR *cov = FontRenderTransformed(owner, glyph, &gm, &left, &top, &w, &h);
         if (cov) {
             DrawCoverage(dc->Surface, clip, gx + left, gy + top, cov, w, h, w, pixel);
             RECT r = {gx + left, gy + top, gx + left + w, gy + top + h};
