@@ -397,6 +397,78 @@ static void enc_cert_info(enc_ctx *c, const CERT_INFO *info)
     DerEnd(&c->w, mark);
 }
 
+static void enc_crl_info(enc_ctx *c, const CRL_INFO *info)
+{
+    DWORD mark = DerBegin(&c->w, ASN_SEQUENCE);
+    if (info->dwVersion != CRL_V1)
+        DerWriteInt(&c->w, (int)info->dwVersion);
+    enc_algid(c, &info->SignatureAlgorithm);
+    DerWriteBytes(&c->w, info->Issuer.pbData, info->Issuer.cbData);
+    DerWriteTime(&c->w, &info->ThisUpdate);
+    if (info->NextUpdate.dwLowDateTime || info->NextUpdate.dwHighDateTime)
+        DerWriteTime(&c->w, &info->NextUpdate);
+    if (info->cCRLEntry) {
+        DWORD entries = DerBegin(&c->w, ASN_SEQUENCE);
+        for (DWORD i = 0; i < info->cCRLEntry && !c->w.error; i++) {
+            const CRL_ENTRY *e = &info->rgCRLEntry[i];
+            DWORD entry = DerBegin(&c->w, ASN_SEQUENCE);
+            DerWriteIntLe(&c->w, e->SerialNumber.pbData, e->SerialNumber.cbData, FALSE);
+            DerWriteTime(&c->w, &e->RevocationDate);
+            if (e->cExtension)
+                enc_extensions(c, e->cExtension, e->rgExtension);
+            DerEnd(&c->w, entry);
+        }
+        DerEnd(&c->w, entries);
+    }
+    if (info->cExtension) {
+        DWORD ext = DerBegin(&c->w, ASN_CONSTRUCTED_CONTEXT(0));
+        enc_extensions(c, info->cExtension, info->rgExtension);
+        DerEnd(&c->w, ext);
+    }
+    DerEnd(&c->w, mark);
+}
+
+/* a distribution point name as the [0] field of a distribution point or an issuing distribution point. */
+static void enc_dist_point_name(enc_ctx *c, const CRL_DIST_POINT_NAME *name)
+{
+    if (name->dwDistPointNameChoice == CRL_DIST_POINT_NO_NAME)
+        return;
+    if (name->dwDistPointNameChoice != CRL_DIST_POINT_FULL_NAME) {
+        fail(c, E_INVALIDARG);
+        return;
+    }
+    DWORD mark = DerBegin(&c->w, ASN_CONSTRUCTED_CONTEXT(0));
+    enc_alt_name(c, ASN_CONSTRUCTED_CONTEXT(0), &name->FullName);
+    DerEnd(&c->w, mark);
+}
+
+static void enc_bool_field(enc_ctx *c, BYTE tag, BOOL value)
+{
+    if (value) {
+        BYTE b = 0xFF;
+        DerWriteTlv(&c->w, tag, &b, 1);
+    }
+}
+
+static void enc_alt_entry(enc_ctx *c, const CERT_ALT_NAME_ENTRY *entry)
+{
+    CERT_ALT_NAME_INFO one = {1, (PCERT_ALT_NAME_ENTRY)entry};
+    der_writer saved = c->w;
+    DerWriteInit(&c->w);
+    enc_alt_name(c, ASN_SEQUENCE, &one);
+    der_writer inner = c->w;
+    c->w = saved;
+    if (inner.error) {
+        fail(c, inner.error);
+    } else {
+        der_reader r = {inner.data, inner.size};
+        der_item seq;
+        if (!DerRead(&r, &seq))
+            DerWriteBytes(&c->w, seq.content, seq.length);
+    }
+    DerWriteFree(&inner);
+}
+
 /* ------------------------------------------------------------------ top level encoders */
 
 typedef void (*encode_fn)(enc_ctx *c, const void *info);
@@ -421,6 +493,51 @@ static void e_cert(enc_ctx *c, const void *p)
 }
 
 static void e_cert_info(enc_ctx *c, const void *p) { enc_cert_info(c, p); }
+
+static void e_crl_info(enc_ctx *c, const void *p) { enc_crl_info(c, p); }
+
+static void e_crl_dist_points(enc_ctx *c, const void *p)
+{
+    const CRL_DIST_POINTS_INFO *info = p;
+    DWORD mark = DerBegin(&c->w, ASN_SEQUENCE);
+    for (DWORD i = 0; i < info->cDistPoint && !c->w.error; i++) {
+        const CRL_DIST_POINT *point = &info->rgDistPoint[i];
+        DWORD seq = DerBegin(&c->w, ASN_SEQUENCE);
+        enc_dist_point_name(c, &point->DistPointName);
+        if (point->ReasonFlags.cbData)
+            enc_bits(c, ASN_CONTEXT(1), &point->ReasonFlags, TRUE);
+        if (point->CRLIssuer.cAltEntry)
+            enc_alt_name(c, ASN_CONSTRUCTED_CONTEXT(2), &point->CRLIssuer);
+        DerEnd(&c->w, seq);
+    }
+    DerEnd(&c->w, mark);
+}
+
+static void e_issuing_dist_point(enc_ctx *c, const void *p)
+{
+    const CRL_ISSUING_DIST_POINT *info = p;
+    DWORD mark = DerBegin(&c->w, ASN_SEQUENCE);
+    enc_dist_point_name(c, &info->DistPointName);
+    enc_bool_field(c, ASN_CONTEXT(1), info->fOnlyContainsUserCerts);
+    enc_bool_field(c, ASN_CONTEXT(2), info->fOnlyContainsCACerts);
+    if (info->OnlySomeReasonFlags.cbData)
+        enc_bits(c, ASN_CONTEXT(3), &info->OnlySomeReasonFlags, TRUE);
+    enc_bool_field(c, ASN_CONTEXT(4), info->fIndirectCRL);
+    DerEnd(&c->w, mark);
+}
+
+static void e_info_access(enc_ctx *c, const void *p)
+{
+    const CERT_AUTHORITY_INFO_ACCESS *info = p;
+    DWORD mark = DerBegin(&c->w, ASN_SEQUENCE);
+    for (DWORD i = 0; i < info->cAccDescr && !c->w.error; i++) {
+        DWORD seq = DerBegin(&c->w, ASN_SEQUENCE);
+        DerWriteOid(&c->w, info->rgAccDescr[i].pszAccessMethod);
+        enc_alt_entry(c, &info->rgAccDescr[i].AccessLocation);
+        DerEnd(&c->w, seq);
+    }
+    DerEnd(&c->w, mark);
+}
 
 static void e_extensions(enc_ctx *c, const void *p)
 {
@@ -560,6 +677,8 @@ static encode_fn encoder_for(LPCSTR type)
             return e_cert;
         case 2:
             return e_cert_info;
+        case 3:
+            return e_crl_info;
         case 5:
             return e_extensions;
         case 6:
@@ -597,10 +716,16 @@ static encode_fn encoder_for(LPCSTR type)
             return e_time;
         case 31:
             return e_authority_key_id2;
+        case 32:
+            return e_info_access;
+        case 35:
+            return e_crl_dist_points;
         case 36:
             return e_eku;
         case 38:
             return e_multi_uint;
+        case 54:
+            return e_issuing_dist_point;
         case 73:
             return e_oid;
         }
@@ -616,6 +741,9 @@ static encode_fn encoder_for(LPCSTR type)
         {szOID_KEY_USAGE, e_bits_trimmed},         {szOID_ENHANCED_KEY_USAGE, e_eku},
         {szOID_SUBJECT_KEY_IDENTIFIER, e_octets},  {szOID_AUTHORITY_KEY_IDENTIFIER2, e_authority_key_id2},
         {szOID_CRL_NUMBER, e_multi_int},           {szOID_CRL_REASON_CODE, e_enumerated},
+        {szOID_DELTA_CRL_INDICATOR, e_multi_int},  {szOID_CRL_DIST_POINTS, e_crl_dist_points},
+        {szOID_FRESHEST_CRL, e_crl_dist_points},   {szOID_ISSUING_DIST_POINT, e_issuing_dist_point},
+        {szOID_AUTHORITY_INFO_ACCESS, e_info_access}, {"1.3.6.1.5.5.7.1.11", e_info_access},
     };
     for (DWORD i = 0; i < RTL_NUMBER_OF(map); i++)
         if (!strcmp(map[i].oid, type))

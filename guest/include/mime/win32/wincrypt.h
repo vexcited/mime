@@ -1449,6 +1449,375 @@ WINCRYPT32API BOOL WINAPI CryptAcquireCertificatePrivateKey(PCCERT_CONTEXT pCert
                                                             HCRYPTPROV_OR_NCRYPT_KEY_HANDLE *phCryptProvOrNCryptKey,
                                                             DWORD *pdwKeySpec, BOOL *pfCallerFreeProvOrNCryptKey);
 
+/* ------------------------------------------------------------------ revocation lists */
+
+#define CRYPT_E_NO_REVOCATION_DLL ((HRESULT)0x80092011L)
+#define CRYPT_E_NOT_IN_REVOCATION_DATABASE ((HRESULT)0x80092014L)
+#define CRYPT_E_SELF_SIGNED ((HRESULT)0x80092007L)
+
+#define X509_ISSUING_DIST_POINT ((LPCSTR)54)
+#define szOID_AUTHORITY_INFO_ACCESS "1.3.6.1.5.5.7.1.1"
+#define szOID_CRL_DIST_POINTS "2.5.29.31"
+#define szOID_ISSUING_DIST_POINT "2.5.29.28"
+#define szOID_DELTA_CRL_INDICATOR "2.5.29.27"
+#define szOID_FRESHEST_CRL "2.5.29.46"
+#define szOID_CRL_VIRTUAL_BASE "1.3.6.1.4.1.311.21.3"
+#define szOID_CRL_NEXT_PUBLISH "1.3.6.1.4.1.311.21.4"
+#define szOID_PKIX_OCSP "1.3.6.1.5.5.7.48.1"
+#define szOID_PKIX_CA_ISSUERS "1.3.6.1.5.5.7.48.2"
+
+#define CRL_REASON_UNSPECIFIED 0
+#define CRL_REASON_KEY_COMPROMISE 1
+#define CRL_REASON_CA_COMPROMISE 2
+#define CRL_REASON_AFFILIATION_CHANGED 3
+#define CRL_REASON_SUPERSEDED 4
+#define CRL_REASON_CESSATION_OF_OPERATION 5
+#define CRL_REASON_CERTIFICATE_HOLD 6
+#define CRL_REASON_REMOVE_FROM_CRL 8
+
+#define CRL_V1 0
+#define CRL_V2 1
+
+typedef struct _CRL_ENTRY {
+    CRYPT_INTEGER_BLOB SerialNumber;
+    FILETIME RevocationDate;
+    DWORD cExtension;
+    PCERT_EXTENSION rgExtension;
+} CRL_ENTRY, *PCRL_ENTRY;
+
+typedef struct _CRL_INFO {
+    DWORD dwVersion;
+    CRYPT_ALGORITHM_IDENTIFIER SignatureAlgorithm;
+    CERT_NAME_BLOB Issuer;
+    FILETIME ThisUpdate;
+    FILETIME NextUpdate;
+    DWORD cCRLEntry;
+    PCRL_ENTRY rgCRLEntry;
+    DWORD cExtension;
+    PCERT_EXTENSION rgExtension;
+} CRL_INFO, *PCRL_INFO;
+
+struct _CRL_CONTEXT {
+    DWORD dwCertEncodingType;
+    BYTE *pbCrlEncoded;
+    DWORD cbCrlEncoded;
+    PCRL_INFO pCrlInfo;
+    HCERTSTORE hCertStore;
+};
+
+#define CRL_DIST_POINT_NO_NAME 0
+#define CRL_DIST_POINT_FULL_NAME 1
+#define CRL_DIST_POINT_ISSUER_RDN_NAME 2
+
+typedef struct _CRL_DIST_POINT_NAME {
+    DWORD dwDistPointNameChoice;
+    union {
+        CERT_ALT_NAME_INFO FullName;
+    };
+} CRL_DIST_POINT_NAME, *PCRL_DIST_POINT_NAME;
+
+#define CRL_REASON_UNUSED_FLAG 0x80
+#define CRL_REASON_KEY_COMPROMISE_FLAG 0x40
+#define CRL_REASON_CA_COMPROMISE_FLAG 0x20
+#define CRL_REASON_AFFILIATION_CHANGED_FLAG 0x10
+#define CRL_REASON_SUPERSEDED_FLAG 0x08
+#define CRL_REASON_CESSATION_OF_OPERATION_FLAG 0x04
+#define CRL_REASON_CERTIFICATE_HOLD_FLAG 0x02
+
+typedef struct _CRL_DIST_POINT {
+    CRL_DIST_POINT_NAME DistPointName;
+    CRYPT_BIT_BLOB ReasonFlags;
+    CERT_ALT_NAME_INFO CRLIssuer;
+} CRL_DIST_POINT, *PCRL_DIST_POINT;
+
+typedef struct _CRL_DIST_POINTS_INFO {
+    DWORD cDistPoint;
+    PCRL_DIST_POINT rgDistPoint;
+} CRL_DIST_POINTS_INFO, *PCRL_DIST_POINTS_INFO;
+
+typedef struct _CRL_ISSUING_DIST_POINT {
+    CRL_DIST_POINT_NAME DistPointName;
+    BOOL fOnlyContainsUserCerts;
+    BOOL fOnlyContainsCACerts;
+    CRYPT_BIT_BLOB OnlySomeReasonFlags;
+    BOOL fIndirectCRL;
+} CRL_ISSUING_DIST_POINT, *PCRL_ISSUING_DIST_POINT;
+
+typedef struct _CERT_ACCESS_DESCRIPTION {
+    LPSTR pszAccessMethod;
+    CERT_ALT_NAME_ENTRY AccessLocation;
+} CERT_ACCESS_DESCRIPTION, *PCERT_ACCESS_DESCRIPTION;
+
+typedef struct _CERT_AUTHORITY_INFO_ACCESS {
+    DWORD cAccDescr;
+    PCERT_ACCESS_DESCRIPTION rgAccDescr;
+} CERT_AUTHORITY_INFO_ACCESS, *PCERT_AUTHORITY_INFO_ACCESS;
+
+#define CRL_FIND_ANY 0
+#define CRL_FIND_ISSUED_BY 1
+#define CRL_FIND_EXISTING 2
+#define CRL_FIND_ISSUED_FOR 3
+#define CRL_FIND_ISSUED_BY_AKI_FLAG 0x1
+#define CRL_FIND_ISSUED_BY_SIGNATURE_FLAG 0x2
+#define CRL_FIND_ISSUED_BY_DELTA_FLAG 0x4
+#define CRL_FIND_ISSUED_BY_BASE_FLAG 0x8
+#define CRL_FIND_ISSUED_FOR_SET_STRONG_PROPERTIES_FLAG 0x10
+
+typedef struct _CRL_FIND_ISSUED_FOR_PARA {
+    PCCERT_CONTEXT pSubjectCert;
+    PCCERT_CONTEXT pIssuerCert;
+} CRL_FIND_ISSUED_FOR_PARA, *PCRL_FIND_ISSUED_FOR_PARA;
+
+#define CERT_STORE_ALL_CONTEXT_FLAG (~0U)
+#define CERT_STORE_CERTIFICATE_CONTEXT_FLAG (1 << CERT_STORE_CERTIFICATE_CONTEXT)
+#define CERT_STORE_CRL_CONTEXT_FLAG (1 << CERT_STORE_CRL_CONTEXT)
+#define CERT_STORE_CTL_CONTEXT_FLAG (1 << CERT_STORE_CTL_CONTEXT)
+
+WINCRYPT32API PCCRL_CONTEXT WINAPI CertCreateCRLContext(DWORD dwCertEncodingType, const BYTE *pbCrlEncoded,
+                                                        DWORD cbCrlEncoded);
+WINCRYPT32API PCCRL_CONTEXT WINAPI CertDuplicateCRLContext(PCCRL_CONTEXT pCrlContext);
+WINCRYPT32API BOOL WINAPI CertAddCRLContextToStore(HCERTSTORE hCertStore, PCCRL_CONTEXT pCrlContext,
+                                                   DWORD dwAddDisposition, PCCRL_CONTEXT *ppStoreContext);
+WINCRYPT32API BOOL WINAPI CertAddCRLLinkToStore(HCERTSTORE hCertStore, PCCRL_CONTEXT pCrlContext,
+                                                DWORD dwAddDisposition, PCCRL_CONTEXT *ppStoreContext);
+WINCRYPT32API PCCRL_CONTEXT WINAPI CertGetCRLFromStore(HCERTSTORE hCertStore, PCCERT_CONTEXT pIssuerContext,
+                                                       PCCRL_CONTEXT pPrevCrlContext, DWORD *pdwFlags);
+WINCRYPT32API BOOL WINAPI CertAddEncodedCRLToStore(HCERTSTORE hCertStore, DWORD dwCertEncodingType,
+                                                   const BYTE *pbCrlEncoded, DWORD cbCrlEncoded,
+                                                   DWORD dwAddDisposition, PCCRL_CONTEXT *ppCrlContext);
+WINCRYPT32API BOOL WINAPI CertDeleteCRLFromStore(PCCRL_CONTEXT pCrlContext);
+WINCRYPT32API PCCRL_CONTEXT WINAPI CertFindCRLInStore(HCERTSTORE hCertStore, DWORD dwCertEncodingType,
+                                                      DWORD dwFindFlags, DWORD dwFindType, const void *pvFindPara,
+                                                      PCCRL_CONTEXT pPrevCrlContext);
+WINCRYPT32API BOOL WINAPI CertGetCRLContextProperty(PCCRL_CONTEXT pCrlContext, DWORD dwPropId, void *pvData,
+                                                    DWORD *pcbData);
+WINCRYPT32API BOOL WINAPI CertSetCRLContextProperty(PCCRL_CONTEXT pCrlContext, DWORD dwPropId, DWORD dwFlags,
+                                                    const void *pvData);
+WINCRYPT32API DWORD WINAPI CertEnumCRLContextProperties(PCCRL_CONTEXT pCrlContext, DWORD dwPropId);
+WINCRYPT32API BOOL WINAPI CertFindCertificateInCRL(PCCERT_CONTEXT pCert, PCCRL_CONTEXT pCrlContext, DWORD dwFlags,
+                                                   void *pvReserved, PCRL_ENTRY *ppCrlEntry);
+WINCRYPT32API BOOL WINAPI CertIsValidCRLForCertificate(PCCERT_CONTEXT pCert, PCCRL_CONTEXT pCrl, DWORD dwFlags,
+                                                       void *pvReserved);
+WINCRYPT32API BOOL WINAPI CertVerifyCRLRevocation(DWORD dwCertEncodingType, PCERT_INFO pCertId, DWORD cCrlInfo,
+                                                  PCRL_INFO rgpCrlInfo[]);
+WINCRYPT32API LONG WINAPI CertVerifyCRLTimeValidity(LPFILETIME pTimeToVerify, PCRL_INFO pCrlInfo);
+WINCRYPT32API BOOL WINAPI CertSerializeCRLStoreElement(PCCRL_CONTEXT pCrlContext, DWORD dwFlags, BYTE *pbElement,
+                                                       DWORD *pcbElement);
+
+/* ------------------------------------------------------------------ revocation checking */
+
+#define CERT_CONTEXT_REVOCATION_TYPE 1
+#define CERT_VERIFY_REV_CHAIN_FLAG 0x00000001
+#define CERT_VERIFY_CACHE_ONLY_BASED_REVOCATION 0x00000002
+#define CERT_VERIFY_REV_ACCUMULATIVE_TIMEOUT_FLAG 0x00000004
+#define CERT_VERIFY_REV_SERVER_OCSP_FLAG 0x00000008
+#define CERT_VERIFY_REV_NO_OCSP_FAILOVER_TO_CRL_FLAG 0x00000010
+
+typedef struct _CERT_REVOCATION_CRL_INFO {
+    DWORD cbSize;
+    PCCRL_CONTEXT pBaseCrlContext;
+    PCCRL_CONTEXT pDeltaCrlContext;
+    PCRL_ENTRY pCrlEntry;
+    BOOL fDeltaCrlEntry;
+} CERT_REVOCATION_CRL_INFO, *PCERT_REVOCATION_CRL_INFO;
+
+typedef struct _CERT_REVOCATION_PARA {
+    DWORD cbSize;
+    PCCERT_CONTEXT pIssuerCert;
+    DWORD cCertStore;
+    HCERTSTORE *rgCertStore;
+    HCERTSTORE hCrlStore;
+    LPFILETIME pftTimeToUse;
+    DWORD dwUrlRetrievalTimeout;
+    BOOL fCheckFreshnessTime;
+    DWORD dwFreshnessTime;
+    LPFILETIME pftCurrentTime;
+    PCERT_REVOCATION_CRL_INFO pCrlInfo;
+    LPFILETIME pftCacheResync;
+    void *pChainPara;
+} CERT_REVOCATION_PARA, *PCERT_REVOCATION_PARA;
+
+typedef struct _CERT_REVOCATION_STATUS {
+    DWORD cbSize;
+    DWORD dwIndex;
+    DWORD dwError;
+    DWORD dwReason;
+    BOOL fHasFreshnessTime;
+    DWORD dwFreshnessTime;
+} CERT_REVOCATION_STATUS, *PCERT_REVOCATION_STATUS;
+
+struct _CERT_REVOCATION_INFO {
+    DWORD cbSize;
+    DWORD dwRevocationResult;
+    LPCSTR pszRevocationOid;
+    LPVOID pvOidSpecificInfo;
+    BOOL fHasFreshnessTime;
+    DWORD dwFreshnessTime;
+    PCERT_REVOCATION_CRL_INFO pCrlInfo;
+};
+
+WINCRYPT32API BOOL WINAPI CertVerifyRevocation(DWORD dwEncodingType, DWORD dwRevType, DWORD cContext,
+                                               PVOID rgpvContext[], DWORD dwFlags, PCERT_REVOCATION_PARA pRevPara,
+                                               PCERT_REVOCATION_STATUS pRevStatus);
+
+/* ------------------------------------------------------------------ object identifier functions */
+
+typedef void *HCRYPTOIDFUNCSET;
+typedef void *HCRYPTOIDFUNCADDR;
+
+#define CRYPT_OID_ENCODE_OBJECT_FUNC "CryptDllEncodeObject"
+#define CRYPT_OID_DECODE_OBJECT_FUNC "CryptDllDecodeObject"
+#define CRYPT_OID_ENCODE_OBJECT_EX_FUNC "CryptDllEncodeObjectEx"
+#define CRYPT_OID_DECODE_OBJECT_EX_FUNC "CryptDllDecodeObjectEx"
+#define CRYPT_OID_VERIFY_REVOCATION_FUNC "CertDllVerifyRevocation"
+#define CRYPT_OID_VERIFY_CTL_USAGE_FUNC "CertDllVerifyCTLUsage"
+#define CRYPT_OID_OPEN_STORE_PROV_FUNC "CertDllOpenStoreProv"
+#define CRYPT_DEFAULT_OID "DEFAULT"
+#define CRYPT_INSTALL_OID_FUNC_BEFORE_FLAG 1
+#define CRYPT_GET_INSTALLED_OID_FUNC_FLAG 0x1
+#define CRYPT_REGISTER_FIRST_INDEX 0
+#define CRYPT_REGISTER_LAST_INDEX 0xFFFFFFFF
+
+typedef struct _CRYPT_OID_FUNC_ENTRY {
+    LPCSTR pszOID;
+    void *pvFuncAddr;
+} CRYPT_OID_FUNC_ENTRY, *PCRYPT_OID_FUNC_ENTRY;
+
+WINCRYPT32API HCRYPTOIDFUNCSET WINAPI CryptInitOIDFunctionSet(LPCSTR pszFuncName, DWORD dwFlags);
+WINCRYPT32API BOOL WINAPI CryptInstallOIDFunctionAddress(HMODULE hModule, DWORD dwEncodingType, LPCSTR pszFuncName,
+                                                         DWORD cFuncEntry, const CRYPT_OID_FUNC_ENTRY rgFuncEntry[],
+                                                         DWORD dwFlags);
+WINCRYPT32API BOOL WINAPI CryptGetOIDFunctionAddress(HCRYPTOIDFUNCSET hFuncSet, DWORD dwEncodingType, LPCSTR pszOID,
+                                                     DWORD dwFlags, void **ppvFuncAddr,
+                                                     HCRYPTOIDFUNCADDR *phFuncAddr);
+WINCRYPT32API BOOL WINAPI CryptGetDefaultOIDDllList(HCRYPTOIDFUNCSET hFuncSet, DWORD dwEncodingType,
+                                                    WCHAR *pwszDllList, DWORD *pcchDllList);
+WINCRYPT32API BOOL WINAPI CryptGetDefaultOIDFunctionAddress(HCRYPTOIDFUNCSET hFuncSet, DWORD dwEncodingType,
+                                                            LPCWSTR pwszDll, DWORD dwFlags, void **ppvFuncAddr,
+                                                            HCRYPTOIDFUNCADDR *phFuncAddr);
+WINCRYPT32API BOOL WINAPI CryptFreeOIDFunctionAddress(HCRYPTOIDFUNCADDR hFuncAddr, DWORD dwFlags);
+WINCRYPT32API BOOL WINAPI CryptRegisterOIDFunction(DWORD dwEncodingType, LPCSTR pszFuncName, LPCSTR pszOID,
+                                                   LPCWSTR pwszDll, LPCSTR pszOverrideFuncName);
+WINCRYPT32API BOOL WINAPI CryptUnregisterOIDFunction(DWORD dwEncodingType, LPCSTR pszFuncName, LPCSTR pszOID);
+WINCRYPT32API BOOL WINAPI CryptRegisterDefaultOIDFunction(DWORD dwEncodingType, LPCSTR pszFuncName, DWORD dwIndex,
+                                                          LPCWSTR pwszDll);
+WINCRYPT32API BOOL WINAPI CryptUnregisterDefaultOIDFunction(DWORD dwEncodingType, LPCSTR pszFuncName,
+                                                            LPCWSTR pwszDll);
+
+/* ------------------------------------------------------------------ object retrieval, cryptnet.dll */
+
+#ifdef MIME_BUILD_CRYPTNET
+#define WINCRYPTNETAPI DECLSPEC_EXPORT
+#else
+#define WINCRYPTNETAPI DECLSPEC_IMPORT
+#endif
+
+#define CONTEXT_OID_CERTIFICATE ((LPCSTR)1)
+#define CONTEXT_OID_CRL ((LPCSTR)2)
+#define CONTEXT_OID_CTL ((LPCSTR)3)
+#define CONTEXT_OID_PKCS7 ((LPCSTR)4)
+#define CONTEXT_OID_CAPI2_ANY ((LPCSTR)5)
+#define CONTEXT_OID_OCSP_RESP ((LPCSTR)6)
+
+#define CRYPT_RETRIEVE_MULTIPLE_OBJECTS 0x00000001
+#define CRYPT_CACHE_ONLY_RETRIEVAL 0x00000002
+#define CRYPT_WIRE_ONLY_RETRIEVAL 0x00000004
+#define CRYPT_DONT_CACHE_RESULT 0x00000008
+#define CRYPT_ASYNC_RETRIEVAL 0x00000010
+#define CRYPT_STICKY_CACHE_RETRIEVAL 0x00001000
+#define CRYPT_LDAP_SCOPE_BASE_ONLY_RETRIEVAL 0x00002000
+#define CRYPT_OFFLINE_CHECK_RETRIEVAL 0x00004000
+#define CRYPT_LDAP_INSERT_ENTRY_ATTRIBUTE 0x00008000
+#define CRYPT_LDAP_SIGN_RETRIEVAL 0x00010000
+#define CRYPT_NO_AUTH_RETRIEVAL 0x00020000
+#define CRYPT_LDAP_AREC_EXCLUSIVE_RETRIEVAL 0x00040000
+#define CRYPT_AIA_RETRIEVAL 0x00080000
+#define CRYPT_HTTP_POST_RETRIEVAL 0x00100000
+#define CRYPT_PROXY_CACHE_RETRIEVAL 0x00200000
+#define CRYPT_NOT_MODIFIED_RETRIEVAL 0x00400000
+#define CRYPT_ENABLE_SSL_REVOCATION_RETRIEVAL 0x00800000
+#define CRYPT_RANDOM_QUERY_STRING_RETRIEVAL 0x04000000
+#define CRYPT_ENABLE_FILE_RETRIEVAL 0x08000000
+#define CRYPT_CREATE_NEW_FLUSH_ENTRY 0x10000000
+#define CRYPT_VERIFY_CONTEXT_SIGNATURE 0x00000020
+#define CRYPT_VERIFY_DATA_HASH 0x00000040
+#define CRYPT_KEEP_TIME_VALID 0x00000080
+#define CRYPT_DONT_VERIFY_SIGNATURE 0x00000100
+#define CRYPT_DONT_CHECK_TIME_VALIDITY 0x00000200
+#define CRYPT_CHECK_FRESHNESS_TIME_VALIDITY 0x00000400
+#define CRYPT_ACCUMULATIVE_TIMEOUT 0x00000800
+#define CRYPT_OCSP_ONLY_RETRIEVAL 0x01000000
+#define CRYPT_NO_OCSP_FAILOVER_TO_CRL_RETRIEVAL 0x02000000
+
+typedef struct _CRYPT_BLOB_ARRAY {
+    DWORD cBlob;
+    PCRYPT_DATA_BLOB rgBlob;
+} CRYPT_BLOB_ARRAY, *PCRYPT_BLOB_ARRAY;
+
+typedef struct _CRYPT_CREDENTIALS {
+    DWORD cbSize;
+    LPCSTR pszCredentialsOid;
+    LPVOID pvCredentials;
+} CRYPT_CREDENTIALS, *PCRYPT_CREDENTIALS;
+
+typedef struct _CRYPT_RETRIEVE_AUX_INFO {
+    DWORD cbSize;
+    FILETIME *pLastSyncTime;
+    DWORD dwMaxUrlRetrievalByteCount;
+    void *pPreFetchInfo;
+    void *pFlushInfo;
+    void **ppResponseInfo;
+    LPWSTR pwszCacheFileNamePrefix;
+    LPFILETIME pftCacheResync;
+    BOOL fProxyCacheRetrieval;
+    DWORD dwHttpStatusCode;
+    LPWSTR *ppwszErrorResponseHeaders;
+    PCRYPT_DATA_BLOB *ppErrorContentBlob;
+} CRYPT_RETRIEVE_AUX_INFO, *PCRYPT_RETRIEVE_AUX_INFO;
+
+typedef struct _CRYPT_URL_ARRAY {
+    DWORD cUrl;
+    LPWSTR *rgwszUrl;
+} CRYPT_URL_ARRAY, *PCRYPT_URL_ARRAY;
+
+typedef struct _CRYPT_URL_INFO {
+    DWORD cbSize;
+    DWORD dwSyncDeltaTime;
+    DWORD cGroup;
+    DWORD *rgcGroupEntry;
+} CRYPT_URL_INFO, *PCRYPT_URL_INFO;
+
+#define URL_OID_CERTIFICATE_ISSUER ((LPCSTR)1)
+#define URL_OID_CERTIFICATE_CRL_DIST_POINT ((LPCSTR)2)
+#define URL_OID_CTL_ISSUER ((LPCSTR)3)
+#define URL_OID_CTL_NEXT_UPDATE ((LPCSTR)4)
+#define URL_OID_CRL_ISSUER ((LPCSTR)5)
+#define URL_OID_CERTIFICATE_FRESHEST_CRL ((LPCSTR)6)
+#define URL_OID_CRL_FRESHEST_CRL ((LPCSTR)7)
+#define URL_OID_CROSS_CERT_DIST_POINT ((LPCSTR)8)
+#define URL_OID_CERTIFICATE_OCSP ((LPCSTR)9)
+#define URL_OID_CERTIFICATE_OCSP_AND_CRL_DIST_POINT ((LPCSTR)10)
+#define URL_OID_CERTIFICATE_CRL_DIST_POINT_AND_OCSP ((LPCSTR)11)
+#define URL_OID_CROSS_CERT_SUBJECT_INFO_ACCESS ((LPCSTR)12)
+#define URL_OID_CERTIFICATE_ONLY_OCSP ((LPCSTR)13)
+
+#define CRYPT_GET_URL_FROM_PROPERTY 0x00000001
+#define CRYPT_GET_URL_FROM_EXTENSION 0x00000002
+#define CRYPT_GET_URL_FROM_UNAUTH_ATTRIBUTE 0x00000004
+#define CRYPT_GET_URL_FROM_AUTH_ATTRIBUTE 0x00000008
+
+WINCRYPTNETAPI BOOL WINAPI CryptRetrieveObjectByUrlA(LPCSTR pszUrl, LPCSTR pszObjectOid, DWORD dwRetrievalFlags,
+                                                     DWORD dwTimeout, LPVOID *ppvObject, HANDLE hAsyncRetrieve,
+                                                     PCRYPT_CREDENTIALS pCredentials, LPVOID pvVerify,
+                                                     PCRYPT_RETRIEVE_AUX_INFO pAuxInfo);
+WINCRYPTNETAPI BOOL WINAPI CryptRetrieveObjectByUrlW(LPCWSTR pszUrl, LPCSTR pszObjectOid, DWORD dwRetrievalFlags,
+                                                     DWORD dwTimeout, LPVOID *ppvObject, HANDLE hAsyncRetrieve,
+                                                     PCRYPT_CREDENTIALS pCredentials, LPVOID pvVerify,
+                                                     PCRYPT_RETRIEVE_AUX_INFO pAuxInfo);
+WINCRYPTNETAPI BOOL WINAPI CryptGetObjectUrl(LPCSTR pszUrlOid, LPVOID pvPara, DWORD dwFlags,
+                                             PCRYPT_URL_ARRAY pUrlArray, DWORD *pcbUrlArray, PCRYPT_URL_INFO pUrlInfo,
+                                             DWORD *pcbUrlInfo, LPVOID pvReserved);
+
 #include <mime/win32/dpapi.h>
 
 #endif
