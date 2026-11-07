@@ -916,6 +916,10 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         PS_ATTRIBUTE_LIST *native_list = nullptr;
         UCHAR list_storage[sizeof(SIZE_T) + 32 * sizeof(PS_ATTRIBUTE)];
         PVOID handle_arrays[2] = {};
+        /* the client id and teb address outputs are written wide, then narrowed into the caller's. */
+        CLIENT_ID client_wide = {};
+        ULONG_PTR teb_wide = 0;
+        ULONG client32 = 0, teb32 = 0;
         if (a[10]) {
             /* the 32-bit list: a size, then attributes of four words. */
             const ULONG *in = pointer32(a[10]);
@@ -935,6 +939,15 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
                 n->ReturnLength = nullptr;
                 if ((e[0] == PS_ATTRIBUTE_TOKEN || e[0] == 0x60000) && e[1] == sizeof(ULONG))
                     n->Size = sizeof(HANDLE);
+                if (e[0] == PS_ATTRIBUTE_CLIENT_ID && e[1] == 2 * sizeof(ULONG)) {
+                    client32 = e[2];
+                    n->Size = sizeof(client_wide);
+                    n->Value = (ULONG_PTR)&client_wide;
+                } else if (e[0] == PS_ATTRIBUTE_TEB_ADDRESS && e[1] == sizeof(ULONG)) {
+                    teb32 = e[2];
+                    n->Size = sizeof(teb_wide);
+                    n->Value = (ULONG_PTR)&teb_wide;
+                }
                 /* lists of handles are widened. */
                 if ((e[0] == 0x2000B || e[0] == 0x20013) && e[1] && !(e[1] & 3) && e[1] <= 0x40000 && arrays < 2) {
                     ULONG handles = e[1] / sizeof(ULONG);
@@ -972,6 +985,13 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
             store32(a[0], (ULONG_PTR)process);
             store32(a[1], (ULONG_PTR)thread);
         }
+        if (NT_SUCCESS(status) && client32) {
+            ULONG *out = pointer32(client32);
+            out[0] = (ULONG)(ULONG_PTR)client_wide.UniqueProcess;
+            out[1] = (ULONG)(ULONG_PTR)client_wide.UniqueThread;
+        }
+        if (NT_SUCCESS(status) && teb32)
+            store32(teb32, teb_wide);
         if (NT_SUCCESS(status) && info32) {
             memset(info32 + 1, 0, 0x48 - sizeof(ULONG));
             info32[1] = info.State;
