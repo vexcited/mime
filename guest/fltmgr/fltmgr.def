@@ -2,7 +2,16 @@ LIBRARY fltmgr.sys
 EXPORTS
     DllInitialize PRIVATE
     DllUnload PRIVATE
+    FltGetFileNameInformation
+    FltGetFileNameInformationUnsafe
+    FltGetRequestorProcess
+    FltGetRequestorProcessId
     FltGetRoutineAddress
+    FltParseFileNameInformation
+    FltQueryInformationFile
+    FltReadFile
+    FltReferenceFileNameInformation
     FltRegisterFilter
+    FltReleaseFileNameInformation
     FltStartFiltering
     FltUnregisterFilter
