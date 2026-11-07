@@ -1,0 +1,8 @@
+LIBRARY fltmgr.sys
+EXPORTS
+    DllInitialize PRIVATE
+    DllUnload PRIVATE
+    FltGetRoutineAddress
+    FltRegisterFilter
+    FltStartFiltering
+    FltUnregisterFilter
