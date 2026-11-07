@@ -1255,25 +1255,6 @@ static NTSTATUS load_dll(PCWSTR name, LOAD_CONTEXT *ctx, PLDR_DATA_TABLE_ENTRY *
 
 /* ------------------------------------------------------------------ process and thread init */
 
-static void normalize_parameters(PRTL_USER_PROCESS_PARAMETERS pp)
-{
-    if (!pp || (pp->Flags & RTL_USER_PROC_PARAMS_NORMALIZED))
-        return;
-#define FIX(s)                                                                                                    \
-    if ((s).Buffer)                                                                                               \
-    (s).Buffer = (PWSTR)((PUCHAR)pp + (ULONG_PTR)(s).Buffer)
-    FIX(pp->CurrentDirectory.DosPath);
-    FIX(pp->DllPath);
-    FIX(pp->ImagePathName);
-    FIX(pp->CommandLine);
-    FIX(pp->WindowTitle);
-    FIX(pp->DesktopInfo);
-    FIX(pp->ShellInfo);
-    FIX(pp->RuntimeData);
-#undef FIX
-    pp->Flags |= RTL_USER_PROC_PARAMS_NORMALIZED;
-}
-
 static void fatal(PCSTR what, NTSTATUS status)
 {
     DbgPrint("ntdll: %s (%08x)\n", what, status);
@@ -1375,7 +1356,7 @@ static void initialize_process(PCONTEXT context)
     peb->FastPebLock = &g_peb_lock;
     peb->TlsBitmap = peb->TlsBitmapBits;
     peb->TlsExpansionBitmap = peb->TlsExpansionBitmapBits;
-    normalize_parameters(peb->ProcessParameters);
+    RtlNormalizeProcessParams(peb->ProcessParameters);
 
     RtlEnterCriticalSection(&LdrpLoaderLock);
     PLDR_DATA_TABLE_ENTRY exe = create_entry(peb->ImageBaseAddress, peb->ProcessParameters->ImagePathName.Buffer);

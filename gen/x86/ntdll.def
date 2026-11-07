@@ -314,10 +314,15 @@ EXPORTS
     RtlCreateAndSetSD=_RtlCreateAndSetSD@20
     RtlCreateEnvironment=_RtlCreateEnvironment@8
     RtlCreateHeap=_RtlCreateHeap@24
+    RtlCreateProcessParameters=_RtlCreateProcessParameters@40
+    RtlCreateProcessParametersEx=_RtlCreateProcessParametersEx@44
     RtlCreateSecurityDescriptor=_RtlCreateSecurityDescriptor@8
     RtlCreateServiceSid=_RtlCreateServiceSid@12
     RtlCreateUnicodeString=_RtlCreateUnicodeString@8
     RtlCreateUnicodeStringFromAsciiz=_RtlCreateUnicodeStringFromAsciiz@8
+    RtlCreateUserProcess=_RtlCreateUserProcess@40
+    RtlCreateUserProcessEx=_RtlCreateUserProcessEx@20
+    RtlCreateUserThread=_RtlCreateUserThread@40
     RtlCreateUserSecurityObject=_RtlCreateUserSecurityObject@28
     RtlCreateVirtualAccountSid=_RtlCreateVirtualAccountSid@16
     RtlDeactivateActivationContext=_RtlDeactivateActivationContext@8
@@ -330,6 +335,8 @@ EXPORTS
     RtlDeriveCapabilitySidsFromName=_RtlDeriveCapabilitySidsFromName@12
     RtlDestroyEnvironment=_RtlDestroyEnvironment@4
     RtlDestroyHeap=_RtlDestroyHeap@4
+    RtlDeNormalizeProcessParams=_RtlDeNormalizeProcessParams@4
+    RtlDestroyProcessParameters=_RtlDestroyProcessParameters@4
     RtlDetermineDosPathNameType_U=_RtlDetermineDosPathNameType_U@4
     RtlDispatchException=_RtlDispatchException@8
     RtlDispatchFrameException=_RtlDispatchFrameException@8
@@ -676,6 +683,7 @@ EXPORTS
     RtlFindClearBits=_RtlFindClearBits@12
     RtlFindClearBitsAndSet=_RtlFindClearBitsAndSet@12
     RtlInitializeBitMap=_RtlInitializeBitMap@12
+    RtlNormalizeProcessParams=_RtlNormalizeProcessParams@4
     RtlSetBit=_RtlSetBit@8
     RtlSetBits=_RtlSetBits@12
     RtlTestBit=_RtlTestBit@8
