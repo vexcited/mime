@@ -2562,8 +2562,20 @@ static void handle_event(const SDL_Event *e)
         } else if (w && w->maximized && !(SDL_GetWindowFlags(w->window) & SDL_WINDOW_MAXIMIZED)) {
             /* the compositor took the window out of the maximized state, as it does when it is dragged. */
             w->maximized = false;
-            if (w->config.flags & MIME_WIN_MAXIMIZED)
+            if (w->config.flags & MIME_WIN_MAXIMIZED) {
                 request_window_state(w, 9);
+            } else if (!w->popup && !w->fullscreen) {
+                /*
+                 * the guest restored it. kwin leaves the size of a window it restores to the client, and sdl keeps the
+                 * maximized one, not the size asked while it was maximized.
+                 */
+                MimeRect host = host_part(&w->config);
+                double scale = config_scale(&w->config);
+                w->want_w = MIME_MAX(1, (int)lround((host.right - host.left) / scale));
+                w->want_h = MIME_MAX(1, (int)lround((host.bottom - host.top) / scale));
+                w->want_ms = now_ms();
+                SDL_SetWindowSize(w->window, w->want_w, w->want_h);
+            }
         }
         break;
     }
