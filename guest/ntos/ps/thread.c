@@ -149,6 +149,7 @@ NTSTATUS PspCreateThread(PEPROCESS process, BOOLEAN system, PKSTART_ROUTINE rout
 
     /* one reference stays with the running thread until it exits. */
     ObReferenceObject(thread);
+    PspNotifyThread(thread, TRUE);
     *out = thread;
     return STATUS_SUCCESS;
 }
@@ -421,6 +422,7 @@ void PspExitThread(NTSTATUS status)
 
     thread->ExitStatus = status;
     thread->Tcb.Terminating = TRUE;
+    PspNotifyThread(thread, FALSE);
     if (thread->Tcb.Win32Thread)
         PsWin32ThreadCallout(thread, FALSE);
     CmNotifyRunDown(thread);
@@ -672,20 +674,13 @@ NTSTATUS NTAPI NtSuspendThread(HANDLE handle, PULONG previous)
 }
 
 /* suspends or resumes every thread of a process once more, as debuggers do. */
-static NTSTATUS suspend_or_resume_process(HANDLE handle, BOOLEAN suspend)
+/* every thread of the process, the caller holding a reference to it. */
+NTSTATUS PspSuspendResumeProcess(PEPROCESS process, BOOLEAN suspend)
 {
-    PEPROCESS process;
-    NTSTATUS status = PsReferenceProcessHandle(handle, PROCESS_SUSPEND_RESUME, &process);
-    if (!NT_SUCCESS(status))
-        return status;
-    if (process->SystemProcess) {
-        ObDereferenceObject(process);
+    if (process->SystemProcess)
         return STATUS_ACCESS_DENIED;
-    }
-    if (process->Terminating) {
-        ObDereferenceObject(process);
+    if (process->Terminating)
         return STATUS_PROCESS_IS_TERMINATING;
-    }
     ULONG64 state = KiAcquireDispatcherLock();
     for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead; e = e->Flink) {
         PETHREAD thread = CONTAINING_RECORD(e, ETHREAD, ThreadListEntry);
@@ -711,8 +706,28 @@ static NTSTATUS suspend_or_resume_process(HANDLE handle, BOOLEAN suspend)
         }
     }
     KiReleaseDispatcherLock(state);
-    ObDereferenceObject(process);
     return STATUS_SUCCESS;
+}
+
+static NTSTATUS suspend_or_resume_process(HANDLE handle, BOOLEAN suspend)
+{
+    PEPROCESS process;
+    NTSTATUS status = PsReferenceProcessHandle(handle, PROCESS_SUSPEND_RESUME, &process);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = PspSuspendResumeProcess(process, suspend);
+    ObDereferenceObject(process);
+    return status;
+}
+
+NTSTATUS NTAPI PsSuspendProcess(PEPROCESS process)
+{
+    return PspSuspendResumeProcess(process, TRUE);
+}
+
+NTSTATUS NTAPI PsResumeProcess(PEPROCESS process)
+{
+    return PspSuspendResumeProcess(process, FALSE);
 }
 
 NTSTATUS NTAPI NtSuspendProcess(HANDLE handle)
@@ -1065,11 +1080,6 @@ PVOID NTAPI PsGetCurrentThreadTeb(void)
 BOOLEAN NTAPI PsIsThreadTerminating(PETHREAD thread)
 {
     return thread->Tcb.Terminating;
-}
-
-NTSTATUS NTAPI PsSetCreateThreadNotifyRoutine(PCREATE_THREAD_NOTIFY_ROUTINE routine)
-{
-    return STATUS_SUCCESS;
 }
 
 /*

@@ -398,7 +398,14 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
         ObDereferenceObject(process);
         return status;
     }
-    PspNotifyProcess(process, TRUE);
+    status = PspNotifyProcessCreate(process, image, &p->CommandLine);
+    if (!NT_SUCCESS(status)) {
+        KiLogPrintf("a driver refused process %u (%wZ): %08x", (ULONG)(ULONG_PTR)process->UniqueProcessId, image, status);
+        PspTerminateProcess(process, status);
+        ObDereferenceObject(thread);
+        ObDereferenceObject(process);
+        return status;
+    }
     /* the arguments help tell processes of one program apart in the log. */
     UNICODE_STRING shown = p->CommandLine;
     if (shown.Length > 300 * sizeof(WCHAR))

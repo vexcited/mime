@@ -190,7 +190,7 @@ static NTSTATUS open_name(MimeGfxShare *a)
     if (!buffer)
         return STATUS_OBJECT_NAME_INVALID;
     HANDLE h;
-    status = ObOpenObjectByName(&oa, type, UserMode, 0xF0003, nullptr, &h);
+    status = ObOpenObjectByName(&oa, type, UserMode, nullptr, 0xF0003, nullptr, &h);
     if (NT_SUCCESS(status))
         a->Handle = (ULONG64)(ULONG_PTR)h;
     ExFreePool(buffer);

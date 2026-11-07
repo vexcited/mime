@@ -634,7 +634,7 @@ void ObMakeTemporaryObject(PVOID object)
         ObDereferenceObject(object);
 }
 
-NTSTATUS ObQueryNameString(PVOID object, PUNICODE_STRING name, PWSTR buffer, ULONG buffer_chars)
+NTSTATUS ObpQueryNameString(PVOID object, PUNICODE_STRING name, PWSTR buffer, ULONG buffer_chars)
 {
     WCHAR tmp[512];
     ULONG pos = RTL_NUMBER_OF(tmp);
@@ -658,6 +658,28 @@ NTSTATUS ObQueryNameString(PVOID object, PUNICODE_STRING name, PWSTR buffer, ULO
     name->Buffer = buffer;
     name->Length = (USHORT)(len * sizeof(WCHAR));
     name->MaximumLength = (USHORT)((len + 1) * sizeof(WCHAR));
+    return STATUS_SUCCESS;
+}
+
+/* windows' form: an OBJECT_NAME_INFORMATION with the name after it, an empty name for an unnamed object. */
+NTSTATUS NTAPI ObQueryNameString(PVOID object, POBJECT_NAME_INFORMATION info, ULONG length, PULONG returned)
+{
+    WCHAR buffer[1024];
+    UNICODE_STRING name = {};
+    if (!NT_SUCCESS(ObpQueryNameString(object, &name, buffer, RTL_NUMBER_OF(buffer))))
+        name.Length = 0;
+    ULONG needed = sizeof(OBJECT_NAME_INFORMATION) + (name.Length ? name.Length + sizeof(WCHAR) : 0);
+    if (returned)
+        *returned = needed;
+    if (length < needed)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    info->Name.Length = name.Length;
+    info->Name.MaximumLength = name.Length ? (USHORT)(name.Length + sizeof(WCHAR)) : 0;
+    info->Name.Buffer = name.Length ? (PWSTR)(info + 1) : nullptr;
+    if (name.Length) {
+        memcpy(info->Name.Buffer, name.Buffer, name.Length);
+        info->Name.Buffer[name.Length / sizeof(WCHAR)] = 0;
+    }
     return STATUS_SUCCESS;
 }
 

@@ -981,28 +981,13 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     }
 }
 
+/* the Nt service for a kernel caller: the copy helpers take its buffers as they are. */
 NTSTATUS NTAPI ZwQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length, PULONG returned)
 {
     PKTHREAD t = KiCurrentThread();
     KPROCESSOR_MODE old = t->PreviousMode;
     t->PreviousMode = KernelMode;
-    NTSTATUS status;
-    /* kernel callers pass kernel buffers, which KiCopyToUser refuses, so copy directly. */
-    if (klass == SystemBasicInformation && length >= sizeof(SYSTEM_BASIC_INFORMATION)) {
-        SYSTEM_BASIC_INFORMATION *b = info;
-        memset(b, 0, sizeof(*b));
-        b->PageSize = PAGE_SIZE;
-        b->NumberOfPhysicalPages = (ULONG)MmGetTotalPages();
-        b->AllocationGranularity = 0x10000;
-        b->MinimumUserModeAddress = 0x10000;
-        b->MaximumUserModeAddress = 0x7FFFFFFEFFFF;
-        b->NumberOfProcessors = (CCHAR)HalBootInfo->cpu_count;
-        if (returned)
-            *returned = sizeof(*b);
-        status = STATUS_SUCCESS;
-    } else {
-        status = STATUS_NOT_IMPLEMENTED;
-    }
+    NTSTATUS status = NtQuerySystemInformation(klass, info, length, returned);
     t->PreviousMode = old;
     return status;
 }

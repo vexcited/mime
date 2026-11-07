@@ -155,7 +155,7 @@ static BOOLEAN creatable_directory(PVOID object)
 {
     WCHAR buffer[128];
     UNICODE_STRING name;
-    if (!NT_SUCCESS(ObQueryNameString(object, &name, buffer, RTL_NUMBER_OF(buffer))))
+    if (!NT_SUCCESS(ObpQueryNameString(object, &name, buffer, RTL_NUMBER_OF(buffer))))
         return FALSE;
     static const PCWSTR creatable[] = {L"\\BaseNamedObjects", L"\\RPC Control", L"\\Windows\\WindowStations"};
     static const WCHAR sessions[] = L"\\Sessions\\";

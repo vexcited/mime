@@ -5,8 +5,6 @@ POBJECT_TYPE ExEventType;
 POBJECT_TYPE ExMutantType;
 POBJECT_TYPE ExSemaphoreType;
 POBJECT_TYPE ExTimerType;
-POBJECT_TYPE *ExEventObjectType = &ExEventType;
-POBJECT_TYPE *ExSemaphoreObjectType = &ExSemaphoreType;
 KUSER_SHARED_DATA *SharedUserData;
 
 void MiSetKuserPage(ULONG64 pa);
@@ -189,7 +187,7 @@ static NTSTATUS open_named(POBJECT_TYPE type, PHANDLE handle, ACCESS_MASK access
     if (!NT_SUCCESS(status))
         return status;
     HANDLE h;
-    status = ObOpenObjectByName(&oa, type, KeGetPreviousMode(), access, nullptr, &h);
+    status = ObOpenObjectByName(&oa, type, KeGetPreviousMode(), nullptr, access, nullptr, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);

@@ -776,7 +776,7 @@ NTSTATUS CmpReferenceKeyByName(POBJECT_ATTRIBUTES attributes, KPROCESSOR_MODE mo
     }
     access &= ~(ACCESS_MASK)(KEY_WOW64_32KEY_ | KEY_WOW64_64KEY_);
     HANDLE h;
-    status = ObOpenObjectByName(&oa, CmKeyType, mode, access, &ctx, &h);
+    status = ObOpenObjectByName(&oa, CmKeyType, mode, nullptr, access, &ctx, &h);
     KiFreeCapturedString(&name);
     if (!NT_SUCCESS(status))
         return status;

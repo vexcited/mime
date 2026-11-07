@@ -1103,6 +1103,8 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
     MiUnlockAddressSpace(as);
     *base = (PVOID)va;
     *view_size = bytes;
+    if (image && PspImageNotifyRegistered())
+        PspNotifyImage(&s->FileName, process, (PVOID)va, bytes, s->Image.Machine);
     return relocated ? STATUS_IMAGE_NOT_AT_BASE : STATUS_SUCCESS;
 }
 
@@ -1304,7 +1306,7 @@ NTSTATUS NTAPI NtOpenSection(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBU
     if (!NT_SUCCESS(status))
         return status;
     HANDLE h;
-    status = ObOpenObjectByName(&oa, MmSectionType, KeGetPreviousMode(), access, nullptr, &h);
+    status = ObOpenObjectByName(&oa, MmSectionType, KeGetPreviousMode(), nullptr, access, nullptr, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);

@@ -499,8 +499,10 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
         if (!*out)
             status = STATUS_INSUFFICIENT_RESOURCES;
     }
-    if (NT_SUCCESS(status))
+    if (NT_SUCCESS(status)) {
         KiLogPrintf("loaded %wZ at %p", path, base);
+        PspNotifyImage(path, nullptr, base, info.SizeOfImage, IMAGE_FILE_MACHINE_AMD64);
+    }
     else
         free_image_pages(base, pages);
     ExFreePool(file);

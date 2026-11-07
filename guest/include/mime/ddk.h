@@ -829,11 +829,12 @@ NTKERNELAPI NTSTATUS NTAPI PsSetCreateProcessNotifyRoutine(PCREATE_PROCESS_NOTIF
 NTKERNELAPI NTSTATUS NTAPI PsSetCreateThreadNotifyRoutine(PCREATE_THREAD_NOTIFY_ROUTINE routine);
 
 typedef struct _OBJECT_TYPE *POBJECT_TYPE;
-extern NTKERNELAPI POBJECT_TYPE *PsProcessType;
-extern NTKERNELAPI POBJECT_TYPE *PsThreadType;
-extern NTKERNELAPI POBJECT_TYPE *ExEventObjectType;
-extern NTKERNELAPI POBJECT_TYPE *ExSemaphoreObjectType;
-extern NTKERNELAPI POBJECT_TYPE *IoFileObjectType;
+/* the exported variables hold the types, as windows' do: drivers built with the WDK reach them through a constant import. */
+extern NTKERNELAPI POBJECT_TYPE PsProcessType;
+extern NTKERNELAPI POBJECT_TYPE PsThreadType;
+extern NTKERNELAPI POBJECT_TYPE ExEventObjectType;
+extern NTKERNELAPI POBJECT_TYPE ExSemaphoreObjectType;
+extern NTKERNELAPI POBJECT_TYPE IoFileObjectType;
 extern NTKERNELAPI POBJECT_TYPE *MmSectionObjectType;
 
 NTKERNELAPI NTSTATUS NTAPI ObReferenceObjectByHandle(HANDLE handle, ACCESS_MASK access, POBJECT_TYPE type,
@@ -885,8 +886,8 @@ NTKERNELAPI NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attrib
                              PHANDLE handle);
 NTKERNELAPI NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCESSOR_MODE mode, PVOID *object,
                            ACCESS_MASK *granted);
-NTKERNELAPI NTSTATUS ObOpenObjectByName(POBJECT_ATTRIBUTES attributes, POBJECT_TYPE type, KPROCESSOR_MODE mode,
-                            ACCESS_MASK access, PVOID parse_context, PHANDLE handle);
+NTKERNELAPI NTSTATUS NTAPI ObOpenObjectByName(POBJECT_ATTRIBUTES attributes, POBJECT_TYPE type, KPROCESSOR_MODE mode,
+                                              PVOID access_state, ACCESS_MASK access, PVOID parse_context, PHANDLE handle);
 /* mime: sets the descriptor of a window station or desktop that everyone at the console works at. */
 NTKERNELAPI NTSTATUS ObSetInteractiveSecurity(PVOID object, BOOLEAN everyone);
 NTKERNELAPI NTSTATUS ObCheckOpenAccess(PVOID object, ACCESS_MASK desired, KPROCESSOR_MODE mode, ACCESS_MASK *granted);
@@ -895,7 +896,7 @@ NTKERNELAPI NTSTATUS ObReplaceSecurity(PVOID object, const OBJECT_ATTRIBUTES *at
 NTKERNELAPI NTSTATUS ObCaptureObjectAttributes(POBJECT_ATTRIBUTES user, POBJECT_ATTRIBUTES copy, PUNICODE_STRING name);
 NTKERNELAPI NTSTATUS ObStoreHandle(PHANDLE user_handle, HANDLE handle);
 NTKERNELAPI POBJECT_TYPE ObGetObjectType(PVOID object);
-NTKERNELAPI NTSTATUS ObQueryNameString(PVOID object, PUNICODE_STRING name, PWSTR buffer, ULONG buffer_chars);
+NTKERNELAPI NTSTATUS NTAPI ObQueryNameString(PVOID object, POBJECT_NAME_INFORMATION info, ULONG length, PULONG returned);
 
 NTKERNELAPI NTSTATUS NTAPI ObOpenObjectByPointer(PVOID object, ULONG attributes, PVOID access_state,
                                                  ACCESS_MASK access, POBJECT_TYPE type, KPROCESSOR_MODE mode,

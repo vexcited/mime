@@ -30,7 +30,33 @@ static PHANDLE_TABLE table_for(HANDLE handle, KPROCESSOR_MODE mode, PEPROCESS *o
     return &(*owner)->HandleTable;
 }
 
+static NTSTATUS create_handle(PEPROCESS process, PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle);
+
+/* the object callbacks drivers registered see each handle to a process or a thread, before and after. */
+static NTSTATUS create_handle_seen(PEPROCESS process, PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle,
+                                   BOOLEAN duplicate, PEPROCESS source)
+{
+    if (!ObpObjectCallbacksPresent(object))
+        return create_handle(process, object, access, attributes, handle);
+    BOOLEAN kernel_handle = process == PsInitialSystemProcess && (attributes & OBJ_KERNEL_HANDLE);
+    access = ObpCallPreCallbacks(object, access, duplicate, kernel_handle, source, process);
+    NTSTATUS status = create_handle(process, object, access, attributes, handle);
+    ObpCallPostCallbacks(object, access, status, duplicate, kernel_handle);
+    return status;
+}
+
 NTSTATUS ObCreateHandle(PEPROCESS process, PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle)
+{
+    return create_handle_seen(process, object, access, attributes, handle, FALSE, nullptr);
+}
+
+NTSTATUS ObpCreateDuplicateHandle(PEPROCESS source, PEPROCESS process, PVOID object, ACCESS_MASK access,
+                                  ULONG attributes, PHANDLE handle)
+{
+    return create_handle_seen(process, object, access, attributes, handle, TRUE, source);
+}
+
+static NTSTATUS create_handle(PEPROCESS process, PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle)
 {
     OBJECT_HEADER *header = OBJECT_TO_HEADER(object);
     if (header->Type->Init.ImplyAccess)
@@ -498,8 +524,8 @@ void ObKillProcessHandles(PEPROCESS process)
         ExFreePool(entries);
 }
 
-NTSTATUS ObOpenObjectByName(POBJECT_ATTRIBUTES attributes, POBJECT_TYPE type, KPROCESSOR_MODE mode,
-                            ACCESS_MASK access, PVOID parse_context, PHANDLE handle)
+NTSTATUS NTAPI ObOpenObjectByName(POBJECT_ATTRIBUTES attributes, POBJECT_TYPE type, KPROCESSOR_MODE mode,
+                                  PVOID access_state, ACCESS_MASK access, PVOID parse_context, PHANDLE handle)
 {
     if (!attributes || !attributes->ObjectName)
         return STATUS_OBJECT_NAME_INVALID;
@@ -594,7 +620,7 @@ NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS ta
     }
     HANDLE h = nullptr;
     if (target_process && target) {
-        status = ObCreateHandle(target_process, object, granted, attributes, &h);
+        status = ObpCreateDuplicateHandle(source_process, target_process, object, granted, attributes, &h);
         if (!NT_SUCCESS(status)) {
             ObDereferenceObject(object);
             return status;
@@ -705,7 +731,7 @@ NTSTATUS NTAPI NtOpenDirectoryObject(PHANDLE handle, ACCESS_MASK access, POBJECT
     if (!NT_SUCCESS(status))
         return status;
     HANDLE h;
-    status = ObOpenObjectByName(&oa, ObDirectoryType, KeGetPreviousMode(), access, nullptr, &h);
+    status = ObOpenObjectByName(&oa, ObDirectoryType, KeGetPreviousMode(), nullptr, access, nullptr, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);
@@ -721,7 +747,7 @@ NTSTATUS NTAPI NtOpenSymbolicLinkObject(PHANDLE handle, ACCESS_MASK access, POBJ
         return status;
     oa.Attributes |= OBJ_OPENLINK;
     HANDLE h;
-    status = ObOpenObjectByName(&oa, ObSymbolicLinkType, KeGetPreviousMode(), access, nullptr, &h);
+    status = ObOpenObjectByName(&oa, ObSymbolicLinkType, KeGetPreviousMode(), nullptr, access, nullptr, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);
@@ -830,7 +856,7 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
             PFILE_OBJECT file = object;
             UNICODE_STRING device = {};
             if (file->DeviceObject && OBJECT_TO_HEADER(file->DeviceObject)->Directory)
-                ObQueryNameString(file->DeviceObject, &device, buf, 512);
+                ObpQueryNameString(file->DeviceObject, &device, buf, 512);
             ULONG chars = device.Length / sizeof(WCHAR);
             ULONG path = file->FileName.Length / sizeof(WCHAR);
             if (path > 1024 - 2 - chars)
@@ -852,7 +878,7 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
             name.Buffer = buf;
             name.Length = (USHORT)(chars * sizeof(WCHAR));
         } else if (OBJECT_TO_HEADER(object)->Directory) {
-            ObQueryNameString(object, &name, buf, 512);
+            ObpQueryNameString(object, &name, buf, 512);
         }
         ULONG need = sizeof(OBJECT_NAME_INFORMATION) + name.Length + sizeof(WCHAR);
         if (returned)
@@ -929,4 +955,60 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
     }
     ObDereferenceObject(object);
     return status;
+}
+
+/*
+ * ExEnumHandleTable: each handle as windows' HANDLE_TABLE_ENTRY, its object header taken to be 0x30 bytes before the
+ * body as windows has it, until the callback returns TRUE. access the callback takes away from the entry is taken
+ * from the handle.
+ */
+typedef struct {
+    ULONG64 LowValue;
+    ULONG64 HighValue;
+} WIN_HANDLE_TABLE_ENTRY;
+
+typedef BOOLEAN(NTAPI *EX_ENUMERATE_HANDLE_ROUTINE)(PHANDLE_TABLE table, WIN_HANDLE_TABLE_ENTRY *entry, HANDLE handle,
+                                                    PVOID context);
+
+#define WIN_OBJECT_HEADER_SIZE 0x30
+#define WIN_GRANTED_ACCESS_BITS 0x1FFFFFFull
+
+BOOLEAN NTAPI ExEnumHandleTable(PHANDLE_TABLE table, EX_ENUMERATE_HANDLE_ROUTINE routine, PVOID context, PHANDLE found)
+{
+    if (!table || !routine)
+        return FALSE;
+    for (ULONG index = 0;; index++) {
+        KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+        if (!table->Entries || index >= table->Capacity) {
+            KeReleaseSpinLock(&table->Lock, irql);
+            return FALSE;
+        }
+        PVOID object = table->Entries[index].Object;
+        ACCESS_MASK access = table->Entries[index].GrantedAccess;
+        ULONG attributes = table->Entries[index].Attributes;
+        if (object)
+            ObReferenceObject(object);
+        KeReleaseSpinLock(&table->Lock, irql);
+        if (!object)
+            continue;
+        ULONG64 header = (ULONG64)object - WIN_OBJECT_HEADER_SIZE;
+        WIN_HANDLE_TABLE_ENTRY entry;
+        entry.LowValue = 1 | ((ULONG64)(attributes & 7) << 17) | ((header >> 4) << 20);
+        entry.HighValue = access & WIN_GRANTED_ACCESS_BITS;
+        HANDLE handle = INDEX_TO_HANDLE(index);
+        BOOLEAN stop = routine(table, &entry, handle, context);
+        ACCESS_MASK left = (ACCESS_MASK)(entry.HighValue & WIN_GRANTED_ACCESS_BITS);
+        if (left != (access & WIN_GRANTED_ACCESS_BITS)) {
+            irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+            if (table->Entries && index < table->Capacity && table->Entries[index].Object == object)
+                table->Entries[index].GrantedAccess &= left | ~(ACCESS_MASK)WIN_GRANTED_ACCESS_BITS;
+            KeReleaseSpinLock(&table->Lock, irql);
+        }
+        ObDereferenceObject(object);
+        if (stop) {
+            if (found)
+                *found = handle;
+            return TRUE;
+        }
+    }
 }
