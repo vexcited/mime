@@ -4,103 +4,247 @@
  */
 #include "../ntos.h"
 
-typedef struct LOADED_MODULE {
-    struct LOADED_MODULE *Next;
-    PVOID Base;
-    SIZE_T Size;
-    WCHAR Name[64];
-} LOADED_MODULE;
+/*
+ * the kernel and every image loaded after it, in load order, as KLDR_DATA_TABLE_ENTRY records drivers read through
+ * DriverSection. entries are only added and unlinked under the mutex, and an unlinked entry stays allocated, so a
+ * reader such as the exception dispatcher walks the list without a lock at any irql.
+ */
+LIST_ENTRY PsLoadedModuleList = {&PsLoadedModuleList, &PsLoadedModuleList};
+ERESOURCE PsLoadedModuleResource;
+static FAST_MUTEX g_modules_lock;
+static PKLDR_DATA_TABLE_ENTRY g_kernel_module;
+BOOLEAN MiTraceRoutines;
 
-static LOADED_MODULE *g_modules;
+#define MI_MAX_IMPORT_DEPTH 8
 
-static PVOID find_export(PVOID base, const char *name, USHORT ordinal_hint, BOOLEAN by_ordinal)
+static PIMAGE_NT_HEADERS64 image_headers(PVOID base)
 {
-    PIMAGE_DOS_HEADER dos = base;
-    PIMAGE_NT_HEADERS64 nt = (PIMAGE_NT_HEADERS64)((PUCHAR)base + dos->e_lfanew);
-    IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    return (PIMAGE_NT_HEADERS64)((PUCHAR)base + ((PIMAGE_DOS_HEADER)base)->e_lfanew);
+}
+
+static PVOID find_export_in(PKLDR_DATA_TABLE_ENTRY module, const char *name, USHORT ordinal, BOOLEAN by_ordinal,
+                            ULONG depth);
+
+/* a forwarder names another module's export as "module.name" or "module.#ordinal". */
+static PVOID resolve_forwarder(const char *forwarder, ULONG depth);
+
+static PVOID find_export_raw(PVOID base, const char *name, USHORT ordinal, BOOLEAN by_ordinal, const char **forwarder)
+{
+    *forwarder = nullptr;
+    IMAGE_DATA_DIRECTORY dir = image_headers(base)->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
     if (!dir.VirtualAddress)
         return nullptr;
     PIMAGE_EXPORT_DIRECTORY exp = (PIMAGE_EXPORT_DIRECTORY)((PUCHAR)base + dir.VirtualAddress);
     PULONG functions = (PULONG)((PUCHAR)base + exp->AddressOfFunctions);
+    ULONG rva = 0;
     if (by_ordinal) {
-        ULONG index = ordinal_hint - exp->Base;
-        return index < exp->NumberOfFunctions && functions[index] ? (PUCHAR)base + functions[index] : nullptr;
+        ULONG index = (ULONG)ordinal - exp->Base;
+        if (index >= exp->NumberOfFunctions)
+            return nullptr;
+        rva = functions[index];
+    } else {
+        PULONG names = (PULONG)((PUCHAR)base + exp->AddressOfNames);
+        PUSHORT ordinals = (PUSHORT)((PUCHAR)base + exp->AddressOfNameOrdinals);
+        LONG lo = 0, hi = (LONG)exp->NumberOfNames - 1;
+        while (lo <= hi) {
+            LONG mid = (lo + hi) / 2;
+            int c = strcmp(name, (const char *)base + names[mid]);
+            if (c == 0) {
+                rva = functions[ordinals[mid]];
+                break;
+            }
+            if (c < 0)
+                hi = mid - 1;
+            else
+                lo = mid + 1;
+        }
     }
-    PULONG names = (PULONG)((PUCHAR)base + exp->AddressOfNames);
-    PUSHORT ordinals = (PUSHORT)((PUCHAR)base + exp->AddressOfNameOrdinals);
-    LONG lo = 0, hi = (LONG)exp->NumberOfNames - 1;
-    while (lo <= hi) {
-        LONG mid = (lo + hi) / 2;
-        int c = strcmp(name, (const char *)base + names[mid]);
-        if (c == 0)
-            return (PUCHAR)base + functions[ordinals[mid]];
-        if (c < 0)
-            hi = mid - 1;
-        else
-            lo = mid + 1;
+    if (!rva)
+        return nullptr;
+    if (rva >= dir.VirtualAddress && rva < dir.VirtualAddress + dir.Size) {
+        *forwarder = (const char *)base + rva;
+        return nullptr;
+    }
+    return (PUCHAR)base + rva;
+}
+
+static PVOID find_export(PVOID base, const char *name, USHORT ordinal, BOOLEAN by_ordinal)
+{
+    const char *forwarder;
+    PVOID found = find_export_raw(base, name, ordinal, by_ordinal, &forwarder);
+    return found ? found : forwarder ? resolve_forwarder(forwarder, 0) : nullptr;
+}
+
+static BOOLEAN ascii_equal_unicode(const char *ascii, PCUNICODE_STRING name)
+{
+    ULONG n = name->Length / sizeof(WCHAR), i = 0;
+    for (; i < n && ascii[i]; i++)
+        if (RtlUpcaseUnicodeChar((WCHAR)(UCHAR)ascii[i]) != RtlUpcaseUnicodeChar(name->Buffer[i]))
+            return FALSE;
+    return i == n && !ascii[i];
+}
+
+static BOOLEAN is_kernel_alias(const char *name)
+{
+    static const char *const aliases[] = {"ntoskrnl.exe", "ntkrnlmp.exe", "ntkrnlpa.exe", "ntkrpamp.exe", "hal.dll"};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(aliases); i++)
+        if (!_stricmp(name, aliases[i]))
+            return TRUE;
+    return FALSE;
+}
+
+/* a loaded module by file name, the kernel for the names windows gives its kernel and hal. */
+static PKLDR_DATA_TABLE_ENTRY module_by_name(const char *name)
+{
+    if (is_kernel_alias(name))
+        return g_kernel_module;
+    for (PLIST_ENTRY l = PsLoadedModuleList.Flink; l != &PsLoadedModuleList; l = l->Flink) {
+        PKLDR_DATA_TABLE_ENTRY m = CONTAINING_RECORD(l, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+        if (ascii_equal_unicode(name, &m->BaseDllName))
+            return m;
     }
     return nullptr;
 }
 
-/* the images loaded into the kernel after it, oldest first. */
-ULONG MiEnumerateSystemImages(MI_SYSTEM_IMAGE_CALLBACK callback, PVOID context)
+PKLDR_DATA_TABLE_ENTRY MiLookupModule(ULONG_PTR address)
 {
-    ULONG count = 0;
-    for (LOADED_MODULE *m = g_modules; m; m = m->Next)
-        count++;
-    ULONG index = count;
-    for (LOADED_MODULE *m = g_modules; m && index; m = m->Next)
-        callback(context, --index, m->Base, m->Size, m->Name);
-    return count;
+    for (PLIST_ENTRY l = PsLoadedModuleList.Flink; l != &PsLoadedModuleList; l = l->Flink) {
+        PKLDR_DATA_TABLE_ENTRY m = CONTAINING_RECORD(l, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+        if (address >= (ULONG_PTR)m->DllBase && address < (ULONG_PTR)m->DllBase + m->SizeOfImage)
+            return m;
+    }
+    return nullptr;
 }
 
-/* the image that holds a code address, the kernel included. */
-static BOOLEAN find_image(ULONG_PTR address, const char **kernel_name, const LOADED_MODULE **module, ULONG_PTR *offset)
+static PVOID find_export_in(PKLDR_DATA_TABLE_ENTRY module, const char *name, USHORT ordinal, BOOLEAN by_ordinal,
+                            ULONG depth)
 {
-    if (address >= HalBootInfo->kernel_virt && address < HalBootInfo->kernel_virt + HalBootInfo->kernel_size) {
-        *kernel_name = "ntoskrnl";
-        *module = nullptr;
-        *offset = address - HalBootInfo->kernel_virt;
-        return TRUE;
+    const char *forwarder;
+    PVOID found = find_export_raw(module->DllBase, name, ordinal, by_ordinal, &forwarder);
+    return found ? found : forwarder ? resolve_forwarder(forwarder, depth + 1) : nullptr;
+}
+
+static PVOID resolve_forwarder(const char *forwarder, ULONG depth)
+{
+    const char *dot = strchr(forwarder, '.');
+    if (!dot || depth > MI_MAX_IMPORT_DEPTH || dot - forwarder > 60)
+        return nullptr;
+    char module[72];
+    memcpy(module, forwarder, (SIZE_T)(dot - forwarder));
+    module[dot - forwarder] = 0;
+    if (!strchr(module, '.'))
+        strcat(module, ".sys");
+    PKLDR_DATA_TABLE_ENTRY m = module_by_name(module);
+    if (!m && !strcmp(module + (dot - forwarder), ".sys")) {
+        module[dot - forwarder] = 0;
+        strcat(module, ".dll");
+        m = module_by_name(module);
     }
-    for (const LOADED_MODULE *m = g_modules; m; m = m->Next) {
-        if (address >= (ULONG_PTR)m->Base && address < (ULONG_PTR)m->Base + m->Size) {
-            *kernel_name = nullptr;
-            *module = m;
-            *offset = address - (ULONG_PTR)m->Base;
-            return TRUE;
-        }
+    if (!m)
+        return nullptr;
+    if (dot[1] == '#') {
+        ULONG ordinal = 0;
+        for (const char *p = dot + 2; *p >= '0' && *p <= '9'; p++)
+            ordinal = ordinal * 10 + (ULONG)(*p - '0');
+        return find_export_in(m, nullptr, (USHORT)ordinal, TRUE, depth);
     }
-    return FALSE;
+    return find_export_in(m, dot + 1, 0, FALSE, depth);
+}
+
+static PKLDR_DATA_TABLE_ENTRY add_module(PVOID base, SIZE_T size, PVOID entry, PCUNICODE_STRING full_name)
+{
+    PKLDR_DATA_TABLE_ENTRY m = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*m) + full_name->Length + sizeof(WCHAR),
+                                               KI_TAG('M', 'm', 'L', 'm'));
+    if (!m)
+        return nullptr;
+    memset(m, 0, sizeof(*m));
+    PWSTR name = (PWSTR)(m + 1);
+    memcpy(name, full_name->Buffer, full_name->Length);
+    name[full_name->Length / sizeof(WCHAR)] = 0;
+    m->FullDllName.Buffer = name;
+    m->FullDllName.Length = full_name->Length;
+    m->FullDllName.MaximumLength = (USHORT)(full_name->Length + sizeof(WCHAR));
+    PWSTR leaf = name + full_name->Length / sizeof(WCHAR);
+    while (leaf > name && leaf[-1] != L'\\')
+        leaf--;
+    m->BaseDllName.Buffer = leaf;
+    m->BaseDllName.Length = (USHORT)(full_name->Length - (USHORT)((PUCHAR)leaf - (PUCHAR)name));
+    m->BaseDllName.MaximumLength = (USHORT)(m->BaseDllName.Length + sizeof(WCHAR));
+    m->DllBase = base;
+    m->EntryPoint = entry;
+    m->SizeOfImage = (ULONG)size;
+    PIMAGE_NT_HEADERS64 nt = image_headers(base);
+    IMAGE_DATA_DIRECTORY exceptions = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+    if (exceptions.VirtualAddress) {
+        m->ExceptionTable = (PUCHAR)base + exceptions.VirtualAddress;
+        m->ExceptionTableSize = exceptions.Size;
+    }
+    m->CheckSum = nt->OptionalHeader.CheckSum;
+    m->TimeDateStamp = nt->FileHeader.TimeDateStamp;
+    m->SizeOfImageNotRounded = nt->OptionalHeader.SizeOfImage;
+    m->Flags = LDRP_ENTRY_PROCESSED;
+    m->LoadCount = 1;
+    ExAcquireFastMutex(&g_modules_lock);
+    InsertTailList(&PsLoadedModuleList, &m->InLoadOrderLinks);
+    ExReleaseFastMutex(&g_modules_lock);
+    return m;
+}
+
+/* the kernel is the first module, as on windows, under the name windows gives it. */
+void MiInitializeLoadedModules(void)
+{
+    ExInitializeFastMutex(&g_modules_lock);
+    ExInitializeResourceLite(&PsLoadedModuleResource);
+    PVOID base = (PVOID)HalBootInfo->kernel_virt;
+    PIMAGE_NT_HEADERS64 nt = image_headers(base);
+    UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\SystemRoot\\system32\\ntoskrnl.exe");
+    g_kernel_module =
+        add_module(base, nt->OptionalHeader.SizeOfImage, (PUCHAR)base + nt->OptionalHeader.AddressOfEntryPoint, &name);
+}
+
+PKLDR_DATA_TABLE_ENTRY MiKernelModule(void)
+{
+    return g_kernel_module;
+}
+
+/* the images loaded into the kernel, the kernel first. */
+ULONG MiEnumerateSystemImages(MI_SYSTEM_IMAGE_CALLBACK callback, PVOID context)
+{
+    ULONG index = 0;
+    ExAcquireFastMutex(&g_modules_lock);
+    for (PLIST_ENTRY l = PsLoadedModuleList.Flink; l != &PsLoadedModuleList; l = l->Flink) {
+        PKLDR_DATA_TABLE_ENTRY m = CONTAINING_RECORD(l, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+        callback(context, index++, m->DllBase, m->SizeOfImage, &m->FullDllName);
+    }
+    ExReleaseFastMutex(&g_modules_lock);
+    return index;
 }
 
 BOOLEAN MiIsCodeAddress(ULONG_PTR address)
 {
-    const char *name;
-    const LOADED_MODULE *m;
-    ULONG_PTR offset;
-    return find_image(address, &name, &m, &offset);
+    return MiLookupModule(address) != nullptr;
 }
 
 /* image name and offset in the image, which the linker maps give the function for. */
 void MiDescribeCodeAddress(ULONG_PTR address, char *out, SIZE_T size)
 {
-    const char *name;
-    const LOADED_MODULE *m;
-    ULONG_PTR offset;
-    if (!find_image(address, &name, &m, &offset)) {
+    PKLDR_DATA_TABLE_ENTRY m = MiLookupModule(address);
+    if (!m) {
         mime_format(out, size, "%p", (PVOID)address);
         return;
     }
     char text[64];
-    if (!name) {
-        ULONG n = 0;
-        for (; m->Name[n] && n < sizeof(text) - 1; n++)
-            text[n] = m->Name[n] < 0x80 ? (char)m->Name[n] : '?';
-        text[n] = 0;
-        name = text;
+    ULONG n = 0;
+    for (; n < m->BaseDllName.Length / sizeof(WCHAR) && n < sizeof(text) - 1; n++) {
+        WCHAR c = m->BaseDllName.Buffer[n];
+        text[n] = c < 0x80 ? (char)c : '?';
     }
-    mime_format(out, size, "%s+0x%llx", name, (ULONG64)offset);
+    text[n] = 0;
+    /* the kernel keeps its old short name in logs, which tools symbolize from. */
+    if (m == g_kernel_module)
+        mime_format(out, size, "ntoskrnl+0x%llx", (ULONG64)(address - (ULONG_PTR)m->DllBase));
+    else
+        mime_format(out, size, "%s+0x%llx", text, (ULONG64)(address - (ULONG_PTR)m->DllBase));
 }
 
 PVOID MiFindKernelExport(PVOID image_base, const char *name)
@@ -108,16 +252,30 @@ PVOID MiFindKernelExport(PVOID image_base, const char *name)
     return find_export(image_base, name, 0, FALSE);
 }
 
+/* the routines of the kernel and the hal, which mime's kernel holds both of. */
 PVOID NTAPI MmGetSystemRoutineAddress(PUNICODE_STRING name)
 {
     char ansi[128];
-    ULONG n = name->Length / sizeof(WCHAR);
-    if (n >= sizeof(ansi))
+    ULONG n = name ? name->Length / sizeof(WCHAR) : 0;
+    if (!n || n >= sizeof(ansi))
         return nullptr;
     for (ULONG i = 0; i < n; i++)
         ansi[i] = (char)name->Buffer[i];
     ansi[n] = 0;
-    return find_export((PVOID)HalBootInfo->kernel_virt, ansi, 0, FALSE);
+    PVOID found = find_export((PVOID)HalBootInfo->kernel_virt, ansi, 0, FALSE);
+    if (!found || MiTraceRoutines) {
+        char caller[96];
+        MiDescribeCodeAddress((ULONG_PTR)__builtin_return_address(0), caller, sizeof(caller));
+        KiLogPrintf("MmGetSystemRoutineAddress(%s) = %p from %s", ansi, found, caller);
+    }
+    return found;
+}
+
+/* an export of a loaded module, for the filter manager's FltGetRoutineAddress. */
+PVOID MiFindModuleExport(const char *module, const char *name)
+{
+    PKLDR_DATA_TABLE_ENTRY m = module_by_name(module);
+    return m ? find_export_in(m, name, 0, FALSE, 0) : nullptr;
 }
 
 NTSTATUS MiReadFileBytes(PFILE_OBJECT file, ULONG64 offset, PVOID buffer, ULONG length, PULONG read)
@@ -153,8 +311,70 @@ static NTSTATUS read_whole_file(PCUNICODE_STRING path, PUCHAR *data, ULONG *size
     return status;
 }
 
-NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base_out, SIZE_T *size_out, PVOID *entry_out)
+static void free_image_pages(PUCHAR base, SIZE_T pages)
 {
+    for (SIZE_T i = 0; i < pages; i++) {
+        ULONG64 pa = MiUnmapPage(MiKernelRoot(), (ULONG_PTR)base + i * PAGE_SIZE, 0) & MM_PTE_ADDR_MASK;
+        if (pa)
+            MmFreePage(pa);
+    }
+    MmFreeSystemVa(base, pages);
+}
+
+static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_ENTRY *out);
+
+/* the module an import names: loaded already, or a driver of System32\drivers that is loaded for it. */
+static PKLDR_DATA_TABLE_ENTRY import_module(const char *dll, ULONG depth, NTSTATUS *status)
+{
+    *status = STATUS_SUCCESS;
+    PKLDR_DATA_TABLE_ENTRY m = module_by_name(dll);
+    if (m)
+        return m;
+    if (depth >= MI_MAX_IMPORT_DEPTH || strlen(dll) > 60) {
+        *status = STATUS_DLL_NOT_FOUND;
+        return nullptr;
+    }
+    WCHAR path[128] = L"\\SystemRoot\\System32\\drivers\\";
+    ULONG at = (ULONG)wcslen(path);
+    for (ULONG i = 0; dll[i]; i++)
+        path[at++] = (WCHAR)(UCHAR)dll[i];
+    path[at] = 0;
+    UNICODE_STRING name;
+    RtlInitUnicodeString(&name, path);
+    *status = load_image(&name, depth + 1, &m);
+    if (*status == STATUS_IMAGE_ALREADY_LOADED)
+        *status = STATUS_SUCCESS;
+    if (!NT_SUCCESS(*status)) {
+        KiLogPrintf("driver import from %s: %08x", dll, *status);
+        return nullptr;
+    }
+    /* an export driver gets its DllInitialize with its registry path, as windows calls it. */
+    NTSTATUS(NTAPI * initialize)(PUNICODE_STRING) =
+        (NTSTATUS(NTAPI *)(PUNICODE_STRING))find_export_in(m, "DllInitialize", 0, FALSE, 0);
+    if (initialize) {
+        UNICODE_STRING registry = RTL_CONSTANT_STRING(L"\\Registry\\Machine\\System\\CurrentControlSet\\Services");
+        initialize(&registry);
+    }
+    return m;
+}
+
+static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_ENTRY *out)
+{
+    *out = nullptr;
+    /* an image is loaded once, whatever path names it. */
+    const WCHAR *leaf = path->Buffer + path->Length / sizeof(WCHAR);
+    while (leaf > path->Buffer && leaf[-1] != L'\\')
+        leaf--;
+    UNICODE_STRING leaf_name = {(USHORT)(path->Length - (USHORT)((const UCHAR *)leaf - (const UCHAR *)path->Buffer)), 0,
+                                (PWSTR)leaf};
+    leaf_name.MaximumLength = leaf_name.Length;
+    for (PLIST_ENTRY l = PsLoadedModuleList.Flink; l != &PsLoadedModuleList; l = l->Flink) {
+        PKLDR_DATA_TABLE_ENTRY m = CONTAINING_RECORD(l, KLDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+        if (RtlEqualUnicodeString(&m->BaseDllName, &leaf_name, TRUE)) {
+            *out = m;
+            return STATUS_IMAGE_ALREADY_LOADED;
+        }
+    }
     PUCHAR file;
     ULONG file_size;
     NTSTATUS status = read_whole_file(path, &file, &file_size);
@@ -162,6 +382,8 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base_out, SIZE_T *size_
         return status;
     MI_IMAGE_INFO info;
     status = MiParseImageHeaders(file, file_size, &info);
+    if (NT_SUCCESS(status) && info.Machine != IMAGE_FILE_MACHINE_AMD64)
+        status = STATUS_INVALID_IMAGE_FORMAT;
     if (!NT_SUCCESS(status)) {
         ExFreePool(file);
         return status;
@@ -176,10 +398,12 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base_out, SIZE_T *size_
     for (SIZE_T i = 0; i < pages; i++) {
         ULONG64 pa = MmAllocatePage();
         if (!pa) {
+            free_image_pages(base, i);
             ExFreePool(file);
             return STATUS_INSUFFICIENT_RESOURCES;
         }
         MiMapPage(MiKernelRoot(), (ULONG_PTR)base + i * PAGE_SIZE, pa, MM_KERNEL_RW);
+        memset(base + i * PAGE_SIZE, 0, PAGE_SIZE);
     }
     memcpy(base, file, info.SizeOfHeaders < file_size ? info.SizeOfHeaders : file_size);
     PIMAGE_SECTION_HEADER sec = IMAGE_FIRST_SECTION(nt);
@@ -206,29 +430,30 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base_out, SIZE_T *size_
         }
         off += block->SizeOfBlock;
     }
+    /* the image's own optional header tells its new base, as the windows loader leaves it. */
+    if (NT_SUCCESS(status))
+        image_headers(base)->OptionalHeader.ImageBase = (ULONG_PTR)base;
 
-    /* imports resolve against the kernel. */
     IMAGE_DATA_DIRECTORY imp = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-    PVOID kernel = (PVOID)HalBootInfo->kernel_virt;
     for (PIMAGE_IMPORT_DESCRIPTOR d = imp.VirtualAddress ? (PIMAGE_IMPORT_DESCRIPTOR)(base + imp.VirtualAddress) : nullptr;
          NT_SUCCESS(status) && d && d->Name; d++) {
         const char *dll = (const char *)base + d->Name;
-        if (_stricmp(dll, "ntoskrnl.exe") != 0 && _stricmp(dll, "hal.dll") != 0) {
-            KiLogPrintf("driver import from unsupported module %s", dll);
-            status = STATUS_DLL_NOT_FOUND;
+        PKLDR_DATA_TABLE_ENTRY from = import_module(dll, depth, &status);
+        if (!from)
             break;
-        }
         PIMAGE_THUNK_DATA64 names = (PIMAGE_THUNK_DATA64)(base + (d->OriginalFirstThunk ? d->OriginalFirstThunk : d->FirstThunk));
         PIMAGE_THUNK_DATA64 iat = (PIMAGE_THUNK_DATA64)(base + d->FirstThunk);
         for (; names->u1.AddressOfData; names++, iat++) {
             PVOID target;
             if (IMAGE_SNAP_BY_ORDINAL64(names->u1.Ordinal)) {
-                target = find_export(kernel, nullptr, (USHORT)IMAGE_ORDINAL64(names->u1.Ordinal), TRUE);
+                target = find_export_in(from, nullptr, (USHORT)IMAGE_ORDINAL64(names->u1.Ordinal), TRUE, 0);
+                if (!target)
+                    KiLogPrintf("unresolved driver import %s!#%u", dll, (ULONG)IMAGE_ORDINAL64(names->u1.Ordinal));
             } else {
                 PIMAGE_IMPORT_BY_NAME by_name = (PIMAGE_IMPORT_BY_NAME)(base + names->u1.AddressOfData);
-                target = find_export(kernel, by_name->Name, 0, FALSE);
+                target = find_export_in(from, by_name->Name, 0, FALSE, 0);
                 if (!target)
-                    KiLogPrintf("unresolved kernel import %s!%s", dll, by_name->Name);
+                    KiLogPrintf("unresolved driver import %s!%s", dll, by_name->Name);
             }
             if (!target) {
                 status = STATUS_ENTRYPOINT_NOT_FOUND;
@@ -239,7 +464,6 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base_out, SIZE_T *size_
     }
 
     if (NT_SUCCESS(status)) {
-        /* apply final page protections. */
         for (SIZE_T i = 0; i < BYTES_TO_PAGES(info.SizeOfHeaders); i++) {
             ULONG64 pte = MiReadPte(MiKernelRoot(), (ULONG_PTR)base + i * PAGE_SIZE);
             MiMapPage(MiKernelRoot(), (ULONG_PTR)base + i * PAGE_SIZE, pte & MM_PTE_ADDR_MASK, MM_KERNEL_RO);
@@ -258,28 +482,36 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base_out, SIZE_T *size_
             }
         }
         KiFlushInstructionCache();
-        LOADED_MODULE *m = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*m), KI_TAG('M', 'm', 'L', 'm'));
-        if (m) {
-            m->Base = base;
-            m->Size = info.SizeOfImage;
-            const WCHAR *slash = path->Buffer + path->Length / sizeof(WCHAR);
-            while (slash > path->Buffer && slash[-1] != '\\')
-                slash--;
-            ULONG n = (ULONG)(path->Buffer + path->Length / sizeof(WCHAR) - slash);
-            if (n >= RTL_NUMBER_OF(m->Name))
-                n = RTL_NUMBER_OF(m->Name) - 1;
-            memcpy(m->Name, slash, n * sizeof(WCHAR));
-            m->Name[n] = 0;
-            m->Next = g_modules;
-            g_modules = m;
-        }
-        KiLogPrintf("loaded %wZ at %p", path, base);
-        *base_out = base;
-        *size_out = info.SizeOfImage;
-        *entry_out = base + info.EntryPoint;
+        *out = add_module(base, info.SizeOfImage, base + info.EntryPoint, path);
+        if (!*out)
+            status = STATUS_INSUFFICIENT_RESOURCES;
     }
+    if (NT_SUCCESS(status))
+        KiLogPrintf("loaded %wZ at %p", path, base);
+    else
+        free_image_pages(base, pages);
     ExFreePool(file);
     return status;
+}
+
+NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PKLDR_DATA_TABLE_ENTRY *out)
+{
+    return load_image(path, 0, out);
+}
+
+/* the image's pages go, the record leaves the list and stays for readers that may still hold it. */
+void MmUnloadSystemImage(PKLDR_DATA_TABLE_ENTRY m)
+{
+    if (!m || m == g_kernel_module)
+        return;
+    ExAcquireFastMutex(&g_modules_lock);
+    RemoveEntryList(&m->InLoadOrderLinks);
+    InitializeListHead(&m->InLoadOrderLinks);
+    ExReleaseFastMutex(&g_modules_lock);
+    KiLogPrintf("unloaded %wZ from %p", &m->FullDllName, m->DllBase);
+    free_image_pages(m->DllBase, BYTES_TO_PAGES(m->SizeOfImage));
+    m->DllBase = nullptr;
+    m->SizeOfImage = 0;
 }
 
 /* reads an export of an image section from its prototype pages through the physmap. */

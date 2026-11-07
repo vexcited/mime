@@ -28,7 +28,7 @@ typedef struct _OPEN_PACKET {
 
 #define OPEN_PACKET_MAGIC 0x4F50454Eu
 
-static NTSTATUS NTAPI invalid_request(PDEVICE_OBJECT device, PIRP irp)
+NTSTATUS NTAPI IopInvalidDeviceRequest(PDEVICE_OBJECT device, PIRP irp)
 {
     irp->IoStatus.Status = STATUS_INVALID_DEVICE_REQUEST;
     irp->IoStatus.Information = 0;
@@ -50,7 +50,7 @@ NTSTATUS IoCreateDriver(PCWSTR name, PDRIVER_INITIALIZE init, PDRIVER_OBJECT *ou
     driver->DriverExtension->DriverObject = driver;
     driver->DriverInit = init;
     for (int i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++)
-        driver->MajorFunction[i] = invalid_request;
+        driver->MajorFunction[i] = IopInvalidDeviceRequest;
     UNICODE_STRING n;
     RtlInitUnicodeString(&n, name);
     driver->DriverName.Buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, n.Length + sizeof(WCHAR), KI_TAG('I', 'o', 'D', 'n'));
@@ -122,6 +122,8 @@ void NTAPI IoDeleteDevice(PDEVICE_OBJECT device)
         link = &(*link)->NextDevice;
     if (*link)
         *link = device->NextDevice;
+    /* a named device leaves the namespace with its last reference, as on windows. */
+    ObMakeTemporaryObject(device);
     ObDereferenceObject(device);
 }
 
@@ -654,6 +656,7 @@ void IoInitialize(void)
     init.ParseProcedure = parse_device;
     IoDeviceObjectType = ObCreateObjectType(L"Device", &init);
     memset(&init, 0, sizeof(init));
+    init.DeleteProcedure = IopDeleteDriverObject;
     IoDriverObjectType = ObCreateObjectType(L"Driver", &init);
     init.ValidAccessMask = FILE_ALL_ACCESS;
     init.CloseProcedure = file_close;

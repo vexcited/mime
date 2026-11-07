@@ -215,6 +215,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
     /* the kernel options no-access-checks, which opens every object to every program, and trace-access. */
     SeAccessEnforced = strstr(boot->cmdline, "no-access-checks") == nullptr;
     SeTraceAccess = strstr(boot->cmdline, "trace-access") != nullptr;
+    MiTraceRoutines = strstr(boot->cmdline, "trace-routines") != nullptr;
     extern BOOLEAN IoTraceFiles;
     IoTraceFiles = strstr(boot->cmdline, "trace-files") != nullptr;
     extern char KiTraceSyscallImage[16];
@@ -278,6 +279,7 @@ static void KiPhase1Initialization(PVOID context)
 {
     KiBootStamp("phase1");
     PspStartReaper();
+    MiInitializeLoadedModules();
     IoInitialize();
     KiBootStamp("io");
     CmInitSystem1();
@@ -290,12 +292,11 @@ static void KiPhase1Initialization(PVOID context)
         KeBugCheckEx(0x0000006B, status, 0, 0, 0); /* PROCESS1_INITIALIZATION_FAILED. */
 
     UNICODE_STRING win32k = RTL_CONSTANT_STRING(L"\\SystemRoot\\System32\\win32k.sys");
-    PVOID base, entry;
-    SIZE_T size;
-    status = MmLoadSystemImage(&win32k, &base, &size, &entry);
+    PKLDR_DATA_TABLE_ENTRY module;
+    status = MmLoadSystemImage(&win32k, &module);
     if (NT_SUCCESS(status)) {
         PDRIVER_OBJECT driver;
-        status = IoCreateDriver(L"\\Driver\\Win32k", (PDRIVER_INITIALIZE)entry, &driver);
+        status = IoCreateDriver(L"\\Driver\\Win32k", (PDRIVER_INITIALIZE)module->EntryPoint, &driver);
         if (!NT_SUCCESS(status))
             KiLogPrintf("win32k initialization failed: %08x", status);
     } else {
