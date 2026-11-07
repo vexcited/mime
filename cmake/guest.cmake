@@ -19,7 +19,12 @@ function(mime_flavor name arch)
     set(MIME_ARCH_${name} ${arch} PARENT_SCOPE)
 endfunction()
 
-mime_flavor(kernel ${MIME_GUEST_ARCH})
+if(MIME_GUEST_ARCH STREQUAL "x64")
+    # drivers' exceptions unwind through the kernel's frames, so the kernel has unwind data like windows'.
+    mime_flavor(kernel x64 -fasynchronous-unwind-tables)
+else()
+    mime_flavor(kernel ${MIME_GUEST_ARCH})
+endif()
 mime_flavor(arm64 arm64 -fasynchronous-unwind-tables)
 if(MIME_GUEST_ARCH STREQUAL "x64")
     mime_flavor(x64 x64 -fasynchronous-unwind-tables -DMIME_X64_NATIVE=1)

@@ -618,17 +618,6 @@ void KiFreeCapturedString(PUNICODE_STRING s)
     s->Buffer = nullptr;
 }
 
-void NTAPI ProbeForRead(PVOID address, SIZE_T length, ULONG alignment)
-{
-    if (length && !KiIsUserRange(address, length))
-        KeBugCheckEx(0x0000001E, STATUS_ACCESS_VIOLATION, (ULONG_PTR)address, 0, 0);
-}
-
-void NTAPI ProbeForWrite(PVOID address, SIZE_T length, ULONG alignment)
-{
-    ProbeForRead(address, length, alignment);
-}
-
 void KiEnableTimeline(void)
 {
     g_timeline = ExAllocatePool2(POOL_FLAG_NON_PAGED, KI_TIMELINE_ENTRIES * sizeof(KI_TIMELINE_ENTRY), KI_TAG('T', 'l', 'i', 'n'));

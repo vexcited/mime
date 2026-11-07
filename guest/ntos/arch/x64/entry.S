@@ -358,7 +358,25 @@ KiIsrBase:
  * error code and the vector. the rest of the trap frame goes below.
  */
     .p2align 4
+    /*
+     * the unwind data tells what the stack holds where the handlers are called, below the trap frame by the
+     * shadow space: a fault of a driver unwinds through here to the frame it happened in, as through windows'
+     * trap handlers.
+     */
+    .seh_proc KiTrapCommon
 KiTrapCommon:
+    .seh_pushframe @code
+    .seh_stackalloc 0x1B0                /* KTRAP_ERROR + 0x20 */
+    /* the interrupted code's nonvolatile registers are the trap frame's, whatever ran since. */
+    .seh_savereg %rbx, 0x138
+    .seh_savereg %rbp, 0x140
+    .seh_savereg %rsi, 0x148
+    .seh_savereg %rdi, 0x150
+    .seh_savereg %r12, 0x178
+    .seh_savereg %r13, 0x180
+    .seh_savereg %r14, 0x188
+    .seh_savereg %r15, 0x190
+    .seh_endprologue
     subq    $KTRAP_VECTOR, %rsp
     SAVE_GPRS
     testb   $RPL_USER, KTRAP_CS(%rsp)
@@ -402,6 +420,7 @@ KiTrapCommon:
     call    KiTrapDispatch
     movq    %rbx, %rsp
     jmp     KiExceptionExit
+    .seh_endproc
 
 /* returns through the trap frame at rsp. */
     .globl  KiExceptionExit

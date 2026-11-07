@@ -226,6 +226,8 @@ static void kernel_exception(PKTRAP_FRAME frame)
         KiEnableInterrupts();
         KiLongJump(recovery, 1);
     }
+    if (KiDispatchKernelTrap(frame))
+        return;
     KiDumpTrapFrame("kernel exception", frame);
     if (frame->Vector == 14)
         KeBugCheckEx(0x00000050, frame->Cr2, frame->ErrorCode, frame->Rip, 0); /* PAGE_FAULT_IN_NONPAGED_AREA */

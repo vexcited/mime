@@ -788,6 +788,7 @@ NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PKLDR_DATA_TABLE_ENTRY *out);
 NTSTATUS IopCreateDriverObject(PCUNICODE_STRING name, PCUNICODE_STRING registry, PCUNICODE_STRING service,
                                PKLDR_DATA_TABLE_ENTRY module, PDRIVER_OBJECT *out);
 void IopDeleteDriverObject(PVOID object);
+BOOLEAN KiDispatchKernelTrap(struct _KTRAP_FRAME *frame);
 NTSTATUS NTAPI IopInvalidDeviceRequest(PDEVICE_OBJECT device, PIRP irp);
 
 void MmUnloadSystemImage(PKLDR_DATA_TABLE_ENTRY module);
