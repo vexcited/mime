@@ -906,9 +906,13 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
 
     /* processes and threads. */
     case MIME_SVC_NtCreateUserProcess: {
-        /* create info is refused, as the kernel does, and process parameters are required. */
-        if (a[9] || !a[8])
-            return a[8] ? STATUS_NOT_SUPPORTED : STATUS_INVALID_PARAMETER;
+        if (!a[8])
+            return STATUS_INVALID_PARAMETER;
+        /* the 32-bit create info is a size and a state, then the state's fields at their 32-bit offsets. */
+        ULONG *info32 = pointer32(a[9]);
+        PS_CREATE_INFO info = {.Size = sizeof(info)};
+        if (info32 && (info32[0] != 0x48 || info32[1] != PsCreateInitialState))
+            return STATUS_INVALID_PARAMETER;
         PS_ATTRIBUTE_LIST *native_list = nullptr;
         UCHAR list_storage[sizeof(SIZE_T) + 32 * sizeof(PS_ATTRIBUTE)];
         PVOID handle_arrays[2] = {};
@@ -959,13 +963,20 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         OBJECT_ATTRIBUTES thread_oa = attributes32(a[5], &thread_name);
         HANDLE process = nullptr, thread = nullptr;
         status = NtCreateUserProcess(&process, &thread, a[2], a[3], a[4] ? &process_oa : nullptr,
-                                     a[5] ? &thread_oa : nullptr, a[6], a[7], &pp, nullptr, native_list);
+                                     a[5] ? &thread_oa : nullptr, a[6], a[7], &pp, info32 ? &info : nullptr,
+                                     native_list);
         for (ULONG k = 0; k < 2; k++)
             if (handle_arrays[k])
                 Mx32FreeScratch(handle_arrays[k]);
         if (NT_SUCCESS(status)) {
             store32(a[0], (ULONG_PTR)process);
             store32(a[1], (ULONG_PTR)thread);
+        }
+        if (NT_SUCCESS(status) && info32) {
+            memset(info32 + 1, 0, 0x48 - sizeof(ULONG));
+            info32[1] = info.State;
+            *(ULONGLONG *)(info32 + 10) = info.SuccessState.PebAddressNative;
+            info32[12] = info.SuccessState.PebAddressWow64;
         }
         return status;
     }

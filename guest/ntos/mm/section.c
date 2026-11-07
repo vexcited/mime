@@ -1466,25 +1466,6 @@ typedef struct _SECTION_BASIC_INFORMATION {
     LARGE_INTEGER MaximumSize;
 } SECTION_BASIC_INFORMATION;
 
-typedef struct _SECTION_IMAGE_INFORMATION {
-    PVOID TransferAddress;
-    ULONG ZeroBits;
-    SIZE_T MaximumStackSize;
-    SIZE_T CommittedStackSize;
-    ULONG SubSystemType;
-    USHORT SubSystemMinorVersion;
-    USHORT SubSystemMajorVersion;
-    ULONG OperatingSystemVersion;
-    USHORT ImageCharacteristics;
-    USHORT DllCharacteristics;
-    USHORT Machine;
-    BOOLEAN ImageContainsCode;
-    UCHAR ImageFlags;
-    ULONG LoaderFlags;
-    ULONG ImageFileSize;
-    ULONG CheckSum;
-} SECTION_IMAGE_INFORMATION;
-
 NTSTATUS NTAPI NtQuerySection(HANDLE handle, ULONG klass, PVOID info, SIZE_T length, PSIZE_T returned)
 {
     PSECTION s;

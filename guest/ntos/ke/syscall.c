@@ -573,6 +573,13 @@ NTSTATUS KiCaptureUnicodeString(PUNICODE_STRING copy, PCUNICODE_STRING src)
     } else {
         s = *src;
     }
+    return KiCaptureUnicodeStringValue(copy, s);
+}
+
+NTSTATUS KiCaptureUnicodeStringValue(PUNICODE_STRING copy, UNICODE_STRING s)
+{
+    copy->Buffer = nullptr;
+    copy->Length = copy->MaximumLength = 0;
     if (s.Length & 1 || s.Length > 0xFFFC)
         return STATUS_OBJECT_NAME_INVALID;
     copy->Buffer = ExAllocatePool2(POOL_FLAG_PAGED, s.Length + sizeof(WCHAR), KI_TAG('C', 'a', 'p', 'S'));

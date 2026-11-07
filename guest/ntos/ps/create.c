@@ -516,15 +516,23 @@ static NTSTATUS capture_params(PRTL_USER_PROCESS_PARAMETERS user, PSP_PARAMS *p)
     NTSTATUS status = KiCopyFromUser(&pp, user, sizeof(pp));
     if (!NT_SUCCESS(status))
         return status;
-    status = KiCaptureUnicodeString(&p->Image, &user->ImagePathName);
+    /* denormalized parameters, as RtlCreateProcessParameters gives them, hold offsets from the block. */
+    if (!(pp.Flags & RTL_USER_PROC_PARAMS_NORMALIZED)) {
+        UNICODE_STRING *strings[] = {&pp.ImagePathName, &pp.CommandLine, &pp.CurrentDirectory.DosPath,
+                                     &pp.WindowTitle, &pp.DesktopInfo, &pp.RuntimeData};
+        for (SIZE_T i = 0; i < RTL_NUMBER_OF(strings); i++)
+            if (strings[i]->Buffer)
+                strings[i]->Buffer = (PWSTR)((ULONG_PTR)strings[i]->Buffer + (ULONG_PTR)user);
+    }
+    status = KiCaptureUnicodeStringValue(&p->Image, pp.ImagePathName);
     if (NT_SUCCESS(status))
-        status = KiCaptureUnicodeString(&p->CommandLine, &user->CommandLine);
+        status = KiCaptureUnicodeStringValue(&p->CommandLine, pp.CommandLine);
     if (NT_SUCCESS(status))
-        status = KiCaptureUnicodeString(&p->CurrentDirectory, &user->CurrentDirectory.DosPath);
+        status = KiCaptureUnicodeStringValue(&p->CurrentDirectory, pp.CurrentDirectory.DosPath);
     if (NT_SUCCESS(status) && pp.WindowTitle.Length)
-        status = KiCaptureUnicodeString(&p->WindowTitle, &user->WindowTitle);
+        status = KiCaptureUnicodeStringValue(&p->WindowTitle, pp.WindowTitle);
     if (NT_SUCCESS(status) && pp.DesktopInfo.Length)
-        status = KiCaptureUnicodeString(&p->DesktopInfo, &user->DesktopInfo);
+        status = KiCaptureUnicodeStringValue(&p->DesktopInfo, pp.DesktopInfo);
     if (NT_SUCCESS(status) && pp.RuntimeData.Length && pp.RuntimeData.Buffer) {
         p->RuntimeData = ExAllocatePool2(POOL_FLAG_NON_PAGED, pp.RuntimeData.Length, KI_TAG('P', 's', 'R', 'd'));
         status = p->RuntimeData ? KiCopyFromUser(p->RuntimeData, pp.RuntimeData.Buffer, pp.RuntimeData.Length)
@@ -862,8 +870,16 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
     if (!process_handle || !thread_handle || !parameters)
         return STATUS_INVALID_PARAMETER;
     if ((process_flags & ~(PROCESS_CREATE_FLAGS_BREAKAWAY | PROCESS_CREATE_FLAGS_INHERIT_HANDLES)) ||
-        (thread_flags & ~1u) || create_info)
+        (thread_flags & ~1u))
         return STATUS_NOT_SUPPORTED;
+    if (create_info) {
+        PS_CREATE_INFO info;
+        NTSTATUS status = KiCopyFromUser(&info, create_info, offsetof(PS_CREATE_INFO, InitState));
+        if (!NT_SUCCESS(status))
+            return status;
+        if (info.Size != sizeof(PS_CREATE_INFO) || info.State != PsCreateInitialState)
+            return STATUS_INVALID_PARAMETER;
+    }
     /* the new objects' attributes may only give them a descriptor. */
     OBJECT_ATTRIBUTES process_oa, thread_oa;
     UNICODE_STRING process_name, thread_name;
@@ -973,6 +989,13 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
         status = KiCopyToUser(process_handle, &ph, sizeof(ph));
     if (NT_SUCCESS(status))
         status = KiCopyToUser(thread_handle, &th, sizeof(th));
+    if (NT_SUCCESS(status) && create_info) {
+        /* no file or section handle is given back, so the caller has none to close. */
+        PS_CREATE_INFO info = {.Size = sizeof(info), .State = PsCreateSuccess};
+        info.SuccessState.PebAddressNative = (ULONG_PTR)process->Peb;
+        info.SuccessState.PebAddressWow64 = (ULONG)(ULONG_PTR)process->Wow64Peb;
+        status = KiCopyToUser(create_info, &info, sizeof(info));
+    }
     if (NT_SUCCESS(status)) {
         return_attributes(&attrs, process, thread);
         if (!(thread_flags & 1)) {

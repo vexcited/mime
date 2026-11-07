@@ -2602,6 +2602,90 @@ typedef struct _PS_ATTRIBUTE_LIST {
     PS_ATTRIBUTE Attributes[1];
 } PS_ATTRIBUTE_LIST, *PPS_ATTRIBUTE_LIST;
 
+typedef struct _SECTION_IMAGE_INFORMATION {
+    PVOID TransferAddress;
+    ULONG ZeroBits;
+    SIZE_T MaximumStackSize;
+    SIZE_T CommittedStackSize;
+    ULONG SubSystemType;
+    USHORT SubSystemMinorVersion;
+    USHORT SubSystemMajorVersion;
+    USHORT MajorOperatingSystemVersion;
+    USHORT MinorOperatingSystemVersion;
+    USHORT ImageCharacteristics;
+    USHORT DllCharacteristics;
+    USHORT Machine;
+    BOOLEAN ImageContainsCode;
+    UCHAR ImageFlags;
+    ULONG LoaderFlags;
+    ULONG ImageFileSize;
+    ULONG CheckSum;
+} SECTION_IMAGE_INFORMATION, *PSECTION_IMAGE_INFORMATION;
+
+typedef struct _RTL_USER_PROCESS_INFORMATION {
+    ULONG Length;
+    HANDLE ProcessHandle;
+    HANDLE ThreadHandle;
+    CLIENT_ID ClientId;
+    SECTION_IMAGE_INFORMATION ImageInformation;
+} RTL_USER_PROCESS_INFORMATION, *PRTL_USER_PROCESS_INFORMATION;
+
+typedef struct _RTL_USER_PROCESS_EXTENDED_PARAMETERS {
+    USHORT Version;
+    USHORT NodeNumber;
+    PVOID ProcessSecurityDescriptor;
+    PVOID ThreadSecurityDescriptor;
+    HANDLE ParentProcess;
+    HANDLE DebugPort;
+    HANDLE TokenHandle;
+    HANDLE JobHandle;
+} RTL_USER_PROCESS_EXTENDED_PARAMETERS, *PRTL_USER_PROCESS_EXTENDED_PARAMETERS;
+#ifdef __i386__
+static_assert(sizeof(SECTION_IMAGE_INFORMATION) == 0x30 && sizeof(RTL_USER_PROCESS_INFORMATION) == 0x44);
+#else
+static_assert(sizeof(SECTION_IMAGE_INFORMATION) == 0x40 && sizeof(RTL_USER_PROCESS_INFORMATION) == 0x68);
+#endif
+
+/* NtCreateUserProcess's create info. mime takes it in its initial state and gives back the success state. */
+typedef enum _PS_CREATE_STATE {
+    PsCreateInitialState,
+    PsCreateFailOnFileOpen,
+    PsCreateFailOnSectionCreate,
+    PsCreateFailExeFormat,
+    PsCreateFailMachineMismatch,
+    PsCreateFailExeName,
+    PsCreateSuccess,
+    PsCreateMaximumStates
+} PS_CREATE_STATE;
+
+typedef struct _PS_CREATE_INFO {
+    SIZE_T Size;
+    PS_CREATE_STATE State;
+    union {
+        struct {
+            ULONG InitFlags;
+            ACCESS_MASK AdditionalFileAccess;
+        } InitState;
+        struct {
+            ULONG OutputFlags;
+            HANDLE FileHandle;
+            HANDLE SectionHandle;
+            ULONGLONG UserProcessParametersNative;
+            ULONG UserProcessParametersWow64;
+            ULONG CurrentParameterFlags;
+            ULONGLONG PebAddressNative;
+            ULONG PebAddressWow64;
+            ULONGLONG ManifestAddress;
+            ULONG ManifestSize;
+        } SuccessState;
+    };
+} PS_CREATE_INFO, *PPS_CREATE_INFO;
+#ifdef __i386__
+static_assert(sizeof(PS_CREATE_INFO) == 0x48);
+#else
+static_assert(sizeof(PS_CREATE_INFO) == 0x58);
+#endif
+
 typedef enum _THREADINFOCLASS {
     ThreadBasicInformation = 0,
     ThreadTimes = 1,

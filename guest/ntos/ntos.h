@@ -433,6 +433,8 @@ void KiApplyFaultStatus(PEXCEPTION_RECORD record);
 NTSTATUS KiCopyToUser(void *user_dst, const void *src, SIZE_T length);
 BOOLEAN KiIsUserRange(const void *address, SIZE_T length);
 NTSTATUS KiCaptureUnicodeString(PUNICODE_STRING kernel_copy, PCUNICODE_STRING user_string);
+/* captures the buffer of a string whose descriptor is already in kernel memory. */
+NTSTATUS KiCaptureUnicodeStringValue(PUNICODE_STRING kernel_copy, UNICODE_STRING string);
 void KiFreeCapturedString(PUNICODE_STRING s);
 
 typedef enum _KI_CLOCK {
