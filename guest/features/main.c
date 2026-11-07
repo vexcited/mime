@@ -219,7 +219,9 @@ static int run_elevated(void)
     tu_str_format(&command, L"\"%ls\" %ls /elevated", self, tu_tail);
     STARTUPINFOW startup = {sizeof(startup)};
     PROCESS_INFORMATION process;
-    DWORD error = launch(nullptr, tu_str_text(&command), nullptr, 0, &startup, &process, nullptr);
+    /* a request of a program comes without a console, and the second run goes without one too. */
+    DWORD flags = GetConsoleWindow() ? 0 : DETACHED_PROCESS;
+    DWORD error = launch(nullptr, tu_str_text(&command), nullptr, flags, &startup, &process, nullptr);
     tu_str_free(&command);
     if (error) {
         tu_eprint(L"features: administrator rights are needed and could not be had (error %lu).\n", error);
