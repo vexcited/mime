@@ -252,6 +252,17 @@ PVOID MiFindKernelExport(PVOID image_base, const char *name)
     return find_export(image_base, name, 0, FALSE);
 }
 
+/* a stand in for routines the kernel lacks, while finding out which ones a driver looks up. */
+BOOLEAN MiDiscoverRoutines;
+
+static ULONG_PTR NTAPI MiMissingRoutine(void)
+{
+    char caller[96];
+    MiDescribeCodeAddress((ULONG_PTR)__builtin_return_address(0), caller, sizeof(caller));
+    KiLogPrintf("a missing routine was called from %s", caller);
+    return 0;
+}
+
 /* the routines of the kernel and the hal, which mime's kernel holds both of. */
 PVOID NTAPI MmGetSystemRoutineAddress(PUNICODE_STRING name)
 {
@@ -263,6 +274,8 @@ PVOID NTAPI MmGetSystemRoutineAddress(PUNICODE_STRING name)
         ansi[i] = (char)name->Buffer[i];
     ansi[n] = 0;
     PVOID found = find_export((PVOID)HalBootInfo->kernel_virt, ansi, 0, FALSE);
+    if (!found && MiDiscoverRoutines)
+        found = (PVOID)MiMissingRoutine;
     if (!found || MiTraceRoutines) {
         char caller[96];
         MiDescribeCodeAddress((ULONG_PTR)__builtin_return_address(0), caller, sizeof(caller));

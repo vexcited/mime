@@ -216,6 +216,8 @@ void KiInitializeKernel(MimeBootInfo *boot)
     SeAccessEnforced = strstr(boot->cmdline, "no-access-checks") == nullptr;
     SeTraceAccess = strstr(boot->cmdline, "trace-access") != nullptr;
     MiTraceRoutines = strstr(boot->cmdline, "trace-routines") != nullptr;
+    extern BOOLEAN MiDiscoverRoutines;
+    MiDiscoverRoutines = strstr(boot->cmdline, "discover-routines") != nullptr;
     extern BOOLEAN IoTraceFiles;
     IoTraceFiles = strstr(boot->cmdline, "trace-files") != nullptr;
     extern char KiTraceSyscallImage[16];
