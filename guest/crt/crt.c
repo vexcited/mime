@@ -293,6 +293,15 @@ wchar_t *wcscat(wchar_t *dst, const wchar_t *src)
     return dst;
 }
 
+wchar_t *wcsncat(wchar_t *dst, const wchar_t *src, size_t n)
+{
+    wchar_t *d = dst + wcslen(dst);
+    while (n-- && *src)
+        *d++ = *src++;
+    *d = 0;
+    return dst;
+}
+
 wchar_t *wcschr(const wchar_t *s, wchar_t c)
 {
     for (;; s++) {
@@ -362,3 +371,10 @@ long labs(long v)
 
 /* the msvc abi expects this symbol whenever floating point is used. */
 int _fltused = 0x9875;
+
+wchar_t *_wcslwr(wchar_t *s)
+{
+    for (wchar_t *p = s; *p; p++)
+        *p = towlower(*p);
+    return s;
+}

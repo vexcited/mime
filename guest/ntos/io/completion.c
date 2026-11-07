@@ -167,7 +167,7 @@ NTSTATUS NTAPI NtOpenIoCompletion(PHANDLE handle, ACCESS_MASK access, POBJECT_AT
     if (!NT_SUCCESS(status))
         return status;
     HANDLE h;
-    status = ObOpenObjectByName(&oa, IoCompletionObjectType, KeGetPreviousMode(), access, nullptr, &h);
+    status = ObOpenObjectByName(&oa, IoCompletionObjectType, KeGetPreviousMode(), nullptr, access, nullptr, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);

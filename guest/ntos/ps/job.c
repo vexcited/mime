@@ -511,7 +511,7 @@ NTSTATUS NTAPI NtOpenJobObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRI
     if (!NT_SUCCESS(status))
         return status;
     HANDLE h;
-    status = ObOpenObjectByName(&oa, PsJobType, KeGetPreviousMode(), access, nullptr, &h);
+    status = ObOpenObjectByName(&oa, PsJobType, KeGetPreviousMode(), nullptr, access, nullptr, &h);
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);

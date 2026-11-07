@@ -4,8 +4,6 @@
 
 POBJECT_TYPE PsProcessTypeObject;
 POBJECT_TYPE PsThreadTypeObject;
-POBJECT_TYPE *PsProcessType = &PsProcessTypeObject;
-POBJECT_TYPE *PsThreadType = &PsThreadTypeObject;
 PEPROCESS PsInitialSystemProcess;
 PEPROCESS PsIdleProcess;
 LIST_ENTRY PsActiveProcessHead;
@@ -16,8 +14,6 @@ static KSPIN_LOCK g_cid_lock;
 static USHORT g_next_asid = 1;
 static ULONG64 g_system_root;
 
-typedef void(NTAPI *PCREATE_PROCESS_NOTIFY)(HANDLE, HANDLE, BOOLEAN);
-static PCREATE_PROCESS_NOTIFY g_process_notify[8];
 
 NTSTATUS PspAllocateId(PVOID object, PHANDLE id)
 {
@@ -154,28 +150,6 @@ NTSTATUS NTAPI PsGetProcessExitStatus(PEPROCESS process)
 void NTAPI MmSetProcessCallbackTable(PEPROCESS process, PVOID table)
 {
     process->KernelCallbackTable = table;
-}
-
-NTSTATUS NTAPI PsSetCreateProcessNotifyRoutine(PCREATE_PROCESS_NOTIFY_ROUTINE routine, BOOLEAN remove)
-{
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_process_notify); i++) {
-        if (remove && g_process_notify[i] == routine) {
-            g_process_notify[i] = nullptr;
-            return STATUS_SUCCESS;
-        }
-        if (!remove && !g_process_notify[i]) {
-            g_process_notify[i] = routine;
-            return STATUS_SUCCESS;
-        }
-    }
-    return remove ? STATUS_PROCEDURE_NOT_FOUND : STATUS_INVALID_PARAMETER;
-}
-
-void PspNotifyProcess(PEPROCESS process, BOOLEAN create)
-{
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_process_notify); i++)
-        if (g_process_notify[i])
-            g_process_notify[i](process->InheritedFromUniqueProcessId, process->UniqueProcessId, create);
 }
 
 /* the base priority of the threads of each priority class. */
@@ -903,6 +877,10 @@ void PsInitialize(void)
     memcpy(system->ImageFileName, "System", 7);
     g_system_root = MiCreateSystemRoot();
     system->Pcb.DirectoryTableBase = g_system_root;
+    /* the user half of the system root is the system process's own, where drivers map views as on windows. */
+    ExInitializeFastMutex(&system->AddressSpace.Lock);
+    system->AddressSpace.RootPhys = g_system_root;
+    system->AddressSpace.Root = HalPhysmap(g_system_root);
     KeInitializeEvent(&system->ExitEvent, NotificationEvent, FALSE);
     InsertTailList(&PsActiveProcessHead, &system->ActiveProcessLinks);
     PsInitialSystemProcess = system;

@@ -1010,6 +1010,11 @@ NTSTATUS ObCheckCreateAccess(PVOID directory, KPROCESSOR_MODE mode);
 NTSTATUS ObReferenceSecurity(PVOID object, SD_BLOB **sd);
 NTSTATUS ObStoreSecurity(PVOID object, SD_BLOB *sd);
 NTSTATUS ObCreateHandle(PEPROCESS process, PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle);
+NTSTATUS ObpQueryNameString(PVOID object, PUNICODE_STRING name, PWSTR buffer, ULONG buffer_chars);
+BOOLEAN ObpObjectCallbacksPresent(PVOID object);
+ACCESS_MASK ObpCallPreCallbacks(PVOID object, ACCESS_MASK access, BOOLEAN duplicate, BOOLEAN kernel_handle,
+                                PEPROCESS source, PEPROCESS target);
+void ObpCallPostCallbacks(PVOID object, ACCESS_MASK granted, NTSTATUS result, BOOLEAN duplicate, BOOLEAN kernel_handle);
 NTSTATUS ObInheritHandles(PEPROCESS parent, PEPROCESS child);
 NTSTATUS ObInheritHandleList(PEPROCESS parent, PEPROCESS child, const HANDLE *list, ULONG count);
 NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode);
@@ -1034,6 +1039,7 @@ typedef struct _ETHREAD {
     CLIENT_ID Cid;
     PVOID StartAddress;
     PVOID Win32StartAddress;
+    PVOID TopLevelIrp;          /* IoSetTopLevelIrp's, for file systems and filters. */
     NTSTATUS ExitStatus;
     BOOLEAN SystemThread;
     BOOLEAN HasTerminated;
@@ -1182,6 +1188,12 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image_dos_path, PCUNICODE_STRING c
 /* the service control manager, a system process the host never asked for. */
 NTSTATUS PsStartServiceController(void);
 DECLSPEC_NORETURN void PspExitThread(NTSTATUS status);
+NTSTATUS PspNotifyProcessCreate(PEPROCESS process, PCUNICODE_STRING image, PCUNICODE_STRING command_line);
+void PspNotifyProcess(PEPROCESS process, BOOLEAN create);
+void PspNotifyThread(PETHREAD thread, BOOLEAN create);
+void PspNotifyImage(PCUNICODE_STRING name, PEPROCESS process, PVOID base, SIZE_T size, USHORT machine);
+BOOLEAN PspImageNotifyRegistered(void);
+NTSTATUS PspSuspendResumeProcess(PEPROCESS process, BOOLEAN suspend);
 NTSTATUS PspTerminateProcess(PEPROCESS process, NTSTATUS status);
 /* ps/mitigation.c. */
 void PspApplyMitigationOptions(PEPROCESS process, PEPROCESS parent, const ULONG64 requested[3]);

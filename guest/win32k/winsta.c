@@ -133,7 +133,7 @@ static NTSTATUS winsta_by_name(PCWSTR name, ULONG chars, BOOLEAN create, BOOLEAN
     OBJECT_ATTRIBUTES oa;
     InitializeObjectAttributes(&oa, &us, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, nullptr, nullptr);
     HANDLE h;
-    NTSTATUS status = ObOpenObjectByName(&oa, g_winsta_type, KernelMode, WINSTA_ALL_ACCESS, nullptr, &h);
+    NTSTATUS status = ObOpenObjectByName(&oa, g_winsta_type, KernelMode, nullptr, WINSTA_ALL_ACCESS, nullptr, &h);
     if (NT_SUCCESS(status)) {
         if (create_only) {
             ZwClose(h);
@@ -871,7 +871,7 @@ DWORD NTAPI NtUserGetGuiResources(HANDLE process, DWORD flags)
     HANDLE pid = PsGetCurrentProcessId();
     if (process != (HANDLE)(LONG_PTR)-2) {
         PEPROCESS target;
-        if (!NT_SUCCESS(ObReferenceObjectByHandle(process, 0x1000, *PsProcessType, UserMode, (PVOID *)&target,
+        if (!NT_SUCCESS(ObReferenceObjectByHandle(process, 0x1000, PsProcessType, UserMode, (PVOID *)&target,
                                                   nullptr))) {
             W32SetLastError(ERROR_INVALID_HANDLE);
             return 0;

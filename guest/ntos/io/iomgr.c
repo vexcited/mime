@@ -7,7 +7,6 @@
 POBJECT_TYPE IoDeviceObjectType;
 POBJECT_TYPE IoDriverObjectType;
 POBJECT_TYPE IoFileObjectTypeObject;
-POBJECT_TYPE *IoFileObjectType = &IoFileObjectTypeObject;
 
 /* carried through ObLookupObjectName into IopParseDevice. */
 typedef struct _OPEN_PACKET {
