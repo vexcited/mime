@@ -588,26 +588,6 @@ NTSTATUS NTAPI IoGetDeviceObjectPointer(PUNICODE_STRING name, ACCESS_MASK access
     return STATUS_SUCCESS;
 }
 
-PMDL NTAPI IoAllocateMdl(PVOID va, ULONG length, BOOLEAN secondary, BOOLEAN charge, PIRP irp)
-{
-    PMDL mdl = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MDL), KI_TAG('I', 'o', 'M', 'd'));
-    if (!mdl)
-        return nullptr;
-    mdl->StartVa = PAGE_ALIGN(va);
-    mdl->ByteOffset = BYTE_OFFSET(va);
-    mdl->ByteCount = length;
-    mdl->MappedSystemVa = va;
-    mdl->MdlFlags = MDL_SOURCE_IS_NONPAGED_POOL;
-    if (irp && !secondary)
-        irp->MdlAddress = mdl;
-    return mdl;
-}
-
-void NTAPI IoFreeMdl(PMDL mdl)
-{
-    ExFreePool(mdl);
-}
-
 PIRP NTAPI IoBuildSynchronousFsdRequest(ULONG major, PDEVICE_OBJECT device, PVOID buffer, ULONG length,
                                         PLARGE_INTEGER offset, PKEVENT event, PIO_STATUS_BLOCK iosb)
 {
