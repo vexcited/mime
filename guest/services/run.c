@@ -808,6 +808,39 @@ static IMAGE *find_image(const WCHAR *key)
     return nullptr;
 }
 
+NTSYSAPI NTSTATUS NTAPI NtLoadDriver(PUNICODE_STRING key);
+NTSYSAPI NTSTATUS NTAPI NtUnloadDriver(PUNICODE_STRING key);
+NTSYSAPI NTSTATUS NTAPI RtlAdjustPrivilege(ULONG privilege, BOOLEAN enable, BOOLEAN thread, PBOOLEAN was);
+
+#define SE_LOAD_DRIVER_PRIVILEGE 10
+
+/* a driver service goes to the kernel by its key, which the manager may load and unload drivers through. */
+static DWORD driver_request(SERVICE *s, BOOL unload)
+{
+    WCHAR key[64 + SVC_NAME_MAX + 1] = L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\";
+    SIZE_T at = wcslen(key);
+    SvcCopyName(key + at, s->Name, SVC_NAME_MAX);
+    UNICODE_STRING name;
+    RtlInitUnicodeString(&name, key);
+    BOOLEAN was;
+    RtlAdjustPrivilege(SE_LOAD_DRIVER_PRIVILEGE, TRUE, FALSE, &was);
+    NTSTATUS status = unload ? NtUnloadDriver(&name) : NtLoadDriver(&name);
+    switch (status) {
+    case STATUS_SUCCESS:
+        return ERROR_SUCCESS;
+    case STATUS_IMAGE_ALREADY_LOADED:
+        return ERROR_SERVICE_ALREADY_RUNNING;
+    case STATUS_OBJECT_NAME_NOT_FOUND:
+    case STATUS_OBJECT_PATH_NOT_FOUND:
+    case STATUS_NO_SUCH_FILE:
+        return unload ? ERROR_SERVICE_NOT_ACTIVE : ERROR_FILE_NOT_FOUND;
+    case STATUS_INVALID_DEVICE_REQUEST:
+        return ERROR_INVALID_SERVICE_CONTROL;
+    default:
+        return RtlNtStatusToDosError(status);
+    }
+}
+
 static DWORD launch(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWORD reason)
 {
     DWORD error = 0;
@@ -820,10 +853,11 @@ static DWORD launch(SERVICE *s, DWORD count, const WCHAR *const *arguments, DWOR
         return ERROR_FILE_NOT_FOUND;
     }
     if (s->Type & SERVICE_DRIVER) {
-        /* kernel drivers cannot be loaded here. */
-        BOOL there = file_exists(command) || wcsstr(command, L"\\SystemRoot\\") || wcschr(command, L'\\');
         SvcFree(command);
-        return there ? ERROR_NOT_SUPPORTED : ERROR_FILE_NOT_FOUND;
+        /* drivers load when asked for; the ones other software set to start with the system are left alone. */
+        if (reason != SCM_START_REASON_DEMAND && reason != SCM_START_REASON_RESTART_ON_FAILURE)
+            return ERROR_NOT_SUPPORTED;
+        return driver_request(s, FALSE);
     }
     WCHAR *key = image_key(command);
     BOOL own = (s->Type & SERVICE_WIN32_OWN_PROCESS) != 0;
@@ -1576,6 +1610,18 @@ static DWORD judge_control(SERVICE *s, DWORD control, BOOL *answered_here)
 DWORD RunControl(SERVICE *s, DWORD control, DWORD event_type, const void *event_data, DWORD event_size, DWORD *result)
 {
     *result = 0;
+    /* a driver has no process to ask: a stop unloads it, an interrogation reads its state. */
+    if (driver_of(s) && !s->Image) {
+        if (state_of(s) != SERVICE_RUNNING)
+            return ERROR_SERVICE_NOT_ACTIVE;
+        if (control == SERVICE_CONTROL_INTERROGATE)
+            return ERROR_SUCCESS;
+        if (control != SERVICE_CONTROL_STOP)
+            return ERROR_INVALID_SERVICE_CONTROL;
+        if (!g_shutdown && has_running_dependents(s))
+            return ERROR_DEPENDENT_SERVICES_RUNNING;
+        return driver_request(s, TRUE);
+    }
     BOOL answered_here;
     DWORD verdict = judge_control(s, control, &answered_here);
     if (verdict || answered_here)
