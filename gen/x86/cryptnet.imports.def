@@ -1,0 +1,14 @@
+LIBRARY cryptnet.dll
+EXPORTS
+    CertDllVerifyCTLUsage@28
+    CertDllVerifyRevocation@28
+    CryptCancelAsyncRetrieval@4
+    CryptFlushTimeValidObject@20
+    CryptGetObjectUrl@32
+    CryptGetTimeValidObject@36
+    CryptInstallCancelRetrieval@16
+    CryptRetrieveObjectByUrlA@36
+    CryptRetrieveObjectByUrlW@36
+    CryptUninstallCancelRetrieval@8
+    DllRegisterServer@0
+    DllUnregisterServer@0

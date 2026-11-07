@@ -111,6 +111,12 @@
 [HKLM\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\Internet Settings]
 [HKLM\SOFTWARE\Clients\StartMenuInternet]
 
+; the default providers crypt32 asks to check revocation and trust list usage, as windows registers them.
+[HKLM\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 1\{CertDllVerifyRevocation,CertDllVerifyCTLUsage}\DEFAULT]
+"Dll"=multi:"C:\\Windows\\System32\\cryptnet.dll"
+[HKLM\SOFTWARE\WOW6432Node\Microsoft\Cryptography\OID\EncodingType 1\{CertDllVerifyRevocation,CertDllVerifyCTLUsage}\DEFAULT]
+"Dll"=multi:"C:\\Windows\\SysWOW64\\cryptnet.dll"
+
 ; user account control is on. the kernel reads DeclineElevationPrompts here and finds none.
 [HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System]
 "EnableLUA"=dword:00000001
