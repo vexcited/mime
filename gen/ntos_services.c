@@ -9,6 +9,8 @@
 
 void KiRegisterService(unsigned int number, void *routine, unsigned char stack_args);
 void NtAccessCheck(void);
+void NtLoadDriver(void);
+void NtUnloadDriver(void);
 void NtAddAtom(void);
 void NtAddAtomEx(void);
 void NtAdjustGroupsToken(void);
@@ -287,6 +289,12 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtCreateEvent
     KiRegisterService(MIME_SVC_NtCreateEvent, (void *)NtCreateEvent, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtLoadDriver
+    KiRegisterService(MIME_SVC_NtLoadDriver, (void *)NtLoadDriver, STACK_ARGS(1));
+#endif
+#ifdef MIME_SVC_NtUnloadDriver
+    KiRegisterService(MIME_SVC_NtUnloadDriver, (void *)NtUnloadDriver, STACK_ARGS(1));
 #endif
 #ifdef MIME_SVC_NtCreateFile
     KiRegisterService(MIME_SVC_NtCreateFile, (void *)NtCreateFile, STACK_ARGS(11));

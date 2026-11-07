@@ -748,10 +748,53 @@ void MiSwapVad(PMMADDRESS_SPACE as, PMMVAD old, PMMVAD fresh);
 NTSTATUS MiZeroBitsHighest(ULONG_PTR zero_bits, ULONG_PTR *highest);
 NTSTATUS MiParseImageHeaders(const void *headers, SIZE_T length, MI_IMAGE_INFO *info);
 BOOLEAN MiImageIsPortableIl(PSECTION s);
-NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PVOID *base, SIZE_T *size, PVOID *entry);
-typedef void (*MI_SYSTEM_IMAGE_CALLBACK)(PVOID context, ULONG index, PVOID base, SIZE_T size, const WCHAR *name);
+/* the record of a loaded kernel image, in windows' layout, which drivers read through DriverSection. */
+typedef struct _KLDR_DATA_TABLE_ENTRY {
+    LIST_ENTRY InLoadOrderLinks;
+    PVOID ExceptionTable;
+    ULONG ExceptionTableSize;
+    PVOID GpValue;
+    PVOID NonPagedDebugInfo;
+    PVOID DllBase;
+    PVOID EntryPoint;
+    ULONG SizeOfImage;
+    UNICODE_STRING FullDllName;
+    UNICODE_STRING BaseDllName;
+    ULONG Flags;
+    USHORT LoadCount;
+    USHORT SignatureInfo;
+    PVOID SectionPointer;
+    ULONG CheckSum;
+    ULONG CoverageSectionSize;
+    PVOID CoverageSection;
+    PVOID LoadedImports;
+    PVOID Spare;
+    ULONG SizeOfImageNotRounded;
+    ULONG TimeDateStamp;
+} KLDR_DATA_TABLE_ENTRY, *PKLDR_DATA_TABLE_ENTRY;
+MIME_FIELD_AT(KLDR_DATA_TABLE_ENTRY, DllBase, 0x30);
+MIME_FIELD_AT(KLDR_DATA_TABLE_ENTRY, FullDllName, 0x48);
+MIME_FIELD_AT(KLDR_DATA_TABLE_ENTRY, Flags, 0x68);
+MIME_FIELD_AT(KLDR_DATA_TABLE_ENTRY, SectionPointer, 0x70);
+MIME_FIELD_AT(KLDR_DATA_TABLE_ENTRY, TimeDateStamp, 0x9C);
+MIME_STATIC_ASSERT(sizeof(KLDR_DATA_TABLE_ENTRY) == 0xA0, "KLDR_DATA_TABLE_ENTRY");
+
+extern LIST_ENTRY PsLoadedModuleList;
+extern BOOLEAN MiTraceRoutines;
+void MiInitializeLoadedModules(void);
+PKLDR_DATA_TABLE_ENTRY MiKernelModule(void);
+PKLDR_DATA_TABLE_ENTRY MiLookupModule(ULONG_PTR address);
+NTSTATUS MmLoadSystemImage(PCUNICODE_STRING path, PKLDR_DATA_TABLE_ENTRY *out);
+NTSTATUS IopCreateDriverObject(PCUNICODE_STRING name, PCUNICODE_STRING registry, PCUNICODE_STRING service,
+                               PKLDR_DATA_TABLE_ENTRY module, PDRIVER_OBJECT *out);
+void IopDeleteDriverObject(PVOID object);
+NTSTATUS NTAPI IopInvalidDeviceRequest(PDEVICE_OBJECT device, PIRP irp);
+
+void MmUnloadSystemImage(PKLDR_DATA_TABLE_ENTRY module);
+typedef void (*MI_SYSTEM_IMAGE_CALLBACK)(PVOID context, ULONG index, PVOID base, SIZE_T size, PCUNICODE_STRING name);
 ULONG MiEnumerateSystemImages(MI_SYSTEM_IMAGE_CALLBACK callback, PVOID context);
 PVOID MiFindKernelExport(PVOID image_base, const char *name);
+PVOID MiFindModuleExport(const char *module, const char *name);
 NTSTATUS MiReadFileBytes(PFILE_OBJECT file, ULONG64 offset, PVOID buffer, ULONG length, PULONG read);
 
 /* ------------------------------------------------------------------ ob */

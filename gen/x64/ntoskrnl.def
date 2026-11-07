@@ -15,9 +15,9 @@ EXPORTS
     ExEventType DATA
     ExFreePool
     ExFreePoolWithTag
-    ExGetPreviousMode
     ExGetFirmwareEnvironmentVariable
     ExGetFirmwareType
+    ExGetPreviousMode
     ExInitialize
     ExInitializeFastMutex
     ExInitializePool
@@ -29,10 +29,10 @@ EXPORTS
     ExReleaseFastMutex
     ExReleaseFastMutexUnsafe
     ExReleaseResourceLite
-    ExSetFirmwareEnvironmentVariable
     ExReleaseTimerResolution
     ExSemaphoreObjectType DATA
     ExSemaphoreType DATA
+    ExSetFirmwareEnvironmentVariable
     ExTimerType DATA
     ExWaitHandles
     ExWaitHandlesAndObject
@@ -207,7 +207,6 @@ EXPORTS
     MimeFsRomSecurity @17 NONAME
     MimeFsSecurityChanged @18 NONAME
     MimeFsStoreSecurity @19 NONAME
-    MmCreatePhysicalSection @20 NONAME
     MimePadEvent @21 NONAME
     MimePadHidInfo @22 NONAME
     MimePnpAddDevice @23 NONAME
@@ -240,6 +239,7 @@ EXPORTS
     MmCopyToProcessFast
     MmCopyVirtualMemory
     MmCreateAddressSpace
+    MmCreatePhysicalSection @20 NONAME
     MmCreateSharedSection
     MmDeleteAddressSpace
     MmDiscardIdle
@@ -264,9 +264,9 @@ EXPORTS
     MmIsAddressValid
     MmLoadSystemImage
     MmMapPagesInSystem
-    MmMapWritableSection
     MmMapSharedSectionUser
     MmMapViewInSystemSpace
+    MmMapWritableSection
     MmQueryVmCounters
     MmSectionObjectType DATA
     MmSectionType DATA
@@ -530,6 +530,8 @@ EXPORTS
     PsInitializeIdleThread
     PsIsThreadTerminating
     PsJobType DATA
+    PsLoadedModuleList DATA
+    PsLoadedModuleResource DATA
     PsLookupProcessByProcessId
     PsLookupThreadByThreadId
     PsProcessType DATA
@@ -707,6 +709,7 @@ EXPORTS
     ZwEnumerateValueKey
     ZwFlushKey
     ZwFreeVirtualMemory
+    ZwLoadDriver
     ZwMapViewOfSection
     ZwOpenFile
     ZwOpenKey
@@ -721,6 +724,7 @@ EXPORTS
     ZwSetEvent
     ZwSetSecurityObject
     ZwSetValueKey
+    ZwUnloadDriver
     ZwUnmapViewOfSection
     ZwWaitForSingleObject
     ZwWriteFile
