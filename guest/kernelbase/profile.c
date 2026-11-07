@@ -42,22 +42,34 @@ static PWSTR profile_path(PCWSTR name)
         KbSetError(ERROR_FILENAME_EXCED_RANGE);
         return nullptr;
     }
+    /* only a bare file name is in the windows directory, a name with a directory resolves from the current one. */
+    if (contains(name, L"\\/") || (length > 1 && name[1] == L':')) {
+        DWORD needed = GetFullPathNameW(name, 0, nullptr, nullptr);
+        PWSTR path = needed ? KbAlloc(needed * sizeof(WCHAR)) : nullptr;
+        if (!path) {
+            if (needed)
+                KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+            return nullptr;
+        }
+        DWORD written = GetFullPathNameW(name, needed, path, nullptr);
+        if (!written || written >= needed) {
+            KbFree(path);
+            return nullptr;
+        }
+        return path;
+    }
     PWSTR path = KbAlloc((length + MAX_PATH + 2) * sizeof(WCHAR));
     if (!path) {
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
         return nullptr;
     }
-    if (name[0] == L'\\' || name[0] == L'/' || (length > 1 && name[1] == L':'))
-        wcscpy(path, name);
-    else {
-        UINT count = GetWindowsDirectoryW(path, MAX_PATH);
-        if (!count || count >= MAX_PATH) {
-            KbFree(path);
-            return nullptr;
-        }
-        path[count++] = L'\\';
-        wcscpy(path + count, name);
+    UINT count = GetWindowsDirectoryW(path, MAX_PATH);
+    if (!count || count >= MAX_PATH) {
+        KbFree(path);
+        return nullptr;
     }
+    path[count++] = L'\\';
+    wcscpy(path + count, name);
     return path;
 }
 
