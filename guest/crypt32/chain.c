@@ -29,6 +29,8 @@ typedef struct {
     PCERT_SIMPLE_CHAIN chains[1];
     PCERT_CHAIN_ELEMENT pointers[MAX_CHAIN];
     CERT_CHAIN_ELEMENT elements[MAX_CHAIN];
+    CERT_REVOCATION_INFO revocation[MAX_CHAIN];
+    CERT_REVOCATION_CRL_INFO crl[MAX_CHAIN];
 } chain_block;
 
 static chain_block *block_of(PCCERT_CHAIN_CONTEXT chain)
@@ -456,6 +458,67 @@ static DWORD build(cr_engine *engine, PCCERT_CONTEXT cert, const FILETIME *time,
     return count;
 }
 
+/* ------------------------------------------------------------------ revocation */
+
+#define CERT_CHAIN_REVOCATION_ACCUMULATIVE_TIMEOUT 0x08000000
+#define DEFAULT_URL_TIMEOUT 15000
+
+typedef struct {
+    HCERTSTORE crls;
+    LPFILETIME time;
+    DWORD flags;
+    const CERT_CHAIN_PARA *para;
+} revocation_ctx;
+
+/*
+ * asks the revocation providers about one element, with the next one as its issuer. a root only tells when it is
+ * revoked: a root without a list to check is not an error. other answers that are not a success leave the status
+ * unknown, and offline unless no check was possible at all.
+ */
+static void check_revocation(const revocation_ctx *ctx, PCCERT_CONTEXT *certs, DWORD count, DWORD i, BOOL is_root,
+                             chain_block *block, DWORD *error)
+{
+    CERT_REVOCATION_CRL_INFO *crl = &block->crl[i];
+    crl->cbSize = sizeof(*crl);
+    CERT_REVOCATION_PARA para = {sizeof(para)};
+    para.pIssuerCert = i + 1 < count ? certs[i + 1] : is_root ? certs[i] : nullptr;
+    para.hCrlStore = ctx->crls;
+    para.pftTimeToUse = ctx->time;
+    para.dwUrlRetrievalTimeout = ctx->para->dwUrlRetrievalTimeout ? ctx->para->dwUrlRetrievalTimeout
+                                                                  : DEFAULT_URL_TIMEOUT;
+    para.fCheckFreshnessTime = ctx->para->fCheckRevocationFreshnessTime;
+    para.dwFreshnessTime = ctx->para->dwRevocationFreshnessTime;
+    para.pCrlInfo = crl;
+    para.pftCacheResync = ctx->para->pftCacheResync;
+    DWORD flags = 0;
+    if (ctx->flags & CERT_CHAIN_REVOCATION_CHECK_CACHE_ONLY)
+        flags |= CERT_VERIFY_CACHE_ONLY_BASED_REVOCATION;
+    if (ctx->flags & CERT_CHAIN_REVOCATION_ACCUMULATIVE_TIMEOUT)
+        flags |= CERT_VERIFY_REV_ACCUMULATIVE_TIMEOUT_FLAG;
+    CERT_REVOCATION_STATUS status = {sizeof(status)};
+    PVOID context = (PVOID)certs[i];
+    DWORD saved = GetLastError();
+    CertVerifyRevocation(X509_ASN_ENCODING, CERT_CONTEXT_REVOCATION_TYPE, 1, &context, flags, &para, &status);
+    SetLastError(saved);
+    DWORD result = status.dwError;
+    if (is_root && result != (DWORD)CRYPT_E_REVOKED)
+        result = 0;
+    if (result == (DWORD)CRYPT_E_REVOKED)
+        *error |= CERT_TRUST_IS_REVOKED;
+    else if (result) {
+        *error |= CERT_TRUST_REVOCATION_STATUS_UNKNOWN;
+        if (result != (DWORD)CRYPT_E_NO_REVOCATION_CHECK)
+            *error |= CERT_TRUST_IS_OFFLINE_REVOCATION;
+    }
+    CERT_REVOCATION_INFO *info = &block->revocation[i];
+    info->cbSize = sizeof(*info);
+    info->dwRevocationResult = result;
+    info->fHasFreshnessTime = status.fHasFreshnessTime;
+    info->dwFreshnessTime = status.dwFreshnessTime;
+    info->pCrlInfo = crl->pBaseCrlContext ? crl : nullptr;
+    block->elements[i].pRevocationInfo = info;
+}
+
 #define CERT_DISALLOWED_FILETIME_PROP_ID 104
 #define CERT_DISALLOWED_ENHKEY_USAGE_PROP_ID 122
 #define CERT_ROOT_PROGRAM_NOT_BEFORE_FILETIME_PROP_ID 126
@@ -552,6 +615,14 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
     DWORD ca_below = 0;
     BOOL revocation = (dwFlags & (CERT_CHAIN_REVOCATION_CHECK_END_CERT | CERT_CHAIN_REVOCATION_CHECK_CHAIN |
                                   CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT)) != 0;
+    revocation_ctx rev = {nullptr, pTime, dwFlags, pChainPara};
+    if (revocation) {
+        rev.crls = CertOpenStore(CERT_STORE_PROV_COLLECTION, 0, 0, 0, nullptr);
+        if (rev.crls && hAdditionalStore)
+            CertAddStoreToCollection(rev.crls, hAdditionalStore, 0, 0);
+        if (rev.crls && engine)
+            CertAddStoreToCollection(rev.crls, engine->world, 0, 0);
+    }
     for (DWORD i = 0; i < count; i++) {
         if (CertVerifyTimeValidity(pTime, certs[i]->pCertInfo))
             errors[i] |= CERT_TRUST_IS_NOT_TIME_VALID;
@@ -567,8 +638,10 @@ BOOL WINAPI CertGetCertificateChain(HCERTCHAINENGINE hChainEngine, PCCERT_CONTEX
             errors[i] |= root_program_errors(certs[i], certs[0], &pChainPara->RequestedUsage);
         if (revocation && (i == 0 || (dwFlags & CERT_CHAIN_REVOCATION_CHECK_CHAIN) ||
                            ((dwFlags & CERT_CHAIN_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT) && !is_root)))
-            errors[i] |= CERT_TRUST_REVOCATION_STATUS_UNKNOWN | CERT_TRUST_IS_OFFLINE_REVOCATION;
+            check_revocation(&rev, certs, count, i, is_root, block, &errors[i]);
     }
+    if (rev.crls)
+        CertCloseStore(rev.crls, 0);
     DWORD info_all = CERT_TRUST_HAS_PREFERRED_ISSUER;
     for (DWORD i = 0; i < count; i++) {
         CERT_CHAIN_ELEMENT *e = &block->elements[i];
@@ -604,8 +677,11 @@ void WINAPI CertFreeCertificateChain(PCCERT_CHAIN_CONTEXT pChainContext)
     chain_block *block = block_of(pChainContext);
     if (InterlockedDecrement(&block->refs))
         return;
-    for (DWORD i = 0; i < block->simple.cElement; i++)
+    for (DWORD i = 0; i < block->simple.cElement; i++) {
         CertFreeCertificateContext(block->elements[i].pCertContext);
+        CertFreeCRLContext(block->crl[i].pBaseCrlContext);
+        CertFreeCRLContext(block->crl[i].pDeltaCrlContext);
+    }
     CrFree(block);
 }
 
@@ -638,6 +714,44 @@ static BOOL first_error(PCCERT_CHAIN_CONTEXT chain, DWORD mask, LONG *chain_inde
     return FALSE;
 }
 
+/*
+ * an unknown revocation status counts unless the flag of its element's place ignores it: the end certificate, a
+ * root, or an authority between them. an element that was offline wins over one where no check was possible.
+ */
+static DWORD revocation_policy(PCCERT_CHAIN_CONTEXT chain, DWORD flags, LONG *chain_index, LONG *element_index)
+{
+    if ((flags & CERT_CHAIN_POLICY_IGNORE_ALL_REV_UNKNOWN_FLAGS) == CERT_CHAIN_POLICY_IGNORE_ALL_REV_UNKNOWN_FLAGS)
+        return 0;
+    DWORD error = 0;
+    for (DWORD c = 0; c < chain->cChain; c++) {
+        const CERT_SIMPLE_CHAIN *simple = chain->rgpChain[c];
+        for (DWORD e = 0; e < simple->cElement; e++) {
+            const CERT_CHAIN_ELEMENT *element = simple->rgpElement[e];
+            if (!(element->TrustStatus.dwErrorStatus & CERT_TRUST_REVOCATION_STATUS_UNKNOWN))
+                continue;
+            DWORD ignore = (element->TrustStatus.dwInfoStatus & CERT_TRUST_IS_SELF_SIGNED)
+                               ? CERT_CHAIN_POLICY_IGNORE_ROOT_REV_UNKNOWN_FLAG
+                           : e ? CERT_CHAIN_POLICY_IGNORE_CA_REV_UNKNOWN_FLAG
+                           : c ? CERT_CHAIN_POLICY_IGNORE_CTL_SIGNER_REV_UNKNOWN_FLAG
+                               : CERT_CHAIN_POLICY_IGNORE_END_REV_UNKNOWN_FLAG;
+            if (flags & ignore)
+                continue;
+            DWORD result = element->pRevocationInfo &&
+                                   element->pRevocationInfo->dwRevocationResult == (DWORD)CRYPT_E_NO_REVOCATION_CHECK
+                               ? (DWORD)CRYPT_E_NO_REVOCATION_CHECK
+                               : (DWORD)CRYPT_E_REVOCATION_OFFLINE;
+            if (!error || result == (DWORD)CRYPT_E_REVOCATION_OFFLINE) {
+                error = result;
+                *chain_index = (LONG)c;
+                *element_index = (LONG)e;
+                if (result == (DWORD)CRYPT_E_REVOCATION_OFFLINE)
+                    return error;
+            }
+        }
+    }
+    return error;
+}
+
 /* the base policy every other one starts from; returns the error found or 0. */
 static DWORD base_policy(PCCERT_CHAIN_CONTEXT chain, DWORD flags, LONG *chain_index, LONG *element_index)
 {
@@ -648,9 +762,9 @@ static DWORD base_policy(PCCERT_CHAIN_CONTEXT chain, DWORD flags, LONG *chain_in
     } checks[] = {
         {CERT_TRUST_IS_NOT_SIGNATURE_VALID, 0, TRUST_E_CERT_SIGNATURE},
         {CERT_TRUST_IS_EXPLICIT_DISTRUST, 0, CRYPT_E_REVOKED},
-        {CERT_TRUST_IS_REVOKED, 0, CRYPT_E_REVOKED},
         {CERT_TRUST_IS_UNTRUSTED_ROOT, CERT_CHAIN_POLICY_ALLOW_UNKNOWN_CA_FLAG, CERT_E_UNTRUSTEDROOT},
         {CERT_TRUST_IS_PARTIAL_CHAIN, CERT_CHAIN_POLICY_ALLOW_UNKNOWN_CA_FLAG, CERT_E_CHAINING},
+        {CERT_TRUST_IS_REVOKED, 0, CRYPT_E_REVOKED},
         {CERT_TRUST_IS_CYCLIC, 0, CERT_E_CHAINING},
         {CERT_TRUST_IS_NOT_TIME_VALID, CERT_CHAIN_POLICY_IGNORE_NOT_TIME_VALID_FLAG, CERT_E_EXPIRED},
         {CERT_TRUST_IS_NOT_TIME_NESTED, CERT_CHAIN_POLICY_IGNORE_NOT_TIME_NESTED_FLAG, CERT_E_VALIDITYPERIODNESTING},
@@ -658,8 +772,6 @@ static DWORD base_policy(PCCERT_CHAIN_CONTEXT chain, DWORD flags, LONG *chain_in
         {CERT_TRUST_INVALID_BASIC_CONSTRAINTS, CERT_CHAIN_POLICY_IGNORE_INVALID_BASIC_CONSTRAINTS_FLAG,
          TRUST_E_BASIC_CONSTRAINTS},
         {CERT_TRUST_INVALID_EXTENSION, 0, CERT_E_CRITICAL},
-        {CERT_TRUST_REVOCATION_STATUS_UNKNOWN, CERT_CHAIN_POLICY_IGNORE_ALL_REV_UNKNOWN_FLAGS,
-         CRYPT_E_REVOCATION_OFFLINE},
     };
     for (DWORD i = 0; i < RTL_NUMBER_OF(checks); i++) {
         if (checks[i].ignore && (flags & checks[i].ignore) == checks[i].ignore)
@@ -667,7 +779,7 @@ static DWORD base_policy(PCCERT_CHAIN_CONTEXT chain, DWORD flags, LONG *chain_in
         if (first_error(chain, checks[i].status, chain_index, element_index))
             return checks[i].error;
     }
-    return 0;
+    return revocation_policy(chain, flags, chain_index, element_index);
 }
 
 static BOOL dns_matches(LPCWSTR pattern, LPCWSTR host)
