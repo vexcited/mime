@@ -1165,6 +1165,8 @@ static int limit_of(int32_t limit, int outside, double scale)
     return limit > 0 ? MIME_MAX(1, (int)lround((limit - outside) / scale)) : 0;
 }
 
+static void unminimize(UiWindow *w, bool activate);
+
 static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
 {
     if (w->state_pending) {
@@ -1267,8 +1269,8 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
         if (opening)
             SDL_ShowWindow(w->window);
         if (SDL_GetWindowFlags(w->window) & SDL_WINDOW_MINIMIZED)
-            SDL_RestoreWindow(w->window);
-        if (cfg->flags & MIME_WIN_ACTIVATE)
+            unminimize(w, (cfg->flags & MIME_WIN_ACTIVATE) != 0);
+        else if (cfg->flags & MIME_WIN_ACTIVATE)
             raise_window(w);
         w->shown = true;
     } else if (w->shown) {
@@ -1330,6 +1332,49 @@ static void raise_window(UiWindow *w)
             return;
     }
     SDL_RaiseWindow(w->window);
+}
+
+static bool fresh_token(void)
+{
+    pthread_mutex_lock(&g_token_lock);
+    bool fresh = g_activation_token[0] && now_ms() - g_activation_token_ms < 5000;
+    pthread_mutex_unlock(&g_token_lock);
+    return fresh;
+}
+
+static void apply_app_id(UiWindow *w);
+static void commit_parent(UiWindow *w);
+
+/*
+ * xdg-shell has no way to unminimize: a window comes back when it is activated. kwin grants activation to the active
+ * window's client, to the latest input or to a token the shell handed out, and otherwise only marks the window as
+ * demanding attention, which left it minimized while the guest showed it. windows restores a window it does not
+ * activate all the same, so such a window is mapped again: kwin shows a new window, if not on top.
+ */
+static void unminimize(UiWindow *w, bool activate)
+{
+    if (!g_wayland) {
+        SDL_RestoreWindow(w->window);
+        if (activate)
+            raise_window(w);
+        return;
+    }
+    if (activate && (fresh_token() || SDL_GetKeyboardFocus())) {
+        raise_window(w);
+        return;
+    }
+    bool maximized = w->maximized;
+    SDL_HideWindow(w->window);
+    /* a hidden window keeps its minimized state for the next show, this drops it. */
+    SDL_RestoreWindow(w->window);
+    if (maximized)
+        SDL_MaximizeWindow(w->window);
+    SDL_ShowWindow(w->window);
+    w->geometry_w = w->geometry_h = 0;
+    w->set_app_id[0] = 0;
+    apply_app_id(w);
+    set_geometry(w);
+    commit_parent(w);
 }
 
 /* sets xdg_toplevel's application id by protocol opcode. */
