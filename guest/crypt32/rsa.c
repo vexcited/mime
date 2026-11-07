@@ -360,6 +360,12 @@ BOOL WINAPI CryptVerifyCertificateSignatureEx(HCRYPTPROV_LEGACY hCryptProv, DWOR
         size = cert->cbCertEncoded;
         break;
     }
+    case CRYPT_VERIFY_CERT_SIGN_SUBJECT_CRL: {
+        PCCRL_CONTEXT crl = pvSubject;
+        data = crl->pbCrlEncoded;
+        size = crl->cbCrlEncoded;
+        break;
+    }
     default:
         return CrFail(E_INVALIDARG);
     }

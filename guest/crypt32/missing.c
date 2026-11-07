@@ -1,8 +1,7 @@
 /*
  * the calls of crypt32 that are not made yet. they are here because other libraries import them by name, as the security
  * forwarder of the database engine does, and a library cannot load without them. each one says it is not implemented:
- * a call that answers a certificate revocation list, a trust list, an object identifier function, a signature provider
- * or a pkcs 8 key does not get a made up answer.
+ * a call that answers a trust list, a signature provider or a pkcs 8 key does not get a made up answer.
  */
 #include "crypt32_private.h"
 
@@ -24,11 +23,6 @@ WINCRYPT32API BOOL WINAPI CryptDecryptMessage(void)
 }
 
 WINCRYPT32API BOOL WINAPI CertVerifyValidityNesting(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CertVerifyRevocation(void)
 {
     return NOT_YET(FALSE);
 }
@@ -79,16 +73,6 @@ WINCRYPT32API BOOL WINAPI CryptVerifyDetachedMessageHash(void)
 }
 
 WINCRYPT32API BOOL WINAPI CryptUnregisterOIDInfo(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CryptUnregisterOIDFunction(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CryptUnregisterDefaultOIDFunction(void)
 {
     return NOT_YET(FALSE);
 }
@@ -183,16 +167,6 @@ WINCRYPT32API BOOL WINAPI CryptRegisterOIDInfo(void)
     return NOT_YET(FALSE);
 }
 
-WINCRYPT32API BOOL WINAPI CryptRegisterOIDFunction(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CryptRegisterDefaultOIDFunction(void)
-{
-    return NOT_YET(FALSE);
-}
-
 WINCRYPT32API BOOL WINAPI CryptMsgVerifyCountersignatureEncodedEx(void)
 {
     return NOT_YET(FALSE);
@@ -243,19 +217,9 @@ WINCRYPT32API DWORD WINAPI CryptMsgCalculateEncodedLength(void)
     return NOT_YET(0);
 }
 
-WINCRYPT32API BOOL WINAPI CryptInstallOIDFunctionAddress(void)
-{
-    return NOT_YET(FALSE);
-}
-
 WINCRYPT32API BOOL WINAPI CryptInstallDefaultContext(void)
 {
     return NOT_YET(FALSE);
-}
-
-WINCRYPT32API PVOID WINAPI CryptInitOIDFunctionSet(void)
-{
-    return NOT_YET(nullptr);
 }
 
 WINCRYPT32API BOOL WINAPI CryptImportPublicKeyInfoEx2(void)
@@ -278,32 +242,12 @@ WINCRYPT32API BOOL WINAPI CryptGetOIDFunctionValue(void)
     return NOT_YET(FALSE);
 }
 
-WINCRYPT32API BOOL WINAPI CryptGetOIDFunctionAddress(void)
-{
-    return NOT_YET(FALSE);
-}
-
 WINCRYPT32API DWORD WINAPI CryptGetMessageSignerCount(void)
 {
     return NOT_YET(0);
 }
 
 WINCRYPT32API BOOL WINAPI CryptGetKeyIdentifierProperty(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CryptGetDefaultOIDFunctionAddress(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CryptGetDefaultOIDDllList(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CryptFreeOIDFunctionAddress(void)
 {
     return NOT_YET(FALSE);
 }
@@ -343,27 +287,12 @@ WINCRYPT32API BOOL WINAPI CryptEnumKeyIdentifierProperties(void)
     return NOT_YET(FALSE);
 }
 
-WINCRYPT32API BOOL WINAPI CertAddCRLContextToStore(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CertAddCRLLinkToStore(void)
-{
-    return NOT_YET(FALSE);
-}
-
 WINCRYPT32API BOOL WINAPI CertAddCTLContextToStore(void)
 {
     return NOT_YET(FALSE);
 }
 
 WINCRYPT32API BOOL WINAPI CertAddCTLLinkToStore(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CertAddEncodedCRLToStore(void)
 {
     return NOT_YET(FALSE);
 }
@@ -393,11 +322,6 @@ WINCRYPT32API void WINAPI CertCloseServerOcspResponse(void)
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 }
 
-WINCRYPT32API PVOID WINAPI CertCreateCRLContext(void)
-{
-    return NOT_YET(nullptr);
-}
-
 WINCRYPT32API PVOID WINAPI CertCreateCTLContext(void)
 {
     return NOT_YET(nullptr);
@@ -413,29 +337,14 @@ WINCRYPT32API PVOID WINAPI CertCreateContext(void)
     return NOT_YET(nullptr);
 }
 
-WINCRYPT32API BOOL WINAPI CertDeleteCRLFromStore(void)
-{
-    return NOT_YET(FALSE);
-}
-
 WINCRYPT32API BOOL WINAPI CertDeleteCTLFromStore(void)
 {
     return NOT_YET(FALSE);
 }
 
-WINCRYPT32API PVOID WINAPI CertDuplicateCRLContext(void)
-{
-    return NOT_YET(nullptr);
-}
-
 WINCRYPT32API PVOID WINAPI CertDuplicateCTLContext(void)
 {
     return NOT_YET(nullptr);
-}
-
-WINCRYPT32API DWORD WINAPI CertEnumCRLContextProperties(void)
-{
-    return NOT_YET(0);
 }
 
 WINCRYPT32API DWORD WINAPI CertEnumCTLContextProperties(void)
@@ -463,19 +372,9 @@ WINCRYPT32API PVOID WINAPI CertFindAttribute(void)
     return NOT_YET(nullptr);
 }
 
-WINCRYPT32API PVOID WINAPI CertFindCRLInStore(void)
-{
-    return NOT_YET(nullptr);
-}
-
 WINCRYPT32API PVOID WINAPI CertFindCTLInStore(void)
 {
     return NOT_YET(nullptr);
-}
-
-WINCRYPT32API BOOL WINAPI CertFindCertificateInCRL(void)
-{
-    return NOT_YET(FALSE);
 }
 
 WINCRYPT32API PVOID WINAPI CertFindSubjectInCTL(void)
@@ -503,16 +402,6 @@ WINCRYPT32API void WINAPI CertFreeServerOcspResponseContext(void)
     SetLastError(ERROR_CALL_NOT_IMPLEMENTED);
 }
 
-WINCRYPT32API BOOL WINAPI CertGetCRLContextProperty(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API PVOID WINAPI CertGetCRLFromStore(void)
-{
-    return NOT_YET(nullptr);
-}
-
 WINCRYPT32API BOOL WINAPI CertGetCTLContextProperty(void)
 {
     return NOT_YET(FALSE);
@@ -523,17 +412,7 @@ WINCRYPT32API PVOID WINAPI CertGetServerOcspResponseContext(void)
     return NOT_YET(nullptr);
 }
 
-WINCRYPT32API DWORD WINAPI CertVerifyCRLTimeValidity(void)
-{
-    return NOT_YET(0);
-}
-
 WINCRYPT32API BOOL WINAPI CertIsStrongHashToSign(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CertIsValidCRLForCertificate(void)
 {
     return NOT_YET(FALSE);
 }
@@ -563,17 +442,7 @@ WINCRYPT32API BOOL WINAPI CertSelectCertificateChains(void)
     return NOT_YET(FALSE);
 }
 
-WINCRYPT32API BOOL WINAPI CertSerializeCRLStoreElement(void)
-{
-    return NOT_YET(FALSE);
-}
-
 WINCRYPT32API BOOL WINAPI CertSerializeCTLStoreElement(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CertSetCRLContextProperty(void)
 {
     return NOT_YET(FALSE);
 }
@@ -594,11 +463,6 @@ WINCRYPT32API BOOL WINAPI CertSetEnhancedKeyUsage(void)
 }
 
 WINCRYPT32API BOOL WINAPI CertUnregisterPhysicalStore(void)
-{
-    return NOT_YET(FALSE);
-}
-
-WINCRYPT32API BOOL WINAPI CertVerifyCRLRevocation(void)
 {
     return NOT_YET(FALSE);
 }

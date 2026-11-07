@@ -1026,9 +1026,14 @@ BOOL WINAPI CryptQueryObject(DWORD object_type, const void *object, DWORD conten
                                                   CERT_STORE_ADD_ALWAYS, nullptr)))
                 error = CRYPT_E_ASN1_CORRUPT;
         }
-        /* the current store has no CRL insertion support. */
-        if (!error && message->crl_count)
-            error = ERROR_NOT_SUPPORTED;
+        for (DWORD i = 0; !error && i < message->crl_count; i++) {
+            der_item crl;
+            error = item_at(message->crls, i, &crl);
+            if (!error && (crl.tag != ASN_SEQUENCE ||
+                !CertAddEncodedCRLToStore(store, X509_ASN_ENCODING, crl.start, crl.total, CERT_STORE_ADD_ALWAYS,
+                                          nullptr)))
+                error = CRYPT_E_ASN1_CORRUPT;
+        }
     }
     HCRYPTMSG handle = nullptr;
     if (!error && message_out) {
