@@ -127,7 +127,22 @@ void FrameGetVisibleRect(WND *w, RECT *r)
     FRAME_METRICS m;
     FrameGetMetrics(w->Style, w->ExStyle, WndFrameDpi(w), &m);
     if (w->Style & WS_MAXIMIZE) {
-        /* the frame of a maximized window lies outside the work area. */
+        /*
+         * a maximized window shows what of it is on the work area, where windows leaves its frame outside. a
+         * borderless toolkit window, as sdl's, maximizes at the work area itself and shows whole.
+         */
+        if (WndIsTopLevel(w)) {
+            RECT physical = w->WindowRect;
+            DpiRectConvert(&physical, w->Awareness, DPI_PHYSICAL);
+            RECT work = MonitorWorkOfRect(&physical);
+            DpiRectConvert(&work, DPI_PHYSICAL, w->Awareness);
+            RECT in = {W32Max(work.left - w->WindowRect.left, 0), W32Max(work.top - w->WindowRect.top, 0),
+                       W32Min(work.right - w->WindowRect.left, width), W32Min(work.bottom - w->WindowRect.top, height)};
+            if (in.right > in.left && in.bottom > in.top) {
+                *r = in;
+                return;
+            }
+        }
         *r = (RECT){m.Border, m.Border, width - m.Border, height - m.Border};
         return;
     }
