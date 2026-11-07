@@ -289,6 +289,7 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
     }
     process->SessionId = SepTokenSessionId(process);
     process->ImageSection = section;
+    process->Subsystem = section->Image.Subsystem;
     process->SystemDll = system_dll;
     process->Machine = machine;
     if (process->Machine == IMAGE_FILE_MACHINE_I386)

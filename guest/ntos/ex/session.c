@@ -183,7 +183,7 @@ static void handle_run(const MimeCtrlRun *run, ULONG size)
         send_process_event(MIME_EVT_RUN_FAILED, run->request_id, (ULONG)status, 0);
         return;
     }
-    send_process_event(MIME_EVT_PROCESS_STARTED, run->request_id, process->ImageSection->Image.Subsystem,
+    send_process_event(MIME_EVT_PROCESS_STARTED, run->request_id, process->Subsystem,
                        (ULONG)(ULONG_PTR)process->UniqueProcessId);
     ObDereferenceObject(process);
 }
