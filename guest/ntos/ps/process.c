@@ -436,8 +436,11 @@ static void process_times(PEPROCESS process, ULONG64 *times)
 NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PVOID info, ULONG length,
                                          PULONG returned)
 {
+    NTSTATUS status = KiProbeReturnLength(returned);
+    if (!NT_SUCCESS(status))
+        return status;
     PEPROCESS process;
-    NTSTATUS status = PsReferenceProcessHandle(handle, query_rights(klass), &process);
+    status = PsReferenceProcessHandle(handle, query_rights(klass), &process);
     if (!NT_SUCCESS(status))
         return status;
     union {
@@ -505,6 +508,26 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         out.ptr = (ULONG_PTR)process->Wow64Peb;
         size = sizeof(ULONG_PTR);
         break;
+    case ProcessDebugObjectHandle: {
+        /* mime has no debug objects, so no process has a debugger: a null handle and no port, as windows answers. */
+        HANDLE none = nullptr;
+        size = sizeof(HANDLE);
+        status = length != size ? STATUS_INFO_LENGTH_MISMATCH : STATUS_PORT_NOT_SET;
+        if (status == STATUS_PORT_NOT_SET) {
+            if (KeGetPreviousMode() != UserMode)
+                *(PHANDLE)info = none;
+            else if (!NT_SUCCESS(KiCopyToUser(info, &none, size)))
+                status = STATUS_ACCESS_VIOLATION;
+        }
+        if (returned) {
+            if (KeGetPreviousMode() == UserMode)
+                KiCopyToUser(returned, &size, sizeof(size));
+            else
+                *returned = size;
+        }
+        ObDereferenceObject(process);
+        return status;
+    }
     case ProcessDebugFlags:
         out.u32[0] = 1;
         size = sizeof(ULONG);

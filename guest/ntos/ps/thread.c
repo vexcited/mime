@@ -742,8 +742,11 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
     default:
         break;
     }
+    NTSTATUS status = KiProbeReturnLength(returned);
+    if (!NT_SUCCESS(status))
+        return status;
     PETHREAD thread;
-    NTSTATUS status = PsReferenceThreadHandle(handle, rights, &thread);
+    status = PsReferenceThreadHandle(handle, rights, &thread);
     if (status == STATUS_ACCESS_DENIED && rights != THREAD_QUERY_INFORMATION)
         status = PsReferenceThreadHandle(handle, THREAD_QUERY_INFORMATION, &thread);
     if (!NT_SUCCESS(status))

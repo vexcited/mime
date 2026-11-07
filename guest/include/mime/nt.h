@@ -170,6 +170,7 @@ typedef struct _GUID {
 #define STATUS_INVALID_SYSTEM_SERVICE ((NTSTATUS)0xC000001CL)
 #define STATUS_INVALID_VIEW_SIZE ((NTSTATUS)0xC000001FL)
 #define STATUS_PORT_ALREADY_SET ((NTSTATUS)0xC0000048L)
+#define STATUS_PORT_NOT_SET ((NTSTATUS)0xC0000353L)
 #define STATUS_ALREADY_COMMITTED ((NTSTATUS)0xC0000021L)
 #define STATUS_ACCESS_DENIED ((NTSTATUS)0xC0000022L)
 #define STATUS_BUFFER_TOO_SMALL ((NTSTATUS)0xC0000023L)
@@ -2476,6 +2477,7 @@ typedef enum _PROCESSINFOCLASS {
     ProcessSessionInformation = 24,
     ProcessWow64Information = 26,
     ProcessImageFileName = 27,
+    ProcessDebugObjectHandle = 30,
     ProcessDebugFlags = 31,
     ProcessExecuteFlags = 34,
     ProcessCookie = 36,
