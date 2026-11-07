@@ -55,6 +55,7 @@ typedef struct UiWindow {
     SDL_DisplayID display; /* the display last reported to the guest. */
     bool maximized;        /* the compositor has the window maximized. */
     bool bogus_size;       /* the compositor gave a size no display could show, which is not acted on. */
+    int geometry_w, geometry_h; /* the window geometry last given to the compositor, in surface coordinates. */
     int want_w, want_h;    /* the last size asked of the compositor, in SDL window coordinates. */
     uint64_t want_ms;      /* time of the last size request. */
     uint64_t fullscreen_ms; /* when the guest last asked for or left fullscreen. */
@@ -844,10 +845,10 @@ static SDL_HitTestResult hit_test(SDL_Window *window, const SDL_Point *point, vo
 }
 
 /*
- * kwin configures a window it minimizes or restores 100000 pixels wider and taller than it is. a buffer of that size
- * is tens of gigabytes, which the nvidia driver tries to take from system memory at once when video memory cannot
- * hold it, and the host runs out within a second. a size past twice the largest display, or past 16384, is taken for
- * such a size.
+ * a size past twice the largest display, or past 16384, is none a window should have. kwin gave such sizes, 100000
+ * pixels more than the window, while the window geometry was left to the extent of the surfaces, see set_geometry.
+ * a buffer of that size is tens of gigabytes, which the nvidia driver takes from system memory when video memory
+ * cannot hold it, and the host runs out within a second.
  */
 static int sane_limit(void)
 {
@@ -869,6 +870,30 @@ static bool sane_size(int width, int height)
     return width <= limit && height <= limit;
 }
 
+/*
+ * a host window tells the compositor its own rectangle. without it the window is the extent of the surface and its
+ * subsurfaces, so a vulkan layer moved aside by HIDDEN_LAYER made kwin take the window for one 100000 pixels larger:
+ * it configured it at that size, kept it maximized at it and drew it into buffers of tens of gigabytes for its
+ * effects, which the nvidia driver took from system memory until the host ran out. it lands with the next commit.
+ */
+enum { XDG_SURFACE_SET_WINDOW_GEOMETRY = 3 };
+
+static void set_geometry(UiWindow *w)
+{
+    if (!g_wayland || !w->window)
+        return;
+    struct wl_proxy *xdg = SDL_GetPointerProperty(SDL_GetWindowProperties(w->window),
+                                                  SDL_PROP_WINDOW_WAYLAND_XDG_SURFACE_POINTER, nullptr);
+    int width = 0, height = 0;
+    SDL_GetWindowSize(w->window, &width, &height);
+    if (!xdg || width <= 0 || height <= 0 || !sane_size(width, height) ||
+        (width == w->geometry_w && height == w->geometry_h))
+        return;
+    w->geometry_w = width;
+    w->geometry_h = height;
+    wl_proxy_marshal_flags(xdg, XDG_SURFACE_SET_WINDOW_GEOMETRY, nullptr, wl_proxy_get_version(xdg), 0, 0, 0, width, height);
+}
+
 static void update_pixel_size(UiWindow *w)
 {
     int width = 0, height = 0, logical_width = 0, logical_height = 0;
@@ -882,6 +907,7 @@ static void update_pixel_size(UiWindow *w)
     w->bogus_size = bogus;
     if (bogus)
         return;
+    set_geometry(w);
     pthread_mutex_lock(&w->lock);
     w->pixel_width = (uint32_t)MIME_MAX(width, 0);
     w->pixel_height = (uint32_t)MIME_MAX(height, 0);
@@ -1177,6 +1203,8 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
     bool fresh = !w->window;
     if (fresh && !create_host_window(w, cfg))
         return;
+    if (fresh)
+        set_geometry(w);
 
     char title[1024];
     mime_utf16_to_utf8(title, sizeof(title), cfg->title, MIME_MIN(cfg->title_chars, 256u));
@@ -1745,6 +1773,7 @@ static void place_layer(UiWindow *w, VkLayer *l, MimeRect area, uint32_t order)
          */
         if (memcmp(&r, &l->place, sizeof(r))) {
             l->place = r;
+            set_geometry(w);
             wl_subsurface_set_position(l->subsurface, -HIDDEN_LAYER, -HIDDEN_LAYER);
         }
         if (restack)
