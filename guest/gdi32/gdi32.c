@@ -1087,6 +1087,7 @@ WINGDIAPI HPEN WINAPI ExtCreatePen(DWORD style, DWORD width, const LOGBRUSH *lb,
 /* ------------------------------------------------------------------ fonts and text */
 
 void GdiAskForFont(const LOGFONTW *lf);
+void GdiAskForText(const WCHAR *text, int count);
 
 WINGDIAPI HFONT WINAPI CreateFontIndirectW(const LOGFONTW *lf)
 {
@@ -1144,6 +1145,8 @@ WINGDIAPI BOOL WINAPI ExtTextOutW(HDC dc, int x, int y, UINT options, const RECT
 {
     if (MfActive(dc))
         return MfTextOut(dc, x, y, options, rect, text, count, dx);
+    if (!(options & ETO_GLYPH_INDEX))
+        GdiAskForText(text, (int)count);
     return NtGdiExtTextOutW(dc, x, y, options, rect, text, (int)count, dx, 0);
 }
 
@@ -1151,6 +1154,7 @@ WINGDIAPI BOOL WINAPI TextOutW(HDC dc, int x, int y, LPCWSTR text, int count)
 {
     if (MfActive(dc))
         return count >= 0 && MfTextOut(dc, x, y, 0, nullptr, text, (UINT)count, nullptr);
+    GdiAskForText(text, count);
     return NtGdiExtTextOutW(dc, x, y, 0, nullptr, text, count, nullptr, 0);
 }
 
@@ -1185,6 +1189,8 @@ WINGDIAPI BOOL WINAPI ExtTextOutA(HDC dc, int x, int y, UINT options, const RECT
     LPWSTR w = to_wide(text, (int)count, &n);
     if (!w)
         return FALSE;
+    if (!(options & ETO_GLYPH_INDEX))
+        GdiAskForText(w, n);
     BOOL ok = NtGdiExtTextOutW(dc, x, y, options, rect, w, n, (dx && (int)count == n) ? dx : nullptr, 0);
     free_wide(w);
     return ok;
@@ -1198,11 +1204,13 @@ WINGDIAPI BOOL WINAPI TextOutA(HDC dc, int x, int y, LPCSTR text, int count)
 WINGDIAPI BOOL WINAPI GetTextExtentExPointW(HDC dc, LPCWSTR text, int count, int max_extent, LPINT fit, LPINT dx,
                                             LPSIZE size)
 {
+    GdiAskForText(text, count);
     return NtGdiGetTextExtentExW(dc, text, (ULONG)count, (ULONG)max_extent, (ULONG *)fit, (ULONG *)dx, size, 0);
 }
 
 WINGDIAPI BOOL WINAPI GetTextExtentPoint32W(HDC dc, LPCWSTR text, int count, LPSIZE size)
 {
+    GdiAskForText(text, count);
     return NtGdiGetTextExtentExW(dc, text, (ULONG)count, 0, nullptr, nullptr, size, 0);
 }
 

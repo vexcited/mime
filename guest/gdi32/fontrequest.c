@@ -139,3 +139,63 @@ void GdiAskForFont(const LOGFONTW *lf)
     MimeFeatureRequestFont(family);
     SetLastError(last);
 }
+
+enum { SCRIPT_THAI = 1, SCRIPT_HANGUL = 2, SCRIPT_KANA = 4, SCRIPT_HAN = 8 };
+
+static volatile LONG g_scripts_seen;
+
+static BOOL any_installed(const WCHAR *const *families)
+{
+    for (; *families; families++)
+        if (installed(*families))
+            return TRUE;
+    return FALSE;
+}
+
+static void ask_family(const WCHAR *family)
+{
+    LOGFONTW lf = {};
+    lstrcpynW(lf.lfFaceName, family, LF_FACESIZE);
+    GdiAskForFont(&lf);
+}
+
+/*
+ * text in a script that no font here has asks once for the font windows links the script to, so the linked fonts of
+ * the kernel can draw it.
+ */
+void GdiAskForText(const WCHAR *text, int count)
+{
+    if (g_mode == 2 || !text || count <= 0)
+        return;
+    LONG scripts = 0;
+    for (int i = 0; i < count; i++) {
+        WCHAR c = text[i];
+        if (c < 0x0E00)
+            continue;
+        if (c <= 0x0E7F)
+            scripts |= SCRIPT_THAI;
+        else if ((c >= 0x1100 && c <= 0x11FF) || (c >= 0x3130 && c <= 0x318F) || (c >= 0xAC00 && c <= 0xD7AF))
+            scripts |= SCRIPT_HANGUL;
+        else if ((c >= 0x3040 && c <= 0x30FF) || (c >= 0x31F0 && c <= 0x31FF) || (c >= 0xFF66 && c <= 0xFF9F))
+            scripts |= SCRIPT_KANA;
+        else if ((c >= 0x2E80 && c <= 0x2FDF) || (c >= 0x3400 && c <= 0x9FFF) || (c >= 0xF900 && c <= 0xFAFF))
+            scripts |= SCRIPT_HAN;
+    }
+    scripts &= ~g_scripts_seen;
+    if (!scripts)
+        return;
+    InterlockedOr(&g_scripts_seen, scripts);
+    static const WCHAR *const thai[] = {L"Tahoma", L"Leelawadee UI", nullptr};
+    static const WCHAR *const hangul[] = {L"Malgun Gothic", L"Gulim", L"Batang", nullptr};
+    static const WCHAR *const kana[] = {L"Yu Gothic UI", L"Meiryo UI", L"MS UI Gothic", nullptr};
+    static const WCHAR *const han[] = {L"Yu Gothic UI", L"Meiryo UI", L"MS UI Gothic", L"Microsoft JhengHei UI",
+                                       L"Microsoft YaHei UI", L"SimSun", L"PMingLiU", nullptr};
+    if ((scripts & SCRIPT_THAI) && !any_installed(thai))
+        ask_family(L"Leelawadee UI");
+    if ((scripts & SCRIPT_HANGUL) && !any_installed(hangul))
+        ask_family(L"Malgun Gothic");
+    if ((scripts & SCRIPT_KANA) && !any_installed(kana))
+        ask_family(L"Yu Gothic UI");
+    else if ((scripts & SCRIPT_HAN) && !any_installed(han))
+        ask_family(L"Microsoft YaHei UI");
+}
