@@ -26,6 +26,9 @@ EXPORTS
     ExInitializeTimeZone
     ExMutantType DATA
     ExQueryPoolUsage
+    ExRaiseAccessViolation
+    ExRaiseDatatypeMisalignment
+    ExRaiseStatus
     ExReleaseFastMutex
     ExReleaseFastMutexUnsafe
     ExReleaseResourceLite
@@ -260,6 +263,7 @@ EXPORTS
     MmGetPhysicalAddress
     MmGetSystemRoutineAddress
     MmGetTotalPages
+    MmHighestUserAddress DATA
     MmInitialize
     MmIsAddressValid
     MmLoadSystemImage
@@ -271,7 +275,9 @@ EXPORTS
     MmSectionObjectType DATA
     MmSectionType DATA
     MmSetProcessCallbackTable
+    MmSystemRangeStart DATA
     MmUnmapViewInSystemSpace
+    MmUserProbeAddress DATA
     MmWindowLostFault
     MmWindowLostInitialize
     MmWindowLostInterrupt
@@ -505,6 +511,8 @@ EXPORTS
     ObTypeType DATA
     ObfDereferenceObject
     ObfReferenceObject
+    ProbeForRead
+    ProbeForWrite
     PsCreateIdleThread
     PsCreateSystemThread
     PsCreateUserProcess
@@ -576,6 +584,7 @@ EXPORTS
     RtlAppendUnicodeToString
     RtlAreAllAccessesGranted
     RtlAreAnyAccessesGranted
+    RtlCaptureContext
     RtlCompareUnicodeString
     RtlCompareUnicodeStrings
     RtlConvertToAutoInheritSecurityObject
@@ -589,6 +598,7 @@ EXPORTS
     RtlCreateUnicodeString
     RtlDeleteAce
     RtlDeleteSecurityObject
+    RtlDispatchException
     RtlDowncaseUnicodeChar
     RtlEqualPrefixSid
     RtlEqualSid
@@ -623,6 +633,7 @@ EXPORTS
     RtlLengthRequiredSid
     RtlLengthSecurityDescriptor
     RtlLengthSid
+    RtlLookupFunctionEntry
     RtlMakeSelfRelativeSD
     RtlMapGenericMask
     RtlMapSecurityErrorToNtStatus
@@ -632,7 +643,10 @@ EXPORTS
     RtlPrefixUnicodeString
     RtlQueryInformationAcl
     RtlQuerySecurityObject
+    RtlRaiseException
+    RtlRaiseStatus
     RtlReplaceSidInSd
+    RtlRestoreContext
     RtlSelfRelativeToAbsoluteSD
     RtlSelfRelativeToAbsoluteSD2
     RtlSetAttributesSecurityDescriptor
@@ -660,12 +674,15 @@ EXPORTS
     RtlUnicodeStringToInteger
     RtlUnicodeToMultiByteN
     RtlUnicodeToUTF8N
+    RtlUnwind
+    RtlUnwindEx
     RtlUpcaseUnicodeChar
     RtlUpcaseUnicodeString
     RtlValidAcl
     RtlValidRelativeSecurityDescriptor
     RtlValidSecurityDescriptor
     RtlValidSid
+    RtlVirtualUnwind
     SeAccessCheckRequired
     SeCheckAccess
     SeSdAddInheritedLabel
@@ -728,6 +745,7 @@ EXPORTS
     ZwUnmapViewOfSection
     ZwWaitForSingleObject
     ZwWriteFile
+    __C_specific_handler
     __chkstk
     _snprintf
     _snwprintf

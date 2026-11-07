@@ -796,8 +796,8 @@ NTKERNELAPI NTSTATUS NTAPI MmMapViewInSystemSpace(PVOID section, PVOID *base, PS
 NTKERNELAPI NTSTATUS NTAPI MmUnmapViewInSystemSpace(PVOID base);
 NTKERNELAPI NTSTATUS NTAPI MmCopyVirtualMemory(PEPROCESS from_process, PVOID from, PEPROCESS to_process, PVOID to,
                                                SIZE_T size, KPROCESSOR_MODE mode, PSIZE_T copied);
-NTKERNELAPI void NTAPI ProbeForRead(PVOID address, SIZE_T length, ULONG alignment);
-NTKERNELAPI void NTAPI ProbeForWrite(PVOID address, SIZE_T length, ULONG alignment);
+NTKERNELAPI void NTAPI ProbeForRead(const volatile void *address, SIZE_T length, ULONG alignment);
+NTKERNELAPI void NTAPI ProbeForWrite(volatile void *address, SIZE_T length, ULONG alignment);
 
 NTKERNELAPI NTSTATUS NTAPI PsCreateSystemThread(PHANDLE handle, ULONG access, POBJECT_ATTRIBUTES attributes,
                                                 HANDLE process, PCLIENT_ID client, PKSTART_ROUTINE routine,
