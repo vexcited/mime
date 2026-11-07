@@ -364,9 +364,73 @@ static DWORD dec_name(cr_arena *a, const der_item *item, BOOL unicode, DWORD fla
     return 0;
 }
 
+static DWORD dec_alt_entry(cr_arena *a, const der_item *name_item, CERT_ALT_NAME_ENTRY *out)
+{
+    der_item name = *name_item;
+    CERT_ALT_NAME_ENTRY e = {};
+    DWORD error;
+    switch (name.tag) {
+    case ASN_CONSTRUCTED_CONTEXT(0): {
+        der_reader inner;
+        der_item oid, wrapper;
+        CERT_OTHER_NAME other = {};
+        DerOpen(&inner, &name);
+        if ((error = DerExpect(&inner, ASN_OID, &oid)) || (error = dec_oid(a, &oid, &other.pszObjId)) ||
+            (error = DerExpect(&inner, ASN_CONSTRUCTED_CONTEXT(0), &wrapper)))
+            return error;
+        dec_blob(a, wrapper.content, wrapper.length, &other.Value);
+        PCERT_OTHER_NAME p = ArenaCopy(a, &other, sizeof(other));
+        e.dwAltNameChoice = CERT_ALT_NAME_OTHER_NAME;
+        e.pOtherName = p;
+        break;
+    }
+    case ASN_CONTEXT(1):
+    case ASN_CONTEXT(2):
+    case ASN_CONTEXT(6): {
+        WCHAR *w = ArenaAlloc(a, (name.length + 1) * sizeof(WCHAR));
+        if (w) {
+            for (DWORD k = 0; k < name.length; k++)
+                w[k] = name.content[k];
+            w[name.length] = 0;
+        }
+        e.dwAltNameChoice = name.tag == ASN_CONTEXT(1)   ? CERT_ALT_NAME_RFC822_NAME
+                            : name.tag == ASN_CONTEXT(2) ? CERT_ALT_NAME_DNS_NAME
+                                                         : CERT_ALT_NAME_URL;
+        e.pwszDNSName = w;
+        break;
+    }
+    case ASN_CONSTRUCTED_CONTEXT(4): {
+        der_reader inner;
+        der_item dn;
+        DerOpen(&inner, &name);
+        if ((error = DerExpect(&inner, ASN_SEQUENCE, &dn)))
+            return error;
+        e.dwAltNameChoice = CERT_ALT_NAME_DIRECTORY_NAME;
+        dec_blob(a, dn.start, dn.total, &e.DirectoryName);
+        break;
+    }
+    case ASN_CONTEXT(7):
+        e.dwAltNameChoice = CERT_ALT_NAME_IP_ADDRESS;
+        dec_blob(a, name.content, name.length, &e.IPAddress);
+        break;
+    case ASN_CONTEXT(8): {
+        der_item oid = name;
+        oid.tag = ASN_OID;
+        e.dwAltNameChoice = CERT_ALT_NAME_REGISTERED_ID;
+        if ((error = dec_oid(a, &oid, &e.pszRegisteredID)))
+            return error;
+        break;
+    }
+    default:
+        return CRYPT_E_ASN1_BADTAG;
+    }
+    *out = e;
+    return 0;
+}
+
 static DWORD dec_alt_name(cr_arena *a, const der_item *item, CERT_ALT_NAME_INFO *out)
 {
-    if (item->tag != ASN_SEQUENCE && item->tag != ASN_CONSTRUCTED_CONTEXT(1))
+    if (item->tag != ASN_SEQUENCE && (item->tag & 0xE0) != 0xA0)
         return CRYPT_E_ASN1_BADTAG;
     DWORD n = DerCount(item);
     PCERT_ALT_NAME_ENTRY entries = n ? ArenaAlloc(a, n * sizeof(CERT_ALT_NAME_ENTRY)) : nullptr;
@@ -374,65 +438,12 @@ static DWORD dec_alt_name(cr_arena *a, const der_item *item, CERT_ALT_NAME_INFO 
     DerOpen(&r, item);
     for (DWORD i = 0; i < n; i++) {
         der_item name;
-        CERT_ALT_NAME_ENTRY e = {};
+        CERT_ALT_NAME_ENTRY e;
         DWORD error = DerRead(&r, &name);
+        if (!error)
+            error = dec_alt_entry(a, &name, &e);
         if (error)
             return error;
-        switch (name.tag) {
-        case ASN_CONSTRUCTED_CONTEXT(0): {
-            der_reader inner;
-            der_item oid, wrapper;
-            CERT_OTHER_NAME other = {};
-            DerOpen(&inner, &name);
-            if ((error = DerExpect(&inner, ASN_OID, &oid)) || (error = dec_oid(a, &oid, &other.pszObjId)) ||
-                (error = DerExpect(&inner, ASN_CONSTRUCTED_CONTEXT(0), &wrapper)))
-                return error;
-            dec_blob(a, wrapper.content, wrapper.length, &other.Value);
-            PCERT_OTHER_NAME p = ArenaCopy(a, &other, sizeof(other));
-            e.dwAltNameChoice = CERT_ALT_NAME_OTHER_NAME;
-            e.pOtherName = p;
-            break;
-        }
-        case ASN_CONTEXT(1):
-        case ASN_CONTEXT(2):
-        case ASN_CONTEXT(6): {
-            WCHAR *w = ArenaAlloc(a, (name.length + 1) * sizeof(WCHAR));
-            if (w) {
-                for (DWORD k = 0; k < name.length; k++)
-                    w[k] = name.content[k];
-                w[name.length] = 0;
-            }
-            e.dwAltNameChoice = name.tag == ASN_CONTEXT(1)   ? CERT_ALT_NAME_RFC822_NAME
-                                : name.tag == ASN_CONTEXT(2) ? CERT_ALT_NAME_DNS_NAME
-                                                             : CERT_ALT_NAME_URL;
-            e.pwszDNSName = w;
-            break;
-        }
-        case ASN_CONSTRUCTED_CONTEXT(4): {
-            der_reader inner;
-            der_item dn;
-            DerOpen(&inner, &name);
-            if ((error = DerExpect(&inner, ASN_SEQUENCE, &dn)))
-                return error;
-            e.dwAltNameChoice = CERT_ALT_NAME_DIRECTORY_NAME;
-            dec_blob(a, dn.start, dn.total, &e.DirectoryName);
-            break;
-        }
-        case ASN_CONTEXT(7):
-            e.dwAltNameChoice = CERT_ALT_NAME_IP_ADDRESS;
-            dec_blob(a, name.content, name.length, &e.IPAddress);
-            break;
-        case ASN_CONTEXT(8): {
-            der_item oid = name;
-            oid.tag = ASN_OID;
-            e.dwAltNameChoice = CERT_ALT_NAME_REGISTERED_ID;
-            if ((error = dec_oid(a, &oid, &e.pszRegisteredID)))
-                return error;
-            break;
-        }
-        default:
-            return CRYPT_E_ASN1_BADTAG;
-        }
         if (entries)
             entries[i] = e;
     }
@@ -502,6 +513,129 @@ static DWORD dec_cert_info(cr_arena *a, const der_item *item, CERT_INFO *info)
     return 0;
 }
 
+static DWORD dec_crl_info(cr_arena *a, const der_item *item, CRL_INFO *info)
+{
+    if (item->tag != ASN_SEQUENCE)
+        return CRYPT_E_ASN1_BADTAG;
+    der_reader r;
+    der_item it;
+    DWORD error;
+    memset(info, 0, sizeof(*info));
+    DerOpen(&r, item);
+    if (DerPeek(&r, ASN_INTEGER)) {
+        int value;
+        DerRead(&r, &it);
+        if ((error = DerParseInt(&it, &value)))
+            return error;
+        info->dwVersion = (DWORD)value;
+    }
+    if ((error = DerRead(&r, &it)) || (error = dec_algid(a, &it, &info->SignatureAlgorithm)))
+        return error;
+    if ((error = DerExpect(&r, ASN_SEQUENCE, &it)))
+        return error;
+    dec_blob(a, it.start, it.total, &info->Issuer);
+    if ((error = DerRead(&r, &it)) || (error = DerParseTime(&it, &info->ThisUpdate)))
+        return error;
+    if (DerPeek(&r, ASN_UTCTIME) || DerPeek(&r, ASN_GENERALTIME)) {
+        DerRead(&r, &it);
+        if ((error = DerParseTime(&it, &info->NextUpdate)))
+            return error;
+    }
+    if (DerPeek(&r, ASN_SEQUENCE)) {
+        der_item list;
+        DerRead(&r, &list);
+        DWORD n = DerCount(&list);
+        PCRL_ENTRY entries = n ? ArenaAlloc(a, n * sizeof(CRL_ENTRY)) : nullptr;
+        der_reader items;
+        DerOpen(&items, &list);
+        for (DWORD i = 0; i < n; i++) {
+            der_item seq, serial, date;
+            der_reader fields;
+            CRL_ENTRY e = {};
+            if ((error = DerExpect(&items, ASN_SEQUENCE, &seq)))
+                return error;
+            DerOpen(&fields, &seq);
+            if ((error = DerRead(&fields, &serial)) || (error = dec_int_blob(a, &serial, &e.SerialNumber, FALSE)) ||
+                (error = DerRead(&fields, &date)) || (error = DerParseTime(&date, &e.RevocationDate)))
+                return error;
+            if (fields.n) {
+                der_item ext;
+                if ((error = DerRead(&fields, &ext)) ||
+                    (error = dec_extensions(a, &ext, &e.cExtension, &e.rgExtension)))
+                    return error;
+            }
+            if (entries)
+                entries[i] = e;
+        }
+        info->cCRLEntry = n;
+        info->rgCRLEntry = entries;
+    }
+    if (DerPeek(&r, ASN_CONSTRUCTED_CONTEXT(0))) {
+        der_reader ext;
+        der_item seq;
+        DerRead(&r, &it);
+        DerOpen(&ext, &it);
+        if ((error = DerExpect(&ext, ASN_SEQUENCE, &seq)) ||
+            (error = dec_extensions(a, &seq, &info->cExtension, &info->rgExtension)))
+            return error;
+    }
+    return 0;
+}
+
+/* the [0] distribution point name of a distribution point or an issuing distribution point. */
+static DWORD dec_dist_point_name(cr_arena *a, const der_item *item, CRL_DIST_POINT_NAME *out)
+{
+    der_reader r;
+    der_item choice;
+    DerOpen(&r, item);
+    DWORD error = DerRead(&r, &choice);
+    if (error)
+        return error;
+    if (choice.tag == ASN_CONSTRUCTED_CONTEXT(0)) {
+        out->dwDistPointNameChoice = CRL_DIST_POINT_FULL_NAME;
+        return dec_alt_name(a, &choice, &out->FullName);
+    }
+    if (choice.tag == ASN_CONSTRUCTED_CONTEXT(1)) {
+        out->dwDistPointNameChoice = CRL_DIST_POINT_ISSUER_RDN_NAME;
+        return 0;
+    }
+    return CRYPT_E_ASN1_BADTAG;
+}
+
+static DWORD dec_context_bool(const der_item *item, BOOL *out)
+{
+    if (item->length != 1)
+        return CRYPT_E_ASN1_CORRUPT;
+    *out = item->content[0] != 0;
+    return 0;
+}
+
+static DWORD dec_dist_point(cr_arena *a, const der_item *item, CRL_DIST_POINT *out)
+{
+    if (item->tag != ASN_SEQUENCE)
+        return CRYPT_E_ASN1_BADTAG;
+    der_reader r;
+    DerOpen(&r, item);
+    memset(out, 0, sizeof(*out));
+    while (r.n) {
+        der_item field;
+        DWORD error = DerRead(&r, &field);
+        if (!error) {
+            if (field.tag == ASN_CONSTRUCTED_CONTEXT(0))
+                error = dec_dist_point_name(a, &field, &out->DistPointName);
+            else if (field.tag == ASN_CONTEXT(1))
+                error = dec_bits(a, &field, &out->ReasonFlags);
+            else if (field.tag == ASN_CONSTRUCTED_CONTEXT(2))
+                error = dec_alt_name(a, &field, &out->CRLIssuer);
+            else
+                error = CRYPT_E_ASN1_BADTAG;
+        }
+        if (error)
+            return error;
+    }
+    return 0;
+}
+
 /* ------------------------------------------------------------------ top level decoders */
 
 typedef DWORD (*decode_fn)(cr_arena *a, const der_item *item, DWORD flags);
@@ -550,6 +684,120 @@ static DWORD d_cert_info(cr_arena *a, const der_item *item, DWORD flags)
     DWORD error = dec_cert_info(a, item, &tmp);
     STORE();
     return error;
+}
+
+/* a signed list, its to be signed part followed by an algorithm and a bit string, decodes as its first part. */
+static DWORD d_crl_info(cr_arena *a, const der_item *item, DWORD flags)
+{
+    TOP(CRL_INFO);
+    der_item tbs = *item;
+    if (!(flags & CRYPT_DECODE_TO_BE_SIGNED_FLAG) && item->tag == ASN_SEQUENCE && DerCount(item) == 3) {
+        der_reader r;
+        der_item first, alg, sig;
+        DerOpen(&r, item);
+        if (!DerRead(&r, &first) && !DerRead(&r, &alg) && !DerRead(&r, &sig) && sig.tag == ASN_BITSTRING &&
+            first.tag == ASN_SEQUENCE)
+            tbs = first;
+    }
+    DWORD error = dec_crl_info(a, &tbs, &tmp);
+    STORE();
+    return error;
+}
+
+static DWORD d_crl_dist_points(cr_arena *a, const der_item *item, DWORD flags)
+{
+    TOP(CRL_DIST_POINTS_INFO);
+    if (item->tag != ASN_SEQUENCE)
+        return CRYPT_E_ASN1_BADTAG;
+    DWORD n = DerCount(item);
+    PCRL_DIST_POINT points = n ? ArenaAlloc(a, n * sizeof(CRL_DIST_POINT)) : nullptr;
+    der_reader r;
+    DerOpen(&r, item);
+    for (DWORD i = 0; i < n; i++) {
+        der_item seq;
+        CRL_DIST_POINT point;
+        DWORD error = DerRead(&r, &seq);
+        if (!error)
+            error = dec_dist_point(a, &seq, &point);
+        if (error)
+            return error;
+        if (points)
+            points[i] = point;
+    }
+    tmp.cDistPoint = n;
+    tmp.rgDistPoint = points;
+    STORE();
+    return 0;
+}
+
+static DWORD d_issuing_dist_point(cr_arena *a, const der_item *item, DWORD flags)
+{
+    TOP(CRL_ISSUING_DIST_POINT);
+    if (item->tag != ASN_SEQUENCE)
+        return CRYPT_E_ASN1_BADTAG;
+    der_reader r;
+    DerOpen(&r, item);
+    while (r.n) {
+        der_item field;
+        DWORD error = DerRead(&r, &field);
+        if (!error) {
+            switch (field.tag) {
+            case ASN_CONSTRUCTED_CONTEXT(0):
+                error = dec_dist_point_name(a, &field, &tmp.DistPointName);
+                break;
+            case ASN_CONTEXT(1):
+                error = dec_context_bool(&field, &tmp.fOnlyContainsUserCerts);
+                break;
+            case ASN_CONTEXT(2):
+                error = dec_context_bool(&field, &tmp.fOnlyContainsCACerts);
+                break;
+            case ASN_CONTEXT(3):
+                error = dec_bits(a, &field, &tmp.OnlySomeReasonFlags);
+                break;
+            case ASN_CONTEXT(4):
+                error = dec_context_bool(&field, &tmp.fIndirectCRL);
+                break;
+            case ASN_CONTEXT(5):
+                break;
+            default:
+                error = CRYPT_E_ASN1_BADTAG;
+                break;
+            }
+        }
+        if (error)
+            return error;
+    }
+    STORE();
+    return 0;
+}
+
+static DWORD d_info_access(cr_arena *a, const der_item *item, DWORD flags)
+{
+    TOP(CERT_AUTHORITY_INFO_ACCESS);
+    if (item->tag != ASN_SEQUENCE)
+        return CRYPT_E_ASN1_BADTAG;
+    DWORD n = DerCount(item);
+    PCERT_ACCESS_DESCRIPTION list = n ? ArenaAlloc(a, n * sizeof(CERT_ACCESS_DESCRIPTION)) : nullptr;
+    der_reader r;
+    DerOpen(&r, item);
+    for (DWORD i = 0; i < n; i++) {
+        der_item seq, oid, location;
+        der_reader fields;
+        CERT_ACCESS_DESCRIPTION d = {};
+        DWORD error = DerExpect(&r, ASN_SEQUENCE, &seq);
+        if (error)
+            return error;
+        DerOpen(&fields, &seq);
+        if ((error = DerExpect(&fields, ASN_OID, &oid)) || (error = dec_oid(a, &oid, &d.pszAccessMethod)) ||
+            (error = DerRead(&fields, &location)) || (error = dec_alt_entry(a, &location, &d.AccessLocation)))
+            return error;
+        if (list)
+            list[i] = d;
+    }
+    tmp.cAccDescr = n;
+    tmp.rgAccDescr = list;
+    STORE();
+    return 0;
 }
 
 static DWORD d_extensions(cr_arena *a, const der_item *item, DWORD flags)
@@ -1045,6 +1293,8 @@ static decode_fn decoder_for(LPCSTR type)
             return d_cert;
         case 2:
             return d_cert_info;
+        case 3:
+            return d_crl_info;
         case 5:
             return d_extensions;
         case 6:
@@ -1084,6 +1334,12 @@ static decode_fn decoder_for(LPCSTR type)
             return d_time;
         case 31:
             return d_authority_key_id2;
+        case 32:
+            return d_info_access;
+        case 35:
+            return d_crl_dist_points;
+        case 54:
+            return d_issuing_dist_point;
         case 36:
             return d_eku;
         case 33:
@@ -1116,6 +1372,12 @@ static decode_fn decoder_for(LPCSTR type)
         {szOID_AUTHORITY_KEY_IDENTIFIER2, d_authority_key_id2},
         {szOID_CRL_NUMBER, d_multi_int},
         {szOID_CRL_REASON_CODE, d_enumerated},
+        {szOID_DELTA_CRL_INDICATOR, d_multi_int},
+        {szOID_CRL_DIST_POINTS, d_crl_dist_points},
+        {szOID_FRESHEST_CRL, d_crl_dist_points},
+        {szOID_ISSUING_DIST_POINT, d_issuing_dist_point},
+        {szOID_AUTHORITY_INFO_ACCESS, d_info_access},
+        {"1.3.6.1.5.5.7.1.11", d_info_access},
         {"1.2.840.113549.1.9.5", d_time},
     };
     for (DWORD i = 0; i < RTL_NUMBER_OF(map); i++)

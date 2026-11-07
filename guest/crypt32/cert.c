@@ -76,15 +76,17 @@ void CrReleaseCert(cr_cert *cert)
         return;
     cr_store *store = cert->store;
     if (store) {
+        cr_cert **head = CrIsCrl(cert) ? &store->crl_head : &store->head;
+        cr_cert **tail = CrIsCrl(cert) ? &store->crl_tail : &store->tail;
         CrLock();
         if (cert->prev)
             cert->prev->next = cert->next;
-        else if (store->head == cert)
-            store->head = cert->next;
+        else if (*head == cert)
+            *head = cert->next;
         if (cert->next)
             cert->next->prev = cert->prev;
-        else if (store->tail == cert)
-            store->tail = cert->prev;
+        else if (*tail == cert)
+            *tail = cert->prev;
         CrUnlock();
         CrReleaseStore(store);
     }
@@ -128,7 +130,7 @@ BOOL WINAPI CertFreeCertificateContext(PCCERT_CONTEXT pCertContext)
 
 /* ------------------------------------------------------------------ properties */
 
-static cr_prop *find_prop(cr_cert *cert, DWORD id)
+cr_prop *CrFindProp(cr_cert *cert, DWORD id)
 {
     for (cr_prop *p = cert->props; p; p = p->next)
         if (p->id == id)
@@ -136,7 +138,7 @@ static cr_prop *find_prop(cr_cert *cert, DWORD id)
     return nullptr;
 }
 
-static void remove_prop(cr_cert *cert, DWORD id)
+void CrRemoveProp(cr_cert *cert, DWORD id)
 {
     for (cr_prop **p = &cert->props; *p; p = &(*p)->next)
         if ((*p)->id == id) {
@@ -147,7 +149,7 @@ static void remove_prop(cr_cert *cert, DWORD id)
         }
 }
 
-static BOOL store_prop(cr_cert *cert, DWORD id, const void *data, DWORD size)
+BOOL CrStoreProp(cr_cert *cert, DWORD id, const void *data, DWORD size)
 {
     cr_prop *p = CrAlloc(sizeof(cr_prop) + size);
     if (!p)
@@ -157,7 +159,7 @@ static BOOL store_prop(cr_cert *cert, DWORD id, const void *data, DWORD size)
     if (size)
         memcpy(p->data, data, size);
     CrLock();
-    remove_prop(cert, id);
+    CrRemoveProp(cert, id);
     cr_prop **tail = &cert->props;
     while (*tail)
         tail = &(*tail)->next;
@@ -212,7 +214,7 @@ static DWORD copy_key_prov_info(const CRYPT_KEY_PROV_INFO *src, BYTE *dst)
     return size;
 }
 
-static BOOL return_data(const void *data, DWORD size, void *out, DWORD *out_size)
+BOOL CrReturnData(const void *data, DWORD size, void *out, DWORD *out_size)
 {
     if (!out) {
         *out_size = size;
@@ -304,7 +306,7 @@ BOOL WINAPI CertGetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD
         return CrFail(E_INVALIDARG);
     cr_cert *cert = CrCert(pCertContext);
     CrLock();
-    cr_prop *p = find_prop(cert, dwPropId);
+    cr_prop *p = CrFindProp(cert, dwPropId);
     if (p) {
         BOOL ok;
         if (dwPropId == CERT_KEY_PROV_INFO_PROP_ID) {
@@ -322,7 +324,7 @@ BOOL WINAPI CertGetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD
                 ok = TRUE;
             }
         } else {
-            ok = return_data(p->data, p->size, pvData, pcbData);
+            ok = CrReturnData(p->data, p->size, pvData, pcbData);
         }
         CrUnlock();
         return ok;
@@ -339,13 +341,13 @@ BOOL WINAPI CertGetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD
             if (!(store->flags & CERT_STORE_READONLY_FLAG))
                 state |= CERT_ACCESS_STATE_WRITE_PERSIST_FLAG;
         }
-        return return_data(&state, sizeof(state), pvData, pcbData);
+        return CrReturnData(&state, sizeof(state), pvData, pcbData);
     }
     case CERT_KEY_SPEC_PROP_ID: {
         DWORD spec = 0;
         CrLock();
-        cr_prop *prov = find_prop(cert, CERT_KEY_PROV_INFO_PROP_ID);
-        cr_prop *key = find_prop(cert, CERT_KEY_CONTEXT_PROP_ID);
+        cr_prop *prov = CrFindProp(cert, CERT_KEY_PROV_INFO_PROP_ID);
+        cr_prop *key = CrFindProp(cert, CERT_KEY_CONTEXT_PROP_ID);
         if (prov)
             spec = ((const CRYPT_KEY_PROV_INFO *)prov->data)->dwKeySpec;
         else if (key)
@@ -353,7 +355,7 @@ BOOL WINAPI CertGetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD
         CrUnlock();
         if (!prov && !key)
             return CrFail(CRYPT_E_NOT_FOUND);
-        return return_data(&spec, sizeof(spec), pvData, pcbData);
+        return CrReturnData(&spec, sizeof(spec), pvData, pcbData);
     }
     }
     if (!CrCertHash(pCertContext, dwPropId, hash, &size))
@@ -361,8 +363,8 @@ BOOL WINAPI CertGetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD
     /* windows keeps the hashes it computes as properties. */
     if (dwPropId == CERT_SHA1_HASH_PROP_ID || dwPropId == CERT_MD5_HASH_PROP_ID ||
         dwPropId == CERT_KEY_IDENTIFIER_PROP_ID || dwPropId == CERT_SIGNATURE_HASH_PROP_ID)
-        store_prop(cert, dwPropId, hash, size);
-    return return_data(hash, size, pvData, pcbData);
+        CrStoreProp(cert, dwPropId, hash, size);
+    return CrReturnData(hash, size, pvData, pcbData);
 }
 
 static BOOL set_prop(cr_cert *cert, DWORD dwPropId, const void *pvData);
@@ -391,7 +393,7 @@ static BOOL set_prop(cr_cert *cert, DWORD dwPropId, const void *pvData)
 {
     if (!pvData) {
         CrLock();
-        remove_prop(cert, dwPropId);
+        CrRemoveProp(cert, dwPropId);
         CrUnlock();
         return TRUE;
     }
@@ -407,7 +409,7 @@ static BOOL set_prop(cr_cert *cert, DWORD dwPropId, const void *pvData)
         p->id = dwPropId;
         p->size = size;
         CrLock();
-        remove_prop(cert, dwPropId);
+        CrRemoveProp(cert, dwPropId);
         cr_prop **tail = &cert->props;
         while (*tail)
             tail = &(*tail)->next;
@@ -420,19 +422,19 @@ static BOOL set_prop(cr_cert *cert, DWORD dwPropId, const void *pvData)
         const CERT_KEY_CONTEXT *key = pvData;
         if (key->cbSize != sizeof(CERT_KEY_CONTEXT))
             return CrFail(E_INVALIDARG);
-        return store_prop(cert, dwPropId, key, sizeof(*key));
+        return CrStoreProp(cert, dwPropId, key, sizeof(*key));
     }
     case CERT_KEY_PROV_HANDLE_PROP_ID:
-        return store_prop(cert, dwPropId, pvData, sizeof(HCRYPTPROV));
+        return CrStoreProp(cert, dwPropId, pvData, sizeof(HCRYPTPROV));
     case CERT_NCRYPT_KEY_HANDLE_PROP_ID:
-        return store_prop(cert, dwPropId, pvData, sizeof(NCRYPT_KEY_HANDLE));
+        return CrStoreProp(cert, dwPropId, pvData, sizeof(NCRYPT_KEY_HANDLE));
     case CERT_KEY_SPEC_PROP_ID:
-        return store_prop(cert, dwPropId, pvData, sizeof(DWORD));
+        return CrStoreProp(cert, dwPropId, pvData, sizeof(DWORD));
     case CERT_DATE_STAMP_PROP_ID:
-        return store_prop(cert, dwPropId, pvData, sizeof(FILETIME));
+        return CrStoreProp(cert, dwPropId, pvData, sizeof(FILETIME));
     default: {
         const CRYPT_DATA_BLOB *blob = pvData;
-        return store_prop(cert, dwPropId, blob->pbData, blob->cbData);
+        return CrStoreProp(cert, dwPropId, blob->pbData, blob->cbData);
     }
     }
 }
@@ -464,7 +466,7 @@ BOOL CrCopyProps(cr_cert *dst, const cr_cert *src, BOOL keep_existing)
     BOOL ok = TRUE;
     CrLock();
     for (const cr_prop *p = src->props; p && ok; p = p->next) {
-        if (keep_existing && find_prop(dst, p->id))
+        if (keep_existing && CrFindProp(dst, p->id))
             continue;
         if (p->id == CERT_KEY_PROV_INFO_PROP_ID) {
             CrUnlock();
@@ -472,7 +474,7 @@ BOOL CrCopyProps(cr_cert *dst, const cr_cert *src, BOOL keep_existing)
             CrLock();
         } else {
             CrUnlock();
-            ok = store_prop(dst, p->id, p->data, p->size);
+            ok = CrStoreProp(dst, p->id, p->data, p->size);
             CrLock();
         }
     }
@@ -484,8 +486,8 @@ BOOL CrHasPrivateKey(PCCERT_CONTEXT cert)
 {
     cr_cert *c = CrCert(cert);
     CrLock();
-    BOOL has = find_prop(c, CERT_KEY_PROV_INFO_PROP_ID) || find_prop(c, CERT_KEY_CONTEXT_PROP_ID) ||
-               find_prop(c, CERT_KEY_PROV_HANDLE_PROP_ID);
+    BOOL has = CrFindProp(c, CERT_KEY_PROV_INFO_PROP_ID) || CrFindProp(c, CERT_KEY_CONTEXT_PROP_ID) ||
+               CrFindProp(c, CERT_KEY_PROV_HANDLE_PROP_ID);
     CrUnlock();
     return has;
 }
@@ -828,21 +830,4 @@ BOOL WINAPI CertGetValidUsages(DWORD count, PCCERT_CONTEXT *certs, int *oid_coun
     if (!ok)
         SetLastError(error);
     return ok;
-}
-
-/* ------------------------------------------------------------------ revocation lists */
-
-/* stores here keep certificates only, so there is never a list to enumerate or to free. */
-PCCRL_CONTEXT WINAPI CertEnumCRLsInStore(HCERTSTORE store, PCCRL_CONTEXT previous)
-{
-    if (!CrStore(store))
-        SetLastError(E_INVALIDARG);
-    else
-        SetLastError(CRYPT_E_NOT_FOUND);
-    return nullptr;
-}
-
-BOOL WINAPI CertFreeCRLContext(PCCRL_CONTEXT context)
-{
-    return TRUE;
 }

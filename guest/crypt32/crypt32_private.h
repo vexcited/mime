@@ -173,6 +173,7 @@ typedef struct cr_prop {
 
 typedef struct cr_store cr_store;
 
+/* a certificate, or a revocation list when kind says so: CRL_CONTEXT has the layout of CERT_CONTEXT. */
 typedef struct cr_cert {
     CERT_CONTEXT context;
     LONG refs;
@@ -181,7 +182,15 @@ typedef struct cr_cert {
     struct cr_cert *prev;
     BOOL deleted;
     cr_prop *props;
+    DWORD kind;
 } cr_cert;
+
+#define CR_CRL CERT_STORE_CRL_CONTEXT
+
+FORCEINLINE BOOL CrIsCrl(const cr_cert *c)
+{
+    return c->kind == CR_CRL;
+}
 
 #define CR_STORE_MAGIC 0x53524543
 
@@ -204,6 +213,8 @@ struct cr_store {
     BOOL collection;
     cr_cert *head;
     cr_cert *tail;
+    cr_cert *crl_head;
+    cr_cert *crl_tail;
     cr_store **children;
     DWORD *child_flags;
     DWORD *child_priorities;
@@ -222,6 +233,10 @@ cr_cert *CrCreateCert(const BYTE *encoded, DWORD size);
 void CrReleaseCert(cr_cert *cert);
 void CrReleaseStore(cr_store *store);
 BOOL CrCopyProps(cr_cert *dst, const cr_cert *src, BOOL keep_existing);
+cr_prop *CrFindProp(cr_cert *cert, DWORD id);
+void CrRemoveProp(cr_cert *cert, DWORD id);
+BOOL CrStoreProp(cr_cert *cert, DWORD id, const void *data, DWORD size);
+BOOL CrReturnData(const void *data, DWORD size, void *out, DWORD *out_size);
 void CrFreeProps(cr_cert *cert);
 BOOL CrCertHash(PCCERT_CONTEXT cert, DWORD prop, BYTE *out, DWORD *size);
 BOOL CrSameCert(PCCERT_CONTEXT a, PCCERT_CONTEXT b);
@@ -236,6 +251,20 @@ DWORD CrAddElements(HCERTSTORE store, const BYTE *data, DWORD size, DWORD dispos
 void CrSerializeCert(der_writer *w, PCCERT_CONTEXT cert);
 /* drops the certificates a store holds, keeping those the program still references alive. */
 BOOL CrEmptyStore(cr_store *store);
+/* adds a copy of a certificate or a list following the dispositions of CertAddCertificateContextToStore. */
+BOOL CrAddContext(cr_store *store, DWORD kind, const void *source, DWORD disposition, const void **result);
+/* the next live context of a kind after prev, walking collections, referenced. */
+cr_cert *CrEnumStore(cr_store *store, cr_cert *prev, DWORD kind);
+/* removes the store's own reference to a context. */
+void CrUnlinkContext(cr_cert *cert);
+/* writes a list and its properties as serialized store elements. */
+void CrSerializeCrl(der_writer *w, PCCRL_CONTEXT crl);
+
+/* ------------------------------------------------------------------ revocation lists, crl.c */
+
+cr_cert *CrCreateCrl(const BYTE *encoded, DWORD size);
+/* whether two lists stand for the same one: same issuer, both base or both delta, same scope. */
+BOOL CrSameCrl(PCCRL_CONTEXT a, PCCRL_CONTEXT b);
 
 /* ------------------------------------------------------------------ system stores, sysstore.c */
 

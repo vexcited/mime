@@ -185,7 +185,7 @@ static void thumbprint(PCCERT_CONTEXT cert, WCHAR *out)
     static const WCHAR hex[] = L"0123456789ABCDEF";
     BYTE hash[20];
     DWORD size = sizeof(hash);
-    if (!CertGetCertificateContextProperty(cert, CERT_SHA1_HASH_PROP_ID, hash, &size))
+    if (CrIsCrl(CrCert(cert)) || !CertGetCertificateContextProperty(cert, CERT_SHA1_HASH_PROP_ID, hash, &size))
         CrHash(CALG_SHA1, cert->pbCertEncoded, cert->cbCertEncoded, hash);
     for (DWORD i = 0; i < 20; i++) {
         out[2 * i] = hex[hash[i] >> 4];
@@ -250,7 +250,7 @@ static BYTE *read_blob(HKEY key, DWORD *size)
     return data;
 }
 
-/* adds the certificate of an element, which crypt32 accepts only under the key its sha-1 names. */
+/* adds the certificate or list of an element, which crypt32 accepts only under the key its sha-1 names. */
 static void load_element(cr_store *store, PCWSTR name, const BYTE *data, DWORD size)
 {
     PCCERT_CONTEXT cert = nullptr;
@@ -259,7 +259,7 @@ static void load_element(cr_store *store, PCWSTR name, const BYTE *data, DWORD s
     WCHAR hash[41];
     thumbprint(cert, hash);
     if (!name || !_wcsicmp(name, hash))
-        CertAddCertificateContextToStore(store, cert, CERT_STORE_ADD_ALWAYS, nullptr);
+        CrAddContext(store, CrCert(cert)->kind, cert, CERT_STORE_ADD_ALWAYS, nullptr);
     CertFreeCertificateContext(cert);
 }
 
@@ -282,13 +282,12 @@ static ULONGLONG registry_stamp(HKEY key)
     return stamp ^ ((ULONGLONG)subkeys << 32 | values);
 }
 
-/* reads the certificates of a registry store: the subkeys of Certificates, and values left there by old versions. */
-static void load_registry(cr_store *store)
+/* reads the elements under one kind's key: its subkeys, and values left there by old versions. */
+static void load_kind(cr_store *store, PCWSTR kind)
 {
     cr_reg *reg = store->reg;
-    reg->stamp = registry_stamp(reg->key);
     HKEY certs;
-    if (RegOpenKeyExW(reg->key, L"Certificates", 0, KEY_READ, &certs))
+    if (RegOpenKeyExW(reg->key, kind, 0, KEY_READ, &certs))
         return;
     reg->loading = TRUE;
     WCHAR name[256];
@@ -322,6 +321,13 @@ static void load_registry(cr_store *store)
     }
     reg->loading = FALSE;
     RegCloseKey(certs);
+}
+
+static void load_registry(cr_store *store)
+{
+    store->reg->stamp = registry_stamp(store->reg->key);
+    load_kind(store, L"Certificates");
+    load_kind(store, L"CRLs");
 }
 
 static HCERTSTORE open_registry(DWORD flags, const sys_name *n)
@@ -448,7 +454,10 @@ BOOL CrRegWriteCert(cr_store *store, PCCERT_CONTEXT cert)
         return CrFail(E_ACCESSDENIED);
     der_writer w;
     DerWriteInit(&w);
-    CrSerializeCert(&w, cert);
+    if (CrIsCrl(CrCert(cert)))
+        CrSerializeCrl(&w, (PCCRL_CONTEXT)cert);
+    else
+        CrSerializeCert(&w, cert);
     if (w.error) {
         DerWriteFree(&w);
         return CrFail(ERROR_OUTOFMEMORY);
@@ -456,8 +465,8 @@ BOOL CrRegWriteCert(cr_store *store, PCCERT_CONTEXT cert)
     WCHAR name[41];
     thumbprint(cert, name);
     HKEY certs, key;
-    LSTATUS error = RegCreateKeyExW(store->reg->key, L"Certificates", 0, nullptr, 0, KEY_READ | KEY_WRITE, nullptr,
-                                    &certs, nullptr);
+    LSTATUS error = RegCreateKeyExW(store->reg->key, CrIsCrl(CrCert(cert)) ? L"CRLs" : L"Certificates", 0, nullptr, 0,
+                                    KEY_READ | KEY_WRITE, nullptr, &certs, nullptr);
     if (!error) {
         error = RegCreateKeyExW(certs, name, 0, nullptr, 0, KEY_READ | KEY_WRITE, nullptr, &key, nullptr);
         if (!error) {
@@ -482,7 +491,8 @@ BOOL CrRegDeleteCert(cr_store *store, PCCERT_CONTEXT cert)
     WCHAR name[41];
     thumbprint(cert, name);
     HKEY certs;
-    LSTATUS error = RegOpenKeyExW(store->reg->key, L"Certificates", 0, KEY_READ | KEY_WRITE, &certs);
+    LSTATUS error = RegOpenKeyExW(store->reg->key, CrIsCrl(CrCert(cert)) ? L"CRLs" : L"Certificates", 0,
+                                  KEY_READ | KEY_WRITE, &certs);
     if (error == ERROR_FILE_NOT_FOUND)
         return TRUE;
     if (!error) {
