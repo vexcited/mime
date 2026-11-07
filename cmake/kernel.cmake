@@ -33,3 +33,12 @@ mime_link(${MIME_SYSTEM32}/win32k.sys ${MIME_GUEST_ARCH} OBJECTS kernel-win32k L
     FLAGS /subsystem:native,10.0 /driver /entry:DriverEntry /base:0xFFFFF80040000000 /stack:0x40000,0x1000
         /map:${CMAKE_BINARY_DIR}/guest/win32k.map
     RESOURCE win32k.sys ROM ${MIME_ROM}/win32k.sys GROUPS guest)
+
+# the filter manager, which drivers import from System32\drivers\fltmgr.sys.
+mime_glob(fltmgr_sources guest/fltmgr/*.c)
+mime_objects(kernel-fltmgr kernel SOURCES ${fltmgr_sources} INCLUDES guest/fltmgr)
+mime_link(${MIME_SYSTEM32}/drivers/fltmgr.sys ${MIME_GUEST_ARCH} OBJECTS kernel-fltmgr LIBS ${MIME_NTOSKRNL_LIB}
+    FLAGS /subsystem:native,10.0 /driver /entry:DriverEntry /def:${CMAKE_SOURCE_DIR}/guest/fltmgr/fltmgr.def
+        /map:${CMAKE_BINARY_DIR}/guest/fltmgr.map
+    DEPENDS ${CMAKE_SOURCE_DIR}/guest/fltmgr/fltmgr.def ${MIME_NTOSKRNL_LIB} IMPLIB ${MIME_LIB}/fltmgr.lib
+    ROM ${MIME_ROM}/windrivers/fltmgr.sys GROUPS guest)
