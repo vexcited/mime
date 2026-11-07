@@ -19,8 +19,6 @@
 
 #define MAX_WINDOWS 256
 #define MAX_VK_LAYERS 8
-/* where a layer with no visible part waits, far from every screen. */
-#define HIDDEN_LAYER 100000
 
 /* a surface over the window for each window of the guest that presents, stacked by the guest's paint order. */
 typedef struct VkLayer {
@@ -28,7 +26,7 @@ typedef struct VkLayer {
     uint32_t source; /* the guest window it presents for. */
     uint32_t order;  /* place in the paint order of the window's tree, the front ones last. */
     struct wl_surface *surface;
-    struct wl_subsurface *subsurface;
+    struct wl_subsurface *subsurface; /* none while nothing of it shows. */
     struct wl_proxy *viewport;
     MimeRect place; /* where the subsurface is, in SDL window coordinates. */
 } VkLayer;
@@ -872,9 +870,8 @@ static bool sane_size(int width, int height)
 
 /*
  * a host window tells the compositor its own rectangle. without it the window is the extent of the surface and its
- * subsurfaces, so a vulkan layer moved aside by HIDDEN_LAYER made kwin take the window for one 100000 pixels larger:
- * it configured it at that size, kept it maximized at it and drew it into buffers of tens of gigabytes for its
- * effects, which the nvidia driver took from system memory until the host ran out. it lands with the next commit.
+ * subsurfaces, and a layer that reaches past the window would make the compositor configure it larger. it lands with
+ * the next commit.
  */
 enum { XDG_SURFACE_SET_WINDOW_GEOMETRY = 3 };
 
@@ -1754,7 +1751,8 @@ static void restack_layers(UiWindow *w)
     for (int n = 0; below && n < MAX_VK_LAYERS; n++) {
         int best = -1;
         for (int k = 0; k < MAX_VK_LAYERS; k++)
-            if (w->vk_layers[k].used && !done[k] && (best < 0 || w->vk_layers[k].order < w->vk_layers[best].order))
+            if (w->vk_layers[k].used && w->vk_layers[k].subsurface && !done[k] &&
+            (best < 0 || w->vk_layers[k].order < w->vk_layers[best].order))
                 best = k;
         if (best < 0)
             break;
@@ -1772,22 +1770,32 @@ static void place_layer(UiWindow *w, VkLayer *l, MimeRect area, uint32_t order)
     l->order = order;
     if (r.right <= r.left || r.bottom <= r.top) {
         /*
-         * nothing of it shows: it moves away from the window until the next place. The surface is the driver's, and
-         * a commit of ours between its sync points and its buffer ends the connection with an error of the compositor.
+         * nothing of it shows: its subsurface goes, which unmaps it at once. the surface is the driver's, and a commit
+         * of ours between its sync points and its buffer ends the connection with an error of the compositor, so it
+         * can neither lose its buffer nor shrink. it once moved 100000 pixels away instead, and kwin, which draws a
+         * window offscreen at the extent of all its surfaces for its animations, took buffers of tens of gigabytes
+         * from system memory for it until the host ran out.
          */
-        if (memcmp(&r, &l->place, sizeof(r))) {
-            l->place = r;
-            set_geometry(w);
-            wl_subsurface_set_position(l->subsurface, -HIDDEN_LAYER, -HIDDEN_LAYER);
+        l->place = r;
+        if (l->subsurface) {
+            wl_subsurface_destroy(l->subsurface);
+            l->subsurface = nullptr;
+            commit_parent(w);
         }
-        if (restack)
-            restack_layers(w);
-        commit_parent(w);
         return;
+    }
+    bool fresh = !l->subsurface;
+    if (fresh) {
+        struct wl_surface *parent = parent_surface(w);
+        l->subsurface = parent ? wl_subcompositor_get_subsurface(g_subcompositor, l->surface, parent) : nullptr;
+        if (!l->subsurface)
+            return;
+        wl_subsurface_set_desync(l->subsurface);
+        restack = true;
     }
     if (!restack && !memcmp(&r, &l->place, sizeof(r)))
         return;
-    if (memcmp(&r, &l->place, sizeof(r))) {
+    if (fresh || memcmp(&r, &l->place, sizeof(r))) {
         l->place = r;
         wl_subsurface_set_position(l->subsurface, r.left, r.top);
         if (l->viewport)
