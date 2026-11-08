@@ -1041,6 +1041,29 @@ SETUPAPI BOOL WINAPI SetupGetInfFileListA(PCSTR directory, DWORD style, PSTR buf
     return TRUE;
 }
 
+/* no driver package is ever staged here, so no inf has a place in the driver store. */
+SETUPAPI BOOL WINAPI SetupGetInfDriverStoreLocationW(PCWSTR inf, PVOID platform, PCWSTR locale, PWSTR buffer, DWORD size,
+                                                     PDWORD required)
+{
+    if (!inf || (!buffer && size)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    SetLastError(ERROR_FILE_NOT_FOUND);
+    return FALSE;
+}
+
+SETUPAPI BOOL WINAPI SetupGetInfDriverStoreLocationA(PCSTR inf, PVOID platform, PCSTR locale, PSTR buffer, DWORD size,
+                                                     PDWORD required)
+{
+    if (!inf || (!buffer && size)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    SetLastError(ERROR_FILE_NOT_FOUND);
+    return FALSE;
+}
+
 /* ------------------------------------------------------------------ lines and fields */
 
 SETUPAPI BOOL WINAPI SetupFindFirstLineW(HINF inf, PCWSTR section, PCWSTR key, PINFCONTEXT context)
