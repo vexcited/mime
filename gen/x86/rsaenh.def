@@ -1,0 +1,29 @@
+LIBRARY rsaenh.dll
+EXPORTS
+    CPAcquireContext=_CPAcquireContext@16
+    CPCreateHash=_CPCreateHash@20
+    CPDecrypt=_CPDecrypt@28
+    CPDeriveKey=_CPDeriveKey@20
+    CPDestroyHash=_CPDestroyHash@8
+    CPDestroyKey=_CPDestroyKey@8
+    CPDuplicateHash=_CPDuplicateHash@20
+    CPDuplicateKey=_CPDuplicateKey@20
+    CPEncrypt=_CPEncrypt@32
+    CPExportKey=_CPExportKey@28
+    CPGenKey=_CPGenKey@16
+    CPGenRandom=_CPGenRandom@12
+    CPGetHashParam=_CPGetHashParam@24
+    CPGetKeyParam=_CPGetKeyParam@24
+    CPGetProvParam=_CPGetProvParam@20
+    CPGetUserKey=_CPGetUserKey@12
+    CPHashData=_CPHashData@20
+    CPHashSessionKey=_CPHashSessionKey@16
+    CPImportKey=_CPImportKey@24
+    CPReleaseContext=_CPReleaseContext@8
+    CPSetHashParam=_CPSetHashParam@20
+    CPSetKeyParam=_CPSetKeyParam@20
+    CPSetProvParam=_CPSetProvParam@16
+    CPSignHash=_CPSignHash@28
+    CPVerifySignature=_CPVerifySignature@28
+    DllRegisterServer=_DllRegisterServer@0 PRIVATE
+    DllUnregisterServer=_DllUnregisterServer@0 PRIVATE
