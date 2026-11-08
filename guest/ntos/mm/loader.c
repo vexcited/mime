@@ -343,8 +343,12 @@ static void unpin_file(PKLDR_DATA_TABLE_ENTRY module)
     }
 }
 
-/* the file's identity on its volume, a volume of ~0 when it has none worth pinning, as a rom file. */
-static NTSTATUS read_whole_file(PCUNICODE_STRING path, PUCHAR *data, ULONG *size, PULONG volume, PULONG64 file_id)
+/*
+ * the file's identity on its volume, a volume of ~0 when it has none worth pinning, as a rom file. the file stays
+ * referenced in *kept when the read worked, for the notification of the load.
+ */
+static NTSTATUS read_whole_file(PCUNICODE_STRING path, PUCHAR *data, ULONG *size, PULONG volume, PULONG64 file_id,
+                                PFILE_OBJECT *kept)
 {
     PFILE_OBJECT file;
     NTSTATUS status = IopOpenFileObject(path, FILE_READ_DATA | SYNCHRONIZE, FILE_NON_DIRECTORY_FILE, &file);
@@ -370,7 +374,10 @@ static NTSTATUS read_whole_file(PCUNICODE_STRING path, PUCHAR *data, ULONG *size
             ExFreePool(*data);
         *size = (ULONG)file_size;
     }
-    ObDereferenceObject(file);
+    if (NT_SUCCESS(status))
+        *kept = file;
+    else
+        ObDereferenceObject(file);
     return status;
 }
 
@@ -441,7 +448,8 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
     PUCHAR file;
     ULONG file_size, volume;
     ULONG64 file_id;
-    NTSTATUS status = read_whole_file(path, &file, &file_size, &volume, &file_id);
+    PFILE_OBJECT file_object;
+    NTSTATUS status = read_whole_file(path, &file, &file_size, &volume, &file_id, &file_object);
     if (!NT_SUCCESS(status))
         return status;
     MI_IMAGE_INFO info;
@@ -450,6 +458,7 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
         status = STATUS_INVALID_IMAGE_FORMAT;
     if (!NT_SUCCESS(status)) {
         ExFreePool(file);
+        ObDereferenceObject(file_object);
         return status;
     }
     PIMAGE_NT_HEADERS64 nt = (PIMAGE_NT_HEADERS64)(file + ((PIMAGE_DOS_HEADER)file)->e_lfanew);
@@ -457,6 +466,7 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
     PUCHAR base = MmAllocateSystemVa(pages);
     if (!base) {
         ExFreePool(file);
+        ObDereferenceObject(file_object);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     for (SIZE_T i = 0; i < pages; i++) {
@@ -464,6 +474,7 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
         if (!pa) {
             free_image_pages(base, i);
             ExFreePool(file);
+            ObDereferenceObject(file_object);
             return STATUS_INSUFFICIENT_RESOURCES;
         }
         MiMapPage(MiKernelRoot(), (ULONG_PTR)base + i * PAGE_SIZE, pa, MM_KERNEL_RW);
@@ -554,11 +565,12 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
         if (volume != ~0u)
             pin_file(*out, volume, file_id);
         KiLogPrintf("loaded %wZ at %p", path, base);
-        PspNotifyImage(path, nullptr, base, info.SizeOfImage, IMAGE_FILE_MACHINE_AMD64);
+        PspNotifyImage(path, nullptr, base, info.SizeOfImage, file_object);
     }
     else
         free_image_pages(base, pages);
     ExFreePool(file);
+    ObDereferenceObject(file_object);
     return status;
 }
 

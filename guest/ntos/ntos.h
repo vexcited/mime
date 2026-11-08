@@ -1227,7 +1227,7 @@ DECLSPEC_NORETURN void PspExitThread(NTSTATUS status);
 NTSTATUS PspNotifyProcessCreate(PEPROCESS process, PCUNICODE_STRING image, PCUNICODE_STRING command_line);
 void PspNotifyProcess(PEPROCESS process, BOOLEAN create);
 void PspNotifyThread(PETHREAD thread, BOOLEAN create);
-void PspNotifyImage(PCUNICODE_STRING name, PEPROCESS process, PVOID base, SIZE_T size, USHORT machine);
+void PspNotifyImage(PCUNICODE_STRING name, PEPROCESS process, PVOID base, SIZE_T size, PFILE_OBJECT file);
 BOOLEAN PspImageNotifyRegistered(void);
 NTSTATUS PspSuspendResumeProcess(PEPROCESS process, BOOLEAN suspend);
 NTSTATUS PspTerminateProcess(PEPROCESS process, NTSTATUS status);
