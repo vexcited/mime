@@ -367,13 +367,13 @@ static DECLSPEC_NORETURN void raise_in_x64(MX_FRAME *f, const EXCEPTION_RECORD *
         mx_fatal(record->ExceptionCode, "cannot deliver the exception");
     }
     /*
-     * the layout KiUserExceptionDispatcher's unwind codes describe: from its
-     * stack pointer, 0x30 bytes, the context, the record, then a machine
-     * frame with the faulting rip and rsp, so unwinding goes on there.
+     * windows' layout for KiUserExceptionDispatcher: the context at its stack
+     * pointer, the record at 0x4F0, then a machine frame with the faulting rip
+     * and rsp at 0x590, so unwinding goes on there.
      */
     ULONG64 machine = ((context->Rsp - 0x80) & ~15ull) - 0x30;
-    ULONG64 rec = machine - 0xA0;
-    ULONG64 ctx = rec - 0x4D0;
+    ULONG64 ctx = machine - 0x590;
+    ULONG64 rec = ctx + 0x4F0;
     MIME_STATIC_ASSERT(sizeof(EXCEPTION_RECORD) <= 0xA0 && sizeof(AMD64_CONTEXT) == 0x4D0, "dispatcher layout");
     ULONG64 *frame = (ULONG64 *)machine;
     frame[0] = context->Rip;
@@ -383,9 +383,7 @@ static DECLSPEC_NORETURN void raise_in_x64(MX_FRAME *f, const EXCEPTION_RECORD *
     frame[4] = context->SegSs;
     memcpy((void *)rec, record, sizeof(*record));
     memcpy((void *)ctx, context, sizeof(*context));
-    c->r[X86_RSP] = ctx - 0x30;
-    c->r[X86_RCX] = rec;
-    c->r[X86_RDX] = ctx;
+    c->r[X86_RSP] = ctx;
     c->rip = g_guest.exception_dispatcher;
     mx_longjmp(&f->restart, 1);
 }
