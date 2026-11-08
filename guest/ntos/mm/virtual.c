@@ -1517,11 +1517,20 @@ static BOOLEAN access_fault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCE
             /* first write since the last reset: the page is now writable. */
             MiUpgradePte(as->Root, page, MI_PTE_SET_RW(v & ~MM_PTE_SW_WATCH), as->Asid);
             handled = TRUE;
+        } else if ((v & MM_PTE_VALID) && mode == UserMode && !MI_PTE_IS_USER(v) && (v & MM_PTE_SW_TRIMMED)) {
+            /* a trimmed page comes back into the working set, a soft fault. */
+            MiWritePte(as->Root, page, (v & ~MM_PTE_SW_TRIMMED) | MM_PTE_USER, as->Asid);
+            handled = TRUE;
         } else if ((v & MM_PTE_VALID) && mode == UserMode && !MI_PTE_IS_USER(v) && MI_PTE_IS_GUARD(v)) {
             /* like Windows, the first touch of a guard page faults and removes the guard. */
             MiWritePte(as->Root, page, MI_PTE_CLEAR_GUARD(v), as->Asid);
-            guard_fault(page);
-            handled = FALSE;
+            if (stack_growth_guard(page)) {
+                grow = TRUE;
+                handled = TRUE;
+            } else {
+                guard_fault(page);
+                handled = FALSE;
+            }
         } else if ((v & MM_PTE_VALID) && (mode == KernelMode || MI_PTE_IS_USER(v)) &&
                    (!write || !MI_PTE_IS_RO(v)) && (!execute || MI_PTE_USER_EXEC(v))) {
             /* another thread fixed the page first. */
@@ -1910,6 +1919,8 @@ NTSTATUS NTAPI NtProtectVirtualMemory(HANDLE process_handle, PVOID *base, PSIZE_
  * a page backed by memory is valid, with its protection and the normal priority 5. a committed page not
  * touched yet is not in the working set. view pages are shared unless they belong to a private allocation.
  */
+static BOOLEAN page_locked(PEPROCESS process, ULONG_PTR page);
+
 static NTSTATUS query_working_set_ex(PEPROCESS process, PVOID info, SIZE_T length)
 {
     PMMADDRESS_SPACE as = &process->AddressSpace;
@@ -1928,10 +1939,12 @@ static NTSTATUS query_working_set_ex(PEPROCESS process, PVOID info, SIZE_T lengt
             if (vad && !(vad->Flags & MM_VAD_PLACEHOLDER)) {
                 ULONG64 pte = MiReadPte(as->Root, va & ~(ULONG_PTR)(PAGE_SIZE - 1));
                 ULONG prot = pte_committed(pte) ? MiPteToProtect(pte) : 0;
-                if ((pte & MM_PTE_VALID) && !(prot & (PAGE_NOACCESS | PAGE_GUARD))) {
+                if ((pte & MM_PTE_VALID) && !(pte & MM_PTE_SW_TRIMMED) && !(prot & (PAGE_NOACCESS | PAGE_GUARD))) {
                     attributes = 1 | (ULONG64)(prot & 0x7FF) << 4 | 5ull << 24;
                     if (vad->Type != MiVadPrivate)
                         attributes |= 1ull << 1 | 1ull << 15;
+                    if (page_locked(process, va & ~(ULONG_PTR)(PAGE_SIZE - 1)))
+                        attributes |= 1ull << 22; /* Locked */
                 }
             }
             MiUnlockAddressSpace(as);
@@ -1979,7 +1992,7 @@ static SIZE_T gather_working_set(PMMADDRESS_SPACE as, ULONG_PTR *resume, ULONG_P
         ULONG_PTR va;
         for (ULONG64 *pte; (pte = cursor_next(&c, &va, &count));)
             for (SIZE_T k = 0; k < count; k++) {
-                if (!(pte[k] & MM_PTE_VALID))
+                if (!(pte[k] & MM_PTE_VALID) || (pte[k] & MM_PTE_SW_TRIMMED))
                     continue;
                 ULONG_PTR flags = working_set_protection(MiPteToProtect(pte[k])) | 1u << 5;
                 if (vad->Type != MiVadPrivate)
@@ -2484,4 +2497,159 @@ NTSTATUS NTAPI NtFlushProcessWriteBuffers(void)
     }
     KiDataSyncBarrier();
     return STATUS_SUCCESS;
+}
+
+/* ------------------------------------------------------------------ locked pages */
+
+/*
+ * mime keeps every page of a process in memory, so locking is the record of what was locked: unlocking a page that is
+ * not locked fails as on windows. the range must be committed throughout.
+ */
+#define MAP_PROCESS 1
+#define MAP_SYSTEM 2
+#define STATUS_NOT_LOCKED ((NTSTATUS)0xC000002AL)
+
+static BOOLEAN range_committed(PEPROCESS process, ULONG_PTR start, ULONG_PTR end)
+{
+    for (ULONG_PTR va = start; va < end;) {
+        MEMORY_BASIC_INFORMATION info;
+        if (!NT_SUCCESS(MiQueryVirtual(process, (PVOID)va, &info)) || info.State != MEM_COMMIT ||
+            (info.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+            return FALSE;
+        va = (ULONG_PTR)info.BaseAddress + info.RegionSize;
+    }
+    return TRUE;
+}
+
+static BOOLEAN page_locked(PEPROCESS process, ULONG_PTR page)
+{
+    for (ULONG i = 0; i < process->MmLockedCount; i++)
+        if (page >= process->MmLockedRanges[2 * i] && page < process->MmLockedRanges[2 * i + 1])
+            return TRUE;
+    return FALSE;
+}
+
+static NTSTATUS add_range(PEPROCESS process, ULONG_PTR start, ULONG_PTR end)
+{
+    if (process->MmLockedCount == process->MmLockedCapacity) {
+        ULONG capacity = process->MmLockedCapacity ? process->MmLockedCapacity * 2 : 16;
+        ULONG_PTR *grown = ExAllocatePool2(POOL_FLAG_NON_PAGED, capacity * 2 * sizeof(ULONG_PTR), KI_TAG('M', 'm', 'L', 'k'));
+        if (!grown)
+            return STATUS_INSUFFICIENT_RESOURCES;
+        if (process->MmLockedRanges) {
+            memcpy(grown, process->MmLockedRanges, process->MmLockedCount * 2 * sizeof(ULONG_PTR));
+            ExFreePool(process->MmLockedRanges);
+        }
+        process->MmLockedRanges = grown;
+        process->MmLockedCapacity = capacity;
+    }
+    process->MmLockedRanges[2 * process->MmLockedCount] = start;
+    process->MmLockedRanges[2 * process->MmLockedCount + 1] = end;
+    process->MmLockedCount++;
+    return STATUS_SUCCESS;
+}
+
+/* takes [start, end) out of every range, splitting one that holds it in its middle. */
+static NTSTATUS remove_range(PEPROCESS process, ULONG_PTR start, ULONG_PTR end)
+{
+    for (ULONG i = 0; i < process->MmLockedCount;) {
+        ULONG_PTR s = process->MmLockedRanges[2 * i], e = process->MmLockedRanges[2 * i + 1];
+        if (e <= start || s >= end) {
+            i++;
+            continue;
+        }
+        if (s < start && e > end) {
+            process->MmLockedRanges[2 * i + 1] = start;
+            return add_range(process, end, e);
+        }
+        if (s < start) {
+            process->MmLockedRanges[2 * i + 1] = start;
+            i++;
+        } else if (e > end) {
+            process->MmLockedRanges[2 * i] = end;
+            i++;
+        } else {
+            process->MmLockedCount--;
+            process->MmLockedRanges[2 * i] = process->MmLockedRanges[2 * process->MmLockedCount];
+            process->MmLockedRanges[2 * i + 1] = process->MmLockedRanges[2 * process->MmLockedCount + 1];
+        }
+    }
+    return STATUS_SUCCESS;
+}
+
+/*
+ * like windows, VirtualUnlock of pages that are not locked takes them out of the working set: they stay where they
+ * are, only hidden from user mode, and the next touch puts them back without an exception, a soft fault. locking puts
+ * them back at once. MemoryWorkingSetExInformation tells a trimmed page from a resident one.
+ */
+static void trim_pages(PEPROCESS process, ULONG_PTR start, ULONG_PTR end, BOOLEAN trim)
+{
+#if !defined(__x86_64__)
+    return;
+#endif
+    PMMADDRESS_SPACE as = &process->AddressSpace;
+    MiLockAddressSpace(as);
+    for (ULONG_PTR page = start; page < end; page += PAGE_SIZE) {
+        PMMVAD vad = MiFindVad(as, page);
+        if (!vad || (vad->Flags & MM_VAD_PLACEHOLDER))
+            continue;
+        ULONG64 v = MiReadPte(as->Root, page);
+        if (!(v & MM_PTE_VALID) || (v & (MM_PTE_SW_GUARD | MM_PTE_SW_CODE)))
+            continue;
+        if (trim && MI_PTE_IS_USER(v))
+            MiWritePte(as->Root, page, (v & ~MM_PTE_USER) | MM_PTE_SW_TRIMMED, as->Asid);
+        else if (!trim && (v & MM_PTE_SW_TRIMMED))
+            MiWritePte(as->Root, page, (v & ~MM_PTE_SW_TRIMMED) | MM_PTE_USER, as->Asid);
+    }
+    MiUnlockAddressSpace(as);
+}
+
+static NTSTATUS lock_virtual(HANDLE process_handle, PVOID *base, PSIZE_T size, ULONG map_type, BOOLEAN lock)
+{
+    PVOID b;
+    SIZE_T s;
+    if (!NT_SUCCESS(KiCopyFromUser(&b, base, sizeof(b))) || !NT_SUCCESS(KiCopyFromUser(&s, size, sizeof(s))))
+        return STATUS_ACCESS_VIOLATION;
+    if ((map_type & ~(MAP_PROCESS | MAP_SYSTEM)) || !map_type)
+        return STATUS_INVALID_PARAMETER;
+    if ((map_type & MAP_SYSTEM) && !SeThreadHasPrivilege(4 /* SE_LOCK_MEMORY_PRIVILEGE */))
+        return STATUS_PRIVILEGE_NOT_HELD;
+    ULONG_PTR start = (ULONG_PTR)PAGE_ALIGN(b), end = ((ULONG_PTR)b + s + PAGE_SIZE - 1) & ~(ULONG_PTR)(PAGE_SIZE - 1);
+    if (s == 0 || end <= start || end - 1 > MM_HIGHEST_USER_ADDRESS)
+        return STATUS_INVALID_PARAMETER;
+    PEPROCESS process;
+    NTSTATUS status = reference_process(process_handle, PROCESS_VM_OPERATION, &process);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (lock) {
+        status = range_committed(process, start, end) ? add_range(process, start, end) : STATUS_ACCESS_VIOLATION;
+        if (NT_SUCCESS(status))
+            trim_pages(process, start, end, FALSE);
+    } else {
+        for (ULONG_PTR page = start; page < end && NT_SUCCESS(status); page += PAGE_SIZE)
+            if (!page_locked(process, page))
+                status = STATUS_NOT_LOCKED;
+        if (NT_SUCCESS(status))
+            status = remove_range(process, start, end);
+        else if (status == STATUS_NOT_LOCKED)
+            trim_pages(process, start, end, TRUE);
+    }
+    ObDereferenceObject(process);
+    if (NT_SUCCESS(status)) {
+        b = (PVOID)start;
+        s = end - start;
+        KiCopyToUser(base, &b, sizeof(b));
+        KiCopyToUser(size, &s, sizeof(s));
+    }
+    return status;
+}
+
+NTSTATUS NTAPI NtLockVirtualMemory(HANDLE process, PVOID *base, PSIZE_T size, ULONG map_type)
+{
+    return lock_virtual(process, base, size, map_type, TRUE);
+}
+
+NTSTATUS NTAPI NtUnlockVirtualMemory(HANDLE process, PVOID *base, PSIZE_T size, ULONG map_type)
+{
+    return lock_virtual(process, base, size, map_type, FALSE);
 }

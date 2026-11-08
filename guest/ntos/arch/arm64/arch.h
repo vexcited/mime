@@ -141,6 +141,7 @@ typedef struct _KJUMP_BUFFER {
 #define MM_PTE_SW_WATCH (1ull << 58)  /* write watched page, mapped read only until written. */
 /* x86 code xta64 decoded, mapped read only until written. a pbha bit, which the hardware ignores with TCR_EL1.HWU clear. */
 #define MM_PTE_SW_CODE (1ull << 59)
+#define MM_PTE_SW_TRIMMED 0ull /* the working set is never trimmed on arm64. */
 #define MM_PTE_ADDR_MASK 0x0000FFFFFFFFF000ull
 
 /* invalid ptes with this bit describe committed but not yet present pages. */

@@ -1121,9 +1121,13 @@ typedef struct _EPROCESS {
     volatile LONG ThreadCount;
     HANDLE_TABLE HandleTable;
     MMADDRESS_SPACE AddressSpace;
+    /* the page ranges NtLockVirtualMemory locked, start and end pairs: MmLockedRanges of them. */
+    ULONG_PTR *MmLockedRanges;
+    ULONG MmLockedCount, MmLockedCapacity;
     PPEB Peb;
     PVOID SectionBaseAddress;
     PSECTION ImageSection;
+    PVOID InstrumentationCallback; /* ProcessInstrumentationCallback, where returns to user mode go first. */
     PVOID NtdllBase;            /* base of the system dll. */
     PPSP_SYSTEM_DLL SystemDll;
     USHORT Machine;             /* of the program image. */
