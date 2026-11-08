@@ -1426,9 +1426,11 @@ EXPORTS
     WakeByAddressSingle=_WakeByAddressSingle@4
     WakeConditionVariable=_WakeConditionVariable@4
     WerGetFlags=_WerGetFlags@8
+    WerRegisterCustomMetadata=_WerRegisterCustomMetadata@8
     WerRegisterFile=_WerRegisterFile@12
     WerRegisterMemoryBlock=_WerRegisterMemoryBlock@8
     WerRegisterRuntimeExceptionModule=_WerRegisterRuntimeExceptionModule@8
+    WerUnregisterCustomMetadata=_WerUnregisterCustomMetadata@4
     WerUnregisterRuntimeExceptionModule=_WerUnregisterRuntimeExceptionModule@8
     WerSetFlags=_WerSetFlags@4
     WideCharToMultiByte=_WideCharToMultiByte@32

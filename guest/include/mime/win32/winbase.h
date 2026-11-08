@@ -2611,6 +2611,8 @@ WINBASEAPI HRESULT WINAPI WerGetFlags(HANDLE process, PDWORD flags);
 WINBASEAPI HRESULT WINAPI WerSetFlags(DWORD flags);
 WINBASEAPI HRESULT WINAPI WerRegisterMemoryBlock(PVOID address, DWORD size);
 WINBASEAPI HRESULT WINAPI WerRegisterFile(PCWSTR file, int type, DWORD flags);
+WINBASEAPI HRESULT WINAPI WerRegisterCustomMetadata(PCWSTR key, PCWSTR value);
+WINBASEAPI HRESULT WINAPI WerUnregisterCustomMetadata(PCWSTR key);
 
 /* ------------------------------------------------------------------ resources */
 

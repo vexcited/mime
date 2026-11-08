@@ -31,8 +31,8 @@ EXPORTS
     AddResourceAttributeAce=kernelbase.AddResourceAttributeAce
     AddSIDToBoundaryDescriptor=Kernel32Thunk_AddSIDToBoundaryDescriptor
     AddScopedPolicyIDAce=kernelbase.AddScopedPolicyIDAce
-    AddVectoredContinueHandler=kernelbase.AddVectoredContinueHandler
-    AddVectoredExceptionHandler=kernelbase.AddVectoredExceptionHandler
+    AddVectoredContinueHandler=NTDLL.RtlAddVectoredContinueHandler
+    AddVectoredExceptionHandler=NTDLL.RtlAddVectoredExceptionHandler
     AdjustTokenGroups=kernelbase.AdjustTokenGroups
     AdjustTokenPrivileges=kernelbase.AdjustTokenPrivileges
     AllocConsole=Kernel32Thunk_AllocConsole
@@ -1244,8 +1244,8 @@ EXPORTS
     RemoveDirectoryA=Kernel32Thunk_RemoveDirectoryA
     RemoveDirectoryW=Kernel32Thunk_RemoveDirectoryW
     RemoveDllDirectory=kernelbase.RemoveDllDirectory
-    RemoveVectoredContinueHandler=kernelbase.RemoveVectoredContinueHandler
-    RemoveVectoredExceptionHandler=kernelbase.RemoveVectoredExceptionHandler
+    RemoveVectoredContinueHandler=NTDLL.RtlRemoveVectoredContinueHandler
+    RemoveVectoredExceptionHandler=NTDLL.RtlRemoveVectoredExceptionHandler
     ReplaceFileW=Kernel32Thunk_ReplaceFileW
     ResetEvent=Kernel32Thunk_ResetEvent
     ResetWriteWatch=Kernel32Thunk_ResetWriteWatch
@@ -1594,9 +1594,11 @@ EXPORTS
     WakeByAddressSingle=Kernel32Thunk_WakeByAddressSingle
     WakeConditionVariable=kernelbase.WakeConditionVariable
     WerGetFlags=Kernel32Thunk_WerGetFlags
+    WerRegisterCustomMetadata=Kernel32Thunk_WerRegisterCustomMetadata
     WerRegisterFile=Kernel32Thunk_WerRegisterFile
     WerRegisterMemoryBlock=Kernel32Thunk_WerRegisterMemoryBlock
     WerRegisterRuntimeExceptionModule=Kernel32Thunk_WerRegisterRuntimeExceptionModule
+    WerUnregisterCustomMetadata=Kernel32Thunk_WerUnregisterCustomMetadata
     WerUnregisterRuntimeExceptionModule=Kernel32Thunk_WerUnregisterRuntimeExceptionModule
     WerSetFlags=Kernel32Thunk_WerSetFlags
     WideCharToMultiByte=Kernel32Thunk_WideCharToMultiByte
