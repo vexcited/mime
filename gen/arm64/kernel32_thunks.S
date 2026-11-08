@@ -7739,6 +7739,12 @@ Kernel32Thunk_WerGetFlags:
     adrp    x16, __imp_WerGetFlags
     ldr     x16, [x16, :lo12:__imp_WerGetFlags]
     br      x16
+    .globl  Kernel32Thunk_WerRegisterCustomMetadata
+    .p2align 4
+Kernel32Thunk_WerRegisterCustomMetadata:
+    adrp    x16, __imp_WerRegisterCustomMetadata
+    ldr     x16, [x16, :lo12:__imp_WerRegisterCustomMetadata]
+    br      x16
     .globl  Kernel32Thunk_WerRegisterFile
     .p2align 4
 Kernel32Thunk_WerRegisterFile:
@@ -7756,6 +7762,12 @@ Kernel32Thunk_WerRegisterMemoryBlock:
 Kernel32Thunk_WerRegisterRuntimeExceptionModule:
     adrp    x16, __imp_WerRegisterRuntimeExceptionModule
     ldr     x16, [x16, :lo12:__imp_WerRegisterRuntimeExceptionModule]
+    br      x16
+    .globl  Kernel32Thunk_WerUnregisterCustomMetadata
+    .p2align 4
+Kernel32Thunk_WerUnregisterCustomMetadata:
+    adrp    x16, __imp_WerUnregisterCustomMetadata
+    ldr     x16, [x16, :lo12:__imp_WerUnregisterCustomMetadata]
     br      x16
     .globl  Kernel32Thunk_WerUnregisterRuntimeExceptionModule
     .p2align 4
