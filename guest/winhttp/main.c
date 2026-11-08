@@ -1279,14 +1279,26 @@ static DWORD QueryOption(WH_OBJECT *object, DWORD option, LPVOID buffer, LPDWORD
             return ERROR_WINHTTP_INCORRECT_HANDLE_TYPE;
         value = option == WINHTTP_OPTION_MAX_CONNS_PER_SERVER ? object->MaxConnsPerServer : object->MaxConnsPer10Server;
         return CopyOut(&value, 4, buffer, length);
+    /* once the handshake is done, the server's certificate and its chain, which the caller frees. */
     case WINHTTP_OPTION_SERVER_CERT_CONTEXT:
+    case WINHTTP_OPTION_SERVER_CERT_CHAIN_CONTEXT: {
         if (!request)
             return ERROR_WINHTTP_INCORRECT_HANDLE_TYPE;
         if (*length < sizeof(void *)) {
             *length = sizeof(void *);
             return ERROR_INSUFFICIENT_BUFFER;
         }
-        return ERROR_WINHTTP_INCORRECT_HANDLE_STATE;
+        EnterCriticalSection(&object->Lock);
+        const void *out = nullptr;
+        DWORD error = option == WINHTTP_OPTION_SERVER_CERT_CONTEXT ? WhTlsServerCert(object->Conn, &out)
+                                                                   : WhTlsServerChain(object->Conn, &out);
+        LeaveCriticalSection(&object->Lock);
+        if (error)
+            return error;
+        *(const void **)buffer = out;
+        *length = sizeof(void *);
+        return ERROR_SUCCESS;
+    }
     case WINHTTP_OPTION_WORKER_THREAD_COUNT:
         return CopyOut(&WorkerThreads, 4, buffer, length);
     case WINHTTP_OPTION_AUTOLOGON_POLICY:

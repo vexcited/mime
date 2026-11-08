@@ -239,6 +239,9 @@ DWORD WhTlsHandshake(WH_CONN *conn, LPCWSTR host, DWORD security_flags, int time
 DWORD WhTlsSend(WH_CONN *conn, const void *data, DWORD size, int timeout);
 DWORD WhTlsFill(WH_CONN *conn, int timeout);
 void WhTlsClose(WH_CONN *conn);
+/* the server's certificate and its chain, as crypt32 references the caller frees. */
+DWORD WhTlsServerCert(WH_CONN *conn, const void **cert);
+DWORD WhTlsServerChain(WH_CONN *conn, const void **chain);
 
 /* proxy.c. */
 BOOL WhReadDefaultProxy(WINHTTP_PROXY_INFO *info);
