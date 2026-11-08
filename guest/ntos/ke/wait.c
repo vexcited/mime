@@ -280,9 +280,9 @@ NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASO
                        BOOLEAN alertable, PLARGE_INTEGER timeout, PKWAIT_BLOCK blocks)
 {
     PKTHREAD thread = KiCurrentThread();
-    if (KeGetPcr()->Irql > DISPATCH_LEVEL ||
-        (KeGetPcr()->Irql == DISPATCH_LEVEL && (!timeout || timeout->QuadPart != 0)))
-        KeBugCheckEx(0x0000000A, (ULONG_PTR)objects, KeGetPcr()->Irql, 0, 0);
+    KIRQL irql = KiCurrentIrql();
+    if (irql > DISPATCH_LEVEL || (irql == DISPATCH_LEVEL && (!timeout || timeout->QuadPart != 0)))
+        KeBugCheckEx(0x0000000A, (ULONG_PTR)objects, irql, 0, 0);
     if (count > MAXIMUM_WAIT_OBJECTS)
         return STATUS_INVALID_PARAMETER;
     if (!blocks)

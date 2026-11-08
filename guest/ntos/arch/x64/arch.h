@@ -95,6 +95,14 @@ FORCEINLINE struct _KPCR *KeGetPcr(void)
     return pcr;
 }
 
+/* one gs relative load, which reads the processor the thread is on even if it moves right after. */
+FORCEINLINE UCHAR KiCurrentIrql(void)
+{
+    UCHAR irql;
+    __asm__ volatile("movb %%gs:%c1, %0" : "=q"(irql) : "i"(KPCR_IRQL));
+    return irql;
+}
+
 #define MSR_EFER 0xC0000080
 #define MSR_STAR 0xC0000081
 #define MSR_LSTAR 0xC0000082
