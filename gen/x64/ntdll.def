@@ -1029,12 +1029,14 @@ EXPORTS
     LdrLoadDll
     LdrLockLoaderLock
     LdrQueryImageFileExecutionOptions
+    LdrRegisterDllNotification
     LdrResolveDelayLoadedAPI
     LdrSetDllManifestProber
     LdrShutdownProcess
     LdrShutdownThread
     LdrUnloadDll
     LdrUnlockLoaderLock
+    LdrUnregisterDllNotification
     RtlFreeActivationContextData
     RtlGenerateActivationContext
     RtlInheritActivationContext
@@ -1176,6 +1178,7 @@ EXPORTS
     RtlGetActiveConsoleId
     RtlGetAppContainerParent
     RtlGetAppContainerSidType
+    RtlGetCallersAddress
     RtlGetControlSecurityDescriptor
     RtlGetCurrentDirectory_U
     RtlGetCurrentPeb
