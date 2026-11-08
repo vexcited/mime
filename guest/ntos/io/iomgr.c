@@ -248,6 +248,187 @@ NTSTATUS IopSynchronousRequest(PFILE_OBJECT file, UCHAR major, UCHAR minor, PVOI
     return status;
 }
 
+/* a device of a driver loaded from a file, which gets its buffers the way windows hands them over. */
+BOOLEAN IopIsLoadedDriverDevice(PFILE_OBJECT file)
+{
+    PDEVICE_OBJECT device = IoGetRelatedDeviceObject(file);
+    PKLDR_DATA_TABLE_ENTRY m = device && device->DriverObject && device->DriverObject->DriverStart
+                                   ? MiLookupModule((ULONG_PTR)device->DriverObject->DriverStart)
+                                   : nullptr;
+    return m && m != MiKernelModule();
+}
+
+/*
+ * an mdl of the caller's buffer with its pages locked, like the one IoAllocateMdl and MmProbeAndLockPages make for
+ * direct i/o. the pages are touched first, so a bad buffer fails here instead of raising.
+ */
+static PMDL lock_buffer(PVOID buffer, ULONG length, KPROCESSOR_MODE mode, LOCK_OPERATION operation, NTSTATUS *status)
+{
+    if (mode == UserMode) {
+        ULONG_PTR start = (ULONG_PTR)buffer, end = start + length;
+        if (end < start || end > MmUserProbeAddress) {
+            *status = STATUS_ACCESS_VIOLATION;
+            return nullptr;
+        }
+        for (ULONG_PTR va = start; va < end; va = (va & ~(ULONG_PTR)(PAGE_SIZE - 1)) + PAGE_SIZE) {
+            UCHAR value;
+            *status = KiCopyFromUser(&value, (PVOID)va, 1);
+            if (NT_SUCCESS(*status) && operation != IoReadAccess)
+                *status = KiCopyToUser((PVOID)va, &value, 1);
+            if (!NT_SUCCESS(*status))
+                return nullptr;
+        }
+    }
+    PMDL mdl = IoAllocateMdl(buffer, length, FALSE, FALSE, nullptr);
+    if (!mdl) {
+        *status = STATUS_INSUFFICIENT_RESOURCES;
+        return nullptr;
+    }
+    MmProbeAndLockPages(mdl, mode, operation);
+    *status = STATUS_SUCCESS;
+    return mdl;
+}
+
+/*
+ * like IopSynchronousServiceTail: the request goes down in the caller's mode with the buffers set up for it, and is
+ * waited for when the driver leaves it pending. a buffered answer is copied back to the caller's buffer here, and the
+ * pool and the locked pages are let go, as the completion of windows does in the caller's context.
+ */
+static NTSTATUS driver_request(PFILE_OBJECT file, PIO_STACK_LOCATION params, ULONG flags, PUCHAR system, PMDL mdl,
+                               PVOID user_buffer, ULONG copy_back, KPROCESSOR_MODE mode, PIO_STATUS_BLOCK iosb)
+{
+    PDEVICE_OBJECT device = IoGetRelatedDeviceObject(file);
+    NTSTATUS status = STATUS_INSUFFICIENT_RESOURCES;
+    PIRP irp = IoAllocateIrp(device->StackSize, FALSE);
+    IO_STATUS_BLOCK local = {};
+    if (irp) {
+        KEVENT event;
+        KeInitializeEvent(&event, NotificationEvent, FALSE);
+        irp->UserEvent = &event;
+        irp->UserIosb = &local;
+        irp->UserBuffer = user_buffer;
+        irp->AssociatedIrp.SystemBuffer = system;
+        irp->MdlAddress = mdl;
+        irp->RequestorMode = mode;
+        irp->Tail.Overlay.Thread = PsCurrentThread();
+        irp->Tail.Overlay.OriginalFileObject = file;
+        irp->Flags = flags | ((file->Flags & FO_SYNCHRONOUS_IO) ? IRP_SYNCHRONOUS_API : 0);
+        PIO_STACK_LOCATION stack = IoGetNextIrpStackLocation(irp);
+        UCHAR major = params->MajorFunction;
+        *stack = *params;
+        stack->MajorFunction = major;
+        stack->FileObject = file;
+        status = IofCallDriver(device, irp);
+        if (status == STATUS_PENDING) {
+            KeWaitForSingleObject(&event, Executive, KernelMode, FALSE, nullptr);
+            status = local.Status;
+        } else {
+            local = irp->IoStatus;
+            local.Status = status;
+        }
+        IoFreeIrp(irp);
+    }
+    if (system && copy_back && !NT_ERROR(status) && local.Information) {
+        ULONG n = local.Information < copy_back ? (ULONG)local.Information : copy_back;
+        NTSTATUS copied = mode == UserMode ? KiCopyToUser(user_buffer, system, n) : (memcpy(user_buffer, system, n), STATUS_SUCCESS);
+        if (!NT_SUCCESS(copied))
+            status = copied;
+    }
+    if (mdl) {
+        if (mdl->MdlFlags & MDL_PAGES_LOCKED)
+            MmUnlockPages(mdl);
+        IoFreeMdl(mdl);
+    }
+    if (system)
+        ExFreePool(system);
+    local.Status = status;
+    *iosb = local;
+    return status;
+}
+
+/*
+ * a read or a write of a loaded driver's device, set up like IopReadFile and NtWriteFile: a buffered device gets a copy
+ * in pool, a direct one an mdl of the caller's pages, and the others the caller's own buffer.
+ */
+NTSTATUS IopDriverReadWrite(PFILE_OBJECT file, BOOLEAN write, PVOID buffer, ULONG length, LONGLONG offset, ULONG key,
+                            KPROCESSOR_MODE mode, PIO_STATUS_BLOCK iosb)
+{
+    PDEVICE_OBJECT device = IoGetRelatedDeviceObject(file);
+    PUCHAR system = nullptr;
+    PMDL mdl = nullptr;
+    ULONG flags = write ? IRP_WRITE_OPERATION : IRP_READ_OPERATION;
+    NTSTATUS status = STATUS_SUCCESS;
+    if (length && (device->Flags & DO_BUFFERED_IO)) {
+        system = ExAllocatePool2(POOL_FLAG_NON_PAGED, length, KI_TAG('I', 'o', 'S', 'b'));
+        if (!system)
+            status = STATUS_INSUFFICIENT_RESOURCES;
+        else if (write)
+            status = mode == UserMode ? KiCopyFromUser(system, buffer, length) : (memcpy(system, buffer, length), STATUS_SUCCESS);
+        flags |= IRP_BUFFERED_IO | IRP_DEALLOCATE_BUFFER | (write ? 0 : IRP_INPUT_OPERATION);
+    } else if (length && (device->Flags & DO_DIRECT_IO)) {
+        mdl = lock_buffer(buffer, length, mode, write ? IoReadAccess : IoWriteAccess, &status);
+    }
+    if (!NT_SUCCESS(status)) {
+        if (system)
+            ExFreePool(system);
+        iosb->Status = status;
+        iosb->Information = 0;
+        return status;
+    }
+    IO_STACK_LOCATION params;
+    memset(&params, 0, sizeof(params));
+    params.MajorFunction = write ? IRP_MJ_WRITE : IRP_MJ_READ;
+    params.Parameters.Read.Length = length;
+    params.Parameters.Read.Key = key;
+    params.Parameters.Read.ByteOffset.QuadPart = offset;
+    return driver_request(file, &params, flags, system, mdl, buffer, write ? 0 : length, mode, iosb);
+}
+
+/*
+ * a control request of a loaded driver's device, with the buffers of its transfer method as IopXxxControlFile sets them:
+ * buffered requests share one pool copy, direct ones copy the input and lock the output, and the rest pass the
+ * caller's pointers.
+ */
+NTSTATUS IopDriverControl(PFILE_OBJECT file, UCHAR major, ULONG code, PVOID input, ULONG in_len, PVOID output,
+                          ULONG out_len, KPROCESSOR_MODE mode, PIO_STATUS_BLOCK iosb)
+{
+    ULONG method = code & 3, flags = 0, copy_back = 0;
+    PUCHAR system = nullptr;
+    PMDL mdl = nullptr;
+    NTSTATUS status = STATUS_SUCCESS;
+    ULONG size = method == METHOD_BUFFERED ? (in_len > out_len ? in_len : out_len) : method == METHOD_NEITHER ? 0 : in_len;
+    if (size) {
+        system = ExAllocatePool2(POOL_FLAG_NON_PAGED, size, KI_TAG('I', 'o', 'S', 'b'));
+        if (!system)
+            status = STATUS_INSUFFICIENT_RESOURCES;
+        else if (in_len)
+            status = mode == UserMode ? KiCopyFromUser(system, input, in_len) : (memcpy(system, input, in_len), STATUS_SUCCESS);
+        flags |= IRP_BUFFERED_IO | IRP_DEALLOCATE_BUFFER;
+        if (method == METHOD_BUFFERED && out_len) {
+            flags |= IRP_INPUT_OPERATION;
+            copy_back = out_len;
+        }
+    }
+    if (NT_SUCCESS(status) && out_len && (method == METHOD_IN_DIRECT || method == METHOD_OUT_DIRECT))
+        mdl = lock_buffer(output, out_len, mode, method == METHOD_IN_DIRECT ? IoReadAccess : IoWriteAccess, &status);
+    if (!NT_SUCCESS(status)) {
+        if (system)
+            ExFreePool(system);
+        iosb->Status = status;
+        iosb->Information = 0;
+        return status;
+    }
+    IO_STACK_LOCATION params;
+    memset(&params, 0, sizeof(params));
+    params.MajorFunction = major;
+    params.Parameters.DeviceIoControl.IoControlCode = code;
+    params.Parameters.DeviceIoControl.InputBufferLength = in_len;
+    params.Parameters.DeviceIoControl.OutputBufferLength = out_len;
+    if (method == METHOD_NEITHER)
+        params.Parameters.DeviceIoControl.Type3InputBuffer = input;
+    return driver_request(file, &params, flags, system, mdl, output, copy_back, mode, iosb);
+}
+
 NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64 offset, PULONG read)
 {
     IO_STACK_LOCATION params;
