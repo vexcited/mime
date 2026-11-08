@@ -159,12 +159,21 @@ static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
         result = HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
     else if (size.QuadPart && !(mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr)))
         result = HRESULT_FROM_WIN32(GetLastError());
+    /*
+     * the files of the system image are the operating system: windows signs its own, so an unsigned one of mime's is
+     * as trusted. the file system numbers them like ntfs records of sequence 1 from 0x1000, which no host file has.
+     */
+    BY_HANDLE_FILE_INFORMATION about;
+    BOOL system_image = GetFileInformationByHandle(file, &about) && about.nFileIndexHigh == 0x10000 &&
+                        about.nFileIndexLow >= 0x1000 && about.nFileIndexLow < 0x100000;
     if (owned)
         CloseHandle(file);
     if (!result)
         result = verify_mapping(mapping, (DWORD)size.QuadPart, data, chain);
     if (mapping)
         CloseHandle(mapping);
+    if (result == TRUST_E_NOSIGNATURE && system_image)
+        result = ERROR_SUCCESS;
     return result;
 }
 
