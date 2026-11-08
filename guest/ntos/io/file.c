@@ -277,47 +277,52 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
         ObDereferenceObject(file);
         return status;
     }
-    PUCHAR bounce = nullptr;
-    ULONG bounce_size = at_end ? IO_APPEND_ATOMIC : IO_BOUNCE_SIZE;
-    if (mode == UserMode && length) {
-        bounce = ExAllocatePool2(POOL_FLAG_NON_PAGED, length < bounce_size ? length : bounce_size, KI_TAG('I', 'o', 'B', 'n'));
-        if (!bounce) {
-            unlock_file(file);
-            ObDereferenceObject(file);
-            return STATUS_INSUFFICIENT_RESOURCES;
-        }
-    }
     ULONG done = 0;
     IO_STATUS_BLOCK io = {};
-    while (done < length || length == 0) {
-        ULONG chunk = length - done;
-        if (bounce && chunk > bounce_size)
-            chunk = bounce_size;
-        PVOID buf = bounce ? bounce : (PUCHAR)buffer + done;
-        if (write && bounce) {
-            status = copy_user(FALSE, buffer, pages, done, bounce, chunk);
+    if (!pages && IopIsLoadedDriverDevice(file)) {
+        status = IopDriverReadWrite(file, write, buffer, length, offset.QuadPart, lock_key, mode, &io);
+        done = (ULONG)io.Information;
+    } else {
+        PUCHAR bounce = nullptr;
+        ULONG bounce_size = at_end ? IO_APPEND_ATOMIC : IO_BOUNCE_SIZE;
+        if (mode == UserMode && length) {
+            bounce = ExAllocatePool2(POOL_FLAG_NON_PAGED, length < bounce_size ? length : bounce_size, KI_TAG('I', 'o', 'B', 'n'));
+            if (!bounce) {
+                unlock_file(file);
+                ObDereferenceObject(file);
+                return STATUS_INSUFFICIENT_RESOURCES;
+            }
+        }
+        while (done < length || length == 0) {
+            ULONG chunk = length - done;
+            if (bounce && chunk > bounce_size)
+                chunk = bounce_size;
+            PVOID buf = bounce ? bounce : (PUCHAR)buffer + done;
+            if (write && bounce) {
+                status = copy_user(FALSE, buffer, pages, done, bounce, chunk);
+                if (!NT_SUCCESS(status))
+                    break;
+            }
+            IO_STACK_LOCATION params;
+            memset(&params, 0, sizeof(params));
+            params.Parameters.Read.Length = chunk;
+            params.Parameters.Read.ByteOffset.QuadPart = at_end ? IO_WRITE_TO_END : offset.QuadPart + done;
+            status = IopSynchronousRequest(file, write ? IRP_MJ_WRITE : IRP_MJ_READ, 0, buf, chunk, &params, &io);
             if (!NT_SUCCESS(status))
                 break;
-        }
-        IO_STACK_LOCATION params;
-        memset(&params, 0, sizeof(params));
-        params.Parameters.Read.Length = chunk;
-        params.Parameters.Read.ByteOffset.QuadPart = at_end ? IO_WRITE_TO_END : offset.QuadPart + done;
-        status = IopSynchronousRequest(file, write ? IRP_MJ_WRITE : IRP_MJ_READ, 0, buf, chunk, &params, &io);
-        if (!NT_SUCCESS(status))
-            break;
-        ULONG got = (ULONG)io.Information;
-        if (!write && bounce && got) {
-            status = copy_user(TRUE, buffer, pages, done, bounce, got);
-            if (!NT_SUCCESS(status))
+            ULONG got = (ULONG)io.Information;
+            if (!write && bounce && got) {
+                status = copy_user(TRUE, buffer, pages, done, bounce, got);
+                if (!NT_SUCCESS(status))
+                    break;
+            }
+            done += got;
+            if (got < chunk || length == 0)
                 break;
         }
-        done += got;
-        if (got < chunk || length == 0)
-            break;
+        if (bounce)
+            ExFreePool(bounce);
     }
-    if (bounce)
-        ExFreePool(bounce);
     if (status == STATUS_END_OF_FILE && done)
         status = STATUS_SUCCESS;
     /* the file system leaves the position of a handle that wrote at the end where the data ended. */
@@ -917,14 +922,19 @@ static NTSTATUS buffered_control(PFILE_OBJECT file, UCHAR major, HANDLE event, P
                                  ULONG out_len)
 {
     NTSTATUS status = STATUS_SUCCESS;
-    ULONG size = in_len > out_len ? in_len : out_len;
-    PUCHAR buf = ExAllocatePool2(POOL_FLAG_NON_PAGED, size ? size : 1, KI_TAG('I', 'o', 'C', 't'));
-    if (!buf)
-        return STATUS_INSUFFICIENT_RESOURCES;
-    if (in_len)
-        status = KiCopyFromUser(buf, input, in_len);
     IO_STATUS_BLOCK io = {};
-    if (NT_SUCCESS(status)) {
+    PUCHAR buf = nullptr;
+    ULONG size = in_len > out_len ? in_len : out_len;
+    if (IopIsLoadedDriverDevice(file)) {
+        status = IopDriverControl(file, major, code, input, in_len, output, out_len, KeGetPreviousMode(), &io);
+    } else {
+        buf = ExAllocatePool2(POOL_FLAG_NON_PAGED, size ? size : 1, KI_TAG('I', 'o', 'C', 't'));
+        if (!buf)
+            return STATUS_INSUFFICIENT_RESOURCES;
+        if (in_len)
+            status = KiCopyFromUser(buf, input, in_len);
+    }
+    if (buf && NT_SUCCESS(status)) {
         IO_STACK_LOCATION params;
         memset(&params, 0, sizeof(params));
         params.Parameters.DeviceIoControl.IoControlCode = code;
@@ -946,7 +956,8 @@ static NTSTATUS buffered_control(PFILE_OBJECT file, UCHAR major, HANDLE event, P
     }
     if (!NT_ERROR(status))
         IopPostCompletion(file, apc_context, status, io.Information, TRUE);
-    ExFreePool(buf);
+    if (buf)
+        ExFreePool(buf);
     return status;
 }
 

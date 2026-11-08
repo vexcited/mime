@@ -1488,6 +1488,11 @@ void FsNotifyHostInterrupt(void);
 NTSTATUS FsNotifyCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
 /* mimefs.c: whether a file object is on a host backed volume, and the volume of an open directory. */
 BOOLEAN IopIsMimeFs(PFILE_OBJECT file);
+BOOLEAN IopIsLoadedDriverDevice(PFILE_OBJECT file);
+NTSTATUS IopDriverReadWrite(PFILE_OBJECT file, BOOLEAN write, PVOID buffer, ULONG length, LONGLONG offset, ULONG key,
+                            KPROCESSOR_MODE mode, PIO_STATUS_BLOCK iosb);
+NTSTATUS IopDriverControl(PFILE_OBJECT file, UCHAR major, ULONG code, PVOID input, ULONG in_len, PVOID output,
+                          ULONG out_len, KPROCESSOR_MODE mode, PIO_STATUS_BLOCK iosb);
 NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume, PULONG64 host_handle);
 
 /* http.c: the http server driver. */
