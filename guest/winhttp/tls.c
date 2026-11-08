@@ -249,6 +249,41 @@ static DWORD VerifyServer(WH_CONN *conn, LPCWSTR host, DWORD security_flags, DWO
     return error;
 }
 
+/* the certificate the server presented, a reference the caller frees. */
+DWORD WhTlsServerCert(WH_CONN *conn, const void **out)
+{
+    PCCERT_CONTEXT *cert = (PCCERT_CONTEXT *)out;
+    *cert = nullptr;
+    if (!conn || !conn->Tls || !Table)
+        return ERROR_WINHTTP_INCORRECT_HANDLE_STATE;
+    if (Table->QueryContextAttributesW(&conn->Context, SECPKG_ATTR_REMOTE_CERT_CONTEXT, cert) != SEC_E_OK || !*cert)
+        return ERROR_WINHTTP_INCORRECT_HANDLE_STATE;
+    return ERROR_SUCCESS;
+}
+
+/* the chain of the server's certificate, built for server authentication as the handshake checks it. */
+DWORD WhTlsServerChain(WH_CONN *conn, const void **out)
+{
+    PCCERT_CHAIN_CONTEXT *chain = (PCCERT_CHAIN_CONTEXT *)out;
+    *chain = nullptr;
+    InitOnceExecuteOnce(&CryptOnce, LoadCrypt, nullptr, nullptr);
+    if (!Crypt.GetChain || !Crypt.FreeContext)
+        return ERROR_WINHTTP_INCORRECT_HANDLE_STATE;
+    PCCERT_CONTEXT cert;
+    DWORD error = WhTlsServerCert(conn, (const void **)&cert);
+    if (error)
+        return error;
+    LPSTR usage = (LPSTR)szOID_PKIX_KP_SERVER_AUTH;
+    CERT_CHAIN_PARA chain_para = {sizeof(chain_para)};
+    chain_para.RequestedUsage.dwType = USAGE_MATCH_TYPE_OR;
+    chain_para.RequestedUsage.Usage.cUsageIdentifier = 1;
+    chain_para.RequestedUsage.Usage.rgpszUsageIdentifier = &usage;
+    if (!Crypt.GetChain(nullptr, cert, nullptr, cert->hCertStore, &chain_para, 0, nullptr, chain))
+        error = GetLastError() ? GetLastError() : ERROR_WINHTTP_INCORRECT_HANDLE_STATE;
+    Crypt.FreeContext(cert);
+    return error;
+}
+
 DWORD WhTlsHandshake(WH_CONN *conn, LPCWSTR host, DWORD security_flags, int timeout, DWORD *failure)
 {
     *failure = 0;
