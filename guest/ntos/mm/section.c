@@ -1104,7 +1104,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
     *base = (PVOID)va;
     *view_size = bytes;
     if (image && PspImageNotifyRegistered())
-        PspNotifyImage(&s->FileName, process, (PVOID)va, bytes, s->Image.Machine);
+        PspNotifyImage(&s->FileName, process, (PVOID)va, bytes, s->File);
     return relocated ? STATUS_IMAGE_NOT_AT_BASE : STATUS_SUCCESS;
 }
 
