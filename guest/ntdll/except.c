@@ -54,25 +54,42 @@ static ULONG remove_handler(PLIST_ENTRY list, PVOID handle)
     return found;
 }
 
+/* the type picks the list: 0 for exception handlers, 1 for continue handlers, as windows' internal routines take it. */
+PVOID NTAPI RtlpAddVectoredHandler(ULONG first, PVECTORED_EXCEPTION_HANDLER handler, ULONG type)
+{
+    return add_handler(type ? &g_continue : &g_vectored, first, handler);
+}
+
+ULONG NTAPI RtlpRemoveVectoredHandler(PVOID handle, ULONG type)
+{
+    return remove_handler(type ? &g_continue : &g_vectored, handle);
+}
+
+/*
+ * on x64 the four exports are windows' stubs, which set the type and jump to the internal routine, see x64/entry.S:
+ * programs follow the jump to call the routine itself.
+ */
+#ifndef __x86_64__
 NTDLL_EXPORT PVOID NTAPI RtlAddVectoredExceptionHandler(ULONG first, PVECTORED_EXCEPTION_HANDLER handler)
 {
-    return add_handler(&g_vectored, first, handler);
+    return RtlpAddVectoredHandler(first, handler, 0);
 }
 
 NTDLL_EXPORT ULONG NTAPI RtlRemoveVectoredExceptionHandler(PVOID handle)
 {
-    return remove_handler(&g_vectored, handle);
+    return RtlpRemoveVectoredHandler(handle, 0);
 }
 
 NTDLL_EXPORT PVOID NTAPI RtlAddVectoredContinueHandler(ULONG first, PVECTORED_EXCEPTION_HANDLER handler)
 {
-    return add_handler(&g_continue, first, handler);
+    return RtlpAddVectoredHandler(first, handler, 1);
 }
 
 NTDLL_EXPORT ULONG NTAPI RtlRemoveVectoredContinueHandler(PVOID handle)
 {
-    return remove_handler(&g_continue, handle);
+    return RtlpRemoveVectoredHandler(handle, 1);
 }
+#endif
 
 /* backs kernel32's SetUnhandledExceptionFilter. */
 NTDLL_EXPORT void NTAPI RtlSetUnhandledExceptionFilter(PVOID filter)
@@ -99,18 +116,18 @@ static LONG call_handlers(PLIST_ENTRY list, PEXCEPTION_RECORD record, PCONTEXT c
 
 BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, PCONTEXT context);
 
+/* like windows, the continue handlers run after the exception is handled, whoever handled it. */
 NTDLL_EXPORT BOOLEAN NTAPI RtlDispatchException(PEXCEPTION_RECORD record, PCONTEXT context)
 {
-    if (call_handlers(&g_vectored, record, context) == EXCEPTION_CONTINUE_EXECUTION)
-        return TRUE;
-    if (RtlDispatchFrameException(record, context))
-        return TRUE;
-    if (g_unhandled_filter) {
+    BOOLEAN handled = call_handlers(&g_vectored, record, context) == EXCEPTION_CONTINUE_EXECUTION ||
+                      RtlDispatchFrameException(record, context);
+    if (!handled && g_unhandled_filter) {
         EXCEPTION_POINTERS info = {record, context};
-        if (g_unhandled_filter(&info) == EXCEPTION_CONTINUE_EXECUTION)
-            return TRUE;
+        handled = g_unhandled_filter(&info) == EXCEPTION_CONTINUE_EXECUTION;
     }
-    return FALSE;
+    if (handled)
+        call_handlers(&g_continue, record, context);
+    return handled;
 }
 
 BOOLEAN LdrpUserCallbackExceptions(void)
@@ -150,7 +167,6 @@ void NTAPI KiUserExceptionDispatcherC(PEXCEPTION_RECORD record, PCONTEXT context
     if (LdrpWow64PrepareForException)
         LdrpWow64PrepareForException(record, context);
     if (RtlDispatchException(record, context)) {
-        call_handlers(&g_continue, record, context);
         status = NtContinue(context, FALSE);
     } else {
         status = NtRaiseException(record, context, FALSE);
