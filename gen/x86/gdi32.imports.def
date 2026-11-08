@@ -67,6 +67,11 @@ EXPORTS
     CreateRectRgnIndirect@4
     CreateRoundRectRgn@24
     CreateSolidBrush@4
+    D3DKMTCloseAdapter@4
+    D3DKMTEnumAdapters@4
+    D3DKMTEnumAdapters2@4
+    D3DKMTOpenAdapterFromLuid@4
+    D3DKMTQueryAdapterInfo@4
     D3DKMTCreateDCFromMemory@4
     D3DKMTDestroyDCFromMemory@4
     D3DKMTGetProcessSchedulingPriorityClass@8
