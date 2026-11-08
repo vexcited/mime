@@ -906,7 +906,7 @@ static HWND *build_list(HWND parent, BOOL children, DWORD thread, ULONG *count)
         HWND *list = UserAlloc(cap * sizeof(HWND));
         if (!list)
             return nullptr;
-        NTSTATUS status = NtUserBuildHwndList(nullptr, parent, children, thread, cap, list, count);
+        NTSTATUS status = NtUserBuildHwndList(nullptr, parent, children, FALSE, thread, cap, list, count);
         if (NT_SUCCESS(status))
             return list;
         UserFree(list);

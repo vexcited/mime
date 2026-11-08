@@ -2483,8 +2483,9 @@ HWND NTAPI NtUserFindWindowEx(HWND parent_h, HWND after_h, PUNICODE_STRING user_
     return result;
 }
 
-NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent_h, BOOL children, ULONG thread, ULONG max, HWND *list,
-                                   ULONG *count)
+/* windows' shape, with the flag that leaves out immersive windows, which mime has none of. */
+NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent_h, BOOL children, BOOL remove_immersive, ULONG thread,
+                                   ULONG max, HWND *list, ULONG *count)
 {
     UserEnter();
     WND *parent = parent_h ? WndLookup(parent_h) : WndDesktop();

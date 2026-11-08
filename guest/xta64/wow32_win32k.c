@@ -132,12 +132,12 @@ static ULONG outline_metrics32(const ULONG *a)
 static ULONG handle_list32(ULONG number, const ULONG *a)
 {
     BOOLEAN props = number == MIME_SVC_NtUserBuildPropList;
-    ULONG max = props ? a[1] : a[4], count = 0;
+    ULONG max = props ? a[1] : a[5], count = 0;
     SIZE_T item = props ? sizeof(PROPLISTITEM) : sizeof(HWND);
     PVOID list = max ? allocate(max * item) : nullptr;
     if (max && !list)
         return (ULONG)STATUS_NO_MEMORY;
-    ULONG64 v[7];
+    ULONG64 v[8];
     if (props) {
         v[0] = a[0];
         v[1] = max;
@@ -148,12 +148,13 @@ static ULONG handle_list32(ULONG number, const ULONG *a)
         v[1] = (LONG64)(LONG)a[1];
         v[2] = a[2];
         v[3] = a[3];
-        v[4] = max;
-        v[5] = (ULONG_PTR)list;
-        v[6] = (ULONG_PTR)&count;
+        v[4] = a[4];
+        v[5] = max;
+        v[6] = (ULONG_PTR)list;
+        v[7] = (ULONG_PTR)&count;
     }
     NTSTATUS status = (NTSTATUS)MxCallService(number, v);
-    ULONG *out = ptr32(props ? a[2] : a[5]);
+    ULONG *out = ptr32(props ? a[2] : a[6]);
     for (ULONG i = 0; out && i < count && i < max; i++) {
         if (props) {
             const PROPLISTITEM *p = (const PROPLISTITEM *)list + i;
@@ -163,7 +164,7 @@ static ULONG handle_list32(ULONG number, const ULONG *a)
             out[i] = (ULONG)(ULONG_PTR)((HWND *)list)[i];
         }
     }
-    ULONG count_at = props ? a[3] : a[6];
+    ULONG count_at = props ? a[3] : a[7];
     if (count_at)
         *(ULONG *)ptr32(count_at) = count;
     release(list);
