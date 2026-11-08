@@ -535,7 +535,9 @@ static PVOID section_export(PSECTION s, const char *name)
 #define AT(rva) ((PUCHAR)HalPhysmap(MiSectionPage(s, (rva) >> PAGE_SHIFT)) + ((rva) & (PAGE_SIZE - 1)))
     PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)AT(0);
     PIMAGE_NT_HEADERS64 nt = (PIMAGE_NT_HEADERS64)AT((ULONG)dos->e_lfanew);
-    IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC
+                                   ? ((PIMAGE_NT_HEADERS32)nt)->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT]
+                                   : nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
     if (!dir.VirtualAddress)
         return nullptr;
     IMAGE_EXPORT_DIRECTORY exp;
@@ -562,6 +564,13 @@ static PVOID section_export(PSECTION s, const char *name)
     }
     return nullptr;
 #undef AT
+}
+
+/* the offset of an export of the 32-bit ntdll from its base, or 0. */
+ULONG PspWow64NtdllExport(const char *name)
+{
+    PUCHAR at = PspWow64NtdllSection ? section_export(PspWow64NtdllSection, name) : nullptr;
+    return at ? (ULONG)(at - (PUCHAR)PspWow64NtdllSection->Image.ImageBase) : 0;
 }
 
 PSP_SYSTEM_DLL PspNativeSystemDll;

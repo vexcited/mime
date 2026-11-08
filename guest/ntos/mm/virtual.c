@@ -1413,11 +1413,47 @@ SIZE_T MmCopyToProcessFast(PEPROCESS process, PVOID dst, const void *src, SIZE_T
  * touching a guard page raises STATUS_GUARD_PAGE_VIOLATION, or STATUS_STACK_OVERFLOW for the thread's own
  * last stack guard. the guard is removed, so the access runs again if the exception is handled.
  */
+/* a guard of the thread's own stack above its last one: the stack grows instead of faulting, see MiGrowUserStack. */
+static BOOLEAN stack_growth_guard(ULONG_PTR page)
+{
+    PETHREAD thread = PsCurrentThread();
+    ULONG_PTR top = (ULONG_PTR)thread->UserStackAllocation + thread->UserStackSize;
+    return thread->UserStackGuard && page > thread->UserStackGuard && page < top &&
+           thread->Tcb.ApcStateProcess == thread->Tcb.Process;
+}
+
 static void guard_fault(ULONG_PTR page)
 {
     PETHREAD thread = PsCurrentThread();
     BOOLEAN own = page == thread->UserStackGuard && thread->Tcb.ApcStateProcess == thread->Tcb.Process;
     thread->Tcb.FaultStatus = own ? STATUS_STACK_OVERFLOW : STATUS_GUARD_PAGE_VIOLATION;
+}
+
+/*
+ * like MiCheckForUserStackOverflow: the guard page the thread touched is now plain committed memory, the three pages
+ * below it are the guard down to the last guard, and the stack limit of the teb follows. the access
+ * runs again without an exception.
+ */
+static void grow_user_stack(ULONG_PTR page)
+{
+    PETHREAD thread = PsCurrentThread();
+    PEPROCESS process = (PEPROCESS)thread->Tcb.Process;
+    ULONG_PTR next = page - MI_STACK_GUARD_SIZE;
+    if (next <= thread->UserStackGuard)
+        next = thread->UserStackGuard + PAGE_SIZE;
+    if (next < page) {
+        PVOID at = (PVOID)next;
+        SIZE_T size = page - next;
+        MiAllocateVirtual(process, &at, &size, MEM_COMMIT, PAGE_READWRITE | PAGE_GUARD);
+    }
+    PUCHAR teb = (PUCHAR)thread->Tcb.Teb;
+    if (PspIsWow64Process(process)) {
+        ULONG limit = (ULONG)page;
+        KiCopyToUser(teb + MIME_TEB_SIZE + 8, &limit, sizeof(limit));
+    } else {
+        PVOID limit = (PVOID)page;
+        KiCopyToUser(&((PTEB)teb)->NtTib.StackLimit, &limit, sizeof(limit));
+    }
 }
 
 static BOOLEAN access_fault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_MODE mode)
@@ -1435,7 +1471,7 @@ static BOOLEAN access_fault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCE
     MmFaultStats[KeGetCurrentPrcb()->Number].Slow++;
     KiCurrentThread()->FaultStatus = 0;
     MiLockAddressSpace(as);
-    BOOLEAN handled = FALSE;
+    BOOLEAN handled = FALSE, grow = FALSE;
     as->PageFaults++;
     PMMVAD vad = MiFindVad(as, page);
     ULONG64 *pte = vad && !(vad->Flags & MM_VAD_PLACEHOLDER) ? MiWalk(as->Root, page, FALSE, 3) : nullptr;
@@ -1451,8 +1487,13 @@ static BOOLEAN access_fault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCE
                 handled = demand_zero(as, vad, page, pte, v, write);
             } else if (protect & PAGE_GUARD) {
                 *pte = sw_pte(protect & ~PAGE_GUARD) | (v & MM_SWPTE_SECTION);
-                guard_fault(page);
-                handled = FALSE;
+                if (stack_growth_guard(page)) {
+                    grow = TRUE;
+                    handled = TRUE;
+                } else {
+                    guard_fault(page);
+                    handled = FALSE;
+                }
             }
         } else if ((v & MM_PTE_VALID) && write && (v & MM_PTE_SW_COW)) {
             ULONG64 pa = MmAllocatePageNoZero();
@@ -1488,6 +1529,8 @@ static BOOLEAN access_fault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCE
         }
     }
     MiUnlockAddressSpace(as);
+    if (grow)
+        grow_user_stack(page);
     return handled;
 }
 

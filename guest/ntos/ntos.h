@@ -1074,6 +1074,9 @@ typedef struct _ETHREAD {
     SIZE_T UserStackSize;
     ULONG_PTR UserStackGuard; /* the stack guard page, whose first touch is a stack overflow. */
     PVOID NativeStackAllocation; /* the translator's own stack in x86 and x64 processes. */
+    /* until the thread first runs, where its start context goes and where LdrInitializeThunk then runs from. */
+    ULONG_PTR FirstEntryContext;
+    ULONG_PTR FirstEntryStack;
     SIZE_T NativeStackSize;
     ULONG64 CreateTime;
     ULONG64 ExitTime;
@@ -1203,7 +1206,7 @@ void PsInitializeIdleThread(void);
 PVOID PsCreateIdleThread(PKPRCB prcb);
 NTSTATUS PspCreateThread(PEPROCESS process, BOOLEAN system, PKSTART_ROUTINE routine, PVOID context,
                          PETHREAD *out);
-NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BOOLEAN suspended,
+NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, ULONG flags,
                              SIZE_T stack_reserve, SIZE_T stack_commit, PETHREAD *out);
 typedef struct _MIME_CONSOLE MIME_CONSOLE;
 NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image_dos_path, PCUNICODE_STRING command_line,
@@ -1252,6 +1255,7 @@ extern PSP_SYSTEM_DLL PspX86SystemDll;
 NTSTATUS PspInitializeSystemDll(void);
 PPSP_SYSTEM_DLL PspSystemDllForMachine(USHORT machine);
 extern PSECTION PspWow64NtdllSection;
+ULONG PspWow64NtdllExport(const char *name);
 extern PSECTION PspX64NtdllSection;
 
 /* ------------------------------------------------------------------ se */
