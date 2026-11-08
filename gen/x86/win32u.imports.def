@@ -120,7 +120,7 @@ EXPORTS
     NtUserAddClipboardFormatListener@4
     NtUserAttachThreadInput@12
     NtUserBeginPaint@8
-    NtUserBuildHwndList@28
+    NtUserBuildHwndList@32
     NtUserBuildNameList@16
     NtUserBuildPropList@16
     NtUserCallHwnd@8

@@ -543,8 +543,8 @@ W32KAPI BOOL NTAPI NtUserSwitchDesktop(HDESK handle, DWORD flags, DWORD fade);
 W32KAPI BOOL NTAPI NtUserGetObjectInformation(HANDLE handle, DWORD index, PVOID info, DWORD length, PDWORD needed);
 W32KAPI BOOL NTAPI NtUserSetObjectInformation(HANDLE handle, DWORD index, PVOID info, DWORD length);
 W32KAPI NTSTATUS NTAPI NtUserBuildNameList(HWINSTA handle, ULONG length, PVOID buffer, PULONG needed);
-W32KAPI NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent, BOOL children, ULONG thread, ULONG max,
-                                           HWND *list, ULONG *count);
+W32KAPI NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent, BOOL children, BOOL remove_immersive,
+                                           ULONG thread, ULONG max, HWND *list, ULONG *count);
 W32KAPI BOOL NTAPI NtUserGetWindowPlacement(HWND hwnd, WINDOWPLACEMENT *placement);
 W32KAPI BOOL NTAPI NtUserSetWindowPlacement(HWND hwnd, const WINDOWPLACEMENT *placement);
 
