@@ -48,12 +48,14 @@ EXPORTS
     LdrLoadDll=_LdrLoadDll@16
     LdrLockLoaderLock=_LdrLockLoaderLock@12
     LdrQueryImageFileExecutionOptions=_LdrQueryImageFileExecutionOptions@24
+    LdrRegisterDllNotification=_LdrRegisterDllNotification@16
     LdrResolveDelayLoadedAPI=_LdrResolveDelayLoadedAPI@24
     LdrSetDllManifestProber=_LdrSetDllManifestProber@12
     LdrShutdownProcess=_LdrShutdownProcess@0
     LdrShutdownThread=_LdrShutdownThread@0
     LdrUnloadDll=_LdrUnloadDll@4
     LdrUnlockLoaderLock=_LdrUnlockLoaderLock@8
+    LdrUnregisterDllNotification=_LdrUnregisterDllNotification@4
     RtlAssert=_RtlAssert@16
     RtlFreeActivationContextData=_RtlFreeActivationContextData@4
     RtlGenerateActivationContext=_RtlGenerateActivationContext@8
@@ -385,6 +387,7 @@ EXPORTS
     RtlGetActiveConsoleId=_RtlGetActiveConsoleId@0
     RtlGetAppContainerParent=_RtlGetAppContainerParent@8
     RtlGetAppContainerSidType=_RtlGetAppContainerSidType@8
+    RtlGetCallersAddress=_RtlGetCallersAddress@8
     RtlGetControlSecurityDescriptor=_RtlGetControlSecurityDescriptor@12
     RtlGetCurrentDirectory_U=_RtlGetCurrentDirectory_U@8
     RtlGetCurrentPeb=_RtlGetCurrentPeb@0
