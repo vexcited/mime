@@ -779,18 +779,17 @@ static ACCESS_MASK map_thread_access(ACCESS_MASK access)
 /* of the attributes, only handle inheritance matters. */
 static NTSTATUS open_attributes(POBJECT_ATTRIBUTES attributes, PCLIENT_ID cid, CLIENT_ID *id, ULONG *handle_attributes)
 {
+    /*
+     * like PsOpenProcess and PsOpenThread: the attributes are read without looking at their length, only the
+     * name, which must be absent since these are found by id, and the handle attributes.
+     */
     OBJECT_ATTRIBUTES oa;
     *handle_attributes = 0;
-    if (attributes) {
-        if (!NT_SUCCESS(KiCopyFromUser(&oa, attributes, sizeof(oa))))
-            return STATUS_ACCESS_VIOLATION;
-        if (oa.Length != sizeof(oa))
-            return STATUS_INVALID_PARAMETER;
-        /* processes and threads are found by id, not by name. */
-        if (oa.ObjectName)
-            return STATUS_INVALID_PARAMETER_MIX;
-        *handle_attributes = oa.Attributes & OBJ_INHERIT;
-    }
+    if (!attributes || !NT_SUCCESS(KiCopyFromUser(&oa, attributes, sizeof(oa))))
+        return STATUS_ACCESS_VIOLATION;
+    if (oa.ObjectName)
+        return STATUS_INVALID_PARAMETER_MIX;
+    *handle_attributes = oa.Attributes & OBJ_INHERIT;
     if (!cid || !NT_SUCCESS(KiCopyFromUser(id, cid, sizeof(*id))))
         return STATUS_INVALID_PARAMETER_MIX;
     return STATUS_SUCCESS;
