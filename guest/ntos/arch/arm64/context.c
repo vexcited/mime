@@ -222,3 +222,10 @@ void KiDumpTrapFrame(const char *what, const KTRAP_FRAME *frame)
         fp = rec[0];
     }
 }
+
+/* the arm64 context has no parts to keep apart yet, the whole record is the thread's. */
+void KiMergeContext(CONTEXT *to, const CONTEXT *from, ULONG flags)
+{
+    *to = *from;
+    to->ContextFlags = flags;
+}

@@ -92,6 +92,16 @@ MIME_STATIC_ASSERT(sizeof(KTRAP_FRAME) == KTRAP_FRAME_SIZE, "trap size");
 #define KI_SERVICE_NUMBER(f) ((ULONG)(f)->Esr & 0xFFFF)
 #define KI_SERVICE_STACK_ARGS(f) ((f)->Sp)
 #define KI_SERVICE_RESULT(f) ((f)->X[0])
+#define KI_TRAP_IN_SERVICE(f) FALSE
+static inline void KiInstrumentReturn(PKTRAP_FRAME f, PVOID callback)
+{
+    (void)f;
+    (void)callback;
+}
+static inline void KiServiceExitVolatiles(PKTRAP_FRAME f)
+{
+    (void)f;
+}
 #define KI_SERVICE_REGISTER_ARG(f, i) ((f)->X[i])
 
 FORCEINLINE void KiPause(void)

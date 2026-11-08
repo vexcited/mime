@@ -173,6 +173,10 @@ typedef struct _KTHREAD {
     BOOLEAN SuspendApcActive;
     BOOLEAN Suspended;
     PVOID UserSuspendGate;
+    /* another thread set the context while this one was in a system call, see KiSystemService. */
+    BOOLEAN ContextSetInService;
+    /* the next return to user mode goes through the process's instrumentation callback, see KiExitToUserMode. */
+    BOOLEAN InstrumentReturn;
     KEVENT SuspendEvent;
     KSEMAPHORE SuspendSemaphore;
     KAPC SuspendApc;
@@ -419,6 +423,7 @@ void KiSystemService(PKTRAP_FRAME frame);
 NTSTATUS KiUserCallback(ULONG api, PVOID input, ULONG input_length, PVOID *output, PULONG output_length);
 NTSTATUS KiCallbackReturn(PVOID result, ULONG result_length, NTSTATUS status);
 void KiContextToTrapFrame(const CONTEXT *context, PKTRAP_FRAME frame, ULONG flags, KPROCESSOR_MODE mode);
+void KiMergeContext(CONTEXT *to, const CONTEXT *from, ULONG flags);
 void KiTrapFrameToContext(const KTRAP_FRAME *frame, CONTEXT *context, ULONG flags);
 BOOLEAN KiDispatchUserException(PEXCEPTION_RECORD record, PKTRAP_FRAME frame);
 NTSTATUS KeRegisterSystemServices(ULONG table, PKSERVICE_DESCRIPTOR services, ULONG count);

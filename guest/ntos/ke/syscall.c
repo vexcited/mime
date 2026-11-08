@@ -285,6 +285,7 @@ void KiSystemService(PKTRAP_FRAME frame)
     PKTHREAD thread = KiCurrentThread();
     thread->TrapFrame = frame;
     thread->PreviousMode = UserMode;
+    ULONG64 entry_pc = KI_TRAP_PC(frame);
     KiEnableInterrupts();
 
     ULONG number = KI_SERVICE_NUMBER(frame);
@@ -461,12 +462,16 @@ void KiSystemService(PKTRAP_FRAME frame)
             g_longest[table][index] = held;
     }
     /* the level belongs to the processor, so a service that leaves it raised would break the next thread to wait here. */
-    PKPCR pcr = KeGetPcr();
-    if (pcr->Irql != PASSIVE_LEVEL) {
-        KiLogPrintf("service %s returned at irql %u", service_name(table, index), (ULONG)pcr->Irql);
-        pcr->Irql = PASSIVE_LEVEL;
+    KIRQL left = KiCurrentIrql();
+    if (left != PASSIVE_LEVEL) {
+        KiLogPrintf("service %s returned at irql %u", service_name(table, index), (ULONG)left);
+        KeLowerIrql(PASSIVE_LEVEL);
     }
     KI_SERVICE_RESULT(frame) = result;
+    if (thread->ContextSetInService) {
+        thread->ContextSetInService = FALSE;
+        KiServiceExitVolatiles(frame);
+    }
     PETHREAD ethread = PsCurrentThread();
     if (ethread->PendingException) {
         EXCEPTION_RECORD record = {};
@@ -481,6 +486,9 @@ void KiSystemService(PKTRAP_FRAME frame)
             PspTerminateProcess(PsCurrentProcess(), record.ExceptionCode);
         }
     }
+    /* a service that returns where it was called from goes through the instrumentation callback, as sysret does. */
+    if (KI_TRAP_PC(frame) == entry_pc)
+        thread->InstrumentReturn = TRUE;
     KiExitToUserMode(frame);
 }
 
