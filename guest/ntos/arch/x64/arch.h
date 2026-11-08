@@ -161,6 +161,32 @@ MIME_STATIC_ASSERT(sizeof(KTRAP_FRAME) == KTRAP_FRAME_SIZE, "trap size");
 #define KI_SERVICE_NUMBER(f) ((ULONG)(f)->Rax & 0xFFFF)
 #define KI_SERVICE_STACK_ARGS(f) ((f)->Rsp + 0x28)
 #define KI_SERVICE_RESULT(f) ((f)->Rax)
+#define KI_TRAP_IN_SERVICE(f) ((f)->Vector == KTRAP_VECTOR_SYSCALL)
+
+/* like KiSetupForInstrumentationReturn: 64-bit code goes to the callback first, with where it was going in r10. */
+static inline void KiInstrumentReturn(PKTRAP_FRAME f, PVOID callback)
+{
+    if (callback && f->Cs == (KGDT64_R3_CODE | RPL_USER)) {
+        f->R10 = f->Rip;
+        f->Rip = (ULONG64)callback;
+    }
+}
+
+/*
+ * like KiSystemServiceExit after KiRestoreSetContextState: a thread whose context another thread set while it was in a
+ * system call gets the nonvolatile registers of that context, and the volatile ones sysret leaves: rcx the return
+ * address, r11 the flags, rdx r9 r10 zero, r8 the stack and xmm0 to xmm5 zero.
+ */
+static inline void KiServiceExitVolatiles(PKTRAP_FRAME f)
+{
+    f->Rcx = f->Rip;
+    f->R11 = f->Rflags;
+    f->Rdx = 0;
+    f->R8 = f->Rsp;
+    f->R9 = 0;
+    f->R10 = 0;
+    memset(f->Xmm, 0, 6 * sizeof(f->Xmm[0]));
+}
 #define KI_SERVICE_REGISTER_ARG(f, i) ((i) == 0 ? (f)->R10 : (i) == 1 ? (f)->Rdx : (i) == 2 ? (f)->R8 : (f)->R9)
 
 #define EFLAGS_USER_MASK 0x00000DD5ull /* cf pf af zf sf tf df of, what user mode may set. */

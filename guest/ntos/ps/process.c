@@ -615,10 +615,43 @@ static void set_process_affinity(PEPROCESS process, ULONG64 mask)
         process->Peb->ActiveProcessAffinityMask = mask;
 }
 
+/*
+ * ProcessInstrumentationCallback, like windows: the callback alone or PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION
+ * with version and reserved zero. another process than the caller's needs the debug privilege. a null callback turns
+ * it off.
+ */
+static NTSTATUS set_instrumentation_callback(HANDLE handle, PVOID info, ULONG length)
+{
+    if (length != 8 && length != 16)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    ULONG64 in[2] = {};
+    NTSTATUS status = KiCopyFromUser(length == 8 ? &in[1] : in, info, length);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (in[0] >> 32)
+        return STATUS_INVALID_PARAMETER;
+    if ((ULONG)in[0])
+        return (NTSTATUS)0xC0000058L; /* STATUS_UNKNOWN_REVISION */
+    if ((LONG64)(in[1] << 16) >> 16 != (LONG64)in[1])
+        return STATUS_INVALID_PARAMETER;
+    PEPROCESS process;
+    status = PsReferenceProcessHandle(handle, PROCESS_SET_INFORMATION, &process);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (process != PsCurrentProcess() && !SeThreadHasPrivilege(SE_DEBUG_PRIVILEGE))
+        status = STATUS_PRIVILEGE_NOT_HELD;
+    else
+        process->InstrumentationCallback = (PVOID)in[1];
+    ObDereferenceObject(process);
+    return status;
+}
+
 NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PVOID info, ULONG length)
 {
     if (klass == ProcessAccessToken)
         return SepSetProcessAccessToken(handle, info, length);
+    if ((ULONG)klass == 40) /* ProcessInstrumentationCallback */
+        return set_instrumentation_callback(handle, info, length);
     if (klass == ProcessMitigationPolicy)
         return PspSetMitigationPolicy(handle, info, length);
     ULONG expected = 0;
