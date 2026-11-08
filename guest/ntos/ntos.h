@@ -266,6 +266,17 @@ typedef struct _KPCR {
 } KPCR, *PKPCR;
 #endif
 
+#ifndef __x86_64__
+/* with interrupts off, so the thread cannot move between finding its processor and reading the level. */
+FORCEINLINE UCHAR KiCurrentIrql(void)
+{
+    ULONG64 state = KiDisableInterrupts();
+    UCHAR irql = KeGetPcr()->Irql;
+    KiRestoreInterrupts(state);
+    return irql;
+}
+#endif
+
 MIME_STATIC_ASSERT(offsetof(KPCR, Prcb.Number) == KPCR_NUMBER, "pcr number");
 #ifndef __x86_64__
 MIME_STATIC_ASSERT(offsetof(KPCR, Prcb.DeferredIpis) == KPCR_DEFERRED_IPIS, "pcr deferred ipis");
@@ -285,9 +296,22 @@ FORCEINLINE PKPRCB KeGetCurrentPrcb(void)
     return KeGetPcr()->CurrentPrcb;
 }
 
+/*
+ * one gs relative load on x64: reading the processor block first and its thread after could give another processor's
+ * thread to code that was moved in between.
+ */
 FORCEINLINE PKTHREAD KiCurrentThread(void)
 {
-    return KeGetPcr()->CurrentPrcb->CurrentThread;
+#ifdef __x86_64__
+    PKTHREAD thread;
+    __asm__ volatile("movq %%gs:%c1, %0" : "=r"(thread) : "i"(KPCR_CURRENT_THREAD));
+    return thread;
+#else
+    ULONG64 state = KiDisableInterrupts();
+    PKTHREAD thread = KeGetPcr()->CurrentPrcb->CurrentThread;
+    KiRestoreInterrupts(state);
+    return thread;
+#endif
 }
 
 /*

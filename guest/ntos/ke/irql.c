@@ -8,18 +8,25 @@
 
 KIRQL NTAPI KeGetCurrentIrql(void)
 {
-    return KeGetPcr()->Irql;
+    return KiCurrentIrql();
 }
 
+/*
+ * code below dispatch level can be preempted and moved to another processor, so the level is read and written with
+ * interrupts off: otherwise a move between the two raises the processor the thread left.
+ */
 KIRQL NTAPI KfRaiseIrql(KIRQL irql)
 {
+    ULONG64 state = KiDisableInterrupts();
     PKPCR pcr = KeGetPcr();
     KIRQL old = pcr->Irql;
     if (irql < old)
         KeBugCheckEx(0x00000009, old, irql, 0, 0); /* IRQL_NOT_GREATER_OR_EQUAL. */
-    if (irql > DISPATCH_LEVEL && old <= DISPATCH_LEVEL)
-        pcr->SavedInterruptState = KiDisableInterrupts();
     pcr->Irql = irql;
+    if (irql > DISPATCH_LEVEL && old <= DISPATCH_LEVEL)
+        pcr->SavedInterruptState = state;
+    else
+        KiRestoreInterrupts(state);
     return old;
 }
 
@@ -30,6 +37,7 @@ KIRQL NTAPI KeRaiseIrqlToDpcLevel(void)
 
 void NTAPI KeLowerIrql(KIRQL irql)
 {
+    ULONG64 state = KiDisableInterrupts();
     PKPCR pcr = KeGetPcr();
     KIRQL old = pcr->Irql;
     if (irql > old)
@@ -37,6 +45,8 @@ void NTAPI KeLowerIrql(KIRQL irql)
     pcr->Irql = irql;
     if (old > DISPATCH_LEVEL && irql <= DISPATCH_LEVEL)
         KiRestoreInterrupts(pcr->SavedInterruptState);
+    else if (old <= DISPATCH_LEVEL)
+        KiRestoreInterrupts(state);
     if (irql < DISPATCH_LEVEL && (pcr->CurrentPrcb->DpcPending || pcr->CurrentPrcb->DispatchPending) &&
         KiInterruptsEnabled())
         KiDispatchPendingWork();

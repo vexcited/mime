@@ -362,7 +362,10 @@ void KiSwapThread(void)
     if (next->ApcStateProcess != old->ApcStateProcess && next->ApcStateProcess->DirectoryTableBase)
         KiSwitchAddressSpace(next->ApcStateProcess);
     ULONG64 switched_out = HalReadCounter();
+    /* the level is the thread's while it runs: the next thread finds its own when it resumes, as windows keeps a wait irql. */
+    KIRQL irql = KeGetPcr()->Irql;
     KiSwapContext(old, next);
+    KeGetPcr()->Irql = irql;
     old->BlockedTicks += HalReadCounter() - switched_out;
 }
 
@@ -384,11 +387,14 @@ static void preempt_current(PKPRCB prcb)
 /* runs dpcs and pending reschedules; callable with interrupts masked or not. */
 void KiDispatchPendingWork(void)
 {
+    /* the processor is read with interrupts off, which keeps the thread on it. */
+    ULONG64 s = KiAcquireDispatcherLock();
     PKPCR pcr = KeGetPcr();
     PKPRCB prcb = pcr->CurrentPrcb;
-    if (pcr->Irql >= DISPATCH_LEVEL)
+    if (pcr->Irql >= DISPATCH_LEVEL) {
+        KiReleaseDispatcherLock(s);
         return;
-    ULONG64 s = KiAcquireDispatcherLock();
+    }
     if (prcb->DpcPending) {
         KIRQL old = pcr->Irql;
         pcr->Irql = DISPATCH_LEVEL;
@@ -403,13 +409,12 @@ void KiDispatchPendingWork(void)
 /* callers like KeSetEvent come here with interrupts on: the ready queues change with them off. */
 void KiCheckPreemption(void)
 {
+    /* the processor is read with interrupts off, so a move of the thread cannot make it another's. */
+    ULONG64 s = KiAcquireDispatcherLock();
     PKPRCB prcb = KeGetCurrentPrcb();
-    if (prcb->DispatchPending && KeGetPcr()->Irql < DISPATCH_LEVEL) {
-        ULONG64 s = KiAcquireDispatcherLock();
-        if (prcb->DispatchPending)
-            preempt_current(prcb);
-        KiReleaseDispatcherLock(s);
-    }
+    if (prcb->DispatchPending && KeGetPcr()->Irql < DISPATCH_LEVEL)
+        preempt_current(prcb);
+    KiReleaseDispatcherLock(s);
 }
 
 /* ------------------------------------------------------------------ dpcs */
