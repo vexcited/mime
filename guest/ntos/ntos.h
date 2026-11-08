@@ -1554,6 +1554,11 @@ extern KUSER_SHARED_DATA *SharedUserData;
 extern ULONG64 KeBootFiletime;
 /* ex/timezone.c: the clock offset follows the zone's daylight time rules. */
 void ExInitializeTimeZone(void);
+NTSTATUS ExQueryTimeZoneInformation(PVOID info, ULONG length, PULONG returned);
+ULONG PsGetDeviceImagePath(PEPROCESS process, PWCHAR out, ULONG capacity);
+void MmGetSectionImageInformation(PSECTION s, SECTION_IMAGE_INFORMATION *image);
+/* the guard below a thread's committed stack, three pages as RtlCreateUserStack makes it. */
+#define MI_STACK_GUARD_SIZE (3 * PAGE_SIZE)
 void PsWin32TimeChange(void);
 /* cm/boot.c: copies the zone's rules for a year into the key the kernel reads. */
 void CmRefreshTimeZoneRules(ULONG year);
