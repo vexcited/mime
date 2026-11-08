@@ -60,6 +60,8 @@ static const struct {
     {CbRegionPolicyClass, CbRegionPolicyFactory},
     {CbNetworkInformationClass, CbNetworkInformationFactory},
     {CbKeyCredentialManagerClass, CbKeyCredentialManagerFactory},
+    {CbMediaDeviceClass, CbMediaDeviceFactory},
+    {CbDeviceInformationClass, CbDeviceInformationFactory},
 };
 
 ROAPI HRESULT WINAPI RoGetActivationFactory(HSTRING class_id, REFIID riid, void **factory)

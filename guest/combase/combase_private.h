@@ -69,6 +69,22 @@ HRESULT CbNewVectorView(CB_VECTOR_KIND kind, void **items, UINT32 count, void **
 extern const WCHAR CbNetworkInformationClass[];
 HRESULT CbNetworkInformationFactory(REFIID riid, void **factory);
 
+/* mediadevice.c: Windows.Media.Devices.MediaDevice, and the audio endpoints as device interfaces. */
+extern const WCHAR CbMediaDeviceClass[];
+HRESULT CbMediaDeviceFactory(REFIID riid, void **factory);
+#define CB_AUDIO_PATH 160
+typedef struct CB_AUDIO_ENDPOINT {
+    WCHAR Path[CB_AUDIO_PATH];
+    WCHAR Name[128];
+    BOOLEAN IsDefault;
+} CB_AUDIO_ENDPOINT;
+/* the active endpoints of a data flow, 0 render and 1 capture. */
+UINT32 CbAudioEndpoints(INT32 flow, CB_AUDIO_ENDPOINT *endpoints, UINT32 capacity);
+
+/* devinfo.c: Windows.Devices.Enumeration.DeviceInformation. */
+extern const WCHAR CbDeviceInformationClass[];
+HRESULT CbDeviceInformationFactory(REFIID riid, void **factory);
+
 /* keycred.c: Windows.Security.Credentials.KeyCredentialManager. */
 extern const WCHAR CbKeyCredentialManagerClass[];
 HRESULT CbKeyCredentialManagerFactory(REFIID riid, void **factory);
