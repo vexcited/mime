@@ -46,6 +46,11 @@ void NtCreateMutant(void);
 void NtCreateNamedPipeFile(void);
 void NtCreateSection(void);
 void NtCreateSemaphore(void);
+void NtCreateDebugObject(void);
+void NtLockVirtualMemory(void);
+void NtUnlockVirtualMemory(void);
+void NtSetInformationDebugObject(void);
+void NtWaitForDebugEvent(void);
 void NtCreateSymbolicLinkObject(void);
 void NtCreateThreadEx(void);
 void NtCreateTimer(void);
@@ -115,6 +120,7 @@ void NtProtectVirtualMemory(void);
 void NtPulseEvent(void);
 void NtQueryAttributesFile(void);
 void NtQueryDebugFilterState(void);
+void NtSetDebugFilterState(void);
 void NtQueryDefaultLocale(void);
 void NtQueryDefaultUILanguage(void);
 void NtQueryDirectoryFile(void);
@@ -323,6 +329,21 @@ void KiInitializeSystemServices(void)
 #ifdef MIME_SVC_NtCreateSemaphore
     KiRegisterService(MIME_SVC_NtCreateSemaphore, (void *)NtCreateSemaphore, STACK_ARGS(5));
 #endif
+#ifdef MIME_SVC_NtLockVirtualMemory
+    KiRegisterService(MIME_SVC_NtLockVirtualMemory, (void *)NtLockVirtualMemory, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtUnlockVirtualMemory
+    KiRegisterService(MIME_SVC_NtUnlockVirtualMemory, (void *)NtUnlockVirtualMemory, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtCreateDebugObject
+    KiRegisterService(MIME_SVC_NtCreateDebugObject, (void *)NtCreateDebugObject, STACK_ARGS(4));
+#endif
+#ifdef MIME_SVC_NtSetInformationDebugObject
+    KiRegisterService(MIME_SVC_NtSetInformationDebugObject, (void *)NtSetInformationDebugObject, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtWaitForDebugEvent
+    KiRegisterService(MIME_SVC_NtWaitForDebugEvent, (void *)NtWaitForDebugEvent, STACK_ARGS(4));
+#endif
 #ifdef MIME_SVC_NtCreateSymbolicLinkObject
     KiRegisterService(MIME_SVC_NtCreateSymbolicLinkObject, (void *)NtCreateSymbolicLinkObject, STACK_ARGS(4));
 #endif
@@ -526,6 +547,9 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtQueryAttributesFile
     KiRegisterService(MIME_SVC_NtQueryAttributesFile, (void *)NtQueryAttributesFile, STACK_ARGS(2));
+#endif
+#ifdef MIME_SVC_NtSetDebugFilterState
+    KiRegisterService(MIME_SVC_NtSetDebugFilterState, (void *)NtSetDebugFilterState, STACK_ARGS(3));
 #endif
 #ifdef MIME_SVC_NtQueryDebugFilterState
     KiRegisterService(MIME_SVC_NtQueryDebugFilterState, (void *)NtQueryDebugFilterState, STACK_ARGS(2));

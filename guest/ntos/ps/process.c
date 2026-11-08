@@ -160,6 +160,8 @@ static void process_delete(PVOID object)
     PEPROCESS process = object;
     if (process->AddressSpace.Root)
         MmDeleteAddressSpace(&process->AddressSpace);
+    if (process->MmLockedRanges)
+        ExFreePool(process->MmLockedRanges);
     PSECTION image = __atomic_exchange_n(&process->ImageSection, nullptr, __ATOMIC_ACQ_REL);
     if (image)
         ObDereferenceObject(image);

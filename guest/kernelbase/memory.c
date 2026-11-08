@@ -110,6 +110,8 @@ SIZE_T WINAPI VirtualQuery(LPCVOID address, PMEMORY_BASIC_INFORMATION info, SIZE
     return VirtualQueryEx(NtCurrentProcess(), address, info, length);
 }
 
+/* 32-bit programs have no stubs for the lock services yet and keep the old answer. */
+#ifndef _WIN64
 BOOL WINAPI VirtualLock(LPVOID address, SIZE_T size)
 {
     return TRUE;
@@ -119,6 +121,27 @@ BOOL WINAPI VirtualUnlock(LPVOID address, SIZE_T size)
 {
     return TRUE;
 }
+#else
+BOOL WINAPI VirtualLock(LPVOID address, SIZE_T size)
+{
+    NTSTATUS status = NtLockVirtualMemory(NtCurrentProcess(), &address, &size, 1 /* MAP_PROCESS */);
+    if (!NT_SUCCESS(status)) {
+        BaseSetLastNTError(status);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+BOOL WINAPI VirtualUnlock(LPVOID address, SIZE_T size)
+{
+    NTSTATUS status = NtUnlockVirtualMemory(NtCurrentProcess(), &address, &size, 1 /* MAP_PROCESS */);
+    if (!NT_SUCCESS(status)) {
+        BaseSetLastNTError(status);
+        return FALSE;
+    }
+    return TRUE;
+}
+#endif
 
 BOOL WINAPI ReadProcessMemory(HANDLE process, LPCVOID base, LPVOID buffer, SIZE_T size, SIZE_T *read)
 {
