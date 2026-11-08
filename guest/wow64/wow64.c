@@ -375,18 +375,32 @@ static NTSTATUS queue_apc32(const ULONG *a)
 
 /* ------------------------------------------------------------ system calls */
 
-/* gets another thread's 32-bit context from the kernel when it runs 32-bit code, otherwise from its CPU area. */
-static NTSTATUS other_thread_cpu(HANDLE thread, ULONG_PTR *area)
+/* the process of another thread, opened to reach its CPU area, and where that area is. */
+static NTSTATUS other_thread_cpu(HANDLE thread, HANDLE *process, ULONG_PTR *area)
 {
     THREAD_BASIC_INFORMATION info;
     NTSTATUS status = NtQueryInformationThread(thread, ThreadBasicInformation, &info, sizeof(info), nullptr);
     if (!NT_SUCCESS(status))
         return status;
+    *process = NtCurrentProcess();
+    if (info.ClientId.UniqueProcess != NtCurrentTeb()->ClientId.UniqueProcess) {
+        OBJECT_ATTRIBUTES attributes;
+        InitializeObjectAttributes(&attributes, nullptr, 0, nullptr, nullptr);
+        CLIENT_ID id = {info.ClientId.UniqueProcess, nullptr};
+        status = NtOpenProcess(process, PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, &attributes, &id);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
     PTEB teb = info.TebBaseAddress;
-    return NtReadVirtualMemory(NtCurrentProcess(), &teb->TlsSlots[WOW64_TLS_CPURESERVED], area, sizeof(*area),
-                               nullptr);
+    status = NtReadVirtualMemory(*process, &teb->TlsSlots[WOW64_TLS_CPURESERVED], area, sizeof(*area), nullptr);
+    if (NT_SUCCESS(status) && !*area)
+        status = STATUS_UNSUCCESSFUL;
+    if (!NT_SUCCESS(status) && *process != NtCurrentProcess())
+        NtClose(*process);
+    return status;
 }
 
+/* gets another thread's 32-bit context from the kernel when it runs 32-bit code, otherwise from its CPU area. */
 static NTSTATUS thread_context32(HANDLE thread, I386_CONTEXT *context, BOOLEAN setting)
 {
     if (thread == NtCurrentThread()) {
@@ -412,20 +426,24 @@ static NTSTATUS thread_context32(HANDLE thread, I386_CONTEXT *context, BOOLEAN s
         context32_to_64(context, &native);
         return NtSetContextThread(thread, &native);
     }
+    HANDLE process;
     ULONG_PTR area;
-    status = other_thread_cpu(thread, &area);
+    status = other_thread_cpu(thread, &process, &area);
     if (!NT_SUCCESS(status))
         return status;
     WOW64_CPURESERVED cpu;
-    status = NtReadVirtualMemory(NtCurrentProcess(), (PVOID)area, &cpu, sizeof(cpu), nullptr);
-    if (!NT_SUCCESS(status))
-        return status;
-    if (!setting) {
-        get_context32(&cpu, context);
-        return STATUS_SUCCESS;
+    status = NtReadVirtualMemory(process, (PVOID)area, &cpu, sizeof(cpu), nullptr);
+    if (NT_SUCCESS(status)) {
+        if (!setting) {
+            get_context32(&cpu, context);
+        } else {
+            set_context32(&cpu, context);
+            status = NtWriteVirtualMemory(process, (PVOID)area, &cpu, sizeof(cpu), nullptr);
+        }
     }
-    set_context32(&cpu, context);
-    return NtWriteVirtualMemory(NtCurrentProcess(), (PVOID)area, &cpu, sizeof(cpu), nullptr);
+    if (process != NtCurrentProcess())
+        NtClose(process);
+    return status;
 }
 
 static DECLSPEC_NORETURN void unhandled32(const MIME_EXCEPTION32 *record, const I386_CONTEXT *context)
@@ -654,22 +672,30 @@ WOW64API DECLSPEC_NORETURN void NTAPI Wow64LdrpInitialize(PCONTEXT context)
     PUCHAR teb32 = Wow64CurrentTeb32();
     ULONG top = *(PULONG)(teb32 + MIME_TEB32_STACK_BASE);
     I386_CONTEXT *start = (void *)(ULONG_PTR)((top - sizeof(I386_CONTEXT)) & ~15u);
-    memset(start, 0, sizeof(*start));
-    start->ContextFlags = CONTEXT_I386_FULL | CONTEXT_I386_EXTENDED_REGISTERS;
-    initial_extended_state(start);
-    ULONG parameter = (ULONG)context->Rdx;
-    if (context->Rdx == (ULONG64)NtCurrentPeb())
-        parameter = (ULONG)(ULONG_PTR)g.Peb32;
     PULONG stack = (PULONG)start;
-    *--stack = parameter;
-    *--stack = (ULONG)context->Rcx;
-    *--stack = 0;
-    start->Eip = g.UserThreadStart;
-    start->Esp = (ULONG)(ULONG_PTR)stack;
-    start->EFlags = 0x202;
-    start->SegCs = CODE32;
-    start->SegDs = start->SegEs = start->SegSs = DATA32;
-    start->SegFs = TEB32_SEGMENT;
+    if (cpu->Context.Eip && cpu->Context.Esp) {
+        /* the kernel's start state, which a SetThreadContext may have changed while the thread was suspended. */
+        memcpy(start, &cpu->Context, sizeof(*start));
+        start->ContextFlags = CONTEXT_I386_FULL | CONTEXT_I386_EXTENDED_REGISTERS;
+        initial_extended_state(start);
+        stack -= 3;
+    } else {
+        memset(start, 0, sizeof(*start));
+        start->ContextFlags = CONTEXT_I386_FULL | CONTEXT_I386_EXTENDED_REGISTERS;
+        initial_extended_state(start);
+        ULONG parameter = (ULONG)context->Rdx;
+        if (context->Rdx == (ULONG64)NtCurrentPeb())
+            parameter = (ULONG)(ULONG_PTR)g.Peb32;
+        *--stack = parameter;
+        *--stack = (ULONG)context->Rcx;
+        *--stack = 0;
+        start->Eip = g.UserThreadStart;
+        start->Esp = (ULONG)(ULONG_PTR)stack;
+        start->EFlags = 0x202;
+        start->SegCs = CODE32;
+        start->SegDs = start->SegEs = start->SegSs = DATA32;
+        start->SegFs = TEB32_SEGMENT;
+    }
 
     stack -= 16;
     *--stack = (ULONG)(ULONG_PTR)g.Ntdll32;
