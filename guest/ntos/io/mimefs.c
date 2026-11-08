@@ -858,6 +858,10 @@ static NTSTATUS NTAPI mimefs_close(PDEVICE_OBJECT device, PIRP irp)
         FsWbClose(&fcb->Wb);
         if (fcb->Cache)
             FsCacheClose(fcb->Cache);
+        /* like ntfs, whose MmFlushImageSection fails while an image of the file is in use, a mapped image or a
+           loaded driver outlives the delete asked of it: the file stays. */
+        if (fcb->DeleteOnClose && !fcb->Directory && FsWbIsImageMapped(fcb->Volume, fcb->FileId))
+            fcb->DeleteOnClose = FALSE;
         if (fcb->DeleteOnClose)
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
         if (fcb->DeleteOnClose) {
@@ -2492,6 +2496,51 @@ static NTSTATUS reparse_delete(PFILE_OBJECT file, MIMEFS_FCB *fcb, const REPARSE
     return status;
 }
 
+/*
+ * FSCTL_QUERY_USN_JOURNAL: the system volume is ntfs with its change journal active, as on any windows install. the
+ * journal's identity comes from the volume serial, its next usn grows with what the volume wrote, and the record
+ * versions are windows 11's. the buffer decides the version of the answer, the largest that fits.
+ */
+#define FSCTL_QUERY_USN_JOURNAL 0x000900F4u
+
+typedef struct MIMEFS_USN_JOURNAL_DATA {
+    ULONG64 UsnJournalID;
+    LONG64 FirstUsn, NextUsn, LowestValidUsn, MaxUsn;
+    ULONG64 MaximumSize, AllocationDelta;
+    USHORT MinSupportedMajorVersion, MaxSupportedMajorVersion;
+    ULONG Flags;
+    ULONG64 RangeTrackChunkSize;
+    LONG64 RangeTrackFileSizeThreshold;
+} MIMEFS_USN_JOURNAL_DATA;
+
+#define USN_JOURNAL_DATA_V0_SIZE 56
+#define USN_JOURNAL_DATA_V1_SIZE 64
+
+static NTSTATUS query_usn_journal(PIRP irp, MIMEFS_VOLUME *vol, ULONG length)
+{
+    if (vol->HostVolume != MIME_FS_VOLUME_SYSTEM)
+        return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    if (length < USN_JOURNAL_DATA_V0_SIZE)
+        return complete(irp, STATUS_BUFFER_TOO_SMALL, 0);
+    MIMEFS_USN_JOURNAL_DATA d = {};
+    ULONG64 writes = 0;
+    for (ULONG i = 0; i < MIMEFS_MAX_CPUS; i++)
+        writes += vol->Counters[i].Writes;
+    d.UsnJournalID = 0x01D7000000000000ull | vol->Serial;
+    d.FirstUsn = 0;
+    d.NextUsn = 0x10000000ll + (LONG64)writes * 0x60;
+    d.LowestValidUsn = 0;
+    d.MaxUsn = 0x7FFFFFFFFFFF0000ll;
+    d.MaximumSize = 0x2000000;
+    d.AllocationDelta = 0x800000;
+    d.MinSupportedMajorVersion = 2;
+    d.MaxSupportedMajorVersion = 4;
+    ULONG size = length >= sizeof(d) ? sizeof(d) : length >= USN_JOURNAL_DATA_V1_SIZE ? USN_JOURNAL_DATA_V1_SIZE
+                                                                                       : USN_JOURNAL_DATA_V0_SIZE;
+    memcpy(irp->AssociatedIrp.SystemBuffer, &d, size);
+    return complete(irp, STATUS_SUCCESS, size);
+}
+
 static NTSTATUS NTAPI mimefs_fs_control(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
@@ -2520,6 +2569,8 @@ static NTSTATUS NTAPI mimefs_fs_control(PDEVICE_OBJECT device, PIRP irp)
         return fs_statistics(irp, vol, length, FALSE);
     case FSCTL_FILESYSTEM_GET_STATISTICS_EX:
         return fs_statistics(irp, vol, length, TRUE);
+    case FSCTL_QUERY_USN_JOURNAL:
+        return query_usn_journal(irp, vol, length);
     default:
         return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
     }

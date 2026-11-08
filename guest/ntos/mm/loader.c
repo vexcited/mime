@@ -296,12 +296,62 @@ NTSTATUS MiReadFileBytes(PFILE_OBJECT file, ULONG64 offset, PVOID buffer, ULONG 
     return IoReadFileObject(file, buffer, length, offset, read);
 }
 
-static NTSTATUS read_whole_file(PCUNICODE_STRING path, PUCHAR *data, ULONG *size)
+/*
+ * like the image section windows keeps for a loaded driver, its file counts as a mapped image while it is loaded, so
+ * it cannot be deleted then: whoever loaded it and tries to remove it learns STATUS_CANNOT_DELETE.
+ */
+typedef struct LOADED_FILE {
+    struct LOADED_FILE *Next;
+    PKLDR_DATA_TABLE_ENTRY Module;
+    ULONG Volume;
+    ULONG64 FileId;
+} LOADED_FILE;
+static LOADED_FILE *g_loaded_files;
+
+static void pin_file(PKLDR_DATA_TABLE_ENTRY module, ULONG volume, ULONG64 file_id)
+{
+    LOADED_FILE *f = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*f), KI_TAG('M', 'm', 'L', 'f'));
+    if (!f)
+        return;
+    f->Module = module;
+    f->Volume = volume;
+    f->FileId = file_id;
+    FsWbMapped(volume, file_id, 1);
+    FsWbImageMapped(volume, file_id, 1);
+    ExAcquireFastMutex(&g_modules_lock);
+    f->Next = g_loaded_files;
+    g_loaded_files = f;
+    ExReleaseFastMutex(&g_modules_lock);
+}
+
+static void unpin_file(PKLDR_DATA_TABLE_ENTRY module)
+{
+    ExAcquireFastMutex(&g_modules_lock);
+    LOADED_FILE *found = nullptr;
+    for (LOADED_FILE **link = &g_loaded_files; *link; link = &(*link)->Next) {
+        if ((*link)->Module == module) {
+            found = *link;
+            *link = found->Next;
+            break;
+        }
+    }
+    ExReleaseFastMutex(&g_modules_lock);
+    if (found) {
+        FsWbImageMapped(found->Volume, found->FileId, -1);
+        FsWbMapped(found->Volume, found->FileId, -1);
+        ExFreePool(found);
+    }
+}
+
+/* the file's identity on its volume, a volume of ~0 when it has none worth pinning, as a rom file. */
+static NTSTATUS read_whole_file(PCUNICODE_STRING path, PUCHAR *data, ULONG *size, PULONG volume, PULONG64 file_id)
 {
     PFILE_OBJECT file;
     NTSTATUS status = IopOpenFileObject(path, FILE_READ_DATA | SYNCHRONIZE, FILE_NON_DIRECTORY_FILE, &file);
     if (!NT_SUCCESS(status))
         return status;
+    if (!MimeFsLockIdentity(file, volume, file_id))
+        *volume = ~0u;
     ULONG64 file_size;
     status = IoQueryFileSize(file, &file_size);
     if (NT_SUCCESS(status) && (file_size == 0 || file_size > 64 * 1024 * 1024))
@@ -389,8 +439,9 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
         }
     }
     PUCHAR file;
-    ULONG file_size;
-    NTSTATUS status = read_whole_file(path, &file, &file_size);
+    ULONG file_size, volume;
+    ULONG64 file_id;
+    NTSTATUS status = read_whole_file(path, &file, &file_size, &volume, &file_id);
     if (!NT_SUCCESS(status))
         return status;
     MI_IMAGE_INFO info;
@@ -500,6 +551,8 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
             status = STATUS_INSUFFICIENT_RESOURCES;
     }
     if (NT_SUCCESS(status)) {
+        if (volume != ~0u)
+            pin_file(*out, volume, file_id);
         KiLogPrintf("loaded %wZ at %p", path, base);
         PspNotifyImage(path, nullptr, base, info.SizeOfImage, IMAGE_FILE_MACHINE_AMD64);
     }
@@ -523,6 +576,7 @@ void MmUnloadSystemImage(PKLDR_DATA_TABLE_ENTRY m)
     RemoveEntryList(&m->InLoadOrderLinks);
     InitializeListHead(&m->InLoadOrderLinks);
     ExReleaseFastMutex(&g_modules_lock);
+    unpin_file(m);
     KiLogPrintf("unloaded %wZ from %p", &m->FullDllName, m->DllBase);
     free_image_pages(m->DllBase, BYTES_TO_PAGES(m->SizeOfImage));
     m->DllBase = nullptr;
