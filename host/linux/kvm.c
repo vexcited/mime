@@ -232,7 +232,10 @@ static void spoof_model(struct kvm_cpuid2 *cpuid)
         struct kvm_cpuid_entry2 *e = &cpuid->entries[i];
         switch (e->function) {
         case 0:
-            cpuid_vendor(e, profile->cpu_vendor);
+            /* the processor vendor of leaf 0 runs through ebx, edx and ecx, unlike a hypervisor's. */
+            memcpy(&e->ebx, profile->cpu_vendor, 4);
+            memcpy(&e->edx, profile->cpu_vendor + 4, 4);
+            memcpy(&e->ecx, profile->cpu_vendor + 8, 4);
             break;
         case 1:
             e->eax = (profile->cpu_family << 8) | (profile->cpu_model << 4) | profile->cpu_stepping;
