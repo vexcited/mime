@@ -786,6 +786,46 @@ static NTSTATUS query_modules(PVOID info, ULONG length, PULONG returned)
     return status;
 }
 
+/*
+ * SystemProcessIdInformation, like windows: the caller names the process and lends an empty, even sized string; the
+ * device path of its image goes there with its nul. a buffer too small gets the size needed in MaximumLength.
+ */
+static NTSTATUS query_process_id(PVOID info, ULONG length, PULONG returned)
+{
+    struct {
+        HANDLE ProcessId;
+        UNICODE_STRING ImageName;
+    } in;
+    ULONG size = sizeof(in);
+    if (returned)
+        KiCopyToUser(returned, &size, sizeof(size));
+    if (length != sizeof(in))
+        return STATUS_INFO_LENGTH_MISMATCH;
+    NTSTATUS status = KiCopyFromUser(&in, info, sizeof(in));
+    if (!NT_SUCCESS(status))
+        return status;
+    if (in.ImageName.Length || (in.ImageName.MaximumLength & 1))
+        return STATUS_INVALID_PARAMETER;
+    PEPROCESS process = PspLookupProcess(in.ProcessId);
+    if (!process)
+        return STATUS_INVALID_CID;
+    WCHAR path[MAX_PATH + 32];
+    ULONG n = PsGetDeviceImagePath(process, path, sizeof(path) - sizeof(WCHAR));
+    path[n / sizeof(WCHAR)] = 0;
+    USHORT need = n ? (USHORT)(n + sizeof(WCHAR)) : 0;
+    UNICODE_STRING out = {(USHORT)n, need, n ? in.ImageName.Buffer : nullptr};
+    if (need > in.ImageName.MaximumLength) {
+        status = STATUS_INFO_LENGTH_MISMATCH;
+        KiCopyToUser((PUCHAR)info + offsetof(UNICODE_STRING, MaximumLength) + sizeof(HANDLE), &need, sizeof(need));
+    } else {
+        status = n ? KiCopyToUser(in.ImageName.Buffer, path, need) : STATUS_SUCCESS;
+        if (NT_SUCCESS(status))
+            status = KiCopyToUser((PUCHAR)info + sizeof(HANDLE), &out, sizeof(out));
+    }
+    ObDereferenceObject(process);
+    return status;
+}
+
 NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length, PULONG returned)
 {
     switch ((ULONG)klass) {
@@ -947,6 +987,23 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
         UCHAR enabled = 1;
         return copy_info(info, &enabled, sizeof(enabled), length, returned);
     }
+    case 44: /* SystemCurrentTimeZoneInformation */
+        return ExQueryTimeZoneInformation(info, length, returned);
+    case 88: /* SystemProcessIdInformation */
+        return query_process_id(info, length, returned);
+    case 103: { /* SystemCodeIntegrityInformation */
+        /* like ci.dll: the caller sets the length, the options are code integrity on, no test or debug signing. */
+        ULONG ci[2];
+        if (length != sizeof(ci))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        NTSTATUS status = KiCopyFromUser(ci, info, sizeof(ci));
+        if (!NT_SUCCESS(status))
+            return status;
+        if (ci[0] != sizeof(ci))
+            return STATUS_INFO_LENGTH_MISMATCH;
+        ci[1] = 0x00000001; /* CODEINTEGRITY_OPTION_ENABLED */
+        return copy_info(info, ci, sizeof(ci), length, returned);
+    }
     case 164: {
         /* the user mode code integrity state msxml asks for, zero flags are no enforcement. */
         UCHAR state[0x20] = {};
@@ -1039,9 +1096,40 @@ NTSTATUS NTAPI NtTraceControl(ULONG code, PVOID in, ULONG in_len, PVOID out, ULO
     return STATUS_NOT_SUPPORTED;
 }
 
+/*
+ * the product policy values a program reads. windows keeps them in a signed blob, here the ones that tell the
+ * edition are fixed to what GetProductInfo answers: professional. a missing one is STATUS_OBJECT_NAME_NOT_FOUND.
+ */
 NTSTATUS NTAPI NtQueryLicenseValue(PUNICODE_STRING name, PULONG type, PVOID data, ULONG length, PULONG returned)
 {
-    return STATUS_OBJECT_NAME_NOT_FOUND;
+    static const struct {
+        PCWSTR Name;
+        ULONG Value;
+    } values[] = {
+        {L"Kernel-ProductInfo", 0x30}, /* PRODUCT_PROFESSIONAL */
+    };
+    UNICODE_STRING copy;
+    NTSTATUS status = KiCaptureUnicodeString(&copy, name);
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG i = 0;
+    for (; i < RTL_NUMBER_OF(values); i++) {
+        UNICODE_STRING candidate;
+        RtlInitUnicodeString(&candidate, values[i].Name);
+        if (RtlEqualUnicodeString(&copy, &candidate, TRUE))
+            break;
+    }
+    KiFreeCapturedString(&copy);
+    if (i == RTL_NUMBER_OF(values))
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    ULONG kind = 4, size = sizeof(ULONG); /* REG_DWORD */
+    if (type)
+        KiCopyToUser(type, &kind, sizeof(kind));
+    if (returned)
+        KiCopyToUser(returned, &size, sizeof(size));
+    if (length < size)
+        return STATUS_BUFFER_TOO_SMALL;
+    return KiCopyToUser(data, &values[i].Value, size);
 }
 
 NTSTATUS NTAPI NtApphelpCacheControl(ULONG type, PVOID data)
@@ -1052,4 +1140,12 @@ NTSTATUS NTAPI NtApphelpCacheControl(ULONG type, PVOID data)
 NTSTATUS NTAPI NtQueryDebugFilterState(ULONG component, ULONG level)
 {
     return TRUE;
+}
+
+/* like windows, changing which debug output is kept needs the debug privilege; everything is kept here. */
+NTSTATUS NTAPI NtSetDebugFilterState(ULONG component, ULONG level, BOOLEAN state)
+{
+    if (KeGetPreviousMode() == UserMode && !SeThreadHasPrivilege(SE_DEBUG_PRIVILEGE))
+        return STATUS_ACCESS_DENIED;
+    return STATUS_SUCCESS;
 }
