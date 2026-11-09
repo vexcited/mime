@@ -8,6 +8,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -94,7 +95,32 @@ static bool make_profile(const MimePaths *paths, const char *name)
     };
     char root[MIME_PATH_MAX];
     snprintf(root, sizeof(root), "Users/%s", name);
-    return make_dirs(paths, root, folders, MIME_ARRAY_COUNT(folders));
+    if (!make_dirs(paths, root, folders, MIME_ARRAY_COUNT(folders)))
+        return false;
+    /* the junctions windows keeps for the programs of older versions, and its old shell folder names. */
+    static const struct {
+        const char *link, *target;
+    } links[] = {
+        {"Application Data", "AppData/Roaming"},
+        {"Cookies", "AppData/Roaming/Microsoft/Windows/Cookies"},
+        {"Local Settings", "AppData/Local"},
+        {"My Documents", "Documents"},
+        {"My Music", "Music"},
+        {"My Pictures", "Pictures"},
+        {"My Videos", "Videos"},
+        {"NetHood", "AppData/Roaming/Microsoft/Windows/Network Shortcuts"},
+        {"PrintHood", "AppData/Roaming/Microsoft/Windows/Printer Shortcuts"},
+        {"Recent", "AppData/Roaming/Microsoft/Windows/Recent"},
+        {"SendTo", "AppData/Roaming/Microsoft/Windows/SendTo"},
+        {"Start Menu", "AppData/Roaming/Microsoft/Windows/Start Menu"},
+        {"Templates", "AppData/Roaming/Microsoft/Windows/Templates"},
+    };
+    char path[MIME_PATH_MAX];
+    for (size_t i = 0; i < MIME_ARRAY_COUNT(links); i++) {
+        snprintf(path, sizeof(path), "%s/%s/%s", paths->drive_c, root, links[i].link);
+        symlink(links[i].target, path);
+    }
+    return true;
 }
 
 /* the profile of the user, and the default one new profiles start from. its NTUSER.DAT is in the ROM. */
@@ -103,6 +129,63 @@ static bool create_profile(const MimePaths *paths)
     MimeIdentity id;
     mime_identity_load(paths, &id);
     return make_profile(paths, "Default") && make_profile(paths, id.user_name);
+}
+
+/*
+ * the folders of a used installation that windows never lists: the recycle bin of the account, the volume's own
+ * tracking folder, and the junction of the old name of the profile folder. z: gets none of them.
+ */
+static bool create_hidden_items(const MimePaths *paths)
+{
+    MimeIdentity identity;
+    if (!mime_identity_load(paths, &identity))
+        return true;
+    char recycle[MIME_PATH_MAX], bin[MIME_PATH_MAX], file[MIME_PATH_MAX], system[MIME_PATH_MAX], legacy[MIME_PATH_MAX];
+    snprintf(recycle, sizeof(recycle), "%s/$Recycle.Bin", paths->drive_c);
+    snprintf(bin, sizeof(bin), "%s/S-1-5-21-%u-%u-%u-1001", recycle, identity.sid[0], identity.sid[1], identity.sid[2]);
+    if (!mime_mkdir_p(recycle, 0755) || !mime_mkdir_p(bin, 0755))
+        return false;
+    snprintf(file, sizeof(file), "%s/desktop.ini", bin);
+    FILE *f = fopen(file, "w");
+    if (f) {
+        fputs("[.ShellClassInfo]\nCLSID={645FF040-5081-101B-9F08-00AA002F954E}\n", f);
+        fclose(f);
+    }
+    snprintf(system, sizeof(system), "%s/System Volume Information", paths->drive_c);
+    if (!mime_mkdir_p(system, 0755))
+        return false;
+    snprintf(file, sizeof(file), "%s/IndexerVolumeGuid", system);
+    f = fopen(file, "w");
+    if (f) {
+        fprintf(f, "{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}\n", identity.volume_serial, identity.sid[0] & 0xFFFF,
+                identity.sid[1] & 0xFFFF, identity.sid[2] & 0xFF, identity.sid[2] >> 8 & 0xFF, identity.sid[0] & 0xFF,
+                identity.sid[1] & 0xFF, identity.sid[2] & 0xFF, identity.sid[0] >> 8 & 0xFF, identity.sid[1] >> 8 & 0xFF,
+                identity.sid[2] >> 16 & 0xFF);
+        fclose(f);
+    }
+    snprintf(file, sizeof(file), "%s/tracking.log", system);
+    f = fopen(file, "wb");
+    if (f) {
+        static const unsigned char header[] = {'G', 't', 'B', '\0', 1, 0, 0, 0};
+        fwrite(header, 1, sizeof(header), f);
+        fclose(f);
+    }
+    snprintf(legacy, sizeof(legacy), "%s/Documents and Settings", paths->drive_c);
+    symlink("Users", legacy);
+    snprintf(legacy, sizeof(legacy), "%s/Users/Default User", paths->drive_c);
+    symlink("Default", legacy);
+    snprintf(legacy, sizeof(legacy), "%s/Users/All Users", paths->drive_c);
+    symlink("../ProgramData", legacy);
+    snprintf(legacy, sizeof(legacy), "%s/ProgramData/Application Data", paths->drive_c);
+    symlink(".", legacy);
+    /* the system's small swap file, which uefi installations always have. */
+    snprintf(file, sizeof(file), "%s/swapfile.sys", paths->drive_c);
+    int fd = open(file, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+    if (fd >= 0) {
+        ftruncate(fd, 16 << 20);
+        close(fd);
+    }
+    return true;
 }
 
 /*
@@ -262,6 +345,8 @@ bool mime_prepare_drive(const MimePaths *paths)
     }
     create_name_files(paths);
     create_shared_folders(paths);
+    if (!create_hidden_items(paths))
+        return false;
 #ifdef __APPLE__
     export_roots(paths);
 #endif

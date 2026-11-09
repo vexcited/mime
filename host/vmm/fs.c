@@ -26,6 +26,7 @@
 
 #define FILE_ATTRIBUTE_READONLY 0x01
 #define FILE_ATTRIBUTE_HIDDEN 0x02
+#define FILE_ATTRIBUTE_SYSTEM 0x04
 #define FILE_ATTRIBUTE_DIRECTORY 0x10
 #define FILE_ATTRIBUTE_REPARSE_POINT 0x400
 #define FILE_ATTRIBUTE_ARCHIVE 0x20
@@ -160,6 +161,23 @@ static struct timespec filetime_to_ts(uint64_t filetime)
     return (struct timespec){.tv_sec = (time_t)(ticks / 10000000ull), .tv_nsec = (long)(ticks % 10000000ull) * 100};
 }
 
+/* names windows keeps both hidden and system, which no unix file mode says. */
+static bool system_name(const char *path, const char *name)
+{
+    static const char *const names[] = {"$Recycle.Bin", "System Volume Information", "Documents and Settings",
+                                        "pagefile.sys", "hiberfil.sys", "swapfile.sys", "DumpStack.log.tmp",
+                                        "Application Data", "Local Settings", "My Documents", "My Music",
+                                        "My Pictures", "My Videos", "NetHood", "PrintHood", "Recent", "SendTo",
+                                        "Templates", "Start Menu", "Cookies", "All Users", "Default User", "Default"};
+    static const char config[] = "Windows/System32/config";
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+        if (!strcasecmp(name, names[i]))
+            return true;
+    /* the hive folder is hidden too, and only that one is called config. */
+    size_t length = strlen(path), tail = sizeof(config) - 1;
+    return length > tail && !strcasecmp(path + length - tail, config);
+}
+
 static void fill_info(const MimeFsStat *s, const char *path, int fd, const char *name, MimeFsInfo *info)
 {
     const struct stat *st = &s->st;
@@ -191,6 +209,8 @@ static void fill_info(const MimeFsStat *s, const char *path, int fd, const char 
     }
     if (name && name[0] == '.' && strcmp(name, ".") != 0 && strcmp(name, "..") != 0)
         attrs |= FILE_ATTRIBUTE_HIDDEN;
+    if (name && system_name(path, name))
+        attrs |= FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM;
     info->attributes = attrs;
 }
 
