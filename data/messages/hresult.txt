@@ -1,5 +1,5 @@
 # HRESULT messages as FormatMessage FROM_SYSTEM returns them in en-US.
-# Format: ID<TAB>SYMBOL<TAB>TEXT. The build appends CRLF to every text, see cmake/asset/messages.cmake.
+# Format: ID<TAB>SYMBOL<TAB>TEXT. The build appends CRLF to every text, see scripts/asset/messages.cmake.
 # In TEXT the two characters backslash and n are a line break, any other backslash is literal.
 0x00030200	STG_S_CONVERTED	The underlying file was converted to compound file format.
 0x00030201	STG_S_BLOCK	The storage operation should block until more data is available.

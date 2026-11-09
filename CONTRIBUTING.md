@@ -45,9 +45,9 @@ The guest always runs the build machine's processor, there is no cross build: AR
 
 ### Icons and sounds
 
-The repository has no binary assets. The icons, cursors and bitmaps are SVG drawings in [mime-icons](https://code.vexcited.com/mime/icons), and the system sounds are text recipes in [mime-audio](https://code.vexcited.com/mime/audio). CMake renders and synthesizes them into the files Windows reads, with scripts in [cmake/asset](cmake/asset/) that need nothing but CMake. The message tables of `FormatMessage` are built the same way from [data/messages](data/messages/).
+The repository has no binary assets. The icons, cursors and bitmaps are SVG drawings in [mime-icons](https://code.vexcited.com/mime/icons), and the system sounds are text recipes in [mime-audio](https://code.vexcited.com/mime/audio). CMake renders and synthesizes them into the files Windows reads, with scripts in [scripts/asset](scripts/asset/) that need nothing but CMake. The message tables of `FormatMessage` are built the same way from [data/messages](data/messages/).
 
-At configure time, CMake fetches the commits that [cmake/assets.cmake](cmake/assets.cmake) pins. A checkout next to Mime's, `../mime-icons` or `../mime-audio`, is used as it is instead. That includes uncommitted changes, so a drawing can be edited and rebuilt without a commit. Worktrees look next to their main checkout. To build from a checkout somewhere else, set `-DMIME_ICONS_DIR=<path>` or `-DMIME_AUDIO_DIR=<path>`. After pushing a change to either repository, update its pinned commit in `cmake/assets.cmake`.
+At configure time, CMake fetches the commits that [CMakeLists.txt](CMakeLists.txt) pins. A checkout next to Mime's, `../mime-icons` or `../mime-audio`, is used as it is instead. That includes uncommitted changes, so a drawing can be edited and rebuilt without a commit. Worktrees look next to their main checkout. To build from a checkout somewhere else, set `-DMIME_ICONS_DIR=<path>` or `-DMIME_AUDIO_DIR=<path>`. After pushing a change to either repository, update its pinned commit in `CMakeLists.txt`.
 
 The first build renders every icon and takes a minute or two of CPU across all cores. After that, only what changed is rebuilt.
 

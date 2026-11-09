@@ -1,6 +1,6 @@
 ; the sound scheme and the names of the events, read by PlaySound and MessageBeep. a program that plays a system sound
 ; names an event, the event's .Current value is the file, and a value that is empty is an event without a sound. the files
-; are the sounds Mime makes from the recipes of mime-audio, see cmake/assets.cmake.
+; are the sounds Mime makes from the recipes of mime-audio, see CMakeLists.txt.
 
 [HKCU\AppEvents\Schemes]
 @=".Default"

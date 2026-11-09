@@ -1,4 +1,4 @@
-// the icons, cursors, bitmaps and strings of user32.dll; the pictures are drawn in mime-icons, see cmake/assets.cmake.
+// the icons, cursors, bitmaps and strings of user32.dll; the pictures are drawn in mime-icons, see CMakeLists.txt.
 LANGUAGE 0, 0
 100 ICON "@MIME_ASSETS@/icons/system_app.ico"
 101 ICON "@MIME_ASSETS@/icons/system_warning.ico"

@@ -1,5 +1,5 @@
 # Win32 error codes as FormatMessage FROM_SYSTEM returns them in en-US.
-# Format: ID<TAB>SYMBOL<TAB>TEXT. The build appends CRLF to every text, see cmake/asset/messages.cmake.
+# Format: ID<TAB>SYMBOL<TAB>TEXT. The build appends CRLF to every text, see scripts/asset/messages.cmake.
 # In TEXT the two characters backslash and n are a line break, any other backslash is literal.
 0	ERROR_SUCCESS	The operation completed successfully.
 1	ERROR_INVALID_FUNCTION	Incorrect function.
