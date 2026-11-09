@@ -869,10 +869,15 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
             mime_path_join(joined, sizeof(joined), cwd, target);
         else
             mime_strlcpy(joined, target, sizeof(joined));
+        bool path = target[0] == '/' || !strncmp(target, "./", 2) || !strncmp(target, "../", 3);
         if (realpath(joined, resolved)) {
             if (is_program(resolved) && !mime_dir_exists(resolved) && !admin)
                 return run_program(paths, argc, argv);
             mime_paths_to_guest(paths, resolved, guest, sizeof(guest));
+            target = guest;
+        } else if (path) {
+            /* windows names ignore case, so a path the host misses, like Steam.exe for steam.exe, can still be a file of C:. */
+            mime_paths_to_guest(paths, joined, guest, sizeof(guest));
             target = guest;
         }
     }
