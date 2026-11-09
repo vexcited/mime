@@ -105,7 +105,7 @@ function(mime_dll name arch)
     if(EXISTS ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.rc)
         set(script RESOURCE_SCRIPT ${CMAKE_SOURCE_DIR}/guest/${name}/${name}.rc)
     endif()
-    # the icons, cursors, bitmaps and message tables the libraries carry, generated into gen/resources.
+    # the icons, cursors, bitmaps and message tables the libraries carry, named by the scripts of gen/resources.
     if(NOT script AND EXISTS ${MIME_GEN}/resources/${name}.rc)
         set(script RESOURCE_SCRIPT ${MIME_GEN}/resources/${name}.rc)
     endif()
