@@ -422,7 +422,20 @@ KiTrapCommon:
 9:
     movq    %rsp, %rbx
     subq    $0x20, %rsp
-    testb   $RPL_USER, KTRAP_CS(%rbx)
+    /*
+     * an interrupt is ended before the kernel lock is waited for: the write exits to the host, and with the lock
+     * held every processor waiting for it would pay that. interrupts stay masked until the handler is done.
+     */
+    movq    KTRAP_VECTOR(%rbx), %rax
+    cmpq    $KI_VECTOR_FIRST, %rax
+    jb      4f
+    cmpq    $KI_VECTOR_SPURIOUS, %rax
+    je      4f
+    xorl    %eax, %eax
+    xorl    %edx, %edx
+    movl    $0x80B, %ecx                /* MSR_X2APIC_EOI */
+    wrmsr
+4:  testb   $RPL_USER, KTRAP_CS(%rbx)
     jz      2f
     /*
      * a not present page fault is first tried without the kernel lock and with UserMode still set,

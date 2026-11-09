@@ -283,8 +283,7 @@ static void interrupt(PKTRAP_FRAME frame)
         break;
     }
     }
-    if (frame->Vector != KI_VECTOR_SPURIOUS)
-        HalEndOfInterrupt((ULONG)frame->Vector);
+    /* the interrupt is already ended, before the kernel lock was taken: see KiTrapCommon. */
     KiChargeServiceTime(prcb, start, FALSE);
 
     pcr->Irql = old;
@@ -321,7 +320,7 @@ void KiTrapDispatch(PKTRAP_FRAME frame)
         KiSystemService(frame);
         return;
     }
-    if (frame->Vector >= 32 && frame->Vector != 0x29 && frame->Vector != 0x2C && frame->Vector != 0x2D)
+    if (frame->Vector >= KI_VECTOR_FIRST)
         interrupt(frame);
     else if (KI_TRAP_FROM_USER(frame))
         user_exception(frame);
