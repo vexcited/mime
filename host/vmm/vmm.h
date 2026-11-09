@@ -54,6 +54,8 @@ typedef struct MimeVcpu {
     uint64_t start_pc, start_x0, start_sp;
     /* the guest-visible microsoft hypervisor state of this processor. */
     uint64_t hv_assist_page, hv_reference_tsc, hv_crash_ctl, hv_crash[5];
+    /* the last kernel lock wait and where it resumed, printed with a triple fault. */
+    uint64_t wait_rip, wait_rsp;
     /* exit statistics, printed with the SIGUSR1 state dump. */
     uint64_t exits_total;
     uint64_t exits_vtimer;

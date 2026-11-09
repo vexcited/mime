@@ -282,6 +282,8 @@ typedef struct MimeBootInfo {
     uint64_t shared_phys; /* MimeSharedPage */
     uint64_t boot_stack_phys;
     uint64_t boot_stack_size;
+    /* a page the trap entry records each processor's last exception in, so a triple fault keeps its cause. */
+    uint64_t exception_trace_phys;
 
     uint64_t timer_frequency;
     /* GICv3 emulated by the host: distributor, redistributors, both mapped at physmap + phys as device memory. */
