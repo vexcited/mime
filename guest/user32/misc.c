@@ -1132,10 +1132,16 @@ WINUSERAPI BOOL WINAPI EnumDisplayDevicesW(LPCWSTR device, DWORD index, PDISPLAY
             return FALSE;
         wsprintfW(number, L"%04u", 0);
         wcscpy(d.DeviceName, list[index].Device);
-        wcscpy(d.DeviceString, MimeArm64Machine() ? L"Qualcomm(R) Adreno(TM) X1-85 GPU" : L"Intel(R) Arc(TM) Graphics");
+        /* the adapter the kernel describes in its video key. */
+        static const WCHAR video[] = L"System\\CurrentControlSet\\Control\\Video\\{b3f36b7e-6a4d-5a41-9e2c-4d8fa1c7e903}\\0000";
+        DWORD size = sizeof(d.DeviceString);
+        if (RegGetValueW(HKEY_LOCAL_MACHINE, video, L"DriverDesc", RRF_RT_REG_SZ, nullptr, d.DeviceString, &size))
+            d.DeviceString[0] = 0;
+        size = sizeof(d.DeviceID) - 6 * sizeof(WCHAR);
+        if (RegGetValueW(HKEY_LOCAL_MACHINE, video, L"MatchingDeviceId", RRF_RT_REG_SZ, nullptr, d.DeviceID, &size))
+            d.DeviceID[0] = 0;
         d.StateFlags = DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | (index == 0 ? DISPLAY_DEVICE_PRIMARY_DEVICE : 0);
-        wcscpy(d.DeviceID, MimeArm64Machine() ? L"ACPI\\VEN_QCOM&DEV_0C36&SUBSYS_10280C69&REV_0086\\"
-                                              : L"PCI\\VEN_8086&DEV_7D55&SUBSYS_20331414&REV_08\\");
+        wcscat(d.DeviceID, L"\\");
         wcscat(d.DeviceID, number);
         wcscpy(d.DeviceKey, L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\{b3f36b7e-6a4d-5a41-9e2c-4d8fa1c7e903}\\");
         wcscat(d.DeviceKey, number);

@@ -6,6 +6,7 @@
 #include "cm.h"
 #define MIME_KERNEL_PNP
 #include <mime/pnp.h>
+#include <mime/gpu_identity.h>
 #ifdef __aarch64__
 #include "../ex/acpi_tables.h"
 #else
@@ -285,9 +286,42 @@ static void firmware(void)
     set_sz(sysinfo, L"SystemVersion", REG_SZ, L"1");
 }
 
+#if !defined(__aarch64__)
+#define DISPLAY_DRIVER L"{4d36e968-e325-11ce-bfc1-08002be10318}\\0000"
+
+/* the pnp identifiers of a host gpu, PCI\VEN_10DE&DEV_28A1&SUBSYS_0B6F1028&REV_A1. */
+static void gpu_hardware_id(const MimeBootGpu *gpu, PWCHAR out, ULONG count)
+{
+    memset(out, 0, count * sizeof(WCHAR));
+    _snwprintf(out, count - 1, L"PCI\\VEN_%04X&DEV_%04X&SUBSYS_%08X&REV_%02X", gpu->vendor, gpu->device,
+               gpu->subsystem, gpu->revision & 0xFF);
+}
+
+/* the device key of a host gpu, where its pci location names the instance. */
+static void gpu_instance(const MimeBootGpu *gpu, PWCHAR out, ULONG count)
+{
+    WCHAR hardware[96];
+    gpu_hardware_id(gpu, hardware, RTL_NUMBER_OF(hardware));
+    memset(out, 0, count * sizeof(WCHAR));
+    _snwprintf(out, count - 1, L"%ls\\3&11583659&0&%02X", hardware, gpu->slot & 0xFF);
+}
+
+/* the inf section and kernel driver of the vendor's windows package. */
+static PCWSTR gpu_inf_section(ULONG vendor)
+{
+    return vendor == 0x10DE ? L"Section048" : vendor == 0x1002 ? L"ati2mtag_R7000" : L"iigd_dch";
+}
+
+static PCWSTR gpu_service(ULONG vendor)
+{
+    return vendor == 0x10DE ? L"nvlddmkm" : vendor == 0x1002 ? L"amdkmdag" : L"igdkmd64";
+}
+#endif
+
 /*
  * the display class key and the video key of the adapter, where its device key leads: the driver description and
- * the identifiers a device reader of the class finds, the name and vendor of the reference gpu.
+ * the identifiers a device reader of the class finds. on x64 that is the host gpu dxgi lists first, and windows'
+ * basic display adapter on a host without one.
  */
 static void display_adapter(void)
 {
@@ -296,6 +330,18 @@ static void display_adapter(void)
     static const WCHAR video_key[] = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Video"
                                     L"\\{b3f36b7e-6a4d-5a41-9e2c-4d8fa1c7e903}\\0000";
     static const PCWSTR keys[] = {class_key, video_key};
+#if !defined(__aarch64__)
+    const MimeBootGpu *gpu = HalBootInfo->gpu_count ? &HalBootInfo->gpus[0] : nullptr;
+    WCHAR name[128] = L"Microsoft Basic Display Adapter", version[48] = L"10.0.26100.1", hardware[96] = L"PCI\\CC_0300";
+    if (gpu) {
+        USHORT parts[4];
+        MimeGpuName(gpu->name, name, RTL_NUMBER_OF(name));
+        MimeGpuDriverVersion(gpu->vendor, gpu->driver_version, parts);
+        memset(version, 0, sizeof(version));
+        _snwprintf(version, RTL_NUMBER_OF(version) - 1, L"%u.%u.%u.%u", parts[0], parts[1], parts[2], parts[3]);
+        gpu_hardware_id(gpu, hardware, RTL_NUMBER_OF(hardware));
+    }
+#endif
     for (ULONG i = 0; i < RTL_NUMBER_OF(keys); i++) {
         if (!CmpOpenPath(keys[i], TRUE))
             continue;
@@ -308,13 +354,17 @@ static void display_adapter(void)
         set_sz(keys[i], L"InfPath", REG_SZ, L"oem12.inf");
         set_sz(keys[i], L"InfSection", REG_SZ, L"qcdx8380_DevDesc");
 #else
-        set_sz(keys[i], L"DriverDesc", REG_SZ, L"Intel(R) Arc(TM) Graphics");
-        set_sz(keys[i], L"ProviderName", REG_SZ, L"Intel Corporation");
-        set_sz(keys[i], L"DriverVersion", REG_SZ, L"32.0.101.6734");
-        set_sz(keys[i], L"DriverDate", REG_SZ, L"6-12-2025");
-        set_sz(keys[i], L"MatchingDeviceId", REG_SZ, L"PCI\\VEN_8086&DEV_7D55&SUBSYS_20331414");
-        set_sz(keys[i], L"InfPath", REG_SZ, L"oem4.inf");
-        set_sz(keys[i], L"InfSection", REG_SZ, L"iigd_dch");
+        set_sz(keys[i], L"DriverDesc", REG_SZ, name);
+        set_sz(keys[i], L"ProviderName", REG_SZ, gpu ? MimeGpuProvider(gpu->vendor) : L"Microsoft");
+        set_sz(keys[i], L"DriverVersion", REG_SZ, version);
+        set_sz(keys[i], L"DriverDate", REG_SZ, gpu ? L"6-12-2025" : L"6-21-2006");
+        set_sz(keys[i], L"MatchingDeviceId", REG_SZ, hardware);
+        set_sz(keys[i], L"InfPath", REG_SZ, gpu ? L"oem4.inf" : L"display.inf");
+        set_sz(keys[i], L"InfSection", REG_SZ, gpu ? gpu_inf_section(gpu->vendor) : L"MSBDA");
+        if (gpu) {
+            set_qword(keys[i], L"HardwareInformation.qwMemorySize", gpu->memory);
+            set(keys[i], L"HardwareInformation.AdapterString", REG_BINARY, name, (ULONG)(wcslen(name) + 1) * sizeof(WCHAR));
+        }
 #endif
     }
 }
@@ -502,6 +552,29 @@ static void pnp(PCWSTR instance, PCWSTR parent, PCWSTR desc, PCWSTR hardware, PC
     MimePnpAddDevice(instance, parent, &p);
 }
 
+/* the host's gpus, real hardware in the machine, each where the host has it; the first is the display key's. */
+static void host_gpus(PCWSTR root)
+{
+#if !defined(__aarch64__)
+    for (ULONG i = 0; i < HalBootInfo->gpu_count && i < MIME_BOOT_GPUS; i++) {
+        const MimeBootGpu *gpu = &HalBootInfo->gpus[i];
+        WCHAR instance[160], hardware[100] = {}, name[128], location[64] = {};
+        gpu_instance(gpu, instance, RTL_NUMBER_OF(instance));
+        gpu_hardware_id(gpu, hardware, RTL_NUMBER_OF(hardware) - 1);
+        MimeGpuName(gpu->name, name, RTL_NUMBER_OF(name));
+        _snwprintf(location, RTL_NUMBER_OF(location) - 1, L"PCI bus %u, device %u, function %u", gpu->bus,
+                   gpu->slot >> 3, gpu->slot & 7);
+        pnp(instance, root, name, hardware, L"Display", DISPLAY_CLASS, MimeGpuProvider(gpu->vendor),
+            gpu_service(gpu->vendor), location);
+        if (i == 0) {
+            WCHAR path[220] = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Enum\\";
+            wcscat(path, instance);
+            set_sz(path, L"Driver", REG_SZ, DISPLAY_DRIVER);
+        }
+    }
+#endif
+}
+
 /*
  * the device tree of the reference machine, as its firmware presents it: the pci root bridge, the chipset and its
  * peripherals, the battery and thermal zone of a laptop. mime has no acpi or pci driver, so these are the enumeration
@@ -514,12 +587,7 @@ static void devices(void)
         L"Microsoft", L"pci", L"PCI bus 0");
     pnp(L"PCI\\VEN_8086&DEV_7E00&SUBSYS_00000000&REV_01\\3&11583659&0&00", root, L"Intel(R) Host Bridge",
         L"PCI\\VEN_8086&DEV_7E00&SUBSYS_00000000&REV_01\0", L"System", SYSTEM_CLASS, L"Intel", L"", L"PCI bus 0, device 0, function 0");
-    pnp(L"PCI\\VEN_8086&DEV_7D55&SUBSYS_00000000&REV_08\\3&11583659&0&02", root, L"Intel(R) Arc(TM) Graphics",
-        L"PCI\\VEN_8086&DEV_7D55&SUBSYS_00000000&REV_08\0", L"Display", DISPLAY_CLASS, L"Intel Corporation",
-        L"igdkmd64", L"PCI bus 0, device 2, function 0");
-    pnp(L"PCI\\VEN_10DE&DEV_28E1&SUBSYS_00000000&REV_A1\\3&11583659&0&01", root, L"NVIDIA GeForce RTX 4050 Laptop GPU",
-        L"PCI\\VEN_10DE&DEV_28E1&SUBSYS_00000000&REV_A1\0", L"Display", DISPLAY_CLASS, L"NVIDIA",
-        L"nvlddmkm", L"PCI bus 0, device 1, function 0");
+    host_gpus(root);
     pnp(L"PCI\\VEN_8086&DEV_7E28&SUBSYS_00000000&REV_01\\3&11583659&0&1F", root, L"Intel(R) LPC Controller",
         L"PCI\\VEN_8086&DEV_7E28&SUBSYS_00000000&REV_01\0", L"System", SYSTEM_CLASS, L"Intel", L"msisadrv",
         L"PCI bus 0, device 31, function 0");
@@ -551,7 +619,7 @@ static void drivers(void)
     static const PCWSTR names[] = {
         L"\\Driver\\ACPI", L"\\Driver\\pci", L"\\Driver\\msisadrv", L"\\Driver\\disk", L"\\Driver\\partmgr",
         L"\\Driver\\volmgr", L"\\Driver\\volsnap", L"\\Driver\\mountmgr", L"\\Driver\\stornvme",
-        L"\\Driver\\CmBatt", L"\\Driver\\netwtw", L"\\Driver\\nvlddmkm", L"\\Driver\\igdkmd64",
+        L"\\Driver\\CmBatt", L"\\Driver\\netwtw", L"\\Driver\\nvlddmkm", L"\\Driver\\amdkmdag", L"\\Driver\\igdkmd64",
         L"\\Driver\\IntcAudioBus", L"\\FileSystem\\FltMgr",
     };
     for (ULONG i = 0; i < RTL_NUMBER_OF(names); i++)
