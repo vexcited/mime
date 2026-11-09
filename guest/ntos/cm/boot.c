@@ -99,6 +99,33 @@ static void version_data(PCWSTR user)
 #endif
 }
 
+/* where fetched feature packages are staged, on the host share so no mime folder appears on C:. */
+static void feature_cache(void)
+{
+    if (!HalBootInfo->feature_cache[0])
+        return;
+    WCHAR path[260];
+    widen(path, RTL_NUMBER_OF(path), HalBootInfo->feature_cache);
+    set_sz(L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsFeatures", L"Cache",
+           REG_SZ, path);
+}
+
+/* the local security policy values a fresh windows keeps in control\lsa. */
+static void security_policy(void)
+{
+    static const PCWSTR lsa = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Lsa";
+    set_dword(lsa, L"LimitBlankPasswordUse", 1);
+    set_dword(lsa, L"RestrictAnonymous", 0);
+    set_dword(lsa, L"RestrictAnonymousSAM", 1);
+    set_dword(lsa, L"EveryoneIncludesAnonymous", 0);
+    set_dword(lsa, L"ForceGuest", 0);
+    set_dword(lsa, L"NoLmHash", 1);
+    set_dword(lsa, L"LmCompatibilityLevel", 5);
+    set_dword(lsa, L"DisableDomainCreds", 0);
+    set_dword(lsa, L"FullPrivilegeAuditing", 0);
+    set_sz(lsa, L"RestrictRemoteSAM", REG_SZ, L"O:BAG:BAD:(A;;RC;;;BA)");
+}
+
 static void identity(PCWSTR computer, PCWSTR user, PCWSTR sid)
 {
     set_sz(CONTROL L"\\ComputerName\\ComputerName", L"ComputerName", REG_SZ, computer);
@@ -468,6 +495,8 @@ void CmpSpecialize(void)
     ExAcquireFastMutex(&CmpLock);
     version_data(user);
     identity(computer, user, sid);
+    security_policy();
+    feature_cache();
     service_profiles();
     volatile_environment(computer, user, sid);
     shell_state(sid);
