@@ -55,14 +55,34 @@ HWND NTAPI NtUserSetCapture(HWND hwnd)
     return old;
 }
 
+/*
+ * a thread that keyboard messages do not reach reads the live key state, as on windows: only the thread taking the
+ * keys sees them change message by message. games poll keys from threads of their own this way.
+ */
+static void sync_with_async(W32THREAD *t)
+{
+    t = W32InputOwner(t);
+    W32THREAD *keys = InputForeground ? W32InputOwner(InputForeground->Thread) : nullptr;
+    if (t == keys || (InputFocusOwner && W32InputOwner(InputFocusOwner) == t))
+        return;
+    for (int i = 0; i < 256; i++) {
+        UCHAR down = InputAsyncKeys[i] & 0x80;
+        if (down && !(t->KeyState[i] & 0x80))
+            t->KeyState[i] ^= 1;
+        t->KeyState[i] = (UCHAR)((t->KeyState[i] & 1) | down);
+    }
+}
+
 SHORT NTAPI NtUserGetKeyState(int key)
 {
     UserEnter();
     W32THREAD *t = W32GetThread();
     SHORT r = 0;
+    if (t)
+        sync_with_async(t);
     if (t && key >= 0 && key < 256) {
         /* the state byte sign extended, like windows: callers test bit 15 or bit 7. */
-        r = (SHORT)(signed char)(t->KeyState[key] & 0x81);
+        r = (SHORT)(signed char)(W32InputOwner(t)->KeyState[key] & 0x81);
     }
     UserLeave();
     return r;
@@ -74,8 +94,10 @@ BOOL NTAPI NtUserGetKeyboardState(PBYTE state)
     UCHAR copy[256];
     UserEnter();
     W32THREAD *t = W32GetThread();
+    if (t)
+        sync_with_async(t);
     for (int i = 0; i < 256; i++)
-        copy[i] = t ? (UCHAR)(t->KeyState[i] & 0x81) : 0;
+        copy[i] = t ? (UCHAR)(W32InputOwner(t)->KeyState[i] & 0x81) : 0;
     UserLeave();
     if (!NT_SUCCESS(MimeCopyToUser(state, copy, sizeof(copy)))) {
         W32SetLastError(ERROR_NOACCESS);
@@ -95,7 +117,7 @@ BOOL NTAPI NtUserSetKeyboardState(PBYTE state)
     W32THREAD *t = W32GetThread();
     if (t)
         for (int i = 0; i < 256; i++)
-            t->KeyState[i] = copy[i] & 0x81;
+            W32InputOwner(t)->KeyState[i] = copy[i] & 0x81;
     UserLeave();
     return TRUE;
 }
@@ -326,6 +348,9 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
         MetricsDisplayChanged();
         return;
     }
+    /* user32 reads the layout from the boot information when it translates keys. */
+    if (ev->type == MIME_INPUT_KEYMAP)
+        return;
     if (ev->type == MIME_INPUT_TRAY) {
         TrayHostEvent(ev);
         return;
@@ -675,6 +700,7 @@ static void set_key_state(W32THREAD *t, UINT vk, BOOLEAN down)
 {
     if (vk >= 256)
         return;
+    t = W32InputOwner(t);
     if (down && !(t->KeyState[vk] & 0x80))
         t->KeyState[vk] ^= 1;
     t->KeyState[vk] = (UCHAR)((t->KeyState[vk] & 1) | (down ? 0x80 : 0));
@@ -683,6 +709,7 @@ static void set_key_state(W32THREAD *t, UINT vk, BOOLEAN down)
 /* the thread side of sync_async_sides. */
 static void sync_sides(W32THREAD *t, BOOLEAN on, UINT left, UINT right, UINT generic)
 {
+    t = W32InputOwner(t);
     if (!on) {
         set_key_state(t, left, FALSE);
         set_key_state(t, right, FALSE);
@@ -699,9 +726,10 @@ static void sync_mouse_state(W32THREAD *t, const MimeInputEvent *ev, WPARAM stat
         WPARAM Mask;
     } buttons[] = {{VK_LBUTTON, MK_LBUTTON}, {VK_RBUTTON, MK_RBUTTON}, {VK_MBUTTON, MK_MBUTTON},
                    {VK_XBUTTON1, MK_XBUTTON1}, {VK_XBUTTON2, MK_XBUTTON2}};
+    UCHAR *keys = W32InputOwner(t)->KeyState;
     for (ULONG i = 0; i < RTL_NUMBER_OF(buttons); i++) {
         UINT key = buttons[i].Key;
-        t->KeyState[key] = (UCHAR)((t->KeyState[key] & 1) | ((state & buttons[i].Mask) ? 0x80 : 0));
+        keys[key] = (UCHAR)((keys[key] & 1) | ((state & buttons[i].Mask) ? 0x80 : 0));
     }
     sync_sides(t, (ev->modifiers & MIME_MOD_SHIFT) != 0, VK_LSHIFT, VK_RSHIFT, VK_SHIFT);
     sync_sides(t, (ev->modifiers & MIME_MOD_CONTROL) != 0, VK_LCONTROL, VK_RCONTROL, VK_CONTROL);
@@ -962,23 +990,25 @@ static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND fi
         /* both threads see the keys that go down, the one that gets them and the one that is the queue's. */
         for (int i = 0; i < 2; i++) {
             W32THREAD *state = i ? owner : t;
-            if (!state)
+            /* attached threads share one state, which takes the key once. */
+            if (!state || (i && W32InputOwner(owner) == W32InputOwner(t)))
                 continue;
             set_key_state(state, ev->vk, down);
             sync_sides(state, (ev->modifiers & MIME_MOD_SHIFT) != 0, VK_LSHIFT, VK_RSHIFT, VK_SHIFT);
             sync_sides(state, (ev->modifiers & MIME_MOD_CONTROL) != 0, VK_LCONTROL, VK_RCONTROL, VK_CONTROL);
             sync_sides(state, alt, VK_LMENU, VK_RMENU, VK_MENU);
             if (ev->modifiers & MIME_MOD_CAPS)
-                state->KeyState[VK_CAPITAL] |= 1;
+                W32InputOwner(state)->KeyState[VK_CAPITAL] |= 1;
             else
-                state->KeyState[VK_CAPITAL] &= ~1;
+                W32InputOwner(state)->KeyState[VK_CAPITAL] &= ~1;
         }
     }
     if (remove) {
         /* a menu bar opens on the release of Alt or F10, when no other key or button came between. */
         for (int i = 0; i < 2; i++) {
             W32THREAD *state = i ? owner : t;
-            if (!state)
+            /* attached threads share one state, which takes the key once. */
+            if (!state || (i && W32InputOwner(owner) == W32InputOwner(t)))
                 continue;
             if (ev->vk == VK_LMENU || ev->vk == VK_RMENU || ev->vk == VK_MENU) {
                 if (down && !(ev->flags & 2))

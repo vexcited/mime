@@ -1,0 +1,6 @@
+file(READ ${INPUT} manifest)
+string(REPLACE "\\" "\\\\" manifest "${manifest}")
+string(REPLACE "\"" "\\\"" manifest "${manifest}")
+string(REPLACE "\t" "\\t" manifest "${manifest}")
+string(REPLACE "\n" "\\n\"\n    \"" manifest "${manifest}")
+file(WRITE ${OUTPUT} "static const char mime_genuine_manifest[] =\n    \"${manifest}\";\n")

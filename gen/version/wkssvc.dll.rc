@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Workstation Service DLL"
             VALUE "FileVersion", "10.0.26100.8521 (WinBuild.160101.0800)"
             VALUE "InternalName", "WKSSVC.DLL"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "WKSSVC.DLL"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.8521"

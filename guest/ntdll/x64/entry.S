@@ -11,36 +11,63 @@
     .text
 
 /*
- * above the stack pointer: 0x30 bytes, the CONTEXT, the EXCEPTION_RECORD
- * in 0xa0 bytes and a machine frame. like windows, the unwind codes
- * describe this, so an unwind through the dispatcher restores the
- * nonvolatile registers from the context and resumes at the faulting rip
- * and rsp.
+ * windows' KiUserExceptionDispatcher, byte for byte: the CONTEXT at the stack pointer, the EXCEPTION_RECORD 0x4F0
+ * above it, then a machine frame, as its unwind codes say. it calls Wow64PrepareForException first when that pointer
+ * is set, and protectors find the pointer by decoding the mov at its start to put a first chance handler there.
  */
     .globl  KiUserExceptionDispatcher
     .p2align 4
     .seh_proc KiUserExceptionDispatcher
     .seh_pushframe
-    .seh_stackalloc 0x5a0
-    .seh_savereg %rbx, 0x30+0x90
-    .seh_savereg %rbp, 0x30+0xa0
-    .seh_savereg %rsi, 0x30+0xa8
-    .seh_savereg %rdi, 0x30+0xb0
-    .seh_savereg %r12, 0x30+0xd8
-    .seh_savereg %r13, 0x30+0xe0
-    .seh_savereg %r14, 0x30+0xe8
-    .seh_savereg %r15, 0x30+0xf0
+    .seh_stackalloc 0x590
+    .seh_savereg %rbx, 0x90
+    .seh_savereg %rbp, 0xa0
+    .seh_savereg %rsi, 0xa8
+    .seh_savereg %rdi, 0xb0
+    .seh_savereg %r12, 0xd8
+    .seh_savereg %r13, 0xe0
+    .seh_savereg %r14, 0xe8
+    .seh_savereg %r15, 0xf0
+    .seh_savexmm %xmm6, 0x200
+    .seh_savexmm %xmm7, 0x210
+    .seh_savexmm %xmm8, 0x220
+    .seh_savexmm %xmm9, 0x230
+    .seh_savexmm %xmm10, 0x240
+    .seh_savexmm %xmm11, 0x250
+    .seh_savexmm %xmm12, 0x260
+    .seh_savexmm %xmm13, 0x270
+    .seh_savexmm %xmm14, 0x280
+    .seh_savexmm %xmm15, 0x290
     .seh_endprologue
 KiUserExceptionDispatcher:
-    movq    %rcx, %rbx
-    movq    %rdx, %rsi
-    call    KiUserExceptionDispatcherC
-    /* only reached if the c dispatcher returns: raise as second chance. */
-    movq    %rbx, %rcx
-    movq    %rsi, %rdx
-    xorl    %r8d, %r8d
+    .byte   0xfc                                    /* cld */
+    .byte   0x48, 0x8b, 0x05                        /* mov rax, [rip + LdrpWow64PrepareForException] */
+    .long   LdrpWow64PrepareForException - (. + 4)
+    .byte   0x48, 0x85, 0xc0                        /* test rax, rax */
+    .byte   0x74, 0x0f                              /* jz 1f */
+    .byte   0x48, 0x8b, 0xcc                        /* mov rcx, rsp */
+    .byte   0x48, 0x81, 0xc1, 0xf0, 0x04, 0x00, 0x00 /* add rcx, 0x4f0 */
+    .byte   0x48, 0x8b, 0xd4                        /* mov rdx, rsp */
+    .byte   0xff, 0xd0                              /* call rax */
+1:  .byte   0x48, 0x8b, 0xcc                        /* mov rcx, rsp */
+    .byte   0x48, 0x81, 0xc1, 0xf0, 0x04, 0x00, 0x00 /* add rcx, 0x4f0 */
+    .byte   0x48, 0x8b, 0xd4                        /* mov rdx, rsp */
+    call    RtlDispatchException
+    .byte   0x84, 0xc0                              /* test al, al */
+    .byte   0x74, 0x0c                              /* jz 2f */
+    .byte   0x48, 0x8b, 0xcc                        /* mov rcx, rsp */
+    .byte   0x33, 0xd2                              /* xor edx, edx */
+    call    RtlRestoreContext
+    .byte   0xeb, 0x15                              /* jmp 3f */
+2:  .byte   0x48, 0x8b, 0xcc                        /* mov rcx, rsp */
+    .byte   0x48, 0x81, 0xc1, 0xf0, 0x04, 0x00, 0x00 /* add rcx, 0x4f0 */
+    .byte   0x48, 0x8b, 0xd4                        /* mov rdx, rsp */
+    .byte   0x45, 0x32, 0xc0                        /* xor r8b, r8b */
     call    NtRaiseException
-    jmp     .
+3:  .byte   0x8b, 0xc8                              /* mov ecx, eax */
+    call    RtlRaiseStatus
+    nop
+    ret
     .seh_endproc
 
 /*
@@ -273,3 +300,35 @@ RtlpCallConsolidate:
     addq    $0x128, %rsp
     ret
     .seh_endproc
+
+/*
+ * the vectored handler exports, byte for byte windows' stubs: the type in r8d or edx with windows' encodings, then a
+ * jmp rel32 to the internal routine.
+ */
+    .globl  RtlAddVectoredExceptionHandler
+    .p2align 4
+RtlAddVectoredExceptionHandler:
+    .byte   0x45, 0x33, 0xc0                    /* xor r8d, r8d */
+    .byte   0xe9
+    .long   RtlpAddVectoredHandler - . - 4
+
+    .globl  RtlAddVectoredContinueHandler
+    .p2align 4
+RtlAddVectoredContinueHandler:
+    .byte   0x41, 0xb8, 0x01, 0x00, 0x00, 0x00  /* mov r8d, 1 */
+    .byte   0xe9
+    .long   RtlpAddVectoredHandler - . - 4
+
+    .globl  RtlRemoveVectoredExceptionHandler
+    .p2align 4
+RtlRemoveVectoredExceptionHandler:
+    .byte   0x33, 0xd2                          /* xor edx, edx */
+    .byte   0xe9
+    .long   RtlpRemoveVectoredHandler - . - 4
+
+    .globl  RtlRemoveVectoredContinueHandler
+    .p2align 4
+RtlRemoveVectoredContinueHandler:
+    .byte   0xba, 0x01, 0x00, 0x00, 0x00        /* mov edx, 1 */
+    .byte   0xe9
+    .long   RtlpRemoveVectoredHandler - . - 4

@@ -851,35 +851,9 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
             ObDereferenceObject(object);
             return STATUS_INSUFFICIENT_RESOURCES;
         }
-        if (OBJECT_TO_HEADER(object)->Type == IoFileObjectTypeObject) {
-            /* a file's name is its device's and its path on it: \Device\HarddiskVolume1\Users\... */
-            PFILE_OBJECT file = object;
-            UNICODE_STRING device = {};
-            if (file->DeviceObject && OBJECT_TO_HEADER(file->DeviceObject)->Directory)
-                ObpQueryNameString(file->DeviceObject, &device, buf, 512);
-            ULONG chars = device.Length / sizeof(WCHAR);
-            ULONG path = file->FileName.Length / sizeof(WCHAR);
-            if (path > 1024 - 2 - chars)
-                path = 1024 - 2 - chars;
-            if (path && file->FileName.Buffer[0] != '\\' && chars)
-                buf[chars++] = '\\';
-            if (path) {
-                memcpy(buf + chars, file->FileName.Buffer, path * sizeof(WCHAR));
-                chars += path;
-            }
-            buf[chars] = 0;
-            name.Buffer = buf;
-            name.Length = (USHORT)(chars * sizeof(WCHAR));
-        } else if (OBJECT_TO_HEADER(object)->Type == CmKeyType) {
-            ULONG chars = CmQueryKeyObjectName(object, buf, 1023);
-            if (chars > 1023)
-                chars = 1023;
-            buf[chars] = 0;
-            name.Buffer = buf;
-            name.Length = (USHORT)(chars * sizeof(WCHAR));
-        } else if (OBJECT_TO_HEADER(object)->Directory) {
-            ObpQueryNameString(object, &name, buf, 512);
-        }
+        if (OBJECT_TO_HEADER(object)->Type == IoFileObjectTypeObject || OBJECT_TO_HEADER(object)->Type == CmKeyType ||
+            OBJECT_TO_HEADER(object)->Directory)
+            ObpQueryNameString(object, &name, buf, 1024);
         ULONG need = sizeof(OBJECT_NAME_INFORMATION) + name.Length + sizeof(WCHAR);
         if (returned)
             KiCopyToUser(returned, &need, sizeof(need));

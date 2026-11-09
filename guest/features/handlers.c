@@ -419,6 +419,9 @@ uint32_t HandlerAvailable(const FEATURE_DEF *feature)
     case FEATURE_HANDLER_VCRUNTIME:
         /* Only an arm64 machine runs x64 programs with the system dlls of SysX64. */
         return MACHINE_ARCH == FEATURE_ARCH_ARM64 ? ERROR_SUCCESS : ERROR_NOT_SUPPORTED;
+    case FEATURE_HANDLER_CATALOGS:
+        /* The catalogs are those of the amd64 packages. */
+        return MACHINE_ARCH == FEATURE_ARCH_X64 ? ERROR_SUCCESS : ERROR_NOT_SUPPORTED;
     case FEATURE_HANDLER_MANAGEMENT:
     case FEATURE_HANDLER_FONTS:
         return ERROR_SUCCESS;
@@ -442,6 +445,8 @@ BOOL HandlerPresent(RUN *run, const FEATURE_DEF *feature)
         return FontsPresent(run, feature);
     case FEATURE_HANDLER_VCRUNTIME:
         return VcRuntimePresent(run);
+    case FEATURE_HANDLER_CATALOGS:
+        return CatalogsPresent(run, feature);
     default:
         return FALSE;
     }
@@ -470,6 +475,8 @@ uint32_t HandlerInstall(RUN *run, const FEATURE_DEF *feature, PCWSTR package)
         return FontsInstall(run, feature, package);
     case FEATURE_HANDLER_VCRUNTIME:
         return VcRuntimeInstall(run, package);
+    case FEATURE_HANDLER_CATALOGS:
+        return CatalogsInstall(run, feature, package);
     default:
         return ERROR_NOT_SUPPORTED;
     }
@@ -502,6 +509,8 @@ uint32_t HandlerRemove(RUN *run, const FEATURE_DEF *feature)
         return FontsRemove(run, feature);
     case FEATURE_HANDLER_VCRUNTIME:
         return VcRuntimeRemove(run);
+    case FEATURE_HANDLER_CATALOGS:
+        return CatalogsRemove(run, feature);
     default:
         return ERROR_NOT_SUPPORTED;
     }

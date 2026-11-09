@@ -1863,6 +1863,7 @@ WINUSERAPI int WINAPI ReleaseDC(HWND hwnd, HDC dc);
 WINUSERAPI BOOL WINAPI InvalidateRect(HWND hwnd, const RECT *rect, BOOL erase);
 WINUSERAPI BOOL WINAPI ValidateRect(HWND hwnd, const RECT *rect);
 WINUSERAPI BOOL WINAPI RedrawWindow(HWND hwnd, const RECT *rect, HRGN region, UINT flags);
+WINUSERAPI BOOL WINAPI PrintWindow(HWND hwnd, HDC dc, UINT flags);
 WINUSERAPI int WINAPI FillRect(HDC dc, const RECT *rect, HBRUSH brush);
 WINUSERAPI int WINAPI FrameRect(HDC dc, const RECT *rect, HBRUSH brush);
 WINUSERAPI BOOL WINAPI DrawFocusRect(HDC dc, const RECT *rect);

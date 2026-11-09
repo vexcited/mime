@@ -1,0 +1,1162 @@
+# HRESULT messages as FormatMessage FROM_SYSTEM returns them in en-US.
+# Format: ID<TAB>SYMBOL<TAB>TEXT. The build appends CRLF to every text, see cmake/asset/messages.cmake.
+# In TEXT the two characters backslash and n are a line break, any other backslash is literal.
+0x00030200	STG_S_CONVERTED	The underlying file was converted to compound file format.
+0x00030201	STG_S_BLOCK	The storage operation should block until more data is available.
+0x00030202	STG_S_RETRYNOW	The storage operation should retry immediately.
+0x00030203	STG_S_MONITORING	The notified event sink will not influence the storage operation.
+0x00030204	STG_S_MULTIPLEOPENS	Multiple opens prevent consolidated. (commit succeeded).
+0x00030205	STG_S_CONSOLIDATIONFAILED	Consolidation of the storage file failed. (commit succeeded).
+0x00030206	STG_S_CANNOTCONSOLIDATE	Consolidation of the storage file is inappropriate. (commit succeeded).
+0x00030207	-	The device needs to be power cycled. (commit succeeded).
+0x00040000	OLE_S_USEREG	Use the registry database to provide the requested information
+0x00040001	OLE_S_STATIC	Success, but static
+0x00040002	OLE_S_MAC_CLIPFORMAT	Macintosh clipboard format
+0x00040100	DRAGDROP_S_DROP	Successful drop took place
+0x00040101	DRAGDROP_S_CANCEL	Drag-drop operation canceled
+0x00040102	DRAGDROP_S_USEDEFAULTCURSORS	Use the default cursor
+0x00040130	DATA_S_SAMEFORMATETC	Data has same FORMATETC
+0x00040140	VIEW_S_ALREADY_FROZEN	View is already frozen
+0x00040170	CACHE_S_FORMATETC_NOTSUPPORTED	FORMATETC not supported
+0x00040171	CACHE_S_SAMECACHE	Same cache
+0x00040172	CACHE_S_SOMECACHES_NOTUPDATED	Some cache(s) not updated
+0x00040180	OLEOBJ_S_INVALIDVERB	Invalid verb for OLE object
+0x00040181	OLEOBJ_S_CANNOT_DOVERB_NOW	Verb number is valid but verb cannot be done now
+0x00040182	OLEOBJ_S_INVALIDHWND	Invalid window handle passed
+0x000401A0	INPLACE_S_TRUNCATED	Message is too long; some of it had to be truncated before displaying
+0x000401C0	CONVERT10_S_NO_PRESENTATION	Unable to convert OLESTREAM to IStorage
+0x000401E2	MK_S_REDUCED_TO_SELF	Moniker reduced to itself
+0x000401E4	MK_S_ME	Common prefix is this moniker
+0x000401E5	MK_S_HIM	Common prefix is input moniker
+0x000401E6	MK_S_US	Common prefix is both monikers
+0x000401E7	MK_S_MONIKERALREADYREGISTERED	Moniker is already registered in running object table
+0x00040200	EVENT_S_SOME_SUBSCRIBERS_FAILED	An event was able to invoke some but not all of the subscribers
+0x00040202	EVENT_S_NOSUBSCRIBERS	An event was delivered but there were no subscribers
+0x00040252	-	TabletPC inking error code. String was truncated
+0x00040253	-	TabletPC inking error code. Recognition or training was interrupted
+0x00040254	-	TabletPC inking error code. No personalization update to the recognizer because no training data found
+0x00041300	SCHED_S_TASK_READY	The task is ready to run at its next scheduled time.
+0x00041301	SCHED_S_TASK_RUNNING	The task is currently running.
+0x00041302	SCHED_S_TASK_DISABLED	The task will not run at the scheduled times because it has been disabled.
+0x00041303	SCHED_S_TASK_HAS_NOT_RUN	The task has not yet run.
+0x00041304	SCHED_S_TASK_NO_MORE_RUNS	There are no more runs scheduled for this task.
+0x00041305	SCHED_S_TASK_NOT_SCHEDULED	One or more of the properties that are needed to run this task on a schedule have not been set.
+0x00041306	SCHED_S_TASK_TERMINATED	The last run of the task was terminated by the user.
+0x00041307	SCHED_S_TASK_NO_VALID_TRIGGERS	Either the task has no triggers or the existing triggers are disabled or not set.
+0x00041308	SCHED_S_EVENT_TRIGGER	Event triggers don't have set run times.
+0x0004131B	-	The task is registered, but not all specified triggers will start the task, check task scheduler event log for detailed information.
+0x0004131C	-	The task is registered, but may fail to start. Batch logon privilege needs to be enabled for the task principal.
+0x00041325	-	The Task Scheduler service has asked the task to run.
+0x0004D000	-	An asynchronous operation was specified. The operation has begun, but its outcome is not known yet.
+0x0004D001	-	XACT_S_DEFECT
+0x0004D002	-	The method call succeeded because the transaction was read-only.
+0x0004D003	-	The transaction was successfully aborted. However, this is a coordinated transaction, and some number of enlisted resources were aborted outright because they could not support abort-retaining semantics
+0x0004D004	-	No changes were made during this call, but the sink wants another chance to look if any other sinks make further changes.
+0x0004D005	-	The sink is content and wishes the transaction to proceed. Changes were made to one or more resources during this call.
+0x0004D006	-	The sink is for the moment and wishes the transaction to proceed, but if other changes are made following this return by other event sinks then this sink wants another chance to look
+0x0004D007	-	The transaction was successfully aborted. However, the abort was non-retaining.
+0x0004D008	-	An abort operation was already in progress.
+0x0004D009	-	The resource manager has performed a single-phase commit of the transaction.
+0x0004D00A	-	The local transaction has not aborted.
+0x0004D010	-	The resource manager has requested to be the coordinator (last resource manager) for the transaction.
+0x00080012	-	Not all the requested interfaces were available
+0x00080013	-	The specified machine name was not found in the cache.
+0x00090312	SEC_I_CONTINUE_NEEDED	The function completed successfully, but must be called again to complete the context
+0x00090313	SEC_I_COMPLETE_NEEDED	The function completed successfully, but CompleteToken must be called
+0x00090314	SEC_I_COMPLETE_AND_CONTINUE	The function completed successfully, but both CompleteToken and this function must be called to complete the context
+0x00090315	SEC_I_LOCAL_LOGON	The logon was completed, but no network authority was available. The logon was made using locally known information
+0x00090316	-	Schannel has received a TLS extension the SSPI caller subscribed to.
+0x00090317	SEC_I_CONTEXT_EXPIRED	The context has expired and can no longer be used.
+0x00090320	SEC_I_INCOMPLETE_CREDENTIALS	The credentials supplied were not complete, and could not be verified. Additional information can be returned from the context.
+0x00090321	SEC_I_RENEGOTIATE	The context data must be renegotiated with the peer.
+0x00090323	SEC_I_NO_LSA_CONTEXT	There is no LSA mode context associated with this context.
+0x0009035C	SEC_I_SIGNATURE_NEEDED	A signature operation must be performed before the user can authenticate.
+0x00090360	SEC_I_NO_RENEGOTIATION	The recipient rejected the renegotiation request.
+0x00090364	SEC_I_MESSAGE_FRAGMENT	The returned buffer is only a fragment of the message.  More fragments need to be returned.
+0x00090366	SEC_I_CONTINUE_NEEDED_MESSAGE_OK	The function completed successfully, but must be called again to complete the context.  Early start can be used.
+0x00090368	SEC_I_ASYNC_CALL_PENDING	An asynchronous SSPI routine has been called and the work is pending completion.
+0x00091012	CRYPT_I_NEW_PROTECTION_REQUIRED	The protected data needs to be re-protected.
+0x80000001	-	Not implemented
+0x80000002	-	Ran out of memory
+0x80000003	-	One or more arguments are invalid
+0x80000004	-	No such interface supported
+0x80000005	-	Invalid pointer
+0x80000006	-	Invalid handle
+0x80000007	-	Operation aborted
+0x80000008	-	Unspecified error
+0x80000009	-	General access denied error
+0x8000000A	E_PENDING	The data necessary to complete this operation is not yet available.
+0x8000000B	E_BOUNDS	The operation attempted to access data outside the valid range
+0x8000000C	E_CHANGED_STATE	A concurrent or interleaved operation changed the state of the object, invalidating this operation.
+0x8000000D	E_ILLEGAL_STATE_CHANGE	An illegal state change was requested.
+0x8000000E	E_ILLEGAL_METHOD_CALL	A method was called at an unexpected time.
+0x8000000F	RO_E_METADATA_NAME_NOT_FOUND	Typename or Namespace was not found in metadata file.
+0x80000010	RO_E_METADATA_NAME_IS_NAMESPACE	Name is an existing namespace rather than a typename.
+0x80000011	RO_E_METADATA_INVALID_TYPE_FORMAT	Typename has an invalid format.
+0x80000012	RO_E_INVALID_METADATA_FILE	Metadata file is invalid or corrupted.
+0x80000013	RO_E_CLOSED	The object has been closed.
+0x80000014	RO_E_EXCLUSIVE_WRITE	Only one thread may access the object during a write operation.
+0x80000015	RO_E_CHANGE_NOTIFICATION_IN_PROGRESS	Operation is prohibited during change notification.
+0x80000016	RO_E_ERROR_STRING_NOT_FOUND	The text associated with this error code could not be found.
+0x80000017	E_STRING_NOT_NULL_TERMINATED	String not null terminated.
+0x80000018	E_ILLEGAL_DELEGATE_ASSIGNMENT	A delegate was assigned when not allowed.
+0x80000019	E_ASYNC_OPERATION_NOT_STARTED	An async operation was not properly started.
+0x8000001A	E_APPLICATION_EXITING	The application is exiting and cannot service this request
+0x8000001B	E_APPLICATION_VIEW_EXITING	The application view is exiting and cannot service this request
+0x8000001C	RO_E_MUST_BE_AGILE	The object must support the IAgileObject interface
+0x8000001D	RO_E_UNSUPPORTED_FROM_MTA	Activating a single-threaded class from MTA is not supported
+0x8000001E	RO_E_COMMITTED	The object has been committed.
+0x8000001F	RO_E_BLOCKED_CROSS_ASTA_CALL	A COM call to an ASTA was blocked because the call chain originated in or passed through another ASTA. This call pattern is deadlock-prone and disallowed by apartment call control.
+0x80000020	RO_E_CANNOT_ACTIVATE_FULL_TRUST_SERVER	A universal application process cannot activate a packaged WinRT server that is declared to run full trust.
+0x80000021	RO_E_CANNOT_ACTIVATE_UNIVERSAL_APPLICATION_SERVER	A full trust packaged application process cannot activate a packaged WinRT server unless it is also declared to run full trust.
+0x80004001	E_NOTIMPL	Not implemented
+0x80004002	E_NOINTERFACE	No such interface supported
+0x80004003	E_POINTER	Invalid pointer
+0x80004004	E_ABORT	Operation aborted
+0x80004005	E_FAIL	Unspecified error
+0x80004006	CO_E_INIT_TLS	Thread local storage failure
+0x80004007	CO_E_INIT_SHARED_ALLOCATOR	Get shared memory allocator failure
+0x80004008	CO_E_INIT_MEMORY_ALLOCATOR	Get memory allocator failure
+0x80004009	CO_E_INIT_CLASS_CACHE	Unable to initialize class cache
+0x8000400A	CO_E_INIT_RPC_CHANNEL	Unable to initialize RPC services
+0x8000400B	CO_E_INIT_TLS_SET_CHANNEL_CONTROL	Cannot set thread local storage channel control
+0x8000400C	CO_E_INIT_TLS_CHANNEL_CONTROL	Could not allocate thread local storage channel control
+0x8000400D	CO_E_INIT_UNACCEPTED_USER_ALLOCATOR	The user supplied memory allocator is unacceptable
+0x8000400E	CO_E_INIT_SCM_MUTEX_EXISTS	The OLE service mutex already exists
+0x8000400F	CO_E_INIT_SCM_FILE_MAPPING_EXISTS	The OLE service file mapping already exists
+0x80004010	CO_E_INIT_SCM_MAP_VIEW_OF_FILE	Unable to map view of file for OLE service
+0x80004011	CO_E_INIT_SCM_EXEC_FAILURE	Failure attempting to launch OLE service
+0x80004012	CO_E_INIT_ONLY_SINGLE_THREADED	There was an attempt to call CoInitialize a second time while single threaded
+0x80004013	CO_E_CANT_REMOTE	A Remote activation was necessary but was not allowed
+0x80004014	CO_E_BAD_SERVER_NAME	A Remote activation was necessary but the server name provided was invalid
+0x80004015	CO_E_WRONG_SERVER_IDENTITY	The class is configured to run as a security id different from the caller
+0x80004016	CO_E_OLE1DDE_DISABLED	Use of Ole1 services requiring DDE windows is disabled
+0x80004017	CO_E_RUNAS_SYNTAX	A RunAs specification must be <domain name>\<user name> or simply <user name>
+0x80004018	CO_E_CREATEPROCESS_FAILURE	The server process could not be started. The pathname may be incorrect.
+0x80004019	CO_E_RUNAS_CREATEPROCESS_FAILURE	The server process could not be started as the configured identity. The pathname may be incorrect or unavailable.
+0x8000401A	CO_E_RUNAS_LOGON_FAILURE	The server process could not be started because the configured identity is incorrect. Check the username and password.
+0x8000401B	CO_E_LAUNCH_PERMSSION_DENIED	The client is not allowed to launch this server.
+0x8000401C	CO_E_START_SERVICE_FAILURE	The service providing this server could not be started.
+0x8000401D	CO_E_REMOTE_COMMUNICATION_FAILURE	This computer was unable to communicate with the computer providing the server.
+0x8000401E	CO_E_SERVER_START_TIMEOUT	The server did not respond after being launched.
+0x8000401F	CO_E_CLSREG_INCONSISTENT	The registration information for this server is inconsistent or incomplete.
+0x80004020	CO_E_IIDREG_INCONSISTENT	The registration information for this interface is inconsistent or incomplete.
+0x80004021	CO_E_NOT_SUPPORTED	The operation attempted is not supported.
+0x80004022	CO_E_RELOAD_DLL	A dll must be loaded.
+0x80004023	CO_E_MSI_ERROR	A Microsoft Software Installer error was encountered.
+0x80004024	CO_E_ATTEMPT_TO_CREATE_OUTSIDE_CLIENT_CONTEXT	The specified activation could not occur in the client context as specified.
+0x80004025	CO_E_SERVER_PAUSED	Activations on the server are paused.
+0x80004026	CO_E_SERVER_NOT_PAUSED	Activations on the server are not paused.
+0x80004027	CO_E_CLASS_DISABLED	The component or application containing the component has been disabled.
+0x80004028	CO_E_CLRNOTAVAILABLE	The common language runtime is not available
+0x80004029	CO_E_ASYNC_WORK_REJECTED	The thread-pool rejected the submitted asynchronous work.
+0x8000402A	CO_E_SERVER_INIT_TIMEOUT	The server started, but did not finish initializing in a timely fashion.
+0x8000402B	CO_E_NO_SECCTX_IN_ACTIVATE	Unable to complete the call since there is no COM+ security context inside IObjectControl.Activate.
+0x80004030	CO_E_TRACKER_CONFIG	The provided tracker configuration is invalid
+0x80004031	CO_E_THREADPOOL_CONFIG	The provided thread pool configuration is invalid
+0x80004032	CO_E_SXS_CONFIG	The provided side-by-side configuration is invalid
+0x80004033	CO_E_MALFORMED_SPN	The server principal name (SPN) obtained during security negotiation is malformed.
+0x80004034	CO_E_UNREVOKED_REGISTRATION_ON_APARTMENT_SHUTDOWN	The caller failed to revoke a per-apartment registration before apartment shutdown.
+0x80004035	CO_E_CALL_OUT_OF_TNA_SCOPE	The object has been rundown by the stub manager while there are external clients.
+0x8000FFFF	E_UNEXPECTED	Catastrophic failure
+0x80010001	RPC_E_CALL_REJECTED	Call was rejected by callee.
+0x80010002	RPC_E_CALL_CANCELED	Call was canceled by the message filter.
+0x80010003	RPC_E_CANTPOST_INSENDCALL	The caller is dispatching an intertask SendMessage call and cannot call out via PostMessage.
+0x80010004	RPC_E_CANTCALLOUT_INASYNCCALL	The caller is dispatching an asynchronous call and cannot make an outgoing call on behalf of this call.
+0x80010005	RPC_E_CANTCALLOUT_INEXTERNALCALL	It is illegal to call out while inside message filter.
+0x80010006	RPC_E_CONNECTION_TERMINATED	The connection terminated or is in a bogus state and cannot be used any more. Other connections are still valid.
+0x80010007	RPC_E_SERVER_DIED	The callee (server [not server application]) is not available and disappeared; all connections are invalid. The call may have executed.
+0x80010008	RPC_E_CLIENT_DIED	The caller (client) disappeared while the callee (server) was processing a call.
+0x80010009	RPC_E_INVALID_DATAPACKET	The data packet with the marshalled parameter data is incorrect.
+0x8001000A	RPC_E_CANTTRANSMIT_CALL	The call was not transmitted properly; the message queue was full and was not emptied after yielding.
+0x8001000B	RPC_E_CLIENT_CANTMARSHAL_DATA	The client (caller) cannot marshall the parameter data - low memory, etc.
+0x8001000C	RPC_E_CLIENT_CANTUNMARSHAL_DATA	The client (caller) cannot unmarshall the return data - low memory, etc.
+0x8001000D	RPC_E_SERVER_CANTMARSHAL_DATA	The server (callee) cannot marshall the return data - low memory, etc.
+0x8001000E	RPC_E_SERVER_CANTUNMARSHAL_DATA	The server (callee) cannot unmarshall the parameter data - low memory, etc.
+0x8001000F	RPC_E_INVALID_DATA	Received data is invalid; could be server or client data.
+0x80010010	RPC_E_INVALID_PARAMETER	A particular parameter is invalid and cannot be (un)marshalled.
+0x80010011	RPC_E_CANTCALLOUT_AGAIN	There is no second outgoing call on same channel in DDE conversation.
+0x80010012	RPC_E_SERVER_DIED_DNE	The callee (server [not server application]) is not available and disappeared; all connections are invalid. The call did not execute.
+0x80010100	RPC_E_SYS_CALL_FAILED	System call failed.
+0x80010101	RPC_E_OUT_OF_RESOURCES	Could not allocate some required resource (memory, events, ...)
+0x80010102	RPC_E_ATTEMPTED_MULTITHREAD	Attempted to make calls on more than one thread in single threaded mode.
+0x80010103	RPC_E_NOT_REGISTERED	The requested interface is not registered on the server object.
+0x80010104	RPC_E_FAULT	RPC could not call the server or could not return the results of calling the server.
+0x80010105	RPC_E_SERVERFAULT	The server threw an exception.
+0x80010106	RPC_E_CHANGED_MODE	Cannot change thread mode after it is set.
+0x80010107	RPC_E_INVALIDMETHOD	The method called does not exist on the server.
+0x80010108	RPC_E_DISCONNECTED	The object invoked has disconnected from its clients.
+0x80010109	RPC_E_RETRY	The object invoked chose not to process the call now. Try again later.
+0x8001010A	RPC_E_SERVERCALL_RETRYLATER	The message filter indicated that the application is busy.
+0x8001010B	RPC_E_SERVERCALL_REJECTED	The message filter rejected the call.
+0x8001010C	RPC_E_INVALID_CALLDATA	A call control interfaces was called with invalid data.
+0x8001010D	RPC_E_CANTCALLOUT_ININPUTSYNCCALL	An outgoing call cannot be made since the application is dispatching an input-synchronous call.
+0x8001010E	RPC_E_WRONG_THREAD	The application called an interface that was marshalled for a different thread.
+0x8001010F	RPC_E_THREAD_NOT_INIT	CoInitialize has not been called on the current thread.
+0x80010110	RPC_E_VERSION_MISMATCH	The version of OLE on the client and server machines does not match.
+0x80010111	RPC_E_INVALID_HEADER	OLE received a packet with an invalid header.
+0x80010112	RPC_E_INVALID_EXTENSION	OLE received a packet with an invalid extension.
+0x80010113	RPC_E_INVALID_IPID	The requested object or interface does not exist.
+0x80010114	RPC_E_INVALID_OBJECT	The requested object does not exist.
+0x80010115	RPC_S_CALLPENDING	OLE has sent a request and is waiting for a reply.
+0x80010116	RPC_S_WAITONTIMER	OLE is waiting before retrying a request.
+0x80010117	RPC_E_CALL_COMPLETE	Call context cannot be accessed after call completed.
+0x80010118	RPC_E_UNSECURE_CALL	Impersonate on unsecure calls is not supported.
+0x80010119	RPC_E_TOO_LATE	Security must be initialized before any interfaces are marshalled or unmarshalled. It cannot be changed once initialized.
+0x8001011A	RPC_E_NO_GOOD_SECURITY_PACKAGES	No security packages are installed on this machine or the user is not logged on or there are no compatible security packages between the client and server.
+0x8001011B	RPC_E_ACCESS_DENIED	Access is denied.
+0x8001011C	RPC_E_REMOTE_DISABLED	Remote calls are not allowed for this process.
+0x8001011D	RPC_E_INVALID_OBJREF	The marshaled interface data packet (OBJREF) has an invalid or unknown format.
+0x8001011E	RPC_E_NO_CONTEXT	No context is associated with this call. This happens for some custom marshalled calls and on the client side of the call.
+0x8001011F	RPC_E_TIMEOUT	This operation returned because the timeout period expired.
+0x80010120	RPC_E_NO_SYNC	There are no synchronize objects to wait on.
+0x80010121	RPC_E_FULLSIC_REQUIRED	Full subject issuer chain SSL principal name expected from the server.
+0x80010122	RPC_E_INVALID_STD_NAME	Principal name is not a valid MSSTD name.
+0x80010123	CO_E_FAILEDTOIMPERSONATE	Unable to impersonate DCOM client
+0x80010124	CO_E_FAILEDTOGETSECCTX	Unable to obtain server's security context
+0x80010125	CO_E_FAILEDTOOPENTHREADTOKEN	Unable to open the access token of the current thread
+0x80010126	CO_E_FAILEDTOGETTOKENINFO	Unable to obtain user info from an access token
+0x80010127	CO_E_TRUSTEEDOESNTMATCHCLIENT	The client who called IAccessControl::IsAccessPermitted was not the trustee provided to the method
+0x80010128	CO_E_FAILEDTOQUERYCLIENTBLANKET	Unable to obtain the client's security blanket
+0x80010129	CO_E_FAILEDTOSETDACL	Unable to set a discretionary ACL into a security descriptor
+0x8001012A	CO_E_ACCESSCHECKFAILED	The system function, AccessCheck, returned false
+0x8001012B	CO_E_NETACCESSAPIFAILED	Either NetAccessDel or NetAccessAdd returned an error code.
+0x8001012C	CO_E_WRONGTRUSTEENAMESYNTAX	One of the trustee strings provided by the user did not conform to the <Domain>\<Name> syntax and it was not the "*" string
+0x8001012D	CO_E_INVALIDSID	One of the security identifiers provided by the user was invalid
+0x8001012E	CO_E_CONVERSIONFAILED	Unable to convert a wide character trustee string to a multibyte trustee string
+0x8001012F	CO_E_NOMATCHINGSIDFOUND	Unable to find a security identifier that corresponds to a trustee string provided by the user
+0x80010130	CO_E_LOOKUPACCSIDFAILED	The system function, LookupAccountSID, failed
+0x80010131	CO_E_NOMATCHINGNAMEFOUND	Unable to find a trustee name that corresponds to a security identifier provided by the user
+0x80010132	CO_E_LOOKUPACCNAMEFAILED	The system function, LookupAccountName, failed
+0x80010133	CO_E_SETSERLHNDLFAILED	Unable to set or reset a serialization handle
+0x80010134	CO_E_FAILEDTOGETWINDIR	Unable to obtain the Windows directory
+0x80010135	CO_E_PATHTOOLONG	Path too long
+0x80010136	CO_E_FAILEDTOGENUUID	Unable to generate a uuid.
+0x80010137	CO_E_FAILEDTOCREATEFILE	Unable to create file
+0x80010138	CO_E_FAILEDTOCLOSEHANDLE	Unable to close a serialization handle or a file handle.
+0x80010139	CO_E_EXCEEDSYSACLLIMIT	The number of ACEs in an ACL exceeds the system limit.
+0x8001013A	CO_E_ACESINWRONGORDER	Not all the DENY_ACCESS ACEs are arranged in front of the GRANT_ACCESS ACEs in the stream.
+0x8001013B	CO_E_INCOMPATIBLESTREAMVERSION	The version of ACL format in the stream is not supported by this implementation of IAccessControl
+0x8001013C	CO_E_FAILEDTOOPENPROCESSTOKEN	Unable to open the access token of the server process
+0x8001013D	CO_E_DECODEFAILED	Unable to decode the ACL in the stream provided by the user
+0x8001013F	CO_E_ACNOTINITIALIZED	The COM IAccessControl object is not initialized
+0x80010140	CO_E_CANCEL_DISABLED	Call Cancellation is disabled
+0x80010141	-	The server was not activated because it cannot support running with privilege equal to the client or greater
+0x80010142	-	An Activate As Activator Packaged server class cannot be activated from outside its package in session 0
+0x8001FFFF	RPC_E_UNEXPECTED	An internal error occurred.
+0x80020001	DISP_E_UNKNOWNINTERFACE	Unknown interface.
+0x80020003	DISP_E_MEMBERNOTFOUND	Member not found.
+0x80020004	DISP_E_PARAMNOTFOUND	Parameter not found.
+0x80020005	DISP_E_TYPEMISMATCH	Type mismatch.
+0x80020006	DISP_E_UNKNOWNNAME	Unknown name.
+0x80020007	DISP_E_NONAMEDARGS	No named arguments.
+0x80020008	DISP_E_BADVARTYPE	Bad variable type.
+0x80020009	DISP_E_EXCEPTION	Exception occurred.
+0x8002000A	DISP_E_OVERFLOW	Out of present range.
+0x8002000B	DISP_E_BADINDEX	Invalid index.
+0x8002000C	DISP_E_UNKNOWNLCID	Unknown language.
+0x8002000D	DISP_E_ARRAYISLOCKED	Memory is locked.
+0x8002000E	DISP_E_BADPARAMCOUNT	Invalid number of parameters.
+0x8002000F	DISP_E_PARAMNOTOPTIONAL	Parameter not optional.
+0x80020010	DISP_E_BADCALLEE	Invalid callee.
+0x80020011	DISP_E_NOTACOLLECTION	Does not support a collection.
+0x80020012	DISP_E_DIVBYZERO	Division by zero.
+0x80020013	DISP_E_BUFFERTOOSMALL	Buffer too small
+0x80028016	TYPE_E_BUFFERTOOSMALL	Buffer too small.
+0x80028017	TYPE_E_FIELDNOTFOUND	Field name not defined in the record.
+0x80028018	TYPE_E_INVDATAREAD	Old format or invalid type library.
+0x80028019	TYPE_E_UNSUPFORMAT	Old format or invalid type library.
+0x8002801C	TYPE_E_REGISTRYACCESS	Error accessing the OLE registry.
+0x8002801D	TYPE_E_LIBNOTREGISTERED	Library not registered.
+0x80028027	TYPE_E_UNDEFINEDTYPE	Bound to unknown type.
+0x80028028	TYPE_E_QUALIFIEDNAMEDISALLOWED	Qualified name disallowed.
+0x80028029	TYPE_E_INVALIDSTATE	Invalid forward reference, or reference to uncompiled type.
+0x8002802A	TYPE_E_WRONGTYPEKIND	Type mismatch.
+0x8002802B	TYPE_E_ELEMENTNOTFOUND	Element not found.
+0x8002802C	TYPE_E_AMBIGUOUSNAME	Ambiguous name.
+0x8002802D	TYPE_E_NAMECONFLICT	Name already exists in the library.
+0x8002802E	TYPE_E_UNKNOWNLCID	Unknown LCID.
+0x8002802F	TYPE_E_DLLFUNCTIONNOTFOUND	Function not defined in specified DLL.
+0x800288BD	TYPE_E_BADMODULEKIND	Wrong module kind for the operation.
+0x800288C5	TYPE_E_SIZETOOBIG	Size may not exceed 64K.
+0x800288C6	TYPE_E_DUPLICATEID	Duplicate ID in inheritance hierarchy.
+0x800288CF	TYPE_E_INVALIDID	Incorrect inheritance depth in standard OLE hmember.
+0x80028CA0	TYPE_E_TYPEMISMATCH	Type mismatch.
+0x80028CA1	TYPE_E_OUTOFBOUNDS	Invalid number of arguments.
+0x80028CA2	TYPE_E_IOERROR	I/O Error.
+0x80028CA3	TYPE_E_CANTCREATETMPFILE	Error creating unique tmp file.
+0x80029C4A	TYPE_E_CANTLOADLIBRARY	Error loading type library/DLL.
+0x80029C83	TYPE_E_INCONSISTENTPROPFUNCS	Inconsistent property functions.
+0x80029C84	TYPE_E_CIRCULARTYPE	Circular dependency between types/modules.
+0x80030001	STG_E_INVALIDFUNCTION	Unable to perform requested operation.
+0x80030002	STG_E_FILENOTFOUND	%1 could not be found.
+0x80030003	STG_E_PATHNOTFOUND	The path %1 could not be found.
+0x80030004	STG_E_TOOMANYOPENFILES	There are insufficient resources to open another file.
+0x80030005	STG_E_ACCESSDENIED	Access Denied.
+0x80030006	STG_E_INVALIDHANDLE	Attempted an operation on an invalid object.
+0x80030008	STG_E_INSUFFICIENTMEMORY	There is insufficient memory available to complete operation.
+0x80030009	STG_E_INVALIDPOINTER	Invalid pointer error.
+0x80030012	STG_E_NOMOREFILES	There are no more entries to return.
+0x80030013	STG_E_DISKISWRITEPROTECTED	Disk is write-protected.
+0x80030019	STG_E_SEEKERROR	An error occurred during a seek operation.
+0x8003001D	STG_E_WRITEFAULT	A disk error occurred during a write operation.
+0x8003001E	STG_E_READFAULT	A disk error occurred during a read operation.
+0x80030020	STG_E_SHAREVIOLATION	A share violation has occurred.
+0x80030021	STG_E_LOCKVIOLATION	A lock violation has occurred.
+0x80030050	STG_E_FILEALREADYEXISTS	%1 already exists.
+0x80030057	STG_E_INVALIDPARAMETER	Invalid parameter error.
+0x80030070	STG_E_MEDIUMFULL	There is insufficient disk space to complete operation.
+0x800300F0	STG_E_PROPSETMISMATCHED	Illegal write of non-simple property to simple property set.
+0x800300FA	STG_E_ABNORMALAPIEXIT	An API call exited abnormally.
+0x800300FB	STG_E_INVALIDHEADER	The file %1 is not a valid compound file.
+0x800300FC	STG_E_INVALIDNAME	The name %1 is not valid.
+0x800300FD	STG_E_UNKNOWN	An unexpected error occurred.
+0x800300FE	STG_E_UNIMPLEMENTEDFUNCTION	That function is not implemented.
+0x800300FF	STG_E_INVALIDFLAG	Invalid flag error.
+0x80030100	STG_E_INUSE	Attempted to use an object that is busy.
+0x80030101	STG_E_NOTCURRENT	The storage has been changed since the last commit.
+0x80030102	STG_E_REVERTED	Attempted to use an object that has ceased to exist.
+0x80030103	STG_E_CANTSAVE	Can't save.
+0x80030104	STG_E_OLDFORMAT	The compound file %1 was produced with an incompatible version of storage.
+0x80030105	STG_E_OLDDLL	The compound file %1 was produced with a newer version of storage.
+0x80030106	STG_E_SHAREREQUIRED	Share.exe or equivalent is required for operation.
+0x80030107	STG_E_NOTFILEBASEDSTORAGE	Illegal operation called on non-file based storage.
+0x80030108	STG_E_EXTANTMARSHALLINGS	Illegal operation called on object with extant marshallings.
+0x80030109	STG_E_DOCFILECORRUPT	The docfile has been corrupted.
+0x80030110	STG_E_BADBASEADDRESS	OLE32.DLL has been loaded at the wrong address.
+0x80030111	STG_E_DOCFILETOOLARGE	The compound file is too large for the current implementation
+0x80030112	STG_E_NOTSIMPLEFORMAT	The compound file was not created with the STGM_SIMPLE flag
+0x80030201	STG_E_INCOMPLETE	The file download was aborted abnormally. The file is incomplete.
+0x80030202	STG_E_TERMINATED	The file download has been terminated.
+0x80030208	STG_E_FIRMWARE_SLOT_INVALID	The specified firmware slot is invalid.
+0x80030209	STG_E_FIRMWARE_IMAGE_INVALID	The specified firmware image is invalid.
+0x8003020A	STG_E_DEVICE_UNRESPONSIVE	The storage device is unresponsive.
+0x80030305	STG_E_STATUS_COPY_PROTECTION_FAILURE	Generic Copy Protection Error.
+0x80030306	STG_E_CSS_AUTHENTICATION_FAILURE	Copy Protection Error - DVD CSS Authentication failed.
+0x80030307	STG_E_CSS_KEY_NOT_PRESENT	Copy Protection Error - The given sector does not have a valid CSS key.
+0x80030308	STG_E_CSS_KEY_NOT_ESTABLISHED	Copy Protection Error - DVD session key not established.
+0x80030309	STG_E_CSS_SCRAMBLED_SECTOR	Copy Protection Error - The read failed because the sector is encrypted.
+0x8003030A	STG_E_CSS_REGION_MISMATCH	Copy Protection Error - The current DVD's region does not correspond to the region setting of the drive.
+0x8003030B	STG_E_RESETS_EXHAUSTED	Copy Protection Error - The drive's region setting may be permanent or the number of user resets has been exhausted.
+0x80040000	OLE_E_OLEVERB	Invalid OLEVERB structure
+0x80040001	OLE_E_ADVF	Invalid advise flags
+0x80040002	OLE_E_ENUM_NOMORE	Can't enumerate any more, because the associated data is missing
+0x80040003	OLE_E_ADVISENOTSUPPORTED	This implementation doesn't take advises
+0x80040004	OLE_E_NOCONNECTION	There is no connection for this connection ID
+0x80040005	OLE_E_NOTRUNNING	Need to run the object to perform this operation
+0x80040006	OLE_E_NOCACHE	There is no cache to operate on
+0x80040007	OLE_E_BLANK	Uninitialized object
+0x80040008	OLE_E_CLASSDIFF	Linked object's source class has changed
+0x80040009	OLE_E_CANT_GETMONIKER	Not able to get the moniker of the object
+0x8004000A	OLE_E_CANT_BINDTOSOURCE	Not able to bind to the source
+0x8004000B	OLE_E_STATIC	Object is static; operation not allowed
+0x8004000C	OLE_E_PROMPTSAVECANCELLED	User canceled out of save dialog
+0x8004000D	OLE_E_INVALIDRECT	Invalid rectangle
+0x8004000E	OLE_E_WRONGCOMPOBJ	compobj.dll is too old for the ole2.dll initialized
+0x8004000F	OLE_E_INVALIDHWND	Invalid window handle
+0x80040010	OLE_E_NOT_INPLACEACTIVE	Object is not in any of the inplace active states
+0x80040011	OLE_E_CANTCONVERT	Not able to convert object
+0x80040012	OLE_E_NOSTORAGE	Not able to perform the operation because object is not given storage yet
+0x80040064	DV_E_FORMATETC	Invalid FORMATETC structure
+0x80040065	DV_E_DVTARGETDEVICE	Invalid DVTARGETDEVICE structure
+0x80040066	DV_E_STGMEDIUM	Invalid STDGMEDIUM structure
+0x80040067	DV_E_STATDATA	Invalid STATDATA structure
+0x80040068	DV_E_LINDEX	Invalid lindex
+0x80040069	DV_E_TYMED	Invalid tymed
+0x8004006A	DV_E_CLIPFORMAT	Invalid clipboard format
+0x8004006B	DV_E_DVASPECT	Invalid aspect(s)
+0x8004006C	DV_E_DVTARGETDEVICE_SIZE	tdSize parameter of the DVTARGETDEVICE structure is invalid
+0x8004006D	DV_E_NOIVIEWOBJECT	Object doesn't support IViewObject interface
+0x80040100	DRAGDROP_E_NOTREGISTERED	Trying to revoke a drop target that has not been registered
+0x80040101	DRAGDROP_E_ALREADYREGISTERED	This window has already been registered as a drop target
+0x80040102	DRAGDROP_E_INVALIDHWND	Invalid window handle
+0x80040103	DRAGDROP_E_CONCURRENT_DRAG_ATTEMPTED	A drag operation is already in progress
+0x80040110	CLASS_E_NOAGGREGATION	Class does not support aggregation (or class object is remote)
+0x80040111	CLASS_E_CLASSNOTAVAILABLE	ClassFactory cannot supply requested class
+0x80040112	CLASS_E_NOTLICENSED	Class is not licensed for use
+0x80040140	VIEW_E_DRAW	Error drawing view
+0x80040150	REGDB_E_READREGDB	Could not read key from registry
+0x80040151	REGDB_E_WRITEREGDB	Could not write key to registry
+0x80040152	REGDB_E_KEYMISSING	Could not find the key in the registry
+0x80040153	REGDB_E_INVALIDVALUE	Invalid value for registry
+0x80040154	REGDB_E_CLASSNOTREG	Class not registered
+0x80040155	REGDB_E_IIDNOTREG	Interface not registered
+0x80040156	REGDB_E_BADTHREADINGMODEL	Threading model entry is not valid
+0x80040157	REGDB_E_PACKAGE_POLICY_VIOLATION	A registration in a package violates package-specific policies
+0x80040160	CAT_E_CATIDNOEXIST	CATID does not exist
+0x80040161	CAT_E_NODESCRIPTION	Description not found
+0x80040164	CS_E_PACKAGE_NOTFOUND	No package in the software installation data in the Active Directory meets this criteria.
+0x80040165	CS_E_NOT_DELETABLE	Deleting this will break the referential integrity of the software installation data in the Active Directory.
+0x80040166	CS_E_CLASS_NOTFOUND	The CLSID was not found in the software installation data in the Active Directory.
+0x80040167	CS_E_INVALID_VERSION	The software installation data in the Active Directory is corrupt.
+0x80040168	CS_E_NO_CLASSSTORE	There is no software installation data in the Active Directory.
+0x80040169	CS_E_OBJECT_NOTFOUND	There is no software installation data object in the Active Directory.
+0x8004016A	CS_E_OBJECT_ALREADY_EXISTS	The software installation data object in the Active Directory already exists.
+0x8004016B	CS_E_INVALID_PATH	The path to the software installation data in the Active Directory is not correct.
+0x8004016C	CS_E_NETWORK_ERROR	A network error interrupted the operation.
+0x8004016D	CS_E_ADMIN_LIMIT_EXCEEDED	The size of this object exceeds the maximum size set by the Administrator.
+0x8004016E	CS_E_SCHEMA_MISMATCH	The schema for the software installation data in the Active Directory does not match the required schema.
+0x8004016F	CS_E_INTERNAL_ERROR	An error occurred in the software installation data in the Active Directory.
+0x80040170	CACHE_E_NOCACHE_UPDATED	Cache not updated
+0x80040180	OLEOBJ_E_NOVERBS	No verbs for OLE object
+0x80040181	OLEOBJ_E_INVALIDVERB	Invalid verb for OLE object
+0x800401A0	INPLACE_E_NOTUNDOABLE	Undo is not available
+0x800401A1	INPLACE_E_NOTOOLSPACE	Space for tools is not available
+0x800401C0	CONVERT10_E_OLESTREAM_GET	OLESTREAM Get method failed
+0x800401C1	CONVERT10_E_OLESTREAM_PUT	OLESTREAM Put method failed
+0x800401C2	CONVERT10_E_OLESTREAM_FMT	Contents of the OLESTREAM not in correct format
+0x800401C3	CONVERT10_E_OLESTREAM_BITMAP_TO_DIB	There was an error in a Windows GDI call while converting the bitmap to a DIB
+0x800401C4	CONVERT10_E_STG_FMT	Contents of the IStorage not in correct format
+0x800401C5	CONVERT10_E_STG_NO_STD_STREAM	Contents of IStorage is missing one of the standard streams
+0x800401C6	CONVERT10_E_STG_DIB_TO_BITMAP	There was an error in a Windows GDI call while converting the DIB to a bitmap.
+0x800401C7	-	OLE Links in OLESTREAM are disabled while converting the OLESTREAM to IStorage
+0x800401D0	CLIPBRD_E_CANT_OPEN	OpenClipboard Failed
+0x800401D1	CLIPBRD_E_CANT_EMPTY	EmptyClipboard Failed
+0x800401D2	CLIPBRD_E_CANT_SET	SetClipboard Failed
+0x800401D3	CLIPBRD_E_BAD_DATA	Data on clipboard is invalid
+0x800401D4	CLIPBRD_E_CANT_CLOSE	CloseClipboard Failed
+0x800401E0	MK_E_CONNECTMANUALLY	Moniker needs to be connected manually
+0x800401E1	MK_E_EXCEEDEDDEADLINE	Operation exceeded deadline
+0x800401E2	MK_E_NEEDGENERIC	Moniker needs to be generic
+0x800401E3	MK_E_UNAVAILABLE	Operation unavailable
+0x800401E4	MK_E_SYNTAX	Invalid syntax
+0x800401E5	MK_E_NOOBJECT	No object for moniker
+0x800401E6	MK_E_INVALIDEXTENSION	Bad extension for file
+0x800401E7	MK_E_INTERMEDIATEINTERFACENOTSUPPORTED	Intermediate operation failed
+0x800401E8	MK_E_NOTBINDABLE	Moniker is not bindable
+0x800401E9	MK_E_NOTBOUND	Moniker is not bound
+0x800401EA	MK_E_CANTOPENFILE	Moniker cannot open file
+0x800401EB	MK_E_MUSTBOTHERUSER	User input required for operation to succeed
+0x800401EC	MK_E_NOINVERSE	Moniker class has no inverse
+0x800401ED	MK_E_NOSTORAGE	Moniker does not refer to storage
+0x800401EE	MK_E_NOPREFIX	No common prefix
+0x800401EF	MK_E_ENUMERATION_FAILED	Moniker could not be enumerated
+0x800401F0	CO_E_NOTINITIALIZED	CoInitialize has not been called.
+0x800401F1	CO_E_ALREADYINITIALIZED	CoInitialize has already been called.
+0x800401F2	CO_E_CANTDETERMINECLASS	Class of object cannot be determined
+0x800401F3	CO_E_CLASSSTRING	Invalid class string
+0x800401F4	CO_E_IIDSTRING	Invalid interface string
+0x800401F5	CO_E_APPNOTFOUND	Application not found
+0x800401F6	CO_E_APPSINGLEUSE	Application cannot be run more than once
+0x800401F7	CO_E_ERRORINAPP	Some error in application program
+0x800401F8	CO_E_DLLNOTFOUND	DLL for class not found
+0x800401F9	CO_E_ERRORINDLL	Error in the DLL
+0x800401FA	CO_E_WRONGOSFORAPP	Wrong OS or OS version for application
+0x800401FB	CO_E_OBJNOTREG	Object is not registered
+0x800401FC	CO_E_OBJISREG	Object is already registered
+0x800401FD	CO_E_OBJNOTCONNECTED	Object is not connected to server
+0x800401FE	CO_E_APPDIDNTREG	Application was launched but it didn't register a class factory
+0x800401FF	CO_E_RELEASED	Object has been released
+0x80040201	EVENT_E_ALL_SUBSCRIBERS_FAILED	An event was unable to invoke any of the subscribers
+0x80040203	EVENT_E_QUERYSYNTAX	A syntax error occurred trying to evaluate a query string
+0x80040204	EVENT_E_QUERYFIELD	An invalid field name was used in a query string
+0x80040205	EVENT_E_INTERNALEXCEPTION	An unexpected exception was raised
+0x80040206	EVENT_E_INTERNALERROR	An unexpected internal error was detected
+0x80040207	EVENT_E_INVALID_PER_USER_SID	The owner SID on a per-user subscription doesn't exist
+0x80040208	EVENT_E_USER_EXCEPTION	A user-supplied component or subscriber raised an exception
+0x80040209	EVENT_E_TOO_MANY_METHODS	An interface has too many methods to fire events from
+0x8004020A	EVENT_E_MISSING_EVENTCLASS	A subscription cannot be stored unless its event class already exists
+0x8004020B	EVENT_E_NOT_ALL_REMOVED	Not all the objects requested could be removed
+0x8004020C	EVENT_E_COMPLUS_NOT_INSTALLED	COM+ is required for this operation, but is not installed
+0x8004020D	EVENT_E_CANT_MODIFY_OR_DELETE_UNCONFIGURED_OBJECT	Cannot modify or delete an object that was not added using the COM+ Admin SDK
+0x8004020E	EVENT_E_CANT_MODIFY_OR_DELETE_CONFIGURED_OBJECT	Cannot modify or delete an object that was added using the COM+ Admin SDK
+0x8004020F	EVENT_E_INVALID_EVENT_CLASS_PARTITION	The event class for this subscription is in an invalid partition
+0x80040210	EVENT_E_PER_USER_SID_NOT_LOGGED_ON	The owner of the PerUser subscription is not logged on to the system specified
+0x80040212	-	TabletPC inking error code. No default tablet
+0x80040219	-	TabletPC inking error code. An invalid input rectangle was specified
+0x8004021B	-	TabletPC inking error code. Unknown property specified
+0x80040222	-	TabletPC inking error code. The stroke object was deleted
+0x80040223	-	TabletPC inking error code. Initialization failure
+0x80040232	-	TabletPC inking error code. The data required for the operation was not supplied
+0x80040233	-	TabletPC inking error code. Invalid packet description
+0x80040235	-	TabletPC inking error code. There are no handwriting recognizers registered
+0x80040236	-	TabletPC inking error code. User does not have the necessary rights to read recognizer information
+0x80040237	-	TabletPC inking error code. API calls were made in an incorrect order
+0x80040238	-	TabletPC inking error code. Queue is full
+0x80040239	-	TabletPC inking error code. RtpEnabled called multiple times
+0x8004023A	-	TabletPC inking error code. A recognizer returned invalid data
+0x80040241	-	TabletPC inking error code. The property was not found, or supported by the recognizer
+0x80041309	SCHED_E_TRIGGER_NOT_FOUND	Trigger not found.
+0x8004130A	SCHED_E_TASK_NOT_READY	One or more of the properties that are needed to run this task have not been set.
+0x8004130B	SCHED_E_TASK_NOT_RUNNING	There is no running instance of the task.
+0x8004130C	SCHED_E_SERVICE_NOT_INSTALLED	The Task Scheduler Service is not installed on this computer.
+0x8004130D	SCHED_E_CANNOT_OPEN_TASK	The task object could not be opened.
+0x8004130E	SCHED_E_INVALID_TASK	The object is either an invalid task object or is not a task object.
+0x8004130F	SCHED_E_ACCOUNT_INFORMATION_NOT_SET	No account information could be found in the Task Scheduler security database for the task indicated.
+0x80041310	SCHED_E_ACCOUNT_NAME_NOT_FOUND	Unable to establish existence of the account specified.
+0x80041311	SCHED_E_ACCOUNT_DBASE_CORRUPT	Corruption was detected in the Task Scheduler security database; the database has been reset.
+0x80041312	SCHED_E_NO_SECURITY_SERVICES	Task Scheduler security services are available only on Windows NT.
+0x80041313	SCHED_E_UNKNOWN_OBJECT_VERSION	The task object version is either unsupported or invalid.
+0x80041314	SCHED_E_UNSUPPORTED_ACCOUNT_OPTION	The task has been configured with an unsupported combination of account settings and run time options.
+0x80041315	SCHED_E_SERVICE_NOT_RUNNING	The Task Scheduler Service is not running.
+0x80041316	SCHED_E_UNEXPECTEDNODE	The task XML contains an unexpected node.
+0x80041317	SCHED_E_NAMESPACE	The task XML contains an element or attribute from an unexpected namespace.
+0x80041318	SCHED_E_INVALIDVALUE	The task XML contains a value which is incorrectly formatted or out of range.
+0x80041319	SCHED_E_MISSINGNODE	The task XML is missing a required element or attribute.
+0x8004131A	SCHED_E_MALFORMEDXML	The task XML is malformed.
+0x8004131D	SCHED_E_TOO_MANY_NODES	The task XML contains too many nodes of the same type.
+0x8004131E	SCHED_E_PAST_END_BOUNDARY	The task cannot be started after the trigger's end boundary.
+0x8004131F	SCHED_E_ALREADY_RUNNING	An instance of this task is already running.
+0x80041320	SCHED_E_USER_NOT_LOGGED_ON	The task will not run because the user is not logged on.
+0x80041321	SCHED_E_INVALID_TASK_HASH	The task image is corrupt or has been tampered with.
+0x80041322	SCHED_E_SERVICE_NOT_AVAILABLE	The Task Scheduler service is not available.
+0x80041323	SCHED_E_SERVICE_TOO_BUSY	The Task Scheduler service is too busy to handle your request. Please try again later.
+0x80041324	SCHED_E_TASK_ATTEMPTED	The Task Scheduler service attempted to run the task, but the task did not run due to one of the constraints in the task definition.
+0x80041326	SCHED_E_TASK_DISABLED	The task is disabled.
+0x80041327	SCHED_E_TASK_NOT_V1_COMPAT	The task has properties that are not compatible with previous versions of Windows.
+0x80041328	SCHED_E_START_ON_DEMAND	The task settings do not allow the task to start on demand.
+0x80041329	SCHED_E_TASK_NOT_UBPM_COMPAT	The combination of properties that task is using is not compatible with the scheduling engine.
+0x80041330	SCHED_E_DEPRECATED_FEATURE_USED	The task definition uses a deprecated feature.
+0x8004D000	XACT_E_ALREADYOTHERSINGLEPHASE	Another single phase resource manager has already been enlisted in this transaction.
+0x8004D001	XACT_E_CANTRETAIN	A retaining commit or abort is not supported
+0x8004D002	XACT_E_COMMITFAILED	The transaction failed to commit for an unknown reason. The transaction was aborted.
+0x8004D003	XACT_E_COMMITPREVENTED	Cannot call commit on this transaction object because the calling application did not initiate the transaction.
+0x8004D004	XACT_E_HEURISTICABORT	Instead of committing, the resource heuristically aborted.
+0x8004D005	XACT_E_HEURISTICCOMMIT	Instead of aborting, the resource heuristically committed.
+0x8004D006	XACT_E_HEURISTICDAMAGE	Some of the states of the resource were committed while others were aborted, likely because of heuristic decisions.
+0x8004D007	XACT_E_HEURISTICDANGER	Some of the states of the resource may have been committed while others may have been aborted, likely because of heuristic decisions.
+0x8004D008	XACT_E_ISOLATIONLEVEL	The requested isolation level is not valid or supported.
+0x8004D009	XACT_E_NOASYNC	The transaction manager doesn't support an asynchronous operation for this method.
+0x8004D00A	XACT_E_NOENLIST	Unable to enlist in the transaction.
+0x8004D00B	XACT_E_NOISORETAIN	The requested semantics of retention of isolation across retaining commit and abort boundaries cannot be supported by this transaction implementation, or isoFlags was not equal to zero.
+0x8004D00C	XACT_E_NORESOURCE	There is no resource presently associated with this enlistment
+0x8004D00D	XACT_E_NOTCURRENT	The transaction failed to commit due to the failure of optimistic concurrency control in at least one of the resource managers.
+0x8004D00E	XACT_E_NOTRANSACTION	The transaction has already been implicitly or explicitly committed or aborted
+0x8004D00F	XACT_E_NOTSUPPORTED	An invalid combination of flags was specified
+0x8004D010	XACT_E_UNKNOWNRMGRID	The resource manager id is not associated with this transaction or the transaction manager.
+0x8004D011	XACT_E_WRONGSTATE	This method was called in the wrong state
+0x8004D012	XACT_E_WRONGUOW	The indicated unit of work does not match the unit of work expected by the resource manager.
+0x8004D013	XACT_E_XTIONEXISTS	An enlistment in a transaction already exists.
+0x8004D014	XACT_E_NOIMPORTOBJECT	An import object for the transaction could not be found.
+0x8004D015	XACT_E_INVALIDCOOKIE	The transaction cookie is invalid.
+0x8004D016	XACT_E_INDOUBT	The transaction status is in doubt. A communication failure occurred, or a transaction manager or resource manager has failed
+0x8004D017	XACT_E_NOTIMEOUT	A time-out was specified, but time-outs are not supported.
+0x8004D018	XACT_E_ALREADYINPROGRESS	The requested operation is already in progress for the transaction.
+0x8004D019	XACT_E_ABORTED	The transaction has already been aborted.
+0x8004D01A	XACT_E_LOGFULL	The Transaction Manager returned a log full error.
+0x8004D01B	XACT_E_TMNOTAVAILABLE	The Transaction Manager is not available.
+0x8004D01C	XACT_E_CONNECTION_DOWN	A connection with the transaction manager was lost.
+0x8004D01D	XACT_E_CONNECTION_DENIED	A request to establish a connection with the transaction manager was denied.
+0x8004D01E	XACT_E_REENLISTTIMEOUT	Resource manager reenlistment to determine transaction status timed out.
+0x8004D01F	XACT_E_TIP_CONNECT_FAILED	This transaction manager failed to establish a connection with another TIP transaction manager.
+0x8004D020	XACT_E_TIP_PROTOCOL_ERROR	This transaction manager encountered a protocol error with another TIP transaction manager.
+0x8004D021	XACT_E_TIP_PULL_FAILED	This transaction manager could not propagate a transaction from another TIP transaction manager.
+0x8004D022	XACT_E_DEST_TMNOTAVAILABLE	The Transaction Manager on the destination machine is not available.
+0x8004D023	XACT_E_TIP_DISABLED	The Transaction Manager has disabled its support for TIP.
+0x8004D024	XACT_E_NETWORK_TX_DISABLED	The transaction manager has disabled its support for remote/network transactions.
+0x8004D025	XACT_E_PARTNER_NETWORK_TX_DISABLED	The partner transaction manager has disabled its support for remote/network transactions.
+0x8004D026	XACT_E_XA_TX_DISABLED	The transaction manager has disabled its support for XA transactions.
+0x8004D027	XACT_E_UNABLE_TO_READ_DTC_CONFIG	MSDTC was unable to read its configuration information.
+0x8004D028	XACT_E_UNABLE_TO_LOAD_DTC_PROXY	MSDTC was unable to load the dtc proxy dll.
+0x8004D029	XACT_E_ABORTING	The local transaction has aborted.
+0x8004D02A	XACT_E_PUSH_COMM_FAILURE	The MSDTC transaction manager was unable to push the transaction to the destination transaction manager due to communication problems. Possible causes are: a firewall is present and it doesn't have an exception for the MSDTC process, the two machines cannot find each other by their NetBIOS names, or the support for network transactions is not enabled for one of the two transaction managers.
+0x8004D02B	XACT_E_PULL_COMM_FAILURE	The MSDTC transaction manager was unable to pull the transaction from the source transaction manager due to communication problems. Possible causes are: a firewall is present and it doesn't have an exception for the MSDTC process, the two machines cannot find each other by their NetBIOS names, or the support for network transactions is not enabled for one of the two transaction managers.
+0x8004D02C	XACT_E_LU_TX_DISABLED	The MSDTC transaction manager has disabled its support for SNA LU 6.2 transactions.
+0x8004D080	XACT_E_CLERKNOTFOUND	XACT_E_CLERKNOTFOUND
+0x8004D081	XACT_E_CLERKEXISTS	XACT_E_CLERKEXISTS
+0x8004D082	XACT_E_RECOVERYINPROGRESS	XACT_E_RECOVERYINPROGRESS
+0x8004D083	XACT_E_TRANSACTIONCLOSED	XACT_E_TRANSACTIONCLOSED
+0x8004D084	XACT_E_INVALIDLSN	XACT_E_INVALIDLSN
+0x8004D085	XACT_E_REPLAYREQUEST	XACT_E_REPLAYREQUEST
+0x8004D100	XACT_E_CONNECTION_REQUEST_DENIED	The request to connect to the specified transaction coordinator was denied.
+0x8004D101	XACT_E_TOOMANY_ENLISTMENTS	The maximum number of enlistments for the specified transaction has been reached.
+0x8004D102	XACT_E_DUPLICATE_GUID	A resource manager with the same identifier is already registered with the specified transaction coordinator.
+0x8004D103	XACT_E_NOTSINGLEPHASE	The prepare request given was not eligible for single phase optimizations.
+0x8004D104	XACT_E_RECOVERYALREADYDONE	RecoveryComplete has already been called for the given resource manager.
+0x8004D105	XACT_E_PROTOCOL	The interface call made was incorrect for the current state of the protocol.
+0x8004D106	XACT_E_RM_FAILURE	xa_open call failed for the XA resource.
+0x8004D107	XACT_E_RECOVERY_FAILED	xa_recover call failed for the XA resource.
+0x8004D108	XACT_E_LU_NOT_FOUND	The Logical Unit of Work specified cannot be found.
+0x8004D109	XACT_E_DUPLICATE_LU	The specified Logical Unit of Work already exists.
+0x8004D10A	XACT_E_LU_NOT_CONNECTED	Subordinate creation failed. The specified Logical Unit of Work was not connected.
+0x8004D10B	XACT_E_DUPLICATE_TRANSID	A transaction with the given identifier already exists.
+0x8004D10C	XACT_E_LU_BUSY	The resource is in use.
+0x8004D10D	XACT_E_LU_NO_RECOVERY_PROCESS	The LU Recovery process is down.
+0x8004D10E	XACT_E_LU_DOWN	The remote session was lost.
+0x8004D10F	XACT_E_LU_RECOVERING	The resource is currently recovering.
+0x8004D110	XACT_E_LU_RECOVERY_MISMATCH	There was a mismatch in driving recovery.
+0x8004D111	XACT_E_RM_UNAVAILABLE	An error occurred with the XA resource.
+0x8004E002	CONTEXT_E_ABORTED	The root transaction wanted to commit, but transaction aborted
+0x8004E003	CONTEXT_E_ABORTING	You made a method call on a COM+ component that has a transaction that has already aborted or in the process of aborting.
+0x8004E004	CONTEXT_E_NOCONTEXT	There is no MTS object context
+0x8004E005	CONTEXT_E_WOULD_DEADLOCK	The component is configured to use synchronization and this method call would cause a deadlock to occur.
+0x8004E006	CONTEXT_E_SYNCH_TIMEOUT	The component is configured to use synchronization and a thread has timed out waiting to enter the context.
+0x8004E007	CONTEXT_E_OLDREF	You made a method call on a COM+ component that has a transaction that has already committed or aborted.
+0x8004E00C	CONTEXT_E_ROLENOTFOUND	The specified role was not configured for the application
+0x8004E00F	CONTEXT_E_NOSECURITY	COM+ was unable to talk to the Microsoft Distributed Transaction Coordinator
+0x8004E021	CONTEXT_E_ABORTED_ACTIVATION	An unexpected error occurred during COM+ Activation.
+0x8004E022	-	COM+ Activation failed. Check the event log for more information
+0x8004E023	-	COM+ Activation failed due to a catalog or configuration error.
+0x8004E024	-	COM+ activation failed because the activation could not be completed in the specified amount of time.
+0x8004E025	-	COM+ Activation failed because an initialization function failed. Check the event log for more information.
+0x8004E026	-	The requested operation requires that JIT be in the current context and it is not
+0x8004E027	-	The requested operation requires that the current context have a Transaction, and it does not
+0x8004E028	-	The components threading model has changed after install into a COM+ Application. Please re-install component.
+0x8004E029	-	IIS intrinsics not available. Start your work with IIS.
+0x8004E02A	-	An attempt to write a cookie failed.
+0x8004E02B	-	An attempt to use a database generated a database specific error.
+0x8004E02C	-	The COM+ component you created must use object pooling to work.
+0x8004E02D	-	The COM+ component you created must use object construction to work correctly.
+0x8004E02E	-	The COM+ component requires synchronization, and it is not configured for it.
+0x8004E02F	-	The TxIsolation Level property for the COM+ component being created is stronger than the TxIsolationLevel for the "root" component for the transaction. The creation failed.
+0x8004E030	-	The component attempted to make a cross-context call between invocations of EnterTransactionScopeand ExitTransactionScope. This is not allowed. Cross-context calls cannot be made while inside of a transaction scope.
+0x8004E031	-	The component made a call to EnterTransactionScope, but did not make a corresponding call to ExitTransactionScope before returning.
+0x80070005	E_ACCESSDENIED	General access denied error
+0x80070006	E_HANDLE	Invalid handle
+0x8007000E	E_OUTOFMEMORY	Ran out of memory
+0x80070057	E_INVALIDARG	One or more arguments are invalid
+0x80080001	CO_E_CLASS_CREATE_FAILED	Attempt to create a class object failed
+0x80080002	CO_E_SCM_ERROR	OLE service could not bind object
+0x80080003	CO_E_SCM_RPC_FAILURE	RPC communication failed with OLE service
+0x80080004	CO_E_BAD_PATH	Bad path to object
+0x80080005	CO_E_SERVER_EXEC_FAILURE	Server execution failed
+0x80080006	CO_E_OBJSRV_RPC_FAILURE	OLE service could not communicate with the object server
+0x80080007	MK_E_NO_NORMALIZED	Moniker path could not be normalized
+0x80080008	CO_E_SERVER_STOPPING	Object server is stopping when OLE service contacts it
+0x80080009	MEM_E_INVALID_ROOT	An invalid root block pointer was specified
+0x80080010	MEM_E_INVALID_LINK	An allocation chain contained an invalid link pointer
+0x80080011	MEM_E_INVALID_SIZE	The requested allocation size was too large
+0x80080015	CO_E_MISSING_DISPLAYNAME	The activation requires a display name to be present under the CLSID key.
+0x80080016	CO_E_RUNAS_VALUE_MUST_BE_AAA	The activation requires that the RunAs value for the application is Activate As Activator.
+0x80080017	CO_E_ELEVATION_DISABLED	The class is not configured to support Elevated activation.
+0x80080200	APPX_E_PACKAGING_INTERNAL	Appx packaging API has encountered an internal error.
+0x80080201	APPX_E_INTERLEAVING_NOT_ALLOWED	The file is not a valid Appx package because its contents are interleaved.
+0x80080202	APPX_E_RELATIONSHIPS_NOT_ALLOWED	The file is not a valid Appx package because it contains OPC relationships.
+0x80080203	APPX_E_MISSING_REQUIRED_FILE	The file is not a valid Appx package because it is missing a manifest or block map, or missing a signature file when the code integrity file is present.
+0x80080204	APPX_E_INVALID_MANIFEST	The Appx package's manifest is invalid.
+0x80080205	APPX_E_INVALID_BLOCKMAP	The Appx package's block map is invalid.
+0x80080206	APPX_E_CORRUPT_CONTENT	The Appx package's content cannot be read because it is corrupt.
+0x80080207	APPX_E_BLOCK_HASH_INVALID	The computed hash value of the block does not match the one stored in the block map.
+0x80080208	APPX_E_REQUESTED_RANGE_TOO_LARGE	The requested byte range is over 4GB when translated to byte range of blocks.
+0x80080209	APPX_E_INVALID_SIP_CLIENT_DATA	The SIP_SUBJECTINFO structure used to sign the package didn't contain the required data.
+0x8008020A	APPX_E_INVALID_KEY_INFO	The APPX_KEY_INFO structure used to encrypt or decrypt the package contains invalid data.
+0x8008020B	APPX_E_INVALID_CONTENTGROUPMAP	The Appx package's content group map is invalid.
+0x8008020C	APPX_E_INVALID_APPINSTALLER	The .appinstaller file is invalid.
+0x8008020D	APPX_E_DELTA_BASELINE_VERSION_MISMATCH	The baseline package version in delta package does not match the version in the baseline package to be updated.
+0x8008020E	APPX_E_DELTA_PACKAGE_MISSING_FILE	The delta package is missing a file from the updated package.
+0x8008020F	APPX_E_INVALID_DELTA_PACKAGE	The delta package is invalid.
+0x80080210	APPX_E_DELTA_APPENDED_PACKAGE_NOT_ALLOWED	The delta appended package is not allowed for the current operation.
+0x80080211	APPX_E_INVALID_PACKAGING_LAYOUT	The packaging layout file is invalid.
+0x80080212	APPX_E_INVALID_PACKAGESIGNCONFIG	The packageSignConfig file is invalid.
+0x80080213	APPX_E_RESOURCESPRI_NOT_ALLOWED	The resources.pri file is not allowed when there are no resource elements in the package manifest.
+0x80080214	APPX_E_FILE_COMPRESSION_MISMATCH	The compression state of file in baseline and updated package does not match.
+0x80080215	APPX_E_INVALID_PAYLOAD_PACKAGE_EXTENSION	Non appx extensions are not allowed for payload packages targeting older platforms.
+0x80080216	APPX_E_INVALID_ENCRYPTION_EXCLUSION_FILE_LIST	The encryptionExclusionFileList file is invalid.
+0x80080217	APPX_E_INVALID_PACKAGE_FOLDER_ACLS	The package folder ACLs are invalid.
+0x80080218	APPX_E_INVALID_PUBLISHER_BRIDGING	The publisher bridging artifact is invalid.
+0x80080219	APPX_E_DIGEST_MISMATCH	The expected digest value did not match the actual digest value of the content.
+0x80080300	-	The background task activation is spurious.
+0x80090001	NTE_BAD_UID	Bad UID.
+0x80090002	NTE_BAD_HASH	Bad Hash.
+0x80090003	NTE_BAD_KEY	Bad Key.
+0x80090004	NTE_BAD_LEN	Bad Length.
+0x80090005	NTE_BAD_DATA	Bad Data.
+0x80090006	NTE_BAD_SIGNATURE	Invalid Signature.
+0x80090007	NTE_BAD_VER	Bad Version of provider.
+0x80090008	NTE_BAD_ALGID	Invalid algorithm specified.
+0x80090009	NTE_BAD_FLAGS	Invalid flags specified.
+0x8009000A	NTE_BAD_TYPE	Invalid type specified.
+0x8009000B	NTE_BAD_KEY_STATE	Key not valid for use in specified state.
+0x8009000C	NTE_BAD_HASH_STATE	Hash not valid for use in specified state.
+0x8009000D	NTE_NO_KEY	Key does not exist.
+0x8009000E	NTE_NO_MEMORY	Insufficient memory available for the operation.
+0x8009000F	NTE_EXISTS	Object already exists.
+0x80090010	NTE_PERM	Access denied.
+0x80090011	NTE_NOT_FOUND	Object was not found.
+0x80090012	NTE_DOUBLE_ENCRYPT	Data already encrypted.
+0x80090013	NTE_BAD_PROVIDER	Invalid provider specified.
+0x80090014	NTE_BAD_PROV_TYPE	Invalid provider type specified.
+0x80090015	NTE_BAD_PUBLIC_KEY	Provider's public key is invalid.
+0x80090016	NTE_BAD_KEYSET	Keyset does not exist
+0x80090017	NTE_PROV_TYPE_NOT_DEF	Provider type not defined.
+0x80090018	NTE_PROV_TYPE_ENTRY_BAD	Provider type as registered is invalid.
+0x80090019	NTE_KEYSET_NOT_DEF	The keyset is not defined.
+0x8009001A	NTE_KEYSET_ENTRY_BAD	Keyset as registered is invalid.
+0x8009001B	NTE_PROV_TYPE_NO_MATCH	Provider type does not match registered value.
+0x8009001C	NTE_SIGNATURE_FILE_BAD	The digital signature file is corrupt.
+0x8009001D	NTE_PROVIDER_DLL_FAIL	Provider DLL failed to initialize correctly.
+0x8009001E	NTE_PROV_DLL_NOT_FOUND	Provider DLL could not be found.
+0x8009001F	NTE_BAD_KEYSET_PARAM	The Keyset parameter is invalid.
+0x80090020	NTE_FAIL	An internal error occurred.
+0x80090021	NTE_SYS_ERR	A base error occurred.
+0x80090022	NTE_SILENT_CONTEXT	Provider could not perform the action since the context was acquired as silent.
+0x80090023	NTE_TOKEN_KEYSET_STORAGE_FULL	The security token does not have storage space available for an additional container.
+0x80090024	NTE_TEMPORARY_PROFILE	The profile for the user is a temporary profile.
+0x80090025	NTE_FIXEDPARAMETER	The key parameters could not be set because the CSP uses fixed parameters.
+0x80090026	NTE_INVALID_HANDLE	The supplied handle is invalid.
+0x80090027	NTE_INVALID_PARAMETER	The parameter is incorrect.
+0x80090028	NTE_BUFFER_TOO_SMALL	The buffer supplied to a function was too small.
+0x80090029	NTE_NOT_SUPPORTED	The requested operation is not supported.
+0x8009002A	NTE_NO_MORE_ITEMS	No more data is available.
+0x8009002B	NTE_BUFFERS_OVERLAP	The supplied buffers overlap incorrectly.
+0x8009002C	NTE_DECRYPTION_FAILURE	The specified data could not be decrypted.
+0x8009002D	NTE_INTERNAL_ERROR	An internal consistency check failed.
+0x8009002E	NTE_UI_REQUIRED	This operation requires input from the user.
+0x8009002F	NTE_HMAC_NOT_SUPPORTED	The cryptographic provider does not support HMAC.
+0x80090030	NTE_DEVICE_NOT_READY	The device that is required by this cryptographic provider is not ready for use.
+0x80090031	NTE_AUTHENTICATION_IGNORED	The dictionary attack mitigation is triggered and the provided authorization was ignored by the provider.
+0x80090032	NTE_VALIDATION_FAILED	The validation of the provided data failed the integrity or signature validation.
+0x80090033	NTE_INCORRECT_PASSWORD	Incorrect password.
+0x80090034	NTE_ENCRYPTION_FAILURE	Encryption failed.
+0x80090035	NTE_DEVICE_NOT_FOUND	The device that is required by this cryptographic provider is not found on this platform.
+0x80090036	NTE_USER_CANCELLED	The action was cancelled by the user.
+0x80090037	NTE_PASSWORD_CHANGE_REQUIRED	The password is no longer valid and must be changed.
+0x80090038	NTE_NOT_ACTIVE_CONSOLE	The operation cannot be completed from Terminal Server client sessions.
+0x80090039	NTE_VBS_UNAVAILABLE	VBS key isolation is not available.
+0x8009003A	NTE_VBS_ISOLATED_KEY_DECRYPT_FAILURE	Cannot decrypt a VBS-isolated key.
+0x8009003B	NTE_FIPS_FAILURE	A cryptographic operation failed FIPS validation.
+0x80090300	SEC_E_INSUFFICIENT_MEMORY	Not enough memory is available to complete this request
+0x80090301	SEC_E_INVALID_HANDLE	The handle specified is invalid
+0x80090302	SEC_E_UNSUPPORTED_FUNCTION	The function requested is not supported
+0x80090303	SEC_E_TARGET_UNKNOWN	The specified target is unknown or unreachable
+0x80090304	SEC_E_INTERNAL_ERROR	The Local Security Authority cannot be contacted
+0x80090305	SEC_E_SECPKG_NOT_FOUND	The requested security package does not exist
+0x80090306	SEC_E_NOT_OWNER	The caller is not the owner of the desired credentials
+0x80090307	SEC_E_CANNOT_INSTALL	The security package failed to initialize, and cannot be installed
+0x80090308	SEC_E_INVALID_TOKEN	The token supplied to the function is invalid
+0x80090309	SEC_E_CANNOT_PACK	The security package is not able to marshall the logon buffer, so the logon attempt has failed
+0x8009030A	SEC_E_QOP_NOT_SUPPORTED	The per-message Quality of Protection is not supported by the security package
+0x8009030B	SEC_E_NO_IMPERSONATION	The security context does not allow impersonation of the client
+0x8009030C	SEC_E_LOGON_DENIED	The logon attempt failed
+0x8009030D	SEC_E_UNKNOWN_CREDENTIALS	The credentials supplied to the package were not recognized
+0x8009030E	SEC_E_NO_CREDENTIALS	No credentials are available in the security package
+0x8009030F	SEC_E_MESSAGE_ALTERED	The message or signature supplied for verification has been altered
+0x80090310	SEC_E_OUT_OF_SEQUENCE	The message supplied for verification is out of sequence
+0x80090311	SEC_E_NO_AUTHENTICATING_AUTHORITY	No authority could be contacted for authentication.
+0x80090316	SEC_E_BAD_PKGID	The requested security package does not exist
+0x80090317	SEC_E_CONTEXT_EXPIRED	The context has expired and can no longer be used.
+0x80090318	SEC_E_INCOMPLETE_MESSAGE	The supplied message is incomplete. The signature was not verified.
+0x80090320	SEC_E_INCOMPLETE_CREDENTIALS	The credentials supplied were not complete, and could not be verified. The context could not be initialized.
+0x80090321	SEC_E_BUFFER_TOO_SMALL	The buffers supplied to a function was too small.
+0x80090322	SEC_E_WRONG_PRINCIPAL	The target principal name is incorrect.
+0x80090324	SEC_E_TIME_SKEW	The clocks on the client and server machines are skewed.
+0x80090325	SEC_E_UNTRUSTED_ROOT	The certificate chain was issued by an authority that is not trusted.
+0x80090326	SEC_E_ILLEGAL_MESSAGE	The message received was unexpected or badly formatted.
+0x80090327	SEC_E_CERT_UNKNOWN	An unknown error occurred while processing the certificate.
+0x80090328	SEC_E_CERT_EXPIRED	The received certificate has expired.
+0x80090329	SEC_E_ENCRYPT_FAILURE	The specified data could not be encrypted.
+0x80090330	SEC_E_DECRYPT_FAILURE	The specified data could not be decrypted.
+0x80090331	SEC_E_ALGORITHM_MISMATCH	The client and server cannot communicate, because they do not possess a common algorithm.
+0x80090332	SEC_E_SECURITY_QOS_FAILED	The security context could not be established due to a failure in the requested quality of service (e.g. mutual authentication or delegation).
+0x80090333	SEC_E_UNFINISHED_CONTEXT_DELETED	A security context was deleted before the context was completed. This is considered a logon failure.
+0x80090334	SEC_E_NO_TGT_REPLY	The client is trying to negotiate a context and the server requires user-to-user but didn't send a TGT reply.
+0x80090335	SEC_E_NO_IP_ADDRESSES	Unable to accomplish the requested task because the local machine does not have any IP addresses.
+0x80090336	SEC_E_WRONG_CREDENTIAL_HANDLE	The supplied credential handle does not match the credential associated with the security context.
+0x80090337	SEC_E_CRYPTO_SYSTEM_INVALID	The crypto system or checksum function is invalid because a required function is unavailable.
+0x80090338	SEC_E_MAX_REFERRALS_EXCEEDED	The number of maximum ticket referrals has been exceeded.
+0x80090339	SEC_E_MUST_BE_KDC	The local machine must be a Kerberos KDC (domain controller) and it is not.
+0x8009033A	SEC_E_STRONG_CRYPTO_NOT_SUPPORTED	The other end of the security negotiation is requires strong crypto but it is not supported on the local machine.
+0x8009033B	SEC_E_TOO_MANY_PRINCIPALS	The KDC reply contained more than one principal name.
+0x8009033C	SEC_E_NO_PA_DATA	Expected to find PA data for a hint of what etype to use, but it was not found.
+0x8009033D	SEC_E_PKINIT_NAME_MISMATCH	The client certificate does not contain a valid UPN, or does not match the client name in the logon request. Please contact your administrator.
+0x8009033E	SEC_E_SMARTCARD_LOGON_REQUIRED	Smartcard logon is required and was not used.
+0x8009033F	SEC_E_SHUTDOWN_IN_PROGRESS	A system shutdown is in progress.
+0x80090340	SEC_E_KDC_INVALID_REQUEST	An invalid request was sent to the KDC.
+0x80090341	SEC_E_KDC_UNABLE_TO_REFER	The KDC was unable to generate a referral for the service requested.
+0x80090342	SEC_E_KDC_UNKNOWN_ETYPE	The encryption type requested is not supported by the KDC.
+0x80090343	SEC_E_UNSUPPORTED_PREAUTH	An unsupported preauthentication mechanism was presented to the Kerberos package.
+0x80090345	SEC_E_DELEGATION_REQUIRED	The requested operation cannot be completed. The computer must be trusted for delegation and the current user account must be configured to allow delegation.
+0x80090346	SEC_E_BAD_BINDINGS	Client's supplied SSPI channel bindings were incorrect.
+0x80090347	SEC_E_MULTIPLE_ACCOUNTS	The received certificate was mapped to multiple accounts.
+0x80090348	SEC_E_NO_KERB_KEY	SEC_E_NO_KERB_KEY
+0x80090349	SEC_E_CERT_WRONG_USAGE	The certificate is not valid for the requested usage.
+0x80090350	SEC_E_DOWNGRADE_DETECTED	The system cannot contact a domain controller to service the authentication request. Please try again later.
+0x80090351	SEC_E_SMARTCARD_CERT_REVOKED	The smartcard certificate used for authentication has been revoked. Please contact your system administrator. There may be additional information in the event log.
+0x80090352	SEC_E_ISSUING_CA_UNTRUSTED	An untrusted certificate authority was detected while processing the smartcard certificate used for authentication. Please contact your system administrator.
+0x80090353	SEC_E_REVOCATION_OFFLINE_C	The revocation status of the smartcard certificate used for authentication could not be determined. Please contact your system administrator.
+0x80090354	SEC_E_PKINIT_CLIENT_FAILURE	The smartcard certificate used for authentication was not trusted. Please contact your system administrator.
+0x80090355	SEC_E_SMARTCARD_CERT_EXPIRED	The smartcard certificate used for authentication has expired. Please contact your system administrator.
+0x80090356	SEC_E_NO_S4U_PROT_SUPPORT	The Kerberos subsystem encountered an error. A service for user protocol request was made against a domain controller which does not support service for user.
+0x80090357	SEC_E_CROSSREALM_DELEGATION_FAILURE	An attempt was made by this server to make a Kerberos constrained delegation request for a target outside of the server's realm. This is not supported, and indicates a misconfiguration on this server's allowed to delegate to list. Please contact your administrator.
+0x80090358	SEC_E_REVOCATION_OFFLINE_KDC	The revocation status of the domain controller certificate used for smartcard authentication could not be determined. There is additional information in the system event log. Please contact your system administrator.
+0x80090359	SEC_E_ISSUING_CA_UNTRUSTED_KDC	An untrusted certificate authority was detected while processing the domain controller certificate used for authentication. There is additional information in the system event log. Please contact your system administrator.
+0x8009035A	SEC_E_KDC_CERT_EXPIRED	The domain controller certificate used for smartcard logon has expired. Please contact your system administrator with the contents of your system event log.
+0x8009035B	SEC_E_KDC_CERT_REVOKED	The domain controller certificate used for smartcard logon has been revoked. Please contact your system administrator with the contents of your system event log.
+0x8009035D	SEC_E_INVALID_PARAMETER	One or more of the parameters passed to the function was invalid.
+0x8009035E	SEC_E_DELEGATION_POLICY	Client policy does not allow credential delegation to target server.
+0x8009035F	SEC_E_POLICY_NLTM_ONLY	Client policy does not allow credential delegation to target server with NLTM only authentication.
+0x80090361	SEC_E_NO_CONTEXT	The required security context does not exist.
+0x80090362	SEC_E_PKU2U_CERT_FAILURE	The PKU2U protocol encountered an error while attempting to utilize the associated certificates.
+0x80090363	SEC_E_MUTUAL_AUTH_FAILED	The identity of the server computer could not be verified.
+0x80090365	SEC_E_ONLY_HTTPS_ALLOWED	Only https scheme is allowed.
+0x80090367	SEC_E_APPLICATION_PROTOCOL_MISMATCH	No common application protocol exists between the client and the server. Application protocol negotiation failed.
+0x80090369	SEC_E_INVALID_UPN_NAME	You can't sign in with a user ID in this format. Try using your email address instead.
+0x8009036A	SEC_E_EXT_BUFFER_TOO_SMALL	The buffer supplied by the SSPI caller to receive generic extensions is too small.
+0x8009036B	SEC_E_INSUFFICIENT_BUFFERS	Not enough secbuffers were supplied to generate a token.
+0x8009036C	SEC_E_NO_SPM_NOT_RESUMABLE	The TLS session cannot be resumed.
+0x80091001	CRYPT_E_MSG_ERROR	An error occurred while performing an operation on a cryptographic message.
+0x80091002	CRYPT_E_UNKNOWN_ALGO	Unknown cryptographic algorithm.
+0x80091003	CRYPT_E_OID_FORMAT	The object identifier is poorly formatted.
+0x80091004	CRYPT_E_INVALID_MSG_TYPE	Invalid cryptographic message type.
+0x80091005	CRYPT_E_UNEXPECTED_ENCODING	Unexpected cryptographic message encoding.
+0x80091006	CRYPT_E_AUTH_ATTR_MISSING	The cryptographic message does not contain an expected authenticated attribute.
+0x80091007	CRYPT_E_HASH_VALUE	The hash value is not correct.
+0x80091008	CRYPT_E_INVALID_INDEX	The index value is not valid.
+0x80091009	CRYPT_E_ALREADY_DECRYPTED	The content of the cryptographic message has already been decrypted.
+0x8009100A	CRYPT_E_NOT_DECRYPTED	The content of the cryptographic message has not been decrypted yet.
+0x8009100B	CRYPT_E_RECIPIENT_NOT_FOUND	The enveloped-data message does not contain the specified recipient.
+0x8009100C	CRYPT_E_CONTROL_TYPE	Invalid control type.
+0x8009100D	CRYPT_E_ISSUER_SERIALNUMBER	Invalid issuer and/or serial number.
+0x8009100E	CRYPT_E_SIGNER_NOT_FOUND	Cannot find the original signer.
+0x8009100F	CRYPT_E_ATTRIBUTES_MISSING	The cryptographic message does not contain all of the requested attributes.
+0x80091010	CRYPT_E_STREAM_MSG_NOT_READY	The streamed cryptographic message is not ready to return data.
+0x80091011	CRYPT_E_STREAM_INSUFFICIENT_DATA	The streamed cryptographic message requires more data to complete the decode operation.
+0x80092001	CRYPT_E_BAD_LEN	The length specified for the output data was insufficient.
+0x80092002	CRYPT_E_BAD_ENCODE	An error occurred during encode or decode operation.
+0x80092003	CRYPT_E_FILE_ERROR	An error occurred while reading or writing to a file.
+0x80092004	CRYPT_E_NOT_FOUND	Cannot find object or property.
+0x80092005	CRYPT_E_EXISTS	The object or property already exists.
+0x80092006	CRYPT_E_NO_PROVIDER	No provider was specified for the store or object.
+0x80092007	CRYPT_E_SELF_SIGNED	The specified certificate is self signed.
+0x80092008	CRYPT_E_DELETED_PREV	The previous certificate or CRL context was deleted.
+0x80092009	CRYPT_E_NO_MATCH	Cannot find the requested object.
+0x8009200A	CRYPT_E_UNEXPECTED_MSG_TYPE	The certificate does not have a property that references a private key.
+0x8009200B	CRYPT_E_NO_KEY_PROPERTY	Cannot find the certificate and private key for decryption.
+0x8009200C	CRYPT_E_NO_DECRYPT_CERT	Cannot find the certificate and private key to use for decryption.
+0x8009200D	CRYPT_E_BAD_MSG	Not a cryptographic message or the cryptographic message is not formatted correctly.
+0x8009200E	CRYPT_E_NO_SIGNER	The signed cryptographic message does not have a signer for the specified signer index.
+0x8009200F	CRYPT_E_PENDING_CLOSE	Final closure is pending until additional frees or closes.
+0x80092010	CRYPT_E_REVOKED	The certificate is revoked.
+0x80092011	CRYPT_E_NO_REVOCATION_DLL	No Dll or exported function was found to verify revocation.
+0x80092012	CRYPT_E_NO_REVOCATION_CHECK	The revocation function was unable to check revocation for the certificate.
+0x80092013	CRYPT_E_REVOCATION_OFFLINE	The revocation function was unable to check revocation because the revocation server was offline.
+0x80092014	CRYPT_E_NOT_IN_REVOCATION_DATABASE	The certificate is not in the revocation server's database.
+0x80092020	CRYPT_E_INVALID_NUMERIC_STRING	The string contains a non-numeric character.
+0x80092021	CRYPT_E_INVALID_PRINTABLE_STRING	The string contains a non-printable character.
+0x80092022	CRYPT_E_INVALID_IA5_STRING	The string contains a character not in the 7 bit ASCII character set.
+0x80092023	CRYPT_E_INVALID_X500_STRING	The string contains an invalid X500 name attribute key, oid, value or delimiter.
+0x80092024	CRYPT_E_NOT_CHAR_STRING	The dwValueType for the CERT_NAME_VALUE is not one of the character strings. Most likely it is either a CERT_RDN_ENCODED_BLOB or CERT_RDN_OCTET_STRING.
+0x80092025	CRYPT_E_FILERESIZED	The Put operation cannot continue. The file needs to be resized. However, there is already a signature present. A complete signing operation must be done.
+0x80092026	CRYPT_E_SECURITY_SETTINGS	The cryptographic operation failed due to a local security option setting.
+0x80092027	CRYPT_E_NO_VERIFY_USAGE_DLL	No DLL or exported function was found to verify subject usage.
+0x80092028	CRYPT_E_NO_VERIFY_USAGE_CHECK	The called function was unable to do a usage check on the subject.
+0x80092029	CRYPT_E_VERIFY_USAGE_OFFLINE	Since the server was offline, the called function was unable to complete the usage check.
+0x8009202A	CRYPT_E_NOT_IN_CTL	The subject was not found in a Certificate Trust List (CTL).
+0x8009202B	CRYPT_E_NO_TRUSTED_SIGNER	None of the signers of the cryptographic message or certificate trust list is trusted.
+0x8009202C	CRYPT_E_MISSING_PUBKEY_PARA	The public key's algorithm parameters are missing.
+0x8009202D	CRYPT_E_OBJECT_LOCATOR_OBJECT_NOT_FOUND	An object could not be located using the object locator infrastructure with the given name.
+0x80093000	CRYPT_E_OSS_ERROR	OSS Certificate encode/decode error code base\n\nSee asn1code.h for a definition of the OSS runtime errors. The OSS error values are offset by CRYPT_E_OSS_ERROR.
+0x80093001	OSS_MORE_BUF	OSS ASN.1 Error: Output Buffer is too small.
+0x80093002	OSS_NEGATIVE_UINTEGER	OSS ASN.1 Error: Signed integer is encoded as a unsigned integer.
+0x80093003	OSS_PDU_RANGE	OSS ASN.1 Error: Unknown ASN.1 data type.
+0x80093004	OSS_MORE_INPUT	OSS ASN.1 Error: Output buffer is too small, the decoded data has been truncated.
+0x80093005	OSS_DATA_ERROR	OSS ASN.1 Error: Invalid data.
+0x80093006	OSS_BAD_ARG	OSS ASN.1 Error: Invalid argument.
+0x80093007	OSS_BAD_VERSION	OSS ASN.1 Error: Encode/Decode version mismatch.
+0x80093008	OSS_OUT_MEMORY	OSS ASN.1 Error: Out of memory.
+0x80093009	OSS_PDU_MISMATCH	OSS ASN.1 Error: Encode/Decode Error.
+0x8009300A	OSS_LIMITED	OSS ASN.1 Error: Internal Error.
+0x8009300B	OSS_BAD_PTR	OSS ASN.1 Error: Invalid data.
+0x8009300C	OSS_BAD_TIME	OSS ASN.1 Error: Invalid data.
+0x8009300D	OSS_INDEFINITE_NOT_SUPPORTED	OSS ASN.1 Error: Unsupported BER indefinite-length encoding.
+0x8009300E	OSS_MEM_ERROR	OSS ASN.1 Error: Access violation.
+0x8009300F	OSS_BAD_TABLE	OSS ASN.1 Error: Invalid data.
+0x80093010	OSS_TOO_LONG	OSS ASN.1 Error: Invalid data.
+0x80093011	OSS_CONSTRAINT_VIOLATED	OSS ASN.1 Error: Invalid data.
+0x80093012	OSS_FATAL_ERROR	OSS ASN.1 Error: Internal Error.
+0x80093013	OSS_ACCESS_SERIALIZATION_ERROR	OSS ASN.1 Error: Multi-threading conflict.
+0x80093014	OSS_NULL_TBL	OSS ASN.1 Error: Invalid data.
+0x80093015	OSS_NULL_FCN	OSS ASN.1 Error: Invalid data.
+0x80093016	OSS_BAD_ENCRULES	OSS ASN.1 Error: Invalid data.
+0x80093017	OSS_UNAVAIL_ENCRULES	OSS ASN.1 Error: Encode/Decode function not implemented.
+0x80093018	OSS_CANT_OPEN_TRACE_WINDOW	OSS ASN.1 Error: Trace file error.
+0x80093019	OSS_UNIMPLEMENTED	OSS ASN.1 Error: Function not implemented.
+0x8009301A	OSS_OID_DLL_NOT_LINKED	OSS ASN.1 Error: Program link error.
+0x8009301B	OSS_CANT_OPEN_TRACE_FILE	OSS ASN.1 Error: Trace file error.
+0x8009301C	OSS_TRACE_FILE_ALREADY_OPEN	OSS ASN.1 Error: Trace file error.
+0x8009301D	OSS_TABLE_MISMATCH	OSS ASN.1 Error: Invalid data.
+0x8009301E	OSS_TYPE_NOT_SUPPORTED	OSS ASN.1 Error: Invalid data.
+0x8009301F	OSS_REAL_DLL_NOT_LINKED	OSS ASN.1 Error: Program link error.
+0x80093020	OSS_REAL_CODE_NOT_LINKED	OSS ASN.1 Error: Program link error.
+0x80093021	OSS_OUT_OF_RANGE	OSS ASN.1 Error: Program link error.
+0x80093022	OSS_COPIER_DLL_NOT_LINKED	OSS ASN.1 Error: Program link error.
+0x80093023	OSS_CONSTRAINT_DLL_NOT_LINKED	OSS ASN.1 Error: Program link error.
+0x80093024	OSS_COMPARATOR_DLL_NOT_LINKED	OSS ASN.1 Error: Program link error.
+0x80093025	OSS_COMPARATOR_CODE_NOT_LINKED	OSS ASN.1 Error: Program link error.
+0x80093026	OSS_MEM_MGR_DLL_NOT_LINKED	OSS ASN.1 Error: Program link error.
+0x80093027	OSS_PDV_DLL_NOT_LINKED	OSS ASN.1 Error: Program link error.
+0x80093028	OSS_PDV_CODE_NOT_LINKED	OSS ASN.1 Error: Program link error.
+0x80093029	OSS_API_DLL_NOT_LINKED	OSS ASN.1 Error: Program link error.
+0x8009302A	OSS_BERDER_DLL_NOT_LINKED	OSS ASN.1 Error: Program link error.
+0x8009302B	OSS_PER_DLL_NOT_LINKED	OSS ASN.1 Error: Program link error.
+0x8009302C	OSS_OPEN_TYPE_ERROR	OSS ASN.1 Error: Program link error.
+0x8009302D	OSS_MUTEX_NOT_CREATED	OSS ASN.1 Error: System resource error.
+0x8009302E	OSS_CANT_CLOSE_TRACE_FILE	OSS ASN.1 Error: Trace file error.
+0x80093100	CRYPT_E_ASN1_ERROR	ASN1 Certificate encode/decode error code base. The ASN1 error values are offset by CRYPT_E_ASN1_ERROR.
+0x80093101	CRYPT_E_ASN1_INTERNAL	ASN1 internal encode or decode error.
+0x80093102	CRYPT_E_ASN1_EOD	ASN1 unexpected end of data.
+0x80093103	CRYPT_E_ASN1_CORRUPT	ASN1 corrupted data.
+0x80093104	CRYPT_E_ASN1_LARGE	ASN1 value too large.
+0x80093105	CRYPT_E_ASN1_CONSTRAINT	ASN1 constraint violated.
+0x80093106	CRYPT_E_ASN1_MEMORY	ASN1 out of memory.
+0x80093107	CRYPT_E_ASN1_OVERFLOW	ASN1 buffer overflow.
+0x80093108	CRYPT_E_ASN1_BADPDU	ASN1 function not supported for this PDU.
+0x80093109	CRYPT_E_ASN1_BADARGS	ASN1 bad arguments to function call.
+0x8009310A	CRYPT_E_ASN1_BADREAL	ASN1 bad real value.
+0x8009310B	CRYPT_E_ASN1_BADTAG	ASN1 bad tag value met.
+0x8009310C	CRYPT_E_ASN1_CHOICE	ASN1 bad choice value.
+0x8009310D	CRYPT_E_ASN1_RULE	ASN1 bad encoding rule.
+0x8009310E	CRYPT_E_ASN1_UTF8	ASN1 bad unicode (UTF8).
+0x80093133	CRYPT_E_ASN1_PDU_TYPE	ASN1 bad PDU type.
+0x80093134	CRYPT_E_ASN1_NYI	ASN1 not yet implemented.
+0x80093201	CRYPT_E_ASN1_EXTENDED	ASN1 skipped unknown extension(s).
+0x80093202	CRYPT_E_ASN1_NOEOD	ASN1 end of data expected
+0x80094001	CERTSRV_E_BAD_REQUESTSUBJECT	The request subject name is invalid or too long.
+0x80094002	CERTSRV_E_NO_REQUEST	The request does not exist.
+0x80094003	CERTSRV_E_BAD_REQUESTSTATUS	The request's current status does not allow this operation.
+0x80094004	CERTSRV_E_PROPERTY_EMPTY	The requested property value is empty.
+0x80094005	CERTSRV_E_INVALID_CA_CERTIFICATE	The certification authority's certificate contains invalid data.
+0x80094006	CERTSRV_E_SERVER_SUSPENDED	Certificate service has been suspended for a database restore operation.
+0x80094007	CERTSRV_E_ENCODING_LENGTH	The certificate contains an encoded length that is potentially incompatible with older enrollment software.
+0x80094008	CERTSRV_E_ROLECONFLICT	The operation is denied. The user has multiple roles assigned and the certification authority is configured to enforce role separation.
+0x80094009	CERTSRV_E_RESTRICTEDOFFICER	The operation is denied. It can only be performed by a certificate manager that is allowed to manage certificates for the current requester.
+0x8009400A	CERTSRV_E_KEY_ARCHIVAL_NOT_CONFIGURED	Cannot archive private key. The certification authority is not configured for key archival.
+0x8009400B	CERTSRV_E_NO_VALID_KRA	Cannot archive private key. The certification authority could not verify one or more key recovery certificates.
+0x8009400C	CERTSRV_E_BAD_REQUEST_KEY_ARCHIVAL	The request is incorrectly formatted. The encrypted private key must be in an unauthenticated attribute in an outermost signature.
+0x8009400D	CERTSRV_E_NO_CAADMIN_DEFINED	At least one security principal must have the permission to manage this CA.
+0x8009400E	CERTSRV_E_BAD_RENEWAL_CERT_ATTRIBUTE	The request contains an invalid renewal certificate attribute.
+0x8009400F	CERTSRV_E_NO_DB_SESSIONS	An attempt was made to open a Certification Authority database session, but there are already too many active sessions. The server may need to be configured to allow additional sessions.
+0x80094010	CERTSRV_E_ALIGNMENT_FAULT	A memory reference caused a data alignment fault.
+0x80094011	CERTSRV_E_ENROLL_DENIED	The permissions on this certification authority do not allow the current user to enroll for certificates.
+0x80094012	CERTSRV_E_TEMPLATE_DENIED	The permissions on the certificate template do not allow the current user to enroll for this type of certificate.
+0x80094013	CERTSRV_E_DOWNLEVEL_DC_SSL_OR_UPGRADE	The contacted domain controller cannot support signed LDAP traffic. Update the domain controller or configure Certificate Services to use SSL for Active Directory access.
+0x80094014	CERTSRV_E_ADMIN_DENIED_REQUEST	The request was denied by a certificate manager or CA administrator.
+0x80094015	CERTSRV_E_NO_POLICY_SERVER	An enrollment policy server cannot be located.
+0x80094016	CERTSRV_E_WEAK_SIGNATURE_OR_KEY	A signature algorithm or public key length does not meet the system's minimum required strength.
+0x80094017	CERTSRV_E_KEY_ATTESTATION_NOT_SUPPORTED	Failed to create an attested key.  This computer or the cryptographic provider may not meet the hardware requirements to support key attestation.
+0x80094018	CERTSRV_E_ENCRYPTION_CERT_REQUIRED	No encryption certificate was specified.
+0x80094800	CERTSRV_E_UNSUPPORTED_CERT_TYPE	The requested certificate template is not supported by this CA.
+0x80094801	CERTSRV_E_NO_CERT_TYPE	The request contains no certificate template information.
+0x80094802	CERTSRV_E_TEMPLATE_CONFLICT	The request contains conflicting template information.
+0x80094803	CERTSRV_E_SUBJECT_ALT_NAME_REQUIRED	The request is missing a required Subject Alternate name extension.
+0x80094804	CERTSRV_E_ARCHIVED_KEY_REQUIRED	The request is missing a required private key for archival by the server.
+0x80094805	CERTSRV_E_SMIME_REQUIRED	The request is missing a required SMIME capabilities extension.
+0x80094806	CERTSRV_E_BAD_RENEWAL_SUBJECT	The request was made on behalf of a subject other than the caller. The certificate template must be configured to require at least one signature to authorize the request.
+0x80094807	CERTSRV_E_BAD_TEMPLATE_VERSION	The request template version is newer than the supported template version.
+0x80094808	CERTSRV_E_TEMPLATE_POLICY_REQUIRED	The template is missing a required signature policy attribute.
+0x80094809	CERTSRV_E_SIGNATURE_POLICY_REQUIRED	The request is missing required signature policy information.
+0x8009480A	CERTSRV_E_SIGNATURE_COUNT	The request is missing one or more required signatures.
+0x8009480B	CERTSRV_E_SIGNATURE_REJECTED	One or more signatures did not include the required application or issuance policies. The request is missing one or more required valid signatures.
+0x8009480C	CERTSRV_E_ISSUANCE_POLICY_REQUIRED	The request is missing one or more required signature issuance policies.
+0x8009480D	CERTSRV_E_SUBJECT_UPN_REQUIRED	The UPN is unavailable and cannot be added to the Subject Alternate name.
+0x8009480E	CERTSRV_E_SUBJECT_DIRECTORY_GUID_REQUIRED	The Active Directory GUID is unavailable and cannot be added to the Subject Alternate name.
+0x8009480F	CERTSRV_E_SUBJECT_DNS_REQUIRED	The DNS name is unavailable and cannot be added to the Subject Alternate name.
+0x80094810	CERTSRV_E_ARCHIVED_KEY_UNEXPECTED	The request includes a private key for archival by the server, but key archival is not enabled for the specified certificate template.
+0x80094811	CERTSRV_E_KEY_LENGTH	The public key does not meet the minimum size required by the specified certificate template.
+0x80094812	CERTSRV_E_SUBJECT_EMAIL_REQUIRED	The EMail name is unavailable and cannot be added to the Subject or Subject Alternate name.
+0x80094813	CERTSRV_E_UNKNOWN_CERT_TYPE	One or more certificate templates to be enabled on this certification authority could not be found.
+0x80094814	CERTSRV_E_CERT_TYPE_OVERLAP	The certificate template renewal period is longer than the certificate validity period. The template should be reconfigured or the CA certificate renewed.
+0x80094815	CERTSRV_E_TOO_MANY_SIGNATURES	The certificate template requires too many RA signatures. Only one RA signature is allowed.
+0x80094816	CERTSRV_E_RENEWAL_BAD_PUBLIC_KEY	The certificate template requires renewal with the same public key, but the request uses a different public key.
+0x80094817	CERTSRV_E_INVALID_EK	The certification authority cannot interpret or verify the endorsement key information supplied in the request, or the information is inconsistent.
+0x80094818	CERTSRV_E_INVALID_IDBINDING	The certification authority cannot validate the Attestation Identity Key Id Binding.
+0x80094819	CERTSRV_E_INVALID_ATTESTATION	The certification authority cannot validate the private key attestation data.
+0x8009481A	CERTSRV_E_KEY_ATTESTATION	The request does not support private key attestation as defined in the certificate template.
+0x8009481B	CERTSRV_E_CORRUPT_KEY_ATTESTATION	The request public key is not consistent with the private key attestation data.
+0x8009481C	CERTSRV_E_EXPIRED_CHALLENGE	The private key attestation challenge cannot be validated because the encryption certificate has expired, or the certificate or key is unavailable.
+0x8009481D	CERTSRV_E_INVALID_RESPONSE	The client's response could not be validated. It is either unexpected or incorrect.
+0x8009481E	CERTSRV_E_INVALID_REQUESTID	A valid Request ID was not detected in the request attributes, or an invalid one was submitted.
+0x8009481F	CERTSRV_E_REQUEST_PRECERTIFICATE_MISMATCH	The request is not consistent with the previously generated precertificate.
+0x80094820	CERTSRV_E_PENDING_CLIENT_RESPONSE	The request is locked against edits until a response is received from the client.
+0x80094821	CERTSRV_E_SEC_EXT_DIRECTORY_SID_REQUIRED	The Active Directory SID is unavailable and cannot be added to the custom security extension.
+0x80095000	XENROLL_E_KEY_NOT_EXPORTABLE	The key is not exportable.
+0x80095001	XENROLL_E_CANNOT_ADD_ROOT_CERT	You cannot add the root CA certificate into your local store.
+0x80095002	XENROLL_E_RESPONSE_KA_HASH_NOT_FOUND	The key archival hash attribute was not found in the response.
+0x80095003	XENROLL_E_RESPONSE_UNEXPECTED_KA_HASH	An unexpected key archival hash attribute was found in the response.
+0x80095004	XENROLL_E_RESPONSE_KA_HASH_MISMATCH	There is a key archival hash mismatch between the request and the response.
+0x80095005	XENROLL_E_KEYSPEC_SMIME_MISMATCH	Signing certificate cannot include SMIME extension.
+0x80096001	TRUST_E_SYSTEM_ERROR	A system-level error occurred while verifying trust.
+0x80096002	TRUST_E_NO_SIGNER_CERT	The certificate for the signer of the message is invalid or not found.
+0x80096003	TRUST_E_COUNTER_SIGNER	One of the counter signatures was invalid.
+0x80096004	TRUST_E_CERT_SIGNATURE	The signature of the certificate cannot be verified.
+0x80096005	TRUST_E_TIME_STAMP	The timestamp signature and/or certificate could not be verified or is malformed.
+0x80096010	TRUST_E_BAD_DIGEST	The digital signature of the object did not verify.
+0x80096011	TRUST_E_MALFORMED_SIGNATURE	The digital signature of the object is malformed. For technical detail, see security bulletin MS13-098.
+0x80096019	TRUST_E_BASIC_CONSTRAINTS	A certificate's basic constraint extension has not been observed.
+0x8009601E	TRUST_E_FINANCIAL_CRITERIA	The certificate does not meet or contain the Authenticode(tm) financial extensions.
+0x80097001	MSSIPOTF_E_OUTOFMEMRANGE	Tried to reference a part of the file outside the proper range.
+0x80097002	MSSIPOTF_E_CANTGETOBJECT	Could not retrieve an object from the file.
+0x80097003	MSSIPOTF_E_NOHEADTABLE	Could not find the head table in the file.
+0x80097004	MSSIPOTF_E_BAD_MAGICNUMBER	The magic number in the head table is incorrect.
+0x80097005	MSSIPOTF_E_BAD_OFFSET_TABLE	The offset table has incorrect values.
+0x80097006	MSSIPOTF_E_TABLE_TAGORDER	Duplicate table tags or tags out of alphabetical order.
+0x80097007	MSSIPOTF_E_TABLE_LONGWORD	A table does not start on a long word boundary.
+0x80097008	MSSIPOTF_E_BAD_FIRST_TABLE_PLACEMENT	First table does not appear after header information.
+0x80097009	MSSIPOTF_E_TABLES_OVERLAP	Two or more tables overlap.
+0x8009700A	MSSIPOTF_E_TABLE_PADBYTES	Too many pad bytes between tables or pad bytes are not 0.
+0x8009700B	MSSIPOTF_E_FILETOOSMALL	File is too small to contain the last table.
+0x8009700C	MSSIPOTF_E_TABLE_CHECKSUM	A table checksum is incorrect.
+0x8009700D	MSSIPOTF_E_FILE_CHECKSUM	The file checksum is incorrect.
+0x80097010	MSSIPOTF_E_FAILED_POLICY	The signature does not have the correct attributes for the policy.
+0x80097011	MSSIPOTF_E_FAILED_HINTS_CHECK	The file did not pass the hints check.
+0x80097012	MSSIPOTF_E_NOT_OPENTYPE	The file is not an OpenType file.
+0x80097013	MSSIPOTF_E_FILE	Failed on a file operation (open, map, read, write).
+0x80097014	MSSIPOTF_E_CRYPT	A call to a CryptoAPI function failed.
+0x80097015	MSSIPOTF_E_BADVERSION	There is a bad version number in the file.
+0x80097016	MSSIPOTF_E_DSIG_STRUCTURE	The structure of the DSIG table is incorrect.
+0x80097017	MSSIPOTF_E_PCONST_CHECK	A check failed in a partially constant table.
+0x80097018	MSSIPOTF_E_STRUCTURE	Some kind of structural error.
+0x80097019	ERROR_CRED_REQUIRES_CONFIRMATION	The requested credential requires confirmation.
+0x800B0001	TRUST_E_PROVIDER_UNKNOWN	Unknown trust provider.
+0x800B0002	TRUST_E_ACTION_UNKNOWN	The trust verification action specified is not supported by the specified trust provider.
+0x800B0003	TRUST_E_SUBJECT_FORM_UNKNOWN	The form specified for the subject is not one supported or known by the specified trust provider.
+0x800B0004	TRUST_E_SUBJECT_NOT_TRUSTED	The subject is not trusted for the specified action.
+0x800B0005	DIGSIG_E_ENCODE	Error due to problem in ASN.1 encoding process.
+0x800B0006	DIGSIG_E_DECODE	Error due to problem in ASN.1 decoding process.
+0x800B0007	DIGSIG_E_EXTENSIBILITY	Reading / writing Extensions where Attributes are appropriate, and vice versa.
+0x800B0008	DIGSIG_E_CRYPTO	Unspecified cryptographic failure.
+0x800B0009	PERSIST_E_SIZEDEFINITE	The size of the data could not be determined.
+0x800B000A	PERSIST_E_SIZEINDEFINITE	The size of the indefinite-sized data could not be determined.
+0x800B000B	PERSIST_E_NOTSELFSIZING	This object does not read and write self-sizing data.
+0x800B0100	TRUST_E_NOSIGNATURE	No signature was present in the subject.
+0x800B0101	CERT_E_EXPIRED	A required certificate is not within its validity period when verifying against the current system clock or the timestamp in the signed file.
+0x800B0102	CERT_E_VALIDITYPERIODNESTING	The validity periods of the certification chain do not nest correctly.
+0x800B0103	CERT_E_ROLE	A certificate that can only be used as an end-entity is being used as a CA or vice versa.
+0x800B0104	CERT_E_PATHLENCONST	A path length constraint in the certification chain has been violated.
+0x800B0105	CERT_E_CRITICAL	A certificate contains an unknown extension that is marked 'critical'.
+0x800B0106	CERT_E_PURPOSE	A certificate being used for a purpose other than the ones specified by its CA.
+0x800B0107	CERT_E_ISSUERCHAINING	A parent of a given certificate in fact did not issue that child certificate.
+0x800B0108	CERT_E_MALFORMED	A certificate is missing or has an empty value for an important field, such as a subject or issuer name.
+0x800B0109	CERT_E_UNTRUSTEDROOT	A certificate chain processed, but terminated in a root certificate which is not trusted by the trust provider.
+0x800B010A	CERT_E_CHAINING	A certificate chain could not be built to a trusted root authority.
+0x800B010B	TRUST_E_FAIL	Generic trust failure.
+0x800B010C	CERT_E_REVOKED	A certificate was explicitly revoked by its issuer.
+0x800B010D	CERT_E_UNTRUSTEDTESTROOT	The certification path terminates with the test root which is not trusted with the current policy settings.
+0x800B010E	CERT_E_REVOCATION_FAILURE	The revocation process could not continue - the certificate(s) could not be checked.
+0x800B010F	CERT_E_CN_NO_MATCH	The certificate's CN name does not match the passed value.
+0x800B0110	CERT_E_WRONG_USAGE	The certificate is not valid for the requested usage.
+0x800B0111	TRUST_E_EXPLICIT_DISTRUST	The certificate was explicitly marked as untrusted by the user.
+0x800B0112	CERT_E_UNTRUSTEDCA	A certification chain processed correctly, but one of the CA certificates is not trusted by the policy provider.
+0x800B0113	CERT_E_INVALID_POLICY	The certificate has invalid policy.
+0x800B0114	CERT_E_INVALID_NAME	The certificate has an invalid name. The name is not included in the permitted list or is explicitly excluded.
+0x800C0002	INET_E_INVALID_URL	The URL is invalid.
+0x800C0003	INET_E_NO_SESSION	No Internet session has been established.
+0x800C0004	INET_E_CANNOT_CONNECT	Unable to connect to the target server.
+0x800C0005	INET_E_RESOURCE_NOT_FOUND	The system cannot locate the resource specified.
+0x800C0006	INET_E_OBJECT_NOT_FOUND	The system cannot locate the object specified.
+0x800C0007	INET_E_DATA_NOT_AVAILABLE	No data is available for the requested resource.
+0x800C0008	INET_E_DOWNLOAD_FAILURE	The download of the specified resource has failed.
+0x800C0009	INET_E_AUTHENTICATION_REQUIRED	Authentication is required to access this resource.
+0x800C000A	INET_E_NO_VALID_MEDIA	The server could not recognize the provided mime type.
+0x800C000B	INET_E_CONNECTION_TIMEOUT	The operation was timed out.
+0x800C000C	INET_E_INVALID_REQUEST	The server did not understand the request, or the request was invalid.
+0x800C000D	INET_E_UNKNOWN_PROTOCOL	The specified protocol is unknown.
+0x800C000E	INET_E_SECURITY_PROBLEM	A security problem occurred.
+0x800C000F	INET_E_CANNOT_LOAD_DATA	The system could not load the persisted data.
+0x800C0010	INET_E_CANNOT_INSTANTIATE_OBJECT	Unable to instantiate the object.
+0x800C0014	INET_E_REDIRECT_FAILED	A redirection problem occurred.
+0x800C0015	INET_E_REDIRECT_TO_DIR	The requested resource is a directory, not a file.
+0x800C0019	-	Security certificate required to access this resource is invalid.
+0x80100001	SCARD_F_INTERNAL_ERROR	An internal consistency check failed.
+0x80100002	SCARD_E_CANCELLED	The action was cancelled by an SCardCancel request.
+0x80100003	SCARD_E_INVALID_HANDLE	The supplied handle was invalid.
+0x80100004	SCARD_E_INVALID_PARAMETER	One or more of the supplied parameters could not be properly interpreted.
+0x80100005	SCARD_E_INVALID_TARGET	Registry startup information is missing or invalid.
+0x80100006	SCARD_E_NO_MEMORY	Not enough memory available to complete this command.
+0x80100007	SCARD_F_WAITED_TOO_LONG	An internal consistency timer has expired.
+0x80100008	SCARD_E_INSUFFICIENT_BUFFER	The data buffer to receive returned data is too small for the returned data.
+0x80100009	SCARD_E_UNKNOWN_READER	The specified reader name is not recognized.
+0x8010000A	SCARD_E_TIMEOUT	The user-specified timeout value has expired.
+0x8010000B	SCARD_E_SHARING_VIOLATION	The smart card cannot be accessed because of other connections outstanding.
+0x8010000C	SCARD_E_NO_SMARTCARD	The operation requires a smart card, but no smart card is currently in the device.
+0x8010000D	SCARD_E_UNKNOWN_CARD	The specified smart card name is not recognized.
+0x8010000E	SCARD_E_CANT_DISPOSE	The system could not dispose of the media in the requested manner.
+0x8010000F	SCARD_E_PROTO_MISMATCH	The requested protocols are incompatible with the protocol currently in use with the smart card.
+0x80100010	SCARD_E_NOT_READY	The reader or smart card is not ready to accept commands.
+0x80100011	SCARD_E_INVALID_VALUE	One or more of the supplied parameters values could not be properly interpreted.
+0x80100012	SCARD_E_SYSTEM_CANCELLED	The action was cancelled by the system, presumably to log off or shut down.
+0x80100013	SCARD_F_COMM_ERROR	An internal communications error has been detected.
+0x80100014	SCARD_F_UNKNOWN_ERROR	An internal error has been detected, but the source is unknown.
+0x80100015	SCARD_E_INVALID_ATR	An ATR obtained from the registry is not a valid ATR string.
+0x80100016	SCARD_E_NOT_TRANSACTED	An attempt was made to end a non-existent transaction.
+0x80100017	SCARD_E_READER_UNAVAILABLE	The specified reader is not currently available for use.
+0x80100018	SCARD_P_SHUTDOWN	The operation has been aborted to allow the server application to exit.
+0x80100019	SCARD_E_PCI_TOO_SMALL	The PCI Receive buffer was too small.
+0x8010001A	SCARD_E_READER_UNSUPPORTED	The reader driver does not meet minimal requirements for support.
+0x8010001B	SCARD_E_DUPLICATE_READER	The reader driver did not produce a unique reader name.
+0x8010001C	SCARD_E_CARD_UNSUPPORTED	The smart card does not meet minimal requirements for support.
+0x8010001D	SCARD_E_NO_SERVICE	The Smart Card Resource Manager is not running.
+0x8010001E	SCARD_E_SERVICE_STOPPED	The Smart Card Resource Manager has shut down.
+0x8010001F	SCARD_E_UNEXPECTED	An unexpected card error has occurred.
+0x80100020	SCARD_E_ICC_INSTALLATION	No Primary Provider can be found for the smart card.
+0x80100021	SCARD_E_ICC_CREATEORDER	The requested order of object creation is not supported.
+0x80100022	SCARD_E_UNSUPPORTED_FEATURE	This smart card does not support the requested feature.
+0x80100023	SCARD_E_DIR_NOT_FOUND	The identified directory does not exist in the smart card.
+0x80100024	SCARD_E_FILE_NOT_FOUND	The identified file does not exist in the smart card.
+0x80100025	SCARD_E_NO_DIR	The supplied path does not represent a smart card directory.
+0x80100026	SCARD_E_NO_FILE	The supplied path does not represent a smart card file.
+0x80100027	SCARD_E_NO_ACCESS	Access is denied to this file.
+0x80100028	SCARD_E_WRITE_TOO_MANY	The smart card does not have enough memory to store the information.
+0x80100029	SCARD_E_BAD_SEEK	There was an error trying to set the smart card file object pointer.
+0x8010002A	SCARD_E_INVALID_CHV	The supplied PIN is incorrect.
+0x8010002B	SCARD_E_UNKNOWN_RES_MNG	An unrecognized error code was returned from a layered component.
+0x8010002C	SCARD_E_NO_SUCH_CERTIFICATE	The requested certificate does not exist.
+0x8010002D	SCARD_E_CERTIFICATE_UNAVAILABLE	The requested certificate could not be obtained.
+0x8010002E	SCARD_E_NO_READERS_AVAILABLE	Cannot find a smart card reader.
+0x8010002F	SCARD_E_COMM_DATA_LOST	A communications error with the smart card has been detected. Retry the operation.
+0x80100030	SCARD_E_NO_KEY_CONTAINER	The requested key container does not exist on the smart card.
+0x80100031	SCARD_E_SERVER_TOO_BUSY	The Smart Card Resource Manager is too busy to complete this operation.
+0x80100032	SCARD_E_PIN_CACHE_EXPIRED	The smart card PIN cache has expired.
+0x80100033	SCARD_E_NO_PIN_CACHE	The smart card PIN cannot be cached.
+0x80100034	SCARD_E_READ_ONLY_CARD	The smart card is read only and cannot be written to.
+0x80100065	SCARD_W_UNSUPPORTED_CARD	The reader cannot communicate with the smart card, due to ATR configuration conflicts.
+0x80100066	SCARD_W_UNRESPONSIVE_CARD	The smart card is not responding to a reset.
+0x80100067	SCARD_W_UNPOWERED_CARD	Power has been removed from the smart card, so that further communication is not possible.
+0x80100068	SCARD_W_RESET_CARD	The smart card has been reset, so any shared state information is invalid.
+0x80100069	SCARD_W_REMOVED_CARD	The smart card has been removed, so that further communication is not possible.
+0x8010006A	SCARD_W_SECURITY_VIOLATION	Access was denied because of a security violation.
+0x8010006B	SCARD_W_WRONG_CHV	The card cannot be accessed because the wrong PIN was presented.
+0x8010006C	SCARD_W_CHV_BLOCKED	The card cannot be accessed because the maximum number of PIN entry attempts has been reached.
+0x8010006D	SCARD_W_EOF	The end of the smart card file has been reached.
+0x8010006E	SCARD_W_CANCELLED_BY_USER	The action was cancelled by the user.
+0x8010006F	SCARD_W_CARD_NOT_AUTHENTICATED	No PIN was presented to the smart card.
+0x80100070	SCARD_W_CACHE_ITEM_NOT_FOUND	The requested item could not be found in the cache.
+0x80100071	SCARD_W_CACHE_ITEM_STALE	The requested cache item is too old and was deleted from the cache.
+0x80100072	SCARD_W_CACHE_ITEM_TOO_BIG	The new cache item exceeds the maximum per-item size defined for the cache.
+0x887A0001	DXGI_ERROR_INVALID_CALL	The application made a call that is invalid. Either the parameters of the call or the state of some object was incorrect.\nEnable the D3D debug layer in order to see details via debug messages.
+0x887A0002	DXGI_ERROR_NOT_FOUND	The object was not found. If calling IDXGIFactory::EnumAdaptes, there is no adapter with the specified ordinal.
+0x887A0003	DXGI_ERROR_MORE_DATA	The caller did not supply a sufficiently large buffer.
+0x887A0004	DXGI_ERROR_UNSUPPORTED	The specified device interface or feature level is not supported on this system.
+0x887A0005	DXGI_ERROR_DEVICE_REMOVED	The GPU device instance has been suspended. Use GetDeviceRemovedReason to determine the appropriate action.
+0x887A0006	DXGI_ERROR_DEVICE_HUNG	The GPU will not respond to more commands, most likely because of an invalid command passed by the calling application.
+0x887A0007	DXGI_ERROR_DEVICE_RESET	The GPU will not respond to more commands, most likely because some other application submitted invalid commands.\nThe calling application should re-create the device and continue.
+0x887A000A	DXGI_ERROR_WAS_STILL_DRAWING	The GPU was busy at the moment when the call was made, and the call was neither executed nor scheduled.
+0x887A000B	DXGI_ERROR_FRAME_STATISTICS_DISJOINT	An event (such as power cycle) interrupted the gathering of presentation statistics. Any previous statistics should be\nconsidered invalid.
+0x887A000C	DXGI_ERROR_GRAPHICS_VIDPN_SOURCE_IN_USE	Fullscreen mode could not be achieved because the specified output was already in use.
+0x887A0020	DXGI_ERROR_DRIVER_INTERNAL_ERROR	An internal issue prevented the driver from carrying out the specified operation. The driver's state is probably suspect,\nand the application should not continue.
+0x887A0021	DXGI_ERROR_NONEXCLUSIVE	A global counter resource was in use, and the specified counter cannot be used by this Direct3D device at this time.
+0x887A0022	DXGI_ERROR_NOT_CURRENTLY_AVAILABLE	A resource is not available at the time of the call, but may become available later.
+0x887A0023	DXGI_ERROR_REMOTE_CLIENT_DISCONNECTED	The application's remote device has been removed due to session disconnect or network disconnect.\nThe application should call IDXGIFactory1::IsCurrent to find out when the remote device becomes available again.
+0x887A0024	DXGI_ERROR_REMOTE_OUTOFMEMORY	The device has been removed during a remote session because the remote computer ran out of memory.
+0x887A0025	-	An on-going mode change prevented completion of the call. The call may succeed if attempted later.
+0x887A0026	DXGI_ERROR_ACCESS_LOST	The keyed mutex was abandoned.
+0x887A0027	DXGI_ERROR_WAIT_TIMEOUT	The timeout value has elapsed and the resource is not yet available.
+0x887A0028	DXGI_ERROR_SESSION_DISCONNECTED	The output duplication has been turned off because the Windows session ended or was disconnected.\nThis happens when a remote user disconnects, or when "switch user" is used locally.
+0x887A0029	DXGI_ERROR_RESTRICT_TO_OUTPUT_STALE	The DXGI output (monitor) to which the swapchain content was restricted, has been disconnected or changed.
+0x887A002A	DXGI_ERROR_CANNOT_PROTECT_CONTENT	DXGI is unable to provide content protection on the swapchain. This is typically caused by an older driver,\nor by the application using a swapchain that is incompatible with content protection.
+0x887A002B	DXGI_ERROR_ACCESS_DENIED	The application is trying to use a resource to which it does not have the required access privileges.\nThis is most commonly caused by writing to a shared resource with read-only access.
+0x887A002C	DXGI_ERROR_NAME_ALREADY_EXISTS	The application is trying to create a shared handle using a name that is already associated with some other resource.
+0x887A002D	DXGI_ERROR_SDK_COMPONENT_MISSING	The application requested an operation that depends on an SDK component that is missing or mismatched.
+0x887A002E	DXGI_ERROR_NOT_CURRENT	The DXGI objects that the application has created are no longer current & need to be recreated for this operation to be performed.
+0x887A0030	DXGI_ERROR_HW_PROTECTION_OUTOFMEMORY	Insufficient HW protected memory exits for proper function.
+0x887A0031	DXGI_ERROR_DYNAMIC_CODE_POLICY_VIOLATION	Creating this device would violate the process's dynamic code policy.
+0x887A0032	DXGI_ERROR_NON_COMPOSITED_UI	The operation failed because the compositor is not in control of the output.
+0x887A0033	DXGI_ERROR_CACHE_CORRUPT	The cache is corrupt and either could not be opened or could not be reset.
+0x887A0034	DXGI_ERROR_CACHE_FULL	This entry would cause the cache to exceed its quota. On a load operation, this may indicate exceeding the maximum in-memory size.
+0x887A0035	DXGI_ERROR_CACHE_HASH_COLLISION	A cache entry was found, but the key provided does not match the key stored in the entry.
+0x887A0036	DXGI_ERROR_ALREADY_EXISTS	The desired element already exists.
+0x887A0064	DXGI_DDI_ERR_WASSTILLDRAWING	The allocation of the MPO plane has been unpinned
+0x887A0065	DXGI_DDI_ERR_UNSUPPORTED	SetDisplayMode is required before present can succeed.
+0x887B0001	D3D10_ERROR_TOO_MANY_UNIQUE_STATE_OBJECTS	The GPU was busy when the operation was requested.
+0x887B0002	D3D10_ERROR_FILE_NOT_FOUND	The driver has rejected the creation of this resource.
+0x887B0003	D3D10_ERROR_TOO_MANY_UNIQUE_VIEW_OBJECTS	The GPU counter was in use by another process or d3d device when application requested access to it.
+0x887C0001	D3D11_ERROR_TOO_MANY_UNIQUE_STATE_OBJECTS	The application has exceeded the maximum number of unique state objects per Direct3D device.\nThe limit is 4096 for feature levels up to 11.1.
+0x887C0002	D3D11_ERROR_FILE_NOT_FOUND	The specified file was not found.
+0x887C0003	D3D11_ERROR_TOO_MANY_UNIQUE_VIEW_OBJECTS	The application has exceeded the maximum number of unique view objects per Direct3D device.\nThe limit is 2^20 for feature levels up to 11.1.
+0x887C0004	D3D11_ERROR_DEFERRED_CONTEXT_MAP_WITHOUT_INITIAL_DISCARD	The application's first call per command list to Map on a deferred context did not use D3D11_MAP_WRITE_DISCARD.
+0x887E0001	D3D12_ERROR_ADAPTER_NOT_FOUND	The blob provided does not match the adapter that the device was created on.
+0x887E0002	D3D12_ERROR_DRIVER_VERSION_MISMATCH	The blob provided was created for a different version of the driver, and must be re-created.
+0x887E0003	D3D12_ERROR_INVALID_REDIST	The D3D12 SDK version configuration of the host exe is invalid.
+0xC0090001	-	The specified event is currently not being audited.
+0xC0090002	-	The SID filtering operation removed all SIDs.
+0xC0090003	-	Business rule scripts are disabled for the calling application.

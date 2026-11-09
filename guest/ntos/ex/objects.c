@@ -5,6 +5,8 @@ POBJECT_TYPE ExEventType;
 POBJECT_TYPE ExMutantType;
 POBJECT_TYPE ExSemaphoreType;
 POBJECT_TYPE ExTimerType;
+POBJECT_TYPE DbgkDebugObjectType;
+#define DEBUG_ALL_ACCESS 0x001F000F
 KUSER_SHARED_DATA *SharedUserData;
 
 void MiSetKuserPage(ULONG64 pa);
@@ -150,6 +152,11 @@ void ExInitialize(void)
     init.DeleteProcedure = timer_delete;
     ObSetGenericMapping(&init, 0x20001, 0x20002, 0x120000, 0x1F0003);
     ExTimerType = ObCreateObjectType(L"Timer", &init);
+    init.DeleteProcedure = nullptr;
+    init.Waitable = FALSE;
+    init.ValidAccessMask = DEBUG_ALL_ACCESS;
+    ObSetGenericMapping(&init, 0x20001, 0x20002, 0x120000, DEBUG_ALL_ACCESS);
+    DbgkDebugObjectType = ObCreateObjectType(L"DebugObject", &init);
     MiInitializeSections();
 }
 
@@ -532,4 +539,73 @@ NTSTATUS NTAPI NtSignalAndWaitForSingleObject(HANDLE signal, HANDLE wait, BOOLEA
         KeReleaseMutant(object, 1, FALSE, TRUE);
     ObDereferenceObject(object);
     return NtWaitForSingleObject(wait, alertable, timeout);
+}
+
+/* ------------------------------------------------------------------ debug objects */
+
+/*
+ * the object a debugger reads the events of a process from. mime attaches no process to one, so a wait for an event
+ * runs into its timeout, as on windows when the debugged process is idle.
+ */
+typedef struct DEBUG_OBJECT {
+    KEVENT EventsPresent;
+    ULONG Flags;
+} DEBUG_OBJECT;
+
+#define DEBUG_KILL_ON_CLOSE 0x1
+
+static void init_debug_object(PVOID body, ULONG_PTR flags, ULONG_PTR unused)
+{
+    DEBUG_OBJECT *debug = body;
+    KeInitializeEvent(&debug->EventsPresent, NotificationEvent, FALSE);
+    debug->Flags = (ULONG)flags;
+}
+
+NTSTATUS NTAPI NtCreateDebugObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, ULONG flags)
+{
+    if (flags & ~DEBUG_KILL_ON_CLOSE)
+        return STATUS_INVALID_PARAMETER;
+    return create_named(DbgkDebugObjectType, sizeof(DEBUG_OBJECT), handle, access, attributes, nullptr,
+                        init_debug_object, flags, 0);
+}
+
+/* DebugObjectKillProcessOnExitInformation is the one class: a ULONG with the kill on close flag. */
+NTSTATUS NTAPI NtSetInformationDebugObject(HANDLE handle, ULONG klass, PVOID info, ULONG length, PULONG returned)
+{
+    if (klass != 1)
+        return STATUS_INVALID_PARAMETER;
+    if (returned) {
+        ULONG need = sizeof(ULONG);
+        if (!NT_SUCCESS(KiCopyToUser(returned, &need, sizeof(need))))
+            return STATUS_ACCESS_VIOLATION;
+    }
+    if (length != sizeof(ULONG))
+        return STATUS_INFO_LENGTH_MISMATCH;
+    ULONG flags;
+    if (!NT_SUCCESS(KiCopyFromUser(&flags, info, sizeof(flags))))
+        return STATUS_ACCESS_VIOLATION;
+    if (flags & ~DEBUG_KILL_ON_CLOSE)
+        return STATUS_INVALID_PARAMETER;
+    DEBUG_OBJECT *debug;
+    NTSTATUS status = ObReferenceHandle(handle, DbgkDebugObjectType, KeGetPreviousMode(), (PVOID *)&debug, nullptr);
+    if (!NT_SUCCESS(status))
+        return status;
+    debug->Flags = flags;
+    ObDereferenceObject(debug);
+    return STATUS_SUCCESS;
+}
+
+NTSTATUS NTAPI NtWaitForDebugEvent(HANDLE handle, BOOLEAN alertable, PLARGE_INTEGER timeout, PVOID state)
+{
+    LARGE_INTEGER t;
+    if (timeout && !NT_SUCCESS(KiCopyFromUser(&t, timeout, sizeof(t))))
+        return STATUS_ACCESS_VIOLATION;
+    DEBUG_OBJECT *debug;
+    NTSTATUS status = ObReferenceHandle(handle, DbgkDebugObjectType, KeGetPreviousMode(), (PVOID *)&debug, nullptr);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = KeWaitForSingleObject(&debug->EventsPresent, Executive, KeGetPreviousMode(), alertable,
+                                   timeout ? &t : nullptr);
+    ObDereferenceObject(debug);
+    return status;
 }

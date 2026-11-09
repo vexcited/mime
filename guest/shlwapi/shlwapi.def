@@ -11,10 +11,10 @@ EXPORTS
     SHUnlockShared @9
     SHFreeShared @10
     SHMapHandle @11 NONAME
-    SHCreateMemStream=shcore.SHCreateMemStream @12
+    SHCreateMemStream=ShlwapiThunk_SHCreateMemStream @12
     GetAcceptLanguagesA=kernelbase.GetAcceptLanguagesA @14
     GetAcceptLanguagesW=kernelbase.GetAcceptLanguagesW @15
-    SHCreateThread=shcore.SHCreateThread @16
+    SHCreateThread=ShlwapiThunk_SHCreateThread @16
     SHWriteDataBlockList @17 NONAME
     SHReadDataBlockList @18 NONAME
     SHFreeDataBlockList @19 NONAME
@@ -163,13 +163,13 @@ EXPORTS
     SHIsEmptyStream @166 NONAME
     SHSetParentHwnd @167 NONAME
     ConnectToConnectionPoint @168
-    IUnknown_AtomicRelease=shcore.IUnknown_AtomicRelease @169
+    IUnknown_AtomicRelease=ShlwapiThunk_IUnknown_AtomicRelease @169
     PathSkipLeadingSlashesA @170 NONAME
     IUnknown_GetWindow @172
     IUnknown_SetOwner @173 NONAME
-    IUnknown_SetSite=shcore.IUnknown_SetSite @174
+    IUnknown_SetSite=ShlwapiThunk_IUnknown_SetSite @174
     IUnknown_GetClassID @175 NONAME
-    IUnknown_QueryService=shcore.IUnknown_QueryService @176
+    IUnknown_QueryService=ShlwapiThunk_IUnknown_QueryService @176
     SHLoadMenuPopup @177 NONAME
     SHPropagateMessage @178 NONAME
     SHMenuIndexFromID @179 NONAME
@@ -177,7 +177,7 @@ EXPORTS
     SHEnableMenuItem @181 NONAME
     SHCheckMenuItem @182 NONAME
     SHRegisterClassA @183 NONAME
-    IStream_Read=shcore.IStream_Read @184
+    IStream_Read=ShlwapiThunk_IStream_Read @184
     SHMessageBoxCheckA @185
     SHSimulateDrop @186 NONAME
     SHLoadFromPropertyBag @187 NONAME
@@ -189,7 +189,7 @@ EXPORTS
     SHIsExpandableFolder @195 NONAME
     SHFillRectClr @197 NONAME
     SHSearchMapInt @198 NONAME
-    IUnknown_Set=shcore.IUnknown_Set @199
+    IUnknown_Set=ShlwapiThunk_IUnknown_Set @199
     MayQSForward @200 NONAME
     MayExecForward @201 NONAME
     IsQSForward @202 NONAME
@@ -201,12 +201,12 @@ EXPORTS
     FDSA_Destroy @209 NONAME
     FDSA_InsertItem @210 NONAME
     FDSA_DeleteItem @211 NONAME
-    IStream_Write=shcore.IStream_Write @212
-    IStream_Reset=shcore.IStream_Reset @213
-    IStream_Size=shcore.IStream_Size @214
-    SHAnsiToUnicode=shcore.SHAnsiToUnicode @215
+    IStream_Write=ShlwapiThunk_IStream_Write @212
+    IStream_Reset=ShlwapiThunk_IStream_Reset @213
+    IStream_Size=ShlwapiThunk_IStream_Size @214
+    SHAnsiToUnicode=ShlwapiThunk_SHAnsiToUnicode @215
     SHAnsiToUnicodeCP @216 NONAME
-    SHUnicodeToAnsi=shcore.SHUnicodeToAnsi @217
+    SHUnicodeToAnsi=ShlwapiThunk_SHUnicodeToAnsi @217
     SHUnicodeToAnsiCP @218
     QISearch=kernelbase.QISearch @219
     SHSetDefaultDialogFont @220 NONAME
@@ -225,7 +225,7 @@ EXPORTS
     SHUnregisterClassesA @238 NONAME
     SHUnregisterClassesW @239 NONAME
     SHDefWindowProc @240 NONAME
-    IUnknown_GetSite=shcore.IUnknown_GetSite @256
+    IUnknown_GetSite=ShlwapiThunk_IUnknown_GetSite @256
     SHCreateWorkerWindowA @257 NONAME
     SHQueueUserWorkItem @260 NONAME
     SHSetTimerQueueTimer @263 NONAME
@@ -239,7 +239,7 @@ EXPORTS
     WhichPlatform @276
     SHCreateWorkerWindowW @278
     SHInvokeDefaultCommand @279 NONAME
-    SHRegGetIntW=shcore.SHRegGetIntW @280
+    SHRegGetIntW=ShlwapiThunk_SHRegGetIntW @280
     SHPackDispParamsV @281
     SHPackDispParams @282 NONAME
     IConnectionPoint_InvokeWithCancel @283 NONAME
@@ -288,8 +288,8 @@ EXPORTS
     FindNextFileWrapW=kernel32.FindNextFileW @341 NONAME
     SHInterlockedCompareExchange @342 NONAME
     SHRegGetCLSIDKey @344 NONAME
-    SHAnsiToAnsi=shcore.SHAnsiToAnsi @345
-    SHUnicodeToUnicode=shcore.SHUnicodeToUnicode @346
+    SHAnsiToAnsi=ShlwapiThunk_SHAnsiToAnsi @345
+    SHUnicodeToUnicode=ShlwapiThunk_SHUnicodeToUnicode @346
     RegDeleteValueWrapW @347 NONAME
     SHGetFileDescriptionW @348 NONAME
     SHGetFileDescriptionA @349 NONAME
@@ -352,7 +352,7 @@ EXPORTS
     SendMessageTimeoutWrapW=user32.SendMessageTimeoutW @434 NONAME
     CLSIDFromProgIDWrap @435 NONAME
     CLSIDFromStringWrap @436 NONAME
-    IsOS=shcore.IsOS @437
+    IsOS=ShlwapiThunk_IsOS @437
     SHLoadRegUIStringA @438 NONAME
     SHLoadRegUIStringW @439 NONAME
     GetEnvironmentVariableWrapW=kernel32.GetEnvironmentVariableW @442 NONAME
@@ -456,7 +456,7 @@ EXPORTS
     AssocGetUrlAction @561 NONAME
     IsInternetESCEnabled562=kernelbase.IsInternetESCEnabled @562 NONAME
     SHPropertyBag_ReadStrAlloc @567
-    IStream_Copy=shcore.IStream_Copy @568
+    IStream_Copy=ShlwapiThunk_IStream_Copy @568
     DelayLoadFailureHook @569
     SHPropertyBag_WriteBSTR @570
     SHInvokeCommandWithFlagsAndSite @571 NONAME
@@ -482,8 +482,8 @@ EXPORTS
     ChrCmpIW=kernelbase.ChrCmpIW @593
     ColorAdjustLuma @594
     ColorHLSToRGB @595
-    IStream_ReadStr=shcore.IStream_ReadStr @596
-    IStream_WriteStr=shcore.IStream_WriteStr @597
+    IStream_ReadStr=ShlwapiThunk_IStream_ReadStr @596
+    IStream_WriteStr=ShlwapiThunk_IStream_WriteStr @597
     SHUnicodeToAnsiCPAlloc @599 NONAME
     SHAnsiToUnicodeCPAlloc @600 NONAME
     ColorRGBToHLS @607
@@ -494,7 +494,7 @@ EXPORTS
     HashData=kernelbase.HashData @612
     SHPropertyBag_WritePropertyKey @613 NONAME
     SHPropertyBag_ReadPropertyKey @614 NONAME
-    SHCreateThreadWithHandle=shcore.SHCreateThreadWithHandle @615
+    SHCreateThreadWithHandle=ShlwapiThunk_SHCreateThreadWithHandle @615
     SHClearViewStatePropertyBag @616 NONAME
     DupWideToAnsi @617 NONAME
     SHWindowsPolicy @618 NONAME
@@ -639,36 +639,36 @@ EXPORTS
     PathUnquoteSpacesA=kernelbase.PathUnquoteSpacesA @758
     PathUnquoteSpacesW=kernelbase.PathUnquoteSpacesW @759
     SHAutoComplete @760
-    SHCopyKeyA=shcore.SHCopyKeyA @761
-    SHCopyKeyW=shcore.SHCopyKeyW @762
+    SHCopyKeyA=ShlwapiThunk_SHCopyKeyA @761
+    SHCopyKeyW=ShlwapiThunk_SHCopyKeyW @762
     SHCreateShellPalette @763
-    SHCreateStreamOnFileA=shcore.SHCreateStreamOnFileA @764
-    SHCreateStreamOnFileEx=shcore.SHCreateStreamOnFileEx @765
-    SHCreateStreamOnFileW=shcore.SHCreateStreamOnFileW @766
-    SHCreateThreadRef=shcore.SHCreateThreadRef @768
-    SHDeleteEmptyKeyA=shcore.SHDeleteEmptyKeyA @769
-    SHDeleteEmptyKeyW=shcore.SHDeleteEmptyKeyW @770
-    SHDeleteKeyA=shcore.SHDeleteKeyA @771
-    SHDeleteKeyW=shcore.SHDeleteKeyW @772
-    SHDeleteValueA=shcore.SHDeleteValueA @775
-    SHDeleteValueW=shcore.SHDeleteValueW @776
-    SHEnumKeyExA=shcore.SHEnumKeyExA @777
-    SHEnumKeyExW=shcore.SHEnumKeyExW @778
-    SHEnumValueA=shcore.SHEnumValueA @779
-    SHEnumValueW=shcore.SHEnumValueW @780
+    SHCreateStreamOnFileA=ShlwapiThunk_SHCreateStreamOnFileA @764
+    SHCreateStreamOnFileEx=ShlwapiThunk_SHCreateStreamOnFileEx @765
+    SHCreateStreamOnFileW=ShlwapiThunk_SHCreateStreamOnFileW @766
+    SHCreateThreadRef=ShlwapiThunk_SHCreateThreadRef @768
+    SHDeleteEmptyKeyA=ShlwapiThunk_SHDeleteEmptyKeyA @769
+    SHDeleteEmptyKeyW=ShlwapiThunk_SHDeleteEmptyKeyW @770
+    SHDeleteKeyA=ShlwapiThunk_SHDeleteKeyA @771
+    SHDeleteKeyW=ShlwapiThunk_SHDeleteKeyW @772
+    SHDeleteValueA=ShlwapiThunk_SHDeleteValueA @775
+    SHDeleteValueW=ShlwapiThunk_SHDeleteValueW @776
+    SHEnumKeyExA=ShlwapiThunk_SHEnumKeyExA @777
+    SHEnumKeyExW=ShlwapiThunk_SHEnumKeyExW @778
+    SHEnumValueA=ShlwapiThunk_SHEnumValueA @779
+    SHEnumValueW=ShlwapiThunk_SHEnumValueW @780
     SHGetInverseCMAP @781
-    SHGetThreadRef=shcore.SHGetThreadRef @782
-    SHGetValueA=shcore.SHGetValueA @783
-    SHGetValueW=shcore.SHGetValueW @784
+    SHGetThreadRef=ShlwapiThunk_SHGetThreadRef @782
+    SHGetValueA=ShlwapiThunk_SHGetValueA @783
+    SHGetValueW=ShlwapiThunk_SHGetValueW @784
     SHIsLowMemoryMachine @785
-    SHOpenRegStream2A=shcore.SHOpenRegStream2A @786
-    SHOpenRegStream2W=shcore.SHOpenRegStream2W @787
-    SHOpenRegStreamA=shcore.SHOpenRegStreamA @788
-    SHOpenRegStreamW=shcore.SHOpenRegStreamW @789
-    SHQueryInfoKeyA=shcore.SHQueryInfoKeyA @790
-    SHQueryInfoKeyW=shcore.SHQueryInfoKeyW @791
-    SHQueryValueExA=shcore.SHQueryValueExA @792
-    SHQueryValueExW=shcore.SHQueryValueExW @793
+    SHOpenRegStream2A=ShlwapiThunk_SHOpenRegStream2A @786
+    SHOpenRegStream2W=ShlwapiThunk_SHOpenRegStream2W @787
+    SHOpenRegStreamA=ShlwapiThunk_SHOpenRegStreamA @788
+    SHOpenRegStreamW=ShlwapiThunk_SHOpenRegStreamW @789
+    SHQueryInfoKeyA=ShlwapiThunk_SHQueryInfoKeyA @790
+    SHQueryInfoKeyW=ShlwapiThunk_SHQueryInfoKeyW @791
+    SHQueryValueExA=ShlwapiThunk_SHQueryValueExA @792
+    SHQueryValueExW=ShlwapiThunk_SHQueryValueExW @793
     SHRegCloseUSKey=kernelbase.SHRegCloseUSKey @794
     SHRegCreateUSKeyA=kernelbase.SHRegCreateUSKeyA @795
     SHRegCreateUSKeyW=kernelbase.SHRegCreateUSKeyW @796
@@ -676,39 +676,39 @@ EXPORTS
     SHRegDeleteEmptyUSKeyW=kernelbase.SHRegDeleteEmptyUSKeyW @798
     SHRegDeleteUSValueA=kernelbase.SHRegDeleteUSValueA @799
     SHRegDeleteUSValueW=kernelbase.SHRegDeleteUSValueW @800
-    SHRegDuplicateHKey=shcore.SHRegDuplicateHKey @801
+    SHRegDuplicateHKey=ShlwapiThunk_SHRegDuplicateHKey @801
     SHRegEnumUSKeyA=kernelbase.SHRegEnumUSKeyA @802
     SHRegEnumUSKeyW=kernelbase.SHRegEnumUSKeyW @803
     SHRegEnumUSValueA=kernelbase.SHRegEnumUSValueA @804
     SHRegEnumUSValueW=kernelbase.SHRegEnumUSValueW @805
     SHRegGetBoolUSValueA=kernelbase.SHRegGetBoolUSValueA @806
     SHRegGetBoolUSValueW=kernelbase.SHRegGetBoolUSValueW @807
-    SHRegGetPathA=shcore.SHRegGetPathA @808
-    SHRegGetPathW=shcore.SHRegGetPathW @809
+    SHRegGetPathA=ShlwapiThunk_SHRegGetPathA @808
+    SHRegGetPathW=ShlwapiThunk_SHRegGetPathW @809
     SHRegGetUSValueA=kernelbase.SHRegGetUSValueA @810
     SHRegGetUSValueW=kernelbase.SHRegGetUSValueW @811
-    SHRegGetValueA=shcore.SHRegGetValueA @812
-    SHRegGetValueW=shcore.SHRegGetValueW @813
+    SHRegGetValueA=ShlwapiThunk_SHRegGetValueA @812
+    SHRegGetValueW=ShlwapiThunk_SHRegGetValueW @813
     SHRegOpenUSKeyA=kernelbase.SHRegOpenUSKeyA @814
     SHRegOpenUSKeyW=kernelbase.SHRegOpenUSKeyW @815
     SHRegQueryInfoUSKeyA=kernelbase.SHRegQueryInfoUSKeyA @816
     SHRegQueryInfoUSKeyW=kernelbase.SHRegQueryInfoUSKeyW @817
     SHRegQueryUSValueA=kernelbase.SHRegQueryUSValueA @818
     SHRegQueryUSValueW=kernelbase.SHRegQueryUSValueW @819
-    SHRegSetPathA=shcore.SHRegSetPathA @820
-    SHRegSetPathW=shcore.SHRegSetPathW @821
+    SHRegSetPathA=ShlwapiThunk_SHRegSetPathA @820
+    SHRegSetPathW=ShlwapiThunk_SHRegSetPathW @821
     SHRegSetUSValueA=kernelbase.SHRegSetUSValueA @822
     SHRegSetUSValueW=kernelbase.SHRegSetUSValueW @823
     SHRegWriteUSValueA=kernelbase.SHRegWriteUSValueA @824
     SHRegWriteUSValueW=kernelbase.SHRegWriteUSValueW @825
     SHRegisterValidateTemplate @826
-    SHReleaseThreadRef=shcore.SHReleaseThreadRef @827
-    SHSetThreadRef=shcore.SHSetThreadRef @828
-    SHSetValueA=shcore.SHSetValueA @829
-    SHSetValueW=shcore.SHSetValueW @830
+    SHReleaseThreadRef=ShlwapiThunk_SHReleaseThreadRef @827
+    SHSetThreadRef=ShlwapiThunk_SHSetThreadRef @828
+    SHSetValueA=ShlwapiThunk_SHSetValueA @829
+    SHSetValueW=ShlwapiThunk_SHSetValueW @830
     SHSkipJunction @831
-    SHStrDupA=shcore.SHStrDupA @832
-    SHStrDupW=shcore.SHStrDupW @833
+    SHStrDupA=ShlwapiThunk_SHStrDupA @832
+    SHStrDupW=ShlwapiThunk_SHStrDupW @833
     ShellMessageBoxA @834
     ShellMessageBoxInternal @835
     StrCSpnA=kernelbase.StrCSpnA @836

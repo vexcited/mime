@@ -117,6 +117,13 @@ void KbInitializeDebug(void)
     RtlSetUnhandledExceptionFilter((PVOID)top_level_filter);
 }
 
+/* windows forwards these to ntdll, whose exports programs follow to its internal routines. */
+#ifdef __x86_64__
+#pragma comment(linker, "/export:AddVectoredExceptionHandler=NTDLL.RtlAddVectoredExceptionHandler")
+#pragma comment(linker, "/export:RemoveVectoredExceptionHandler=NTDLL.RtlRemoveVectoredExceptionHandler")
+#pragma comment(linker, "/export:AddVectoredContinueHandler=NTDLL.RtlAddVectoredContinueHandler")
+#pragma comment(linker, "/export:RemoveVectoredContinueHandler=NTDLL.RtlRemoveVectoredContinueHandler")
+#else
 PVOID WINAPI AddVectoredExceptionHandler(ULONG first, PVECTORED_EXCEPTION_HANDLER handler)
 {
     return RtlAddVectoredExceptionHandler(first, handler);
@@ -136,6 +143,7 @@ ULONG WINAPI RemoveVectoredContinueHandler(PVOID handle)
 {
     return RtlRemoveVectoredContinueHandler(handle);
 }
+#endif
 
 /* windows raises DBG_PRINTEXCEPTION_C for a debugger; without one the text goes straight to the terminal. */
 void WINAPI OutputDebugStringW(LPCWSTR text)
@@ -324,6 +332,16 @@ HRESULT WINAPI WerSetFlags(DWORD flags)
 HRESULT WINAPI WerRegisterMemoryBlock(PVOID address, DWORD size)
 {
     return S_OK;
+}
+
+HRESULT WINAPI WerRegisterCustomMetadata(PCWSTR key, PCWSTR value)
+{
+    return key && value ? S_OK : E_INVALIDARG;
+}
+
+HRESULT WINAPI WerUnregisterCustomMetadata(PCWSTR key)
+{
+    return key ? S_OK : E_INVALIDARG;
 }
 
 HRESULT WINAPI WerRegisterFile(PCWSTR file, int type, DWORD flags)

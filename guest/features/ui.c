@@ -7,7 +7,7 @@
 #include "featurep.h"
 #include <mime/win32/commctrl.h>
 
-#define TITLE L"Mime features"
+#define TITLE L"Windows features"
 #define ID_DOWNLOAD 101
 #define ID_SKIP 102
 #define PROGRESS_RANGE 1000
@@ -38,6 +38,11 @@ static void name_of(RUN *run, WCHAR *name, SIZE_T chars)
     WidenName(run->Feature->DisplayName, name, chars);
 }
 
+static PCWSTR caller_of(RUN *run)
+{
+    return run->Caller[0] ? run->Caller : L"The program";
+}
+
 /* ------------------------------------------------------------------ the question */
 
 static HRESULT CALLBACK consent_callback(HWND window, UINT message, WPARAM wparam, LPARAM lparam, LONG_PTR data)
@@ -57,27 +62,38 @@ static HRESULT CALLBACK consent_callback(HWND window, UINT message, WPARAM wpara
 static BOOL ask(UI *ui)
 {
     RUN *run = ui->Run;
-    WCHAR feature[96], instruction[160], content[640], download[160], skip[160], terms[256] = L"";
+    WCHAR feature[96], instruction[200], content[800], download[160], skip[200], terms[256] = L"";
     name_of(run, feature, RTL_NUMBER_OF(feature));
-    if (run->Caller[0])
+    if (run->Font[0])
+        _snwprintf(instruction, RTL_NUMBER_OF(instruction), L"%ls needs the font %ls, which comes with this feature:",
+                   caller_of(run), run->Font);
+    else if (run->Caller[0])
         _snwprintf(instruction, RTL_NUMBER_OF(instruction), L"%ls on your PC needs the following feature:", run->Caller);
     else
         _snwprintf(instruction, RTL_NUMBER_OF(instruction), L"A program on your PC needs the following feature:");
     if (run->Feature->DownloadMB)
         _snwprintf(content, RTL_NUMBER_OF(content),
-                   L"%ls\n\nMime gets it from Microsoft, about %lu MB. Nothing is downloaded unless you agree.", feature,
+                   L"%ls\n\nWindows gets it from Microsoft, about %lu MB. Nothing is downloaded unless you agree.", feature,
                    run->Feature->DownloadMB);
     else
         _snwprintf(content, RTL_NUMBER_OF(content),
-                   L"%ls\n\nMime gets it from Microsoft. Nothing is downloaded unless you agree.", feature);
+                   L"%ls\n\nWindows gets it from Microsoft. Nothing is downloaded unless you agree.", feature);
     _snwprintf(download, RTL_NUMBER_OF(download), L"Download and install this feature\nThe program carries on when it is done.");
-    _snwprintf(skip, RTL_NUMBER_OF(skip), L"Skip this installation\nNothing is downloaded, the program may not work without it.");
+    if (run->Font[0]) {
+        SIZE_T used = wcslen(content);
+        _snwprintf(content + used, RTL_NUMBER_OF(content) - used, L" %ls cannot run without it and is closed if it is not installed.",
+                   caller_of(run));
+        _snwprintf(skip, RTL_NUMBER_OF(skip), L"Skip this installation\nNothing is downloaded and %ls is closed.",
+                   run->Caller[0] ? run->Caller : L"the program");
+    } else {
+        _snwprintf(skip, RTL_NUMBER_OF(skip), L"Skip this installation\nNothing is downloaded, the program may not work without it.");
+    }
     if (run->Feature->Terms) {
         WidenName(run->Feature->Terms, terms, RTL_NUMBER_OF(terms));
         SIZE_T used = wcslen(content);
         _snwprintf(content + used, RTL_NUMBER_OF(content) - used, L"\n\n%ls", terms);
     }
-    instruction[RTL_NUMBER_OF(instruction) - 1] = content[RTL_NUMBER_OF(content) - 1] = 0;
+    instruction[RTL_NUMBER_OF(instruction) - 1] = content[RTL_NUMBER_OF(content) - 1] = skip[RTL_NUMBER_OF(skip) - 1] = 0;
     TASKDIALOG_BUTTON buttons[] = {{ID_DOWNLOAD, download}, {ID_SKIP, skip}};
     TASKDIALOGCONFIG config = {.cbSize = sizeof(config),
                                .dwFlags = TDF_USE_COMMAND_LINKS | TDF_ALLOW_DIALOG_CANCELLATION,
@@ -271,6 +287,32 @@ static void show_failure(UI *ui, DWORD error)
     TaskDialogIndirect(&config, nullptr, nullptr, nullptr);
 }
 
+/* A program that asked for a font does not go on without it, gdi32 ends it when this returns. */
+static void show_closing(UI *ui, DWORD error)
+{
+    RUN *run = ui->Run;
+    WCHAR instruction[160], message[300], content[700];
+    _snwprintf(instruction, RTL_NUMBER_OF(instruction), L"%ls is closed", caller_of(run));
+    instruction[RTL_NUMBER_OF(instruction) - 1] = 0;
+    if (error == FEATURE_ERROR_CANCELLED) {
+        _snwprintf(content, RTL_NUMBER_OF(content),
+                   L"It cannot run without the font %ls, which was not installed. It asks again the next time it starts.",
+                   run->Font);
+    } else {
+        ErrorMessage(error, message, RTL_NUMBER_OF(message));
+        _snwprintf(content, RTL_NUMBER_OF(content), L"It cannot run without the font %ls, which could not be installed.\n\n%ls%ls%ls",
+                   run->Font, message, run->Detail[0] ? L"\n\n" : L"", run->Detail);
+    }
+    content[RTL_NUMBER_OF(content) - 1] = 0;
+    TASKDIALOGCONFIG config = {.cbSize = sizeof(config),
+                               .dwCommonButtons = TDCBF_CLOSE_BUTTON,
+                               .pszWindowTitle = TITLE,
+                               .pszMainIcon = TD_ERROR_ICON,
+                               .pszMainInstruction = instruction,
+                               .pszContent = content};
+    run->Told = SUCCEEDED(TaskDialogIndirect(&config, nullptr, nullptr, nullptr));
+}
+
 DWORD UiRun(RUN *run, DWORD (*worker)(RUN *run))
 {
     if (!run->Dialogs)
@@ -311,7 +353,10 @@ DWORD UiRun(RUN *run, DWORD (*worker)(RUN *run))
     WaitForSingleObject(ui.Thread, INFINITE);
     CloseHandle(ui.Thread);
     run->Ui = nullptr;
-    if (shown && ui.Result != FEATURE_OK)
+    if (run->Font[0] && ui.Result != FEATURE_OK && ui.Result != FEATURE_ERROR_ABANDONED &&
+        ui.Result != FEATURE_ERROR_NO_INTERFACE)
+        show_closing(&ui, ui.Result);
+    else if (shown && ui.Result != FEATURE_OK)
         show_failure(&ui, ui.Result);
     CloseHandle(ui.ConsentAsked);
     CloseHandle(ui.ConsentAnswered);

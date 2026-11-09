@@ -50,6 +50,10 @@ EXPORTS
     CM_Get_Device_IDW=cfgmgr32.CM_Get_Device_IDW
     CM_Get_Device_IDA=cfgmgr32.CM_Get_Device_IDA
     CM_Get_Device_ID_Size=cfgmgr32.CM_Get_Device_ID_Size
+    CM_Get_Device_ID_List_SizeW=cfgmgr32.CM_Get_Device_ID_List_SizeW
+    CM_Get_Device_ID_List_SizeA=cfgmgr32.CM_Get_Device_ID_List_SizeA
+    CM_Get_Device_ID_ListW=cfgmgr32.CM_Get_Device_ID_ListW
+    CM_Get_Device_ID_ListA=cfgmgr32.CM_Get_Device_ID_ListA
     CM_Get_DevNode_Status=cfgmgr32.CM_Get_DevNode_Status
     CM_Get_DevNode_Registry_PropertyW=cfgmgr32.CM_Get_DevNode_Registry_PropertyW
     CM_Get_DevNode_Registry_PropertyA=cfgmgr32.CM_Get_DevNode_Registry_PropertyA
@@ -75,6 +79,8 @@ EXPORTS
     SetupQueryInfVersionInformationA
     SetupGetInfFileListW
     SetupGetInfFileListA
+    SetupGetInfDriverStoreLocationW
+    SetupGetInfDriverStoreLocationA
     SetupFindFirstLineW
     SetupFindFirstLineA
     SetupFindNextLine

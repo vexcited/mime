@@ -158,8 +158,9 @@ static const SCHAR g_class_base[] = {8, 4, 8, 13, 24, 6, 10};
 static void process_delete(PVOID object)
 {
     PEPROCESS process = object;
-    if (process->AddressSpace.Root)
-        MmDeleteAddressSpace(&process->AddressSpace);
+    MmFreeAddressSpaceRoot(&process->AddressSpace);
+    if (process->MmLockedRanges)
+        ExFreePool(process->MmLockedRanges);
     PSECTION image = __atomic_exchange_n(&process->ImageSection, nullptr, __ATOMIC_ACQ_REL);
     if (image)
         ObDereferenceObject(image);
@@ -330,23 +331,45 @@ NTSTATUS NTAPI NtTerminateProcess(HANDLE handle, NTSTATUS exit_status)
     return STATUS_SUCCESS;
 }
 
-/* the limited rights are for what anyone may see. */
+/* the image's device path, as SeLocateProcessImageName keeps it: \Device\HarddiskVolumeN then the path. bytes, no nul. */
+ULONG PsGetDeviceImagePath(PEPROCESS process, PWCHAR out, ULONG capacity)
+{
+    const WCHAR *path = process->ImagePath.Buffer;
+    ULONG n = process->ImagePath.Length, prefix = 0;
+    if (n >= 2 * sizeof(WCHAR) && path[1] == L':') {
+        static const WCHAR system_volume[] = L"\\Device\\HarddiskVolume1", host_volume[] = L"\\Device\\HarddiskVolume2";
+        const WCHAR *volume = (path[0] | 0x20) == L'c' ? system_volume : host_volume;
+        prefix = (ULONG)wcslen(volume) * sizeof(WCHAR);
+        if (prefix > capacity)
+            return 0;
+        memcpy(out, volume, prefix);
+        path += 2;
+        n -= 2 * sizeof(WCHAR);
+    }
+    if (prefix + n > capacity)
+        n = capacity - prefix;
+    memcpy((PUCHAR)out + prefix, path, n);
+    return prefix + n;
+}
+
+/*
+ * the right each class needs, as NtQueryInformationProcess asks ObReferenceObjectByHandle for it: most need only the
+ * limited query right, a few the full one, some also memory or handle rights.
+ */
 static ACCESS_MASK query_rights(PROCESSINFOCLASS klass)
 {
     switch ((ULONG)klass) {
-    case ProcessBasicInformation:
-    case ProcessTimes:
-    case ProcessPriorityClass:
-    case ProcessPriorityBoost:
-    case ProcessImageFileName:
-    case ProcessImageFileNameWin32:
-    case ProcessHandleCount:
-    case ProcessWow64Information:
-    case ProcessSessionInformation:
-    case ProcessProtectionInformation:
-        return PROCESS_QUERY_LIMITED_INFORMATION;
-    default:
+    case 7: case 14: case 19: case 23: case 30: case 31: case 32: case 44: case 49: case 54: case 55: case 59:
+    case 72: case 73: case 87: case 96:
         return PROCESS_QUERY_INFORMATION;
+    case 10: case 34:
+        return PROCESS_QUERY_INFORMATION | PROCESS_VM_READ;
+    case 28: case 58:
+        return PROCESS_QUERY_INFORMATION | PROCESS_DUP_HANDLE;
+    case 84:
+        return PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_OPERATION;
+    default:
+        return PROCESS_QUERY_LIMITED_INFORMATION;
     }
 }
 
@@ -412,16 +435,208 @@ static void process_times(PEPROCESS process, ULONG64 *times)
     times[3] = user;
 }
 
+#define ProcessDeviceMap 23
+#ifndef FILE_DEVICE_CD_ROM
+#define FILE_DEVICE_CD_ROM 0x00000002
+#endif
+#ifndef FILE_REMOVABLE_MEDIA
+#define FILE_REMOVABLE_MEDIA 0x00000001
+#endif
+
+/*
+ * like ObQueryDeviceMapInformation: a bit for each drive letter the dos device directory has, and its type, a
+ * DOSDEVICE_DRIVE value, from the device the link leads to.
+ */
+static void query_device_map(PULONG drives, PUCHAR types)
+{
+    *drives = 0;
+    memset(types, 0, 32);
+    for (ULONG i = 0; i < 26; i++) {
+        WCHAR path[] = L"\\GLOBAL??\\X:";
+        path[10] = (WCHAR)(L'A' + i);
+        UNICODE_STRING name;
+        RtlInitUnicodeString(&name, path);
+        PVOID link;
+        if (!NT_SUCCESS(ObLookupObjectName(&name, nullptr, OBJ_OPENLINK | OBJ_CASE_INSENSITIVE, ObSymbolicLinkType,
+                                           KernelMode, nullptr, &link)))
+            continue;
+        ObDereferenceObject(link);
+        PDEVICE_OBJECT device;
+        if (!NT_SUCCESS(ObLookupObjectName(&name, nullptr, OBJ_CASE_INSENSITIVE, IoDeviceObjectType, KernelMode, nullptr,
+                                           (PVOID *)&device)))
+            continue;
+        /* the second disk is the host share; a single-disk machine is more ordinary than one with a stray volume. */
+        if (device == IoGetHostVolumeDevice()) {
+            ObDereferenceObject(device);
+            continue;
+        }
+        *drives |= 1u << i;
+        types[i] = 3; /* DOSDEVICE_DRIVE_FIXED */
+        if (device->DeviceType == FILE_DEVICE_CD_ROM)
+            types[i] = 5;
+        else if (device->Characteristics & FILE_REMOTE_DEVICE)
+            types[i] = 4;
+        else if (device->Characteristics & FILE_REMOVABLE_MEDIA)
+            types[i] = 2;
+        ObDereferenceObject(device);
+    }
+}
+
+/* reads the process parameters' bytes at an offset in the process, the 64-bit block even for wow64. */
+static NTSTATUS read_parameters(PEPROCESS process, ULONG offset, PVOID out, ULONG size)
+{
+    if (!process->Peb)
+        return STATUS_PROCESS_IS_TERMINATING;
+    PKPROCESS saved;
+    KeStackAttachProcess(&process->Pcb, &saved);
+    ULONG_PTR parameters = 0;
+    NTSTATUS status = KiCopyFromUser(&parameters, (PUCHAR)process->Peb + 0x20, sizeof(parameters));
+    if (NT_SUCCESS(status))
+        status = parameters ? KiCopyFromUser(out, (PUCHAR)parameters + offset, size) : STATUS_UNSUCCESSFUL;
+    KeUnstackDetachProcess(&saved);
+    return status;
+}
+
+/* a string of the process parameters, at most capacity bytes, read from the process. */
+static NTSTATUS read_parameter_string(PEPROCESS process, ULONG offset, PWCHAR out, ULONG capacity, PULONG bytes)
+{
+    UNICODE_STRING s;
+    NTSTATUS status = read_parameters(process, offset, &s, sizeof(s));
+    if (!NT_SUCCESS(status))
+        return status;
+    *bytes = s.Length;
+    if (s.Length > capacity)
+        return STATUS_BUFFER_OVERFLOW;
+    PKPROCESS saved;
+    KeStackAttachProcess(&process->Pcb, &saved);
+    status = s.Length ? KiCopyFromUser(out, s.Buffer, s.Length) : STATUS_SUCCESS;
+    KeUnstackDetachProcess(&saved);
+    return status;
+}
+
+/*
+ * ProcessCommandLineInformation, ProcessWindowInformation, ProcessUptimeInformation and
+ * ProcessSecurityDomainInformation, as windows answers them; FALSE for any other class.
+ */
+static BOOLEAN query_more(PEPROCESS process, ULONG klass, PVOID info, ULONG length, PULONG returned, NTSTATUS *result)
+{
+    enum { TEXT_BYTES = 0x8000 };
+    if (klass != 50 && klass != 60 && klass != 88 && klass != 92)
+        return FALSE;
+    PWCHAR text = nullptr;
+    if (klass == 50 || klass == 60) {
+        text = ExAllocatePool2(POOL_FLAG_NON_PAGED, TEXT_BYTES + sizeof(WCHAR), KI_TAG('P', 's', 'P', 'a'));
+        if (!text) {
+            *result = STATUS_INSUFFICIENT_RESOURCES;
+            return TRUE;
+        }
+    }
+    ULONG size = 0;
+    NTSTATUS status;
+    switch (klass) {
+    case 60: { /* a UNICODE_STRING and its text after it, its buffer pointing there. */
+        ULONG bytes = 0;
+        status = read_parameter_string(process, 0x70, text, TEXT_BYTES, &bytes);
+        size = sizeof(UNICODE_STRING) + bytes + sizeof(WCHAR);
+        if (NT_SUCCESS(status) && length < size)
+            status = STATUS_INFO_LENGTH_MISMATCH;
+        if (NT_SUCCESS(status)) {
+            text[bytes / sizeof(WCHAR)] = 0;
+            UNICODE_STRING us = {(USHORT)bytes, (USHORT)(bytes + sizeof(WCHAR)), (PWSTR)((PUCHAR)info + sizeof(UNICODE_STRING))};
+            status = KiCopyToUser(info, &us, sizeof(us));
+            if (NT_SUCCESS(status))
+                status = KiCopyToUser((PUCHAR)info + sizeof(us), text, bytes + sizeof(WCHAR));
+        }
+        break;
+    }
+    case 50: { /* the window flags, the title's length and the title, which only user mode may ask for. */
+        if (KeGetPreviousMode() != UserMode) {
+            status = STATUS_UNSUCCESSFUL;
+            break;
+        }
+        ULONG flags = 0;
+        status = read_parameters(process, 0xA4, &flags, sizeof(flags));
+        ULONG bytes = 0;
+        if (NT_SUCCESS(status))
+            status = read_parameter_string(process, 0xB0, text, TEXT_BYTES, &bytes);
+        size = 6 + bytes;
+        if (NT_SUCCESS(status) && length < size)
+            status = STATUS_INFO_LENGTH_MISMATCH;
+        if (NT_SUCCESS(status)) {
+            UCHAR head[6];
+            *(PULONG)head = flags;
+            *(PUSHORT)(head + 4) = (USHORT)bytes;
+            status = KiCopyToUser(info, head, sizeof(head));
+            if (NT_SUCCESS(status) && bytes)
+                status = KiCopyToUser((PUCHAR)info + 6, text, bytes);
+        }
+        break;
+    }
+    case 88: { /* PROCESS_UPTIME_INFORMATION, cut to the buffer. */
+        ULONG64 u[7] = {};
+        LARGE_INTEGER system_time;
+        KeQuerySystemTime(&system_time);
+        ULONG64 now = KeQueryInterruptTime(), system = (ULONG64)system_time.QuadPart;
+        u[0] = now;
+        u[1] = now;
+        u[2] = process->Exited ? now - (system - process->ExitTime) : 0;
+        u[3] = (process->Exited ? process->ExitTime : system) - process->CreateTime;
+        u[4] = u[3];
+        u[5] = 0;
+        u[6] = process->Exited ? 0x200 : 0; /* Terminated */
+        size = length < sizeof(u) ? length : sizeof(u);
+        status = KiCopyToUser(info, u, size);
+        break;
+    }
+    case 92: { /* the security domain, one for each process. */
+        if (length != sizeof(ULONG64)) {
+            status = STATUS_INFO_LENGTH_MISMATCH;
+            break;
+        }
+        ULONG64 domain = 0x100000000ull | (ULONG64)(ULONG_PTR)process->UniqueProcessId;
+        size = sizeof(domain);
+        status = KiCopyToUser(info, &domain, size);
+        break;
+    }
+    }
+    if (text)
+        ExFreePool(text);
+    if (returned && (NT_SUCCESS(status) || status == STATUS_INFO_LENGTH_MISMATCH))
+        KiCopyToUser(returned, &size, sizeof(size));
+    *result = status;
+    return TRUE;
+}
+
 NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PVOID info, ULONG length,
                                          PULONG returned)
 {
     NTSTATUS status = KiProbeReturnLength(returned);
     if (!NT_SUCCESS(status))
         return status;
+    /* like windows, these two check the length before the handle. */
+    if ((ULONG)klass == ProcessDeviceMap) {
+        /* PROCESS_DEVICEMAP_INFORMATION, or the _EX form whose flags may only ask for the luid device map. */
+        if (length != 36 && length != 48)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        if (length == 48) {
+            ULONG flags;
+            status = KiCopyFromUser(&flags, (PUCHAR)info + 40, sizeof(flags));
+            if (!NT_SUCCESS(status))
+                return status;
+            if (flags & ~1u)
+                return STATUS_INVALID_PARAMETER;
+        }
+    } else if ((ULONG)klass == ProcessImageInformation && length != sizeof(SECTION_IMAGE_INFORMATION)) {
+        return STATUS_INFO_LENGTH_MISMATCH;
+    }
     PEPROCESS process;
     status = PsReferenceProcessHandle(handle, query_rights(klass), &process);
     if (!NT_SUCCESS(status))
         return status;
+    if (query_more(process, (ULONG)klass, info, length, returned, &status)) {
+        ObDereferenceObject(process);
+        return status;
+    }
     union {
         PROCESS_BASIC_INFORMATION basic;
         ULONG_PTR ptr;
@@ -443,6 +658,26 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         break;
     case ProcessIoCounters:
         size = 48;
+        break;
+    case ProcessDeviceMap: {
+        ULONG drives;
+        UCHAR types[32];
+        query_device_map(&drives, types);
+        status = KiCopyToUser(info, &drives, sizeof(drives));
+        if (NT_SUCCESS(status))
+            status = KiCopyToUser((PUCHAR)info + 4, types, sizeof(types));
+        if (NT_SUCCESS(status) && returned)
+            KiCopyToUser(returned, &length, sizeof(length));
+        ObDereferenceObject(process);
+        return status;
+    }
+    case ProcessImageInformation:
+        if (!process->ImageSection) {
+            status = STATUS_PROCESS_IS_TERMINATING;
+            break;
+        }
+        MmGetSectionImageInformation(process->ImageSection, (SECTION_IMAGE_INFORMATION *)out.bytes);
+        size = sizeof(SECTION_IMAGE_INFORMATION);
         break;
     case MX_PROCESS_SHUTDOWN_PARAMETERS:
         out.u32[0] = process->ShutdownLevel;
@@ -478,9 +713,9 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         size = sizeof(ULONG_PTR);
         break;
     case ProcessHandleCount:
-        /* current and peak handle count. */
+        /* the count alone, or with the peak after it: dbghelp asks for the four bytes, and a dump with handles failed. */
         out.u32[0] = out.u32[1] = (ULONG)process->HandleTable.Count;
-        size = 8;
+        size = length == 4 ? 4 : 8;
         break;
     case ProcessWow64Information:
         /* the 32-bit peb of a wow64 process, else 0. */
@@ -545,23 +780,16 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
     case ProcessImageFileNameWin32: {
         UNICODE_STRING *us = (UNICODE_STRING *)out.bytes;
         PUCHAR text = out.bytes + sizeof(UNICODE_STRING);
-        const WCHAR *path = process->ImagePath.Buffer;
-        ULONG n = process->ImagePath.Length;
-        ULONG prefix = 0;
+        ULONG capacity = sizeof(out.bytes) - sizeof(UNICODE_STRING) - sizeof(WCHAR);
         /* ProcessImageFileName gives the device path, the win32 class the drive path. */
-        if ((ULONG)klass == ProcessImageFileName && n >= 2 * sizeof(WCHAR) && path[1] == L':') {
-            static const WCHAR system_volume[] = L"\\Device\\HarddiskVolume1", host_volume[] = L"\\Device\\HarddiskVolume2";
-            const WCHAR *volume = (path[0] | 0x20) == L'c' ? system_volume : host_volume;
-            prefix = (ULONG)wcslen(volume) * sizeof(WCHAR);
-            memcpy(text, volume, prefix);
-            path += 2;
-            n -= 2 * sizeof(WCHAR);
-        }
-        us->Length = (USHORT)(prefix + n);
-        us->MaximumLength = (USHORT)(prefix + n + 2);
+        ULONG n = (ULONG)klass == ProcessImageFileName ? PsGetDeviceImagePath(process, (PWCHAR)text, capacity)
+                  : process->ImagePath.Length <= capacity ? process->ImagePath.Length : capacity;
+        if ((ULONG)klass != ProcessImageFileName)
+            memcpy(text, process->ImagePath.Buffer, n);
+        us->Length = (USHORT)n;
+        us->MaximumLength = (USHORT)(n + 2);
         us->Buffer = (PWSTR)((PUCHAR)info + sizeof(UNICODE_STRING));
-        memcpy(text + prefix, path, n);
-        size = sizeof(UNICODE_STRING) + prefix + n + 2;
+        size = sizeof(UNICODE_STRING) + n + 2;
         break;
     }
     default:
@@ -613,10 +841,43 @@ static void set_process_affinity(PEPROCESS process, ULONG64 mask)
         process->Peb->ActiveProcessAffinityMask = mask;
 }
 
+/*
+ * ProcessInstrumentationCallback, like windows: the callback alone or PROCESS_INSTRUMENTATION_CALLBACK_INFORMATION
+ * with version and reserved zero. another process than the caller's needs the debug privilege. a null callback turns
+ * it off.
+ */
+static NTSTATUS set_instrumentation_callback(HANDLE handle, PVOID info, ULONG length)
+{
+    if (length != 8 && length != 16)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    ULONG64 in[2] = {};
+    NTSTATUS status = KiCopyFromUser(length == 8 ? &in[1] : in, info, length);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (in[0] >> 32)
+        return STATUS_INVALID_PARAMETER;
+    if ((ULONG)in[0])
+        return (NTSTATUS)0xC0000058L; /* STATUS_UNKNOWN_REVISION */
+    if ((LONG64)(in[1] << 16) >> 16 != (LONG64)in[1])
+        return STATUS_INVALID_PARAMETER;
+    PEPROCESS process;
+    status = PsReferenceProcessHandle(handle, PROCESS_SET_INFORMATION, &process);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (process != PsCurrentProcess() && !SeThreadHasPrivilege(SE_DEBUG_PRIVILEGE))
+        status = STATUS_PRIVILEGE_NOT_HELD;
+    else
+        process->InstrumentationCallback = (PVOID)in[1];
+    ObDereferenceObject(process);
+    return status;
+}
+
 NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PVOID info, ULONG length)
 {
     if (klass == ProcessAccessToken)
         return SepSetProcessAccessToken(handle, info, length);
+    if ((ULONG)klass == 40) /* ProcessInstrumentationCallback */
+        return set_instrumentation_callback(handle, info, length);
     if (klass == ProcessMitigationPolicy)
         return PspSetMitigationPolicy(handle, info, length);
     ULONG expected = 0;
@@ -744,18 +1005,17 @@ static ACCESS_MASK map_thread_access(ACCESS_MASK access)
 /* of the attributes, only handle inheritance matters. */
 static NTSTATUS open_attributes(POBJECT_ATTRIBUTES attributes, PCLIENT_ID cid, CLIENT_ID *id, ULONG *handle_attributes)
 {
+    /*
+     * like PsOpenProcess and PsOpenThread: the attributes are read without looking at their length, only the
+     * name, which must be absent since these are found by id, and the handle attributes.
+     */
     OBJECT_ATTRIBUTES oa;
     *handle_attributes = 0;
-    if (attributes) {
-        if (!NT_SUCCESS(KiCopyFromUser(&oa, attributes, sizeof(oa))))
-            return STATUS_ACCESS_VIOLATION;
-        if (oa.Length != sizeof(oa))
-            return STATUS_INVALID_PARAMETER;
-        /* processes and threads are found by id, not by name. */
-        if (oa.ObjectName)
-            return STATUS_INVALID_PARAMETER_MIX;
-        *handle_attributes = oa.Attributes & OBJ_INHERIT;
-    }
+    if (!attributes || !NT_SUCCESS(KiCopyFromUser(&oa, attributes, sizeof(oa))))
+        return STATUS_ACCESS_VIOLATION;
+    if (oa.ObjectName)
+        return STATUS_INVALID_PARAMETER_MIX;
+    *handle_attributes = oa.Attributes & OBJ_INHERIT;
     if (!cid || !NT_SUCCESS(KiCopyFromUser(id, cid, sizeof(*id))))
         return STATUS_INVALID_PARAMETER_MIX;
     return STATUS_SUCCESS;

@@ -24,13 +24,18 @@ typedef struct MIMEFS_COUNTERS {
 typedef struct MIMEFS_VOLUME {
     ULONG HostVolume;
     ULONG Serial;
+    BOOLEAN Raw; /* the disk device, \\.\PhysicalDrive0, which has the volume's drive behind it. */
     WCHAR Label[32];
     /* what the volume read and wrote, for each processor, as the statistics of the file system tell. */
     MIMEFS_COUNTERS Counters[MIMEFS_MAX_CPUS];
 } MIMEFS_VOLUME;
 
+static NTSTATUS volume_bytes(MIMEFS_VOLUME *vol, ULONGLONG *bytes);
+
 typedef struct MIMEFS_FCB {
     const MimeRomEntry *Rom; /* set for system files served from the rom. */
+    ULONG64 Genuine;         /* host handle of microsoft's copy of a rom file, 0 when none is ready, see host/genuine.c. */
+    ULONG64 GenuineSize;     /* its size, which reads and data sections of the rom file show instead of the rom's. */
     MIMEFS_CACHE *Cache;     /* read only opens of host files. */
     ULONG Volume;
     ULONG64 FileId;
@@ -103,6 +108,7 @@ static NTSTATUS complete(PIRP irp, NTSTATUS status, ULONG_PTR info)
 }
 
 static PDRIVER_OBJECT g_driver;
+static PDEVICE_OBJECT g_host_volume;
 
 BOOLEAN MimeFsLockIdentity(PFILE_OBJECT file, PULONG volume, PULONG64 file_id)
 {
@@ -140,8 +146,9 @@ static BOOLEAN access_time_disabled(void)
 static void rom_info(const MimeRomEntry *rom, MimeFsInfo *info)
 {
     memset(info, 0, sizeof(*info));
-    info->size = rom->size;
-    info->allocation_size = (rom->size + PAGE_SIZE - 1) & ~(ULONG64)(PAGE_SIZE - 1);
+    /* while the host holds microsoft's copy of the file, its size is the one reads and listings show. */
+    info->size = HalGenuineReady(rom) ? rom->genuine_size : rom->size;
+    info->allocation_size = (info->size + PAGE_SIZE - 1) & ~(ULONG64)(PAGE_SIZE - 1);
     info->creation_time = info->access_time = info->write_time = info->change_time = HalRomFiletime();
     /* an ntfs file reference: sequence number 1, mft records after the reserved ones. */
     info->file_id = (1ull << 48) | (0x1000 + (ULONG64)(rom - HalRomEntry(0)));
@@ -214,12 +221,50 @@ static NTSTATUS create_rom(PIRP irp, PFILE_OBJECT file, const MimeRomEntry *rom,
     return complete(irp, STATUS_SUCCESS, FILE_OPENED);
 }
 
+/* the device of the host share, which the drive list can leave out so the machine looks single-disked. */
+PDEVICE_OBJECT IoGetHostVolumeDevice(void)
+{
+    return g_host_volume;
+}
+
 /* the rom file behind a file object of this driver, for zero copy image sections. */
 const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file)
 {
     if (!file->DeviceObject || file->DeviceObject->DriverObject != g_driver || !file->FsContext)
         return nullptr;
     return ((MIMEFS_FCB *)file->FsContext)->Rom;
+}
+
+/*
+ * the host handle of microsoft's copy of a rom file, opened on the first read or data section that needs it, 0 when
+ * none is ready. one open per file object at most: an open, a stat or an image load never asks for it. GenuineSize is
+ * published before the handle, so a reader that sees the handle sees the size.
+ */
+static ULONG64 ensure_genuine(MIMEFS_FCB *fcb)
+{
+    ULONG64 handle = __atomic_load_n(&fcb->Genuine, __ATOMIC_ACQUIRE);
+    if (handle)
+        return handle;
+    if (!HalGenuineReady(fcb->Rom))
+        return 0;
+    MimeFsInfo *info = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*info), KI_TAG('M', 'f', 'G', 'i'));
+    if (!info)
+        return 0;
+    ULONG64 opened = 0;
+    ULONG64 hs = HalHypercallUnlocked(MIME_HC_GENUINE_OPEN, fcb->Rom->genuine - 1, HalPhysicalOf(info), 0, 0, 0, 0,
+                                      &opened);
+    ULONG64 size = info->size;
+    ExFreePool(info);
+    if (hs != MIME_HC_STATUS_OK || !opened)
+        return 0;
+    fcb->GenuineSize = size;
+    ULONG64 expected = 0;
+    if (!__atomic_compare_exchange_n(&fcb->Genuine, &expected, opened, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        /* another reader opened it first: keep theirs and close ours. */
+        HalHypercallUnlocked(MIME_HC_FS_CLOSE, opened, 0, 0, 0, 0, 0, nullptr);
+        return expected;
+    }
+    return opened;
 }
 
 /*
@@ -234,6 +279,7 @@ typedef struct MIMEFS_WINDOW_REF {
     ULONG Volume;
     ULONG64 FileId;
     BOOLEAN Image; /* the window of an image section. */
+    BOOLEAN Genuine; /* a private window of a rom file's genuine host handle, released by unmapping alone. */
 } MIMEFS_WINDOW_REF;
 
 static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info);
@@ -247,6 +293,23 @@ BOOLEAN IoGetFileWindowEx(PFILE_OBJECT file, BOOLEAN writable, ULONG64 minimum_s
     if (fcb->Rom) {
         if (writable)
             return FALSE;
+        /* a data section of a rom file whose genuine copy is open maps that copy; otherwise mime's own bytes. */
+        ULONG64 genuine = ensure_genuine(fcb);
+        if (genuine) {
+            MIMEFS_WINDOW_REF *r = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*r), KI_TAG('M', 'f', 'W', 'r'));
+            ULONG64 window = 0;
+            if (r && FsCacheMapPrivate(genuine, FALSE, &window)) {
+                memset(r, 0, sizeof(*r));
+                r->Private = window;
+                r->Genuine = TRUE;
+                *pa = window;
+                *size = fcb->GenuineSize;
+                *ref = r;
+                return TRUE;
+            }
+            if (r)
+                ExFreePool(r);
+        }
         *pa = HalRomPhysical(fcb->Rom);
         *size = fcb->Rom->size;
         return TRUE;
@@ -307,6 +370,15 @@ BOOLEAN IoGetFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *re
 
 BOOLEAN IoGetImageFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref)
 {
+    *ref = nullptr;
+    /* an image maps the code mime runs, while reads and data sections see the genuine copy of the file. */
+    if (file->DeviceObject && file->DeviceObject->DriverObject == g_driver && file->FsContext &&
+        ((MIMEFS_FCB *)file->FsContext)->Rom) {
+        const MimeRomEntry *rom = ((MIMEFS_FCB *)file->FsContext)->Rom;
+        *pa = HalRomPhysical(rom);
+        *size = rom->size;
+        return TRUE;
+    }
     if (!IoGetFileWindowEx(file, FALSE, 0, pa, size, ref))
         return FALSE;
     MIMEFS_WINDOW_REF *r = *ref;
@@ -326,6 +398,11 @@ void IoReleaseFileWindow(PVOID ref)
         FsCacheClose(r->Cache);
     if (r->Private)
         FsCacheUnmapPrivate(r->Private);
+    if (r->Genuine) {
+        /* a genuine window of a rom file is not counted among the writable mappings of a host file. */
+        ExFreePool(r);
+        return;
+    }
     if (r->Image)
         FsWbImageMapped(r->Volume, r->FileId, -1);
     FsWbMapped(r->Volume, r->FileId, -1);
@@ -561,6 +638,13 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
         ExFreePool(req);
         if (disposition != FILE_OPEN && disposition != FILE_OPEN_IF)
             return complete(irp, STATUS_OBJECT_NAME_COLLISION, 0);
+        file->FsContext = nullptr;
+        return complete(irp, STATUS_SUCCESS, FILE_OPENED);
+    }
+    /* the parts under a disk, \Device\Harddisk0\Partition1, and \Device\Harddisk0\DR0, are the drive too. */
+    if (vol->Raw && disposition == FILE_OPEN &&
+        ((chars >= 9 && !_wcsnicmp(name, L"Partition", 9)) || (chars == 3 && !_wcsnicmp(name, L"DR0", 3)))) {
+        ExFreePool(req);
         file->FsContext = nullptr;
         return complete(irp, STATUS_SUCCESS, FILE_OPENED);
     }
@@ -852,12 +936,18 @@ static NTSTATUS NTAPI mimefs_close(PDEVICE_OBJECT device, PIRP irp)
     PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
     MIMEFS_FCB *fcb = file->FsContext;
     if (fcb && fcb->Rom) {
+        if (fcb->Genuine)
+            HalHypercallUnlocked(MIME_HC_FS_CLOSE, fcb->Genuine, 0, 0, 0, 0, 0, nullptr);
         ExFreePool(fcb);
         file->FsContext = nullptr;
     } else if (fcb) {
         FsWbClose(&fcb->Wb);
         if (fcb->Cache)
             FsCacheClose(fcb->Cache);
+        /* like ntfs, whose MmFlushImageSection fails while an image of the file is in use, a mapped image or a
+           loaded driver outlives the delete asked of it: the file stays. */
+        if (fcb->DeleteOnClose && !fcb->Directory && FsWbIsImageMapped(fcb->Volume, fcb->FileId))
+            fcb->DeleteOnClose = FALSE;
         if (fcb->DeleteOnClose)
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
         if (fcb->DeleteOnClose) {
@@ -938,13 +1028,161 @@ static NTSTATUS mimefs_append(PIRP irp, PIO_STACK_LOCATION stack, MIMEFS_FCB *fc
     return complete(irp, status, done);
 }
 
+/* -------------------------------------------------- the first sectors of the drive */
+
+/*
+ * \\.\PhysicalDrive0 reads the sector table of the reference machine's disk: a protective mbr, as a gpt disk of the
+ * uefi firmware has, and its header and partition table. the table is a windows 11 layout: recovery, efi system,
+ * microsoft reserved and the windows partition, which is the volume of C:. the drive has no sectors of its own, so
+ * they are made at each read from the size of the volume and the uuid of the machine.
+ */
+#define GPT_ENTRIES 128
+#define GPT_AREA (GPT_ENTRIES * 128)
+#define GPT_FIRST 34ull /* the header at 1 and the table at 2..33 come before the first usable sector. */
+
+static const UCHAR gpt_recovery[16] = {0xA4, 0xBB, 0x94, 0xDE, 0xD1, 0x06, 0x40, 0x4D,
+                                       0xA1, 0x6A, 0xBF, 0xD5, 0x01, 0x79, 0xD6, 0xAC};
+static const UCHAR gpt_esp[16] = {0x28, 0x73, 0x2A, 0xC1, 0x1F, 0xF8, 0xD2, 0x11,
+                                  0xBA, 0x4B, 0x00, 0xA0, 0xC9, 0x3E, 0xC9, 0x3B};
+static const UCHAR gpt_msr[16] = {0x16, 0xE3, 0xC9, 0xE3, 0x5C, 0x0B, 0xB8, 0x4D,
+                                  0x81, 0x7D, 0xF9, 0x2D, 0xF0, 0x02, 0x15, 0xAE};
+static const UCHAR gpt_basic[16] = {0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44,
+                                    0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7};
+
+static ULONG gpt_crc(const UCHAR *data, ULONG length)
+{
+    ULONG crc = 0xFFFFFFFF;
+    for (ULONG i = 0; i < length; i++) {
+        crc ^= data[i];
+        for (ULONG bit = 0; bit < 8; bit++)
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1)));
+    }
+    return ~crc;
+}
+
+static void put32(UCHAR *at, ULONG value)
+{
+    memcpy(at, &value, sizeof(value));
+}
+
+static void put64(UCHAR *at, ULONG64 value)
+{
+    memcpy(at, &value, sizeof(value));
+}
+
+static void gpt_guid(UCHAR *out, UCHAR index)
+{
+    memcpy(out, HalBootInfo->system_uuid, 16);
+    out[0] ^= (UCHAR)(index * 0x5B);
+    out[8] += index;
+    out[6] = (UCHAR)((out[6] & 0x0F) | 0x40); /* version 4 */
+    out[8] = (UCHAR)((out[8] & 0x3F) | 0x80); /* the rfc 4122 variant */
+}
+
+static void gpt_entry(UCHAR *entry, UCHAR index, const UCHAR *type, ULONG first, ULONG last, ULONG64 attributes,
+                      const WCHAR *name)
+{
+    memcpy(entry, type, 16);
+    gpt_guid(entry + 16, index);
+    put64(entry + 32, first);
+    put64(entry + 40, last);
+    put64(entry + 48, attributes);
+    for (ULONG i = 0; name[i] && i < 36; i++)
+        entry[56 + i * 2] = (UCHAR)name[i];
+}
+
+static NTSTATUS disk_read(PIRP irp, PIO_STACK_LOCATION stack, MIMEFS_VOLUME *vol)
+{
+    ULONG length = stack->Parameters.Read.Length;
+    ULONG64 offset = (ULONG64)stack->Parameters.Read.ByteOffset.QuadPart;
+    ULONGLONG bytes;
+    NTSTATUS status = volume_bytes(vol, &bytes);
+    if (!NT_SUCCESS(status))
+        return complete(irp, status, 0);
+    if (offset >= bytes)
+        return complete(irp, STATUS_END_OF_FILE, 0);
+    if (length > bytes - offset)
+        length = (ULONG)(bytes - offset);
+    if (!length)
+        return complete(irp, STATUS_SUCCESS, 0);
+
+    ULONG64 total = bytes / 512;
+    ULONG64 last = total > GPT_FIRST + 1 ? total - GPT_FIRST : GPT_FIRST + 1;
+    UCHAR *area = ExAllocatePool2(POOL_FLAG_NON_PAGED, 512 + 512 + GPT_AREA, KI_TAG('D', 's', 'k', 'S'));
+    if (!area)
+        return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+    UCHAR *mbr = area, *header = area + 512, *entries = area + 1024;
+    memset(area, 0, 512 + 512 + GPT_AREA);
+
+    /* the protective mbr covers the disk with a single type 0xee partition. */
+    UCHAR *entry = mbr + 446;
+    entry[1] = 0x00;
+    entry[2] = 0x02;
+    entry[3] = 0x00;
+    entry[4] = 0xEE;
+    entry[5] = 0xFF;
+    entry[6] = 0xFF;
+    entry[7] = 0xFF;
+    put32(entry + 8, 1);
+    put32(entry + 12, total - 1 > 0xFFFFFFFFull ? 0xFFFFFFFFu : (ULONG)(total - 1));
+    mbr[510] = 0x55;
+    mbr[511] = 0xAA;
+
+    /* the windows layout: recovery, efi system, microsoft reserved and the data partition of the volume. */
+    gpt_entry(entries + 0 * 128, 1, gpt_recovery, 2048, 208895, 0x8000000000000001ull, L"Recovery");
+    gpt_entry(entries + 1 * 128, 2, gpt_esp, 208896, 395263, 0, L"EFI system partition");
+    gpt_entry(entries + 2 * 128, 3, gpt_msr, 395264, 411647, 0x8000000000000000ull, L"Microsoft reserved partition");
+    if (last > 411648)
+        gpt_entry(entries + 3 * 128, 4, gpt_basic, 411648, (ULONG)(last > 0xFFFFFFFFull ? 0xFFFFFFFFu : last), 0,
+                  L"Basic data partition");
+
+    memcpy(header, "EFI PART", 8);
+    put32(header + 8, 0x00010000);
+    put32(header + 12, 92);
+    put32(header + 20, 1);
+    put64(header + 24, (ULONG64)(total - 1));
+    put64(header + 32, GPT_FIRST);
+    put64(header + 40, total - GPT_FIRST);
+    gpt_guid(header + 56, 0);
+    put64(header + 72, 2);
+    put32(header + 80, GPT_ENTRIES);
+    put32(header + 84, 128);
+    put32(header + 88, gpt_crc(entries, GPT_AREA));
+    put32(header + 16, gpt_crc(header, 92));
+
+    /* the answered part of the sector table, wherever the read lands in it. */
+    struct {
+        ULONG64 At;
+        ULONG Length;
+        PUCHAR Data;
+    } parts[] = {{0, 512, mbr}, {512, 512, header}, {1024, GPT_AREA, entries}};
+    PUCHAR out = irp->UserBuffer;
+    memset(out, 0, length);
+    for (ULONG i = 0; i < RTL_NUMBER_OF(parts); i++) {
+        ULONG64 from = parts[i].At, to = parts[i].At + parts[i].Length;
+        if (offset + length <= from || offset >= to)
+            continue;
+        ULONG64 start = offset > from ? offset : from;
+        ULONG64 end = offset + length < to ? offset + length : to;
+        memcpy(out + (start - offset), parts[i].Data + (start - from), (SIZE_T)(end - start));
+    }
+    ExFreePool(area);
+    return complete(irp, STATUS_SUCCESS, length);
+}
+
 static NTSTATUS NTAPI mimefs_read_write(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
     MIMEFS_FCB *fcb = stack->FileObject->FsContext;
     BOOLEAN write = stack->MajorFunction == IRP_MJ_WRITE;
-    if (!fcb)
-        return complete(irp, STATUS_INVALID_HANDLE, 0);
+    if (!fcb) {
+        MIMEFS_VOLUME *raw = device->DeviceExtension;
+        if (!raw->Raw)
+            return complete(irp, STATUS_INVALID_HANDLE, 0);
+        if (write)
+            return complete(irp, STATUS_SUCCESS, stack->Parameters.Write.Length);
+        return disk_read(irp, stack, raw);
+    }
     if (fcb->Directory)
         return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
     /* the link has no data. */
@@ -958,6 +1196,38 @@ static NTSTATUS NTAPI mimefs_read_write(PDEVICE_OBJECT device, PIRP irp)
     if (fcb->Rom) {
         if (write)
             return complete(irp, STATUS_ACCESS_DENIED, 0);
+        /* microsoft's copy is open: reads of the file come from it, byte for byte, through the host handle. */
+        ULONG64 genuine = ensure_genuine(fcb);
+        if (genuine) {
+            if (offset >= fcb->GenuineSize)
+                return complete(irp, STATUS_END_OF_FILE, 0);
+            ULONG want = fcb->GenuineSize - offset < length ? (ULONG)(fcb->GenuineSize - offset) : length;
+            PUCHAR bounce = ExAllocatePool2(POOL_FLAG_NON_PAGED, want < MIMEFS_CHUNK ? want : MIMEFS_CHUNK,
+                                            KI_TAG('M', 'f', 'B', 'n'));
+            if (!bounce)
+                return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+            ULONG64 bounce_pa = HalPhysicalOf(bounce);
+            ULONG done = 0;
+            NTSTATUS status = STATUS_SUCCESS;
+            while (done < want) {
+                ULONG n = want - done < MIMEFS_CHUNK ? want - done : MIMEFS_CHUNK;
+                ULONG64 got = 0;
+                ULONG64 hs = HalHypercallUnlocked(MIME_HC_FS_READ, genuine, offset + done, bounce_pa, n, 0, 0, &got);
+                if (hs != MIME_HC_STATUS_OK) {
+                    status = host_status(hs, FALSE);
+                    break;
+                }
+                if (got)
+                    memcpy(user + done, bounce, got);
+                done += (ULONG)got;
+                if (got < n)
+                    break;
+            }
+            ExFreePool(bounce);
+            if (NT_SUCCESS(status) && done == 0)
+                status = STATUS_END_OF_FILE;
+            return complete(irp, status, done);
+        }
         if (offset >= fcb->Rom->size)
             return complete(irp, STATUS_END_OF_FILE, 0);
         ULONG n = fcb->Rom->size - offset < length ? (ULONG)(fcb->Rom->size - offset) : length;
@@ -2013,6 +2283,7 @@ static NTSTATUS NTAPI mimefs_set_security(PDEVICE_OBJECT device, PIRP irp)
 #define IOCTL_STORAGE_CHECK_VERIFY 0x002D4800u
 #define IOCTL_DISK_GET_DRIVE_GEOMETRY_EX 0x000700A0u
 #define IOCTL_DISK_GET_LENGTH_INFO 0x0007405Cu
+#define IOCTL_DISK_GET_PARTITION_INFO_EX 0x00070048u
 #define IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS 0x00560000u
 
 typedef struct MIMEFS_DEVICE_NUMBER {
@@ -2034,7 +2305,25 @@ typedef struct MIMEFS_DEVICE_DESCRIPTOR {
     ULONG SerialNumberOffset;
     ULONG BusType;
     ULONG RawPropertiesLength;
+    UCHAR RawDeviceProperties[1];
 } MIMEFS_DEVICE_DESCRIPTOR;
+
+typedef struct MIMEFS_ADAPTER_DESCRIPTOR {
+    ULONG Version;
+    ULONG Size;
+    ULONG MaximumTransferLength;
+    ULONG MaximumPhysicalPages;
+    ULONG AlignmentMask;
+    BOOLEAN AdapterUsesPio;
+    BOOLEAN AdapterScansDown;
+    BOOLEAN CommandQueueing;
+    BOOLEAN AcceleratedTransfer;
+    UCHAR BusType;
+    USHORT BusMajorVersion;
+    USHORT BusMinorVersion;
+    UCHAR SrbType;
+    UCHAR AddressType;
+} MIMEFS_ADAPTER_DESCRIPTOR;
 
 typedef struct MIMEFS_DISK_GEOMETRY {
     LONGLONG Cylinders;
@@ -2068,11 +2357,30 @@ static void drive_serial(PUCHAR out)
 
 static NTSTATUS storage_query(PIRP irp, PIO_STACK_LOCATION stack, MIMEFS_VOLUME *vol, ULONG length)
 {
-    /* only the standard query of the device property is answered. */
+    /* only the standard queries of the device and the adapter are answered. */
     if (stack->Parameters.DeviceIoControl.InputBufferLength < 8)
         return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
     const ULONG *query = irp->UserBuffer;
-    if (query[0] != 0 || query[1] != 0)
+    if (query[1] != 0)
+        return complete(irp, STATUS_INVALID_PARAMETER, 0);
+    if (query[0] == 1) {
+        if (length < sizeof(MIMEFS_ADAPTER_DESCRIPTOR))
+            return complete(irp, STATUS_BUFFER_TOO_SMALL, sizeof(MIMEFS_ADAPTER_DESCRIPTOR));
+        MIMEFS_ADAPTER_DESCRIPTOR *adapter = (MIMEFS_ADAPTER_DESCRIPTOR *)irp->UserBuffer;
+        memset(adapter, 0, sizeof(*adapter));
+        adapter->Version = sizeof(*adapter);
+        adapter->Size = sizeof(*adapter);
+        adapter->MaximumTransferLength = 0x100000;
+        adapter->MaximumPhysicalPages = 0x100000 / 4096;
+        adapter->AlignmentMask = 3;
+        adapter->AdapterScansDown = TRUE;
+        adapter->CommandQueueing = TRUE;
+        adapter->AcceleratedTransfer = TRUE;
+        adapter->BusType = 0x11; /* Nvme */
+        adapter->SrbType = 1;    /* Scsi request block. */
+        return complete(irp, STATUS_SUCCESS, sizeof(*adapter));
+    }
+    if (query[0] != 0)
         return complete(irp, STATUS_INVALID_PARAMETER, 0);
 
     static const char vendor[] = "NVMe    ";
@@ -2127,7 +2435,7 @@ static NTSTATUS NTAPI mimefs_device_control(PDEVICE_OBJECT device, PIRP irp)
         MIMEFS_DEVICE_NUMBER *number = (MIMEFS_DEVICE_NUMBER *)irp->UserBuffer;
         number->DeviceType = FILE_DEVICE_DISK;
         number->DeviceNumber = vol->HostVolume;
-        number->PartitionNumber = vol->HostVolume + 1;
+        number->PartitionNumber = vol->Raw ? 0 : vol->HostVolume + 1;
         return complete(irp, STATUS_SUCCESS, sizeof(*number));
     }
     case IOCTL_STORAGE_CHECK_VERIFY:
@@ -2141,6 +2449,32 @@ static NTSTATUS NTAPI mimefs_device_control(PDEVICE_OBJECT device, PIRP irp)
             return complete(irp, STATUS_BUFFER_TOO_SMALL, sizeof(bytes));
         *(ULONGLONG *)irp->UserBuffer = bytes;
         return complete(irp, STATUS_SUCCESS, sizeof(bytes));
+    }
+    case IOCTL_DISK_GET_PARTITION_INFO_EX: {
+        /*
+         * the data partition of the layout, the volume: style, ordinal, offset, length, number, the two flags, then
+         * the gpt part as its type, id, attributes and name.
+         */
+        ULONGLONG bytes;
+        NTSTATUS status = volume_bytes(vol, &bytes);
+        if (!NT_SUCCESS(status))
+            return complete(irp, status, 0);
+        ULONG need = 32 + 2 * sizeof(GUID) + sizeof(ULONGLONG) + 36 * sizeof(WCHAR);
+        if (length < need)
+            return complete(irp, STATUS_BUFFER_TOO_SMALL, need);
+        UCHAR *out = irp->UserBuffer;
+        memset(out, 0, need);
+        *(ULONG *)out = 1; /* partition style: gpt */
+        *(USHORT *)(out + 4) = 4; /* ordinal */
+        *(LONGLONG *)(out + 8) = (LONGLONG)(411648ull * 512);
+        *(LONGLONG *)(out + 16) = (LONGLONG)bytes;
+        *(ULONG *)(out + 24) = 4; /* partition number */
+        UCHAR *gpt = out + 32;
+        memcpy(gpt, gpt_basic, sizeof(gpt_basic));
+        gpt_guid(gpt + sizeof(GUID), 4);
+        static const WCHAR name[] = L"Basic data partition";
+        memcpy(gpt + 2 * sizeof(GUID) + sizeof(ULONGLONG), name, sizeof(name) - sizeof(WCHAR));
+        return complete(irp, STATUS_SUCCESS, need);
     }
     case IOCTL_DISK_GET_DRIVE_GEOMETRY_EX: {
         ULONGLONG bytes;
@@ -2492,6 +2826,51 @@ static NTSTATUS reparse_delete(PFILE_OBJECT file, MIMEFS_FCB *fcb, const REPARSE
     return status;
 }
 
+/*
+ * FSCTL_QUERY_USN_JOURNAL: the system volume is ntfs with its change journal active, as on any windows install. the
+ * journal's identity comes from the volume serial, its next usn grows with what the volume wrote, and the record
+ * versions are windows 11's. the buffer decides the version of the answer, the largest that fits.
+ */
+#define FSCTL_QUERY_USN_JOURNAL 0x000900F4u
+
+typedef struct MIMEFS_USN_JOURNAL_DATA {
+    ULONG64 UsnJournalID;
+    LONG64 FirstUsn, NextUsn, LowestValidUsn, MaxUsn;
+    ULONG64 MaximumSize, AllocationDelta;
+    USHORT MinSupportedMajorVersion, MaxSupportedMajorVersion;
+    ULONG Flags;
+    ULONG64 RangeTrackChunkSize;
+    LONG64 RangeTrackFileSizeThreshold;
+} MIMEFS_USN_JOURNAL_DATA;
+
+#define USN_JOURNAL_DATA_V0_SIZE 56
+#define USN_JOURNAL_DATA_V1_SIZE 64
+
+static NTSTATUS query_usn_journal(PIRP irp, MIMEFS_VOLUME *vol, ULONG length)
+{
+    if (vol->HostVolume != MIME_FS_VOLUME_SYSTEM)
+        return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    if (length < USN_JOURNAL_DATA_V0_SIZE)
+        return complete(irp, STATUS_BUFFER_TOO_SMALL, 0);
+    MIMEFS_USN_JOURNAL_DATA d = {};
+    ULONG64 writes = 0;
+    for (ULONG i = 0; i < MIMEFS_MAX_CPUS; i++)
+        writes += vol->Counters[i].Writes;
+    d.UsnJournalID = 0x01D7000000000000ull | vol->Serial;
+    d.FirstUsn = 0;
+    d.NextUsn = 0x10000000ll + (LONG64)writes * 0x60;
+    d.LowestValidUsn = 0;
+    d.MaxUsn = 0x7FFFFFFFFFFF0000ll;
+    d.MaximumSize = 0x2000000;
+    d.AllocationDelta = 0x800000;
+    d.MinSupportedMajorVersion = 2;
+    d.MaxSupportedMajorVersion = 4;
+    ULONG size = length >= sizeof(d) ? sizeof(d) : length >= USN_JOURNAL_DATA_V1_SIZE ? USN_JOURNAL_DATA_V1_SIZE
+                                                                                       : USN_JOURNAL_DATA_V0_SIZE;
+    memcpy(irp->AssociatedIrp.SystemBuffer, &d, size);
+    return complete(irp, STATUS_SUCCESS, size);
+}
+
 static NTSTATUS NTAPI mimefs_fs_control(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
@@ -2520,6 +2899,8 @@ static NTSTATUS NTAPI mimefs_fs_control(PDEVICE_OBJECT device, PIRP irp)
         return fs_statistics(irp, vol, length, FALSE);
     case FSCTL_FILESYSTEM_GET_STATISTICS_EX:
         return fs_statistics(irp, vol, length, TRUE);
+    case FSCTL_QUERY_USN_JOURNAL:
+        return query_usn_journal(irp, vol, length);
     default:
         return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
     }
@@ -2547,6 +2928,8 @@ static NTSTATUS create_volume(PDRIVER_OBJECT driver, PCWSTR name, ULONG host_vol
     RtlInitUnicodeString(&n, name);
     PDEVICE_OBJECT device;
     NTSTATUS status = IoCreateDevice(driver, sizeof(MIMEFS_VOLUME), &n, FILE_DEVICE_DISK_FILE_SYSTEM, 0, FALSE, &device);
+    if (NT_SUCCESS(status) && host_volume == MIME_FS_VOLUME_HOST)
+        g_host_volume = device;
     if (!NT_SUCCESS(status))
         return status;
     MIMEFS_VOLUME *vol = device->DeviceExtension;
@@ -2554,6 +2937,23 @@ static NTSTATUS create_volume(PDRIVER_OBJECT driver, PCWSTR name, ULONG host_vol
     vol->Serial = serial;
     for (ULONG i = 0; label[i] && i + 1 < RTL_NUMBER_OF(vol->Label); i++)
         vol->Label[i] = (UCHAR)label[i];
+    device->Flags &= ~DO_DEVICE_INITIALIZING;
+    return STATUS_SUCCESS;
+}
+
+/* the disk the volume sits on, \\.\PhysicalDrive0: its ioctls and first sectors are the volume's drive. */
+static NTSTATUS create_disk(PDRIVER_OBJECT driver, ULONG serial)
+{
+    UNICODE_STRING n;
+    RtlInitUnicodeString(&n, L"\\Device\\Harddisk0");
+    PDEVICE_OBJECT device;
+    NTSTATUS status = IoCreateDevice(driver, sizeof(MIMEFS_VOLUME), &n, FILE_DEVICE_DISK, 0, FALSE, &device);
+    if (!NT_SUCCESS(status))
+        return status;
+    MIMEFS_VOLUME *vol = device->DeviceExtension;
+    vol->HostVolume = MIME_FS_VOLUME_SYSTEM;
+    vol->Serial = serial;
+    vol->Raw = TRUE;
     device->Flags &= ~DO_DEVICE_INITIALIZING;
     return STATUS_SUCCESS;
 }
@@ -2587,5 +2987,7 @@ NTSTATUS MimeFsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
     if (NT_SUCCESS(status))
         status = create_volume(driver, L"\\Device\\HarddiskVolume2", MIME_FS_VOLUME_HOST, HalBootInfo->host_volume_label,
                                serial * 2654435761u | 1);
+    if (NT_SUCCESS(status))
+        status = create_disk(driver, serial);
     return status;
 }

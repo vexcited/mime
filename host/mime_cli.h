@@ -12,6 +12,7 @@ int mime_cmd_config(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_apps(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_uninstall(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_features(const MimePaths *paths, int argc, char **argv);
+int mime_cmd_genuine(const MimePaths *paths, int argc, char **argv);
 
 /* entry point of the background machine process, see instance.h. */
 int mime_vmm_main(const MimePaths *paths, int lock_fd);

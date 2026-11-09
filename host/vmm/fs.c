@@ -26,6 +26,7 @@
 
 #define FILE_ATTRIBUTE_READONLY 0x01
 #define FILE_ATTRIBUTE_HIDDEN 0x02
+#define FILE_ATTRIBUTE_SYSTEM 0x04
 #define FILE_ATTRIBUTE_DIRECTORY 0x10
 #define FILE_ATTRIBUTE_REPARSE_POINT 0x400
 #define FILE_ATTRIBUTE_ARCHIVE 0x20
@@ -160,6 +161,23 @@ static struct timespec filetime_to_ts(uint64_t filetime)
     return (struct timespec){.tv_sec = (time_t)(ticks / 10000000ull), .tv_nsec = (long)(ticks % 10000000ull) * 100};
 }
 
+/* names windows keeps both hidden and system, which no unix file mode says. */
+static bool system_name(const char *path, const char *name)
+{
+    static const char *const names[] = {"$Recycle.Bin", "System Volume Information", "Documents and Settings",
+                                        "pagefile.sys", "hiberfil.sys", "swapfile.sys", "DumpStack.log.tmp",
+                                        "Application Data", "Local Settings", "My Documents", "My Music",
+                                        "My Pictures", "My Videos", "NetHood", "PrintHood", "Recent", "SendTo",
+                                        "Templates", "Start Menu", "Cookies", "All Users", "Default User", "Default"};
+    static const char config[] = "Windows/System32/config";
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+        if (!strcasecmp(name, names[i]))
+            return true;
+    /* the hive folder is hidden too, and only that one is called config. */
+    size_t length = strlen(path), tail = sizeof(config) - 1;
+    return length > tail && !strcasecmp(path + length - tail, config);
+}
+
 static void fill_info(const MimeFsStat *s, const char *path, int fd, const char *name, MimeFsInfo *info)
 {
     const struct stat *st = &s->st;
@@ -191,6 +209,8 @@ static void fill_info(const MimeFsStat *s, const char *path, int fd, const char 
     }
     if (name && name[0] == '.' && strcmp(name, ".") != 0 && strcmp(name, "..") != 0)
         attrs |= FILE_ATTRIBUTE_HIDDEN;
+    if (name && system_name(path, name))
+        attrs |= FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM;
     info->attributes = attrs;
 }
 
@@ -1253,6 +1273,40 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     case MIME_HC_FS_OPEN: {
         MimeFsOpen *req = mime_vm_phys(vm, a[1], sizeof(MimeFsOpen));
         status = req ? fs_open(vm, req) : MIME_HC_STATUS_INVALID;
+        break;
+    }
+    case MIME_HC_GENUINE_OPEN: {
+        /* the host's checked copy of a manifest entry, as a read-only handle in the same table the guest reads. */
+        MimeFsInfo *info = mime_vm_phys(vm, a[2], sizeof(MimeFsInfo));
+        char path[MIME_PATH_MAX];
+        if (!info || !mime_genuine_path((uint32_t)a[1], path, sizeof(path))) {
+            status = MIME_HC_STATUS_NOT_FOUND;
+            break;
+        }
+        int fd = open_quiet(path, O_RDONLY | O_CLOEXEC, 0);
+        MimeFsStat ms;
+        if (fd < 0 || mime_fs_fstat(fd, &ms) != 0) {
+            if (fd >= 0)
+                close(fd);
+            status = MIME_HC_STATUS_NOT_FOUND;
+            break;
+        }
+        MimeFsHandle *fh = mime_xcalloc(1, sizeof(*fh));
+        fh->fd = fd;
+        fh->volume = MIME_FS_VOLUME_GENUINE;
+        fh->no_access_update = true;
+        fh->host_path = mime_xstrdup(path);
+        uint64_t h = alloc_handle(vm, fh);
+        if (!h) {
+            close(fd);
+            free(fh->host_path);
+            free(fh);
+            status = MIME_HC_STATUS_NO_MEMORY;
+            break;
+        }
+        const char *name = strrchr(path, '/');
+        fill_info(&ms, path, fd, name ? name + 1 : path, info);
+        regs[1] = h;
         break;
     }
     case MIME_HC_FS_CLOSE:

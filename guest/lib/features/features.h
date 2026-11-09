@@ -43,6 +43,8 @@ typedef enum FEATURE_HANDLER {
     FEATURE_HANDLER_FONTS,
     /* The x64 Visual C++ runtime, taken out of Microsoft's redistributable into SysX64 for the x64 programs. */
     FEATURE_HANDLER_VCRUNTIME,
+    /* Microsoft's signed catalogs of the system packages, into CatRoot. Each is checked against the hash the list names. */
+    FEATURE_HANDLER_CATALOGS,
 } FEATURE_HANDLER;
 
 /* What the file that is fetched for a feature is, and so how it is checked and read. */
@@ -53,7 +55,7 @@ typedef enum FEATURE_FORMAT {
     FEATURE_FORMAT_WIM,      /* Streams of a Windows image read by range, found by their SHA-1. */
 } FEATURE_FORMAT;
 
-/* A font file of a feature of fonts. The name and the hashes are those of the real file of Microsoft. */
+/* A file a feature names by hash, a font or a catalog. The name and the hashes are those of the real file of Microsoft. */
 typedef struct FEATURE_FONT {
     const char *File;      /* The name in the fonts folder, and in the cabinet or the package that holds it. */
     const char *Member;    /* The path in a zip file, else null. */
@@ -142,9 +144,6 @@ typedef struct FEATURE_OPS {
     FEATURE_STATE (*GetState)(void *context, const FEATURE_DEF *feature);
     /* Records the state, the error of the last attempt and whether the files were there before the attempt. */
     void (*SetState)(void *context, const FEATURE_DEF *feature, FEATURE_STATE state, uint32_t error, bool from_drive);
-    /* Whether the user said no a short while ago, so that a program that asks again is not asked again. */
-    bool (*RecentlyDeclined)(void *context, const FEATURE_DEF *feature);
-    void (*SetDeclined)(void *context, const FEATURE_DEF *feature);
     /* Asks the user. Returns FEATURE_OK for yes. */
     uint32_t (*Consent)(void *context, const FEATURE_DEF *feature);
     void (*Stage)(void *context, const FEATURE_DEF *feature, FEATURE_STAGE stage);

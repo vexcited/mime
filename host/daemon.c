@@ -549,8 +549,21 @@ static void get_display(MimeDisplayInfo *info)
         info->dpi = (uint32_t)dpi;
 }
 
+/* the layout keeps its generation going up across the copies, so the guest sees each change. */
+static void get_keyboard(void)
+{
+    MimeKeyboardLayout layout;
+    if (!g_vm.boot || !mime_ui_get_keyboard(&layout))
+        return;
+    layout.generation = g_vm.boot->keyboard.generation + 1;
+    g_vm.boot->keyboard = layout;
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+}
+
 static void on_input(void *ctx, const MimeInputEvent *ev)
 {
+    if (ev->type == MIME_INPUT_KEYMAP)
+        get_keyboard();
     /* the guest reads the new display from its boot information. */
     if (ev->type == MIME_INPUT_DISPLAY) {
         if (!g_vm.boot)
@@ -822,6 +835,8 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     if (!mime_vm_start(&g_vm))
         return 1;
     mime_memory_monitor_start(&g_vm);
+    /* fetches and announces microsoft's copies of the system files, in the background, see host/genuine.c. */
+    mime_genuine_start(&g_vm);
     uint64_t started_ns = mime_now_ns();
 
     /*
@@ -837,6 +852,7 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
      */
     mime_vk_warm_up();
     get_display(&g_vm.boot->display);
+    get_keyboard();
     __atomic_store_n(&g_vm.boot->display_ready, 1, __ATOMIC_RELEASE);
     mime_info("display %ux%u at %u dpi", g_vm.boot->display.width, g_vm.boot->display.height,
               g_vm.boot->display.dpi);

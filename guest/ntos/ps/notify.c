@@ -27,12 +27,19 @@ typedef struct _IMAGE_INFO {
     ULONG ImageSectionNumber;
 } IMAGE_INFO, *PIMAGE_INFO;
 
+typedef struct _IMAGE_INFO_EX {
+    SIZE_T Size;
+    IMAGE_INFO ImageInfo;
+    PFILE_OBJECT FileObject;
+} IMAGE_INFO_EX;
+
 typedef void(NTAPI *PCREATE_PROCESS_NOTIFY_ROUTINE_EX)(PEPROCESS process, HANDLE id, PPS_CREATE_NOTIFY_INFO info);
 typedef void(NTAPI *PLOAD_IMAGE_NOTIFY_ROUTINE)(PUNICODE_STRING name, HANDLE process, PIMAGE_INFO info);
 
 #define IMAGE_ADDRESSING_MODE_32BIT 3
 #define IMAGE_INFO_SYSTEM_MODE (1u << 8)
 #define IMAGE_INFO_MAPPED_TO_ALL_PIDS (1u << 9)
+#define IMAGE_INFO_EXTENDED_INFO_PRESENT (1u << 10)
 
 static PVOID g_process[NOTIFY_SLOTS];
 static BOOLEAN g_process_ex[NOTIFY_SLOTS];
@@ -109,6 +116,9 @@ NTSTATUS PspNotifyProcessCreate(PEPROCESS process, PCUNICODE_STRING image, PCUNI
     info.ParentProcessId = process->InheritedFromUniqueProcessId;
     info.CreatingThreadId.UniqueProcess = PsGetCurrentProcessId();
     info.CreatingThreadId.UniqueThread = PsGetCurrentThreadId();
+    /* like PspCallProcessNotifyRoutines, the image's file object, and the name it was opened by when there is one. */
+    info.FileObject = process->ImageSection ? process->ImageSection->File : nullptr;
+    info.Flags = image ? 1 : 0; /* FileOpenNameAvailable */
     info.ImageFileName = image;
     info.CommandLine = command_line;
     info.CreationStatus = STATUS_SUCCESS;
@@ -152,22 +162,27 @@ void PspNotifyThread(PETHREAD thread, BOOLEAN create)
     }
 }
 
-/* an image mapped into a process, or a driver loaded when process is null. */
-void PspNotifyImage(PCUNICODE_STRING name, PEPROCESS process, PVOID base, SIZE_T size, USHORT machine)
+/*
+ * an image mapped into a process, or a driver loaded when process is null. like PsCallImageNotifyRoutines, the routines
+ * get the info inside an IMAGE_INFO_EX with the image's file object, which drivers reach through ExtendedInfoPresent,
+ * and like MiCallImageNotify the addressing mode is IMAGE_ADDRESSING_MODE_32BIT whatever the machine.
+ */
+void PspNotifyImage(PCUNICODE_STRING name, PEPROCESS process, PVOID base, SIZE_T size, PFILE_OBJECT file)
 {
     if (!name || !name->Length)
         return;
-    IMAGE_INFO info = {};
-    info.Properties = process ? 0 : IMAGE_INFO_SYSTEM_MODE;
-    if (machine == IMAGE_FILE_MACHINE_I386)
-        info.Properties |= IMAGE_ADDRESSING_MODE_32BIT;
-    info.ImageBase = base;
-    info.ImageSize = size;
+    IMAGE_INFO_EX info = {};
+    info.Size = sizeof(info);
+    info.ImageInfo.Properties = IMAGE_ADDRESSING_MODE_32BIT | IMAGE_INFO_EXTENDED_INFO_PRESENT |
+                                (process ? 0 : IMAGE_INFO_SYSTEM_MODE);
+    info.ImageInfo.ImageBase = base;
+    info.ImageInfo.ImageSize = size;
+    info.FileObject = file;
     UNICODE_STRING copy = *name;
     for (ULONG i = 0; i < NOTIFY_SLOTS; i++) {
         PLOAD_IMAGE_NOTIFY_ROUTINE routine = __atomic_load_n(&g_image[i], __ATOMIC_ACQUIRE);
         if (routine)
-            routine(&copy, process ? process->UniqueProcessId : nullptr, &info);
+            routine(&copy, process ? process->UniqueProcessId : nullptr, &info.ImageInfo);
     }
 }
 

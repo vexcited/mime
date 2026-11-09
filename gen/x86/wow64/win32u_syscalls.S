@@ -273,12 +273,12 @@ _NtUserBuildNameList@16:
     calll *%edx
     retl $16
     .p2align 4, 0x90
-    .globl _NtUserBuildHwndList@28
-_NtUserBuildHwndList@28:
+    .globl _NtUserBuildHwndList@32
+_NtUserBuildHwndList@32:
     movl $0x101a, %eax
     movl $_Wow64SystemServiceCall, %edx
     calll *%edx
-    retl $28
+    retl $32
     .p2align 4, 0x90
     .globl _NtUserGetWindowPlacement@8
 _NtUserGetWindowPlacement@8:

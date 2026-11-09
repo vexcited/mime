@@ -268,7 +268,10 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
             break;
         }
         uint32_t v = __atomic_load_n(word, __ATOMIC_ACQUIRE);
-        if ((uint16_t)v != (uint16_t)regs[2])
+        static int spin = -1;
+        if (spin < 0)
+            spin = getenv("MIME_LOCK_SPIN") != nullptr;
+        if (!spin && (uint16_t)v != (uint16_t)regs[2])
             mime_host_wait_word(word, v, 1000000);
         break;
     }
@@ -321,6 +324,7 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_FS_GET_REPARSE:
     case MIME_HC_FS_DELETE_REPARSE:
     case MIME_HC_FS_APPEND:
+    case MIME_HC_GENUINE_OPEN:
     case MIME_HC_FS_WARM:
     case MIME_HC_FS_WINDOW_LOST:
     case MIME_HC_FS_WATCH:

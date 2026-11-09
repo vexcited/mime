@@ -12,7 +12,9 @@
  * the guest sees all of the host's memory, but a page it has not written yet costs the host nothing, so before it starts
  * on a host memory block it asks for it with MIME_HC_MEM_GRANT. a grant never takes MemAvailable below a floor left for
  * the desktop: past it the guest's allocations and commits fail as they would on a Windows machine out of memory, and
- * the host never has to swap or kill for the guest.
+ * the host never has to kill for the guest. half of the free swap counts as well, the way windows counts its page file:
+ * the guest's memory is plain process memory the kernel may swap out, and the half leaves room for a zram swap's own
+ * pages and for the desktop's.
  */
 #include "../vmm/vmm.h"
 
@@ -69,12 +71,15 @@ static pthread_mutex_t g_grant_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_meminfo = -1;
 static uint64_t g_floor;
 
-/* MemAvailable in bytes. the kernel works it out on each read, so it counts what the GPU driver and every other program took. */
-static uint64_t available_bytes(void)
+/*
+ * MemAvailable in bytes, and SwapFree when swap is asked for. the kernel works them out on each read, so they count
+ * what the GPU driver and every other program took.
+ */
+static uint64_t available_bytes(uint64_t *swap)
 {
     if (g_meminfo < 0)
         g_meminfo = open("/proc/meminfo", O_RDONLY | O_CLOEXEC);
-    char text[512];
+    char text[2048];
     ssize_t n = g_meminfo >= 0 ? pread(g_meminfo, text, sizeof(text) - 1, 0) : -1;
     if (n <= 0)
         return 0;
@@ -88,6 +93,13 @@ static uint64_t available_bytes(void)
         return 0;
     if (!g_floor)
         g_floor = MIME_MAX(640ull << 20, (uint64_t)total * 1024 / 100 * 6);
+    if (swap) {
+        unsigned long long free = 0;
+        const char *f = strstr(text, "SwapFree:");
+        if (f)
+            sscanf(f, "SwapFree: %llu kB", &free);
+        *swap = (uint64_t)free * 1024;
+    }
     return (uint64_t)avail * 1024;
 }
 
@@ -184,7 +196,8 @@ static uint64_t cgroup_room(void)
 /* the lock is held. what the guest was granted and has not touched yet is still counted as free. */
 static uint64_t grantable(MimeVm *vm)
 {
-    uint64_t avail = available_bytes();
+    uint64_t swap = 0, avail = available_bytes(&swap);
+    avail += swap / 2;
     avail = avail > g_floor ? avail - g_floor : 0;
     avail = MIME_MIN(avail, cgroup_room());
     uint64_t credit = __atomic_load_n(&vm->shared->memory_credit, __ATOMIC_ACQUIRE);
@@ -201,10 +214,11 @@ uint64_t mime_memory_grant(MimeVm *vm, uint64_t want)
     return granted;
 }
 
+/* memory the GPU driver pins for the guest cannot be swapped out, so swap does not count here. */
 uint64_t mime_memory_room(void)
 {
     pthread_mutex_lock(&g_grant_lock);
-    uint64_t avail = available_bytes();
+    uint64_t avail = available_bytes(nullptr);
     avail = avail > g_floor ? avail - g_floor : 0;
     avail = MIME_MIN(avail, cgroup_room());
     pthread_mutex_unlock(&g_grant_lock);

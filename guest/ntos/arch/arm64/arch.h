@@ -92,6 +92,16 @@ MIME_STATIC_ASSERT(sizeof(KTRAP_FRAME) == KTRAP_FRAME_SIZE, "trap size");
 #define KI_SERVICE_NUMBER(f) ((ULONG)(f)->Esr & 0xFFFF)
 #define KI_SERVICE_STACK_ARGS(f) ((f)->Sp)
 #define KI_SERVICE_RESULT(f) ((f)->X[0])
+#define KI_TRAP_IN_SERVICE(f) FALSE
+static inline void KiInstrumentReturn(PKTRAP_FRAME f, PVOID callback)
+{
+    (void)f;
+    (void)callback;
+}
+static inline void KiServiceExitVolatiles(PKTRAP_FRAME f)
+{
+    (void)f;
+}
 #define KI_SERVICE_REGISTER_ARG(f, i) ((f)->X[i])
 
 FORCEINLINE void KiPause(void)
@@ -141,6 +151,7 @@ typedef struct _KJUMP_BUFFER {
 #define MM_PTE_SW_WATCH (1ull << 58)  /* write watched page, mapped read only until written. */
 /* x86 code xta64 decoded, mapped read only until written. a pbha bit, which the hardware ignores with TCR_EL1.HWU clear. */
 #define MM_PTE_SW_CODE (1ull << 59)
+#define MM_PTE_SW_TRIMMED 0ull /* the working set is never trimmed on arm64. */
 #define MM_PTE_ADDR_MASK 0x0000FFFFFFFFF000ull
 
 /* invalid ptes with this bit describe committed but not yet present pages. */

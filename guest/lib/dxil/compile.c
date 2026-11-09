@@ -1292,6 +1292,8 @@ static uint32_t condition(Compiler *c, uint32_t value)
 static void terminator(Compiler *c, uint32_t b)
 {
     const CfgBlock *blk = &c->cfg->blocks[b];
+    /* the condition may be a load, which has to come before the merge: a merge is second to last in its block. */
+    uint32_t cond = blk->term == TERM_COND || blk->term == TERM_SWITCH ? condition(c, blk->cond) : 0;
     if (blk->header == HEADER_LOOP) {
         uint32_t w[3] = {c->labels[blk->merge], c->labels[blk->cont], SpvLoopControlMaskNone};
         spv_op_void(&c->b, SpvOpLoopMerge, w, 3);
@@ -1302,10 +1304,10 @@ static void terminator(Compiler *c, uint32_t b)
     switch (blk->term) {
     case TERM_BRANCH: spv_branch(&c->b, c->labels[blk->succ[0]]); break;
     case TERM_COND:
-        spv_branch_conditional(&c->b, condition(c, blk->cond), c->labels[blk->succ[0]], c->labels[blk->succ[1]]);
+        spv_branch_conditional(&c->b, cond, c->labels[blk->succ[0]], c->labels[blk->succ[1]]);
         break;
     case TERM_SWITCH: {
-        uint32_t selector = condition(c, blk->cond);
+        uint32_t selector = cond;
         int wide = 0;
         if (blk->cond < CFG_SYNTH) {
             const DxValue *v = dx_value(&c->m, c->f, blk->cond);
@@ -1715,6 +1717,7 @@ static int build(Compiler *c)
     uint32_t model[2] = {MODELS[c->kind], main};
     spv_emit_string(b, SECTION_ENTRY_POINTS, SpvOpEntryPoint, model, 2, "main", c->interface, c->interface_count);
     dxil_execution_modes(c, main);
+    spv_keep_inf_nan(&c->b, main, c->options ? c->options->inf_nan_widths : 0);
     return b->failed ? dxil_fail(c, "out of memory") : c->error ? -1 : 0;
 }
 

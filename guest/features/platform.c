@@ -1,8 +1,6 @@
 /* What the rules of features need from the machine: the registry, the drive, the question and the steps. */
 #include "featurep.h"
 
-#define DECLINE_SECONDS 600
-
 static ULONGLONG now_filetime(void)
 {
     FILETIME ft;
@@ -24,12 +22,6 @@ static BOOL read_dword(PCWSTR key, PCWSTR name, DWORD *value)
 {
     DWORD size = sizeof(*value), type;
     return RegGetValueW(HKEY_LOCAL_MACHINE, key, name, RRF_RT_REG_DWORD, &type, value, &size) == ERROR_SUCCESS;
-}
-
-static BOOL read_qword(PCWSTR key, PCWSTR name, ULONGLONG *value)
-{
-    DWORD size = sizeof(*value), type;
-    return RegGetValueW(HKEY_LOCAL_MACHINE, key, name, RRF_RT_REG_QWORD, &type, value, &size) == ERROR_SUCCESS;
 }
 
 static void write_value(PCWSTR key, PCWSTR name, DWORD type, const void *data, DWORD size)
@@ -95,22 +87,6 @@ static void ops_set_state(void *context, const FEATURE_DEF *feature, FEATURE_STA
     }
 }
 
-static bool ops_recently_declined(void *context, const FEATURE_DEF *feature)
-{
-    WCHAR key[160];
-    state_key(feature, key, RTL_NUMBER_OF(key));
-    ULONGLONG then, now = now_filetime();
-    return read_qword(key, L"Declined", &then) && now >= then && (now - then) / 10000000ull < DECLINE_SECONDS;
-}
-
-static void ops_set_declined(void *context, const FEATURE_DEF *feature)
-{
-    WCHAR key[160];
-    state_key(feature, key, RTL_NUMBER_OF(key));
-    ULONGLONG time = now_filetime();
-    write_value(key, L"Declined", REG_QWORD, &time, sizeof(time));
-}
-
 /* Counts a request of a program, whatever becomes of it: how often it was asked for, when, and by whom. */
 void RecordRequest(const FEATURE_DEF *feature, PCWSTR caller)
 {
@@ -150,7 +126,17 @@ void RunInit(RUN *run, const FEATURE_DEF *feature)
         wcscpy(run->Root, L"C:\\");
     }
     run->Root[3] = 0;
-    _snwprintf(run->Cache, RTL_NUMBER_OF(run->Cache), L"%ls" CACHE_FOLDER, run->Root);
+    /* the host share path the kernel records at boot; without one, the old folder below the drive. */
+    HKEY key;
+    DWORD type = 0, size = RTL_NUMBER_OF(run->Cache) * sizeof(WCHAR);
+    BOOL found = RegOpenKeyExW(HKEY_LOCAL_MACHINE, MIME_FEATURE_STATE_KEY, 0, KEY_READ, &key) == ERROR_SUCCESS &&
+                 RegQueryValueExW(key, L"Cache", nullptr, &type, (BYTE *)run->Cache, &size) == ERROR_SUCCESS &&
+                 type == REG_SZ && run->Cache[0];
+    if (found)
+        RegCloseKey(key);
+    else {
+        _snwprintf(run->Cache, RTL_NUMBER_OF(run->Cache), L"%ls" CACHE_FOLDER, run->Root);
+    }
     run->Cache[RTL_NUMBER_OF(run->Cache) - 1] = 0;
 }
 
@@ -236,9 +222,11 @@ static uint32_t ops_acquire(void *context, const FEATURE_DEF *feature, void **pa
     WidenName(feature->Name, name, RTL_NUMBER_OF(name));
     /* The folders below the drive, one level at a time. */
     WCHAR folder[MAX_PATH];
-    _snwprintf(folder, RTL_NUMBER_OF(folder), L"%ls" L"ProgramData\\Mime", run->Root);
+    _snwprintf(folder, RTL_NUMBER_OF(folder), L"%ls" L"ProgramData\\Microsoft\\Windows", run->Root);
     folder[RTL_NUMBER_OF(folder) - 1] = 0;
-    CreateDirectoryW(folder, nullptr);
+    /* the mime folder on the drive only exists when the cache falls back to it. */
+    if (!wcsncmp(run->Cache, run->Root, 3))
+        CreateDirectoryW(folder, nullptr);
     CreateDirectoryW(run->Cache, nullptr);
     PCWSTR extension = feature->Format == FEATURE_FORMAT_CABINET ? L"cab"
                        : feature->Format == FEATURE_FORMAT_PROGRAM ? L"exe" : L"pack";
@@ -296,8 +284,6 @@ void FillOps(FEATURE_OPS *ops, RUN *run)
         .Present = ops_present,
         .GetState = ops_get_state,
         .SetState = ops_set_state,
-        .RecentlyDeclined = ops_recently_declined,
-        .SetDeclined = ops_set_declined,
         .Consent = ops_consent,
         .Stage = ops_stage,
         .Acquire = ops_acquire,

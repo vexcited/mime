@@ -1,6 +1,6 @@
 /*
  * The side of features on demand that programs meet: a program that uses a file that is missing in the folders of a
- * feature asks features.exe for the feature, and tries again. Using is starting a program, loading a library and opening
+ * feature asks OptionalFeatures.exe for the feature, and tries again. Using is starting a program, loading a library and opening
  * a file to read it. A look at the name asks for nothing. The file is compiled into kernelbase, shell32 and gdi32, each
  * can ask.
  */
@@ -279,7 +279,7 @@ static void state_name(PWSTR name, UINT chars, PCWSTR feature, PCWSTR kind)
     for (DWORD id = GetCurrentProcessId(); id || !digits; id /= 10)
         pid[digits++] = (WCHAR)(L'0' + id % 10);
     UINT length = 0;
-    for (PCWSTR p = L"Local\\MimeFeature."; *p; p++)
+    for (PCWSTR p = L"Local\\WindowsFeature."; *p; p++)
         name[length++] = *p;
     while (digits)
         name[length++] = pid[--digits];
@@ -319,7 +319,7 @@ static BOOL ask_once(const FEATURE *feature, WCHAR drive)
         return TRUE;
     }
     /*
-     * What features.exe sets for the programs it runs, which must not ask for what they are installing. A feature that is
+     * What OptionalFeatures.exe sets for the programs it runs, which must not ask for what they are installing. A feature that is
      * on the drive does not have the file, as on Windows: programs use optional ones and fail when they are not there.
      */
     BOOL arrived = FALSE;

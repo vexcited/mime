@@ -62,6 +62,7 @@ void spv_emit(SpvBuilder *b, int section, uint32_t op, const uint32_t *operands,
 void spv_emit_string(SpvBuilder *b, int section, uint32_t op, const uint32_t *before, uint32_t before_count,
                      const char *text, const uint32_t *after, uint32_t after_count);
 void spv_capability(SpvBuilder *b, uint32_t capability);
+void spv_keep_inf_nan(SpvBuilder *b, uint32_t main, uint32_t widths);
 void spv_extension(SpvBuilder *b, const char *name);
 void spv_decorate(SpvBuilder *b, uint32_t id, uint32_t decoration, const uint32_t *args, uint32_t count);
 void spv_member_decorate(SpvBuilder *b, uint32_t id, uint32_t member, uint32_t decoration, const uint32_t *args,

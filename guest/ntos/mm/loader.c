@@ -296,12 +296,66 @@ NTSTATUS MiReadFileBytes(PFILE_OBJECT file, ULONG64 offset, PVOID buffer, ULONG 
     return IoReadFileObject(file, buffer, length, offset, read);
 }
 
-static NTSTATUS read_whole_file(PCUNICODE_STRING path, PUCHAR *data, ULONG *size)
+/*
+ * like the image section windows keeps for a loaded driver, its file counts as a mapped image while it is loaded, so
+ * it cannot be deleted then: whoever loaded it and tries to remove it learns STATUS_CANNOT_DELETE.
+ */
+typedef struct LOADED_FILE {
+    struct LOADED_FILE *Next;
+    PKLDR_DATA_TABLE_ENTRY Module;
+    ULONG Volume;
+    ULONG64 FileId;
+} LOADED_FILE;
+static LOADED_FILE *g_loaded_files;
+
+static void pin_file(PKLDR_DATA_TABLE_ENTRY module, ULONG volume, ULONG64 file_id)
+{
+    LOADED_FILE *f = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*f), KI_TAG('M', 'm', 'L', 'f'));
+    if (!f)
+        return;
+    f->Module = module;
+    f->Volume = volume;
+    f->FileId = file_id;
+    FsWbMapped(volume, file_id, 1);
+    FsWbImageMapped(volume, file_id, 1);
+    ExAcquireFastMutex(&g_modules_lock);
+    f->Next = g_loaded_files;
+    g_loaded_files = f;
+    ExReleaseFastMutex(&g_modules_lock);
+}
+
+static void unpin_file(PKLDR_DATA_TABLE_ENTRY module)
+{
+    ExAcquireFastMutex(&g_modules_lock);
+    LOADED_FILE *found = nullptr;
+    for (LOADED_FILE **link = &g_loaded_files; *link; link = &(*link)->Next) {
+        if ((*link)->Module == module) {
+            found = *link;
+            *link = found->Next;
+            break;
+        }
+    }
+    ExReleaseFastMutex(&g_modules_lock);
+    if (found) {
+        FsWbImageMapped(found->Volume, found->FileId, -1);
+        FsWbMapped(found->Volume, found->FileId, -1);
+        ExFreePool(found);
+    }
+}
+
+/*
+ * the file's identity on its volume, a volume of ~0 when it has none worth pinning, as a rom file. the file stays
+ * referenced in *kept when the read worked, for the notification of the load.
+ */
+static NTSTATUS read_whole_file(PCUNICODE_STRING path, PUCHAR *data, ULONG *size, PULONG volume, PULONG64 file_id,
+                                PFILE_OBJECT *kept)
 {
     PFILE_OBJECT file;
     NTSTATUS status = IopOpenFileObject(path, FILE_READ_DATA | SYNCHRONIZE, FILE_NON_DIRECTORY_FILE, &file);
     if (!NT_SUCCESS(status))
         return status;
+    if (!MimeFsLockIdentity(file, volume, file_id))
+        *volume = ~0u;
     ULONG64 file_size;
     status = IoQueryFileSize(file, &file_size);
     if (NT_SUCCESS(status) && (file_size == 0 || file_size > 64 * 1024 * 1024))
@@ -320,7 +374,10 @@ static NTSTATUS read_whole_file(PCUNICODE_STRING path, PUCHAR *data, ULONG *size
             ExFreePool(*data);
         *size = (ULONG)file_size;
     }
-    ObDereferenceObject(file);
+    if (NT_SUCCESS(status))
+        *kept = file;
+    else
+        ObDereferenceObject(file);
     return status;
 }
 
@@ -389,8 +446,10 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
         }
     }
     PUCHAR file;
-    ULONG file_size;
-    NTSTATUS status = read_whole_file(path, &file, &file_size);
+    ULONG file_size, volume;
+    ULONG64 file_id;
+    PFILE_OBJECT file_object;
+    NTSTATUS status = read_whole_file(path, &file, &file_size, &volume, &file_id, &file_object);
     if (!NT_SUCCESS(status))
         return status;
     MI_IMAGE_INFO info;
@@ -399,6 +458,7 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
         status = STATUS_INVALID_IMAGE_FORMAT;
     if (!NT_SUCCESS(status)) {
         ExFreePool(file);
+        ObDereferenceObject(file_object);
         return status;
     }
     PIMAGE_NT_HEADERS64 nt = (PIMAGE_NT_HEADERS64)(file + ((PIMAGE_DOS_HEADER)file)->e_lfanew);
@@ -406,6 +466,7 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
     PUCHAR base = MmAllocateSystemVa(pages);
     if (!base) {
         ExFreePool(file);
+        ObDereferenceObject(file_object);
         return STATUS_INSUFFICIENT_RESOURCES;
     }
     for (SIZE_T i = 0; i < pages; i++) {
@@ -413,6 +474,7 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
         if (!pa) {
             free_image_pages(base, i);
             ExFreePool(file);
+            ObDereferenceObject(file_object);
             return STATUS_INSUFFICIENT_RESOURCES;
         }
         MiMapPage(MiKernelRoot(), (ULONG_PTR)base + i * PAGE_SIZE, pa, MM_KERNEL_RW);
@@ -500,12 +562,15 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
             status = STATUS_INSUFFICIENT_RESOURCES;
     }
     if (NT_SUCCESS(status)) {
+        if (volume != ~0u)
+            pin_file(*out, volume, file_id);
         KiLogPrintf("loaded %wZ at %p", path, base);
-        PspNotifyImage(path, nullptr, base, info.SizeOfImage, IMAGE_FILE_MACHINE_AMD64);
+        PspNotifyImage(path, nullptr, base, info.SizeOfImage, file_object);
     }
     else
         free_image_pages(base, pages);
     ExFreePool(file);
+    ObDereferenceObject(file_object);
     return status;
 }
 
@@ -523,6 +588,7 @@ void MmUnloadSystemImage(PKLDR_DATA_TABLE_ENTRY m)
     RemoveEntryList(&m->InLoadOrderLinks);
     InitializeListHead(&m->InLoadOrderLinks);
     ExReleaseFastMutex(&g_modules_lock);
+    unpin_file(m);
     KiLogPrintf("unloaded %wZ from %p", &m->FullDllName, m->DllBase);
     free_image_pages(m->DllBase, BYTES_TO_PAGES(m->SizeOfImage));
     m->DllBase = nullptr;
@@ -535,7 +601,9 @@ static PVOID section_export(PSECTION s, const char *name)
 #define AT(rva) ((PUCHAR)HalPhysmap(MiSectionPage(s, (rva) >> PAGE_SHIFT)) + ((rva) & (PAGE_SIZE - 1)))
     PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)AT(0);
     PIMAGE_NT_HEADERS64 nt = (PIMAGE_NT_HEADERS64)AT((ULONG)dos->e_lfanew);
-    IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+    IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC
+                                   ? ((PIMAGE_NT_HEADERS32)nt)->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT]
+                                   : nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
     if (!dir.VirtualAddress)
         return nullptr;
     IMAGE_EXPORT_DIRECTORY exp;
@@ -562,6 +630,13 @@ static PVOID section_export(PSECTION s, const char *name)
     }
     return nullptr;
 #undef AT
+}
+
+/* the offset of an export of the 32-bit ntdll from its base, or 0. */
+ULONG PspWow64NtdllExport(const char *name)
+{
+    PUCHAR at = PspWow64NtdllSection ? section_export(PspWow64NtdllSection, name) : nullptr;
+    return at ? (ULONG)(at - (PUCHAR)PspWow64NtdllSection->Image.ImageBase) : 0;
 }
 
 PSP_SYSTEM_DLL PspNativeSystemDll;

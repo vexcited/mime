@@ -53,6 +53,7 @@ typedef struct UiWindow {
     SDL_DisplayID display; /* the display last reported to the guest. */
     bool maximized;        /* the compositor has the window maximized. */
     bool bogus_size;       /* the compositor gave a size no display could show, which is not acted on. */
+    uint64_t renderer_retry_ms; /* a renderer that failed, as with the gpu's memory full, is tried again then. */
     int geometry_w, geometry_h; /* the window geometry last given to the compositor, in surface coordinates. */
     int want_w, want_h;    /* the last size asked of the compositor, in SDL window coordinates. */
     uint64_t want_ms;      /* time of the last size request. */
@@ -88,6 +89,7 @@ static double g_scale = 1.0;  /* guest pixels per SDL window coordinate of the p
 static MimeDisplayInfo g_display;
 static void raise_window(UiWindow *w);
 static bool g_wayland;        /* the video driver is Wayland's. */
+static bool g_gl;             /* gl stays loaded for the windows' renderers. */
 
 /* the displays of the host, the primary first, in the guest's virtual screen. */
 typedef struct HostMonitor {
@@ -651,6 +653,106 @@ static const KeyMap g_keymap[SDL_SCANCODE_COUNT] = {
     [SDL_SCANCODE_RALT] = {0xA5, 0x138}, [SDL_SCANCODE_RGUI] = {0x5C, 0x15C},
 };
 
+/*
+ * virtual keys windows' layouts give keys that are not letters or digits, by scan code, where they differ from the US
+ * positions: kbdfr for AZERTY, kbdgr for QWERTZ and kbduk.
+ */
+typedef struct LayoutKey {
+    uint8_t scan, vk;
+} LayoutKey;
+
+static const LayoutKey g_azerty[] = {
+    {0x29, 0xDE}, {0x0C, 0xDB}, {0x0D, 0xBB}, {0x1A, 0xDD}, {0x1B, 0xBA}, {0x28, 0xC0},
+    {0x2B, 0xDC}, {0x32, 0xBC}, {0x33, 0xBE}, {0x34, 0xBF}, {0x35, 0xDF}, {0x56, 0xE2},
+};
+static const LayoutKey g_qwertz[] = {
+    {0x0C, 0xDB}, {0x0D, 0xDD}, {0x1A, 0xBA}, {0x1B, 0xBB}, {0x27, 0xC0},
+    {0x28, 0xDE}, {0x29, 0xDC}, {0x2B, 0xBF}, {0x35, 0xBD}, {0x56, 0xE2},
+};
+static const LayoutKey g_uk[] = {{0x28, 0xC0}, {0x29, 0xDF}, {0x2B, 0xDE}, {0x56, 0xDC}};
+
+static MimeKeyboardLayout g_layout;
+static bool g_layout_known;
+
+/* the character a key types with the given modifiers, 0 for none. */
+static uint16_t layout_char(SDL_Scancode code, SDL_Keymod mod)
+{
+    SDL_Keycode key = SDL_GetKeyFromScancode(code, mod, false);
+    if ((key & SDLK_SCANCODE_MASK) || key < 0x20 || key == 0x7F || key > 0xFFFF)
+        return 0;
+    return (uint16_t)key;
+}
+
+static bool lower_letter(uint16_t c)
+{
+    return c >= 'a' && c <= 'z';
+}
+
+/* reads the layout of the host from SDL's keymap, and tells the guest when it changed. */
+static void update_layout(void)
+{
+    MimeKeyboardLayout l = {};
+    l.language = 0x0409;
+    SDL_Scancode by_scan[MIME_KEYBOARD_KEYS] = {};
+    for (int code = 0; code < SDL_SCANCODE_COUNT; code++) {
+        const KeyMap *k = &g_keymap[code];
+        /* two SDL scancodes share a place, as backslash and the ISO key next to enter: the first is the one keyboards send. */
+        if (!k->vk || k->scan >= MIME_KEYBOARD_KEYS || by_scan[k->scan])
+            continue;
+        by_scan[k->scan] = (SDL_Scancode)code;
+        l.vk[k->scan] = k->vk;
+        l.chars[k->scan][0] = layout_char((SDL_Scancode)code, SDL_KMOD_NONE);
+        l.chars[k->scan][1] = layout_char((SDL_Scancode)code, SDL_KMOD_SHIFT);
+        l.chars[k->scan][2] = layout_char((SDL_Scancode)code, SDL_KMOD_MODE);
+        if (l.chars[k->scan][2] == l.chars[k->scan][0])
+            l.chars[k->scan][2] = 0;
+    }
+    if (!by_scan[0x10] || !l.chars[0x10][0])
+        return;
+    const LayoutKey *keys = nullptr;
+    size_t count = 0;
+    uint16_t (*c)[3] = l.chars;
+    if (c[0x10][0] == 'a' && c[0x11][0] == 'z') {
+        keys = g_azerty;
+        count = MIME_ARRAY_COUNT(g_azerty);
+        l.language = c[0x28][0] == 0xF9 ? 0x040C : 0x080C;
+    } else if (c[0x15][0] == 'z' && c[0x2C][0] == 'y') {
+        keys = g_qwertz;
+        count = MIME_ARRAY_COUNT(g_qwertz);
+        l.language = 0x0407;
+    } else if (c[0x2B][0] == '#' && c[0x03][1] == '"') {
+        keys = g_uk;
+        count = MIME_ARRAY_COUNT(g_uk);
+        l.language = 0x0809;
+    }
+    for (size_t i = 0; i < count; i++)
+        l.vk[keys[i].scan] = keys[i].vk;
+    /* a letter key is the virtual key of its letter wherever the layout puts it, like windows layouts. */
+    for (int scan = 0; scan < MIME_KEYBOARD_KEYS; scan++) {
+        uint16_t ch = c[scan][0];
+        if (lower_letter(ch))
+            l.vk[scan] = (uint8_t)(ch - 32);
+        else if (l.vk[scan] >= 'A' && l.vk[scan] <= 'Z')
+            l.vk[scan] = ch == ',' ? 0xBC : ch == '.' ? 0xBE : ch == '-' ? 0xBD : ch == '=' || ch == '+' ? 0xBB : 0xDF;
+    }
+    if (g_layout_known && !memcmp(&l, &g_layout, sizeof(l)))
+        return;
+    g_layout = l;
+    g_layout_known = true;
+    mime_info("keyboard layout %04x, the key at the place of W types %c", l.language,
+              c[0x11][0] < 0x80 ? (char)c[0x11][0] : '?');
+    MimeInputEvent ev = {.type = MIME_INPUT_KEYMAP};
+    emit(&ev);
+}
+
+bool mime_ui_get_keyboard(MimeKeyboardLayout *out)
+{
+    if (!g_layout_known)
+        return false;
+    *out = g_layout;
+    return true;
+}
+
 /* pending Alt character, discarded if the next event supplies typed text. */
 static MimeInputEvent g_alt_char;
 static bool g_alt_char_pending;
@@ -673,8 +775,10 @@ static void emit_key(const SDL_KeyboardEvent *key)
     ev.type = key->down ? MIME_INPUT_KEY_DOWN : MIME_INPUT_KEY_UP;
     ev.window_id = w->id;
     ev.vk = k->vk;
+    if (g_layout_known && k->scan < MIME_KEYBOARD_KEYS)
+        ev.vk = g_layout.vk[k->scan];
     /* letter keys take the virtual key of the letter they type in the host layout, like windows layouts do. */
-    if (k->vk >= 'A' && k->vk <= 'Z' && key->key >= 'a' && key->key <= 'z')
+    else if (k->vk >= 'A' && k->vk <= 'Z' && key->key >= 'a' && key->key <= 'z')
         ev.vk = (uint32_t)(key->key - 32);
     ev.scancode = k->scan;
     ev.modifiers = modifiers_of(key->mod);
@@ -968,6 +1072,8 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
     UiWindow *owner = cfg->owner_id ? find_window(cfg->owner_id) : nullptr;
     bool popup = (cfg->flags & MIME_WIN_TOOL) && owner && owner->window;
     SDL_WindowFlags flags = SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_TRANSPARENT;
+    if (g_gl)
+        flags |= SDL_WINDOW_OPENGL;
     if (popup) {
         MimeRect oh = host_part(&owner->config);
         int x = (int)lround((cfg->rect.left + host.left - owner->config.rect.left - oh.left) / scale);
@@ -1142,6 +1248,11 @@ static void present_main(void *arg)
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window((uint32_t)(uintptr_t)arg);
     pthread_mutex_unlock(&g_windows_lock);
+    if (w && w->shown && !w->renderer && !w->vk_whole && w->window && now_ms() >= w->renderer_retry_ms) {
+        restore_renderer(w);
+        if (!w->renderer)
+            w->renderer_retry_ms = now_ms() + 1000;
+    }
     if (w && w->shown)
         draw(w);
 }
@@ -2306,8 +2417,17 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     g_video = g_call_event != 0;
     mime_info("display driver %s", SDL_GetCurrentVideoDriver());
     g_wayland = SDL_GetCurrentVideoDriver() && !strcmp(SDL_GetCurrentVideoDriver(), "wayland");
+    /*
+     * the windows' renderers draw with gl. a renderer that fails, as when the gpu's memory is full, makes SDL put its
+     * window back as it was and drop gl with the last gl window, then destroy the renderer through the dropped gl: the
+     * whole machine went down. gl stays loaded, and windows are made for gl from the start, so a failed renderer is
+     * only a null one.
+     */
+    if (g_video && g_wayland && !(g_gl = SDL_GL_LoadLibrary(nullptr)))
+        mime_warn("cannot load gl for the windows: %s", SDL_GetError());
     if (g_video) {
         update_display();
+        update_layout();
         mime_dnd_init();
     }
 }
@@ -2500,7 +2620,12 @@ static void handle_event(const SDL_Event *e)
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP:
+        if (!g_layout_known)
+            update_layout();
         emit_key(&e->key);
+        break;
+    case SDL_EVENT_KEYMAP_CHANGED:
+        update_layout();
         break;
     case SDL_EVENT_TEXT_INPUT: {
         UiWindow *w = find_by_sdl(e->text.windowID);

@@ -1,8 +1,8 @@
 /*
  * A program that asks for a Windows font that the machine does not have asks the feature service for it: the fonts
- * of Microsoft are an optional download. Until the font is there the open font of the ROM stands in, whatever happens
- * here. The request is made once for each family in a process, and only for the families that the catalog of
- * features on demand has, so every other font name costs a few comparisons.
+ * of Microsoft are an optional download. Nothing stands in for them, so a program whose font is still missing after
+ * the request is ended. The request is made once for each family in a process, and only for the families that the
+ * catalog of features on demand has, so every other font name costs a few comparisons.
  */
 #include "gdi32_private.h"
 #include <mime/feature.h>
@@ -92,7 +92,7 @@ static BOOL is_the_service(void)
     const WCHAR *name = path + n;
     while (name > path && name[-1] != L'\\')
         name--;
-    return same_name(name, L"features.exe") || same_name(name, L"dism.exe") || same_name(name, L"fondue.exe");
+    return same_name(name, L"OptionalFeatures.exe") || same_name(name, L"dism.exe") || same_name(name, L"fondue.exe");
 }
 
 /* Remembers a family as asked for. FALSE when it already was. */
@@ -112,6 +112,23 @@ static BOOL first_time(const WCHAR *family)
     return TRUE;
 }
 
+typedef int(WINAPI *MESSAGE_BOX)(HWND, LPCWSTR, LPCWSTR, UINT);
+
+/* features.exe could not tell the user, this does it as well as it can before the end. */
+static void tell_missing(const WCHAR *family, DWORD result)
+{
+    WCHAR text[256];
+    _snwprintf(text, RTL_NUMBER_OF(text),
+               L"This program cannot run without the font %ls, which is not installed (error %lu). It is closed.", family,
+               result);
+    text[RTL_NUMBER_OF(text) - 1] = 0;
+    OutputDebugStringW(text);
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    MESSAGE_BOX box = user32 ? (MESSAGE_BOX)(void *)GetProcAddress(user32, "MessageBoxW") : nullptr;
+    if (box)
+        box(nullptr, text, L"Mime", 0x10 | 0x1000); /* MB_ICONERROR | MB_SYSTEMMODAL */
+}
+
 void GdiAskForFont(const LOGFONTW *lf)
 {
     if (g_mode == 2 || !lf->lfFaceName[0])
@@ -125,7 +142,7 @@ void GdiAskForFont(const LOGFONTW *lf)
     if (!in_catalog(family))
         return;
     if (!g_mode) {
-        /* What features.exe sets for itself and for what it runs: they must not ask for what they are installing. */
+        /* What OptionalFeatures.exe sets for itself and for what it runs: they must not ask for what they are installing. */
         WCHAR busy[4];
         DWORD last = GetLastError();
         InterlockedExchange(&g_mode, is_the_service() || GetEnvironmentVariableW(MIME_FEATURE_BUSY_VARIABLE, busy, RTL_NUMBER_OF(busy)) ? 2 : 1);
@@ -136,8 +153,16 @@ void GdiAskForFont(const LOGFONTW *lf)
     if (!first_time(family) || installed(family))
         return;
     DWORD last = GetLastError();
-    MimeFeatureRequestFont(family);
-    SetLastError(last);
+    DWORD result = MimeFeatureRequestFont(family);
+    if (installed(family)) {
+        SetLastError(last);
+        return;
+    }
+    /* What the program would show next needs fonts too, none is asked for again. */
+    InterlockedExchange(&g_mode, 2);
+    if (result != MIME_FEATURE_FONT_MISSING)
+        tell_missing(family, result);
+    TerminateProcess(GetCurrentProcess(), ERROR_CANCELLED);
 }
 
 enum { SCRIPT_THAI = 1, SCRIPT_HANGUL = 2, SCRIPT_KANA = 4, SCRIPT_HAN = 8 };

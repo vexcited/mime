@@ -191,6 +191,7 @@ enum {
     MIME_ONEPARAM_GETTHREADDPICONTEXT,  /* -> the awareness in effect, 4 is unaware with gdi scaling. */
     MIME_ONEPARAM_SETTHREADDPIHOSTING,  /* 0 default or 1 mixed -> the behavior before, -1 when it is none. */
     MIME_ONEPARAM_GETTHREADDPIHOSTING,
+    MIME_ONEPARAM_GETKEYBOARDLAYOUT,    /* a MimeKeyboardLayout pointer -> its generation, 0 for the US layout. */
 };
 
 enum {
@@ -543,8 +544,8 @@ W32KAPI BOOL NTAPI NtUserSwitchDesktop(HDESK handle, DWORD flags, DWORD fade);
 W32KAPI BOOL NTAPI NtUserGetObjectInformation(HANDLE handle, DWORD index, PVOID info, DWORD length, PDWORD needed);
 W32KAPI BOOL NTAPI NtUserSetObjectInformation(HANDLE handle, DWORD index, PVOID info, DWORD length);
 W32KAPI NTSTATUS NTAPI NtUserBuildNameList(HWINSTA handle, ULONG length, PVOID buffer, PULONG needed);
-W32KAPI NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent, BOOL children, ULONG thread, ULONG max,
-                                           HWND *list, ULONG *count);
+W32KAPI NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent, BOOL children, BOOL remove_immersive,
+                                           ULONG thread, ULONG max, HWND *list, ULONG *count);
 W32KAPI BOOL NTAPI NtUserGetWindowPlacement(HWND hwnd, WINDOWPLACEMENT *placement);
 W32KAPI BOOL NTAPI NtUserSetWindowPlacement(HWND hwnd, const WINDOWPLACEMENT *placement);
 

@@ -12,6 +12,10 @@ void KiSwitchAddressSpace(PKPROCESS process)
     KiInstructionBarrier();
 }
 
+void KiSetThreadDebug(PKTHREAD thread, const CONTEXT *ctx) {}
+
+void KiGetThreadDebug(PKTHREAD thread, CONTEXT *ctx) {}
+
 void KiSwapContext(PKTHREAD old, PKTHREAD next)
 {
     KiSwapContextInternal(&old->KernelSp, next->KernelSp);
@@ -221,4 +225,11 @@ void KiDumpTrapFrame(const char *what, const KTRAP_FRAME *frame)
         KiLogPrintf("  frame %d: %p", depth, (PVOID)rec[1]);
         fp = rec[0];
     }
+}
+
+/* the arm64 context has no parts to keep apart yet, the whole record is the thread's. */
+void KiMergeContext(CONTEXT *to, const CONTEXT *from, ULONG flags)
+{
+    *to = *from;
+    to->ContextFlags = flags;
 }

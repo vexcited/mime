@@ -1,6 +1,6 @@
 /*
  * features on demand. A feature is a runtime that Windows ships or offers, like the .NET Framework or the WebView2
- * runtime. Its files are fetched from the vendor the first time a program needs them, by features.exe.
+ * runtime. Its files are fetched from the vendor the first time a program needs them, by OptionalFeatures.exe.
  *
  * This header holds what the pieces share. The handler interface is how a feature is put on the drive from the
  * file that was downloaded. The request functions are how the rest of the system asks for a feature.
@@ -15,9 +15,10 @@
 #define MIME_FEATURE_NETFX4 L"NetFx4"
 #define MIME_FEATURE_POWERSHELL L"PowerShell"
 #define MIME_FEATURE_VCRUNTIME_X64 L"VCRuntime.x64"
+#define MIME_FEATURE_SYSTEM_CATALOGS L"SystemCatalogs"
 
 /* The program that serves requests, below the windows folder. */
-#define MIME_FEATURE_PROGRAM L"\\System32\\features.exe"
+#define MIME_FEATURE_PROGRAM L"\\System32\\OptionalFeatures.exe"
 
 /*
  * Reports how far a handler is. Done and total are in units of the handler's choice, total is 0 when unknown.
@@ -34,7 +35,7 @@ typedef DWORD (*MIME_FEATURE_INSTALL)(PCWSTR package, PCWSTR root, MIME_FEATURE_
 /*
  * The .NET Framework 4.8.1 handler. The package is NDP481-x86-x64-AllOS-ENU.exe, Microsoft's offline installer. It
  * writes the Framework, its assemblies and its runtime libraries under Root. It is provided by guest/lib/cbs, until
- * then features.exe links a weak stub that returns ERROR_NOT_SUPPORTED. features.exe calls it with a null package to
+ * then OptionalFeatures.exe links a weak stub that returns ERROR_NOT_SUPPORTED. OptionalFeatures.exe calls it with a null package to
  * learn whether it is there before it downloads anything, so the real one must do nothing and return
  * ERROR_INVALID_PARAMETER for a null package.
  */
@@ -49,16 +50,19 @@ DWORD NetfxInstallFromPackage(PCWSTR package, PCWSTR root, MIME_FEATURE_PROGRESS
 DWORD PowerShellInstallFromPackage(PCWSTR package, PCWSTR root, MIME_FEATURE_PROGRESS progress, void *context);
 
 /*
- * Asks features.exe to enable a feature and waits for it. The user is asked first unless the policy decided. Returns a
+ * Asks OptionalFeatures.exe to enable a feature and waits for it. The user is asked first unless the policy decided. Returns a
  * Win32 error, 0 when the feature is on the drive. The process that asked carries on when it is 0.
  */
 DWORD MimeFeatureRequest(PCWSTR name, DWORD flags);
 
 /*
  * Asks for the feature that holds a font family, for a lookup of a font by name that found none. Returns 0 when the
- * font is on the drive, ERROR_NOT_FOUND when no feature has it.
+ * font is on the drive, ERROR_NOT_FOUND when no feature has it, MIME_FEATURE_FONT_MISSING when the font is still
+ * missing and the user was told that the program is ended.
  */
 DWORD MimeFeatureRequestFont(PCWSTR family);
+
+#define MIME_FEATURE_FONT_MISSING 0x20004D01
 
 /*
  * Called when a program meant to use a file and did not find it: it starts the program, loads the library or opens the
@@ -78,11 +82,11 @@ BOOL MimeFeatureFault(PCWSTR path);
  */
 BOOL MimeFeatureFaultFromRuntime(PCWSTR path, PVOID caller);
 
-/* The environment variable features.exe sets for what it runs, so that a missing file in there asks for nothing. */
-#define MIME_FEATURE_BUSY_VARIABLE L"MIME_FEATURE_BUSY"
+/* The environment variable OptionalFeatures.exe sets for what it runs, so that a missing file in there asks for nothing. */
+#define MIME_FEATURE_BUSY_VARIABLE L"WINDOWS_FEATURE_BUSY"
 
 /* Where the state of the features is kept, and where the policy is. */
-#define MIME_FEATURE_STATE_KEY L"SOFTWARE\\Mime\\Features"
-#define MIME_FEATURE_POLICY_KEY L"SOFTWARE\\Policies\\Mime\\Features"
+#define MIME_FEATURE_STATE_KEY L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\WindowsFeatures"
+#define MIME_FEATURE_POLICY_KEY L"SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsFeatures"
 
 #endif

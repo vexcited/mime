@@ -431,9 +431,9 @@ static HWND create_desktop_window(void)
     WNDCLASSW class = {};
     class.lpfnWndProc = desktop_window_proc;
     class.hInstance = g_explorerframe;
-    class.lpszClassName = L"MimeShellDesktop";
+    class.lpszClassName = L"Progman";
     RegisterClassW(&class);
-    return CreateWindowExW(WS_EX_TOOLWINDOW, L"MimeShellDesktop", L"Mime shell desktop", WS_POPUP, 0, 0, 0, 0, nullptr,
+    return CreateWindowExW(WS_EX_TOOLWINDOW, L"Progman", L"Program Manager", WS_POPUP, 0, 0, 0, 0, nullptr,
                            nullptr, g_explorerframe, nullptr);
 }
 

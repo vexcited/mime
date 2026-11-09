@@ -1,0 +1,20 @@
+; the exports of profapi.dll of windows, which has ordinals only.
+LIBRARY profapi.dll
+EXPORTS
+    CreateEnvBlock @101 NONAME
+    DestroyEnvBlock @102 NONAME
+    ExpandEnvStringForUser @103 NONAME
+    GetBasicProfileFolderPath @104 NONAME
+    LoadProfileBasic @105 NONAME
+    UnloadProfileBasic @106 NONAME
+    GetAppContainerRegistryHandle @107 NONAME
+    CreateAppContainerEnumerator @108 NONAME
+    GetNextAppContainerSid @109 NONAME
+    DeleteAppContainerEnumerator @110 NONAME
+    GetAppContainerPath @111 NONAME
+    GetAppContainerRegistryPath @112 NONAME
+    GetAppContainerSpecificSubPath @113 NONAME
+    GetAppContainerRegistryHandleFromName @114 NONAME
+    GetAppContainerPathFromSidString @115 NONAME
+    GetBasicProfileFolderPathEx @116 NONAME
+    GetBasicProfileFolderPathAlloc @117 NONAME

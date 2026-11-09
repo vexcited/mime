@@ -710,7 +710,7 @@ static void write_ctab(S1 *e, uint32_t version)
         c16(&c, 0);
         c32(&c, 0);
     }
-    cstring(&c, creator, "Mime HLSL Shader Compiler 10.1");
+    cstring(&c, creator, "Microsoft (R) HLSL Shader Compiler 10.1");
     cstring(&c, target, s->profile.name);
     for (uint32_t i = 0; i < c.string_count; i++) {
         set_at(&c, c.string_at[i], (uint32_t)c.b.length);

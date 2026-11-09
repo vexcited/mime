@@ -317,7 +317,7 @@ static void write_rdef(IrShader *s, HlBuf *out, uint32_t flags)
         w32(c, 12);
         w32(c, 0);
     }
-    string_at(c, creator_at, "Mime HLSL Shader Compiler 10.1");
+    string_at(c, creator_at, "Microsoft (R) HLSL Shader Compiler 10.1");
 
     /* binding descriptions. */
     set32(c, bindings_at, (uint32_t)c->b.length);

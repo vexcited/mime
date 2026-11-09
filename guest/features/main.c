@@ -1,5 +1,5 @@
 /*
- * features.exe: turns the features that are fetched from the vendor on and off.
+ * OptionalFeatures.exe: turns the features that are fetched from the vendor on and off.
  *
  *   features list                           the features and what state each is in
  *   features status <name>                  one feature in full
@@ -46,6 +46,7 @@ typedef struct OPTIONS {
     BOOL Ask;       /* The form of a program that needs the feature, the user decides. */
     BOOL HideUi;
     BOOL Elevated;  /* Started by the broker for this very request. */
+    BOOL Font;      /* A program asked for a font, Name is the family. */
 } OPTIONS;
 
 static const WCHAR kUsage[] =
@@ -63,7 +64,7 @@ static const WCHAR kUsage[] =
     L"The forms of Windows work too: fondue /enable-feature:<name> asks before it downloads, and\n"
     L"dism /online /enable-feature /featurename:<name> [/source:<file>] does not.\n"
     L"\n"
-    L"Policy: the value Consent under HKLM\\SOFTWARE\\Policies\\Mime\\Features, or under a key of the feature's name, is 0\n"
+    L"Policy: the value Consent under HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsFeatures, or under a key of the feature's name, is 0\n"
     L"to ask, 1 to download without asking and 2 to download nothing.\n";
 
 static void narrow(const WCHAR *wide, char *narrow_text, SIZE_T chars)
@@ -252,7 +253,7 @@ static HANDLE lock_feature(const FEATURE_DEF *feature, BOOL say)
 {
     WCHAR name[64], mutex_name[96];
     WidenName(feature->Name, name, RTL_NUMBER_OF(name));
-    _snwprintf(mutex_name, RTL_NUMBER_OF(mutex_name), L"Global\\MimeFeature.%ls", name);
+    _snwprintf(mutex_name, RTL_NUMBER_OF(mutex_name), L"Global\\WindowsFeature.%ls", name);
     mutex_name[RTL_NUMBER_OF(mutex_name) - 1] = 0;
     HANDLE mutex = CreateMutexW(nullptr, FALSE, mutex_name);
     if (!mutex)
@@ -281,6 +282,8 @@ static int change(const OPTIONS *o, const FEATURE_DEF *feature)
     run.Remove = remove;
     lstrcpynW(run.Source, o->Source, RTL_NUMBER_OF(run.Source));
     lstrcpynW(run.Caller, o->Caller, RTL_NUMBER_OF(run.Caller));
+    if (o->Font)
+        lstrcpynW(run.Font, o->Name, RTL_NUMBER_OF(run.Font));
     run.CallerPid = o->CallerPid;
     for (WCHAR *p = run.Caller; *p; p++)
         if (*p == L'_')
@@ -313,7 +316,7 @@ static int change(const OPTIONS *o, const FEATURE_DEF *feature)
             tu_eprint(L"features: %ls\n", run.Detail);
     }
     tu_flush();
-    return (int)error;
+    return run.Told ? MIME_FEATURE_FONT_MISSING : (int)error;
 }
 
 /* ------------------------------------------------------------------ what is there */
@@ -379,10 +382,22 @@ static int show_status(const FEATURE_DEF *feature)
     return 0;
 }
 
+/* The font of the windows, for this process only: the drive may have no font at all, it is what features fetch. */
+static void add_ui_font(void)
+{
+    WCHAR path[MAX_PATH];
+    UINT n = GetWindowsDirectoryW(path, MAX_PATH);
+    if (!n || n >= MAX_PATH - 48)
+        return;
+    wcscpy(path + n, L"\\Resources\\Features\\NotoSans-Regular.ttf");
+    AddFontResourceExW(path, FR_PRIVATE, nullptr);
+}
+
 int tool_main(void)
 {
     /* What this program looks into must not ask for a feature, it would ask itself. */
     SetEnvironmentVariableW(MIME_FEATURE_BUSY_VARIABLE, L"1");
+    add_ui_font();
     OPTIONS o = {};
     if (!parse(&o)) {
         tu_eprint(L"features: the command line is not right, `features help` tells how it is used.\n");
@@ -406,7 +421,9 @@ int tool_main(void)
     }
     if (o.Action == ACTION_STATUS)
         return show_status(feature);
-    if (o.Action == ACTION_FONT)
+    if (o.Action == ACTION_FONT) {
         o.Action = ACTION_ENABLE;
+        o.Font = TRUE;
+    }
     return change(&o, feature);
 }

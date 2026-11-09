@@ -1086,7 +1086,7 @@ static void sort_written(CM_CREDENTIAL **items, DWORD count)
 static int store_open(STORE *s)
 {
     memset(s, 0, sizeof(*s));
-    WCHAR name[96] = L"Local\\MimeCredMan.";
+    WCHAR name[96] = L"Local\\CredMan.";
     BYTE storage[SECURITY_MAX_SID_SIZE];
     PWSTR text = nullptr;
     if (AdvCurrentUserSid(storage) && ConvertSidToStringSidW(storage, &text)) {

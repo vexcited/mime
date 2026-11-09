@@ -156,6 +156,13 @@ typedef struct DxbcCompileOptions {
     int compute_derivatives;
     /* reads report whether what they read is mapped, for CheckAccessFullyMapped. */
     int residency;
+    /*
+     * the pixel shader's second target is the second source of the first target's blend. vulkan reads it at location 0
+     * and index 1, while direct3d writes it to render target 1.
+     */
+    int dual_source;
+    /* the float widths whose nans, infinities and signed zeros the gpu keeps when asked, see spv_keep_inf_nan. */
+    uint32_t inf_nan_widths;
 } DxbcCompileOptions;
 
 /* what a stage slot holds, as the shader declares it. */

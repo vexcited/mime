@@ -102,6 +102,26 @@ void spv_capability(SpvBuilder *b, uint32_t capability)
     spv_emit(b, SECTION_CAPABILITIES, SpvOpCapability, &capability, 1);
 }
 
+/*
+ * direct3d keeps nans, infinities and the sign of zero, which vulkan drivers may drop unless asked: a driver that
+ * assumes no nan removes the isnan tests games clean their buffers with. widths: 1 for 16, 2 for 32 and 4 for 64 bits,
+ * those the gpu can keep; 16 and 64 only matter in a module that uses them.
+ */
+void spv_keep_inf_nan(SpvBuilder *b, uint32_t main, uint32_t widths)
+{
+    static const struct {
+        uint32_t width, bit, capability;
+    } TYPES[] = {{32, 2, 0}, {16, 1, SpvCapabilityFloat16}, {64, 4, SpvCapabilityFloat64}};
+    for (uint32_t i = 0; i < 3; i++) {
+        uint32_t cap = TYPES[i].capability;
+        if (!(widths & TYPES[i].bit) || (cap && !(b->capabilities[cap >> 6] & (1ull << (cap & 63)))))
+            continue;
+        spv_capability(b, SpvCapabilitySignedZeroInfNanPreserve);
+        uint32_t w[3] = {main, SpvExecutionModeSignedZeroInfNanPreserve, TYPES[i].width};
+        spv_emit(b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, w, 3);
+    }
+}
+
 void spv_extension(SpvBuilder *b, const char *name)
 {
     spv_emit_string(b, SECTION_EXTENSIONS, SpvOpExtension, nullptr, 0, name, nullptr, 0);

@@ -92,8 +92,12 @@ typedef struct Props {
 static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p, Request *r)
 {
     memset(p, 0, sizeof(*p));
-    VkPhysicalDeviceProperties2 base = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+    VkPhysicalDeviceVulkan12Properties p12 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
+    VkPhysicalDeviceProperties2 base = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &p12};
     fn->properties2(physical, &base);
+    p->inf_nan_widths = (p12.shaderSignedZeroInfNanPreserveFloat16 ? 1 : 0) |
+                        (p12.shaderSignedZeroInfNanPreserveFloat32 ? 2 : 0) |
+                        (p12.shaderSignedZeroInfNanPreserveFloat64 ? 4 : 0);
 
     UINT count = 0;
     fn->extensions(physical, nullptr, &count, nullptr);

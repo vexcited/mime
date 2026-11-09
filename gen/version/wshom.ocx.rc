@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Windows Script Host Runtime Library"
             VALUE "FileVersion", "10.0.26100.9278"
             VALUE "InternalName", "wshom.ocx"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "wshom.ocx"
             VALUE "ProductName", "Microsoft \256 Windows Script Host Runtime Library"
             VALUE "ProductVersion", "10.0.26100.9278"

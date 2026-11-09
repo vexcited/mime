@@ -8,6 +8,7 @@
 #define LDRP_DONT_CALL_FOR_THREADS 0x00040000
 #define LDRP_LOAD_IN_PROGRESS 0x00001000
 #define LDRP_STATIC_LINK 0x00000002
+#define LDRP_LOAD_NOTIFICATIONS_SENT 0x00000008
 #define LDRP_COR_IMAGE 0x00400000
 #define LDRP_COR_ILONLY 0x01000000
 
@@ -31,6 +32,15 @@ RTL_CRITICAL_SECTION LdrpLoaderLock = RTL_CRITICAL_SECTION_INIT;
 PVOID LdrpKernel32ThreadInitThunk;
 
 static PEB_LDR_DATA g_ldr;
+/*
+ * like windows' LdrpModuleDatatableLock: the module lists and the reference counts. finding a loaded module, the
+ * procedures it exports and loading it once more take this lock and not the loader lock, which only loads and
+ * initializers hold. taken after the loader lock, never before it.
+ */
+static RTL_SRWLOCK g_table_lock;
+/* like LdrpTlsLock: the static tls slots and the threads' vectors, so a thread allocates its tls before it waits for
+   the loader lock. */
+static RTL_SRWLOCK g_tls_lock;
 typedef struct FORWARD_DEPENDENCY {
     struct FORWARD_DEPENDENCY *Next;
     PLDR_DATA_TABLE_ENTRY Source, Target;
@@ -89,6 +99,8 @@ static LIST_ENTRY g_tls_vectors = {&g_tls_vectors, &g_tls_vectors};
 typedef struct LOAD_CONTEXT {
     BOOLEAN Static; /* part of the initial process image. */
     PCWSTR SearchPath;
+    BOOLEAN DontResolve; /* mapped only, as LoadLibraryEx's DONT_RESOLVE_DLL_REFERENCES asks. */
+    BOOLEAN NoLoad; /* a lookup without the loader lock: a forward to a module that is not ready fails with STATUS_RETRY. */
 } LOAD_CONTEXT;
 
 static NTSTATUS load_dll(PCWSTR name, LOAD_CONTEXT *ctx, PLDR_DATA_TABLE_ENTRY *out);
@@ -253,8 +265,10 @@ static PLDR_DATA_TABLE_ENTRY create_entry(PVOID base, PCWSTR full_path)
         e->EntryPoint = nullptr;
     InitializeListHead(&e->HashLinks);
     InitializeListHead(&e->InInitializationOrderLinks);
+    RtlAcquireSRWLockExclusive(&g_table_lock);
     InsertTailList(&g_ldr.InLoadOrderModuleList, &e->InLoadOrderLinks);
     InsertTailList(&g_ldr.InMemoryOrderModuleList, &e->InMemoryOrderLinks);
+    RtlReleaseSRWLockExclusive(&g_table_lock);
     return e;
 }
 
@@ -262,6 +276,7 @@ static void release_tls(PLDR_DATA_TABLE_ENTRY e);
 
 static void destroy_entry(PLDR_DATA_TABLE_ENTRY e)
 {
+    RtlAcquireSRWLockExclusive(&g_table_lock);
     FORWARD_DEPENDENCY **link = &g_forward_dependencies;
     while (*link) {
         FORWARD_DEPENDENCY *dependency = *link;
@@ -272,12 +287,13 @@ static void destroy_entry(PLDR_DATA_TABLE_ENTRY e)
             link = &dependency->Next;
         }
     }
-    release_tls(e);
-    RtlReleaseActivationContext(e->EntryPointActivationContext);
     RemoveEntryList(&e->InLoadOrderLinks);
     RemoveEntryList(&e->InMemoryOrderLinks);
     if (!IsListEmpty(&e->InInitializationOrderLinks))
         RemoveEntryList(&e->InInitializationOrderLinks);
+    RtlReleaseSRWLockExclusive(&g_table_lock);
+    release_tls(e);
+    RtlReleaseActivationContext(e->EntryPointActivationContext);
     heap_free(e->FullDllName.Buffer);
     heap_free(e);
 }
@@ -757,6 +773,29 @@ static PLDR_DATA_TABLE_ENTRY find_loaded_path(PCWSTR name)
     return e ? e : find_by_file(path);
 }
 
+/* the module a load of this name gets if it is already loaded, as load_dll looks for it. the table lock is held. */
+static PLDR_DATA_TABLE_ENTRY find_loaded(PCWSTR name)
+{
+    name = resolve_api_set(name);
+    PCWSTR base_name = name + wcslen(name);
+    while (base_name > name && base_name[-1] != '\\' && base_name[-1] != '/')
+        base_name--;
+    WCHAR path[MAX_PATH];
+    if (NT_SUCCESS(LdrpSxsRedirectDll(name, path, RTL_NUMBER_OF(path))))
+        return find_by_path(path);
+    return is_path_name(name) ? find_loaded_path(name) : find_by_name(base_name);
+}
+
+/* a module whose initializers have run, which windows calls LdrModulesReadyToRun. */
+static BOOLEAN module_ready(PLDR_DATA_TABLE_ENTRY e)
+{
+    if (e->Flags & LDRP_LOAD_IN_PROGRESS)
+        return FALSE;
+    if (e->Flags & LDRP_IMAGE_DLL)
+        return (e->Flags & LDRP_PROCESS_ATTACH_CALLED) != 0;
+    return (e->Flags & LDRP_ENTRY_PROCESSED) != 0;
+}
+
 /* ------------------------------------------------------------------ exports */
 
 static NTSTATUS resolve_export(PLDR_DATA_TABLE_ENTRY module, PCSTR name, USHORT hint, ULONG ordinal, PVOID *address,
@@ -778,6 +817,21 @@ static NTSTATUS resolve_forwarder(PLDR_DATA_TABLE_ENTRY source, PCSTR forward, P
     if (!wcschr(dll, '.'))
         wcscat(dll, L".dll");
     PLDR_DATA_TABLE_ENTRY target;
+    if (ctx->NoLoad) {
+        /* like LdrpGetProcedureAddress without the loader lock: a forward is followed only to a module that is ready
+           and that the source already depends on, anything else goes the long way. */
+        target = find_loaded(dll);
+        if (!target || !module_ready(target))
+            return STATUS_RETRY;
+        if (source != target) {
+            FORWARD_DEPENDENCY *dependency = g_forward_dependencies;
+            while (dependency && (dependency->Source != source || dependency->Target != target))
+                dependency = dependency->Next;
+            if (!dependency)
+                return STATUS_RETRY;
+        }
+        goto resolve;
+    }
     NTSTATUS status = load_dll(dll, ctx, &target);
     if (!NT_SUCCESS(status))
         return status;
@@ -791,10 +845,13 @@ static NTSTATUS resolve_forwarder(PLDR_DATA_TABLE_ENTRY source, PCSTR forward, P
                 return STATUS_NO_MEMORY;
             dependency->Source = source;
             dependency->Target = target;
+            RtlAcquireSRWLockExclusive(&g_table_lock);
             dependency->Next = g_forward_dependencies;
             g_forward_dependencies = dependency;
+            RtlReleaseSRWLockExclusive(&g_table_lock);
         }
     }
+resolve:
     if (dot[1] == '#') {
         ULONG ordinal = 0;
         for (PCSTR p = dot + 2; *p >= '0' && *p <= '9'; p++)
@@ -949,6 +1006,7 @@ static void register_tls(PLDR_DATA_TABLE_ENTRY e)
     IMAGE_TLS_DIRECTORY *tls = LdrpImageDirectory(e->DllBase, IMAGE_DIRECTORY_ENTRY_TLS, &size);
     if (!tls)
         return;
+    RtlAcquireSRWLockExclusive(&g_tls_lock);
     /* reuse the slot of an unloaded library, a program may load and free one many times. */
     ULONG index = g_tls_count;
     for (ULONG i = 0; i < g_tls_count; i++) {
@@ -958,8 +1016,10 @@ static void register_tls(PLDR_DATA_TABLE_ENTRY e)
         }
     }
     if (index == g_tls_count) {
-        if (g_tls_count >= RTL_NUMBER_OF(g_tls_modules))
+        if (g_tls_count >= RTL_NUMBER_OF(g_tls_modules)) {
+            RtlReleaseSRWLockExclusive(&g_tls_lock);
             return;
+        }
         g_tls_count++;
     }
     g_tls_modules[index].Entry = e;
@@ -967,11 +1027,13 @@ static void register_tls(PLDR_DATA_TABLE_ENTRY e)
     e->TlsIndex = (USHORT)index;
     if (tls->AddressOfIndex)
         *(PULONG)tls->AddressOfIndex = index;
+    RtlReleaseSRWLockExclusive(&g_tls_lock);
 }
 
 /* frees the library's block in every thread and its slot. */
 static void release_tls(PLDR_DATA_TABLE_ENTRY e)
 {
+    RtlAcquireSRWLockExclusive(&g_tls_lock);
     for (ULONG i = 0; i < g_tls_count; i++) {
         if (g_tls_modules[i].Entry != e || !g_tls_modules[i].Directory)
             continue;
@@ -985,6 +1047,7 @@ static void release_tls(PLDR_DATA_TABLE_ENTRY e)
             }
         }
     }
+    RtlReleaseSRWLockExclusive(&g_tls_lock);
 }
 
 /* an array of slots with the vector in front of the first. */
@@ -1036,7 +1099,7 @@ static NTSTATUS fill_tls(TLS_VECTOR *v)
     return STATUS_SUCCESS;
 }
 
-static NTSTATUS allocate_thread_tls(void)
+static NTSTATUS allocate_thread_tls_locked(void)
 {
     if (!g_tls_count)
         return STATUS_SUCCESS;
@@ -1058,12 +1121,22 @@ static NTSTATUS allocate_thread_tls(void)
     return fill_tls(v);
 }
 
+static NTSTATUS allocate_thread_tls(void)
+{
+    RtlAcquireSRWLockExclusive(&g_tls_lock);
+    NTSTATUS status = allocate_thread_tls_locked();
+    RtlReleaseSRWLockExclusive(&g_tls_lock);
+    return status;
+}
+
 /* for a tls dll loaded late: like windows, every running thread gets its block. */
 static NTSTATUS allocate_process_tls(void)
 {
-    NTSTATUS status = allocate_thread_tls();
+    RtlAcquireSRWLockExclusive(&g_tls_lock);
+    NTSTATUS status = allocate_thread_tls_locked();
     for (PLIST_ENTRY l = g_tls_vectors.Flink; NT_SUCCESS(status) && l != &g_tls_vectors; l = l->Flink)
         status = fill_tls(CONTAINING_RECORD(l, TLS_VECTOR, Link));
+    RtlReleaseSRWLockExclusive(&g_tls_lock);
     return status;
 }
 
@@ -1073,9 +1146,11 @@ static void free_thread_tls(void)
     PVOID *slots = teb->ThreadLocalStoragePointer;
     if (!slots)
         return;
+    RtlAcquireSRWLockExclusive(&g_tls_lock);
     teb->ThreadLocalStoragePointer = nullptr;
     TLS_VECTOR *v = ((TLS_VECTOR **)slots)[-1];
     RemoveEntryList(&v->Link);
+    RtlReleaseSRWLockExclusive(&g_tls_lock);
     for (ULONG i = 0; i < v->Capacity; i++)
         heap_free(v->Slots[i]);
     heap_free(v->Slots - 1);
@@ -1182,8 +1257,89 @@ static NTSTATUS init_module(PLDR_DATA_TABLE_ENTRY e, PVOID reserved)
 
 /* only runs what this load or lookup added: a DllMain that loads a library or looks up a procedure must not start
    modules that wait for the outer load. */
+/*
+ * LdrRegisterDllNotification: the routines hear of each dll once it is mapped with what it imports, before the
+ * initializers run, and of each dll that unloads, before it is unmapped. the loader lock is held, as on windows.
+ */
+#define LDR_DLL_NOTIFICATION_REASON_LOADED 1
+#define LDR_DLL_NOTIFICATION_REASON_UNLOADED 2
+
+typedef struct {
+    ULONG Flags;
+    PCUNICODE_STRING FullDllName;
+    PCUNICODE_STRING BaseDllName;
+    PVOID DllBase;
+    ULONG SizeOfImage;
+} LDR_DLL_NOTIFICATION_DATA;
+
+typedef void(NTAPI *LDR_DLL_NOTIFICATION_FUNCTION)(ULONG reason, const LDR_DLL_NOTIFICATION_DATA *data, PVOID context);
+
+typedef struct DLL_NOTIFICATION {
+    LIST_ENTRY Links;
+    LDR_DLL_NOTIFICATION_FUNCTION Callback;
+    PVOID Context;
+} DLL_NOTIFICATION;
+
+static LIST_ENTRY g_dll_notifications = {&g_dll_notifications, &g_dll_notifications};
+
+NTDLL_EXPORT NTSTATUS NTAPI LdrRegisterDllNotification(ULONG flags, LDR_DLL_NOTIFICATION_FUNCTION callback,
+                                                       PVOID context, PVOID *cookie)
+{
+    if (flags || !callback || !cookie)
+        return STATUS_INVALID_PARAMETER;
+    DLL_NOTIFICATION *n = RtlAllocateHeap(NtCurrentPeb()->ProcessHeap, 0, sizeof(*n));
+    if (!n)
+        return STATUS_NO_MEMORY;
+    n->Callback = callback;
+    n->Context = context;
+    RtlEnterCriticalSection(&LdrpLoaderLock);
+    InsertTailList(&g_dll_notifications, &n->Links);
+    RtlLeaveCriticalSection(&LdrpLoaderLock);
+    *cookie = n;
+    return STATUS_SUCCESS;
+}
+
+NTDLL_EXPORT NTSTATUS NTAPI LdrUnregisterDllNotification(PVOID cookie)
+{
+    NTSTATUS status = STATUS_DLL_NOT_FOUND;
+    RtlEnterCriticalSection(&LdrpLoaderLock);
+    for (PLIST_ENTRY l = g_dll_notifications.Flink; l != &g_dll_notifications; l = l->Flink) {
+        if (l == cookie) {
+            RemoveEntryList(l);
+            status = STATUS_SUCCESS;
+            break;
+        }
+    }
+    RtlLeaveCriticalSection(&LdrpLoaderLock);
+    if (NT_SUCCESS(status))
+        RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, cookie);
+    return status;
+}
+
+static void send_dll_notifications(PLDR_DATA_TABLE_ENTRY e, ULONG reason)
+{
+    if (reason == LDR_DLL_NOTIFICATION_REASON_LOADED) {
+        if (e->Flags & LDRP_LOAD_NOTIFICATIONS_SENT)
+            return;
+        e->Flags |= LDRP_LOAD_NOTIFICATIONS_SENT;
+    } else if (!(e->Flags & LDRP_LOAD_NOTIFICATIONS_SENT)) {
+        return;
+    }
+    LDR_DLL_NOTIFICATION_DATA data = {0, &e->FullDllName, &e->BaseDllName, e->DllBase, e->SizeOfImage};
+    for (PLIST_ENTRY l = g_dll_notifications.Flink, next; l != &g_dll_notifications; l = next) {
+        next = l->Flink;
+        DLL_NOTIFICATION *n = CONTAINING_RECORD(l, DLL_NOTIFICATION, Links);
+        n->Callback(reason, &data, n->Context);
+    }
+}
+
 static NTSTATUS run_new_initializers(PLIST_ENTRY before, PLDR_DATA_TABLE_ENTRY target)
 {
+    if (target && !(target->Flags & LDRP_PROCESS_ATTACH_CALLED))
+        send_dll_notifications(target, LDR_DLL_NOTIFICATION_REASON_LOADED);
+    for (PLIST_ENTRY l = before->Flink; l != &g_ldr.InInitializationOrderModuleList; l = l->Flink)
+        send_dll_notifications(CONTAINING_RECORD(l, LDR_DATA_TABLE_ENTRY, InInitializationOrderLinks),
+                               LDR_DLL_NOTIFICATION_REASON_LOADED);
     NTSTATUS status = target ? init_module(target, nullptr) : STATUS_SUCCESS;
     for (PLIST_ENTRY l = before->Flink; NT_SUCCESS(status) && l != &g_ldr.InInitializationOrderModuleList; l = l->Flink)
         status = init_module(CONTAINING_RECORD(l, LDR_DATA_TABLE_ENTRY, InInitializationOrderLinks), nullptr);
@@ -1202,10 +1358,14 @@ static NTSTATUS load_dll(PCWSTR name, LOAD_CONTEXT *ctx, PLDR_DATA_TABLE_ENTRY *
     WCHAR path[MAX_PATH];
     BOOLEAN redirected = NT_SUCCESS(LdrpSxsRedirectDll(name, path, RTL_NUMBER_OF(path)));
     BOOLEAN qualified = !redirected && is_path_name(name);
+    RtlAcquireSRWLockExclusive(&g_table_lock);
     PLDR_DATA_TABLE_ENTRY e = redirected ? find_by_path(path) : qualified ? find_loaded_path(name) : find_by_name(base_name);
     if (e) {
         e->ReferenceCount++;
         e->ObsoleteLoadCount++;
+    }
+    RtlReleaseSRWLockExclusive(&g_table_lock);
+    if (e) {
         *out = e;
         return STATUS_SUCCESS;
     }
@@ -1230,6 +1390,12 @@ static NTSTATUS load_dll(PCWSTR name, LOAD_CONTEXT *ctx, PLDR_DATA_TABLE_ENTRY *
         NtUnmapViewOfSection(NtCurrentProcess(), base);
         return STATUS_NO_MEMORY;
     }
+    if (ctx->DontResolve) {
+        /* no imports and no entry call, so the module never joins the initialization order. */
+        e->Flags |= LDRP_ENTRY_PROCESSED;
+        *out = e;
+        return STATUS_SUCCESS;
+    }
     e->Flags |= LDRP_LOAD_IN_PROGRESS | (ctx->Static ? LDRP_STATIC_LINK : 0);
     /* the dll's own manifest is active while its imports resolve. */
     if (!(e->Flags & LDRP_COR_ILONLY))
@@ -1248,7 +1414,9 @@ static NTSTATUS load_dll(PCWSTR name, LOAD_CONTEXT *ctx, PLDR_DATA_TABLE_ENTRY *
     e->Flags &= ~LDRP_LOAD_IN_PROGRESS;
     register_tls(e);
     /* post order: a module enters the init list after everything it imports. */
+    RtlAcquireSRWLockExclusive(&g_table_lock);
     InsertTailList(&g_ldr.InInitializationOrderModuleList, &e->InInitializationOrderLinks);
+    RtlReleaseSRWLockExclusive(&g_table_lock);
     *out = e;
     return STATUS_SUCCESS;
 }
@@ -1425,9 +1593,27 @@ static void initialize_process(PCONTEXT context)
     RtlLeaveCriticalSection(&LdrpLoaderLock);
 }
 
+/* TEB SameTebFlags the kernel sets from the creation flags, and the one process start sets. */
+#define TEB_SKIP_THREAD_ATTACH 0x0008
+#define TEB_RAN_PROCESS_INIT 0x0020
+#define TEB_LOADER_WORKER 0x2000
+#define TEB_SKIP_LOADER_INIT 0x4000
+
+/* like LdrpInitializeThread, a thread made to skip the attach routines or one of the loader's own gets no tls either. */
+static BOOLEAN skips_thread_attach(void)
+{
+    USHORT flags = NtCurrentTeb()->SameTebFlags;
+    return ((flags & TEB_SKIP_THREAD_ATTACH) && !(flags & TEB_RAN_PROCESS_INIT)) || (flags & TEB_LOADER_WORKER);
+}
+
 static void initialize_thread(void)
 {
     LdrpSxsInitializeThread();
+    if (skips_thread_attach())
+        return;
+    /* like LdrpInitializeThread, the tls comes before the loader lock. the slots of modules registered meanwhile, by
+       the process start or a load, are filled once the thread has the lock. */
+    allocate_thread_tls();
     RtlEnterCriticalSection(&LdrpLoaderLock);
     allocate_thread_tls();
     for (PLIST_ENTRY l = g_ldr.InInitializationOrderModuleList.Flink; l != &g_ldr.InInitializationOrderModuleList;
@@ -1448,8 +1634,12 @@ void NTAPI LdrpInitialize(PCONTEXT context)
     /* a thread that a library makes while the process is still starting is a thread, not the start of the process. It
      * waits for the loader lock, which the start holds, in initialize_thread. */
     static BOOLEAN process_start_begun;
+    /* like LdrpInitializeInternal, a thread made with THREAD_CREATE_FLAGS_SKIP_LOADER_INIT goes straight to its start. */
+    if (NtCurrentTeb()->SameTebFlags & TEB_SKIP_LOADER_INIT)
+        return;
     if (!process_start_begun) {
         process_start_begun = TRUE;
+        NtCurrentTeb()->SameTebFlags |= TEB_RAN_PROCESS_INIT;
         initialize_process(context);
         g_process_initialized = TRUE;
         if (g_wow64_initialize)
@@ -1463,6 +1653,10 @@ void NTAPI LdrpInitialize(PCONTEXT context)
 
 NTDLL_EXPORT void NTAPI LdrShutdownThread(void)
 {
+    if (skips_thread_attach()) {
+        RtlFreeThreadActivationContextStack();
+        return;
+    }
     RtlEnterCriticalSection(&LdrpLoaderLock);
     /* the exe is in no initialization list, its tls callbacks go first as they came last on attach. */
     PLDR_DATA_TABLE_ENTRY exe = find_by_base(NtCurrentPeb()->ImageBaseAddress);
@@ -1515,9 +1709,28 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrLoadDll(PCWSTR search_path, PULONG flags, PCUNICO
     WCHAR dll[MAX_PATH];
     unicode_to_cstr(name, dll, RTL_NUMBER_OF(dll));
     /* the search path is a ';' separated list unless it is a small flags value. */
-    LOAD_CONTEXT ctx = {FALSE, ((ULONG_PTR)search_path & ~(ULONG_PTR)0xFFFF) ? search_path : nullptr};
-    RtlEnterCriticalSection(&LdrpLoaderLock);
+    /* IMAGE_FILE_EXECUTABLE_IMAGE in the characteristics is how LoadLibraryEx passes DONT_RESOLVE_DLL_REFERENCES. */
+    LOAD_CONTEXT ctx = {FALSE, ((ULONG_PTR)search_path & ~(ULONG_PTR)0xFFFF) ? search_path : nullptr,
+                        flags && (*flags & IMAGE_FILE_EXECUTABLE_IMAGE)};
     PLDR_DATA_TABLE_ENTRY e;
+    /*
+     * like LdrpFastpthReloadedDll, a module that is loaded and initialized gets one more reference without the loader
+     * lock, so a load of one waits neither for another load nor for a thread that runs its attach routines.
+     */
+    if (!ctx.DontResolve) {
+        RtlAcquireSRWLockExclusive(&g_table_lock);
+        e = find_loaded(dll);
+        BOOLEAN ready = e && module_ready(e);
+        if (ready) {
+            e->ReferenceCount++;
+            e->ObsoleteLoadCount++;
+            *base = e->DllBase;
+        }
+        RtlReleaseSRWLockExclusive(&g_table_lock);
+        if (ready)
+            return STATUS_SUCCESS;
+    }
+    RtlEnterCriticalSection(&LdrpLoaderLock);
     PLIST_ENTRY before = g_ldr.InInitializationOrderModuleList.Blink;
     NTSTATUS status = load_dll(dll, &ctx, &e);
     if (NT_SUCCESS(status)) {
@@ -1579,13 +1792,20 @@ NTDLL_EXPORT PVOID NTAPI RtlGetUnloadEventTraceEx(PULONG *element_size, PULONG *
 NTDLL_EXPORT NTSTATUS NTAPI LdrUnloadDll(PVOID base)
 {
     RtlEnterCriticalSection(&LdrpLoaderLock);
+    RtlAcquireSRWLockExclusive(&g_table_lock);
     PLDR_DATA_TABLE_ENTRY e = find_by_base(base);
+    BOOLEAN last = e && e->ObsoleteLoadCount != 0xFFFF && !(e->Flags & LDRP_STATIC_LINK) && --e->ReferenceCount == 0;
+    /* a module on its way out is not ready, a load without the loader lock must not take it. */
+    if (last)
+        e->Flags |= LDRP_LOAD_IN_PROGRESS;
+    RtlReleaseSRWLockExclusive(&g_table_lock);
     NTSTATUS status = STATUS_DLL_NOT_FOUND;
     if (e) {
         status = STATUS_SUCCESS;
-        if (e->ObsoleteLoadCount != 0xFFFF && !(e->Flags & LDRP_STATIC_LINK) && --e->ReferenceCount == 0) {
+        if (last) {
             if (e->Flags & LDRP_PROCESS_ATTACH_CALLED)
                 call_entry(e, DLL_PROCESS_DETACH, nullptr);
+            send_dll_notifications(e, LDR_DLL_NOTIFICATION_REASON_UNLOADED);
             /* dependencies keep their references and stay loaded. */
             record_unload(e);
             destroy_entry(e);
@@ -1607,12 +1827,13 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetDllHandleEx(ULONG flags, PCWSTR path, PULONG c
         file--;
     WCHAR redirected[MAX_PATH];
     BOOLEAN is_redirected = NT_SUCCESS(LdrpSxsRedirectDll(resolved, redirected, RTL_NUMBER_OF(redirected)));
-    RtlEnterCriticalSection(&LdrpLoaderLock);
+    /* like windows, a lookup takes the module table lock and never waits for the loader lock. */
+    RtlAcquireSRWLockExclusive(&g_table_lock);
     PLDR_DATA_TABLE_ENTRY e = is_redirected ? find_by_path(redirected)
                               : is_path_name(resolved) ? find_loaded_path(resolved) : find_by_name(file);
     if (e && !(flags & 2)) /* LDR_GET_DLL_HANDLE_EX_UNCHANGED_REFCOUNT */
         e->ReferenceCount++;
-    RtlLeaveCriticalSection(&LdrpLoaderLock);
+    RtlReleaseSRWLockExclusive(&g_table_lock);
     if (!e)
         return STATUS_DLL_NOT_FOUND;
     *base = e->DllBase;
@@ -1626,14 +1847,14 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetDllHandle(PCWSTR path, PULONG characteristics,
 
 NTDLL_EXPORT NTSTATUS NTAPI LdrAddRefDll(ULONG flags, PVOID base)
 {
-    RtlEnterCriticalSection(&LdrpLoaderLock);
+    RtlAcquireSRWLockExclusive(&g_table_lock);
     PLDR_DATA_TABLE_ENTRY e = find_by_base(base);
     if (e) {
         if (flags & 1) /* LDR_ADDREF_DLL_PIN */
             e->ObsoleteLoadCount = 0xFFFF;
         e->ReferenceCount++;
     }
-    RtlLeaveCriticalSection(&LdrpLoaderLock);
+    RtlReleaseSRWLockExclusive(&g_table_lock);
     return e ? STATUS_SUCCESS : STATUS_DLL_NOT_FOUND;
 }
 
@@ -1655,17 +1876,26 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetProcedureAddressEx(PVOID base, PCANSI_STRING n
         memcpy((char *)cname, name->Buffer, name->Length);
         ((char *)cname)[name->Length] = 0;
     }
-    RtlEnterCriticalSection(&LdrpLoaderLock);
+    /* like LdrGetProcedureAddressForCaller, the export of a loaded module is found under the module table lock. only
+       a forward to a module that has to be loaded or initialized takes the loader lock. */
+    LOAD_CONTEXT fast = {FALSE, nullptr, FALSE, TRUE};
+    RtlAcquireSRWLockShared(&g_table_lock);
     PLDR_DATA_TABLE_ENTRY e = find_by_base(base);
-    NTSTATUS status = STATUS_DLL_NOT_FOUND;
-    if (e) {
-        LOAD_CONTEXT ctx = {FALSE, nullptr};
-        PLIST_ENTRY before = g_ldr.InInitializationOrderModuleList.Blink;
-        status = resolve_export(e, cname, 0, ordinal, address, &ctx, 0);
-        if (NT_SUCCESS(status))
-            status = run_new_initializers(before, nullptr);
+    NTSTATUS status = e ? resolve_export(e, cname, 0, ordinal, address, &fast, 0) : STATUS_DLL_NOT_FOUND;
+    RtlReleaseSRWLockShared(&g_table_lock);
+    if (status == STATUS_RETRY) {
+        RtlEnterCriticalSection(&LdrpLoaderLock);
+        e = find_by_base(base);
+        status = STATUS_DLL_NOT_FOUND;
+        if (e) {
+            LOAD_CONTEXT ctx = {FALSE, nullptr};
+            PLIST_ENTRY before = g_ldr.InInitializationOrderModuleList.Blink;
+            status = resolve_export(e, cname, 0, ordinal, address, &ctx, 0);
+            if (NT_SUCCESS(status))
+                status = run_new_initializers(before, nullptr);
+        }
+        RtlLeaveCriticalSection(&LdrpLoaderLock);
     }
-    RtlLeaveCriticalSection(&LdrpLoaderLock);
     if (copy)
         RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, copy);
     return status;
@@ -1796,24 +2026,66 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrDisableThreadCalloutsForDll(PVOID base)
     return e ? STATUS_SUCCESS : STATUS_DLL_NOT_FOUND;
 }
 
+/*
+ * like windows: the cookie holds the low 12 bits of the thread id in its top 16 bits and an even acquisition count
+ * with bit 0 set. before the process start is done the lock is not taken and the cookie stays zero, which unlocking ignores.
+ */
+#define LDR_LOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS 1
+#define LDR_LOCK_LOADER_LOCK_FLAG_TRY_ONLY 2
+static volatile LONG g_loader_lock_acquisitions;
+#define LOADER_COOKIE_SHIFT (sizeof(ULONG_PTR) * 8 - 16)
+
+static NTSTATUS loader_lock_error(ULONG flags, NTSTATUS status)
+{
+    if (flags & LDR_LOCK_LOADER_LOCK_FLAG_RAISE_ON_ERRORS)
+        RtlRaiseStatus(status);
+    return status;
+}
+
+static ULONG_PTR loader_lock_cookie(void)
+{
+    ULONG id = (ULONG)(ULONG_PTR)NtCurrentThreadId();
+    USHORT count = (USHORT)__atomic_add_fetch(&g_loader_lock_acquisitions, 1, __ATOMIC_RELAXED);
+    return ((ULONG_PTR)(id & 0xFFF) << LOADER_COOKIE_SHIFT) | (count & 0xFFFE) | 1;
+}
+
 NTDLL_EXPORT NTSTATUS NTAPI LdrLockLoaderLock(ULONG flags, PULONG disposition, PULONG_PTR cookie)
 {
-    if (flags & 2) { /* LDR_LOCK_LOADER_LOCK_FLAG_TRY_ONLY */
-        BOOLEAN got = RtlTryEnterCriticalSection(&LdrpLoaderLock);
-        if (disposition)
-            *disposition = got ? 1 : 2;
+    if (disposition)
+        *disposition = 0;
+    if (cookie)
+        *cookie = 0;
+    if (flags & ~3u)
+        return loader_lock_error(flags, STATUS_INVALID_PARAMETER_1);
+    if (!cookie)
+        return loader_lock_error(flags, STATUS_INVALID_PARAMETER_3);
+    if ((flags & LDR_LOCK_LOADER_LOCK_FLAG_TRY_ONLY) && !disposition)
+        return loader_lock_error(flags, STATUS_INVALID_PARAMETER_2);
+    if (!g_process_initialized)
+        return STATUS_SUCCESS;
+    if (flags & LDR_LOCK_LOADER_LOCK_FLAG_TRY_ONLY) {
+        if (!RtlTryEnterCriticalSection(&LdrpLoaderLock)) {
+            *disposition = 2; /* LDR_LOCK_LOADER_LOCK_DISPOSITION_LOCK_NOT_ACQUIRED */
+            return STATUS_SUCCESS;
+        }
     } else {
         RtlEnterCriticalSection(&LdrpLoaderLock);
-        if (disposition)
-            *disposition = 1;
     }
-    if (cookie)
-        *cookie = (ULONG_PTR)NtCurrentThreadId();
+    if (disposition)
+        *disposition = 1; /* LDR_LOCK_LOADER_LOCK_DISPOSITION_LOCK_ACQUIRED */
+    *cookie = loader_lock_cookie();
     return STATUS_SUCCESS;
 }
 
 NTDLL_EXPORT NTSTATUS NTAPI LdrUnlockLoaderLock(ULONG flags, ULONG_PTR cookie)
 {
+    if (flags & ~1u)
+        return loader_lock_error(flags, STATUS_INVALID_PARAMETER_1);
+    if (!cookie)
+        return STATUS_SUCCESS;
+    ULONG id = (ULONG)(ULONG_PTR)NtCurrentThreadId();
+    if (cookie >= (ULONG_PTR)1 << (LOADER_COOKIE_SHIFT + 12) || ((id ^ (ULONG)(cookie >> LOADER_COOKIE_SHIFT)) & 0xFFF))
+        return loader_lock_error(flags, STATUS_INVALID_PARAMETER_2);
     RtlLeaveCriticalSection(&LdrpLoaderLock);
     return STATUS_SUCCESS;
 }

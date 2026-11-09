@@ -25,6 +25,6 @@ Windows programs use those DLLs and system calls to access files, create windows
 
 The guest kernel runs on the host's processor architecture. On arm64, Mime's `xta64.dll` translates x64 and x86 program code to run on arm64. On x86_64 Linux, x64 code runs directly and 32-bit x86 code runs directly through Mime's WOW64 layer, which adapts its system calls to the 64-bit kernel.
 
-Mime needs no copy of Windows. The first `mime` command creates the `C:` drive. The registry, theme, icons, cursors, sounds and system strings are Mime's own and live in the ROM: `regc` builds the hives from `data/registry`. What Windows ships but Mime cannot, the .NET Framework, the Edge WebView2 runtime and the Microsoft fonts, is fetched from Microsoft when a program first needs it, after asking; `mime features` lists them. Until a font is fetched, Noto Sans stands in under its own name.
+Mime needs no copy of Windows. The first `mime` command creates the `C:` drive. The registry, theme, icons, cursors, sounds and system strings are Mime's own and live in the ROM: `regc` builds the hives from `data/registry`. What Windows ships but Mime cannot, the .NET Framework, the Edge WebView2 runtime and the Microsoft fonts, is fetched from Microsoft when a program first needs it, after asking; `mime features` lists them. A program that needs a missing font is ended if the font is not fetched.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions and contribution guidelines.

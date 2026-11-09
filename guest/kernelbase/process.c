@@ -170,14 +170,12 @@ HANDLE WINAPI CreateRemoteThreadEx(HANDLE process, LPSECURITY_ATTRIBUTES sa, SIZ
         KbSetError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }
+    /* like CreateRemoteThreadEx, the size is the commit or the reservation, the kernel works out the other. */
     SIZE_T commit = 0, reserve = 0;
-    if (flags & STACK_SIZE_PARAM_IS_A_RESERVATION) {
+    if (flags & STACK_SIZE_PARAM_IS_A_RESERVATION)
         reserve = stack;
-    } else {
+    else
         commit = stack;
-        if (commit > DEFAULT_STACK_RESERVE)
-            reserve = (commit + DEFAULT_STACK_RESERVE - 1) & ~(SIZE_T)(DEFAULT_STACK_RESERVE - 1);
-    }
     OBJECT_ATTRIBUTES oa;
     InitializeObjectAttributes(&oa, nullptr, (sa && sa->bInheritHandle) ? OBJ_INHERIT : 0, nullptr,
                                sa ? sa->lpSecurityDescriptor : nullptr);

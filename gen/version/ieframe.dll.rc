@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Internet Browser"
             VALUE "FileVersion", "11.00.26100.9278 (WinBuild.160101.0800)"
             VALUE "InternalName", "IEFRAME.DLL"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "IEFRAME.DLL"
             VALUE "ProductName", "Internet Explorer"
             VALUE "ProductVersion", "11.00.26100.9278"

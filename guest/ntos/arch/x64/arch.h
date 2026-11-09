@@ -95,6 +95,14 @@ FORCEINLINE struct _KPCR *KeGetPcr(void)
     return pcr;
 }
 
+/* one gs relative load, which reads the processor the thread is on even if it moves right after. */
+FORCEINLINE UCHAR KiCurrentIrql(void)
+{
+    UCHAR irql;
+    __asm__ volatile("movb %%gs:%c1, %0" : "=q"(irql) : "i"(KPCR_IRQL));
+    return irql;
+}
+
 #define MSR_EFER 0xC0000080
 #define MSR_STAR 0xC0000081
 #define MSR_LSTAR 0xC0000082
@@ -153,9 +161,35 @@ MIME_STATIC_ASSERT(sizeof(KTRAP_FRAME) == KTRAP_FRAME_SIZE, "trap size");
 #define KI_SERVICE_NUMBER(f) ((ULONG)(f)->Rax & 0xFFFF)
 #define KI_SERVICE_STACK_ARGS(f) ((f)->Rsp + 0x28)
 #define KI_SERVICE_RESULT(f) ((f)->Rax)
+#define KI_TRAP_IN_SERVICE(f) ((f)->Vector == KTRAP_VECTOR_SYSCALL)
+
+/* like KiSetupForInstrumentationReturn: 64-bit code goes to the callback first, with where it was going in r10. */
+static inline void KiInstrumentReturn(PKTRAP_FRAME f, PVOID callback)
+{
+    if (callback && f->Cs == (KGDT64_R3_CODE | RPL_USER)) {
+        f->R10 = f->Rip;
+        f->Rip = (ULONG64)callback;
+    }
+}
+
+/*
+ * like KiSystemServiceExit after KiRestoreSetContextState: a thread whose context another thread set while it was in a
+ * system call gets the nonvolatile registers of that context, and the volatile ones sysret leaves: rcx the return
+ * address, r11 the flags, rdx r9 r10 zero, r8 the stack and xmm0 to xmm5 zero.
+ */
+static inline void KiServiceExitVolatiles(PKTRAP_FRAME f)
+{
+    f->Rcx = f->Rip;
+    f->R11 = f->Rflags;
+    f->Rdx = 0;
+    f->R8 = f->Rsp;
+    f->R9 = 0;
+    f->R10 = 0;
+    memset(f->Xmm, 0, 6 * sizeof(f->Xmm[0]));
+}
 #define KI_SERVICE_REGISTER_ARG(f, i) ((i) == 0 ? (f)->R10 : (i) == 1 ? (f)->Rdx : (i) == 2 ? (f)->R8 : (f)->R9)
 
-#define EFLAGS_USER_MASK 0x00000DD5ull /* cf pf af zf sf tf df of, what user mode may set. */
+#define EFLAGS_USER_MASK 0x00010DD5ull /* cf pf af zf sf tf df of, and rf to step past a breakpoint: what user mode may set. */
 #define EFLAGS_IF 0x200ull
 
 typedef struct _KJUMP_BUFFER {
@@ -185,6 +219,7 @@ extern ULONG64 KiXsaveMask;
 #define MM_PTE_SW_WATCH (1ull << 11)  /* write watched page, mapped read only until written. */
 #define MM_PTE_SW_GUARD (1ull << 52)  /* guard page, hidden from user mode until first touched. */
 #define MM_PTE_SW_CODE (1ull << 53)   /* x86 code xta64 decoded, mapped read only until written. */
+#define MM_PTE_SW_TRIMMED (1ull << 54) /* out of the working set: hidden from user mode until touched again. */
 #define MM_PTE_NX (1ull << 63)
 #define MM_PTE_ADDR_MASK 0x000FFFFFFFFFF000ull
 /* no leaf marker on x64: present without the large bit at the last level. */

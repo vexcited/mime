@@ -1104,7 +1104,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
     *base = (PVOID)va;
     *view_size = bytes;
     if (image && PspImageNotifyRegistered())
-        PspNotifyImage(&s->FileName, process, (PVOID)va, bytes, s->Image.Machine);
+        PspNotifyImage(&s->FileName, process, (PVOID)va, bytes, s->File);
     return relocated ? STATUS_IMAGE_NOT_AT_BASE : STATUS_SUCCESS;
 }
 
@@ -1468,6 +1468,22 @@ typedef struct _SECTION_BASIC_INFORMATION {
     LARGE_INTEGER MaximumSize;
 } SECTION_BASIC_INFORMATION;
 
+/* what NtQuerySection's SectionImageInformation and ProcessImageInformation tell of an image section. */
+void MmGetSectionImageInformation(PSECTION s, SECTION_IMAGE_INFORMATION *image)
+{
+    memset(image, 0, sizeof(*image));
+    image->TransferAddress = (PVOID)(s->Image.ImageBase + s->Image.EntryPoint);
+    image->MaximumStackSize = s->Image.StackReserve;
+    image->CommittedStackSize = s->Image.StackCommit;
+    image->SubSystemType = s->Image.Subsystem;
+    image->SubSystemMajorVersion = s->Image.SubsystemMajor;
+    image->SubSystemMinorVersion = s->Image.SubsystemMinor;
+    image->ImageCharacteristics = s->Image.Characteristics;
+    image->DllCharacteristics = s->Image.DllCharacteristics;
+    image->Machine = s->Image.Machine;
+    image->ImageContainsCode = TRUE;
+}
+
 NTSTATUS NTAPI NtQuerySection(HANDLE handle, ULONG klass, PVOID info, SIZE_T length, PSIZE_T returned)
 {
     PSECTION s;
@@ -1485,16 +1501,7 @@ NTSTATUS NTAPI NtQuerySection(HANDLE handle, ULONG klass, PVOID info, SIZE_T len
         out.basic.MaximumSize.QuadPart = (LONGLONG)s->Size;
         size = sizeof(out.basic);
     } else if (klass == 1 && (s->Flags & SEC_IMAGE)) {
-        out.image.TransferAddress = (PVOID)(s->Image.ImageBase + s->Image.EntryPoint);
-        out.image.MaximumStackSize = s->Image.StackReserve;
-        out.image.CommittedStackSize = s->Image.StackCommit;
-        out.image.SubSystemType = s->Image.Subsystem;
-        out.image.SubSystemMajorVersion = s->Image.SubsystemMajor;
-        out.image.SubSystemMinorVersion = s->Image.SubsystemMinor;
-        out.image.ImageCharacteristics = s->Image.Characteristics;
-        out.image.DllCharacteristics = s->Image.DllCharacteristics;
-        out.image.Machine = s->Image.Machine;
-        out.image.ImageContainsCode = TRUE;
+        MmGetSectionImageInformation(s, &out.image);
         size = sizeof(out.image);
     } else {
         ObDereferenceObject(s);

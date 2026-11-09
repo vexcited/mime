@@ -1,6 +1,6 @@
 /*
  * The handler of the .NET Framework until guest/lib/cbs provides it. A definition in another object file wins over this
- * one. A null package is how features.exe asks whether the handler is there.
+ * one. A null package is how OptionalFeatures.exe asks whether the handler is there.
  */
 #include <mime/feature.h>
 
