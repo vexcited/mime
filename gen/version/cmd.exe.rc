@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Windows Command Processor"
             VALUE "FileVersion", "10.0.26100.9278 (WinBuild.160101.0800)"
             VALUE "InternalName", "cmd"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "Cmd.Exe"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.9278"
