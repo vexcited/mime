@@ -835,6 +835,8 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     if (!mime_vm_start(&g_vm))
         return 1;
     mime_memory_monitor_start(&g_vm);
+    /* fetches and announces microsoft's copies of the system files, in the background, see host/genuine.c. */
+    mime_genuine_start(&g_vm);
     uint64_t started_ns = mime_now_ns();
 
     /*

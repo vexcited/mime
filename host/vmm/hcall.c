@@ -321,6 +321,7 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_FS_GET_REPARSE:
     case MIME_HC_FS_DELETE_REPARSE:
     case MIME_HC_FS_APPEND:
+    case MIME_HC_GENUINE_OPEN:
     case MIME_HC_FS_WARM:
     case MIME_HC_FS_WINDOW_LOST:
     case MIME_HC_FS_WATCH:

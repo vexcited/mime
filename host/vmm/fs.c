@@ -1275,6 +1275,40 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         status = req ? fs_open(vm, req) : MIME_HC_STATUS_INVALID;
         break;
     }
+    case MIME_HC_GENUINE_OPEN: {
+        /* the host's checked copy of a manifest entry, as a read-only handle in the same table the guest reads. */
+        MimeFsInfo *info = mime_vm_phys(vm, a[2], sizeof(MimeFsInfo));
+        char path[MIME_PATH_MAX];
+        if (!info || !mime_genuine_path((uint32_t)a[1], path, sizeof(path))) {
+            status = MIME_HC_STATUS_NOT_FOUND;
+            break;
+        }
+        int fd = open_quiet(path, O_RDONLY | O_CLOEXEC, 0);
+        MimeFsStat ms;
+        if (fd < 0 || mime_fs_fstat(fd, &ms) != 0) {
+            if (fd >= 0)
+                close(fd);
+            status = MIME_HC_STATUS_NOT_FOUND;
+            break;
+        }
+        MimeFsHandle *fh = mime_xcalloc(1, sizeof(*fh));
+        fh->fd = fd;
+        fh->volume = MIME_FS_VOLUME_GENUINE;
+        fh->no_access_update = true;
+        fh->host_path = mime_xstrdup(path);
+        uint64_t h = alloc_handle(vm, fh);
+        if (!h) {
+            close(fd);
+            free(fh->host_path);
+            free(fh);
+            status = MIME_HC_STATUS_NO_MEMORY;
+            break;
+        }
+        const char *name = strrchr(path, '/');
+        fill_info(&ms, path, fd, name ? name + 1 : path, info);
+        regs[1] = h;
+        break;
+    }
     case MIME_HC_FS_CLOSE:
         free_handle(vm, a[1]);
         break;

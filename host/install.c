@@ -302,7 +302,7 @@ static void put_base64(FILE *f, const uint8_t *data, size_t size)
 /*
  * the roots macos trusts, for the machine's AuthRoot store. they live in the system keychain: the /etc/ssl/cert.pem
  * bundle the kernel reads otherwise lags behind it and lacks roots that sites are signed under. written at every start,
- * so the machine follows the system's updates.
+ * so the machine follows the system's updates. it goes on the host share, in the cache, like the feature packages.
  */
 static void export_roots(const MimePaths *paths)
 {
@@ -310,9 +310,9 @@ static void export_roots(const MimePaths *paths)
     if (SecTrustCopyAnchorCertificates(&anchors) != errSecSuccess || !anchors)
         return;
     char path[MIME_PATH_MAX], temporary[MIME_PATH_MAX];
-    snprintf(path, sizeof(path), "%s/ProgramData/Mime/roots.pem", paths->drive_c);
+    snprintf(path, sizeof(path), "%s/roots.pem", paths->cache);
     snprintf(temporary, sizeof(temporary), "%s.%d", path, (int)getpid());
-    FILE *f = make_dir_nocase(paths->drive_c, "ProgramData/Mime") ? fopen(temporary, "w") : nullptr;
+    FILE *f = mime_mkdir_p(paths->cache, 0700) ? fopen(temporary, "w") : nullptr;
     for (CFIndex i = 0; f && i < CFArrayGetCount(anchors); i++) {
         CFDataRef der = SecCertificateCopyData((SecCertificateRef)CFArrayGetValueAtIndex(anchors, i));
         if (!der)
