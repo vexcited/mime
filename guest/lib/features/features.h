@@ -142,9 +142,6 @@ typedef struct FEATURE_OPS {
     FEATURE_STATE (*GetState)(void *context, const FEATURE_DEF *feature);
     /* Records the state, the error of the last attempt and whether the files were there before the attempt. */
     void (*SetState)(void *context, const FEATURE_DEF *feature, FEATURE_STATE state, uint32_t error, bool from_drive);
-    /* Whether the user said no a short while ago, so that a program that asks again is not asked again. */
-    bool (*RecentlyDeclined)(void *context, const FEATURE_DEF *feature);
-    void (*SetDeclined)(void *context, const FEATURE_DEF *feature);
     /* Asks the user. Returns FEATURE_OK for yes. */
     uint32_t (*Consent)(void *context, const FEATURE_DEF *feature);
     void (*Stage)(void *context, const FEATURE_DEF *feature, FEATURE_STAGE stage);
