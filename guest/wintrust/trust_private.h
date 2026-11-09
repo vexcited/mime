@@ -6,7 +6,6 @@
 
 typedef struct { const BYTE *data; DWORD size; } WT_BYTES;
 typedef struct { WT_BYTES encoded, value; BYTE tag; } WT_DER;
-void WtTrace(const char *format, ...);
 BOOL WtTake(WT_BYTES *input, BYTE tag, WT_DER *item);
 BOOL WtOid(WT_DER item, const BYTE *value, DWORD size);
 /*

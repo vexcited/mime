@@ -32,35 +32,21 @@ static BOOL catalog_has(HANDLE file, const BYTE *hash, DWORD hash_size)
 /* defaults to the driver signing catalog subsystem. */
 static const GUID g_driver_action = {0xf750e6c3, 0x38ee, 0x11d1, {0x85, 0xe5, 0x00, 0xc0, 0x4f, 0xc2, 0x95, 0xee}};
 
-static void hex(char *out, const BYTE *data, DWORD length)
-{
-    static const char digits[] = "0123456789abcdef";
-    for (DWORD i = 0; i < length; i++) {
-        out[i * 2] = digits[data[i] >> 4];
-        out[i * 2 + 1] = digits[data[i] & 15];
-    }
-    out[length * 2] = 0;
-}
-
 WINTRUSTAPI BOOL WINAPI CryptCATAdminAcquireContext2(HCATADMIN *admin, const GUID *subsystem, PCWSTR algorithm,
                                                     const void *policy, DWORD flags)
 {
-    WtTrace("cat acquire2 flags %x alg %ws", flags, algorithm ? algorithm : L"");
     if (!admin || flags || (algorithm && _wcsicmp(algorithm, L"SHA1") && _wcsicmp(algorithm, L"SHA256"))) {
         SetLastError(ERROR_INVALID_PARAMETER);
-        WtTrace("cat acquire2 failed");
         return FALSE;
     }
     CAT_ADMIN *a = LocalAlloc(LMEM_FIXED | LMEM_ZEROINIT, sizeof(*a));
     if (!a) {
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        WtTrace("cat acquire2 no memory");
         return FALSE;
     }
     a->Magic = CATADMIN_MAGIC;
     a->Subsystem = subsystem ? *subsystem : g_driver_action;
     *admin = a;
-    WtTrace("cat acquire2 ok");
     return TRUE;
 }
 
@@ -130,7 +116,6 @@ static BOOL file_hash(const BYTE *bytes, DWORD size, BYTE *hash)
 
 WINTRUSTAPI BOOL WINAPI CryptCATAdminCalcHashFromFileHandle(HANDLE file, DWORD *hash_size, BYTE *hash, DWORD flags)
 {
-    WtTrace("cat calc file %p flags %x size %u", file, flags, hash_size ? *hash_size : 0);
     if (flags || !file || file == INVALID_HANDLE_VALUE || !hash_size) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
@@ -157,13 +142,6 @@ WINTRUSTAPI BOOL WINAPI CryptCATAdminCalcHashFromFileHandle(HANDLE file, DWORD *
         return FALSE;
     }
     BOOL ok = file_hash(bytes ? bytes : (const BYTE *)"", (DWORD)size.QuadPart, hash);
-    if (ok) {
-        char text[64];
-        hex(text, hash, HASH_SIZE);
-        WtTrace("cat hash %s size %llu", text, size.QuadPart);
-    } else {
-        WtTrace("cat hash failed size %llu", size.QuadPart);
-    }
     if (bytes)
         UnmapViewOfFile(bytes);
     if (mapping)
@@ -178,7 +156,6 @@ WINTRUSTAPI BOOL WINAPI CryptCATAdminCalcHashFromFileHandle(HANDLE file, DWORD *
 WINTRUSTAPI BOOL WINAPI CryptCATAdminCalcHashFromFileHandle2(HCATADMIN admin, HANDLE file, DWORD *hash_size,
                                                             BYTE *hash, DWORD flags)
 {
-    WtTrace("cat calc2 admin %p file %p flags %x", admin, file, flags);
     if (!valid_admin(admin)) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
@@ -193,10 +170,6 @@ WINTRUSTAPI HCATINFO WINAPI CryptCATAdminEnumCatalogFromHash(HCATADMIN admin, BY
         SetLastError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }
-    char text[64] = "";
-    if (hash && hash_size >= HASH_SIZE)
-        hex(text, hash, HASH_SIZE);
-    WtTrace("cat enum %s", text);
     WCHAR pattern[MAX_PATH];
     _snwprintf(pattern, MAX_PATH, CATROOT L"*.cat");
     WIN32_FIND_DATAW found;
@@ -230,7 +203,6 @@ WINTRUSTAPI HCATINFO WINAPI CryptCATAdminEnumCatalogFromHash(HCATADMIN admin, BY
     } while (FindNextFileW(search, &found));
     FindClose(search);
     if (result) {
-        WtTrace("cat found %ws", ((CAT_INFO *)result)->Path);
         SetLastError(ERROR_SUCCESS);
     } else if (GetLastError() != ERROR_NOT_ENOUGH_MEMORY) {
         SetLastError(ERROR_NOT_FOUND);

@@ -5,30 +5,6 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
     return TRUE;
 }
 
-/* one line per verification call to the debug output, so files and results are in the host's log. */
-void WtTrace(const char *format, ...)
-{
-    char text[600];
-    int n = _snprintf(text, sizeof(text) - 2, "wt %u ", GetCurrentProcessId());
-    va_list ap;
-    va_start(ap, format);
-    int m = _vsnprintf(text + n, sizeof(text) - 2 - n, format, ap);
-    va_end(ap);
-    if (m < 0)
-        m = (int)strlen(text + n);
-    n += m;
-    text[n++] = 0;
-    OutputDebugStringA(text);
-}
-
-static void narrow(char *out, DWORD size, const WCHAR *in)
-{
-    DWORD i = 0;
-    for (; in && in[i] && i + 1 < size; i++)
-        out[i] = in[i] < 0x80 ? (char)in[i] : '?';
-    out[i] = 0;
-}
-
 /*
  * the verification handle is CRYPT_PROVIDER_DATA, containing one signer and its certificate chain from signer to
  * root.
@@ -202,7 +178,6 @@ static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
         CloseHandle(mapping);
     if (result == TRUST_E_NOSIGNATURE && system_image)
         result = ERROR_SUCCESS;
-    WtTrace("file system_image %u result %08lx", system_image, (ULONG)result);
     return result;
 }
 
@@ -246,12 +221,6 @@ LONG WINAPI WinVerifyTrust(HWND window, GUID *action, PVOID input)
     static const GUID generic = WINTRUST_ACTION_GENERIC_VERIFY_V2;
     static const GUID driver = DRIVER_ACTION_VERIFY;
     WINTRUST_DATA *data = input;
-    char path[420] = "";
-    if (data && action && data->dwUnionChoice == WTD_CHOICE_FILE && data->pFile)
-        narrow(path, sizeof(path), data->pFile->pcwszFilePath);
-    else if (data && action && data->dwUnionChoice == WTD_CHOICE_CATALOG && data->pCatalog)
-        narrow(path, sizeof(path), ((const WINTRUST_CATALOG_INFO *)data->pCatalog)->pcwszCatalogFilePath);
-    WtTrace("verify choice %u state %u file %s", data ? data->dwUnionChoice : 0, data ? data->dwStateAction : 0, path);
     if (!action || !data || (data->cbStruct != offsetof(WINTRUST_DATA, pSignatureSettings) &&
         data->cbStruct != sizeof(*data)))
         return E_INVALIDARG;
