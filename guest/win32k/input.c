@@ -573,6 +573,24 @@ UINT NTAPI NtUserSendInput(UINT count, const INPUT *user_inputs, int size)
 
 HANDLE InputThreadId, InputProcessId;
 
+/*
+ * the host stamps events with its own clock, while messages carry the tick count of GetTickCount and GetMessageTime.
+ * events move to that clock by an offset that keeps their spacing, taken again when an event would land in the future
+ * or long past, as after the machine was suspended.
+ */
+static void guest_time(MimeInputEvent *ev)
+{
+    static LONG64 offset;
+    static BOOLEAN known;
+    LONG64 now = (LONG64)W32TickCount(), at = (LONG64)ev->time_ms + offset;
+    if (!known || at > now || now - at > 5000) {
+        offset = now - (LONG64)ev->time_ms;
+        known = TRUE;
+        at = now;
+    }
+    ev->time_ms = (uint64_t)at;
+}
+
 static void NTAPI input_thread(PVOID context)
 {
     InputThreadId = PsGetCurrentThreadId();
@@ -589,8 +607,10 @@ static void NTAPI input_thread(PVOID context)
             if (count > INPUT_BATCH)
                 count = INPUT_BATCH;
             UserEnter();
-            for (ULONG64 i = 0; i < count; i++)
+            for (ULONG64 i = 0; i < count; i++) {
+                guest_time(&g_events[i]);
                 dispatch_event(&g_events[i], FALSE, 0);
+            }
             UserLeave();
         }
     }
