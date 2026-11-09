@@ -14,7 +14,6 @@
 #include <mime/win32/gdiplus.h>
 #include <mime/win32/winuser.h>
 #include <mime/stub.h>
-#include <mime/fonts.h>
 #include <vector/vector.h>
 
 /* ------------------------------------------------------------------ objects */
