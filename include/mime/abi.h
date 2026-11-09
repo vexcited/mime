@@ -262,6 +262,19 @@ typedef struct MimeShellJumpList {
 } MimeShellJumpList;
 
 /* passed to the kernel entry point in x0, as a physmap virtual address. */
+/*
+ * the host's keyboard layout, which the guest's follows: the virtual key and characters of each key by set 1 scan code
+ * without the E0 prefix. the host bumps generation at each change, 0 means none was given and the guest keeps US.
+ */
+#define MIME_KEYBOARD_KEYS 0x80
+typedef struct MimeKeyboardLayout {
+    uint32_t generation;
+    uint16_t language; /* the windows language of the layout, 0x040C for french. */
+    uint16_t pad;
+    uint8_t vk[MIME_KEYBOARD_KEYS];
+    uint16_t chars[MIME_KEYBOARD_KEYS][3]; /* unshifted, shifted and with AltGr, 0 for none. */
+} MimeKeyboardLayout;
+
 typedef struct MimeBootInfo {
     uint64_t magic;
     uint32_t version;
@@ -351,6 +364,7 @@ typedef struct MimeBootInfo {
     uint16_t ansi_code_page;
     uint16_t oem_code_page;
     char locale_name[32];
+    MimeKeyboardLayout keyboard;
 } MimeBootInfo;
 
 /*
@@ -1203,6 +1217,8 @@ enum {
      * frames waiting.
      */
     MIME_INPUT_CAMERA = 30,
+    /* the host's keyboard layout changed, the guest reads it from MimeBootInfo's keyboard. */
+    MIME_INPUT_KEYMAP = 31,
     /*
      * shell reply: flags is MIME_SHELL_EVENT_*, pad the toast id, x the action or reason, and y the available
      * reply text units.
