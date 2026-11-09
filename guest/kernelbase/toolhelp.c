@@ -8,21 +8,6 @@
 #define TH32CS_SNAPTHREAD 0x00000004
 #define TH32CS_SNAPMODULE 0x00000008
 #define TH32CS_SNAPMODULE32 0x00000010
-#define MAX_MODULE_NAME32 255
-
-typedef struct tagMODULEENTRY32W {
-    DWORD dwSize;
-    DWORD th32ModuleID;
-    DWORD th32ProcessID;
-    DWORD GlblcntUsage;
-    DWORD ProccntUsage;
-    BYTE *modBaseAddr;
-    DWORD modBaseSize;
-    HMODULE hModule;
-    WCHAR szModule[MAX_MODULE_NAME32 + 1];
-    WCHAR szExePath[MAX_PATH];
-} MODULEENTRY32W, *LPMODULEENTRY32W;
-
 typedef struct tagMODULEENTRY32 {
     DWORD dwSize;
     DWORD th32ModuleID;
@@ -255,11 +240,8 @@ static BOOL other_modules(HANDLE process, ULONG64 peb, const LDR_LAYOUT *layout,
  * TH32CS_SNAPMODULE and a wow64 process's 32-bit ones with TH32CS_SNAPMODULE32. a 32-bit caller only sees 32-bit
  * processes.
  */
-static BOOL modules_of(DWORD pid, DWORD flags, MODULE_LIST *list)
+static BOOL modules_of_process(HANDLE process, DWORD pid, DWORD flags, MODULE_LIST *list)
 {
-    HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
-    if (!process)
-        return FALSE;
     BOOL ok = TRUE;
     PROCESS_BASIC_INFORMATION basic;
     ULONG_PTR peb32 = 0;
@@ -297,8 +279,42 @@ static BOOL modules_of(DWORD pid, DWORD flags, MODULE_LIST *list)
 #endif
     if (!ok && list->Count == 0 && NT_SUCCESS(status))
         KbSetError(ERROR_PARTIAL_COPY);
+    return ok;
+}
+
+static BOOL modules_of(DWORD pid, DWORD flags, MODULE_LIST *list)
+{
+    HANDLE process = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+    if (!process)
+        return FALSE;
+    BOOL ok = modules_of_process(process, pid, flags, list);
     NtClose(process);
     return ok;
+}
+
+/*
+ * another process's modules for the process status api, read from its loader list as windows does: the native ones,
+ * a wow64 process's 32-bit ones, or both, as LIST_MODULES_* asks. the caller frees the entries with KbFree.
+ */
+MODULEENTRY32W *KbOtherProcessModules(HANDLE process, DWORD filter, ULONG *count)
+{
+    MODULE_LIST list = {};
+    DWORD flags = 0;
+#ifdef _WIN64
+    if (filter == 0 || (filter & 2))
+        flags |= TH32CS_SNAPMODULE;
+    if (filter & 1)
+        flags |= TH32CS_SNAPMODULE32;
+#else
+    flags = TH32CS_SNAPMODULE;
+#endif
+    BOOL ok = modules_of_process(process, GetProcessId(process), flags, &list);
+    *count = list.Count;
+    if (!ok && !list.Count) {
+        KbFree(list.Entries);
+        return nullptr;
+    }
+    return list.Entries ? list.Entries : KbAlloc(sizeof(MODULEENTRY32W));
 }
 
 static PSYSTEM_PROCESS_INFORMATION process_list(PVOID *memory)

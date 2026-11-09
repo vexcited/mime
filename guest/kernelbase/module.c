@@ -592,11 +592,41 @@ static BOOL collect_module(PLDR_DATA_TABLE_ENTRY entry, void *context)
     return TRUE;
 }
 
+MODULEENTRY32W *KbOtherProcessModules(HANDLE process, DWORD filter, ULONG *count);
+
+/* one of another process's modules by its base, for its name or its extent. */
+static BOOL other_module(HANDLE process, HMODULE module, MODULEENTRY32W *out)
+{
+    ULONG count;
+    MODULEENTRY32W *list = KbOtherProcessModules(process, 3, &count);
+    if (!list)
+        return FALSE;
+    BOOL found = FALSE;
+    for (ULONG i = 0; i < count && !found; i++)
+        if (list[i].hModule == module || (!module && i == 0)) {
+            *out = list[i];
+            found = TRUE;
+        }
+    KbFree(list);
+    if (!found)
+        KbSetError(ERROR_INVALID_HANDLE);
+    return found;
+}
+
 BOOL WINAPI K32EnumProcessModulesEx(HANDLE process, HMODULE *modules, DWORD size, LPDWORD needed, DWORD filter)
 {
+    /* another process's from its loader list, as crash reporters and task managers read them. */
     if (!is_current_process(process)) {
-        KbSetError(ERROR_ACCESS_DENIED);
-        return FALSE;
+        ULONG count;
+        MODULEENTRY32W *list = KbOtherProcessModules(process, filter, &count);
+        if (!list)
+            return FALSE;
+        for (ULONG i = 0; i < count && i < size / sizeof(HMODULE); i++)
+            modules[i] = list[i].hModule;
+        KbFree(list);
+        if (needed)
+            *needed = count * sizeof(HMODULE);
+        return TRUE;
     }
     ENUM_QUERY q = {modules, size / sizeof(HMODULE), 0};
     visit_modules(collect_module, &q);
@@ -635,8 +665,20 @@ BOOL WINAPI K32GetModuleInformation(HANDLE process, HMODULE module, LPMODULEINFO
         return FALSE;
     }
     if (!is_current_process(process)) {
-        KbSetError(ERROR_ACCESS_DENIED);
-        return FALSE;
+        MODULEENTRY32W m;
+        if (!other_module(process, module, &m))
+            return FALSE;
+        info->lpBaseOfDll = m.modBaseAddr;
+        info->SizeOfImage = m.modBaseSize;
+        info->EntryPoint = nullptr;
+        IMAGE_DOS_HEADER dos;
+        IMAGE_NT_HEADERS nt;
+        SIZE_T done;
+        if (NT_SUCCESS(NtReadVirtualMemory(process, m.modBaseAddr, &dos, sizeof(dos), &done)) &&
+            NT_SUCCESS(NtReadVirtualMemory(process, m.modBaseAddr + dos.e_lfanew, &nt, sizeof(nt), &done)) &&
+            nt.OptionalHeader.AddressOfEntryPoint)
+            info->EntryPoint = m.modBaseAddr + nt.OptionalHeader.AddressOfEntryPoint;
+        return TRUE;
     }
     INFO_QUERY q = {module_base(module), info, FALSE};
     visit_modules(module_info, &q);
@@ -647,11 +689,23 @@ BOOL WINAPI K32GetModuleInformation(HANDLE process, HMODULE module, LPMODULEINFO
     return TRUE;
 }
 
+static DWORD copy_name(const WCHAR *from, LPWSTR name, DWORD size)
+{
+    DWORD n = (DWORD)wcslen(from);
+    if (!size)
+        return 0;
+    if (n >= size)
+        n = size - 1;
+    memcpy(name, from, n * sizeof(WCHAR));
+    name[n] = 0;
+    return n;
+}
+
 DWORD WINAPI K32GetModuleBaseNameW(HANDLE process, HMODULE module, LPWSTR name, DWORD size)
 {
     if (!is_current_process(process)) {
-        KbSetError(ERROR_ACCESS_DENIED);
-        return 0;
+        MODULEENTRY32W m;
+        return other_module(process, module, &m) ? copy_name(m.szModule, name, size) : 0;
     }
     DWORD n = module_name(module, name, size, TRUE);
     return n == size && GetLastError() == ERROR_INSUFFICIENT_BUFFER ? size - 1 : n;
@@ -674,8 +728,8 @@ DWORD WINAPI K32GetModuleBaseNameA(HANDLE process, HMODULE module, LPSTR name, D
 DWORD WINAPI K32GetModuleFileNameExW(HANDLE process, HMODULE module, LPWSTR name, DWORD size)
 {
     if (!is_current_process(process)) {
-        KbSetError(ERROR_ACCESS_DENIED);
-        return 0;
+        MODULEENTRY32W m;
+        return other_module(process, module, &m) ? copy_name(m.szExePath, name, size) : 0;
     }
     DWORD n = module_name(module, name, size, FALSE);
     return n == size && GetLastError() == ERROR_INSUFFICIENT_BUFFER ? size - 1 : n;
