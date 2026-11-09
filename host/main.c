@@ -1,6 +1,7 @@
 #include "instance.h"
 #include "mime_cli.h"
 #include "ui/app_identity.h"
+#include "ui/ui.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -34,6 +35,10 @@ static void usage(void)
 
 int main(int argc, char **argv)
 {
+    /* the machine shows a dialog through mime itself when the desktop has no helper for it. */
+    int dialog_result = mime_ui_dialog_helper(argc, argv);
+    if (dialog_result >= 0)
+        return dialog_result;
     int proxy_result = mime_app_proxy_main(argc, argv);
     if (proxy_result >= 0)
         return proxy_result;

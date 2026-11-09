@@ -1287,6 +1287,13 @@ void mime_ui_run(void)
     MSG_V(g_app, "run");
 }
 
+int mime_ui_dialog_helper(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    return -1;
+}
+
 /* macOS reports in the terminal only for now. */
 void mime_ui_alert(const char *text)
 {

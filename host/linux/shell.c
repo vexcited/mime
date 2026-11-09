@@ -21,6 +21,8 @@ uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value)
             return MIME_HC_STATUS_INVALID;
         mime_desktop_jump_list(command);
         return MIME_HC_STATUS_OK;
+    case MIME_SHELL_DIALOG:
+        return size >= sizeof(MimeShellDialog) ? mime_ui_dialog(command) : MIME_HC_STATUS_INVALID;
     default:
         return toast_command(command, size, value);
     }
@@ -31,6 +33,11 @@ uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value)
 static uint64_t toast_command(void *command, size_t size, uint64_t *value)
 {
     return MIME_HC_STATUS_UNSUPPORTED;
+}
+
+bool mime_shell_job(const MimeShellDialog *dialog, const char *text)
+{
+    return false;
 }
 
 void mime_shell_launcher_update(const MimeLauncherUpdate *update)
@@ -72,14 +79,32 @@ static struct {
 } g_replies[REPLIES_MAX];
 static uint32_t g_reply_next;
 
+typedef enum CommandKind { COMMAND_TOAST, COMMAND_LAUNCHER, COMMAND_JOB } CommandKind;
+
 typedef struct Command {
     struct Command *next;
-    bool launcher;
+    CommandKind kind;
     union {
         MimeShellToast toast;
         MimeLauncherUpdate update;
+        struct {
+            MimeShellDialog dialog;
+            char text[1024];
+        } job;
     };
 } Command;
+
+/* the progress views of plasma's job server, the one dolphin shows copies in. */
+#define JOB_SERVER "org.kde.JobViewServer"
+#define JOBS_MAX 16
+
+typedef struct Job {
+    uint32_t id;
+    char path[128];
+} Job;
+
+static Job g_jobs[JOBS_MAX];
+static bool g_job_server;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_ready = PTHREAD_COND_INITIALIZER;
@@ -150,15 +175,20 @@ static void read_capabilities(void)
     sd_bus_message_unref(reply);
 }
 
-static bool name_has_owner(void)
+static bool owner_of_name(const char *name)
 {
     sd_bus_message *reply = nullptr;
     int has = 0;
     if (sd_bus_call_method(g_bus, "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "NameHasOwner",
-                           nullptr, &reply, "s", NOTIFICATIONS) >= 0)
+                           nullptr, &reply, "s", name) >= 0)
         sd_bus_message_read(reply, "b", &has);
     sd_bus_message_unref(reply);
     return has != 0;
+}
+
+static bool name_has_owner(void)
+{
+    return owner_of_name(NOTIFICATIONS);
 }
 
 static int owner_changed(sd_bus_message *m, void *userdata, sd_bus_error *error)
@@ -502,6 +532,51 @@ static void run_command(const MimeShellToast *c)
 
 /* ------------------------------------------------------------------ the thread */
 
+static Job *find_job(uint32_t id)
+{
+    for (int i = 0; i < JOBS_MAX; i++)
+        if (g_jobs[i].id == id)
+            return &g_jobs[i];
+    return nullptr;
+}
+
+static void run_job(const MimeShellDialog *d, const char *text)
+{
+    char title[256];
+    mime_utf16_to_utf8(title, sizeof(title), d->title, SIZE_MAX);
+    Job *job = find_job(d->id);
+    if (d->kind == MIME_DIALOG_PROGRESS && !job) {
+        job = find_job(0);
+        sd_bus_message *reply = nullptr;
+        const char *path = nullptr;
+        if (!job || sd_bus_call_method(g_bus, JOB_SERVER, "/JobViewServer", JOB_SERVER, "requestView", nullptr, &reply,
+                                       "ssi", title, "system-software-install", 0) < 0 ||
+            sd_bus_message_read(reply, "o", &path) < 0) {
+            sd_bus_message_unref(reply);
+            return;
+        }
+        job->id = d->id;
+        mime_strlcpy(job->path, path, sizeof(job->path));
+        sd_bus_message_unref(reply);
+    }
+    if (!job)
+        return;
+    if (d->kind == MIME_DIALOG_END) {
+        sd_bus_call_method(g_bus, JOB_SERVER, job->path, "org.kde.JobViewV2", "terminate", nullptr, nullptr, "s", "");
+        job->id = 0;
+        return;
+    }
+    char instruction[512];
+    mime_utf16_to_utf8(instruction, sizeof(instruction), d->instruction, SIZE_MAX);
+    sd_bus_call_method(g_bus, JOB_SERVER, job->path, "org.kde.JobViewV2", "setInfoMessage", nullptr, nullptr, "s",
+                       instruction);
+    sd_bus_call_method(g_bus, JOB_SERVER, job->path, "org.kde.JobViewV2", "setDescriptionField", nullptr, nullptr, "uss",
+                       0u, title, text);
+    if (d->permille >= 0)
+        sd_bus_call_method(g_bus, JOB_SERVER, job->path, "org.kde.JobViewV2", "setPercent", nullptr, nullptr, "u",
+                           (uint32_t)(d->permille / 10));
+}
+
 static void *shell_thread(void *arg)
 {
     mime_set_thread_name("mime-shell");
@@ -522,8 +597,10 @@ static void *shell_thread(void *arg)
         bool present = name_has_owner();
         if (present)
             read_capabilities();
+        bool jobs = owner_of_name(JOB_SERVER);
         pthread_mutex_lock(&g_lock);
         g_server = present;
+        g_job_server = jobs;
         pthread_mutex_unlock(&g_lock);
     }
     pthread_mutex_lock(&g_lock);
@@ -544,8 +621,10 @@ static void *shell_thread(void *arg)
             pthread_mutex_unlock(&g_lock);
             if (!c)
                 break;
-            if (c->launcher)
+            if (c->kind == COMMAND_LAUNCHER)
                 run_launcher(&c->update);
+            else if (c->kind == COMMAND_JOB)
+                run_job(&c->job.dialog, c->job.text);
             else
                 run_command(&c->toast);
             free(c);
@@ -632,7 +711,7 @@ static uint64_t toast_command(void *command, size_t size, uint64_t *value)
     if (!c)
         return MIME_HC_STATUS_NO_MEMORY;
     c->next = nullptr;
-    c->launcher = false;
+    c->kind = COMMAND_TOAST;
     memcpy(&c->toast, toast, sizeof(*toast));
     enqueue(c);
     return MIME_HC_STATUS_OK;
@@ -646,9 +725,29 @@ void mime_shell_launcher_update(const MimeLauncherUpdate *update)
     if (!c)
         return;
     c->next = nullptr;
-    c->launcher = true;
+    c->kind = COMMAND_LAUNCHER;
     c->update = *update;
     enqueue(c);
+}
+
+bool mime_shell_job(const MimeShellDialog *dialog, const char *text)
+{
+    if (!ensure_thread())
+        return false;
+    pthread_mutex_lock(&g_lock);
+    bool jobs = g_job_server;
+    pthread_mutex_unlock(&g_lock);
+    if (!jobs)
+        return false;
+    Command *c = malloc(sizeof(*c));
+    if (!c)
+        return false;
+    c->next = nullptr;
+    c->kind = COMMAND_JOB;
+    c->job.dialog = *dialog;
+    mime_strlcpy(c->job.text, text, sizeof(c->job.text));
+    enqueue(c);
+    return true;
 }
 
 static void enqueue(Command *c)
