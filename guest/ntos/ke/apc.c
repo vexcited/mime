@@ -106,6 +106,8 @@ NTSTATUS NTAPI NtContinue(PCONTEXT context, BOOLEAN test_alert)
     if (!NT_SUCCESS(KiCopyFromUser(&ctx, context, sizeof(ctx))))
         return STATUS_ACCESS_VIOLATION;
     KiContextToTrapFrame(&ctx, frame, ctx.ContextFlags, UserMode);
+    if ((ctx.ContextFlags & CONTEXT_DEBUG_REGISTERS) == CONTEXT_DEBUG_REGISTERS)
+        KiSetThreadDebug(thread, &ctx);
     if (test_alert && !IsListEmpty(&thread->ApcListHead[UserMode]))
         thread->UserApcPending = TRUE;
     /* a continue resumes the context as it is, without the instrumentation callback. */
@@ -137,10 +139,16 @@ static void NTAPI context_apc(PKAPC apc, PKNORMAL_ROUTINE *normal, PVOID *contex
         r->Status = STATUS_UNSUCCESSFUL;
     } else {
         r->Status = STATUS_SUCCESS;
-        if (r->Set)
+        BOOLEAN debug = (r->Flags & CONTEXT_DEBUG_REGISTERS) == CONTEXT_DEBUG_REGISTERS;
+        if (r->Set) {
             KiContextToTrapFrame(r->Context, frame, r->Flags, UserMode);
-        else
+            if (debug)
+                KiSetThreadDebug(KiCurrentThread(), r->Context);
+        } else {
             KiTrapFrameToContext(frame, r->Context, r->Flags & CONTEXT_ALL);
+            if (debug)
+                KiGetThreadDebug(KiCurrentThread(), r->Context);
+        }
     }
     KeSetEvent(&r->Done, 0, FALSE);
 }
@@ -187,8 +195,11 @@ NTSTATUS NTAPI NtGetContextThread(HANDLE handle, PCONTEXT context)
     if (NT_SUCCESS(status)) {
         ULONG64 state = KiAcquireDispatcherLock();
         PKTRAP_FRAME frame = stopped_frame(thread, &status);
-        if (frame)
+        if (frame) {
             KiTrapFrameToContext(frame, &ctx, flags & CONTEXT_ALL);
+            if ((flags & CONTEXT_DEBUG_REGISTERS) == CONTEXT_DEBUG_REGISTERS)
+                KiGetThreadDebug(&thread->Tcb, &ctx);
+        }
         KiReleaseDispatcherLock(state);
         if (NT_SUCCESS(status) && !frame)
             status = context_by_apc(thread, &ctx, flags, FALSE);
@@ -217,6 +228,8 @@ NTSTATUS NTAPI NtSetContextThread(HANDLE handle, PCONTEXT context)
         frame = stopped_frame(thread, &status);
         if (frame) {
             KiContextToTrapFrame(&ctx, frame, ctx.ContextFlags, UserMode);
+            if ((ctx.ContextFlags & CONTEXT_DEBUG_REGISTERS) == CONTEXT_DEBUG_REGISTERS)
+                KiSetThreadDebug(&thread->Tcb, &ctx);
             if (thread != PsCurrentThread() && !thread->FirstEntryContext && KI_TRAP_IN_SERVICE(frame))
                 thread->Tcb.ContextSetInService = TRUE;
         }
@@ -224,7 +237,8 @@ NTSTATUS NTAPI NtSetContextThread(HANDLE handle, PCONTEXT context)
         if (NT_SUCCESS(status) && !frame)
             status = context_by_apc(thread, &ctx, ctx.ContextFlags, TRUE);
     }
-    if (NT_SUCCESS(status) && frame && thread == PsCurrentThread()) {
+    /* the caller's own registers resume at once; its breakpoints alone take effect without, and it gets the status. */
+    if (NT_SUCCESS(status) && frame && thread == PsCurrentThread() && (ctx.ContextFlags & 0xB)) {
         ObDereferenceObject(thread);
         KiExitToUserMode(frame);
         KiEnterUserMode(frame);

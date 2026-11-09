@@ -40,8 +40,52 @@ static void set_teb32(ULONG_PTR teb32)
     KiWriteMsr(MSR_FS_BASE, teb32);
 }
 
+/* dr7: the enables of the four breakpoints and their conditions and lengths, never general detect. */
+#define DR7_USER_MASK 0xFFFF00FFull
+
+static void load_debug(PKTHREAD thread)
+{
+    ULONG64 dr7 = thread->UserDr7 & 0xFF ? thread->UserDr7 : 0;
+    __asm__ volatile("mov %0, %%dr7" ::"r"(0ull));
+    if (dr7) {
+        __asm__ volatile("mov %0, %%dr0" ::"r"(thread->UserDr[0]));
+        __asm__ volatile("mov %0, %%dr1" ::"r"(thread->UserDr[1]));
+        __asm__ volatile("mov %0, %%dr2" ::"r"(thread->UserDr[2]));
+        __asm__ volatile("mov %0, %%dr3" ::"r"(thread->UserDr[3]));
+        __asm__ volatile("mov %0, %%dr7" ::"r"(dr7));
+    }
+}
+
+/*
+ * like windows, a context's breakpoints name user addresses only, others become 0, and dr7 keeps what user mode may
+ * use. the thread loads them when it runs, at once when it is the caller.
+ */
+void KiSetThreadDebug(PKTHREAD thread, const CONTEXT *ctx)
+{
+    const ULONG64 dr[4] = {ctx->Dr0, ctx->Dr1, ctx->Dr2, ctx->Dr3};
+    for (int i = 0; i < 4; i++)
+        thread->UserDr[i] = dr[i] <= MIME_USER_ADDRESS_LIMIT ? dr[i] : 0;
+    thread->UserDr6 = ctx->Dr6;
+    thread->UserDr7 = ctx->Dr7 & DR7_USER_MASK;
+    if (thread == KiCurrentThread())
+        load_debug(thread);
+}
+
+void KiGetThreadDebug(PKTHREAD thread, CONTEXT *ctx)
+{
+    ctx->Dr0 = thread->UserDr[0];
+    ctx->Dr1 = thread->UserDr[1];
+    ctx->Dr2 = thread->UserDr[2];
+    ctx->Dr3 = thread->UserDr[3];
+    ctx->Dr6 = thread->UserDr6;
+    ctx->Dr7 = thread->UserDr7;
+}
+
 void KiSwapContext(PKTHREAD old, PKTHREAD next)
 {
+    /* the processor holds the breakpoints of the thread that runs, and none for threads without. */
+    if ((next->UserDr7 & 0xFF) || (old->UserDr7 & 0xFF))
+        load_debug(next);
     /* in user mode gs is the teb, swapped in at each return there. */
     if (next->Teb)
         KiWriteMsr(MSR_KERNEL_GS_BASE, (ULONG64)next->Teb);
