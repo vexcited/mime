@@ -7,8 +7,13 @@
  *   fsutil reparsepoint delete <file>
  *   fsutil behavior query symlinkEvaluation
  *   fsutil behavior set symlinkEvaluation L2L:1 L2R:0 R2L:0 R2R:0
+ *   fsutil volume diskFree [/csv] <volume pathname>
+ *   fsutil volume flush <volume pathname>
+ *   fsutil volume list
+ *   fsutil volume queryLabel <volume pathname>
+ *   fsutil volume setLabel <volume pathname> <label>
  *
- * a list prints every name of the file as a path from the root of its volume, one to a line. the exit code is 0, or 1
+ * a usage given for no arguments at all exits with 0, as fsutil does. a volume pathname is a drive, C:, or a folder on it, C:\Games, whose host file system diskFree tells. a list prints every name of the file as a path from the root of its volume, one to a line. the exit code is 0, or 1
  * when the command is wrong or the system refused it.
  */
 #include "tool.h"
@@ -17,7 +22,16 @@ static const WCHAR kCommands[] =
     L"---- Commands Supported ----\n\n"
     L"behavior      Control file system behavior\n"
     L"hardlink      Hardlink management\n"
-    L"reparsePoint  Reparse point management\n";
+    L"reparsePoint  Reparse point management\n"
+    L"volume        Volume management\n";
+
+static const WCHAR kVolume[] =
+    L"---- VOLUME Commands Supported ----\n\n"
+    L"diskFree              Query the free space of a volume\n"
+    L"flush                 Flush a volume\n"
+    L"list                  List volumes\n"
+    L"queryLabel            Query the label for a volume\n"
+    L"setLabel              Set the label for a volume\n";
 
 static const WCHAR kReparsePoint[] =
     L"---- REPARSEPOINT Commands Supported ----\n\n"
@@ -284,6 +298,296 @@ static int behavior(void)
     return status == ERROR_SUCCESS ? 0 : error_exit((DWORD)status);
 }
 
+/* \\.\ before a drive or folder, as fsutil opens it; a volume guid path stays, without its last backslash. */
+static HANDLE open_volume(const WCHAR *name, DWORD access)
+{
+    SIZE_T n = wcslen(name);
+    if (n + 1 > MAX_PATH) {
+        tu_print(L"The specified drive is too long.\n");
+        SetLastError(ERROR_SUCCESS);
+        return INVALID_HANDLE_VALUE;
+    }
+    WCHAR path[MAX_PATH + 8];
+    if (n > 4 && name[0] == L'\\' && (name[1] == L'\\' || name[1] == L'?') && name[2] == L'?' && name[3] == L'\\') {
+        wcscpy(path, name);
+        if (path[n - 1] == L'\\')
+            path[n - 1] = 0;
+    } else if (n > 4 && name[0] == L'\\' && name[1] == L'\\' && name[2] == L'.' && name[3] == L'\\') {
+        wcscpy(path, name);
+    } else {
+        wcscpy(path, L"\\\\.\\");
+        wcscat(path, name);
+    }
+    return CreateFileW(path, access, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS,
+                       nullptr);
+}
+
+/* nothing printed means open_volume told the error itself. */
+static int volume_error(void)
+{
+    DWORD error = GetLastError();
+    return error ? error_exit(error) : 1;
+}
+
+static BOOL local_ntfs(const WCHAR *name)
+{
+    WCHAR root[MAX_PATH + 2], fs[16];
+    wcscpy(root, name);
+    if (root[0] && root[wcslen(root) - 1] != L'\\')
+        wcscat(root, L"\\");
+    if (!GetVolumePathNameW(root, root, MAX_PATH) || GetDriveTypeW(root) != DRIVE_FIXED)
+        return FALSE;
+    return GetVolumeInformationW(root, nullptr, 0, nullptr, nullptr, nullptr, fs, RTL_NUMBER_OF(fs)) && tu_eq(fs, L"NTFS");
+}
+
+/* the number with the user's thousands separator, grouped as fsutil groups it. */
+static void group(UINT64 value, WCHAR *out, int size)
+{
+    static WCHAR decimal[8], thousand[8], grouping[16];
+    static NUMBERFMTW format;
+    static BOOL ready;
+    if (!ready) {
+        DWORD lead = 1, order = 1;
+        BOOL failed = !GetLocaleInfoEx(nullptr, LOCALE_RETURN_NUMBER | LOCALE_ILZERO, (WCHAR *)&lead, 2);
+        GetLocaleInfoEx(nullptr, LOCALE_RETURN_NUMBER | LOCALE_INEGNUMBER, (WCHAR *)&order, 2);
+        failed |= !GetLocaleInfoEx(nullptr, LOCALE_STHOUSAND, thousand, RTL_NUMBER_OF(thousand));
+        failed |= !GetLocaleInfoEx(nullptr, LOCALE_SDECIMAL, decimal, RTL_NUMBER_OF(decimal));
+        failed |= !GetLocaleInfoEx(nullptr, LOCALE_SGROUPING, grouping, RTL_NUMBER_OF(grouping));
+        /* "3;2;0" is 32: the digits of each group up to the 0 that repeats the last one. */
+        UINT groups = 0;
+        for (WCHAR *p = grouping; *p && *p != L'0'; p++) {
+            if (tu_is_digit(*p))
+                groups = groups * 10 + (UINT)(*p - L'0');
+        }
+        format = failed ? (NUMBERFMTW){0, 1, 30, L".", L",", 1}
+                        : (NUMBERFMTW){0, lead, groups, decimal, thousand, order};
+        ready = TRUE;
+    }
+    WCHAR digits[24];
+    TU_STR text = {};
+    tu_str_format(&text, L"%llu", value);
+    wcscpy(digits, tu_str_text(&text));
+    tu_str_free(&text);
+    if (!GetNumberFormatEx(nullptr, 0, digits, &format, out, size))
+        wcscpy(out, digits);
+}
+
+typedef struct SIZE_TEXT {
+    WCHAR Bytes[40];
+    WCHAR Amount[24];
+    const WCHAR *Unit;
+} SIZE_TEXT;
+
+/* the bytes, and the amount in the largest unit below 1024 of it, rounded to a tenth as %.1f does. */
+static void size_text(UINT64 bytes, SIZE_TEXT *t, int *bytes_width, int *amount_width)
+{
+    static const WCHAR *const kUnits[] = {L" KB", L" MB", L" GB", L" TB", L" PB"};
+    group(bytes, t->Bytes, RTL_NUMBER_OF(t->Bytes));
+    int unit = 0;
+    for (UINT64 v = bytes >> 10; v >= 1024 && unit < 4; v >>= 10)
+        unit++;
+    UINT64 divisor = 1ull << (10 * (unit + 1)), whole = bytes / divisor;
+    UINT64 tenths = ((bytes % divisor) * 20 + divisor) / (2 * divisor);
+    if (tenths == 10) {
+        whole++;
+        tenths = 0;
+    }
+    TU_STR text = {};
+    tu_str_format(&text, L"%llu.%llu", whole, tenths);
+    wcscpy(t->Amount, tu_str_text(&text));
+    tu_str_free(&text);
+    t->Unit = kUnits[unit];
+    if ((int)wcslen(t->Bytes) > *bytes_width)
+        *bytes_width = (int)wcslen(t->Bytes);
+    if ((int)wcslen(t->Amount) > *amount_width)
+        *amount_width = (int)wcslen(t->Amount);
+}
+
+static int disk_free(void)
+{
+    static const WCHAR *const kLabels[] = {
+        L"Total free bytes", L"Total bytes", L"Total quota free bytes", L"Unavailable pool bytes",
+        L"Quota unavailable pool bytes", L"Used bytes", L"Total Reserved bytes", L"Volume storage reserved bytes",
+        L"Available committed bytes", L"Pool available bytes",
+    };
+    int first = 3;
+    BOOL csv = FALSE;
+    while (first < tu_argc && tu_eq(tu_argv[first], L"/csv")) {
+        csv = TRUE;
+        first++;
+    }
+    if (tu_argc - first != 1) {
+        tu_print(L"Usage: fsutil volume diskFree <volume pathname>\n   Eg: fsutil volume diskFree C:\n");
+        return tu_argc != first;
+    }
+    const WCHAR *name = tu_argv[first];
+    if (wcslen(name) + 1 > MAX_PATH) {
+        tu_print(L"The specified drive is too long.\n");
+        return 1;
+    }
+    UINT64 values[10] = {};
+    int count = 3;
+    if (local_ntfs(name)) {
+        HANDLE h = open_volume(name, GENERIC_READ);
+        if (h == INVALID_HANDLE_VALUE)
+            return volume_error();
+        FILE_FS_FULL_SIZE_INFORMATION_EX info = {};
+        IO_STATUS_BLOCK iosb;
+        NTSTATUS status = NtQueryVolumeInformationFile(h, &iosb, &info, sizeof(info), FileFsFullSizeInformationEx);
+        CloseHandle(h);
+        if (status < 0)
+            return error_exit(RtlNtStatusToDosError(status));
+        UINT64 unit = (UINT64)info.SectorsPerAllocationUnit * info.BytesPerSector;
+        const ULONGLONG units[10] = {
+            info.ActualAvailableAllocationUnits, info.CallerTotalAllocationUnits, info.CallerAvailableAllocationUnits,
+            info.ActualPoolUnavailableAllocationUnits, info.CallerPoolUnavailableAllocationUnits, info.UsedAllocationUnits,
+            info.TotalReservedAllocationUnits, info.VolumeStorageReserveAllocationUnits,
+            info.AvailableCommittedAllocationUnits, info.PoolAvailableAllocationUnits,
+        };
+        for (int i = 0; i < 10; i++)
+            values[i] = units[i] * unit;
+        count = 10;
+    } else {
+        WCHAR root[MAX_PATH + 2];
+        wcscpy(root, name);
+        wcscat(root, L"\\");
+        ULARGE_INTEGER available, total, free;
+        if (!GetDiskFreeSpaceExW(root, &available, &total, &free))
+            return error_exit(GetLastError());
+        values[0] = free.QuadPart;
+        values[1] = total.QuadPart;
+        values[2] = available.QuadPart;
+    }
+    if (csv) {
+        tu_print(L"%llu,%llu,%llu\n", values[2], values[1], values[0]);
+        return 0;
+    }
+    SIZE_TEXT texts[10];
+    int bytes_width = 0, amount_width = 0;
+    for (int i = 0; i < count; i++)
+        size_text(values[i], &texts[i], &bytes_width, &amount_width);
+    /* the labels line up on the widest of the report: the three line one of other volumes is narrower. */
+    int label_width = count == 10 ? 32 : 24;
+    for (int i = 0; i < count; i++)
+        tu_print(L"%-*s: %*s (%*s%s)\n", label_width, kLabels[i], bytes_width, texts[i].Bytes, amount_width,
+                 texts[i].Amount, texts[i].Unit);
+    return 0;
+}
+
+static int volume_list(void)
+{
+    if (tu_argc != 3) {
+        tu_print(L"Usage: fsutil volume list\n");
+        return 1;
+    }
+    WCHAR volume[MAX_PATH + 8];
+    HANDLE find = FindFirstVolumeW(volume, RTL_NUMBER_OF(volume));
+    if (find == INVALID_HANDLE_VALUE)
+        return error_exit(GetLastError());
+    tu_print(L"Possible volumes and current mount points are:\n\n");
+    do {
+        DWORD length = 0;
+        GetVolumePathNamesForVolumeNameW(volume, nullptr, 0, &length);
+        WCHAR *names = tu_alloc((length + 2) * sizeof(WCHAR));
+        if (GetVolumePathNamesForVolumeNameW(volume, names, length + 1, nullptr)) {
+            tu_print(L"%s\n", volume);
+            for (WCHAR *p = names; *p; p += wcslen(p) + 1)
+                tu_print(L"%s\n", p);
+        }
+        tu_free(names);
+        tu_print(L"\n");
+    } while (FindNextVolumeW(find, volume, RTL_NUMBER_OF(volume)));
+    DWORD error = GetLastError();
+    FindVolumeClose(find);
+    return error == ERROR_NO_MORE_FILES ? 0 : error_exit(error);
+}
+
+static int volume_flush(void)
+{
+    if (tu_argc != 4) {
+        tu_print(L"Usage: fsutil volume flush <volume pathname>\n   Eg: fsutil volume flush C:\n");
+        return tu_argc != 3;
+    }
+    HANDLE h = open_volume(tu_argv[3], FILE_WRITE_DATA);
+    if (h == INVALID_HANDLE_VALUE)
+        return volume_error();
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS status = NtFlushBuffersFile(h, &iosb);
+    CloseHandle(h);
+    return status < 0 ? error_exit(RtlNtStatusToDosError(status)) : 0;
+}
+
+/* FILE_FS_VOLUME_INFORMATION: creation time, serial, label length, supports objects, then the label at 18. */
+#define VOLUME_INFO_SIZE 0x5A
+
+static int volume_label(BOOL set)
+{
+    if (tu_argc != (set ? 5 : 4)) {
+        if (set)
+            tu_print(L"Usage: fsutil volume setLabel <volume pathname> <label>\n   Eg: fsutil volume flush C: \"my volume\"\n");
+        else
+            tu_print(L"Usage: fsutil volume queryLabel <volume pathname>\n   Eg: fsutil volume queryLabel C:\n");
+        return tu_argc != 3;
+    }
+    HANDLE h = open_volume(tu_argv[3], FILE_WRITE_DATA);
+    if (h == INVALID_HANDLE_VALUE)
+        return volume_error();
+    BYTE info[VOLUME_INFO_SIZE] = {};
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS status;
+    if (set) {
+        /* longer than 33 characters is cut to 32, as fsutil does. */
+        ULONG bytes = (ULONG)wcslen(tu_argv[4]) * sizeof(WCHAR);
+        if (bytes > 0x42)
+            bytes = 0x40;
+        BYTE label[sizeof(ULONG) + 0x42] = {};
+        memcpy(label, &bytes, sizeof(ULONG));
+        memcpy(label + sizeof(ULONG), tu_argv[4], bytes);
+        status = NtSetVolumeInformationFile(h, &iosb, label, sizeof(ULONG) + bytes, FileFsLabelInformation);
+        if (status >= 0) {
+            if (NtQueryVolumeInformationFile(h, &iosb, info, sizeof(info), FileFsVolumeInformation) < 0) {
+                memcpy(info + 12, &bytes, sizeof(ULONG));
+                memcpy(info + 18, tu_argv[4], bytes);
+            }
+        }
+    } else {
+        status = NtQueryVolumeInformationFile(h, &iosb, info, sizeof(info), FileFsVolumeInformation);
+    }
+    CloseHandle(h);
+    if (status < 0)
+        return error_exit(RtlNtStatusToDosError(status));
+    ULONG length;
+    memcpy(&length, info + 12, sizeof(ULONG));
+    if (length > sizeof(info) - 18)
+        length = sizeof(info) - 18;
+    if (set)
+        tu_print(L"Successfully set \"%.*s\" as volume label for \"%s\"\n", (int)(length / 2), (const WCHAR *)(info + 18),
+                 tu_argv[3]);
+    else
+        tu_print(L"Volume Label for \"%s\" is \"%.*s\"\n", tu_argv[3], (int)(length / 2), (const WCHAR *)(info + 18));
+    return 0;
+}
+
+static int volume(void)
+{
+    if (tu_argc == 2) {
+        tu_puts(kVolume);
+        return 0;
+    }
+    if (tu_eq(tu_argv[2], L"diskfree"))
+        return disk_free();
+    if (tu_eq(tu_argv[2], L"flush"))
+        return volume_flush();
+    if (tu_eq(tu_argv[2], L"list"))
+        return volume_list();
+    if (tu_eq(tu_argv[2], L"querylabel"))
+        return volume_label(FALSE);
+    if (tu_eq(tu_argv[2], L"setlabel"))
+        return volume_label(TRUE);
+    tu_puts(kVolume);
+    return 1;
+}
+
 int tool_main(void)
 {
     if (tu_argc == 1) {
@@ -302,6 +606,8 @@ int tool_main(void)
         tu_puts(kReparsePoint);
         return 1;
     }
+    if (tu_eq(tu_argv[1], L"volume"))
+        return volume();
     if (tu_eq(tu_argv[1], L"behavior") && tu_argc >= 3)
         return behavior();
     if (!tu_eq(tu_argv[1], L"hardlink")) {

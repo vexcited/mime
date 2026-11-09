@@ -1198,6 +1198,10 @@ WINBASEAPI BOOL WINAPI GetVolumeInformationByHandleW(HANDLE file, LPWSTR name, D
                                                      LPDWORD max_component, LPDWORD flags, LPWSTR fs_name,
                                                      DWORD fs_name_size);
 WINBASEAPI BOOL WINAPI GetVolumePathNameW(LPCWSTR path, LPWSTR volume, DWORD size);
+WINBASEAPI HANDLE WINAPI FindFirstVolumeW(LPWSTR name, DWORD length);
+WINBASEAPI BOOL WINAPI FindNextVolumeW(HANDLE handle, LPWSTR name, DWORD length);
+WINBASEAPI BOOL WINAPI FindVolumeClose(HANDLE handle);
+WINBASEAPI BOOL WINAPI GetVolumePathNamesForVolumeNameW(LPCWSTR volume, LPWSTR names, DWORD length, PDWORD returned);
 WINBASEAPI BOOL WINAPI GetDiskFreeSpaceExW(LPCWSTR root, PULARGE_INTEGER available, PULARGE_INTEGER total,
                                            PULARGE_INTEGER free);
 WINBASEAPI BOOL WINAPI GetDiskFreeSpaceExA(LPCSTR root, PULARGE_INTEGER available, PULARGE_INTEGER total,
