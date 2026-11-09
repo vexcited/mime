@@ -67,9 +67,9 @@ file(MAKE_DIRECTORY ${MIME_BUILD_GEN}/res ${MIME_SYSTEM32} ${MIME_SYSX64} ${MIME
 # name another checkout.
 include(FetchContent)
 
-set(MIME_ICONS_REPOSITORY ssh://git@code.vexcited.com/mime/icons.git)
+set(MIME_ICONS_REPOSITORY https://code.vexcited.com/mime/icons.git)
 set(MIME_ICONS_COMMIT dd61167f31ec0551f02ee18716479f50ea62d681)
-set(MIME_AUDIO_REPOSITORY ssh://git@code.vexcited.com/mime/audio.git)
+set(MIME_AUDIO_REPOSITORY https://code.vexcited.com/mime/audio.git)
 set(MIME_AUDIO_COMMIT 86c3138fcab689175f18847b72b06820c7dd0bd6)
 set(MIME_ICONS_DIR "" CACHE PATH "A checkout of mime-icons to build from instead of the pinned commit")
 set(MIME_AUDIO_DIR "" CACHE PATH "A checkout of mime-audio to build from instead of the pinned commit")
