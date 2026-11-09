@@ -461,19 +461,24 @@ static void query_device_map(PULONG drives, PUCHAR types)
                                            KernelMode, nullptr, &link)))
             continue;
         ObDereferenceObject(link);
+        PDEVICE_OBJECT device;
+        if (!NT_SUCCESS(ObLookupObjectName(&name, nullptr, OBJ_CASE_INSENSITIVE, IoDeviceObjectType, KernelMode, nullptr,
+                                           (PVOID *)&device)))
+            continue;
+        /* the second disk is the host share; a single-disk machine is more ordinary than one with a stray volume. */
+        if (device == IoGetHostVolumeDevice()) {
+            ObDereferenceObject(device);
+            continue;
+        }
         *drives |= 1u << i;
         types[i] = 3; /* DOSDEVICE_DRIVE_FIXED */
-        PDEVICE_OBJECT device;
-        if (NT_SUCCESS(ObLookupObjectName(&name, nullptr, OBJ_CASE_INSENSITIVE, IoDeviceObjectType, KernelMode, nullptr,
-                                          (PVOID *)&device))) {
-            if (device->DeviceType == FILE_DEVICE_CD_ROM)
-                types[i] = 5;
-            else if (device->Characteristics & FILE_REMOTE_DEVICE)
-                types[i] = 4;
-            else if (device->Characteristics & FILE_REMOVABLE_MEDIA)
-                types[i] = 2;
-            ObDereferenceObject(device);
-        }
+        if (device->DeviceType == FILE_DEVICE_CD_ROM)
+            types[i] = 5;
+        else if (device->Characteristics & FILE_REMOTE_DEVICE)
+            types[i] = 4;
+        else if (device->Characteristics & FILE_REMOVABLE_MEDIA)
+            types[i] = 2;
+        ObDereferenceObject(device);
     }
 }
 
@@ -708,9 +713,9 @@ NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, 
         size = sizeof(ULONG_PTR);
         break;
     case ProcessHandleCount:
-        /* current and peak handle count. */
+        /* the count alone, or with the peak after it: dbghelp asks for the four bytes, and a dump with handles failed. */
         out.u32[0] = out.u32[1] = (ULONG)process->HandleTable.Count;
-        size = 8;
+        size = length == 4 ? 4 : 8;
         break;
     case ProcessWow64Information:
         /* the 32-bit peb of a wow64 process, else 0. */
