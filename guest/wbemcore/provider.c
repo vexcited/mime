@@ -302,8 +302,8 @@ static BOOL computer_enum(WNs *ns, WObj *c, WEmit emit, void *context)
     put_str(o, L"Workgroup", L"WORKGROUP");
     put_bool(o, L"PartOfDomain", FALSE);
     put_uint(o, L"DomainRole", 0);
-    put_str(o, L"Manufacturer", vendor ? vendor : L"Mime");
-    put_str(o, L"Model", model ? model : L"Mime Machine");
+    put_str(o, L"Manufacturer", vendor ? vendor : L"Microsoft Corporation");
+    put_str(o, L"Model", model ? model : L"Microsoft Surface");
     put_str(o, L"UserName", full);
     put_str(o, L"SystemType", si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64 ? L"x64-based PC" : L"X86-based PC");
     put_str(o, L"Status", L"OK");
@@ -399,7 +399,7 @@ static BOOL memory_enum(WNs *ns, WObj *c, WEmit emit, void *context)
     put_str(o, L"Description", L"Physical Memory");
     put_str(o, L"BankLabel", L"BANK 0");
     put_str(o, L"DeviceLocator", L"DIMM 0");
-    put_str(o, L"Manufacturer", L"Mime");
+    put_str(o, L"Manufacturer", L"Microsoft Corporation");
     put_str(o, L"CreationClassName", L"Win32_PhysicalMemory");
     put_uint(o, L"Capacity", capacity);
     put_uint(o, L"FormFactor", 8);
@@ -407,6 +407,35 @@ static BOOL memory_enum(WNs *ns, WObj *c, WEmit emit, void *context)
     put_uint(o, L"TypeDetail", 128);
     put_uint(o, L"DataWidth", 64);
     put_uint(o, L"TotalWidth", 64);
+    BOOL more = emit(context, o);
+    wo_free(o);
+    return more;
+}
+
+/* ------------------------------------------------------------------ Win32_Battery */
+
+static BOOL battery_enum(WNs *ns, WObj *c, WEmit emit, void *context)
+{
+    SYSTEM_POWER_STATUS power = {};
+    GetSystemPowerStatus(&power);
+    WObj *o = wo_spawn(c);
+    put_str(o, L"DeviceID", L"Battery 0");
+    put_str(o, L"Name", L"Battery 0");
+    put_str(o, L"Caption", L"Internal Battery");
+    put_str(o, L"Description", L"Internal Battery");
+    put_str(o, L"Status", L"OK");
+    put_str(o, L"SystemName", computer_name());
+    put_str(o, L"CreationClassName", L"Win32_Battery");
+    put_str(o, L"SystemCreationClassName", L"Win32_ComputerSystem");
+    put_uint(o, L"BatteryStatus", power.ACLineStatus ? 2 : 1);
+    put_uint(o, L"Chemistry", 6);
+    put_uint(o, L"DesignCapacity", 70000);
+    put_uint(o, L"DesignVoltage", 12000);
+    put_uint(o, L"EstimatedChargeRemaining", power.BatteryLifePercent <= 100 ? power.BatteryLifePercent : 87);
+    put_uint(o, L"EstimatedRunTime", 71582788);
+    put_bool(o, L"PowerOnline", power.ACLineStatus != 0);
+    put_uint(o, L"TimeOnBattery", 0);
+    put_uint(o, L"TimeToFullCharge", 0);
     BOOL more = emit(context, o);
     wo_free(o);
     return more;
@@ -780,6 +809,112 @@ static HRESULT service_method(WNs *ns, const WCHAR *name, const WCHAR *method, W
     return S_OK;
 }
 
+/* ------------------------------------------------------------------ the disk */
+
+/* the sector the data partition starts at, from the sector table of mimefs: recovery, efi system and msr come before. */
+#define DISK_DATA_FIRST 411648ull
+#define DISK_SECTORS_TAIL 34ull /* the backup table and header at the end of the disk. */
+
+static ULONGLONG disk_bytes(void)
+{
+    ULONGLONG total = 0, free_bytes = 0, total_free = 0;
+    WCHAR windows[MAX_PATH];
+    if (!GetWindowsDirectoryW(windows, MAX_PATH))
+        return 0;
+    WCHAR root[4] = {windows[0], ':', '\\', 0};
+    if (!GetDiskFreeSpaceExW(root, (PULARGE_INTEGER)&free_bytes, (PULARGE_INTEGER)&total, (PULARGE_INTEGER)&total_free))
+        return 0;
+    return total;
+}
+
+static BOOL diskdrive_enum(WNs *ns, WObj *c, WEmit emit, void *context)
+{
+    ULONGLONG bytes = disk_bytes();
+    WObj *o = wo_spawn(c);
+    put_str(o, L"DeviceID", L"\\\\.\\PHYSICALDRIVE0");
+    put_str(o, L"Name", L"\\\\.\\PHYSICALDRIVE0");
+    put_str(o, L"Caption", L"SAMSUNG MZVL21T0HCLR-00BL2");
+    put_str(o, L"Description", L"Disk drive");
+    put_str(o, L"Model", L"SAMSUNG MZVL21T0HCLR-00BL2");
+    put_str(o, L"Manufacturer", L"(Standard disk drives)");
+    put_str(o, L"InterfaceType", L"SCSI");
+    put_str(o, L"MediaType", L"Fixed hard disk media");
+    put_str(o, L"PNPDeviceID", L"SCSI\\DISK&VEN_NVME&PROD_SAMSUNG_MZVL21T0\\5&2A9C1B3F&0&000000");
+    put_str(o, L"SerialNumber", L"0025_38B1_81A3_5C2F.");
+    put_str(o, L"FirmwareRevision", L"AGXA0101");
+    put_uint(o, L"Signature", 0x4c3a91b7);
+    put_str(o, L"Status", L"OK");
+    put_str(o, L"CreationClassName", L"Win32_DiskDrive");
+    put_str(o, L"SystemName", computer_name());
+    put_str(o, L"SystemCreationClassName", L"Win32_ComputerSystem");
+    put_uint(o, L"Index", 0);
+    put_uint(o, L"Partitions", 4);
+    put_uint(o, L"BytesPerSector", 512);
+    put_uint(o, L"SectorsPerTrack", 63);
+    put_uint(o, L"TracksPerCylinder", 255);
+    put_uint(o, L"TotalSectors", bytes / 512);
+    put_uint(o, L"TotalCylinders", bytes / 512 / (63 * 255));
+    put_uint(o, L"TotalHeads", 255);
+    put_uint(o, L"TotalTracks", bytes / 512 / 63);
+    put_uint(o, L"Size", bytes);
+    put_uint(o, L"ConfigManagerErrorCode", 0);
+    put_bool(o, L"ConfigManagerUserConfig", FALSE);
+    BOOL more = emit(context, o);
+    wo_free(o);
+    return more;
+}
+
+/* one entry of the partition table, as wmi names the parts of the layout. */
+static void put_partition(WObj *o, ULONG index, const WCHAR *type, ULONGLONG first, ULONGLONG last, BOOL bootable,
+                          BOOL primary)
+{
+    WCHAR id[32], name[32];
+    _snwprintf(id, RTL_NUMBER_OF(id), L"Disk #0, Partition #%u", index);
+    _snwprintf(name, RTL_NUMBER_OF(name), L"Disk #0, Partition #%u", index);
+    put_str(o, L"DeviceID", id);
+    put_str(o, L"Name", name);
+    put_str(o, L"Caption", id);
+    put_str(o, L"Description", type);
+    put_str(o, L"Type", type);
+    put_str(o, L"Status", L"OK");
+    put_str(o, L"CreationClassName", L"Win32_DiskPartition");
+    put_str(o, L"SystemName", computer_name());
+    put_str(o, L"SystemCreationClassName", L"Win32_ComputerSystem");
+    put_uint(o, L"DiskIndex", 0);
+    put_uint(o, L"Index", index);
+    put_uint(o, L"NumberOfBlocks", last >= first ? last - first + 1 : 0);
+    put_uint(o, L"StartingOffset", first * 512);
+    put_uint(o, L"Size", last >= first ? (last - first + 1) * 512 : 0);
+    put_bool(o, L"Bootable", bootable);
+    put_bool(o, L"BootPartition", bootable);
+    put_bool(o, L"PrimaryPartition", primary);
+}
+
+static BOOL partition_enum(WNs *ns, WObj *c, WEmit emit, void *context)
+{
+    ULONGLONG sectors = disk_bytes() / 512;
+    ULONGLONG last = sectors > DISK_DATA_FIRST + DISK_SECTORS_TAIL ? sectors - DISK_SECTORS_TAIL : DISK_DATA_FIRST;
+    struct {
+        const WCHAR *type;
+        ULONGLONG first, last;
+        BOOL bootable, primary;
+    } parts[] = {
+        {L"GPT: Unknown", 2048, 208895, FALSE, FALSE},
+        {L"GPT: System", 208896, 395263, FALSE, FALSE},
+        {L"GPT: Reserved", 395264, 411647, FALSE, FALSE},
+        {L"GPT: Basic Data", DISK_DATA_FIRST, last, TRUE, TRUE},
+    };
+    for (ULONG i = 0; i < RTL_NUMBER_OF(parts); i++) {
+        WObj *o = wo_spawn(c);
+        put_partition(o, i, parts[i].type, parts[i].first, parts[i].last, parts[i].bootable, parts[i].primary);
+        BOOL more = emit(context, o);
+        wo_free(o);
+        if (!more)
+            return FALSE;
+    }
+    return TRUE;
+}
+
 /* ------------------------------------------------------------------ the table */
 
 typedef struct Native {
@@ -792,6 +927,8 @@ static const Native NATIVES[] = {
     {L"Win32_OperatingSystem", os_enum, nullptr}, {L"Win32_ComputerSystem", computer_enum, nullptr},
     {L"Win32_Processor", processor_enum, nullptr}, {L"Win32_PhysicalMemory", memory_enum, nullptr},
     {L"Win32_LogicalDisk", disk_enum, nullptr},    {L"Win32_VideoController", video_enum, nullptr},
+    {L"Win32_Battery", battery_enum, nullptr},    {L"Win32_DiskDrive", diskdrive_enum, nullptr},
+    {L"Win32_DiskPartition", partition_enum, nullptr},
     {L"Win32_Service", service_enum, service_method},
 };
 

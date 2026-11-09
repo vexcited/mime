@@ -129,7 +129,7 @@ static void write_begin(void)
 {
     if (!g_loading && !g_write_depth) {
         if (!g_write_mutex)
-            g_write_mutex = CreateMutexW(nullptr, FALSE, L"Global\\MimeWbemRepository");
+            g_write_mutex = CreateMutexW(nullptr, FALSE, L"Global\\WbemRepository");
         if (g_write_mutex) {
             WaitForSingleObject(g_write_mutex, 30000);
             /* another process may have written since this one last looked. */
