@@ -272,6 +272,8 @@ BOOL NTAPI NtUserGetCursorInfo(PCURSORINFO user_info)
 BOOL NTAPI NtUserAttachThreadInput(DWORD attach, DWORD to, BOOL do_attach)
 {
     UserEnter();
+    /* like any call of the window manager, this one makes its caller a gui thread, so it can attach itself. */
+    W32GetThread();
     W32THREAD *a = W32LookupThread((HANDLE)(ULONG_PTR)attach);
     W32THREAD *b = W32LookupThread((HANDLE)(ULONG_PTR)to);
     BOOL ok = a && b && a != b && W32AttachInput(a, b, do_attach);
