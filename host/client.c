@@ -126,7 +126,7 @@ static int machine_up(const MimePaths *paths, bool quiet)
         return 1;
     /* lets a concurrent `mime up` see which machine is starting. */
     mime_instance_publish(lock_fd, paths);
-    if (!mime_prepare_drive(paths)) {
+    if (!mime_prepare_drive(paths) || mime_genuine_ensure(paths) != 0) {
         close(lock_fd);
         return 1;
     }
@@ -150,6 +150,32 @@ int mime_cmd_up(const MimePaths *paths, int argc, char **argv)
     return machine_up(paths, false);
 }
 
+/* what mime up and mime run do before the machine starts, on its own, so a script can have it done first. */
+int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
+{
+    if (argc) {
+        fprintf(stderr, "usage: mime setup\n");
+        return 2;
+    }
+    if (!mime_paths_ensure(paths))
+        return 1;
+    /* a machine that is up prepared its drive when it started. */
+    MimeInstanceHolder holder;
+    int lock_fd = mime_instance_lock(paths, &holder);
+    if (lock_fd == -2)
+        return 1;
+    if (lock_fd >= 0) {
+        bool prepared = mime_prepare_drive(paths);
+        close(lock_fd);
+        if (!prepared)
+            return 1;
+    }
+    int r = mime_genuine_ensure(paths);
+    if (r == 0)
+        printf("Mime is set up.\n");
+    return r;
+}
+
 int mime_cmd_status(const MimePaths *paths, int argc, char **argv)
 {
     MimeIpcStatus status;
@@ -160,11 +186,13 @@ int mime_cmd_status(const MimePaths *paths, int argc, char **argv)
                    holder.socket[0] ? holder.socket : "unknown");
         else
             printf("Mime machine is down.\n");
+        mime_genuine_print_status(paths);
         return 1;
     }
     printf("Mime machine is %s (pid %u), up for %llus, %u program(s) running.\n", status.ready ? "up" : "booting",
            status.pid, (unsigned long long)(status.uptime_ms / 1000), status.running_programs);
     printf("  C: drive  %s\n  log       %s\n", paths->drive_c, paths->logfile);
+    mime_genuine_print_status(paths);
     return 0;
 }
 

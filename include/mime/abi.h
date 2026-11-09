@@ -385,9 +385,9 @@ typedef struct MimeRomEntry {
     uint64_t offset; /* from the rom header, page aligned. */
     uint64_t size;
     /*
-     * a file whose microsoft original is listed in data/genuine.manifest has 1 + its index there and its size. while
-     * the host holds a checked copy, its bit in MimeSharedPage.genuine_ready is set: reads, sizes and data sections of
-     * the file show that copy, see MIME_HC_GENUINE_OPEN, and images still map this one.
+     * a file whose microsoft original is listed in data/genuine.manifest has 1 + its index there and its size. the
+     * machine starts only when the host holds every one: reads, sizes and data sections of the file show that copy,
+     * see MIME_HC_GENUINE_OPEN, and images still map this one.
      */
     uint64_t genuine_size;
     uint32_t genuine;
@@ -435,11 +435,6 @@ typedef struct MimeSharedPage {
      */
     volatile uint64_t memory_grantable;
     volatile uint64_t memory_credit;
-    /*
-     * bit i is set while the host holds a checked copy of the file at index i of data/genuine.manifest, so a rom open
-     * learns whether there is one without asking the host. see MimeRomEntry.genuine.
-     */
-    volatile uint64_t genuine_ready[MIME_GENUINE_MAX / 64];
 } MimeSharedPage;
 
 /* one run of free guest pages in a MIME_HC_MEM_REPORT list. */
@@ -492,8 +487,7 @@ enum {
     MIME_HC_FS_APPEND = 0x6C,   /* handle, unused, pa and len: writes at the end of the file in one step that no other writer can get in the middle of, host programs that append included; returns the offset it was written at, the whole length or nothing is written. */
     /*
      * (index, MimeFsInfo pa) -> handle: the host's checked copy of entry index of data/genuine.manifest, on the
-     * MIME_FS_VOLUME_GENUINE volume, to read, query and map read only. NOT_FOUND when it has none any more, which also
-     * clears the entry's bit in MimeSharedPage.genuine_ready.
+     * MIME_FS_VOLUME_GENUINE volume, to read, query and map read only. NOT_FOUND past the last entry.
      */
     MIME_HC_GENUINE_OPEN = 0x6D,
     MIME_HC_FS_LINKS = 0x68,    /* handle, pa and capacity: every name of the file on its volume as MimeFsLinkName records, returns the bytes they need. */

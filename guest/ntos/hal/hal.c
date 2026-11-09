@@ -159,18 +159,6 @@ ULONG64 HalRomPhysical(const MimeRomEntry *entry)
     return HalBootInfo->rom_phys + entry->offset;
 }
 
-/* whether the host holds a checked copy of microsoft's original of a rom file, see host/genuine.c. */
-BOOLEAN HalGenuineReady(const MimeRomEntry *entry)
-{
-    if (!entry->genuine)
-        return FALSE;
-    ULONG index = entry->genuine - 1;
-    if (index >= MIME_GENUINE_MAX)
-        return FALSE;
-    ULONG64 word = __atomic_load_n(&HalSharedPage->genuine_ready[index / 64], __ATOMIC_ACQUIRE);
-    return (word >> (index % 64)) & 1;
-}
-
 BOOLEAN HalIsRomPhysical(ULONG64 pa)
 {
     return pa >= HalBootInfo->rom_phys && pa < HalBootInfo->rom_phys + HalBootInfo->rom_size;

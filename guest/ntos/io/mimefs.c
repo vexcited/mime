@@ -146,8 +146,8 @@ static BOOLEAN access_time_disabled(void)
 static void rom_info(const MimeRomEntry *rom, MimeFsInfo *info)
 {
     memset(info, 0, sizeof(*info));
-    /* while the host holds microsoft's copy of the file, its size is the one reads and listings show. */
-    info->size = HalGenuineReady(rom) ? rom->genuine_size : rom->size;
+    /* a file microsoft's copy stands in for has that copy's size in reads and listings. */
+    info->size = rom->genuine ? rom->genuine_size : rom->size;
     info->allocation_size = (info->size + PAGE_SIZE - 1) & ~(ULONG64)(PAGE_SIZE - 1);
     info->creation_time = info->access_time = info->write_time = info->change_time = HalRomFiletime();
     /* an ntfs file reference: sequence number 1, mft records after the reserved ones. */
@@ -236,8 +236,8 @@ const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file)
 }
 
 /*
- * the host handle of microsoft's copy of a rom file, opened on the first read or data section that needs it, 0 when
- * none is ready. one open per file object at most: an open, a stat or an image load never asks for it. GenuineSize is
+ * the host handle of microsoft's copy of a rom file, opened on the first read or data section that needs it, 0 for a
+ * file the manifest does not list or when the host cannot open it. one open per file object at most: an open, a stat or an image load never asks for it. GenuineSize is
  * published before the handle, so a reader that sees the handle sees the size.
  */
 static ULONG64 ensure_genuine(MIMEFS_FCB *fcb)
@@ -245,7 +245,7 @@ static ULONG64 ensure_genuine(MIMEFS_FCB *fcb)
     ULONG64 handle = __atomic_load_n(&fcb->Genuine, __ATOMIC_ACQUIRE);
     if (handle)
         return handle;
-    if (!HalGenuineReady(fcb->Rom))
+    if (!fcb->Rom->genuine)
         return 0;
     MimeFsInfo *info = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*info), KI_TAG('M', 'f', 'G', 'i'));
     if (!info)
@@ -293,10 +293,11 @@ BOOLEAN IoGetFileWindowEx(PFILE_OBJECT file, BOOLEAN writable, ULONG64 minimum_s
     if (fcb->Rom) {
         if (writable)
             return FALSE;
-        /* a data section of a rom file whose genuine copy is open maps that copy; otherwise mime's own bytes. */
-        ULONG64 genuine = ensure_genuine(fcb);
-        if (genuine) {
-            MIMEFS_WINDOW_REF *r = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*r), KI_TAG('M', 'f', 'W', 'r'));
+        /* a data section of a rom file microsoft's copy stands in for maps that copy, never mime's own bytes. */
+        if (fcb->Rom->genuine) {
+            ULONG64 genuine = ensure_genuine(fcb);
+            MIMEFS_WINDOW_REF *r =
+                genuine ? ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*r), KI_TAG('M', 'f', 'W', 'r')) : nullptr;
             ULONG64 window = 0;
             if (r && FsCacheMapPrivate(genuine, FALSE, &window)) {
                 memset(r, 0, sizeof(*r));
@@ -309,6 +310,7 @@ BOOLEAN IoGetFileWindowEx(PFILE_OBJECT file, BOOLEAN writable, ULONG64 minimum_s
             }
             if (r)
                 ExFreePool(r);
+            return FALSE;
         }
         *pa = HalRomPhysical(fcb->Rom);
         *size = fcb->Rom->size;
@@ -1228,6 +1230,8 @@ static NTSTATUS NTAPI mimefs_read_write(PDEVICE_OBJECT device, PIRP irp)
                 status = STATUS_END_OF_FILE;
             return complete(irp, status, done);
         }
+        if (fcb->Rom->genuine)
+            return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
         if (offset >= fcb->Rom->size)
             return complete(irp, STATUS_END_OF_FILE, 0);
         ULONG n = fcb->Rom->size - offset < length ? (ULONG)(fcb->Rom->size - offset) : length;

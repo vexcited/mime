@@ -16,6 +16,8 @@ void mime_ui_run(void);
 void mime_ui_get_display(MimeDisplayInfo *info);
 /* the keyboard layout of the host, false when the ui does not know it. */
 bool mime_ui_get_keyboard(MimeKeyboardLayout *out);
+/* shows an error outside the machine, for a client started without a terminal. */
+void mime_ui_alert(const char *text);
 /*
  * asks the compositor to move with edge 0 or resize with a WMSZ_* edge while the pointer button remains held.
  * returns MIME_HC_STATUS_OK if accepted, unsupported when the guest handles movement.
