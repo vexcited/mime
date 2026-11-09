@@ -53,6 +53,7 @@ const MimeRomEntry *HalRomFind(PCWSTR path, ULONG chars);
 const MimeRomEntry *HalRomEntry(ULONG index); /* NULL past the last entry. */
 ULONG64 HalRomFiletime(void);                 /* the time of every rom file. */
 ULONG64 HalRomPhysical(const MimeRomEntry *entry);
+BOOLEAN HalGenuineReady(const MimeRomEntry *entry); /* the host holds microsoft's copy of the file. */
 BOOLEAN HalIsRomPhysical(ULONG64 pa);
 ULONG HalAcknowledgeInterrupt(void); /* the interrupt id, 1020 or above when none is pending. */
 void HalEndOfInterrupt(ULONG intid);

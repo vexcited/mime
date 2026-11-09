@@ -18,7 +18,6 @@
 
 /* first match wins. */
 static const PCWSTR bundles[] = {
-    L"\\??\\C:\\ProgramData\\Mime\\roots.pem",                          /* macos, its keychain's roots. */
     L"\\??\\Z:\\etc\\ssl\\certs\\ca-certificates.crt",                 /* debian, ubuntu, arch, gentoo. */
     L"\\??\\Z:\\etc\\pki\\tls\\certs\\ca-bundle.crt",                  /* fedora, rhel. */
     L"\\??\\Z:\\etc\\pki\\ca-trust\\extracted\\pem\\tls-ca-bundle.pem", /* fedora without the link. */
@@ -26,32 +25,64 @@ static const PCWSTR bundles[] = {
     L"\\??\\Z:\\etc\\ssl\\cert.pem",                                  /* alpine, macos without the export. */
 };
 
+/* the host's own export, beside the feature cache, when it keeps its roots outside /etc: macos and its keychain. */
+static ULONG trusted_bundle(WCHAR *path, ULONG chars)
+{
+    ULONG n = 0;
+    while (HalBootInfo->auth_roots[n] && n + 5 < chars)
+        n++;
+    if (!n)
+        return 0;
+    path[0] = L'\\';
+    path[1] = L'?';
+    path[2] = L'?';
+    path[3] = L'\\';
+    for (ULONG i = 0; i < n; i++)
+        path[4 + i] = (UCHAR)HalBootInfo->auth_roots[i];
+    path[4 + n] = 0;
+    return 1;
+}
+
+static PUCHAR read_one(PCWSTR text, PULONG size)
+{
+    UNICODE_STRING path;
+    RtlInitUnicodeString(&path, text);
+    PFILE_OBJECT file;
+    if (!NT_SUCCESS(IopOpenFileObject(&path, FILE_READ_DATA | SYNCHRONIZE, FILE_NON_DIRECTORY_FILE, &file)))
+        return nullptr;
+    ULONG64 length = 0;
+    PUCHAR data = nullptr;
+    if (NT_SUCCESS(IoQueryFileSize(file, &length)) && length && length <= MAX_BUNDLE)
+        data = ExAllocatePool2(POOL_FLAG_PAGED, (SIZE_T)length, KI_TAG('C', 'm', 'C', 'a'));
+    ULONG done = 0;
+    while (data && done < length) {
+        ULONG got = 0;
+        if (!NT_SUCCESS(IoReadFileObject(file, data + done, (ULONG)length - done, done, &got)) || !got)
+            break;
+        done += got;
+    }
+    ObDereferenceObject(file);
+    if (data && done == length) {
+        *size = done;
+        return data;
+    }
+    if (data)
+        ExFreePool(data);
+    return nullptr;
+}
+
 static PUCHAR read_bundle(PULONG size)
 {
-    for (ULONG i = 0; i < RTL_NUMBER_OF(bundles); i++) {
-        UNICODE_STRING path;
-        RtlInitUnicodeString(&path, bundles[i]);
-        PFILE_OBJECT file;
-        if (!NT_SUCCESS(IopOpenFileObject(&path, FILE_READ_DATA | SYNCHRONIZE, FILE_NON_DIRECTORY_FILE, &file)))
-            continue;
-        ULONG64 length = 0;
-        PUCHAR data = nullptr;
-        if (NT_SUCCESS(IoQueryFileSize(file, &length)) && length && length <= MAX_BUNDLE)
-            data = ExAllocatePool2(POOL_FLAG_PAGED, (SIZE_T)length, KI_TAG('C', 'm', 'C', 'a'));
-        ULONG done = 0;
-        while (data && done < length) {
-            ULONG got = 0;
-            if (!NT_SUCCESS(IoReadFileObject(file, data + done, (ULONG)length - done, done, &got)) || !got)
-                break;
-            done += got;
-        }
-        ObDereferenceObject(file);
-        if (data && done == length) {
-            *size = done;
-            return data;
-        }
+    WCHAR exported[260];
+    if (trusted_bundle(exported, RTL_NUMBER_OF(exported))) {
+        PUCHAR data = read_one(exported, size);
         if (data)
-            ExFreePool(data);
+            return data;
+    }
+    for (ULONG i = 0; i < RTL_NUMBER_OF(bundles); i++) {
+        PUCHAR data = read_one(bundles[i], size);
+        if (data)
+            return data;
     }
     return nullptr;
 }

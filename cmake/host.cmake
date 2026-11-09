@@ -1,8 +1,11 @@
 get_property(rom_files GLOBAL PROPERTY MIME_ROM_FILES)
+# microsoft's originals of a few system files are fetched by the host at run time, never put in the build: the rom and
+# the host only know them by the manifest, see host/genuine.c.
+set(genuine_manifest ${CMAKE_SOURCE_DIR}/data/genuine.manifest)
 add_custom_command(OUTPUT ${MIME_BUILD_GEN}/rom.S
     COMMAND ${CMAKE_COMMAND} -DOUTPUT=${MIME_BUILD_GEN}/rom.S -DSYSTEM=${CMAKE_SYSTEM_NAME} "-DFILES=${rom_files}"
-        -P ${CMAKE_SOURCE_DIR}/cmake/rom.cmake
-    DEPENDS cmake/rom.cmake ${rom_files} VERBATIM)
+        -DMANIFEST=${genuine_manifest} -P ${CMAKE_SOURCE_DIR}/cmake/rom.cmake
+    DEPENDS cmake/rom.cmake ${rom_files} ${genuine_manifest} VERBATIM)
 add_custom_target(rom DEPENDS ${MIME_BUILD_GEN}/rom.S)
 
 mime_group(guest ALL DEPENDS rom)
@@ -108,3 +111,14 @@ set_target_properties(mime PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXT
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set_source_files_properties(${MIME_BUILD_GEN}/rom.S PROPERTIES OBJECT_DEPENDS "${rom_files}")
 add_dependencies(mime rom)
+
+# the manifest as a string of the host, which fetches the files it lists and checks each against its hash.
+add_custom_command(OUTPUT ${MIME_BUILD_GEN}/genuine_manifest.h
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${genuine_manifest} -DOUTPUT=${MIME_BUILD_GEN}/genuine_manifest.h
+        -P ${CMAKE_SOURCE_DIR}/cmake/genuine.cmake
+    DEPENDS cmake/genuine.cmake ${genuine_manifest} VERBATIM)
+target_sources(mime PRIVATE ${MIME_BUILD_GEN}/genuine_manifest.h)
+set_source_files_properties(host/genuine.c PROPERTIES INCLUDE_DIRECTORIES ${MIME_BUILD_GEN}
+    OBJECT_DEPENDS ${MIME_BUILD_GEN}/genuine_manifest.h)
+find_package(CURL REQUIRED)
+target_link_libraries(mime PRIVATE CURL::libcurl)

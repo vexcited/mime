@@ -27,6 +27,8 @@ static void usage(void)
     printf("                                         disk and checked the same way\n");
     printf("  mime features disable <name>           remove the files of a feature, a program that needs it\n");
     printf("                                         asks again\n");
+    printf("  mime genuine [status|fetch|clear]      the Microsoft copies of system files the host keeps so identity\n");
+    printf("                                         checks pass; fetched from Microsoft's symbol server when needed\n");
     printf("  mime down [--force] [--timeout secs]   shut the machine down, programs get to close first; --force\n");
     printf("                                         ends them all at once\n");
     printf("  mime status                            show machine state\n");
@@ -70,6 +72,8 @@ int main(int argc, char **argv)
         return mime_cmd_uninstall(&paths, argc - 2, argv + 2);
     if (strcmp(cmd, "features") == 0)
         return mime_cmd_features(&paths, argc - 2, argv + 2);
+    if (strcmp(cmd, "genuine") == 0)
+        return mime_cmd_genuine(&paths, argc - 2, argv + 2);
     if (strcmp(cmd, "down") == 0)
         return mime_cmd_down(&paths, argc - 2, argv + 2);
     if (strcmp(cmd, "status") == 0)
