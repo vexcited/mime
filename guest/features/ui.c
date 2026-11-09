@@ -1,10 +1,13 @@
 /*
  * The windows of a request: the question when a program needs a feature, the progress of the download and the
- * install, and what came of it. They are task dialogs, as the ones Windows shows for a feature on demand. The work
- * runs on a thread of its own and the windows on the first one, so that the answer to a question and the end of the
- * work meet here.
+ * install, and what came of it. They are the host desktop's own dialogs, drawn with its fonts: a drive may have no
+ * font at all, fonts are what features fetch. Without a host desktop they are task dialogs, as the ones Windows shows
+ * for a feature on demand. The work runs on a thread of its own and the windows on the first one, so that the answer
+ * to a question and the end of the work meet here.
  */
 #include "featurep.h"
+#include <mime/abi.h>
+#include <mime/ntuser.h>
 #include <mime/win32/commctrl.h>
 
 #define TITLE L"Windows features"
@@ -41,6 +44,56 @@ static void name_of(RUN *run, WCHAR *name, SIZE_T chars)
 static PCWSTR caller_of(RUN *run)
 {
     return run->Caller[0] ? run->Caller : L"The program";
+}
+
+/* ------------------------------------------------------------------ the host's dialogs */
+
+static BOOL g_no_host; /* the host has no desktop to show them on: task dialogs then. */
+
+static void put(USHORT *to, SIZE_T chars, PCWSTR from)
+{
+    SIZE_T i = 0;
+    for (; from && from[i] && i + 1 < chars; i++)
+        to[i] = from[i];
+    to[i] = 0;
+}
+
+/* a dialog of the host, its id, or 0 when the host shows none. */
+static ULONG host_dialog(ULONG kind, ULONG id, PCWSTR instruction, PCWSTR content, PCWSTR const *buttons, ULONG count,
+                         LONG permille)
+{
+    if (g_no_host)
+        return 0;
+    MimeShellDialog d = {.op = MIME_SHELL_DIALOG, .id = id, .kind = kind, .button_count = count, .permille = permille};
+    put(d.title, RTL_NUMBER_OF(d.title), TITLE);
+    put(d.instruction, RTL_NUMBER_OF(d.instruction), instruction);
+    put(d.content, RTL_NUMBER_OF(d.content), content);
+    for (ULONG i = 0; i < count && i < MIME_DIALOG_BUTTONS; i++)
+        put(d.buttons[i], RTL_NUMBER_OF(d.buttons[i]), buttons[i]);
+    LONG r = NtUserMimeShell(MIME_SHELLOP_COMMAND, 0, (PUCHAR)&d, sizeof(d));
+    if (r < 0) {
+        if (kind != MIME_DIALOG_UPDATE && kind != MIME_DIALOG_END)
+            g_no_host = TRUE;
+        return 0;
+    }
+    return kind == MIME_DIALOG_UPDATE || kind == MIME_DIALOG_END ? id : (ULONG)r;
+}
+
+/* the button pressed in the dialog id, -1 when it was closed; gives up the question when stop is set. */
+static LONG host_answer(ULONG id, volatile LONG *stop)
+{
+    for (;;) {
+        MIME_SHELL_EVENT e = {};
+        LONG r = NtUserMimeShell(MIME_SHELLOP_WAIT, 200, (PUCHAR)&e, sizeof(e));
+        if (r == 1 && e.Kind == MIME_SHELL_EVENT_DIALOG_ANSWERED && e.Id == id)
+            return e.Arg;
+        if (r < 0)
+            return -1;
+        if (stop && *stop) {
+            host_dialog(MIME_DIALOG_END, id, nullptr, nullptr, nullptr, 0, 0);
+            return -1;
+        }
+    }
 }
 
 /* ------------------------------------------------------------------ the question */
@@ -94,6 +147,17 @@ static BOOL ask(UI *ui)
         _snwprintf(content + used, RTL_NUMBER_OF(content) - used, L"\n\n%ls", terms);
     }
     instruction[RTL_NUMBER_OF(instruction) - 1] = content[RTL_NUMBER_OF(content) - 1] = skip[RTL_NUMBER_OF(skip) - 1] = 0;
+    ui->Yes = FALSE;
+    /* the host's buttons have one line, what each does goes under the text. */
+    WCHAR host_content[1024];
+    PCWSTR download_note = wcschr(download, L'\n'), skip_note = wcschr(skip, L'\n');
+    _snwprintf(host_content, RTL_NUMBER_OF(host_content), L"%ls\n\nDownload: %ls\nSkip: %ls", content,
+               download_note ? download_note + 1 : L"", skip_note ? skip_note + 1 : L"");
+    host_content[RTL_NUMBER_OF(host_content) - 1] = 0;
+    static PCWSTR const choices[] = {L"Download", L"Skip"};
+    ULONG id = host_dialog(MIME_DIALOG_ASK, 0, instruction, host_content, choices, 2, 0);
+    if (id)
+        return host_answer(id, &ui->Abandoned) == 0 && !ui->Abandoned;
     TASKDIALOG_BUTTON buttons[] = {{ID_DOWNLOAD, download}, {ID_SKIP, skip}};
     TASKDIALOGCONFIG config = {.cbSize = sizeof(config),
                                .dwFlags = TDF_USE_COMMAND_LINKS | TDF_ALLOW_DIALOG_CANCELLATION,
@@ -107,7 +171,6 @@ static BOOL ask(UI *ui)
                                .pfCallback = consent_callback,
                                .lpCallbackData = (LONG_PTR)ui};
     int pressed = 0;
-    ui->Yes = FALSE;
     if (FAILED(TaskDialogIndirect(&config, &pressed, nullptr, nullptr))) {
         ui->NoInterface = TRUE;
         return FALSE;
@@ -248,6 +311,19 @@ static void show_progress(UI *ui)
     PROGRESS_STATE state = {.Ui = ui};
     PROGRESS_VIEW view;
     progress_content(&state, state.Shown, RTL_NUMBER_OF(state.Shown), &view);
+    ULONG id = host_dialog(MIME_DIALOG_PROGRESS, 0, instruction, state.Shown, nullptr, 0,
+                           !view.Known && !view.Permille ? -1 : (LONG)view.Permille);
+    if (id) {
+        /* the host's view has no cancel: it follows the work until it ends. */
+        while (WaitForSingleObject(ui->Done, 250) == WAIT_TIMEOUT) {
+            WCHAR text[300];
+            progress_content(&state, text, RTL_NUMBER_OF(text), &view);
+            host_dialog(MIME_DIALOG_UPDATE, id, instruction, text, nullptr, 0,
+                        !view.Known && !view.Permille ? -1 : (LONG)view.Permille);
+        }
+        host_dialog(MIME_DIALOG_END, id, nullptr, nullptr, nullptr, 0, 0);
+        return;
+    }
     TASKDIALOGCONFIG config = {.cbSize = sizeof(config),
                                .dwFlags = TDF_SHOW_PROGRESS_BAR | TDF_CALLBACK_TIMER,
                                .dwCommonButtons = TDCBF_CANCEL_BUTTON,
@@ -278,6 +354,12 @@ static void show_failure(UI *ui, DWORD error)
     else
         _snwprintf(content, RTL_NUMBER_OF(content), L"%ls", message);
     content[RTL_NUMBER_OF(content) - 1] = 0;
+    ULONG id = host_dialog(error == FEATURE_ERROR_CANCELLED ? MIME_DIALOG_INFO : MIME_DIALOG_ERROR, 0, instruction, content,
+                           nullptr, 0, 0);
+    if (id) {
+        host_answer(id, nullptr);
+        return;
+    }
     TASKDIALOGCONFIG config = {.cbSize = sizeof(config),
                                .dwCommonButtons = TDCBF_CLOSE_BUTTON,
                                .pszWindowTitle = TITLE,
@@ -304,6 +386,12 @@ static void show_closing(UI *ui, DWORD error)
                    run->Font, message, run->Detail[0] ? L"\n\n" : L"", run->Detail);
     }
     content[RTL_NUMBER_OF(content) - 1] = 0;
+    ULONG id = host_dialog(MIME_DIALOG_ERROR, 0, instruction, content, nullptr, 0, 0);
+    if (id) {
+        host_answer(id, nullptr);
+        run->Told = TRUE;
+        return;
+    }
     TASKDIALOGCONFIG config = {.cbSize = sizeof(config),
                                .dwCommonButtons = TDCBF_CLOSE_BUTTON,
                                .pszWindowTitle = TITLE,

@@ -382,22 +382,10 @@ static int show_status(const FEATURE_DEF *feature)
     return 0;
 }
 
-/* The font of the windows, for this process only: the drive may have no font at all, it is what features fetch. */
-static void add_ui_font(void)
-{
-    WCHAR path[MAX_PATH];
-    UINT n = GetWindowsDirectoryW(path, MAX_PATH);
-    if (!n || n >= MAX_PATH - 48)
-        return;
-    wcscpy(path + n, L"\\Resources\\Features\\NotoSans-Regular.ttf");
-    AddFontResourceExW(path, FR_PRIVATE, nullptr);
-}
-
 int tool_main(void)
 {
     /* What this program looks into must not ask for a feature, it would ask itself. */
     SetEnvironmentVariableW(MIME_FEATURE_BUSY_VARIABLE, L"1");
-    add_ui_font();
     OPTIONS o = {};
     if (!parse(&o)) {
         tu_eprint(L"features: the command line is not right, `features help` tells how it is used.\n");

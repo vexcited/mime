@@ -521,7 +521,8 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
         break;
     }
     case MIME_HC_SHELL: {
-        void *command = regs[2] >= sizeof(uint32_t) && regs[2] <= sizeof(MimeShellJumpList)
+        size_t largest = sizeof(MimeShellJumpList) > sizeof(MimeShellDialog) ? sizeof(MimeShellJumpList) : sizeof(MimeShellDialog);
+        void *command = regs[2] >= sizeof(uint32_t) && regs[2] <= largest
                             ? mime_vm_phys(vm, regs[1], regs[2])
                             : nullptr;
         status = command ? mime_ui_shell(command, (size_t)regs[2], &value) : MIME_HC_STATUS_INVALID;

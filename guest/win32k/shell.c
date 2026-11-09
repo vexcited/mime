@@ -1,5 +1,6 @@
 /*
- * host integration for toasts, window identity and launcher entries. combase and explorerframe submit NtUserMimeShell
+ * host integration for toasts, dialogs, window identity and launcher entries. combase, explorerframe and
+ * OptionalFeatures.exe submit NtUserMimeShell
  * commands. the kernel assigns toast ids, forwards MIME_HC_SHELL commands, and queues MIME_INPUT_SHELL replies for
  * the creating process, whose notification thread waits here.
  */
@@ -24,6 +25,7 @@ typedef union SHELL_COMMAND {
     MimeShellToast Toast;
     MimeShellWindow Window;
     MimeShellJumpList Jump;
+    MimeShellDialog Dialog;
 } SHELL_COMMAND;
 
 static KSPIN_LOCK g_lock;
@@ -137,7 +139,8 @@ void ShellHostEvent(const MimeInputEvent *ev)
             e.ReplyLength = 0;
         }
     }
-    BOOLEAN done = e.Kind == MIME_SHELL_EVENT_TOAST_DISMISSED || e.Kind == MIME_SHELL_EVENT_TOAST_FAILED;
+    BOOLEAN done = e.Kind == MIME_SHELL_EVENT_TOAST_DISMISSED || e.Kind == MIME_SHELL_EVENT_TOAST_FAILED ||
+                   e.Kind == MIME_SHELL_EVENT_DIALOG_ANSWERED;
     KIRQL irql;
     KeAcquireSpinLock(&g_lock, &irql);
     SHELL_QUEUED *slot = nullptr;
@@ -234,6 +237,9 @@ static LONG run_command(PUCHAR request, ULONG size)
     case MIME_SHELL_JUMPLIST:
         want = sizeof(MimeShellJumpList);
         break;
+    case MIME_SHELL_DIALOG:
+        want = sizeof(MimeShellDialog);
+        break;
     default:
         return STATUS_INVALID_PARAMETER;
     }
@@ -282,6 +288,31 @@ static LONG run_command(PUCHAR request, ULONG size)
             UserLeave();
             return STATUS_NOT_FOUND;
         }
+    } else if (op == MIME_SHELL_DIALOG) {
+        MimeShellDialog *d = &g_command->Dialog;
+        zero_end(d->title, RTL_NUMBER_OF(d->title));
+        zero_end(d->instruction, RTL_NUMBER_OF(d->instruction));
+        zero_end(d->content, RTL_NUMBER_OF(d->content));
+        if (d->button_count > MIME_DIALOG_BUTTONS)
+            d->button_count = MIME_DIALOG_BUTTONS;
+        for (ULONG i = 0; i < MIME_DIALOG_BUTTONS; i++)
+            zero_end(d->buttons[i], RTL_NUMBER_OF(d->buttons[i]));
+        d->process_id = pid;
+        if (d->kind == MIME_DIALOG_UPDATE || d->kind == MIME_DIALOG_END) {
+            if (owner_of(d->id) != pid) {
+                UserLeave();
+                return STATUS_NOT_FOUND;
+            }
+        } else if (d->kind >= MIME_DIALOG_ASK && d->kind <= MIME_DIALOG_PROGRESS) {
+            id = ++g_next_id;
+            if (!id)
+                id = ++g_next_id;
+            d->id = id;
+            owner_set(id, pid);
+        } else {
+            UserLeave();
+            return STATUS_INVALID_PARAMETER;
+        }
     } else if (want == sizeof(MimeShellJumpList)) {
         MimeShellJumpList *j = &g_command->Jump;
         zero_end(j->aumid, RTL_NUMBER_OF(j->aumid));
@@ -310,11 +341,13 @@ static LONG run_command(PUCHAR request, ULONG size)
                                       0, &value);
     result = (LONG)from_host(status);
     if (NT_SUCCESS(result)) {
-        if (op == MIME_SHELL_TOAST_SHOW)
+        if (op == MIME_SHELL_TOAST_SHOW || (op == MIME_SHELL_DIALOG && id))
             result = (LONG)id;
         else if (op == MIME_SHELL_TOAST_PROBE)
             result = (LONG)value;
-    } else if (op == MIME_SHELL_TOAST_SHOW) {
+        if (op == MIME_SHELL_DIALOG && g_command->Dialog.kind == MIME_DIALOG_END)
+            owner_forget(g_command->Dialog.id);
+    } else if (op == MIME_SHELL_TOAST_SHOW || (op == MIME_SHELL_DIALOG && id)) {
         owner_forget(id);
     }
     UserLeave();

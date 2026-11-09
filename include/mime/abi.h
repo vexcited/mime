@@ -167,7 +167,37 @@ enum {
     MIME_SHELL_LAUNCHER = 11,    /* MimeShellWindow: the progress, badge and attention of a window's button in the launcher. */
     MIME_SHELL_FLASH = 12,       /* MimeShellWindow: a window asks for attention, or stops. */
     MIME_SHELL_JUMPLIST = 13,    /* MimeShellJumpList: the tasks of an application's jump list. */
+    MIME_SHELL_DIALOG = 14,      /* MimeShellDialog: a dialog of the host's desktop, drawn with its own fonts. */
 };
+
+/*
+ * a MimeShellDialog asks a question, tells of a failure or of a result, or shows progress, outside any guest window.
+ * the host answers a question and a notice with MIME_SHELL_EVENT_DIALOG_ANSWERED once it is closed; progress has no
+ * answer and is changed and ended with its id.
+ */
+enum {
+    MIME_DIALOG_ASK = 1,      /* the buttons, the first the default; x is the one pressed, -1 when it was closed. */
+    MIME_DIALOG_ERROR = 2,    /* a failure, with one button to close it. */
+    MIME_DIALOG_INFO = 3,     /* a result, with one button to close it. */
+    MIME_DIALOG_PROGRESS = 4, /* starts a progress view. */
+    MIME_DIALOG_UPDATE = 5,   /* changes the permille and the content of the progress id. */
+    MIME_DIALOG_END = 6,      /* takes the progress or the question id away, a question is then answered with -1. */
+};
+
+#define MIME_DIALOG_BUTTONS 3
+
+typedef struct MimeShellDialog {
+    uint32_t op;
+    uint32_t id; /* assigned by the guest kernel, the progress to change for MIME_DIALOG_UPDATE and MIME_DIALOG_END. */
+    uint32_t kind;
+    uint32_t process_id;
+    uint32_t button_count;
+    int32_t permille; /* progress from 0 to 1000, -1 while it is not known. */
+    uint16_t title[64];
+    uint16_t instruction[256];
+    uint16_t content[1024];
+    uint16_t buttons[MIME_DIALOG_BUTTONS][64];
+} MimeShellDialog;
 
 enum {
     MIME_TOAST_SILENT = 1u << 0,
@@ -211,6 +241,7 @@ enum {
     MIME_SHELL_EVENT_TOAST_REPLIED = 2,   /* x is the action, the text is fetched with MIME_SHELL_TOAST_REPLY. */
     MIME_SHELL_EVENT_TOAST_DISMISSED = 3, /* x is 0 for the person, 1 for the program, 2 for the time. */
     MIME_SHELL_EVENT_TOAST_FAILED = 4,    /* x is the error. */
+    MIME_SHELL_EVENT_DIALOG_ANSWERED = 5, /* x is the button of a MIME_DIALOG_ASK, -1 when it was closed without one. */
 };
 
 /* launcher window and application state keyed by application user model id. */

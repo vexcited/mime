@@ -803,10 +803,11 @@ typedef struct MIME_TRAY_REQUEST {
 } MIME_TRAY_REQUEST;
 
 /*
- * NtUserMimeShell: MIME_SHELLOP_COMMAND takes a MimeShellToast or MimeShellWindow of mime/abi.h as request, with
- * its own size. it returns the toast number for MIME_SHELL_TOAST_SHOW, 1 or 0 for MIME_SHELL_TOAST_PROBE, else 0
- * or a failure status. MIME_SHELLOP_WAIT waits id milliseconds, 0xFFFFFFFF for no limit, for an event of the
- * caller's toasts, and returns 1 with the event in request, 0 for none, or the status that woke it.
+ * NtUserMimeShell: MIME_SHELLOP_COMMAND takes a MimeShellToast, MimeShellWindow or MimeShellDialog of mime/abi.h as
+ * request, with its own size. it returns the toast number for MIME_SHELL_TOAST_SHOW and the dialog number for a new
+ * MIME_SHELL_DIALOG, 1 or 0 for MIME_SHELL_TOAST_PROBE, else 0 or a failure status. MIME_SHELLOP_WAIT waits id
+ * milliseconds, 0xFFFFFFFF for no limit, for an event of the caller's toasts and dialogs, and returns 1 with the event
+ * in request, 0 for none, or the status that woke it.
  */
 #define MIME_SHELLOP_COMMAND 1
 #define MIME_SHELLOP_WAIT 2
