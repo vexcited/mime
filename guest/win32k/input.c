@@ -289,9 +289,14 @@ static BOOLEAN low_level_mouse(const MimeInputEvent *ev, BOOLEAN injected, ULONG
     return HookCall(WH_MOUSE_LL, nullptr, HC_ACTION, msg, (LPARAM)&m, sizeof(m), nullptr) != 0;
 }
 
-/* the characters the host sends right after a key press share its fate. */
+/*
+ * the characters the host sends right after a key press share its fate, and carry its scan code and repeat like the
+ * ones TranslateMessage makes on windows.
+ */
 static BOOLEAN g_chars_follow_key;
 static BOOLEAN g_key_dropped;
+static ULONG g_key_scancode;
+static BOOLEAN g_key_repeat;
 
 DWORD InputLastTime;
 BOOLEAN InputPointerOutside;
@@ -374,12 +379,20 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
     case MIME_INPUT_KEY_UP:
         g_key_dropped = low_level_key(ev, injected, extra);
         g_chars_follow_key = ev->type == MIME_INPUT_KEY_DOWN;
+        g_key_scancode = ev->scancode;
+        g_key_repeat = (ev->flags & 2) != 0;
         if (g_key_dropped)
             return;
         break;
     case MIME_INPUT_CHAR:
         if (g_chars_follow_key ? g_key_dropped : low_level_key(ev, injected, extra))
             return;
+        if (g_chars_follow_key) {
+            if (!copy.scancode)
+                copy.scancode = g_key_scancode;
+            if (g_key_repeat)
+                copy.flags |= 2;
+        }
         break;
     case MIME_INPUT_MOUSE_MOVE:
     case MIME_INPUT_MOUSE_DOWN:
@@ -963,6 +976,20 @@ static W32THREAD *foreign_focus_thread(W32THREAD *t)
     return owner;
 }
 
+static LPARAM key_lparam(const MimeInputEvent *ev, BOOLEAN alt)
+{
+    LPARAM lparam = 1 | ((LPARAM)(ev->scancode & 0xFF) << 16);
+    if (ev->scancode & 0x100)
+        lparam |= 1 << 24;
+    if (alt)
+        lparam |= 1 << 29;
+    if (ev->type == MIME_INPUT_KEY_UP)
+        lparam |= (LPARAM)3 << 30;
+    else if (ev->flags & 2)
+        lparam |= (LPARAM)1 << 30;
+    return lparam;
+}
+
 static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, UINT min, UINT max,
                              BOOLEAN remove, BOOLEAN *consumed)
 {
@@ -983,7 +1010,7 @@ static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND fi
     if (ev->type == MIME_INPUT_CHAR) {
         WCHAR ch = ev->ch <= 0xFFFF ? (WCHAR)ev->ch : L'?';
         UINT msg = sys && alt ? WM_SYSCHAR : WM_CHAR;
-        LPARAM lparam = 1 | ((LPARAM)(ev->scancode & 0xFF) << 16) | (alt ? (1 << 29) : 0);
+        LPARAM lparam = key_lparam(ev, alt);
         if (owner) {
             if (remove) {
                 QueuePost(owner, WndHandle(target), msg, ch, lparam);
@@ -995,15 +1022,7 @@ static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND fi
     }
     BOOLEAN down = ev->type == MIME_INPUT_KEY_DOWN;
     UINT msg = sys ? (down ? WM_SYSKEYDOWN : WM_SYSKEYUP) : (down ? WM_KEYDOWN : WM_KEYUP);
-    LPARAM lparam = 1 | ((LPARAM)(ev->scancode & 0xFF) << 16);
-    if (ev->scancode & 0x100)
-        lparam |= 1 << 24;
-    if (alt)
-        lparam |= 1 << 29;
-    if (!down)
-        lparam |= (LPARAM)3 << 30;
-    else if (ev->flags & 2)
-        lparam |= (LPARAM)1 << 30;
+    LPARAM lparam = key_lparam(ev, alt);
     if (!owner && !MsgFilterMatches(WndHandle(target), msg, filter, min, max))
         return FALSE;
     if (owner && !remove)
