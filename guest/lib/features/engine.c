@@ -16,16 +16,11 @@ uint32_t FeatureEnable(const FEATURE_OPS *ops, const FEATURE_DEF *feature, uint3
     uint32_t available = ops->Available(c, feature);
     if (available != FEATURE_OK)
         return available;
+    /* A no is not remembered: the next request asks again. */
     if (policy == FEATURE_POLICY_ASK && (flags & FEATURE_ENABLE_ASK)) {
-        /* A program that asks again right after a no does not ask the user again. */
-        if (ops->RecentlyDeclined(c, feature))
-            return FEATURE_ERROR_CANCELLED;
         uint32_t answer = ops->Consent(c, feature);
-        if (answer != FEATURE_OK) {
-            if (answer == FEATURE_ERROR_CANCELLED)
-                ops->SetDeclined(c, feature);
+        if (answer != FEATURE_OK)
             return answer;
-        }
     }
     FEATURE_STATE before = ops->GetState(c, feature);
     ops->Stage(c, feature, FEATURE_STAGE_COLLECTING);
