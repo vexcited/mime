@@ -11,7 +11,6 @@
 #include <mime/win32/winbase.h>
 #include <mime/win32/winnls.h>
 #include <mime/win32/dwrite.h>
-#include <mime/fonts.h>
 #include <ttf/ttf.h>
 #include <ttf/ttf_internal.h>
 
