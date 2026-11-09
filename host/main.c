@@ -7,38 +7,29 @@
 
 static void usage(void)
 {
-    printf("mime %s, windows compatibility machine\n\n", MIME_VERSION_STRING);
-    printf("usage:\n");
-    printf("  mime up                                start the machine\n");
-    printf("  mime run [--wait] [--admin] <target> [args]\n");
-    printf("                                         open a program, host or C:\\ paths, an app by its id or name, or\n");
-    printf("                                         anything the windows run box opens: a name like notepad, a\n");
-    printf("                                         document, a shortcut, a url; --wait waits for a gui program\n");
-    printf("                                         instead of returning like cmd.exe; --admin runs it as\n");
-    printf("                                         administrator\n");
-    printf("  mime apps                              list the apps mime run opens by id, the start menu's entries\n");
-    printf("  mime apps --installed                  list the installed programs\n");
-    printf("  mime uninstall <id>                    run the uninstaller of an installed program, or of an app\n");
-    printf("  mime features                          list the features mime fetches from Microsoft when a program\n");
-    printf("                                         needs them: the .NET Framework, WebView2, the fonts and the\n");
-    printf("                                         Visual C++ runtime of x64 programs\n");
-    printf("  mime features enable <name> [--source file]\n");
-    printf("                                         get a feature now; with --source the file is taken from the\n");
-    printf("                                         disk and checked the same way\n");
-    printf("  mime features disable <name>           remove the files of a feature, a program that needs it\n");
-    printf("                                         asks again\n");
-    printf("  mime setup                             prepare the drive and download the Windows system files\n");
-    printf("                                         programs need, which mime up and mime run also do once\n");
-    printf("  mime down [--force] [--timeout secs]   shut the machine down, programs get to close first; --force\n");
-    printf("                                         ends them all at once\n");
-    printf("  mime status                            show machine state\n");
-    printf("  mime locale [name]                     show the user's locale, or set it, for example fr-FR; it\n");
-    printf("                                         follows the host's until set\n");
-    printf("  mime config                            show the settings of the running machine, they last until\n");
-    printf("                                         it goes down\n");
-    printf("  mime config get <name>                 show one setting\n");
-    printf("  mime config set <name> <value>         change one setting; internet on or off puts the machine\n");
-    printf("                                         online or offline\n");
+    printf("mime %s, runs Windows programs\n\n", MIME_VERSION_STRING);
+    printf("usage: mime <command> [arguments]\n\n");
+    printf("  setup                        prepare the drive and download the Windows system files programs need,\n");
+    printf("                               which up and run also do the first time\n");
+    printf("  up                           start the machine\n");
+    printf("  down [--force]               shut the machine down, letting programs close first unless --force\n");
+    printf("  status                       show the machine's state\n");
+    printf("  run [--admin] <target> [args]\n");
+    printf("                               open a program, document, shortcut or url, or an app by its id or name,\n");
+    printf("                               as the Windows Run box does; a console program runs in the terminal\n");
+    printf("  apps [--installed]           list the apps run opens by name, or the installed programs\n");
+    printf("  uninstall <id>               run the uninstaller of an installed program or app\n");
+    printf("  features                     list the features fetched from Microsoft when a program needs them\n");
+    printf("  features enable <name> [--source <file>]\n");
+    printf("                               get a feature now, from a file instead of the network with --source\n");
+    printf("  features disable <name>      remove a feature's files\n");
+    printf("  config                       list the settings\n");
+    printf("  config get <name>            show a setting\n");
+    printf("  config set <name> <value>    change a setting\n\n");
+    printf("settings:\n");
+    printf("  locale                       the user's locale, such as fr-FR, taken when the machine starts;\n");
+    printf("                               it follows the host's until set\n");
+    printf("  internet                     on or off, until the machine goes down\n");
 }
 
 int main(int argc, char **argv)
@@ -78,8 +69,6 @@ int main(int argc, char **argv)
         return mime_cmd_down(&paths, argc - 2, argv + 2);
     if (strcmp(cmd, "status") == 0)
         return mime_cmd_status(&paths, argc - 2, argv + 2);
-    if (strcmp(cmd, "locale") == 0)
-        return mime_cmd_locale(&paths, argc - 2, argv + 2);
     if (strcmp(cmd, "config") == 0)
         return mime_cmd_config(&paths, argc - 2, argv + 2);
     if (strcmp(cmd, "version") == 0 || strcmp(cmd, "--version") == 0) {

@@ -196,7 +196,7 @@ int mime_cmd_status(const MimePaths *paths, int argc, char **argv)
     return 0;
 }
 
-/* settings last as long as the machine runs, they live in its process. */
+/* the locale is the drive's and lasts; the machine's settings live in its process and go with it. */
 int mime_cmd_config(const MimePaths *paths, int argc, char **argv)
 {
     bool get = argc == 2 && strcmp(argv[0], "get") == 0;
@@ -204,6 +204,30 @@ int mime_cmd_config(const MimePaths *paths, int argc, char **argv)
     if (argc && !get && !set) {
         fprintf(stderr, "usage: mime config [get <name> | set <name> <value>]\n");
         return 2;
+    }
+    if ((get || set) && strcmp(argv[1], "locale") == 0) {
+        MimeIdentity id;
+        if (set) {
+            if (!mime_identity_set_locale(paths, argv[2])) {
+                mime_error("%s is not a locale of the system", argv[2]);
+                return 1;
+            }
+            MimeIpcStatus status;
+            if (query_status(paths, &status) && status.ready)
+                printf("The machine takes the locale when it starts again.\n");
+            return 0;
+        }
+        mime_identity_load(paths, &id);
+        printf("%s\n", id.locale);
+        return 0;
+    }
+    if (!argc) {
+        MimeIdentity id;
+        mime_identity_load(paths, &id);
+        printf("%-10s %s\n", "locale", id.locale);
+        MimeIpcStatus status;
+        if (!query_status(paths, &status))
+            return 0;
     }
     size_t size = 0;
     char payload[512];
@@ -252,9 +276,8 @@ int mime_cmd_config(const MimePaths *paths, int argc, char **argv)
 }
 
 /*
- * normal shutdown notifies programs, waits and flushes files. --force terminates programs immediately; --timeout
- * sets the overall limit in seconds. the host process is terminated after that limit plus a margin regardless of
- * guest progress.
+ * normal shutdown notifies programs, waits and flushes files. --force terminates programs immediately. the host
+ * process is terminated after the guest's limit plus a margin regardless of guest progress.
  */
 int mime_cmd_down(const MimePaths *paths, int argc, char **argv)
 {
@@ -262,16 +285,8 @@ int mime_cmd_down(const MimePaths *paths, int argc, char **argv)
     for (int i = 0; i < argc; i++) {
         if (strcmp(argv[i], "--force") == 0 || strcmp(argv[i], "-f") == 0) {
             stop.flags |= MIME_SHUTDOWN_FORCE;
-        } else if (strcmp(argv[i], "--timeout") == 0 && i + 1 < argc) {
-            char *end;
-            unsigned long seconds = strtoul(argv[++i], &end, 10);
-            if (*end || !argv[i][0] || seconds == 0 || seconds > 3600) {
-                fprintf(stderr, "mime down: --timeout takes a number of seconds from 1 to 3600\n");
-                return 2;
-            }
-            stop.timeout_ms = (uint32_t)(seconds * 1000);
         } else {
-            fprintf(stderr, "usage: mime down [--force] [--timeout seconds]\n");
+            fprintf(stderr, "usage: mime down [--force]\n");
             return 2;
         }
     }
@@ -290,7 +305,7 @@ int mime_cmd_down(const MimePaths *paths, int argc, char **argv)
     MimeIpcHeader h;
     void *payload;
     /* the daemon closes the connection once the guest has powered off. */
-    uint64_t guest_ms = stop.timeout_ms ? stop.timeout_ms : MIME_SHUTDOWN_DEFAULT_MS;
+    uint64_t guest_ms = MIME_SHUTDOWN_DEFAULT_MS;
     uint64_t give_up = mime_now_ns() + (guest_ms + 20000) * 1000000ull;
     for (;;) {
         struct pollfd p = {.fd = fd, .events = POLLIN};
@@ -315,7 +330,7 @@ int mime_cmd_down(const MimePaths *paths, int argc, char **argv)
 
 /*
  * relays console I/O and Ctrl+C or Ctrl+Break events; disconnecting closes the console. GUI programs return
- * immediately unless --wait is set.
+ * immediately, as cmd.exe does.
  */
 
 #define ENABLE_PROCESSED_INPUT 0x1
@@ -596,7 +611,7 @@ static uint32_t terminal_cursor(void)
 }
 
 /* runs a guest program with the terminal as its console; returns the shell status of its exit. */
-static int run_program(const MimePaths *paths, bool wait_gui, int argc, char **argv)
+static int run_program(const MimePaths *paths, int argc, char **argv)
 {
     MimeIpcStatus status;
     if (!query_status(paths, &status) || !status.ready) {
@@ -748,7 +763,7 @@ static int run_program(const MimePaths *paths, bool wait_gui, int argc, char **a
             if (h.size >= sizeof(subsystem))
                 memcpy(&subsystem, msg, sizeof(subsystem));
             console = subsystem == MIME_SUBSYSTEM_CUI;
-            if (!console && !wait_gui) {
+            if (!console) {
                 exit_code = 0;
                 done = true;
                 break;
@@ -798,23 +813,21 @@ static int run_program(const MimePaths *paths, bool wait_gui, int argc, char **a
 
 #define OPENWITH "C:\\Windows\\System32\\openwith.exe"
 
-/* runs openwith.exe with a command, an optional --wait, then the arguments. */
-static int run_openwith(const MimePaths *paths, const char *command, bool wait, bool admin, const char *first,
-                        int argc, char **argv)
+/* runs openwith.exe with a command, then the arguments. */
+static int run_openwith(const MimePaths *paths, const char *command, bool admin, const char *first, int argc,
+                        char **argv)
 {
     char **args = mime_xcalloc((size_t)argc + 6, sizeof(char *));
     int n = 0;
     args[n++] = OPENWITH;
     args[n++] = (char *)command;
-    if (wait)
-        args[n++] = "--wait";
     if (admin)
         args[n++] = "--admin";
     if (first)
         args[n++] = (char *)first;
     for (int i = 0; i < argc; i++)
         args[n++] = argv[i];
-    int r = run_program(paths, false, n, args);
+    int r = run_program(paths, n, args);
     free(args);
     return r;
 }
@@ -831,17 +844,14 @@ static bool is_program(const char *path)
  */
 int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
 {
-    bool wait_gui = false, admin = false;
-    for (; argc > 0; argc--, argv++) {
-        if (strcmp(argv[0], "--wait") == 0)
-            wait_gui = true;
-        else if (strcmp(argv[0], "--admin") == 0)
-            admin = true;
-        else
-            break;
+    bool admin = false;
+    if (argc > 0 && strcmp(argv[0], "--admin") == 0) {
+        admin = true;
+        argc--;
+        argv++;
     }
-    if (argc < 1) {
-        mime_error("usage: mime run [--wait] [--admin] <program, file, name or url> [args...]");
+    if (argc < 1 || !strncmp(argv[0], "--", 2)) {
+        fprintf(stderr, "usage: mime run [--admin] <target> [args]\n");
         return 2;
     }
     const char *target = argv[0];
@@ -850,7 +860,7 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
     /* elevation goes through the shell's runas verb, so programs go to openwith too. */
     if (windows) {
         if (is_program(target) && !admin)
-            return run_program(paths, wait_gui, argc, argv);
+            return run_program(paths, argc, argv);
     } else {
         char cwd[MIME_PATH_MAX], joined[MIME_PATH_MAX], resolved[PATH_MAX];
         if (target[0] == '/')
@@ -861,20 +871,20 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
             mime_strlcpy(joined, target, sizeof(joined));
         if (realpath(joined, resolved)) {
             if (is_program(resolved) && !mime_dir_exists(resolved) && !admin)
-                return run_program(paths, wait_gui, argc, argv);
+                return run_program(paths, argc, argv);
             mime_paths_to_guest(paths, resolved, guest, sizeof(guest));
             target = guest;
         }
     }
-    return run_openwith(paths, "open", wait_gui, admin, target, argc - 1, argv + 1);
+    return run_openwith(paths, "open", admin, target, argc - 1, argv + 1);
 }
 
 int mime_cmd_apps(const MimePaths *paths, int argc, char **argv)
 {
     if (argc == 0)
-        return run_openwith(paths, "apps", false, false, nullptr, 0, nullptr);
+        return run_openwith(paths, "apps", false, nullptr, 0, nullptr);
     if (argc == 1 && strcmp(argv[0], "--installed") == 0)
-        return run_openwith(paths, "installed", false, false, nullptr, 0, nullptr);
+        return run_openwith(paths, "installed", false, nullptr, 0, nullptr);
     fprintf(stderr, "usage: mime apps [--installed]\n");
     return 2;
 }
@@ -885,7 +895,7 @@ int mime_cmd_uninstall(const MimePaths *paths, int argc, char **argv)
         fprintf(stderr, "usage: mime uninstall <id>\n");
         return 2;
     }
-    return run_openwith(paths, "uninstall", false, false, nullptr, 1, argv);
+    return run_openwith(paths, "uninstall", false, nullptr, 1, argv);
 }
 
 /*
@@ -918,29 +928,8 @@ int mime_cmd_features(const MimePaths *paths, int argc, char **argv)
             args[n++] = (char *)file;
         }
     }
-    int result = run_openwith(paths, "features", false, false, verb, n, args);
+    int result = run_openwith(paths, "features", false, verb, n, args);
     free(args);
     return result;
 }
 
-/* the locale of the user, which the machine takes when it starts. */
-int mime_cmd_locale(const MimePaths *paths, int argc, char **argv)
-{
-    if (argc > 1) {
-        fprintf(stderr, "usage: mime locale [name]\n");
-        return 2;
-    }
-    if (argc == 1) {
-        if (!mime_identity_set_locale(paths, argv[0])) {
-            mime_error("%s is not a locale of the system", argv[0]);
-            return 1;
-        }
-        MimeIpcStatus status;
-        if (query_status(paths, &status) && status.ready)
-            printf("The machine takes the locale when it starts again.\n");
-    }
-    MimeIdentity id;
-    mime_identity_load(paths, &id);
-    printf("%s\n", id.locale);
-    return 0;
-}
