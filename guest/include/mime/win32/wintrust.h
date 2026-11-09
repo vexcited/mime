@@ -30,6 +30,8 @@
 #define TRUST_E_NOSIGNATURE ((LONG)0x800b0100)
 #define TRUST_E_BAD_DIGEST ((LONG)0x80096010)
 #define WINTRUST_ACTION_GENERIC_VERIFY_V2 {0x00aac56b,0xcd44,0x11d0,{0x8c,0xc2,0x00,0xc0,0x4f,0xc2,0x95,0xee}}
+/* the policy of driver packages, as setup and the driver store verify them. */
+#define DRIVER_ACTION_VERIFY {0xf750e6c3,0x38ee,0x11d1,{0x85,0xe5,0x00,0xc0,0x4f,0xc2,0x95,0xee}}
 
 typedef struct WINTRUST_FILE_INFO_ {
     DWORD cbStruct;
@@ -37,6 +39,21 @@ typedef struct WINTRUST_FILE_INFO_ {
     HANDLE hFile;
     GUID *pgKnownSubject;
 } WINTRUST_FILE_INFO, *PWINTRUST_FILE_INFO;
+
+typedef HANDLE HCATADMIN;
+
+typedef struct WINTRUST_CATALOG_INFO_ {
+    DWORD cbStruct;
+    DWORD dwCatalogVersion;
+    LPCWSTR pcwszCatalogFilePath;
+    LPCWSTR pcwszMemberTag;
+    LPCWSTR pcwszMemberFilePath;
+    HANDLE hMemberFile;
+    BYTE *pbCalculatedFileHash;
+    DWORD cbCalculatedFileHash;
+    PVOID pcCatalogContext;
+    HCATADMIN hCatAdmin;
+} WINTRUST_CATALOG_INFO, *PWINTRUST_CATALOG_INFO;
 
 typedef struct _WINTRUST_BLOB_INFO {
     DWORD cbStruct;
