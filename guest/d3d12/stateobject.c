@@ -447,6 +447,7 @@ static HRESULT compile_shader(D12Device *device, D12StateObject *so, const SoSha
         options.handle_bits = D12_HANDLE_SHIFT;
         options.increment_shift = D12_INCREMENT_SHIFT;
         options.nonconstant_offsets = device->has_maintenance8;
+        options.inf_nan_widths = device->inf_nan_widths;
         DxbcShaderInfo info;
         if (dxil_compile(s->library->data, s->library->size, &options, &info, &g_d12_allocator)) {
             D12Log("d3d12: shader %s failed to compile: %s", s->function, info.error);

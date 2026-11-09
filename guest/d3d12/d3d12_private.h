@@ -267,11 +267,28 @@ struct D12Heap {
     BYTE *mapped;
     /* internal heaps that committed resources come from, with their free ranges. */
     BOOL internal;
+    /* in system memory, since video memory had no room for it. */
+    BOOL demoted;
+    /* over memory that denies buffers, to clear it when the heap is made. */
+    VkBuffer zero_buffer;
     struct D12Heap *next;
     struct D12Range *free;
     UINT free_count, free_capacity;
     UINT64 handed_out; /* no range past this offset was ever given out. */
+    /* placed textures alike at one offset share one image, see create_texture. */
+    SRWLOCK images_lock;
+    struct D12SharedImage *images;
 };
+
+/* the image of the textures placed alike at one offset of a heap. */
+typedef struct D12SharedImage {
+    struct D12SharedImage *next;
+    struct D12Heap *heap;
+    UINT64 offset;
+    D3D12_RESOURCE_DESC1 desc;
+    VkImage image;
+    LONG refs;
+} D12SharedImage;
 
 HRESULT D12CreateHeap(D12Device *device, const D3D12_HEAP_DESC *desc, D12Heap **out);
 D12Heap *D12HeapFrom(ID3D12Heap *iface);
@@ -325,9 +342,10 @@ struct D12Resource {
     D3D12_GPU_VIRTUAL_ADDRESS va;
     BYTE *mapped;
     LONG map_count;
-    /* textures. */
+    /* textures, and the image the texture shares with others placed alike, if it does. */
     const D3dFormat *fmt;
     VkImage image;
+    D12SharedImage *shared_image;
     VkImageAspectFlags aspect;
     VkImageUsageFlags usage;
     UINT mips, layers, samples;
@@ -631,7 +649,7 @@ typedef struct D12Fence {
     VkSemaphore semaphore;
     /* the highest value seen completed, and the pending cpu waits. */
     volatile UINT64 completed;
-    /* the highest value any submission or the cpu will signal, so waits up to it only wait for the gpu. */
+    /* the highest value a submission or the cpu signals, so waits up to it only wait for the gpu. */
     volatile UINT64 queued;
     SRWLOCK lock;
     D12FenceWait *waits;
@@ -664,13 +682,20 @@ typedef struct D12Queue {
     UINT64 next_serial;
     /* the tile mapping serial the next submission must wait for, since Vulkan does not order them. */
     UINT64 bind_serial;
+    /* what the queue got after a wait for a value nothing signals yet, see queue.c. */
+    struct D12QueueOp *held, **held_tail;
+    struct D12Queue *next;
 } D12Queue;
+
+typedef struct D12QueueOp D12QueueOp;
 
 HRESULT D12CreateQueue(D12Device *device, const D3D12_COMMAND_QUEUE_DESC *desc, D12Queue **out);
 D12Queue *D12QueueFrom(ID3D12CommandQueue *iface);
 UINT64 D12QueueSubmit(D12Queue *queue, const VkCommandBuffer *buffers, UINT count, const VkSemaphoreSubmitInfo *waits,
                       UINT wait_count, const VkSemaphoreSubmitInfo *signals, UINT signal_count);
 void D12QueueWaitIdle(D12Queue *queue);
+/* lets what the queue holds back go to vulkan first, for work that goes there at once. */
+void D12QueueSettle(D12Queue *queue);
 void D12UpdateTileMappings(D12Queue *queue, D12Resource *resource, UINT region_count,
                            const D3D12_TILED_RESOURCE_COORDINATE *starts, const D3D12_TILE_REGION_SIZE *sizes,
                            struct D12Heap *heap, UINT range_count, const D3D12_TILE_RANGE_FLAGS *flags,
@@ -817,7 +842,7 @@ D12CommandList *D12CommandListFrom(ID3D12CommandList *iface);
 
 /* ------------------------------------------------------------------ the device */
 
-/* vulkan objects released while queues may still use them, freed once the device is idle or destroyed. */
+/* vulkan objects released while the device's own commands that may name them record. */
 typedef struct D12Garbage {
     UINT64 handle;
     VkObjectType type;
@@ -867,6 +892,7 @@ struct D12Device {
     /* 64-bit atomics of typed views and of shared memory. */
     BOOL has_atomic64, has_shared_atomic64;
     BOOL has_barycentrics, has_maintenance5, has_maintenance8, has_compute_derivatives, has_msaa_storage;
+    UINT inf_nan_widths;
     /* variable rate shading: the Direct3D tier, rate image tile size, 4 pixel wide rates, per viewport rates. */
     UINT vrs_tier, vrs_tile;
     UINT conservative_tier;
@@ -896,6 +922,10 @@ struct D12Device {
     VkQueue queues[16];
     MimeVkShared shared;
     LONG next_queue;
+    /* the queues; the lock keeps submissions, signals and what queues hold back in the program's order. */
+    SRWLOCK submit_lock;
+    CONDITION_VARIABLE released;
+    struct D12Queue *queue_list;
 
     /* memory: the heaps committed resources come from, and gpu virtual addresses by heap. */
     SRWLOCK memory_lock;
@@ -949,6 +979,9 @@ struct D12Device {
     SRWLOCK garbage_lock;
     D12Garbage *garbage;
     UINT garbage_count, garbage_capacity;
+    /* what was released while the last batch of the device's commands recorded, kept until it ran. */
+    D12Garbage *retired;
+    UINT retired_count;
 
     /* the device's own commands: initial clears of resources. */
     CRITICAL_SECTION init_lock;

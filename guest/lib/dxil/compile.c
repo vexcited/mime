@@ -1717,6 +1717,7 @@ static int build(Compiler *c)
     uint32_t model[2] = {MODELS[c->kind], main};
     spv_emit_string(b, SECTION_ENTRY_POINTS, SpvOpEntryPoint, model, 2, "main", c->interface, c->interface_count);
     dxil_execution_modes(c, main);
+    spv_keep_inf_nan(&c->b, main, c->options ? c->options->inf_nan_widths : 0);
     return b->failed ? dxil_fail(c, "out of memory") : c->error ? -1 : 0;
 }
 
