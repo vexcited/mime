@@ -88,6 +88,14 @@ static void flush_local_all(BOOLEAN global)
 static void shootdown(BOOLEAN global)
 {
     PKPRCB self = KeGetCurrentPrcb();
+    /* a processor waiting for the dispatcher lock with interrupts off would never answer its holder. */
+    if (__builtin_expect(KiDispatcherLockHeld(), 0)) {
+        static BOOLEAN said;
+        if (!said) {
+            said = TRUE;
+            KiLogPrintf("translations changed with the dispatcher lock held, from %p", __builtin_return_address(1));
+        }
+    }
     /* the boot processor has no thread until the scheduler starts, and no other processor runs yet. */
     PKTHREAD thread = KiCurrentThread();
     PKPROCESS process = thread ? thread->ApcStateProcess : nullptr;
@@ -148,7 +156,7 @@ void MiFlushTlbAll(void)
     shootdown(TRUE);
 }
 
-/* kernel lock held. */
+/* interrupts off. */
 void KiSettleTlbFlush(void)
 {
     PKPCR pcr = KeGetPcr();

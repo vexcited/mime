@@ -217,6 +217,7 @@ static void cancel_thread_timer(PKTHREAD thread);
 /* dispatcher lock held. */
 void KiUnwaitThread(PKTHREAD thread, LONG_PTR status)
 {
+    KI_ASSERT_DISPATCHER_LOCK("a wait ended");
     for (PKWAIT_BLOCK b = thread->WaitBlockList; b; b = b->NextWaitBlock) {
         if (b->BlockState) {
             RemoveEntryList(&b->WaitListEntry);
@@ -232,6 +233,7 @@ void KiUnwaitThread(PKTHREAD thread, LONG_PTR status)
 /* dispatcher lock held. wakes threads whose wait the object now satisfies. */
 void KiSignalWaiters(PDISPATCHER_HEADER object, KPRIORITY increment)
 {
+    KI_ASSERT_DISPATCHER_LOCK("an object signaled");
     PLIST_ENTRY e = object->WaitListHead.Flink;
     while (e != &object->WaitListHead && object->SignalState > 0) {
         PKWAIT_BLOCK b = CONTAINING_RECORD(e, KWAIT_BLOCK, WaitListEntry);

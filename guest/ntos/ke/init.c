@@ -171,7 +171,9 @@ void KiInitializeProcessor(PKPCR pcr)
     KiInitializeProcessorArch();
     KiSwitchAddressSpace(&PsInitialSystemProcess->Pcb);
     HalInitializeProcessor();
+    ULONG64 s = KiAcquireDispatcherLock();
     KiProgramNextTimer();
+    KiReleaseDispatcherLock(s);
     idle_loop();
 }
 

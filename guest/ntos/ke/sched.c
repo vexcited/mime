@@ -19,12 +19,60 @@ UCHAR KiNoLockFlush;
 /* a row of eight per processor: acquisitions, those that waited, ticks waited, the longest wait. see entry.S. */
 ULONG64 KiLockStats[MAXIMUM_PROCESSORS][8];
 
+#ifdef __x86_64__
+/* a cache line to itself: the waiters read it while they spin. */
+volatile ULONG KiDispatcherLock __attribute__((aligned(64)));
+
+void KiDispatcherLockContended(void)
+{
+    PKPCR pcr = KeGetPcr();
+    ULONG64 start = HalReadCounter();
+    do {
+        while (__atomic_load_n(&KiDispatcherLock, __ATOMIC_RELAXED)) {
+            /* a processor that changed translations may be waiting for this one to take the change in. */
+            if (pcr->FlushPending)
+                KiSettleTlbFlush();
+            KiPause();
+        }
+    } while (__atomic_exchange_n(&KiDispatcherLock, 1, __ATOMIC_ACQUIRE));
+    pcr->Prcb.DispatcherWaited++;
+    pcr->Prcb.DispatcherWaitTicks += HalReadCounter() - start;
+}
+
+/* the lock is let go and interrupts are still off. */
+void KiDispatcherUnlockWork(PKPRCB prcb)
+{
+    UCHAR work = prcb->UnlockWork;
+    prcb->UnlockWork = 0;
+    if ((work & KI_UNLOCK_TIMER) && prcb->TimerArmed)
+        HalArmTimer(prcb->TimerArmed);
+    /* with the kernel lock held, they go once that is let go. */
+    if ((work & KI_UNLOCK_IPI) && KiKernelLock[KI_LOCK_OWNER] != prcb->Number) {
+        ULONG64 mask = __atomic_exchange_n(&prcb->DeferredIpis, 0, __ATOMIC_RELAXED);
+        if (mask)
+            HalSendIpiMask(mask);
+    }
+}
+#endif
+
+/* said once: a caller that works on the scheduler's structures without the dispatcher lock. */
+void KiDispatcherLockMissing(const char *what, PVOID caller)
+{
+    static BOOLEAN said;
+    if (!said) {
+        said = TRUE;
+        KiLogPrintf("%s without the dispatcher lock, from %p", what, caller);
+    }
+}
+
 ULONG64 HalHypercallUnlocked(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULONG64 a5, ULONG64 a6,
                              PULONG64 value)
 {
     /* interrupts stay off: an interrupt taken meanwhile would run without the lock. */
     ULONG64 state = KiDisableInterrupts();
-    BOOLEAN held = KeGetPcr()->Irql < DISPATCH_LEVEL && KiKernelLock[KI_LOCK_OWNER] == KeGetCurrentPrcb()->Number;
+    /* the kernel lock is never taken with the dispatcher lock held, so a holder of both keeps both. */
+    BOOLEAN held = KeGetPcr()->Irql < DISPATCH_LEVEL && KiKernelLock[KI_LOCK_OWNER] == KeGetCurrentPrcb()->Number &&
+                   !KiDispatcherLockHeld();
     if (!held) {
         KiRestoreInterrupts(state);
         return HalHypercall(nr, a1, a2, a3, a4, a5, a6, value);
@@ -99,26 +147,20 @@ void KiInitializeThread(PKTHREAD thread, PKPROCESS process, PVOID stack_top, PVO
 /* first c code of every thread; interrupts are still masked by the switch. */
 void KiThreadStartupC(PKSTART_ROUTINE routine, PVOID context)
 {
+#ifdef __x86_64__
+    /* the switch came with the dispatcher lock held, which a thread that ran before lets go of in KiSwapThread's caller. */
+    KiReleaseDispatcherLock(0);
+#endif
     KeGetPcr()->Irql = PASSIVE_LEVEL;
     KiEnableInterrupts();
     routine(context);
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
-/* the ready queues change with interrupts off, or an interrupt on this processor would change them midway. */
-static void check_dispatcher_lock(const char *what, PVOID caller)
-{
-    static BOOLEAN said;
-    if (KiInterruptsEnabled() && !said) {
-        said = TRUE;
-        KiLogPrintf("%s with interrupts on, from %p", what, caller);
-    }
-}
-
 /* dispatcher lock held. */
 void KiInsertReadyThread(PKTHREAD thread)
 {
-    check_dispatcher_lock("a thread queued", __builtin_return_address(0));
+    KI_ASSERT_DISPATCHER_LOCK("a thread queued");
     /* a thread queued twice would tie the queue in a loop: said once, and the second time ignored. */
     if (thread->State == Ready && thread->ReadyListEntry.Flink && thread->ReadyListEntry.Flink != &thread->ReadyListEntry) {
         static BOOLEAN said;
@@ -138,16 +180,24 @@ void KiInsertReadyThread(PKTHREAD thread)
 
 /*
  * the interrupt waits for this processor to let go of the kernel lock: its target could only wait for the lock
- * until then, and sending it is an exit to the host that would count in the time the lock is held.
+ * until then, and sending it is an exit to the host that would count in the time the lock is held. the same
+ * goes for the dispatcher lock.
  */
 void KiSendIpi(ULONG processor)
 {
+    ULONG64 state = KiDisableInterrupts();
     PKPRCB prcb = KeGetCurrentPrcb();
-    if (KiKernelLock[KI_LOCK_OWNER] == prcb->Number) {
+    BOOLEAN kernel = KiKernelLock[KI_LOCK_OWNER] == prcb->Number;
+    if (kernel || KiDispatcherLockHeld()) {
         __atomic_fetch_or(&prcb->DeferredIpis, 1ull << processor, __ATOMIC_RELAXED);
-        return;
+#ifdef __x86_64__
+        if (!kernel)
+            prcb->UnlockWork |= KI_UNLOCK_IPI;
+#endif
+    } else {
+        HalSendIpi(processor);
     }
-    HalSendIpi(processor);
+    KiRestoreInterrupts(state);
 }
 
 /* asks a processor to pick its next thread, waking or interrupting it when it is another one. */
@@ -206,6 +256,7 @@ static PKPRCB pick_processor(PKTHREAD thread)
 void KiReadyThread(PKTHREAD thread)
 {
     KI_ASSERT_KERNEL_LOCK();
+    KI_ASSERT_DISPATCHER_LOCK("a thread made ready");
     if (thread->IdleThread) {
         thread->State = Ready;
         return;
@@ -319,7 +370,7 @@ void KiStartThread(PKTHREAD thread)
 
 static PKTHREAD select_next(PKPRCB prcb)
 {
-    check_dispatcher_lock("a thread chosen", __builtin_return_address(0));
+    KI_ASSERT_DISPATCHER_LOCK("a thread chosen");
     if (!KiReadySummary)
         return prcb->IdleThread;
     int prio = 31 - __builtin_clz(KiReadySummary);
@@ -346,6 +397,7 @@ static PKTHREAD select_next(PKPRCB prcb)
 void KiSwapThread(void)
 {
     KI_ASSERT_KERNEL_LOCK();
+    KI_ASSERT_DISPATCHER_LOCK("a thread switched");
     PKPRCB prcb = KeGetCurrentPrcb();
     PKTHREAD old = prcb->CurrentThread;
     PKTHREAD next = select_next(prcb);
@@ -371,8 +423,29 @@ void KiSwapThread(void)
     ULONG64 switched_out = HalReadCounter();
     /* the level is the thread's while it runs: the next thread finds its own when it resumes, as windows keeps a wait irql. */
     KIRQL irql = KeGetPcr()->Irql;
+#ifdef __x86_64__
+    /*
+     * the next thread lets go of the lock once, so a thread that took it more than once keeps the count for when it
+     * resumes. there should be none.
+     */
+    ULONG depth = prcb->DispatcherDepth;
+    if (depth != 1) {
+        static BOOLEAN said;
+        if (!said) {
+            said = TRUE;
+            KiLogPrintf("thread %p switched away with the dispatcher lock taken %u times, from %p", old, depth,
+                        __builtin_return_address(0));
+        }
+        prcb->DispatcherDepth = 1;
+    }
+#endif
     KiSwapContext(old, next);
-    KeGetPcr()->Irql = irql;
+    /* the thread may resume on another processor. */
+    PKPCR pcr = KeGetPcr();
+    pcr->Irql = irql;
+#ifdef __x86_64__
+    pcr->Prcb.DispatcherDepth = depth;
+#endif
     old->BlockedTicks += HalReadCounter() - switched_out;
 }
 
@@ -391,37 +464,45 @@ static void preempt_current(PKPRCB prcb)
     KiSwapThread();
 }
 
-/* runs dpcs and pending reschedules; callable with interrupts masked or not. */
+/*
+ * runs dpcs and pending reschedules; callable with interrupts masked or not. a caller that holds the dispatcher
+ * lock is in the middle of the scheduler's work: it is left alone, and the request stays for the next interrupt
+ * or return to user mode.
+ */
 void KiDispatchPendingWork(void)
 {
     /* the processor is read with interrupts off, which keeps the thread on it. */
-    ULONG64 s = KiAcquireDispatcherLock();
+    ULONG64 s = KiDisableInterrupts();
     PKPCR pcr = KeGetPcr();
     PKPRCB prcb = pcr->CurrentPrcb;
-    if (pcr->Irql >= DISPATCH_LEVEL) {
-        KiReleaseDispatcherLock(s);
-        return;
+    if (pcr->Irql < DISPATCH_LEVEL && !KiDispatcherLockHeld()) {
+        if (prcb->DpcPending) {
+            KIRQL old = pcr->Irql;
+            pcr->Irql = DISPATCH_LEVEL;
+            KiDeliverDpcs();
+            pcr->Irql = old;
+        }
+        if (prcb->DispatchPending) {
+            ULONG64 d = KiAcquireDispatcherLock();
+            preempt_current(prcb);
+            KiReleaseDispatcherLock(d);
+        }
     }
-    if (prcb->DpcPending) {
-        KIRQL old = pcr->Irql;
-        pcr->Irql = DISPATCH_LEVEL;
-        KiDeliverDpcs();
-        pcr->Irql = old;
-    }
-    if (prcb->DispatchPending)
-        preempt_current(prcb);
-    KiReleaseDispatcherLock(s);
+    KiRestoreInterrupts(s);
 }
 
 /* callers like KeSetEvent come here with interrupts on: the ready queues change with them off. */
 void KiCheckPreemption(void)
 {
     /* the processor is read with interrupts off, so a move of the thread cannot make it another's. */
-    ULONG64 s = KiAcquireDispatcherLock();
+    ULONG64 s = KiDisableInterrupts();
     PKPRCB prcb = KeGetCurrentPrcb();
-    if (prcb->DispatchPending && KeGetPcr()->Irql < DISPATCH_LEVEL)
+    if (prcb->DispatchPending && KeGetPcr()->Irql < DISPATCH_LEVEL && !KiDispatcherLockHeld()) {
+        ULONG64 d = KiAcquireDispatcherLock();
         preempt_current(prcb);
-    KiReleaseDispatcherLock(s);
+        KiReleaseDispatcherLock(d);
+    }
+    KiRestoreInterrupts(s);
 }
 
 /* ------------------------------------------------------------------ dpcs */

@@ -786,6 +786,20 @@ void KiDumpServiceCalls(void)
                 "%llu us watched on average",
                 polls, halts, ipis - ipis_before, HalCounterToHns(watch / KeNumberProcessors) / 10);
     ipis_before = ipis;
+#ifdef __x86_64__
+    ULONG64 taken = 0, spun = 0, spin_ticks = 0;
+    for (ULONG i = 0; i < KeNumberProcessors; i++) {
+        PKPRCB p = KiProcessorBlock[i];
+        if (!p)
+            continue;
+        taken += p->DispatcherTaken;
+        spun += p->DispatcherWaited;
+        spin_ticks += p->DispatcherWaitTicks;
+        p->DispatcherTaken = p->DispatcherWaited = p->DispatcherWaitTicks = 0;
+    }
+    KiLogPrintf("dispatcher lock: %llu taken, %llu after waiting, %llu us waited in all", taken, spun,
+                HalCounterToHns(spin_ticks) / 10);
+#endif
     AfdDumpStats();
     reset_dump_counters();
     /* the timeline is long, and the lock is held while it is written: its own cost is no part of the counters above. */

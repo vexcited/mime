@@ -97,8 +97,10 @@ LARGE_INTEGER NTAPI KeQueryPerformanceCounter(PLARGE_INTEGER frequency)
     return r;
 }
 
+/* dispatcher lock held. */
 void KiProgramNextTimer(void)
 {
+    KI_ASSERT_DISPATCHER_LOCK("the timer set");
     PKPRCB prcb = KeGetCurrentPrcb();
     ULONG64 deadline = ~0ull;
     if (prcb->CurrentThread != prcb->IdleThread)
@@ -123,6 +125,7 @@ void KiProgramNextTimer(void)
         if (KiOptions & KI_OPT_EAGER_TIMER) {
             HalDisarmTimer();
             prcb->TimerArmed = 0;
+            prcb->UnlockWork &= (UCHAR)~KI_UNLOCK_TIMER;
         }
         return;
     }
@@ -135,7 +138,11 @@ void KiProgramNextTimer(void)
     if (prcb->TimerArmed && prcb->TimerArmed <= target && !(KiOptions & KI_OPT_EAGER_TIMER))
         return;
     prcb->TimerArmed = target;
-    HalArmTimer(target);
+    /* the write waits until the dispatcher lock is let go, see KiDispatcherUnlockWork. */
+    if (KiDispatcherLockHeld())
+        prcb->UnlockWork |= KI_UNLOCK_TIMER;
+    else
+        HalArmTimer(target);
 #else
     if (deadline == ~0ull) {
         HalDisarmTimer();
@@ -155,6 +162,7 @@ void KiProgramNextTimer(void)
 /* dispatcher lock held. */
 void KiInsertTimer(PKTIMER timer, ULONG64 due)
 {
+    KI_ASSERT_DISPATCHER_LOCK("a timer queued");
     if (timer->TimerListEntry.Flink)
         RemoveEntryList(&timer->TimerListEntry);
     timer->DueTime.QuadPart = due;
@@ -304,9 +312,10 @@ void KiChargeServiceTime(PKPRCB prcb, ULONG64 start_counter, BOOLEAN dpc)
         prcb->TickTime += elapsed;
 }
 
-/* interrupts masked, dispatcher database owned. */
+/* interrupts masked. */
 void KiClockInterrupt(PKTRAP_FRAME frame)
 {
+    ULONG64 s = KiAcquireDispatcherLock();
     KeGetCurrentPrcb()->TimerArmed = 0;
     ULONG64 counter = HalReadCounter();
     ULONG64 now = HalCounterToHns(counter - g_boot_counter);
@@ -354,6 +363,7 @@ void KiClockInterrupt(PKTRAP_FRAME frame)
     }
 
     KiProgramNextTimer();
+    KiReleaseDispatcherLock(s);
 }
 
 void KiInitializeTimers(void)
@@ -377,5 +387,7 @@ void KiInitializeTimers(void)
     ULONG64 counter = HalReadCounter();
     g_next_tick = HalCounterToHns(counter - g_boot_counter) + KI_CLOCK_TICK_HNS;
     update_shared_time(counter);
+    ULONG64 s = KiAcquireDispatcherLock();
     KiProgramNextTimer();
+    KiReleaseDispatcherLock(s);
 }
