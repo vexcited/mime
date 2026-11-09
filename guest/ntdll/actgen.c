@@ -144,21 +144,24 @@ static void unmap_file(MAPPED_FILE *f)
 static NTSTATUS find_manifest_resource(PVOID module, ULONG_PTR name, const void **data, SIZE_T *size)
 {
     LDR_RESOURCE_INFO info = {24, name, 0};
-    IMAGE_RESOURCE_DIRECTORY *dir;
-    NTSTATUS status = LdrFindResourceDirectory_U(module, &info, 2, &dir);
+    IMAGE_RESOURCE_DIRECTORY *root, *dir;
+    NTSTATUS status = LdrFindResourceDirectory_U(module, &info, 0, &root);
+    if (NT_SUCCESS(status))
+        status = LdrFindResourceDirectory_U(module, &info, 2, &dir);
     if (!NT_SUCCESS(status))
         return status;
     if (!dir->NumberOfNamedEntries && !dir->NumberOfIdEntries)
         return STATUS_RESOURCE_LANG_NOT_FOUND;
-    /* the first language, as the loader takes it when it asks for none. */
+    /*
+     * the first language, as the loader takes it when it asks for none. it is read from the directory: a lookup by
+     * language 0 would mean the user's language, and installers carry a neutral manifest next to an en-US one.
+     */
     IMAGE_RESOURCE_DIRECTORY_ENTRY *entry = (IMAGE_RESOURCE_DIRECTORY_ENTRY *)(dir + 1);
-    info.Language = entry->Name & 0xFFFF;
-    IMAGE_RESOURCE_DATA_ENTRY *data_entry;
-    status = LdrFindResource_U(module, &info, 3, &data_entry);
-    if (!NT_SUCCESS(status))
-        return status;
+    if (entry->OffsetToData & 0x80000000)
+        return STATUS_RESOURCE_LANG_NOT_FOUND;
     ULONG length;
-    status = LdrAccessResource(module, data_entry, (PVOID *)data, &length);
+    status = LdrAccessResource(module, (IMAGE_RESOURCE_DATA_ENTRY *)((PUCHAR)root + entry->OffsetToData),
+                               (PVOID *)data, &length);
     *size = length;
     return status;
 }
