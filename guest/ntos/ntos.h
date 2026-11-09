@@ -972,6 +972,25 @@ typedef struct _HANDLE_TABLE {
     KSPIN_LOCK Lock;
 } HANDLE_TABLE, *PHANDLE_TABLE;
 
+/*
+ * a real lock, held with interrupts off for a few instructions: the services that run without the kernel lock
+ * look their handles up under it. nothing is waited for with it held.
+ */
+FORCEINLINE ULONG64 ObLockHandleTable(PHANDLE_TABLE table)
+{
+    ULONG64 state = KiDisableInterrupts();
+    while (__atomic_exchange_n(&table->Lock, 1, __ATOMIC_ACQUIRE))
+        while (__atomic_load_n(&table->Lock, __ATOMIC_RELAXED))
+            KiPause();
+    return state;
+}
+
+FORCEINLINE void ObUnlockHandleTable(PHANDLE_TABLE table, ULONG64 state)
+{
+    __atomic_store_n(&table->Lock, 0, __ATOMIC_RELEASE);
+    KiRestoreInterrupts(state);
+}
+
 extern POBJECT_TYPE ObDirectoryType;
 extern POBJECT_TYPE ObSymbolicLinkType;
 extern POBJECT_TYPE ObTypeType;

@@ -400,18 +400,18 @@ static ACCESS_MASK imply_thread_access(ACCESS_MASK granted)
 static NTSTATUS query_handle_table(PEPROCESS process, PVOID info, ULONG length, ULONG *size)
 {
     PHANDLE_TABLE table = &process->HandleTable;
-    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+    ULONG64 state = ObLockHandleTable(table);
     ULONG capacity = table->Capacity;
-    KeReleaseSpinLock(&table->Lock, irql);
+    ObUnlockHandleTable(table, state);
     PULONG values = ExAllocatePool2(POOL_FLAG_PAGED, (SIZE_T)(capacity ? capacity : 1) * sizeof(ULONG), KI_TAG('P', 's', 'H', 'T'));
     if (!values)
         return STATUS_INSUFFICIENT_RESOURCES;
     ULONG count = 0;
-    irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+    state = ObLockHandleTable(table);
     for (ULONG i = 0; i < table->Capacity && i < capacity; i++)
         if (table->Entries[i].Object)
             values[count++] = (i + 1) * 4;
-    KeReleaseSpinLock(&table->Lock, irql);
+    ObUnlockHandleTable(table, state);
     *size = count * sizeof(ULONG);
     NTSTATUS status = length < *size ? STATUS_INFO_LENGTH_MISMATCH : KiCopyToUser(info, values, *size);
     ExFreePool(values);

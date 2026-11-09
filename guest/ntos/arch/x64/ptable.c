@@ -93,7 +93,7 @@ static void shootdown(BOOLEAN global)
         static BOOLEAN said;
         if (!said) {
             said = TRUE;
-            KiLogPrintf("translations changed with the dispatcher lock held, from %p", __builtin_return_address(1));
+            KiLogPrintf("translations changed with the dispatcher lock held, from %p", __builtin_return_address(0));
         }
     }
     /* the boot processor has no thread until the scheduler starts, and no other processor runs yet. */

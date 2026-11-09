@@ -49,14 +49,14 @@ static BOOLEAN conflict(const FS_RANGE_LOCK *wanted)
 static BOOLEAN has_handle(PEPROCESS process, PFILE_OBJECT file)
 {
     PHANDLE_TABLE table = &process->HandleTable;
-    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+    ULONG64 state = ObLockHandleTable(table);
     BOOLEAN found = FALSE;
     for (ULONG i = 0; i < table->Capacity; i++)
         if (table->Entries[i].Object == file) {
             found = TRUE;
             break;
         }
-    KeReleaseSpinLock(&table->Lock, irql);
+    ObUnlockHandleTable(table, state);
     return found;
 }
 
