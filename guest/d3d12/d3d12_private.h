@@ -475,6 +475,8 @@ typedef struct D12TargetView {
     BOOL read_only_depth, read_only_stencil;
 } D12TargetView;
 
+#define D12_STAGE_SLOTS 32
+
 typedef struct D12DescriptorHeap {
     ID3D12DescriptorHeap iface;
     D12Child child;
@@ -484,6 +486,18 @@ typedef struct D12DescriptorHeap {
     VkDeviceMemory memory;
     VkBuffer buffer;
     VkDeviceAddress address;
+    /*
+     * a staged heap's descriptor buffer is memory the cpu cannot map, as radv keeps descriptor buffers in memory
+     * types that cannot take guest ram. the cpu writes a copy in guest ram and marks the pages it wrote for every
+     * queue, each queue's next submission copies over what it has not, see D12DescriptorsUpload.
+     */
+    VkDeviceMemory shadow_memory;
+    VkBuffer shadow;
+    UINT64 size;
+    volatile LONG64 *dirty; /* dirty_words for each queue slot. */
+    UINT dirty_words;
+    UINT64 upload_serials[D12_STAGE_SLOTS]; /* each queue slot's submission that last copied it. */
+    struct D12DescriptorHeap *next_staged;
     /* Vulkan descriptors and records, both in guest memory. */
     BYTE *base;
     BYTE *descriptors;
@@ -685,11 +699,24 @@ typedef struct D12Queue {
     /* what the queue got after a wait for a value nothing signals yet, see queue.c. */
     struct D12QueueOp *held, **held_tail;
     struct D12Queue *next;
+    /* its slot among the queues staged descriptor heaps upload for, and the command buffers of its uploads. */
+    int stage_slot;
+    VkCommandPool upload_pool;
+    struct D12Upload *uploads;
+    UINT upload_count, upload_capacity;
 } D12Queue;
 
 typedef struct D12QueueOp D12QueueOp;
 
 HRESULT D12CreateQueue(D12Device *device, const D3D12_COMMAND_QUEUE_DESC *desc, D12Queue **out);
+/* a queue takes a slot among those staged descriptor heaps upload for, and gives it back once idle. */
+void D12DescriptorsAddQueue(D12Queue *queue);
+void D12DescriptorsRemoveQueue(D12Queue *queue);
+/*
+ * the copies of what the cpu wrote to staged descriptor heaps since the queue's last upload, for the submission that
+ * signals serial on the queue's timeline to run first; VK_NULL_HANDLE when there is nothing to copy.
+ */
+VkCommandBuffer D12DescriptorsUpload(D12Queue *queue, UINT64 serial);
 D12Queue *D12QueueFrom(ID3D12CommandQueue *iface);
 UINT64 D12QueueSubmit(D12Queue *queue, const VkCommandBuffer *buffers, UINT count, const VkSemaphoreSubmitInfo *waits,
                       UINT wait_count, const VkSemaphoreSubmitInfo *signals, UINT signal_count);
@@ -992,6 +1019,14 @@ struct D12Device {
     BOOL init_recording;
     VkSemaphore init_timeline;
     UINT64 init_serial;
+
+    /* descriptor heaps whose cpu copy submissions upload, and the queue slots they upload for. */
+    SRWLOCK staged_lock;
+    D12DescriptorHeap *staged;
+    UINT stage_slots;
+    VkSemaphore stage_timelines[D12_STAGE_SLOTS];
+    /* released staged heaps whose memory waits for the queues' last uploads of it. */
+    struct D12StagedGrave *graves;
 };
 
 /* stateobject.c: ray tracing pipelines and collections. */
