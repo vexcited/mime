@@ -1624,7 +1624,15 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         pthread_mutex_unlock(WINDOW_LOCK(vm));
         break;
     case MIME_HC_FS_SYNC: {
-        /* flush guest writes to the drive at shutdown, beyond the host page cache. */
+        /* flush guest writes to the disk beyond the host page cache, at shutdown or for a volume flush. Z: spans every mount. */
+        if (a[1] == MIME_FS_VOLUME_HOST) {
+            sync();
+            break;
+        }
+        if (a[1] != MIME_FS_VOLUME_SYSTEM) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
         int fd = open(vm->paths->drive_c, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
         if (fd < 0) {
             status = errno_status(errno);
