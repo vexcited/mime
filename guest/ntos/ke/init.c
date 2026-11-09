@@ -229,7 +229,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
         for (ULONG i = 0; i < sizeof(KiTraceStackService) - 1 && stack[i] && stack[i] != ' '; i++)
             KiTraceStackService[i] = stack[i];
     }
-    extern char KiTraceFilter[40];
+    extern char KiTraceFilter[256];
     const char *filter = strstr(boot->cmdline, "trace-filter=");
     if (filter) {
         filter += 13;
