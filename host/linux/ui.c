@@ -53,6 +53,7 @@ typedef struct UiWindow {
     SDL_DisplayID display; /* the display last reported to the guest. */
     bool maximized;        /* the compositor has the window maximized. */
     bool bogus_size;       /* the compositor gave a size no display could show, which is not acted on. */
+    uint64_t renderer_retry_ms; /* a renderer that failed, as with the gpu's memory full, is tried again then. */
     int geometry_w, geometry_h; /* the window geometry last given to the compositor, in surface coordinates. */
     int want_w, want_h;    /* the last size asked of the compositor, in SDL window coordinates. */
     uint64_t want_ms;      /* time of the last size request. */
@@ -88,6 +89,7 @@ static double g_scale = 1.0;  /* guest pixels per SDL window coordinate of the p
 static MimeDisplayInfo g_display;
 static void raise_window(UiWindow *w);
 static bool g_wayland;        /* the video driver is Wayland's. */
+static bool g_gl;             /* gl stays loaded for the windows' renderers. */
 
 /* the displays of the host, the primary first, in the guest's virtual screen. */
 typedef struct HostMonitor {
@@ -1070,6 +1072,8 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
     UiWindow *owner = cfg->owner_id ? find_window(cfg->owner_id) : nullptr;
     bool popup = (cfg->flags & MIME_WIN_TOOL) && owner && owner->window;
     SDL_WindowFlags flags = SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_TRANSPARENT;
+    if (g_gl)
+        flags |= SDL_WINDOW_OPENGL;
     if (popup) {
         MimeRect oh = host_part(&owner->config);
         int x = (int)lround((cfg->rect.left + host.left - owner->config.rect.left - oh.left) / scale);
@@ -1244,6 +1248,11 @@ static void present_main(void *arg)
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window((uint32_t)(uintptr_t)arg);
     pthread_mutex_unlock(&g_windows_lock);
+    if (w && w->shown && !w->renderer && !w->vk_whole && w->window && now_ms() >= w->renderer_retry_ms) {
+        restore_renderer(w);
+        if (!w->renderer)
+            w->renderer_retry_ms = now_ms() + 1000;
+    }
     if (w && w->shown)
         draw(w);
 }
@@ -2408,6 +2417,14 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     g_video = g_call_event != 0;
     mime_info("display driver %s", SDL_GetCurrentVideoDriver());
     g_wayland = SDL_GetCurrentVideoDriver() && !strcmp(SDL_GetCurrentVideoDriver(), "wayland");
+    /*
+     * the windows' renderers draw with gl. a renderer that fails, as when the gpu's memory is full, makes SDL put its
+     * window back as it was and drop gl with the last gl window, then destroy the renderer through the dropped gl: the
+     * whole machine went down. gl stays loaded, and windows are made for gl from the start, so a failed renderer is
+     * only a null one.
+     */
+    if (g_video && g_wayland && !(g_gl = SDL_GL_LoadLibrary(nullptr)))
+        mime_warn("cannot load gl for the windows: %s", SDL_GetError());
     if (g_video) {
         update_display();
         update_layout();
