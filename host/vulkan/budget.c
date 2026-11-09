@@ -4,7 +4,7 @@
 #include <string.h>
 
 #define MAX_DEVICES 256
-#define MARGIN_MIN (256ull << 20)
+#define MARGIN_MIN (768ull << 20)
 #define WARN_INTERVAL_NS 1000000000ull
 
 typedef struct BudgetDevice {
@@ -23,8 +23,12 @@ static PFN_vkEnumerateDeviceExtensionProperties g_extensions;
 static VkDeviceSize g_pending[VK_MAX_MEMORY_HEAPS];
 static uint64_t g_warned;
 
-/* the room the desktop keeps on a heap of size bytes: 5% or 256 MiB. */
-static VkDeviceSize margin_of(VkDeviceSize size) { return MIME_MAX(size / 20, MARGIN_MIN); }
+/*
+ * the room the desktop and the driver keep on a heap of size bytes: 10% or 768 MiB. the driver takes what it needs
+ * for a process's command streams and shaders from there, and with less a game that fills its budget sees the gpu
+ * fault on command memory the driver could not get.
+ */
+static VkDeviceSize margin_of(VkDeviceSize size) { return MIME_MAX(size / 10, MARGIN_MIN); }
 
 static bool has_budget_extension(VkPhysicalDevice physical)
 {
