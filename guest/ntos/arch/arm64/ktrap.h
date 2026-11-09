@@ -34,6 +34,13 @@
 #define KPCR_USER_MODE 0x11
 #define KPCR_DEFERRED_IPIS 0xC8
 
+/* words of KiKernelLock, see vectors.S. */
+#define KI_LOCK_OWNER 1
+#define KI_LOCK_SLEEPERS 2
+#define KI_LOCK_REASON 3
+#define KI_LOCK_SINCE 4
+#define KI_LOCK_HELD 6
+
 #define HAL_IPI_INTID 1 /* the sgi asking a processor to reschedule. */
 
 #endif

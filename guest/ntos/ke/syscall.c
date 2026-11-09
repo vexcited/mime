@@ -32,7 +32,7 @@ ULONG64 HalHypercallCalls[64], HalHypercallTicks[64], HalHypercallLongest[64], H
 /* called as the lock is released after being held for longer than KiLongHoldTicks, with the lock still held. */
 void KiNoteLongHold(ULONG64 held)
 {
-    ULONG reason = KiKernelLock[3];
+    ULONG reason = KiKernelLock[KI_LOCK_REASON];
     if (reason >= KI_HOLD_REASONS)
         reason = 0;
     g_long_ticks[reason] += held;
@@ -319,7 +319,7 @@ void KiSystemService(PKTRAP_FRAME frame)
     ULONG index = number & 0xFFF;
     ULONG64 result;
     ULONG64 started = HalReadCounter(), blocked = thread->BlockedTicks;
-    KiKernelLock[3] = (table << 12 | index) + 1;
+    KiKernelLock[KI_LOCK_REASON] = (table << 12 | index) + 1;
     BOOLEAN timeline = g_timeline && table < 2 && !strcmp(PsCurrentProcess()->ImageFileName, KiTimelineImage);
     char tpath[32];
     tpath[0] = 0;
@@ -691,7 +691,7 @@ static void reset_dump_counters(void)
     memset(g_long_calls, 0, sizeof(g_long_calls));
     memset(g_long_max, 0, sizeof(g_long_max));
     g_long_total = 0;
-    KiKernelLock[6] = KiKernelLock[7] = 0;
+    KiKernelLock[KI_LOCK_HELD] = KiKernelLock[KI_LOCK_HELD + 1] = 0;
     memset(g_calls, 0, sizeof(g_calls));
     memset(g_ticks, 0, sizeof(g_ticks));
     memset(g_longest, 0, sizeof(g_longest));
@@ -738,8 +738,9 @@ void KiDumpServiceCalls(void)
         g_ticks[bt][bi] = 0;
     }
     /* the lock as a whole: the time it was held, and what held it for a long time. */
-    KiLogPrintf("kernel lock: held %llu us in all, %llu holds over %llu us", HalCounterToHns(KiKernelLock[6] | (ULONG64)KiKernelLock[7] << 32) / 10,
-                g_long_total, HalCounterToHns(KiLongHoldTicks) / 10);
+    ULONG64 held = KiKernelLock[KI_LOCK_HELD] | (ULONG64)KiKernelLock[KI_LOCK_HELD + 1] << 32;
+    KiLogPrintf("kernel lock: held %llu us in all, %llu holds over %llu us", HalCounterToHns(held) / 10, g_long_total,
+                HalCounterToHns(KiLongHoldTicks) / 10);
     for (int round = 0; round < 10; round++) {
         ULONG64 best = 0;
         ULONG bi = 0;

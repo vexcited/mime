@@ -9,7 +9,7 @@ LIST_ENTRY KiReadyListHead[MAXIMUM_PRIORITY];
 ULONG KiReadySummary;
 PKPRCB KiProcessorBlock[MAXIMUM_PROCESSORS];
 ULONG KeNumberProcessors = 1;
-volatile ULONG KiKernelLock[8] __attribute__((aligned(64))) = {0, ~0u, 0, 0};
+volatile ULONG KiKernelLock[32] __attribute__((aligned(64))) = {[KI_LOCK_OWNER] = ~0u};
 /* lock holds longer than this many ticks are counted by what held them, see KiNoteLongHold. */
 ULONG64 KiLongHoldTicks = ~0ull;
 ULONG64 KiKernelLockPhys;
@@ -24,7 +24,7 @@ ULONG64 HalHypercallUnlocked(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULO
 {
     /* interrupts stay off: an interrupt taken meanwhile would run without the lock. */
     ULONG64 state = KiDisableInterrupts();
-    BOOLEAN held = KeGetPcr()->Irql < DISPATCH_LEVEL && KiKernelLock[1] == KeGetCurrentPrcb()->Number;
+    BOOLEAN held = KeGetPcr()->Irql < DISPATCH_LEVEL && KiKernelLock[KI_LOCK_OWNER] == KeGetCurrentPrcb()->Number;
     if (!held) {
         KiRestoreInterrupts(state);
         return HalHypercall(nr, a1, a2, a3, a4, a5, a6, value);
@@ -136,15 +136,17 @@ void KiInsertReadyThread(PKTHREAD thread)
         SharedUserData->MimeReadyThreads = KiReadySummary;
 }
 
+/*
+ * the interrupt waits for this processor to let go of the kernel lock: its target could only wait for the lock
+ * until then, and sending it is an exit to the host that would count in the time the lock is held.
+ */
 void KiSendIpi(ULONG processor)
 {
-#ifndef __x86_64__
     PKPRCB prcb = KeGetCurrentPrcb();
-    if (KiKernelLock[1] == prcb->Number) {
+    if (KiKernelLock[KI_LOCK_OWNER] == prcb->Number) {
         __atomic_fetch_or(&prcb->DeferredIpis, 1ull << processor, __ATOMIC_RELAXED);
         return;
     }
-#endif
     HalSendIpi(processor);
 }
 
