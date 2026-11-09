@@ -564,7 +564,7 @@ static HANDLE g_mutex;
 LOADPERF BOOL WINAPI LpAcquireInstallationMutex(void)
 {
     if (!g_mutex)
-        g_mutex = CreateMutexW(nullptr, FALSE, L"Global\\MimePerflibInstallation");
+        g_mutex = CreateMutexW(nullptr, FALSE, L"Global\\PerflibInstallation");
     return g_mutex && WaitForSingleObject(g_mutex, 60000) <= WAIT_ABANDONED;
 }
 

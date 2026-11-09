@@ -93,12 +93,12 @@ static void ensure_thread_window(void)
         WNDCLASSW wc = {};
         wc.lpfnWndProc = thread_proc;
         wc.hInstance = GetModuleHandleW(nullptr);
-        wc.lpszClassName = L"MimeUiaThreadWindow";
+        wc.lpszClassName = L"UiaThreadWindow";
         g_class = RegisterClassW(&wc);
         if (!g_class && GetLastError() == ERROR_CLASS_ALREADY_EXISTS)
             g_class = 1;
     }
-    HWND hwnd = CreateWindowExW(0, L"MimeUiaThreadWindow", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+    HWND hwnd = CreateWindowExW(0, L"UiaThreadWindow", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
                                 GetModuleHandleW(nullptr), nullptr);
     if (hwnd) {
         int slot = -1;

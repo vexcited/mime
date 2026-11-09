@@ -618,7 +618,7 @@ static SECURITY_STATUS unseal(const BYTE *key, const BYTE *aad, ULONG aad_size, 
 
 /* ------------------------------------------------------------------ the secrets of the user and of the machine */
 
-#define SECRET_KEY L"Software\\Microsoft\\Cryptography\\NProtect\\MimeSecrets"
+#define SECRET_KEY L"Software\\Microsoft\\Cryptography\\NProtect\\Secrets"
 
 /* 32 random bytes kept in the registry of the user or the machine, made on first use. */
 static SECURITY_STATUS scope_secret(BOOL machine, BYTE *secret)

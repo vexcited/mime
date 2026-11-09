@@ -286,7 +286,7 @@ void UserDefPrint(HWND hwnd, HDC dc, DWORD flags)
 /* the setting of a window, kept as a property holding the value plus one so that zero means none. */
 static void feedback_name(WCHAR name[24], UINT feedback)
 {
-    wsprintfW(name, L"MimeFeedback%u", feedback);
+    wsprintfW(name, L"FeedbackHost%u", feedback);
 }
 
 /* the visual feedback of touch and pen input. a window has none set until a program sets one. */
