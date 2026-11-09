@@ -25,7 +25,7 @@ typedef struct MIMEFS_VOLUME {
     ULONG HostVolume;
     ULONG Serial;
     BOOLEAN Raw; /* the disk device, \\.\PhysicalDrive0, which has the volume's drive behind it. */
-    WCHAR Label[32];
+    WCHAR Label[33]; /* ntfs takes 32 characters. */
     /* what the volume read and wrote, for each processor, as the statistics of the file system tell. */
     MIMEFS_COUNTERS Counters[MIMEFS_MAX_CPUS];
 } MIMEFS_VOLUME;
