@@ -526,6 +526,47 @@ HRESULT D12DescriptorsInit(D12Device *device)
 
 static void heap_destroy(D12DescriptorHeap *heap);
 
+typedef struct D12StagedGrave {
+    struct D12StagedGrave *next;
+    VkBuffer shadow;
+    VkDeviceMemory shadow_memory;
+    VkBuffer buffer;
+    VkDeviceMemory memory;
+    UINT64 serials[D12_STAGE_SLOTS];
+} D12StagedGrave;
+
+static void bury(D12Device *device, const D12StagedGrave *grave)
+{
+    D12Vk *vk = &device->vk;
+    vk->vkDestroyBuffer(vk->device, grave->shadow, nullptr);
+    vk->vkFreeMemory(vk->device, grave->shadow_memory, nullptr);
+    vk->vkDestroyBuffer(vk->device, grave->buffer, nullptr);
+    vk->vkFreeMemory(vk->device, grave->memory, nullptr);
+}
+
+/* frees the released heaps whose uploads all ran, or every one when all is idle; with the staged lock held. */
+static void sweep(D12Device *device, BOOL idle)
+{
+    D12Vk *vk = &device->vk;
+    for (D12StagedGrave **link = &device->graves; *link;) {
+        D12StagedGrave *grave = *link;
+        BOOL ran = TRUE;
+        for (UINT slot = 0; slot < D12_STAGE_SLOTS && ran && !idle; slot++) {
+            UINT64 value = 0;
+            if (grave->serials[slot] && device->stage_timelines[slot] &&
+                vk->vkGetSemaphoreCounterValue(vk->device, device->stage_timelines[slot], &value) == VK_SUCCESS)
+                ran = value >= grave->serials[slot];
+        }
+        if (!ran) {
+            link = &grave->next;
+            continue;
+        }
+        *link = grave->next;
+        bury(device, grave);
+        HeapFree(GetProcessHeap(), 0, grave);
+    }
+}
+
 void D12DescriptorsDestroy(D12Device *device)
 {
     D12Vk *vk = &device->vk;
@@ -542,6 +583,8 @@ void D12DescriptorsDestroy(D12Device *device)
             heap_destroy(device->dummy_heaps[i]);
             HeapFree(GetProcessHeap(), 0, device->dummy_heaps[i]);
         }
+    /* the device is idle, so what released heaps kept goes now. */
+    sweep(device, TRUE);
     for (UINT i = 0; i < device->sampler_count; i++)
         vk->vkDestroySampler(vk->device, device->samplers[i].sampler, nullptr);
     HeapFree(GetProcessHeap(), 0, device->samplers);
@@ -594,14 +637,41 @@ static ULONG STDMETHODCALLTYPE heap_add_ref(ID3D12DescriptorHeap *iface)
 static void heap_destroy(D12DescriptorHeap *heap)
 {
     D12Device *device = heap->child.device;
+    D12Vk *vk = &device->vk;
     if (heap->id)
         heap_unregister(device, heap->id);
-    if (heap->buffer)
-        device->vk.vkDestroyBuffer(device->vk.device, heap->buffer, nullptr);
-    if (heap->memory)
-        device->vk.vkFreeMemory(device->vk.device, heap->memory, nullptr);
-    else
-        VirtualFree(heap->base, 0, MEM_RELEASE);
+    if (heap->dirty) {
+        AcquireSRWLockExclusive(&device->staged_lock);
+        for (D12DescriptorHeap **link = &device->staged; *link; link = &(*link)->next_staged)
+            if (*link == heap) {
+                *link = heap->next_staged;
+                break;
+            }
+        D12StagedGrave *grave = HeapAlloc(GetProcessHeap(), 0, sizeof(*grave));
+        if (grave) {
+            *grave = (D12StagedGrave){device->graves, heap->shadow, heap->shadow_memory, heap->buffer, heap->memory};
+            memcpy(grave->serials, heap->upload_serials, sizeof(grave->serials));
+            device->graves = grave;
+        }
+        ReleaseSRWLockExclusive(&device->staged_lock);
+        HeapFree(GetProcessHeap(), 0, (void *)heap->dirty);
+        /* without room to keep it, all of the gpu's work goes first. */
+        if (!grave) {
+            vk->vkDeviceWaitIdle(vk->device);
+            bury(device, &(D12StagedGrave){nullptr, heap->shadow, heap->shadow_memory, heap->buffer, heap->memory});
+        }
+    } else {
+        if (heap->buffer)
+            vk->vkDestroyBuffer(vk->device, heap->buffer, nullptr);
+        if (heap->shadow)
+            vk->vkDestroyBuffer(vk->device, heap->shadow, nullptr);
+        if (heap->shadow_memory)
+            vk->vkFreeMemory(vk->device, heap->shadow_memory, nullptr);
+        if (heap->memory)
+            vk->vkFreeMemory(vk->device, heap->memory, nullptr);
+        else
+            VirtualFree(heap->base, 0, MEM_RELEASE);
+    }
     HeapFree(GetProcessHeap(), 0, heap->infos);
     HeapFree(GetProcessHeap(), 0, heap->targets);
 }
@@ -679,43 +749,258 @@ static const struct ID3D12DescriptorHeapVtbl g_heap_vtbl = {
     heap_get_gpu_start,
 };
 
-/* guest memory the gpu reads descriptors from, with a buffer over it whose address shaders know. */
-static HRESULT descriptor_buffer(D12Device *device, D12DescriptorHeap *heap, UINT64 size, BOOL samplers)
+#define STAGE_PAGE 4096u
+
+static int memory_type(D12Device *device, UINT allowed, VkMemoryPropertyFlags wanted)
+{
+    for (UINT i = 0; i < device->memory.memoryTypeCount; i++)
+        if ((allowed & (1u << i)) && (device->memory.memoryTypes[i].propertyFlags & wanted) == wanted)
+            return (int)i;
+    return -1;
+}
+
+/* a buffer bound to memory of its own, of a type with the wanted flags; *type is -1 when none allows it. */
+static HRESULT bound_buffer(D12Device *device, UINT64 size, VkBufferUsageFlags usage, VkMemoryPropertyFlags wanted,
+                            VkBuffer *buffer, VkDeviceMemory *memory, int *type)
 {
     D12Vk *vk = &device->vk;
+    *type = -1;
     VkBufferCreateInfo info = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     info.size = size;
-    info.usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
-                 (samplers ? VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT
-                           : VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-    if (vk->vkCreateBuffer(vk->device, &info, nullptr, &heap->buffer) != VK_SUCCESS)
+    info.usage = usage;
+    if (vk->vkCreateBuffer(vk->device, &info, nullptr, buffer) != VK_SUCCESS)
         return E_OUTOFMEMORY;
     VkMemoryRequirements req;
-    vk->vkGetBufferMemoryRequirements(vk->device, heap->buffer, &req);
-    int type = -1;
-    for (UINT i = 0; i < device->memory.memoryTypeCount && type < 0; i++) {
-        VkMemoryPropertyFlags f = device->memory.memoryTypes[i].propertyFlags;
-        if ((req.memoryTypeBits & (1u << i)) &&
-            (f & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
-                (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
-            type = (int)i;
-    }
-    if (type < 0)
+    vk->vkGetBufferMemoryRequirements(vk->device, *buffer, &req);
+    *type = memory_type(device, req.memoryTypeBits, wanted);
+    if (*type < 0 && wanted == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+        *type = memory_type(device, req.memoryTypeBits, 0);
+    if (*type < 0)
         return E_OUTOFMEMORY;
     VkMemoryAllocateFlagsInfo flags = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO};
     flags.flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT;
     VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &flags};
     alloc.allocationSize = req.size;
-    alloc.memoryTypeIndex = type;
-    if (vk->vkAllocateMemory(vk->device, &alloc, nullptr, &heap->memory) != VK_SUCCESS)
+    alloc.memoryTypeIndex = (UINT)*type;
+    if (vk->vkAllocateMemory(vk->device, &alloc, nullptr, memory) != VK_SUCCESS ||
+        vk->vkBindBufferMemory(vk->device, *buffer, *memory, 0) != VK_SUCCESS)
         return E_OUTOFMEMORY;
-    vk->vkBindBufferMemory(vk->device, heap->buffer, heap->memory, 0);
-    if (vk->vkMapMemory(vk->device, heap->memory, 0, VK_WHOLE_SIZE, 0, (void **)&heap->base) != VK_SUCCESS)
+    return S_OK;
+}
+
+static const VkMemoryPropertyFlags g_mapped = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+/*
+ * guest memory the gpu reads descriptors from, with a buffer over it whose address shaders know. a gpu that keeps
+ * descriptor buffers where the guest cannot map gets a staged heap: the buffer in memory only the gpu sees, and a
+ * copy in guest ram the cpu writes.
+ */
+static HRESULT descriptor_buffer(D12Device *device, D12DescriptorHeap *heap, UINT64 size, BOOL samplers)
+{
+    D12Vk *vk = &device->vk;
+    VkBufferUsageFlags usage = VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+                               (samplers ? VK_BUFFER_USAGE_SAMPLER_DESCRIPTOR_BUFFER_BIT_EXT
+                                         : VK_BUFFER_USAGE_RESOURCE_DESCRIPTOR_BUFFER_BIT_EXT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    int type;
+    HRESULT hr = bound_buffer(device, size, usage, g_mapped, &heap->buffer, &heap->memory, &type);
+    if (FAILED(hr) && type < 0 && heap->buffer) {
+        vk->vkDestroyBuffer(vk->device, heap->buffer, nullptr);
+        heap->buffer = VK_NULL_HANDLE;
+        hr = bound_buffer(device, size, usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                          &heap->buffer, &heap->memory, &type);
+        if (SUCCEEDED(hr))
+            hr = bound_buffer(device, size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, g_mapped, &heap->shadow,
+                              &heap->shadow_memory, &type);
+        if (FAILED(hr))
+            return hr;
+        heap->size = size;
+        heap->dirty_words = (UINT)((size + STAGE_PAGE * 64 - 1) / (STAGE_PAGE * 64));
+        heap->dirty = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+                                (SIZE_T)D12_STAGE_SLOTS * heap->dirty_words * sizeof(*heap->dirty));
+        if (!heap->dirty)
+            return E_OUTOFMEMORY;
+    } else if (FAILED(hr)) {
+        return hr;
+    }
+    VkDeviceMemory mapped = heap->shadow_memory ? heap->shadow_memory : heap->memory;
+    if (vk->vkMapMemory(vk->device, mapped, 0, VK_WHOLE_SIZE, 0, (void **)&heap->base) != VK_SUCCESS)
         return E_OUTOFMEMORY;
     VkBufferDeviceAddressInfo address = {VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
     address.buffer = heap->buffer;
     heap->address = vk->vkGetBufferDeviceAddress(vk->device, &address);
     return S_OK;
+}
+
+/* marks the pages of a staged heap the cpu wrote, from at for size bytes, for every queue. */
+static void touch(D12DescriptorHeap *heap, const void *at, SIZE_T size)
+{
+    if (!heap->dirty || !size)
+        return;
+    UINT slots = __atomic_load_n(&heap->child.device->stage_slots, __ATOMIC_ACQUIRE);
+    UINT64 offset = (UINT64)((const BYTE *)at - heap->base);
+    for (UINT64 page = offset / STAGE_PAGE; page <= (offset + size - 1) / STAGE_PAGE; page++) {
+        LONG64 bit = (LONG64)(1ull << (page % 64));
+        for (UINT left = slots; left; left &= left - 1) {
+            volatile LONG64 *word = &heap->dirty[(SIZE_T)__builtin_ctz(left) * heap->dirty_words + page / 64];
+            if (!(*word & bit))
+                __atomic_fetch_or(word, bit, __ATOMIC_RELEASE);
+        }
+    }
+}
+
+typedef struct D12Upload {
+    VkCommandBuffer cmd;
+    UINT64 serial; /* of the queue's timeline, signalled once it ran. */
+} D12Upload;
+
+/* a command buffer of the queue's uploads whose last one ran, or a new one, recording. */
+static VkCommandBuffer upload_commands(D12Queue *queue, UINT64 serial)
+{
+    D12Device *device = queue->child.device;
+    D12Vk *vk = &device->vk;
+    UINT64 ran = 0;
+    vk->vkGetSemaphoreCounterValue(vk->device, queue->timeline, &ran);
+    UINT at = queue->upload_count;
+    for (UINT i = 0; i < queue->upload_count && at == queue->upload_count; i++)
+        if (queue->uploads[i].serial <= ran)
+            at = i;
+    if (at == queue->upload_count) {
+        if (at == queue->upload_capacity) {
+            UINT capacity = at ? at * 2 : 4;
+            D12Upload *grown = at ? HeapReAlloc(GetProcessHeap(), 0, queue->uploads, capacity * sizeof(*grown))
+                                  : HeapAlloc(GetProcessHeap(), 0, capacity * sizeof(*grown));
+            if (!grown)
+                return VK_NULL_HANDLE;
+            queue->uploads = grown;
+            queue->upload_capacity = capacity;
+        }
+        VkCommandBufferAllocateInfo alloc = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        alloc.commandPool = queue->upload_pool;
+        alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        alloc.commandBufferCount = 1;
+        if (vk->vkAllocateCommandBuffers(vk->device, &alloc, &queue->uploads[at].cmd) != VK_SUCCESS)
+            return VK_NULL_HANDLE;
+        queue->upload_count++;
+    }
+    D12Upload *upload = &queue->uploads[at];
+    upload->serial = serial;
+    vk->vkResetCommandBuffer(upload->cmd, 0);
+    VkCommandBufferBeginInfo begin = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vk->vkBeginCommandBuffer(upload->cmd, &begin);
+    return upload->cmd;
+}
+
+static BOOL record_copies(D12Queue *queue, D12DescriptorHeap *heap, UINT64 serial, VkCommandBuffer *cmd,
+                          const VkBufferCopy *copies, UINT *count)
+{
+    if (!*count)
+        return TRUE;
+    if (!*cmd && !(*cmd = upload_commands(queue, serial)))
+        return FALSE;
+    queue->child.device->vk.vkCmdCopyBuffer(*cmd, heap->shadow, heap->buffer, *count, copies);
+    heap->upload_serials[queue->stage_slot] = serial;
+    *count = 0;
+    return TRUE;
+}
+
+/* the runs of a staged heap's pages the queue slot has not copied, the last page cut at the end of the heap. */
+static BOOL upload(D12Queue *queue, D12DescriptorHeap *heap, UINT64 serial, VkCommandBuffer *cmd)
+{
+    volatile LONG64 *dirty = &heap->dirty[(SIZE_T)queue->stage_slot * heap->dirty_words];
+    VkBufferCopy copies[64];
+    UINT count = 0;
+    UINT64 pages = (heap->size + STAGE_PAGE - 1) / STAGE_PAGE, run = UINT64_MAX;
+    for (UINT64 w = 0; w <= heap->dirty_words; w++) {
+        UINT64 bits = 0;
+        if (w < heap->dirty_words && dirty[w])
+            bits = (UINT64)__atomic_exchange_n(&dirty[w], 0, __ATOMIC_ACQUIRE);
+        if (!bits && run == UINT64_MAX)
+            continue;
+        for (UINT b = 0; b < 64; b++) {
+            UINT64 page = w * 64 + b;
+            BOOL set = page < pages && ((bits >> b) & 1);
+            if (set && run == UINT64_MAX) {
+                run = page;
+            } else if (!set && run != UINT64_MAX) {
+                copies[count++] = (VkBufferCopy){run * STAGE_PAGE, run * STAGE_PAGE,
+                                                 D12_MIN(page * STAGE_PAGE, heap->size) - run * STAGE_PAGE};
+                run = UINT64_MAX;
+            }
+            if (count == RTL_NUMBER_OF(copies) && !record_copies(queue, heap, serial, cmd, copies, &count))
+                return FALSE;
+            if (run == UINT64_MAX && !(bits >> b))
+                break;
+        }
+    }
+    return record_copies(queue, heap, serial, cmd, copies, &count);
+}
+
+VkCommandBuffer D12DescriptorsUpload(D12Queue *queue, UINT64 serial)
+{
+    D12Device *device = queue->child.device;
+    if (device->graves) {
+        AcquireSRWLockExclusive(&device->staged_lock);
+        sweep(device, FALSE);
+        ReleaseSRWLockExclusive(&device->staged_lock);
+    }
+    if (!device->staged || queue->stage_slot < 0)
+        return VK_NULL_HANDLE;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    AcquireSRWLockShared(&device->staged_lock);
+    for (D12DescriptorHeap *heap = device->staged; heap; heap = heap->next_staged)
+        if (!upload(queue, heap, serial, &cmd))
+            break;
+    ReleaseSRWLockShared(&device->staged_lock);
+    if (!cmd)
+        return VK_NULL_HANDLE;
+    /* the copies before every read of the descriptors in the submission. */
+    D12Barrier(device, cmd);
+    device->vk.vkEndCommandBuffer(cmd);
+    return cmd;
+}
+
+void D12DescriptorsAddQueue(D12Queue *queue)
+{
+    D12Device *device = queue->child.device;
+    queue->stage_slot = -1;
+    VkCommandPoolCreateInfo pool = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    pool.queueFamilyIndex = queue->family;
+    if (device->vk.vkCreateCommandPool(device->vk.device, &pool, nullptr, &queue->upload_pool) != VK_SUCCESS)
+        return;
+    AcquireSRWLockExclusive(&device->staged_lock);
+    if (~device->stage_slots) {
+        int slot = __builtin_ctz(~device->stage_slots);
+        /* a new queue copies all of every staged heap once. */
+        for (D12DescriptorHeap *heap = device->staged; heap; heap = heap->next_staged)
+            for (UINT w = 0; w < heap->dirty_words; w++)
+                heap->dirty[(SIZE_T)slot * heap->dirty_words + w] = -1;
+        device->stage_timelines[slot] = queue->timeline;
+        __atomic_or_fetch(&device->stage_slots, 1u << slot, __ATOMIC_RELEASE);
+        queue->stage_slot = slot;
+    } else {
+        D12Log("d3d12: more queues than staged descriptor heaps upload for");
+    }
+    ReleaseSRWLockExclusive(&device->staged_lock);
+}
+
+void D12DescriptorsRemoveQueue(D12Queue *queue)
+{
+    D12Device *device = queue->child.device;
+    AcquireSRWLockExclusive(&device->staged_lock);
+    if (queue->stage_slot >= 0) {
+        __atomic_and_fetch(&device->stage_slots, ~(1u << queue->stage_slot), __ATOMIC_RELEASE);
+        device->stage_timelines[queue->stage_slot] = VK_NULL_HANDLE;
+        for (D12DescriptorHeap *heap = device->staged; heap; heap = heap->next_staged)
+            heap->upload_serials[queue->stage_slot] = 0;
+        for (D12StagedGrave *grave = device->graves; grave; grave = grave->next)
+            grave->serials[queue->stage_slot] = 0;
+    }
+    ReleaseSRWLockExclusive(&device->staged_lock);
+    if (queue->upload_pool)
+        device->vk.vkDestroyCommandPool(device->vk.device, queue->upload_pool, nullptr);
+    HeapFree(GetProcessHeap(), 0, queue->uploads);
 }
 
 static HRESULT create_heap(D12Device *device, const D3D12_DESCRIPTOR_HEAP_DESC *desc, BOOL internal,
@@ -795,6 +1080,14 @@ static HRESULT create_heap(D12Device *device, const D3D12_DESCRIPTOR_HEAP_DESC *
         HeapFree(GetProcessHeap(), 0, heap);
         return hr;
     }
+    if (heap->dirty) {
+        /* all of it is new, nulls included. */
+        touch(heap, heap->base, (SIZE_T)heap->size);
+        AcquireSRWLockExclusive(&device->staged_lock);
+        heap->next_staged = device->staged;
+        device->staged = heap;
+        ReleaseSRWLockExclusive(&device->staged_lock);
+    }
     if (!internal)
         D12ChildInit(&heap->child, device);
     *out = heap;
@@ -821,6 +1114,10 @@ static void write_atomic_view(D12Device *device, D3D12_CPU_DESCRIPTOR_HANDLE des
     if (heap->atomics)
         memcpy(heap->atomics + (SIZE_T)index * device->atomic_stride,
                atomic ? atomic : device->null_descriptors[D12_DESC_STORAGE_IMAGE], device->atomic_stride);
+    touch(heap, heap->descriptors + (SIZE_T)index * heap->stride, heap->stride);
+    touch(heap, &heap->records[index], sizeof(DxbcRecord));
+    if (heap->atomics)
+        touch(heap, heap->atomics + (SIZE_T)index * device->atomic_stride, device->atomic_stride);
     if (heap->infos) {
         if (info)
             heap->infos[index] = *info;
@@ -1398,6 +1695,7 @@ void D12CreateSampler(D12Device *device, const D3D12_SAMPLER_DESC2 *desc, D3D12_
     const BYTE *descriptor;
     D12Sampler(device, desc, &descriptor);
     memcpy(heap->descriptors + (SIZE_T)index * heap->stride, descriptor, heap->stride);
+    touch(heap, heap->descriptors + (SIZE_T)index * heap->stride, heap->stride);
 }
 
 /* ------------------------------------------------------------------ copies */
@@ -1415,12 +1713,16 @@ void D12CopyDescriptors(D12Device *device, D3D12_CPU_DESCRIPTOR_HANDLE dest, D3D
         return;
     }
     memmove(d->descriptors + (SIZE_T)di * d->stride, s->descriptors + (SIZE_T)si * s->stride, (SIZE_T)count * d->stride);
+    touch(d, d->descriptors + (SIZE_T)di * d->stride, (SIZE_T)count * d->stride);
     if (type != D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
         return;
     memmove(&d->records[di], &s->records[si], count * sizeof(DxbcRecord));
-    if (d->atomics && s->atomics)
+    touch(d, &d->records[di], count * sizeof(DxbcRecord));
+    if (d->atomics && s->atomics) {
         memmove(d->atomics + (SIZE_T)di * device->atomic_stride, s->atomics + (SIZE_T)si * device->atomic_stride,
                 (SIZE_T)count * device->atomic_stride);
+        touch(d, d->atomics + (SIZE_T)di * device->atomic_stride, (SIZE_T)count * device->atomic_stride);
+    }
     if (d->infos) {
         if (s->infos)
             memmove(&d->infos[di], &s->infos[si], count * sizeof(*d->infos));

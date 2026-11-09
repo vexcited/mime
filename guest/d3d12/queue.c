@@ -429,11 +429,15 @@ static UINT64 submit(D12Queue *queue, const VkCommandBuffer *buffers, UINT count
     D12Device *device = queue->child.device;
     UINT64 init_serial;
     VkCommandBuffer init = D12TakeInitCommands(device, &init_serial);
-    VkCommandBufferSubmitInfo cmds[64], init_cmd = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, init};
+    VkCommandBufferSubmitInfo cmds[65], init_cmd = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, init};
     VkSemaphoreSubmitInfo wait_infos[9], signal_infos[9];
     VkSemaphoreSubmitInfo init_signal = {VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, device->init_timeline,
                                          init_serial, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
     UINT n = 0, w = 0, s = 0;
+    /* the submit lock keeps the queue's next serial until it is taken below. */
+    VkCommandBuffer upload = D12DescriptorsUpload(queue, queue->next_serial);
+    if (upload)
+        cmds[n++] = (VkCommandBufferSubmitInfo){VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, upload};
     for (UINT i = 0; i < count && n < RTL_NUMBER_OF(cmds); i++)
         cmds[n++] = (VkCommandBufferSubmitInfo){VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, buffers[i]};
     /* another queue's submission ran the device's commands, so wait for them. */
@@ -708,6 +712,7 @@ static ULONG STDMETHODCALLTYPE queue_release(ID3D12CommandQueue *iface)
                 break;
             }
         ReleaseSRWLockExclusive(&device->submit_lock);
+        D12DescriptorsRemoveQueue(queue);
         device->vk.vkDestroySemaphore(device->vk.device, queue->timeline, nullptr);
         D12ChildRelease(&queue->child);
         HeapFree(GetProcessHeap(), 0, queue);
@@ -945,6 +950,7 @@ HRESULT D12CreateQueue(D12Device *device, const D3D12_COMMAND_QUEUE_DESC *desc, 
     queue->child.refs = 1;
     D12ChildInit(&queue->child, device);
     queue->held_tail = &queue->held;
+    D12DescriptorsAddQueue(queue);
     AcquireSRWLockExclusive(&device->submit_lock);
     queue->next = device->queue_list;
     device->queue_list = queue;
