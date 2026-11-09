@@ -1,4 +1,4 @@
-/* CryptExportPublicKeyInfoFromBCryptKeyHandle: the public key of a cng key as the key info of a certificate. */
+/* the public key of a cng key as the key info of a certificate, and back. */
 #include "crypt32_private.h"
 
 #define BCRYPT_RSAPUBLIC_MAGIC_ 0x31415352
@@ -9,7 +9,12 @@
 #define BCRYPT_ECDH_PUBLIC_P384_MAGIC_ 0x334B4345
 #define BCRYPT_ECDH_PUBLIC_P521_MAGIC_ 0x354B4345
 
+#define CRYPT_OID_INFO_PUBKEY_ENCRYPT_KEY_FLAG_ 0x40000000
+
 typedef LONG(WINAPI *EXPORT_BCRYPT_KEY)(PVOID, PVOID, LPCWSTR, PUCHAR, ULONG, ULONG *, ULONG);
+typedef LONG(WINAPI *OPEN_BCRYPT_ALGORITHM)(PVOID *, LPCWSTR, LPCWSTR, ULONG);
+typedef LONG(WINAPI *CLOSE_BCRYPT_ALGORITHM)(PVOID, ULONG);
+typedef LONG(WINAPI *IMPORT_BCRYPT_KEY_PAIR)(PVOID, PVOID, LPCWSTR, PVOID *, PUCHAR, ULONG, ULONG);
 
 /* an unsigned big endian number as an asn.1 integer. */
 static void write_big_endian(der_writer *w, const BYTE *data, DWORD size)
@@ -127,4 +132,134 @@ WINCRYPT32API BOOL WINAPI CryptExportPublicKeyInfoFromBCryptKeyHandle(PVOID key,
     if (capacity < total)
         return CrFail(ERROR_MORE_DATA);
     return TRUE;
+}
+
+/* the bytes of an unsigned big endian number, without its leading zeros. */
+static const BYTE *strip_zeros(const der_item *item, DWORD *size)
+{
+    const BYTE *data = item->content;
+    *size = item->length;
+    while (*size > 1 && !*data) {
+        data++;
+        (*size)--;
+    }
+    return data;
+}
+
+/* an rsa key as BCRYPT_RSAPUBLIC_BLOB: magic, bits, exponent and modulus sizes, then both, big endian. */
+static BYTE *rsa_blob(const CERT_PUBLIC_KEY_INFO *info, ULONG *size)
+{
+    der_reader r = {info->PublicKey.pbData, info->PublicKey.cbData};
+    der_item seq, n, e;
+    if (DerExpect(&r, ASN_SEQUENCE, &seq))
+        return nullptr;
+    DerOpen(&r, &seq);
+    if (DerExpect(&r, ASN_INTEGER, &n) || DerExpect(&r, ASN_INTEGER, &e))
+        return nullptr;
+    DWORD modulus_size, exponent_size;
+    const BYTE *modulus = strip_zeros(&n, &modulus_size), *exponent = strip_zeros(&e, &exponent_size);
+    if (!modulus_size || !*modulus || !exponent_size)
+        return nullptr;
+    DWORD bits = modulus_size * 8;
+    for (BYTE top = modulus[0]; !(top & 0x80); top <<= 1)
+        bits--;
+    *size = 24 + exponent_size + modulus_size;
+    BYTE *blob = CrAlloc(*size);
+    if (!blob)
+        return nullptr;
+    ULONG *header = (ULONG *)blob;
+    header[0] = BCRYPT_RSAPUBLIC_MAGIC_;
+    header[1] = bits;
+    header[2] = exponent_size;
+    header[3] = modulus_size;
+    header[4] = header[5] = 0;
+    memcpy(blob + 24, exponent, exponent_size);
+    memcpy(blob + 24 + exponent_size, modulus, modulus_size);
+    return blob;
+}
+
+/* an uncompressed point on a named curve as BCRYPT_ECCPUBLIC_BLOB: magic, coordinate size, then x and y. */
+static BYTE *ec_blob(const CERT_PUBLIC_KEY_INFO *info, BOOL exchange, LPCWSTR *algorithm, ULONG *size)
+{
+    der_reader r = {info->Algorithm.Parameters.pbData, info->Algorithm.Parameters.cbData};
+    der_item oid;
+    char curve[32];
+    if (DerExpect(&r, ASN_OID, &oid) || DerParseOid(&oid, curve, sizeof(curve)))
+        return nullptr;
+    ULONG magic, coordinate;
+    if (!strcmp(curve, "1.2.840.10045.3.1.7")) {
+        magic = exchange ? BCRYPT_ECDH_PUBLIC_P256_MAGIC_ : BCRYPT_ECDSA_PUBLIC_P256_MAGIC_;
+        *algorithm = exchange ? L"ECDH_P256" : L"ECDSA_P256";
+        coordinate = 32;
+    } else if (!strcmp(curve, "1.3.132.0.34")) {
+        magic = exchange ? BCRYPT_ECDH_PUBLIC_P384_MAGIC_ : BCRYPT_ECDSA_PUBLIC_P384_MAGIC_;
+        *algorithm = exchange ? L"ECDH_P384" : L"ECDSA_P384";
+        coordinate = 48;
+    } else if (!strcmp(curve, "1.3.132.0.35")) {
+        magic = exchange ? BCRYPT_ECDH_PUBLIC_P521_MAGIC_ : BCRYPT_ECDSA_PUBLIC_P521_MAGIC_;
+        *algorithm = exchange ? L"ECDH_P521" : L"ECDSA_P521";
+        coordinate = 66;
+    } else {
+        return nullptr;
+    }
+    const BYTE *point = info->PublicKey.pbData;
+    if (info->PublicKey.cbData != 1 + 2 * coordinate || point[0] != 4)
+        return nullptr;
+    *size = 8 + 2 * coordinate;
+    BYTE *blob = CrAlloc(*size);
+    if (!blob)
+        return nullptr;
+    ((ULONG *)blob)[0] = magic;
+    ((ULONG *)blob)[1] = coordinate;
+    memcpy(blob + 8, point + 1, 2 * coordinate);
+    return blob;
+}
+
+WINCRYPT32API BOOL WINAPI CryptImportPublicKeyInfoEx2(DWORD encoding, PCERT_PUBLIC_KEY_INFO info, DWORD flags, void *aux,
+                                                     PVOID *key)
+{
+    if (!info || !key)
+        return CrFail(E_INVALIDARG);
+    if (aux)
+        return CrFail(ERROR_INVALID_PARAMETER);
+    if ((encoding & 0xFFFF) != X509_ASN_ENCODING)
+        return CrFail(ERROR_FILE_NOT_FOUND);
+    *key = nullptr;
+    LPCSTR oid = info->Algorithm.pszObjId;
+    LPCWSTR algorithm = nullptr, type = nullptr;
+    ULONG size = 0;
+    BYTE *blob = nullptr;
+    if (oid && !strcmp(oid, szOID_RSA_RSA)) {
+        algorithm = L"RSA";
+        type = L"RSAPUBLICBLOB";
+        blob = rsa_blob(info, &size);
+    } else if (oid && !strcmp(oid, szOID_ECC_PUBLIC_KEY)) {
+        type = L"ECCPUBLICBLOB";
+        blob = ec_blob(info, (flags & CRYPT_OID_INFO_PUBKEY_ENCRYPT_KEY_FLAG_) != 0, &algorithm, &size);
+    } else {
+        return CrFail(NTE_BAD_ALGID);
+    }
+    if (!blob)
+        return CrFail(NTE_BAD_DATA);
+    /* bcrypt stays loaded for the key. */
+    HMODULE bcrypt = LoadLibraryW(L"bcrypt.dll");
+    OPEN_BCRYPT_ALGORITHM open = bcrypt ? (OPEN_BCRYPT_ALGORITHM)GetProcAddress(bcrypt, "BCryptOpenAlgorithmProvider")
+                                        : nullptr;
+    CLOSE_BCRYPT_ALGORITHM close = bcrypt ? (CLOSE_BCRYPT_ALGORITHM)GetProcAddress(bcrypt, "BCryptCloseAlgorithmProvider")
+                                          : nullptr;
+    IMPORT_BCRYPT_KEY_PAIR import = bcrypt ? (IMPORT_BCRYPT_KEY_PAIR)GetProcAddress(bcrypt, "BCryptImportKeyPair")
+                                           : nullptr;
+    if (!open || !close || !import) {
+        CrFree(blob);
+        return CrFail(ERROR_PROC_NOT_FOUND);
+    }
+    PVOID provider;
+    LONG status = open(&provider, algorithm, nullptr, 0);
+    if (status >= 0) {
+        /* the key keeps its provider alive. */
+        status = import(provider, nullptr, type, key, blob, size, 0);
+        close(provider, 0);
+    }
+    CrFree(blob);
+    return status >= 0 ? TRUE : CrFail(RtlNtStatusToDosError(status));
 }

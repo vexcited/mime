@@ -222,11 +222,6 @@ WINCRYPT32API BOOL WINAPI CryptInstallDefaultContext(void)
     return NOT_YET(FALSE);
 }
 
-WINCRYPT32API BOOL WINAPI CryptImportPublicKeyInfoEx2(void)
-{
-    return NOT_YET(FALSE);
-}
-
 WINCRYPT32API BOOL WINAPI CryptImportPKCS8(void)
 {
     return NOT_YET(FALSE);
