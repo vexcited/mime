@@ -38,7 +38,7 @@ RANGES *RangesOpen(RUN *run, const FEATURE_DEF *feature, PCWSTR url)
     r->Feature = feature;
     lstrcpynW(r->Path, path, RTL_NUMBER_OF(r->Path));
     r->Secure = parts.nScheme == INTERNET_SCHEME_HTTPS;
-    r->Session = WinHttpOpen(L"Mime-Features/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
+    r->Session = WinHttpOpen(L"Microsoft-Windows-Features/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
                              WINHTTP_NO_PROXY_BYPASS, 0);
     if (r->Session) {
         WinHttpSetTimeouts(r->Session, 30000, 30000, 60000, 60000);

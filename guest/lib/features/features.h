@@ -43,6 +43,8 @@ typedef enum FEATURE_HANDLER {
     FEATURE_HANDLER_FONTS,
     /* The x64 Visual C++ runtime, taken out of Microsoft's redistributable into SysX64 for the x64 programs. */
     FEATURE_HANDLER_VCRUNTIME,
+    /* Microsoft's signed catalogs of the system packages, into CatRoot. Each is checked against the hash the list names. */
+    FEATURE_HANDLER_CATALOGS,
 } FEATURE_HANDLER;
 
 /* What the file that is fetched for a feature is, and so how it is checked and read. */
@@ -53,7 +55,7 @@ typedef enum FEATURE_FORMAT {
     FEATURE_FORMAT_WIM,      /* Streams of a Windows image read by range, found by their SHA-1. */
 } FEATURE_FORMAT;
 
-/* A font file of a feature of fonts. The name and the hashes are those of the real file of Microsoft. */
+/* A file a feature names by hash, a font or a catalog. The name and the hashes are those of the real file of Microsoft. */
 typedef struct FEATURE_FONT {
     const char *File;      /* The name in the fonts folder, and in the cabinet or the package that holds it. */
     const char *Member;    /* The path in a zip file, else null. */

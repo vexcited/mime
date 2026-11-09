@@ -7,7 +7,7 @@
 #include "featurep.h"
 #include <mime/win32/commctrl.h>
 
-#define TITLE L"Mime features"
+#define TITLE L"Windows features"
 #define ID_DOWNLOAD 101
 #define ID_SKIP 102
 #define PROGRESS_RANGE 1000
@@ -73,11 +73,11 @@ static BOOL ask(UI *ui)
         _snwprintf(instruction, RTL_NUMBER_OF(instruction), L"A program on your PC needs the following feature:");
     if (run->Feature->DownloadMB)
         _snwprintf(content, RTL_NUMBER_OF(content),
-                   L"%ls\n\nMime gets it from Microsoft, about %lu MB. Nothing is downloaded unless you agree.", feature,
+                   L"%ls\n\nWindows gets it from Microsoft, about %lu MB. Nothing is downloaded unless you agree.", feature,
                    run->Feature->DownloadMB);
     else
         _snwprintf(content, RTL_NUMBER_OF(content),
-                   L"%ls\n\nMime gets it from Microsoft. Nothing is downloaded unless you agree.", feature);
+                   L"%ls\n\nWindows gets it from Microsoft. Nothing is downloaded unless you agree.", feature);
     _snwprintf(download, RTL_NUMBER_OF(download), L"Download and install this feature\nThe program carries on when it is done.");
     if (run->Font[0]) {
         SIZE_T used = wcslen(content);

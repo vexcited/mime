@@ -23,7 +23,7 @@ void ErrorMessage(DWORD error, WCHAR *text, SIZE_T chars)
         own = L"There is not enough room on the drive for this feature.";
         break;
     case ERROR_ACCESS_DENIED:
-        own = L"Mime could not get the files, the server or a redirect was not accepted.";
+        own = L"Windows could not get the files, the server or a redirect was not accepted.";
         break;
     case FEATURE_ERROR_INSTALL_FAILURE:
         own = L"The installer did not put the feature on the drive.";
@@ -32,7 +32,7 @@ void ErrorMessage(DWORD error, WCHAR *text, SIZE_T chars)
     case ERROR_WINHTTP_NAME_NOT_RESOLVED:
     case ERROR_WINHTTP_CANNOT_CONNECT:
     case ERROR_WINHTTP_CONNECTION_ERROR:
-        own = L"Mime could not reach Microsoft. Check the network connection and try again.";
+        own = L"Windows could not reach Microsoft. Check the network connection and try again.";
         break;
     case 12175: /* ERROR_WINHTTP_SECURE_FAILURE */
         own = L"The connection to Microsoft is not secure, the certificate of the server was refused.";

@@ -126,7 +126,17 @@ void RunInit(RUN *run, const FEATURE_DEF *feature)
         wcscpy(run->Root, L"C:\\");
     }
     run->Root[3] = 0;
-    _snwprintf(run->Cache, RTL_NUMBER_OF(run->Cache), L"%ls" CACHE_FOLDER, run->Root);
+    /* the host share path the kernel records at boot; without one, the old folder below the drive. */
+    HKEY key;
+    DWORD type = 0, size = RTL_NUMBER_OF(run->Cache) * sizeof(WCHAR);
+    BOOL found = RegOpenKeyExW(HKEY_LOCAL_MACHINE, MIME_FEATURE_STATE_KEY, 0, KEY_READ, &key) == ERROR_SUCCESS &&
+                 RegQueryValueExW(key, L"Cache", nullptr, &type, (BYTE *)run->Cache, &size) == ERROR_SUCCESS &&
+                 type == REG_SZ && run->Cache[0];
+    if (found)
+        RegCloseKey(key);
+    else {
+        _snwprintf(run->Cache, RTL_NUMBER_OF(run->Cache), L"%ls" CACHE_FOLDER, run->Root);
+    }
     run->Cache[RTL_NUMBER_OF(run->Cache) - 1] = 0;
 }
 
@@ -212,9 +222,11 @@ static uint32_t ops_acquire(void *context, const FEATURE_DEF *feature, void **pa
     WidenName(feature->Name, name, RTL_NUMBER_OF(name));
     /* The folders below the drive, one level at a time. */
     WCHAR folder[MAX_PATH];
-    _snwprintf(folder, RTL_NUMBER_OF(folder), L"%ls" L"ProgramData\\Mime", run->Root);
+    _snwprintf(folder, RTL_NUMBER_OF(folder), L"%ls" L"ProgramData\\Microsoft\\Windows", run->Root);
     folder[RTL_NUMBER_OF(folder) - 1] = 0;
-    CreateDirectoryW(folder, nullptr);
+    /* the mime folder on the drive only exists when the cache falls back to it. */
+    if (!wcsncmp(run->Cache, run->Root, 3))
+        CreateDirectoryW(folder, nullptr);
     CreateDirectoryW(run->Cache, nullptr);
     PCWSTR extension = feature->Format == FEATURE_FORMAT_CABINET ? L"cab"
                        : feature->Format == FEATURE_FORMAT_PROGRAM ? L"exe" : L"pack";
