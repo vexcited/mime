@@ -1180,6 +1180,8 @@ WINCRYPT32API BOOL WINAPI CryptImportPublicKeyInfo(HCRYPTPROV hCryptProv, DWORD 
 WINCRYPT32API BOOL WINAPI CryptImportPublicKeyInfoEx(HCRYPTPROV hCryptProv, DWORD dwCertEncodingType,
                                                     PCERT_PUBLIC_KEY_INFO pInfo, ALG_ID aiKeyAlg, DWORD dwFlags,
                                                     void *pvAuxInfo, HCRYPTKEY *phKey);
+WINCRYPT32API BOOL WINAPI CryptImportPublicKeyInfoEx2(DWORD encoding, PCERT_PUBLIC_KEY_INFO info, DWORD flags, void *aux,
+                                                     PVOID *key);
 WINCRYPT32API PCCERT_CONTEXT WINAPI CertDuplicateCertificateContext(PCCERT_CONTEXT pCertContext);
 WINCRYPT32API BOOL WINAPI CertFreeCertificateContext(PCCERT_CONTEXT pCertContext);
 WINCRYPT32API BOOL WINAPI CertGetCertificateContextProperty(PCCERT_CONTEXT pCertContext, DWORD dwPropId, void *pvData,

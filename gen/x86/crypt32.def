@@ -106,6 +106,7 @@ EXPORTS
     CryptHashToBeSigned=_CryptHashToBeSigned@24
     CryptImportPublicKeyInfo=_CryptImportPublicKeyInfo@16
     CryptImportPublicKeyInfoEx=_CryptImportPublicKeyInfoEx@28
+    CryptImportPublicKeyInfoEx2=_CryptImportPublicKeyInfoEx2@20
     CryptInitOIDFunctionSet=_CryptInitOIDFunctionSet@8
     CryptInstallOIDFunctionAddress=_CryptInstallOIDFunctionAddress@24
     CryptMemAlloc=_CryptMemAlloc@4
