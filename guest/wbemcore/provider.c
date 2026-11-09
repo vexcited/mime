@@ -513,19 +513,47 @@ static WCHAR *driver_date(const WCHAR *text)
     return wb_format(L"%04d%02d%02d000000.000000+000", part[2], part[0], part[1]);
 }
 
+/* the pci device whose driver is the display class key's adapter, as the device tree names it. */
+static WCHAR *display_instance(void)
+{
+    HKEY pci;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Enum\\PCI", 0, KEY_READ, &pci))
+        return nullptr;
+    WCHAR *found = nullptr, hardware[200], instance[200], driver[128];
+    for (DWORD i = 0; !found; i++) {
+        DWORD length = RTL_NUMBER_OF(hardware);
+        if (RegEnumKeyExW(pci, i, hardware, &length, nullptr, nullptr, nullptr, nullptr))
+            break;
+        HKEY device;
+        if (RegOpenKeyExW(pci, hardware, 0, KEY_READ, &device))
+            continue;
+        for (DWORD j = 0; !found; j++) {
+            length = RTL_NUMBER_OF(instance);
+            if (RegEnumKeyExW(device, j, instance, &length, nullptr, nullptr, nullptr, nullptr))
+                break;
+            DWORD size = sizeof(driver);
+            if (!RegGetValueW(device, instance, L"Driver", RRF_RT_REG_SZ, nullptr, driver, &size) &&
+                !_wcsicmp(driver, L"{4d36e968-e325-11ce-bfc1-08002be10318}\\0000"))
+                found = wb_format(L"PCI\\%s\\%s", hardware, instance);
+        }
+        RegCloseKey(device);
+    }
+    RegCloseKey(pci);
+    return found;
+}
+
 static BOOL video_enum(WNs *ns, WObj *c, WEmit emit, void *context)
 {
     WCHAR *name = registry_text(HKEY_LOCAL_MACHINE, DISPLAY_CLASS_KEY, L"DriverDesc");
     if (!name)
         return TRUE;
     WCHAR *vendor = registry_text(HKEY_LOCAL_MACHINE, DISPLAY_CLASS_KEY, L"ProviderName");
-    WCHAR *hardware = registry_text(HKEY_LOCAL_MACHINE, DISPLAY_CLASS_KEY, L"MatchingDeviceId");
     WCHAR *version = registry_text(HKEY_LOCAL_MACHINE, DISPLAY_CLASS_KEY, L"DriverVersion");
     WCHAR *date_text = registry_text(HKEY_LOCAL_MACHINE, DISPLAY_CLASS_KEY, L"DriverDate");
     WCHAR *date = driver_date(date_text);
     WCHAR *inf = registry_text(HKEY_LOCAL_MACHINE, DISPLAY_CLASS_KEY, L"InfPath");
     WCHAR *section = registry_text(HKEY_LOCAL_MACHINE, DISPLAY_CLASS_KEY, L"InfSection");
-    WCHAR *pnp = hardware ? wb_format(L"%s\\3&11583659&0&10", hardware) : nullptr;
+    WCHAR *pnp = display_instance();
     WCHAR *description = nullptr;
     WObj *o = wo_spawn(c);
     put_str(o, L"DeviceID", L"VideoController1");
@@ -573,7 +601,6 @@ static BOOL video_enum(WNs *ns, WObj *c, WEmit emit, void *context)
     wo_free(o);
     wb_free(name);
     wb_free(vendor);
-    wb_free(hardware);
     wb_free(version);
     wb_free(date_text);
     wb_free(date);
