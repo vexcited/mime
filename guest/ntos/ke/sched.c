@@ -173,22 +173,27 @@ void KiInterruptThread(PKTHREAD thread)
 }
 
 /*
- * the processor that should run a thread just made ready: an idle one,
- * this one or the one it last ran on first, else the one running the
- * lowest priority below the thread's. none leaves it queued.
+ * the processor that should run a thread just made ready: an idle one first, else the one running the lowest
+ * priority below the thread's. none leaves it queued.
+ *
+ * among the idle ones this processor comes first, which needs no waking, then those still watching their flags,
+ * see KiIdleWait, which need no interrupt, then the halted ones. the processor the thread last ran on wins a tie.
  */
 static PKPRCB pick_processor(PKTHREAD thread)
 {
     PKPRCB self = KeGetCurrentPrcb(), idle = nullptr, low = nullptr;
-    int low_prio = thread->Priority;
+    int low_prio = thread->Priority, best = 0;
     for (ULONG i = 0; i < KeNumberProcessors; i++) {
         PKPRCB p = KiProcessorBlock[i];
         if (!p || p->DispatchPending)
             continue;
         PKTHREAD cur = p->CurrentThread;
         if (cur == p->IdleThread) {
-            if (!idle || p == self || (i == thread->Processor && idle != self))
+            int rank = p == self ? 4 : (p->IdleState == KI_IDLE_POLLING ? 2 : 0) + (i == thread->Processor);
+            if (!idle || rank > best) {
                 idle = p;
+                best = rank;
+            }
         } else if (cur->Priority < low_prio || (cur->Priority == low_prio && low && p == self)) {
             low = p;
             low_prio = cur->Priority;

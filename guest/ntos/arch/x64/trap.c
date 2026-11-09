@@ -268,6 +268,8 @@ static void interrupt(PKTRAP_FRAME frame)
     pcr->Irql = CLOCK_LEVEL;
     prcb->InterruptCount++;
     ULONG64 start = HalReadCounter();
+    if (prcb->HaltedSince)
+        KiIdleHaltEnded(prcb, start, frame->Vector == KI_VECTOR_IPI);
 
     switch (frame->Vector) {
     case KI_VECTOR_CLOCK:
