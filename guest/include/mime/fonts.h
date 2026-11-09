@@ -1,14 +1,11 @@
 /*
- * fonts. Windows always has its fonts, a machine of Mime may have none of them: they are an optional download. The
- * open font that ships in the ROM stands in when a requested face is missing, under its own name.
+ * fonts. Windows always has its fonts, a machine of Mime may have none of them: they are an optional download, and a
+ * program that asks for one that is missing gets it or is ended.
  */
 #ifndef MIME_FONTS_H
 #define MIME_FONTS_H
 
 #include <stddef.h>
-
-/* The family of the open font in the ROM, as the font lookups of GDI, GDI+ and DirectWrite end up with it. */
-#define MIME_FALLBACK_FONT L"Noto Sans"
 
 /*
  * The FontSubstitutes of Windows, with the bitmap faces that are mapped to outline ones: a request for the first name

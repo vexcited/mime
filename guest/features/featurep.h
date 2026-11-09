@@ -65,6 +65,8 @@ typedef struct RUN {
     FEATURE_OPS Ops;
     uint32_t EnableFlags;
     BOOL Remove;              /* The work is turning the feature off. */
+    WCHAR Font[64];           /* The family a program asked for, it is ended without it. */
+    BOOL Told;                /* The user saw that the program is ended. */
 } RUN;
 
 /* platform.c */

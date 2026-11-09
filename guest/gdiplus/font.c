@@ -456,7 +456,7 @@ static GFamily *first_installed_family(void)
 
 static GFamily *generic_family(const void *kind)
 {
-    static const WCHAR *const sans[] = {L"Microsoft Sans Serif", L"Arial", L"Tahoma", MIME_FALLBACK_FONT, nullptr};
+    static const WCHAR *const sans[] = {L"Microsoft Sans Serif", L"Arial", L"Tahoma", nullptr};
     static const WCHAR *const serif[] = {L"Times New Roman", nullptr};
     static const WCHAR *const mono[] = {L"Courier New", L"Lucida Console", nullptr};
     const WCHAR *const *names = kind == GP_FAMILY_SANS_SERIF ? sans : (kind == GP_FAMILY_SERIF ? serif : mono);
@@ -1037,7 +1037,7 @@ GpStatus gp_face_outline(const GFace *face, UINT16 glyph, MimeVecPath *path, flo
 static const WCHAR *const g_fallback_names[] = {
     L"Segoe UI",        L"Microsoft YaHei", L"Microsoft JhengHei", L"Yu Gothic",   L"Malgun Gothic", L"MS Gothic",
     L"Segoe UI Symbol", L"Segoe UI Emoji",  L"Nirmala UI",         L"Leelawadee UI", L"Ebrima",       L"Gadugi",
-    L"Sylfaen",         L"Cambria Math",    L"Arial Unicode MS",   L"Arial",         MIME_FALLBACK_FONT,
+    L"Sylfaen",         L"Cambria Math",    L"Arial Unicode MS",   L"Arial",
 };
 enum { FALLBACK_COUNT = sizeof(g_fallback_names) / sizeof(g_fallback_names[0]) };
 
