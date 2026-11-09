@@ -1200,7 +1200,7 @@ BOOL NTAPI NtUserTranslateMessage(const MSG *user_msg, UINT flags)
     if (!NT_SUCCESS(MimeCopyFromUser(&m, user_msg, sizeof(m))))
         return FALSE;
     (void)flags;
-    return m.message == WM_KEYDOWN || m.message == WM_SYSKEYDOWN;
+    return m.message == WM_KEYDOWN || m.message == WM_KEYUP || m.message == WM_SYSKEYDOWN || m.message == WM_SYSKEYUP;
 }
 
 BOOL NTAPI NtUserGetMessagePos(void)
