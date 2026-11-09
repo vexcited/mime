@@ -3,6 +3,7 @@
  * made with the first factory and lives as long as the process.
  */
 #include "dxgi_private.h"
+#include <mime/gpu_identity.h>
 
 int _fltused = 0x9875;
 
@@ -13,8 +14,8 @@ BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved) { return TRU
 
 /*
  * the user mode driver version as windows numbers it, read by programs through CheckInterfaceSupport. on x64 the
- * host gpu's package is told as windows tells one, nvidia's in the last digit of the major and the minor, so 580.95
- * is 32.0.15.8095. the arm64 machine's adreno package is 31.0.63.7, which its translated programs see too.
+ * host gpu's package is told as windows tells one, the same number as the display key's DriverVersion. the arm64
+ * machine's adreno package is 31.0.63.7, which its translated programs see too.
  */
 static LARGE_INTEGER umd_version(const VkPhysicalDeviceProperties *p)
 {
@@ -24,18 +25,10 @@ static LARGE_INTEGER umd_version(const VkPhysicalDeviceProperties *p)
     if (MimeArm64Machine())
         return v;
 #if !defined(__aarch64__)
-    UINT a = 31, b = 0, c, d;
-    if (p->vendorID == 0x10DE) {
-        UINT n = (p->driverVersion >> 22) * 100 + ((p->driverVersion >> 14) & 0xFF);
-        a = 32;
-        c = 10 + n / 10000;
-        d = n % 10000;
-    } else {
-        c = VK_API_VERSION_MAJOR(p->driverVersion) * 100 + VK_API_VERSION_MINOR(p->driverVersion);
-        d = VK_API_VERSION_PATCH(p->driverVersion);
-    }
-    v.HighPart = (a << 16) | b;
-    v.LowPart = (c << 16) | (d & 0xFFFF);
+    USHORT parts[4];
+    MimeGpuDriverVersion(p->vendorID, p->driverVersion, parts);
+    v.HighPart = (parts[0] << 16) | parts[1];
+    v.LowPart = (parts[2] << 16) | parts[3];
 #endif
     return v;
 }
@@ -56,8 +49,7 @@ static void identify(const VkPhysicalDeviceProperties *p, DXGI_ADAPTER_DESC3 *de
         desc->Revision = 0x0086;
         return;
     }
-    MultiByteToWideChar(CP_UTF8, 0, p->deviceName, -1, desc->Description, 128);
-    desc->Description[127] = 0;
+    MimeGpuName(p->deviceName, desc->Description, RTL_NUMBER_OF(desc->Description));
     desc->VendorId = p->vendorID;
     desc->DeviceId = p->deviceID;
     desc->Revision = 0;
