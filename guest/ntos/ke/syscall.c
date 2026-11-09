@@ -117,7 +117,30 @@ char KiTraceSyscallImage[16];
 /* the service whose callers are walked too, from the kernel option trace-stack=<service name>. */
 char KiTraceStackService[40];
 /* a part of a service name the traced calls must have, from the kernel option trace-filter=<text>. */
-char KiTraceFilter[40];
+char KiTraceFilter[256];
+
+/* whether the filter lets a service's calls be logged: a part of its name, or !a,b,c for the names it leaves out. */
+static BOOLEAN trace_filtered(const char *name)
+{
+    if (!KiTraceFilter[0])
+        return TRUE;
+    if (KiTraceFilter[0] != '!')
+        return strstr(name, KiTraceFilter) != nullptr;
+    char part[40];
+    for (const char *at = KiTraceFilter + 1; *at;) {
+        ULONG n = 0;
+        while (at[n] && at[n] != ',' && n + 1 < sizeof(part))
+            n++;
+        memcpy(part, at, n);
+        part[n] = 0;
+        if (n && strstr(name, part))
+            return FALSE;
+        at += n;
+        if (*at == ',')
+            at++;
+    }
+    return TRUE;
+}
 
 /*
  * the kernel option svc-timeline=<image name> records every system call of that image's processes with when it
@@ -328,7 +351,7 @@ void KiSystemService(PKTRAP_FRAME frame)
             stack = 16 - KI_SERVICE_REGISTER_ARGS;
         BOOLEAN trace = KiTraceSyscallImage[0] &&
                         (KiTraceSyscallImage[0] == '*' || !strcmp(PsCurrentProcess()->ImageFileName, KiTraceSyscallImage)) &&
-                        (!KiTraceFilter[0] || strstr(service_name(table, index), KiTraceFilter));
+                        trace_filtered(service_name(table, index));
         BOOLEAN copied = !stack || NT_SUCCESS(KiCopyFromUser(&args[KI_SERVICE_REGISTER_ARGS],
                                                              (PVOID)KI_SERVICE_STACK_ARGS(frame),
                                                              stack * sizeof(ULONG64)));
