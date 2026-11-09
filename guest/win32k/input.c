@@ -208,6 +208,12 @@ static void update_async_keys(const MimeInputEvent *ev)
         if (ev->vk < 256)
             InputAsyncKeys[ev->vk] = ev->type == MIME_INPUT_KEY_DOWN ? 0x80 : 0;
         break;
+    case MIME_INPUT_MOUSE_MOVE:
+    case MIME_INPUT_MOUSE_WHEEL:
+        break;
+    default:
+        /* characters and window events carry no modifiers, and a held shift stays held through them. */
+        return;
     }
     sync_async_sides((ev->modifiers & MIME_MOD_SHIFT) != 0, VK_LSHIFT, VK_RSHIFT, VK_SHIFT);
     sync_async_sides((ev->modifiers & MIME_MOD_CONTROL) != 0, VK_LCONTROL, VK_RCONTROL, VK_CONTROL);
