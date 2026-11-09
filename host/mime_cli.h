@@ -3,7 +3,6 @@
 
 #include "mime_host.h"
 
-int mime_cmd_locale(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_up(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_run(const MimePaths *paths, int argc, char **argv);
 int mime_cmd_down(const MimePaths *paths, int argc, char **argv);
