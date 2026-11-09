@@ -7,6 +7,8 @@
  * context stays whole whatever the kernel did since, and ends with the
  * hardware frame, so its top is the stack top of an entry.
  */
+#define KTRAP_PHYSMAP 0xFFFF800000000000ull
+
 #define KTRAP_XMM0 0x000
 #define KTRAP_RAX 0x100
 #define KTRAP_RCX 0x108

@@ -386,6 +386,34 @@ KiTrapCommon:
     SAVE_XMM
     movq    %cr2, %rax
     movq    %rax, KTRAP_CR2(%rsp)
+    /* keep the exception in the boot trace page; a triple fault then names it. */
+    movq    HalExceptionTracePa(%rip), %r10
+    testq   %r10, %r10
+    jz      9f
+    movl    %gs:KPCR_NUMBER, %eax
+    shll    $8, %eax
+    addq    %rax, %r10
+    movabsq $KTRAP_PHYSMAP, %rax
+    addq    %rax, %r10
+    movzbl  0(%r10), %eax
+    movl    %eax, %r11d
+    andl    $3, %r11d
+    imull   $56, %r11d
+    leaq    8(%r10,%r11), %r11
+    movq    KTRAP_VECTOR(%rsp), %rax
+    movq    %rax, 0(%r11)
+    movq    KTRAP_RIP(%rsp), %rax
+    movq    %rax, 8(%r11)
+    movq    KTRAP_RSP(%rsp), %rax
+    movq    %rax, 16(%r11)
+    movq    KTRAP_CR2(%rsp), %rax
+    movq    %rax, 24(%r11)
+    movq    KTRAP_ERROR(%rsp), %rax
+    movq    %rax, 32(%r11)
+    movzbl  0(%r10), %eax
+    incl    %eax
+    movb    %al, 0(%r10)
+9:
     movq    %rsp, %rbx
     subq    $0x20, %rsp
     testb   $RPL_USER, KTRAP_CS(%rbx)

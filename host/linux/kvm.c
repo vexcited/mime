@@ -28,6 +28,11 @@
 #include <x86intrin.h>
 
 #define KICK_SIGNAL SIGUSR2
+
+/* newer kvm reports a triple fault before the processor state is reset. */
+#ifndef KVM_EXIT_TRIPLE_FAULT
+#define KVM_EXIT_TRIPLE_FAULT 18
+#endif
 #define IRQ_GSI 24 /* past the routes KVM keeps for a userspace ioapic, which mime has none of. */
 #define MSR_IA32_TSC 0x10
 
@@ -413,6 +418,10 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
         mime_error("kvm cannot keep the local apics in the kernel: %s", strerror(errno));
         return false;
     }
+    struct kvm_enable_cap triple = {.cap = KVM_CAP_X86_TRIPLE_FAULT_EVENT};
+    int triple_event = ioctl(vm->vm_fd, KVM_ENABLE_CAP, &triple) == 0;
+    if (!triple_event)
+        mime_error("kvm cannot report the state of a triple fault: %s", strerror(errno));
     if (!load_cpuid(vm))
         return false;
     if (!cpuid_has(0x80000001, 3, 26)) {
@@ -638,7 +647,12 @@ static bool handle_io(MimeVcpu *vcpu)
     uint64_t regs[8] = {r->rax, r->rdi, r->rsi, r->rdx, r->r10, r->r8, r->r9, 0};
     vcpu->exits_hvc[regs[0] & 63]++;
     uint64_t number = regs[0] & 255, started = __rdtsc();
+    uint64_t wait_rip = r->rip, wait_rsp = r->rsp;
     mime_hcall_dispatch(vcpu, regs);
+    if (number == 0xa) {
+        vcpu->wait_rip = wait_rip;
+        vcpu->wait_rsp = wait_rsp;
+    }
     vcpu->hvc_calls[number]++;
     vcpu->hvc_ticks[number] += __rdtsc() - started;
     r->rax = regs[0];
@@ -666,7 +680,7 @@ static void *vcpu_main(void *arg)
         mime_vm_request_stop(vm, 1);
         return nullptr;
     }
-    vcpu->run->kvm_valid_regs = KVM_SYNC_X86_REGS;
+    vcpu->run->kvm_valid_regs = KVM_SYNC_X86_REGS | KVM_SYNC_X86_SREGS;
     /* KVM holds processors other than the first for an init and startup ipi pair; the guest starts them by hypercall. */
     struct kvm_mp_state runnable = {KVM_MP_STATE_RUNNABLE};
     if (ioctl(vcpu->fd, KVM_SET_MP_STATE, &runnable) != 0)
@@ -694,7 +708,11 @@ static void *vcpu_main(void *arg)
     else
         set_entry_regs(vcpu, vcpu->start_pc, vcpu->start_x0, vcpu->start_sp);
 
+    struct kvm_regs previous = vcpu->run->s.regs.regs;
+    struct kvm_sregs previous_sregs = vcpu->run->s.regs.sregs;
     while (!vm->stopping) {
+        previous = vcpu->run->s.regs.regs;
+        previous_sregs = vcpu->run->s.regs.sregs;
         int r = ioctl(vcpu->fd, KVM_RUN, 0);
         vcpu->exits_total++;
         if (r != 0) {
@@ -759,11 +777,27 @@ static void *vcpu_main(void *arg)
             mime_daemon_guest_halted(vm, 3);
             mime_vm_request_stop(vm, 3);
             break;
-        case KVM_EXIT_SHUTDOWN:
+        case KVM_EXIT_TRIPLE_FAULT:
+        case KVM_EXIT_SHUTDOWN: {
+            uint8_t *xtrace = vm->ram + 0x2000 + (size_t)vcpu->index * 256;
             dump_state(vcpu, "guest triple fault");
+            mime_error("  before the reset: rip %#llx rsp %#llx cr2 %#llx cr3 %#llx",
+                       (unsigned long long)previous.rip, (unsigned long long)previous.rsp,
+                       (unsigned long long)previous_sregs.cr2, (unsigned long long)previous_sregs.cr3);
+            mime_error("  last lock wait: rip %#llx rsp %#llx", (unsigned long long)vcpu->wait_rip,
+                       (unsigned long long)vcpu->wait_rsp);
+            for (int slot = 0; slot < 4; slot++) {
+                uint64_t *e = (uint64_t *)(xtrace + 8 + slot * 56);
+                if (!e[0] && !e[1])
+                    continue;
+                mime_error("  exception %d: vector %llu rip %#llx rsp %#llx cr2 %#llx err %#llx", slot,
+                           (unsigned long long)e[0], (unsigned long long)e[1], (unsigned long long)e[2],
+                           (unsigned long long)e[3], (unsigned long long)e[4]);
+            }
             mime_daemon_guest_halted(vm, 3);
             mime_vm_request_stop(vm, 3);
             break;
+        }
         case KVM_EXIT_FAIL_ENTRY:
             mime_error("vcpu %u entry failed, reason %#llx", vcpu->index,
                        (unsigned long long)vcpu->run->fail_entry.hardware_entry_failure_reason);

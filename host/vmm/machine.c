@@ -99,6 +99,8 @@ void mime_vm_init_boot(MimeVm *vm)
     boot->shared_phys = MIME_RAM_BASE + MIME_LAYOUT_SHARED;
     boot->boot_stack_phys = MIME_RAM_BASE + MIME_LAYOUT_BOOT_STACK;
     boot->boot_stack_size = MIME_LAYOUT_BOOT_STACK_SIZE;
+    boot->exception_trace_phys = MIME_RAM_BASE + 0x2000;
+    memset(vm->ram + 0x2000, 0, 0x4000);
     boot->cpu_count = vm->vcpu_count;
     boot->rom_phys = MIME_ROM_BASE;
     boot->rom_size = mime_rom_size();
