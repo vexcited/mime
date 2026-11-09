@@ -414,8 +414,11 @@ void KiSwapThread(void)
     next->ContextSwitches++;
     /* a busy processor ticks for its quanta, an idle one sleeps until its next timer. */
     if ((old == prcb->IdleThread) != (next == prcb->IdleThread)) {
-        if (old == prcb->IdleThread)
+        if (old == prcb->IdleThread) {
             prcb->TickTime = KiQueryInterruptTime();
+            /* an idle wait left in an interrupt: the processor no longer watches its flags, see KiRequestDispatch. */
+            prcb->IdleState = KI_IDLE_RUNNING;
+        }
         KiProgramNextTimer();
     }
     if (next->ApcStateProcess != old->ApcStateProcess && next->ApcStateProcess->DirectoryTableBase)
