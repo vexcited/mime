@@ -202,7 +202,12 @@ void D12EndQuery(D12CommandList *list, D12QueryHeap *heap, D3D12_QUERY_TYPE type
         vk->vkCmdEndQuery(list->cmd, pool, index);
 }
 
-/* copies results in Direct3D's layout, waiting for them, then resets the queries for reuse. */
+/*
+ * copies results in Direct3D's layout, then resets the queries for reuse. Direct3D lets a program resolve queries it
+ * never ended, or resolved already, and gets whatever is there. a vulkan copy that waits for those would wait for
+ * good, so the copy does not wait: the barrier before it makes every query ended earlier on the queue available, and
+ * the others leave their place in the buffer as it was.
+ */
 void D12ResolveQueries(D12CommandList *list, D12QueryHeap *heap, D3D12_QUERY_TYPE type, UINT start, UINT count,
                        D12Resource *dst, UINT64 offset)
 {
@@ -219,7 +224,7 @@ void D12ResolveQueries(D12CommandList *list, D12QueryHeap *heap, D3D12_QUERY_TYP
         stride = sizeof(D3D12_QUERY_DATA_SO_STATISTICS);
     D12Barrier(device, list->cmd);
     vk->vkCmdCopyQueryPoolResults(list->cmd, pool, start, count, dst->buffer, dst->offset + offset, stride,
-                                  VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+                                  VK_QUERY_RESULT_64_BIT);
     vk->vkCmdResetQueryPool(list->cmd, pool, start, count);
     /* binary occlusion should give 0 or 1, but nonzero counts are not clamped to 1. */
 }

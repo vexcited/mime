@@ -29,15 +29,9 @@ HRESULT D12ChildGetDevice(D12Child *child, REFIID riid, void **out)
     return child->device->iface.lpVtbl->QueryInterface(&child->device->iface, riid, out);
 }
 
-/*
- * Direct3D 12 programs keep what the gpu uses alive until it is done, and mime's vulkan-1 destroys an object
- * only after the commands recorded before, so released objects can go at once.
- */
-void D12Defer(D12Device *device, VkObjectType type, UINT64 handle)
+static void destroy_object(D12Device *device, VkObjectType type, UINT64 handle)
 {
     D12Vk *vk = &device->vk;
-    if (!handle)
-        return;
     switch (type) {
     case VK_OBJECT_TYPE_IMAGE:
         vk->vkDestroyImage(vk->device, (VkImage)handle, nullptr);
@@ -77,6 +71,47 @@ void D12Defer(D12Device *device, VkObjectType type, UINT64 handle)
     }
 }
 
+/*
+ * Direct3D 12 programs keep what their own work uses alive until it is done, so released objects can go at once,
+ * but for the device's own commands: a texture made and released at once is named in those, so what is released
+ * while they record waits until they ran.
+ */
+void D12Defer(D12Device *device, VkObjectType type, UINT64 handle)
+{
+    if (!handle)
+        return;
+    EnterCriticalSection(&device->init_lock);
+    if (device->init_recording) {
+        if (device->garbage_count == device->garbage_capacity) {
+            UINT capacity = device->garbage_capacity ? device->garbage_capacity * 2 : 64;
+            D12Garbage *grown = device->garbage
+                                    ? HeapReAlloc(GetProcessHeap(), 0, device->garbage, capacity * sizeof(*grown))
+                                    : HeapAlloc(GetProcessHeap(), 0, capacity * sizeof(*grown));
+            if (grown) {
+                device->garbage = grown;
+                device->garbage_capacity = capacity;
+            }
+        }
+        if (device->garbage_count < device->garbage_capacity) {
+            device->garbage[device->garbage_count++] = (D12Garbage){handle, type};
+            LeaveCriticalSection(&device->init_lock);
+            return;
+        }
+        /* with no room to keep it, the batch goes first. */
+        D12Log("d3d12: no room to keep a released object until the device's commands run");
+    }
+    LeaveCriticalSection(&device->init_lock);
+    destroy_object(device, type, handle);
+}
+
+static void destroy_garbage(D12Device *device, D12Garbage *garbage, UINT count)
+{
+    for (UINT i = 0; i < count; i++)
+        destroy_object(device, garbage[i].type, garbage[i].handle);
+    if (garbage)
+        HeapFree(GetProcessHeap(), 0, garbage);
+}
+
 /* ------------------------------------------------------------------ the device's own commands */
 
 /*
@@ -95,6 +130,9 @@ VkCommandBuffer D12InitCommands(D12Device *device)
             wait.pSemaphores = &device->init_timeline;
             wait.pValues = &device->init_serial;
             vk->vkWaitSemaphores(vk->device, &wait, UINT64_MAX);
+            destroy_garbage(device, device->retired, device->retired_count);
+            device->retired = nullptr;
+            device->retired_count = 0;
         } else {
             VkCommandBufferAllocateInfo alloc = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
             alloc.commandPool = device->init_pool;
@@ -119,6 +157,11 @@ VkCommandBuffer D12TakeInitCommands(D12Device *device, UINT64 *serial)
     EnterCriticalSection(&device->init_lock);
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     if (device->init_recording) {
+        /* a batch records only once the one before ran, which freed what that one kept. */
+        device->retired = device->garbage;
+        device->retired_count = device->garbage_count;
+        device->garbage = nullptr;
+        device->garbage_count = device->garbage_capacity = 0;
         D12Barrier(device, device->init_cmd);
         device->vk.vkEndCommandBuffer(device->init_cmd);
         device->init_recording = FALSE;
@@ -301,6 +344,8 @@ static void destroy_device(D12Device *device)
     D12FenceWaiterStop(device);
     if (vk->device) {
         vk->vkDeviceWaitIdle(vk->device);
+        destroy_garbage(device, device->retired, device->retired_count);
+        destroy_garbage(device, device->garbage, device->garbage_count);
         D12AccelerationStructuresDestroy(device);
         D12RaysDestroy(device);
         D12DescriptorsDestroy(device);
