@@ -15,7 +15,7 @@
 
 #include <stdint.h>
 
-#define MIME_ABI_VERSION 4
+#define MIME_ABI_VERSION 5
 
 /* guest physical layout. */
 #ifdef __x86_64__
@@ -306,6 +306,19 @@ typedef struct MimeKeyboardLayout {
     uint16_t chars[MIME_KEYBOARD_KEYS][3]; /* unshifted, shifted and with AltGr, 0 for none. */
 } MimeKeyboardLayout;
 
+/* a gpu of the host: what vulkan calls it and what its pci configuration space holds. */
+#define MIME_BOOT_GPUS 4
+typedef struct MimeBootGpu {
+    char name[128];          /* vulkan's device name. */
+    uint32_t vendor, device;
+    uint32_t subsystem;      /* the subsystem device in the high half and its vendor in the low one, windows' SUBSYS_. */
+    uint32_t revision;
+    uint32_t driver_version; /* vulkan's. */
+    uint32_t integrated;
+    uint32_t bus, slot;      /* where it sits: the bus, and the device << 3 | the function. */
+    uint64_t memory;         /* what dxgi tells as its dedicated memory. */
+} MimeBootGpu;
+
 typedef struct MimeBootInfo {
     uint64_t magic;
     uint32_t version;
@@ -400,6 +413,10 @@ typedef struct MimeBootInfo {
     uint16_t oem_code_page;
     char locale_name[32];
     MimeKeyboardLayout keyboard;
+    /* the host's gpus in the order dxgi lists them, which the display key and the device tree name. */
+    uint32_t gpu_count;
+    uint32_t pad3;
+    MimeBootGpu gpus[MIME_BOOT_GPUS];
 } MimeBootInfo;
 
 /*

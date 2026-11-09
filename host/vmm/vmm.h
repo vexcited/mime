@@ -208,6 +208,8 @@ void mime_vm_init_boot(MimeVm *vm);
 
 /* vm.c on macOS, linux/kvm.c on linux. */
 void mime_host_volume_label(char *out, size_t size);
+/* linux/pci.c fills in what the pci configuration space holds of each gpu, vm.c has no pci to read. */
+void mime_host_gpu_pci(MimeBootGpu *gpus, uint32_t count);
 /* sleeps while the guest word at host address word holds value, at most timeout_ns; wakes every sleeper. */
 void mime_host_wait_word(uint32_t *word, uint32_t value, uint64_t timeout_ns);
 void mime_host_wake_word(uint32_t *word);
