@@ -93,18 +93,15 @@ function(mime_resource name arch)
     endif()
     set(base ${MIME_BUILD_GEN}/res/${MIME_MACHINE_${arch}}/${name})
     set(inputs ${version} ${ARGN})
-    # the files a script includes, such as the type libraries of the shell dlls and the icons of the resource scripts
-    # in gen/resources.
+    # the files a script includes, such as the type libraries of the shell dlls, and the icons, cursors and message
+    # tables the build makes, see cmake/assets.cmake.
     file(GLOB includes CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/guest/*/*.tlb)
-    if(inputs MATCHES "gen/resources/")
-        file(GLOB_RECURSE assets CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/gen/resources/*.ico
-            ${CMAKE_SOURCE_DIR}/gen/resources/*.cur ${CMAKE_SOURCE_DIR}/gen/resources/*.ani
-            ${CMAKE_SOURCE_DIR}/gen/resources/*.bmp ${CMAKE_SOURCE_DIR}/gen/resources/*.bin)
-        list(APPEND includes ${assets})
-    endif()
+    mime_script_assets(assets ${inputs})
+    list(APPEND includes ${assets})
     add_custom_command(OUTPUT ${base}.res
         COMMAND ${CMAKE_COMMAND} -E make_directory ${MIME_BUILD_GEN}/res/${MIME_MACHINE_${arch}}
-        COMMAND ${CMAKE_COMMAND} -DOUTPUT=${base}.rc "-DINPUTS=${inputs}" -DROOT=${CMAKE_SOURCE_DIR} -P ${CMAKE_SOURCE_DIR}/cmake/concat.cmake
+        COMMAND ${CMAKE_COMMAND} -DOUTPUT=${base}.rc "-DINPUTS=${inputs}" -DROOT=${CMAKE_SOURCE_DIR} -DASSETS=${MIME_ASSETS}
+            -P ${CMAKE_SOURCE_DIR}/cmake/concat.cmake
         COMMAND ${MIME_LLVM_RC} -no-preprocess -c 1252 -fo ${base}.res -- ${base}.rc
         DEPENDS ${inputs} ${includes} cmake/concat.cmake VERBATIM)
 endfunction()
