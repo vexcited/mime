@@ -1010,13 +1010,11 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
         return copy_info(info, state, length < sizeof(state) ? length : sizeof(state), length, returned);
     }
     case SystemHypervisorInformation: {
-        /* the root partition answers both: it is connected to, and runs under, its hypervisor. */
+        /* a physical machine answers, with nothing present; a root partition is connected to its hypervisor. */
         ULONG leaves[1][4];
-        if (!KiQueryHypervisorLeaves(leaves, 1))
-            return STATUS_NOT_SUPPORTED;
         SYSTEM_HYPERVISOR_QUERY_INFORMATION hypervisor = {};
-        hypervisor.HypervisorConnected = TRUE;
-        hypervisor.HypervisorPresent = TRUE;
+        if (KiQueryHypervisorLeaves(leaves, 1))
+            hypervisor.HypervisorConnected = hypervisor.HypervisorPresent = TRUE;
         return copy_info(info, &hypervisor, sizeof(hypervisor), length, returned);
     }
     case SystemHypervisorDetailInformation: {
@@ -1025,9 +1023,9 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
          * version, features, hardware features, enlightenments, limits. without
          * microsoft's hypervisor windows reports none.
          */
-        ULONG leaves[7][4], out[7][4];
+        ULONG leaves[7][4] = {}, out[7][4] = {};
         if (!KiQueryHypervisorLeaves(leaves, 7))
-            return STATUS_NOT_SUPPORTED;
+            return copy_info(info, out, sizeof(out), length, returned);
         static const UCHAR order[7] = {0, 1, 2, 3, 6, 4, 5};
         for (ULONG i = 0; i < 7; i++)
             memcpy(out[i], leaves[order[i]], sizeof(out[i]));

@@ -238,9 +238,12 @@ static void spoof_model(struct kvm_cpuid2 *cpuid)
             memcpy(&e->ecx, profile->cpu_vendor + 8, 4);
             break;
         case 1:
-            e->eax = (profile->cpu_family << 8) | (profile->cpu_model << 4) | profile->cpu_stepping;
+            /* the low model nibble sits in bits 4-7, the high one in the extended model bits 16-19. */
+            e->eax = ((profile->cpu_family & 0xF) << 8) | ((profile->cpu_model & 0xF) << 4) | profile->cpu_stepping;
             if (profile->cpu_family >= 0xF)
-                e->eax |= ((profile->cpu_family - 0xF) << 20) | ((profile->cpu_model >> 4) << 16);
+                e->eax |= (profile->cpu_family - 0xF) << 20;
+            if (profile->cpu_family == 6 || profile->cpu_family == 0xF)
+                e->eax |= (profile->cpu_model >> 4) << 16;
             break;
         case 7:
             if (e->index == 0) {
@@ -273,6 +276,9 @@ static void spoof_model(struct kvm_cpuid2 *cpuid)
  * exposes the host CPU features KVM supports, including x2APIC and TSC deadline timers. advertises Hyper-V when
  * supported, otherwise no hypervisor.
  */
+/* a physical machine has no hypervisor: its leaf 1 bit 31 is clear and the 0x40000000 leaves are absent. */
+static bool g_expose_hypervisor;
+
 static bool load_cpuid(MimeVm *vm)
 {
     int n = 256;
@@ -289,24 +295,36 @@ static bool load_cpuid(MimeVm *vm)
         }
         n *= 2;
     }
+    const MimeHardwareProfile *model = mime_hardware_profile();
+    bool intel = !model || !model->cpu_vendor || !strcmp(model->cpu_vendor, "GenuineIntel");
     uint32_t out = 0;
     for (uint32_t i = 0; i < g_cpuid->nent; i++) {
         struct kvm_cpuid_entry2 *e = &g_cpuid->entries[i];
         if (e->function >= 0x40000000 && e->function < 0x40010000)
             continue;
+        /* an intel processor has no amd-only leaves, bits or svm. */
+        if (intel && (e->function == 0x8000000A || (e->function >= 0x8000001E && e->function <= 0x80000022)))
+            continue;
+        if (intel && e->function == 0x80000000)
+            e->eax = 0x80000008;
         if (e->function == 1)
             e->ecx |= (1u << 21) | (1u << 24); /* x2apic, TSC deadline. */
+        if (intel && e->function == 0x80000001) {
+            e->ecx &= ~((1u << 2) | (1u << 6) | (1u << 7) | (1u << 8) | (1u << 22)); /* svm, sse4a, misalignsse, 3dnowprefetch, topology extensions. */
+            e->edx &= ~((1u << 22) | (1u << 30) | (1u << 31));                      /* mmxext, 3dnowext, 3dnow. */
+        }
         g_cpuid->entries[out++] = *e;
     }
-    uint32_t hv = add_hyperv_leaves(vm, g_cpuid->entries + out, (uint32_t)n - out);
+    g_expose_hypervisor = getenv("MIME_EXPOSE_HYPERVISOR") != nullptr;
+    uint32_t hv = g_expose_hypervisor ? add_hyperv_leaves(vm, g_cpuid->entries + out, (uint32_t)n - out) : 0;
     for (uint32_t i = 0; i < out; i++) {
         struct kvm_cpuid_entry2 *e = &g_cpuid->entries[i];
         if (e->function == 1)
-            e->ecx = hv ? e->ecx | (1u << 31) : e->ecx & ~(1u << 31);
+            e->ecx = (hv ? e->ecx | (1u << 31) : e->ecx & ~(1u << 31));
     }
     g_cpuid->nent = out + hv;
     spoof_model(g_cpuid);
-    mime_info("processor: %s hypervisor", hv ? "microsoft's" : "no");
+    mime_info("processor: %s hypervisor", hv ? "microsoft's" : "hidden");
     return true;
 }
 
