@@ -430,29 +430,6 @@ static BOOLEAN has_suffix(PCWSTR name, ULONG chars, PCWSTR suffix)
     return chars >= n && !_wcsnicmp(name + chars - n, suffix, n);
 }
 
-/* the files of the open font in the ROM, which the machine has even when its fonts folder is empty or missing. */
-static const PCWSTR g_builtin[] = {
-    L"\\SystemRoot\\Fonts\\NotoSans-Regular.ttf",
-    L"\\SystemRoot\\Fonts\\NotoSans-Bold.ttf",
-    L"\\SystemRoot\\Fonts\\NotoSans-Italic.ttf",
-    L"\\SystemRoot\\Fonts\\NotoSans-BoldItalic.ttf",
-};
-
-static BOOLEAN path_registered(PCWSTR path)
-{
-    for (ULONG i = 0; i < g_face_count; i++)
-        if (!g_faces[i].File->Memory && !_wcsicmp(g_faces[i].File->Path, path))
-            return TRUE;
-    return FALSE;
-}
-
-static void register_builtin(void)
-{
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_builtin); i++)
-        if (!path_registered(g_builtin[i]))
-            register_file(g_builtin[i], nullptr, FALSE);
-}
-
 static void scan_fonts(void)
 {
     UNICODE_STRING dir_name = RTL_CONSTANT_STRING(L"\\SystemRoot\\Fonts");
@@ -465,7 +442,6 @@ static void scan_fonts(void)
                                    FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT, nullptr, 0);
     if (!NT_SUCCESS(status)) {
         W32Trace("win32k: cannot open the fonts directory: %08x\n", status);
-        register_builtin();
         return;
     }
     UCHAR *buffer = W32Alloc(16384);
@@ -497,7 +473,6 @@ static void scan_fonts(void)
     }
     W32Free(buffer);
     ZwClose(dir);
-    register_builtin();
     W32Trace("win32k: %u font faces registered\n", g_face_count);
 }
 
@@ -597,7 +572,8 @@ static PCWSTR substitute(PCWSTR name)
     return name;
 }
 
-/* the best face of a family for the weight and slant asked for, null when the family has none. */
+/* the best face of a family for the weight and slant asked for, null when the family has none. without a name, the
+ * best of the faces the process added for itself. */
 static FONT_FACE *match_family(PCWSTR name, LONG weight, BOOLEAN italic)
 {
     FONT_FACE *best = nullptr;
@@ -606,15 +582,19 @@ static FONT_FACE *match_family(PCWSTR name, LONG weight, BOOLEAN italic)
         FONT_FACE *f = &g_faces[i];
         if (!FontFaceVisible(f))
             continue;
-        if (_wcsicmp(f->Family, name) && _wcsicmp(f->TypoFamily, name) && _wcsicmp(f->FullName, name))
+        if (!name) {
+            if (!f->File->OwnerPid || f->File->Hidden || f->Symbol)
+                continue;
+        } else if (_wcsicmp(f->Family, name) && _wcsicmp(f->TypoFamily, name) && _wcsicmp(f->FullName, name)) {
             continue;
+        }
         LONG score = (f->Weight > weight ? f->Weight - weight : weight - f->Weight);
         /* prefer lighter faces for weights below normal, like gdi. */
         if (weight <= FW_NORMAL && f->Weight > weight)
             score += 50;
         if (!!f->Italic != italic)
             score += 1000;
-        if (!_wcsicmp(f->Family, name))
+        if (name && !_wcsicmp(f->Family, name))
             score -= 1; /* an exact family beats a typographic family. */
         if (score < best_score) {
             best_score = score;
@@ -625,8 +605,8 @@ static FONT_FACE *match_family(PCWSTR name, LONG weight, BOOLEAN italic)
 }
 
 /*
- * a face that is not installed is stood in for by the generic family the request names, then by the open font that
- * ships in the ROM, which keeps its own name, then by whatever is installed. the face is never given the name asked.
+ * a face that is not installed is stood in for by the generic family the request names, then by a face the process
+ * added for itself, then by whatever is installed. the face is never given the name asked.
  */
 FONT_FACE *FontMatchFace(const LOGFONTW *lf)
 {
@@ -641,7 +621,7 @@ FONT_FACE *FontMatchFace(const LOGFONTW *lf)
         best = match_family(generic, weight, italic);
     }
     if (!best)
-        best = match_family(MIME_FALLBACK_FONT, weight, italic);
+        best = match_family(nullptr, weight, italic);
     for (ULONG i = 0; !best && i < g_face_count; i++)
         if (FontFaceVisible(&g_faces[i]))
             best = &g_faces[i];
@@ -797,12 +777,12 @@ static const WCHAR *const g_link_families[FONT_LINKS] = {
     L"Tahoma", L"Leelawadee UI", L"Microsoft Sans Serif", L"Malgun Gothic", L"Gulim", L"Batang", L"Yu Gothic UI",
     L"Meiryo UI", L"MS UI Gothic", L"Microsoft JhengHei UI", L"Microsoft YaHei UI", L"SimSun", L"PMingLiU", L"Segoe UI",
     L"Segoe UI Symbol", L"Arial", L"Nirmala UI", L"Ebrima", L"Gadugi", L"Myanmar Text", L"Sylfaen", L"Segoe UI Historic",
-    L"Segoe UI Emoji", L"Cambria Math", MIME_FALLBACK_FONT,
+    L"Segoe UI Emoji", L"Cambria Math",
 };
 static const UCHAR g_link_thai[] = {0, 1, 2};
 static const UCHAR g_link_hangul[] = {3, 4, 5};
 static const UCHAR g_link_han[] = {6, 7, 8, 9, 10, 3, 11, 12, 4, 5};
-static const UCHAR g_link_general[] = {13, 0, 14, 15, 2, 16, 17, 18, 1, 19, 20, 21, 22, 23, 24,
+static const UCHAR g_link_general[] = {13, 0, 14, 15, 2, 16, 17, 18, 1, 19, 20, 21, 22, 23,
                                        6, 7, 8, 9, 10, 3, 11, 12, 4, 5};
 
 static BOOLEAN is_han(ULONG c)
