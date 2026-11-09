@@ -31,6 +31,7 @@ typedef struct MIMEFS_VOLUME {
 } MIMEFS_VOLUME;
 
 static NTSTATUS volume_bytes(MIMEFS_VOLUME *vol, ULONGLONG *bytes);
+static NTSTATUS volume_size(MIMEFS_VOLUME *vol, ULONG64 host, MimeFsVolumeInfo *out);
 
 typedef struct MIMEFS_FCB {
     const MimeRomEntry *Rom; /* set for system files served from the rom. */
@@ -2192,36 +2193,43 @@ static NTSTATUS NTAPI mimefs_query_volume(PDEVICE_OBJECT device, PIRP irp)
         return complete(irp, copy == label_bytes ? STATUS_SUCCESS : STATUS_BUFFER_OVERFLOW, 18 + copy);
     }
     case FileFsSizeInformation:
-    case FileFsFullSizeInformation: {
-        ULONG need = stack->Parameters.QueryVolume.FsInformationClass == FileFsSizeInformation ? 24 : 32;
+    case FileFsFullSizeInformation:
+    case FileFsFullSizeInformationEx: {
+        FS_INFORMATION_CLASS klass = stack->Parameters.QueryVolume.FsInformationClass;
+        ULONG need = klass == FileFsSizeInformation ? 24 : klass == FileFsFullSizeInformation ? 32
+                                                                                                : sizeof(FILE_FS_FULL_SIZE_INFORMATION_EX);
         if (length < need)
             return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
-        MimeFsVolumeInfo *volume = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*volume), KI_TAG('F', 's', 'V', 'l'));
-        if (!volume)
-            return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+        MimeFsVolumeInfo volume;
         MIMEFS_FCB *fcb = stack->FileObject ? stack->FileObject->FsContext : nullptr;
-        NTSTATUS status = host_status(HalHypercall(MIME_HC_FS_VOLUME_QUERY, vol->HostVolume, HalPhysicalOf(volume),
-                                                   fcb ? fcb->HostHandle : 0, 0, 0, 0, nullptr), FALSE);
-        if (NT_SUCCESS(status) && (!volume->bytes_per_unit || volume->bytes_per_unit % 512 ||
-            volume->total_units > INT64_MAX || volume->available_units > INT64_MAX || volume->free_units > INT64_MAX))
-            status = STATUS_UNSUCCESSFUL;
-        if (!NT_SUCCESS(status)) {
-            ExFreePool(volume);
+        NTSTATUS status = volume_size(vol, fcb ? fcb->HostHandle : 0, &volume);
+        if (!NT_SUCCESS(status))
             return complete(irp, status, 0);
+        ULONG sectors = volume.bytes_per_unit / 512;
+        if (klass == FileFsFullSizeInformationEx) {
+            /* the units not in use are free, those the host keeps for root are the reserved ones. */
+            PFILE_FS_FULL_SIZE_INFORMATION_EX ex = (PFILE_FS_FULL_SIZE_INFORMATION_EX)out;
+            memset(ex, 0, sizeof(*ex));
+            ex->ActualTotalAllocationUnits = ex->CallerTotalAllocationUnits = volume.total_units;
+            ex->ActualAvailableAllocationUnits = ex->CallerAvailableAllocationUnits = volume.available_units;
+            ex->UsedAllocationUnits = volume.total_units - volume.free_units;
+            ex->TotalReservedAllocationUnits = volume.free_units - volume.available_units;
+            ex->SectorsPerAllocationUnit = sectors;
+            ex->BytesPerSector = 512;
+            return complete(irp, STATUS_SUCCESS, need);
         }
         PLARGE_INTEGER v = (PLARGE_INTEGER)out;
-        v[0].QuadPart = (LONGLONG)volume->total_units;
+        v[0].QuadPart = (LONGLONG)volume.total_units;
         if (need == 32) {
-            v[1].QuadPart = (LONGLONG)volume->available_units;
-            v[2].QuadPart = (LONGLONG)volume->free_units;
-            ((PULONG)(out + 24))[0] = volume->bytes_per_unit / 512;
+            v[1].QuadPart = (LONGLONG)volume.available_units;
+            v[2].QuadPart = (LONGLONG)volume.free_units;
+            ((PULONG)(out + 24))[0] = sectors;
             ((PULONG)(out + 24))[1] = 512;
         } else {
-            v[1].QuadPart = (LONGLONG)volume->free_units;
-            ((PULONG)(out + 16))[0] = volume->bytes_per_unit / 512;
+            v[1].QuadPart = (LONGLONG)volume.free_units;
+            ((PULONG)(out + 16))[0] = sectors;
             ((PULONG)(out + 16))[1] = 512;
         }
-        ExFreePool(volume);
         return complete(irp, STATUS_SUCCESS, need);
     }
     default:
@@ -2338,16 +2346,29 @@ typedef struct MIMEFS_DISK_GEOMETRY {
     ULONG BytesPerSector;
 } MIMEFS_DISK_GEOMETRY;
 
-static NTSTATUS volume_bytes(MIMEFS_VOLUME *vol, ULONGLONG *bytes)
+/* the size of the host file system holding the file, the volume root when host is 0. */
+static NTSTATUS volume_size(MIMEFS_VOLUME *vol, ULONG64 host, MimeFsVolumeInfo *out)
 {
     MimeFsVolumeInfo *info = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*info), KI_TAG('F', 's', 'V', 'l'));
     if (!info)
         return STATUS_INSUFFICIENT_RESOURCES;
-    NTSTATUS status = host_status(HalHypercall(MIME_HC_FS_VOLUME_QUERY, vol->HostVolume, HalPhysicalOf(info), 0, 0, 0,
-                                               0, nullptr), FALSE);
+    NTSTATUS status = host_status(HalHypercall(MIME_HC_FS_VOLUME_QUERY, vol->HostVolume, HalPhysicalOf(info), host, 0,
+                                               0, 0, nullptr), FALSE);
+    if (NT_SUCCESS(status) && (!info->bytes_per_unit || info->bytes_per_unit % 512 || info->total_units > INT64_MAX ||
+                               info->available_units > info->free_units || info->free_units > info->total_units))
+        status = STATUS_UNSUCCESSFUL;
     if (NT_SUCCESS(status))
-        *bytes = info->total_units * info->bytes_per_unit;
+        *out = *info;
     ExFreePool(info);
+    return status;
+}
+
+static NTSTATUS volume_bytes(MIMEFS_VOLUME *vol, ULONGLONG *bytes)
+{
+    MimeFsVolumeInfo info;
+    NTSTATUS status = volume_size(vol, 0, &info);
+    if (NT_SUCCESS(status))
+        *bytes = info.total_units * info.bytes_per_unit;
     return status;
 }
 
