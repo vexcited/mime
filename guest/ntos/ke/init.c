@@ -115,6 +115,50 @@ static void KiBootReport(void)
     KiLogPrintf("%s", line);
 }
 
+#ifdef __x86_64__
+/*
+ * every processor ends here, with interrupts masked. an idle processor works without the kernel lock: it switches
+ * to a ready thread under the dispatcher lock alone, and the thread takes the kernel lock when it needs it. so a
+ * thread woken on an idle processor costs the lock's holders nothing until it runs.
+ *
+ * the idle thread gets the lock with the processor, from a thread that blocked or an interrupt in KiIdleWait, and
+ * takes it for dpcs. it lets go of it before it waits. interrupts are open in KiIdleWait only.
+ */
+static DECLSPEC_NORETURN void idle_loop(void)
+{
+    PKPRCB prcb = KeGetCurrentPrcb();
+    for (;;) {
+        KiDisableInterrupts();
+        if (KiKernelLock[KI_LOCK_OWNER] == prcb->Number) {
+            /* dpcs, and a switch that hands the lock to the next thread. */
+            KiDispatchPendingWork();
+            /* the idle thread may be back on a processor without the lock. */
+            if (KiKernelLock[KI_LOCK_OWNER] == prcb->Number)
+                KiReleaseKernelLock();
+            continue;
+        }
+        if (prcb->DpcPending) {
+            KiAcquireKernelLock();
+            continue;
+        }
+        if (prcb->DispatchPending) {
+            KiCheckPreemption();
+            continue;
+        }
+        /* nothing from here to the wait switches threads, so the processor still has no lock there. */
+        PspReapDeadThreads();
+        if (prcb->Number == 0 && MmDiscardIdleDue()) {
+            KiAcquireKernelLock();
+            MmDiscardIdle();
+            KiReleaseKernelLock();
+        }
+        if (!prcb->DispatchPending && !prcb->DpcPending) {
+            prcb->IdleTicks++;
+            KiIdleWait();
+        }
+    }
+}
+#else
 /*
  * every processor ends here, holding the kernel lock. it lets go only
  * while sleeping in KiIdleWait, so an interrupt is always taken with the
@@ -136,6 +180,7 @@ static DECLSPEC_NORETURN void idle_loop(void)
         PspReapDeadThreads();
     }
 }
+#endif
 
 /* the host starts each secondary processor on its idle thread's stack. */
 void KiStartProcessors(void)
@@ -279,7 +324,9 @@ void KiInitializeKernel(MimeBootInfo *boot)
     ObDereferenceObject(phase1);
     KiStartProcessors();
 
+#ifndef __x86_64__
     KiEnableInterrupts();
+#endif
     idle_loop();
 }
 

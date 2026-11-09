@@ -458,8 +458,16 @@ KiTrapCommon:
 5:  movb    $0, %gs:KPCR_USER_MODE
     call    KiAcquireKernelLock
     jmp     3f
-    /* an idle processor that halted without the lock takes it back first. */
+    /*
+     * an idle processor waits without the lock. the clock and a request from another processor work under the
+     * dispatcher lock alone, and leave dpcs and the switch to the idle loop. any other takes the lock first.
+     */
 2:  cmpb    $0, %gs:KPCR_IDLE_SLEEPING
+    je      3f
+    movq    KTRAP_VECTOR(%rbx), %rax
+    cmpq    $KI_VECTOR_CLOCK, %rax
+    je      3f
+    cmpq    $KI_VECTOR_IPI, %rax
     je      3f
     movb    $0, %gs:KPCR_IDLE_SLEEPING
     call    KiAcquireKernelLock

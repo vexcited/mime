@@ -150,6 +150,9 @@ void KiThreadStartupC(PKSTART_ROUTINE routine, PVOID context)
 #ifdef __x86_64__
     /* the switch came with the dispatcher lock held, which a thread that ran before lets go of in KiSwapThread's caller. */
     KiReleaseDispatcherLock(0);
+    /* a processor that was idle comes without the kernel lock. */
+    if (KiKernelLock[KI_LOCK_OWNER] != KeGetCurrentPrcb()->Number)
+        KiAcquireKernelLock();
 #endif
     KeGetPcr()->Irql = PASSIVE_LEVEL;
     KiEnableInterrupts();
@@ -255,7 +258,9 @@ static PKPRCB pick_processor(PKTHREAD thread)
 /* dispatcher lock held. */
 void KiReadyThread(PKTHREAD thread)
 {
+#ifndef __x86_64__
     KI_ASSERT_KERNEL_LOCK();
+#endif
     KI_ASSERT_DISPATCHER_LOCK("a thread made ready");
     if (thread->IdleThread) {
         thread->State = Ready;
@@ -390,13 +395,33 @@ static PKTHREAD select_next(PKPRCB prcb)
     return CONTAINING_RECORD(e, KTHREAD, ReadyListEntry);
 }
 
+#ifdef __x86_64__
+/*
+ * a thread that held the kernel lock when it was switched away from resumes on a processor without it. the
+ * dispatcher lock is let go meanwhile: the wait for the kernel lock can be long, and its holder may need this one.
+ * the thread is running by now, so nothing the caller left under the lock is the scheduler's to change.
+ */
+static void take_kernel_lock_back(PKTHREAD thread)
+{
+    KiReleaseDispatcherLock(0);
+    KiAcquireKernelLock();
+    KiKernelLock[KI_LOCK_REASON] = thread->LockReason;
+    (void)KiAcquireDispatcherLock();
+}
+#endif
+
 /*
  * switches to the best ready thread. the caller holds the dispatcher lock
  * and has already moved the current thread out of the running state.
+ *
+ * on x64 the kernel lock stays with the processor, as the dispatcher lock does. an idle processor has neither, so
+ * the thread it switches to takes the kernel lock itself, when it held it.
  */
 void KiSwapThread(void)
 {
+#ifndef __x86_64__
     KI_ASSERT_KERNEL_LOCK();
+#endif
     KI_ASSERT_DISPATCHER_LOCK("a thread switched");
     PKPRCB prcb = KeGetCurrentPrcb();
     PKTHREAD old = prcb->CurrentThread;
@@ -441,14 +466,25 @@ void KiSwapThread(void)
         }
         prcb->DispatcherDepth = 1;
     }
+    BOOLEAN owned = KiKernelLock[KI_LOCK_OWNER] == prcb->Number;
+    old->KernelLocked = owned && old != prcb->IdleThread;
+    if (owned)
+        old->LockReason = KiKernelLock[KI_LOCK_REASON];
 #endif
     KiSwapContext(old, next);
     /* the thread may resume on another processor. */
     PKPCR pcr = KeGetPcr();
-    pcr->Irql = irql;
 #ifdef __x86_64__
+    if (old->KernelLocked) {
+        if (KiKernelLock[KI_LOCK_OWNER] != pcr->Prcb.Number)
+            take_kernel_lock_back(old);
+        else
+            KiKernelLock[KI_LOCK_REASON] = old->LockReason;
+    }
     pcr->Prcb.DispatcherDepth = depth;
 #endif
+    pcr->Irql = irql;
+    /* the wait for the kernel lock counts as time switched out. */
     old->BlockedTicks += HalReadCounter() - switched_out;
 }
 
