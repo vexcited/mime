@@ -668,7 +668,7 @@ static NTSTATUS query_handles(BOOLEAN extended, PVOID info, ULONG length, PULONG
     SIZE_T count = 0;
     for (ULONG i = 0; i < n; i++) {
         PHANDLE_TABLE table = &processes[i]->HandleTable;
-        KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+        ULONG64 state = ObLockHandleTable(table);
         for (ULONG h = 0; h < table->Capacity && count < room; h++) {
             HANDLE_TABLE_ENTRY *entry = &table->Entries[h];
             if (!entry->Object)
@@ -698,7 +698,7 @@ static NTSTATUS query_handles(BOOLEAN extended, PVOID info, ULONG length, PULONG
             }
             count++;
         }
-        KeReleaseSpinLock(&table->Lock, irql);
+        ObUnlockHandleTable(table, state);
     }
     for (ULONG i = 0; i < n; i++)
         ObDereferenceObject(processes[i]);

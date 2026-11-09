@@ -65,9 +65,9 @@ static NTSTATUS create_handle(PEPROCESS process, PVOID object, ACCESS_MASK acces
     PHANDLE_TABLE_ENTRY prepared = nullptr;
     ULONG prepared_capacity = 0;
     for (;;) {
-        KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+        ULONG64 state = ObLockHandleTable(table);
         if (!table->Entries || !table->Capacity) {
-            KeReleaseSpinLock(&table->Lock, irql);
+            ObUnlockHandleTable(table, state);
             if (prepared)
                 ExFreePool(prepared);
             return STATUS_PROCESS_IS_TERMINATING;
@@ -86,7 +86,7 @@ static NTSTATUS create_handle(PEPROCESS process, PVOID object, ACCESS_MASK acces
                 prepared = nullptr;
             } else {
                 ULONG capacity = table->Capacity;
-                KeReleaseSpinLock(&table->Lock, irql);
+                ObUnlockHandleTable(table, state);
                 if (prepared)
                     ExFreePool(prepared);
                 if (capacity >= (1u << 24))
@@ -107,7 +107,7 @@ static NTSTATUS create_handle(PEPROCESS process, PVOID object, ACCESS_MASK acces
         table->Entries[index].Attributes = attributes & OBJ_INHERIT;
         table->Count++;
         table->FirstFree = index + 1;
-        KeReleaseSpinLock(&table->Lock, irql);
+        ObUnlockHandleTable(table, state);
         if (old)
             ExFreePool(old);
         if (prepared)
@@ -143,12 +143,12 @@ static BOOLEAN handle_listed(const HANDLE *list, ULONG count, ULONG_PTR index)
 static NTSTATUS inherit_handles(PEPROCESS parent, PEPROCESS child, const HANDLE *list, ULONG list_count)
 {
     PHANDLE_TABLE from = &parent->HandleTable, to = &child->HandleTable;
-    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&from->Lock);
+    ULONG64 state = ObLockHandleTable(from);
     for (ULONG i = 0; i < list_count; i++) {
         ULONG_PTR index = HANDLE_TO_INDEX(list[i]);
         if (((ULONG_PTR)list[i] & 3) || index >= from->Capacity || !from->Entries[index].Object ||
             !(from->Entries[index].Attributes & OBJ_INHERIT)) {
-            KeReleaseSpinLock(&from->Lock, irql);
+            ObUnlockHandleTable(from, state);
             return STATUS_INVALID_PARAMETER;
         }
     }
@@ -157,7 +157,7 @@ static NTSTATUS inherit_handles(PEPROCESS parent, PEPROCESS child, const HANDLE 
         if (from->Entries[i].Object && (from->Entries[i].Attributes & OBJ_INHERIT) &&
             (!list || handle_listed(list, list_count, i)))
             end = i + 1;
-    KeReleaseSpinLock(&from->Lock, irql);
+    ObUnlockHandleTable(from, state);
     if (!end)
         return STATUS_SUCCESS;
     ULONG capacity = to->Capacity;
@@ -169,7 +169,7 @@ static NTSTATUS inherit_handles(PEPROCESS parent, PEPROCESS child, const HANDLE 
         return STATUS_INSUFFICIENT_RESOURCES;
     memset(entries, 0, capacity * sizeof(HANDLE_TABLE_ENTRY));
     ULONG count = 0;
-    irql = KeAcquireSpinLockRaiseToDpc(&from->Lock);
+    state = ObLockHandleTable(from);
     for (ULONG i = 0; i < from->Capacity && i < capacity; i++) {
         HANDLE_TABLE_ENTRY *e = &from->Entries[i];
         if (!e->Object || !(e->Attributes & OBJ_INHERIT) || (list && !handle_listed(list, list_count, i)))
@@ -181,14 +181,14 @@ static NTSTATUS inherit_handles(PEPROCESS parent, PEPROCESS child, const HANDLE 
         entries[i] = *e;
         count++;
     }
-    KeReleaseSpinLock(&from->Lock, irql);
-    irql = KeAcquireSpinLockRaiseToDpc(&to->Lock);
+    ObUnlockHandleTable(from, state);
+    state = ObLockHandleTable(to);
     PHANDLE_TABLE_ENTRY old = to->Entries;
     to->Entries = entries;
     to->Capacity = capacity;
     to->Count = count;
     to->FirstFree = 0;
-    KeReleaseSpinLock(&to->Lock, irql);
+    ObUnlockHandleTable(to, state);
     ExFreePool(old);
     return STATUS_SUCCESS;
 }
@@ -384,19 +384,19 @@ NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCESSOR_MODE mod
     PEPROCESS owner;
     PHANDLE_TABLE table = table_for(handle, mode, &owner);
     ULONG_PTR index = HANDLE_TO_INDEX(handle);
-    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+    ULONG64 state = ObLockHandleTable(table);
     if (!handle || index >= table->Capacity || !table->Entries[index].Object) {
-        KeReleaseSpinLock(&table->Lock, irql);
+        ObUnlockHandleTable(table, state);
         return invalid_handle(handle, mode);
     }
     PVOID obj = table->Entries[index].Object;
     ACCESS_MASK access = table->Entries[index].GrantedAccess;
     if (type && OBJECT_TO_HEADER(obj)->Type != type) {
-        KeReleaseSpinLock(&table->Lock, irql);
+        ObUnlockHandleTable(table, state);
         return STATUS_OBJECT_TYPE_MISMATCH;
     }
     ObReferenceObject(obj);
-    KeReleaseSpinLock(&table->Lock, irql);
+    ObUnlockHandleTable(table, state);
     *object = obj;
     if (granted)
         *granted = access;
@@ -421,9 +421,9 @@ static void close_object_handle(PEPROCESS process, PVOID object)
 
 static NTSTATUS close_in_table(PEPROCESS process, PHANDLE_TABLE table, ULONG_PTR index)
 {
-    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+    ULONG64 state = ObLockHandleTable(table);
     if (index >= table->Capacity || !table->Entries[index].Object) {
-        KeReleaseSpinLock(&table->Lock, irql);
+        ObUnlockHandleTable(table, state);
         return STATUS_INVALID_HANDLE;
     }
     PVOID obj = table->Entries[index].Object;
@@ -431,7 +431,7 @@ static NTSTATUS close_in_table(PEPROCESS process, PHANDLE_TABLE table, ULONG_PTR
     table->Count--;
     if (index < table->FirstFree)
         table->FirstFree = (ULONG)index;
-    KeReleaseSpinLock(&table->Lock, irql);
+    ObUnlockHandleTable(table, state);
 
     close_object_handle(process, obj);
     return STATUS_SUCCESS;
@@ -445,10 +445,10 @@ NTSTATUS ObCloseHandle(HANDLE handle, KPROCESSOR_MODE mode)
     PHANDLE_TABLE table = table_for(handle, mode, &owner);
     ULONG_PTR index = HANDLE_TO_INDEX(handle);
     /* a protected handle stays open, though process exit still closes it. */
-    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+    ULONG64 state = ObLockHandleTable(table);
     BOOLEAN protected = index < table->Capacity && table->Entries[index].Object &&
                         (table->Entries[index].Attributes & OBJ_PROTECT_CLOSE);
-    KeReleaseSpinLock(&table->Lock, irql);
+    ObUnlockHandleTable(table, state);
     if (protected)
         return STATUS_HANDLE_NOT_CLOSABLE;
     NTSTATUS status = close_in_table(owner, table, index);
@@ -466,9 +466,9 @@ static NTSTATUS handle_flags(HANDLE handle, OBJECT_HANDLE_FLAGS *flags, BOOLEAN 
     PEPROCESS owner;
     PHANDLE_TABLE table = table_for(handle, KeGetPreviousMode(), &owner);
     ULONG_PTR index = HANDLE_TO_INDEX(handle);
-    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+    ULONG64 state = ObLockHandleTable(table);
     if (index >= table->Capacity || !table->Entries[index].Object) {
-        KeReleaseSpinLock(&table->Lock, irql);
+        ObUnlockHandleTable(table, state);
         return STATUS_INVALID_HANDLE;
     }
     HANDLE_TABLE_ENTRY *e = &table->Entries[index];
@@ -480,7 +480,7 @@ static NTSTATUS handle_flags(HANDLE handle, OBJECT_HANDLE_FLAGS *flags, BOOLEAN 
     }
     if (granted)
         *granted = e->GrantedAccess;
-    KeReleaseSpinLock(&table->Lock, irql);
+    ObUnlockHandleTable(table, state);
     return STATUS_SUCCESS;
 }
 
@@ -509,14 +509,14 @@ NTSTATUS NTAPI ZwClose(HANDLE handle)
 void ObKillProcessHandles(PEPROCESS process)
 {
     PHANDLE_TABLE table = &process->HandleTable;
-    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+    ULONG64 state = ObLockHandleTable(table);
     PHANDLE_TABLE_ENTRY entries = table->Entries;
     ULONG capacity = table->Capacity;
     table->Entries = nullptr;
     table->Capacity = 0;
     table->Count = 0;
     table->FirstFree = 0;
-    KeReleaseSpinLock(&table->Lock, irql);
+    ObUnlockHandleTable(table, state);
     for (ULONG i = 0; i < capacity; i++)
         if (entries[i].Object)
             close_object_handle(process, entries[i].Object);
@@ -571,15 +571,15 @@ NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS ta
     } else {
         PHANDLE_TABLE table = &source_process->HandleTable;
         ULONG_PTR index = HANDLE_TO_INDEX(source);
-        KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+        ULONG64 state = ObLockHandleTable(table);
         if (!source || index >= table->Capacity || !table->Entries[index].Object) {
-            KeReleaseSpinLock(&table->Lock, irql);
+            ObUnlockHandleTable(table, state);
             return STATUS_INVALID_HANDLE;
         }
         object = table->Entries[index].Object;
         granted = table->Entries[index].GrantedAccess;
         ObReferenceObject(object);
-        KeReleaseSpinLock(&table->Lock, irql);
+        ObUnlockHandleTable(table, state);
         status = STATUS_SUCCESS;
     }
     if (!NT_SUCCESS(status))
@@ -952,9 +952,9 @@ BOOLEAN NTAPI ExEnumHandleTable(PHANDLE_TABLE table, EX_ENUMERATE_HANDLE_ROUTINE
     if (!table || !routine)
         return FALSE;
     for (ULONG index = 0;; index++) {
-        KIRQL irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+        ULONG64 state = ObLockHandleTable(table);
         if (!table->Entries || index >= table->Capacity) {
-            KeReleaseSpinLock(&table->Lock, irql);
+            ObUnlockHandleTable(table, state);
             return FALSE;
         }
         PVOID object = table->Entries[index].Object;
@@ -962,7 +962,7 @@ BOOLEAN NTAPI ExEnumHandleTable(PHANDLE_TABLE table, EX_ENUMERATE_HANDLE_ROUTINE
         ULONG attributes = table->Entries[index].Attributes;
         if (object)
             ObReferenceObject(object);
-        KeReleaseSpinLock(&table->Lock, irql);
+        ObUnlockHandleTable(table, state);
         if (!object)
             continue;
         ULONG64 header = (ULONG64)object - WIN_OBJECT_HEADER_SIZE;
@@ -973,10 +973,10 @@ BOOLEAN NTAPI ExEnumHandleTable(PHANDLE_TABLE table, EX_ENUMERATE_HANDLE_ROUTINE
         BOOLEAN stop = routine(table, &entry, handle, context);
         ACCESS_MASK left = (ACCESS_MASK)(entry.HighValue & WIN_GRANTED_ACCESS_BITS);
         if (left != (access & WIN_GRANTED_ACCESS_BITS)) {
-            irql = KeAcquireSpinLockRaiseToDpc(&table->Lock);
+            state = ObLockHandleTable(table);
             if (table->Entries && index < table->Capacity && table->Entries[index].Object == object)
                 table->Entries[index].GrantedAccess &= left | ~(ACCESS_MASK)WIN_GRANTED_ACCESS_BITS;
-            KeReleaseSpinLock(&table->Lock, irql);
+            ObUnlockHandleTable(table, state);
         }
         ObDereferenceObject(object);
         if (stop) {
