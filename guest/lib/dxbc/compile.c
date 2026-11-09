@@ -1593,7 +1593,10 @@ static void store_outputs(Compiler *c)
                         kind = component_kind(e->component_type);
                 }
                 d->var = global(c, SpvStorageClassOutput, vec_type(c, kind, 4), 0);
-                decorate1(c, d->var, SpvDecorationLocation, reg);
+                int second = c->program == DXBC_PIXEL && c->options && c->options->dual_source && reg == 1;
+                decorate1(c, d->var, SpvDecorationLocation, second ? 0 : reg);
+                if (second)
+                    decorate1(c, d->var, SpvDecorationIndex, 1);
                 if (c->program == DXBC_GEOMETRY && c->raster_stream)
                     decorate1(c, d->var, SpvDecorationStream, c->raster_stream);
                 d->kind = kind;
@@ -4264,6 +4267,7 @@ static int build(Compiler *c)
                                       [DXBC_COMPUTE] = SpvExecutionModelGLCompute};
     uint32_t model[2] = {MODELS[c->program], main};
     spv_emit_string(b, SECTION_ENTRY_POINTS, SpvOpEntryPoint, model, 2, "main", c->interface, c->interface_count);
+    spv_keep_inf_nan(b, main, c->options ? c->options->inf_nan_widths : 0);
     if (c->program == DXBC_PIXEL) {
         uint32_t w[2] = {main, SpvExecutionModeOriginUpperLeft};
         spv_emit(b, SECTION_EXECUTION_MODES, SpvOpExecutionMode, w, 2);

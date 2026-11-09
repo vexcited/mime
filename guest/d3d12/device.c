@@ -242,6 +242,7 @@ static HRESULT create_vulkan_device(D12Device *device, IDXGIAdapter *adapter, co
     COPY(has_barycentrics);
     COPY(has_maintenance5);
     COPY(has_maintenance8);
+    COPY(inf_nan_widths);
     COPY(has_compute_derivatives);
     COPY(has_msaa_storage);
     COPY(vrs_tier);

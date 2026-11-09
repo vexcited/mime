@@ -651,6 +651,7 @@ struct D3dDevice {
     BOOL has_divisor, has_zero_divisor, has_statistics, has_precise_occlusion, has_so_queries;
     BOOL has_logic_op, has_depth_bounds, has_geometry, has_tessellation;
     BOOL has_null_descriptor;
+    UINT inf_nan_widths;
     BOOL has_video;
     /* features the shared device enables for direct3d 12, whose state shader objects need before every draw. */
     BOOL has_vrs, has_conservative, has_mesh;
@@ -689,6 +690,7 @@ struct D3dDevice {
     /* when empty blocks were last looked for, to give back the ones that stayed empty. */
     ULONGLONG blocks_swept;
     UINT buffer_types[D3D_MEMORY_KINDS];
+    UINT buffer_bits; /* the memory types buffers may take. */
     UINT image_type_device;
 
     SRWLOCK ring_lock;

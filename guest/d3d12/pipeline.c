@@ -166,6 +166,7 @@ static HRESULT compile_stage(D12Device *device, D12PipelineState *state, D12Stag
     options->nonconstant_offsets = device->has_maintenance8;
     options->compute_derivatives = device->has_compute_derivatives;
     options->residency = device->tiled_tier >= D3D12_TILED_RESOURCES_TIER_2;
+    options->inf_nan_widths = device->inf_nan_widths;
     DxbcShaderInfo info;
     int failed = dxil_is(bytecode, length) ? dxil_compile(bytecode, length, options, &info, &g_d12_allocator)
                                            : dxbc_compile(bytecode, length, options, &info, &g_d12_allocator);
@@ -436,6 +437,15 @@ static void depth_stencil_from(D3D12_DEPTH_STENCIL_DESC2 *out, const D3D12_DEPTH
                                                   d->BackFace.StencilPassOp, d->BackFace.StencilFunc,
                                                   d->StencilReadMask, d->StencilWriteMask};
     out->DepthBoundsTestEnable = bounds;
+}
+
+static BOOL second_source(D3D12_BLEND b) { return b >= D3D12_BLEND_SRC1_COLOR && b <= D3D12_BLEND_INV_SRC1_ALPHA; }
+
+/* the first target blends with the pixel shader's second output, which vulkan takes at location 0 and index 1. */
+static BOOL dual_source(const D3D12_RENDER_TARGET_BLEND_DESC *b)
+{
+    return b->BlendEnable && (second_source(b->SrcBlend) || second_source(b->DestBlend) ||
+                              second_source(b->SrcBlendAlpha) || second_source(b->DestBlendAlpha));
 }
 
 static VkBlendFactor blend_factor(D3D12_BLEND b, BOOL alpha)
@@ -760,6 +770,12 @@ static HRESULT create_graphics(D12Device *device, const GraphicsDesc *g, D12Pipe
     state->strip_cut = g->strip_cut;
     state->topology_type = g->topology;
     state->rt_count = D12_MIN(g->rtv.NumRenderTargets, 8u);
+    /*
+     * dual source blending writes the first target only. vulkan takes one color attachment with it, so the others a
+     * game leaves in the pipeline are dropped, as vkd3d-proton does: they made the gpu blend garbage.
+     */
+    if (dual_source(&g->blend.RenderTarget[0]))
+        state->rt_count = D12_MIN(state->rt_count, 1u);
     memcpy(state->rtv_formats, g->rtv.RTFormats, sizeof(state->rtv_formats));
     state->dsv_format = g->dsv;
     state->samples = g->sample.Count ? g->sample.Count : 1;
@@ -791,6 +807,7 @@ static HRESULT create_graphics(D12Device *device, const GraphicsDesc *g, D12Pipe
             continue;
         DxbcCompileOptions options = {};
         options.sample_count = state->samples;
+        options.dual_source = stage == D12_PS && dual_source(&g->blend.RenderTarget[0]);
         if (mesh) {
             options.linked_inputs = &ps_inputs;
             options.per_primitive = &primitives;
