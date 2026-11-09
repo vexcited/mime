@@ -236,6 +236,10 @@ void KiInitializeKernel(MimeBootInfo *boot)
         for (ULONG i = 0; i < sizeof(KiTraceFilter) - 1 && filter[i] && filter[i] != ' '; i++)
             KiTraceFilter[i] = filter[i];
     }
+    extern ULONG KiTraceEvery;
+    const char *every = strstr(boot->cmdline, "trace-every=");
+    for (every = every ? every + 12 : ""; *every >= '0' && *every <= '9'; every++)
+        KiTraceEvery = KiTraceEvery * 10 + (ULONG)(*every - '0');
     extern char KiTimelineImage[16];
     const char *timeline = strstr(boot->cmdline, "svc-timeline=");
     if (timeline) {
