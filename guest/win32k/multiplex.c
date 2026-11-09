@@ -13,13 +13,13 @@ ULONG_PTR NTAPI NtUserCallNoParam(ULONG routine)
         r = (ULONG_PTR)WndHandle(WndDesktop());
         break;
     case MIME_NOPARAM_GETFOCUS:
-        r = t ? (ULONG_PTR)t->Focus : 0;
+        r = t ? (ULONG_PTR)W32SharedWindow(t, offsetof(W32THREAD, Focus)) : 0;
         break;
     case MIME_NOPARAM_GETACTIVEWINDOW:
-        r = t ? (ULONG_PTR)t->Active : 0;
+        r = t ? (ULONG_PTR)W32SharedWindow(t, offsetof(W32THREAD, Active)) : 0;
         break;
     case MIME_NOPARAM_GETCAPTURE:
-        r = t ? (ULONG_PTR)t->Capture : 0;
+        r = t ? (ULONG_PTR)W32SharedWindow(t, offsetof(W32THREAD, Capture)) : 0;
         break;
     case MIME_NOPARAM_RELEASECAPTURE:
         if (t)
@@ -135,6 +135,21 @@ ULONG_PTR NTAPI NtUserCallOneParam(ULONG_PTR param, ULONG routine)
             t->DpiHosting = (ULONG)param;
         }
         break;
+    case MIME_ONEPARAM_GETKEYBOARDLAYOUT: {
+        /* the host may be writing a new layout: a copy counts once the generation held still across it. */
+        const volatile MimeBootInfo *boot = HalMimeGetBootInfo();
+        MimeKeyboardLayout layout;
+        for (int tries = 0; tries < 4; tries++) {
+            memcpy(&layout, (const void *)&boot->keyboard, sizeof(layout));
+            __atomic_thread_fence(__ATOMIC_ACQUIRE);
+            if (layout.generation == boot->keyboard.generation)
+                break;
+        }
+        r = layout.generation;
+        if (r && !NT_SUCCESS(MimeCopyToUser((PVOID)param, &layout, sizeof(layout))))
+            r = 0;
+        break;
+    }
     case MIME_ONEPARAM_GETTHREADDPIHOSTING:
         r = t ? t->DpiHosting : 0;
         break;
@@ -254,16 +269,14 @@ BOOL NTAPI NtUserGetCursorInfo(PCURSORINFO user_info)
     return TRUE;
 }
 
-/* attaching validates threads but leaves their queues separate. */
 BOOL NTAPI NtUserAttachThreadInput(DWORD attach, DWORD to, BOOL do_attach)
 {
     UserEnter();
     W32THREAD *a = W32LookupThread((HANDLE)(ULONG_PTR)attach);
     W32THREAD *b = W32LookupThread((HANDLE)(ULONG_PTR)to);
-    BOOL ok = a && b && a != b;
+    BOOL ok = a && b && a != b && W32AttachInput(a, b, do_attach);
     UserLeave();
     if (!ok)
         W32SetLastError(ERROR_INVALID_PARAMETER);
-    (void)do_attach;
     return ok;
 }

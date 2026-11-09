@@ -1287,6 +1287,13 @@ void mime_ui_run(void)
     MSG_V(g_app, "run");
 }
 
+/* the guest keeps the US layout on macOS for now. */
+bool mime_ui_get_keyboard(MimeKeyboardLayout *out)
+{
+    (void)out;
+    return false;
+}
+
 void mime_ui_get_display(MimeDisplayInfo *info)
 {
     memset(info, 0, sizeof(*info));

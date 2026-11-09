@@ -577,6 +577,7 @@ typedef struct W32THREAD {
     HWND Capture;
     ULONG CaptureNc;  /* nc hit code of a capture held by the frame. */
     UCHAR KeyState[256]; /* bit 7 down, bit 0 toggled, as seen by this thread. */
+    struct W32THREAD *InputShare; /* the thread whose key state and focus AttachThreadInput shares, or null. */
     HWND MouseWindow;    /* window under the mouse for leave tracking. */
     TRACKMOUSEEVENT Track;
     ULONG CallbackDepth;
@@ -629,6 +630,14 @@ ULONG MsgSendSystem(HANDLE tid, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
                     PKEVENT *events, ULONG event_count, LRESULT *result);
 extern LIST_ENTRY W32Processes;
 W32THREAD *W32LookupThread(HANDLE tid);
+BOOL W32AttachInput(W32THREAD *a, W32THREAD *b, BOOL attach);
+HWND W32SharedWindow(W32THREAD *t, SIZE_T offset);
+
+/* the thread that holds the input state the given one reads: the one it is attached to, else itself. */
+static inline W32THREAD *W32InputOwner(W32THREAD *t)
+{
+    return t->InputShare ? t->InputShare : t;
+}
 void QueueWake(W32THREAD *t, ULONG bits);
 BOOLEAN QueuePost(W32THREAD *t, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 /* the clock's offset changed: every top level window is told with WM_TIMECHANGE. */

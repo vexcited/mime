@@ -191,6 +191,7 @@ enum {
     MIME_ONEPARAM_GETTHREADDPICONTEXT,  /* -> the awareness in effect, 4 is unaware with gdi scaling. */
     MIME_ONEPARAM_SETTHREADDPIHOSTING,  /* 0 default or 1 mixed -> the behavior before, -1 when it is none. */
     MIME_ONEPARAM_GETTHREADDPIHOSTING,
+    MIME_ONEPARAM_GETKEYBOARDLAYOUT,    /* a MimeKeyboardLayout pointer -> its generation, 0 for the US layout. */
 };
 
 enum {

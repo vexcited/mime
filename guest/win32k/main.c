@@ -293,6 +293,90 @@ W32THREAD *W32LookupThread(HANDLE tid)
     return nullptr;
 }
 
+/* threads attached by AttachThreadInput, so that lookups of shared state skip the walk while there are none. */
+static ULONG g_attached;
+
+/* gives every thread that reads the state of from the state of to instead. */
+static void move_sharers(W32THREAD *from, W32THREAD *to)
+{
+    for (PLIST_ENTRY e = g_threads.Flink; e != &g_threads; e = e->Flink) {
+        W32THREAD *x = CONTAINING_RECORD(e, W32THREAD, Links);
+        if (x != to && (x == from || x->InputShare == from)) {
+            if (!x->InputShare)
+                g_attached++;
+            x->InputShare = to;
+        }
+        if (x == to && x->InputShare) {
+            x->InputShare = nullptr;
+            g_attached--;
+        }
+    }
+}
+
+static void detach(W32THREAD *t)
+{
+    memcpy(t->KeyState, t->InputShare->KeyState, sizeof(t->KeyState));
+    t->InputShare = nullptr;
+    g_attached--;
+}
+
+/*
+ * attached threads share one input state, as windows shares their queue: the key state lives in the thread the group is
+ * attached to, and the focus, active window and capture read as the group's.
+ */
+BOOL W32AttachInput(W32THREAD *a, W32THREAD *b, BOOL attach)
+{
+    W32THREAD *ra = W32InputOwner(a), *rb = W32InputOwner(b);
+    if (attach) {
+        if (ra != rb)
+            move_sharers(ra, rb);
+        return TRUE;
+    }
+    if (ra != rb)
+        return FALSE;
+    detach(a->InputShare ? a : b);
+    return TRUE;
+}
+
+/* a window handle field of the thread, or of the first thread of its attached group that has one. */
+HWND W32SharedWindow(W32THREAD *t, SIZE_T offset)
+{
+    HWND own = *(HWND *)((char *)t + offset);
+    if (own || !g_attached)
+        return own;
+    W32THREAD *owner = W32InputOwner(t);
+    for (PLIST_ENTRY e = g_threads.Flink; e != &g_threads; e = e->Flink) {
+        W32THREAD *x = CONTAINING_RECORD(e, W32THREAD, Links);
+        HWND h = *(HWND *)((char *)x + offset);
+        if (h && !x->Destroying && W32InputOwner(x) == owner)
+            return h;
+    }
+    return nullptr;
+}
+
+/* an ending thread leaves its group: its sharers take the first of them as the holder of their state. */
+static void leave_group(W32THREAD *t)
+{
+    if (t->InputShare) {
+        t->InputShare = nullptr;
+        g_attached--;
+        return;
+    }
+    W32THREAD *heir = nullptr;
+    for (PLIST_ENTRY e = g_threads.Flink; e != &g_threads && !heir; e = e->Flink) {
+        W32THREAD *x = CONTAINING_RECORD(e, W32THREAD, Links);
+        if (x->InputShare == t)
+            heir = x;
+    }
+    if (!heir)
+        return;
+    memcpy(heir->KeyState, t->KeyState, sizeof(t->KeyState));
+    move_sharers(t, heir);
+    /* move_sharers counted t as a sharer it is not. */
+    t->InputShare = nullptr;
+    g_attached--;
+}
+
 /* the live threads of a process, in creation order. */
 ULONG W32ProcessThreads(W32PROCESS *p, HANDLE *tids, ULONG max)
 {
@@ -329,6 +413,7 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
     DndThreadDestroyed(t);
     TimerRemoveThread(t);
     HookRemoveThread(t);
+    leave_group(t);
     free_message_list(&t->Posted);
     free_message_list(&t->Input);
     /* a thread that ends inside a procedure called for a sent message never answers it. */
@@ -441,13 +526,13 @@ ULONG_PTR NTAPI NtUserGetThreadState(ULONG routine)
     if (t) {
         switch (routine) {
         case 0: /* focus */
-            v = (ULONG_PTR)t->Focus;
+            v = (ULONG_PTR)W32SharedWindow(t, offsetof(W32THREAD, Focus));
             break;
         case 1: /* active */
-            v = (ULONG_PTR)t->Active;
+            v = (ULONG_PTR)W32SharedWindow(t, offsetof(W32THREAD, Active));
             break;
         case 2: /* capture */
-            v = (ULONG_PTR)t->Capture;
+            v = (ULONG_PTR)W32SharedWindow(t, offsetof(W32THREAD, Capture));
             break;
         case 14: /* thread has a queue */
         case 15:
