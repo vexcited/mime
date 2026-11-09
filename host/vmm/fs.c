@@ -1276,18 +1276,17 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         break;
     }
     case MIME_HC_GENUINE_OPEN: {
-        /* the host's checked copy of a manifest entry, as a read-only handle in the same table the guest reads. */
+        /* microsoft's copy of a manifest entry, which the host keeps open, as a read-only handle the guest reads. */
         MimeFsInfo *info = mime_vm_phys(vm, a[2], sizeof(MimeFsInfo));
         char path[MIME_PATH_MAX];
-        if (!info || !mime_genuine_path((uint32_t)a[1], path, sizeof(path))) {
+        int fd = info ? mime_genuine_dup((uint32_t)a[1], path, sizeof(path)) : -1;
+        if (fd < 0) {
             status = MIME_HC_STATUS_NOT_FOUND;
             break;
         }
-        int fd = open_quiet(path, O_RDONLY | O_CLOEXEC, 0);
         MimeFsStat ms;
-        if (fd < 0 || mime_fs_fstat(fd, &ms) != 0) {
-            if (fd >= 0)
-                close(fd);
+        if (mime_fs_fstat(fd, &ms) != 0) {
+            close(fd);
             status = MIME_HC_STATUS_NOT_FOUND;
             break;
         }

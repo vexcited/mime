@@ -226,12 +226,12 @@ void mime_vm_raise_irq(MimeVm *vm, uint32_t bits);
 /* starts the thread that asks the guest for memory back when the host runs short; linux/memory.c, nothing on macOS. */
 void mime_memory_monitor_start(MimeVm *vm);
 /*
- * genuine.c: starts the thread that announces and fetches microsoft's copies of the system files the manifest names,
- * into the host cache. mime_genuine_path gives the cache path of entry index when a checked copy is ready, for
- * MIME_HC_GENUINE_OPEN.
+ * genuine.c: opens every Windows system file of the manifest from the host cache and keeps them open, false when one
+ * is missing, which mime setup gets. mime_genuine_dup gives a new descriptor of entry index and its path, for
+ * MIME_HC_GENUINE_OPEN, -1 past the last.
  */
-void mime_genuine_start(MimeVm *vm);
-bool mime_genuine_path(uint32_t index, char *out, size_t size);
+bool mime_genuine_open_all(MimeVm *vm);
+int mime_genuine_dup(uint32_t index, char *path, size_t size);
 /* host memory for guest RAM it has not used yet: what the host grants of want bytes, and what it could still grant. */
 uint64_t mime_memory_grant(MimeVm *vm, uint64_t want);
 void mime_memory_publish(MimeVm *vm);

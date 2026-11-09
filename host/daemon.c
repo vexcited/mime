@@ -828,6 +828,10 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
         return 1;
     uint64_t created_ns = mime_now_ns();
 
+    /* no program runs without microsoft's copies of the system files, which mime setup gets, see host/genuine.c. */
+    if (!mime_genuine_open_all(&g_vm))
+        return 1;
+
     if (!mime_vm_load_kernel(&g_vm))
         return 1;
     /* scans cameras concurrently with guest boot. */
@@ -835,8 +839,6 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     if (!mime_vm_start(&g_vm))
         return 1;
     mime_memory_monitor_start(&g_vm);
-    /* fetches and announces microsoft's copies of the system files, in the background, see host/genuine.c. */
-    mime_genuine_start(&g_vm);
     uint64_t started_ns = mime_now_ns();
 
     /*

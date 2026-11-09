@@ -1287,6 +1287,12 @@ void mime_ui_run(void)
     MSG_V(g_app, "run");
 }
 
+/* macOS reports in the terminal only for now. */
+void mime_ui_alert(const char *text)
+{
+    (void)text;
+}
+
 /* the guest keeps the US layout on macOS for now. */
 bool mime_ui_get_keyboard(MimeKeyboardLayout *out)
 {
