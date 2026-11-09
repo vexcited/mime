@@ -195,6 +195,35 @@ static void get_context32(PWOW64_CPURESERVED cpu, I386_CONTEXT *out)
     out->SegFs = TEB32_SEGMENT;
 }
 
+/* the hardware breakpoints are the thread's, whatever code it runs: a 32-bit context takes and gives them natively. */
+static NTSTATUS debug_registers32(HANDLE thread, I386_CONTEXT *context, BOOLEAN setting)
+{
+    if ((context->ContextFlags & CONTEXT_I386_DEBUG_REGISTERS) != CONTEXT_I386_DEBUG_REGISTERS)
+        return STATUS_SUCCESS;
+    CONTEXT native;
+    memset(&native, 0, sizeof(native));
+    native.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+    if (setting) {
+        native.Dr0 = context->Dr0;
+        native.Dr1 = context->Dr1;
+        native.Dr2 = context->Dr2;
+        native.Dr3 = context->Dr3;
+        native.Dr6 = context->Dr6;
+        native.Dr7 = context->Dr7;
+        return NtSetContextThread(thread, &native);
+    }
+    NTSTATUS status = NtGetContextThread(thread, &native);
+    if (NT_SUCCESS(status)) {
+        context->Dr0 = (ULONG)native.Dr0;
+        context->Dr1 = (ULONG)native.Dr1;
+        context->Dr2 = (ULONG)native.Dr2;
+        context->Dr3 = (ULONG)native.Dr3;
+        context->Dr6 = (ULONG)native.Dr6;
+        context->Dr7 = (ULONG)native.Dr7;
+    }
+    return status;
+}
+
 /* converts the kernel's native fault context to the 32-bit layout. */
 static void context64_to_32(const CONTEXT *in, I386_CONTEXT *out)
 {
@@ -220,6 +249,15 @@ static void context64_to_32(const CONTEXT *in, I386_CONTEXT *out)
     memcpy(out->ExtendedRegisters, state, sizeof(state));
     memcpy(out->ExtendedRegisters + 160, in->FltSave.XmmRegisters, 8 * 16);
     *(ULONG *)(out->ExtendedRegisters + 24) = in->MxCsr;
+    if ((in->ContextFlags & CONTEXT_DEBUG_REGISTERS) == CONTEXT_DEBUG_REGISTERS) {
+        out->ContextFlags |= CONTEXT_I386_DEBUG_REGISTERS;
+        out->Dr0 = (ULONG)in->Dr0;
+        out->Dr1 = (ULONG)in->Dr1;
+        out->Dr2 = (ULONG)in->Dr2;
+        out->Dr3 = (ULONG)in->Dr3;
+        out->Dr6 = (ULONG)in->Dr6;
+        out->Dr7 = (ULONG)in->Dr7;
+    }
 }
 
 static void context32_to_64(const I386_CONTEXT *in, CONTEXT *out)
@@ -401,7 +439,18 @@ static NTSTATUS other_thread_cpu(HANDLE thread, HANDLE *process, ULONG_PTR *area
 }
 
 /* gets another thread's 32-bit context from the kernel when it runs 32-bit code, otherwise from its CPU area. */
+static NTSTATUS thread_context_rest32(HANDLE thread, I386_CONTEXT *context, BOOLEAN setting);
+
+/* the registers from the thread's 32-bit state, its breakpoints from the native thread, read after so they stay. */
 static NTSTATUS thread_context32(HANDLE thread, I386_CONTEXT *context, BOOLEAN setting)
+{
+    NTSTATUS status = thread_context_rest32(thread, context, setting);
+    if (NT_SUCCESS(status))
+        status = debug_registers32(thread, context, setting);
+    return status;
+}
+
+static NTSTATUS thread_context_rest32(HANDLE thread, I386_CONTEXT *context, BOOLEAN setting)
 {
     if (thread == NtCurrentThread()) {
         if (setting)
@@ -467,6 +516,7 @@ static BOOLEAN special_service(ULONG number, PULONG a, LONG *result)
     WOW64_THREAD *t = current_thread();
     switch (number) {
     case MIME_SVC_NtContinue:
+        debug_registers32(NtCurrentThread(), (I386_CONTEXT *)(ULONG_PTR)a[0], TRUE);
         set_context32(cpu, (const I386_CONTEXT *)(ULONG_PTR)a[0]);
         if (a[1])
             NtTestAlert();
