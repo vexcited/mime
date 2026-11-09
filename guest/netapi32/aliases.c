@@ -20,7 +20,7 @@ typedef LPCWSTR LMCSTR;
 #define ERROR_MEMBER_IN_ALIAS_CODE 1378
 #define ERROR_ALIAS_EXISTS_CODE 1379
 #define ERROR_NONE_MAPPED_CODE 1332
-#define ALIAS_KEY L"SYSTEM\\CurrentControlSet\\Control\\Lsa\\MimeAliases"
+#define ALIAS_KEY L"SYSTEM\\CurrentControlSet\\Control\\Lsa\\Aliases"
 #define FIRST_ALIAS_RID 1100
 
 NETAPI NET_API_STATUS WINAPI NetApiBufferAllocate(DWORD size, LPVOID *buffer);

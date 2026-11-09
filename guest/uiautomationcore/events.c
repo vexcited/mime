@@ -60,8 +60,8 @@ static BOOL reg_open(void)
     state_lock();
     if (!g_reg) {
         HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(REG),
-                                            L"Local\\MimeUiaRegistry");
-        HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\MimeUiaRegistryLock");
+                                            L"Local\\UiaRegistry");
+        HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Local\\UiaRegistryLock");
         REG *reg = mapping ? MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(REG)) : nullptr;
         if (reg && mutex) {
             g_mutex = mutex;

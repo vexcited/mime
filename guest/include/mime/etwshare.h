@@ -102,7 +102,7 @@ static inline ETWS_TABLE *etws_table(BOOLEAN create)
         return g_etws_table;
     UNICODE_STRING name;
     OBJECT_ATTRIBUTES attributes;
-    RtlInitUnicodeString(&name, L"\\BaseNamedObjects\\MimeEtwSessions");
+    RtlInitUnicodeString(&name, L"\\BaseNamedObjects\\EtwSessions");
     InitializeObjectAttributes(&attributes, &name, OBJ_OPENIF, nullptr, nullptr);
     LARGE_INTEGER size;
     size.QuadPart = sizeof(ETWS_TABLE);
