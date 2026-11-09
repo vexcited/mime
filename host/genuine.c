@@ -8,7 +8,7 @@
 #include "mime_host.h"
 #include "vmm/vmm.h"
 
-#include "genuine_manifest.h" /* mime_genuine_manifest[], written by cmake/genuine.cmake. */
+#include "genuine_manifest.h" /* mime_genuine_manifest[], written by scripts/genuine.cmake. */
 
 #include <curl/curl.h>
 #include <dirent.h>

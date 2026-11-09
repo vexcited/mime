@@ -1,5 +1,5 @@
 # NTSTATUS messages as stored in the ntdll message table in en-US.
-# Format: ID<TAB>SYMBOL<TAB>TEXT. The build appends CRLF to every text, see cmake/asset/messages.cmake.
+# Format: ID<TAB>SYMBOL<TAB>TEXT. The build appends CRLF to every text, see scripts/asset/messages.cmake.
 # In TEXT the two characters backslash and n are a line break, any other backslash is literal.
 0x00000000	STATUS_SUCCESS	STATUS_SUCCESS
 0x00000001	STATUS_WAIT_1	STATUS_WAIT_1

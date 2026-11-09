@@ -1,4 +1,4 @@
-// the icons of imageres.dll, drawn in mime-icons and made by the build, see cmake/assets.cmake.
+// the icons of imageres.dll, drawn in mime-icons and made by the build, see CMakeLists.txt.
 LANGUAGE 0, 0
 2 ICON "@MIME_ASSETS@/icons/file.ico"
 3 ICON "@MIME_ASSETS@/icons/folder_plain.ico"
