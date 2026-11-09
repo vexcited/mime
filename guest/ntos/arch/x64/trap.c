@@ -289,7 +289,8 @@ static void interrupt(PKTRAP_FRAME frame)
     KiChargeServiceTime(prcb, start, FALSE);
 
     pcr->Irql = old;
-    if (old < DISPATCH_LEVEL) {
+    /* an idle processor in its wait may be without the kernel lock: its idle loop does this once the wait is over. */
+    if (old < DISPATCH_LEVEL && !prcb->IdleWaiting) {
         if (prcb->DpcPending) {
             pcr->Irql = DISPATCH_LEVEL;
             KiDeliverDpcs();
@@ -315,7 +316,8 @@ BOOLEAN KiFastPageFault(PKTRAP_FRAME frame)
 void KiTrapDispatch(PKTRAP_FRAME frame)
 {
     /* the lock holder for statistics: the vector, past the system service numbers. */
-    KiKernelLock[KI_LOCK_REASON] = 0x2001 + (frame->Vector & 0xFF);
+    if (KiKernelLock[KI_LOCK_OWNER] == KeGetCurrentPrcb()->Number)
+        KiKernelLock[KI_LOCK_REASON] = 0x2001 + (frame->Vector & 0xFF);
     /* int 2e, the system call of ntdll's stubs when SharedUserData says syscall is unavailable. */
     if (frame->Vector == 0x2E && KI_TRAP_FROM_USER(frame)) {
         frame->Vector = KTRAP_VECTOR_SYSCALL;

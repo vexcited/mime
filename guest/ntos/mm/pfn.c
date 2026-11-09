@@ -319,9 +319,14 @@ static void discard_free(BOOLEAN idle)
     report_free(g_discard_min_order, DISCARD_PASS_BYTES, idle, FALSE);
 }
 
+BOOLEAN MmDiscardIdleDue(void)
+{
+    return g_freed_since_discard >= DISCARD_IDLE;
+}
+
 void MmDiscardIdle(void)
 {
-    if (g_freed_since_discard >= DISCARD_IDLE)
+    if (MmDiscardIdleDue())
         discard_free(TRUE);
 }
 

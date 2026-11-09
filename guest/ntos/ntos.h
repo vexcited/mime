@@ -142,7 +142,7 @@ typedef struct _KTHREAD {
     SCHAR Saturation;      /* sign of a base priority set as a limit: -1 idle, 1 time critical. */
     BOOLEAN DisableBoost;  /* recorded, nothing boosts. */
     UCHAR IdealProcessor;  /* recorded, nothing honours it. */
-    UCHAR Pad2;
+    BOOLEAN KernelLocked;  /* x64: switched away from with the kernel lock held, and goes on with it, see KiSwapThread. */
     ULONG64 Affinity;      /* recorded, not enforced. */
     UCHAR WaitReason;
     BOOLEAN WaitIrqlRaised;
@@ -167,6 +167,7 @@ typedef struct _KTHREAD {
     NTSTATUS FaultStatus; /* the status of an unresolved fault that is not an access violation, see KiApplyFaultStatus. */
     ULONG64 ContextSwitches;
     ULONG64 BlockedTicks; /* counter ticks spent switched out, to tell a service's work from its waiting. */
+    ULONG LockReason;     /* x64: what the thread held the kernel lock for when it was switched away from. */
     ULONG64 KernelTime;
     ULONG64 UserTime;
     ULONG SuspendCount;
@@ -217,7 +218,7 @@ typedef struct _KPRCB {
     volatile BOOLEAN DpcPending;
     volatile UCHAR IdleState; /* KI_IDLE_*: whether an idle processor looks for work itself or must be interrupted. */
     BOOLEAN InDpc;
-    BOOLEAN Pad2;
+    BOOLEAN IdleWaiting; /* x64: inside KiIdleWait, where an interrupt leaves dpcs and the switch to the idle loop. */
     SINGLE_LIST_ENTRY DpcHead;
     PSINGLE_LIST_ENTRY *DpcTail;
     ULONG64 InterruptCount;
@@ -254,7 +255,7 @@ typedef struct _KPCR {
     ULONG64 Pad0[3];
     volatile KIRQL Irql;
     volatile UCHAR UserMode; /* set while the processor runs user mode, see entry.S. */
-    volatile UCHAR IdleSleeping; /* halted without the kernel lock, see KiIdleWait. */
+    volatile UCHAR IdleSleeping; /* in the idle wait without the kernel lock, see KiIdleWait. */
     volatile UCHAR FlushPending; /* KPCR_FLUSH_* the processor owes before using translations again. */
     ULONG ApicId;
     ULONG64 SavedInterruptState; /* interrupt flag before irql rose above DISPATCH_LEVEL. */
@@ -301,7 +302,7 @@ extern KPCR KiBootPcr;
 extern PKPRCB KiProcessorBlock[MAXIMUM_PROCESSORS];
 extern ULONG KeNumberProcessors;
 
-/* ready threads are shared by all processors. the kernel lock guards the queues like every other kernel structure. */
+/* ready threads are shared by all processors, under the dispatcher lock. */
 extern LIST_ENTRY KiReadyListHead[MAXIMUM_PRIORITY];
 extern ULONG KiReadySummary;
 
@@ -333,6 +334,9 @@ FORCEINLINE PKTHREAD KiCurrentThread(void)
  * kernel from user mode takes it and returning releases it, see vectors.S, and the idle loop drops it
  * only around wfi. user mode runs on every processor at once, while kernel code keeps uniprocessor
  * rules: masking interrupts excludes every other kernel path.
+ *
+ * x64 has the dispatcher lock for the scheduler, and there an idle processor has no kernel lock at all:
+ * see idle_loop and KiSwapThread. the one place it opens interrupts without it is KiIdleWait.
  */
 /* the lock word first, then the KI_LOCK_* words: owner, sleepers in the host, holder, time taken, ticks held. */
 extern volatile ULONG KiKernelLock[32];
@@ -476,7 +480,11 @@ void KiAttachProcess(PKPROCESS process);
 /* arch/<processor>/context.c: the processor specific half of threads, contexts and user mode entry. */
 void KiSwitchAddressSpace(PKPROCESS process);
 void KiSwapContext(PKTHREAD old, PKTHREAD next);
-void KiIdleWait(void); /* called and returns with interrupts masked and the kernel lock held. */
+/*
+ * called and returns with interrupts masked. arm64 has the kernel lock on both sides. x64 comes without it, and
+ * returns with it when an interrupt took it meanwhile.
+ */
+void KiIdleWait(void);
 void KiIdleHaltEnded(PKPRCB prcb, ULONG64 now, BOOLEAN by_request);
 void KiInitializeSwitchFrame(PKTHREAD thread, PKSTART_ROUTINE routine, PVOID context);
 void KiInitializeUserFrame(PKTRAP_FRAME frame, ULONG64 pc, ULONG64 sp, ULONG64 arg0, ULONG64 arg1, ULONG64 teb);
@@ -755,6 +763,7 @@ SIZE_T MmGetUnbackablePages(void);
 ULONG64 MmGetAllocationFailures(void);
 void MmReturnCredit(void);
 void MmDiscardIdle(void); /* idle loop, interrupts disabled: hands freed memory back to the host. */
+BOOLEAN MmDiscardIdleDue(void); /* whether MmDiscardIdle has work, asked without the kernel lock. */
 ULONG64 MmReleaseFreeMemory(void); /* a trim: every free page to the host, returns the bytes it dropped. */
 SIZE_T MmFreedSinceSweep(void);    /* pages freed since every free page was last handed back. */
 ULONG64 MmGetReleasedBytes(void);  /* the total of what the host dropped since boot. */

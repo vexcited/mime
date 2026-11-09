@@ -101,14 +101,16 @@ void KiSwapContext(PKTHREAD old, PKTHREAD next)
 }
 
 /*
- * an idle processor releases the kernel lock and watches its work flags for a while. a waker that sees it
+ * an idle processor, which has no kernel lock, watches its work flags for a while. a waker that sees it
  * watching, see KiRequestDispatch, skips the interrupt, which would cost both sides exits to the host.
  * only then does it halt, and a halted processor is interrupted.
  *
  * how long it watches follows how its halts end, as linux's haltpoll governor does: see KiIdleHaltEnded.
  *
- * hlt ends only on an interrupt taken with interrupts enabled. an interrupt entry that finds IdleSleeping
- * takes the lock back first, so interrupts still run with the lock held and the processor holds it after.
+ * hlt ends only on an interrupt taken with interrupts enabled. the clock and a request from another processor
+ * work under the dispatcher lock alone. any other interrupt finds IdleSleeping and takes the kernel lock first,
+ * see KiTrapCommon, and the processor holds it after. none of them delivers dpcs or switches threads here, see
+ * IdleWaiting: the idle loop does, once the wait is over.
  */
 static ULONG64 g_idle_poll_shortest, g_idle_poll_longest;
 
@@ -136,9 +138,9 @@ void KiIdleWait(void)
     }
     ULONG64 poll = (KiOptions & KI_OPT_NO_IDLE_SPIN) ? 0 : prcb->IdlePoll;
     pcr->IdleSleeping = 1;
+    prcb->IdleWaiting = TRUE;
     if (poll)
         __atomic_store_n(&prcb->IdleState, KI_IDLE_POLLING, __ATOMIC_SEQ_CST);
-    KiReleaseKernelLock();
     __asm__ volatile("sti" ::: "memory");
     ULONG64 since = HalReadCounter(), now = since;
     while (now - since < poll) {
@@ -164,10 +166,8 @@ void KiIdleWait(void)
         prcb->IdlePolls++;
     }
     __atomic_store_n(&prcb->IdleState, KI_IDLE_RUNNING, __ATOMIC_SEQ_CST);
-    if (pcr->IdleSleeping) {
-        pcr->IdleSleeping = 0;
-        KiAcquireKernelLock();
-    }
+    prcb->IdleWaiting = FALSE;
+    pcr->IdleSleeping = 0;
 }
 
 /*
