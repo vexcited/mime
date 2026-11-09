@@ -1339,14 +1339,14 @@ BOOL WINAPI SetFileTime(HANDLE file, const FILETIME *creation, const FILETIME *a
 
 /* ------------------------------------------------------------------ final path names */
 
-/* finds the drive letter of the volume a handle lives on by comparing serial numbers. */
+/*
+ * finds the drive letter of the volume a handle lives on by comparing serial numbers. every letter is tried, since
+ * drive lists leave out Z: and a file opened through it must keep its letter.
+ */
 static WCHAR drive_of_handle(HANDLE file)
 {
     ULONG serial = volume_serial(file);
-    DWORD drives = GetLogicalDrives();
     for (int i = 0; i < 26; i++) {
-        if (!(drives & (1u << i)))
-            continue;
         WCHAR root[4] = {(WCHAR)('A' + i), ':', '\\', 0};
         HANDLE h;
         if (!NT_SUCCESS(open_path(root, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
