@@ -841,5 +841,6 @@ void IoInitialize(void)
         KiLogPrintf("file system failed to start: %08x", status);
     ObCreateSymbolicLink(L"\\GLOBAL??\\C:", L"\\Device\\HarddiskVolume1");
     ObCreateSymbolicLink(L"\\GLOBAL??\\Z:", L"\\Device\\HarddiskVolume2");
+    ObCreateSymbolicLink(L"\\GLOBAL??\\PhysicalDrive0", L"\\Device\\Harddisk0");
     ObCreateSymbolicLink(L"\\GLOBAL??\\SystemRoot", L"\\Device\\HarddiskVolume1\\Windows");
 }
