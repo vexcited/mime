@@ -1,8 +1,6 @@
 /* What the rules of features need from the machine: the registry, the drive, the question and the steps. */
 #include "featurep.h"
 
-#define DECLINE_SECONDS 600
-
 static ULONGLONG now_filetime(void)
 {
     FILETIME ft;
@@ -24,12 +22,6 @@ static BOOL read_dword(PCWSTR key, PCWSTR name, DWORD *value)
 {
     DWORD size = sizeof(*value), type;
     return RegGetValueW(HKEY_LOCAL_MACHINE, key, name, RRF_RT_REG_DWORD, &type, value, &size) == ERROR_SUCCESS;
-}
-
-static BOOL read_qword(PCWSTR key, PCWSTR name, ULONGLONG *value)
-{
-    DWORD size = sizeof(*value), type;
-    return RegGetValueW(HKEY_LOCAL_MACHINE, key, name, RRF_RT_REG_QWORD, &type, value, &size) == ERROR_SUCCESS;
 }
 
 static void write_value(PCWSTR key, PCWSTR name, DWORD type, const void *data, DWORD size)
@@ -93,22 +85,6 @@ static void ops_set_state(void *context, const FEATURE_DEF *feature, FEATURE_STA
         PCWSTR source = from_drive ? L"drive" : run->Source[0] ? L"file" : L"download";
         write_value(key, L"Source", REG_SZ, source, (DWORD)((wcslen(source) + 1) * sizeof(WCHAR)));
     }
-}
-
-static bool ops_recently_declined(void *context, const FEATURE_DEF *feature)
-{
-    WCHAR key[160];
-    state_key(feature, key, RTL_NUMBER_OF(key));
-    ULONGLONG then, now = now_filetime();
-    return read_qword(key, L"Declined", &then) && now >= then && (now - then) / 10000000ull < DECLINE_SECONDS;
-}
-
-static void ops_set_declined(void *context, const FEATURE_DEF *feature)
-{
-    WCHAR key[160];
-    state_key(feature, key, RTL_NUMBER_OF(key));
-    ULONGLONG time = now_filetime();
-    write_value(key, L"Declined", REG_QWORD, &time, sizeof(time));
 }
 
 /* Counts a request of a program, whatever becomes of it: how often it was asked for, when, and by whom. */
@@ -296,8 +272,6 @@ void FillOps(FEATURE_OPS *ops, RUN *run)
         .Present = ops_present,
         .GetState = ops_get_state,
         .SetState = ops_set_state,
-        .RecentlyDeclined = ops_recently_declined,
-        .SetDeclined = ops_set_declined,
         .Consent = ops_consent,
         .Stage = ops_stage,
         .Acquire = ops_acquire,
