@@ -3495,6 +3495,134 @@ void mime_vk_close(uint64_t index)
 
 static void warm_wait(void);
 
+/* ------------------------------------------------------------------ the gpus the machine reports */
+
+#define GPU_LIST_NAME "gpus"
+#define GPU_LIST_HEADER "mime gpus 1"
+
+static int gpu_rank(VkPhysicalDeviceType type)
+{
+    return type == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 0 : type == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 1 : 2;
+}
+
+/* dxgi's adapters: no cpu drivers nor ones below vulkan 1.3, discrete ones first, vulkan's order within a kind. */
+static uint32_t gpu_list(PFN_vkGetInstanceProcAddr gipa, VkInstance instance, MimeBootGpu *gpus, uint32_t max)
+{
+    PFN_vkEnumeratePhysicalDevices enumerate =
+        (PFN_vkEnumeratePhysicalDevices)gipa(instance, "vkEnumeratePhysicalDevices");
+    PFN_vkGetPhysicalDeviceProperties properties =
+        (PFN_vkGetPhysicalDeviceProperties)gipa(instance, "vkGetPhysicalDeviceProperties");
+    PFN_vkGetPhysicalDeviceMemoryProperties memory =
+        (PFN_vkGetPhysicalDeviceMemoryProperties)gipa(instance, "vkGetPhysicalDeviceMemoryProperties");
+    VkPhysicalDevice devices[MAX_PHYSICAL_DEVICES];
+    uint32_t count = MAX_PHYSICAL_DEVICES, n = 0;
+    int ranks[MIME_BOOT_GPUS];
+    if (!enumerate || !properties || !memory || enumerate(instance, &count, devices) < 0)
+        return 0;
+    for (uint32_t i = 0; i < count && n < max; i++) {
+        VkPhysicalDeviceProperties p;
+        properties(devices[i], &p);
+        if (p.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU || p.apiVersion < VK_API_VERSION_1_3)
+            continue;
+        MimeBootGpu gpu = {};
+        mime_strlcpy(gpu.name, p.deviceName, sizeof(gpu.name));
+        gpu.vendor = p.vendorID;
+        gpu.device = p.deviceID;
+        gpu.driver_version = p.driverVersion;
+        gpu.integrated = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
+        /* like dxgi's adapters, where an integrated gpu's memory is shared system memory. */
+        VkPhysicalDeviceMemoryProperties m;
+        memory(devices[i], &m);
+        for (uint32_t h = 0; h < m.memoryHeapCount; h++)
+            if (m.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
+                gpu.memory += m.memoryHeaps[h].size;
+        if (gpu.integrated)
+            gpu.memory = 128ull << 20;
+        int rank = gpu_rank(p.deviceType);
+        uint32_t at = n++;
+        while (at && ranks[at - 1] > rank) {
+            gpus[at] = gpus[at - 1];
+            ranks[at] = ranks[at - 1];
+            at--;
+        }
+        gpus[at] = gpu;
+        ranks[at] = rank;
+    }
+    return n;
+}
+
+static void gpu_list_path(const MimePaths *paths, char *out, size_t size)
+{
+    snprintf(out, size, "%s/%s", paths ? paths->cache : "", GPU_LIST_NAME);
+}
+
+static void gpu_list_save(const MimePaths *paths, const MimeBootGpu *gpus, uint32_t count)
+{
+    char path[MIME_PATH_MAX], part[MIME_PATH_MAX + 16];
+    gpu_list_path(paths, path, sizeof(path));
+    snprintf(part, sizeof(part), "%s.%d", path, (int)getpid());
+    FILE *f = fopen(part, "w");
+    if (!f)
+        return;
+    fprintf(f, "%s\n", GPU_LIST_HEADER);
+    for (uint32_t i = 0; i < count; i++)
+        fprintf(f, "%x %x %x %u %llu %s\n", gpus[i].vendor, gpus[i].device, gpus[i].driver_version,
+                gpus[i].integrated, (unsigned long long)gpus[i].memory, gpus[i].name);
+    if (fclose(f) != 0 || rename(part, path) != 0)
+        unlink(part);
+}
+
+static bool gpu_list_load(const MimePaths *paths, MimeBootGpu *gpus, uint32_t max, uint32_t *count)
+{
+    char path[MIME_PATH_MAX], line[512];
+    gpu_list_path(paths, path, sizeof(path));
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return false;
+    bool valid = fgets(line, sizeof(line), f) && !strncmp(line, GPU_LIST_HEADER, strlen(GPU_LIST_HEADER));
+    *count = 0;
+    while (valid && *count < max && fgets(line, sizeof(line), f)) {
+        MimeBootGpu gpu = {};
+        unsigned long long memory;
+        int name_at = 0;
+        if (sscanf(line, "%x %x %x %u %llu %n", &gpu.vendor, &gpu.device, &gpu.driver_version, &gpu.integrated,
+                   &memory, &name_at) < 5 || !name_at)
+            continue;
+        line[strcspn(line, "\n")] = 0;
+        mime_strlcpy(gpu.name, line + name_at, sizeof(gpu.name));
+        gpu.memory = memory;
+        gpus[(*count)++] = gpu;
+    }
+    fclose(f);
+    return valid;
+}
+
+/*
+ * the gpus as the last start found them, kept so a boot does not wait for the driver; the warm up refreshes the list
+ * for the next one. only the first start asks vulkan before the guest boots.
+ */
+uint32_t mime_vk_gpus(const MimePaths *paths, MimeBootGpu *gpus, uint32_t max)
+{
+    uint32_t count = 0;
+    if (gpu_list_load(paths, gpus, max, &count))
+        return count;
+    MvkConnection probe = {};
+    if (!load_library(&probe))
+        return 0;
+    PFN_vkCreateInstance create = (PFN_vkCreateInstance)probe.gipa(nullptr, "vkCreateInstance");
+    VkApplicationInfo app = {VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr, "mime", 1, "mime", 1, VK_API_VERSION_1_1};
+    VkInstanceCreateInfo info = {VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, nullptr, 0, &app};
+    VkInstance instance;
+    if (!create || create(&info, nullptr, &instance) != VK_SUCCESS)
+        return 0;
+    count = gpu_list(probe.gipa, instance, gpus, max);
+    PFN_vkDestroyInstance destroy = (PFN_vkDestroyInstance)probe.gipa(instance, "vkDestroyInstance");
+    if (destroy)
+        destroy(instance, nullptr);
+    gpu_list_save(paths, gpus, count);
+    return count;
+}
+
 void mime_vk_close_all(void)
 {
     warm_wait();
@@ -3522,6 +3650,8 @@ static void *warm_run(void)
     if (warm.fn.vkEnumeratePhysicalDevices(warm.instance, &count, devices) >= 0)
         for (uint32_t i = 0; i < count; i++)
             importable_types(&warm, devices[i]);
+    MimeBootGpu gpus[MIME_BOOT_GPUS];
+    gpu_list_save(mime_daemon_paths(), gpus, gpu_list(warm.gipa, warm.instance, gpus, MIME_BOOT_GPUS));
     /* retain the instance to keep the driver loaded. */
     uint64_t done = mime_now_ns();
     __atomic_store_n(&g_warm_done, done, __ATOMIC_RELEASE);

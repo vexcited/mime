@@ -39,6 +39,10 @@ void mime_host_volume_label(char *out, size_t size)
     mime_strlcpy(out, "Data", size);
 }
 
+void mime_host_gpu_pci(MimeBootGpu *gpus, uint32_t count)
+{
+}
+
 void mime_host_wait_word(uint32_t *word, uint32_t value, uint64_t timeout_ns)
 {
     os_sync_wait_on_address_with_timeout(word, value, 4, OS_SYNC_WAIT_ON_ADDRESS_NONE, OS_CLOCK_MACH_ABSOLUTE_TIME,

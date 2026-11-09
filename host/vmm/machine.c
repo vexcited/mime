@@ -2,6 +2,7 @@
 #include "vmm.h"
 #include "input_queue.h"
 
+#include "../gpu/gpu.h"
 #include "../identity.h"
 #include "../locale.h"
 #include "../rom.h"
@@ -73,6 +74,11 @@ static void fill_identity(MimeVm *vm)
     mime_strlcpy(boot->system_serial, id.machine_serial, sizeof(boot->system_serial));
     parse_uuid(id.machine_uuid, boot->system_uuid);
     mime_host_volume_label(boot->host_volume_label, sizeof(boot->host_volume_label));
+#if defined(__x86_64__)
+    /* an arm64 machine shows the reference machine's adreno instead. */
+    boot->gpu_count = mime_vk_gpus(vm->paths, boot->gpus, MIME_BOOT_GPUS);
+    mime_host_gpu_pci(boot->gpus, boot->gpu_count);
+#endif
 
     /* MIME_LOCALE overrides the installation language for one run. */
     MimeLocale locale;
