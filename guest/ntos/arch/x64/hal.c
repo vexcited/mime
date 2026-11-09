@@ -20,7 +20,7 @@ ULONG64 HalHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4,
         ULONG64 took = HalReadCounter() - start;
         HalHypercallCalls[number]++;
         HalHypercallTicks[number] += took;
-        if (KiKernelLock[1] == KeGetCurrentPrcb()->Number)
+        if (KiKernelLock[KI_LOCK_OWNER] == KeGetCurrentPrcb()->Number)
             HalHypercallLockedTicks[number] += took;
         if (took > HalHypercallLongest[number])
             HalHypercallLongest[number] = took;
@@ -76,13 +76,18 @@ void HalSendIpi(ULONG processor)
 
 /*
  * logical destination mode reaches the sixteen processors of a cluster in one
- * write, instead of one host exit per processor.
+ * write, instead of one host exit per processor. a single processor is named
+ * by its number: kvm handles only that form on its short exit path.
  */
 static void send_mask(ULONG64 mask, ULONG vector)
 {
     for (ULONG cluster = 0; mask; cluster++, mask >>= 16) {
         ULONG bits = (ULONG)(mask & 0xFFFF);
-        if (bits)
+        if (!bits)
+            continue;
+        if (!(bits & (bits - 1)))
+            KiWriteMsr(MSR_X2APIC_ICR, (ULONG64)(cluster * 16 + (ULONG)__builtin_ctz(bits)) << 32 | vector);
+        else
             KiWriteMsr(MSR_X2APIC_ICR, (ULONG64)(cluster << 16 | bits) << 32 | (1u << 11) | vector);
     }
 }

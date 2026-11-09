@@ -48,63 +48,64 @@ KiSecondaryStartup:
     jmp     1b
 
 /*
- * the kernel lock, a ticket lock: the low half serves, the high half hands
- * out tickets. a waiter spins for a few microseconds, then sleeps in the
- * host on the lock word, so it does not take the host core the owner's vcpu
- * needs. a releaser that sees sleepers wakes them.
+ * the kernel lock. its word is odd while held and every release adds one, so a waiter sleeping on the value it saw
+ * wakes on any release since. a free lock goes to whichever processor takes it first, never to one still asleep in
+ * the host, whose wakeup would hold up every processor behind it. a waiter spins on loads for a few microseconds,
+ * then sleeps in the host, and a releaser that sees sleepers wakes one. the processors interrupted while the lock was
+ * held are interrupted once it is let go, see KiSendIpi.
  * clobbers rax, rcx, rdx and r8 to r11, as any call.
  */
-#define LOCK_OWNER 4
-#define LOCK_SLEEPERS 8
-#define LOCK_REASON 12
-#define LOCK_SINCE 16
-#define LOCK_HELD 24
+#define LOCK_SLEEPERS (KI_LOCK_SLEEPERS * 4)
+#define LOCK_OWNER (KI_LOCK_OWNER * 4)
+#define LOCK_REASON (KI_LOCK_REASON * 4)
+#define LOCK_SINCE (KI_LOCK_SINCE * 4)
+#define LOCK_HELD (KI_LOCK_HELD * 4)
 #define LOCK_SPINS 2048
-#define HC_LOCK_WAIT 0x0A
-#define HC_LOCK_WAKE 0x0B
+#define HC_WORD_WAIT 0x0D
+#define HC_WORD_WAKE 0x0E
 
     .globl  KiAcquireKernelLock
     .p2align 4
 KiAcquireKernelLock:
     leaq    KiKernelLock(%rip), %r8
-    movl    $0x10000, %eax
-    lock xaddl %eax, (%r8)
-    movl    %eax, %r9d
-    shrl    $16, %r9d               /* our ticket */
-    movzwl  %ax, %eax
     xorl    %r11d, %r11d            /* when waiting began, 0 if the lock was free */
-    cmpl    %r9d, %eax
+    movl    (%r8), %eax
+    testb   $1, %al
+    jnz     1f
+    leal    1(%rax), %ecx
+    lock cmpxchgl %ecx, (%r8)
     je      4f
-    rdtsc
+1:  rdtsc
     shlq    $32, %rdx
     orq     %rdx, %rax
     movq    %rax, %r11
-1:  movl    $LOCK_SPINS, %r10d
-2:  pause
-    movzwl  (%r8), %eax
-    cmpl    %r9d, %eax
-    je      4f
+2:  movl    $LOCK_SPINS, %r10d
+3:  pause
+    movl    (%r8), %eax
+    testb   $1, %al
+    jz      6f
     decl    %r10d
-    jnz     2b
+    jnz     3b
     cmpq    $0, KiKernelLockPhys(%rip)
-    je      1b
+    je      2b
     lock incl LOCK_SLEEPERS(%r8)
-    movzwl  (%r8), %eax
-    cmpl    %r9d, %eax
-    je      5f
+    movl    (%r8), %eax
+    testb   $1, %al
+    jz      5f
     pushq   %rdi
     pushq   %rsi
-    movl    $HC_LOCK_WAIT, %eax
+    movl    %eax, %esi
+    movl    $HC_WORD_WAIT, %eax
     movq    KiKernelLockPhys(%rip), %rdi
-    movl    %r9d, %esi
     outb    %al, $MIME_HC_PORT
     popq    %rsi
     popq    %rdi
     leaq    KiKernelLock(%rip), %r8
 5:  lock decl LOCK_SLEEPERS(%r8)
-    movzwl  (%r8), %eax
-    cmpl    %r9d, %eax
-    jne     1b
+    jmp     2b
+6:  leal    1(%rax), %ecx
+    lock cmpxchgl %ecx, (%r8)
+    jne     2b
 4:  rdtsc
     shlq    $32, %rdx
     orq     %rdx, %rax
@@ -118,9 +119,7 @@ KiAcquireKernelLock:
     incq    (%rcx)
     testq   %r11, %r11
     jz      7f
-    rdtsc
-    shlq    $32, %rdx
-    orq     %rdx, %rax
+    movq    LOCK_SINCE(%r8), %rax
     subq    %r11, %rax
     incq    8(%rcx)
     addq    %rax, 16(%rcx)
@@ -143,13 +142,13 @@ KiAcquireKernelLock:
      * for a page another thread freed and the allocator reused would take the write.
      */
 8:  testb   $KPCR_FLUSH_USER, %gs:KPCR_FLUSH_PENDING
-    jz      6f
+    jz      9f
     cmpb    $0, KiNoLockFlush(%rip)
-    jne     6f
+    jne     9f
     movb    $0, %gs:KPCR_FLUSH_PENDING
     movq    %cr3, %rax
     movq    %rax, %cr3
-6:  ret
+9:  ret
 
     .globl  KiReleaseKernelLock
     .p2align 4
@@ -174,15 +173,22 @@ KiReleaseKernelLock:
     leaq    KiKernelLock(%rip), %r8
 3:  movl    $0, LOCK_REASON(%r8)
     movl    $-1, LOCK_OWNER(%r8)
-    lock incw (%r8)
+    lock incl (%r8)
     cmpl    $0, LOCK_SLEEPERS(%r8)
     je      2f
     pushq   %rdi
-    movl    $HC_LOCK_WAKE, %eax
+    movl    $HC_WORD_WAKE, %eax
     movq    KiKernelLockPhys(%rip), %rdi
     outb    %al, $MIME_HC_PORT
     popq    %rdi
-2:  ret
+2:  cmpq    $0, %gs:KPCR_DEFERRED_IPIS
+    je      4f
+    xorl    %ecx, %ecx
+    xchgq   %rcx, %gs:KPCR_DEFERRED_IPIS
+    subq    $40, %rsp
+    call    HalSendIpiMask
+    addq    $40, %rsp
+4:  ret
 
 /*
  * the user tlb flush interrupt. it touches nothing the kernel lock guards,

@@ -61,6 +61,17 @@
 #define KPCR_PRCB 0x180
 #define KPCR_NUMBER (KPCR_PRCB + 0x00)
 #define KPCR_CURRENT_THREAD (KPCR_PRCB + 0x08)
+#define KPCR_DEFERRED_IPIS (KPCR_PRCB + 0xA0)
+
+/*
+ * words of KiKernelLock. the lock word and its sleepers have a cache line to themselves: the waiters read it while
+ * they spin, and the owner's writes to the rest would take it from them each time.
+ */
+#define KI_LOCK_SLEEPERS 1
+#define KI_LOCK_OWNER 16
+#define KI_LOCK_REASON 17
+#define KI_LOCK_SINCE 18
+#define KI_LOCK_HELD 20
 
 /* FlushPending bits: user translations, or global ones too. */
 #define KPCR_FLUSH_USER 1

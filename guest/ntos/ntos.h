@@ -285,9 +285,7 @@ FORCEINLINE UCHAR KiCurrentIrql(void)
 #endif
 
 MIME_STATIC_ASSERT(offsetof(KPCR, Prcb.Number) == KPCR_NUMBER, "pcr number");
-#ifndef __x86_64__
 MIME_STATIC_ASSERT(offsetof(KPCR, Prcb.DeferredIpis) == KPCR_DEFERRED_IPIS, "pcr deferred ipis");
-#endif
 MIME_STATIC_ASSERT(offsetof(KPCR, UserMode) == KPCR_USER_MODE, "pcr user mode");
 
 extern KPCR KiBootPcr;
@@ -327,14 +325,15 @@ FORCEINLINE PKTHREAD KiCurrentThread(void)
  * only around wfi. user mode runs on every processor at once, while kernel code keeps uniprocessor
  * rules: masking interrupts excludes every other kernel path.
  */
-extern volatile ULONG KiKernelLock[8]; /* lock word, owner, sleepers in the host, holder, time taken, ticks held. */
+/* the lock word first, then the KI_LOCK_* words: owner, sleepers in the host, holder, time taken, ticks held. */
+extern volatile ULONG KiKernelLock[32];
 extern ULONG64 KiLongHoldTicks;
 void KiNoteLongHold(ULONG64 held);
 extern ULONG64 HalHypercallCalls[64], HalHypercallTicks[64], HalHypercallLongest[64], HalHypercallLockedTicks[64];
 #define KI_ASSERT_KERNEL_LOCK()                                                                                   \
     do {                                                                                                          \
-        if (KiKernelLock[1] != KeGetCurrentPrcb()->Number)                                                        \
-            KeBugCheckEx(0xDEAD10C, KiKernelLock[1], KeGetCurrentPrcb()->Number, __LINE__, 0);                    \
+        if (KiKernelLock[KI_LOCK_OWNER] != KeGetCurrentPrcb()->Number)                                            \
+            KeBugCheckEx(0xDEAD10C, KiKernelLock[KI_LOCK_OWNER], KeGetCurrentPrcb()->Number, __LINE__, 0);        \
     } while (0)
 extern ULONG64 KiKernelLockPhys;
 extern ULONG64 KiLockStats[MAXIMUM_PROCESSORS][8];
