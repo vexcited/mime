@@ -592,37 +592,19 @@ LONG WtVerifySignedData(WT_BYTES encoded, const WT_SUBJECT *subject, const WINTR
     for (DWORD i = 0; i < encoded.size; i++)
         if (encoded.data[i])
             return TRUST_E_SUBJECT_NOT_TRUSTED;
-    int step = 1;
-    if (!take_oid(&envelope.value, oid_signed, sizeof(oid_signed))) goto bad;
-    step = 2;
-    if (!WtTake(&envelope.value, 0xa0, &wrapper) || envelope.value.size) goto bad;
-    step = 3;
-    if (!WtTake(&wrapper.value, 0x30, &data) || wrapper.value.size) goto bad;
-    step = 4;
-    if (!WtTake(&data.value, 2, &version) || version.value.size != 1 || version.value.data[0] != 1) goto bad;
-    step = 5;
-    if (!WtTake(&data.value, 0x31, &algorithms)) goto bad;
-    step = 6;
-    if (!WtTake(&data.value, 0x30, &content_info)) goto bad;
-    step = 7;
-    if (!take_oid_pair(&content_info.value, oid_indirect, sizeof(oid_indirect), oid_cat_indirect,
-                       sizeof(oid_cat_indirect)))
-        goto bad;
-    step = 8;
-    if (!WtTake(&content_info.value, 0xa0, &content_wrapper) || content_info.value.size) goto bad;
-    step = 9;
-    if (!WtTake(&content_wrapper.value, 0x30, &content) || content_wrapper.value.size) goto bad;
-    step = 10;
-    if (!WtTake(&data.value, 0xa0, &certs)) goto bad;
-    step = 11;
-    if (!WtTake(&data.value, 0x31, &signers) || data.value.size) goto bad;
-    step = 12;
-    if (!WtTake(&signers.value, 0x30, &one) || signers.value.size) goto bad;
-    goto ok;
-bad:
-    WtTrace("signed data: step %d failed", step);
-    return TRUST_E_SUBJECT_FORM_UNKNOWN;
-ok:;
+    if (!take_oid(&envelope.value, oid_signed, sizeof(oid_signed)) ||
+        !WtTake(&envelope.value, 0xa0, &wrapper) || envelope.value.size ||
+        !WtTake(&wrapper.value, 0x30, &data) || wrapper.value.size ||
+        !WtTake(&data.value, 2, &version) || version.value.size != 1 || version.value.data[0] != 1 ||
+        !WtTake(&data.value, 0x31, &algorithms) ||
+        !WtTake(&data.value, 0x30, &content_info) ||
+        !take_oid_pair(&content_info.value, oid_indirect, sizeof(oid_indirect), oid_cat_indirect,
+                       sizeof(oid_cat_indirect)) ||
+        !WtTake(&content_info.value, 0xa0, &content_wrapper) || content_info.value.size ||
+        !WtTake(&content_wrapper.value, 0x30, &content) || content_wrapper.value.size ||
+        !WtTake(&data.value, 0xa0, &certs) || !WtTake(&data.value, 0x31, &signers) || data.value.size ||
+        !WtTake(&signers.value, 0x30, &one) || signers.value.size)
+        return TRUST_E_SUBJECT_FORM_UNKNOWN;
     WT_DER digest_algorithm;
     if (!WtTake(&algorithms.value, 0x30, &digest_algorithm) || algorithms.value.size)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
