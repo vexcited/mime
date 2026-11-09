@@ -1,5 +1,5 @@
 /*
- * features.exe: turns the features that are fetched from the vendor on and off.
+ * OptionalFeatures.exe: turns the features that are fetched from the vendor on and off.
  *
  *   features list                           the features and what state each is in
  *   features status <name>                  one feature in full
@@ -64,7 +64,7 @@ static const WCHAR kUsage[] =
     L"The forms of Windows work too: fondue /enable-feature:<name> asks before it downloads, and\n"
     L"dism /online /enable-feature /featurename:<name> [/source:<file>] does not.\n"
     L"\n"
-    L"Policy: the value Consent under HKLM\\SOFTWARE\\Policies\\Mime\\Features, or under a key of the feature's name, is 0\n"
+    L"Policy: the value Consent under HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsFeatures, or under a key of the feature's name, is 0\n"
     L"to ask, 1 to download without asking and 2 to download nothing.\n";
 
 static void narrow(const WCHAR *wide, char *narrow_text, SIZE_T chars)
@@ -253,7 +253,7 @@ static HANDLE lock_feature(const FEATURE_DEF *feature, BOOL say)
 {
     WCHAR name[64], mutex_name[96];
     WidenName(feature->Name, name, RTL_NUMBER_OF(name));
-    _snwprintf(mutex_name, RTL_NUMBER_OF(mutex_name), L"Global\\MimeFeature.%ls", name);
+    _snwprintf(mutex_name, RTL_NUMBER_OF(mutex_name), L"Global\\WindowsFeature.%ls", name);
     mutex_name[RTL_NUMBER_OF(mutex_name) - 1] = 0;
     HANDLE mutex = CreateMutexW(nullptr, FALSE, mutex_name);
     if (!mutex)

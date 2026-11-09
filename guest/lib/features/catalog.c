@@ -16,6 +16,8 @@ static const FEATURE_FONT management_files[] = {
     },
 };
 
+#include "systemcatalogs.inc"
+
 static const FEATURE_DEF g_catalog[] = {
     {
         .Name = "WebView2",
@@ -101,6 +103,25 @@ static const FEATURE_DEF g_catalog[] = {
         .DownloadMB = 19,
         .InstallMB = 15,
         .Handler = FEATURE_HANDLER_VCRUNTIME,
+    },
+    {
+        .Name = "SystemCatalogs",
+        .DisplayName = "Windows system catalogs",
+        .Version = "10.0.26300.9457",
+        .Vendor = "Microsoft Corporation",
+        /*
+         * The whole catalog folder of Windows 11 26H2, read by range out of the image the media creation tool
+         * fetches, the machine's own build. The catalogs of a machine are all the ones its image carries, not only
+         * the last of each package. They lie in three solid chunks of it.
+         */
+        .Url = {[FEATURE_ARCH_X64] = "http://dl.delivery.mp.microsoft.com/filestreamingservice/files/3d9e62bb-e92f-443e-94da-fc4e03021048/26300.9457.260913-1737.26h2_ge_release_svc_refresh_CLIENTCONSUMER_RET_x64FRE_en-us.esd"},
+        .Format = FEATURE_FORMAT_WIM,
+        .MinSize = 0ull, .MaxSize = 1099511627776ull,
+        .DownloadMB = 86,
+        .InstallMB = 80,
+        .Handler = FEATURE_HANDLER_CATALOGS,
+        .Terms = "These catalogs are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
+        .Fonts = g_system_catalogs, .FontCount = sizeof(g_system_catalogs) / sizeof(g_system_catalogs[0]),
     },
 };
 

@@ -92,7 +92,7 @@ static BOOL is_the_service(void)
     const WCHAR *name = path + n;
     while (name > path && name[-1] != L'\\')
         name--;
-    return same_name(name, L"features.exe") || same_name(name, L"dism.exe") || same_name(name, L"fondue.exe");
+    return same_name(name, L"OptionalFeatures.exe") || same_name(name, L"dism.exe") || same_name(name, L"fondue.exe");
 }
 
 /* Remembers a family as asked for. FALSE when it already was. */
@@ -142,7 +142,7 @@ void GdiAskForFont(const LOGFONTW *lf)
     if (!in_catalog(family))
         return;
     if (!g_mode) {
-        /* What features.exe sets for itself and for what it runs: they must not ask for what they are installing. */
+        /* What OptionalFeatures.exe sets for itself and for what it runs: they must not ask for what they are installing. */
         WCHAR busy[4];
         DWORD last = GetLastError();
         InterlockedExchange(&g_mode, is_the_service() || GetEnvironmentVariableW(MIME_FEATURE_BUSY_VARIABLE, busy, RTL_NUMBER_OF(busy)) ? 2 : 1);

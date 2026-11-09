@@ -122,7 +122,7 @@ static DWORD transfer(RUN *run, const FEATURE_DEF *feature, PCWSTR url, PCWSTR p
     parts.dwUrlPathLength = RTL_NUMBER_OF(path);
     if (!WinHttpCrackUrl(url, 0, 0, &parts))
         return GetLastError();
-    t.Session = WinHttpOpen(L"Mime-Features/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
+    t.Session = WinHttpOpen(L"Microsoft-Windows-Features/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
                             WINHTTP_NO_PROXY_BYPASS, 0);
     if (!t.Session)
         return GetLastError();

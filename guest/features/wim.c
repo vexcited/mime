@@ -23,7 +23,7 @@
 #define MAX_TABLE (64u << 20)
 #define MAX_CHUNK (64u << 20)
 #define MAX_SOLIDS 64
-#define MAX_JOBS 512
+#define MAX_JOBS 4096
 
 typedef struct SOLID {
     ULONGLONG Offset;  /* In the file. */
@@ -281,7 +281,7 @@ DWORD AcquireWim(RUN *run, const FEATURE_DEF *feature, PCWSTR url, PCWSTR destin
     for (SIZE_T k = 0; k < feature->FontCount; k++)
         if (!w->Jobs[k].Found) {
             error = ERROR_FILE_NOT_FOUND;
-            fail_detail(run, L"The image does not have %hs, the file that Microsoft's font of this name is.", feature->Fonts[k].File);
+            fail_detail(run, L"The image does not have %hs, the file of Microsoft that the feature names.", feature->Fonts[k].File);
             goto done;
         }
     HeapFree(GetProcessHeap(), 0, table);

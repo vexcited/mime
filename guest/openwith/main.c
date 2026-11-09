@@ -8,7 +8,7 @@
  *   installed                            lists the programs installed, as the installed apps settings show them
  *   uninstall <id>                       runs the uninstaller of an installed program, or of the one an app belongs
  *                                        to, and waits for it
- *   features <arguments>                 runs features.exe with the arguments and waits, its exit code becomes ours
+ *   features <arguments>                 runs OptionalFeatures.exe with the arguments and waits, its exit code becomes ours
  *
  * a console program opened here shares this console and its exit code becomes ours. a window program is left
  * running unless --wait is given. exit codes: 1 failure, 2 bad command line.
@@ -765,9 +765,9 @@ static int command_uninstall(int argc, WCHAR **argv)
 
 /* ------------------------------------------------------------------ features */
 
-#define FEATURES_PROGRAM L"C:\\Windows\\System32\\features.exe"
+#define FEATURES_PROGRAM L"C:\\Windows\\System32\\OptionalFeatures.exe"
 
-/* features.exe asks for the rights it needs itself, the console is shared, so its words reach the host. */
+/* OptionalFeatures.exe asks for the rights it needs itself, the console is shared, so its words reach the host. */
 static int command_features(int argc, WCHAR **argv)
 {
     static WCHAR parameters[2048];
