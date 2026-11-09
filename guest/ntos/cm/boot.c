@@ -543,6 +543,14 @@ static void acpi_description(void)
 #define MEDIA_CLASS L"{4d36e96c-e325-11ce-bfc1-08002be10318}"
 #define NET_CLASS L"{4d36e972-e325-11ce-bfc1-08002be10318}"
 #define BATTERY_CLASS L"{72631e54-78a4-11d0-bcf7-00aa00b7b32a}"
+#define KEYBOARD_CLASS L"{4d36e96b-e325-11ce-bfc1-08002be10318}"
+#define MOUSE_CLASS L"{4d36e96f-e325-11ce-bfc1-08002be10318}"
+
+/* the instances raw input names its keyboard and mouse by, see win32k's rawinput.c. */
+#define KEYBOARD_INSTANCE L"ACPI\\PNP0303\\4&38a0320a&0"
+#define MOUSE_INSTANCE L"ACPI\\PNP0F13\\4&38a0320a&0"
+static const GUID GUID_DEVINTERFACE_KEYBOARD = {0x884b96c3, 0x56ef, 0x11d1, {0xbc, 0x8c, 0x00, 0xa0, 0xc9, 0x14, 0x05, 0xdd}};
+static const GUID GUID_DEVINTERFACE_MOUSE = {0x378de44c, 0x56ef, 0x11d1, {0xbc, 0x8c, 0x00, 0xa0, 0xc9, 0x14, 0x05, 0xdd}};
 
 static void pnp(PCWSTR instance, PCWSTR parent, PCWSTR desc, PCWSTR hardware, PCWSTR klass, PCWSTR guid,
                 PCWSTR manufacturer, PCWSTR service, PCWSTR location)
@@ -602,6 +610,13 @@ static void devices(void)
     pnp(L"PCI\\VEN_144D&DEV_A80A&SUBSYS_00000000&REV_00\\3&11583659&0&1D", root, L"Samsung NVMe Controller",
         L"PCI\\VEN_144D&DEV_A80A&SUBSYS_00000000&REV_00\0", L"DiskDrive", DISK_CLASS, L"Samsung",
         L"stornvme", L"PCI bus 0, device 29, function 0");
+    /* the keyboard and mouse every pc has, whose interfaces lead to the class devices the raw input names open. */
+    pnp(KEYBOARD_INSTANCE, root, L"Standard PS/2 Keyboard", L"ACPI\\PNP0303\0*PNP0303\0", L"Keyboard", KEYBOARD_CLASS,
+        L"(Standard keyboards)", L"i8042prt", L"plugged into keyboard port");
+    MimePnpAddInterface(KEYBOARD_INSTANCE, &GUID_DEVINTERFACE_KEYBOARD, L"\\Device\\KeyboardClass0");
+    pnp(MOUSE_INSTANCE, root, L"PS/2 Compatible Mouse", L"ACPI\\PNP0F13\0*PNP0F13\0", L"Mouse", MOUSE_CLASS,
+        L"(Standard mouse types)", L"i8042prt", L"plugged into PS/2 mouse port");
+    MimePnpAddInterface(MOUSE_INSTANCE, &GUID_DEVINTERFACE_MOUSE, L"\\Device\\PointerClass0");
     pnp(L"ACPI\\PNP0C0A\\1", root, L"Microsoft ACPI-Compliant Control Method Battery", L"ACPI\\PNP0C0A\0",
         L"Battery", BATTERY_CLASS, L"Microsoft", L"CmBatt", L"");
     pnp(L"ACPI\\PNP0C0B\\2", root, L"ACPI Thermal Zone", L"ACPI\\PNP0C0B\0", L"System", SYSTEM_CLASS,
@@ -614,13 +629,58 @@ static NTSTATUS NTAPI empty_driver(PDRIVER_OBJECT driver, PUNICODE_STRING regist
     return STATUS_SUCCESS;
 }
 
+/*
+ * the class drivers of the keyboard and mouse: their devices open, as programs that look a raw input device up by its
+ * name do, and take no requests, since the window manager reads the input.
+ */
+static NTSTATUS NTAPI class_open(PDEVICE_OBJECT device, PIRP irp)
+{
+    irp->IoStatus.Status = STATUS_SUCCESS;
+    irp->IoStatus.Information = 0;
+    IofCompleteRequest(irp, IO_NO_INCREMENT);
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS NTAPI class_refuse(PDEVICE_OBJECT device, PIRP irp)
+{
+    irp->IoStatus.Status = STATUS_INVALID_DEVICE_REQUEST;
+    irp->IoStatus.Information = 0;
+    IofCompleteRequest(irp, IO_NO_INCREMENT);
+    return STATUS_INVALID_DEVICE_REQUEST;
+}
+
+static NTSTATUS class_driver(PDRIVER_OBJECT driver, PCWSTR device_name, ULONG type)
+{
+    for (ULONG i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++)
+        driver->MajorFunction[i] = class_refuse;
+    driver->MajorFunction[IRP_MJ_CREATE] = class_open;
+    driver->MajorFunction[IRP_MJ_CLEANUP] = class_open;
+    driver->MajorFunction[IRP_MJ_CLOSE] = class_open;
+    UNICODE_STRING name;
+    RtlInitUnicodeString(&name, device_name);
+    PDEVICE_OBJECT device;
+    return IoCreateDevice(driver, 0, &name, type, 0, FALSE, &device);
+}
+
+static NTSTATUS NTAPI kbdclass_entry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
+{
+    return class_driver(driver, L"\\Device\\KeyboardClass0", 0x0b /* FILE_DEVICE_KEYBOARD */);
+}
+
+static NTSTATUS NTAPI mouclass_entry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
+{
+    return class_driver(driver, L"\\Device\\PointerClass0", 0x0f /* FILE_DEVICE_MOUSE */);
+}
+
 static void drivers(void)
 {
+    IoCreateDriver(L"\\Driver\\kbdclass", kbdclass_entry, nullptr);
+    IoCreateDriver(L"\\Driver\\mouclass", mouclass_entry, nullptr);
     static const PCWSTR names[] = {
         L"\\Driver\\ACPI", L"\\Driver\\pci", L"\\Driver\\msisadrv", L"\\Driver\\disk", L"\\Driver\\partmgr",
         L"\\Driver\\volmgr", L"\\Driver\\volsnap", L"\\Driver\\mountmgr", L"\\Driver\\stornvme",
         L"\\Driver\\CmBatt", L"\\Driver\\netwtw", L"\\Driver\\nvlddmkm", L"\\Driver\\amdkmdag", L"\\Driver\\igdkmd64",
-        L"\\Driver\\IntcAudioBus", L"\\FileSystem\\FltMgr",
+        L"\\Driver\\IntcAudioBus", L"\\Driver\\i8042prt", L"\\FileSystem\\FltMgr",
     };
     for (ULONG i = 0; i < RTL_NUMBER_OF(names); i++)
         IoCreateDriver(names[i], empty_driver, nullptr);
