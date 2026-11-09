@@ -734,6 +734,7 @@ void MiDescribeCodeAddress(ULONG_PTR address, char *out, SIZE_T size);
 
 NTSTATUS MmCreateAddressSpace(PMMADDRESS_SPACE as);
 void MmDeleteAddressSpace(PMMADDRESS_SPACE as);
+void MmFreeAddressSpaceRoot(PMMADDRESS_SPACE as);
 PMMVAD MiFindVad(PMMADDRESS_SPACE as, ULONG_PTR va);
 NTSTATUS MiInsertVad(PMMADDRESS_SPACE as, PMMVAD vad);
 NTSTATUS MiFindFreeRange(PMMADDRESS_SPACE as, SIZE_T size, ULONG_PTR alignment, BOOLEAN top_down,

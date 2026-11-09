@@ -158,8 +158,7 @@ static const SCHAR g_class_base[] = {8, 4, 8, 13, 24, 6, 10};
 static void process_delete(PVOID object)
 {
     PEPROCESS process = object;
-    if (process->AddressSpace.Root)
-        MmDeleteAddressSpace(&process->AddressSpace);
+    MmFreeAddressSpaceRoot(&process->AddressSpace);
     if (process->MmLockedRanges)
         ExFreePool(process->MmLockedRanges);
     PSECTION image = __atomic_exchange_n(&process->ImageSection, nullptr, __ATOMIC_ACQ_REL);

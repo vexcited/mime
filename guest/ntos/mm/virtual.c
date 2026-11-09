@@ -1568,6 +1568,10 @@ BOOLEAN MmAccessFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCESSOR_M
     }
 }
 
+/*
+ * the user half, which the last thread takes along. the root stays until the process object goes, see
+ * MmFreeAddressSpaceRoot: a thread attached to the process loads it, and on x64 its kernel half maps the kernel.
+ */
 void MmDeleteAddressSpace(PMMADDRESS_SPACE as)
 {
     if (!as->Root)
@@ -1593,9 +1597,16 @@ void MmDeleteAddressSpace(PMMADDRESS_SPACE as)
         as->CodeLogPage = 0;
     }
     free_tables(as->Root, 0);
-    MmFreePage(as->RootPhys);
+    memset(as->Root, 0, MI_USER_ROOT_ENTRIES * sizeof(ULONG64));
     MiFlushTlbAsid(as->Asid);
     as->Root = nullptr;
+}
+
+void MmFreeAddressSpaceRoot(PMMADDRESS_SPACE as)
+{
+    MmDeleteAddressSpace(as);
+    if (as->RootPhys)
+        MmFreePage(as->RootPhys);
     as->RootPhys = 0;
 }
 

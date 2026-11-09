@@ -28,8 +28,14 @@ static DECLSPEC_ALIGN(16) UCHAR g_fault_stacks[MAXIMUM_PROCESSORS][8192];
 
 void KiSwitchAddressSpace(PKPROCESS process)
 {
-    if (KiReadCr3() != process->DirectoryTableBase)
-        KiWriteCr3(process->DirectoryTableBase);
+    if (KiReadCr3() == process->DirectoryTableBase)
+        return;
+    /* a root without the kernel's half leaves the next fault nowhere to go and the processor resets: stop before. */
+    ULONG kernel = (MIME_KVA_KERNEL >> 39) & 0x1FF;
+    if (((ULONG64 *)HalPhysmap(process->DirectoryTableBase))[kernel] != MiKernelRoot()[kernel])
+        KeBugCheckEx(0x0000001A, process->DirectoryTableBase, (ULONG_PTR)process,
+                     (ULONG_PTR)__builtin_return_address(0), 0); /* MEMORY_MANAGEMENT */
+    KiWriteCr3(process->DirectoryTableBase);
 }
 
 /* in 32-bit code, fs of a wow64 thread points at its 32-bit teb. */
@@ -484,6 +490,11 @@ BOOLEAN KiSetupUserException(PKTRAP_FRAME frame, PVOID dispatcher, PEXCEPTION_RE
 {
     CONTEXT ctx;
     KiTrapFrameToContext(frame, &ctx, CONTEXT_FULL);
+    PKTHREAD thread = KiCurrentThread();
+    if ((thread->UserDr7 & 0xFF) || record->ExceptionCode == (NTSTATUS)0x80000004L) {
+        ctx.ContextFlags |= CONTEXT_DEBUG_REGISTERS;
+        KiGetThreadDebug(thread, &ctx);
+    }
     ULONG64 machine = ((user_stack(frame) - 0x80) & ~15ull) - 0x30;
     ULONG64 ctx_addr = machine - 0x590;
     ULONG64 rec = ctx_addr + 0x4F0;
