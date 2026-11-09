@@ -1314,6 +1314,7 @@ NTSTATUS IopSynchronousRequest(PFILE_OBJECT file, UCHAR major, UCHAR minor, PVOI
                                PIO_STACK_LOCATION params, PIO_STATUS_BLOCK iosb);
 NTSTATUS IoRenameFileObject(PFILE_OBJECT file, PCWSTR new_name, BOOLEAN replace);
 const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file);
+PDEVICE_OBJECT IoGetHostVolumeDevice(void);
 BOOLEAN IoGetFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref);
 /* the same for an image section, whose file then cannot be deleted. */
 BOOLEAN IoGetImageFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref);
