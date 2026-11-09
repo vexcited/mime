@@ -233,7 +233,13 @@ typedef struct _KPRCB {
     ULONG64 IdlePoll;     /* counter ticks an idle processor watches its flags before it halts, see KiIdleWait. */
     ULONG64 HaltedSince;  /* counter value at the start of the idle wait that halted, 0 once an interrupt ended it. */
     ULONG64 IdlePolls, IdleHalts; /* idle waits ended while watching, and by an interrupt after halting. */
+    ULONG DispatcherDepth;        /* times this processor took the dispatcher lock and has not let go. */
+    UCHAR UnlockWork;             /* KI_UNLOCK_*: exits to the host put off until the dispatcher lock is let go. */
+    ULONG64 DispatcherTaken, DispatcherWaited, DispatcherWaitTicks;
 } KPRCB, *PKPRCB;
+
+#define KI_UNLOCK_TIMER 1 /* the timer is to be set to TimerArmed. */
+#define KI_UNLOCK_IPI 2   /* DeferredIpis are to be sent, when the kernel lock is not held too. */
 
 #ifdef __x86_64__
 /* descriptor tables and the system call stack switch first, then the kernel's fields. */
@@ -343,6 +349,59 @@ extern ULONG64 KiLockStats[MAXIMUM_PROCESSORS][8];
 void KiAcquireKernelLock(void);
 void KiReleaseKernelLock(void);
 
+#ifdef __x86_64__
+/*
+ * the dispatcher lock guards what the scheduler works on: thread states, ready queues, wait lists and timers.
+ * it is a spin lock taken with interrupts off, which the processor that holds it may take again. it stays held
+ * across a thread switch, and the thread switched to lets go of it. it is taken after the kernel lock, never
+ * before. the exits to the host its holder would make, to set the timer or to interrupt a processor, wait
+ * until it is let go.
+ */
+extern volatile ULONG KiDispatcherLock;
+void KiDispatcherLockContended(void);
+void KiDispatcherUnlockWork(PKPRCB prcb);
+void KiDispatcherLockMissing(const char *what, PVOID caller);
+void KiSettleTlbFlush(void);
+
+FORCEINLINE ULONG64 KiAcquireDispatcherLock(void)
+{
+    ULONG64 state = KiDisableInterrupts();
+    PKPCR pcr = KeGetPcr();
+    if (pcr->Prcb.DispatcherDepth++ == 0) {
+        if (__atomic_exchange_n(&KiDispatcherLock, 1, __ATOMIC_ACQUIRE))
+            KiDispatcherLockContended();
+        pcr->Prcb.DispatcherTaken++;
+        /* what the lock guards is read through translations another processor may have changed meanwhile. */
+        if (pcr->FlushPending)
+            KiSettleTlbFlush();
+    }
+    return state;
+}
+
+FORCEINLINE void KiReleaseDispatcherLock(ULONG64 state)
+{
+    PKPRCB prcb = KeGetCurrentPrcb();
+    if (--prcb->DispatcherDepth == 0) {
+        __atomic_store_n(&KiDispatcherLock, 0, __ATOMIC_RELEASE);
+        if (prcb->UnlockWork)
+            KiDispatcherUnlockWork(prcb);
+    }
+    KiRestoreInterrupts(state);
+}
+
+/* whether this processor holds the lock. asked with interrupts off, or the answer is another processor's. */
+FORCEINLINE BOOLEAN KiDispatcherLockHeld(void)
+{
+    return KeGetCurrentPrcb()->DispatcherDepth != 0;
+}
+
+#define KI_ASSERT_DISPATCHER_LOCK(what)                                                                           \
+    do {                                                                                                          \
+        if (__builtin_expect(!KiDispatcherLockHeld(), 0))                                                         \
+            KiDispatcherLockMissing(what, __builtin_return_address(0));                                           \
+    } while (0)
+#else
+/* interrupts off under the kernel lock: nothing else runs kernel code meanwhile. */
 FORCEINLINE ULONG64 KiAcquireDispatcherLock(void)
 {
     return KiDisableInterrupts();
@@ -352,6 +411,19 @@ FORCEINLINE void KiReleaseDispatcherLock(ULONG64 state)
 {
     KiRestoreInterrupts(state);
 }
+
+FORCEINLINE BOOLEAN KiDispatcherLockHeld(void)
+{
+    return FALSE;
+}
+
+#define KI_ASSERT_DISPATCHER_LOCK(what)                                                                           \
+    do {                                                                                                          \
+        if (__builtin_expect(KiInterruptsEnabled(), 0))                                                           \
+            KiDispatcherLockMissing(what, __builtin_return_address(0));                                           \
+    } while (0)
+void KiDispatcherLockMissing(const char *what, PVOID caller);
+#endif
 
 /* MIME_KERNEL_ARGS options that turn the lock free paths off, to tell what a failure depends on. */
 #define KI_OPT_NO_FAST_FAULT 0x1
