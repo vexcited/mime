@@ -32,6 +32,9 @@ ULONG_PTR NTAPI NtUserCallNoParam(ULONG routine)
     case MIME_NOPARAM_GETMESSAGEEXTRAINFO:
         r = t ? t->ExtraInfo : 0;
         break;
+    case MIME_NOPARAM_GETINPUTSOURCE:
+        r = t ? (ULONG_PTR)t->InputDevice | (ULONG_PTR)t->InputOrigin << 8 : 0;
+        break;
     case MIME_NOPARAM_GETDPIFORSYSTEM:
         r = DpiScaleOf(DpiThreadAwareness(t));
         break;
