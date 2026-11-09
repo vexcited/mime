@@ -101,40 +101,97 @@ void KiSwapContext(PKTHREAD old, PKTHREAD next)
 }
 
 /*
- * an idle processor releases the kernel lock and spins briefly on its work flags. a waker that sees it
- * spinning, see KiRequestDispatch, skips the interrupt, which would cost both sides an exit to the host.
+ * an idle processor releases the kernel lock and watches its work flags for a while. a waker that sees it
+ * watching, see KiRequestDispatch, skips the interrupt, which would cost both sides exits to the host.
  * only then does it halt, and a halted processor is interrupted.
+ *
+ * how long it watches follows how its halts end, as linux's haltpoll governor does: see KiIdleHaltEnded.
  *
  * hlt ends only on an interrupt taken with interrupts enabled. an interrupt entry that finds IdleSleeping
  * takes the lock back first, so interrupts still run with the lock held and the processor holds it after.
  */
-#define KI_IDLE_SPIN_TICKS 40000
+static ULONG64 g_idle_poll_shortest, g_idle_poll_longest;
+
+/*
+ * pause leaves the core to the other thread of it. the host counts the pauses that follow each other within
+ * 128 cycles and, at 3000, takes the processor for one waiting on a lock, and looks for its holder to run
+ * instead. rows of them with a gap between never get there.
+ */
+#define KI_IDLE_PAUSE_ROW 64
+#define KI_IDLE_PAUSE_GAP 512
+
+FORCEINLINE BOOLEAN idle_work(PKPCR pcr, PKPRCB prcb)
+{
+    return !pcr->IdleSleeping || prcb->DispatchPending || prcb->DpcPending;
+}
 
 void KiIdleWait(void)
 {
     PKPCR pcr = KeGetPcr();
     PKPRCB prcb = pcr->CurrentPrcb;
+    if (!prcb->IdlePoll) {
+        g_idle_poll_shortest = HalBootInfo->timer_frequency / 80000; /* 12.5 microseconds */
+        g_idle_poll_longest = HalBootInfo->timer_frequency / 5000;   /* 200 microseconds */
+        prcb->IdlePoll = g_idle_poll_shortest;
+    }
+    ULONG64 poll = (KiOptions & KI_OPT_NO_IDLE_SPIN) ? 0 : prcb->IdlePoll;
     pcr->IdleSleeping = 1;
-    if (!(KiOptions & KI_OPT_NO_IDLE_SPIN))
+    if (poll)
         __atomic_store_n(&prcb->IdleState, KI_IDLE_POLLING, __ATOMIC_SEQ_CST);
     KiReleaseKernelLock();
     __asm__ volatile("sti" ::: "memory");
-    ULONG64 end = HalReadCounter() + ((KiOptions & KI_OPT_NO_IDLE_SPIN) ? 0 : KI_IDLE_SPIN_TICKS);
-    /* no pause: the host would take a vcpu looping on it for one waiting on a lock. */
-    while (pcr->IdleSleeping && !prcb->DispatchPending && !prcb->DpcPending && HalReadCounter() < end)
-        ;
+    ULONG64 since = HalReadCounter(), now = since;
+    while (now - since < poll) {
+        for (int i = 0; i < KI_IDLE_PAUSE_ROW && !idle_work(pcr, prcb); i++)
+            __builtin_ia32_pause();
+        ULONG64 gap = HalReadCounter();
+        do
+            now = HalReadCounter();
+        while (now - gap < KI_IDLE_PAUSE_GAP && !idle_work(pcr, prcb));
+        if (idle_work(pcr, prcb))
+            break;
+    }
     __asm__ volatile("cli" ::: "memory");
-    if (pcr->IdleSleeping && !prcb->DispatchPending && !prcb->DpcPending) {
+    if (!idle_work(pcr, prcb)) {
         /* published before looking again, so a request that came meanwhile is seen or sends the interrupt. */
         __atomic_store_n(&prcb->IdleState, KI_IDLE_HALTED, __ATOMIC_SEQ_CST);
-        if (!prcb->DispatchPending && !prcb->DpcPending)
+        if (!prcb->DispatchPending && !prcb->DpcPending) {
+            prcb->HaltedSince = since;
             __asm__ volatile("sti; hlt; cli" ::: "memory");
+            prcb->HaltedSince = 0;
+        }
+    } else if (pcr->IdleSleeping) {
+        prcb->IdlePolls++;
     }
     __atomic_store_n(&prcb->IdleState, KI_IDLE_RUNNING, __ATOMIC_SEQ_CST);
     if (pcr->IdleSleeping) {
         pcr->IdleSleeping = 0;
         KiAcquireKernelLock();
     }
+}
+
+/*
+ * an interrupt ended a halt. it is told here and not after the hlt: the interrupt may switch away from the idle
+ * thread, which then only goes on the next time the processor has nothing to run.
+ *
+ * a request from another processor that came within the longest watch would have been seen without the
+ * interrupt, had the processor watched on, so it watches for twice as long next time. a wait longer than that is
+ * not worth watching through, and halves it.
+ */
+void KiIdleHaltEnded(PKPRCB prcb, ULONG64 now, BOOLEAN by_request)
+{
+    ULONG64 waited = now - prcb->HaltedSince, poll = prcb->IdlePoll;
+    prcb->HaltedSince = 0;
+    prcb->IdleHalts++;
+    if (waited > g_idle_poll_longest)
+        poll /= 2;
+    else if (by_request)
+        poll *= 2;
+    if (poll < g_idle_poll_shortest)
+        poll = g_idle_poll_shortest;
+    if (poll > g_idle_poll_longest)
+        poll = g_idle_poll_longest;
+    prcb->IdlePoll = poll;
 }
 
 /* x64 keeps instruction fetches coherent with stores. */

@@ -769,6 +769,23 @@ void KiDumpServiceCalls(void)
                     HalCounterToHns(HalHypercallLongest[bi]) / 10);
         HalHypercallTicks[bi] = 0;
     }
+    /* the idle waits, and how long the processors watch their flags before halting, see KiIdleWait. */
+    static ULONG64 ipis_before;
+    ULONG64 polls = 0, halts = 0, ipis = 0, watch = 0;
+    for (ULONG i = 0; i < KeNumberProcessors; i++) {
+        PKPRCB p = KiProcessorBlock[i];
+        if (!p)
+            continue;
+        polls += p->IdlePolls;
+        halts += p->IdleHalts;
+        ipis += p->IpiSent;
+        watch += p->IdlePoll;
+        p->IdlePolls = p->IdleHalts = 0;
+    }
+    KiLogPrintf("idle: %llu waits ended while watching, %llu by an interrupt after a halt, %llu interrupts asked for, "
+                "%llu us watched on average",
+                polls, halts, ipis - ipis_before, HalCounterToHns(watch / KeNumberProcessors) / 10);
+    ipis_before = ipis;
     AfdDumpStats();
     reset_dump_counters();
     /* the timeline is long, and the lock is held while it is written: its own cost is no part of the counters above. */

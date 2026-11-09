@@ -230,6 +230,9 @@ typedef struct _KPRCB {
     ULONG64 PendingSince; /* interrupt time an idle processor was asked to dispatch, 0 when not. */
     ULONG64 TimerArmed;   /* counter value the timer is set to, 0 when unset. on x64 it fires once. */
     ULONG64 DeferredIpis; /* processors to interrupt once this one lets go of the kernel lock, see KiSendIpi. */
+    ULONG64 IdlePoll;     /* counter ticks an idle processor watches its flags before it halts, see KiIdleWait. */
+    ULONG64 HaltedSince;  /* counter value at the start of the idle wait that halted, 0 once an interrupt ended it. */
+    ULONG64 IdlePolls, IdleHalts; /* idle waits ended while watching, and by an interrupt after halting. */
 } KPRCB, *PKPRCB;
 
 #ifdef __x86_64__
@@ -402,6 +405,7 @@ void KiAttachProcess(PKPROCESS process);
 void KiSwitchAddressSpace(PKPROCESS process);
 void KiSwapContext(PKTHREAD old, PKTHREAD next);
 void KiIdleWait(void); /* called and returns with interrupts masked and the kernel lock held. */
+void KiIdleHaltEnded(PKPRCB prcb, ULONG64 now, BOOLEAN by_request);
 void KiInitializeSwitchFrame(PKTHREAD thread, PKSTART_ROUTINE routine, PVOID context);
 void KiInitializeUserFrame(PKTRAP_FRAME frame, ULONG64 pc, ULONG64 sp, ULONG64 arg0, ULONG64 arg1, ULONG64 teb);
 void KiInitializeUserContext(PCONTEXT context, ULONG64 pc, ULONG64 sp, ULONG64 arg0, ULONG64 arg1, ULONG64 teb);
