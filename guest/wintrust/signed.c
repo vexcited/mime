@@ -7,6 +7,9 @@ static constexpr BYTE oid_pe[] = {0x2b,6,1,4,1,0x82,0x37,2,1,15};
 static constexpr BYTE oid_cab[] = {0x2b,6,1,4,1,0x82,0x37,2,1,25};
 static constexpr BYTE oid_cab_enhanced[] = {0x2b,6,1,4,1,0x82,0x37,2,1,28};
 static constexpr BYTE oid_sip_info[] = {0x2b,6,1,4,1,0x82,0x37,2,1,30};
+/* the content type of a catalog's signed data, and the class of its member data. */
+static constexpr BYTE oid_cat_indirect[] = {0x2b,6,1,4,1,0x82,0x37,0x0a,1};
+static constexpr BYTE oid_catalog[] = {0x2b,6,1,4,1,0x82,0x37,0x0c,1,1};
 static constexpr BYTE oid_counter[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,6};
 static constexpr BYTE oid_token[] = {0x2b,6,1,4,1,0x82,0x37,3,3,1};
 static constexpr BYTE oid_token_info[] = {0x2a,0x86,0x48,0x86,0xf7,0x0d,1,9,0x10,1,4};
@@ -56,6 +59,18 @@ static BOOL take_oid(WT_BYTES *input, const BYTE *value, DWORD size)
 {
     WT_DER oid;
     return WtTake(input, 6, &oid) && WtOid(oid, value, size);
+}
+
+/* takes an object identifier that is one of two, which one were the first that matches. the input only moves for a match. */
+static BOOL take_oid_pair(WT_BYTES *input, const BYTE *first, DWORD first_size, const BYTE *second, DWORD second_size)
+{
+    WT_BYTES probe = *input;
+    WT_DER oid;
+    if (WtTake(&probe, 6, &oid) && WtOid(oid, first, first_size)) {
+        *input = probe;
+        return TRUE;
+    }
+    return take_oid(input, second, second_size);
 }
 
 static ALG_ID algorithm(WT_DER sequence)
@@ -139,6 +154,18 @@ static LONG file_digest(WT_DER content, const WT_SUBJECT *subject)
 {
     WT_BYTES input = content.value;
     WT_DER data, digest, alg, hash;
+    if (subject->catalog) {
+        /*
+         * a catalog's content is not the two elements of a file signed by its publisher: the member class and the tag
+         * of the member come first, then the time and the id of the list, then the hashes of the members. the list is
+         * what the signature covers, and the signer checks that digest.
+         */
+        WT_DER type, tag;
+        if (!WtTake(&input, 0x30, &data) || !WtTake(&data.value, 6, &type) ||
+            !WtOid(type, oid_catalog, sizeof(oid_catalog)) || !WtTake(&input, 4, &tag))
+            return TRUST_E_SUBJECT_FORM_UNKNOWN;
+        return 0;
+    }
     if (!WtTake(&input, 0x30, &data) || !WtTake(&input, 0x30, &digest) || input.size)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
     BOOL cabinet = subject->digest_input != nullptr;
@@ -486,7 +513,10 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
             !WtTake(&attribute.value, 0x31, &values) || attribute.value.size)
             return TRUST_E_SUBJECT_FORM_UNKNOWN;
         if (WtOid(oid, oid_type, sizeof(oid_type))) {
-            if (have_type || !take_oid(&values.value, oid_indirect, sizeof(oid_indirect)) || values.value.size)
+            if (have_type ||
+                !take_oid_pair(&values.value, oid_indirect, sizeof(oid_indirect), oid_cat_indirect,
+                               sizeof(oid_cat_indirect)) ||
+                values.value.size)
                 return TRUST_E_SUBJECT_FORM_UNKNOWN;
             have_type = TRUE;
         } else if (WtOid(oid, oid_digest, sizeof(oid_digest))) {
@@ -562,18 +592,37 @@ LONG WtVerifySignedData(WT_BYTES encoded, const WT_SUBJECT *subject, const WINTR
     for (DWORD i = 0; i < encoded.size; i++)
         if (encoded.data[i])
             return TRUST_E_SUBJECT_NOT_TRUSTED;
-    if (!take_oid(&envelope.value, oid_signed, sizeof(oid_signed)) ||
-        !WtTake(&envelope.value, 0xa0, &wrapper) || envelope.value.size ||
-        !WtTake(&wrapper.value, 0x30, &data) || wrapper.value.size ||
-        !WtTake(&data.value, 2, &version) || version.value.size != 1 || version.value.data[0] != 1 ||
-        !WtTake(&data.value, 0x31, &algorithms) ||
-        !WtTake(&data.value, 0x30, &content_info) ||
-        !take_oid(&content_info.value, oid_indirect, sizeof(oid_indirect)) ||
-        !WtTake(&content_info.value, 0xa0, &content_wrapper) || content_info.value.size ||
-        !WtTake(&content_wrapper.value, 0x30, &content) || content_wrapper.value.size ||
-        !WtTake(&data.value, 0xa0, &certs) || !WtTake(&data.value, 0x31, &signers) || data.value.size ||
-        !WtTake(&signers.value, 0x30, &one) || signers.value.size)
-        return TRUST_E_SUBJECT_FORM_UNKNOWN;
+    int step = 1;
+    if (!take_oid(&envelope.value, oid_signed, sizeof(oid_signed))) goto bad;
+    step = 2;
+    if (!WtTake(&envelope.value, 0xa0, &wrapper) || envelope.value.size) goto bad;
+    step = 3;
+    if (!WtTake(&wrapper.value, 0x30, &data) || wrapper.value.size) goto bad;
+    step = 4;
+    if (!WtTake(&data.value, 2, &version) || version.value.size != 1 || version.value.data[0] != 1) goto bad;
+    step = 5;
+    if (!WtTake(&data.value, 0x31, &algorithms)) goto bad;
+    step = 6;
+    if (!WtTake(&data.value, 0x30, &content_info)) goto bad;
+    step = 7;
+    if (!take_oid_pair(&content_info.value, oid_indirect, sizeof(oid_indirect), oid_cat_indirect,
+                       sizeof(oid_cat_indirect)))
+        goto bad;
+    step = 8;
+    if (!WtTake(&content_info.value, 0xa0, &content_wrapper) || content_info.value.size) goto bad;
+    step = 9;
+    if (!WtTake(&content_wrapper.value, 0x30, &content) || content_wrapper.value.size) goto bad;
+    step = 10;
+    if (!WtTake(&data.value, 0xa0, &certs)) goto bad;
+    step = 11;
+    if (!WtTake(&data.value, 0x31, &signers) || data.value.size) goto bad;
+    step = 12;
+    if (!WtTake(&signers.value, 0x30, &one) || signers.value.size) goto bad;
+    goto ok;
+bad:
+    WtTrace("signed data: step %d failed", step);
+    return TRUST_E_SUBJECT_FORM_UNKNOWN;
+ok:;
     WT_DER digest_algorithm;
     if (!WtTake(&algorithms.value, 0x30, &digest_algorithm) || algorithms.value.size)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;

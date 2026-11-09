@@ -6,6 +6,7 @@
 
 typedef struct { const BYTE *data; DWORD size; } WT_BYTES;
 typedef struct { WT_BYTES encoded, value; BYTE tag; } WT_DER;
+void WtTrace(const char *format, ...);
 BOOL WtTake(WT_BYTES *input, BYTE tag, WT_DER *item);
 BOOL WtOid(WT_DER item, const BYTE *value, DWORD size);
 /*
@@ -23,11 +24,14 @@ typedef struct {
     BOOL installer;
     /* the signature file of an app package, checked on its own: its digests are the package's to compare. */
     BOOL p7x;
+    /* a catalog: its signed content names the member hashes instead of holding one digest of a file. */
+    BOOL catalog;
 } WT_SUBJECT;
 LONG WtVerifyPe(HANDLE mapping, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifyP7x(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifyCab(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifyInstaller(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
+LONG WtVerifyCatalog(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain);
 LONG WtVerifySignedData(WT_BYTES encoded, const WT_SUBJECT *subject, const WINTRUST_DATA *options,
                         PCCERT_CHAIN_CONTEXT *chain);
 #endif

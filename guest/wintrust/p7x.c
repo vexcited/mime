@@ -13,3 +13,10 @@ LONG WtVerifyP7x(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PC
     WT_SUBJECT subject = {.p7x = TRUE};
     return WtVerifySignedData((WT_BYTES){bytes + 4, size - 4}, &subject, options, chain);
 }
+
+/* a catalog file: its own signature is what is checked, against the member hashes it lists. */
+LONG WtVerifyCatalog(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain)
+{
+    WT_SUBJECT subject = {.catalog = TRUE};
+    return WtVerifySignedData((WT_BYTES){bytes, size}, &subject, options, chain);
+}

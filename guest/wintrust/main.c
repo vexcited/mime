@@ -5,6 +5,30 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, PVOID reserved)
     return TRUE;
 }
 
+/* one line per verification call to the debug output, so files and results are in the host's log. */
+void WtTrace(const char *format, ...)
+{
+    char text[600];
+    int n = _snprintf(text, sizeof(text) - 2, "wt %u ", GetCurrentProcessId());
+    va_list ap;
+    va_start(ap, format);
+    int m = _vsnprintf(text + n, sizeof(text) - 2 - n, format, ap);
+    va_end(ap);
+    if (m < 0)
+        m = (int)strlen(text + n);
+    n += m;
+    text[n++] = 0;
+    OutputDebugStringA(text);
+}
+
+static void narrow(char *out, DWORD size, const WCHAR *in)
+{
+    DWORD i = 0;
+    for (; in && in[i] && i + 1 < size; i++)
+        out[i] = in[i] < 0x80 ? (char)in[i] : '?';
+    out[i] = 0;
+}
+
 /*
  * the verification handle is CRYPT_PROVIDER_DATA, containing one signer and its certificate chain from signer to
  * root.
@@ -122,12 +146,16 @@ static LONG verify_mapping(HANDLE mapping, DWORD size, const WINTRUST_DATA *data
     UnmapViewOfFile(start);
     BOOL package = got == 8 && !memcmp(magic, "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", 8);
     BOOL cabinet = got >= 4 && !memcmp(magic, "MSCF", 4);
-    if (!package && !cabinet)
+    /* a catalog is a bare pkcs#7 signed data, a DER sequence. */
+    BOOL catalog = got >= 2 && magic[0] == 0x30 && (magic[1] == 0x82 || magic[1] == 0x81);
+    if (!package && !cabinet && !catalog)
         return WtVerifyPe(mapping, size, data, chain);
     const BYTE *bytes = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
     if (!bytes)
         return HRESULT_FROM_WIN32(GetLastError());
-    LONG result = package ? WtVerifyInstaller(bytes, size, data, chain) : WtVerifyCab(bytes, size, data, chain);
+    LONG result = package ? WtVerifyInstaller(bytes, size, data, chain)
+                 : cabinet ? WtVerifyCab(bytes, size, data, chain)
+                           : WtVerifyCatalog(bytes, size, data, chain);
     UnmapViewOfFile(bytes);
     return result;
 }
@@ -174,17 +202,60 @@ static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
         CloseHandle(mapping);
     if (result == TRUST_E_NOSIGNATURE && system_image)
         result = ERROR_SUCCESS;
+    WtTrace("file system_image %u result %08lx", system_image, (ULONG)result);
+    return result;
+}
+
+/* a file verified against a catalog: what is checked here is the catalog's own signature. */
+static LONG verify_catalog(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
+{
+    const WINTRUST_CATALOG_INFO *info = data->pCatalog;
+    if (!info || info->cbStruct < offsetof(WINTRUST_CATALOG_INFO, pcwszCatalogFilePath) + sizeof(LPCWSTR) ||
+        !info->pcwszCatalogFilePath)
+        return E_INVALIDARG;
+    HANDLE file = CreateFileW(info->pcwszCatalogFilePath, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0,
+                              nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+        return HRESULT_FROM_WIN32(GetLastError());
+    LARGE_INTEGER size;
+    LONG result = 0;
+    HANDLE mapping = nullptr;
+    if (!GetFileSizeEx(file, &size))
+        result = HRESULT_FROM_WIN32(GetLastError());
+    else if (size.QuadPart <= 0 || size.QuadPart > 0xFFFFFFFF)
+        result = HRESULT_FROM_WIN32(ERROR_FILE_TOO_LARGE);
+    else if (!(mapping = CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr)))
+        result = HRESULT_FROM_WIN32(GetLastError());
+    if (!result) {
+        const BYTE *bytes = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
+        if (!bytes)
+            result = HRESULT_FROM_WIN32(GetLastError());
+        else {
+            result = WtVerifyCatalog(bytes, (DWORD)size.QuadPart, data, chain);
+            UnmapViewOfFile(bytes);
+        }
+    }
+    if (mapping)
+        CloseHandle(mapping);
+    CloseHandle(file);
     return result;
 }
 
 LONG WINAPI WinVerifyTrust(HWND window, GUID *action, PVOID input)
 {
     static const GUID generic = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    static const GUID driver = DRIVER_ACTION_VERIFY;
     WINTRUST_DATA *data = input;
+    char path[420] = "";
+    if (data && action && data->dwUnionChoice == WTD_CHOICE_FILE && data->pFile)
+        narrow(path, sizeof(path), data->pFile->pcwszFilePath);
+    else if (data && action && data->dwUnionChoice == WTD_CHOICE_CATALOG && data->pCatalog)
+        narrow(path, sizeof(path), ((const WINTRUST_CATALOG_INFO *)data->pCatalog)->pcwszCatalogFilePath);
+    WtTrace("verify choice %u state %u file %s", data ? data->dwUnionChoice : 0, data ? data->dwStateAction : 0, path);
     if (!action || !data || (data->cbStruct != offsetof(WINTRUST_DATA, pSignatureSettings) &&
         data->cbStruct != sizeof(*data)))
         return E_INVALIDARG;
-    if (memcmp(action, &generic, sizeof(generic)))
+    if (memcmp(action, &generic, sizeof(generic)) && memcmp(action, &driver, sizeof(driver)))
         return TRUST_E_ACTION_UNKNOWN;
     if (data->dwStateAction == WTD_STATEACTION_CLOSE)
         return state_close(data);
@@ -192,10 +263,13 @@ LONG WINAPI WinVerifyTrust(HWND window, GUID *action, PVOID input)
         data->dwUIChoice < WTD_UI_ALL || data->dwUIChoice > WTD_UI_NOGOOD || data->fdwRevocationChecks > 1 ||
         (data->cbStruct == sizeof(*data) && data->pSignatureSettings))
         return E_INVALIDARG;
-    if (data->dwUnionChoice != WTD_CHOICE_FILE && data->dwUnionChoice != WTD_CHOICE_BLOB)
+    if (data->dwUnionChoice != WTD_CHOICE_FILE && data->dwUnionChoice != WTD_CHOICE_BLOB &&
+        data->dwUnionChoice != WTD_CHOICE_CATALOG)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
     LONG (*verify)(const WINTRUST_DATA *, PCCERT_CHAIN_CONTEXT *) =
-        data->dwUnionChoice == WTD_CHOICE_BLOB ? verify_blob : verify_file;
+        data->dwUnionChoice == WTD_CHOICE_BLOB   ? verify_blob
+        : data->dwUnionChoice == WTD_CHOICE_CATALOG ? verify_catalog
+                                                    : verify_file;
     if (data->dwStateAction != WTD_STATEACTION_VERIFY)
         return verify(data, nullptr);
     if (data->hWVTStateData)
