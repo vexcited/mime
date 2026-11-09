@@ -513,6 +513,7 @@ typedef struct QUEUED_MESSAGE {
     MSG Msg;
     ULONG_PTR ExtraInfo;
     ULONG Kind; /* QM_* */
+    ULONG Origin; /* IMO_* of an input message: the hardware, SendInput or the system. */
     union {
         MimeInputEvent Input;
         WINDOWPLACEMENT Placement;
@@ -571,6 +572,8 @@ typedef struct W32THREAD {
     DWORD MessageTime;
     POINT MessagePos;
     ULONG_PTR ExtraInfo;
+    /* IMDT_* and IMO_* of the input message the thread retrieved last, for GetCurrentInputMessageSource. */
+    UCHAR InputDevice, InputOrigin;
     HWND Focus;
     HWND Active;
     BOOLEAN AppActive;       /* WM_ACTIVATEAPP told the thread's windows that the thread is the active one. */
@@ -643,7 +646,7 @@ BOOLEAN QueuePost(W32THREAD *t, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
 /* the clock's offset changed: every top level window is told with WM_TIMECHANGE. */
 void NTAPI W32TimeChange(void);
 BOOLEAN QueueWindowOperation(W32THREAD *t, HWND hwnd, UINT command, const WINDOWPLACEMENT *placement);
-void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state);
+void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state, ULONG origin, ULONG_PTR extra);
 DWORD W32TickCount(void);
 /* tick count of the last host or injected input event. */
 extern DWORD InputLastTime;

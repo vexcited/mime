@@ -116,15 +116,16 @@ WINUSERAPI BOOL WINAPI SkipPointerFrameMessages(UINT id)
     return TRUE;
 }
 
-/* always reports hardware mouse input. */
+/* the device and origin of the input message the thread retrieved last, unavailable for other messages. */
 WINUSERAPI BOOL WINAPI GetCurrentInputMessageSource(INPUT_MESSAGE_SOURCE *source)
 {
     if (!source) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    source->deviceType = IMDT_MOUSE;
-    source->originId = IMO_HARDWARE;
+    ULONG_PTR r = NtUserCallNoParam(MIME_NOPARAM_GETINPUTSOURCE);
+    source->deviceType = (INPUT_MESSAGE_DEVICE_TYPE)(r & 0xFF);
+    source->originId = (INPUT_MESSAGE_ORIGIN_ID)((r >> 8) & 0xFF);
     return TRUE;
 }
 

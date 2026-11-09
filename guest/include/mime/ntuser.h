@@ -173,6 +173,7 @@ enum {
     MIME_NOPARAM_GETLASTINPUTTIME,
     MIME_NOPARAM_INSENDMESSAGE,
     MIME_NOPARAM_GETSYSTEMDPI,          /* the physical dpi of the system, whatever the thread is aware of. */
+    MIME_NOPARAM_GETINPUTSOURCE,        /* IMDT_* | IMO_* << 8 of the input message the thread retrieved last. */
 };
 
 enum {

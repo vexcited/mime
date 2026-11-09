@@ -52,7 +52,7 @@ BOOLEAN QueueWindowOperation(W32THREAD *t, HWND hwnd, UINT command, const WINDOW
     return TRUE;
 }
 
-void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state)
+void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state, ULONG origin, ULONG_PTR extra)
 {
     if (!t || t->Destroying)
         return;
@@ -61,6 +61,8 @@ void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state)
         return;
     qm->Kind = QM_INPUT;
     qm->Input = *ev;
+    qm->Origin = origin;
+    qm->ExtraInfo = extra;
     /* raw input keeps mouse flags in the otherwise unused message payload. */
     qm->Msg.wParam = mouse_state;
     InsertTailList(&t->Input, &qm->Links);
@@ -781,6 +783,7 @@ scan_posted:
                 continue;
             *out = qm->Msg;
             t->ExtraInfo = qm->ExtraInfo;
+            t->InputDevice = t->InputOrigin = 0;
             set_message_state(t, out);
             if (remove) {
                 RemoveEntryList(&qm->Links);
@@ -803,6 +806,16 @@ scan_posted:
                 break;
             }
             BOOLEAN got = InputTranslate(t, qm, out, hwnd, min, max, remove, &consumed);
+            if (got) {
+                /* the source GetCurrentInputMessageSource tells while the thread handles the message. */
+                UINT type = qm->Input.type;
+                t->InputDevice = type == MIME_INPUT_KEY_DOWN || type == MIME_INPUT_KEY_UP || type == MIME_INPUT_CHAR
+                                     ? IMDT_KEYBOARD
+                                 : type <= MIME_INPUT_MOUSE_WHEEL ? IMDT_MOUSE
+                                                                  : IMDT_UNAVAILABLE;
+                t->InputOrigin = t->InputDevice ? (UCHAR)qm->Origin : IMO_UNAVAILABLE;
+                t->ExtraInfo = qm->ExtraInfo;
+            }
             if (consumed || (got && remove)) {
                 RemoveEntryList(&qm->Links);
                 W32Free(qm);

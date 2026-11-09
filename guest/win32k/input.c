@@ -422,11 +422,13 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
         if (last->Input.type == MIME_INPUT_MOUSE_MOVE && last->Input.window_id == ev->window_id) {
             last->Input = *ev;
             last->Msg.wParam = mouse_state;
+            last->Origin = injected ? IMO_INJECTED : IMO_HARDWARE;
+            last->ExtraInfo = extra;
             QueueWake(t, QS_MOUSEMOVE);
             return;
         }
     }
-    QueuePostInput(t, ev, mouse_state);
+    QueuePostInput(t, ev, mouse_state, injected ? IMO_INJECTED : IMO_HARDWARE, extra);
 }
 
 /* events carry the left or right modifier key, never the generic one. */
