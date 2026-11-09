@@ -398,7 +398,7 @@ enum {
     FONT_SMOOTH_NATURAL, /* ClearType with the widths of the font itself. */
 };
 
-#define FONT_LINKS 25
+#define FONT_LINKS 24
 
 typedef struct FONT_INSTANCE {
     LIST_ENTRY Links;
