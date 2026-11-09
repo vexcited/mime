@@ -271,6 +271,10 @@ NTSTATUS NTAPI NtTestAlert(void)
 /* first chance: hand the exception to ntdll!KiUserExceptionDispatcher. */
 BOOLEAN KiDispatchUserException(PEXCEPTION_RECORD record, PKTRAP_FRAME frame)
 {
+    extern BOOLEAN KiTraceUserExceptions;
+    if (KiTraceUserExceptions)
+        KiLogPrintf("dispatch %08x at %p to thread %u of %s", record->ExceptionCode, record->ExceptionAddress,
+                    (ULONG)(ULONG_PTR)PsGetCurrentThreadId(), PsCurrentProcess()->ImageFileName);
     PPSP_SYSTEM_DLL dll = current_system_dll();
     if (!dll || !dll->KiUserExceptionDispatcher)
         return FALSE;
