@@ -33,3 +33,7 @@ Windows programs use those DLLs and system calls to access files, create windows
 The guest kernel runs on the host's processor architecture. On arm64, Mime's `xta64.dll` translates x64 and x86 program code to run on arm64. On x86_64 Linux, x64 code runs directly and 32-bit x86 code runs directly through Mime's WOW64 layer, which adapts its system calls to the 64-bit kernel.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions and contribution guidelines.
+
+## Community
+
+If you're running into any issue or asking for any feature, please feel free to [open an issue](https://code.vexcited.com/mime/mime/issues) or [join Mime's Discord server](https://discord.gg/SfH2VgX2aq) to come talk with us!
