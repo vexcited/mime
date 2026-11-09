@@ -71,6 +71,7 @@ static void bind_tiles(D12Queue *queue, D12Resource *r, const UINT *tiles, const
         bind.bufferBindCount = b.range_count ? 1 : 0;
         bind.pBufferBinds = &buffer;
     }
+    D12QueueSettle(queue);
     AcquireSRWLockExclusive(queue->queue_lock);
     UINT64 serial = queue->next_serial++, last = serial - 1;
     VkTimelineSemaphoreSubmitInfo values = {VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};

@@ -7,6 +7,9 @@
 
 /* ------------------------------------------------------------------ fences */
 
+static D12QueueOp *release_held(D12Device *device, D12QueueOp *done);
+static void free_ops(D12QueueOp *op);
+
 static D12Fence *fence_impl(ID3D12Fence1 *iface) { return CONTAINING_RECORD(iface, D12Fence, iface); }
 
 D12Fence *D12FenceFrom(ID3D12Fence *iface) { return iface ? CONTAINING_RECORD(iface, D12Fence, iface) : nullptr; }
@@ -296,21 +299,30 @@ static HRESULT STDMETHODCALLTYPE fence_set_event_on_completion(ID3D12Fence1 *ifa
     return add_wait(fence, value, event);
 }
 
-/* Vulkan timelines only go up: a value at or below the current one is not signalled again. */
+/*
+ * Vulkan timelines only go up: a value at or below the current one is not signalled again. queues holding back a
+ * wait for the value go on, after the signal so a submission that waits for it under the lock is not held up.
+ */
 static HRESULT STDMETHODCALLTYPE fence_signal(ID3D12Fence1 *iface, UINT64 value)
 {
     D12Fence *fence = fence_impl(iface);
     D12Device *device = fence->child.device;
+    BOOL higher = value > D12FenceValue(fence);
+    if (higher) {
+        VkSemaphoreSignalInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
+        info.semaphore = fence->semaphore;
+        info.value = value;
+        device->vk.vkSignalSemaphore(device->vk.device, &info);
+        fence->completed = value;
+    }
+    AcquireSRWLockExclusive(&device->submit_lock);
     if (value > fence->queued)
         fence->queued = value;
-    if (value <= D12FenceValue(fence))
-        return S_OK;
-    VkSemaphoreSignalInfo info = {VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO};
-    info.semaphore = fence->semaphore;
-    info.value = value;
-    device->vk.vkSignalSemaphore(device->vk.device, &info);
-    fence->completed = value;
-    D12FenceWake(device);
+    D12QueueOp *done = release_held(device, nullptr);
+    ReleaseSRWLockExclusive(&device->submit_lock);
+    free_ops(done);
+    if (higher)
+        D12FenceWake(device);
     return S_OK;
 }
 
@@ -407,20 +419,21 @@ static D12Queue *queue_impl(ID3D12CommandQueue *iface) { return CONTAINING_RECOR
 D12Queue *D12QueueFrom(ID3D12CommandQueue *iface) { return iface ? queue_impl(iface) : nullptr; }
 
 /*
- * submits the device's own commands first, then the buffers with the given waits and signals, then the queue's
+ * submits the device's own commands, if any, in a batch of their own, so they wait for none of the program's fences:
+ * every queue's next submission waits for them. then the buffers with the given waits and signals, and the queue's
  * timeline. returns the timeline serial the submission signals.
  */
-UINT64 D12QueueSubmit(D12Queue *queue, const VkCommandBuffer *buffers, UINT count, const VkSemaphoreSubmitInfo *waits,
-                      UINT wait_count, const VkSemaphoreSubmitInfo *signals, UINT signal_count)
+static UINT64 submit(D12Queue *queue, const VkCommandBuffer *buffers, UINT count, const VkSemaphoreSubmitInfo *waits,
+                     UINT wait_count, const VkSemaphoreSubmitInfo *signals, UINT signal_count)
 {
     D12Device *device = queue->child.device;
     UINT64 init_serial;
     VkCommandBuffer init = D12TakeInitCommands(device, &init_serial);
-    VkCommandBufferSubmitInfo cmds[64];
+    VkCommandBufferSubmitInfo cmds[64], init_cmd = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, init};
     VkSemaphoreSubmitInfo wait_infos[9], signal_infos[9];
+    VkSemaphoreSubmitInfo init_signal = {VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, device->init_timeline,
+                                         init_serial, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
     UINT n = 0, w = 0, s = 0;
-    if (init)
-        cmds[n++] = (VkCommandBufferSubmitInfo){VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, init};
     for (UINT i = 0; i < count && n < RTL_NUMBER_OF(cmds); i++)
         cmds[n++] = (VkCommandBufferSubmitInfo){VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, nullptr, buffers[i]};
     /* another queue's submission ran the device's commands, so wait for them. */
@@ -432,12 +445,6 @@ UINT64 D12QueueSubmit(D12Queue *queue, const VkCommandBuffer *buffers, UINT coun
     }
     for (UINT i = 0; i < wait_count && w < RTL_NUMBER_OF(wait_infos); i++)
         wait_infos[w++] = waits[i];
-    if (init) {
-        signal_infos[s] = (VkSemaphoreSubmitInfo){VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
-        signal_infos[s].semaphore = device->init_timeline;
-        signal_infos[s].value = init_serial;
-        signal_infos[s++].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    }
     for (UINT i = 0; i < signal_count && s < RTL_NUMBER_OF(signal_infos) - 1; i++)
         signal_infos[s++] = signals[i];
     AcquireSRWLockExclusive(queue->queue_lock);
@@ -453,22 +460,208 @@ UINT64 D12QueueSubmit(D12Queue *queue, const VkCommandBuffer *buffers, UINT coun
     signal_infos[s].semaphore = queue->timeline;
     signal_infos[s].value = serial;
     signal_infos[s++].stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    VkSubmitInfo2 submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
-    submit.waitSemaphoreInfoCount = w;
-    submit.pWaitSemaphoreInfos = wait_infos;
-    submit.commandBufferInfoCount = n;
-    submit.pCommandBufferInfos = cmds;
-    submit.signalSemaphoreInfoCount = s;
-    submit.pSignalSemaphoreInfos = signal_infos;
-    if (device->vk.vkQueueSubmit2(queue->queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS)
+    /* the init batch's closing barrier orders its commands before the next batch's, which comes later on the queue. */
+    VkSubmitInfo2 batches[2] = {{VK_STRUCTURE_TYPE_SUBMIT_INFO_2}, {VK_STRUCTURE_TYPE_SUBMIT_INFO_2}};
+    UINT b = 0;
+    if (init) {
+        batches[b].commandBufferInfoCount = 1;
+        batches[b].pCommandBufferInfos = &init_cmd;
+        batches[b].signalSemaphoreInfoCount = 1;
+        batches[b++].pSignalSemaphoreInfos = &init_signal;
+    }
+    batches[b].waitSemaphoreInfoCount = w;
+    batches[b].pWaitSemaphoreInfos = wait_infos;
+    batches[b].commandBufferInfoCount = n;
+    batches[b].pCommandBufferInfos = cmds;
+    batches[b].signalSemaphoreInfoCount = s;
+    batches[b++].pSignalSemaphoreInfos = signal_infos;
+    if (device->vk.vkQueueSubmit2(queue->queue, b, batches, VK_NULL_HANDLE) != VK_SUCCESS)
         D12Log("d3d12: vkQueueSubmit2 failed");
     ReleaseSRWLockExclusive(queue->queue_lock);
+    return serial;
+}
+
+/* ------------------------------------------------------------------ held back work */
+
+/*
+ * Direct3D 12 lets a queue wait for a value nothing signals yet while the other queues run on. a vulkan wait like
+ * that holds up what follows it on its vulkan queue, which other queues of the program may share, and the device's
+ * own commands when the next submission is that queue's, which every queue then waits for: when the value comes
+ * from one of those, nothing moves again. so such a wait and what the queue gets after it are held back here, and
+ * go to vulkan in order once a submission or the cpu signals the value. a vulkan wait then only ever waits for work
+ * submitted before it, which cannot wait for it in turn.
+ */
+enum { OP_EXECUTE, OP_SIGNAL, OP_WAIT };
+
+struct D12QueueOp {
+    struct D12QueueOp *next;
+    UINT kind;
+    D12Fence *fence;
+    UINT64 value;
+    UINT count;
+    VkCommandBuffer buffers[];
+};
+
+/*
+ * a wait for the value ends without more of the program's work: a submission or the cpu signals it already, or the
+ * fence is shared and others signal it.
+ */
+static BOOL reachable(D12Fence *fence, UINT64 value)
+{
+    return value <= fence->queued || (fence->flags & D3D12_FENCE_FLAG_SHARED);
+}
+
+static void run_execute(D12Queue *queue, const VkCommandBuffer *buffers, UINT count)
+{
+    for (UINT at = 0; at < count; at += 64)
+        submit(queue, buffers + at, D12_MIN(count - at, 64u), nullptr, 0, nullptr, 0);
+}
+
+/* Vulkan timelines only go up: a value at or below one already signalled is not signalled again. */
+static void run_signal(D12Queue *queue, D12Fence *fence, UINT64 value)
+{
+    if (value <= fence->queued)
+        return;
+    fence->queued = value;
+    VkSemaphoreSubmitInfo signal = {VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, fence->semaphore, value,
+                                    VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
+    submit(queue, nullptr, 0, nullptr, 0, &signal, 1);
+}
+
+static void run_op(D12Queue *queue, UINT kind, D12Fence *fence, UINT64 value, const VkCommandBuffer *buffers,
+                   UINT count)
+{
+    if (kind == OP_EXECUTE) {
+        run_execute(queue, buffers, count);
+    } else if (kind == OP_SIGNAL) {
+        run_signal(queue, fence, value);
+    } else {
+        VkSemaphoreSubmitInfo wait = {VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO, nullptr, fence->semaphore, value,
+                                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT};
+        submit(queue, nullptr, 0, &wait, 1, nullptr, 0);
+    }
+}
+
+/* runs the queue's first held back operation and puts it on the list of those to free outside the lock. */
+static D12QueueOp *run_first(D12Queue *queue, D12QueueOp *done)
+{
+    D12QueueOp *op = queue->held;
+    if (!(queue->held = op->next))
+        queue->held_tail = &queue->held;
+    run_op(queue, op->kind, op->fence, op->value, op->buffers, op->count);
+    op->next = done;
+    return op;
+}
+
+/* runs what the queues held back that no wait holds up any more, until nothing more is let go. */
+static D12QueueOp *release_held(D12Device *device, D12QueueOp *done)
+{
+    BOOL any = FALSE;
+    for (BOOL progress = TRUE; progress;) {
+        progress = FALSE;
+        for (D12Queue *queue = device->queue_list; queue; queue = queue->next) {
+            D12QueueOp *op;
+            while ((op = queue->held) && (op->kind != OP_WAIT || reachable(op->fence, op->value))) {
+                done = run_first(queue, done);
+                progress = any = TRUE;
+            }
+        }
+    }
+    if (any)
+        WakeAllConditionVariable(&device->released);
+    return done;
+}
+
+/* runs all the queue holds back, waits for values nothing signals yet included. */
+static D12QueueOp *run_held(D12Queue *queue, D12QueueOp *done)
+{
+    while (queue->held)
+        done = run_first(queue, done);
+    return release_held(queue->child.device, done);
+}
+
+static void free_ops(D12QueueOp *op)
+{
+    while (op) {
+        D12QueueOp *next = op->next;
+        if (op->fence)
+            op->fence->iface.lpVtbl->Release(&op->fence->iface);
+        HeapFree(GetProcessHeap(), 0, op);
+        op = next;
+    }
+}
+
+/* runs an operation of the program's, unless work before it is held back or it waits for what nothing signals yet. */
+static void queue_op(D12Queue *queue, UINT kind, D12Fence *fence, UINT64 value, const VkCommandBuffer *buffers,
+                     UINT count)
+{
+    D12Device *device = queue->child.device;
+    D12QueueOp *done = nullptr;
+    AcquireSRWLockExclusive(&device->submit_lock);
+    if (queue->held || (kind == OP_WAIT && !reachable(fence, value))) {
+        D12QueueOp *op = HeapAlloc(GetProcessHeap(), 0, sizeof(*op) + count * sizeof(*buffers));
+        if (op) {
+            *op = (D12QueueOp){nullptr, kind, fence, value, count};
+            if (count)
+                memcpy(op->buffers, buffers, count * sizeof(*buffers));
+            if (fence)
+                fence->iface.lpVtbl->AddRef(&fence->iface);
+            *queue->held_tail = op;
+            queue->held_tail = &op->next;
+            ReleaseSRWLockExclusive(&device->submit_lock);
+            return;
+        }
+        /* with no memory to hold it, the order of the queue matters more than the wait. */
+        done = run_held(queue, done);
+    }
+    run_op(queue, kind, fence, value, buffers, count);
+    if (kind == OP_SIGNAL)
+        done = release_held(device, done);
+    ReleaseSRWLockExclusive(&device->submit_lock);
+    free_ops(done);
+}
+
+/*
+ * presents, tile mappings and idle waits go to vulkan at once, so what the queue holds back must go first: they wait
+ * a while for another thread to signal what it waits for, then run it as it is.
+ */
+static void settle(D12Queue *queue)
+{
+    D12Device *device = queue->child.device;
+    D12QueueOp *done = nullptr;
+    AcquireSRWLockExclusive(&device->submit_lock);
+    ULONGLONG start = GetTickCount64();
+    while (queue->held) {
+        ULONGLONG waited = GetTickCount64() - start;
+        if (waited >= 1000 ||
+            !SleepConditionVariableSRW(&device->released, &device->submit_lock, (DWORD)(1000 - waited), 0))
+            break;
+    }
+    if (queue->held)
+        done = run_held(queue, done);
+    ReleaseSRWLockExclusive(&device->submit_lock);
+    free_ops(done);
+}
+
+void D12QueueSettle(D12Queue *queue) { settle(queue); }
+
+UINT64 D12QueueSubmit(D12Queue *queue, const VkCommandBuffer *buffers, UINT count, const VkSemaphoreSubmitInfo *waits,
+                      UINT wait_count, const VkSemaphoreSubmitInfo *signals, UINT signal_count)
+{
+    D12Device *device = queue->child.device;
+    settle(queue);
+    AcquireSRWLockExclusive(&device->submit_lock);
+    D12QueueOp *done = queue->held ? run_held(queue, nullptr) : nullptr;
+    UINT64 serial = submit(queue, buffers, count, waits, wait_count, signals, signal_count);
+    ReleaseSRWLockExclusive(&device->submit_lock);
+    free_ops(done);
     return serial;
 }
 
 void D12QueueWaitIdle(D12Queue *queue)
 {
     D12Device *device = queue->child.device;
+    settle(queue);
     UINT64 serial = queue->next_serial - 1;
     if (!serial)
         return;
@@ -508,6 +701,13 @@ static ULONG STDMETHODCALLTYPE queue_release(ID3D12CommandQueue *iface)
     if (!refs) {
         D12Device *device = queue->child.device;
         D12QueueWaitIdle(queue);
+        AcquireSRWLockExclusive(&device->submit_lock);
+        for (D12Queue **link = &device->queue_list; *link; link = &(*link)->next)
+            if (*link == queue) {
+                *link = queue->next;
+                break;
+            }
+        ReleaseSRWLockExclusive(&device->submit_lock);
         device->vk.vkDestroySemaphore(device->vk.device, queue->timeline, nullptr);
         D12ChildRelease(&queue->child);
         HeapFree(GetProcessHeap(), 0, queue);
@@ -569,20 +769,21 @@ static void STDMETHODCALLTYPE queue_execute_command_lists(ID3D12CommandQueue *if
                                                           ID3D12CommandList *const *lists)
 {
     D12Queue *queue = queue_impl(iface);
-    VkCommandBuffer buffers[64];
+    VkCommandBuffer local[64];
+    VkCommandBuffer *buffers =
+        count < RTL_NUMBER_OF(local) ? local : HeapAlloc(GetProcessHeap(), 0, (count + 1) * sizeof(*buffers));
+    if (!buffers)
+        return;
     UINT n = 0;
     buffers[n++] = queue->child.device->boundary_cmd;
     for (UINT i = 0; i < count; i++) {
         VkCommandBuffer cmd = lists[i] ? D12CommandListBuffer(lists[i]) : VK_NULL_HANDLE;
-        if (!cmd)
-            continue;
-        if (n == RTL_NUMBER_OF(buffers)) {
-            D12QueueSubmit(queue, buffers, n, nullptr, 0, nullptr, 0);
-            n = 0;
-        }
-        buffers[n++] = cmd;
+        if (cmd)
+            buffers[n++] = cmd;
     }
-    D12QueueSubmit(queue, buffers, n, nullptr, 0, nullptr, 0);
+    queue_op(queue, OP_EXECUTE, nullptr, 0, buffers, n);
+    if (buffers != local)
+        HeapFree(GetProcessHeap(), 0, buffers);
 }
 
 static void STDMETHODCALLTYPE queue_set_marker(ID3D12CommandQueue *iface, UINT metadata, const void *data, UINT size)
@@ -597,15 +798,7 @@ static HRESULT STDMETHODCALLTYPE queue_signal(ID3D12CommandQueue *iface, ID3D12F
     D12Fence *fence = D12FenceFrom(fence_iface);
     if (!fence)
         return E_INVALIDARG;
-    /* Vulkan timelines only go up: a value a signal already promised is not signalled again. */
-    if (value <= fence->queued)
-        return S_OK;
-    fence->queued = value;
-    VkSemaphoreSubmitInfo signal = {VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
-    signal.semaphore = fence->semaphore;
-    signal.value = value;
-    signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    D12QueueSubmit(queue, nullptr, 0, nullptr, 0, &signal, 1);
+    queue_op(queue, OP_SIGNAL, fence, value, nullptr, 0);
     D12FenceWake(queue->child.device);
     return S_OK;
 }
@@ -616,11 +809,7 @@ static HRESULT STDMETHODCALLTYPE queue_wait(ID3D12CommandQueue *iface, ID3D12Fen
     D12Fence *fence = D12FenceFrom(fence_iface);
     if (!fence)
         return E_INVALIDARG;
-    VkSemaphoreSubmitInfo wait = {VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
-    wait.semaphore = fence->semaphore;
-    wait.value = value;
-    wait.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    D12QueueSubmit(queue, nullptr, 0, &wait, 1, nullptr, 0);
+    queue_op(queue, OP_WAIT, fence, value, nullptr, 0);
     return S_OK;
 }
 
@@ -755,6 +944,11 @@ HRESULT D12CreateQueue(D12Device *device, const D3D12_COMMAND_QUEUE_DESC *desc, 
     }
     queue->child.refs = 1;
     D12ChildInit(&queue->child, device);
+    queue->held_tail = &queue->held;
+    AcquireSRWLockExclusive(&device->submit_lock);
+    queue->next = device->queue_list;
+    device->queue_list = queue;
+    ReleaseSRWLockExclusive(&device->submit_lock);
     *out = queue;
     return S_OK;
 }
