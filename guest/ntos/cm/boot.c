@@ -4,6 +4,8 @@
  * machine and user identity, hardware description, processor variables.
  */
 #include "cm.h"
+#define MIME_KERNEL_PNP
+#include <mime/pnp.h>
 #ifdef __aarch64__
 #include "../ex/acpi_tables.h"
 #else
@@ -485,6 +487,77 @@ static void acpi_description(void)
     }
 }
 
+#define SYSTEM_CLASS L"{4d36e97d-e325-11ce-bfc1-08002be10318}"
+#define DISPLAY_CLASS L"{4d36e968-e325-11ce-bfc1-08002be10318}"
+#define DISK_CLASS L"{4d36e967-e325-11ce-bfc1-08002be10318}"
+#define MEDIA_CLASS L"{4d36e96c-e325-11ce-bfc1-08002be10318}"
+#define NET_CLASS L"{4d36e972-e325-11ce-bfc1-08002be10318}"
+#define BATTERY_CLASS L"{72631e54-78a4-11d0-bcf7-00aa00b7b32a}"
+
+static void pnp(PCWSTR instance, PCWSTR parent, PCWSTR desc, PCWSTR hardware, PCWSTR klass, PCWSTR guid,
+                PCWSTR manufacturer, PCWSTR service, PCWSTR location)
+{
+    MIME_DEVICE_PROPERTIES p = {desc, hardware, hardware, klass, guid, manufacturer, service, location, L"",
+                                desc};
+    MimePnpAddDevice(instance, parent, &p);
+}
+
+/*
+ * the device tree of the reference machine, as its firmware presents it: the pci root bridge, the chipset and its
+ * peripherals, the battery and thermal zone of a laptop. mime has no acpi or pci driver, so these are the enumeration
+ * a program reads; the drivers of the devices themselves are win32k's or the host's own services.
+ */
+static void devices(void)
+{
+    static const WCHAR root[] = L"ACPI\\PNP0A08\\0";
+    pnp(root, nullptr, L"PCI Express Root Complex", L"ACPI\\PNP0A08\0ACPI\\PNP0A03\0", L"System", SYSTEM_CLASS,
+        L"Microsoft", L"pci", L"PCI bus 0");
+    pnp(L"PCI\\VEN_8086&DEV_7E00&SUBSYS_00000000&REV_01\\3&11583659&0&00", root, L"Intel(R) Host Bridge",
+        L"PCI\\VEN_8086&DEV_7E00&SUBSYS_00000000&REV_01\0", L"System", SYSTEM_CLASS, L"Intel", L"", L"PCI bus 0, device 0, function 0");
+    pnp(L"PCI\\VEN_8086&DEV_7D55&SUBSYS_00000000&REV_08\\3&11583659&0&02", root, L"Intel(R) Arc(TM) Graphics",
+        L"PCI\\VEN_8086&DEV_7D55&SUBSYS_00000000&REV_08\0", L"Display", DISPLAY_CLASS, L"Intel Corporation",
+        L"igdkmd64", L"PCI bus 0, device 2, function 0");
+    pnp(L"PCI\\VEN_10DE&DEV_28E1&SUBSYS_00000000&REV_A1\\3&11583659&0&01", root, L"NVIDIA GeForce RTX 4050 Laptop GPU",
+        L"PCI\\VEN_10DE&DEV_28E1&SUBSYS_00000000&REV_A1\0", L"Display", DISPLAY_CLASS, L"NVIDIA",
+        L"nvlddmkm", L"PCI bus 0, device 1, function 0");
+    pnp(L"PCI\\VEN_8086&DEV_7E28&SUBSYS_00000000&REV_01\\3&11583659&0&1F", root, L"Intel(R) LPC Controller",
+        L"PCI\\VEN_8086&DEV_7E28&SUBSYS_00000000&REV_01\0", L"System", SYSTEM_CLASS, L"Intel", L"msisadrv",
+        L"PCI bus 0, device 31, function 0");
+    pnp(L"PCI\\VEN_8086&DEV_7E22&SUBSYS_00000000&REV_01\\3&11583659&0&1F4", root, L"Intel(R) SMBus Controller",
+        L"PCI\\VEN_8086&DEV_7E22&SUBSYS_00000000&REV_01\0", L"System", SYSTEM_CLASS, L"Intel", L"", L"PCI bus 0, device 31, function 4");
+    pnp(L"PCI\\VEN_8086&DEV_7E40&SUBSYS_00000000&REV_01\\3&11583659&0&14", root, L"Intel(R) Wi-Fi 7 BE200 320MHz",
+        L"PCI\\VEN_8086&DEV_7E40&SUBSYS_00000000&REV_01\0", L"Net", NET_CLASS, L"Intel Corporation", L"netwtw",
+        L"PCI bus 0, device 20, function 0");
+    pnp(L"PCI\\VEN_8086&DEV_7E28&SUBSYS_00000000&REV_01\\3&11583659&0&1F3", root, L"Intel(R) Smart Sound Technology Audio Controller",
+        L"PCI\\VEN_8086&DEV_7E28&SUBSYS_00000000&REV_01\0", L"Media", MEDIA_CLASS, L"Intel", L"IntcAudioBus",
+        L"PCI bus 0, device 31, function 3");
+    pnp(L"PCI\\VEN_144D&DEV_A80A&SUBSYS_00000000&REV_00\\3&11583659&0&1D", root, L"Samsung NVMe Controller",
+        L"PCI\\VEN_144D&DEV_A80A&SUBSYS_00000000&REV_00\0", L"DiskDrive", DISK_CLASS, L"Samsung",
+        L"stornvme", L"PCI bus 0, device 29, function 0");
+    pnp(L"ACPI\\PNP0C0A\\1", root, L"Microsoft ACPI-Compliant Control Method Battery", L"ACPI\\PNP0C0A\0",
+        L"Battery", BATTERY_CLASS, L"Microsoft", L"CmBatt", L"");
+    pnp(L"ACPI\\PNP0C0B\\2", root, L"ACPI Thermal Zone", L"ACPI\\PNP0C0B\0", L"System", SYSTEM_CLASS,
+        L"Microsoft", L"", L"");
+}
+
+/* the drivers of the devices, empty but present, so the manager and \Driver show them running as on the reference machine. */
+static NTSTATUS NTAPI empty_driver(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
+{
+    return STATUS_SUCCESS;
+}
+
+static void drivers(void)
+{
+    static const PCWSTR names[] = {
+        L"\\Driver\\ACPI", L"\\Driver\\pci", L"\\Driver\\msisadrv", L"\\Driver\\disk", L"\\Driver\\partmgr",
+        L"\\Driver\\volmgr", L"\\Driver\\volsnap", L"\\Driver\\mountmgr", L"\\Driver\\stornvme",
+        L"\\Driver\\CmBatt", L"\\Driver\\netwtw", L"\\Driver\\nvlddmkm", L"\\Driver\\igdkmd64",
+        L"\\Driver\\IntcAudioBus", L"\\FileSystem\\FltMgr",
+    };
+    for (ULONG i = 0; i < RTL_NUMBER_OF(names); i++)
+        IoCreateDriver(names[i], empty_driver, nullptr);
+}
+
 void CmpSpecialize(void)
 {
     WCHAR computer[16], user[24], sid[96] = {};
@@ -507,6 +580,8 @@ void CmpSpecialize(void)
     time_zone();
     locale(sid);
     hardware();
+    devices();
+    drivers();
     processor_environment();
     CmpUnlock();
 }
