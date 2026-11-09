@@ -1394,6 +1394,7 @@ void FsWbNameUnlock(void);
 void FsWbClose(FS_WB *wb);
 /* flushes everything, for shutdown. */
 void FsWbFlushAll(void);
+void FsWbFlushVolume(ULONG volume);
 /* a file with a section or window in use buffers no writes, see io/fswrite.c. */
 void FsWbMapped(ULONG volume, ULONG64 file_id, LONG delta);
 /* the file has more than one name, so a look by any name flushes what its handles buffered by the others. */

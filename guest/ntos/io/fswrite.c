@@ -421,12 +421,25 @@ void FsWbClose(FS_WB *wb)
     ExReleaseFastMutex(&g_lock);
 }
 
-void FsWbFlushAll(void)
+static void flush_all(ULONG volume, BOOLEAN every)
 {
     if (!g_ready)
         return;
     ExAcquireFastMutex(&g_lock);
-    for (PLIST_ENTRY e = g_kept.Flink; e != &g_kept; e = e->Flink)
-        flush_locked(CONTAINING_RECORD(e, FS_WB, Links));
+    for (PLIST_ENTRY e = g_kept.Flink; e != &g_kept; e = e->Flink) {
+        FS_WB *wb = CONTAINING_RECORD(e, FS_WB, Links);
+        if (every || wb->Volume == volume)
+            flush_locked(wb);
+    }
     ExReleaseFastMutex(&g_lock);
+}
+
+void FsWbFlushAll(void)
+{
+    flush_all(0, TRUE);
+}
+
+void FsWbFlushVolume(ULONG volume)
+{
+    flush_all(volume, FALSE);
 }

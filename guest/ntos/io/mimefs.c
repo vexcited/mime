@@ -2936,8 +2936,13 @@ static NTSTATUS NTAPI mimefs_flush(PDEVICE_OBJECT device, PIRP irp)
 {
     PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
     MIMEFS_FCB *fcb = file->FsContext;
-    if (!fcb)
-        return complete(irp, STATUS_INVALID_HANDLE, 0);
+    if (!fcb) {
+        /* the volume itself: what every handle on it still buffers, then the host file system under it. */
+        MIMEFS_VOLUME *vol = device->DeviceExtension;
+        FsWbFlushVolume(vol->HostVolume);
+        return complete(irp, host_status(HalHypercallUnlocked(MIME_HC_FS_SYNC, vol->HostVolume, 0, 0, 0, 0, 0, nullptr),
+                                         FALSE), 0);
+    }
     if (fcb->Rom)
         return complete(irp, STATUS_SUCCESS, 0);
     NTSTATUS kept = FsWbSync(&fcb->Wb);
