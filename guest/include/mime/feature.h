@@ -56,9 +56,12 @@ DWORD MimeFeatureRequest(PCWSTR name, DWORD flags);
 
 /*
  * Asks for the feature that holds a font family, for a lookup of a font by name that found none. Returns 0 when the
- * font is on the drive, ERROR_NOT_FOUND when no feature has it.
+ * font is on the drive, ERROR_NOT_FOUND when no feature has it, MIME_FEATURE_FONT_MISSING when the font is still
+ * missing and the user was told that the program is ended.
  */
 DWORD MimeFeatureRequestFont(PCWSTR family);
+
+#define MIME_FEATURE_FONT_MISSING 0x20004D01
 
 /*
  * Called when a program meant to use a file and did not find it: it starts the program, loads the library or opens the

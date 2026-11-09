@@ -46,6 +46,7 @@ typedef struct OPTIONS {
     BOOL Ask;       /* The form of a program that needs the feature, the user decides. */
     BOOL HideUi;
     BOOL Elevated;  /* Started by the broker for this very request. */
+    BOOL Font;      /* A program asked for a font, Name is the family. */
 } OPTIONS;
 
 static const WCHAR kUsage[] =
@@ -281,6 +282,8 @@ static int change(const OPTIONS *o, const FEATURE_DEF *feature)
     run.Remove = remove;
     lstrcpynW(run.Source, o->Source, RTL_NUMBER_OF(run.Source));
     lstrcpynW(run.Caller, o->Caller, RTL_NUMBER_OF(run.Caller));
+    if (o->Font)
+        lstrcpynW(run.Font, o->Name, RTL_NUMBER_OF(run.Font));
     run.CallerPid = o->CallerPid;
     for (WCHAR *p = run.Caller; *p; p++)
         if (*p == L'_')
@@ -313,7 +316,7 @@ static int change(const OPTIONS *o, const FEATURE_DEF *feature)
             tu_eprint(L"features: %ls\n", run.Detail);
     }
     tu_flush();
-    return (int)error;
+    return run.Told ? MIME_FEATURE_FONT_MISSING : (int)error;
 }
 
 /* ------------------------------------------------------------------ what is there */
@@ -418,7 +421,9 @@ int tool_main(void)
     }
     if (o.Action == ACTION_STATUS)
         return show_status(feature);
-    if (o.Action == ACTION_FONT)
+    if (o.Action == ACTION_FONT) {
         o.Action = ACTION_ENABLE;
+        o.Font = TRUE;
+    }
     return change(&o, feature);
 }
