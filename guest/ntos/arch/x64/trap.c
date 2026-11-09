@@ -69,9 +69,17 @@ static void build_record(PKTRAP_FRAME frame, PEXCEPTION_RECORD record)
     case 0:
         record->ExceptionCode = STATUS_INTEGER_DIVIDE_BY_ZERO;
         break;
-    case 1:
+    case 1: {
         record->ExceptionCode = STATUS_SINGLE_STEP_CODE;
+        /* handlers get the context with the trap flag off, as on windows: one that continues is not trapped again. */
+        frame->Rflags &= ~0x100ull;
+        /* dr6 tells a breakpoint from a step, for the handler; the processor's goes back to its reset value. */
+        ULONG64 dr6;
+        __asm__ volatile("mov %%dr6, %0" : "=r"(dr6));
+        __asm__ volatile("mov %0, %%dr6" ::"r"(0xFFFF0FF0ull));
+        KiCurrentThread()->UserDr6 = dr6 & 0xE00F;
         break;
+    }
     case 3:
         /* int3 leaves rip after itself; windows reports and resumes at the breakpoint. */
         frame->Rip--;
@@ -199,6 +207,15 @@ static void user_exception(PKTRAP_FRAME frame)
 static void kernel_exception(PKTRAP_FRAME frame)
 {
     PKTHREAD thread = KiCurrentThread();
+    /* a user data breakpoint on memory the kernel copied: windows lets the kernel go on, the program never sees it. */
+    if (frame->Vector == 1) {
+        __asm__ volatile("mov %0, %%dr6" ::"r"(0xFFFF0FF0ull));
+        return;
+    }
+    /* a fault on kernel memory, or a trap that is not a page fault, is rare enough to keep a line of. */
+    if (frame->Vector != 14 || frame->Cr2 > MIME_USER_ADDRESS_LIMIT)
+        KiLogPrintf("kernel exception %u at rip %p rsp %p cr2 %p err %x", frame->Vector, (PVOID)frame->Rip,
+                    (PVOID)frame->Rsp, (PVOID)frame->Cr2, frame->ErrorCode);
     if (frame->Vector == 14) {
         ULONG_PTR address = frame->Cr2;
         BOOLEAN write = (frame->ErrorCode & 0x2) != 0;
@@ -226,6 +243,9 @@ static void kernel_exception(PKTRAP_FRAME frame)
         KiEnableInterrupts();
         KiLongJump(recovery, 1);
     }
+    if (frame->Vector == 8)
+        KiLogPrintf("double fault at rip %p rsp %p cr2 %p cs %x err %x", (PVOID)frame->Rip, (PVOID)frame->Rsp,
+                    (PVOID)frame->Cr2, frame->Cs, frame->ErrorCode);
     if (KiDispatchKernelTrap(frame))
         return;
     KiDumpTrapFrame("kernel exception", frame);

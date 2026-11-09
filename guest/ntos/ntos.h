@@ -182,6 +182,9 @@ typedef struct _KTHREAD {
     KAPC SuspendApc;
     KEVENT AlertByIdEvent; /* NtAlertThreadByThreadId, sticky until the next NtWaitForAlertByThreadId. */
     PVOID XSaveArea; /* x64: the extended state saved when switched out, NULL for system threads. */
+    /* x64: the hardware breakpoints a context set, loaded while the thread runs, see KiSetThreadDebug. */
+    ULONG64 UserDr[4];
+    ULONG64 UserDr6, UserDr7;
 } KTHREAD;
 
 typedef struct _KPROCESS {
@@ -425,6 +428,8 @@ NTSTATUS KiCallbackReturn(PVOID result, ULONG result_length, NTSTATUS status);
 void KiContextToTrapFrame(const CONTEXT *context, PKTRAP_FRAME frame, ULONG flags, KPROCESSOR_MODE mode);
 void KiMergeContext(CONTEXT *to, const CONTEXT *from, ULONG flags);
 void KiTrapFrameToContext(const KTRAP_FRAME *frame, CONTEXT *context, ULONG flags);
+void KiSetThreadDebug(PKTHREAD thread, const CONTEXT *context);
+void KiGetThreadDebug(PKTHREAD thread, CONTEXT *context);
 BOOLEAN KiDispatchUserException(PEXCEPTION_RECORD record, PKTRAP_FRAME frame);
 NTSTATUS KeRegisterSystemServices(ULONG table, PKSERVICE_DESCRIPTOR services, ULONG count);
 void KiRegisterService(ULONG number, PVOID routine, UCHAR stack_args);

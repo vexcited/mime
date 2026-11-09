@@ -12,6 +12,10 @@ void KiSwitchAddressSpace(PKPROCESS process)
     KiInstructionBarrier();
 }
 
+void KiSetThreadDebug(PKTHREAD thread, const CONTEXT *ctx) {}
+
+void KiGetThreadDebug(PKTHREAD thread, CONTEXT *ctx) {}
+
 void KiSwapContext(PKTHREAD old, PKTHREAD next)
 {
     KiSwapContextInternal(&old->KernelSp, next->KernelSp);

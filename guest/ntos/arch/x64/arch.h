@@ -189,7 +189,7 @@ static inline void KiServiceExitVolatiles(PKTRAP_FRAME f)
 }
 #define KI_SERVICE_REGISTER_ARG(f, i) ((i) == 0 ? (f)->R10 : (i) == 1 ? (f)->Rdx : (i) == 2 ? (f)->R8 : (f)->R9)
 
-#define EFLAGS_USER_MASK 0x00000DD5ull /* cf pf af zf sf tf df of, what user mode may set. */
+#define EFLAGS_USER_MASK 0x00010DD5ull /* cf pf af zf sf tf df of, and rf to step past a breakpoint: what user mode may set. */
 #define EFLAGS_IF 0x200ull
 
 typedef struct _KJUMP_BUFFER {
