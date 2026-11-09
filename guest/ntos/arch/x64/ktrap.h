@@ -89,6 +89,7 @@
 #define KGDT64_R3_CMTEB 0x50
 #define RPL_USER 3
 
+#define KI_VECTOR_FIRST 0x30   /* the interrupts start past the exceptions and the software interrupts of user code */
 #define KI_VECTOR_HOST 0x81    /* the host's interrupt, see MimeSharedPage */
 #define KI_VECTOR_CLOCK 0xD1   /* the local apic timer */
 #define KI_VECTOR_IPI 0xE1     /* reschedule and leave user mode */

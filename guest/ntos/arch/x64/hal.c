@@ -103,6 +103,7 @@ void HalSendFlushIpi(ULONG64 mask)
     send_mask(mask, KI_VECTOR_FLUSH);
 }
 
+/* exported to drivers. the kernel's own interrupts are ended in KiTrapCommon. */
 void HalEndOfInterrupt(ULONG vector)
 {
     KiWriteMsr(MSR_X2APIC_EOI, 0);
