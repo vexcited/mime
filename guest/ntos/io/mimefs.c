@@ -2199,8 +2199,9 @@ static NTSTATUS NTAPI mimefs_query_volume(PDEVICE_OBJECT device, PIRP irp)
         MimeFsVolumeInfo *volume = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*volume), KI_TAG('F', 's', 'V', 'l'));
         if (!volume)
             return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
-        NTSTATUS status = host_status(HalHypercall(MIME_HC_FS_VOLUME_QUERY, vol->HostVolume,
-                                                   HalPhysicalOf(volume), 0, 0, 0, 0, nullptr), FALSE);
+        MIMEFS_FCB *fcb = stack->FileObject ? stack->FileObject->FsContext : nullptr;
+        NTSTATUS status = host_status(HalHypercall(MIME_HC_FS_VOLUME_QUERY, vol->HostVolume, HalPhysicalOf(volume),
+                                                   fcb ? fcb->HostHandle : 0, 0, 0, 0, nullptr), FALSE);
         if (NT_SUCCESS(status) && (!volume->bytes_per_unit || volume->bytes_per_unit % 512 ||
             volume->total_units > INT64_MAX || volume->available_units > INT64_MAX || volume->free_units > INT64_MAX))
             status = STATUS_UNSUCCESSFUL;

@@ -1421,8 +1421,10 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             status = MIME_HC_STATUS_INVALID;
             break;
         }
+        /* the volume of the file asked about, so Z:\home tells the free space of /home and not of /. */
+        MimeFsHandle *fh = get_handle(vm, a[3]);
         struct statfs volume;
-        if (statfs(root, &volume) != 0) {
+        if ((fh && fh->volume == a[1] && fh->fd >= 0 ? fstatfs(fh->fd, &volume) : statfs(root, &volume)) != 0) {
             status = errno_status(errno);
             break;
         }

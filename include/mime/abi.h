@@ -502,7 +502,7 @@ enum {
     MIME_HC_FS_MAP = 0x18,      /* handle and flags: the guest physical address of the whole file, filled on touch; read only, or with MIME_FS_MAP_WRITABLE shared and writable, so the guest's writes are the file's. */
     MIME_HC_FS_UNMAP = 0x19,    /* (pa) */
     MIME_HC_MEM_DISCARD = 0x1A, /* (pa, size) free guest RAM whose contents the host may drop */
-    MIME_HC_FS_VOLUME_QUERY = 0x1C, /* volume id and volume information address. */
+    MIME_HC_FS_VOLUME_QUERY = 0x1C, /* volume id, volume information address and the file asked about, 0 for the root. */
     MIME_HC_FS_FLUSH = 0x1B,    /* flush a host file handle. */
     MIME_HC_FS_WATCH = 0x63,    /* directory handle, id, filter and tree: watches the changes the host makes below a directory, UNSUPPORTED where it cannot. */
     MIME_HC_FS_UNWATCH = 0x64,  /* the watch to end. */
