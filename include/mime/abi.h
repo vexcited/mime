@@ -262,6 +262,19 @@ typedef struct MimeShellJumpList {
 } MimeShellJumpList;
 
 /* passed to the kernel entry point in x0, as a physmap virtual address. */
+/*
+ * the host's keyboard layout, which the guest's follows: the virtual key and characters of each key by set 1 scan code
+ * without the E0 prefix. the host bumps generation at each change, 0 means none was given and the guest keeps US.
+ */
+#define MIME_KEYBOARD_KEYS 0x80
+typedef struct MimeKeyboardLayout {
+    uint32_t generation;
+    uint16_t language; /* the windows language of the layout, 0x040C for french. */
+    uint16_t pad;
+    uint8_t vk[MIME_KEYBOARD_KEYS];
+    uint16_t chars[MIME_KEYBOARD_KEYS][3]; /* unshifted, shifted and with AltGr, 0 for none. */
+} MimeKeyboardLayout;
+
 typedef struct MimeBootInfo {
     uint64_t magic;
     uint32_t version;
@@ -282,6 +295,8 @@ typedef struct MimeBootInfo {
     uint64_t shared_phys; /* MimeSharedPage */
     uint64_t boot_stack_phys;
     uint64_t boot_stack_size;
+    /* a page the trap entry records each processor's last exception in, so a triple fault keeps its cause. */
+    uint64_t exception_trace_phys;
 
     uint64_t timer_frequency;
     /* GICv3 emulated by the host: distributor, redistributors, both mapped at physmap + phys as device memory. */
@@ -333,6 +348,10 @@ typedef struct MimeBootInfo {
 
     char system_root[64]; /* "C:\\Windows". */
     char cmdline[256];
+    /* where programs write fetched feature packages; on the host share, so nothing of mime lands on C:. */
+    char feature_cache[260];
+    /* the root bundle of a host that keeps its roots outside /etc, exported beside the cache; empty when it has none. */
+    char auth_roots[260];
     /* the host's swap. the guest has no paging file: its commit limit is its memory, the host grants none past its floor. */
     uint64_t swap_size;
     /* the host's time zone: its IANA id, and the key of the Windows zone it is under Time Zones, empty when unknown. */
@@ -349,6 +368,7 @@ typedef struct MimeBootInfo {
     uint16_t ansi_code_page;
     uint16_t oem_code_page;
     char locale_name[32];
+    MimeKeyboardLayout keyboard;
 } MimeBootInfo;
 
 /*
@@ -357,10 +377,21 @@ typedef struct MimeBootInfo {
  */
 #define MIME_ROM_MAGIC 0x004D4F52454D494Dull /* "MIMEROM". */
 
+/* the entries of data/genuine.manifest the rom and the host can know. */
+#define MIME_GENUINE_MAX 256
+
 typedef struct MimeRomEntry {
     char path[96]; /* relative to C:, e.g. \Windows\System32\ntdll.dll, NUL padded. */
     uint64_t offset; /* from the rom header, page aligned. */
     uint64_t size;
+    /*
+     * a file whose microsoft original is listed in data/genuine.manifest has 1 + its index there and its size. while
+     * the host holds a checked copy, its bit in MimeSharedPage.genuine_ready is set: reads, sizes and data sections of
+     * the file show that copy, see MIME_HC_GENUINE_OPEN, and images still map this one.
+     */
+    uint64_t genuine_size;
+    uint32_t genuine;
+    uint32_t reserved;
 } MimeRomEntry;
 
 typedef struct MimeRomHeader {
@@ -404,6 +435,11 @@ typedef struct MimeSharedPage {
      */
     volatile uint64_t memory_grantable;
     volatile uint64_t memory_credit;
+    /*
+     * bit i is set while the host holds a checked copy of the file at index i of data/genuine.manifest, so a rom open
+     * learns whether there is one without asking the host. see MimeRomEntry.genuine.
+     */
+    volatile uint64_t genuine_ready[MIME_GENUINE_MAX / 64];
 } MimeSharedPage;
 
 /* one run of free guest pages in a MIME_HC_MEM_REPORT list. */
@@ -454,6 +490,12 @@ enum {
     MIME_HC_FS_SET_BASIC = 0x66, /* (handle, MimeFsBasic pa) sets the times and the read only attribute the mask names, see MimeFsBasic */
     MIME_HC_FS_LINK = 0x67,     /* handle, directory handle or 0 for the file's own, pa, chars and MIME_FS_LINK_* flags: makes a hard link to the file in a directory, returns the links the file has now. */
     MIME_HC_FS_APPEND = 0x6C,   /* handle, unused, pa and len: writes at the end of the file in one step that no other writer can get in the middle of, host programs that append included; returns the offset it was written at, the whole length or nothing is written. */
+    /*
+     * (index, MimeFsInfo pa) -> handle: the host's checked copy of entry index of data/genuine.manifest, on the
+     * MIME_FS_VOLUME_GENUINE volume, to read, query and map read only. NOT_FOUND when it has none any more, which also
+     * clears the entry's bit in MimeSharedPage.genuine_ready.
+     */
+    MIME_HC_GENUINE_OPEN = 0x6D,
     MIME_HC_FS_LINKS = 0x68,    /* handle, pa and capacity: every name of the file on its volume as MimeFsLinkName records, returns the bytes they need. */
     MIME_HC_FS_SET_REPARSE = 0x69, /* handle and MimeFsReparse pa: makes the empty file or directory a symbolic link or a junction. */
     MIME_HC_FS_GET_REPARSE = 0x6A, /* handle and MimeFsReparse pa: what the link the handle was opened as says, MIME_HC_STATUS_NOT_REPARSE for any other. */
@@ -838,6 +880,7 @@ typedef struct MimeCtrlConsole {
 enum {
     MIME_FS_VOLUME_SYSTEM = 0, /* C:, the drive_c directory. */
     MIME_FS_VOLUME_HOST = 1,   /* Z:, the host root. */
+    MIME_FS_VOLUME_GENUINE = 2, /* the copies of MIME_HC_GENUINE_OPEN, which no drive of the guest shows. */
 };
 
 enum {
@@ -1201,6 +1244,8 @@ enum {
      * frames waiting.
      */
     MIME_INPUT_CAMERA = 30,
+    /* the host's keyboard layout changed, the guest reads it from MimeBootInfo's keyboard. */
+    MIME_INPUT_KEYMAP = 31,
     /*
      * shell reply: flags is MIME_SHELL_EVENT_*, pad the toast id, x the action or reason, and y the available
      * reply text units.

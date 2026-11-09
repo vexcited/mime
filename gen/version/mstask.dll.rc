@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Task Scheduler 1.0 COM Interface DLL"
             VALUE "FileVersion", "10.0.26100.9444 (WinBuild.160101.0800)"
             VALUE "InternalName", "mstask.dll"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "mstask.dll"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.9444"

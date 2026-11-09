@@ -28,6 +28,11 @@
 #include <x86intrin.h>
 
 #define KICK_SIGNAL SIGUSR2
+
+/* newer kvm reports a triple fault before the processor state is reset. */
+#ifndef KVM_EXIT_TRIPLE_FAULT
+#define KVM_EXIT_TRIPLE_FAULT 18
+#endif
 #define IRQ_GSI 24 /* past the routes KVM keeps for a userspace ioapic, which mime has none of. */
 #define MSR_IA32_TSC 0x10
 
@@ -232,12 +237,18 @@ static void spoof_model(struct kvm_cpuid2 *cpuid)
         struct kvm_cpuid_entry2 *e = &cpuid->entries[i];
         switch (e->function) {
         case 0:
-            cpuid_vendor(e, profile->cpu_vendor);
+            /* the processor vendor of leaf 0 runs through ebx, edx and ecx, unlike a hypervisor's. */
+            memcpy(&e->ebx, profile->cpu_vendor, 4);
+            memcpy(&e->edx, profile->cpu_vendor + 4, 4);
+            memcpy(&e->ecx, profile->cpu_vendor + 8, 4);
             break;
         case 1:
-            e->eax = (profile->cpu_family << 8) | (profile->cpu_model << 4) | profile->cpu_stepping;
+            /* the low model nibble sits in bits 4-7, the high one in the extended model bits 16-19. */
+            e->eax = ((profile->cpu_family & 0xF) << 8) | ((profile->cpu_model & 0xF) << 4) | profile->cpu_stepping;
             if (profile->cpu_family >= 0xF)
-                e->eax |= ((profile->cpu_family - 0xF) << 20) | ((profile->cpu_model >> 4) << 16);
+                e->eax |= (profile->cpu_family - 0xF) << 20;
+            if (profile->cpu_family == 6 || profile->cpu_family == 0xF)
+                e->eax |= (profile->cpu_model >> 4) << 16;
             break;
         case 7:
             if (e->index == 0) {
@@ -270,6 +281,9 @@ static void spoof_model(struct kvm_cpuid2 *cpuid)
  * exposes the host CPU features KVM supports, including x2APIC and TSC deadline timers. advertises Hyper-V when
  * supported, otherwise no hypervisor.
  */
+/* a physical machine has no hypervisor: its leaf 1 bit 31 is clear and the 0x40000000 leaves are absent. */
+static bool g_expose_hypervisor;
+
 static bool load_cpuid(MimeVm *vm)
 {
     int n = 256;
@@ -286,24 +300,36 @@ static bool load_cpuid(MimeVm *vm)
         }
         n *= 2;
     }
+    const MimeHardwareProfile *model = mime_hardware_profile();
+    bool intel = !model || !model->cpu_vendor || !strcmp(model->cpu_vendor, "GenuineIntel");
     uint32_t out = 0;
     for (uint32_t i = 0; i < g_cpuid->nent; i++) {
         struct kvm_cpuid_entry2 *e = &g_cpuid->entries[i];
         if (e->function >= 0x40000000 && e->function < 0x40010000)
             continue;
+        /* an intel processor has no amd-only leaves, bits or svm. */
+        if (intel && (e->function == 0x8000000A || (e->function >= 0x8000001E && e->function <= 0x80000022)))
+            continue;
+        if (intel && e->function == 0x80000000)
+            e->eax = 0x80000008;
         if (e->function == 1)
             e->ecx |= (1u << 21) | (1u << 24); /* x2apic, TSC deadline. */
+        if (intel && e->function == 0x80000001) {
+            e->ecx &= ~((1u << 2) | (1u << 6) | (1u << 7) | (1u << 8) | (1u << 22)); /* svm, sse4a, misalignsse, 3dnowprefetch, topology extensions. */
+            e->edx &= ~((1u << 22) | (1u << 30) | (1u << 31));                      /* mmxext, 3dnowext, 3dnow. */
+        }
         g_cpuid->entries[out++] = *e;
     }
-    uint32_t hv = add_hyperv_leaves(vm, g_cpuid->entries + out, (uint32_t)n - out);
+    g_expose_hypervisor = getenv("MIME_EXPOSE_HYPERVISOR") != nullptr;
+    uint32_t hv = g_expose_hypervisor ? add_hyperv_leaves(vm, g_cpuid->entries + out, (uint32_t)n - out) : 0;
     for (uint32_t i = 0; i < out; i++) {
         struct kvm_cpuid_entry2 *e = &g_cpuid->entries[i];
         if (e->function == 1)
-            e->ecx = hv ? e->ecx | (1u << 31) : e->ecx & ~(1u << 31);
+            e->ecx = (hv ? e->ecx | (1u << 31) : e->ecx & ~(1u << 31));
     }
     g_cpuid->nent = out + hv;
     spoof_model(g_cpuid);
-    mime_info("processor: %s hypervisor", hv ? "microsoft's" : "no");
+    mime_info("processor: %s hypervisor", hv ? "microsoft's" : "hidden");
     return true;
 }
 
@@ -392,6 +418,10 @@ bool mime_vm_create(MimeVm *vm, const MimePaths *paths, uint64_t ram_size)
         mime_error("kvm cannot keep the local apics in the kernel: %s", strerror(errno));
         return false;
     }
+    struct kvm_enable_cap triple = {.cap = KVM_CAP_X86_TRIPLE_FAULT_EVENT};
+    int triple_event = ioctl(vm->vm_fd, KVM_ENABLE_CAP, &triple) == 0;
+    if (!triple_event)
+        mime_error("kvm cannot report the state of a triple fault: %s", strerror(errno));
     if (!load_cpuid(vm))
         return false;
     if (!cpuid_has(0x80000001, 3, 26)) {
@@ -617,7 +647,12 @@ static bool handle_io(MimeVcpu *vcpu)
     uint64_t regs[8] = {r->rax, r->rdi, r->rsi, r->rdx, r->r10, r->r8, r->r9, 0};
     vcpu->exits_hvc[regs[0] & 63]++;
     uint64_t number = regs[0] & 255, started = __rdtsc();
+    uint64_t wait_rip = r->rip, wait_rsp = r->rsp;
     mime_hcall_dispatch(vcpu, regs);
+    if (number == 0xa) {
+        vcpu->wait_rip = wait_rip;
+        vcpu->wait_rsp = wait_rsp;
+    }
     vcpu->hvc_calls[number]++;
     vcpu->hvc_ticks[number] += __rdtsc() - started;
     r->rax = regs[0];
@@ -645,7 +680,7 @@ static void *vcpu_main(void *arg)
         mime_vm_request_stop(vm, 1);
         return nullptr;
     }
-    vcpu->run->kvm_valid_regs = KVM_SYNC_X86_REGS;
+    vcpu->run->kvm_valid_regs = KVM_SYNC_X86_REGS | KVM_SYNC_X86_SREGS;
     /* KVM holds processors other than the first for an init and startup ipi pair; the guest starts them by hypercall. */
     struct kvm_mp_state runnable = {KVM_MP_STATE_RUNNABLE};
     if (ioctl(vcpu->fd, KVM_SET_MP_STATE, &runnable) != 0)
@@ -673,7 +708,11 @@ static void *vcpu_main(void *arg)
     else
         set_entry_regs(vcpu, vcpu->start_pc, vcpu->start_x0, vcpu->start_sp);
 
+    struct kvm_regs previous = vcpu->run->s.regs.regs;
+    struct kvm_sregs previous_sregs = vcpu->run->s.regs.sregs;
     while (!vm->stopping) {
+        previous = vcpu->run->s.regs.regs;
+        previous_sregs = vcpu->run->s.regs.sregs;
         int r = ioctl(vcpu->fd, KVM_RUN, 0);
         vcpu->exits_total++;
         if (r != 0) {
@@ -738,11 +777,27 @@ static void *vcpu_main(void *arg)
             mime_daemon_guest_halted(vm, 3);
             mime_vm_request_stop(vm, 3);
             break;
-        case KVM_EXIT_SHUTDOWN:
+        case KVM_EXIT_TRIPLE_FAULT:
+        case KVM_EXIT_SHUTDOWN: {
+            uint8_t *xtrace = vm->ram + 0x2000 + (size_t)vcpu->index * 256;
             dump_state(vcpu, "guest triple fault");
+            mime_error("  before the reset: rip %#llx rsp %#llx cr2 %#llx cr3 %#llx",
+                       (unsigned long long)previous.rip, (unsigned long long)previous.rsp,
+                       (unsigned long long)previous_sregs.cr2, (unsigned long long)previous_sregs.cr3);
+            mime_error("  last lock wait: rip %#llx rsp %#llx", (unsigned long long)vcpu->wait_rip,
+                       (unsigned long long)vcpu->wait_rsp);
+            for (int slot = 0; slot < 4; slot++) {
+                uint64_t *e = (uint64_t *)(xtrace + 8 + slot * 56);
+                if (!e[0] && !e[1])
+                    continue;
+                mime_error("  exception %d: vector %llu rip %#llx rsp %#llx cr2 %#llx err %#llx", slot,
+                           (unsigned long long)e[0], (unsigned long long)e[1], (unsigned long long)e[2],
+                           (unsigned long long)e[3], (unsigned long long)e[4]);
+            }
             mime_daemon_guest_halted(vm, 3);
             mime_vm_request_stop(vm, 3);
             break;
+        }
         case KVM_EXIT_FAIL_ENTRY:
             mime_error("vcpu %u entry failed, reason %#llx", vcpu->index,
                        (unsigned long long)vcpu->run->fail_entry.hardware_entry_failure_reason);

@@ -284,5 +284,9 @@ void KiExitToUserMode(PKTRAP_FRAME frame)
         }
         break;
     }
+    if (thread->InstrumentReturn) {
+        thread->InstrumentReturn = FALSE;
+        KiInstrumentReturn(frame, ((PEPROCESS)thread->Process)->InstrumentationCallback);
+    }
     thread->PreviousMode = UserMode;
 }

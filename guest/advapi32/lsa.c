@@ -548,7 +548,7 @@ ADVAPI BOOL WINAPI LookupAccountSidLocalA(PSID sid, LPSTR name, LPDWORD name_siz
  * logon rights. an account that holds none has no subkey, which is how the policy tells it is unknown.
  */
 #define POLICY_CREATE_ACCOUNT 0x10
-#define RIGHTS_KEY L"SYSTEM\\CurrentControlSet\\Control\\Lsa\\MimeRights"
+#define RIGHTS_KEY L"SYSTEM\\CurrentControlSet\\Control\\Lsa\\Rights"
 #define STATUS_NO_SUCH_PRIVILEGE_ ((NTSTATUS)0xC0000060L)
 
 typedef struct LSA_ENUMERATION_INFORMATION_ {

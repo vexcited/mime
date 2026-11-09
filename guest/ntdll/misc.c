@@ -666,8 +666,8 @@ NTDLL_EXPORT USHORT NTAPI RtlCaptureStackBackTrace(ULONG skip, ULONG count, PVOI
 #else
 NTDLL_EXPORT USHORT NTAPI RtlCaptureStackBackTrace(ULONG skip, ULONG count, PVOID *frames, PULONG hash)
 {
-    /* walk the frame record chain; x29 points at {previous x29, x30}. */
-    ULONG64 *fp = __builtin_frame_address(0);
+    /* walk the frame record chain, {previous frame pointer, return address}. */
+    ULONG_PTR *fp = __builtin_frame_address(0);
     PTEB teb = NtCurrentTeb();
     USHORT n = 0;
     ULONG h = 0;
@@ -679,13 +679,25 @@ NTDLL_EXPORT USHORT NTAPI RtlCaptureStackBackTrace(ULONG skip, ULONG count, PVOI
             frames[n++] = ret;
             h += (ULONG)(ULONG_PTR)ret;
         }
-        fp = (ULONG64 *)fp[0];
+        fp = (ULONG_PTR *)fp[0];
     }
     if (hash)
         *hash = h;
     return n;
 }
 #endif
+
+/* where the caller of the caller returns to, and where its own caller does. */
+NTDLL_EXPORT void NTAPI RtlGetCallersAddress(PVOID *caller, PVOID *callers_caller)
+{
+    PVOID frames[8], own = __builtin_return_address(0);
+    USHORT n = RtlCaptureStackBackTrace(0, RTL_NUMBER_OF(frames), frames, nullptr);
+    USHORT i = 0;
+    while (i < n && frames[i] != own)
+        i++;
+    *caller = i + 1 < n ? frames[i + 1] : nullptr;
+    *callers_caller = i + 2 < n ? frames[i + 2] : nullptr;
+}
 
 /* the telemetry session of windows is not kept. */
 NTDLL_EXPORT void NTAPI WinSqmSetDWORD(const GUID *session, ULONG id, ULONG value)

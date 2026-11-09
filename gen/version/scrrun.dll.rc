@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "Microsoft \256 Script Runtime"
             VALUE "FileVersion", "10.0.26100.9278"
             VALUE "InternalName", "scrrun.dll"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "scrrun.dll"
             VALUE "ProductName", "Microsoft \256 Script Runtime"
             VALUE "ProductVersion", "10.0.26100.9278"

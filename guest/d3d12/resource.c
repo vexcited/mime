@@ -37,6 +37,23 @@ static int pick_type(D12Device *device, D12MemoryKind kind, UINT allowed)
     return -1;
 }
 
+/* a type of the allowed ones in system memory the gpu reaches, one the cpu does not map when there is one. */
+static int system_type(D12Device *device, UINT allowed)
+{
+    int found = -1;
+    for (UINT i = 0; i < device->memory.memoryTypeCount; i++) {
+        const VkMemoryType *t = &device->memory.memoryTypes[i];
+        BOOL local = (device->memory.memoryHeaps[t->heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+        if (!(allowed & (1u << i)) || local)
+            continue;
+        if (found < 0 || !(t->propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
+            found = (int)i;
+        if (!(t->propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
+            break;
+    }
+    return found;
+}
+
 /* custom heaps go by their cpu page property. */
 D12MemoryKind D12HeapKind(D12Device *device, const D3D12_HEAP_PROPERTIES *props)
 {
@@ -154,10 +171,10 @@ static void heap_destroy(D12Heap *heap)
     if (heap->buffer) {
         D12AccelerationStructuresForget(device, heap->va, heap->desc.SizeInBytes);
         D12AddressRemove(device, heap);
-        device->vk.vkDestroyBuffer(device->vk.device, heap->buffer, nullptr);
+        D12Defer(device, VK_OBJECT_TYPE_BUFFER, (UINT64)heap->buffer);
     }
-    if (heap->memory)
-        device->vk.vkFreeMemory(device->vk.device, heap->memory, nullptr);
+    D12Defer(device, VK_OBJECT_TYPE_BUFFER, (UINT64)heap->zero_buffer);
+    D12Defer(device, VK_OBJECT_TYPE_DEVICE_MEMORY, (UINT64)heap->memory);
     HeapFree(GetProcessHeap(), 0, heap->free);
 }
 
@@ -237,7 +254,12 @@ static const struct ID3D12Heap1Vtbl g_heap_vtbl = {
     heap_get_protected_session,
 };
 
-static HRESULT heap_init(D12Device *device, D12Heap *heap, D12MemoryKind kind, int type)
+/*
+ * the heap's memory, of the given type or one picked for buffers. windows moves what video memory has no room for to
+ * system memory, where the gpu still reaches it: when demote is set, a device heap the budget refuses goes there, so
+ * the program gets its memory and the driver keeps the room it needs.
+ */
+static HRESULT heap_init(D12Device *device, D12Heap *heap, D12MemoryKind kind, int type, UINT allowed, BOOL demote)
 {
     D12Vk *vk = &device->vk;
     heap->kind = kind;
@@ -251,6 +273,7 @@ static HRESULT heap_init(D12Device *device, D12Heap *heap, D12MemoryKind kind, i
         VkMemoryRequirements req;
         vk->vkGetBufferMemoryRequirements(vk->device, probe, &req);
         vk->vkDestroyBuffer(vk->device, probe, nullptr);
+        allowed &= req.memoryTypeBits;
         type = device->buffer_types[kind] != ~0u ? (int)device->buffer_types[kind] : pick_type(device, kind, req.memoryTypeBits);
         if (type < 0)
             return E_OUTOFMEMORY;
@@ -262,8 +285,14 @@ static HRESULT heap_init(D12Device *device, D12Heap *heap, D12MemoryKind kind, i
     VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &flags};
     alloc.allocationSize = heap->desc.SizeInBytes;
     alloc.memoryTypeIndex = type;
-    if (vk->vkAllocateMemory(vk->device, &alloc, nullptr, &heap->memory) != VK_SUCCESS)
-        return E_OUTOFMEMORY;
+    if (vk->vkAllocateMemory(vk->device, &alloc, nullptr, &heap->memory) != VK_SUCCESS) {
+        int system = demote && kind == D12_MEMORY_DEVICE ? system_type(device, allowed) : -1;
+        alloc.memoryTypeIndex = (UINT)system;
+        if (system < 0 || vk->vkAllocateMemory(vk->device, &alloc, nullptr, &heap->memory) != VK_SUCCESS)
+            return E_OUTOFMEMORY;
+        heap->type = (UINT)system;
+        heap->demoted = TRUE;
+    }
     if (kind != D12_MEMORY_DEVICE &&
         vk->vkMapMemory(vk->device, heap->memory, 0, VK_WHOLE_SIZE, 0, (void **)&heap->mapped) != VK_SUCCESS)
         return E_OUTOFMEMORY;
@@ -282,7 +311,8 @@ static HRESULT heap_init(D12Device *device, D12Heap *heap, D12MemoryKind kind, i
     return S_OK;
 }
 
-static HRESULT heap_create(D12Device *device, const D3D12_HEAP_DESC *desc, BOOL internal, int type, D12Heap **out)
+static HRESULT heap_create(D12Device *device, const D3D12_HEAP_DESC *desc, BOOL internal, int type, UINT allowed,
+                           BOOL demote, D12Heap **out)
 {
     D12Heap *heap = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*heap));
     if (!heap)
@@ -298,7 +328,7 @@ static HRESULT heap_create(D12Device *device, const D3D12_HEAP_DESC *desc, BOOL 
         heap->desc.Properties.CreationNodeMask = 1;
     if (!heap->desc.Properties.VisibleNodeMask)
         heap->desc.Properties.VisibleNodeMask = 1;
-    HRESULT hr = heap_init(device, heap, D12HeapKind(device, &desc->Properties), type);
+    HRESULT hr = heap_init(device, heap, D12HeapKind(device, &desc->Properties), type, allowed, demote);
     if (FAILED(hr)) {
         heap_destroy(heap);
         HeapFree(GetProcessHeap(), 0, heap);
@@ -310,6 +340,37 @@ static HRESULT heap_create(D12Device *device, const D3D12_HEAP_DESC *desc, BOOL 
     return S_OK;
 }
 
+/*
+ * a new heap starts zeroed, and windows' drivers clear it even when the program says it need not be: programs read
+ * what they never wrote there, and memory the driver hands out again holds what was there before. memory the cpu
+ * maps is new pages already, the rest is cleared by the device's own commands before any queue uses the heap.
+ */
+static void zero_heap(D12Device *device, D12Heap *heap)
+{
+    D12Vk *vk = &device->vk;
+    if (heap->mapped)
+        return;
+    VkBuffer buffer = heap->buffer;
+    if (!buffer) {
+        VkBufferCreateInfo info = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+        info.size = heap->desc.SizeInBytes;
+        info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        if (vk->vkCreateBuffer(vk->device, &info, nullptr, &heap->zero_buffer) != VK_SUCCESS) {
+            heap->zero_buffer = VK_NULL_HANDLE;
+            return;
+        }
+        VkMemoryRequirements req;
+        vk->vkGetBufferMemoryRequirements(vk->device, heap->zero_buffer, &req);
+        if (!(req.memoryTypeBits & (1u << heap->type)) ||
+            vk->vkBindBufferMemory(vk->device, heap->zero_buffer, heap->memory, 0) != VK_SUCCESS)
+            return;
+        buffer = heap->zero_buffer;
+    }
+    VkCommandBuffer cmd = D12InitCommands(device);
+    vk->vkCmdFillBuffer(cmd, buffer, 0, VK_WHOLE_SIZE, 0);
+    D12InitDone(device);
+}
+
 HRESULT D12CreateHeap(D12Device *device, const D3D12_HEAP_DESC *desc, D12Heap **out)
 {
     if (!desc->SizeInBytes)
@@ -317,7 +378,10 @@ HRESULT D12CreateHeap(D12Device *device, const D3D12_HEAP_DESC *desc, D12Heap **
     if (desc->Properties.Type == D3D12_HEAP_TYPE_CUSTOM &&
         desc->Properties.CPUPageProperty == D3D12_CPU_PAGE_PROPERTY_UNKNOWN)
         return E_INVALIDARG;
-    return heap_create(device, desc, FALSE, -1, out);
+    HRESULT hr = heap_create(device, desc, FALSE, -1, ~0u, TRUE, out);
+    if (SUCCEEDED(hr))
+        zero_heap(device, *out);
+    return hr;
 }
 
 /* ------------------------------------------------------------------ internal heaps */
@@ -383,6 +447,24 @@ static BOOL take_range(D12Heap *heap, UINT64 size, UINT64 align, UINT64 *out)
     return FALSE;
 }
 
+/* takes a range of an internal heap with room, of video memory or of system memory a refused heap went to. */
+static BOOL take_internal(D12Device *device, D12MemoryKind kind, UINT type_bits, UINT64 size, UINT64 align, BOOL image,
+                          BOOL demoted, D12Allocation *out)
+{
+    for (D12Heap *heap = device->internal_heaps; heap; heap = heap->next) {
+        if (heap->kind != kind || heap->demoted != demoted || !(type_bits & (1u << heap->type)) ||
+            (!image && !heap->buffer))
+            continue;
+        UINT64 offset;
+        if (take_range(heap, size, align, &offset)) {
+            *out = (D12Allocation){heap, offset, size, offset >= heap->handed_out};
+            heap->handed_out = D12_MAX(heap->handed_out, offset + size);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 /* a range of an internal heap of a kind, in a memory type the resource allows. */
 HRESULT D12Alloc(D12Device *device, D12MemoryKind kind, UINT type_bits, UINT64 size, UINT64 align, BOOL image,
                  D12Allocation *out)
@@ -390,16 +472,9 @@ HRESULT D12Alloc(D12Device *device, D12MemoryKind kind, UINT type_bits, UINT64 s
     memset(out, 0, sizeof(*out));
     size = D12_ALIGN(size, 256);
     AcquireSRWLockExclusive(&device->memory_lock);
-    for (D12Heap *heap = device->internal_heaps; heap; heap = heap->next) {
-        if (heap->kind != kind || !(type_bits & (1u << heap->type)) || (!image && !heap->buffer))
-            continue;
-        UINT64 offset;
-        if (take_range(heap, size, align, &offset)) {
-            *out = (D12Allocation){heap, offset, size, offset >= heap->handed_out};
-            heap->handed_out = D12_MAX(heap->handed_out, offset + size);
-            ReleaseSRWLockExclusive(&device->memory_lock);
-            return S_OK;
-        }
+    if (take_internal(device, kind, type_bits, size, align, image, FALSE, out)) {
+        ReleaseSRWLockExclusive(&device->memory_lock);
+        return S_OK;
     }
     D3D12_HEAP_DESC desc = {};
     desc.SizeInBytes = D12_MAX(INTERNAL_HEAP_SIZE, D12_ALIGN(size, 1 << 20));
@@ -413,8 +488,15 @@ HRESULT D12Alloc(D12Device *device, D12MemoryKind kind, UINT type_bits, UINT64 s
                                                                         : pick_type(device, kind, type_bits);
     if (type >= 0 && (UINT)type != buffer_type)
         desc.Flags = D3D12_HEAP_FLAG_DENY_BUFFERS;
+    /* a heap of video memory, else room left in system memory, else a new heap there. */
     D12Heap *heap;
-    HRESULT hr = heap_create(device, &desc, TRUE, type, &heap);
+    HRESULT hr = heap_create(device, &desc, TRUE, type, type_bits, FALSE, &heap);
+    if (FAILED(hr) && take_internal(device, kind, type_bits, size, align, image, TRUE, out)) {
+        ReleaseSRWLockExclusive(&device->memory_lock);
+        return S_OK;
+    }
+    if (FAILED(hr))
+        hr = heap_create(device, &desc, TRUE, type, type_bits, TRUE, &heap);
     if (FAILED(hr)) {
         ReleaseSRWLockExclusive(&device->memory_lock);
         return hr;
@@ -655,6 +737,8 @@ static D3D12_RESOURCE_ALLOCATION_INFO allocation_info(D12Device *device, const D
     VkImageCreateInfo image;
     if (!image_info(device, desc, &image))
         return (D3D12_RESOURCE_ALLOCATION_INFO){~0ull, D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT};
+    /* sizes are asked for placed textures, which take the alias bit. */
+    image.flags |= VK_IMAGE_CREATE_ALIAS_BIT;
     VkDeviceImageMemoryRequirements req = {VK_STRUCTURE_TYPE_DEVICE_IMAGE_MEMORY_REQUIREMENTS};
     req.pCreateInfo = &image;
     VkMemoryRequirements2 out = {VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2};
@@ -852,6 +936,8 @@ D12Resource *D12ResourceFrom(ID3D12Resource *iface)
 
 static D12Resource *impl(ID3D12Resource2 *iface) { return CONTAINING_RECORD(iface, D12Resource, iface); }
 
+static BOOL release_image(D12Resource *resource);
+
 static void resource_destroy(D12Resource *resource)
 {
     D12Device *device = resource->child.device;
@@ -861,8 +947,8 @@ static void resource_destroy(D12Resource *resource)
         vk->vkDestroyImageView(vk->device, v->view, nullptr);
         HeapFree(GetProcessHeap(), 0, v);
     }
-    if (resource->image && !resource->swapchain)
-        vk->vkDestroyImage(vk->device, resource->image, nullptr);
+    if (resource->image && !resource->swapchain && release_image(resource))
+        D12Defer(device, VK_OBJECT_TYPE_IMAGE, (UINT64)resource->image);
     if (resource->buffer)
         D12AccelerationStructuresForget(device, resource->va, resource->desc.Width);
     if (resource->reserved)
@@ -1080,6 +1166,64 @@ static VkImageAspectFlags format_aspect(VkFormat format)
     }
 }
 
+static BOOL same_desc(const D3D12_RESOURCE_DESC1 *a, const D3D12_RESOURCE_DESC1 *b)
+{
+    return a->Dimension == b->Dimension && a->Width == b->Width && a->Height == b->Height &&
+           a->DepthOrArraySize == b->DepthOrArraySize && a->MipLevels == b->MipLevels && a->Format == b->Format &&
+           a->SampleDesc.Count == b->SampleDesc.Count && a->SampleDesc.Quality == b->SampleDesc.Quality &&
+           a->Layout == b->Layout && a->Flags == b->Flags;
+}
+
+/* takes the image of a texture placed alike at the offset, if one lives there. */
+static BOOL share_image(D12Heap *heap, UINT64 offset, D12Resource *resource)
+{
+    AcquireSRWLockExclusive(&heap->images_lock);
+    D12SharedImage *s = heap->images;
+    while (s && (s->offset != offset || !same_desc(&s->desc, &resource->desc)))
+        s = s->next;
+    if (s) {
+        s->refs++;
+        resource->image = s->image;
+        resource->shared_image = s;
+    }
+    ReleaseSRWLockExclusive(&heap->images_lock);
+    return s != nullptr;
+}
+
+static void remember_image(D12Heap *heap, UINT64 offset, D12Resource *resource)
+{
+    D12SharedImage *s = HeapAlloc(GetProcessHeap(), 0, sizeof(*s));
+    if (!s)
+        return;
+    *s = (D12SharedImage){nullptr, heap, offset, resource->desc, resource->image, 1};
+    AcquireSRWLockExclusive(&heap->images_lock);
+    s->next = heap->images;
+    heap->images = s;
+    ReleaseSRWLockExclusive(&heap->images_lock);
+    resource->shared_image = s;
+}
+
+/* the image goes with the last texture that shares it. */
+static BOOL release_image(D12Resource *resource)
+{
+    D12SharedImage *s = resource->shared_image;
+    if (!s)
+        return TRUE;
+    D12Heap *heap = s->heap;
+    AcquireSRWLockExclusive(&heap->images_lock);
+    BOOL last = --s->refs == 0;
+    if (last)
+        for (D12SharedImage **at = &heap->images; *at; at = &(*at)->next)
+            if (*at == s) {
+                *at = s->next;
+                break;
+            }
+    ReleaseSRWLockExclusive(&heap->images_lock);
+    if (last)
+        HeapFree(GetProcessHeap(), 0, s);
+    return last;
+}
+
 static HRESULT create_texture(D12Device *device, D12Resource *resource, D12Heap *heap, UINT64 offset)
 {
     D12Vk *vk = &device->vk;
@@ -1110,7 +1254,20 @@ static HRESULT create_texture(D12Device *device, D12Resource *resource, D12Heap 
         info.flags |= VK_IMAGE_CREATE_ALIAS_BIT;
         info.pNext = &external;
     }
+    /*
+     * textures placed alike at one place in a heap share their contents, which windows calls data inheritance and
+     * games use: vulkan only promises it to images made with the alias bit, as vkd3d-proton makes them.
+     */
+    if (heap)
+        info.flags |= VK_IMAGE_CREATE_ALIAS_BIT;
     resource->aspect = format_aspect(info.format);
+    /*
+     * a texture placed alike where another lives takes its image: even with the alias bit, two images of one memory
+     * need not share what the gpu keeps beside the texels, like compression, and games read through the second what
+     * they drew through the first.
+     */
+    if (heap && !shared && share_image(heap, offset, resource))
+        return S_OK;
     if (vk->vkCreateImage(vk->device, &info, nullptr, &resource->image) != VK_SUCCESS)
         return E_OUTOFMEMORY;
     VkMemoryRequirements req;
@@ -1158,6 +1315,7 @@ static HRESULT create_texture(D12Device *device, D12Resource *resource, D12Heap 
             return E_INVALIDARG;
         if (vk->vkBindImageMemory(vk->device, resource->image, heap->memory, offset) != VK_SUCCESS)
             return E_OUTOFMEMORY;
+        remember_image(heap, offset, resource);
     } else {
         HRESULT hr = D12Alloc(device, D12HeapKind(device, &resource->heap_props), req.memoryTypeBits, req.size,
                               req.alignment, TRUE, &resource->alloc);
@@ -1168,7 +1326,8 @@ static HRESULT create_texture(D12Device *device, D12Resource *resource, D12Heap 
             VK_SUCCESS)
             return E_OUTOFMEMORY;
     }
-    BOOL clear = !heap && !(resource->heap_flags & D3D12_HEAP_FLAG_CREATE_NOT_ZEROED) &&
+    /* committed targets start cleared even when the program says they need not: windows' drivers clear them too. */
+    BOOL clear = !heap &&
                  (desc->Flags & (D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL |
                                  D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)) && !feedback;
     init_image(device, resource, clear);
@@ -1203,13 +1362,14 @@ static HRESULT create_buffer(D12Device *device, D12Resource *resource, D12Heap *
     /*
      * committed resources start zeroed like on windows, even in reused memory. mapped memory no resource had before
      * is already zero, since vulkan-1.dll makes it from new pages, and clearing it would fault in pages the program
-     * may overwrite at once, as a 64 MiB upload does. D3D12_HEAP_FLAG_CREATE_NOT_ZEROED also skips the clear.
+     * may overwrite at once, as a 64 MiB upload does. D3D12_HEAP_FLAG_CREATE_NOT_ZEROED skips the clear of mapped
+     * memory only: windows' drivers clear video memory anyway, and programs read what they never wrote there.
      */
     if (resource->mapped && (resource->alloc.fresh || (resource->heap_flags & D3D12_HEAP_FLAG_CREATE_NOT_ZEROED)))
         ;
     else if (resource->mapped)
         memset(resource->mapped, 0, (SIZE_T)size);
-    else if (!(resource->heap_flags & D3D12_HEAP_FLAG_CREATE_NOT_ZEROED)) {
+    else {
         VkCommandBuffer cmd = D12InitCommands(device);
         device->vk.vkCmdFillBuffer(cmd, resource->buffer, resource->offset, D12_ALIGN(size, 4), 0);
         D12InitDone(device);

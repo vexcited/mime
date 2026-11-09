@@ -99,4 +99,16 @@ void mime_sha1_init(MimeSha1 *ctx);
 void mime_sha1_update(MimeSha1 *ctx, const void *data, size_t size);
 void mime_sha1_final(MimeSha1 *ctx, uint8_t digest[20]);
 
+/* sha256.c */
+typedef struct MimeSha256 {
+    uint32_t state[8];
+    uint64_t length;
+    uint8_t buffer[64];
+    uint32_t buffered;
+} MimeSha256;
+
+void mime_sha256_init(MimeSha256 *ctx);
+void mime_sha256_update(MimeSha256 *ctx, const void *data, size_t size);
+void mime_sha256_final(MimeSha256 *ctx, uint8_t digest[32]);
+
 #endif

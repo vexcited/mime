@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 void *mime_vm_phys(MimeVm *vm, uint64_t pa, uint64_t len)
 {
@@ -99,10 +100,20 @@ void mime_vm_init_boot(MimeVm *vm)
     boot->shared_phys = MIME_RAM_BASE + MIME_LAYOUT_SHARED;
     boot->boot_stack_phys = MIME_RAM_BASE + MIME_LAYOUT_BOOT_STACK;
     boot->boot_stack_size = MIME_LAYOUT_BOOT_STACK_SIZE;
+    boot->exception_trace_phys = MIME_RAM_BASE + 0x2000;
+    memset(vm->ram + 0x2000, 0, 0x4000);
     boot->cpu_count = vm->vcpu_count;
     boot->rom_phys = MIME_ROM_BASE;
     boot->rom_size = mime_rom_size();
     mime_strlcpy(boot->system_root, "C:\\Windows", sizeof(boot->system_root));
+    char feature_cache[MIME_PATH_MAX];
+    mime_path_join(feature_cache, sizeof(feature_cache), vm->paths->cache, "features");
+    mime_mkdir_p(feature_cache, 0755);
+    mime_paths_to_guest(vm->paths, feature_cache, boot->feature_cache, sizeof(boot->feature_cache));
+    char roots[MIME_PATH_MAX];
+    mime_path_join(roots, sizeof(roots), vm->paths->cache, "roots.pem");
+    if (access(roots, R_OK) == 0)
+        mime_paths_to_guest(vm->paths, roots, boot->auth_roots, sizeof(boot->auth_roots));
     /* kernel options such as "trace-exceptions", for debugging the guest. */
     const char *kargs = getenv("MIME_KERNEL_ARGS");
     if (kargs)

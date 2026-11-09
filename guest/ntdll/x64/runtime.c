@@ -1,7 +1,7 @@
 /*
  * the visual c++ runtime that a redistributable puts in System32 is arm64x, as on windows on arm, and only its arm64
  * half runs here: mime runs x64 programs with the x64 system dlls of SysX64. when such a runtime is installed and an x64
- * program cannot find a dll of it, features.exe takes the x64 runtime out of Microsoft's redistributable into SysX64,
+ * program cannot find a dll of it, OptionalFeatures.exe takes the x64 runtime out of Microsoft's redistributable into SysX64,
  * once a process, and the loader looks again.
  */
 #include "../ntdll_private.h"
@@ -10,9 +10,9 @@
 
 #define CONSOLE_DETACHED ((HANDLE)(LONG_PTR)-1)
 /* the names of mime/feature.h, which needs winbase.h. */
-#define FEATURE_PROGRAM L"\\System32\\features.exe"
+#define FEATURE_PROGRAM L"\\System32\\OptionalFeatures.exe"
 #define FEATURE_NAME L"VCRuntime.x64"
-#define FEATURE_BUSY L"MIME_FEATURE_BUSY"
+#define FEATURE_BUSY L"WINDOWS_FEATURE_BUSY"
 
 static const WCHAR *const g_runtime[] = {L"vcruntime140", L"msvcp140", L"concrt140", L"vccorlib140",
                                          L"vcamp140",     L"vcomp140", L"mfc140",    L"mfcm140"};
@@ -42,7 +42,7 @@ static BOOLEAN in_system32(PCWSTR name)
     return NT_SUCCESS(NtQueryAttributesFile(&oa, &info));
 }
 
-/* what features.exe sets for the programs it runs, which must not ask for what it is installing. */
+/* what OptionalFeatures.exe sets for the programs it runs, which must not ask for what it is installing. */
 static BOOLEAN busy(void)
 {
     WCHAR value[4];

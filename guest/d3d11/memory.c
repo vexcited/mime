@@ -79,6 +79,30 @@ static int pick_type(D3dDevice *device, D3dMemoryKind kind, UINT allowed)
     return -1;
 }
 
+/*
+ * video memory the budget refuses is taken from system memory, as DXVK and windows' drivers do: the gpu reads it
+ * slower, but the program goes on where failing would end it. nvidia's plain system memory type comes first, so
+ * nothing that expects video memory finds it mapped.
+ */
+static int system_type(D3dDevice *device, UINT allowed)
+{
+    for (UINT pass = 0; pass < 2; pass++)
+        for (UINT i = 0; i < device->memory.memoryTypeCount; i++) {
+            VkMemoryPropertyFlags flags = device->memory.memoryTypes[i].propertyFlags;
+            if ((allowed & (1u << i)) && !(flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) &&
+                (pass || !(flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)))
+                return (int)i;
+        }
+    return -1;
+}
+
+static void note_demotion(VkDeviceSize size)
+{
+    static volatile LONG told;
+    if (!InterlockedExchange(&told, 1))
+        D3dLog("d3d11: video memory is full, %llu bytes and what follows go to system memory", (unsigned long long)size);
+}
+
 static BOOL add_free(D3dBlock *block, VkDeviceSize offset, VkDeviceSize size)
 {
     if (block->free_count == block->free_capacity) {
@@ -292,7 +316,14 @@ HRESULT D3dAllocBuffer(D3dDevice *device, D3dMemoryKind kind, VkDeviceSize size,
      * buffers leave no gaps in the free list.
      */
     align = D3D_MAX(align, 256);
-    return allocate(device, kind, FALSE, type, D3D_ALIGN(size, align), align, out);
+    HRESULT hr = allocate(device, kind, FALSE, type, D3D_ALIGN(size, align), align, out);
+    int other;
+    if (FAILED(hr) && kind == D3D_MEMORY_DEVICE && (other = system_type(device, device->buffer_bits)) >= 0 &&
+        (UINT)other != type) {
+        note_demotion(size);
+        hr = allocate(device, kind, FALSE, (UINT)other, D3D_ALIGN(size, align), align, out);
+    }
+    return hr;
 }
 
 HRESULT D3dAllocImage(D3dDevice *device, VkImage image, D3dAllocation *out)
@@ -304,6 +335,11 @@ HRESULT D3dAllocImage(D3dDevice *device, VkImage image, D3dAllocation *out)
     if (type < 0)
         return E_OUTOFMEMORY;
     HRESULT hr = allocate(device, D3D_MEMORY_DEVICE, TRUE, (UINT)type, req.size, req.alignment, out);
+    int other;
+    if (FAILED(hr) && (other = system_type(device, req.memoryTypeBits)) >= 0 && other != type) {
+        note_demotion(req.size);
+        hr = allocate(device, D3D_MEMORY_DEVICE, TRUE, (UINT)other, req.size, req.alignment, out);
+    }
     if (FAILED(hr))
         return hr;
     if (vk->vkBindImageMemory(vk->device, image, out->memory, out->offset) != VK_SUCCESS) {
@@ -386,6 +422,7 @@ HRESULT D3dMemoryInit(D3dDevice *device)
     VkMemoryRequirements req;
     vk->vkGetBufferMemoryRequirements(vk->device, probe, &req);
     vk->vkDestroyBuffer(vk->device, probe, nullptr);
+    device->buffer_bits = req.memoryTypeBits;
     for (UINT kind = 0; kind < D3D_MEMORY_KINDS; kind++) {
         int type = pick_type(device, kind, req.memoryTypeBits);
         device->buffer_types[kind] = type < 0 ? ~0u : (UINT)type;

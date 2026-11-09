@@ -34,6 +34,8 @@ typedef struct MimeVkProfile {
     /* 64-bit atomics on typed views and on shared memory. */
     BOOL has_atomic64, has_shared_atomic64;
     BOOL has_barycentrics, has_maintenance5, has_maintenance8, has_compute_derivatives, has_msaa_storage;
+    /* float widths whose nans, infinities and signed zeros shaders can keep: 1 for 16, 2 for 32, 4 for 64 bits. */
+    UINT inf_nan_widths;
     /* when on, shader objects want a shading rate before every draw. */
     BOOL has_vrs;
     UINT vrs_tier, vrs_tile;

@@ -1,9 +1,0 @@
-data/windrivers/gm.dls is the General MIDI sound set of Mime's wavetable synth, served from the ROM as
-C:\Windows\System32\drivers\gm.dls. It is made from GeneralUser GS 2.0.3 by S. Christian Collins
-(https://github.com/mrbumpy409/GeneralUser-GS, GeneralUser-GS.sf2), under the license in GeneralUser-GS-License.txt,
-which lets the bank be used in software projects and modified. The conversion is tools/sf2dls.c of the research
-repository: it keeps the 128 melodic programs and the standard drum kit, brings the samples to at most 22050 Hz and
-stores them as 4 bit ADPCM, so the samples are not the originals.
-
-The license says the author cannot be sure where every sample of the bank came from, and that none of them came from a
-commercially published SoundFont or sample CD.

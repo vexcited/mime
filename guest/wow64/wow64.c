@@ -195,6 +195,35 @@ static void get_context32(PWOW64_CPURESERVED cpu, I386_CONTEXT *out)
     out->SegFs = TEB32_SEGMENT;
 }
 
+/* the hardware breakpoints are the thread's, whatever code it runs: a 32-bit context takes and gives them natively. */
+static NTSTATUS debug_registers32(HANDLE thread, I386_CONTEXT *context, BOOLEAN setting)
+{
+    if ((context->ContextFlags & CONTEXT_I386_DEBUG_REGISTERS) != CONTEXT_I386_DEBUG_REGISTERS)
+        return STATUS_SUCCESS;
+    CONTEXT native;
+    memset(&native, 0, sizeof(native));
+    native.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+    if (setting) {
+        native.Dr0 = context->Dr0;
+        native.Dr1 = context->Dr1;
+        native.Dr2 = context->Dr2;
+        native.Dr3 = context->Dr3;
+        native.Dr6 = context->Dr6;
+        native.Dr7 = context->Dr7;
+        return NtSetContextThread(thread, &native);
+    }
+    NTSTATUS status = NtGetContextThread(thread, &native);
+    if (NT_SUCCESS(status)) {
+        context->Dr0 = (ULONG)native.Dr0;
+        context->Dr1 = (ULONG)native.Dr1;
+        context->Dr2 = (ULONG)native.Dr2;
+        context->Dr3 = (ULONG)native.Dr3;
+        context->Dr6 = (ULONG)native.Dr6;
+        context->Dr7 = (ULONG)native.Dr7;
+    }
+    return status;
+}
+
 /* converts the kernel's native fault context to the 32-bit layout. */
 static void context64_to_32(const CONTEXT *in, I386_CONTEXT *out)
 {
@@ -220,6 +249,15 @@ static void context64_to_32(const CONTEXT *in, I386_CONTEXT *out)
     memcpy(out->ExtendedRegisters, state, sizeof(state));
     memcpy(out->ExtendedRegisters + 160, in->FltSave.XmmRegisters, 8 * 16);
     *(ULONG *)(out->ExtendedRegisters + 24) = in->MxCsr;
+    if ((in->ContextFlags & CONTEXT_DEBUG_REGISTERS) == CONTEXT_DEBUG_REGISTERS) {
+        out->ContextFlags |= CONTEXT_I386_DEBUG_REGISTERS;
+        out->Dr0 = (ULONG)in->Dr0;
+        out->Dr1 = (ULONG)in->Dr1;
+        out->Dr2 = (ULONG)in->Dr2;
+        out->Dr3 = (ULONG)in->Dr3;
+        out->Dr6 = (ULONG)in->Dr6;
+        out->Dr7 = (ULONG)in->Dr7;
+    }
 }
 
 static void context32_to_64(const I386_CONTEXT *in, CONTEXT *out)
@@ -375,19 +413,44 @@ static NTSTATUS queue_apc32(const ULONG *a)
 
 /* ------------------------------------------------------------ system calls */
 
-/* gets another thread's 32-bit context from the kernel when it runs 32-bit code, otherwise from its CPU area. */
-static NTSTATUS other_thread_cpu(HANDLE thread, ULONG_PTR *area)
+/* the process of another thread, opened to reach its CPU area, and where that area is. */
+static NTSTATUS other_thread_cpu(HANDLE thread, HANDLE *process, ULONG_PTR *area)
 {
     THREAD_BASIC_INFORMATION info;
     NTSTATUS status = NtQueryInformationThread(thread, ThreadBasicInformation, &info, sizeof(info), nullptr);
     if (!NT_SUCCESS(status))
         return status;
+    *process = NtCurrentProcess();
+    if (info.ClientId.UniqueProcess != NtCurrentTeb()->ClientId.UniqueProcess) {
+        OBJECT_ATTRIBUTES attributes;
+        InitializeObjectAttributes(&attributes, nullptr, 0, nullptr, nullptr);
+        CLIENT_ID id = {info.ClientId.UniqueProcess, nullptr};
+        status = NtOpenProcess(process, PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION, &attributes, &id);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
     PTEB teb = info.TebBaseAddress;
-    return NtReadVirtualMemory(NtCurrentProcess(), &teb->TlsSlots[WOW64_TLS_CPURESERVED], area, sizeof(*area),
-                               nullptr);
+    status = NtReadVirtualMemory(*process, &teb->TlsSlots[WOW64_TLS_CPURESERVED], area, sizeof(*area), nullptr);
+    if (NT_SUCCESS(status) && !*area)
+        status = STATUS_UNSUCCESSFUL;
+    if (!NT_SUCCESS(status) && *process != NtCurrentProcess())
+        NtClose(*process);
+    return status;
 }
 
+/* gets another thread's 32-bit context from the kernel when it runs 32-bit code, otherwise from its CPU area. */
+static NTSTATUS thread_context_rest32(HANDLE thread, I386_CONTEXT *context, BOOLEAN setting);
+
+/* the registers from the thread's 32-bit state, its breakpoints from the native thread, read after so they stay. */
 static NTSTATUS thread_context32(HANDLE thread, I386_CONTEXT *context, BOOLEAN setting)
+{
+    NTSTATUS status = thread_context_rest32(thread, context, setting);
+    if (NT_SUCCESS(status))
+        status = debug_registers32(thread, context, setting);
+    return status;
+}
+
+static NTSTATUS thread_context_rest32(HANDLE thread, I386_CONTEXT *context, BOOLEAN setting)
 {
     if (thread == NtCurrentThread()) {
         if (setting)
@@ -412,20 +475,24 @@ static NTSTATUS thread_context32(HANDLE thread, I386_CONTEXT *context, BOOLEAN s
         context32_to_64(context, &native);
         return NtSetContextThread(thread, &native);
     }
+    HANDLE process;
     ULONG_PTR area;
-    status = other_thread_cpu(thread, &area);
+    status = other_thread_cpu(thread, &process, &area);
     if (!NT_SUCCESS(status))
         return status;
     WOW64_CPURESERVED cpu;
-    status = NtReadVirtualMemory(NtCurrentProcess(), (PVOID)area, &cpu, sizeof(cpu), nullptr);
-    if (!NT_SUCCESS(status))
-        return status;
-    if (!setting) {
-        get_context32(&cpu, context);
-        return STATUS_SUCCESS;
+    status = NtReadVirtualMemory(process, (PVOID)area, &cpu, sizeof(cpu), nullptr);
+    if (NT_SUCCESS(status)) {
+        if (!setting) {
+            get_context32(&cpu, context);
+        } else {
+            set_context32(&cpu, context);
+            status = NtWriteVirtualMemory(process, (PVOID)area, &cpu, sizeof(cpu), nullptr);
+        }
     }
-    set_context32(&cpu, context);
-    return NtWriteVirtualMemory(NtCurrentProcess(), (PVOID)area, &cpu, sizeof(cpu), nullptr);
+    if (process != NtCurrentProcess())
+        NtClose(process);
+    return status;
 }
 
 static DECLSPEC_NORETURN void unhandled32(const MIME_EXCEPTION32 *record, const I386_CONTEXT *context)
@@ -449,6 +516,7 @@ static BOOLEAN special_service(ULONG number, PULONG a, LONG *result)
     WOW64_THREAD *t = current_thread();
     switch (number) {
     case MIME_SVC_NtContinue:
+        debug_registers32(NtCurrentThread(), (I386_CONTEXT *)(ULONG_PTR)a[0], TRUE);
         set_context32(cpu, (const I386_CONTEXT *)(ULONG_PTR)a[0]);
         if (a[1])
             NtTestAlert();
@@ -654,22 +722,30 @@ WOW64API DECLSPEC_NORETURN void NTAPI Wow64LdrpInitialize(PCONTEXT context)
     PUCHAR teb32 = Wow64CurrentTeb32();
     ULONG top = *(PULONG)(teb32 + MIME_TEB32_STACK_BASE);
     I386_CONTEXT *start = (void *)(ULONG_PTR)((top - sizeof(I386_CONTEXT)) & ~15u);
-    memset(start, 0, sizeof(*start));
-    start->ContextFlags = CONTEXT_I386_FULL | CONTEXT_I386_EXTENDED_REGISTERS;
-    initial_extended_state(start);
-    ULONG parameter = (ULONG)context->Rdx;
-    if (context->Rdx == (ULONG64)NtCurrentPeb())
-        parameter = (ULONG)(ULONG_PTR)g.Peb32;
     PULONG stack = (PULONG)start;
-    *--stack = parameter;
-    *--stack = (ULONG)context->Rcx;
-    *--stack = 0;
-    start->Eip = g.UserThreadStart;
-    start->Esp = (ULONG)(ULONG_PTR)stack;
-    start->EFlags = 0x202;
-    start->SegCs = CODE32;
-    start->SegDs = start->SegEs = start->SegSs = DATA32;
-    start->SegFs = TEB32_SEGMENT;
+    if (cpu->Context.Eip && cpu->Context.Esp) {
+        /* the kernel's start state, which a SetThreadContext may have changed while the thread was suspended. */
+        memcpy(start, &cpu->Context, sizeof(*start));
+        start->ContextFlags = CONTEXT_I386_FULL | CONTEXT_I386_EXTENDED_REGISTERS;
+        initial_extended_state(start);
+        stack -= 3;
+    } else {
+        memset(start, 0, sizeof(*start));
+        start->ContextFlags = CONTEXT_I386_FULL | CONTEXT_I386_EXTENDED_REGISTERS;
+        initial_extended_state(start);
+        ULONG parameter = (ULONG)context->Rdx;
+        if (context->Rdx == (ULONG64)NtCurrentPeb())
+            parameter = (ULONG)(ULONG_PTR)g.Peb32;
+        *--stack = parameter;
+        *--stack = (ULONG)context->Rcx;
+        *--stack = 0;
+        start->Eip = g.UserThreadStart;
+        start->Esp = (ULONG)(ULONG_PTR)stack;
+        start->EFlags = 0x202;
+        start->SegCs = CODE32;
+        start->SegDs = start->SegEs = start->SegSs = DATA32;
+        start->SegFs = TEB32_SEGMENT;
+    }
 
     stack -= 16;
     *--stack = (ULONG)(ULONG_PTR)g.Ntdll32;

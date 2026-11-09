@@ -234,3 +234,46 @@
 [HKLM\SYSTEM\CurrentControlSet\Services\KeyIso\Parameters]
 "ServiceDll"=expand:"%systemroot%\\system32\\keyiso.dll"
 "ServiceDllUnloadOnStop"=dword:00000001
+
+; the drivers of the devices the firmware tree names; mime runs the work in its own libraries, the keys are what
+; plug and play resolves a device's service to.
+[HKLM\SYSTEM\CurrentControlSet\Services\pci]
+"Type"=dword:00000001
+"Start"=dword:00000000
+"ErrorControl"=dword:00000001
+"Group"="Boot Bus Extender"
+[HKLM\SYSTEM\CurrentControlSet\Services\msisadrv]
+"Type"=dword:00000001
+"Start"=dword:00000000
+"ErrorControl"=dword:00000003
+"Group"="Boot Bus Extender"
+[HKLM\SYSTEM\CurrentControlSet\Services\stornvme]
+"Type"=dword:00000001
+"Start"=dword:00000000
+"ErrorControl"=dword:00000003
+"Group"="SCSI miniport"
+[HKLM\SYSTEM\CurrentControlSet\Services\CmBatt]
+"Type"=dword:00000001
+"Start"=dword:00000000
+"ErrorControl"=dword:00000003
+"Group"="Extended Base"
+[HKLM\SYSTEM\CurrentControlSet\Services\netwtw]
+"Type"=dword:00000001
+"Start"=dword:00000002
+"ErrorControl"=dword:00000001
+"Group"="NDIS"
+[HKLM\SYSTEM\CurrentControlSet\Services\nvlddmkm]
+"Type"=dword:00000001
+"Start"=dword:00000002
+"ErrorControl"=dword:00000001
+"Group"="Video"
+[HKLM\SYSTEM\CurrentControlSet\Services\igdkmd64]
+"Type"=dword:00000001
+"Start"=dword:00000002
+"ErrorControl"=dword:00000001
+"Group"="Video"
+[HKLM\SYSTEM\CurrentControlSet\Services\IntcAudioBus]
+"Type"=dword:00000001
+"Start"=dword:00000003
+"ErrorControl"=dword:00000001
+"Group"="AudioGroup"

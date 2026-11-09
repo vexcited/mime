@@ -2483,8 +2483,9 @@ HWND NTAPI NtUserFindWindowEx(HWND parent_h, HWND after_h, PUNICODE_STRING user_
     return result;
 }
 
-NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent_h, BOOL children, ULONG thread, ULONG max, HWND *list,
-                                   ULONG *count)
+/* windows' shape, with the flag that leaves out immersive windows, which mime has none of. */
+NTSTATUS NTAPI NtUserBuildHwndList(HDESK desktop, HWND parent_h, BOOL children, BOOL remove_immersive, ULONG thread,
+                                   ULONG max, HWND *list, ULONG *count)
 {
     UserEnter();
     WND *parent = parent_h ? WndLookup(parent_h) : WndDesktop();
@@ -2825,6 +2826,51 @@ static void map_points(WND *from, WND *to, POINT *pts, UINT count)
         }
         pts[i] = p;
     }
+}
+
+/*
+ * like win32kfull's NtUserQueryWindow: what the classes of WINDOWINFOCLASS ask of a window's owner. the process and
+ * thread are the creating thread's, the active and focus windows its queue's, and the default ime window and input
+ * context are none here. any other class, or a window that does not exist, answers zero.
+ */
+ULONG_PTR NTAPI NtUserQueryWindow(HWND hwnd, ULONG klass)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    ULONG_PTR r = 0;
+    W32THREAD *t = w ? w->Thread : nullptr;
+    if (w == g_desktop && InputThreadId) {
+        if (klass == 0 || klass == 1)
+            r = (ULONG_PTR)InputProcessId;
+        else if (klass == 2)
+            r = (ULONG_PTR)InputThreadId;
+    } else if (t) {
+        switch (klass) {
+        case 0: /* WindowProcess */
+        case 1: /* WindowRealProcess */
+            r = (ULONG_PTR)t->Process->Pid;
+            break;
+        case 2: /* WindowThread */
+            r = (ULONG_PTR)t->Tid;
+            break;
+        case 3: /* WindowActiveWindow */
+            r = (ULONG_PTR)t->Active;
+            break;
+        case 4: /* WindowFocusWindow */
+            r = (ULONG_PTR)t->Focus;
+            break;
+        case 5: /* WindowIsHung */
+            r = MsgThreadHung(t);
+            break;
+        case 7: /* WindowIsForegroundThread */
+            r = InputForeground && InputForeground->Thread == t;
+            break;
+        default:
+            break;
+        }
+    }
+    UserLeave();
+    return r;
 }
 
 ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)

@@ -1,4 +1,4 @@
-/* features.exe internals shared by its source files. */
+/* OptionalFeatures.exe internals shared by its source files. */
 #ifndef MIME_FEATUREP_H
 #define MIME_FEATUREP_H
 
@@ -18,7 +18,7 @@
 #define ERROR_BAD_NET_RESP 58
 #endif
 
-#define CACHE_FOLDER L"ProgramData\\Mime\\Features"
+#define CACHE_FOLDER L"ProgramData\\Microsoft\\Windows\\WindowsFeatures"
 
 struct UI;
 
@@ -65,6 +65,8 @@ typedef struct RUN {
     FEATURE_OPS Ops;
     uint32_t EnableFlags;
     BOOL Remove;              /* The work is turning the feature off. */
+    WCHAR Font[64];           /* The family a program asked for, it is ended without it. */
+    BOOL Told;                /* The user saw that the program is ended. */
 } RUN;
 
 /* platform.c */
@@ -132,6 +134,11 @@ BOOL FontsPresent(RUN *run, const FEATURE_DEF *feature);
 uint32_t VcRuntimeInstall(RUN *run, PCWSTR package);
 BOOL VcRuntimePresent(RUN *run);
 uint32_t VcRuntimeRemove(RUN *run);
+
+/* catalogs.c */
+uint32_t CatalogsInstall(RUN *run, const FEATURE_DEF *feature, PCWSTR package);
+BOOL CatalogsPresent(RUN *run, const FEATURE_DEF *feature);
+uint32_t CatalogsRemove(RUN *run, const FEATURE_DEF *feature);
 
 /* trust.c */
 DWORD VerifyPackage(RUN *run, const FEATURE_DEF *feature, PCWSTR path);

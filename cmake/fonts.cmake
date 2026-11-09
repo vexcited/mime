@@ -1,6 +1,41 @@
-# The open font that stands in when a requested face is missing, served from the ROM as files of C:\Windows\Fonts.
-# It keeps its own name, Noto Sans, and the license text goes along with it.
-file(GLOB mime_rom_fonts ${CMAKE_SOURCE_DIR}/third_party/fonts/winfonts/*)
-set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${mime_rom_fonts})
+# Noto Sans, the private UI font of features.exe, which has to be readable on a drive without any font. It is fetched
+# from the release of the Noto project and served from the ROM out of the fonts folder, so no other program sees it.
+set(MIME_NOTO_VERSION 2.015)
+set(MIME_NOTO_SHA256 0c34df072a3fa7efbb7cbf34950e1f971a4447cffe365d3a359e2d4089b958f5)
+set(MIME_NOTO_ARCHIVE "" CACHE FILEPATH "A local copy of NotoSans-v${MIME_NOTO_VERSION}.zip, for builds without network")
+set(noto_dir ${CMAKE_BINARY_DIR}/third_party/noto-sans-${MIME_NOTO_VERSION})
+set(noto_rom ${noto_dir}/featurefonts)
+set(noto_files ${noto_rom}/NotoSans-Regular.ttf ${noto_rom}/OFL-NotoSans.txt)
+if(NOT EXISTS ${noto_rom}/NotoSans-Regular.ttf OR NOT EXISTS ${noto_rom}/OFL-NotoSans.txt)
+    if(MIME_NOTO_ARCHIVE)
+        set(noto_zip ${MIME_NOTO_ARCHIVE})
+        file(SHA256 ${noto_zip} noto_hash)
+        if(NOT noto_hash STREQUAL MIME_NOTO_SHA256)
+            message(FATAL_ERROR "${noto_zip} has SHA256 ${noto_hash}, not ${MIME_NOTO_SHA256}")
+        endif()
+    else()
+        set(noto_zip ${noto_dir}/NotoSans-v${MIME_NOTO_VERSION}.zip)
+        message(STATUS "Downloading Noto Sans ${MIME_NOTO_VERSION}")
+        file(DOWNLOAD
+            https://github.com/notofonts/latin-greek-cyrillic/releases/download/NotoSans-v${MIME_NOTO_VERSION}/NotoSans-v${MIME_NOTO_VERSION}.zip
+            ${noto_zip} EXPECTED_HASH SHA256=${MIME_NOTO_SHA256} TLS_VERIFY ON STATUS noto_status)
+        list(GET noto_status 0 noto_code)
+        if(NOT noto_code EQUAL 0)
+            file(REMOVE ${noto_zip})
+            message(FATAL_ERROR "Noto Sans could not be downloaded: ${noto_status}. Set MIME_NOTO_ARCHIVE to a local copy.")
+        endif()
+    endif()
+    file(REMOVE_RECURSE ${noto_dir}/extract)
+    file(ARCHIVE_EXTRACT INPUT ${noto_zip} DESTINATION ${noto_dir}/extract
+        PATTERNS NotoSans/hinted/ttf/NotoSans-Regular.ttf OFL.txt)
+    file(MAKE_DIRECTORY ${noto_rom})
+    file(COPY_FILE ${noto_dir}/extract/NotoSans/hinted/ttf/NotoSans-Regular.ttf ${noto_rom}/NotoSans-Regular.ttf)
+    file(COPY_FILE ${noto_dir}/extract/OFL.txt ${noto_rom}/OFL-NotoSans.txt)
+    file(REMOVE_RECURSE ${noto_dir}/extract)
+    if(NOT MIME_NOTO_ARCHIVE)
+        file(REMOVE ${noto_zip})
+    endif()
+endif()
+set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${noto_files})
 # the folder's desktop.ini, which gives it the fonts view of the shell as on windows.
 set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${CMAKE_SOURCE_DIR}/data/winfonts/desktop.ini)

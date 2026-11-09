@@ -53,6 +53,7 @@ const MimeRomEntry *HalRomFind(PCWSTR path, ULONG chars);
 const MimeRomEntry *HalRomEntry(ULONG index); /* NULL past the last entry. */
 ULONG64 HalRomFiletime(void);                 /* the time of every rom file. */
 ULONG64 HalRomPhysical(const MimeRomEntry *entry);
+BOOLEAN HalGenuineReady(const MimeRomEntry *entry); /* the host holds microsoft's copy of the file. */
 BOOLEAN HalIsRomPhysical(ULONG64 pa);
 ULONG HalAcknowledgeInterrupt(void); /* the interrupt id, 1020 or above when none is pending. */
 void HalEndOfInterrupt(ULONG intid);
@@ -173,11 +174,18 @@ typedef struct _KTHREAD {
     BOOLEAN SuspendApcActive;
     BOOLEAN Suspended;
     PVOID UserSuspendGate;
+    /* another thread set the context while this one was in a system call, see KiSystemService. */
+    BOOLEAN ContextSetInService;
+    /* the next return to user mode goes through the process's instrumentation callback, see KiExitToUserMode. */
+    BOOLEAN InstrumentReturn;
     KEVENT SuspendEvent;
     KSEMAPHORE SuspendSemaphore;
     KAPC SuspendApc;
     KEVENT AlertByIdEvent; /* NtAlertThreadByThreadId, sticky until the next NtWaitForAlertByThreadId. */
     PVOID XSaveArea; /* x64: the extended state saved when switched out, NULL for system threads. */
+    /* x64: the hardware breakpoints a context set, loaded while the thread runs, see KiSetThreadDebug. */
+    ULONG64 UserDr[4];
+    ULONG64 UserDr6, UserDr7;
 } KTHREAD;
 
 typedef struct _KPROCESS {
@@ -266,6 +274,17 @@ typedef struct _KPCR {
 } KPCR, *PKPCR;
 #endif
 
+#ifndef __x86_64__
+/* with interrupts off, so the thread cannot move between finding its processor and reading the level. */
+FORCEINLINE UCHAR KiCurrentIrql(void)
+{
+    ULONG64 state = KiDisableInterrupts();
+    UCHAR irql = KeGetPcr()->Irql;
+    KiRestoreInterrupts(state);
+    return irql;
+}
+#endif
+
 MIME_STATIC_ASSERT(offsetof(KPCR, Prcb.Number) == KPCR_NUMBER, "pcr number");
 #ifndef __x86_64__
 MIME_STATIC_ASSERT(offsetof(KPCR, Prcb.DeferredIpis) == KPCR_DEFERRED_IPIS, "pcr deferred ipis");
@@ -285,9 +304,22 @@ FORCEINLINE PKPRCB KeGetCurrentPrcb(void)
     return KeGetPcr()->CurrentPrcb;
 }
 
+/*
+ * one gs relative load on x64: reading the processor block first and its thread after could give another processor's
+ * thread to code that was moved in between.
+ */
 FORCEINLINE PKTHREAD KiCurrentThread(void)
 {
-    return KeGetPcr()->CurrentPrcb->CurrentThread;
+#ifdef __x86_64__
+    PKTHREAD thread;
+    __asm__ volatile("movq %%gs:%c1, %0" : "=r"(thread) : "i"(KPCR_CURRENT_THREAD));
+    return thread;
+#else
+    ULONG64 state = KiDisableInterrupts();
+    PKTHREAD thread = KeGetPcr()->CurrentPrcb->CurrentThread;
+    KiRestoreInterrupts(state);
+    return thread;
+#endif
 }
 
 /*
@@ -395,7 +427,10 @@ void KiSystemService(PKTRAP_FRAME frame);
 NTSTATUS KiUserCallback(ULONG api, PVOID input, ULONG input_length, PVOID *output, PULONG output_length);
 NTSTATUS KiCallbackReturn(PVOID result, ULONG result_length, NTSTATUS status);
 void KiContextToTrapFrame(const CONTEXT *context, PKTRAP_FRAME frame, ULONG flags, KPROCESSOR_MODE mode);
+void KiMergeContext(CONTEXT *to, const CONTEXT *from, ULONG flags);
 void KiTrapFrameToContext(const KTRAP_FRAME *frame, CONTEXT *context, ULONG flags);
+void KiSetThreadDebug(PKTHREAD thread, const CONTEXT *context);
+void KiGetThreadDebug(PKTHREAD thread, CONTEXT *context);
 BOOLEAN KiDispatchUserException(PEXCEPTION_RECORD record, PKTRAP_FRAME frame);
 NTSTATUS KeRegisterSystemServices(ULONG table, PKSERVICE_DESCRIPTOR services, ULONG count);
 void KiRegisterService(ULONG number, PVOID routine, UCHAR stack_args);
@@ -700,6 +735,7 @@ void MiDescribeCodeAddress(ULONG_PTR address, char *out, SIZE_T size);
 
 NTSTATUS MmCreateAddressSpace(PMMADDRESS_SPACE as);
 void MmDeleteAddressSpace(PMMADDRESS_SPACE as);
+void MmFreeAddressSpaceRoot(PMMADDRESS_SPACE as);
 PMMVAD MiFindVad(PMMADDRESS_SPACE as, ULONG_PTR va);
 NTSTATUS MiInsertVad(PMMADDRESS_SPACE as, PMMVAD vad);
 NTSTATUS MiFindFreeRange(PMMADDRESS_SPACE as, SIZE_T size, ULONG_PTR alignment, BOOLEAN top_down,
@@ -1050,6 +1086,9 @@ typedef struct _ETHREAD {
     SIZE_T UserStackSize;
     ULONG_PTR UserStackGuard; /* the stack guard page, whose first touch is a stack overflow. */
     PVOID NativeStackAllocation; /* the translator's own stack in x86 and x64 processes. */
+    /* until the thread first runs, where its start context goes and where LdrInitializeThunk then runs from. */
+    ULONG_PTR FirstEntryContext;
+    ULONG_PTR FirstEntryStack;
     SIZE_T NativeStackSize;
     ULONG64 CreateTime;
     ULONG64 ExitTime;
@@ -1094,9 +1133,13 @@ typedef struct _EPROCESS {
     volatile LONG ThreadCount;
     HANDLE_TABLE HandleTable;
     MMADDRESS_SPACE AddressSpace;
+    /* the page ranges NtLockVirtualMemory locked, start and end pairs: MmLockedRanges of them. */
+    ULONG_PTR *MmLockedRanges;
+    ULONG MmLockedCount, MmLockedCapacity;
     PPEB Peb;
     PVOID SectionBaseAddress;
     PSECTION ImageSection;
+    PVOID InstrumentationCallback; /* ProcessInstrumentationCallback, where returns to user mode go first. */
     PVOID NtdllBase;            /* base of the system dll. */
     PPSP_SYSTEM_DLL SystemDll;
     USHORT Machine;             /* of the program image. */
@@ -1179,7 +1222,7 @@ void PsInitializeIdleThread(void);
 PVOID PsCreateIdleThread(PKPRCB prcb);
 NTSTATUS PspCreateThread(PEPROCESS process, BOOLEAN system, PKSTART_ROUTINE routine, PVOID context,
                          PETHREAD *out);
-NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BOOLEAN suspended,
+NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, ULONG flags,
                              SIZE_T stack_reserve, SIZE_T stack_commit, PETHREAD *out);
 typedef struct _MIME_CONSOLE MIME_CONSOLE;
 NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image_dos_path, PCUNICODE_STRING command_line,
@@ -1191,7 +1234,7 @@ DECLSPEC_NORETURN void PspExitThread(NTSTATUS status);
 NTSTATUS PspNotifyProcessCreate(PEPROCESS process, PCUNICODE_STRING image, PCUNICODE_STRING command_line);
 void PspNotifyProcess(PEPROCESS process, BOOLEAN create);
 void PspNotifyThread(PETHREAD thread, BOOLEAN create);
-void PspNotifyImage(PCUNICODE_STRING name, PEPROCESS process, PVOID base, SIZE_T size, USHORT machine);
+void PspNotifyImage(PCUNICODE_STRING name, PEPROCESS process, PVOID base, SIZE_T size, PFILE_OBJECT file);
 BOOLEAN PspImageNotifyRegistered(void);
 NTSTATUS PspSuspendResumeProcess(PEPROCESS process, BOOLEAN suspend);
 NTSTATUS PspTerminateProcess(PEPROCESS process, NTSTATUS status);
@@ -1228,6 +1271,7 @@ extern PSP_SYSTEM_DLL PspX86SystemDll;
 NTSTATUS PspInitializeSystemDll(void);
 PPSP_SYSTEM_DLL PspSystemDllForMachine(USHORT machine);
 extern PSECTION PspWow64NtdllSection;
+ULONG PspWow64NtdllExport(const char *name);
 extern PSECTION PspX64NtdllSection;
 
 /* ------------------------------------------------------------------ se */
@@ -1271,6 +1315,7 @@ NTSTATUS IopSynchronousRequest(PFILE_OBJECT file, UCHAR major, UCHAR minor, PVOI
                                PIO_STACK_LOCATION params, PIO_STATUS_BLOCK iosb);
 NTSTATUS IoRenameFileObject(PFILE_OBJECT file, PCWSTR new_name, BOOLEAN replace);
 const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file);
+PDEVICE_OBJECT IoGetHostVolumeDevice(void);
 BOOLEAN IoGetFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref);
 /* the same for an image section, whose file then cannot be deleted. */
 BOOLEAN IoGetImageFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref);
@@ -1451,6 +1496,11 @@ void FsNotifyHostInterrupt(void);
 NTSTATUS FsNotifyCancel(PFILE_OBJECT file, PETHREAD thread, PVOID iosb);
 /* mimefs.c: whether a file object is on a host backed volume, and the volume of an open directory. */
 BOOLEAN IopIsMimeFs(PFILE_OBJECT file);
+BOOLEAN IopIsLoadedDriverDevice(PFILE_OBJECT file);
+NTSTATUS IopDriverReadWrite(PFILE_OBJECT file, BOOLEAN write, PVOID buffer, ULONG length, LONGLONG offset, ULONG key,
+                            KPROCESSOR_MODE mode, PIO_STATUS_BLOCK iosb);
+NTSTATUS IopDriverControl(PFILE_OBJECT file, UCHAR major, ULONG code, PVOID input, ULONG in_len, PVOID output,
+                          ULONG out_len, KPROCESSOR_MODE mode, PIO_STATUS_BLOCK iosb);
 NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume, PULONG64 host_handle);
 
 /* http.c: the http server driver. */
@@ -1517,6 +1567,11 @@ extern KUSER_SHARED_DATA *SharedUserData;
 extern ULONG64 KeBootFiletime;
 /* ex/timezone.c: the clock offset follows the zone's daylight time rules. */
 void ExInitializeTimeZone(void);
+NTSTATUS ExQueryTimeZoneInformation(PVOID info, ULONG length, PULONG returned);
+ULONG PsGetDeviceImagePath(PEPROCESS process, PWCHAR out, ULONG capacity);
+void MmGetSectionImageInformation(PSECTION s, SECTION_IMAGE_INFORMATION *image);
+/* the guard below a thread's committed stack, three pages as RtlCreateUserStack makes it. */
+#define MI_STACK_GUARD_SIZE (3 * PAGE_SIZE)
 void PsWin32TimeChange(void);
 /* cm/boot.c: copies the zone's rules for a year into the key the kernel reads. */
 void CmRefreshTimeZoneRules(ULONG year);

@@ -507,9 +507,12 @@ DBGHELP BOOL WINAPI StackWalk64(DWORD machine, HANDLE process, HANDLE thread, LP
 
 #define MINIDUMP_SIGNATURE 0x504D444D /* "MDMP" */
 #define MINIDUMP_VERSION 0xA793
+#define ThreadListStream 3
 #define ModuleListStream 4
+#define MemoryListStream 5
 #define ExceptionStream 6
 #define SystemInfoStream 7
+#define MiscInfoStream 15
 
 #pragma pack(push, 4)
 typedef struct _MINIDUMP_HEADER {
@@ -565,6 +568,30 @@ typedef struct _MINIDUMP_MODULE {
     ULONG64 Reserved1;
 } MINIDUMP_MODULE;
 
+typedef struct _MINIDUMP_MEMORY_DESCRIPTOR {
+    ULONG64 StartOfMemoryRange;
+    MINIDUMP_LOCATION_DESCRIPTOR Memory;
+} MINIDUMP_MEMORY_DESCRIPTOR;
+
+typedef struct _MINIDUMP_THREAD {
+    ULONG32 ThreadId;
+    ULONG32 SuspendCount;
+    ULONG32 PriorityClass;
+    ULONG32 Priority;
+    ULONG64 Teb;
+    MINIDUMP_MEMORY_DESCRIPTOR Stack;
+    MINIDUMP_LOCATION_DESCRIPTOR ThreadContext;
+} MINIDUMP_THREAD;
+
+typedef struct _MINIDUMP_MISC_INFO {
+    ULONG32 SizeOfInfo;
+    ULONG32 Flags1;
+    ULONG32 ProcessId;
+    ULONG32 ProcessCreateTime;
+    ULONG32 ProcessUserTime;
+    ULONG32 ProcessKernelTime;
+} MINIDUMP_MISC_INFO;
+
 typedef struct _MINIDUMP_EXCEPTION {
     ULONG32 ExceptionCode;
     ULONG32 ExceptionFlags;
@@ -617,26 +644,109 @@ static ULONG32 put_string(DUMP *d, PCWSTR text)
     return at;
 }
 
+/* a range of the dumped process's memory, read into the file; what cannot be read is left out. */
+static BOOL put_memory(DUMP *d, HANDLE process, ULONG64 start, ULONG64 size, MINIDUMP_MEMORY_DESCRIPTOR *out)
+{
+    BYTE *buffer = size ? HeapAlloc(GetProcessHeap(), 0, (SIZE_T)size) : nullptr;
+    SIZE_T got = 0;
+    if (!buffer || !ReadProcessMemory(process, (PCVOID)(ULONG_PTR)start, buffer, (SIZE_T)size, &got) || !got) {
+        HeapFree(GetProcessHeap(), 0, buffer);
+        return FALSE;
+    }
+    out->StartOfMemoryRange = start;
+    out->Memory.DataSize = (ULONG32)got;
+    out->Memory.Rva = put(d, buffer, (ULONG32)got);
+    HeapFree(GetProcessHeap(), 0, buffer);
+    return TRUE;
+}
+
+/* the dumped process's thread ids, from the system's process list. */
+static DWORD *process_threads(DWORD pid, ULONG *count)
+{
+    *count = 0;
+    ULONG size = 1 << 16;
+    BYTE *info = nullptr;
+    NTSTATUS status;
+    for (;;) {
+        info = HeapAlloc(GetProcessHeap(), 0, size);
+        if (!info)
+            return nullptr;
+        status = NtQuerySystemInformation(SystemProcessInformation, info, size, &size);
+        if (status != STATUS_INFO_LENGTH_MISMATCH)
+            break;
+        HeapFree(GetProcessHeap(), 0, info);
+        size += 1 << 16;
+    }
+    DWORD *ids = nullptr;
+    if (NT_SUCCESS(status)) {
+        for (SYSTEM_PROCESS_INFORMATION *p = (SYSTEM_PROCESS_INFORMATION *)info;;
+             p = (SYSTEM_PROCESS_INFORMATION *)((BYTE *)p + p->NextEntryOffset)) {
+            if ((DWORD)(ULONG_PTR)p->UniqueProcessId == pid) {
+                ids = HeapAlloc(GetProcessHeap(), 0, (p->NumberOfThreads ? p->NumberOfThreads : 1) * sizeof(DWORD));
+                SYSTEM_THREAD_INFORMATION *t = (SYSTEM_THREAD_INFORMATION *)(p + 1);
+                for (ULONG i = 0; ids && i < p->NumberOfThreads; i++)
+                    ids[(*count)++] = (DWORD)(ULONG_PTR)t[i].ClientId.UniqueThread;
+                break;
+            }
+            if (!p->NextEntryOffset)
+                break;
+        }
+    }
+    HeapFree(GetProcessHeap(), 0, info);
+    return ids;
+}
+
+/*
+ * a dump of this process or of another, as crash reporters write of the program that failed: the system, the
+ * process's times, its threads with their contexts and stacks, its modules, the stacks' memory and the exception.
+ * the other threads stand still while they are written. an exception given with client pointers lies in the dumped
+ * process's memory.
+ */
 DBGHELP BOOL WINAPI MiniDumpWriteDump(HANDLE process, DWORD process_id, HANDLE file, DWORD type,
                                       PMINIDUMP_EXCEPTION_INFORMATION exception, PVOID user_streams, PVOID callback)
 {
-    if (!own_process(process) || process_id != GetCurrentProcessId()) {
-        SetLastError(ERROR_NOT_SUPPORTED);
-        return FALSE;
-    }
+    if (!process_id)
+        process_id = GetProcessId(process);
     if (SetFilePointer(file, 0, nullptr, FILE_BEGIN) == INVALID_SET_FILE_POINTER) {
         SetLastError(ERROR_INVALID_HANDLE);
         return FALSE;
     }
+    BOOL self = process_id == GetCurrentProcessId();
+
+    /* the exception first: with client pointers its record and context are the dumped process's. */
+    EXCEPTION_RECORD record;
+    CONTEXT exception_context;
+    BOOL have_record = FALSE, have_context = FALSE;
+    DWORD exception_thread = 0;
+    if (exception) {
+        exception_thread = exception->ThreadId;
+        EXCEPTION_POINTERS pointers = {};
+        BOOL ok = TRUE;
+        if (exception->ClientPointers)
+            ok = exception->ExceptionPointers &&
+                 ReadProcessMemory(process, exception->ExceptionPointers, &pointers, sizeof(pointers), nullptr);
+        else if (exception->ExceptionPointers)
+            pointers = *exception->ExceptionPointers;
+        if (ok && pointers.ExceptionRecord)
+            have_record = exception->ClientPointers
+                              ? ReadProcessMemory(process, pointers.ExceptionRecord, &record, sizeof(record), nullptr)
+                              : (record = *pointers.ExceptionRecord, TRUE);
+        if (ok && pointers.ContextRecord)
+            have_context = exception->ClientPointers ? ReadProcessMemory(process, pointers.ContextRecord, &exception_context,
+                                                                         sizeof(exception_context), nullptr)
+                                                     : (exception_context = *pointers.ContextRecord, TRUE);
+    }
+
     DUMP d = {file, 0, TRUE};
-    ULONG32 streams = exception ? 3 : 2;
-    MINIDUMP_HEADER header = {MINIDUMP_SIGNATURE, MINIDUMP_VERSION, streams, sizeof(MINIDUMP_HEADER), 0, 0, type};
+    enum { STREAMS = 6 };
+    MINIDUMP_HEADER header = {MINIDUMP_SIGNATURE, MINIDUMP_VERSION, STREAMS, sizeof(MINIDUMP_HEADER), 0, 0, type};
     LARGE_INTEGER now;
     NtQuerySystemTime(&now);
     header.TimeDateStamp = (ULONG32)(now.QuadPart / 10000000 - 11644473600ll);
     put(&d, &header, sizeof(header));
-    MINIDUMP_DIRECTORY directory[3] = {};
-    ULONG32 directory_rva = put(&d, directory, streams * sizeof(MINIDUMP_DIRECTORY));
+    MINIDUMP_DIRECTORY directory[STREAMS] = {};
+    ULONG32 directory_rva = put(&d, directory, sizeof(directory));
+    ULONG32 streams = 0;
 
     SYSTEM_INFO si;
     GetSystemInfo(&si);
@@ -652,10 +762,92 @@ DBGHELP BOOL WINAPI MiniDumpWriteDump(HANDLE process, DWORD process_id, HANDLE f
     sys.MinorVersion = version.dwMinorVersion;
     sys.BuildNumber = version.dwBuildNumber;
     sys.PlatformId = 2; /* VER_PLATFORM_WIN32_NT */
-    ULONG32 sys_rva = put(&d, &sys, sizeof(sys));
     sys.CSDVersionRva = put_string(&d, L"");
-    directory[0] = (MINIDUMP_DIRECTORY){SystemInfoStream, {sizeof(sys), sys_rva}};
+    directory[streams++] = (MINIDUMP_DIRECTORY){SystemInfoStream, {sizeof(sys), put(&d, &sys, sizeof(sys))}};
 
+    /* the process id and its times in seconds, as MINIDUMP_MISC1_PROCESS_ID and MINIDUMP_MISC1_PROCESS_TIMES. */
+    MINIDUMP_MISC_INFO misc = {sizeof(misc), 1, process_id};
+    FILETIME created, exited, kernel, user;
+    if (GetProcessTimes(process, &created, &exited, &kernel, &user)) {
+        misc.Flags1 |= 2;
+        misc.ProcessCreateTime =
+            (ULONG32)((((ULONG64)created.dwHighDateTime << 32 | created.dwLowDateTime) / 10000000) - 11644473600ull);
+        misc.ProcessUserTime = (ULONG32)(((ULONG64)user.dwHighDateTime << 32 | user.dwLowDateTime) / 10000000);
+        misc.ProcessKernelTime = (ULONG32)(((ULONG64)kernel.dwHighDateTime << 32 | kernel.dwLowDateTime) / 10000000);
+    }
+    directory[streams++] = (MINIDUMP_DIRECTORY){MiscInfoStream, {sizeof(misc), put(&d, &misc, sizeof(misc))}};
+
+    /* threads: the context of each, the faulting one's from the exception, and its stack from sp to its base. */
+    ULONG thread_count = 0;
+    DWORD *ids = process_threads(process_id, &thread_count);
+    MINIDUMP_THREAD *threads = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (thread_count ? thread_count : 1) * sizeof(*threads));
+    MINIDUMP_MEMORY_DESCRIPTOR *stacks = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, (thread_count ? thread_count : 1) * sizeof(*stacks));
+    ULONG written = 0, stack_count = 0;
+    for (ULONG i = 0; ids && threads && stacks && i < thread_count; i++) {
+        HANDLE thread = OpenThread(THREAD_GET_CONTEXT | THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION, FALSE, ids[i]);
+        if (!thread)
+            continue;
+        BOOL current = self && ids[i] == GetCurrentThreadId();
+        DWORD suspended = current ? 0 : SuspendThread(thread);
+        CONTEXT context;
+        memset(&context, 0, sizeof(context));
+#ifdef _WIN64
+        context.ContextFlags = CONTEXT_FULL | CONTEXT_SEGMENTS;
+#else
+        context.ContextFlags = CONTEXT_FULL;
+#endif
+        BOOL have = FALSE;
+        if (ids[i] == exception_thread && have_context) {
+            context = exception_context;
+            have = TRUE;
+        } else if (current) {
+            RtlCaptureContext(&context);
+            have = TRUE;
+        } else {
+            have = GetThreadContext(thread, &context);
+        }
+        MINIDUMP_THREAD *t = &threads[written];
+        t->ThreadId = ids[i];
+        t->SuspendCount = suspended == (DWORD)-1 ? 0 : suspended;
+        t->Priority = (ULONG32)GetThreadPriority(thread);
+        t->PriorityClass = GetPriorityClass(process);
+        THREAD_BASIC_INFORMATION basic;
+        NT_TIB tib = {};
+        if (NT_SUCCESS(NtQueryInformationThread(thread, ThreadBasicInformation, &basic, sizeof(basic), nullptr))) {
+            t->Teb = (ULONG64)(ULONG_PTR)basic.TebBaseAddress;
+            ReadProcessMemory(process, basic.TebBaseAddress, &tib, sizeof(tib), nullptr);
+        }
+        if (have) {
+            t->ThreadContext.DataSize = sizeof(context);
+            t->ThreadContext.Rva = put(&d, &context, sizeof(context));
+#ifdef _WIN64
+            ULONG64 sp = context.Rsp & ~15ull;
+#else
+            ULONG64 sp = context.Esp & ~15ull;
+#endif
+            ULONG64 base = (ULONG64)(ULONG_PTR)tib.StackBase;
+            if (sp && base > sp && base - sp <= (16u << 20) && put_memory(&d, process, sp, base - sp, &t->Stack))
+                stacks[stack_count++] = t->Stack;
+        }
+        if (!current && suspended != (DWORD)-1)
+            ResumeThread(thread);
+        CloseHandle(thread);
+        written++;
+    }
+    ULONG32 threads_rva = put(&d, &written, sizeof(written));
+    if (threads)
+        put(&d, threads, written * sizeof(*threads));
+    directory[streams++] = (MINIDUMP_DIRECTORY){ThreadListStream, {sizeof(written) + written * sizeof(MINIDUMP_THREAD), threads_rva}};
+    ULONG32 memory_rva = put(&d, &stack_count, sizeof(stack_count));
+    if (stacks)
+        put(&d, stacks, stack_count * sizeof(*stacks));
+    directory[streams++] = (MINIDUMP_DIRECTORY){MemoryListStream,
+                                                {sizeof(stack_count) + stack_count * sizeof(MINIDUMP_MEMORY_DESCRIPTOR), memory_rva}};
+    HeapFree(GetProcessHeap(), 0, threads);
+    HeapFree(GetProcessHeap(), 0, stacks);
+    HeapFree(GetProcessHeap(), 0, ids);
+
+    /* modules, their headers read from the dumped process. */
     HMODULE modules[512];
     DWORD needed = 0;
     if (!K32EnumProcessModules(process, modules, sizeof(modules), &needed))
@@ -668,56 +860,58 @@ DBGHELP BOOL WINAPI MiniDumpWriteDump(HANDLE process, DWORD process_id, HANDLE f
         SetLastError(ERROR_NOT_ENOUGH_MEMORY);
         return FALSE;
     }
+    ULONG32 kept = 0;
     for (ULONG32 i = 0; i < count; i++) {
         BYTE *base = (BYTE *)modules[i];
-        IMAGE_NT_HEADERS *nt = (IMAGE_NT_HEADERS *)(base + ((IMAGE_DOS_HEADER *)base)->e_lfanew);
+        IMAGE_DOS_HEADER dos;
+        IMAGE_NT_HEADERS nt;
+        if (!ReadProcessMemory(process, base, &dos, sizeof(dos), nullptr) ||
+            !ReadProcessMemory(process, base + dos.e_lfanew, &nt, sizeof(nt), nullptr))
+            continue;
         WCHAR path[MAX_PATH];
-        if (!GetModuleFileNameW(modules[i], path, MAX_PATH))
+        if (!K32GetModuleFileNameExW(process, modules[i], path, MAX_PATH))
             path[0] = 0;
-        list[i].BaseOfImage = (ULONG64)(ULONG_PTR)base;
-        list[i].SizeOfImage = nt->OptionalHeader.SizeOfImage;
-        list[i].CheckSum = nt->OptionalHeader.CheckSum;
-        list[i].TimeDateStamp = nt->FileHeader.TimeDateStamp;
-        list[i].ModuleNameRva = put_string(&d, path);
+        list[kept].BaseOfImage = (ULONG64)(ULONG_PTR)base;
+        list[kept].SizeOfImage = nt.OptionalHeader.SizeOfImage;
+        list[kept].CheckSum = nt.OptionalHeader.CheckSum;
+        list[kept].TimeDateStamp = nt.FileHeader.TimeDateStamp;
+        list[kept].ModuleNameRva = put_string(&d, path);
+        kept++;
     }
-    ULONG32 modules_rva = put(&d, &count, sizeof(count));
-    put(&d, list, count * sizeof(*list));
+    ULONG32 modules_rva = put(&d, &kept, sizeof(kept));
+    put(&d, list, kept * sizeof(*list));
     HeapFree(GetProcessHeap(), 0, list);
-    directory[1] = (MINIDUMP_DIRECTORY){ModuleListStream, {sizeof(count) + count * sizeof(MINIDUMP_MODULE), modules_rva}};
+    directory[streams++] = (MINIDUMP_DIRECTORY){ModuleListStream, {sizeof(kept) + kept * sizeof(MINIDUMP_MODULE), modules_rva}};
 
     if (exception) {
-        EXCEPTION_POINTERS *pointers = exception->ExceptionPointers;
         MINIDUMP_EXCEPTION_STREAM e = {};
-        e.ThreadId = exception->ThreadId;
-        if (pointers && pointers->ExceptionRecord) {
-            EXCEPTION_RECORD *r = pointers->ExceptionRecord;
-            e.ExceptionRecord.ExceptionCode = r->ExceptionCode;
-            e.ExceptionRecord.ExceptionFlags = r->ExceptionFlags;
-            e.ExceptionRecord.ExceptionAddress = (ULONG64)(ULONG_PTR)r->ExceptionAddress;
-            e.ExceptionRecord.NumberParameters = r->NumberParameters;
-            for (DWORD i = 0; i < r->NumberParameters && i < EXCEPTION_MAXIMUM_PARAMETERS; i++)
-                e.ExceptionRecord.ExceptionInformation[i] = r->ExceptionInformation[i];
+        e.ThreadId = exception_thread;
+        if (have_record) {
+            e.ExceptionRecord.ExceptionCode = record.ExceptionCode;
+            e.ExceptionRecord.ExceptionFlags = record.ExceptionFlags;
+            e.ExceptionRecord.ExceptionAddress = (ULONG64)(ULONG_PTR)record.ExceptionAddress;
+            e.ExceptionRecord.NumberParameters = record.NumberParameters;
+            for (DWORD i = 0; i < record.NumberParameters && i < EXCEPTION_MAXIMUM_PARAMETERS; i++)
+                e.ExceptionRecord.ExceptionInformation[i] = record.ExceptionInformation[i];
         }
-        if (pointers && pointers->ContextRecord) {
+        if (have_context) {
             e.ThreadContext.DataSize = sizeof(CONTEXT);
-            e.ThreadContext.Rva = put(&d, pointers->ContextRecord, sizeof(CONTEXT));
+            e.ThreadContext.Rva = put(&d, &exception_context, sizeof(CONTEXT));
         }
-        ULONG32 at = put(&d, &e, sizeof(e));
-        directory[2] = (MINIDUMP_DIRECTORY){ExceptionStream, {sizeof(e), at}};
+        directory[streams++] = (MINIDUMP_DIRECTORY){ExceptionStream, {sizeof(e), put(&d, &e, sizeof(e))}};
     }
 
-    /* write the directory and the system info string back in place. */
+    /* the directory goes back in place, with as many streams as were written. */
     LONG end = (LONG)d.Rva;
+    header.NumberOfStreams = streams;
+    SetFilePointer(file, 0, nullptr, FILE_BEGIN);
+    d.Rva = 0;
+    put(&d, &header, sizeof(header));
     SetFilePointer(file, (LONG)directory_rva, nullptr, FILE_BEGIN);
     d.Rva = directory_rva;
-    put(&d, directory, streams * sizeof(MINIDUMP_DIRECTORY));
-    SetFilePointer(file, (LONG)sys_rva, nullptr, FILE_BEGIN);
-    d.Rva = sys_rva;
-    put(&d, &sys, sizeof(sys));
+    put(&d, directory, sizeof(directory));
     SetFilePointer(file, end, nullptr, FILE_BEGIN);
-    if (!d.Ok)
-        return FALSE;
-    return TRUE;
+    return d.Ok;
 }
 
 /* ------------------------------------------------------------------ module information */

@@ -15,7 +15,7 @@ BEGIN
             VALUE "FileDescription", "OneCore Common Proxy Stub"
             VALUE "FileVersion", "10.0.26100.9278 (WinBuild.160101.0800)"
             VALUE "InternalName", "OneCoreCommonProxyStub.dll"
-            VALUE "LegalCopyright", "The Mime authors"
+            VALUE "LegalCopyright", "Microsoft Corporation. All rights reserved."
             VALUE "OriginalFilename", "OneCoreCommonProxyStub.dll"
             VALUE "ProductName", "Microsoft\256 Windows\256 Operating System"
             VALUE "ProductVersion", "10.0.26100.9278"

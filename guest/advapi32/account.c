@@ -106,7 +106,7 @@ static const struct {
  * local groups made by programs live in one key of the registry, each with its relative id, and a service has a sid of
  * its own that comes from its name: the five numbers of the sha-1 of the name in capitals.
  */
-#define ALIAS_KEY L"SYSTEM\\CurrentControlSet\\Control\\Lsa\\MimeAliases"
+#define ALIAS_KEY L"SYSTEM\\CurrentControlSet\\Control\\Lsa\\Aliases"
 #define NT_SERVICE_DOMAIN L"NT SERVICE"
 #define SERVICES_KEY L"SYSTEM\\CurrentControlSet\\Services"
 

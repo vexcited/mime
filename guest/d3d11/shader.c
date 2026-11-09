@@ -238,6 +238,7 @@ VkShaderEXT D3dShaderVariant(D3dShader *shader, UINT primitive)
     if (!gs)
         return shader->shader;
     DxbcCompileOptions options = so_options(shader);
+    options.inf_nan_widths = shader->child.device->inf_nan_widths;
     DxbcShaderInfo info;
     VkShaderEXT variant = VK_NULL_HANDLE;
     if (!dxbc_compile(gs, length, &options, &info, &g_d3d_allocator))
@@ -322,6 +323,7 @@ HRESULT D3dCreateShader(D3dDevice *device, D3dStage stage, const void *bytecode,
         shader->rasterized_stream = rasterized_stream;
         options = so_options(shader);
     }
+    options.inf_nan_widths = device->inf_nan_widths;
     const void *code = bytecode;
     SIZE_T code_length = length;
     void *passthrough = nullptr;

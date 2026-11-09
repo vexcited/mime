@@ -634,8 +634,50 @@ void ObMakeTemporaryObject(PVOID object)
         ObDereferenceObject(object);
 }
 
+/*
+ * like IopQueryName, a file's name is its device's and its path on it, \Device\HarddiskVolume1\Windows\..., and like
+ * CmpQueryKeyName a key's is its full path under \REGISTRY.
+ */
+static NTSTATUS query_typed_name(PVOID object, PUNICODE_STRING name, PWSTR buffer, ULONG buffer_chars, BOOLEAN *done)
+{
+    *done = TRUE;
+    POBJECT_TYPE type = OBJECT_TO_HEADER(object)->Type;
+    ULONG chars = 0;
+    if (type == IoFileObjectTypeObject) {
+        PFILE_OBJECT file = object;
+        UNICODE_STRING device = {};
+        if (file->DeviceObject && OBJECT_TO_HEADER(file->DeviceObject)->Directory &&
+            NT_SUCCESS(ObpQueryNameString(file->DeviceObject, &device, buffer, buffer_chars)))
+            chars = device.Length / sizeof(WCHAR);
+        ULONG path = file->FileName.Length / sizeof(WCHAR);
+        BOOLEAN slash = path && file->FileName.Buffer[0] != '\\' && chars;
+        if (chars + slash + path + 1 > buffer_chars)
+            return STATUS_NAME_TOO_LONG;
+        if (slash)
+            buffer[chars++] = '\\';
+        memcpy(buffer + chars, file->FileName.Buffer, path * sizeof(WCHAR));
+        chars += path;
+    } else if (type == CmKeyType) {
+        chars = CmQueryKeyObjectName(object, buffer, buffer_chars - 1);
+        if (chars > buffer_chars - 1)
+            chars = buffer_chars - 1;
+    } else {
+        *done = FALSE;
+        return STATUS_SUCCESS;
+    }
+    buffer[chars] = 0;
+    name->Buffer = buffer;
+    name->Length = (USHORT)(chars * sizeof(WCHAR));
+    name->MaximumLength = (USHORT)((chars + 1) * sizeof(WCHAR));
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS ObpQueryNameString(PVOID object, PUNICODE_STRING name, PWSTR buffer, ULONG buffer_chars)
 {
+    BOOLEAN typed;
+    NTSTATUS typed_status = query_typed_name(object, name, buffer, buffer_chars, &typed);
+    if (typed)
+        return typed_status;
     WCHAR tmp[512];
     ULONG pos = RTL_NUMBER_OF(tmp);
     OBJECT_HEADER *h = OBJECT_TO_HEADER(object);

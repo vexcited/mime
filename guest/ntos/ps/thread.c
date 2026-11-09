@@ -180,8 +180,19 @@ static void user_thread_startup(PVOID context)
 {
     PKTHREAD thread = KiCurrentThread();
     PKTRAP_FRAME frame = thread->TrapFrame;
-    ((PEPROCESS)thread->Process)->TokenFrozen = TRUE;
+    PEPROCESS process = (PEPROCESS)thread->Process;
+    PETHREAD ethread = (PETHREAD)thread;
+    process->TokenFrozen = TRUE;
     thread->PreviousMode = UserMode;
+    if (ethread->FirstEntryContext) {
+        CONTEXT start;
+        KiTrapFrameToContext(frame, &start, CONTEXT_FULL);
+        start.ContextFlags = CONTEXT_FULL;
+        KiCopyToUser((PVOID)ethread->FirstEntryContext, &start, sizeof(start));
+        KiInitializeUserFrame(frame, (ULONG64)process->SystemDll->LdrInitializeThunk, ethread->FirstEntryStack,
+                              ethread->FirstEntryContext, (ULONG64)process->NtdllBase, (ULONG64)thread->Teb);
+        ethread->FirstEntryContext = 0;
+    }
     KiExitToUserMode(frame);
     KiEnterUserMode(frame);
 }
@@ -194,7 +205,7 @@ static void user_thread_startup(PVOID context)
  * 64-bit stack, the 32-bit teb's the program's, and the cpu area is at the top of the 64-bit stack.
  */
 static void setup_wow64_teb(PEPROCESS process, PETHREAD thread, PTEB teb, PVOID stack, PVOID stack_limit, SIZE_T stack_size,
-                            ULONG_PTR native_top, ULONG_PTR *native_base)
+                            ULONG_PTR native_top, ULONG_PTR *native_base, PVOID start, PVOID parameter)
 {
     PUCHAR teb32 = (PUCHAR)teb + MIME_TEB_SIZE;
     PULONG t = (PULONG)teb32;
@@ -202,6 +213,30 @@ static void setup_wow64_teb(PEPROCESS process, PETHREAD thread, PTEB teb, PVOID 
     PWOW64_CPURESERVED area = (PWOW64_CPURESERVED)cpu;
     memset(area, 0, sizeof(*area));
     area->Machine = IMAGE_FILE_MACHINE_I386;
+    /*
+     * the 32-bit start state is there before the thread runs, as on windows, so another thread can read and change it
+     * while this one is suspended. RtlUserThreadStart gets the entry in eax and the argument in ebx, and here also on
+     * the stack, below where wow64.dll puts the context it starts from.
+     */
+    ULONG ntdll32 = (ULONG)(ULONG_PTR)process->Peb->SparePointers[0], thread_start = PspWow64NtdllExport("RtlUserThreadStart");
+    if (ntdll32 && thread_start) {
+        ULONG argument = parameter == process->Peb ? (ULONG)(ULONG_PTR)process->Wow64Peb : (ULONG)(ULONG_PTR)parameter;
+        ULONG top = (ULONG)(((ULONG_PTR)stack + stack_size - sizeof(I386_CONTEXT)) & ~15ull);
+        PULONG frame = (PULONG)(ULONG_PTR)top - 3;
+        frame[0] = 0;
+        frame[1] = (ULONG)(ULONG_PTR)start;
+        frame[2] = argument;
+        I386_CONTEXT *c = &area->Context;
+        c->ContextFlags = CONTEXT_I386_FULL;
+        c->Eip = ntdll32 + thread_start;
+        c->Eax = (ULONG)(ULONG_PTR)start;
+        c->Ebx = argument;
+        c->Esp = (ULONG)(ULONG_PTR)frame;
+        c->EFlags = 0x202;
+        c->SegCs = 0x23;
+        c->SegDs = c->SegEs = c->SegSs = 0x2B;
+        c->SegFs = 0x53;
+    }
     teb->TlsSlots[WOW64_TLS_CPURESERVED] = area;
     teb->WowTebOffset = MIME_TEB_SIZE;
     teb->NtTib.ExceptionList = (PVOID)teb32;
@@ -226,20 +261,41 @@ static void setup_wow64_teb(PEPROCESS process, PETHREAD thread, PTEB teb, PVOID 
     thread->Tcb.Teb32 = teb32;
 }
 
-/* allocates the user stack and teb, then creates the kernel half of the thread. */
-NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BOOLEAN suspended,
+#define THREAD_CREATE_FLAGS_CREATE_SUSPENDED 0x00000001
+#define THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH 0x00000002
+#define THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER 0x00000004
+#define THREAD_CREATE_FLAGS_LOADER_WORKER 0x00000010
+#define THREAD_CREATE_FLAGS_SKIP_LOADER_INIT 0x00000020
+
+/* allocates the user stack and teb, then creates the kernel half of the thread. flags are NtCreateThreadEx's. */
+NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, ULONG flags,
                              SIZE_T stack_reserve, SIZE_T stack_commit, PETHREAD *out)
 {
     PPSP_SYSTEM_DLL dll = process->SystemDll;
     if (!dll)
         return STATUS_DLL_NOT_FOUND;
-    PVOID ldr_thunk = dll->LdrInitializeThunk;
     PVOID user_start = dll->RtlUserThreadStart;
     BOOLEAN wow64 = PspIsWow64Process(process);
     /* a wow64 thread runs 64-bit code on a stack of its own too, like the translator. */
     BOOLEAN translated = process->Machine != MIME_NATIVE_MACHINE;
-    if (!stack_reserve)
-        stack_reserve = MIME_DEFAULT_STACK_RESERVE;
+    /*
+     * like RtlCreateUserStack: a size left zero is the image's, a commit of zero is 16 KB, a commit as large as the
+     * reservation makes the reservation that commit rounded to a megabyte, and the reservation is 64 KB aligned. a
+     * game whose image asks for 4 MB stacks gets them for every thread made without a size.
+     */
+    if (!stack_commit || !stack_reserve) {
+        PSECTION image = process->ImageSection;
+        SIZE_T image_reserve = image ? image->Image.StackReserve : MIME_DEFAULT_STACK_RESERVE;
+        SIZE_T image_commit = image ? image->Image.StackCommit : 0;
+        if (!stack_commit)
+            stack_commit = image_commit;
+        if (!stack_reserve)
+            stack_reserve = image_reserve;
+    }
+    if (!stack_commit)
+        stack_commit = 0x4000;
+    if (stack_commit >= stack_reserve)
+        stack_reserve = (stack_commit + 0xFFFFF) & ~(SIZE_T)0xFFFFF;
     stack_reserve = (stack_reserve + 0xFFFF) & ~(SIZE_T)0xFFFF;
 
     PKPROCESS saved = KiCurrentThread()->ApcStateProcess;
@@ -247,7 +303,7 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
 
     PVOID stack = nullptr, teb_va = nullptr;
     SIZE_T size = stack_reserve;
-    NTSTATUS status = MiAllocateVirtual(process, &stack, &size, MEM_RESERVE | MEM_COMMIT | (process->Machine == IMAGE_FILE_MACHINE_I386 ? 0 : MEM_TOP_DOWN), PAGE_READWRITE);
+    NTSTATUS status = MiAllocateVirtual(process, &stack, &size, MEM_RESERVE | (process->Machine == IMAGE_FILE_MACHINE_I386 ? 0 : MEM_TOP_DOWN), PAGE_READWRITE);
     /* the 32-bit teb that follows a wow64 thread's must be reachable from 32-bit code. */
     SIZE_T teb_size = MIME_TEB_SIZE + (wow64 ? MIME_TEB32_SIZE : 0);
     if (NT_SUCCESS(status))
@@ -273,19 +329,40 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     thread->UserStackAllocation = stack;
     thread->UserStackSize = stack_reserve;
     /*
-     * the stack is committed whole, with a guard page above its last bytes: hitting the guard means overflow, and
-     * the bytes below are where the exception is dispatched, as windows keeps a few pages for it. the thread's
-     * stack limit is the page above the guard.
+     * like RtlCreateUserStack and MiCheckForUserStackOverflow: the commit is at the top with a guard page below it,
+     * and touching the guard commits it and moves the guard one page down, see MiGrowUserStack. the bottom of the
+     * reservation stays committed under a last guard: hitting that one is a stack overflow, and the bytes below are
+     * where the exception is dispatched, as windows keeps a few pages for it. the stack limit is the committed top.
      */
     SIZE_T zone = stack_reserve >= 4 * MIME_STACK_OVERFLOW_ZONE ? MIME_STACK_OVERFLOW_ZONE : ROUND_TO_PAGES(stack_reserve / 4);
-    PVOID guard = (PUCHAR)stack + zone;
-    SIZE_T guard_size = PAGE_SIZE;
-    ULONG old_protect;
-    PVOID stack_limit = stack;
-    if (NT_SUCCESS(MiProtectVirtual(process, &guard, &guard_size, PAGE_READWRITE | PAGE_GUARD, &old_protect))) {
-        thread->UserStackGuard = (ULONG_PTR)guard;
-        stack_limit = (PUCHAR)guard + PAGE_SIZE;
+    ULONG_PTR stack_top = (ULONG_PTR)stack + stack_reserve, last_guard = (ULONG_PTR)stack + zone;
+    SIZE_T commit = ROUND_TO_PAGES(stack_commit);
+    if (commit > stack_top - last_guard - PAGE_SIZE)
+        commit = stack_top - last_guard - PAGE_SIZE;
+    ULONG_PTR committed = stack_top - commit;
+    struct {
+        ULONG_PTR Start;
+        SIZE_T Size;
+        ULONG Protect;
+    } parts[] = {
+        {committed, commit, PAGE_READWRITE},
+        {(ULONG_PTR)stack, zone, PAGE_READWRITE},
+        {last_guard, PAGE_SIZE, PAGE_READWRITE | PAGE_GUARD},
+        {committed - MI_STACK_GUARD_SIZE, committed - MI_STACK_GUARD_SIZE > last_guard ? MI_STACK_GUARD_SIZE : 0,
+         PAGE_READWRITE | PAGE_GUARD},
+    };
+    for (ULONG i = 0; i < RTL_NUMBER_OF(parts) && NT_SUCCESS(status); i++) {
+        PVOID at = (PVOID)parts[i].Start;
+        SIZE_T part = parts[i].Size;
+        if (part)
+            status = MiAllocateVirtual(process, &at, &part, MEM_COMMIT, parts[i].Protect);
     }
+    if (!NT_SUCCESS(status)) {
+        KiAttachProcess(saved);
+        return status;
+    }
+    thread->UserStackGuard = last_guard;
+    PVOID stack_limit = (PVOID)committed;
     thread->NativeStackAllocation = native_stack;
     thread->NativeStackSize = native_stack ? native_size : 0;
     thread->Win32StartAddress = start;
@@ -304,6 +381,17 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
     teb->StaticUnicodeString.MaximumLength = sizeof(teb->StaticUnicodeBuffer);
     teb->StaticUnicodeString.Buffer = teb->StaticUnicodeBuffer;
     InitializeListHead(&teb->TlsLinks);
+    /*
+     * like PspAllocateThread, the creation flags the loader reads become teb flags: SkipThreadAttach, LoaderWorker and
+     * SkipLoaderInit. a thread that skips the loader's initialization never takes the loader lock, so its creator may
+     * suspend it at once.
+     */
+    USHORT same = (flags & THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH ? 0x0008 : 0) |
+                  (flags & THREAD_CREATE_FLAGS_LOADER_WORKER ? 0x2000 : 0) |
+                  (flags & THREAD_CREATE_FLAGS_SKIP_LOADER_INIT ? 0x4000 : 0);
+    teb->SameTebFlags = same;
+    if (flags & THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER)
+        thread->HideFromDebugger = TRUE;
 
     /* initial context consumed by LdrInitializeThunk, then NtContinue'd into RtlUserThreadStart. */
     ULONG64 ctx_va = (stack_base - sizeof(CONTEXT)) & ~15ull;
@@ -312,20 +400,25 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, BO
         /* the 64-bit teb describes the 64-bit stack, which holds the cpu area and the 64-bit start context. */
         ULONG_PTR native_base;
         setup_wow64_teb(process, thread, teb, stack, stack_limit, stack_reserve, (ULONG_PTR)native_stack + native_size,
-                        &native_base);
+                        &native_base, start, parameter);
+        *(PUSHORT)((PUCHAR)teb + MIME_TEB_SIZE + 0xFCA) = same;
         teb->NtTib.StackBase = (PVOID)native_base;
         teb->NtTib.StackLimit = native_stack;
         teb->DeallocationStack = native_stack;
         ctx_va = (native_base - sizeof(CONTEXT)) & ~15ull;
         sp = ctx_va;
     }
-    KiInitializeUserContext((PCONTEXT)ctx_va, (ULONG64)user_start, ctx_va, (ULONG64)start, (ULONG64)parameter,
-                            (ULONG64)teb_va);
-    KiInitializeUserFrame(thread->Tcb.TrapFrame, (ULONG64)ldr_thunk, sp, ctx_va, (ULONG64)process->NtdllBase,
+    /*
+     * as on windows the trap frame holds the RtlUserThreadStart state until the thread runs, so the context another
+     * thread reads or changes meanwhile is that one. the first entry to user mode saves it for LdrInitializeThunk.
+     */
+    KiInitializeUserFrame(thread->Tcb.TrapFrame, (ULONG64)user_start, ctx_va, (ULONG64)start, (ULONG64)parameter,
                           (ULONG64)teb_va);
+    thread->FirstEntryContext = ctx_va;
+    thread->FirstEntryStack = sp;
     KiAttachProcess(saved);
 
-    if (!suspended)
+    if (!(flags & THREAD_CREATE_FLAGS_CREATE_SUSPENDED))
         KiStartThread(&thread->Tcb);
     else
         thread->Tcb.SuspendCount = 1;
@@ -496,7 +589,6 @@ NTSTATUS NTAPI NtTerminateThread(HANDLE handle, NTSTATUS exit_status)
     return STATUS_SUCCESS;
 }
 
-#define THREAD_CREATE_FLAGS_CREATE_SUSPENDED 0x00000001
 
 NTSTATUS NTAPI NtCreateThreadEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, HANDLE process_handle,
                                 PVOID start, PVOID parameter, ULONG flags, SIZE_T zero_bits, SIZE_T stack_size,
@@ -519,7 +611,7 @@ NTSTATUS NTAPI NtCreateThreadEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTR
         return status;
     }
     PETHREAD thread;
-    status = PspCreateUserThread(process, start, parameter, (flags & THREAD_CREATE_FLAGS_CREATE_SUSPENDED) != 0,
+    status = PspCreateUserThread(process, start, parameter, flags,
                                  max_stack_size, stack_size, &thread);
     ObDereferenceObject(process);
     if (!NT_SUCCESS(status)) {
@@ -760,6 +852,9 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
     NTSTATUS status = KiProbeReturnLength(returned);
     if (!NT_SUCCESS(status))
         return status;
+    /* ThreadSuspendCount: like windows, an exact length is checked before the handle. */
+    if ((ULONG)klass == 35 && length != sizeof(ULONG))
+        return STATUS_INFO_LENGTH_MISMATCH;
     PETHREAD thread;
     status = PsReferenceThreadHandle(handle, rights, &thread);
     if (status == STATUS_ACCESS_DENIED && rights != THREAD_QUERY_INFORMATION)
@@ -774,7 +869,7 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
     } out;
     ULONG size = 0;
     memset(&out, 0, sizeof(out));
-    switch (klass) {
+    switch ((ULONG)klass) {
     case ThreadBasicInformation:
         out.basic.ExitStatus = thread->HasTerminated ? thread->ExitStatus : STATUS_PENDING;
         out.basic.TebBaseAddress = thread->Tcb.Teb;
@@ -815,6 +910,10 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
     case ThreadHideFromDebugger:
         out.u32 = thread->HideFromDebugger;
         size = 1;
+        break;
+    case 35: /* ThreadSuspendCount */
+        out.u32 = thread->Tcb.SuspendCount;
+        size = sizeof(ULONG);
         break;
     case ThreadAmILastThread: {
         PEPROCESS process = (PEPROCESS)KiCurrentThread()->Process;
@@ -919,6 +1018,8 @@ NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOI
         thread->Tcb.DisableBoost = (ULONG)value != 0;
     } else if (klass == ThreadAffinityMask) {
         PEPROCESS process = (PEPROCESS)thread->Tcb.Process;
+        /* like KiSetLegacyAffinityThread, processors that do not exist are dropped from the mask before it is checked. */
+        value &= KiAllProcessors();
         if (!value || (value & ~KiProcessAffinity(&process->Pcb)))
             status = STATUS_INVALID_PARAMETER;
         else
@@ -1140,9 +1241,22 @@ void PsDumpThreads(void)
                         satisfied[i]);
         ObDereferenceObject(threads[i]);
     }
-    /* the root table of each process, which the host's profiler records with every sample. */
+    /* the root table of each process, which the host's profiler records with every sample, and who holds its loader lock. */
     for (PLIST_ENTRY p = PsActiveProcessHead.Flink; p != &PsActiveProcessHead; p = p->Flink) {
         PEPROCESS process = CONTAINING_RECORD(p, EPROCESS, ActiveProcessLinks);
+        if (!process->SystemProcess && process->Peb && !process->Terminating && !IsListEmpty(&process->ThreadListHead)) {
+            PKPROCESS saved;
+            /* the critical section's LockCount, RecursionCount and OwningThread. */
+            struct { PVOID DebugInfo; LONG LockCount, RecursionCount; HANDLE OwningThread; } lock = {0};
+            PVOID at = nullptr;
+            KeStackAttachProcess(&process->Pcb, &saved);
+            if (NT_SUCCESS(KiCopyFromUser(&at, &process->Peb->LoaderLock, sizeof(at))) && at &&
+                NT_SUCCESS(KiCopyFromUser(&lock, at, sizeof(lock))) && lock.OwningThread)
+                KiLogPrintf("process %s %u loader lock owner %u count %d recursion %d", process->ImageFileName,
+                            (ULONG)(ULONG_PTR)process->UniqueProcessId, (ULONG)(ULONG_PTR)lock.OwningThread, lock.LockCount,
+                            lock.RecursionCount);
+            KeUnstackDetachProcess(&saved);
+        }
         KiLogPrintf("process %s %u table %llx", process->ImageFileName, (ULONG)(ULONG_PTR)process->UniqueProcessId,
                     (unsigned long long)process->Pcb.DirectoryTableBase);
     }

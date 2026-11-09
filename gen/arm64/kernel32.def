@@ -1593,9 +1593,11 @@ EXPORTS
     WakeByAddressSingle=Kernel32Thunk_WakeByAddressSingle
     WakeConditionVariable=kernelbase.WakeConditionVariable
     WerGetFlags=Kernel32Thunk_WerGetFlags
+    WerRegisterCustomMetadata=Kernel32Thunk_WerRegisterCustomMetadata
     WerRegisterFile=Kernel32Thunk_WerRegisterFile
     WerRegisterMemoryBlock=Kernel32Thunk_WerRegisterMemoryBlock
     WerRegisterRuntimeExceptionModule=Kernel32Thunk_WerRegisterRuntimeExceptionModule
+    WerUnregisterCustomMetadata=Kernel32Thunk_WerUnregisterCustomMetadata
     WerUnregisterRuntimeExceptionModule=Kernel32Thunk_WerUnregisterRuntimeExceptionModule
     WerSetFlags=Kernel32Thunk_WerSetFlags
     WideCharToMultiByte=Kernel32Thunk_WideCharToMultiByte

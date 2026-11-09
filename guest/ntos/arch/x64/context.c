@@ -28,8 +28,14 @@ static DECLSPEC_ALIGN(16) UCHAR g_fault_stacks[MAXIMUM_PROCESSORS][8192];
 
 void KiSwitchAddressSpace(PKPROCESS process)
 {
-    if (KiReadCr3() != process->DirectoryTableBase)
-        KiWriteCr3(process->DirectoryTableBase);
+    if (KiReadCr3() == process->DirectoryTableBase)
+        return;
+    /* a root without the kernel's half leaves the next fault nowhere to go and the processor resets: stop before. */
+    ULONG kernel = (MIME_KVA_KERNEL >> 39) & 0x1FF;
+    if (((ULONG64 *)HalPhysmap(process->DirectoryTableBase))[kernel] != MiKernelRoot()[kernel])
+        KeBugCheckEx(0x0000001A, process->DirectoryTableBase, (ULONG_PTR)process,
+                     (ULONG_PTR)__builtin_return_address(0), 0); /* MEMORY_MANAGEMENT */
+    KiWriteCr3(process->DirectoryTableBase);
 }
 
 /* in 32-bit code, fs of a wow64 thread points at its 32-bit teb. */
@@ -40,8 +46,52 @@ static void set_teb32(ULONG_PTR teb32)
     KiWriteMsr(MSR_FS_BASE, teb32);
 }
 
+/* dr7: the enables of the four breakpoints and their conditions and lengths, never general detect. */
+#define DR7_USER_MASK 0xFFFF00FFull
+
+static void load_debug(PKTHREAD thread)
+{
+    ULONG64 dr7 = thread->UserDr7 & 0xFF ? thread->UserDr7 : 0;
+    __asm__ volatile("mov %0, %%dr7" ::"r"(0ull));
+    if (dr7) {
+        __asm__ volatile("mov %0, %%dr0" ::"r"(thread->UserDr[0]));
+        __asm__ volatile("mov %0, %%dr1" ::"r"(thread->UserDr[1]));
+        __asm__ volatile("mov %0, %%dr2" ::"r"(thread->UserDr[2]));
+        __asm__ volatile("mov %0, %%dr3" ::"r"(thread->UserDr[3]));
+        __asm__ volatile("mov %0, %%dr7" ::"r"(dr7));
+    }
+}
+
+/*
+ * like windows, a context's breakpoints name user addresses only, others become 0, and dr7 keeps what user mode may
+ * use. the thread loads them when it runs, at once when it is the caller.
+ */
+void KiSetThreadDebug(PKTHREAD thread, const CONTEXT *ctx)
+{
+    const ULONG64 dr[4] = {ctx->Dr0, ctx->Dr1, ctx->Dr2, ctx->Dr3};
+    for (int i = 0; i < 4; i++)
+        thread->UserDr[i] = dr[i] <= MIME_USER_ADDRESS_LIMIT ? dr[i] : 0;
+    thread->UserDr6 = ctx->Dr6;
+    thread->UserDr7 = ctx->Dr7 & DR7_USER_MASK;
+    if (thread == KiCurrentThread())
+        load_debug(thread);
+}
+
+void KiGetThreadDebug(PKTHREAD thread, CONTEXT *ctx)
+{
+    ctx->Dr0 = thread->UserDr[0];
+    ctx->Dr1 = thread->UserDr[1];
+    ctx->Dr2 = thread->UserDr[2];
+    ctx->Dr3 = thread->UserDr[3];
+    ctx->Dr6 = thread->UserDr6;
+    ctx->Dr7 = thread->UserDr7;
+}
+
 void KiSwapContext(PKTHREAD old, PKTHREAD next)
 {
+    /* the processor holds the breakpoints of the thread that runs, and none for threads without. */
+    if ((next->UserDr7 & 0xFF) || (old->UserDr7 & 0xFF))
+        load_debug(next);
     /* in user mode gs is the teb, swapped in at each return there. */
     if (next->Teb)
         KiWriteMsr(MSR_KERNEL_GS_BASE, (ULONG64)next->Teb);
@@ -315,6 +365,54 @@ void KiTrapFrameToContext(const KTRAP_FRAME *frame, CONTEXT *ctx, ULONG flags)
         memcpy(ctx->FltSave.XmmRegisters, frame->Xmm, sizeof(frame->Xmm));
 }
 
+/* copies the parts of a context the flags name into another. */
+void KiMergeContext(CONTEXT *to, const CONTEXT *from, ULONG flags)
+{
+    if ((flags & CONTEXT_CONTROL) == CONTEXT_CONTROL) {
+        to->Rip = from->Rip;
+        to->Rsp = from->Rsp;
+        to->EFlags = from->EFlags;
+        to->SegCs = from->SegCs;
+        to->SegSs = from->SegSs;
+    }
+    if ((flags & CONTEXT_INTEGER) == CONTEXT_INTEGER) {
+        to->Rax = from->Rax;
+        to->Rcx = from->Rcx;
+        to->Rdx = from->Rdx;
+        to->Rbx = from->Rbx;
+        to->Rbp = from->Rbp;
+        to->Rsi = from->Rsi;
+        to->Rdi = from->Rdi;
+        to->R8 = from->R8;
+        to->R9 = from->R9;
+        to->R10 = from->R10;
+        to->R11 = from->R11;
+        to->R12 = from->R12;
+        to->R13 = from->R13;
+        to->R14 = from->R14;
+        to->R15 = from->R15;
+    }
+    if ((flags & CONTEXT_SEGMENTS) == CONTEXT_SEGMENTS) {
+        to->SegDs = from->SegDs;
+        to->SegEs = from->SegEs;
+        to->SegFs = from->SegFs;
+        to->SegGs = from->SegGs;
+    }
+    if ((flags & CONTEXT_FLOATING_POINT) == CONTEXT_FLOATING_POINT) {
+        to->MxCsr = from->MxCsr;
+        to->FltSave = from->FltSave;
+    }
+    if ((flags & CONTEXT_DEBUG_REGISTERS) == CONTEXT_DEBUG_REGISTERS) {
+        to->Dr0 = from->Dr0;
+        to->Dr1 = from->Dr1;
+        to->Dr2 = from->Dr2;
+        to->Dr3 = from->Dr3;
+        to->Dr6 = from->Dr6;
+        to->Dr7 = from->Dr7;
+    }
+    to->ContextFlags = flags;
+}
+
 void KiContextToTrapFrame(const CONTEXT *ctx, PKTRAP_FRAME frame, ULONG flags, KPROCESSOR_MODE mode)
 {
     if ((flags & CONTEXT_INTEGER) == CONTEXT_INTEGER) {
@@ -378,32 +476,43 @@ BOOLEAN KiSetupUserApc(PKTRAP_FRAME frame, PVOID dispatcher, PKNORMAL_ROUTINE ro
     frame->Rsp = sp;
     frame->Rip = (ULONG64)dispatcher;
     user_segments(frame);
+    /* like KiInitializeUserApc, the apc dispatcher is reached through the instrumentation callback. */
+    KiCurrentThread()->InstrumentReturn = TRUE;
     return TRUE;
 }
 
 /*
- * the layout KiUserExceptionDispatcher's unwind codes expect: from its sp, 0x28 bytes,
- * the context, the record, then a machine frame with the faulting rip and rsp.
+ * windows' layout for KiUserExceptionDispatcher: at its sp the CONTEXT and its CONTEXT_EX, the EXCEPTION_RECORD at
+ * 0x4F0, then at 0x590 a machine frame with the faulting rip and rsp, as its unwind codes describe. it takes nothing
+ * in registers.
  */
 BOOLEAN KiSetupUserException(PKTRAP_FRAME frame, PVOID dispatcher, PEXCEPTION_RECORD record)
 {
     CONTEXT ctx;
     KiTrapFrameToContext(frame, &ctx, CONTEXT_FULL);
+    PKTHREAD thread = KiCurrentThread();
+    if ((thread->UserDr7 & 0xFF) || record->ExceptionCode == (NTSTATUS)0x80000004L) {
+        ctx.ContextFlags |= CONTEXT_DEBUG_REGISTERS;
+        KiGetThreadDebug(thread, &ctx);
+    }
     ULONG64 machine = ((user_stack(frame) - 0x80) & ~15ull) - 0x30;
-    ULONG64 rec = machine - 0xA0;
-    ULONG64 ctx_addr = rec - sizeof(CONTEXT);
+    ULONG64 ctx_addr = machine - 0x590;
+    ULONG64 rec = ctx_addr + 0x4F0;
     MIME_STATIC_ASSERT(sizeof(EXCEPTION_RECORD) <= 0xA0 && sizeof(CONTEXT) == 0x4D0, "dispatcher layout");
+    /* CONTEXT_EX: the whole and the legacy part start at the context, there is no extended state. */
+    LONG context_ex[6] = {-(LONG)sizeof(CONTEXT), (LONG)sizeof(CONTEXT) + 0x18, -(LONG)sizeof(CONTEXT),
+                          (LONG)sizeof(CONTEXT), 0x18, 0};
     ULONG64 mframe[5] = {frame->Rip, frame->Cs, frame->Rflags, frame->Rsp, frame->Ss};
     if (!NT_SUCCESS(KiCopyToUser((PVOID)machine, mframe, sizeof(mframe))) ||
         !NT_SUCCESS(KiCopyToUser((PVOID)rec, record, sizeof(*record))) ||
+        !NT_SUCCESS(KiCopyToUser((PVOID)(ctx_addr + sizeof(CONTEXT)), context_ex, sizeof(context_ex))) ||
         !NT_SUCCESS(KiCopyToUser((PVOID)ctx_addr, &ctx, sizeof(ctx))))
         return FALSE;
-    frame->Rsp = ctx_addr - 0x30;
+    frame->Rsp = ctx_addr;
     /* the dispatcher runs without the trap flag, the context keeps it. */
     frame->Rflags &= ~0x100ull;
-    frame->Rcx = rec;
-    frame->Rdx = ctx_addr;
     frame->Rip = (ULONG64)dispatcher;
+    KiCurrentThread()->InstrumentReturn = TRUE;
     user_segments(frame);
     return TRUE;
 }

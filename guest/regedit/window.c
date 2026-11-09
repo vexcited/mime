@@ -1111,7 +1111,7 @@ static void command(UINT id)
         refresh();
         break;
     case IDM_ABOUT:
-        RegeditBox(g_window, L"Registry Editor\n\nMime's registry editor.", MB_ICONINFORMATION);
+        RegeditBox(g_window, L"Registry Editor\n\nWindows registry editor.", MB_ICONINFORMATION);
         break;
     }
     update_menu();

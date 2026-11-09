@@ -54,6 +54,8 @@ typedef struct MimeVcpu {
     uint64_t start_pc, start_x0, start_sp;
     /* the guest-visible microsoft hypervisor state of this processor. */
     uint64_t hv_assist_page, hv_reference_tsc, hv_crash_ctl, hv_crash[5];
+    /* the last kernel lock wait and where it resumed, printed with a triple fault. */
+    uint64_t wait_rip, wait_rsp;
     /* exit statistics, printed with the SIGUSR1 state dump. */
     uint64_t exits_total;
     uint64_t exits_vtimer;
@@ -223,6 +225,13 @@ void mime_vm_advise(MimeVm *vm, uint64_t pa, uint64_t len, uint32_t advice);
 void mime_vm_raise_irq(MimeVm *vm, uint32_t bits);
 /* starts the thread that asks the guest for memory back when the host runs short; linux/memory.c, nothing on macOS. */
 void mime_memory_monitor_start(MimeVm *vm);
+/*
+ * genuine.c: starts the thread that announces and fetches microsoft's copies of the system files the manifest names,
+ * into the host cache. mime_genuine_path gives the cache path of entry index when a checked copy is ready, for
+ * MIME_HC_GENUINE_OPEN.
+ */
+void mime_genuine_start(MimeVm *vm);
+bool mime_genuine_path(uint32_t index, char *out, size_t size);
 /* host memory for guest RAM it has not used yet: what the host grants of want bytes, and what it could still grant. */
 uint64_t mime_memory_grant(MimeVm *vm, uint64_t want);
 void mime_memory_publish(MimeVm *vm);

@@ -294,6 +294,18 @@ static int32_t memory_type(MvkConnection *c, uint32_t bits, VkMemoryPropertyFlag
     return -1;
 }
 
+/* a type of the bits in system memory, which the budget of video memory leaves alone. */
+static int32_t system_memory_type(MvkConnection *c, uint32_t bits)
+{
+    VkPhysicalDeviceMemoryProperties props;
+    c->fn.vkGetPhysicalDeviceMemoryProperties(c->physical_device, &props);
+    for (uint32_t i = 0; i < props.memoryTypeCount; i++)
+        if ((bits & (1u << i)) &&
+            !(props.memoryHeaps[props.memoryTypes[i].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT))
+            return (int32_t)i;
+    return -1;
+}
+
 static VkQueue queue_family(MvkConnection *c, VkQueue queue, uint32_t *family)
 {
     for (uint32_t i = 0; i < c->queue_count; i++) {
@@ -937,8 +949,14 @@ static bool make_last(MvkConnection *c, Presenter *p, VkExtent2D extent, VkForma
     c->fn.vkGetImageMemoryRequirements(c->device, p->last, &req);
     int32_t type = memory_type(c, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, nullptr, req.size, (uint32_t)type};
-    if (type < 0 || c->fn.vkAllocateMemory(c->device, &alloc, nullptr, &p->last_memory) != VK_SUCCESS ||
-        c->fn.vkBindImageMemory(c->device, p->last, p->last_memory, 0) != VK_SUCCESS) {
+    VkResult made = type < 0 ? VK_ERROR_OUT_OF_DEVICE_MEMORY
+                             : c->fn.vkAllocateMemory(c->device, &alloc, nullptr, &p->last_memory);
+    /* a game that fills its video memory budget leaves no room for the copy, which system memory holds as well. */
+    if (made != VK_SUCCESS && (type = system_memory_type(c, req.memoryTypeBits)) >= 0) {
+        alloc.memoryTypeIndex = (uint32_t)type;
+        made = c->fn.vkAllocateMemory(c->device, &alloc, nullptr, &p->last_memory);
+    }
+    if (made != VK_SUCCESS || c->fn.vkBindImageMemory(c->device, p->last, p->last_memory, 0) != VK_SUCCESS) {
         c->fn.vkDestroyImage(c->device, p->last, nullptr);
         if (p->last_memory)
             c->fn.vkFreeMemory(c->device, p->last_memory, nullptr);

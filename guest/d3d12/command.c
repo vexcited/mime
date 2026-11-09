@@ -81,7 +81,16 @@ BOOL D12ScratchAlloc(D12CommandAllocator *allocator, UINT64 size, UINT64 alignme
     VkMemoryAllocateInfo alloc = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &flags};
     alloc.allocationSize = type >= 0 ? req.size : 0;
     alloc.memoryTypeIndex = (UINT)type;
-    if (type < 0 || vk->vkAllocateMemory(vk->device, &alloc, nullptr, &b->memory) != VK_SUCCESS) {
+    VkResult r = type >= 0 ? vk->vkAllocateMemory(vk->device, &alloc, nullptr, &b->memory) : VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    /* with video memory full, system memory: the gpu reads it slower, but the commands still run. */
+    for (UINT i = 0; r != VK_SUCCESS && type >= 0 && i < device->memory.memoryTypeCount; i++)
+        if ((req.memoryTypeBits & type_bits & (1u << i)) &&
+            !(device->memory.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+            alloc.memoryTypeIndex = i;
+            if ((r = vk->vkAllocateMemory(vk->device, &alloc, nullptr, &b->memory)) == VK_SUCCESS)
+                type = (int)i;
+        }
+    if (r != VK_SUCCESS) {
         if (b->buffer)
             vk->vkDestroyBuffer(vk->device, b->buffer, nullptr);
         HeapFree(GetProcessHeap(), 0, b);
@@ -1605,6 +1614,21 @@ static void clear_attachment_rects(D12CommandList *list, const D12TargetView *t,
     vk->vkCmdEndRendering(list->cmd);
 }
 
+/*
+ * a clear of a whole image takes its values in the image's format, which for a typeless texture is an integer one: a
+ * float 1.0 clamps to 0xffff there, a half float nan where the view reads it. the values go through the view's format
+ * to bits, and those bits to the image's format. false when they cannot.
+ */
+static BOOL image_clear_value(const D12Resource *r, VkFormat view, const UINT *uints, const FLOAT *floats,
+                              VkClearColorValue *value)
+{
+    if (!r->fmt || r->fmt->vk == view || r->fmt->vk == VK_FORMAT_UNDEFINED)
+        return TRUE;
+    BYTE packed[16];
+    UINT size;
+    return D3dPackClear(view, uints, floats, packed, &size) && D3dClearValueOfBits(r->fmt->vk, packed, value);
+}
+
 static void STDMETHODCALLTYPE list_clear_render_target_view(ID3D12GraphicsCommandList10 *iface,
                                                             D3D12_CPU_DESCRIPTOR_HANDLE view, const FLOAT color[4],
                                                             UINT rect_count, const D3D12_RECT *rects)
@@ -1621,6 +1645,11 @@ static void STDMETHODCALLTYPE list_clear_render_target_view(ID3D12GraphicsComman
             value.int32[i] = (INT)color[i];
         else
             value.float32[i] = color[i];
+    }
+    D3D12_RECT whole = {0, 0, (LONG)t->extent.width, (LONG)t->extent.height};
+    if (!(rect_count && rects) && !image_clear_value(t->resource, t->format, nullptr, color, &value)) {
+        rect_count = 1;
+        rects = &whole;
     }
     if (rect_count && rects) {
         VkClearAttachment clear = {VK_IMAGE_ASPECT_COLOR_BIT, 0, {.color = value}};
@@ -1802,6 +1831,8 @@ static void clear_uav(D12CommandList *list, D3D12_CPU_DESCRIPTOR_HANDLE cpu, con
         clear_uav_rects(list, info, uints, floats, rect_count, rects);
         return;
     }
+    if (!image_clear_value(r, info->format, uints, floats, &value))
+        return;
     list->copied = TRUE;
     vk_of(list)->vkCmdClearColorImage(list->cmd, r->image, VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
 }
@@ -1820,10 +1851,96 @@ static void STDMETHODCALLTYPE list_clear_uav_float(ID3D12GraphicsCommandList10 *
     clear_uav(impl(iface), cpu, nullptr, values, rect_count, rects);
 }
 
-/* discarded contents may be lost, so nothing needs doing. */
+/*
+ * images whose contents a discard or an aliased use left undefined enter the general layout again from undefined, as
+ * vulkan wants of memory another image wrote. the gpu resets their compression state then: left as the other image
+ * wrote it, it shows as corrupt blocks.
+ */
+typedef struct Reinit {
+    VkImageMemoryBarrier2 barriers[64];
+    UINT count;
+} Reinit;
+
+static void reinit_flush(D12CommandList *list, Reinit *r)
+{
+    if (!r->count)
+        return;
+    end_rendering(list);
+    VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.imageMemoryBarrierCount = r->count;
+    dep.pImageMemoryBarriers = r->barriers;
+    vk_of(list)->vkCmdPipelineBarrier2(list->cmd, &dep);
+    list->written_count = 0;
+    r->count = 0;
+}
+
+static void reinit_add(D12CommandList *list, Reinit *r, const D12Resource *resource, VkImageSubresourceRange range)
+{
+    if (r->count == RTL_NUMBER_OF(r->barriers))
+        reinit_flush(list, r);
+    VkImageMemoryBarrier2 *b = &r->barriers[r->count++];
+    *b = (VkImageMemoryBarrier2){VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+    b->srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    b->dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    b->dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    b->oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    b->newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    b->srcQueueFamilyIndex = b->dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b->image = resource->image;
+    b->subresourceRange = range;
+}
+
+/* subresources first to first + count, or all of them for count ~0u. */
+static void reinit_subresources(D12CommandList *list, Reinit *r, const D12Resource *resource, UINT first, UINT count)
+{
+    UINT total = D12SubresourceCount(resource);
+    if (count == ~0u || (first == 0 && count >= total)) {
+        reinit_add(list, r, resource, (VkImageSubresourceRange){resource->aspect, 0, VK_REMAINING_MIP_LEVELS, 0,
+                                                                VK_REMAINING_ARRAY_LAYERS});
+        return;
+    }
+    for (UINT i = first; i < first + count && i < total; i++) {
+        VkImageSubresourceLayers l = subresource_layers(resource, i);
+        reinit_add(list, r, resource, (VkImageSubresourceRange){l.aspectMask, l.mipLevel, 1, l.baseArrayLayer, 1});
+    }
+}
+
+/* an enhanced barrier's range: a subresource index when it names no mips, every subresource for ~0u. */
+static void reinit_range(D12CommandList *list, Reinit *r, const D12Resource *resource,
+                         const D3D12_BARRIER_SUBRESOURCE_RANGE *range)
+{
+    if (!range->NumMipLevels) {
+        reinit_subresources(list, r, resource, range->IndexOrFirstMipLevel,
+                            range->IndexOrFirstMipLevel == ~0u ? ~0u : 1);
+        return;
+    }
+    for (UINT plane = range->FirstPlane; plane < range->FirstPlane + D12_MAX(range->NumPlanes, 1u); plane++)
+        reinit_add(list, r, resource,
+                   (VkImageSubresourceRange){D12PlaneAspect(resource, plane), range->IndexOrFirstMipLevel,
+                                             range->NumMipLevels, range->FirstArraySlice,
+                                             D12_MAX(range->NumArraySlices, 1u)});
+}
+
+/* rectangles that leave part of a subresource keep it, as windows keeps what they do not cover. */
 static void STDMETHODCALLTYPE list_discard_resource(ID3D12GraphicsCommandList10 *iface, ID3D12Resource *resource,
                                                     const D3D12_DISCARD_REGION *region)
 {
+    D12CommandList *list = impl(iface);
+    D12Resource *r = D12ResourceFrom(resource);
+    if (!list->open || !r || !r->image)
+        return;
+    if (region && region->NumRects) {
+        VkExtent3D e = D12MipExtent(r, 0);
+        BOOL full = FALSE;
+        for (UINT i = 0; i < region->NumRects && !full; i++)
+            full = region->pRects[i].left <= 0 && region->pRects[i].top <= 0 &&
+                   region->pRects[i].right >= (LONG)e.width && region->pRects[i].bottom >= (LONG)e.height;
+        if (!full)
+            return;
+    }
+    Reinit reinit = {};
+    reinit_subresources(list, &reinit, r, region ? region->FirstSubresource : 0, region ? region->NumSubresources : ~0u);
+    reinit_flush(list, &reinit);
 }
 
 /* ------------------------------------------------------------------ barriers */
@@ -1962,10 +2079,17 @@ static void STDMETHODCALLTYPE list_resource_barrier(ID3D12GraphicsCommandList10 
         return;
     D12Device *device = list->child.device;
     VkMemoryBarrier2 b = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    Reinit reinit = {};
     for (UINT i = 0; i < count; i++) {
         const D3D12_RESOURCE_BARRIER *r = &barriers[i];
         if (r->Flags & D3D12_RESOURCE_BARRIER_FLAG_BEGIN_ONLY)
             continue;
+        if (r->Type == D3D12_RESOURCE_BARRIER_TYPE_ALIASING) {
+            D12Resource *after = D12ResourceFrom(r->Aliasing.pResourceAfter);
+            /* the resource taking the memory starts undefined, as after a discard. */
+            if (after && after->image)
+                reinit_subresources(list, &reinit, after, 0, ~0u);
+        }
         switch (r->Type) {
         case D3D12_RESOURCE_BARRIER_TYPE_TRANSITION:
             state_scope(device, r->Transition.StateBefore, &b.srcStageMask, &b.srcAccessMask);
@@ -1983,8 +2107,10 @@ static void STDMETHODCALLTYPE list_resource_barrier(ID3D12GraphicsCommandList10 
             break;
         }
     }
-    if (!b.srcStageMask)
+    if (!b.srcStageMask) {
+        reinit_flush(list, &reinit);
         return;
+    }
     end_rendering(list);
     VkDependencyInfo dep = {VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
     dep.memoryBarrierCount = 1;
@@ -1992,6 +2118,7 @@ static void STDMETHODCALLTYPE list_resource_barrier(ID3D12GraphicsCommandList10 
     vk_of(list)->vkCmdPipelineBarrier2(list->cmd, &dep);
     if (b.srcStageMask & b.dstStageMask & VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT)
         list->written_count = 0;
+    reinit_flush(list, &reinit);
 }
 
 /* vulkan stages for enhanced barrier sync scopes, including the commands mime runs for them. */
@@ -2085,6 +2212,7 @@ static void STDMETHODCALLTYPE list_barrier(ID3D12GraphicsCommandList10 *iface, U
         return;
     D12Device *device = list->child.device;
     VkMemoryBarrier2 b = {VK_STRUCTURE_TYPE_MEMORY_BARRIER_2};
+    Reinit reinit = {};
     for (UINT32 g = 0; g < count; g++) {
         for (UINT32 i = 0; i < groups[g].NumBarriers; i++) {
             switch (groups[g].Type) {
@@ -2096,6 +2224,10 @@ static void STDMETHODCALLTYPE list_barrier(ID3D12GraphicsCommandList10 *iface, U
             case D3D12_BARRIER_TYPE_TEXTURE: {
                 const D3D12_TEXTURE_BARRIER *x = &groups[g].pTextureBarriers[i];
                 add_enhanced(device, &b, x->SyncBefore, x->SyncAfter, x->AccessBefore, x->AccessAfter);
+                D12Resource *r = D12ResourceFrom(x->pResource);
+                if (r && r->image && (UINT)x->SyncAfter != (UINT)D3D12_BARRIER_SYNC_SPLIT &&
+                    (x->LayoutBefore == D3D12_BARRIER_LAYOUT_UNDEFINED || (x->Flags & D3D12_TEXTURE_BARRIER_FLAG_DISCARD)))
+                    reinit_range(list, &reinit, r, &x->Subresources);
                 break;
             }
             case D3D12_BARRIER_TYPE_BUFFER: {
@@ -2109,6 +2241,7 @@ static void STDMETHODCALLTYPE list_barrier(ID3D12GraphicsCommandList10 *iface, U
             }
         }
     }
+    reinit_flush(list, &reinit);
     if (!b.srcStageMask && !b.dstStageMask)
         return;
     /* with no work before or after, vulkan still takes a dependency from the top or to the bottom. */

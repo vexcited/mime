@@ -522,8 +522,18 @@ static BOOL drive_exists(WCHAR letter)
     HANDLE h;
     if (!NT_SUCCESS(NtOpenSymbolicLinkObject(&h, SYMBOLIC_LINK_QUERY, &oa)))
         return FALSE;
+    /* the host share is a second disk only this compatibility layer has; leave it out of drive lists. */
+    WCHAR target[64] = {};
+    UNICODE_STRING t = {0, (USHORT)sizeof(target) - sizeof(WCHAR), target};
+    ULONG length = 0;
+    BOOL queried = NT_SUCCESS(NtQuerySymbolicLinkObject(h, &t, &length));
     NtClose(h);
-    return TRUE;
+    if (!queried)
+        return TRUE;
+    static const WCHAR host[] = L"\\Device\\HarddiskVolume2";
+    USHORT chars = (USHORT)(length / sizeof(WCHAR));
+    t.Buffer[chars] = 0;
+    return chars != 23 || wcsncmp(target, host, 23) != 0;
 }
 
 DWORD WINAPI GetLogicalDrives(void)
@@ -638,11 +648,9 @@ UINT WINAPI GetDriveTypeW(LPCWSTR root)
     WCHAR r[MAX_PATH];
     if (!volume_root(root, r, RTL_NUMBER_OF(r)))
         return DRIVE_NO_ROOT_DIR;
-    if (r[1] == ':' && !drive_exists(r[0]))
-        return DRIVE_NO_ROOT_DIR;
     HANDLE h;
     if (!NT_SUCCESS(open_root(r, &h)))
-        return r[0] == '\\' ? DRIVE_NO_ROOT_DIR : DRIVE_UNKNOWN;
+        return DRIVE_NO_ROOT_DIR;
     FILE_FS_DEVICE_INFORMATION info;
     IO_STATUS_BLOCK iosb;
     NTSTATUS status = NtQueryVolumeInformationFile(h, &iosb, &info, sizeof(info), FileFsDeviceInformation);

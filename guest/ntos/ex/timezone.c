@@ -252,3 +252,39 @@ void ExInitializeTimeZone(void)
     if (!NT_SUCCESS(PsCreateSystemThread(nullptr, 0, nullptr, nullptr, nullptr, worker, nullptr)))
         KiLogPrintf("time zone: no thread to follow daylight time");
 }
+
+/*
+ * SystemCurrentTimeZoneInformation: windows' RTL_TIME_ZONE_INFORMATION, the bias, the two names and the two rules of
+ * TimeZoneInformation as the kernel loaded them.
+ */
+NTSTATUS ExQueryTimeZoneInformation(PVOID info, ULONG length, PULONG returned)
+{
+    struct {
+        LONG Bias;
+        WCHAR StandardName[32];
+        TZ_DATE StandardStart;
+        LONG StandardBias;
+        WCHAR DaylightName[32];
+        TZ_DATE DaylightStart;
+        LONG DaylightBias;
+    } out;
+    memset(&out, 0, sizeof(out));
+    TZ_RULES rules;
+    if (load_rules(&rules)) {
+        out.Bias = rules.Bias;
+        out.StandardStart = rules.StandardDate;
+        out.StandardBias = rules.StandardBias;
+        out.DaylightStart = rules.DaylightDate;
+        out.DaylightBias = rules.DaylightBias;
+    }
+    ULONG type = 0, size = sizeof(out.StandardName) - sizeof(WCHAR);
+    CmQueryValue(KEY_TIME_ZONE, L"StandardName", &type, out.StandardName, &size);
+    size = sizeof(out.DaylightName) - sizeof(WCHAR);
+    CmQueryValue(KEY_TIME_ZONE, L"DaylightName", &type, out.DaylightName, &size);
+    ULONG need = sizeof(out);
+    if (returned)
+        KiCopyToUser(returned, &need, sizeof(need));
+    if (length != need)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    return KiCopyToUser(info, &out, need);
+}

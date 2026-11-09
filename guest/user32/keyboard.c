@@ -1,8 +1,10 @@
 /*
- * key and character translation for the US english layout, the only one the host delivers. the tables hold the same
- * KBDUS mappings windows loads in win32k.
+ * key and character translation. the tables hold the KBDUS mappings windows loads in win32k; the typing keys follow the
+ * host's layout once it gave one, which win32k reads from the boot information.
  */
 #include "user32_private.h"
+
+#include <mime/abi.h>
 
 #define US_LAYOUT ((HKL)(ULONG_PTR)0x04090409)
 #define EXT 0x100 /* extended scan code, sent with the E0 prefix. */
@@ -51,6 +53,62 @@ static const EXT_KEY g_extended[] = {
 
 /* numeric keypad keys share their scan codes with the navigation keys. */
 static constexpr BYTE g_numpad_scan[10] = {0x52, 0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48, 0x49};
+
+/* the keys a layout changes: digits, letters and punctuation, without the E0 prefix. */
+static BOOL typing_key(UINT scan)
+{
+    return (scan >= 0x02 && scan <= 0x0D) || (scan >= 0x10 && scan <= 0x1B) || (scan >= 0x1E && scan <= 0x29) ||
+           (scan >= 0x2B && scan <= 0x35) || scan == 0x56;
+}
+
+/* the host's layout, asked again every quarter second, or null for US. two copies, so readers never see one written. */
+static MimeKeyboardLayout g_layouts[2];
+static MimeKeyboardLayout *volatile g_layout;
+static LONG g_layout_next;
+static volatile DWORD g_layout_tick;
+static volatile LONG g_layout_asked, g_layout_busy;
+
+static const MimeKeyboardLayout *host_layout(void)
+{
+    DWORD now = GetTickCount();
+    if (!g_layout_asked || now - g_layout_tick >= 250) {
+        if (!InterlockedExchange(&g_layout_busy, 1)) {
+            MimeKeyboardLayout *spare = &g_layouts[g_layout_next];
+            ULONG generation = (ULONG)NtUserCallOneParam((ULONG_PTR)spare, MIME_ONEPARAM_GETKEYBOARDLAYOUT);
+            if (!generation)
+                g_layout = nullptr;
+            else if (!g_layout || g_layout->generation != generation) {
+                g_layout = spare;
+                g_layout_next ^= 1;
+            }
+            g_layout_tick = now;
+            g_layout_asked = 1;
+            InterlockedExchange(&g_layout_busy, 0);
+        }
+    }
+    return g_layout;
+}
+
+/* the typing key of the layout that gives a virtual key, or 0. */
+static UINT layout_scan(const MimeKeyboardLayout *l, UINT vk)
+{
+    for (UINT s = 1; s < MIME_KEYBOARD_KEYS; s++)
+        if (typing_key(s) && l->vk[s] == vk)
+            return s;
+    return 0;
+}
+
+/* the layout's handle: its language in both halves, as windows names the default layout of a language. */
+static HKL current_layout(void)
+{
+    const MimeKeyboardLayout *l = host_layout();
+    return l && l->language ? (HKL)(ULONG_PTR)MAKELONG(l->language, l->language) : US_LAYOUT;
+}
+
+static WCHAR upper_char(WCHAR c)
+{
+    return (WCHAR)(ULONG_PTR)CharUpperW((LPWSTR)(ULONG_PTR)c);
+}
 
 /* characters of the printable keys, unshifted and shifted. */
 typedef struct CHAR_KEY {
@@ -111,8 +169,14 @@ static UINT vk_to_scan(UINT vk)
     }
     if (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD0 + 9)
         return g_numpad_scan[vk - VK_NUMPAD0];
+    const MimeKeyboardLayout *l = host_layout();
+    if (l) {
+        UINT s = layout_scan(l, vk);
+        if (s)
+            return s;
+    }
     for (UINT s = 1; s < RTL_NUMBER_OF(g_scan_to_vk); s++)
-        if (g_scan_to_vk[s] == vk && vk != VK_SNAPSHOT && vk != VK_CLEAR)
+        if (g_scan_to_vk[s] == vk && vk != VK_SNAPSHOT && vk != VK_CLEAR && !(l && typing_key(s)))
             return s;
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_extended); i++)
         if (g_extended[i].Vk == vk)
@@ -132,7 +196,8 @@ static UINT scan_to_vk(UINT scan, BOOL distinguish)
             if (g_extended[i].Scan == code)
                 vk = g_extended[i].Vk;
     } else if (code < RTL_NUMBER_OF(g_scan_to_vk)) {
-        vk = g_scan_to_vk[code];
+        const MimeKeyboardLayout *l = typing_key(code) ? host_layout() : nullptr;
+        vk = l && l->vk[code] ? l->vk[code] : g_scan_to_vk[code];
     }
     return distinguish ? vk : generic_vk(vk);
 }
@@ -144,9 +209,17 @@ static WCHAR key_char(UINT vk, const BYTE *state)
     BOOL ctrl = state && (state[VK_CONTROL] & 0x80);
     BOOL alt = state && (state[VK_MENU] & 0x80);
     BOOL caps = state && (state[VK_CAPITAL] & 0x01);
+    const MimeKeyboardLayout *l = host_layout();
+    UINT scan = l ? layout_scan(l, vk) : 0;
     /* ctrl with alt is altgr, which has no characters on the US layout. */
     if (ctrl && alt)
-        return 0;
+        return scan ? l->chars[scan][2] : 0;
+    if (scan && !ctrl) {
+        WCHAR normal = l->chars[scan][0], shifted = l->chars[scan][1];
+        /* caps lock shifts the keys whose shifted character is the capital of the unshifted one. */
+        BOOL capital = shifted && shifted != normal && upper_char(normal) == shifted;
+        return (shift != (caps && capital)) ? shifted : normal;
+    }
     if (vk >= 'A' && vk <= 'Z') {
         if (ctrl)
             return (WCHAR)(vk - 'A' + 1);
@@ -194,6 +267,10 @@ WINUSERAPI UINT WINAPI MapVirtualKeyExW(UINT code, UINT type, HKL layout)
     case MAPVK_VSC_TO_VK_EX:
         return scan_to_vk(code, TRUE);
     case MAPVK_VK_TO_CHAR: {
+        const MimeKeyboardLayout *l = host_layout();
+        UINT scan = l ? layout_scan(l, code) : 0;
+        if (scan && l->chars[scan][0])
+            return upper_char(l->chars[scan][0]);
         if (code >= 'A' && code <= 'Z')
             return code;
         if (code >= VK_NUMPAD0 && code <= VK_NUMPAD0 + 9)
@@ -289,7 +366,7 @@ WINUSERAPI int WINAPI GetKeyNameTextW(LONG lparam, LPWSTR buffer, int size)
     if (!name && !ext) {
         UINT ch = MapVirtualKeyExW(scan_to_vk(scan, FALSE), MAPVK_VK_TO_CHAR, US_LAYOUT);
         if (ch) {
-            single[0] = (WCHAR)(ch >= 'a' && ch <= 'z' ? ch - 32 : ch);
+            single[0] = upper_char((WCHAR)ch);
             name = single;
         }
     }
@@ -331,6 +408,14 @@ WINUSERAPI int WINAPI ToAscii(UINT vk, UINT scan, const BYTE *state, LPWORD char
 
 WINUSERAPI SHORT WINAPI VkKeyScanExW(WCHAR ch, HKL layout)
 {
+    const MimeKeyboardLayout *l = host_layout();
+    if (l && ch >= 0x20) {
+        static const SHORT SHIFTS[3] = {0, 0x100, 0x600};
+        for (int level = 0; level < 3; level++)
+            for (UINT scan = 1; scan < MIME_KEYBOARD_KEYS; scan++)
+                if (typing_key(scan) && l->vk[scan] && l->chars[scan][level] == ch)
+                    return (SHORT)(SHIFTS[level] | l->vk[scan]);
+    }
     if (ch >= 'a' && ch <= 'z')
         return (SHORT)(ch - 32);
     if (ch >= 'A' && ch <= 'Z')
@@ -377,7 +462,7 @@ WINUSERAPI int WINAPI GetKeyboardLayoutList(int count, HKL *list)
         SetLastError(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    list[0] = US_LAYOUT;
+    list[0] = current_layout();
     return 1;
 }
 
@@ -398,7 +483,7 @@ WINUSERAPI int WINAPI GetKeyboardType(int which)
 
 WINUSERAPI HKL WINAPI GetKeyboardLayout(DWORD thread)
 {
-    return US_LAYOUT;
+    return current_layout();
 }
 
 WINUSERAPI BOOL WINAPI GetKeyboardLayoutNameW(LPWSTR name)
@@ -407,22 +492,23 @@ WINUSERAPI BOOL WINAPI GetKeyboardLayoutNameW(LPWSTR name)
         SetLastError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    memcpy(name, L"00000409", sizeof(L"00000409"));
+    wsprintfW(name, L"%08X", (UINT)LOWORD((ULONG_PTR)current_layout()));
     return TRUE;
 }
 
 WINUSERAPI HKL WINAPI ActivateKeyboardLayout(HKL layout, UINT flags)
 {
-    if (layout != US_LAYOUT && layout != (HKL)HKL_NEXT && layout != (HKL)HKL_PREV) {
+    HKL current = current_layout();
+    if (layout != current && layout != (HKL)HKL_NEXT && layout != (HKL)HKL_PREV) {
         SetLastError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }
-    return US_LAYOUT;
+    return current;
 }
 
 WINUSERAPI HKL WINAPI LoadKeyboardLayoutW(LPCWSTR name, UINT flags)
 {
-    return US_LAYOUT;
+    return current_layout();
 }
 
 /*

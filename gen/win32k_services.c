@@ -129,6 +129,7 @@ void NtUserAddClipboardFormatListener(void);
 void NtUserAttachThreadInput(void);
 void NtUserBeginPaint(void);
 void NtUserBuildHwndList(void);
+void NtUserQueryWindow(void);
 void NtUserBuildNameList(void);
 void NtUserBuildPropList(void);
 void NtUserCallHwnd(void);
@@ -897,8 +898,13 @@ void Win32kInitializeServices(SERVICE *table)
 #else
 #warning "NtUserBeginPaint has no syscall number"
 #endif
+#ifdef MIME_SVC_NtUserQueryWindow
+    table[MIME_SVC_NtUserQueryWindow & 0xFFF] = (SERVICE){(void *)NtUserQueryWindow, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserQueryWindow has no syscall number"
+#endif
 #ifdef MIME_SVC_NtUserBuildHwndList
-    table[MIME_SVC_NtUserBuildHwndList & 0xFFF] = (SERVICE){(void *)NtUserBuildHwndList, STACK_ARGS(7), 1, 0};
+    table[MIME_SVC_NtUserBuildHwndList & 0xFFF] = (SERVICE){(void *)NtUserBuildHwndList, STACK_ARGS(8), 1, 0};
 #else
 #warning "NtUserBuildHwndList has no syscall number"
 #endif

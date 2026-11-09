@@ -5159,6 +5159,10 @@ _Kernel32Thunk_WakeByAddressSingle@4:
     .p2align 4
 _Kernel32Thunk_WerGetFlags@8:
     jmp     *__imp__WerGetFlags@8
+    .globl  _Kernel32Thunk_WerRegisterCustomMetadata@8
+    .p2align 4
+_Kernel32Thunk_WerRegisterCustomMetadata@8:
+    jmp     *__imp__WerRegisterCustomMetadata@8
     .globl  _Kernel32Thunk_WerRegisterFile@12
     .p2align 4
 _Kernel32Thunk_WerRegisterFile@12:
@@ -5171,6 +5175,10 @@ _Kernel32Thunk_WerRegisterMemoryBlock@8:
     .p2align 4
 _Kernel32Thunk_WerRegisterRuntimeExceptionModule@8:
     jmp     *__imp__WerRegisterRuntimeExceptionModule@8
+    .globl  _Kernel32Thunk_WerUnregisterCustomMetadata@4
+    .p2align 4
+_Kernel32Thunk_WerUnregisterCustomMetadata@4:
+    jmp     *__imp__WerUnregisterCustomMetadata@4
     .globl  _Kernel32Thunk_WerUnregisterRuntimeExceptionModule@8
     .p2align 4
 _Kernel32Thunk_WerUnregisterRuntimeExceptionModule@8:

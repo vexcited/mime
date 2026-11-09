@@ -272,7 +272,8 @@ ULONG MiPteToProtect(ULONG64 pte)
         protect = ro ? PAGE_EXECUTE_READ : PAGE_EXECUTE_READWRITE;
     else
         protect = ro ? PAGE_READONLY : PAGE_READWRITE;
-    if (!(pte & MM_PTE_USER))
+    /* a page out of the working set keeps its protection, only its residence changed. */
+    if (!(pte & MM_PTE_USER) && !(pte & MM_PTE_SW_TRIMMED))
         return (pte & MM_PTE_SW_GUARD) ? protect | PAGE_GUARD : PAGE_NOACCESS;
     return protect;
 }
@@ -290,6 +291,8 @@ void MiUpgradePte(ULONG64 *root, ULONG_PTR va, ULONG64 value, USHORT asid)
 BOOLEAN NTAPI MmIsAddressValid(PVOID va)
 {
     ULONG_PTR v = (ULONG_PTR)va;
+    if ((ULONG_PTR)((LONG_PTR)(v << 16) >> 16) != v)
+        return FALSE;
     if (v >= MIME_KVA_PHYSMAP && v < MIME_KVA_PHYSMAP + HalBootInfo->ram_base + HalBootInfo->ram_size)
         return TRUE;
     ULONG64 *table = (ULONG64 *)HalPhysmap(KiReadCr3() & MM_PTE_ADDR_MASK);

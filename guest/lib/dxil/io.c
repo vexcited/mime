@@ -332,7 +332,11 @@ static void location_variable(Compiler *c, int sig, const SigElement *e, uint32_
     if (e->per_vertex)
         n = 3;
     *var = dxil_global(c, storage, n ? spv_type_array(&c->b, type, n) : type, 0);
-    dxil_decorate(c, *var, SpvDecorationLocation, location);
+    /* the second source of a dual source blend, see DxbcCompileOptions. */
+    int second = c->kind == KIND_PIXEL && sig == SIG_OUT && c->options->dual_source && location == 1;
+    dxil_decorate(c, *var, SpvDecorationLocation, second ? 0 : location);
+    if (second)
+        dxil_decorate(c, *var, SpvDecorationIndex, 1);
     if (component)
         dxil_decorate(c, *var, SpvDecorationComponent, component);
     if (sig == SIG_PATCH)
