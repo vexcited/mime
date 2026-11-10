@@ -1023,7 +1023,7 @@ NTSTATUS NTAPI NtSetInformationThread(HANDLE handle, THREADINFOCLASS klass, PVOI
         if (!value || (value & ~KiProcessAffinity(&process->Pcb)))
             status = STATUS_INVALID_PARAMETER;
         else
-            thread->Tcb.Affinity = value;
+            KiSetAffinityThread(&thread->Tcb, value);
     } else if (klass == ThreadIdealProcessor) {
         /* the previous ideal processor is returned as the status. a processor that does not exist changes nothing. */
         ULONG ideal = (ULONG)value;
