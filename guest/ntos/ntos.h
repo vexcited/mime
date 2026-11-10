@@ -243,9 +243,9 @@ typedef struct _KPRCB {
     ULONG64 DispatcherTaken, DispatcherWaited, DispatcherWaitTicks;
     /*
      * services done without the kernel lock: waits, semaphore releases, event sets, then those that took it to end,
-     * then the ones win32k answered.
+     * then the ones win32k answered. last the interrupts taken in user mode without it, and those that took it to end.
      */
-    ULONG64 FastServices[3], FastServicesLocked, FastWin32Services;
+    ULONG64 FastServices[3], FastServicesLocked, FastWin32Services, FastInterrupts, FastInterruptsLocked;
 } KPRCB, *PKPRCB;
 
 #define KI_UNLOCK_TIMER 1 /* the timer is to be set to TimerArmed. */
@@ -520,6 +520,7 @@ void KiSystemService(PKTRAP_FRAME frame);
 #ifdef __x86_64__
 /* 0 when the service goes the usual way, 1 when it is done without the kernel lock, 2 when it is done and took it. */
 ULONG KiFastSystemService(PKTRAP_FRAME frame);
+ULONG KiFastUserInterrupt(PKTRAP_FRAME frame);
 /* interrupts off: the thread takes the kernel lock and goes on as in any other service, with interrupts on. */
 void KiLeaveFastService(PKTHREAD thread);
 /* one access to user memory that fails where it would fault, see KiTrapCommon. */
