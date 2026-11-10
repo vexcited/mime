@@ -919,6 +919,33 @@ void mime_desktop_jump_list(const MimeShellJumpList *list)
 
 /* ------------------------------------------------------------------ start */
 
+/*
+ * the mime on PATH when it is this one, as wine writes its menu entries, so an entry outlives the binary an update
+ * replaces: a store path of nix goes away, /run/current-system/sw/bin/mime stays.
+ */
+static bool stable_exe(char *out, size_t size)
+{
+    char self[MIME_PATH_MAX];
+    if (!realpath("/proc/self/exe", self))
+        return false;
+    const char *path = getenv("PATH");
+    while (path && *path) {
+        const char *end = strchrnul(path, ':');
+        char candidate[MIME_PATH_MAX], resolved[MIME_PATH_MAX];
+        int length = (int)(end - path);
+        if (path[0] == '/' && (size_t)length + sizeof("/mime") <= sizeof(candidate)) {
+            snprintf(candidate, sizeof(candidate), "%.*s/mime", length, path);
+            if (realpath(candidate, resolved) && !strcmp(resolved, self)) {
+                mime_strlcpy(out, candidate, size);
+                return true;
+            }
+        }
+        path = *end ? end + 1 : end;
+    }
+    mime_strlcpy(out, self, size);
+    return true;
+}
+
 void mime_ui_desktop_start(const MimePaths *paths)
 {
     if (!setting_enabled(paths))
@@ -929,10 +956,8 @@ void mime_ui_desktop_start(const MimePaths *paths)
         return;
     mime_strlcpy(g_user, id.user_name, sizeof(g_user));
     data_directory(g_data, sizeof(g_data));
-    ssize_t n = readlink("/proc/self/exe", g_exe, sizeof(g_exe) - 1);
-    if (n <= 0)
+    if (!stable_exe(g_exe, sizeof(g_exe)))
         return;
-    g_exe[n] = 0;
     g_inotify = inotify_init1(IN_CLOEXEC);
     if (g_inotify < 0)
         return;

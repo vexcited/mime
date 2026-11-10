@@ -216,13 +216,10 @@ static int show(const MimeShellDialog *d)
         return code == 0 ? 0 : -1;
     }
     /* SDL's box, in a process of its own: it would hold the thread that draws the machine's windows. */
-    char self[512], kind_text[8];
-    ssize_t length = readlink("/proc/self/exe", self, sizeof(self) - 1);
-    if (length <= 0)
-        return -1;
-    self[length] = 0;
+    char kind_text[8];
     snprintf(kind_text, sizeof(kind_text), "%u", d->kind);
-    argv[n++] = self;
+    /* the running binary itself, which still starts after an update has replaced or deleted its file. */
+    argv[n++] = "/proc/self/exe";
     argv[n++] = kind_text;
     argv[n++] = title;
     argv[n++] = text;
