@@ -3,9 +3,11 @@
  * receiving thread turns them into messages, so hit testing and activation run in the right context.
  */
 #include "win32k.h"
+#include "mime_svc_win32k.h"
 
 POINT InputCursorPos;
 UCHAR InputAsyncKeys[256];
+volatile LONG InputKeyGeneration = 1;
 WND *InputForeground;
 
 #define INPUT_BATCH (4096 / sizeof(MimeInputEvent))
@@ -27,6 +29,7 @@ void InputSetForeground(WND *w)
 {
     WND *old = InputForeground;
     InputForeground = w;
+    InputKeysChanged();
     if (old != w)
         InputForegroundChanged();
 }
@@ -78,14 +81,38 @@ SHORT NTAPI NtUserGetKeyState(int key)
     UserEnter();
     W32THREAD *t = W32GetThread();
     SHORT r = 0;
+    /* read first: a change that comes while the answer is made leaves it out of date at once. */
+    LONG generation = __atomic_load_n(&InputKeyGeneration, __ATOMIC_SEQ_CST);
     if (t)
         sync_with_async(t);
     if (t && key >= 0 && key < 256) {
         /* the state byte sign extended, like windows: callers test bit 15 or bit 7. */
         r = (SHORT)(signed char)(W32InputOwner(t)->KeyState[key] & 0x81);
+        if (t->KeyCacheGeneration != generation) {
+            memset(t->KeyCacheValid, 0, sizeof(t->KeyCacheValid));
+            t->KeyCacheGeneration = generation;
+        }
+        t->KeyCache[key] = (UCHAR)r;
+        t->KeyCacheValid[key >> 5] |= 1u << (key & 31);
     }
     UserLeave();
     return r;
+}
+
+/*
+ * a game asks for a hundred keys a frame, and the answers change when a key does. the kernel calls this before it
+ * takes any lock, with interrupts off: it reads what the calling thread alone writes, and the generation.
+ */
+BOOLEAN NTAPI W32FastService(ULONG number, ULONG64 argument, ULONG64 *result)
+{
+    W32THREAD *t = PsGetCurrentThreadWin32Thread();
+    ULONG key = (ULONG)argument;
+    if (number != MIME_SVC_NtUserGetKeyState || !t || key >= 256 ||
+        t->KeyCacheGeneration != __atomic_load_n(&InputKeyGeneration, __ATOMIC_SEQ_CST) ||
+        !(t->KeyCacheValid[key >> 5] & 1u << (key & 31)))
+        return FALSE;
+    *result = (ULONG64)(LONG64)(signed char)t->KeyCache[key];
+    return TRUE;
 }
 
 /* the 256 state bytes of the calling thread: bit 7 down, bit 0 toggled. */
@@ -118,6 +145,7 @@ BOOL NTAPI NtUserSetKeyboardState(PBYTE state)
     if (t)
         for (int i = 0; i < 256; i++)
             W32InputOwner(t)->KeyState[i] = copy[i] & 0x81;
+    InputKeysChanged();
     UserLeave();
     return TRUE;
 }
@@ -197,6 +225,7 @@ static void sync_async_sides(BOOLEAN on, UINT left, UINT right, UINT generic)
 static void update_async_keys(const MimeInputEvent *ev)
 {
     static const UCHAR button_vk[] = {0, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2};
+    InputKeysChanged();
     switch (ev->type) {
     case MIME_INPUT_MOUSE_DOWN:
     case MIME_INPUT_MOUSE_UP:
@@ -741,6 +770,7 @@ static void set_key_state(W32THREAD *t, UINT vk, BOOLEAN down)
 {
     if (vk >= 256)
         return;
+    InputKeysChanged();
     t = W32InputOwner(t);
     if (down && !(t->KeyState[vk] & 0x80))
         t->KeyState[vk] ^= 1;
@@ -768,6 +798,7 @@ static void sync_mouse_state(W32THREAD *t, const MimeInputEvent *ev, WPARAM stat
     } buttons[] = {{VK_LBUTTON, MK_LBUTTON}, {VK_RBUTTON, MK_RBUTTON}, {VK_MBUTTON, MK_MBUTTON},
                    {VK_XBUTTON1, MK_XBUTTON1}, {VK_XBUTTON2, MK_XBUTTON2}};
     UCHAR *keys = W32InputOwner(t)->KeyState;
+    InputKeysChanged();
     for (ULONG i = 0; i < RTL_NUMBER_OF(buttons); i++) {
         UINT key = buttons[i].Key;
         keys[key] = (UCHAR)((keys[key] & 1) | ((state & buttons[i].Mask) ? 0x80 : 0));
@@ -1048,6 +1079,7 @@ static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND fi
                 W32InputOwner(state)->KeyState[VK_CAPITAL] |= 1;
             else
                 W32InputOwner(state)->KeyState[VK_CAPITAL] &= ~1;
+            InputKeysChanged();
         }
     }
     if (remove) {

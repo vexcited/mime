@@ -299,6 +299,7 @@ static ULONG g_attached;
 /* gives every thread that reads the state of from the state of to instead. */
 static void move_sharers(W32THREAD *from, W32THREAD *to)
 {
+    InputKeysChanged();
     for (PLIST_ENTRY e = g_threads.Flink; e != &g_threads; e = e->Flink) {
         W32THREAD *x = CONTAINING_RECORD(e, W32THREAD, Links);
         if (x != to && (x == from || x->InputShare == from)) {
@@ -318,6 +319,7 @@ static void detach(W32THREAD *t)
     memcpy(t->KeyState, t->InputShare->KeyState, sizeof(t->KeyState));
     t->InputShare = nullptr;
     g_attached--;
+    InputKeysChanged();
 }
 
 /*
@@ -357,6 +359,7 @@ HWND W32SharedWindow(W32THREAD *t, SIZE_T offset)
 /* an ending thread leaves its group: its sharers take the first of them as the holder of their state. */
 static void leave_group(W32THREAD *t)
 {
+    InputKeysChanged();
     if (t->InputShare) {
         t->InputShare = nullptr;
         g_attached--;
@@ -448,6 +451,7 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
     }
     if (InputForeground && InputForeground->Thread == t)
         InputForeground = nullptr;
+    InputKeysChanged();
     /* otherwise a thread that hid the pointer leaves it hidden for the next program. */
     if (InputCursorHidden && (t->CursorShowCount < 0 || !t->Cursor))
         HostSetCursor(MIME_CURSOR_ARROW);
@@ -654,7 +658,7 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
         DbgPrint("win32k: cannot register the system service table\n");
         return STATUS_UNSUCCESSFUL;
     }
-    static WIN32_CALLOUTS callouts = {process_callout, thread_callout, W32ShutdownProcess, W32TimeChange};
+    static WIN32_CALLOUTS callouts = {process_callout, thread_callout, W32ShutdownProcess, W32TimeChange, W32FastService};
     PsEstablishWin32Callouts(&callouts);
 
     UserEnter();

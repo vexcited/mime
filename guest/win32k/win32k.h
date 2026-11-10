@@ -580,6 +580,10 @@ typedef struct W32THREAD {
     HWND Capture;
     ULONG CaptureNc;  /* nc hit code of a capture held by the frame. */
     UCHAR KeyState[256]; /* bit 7 down, bit 0 toggled, as seen by this thread. */
+    /* what GetKeyState last answered this thread, key by key, good while InputKeyGeneration stands. */
+    LONG KeyCacheGeneration;
+    ULONG KeyCacheValid[8];
+    UCHAR KeyCache[256];
     struct W32THREAD *InputShare; /* the thread whose key state and focus AttachThreadInput shares, or null. */
     HWND MouseWindow;    /* window under the mouse for leave tracking. */
     TRACKMOUSEEVENT Track;
@@ -1027,6 +1031,13 @@ extern BOOLEAN InputPointerOutside; /* the host said the last pointer event was 
 /* raw input thread owns the desktop window, like the Windows csrss threads. */
 extern HANDLE InputThreadId, InputProcessId;
 extern UCHAR InputAsyncKeys[256];
+/* counts the changes to anything GetKeyState reads: a key, the foreground, the focus owner, the attached threads. */
+extern volatile LONG InputKeyGeneration;
+static inline void InputKeysChanged(void)
+{
+    __atomic_add_fetch(&InputKeyGeneration, 1, __ATOMIC_SEQ_CST);
+}
+BOOLEAN NTAPI W32FastService(ULONG number, ULONG64 argument, ULONG64 *result);
 extern WND *InputForeground;
 /* the thread that set the focus last, for a foreground window that has windows of several threads. */
 extern W32THREAD *InputFocusOwner;
