@@ -1,5 +1,10 @@
 LIBRARY dbghelp.dll
 EXPORTS
+    ImageDirectoryEntryToData=imagehlp.ImageDirectoryEntryToData
+    ImageDirectoryEntryToDataEx=imagehlp.ImageDirectoryEntryToDataEx
+    ImageNtHeader=imagehlp.ImageNtHeader
+    ImageRvaToSection=imagehlp.ImageRvaToSection
+    ImageRvaToVa=imagehlp.ImageRvaToVa
     MiniDumpWriteDump=_MiniDumpWriteDump@28
     StackWalk64=_StackWalk64@36
     SymCleanup=_SymCleanup@4
