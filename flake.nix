@@ -1,5 +1,5 @@
 {
-  description = "Runs Windows programs on its own Windows-compatible kernel in a virtual machine";
+  description = "Running Windows programs on Linux by reimplementing Windows.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
