@@ -1123,6 +1123,7 @@ WINUSERAPI BOOL WINAPI IsDialogMessageW(HWND dialog, LPMSG msg)
     }
     UINT code = dlg_code_for(msg->hwnd == dialog ? nullptr : msg->hwnd, msg);
     if (code & DLGC_WANTMESSAGE) {
+        TranslateMessage(msg);
         DispatchMessageW(msg);
         return TRUE;
     }

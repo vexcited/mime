@@ -1193,14 +1193,60 @@ LRESULT NTAPI NtUserDispatchMessage(const MSG *user_msg)
     return r;
 }
 
+/* the character of a key the host types no text for, as the US layout gives it. */
+static WCHAR control_char(UINT vk, BOOLEAN shift, BOOLEAN ctrl, BOOLEAN alt)
+{
+    if (ctrl && (shift || alt))
+        return 0;
+    switch (vk) {
+    case VK_BACK: return ctrl ? 0x7F : 0x08;
+    case VK_TAB: return ctrl ? 0 : 0x09;
+    case VK_RETURN: return ctrl ? 0x0A : 0x0D;
+    case VK_ESCAPE: return 0x1B;
+    case VK_CANCEL: return 0x03;
+    }
+    return 0;
+}
+
 BOOL NTAPI NtUserTranslateMessage(const MSG *user_msg, UINT flags)
 {
-    /* the host delivers translated characters as their own events. */
     MSG m;
     if (!NT_SUCCESS(MimeCopyFromUser(&m, user_msg, sizeof(m))))
         return FALSE;
     (void)flags;
-    return m.message == WM_KEYDOWN || m.message == WM_KEYUP || m.message == WM_SYSKEYDOWN || m.message == WM_SYSKEYUP;
+    if (m.message != WM_KEYDOWN && m.message != WM_KEYUP && m.message != WM_SYSKEYDOWN && m.message != WM_SYSKEYUP)
+        return FALSE;
+    if (m.message == WM_KEYUP || m.message == WM_SYSKEYUP)
+        return TRUE;
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    if (t) {
+        const UCHAR *keys = W32InputOwner(t)->KeyState;
+        WCHAR ch = control_char((UINT)m.wParam, keys[VK_SHIFT] >> 7, keys[VK_CONTROL] >> 7, keys[VK_MENU] >> 7);
+        if (ch)
+            QueuePost(t, m.hwnd, m.message == WM_SYSKEYDOWN ? WM_SYSCHAR : WM_CHAR, ch, m.lParam);
+        /*
+         * the host types the other characters, as events that follow the key press. the ones of this press were kept
+         * when the thread took it, and the ones that come later pass once the press is translated.
+         */
+        ULONG scan = (ULONG)(m.lParam >> 16) & 0x1FF, count = RTL_NUMBER_OF(t->KeyChars);
+        struct KEY_CHARS *last = &t->KeyChars[(t->KeyCharsNext - 1) % count], *found = nullptr;
+        for (ULONG i = 1; i <= count && !found; i++) {
+            struct KEY_CHARS *k = &t->KeyChars[(t->KeyCharsNext - i) % count];
+            if (k->Used && k->Scan == scan && k->Time == m.time)
+                found = k;
+        }
+        if (!found && last->Used && last->Scan == scan)
+            found = last;
+        if (found) {
+            for (ULONG i = 0; i < found->Count; i++)
+                QueuePost(t, m.hwnd, found->Chars[i].Message, found->Chars[i].Char, m.lParam);
+            found->Count = 0;
+            found->Translated = TRUE;
+        }
+    }
+    UserLeave();
+    return TRUE;
 }
 
 BOOL NTAPI NtUserGetMessagePos(void)
