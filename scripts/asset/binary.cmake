@@ -133,6 +133,8 @@ function(mime_write_binary path hex)
     file(WRITE "${work}/a.b64" "begin-base64 644 a.cpio\n${text}\n====\n")
     file(ARCHIVE_EXTRACT INPUT "${work}/a.b64" DESTINATION "${work}/out")
     file(RENAME "${work}/out/${member}" "${path}")
+    # the archive's member has a time of 1970, which would keep ninja from rebuilding what depends on it.
+    file(TOUCH "${path}")
     file(REMOVE_RECURSE "${work}")
 endfunction()
 
