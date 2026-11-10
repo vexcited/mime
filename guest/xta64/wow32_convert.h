@@ -61,6 +61,8 @@ static inline OBJECT_ATTRIBUTES attributes32(ULONG address, UNICODE_STRING *name
 /* native scratch memory for results before they are narrowed, anywhere in the address space. */
 PVOID Mx32Scratch(SIZE_T size);
 void Mx32FreeScratch(PVOID base);
+/* where the 32-bit addresses of this process end: 4 GiB less the last 64 KiB for a large address aware program, 2 GiB otherwise. */
+ULONG64 Mx32AddressLimit(void);
 
 PVOID MxCurrentPeb32(void);
 PVOID MxCurrentTeb32(void);

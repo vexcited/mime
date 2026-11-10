@@ -18,6 +18,17 @@ NTSYSCALLAPI NTSTATUS NTAPI NtAdjustPrivilegesToken(HANDLE handle, BOOLEAN disab
 NTSYSCALLAPI NTSTATUS NTAPI NtDuplicateToken(HANDLE token, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
                                              BOOLEAN effective_only, ULONG type, PHANDLE result);
 
+ULONG64 Mx32AddressLimit(void)
+{
+    static ULONG64 limit;
+    if (!limit) {
+        const IMAGE_DOS_HEADER *dos = NtCurrentPeb()->ImageBaseAddress;
+        const IMAGE_NT_HEADERS32 *nt = (const IMAGE_NT_HEADERS32 *)((PUCHAR)dos + dos->e_lfanew);
+        limit = nt->FileHeader.Characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE ? 0xFFFF0000ull : 0x7FFF0000ull;
+    }
+    return limit;
+}
+
 static PVOID allocate32(SIZE_T size)
 {
     PVOID base = nullptr;
@@ -813,10 +824,10 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtAllocateVirtualMemory: {
         PVOID base = pointer32(*(PULONG)pointer32(a[1]));
         SIZE_T size = *(PULONG)pointer32(a[3]);
-        if ((ULONG_PTR)base + size > 0x7FFF0000ull)
+        if ((ULONG_PTR)base + size > Mx32AddressLimit())
             return STATUS_NO_MEMORY;
         status = NtAllocateVirtualMemory(handle32(a[0]), &base, a[2], &size, a[4], a[5]);
-        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > 0x7FFF0000ull) {
+        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > Mx32AddressLimit()) {
             SIZE_T release = 0;
             NtFreeVirtualMemory(handle32(a[0]), &base, &release, MEM_RELEASE);
             return STATUS_NO_MEMORY;
@@ -835,13 +846,13 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         status = extended32(a[5], a[6], &ext, &block);
         if (!NT_SUCCESS(status))
             return status;
-        if ((ULONG_PTR)base + size > 0x7FFF0000ull) {
+        if ((ULONG_PTR)base + size > Mx32AddressLimit()) {
             Mx32FreeScratch(block);
             return STATUS_NO_MEMORY;
         }
         status = NtAllocateVirtualMemoryEx(handle32(a[0]), &base, &size, a[3], a[4], ext, a[6]);
         Mx32FreeScratch(block);
-        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > 0x7FFF0000ull) {
+        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > Mx32AddressLimit()) {
             SIZE_T release = 0;
             NtFreeVirtualMemory(handle32(a[0]), &base, &release, MEM_RELEASE);
             return STATUS_NO_MEMORY;
@@ -1352,11 +1363,11 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtMapViewOfSection: {
         PVOID base = pointer32(*(PULONG)pointer32(a[2]));
         SIZE_T size = *(PULONG)pointer32(a[6]);
-        if ((ULONG_PTR)base + size > 0x7FFF0000ull)
+        if ((ULONG_PTR)base + size > Mx32AddressLimit())
             return STATUS_NO_MEMORY;
         status = NtMapViewOfSection(handle32(a[0]), handle32(a[1]), &base, a[3], a[4], pointer32(a[5]), &size,
                                     a[7], a[8], a[9]);
-        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > 0x7FFF0000ull)
+        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > Mx32AddressLimit())
             return too_high32(handle32(a[1]), base);
         if (NT_SUCCESS(status)) {
             store32(a[2], (ULONG_PTR)base);
@@ -1372,14 +1383,14 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         status = extended32(a[7], a[8], &ext, &block);
         if (!NT_SUCCESS(status))
             return status;
-        if ((ULONG_PTR)base + size > 0x7FFF0000ull) {
+        if ((ULONG_PTR)base + size > Mx32AddressLimit()) {
             Mx32FreeScratch(block);
             return STATUS_NO_MEMORY;
         }
         status = NtMapViewOfSectionEx(handle32(a[0]), handle32(a[1]), &base, pointer32(a[3]), &size, a[5], a[6], ext,
                                       a[8]);
         Mx32FreeScratch(block);
-        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > 0x7FFF0000ull)
+        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > Mx32AddressLimit())
             return too_high32(handle32(a[1]), base);
         if (NT_SUCCESS(status)) {
             store32(a[2], (ULONG_PTR)base);

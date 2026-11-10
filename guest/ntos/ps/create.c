@@ -292,8 +292,10 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
     process->Subsystem = section->Image.Subsystem;
     process->SystemDll = system_dll;
     process->Machine = machine;
+    /* a large address aware 32-bit program has the whole 4 GiB on 64-bit windows. */
     if (process->Machine == IMAGE_FILE_MACHINE_I386)
-        process->AddressSpace.AllocationLimit = 0x7FFF0000;
+        process->AddressSpace.AllocationLimit =
+            section->Image.Characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE ? 0xFFFF0000 : 0x7FFF0000;
     process->MimeRequestId = request_id;
     MimeSessionUserProgram(process, parent);
     /* a gui program gets no console. a console program shares the one it is given. */

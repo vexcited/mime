@@ -640,7 +640,7 @@ NTSTATUS Mx32QuerySystemInformation(const ULONG *a)
         if (NT_SUCCESS(status)) {
             ULONG o[11] = {info.Reserved, info.TimerResolution, info.PageSize, info.NumberOfPhysicalPages,
                            info.LowestPhysicalPageNumber, info.HighestPhysicalPageNumber, info.AllocationGranularity,
-                           0x10000, 0x7FFEFFFF, (ULONG)info.ActiveProcessorsAffinityMask,
+                           0x10000, (ULONG)Mx32AddressLimit() - 1, (ULONG)info.ActiveProcessorsAffinityMask,
                            (UCHAR)info.NumberOfProcessors};
             memcpy(out, o, sizeof(o));
         }
