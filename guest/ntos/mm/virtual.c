@@ -1396,15 +1396,16 @@ BOOLEAN MmFastFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute)
 #define FAST_QUERY_ENTRIES 16384
 
 /*
- * the region of an address of the current process, without the kernel lock and with interrupts off. it is a reader
- * of the gate as MmFastFault is: no vad and no table changes meanwhile, and an entry only goes from absent to
- * present, which leaves its state and its protection as they were. FALSE leaves the call to the usual way.
+ * the region of an address of a process, the current one when none is given, without the kernel lock and with
+ * interrupts off. it is a reader of the gate as MmFastFault is: no vad and no table changes meanwhile, and an entry
+ * only goes from absent to present, which leaves its state and its protection as they were. the end of the process
+ * is a writer too. FALSE leaves the call to the usual way.
  */
-BOOLEAN MmFastQueryVirtual(PVOID base, PMEMORY_BASIC_INFORMATION info)
+BOOLEAN MmFastQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION info)
 {
-    PMMADDRESS_SPACE as = &((PEPROCESS)KiCurrentThread()->ApcStateProcess)->AddressSpace;
+    PMMADDRESS_SPACE as = &(process ? process : (PEPROCESS)KiCurrentThread()->ApcStateProcess)->AddressSpace;
     ULONG_PTR va = (ULONG_PTR)base & ~(ULONG_PTR)(PAGE_SIZE - 1);
-    if (va > MM_HIGHEST_USER_ADDRESS || !as->Root || (KiOptions & KI_OPT_NO_FAST_FAULT))
+    if (va > MM_HIGHEST_USER_ADDRESS || (KiOptions & KI_OPT_NO_FAST_FAULT))
         return FALSE;
     ULONG gate = __atomic_load_n(&as->FaultGate, __ATOMIC_RELAXED);
     do {
@@ -1412,7 +1413,7 @@ BOOLEAN MmFastQueryVirtual(PVOID base, PMEMORY_BASIC_INFORMATION info)
             return FALSE;
     } while (!__atomic_compare_exchange_n(&as->FaultGate, &gate, gate + MI_GATE_READER, TRUE, __ATOMIC_ACQUIRE,
                                           __ATOMIC_RELAXED));
-    BOOLEAN done = query_region(as, va, info, FAST_QUERY_ENTRIES);
+    BOOLEAN done = as->Root && query_region(as, va, info, FAST_QUERY_ENTRIES);
     __atomic_fetch_sub(&as->FaultGate, MI_GATE_READER, __ATOMIC_RELEASE);
     return done;
 }
@@ -1613,6 +1614,8 @@ void MmDeleteAddressSpace(PMMADDRESS_SPACE as)
 {
     if (!as->Root)
         return;
+    /* another process may be reading or changing it, and the fast queries read it without the kernel lock. */
+    MiLockAddressSpace(as);
     while (as->VadCount) {
         PMMVAD v = as->Vads[as->VadCount - 1];
         release_pages(as, v->StartVa, v->EndVa);
@@ -1637,6 +1640,7 @@ void MmDeleteAddressSpace(PMMADDRESS_SPACE as)
     memset(as->Root, 0, MI_USER_ROOT_ENTRIES * sizeof(ULONG64));
     MiFlushTlbAsid(as->Asid);
     as->Root = nullptr;
+    MiUnlockAddressSpace(as);
 }
 
 void MmFreeAddressSpaceRoot(PMMADDRESS_SPACE as)

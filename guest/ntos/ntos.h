@@ -712,7 +712,7 @@ FORCEINLINE void MiUnlockAddressSpace(PMMADDRESS_SPACE as)
 }
 
 BOOLEAN MmFastFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute);
-BOOLEAN MmFastQueryVirtual(PVOID base, PMEMORY_BASIC_INFORMATION info);
+BOOLEAN MmFastQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION info);
 
 /* user mode faults by how they were resolved, for the thread dump. */
 typedef struct DECLSPEC_ALIGN(64) _MM_FAULT_STATS {
