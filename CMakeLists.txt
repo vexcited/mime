@@ -68,7 +68,7 @@ file(MAKE_DIRECTORY ${MIME_BUILD_GEN}/res ${MIME_SYSTEM32} ${MIME_SYSX64} ${MIME
 include(FetchContent)
 
 set(MIME_ICONS_REPOSITORY https://code.vexcited.com/mime/icons.git)
-set(MIME_ICONS_COMMIT b08a4e14fc8697158379e7a0d18328923787eb6a)
+set(MIME_ICONS_COMMIT ed99f1c9de2bc1b42f7c899b7355503be96cab5f)
 set(MIME_AUDIO_REPOSITORY https://code.vexcited.com/mime/audio.git)
 set(MIME_AUDIO_COMMIT 86c3138fcab689175f18847b72b06820c7dd0bd6)
 set(MIME_ICONS_DIR "" CACHE PATH "A checkout of mime-icons to build from instead of the pinned commit")
