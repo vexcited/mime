@@ -212,7 +212,7 @@ typedef struct _KPROCESS {
 #define KI_IDLE_HALTED 2
 
 /* the kinds of service KiFastSystemService does without the kernel lock. */
-#define KI_FAST_SERVICE_KINDS 11
+#define KI_FAST_SERVICE_KINDS 12
 
 typedef struct _KPRCB {
     ULONG Number;
@@ -709,6 +709,7 @@ FORCEINLINE void MiUnlockAddressSpace(PMMADDRESS_SPACE as)
 }
 
 BOOLEAN MmFastFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute);
+BOOLEAN MmFastQueryVirtual(PVOID base, PMEMORY_BASIC_INFORMATION info);
 
 /* user mode faults by how they were resolved, for the thread dump. */
 typedef struct DECLSPEC_ALIGN(64) _MM_FAULT_STATS {

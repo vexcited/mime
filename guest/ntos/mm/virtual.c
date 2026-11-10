@@ -1061,14 +1061,13 @@ NTSTATUS MiProtectVirtual(PEPROCESS process, PVOID *base, SIZE_T *size, ULONG pr
 
 /* ----------------------------------------------------------------- query */
 
-NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION info)
+/*
+ * the region of a page, for a caller that keeps the vads and the tables as they are. the region is followed over at most
+ * budget table entries, and FALSE tells it is longer.
+ */
+static BOOLEAN query_region(PMMADDRESS_SPACE as, ULONG_PTR va, PMEMORY_BASIC_INFORMATION info, SIZE_T budget)
 {
-    PMMADDRESS_SPACE as = &process->AddressSpace;
-    ULONG_PTR va = (ULONG_PTR)base & ~(ULONG_PTR)(PAGE_SIZE - 1);
-    if (va > MM_HIGHEST_USER_ADDRESS)
-        return STATUS_INVALID_PARAMETER;
     memset(info, 0, sizeof(*info));
-    MiLockAddressSpace(as);
     PMMVAD vad = MiFindVad(as, va);
     if (!vad) {
         ULONG i = vad_lower_bound(as, va);
@@ -1077,8 +1076,7 @@ NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION
         info->RegionSize = next - va;
         info->State = MEM_FREE;
         info->Protect = PAGE_NOACCESS;
-        MiUnlockAddressSpace(as);
-        return STATUS_SUCCESS;
+        return TRUE;
     }
     ULONG64 pte = MiReadPte(as->Root, va);
     BOOLEAN committed = pte_committed(pte);
@@ -1096,8 +1094,11 @@ NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION
                 break;
             end = run_va;
         }
+        if (count > budget)
+            return FALSE;
+        budget -= count;
         for (SIZE_T i = 0; i < count; i++) {
-            ULONG64 e = p[i];
+            ULONG64 e = __atomic_load_n(&p[i], __ATOMIC_RELAXED);
             if (pte_committed(e) != committed || (committed && MiPteToProtect(e) != prot)) {
                 stopped = TRUE;
                 break;
@@ -1114,6 +1115,17 @@ NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION
     info->State = committed ? MEM_COMMIT : MEM_RESERVE;
     info->Protect = prot;
     info->Type = vad->Type == MiVadImage ? MEM_IMAGE : vad->Type == MiVadPrivate ? MEM_PRIVATE : MEM_MAPPED;
+    return TRUE;
+}
+
+NTSTATUS MiQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMATION info)
+{
+    PMMADDRESS_SPACE as = &process->AddressSpace;
+    ULONG_PTR va = (ULONG_PTR)base & ~(ULONG_PTR)(PAGE_SIZE - 1);
+    if (va > MM_HIGHEST_USER_ADDRESS)
+        return STATUS_INVALID_PARAMETER;
+    MiLockAddressSpace(as);
+    query_region(as, va, info, (SIZE_T)-1);
     MiUnlockAddressSpace(as);
     return STATUS_SUCCESS;
 }
@@ -1378,6 +1390,31 @@ BOOLEAN MmFastFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute)
     MmFaultStats[KeGetCurrentPrcb()->Number].Rejected += !handled;
     KiRestoreInterrupts(state);
     return handled;
+}
+
+/* a longer region keeps a writer of the gate waiting with the kernel lock for too long, and is the usual way's. */
+#define FAST_QUERY_ENTRIES 16384
+
+/*
+ * the region of an address of the current process, without the kernel lock and with interrupts off. it is a reader
+ * of the gate as MmFastFault is: no vad and no table changes meanwhile, and an entry only goes from absent to
+ * present, which leaves its state and its protection as they were. FALSE leaves the call to the usual way.
+ */
+BOOLEAN MmFastQueryVirtual(PVOID base, PMEMORY_BASIC_INFORMATION info)
+{
+    PMMADDRESS_SPACE as = &((PEPROCESS)KiCurrentThread()->ApcStateProcess)->AddressSpace;
+    ULONG_PTR va = (ULONG_PTR)base & ~(ULONG_PTR)(PAGE_SIZE - 1);
+    if (va > MM_HIGHEST_USER_ADDRESS || !as->Root || (KiOptions & KI_OPT_NO_FAST_FAULT))
+        return FALSE;
+    ULONG gate = __atomic_load_n(&as->FaultGate, __ATOMIC_RELAXED);
+    do {
+        if (gate & MI_GATE_WRITER)
+            return FALSE;
+    } while (!__atomic_compare_exchange_n(&as->FaultGate, &gate, gate + MI_GATE_READER, TRUE, __ATOMIC_ACQUIRE,
+                                          __ATOMIC_RELAXED));
+    BOOLEAN done = query_region(as, va, info, FAST_QUERY_ENTRIES);
+    __atomic_fetch_sub(&as->FaultGate, MI_GATE_READER, __ATOMIC_RELEASE);
+    return done;
 }
 
 /*
