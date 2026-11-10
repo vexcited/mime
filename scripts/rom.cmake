@@ -96,4 +96,8 @@ foreach(key IN LISTS genuine_paths)
     endif()
 endforeach()
 string(APPEND text "${data}.p2align 14\n.globl ${prefix}mime_rom_end\n${prefix}mime_rom_end:\n")
+if(NOT SYSTEM STREQUAL "Darwin")
+    # without the note, ld.bfd gives the whole host an executable stack.
+    string(APPEND text ".section .note.GNU-stack,\"\",@progbits\n")
+endif()
 file(WRITE ${OUTPUT} "${text}")
