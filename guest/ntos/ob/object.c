@@ -796,7 +796,7 @@ NTSTATUS NTAPI NtQueryDirectoryObject(HANDLE handle, PVOID buffer, ULONG length,
                                       PULONG user_context, PULONG user_returned)
 {
     POBJECT_DIRECTORY dir;
-    NTSTATUS status = ObReferenceHandle(handle, ObDirectoryType, KeGetPreviousMode(), (PVOID *)&dir, nullptr);
+    NTSTATUS status = ObReferenceHandleFor(handle, DIRECTORY_QUERY, ObDirectoryType, KeGetPreviousMode(), &dir);
     if (!NT_SUCCESS(status))
         return status;
     ULONG start = 0;

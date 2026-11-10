@@ -1218,7 +1218,8 @@ NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS ta
                            ACCESS_MASK access, ULONG attributes, ULONG options);
 PDISPATCHER_HEADER ObGetWaitObject(PVOID object);
 /* the object of one of two types behind a handle of the calling process, or none. needs no kernel lock. */
-PVOID ObReferenceHandleFast(HANDLE handle, POBJECT_TYPE type, POBJECT_TYPE other);
+PVOID ObReferenceHandleFast(HANDLE handle, ACCESS_MASK access, POBJECT_TYPE type, POBJECT_TYPE other);
+extern BOOLEAN ObAuditHandleAccess;
 /* lets go of a reference unless it is the last one, which takes the kernel lock to let go of. */
 BOOLEAN ObDereferenceObjectFast(PVOID object);
 NTSTATUS ObCreateSymbolicLinkObject(PCUNICODE_STRING link, PCUNICODE_STRING target, BOOLEAN permanent);

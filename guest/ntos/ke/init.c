@@ -271,6 +271,7 @@ void KiInitializeKernel(MimeBootInfo *boot)
     /* the kernel options no-access-checks, which opens every object to every program, and trace-access. */
     SeAccessEnforced = strstr(boot->cmdline, "no-access-checks") == nullptr;
     SeTraceAccess = strstr(boot->cmdline, "trace-access") != nullptr;
+    ObAuditHandleAccess = strstr(boot->cmdline, "audit-handle-access") != nullptr;
     MiTraceRoutines = strstr(boot->cmdline, "trace-routines") != nullptr;
     extern BOOLEAN MiDiscoverRoutines;
     MiDiscoverRoutines = strstr(boot->cmdline, "discover-routines") != nullptr;

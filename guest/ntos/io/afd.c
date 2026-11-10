@@ -246,7 +246,7 @@ static AFD_REQUEST *new_request(PFILE_OBJECT file, ULONG kind, ULONG count, HAND
     }
     memset(r, 0, sizeof(*r));
     if (event) {
-        *status = ObReferenceHandle(event, ExEventType, KeGetPreviousMode(), (PVOID *)&r->Event, nullptr);
+        *status = ObReferenceHandleFor(event, EVENT_MODIFY_STATE, ExEventType, KeGetPreviousMode(), &r->Event);
         if (!NT_SUCCESS(*status)) {
             ExFreePool(r);
             return nullptr;

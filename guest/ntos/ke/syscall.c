@@ -548,7 +548,7 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         alertable = (BOOLEAN)a1;
         if (!fast_timeout(a2, &time, &timeout))
             return 0;
-        objects[0] = ObReferenceHandleFast((HANDLE)a0, nullptr, nullptr);
+        objects[0] = ObReferenceHandleFast((HANDLE)a0, SYNCHRONIZE, nullptr, nullptr);
         if (!objects[0])
             return 0;
         held = count = 1;
@@ -564,7 +564,8 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         if (previous && !fast_probe((ULONG64)previous, sizeof(LONG)))
             return 0;
         POBJECT_TYPE type = kind == FAST_RELEASE ? ExSemaphoreType : ExEventType;
-        objects[0] = ObReferenceHandleFast((HANDLE)a0, type, type);
+        /* EVENT_MODIFY_STATE and SEMAPHORE_MODIFY_STATE are one bit. */
+        objects[0] = ObReferenceHandleFast((HANDLE)a0, EVENT_MODIFY_STATE, type, type);
         if (!objects[0])
             return 0;
         held = 1;
@@ -589,7 +590,7 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
             ULONG64 handle;
             if (!KiFastReadUser64((PVOID)(a1 + held * sizeof(HANDLE)), &handle))
                 return fast_decline(thread, frame, objects, held);
-            objects[held] = ObReferenceHandleFast((HANDLE)handle, nullptr, nullptr);
+            objects[held] = ObReferenceHandleFast((HANDLE)handle, SYNCHRONIZE, nullptr, nullptr);
             if (!objects[held])
                 return fast_decline(thread, frame, objects, held);
             waits[held] = ObGetWaitObject(objects[held]);
@@ -602,7 +603,7 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         if (!fast_probe(a1, sizeof(PVOID)) || !fast_probe(a2, sizeof(PVOID)) || !fast_probe(a3, sizeof(IO_STATUS_BLOCK)) ||
             !fast_stack_argument(frame, 0, &a4) || !fast_timeout(a4, &time, &timeout))
             return 0;
-        objects[0] = ObReferenceHandleFast((HANDLE)a0, IoCompletionObjectType, IoCompletionObjectType);
+        objects[0] = ObReferenceHandleFast((HANDLE)a0, 0x2 /* IO_COMPLETION_MODIFY_STATE */, IoCompletionObjectType, IoCompletionObjectType);
         if (!objects[0])
             return 0;
         held = count = 1;
@@ -612,7 +613,7 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
     case FAST_POST:
         if (!fast_stack_argument(frame, 0, &a4))
             return 0;
-        objects[0] = ObReferenceHandleFast((HANDLE)a0, IoCompletionObjectType, IoCompletionObjectType);
+        objects[0] = ObReferenceHandleFast((HANDLE)a0, 0x2 /* IO_COMPLETION_MODIFY_STATE */, IoCompletionObjectType, IoCompletionObjectType);
         if (!objects[0])
             return 0;
         held = 1;

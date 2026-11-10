@@ -198,7 +198,7 @@ static NP_REQUEST *new_request(PFILE_OBJECT file, HANDLE event, PVOID apc_routin
     }
     memset(r, 0, sizeof(*r));
     if (event) {
-        *status = ObReferenceHandle(event, ExEventType, KeGetPreviousMode(), (PVOID *)&r->Event, nullptr);
+        *status = ObReferenceHandleFor(event, EVENT_MODIFY_STATE, ExEventType, KeGetPreviousMode(), &r->Event);
         if (!NT_SUCCESS(*status)) {
             ExFreePool(r);
             return nullptr;
@@ -242,7 +242,7 @@ static BOOLEAN init_call(NP_REQUEST *r, PFILE_OBJECT file, HANDLE event, PVOID a
 {
     memset(r, 0, offsetof(NP_REQUEST, Done));
     if (event) {
-        *status = ObReferenceHandle(event, ExEventType, KeGetPreviousMode(), (PVOID *)&r->Event, nullptr);
+        *status = ObReferenceHandleFor(event, EVENT_MODIFY_STATE, ExEventType, KeGetPreviousMode(), &r->Event);
         if (!NT_SUCCESS(*status))
             return FALSE;
         KeClearEvent(r->Event);
