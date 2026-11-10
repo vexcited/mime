@@ -276,6 +276,10 @@ PVOID NTAPI MmGetSystemRoutineAddress(PUNICODE_STRING name)
     PVOID found = find_export((PVOID)HalBootInfo->kernel_virt, ansi, 0, FALSE);
     if (!found && MiDiscoverRoutines)
         found = (PVOID)MiMissingRoutine;
+#ifdef __x86_64__
+    if (found && KiIsForeignCaller((ULONG_PTR)__builtin_return_address(0)))
+        found = KiForeignImport(found, ansi);
+#endif
     if (!found || MiTraceRoutines) {
         char caller[96];
         MiDescribeCodeAddress((ULONG_PTR)__builtin_return_address(0), caller, sizeof(caller));
@@ -288,7 +292,13 @@ PVOID NTAPI MmGetSystemRoutineAddress(PUNICODE_STRING name)
 PVOID MiFindModuleExport(const char *module, const char *name)
 {
     PKLDR_DATA_TABLE_ENTRY m = module_by_name(module);
-    return m ? find_export_in(m, name, 0, FALSE, 0) : nullptr;
+    PVOID found = m ? find_export_in(m, name, 0, FALSE, 0) : nullptr;
+#ifdef __x86_64__
+    /* only drivers ask, and a foreign one calls what it gets without the kernel lock. */
+    if (found)
+        found = KiForeignImport(found, name);
+#endif
+    return found;
 }
 
 NTSTATUS MiReadFileBytes(PFILE_OBJECT file, ULONG64 offset, PVOID buffer, ULONG length, PULONG read)
@@ -509,6 +519,15 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
     if (NT_SUCCESS(status))
         image_headers(base)->OptionalHeader.ImageBase = (ULONG_PTR)base;
 
+#ifdef __x86_64__
+    /* a driver that is not one of mime's rom files calls mime's code through stubs, see arch/x64/foreign.c. */
+    ULONG rom_volume;
+    ULONG64 rom_id;
+    BOOLEAN foreign = NT_SUCCESS(status) && !(file_object && MimeFsLockIdentity(file_object, &rom_volume, &rom_id) &&
+                                              rom_volume == ~0u);
+    if (foreign)
+        KiNoteForeignImage(base, info.SizeOfImage);
+#endif
     IMAGE_DATA_DIRECTORY imp = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
     for (PIMAGE_IMPORT_DESCRIPTOR d = imp.VirtualAddress ? (PIMAGE_IMPORT_DESCRIPTOR)(base + imp.VirtualAddress) : nullptr;
          NT_SUCCESS(status) && d && d->Name; d++) {
@@ -520,6 +539,7 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
         PIMAGE_THUNK_DATA64 iat = (PIMAGE_THUNK_DATA64)(base + d->FirstThunk);
         for (; names->u1.AddressOfData; names++, iat++) {
             PVOID target;
+            const char *name = "#";
             if (IMAGE_SNAP_BY_ORDINAL64(names->u1.Ordinal)) {
                 target = find_export_in(from, nullptr, (USHORT)IMAGE_ORDINAL64(names->u1.Ordinal), TRUE, 0);
                 if (!target)
@@ -527,6 +547,7 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
             } else {
                 PIMAGE_IMPORT_BY_NAME by_name = (PIMAGE_IMPORT_BY_NAME)(base + names->u1.AddressOfData);
                 target = find_export_in(from, by_name->Name, 0, FALSE, 0);
+                name = by_name->Name;
                 if (!target)
                     KiLogPrintf("unresolved driver import %s!%s", dll, by_name->Name);
             }
@@ -534,6 +555,10 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
                 status = STATUS_ENTRYPOINT_NOT_FOUND;
                 break;
             }
+#ifdef __x86_64__
+            if (foreign)
+                target = KiForeignImport(target, name);
+#endif
             iat->u1.Function = (ULONG64)target;
         }
     }

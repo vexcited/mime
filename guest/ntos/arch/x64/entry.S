@@ -555,13 +555,21 @@ KiTrapCommon:
     movq    %rbx, %rsp
     jmp     KiExceptionExit
 6:  cmpb    $0, %gs:KPCR_IDLE_SLEEPING
-    je      3f
+    je      10f
     movq    KTRAP_VECTOR(%rbx), %rax
     cmpq    $KI_VECTOR_CLOCK, %rax
     je      3f
     cmpq    $KI_VECTOR_IPI, %rax
     je      3f
     movb    $0, %gs:KPCR_IDLE_SLEEPING
+    call    KiAcquireKernelLock
+    jmp     3f
+    /* a driver's code may run without the lock, see arch/x64/foreign.c: the trap takes it to its end. */
+10: movl    %gs:KPCR_NUMBER, %eax
+    cmpl    %eax, KiKernelLock+LOCK_OWNER(%rip)
+    je      3f
+    orl     $KTRAP_FLAG_LOCK_TAKEN, KTRAP_FLAGS(%rbx)
+    movb    $0, %gs:KPCR_USER_MODE
     call    KiAcquireKernelLock
 3:  movq    %rbx, %rcx
     call    KiTrapDispatch
@@ -599,7 +607,14 @@ KiExceptionExit:
     swapgs
     iretq
 
-2:  RESTORE_XMM
+2:  testl   $KTRAP_FLAG_LOCK_TAKEN, KTRAP_FLAGS(%rsp)
+    jz      3f
+    andl    $~KTRAP_FLAG_LOCK_TAKEN, KTRAP_FLAGS(%rsp)
+    movq    %rsp, %rbx
+    subq    $0x20, %rsp
+    call    KiForeignTrapExit
+    movq    %rbx, %rsp
+3:  RESTORE_XMM
     RESTORE_GPRS
     addq    $KTRAP_RIP, %rsp
     iretq
