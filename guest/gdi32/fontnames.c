@@ -167,6 +167,8 @@ const char *const g_catalog_font_names[] = {
     "sakkal majalla",
     "sans serif collection",
     "sanskrit text",
+    "segoe fluent icons",
+    "segoe mdl2 assets",
     "segoe print",
     "segoe script",
     "segoe ui",
@@ -177,6 +179,7 @@ const char *const g_catalog_font_names[] = {
     "segoe ui semibold",
     "segoe ui semilight",
     "segoe ui symbol",
+    "segoe ui variable",
     "shonar bangla",
     "shruti",
     "simhei",
@@ -225,4 +228,4 @@ const char *const g_catalog_font_names[] = {
     "yu mincho light",
 };
 
-const unsigned g_catalog_font_name_count = 218;
+const unsigned g_catalog_font_name_count = 221;
