@@ -191,6 +191,15 @@ typedef struct DwCollection {
     SRWLOCK lock;
     DWRITE_FONT_FAMILY_MODEL model;
     IDWriteFontSet4 *set; /* the set it was made of, or the one made of it when asked. */
+    /*
+     * a system collection grows by the fonts fetched while it lives. they come after every family it was made with, and
+     * up to capacity, so the array never moves under a reader. names it already looked up are in checked.
+     */
+    BOOL system;
+    UINT32 capacity;
+    UINT32 grown_from;
+    ULONG checked[256];
+    LONG checked_count;
 } DwCollection;
 
 HRESULT DwCollectionFromFiles(DwFactory *factory, IDWriteFontFile *const *files, UINT32 count,
@@ -247,6 +256,8 @@ HRESULT DwFontResourceCreate(DwFactory *factory, IDWriteFontFile *file, UINT32 i
 /* a set of the fonts of keys, the properties read from the files. */
 HRESULT DwFontSetFromKeys(DwFactory *factory, const DwFontKey *keys, UINT32 count, IDWriteFontSet4 **set);
 HRESULT DwSystemFontSet(DwFactory *factory, IDWriteFontSet4 **set);
+/* the system set read from the drive again, for fonts installed since. */
+HRESULT DwSystemFontSetRescan(DwFactory *factory, IDWriteFontSet4 **set);
 HRESULT DwFontSetBuilderCreate(DwFactory *factory, IDWriteFontSetBuilder2 **builder);
 HRESULT DwInMemoryLoaderCreate(IDWriteInMemoryFontFileLoader **loader);
 /* copies the pairs of locale and text, which may repeat locales. */

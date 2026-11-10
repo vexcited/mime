@@ -1613,52 +1613,57 @@ static void add_directory(KeyList *l, const WCHAR *directory)
     FindClose(h);
 }
 
+/* the fonts of the windows folder and of the user, as they are on the drive now. */
+static HRESULT system_set_build(DwFactory *factory, IDWriteFontSet4 **out)
+{
+    *out = nullptr;
+    KeyList machine = {}, user = {};
+    WCHAR directory[MAX_PATH];
+    UINT n = GetWindowsDirectoryW(directory, MAX_PATH);
+    if (n && n < MAX_PATH - 8) {
+        wcscat(directory, L"\\Fonts\\");
+        add_directory(&machine, directory);
+    }
+    /* the fonts a user installs without being an administrator. */
+    n = GetEnvironmentVariableW(L"LOCALAPPDATA", directory, MAX_PATH);
+    if (n && n < MAX_PATH - 32) {
+        wcscat(directory, L"\\Microsoft\\Windows\\Fonts\\");
+        add_directory(&user, directory);
+    }
+    IDWriteFontSet4 *machine_set = nullptr, *user_set = nullptr;
+    HRESULT hr = set_from_keys(factory, machine.keys, machine.count, DWRITE_FONT_SOURCE_TYPE_PER_MACHINE, &machine_set);
+    if (SUCCEEDED(hr))
+        hr = set_from_keys(factory, user.keys, user.count, DWRITE_FONT_SOURCE_TYPE_PER_USER, &user_set);
+    if (SUCCEEDED(hr)) {
+        DwFontSet *a = set_of(machine_set), *b = set_of(user_set);
+        DwSetFont **fonts = DwAlloc((a->count + b->count + 1) * sizeof(*fonts));
+        if (fonts) {
+            memcpy(fonts, a->fonts, a->count * sizeof(*fonts));
+            if (b->count)
+                memcpy(fonts + a->count, b->fonts, b->count * sizeof(*fonts));
+            hr = set_create(factory, fonts, a->count + b->count, out);
+            DwFree(fonts);
+        } else {
+            hr = E_OUTOFMEMORY;
+        }
+    }
+    if (machine_set)
+        set_release(machine_set);
+    if (user_set)
+        set_release(user_set);
+    for (UINT32 i = 0; i < machine.count; i++)
+        machine.keys[i].file->lpVtbl->Release(machine.keys[i].file);
+    for (UINT32 i = 0; i < user.count; i++)
+        user.keys[i].file->lpVtbl->Release(user.keys[i].file);
+    DwFree(machine.keys);
+    DwFree(user.keys);
+    return hr;
+}
+
 HRESULT DwSystemFontSet(DwFactory *factory, IDWriteFontSet4 **out)
 {
     AcquireSRWLockExclusive(&factory->lock);
-    HRESULT hr = S_OK;
-    if (!factory->system_set) {
-        KeyList machine = {}, user = {};
-        WCHAR directory[MAX_PATH];
-        UINT n = GetWindowsDirectoryW(directory, MAX_PATH);
-        if (n && n < MAX_PATH - 8) {
-            wcscat(directory, L"\\Fonts\\");
-            add_directory(&machine, directory);
-        }
-        /* the fonts a user installs without being an administrator. */
-        n = GetEnvironmentVariableW(L"LOCALAPPDATA", directory, MAX_PATH);
-        if (n && n < MAX_PATH - 32) {
-            wcscat(directory, L"\\Microsoft\\Windows\\Fonts\\");
-            add_directory(&user, directory);
-        }
-        IDWriteFontSet4 *machine_set = nullptr, *user_set = nullptr;
-        hr = set_from_keys(factory, machine.keys, machine.count, DWRITE_FONT_SOURCE_TYPE_PER_MACHINE, &machine_set);
-        if (SUCCEEDED(hr))
-            hr = set_from_keys(factory, user.keys, user.count, DWRITE_FONT_SOURCE_TYPE_PER_USER, &user_set);
-        if (SUCCEEDED(hr)) {
-            DwFontSet *a = set_of(machine_set), *b = set_of(user_set);
-            DwSetFont **fonts = DwAlloc((a->count + b->count + 1) * sizeof(*fonts));
-            if (fonts) {
-                memcpy(fonts, a->fonts, a->count * sizeof(*fonts));
-                if (b->count)
-                    memcpy(fonts + a->count, b->fonts, b->count * sizeof(*fonts));
-                hr = set_create(factory, fonts, a->count + b->count, &factory->system_set);
-                DwFree(fonts);
-            } else {
-                hr = E_OUTOFMEMORY;
-            }
-        }
-        if (machine_set)
-            set_release(machine_set);
-        if (user_set)
-            set_release(user_set);
-        for (UINT32 i = 0; i < machine.count; i++)
-            machine.keys[i].file->lpVtbl->Release(machine.keys[i].file);
-        for (UINT32 i = 0; i < user.count; i++)
-            user.keys[i].file->lpVtbl->Release(user.keys[i].file);
-        DwFree(machine.keys);
-        DwFree(user.keys);
-    }
+    HRESULT hr = factory->system_set ? S_OK : system_set_build(factory, &factory->system_set);
     if (SUCCEEDED(hr)) {
         *out = factory->system_set;
         set_addref(*out);
@@ -1667,6 +1672,25 @@ HRESULT DwSystemFontSet(DwFactory *factory, IDWriteFontSet4 **out)
     }
     ReleaseSRWLockExclusive(&factory->lock);
     return hr;
+}
+
+HRESULT DwSystemFontSetRescan(DwFactory *factory, IDWriteFontSet4 **out)
+{
+    IDWriteFontSet4 *set;
+    HRESULT hr = system_set_build(factory, &set);
+    if (FAILED(hr)) {
+        *out = nullptr;
+        return hr;
+    }
+    AcquireSRWLockExclusive(&factory->lock);
+    IDWriteFontSet4 *old = factory->system_set;
+    factory->system_set = set;
+    set_addref(set);
+    ReleaseSRWLockExclusive(&factory->lock);
+    if (old)
+        set_release(old);
+    *out = set;
+    return S_OK;
 }
 
 /* ------------------------------------------------------------------ font set builders */
