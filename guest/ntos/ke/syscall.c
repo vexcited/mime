@@ -632,11 +632,18 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         held = 1;
         break;
     case FAST_QUERY:
-        /* the regions of the caller's own memory. the answer is found here, which changes nothing. */
-        if ((HANDLE)a0 != NtCurrentProcess() || (ULONG)a2 != MemoryBasicInformation || !fast_stack_argument(frame, 0, &a4) ||
-            a4 < sizeof(region) || !fast_stack_argument(frame, 1, &a5) ||
-            !MmFastQueryVirtual((PVOID)a1, (PMEMORY_BASIC_INFORMATION)region))
+        /* the regions of a process's memory. the answer is found here, which changes nothing. */
+        if ((ULONG)a2 != MemoryBasicInformation || !fast_stack_argument(frame, 0, &a4) || a4 < sizeof(region) ||
+            !fast_stack_argument(frame, 1, &a5))
             return 0;
+        if ((HANDLE)a0 != NtCurrentProcess()) {
+            objects[0] = ObReferenceHandleFast((HANDLE)a0, PROCESS_QUERY_INFORMATION, PsProcessTypeObject, PsProcessTypeObject);
+            if (!objects[0])
+                return 0;
+            held = 1;
+        }
+        if (!MmFastQueryVirtual(held ? objects[0] : nullptr, (PVOID)a1, (PMEMORY_BASIC_INFORMATION)region))
+            return held ? fast_decline(thread, frame, objects, held) : 0;
         break;
     default: {
         /* the suspension of an emulated thread, a suspension, an apc and an alert are the usual way's. */
