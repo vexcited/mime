@@ -975,21 +975,75 @@ static BOOL mirrors_reached(VkDevice device, const VkSemaphoreWaitInfo *info)
     return !any && info->semaphoreCount;
 }
 
+#define MIRROR_WAIT 64
+
+/* the slots of a wait whose semaphores are all mirrored. */
+static BOOL mirror_slots(const VkSemaphoreWaitInfo *info, int *slots)
+{
+    if (!mvk_mirrors() || !info->semaphoreCount || info->semaphoreCount > MIRROR_WAIT)
+        return FALSE;
+    BOOL all = TRUE;
+    AcquireSRWLockShared(&g_mirror_lock);
+    for (uint32_t i = 0; i < info->semaphoreCount && all; i++)
+        all = info->pSemaphores[i] && (slots[i] = find_mirror((uint64_t)info->pSemaphores[i])) >= 0;
+    ReleaseSRWLockShared(&g_mirror_lock);
+    return all;
+}
+
+static BOOL slots_reached(const VkSemaphoreWaitInfo *info, const int *slots)
+{
+    BOOL any = (info->flags & VK_SEMAPHORE_WAIT_ANY_BIT) != 0;
+    volatile uint64_t *host = mvk_mirrors();
+    for (uint32_t i = 0; i < info->semaphoreCount; i++) {
+        BOOL reached = __atomic_load_n(&host[slots[i]], __ATOMIC_ACQUIRE) >= info->pValues[i] ||
+                       __atomic_load_n(&g_mirrors[slots[i]].signaled, __ATOMIC_ACQUIRE) >= info->pValues[i];
+        if (any && reached)
+            return TRUE;
+        if (!any && !reached)
+            return FALSE;
+    }
+    return !any;
+}
+
+/*
+ * the host's watcher moves a mirror before it counts the event of a watch, so a wait on mirrored semaphores reads
+ * them and needs no reply: a reply waits behind everything the ring holds. the host is still asked after a
+ * round without news, since it is the one that learns of a lost device.
+ */
 VKAPI_ATTR VkResult VKAPI_CALL vkWaitSemaphores(VkDevice device, const VkSemaphoreWaitInfo *info, uint64_t timeout)
 {
-    if (mirrors_reached(device, info))
+    int slots[MIRROR_WAIT];
+    BOOL mirrored = mirror_slots(info, slots);
+    if (mirrored) {
+        if (slots_reached(info, slots))
+            return VK_SUCCESS;
+        if (!timeout)
+            return VK_TIMEOUT;
+        /* a short spin catches work about to finish without sleeping. */
+        for (int i = 0; i < 20000; i++) {
+            YieldProcessor();
+            if (slots_reached(info, slots))
+                return VK_SUCCESS;
+        }
+    } else if (mirrors_reached(device, info)) {
         return VK_SUCCESS;
+    }
     ULONGLONG start = GetTickCount64();
-    for (;;) {
+    for (BOOL ask = !mirrored;;) {
         uint64_t seen = mvk_events();
-        MvkEncoder *e = mvk_call_begin(MVK_OP_WAIT_SEMAPHORES);
-        mvk_put_VkSemaphoreWaitInfo(e, info);
-        mvk_put_u64(e, 0);
-        VkResult r = result_call(e);
+        VkResult r = VK_TIMEOUT;
+        if (mirrored && slots_reached(info, slots))
+            return VK_SUCCESS;
+        if (ask) {
+            MvkEncoder *e = mvk_call_begin(MVK_OP_WAIT_SEMAPHORES);
+            mvk_put_VkSemaphoreWaitInfo(e, info);
+            mvk_put_u64(e, 0);
+            r = result_call(e);
+        }
         ULONG left = timeout ? remaining_ms(timeout, start) : 0;
         if (r != VK_TIMEOUT || !left)
             return r;
-        e = mvk_call_begin(MVK_OP_WATCH_SEMAPHORES);
+        MvkEncoder *e = mvk_call_begin(MVK_OP_WATCH_SEMAPHORES);
         mvk_put_u32(e, info->semaphoreCount);
         for (uint32_t i = 0; i < info->semaphoreCount; i++) {
             mvk_put_u64(e, (uint64_t)info->pSemaphores[i]);
@@ -997,7 +1051,8 @@ VKAPI_ATTR VkResult VKAPI_CALL vkWaitSemaphores(VkDevice device, const VkSemapho
         }
         mvk_call_end(e);
         /* poll at least every 100 ms in case a wake up is lost. */
-        mvk_wait_events(seen, left < 100 ? left : 100);
+        BOOL news = mvk_wait_events(seen, left < 100 ? left : 100, !mirrored);
+        ask = !mirrored || !news;
     }
 }
 
