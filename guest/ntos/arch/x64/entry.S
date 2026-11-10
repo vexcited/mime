@@ -363,11 +363,13 @@ KiFastServiceExit:
 
 /*
  * BOOLEAN KiFastReadUser64(const void *address, ULONG64 *value), BOOLEAN KiFastWriteUser32(void *address, ULONG
- * value) and BOOLEAN KiFastProbeUser32(void *address), which writes what is there: the caller's memory without
- * the kernel lock. a page fault between the two labels is not handled: KiTrapCommon makes the call return FALSE.
+ * value), BOOLEAN KiFastWriteUser64(void *address, ULONG64 value) and BOOLEAN KiFastProbeUser32(void *address),
+ * which writes what is there: the caller's memory without the kernel lock. a page fault between the two labels is
+ * not handled: KiTrapCommon makes the call return FALSE.
  */
     .globl  KiFastReadUser64
     .globl  KiFastWriteUser32
+    .globl  KiFastWriteUser64
     .globl  KiFastProbeUser32
     .p2align 4
 KiFastUserAccess:
@@ -378,6 +380,10 @@ KiFastReadUser64:
     ret
 KiFastWriteUser32:
     movl    %edx, (%rcx)
+    movb    $1, %al
+    ret
+KiFastWriteUser64:
+    movq    %rdx, (%rcx)
     movb    $1, %al
     ret
 KiFastProbeUser32:

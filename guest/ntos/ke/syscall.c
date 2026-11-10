@@ -376,14 +376,89 @@ void KiLeaveFastService(PKTHREAD thread)
     KiEnableInterrupts();
 }
 
+enum {
+    FAST_WAIT,
+    FAST_RELEASE,
+    FAST_SET,
+    FAST_RESET,
+    FAST_DELAY,
+    FAST_WAIT_MANY,
+    FAST_REMOVE,
+    FAST_POST,
+    FAST_PARK,
+    FAST_UNPARK,
+    FAST_TEST_ALERT,
+};
+static_assert(FAST_TEST_ALERT + 1 == KI_FAST_SERVICE_KINDS);
+
+/* a wait on more objects than this is left to the usual way: the wait blocks are on the stack. */
+#define FAST_WAIT_OBJECTS 8
+#define FAST_OUTPUTS 4
+
+typedef struct FAST_OUTPUT {
+    PVOID Address;
+    ULONG64 Value;
+    ULONG Size;
+} FAST_OUTPUT;
+
+static BOOLEAN fast_timeout(ULONG64 address, PLARGE_INTEGER storage, PLARGE_INTEGER *timeout)
+{
+    *timeout = nullptr;
+    if (!address)
+        return TRUE;
+    if (!KiIsUserRange((PVOID)address, sizeof(*storage)) || !KiFastReadUser64((PVOID)address, (ULONG64 *)&storage->QuadPart))
+        return FALSE;
+    *timeout = storage;
+    return TRUE;
+}
+
 /*
- * a wait on an event or a semaphore, a semaphore release and an event set work on what the dispatcher lock guards,
- * so they are tried without the kernel lock: interrupts stay off from the entry to the return, as they are for a
- * holder of the dispatcher lock. UserMode stays set as well, so the caller's memory is read as user mode would
- * read it: a processor that unmaps it waits for this one.
+ * like ProbeForWrite, for a range of at most two pages. a locked instruction on a value that spans two cache lines
+ * stalls the whole machine, so a pointer that is not aligned is left to the usual way.
+ */
+static BOOLEAN fast_probe(ULONG64 address, ULONG length)
+{
+    return !(address & 3) && KiIsUserRange((PVOID)address, length) && KiFastProbeUser32((PVOID)address) &&
+           KiFastProbeUser32((PVOID)(address + length - sizeof(ULONG)));
+}
+
+static BOOLEAN fast_stack_argument(PKTRAP_FRAME frame, ULONG index, ULONG64 *value)
+{
+    PVOID address = (PVOID)(KI_SERVICE_STACK_ARGS(frame) + index * sizeof(ULONG64));
+    return KiIsUserRange(address, sizeof(*value)) && KiFastReadUser64(address, value);
+}
+
+/*
+ * a call that is found not to be a plain one once it holds objects. the last reference to one ends it, which is
+ * the kernel lock's work, and the call then goes the usual way from here.
+ */
+static ULONG fast_decline(PKTHREAD thread, PKTRAP_FRAME frame, PVOID objects[], ULONG held)
+{
+    while (held && ObDereferenceObjectFast(objects[held - 1]))
+        held--;
+    if (!held)
+        return 0;
+    KeGetPcr()->UserMode = 0;
+    KiAcquireKernelLock();
+    thread->TrapFrame = frame;
+    thread->PreviousMode = UserMode;
+    KiEnableInterrupts();
+    while (held)
+        ObDereferenceObject(objects[--held]);
+    KiDisableInterrupts();
+    KiSystemService(frame);
+    return 2;
+}
+
+/*
+ * the services that work on what the dispatcher lock guards are tried without the kernel lock: the waits, on one
+ * object or a few, on a completion port and for an alert by thread id, the delays, and what ends such waits, a
+ * semaphore release, an event set, a packet posted to a port and the alert. interrupts stay off from the entry to
+ * the return, as they are for a holder of the dispatcher lock. UserMode stays set as well, so the caller's memory
+ * is read as user mode would read it: a processor that unmaps it waits for this one.
  *
  * anything else such a call can need takes the lock, before the work, when the handle or the arguments are not
- * the plain ones, or after it: an apc, the end of the thread, a context set meanwhile, the last reference to the
+ * the plain ones, or after it: an apc, the end of the thread, a context set meanwhile, the last reference to an
  * object. a thread that waited comes back on any processor, which may hold the lock from the thread before.
  */
 ULONG KiFastSystemService(PKTRAP_FRAME frame)
@@ -404,72 +479,225 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         pcr->Prcb.FastWin32Services++;
         return 1;
     }
-    if (number != MIME_SVC_NtWaitForSingleObject && number != MIME_SVC_NtReleaseSemaphore && number != MIME_SVC_NtSetEvent)
+    ULONG kind;
+    switch (number) {
+    case MIME_SVC_NtWaitForSingleObject:
+        kind = FAST_WAIT;
+        break;
+    case MIME_SVC_NtReleaseSemaphore:
+        kind = FAST_RELEASE;
+        break;
+    case MIME_SVC_NtSetEvent:
+        kind = FAST_SET;
+        break;
+    case MIME_SVC_NtResetEvent:
+    case MIME_SVC_NtClearEvent:
+        kind = FAST_RESET;
+        break;
+    case MIME_SVC_NtDelayExecution:
+    case MIME_SVC_NtYieldExecution:
+        kind = FAST_DELAY;
+        break;
+    case MIME_SVC_NtWaitForMultipleObjects:
+        kind = FAST_WAIT_MANY;
+        break;
+    case MIME_SVC_NtRemoveIoCompletion:
+        kind = FAST_REMOVE;
+        break;
+    case MIME_SVC_NtSetIoCompletion:
+        kind = FAST_POST;
+        break;
+    case MIME_SVC_NtWaitForAlertByThreadId:
+        kind = FAST_PARK;
+        break;
+    case MIME_SVC_NtAlertThreadByThreadId:
+        kind = FAST_UNPARK;
+        break;
+    case MIME_SVC_NtTestAlert:
+        kind = FAST_TEST_ALERT;
+        break;
+    default:
         return 0;
+    }
     /* tracing and the timeline see every call, and pool blocks with guard pages are no part of the fixed mappings. */
-    if (KiTraceSyscallImage[0] || g_timeline || MmVerifyPool || (KiOptions & KI_OPT_NO_FAST_SERVICE) ||
+    if (KiTraceSyscallImage[0] || g_timeline || KiTimelineOn || MmVerifyPool || (KiOptions & KI_OPT_NO_FAST_SERVICE) ||
         KeGetPcr()->Irql != PASSIVE_LEVEL)
         return 0;
-    HANDLE handle = (HANDLE)KI_SERVICE_REGISTER_ARG(frame, 0);
-    ULONG64 second = KI_SERVICE_REGISTER_ARG(frame, 1), third = KI_SERVICE_REGISTER_ARG(frame, 2);
-    LARGE_INTEGER timeout;
-    PLARGE_INTEGER wait_timeout = nullptr;
-    POBJECT_TYPE type, other;
-    PVOID previous = nullptr;
-    ULONG kind;
-    if (number == MIME_SVC_NtWaitForSingleObject) {
-        /* an alertable wait delivers user apcs. */
-        if ((BOOLEAN)second)
-            return 0;
-        if (third) {
-            if (!KiIsUserRange((PVOID)third, sizeof(timeout)) || !KiFastReadUser64((PVOID)third, (ULONG64 *)&timeout.QuadPart))
-                return 0;
-            wait_timeout = &timeout;
-        }
-        kind = 0;
-        type = ExEventType;
-        other = ExSemaphoreType;
-    } else if (number == MIME_SVC_NtReleaseSemaphore) {
-        previous = (PVOID)third;
-        kind = 1;
-        type = other = ExSemaphoreType;
-    } else {
-        previous = (PVOID)second;
-        kind = 2;
-        type = other = ExEventType;
-    }
-    /* a pointer that cannot be written fails the call before it does anything, which the usual way reports. */
-    if (previous && (!KiIsUserRange(previous, sizeof(LONG)) || !KiFastProbeUser32(previous)))
-        return 0;
-    /* a handle that is not found is left to the usual way, with its status and its exception. */
-    PVOID object = ObReferenceHandleFast(handle, type, other);
-    if (!object)
-        return 0;
 
+    /* what is not plain is left to the usual way, with its status and its exception: nothing is done before. */
     PKTHREAD thread = KiCurrentThread();
+    ULONG64 a0 = KI_SERVICE_REGISTER_ARG(frame, 0), a1 = KI_SERVICE_REGISTER_ARG(frame, 1);
+    ULONG64 a2 = KI_SERVICE_REGISTER_ARG(frame, 2), a3 = KI_SERVICE_REGISTER_ARG(frame, 3), a4 = 0;
+    PVOID objects[FAST_WAIT_OBJECTS], waits[FAST_WAIT_OBJECTS];
+    KWAIT_BLOCK blocks[FAST_WAIT_OBJECTS];
+    ULONG held = 0, count = 0;
+    LARGE_INTEGER time = {};
+    PLARGE_INTEGER timeout = nullptr;
+    BOOLEAN alertable = FALSE;
+    WAIT_TYPE wait_type = WaitAny;
+    PVOID previous = nullptr;
+    switch (kind) {
+    case FAST_WAIT:
+        alertable = (BOOLEAN)a1;
+        if (!fast_timeout(a2, &time, &timeout))
+            return 0;
+        objects[0] = ObReferenceHandleFast((HANDLE)a0, nullptr, nullptr);
+        if (!objects[0])
+            return 0;
+        held = count = 1;
+        waits[0] = ObGetWaitObject(objects[0]);
+        if (!waits[0])
+            return fast_decline(thread, frame, objects, held);
+        break;
+    case FAST_RELEASE:
+    case FAST_SET:
+    case FAST_RESET: {
+        previous = kind == FAST_RELEASE ? (PVOID)a2 : number == MIME_SVC_NtClearEvent ? nullptr : (PVOID)a1;
+        /* a pointer that cannot be written fails the call before it does anything. */
+        if (previous && !fast_probe((ULONG64)previous, sizeof(LONG)))
+            return 0;
+        POBJECT_TYPE type = kind == FAST_RELEASE ? ExSemaphoreType : ExEventType;
+        objects[0] = ObReferenceHandleFast((HANDLE)a0, type, type);
+        if (!objects[0])
+            return 0;
+        held = 1;
+        break;
+    }
+    case FAST_DELAY:
+        if (number == MIME_SVC_NtDelayExecution) {
+            alertable = (BOOLEAN)a0;
+            if (!KiIsUserRange((PVOID)a1, sizeof(time)) || !KiFastReadUser64((PVOID)a1, (ULONG64 *)&time.QuadPart))
+                return 0;
+        }
+        break;
+    case FAST_WAIT_MANY:
+        count = (ULONG)a0;
+        if (!count || count > FAST_WAIT_OBJECTS || !KiIsUserRange((PVOID)a1, count * sizeof(HANDLE)))
+            return 0;
+        wait_type = (ULONG)a2 == WaitAll ? WaitAll : WaitAny;
+        alertable = (BOOLEAN)a3;
+        if (!fast_stack_argument(frame, 0, &a4) || !fast_timeout(a4, &time, &timeout))
+            return 0;
+        for (; held < count; held++) {
+            ULONG64 handle;
+            if (!KiFastReadUser64((PVOID)(a1 + held * sizeof(HANDLE)), &handle))
+                return fast_decline(thread, frame, objects, held);
+            objects[held] = ObReferenceHandleFast((HANDLE)handle, nullptr, nullptr);
+            if (!objects[held])
+                return fast_decline(thread, frame, objects, held);
+            waits[held] = ObGetWaitObject(objects[held]);
+            if (!waits[held])
+                return fast_decline(thread, frame, objects, held + 1);
+        }
+        break;
+    case FAST_REMOVE:
+        /* pointers that cannot be written fail the call before it takes a packet. */
+        if (!fast_probe(a1, sizeof(PVOID)) || !fast_probe(a2, sizeof(PVOID)) || !fast_probe(a3, sizeof(IO_STATUS_BLOCK)) ||
+            !fast_stack_argument(frame, 0, &a4) || !fast_timeout(a4, &time, &timeout))
+            return 0;
+        objects[0] = ObReferenceHandleFast((HANDLE)a0, IoCompletionObjectType, IoCompletionObjectType);
+        if (!objects[0])
+            return 0;
+        held = count = 1;
+        /* the semaphore that counts the packets is the first thing in a port. */
+        waits[0] = objects[0];
+        break;
+    case FAST_POST:
+        if (!fast_stack_argument(frame, 0, &a4))
+            return 0;
+        objects[0] = ObReferenceHandleFast((HANDLE)a0, IoCompletionObjectType, IoCompletionObjectType);
+        if (!objects[0])
+            return 0;
+        held = 1;
+        break;
+    case FAST_PARK:
+        if (!fast_timeout(a1, &time, &timeout))
+            return 0;
+        waits[0] = &thread->AlertByIdEvent;
+        count = 1;
+        break;
+    case FAST_UNPARK:
+        objects[0] = PspLookupThread((HANDLE)a0);
+        if (!objects[0])
+            return 0;
+        held = 1;
+        break;
+    default: {
+        /* the suspension of an emulated thread, a suspension, an apc and an alert are the usual way's. */
+        if (thread->UserSuspendGate)
+            return 0;
+        ULONG64 s = KiAcquireDispatcherLock();
+        BOOLEAN plain = !thread->SuspendCount && IsListEmpty(&thread->ApcListHead[UserMode]) && !thread->Alerted[UserMode];
+        KiReleaseDispatcherLock(s);
+        if (!plain)
+            return 0;
+        break;
+    }
+    }
+
     ULONG64 entry_pc = KI_TRAP_PC(frame);
     thread->TrapFrame = frame;
     thread->PreviousMode = UserMode;
     thread->FastService = TRUE;
-    ULONG64 result = STATUS_SUCCESS;
+    FAST_OUTPUT outputs[FAST_OUTPUTS];
+    ULONG output_count = 0, written = 0;
+    NTSTATUS status = STATUS_SUCCESS;
     LONG old = 0;
-    if (kind == 0) {
-        result = (ULONG64)(LONG64)KiWaitObjects(1, &object, WaitAny, UserRequest, UserMode, FALSE, wait_timeout, nullptr);
-    } else if (kind == 1) {
-        old = KeReleaseSemaphore(object, 1, (LONG)second, FALSE);
+    switch (kind) {
+    case FAST_WAIT:
+    case FAST_WAIT_MANY:
+    case FAST_REMOVE:
+    case FAST_PARK:
+        status = KiWaitObjects(count, waits, wait_type, UserRequest, UserMode, alertable, timeout,
+                               count > THREAD_WAIT_OBJECTS ? blocks : nullptr);
+        if (kind == FAST_PARK && status == STATUS_WAIT_0) {
+            status = STATUS_ALERTED;
+        } else if (kind == FAST_REMOVE && status == STATUS_SUCCESS) {
+            ULONG64 values[4];
+            if (IopRemoveCompletionPacket(objects[0], values)) {
+                outputs[0] = (FAST_OUTPUT){(PVOID)a1, values[0], sizeof(ULONG64)};
+                outputs[1] = (FAST_OUTPUT){(PVOID)a2, values[1], sizeof(ULONG64)};
+                outputs[2] = (FAST_OUTPUT){(PVOID)a3, values[2], sizeof(ULONG64)};
+                outputs[3] = (FAST_OUTPUT){(PVOID)(a3 + sizeof(ULONG64)), values[3], sizeof(ULONG64)};
+                output_count = 4;
+            }
+        }
+        break;
+    case FAST_RELEASE:
+        old = KeReleaseSemaphore(objects[0], 1, (LONG)a1, FALSE);
         if (old < 0) {
-            result = (ULONG64)(LONG64)STATUS_SEMAPHORE_LIMIT_EXCEEDED;
+            status = STATUS_SEMAPHORE_LIMIT_EXCEEDED;
             previous = nullptr;
         }
-    } else {
-        old = KeSetEvent(object, 1, TRUE);
+        break;
+    case FAST_SET:
+        old = KeSetEvent(objects[0], 1, TRUE);
+        break;
+    case FAST_RESET:
+        old = KeResetEvent(objects[0]);
+        break;
+    case FAST_DELAY:
+        status = KeDelayExecutionThread(UserMode, alertable, &time);
+        if (number == MIME_SVC_NtDelayExecution && status == STATUS_NO_YIELD_PERFORMED)
+            status = STATUS_SUCCESS;
+        break;
+    case FAST_POST:
+        status = IopQueueCompletion(objects[0], (PVOID)a1, (PVOID)a2, (NTSTATUS)a3, (ULONG_PTR)a4);
+        break;
+    case FAST_UNPARK:
+        if (((PKTHREAD)objects[0])->Process == thread->Process)
+            KeSetEvent(&((PKTHREAD)objects[0])->AlertByIdEvent, 0, TRUE);
+        else
+            status = STATUS_ACCESS_DENIED;
+        break;
+    default:
+        break;
     }
-    /*
-     * the previous state goes to the caller's memory. neither call above gives the processor away, so UserMode has
-     * been set since user mode. a write that would fault is made again with the kernel lock.
-     */
-    if (previous && KiFastWriteUser32(previous, (ULONG)old))
-        previous = nullptr;
+    if (previous) {
+        outputs[0] = (FAST_OUTPUT){previous, (ULONG)old, sizeof(LONG)};
+        output_count = 1;
+    }
+    ULONG64 result = (ULONG64)(LONG64)status;
     /* a thread switched away from below shows its result to whoever reads its context. */
     KI_SERVICE_RESULT(frame) = result;
 
@@ -485,24 +713,54 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
             /* a thread it woke may take this processor, and this one resumes on any. */
             KiCheckPreemption();
         }
-        /*
-         * whoever asks for more after this finds the thread running and interrupts it, which is taken in user mode.
-         * the instrumentation callback is a change of the frame alone.
-         */
-        if (!previous && !owned && !thread->KernelApcPending && !thread->Terminating && !thread->UserApcPending &&
-            !pcr->Prcb.DpcPending && !thread->ContextSetInService && !((PETHREAD)thread)->PendingException &&
-            pcr->Irql == PASSIVE_LEVEL && ObDereferenceObjectFast(object)) {
-            thread->FastService = FALSE;
-            if (KI_TRAP_PC(frame) == entry_pc)
-                KiInstrumentReturn(frame, ((PEPROCESS)thread->Process)->InstrumentationCallback);
-            pcr->Prcb.FastServices[kind]++;
-            return 1;
+        if (!owned && pcr->Irql == PASSIVE_LEVEL) {
+            if (output_count) {
+                /*
+                 * the processor a thread resumes on was not in user mode for those that change the address space.
+                 * the order is that of the return to user mode: either this one flushes or the other one waits.
+                 */
+                __atomic_store_n(&pcr->UserMode, 1, __ATOMIC_SEQ_CST);
+                if (pcr->FlushPending)
+                    KiSettleTlbFlush();
+                /* a write that would fault is made again with the kernel lock. */
+                for (; written < output_count; written++) {
+                    FAST_OUTPUT *o = &outputs[written];
+                    if (!KiIsUserRange(o->Address, o->Size) ||
+                        !(o->Size == sizeof(ULONG64) ? KiFastWriteUser64(o->Address, o->Value)
+                                                      : KiFastWriteUser32(o->Address, (ULONG)o->Value)))
+                        break;
+                }
+            }
+            /*
+             * whoever asks for more after this finds the thread running and interrupts it, which is taken in user
+             * mode. the instrumentation callback is a change of the frame alone.
+             */
+            if (written == output_count && !thread->KernelApcPending && !thread->Terminating && !thread->UserApcPending &&
+                !pcr->Prcb.DpcPending && !thread->ContextSetInService && !((PETHREAD)thread)->PendingException) {
+                while (held && ObDereferenceObjectFast(objects[held - 1]))
+                    held--;
+                if (!held) {
+                    thread->FastService = FALSE;
+                    if (KI_TRAP_PC(frame) == entry_pc)
+                        KiInstrumentReturn(frame, ((PEPROCESS)thread->Process)->InstrumentationCallback);
+                    pcr->Prcb.FastServices[kind]++;
+                    return 1;
+                }
+            }
         }
         KiLeaveFastService(thread);
     }
-    ObDereferenceObject(object);
-    if (previous)
-        KiCopyToUser(previous, &old, sizeof(old));
+    while (held)
+        ObDereferenceObject(objects[--held]);
+    for (; written < output_count; written++) {
+        FAST_OUTPUT *o = &outputs[written];
+        if (!NT_SUCCESS(KiCopyToUser(o->Address, &o->Value, o->Size))) {
+            /* a packet whose values cannot be stored is lost, and the previous state of an object is not asked for again. */
+            if (kind == FAST_REMOVE)
+                result = (ULONG64)(LONG64)STATUS_ACCESS_VIOLATION;
+            break;
+        }
+    }
     finish_service(thread, frame, 0, number, result, entry_pc);
     return 2;
 }
@@ -912,6 +1170,19 @@ void KiDumpServiceCalls(void)
                     HalCounterToHns(g_longest[bt][bi]) / 10);
         g_ticks[bt][bi] = 0;
     }
+    /* the services called most often, which the list above leaves out when each call is short. */
+    for (int round = 0; round < 16; round++) {
+        ULONG64 best = 0;
+        ULONG bt = 0, bi = 0;
+        for (ULONG t = 0; t < 2; t++)
+            for (ULONG i = 0; i < 4096; i++)
+                if (g_calls[t][i] > best)
+                    best = g_calls[t][i], bt = t, bi = i;
+        if (!best)
+            break;
+        KiLogPrintf("most called %s: %llu", service_name(bt, bi), best);
+        g_calls[bt][bi] = 0;
+    }
     /* the lock as a whole: the time it was held, and what held it for a long time. */
     ULONG64 held = KiKernelLock[KI_LOCK_HELD] | (ULONG64)KiKernelLock[KI_LOCK_HELD + 1] << 32;
     KiLogPrintf("kernel lock: held %llu us in all, %llu holds over %llu us", HalCounterToHns(held) / 10, g_long_total,
@@ -988,12 +1259,12 @@ void KiDumpServiceCalls(void)
     }
     KiLogPrintf("dispatcher lock: %llu taken, %llu after waiting, %llu us waited in all", taken, spun,
                 HalCounterToHns(spin_ticks) / 10);
-    ULONG64 fast[3] = {}, fast_locked = 0, fast_win32 = 0, fast_interrupts = 0, fast_interrupts_locked = 0;
+    ULONG64 fast[KI_FAST_SERVICE_KINDS] = {}, fast_locked = 0, fast_win32 = 0, fast_interrupts = 0, fast_interrupts_locked = 0;
     for (ULONG i = 0; i < KeNumberProcessors; i++) {
         PKPRCB p = KiProcessorBlock[i];
         if (!p)
             continue;
-        for (ULONG k = 0; k < 3; k++) {
+        for (ULONG k = 0; k < KI_FAST_SERVICE_KINDS; k++) {
             fast[k] += p->FastServices[k];
             p->FastServices[k] = 0;
         }
@@ -1005,6 +1276,10 @@ void KiDumpServiceCalls(void)
     }
     KiLogPrintf("services without the kernel lock: %llu waits, %llu semaphore releases, %llu event sets, %llu more "
                 "took it to end, %llu answered by win32k", fast[0], fast[1], fast[2], fast_locked, fast_win32);
+    KiLogPrintf("more services without the kernel lock: %llu event resets, %llu delays, %llu waits on several, %llu "
+                "packets removed, %llu packets posted, %llu waits for an alert, %llu alerts, %llu alert tests",
+                fast[FAST_RESET], fast[FAST_DELAY], fast[FAST_WAIT_MANY], fast[FAST_REMOVE], fast[FAST_POST],
+                fast[FAST_PARK], fast[FAST_UNPARK], fast[FAST_TEST_ALERT]);
     KiLogPrintf("interrupts in user mode without the kernel lock: %llu, %llu more took it to end", fast_interrupts,
                 fast_interrupts_locked);
 #endif
