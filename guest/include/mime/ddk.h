@@ -892,6 +892,14 @@ NTKERNELAPI NTSTATUS ObInsertObjectNamed(PVOID object, POBJECT_ATTRIBUTES attrib
                              PHANDLE handle);
 NTKERNELAPI NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCESSOR_MODE mode, PVOID *object,
                            ACCESS_MASK *granted);
+/* mime: fails with STATUS_ACCESS_DENIED when the handle of a user mode caller lacks a right. */
+NTKERNELAPI NTSTATUS ObReferenceHandleAccess(HANDLE handle, ACCESS_MASK desired, POBJECT_TYPE type, KPROCESSOR_MODE mode,
+                                             PVOID *object, PCSTR service);
+NTKERNELAPI ACCESS_MASK ObHandleRights(PVOID object, ACCESS_MASK granted);
+NTKERNELAPI BOOLEAN ObHandleAllows(PVOID object, ACCESS_MASK granted, ACCESS_MASK desired, KPROCESSOR_MODE mode, PCSTR service);
+#define ObReferenceHandleFor(handle, desired, type, mode, object) \
+    ObReferenceHandleAccess(handle, desired, type, mode, (PVOID *)(object), __func__)
+#define ObHandleGrants(object, granted, desired, mode) ObHandleAllows(object, granted, desired, mode, __func__)
 NTKERNELAPI NTSTATUS NTAPI ObOpenObjectByName(POBJECT_ATTRIBUTES attributes, POBJECT_TYPE type, KPROCESSOR_MODE mode,
                                               PVOID access_state, ACCESS_MASK access, PVOID parse_context, PHANDLE handle);
 /* mime: sets the descriptor of a window station or desktop that everyone at the console works at. */

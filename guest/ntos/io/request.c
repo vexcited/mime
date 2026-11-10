@@ -16,7 +16,7 @@ IO_USER_REQUEST *IopNewUserRequest(PFILE_OBJECT file, HANDLE event, PVOID apc_ro
     }
     memset(r, 0, sizeof(*r));
     if (event) {
-        *status = ObReferenceHandle(event, ExEventType, KeGetPreviousMode(), (PVOID *)&r->Event, nullptr);
+        *status = ObReferenceHandleFor(event, EVENT_MODIFY_STATE, ExEventType, KeGetPreviousMode(), &r->Event);
         if (!NT_SUCCESS(*status)) {
             ExFreePool(r);
             return nullptr;

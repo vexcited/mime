@@ -1234,6 +1234,24 @@ NTSTATUS NTAPI MmUnmapViewInSystemSpace(PVOID base)
 
 /* -------------------------------------------------------- system services */
 
+/* the rights a protection asks of a handle, with the names of the three ways to reach the pages. */
+static ACCESS_MASK protection_rights(ULONG protect, ACCESS_MASK read, ACCESS_MASK write, ACCESS_MASK execute)
+{
+    switch (protect & 0xFF) {
+    case PAGE_READWRITE:
+        return write;
+    case PAGE_EXECUTE:
+        return execute;
+    case PAGE_EXECUTE_READ:
+    case PAGE_EXECUTE_WRITECOPY:
+        return execute | read;
+    case PAGE_EXECUTE_READWRITE:
+        return execute | write;
+    default:
+        return read;
+    }
+}
+
 NTSTATUS NTAPI NtCreateSection(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes,
                                PLARGE_INTEGER maximum_size, ULONG protect, ULONG allocation, HANDLE file_handle)
 {
@@ -1243,7 +1261,9 @@ NTSTATUS NTAPI NtCreateSection(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRI
     PFILE_OBJECT file = nullptr;
     NTSTATUS status;
     if (file_handle) {
-        status = ObReferenceHandle(file_handle, IoFileObjectTypeObject, KeGetPreviousMode(), (PVOID *)&file, nullptr);
+        /* the file is read into the pages whatever they allow, so a section that can be written needs both. */
+        ACCESS_MASK needed = protection_rights(protect, FILE_READ_DATA, FILE_READ_DATA | FILE_WRITE_DATA, FILE_EXECUTE);
+        status = ObReferenceHandleFor(file_handle, needed, IoFileObjectTypeObject, KeGetPreviousMode(), &file);
         if (!NT_SUCCESS(status))
             return status;
     }
@@ -1325,7 +1345,8 @@ NTSTATUS NTAPI NtMapViewOfSection(HANDLE section_handle, HANDLE process_handle, 
         (offset && !NT_SUCCESS(KiCopyFromUser(&off, offset, sizeof(off)))))
         return STATUS_ACCESS_VIOLATION;
     PSECTION section;
-    NTSTATUS status = ObReferenceHandle(section_handle, MmSectionType, KeGetPreviousMode(), (PVOID *)&section, nullptr);
+    ACCESS_MASK needed = protection_rights(protect, SECTION_MAP_READ, SECTION_MAP_WRITE, SECTION_MAP_EXECUTE);
+    NTSTATUS status = ObReferenceHandleFor(section_handle, needed, MmSectionType, KeGetPreviousMode(), &section);
     if (!NT_SUCCESS(status))
         return status;
     PEPROCESS process;
@@ -1367,7 +1388,8 @@ NTSTATUS NTAPI NtMapViewOfSectionEx(HANDLE section_handle, HANDLE process_handle
     if ((ULONG_PTR)b > 0x7FFFFFFEFFFFull || vs > 0x7FFFFFFF0000ull - (ULONG_PTR)b)
         return STATUS_INVALID_PARAMETER;
     PSECTION section;
-    NTSTATUS status = ObReferenceHandle(section_handle, MmSectionType, KeGetPreviousMode(), (PVOID *)&section, nullptr);
+    ACCESS_MASK needed = protection_rights(protect, SECTION_MAP_READ, SECTION_MAP_WRITE, SECTION_MAP_EXECUTE);
+    NTSTATUS status = ObReferenceHandleFor(section_handle, needed, MmSectionType, KeGetPreviousMode(), &section);
     if (!NT_SUCCESS(status))
         return status;
     PEPROCESS process;
@@ -1487,7 +1509,7 @@ void MmGetSectionImageInformation(PSECTION s, SECTION_IMAGE_INFORMATION *image)
 NTSTATUS NTAPI NtQuerySection(HANDLE handle, ULONG klass, PVOID info, SIZE_T length, PSIZE_T returned)
 {
     PSECTION s;
-    NTSTATUS status = ObReferenceHandle(handle, MmSectionType, KeGetPreviousMode(), (PVOID *)&s, nullptr);
+    NTSTATUS status = ObReferenceHandleFor(handle, SECTION_QUERY, MmSectionType, KeGetPreviousMode(), &s);
     if (!NT_SUCCESS(status))
         return status;
     union {

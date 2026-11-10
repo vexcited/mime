@@ -7,6 +7,10 @@ POBJECT_TYPE ExSemaphoreType;
 POBJECT_TYPE ExTimerType;
 POBJECT_TYPE DbgkDebugObjectType;
 #define DEBUG_ALL_ACCESS 0x001F000F
+#define DEBUG_READ_EVENT 0x0001
+#define DEBUG_SET_INFORMATION 0x0008
+#define SEMAPHORE_QUERY_STATE 0x0001
+#define TIMER_MODIFY_STATE 0x0002
 KUSER_SHARED_DATA *SharedUserData;
 
 void MiSetKuserPage(ULONG64 pa);
@@ -263,7 +267,7 @@ static NTSTATUS event_op(HANDLE handle, PLONG previous, int op)
     NTSTATUS status = probe_previous(previous);
     if (!NT_SUCCESS(status))
         return status;
-    status = ObReferenceHandle(handle, ExEventType, KeGetPreviousMode(), (PVOID *)&event, nullptr);
+    status = ObReferenceHandleFor(handle, EVENT_MODIFY_STATE, ExEventType, KeGetPreviousMode(), &event);
     if (!NT_SUCCESS(status))
         return status;
     LONG old = op == 0 ? KeSetEvent(event, 1, FALSE) : op == 1 ? KeResetEvent(event) : KePulseEvent(event, 1, FALSE);
@@ -352,7 +356,7 @@ NTSTATUS NTAPI NtReleaseSemaphore(HANDLE handle, LONG count, PLONG previous)
     NTSTATUS status = probe_previous(previous);
     if (!NT_SUCCESS(status))
         return status;
-    status = ObReferenceHandle(handle, ExSemaphoreType, KeGetPreviousMode(), (PVOID *)&s, nullptr);
+    status = ObReferenceHandleFor(handle, SEMAPHORE_MODIFY_STATE, ExSemaphoreType, KeGetPreviousMode(), &s);
     if (!NT_SUCCESS(status))
         return status;
     LONG old = KeReleaseSemaphore(s, 1, count, FALSE);
@@ -372,7 +376,8 @@ static NTSTATUS query_basic(HANDLE handle, POBJECT_TYPE type, ULONG klass, PVOID
     if (length != 2 * sizeof(LONG))
         return STATUS_INFO_LENGTH_MISMATCH;
     PDISPATCHER_HEADER object;
-    NTSTATUS status = ObReferenceHandle(handle, type, KeGetPreviousMode(), (PVOID *)&object, nullptr);
+    ACCESS_MASK query = type == ExEventType ? EVENT_QUERY_STATE : SEMAPHORE_QUERY_STATE;
+    NTSTATUS status = ObReferenceHandleFor(handle, query, type, KeGetPreviousMode(), &object);
     if (!NT_SUCCESS(status))
         return status;
     LONG basic[2];
@@ -418,7 +423,7 @@ NTSTATUS NTAPI NtSetTimer(HANDLE handle, PLARGE_INTEGER due, PVOID apc, PVOID ap
     LARGE_INTEGER d;
     if (!NT_SUCCESS(KiCopyFromUser(&d, due, sizeof(d))))
         return STATUS_ACCESS_VIOLATION;
-    NTSTATUS status = ObReferenceHandle(handle, ExTimerType, KeGetPreviousMode(), (PVOID *)&t, nullptr);
+    NTSTATUS status = ObReferenceHandleFor(handle, TIMER_MODIFY_STATE, ExTimerType, KeGetPreviousMode(), &t);
     if (!NT_SUCCESS(status))
         return status;
     BOOLEAN state = KeReadStateTimer(&t->Timer);
@@ -445,7 +450,7 @@ NTSTATUS NTAPI NtSetTimer(HANDLE handle, PLARGE_INTEGER due, PVOID apc, PVOID ap
 NTSTATUS NTAPI NtCancelTimer(HANDLE handle, PBOOLEAN current)
 {
     ETIMER *t;
-    NTSTATUS status = ObReferenceHandle(handle, ExTimerType, KeGetPreviousMode(), (PVOID *)&t, nullptr);
+    NTSTATUS status = ObReferenceHandleFor(handle, TIMER_MODIFY_STATE, ExTimerType, KeGetPreviousMode(), &t);
     if (!NT_SUCCESS(status))
         return status;
     BOOLEAN state = KeReadStateTimer(&t->Timer);
@@ -472,13 +477,18 @@ NTSTATUS ExWaitHandlesAndObject(ULONG count, const HANDLE *handles, WAIT_TYPE ty
     NTSTATUS status = STATUS_SUCCESS;
     ULONG referenced = 0;
     for (; referenced < count; referenced++) {
-        status = ObReferenceHandle(handles[referenced], nullptr, KeGetPreviousMode(), &objects[referenced], nullptr);
+        ACCESS_MASK granted;
+        status = ObReferenceHandle(handles[referenced], nullptr, KeGetPreviousMode(), &objects[referenced], &granted);
         if (!NT_SUCCESS(status))
             break;
+        /* an object that cannot be waited on is told as such, whatever its handle allows. */
         waits[referenced] = ObGetWaitObject(objects[referenced]);
-        if (!waits[referenced]) {
-            ObDereferenceObject(objects[referenced]);
+        if (!waits[referenced])
             status = STATUS_OBJECT_TYPE_MISMATCH;
+        else if (!ObHandleGrants(objects[referenced], granted, SYNCHRONIZE, KeGetPreviousMode()))
+            status = STATUS_ACCESS_DENIED;
+        if (!NT_SUCCESS(status)) {
+            ObDereferenceObject(objects[referenced]);
             break;
         }
     }
@@ -543,10 +553,17 @@ NTSTATUS NTAPI NtWaitForMultipleObjects(ULONG count, PHANDLE handles, WAIT_TYPE 
 NTSTATUS NTAPI NtSignalAndWaitForSingleObject(HANDLE signal, HANDLE wait, BOOLEAN alertable, PLARGE_INTEGER timeout)
 {
     PVOID object;
-    NTSTATUS status = ObReferenceHandle(signal, nullptr, KeGetPreviousMode(), &object, nullptr);
+    ACCESS_MASK granted;
+    NTSTATUS status = ObReferenceHandle(signal, nullptr, KeGetPreviousMode(), &object, &granted);
     if (!NT_SUCCESS(status))
         return status;
     POBJECT_TYPE type = ObGetObjectType(object);
+    /* an event and a semaphore need the right to change their state. a mutant needs its owner, and no right. */
+    ACCESS_MASK needed = type == ExEventType ? EVENT_MODIFY_STATE : type == ExSemaphoreType ? SEMAPHORE_MODIFY_STATE : 0;
+    if (!ObHandleGrants(object, granted, needed, KeGetPreviousMode())) {
+        ObDereferenceObject(object);
+        return STATUS_ACCESS_DENIED;
+    }
     if (type == ExEventType)
         KeSetEvent(object, 1, TRUE);
     else if (type == ExSemaphoreType)
@@ -603,7 +620,7 @@ NTSTATUS NTAPI NtSetInformationDebugObject(HANDLE handle, ULONG klass, PVOID inf
     if (flags & ~DEBUG_KILL_ON_CLOSE)
         return STATUS_INVALID_PARAMETER;
     DEBUG_OBJECT *debug;
-    NTSTATUS status = ObReferenceHandle(handle, DbgkDebugObjectType, KeGetPreviousMode(), (PVOID *)&debug, nullptr);
+    NTSTATUS status = ObReferenceHandleFor(handle, DEBUG_SET_INFORMATION, DbgkDebugObjectType, KeGetPreviousMode(), &debug);
     if (!NT_SUCCESS(status))
         return status;
     debug->Flags = flags;
@@ -617,7 +634,7 @@ NTSTATUS NTAPI NtWaitForDebugEvent(HANDLE handle, BOOLEAN alertable, PLARGE_INTE
     if (timeout && !NT_SUCCESS(KiCopyFromUser(&t, timeout, sizeof(t))))
         return STATUS_ACCESS_VIOLATION;
     DEBUG_OBJECT *debug;
-    NTSTATUS status = ObReferenceHandle(handle, DbgkDebugObjectType, KeGetPreviousMode(), (PVOID *)&debug, nullptr);
+    NTSTATUS status = ObReferenceHandleFor(handle, DEBUG_READ_EVENT, DbgkDebugObjectType, KeGetPreviousMode(), &debug);
     if (!NT_SUCCESS(status))
         return status;
     status = KeWaitForSingleObject(&debug->EventsPresent, Executive, KeGetPreviousMode(), alertable,

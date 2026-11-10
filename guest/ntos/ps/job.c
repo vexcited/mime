@@ -628,8 +628,8 @@ NTSTATUS NTAPI NtSetInformationJobObject(HANDLE job_handle, ULONG klass, PVOID i
                 status = STATUS_INVALID_PARAMETER;
                 break;
             }
-            status = ObReferenceHandle(in.port.CompletionPort, IoCompletionObjectType, KeGetPreviousMode(), &port,
-                                       nullptr);
+            status = ObReferenceHandleFor(in.port.CompletionPort, 0x2 /* IO_COMPLETION_MODIFY_STATE */,
+                                          IoCompletionObjectType, KeGetPreviousMode(), &port);
             if (NT_SUCCESS(status)) {
                 job->Port = port;
                 job->Key = in.port.CompletionKey;

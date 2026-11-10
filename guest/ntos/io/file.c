@@ -168,9 +168,32 @@ static void unlock_file(PFILE_OBJECT file)
         KeSetEvent(&file->Lock, IO_NO_INCREMENT, FALSE);
 }
 
-static NTSTATUS reference_file(HANDLE handle, PFILE_OBJECT *file)
+/* a user mode caller needs every right of all in the handle, and one of any when some are given. */
+static NTSTATUS reference_file_for(HANDLE handle, ACCESS_MASK all, ACCESS_MASK any, PFILE_OBJECT *file, PCSTR service)
 {
-    return ObReferenceHandle(handle, IoFileObjectTypeObject, KeGetPreviousMode(), (PVOID *)file, nullptr);
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    ACCESS_MASK granted = 0;
+    NTSTATUS status = ObReferenceHandle(handle, IoFileObjectTypeObject, mode, (PVOID *)file, &granted);
+    if (!NT_SUCCESS(status))
+        return status;
+    /* with none of them the first one is reported as missing. */
+    if (any && !(ObHandleRights(*file, granted) & any))
+        all |= any & (~any + 1);
+    if (!ObHandleAllows(*file, granted, all, mode, service)) {
+        ObDereferenceObject(*file);
+        *file = nullptr;
+        return STATUS_ACCESS_DENIED;
+    }
+    return STATUS_SUCCESS;
+}
+
+#define reference_file(handle, all, any, file) reference_file_for(handle, all, any, file, __func__)
+#define FILE_WRITE_OR_APPEND (FILE_WRITE_DATA | FILE_APPEND_DATA)
+
+/* the rights a device or file system control asks for are in bits 14 and 15 of its code. */
+static ACCESS_MASK control_rights(ULONG code)
+{
+    return (code & 0x4000 ? FILE_READ_DATA : 0) | (code & 0x8000 ? FILE_WRITE_DATA : 0);
 }
 
 /*
@@ -200,7 +223,8 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
                         const ULONG64 *pages)
 {
     PFILE_OBJECT file;
-    NTSTATUS status = reference_file(handle, &file);
+    NTSTATUS status = reference_file_for(handle, write ? 0 : FILE_READ_DATA, write ? FILE_WRITE_OR_APPEND : 0, &file,
+                                         write ? "NtWriteFile" : "NtReadFile");
     if (!NT_SUCCESS(status))
         return status;
     /* scatter and gather i/o is for files with no buffering that do not serve one request at a time. */
@@ -334,7 +358,7 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
     store_iosb(iosb, &io);
     if (event) {
         PKEVENT ev;
-        if (NT_SUCCESS(ObReferenceHandle(event, ExEventType, mode, (PVOID *)&ev, nullptr))) {
+        if (NT_SUCCESS(ObReferenceHandleFor(event, EVENT_MODIFY_STATE, ExEventType, mode, &ev))) {
             KeSetEvent(ev, 0, FALSE);
             ObDereferenceObject(ev);
         }
@@ -384,7 +408,7 @@ static NTSTATUS sg_file(BOOLEAN write, HANDLE handle, HANDLE event, PIO_APC_ROUT
         return STATUS_INVALID_PARAMETER;
     /* a handle that is not a file is refused before the array is looked at. */
     PFILE_OBJECT probe;
-    NTSTATUS status = reference_file(handle, &probe);
+    NTSTATUS status = reference_file(handle, 0, 0, &probe);
     if (!NT_SUCCESS(status))
         return status;
     ObDereferenceObject(probe);
@@ -496,13 +520,49 @@ static NTSTATUS query_access(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID info, U
     return status;
 }
 
+/* the attributes of a file and the state of a pipe are told to a handle that may read the attributes. */
+static ACCESS_MASK query_rights(FILE_INFORMATION_CLASS klass)
+{
+    switch ((ULONG)klass) {
+    case FileBasicInformation:
+    case FileAllInformation:
+    case FilePipeInformation:
+    case FilePipeLocalInformation:
+    case FileNetworkOpenInformation:
+    case FileAttributeTagInformation:
+        return FILE_READ_ATTRIBUTES;
+    default:
+        return 0;
+    }
+}
+
+static ACCESS_MASK set_rights(FILE_INFORMATION_CLASS klass)
+{
+    switch ((ULONG)klass) {
+    case FileBasicInformation:
+    case FilePipeInformation:
+        return FILE_WRITE_ATTRIBUTES;
+    case FileRenameInformation:
+    case FileDispositionInformation:
+    case FileDispositionInformationEx:
+    case FileRenameInformationEx:
+        return DELETE;
+    case FileAllocationInformation:
+    case FileEndOfFileInformation:
+    case 39: /* FileValidDataLengthInformation. */
+        return FILE_WRITE_DATA;
+    default:
+        return 0;
+    }
+}
+
 NTSTATUS NTAPI NtQueryInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID info, ULONG length,
                                       FILE_INFORMATION_CLASS klass)
 {
     if (klass == FileAccessInformation)
         return query_access(handle, iosb, info, length);
     PFILE_OBJECT file;
-    NTSTATUS status = reference_file(handle, &file);
+    NTSTATUS status = reference_file(handle, query_rights(klass), 0, &file);
     if (!NT_SUCCESS(status))
         return status;
     PUCHAR buf = ExAllocatePool2(POOL_FLAG_NON_PAGED, length ? length : 1, KI_TAG('I', 'o', 'Q', 'i'));
@@ -672,6 +732,10 @@ NTSTATUS NTAPI NtSetInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, PVOID 
     NTSTATUS status = ObReferenceHandle(handle, IoFileObjectTypeObject, KeGetPreviousMode(), (PVOID *)&file, &granted);
     if (!NT_SUCCESS(status))
         return status;
+    if (!ObHandleGrants(file, granted, set_rights(klass), KeGetPreviousMode())) {
+        ObDereferenceObject(file);
+        return STATUS_ACCESS_DENIED;
+    }
     PUCHAR buf = ExAllocatePool2(POOL_FLAG_NON_PAGED, length ? length : 1, KI_TAG('I', 'o', 'S', 'i'));
     if (!buf) {
         ObDereferenceObject(file);
@@ -778,7 +842,7 @@ NTSTATUS NTAPI NtQueryDirectoryFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE
                                     BOOLEAN single, PUNICODE_STRING pattern, BOOLEAN restart)
 {
     PFILE_OBJECT file;
-    NTSTATUS status = reference_file(handle, &file);
+    NTSTATUS status = reference_file(handle, FILE_LIST_DIRECTORY, 0, &file);
     if (!NT_SUCCESS(status))
         return status;
     UNICODE_STRING pat = {};
@@ -831,7 +895,7 @@ NTSTATUS NTAPI NtQueryVolumeInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb
                                             FS_INFORMATION_CLASS klass)
 {
     PFILE_OBJECT file;
-    NTSTATUS status = reference_file(handle, &file);
+    NTSTATUS status = reference_file(handle, 0, 0, &file);
     if (!NT_SUCCESS(status))
         return status;
     PUCHAR buf = ExAllocatePool2(POOL_FLAG_NON_PAGED, length ? length : 1, KI_TAG('I', 'o', 'Q', 'v'));
@@ -867,7 +931,7 @@ NTSTATUS NTAPI NtSetVolumeInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, 
                                           FS_INFORMATION_CLASS klass)
 {
     PFILE_OBJECT file;
-    NTSTATUS status = reference_file(handle, &file);
+    NTSTATUS status = reference_file(handle, 0, 0, &file);
     if (!NT_SUCCESS(status))
         return status;
     PUCHAR buf = ExAllocatePool2(POOL_FLAG_NON_PAGED, length ? length : 1, KI_TAG('I', 'o', 'S', 'v'));
@@ -897,7 +961,7 @@ NTSTATUS NTAPI NtSetVolumeInformationFile(HANDLE handle, PIO_STATUS_BLOCK iosb, 
 NTSTATUS NTAPI NtFlushBuffersFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
 {
     PFILE_OBJECT file;
-    NTSTATUS status = reference_file(handle, &file);
+    NTSTATUS status = reference_file(handle, 0, FILE_WRITE_OR_APPEND, &file);
     if (!NT_SUCCESS(status))
         return status;
     IO_STATUS_BLOCK io = {};
@@ -949,7 +1013,7 @@ static NTSTATUS buffered_control(PFILE_OBJECT file, UCHAR major, HANDLE event, P
     store_iosb(iosb, &io);
     if (event) {
         PKEVENT ev;
-        if (NT_SUCCESS(ObReferenceHandle(event, ExEventType, KeGetPreviousMode(), (PVOID *)&ev, nullptr))) {
+        if (NT_SUCCESS(ObReferenceHandleFor(event, EVENT_MODIFY_STATE, ExEventType, KeGetPreviousMode(), &ev))) {
             KeSetEvent(ev, 0, FALSE);
             ObDereferenceObject(ev);
         }
@@ -966,7 +1030,7 @@ NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTIN
                                      ULONG out_len)
 {
     PFILE_OBJECT file;
-    NTSTATUS status = reference_file(handle, &file);
+    NTSTATUS status = reference_file(handle, control_rights(code), 0, &file);
     if (!NT_SUCCESS(status))
         return status;
     PVOID routine = (PVOID)apc;
@@ -991,7 +1055,7 @@ NTSTATUS NTAPI NtFsControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc,
                                ULONG out_len)
 {
     PFILE_OBJECT file;
-    NTSTATUS status = reference_file(handle, &file);
+    NTSTATUS status = reference_file(handle, control_rights(code), 0, &file);
     if (!NT_SUCCESS(status))
         return status;
     PVOID routine = (PVOID)apc;
@@ -1010,7 +1074,7 @@ NTSTATUS NTAPI NtFsControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc,
 NTSTATUS NTAPI NtCancelIoFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
 {
     PFILE_OBJECT file;
-    NTSTATUS status = reference_file(handle, &file);
+    NTSTATUS status = reference_file(handle, 0, 0, &file);
     if (!NT_SUCCESS(status))
         return status;
     if (IopIsNamedPipe(file))
@@ -1034,7 +1098,7 @@ NTSTATUS NTAPI NtCancelIoFile(HANDLE handle, PIO_STATUS_BLOCK iosb)
 NTSTATUS NTAPI NtCancelIoFileEx(HANDLE handle, PIO_STATUS_BLOCK request, PIO_STATUS_BLOCK iosb)
 {
     PFILE_OBJECT file;
-    NTSTATUS status = reference_file(handle, &file);
+    NTSTATUS status = reference_file(handle, 0, 0, &file);
     if (!NT_SUCCESS(status))
         return status;
     /* the request is identified by its i/o status block, the start of its OVERLAPPED. */

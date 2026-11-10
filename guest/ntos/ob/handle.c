@@ -203,6 +203,26 @@ NTSTATUS ObInheritHandleList(PEPROCESS parent, PEPROCESS child, const HANDLE *li
     return inherit_handles(parent, child, list, count);
 }
 
+#define GENERIC_RIGHTS (GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL | MAXIMUM_ALLOWED)
+
+/* generic rights become the type's own, and MAXIMUM_ALLOWED gets everything the type has. */
+static ACCESS_MASK own_rights(const OBJECT_TYPE *type, ACCESS_MASK access)
+{
+    const ULONG *mapping = type->Init.GenericMapping;
+    if (!(access & GENERIC_RIGHTS))
+        return access;
+    ACCESS_MASK mapped = access & ~GENERIC_RIGHTS;
+    if (access & (GENERIC_ALL | MAXIMUM_ALLOWED))
+        mapped |= mapping[3];
+    if (access & GENERIC_READ)
+        mapped |= mapping[0];
+    if (access & GENERIC_WRITE)
+        mapped |= mapping[1];
+    if (access & GENERIC_EXECUTE)
+        mapped |= mapping[2];
+    return mapped;
+}
+
 /* consumes the caller's pointer reference to object. */
 NTSTATUS ObInsertObject(PVOID object, ACCESS_MASK access, ULONG attributes, PHANDLE handle)
 {
@@ -212,20 +232,8 @@ NTSTATUS ObInsertObject(PVOID object, ACCESS_MASK access, ULONG attributes, PHAN
         ObDereferenceObject(object);
         return STATUS_PRIVILEGE_NOT_HELD;
     }
-    /* generic rights become the type's own, and MAXIMUM_ALLOWED gets everything the type has. */
-    const ULONG *mapping = OBJECT_TO_HEADER(object)->Type->Init.GenericMapping;
-    if (mapping[3] && (access & (GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL | MAXIMUM_ALLOWED))) {
-        ACCESS_MASK mapped = access & ~(GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE | GENERIC_ALL | MAXIMUM_ALLOWED);
-        if (access & (GENERIC_ALL | MAXIMUM_ALLOWED))
-            mapped |= mapping[3];
-        if (access & GENERIC_READ)
-            mapped |= mapping[0];
-        if (access & GENERIC_WRITE)
-            mapped |= mapping[1];
-        if (access & GENERIC_EXECUTE)
-            mapped |= mapping[2];
-        access = mapped;
-    }
+    if (OBJECT_TO_HEADER(object)->Type->Init.GenericMapping[3])
+        access = own_rights(OBJECT_TO_HEADER(object)->Type, access);
     if (OBJECT_TO_HEADER(object)->Flags & OB_FLAG_SD_PENDING) {
         NTSTATUS status = (OBJECT_TO_HEADER(object)->Flags & OB_FLAG_BOOT) ? ObAssignBootSecurity(object)
                                                                             : ObAssignSecurity(object, nullptr, nullptr, KernelMode);
@@ -358,8 +366,88 @@ static NTSTATUS invalid_handle(HANDLE handle, KPROCESSOR_MODE mode)
     return STATUS_INVALID_HANDLE;
 }
 
-/* an object of either type, or with no type given any object that can be waited on. */
-PVOID ObReferenceHandleFast(HANDLE handle, POBJECT_TYPE type, POBJECT_TYPE other)
+BOOLEAN ObAuditHandleAccess;
+
+/* each service and type is reported once. a report lost or doubled between two processors does not matter. */
+static void report_missing_rights(PVOID object, ACCESS_MASK granted, ACCESS_MASK desired, PCSTR service, BOOLEAN denied)
+{
+    static struct {
+        PCSTR service;
+        const OBJECT_TYPE *type;
+        ACCESS_MASK missing;
+    } seen[128];
+    static ULONG count;
+    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
+    ACCESS_MASK missing = desired & ~granted;
+    ULONG n = count < 128 ? count : 128;
+    for (ULONG i = 0; i < n; i++) {
+        if (seen[i].service == service && seen[i].type == h->Type && seen[i].missing == missing)
+            return;
+    }
+    if (n < 128) {
+        seen[n].service = service, seen[n].type = h->Type, seen[n].missing = missing;
+        count = n + 1;
+    }
+    char type[24];
+    ULONG chars = 0;
+    for (; chars < sizeof(type) - 1 && chars < h->Type->Name.Length / sizeof(WCHAR); chars++)
+        type[chars] = (char)h->Type->Name.Buffer[chars];
+    type[chars] = 0;
+    KiLogPrintf("handle access %s: %s needs %08x of a %s handle that has %08x, %s pid %u", denied ? "denied" : "missing",
+                service, desired, type, granted, PsCurrentProcess()->ImageFileName,
+                (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId);
+}
+
+/*
+ * a service a program calls needs its rights in the handle the object came from. kernel mode callers are not
+ * checked. the kernel option audit-handle-access reports a handle with too few rights and lets it pass.
+ */
+BOOLEAN ObHandleAllows(PVOID object, ACCESS_MASK granted, ACCESS_MASK desired, KPROCESSOR_MODE mode, PCSTR service)
+{
+    if (mode != UserMode || !SeAccessEnforced || (granted & desired) == desired)
+        return TRUE;
+    const OBJECT_TYPE *type = OBJECT_TO_HEADER(object)->Type;
+    if ((granted | desired) & GENERIC_RIGHTS) {
+        /* a type without rights of its own for the generic ones cannot be judged. */
+        if (!type->Init.GenericMapping[3])
+            return TRUE;
+        granted = own_rights(type, granted);
+        desired = own_rights(type, desired);
+        if ((granted & desired) == desired)
+            return TRUE;
+    }
+    if (ObAuditHandleAccess || SeTraceAccess)
+        report_missing_rights(object, granted, desired, service, !ObAuditHandleAccess);
+    return ObAuditHandleAccess;
+}
+
+/* the rights of a handle as its type names them. a type that names none for the generic ones gives them all. */
+ACCESS_MASK ObHandleRights(PVOID object, ACCESS_MASK granted)
+{
+    const OBJECT_TYPE *type = OBJECT_TO_HEADER(object)->Type;
+    if (!(granted & GENERIC_RIGHTS))
+        return granted;
+    return type->Init.GenericMapping[3] ? own_rights(type, granted) : ~0u;
+}
+
+NTSTATUS ObReferenceHandleAccess(HANDLE handle, ACCESS_MASK desired, POBJECT_TYPE type, KPROCESSOR_MODE mode,
+                                 PVOID *object, PCSTR service)
+{
+    ACCESS_MASK granted = 0;
+    NTSTATUS status = ObReferenceHandle(handle, type, mode, object, &granted);
+    if (NT_SUCCESS(status) && !ObHandleAllows(*object, granted, desired, mode, service)) {
+        ObDereferenceObject(*object);
+        *object = nullptr;
+        status = STATUS_ACCESS_DENIED;
+    }
+    return status;
+}
+
+/*
+ * an object of either type, or with no type given any object that can be waited on. a handle without the
+ * rights gives nothing, and the service that takes over answers for it.
+ */
+PVOID ObReferenceHandleFast(HANDLE handle, ACCESS_MASK access, POBJECT_TYPE type, POBJECT_TYPE other)
 {
     /* pseudo handles and kernel handles have these bits. */
     if (!handle || (ULONG_PTR)handle >> 31)
@@ -371,7 +459,9 @@ PVOID ObReferenceHandleFast(HANDLE handle, POBJECT_TYPE type, POBJECT_TYPE other
     if (index < table->Capacity && table->Entries[index].Object) {
         object = table->Entries[index].Object;
         POBJECT_TYPE found = OBJECT_TO_HEADER(object)->Type;
-        if (type ? found == type || found == other : found->Init.Waitable || found->Init.WaitObject)
+        if ((table->Entries[index].GrantedAccess & access) != access)
+            object = nullptr;
+        else if (type ? found == type || found == other : found->Init.Waitable || found->Init.WaitObject)
             ObReferenceObject(object);
         else
             object = nullptr;
@@ -428,7 +518,7 @@ NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCESSOR_MODE mod
 NTSTATUS NTAPI ObReferenceObjectByHandle(HANDLE handle, ACCESS_MASK access, POBJECT_TYPE type, KPROCESSOR_MODE mode,
                                          PVOID *object, PVOID info)
 {
-    return ObReferenceHandle(handle, type, mode, object, nullptr);
+    return ObReferenceHandleAccess(handle, access, type, mode, object, "ObReferenceObjectByHandle");
 }
 
 static void close_object_handle(PEPROCESS process, PVOID object)
@@ -834,7 +924,7 @@ NTSTATUS NTAPI NtMakeTemporaryObject(HANDLE handle)
 NTSTATUS NTAPI NtQuerySymbolicLinkObject(HANDLE handle, PUNICODE_STRING target, PULONG returned)
 {
     POBJECT_SYMBOLIC_LINK link;
-    NTSTATUS status = ObReferenceHandle(handle, ObSymbolicLinkType, KeGetPreviousMode(), (PVOID *)&link, nullptr);
+    NTSTATUS status = ObReferenceHandleFor(handle, SYMBOLIC_LINK_QUERY, ObSymbolicLinkType, KeGetPreviousMode(), &link);
     if (!NT_SUCCESS(status))
         return status;
     UNICODE_STRING out;

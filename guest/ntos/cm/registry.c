@@ -31,7 +31,10 @@ typedef struct CM_PARSE_CONTEXT {
     BOOLEAN ViewContainer;
 } CM_PARSE_CONTEXT;
 
+#define KEY_QUERY_VALUE 0x0001
+#define KEY_SET_VALUE 0x0002
 #define KEY_CREATE_SUB_KEY_ 0x0004
+#define KEY_ENUMERATE_SUB_KEYS 0x0008
 #define KEY_ALL_ACCESS_ 0xF003F
 #define KEY_WOW64_64KEY_ 0x0100
 #define KEY_WOW64_32KEY_ 0x0200
@@ -803,10 +806,10 @@ static NTSTATUS key_put_security(PVOID object, PVOID blob)
     return status;
 }
 
-/* refuses deleted keys. takes the lock on success. */
-static NTSTATUS lock_key(HANDLE handle, CM_KEY_BODY **body, CM_NODE **node)
+/* refuses deleted keys and handles without the rights. takes the lock on success. */
+static NTSTATUS lock_key_for(HANDLE handle, ACCESS_MASK access, CM_KEY_BODY **body, CM_NODE **node, PCSTR service)
 {
-    NTSTATUS status = ObReferenceHandle(handle, CmKeyType, KeGetPreviousMode(), (PVOID *)body, nullptr);
+    NTSTATUS status = ObReferenceHandleAccess(handle, access, CmKeyType, KeGetPreviousMode(), (PVOID *)body, service);
     if (!NT_SUCCESS(status))
         return status;
     ExAcquireFastMutex(&CmpLock);
@@ -818,6 +821,8 @@ static NTSTATUS lock_key(HANDLE handle, CM_KEY_BODY **body, CM_NODE **node)
     }
     return STATUS_SUCCESS;
 }
+
+#define lock_key(handle, access, body, node) lock_key_for(handle, access, body, node, __func__)
 
 static void unlock_key(CM_KEY_BODY *body)
 {
@@ -1113,11 +1118,17 @@ NTSTATUS NTAPI NtOpenKey(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES 
     return NtOpenKeyEx(handle, access, attributes, 0);
 }
 
+/* the name of a key, its handle tags, its trust and its layers are told to any handle. */
+static ACCESS_MASK query_rights(ULONG klass)
+{
+    return klass == 3 || (klass >= 7 && klass <= 9) ? 0 : KEY_QUERY_VALUE;
+}
+
 NTSTATUS NTAPI NtQueryKey(HANDLE key, ULONG klass, PVOID info, ULONG length, PULONG returned)
 {
     CM_KEY_BODY *body;
     CM_NODE *node;
-    NTSTATUS status = lock_key(key, &body, &node);
+    NTSTATUS status = lock_key(key, query_rights(klass), &body, &node);
     if (!NT_SUCCESS(status))
         return status;
     OUT_BUFFER o;
@@ -1131,7 +1142,7 @@ NTSTATUS NTAPI NtEnumerateKey(HANDLE key, ULONG index, ULONG klass, PVOID info, 
 {
     CM_KEY_BODY *body;
     CM_NODE *node;
-    NTSTATUS status = lock_key(key, &body, &node);
+    NTSTATUS status = lock_key(key, KEY_ENUMERATE_SUB_KEYS, &body, &node);
     if (!NT_SUCCESS(status))
         return status;
     CmpLoadChildren(node);
@@ -1155,7 +1166,7 @@ NTSTATUS NTAPI NtQueryValueKey(HANDLE key, PUNICODE_STRING name, ULONG klass, PV
         return status;
     CM_KEY_BODY *body;
     CM_NODE *node;
-    status = lock_key(key, &body, &node);
+    status = lock_key(key, KEY_QUERY_VALUE, &body, &node);
     if (!NT_SUCCESS(status)) {
         KiFreeCapturedString(&captured);
         return status;
@@ -1176,7 +1187,7 @@ NTSTATUS NTAPI NtEnumerateValueKey(HANDLE key, ULONG index, ULONG klass, PVOID i
 {
     CM_KEY_BODY *body;
     CM_NODE *node;
-    NTSTATUS status = lock_key(key, &body, &node);
+    NTSTATUS status = lock_key(key, KEY_QUERY_VALUE, &body, &node);
     if (!NT_SUCCESS(status))
         return status;
     CmpLoadValues(node);
@@ -1209,7 +1220,7 @@ NTSTATUS NTAPI NtSetValueKey(HANDLE key, PUNICODE_STRING name, ULONG title_index
     CM_KEY_BODY *body;
     CM_NODE *node;
     if (NT_SUCCESS(status))
-        status = lock_key(key, &body, &node);
+        status = lock_key(key, KEY_SET_VALUE, &body, &node);
     if (NT_SUCCESS(status)) {
         status = CmpSetValue(node, captured.Buffer, captured.Length / sizeof(WCHAR), type, copy, size);
         unlock_key(body);
@@ -1227,7 +1238,7 @@ NTSTATUS NTAPI NtDeleteValueKey(HANDLE key, PUNICODE_STRING name)
         return status;
     CM_KEY_BODY *body;
     CM_NODE *node;
-    status = lock_key(key, &body, &node);
+    status = lock_key(key, KEY_SET_VALUE, &body, &node);
     if (NT_SUCCESS(status)) {
         status = CmpDeleteValue(node, captured.Buffer, captured.Length / sizeof(WCHAR));
         unlock_key(body);
@@ -1346,7 +1357,7 @@ NTSTATUS NTAPI NtDeleteKey(HANDLE key)
 {
     CM_KEY_BODY *body;
     CM_NODE *node;
-    NTSTATUS status = lock_key(key, &body, &node);
+    NTSTATUS status = lock_key(key, DELETE, &body, &node);
     if (!NT_SUCCESS(status))
         return status;
     status = delete_key(node);
@@ -1358,7 +1369,7 @@ NTSTATUS NTAPI NtFlushKey(HANDLE key)
 {
     CM_KEY_BODY *body;
     CM_NODE *node;
-    NTSTATUS status = lock_key(key, &body, &node);
+    NTSTATUS status = lock_key(key, 0, &body, &node);
     if (!NT_SUCCESS(status))
         return status;
     BOOLEAN is_volatile = (node->Flags & (CM_NODE_VOLATILE | CM_NODE_APP_HIVE)) != 0;

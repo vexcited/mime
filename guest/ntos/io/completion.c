@@ -105,7 +105,7 @@ void IopSignalFile(PFILE_OBJECT file)
 NTSTATUS IopSetCompletion(PFILE_OBJECT file, HANDLE port_handle, PVOID key)
 {
     IO_COMPLETION *port;
-    NTSTATUS status = ObReferenceHandle(port_handle, IoCompletionObjectType, KeGetPreviousMode(), (PVOID *)&port, nullptr);
+    NTSTATUS status = ObReferenceHandleFor(port_handle, IO_COMPLETION_MODIFY_STATE, IoCompletionObjectType, KeGetPreviousMode(), &port);
     if (!NT_SUCCESS(status))
         return status;
     IO_COMPLETION_CONTEXT *ctx = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*ctx), KI_TAG('I', 'o', 'C', 'c'));
@@ -175,7 +175,7 @@ NTSTATUS NTAPI NtOpenIoCompletion(PHANDLE handle, ACCESS_MASK access, POBJECT_AT
 NTSTATUS NTAPI NtSetIoCompletion(HANDLE handle, PVOID key, PVOID apc_context, NTSTATUS io_status, ULONG_PTR information)
 {
     IO_COMPLETION *port;
-    NTSTATUS status = ObReferenceHandle(handle, IoCompletionObjectType, KeGetPreviousMode(), (PVOID *)&port, nullptr);
+    NTSTATUS status = ObReferenceHandleFor(handle, IO_COMPLETION_MODIFY_STATE, IoCompletionObjectType, KeGetPreviousMode(), &port);
     if (!NT_SUCCESS(status))
         return status;
     status = queue_packet(port, key, apc_context, io_status, information);
@@ -217,7 +217,7 @@ static NTSTATUS remove_packets(HANDLE handle, FILE_IO_COMPLETION_INFORMATION *ou
     IO_COMPLETION *port;
     KPROCESSOR_MODE mode = KeGetPreviousMode();
     *removed = 0;
-    NTSTATUS status = ObReferenceHandle(handle, IoCompletionObjectType, mode, (PVOID *)&port, nullptr);
+    NTSTATUS status = ObReferenceHandleFor(handle, IO_COMPLETION_MODIFY_STATE, IoCompletionObjectType, mode, &port);
     if (!NT_SUCCESS(status))
         return status;
     ULONG n = 0;
@@ -323,7 +323,7 @@ NTSTATUS NTAPI NtQueryIoCompletion(HANDLE handle, ULONG klass, PVOID info, ULONG
     if (length < sizeof(IO_COMPLETION_BASIC_INFORMATION))
         return STATUS_INFO_LENGTH_MISMATCH;
     IO_COMPLETION *port;
-    NTSTATUS status = ObReferenceHandle(handle, IoCompletionObjectType, KeGetPreviousMode(), (PVOID *)&port, nullptr);
+    NTSTATUS status = ObReferenceHandleFor(handle, IO_COMPLETION_QUERY_STATE, IoCompletionObjectType, KeGetPreviousMode(), &port);
     if (!NT_SUCCESS(status))
         return status;
     IO_COMPLETION_BASIC_INFORMATION basic = {port->Count};
@@ -485,12 +485,12 @@ NTSTATUS NTAPI NtAssociateWaitCompletionPacket(HANDLE packet_handle, HANDLE port
     NTSTATUS status = ObReferenceHandle(packet_handle, WaitPacketObjectType, mode, (PVOID *)&packet, nullptr);
     if (!NT_SUCCESS(status))
         return status;
-    status = ObReferenceHandle(port_handle, IoCompletionObjectType, mode, (PVOID *)&port, nullptr);
+    status = ObReferenceHandleFor(port_handle, IO_COMPLETION_MODIFY_STATE, IoCompletionObjectType, mode, &port);
     if (!NT_SUCCESS(status)) {
         ObDereferenceObject(packet);
         return status;
     }
-    status = ObReferenceHandle(target_handle, nullptr, mode, &target, nullptr);
+    status = ObReferenceHandleFor(target_handle, SYNCHRONIZE, nullptr, mode, &target);
     PDISPATCHER_HEADER target_wait = NT_SUCCESS(status) ? ObGetWaitObject(target) : nullptr;
     if (NT_SUCCESS(status) && !target_wait) {
         ObDereferenceObject(target);
