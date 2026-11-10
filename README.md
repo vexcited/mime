@@ -2,6 +2,36 @@
 
 Mime is at an early stage, you should build from source for now, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
+### NixOS
+
+The flake builds Mime from source. Add it to your system flake:
+
+```nix
+{
+  inputs.mime.url = "git+https://code.vexcited.com/mime/mime.git";
+
+  outputs = { nixpkgs, mime, ... }: {
+    nixosConfigurations.<hostname> = nixpkgs.lib.nixosSystem {
+      modules = [
+        mime.nixosModules.default
+        { programs.mime.enable = true; }
+      ];
+    };
+  };
+}
+```
+
+Then rebuild with `sudo nixos-rebuild switch`.
+
+Without a system flake, install it in your profile:
+
+```sh
+nix profile install git+https://code.vexcited.com/mime/mime.git
+```
+
+The module enables `hardware.graphics` for the Vulkan drivers.
+Mime needs RW access to `/dev/kvm`, add your user to the `kvm` group if it is not world writable.
+
 ## Usage
 
 ```sh
