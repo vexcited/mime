@@ -369,8 +369,9 @@ void KiLeaveFastService(PKTHREAD thread)
         pcr->UserMode = 0;
         KiAcquireKernelLock();
     }
-    KiKernelLock[KI_LOCK_REASON] = KI_SERVICE_NUMBER(thread->TrapFrame) + 1;
-    KiNoteLockWait(KI_SERVICE_NUMBER(thread->TrapFrame) + 1);
+    /* the frame may hold the result by now, not the number. */
+    KiKernelLock[KI_LOCK_REASON] = thread->FastReason;
+    KiNoteLockWait(thread->FastReason);
     thread->FastService = FALSE;
     pcr->Prcb.FastServicesLocked++;
     KiEnableInterrupts();
@@ -654,6 +655,7 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
     thread->TrapFrame = frame;
     thread->PreviousMode = UserMode;
     thread->FastService = TRUE;
+    thread->FastReason = number + 1;
     FAST_OUTPUT outputs[FAST_OUTPUTS];
     ULONG output_count = 0, written = 0;
     NTSTATUS status = STATUS_SUCCESS;
