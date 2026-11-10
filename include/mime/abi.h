@@ -26,10 +26,11 @@
 #define MIME_RAM_BASE 0x100000000ull
 /*
  * host files placed read only by MIME_HC_FS_MAP, above RAM, mapped from
- * the host page cache.
+ * the host page cache. it ends at 512 GiB since intel client processors address 39 bits and KVM refuses
+ * memory slots past that.
  */
-#define MIME_WINDOW_BASE 0x10000000000ull
-#define MIME_WINDOW_SIZE 0x10000000000ull
+#define MIME_WINDOW_BASE 0x4000000000ull
+#define MIME_WINDOW_SIZE 0x4000000000ull
 #else
 #define MIME_GIC_BASE 0x08000000ull /* the GIC registers, below RAM. */
 #define MIME_ROM_BASE 0x10000000ull /* the system files, read only, below RAM. */
