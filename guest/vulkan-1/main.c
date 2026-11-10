@@ -290,15 +290,18 @@ uint64_t mvk_events(void)
     return g_header ? __atomic_load_n(&g_header->events, __ATOMIC_ACQUIRE) : 0;
 }
 
-void mvk_wait_events(uint64_t seen, ULONG timeout_ms)
+/* FALSE when no event ended the wait: the time ran out or the connection is lost. */
+BOOL mvk_wait_events(uint64_t seen, ULONG timeout_ms, BOOL spin)
 {
     /* a short spin catches work about to finish without sleeping. */
-    for (int i = 0; i < 20000; i++) {
-        if (__atomic_load_n(&g_header->events, __ATOMIC_ACQUIRE) != seen || g_header->lost)
-            return;
+    for (int i = 0; i < (spin ? 20000 : 1); i++) {
+        if (g_header->lost)
+            return FALSE;
+        if (__atomic_load_n(&g_header->events, __ATOMIC_ACQUIRE) != seen)
+            return TRUE;
         YieldProcessor();
     }
-    NtGdiMimeVkWait(MVK_WAIT_EVENTS | seen, timeout_ms);
+    return NtGdiMimeVkWait(MVK_WAIT_EVENTS | seen, timeout_ms) == STATUS_SUCCESS;
 }
 
 static MvkDecoder g_reply_decoder;

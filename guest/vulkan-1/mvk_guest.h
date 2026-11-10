@@ -89,7 +89,7 @@ volatile uint64_t *mvk_mirrors(void);
 uint64_t mvk_done_serial(void);
 /* the process allocated or freed device memory, so a budget read before is stale. */
 void mvk_memory_changed(void);
-void mvk_wait_events(uint64_t seen, ULONG timeout_ms);
+BOOL mvk_wait_events(uint64_t seen, ULONG timeout_ms, BOOL spin);
 void *mvk_block_alloc(SIZE_T size, ULONG64 *pa);
 void mvk_block_free(void *base);
 void mvk_block_free_after(void *base, uint64_t serial);
