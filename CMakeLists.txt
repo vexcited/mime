@@ -1758,6 +1758,8 @@ else()
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${vulkan_gen};${CMAKE_SOURCE_DIR}/third_party/glslang")
     target_compile_definitions(mime PRIVATE _GNU_SOURCE)
     target_link_libraries(mime PRIVATE PkgConfig::HOST_LIBS Threads::Threads m)
+    # the client tells a machine of another build by it, see host/build_id.c.
+    target_link_options(mime PRIVATE -Wl,--build-id=sha1)
     if(HOST_SDBUS_FOUND)
         target_compile_definitions(mime PRIVATE MIME_HAVE_SDBUS=1)
         target_link_libraries(mime PRIVATE PkgConfig::HOST_SDBUS)

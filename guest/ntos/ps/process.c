@@ -165,6 +165,7 @@ static const SCHAR g_class_base[] = {8, 4, 8, 13, 24, 6, 10};
 static void process_delete(PVOID object)
 {
     PEPROCESS process = object;
+    MimeSessionUserProgramGone(process);
     MmFreeAddressSpaceRoot(&process->AddressSpace);
     if (process->MmLockedRanges)
         ExFreePool(process->MmLockedRanges);

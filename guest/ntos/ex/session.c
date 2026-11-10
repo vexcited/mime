@@ -86,8 +86,25 @@ void MimeSendConsole(ULONG type, ULONG64 request, ULONG value, const void *data,
     ExReleaseFastMutex(&g_console_lock);
 }
 
+/* counts what the user started, directly or through it, so the host restarts the machine only when it ends nothing. */
+void MimeSessionUserProgram(PEPROCESS process, PEPROCESS parent)
+{
+    if (!process->MimeRequestId && !(parent && parent->MimeUserProgram))
+        return;
+    process->MimeUserProgram = TRUE;
+    __atomic_fetch_add(&HalSharedPage->user_processes, 1, __ATOMIC_RELEASE);
+}
+
+/* at the exit, or at the deletion of a process that failed to start. */
+void MimeSessionUserProgramGone(PEPROCESS process)
+{
+    if (__atomic_exchange_n(&process->MimeUserProgram, FALSE, __ATOMIC_ACQ_REL))
+        __atomic_fetch_sub(&HalSharedPage->user_processes, 1, __ATOMIC_RELEASE);
+}
+
 void MimeSessionProcessExited(PEPROCESS process)
 {
+    MimeSessionUserProgramGone(process);
     if (process->MimeRequestId)
         send_process_event(MIME_EVT_PROCESS_EXIT, process->MimeRequestId, (ULONG)process->ExitStatus,
                            (ULONG)(ULONG_PTR)process->UniqueProcessId);

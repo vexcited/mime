@@ -87,6 +87,12 @@ size_t mime_utf16_to_utf8(char *dst, size_t dst_size, const uint16_t *src, size_
 size_t mime_utf8_to_utf16(uint16_t *dst, size_t dst_count, const char *src);
 uint64_t mime_now_ns(void);
 
+/* build_id.c */
+#define MIME_BUILD_ID_MAX 32
+size_t mime_build_id(uint8_t out[MIME_BUILD_ID_MAX]);
+/* in hex, or "unknown" when length is 0. */
+void mime_build_id_text(const uint8_t *id, size_t length, char *out, size_t size);
+
 /* sha1.c */
 typedef struct MimeSha1 {
     uint32_t state[5];

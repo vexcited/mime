@@ -46,9 +46,16 @@ typedef struct MimeIpcStatus {
     uint32_t ready;
     uint32_t pid;
     uint64_t uptime_ms;
-    uint32_t running_programs;
+    uint32_t running_programs; /* runs a client still waits on. */
     uint32_t pad;
+    /* older machines end here. */
+    uint32_t user_processes; /* processes a run started and their descendants, MimeSharedPage.user_processes. */
+    uint32_t build_id_size;
+    uint8_t build_id[32]; /* the build of the machine's mime, see mime_build_id. */
 } MimeIpcStatus;
+
+/* the size of the replies of older machines, which tell neither their build nor the user's processes. */
+#define MIME_IPC_STATUS_V1_SIZE offsetof(MimeIpcStatus, user_processes)
 
 #define MIME_IPC_MAX_PAYLOAD (1u << 20)
 

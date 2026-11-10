@@ -487,6 +487,8 @@ typedef struct MimeSharedPage {
     /* where the kernel lock names the processor that holds it and what for, so the profiler tells the holder apart. */
     volatile uint64_t lock_owner_pa;
     volatile uint64_t lock_reason_pa;
+    /* the processes a run started and their descendants, kept by the guest so the host knows whether a restart ends a program. */
+    volatile uint32_t user_processes;
 } MimeSharedPage;
 
 /* one run of free guest pages in a MIME_HC_MEM_REPORT list. */

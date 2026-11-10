@@ -1334,6 +1334,7 @@ typedef struct _EPROCESS {
     PVOID Win32Process;
     PVOID KernelCallbackTable;
     ULONG64 MimeRequestId; /* the host run request that created the process. */
+    BOOLEAN MimeUserProgram; /* a run started it or its ancestors, counted in MimeSharedPage.user_processes. */
     struct _MIME_CONSOLE *Console; /* the attached console, io/console.c. */
     PVOID ConsoleCtrlRoutine;      /* kernelbase's, started on a new thread for each ctrl event. */
     ULONG ConsoleGroup;            /* process group of GenerateConsoleCtrlEvent. */
@@ -1770,6 +1771,8 @@ NTSTATUS ExWaitHandles(ULONG count, const HANDLE *handles, WAIT_TYPE type, BOOLE
 void MiSessionInitialize(void);
 void MimeSessionInterrupt(ULONG bits);
 void MimeSessionProcessExited(PEPROCESS process);
+void MimeSessionUserProgram(PEPROCESS process, PEPROCESS parent);
+void MimeSessionUserProgramGone(PEPROCESS process);
 void MimeSendDebugOutput(PEPROCESS process, const char *text, SIZE_T length);
 void MimeSendConsole(ULONG type, ULONG64 request, ULONG value, const void *data, ULONG length);
 
