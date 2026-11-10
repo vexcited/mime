@@ -63,22 +63,20 @@ file(MAKE_DIRECTORY ${MIME_BUILD_GEN}/res ${MIME_SYSTEM32} ${MIME_SYSX64} ${MIME
 
 # The drawings and sounds that live in their own repositories, mime-icons and mime-audio, and the files of Windows the
 # build makes from them and from data/messages. A checkout of a repository next to Mime's is used as it is, so it can be
-# edited and built without a commit; otherwise the commit pinned here is fetched. MIME_ICONS_DIR and MIME_AUDIO_DIR
+# edited and built without a commit; otherwise main is fetched at each configure. MIME_ICONS_DIR and MIME_AUDIO_DIR
 # name another checkout.
 include(FetchContent)
 
 set(MIME_ICONS_REPOSITORY https://code.vexcited.com/mime/icons.git)
-set(MIME_ICONS_COMMIT ed99f1c9de2bc1b42f7c899b7355503be96cab5f)
 set(MIME_AUDIO_REPOSITORY https://code.vexcited.com/mime/audio.git)
-set(MIME_AUDIO_COMMIT 86c3138fcab689175f18847b72b06820c7dd0bd6)
-set(MIME_ICONS_DIR "" CACHE PATH "A checkout of mime-icons to build from instead of the pinned commit")
-set(MIME_AUDIO_DIR "" CACHE PATH "A checkout of mime-audio to build from instead of the pinned commit")
+set(MIME_ICONS_DIR "" CACHE PATH "A checkout of mime-icons to build from instead of main")
+set(MIME_AUDIO_DIR "" CACHE PATH "A checkout of mime-audio to build from instead of main")
 
 set(MIME_ASSETS ${MIME_BUILD_GEN}/assets)
 set(MIME_ASSET_SCRIPTS ${CMAKE_SOURCE_DIR}/scripts/asset/binary.cmake ${CMAKE_SOURCE_DIR}/scripts/asset/raster.cmake
     ${CMAKE_SOURCE_DIR}/scripts/asset/png.cmake)
 
-function(mime_asset_repository out name url commit)
+function(mime_asset_repository out name url)
     string(TOUPPER "${name}" upper)
     set(dir "${MIME_${upper}_DIR}")
     if(NOT dir)
@@ -102,16 +100,16 @@ function(mime_asset_repository out name url commit)
     if(dir)
         message(STATUS "mime-${name}: ${dir}")
     else()
-        FetchContent_Declare(mime_${name} GIT_REPOSITORY ${url} GIT_TAG ${commit} GIT_PROGRESS TRUE)
+        FetchContent_Declare(mime_${name} GIT_REPOSITORY ${url} GIT_TAG main GIT_SHALLOW TRUE GIT_PROGRESS TRUE)
         FetchContent_MakeAvailable(mime_${name})
         set(dir "${mime_${name}_SOURCE_DIR}")
-        message(STATUS "mime-${name}: ${commit}")
+        message(STATUS "mime-${name}: ${url} main")
     endif()
     set(${out} "${dir}" PARENT_SCOPE)
 endfunction()
 
-mime_asset_repository(MIME_ICONS icons ${MIME_ICONS_REPOSITORY} ${MIME_ICONS_COMMIT})
-mime_asset_repository(MIME_AUDIO audio ${MIME_AUDIO_REPOSITORY} ${MIME_AUDIO_COMMIT})
+mime_asset_repository(MIME_ICONS icons ${MIME_ICONS_REPOSITORY})
+mime_asset_repository(MIME_AUDIO audio ${MIME_AUDIO_REPOSITORY})
 
 set(mime_icon_sizes 16 20 24 32 48 256)
 set(mime_system_icon_sizes 16 20 24 32 40 48 64 256)
