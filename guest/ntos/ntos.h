@@ -39,6 +39,8 @@ ULONG64 HalHypercall(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4,
  */
 ULONG64 HalHypercallUnlocked(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 a4, ULONG64 a5, ULONG64 a6,
                              PULONG64 value);
+/* kernel memory to kernel memory, without the kernel lock when the caller holds it. */
+void KiCopyUnlocked(void *to, const void *from, SIZE_T length);
 void HalInitialize(MimeBootInfo *boot);
 void HalLog(const char *text, SIZE_T length);
 DECLSPEC_NORETURN void HalPanic(const char *text);

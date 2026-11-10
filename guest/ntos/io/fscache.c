@@ -232,8 +232,14 @@ BOOLEAN FsCacheRead(MIMEFS_CACHE *c, ULONG64 host_handle, ULONG64 offset, PUCHAR
         return TRUE;
     if (length > c->Size - offset)
         length = (ULONG)(c->Size - offset);
-    /* the caller's open reference keeps the window mapped while it copies. */
-    memcpy(out, (PUCHAR)HalPhysmap(window) + offset, length);
+    /*
+     * the caller's open reference keeps the window mapped while it copies. the host reads the file as the window is
+     * touched, which nobody waits for when the bytes go to pool memory.
+     */
+    if ((ULONG_PTR)out - MIME_KVA_PHYSMAP < MIME_KVA_KUSER_SHARED - MIME_KVA_PHYSMAP)
+        KiCopyUnlocked(out, (PUCHAR)HalPhysmap(window) + offset, length);
+    else
+        memcpy(out, (PUCHAR)HalPhysmap(window) + offset, length);
     *done = length;
     return TRUE;
 }
