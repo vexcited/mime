@@ -22,7 +22,7 @@ typedef struct MIME_FONT_SUBSTITUTE {
     {L"MS Sans Serif", L"Microsoft Sans Serif"}, {L"Helv", L"Microsoft Sans Serif"}, {L"Helvetica", L"Arial"},       \
     {L"Tms Rmn", L"Times New Roman"}, {L"Times", L"Times New Roman"}, {L"MS Serif", L"Times New Roman"},            \
     {L"Courier", L"Courier New"}, {L"System", L"Segoe UI"}, {L"Fixedsys", L"Consolas"}, {L"Terminal", L"Consolas"}, \
-    {L"Small Fonts", L"Segoe UI"}, {L"Segoe UI Variable", L"Segoe UI"}, {L"Segoe UI Variable Text", L"Segoe UI"},    \
-    {L"Segoe UI Variable Display", L"Segoe UI"},
+    {L"Small Fonts", L"Segoe UI"}, {L"Segoe UI Variable Text", L"Segoe UI Variable"},                                \
+    {L"Segoe UI Variable Display", L"Segoe UI Variable"}, {L"Segoe UI Variable Small", L"Segoe UI Variable"},
 
 #endif

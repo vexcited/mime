@@ -1019,543 +1019,561 @@ static const FEATURE_FONT fonts24[] = {
      .Sha1 = "7b01a94309e6c9c9f5a07d600524765a64383029", .Size = 2514056, .Families = f24_18},
 };
 
-static const char *const f25_0[] = {"Arial", nullptr};
-static const char *const f25_1[] = {"Arial", nullptr};
-static const char *const f25_2[] = {"Arial", nullptr};
-static const char *const f25_3[] = {"Arial", nullptr};
-static const char *const f25_4[] = {"Arial Black", "Arial", nullptr};
-static const char *const f25_5[] = {"Bahnschrift", nullptr};
-static const char *const f25_6[] = {"Comic Sans MS", nullptr};
-static const char *const f25_7[] = {"Comic Sans MS", nullptr};
-static const char *const f25_8[] = {"Comic Sans MS", nullptr};
-static const char *const f25_9[] = {"Comic Sans MS", nullptr};
-static const char *const f25_10[] = {"Courier New", nullptr};
-static const char *const f25_11[] = {"Courier New", nullptr};
-static const char *const f25_12[] = {"Courier New", nullptr};
-static const char *const f25_13[] = {"Courier New", nullptr};
-static const char *const f25_14[] = {"Franklin Gothic Medium", nullptr};
-static const char *const f25_15[] = {"Franklin Gothic Medium", nullptr};
-static const char *const f25_16[] = {"Georgia", nullptr};
-static const char *const f25_17[] = {"Georgia", nullptr};
-static const char *const f25_18[] = {"Georgia", nullptr};
-static const char *const f25_19[] = {"Georgia", nullptr};
-static const char *const f25_20[] = {"Impact", nullptr};
-static const char *const f25_21[] = {"Lucida Sans Unicode", nullptr};
-static const char *const f25_22[] = {"Lucida Console", nullptr};
-static const char *const f25_23[] = {"Microsoft Sans Serif", nullptr};
-static const char *const f25_24[] = {"Palatino Linotype", nullptr};
-static const char *const f25_25[] = {"Palatino Linotype", nullptr};
-static const char *const f25_26[] = {"Palatino Linotype", nullptr};
-static const char *const f25_27[] = {"Palatino Linotype", nullptr};
-static const char *const f25_28[] = {"Sylfaen", nullptr};
-static const char *const f25_29[] = {"Tahoma", nullptr};
-static const char *const f25_30[] = {"Tahoma", nullptr};
-static const char *const f25_31[] = {"Times New Roman", nullptr};
-static const char *const f25_32[] = {"Times New Roman", nullptr};
-static const char *const f25_33[] = {"Times New Roman", nullptr};
-static const char *const f25_34[] = {"Times New Roman", nullptr};
-static const char *const f25_35[] = {"Trebuchet MS", nullptr};
-static const char *const f25_36[] = {"Trebuchet MS", nullptr};
-static const char *const f25_37[] = {"Trebuchet MS", nullptr};
-static const char *const f25_38[] = {"Trebuchet MS", nullptr};
-static const char *const f25_39[] = {"Verdana", nullptr};
-static const char *const f25_40[] = {"Verdana", nullptr};
-static const char *const f25_41[] = {"Verdana", nullptr};
-static const char *const f25_42[] = {"Verdana", nullptr};
+static const char *const f25_0[] = {"Segoe UI Variable", nullptr};
 static const FEATURE_FONT fonts25[] = {
+    {.File = "SegUIVar.ttf", .Member = nullptr, .Registry = "Segoe UI Variable (TrueType)",
+     .Sha256 = "27ca1ab4bd5ad3b0404ee6a9a03b143408dbd7e5a4c9e4b2054639c03fc0f682",
+     .Sha1 = "151ceb9bf1b65cdc801d477d01b0252dbe9f13af", .Size = 1851000, .Families = f25_0},
+};
+
+static const char *const f26_0[] = {"Segoe MDL2 Assets", nullptr};
+static const char *const f26_1[] = {"Segoe Fluent Icons", nullptr};
+static const FEATURE_FONT fonts26[] = {
+    {.File = "segmdl2.ttf", .Member = nullptr, .Registry = "Segoe MDL2 Assets (TrueType)",
+     .Sha256 = "a2efc8b8e51fbd031a7142a1ade8866fa904c0c349511abc579ee53f8a926f31",
+     .Sha1 = "9c27d5cb80e03f782d7ab5d76b3a4928b0ba872d", .Size = 283820, .Families = f26_0},
+    {.File = "SegoeIcons.ttf", .Member = nullptr, .Registry = "Segoe Fluent Icons (TrueType)",
+     .Sha256 = "8174e92a5f9a19ada80827bb3536088438c683f0cd96cb382dc8b919191cd0d4",
+     .Sha1 = "f1b51ef0be20bd1127e4be871bafa19126296e45", .Size = 451924, .Families = f26_1},
+};
+
+static const char *const f27_0[] = {"Arial", nullptr};
+static const char *const f27_1[] = {"Arial", nullptr};
+static const char *const f27_2[] = {"Arial", nullptr};
+static const char *const f27_3[] = {"Arial", nullptr};
+static const char *const f27_4[] = {"Arial Black", "Arial", nullptr};
+static const char *const f27_5[] = {"Bahnschrift", nullptr};
+static const char *const f27_6[] = {"Comic Sans MS", nullptr};
+static const char *const f27_7[] = {"Comic Sans MS", nullptr};
+static const char *const f27_8[] = {"Comic Sans MS", nullptr};
+static const char *const f27_9[] = {"Comic Sans MS", nullptr};
+static const char *const f27_10[] = {"Courier New", nullptr};
+static const char *const f27_11[] = {"Courier New", nullptr};
+static const char *const f27_12[] = {"Courier New", nullptr};
+static const char *const f27_13[] = {"Courier New", nullptr};
+static const char *const f27_14[] = {"Franklin Gothic Medium", nullptr};
+static const char *const f27_15[] = {"Franklin Gothic Medium", nullptr};
+static const char *const f27_16[] = {"Georgia", nullptr};
+static const char *const f27_17[] = {"Georgia", nullptr};
+static const char *const f27_18[] = {"Georgia", nullptr};
+static const char *const f27_19[] = {"Georgia", nullptr};
+static const char *const f27_20[] = {"Impact", nullptr};
+static const char *const f27_21[] = {"Lucida Sans Unicode", nullptr};
+static const char *const f27_22[] = {"Lucida Console", nullptr};
+static const char *const f27_23[] = {"Microsoft Sans Serif", nullptr};
+static const char *const f27_24[] = {"Palatino Linotype", nullptr};
+static const char *const f27_25[] = {"Palatino Linotype", nullptr};
+static const char *const f27_26[] = {"Palatino Linotype", nullptr};
+static const char *const f27_27[] = {"Palatino Linotype", nullptr};
+static const char *const f27_28[] = {"Sylfaen", nullptr};
+static const char *const f27_29[] = {"Tahoma", nullptr};
+static const char *const f27_30[] = {"Tahoma", nullptr};
+static const char *const f27_31[] = {"Times New Roman", nullptr};
+static const char *const f27_32[] = {"Times New Roman", nullptr};
+static const char *const f27_33[] = {"Times New Roman", nullptr};
+static const char *const f27_34[] = {"Times New Roman", nullptr};
+static const char *const f27_35[] = {"Trebuchet MS", nullptr};
+static const char *const f27_36[] = {"Trebuchet MS", nullptr};
+static const char *const f27_37[] = {"Trebuchet MS", nullptr};
+static const char *const f27_38[] = {"Trebuchet MS", nullptr};
+static const char *const f27_39[] = {"Verdana", nullptr};
+static const char *const f27_40[] = {"Verdana", nullptr};
+static const char *const f27_41[] = {"Verdana", nullptr};
+static const char *const f27_42[] = {"Verdana", nullptr};
+static const FEATURE_FONT fonts27[] = {
     {.File = "arial.ttf", .Member = nullptr, .Registry = "Arial (TrueType)",
      .Sha256 = "74d696e666f696e93db685a85c94bfbfcc0796dfcf8a2e2e2e2c908a54e82949",
-     .Sha1 = "38bfe8fd08eba49c44c2229388d40fbc303ecad3", .Size = 1047208, .Families = f25_0},
+     .Sha1 = "38bfe8fd08eba49c44c2229388d40fbc303ecad3", .Size = 1047208, .Families = f27_0},
     {.File = "arialbd.ttf", .Member = nullptr, .Registry = "Arial Bold (TrueType)",
      .Sha256 = "9e77165c7bfb4a5436f1ab683f1592bb2a9826e15aecad8dc9ed278ce03e8882",
-     .Sha1 = "477933db6a9a766b4743716a2ce8a3db8a14f1f9", .Size = 991572, .Families = f25_1},
+     .Sha1 = "477933db6a9a766b4743716a2ce8a3db8a14f1f9", .Size = 991572, .Families = f27_1},
     {.File = "arialbi.ttf", .Member = nullptr, .Registry = "Arial Bold Italic (TrueType)",
      .Sha256 = "02d374333edc09827f8b6afb4b95be63317418c2270574dc6579cdc0df698553",
-     .Sha1 = "08faf0ca98c4b9299d96cdb2165a63febd918003", .Size = 731964, .Families = f25_2},
+     .Sha1 = "08faf0ca98c4b9299d96cdb2165a63febd918003", .Size = 731964, .Families = f27_2},
     {.File = "ariali.ttf", .Member = nullptr, .Registry = "Arial Italic (TrueType)",
      .Sha256 = "6ac9e0ec4d55bfa29e16a7b74e9109efb344bff80d87cc664e1af63bd6c45f94",
-     .Sha1 = "0f68906cc44e048d724386621ac26cad2350edfe", .Size = 728308, .Families = f25_3},
+     .Sha1 = "0f68906cc44e048d724386621ac26cad2350edfe", .Size = 728308, .Families = f27_3},
     {.File = "ariblk.ttf", .Member = nullptr, .Registry = "Arial Black (TrueType)",
      .Sha256 = "10df702864b1f89cb29ba0d6b97c04228338d16807e13e8d8c74b91aba5e5f23",
-     .Sha1 = "e6528182997a46a5daf8008fab9ec5fed0a84ce2", .Size = 167592, .Families = f25_4},
+     .Sha1 = "e6528182997a46a5daf8008fab9ec5fed0a84ce2", .Size = 167592, .Families = f27_4},
     {.File = "bahnschrift.ttf", .Member = nullptr, .Registry = "Bahnschrift (TrueType)",
      .Sha256 = "eaad201da94cb323401fdb8cc760650803ddf8fd704cb9fa56317e6c69bc6fd6",
-     .Sha1 = "34d4becf017fa35dff4efcd5ee78c223891b9af1", .Size = 361564, .Families = f25_5},
+     .Sha1 = "34d4becf017fa35dff4efcd5ee78c223891b9af1", .Size = 361564, .Families = f27_5},
     {.File = "comic.ttf", .Member = nullptr, .Registry = "Comic Sans MS (TrueType)",
      .Sha256 = "fc7fbc3fb456a363f1f719b0ec62ae093c78124bb6da046006ae7e217a6b8575",
-     .Sha1 = "c05f71b8b331d56ce2172aace70db729456fd649", .Size = 272612, .Families = f25_6},
+     .Sha1 = "c05f71b8b331d56ce2172aace70db729456fd649", .Size = 272612, .Families = f27_6},
     {.File = "comicbd.ttf", .Member = nullptr, .Registry = "Comic Sans MS Bold (TrueType)",
      .Sha256 = "128fdcfdfdd358e1624c15dd1f84a4d0689e59afcdefb81f8105efb2253b9c00",
-     .Sha1 = "42ba35810d23a520dcd137b817bcef839eaaee11", .Size = 255972, .Families = f25_7},
+     .Sha1 = "42ba35810d23a520dcd137b817bcef839eaaee11", .Size = 255972, .Families = f27_7},
     {.File = "comici.ttf", .Member = nullptr, .Registry = "Comic Sans MS Italic (TrueType)",
      .Sha256 = "872cdefea79e25ff1a8a814109593c23ed66ba46f5bb843815d49e1ab4e0be3c",
-     .Sha1 = "4e899d425fea90bc59c38ddacd0ced7ffab55613", .Size = 255796, .Families = f25_8},
+     .Sha1 = "4e899d425fea90bc59c38ddacd0ced7ffab55613", .Size = 255796, .Families = f27_8},
     {.File = "comicz.ttf", .Member = nullptr, .Registry = "Comic Sans MS Bold Italic (TrueType)",
      .Sha256 = "36eb300a76582b7d39f3d34834ce1255f0b9b2830fb2e81485c4b85a5ff7f03b",
-     .Sha1 = "db0acbedeb9591c766a5144e92792902eb8f6dd4", .Size = 253232, .Families = f25_9},
+     .Sha1 = "db0acbedeb9591c766a5144e92792902eb8f6dd4", .Size = 253232, .Families = f27_9},
     {.File = "cour.ttf", .Member = nullptr, .Registry = "Courier New (TrueType)",
      .Sha256 = "6aab1f79264ccda1e7129dba62dbe3750b10eaa27408a327dadb808724e62c84",
-     .Sha1 = "0be4ad6e7445bef2621feaa042b8a03dfa9bdfff", .Size = 828760, .Families = f25_10},
+     .Sha1 = "0be4ad6e7445bef2621feaa042b8a03dfa9bdfff", .Size = 828760, .Families = f27_10},
     {.File = "courbd.ttf", .Member = nullptr, .Registry = "Courier New Bold (TrueType)",
      .Sha256 = "e376f24c9f27eb7370b25aa366d78da731834a1aea651858801c9a14e8906943",
-     .Sha1 = "6b356fed99b5aca5414d497ad41c10a73d6d7994", .Size = 827444, .Families = f25_11},
+     .Sha1 = "6b356fed99b5aca5414d497ad41c10a73d6d7994", .Size = 827444, .Families = f27_11},
     {.File = "courbi.ttf", .Member = nullptr, .Registry = "Courier New Bold Italic (TrueType)",
      .Sha256 = "ac3b362cf998eb33475655e12ab7cb2f6a35d1f2eff6f76af00ebb6f81c53ee7",
-     .Sha1 = "6be98da15ae7bc6abf0989d2561edfbff43b446b", .Size = 602956, .Families = f25_12},
+     .Sha1 = "6be98da15ae7bc6abf0989d2561edfbff43b446b", .Size = 602956, .Families = f27_12},
     {.File = "couri.ttf", .Member = nullptr, .Registry = "Courier New Italic (TrueType)",
      .Sha256 = "546406ddbb3e3f6b876a5e8a5dee62ac090d1448662e98d8844b22393813dd13",
-     .Sha1 = "ddaf15568bc19d06c0a29d25718fc2bbe6332d57", .Size = 692884, .Families = f25_13},
+     .Sha1 = "ddaf15568bc19d06c0a29d25718fc2bbe6332d57", .Size = 692884, .Families = f27_13},
     {.File = "framd.ttf", .Member = nullptr, .Registry = "Franklin Gothic Medium (TrueType)",
      .Sha256 = "bac844bd41f847cf138737026d41c983387a1065535c32e78aa22c48708b52ad",
-     .Sha1 = "8e367c494ecc95424e0304f845521b189b2a2e67", .Size = 133632, .Families = f25_14},
+     .Sha1 = "8e367c494ecc95424e0304f845521b189b2a2e67", .Size = 133632, .Families = f27_14},
     {.File = "framdit.ttf", .Member = nullptr, .Registry = "Franklin Gothic Medium Italic (TrueType)",
      .Sha256 = "df59f9ea915957b22a389d68580bf40dc5bd05822cc65b5fdcc188c706a694e7",
-     .Sha1 = "455dcab05672ec755863f68416194d7f4959f71a", .Size = 148728, .Families = f25_15},
+     .Sha1 = "455dcab05672ec755863f68416194d7f4959f71a", .Size = 148728, .Families = f27_15},
     {.File = "georgia.ttf", .Member = nullptr, .Registry = "Georgia (TrueType)",
      .Sha256 = "38dffcaf1fac89492f7c56c600a14daf36ae42f7c21985cd4134ae113124a58f",
-     .Sha1 = "5818c435d0ff1333d98891690a83f50e56bc5a3b", .Size = 219712, .Families = f25_16},
+     .Sha1 = "5818c435d0ff1333d98891690a83f50e56bc5a3b", .Size = 219712, .Families = f27_16},
     {.File = "georgiab.ttf", .Member = nullptr, .Registry = "Georgia Bold (TrueType)",
      .Sha256 = "72a6cd94fab6c179392075d3fb361e269cdddfad41bb7ab385fa22a37e49a900",
-     .Sha1 = "e27ea4537381876f28e11c52fd383b98933ee58b", .Size = 207476, .Families = f25_17},
+     .Sha1 = "e27ea4537381876f28e11c52fd383b98933ee58b", .Size = 207476, .Families = f27_17},
     {.File = "georgiai.ttf", .Member = nullptr, .Registry = "Georgia Italic (TrueType)",
      .Sha256 = "d3e4bad27651d120ac8f2cea42cf4b4f077264fb243f66b3caffcfd35465f49b",
-     .Sha1 = "461596c20be5bb991d4749c06dc54ad410144474", .Size = 208444, .Families = f25_18},
+     .Sha1 = "461596c20be5bb991d4749c06dc54ad410144474", .Size = 208444, .Families = f27_18},
     {.File = "georgiaz.ttf", .Member = nullptr, .Registry = "Georgia Bold Italic (TrueType)",
      .Sha256 = "3f9e512f82eaf6f1b7869b82013fb79f6eaf1a41e75a0e7b96f31f35b1022ae4",
-     .Sha1 = "c093a9eabcf4e3c233afef89285f1662798d2086", .Size = 211780, .Families = f25_19},
+     .Sha1 = "c093a9eabcf4e3c233afef89285f1662798d2086", .Size = 211780, .Families = f27_19},
     {.File = "impact.ttf", .Member = nullptr, .Registry = "Impact (TrueType)",
      .Sha256 = "d8bbdb72e3f930157824b2e59677d3a912d4512c14a948e6656a2e3fb0c935ad",
-     .Sha1 = "a539dd4feed027f9511e5061cb56da83d0d6bcf5", .Size = 206784, .Families = f25_20},
+     .Sha1 = "a539dd4feed027f9511e5061cb56da83d0d6bcf5", .Size = 206784, .Families = f27_20},
     {.File = "l_10646.ttf", .Member = nullptr, .Registry = "Lucida Sans Unicode (TrueType)",
      .Sha256 = "97226e81f19eff8c8fb191745748bab920472c005d3ec4e23d9a50a12c471d92",
-     .Sha1 = "d96a01dba0e8d659426add318fde33a1fc65cd54", .Size = 309516, .Families = f25_21},
+     .Sha1 = "d96a01dba0e8d659426add318fde33a1fc65cd54", .Size = 309516, .Families = f27_21},
     {.File = "lucon.ttf", .Member = nullptr, .Registry = "Lucida Console (TrueType)",
      .Sha256 = "2ca2cfde263fa420e8d39420f075ee9ac80bc0794272c53ac4571a88f8a075a6",
-     .Sha1 = "3a21f868544500c690f8ac04dc6b05a7dfe94637", .Size = 111108, .Families = f25_22},
+     .Sha1 = "3a21f868544500c690f8ac04dc6b05a7dfe94637", .Size = 111108, .Families = f27_22},
     {.File = "micross.ttf", .Member = nullptr, .Registry = "Microsoft Sans Serif (TrueType)",
      .Sha256 = "9621f0043b451d266255ac6229e729d476b76dd908635924f0bcdc4bb6719de1",
-     .Sha1 = "bfaaa6f717e897e4536e9076670c55e02a728edd", .Size = 888228, .Families = f25_23},
+     .Sha1 = "bfaaa6f717e897e4536e9076670c55e02a728edd", .Size = 888228, .Families = f27_23},
     {.File = "pala.ttf", .Member = nullptr, .Registry = "Palatino Linotype (TrueType)",
      .Sha256 = "e47d594e2e2bc31b28f87b6f66483d32f925843ceb002f919c7a403aca48813d",
-     .Sha1 = "31972e315346a39e05c0a5138bc9e96cbfed410f", .Size = 472284, .Families = f25_24},
+     .Sha1 = "31972e315346a39e05c0a5138bc9e96cbfed410f", .Size = 472284, .Families = f27_24},
     {.File = "palab.ttf", .Member = nullptr, .Registry = "Palatino Linotype Bold (TrueType)",
      .Sha256 = "8e14668bbae03f78ed668dbe3261218881960dcd9fb80ad6c1d1dfb4226a57c3",
-     .Sha1 = "de2ab52a23c0829cf68511f87bf47045ed727c64", .Size = 419932, .Families = f25_25},
+     .Sha1 = "de2ab52a23c0829cf68511f87bf47045ed727c64", .Size = 419932, .Families = f27_25},
     {.File = "palabi.ttf", .Member = nullptr, .Registry = "Palatino Linotype Bold Italic (TrueType)",
      .Sha256 = "d0e722b91ffd5391cc2e7d6e976f274d5aee9fe0b8d0fedfffe093763e695cde",
-     .Sha1 = "bdc1ff41007fd1ed38a455acfdd58969133e2aeb", .Size = 335292, .Families = f25_26},
+     .Sha1 = "bdc1ff41007fd1ed38a455acfdd58969133e2aeb", .Size = 335292, .Families = f27_26},
     {.File = "palai.ttf", .Member = nullptr, .Registry = "Palatino Linotype Italic (TrueType)",
      .Sha256 = "99f0af2d1941707fecda23da38bafbed5144a73a3720d773c05b9d4c445920ed",
-     .Sha1 = "b0e6640fa0a361857cd0898f77a9afea4c560e69", .Size = 413708, .Families = f25_27},
+     .Sha1 = "b0e6640fa0a361857cd0898f77a9afea4c560e69", .Size = 413708, .Families = f27_27},
     {.File = "sylfaen.ttf", .Member = nullptr, .Registry = "Sylfaen (TrueType)",
      .Sha256 = "ac278d932d59558a76817e98051b1dae53867aa81ad83e5198b1b4c4b8066a08",
-     .Sha1 = "bfd784c4b156c31cee05abd510ba9f72507a711d", .Size = 260108, .Families = f25_28},
+     .Sha1 = "bfd784c4b156c31cee05abd510ba9f72507a711d", .Size = 260108, .Families = f27_28},
     {.File = "tahoma.ttf", .Member = nullptr, .Registry = "Tahoma (TrueType)",
      .Sha256 = "dbccddcd68ffa5f9e4d2b9f8ca2507145e0c1f02f8f03298cb1f6281fe3ad12e",
-     .Sha1 = "efed5ffa27618bcf11c2e52ca0764093d69bbfa4", .Size = 948860, .Families = f25_29},
+     .Sha1 = "efed5ffa27618bcf11c2e52ca0764093d69bbfa4", .Size = 948860, .Families = f27_29},
     {.File = "tahomabd.ttf", .Member = nullptr, .Registry = "Tahoma Bold (TrueType)",
      .Sha256 = "13187d9b4746c442e0b0050809038fc78a23607c812baf612c07246e1ecbb8de",
-     .Sha1 = "c5fe34f954b626f9a7ecded8f66dacd470479112", .Size = 877632, .Families = f25_30},
+     .Sha1 = "c5fe34f954b626f9a7ecded8f66dacd470479112", .Size = 877632, .Families = f27_30},
     {.File = "times.ttf", .Member = nullptr, .Registry = "Times New Roman (TrueType)",
      .Sha256 = "f2cb777422a10368904d3f691e650e39da862fe723389056324927df540a35ec",
-     .Sha1 = "6986ac9bcb9a1502b352ad922e63bcacfbcf7a82", .Size = 1201620, .Families = f25_31},
+     .Sha1 = "6986ac9bcb9a1502b352ad922e63bcacfbcf7a82", .Size = 1201620, .Families = f27_31},
     {.File = "timesbd.ttf", .Member = nullptr, .Registry = "Times New Roman Bold (TrueType)",
      .Sha256 = "85b680fc9d8fee549191dc823f31d777b37181d298b470bd615cf066920a4a51",
-     .Sha1 = "e43bb5a37df0339a5917dd4730b5c928a1f06f7a", .Size = 1180596, .Families = f25_32},
+     .Sha1 = "e43bb5a37df0339a5917dd4730b5c928a1f06f7a", .Size = 1180596, .Families = f27_32},
     {.File = "timesbi.ttf", .Member = nullptr, .Registry = "Times New Roman Bold Italic (TrueType)",
      .Sha256 = "ffb7862e680bfa5967a4ed34d0cdd2b01417e9c698e8d0dc1fcc5302e3f26dbf",
-     .Sha1 = "8773a254b83cbf552cb2b5d49c6ebe6744bd64f2", .Size = 920012, .Families = f25_33},
+     .Sha1 = "8773a254b83cbf552cb2b5d49c6ebe6744bd64f2", .Size = 920012, .Families = f27_33},
     {.File = "timesi.ttf", .Member = nullptr, .Registry = "Times New Roman Italic (TrueType)",
      .Sha256 = "4b6d2004937d292f183af258c27d7f7f931783ad0e03d441822768dc02145ded",
-     .Sha1 = "2b1b217fca64992a8c63acd070115f9809f07057", .Size = 978952, .Families = f25_34},
+     .Sha1 = "2b1b217fca64992a8c63acd070115f9809f07057", .Size = 978952, .Families = f27_34},
     {.File = "trebuc.ttf", .Member = nullptr, .Registry = "Trebuchet MS (TrueType)",
      .Sha256 = "fe3e8bdd64c1c9f3b9cf5189d06510c80d72cec28e03d04bffc560f77eec58d1",
-     .Sha1 = "2e18b1cbc858120534910e769f29dd15c200907a", .Size = 254396, .Families = f25_35},
+     .Sha1 = "2e18b1cbc858120534910e769f29dd15c200907a", .Size = 254396, .Families = f27_35},
     {.File = "trebucbd.ttf", .Member = nullptr, .Registry = "Trebuchet MS Bold (TrueType)",
      .Sha256 = "dfcc306777a594d2815368547dd897e2ac82aff8073e55d9e682569939e49b81",
-     .Sha1 = "a1fa4d6d7a2ddd568e4c615091ea7fa405c7052d", .Size = 244124, .Families = f25_36},
+     .Sha1 = "a1fa4d6d7a2ddd568e4c615091ea7fa405c7052d", .Size = 244124, .Families = f27_36},
     {.File = "trebucbi.ttf", .Member = nullptr, .Registry = "Trebuchet MS Bold Italic (TrueType)",
      .Sha256 = "87942234ab0cc4400088648bef8d1f7afc4c44e676c7ed6b32ca31462c18307d",
-     .Sha1 = "78296a55fcd48978a28bfc5ca0d230ffebbc0e4e", .Size = 225868, .Families = f25_37},
+     .Sha1 = "78296a55fcd48978a28bfc5ca0d230ffebbc0e4e", .Size = 225868, .Families = f27_37},
     {.File = "trebucit.ttf", .Member = nullptr, .Registry = "Trebuchet MS Italic (TrueType)",
      .Sha256 = "9c9dc0cd0fd6b1a06e8f406d04bb15a88aaf20328d3e166c12d6bc7994b781d2",
-     .Sha1 = "10117beb4c7bf4e7dfedbde44d891e977bb56aed", .Size = 252224, .Families = f25_38},
+     .Sha1 = "10117beb4c7bf4e7dfedbde44d891e977bb56aed", .Size = 252224, .Families = f27_38},
     {.File = "verdana.ttf", .Member = nullptr, .Registry = "Verdana (TrueType)",
      .Sha256 = "6a8481fe107ee547893c018b13dba291c2020bec3de5da6525d9ac09f6bc2105",
-     .Sha1 = "0919499ee7c5cbf6ec77d8d82f913df94962d415", .Size = 243304, .Families = f25_39},
+     .Sha1 = "0919499ee7c5cbf6ec77d8d82f913df94962d415", .Size = 243304, .Families = f27_39},
     {.File = "verdanab.ttf", .Member = nullptr, .Registry = "Verdana Bold (TrueType)",
      .Sha256 = "f3245f5f38f61bd1ceefb0f1338a5b88a21e6220832c2f43a38bbc7e1547c36f",
-     .Sha1 = "612e869a6da8f879a67109ae4d78a0a41f266ff9", .Size = 211260, .Families = f25_40},
+     .Sha1 = "612e869a6da8f879a67109ae4d78a0a41f266ff9", .Size = 211260, .Families = f27_40},
     {.File = "verdanai.ttf", .Member = nullptr, .Registry = "Verdana Italic (TrueType)",
      .Sha256 = "14f2ebcdaa1b77e5993a8533662e4bd3ebfe2c5771b6daafd8ccb39b2ad588b9",
-     .Sha1 = "358a21d7a6e883365b41334fff983abb6fa88870", .Size = 223268, .Families = f25_41},
+     .Sha1 = "358a21d7a6e883365b41334fff983abb6fa88870", .Size = 223268, .Families = f27_41},
     {.File = "verdanaz.ttf", .Member = nullptr, .Registry = "Verdana Bold Italic (TrueType)",
      .Sha256 = "d71f81c83ec63eaa32d36d5df7be1d9e71d3ea9150f47cebda2924923cbbf18a",
-     .Sha1 = "342cd5a4ce1d036d72ead842478d3ac2514760f9", .Size = 229800, .Families = f25_42},
+     .Sha1 = "342cd5a4ce1d036d72ead842478d3ac2514760f9", .Size = 229800, .Families = f27_42},
 };
 
-static const char *const f26_0[] = {"Calibri", nullptr};
-static const char *const f26_1[] = {"Calibri", nullptr};
-static const char *const f26_2[] = {"Calibri", nullptr};
-static const char *const f26_3[] = {"Calibri Light", "Calibri", nullptr};
-static const char *const f26_4[] = {"Calibri Light", "Calibri", nullptr};
-static const char *const f26_5[] = {"Calibri", nullptr};
-static const char *const f26_6[] = {"Cambria", "Cambria Math", nullptr};
-static const char *const f26_7[] = {"Cambria", nullptr};
-static const char *const f26_8[] = {"Cambria", nullptr};
-static const char *const f26_9[] = {"Cambria", nullptr};
-static const char *const f26_10[] = {"Candara", nullptr};
-static const char *const f26_11[] = {"Candara", nullptr};
-static const char *const f26_12[] = {"Candara", nullptr};
-static const char *const f26_13[] = {"Candara Light", "Candara", nullptr};
-static const char *const f26_14[] = {"Candara Light", "Candara", nullptr};
-static const char *const f26_15[] = {"Candara", nullptr};
-static const char *const f26_16[] = {"Consolas", nullptr};
-static const char *const f26_17[] = {"Consolas", nullptr};
-static const char *const f26_18[] = {"Consolas", nullptr};
-static const char *const f26_19[] = {"Consolas", nullptr};
-static const char *const f26_20[] = {"Constantia", nullptr};
-static const char *const f26_21[] = {"Constantia", nullptr};
-static const char *const f26_22[] = {"Constantia", nullptr};
-static const char *const f26_23[] = {"Constantia", nullptr};
-static const char *const f26_24[] = {"Corbel", nullptr};
-static const char *const f26_25[] = {"Corbel", nullptr};
-static const char *const f26_26[] = {"Corbel", nullptr};
-static const char *const f26_27[] = {"Corbel Light", "Corbel", nullptr};
-static const char *const f26_28[] = {"Corbel Light", "Corbel", nullptr};
-static const char *const f26_29[] = {"Corbel", nullptr};
-static const FEATURE_FONT fonts26[] = {
+static const char *const f28_0[] = {"Calibri", nullptr};
+static const char *const f28_1[] = {"Calibri", nullptr};
+static const char *const f28_2[] = {"Calibri", nullptr};
+static const char *const f28_3[] = {"Calibri Light", "Calibri", nullptr};
+static const char *const f28_4[] = {"Calibri Light", "Calibri", nullptr};
+static const char *const f28_5[] = {"Calibri", nullptr};
+static const char *const f28_6[] = {"Cambria", "Cambria Math", nullptr};
+static const char *const f28_7[] = {"Cambria", nullptr};
+static const char *const f28_8[] = {"Cambria", nullptr};
+static const char *const f28_9[] = {"Cambria", nullptr};
+static const char *const f28_10[] = {"Candara", nullptr};
+static const char *const f28_11[] = {"Candara", nullptr};
+static const char *const f28_12[] = {"Candara", nullptr};
+static const char *const f28_13[] = {"Candara Light", "Candara", nullptr};
+static const char *const f28_14[] = {"Candara Light", "Candara", nullptr};
+static const char *const f28_15[] = {"Candara", nullptr};
+static const char *const f28_16[] = {"Consolas", nullptr};
+static const char *const f28_17[] = {"Consolas", nullptr};
+static const char *const f28_18[] = {"Consolas", nullptr};
+static const char *const f28_19[] = {"Consolas", nullptr};
+static const char *const f28_20[] = {"Constantia", nullptr};
+static const char *const f28_21[] = {"Constantia", nullptr};
+static const char *const f28_22[] = {"Constantia", nullptr};
+static const char *const f28_23[] = {"Constantia", nullptr};
+static const char *const f28_24[] = {"Corbel", nullptr};
+static const char *const f28_25[] = {"Corbel", nullptr};
+static const char *const f28_26[] = {"Corbel", nullptr};
+static const char *const f28_27[] = {"Corbel Light", "Corbel", nullptr};
+static const char *const f28_28[] = {"Corbel Light", "Corbel", nullptr};
+static const char *const f28_29[] = {"Corbel", nullptr};
+static const FEATURE_FONT fonts28[] = {
     {.File = "calibri.ttf", .Member = nullptr, .Registry = "Calibri (TrueType)",
      .Sha256 = "df2c69a18a462e5cbc97d04a033f3bd7cd0abfe818381641f8c2dee7b7c43dbd",
-     .Sha1 = "0da30585a64c21cf21007ba02d250252ea00044e", .Size = 1681220, .Families = f26_0},
+     .Sha1 = "0da30585a64c21cf21007ba02d250252ea00044e", .Size = 1681220, .Families = f28_0},
     {.File = "calibrib.ttf", .Member = nullptr, .Registry = "Calibri Bold (TrueType)",
      .Sha256 = "5e8b2eb430f543eb304f08f44f5eb02ccbc39ffdc95400aae96f5dcd2aea73d8",
-     .Sha1 = "deaf78529e4664ee7e5d5b6bde330074e4d9c32e", .Size = 1647428, .Families = f26_1},
+     .Sha1 = "deaf78529e4664ee7e5d5b6bde330074e4d9c32e", .Size = 1647428, .Families = f28_1},
     {.File = "calibrii.ttf", .Member = nullptr, .Registry = "Calibri Italic (TrueType)",
      .Sha256 = "21390a7e84b61224916e810fd00344ad9ad4f1d9115151a551845a4387d20b10",
-     .Sha1 = "5dbd86f2f0045d7c83f9de3aef89b9d487d40ba9", .Size = 1228564, .Families = f26_2},
+     .Sha1 = "5dbd86f2f0045d7c83f9de3aef89b9d487d40ba9", .Size = 1228564, .Families = f28_2},
     {.File = "calibril.ttf", .Member = nullptr, .Registry = "Calibri Light (TrueType)",
      .Sha256 = "744d3ec1b277e3652ba8f8d45c89f83c99b7ecf3eb2dfa27306d7be56d3ee030",
-     .Sha1 = "a506135f1af030f1099d53362acf10962e4f2f1f", .Size = 1471248, .Families = f26_3},
+     .Sha1 = "a506135f1af030f1099d53362acf10962e4f2f1f", .Size = 1471248, .Families = f28_3},
     {.File = "calibrili.ttf", .Member = nullptr, .Registry = "Calibri Light Italic (TrueType)",
      .Sha256 = "67ac784ac390f6c48119e76f9e34589f9a86b8974f561a6159545b858ab4cd41",
-     .Sha1 = "13508976b1d041ffa5adcf578ad8dc2da8d30352", .Size = 1092612, .Families = f26_4},
+     .Sha1 = "13508976b1d041ffa5adcf578ad8dc2da8d30352", .Size = 1092612, .Families = f28_4},
     {.File = "calibriz.ttf", .Member = nullptr, .Registry = "Calibri Bold Italic (TrueType)",
      .Sha256 = "b699a59faad65272ee48a4d118d6bc743d4cc4ba338cb1c6347deec58aa1e1a0",
-     .Sha1 = "c9f25950fa3d36f3b6af3f9f60b4c66ebd01365d", .Size = 1190004, .Families = f26_5},
+     .Sha1 = "c9f25950fa3d36f3b6af3f9f60b4c66ebd01365d", .Size = 1190004, .Families = f28_5},
     {.File = "cambria.ttc", .Member = nullptr, .Registry = "Cambria & Cambria Math (TrueType)",
      .Sha256 = "84e70ccc1664482f4a960442c7a166c91a1b2cf98ff88c33cb73f79403f66d7b",
-     .Sha1 = "ab4a4fe054d23061f3c039493d6f665cfda2ecf5", .Size = 1792664, .Families = f26_6},
+     .Sha1 = "ab4a4fe054d23061f3c039493d6f665cfda2ecf5", .Size = 1792664, .Families = f28_6},
     {.File = "cambriab.ttf", .Member = nullptr, .Registry = "Cambria Bold (TrueType)",
      .Sha256 = "6685c657a7e292083e28f19bbf1a1e90509ce3e1130dbc4ed1c62ba3f9140543",
-     .Sha1 = "fc411b1204ca24344c3bb19033cce9b49f6fe4ab", .Size = 841440, .Families = f26_7},
+     .Sha1 = "fc411b1204ca24344c3bb19033cce9b49f6fe4ab", .Size = 841440, .Families = f28_7},
     {.File = "cambriai.ttf", .Member = nullptr, .Registry = "Cambria Italic (TrueType)",
      .Sha256 = "6905f0ac846d1ec4326cd14a46cb7379204940aa293b098ee4c1a69723bbd165",
-     .Sha1 = "2d1f4a656e3323eb05e2f1e2dc7f34706cf799bd", .Size = 892620, .Families = f26_8},
+     .Sha1 = "2d1f4a656e3323eb05e2f1e2dc7f34706cf799bd", .Size = 892620, .Families = f28_8},
     {.File = "cambriaz.ttf", .Member = nullptr, .Registry = "Cambria Bold Italic (TrueType)",
      .Sha256 = "fa90f376ad37f308a819b341c8185f788d30a1012829278592eab45a41818d1a",
-     .Sha1 = "c1dea792e50f1fb71fc4180b598f68f1078726ba", .Size = 856672, .Families = f26_9},
+     .Sha1 = "c1dea792e50f1fb71fc4180b598f68f1078726ba", .Size = 856672, .Families = f28_9},
     {.File = "Candara.ttf", .Member = nullptr, .Registry = "Candara (TrueType)",
      .Sha256 = "002c1e3378d02ed7dbdb3df1c94d433413a56f3f2f3aa8315a57720ee851dc45",
-     .Sha1 = "ef011d4eceb4adc2d82a46f62d7a62a98441ede6", .Size = 242012, .Families = f26_10},
+     .Sha1 = "ef011d4eceb4adc2d82a46f62d7a62a98441ede6", .Size = 242012, .Families = f28_10},
     {.File = "Candarab.ttf", .Member = nullptr, .Registry = "Candara Bold (TrueType)",
      .Sha256 = "ec0dce5170aaaf2cf485d4ba39d86fbba1dd1c76d9140cbf75a6b84b50fb20de",
-     .Sha1 = "c46a6e428e4373bc5c5248371eea8732df786a94", .Size = 250772, .Families = f26_11},
+     .Sha1 = "c46a6e428e4373bc5c5248371eea8732df786a94", .Size = 250772, .Families = f28_11},
     {.File = "Candarai.ttf", .Member = nullptr, .Registry = "Candara Italic (TrueType)",
      .Sha256 = "c165dbbc35bbf1fefae865c3e6b02404c8d182074fe04e78e221bab7d35ce3f8",
-     .Sha1 = "474531cca0bc6b3439039e4578ef9d504385b91e", .Size = 251156, .Families = f26_12},
+     .Sha1 = "474531cca0bc6b3439039e4578ef9d504385b91e", .Size = 251156, .Families = f28_12},
     {.File = "Candaral.ttf", .Member = nullptr, .Registry = "Candara Light (TrueType)",
      .Sha256 = "c35742957794a81b6c73aa43d2f19e3d3d0c45a6dafbc2efcddd04ad6b3aeac8",
-     .Sha1 = "31cd475ef61d6d281388b7f682983836a5dd6003", .Size = 252124, .Families = f26_13},
+     .Sha1 = "31cd475ef61d6d281388b7f682983836a5dd6003", .Size = 252124, .Families = f28_13},
     {.File = "Candarali.ttf", .Member = nullptr, .Registry = "Candara Light Italic (TrueType)",
      .Sha256 = "ff22b2841bc0aa0664b50c9215e8440f1da4f74bedd27ab33865f63f433b2681",
-     .Sha1 = "038093ecb200a11d374569b2cb6a13981f81c795", .Size = 189388, .Families = f26_14},
+     .Sha1 = "038093ecb200a11d374569b2cb6a13981f81c795", .Size = 189388, .Families = f28_14},
     {.File = "Candaraz.ttf", .Member = nullptr, .Registry = "Candara Bold Italic (TrueType)",
      .Sha256 = "a873581d9f0886441bd45c5e425a734e86e063ef583b9cf8081b1aa03b871f1c",
-     .Sha1 = "2fc68094aefa63acff165a00a39cf0b682a55ffc", .Size = 254676, .Families = f26_15},
+     .Sha1 = "2fc68094aefa63acff165a00a39cf0b682a55ffc", .Size = 254676, .Families = f28_15},
     {.File = "consola.ttf", .Member = nullptr, .Registry = "Consolas (TrueType)",
      .Sha256 = "c6e6ce8119fdd47ec6a5449a08e2d2ad7f41ea03143aae193068ed9fa58eaebc",
-     .Sha1 = "2c3f9080c8eb055da7afd9c43cfc5fc5e9510df6", .Size = 459180, .Families = f26_16},
+     .Sha1 = "2c3f9080c8eb055da7afd9c43cfc5fc5e9510df6", .Size = 459180, .Families = f28_16},
     {.File = "consolab.ttf", .Member = nullptr, .Registry = "Consolas Bold (TrueType)",
      .Sha256 = "8fa803e5abc7fff0c78c62cd22d07c705f3273c53312380c36ff484246ed3c1b",
-     .Sha1 = "9efe22a265beb9bc0dc0c8267fecbab5f547f3e7", .Size = 397896, .Families = f26_17},
+     .Sha1 = "9efe22a265beb9bc0dc0c8267fecbab5f547f3e7", .Size = 397896, .Families = f28_17},
     {.File = "consolai.ttf", .Member = nullptr, .Registry = "Consolas Italic (TrueType)",
      .Sha256 = "81e2a95d3c49468029c07e58f71a5f0ca4cfcb617eaf6bd77576fb03aa430bb2",
-     .Sha1 = "ee06251e5dc560500b80558956b82d31767aedbb", .Size = 467584, .Families = f26_18},
+     .Sha1 = "ee06251e5dc560500b80558956b82d31767aedbb", .Size = 467584, .Families = f28_18},
     {.File = "consolaz.ttf", .Member = nullptr, .Registry = "Consolas Bold Italic (TrueType)",
      .Sha256 = "1df27cbcc8a9fb7f843bc24e257b78e8ff93de70e8c1ad2caab8379e7d6a1eab",
-     .Sha1 = "67ea67b87aadc101d20efe5547b29d7cd9bc20fb", .Size = 407956, .Families = f26_19},
+     .Sha1 = "67ea67b87aadc101d20efe5547b29d7cd9bc20fb", .Size = 407956, .Families = f28_19},
     {.File = "constan.ttf", .Member = nullptr, .Registry = "Constantia (TrueType)",
      .Sha256 = "495577bf8ef74deab6ecc2e7acf63cd966184148f9bc2044a1068cd58501577e",
-     .Sha1 = "fab18ace162e6f5986a8a6d3c403bc1bc1e7b894", .Size = 448376, .Families = f26_20},
+     .Sha1 = "fab18ace162e6f5986a8a6d3c403bc1bc1e7b894", .Size = 448376, .Families = f28_20},
     {.File = "constanb.ttf", .Member = nullptr, .Registry = "Constantia Bold (TrueType)",
      .Sha256 = "b6c66a1858370fe575629e19d53c05350738bf5105e18ceac07fe9efc9cd008d",
-     .Sha1 = "60ae3d24a259f6f8a69992c1b26c86db44709ea1", .Size = 451824, .Families = f26_21},
+     .Sha1 = "60ae3d24a259f6f8a69992c1b26c86db44709ea1", .Size = 451824, .Families = f28_21},
     {.File = "constani.ttf", .Member = nullptr, .Registry = "Constantia Italic (TrueType)",
      .Sha256 = "2314a03c53506fa79525bc479ea4be9c036d1ebd86a1ffb5837ca5b43ff51f07",
-     .Sha1 = "979e5983aa67ead8c0bacca8e40d9ac6fafdeb93", .Size = 448748, .Families = f26_22},
+     .Sha1 = "979e5983aa67ead8c0bacca8e40d9ac6fafdeb93", .Size = 448748, .Families = f28_22},
     {.File = "constanz.ttf", .Member = nullptr, .Registry = "Constantia Bold Italic (TrueType)",
      .Sha256 = "9311aadcbd919746f50d222fa0215fb44266d6993221c14a196f0725fdae464f",
-     .Sha1 = "2d0689d3947c2f974f8cf792f3390f92e30d917e", .Size = 455564, .Families = f26_23},
+     .Sha1 = "2d0689d3947c2f974f8cf792f3390f92e30d917e", .Size = 455564, .Families = f28_23},
     {.File = "corbel.ttf", .Member = nullptr, .Registry = "Corbel (TrueType)",
      .Sha256 = "a183b77b655df66793639af7874828fb50f748dc4af57ae40f758156f7f34634",
-     .Sha1 = "09920eeec6b90415491b73b99ab79745068ec34b", .Size = 277168, .Families = f26_24},
+     .Sha1 = "09920eeec6b90415491b73b99ab79745068ec34b", .Size = 277168, .Families = f28_24},
     {.File = "corbelb.ttf", .Member = nullptr, .Registry = "Corbel Bold (TrueType)",
      .Sha256 = "fa008372f8a94945d0daef9daf0bfb9e3fba3a25fd17f2607d47ac6861bd0303",
-     .Sha1 = "ef9dd2983857b8b41cc8aff1b8fb421aefa3588e", .Size = 290908, .Families = f26_25},
+     .Sha1 = "ef9dd2983857b8b41cc8aff1b8fb421aefa3588e", .Size = 290908, .Families = f28_25},
     {.File = "corbeli.ttf", .Member = nullptr, .Registry = "Corbel Italic (TrueType)",
      .Sha256 = "9be778c9ed418770f6b5a02064d9c0b47a8fdea1137618f0bec9ac4072430a45",
-     .Sha1 = "303728c04b873ddfe1fd783dd7b37d7a44385acb", .Size = 284690, .Families = f26_26},
+     .Sha1 = "303728c04b873ddfe1fd783dd7b37d7a44385acb", .Size = 284690, .Families = f28_26},
     {.File = "corbell.ttf", .Member = nullptr, .Registry = "Corbel Light (TrueType)",
      .Sha256 = "0e36ddf90102e476c6739ca4c8cc18ba8309d880c12558981d2e4d42de78fc00",
-     .Sha1 = "ae2f8445227e90acb2a47b9430be7556a5c5c0cb", .Size = 172256, .Families = f26_27},
+     .Sha1 = "ae2f8445227e90acb2a47b9430be7556a5c5c0cb", .Size = 172256, .Families = f28_27},
     {.File = "corbelli.ttf", .Member = nullptr, .Registry = "Corbel Light Italic (TrueType)",
      .Sha256 = "a031500bccd32b5d6e819699b774fc679c696ed4965b643d51a94eb398475550",
-     .Sha1 = "0421288211c4a1bfc1518e6c30bdcc691adeb469", .Size = 169228, .Families = f26_28},
+     .Sha1 = "0421288211c4a1bfc1518e6c30bdcc691adeb469", .Size = 169228, .Families = f28_28},
     {.File = "corbelz.ttf", .Member = nullptr, .Registry = "Corbel Bold Italic (TrueType)",
      .Sha256 = "588f090ae3a6d31370457312683d14ee3a5bfbdaaa0a070b7c80225b55b23e78",
-     .Sha1 = "db8a678e01c37ff2e2da7ad3b097cab391c25e1a", .Size = 294692, .Families = f26_29},
+     .Sha1 = "db8a678e01c37ff2e2da7ad3b097cab391c25e1a", .Size = 294692, .Families = f28_29},
 };
 
-static const char *const f27_0[] = {"Marlett", nullptr};
-static const char *const f27_1[] = {"Symbol", nullptr};
-static const char *const f27_2[] = {"Webdings", nullptr};
-static const char *const f27_3[] = {"Wingdings", nullptr};
-static const FEATURE_FONT fonts27[] = {
+static const char *const f29_0[] = {"Marlett", nullptr};
+static const char *const f29_1[] = {"Symbol", nullptr};
+static const char *const f29_2[] = {"Webdings", nullptr};
+static const char *const f29_3[] = {"Wingdings", nullptr};
+static const FEATURE_FONT fonts29[] = {
     {.File = "marlett.ttf", .Member = nullptr, .Registry = "Marlett (TrueType)",
      .Sha256 = "b7397adf2dcc24ca790348a3c26deb2122b45e5728fd25fc588de4cf5a75b469",
-     .Sha1 = "2d9e6a4751ece0ede6790acbea5e604b3f3c2241", .Size = 27724, .Families = f27_0},
+     .Sha1 = "2d9e6a4751ece0ede6790acbea5e604b3f3c2241", .Size = 27724, .Families = f29_0},
     {.File = "symbol.ttf", .Member = nullptr, .Registry = "Symbol (TrueType)",
      .Sha256 = "bbf1192965e5266fbf23370416337d2861fc1e8bd349def93f2994ba67382fc3",
-     .Sha1 = "5ca2785630fae8b7337d37492c4486b224a2fd5e", .Size = 69036, .Families = f27_1},
+     .Sha1 = "5ca2785630fae8b7337d37492c4486b224a2fd5e", .Size = 69036, .Families = f29_1},
     {.File = "webdings.ttf", .Member = nullptr, .Registry = "Webdings (TrueType)",
      .Sha256 = "67461fabd8329d0d8ad62689cac642b34fac81c754ff9077ad211160ec62282d",
-     .Sha1 = "c9c772b70624d4c4cec0ec12e0b940d78056bc0f", .Size = 120560, .Families = f27_2},
+     .Sha1 = "c9c772b70624d4c4cec0ec12e0b940d78056bc0f", .Size = 120560, .Families = f29_2},
     {.File = "wingding.ttf", .Member = nullptr, .Registry = "Wingdings (TrueType)",
      .Sha256 = "9bcd6064e3b52fa30a347edd6e82506e2ec8b1602930b423c629a82c10468a5b",
-     .Sha1 = "49e46c9cbc8f6c36a01fe032e18750c3a787c260", .Size = 82180, .Families = f27_3},
+     .Sha1 = "49e46c9cbc8f6c36a01fe032e18750c3a787c260", .Size = 82180, .Families = f29_3},
 };
 
-static const char *const f28_0[] = {"Ebrima", nullptr};
-static const char *const f28_1[] = {"Ebrima", nullptr};
-static const char *const f28_2[] = {"Gabriola", nullptr};
-static const char *const f28_3[] = {"Gadugi", nullptr};
-static const char *const f28_4[] = {"Gadugi", nullptr};
-static const char *const f28_5[] = {"Microsoft Himalaya", nullptr};
-static const char *const f28_6[] = {"Ink Free", nullptr};
-static const char *const f28_7[] = {"Javanese Text", nullptr};
-static const char *const f28_8[] = {"Leelawadee UI", nullptr};
-static const char *const f28_9[] = {"Leelawadee UI", nullptr};
-static const char *const f28_10[] = {"Leelawadee UI Semilight", "Leelawadee UI", nullptr};
-static const char *const f28_11[] = {"Myanmar Text", nullptr};
-static const char *const f28_12[] = {"Myanmar Text", nullptr};
-static const char *const f28_13[] = {"Mongolian Baiti", nullptr};
-static const char *const f28_14[] = {"Microsoft Yi Baiti", nullptr};
-static const char *const f28_15[] = {"MV Boli", nullptr};
-static const char *const f28_16[] = {"Nirmala UI", "Nirmala UI Semilight", "Nirmala Text", "Nirmala Text Semilight", nullptr};
-static const char *const f28_17[] = {"Microsoft New Tai Lue", nullptr};
-static const char *const f28_18[] = {"Microsoft New Tai Lue", nullptr};
-static const char *const f28_19[] = {"Microsoft PhagsPa", nullptr};
-static const char *const f28_20[] = {"Microsoft PhagsPa", nullptr};
-static const char *const f28_21[] = {"Sans Serif Collection", nullptr};
-static const char *const f28_22[] = {"Sitka Text", "Sitka", nullptr};
-static const char *const f28_23[] = {"Sitka Text", "Sitka", nullptr};
-static const char *const f28_24[] = {"Microsoft Tai Le", nullptr};
-static const char *const f28_25[] = {"Microsoft Tai Le", nullptr};
-static const FEATURE_FONT fonts28[] = {
+static const char *const f30_0[] = {"Ebrima", nullptr};
+static const char *const f30_1[] = {"Ebrima", nullptr};
+static const char *const f30_2[] = {"Gabriola", nullptr};
+static const char *const f30_3[] = {"Gadugi", nullptr};
+static const char *const f30_4[] = {"Gadugi", nullptr};
+static const char *const f30_5[] = {"Microsoft Himalaya", nullptr};
+static const char *const f30_6[] = {"Ink Free", nullptr};
+static const char *const f30_7[] = {"Javanese Text", nullptr};
+static const char *const f30_8[] = {"Leelawadee UI", nullptr};
+static const char *const f30_9[] = {"Leelawadee UI", nullptr};
+static const char *const f30_10[] = {"Leelawadee UI Semilight", "Leelawadee UI", nullptr};
+static const char *const f30_11[] = {"Myanmar Text", nullptr};
+static const char *const f30_12[] = {"Myanmar Text", nullptr};
+static const char *const f30_13[] = {"Mongolian Baiti", nullptr};
+static const char *const f30_14[] = {"Microsoft Yi Baiti", nullptr};
+static const char *const f30_15[] = {"MV Boli", nullptr};
+static const char *const f30_16[] = {"Nirmala UI", "Nirmala UI Semilight", "Nirmala Text", "Nirmala Text Semilight", nullptr};
+static const char *const f30_17[] = {"Microsoft New Tai Lue", nullptr};
+static const char *const f30_18[] = {"Microsoft New Tai Lue", nullptr};
+static const char *const f30_19[] = {"Microsoft PhagsPa", nullptr};
+static const char *const f30_20[] = {"Microsoft PhagsPa", nullptr};
+static const char *const f30_21[] = {"Sans Serif Collection", nullptr};
+static const char *const f30_22[] = {"Sitka Text", "Sitka", nullptr};
+static const char *const f30_23[] = {"Sitka Text", "Sitka", nullptr};
+static const char *const f30_24[] = {"Microsoft Tai Le", nullptr};
+static const char *const f30_25[] = {"Microsoft Tai Le", nullptr};
+static const FEATURE_FONT fonts30[] = {
     {.File = "ebrima.ttf", .Member = nullptr, .Registry = "Ebrima (TrueType)",
      .Sha256 = "1dcd304f0ba642dbc3c3f3ccb70c24e9fad7ada2e2d5d0061c7cacab86e8df92",
-     .Sha1 = "193aad56c89f5a06efd712144bfc0de9e0a4286a", .Size = 949408, .Families = f28_0},
+     .Sha1 = "193aad56c89f5a06efd712144bfc0de9e0a4286a", .Size = 949408, .Families = f30_0},
     {.File = "ebrimabd.ttf", .Member = nullptr, .Registry = "Ebrima Bold (TrueType)",
      .Sha256 = "a7bc75937950d0f217f79313631d81f5b92459c414a4099d6ea3c0c0262a716b",
-     .Sha1 = "8f39d10441c3b7168e1b7df3c23398e5385453e6", .Size = 1026388, .Families = f28_1},
+     .Sha1 = "8f39d10441c3b7168e1b7df3c23398e5385453e6", .Size = 1026388, .Families = f30_1},
     {.File = "Gabriola.ttf", .Member = nullptr, .Registry = "Gabriola (TrueType)",
      .Sha256 = "ddd852f9e43a5e81af62a3f6654324ba7553d7d66101ab848abc1bd2d626ac4b",
-     .Sha1 = "b5d67602dd2dcb5b9d26ed08a9b6a366134390b0", .Size = 1806004, .Families = f28_2},
+     .Sha1 = "b5d67602dd2dcb5b9d26ed08a9b6a366134390b0", .Size = 1806004, .Families = f30_2},
     {.File = "gadugi.ttf", .Member = nullptr, .Registry = "Gadugi (TrueType)",
      .Sha256 = "0ec2bdbfc2ba99d9fb05b6f7c511e7ab8b7c055e2d644570ad777455d6e9796d",
-     .Sha1 = "c8437807c4ba7bdd7e2ad95c47b6000c7ef0fac1", .Size = 242684, .Families = f28_3},
+     .Sha1 = "c8437807c4ba7bdd7e2ad95c47b6000c7ef0fac1", .Size = 242684, .Families = f30_3},
     {.File = "gadugib.ttf", .Member = nullptr, .Registry = "Gadugi Bold (TrueType)",
      .Sha256 = "c96226cba7f50e94b534a5f8ade6a54f48a03be7c73360524eda5cbce4de34b6",
-     .Sha1 = "ef311c64340de99d68a9707d889de38e91a92fed", .Size = 249236, .Families = f28_4},
+     .Sha1 = "ef311c64340de99d68a9707d889de38e91a92fed", .Size = 249236, .Families = f30_4},
     {.File = "himalaya.ttf", .Member = nullptr, .Registry = "Microsoft Himalaya (TrueType)",
      .Sha256 = "fdec3a7efacd57913d3c14111837908ccbabea5b0b44ec62527eb73acf743afb",
-     .Sha1 = "20483b11d497ab8eda908e05ae6b4e50b2df2d78", .Size = 572776, .Families = f28_5},
+     .Sha1 = "20483b11d497ab8eda908e05ae6b4e50b2df2d78", .Size = 572776, .Families = f30_5},
     {.File = "Inkfree.ttf", .Member = nullptr, .Registry = "Ink Free (TrueType)",
      .Sha256 = "c8ab96bc49ec1dc36936b5973fc143ca222c1a33ab27b87071a3bbc44d34ca9a",
-     .Sha1 = "20dec392d2e2829d4d495720fe983b41d8d96d30", .Size = 198972, .Families = f28_6},
+     .Sha1 = "20dec392d2e2829d4d495720fe983b41d8d96d30", .Size = 198972, .Families = f30_6},
     {.File = "javatext.ttf", .Member = nullptr, .Registry = "Javanese Text (TrueType)",
      .Sha256 = "df8d94382f73e6d2197b60653c3d55c28ab5cf127a82e65b8af4ed1b52fdc412",
-     .Sha1 = "2b758761919bbac82a016c59199ffc8abbeec7e6", .Size = 305448, .Families = f28_7},
+     .Sha1 = "2b758761919bbac82a016c59199ffc8abbeec7e6", .Size = 305448, .Families = f30_7},
     {.File = "LeelaUIb.ttf", .Member = nullptr, .Registry = "Leelawadee UI Bold (TrueType)",
      .Sha256 = "16d0c83e99ca3cd56a85966c4ff2c5f0c0f8a5a7140a7594b2ec3e404c8e96a0",
-     .Sha1 = "51fc12c9ad72d0732292a284d6caf79e7a25f493", .Size = 327420, .Families = f28_8},
+     .Sha1 = "51fc12c9ad72d0732292a284d6caf79e7a25f493", .Size = 327420, .Families = f30_8},
     {.File = "LeelawUI.ttf", .Member = nullptr, .Registry = "Leelawadee UI (TrueType)",
      .Sha256 = "796dc7e97b357f9c2ad10044d01a86d3fb49cf80e3693011eb055c466c995de0",
-     .Sha1 = "dad8697c0b001895c76497646b0e10572d33c92a", .Size = 393764, .Families = f28_9},
+     .Sha1 = "dad8697c0b001895c76497646b0e10572d33c92a", .Size = 393764, .Families = f30_9},
     {.File = "LeelUIsl.ttf", .Member = nullptr, .Registry = "Leelawadee UI Semilight (TrueType)",
      .Sha256 = "2e2fabd71aa30f0d7039b879ee58441a791e095a6656064eb9d4a84a071e5e8f",
-     .Sha1 = "89fbd20b01d092379f8ff39ae817ea7b43b485dd", .Size = 386264, .Families = f28_10},
+     .Sha1 = "89fbd20b01d092379f8ff39ae817ea7b43b485dd", .Size = 386264, .Families = f30_10},
     {.File = "mmrtext.ttf", .Member = nullptr, .Registry = "Myanmar Text (TrueType)",
      .Sha256 = "289bfc7da2a20102b0e00bc86d939cc1e3a41b2492bf61f87acdc49a493cb748",
-     .Sha1 = "039e289b6a4238b957a0244b2a4808d993b7961b", .Size = 354796, .Families = f28_11},
+     .Sha1 = "039e289b6a4238b957a0244b2a4808d993b7961b", .Size = 354796, .Families = f30_11},
     {.File = "mmrtextb.ttf", .Member = nullptr, .Registry = "Myanmar Text Bold (TrueType)",
      .Sha256 = "8b20b869b1fb1ab26b8e7b90e28a34a575a097c41662a9f17cd9875e2688eaa3",
-     .Sha1 = "1b1b82ac3fac7b1c33aec26970f49d388ee7a626", .Size = 336660, .Families = f28_12},
+     .Sha1 = "1b1b82ac3fac7b1c33aec26970f49d388ee7a626", .Size = 336660, .Families = f30_12},
     {.File = "monbaiti.ttf", .Member = nullptr, .Registry = "Mongolian Baiti (TrueType)",
      .Sha256 = "707585b9acfc1507d9bd943bb5435f75768274b1a12b1f71de76ad78be4d7e7b",
-     .Sha1 = "42c72af4bc6d6f9076073567d1654c7c64db25de", .Size = 289052, .Families = f28_13},
+     .Sha1 = "42c72af4bc6d6f9076073567d1654c7c64db25de", .Size = 289052, .Families = f30_13},
     {.File = "msyi.ttf", .Member = nullptr, .Registry = "Microsoft Yi Baiti (TrueType)",
      .Sha256 = "80aef1c25135b945e9de7d09e6445c386405eb2e0ea7032d4cd00a2fe3eef0ae",
-     .Sha1 = "5abb36281f9156e4e62f4c17284bdf8fc197ef60", .Size = 301180, .Families = f28_14},
+     .Sha1 = "5abb36281f9156e4e62f4c17284bdf8fc197ef60", .Size = 301180, .Families = f30_14},
     {.File = "mvboli.ttf", .Member = nullptr, .Registry = "MV Boli (TrueType)",
      .Sha256 = "5dfd7a4c708caeefae42cdb9540946de042beeb8c069dfde0dbc14c2fa0705ae",
-     .Sha1 = "b5b92d1e885326bc917c02d16121d265ad535c9c", .Size = 79320, .Families = f28_15},
+     .Sha1 = "b5b92d1e885326bc917c02d16121d265ad535c9c", .Size = 79320, .Families = f30_15},
     {.File = "Nirmala.ttc", .Member = nullptr, .Registry = "Nirmala UI & Nirmala UI Bold & Nirmala UI Semilight & Nirmala Text & Nirmala Text Bold & Nirmala Text Semilight (TrueType)",
      .Sha256 = "ad02cdfc06e144ac45f318e8e5a64cbe04c7479d4beb91d25f5a319a466b1767",
-     .Sha1 = "e0a9a5a71859a10a3b5b8d7d34d5068c2a8f1a90", .Size = 5304988, .Families = f28_16},
+     .Sha1 = "e0a9a5a71859a10a3b5b8d7d34d5068c2a8f1a90", .Size = 5304988, .Families = f30_16},
     {.File = "ntailu.ttf", .Member = nullptr, .Registry = "Microsoft New Tai Lue (TrueType)",
      .Sha256 = "de0b632015447f28c2db41c8e07c745cedb05ead5dbc2e73f19da14d2e5f2151",
-     .Sha1 = "d27af5fe7e29e4d0ba9685008a40da8e63d6a19f", .Size = 74464, .Families = f28_17},
+     .Sha1 = "d27af5fe7e29e4d0ba9685008a40da8e63d6a19f", .Size = 74464, .Families = f30_17},
     {.File = "ntailub.ttf", .Member = nullptr, .Registry = "Microsoft New Tai Lue Bold (TrueType)",
      .Sha256 = "cfc2acbf9ae0205a0a258e564bdbf5466a4e49a95281a1d2e72690f149ec837b",
-     .Sha1 = "9a779f727422923c521c23871d15847893f39ad6", .Size = 67168, .Families = f28_18},
+     .Sha1 = "9a779f727422923c521c23871d15847893f39ad6", .Size = 67168, .Families = f30_18},
     {.File = "phagspa.ttf", .Member = nullptr, .Registry = "Microsoft PhagsPa (TrueType)",
      .Sha256 = "538949482d964e9f353a3a8d860bb3eda93b46b830f3b677e4f53eb2ff3a6e7d",
-     .Sha1 = "328e9ab90af4733873e9cd0e8217c0dc43fd35c0", .Size = 93720, .Families = f28_19},
+     .Sha1 = "328e9ab90af4733873e9cd0e8217c0dc43fd35c0", .Size = 93720, .Families = f30_19},
     {.File = "phagspab.ttf", .Member = nullptr, .Registry = "Microsoft PhagsPa Bold (TrueType)",
      .Sha256 = "03e4e45bb8ebb6d055a5584166cc26712bf7e746ea29cb6e548341361d31dc85",
-     .Sha1 = "94baf9ce76cc91b49d0eb46edcc9f1d85d9814ac", .Size = 97476, .Families = f28_20},
+     .Sha1 = "94baf9ce76cc91b49d0eb46edcc9f1d85d9814ac", .Size = 97476, .Families = f30_20},
     {.File = "SansSerifCollection.ttf", .Member = nullptr, .Registry = "Sans Serif Collection (TrueType)",
      .Sha256 = "eb78c210d380fce7d3822b3a5ccfa808f1eb0390de6237f5460970679f393ce0",
-     .Sha1 = "af79eb7735f40a3d43d8537ee980b3ad3d8ae82c", .Size = 3775516, .Families = f28_21},
+     .Sha1 = "af79eb7735f40a3d43d8537ee980b3ad3d8ae82c", .Size = 3775516, .Families = f30_21},
     {.File = "SitkaVF-Italic.ttf", .Member = nullptr, .Registry = "Sitka Text Italic (TrueType)",
      .Sha256 = "74d4b98aabe85e16cb2fa6583c93f9f17642234d030a38462c36d1bcdde65928",
-     .Sha1 = "b8c7ed77e24078d77db4b1c1d9a25a548f8951a4", .Size = 558188, .Families = f28_22},
+     .Sha1 = "b8c7ed77e24078d77db4b1c1d9a25a548f8951a4", .Size = 558188, .Families = f30_22},
     {.File = "SitkaVF.ttf", .Member = nullptr, .Registry = "Sitka Text (TrueType)",
      .Sha256 = "9f71aabf76ccc757d25e18801d6a37e45cacc8b74c8b42a19e9f36ca99eef594",
-     .Sha1 = "bf690d6fc231a7c7becc4525fa12c82e6563118a", .Size = 516124, .Families = f28_23},
+     .Sha1 = "bf690d6fc231a7c7becc4525fa12c82e6563118a", .Size = 516124, .Families = f30_23},
     {.File = "taile.ttf", .Member = nullptr, .Registry = "Microsoft Tai Le (TrueType)",
      .Sha256 = "f5151d081f6afea4c26464e0cd5e695f57a99209cfeea2f483c3108684660eb6",
-     .Sha1 = "44c79fd168a47d0c28f22d23cc9b75fa44b95471", .Size = 67568, .Families = f28_24},
+     .Sha1 = "44c79fd168a47d0c28f22d23cc9b75fa44b95471", .Size = 67568, .Families = f30_24},
     {.File = "taileb.ttf", .Member = nullptr, .Registry = "Microsoft Tai Le Bold (TrueType)",
      .Sha256 = "1878842d8dbdf8489794af0bace95a956db270dfa506ddcaabf94fa827b769ac",
-     .Sha1 = "db94e18afa0ba3270be61c849e929416d4ea2851", .Size = 58532, .Families = f28_25},
+     .Sha1 = "db94e18afa0ba3270be61c849e929416d4ea2851", .Size = 58532, .Families = f30_25},
 };
 
-static const char *const f29_0[] = {"Microsoft YaHei", "Microsoft YaHei UI", nullptr};
-static const char *const f29_1[] = {"Microsoft YaHei", "Microsoft YaHei UI", nullptr};
-static const char *const f29_2[] = {"Microsoft YaHei Light", "Microsoft YaHei", "Microsoft YaHei UI Light", "Microsoft YaHei UI", nullptr};
-static const char *const f29_3[] = {"SimSun", "NSimSun", nullptr};
-static const char *const f29_4[] = {"SimSun-ExtB", nullptr};
-static const char *const f29_5[] = {"SimSun-ExtG", nullptr};
-static const FEATURE_FONT fonts29[] = {
+static const char *const f31_0[] = {"Microsoft YaHei", "Microsoft YaHei UI", nullptr};
+static const char *const f31_1[] = {"Microsoft YaHei", "Microsoft YaHei UI", nullptr};
+static const char *const f31_2[] = {"Microsoft YaHei Light", "Microsoft YaHei", "Microsoft YaHei UI Light", "Microsoft YaHei UI", nullptr};
+static const char *const f31_3[] = {"SimSun", "NSimSun", nullptr};
+static const char *const f31_4[] = {"SimSun-ExtB", nullptr};
+static const char *const f31_5[] = {"SimSun-ExtG", nullptr};
+static const FEATURE_FONT fonts31[] = {
     {.File = "msyh.ttc", .Member = nullptr, .Registry = "Microsoft YaHei & Microsoft YaHei UI (TrueType)",
      .Sha256 = "d79c55e68b1131eea0cc1c47be4f572d964f28c682e143db2ad09c1e4cb07a3f",
-     .Sha1 = "e5a993b85dd99da4930bb8d7b9da53ae89fef3c6", .Size = 19704352, .Families = f29_0},
+     .Sha1 = "e5a993b85dd99da4930bb8d7b9da53ae89fef3c6", .Size = 19704352, .Families = f31_0},
     {.File = "msyhbd.ttc", .Member = nullptr, .Registry = "Microsoft YaHei Bold & Microsoft YaHei UI Bold (TrueType)",
      .Sha256 = "4508821b3dffe01f0ef5e5326a3e60df705a44633858811f67b6982dce3f6ee6",
-     .Sha1 = "e142fd01e96fea9365b5c6e053a0a1e0d309e218", .Size = 16883552, .Families = f29_1},
+     .Sha1 = "e142fd01e96fea9365b5c6e053a0a1e0d309e218", .Size = 16883552, .Families = f31_1},
     {.File = "msyhl.ttc", .Member = nullptr, .Registry = "Microsoft YaHei Light & Microsoft YaHei UI Light (TrueType)",
      .Sha256 = "7e9bdf90bb5d3fe1b5975fc8ae31944b8fa674122261f92c28d4ec0b9c482fa1",
-     .Sha1 = "5444a8bab4b57604f6420ea4e60194f41459f9f8", .Size = 12189612, .Families = f29_2},
+     .Sha1 = "5444a8bab4b57604f6420ea4e60194f41459f9f8", .Size = 12189612, .Families = f31_2},
     {.File = "simsun.ttc", .Member = nullptr, .Registry = "SimSun & NSimSun (TrueType)",
      .Sha256 = "120a51d2b14eb588700a21e15fc301f0ea55d7c1a4e1f3ae61db83b7c8d42cd6",
-     .Sha1 = "41ddadf676ae82c12445bd0fda50b8f321e9d678", .Size = 18070492, .Families = f29_3},
+     .Sha1 = "41ddadf676ae82c12445bd0fda50b8f321e9d678", .Size = 18070492, .Families = f31_3},
     {.File = "simsunb.ttf", .Member = nullptr, .Registry = "SimSun-ExtB (TrueType)",
      .Sha256 = "a67e70adce24390c43a0c5dfc0856dc81660e91489db930999aa0973780e8a67",
-     .Sha1 = "0f2942dd0f4f7a59f14c1e248378e0b25312717b", .Size = 21882036, .Families = f29_4},
+     .Sha1 = "0f2942dd0f4f7a59f14c1e248378e0b25312717b", .Size = 21882036, .Families = f31_4},
     {.File = "SimsunExtG.ttf", .Member = nullptr, .Registry = "SimSun-ExtG (TrueType)",
      .Sha256 = "4712ba830912e2d434b7a25ba2d0f4d2bb633a66c10ffcc8ce2f24e6148a4f97",
-     .Sha1 = "d52683faecc251972b829f4270ff546a957f4407", .Size = 3558468, .Families = f29_5},
+     .Sha1 = "d52683faecc251972b829f4270ff546a957f4407", .Size = 3558468, .Families = f31_5},
 };
 
-static const char *const f30_0[] = {"MingLiU-ExtB", "PMingLiU-ExtB", "MingLiU_HKSCS-ExtB", "MingLiU_MSCS-ExtB", nullptr};
-static const char *const f30_1[] = {"Microsoft JhengHei", "Microsoft JhengHei UI", nullptr};
-static const char *const f30_2[] = {"Microsoft JhengHei", "Microsoft JhengHei UI", nullptr};
-static const char *const f30_3[] = {"Microsoft JhengHei Light", "Microsoft JhengHei", "Microsoft JhengHei UI Light", "Microsoft JhengHei UI", nullptr};
-static const FEATURE_FONT fonts30[] = {
+static const char *const f32_0[] = {"MingLiU-ExtB", "PMingLiU-ExtB", "MingLiU_HKSCS-ExtB", "MingLiU_MSCS-ExtB", nullptr};
+static const char *const f32_1[] = {"Microsoft JhengHei", "Microsoft JhengHei UI", nullptr};
+static const char *const f32_2[] = {"Microsoft JhengHei", "Microsoft JhengHei UI", nullptr};
+static const char *const f32_3[] = {"Microsoft JhengHei Light", "Microsoft JhengHei", "Microsoft JhengHei UI Light", "Microsoft JhengHei UI", nullptr};
+static const FEATURE_FONT fonts32[] = {
     {.File = "mingliub.ttc", .Member = nullptr, .Registry = "MingLiU-ExtB & PMingLiU-ExtB & MingLiU_HKSCS-ExtB & MingLiU_MSCS-ExtB (TrueType)",
      .Sha256 = "8f8afdb3ec7047118f6dc51b29d395e697ee6770d0afd0cd407457e2ad6e93cb",
-     .Sha1 = "5b56c92989aaca759cd806ade44af5055faa77f8", .Size = 37112128, .Families = f30_0},
+     .Sha1 = "5b56c92989aaca759cd806ade44af5055faa77f8", .Size = 37112128, .Families = f32_0},
     {.File = "msjh.ttc", .Member = nullptr, .Registry = "Microsoft JhengHei & Microsoft JhengHei UI (TrueType)",
      .Sha256 = "1fd5fc7046e0eea753988ee06d1a5a731df68475614e2174fbba9b4800f392ac",
-     .Sha1 = "edc859cadaf900f319ec80264291980b53a6842c", .Size = 21404172, .Families = f30_1},
+     .Sha1 = "edc859cadaf900f319ec80264291980b53a6842c", .Size = 21404172, .Families = f32_1},
     {.File = "msjhbd.ttc", .Member = nullptr, .Registry = "Microsoft JhengHei Bold & Microsoft JhengHei UI Bold (TrueType)",
      .Sha256 = "7d55cd4801102131d991630cea74534dcf73a9fabf4a33e54fe05dfb4f5aa790",
-     .Sha1 = "0adec7aba63349065476b0ee3ffbe49a19556fd3", .Size = 14441188, .Families = f30_2},
+     .Sha1 = "0adec7aba63349065476b0ee3ffbe49a19556fd3", .Size = 14441188, .Families = f32_2},
     {.File = "msjhl.ttc", .Member = nullptr, .Registry = "Microsoft JhengHei Light & Microsoft JhengHei UI Light (TrueType)",
      .Sha256 = "15f1162a68b5859f246d89ea62aed711b1994817c72e78e3df5d205c89c5c6e8",
-     .Sha1 = "88b9aa4cb60c7b9c18a6cab54e7bc18dd8f96aa1", .Size = 12877764, .Families = f30_3},
+     .Sha1 = "88b9aa4cb60c7b9c18a6cab54e7bc18dd8f96aa1", .Size = 12877764, .Families = f32_3},
 };
 
-static const char *const f31_0[] = {"Yu Gothic", "Yu Gothic UI", "Yu Gothic UI Semibold", nullptr};
-static const char *const f31_1[] = {"Yu Gothic Light", "Yu Gothic", "Yu Gothic UI Light", "Yu Gothic UI", nullptr};
-static const char *const f31_2[] = {"Yu Gothic Medium", "Yu Gothic", "Yu Gothic UI", nullptr};
-static const char *const f31_3[] = {"Yu Gothic", "Yu Gothic UI Semilight", "Yu Gothic UI", nullptr};
-static const FEATURE_FONT fonts31[] = {
+static const char *const f33_0[] = {"Yu Gothic", "Yu Gothic UI", "Yu Gothic UI Semibold", nullptr};
+static const char *const f33_1[] = {"Yu Gothic Light", "Yu Gothic", "Yu Gothic UI Light", "Yu Gothic UI", nullptr};
+static const char *const f33_2[] = {"Yu Gothic Medium", "Yu Gothic", "Yu Gothic UI", nullptr};
+static const char *const f33_3[] = {"Yu Gothic", "Yu Gothic UI Semilight", "Yu Gothic UI", nullptr};
+static const FEATURE_FONT fonts33[] = {
     {.File = "YuGothB.ttc", .Member = nullptr, .Registry = "Yu Gothic Bold & Yu Gothic UI Bold & Yu Gothic UI Semibold (TrueType)",
      .Sha256 = "9d0437d151ddd907d72ba9ba348d670575a86e4f5cbf018de18645f2353140e5",
-     .Sha1 = "2b3515cd7740f1b6d617ee1309a652cc3085ab3e", .Size = 14743864, .Families = f31_0},
+     .Sha1 = "2b3515cd7740f1b6d617ee1309a652cc3085ab3e", .Size = 14743864, .Families = f33_0},
     {.File = "YuGothL.ttc", .Member = nullptr, .Registry = "Yu Gothic Light & Yu Gothic UI Light (TrueType)",
      .Sha256 = "95392428a804b937919526fec91bab64200664f7f22f777211da6bb244988f56",
-     .Sha1 = "0cb741ac05e184547bbf3ad10760c9f6382073ae", .Size = 13984748, .Families = f31_1},
+     .Sha1 = "0cb741ac05e184547bbf3ad10760c9f6382073ae", .Size = 13984748, .Families = f33_1},
     {.File = "YuGothM.ttc", .Member = nullptr, .Registry = "Yu Gothic Medium & Yu Gothic UI Regular (TrueType)",
      .Sha256 = "7de36ce08c41514f0ea1a25681dca833353eed5b07b5d1b056af46cee3e2cb22",
-     .Sha1 = "0ef0de860b3671ced295566651c538cce2dbe758", .Size = 13924448, .Families = f31_2},
+     .Sha1 = "0ef0de860b3671ced295566651c538cce2dbe758", .Size = 13924448, .Families = f33_2},
     {.File = "YuGothR.ttc", .Member = nullptr, .Registry = "Yu Gothic Regular & Yu Gothic UI Semilight (TrueType)",
      .Sha256 = "599ae7ecd382254ec077661c6cac1ff98e559c7f1948cf1bea18d0b62ac2ab3e",
-     .Sha1 = "ef030d0d01103209d427648d2a58b60ea327b390", .Size = 13852076, .Families = f31_3},
+     .Sha1 = "ef030d0d01103209d427648d2a58b60ea327b390", .Size = 13852076, .Families = f33_3},
 };
 
-static const char *const f32_0[] = {"Malgun Gothic", nullptr};
-static const char *const f32_1[] = {"Malgun Gothic", nullptr};
-static const char *const f32_2[] = {"Malgun Gothic Semilight", "Malgun Gothic", nullptr};
-static const FEATURE_FONT fonts32[] = {
+static const char *const f34_0[] = {"Malgun Gothic", nullptr};
+static const char *const f34_1[] = {"Malgun Gothic", nullptr};
+static const char *const f34_2[] = {"Malgun Gothic Semilight", "Malgun Gothic", nullptr};
+static const FEATURE_FONT fonts34[] = {
     {.File = "malgun.ttf", .Member = nullptr, .Registry = "Malgun Gothic (TrueType)",
      .Sha256 = "7a183cf1c6c56b9609fcc16eda8b5229fbc11758a21e669ec00343239b02192f",
-     .Sha1 = "15a8a24331a37b57b5fab52054815b5a318b6218", .Size = 13459196, .Families = f32_0},
+     .Sha1 = "15a8a24331a37b57b5fab52054815b5a318b6218", .Size = 13459196, .Families = f34_0},
     {.File = "malgunbd.ttf", .Member = nullptr, .Registry = "Malgun Gothic Bold (TrueType)",
      .Sha256 = "e8cbc0b2afcc14fb45dfb6086d5102c0b23a96e7b6e708f3122acde1b86c9082",
-     .Sha1 = "ea48ec0fb0bfbd4af015f1dbc90be39d8026c003", .Size = 12600392, .Families = f32_1},
+     .Sha1 = "ea48ec0fb0bfbd4af015f1dbc90be39d8026c003", .Size = 12600392, .Families = f34_1},
     {.File = "malgunsl.ttf", .Member = nullptr, .Registry = "Malgun Gothic Semilight (TrueType)",
      .Sha256 = "c0ca810a242c4482594182db40f0f9d35a3d51bb2eeac750e6e867b2110eb00e",
-     .Sha1 = "03bc1a5bf19b5e71ac7661c542e884c1fed62cb5", .Size = 5085196, .Families = f32_2},
+     .Sha1 = "03bc1a5bf19b5e71ac7661c542e884c1fed62cb5", .Size = 5085196, .Families = f34_2},
 };
 
-static const char *const f33_0[] = {"Cascadia Code", nullptr};
-static const char *const f33_1[] = {"Cascadia Code", nullptr};
-static const char *const f33_2[] = {"Cascadia Code", nullptr};
-static const char *const f33_3[] = {"Cascadia Code", nullptr};
-static const char *const f33_4[] = {"Cascadia Mono", nullptr};
-static const char *const f33_5[] = {"Cascadia Mono", nullptr};
-static const char *const f33_6[] = {"Cascadia Mono", nullptr};
-static const char *const f33_7[] = {"Cascadia Mono", nullptr};
-static const FEATURE_FONT fonts33[] = {
+static const char *const f35_0[] = {"Cascadia Code", nullptr};
+static const char *const f35_1[] = {"Cascadia Code", nullptr};
+static const char *const f35_2[] = {"Cascadia Code", nullptr};
+static const char *const f35_3[] = {"Cascadia Code", nullptr};
+static const char *const f35_4[] = {"Cascadia Mono", nullptr};
+static const char *const f35_5[] = {"Cascadia Mono", nullptr};
+static const char *const f35_6[] = {"Cascadia Mono", nullptr};
+static const char *const f35_7[] = {"Cascadia Mono", nullptr};
+static const FEATURE_FONT fonts35[] = {
     {.File = "CascadiaCode-Bold.ttf", .Member = "ttf/static/CascadiaCode-Bold.ttf", .Registry = "Cascadia Code Bold (TrueType)",
      .Sha256 = "58197c5c3ba2967d4780b0ef8aee72d0cbbfa42885ddede9ec96fa7a1df5aead",
-     .Sha1 = nullptr, .Size = 604696, .Families = f33_0},
+     .Sha1 = nullptr, .Size = 604696, .Families = f35_0},
     {.File = "CascadiaCode-BoldItalic.ttf", .Member = "ttf/static/CascadiaCode-BoldItalic.ttf", .Registry = "Cascadia Code Bold Italic (TrueType)",
      .Sha256 = "aff1984cbbdd990137691ae9567b87e7b1190f6a4e146017c6a0893ca4b000e7",
-     .Sha1 = nullptr, .Size = 458632, .Families = f33_1},
+     .Sha1 = nullptr, .Size = 458632, .Families = f35_1},
     {.File = "CascadiaCode-Italic.ttf", .Member = "ttf/static/CascadiaCode-Italic.ttf", .Registry = "Cascadia Code Italic (TrueType)",
      .Sha256 = "1f0676937792fe550effeafb7f4622080c2a5d62715d1245d471258fa1a23b8c",
-     .Sha1 = nullptr, .Size = 453184, .Families = f33_2},
+     .Sha1 = nullptr, .Size = 453184, .Families = f35_2},
     {.File = "CascadiaCode-Regular.ttf", .Member = "ttf/static/CascadiaCode-Regular.ttf", .Registry = "Cascadia Code Regular (TrueType)",
      .Sha256 = "c33ef522cdfeff99907fb54f3e97152bb18bfb9b56ec2fef4d4ceec51c8974a4",
-     .Sha1 = nullptr, .Size = 598060, .Families = f33_3},
+     .Sha1 = nullptr, .Size = 598060, .Families = f35_3},
     {.File = "CascadiaMono-Bold.ttf", .Member = "ttf/static/CascadiaMono-Bold.ttf", .Registry = "Cascadia Mono Bold (TrueType)",
      .Sha256 = "b22cb603ed23cac36e8444846e1841caca21719a5e852780a8d37ae7a49b0a36",
-     .Sha1 = nullptr, .Size = 581704, .Families = f33_4},
+     .Sha1 = nullptr, .Size = 581704, .Families = f35_4},
     {.File = "CascadiaMono-BoldItalic.ttf", .Member = "ttf/static/CascadiaMono-BoldItalic.ttf", .Registry = "Cascadia Mono Bold Italic (TrueType)",
      .Sha256 = "ecaeab55e6334408f8ff1fde78a99ddaeb3bb7fad4fcd177df8475c88a7d240f",
-     .Sha1 = nullptr, .Size = 439072, .Families = f33_5},
+     .Sha1 = nullptr, .Size = 439072, .Families = f35_5},
     {.File = "CascadiaMono-Italic.ttf", .Member = "ttf/static/CascadiaMono-Italic.ttf", .Registry = "Cascadia Mono Italic (TrueType)",
      .Sha256 = "8d98a33e7617c14dd1d200b4900bc6c2d5d7165abb5c09e9d2fd51c38ce9c9ff",
-     .Sha1 = nullptr, .Size = 435820, .Families = f33_6},
+     .Sha1 = nullptr, .Size = 435820, .Families = f35_6},
     {.File = "CascadiaMono-Regular.ttf", .Member = "ttf/static/CascadiaMono-Regular.ttf", .Registry = "Cascadia Mono Regular (TrueType)",
      .Sha256 = "06520d032ec274fa5040b22c6f4a1d829081b24ba40b2da56dae89bf10c7b481",
-     .Sha1 = nullptr, .Size = 575912, .Families = f33_7},
+     .Sha1 = nullptr, .Size = 575912, .Families = f35_7},
 };
 
 const FEATURE_DEF g_font_features[] = {
@@ -1933,6 +1951,32 @@ const FEATURE_DEF g_font_features[] = {
         .Fonts = fonts24, .FontCount = 19,
     },
     {
+        .Name = "Fonts.SegoeVariable",
+        .DisplayName = "Segoe UI Variable",
+        .Version = "10.0.26100.4349",
+        .Vendor = "Microsoft Corporation",
+        .Url = {[FEATURE_ARCH_X64] = "http://dl.delivery.mp.microsoft.com/filestreamingservice/files/009d9a0d-8e1a-45ce-9540-21377534803e/26100.4349.250607-1500.ge_release_svc_refresh_CLIENTCONSUMER_RET_x64FRE_en-us.esd"},
+        .Format = FEATURE_FORMAT_WIM,
+        .MinSize = 0ull, .MaxSize = 1099511627776ull,
+        .DownloadMB = 37,
+        .Handler = FEATURE_HANDLER_FONTS,
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
+        .Fonts = fonts25, .FontCount = 1,
+    },
+    {
+        .Name = "Fonts.SegoeIcons",
+        .DisplayName = "Segoe Fluent Icons and Segoe MDL2 Assets",
+        .Version = "10.0.26100.4349",
+        .Vendor = "Microsoft Corporation",
+        .Url = {[FEATURE_ARCH_X64] = "http://dl.delivery.mp.microsoft.com/filestreamingservice/files/009d9a0d-8e1a-45ce-9540-21377534803e/26100.4349.250607-1500.ge_release_svc_refresh_CLIENTCONSUMER_RET_x64FRE_en-us.esd"},
+        .Format = FEATURE_FORMAT_WIM,
+        .MinSize = 0ull, .MaxSize = 1099511627776ull,
+        .DownloadMB = 57,
+        .Handler = FEATURE_HANDLER_FONTS,
+        .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
+        .Fonts = fonts26, .FontCount = 2,
+    },
+    {
         .Name = "Fonts.Latin",
         .DisplayName = "Arial, Times New Roman, Courier New, Verdana, Tahoma and the other core fonts",
         .Version = "10.0.26100.4349",
@@ -1943,7 +1987,7 @@ const FEATURE_DEF g_font_features[] = {
         .DownloadMB = 127,
         .Handler = FEATURE_HANDLER_FONTS,
         .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
-        .Fonts = fonts25, .FontCount = 43,
+        .Fonts = fonts27, .FontCount = 43,
     },
     {
         .Name = "Fonts.ClearType",
@@ -1956,7 +2000,7 @@ const FEATURE_DEF g_font_features[] = {
         .DownloadMB = 120,
         .Handler = FEATURE_HANDLER_FONTS,
         .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
-        .Fonts = fonts26, .FontCount = 30,
+        .Fonts = fonts28, .FontCount = 30,
     },
     {
         .Name = "Fonts.Symbols",
@@ -1969,7 +2013,7 @@ const FEATURE_DEF g_font_features[] = {
         .DownloadMB = 57,
         .Handler = FEATURE_HANDLER_FONTS,
         .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
-        .Fonts = fonts27, .FontCount = 4,
+        .Fonts = fonts29, .FontCount = 4,
     },
     {
         .Name = "Fonts.Scripts",
@@ -1982,7 +2026,7 @@ const FEATURE_DEF g_font_features[] = {
         .DownloadMB = 80,
         .Handler = FEATURE_HANDLER_FONTS,
         .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
-        .Fonts = fonts28, .FontCount = 26,
+        .Fonts = fonts30, .FontCount = 26,
     },
     {
         .Name = "Fonts.ChineseSimplified",
@@ -1995,7 +2039,7 @@ const FEATURE_DEF g_font_features[] = {
         .DownloadMB = 100,
         .Handler = FEATURE_HANDLER_FONTS,
         .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
-        .Fonts = fonts29, .FontCount = 6,
+        .Fonts = fonts31, .FontCount = 6,
     },
     {
         .Name = "Fonts.ChineseTraditional",
@@ -2008,7 +2052,7 @@ const FEATURE_DEF g_font_features[] = {
         .DownloadMB = 57,
         .Handler = FEATURE_HANDLER_FONTS,
         .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
-        .Fonts = fonts30, .FontCount = 4,
+        .Fonts = fonts32, .FontCount = 4,
     },
     {
         .Name = "Fonts.YuGothic",
@@ -2021,7 +2065,7 @@ const FEATURE_DEF g_font_features[] = {
         .DownloadMB = 69,
         .Handler = FEATURE_HANDLER_FONTS,
         .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
-        .Fonts = fonts31, .FontCount = 4,
+        .Fonts = fonts33, .FontCount = 4,
     },
     {
         .Name = "Fonts.MalgunGothic",
@@ -2034,7 +2078,7 @@ const FEATURE_DEF g_font_features[] = {
         .DownloadMB = 31,
         .Handler = FEATURE_HANDLER_FONTS,
         .Terms = "These fonts are Microsoft's and licensed with Windows. It is up to you to have the right to use them.",
-        .Fonts = fonts32, .FontCount = 3,
+        .Fonts = fonts34, .FontCount = 3,
     },
     {
         .Name = "Fonts.Cascadia",
@@ -2047,7 +2091,7 @@ const FEATURE_DEF g_font_features[] = {
         .DownloadMB = 3,
         .Handler = FEATURE_HANDLER_FONTS,
         .Terms = "Cascadia is free software under the SIL Open Font License.",
-        .Fonts = fonts33, .FontCount = 8,
+        .Fonts = fonts35, .FontCount = 8,
     },
 };
 
