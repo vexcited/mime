@@ -74,7 +74,7 @@ llvmPackages_latest.stdenv.mkDerivation {
   '';
 
   meta = {
-    description = "Runs Windows programs on its own Windows-compatible kernel in a virtual machine";
+    description = "Running Windows programs on Linux by reimplementing Windows";
     homepage = "https://code.vexcited.com/mime/mime";
     platforms = [ "x86_64-linux" ];
     mainProgram = "mime";
