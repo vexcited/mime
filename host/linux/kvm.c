@@ -1143,6 +1143,28 @@ static void profile_report(MimeVm *vm)
                        (unsigned)(all[i].cr3 >> 1));
             held++;
         }
+    /* all of them by where the code is, 16 MB at a time, since the lines above leave out the rare addresses. */
+    struct {
+        uint64_t area, count;
+    } areas[32] = {};
+    size_t area_count = 0;
+    uint64_t held_total = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (!(all[i].cr3 & 1))
+            continue;
+        held_total += all[i].count;
+        size_t k = 0;
+        while (k < area_count && areas[k].area != all[i].rip >> 24)
+            k++;
+        if (k == area_count && area_count < 32)
+            areas[area_count++].area = all[i].rip >> 24;
+        if (k < area_count)
+            areas[k].count += all[i].count;
+    }
+    mime_error("profile held in all %llu", (unsigned long long)held_total);
+    for (size_t k = 0; k < area_count; k++)
+        mime_error("profile held area %#llx %llu", (unsigned long long)(areas[k].area << 24),
+                   (unsigned long long)areas[k].count);
     for (size_t i = 0; i < count && i < 600; i++) {
         char name[64];
         uint64_t base;

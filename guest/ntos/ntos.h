@@ -170,6 +170,7 @@ typedef struct _KTHREAD {
     ULONG64 ContextSwitches;
     ULONG64 BlockedTicks; /* counter ticks spent switched out, to tell a service's work from its waiting. */
     ULONG LockReason;     /* x64: what the thread held the kernel lock for when it was switched away from. */
+    ULONG FastReason;     /* x64: the service that came without the kernel lock, for when it takes it to end. */
     ULONG64 KernelTime;
     ULONG64 UserTime;
     ULONG SuspendCount;
