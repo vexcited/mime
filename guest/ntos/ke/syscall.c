@@ -1233,7 +1233,9 @@ void KiDumpServiceCalls(void)
                 best = g_long_ticks[i], bi = i;
         if (!best)
             break;
-        const char *name = bi < 0x2001 && bi ? service_name((bi - 1) >> 12, (bi - 1) & 0xFFF) : "trap";
+        const char *name = bi < 0x2001 && bi ? service_name((bi - 1) >> 12, (bi - 1) & 0xFFF)
+                         : bi == KI_LOCK_REASON_FOREIGN ? "foreign driver call"
+                                                         : "trap";
         KiLogPrintf("long holds by %s %u: %llu, %llu us in all, at most %llu us", name,
                     bi < 0x2001 ? 0 : bi - 0x2001, g_long_calls[bi], HalCounterToHns(best) / 10,
                     HalCounterToHns(g_long_max[bi]) / 10);
@@ -1247,7 +1249,10 @@ void KiDumpServiceCalls(void)
                 best = g_wait_ticks[i], bi = i;
         if (!best)
             break;
-        const char *name = bi >= 0x2001 ? "trap" : bi ? service_name((bi - 1) >> 12, (bi - 1) & 0xFFF) : "a thread back";
+        const char *name = bi == KI_LOCK_REASON_FOREIGN ? "foreign driver call"
+                         : bi >= 0x2001                ? "trap"
+                         : bi                          ? service_name((bi - 1) >> 12, (bi - 1) & 0xFFF)
+                                                       : "a thread back";
         KiLogPrintf("lock waits by %s %u: %llu, %llu us in all", name, bi < 0x2001 ? 0 : bi - 0x2001, g_wait_calls[bi],
                     HalCounterToHns(best) / 10);
         g_wait_ticks[bi] = 0;
@@ -1321,6 +1326,7 @@ void KiDumpServiceCalls(void)
                 fast[FAST_PARK], fast[FAST_UNPARK], fast[FAST_TEST_ALERT], fast[FAST_QUERY]);
     KiLogPrintf("interrupts in user mode without the kernel lock: %llu, %llu more took it to end", fast_interrupts,
                 fast_interrupts_locked);
+    KiDumpForeignStats();
 #endif
     AfdDumpStats();
     reset_dump_counters();

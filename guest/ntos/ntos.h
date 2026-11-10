@@ -171,6 +171,10 @@ typedef struct _KTHREAD {
     ULONG64 BlockedTicks; /* counter ticks spent switched out, to tell a service's work from its waiting. */
     ULONG LockReason;     /* x64: what the thread held the kernel lock for when it was switched away from. */
     ULONG FastReason;     /* x64: the service that came without the kernel lock, for when it takes it to end. */
+    BOOLEAN ForeignKept;  /* x64: a foreign driver's code without the lock left it held at dispatch level. */
+    BOOLEAN ForeignUnlocked; /* x64: a foreign driver's system thread, whose code runs without the lock. */
+    UCHAR ForeignCount;      /* x64: its frames that hold the lock for it, the first eight in ForeignFrames. */
+    ULONG_PTR ForeignFrames[8];
     ULONG64 KernelTime;
     ULONG64 UserTime;
     ULONG SuspendCount;
@@ -344,7 +348,8 @@ FORCEINLINE PKTHREAD KiCurrentThread(void)
 }
 
 /*
- * the kernel lock: held whenever a processor runs kernel code with interrupts enabled. entering the
+ * the kernel lock: held whenever a processor runs mime's kernel code with interrupts enabled, the code of a
+ * foreign driver's system thread aside on x64, see arch/x64/foreign.c. entering the
  * kernel from user mode takes it and returning releases it, see vectors.S, and the idle loop drops it
  * only around wfi. user mode runs on every processor at once, while kernel code keeps uniprocessor
  * rules: masking interrupts excludes every other kernel path.
@@ -367,6 +372,19 @@ extern ULONG64 KiLockStats[MAXIMUM_PROCESSORS][8];
 void KiNoteLockWait(ULONG reason);
 void KiAcquireKernelLock(void);
 void KiReleaseKernelLock(void);
+
+/* arch/x64/foreign.c: the drivers mime did not build. a lock held for their calls is named by this reason. */
+#define KI_LOCK_REASON_FOREIGN (0x2001 + 0xF1)
+extern BOOLEAN KiForeignDirect, KiForeignUnlock;
+void KiForeignRun(PKSTART_ROUTINE routine, PVOID context);
+BOOLEAN KiIsForeignCaller(ULONG_PTR return_address);
+void KiForeignTrapTaken(PKTRAP_FRAME frame);
+void KiForeignRestore(PCONTEXT context);
+void KiNoteForeignImage(PVOID base, SIZE_T size);
+BOOLEAN KiIsForeignCode(ULONG_PTR pc);
+PVOID KiForeignImport(PVOID target, const char *name);
+void KiObserveKernelInterrupt(PKTRAP_FRAME frame, KIRQL irql);
+void KiDumpForeignStats(void);
 
 /*
  * a real lock, held with interrupts off for a few instructions and never across a wait: what the services that run

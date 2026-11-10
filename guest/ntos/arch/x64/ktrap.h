@@ -39,6 +39,7 @@
 
 /* the xmm registers hold the interrupted values, restored on exit. */
 #define KTRAP_FLAG_FP_SAVED 1
+#define KTRAP_FLAG_LOCK_TAKEN 2 /* the kernel lock was taken for the trap, see arch/x64/foreign.c. */
 
 #define KTRAP_VECTOR_SYSCALL 0x100
 

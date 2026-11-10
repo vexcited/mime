@@ -53,6 +53,7 @@ static BOOLEAN frame_in_stack(ULONG64 frame)
 void NTAPI RtlRestoreContext(PCONTEXT context, PEXCEPTION_RECORD record)
 {
     (void)record;
+    KiForeignRestore(context);
     KiRestoreKernelContext(context);
 }
 

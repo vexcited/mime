@@ -265,6 +265,8 @@ static void interrupt(PKTRAP_FRAME frame)
     PKPCR pcr = KeGetPcr();
     PKPRCB prcb = pcr->CurrentPrcb;
     KIRQL old = pcr->Irql;
+    if (!KI_TRAP_FROM_USER(frame))
+        KiObserveKernelInterrupt(frame, old);
     pcr->Irql = CLOCK_LEVEL;
     prcb->InterruptCount++;
     ULONG64 start = HalReadCounter();
@@ -379,6 +381,8 @@ void KiTrapDispatch(PKTRAP_FRAME frame)
      * the lock holder for statistics: the vector, past the system service numbers. a holder this trap interrupted
      * keeps its own, which the release clears.
      */
+    if (frame->Flags & KTRAP_FLAG_LOCK_TAKEN)
+        KiForeignTrapTaken(frame);
     if (KiKernelLock[KI_LOCK_OWNER] == KeGetCurrentPrcb()->Number) {
         if (!KiKernelLock[KI_LOCK_REASON])
             KiKernelLock[KI_LOCK_REASON] = 0x2001 + (frame->Vector & 0xFF);

@@ -272,6 +272,10 @@ void KiInitializeKernel(MimeBootInfo *boot)
     SeAccessEnforced = strstr(boot->cmdline, "no-access-checks") == nullptr;
     SeTraceAccess = strstr(boot->cmdline, "trace-access") != nullptr;
     ObAuditHandleAccess = strstr(boot->cmdline, "audit-handle-access") != nullptr;
+#ifdef __x86_64__
+    KiForeignDirect = strstr(boot->cmdline, "foreign-direct") != nullptr;
+    KiForeignUnlock = !KiForeignDirect && strstr(boot->cmdline, "foreign-locked") == nullptr;
+#endif
     MiTraceRoutines = strstr(boot->cmdline, "trace-routines") != nullptr;
     extern BOOLEAN MiDiscoverRoutines;
     MiDiscoverRoutines = strstr(boot->cmdline, "discover-routines") != nullptr;

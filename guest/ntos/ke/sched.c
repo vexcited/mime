@@ -189,7 +189,12 @@ void KiThreadStartupC(PKSTART_ROUTINE routine, PVOID context)
 #endif
     KeGetPcr()->Irql = PASSIVE_LEVEL;
     KiEnableInterrupts();
-    routine(context);
+#ifdef __x86_64__
+    if (KiForeignUnlock && KiIsForeignCode((ULONG_PTR)routine))
+        KiForeignRun(routine, context);
+    else
+#endif
+        routine(context);
     PsTerminateSystemThread(STATUS_SUCCESS);
 }
 
