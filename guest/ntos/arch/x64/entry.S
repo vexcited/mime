@@ -362,18 +362,29 @@ KiFastServiceExit:
     iretq
 
 /*
- * BOOLEAN KiFastReadUser64(const void *address, ULONG64 *value): reads the caller's memory without the kernel
- * lock. a fault at the load is not handled: KiTrapCommon makes the read return FALSE instead.
+ * BOOLEAN KiFastReadUser64(const void *address, ULONG64 *value), BOOLEAN KiFastWriteUser32(void *address, ULONG
+ * value) and BOOLEAN KiFastProbeUser32(void *address), which writes what is there: the caller's memory without
+ * the kernel lock. a page fault between the two labels is not handled: KiTrapCommon makes the call return FALSE.
  */
     .globl  KiFastReadUser64
+    .globl  KiFastWriteUser32
+    .globl  KiFastProbeUser32
     .p2align 4
+KiFastUserAccess:
 KiFastReadUser64:
-KiFastUserRead:
     movq    (%rcx), %rax
     movq    %rax, (%rdx)
     movb    $1, %al
     ret
-KiFastUserReadFailed:
+KiFastWriteUser32:
+    movl    %edx, (%rcx)
+    movb    $1, %al
+    ret
+KiFastProbeUser32:
+    lock orl $0, (%rcx)
+    movb    $1, %al
+    ret
+KiFastUserFailed:
     xorl    %eax, %eax
     ret
 
@@ -512,12 +523,15 @@ KiTrapCommon:
      */
 2:  cmpq    $14, KTRAP_VECTOR(%rbx)
     jne     6f
-    leaq    KiFastUserRead(%rip), %rax
-    cmpq    %rax, KTRAP_RIP(%rbx)
-    jne     6f
-    /* the one read of user memory made without the kernel lock fails instead, see KiFastReadUser64. */
-    leaq    KiFastUserReadFailed(%rip), %rax
-    movq    %rax, KTRAP_RIP(%rbx)
+    movq    KTRAP_RIP(%rbx), %rax
+    leaq    KiFastUserAccess(%rip), %rcx
+    cmpq    %rcx, %rax
+    jb      6f
+    leaq    KiFastUserFailed(%rip), %rcx
+    cmpq    %rcx, %rax
+    jae     6f
+    /* user memory touched without the kernel lock: the access fails instead, see KiFastReadUser64. */
+    movq    %rcx, KTRAP_RIP(%rbx)
     movq    %rbx, %rsp
     jmp     KiExceptionExit
 6:  cmpb    $0, %gs:KPCR_IDLE_SLEEPING
