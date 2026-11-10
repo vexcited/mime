@@ -356,6 +356,7 @@ extern ULONG64 HalHypercallCalls[64], HalHypercallTicks[64], HalHypercallLongest
     } while (0)
 extern ULONG64 KiKernelLockPhys;
 extern ULONG64 KiLockStats[MAXIMUM_PROCESSORS][8];
+void KiNoteLockWait(ULONG reason);
 void KiAcquireKernelLock(void);
 void KiReleaseKernelLock(void);
 

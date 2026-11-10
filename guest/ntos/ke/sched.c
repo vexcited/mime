@@ -78,9 +78,12 @@ ULONG64 HalHypercallUnlocked(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULO
         return HalHypercall(nr, a1, a2, a3, a4, a5, a6, value);
     }
     ULONG64 start = HalReadCounter();
+    /* the release forgets what the lock was held for. */
+    ULONG reason = KiKernelLock[KI_LOCK_REASON];
     KiReleaseKernelLock();
     ULONG64 status = HalHypercall(nr, a1, a2, a3, a4, a5, a6, value);
     KiAcquireKernelLock();
+    KiKernelLock[KI_LOCK_REASON] = reason;
     /* time away does not count as holding the lock in the service statistics. */
     KiCurrentThread()->BlockedTicks += HalReadCounter() - start;
     KiRestoreInterrupts(state);
@@ -99,11 +102,13 @@ void KiCopyUnlocked(void *to, const void *from, SIZE_T length)
         BOOLEAN held = KeGetPcr()->Irql < DISPATCH_LEVEL && KiKernelLock[KI_LOCK_OWNER] == KeGetCurrentPrcb()->Number &&
                        !KiDispatcherLockHeld();
         ULONG64 start = held ? HalReadCounter() : 0;
+        ULONG reason = held ? KiKernelLock[KI_LOCK_REASON] : 0;
         if (held)
             KiReleaseKernelLock();
         memcpy(to, from, n);
         if (held) {
             KiAcquireKernelLock();
+            KiKernelLock[KI_LOCK_REASON] = reason;
             KiCurrentThread()->BlockedTicks += HalReadCounter() - start;
         }
         KiRestoreInterrupts(state);
@@ -439,6 +444,7 @@ static void take_kernel_lock_back(PKTHREAD thread)
     KeGetPcr()->UserMode = 0;
     KiAcquireKernelLock();
     KiKernelLock[KI_LOCK_REASON] = thread->LockReason;
+    KiNoteLockWait(0);
     (void)KiAcquireDispatcherLock();
 }
 #endif

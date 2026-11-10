@@ -29,6 +29,25 @@ void AfdDumpStats(void);
 /* per hypercall: calls, time taken, and how much of it with the kernel lock held. the x64 hal counts them. */
 ULONG64 HalHypercallCalls[64], HalHypercallTicks[64], HalHypercallLongest[64], HalHypercallLockedTicks[64];
 
+/* the time processors waited for the lock, by what they took it for. 0 is a thread that goes on after a wait. */
+static ULONG64 g_wait_ticks[KI_HOLD_REASONS], g_wait_calls[KI_HOLD_REASONS];
+
+/* called with the lock, once what it was taken for is known. the fifth counter is the wait already told. */
+void KiNoteLockWait(ULONG reason)
+{
+    ULONG64 *stats = KiLockStats[KeGetCurrentPrcb()->Number];
+    ULONG64 waited = stats[2] - stats[4];
+    if (!waited || stats[2] < stats[4]) {
+        stats[4] = stats[2];
+        return;
+    }
+    stats[4] = stats[2];
+    if (reason >= KI_HOLD_REASONS)
+        reason = 0;
+    g_wait_ticks[reason] += waited;
+    g_wait_calls[reason]++;
+}
+
 /* called as the lock is released after being held for longer than KiLongHoldTicks, with the lock still held. */
 void KiNoteLongHold(ULONG64 held)
 {
@@ -351,6 +370,7 @@ void KiLeaveFastService(PKTHREAD thread)
         KiAcquireKernelLock();
     }
     KiKernelLock[KI_LOCK_REASON] = KI_SERVICE_NUMBER(thread->TrapFrame) + 1;
+    KiNoteLockWait(KI_SERVICE_NUMBER(thread->TrapFrame) + 1);
     thread->FastService = FALSE;
     pcr->Prcb.FastServicesLocked++;
     KiEnableInterrupts();
@@ -487,6 +507,7 @@ void KiSystemService(PKTRAP_FRAME frame)
     ULONG64 result;
     ULONG64 started = HalReadCounter(), blocked = thread->BlockedTicks;
     KiKernelLock[KI_LOCK_REASON] = (table << 12 | index) + 1;
+    KiNoteLockWait((table << 12 | index) + 1);
     BOOLEAN timeline = g_timeline && table < 2 && !strcmp(PsCurrentProcess()->ImageFileName, KiTimelineImage);
     char tpath[32];
     tpath[0] = 0;
@@ -894,6 +915,20 @@ void KiDumpServiceCalls(void)
                     HalCounterToHns(g_long_max[bi]) / 10);
         g_long_ticks[bi] = 0;
     }
+    for (int round = 0; round < 12; round++) {
+        ULONG64 best = 0;
+        ULONG bi = 0;
+        for (ULONG i = 0; i < KI_HOLD_REASONS; i++)
+            if (g_wait_ticks[i] > best)
+                best = g_wait_ticks[i], bi = i;
+        if (!best)
+            break;
+        const char *name = bi >= 0x2001 ? "trap" : bi ? service_name((bi - 1) >> 12, (bi - 1) & 0xFFF) : "a thread back";
+        KiLogPrintf("lock waits by %s %u: %llu, %llu us in all", name, bi < 0x2001 ? 0 : bi - 0x2001, g_wait_calls[bi],
+                    HalCounterToHns(best) / 10);
+        g_wait_ticks[bi] = 0;
+    }
+    memset(g_wait_calls, 0, sizeof(g_wait_calls));
     /* the hypercalls made with the lock held, the host's work that every other processor waited for. */
     for (int round = 0; round < 8; round++) {
         ULONG64 best = 0;

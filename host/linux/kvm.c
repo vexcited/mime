@@ -996,6 +996,13 @@ static void profile_sample(MimeVcpu *vcpu)
         return;
     /* kernel addresses are the same in every process. */
     uint64_t cr3 = regs.rip >> 63 ? 0 : sregs.cr3 & ~0xFFFull;
+    /* a sample of the kernel lock's holder is kept apart, by what it holds the lock for: an odd value is no table. */
+    MimeSharedPage *shared = vcpu->vm->shared;
+    uint64_t owner_pa = shared ? shared->lock_owner_pa : 0;
+    uint32_t *owner = owner_pa ? mime_vm_phys(vcpu->vm, owner_pa, 4) : nullptr;
+    uint32_t *reason = owner ? mime_vm_phys(vcpu->vm, shared->lock_reason_pa, 4) : nullptr;
+    if (reason && __atomic_load_n(owner, __ATOMIC_RELAXED) == vcpu->index)
+        cr3 = (uint64_t)__atomic_load_n(reason, __ATOMIC_RELAXED) << 1 | 1;
     uint64_t h = (regs.rip * 0x9E3779B97F4A7C15ull) ^ cr3;
     for (uint32_t i = (uint32_t)(h >> 40) & (PROFILE_SLOTS - 1), n = 0; n < PROFILE_SLOTS / 2;
          i = (i + 1) & (PROFILE_SLOTS - 1), n++) {
@@ -1113,7 +1120,7 @@ static void profile_report(MimeVm *vm)
         char name[64];
         uint64_t base;
         const char *who = "kernel";
-        if (all[i].cr3)
+        if (all[i].cr3 && !(all[i].cr3 & 1))
             who = find_module(vm, all[i].cr3, all[i].rip, name, sizeof(name), &base) ? name : "user, no module";
         size_t m = 0;
         while (m < used && strcmp(modules[m].name, who) != 0)
@@ -1128,10 +1135,21 @@ static void profile_report(MimeVm *vm)
     for (size_t m = 0; m < used; m++)
         if (modules[m].count * 1000 >= total)
             mime_error("profile module %5.2f%% %s", 100.0 * modules[m].count / (double)total, modules[m].name);
+    /* the holder of the kernel lock: every address, since each is a small part of the whole. */
+    size_t held = 0;
+    for (size_t i = 0; i < count && held < 400; i++)
+        if (all[i].cr3 & 1) {
+            mime_error("profile held %6u %#llx for %u", all[i].count, (unsigned long long)all[i].rip,
+                       (unsigned)(all[i].cr3 >> 1));
+            held++;
+        }
     for (size_t i = 0; i < count && i < 600; i++) {
         char name[64];
         uint64_t base;
-        if (all[i].cr3 && find_module(vm, all[i].cr3, all[i].rip, name, sizeof(name), &base))
+        if (all[i].cr3 & 1)
+            mime_error("profile %6u %5.2f%% %#llx", all[i].count, 100.0 * all[i].count / (double)total,
+                       (unsigned long long)all[i].rip);
+        else if (all[i].cr3 && find_module(vm, all[i].cr3, all[i].rip, name, sizeof(name), &base))
             mime_error("profile %6u %5.2f%% %s+%#llx", all[i].count, 100.0 * all[i].count / (double)total, name,
                        (unsigned long long)(all[i].rip - base));
         else
