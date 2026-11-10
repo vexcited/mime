@@ -315,9 +315,15 @@ BOOLEAN KiFastPageFault(PKTRAP_FRAME frame)
 
 void KiTrapDispatch(PKTRAP_FRAME frame)
 {
-    /* the lock holder for statistics: the vector, past the system service numbers. */
-    if (KiKernelLock[KI_LOCK_OWNER] == KeGetCurrentPrcb()->Number)
-        KiKernelLock[KI_LOCK_REASON] = 0x2001 + (frame->Vector & 0xFF);
+    /*
+     * the lock holder for statistics: the vector, past the system service numbers. a holder this trap interrupted
+     * keeps its own, which the release clears.
+     */
+    if (KiKernelLock[KI_LOCK_OWNER] == KeGetCurrentPrcb()->Number) {
+        if (!KiKernelLock[KI_LOCK_REASON])
+            KiKernelLock[KI_LOCK_REASON] = 0x2001 + (frame->Vector & 0xFF);
+        KiNoteLockWait(0x2001 + (frame->Vector & 0xFF));
+    }
     /* int 2e, the system call of ntdll's stubs when SharedUserData says syscall is unavailable. */
     if (frame->Vector == 0x2E && KI_TRAP_FROM_USER(frame)) {
         frame->Vector = KTRAP_VECTOR_SYSCALL;

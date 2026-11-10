@@ -244,6 +244,8 @@ void MiSessionInitialize(void)
     g_ready = TRUE;
 
     MimeCtrlHeader ready = {MIME_EVT_READY, sizeof(ready)};
+    HalSharedPage->lock_reason_pa = HalPhysicalOf((PVOID)&KiKernelLock[KI_LOCK_REASON]);
+    HalSharedPage->lock_owner_pa = HalPhysicalOf((PVOID)&KiKernelLock[KI_LOCK_OWNER]);
     HalSharedPage->guest_ready = 1;
     send_message(&ready, sizeof(ready));
     KiLogPrintf("session ready");
