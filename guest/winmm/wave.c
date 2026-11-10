@@ -1,7 +1,8 @@
 /*
  * wave output through the host's default device. each open device has a lib/audio/output.c stream and a thread
  * feeding queued headers; headers return once their last frame has played. eight-bit samples are widened; the mapper
- * converts compressed formats through msacm32. there is no input device.
+ * converts compressed formats through msacm32. wave input reads the host's default recording device through a capture
+ * stream of the same kind, and a thread fills the queued headers.
  */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
@@ -899,30 +900,440 @@ WINMMAPI MMRESULT WINAPI waveOutGetErrorTextA(MMRESULT error, LPSTR text, UINT s
 
 /* ------------------------------------------------------------------ input */
 
+
+#if defined(__aarch64__)
+#define INPUT_NAME L"Microphone (Qualcomm Audio)"
+#else
+#define INPUT_NAME L"Microphone (Realtek(R) Audio)"
+#endif
+
+typedef struct WAVE_IN {
+    struct WAVE_IN *next;
+    RTL_CRITICAL_SECTION lock;
+    DWORD callback;
+    DWORD_PTR target, instance;
+    WAVEFORMATEX format;
+    BOOL narrow8;           /* recorded in sixteen bits, handed over in eight. */
+    MimeAudioHeader *hdr;
+    BYTE *ring;
+    ULONG slot;
+    UINT32 ring_frames, ring_frame; /* capacity, and bytes per frame of the ring. */
+    WAVEHDR *head, *tail;   /* queued, the first one being filled. */
+    BOOL recording;
+    UINT64 recorded;        /* frames handed over since the last reset. */
+    HANDLE thread, wake;
+    volatile BOOL quit;
+} WAVE_IN;
+
+static WAVE_IN *g_ins;
+
+static WAVE_IN *find_in(HWAVEIN h)
+{
+    RtlEnterCriticalSection(&g_lock);
+    WAVE_IN *w = g_ins;
+    while (w && w != (WAVE_IN *)h)
+        w = w->next;
+    RtlLeaveCriticalSection(&g_lock);
+    return w;
+}
+
+static void notify_in(WAVE_IN *w, UINT message, DWORD_PTR param1)
+{
+    DriverCallback(w->target, w->callback, (HANDLE)w, message, w->instance, param1, 0);
+}
+
+static WAVEHDR *pop_in(WAVE_IN *w)
+{
+    WAVEHDR *h = w->head;
+    w->head = h->lpNext;
+    if (!w->head)
+        w->tail = nullptr;
+    h->lpNext = nullptr;
+    return h;
+}
+
+/* moves what the host recorded into the queued headers. without a header the frames are lost, as on windows. */
+static UINT32 drain(WAVE_IN *w, WAVEHDR **finished, UINT32 max)
+{
+    UINT32 n = 0, out_frame = w->format.nBlockAlign;
+    UINT64 written = __atomic_load_n(&w->hdr->written, __ATOMIC_ACQUIRE), played = w->hdr->played;
+    if (written - played > w->ring_frames)
+        played = written - w->ring_frames;
+    while (played != written && w->head && n < max) {
+        WAVEHDR *h = w->head;
+        UINT32 start = (UINT32)(played % w->ring_frames);
+        UINT32 frames = (h->dwBufferLength - h->dwBytesRecorded) / out_frame;
+        if (frames > written - played)
+            frames = (UINT32)(written - played);
+        if (frames > w->ring_frames - start)
+            frames = w->ring_frames - start;
+        const BYTE *src = w->ring + (SIZE_T)start * w->ring_frame;
+        BYTE *dst = (BYTE *)h->lpData + h->dwBytesRecorded;
+        if (w->narrow8) {
+            UINT32 samples = frames * w->format.nChannels;
+            for (UINT32 i = 0; i < samples; i++)
+                dst[i] = (BYTE)((((const INT16 *)src)[i] >> 8) + 128);
+        } else {
+            memcpy(dst, src, (SIZE_T)frames * out_frame);
+        }
+        h->dwBytesRecorded += frames * out_frame;
+        played += frames;
+        w->recorded += frames;
+        if (h->dwBytesRecorded + out_frame > h->dwBufferLength)
+            finished[n++] = pop_in(w);
+    }
+    if (!w->head)
+        played = written;
+    __atomic_store_n(&w->hdr->played, played, __ATOMIC_RELEASE);
+    return n;
+}
+
+static void finish_in(WAVE_IN *w, WAVEHDR **finished, UINT32 n)
+{
+    for (UINT32 i = 0; i < n; i++) {
+        WAVEHDR *h = finished[i];
+        h->dwFlags = (h->dwFlags & ~WHDR_INQUEUE) | WHDR_DONE;
+        notify_in(w, WIM_DATA, (DWORD_PTR)h);
+    }
+}
+
+static DWORD WINAPI record_thread(void *arg)
+{
+    WAVE_IN *w = arg;
+    WAVEHDR *finished[64];
+    while (!w->quit) {
+        WaitForSingleObject(w->wake, FEED_MS);
+        RtlEnterCriticalSection(&w->lock);
+        UINT32 n = w->recording && !w->quit ? drain(w, finished, RTL_NUMBER_OF(finished)) : 0;
+        RtlLeaveCriticalSection(&w->lock);
+        finish_in(w, finished, n);
+    }
+    return 0;
+}
+
+static void fill_in_caps(BOOL mapper, WAVEINCAPSW *c)
+{
+    memset(c, 0, sizeof(*c));
+    c->wMid = MM_MICROSOFT;
+    c->wPid = mapper ? MM_WAVE_MAPPER : MM_MSFT_WDMAUDIO_WAVEIN;
+    c->vDriverVersion = 0x0A00;
+    lstrcpynW(c->szPname, mapper ? MAPPER_NAME : INPUT_NAME, MAXPNAMELEN);
+    c->dwFormats = 0x000FFFFF;
+    c->wChannels = 2;
+}
+
+static MMRESULT in_caps_device(UINT_PTR id, BOOL *mapper)
+{
+    *mapper = id == WAVE_MAPPER || id == (UINT_PTR)(UINT)WAVE_MAPPER;
+    if (*mapper || id == 0)
+        return MMSYSERR_NOERROR;
+    return find_in((HWAVEIN)id) ? MMSYSERR_NOERROR : MMSYSERR_BADDEVICEID;
+}
+
 WINMMAPI UINT WINAPI waveInGetNumDevs(void)
 {
-    return 0;
+    return 1;
 }
 
 WINMMAPI MMRESULT WINAPI waveInGetDevCapsW(UINT_PTR id, LPWAVEINCAPSW caps, UINT size)
 {
-    return MMSYSERR_BADDEVICEID;
+    BOOL mapper;
+    MMRESULT r = in_caps_device(id, &mapper);
+    if (r)
+        return r;
+    if (!caps)
+        return MMSYSERR_INVALPARAM;
+    WAVEINCAPSW c;
+    fill_in_caps(mapper, &c);
+    memcpy(caps, &c, size < sizeof(c) ? size : sizeof(c));
+    return MMSYSERR_NOERROR;
 }
 
 WINMMAPI MMRESULT WINAPI waveInGetDevCapsA(UINT_PTR id, LPWAVEINCAPSA caps, UINT size)
 {
-    return MMSYSERR_BADDEVICEID;
+    BOOL mapper;
+    MMRESULT r = in_caps_device(id, &mapper);
+    if (r)
+        return r;
+    if (!caps)
+        return MMSYSERR_INVALPARAM;
+    WAVEINCAPSW w;
+    fill_in_caps(mapper, &w);
+    WAVEINCAPSA c = {w.wMid, w.wPid, w.vDriverVersion};
+    WideCharToMultiByte(CP_ACP, 0, w.szPname, -1, c.szPname, MAXPNAMELEN, nullptr, nullptr);
+    c.dwFormats = w.dwFormats;
+    c.wChannels = w.wChannels;
+    memcpy(caps, &c, size < sizeof(c) ? size : sizeof(c));
+    return MMSYSERR_NOERROR;
 }
 
 WINMMAPI MMRESULT WINAPI waveInOpen(LPHWAVEIN in, UINT id, LPCWAVEFORMATEX format, DWORD_PTR callback,
                                     DWORD_PTR instance, DWORD flags)
 {
-    if (in)
+    if (in && !(flags & WAVE_FORMAT_QUERY))
         *in = nullptr;
-    return id == WAVE_MAPPER ? MMSYSERR_NODRIVER : MMSYSERR_BADDEVICEID;
+    if (id != 0 && id != WAVE_MAPPER && !find_in((HWAVEIN)(UINT_PTR)id))
+        return MMSYSERR_BADDEVICEID;
+    if (!format)
+        return MMSYSERR_INVALPARAM;
+    MMRESULT r = check_callback(flags, callback);
+    if (r)
+        return r;
+    if (!in && !(flags & WAVE_FORMAT_QUERY))
+        return MMSYSERR_INVALPARAM;
+    UINT32 bits;
+    BOOL is_float;
+    if (!linear_format(format, &bits, &is_float))
+        return WAVERR_BADFORMAT;
+    if (flags & WAVE_FORMAT_QUERY)
+        return MMSYSERR_NOERROR;
+
+    WAVE_IN *w = HeapAlloc(heap(), HEAP_ZERO_MEMORY, sizeof(*w));
+    if (!w)
+        return MMSYSERR_NOMEM;
+    w->format = *format;
+    w->narrow8 = bits == 8;
+    UINT32 ring_bits = w->narrow8 ? 16 : bits;
+    PVOID base;
+    NTSTATUS status = NtGdiMimeAudioCreate(&base, &w->slot);
+    if (NT_SUCCESS(status)) {
+        MimeAudioHeader *h = base;
+        w->ring_frame = format->nChannels * ring_bits / 8;
+        w->ring_frames = (MIME_AUDIO_STREAM_SIZE - MIME_AUDIO_HEADER_SIZE) / w->ring_frame;
+        h->rate = format->nSamplesPerSec;
+        h->channels = format->nChannels;
+        h->bits = ring_bits;
+        h->is_float = is_float;
+        h->frames = w->ring_frames;
+        h->volume = 65536;
+        h->capture = 1;
+        status = NtGdiMimeAudioControl(w->slot, MIME_AUDIO_OPEN);
+        if (!NT_SUCCESS(status))
+            NtGdiMimeAudioControl(w->slot, MIME_AUDIO_CLOSE);
+        w->hdr = h;
+        w->ring = (BYTE *)base + MIME_AUDIO_HEADER_SIZE;
+    }
+    if (!NT_SUCCESS(status)) {
+        HeapFree(heap(), 0, w);
+        return MMSYSERR_ALLOCATED;
+    }
+    w->callback = (flags & CALLBACK_TYPEMASK) >> 16;
+    w->target = callback;
+    w->instance = instance;
+    RtlInitializeCriticalSection(&w->lock);
+    w->wake = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    w->thread = w->wake ? CreateThread(nullptr, 0, record_thread, w, 0, nullptr) : nullptr;
+    if (!w->thread) {
+        if (w->wake)
+            CloseHandle(w->wake);
+        NtGdiMimeAudioControl(w->slot, MIME_AUDIO_CLOSE);
+        RtlDeleteCriticalSection(&w->lock);
+        HeapFree(heap(), 0, w);
+        return MMSYSERR_NOMEM;
+    }
+    SetThreadPriority(w->thread, THREAD_PRIORITY_TIME_CRITICAL);
+    RtlEnterCriticalSection(&g_lock);
+    w->next = g_ins;
+    g_ins = w;
+    RtlLeaveCriticalSection(&g_lock);
+    *in = (HWAVEIN)w;
+    notify_in(w, WIM_OPEN, 0);
+    return MMSYSERR_NOERROR;
 }
 
-WINMMAPI MMRESULT WINAPI waveInClose(HWAVEIN wave)
+WINMMAPI MMRESULT WINAPI waveInClose(HWAVEIN handle)
 {
-    return MMSYSERR_INVALHANDLE;
+    WAVE_IN *w = find_in(handle);
+    if (!w)
+        return MMSYSERR_INVALHANDLE;
+    RtlEnterCriticalSection(&w->lock);
+    BOOL queued = w->head != nullptr;
+    RtlLeaveCriticalSection(&w->lock);
+    if (queued)
+        return WAVERR_STILLPLAYING;
+    RtlEnterCriticalSection(&g_lock);
+    for (WAVE_IN **p = &g_ins; *p; p = &(*p)->next) {
+        if (*p == w) {
+            *p = w->next;
+            break;
+        }
+    }
+    RtlLeaveCriticalSection(&g_lock);
+    w->quit = TRUE;
+    SetEvent(w->wake);
+    if (GetCurrentThreadId() != GetThreadId(w->thread))
+        WaitForSingleObject(w->thread, INFINITE);
+    CloseHandle(w->thread);
+    CloseHandle(w->wake);
+    NtGdiMimeAudioControl(w->slot, MIME_AUDIO_STOP);
+    NtGdiMimeAudioControl(w->slot, MIME_AUDIO_CLOSE);
+    notify_in(w, WIM_CLOSE, 0);
+    RtlDeleteCriticalSection(&w->lock);
+    HeapFree(heap(), 0, w);
+    return MMSYSERR_NOERROR;
+}
+
+WINMMAPI MMRESULT WINAPI waveInPrepareHeader(HWAVEIN handle, LPWAVEHDR h, UINT size)
+{
+    if (!find_in(handle))
+        return MMSYSERR_INVALHANDLE;
+    if (!h || size < sizeof(WAVEHDR) || !h->lpData)
+        return MMSYSERR_INVALPARAM;
+    if (h->dwFlags & WHDR_INQUEUE)
+        return WAVERR_STILLPLAYING;
+    h->dwFlags |= WHDR_PREPARED;
+    return MMSYSERR_NOERROR;
+}
+
+WINMMAPI MMRESULT WINAPI waveInUnprepareHeader(HWAVEIN handle, LPWAVEHDR h, UINT size)
+{
+    if (!find_in(handle))
+        return MMSYSERR_INVALHANDLE;
+    if (!h || size < sizeof(WAVEHDR))
+        return MMSYSERR_INVALPARAM;
+    if (h->dwFlags & WHDR_INQUEUE)
+        return WAVERR_STILLPLAYING;
+    h->dwFlags &= ~WHDR_PREPARED;
+    return MMSYSERR_NOERROR;
+}
+
+WINMMAPI MMRESULT WINAPI waveInAddBuffer(HWAVEIN handle, LPWAVEHDR h, UINT size)
+{
+    WAVE_IN *w = find_in(handle);
+    if (!w)
+        return MMSYSERR_INVALHANDLE;
+    if (!h || size < sizeof(WAVEHDR) || !h->lpData)
+        return MMSYSERR_INVALPARAM;
+    if (!(h->dwFlags & WHDR_PREPARED))
+        return WAVERR_UNPREPARED;
+    if (h->dwFlags & WHDR_INQUEUE)
+        return WAVERR_STILLPLAYING;
+    h->dwFlags = (h->dwFlags & ~WHDR_DONE) | WHDR_INQUEUE;
+    h->dwBytesRecorded = 0;
+    h->lpNext = nullptr;
+    RtlEnterCriticalSection(&w->lock);
+    if (w->tail)
+        w->tail->lpNext = h;
+    else
+        w->head = h;
+    w->tail = h;
+    RtlLeaveCriticalSection(&w->lock);
+    return MMSYSERR_NOERROR;
+}
+
+WINMMAPI MMRESULT WINAPI waveInStart(HWAVEIN handle)
+{
+    WAVE_IN *w = find_in(handle);
+    if (!w)
+        return MMSYSERR_INVALHANDLE;
+    RtlEnterCriticalSection(&w->lock);
+    if (!w->recording) {
+        /* what was recorded before the stop is not part of this run. */
+        __atomic_store_n(&w->hdr->played, __atomic_load_n(&w->hdr->written, __ATOMIC_ACQUIRE), __ATOMIC_RELEASE);
+        NtGdiMimeAudioControl(w->slot, MIME_AUDIO_START);
+        w->recording = TRUE;
+    }
+    RtlLeaveCriticalSection(&w->lock);
+    return MMSYSERR_NOERROR;
+}
+
+/* stops recording. the header being filled comes back with what it has, all of them on a reset. */
+static MMRESULT stop_in(HWAVEIN handle, BOOL reset)
+{
+    WAVE_IN *w = find_in(handle);
+    if (!w)
+        return MMSYSERR_INVALHANDLE;
+    WAVEHDR *finished[256];
+    UINT32 n = 0;
+    RtlEnterCriticalSection(&w->lock);
+    if (w->recording) {
+        n = drain(w, finished, RTL_NUMBER_OF(finished) / 2);
+        NtGdiMimeAudioControl(w->slot, MIME_AUDIO_STOP);
+        w->recording = FALSE;
+    }
+    if (w->head && (reset || w->head->dwBytesRecorded))
+        finished[n++] = pop_in(w);
+    while (reset && w->head && n < RTL_NUMBER_OF(finished))
+        finished[n++] = pop_in(w);
+    if (reset)
+        w->recorded = 0;
+    RtlLeaveCriticalSection(&w->lock);
+    finish_in(w, finished, n);
+    return MMSYSERR_NOERROR;
+}
+
+WINMMAPI MMRESULT WINAPI waveInStop(HWAVEIN handle)
+{
+    return stop_in(handle, FALSE);
+}
+
+WINMMAPI MMRESULT WINAPI waveInReset(HWAVEIN handle)
+{
+    return stop_in(handle, TRUE);
+}
+
+WINMMAPI MMRESULT WINAPI waveInGetPosition(HWAVEIN handle, LPMMTIME time, UINT size)
+{
+    WAVE_IN *w = find_in(handle);
+    if (!w)
+        return MMSYSERR_INVALHANDLE;
+    if (!time || size < sizeof(MMTIME))
+        return MMSYSERR_INVALPARAM;
+    RtlEnterCriticalSection(&w->lock);
+    UINT64 frames = w->recorded;
+    RtlLeaveCriticalSection(&w->lock);
+    switch (time->wType) {
+    case TIME_SAMPLES:
+        time->u.sample = (DWORD)frames;
+        break;
+    case TIME_MS:
+        time->u.ms = (DWORD)(frames * 1000 / w->format.nSamplesPerSec);
+        break;
+    default:
+        time->wType = TIME_BYTES;
+        time->u.cb = (DWORD)(frames * w->format.nBlockAlign);
+        break;
+    }
+    return MMSYSERR_NOERROR;
+}
+
+WINMMAPI MMRESULT WINAPI waveInGetID(HWAVEIN handle, LPUINT id)
+{
+    if (!id)
+        return MMSYSERR_INVALPARAM;
+    if (!find_in(handle))
+        return MMSYSERR_INVALHANDLE;
+    *id = 0;
+    return MMSYSERR_NOERROR;
+}
+
+static constexpr WCHAR g_in_interface[] = L"\\\\?\\SWD#MMDEVAPI#{0.0.1.00000000}.{2c9f1a4b-8d3e-4f6a-9b1c-7e5d2a8c4f02}#"
+                                          L"{2eef81be-33fa-4800-9670-1cd474972c3f}";
+
+WINMMAPI MMRESULT WINAPI waveInMessage(HWAVEIN handle, UINT message, DWORD_PTR param1, DWORD_PTR param2)
+{
+    BOOL device = !handle || handle == (HWAVEIN)(UINT_PTR)WAVE_MAPPER || find_in(handle);
+    if (!device)
+        return MMSYSERR_INVALHANDLE;
+    switch (message) {
+    case DRVM_MAPPER_PREFERRED_GET:
+    case DRVM_MAPPER_CONSOLEVOICECOM_GET:
+        if (param1)
+            *(DWORD *)param1 = 0;
+        if (param2)
+            *(DWORD *)param2 = 0;
+        return MMSYSERR_NOERROR;
+    case DRV_QUERYDEVICEINTERFACESIZE:
+        if (!param1)
+            return MMSYSERR_INVALPARAM;
+        *(ULONG *)param1 = sizeof(g_in_interface);
+        return MMSYSERR_NOERROR;
+    case DRV_QUERYDEVICEINTERFACE:
+        if (!param1 || param2 < sizeof(g_in_interface))
+            return MMSYSERR_INVALPARAM;
+        memcpy((void *)param1, g_in_interface, sizeof(g_in_interface));
+        return MMSYSERR_NOERROR;
+    default:
+        return MMSYSERR_NOTSUPPORTED;
+    }
 }
