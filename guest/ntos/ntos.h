@@ -516,8 +516,11 @@ void KiSystemService(PKTRAP_FRAME frame);
 ULONG KiFastSystemService(PKTRAP_FRAME frame);
 /* interrupts off: the thread takes the kernel lock and goes on as in any other service, with interrupts on. */
 void KiLeaveFastService(PKTHREAD thread);
-/* one load of user memory that fails where it would fault, see KiTrapCommon. */
+/* one access to user memory that fails where it would fault, see KiTrapCommon. */
 BOOLEAN KiFastReadUser64(const void *address, ULONG64 *value);
+BOOLEAN KiFastWriteUser32(void *address, ULONG value);
+/* writes back what is there, as ProbeForWriteLong does. */
+BOOLEAN KiFastProbeUser32(void *address);
 #endif
 NTSTATUS KiUserCallback(ULONG api, PVOID input, ULONG input_length, PVOID *output, PULONG output_length);
 NTSTATUS KiCallbackReturn(PVOID result, ULONG result_length, NTSTATUS status);

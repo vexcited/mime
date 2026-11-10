@@ -380,6 +380,7 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
     LARGE_INTEGER timeout;
     PLARGE_INTEGER wait_timeout = nullptr;
     POBJECT_TYPE type, other;
+    PVOID previous = nullptr;
     ULONG kind;
     if (number == MIME_SVC_NtWaitForSingleObject) {
         /* an alertable wait delivers user apcs. */
@@ -394,17 +395,17 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         type = ExEventType;
         other = ExSemaphoreType;
     } else if (number == MIME_SVC_NtReleaseSemaphore) {
-        /* the previous count is written to the caller's memory. */
-        if (third)
-            return 0;
+        previous = (PVOID)third;
         kind = 1;
         type = other = ExSemaphoreType;
     } else {
-        if (second)
-            return 0;
+        previous = (PVOID)second;
         kind = 2;
         type = other = ExEventType;
     }
+    /* a pointer that cannot be written fails the call before it does anything, which the usual way reports. */
+    if (previous && (!KiIsUserRange(previous, sizeof(LONG)) || !KiFastProbeUser32(previous)))
+        return 0;
     /* a handle that is not found is left to the usual way, with its status and its exception. */
     PVOID object = ObReferenceHandleFast(handle, type, other);
     if (!object)
@@ -416,12 +417,24 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
     thread->PreviousMode = UserMode;
     thread->FastService = TRUE;
     ULONG64 result = STATUS_SUCCESS;
-    if (kind == 0)
+    LONG old = 0;
+    if (kind == 0) {
         result = (ULONG64)(LONG64)KiWaitObjects(1, &object, WaitAny, UserRequest, UserMode, FALSE, wait_timeout, nullptr);
-    else if (kind == 1)
-        result = KeReleaseSemaphore(object, 1, (LONG)second, FALSE) < 0 ? (ULONG64)(LONG64)STATUS_SEMAPHORE_LIMIT_EXCEEDED : 0;
-    else
-        KeSetEvent(object, 1, TRUE);
+    } else if (kind == 1) {
+        old = KeReleaseSemaphore(object, 1, (LONG)second, FALSE);
+        if (old < 0) {
+            result = (ULONG64)(LONG64)STATUS_SEMAPHORE_LIMIT_EXCEEDED;
+            previous = nullptr;
+        }
+    } else {
+        old = KeSetEvent(object, 1, TRUE);
+    }
+    /*
+     * the previous state goes to the caller's memory. neither call above gives the processor away, so UserMode has
+     * been set since user mode. a write that would fault is made again with the kernel lock.
+     */
+    if (previous && KiFastWriteUser32(previous, (ULONG)old))
+        previous = nullptr;
     /* a thread switched away from below shows its result to whoever reads its context. */
     KI_SERVICE_RESULT(frame) = result;
 
@@ -441,7 +454,7 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
          * whoever asks for more after this finds the thread running and interrupts it, which is taken in user mode.
          * the instrumentation callback is a change of the frame alone.
          */
-        if (!owned && !thread->KernelApcPending && !thread->Terminating && !thread->UserApcPending &&
+        if (!previous && !owned && !thread->KernelApcPending && !thread->Terminating && !thread->UserApcPending &&
             !pcr->Prcb.DpcPending && !thread->ContextSetInService && !((PETHREAD)thread)->PendingException &&
             pcr->Irql == PASSIVE_LEVEL && ObDereferenceObjectFast(object)) {
             thread->FastService = FALSE;
@@ -453,6 +466,8 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         KiLeaveFastService(thread);
     }
     ObDereferenceObject(object);
+    if (previous)
+        KiCopyToUser(previous, &old, sizeof(old));
     finish_service(thread, frame, 0, number, result, entry_pc);
     return 2;
 }

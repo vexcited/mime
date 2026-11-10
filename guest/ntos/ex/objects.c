@@ -247,10 +247,23 @@ NTSTATUS NTAPI NtOpenEvent(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTE
     return open_named(ExEventType, handle, access, attributes);
 }
 
+/* like ProbeForWriteLong: the caller's value is read and written back, so a bad pointer fails the call before it acts. */
+static NTSTATUS probe_previous(PLONG previous)
+{
+    LONG value;
+    if (!previous || KeGetPreviousMode() != UserMode)
+        return STATUS_SUCCESS;
+    NTSTATUS status = KiCopyFromUser(&value, previous, sizeof(value));
+    return NT_SUCCESS(status) ? KiCopyToUser(previous, &value, sizeof(value)) : status;
+}
+
 static NTSTATUS event_op(HANDLE handle, PLONG previous, int op)
 {
     PKEVENT event;
-    NTSTATUS status = ObReferenceHandle(handle, ExEventType, KeGetPreviousMode(), (PVOID *)&event, nullptr);
+    NTSTATUS status = probe_previous(previous);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = ObReferenceHandle(handle, ExEventType, KeGetPreviousMode(), (PVOID *)&event, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     LONG old = op == 0 ? KeSetEvent(event, 1, FALSE) : op == 1 ? KeResetEvent(event) : KePulseEvent(event, 1, FALSE);
@@ -336,7 +349,10 @@ NTSTATUS NTAPI NtOpenSemaphore(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRI
 NTSTATUS NTAPI NtReleaseSemaphore(HANDLE handle, LONG count, PLONG previous)
 {
     PKSEMAPHORE s;
-    NTSTATUS status = ObReferenceHandle(handle, ExSemaphoreType, KeGetPreviousMode(), (PVOID *)&s, nullptr);
+    NTSTATUS status = probe_previous(previous);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = ObReferenceHandle(handle, ExSemaphoreType, KeGetPreviousMode(), (PVOID *)&s, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     LONG old = KeReleaseSemaphore(s, 1, count, FALSE);
