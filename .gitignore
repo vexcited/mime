@@ -8,3 +8,6 @@
 
 # macos
 .DS_Store
+
+# nix
+/result

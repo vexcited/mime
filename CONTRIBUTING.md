@@ -20,6 +20,15 @@ Running Mime requires x86_64 Linux with KVM enabled and RW access to `/dev/kvm`.
 sudo pacman -Syu --needed base-devel clang llvm lld cmake ninja sdl3 wayland
 ```
 
+#### NixOS
+
+```sh
+nix develop
+```
+
+The shell has the toolchain and libraries, the build below works as is.
+To build the package instead, run `nix build`, the binary lands in `result/bin/mime`.
+
 ## Build
 
 ```sh
