@@ -10,45 +10,52 @@ LIST_ENTRY PsActiveProcessHead;
 
 static PVOID *g_cid_table;
 static ULONG g_cid_capacity;
-static KSPIN_LOCK g_cid_lock;
+/* a real lock: a thread is looked up by its id without the kernel lock, see KiFastSystemService. */
+static volatile LONG g_cid_lock;
 static USHORT g_next_asid = 1;
 static ULONG64 g_system_root;
 
 
 NTSTATUS PspAllocateId(PVOID object, PHANDLE id)
 {
-    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_cid_lock);
+    ULONG64 state = KiAcquireRawLock(&g_cid_lock);
     for (ULONG i = 2; i < g_cid_capacity; i++) {
         if (!g_cid_table[i]) {
             g_cid_table[i] = object;
-            KeReleaseSpinLock(&g_cid_lock, irql);
+            KiReleaseRawLock(&g_cid_lock, state);
             *id = (HANDLE)(ULONG_PTR)(i * 4);
             return STATUS_SUCCESS;
         }
     }
-    KeReleaseSpinLock(&g_cid_lock, irql);
+    KiReleaseRawLock(&g_cid_lock, state);
     return STATUS_INSUFFICIENT_RESOURCES;
 }
 
 void PspFreeId(HANDLE id)
 {
     ULONG i = (ULONG)((ULONG_PTR)id / 4);
-    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_cid_lock);
+    ULONG64 state = KiAcquireRawLock(&g_cid_lock);
     if (i < g_cid_capacity)
         g_cid_table[i] = nullptr;
-    KeReleaseSpinLock(&g_cid_lock, irql);
+    KiReleaseRawLock(&g_cid_lock, state);
 }
 
 static PVOID lookup_cid(HANDLE id, POBJECT_TYPE type)
 {
     ULONG i = (ULONG)((ULONG_PTR)id / 4);
     PVOID object = nullptr;
-    KIRQL irql = KeAcquireSpinLockRaiseToDpc(&g_cid_lock);
+    ULONG64 state = KiAcquireRawLock(&g_cid_lock);
     if (i < g_cid_capacity && g_cid_table[i] && OBJECT_TO_HEADER(g_cid_table[i])->Type == type) {
-        object = g_cid_table[i];
-        ObReferenceObject(object);
+        /* an object on its way out is still listed until its end frees the id, and is no longer to be referenced. */
+        OBJECT_HEADER *h = OBJECT_TO_HEADER(g_cid_table[i]);
+        LONG_PTR count = __atomic_load_n(&h->PointerCount, __ATOMIC_RELAXED);
+        while (count > 0 &&
+               !__atomic_compare_exchange_n(&h->PointerCount, &count, count + 1, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
+            ;
+        if (count > 0)
+            object = g_cid_table[i];
     }
-    KeReleaseSpinLock(&g_cid_lock, irql);
+    KiReleaseRawLock(&g_cid_lock, state);
     return object;
 }
 

@@ -103,7 +103,6 @@ POBJECT_TYPE PsJobType;
 /* one lock for the job tree, its lists and counts, which change rarely. */
 static KSPIN_LOCK g_lock;
 
-NTSTATUS IopQueueCompletion(PVOID port, PVOID key, PVOID apc_context, NTSTATUS status, ULONG_PTR information);
 
 static void post(EJOB *job, ULONG message, PEPROCESS process)
 {

@@ -22,6 +22,8 @@ typedef struct POOL_FREE {
 static constexpr ULONG g_class_size[] = {32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2064};
 #define POOL_CLASSES (sizeof(g_class_size) / sizeof(g_class_size[0]))
 static POOL_FREE *g_class_free[POOL_CLASSES];
+/* real locks, one a size class: a service without the kernel lock frees and allocates too. */
+static volatile LONG g_class_lock[POOL_CLASSES];
 static SIZE_T g_pool_bytes;
 
 static int class_for(SIZE_T total)
@@ -32,6 +34,7 @@ static int class_for(SIZE_T total)
     return -1;
 }
 
+/* the pages come without the class lock held, which the page allocator never sees taken. */
 static BOOLEAN refill(int cls)
 {
     SIZE_T pages = g_class_size[cls] > 512 ? 4 : 1;
@@ -45,11 +48,16 @@ static BOOLEAN refill(int cls)
     }
     PUCHAR base = HalPhysmap(pa);
     SIZE_T count = (pages * PAGE_SIZE) / g_class_size[cls];
+    POOL_FREE *first = nullptr, *last = (POOL_FREE *)base;
     for (SIZE_T i = 0; i < count; i++) {
         POOL_FREE *f = (POOL_FREE *)(base + i * g_class_size[cls]);
-        f->Next = g_class_free[cls];
-        g_class_free[cls] = f;
+        f->Next = first;
+        first = f;
     }
+    ULONG64 state = KiAcquireRawLock(&g_class_lock[cls]);
+    last->Next = g_class_free[cls];
+    g_class_free[cls] = first;
+    KiReleaseRawLock(&g_class_lock[cls], state);
     return TRUE;
 }
 
@@ -97,20 +105,22 @@ static BOOLEAN refill(int cls)
         /* the pfn list entry holds the page count and the tag. */
         p->ListEntry.Flink = (PLIST_ENTRY)(ULONG_PTR)pages;
         p->ListEntry.Blink = (PLIST_ENTRY)(ULONG_PTR)tag;
-        ULONG64 state = KiDisableInterrupts();
-        g_pool_bytes += pages * PAGE_SIZE;
-        KiRestoreInterrupts(state);
+        __atomic_fetch_add(&g_pool_bytes, pages * PAGE_SIZE, __ATOMIC_RELAXED);
         return HalPhysmap(pa);
     }
-    ULONG64 state = KiDisableInterrupts();
-    if (!g_class_free[cls] && !refill(cls)) {
-        KiRestoreInterrupts(state);
-        return nullptr;
+    POOL_FREE *f;
+    for (;;) {
+        ULONG64 state = KiAcquireRawLock(&g_class_lock[cls]);
+        f = g_class_free[cls];
+        if (f)
+            g_class_free[cls] = f->Next;
+        KiReleaseRawLock(&g_class_lock[cls], state);
+        if (f)
+            break;
+        if (!refill(cls))
+            return nullptr;
     }
-    POOL_FREE *f = g_class_free[cls];
-    g_class_free[cls] = f->Next;
-    g_pool_bytes += g_class_size[cls];
-    KiRestoreInterrupts(state);
+    __atomic_fetch_add(&g_pool_bytes, g_class_size[cls], __ATOMIC_RELAXED);
     POOL_HEADER *h = (POOL_HEADER *)f;
     h->Tag = tag;
     h->Class = (USHORT)cls;
@@ -137,9 +147,7 @@ static BOOLEAN refill(int cls)
             bad_large_free(p, __builtin_return_address(0));
         SIZE_T pages = (SIZE_T)(ULONG_PTR)pfn->ListEntry.Flink;
         pfn->ShareCount = 0;
-        ULONG64 state = KiDisableInterrupts();
-        g_pool_bytes -= pages * PAGE_SIZE;
-        KiRestoreInterrupts(state);
+        __atomic_fetch_sub(&g_pool_bytes, pages * PAGE_SIZE, __ATOMIC_RELAXED);
         MmFreeContiguous(pa, pages);
         return;
     }
@@ -148,12 +156,12 @@ static BOOLEAN refill(int cls)
         bad_header(p, h, __builtin_return_address(0));
     int cls = h->Class;
     h->Magic = 0;
-    ULONG64 state = KiDisableInterrupts();
     POOL_FREE *f = (POOL_FREE *)h;
+    ULONG64 state = KiAcquireRawLock(&g_class_lock[cls]);
     f->Next = g_class_free[cls];
     g_class_free[cls] = f;
-    g_pool_bytes -= g_class_size[cls];
-    KiRestoreInterrupts(state);
+    KiReleaseRawLock(&g_class_lock[cls], state);
+    __atomic_fetch_sub(&g_pool_bytes, g_class_size[cls], __ATOMIC_RELAXED);
 }
 
 PVOID NTAPI ExAllocatePool2(POOL_FLAGS flags, SIZE_T size, ULONG tag)

@@ -13,10 +13,10 @@ typedef struct IO_COMPLETION_PACKET {
     IO_STATUS_BLOCK IoStatus;
 } IO_COMPLETION_PACKET;
 
-/* the semaphore counts the queued packets; the lock guards the list. */
+/* the semaphore counts the queued packets. the lock guards the list, a real one: packets come and go without the kernel lock. */
 typedef struct IO_COMPLETION {
     KSEMAPHORE Packets;
-    KSPIN_LOCK Lock;
+    volatile LONG Lock;
     LIST_ENTRY Queue;
     LONG Count;
 } IO_COMPLETION;
@@ -62,11 +62,10 @@ static NTSTATUS queue_packet(IO_COMPLETION *port, PVOID key, PVOID apc_context, 
     p->ApcContext = apc_context;
     p->IoStatus.Status = status;
     p->IoStatus.Information = information;
-    KIRQL irql;
-    KeAcquireSpinLock(&port->Lock, &irql);
+    ULONG64 state = KiAcquireRawLock(&port->Lock);
     InsertTailList(&port->Queue, &p->Links);
     port->Count++;
-    KeReleaseSpinLock(&port->Lock, irql);
+    KiReleaseRawLock(&port->Lock, state);
     KeReleaseSemaphore(&port->Packets, IO_NO_INCREMENT, 1, FALSE);
     if (KiTimelineOn) {
         char text[24];
@@ -147,7 +146,6 @@ NTSTATUS NTAPI NtCreateIoCompletion(PHANDLE handle, ACCESS_MASK access, POBJECT_
     if (NT_SUCCESS(status)) {
         memset(port, 0, sizeof(*port));
         KeInitializeSemaphore(&port->Packets, 0, 0x7FFFFFFF);
-        KeInitializeSpinLock(&port->Lock);
         InitializeListHead(&port->Queue);
         HANDLE h;
         status = ObInsertObjectNamed(port, attributes ? &oa : nullptr, access ? access : IO_COMPLETION_ALL_ACCESS,
@@ -191,6 +189,27 @@ NTSTATUS NTAPI NtSetIoCompletionEx(HANDLE handle, HANDLE reserve, PVOID key, PVO
     return NtSetIoCompletion(handle, key, apc_context, io_status, information);
 }
 
+/* the oldest packet of a port, whose semaphore the caller has waited for. */
+BOOLEAN IopRemoveCompletionPacket(PVOID object, ULONG64 values[4])
+{
+    IO_COMPLETION *port = object;
+    IO_COMPLETION_PACKET *p = nullptr;
+    ULONG64 state = KiAcquireRawLock(&port->Lock);
+    if (!IsListEmpty(&port->Queue)) {
+        p = CONTAINING_RECORD(RemoveHeadList(&port->Queue), IO_COMPLETION_PACKET, Links);
+        port->Count--;
+    }
+    KiReleaseRawLock(&port->Lock, state);
+    if (!p)
+        return FALSE;
+    values[0] = (ULONG64)(ULONG_PTR)p->KeyContext;
+    values[1] = (ULONG64)(ULONG_PTR)p->ApcContext;
+    values[2] = (ULONG64)(ULONG_PTR)p->IoStatus.Pointer;
+    values[3] = p->IoStatus.Information;
+    ExFreePool(p);
+    return TRUE;
+}
+
 /* waits in the caller's mode for up to count packets, into a kernel buffer. */
 static NTSTATUS remove_packets(HANDLE handle, FILE_IO_COMPLETION_INFORMATION *out, ULONG count, PULONG removed,
                                PLARGE_INTEGER timeout, BOOLEAN alertable)
@@ -204,20 +223,13 @@ static NTSTATUS remove_packets(HANDLE handle, FILE_IO_COMPLETION_INFORMATION *ou
     ULONG n = 0;
     status = KeWaitForSingleObject(&port->Packets, UserRequest, mode, alertable, timeout);
     while (status == STATUS_SUCCESS) {
-        KIRQL irql;
-        KeAcquireSpinLock(&port->Lock, &irql);
-        IO_COMPLETION_PACKET *p = nullptr;
-        if (!IsListEmpty(&port->Queue)) {
-            p = CONTAINING_RECORD(RemoveHeadList(&port->Queue), IO_COMPLETION_PACKET, Links);
-            port->Count--;
-        }
-        KeReleaseSpinLock(&port->Lock, irql);
-        if (!p)
+        ULONG64 values[4];
+        if (!IopRemoveCompletionPacket(port, values))
             break;
-        out[n].KeyContext = p->KeyContext;
-        out[n].ApcContext = p->ApcContext;
-        out[n].IoStatusBlock = p->IoStatus;
-        ExFreePool(p);
+        out[n].KeyContext = (PVOID)(ULONG_PTR)values[0];
+        out[n].ApcContext = (PVOID)(ULONG_PTR)values[1];
+        out[n].IoStatusBlock.Pointer = (PVOID)(ULONG_PTR)values[2];
+        out[n].IoStatusBlock.Information = values[3];
         if (++n == count)
             break;
         /* after the first packet, take only the ones already queued. */
@@ -241,11 +253,27 @@ static NTSTATUS capture_timeout(PLARGE_INTEGER user, PLARGE_INTEGER storage, PLA
     return status;
 }
 
+/* like ProbeForWrite: what is there is read and written back, so a bad pointer fails the call before it takes a packet. */
+static NTSTATUS probe_output(PVOID address, SIZE_T length)
+{
+    UCHAR value[sizeof(IO_STATUS_BLOCK)];
+    if (KeGetPreviousMode() != UserMode)
+        return STATUS_SUCCESS;
+    NTSTATUS status = KiCopyFromUser(value, address, length);
+    return NT_SUCCESS(status) ? KiCopyToUser(address, value, length) : status;
+}
+
 NTSTATUS NTAPI NtRemoveIoCompletion(HANDLE handle, PVOID *key, PVOID *apc_context, PIO_STATUS_BLOCK iosb,
                                     PLARGE_INTEGER timeout)
 {
     LARGE_INTEGER t, *pt;
-    NTSTATUS status = capture_timeout(timeout, &t, &pt);
+    NTSTATUS status = probe_output(apc_context, sizeof(PVOID));
+    if (NT_SUCCESS(status))
+        status = probe_output(key, sizeof(PVOID));
+    if (NT_SUCCESS(status))
+        status = probe_output(iosb, sizeof(IO_STATUS_BLOCK));
+    if (NT_SUCCESS(status))
+        status = capture_timeout(timeout, &t, &pt);
     if (!NT_SUCCESS(status))
         return status;
     FILE_IO_COMPLETION_INFORMATION info;

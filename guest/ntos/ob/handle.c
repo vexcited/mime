@@ -358,6 +358,7 @@ static NTSTATUS invalid_handle(HANDLE handle, KPROCESSOR_MODE mode)
     return STATUS_INVALID_HANDLE;
 }
 
+/* an object of either type, or with no type given any object that can be waited on. */
 PVOID ObReferenceHandleFast(HANDLE handle, POBJECT_TYPE type, POBJECT_TYPE other)
 {
     /* pseudo handles and kernel handles have these bits. */
@@ -370,7 +371,7 @@ PVOID ObReferenceHandleFast(HANDLE handle, POBJECT_TYPE type, POBJECT_TYPE other
     if (index < table->Capacity && table->Entries[index].Object) {
         object = table->Entries[index].Object;
         POBJECT_TYPE found = OBJECT_TO_HEADER(object)->Type;
-        if (found == type || found == other)
+        if (type ? found == type || found == other : found->Init.Waitable || found->Init.WaitObject)
             ObReferenceObject(object);
         else
             object = nullptr;

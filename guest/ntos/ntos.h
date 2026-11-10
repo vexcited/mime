@@ -211,6 +211,9 @@ typedef struct _KPROCESS {
 #define KI_IDLE_POLLING 1
 #define KI_IDLE_HALTED 2
 
+/* the kinds of service KiFastSystemService does without the kernel lock. */
+#define KI_FAST_SERVICE_KINDS 11
+
 typedef struct _KPRCB {
     ULONG Number;
     ULONG Pad;
@@ -242,10 +245,11 @@ typedef struct _KPRCB {
     UCHAR UnlockWork;             /* KI_UNLOCK_*: exits to the host put off until the dispatcher lock is let go. */
     ULONG64 DispatcherTaken, DispatcherWaited, DispatcherWaitTicks;
     /*
-     * services done without the kernel lock: waits, semaphore releases, event sets, then those that took it to end,
-     * then the ones win32k answered. last the interrupts taken in user mode without it, and those that took it to end.
+     * services done without the kernel lock by kind, see KiFastSystemService, then those that took it to end, then
+     * the ones win32k answered. last the interrupts taken in user mode without it, and those that took it to end.
      */
-    ULONG64 FastServices[3], FastServicesLocked, FastWin32Services, FastInterrupts, FastInterruptsLocked;
+    ULONG64 FastServices[KI_FAST_SERVICE_KINDS], FastServicesLocked, FastWin32Services, FastInterrupts,
+        FastInterruptsLocked;
 } KPRCB, *PKPRCB;
 
 #define KI_UNLOCK_TIMER 1 /* the timer is to be set to TimerArmed. */
@@ -362,6 +366,25 @@ extern ULONG64 KiLockStats[MAXIMUM_PROCESSORS][8];
 void KiNoteLockWait(ULONG reason);
 void KiAcquireKernelLock(void);
 void KiReleaseKernelLock(void);
+
+/*
+ * a real lock, held with interrupts off for a few instructions and never across a wait: what the services that run
+ * without the kernel lock share with the rest of the kernel is changed under one.
+ */
+FORCEINLINE ULONG64 KiAcquireRawLock(volatile LONG *lock)
+{
+    ULONG64 state = KiDisableInterrupts();
+    while (__atomic_exchange_n(lock, 1, __ATOMIC_ACQUIRE))
+        while (__atomic_load_n(lock, __ATOMIC_RELAXED))
+            KiPause();
+    return state;
+}
+
+FORCEINLINE void KiReleaseRawLock(volatile LONG *lock, ULONG64 state)
+{
+    __atomic_store_n(lock, 0, __ATOMIC_RELEASE);
+    KiRestoreInterrupts(state);
+}
 
 #ifdef __x86_64__
 /*
@@ -526,6 +549,7 @@ void KiLeaveFastService(PKTHREAD thread);
 /* one access to user memory that fails where it would fault, see KiTrapCommon. */
 BOOLEAN KiFastReadUser64(const void *address, ULONG64 *value);
 BOOLEAN KiFastWriteUser32(void *address, ULONG value);
+BOOLEAN KiFastWriteUser64(void *address, ULONG64 value);
 /* writes back what is there, as ProbeForWriteLong does. */
 BOOLEAN KiFastProbeUser32(void *address);
 #endif
@@ -1389,6 +1413,8 @@ void KiDumpServiceCalls(void);
 extern POBJECT_TYPE IoCompletionObjectType;
 PEPROCESS PspLookupProcess(HANDLE pid);
 PETHREAD PspLookupThread(HANDLE tid);
+NTSTATUS IopQueueCompletion(PVOID port, PVOID key, PVOID apc_context, NTSTATUS status, ULONG_PTR information);
+BOOLEAN IopRemoveCompletionPacket(PVOID port, ULONG64 values[4]);
 NTSTATUS PspAllocateId(PVOID object, PHANDLE id);
 void PspFreeId(HANDLE id);
 NTSTATUS PsReferenceProcessHandle(HANDLE handle, ACCESS_MASK access, PEPROCESS *process);
