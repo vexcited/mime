@@ -261,6 +261,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkAllocateMemory(VkDevice device, const VkMemoryA
         return r;
     }
     map_put(&g_memory, id, m);
+    mvk_memory_changed();
     *out = (VkDeviceMemory)id;
     return VK_SUCCESS;
 }
@@ -273,6 +274,7 @@ VkResult mvk_memory_imported(VkDeviceMemory memory, VkDeviceSize size)
         return VK_ERROR_OUT_OF_HOST_MEMORY;
     m->size = size;
     map_put(&g_memory, (uint64_t)memory, m);
+    mvk_memory_changed();
     return VK_SUCCESS;
 }
 
@@ -284,6 +286,7 @@ VKAPI_ATTR void VKAPI_CALL vkFreeMemory(VkDevice device, VkDeviceMemory memory, 
     MvkEncoder *e = mvk_call_begin(MVK_OP_FREE_MEMORY);
     mvk_put_u64(e, (uint64_t)memory);
     mvk_call_end(e);
+    mvk_memory_changed();
     /* the ram is released once the host freed its import. */
     if (m && m->base)
         mvk_block_free_after(m->base, mvk_last_serial());

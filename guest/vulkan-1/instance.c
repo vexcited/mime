@@ -235,12 +235,59 @@ VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceMemoryProperties(VkPhysicalDevice 
     *out = physical->memory;
 }
 
+/*
+ * programs ask for the memory budget every frame, and a reply waits behind everything the ring holds. so the last
+ * one stands for a moment, unless the process allocated or freed memory since.
+ */
+#define BUDGET_AGE_MS 30
+
+static SRWLOCK g_budget_lock = SRWLOCK_INIT;
+static LONG g_memory_generation;
+static struct {
+    VkPhysicalDevice physical;
+    ULONGLONG tick;
+    LONG generation;
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT budget;
+} g_budget;
+
+void mvk_memory_changed(void)
+{
+    InterlockedIncrement(&g_memory_generation);
+}
+
 VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physical,
                                                                 VkPhysicalDeviceMemoryProperties2 *out)
 {
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT *budget = out->pNext;
+    if (budget && (budget->sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT || budget->pNext))
+        budget = nullptr;
+    ULONGLONG now = GetTickCount64();
+    LONG generation = InterlockedCompareExchange(&g_memory_generation, 0, 0);
+    if (budget) {
+        AcquireSRWLockShared(&g_budget_lock);
+        BOOL fresh = g_budget.physical == physical && g_budget.generation == generation &&
+                     now - g_budget.tick < BUDGET_AGE_MS;
+        if (fresh) {
+            memcpy(budget->heapBudget, g_budget.budget.heapBudget, sizeof(budget->heapBudget));
+            memcpy(budget->heapUsage, g_budget.budget.heapUsage, sizeof(budget->heapUsage));
+        }
+        ReleaseSRWLockShared(&g_budget_lock);
+        if (fresh) {
+            out->memoryProperties = physical->memory;
+            return;
+        }
+    }
     /* the chain, such as the memory budget, comes from the host; the types are the guest's view. */
     mvk_raw_vkGetPhysicalDeviceMemoryProperties2(physical, out);
     out->memoryProperties = physical->memory;
+    if (budget) {
+        AcquireSRWLockExclusive(&g_budget_lock);
+        g_budget.physical = physical;
+        g_budget.tick = now;
+        g_budget.generation = generation;
+        g_budget.budget = *budget;
+        ReleaseSRWLockExclusive(&g_budget_lock);
+    }
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkEnumerateDeviceLayerProperties(VkPhysicalDevice physical, uint32_t *count,
