@@ -302,6 +302,66 @@ static void interrupt(PKTRAP_FRAME frame)
     }
 }
 
+/*
+ * the clock or the request of another processor taken in user mode, before the kernel lock. both are the dispatcher
+ * lock's work, as on an idle processor, and so is the switch to another thread. interrupts stay off and UserMode
+ * stays set, as in KiFastSystemService, and the lock is taken for what is left: a dpc, an apc, the end of the thread.
+ * 0 leaves all of it to the usual way, 1 goes back to user mode without the lock and 2 with it.
+ */
+ULONG KiFastUserInterrupt(PKTRAP_FRAME frame)
+{
+    if (KiOptions & KI_OPT_NO_FAST_SERVICE)
+        return 0;
+    PKTHREAD thread = KiCurrentThread();
+    PKPCR pcr = KeGetPcr();
+    PKPRCB prcb = pcr->CurrentPrcb;
+    ULONG vector = (ULONG)frame->Vector;
+    thread->TrapFrame = frame;
+    thread->PreviousMode = UserMode;
+    pcr->Irql = CLOCK_LEVEL;
+    prcb->InterruptCount++;
+    ULONG64 start = HalReadCounter();
+    if (vector == KI_VECTOR_CLOCK)
+        KiClockInterrupt(frame);
+    else
+        prcb->IpiReceived++;
+    KiChargeServiceTime(prcb, start, FALSE);
+    pcr->Irql = PASSIVE_LEVEL;
+
+    BOOLEAN owned;
+    for (;;) {
+        /* the thread resumes on any processor, which may hold the lock from the thread before. */
+        pcr = KeGetPcr();
+        owned = KiKernelLock[KI_LOCK_OWNER] == pcr->Prcb.Number;
+        if (owned || !pcr->Prcb.DispatchPending || pcr->Irql != PASSIVE_LEVEL)
+            break;
+        KiCheckPreemption();
+    }
+    /* whoever asks for more after this finds the thread running and interrupts it again. */
+    if (!owned && !pcr->Prcb.DpcPending && !thread->KernelApcPending && !thread->Terminating && !thread->UserApcPending &&
+        pcr->Irql == PASSIVE_LEVEL) {
+        pcr->Prcb.FastInterrupts++;
+        return 1;
+    }
+    if (!owned) {
+        /* a processor that changes an address space waits for those in user mode, and the wait for the lock answers none. */
+        pcr->UserMode = 0;
+        KiAcquireKernelLock();
+    }
+    KiKernelLock[KI_LOCK_REASON] = 0x2001 + vector;
+    KiNoteLockWait(0x2001 + vector);
+    pcr->Prcb.FastInterruptsLocked++;
+    if (pcr->Prcb.DpcPending) {
+        KIRQL old = pcr->Irql;
+        pcr->Irql = DISPATCH_LEVEL;
+        KiDeliverDpcs();
+        pcr->Irql = old;
+    }
+    KiCheckPreemption();
+    KiExitToUserMode(frame);
+    return 2;
+}
+
 /* first try at a user not present page fault, before the kernel lock, see entry.S. */
 BOOLEAN KiFastPageFault(PKTRAP_FRAME frame)
 {

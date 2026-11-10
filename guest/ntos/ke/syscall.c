@@ -988,7 +988,7 @@ void KiDumpServiceCalls(void)
     }
     KiLogPrintf("dispatcher lock: %llu taken, %llu after waiting, %llu us waited in all", taken, spun,
                 HalCounterToHns(spin_ticks) / 10);
-    ULONG64 fast[3] = {}, fast_locked = 0, fast_win32 = 0;
+    ULONG64 fast[3] = {}, fast_locked = 0, fast_win32 = 0, fast_interrupts = 0, fast_interrupts_locked = 0;
     for (ULONG i = 0; i < KeNumberProcessors; i++) {
         PKPRCB p = KiProcessorBlock[i];
         if (!p)
@@ -999,10 +999,14 @@ void KiDumpServiceCalls(void)
         }
         fast_locked += p->FastServicesLocked;
         fast_win32 += p->FastWin32Services;
-        p->FastServicesLocked = p->FastWin32Services = 0;
+        fast_interrupts += p->FastInterrupts;
+        fast_interrupts_locked += p->FastInterruptsLocked;
+        p->FastServicesLocked = p->FastWin32Services = p->FastInterrupts = p->FastInterruptsLocked = 0;
     }
     KiLogPrintf("services without the kernel lock: %llu waits, %llu semaphore releases, %llu event sets, %llu more "
                 "took it to end, %llu answered by win32k", fast[0], fast[1], fast[2], fast_locked, fast_win32);
+    KiLogPrintf("interrupts in user mode without the kernel lock: %llu, %llu more took it to end", fast_interrupts,
+                fast_interrupts_locked);
 #endif
     AfdDumpStats();
     reset_dump_counters();

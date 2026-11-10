@@ -514,7 +514,21 @@ KiTrapCommon:
     addq    $KTRAP_RIP, %rsp
     swapgs
     iretq
-5:  movb    $0, %gs:KPCR_USER_MODE
+    /* the clock and a request from another processor are tried the same way, see KiFastUserInterrupt. */
+5:  movq    KTRAP_VECTOR(%rbx), %rax
+    cmpq    $KI_VECTOR_CLOCK, %rax
+    je      7f
+    cmpq    $KI_VECTOR_IPI, %rax
+    jne     8f
+7:  movq    %rbx, %rcx
+    call    KiFastUserInterrupt
+    cmpl    $1, %eax
+    je      KiFastServiceExit
+    cmpl    $2, %eax
+    jne     8f
+    movq    %rbx, %rsp
+    jmp     KiExceptionExit
+8:  movb    $0, %gs:KPCR_USER_MODE
     call    KiAcquireKernelLock
     jmp     3f
     /*
