@@ -306,6 +306,158 @@ static const char *service_name(ULONG table, ULONG index)
     return "?";
 }
 
+/* what a service leaves to do once it has its result. the kernel lock is held and interrupts are on. */
+static void finish_service(PKTHREAD thread, PKTRAP_FRAME frame, ULONG table, ULONG index, ULONG64 result,
+                           ULONG64 entry_pc)
+{
+    /* the level belongs to the processor, so a service that leaves it raised would break the next thread to wait here. */
+    KIRQL left = KiCurrentIrql();
+    if (left != PASSIVE_LEVEL) {
+        KiLogPrintf("service %s returned at irql %u", service_name(table, index), (ULONG)left);
+        KeLowerIrql(PASSIVE_LEVEL);
+    }
+    KI_SERVICE_RESULT(frame) = result;
+    if (thread->ContextSetInService) {
+        thread->ContextSetInService = FALSE;
+        KiServiceExitVolatiles(frame);
+    }
+    PETHREAD ethread = PsCurrentThread();
+    if (ethread->PendingException) {
+        EXCEPTION_RECORD record = {};
+        record.ExceptionCode = ethread->PendingException;
+        record.ExceptionAddress = (PVOID)KI_TRAP_PC(frame);
+        ethread->PendingException = 0;
+        if (PspIsWow64Process(PsCurrentProcess())) {
+            /* the program is emulated, so the emulator raises it for the calling code, as the code in the teb tells it. */
+            ULONG code = (ULONG)record.ExceptionCode;
+            KiCopyToUser(&ethread->Tcb.Teb->ExceptionCode, &code, sizeof(code));
+        } else if (!KiDispatchUserException(&record, frame)) {
+            PspTerminateProcess(PsCurrentProcess(), record.ExceptionCode);
+        }
+    }
+    /* a service that returns where it was called from goes through the instrumentation callback, as sysret does. */
+    if (KI_TRAP_PC(frame) == entry_pc)
+        thread->InstrumentReturn = TRUE;
+    KiExitToUserMode(frame);
+}
+
+#ifdef __x86_64__
+void KiLeaveFastService(PKTHREAD thread)
+{
+    PKPCR pcr = KeGetPcr();
+    if (KiKernelLock[KI_LOCK_OWNER] != pcr->Prcb.Number) {
+        /* a processor that changes an address space waits for those in user mode, and the wait for the lock answers none. */
+        pcr->UserMode = 0;
+        KiAcquireKernelLock();
+    }
+    KiKernelLock[KI_LOCK_REASON] = KI_SERVICE_NUMBER(thread->TrapFrame) + 1;
+    thread->FastService = FALSE;
+    pcr->Prcb.FastServicesLocked++;
+    KiEnableInterrupts();
+}
+
+/*
+ * a wait on an event or a semaphore, a semaphore release and an event set work on what the dispatcher lock guards,
+ * so they are tried without the kernel lock: interrupts stay off from the entry to the return, as they are for a
+ * holder of the dispatcher lock. UserMode stays set as well, so the caller's memory is read as user mode would
+ * read it: a processor that unmaps it waits for this one.
+ *
+ * anything else such a call can need takes the lock, before the work, when the handle or the arguments are not
+ * the plain ones, or after it: an apc, the end of the thread, a context set meanwhile, the last reference to the
+ * object. a thread that waited comes back on any processor, which may hold the lock from the thread before.
+ */
+ULONG KiFastSystemService(PKTRAP_FRAME frame)
+{
+    ULONG number = KI_SERVICE_NUMBER(frame);
+    if (number != MIME_SVC_NtWaitForSingleObject && number != MIME_SVC_NtReleaseSemaphore && number != MIME_SVC_NtSetEvent)
+        return 0;
+    /* tracing and the timeline see every call, and pool blocks with guard pages are no part of the fixed mappings. */
+    if (KiTraceSyscallImage[0] || g_timeline || MmVerifyPool || (KiOptions & KI_OPT_NO_FAST_SERVICE) ||
+        KeGetPcr()->Irql != PASSIVE_LEVEL)
+        return 0;
+    HANDLE handle = (HANDLE)KI_SERVICE_REGISTER_ARG(frame, 0);
+    ULONG64 second = KI_SERVICE_REGISTER_ARG(frame, 1), third = KI_SERVICE_REGISTER_ARG(frame, 2);
+    LARGE_INTEGER timeout;
+    PLARGE_INTEGER wait_timeout = nullptr;
+    POBJECT_TYPE type, other;
+    ULONG kind;
+    if (number == MIME_SVC_NtWaitForSingleObject) {
+        /* an alertable wait delivers user apcs. */
+        if ((BOOLEAN)second)
+            return 0;
+        if (third) {
+            if (!KiIsUserRange((PVOID)third, sizeof(timeout)) || !KiFastReadUser64((PVOID)third, (ULONG64 *)&timeout.QuadPart))
+                return 0;
+            wait_timeout = &timeout;
+        }
+        kind = 0;
+        type = ExEventType;
+        other = ExSemaphoreType;
+    } else if (number == MIME_SVC_NtReleaseSemaphore) {
+        /* the previous count is written to the caller's memory. */
+        if (third)
+            return 0;
+        kind = 1;
+        type = other = ExSemaphoreType;
+    } else {
+        if (second)
+            return 0;
+        kind = 2;
+        type = other = ExEventType;
+    }
+    /* a handle that is not found is left to the usual way, with its status and its exception. */
+    PVOID object = ObReferenceHandleFast(handle, type, other);
+    if (!object)
+        return 0;
+
+    PKTHREAD thread = KiCurrentThread();
+    ULONG64 entry_pc = KI_TRAP_PC(frame);
+    thread->TrapFrame = frame;
+    thread->PreviousMode = UserMode;
+    thread->FastService = TRUE;
+    ULONG64 result = STATUS_SUCCESS;
+    if (kind == 0)
+        result = (ULONG64)(LONG64)KiWaitObjects(1, &object, WaitAny, UserRequest, UserMode, FALSE, wait_timeout, nullptr);
+    else if (kind == 1)
+        result = KeReleaseSemaphore(object, 1, (LONG)second, FALSE) < 0 ? (ULONG64)(LONG64)STATUS_SEMAPHORE_LIMIT_EXCEEDED : 0;
+    else
+        KeSetEvent(object, 1, TRUE);
+    /* a thread switched away from below shows its result to whoever reads its context. */
+    KI_SERVICE_RESULT(frame) = result;
+
+    /* still set unless a kernel apc in the wait made it a service like any other, see KiWaitObjects. */
+    if (thread->FastService) {
+        PKPCR pcr;
+        BOOLEAN owned;
+        for (;;) {
+            pcr = KeGetPcr();
+            owned = KiKernelLock[KI_LOCK_OWNER] == pcr->Prcb.Number;
+            if (owned || !pcr->Prcb.DispatchPending || pcr->Irql != PASSIVE_LEVEL)
+                break;
+            /* a thread it woke may take this processor, and this one resumes on any. */
+            KiCheckPreemption();
+        }
+        /*
+         * whoever asks for more after this finds the thread running and interrupts it, which is taken in user mode.
+         * the instrumentation callback is a change of the frame alone.
+         */
+        if (!owned && !thread->KernelApcPending && !thread->Terminating && !thread->UserApcPending &&
+            !pcr->Prcb.DpcPending && !thread->ContextSetInService && !((PETHREAD)thread)->PendingException &&
+            pcr->Irql == PASSIVE_LEVEL && ObDereferenceObjectFast(object)) {
+            thread->FastService = FALSE;
+            if (KI_TRAP_PC(frame) == entry_pc)
+                KiInstrumentReturn(frame, ((PEPROCESS)thread->Process)->InstrumentationCallback);
+            pcr->Prcb.FastServices[kind]++;
+            return 1;
+        }
+        KiLeaveFastService(thread);
+    }
+    ObDereferenceObject(object);
+    finish_service(thread, frame, 0, number, result, entry_pc);
+    return 2;
+}
+#endif
+
 void KiSystemService(PKTRAP_FRAME frame)
 {
     PKTHREAD thread = KiCurrentThread();
@@ -488,35 +640,7 @@ void KiSystemService(PKTRAP_FRAME frame)
         if (held > g_longest[table][index])
             g_longest[table][index] = held;
     }
-    /* the level belongs to the processor, so a service that leaves it raised would break the next thread to wait here. */
-    KIRQL left = KiCurrentIrql();
-    if (left != PASSIVE_LEVEL) {
-        KiLogPrintf("service %s returned at irql %u", service_name(table, index), (ULONG)left);
-        KeLowerIrql(PASSIVE_LEVEL);
-    }
-    KI_SERVICE_RESULT(frame) = result;
-    if (thread->ContextSetInService) {
-        thread->ContextSetInService = FALSE;
-        KiServiceExitVolatiles(frame);
-    }
-    PETHREAD ethread = PsCurrentThread();
-    if (ethread->PendingException) {
-        EXCEPTION_RECORD record = {};
-        record.ExceptionCode = ethread->PendingException;
-        record.ExceptionAddress = (PVOID)KI_TRAP_PC(frame);
-        ethread->PendingException = 0;
-        if (PspIsWow64Process(PsCurrentProcess())) {
-            /* the program is emulated, so the emulator raises it for the calling code, as the code in the teb tells it. */
-            ULONG code = (ULONG)record.ExceptionCode;
-            KiCopyToUser(&ethread->Tcb.Teb->ExceptionCode, &code, sizeof(code));
-        } else if (!KiDispatchUserException(&record, frame)) {
-            PspTerminateProcess(PsCurrentProcess(), record.ExceptionCode);
-        }
-    }
-    /* a service that returns where it was called from goes through the instrumentation callback, as sysret does. */
-    if (KI_TRAP_PC(frame) == entry_pc)
-        thread->InstrumentReturn = TRUE;
-    KiExitToUserMode(frame);
+    finish_service(thread, frame, table, index, result, entry_pc);
 }
 
 BOOLEAN KiIsUserRange(const void *address, SIZE_T length)
@@ -799,6 +923,20 @@ void KiDumpServiceCalls(void)
     }
     KiLogPrintf("dispatcher lock: %llu taken, %llu after waiting, %llu us waited in all", taken, spun,
                 HalCounterToHns(spin_ticks) / 10);
+    ULONG64 fast[3] = {}, fast_locked = 0;
+    for (ULONG i = 0; i < KeNumberProcessors; i++) {
+        PKPRCB p = KiProcessorBlock[i];
+        if (!p)
+            continue;
+        for (ULONG k = 0; k < 3; k++) {
+            fast[k] += p->FastServices[k];
+            p->FastServices[k] = 0;
+        }
+        fast_locked += p->FastServicesLocked;
+        p->FastServicesLocked = 0;
+    }
+    KiLogPrintf("services without the kernel lock: %llu waits, %llu semaphore releases, %llu event sets, %llu more "
+                "took it to end", fast[0], fast[1], fast[2], fast_locked);
 #endif
     AfdDumpStats();
     reset_dump_counters();
