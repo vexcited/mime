@@ -178,6 +178,8 @@ typedef struct _KTHREAD {
     BOOLEAN ContextSetInService;
     /* the next return to user mode goes through the process's instrumentation callback, see KiExitToUserMode. */
     BOOLEAN InstrumentReturn;
+    /* x64: in a system service that came without the kernel lock, see KiFastSystemService. */
+    BOOLEAN FastService;
     KEVENT SuspendEvent;
     KSEMAPHORE SuspendSemaphore;
     KAPC SuspendApc;
@@ -237,6 +239,8 @@ typedef struct _KPRCB {
     ULONG DispatcherDepth;        /* times this processor took the dispatcher lock and has not let go. */
     UCHAR UnlockWork;             /* KI_UNLOCK_*: exits to the host put off until the dispatcher lock is let go. */
     ULONG64 DispatcherTaken, DispatcherWaited, DispatcherWaitTicks;
+    /* services done without the kernel lock: waits, semaphore releases, event sets, then those that took it to end. */
+    ULONG64 FastServices[3], FastServicesLocked;
 } KPRCB, *PKPRCB;
 
 #define KI_UNLOCK_TIMER 1 /* the timer is to be set to TimerArmed. */
@@ -436,6 +440,7 @@ void KiDispatcherLockMissing(const char *what, PVOID caller);
 #define KI_OPT_EAGER_TIMER 0x8
 #define KI_OPT_NO_ATTR_CACHE 0x10
 #define KI_OPT_PRECISE_TIMERS 0x20
+#define KI_OPT_NO_FAST_SERVICE 0x40
 extern ULONG KiOptions;
 extern UCHAR KiNoLockFlush;
 
@@ -506,6 +511,14 @@ void KeInitializeApc(PKAPC apc, PKTHREAD thread, KAPC_ENVIRONMENT env, PKKERNEL_
 BOOLEAN KeInsertQueueApc(PKAPC apc, PVOID arg1, PVOID arg2, KPRIORITY increment);
 void KiExitToUserMode(PKTRAP_FRAME frame);
 void KiSystemService(PKTRAP_FRAME frame);
+#ifdef __x86_64__
+/* 0 when the service goes the usual way, 1 when it is done without the kernel lock, 2 when it is done and took it. */
+ULONG KiFastSystemService(PKTRAP_FRAME frame);
+/* interrupts off: the thread takes the kernel lock and goes on as in any other service, with interrupts on. */
+void KiLeaveFastService(PKTHREAD thread);
+/* one load of user memory that fails where it would fault, see KiTrapCommon. */
+BOOLEAN KiFastReadUser64(const void *address, ULONG64 *value);
+#endif
 NTSTATUS KiUserCallback(ULONG api, PVOID input, ULONG input_length, PVOID *output, PULONG output_length);
 NTSTATUS KiCallbackReturn(PVOID result, ULONG result_length, NTSTATUS status);
 void KiContextToTrapFrame(const CONTEXT *context, PKTRAP_FRAME frame, ULONG flags, KPROCESSOR_MODE mode);
@@ -1167,6 +1180,10 @@ void ObKillProcessHandles(PEPROCESS process);
 NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS target_process, PHANDLE target,
                            ACCESS_MASK access, ULONG attributes, ULONG options);
 PDISPATCHER_HEADER ObGetWaitObject(PVOID object);
+/* the object of one of two types behind a handle of the calling process, or none. needs no kernel lock. */
+PVOID ObReferenceHandleFast(HANDLE handle, POBJECT_TYPE type, POBJECT_TYPE other);
+/* lets go of a reference unless it is the last one, which takes the kernel lock to let go of. */
+BOOLEAN ObDereferenceObjectFast(PVOID object);
 NTSTATUS ObCreateSymbolicLinkObject(PCUNICODE_STRING link, PCUNICODE_STRING target, BOOLEAN permanent);
 void ObMakeTemporaryObject(PVOID object);
 

@@ -129,6 +129,8 @@ static DECLSPEC_NORETURN void idle_loop(void)
     PKPRCB prcb = KeGetCurrentPrcb();
     for (;;) {
         KiDisableInterrupts();
+        /* a thread that waits in a service without the kernel lock leaves it set, see KiFastSystemService. */
+        KeGetPcr()->UserMode = 0;
         if (KiKernelLock[KI_LOCK_OWNER] == prcb->Number) {
             /* dpcs, and a switch that hands the lock to the next thread. */
             KiDispatchPendingWork();
@@ -251,7 +253,8 @@ void KiInitializeKernel(MimeBootInfo *boot)
                 (strstr(boot->cmdline, "noidlespin") ? KI_OPT_NO_IDLE_SPIN : 0) |
                 (strstr(boot->cmdline, "eagertimer") ? KI_OPT_EAGER_TIMER : 0) |
                 (strstr(boot->cmdline, "noattrcache") ? KI_OPT_NO_ATTR_CACHE : 0) |
-                (strstr(boot->cmdline, "precisetimers") ? KI_OPT_PRECISE_TIMERS : 0);
+                (strstr(boot->cmdline, "precisetimers") ? KI_OPT_PRECISE_TIMERS : 0) |
+                (strstr(boot->cmdline, "nofastservice") ? KI_OPT_NO_FAST_SERVICE : 0);
 
     KiNoLockFlush = strstr(boot->cmdline, "nolockflush") != nullptr;
     extern BOOLEAN KiTraceUserExceptions;

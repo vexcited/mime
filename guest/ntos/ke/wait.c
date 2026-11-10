@@ -313,6 +313,11 @@ NTSTATUS KiWaitObjects(ULONG count, PVOID objects[], WAIT_TYPE type, KWAIT_REASO
         if (thread->KernelApcPending && !thread->KernelApcDisable && !thread->SpecialApcDisable &&
             KeGetPcr()->Irql == PASSIVE_LEVEL) {
             KiReleaseDispatcherLock(s);
+#ifdef __x86_64__
+            /* a service that came without the kernel lock takes it for the apc, and waits on as any other. */
+            if (thread->FastService)
+                KiLeaveFastService(thread);
+#endif
             KiDeliverApcs(KernelMode, nullptr);
             continue;
         }

@@ -320,14 +320,62 @@ KiSystemCall64:
     movq    $0, KTRAP_ERROR(%rsp)
     movq    $KTRAP_VECTOR_SYSCALL, KTRAP_VECTOR(%rsp)
     SAVE_XMM
-    movb    $0, %gs:KPCR_USER_MODE
     movq    %rsp, %rbx
     subq    $0x20, %rsp
+    /* a few services are first tried without the kernel lock and with UserMode still set, see KiFastSystemService. */
+    movq    %rbx, %rcx
+    call    KiFastSystemService
+    cmpl    $1, %eax
+    je      KiFastServiceExit
+    cmpl    $2, %eax
+    je      1f
+    movb    $0, %gs:KPCR_USER_MODE
     call    KiAcquireKernelLock
     movq    %rbx, %rcx
     call    KiSystemService
-    movq    %rbx, %rsp
+1:  movq    %rbx, %rsp
     jmp     KiExceptionExit
+
+/*
+ * back to user mode from a service that never had the kernel lock, interrupts off. UserMode is stored before
+ * FlushPending is read: a processor that changes the address space sets the one and then reads the other, so
+ * either this one flushes here or it is interrupted in user mode.
+ */
+    .p2align 4
+KiFastServiceExit:
+    movq    %rbx, %rsp
+    leaq    KTRAP_FRAME_SIZE(%rsp), %rax
+    movq    %rax, %gs:KPCR_KERNEL_RSP
+    movq    %gs:KPCR_TSS, %rcx
+    movq    %rax, KTSS_RSP0(%rcx)
+    movb    $1, %al
+    xchgb   %al, %gs:KPCR_USER_MODE
+    cmpb    $0, %gs:KPCR_FLUSH_PENDING
+    je      1f
+    subq    $0x20, %rsp
+    call    KiSettleTlbFlush
+    movq    %rbx, %rsp
+1:  RESTORE_XMM
+    RESTORE_GPRS
+    addq    $KTRAP_RIP, %rsp
+    swapgs
+    iretq
+
+/*
+ * BOOLEAN KiFastReadUser64(const void *address, ULONG64 *value): reads the caller's memory without the kernel
+ * lock. a fault at the load is not handled: KiTrapCommon makes the read return FALSE instead.
+ */
+    .globl  KiFastReadUser64
+    .p2align 4
+KiFastReadUser64:
+KiFastUserRead:
+    movq    (%rcx), %rax
+    movq    %rax, (%rdx)
+    movb    $1, %al
+    ret
+KiFastUserReadFailed:
+    xorl    %eax, %eax
+    ret
 
 /* there is no 32-bit system call: it ends the process like an illegal instruction. */
     .globl  KiSystemCall32
@@ -462,7 +510,17 @@ KiTrapCommon:
      * an idle processor waits without the lock. the clock and a request from another processor work under the
      * dispatcher lock alone, and leave dpcs and the switch to the idle loop. any other takes the lock first.
      */
-2:  cmpb    $0, %gs:KPCR_IDLE_SLEEPING
+2:  cmpq    $14, KTRAP_VECTOR(%rbx)
+    jne     6f
+    leaq    KiFastUserRead(%rip), %rax
+    cmpq    %rax, KTRAP_RIP(%rbx)
+    jne     6f
+    /* the one read of user memory made without the kernel lock fails instead, see KiFastReadUser64. */
+    leaq    KiFastUserReadFailed(%rip), %rax
+    movq    %rax, KTRAP_RIP(%rbx)
+    movq    %rbx, %rsp
+    jmp     KiExceptionExit
+6:  cmpb    $0, %gs:KPCR_IDLE_SLEEPING
     je      3f
     movq    KTRAP_VECTOR(%rbx), %rax
     cmpq    $KI_VECTOR_CLOCK, %rax

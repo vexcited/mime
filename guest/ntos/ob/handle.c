@@ -358,6 +358,27 @@ static NTSTATUS invalid_handle(HANDLE handle, KPROCESSOR_MODE mode)
     return STATUS_INVALID_HANDLE;
 }
 
+PVOID ObReferenceHandleFast(HANDLE handle, POBJECT_TYPE type, POBJECT_TYPE other)
+{
+    /* pseudo handles and kernel handles have these bits. */
+    if (!handle || (ULONG_PTR)handle >> 31)
+        return nullptr;
+    PHANDLE_TABLE table = &PsCurrentProcess()->HandleTable;
+    ULONG_PTR index = HANDLE_TO_INDEX(handle);
+    PVOID object = nullptr;
+    ULONG64 state = ObLockHandleTable(table);
+    if (index < table->Capacity && table->Entries[index].Object) {
+        object = table->Entries[index].Object;
+        POBJECT_TYPE found = OBJECT_TO_HEADER(object)->Type;
+        if (found == type || found == other)
+            ObReferenceObject(object);
+        else
+            object = nullptr;
+    }
+    ObUnlockHandleTable(table, state);
+    return object;
+}
+
 NTSTATUS ObReferenceHandle(HANDLE handle, POBJECT_TYPE type, KPROCESSOR_MODE mode, PVOID *object,
                            ACCESS_MASK *granted)
 {

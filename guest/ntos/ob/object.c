@@ -194,6 +194,16 @@ LONG_PTR FASTCALL ObfDereferenceObject(PVOID object)
     return count;
 }
 
+BOOLEAN ObDereferenceObjectFast(PVOID object)
+{
+    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
+    LONG_PTR count = __atomic_load_n(&h->PointerCount, __ATOMIC_RELAXED);
+    while (count > 1)
+        if (__atomic_compare_exchange_n(&h->PointerCount, &count, count - 1, FALSE, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
+            return TRUE;
+    return FALSE;
+}
+
 void NTAPI ObDereferenceObjectDeferDelete(PVOID object)
 {
     ObfDereferenceObject(object);

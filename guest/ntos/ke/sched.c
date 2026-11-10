@@ -150,9 +150,11 @@ void KiThreadStartupC(PKSTART_ROUTINE routine, PVOID context)
 #ifdef __x86_64__
     /* the switch came with the dispatcher lock held, which a thread that ran before lets go of in KiSwapThread's caller. */
     KiReleaseDispatcherLock(0);
-    /* a processor that was idle comes without the kernel lock. */
-    if (KiKernelLock[KI_LOCK_OWNER] != KeGetCurrentPrcb()->Number)
+    /* a processor that was idle comes without the kernel lock, and one left by a fast service has UserMode set. */
+    if (KiKernelLock[KI_LOCK_OWNER] != KeGetCurrentPrcb()->Number) {
+        KeGetPcr()->UserMode = 0;
         KiAcquireKernelLock();
+    }
 #endif
     KeGetPcr()->Irql = PASSIVE_LEVEL;
     KiEnableInterrupts();
@@ -404,6 +406,11 @@ static PKTHREAD select_next(PKPRCB prcb)
 static void take_kernel_lock_back(PKTHREAD thread)
 {
     KiReleaseDispatcherLock(0);
+    /*
+     * the thread before may be in a service without the kernel lock, see KiFastSystemService, which leaves UserMode
+     * set. a processor that changes an address space waits for those, and the wait for the lock answers none.
+     */
+    KeGetPcr()->UserMode = 0;
     KiAcquireKernelLock();
     KiKernelLock[KI_LOCK_REASON] = thread->LockReason;
     (void)KiAcquireDispatcherLock();
