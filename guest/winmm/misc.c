@@ -185,52 +185,6 @@ WINMMAPI MMRESULT WINAPI waveInGetErrorTextA(MMRESULT error, LPSTR text, UINT si
     return MmErrorTextA(error, text, size);
 }
 
-WINMMAPI MMRESULT WINAPI waveInPrepareHeader(HWAVEIN wave, LPWAVEHDR header, UINT size)
-{
-    return MMSYSERR_INVALHANDLE;
-}
-
-WINMMAPI MMRESULT WINAPI waveInUnprepareHeader(HWAVEIN wave, LPWAVEHDR header, UINT size)
-{
-    return MMSYSERR_INVALHANDLE;
-}
-
-WINMMAPI MMRESULT WINAPI waveInAddBuffer(HWAVEIN wave, LPWAVEHDR header, UINT size)
-{
-    return MMSYSERR_INVALHANDLE;
-}
-
-WINMMAPI MMRESULT WINAPI waveInStart(HWAVEIN wave)
-{
-    return MMSYSERR_INVALHANDLE;
-}
-
-WINMMAPI MMRESULT WINAPI waveInStop(HWAVEIN wave)
-{
-    return MMSYSERR_INVALHANDLE;
-}
-
-WINMMAPI MMRESULT WINAPI waveInReset(HWAVEIN wave)
-{
-    return MMSYSERR_INVALHANDLE;
-}
-
-WINMMAPI MMRESULT WINAPI waveInGetPosition(HWAVEIN wave, LPMMTIME time, UINT size)
-{
-    return MMSYSERR_INVALHANDLE;
-}
-
-WINMMAPI MMRESULT WINAPI waveInGetID(HWAVEIN wave, LPUINT id)
-{
-    return MMSYSERR_INVALHANDLE;
-}
-
-WINMMAPI MMRESULT WINAPI waveInMessage(HWAVEIN wave, UINT message, DWORD_PTR param1, DWORD_PTR param2)
-{
-    return wave ? MMSYSERR_INVALHANDLE : MMSYSERR_BADDEVICEID;
-}
-
-
 WINMMAPI UINT WINAPI mmsystemGetVersion(void)
 {
     return 0x030A;
