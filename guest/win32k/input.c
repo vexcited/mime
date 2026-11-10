@@ -328,6 +328,7 @@ static BOOLEAN low_level_mouse(const MimeInputEvent *ev, BOOLEAN injected, ULONG
  * the characters the host sends right after a key press share its fate, and carry its scan code and repeat like the
  * ones TranslateMessage makes on windows.
  */
+#define CHAR_OF_KEY 16 /* a flag of a character event, kept inside the guest. */
 static BOOLEAN g_chars_follow_key;
 static BOOLEAN g_key_dropped;
 static ULONG g_key_scancode;
@@ -427,6 +428,7 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
                 copy.scancode = g_key_scancode;
             if (g_key_repeat)
                 copy.flags |= 2;
+            copy.flags |= CHAR_OF_KEY;
         }
         break;
     case MIME_INPUT_MOUSE_MOVE:
@@ -1055,6 +1057,18 @@ static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND fi
             }
             return FALSE;
         }
+        /* like windows, the character of a key press waits for the TranslateMessage of that press, and is lost without one. */
+        struct KEY_CHARS *k = &t->KeyChars[(t->KeyCharsNext - 1) % RTL_NUMBER_OF(t->KeyChars)];
+        if ((ev->flags & CHAR_OF_KEY) && k->Used && !k->Translated && k->Scan == (ev->scancode & 0x1FF)) {
+            if (remove) {
+                if (k->Count < RTL_NUMBER_OF(k->Chars)) {
+                    k->Chars[k->Count].Message = (USHORT)msg;
+                    k->Chars[k->Count++].Char = ch;
+                }
+                *consumed = TRUE;
+            }
+            return FALSE;
+        }
         return emit(out, WndHandle(target), msg, ch, lparam, ev, filter, min, max);
     }
     BOOLEAN down = ev->type == MIME_INPUT_KEY_DOWN;
@@ -1064,6 +1078,10 @@ static BOOLEAN translate_key(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND fi
         return FALSE;
     if (owner && !remove)
         return FALSE;
+    if (remove && down && !owner) {
+        struct KEY_CHARS *k = &t->KeyChars[t->KeyCharsNext++ % RTL_NUMBER_OF(t->KeyChars)];
+        *k = (struct KEY_CHARS){.Scan = ev->scancode & 0x1FF, .Time = (ULONG)ev->time_ms, .Used = TRUE};
+    }
     if (remove) {
         /* both threads see the keys that go down, the one that gets them and the one that is the queue's. */
         for (int i = 0; i < 2; i++) {

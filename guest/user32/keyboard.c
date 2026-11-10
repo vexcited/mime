@@ -546,6 +546,9 @@ WINUSERAPI UINT WINAPI SendInput(UINT count, LPINPUT inputs, int size)
             state[generic] = down ? 0x80 : 0;
             if (down && !(state[VK_CONTROL] & 0x80) && !(state[VK_MENU] & 0x80))
                 ch = key_char(in.ki.wVk, state);
+            /* TranslateMessage makes the control characters from the key itself. */
+            if (ch < 0x20 || ch == 0x7F)
+                ch = 0;
         }
         if (NtUserSendInput(1, &in, sizeof(in)) != 1)
             break;

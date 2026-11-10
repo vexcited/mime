@@ -598,6 +598,18 @@ typedef struct W32THREAD {
     HANDLE DesktopHandle;
     HWND TsfSink;          /* text services window for host input methods, ime.c. */
     BOOLEAN AltAlone;      /* Alt or F10 went down and no other key or button has since, for the menu bar. */
+    /* the last key presses the thread took, with the characters the host typed for them, which TranslateMessage posts. */
+    struct KEY_CHARS {
+        ULONG Scan;
+        ULONG Time;
+        BOOLEAN Used, Translated;
+        UCHAR Count;
+        struct {
+            USHORT Message;
+            WCHAR Char;
+        } Chars[4];
+    } KeyChars[8];
+    ULONG KeyCharsNext;
     ULONG DpiOverride;     /* the awareness set for the thread plus one, 0 to follow the process. */
     ULONG DpiHosting;      /* the DPI hosting behavior of the thread, 0 default and 1 mixed. */
 } W32THREAD;
