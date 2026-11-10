@@ -574,7 +574,7 @@ static HRESULT WINAPI collection_family(IDWriteFontCollection *This, UINT32 inde
         return E_POINTER;
     *family = nullptr;
     DwCollection *c = (DwCollection *)This;
-    if (index >= c->public_count)
+    if (index >= c->public_count && (index < c->grown_from || index >= c->count))
         return E_INVALIDARG;
     return DwFamilyCreate(c, index, family);
 }
@@ -609,6 +609,96 @@ BOOL DwFindFamilyExact(const DwCollection *c, const WCHAR *name, UINT32 *index)
     return FALSE;
 }
 
+/* ------------------------------------------------------------------ fonts fetched while a collection lives */
+
+static int CALLBACK gdi_has_one(const LOGFONTW *lf, const TEXTMETRICW *tm, DWORD type, LPARAM param)
+{
+    *(BOOL *)param = TRUE;
+    return 0;
+}
+
+static BOOL gdi_has(const WCHAR *name)
+{
+    HDC dc = CreateCompatibleDC(nullptr);
+    if (!dc)
+        return FALSE;
+    LOGFONTW lf = {};
+    lf.lfCharSet = DEFAULT_CHARSET;
+    lstrcpynW(lf.lfFaceName, name, LF_FACESIZE);
+    BOOL found = FALSE;
+    EnumFontFamiliesExW(dc, &lf, gdi_has_one, (LPARAM)&found, 0);
+    DeleteDC(dc);
+    return found;
+}
+
+/* FALSE when the collection looked the name up before. */
+static BOOL first_check(DwCollection *c, const WCHAR *name)
+{
+    ULONG hash = 5381;
+    for (const WCHAR *p = name; *p; p++)
+        hash = hash * 33 + (*p >= L'A' && *p <= L'Z' ? *p + 32 : *p);
+    hash |= 1;
+    LONG seen = c->checked_count;
+    for (LONG i = 0; i < seen && i < (LONG)RTL_NUMBER_OF(c->checked); i++)
+        if (c->checked[i] == hash)
+            return FALSE;
+    LONG slot = InterlockedIncrement(&c->checked_count) - 1;
+    if (slot < (LONG)RTL_NUMBER_OF(c->checked))
+        c->checked[slot] = hash;
+    return TRUE;
+}
+
+static void grow(DwCollection *c)
+{
+    IDWriteFontSet4 *set;
+    if (FAILED(DwSystemFontSetRescan(c->factory, &set)))
+        return;
+    DwCollection *fresh;
+    HRESULT hr = DwCollectionFromSet(c->factory, (IDWriteFontSet *)set, c->model, &fresh);
+    set->lpVtbl->Release(set);
+    if (FAILED(hr))
+        return;
+    AcquireSRWLockExclusive(&c->lock);
+    UINT32 count = c->count;
+    for (UINT32 i = 0; i < fresh->count && count < c->capacity; i++) {
+        DwFamily *f = &fresh->families[i];
+        BOOL known = FALSE;
+        UINT32 at;
+        for (UINT32 l = 0; l < DwStringsCount(f->names) && !known; l++)
+            known = DwFindFamily(c, DwStringsAt(f->names, l)->text, &at);
+        if (known)
+            continue;
+        c->families[count++] = *f;
+        memset(f, 0, sizeof(*f));
+    }
+    /* the families are whole before a reader can count them. */
+    MemoryBarrier();
+    c->count = count;
+    ReleaseSRWLockExclusive(&c->lock);
+    collection_release((IDWriteFontCollection *)fresh);
+}
+
+/*
+ * a family the system collection misses is asked for the way gdi32 asks: CreateFontIndirectW requests a family of the
+ * fonts catalog from the feature service, and ends the program when the user skips it. a family gdi did not have
+ * before and has after is read in from the drive.
+ */
+static BOOL fetch_family(DwCollection *c, const WCHAR *name, UINT32 *index)
+{
+    if (!c->system || !name[0] || wcslen(name) >= LF_FACESIZE || !first_check(c, name) || gdi_has(name))
+        return FALSE;
+    LOGFONTW lf = {};
+    lf.lfCharSet = DEFAULT_CHARSET;
+    lstrcpynW(lf.lfFaceName, name, LF_FACESIZE);
+    HFONT font = CreateFontIndirectW(&lf);
+    if (font)
+        DeleteObject(font);
+    if (!gdi_has(name))
+        return FALSE;
+    grow(c);
+    return DwFindFamilyExact(c, name, index);
+}
+
 static HRESULT WINAPI collection_find(IDWriteFontCollection *This, const WCHAR *name, UINT32 *index, BOOL *exists)
 {
     if (!index || !exists)
@@ -618,7 +708,7 @@ static HRESULT WINAPI collection_find(IDWriteFontCollection *This, const WCHAR *
     if (!name)
         return E_INVALIDARG;
     UINT32 found;
-    if (DwFindFamilyExact((DwCollection *)This, name, &found)) {
+    if (DwFindFamilyExact((DwCollection *)This, name, &found) || fetch_family((DwCollection *)This, name, &found)) {
         *index = found;
         *exists = TRUE;
     }
@@ -762,7 +852,7 @@ static HRESULT WINAPI collection_matching(IDWriteFontCollection2 *This, const WC
         return E_INVALIDARG;
     UINT32 index;
     /* a family the collection does not have gives an empty list. */
-    if (!DwFindFamilyExact(c, name, &index))
+    if (!DwFindFamilyExact(c, name, &index) && !fetch_family(c, name, &index))
         return list_create(c, (UINT32)-1, nullptr, 0, (IDWriteFontList **)fonts);
     const DwFamily *family = &c->families[index];
     UINT32 *order = DwAlloc((family->count + 1) * sizeof(UINT32));
@@ -831,6 +921,8 @@ static HRESULT builder_finish(Builder *b, DwFactory *factory, DwCollection **out
     c->families = b->families;
     c->count = b->count;
     c->public_count = b->public_count;
+    c->capacity = b->count;
+    c->grown_from = b->count;
     c->model = b->model;
     InitializeSRWLock(&c->lock);
     *out = c;
@@ -903,6 +995,20 @@ HRESULT DwCollectionFromFiles(DwFactory *factory, IDWriteFontFile *const *files,
 
 /* ------------------------------------------------------------------ system collection */
 
+#define SYSTEM_ROOM 1024
+
+static void make_room(DwCollection *c)
+{
+    DwFamily *families = DwAlloc((c->count + SYSTEM_ROOM) * sizeof(DwFamily));
+    if (families) {
+        memcpy(families, c->families, c->count * sizeof(DwFamily));
+        DwFree(c->families);
+        c->families = families;
+        c->capacity = c->count + SYSTEM_ROOM;
+    }
+    c->system = TRUE;
+}
+
 HRESULT DwSystemCollectionModel(DwFactory *factory, DWRITE_FONT_FAMILY_MODEL model, IDWriteFontCollection **out)
 {
     *out = nullptr;
@@ -916,8 +1022,10 @@ HRESULT DwSystemCollectionModel(DwFactory *factory, DWRITE_FONT_FAMILY_MODEL mod
     if (!*slot) {
         DwCollection *c;
         hr = DwCollectionFromSet(factory, (IDWriteFontSet *)set, model, &c);
-        if (SUCCEEDED(hr))
+        if (SUCCEEDED(hr)) {
+            make_room(c);
             *slot = (IDWriteFontCollection *)c;
+        }
     }
     if (SUCCEEDED(hr)) {
         *out = *slot;
