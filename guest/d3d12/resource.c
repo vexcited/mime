@@ -896,15 +896,17 @@ void D12Footprints(D12Device *device, const D3D12_RESOURCE_DESC1 *desc, UINT fir
 D12ImageView *D12ResourceView(D12Resource *resource, const VkImageViewCreateInfo *info, VkImageUsageFlags usage)
 {
     D12Device *device = resource->child.device;
-    AcquireSRWLockShared(&resource->views_lock);
-    for (D12ImageView *v = resource->views; v; v = v->next)
+    SRWLOCK *lock = resource->shared_image ? &resource->shared_image->views_lock : &resource->views_lock;
+    D12ImageView **views = resource->shared_image ? &resource->shared_image->views : &resource->views;
+    AcquireSRWLockShared(lock);
+    for (D12ImageView *v = *views; v; v = v->next)
         if (v->usage.usage == usage && v->info.viewType == info->viewType && v->info.format == info->format &&
             !memcmp(&v->info.components, &info->components, sizeof(info->components)) &&
             !memcmp(&v->info.subresourceRange, &info->subresourceRange, sizeof(info->subresourceRange))) {
-            ReleaseSRWLockShared(&resource->views_lock);
+            ReleaseSRWLockShared(lock);
             return v;
         }
-    ReleaseSRWLockShared(&resource->views_lock);
+    ReleaseSRWLockShared(lock);
 
     D12ImageView *view = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*view));
     if (!view)
@@ -920,14 +922,23 @@ D12ImageView *D12ResourceView(D12Resource *resource, const VkImageViewCreateInfo
         return nullptr;
     }
     view->info.pNext = nullptr;
-    AcquireSRWLockExclusive(&resource->views_lock);
-    view->next = resource->views;
-    resource->views = view;
-    ReleaseSRWLockExclusive(&resource->views_lock);
+    AcquireSRWLockExclusive(lock);
+    view->next = *views;
+    *views = view;
+    ReleaseSRWLockExclusive(lock);
     return view;
 }
 
 /* ------------------------------------------------------------------ ID3D12Resource2 */
+
+static void destroy_views(D12Device *device, D12ImageView *views)
+{
+    for (D12ImageView *v = views, *next; v; v = next) {
+        next = v->next;
+        device->vk.vkDestroyImageView(device->vk.device, v->view, nullptr);
+        HeapFree(GetProcessHeap(), 0, v);
+    }
+}
 
 D12Resource *D12ResourceFrom(ID3D12Resource *iface)
 {
@@ -941,12 +952,7 @@ static BOOL release_image(D12Resource *resource);
 static void resource_destroy(D12Resource *resource)
 {
     D12Device *device = resource->child.device;
-    D12Vk *vk = &device->vk;
-    for (D12ImageView *v = resource->views, *next; v; v = next) {
-        next = v->next;
-        vk->vkDestroyImageView(vk->device, v->view, nullptr);
-        HeapFree(GetProcessHeap(), 0, v);
-    }
+    destroy_views(device, resource->views);
     if (resource->image && !resource->swapchain && release_image(resource))
         D12Defer(device, VK_OBJECT_TYPE_IMAGE, (UINT64)resource->image);
     if (resource->buffer)
@@ -1195,7 +1201,7 @@ static void remember_image(D12Heap *heap, UINT64 offset, D12Resource *resource)
     D12SharedImage *s = HeapAlloc(GetProcessHeap(), 0, sizeof(*s));
     if (!s)
         return;
-    *s = (D12SharedImage){nullptr, heap, offset, resource->desc, resource->image, 1};
+    *s = (D12SharedImage){nullptr, heap, offset, resource->desc, resource->image, 1, SRWLOCK_INIT, nullptr};
     AcquireSRWLockExclusive(&heap->images_lock);
     s->next = heap->images;
     heap->images = s;
@@ -1219,8 +1225,10 @@ static BOOL release_image(D12Resource *resource)
                 break;
             }
     ReleaseSRWLockExclusive(&heap->images_lock);
-    if (last)
+    if (last) {
+        destroy_views(resource->child.device, s->views);
         HeapFree(GetProcessHeap(), 0, s);
+    }
     return last;
 }
 

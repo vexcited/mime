@@ -288,6 +288,9 @@ typedef struct D12SharedImage {
     D3D12_RESOURCE_DESC1 desc;
     VkImage image;
     LONG refs;
+    /* the views of every texture that shares the image, since games place a new one alike each frame. */
+    SRWLOCK views_lock;
+    struct D12ImageView *views;
 } D12SharedImage;
 
 HRESULT D12CreateHeap(D12Device *device, const D3D12_HEAP_DESC *desc, D12Heap **out);
@@ -314,7 +317,7 @@ void D12AddressRemove(D12Device *device, D12Heap *heap);
 
 /* ------------------------------------------------------------------ resources */
 
-/* made once per view description and kept with the resource. */
+/* made once per view description and kept with the resource, or with the image it shares. */
 typedef struct D12ImageView {
     struct D12ImageView *next;
     VkImageViewCreateInfo info;
