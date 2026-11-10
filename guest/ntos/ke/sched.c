@@ -87,6 +87,32 @@ ULONG64 HalHypercallUnlocked(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULO
     return status;
 }
 
+/*
+ * a copy between kernel memory that may wait for the host, as one out of a file window does while the host reads the
+ * file: made like the hypercall above, in pieces so that interrupts are not off for the whole of it.
+ */
+void KiCopyUnlocked(void *to, const void *from, SIZE_T length)
+{
+    while (length) {
+        SIZE_T n = length < 0x10000 ? length : 0x10000;
+        ULONG64 state = KiDisableInterrupts();
+        BOOLEAN held = KeGetPcr()->Irql < DISPATCH_LEVEL && KiKernelLock[KI_LOCK_OWNER] == KeGetCurrentPrcb()->Number &&
+                       !KiDispatcherLockHeld();
+        ULONG64 start = held ? HalReadCounter() : 0;
+        if (held)
+            KiReleaseKernelLock();
+        memcpy(to, from, n);
+        if (held) {
+            KiAcquireKernelLock();
+            KiCurrentThread()->BlockedTicks += HalReadCounter() - start;
+        }
+        KiRestoreInterrupts(state);
+        to = (PUCHAR)to + n;
+        from = (const UCHAR *)from + n;
+        length -= n;
+    }
+}
+
 void KiInitializeScheduler(void)
 {
     PKPRCB prcb = KeGetCurrentPrcb();
