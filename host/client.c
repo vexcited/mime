@@ -30,14 +30,30 @@ static bool query_status(const MimePaths *paths, MimeIpcStatus *status)
     MimeIpcHeader h;
     void *payload;
     if (mime_ipc_send(fd, MIME_IPC_STATUS, nullptr, 0) && mime_ipc_recv(fd, &h, &payload)) {
-        if (h.type == MIME_IPC_STATUS_REPLY && h.size >= sizeof(MimeIpcStatus)) {
-            memcpy(status, payload, sizeof(*status));
+        if (h.type == MIME_IPC_STATUS_REPLY && h.size >= MIME_IPC_STATUS_V1_SIZE) {
+            memset(status, 0, sizeof(*status));
+            memcpy(status, payload, MIME_MIN((size_t)h.size, sizeof(*status)));
+            /* an older machine cannot tell whether programs are open, so it is taken as busy. */
+            if (h.size < sizeof(*status))
+                status->user_processes = UINT32_MAX;
+            status->build_id_size = MIME_MIN(status->build_id_size, (uint32_t)sizeof(status->build_id));
             ok = true;
         }
         free(payload);
     }
     close(fd);
     return ok;
+}
+
+/* whether the machine runs this very binary, not one an update or a rebuild has replaced since it started. */
+static bool same_build(const MimeIpcStatus *status)
+{
+    uint8_t id[MIME_BUILD_ID_MAX];
+    size_t length = mime_build_id(id);
+    /* a binary linked without a build id cannot tell, so it leaves the machine alone. */
+    if (!length)
+        return true;
+    return status->build_id_size == length && !memcmp(status->build_id, id, length);
 }
 
 static pid_t read_pid(const MimePaths *paths)
@@ -95,16 +111,33 @@ static int wait_ready(const MimePaths *paths, pid_t pid, bool quiet)
     return 1;
 }
 
+static int machine_down(const MimePaths *paths, const MimeIpcStop *stop, bool quiet);
+
+/*
+ * a machine of another build is restarted on this one while none of the user's programs runs, as bazel restarts its
+ * server. otherwise it keeps running, so no open program is lost.
+ */
 static int machine_up(const MimePaths *paths, bool quiet)
 {
     MimeIpcStatus status;
     if (query_status(paths, &status)) {
-        if (status.ready) {
+        if (!status.ready)
+            return wait_ready(paths, 0, quiet);
+        if (same_build(&status)) {
             if (!quiet)
                 printf("Mime machine is already up (pid %u).\n", status.pid);
             return 0;
         }
-        return wait_ready(paths, 0, quiet);
+        if (status.user_processes || status.running_programs) {
+            mime_warn("the machine runs another build of mime, it moves to this one at the next `mime down`");
+            return 0;
+        }
+        if (!quiet) {
+            printf("Restarting the Mime machine on this build...\n");
+            fflush(stdout);
+        }
+        if (machine_down(paths, &(MimeIpcStop){}, true) != 0)
+            return 1;
     }
     if (!mime_paths_ensure(paths))
         return 1;
@@ -191,6 +224,16 @@ int mime_cmd_status(const MimePaths *paths, int argc, char **argv)
     }
     printf("Mime machine is %s (pid %u), up for %llus, %u program(s) running.\n", status.ready ? "up" : "booting",
            status.pid, (unsigned long long)(status.uptime_ms / 1000), status.running_programs);
+    uint8_t id[MIME_BUILD_ID_MAX];
+    size_t length = mime_build_id(id);
+    char machine[2 * MIME_BUILD_ID_MAX + 1], self[2 * MIME_BUILD_ID_MAX + 1];
+    mime_build_id_text(status.build_id, status.build_id_size, machine, sizeof(machine));
+    mime_build_id_text(id, length, self, sizeof(self));
+    if (status.user_processes != UINT32_MAX)
+        printf("  programs  %u process(es) the user started\n", status.user_processes);
+    printf("  build     %s\n", machine);
+    if (!same_build(&status))
+        printf("            this mime is %s, the machine moves to it at the next `mime down`\n", self);
     printf("  C: drive  %s\n  log       %s\n", paths->drive_c, paths->logfile);
     mime_genuine_print_status(paths);
     return 0;
@@ -290,18 +333,25 @@ int mime_cmd_down(const MimePaths *paths, int argc, char **argv)
             return 2;
         }
     }
+    return machine_down(paths, &stop, false);
+}
+
+static int machine_down(const MimePaths *paths, const MimeIpcStop *stop, bool quiet)
+{
     int fd = mime_ipc_connect(paths->socket);
     pid_t pid = read_pid(paths);
     if (fd < 0) {
         if (pid > 0 && kill(pid, 0) == 0) {
             kill(pid, SIGTERM);
-            printf("Mime machine stopped.\n");
+            if (!quiet)
+                printf("Mime machine stopped.\n");
             return 0;
         }
-        printf("Mime machine is not running.\n");
+        if (!quiet)
+            printf("Mime machine is not running.\n");
         return 0;
     }
-    mime_ipc_send(fd, MIME_IPC_STOP, &stop, sizeof(stop));
+    mime_ipc_send(fd, MIME_IPC_STOP, stop, sizeof(*stop));
     MimeIpcHeader h;
     void *payload;
     /* the daemon closes the connection once the guest has powered off. */
@@ -320,9 +370,15 @@ int mime_cmd_down(const MimePaths *paths, int argc, char **argv)
     uint64_t deadline = mime_now_ns() + 10ull * 1000000000ull;
     while (pid > 0 && kill(pid, 0) == 0 && mime_now_ns() < deadline)
         usleep(2000);
-    if (pid > 0 && kill(pid, 0) == 0)
+    if (pid > 0 && kill(pid, 0) == 0) {
         kill(pid, SIGKILL);
-    printf("Mime machine stopped.\n");
+        /* the lock goes with the process, which a machine starting next waits for. */
+        deadline = mime_now_ns() + 2ull * 1000000000ull;
+        while (kill(pid, 0) == 0 && mime_now_ns() < deadline)
+            usleep(2000);
+    }
+    if (!quiet)
+        printf("Mime machine stopped.\n");
     return 0;
 }
 
@@ -614,7 +670,7 @@ static uint32_t terminal_cursor(void)
 static int run_program(const MimePaths *paths, int argc, char **argv)
 {
     MimeIpcStatus status;
-    if (!query_status(paths, &status) || !status.ready) {
+    if (!query_status(paths, &status) || !status.ready || !same_build(&status)) {
         int r = machine_up(paths, false);
         if (r != 0)
             return r;

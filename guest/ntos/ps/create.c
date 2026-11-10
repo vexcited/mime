@@ -295,6 +295,7 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
     if (process->Machine == IMAGE_FILE_MACHINE_I386)
         process->AddressSpace.AllocationLimit = 0x7FFF0000;
     process->MimeRequestId = request_id;
+    MimeSessionUserProgram(process, parent);
     /* a gui program gets no console. a console program shares the one it is given. */
     if (!p->Detached && section->Image.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI) {
         MIME_CONSOLE *pty = p->PtyHandle ? ConsoleOfPtyHandle(p->PtyHandle) : nullptr;

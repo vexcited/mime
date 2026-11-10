@@ -467,6 +467,9 @@ static void *client_thread(void *arg)
         for (int i = 0; i < MAX_RUNS; i++)
             st.running_programs += g_runs[i].used;
         pthread_mutex_unlock(&g_runs_lock);
+        if (g_vm.shared)
+            st.user_processes = __atomic_load_n(&g_vm.shared->user_processes, __ATOMIC_ACQUIRE);
+        st.build_id_size = (uint32_t)mime_build_id(st.build_id);
         mime_ipc_send(fd, MIME_IPC_STATUS_REPLY, &st, sizeof(st));
         close(fd);
         break;
