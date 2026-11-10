@@ -1057,6 +1057,11 @@ typedef struct _WIN32_CALLOUTS {
     NTSTATUS(NTAPI *ThreadCallout)(PETHREAD thread, BOOLEAN initialize);
     ULONG(NTAPI *ShutdownProcess)(PEPROCESS process, const MX_SHUTDOWN_CONTEXT *context);
     void(NTAPI *TimeChange)(void); /* the offset of the clock changed with daylight time: windows hear WM_TIMECHANGE */
+    /*
+     * a service answered from what the calling thread alone writes, without any lock and with interrupts off. FALSE
+     * leaves the call to the service itself.
+     */
+    BOOLEAN(NTAPI *FastService)(ULONG number, ULONG64 argument, ULONG64 *result);
 } WIN32_CALLOUTS;
 NTKERNELAPI void NTAPI PsEstablishWin32Callouts(WIN32_CALLOUTS *callouts);
 

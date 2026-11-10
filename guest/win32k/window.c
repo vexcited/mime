@@ -1512,6 +1512,7 @@ void WndSetFocus(WND *w)
         InputFocusOwner = t;
     else if (InputFocusOwner == t)
         InputFocusOwner = nullptr;
+    InputKeysChanged();
     ImeFocusChanged();
     if (old)
         MsgSend(old, WM_KILLFOCUS, (WPARAM)WndHandle(w), 0);

@@ -389,6 +389,21 @@ void KiLeaveFastService(PKTHREAD thread)
 ULONG KiFastSystemService(PKTRAP_FRAME frame)
 {
     ULONG number = KI_SERVICE_NUMBER(frame);
+    if (number >= MIME_WIN32K_SERVICES_BASE) {
+        /* nothing is done when win32k declines, and whatever is pending for the thread is left to the usual way. */
+        PKTHREAD current = KiCurrentThread();
+        PKPCR pcr = KeGetPcr();
+        ULONG64 answer;
+        if (!g_win32.FastService || KiTraceSyscallImage[0] || g_timeline || (KiOptions & KI_OPT_NO_FAST_SERVICE) ||
+            pcr->Irql != PASSIVE_LEVEL || current->KernelApcPending || current->Terminating || current->UserApcPending ||
+            pcr->Prcb.DpcPending || current->ContextSetInService || ((PETHREAD)current)->PendingException ||
+            !g_win32.FastService(number, KI_SERVICE_REGISTER_ARG(frame, 0), &answer))
+            return 0;
+        KI_SERVICE_RESULT(frame) = answer;
+        KiInstrumentReturn(frame, ((PEPROCESS)current->Process)->InstrumentationCallback);
+        pcr->Prcb.FastWin32Services++;
+        return 1;
+    }
     if (number != MIME_SVC_NtWaitForSingleObject && number != MIME_SVC_NtReleaseSemaphore && number != MIME_SVC_NtSetEvent)
         return 0;
     /* tracing and the timeline see every call, and pool blocks with guard pages are no part of the fixed mappings. */
@@ -973,7 +988,7 @@ void KiDumpServiceCalls(void)
     }
     KiLogPrintf("dispatcher lock: %llu taken, %llu after waiting, %llu us waited in all", taken, spun,
                 HalCounterToHns(spin_ticks) / 10);
-    ULONG64 fast[3] = {}, fast_locked = 0;
+    ULONG64 fast[3] = {}, fast_locked = 0, fast_win32 = 0;
     for (ULONG i = 0; i < KeNumberProcessors; i++) {
         PKPRCB p = KiProcessorBlock[i];
         if (!p)
@@ -983,10 +998,11 @@ void KiDumpServiceCalls(void)
             p->FastServices[k] = 0;
         }
         fast_locked += p->FastServicesLocked;
-        p->FastServicesLocked = 0;
+        fast_win32 += p->FastWin32Services;
+        p->FastServicesLocked = p->FastWin32Services = 0;
     }
     KiLogPrintf("services without the kernel lock: %llu waits, %llu semaphore releases, %llu event sets, %llu more "
-                "took it to end", fast[0], fast[1], fast[2], fast_locked);
+                "took it to end, %llu answered by win32k", fast[0], fast[1], fast[2], fast_locked, fast_win32);
 #endif
     AfdDumpStats();
     reset_dump_counters();

@@ -241,8 +241,11 @@ typedef struct _KPRCB {
     ULONG DispatcherDepth;        /* times this processor took the dispatcher lock and has not let go. */
     UCHAR UnlockWork;             /* KI_UNLOCK_*: exits to the host put off until the dispatcher lock is let go. */
     ULONG64 DispatcherTaken, DispatcherWaited, DispatcherWaitTicks;
-    /* services done without the kernel lock: waits, semaphore releases, event sets, then those that took it to end. */
-    ULONG64 FastServices[3], FastServicesLocked;
+    /*
+     * services done without the kernel lock: waits, semaphore releases, event sets, then those that took it to end,
+     * then the ones win32k answered.
+     */
+    ULONG64 FastServices[3], FastServicesLocked, FastWin32Services;
 } KPRCB, *PKPRCB;
 
 #define KI_UNLOCK_TIMER 1 /* the timer is to be set to TimerArmed. */
