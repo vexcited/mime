@@ -772,7 +772,7 @@ WINOLEAPI HRESULT WINAPI CoTreatAsClass(REFCLSID old_clsid, REFCLSID new_clsid)
     return hr;
 }
 
-WINOLEAPI HRESULT WINAPI CoGetClassObject(REFCLSID clsid, DWORD context, void *server, REFIID riid, void **object)
+static HRESULT get_class_object(REFCLSID clsid, DWORD context, REFIID riid, void **object)
 {
     if (!object)
         return E_INVALIDARG;
@@ -799,6 +799,20 @@ WINOLEAPI HRESULT WINAPI CoGetClassObject(REFCLSID clsid, DWORD context, void *s
     if (!(context & CLSCTX_LOCAL_SERVER))
         return REGDB_E_CLASSNOTREG;
     return OrpcClassGet(clsid, riid, object);
+}
+
+WINOLEAPI HRESULT WINAPI CoGetClassObject(REFCLSID clsid, DWORD context, void *server, REFIID riid, void **object)
+{
+    HRESULT hr = get_class_object(clsid, context, riid, object);
+    /* log missing classes, to see what programs want next. */
+    if (hr == REGDB_E_CLASSNOTREG) {
+        WCHAR name[39];
+        OleFormatGuid(clsid, name);
+        char text[80];
+        if (_snprintf(text, sizeof(text), "ole32: no class %ls\n", name) > 0)
+            OutputDebugStringA(text);
+    }
+    return hr;
 }
 
 void OleLocalServersResume(void)
