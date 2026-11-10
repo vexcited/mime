@@ -133,6 +133,15 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     return TRUE;
 }
 
+/* windows exports the image lookups from both dlls, onnxruntime imports them from dbghelp. */
+#if defined(__x86_64__) || defined(__aarch64__)
+#pragma comment(linker, "/export:ImageNtHeader=imagehlp.ImageNtHeader")
+#pragma comment(linker, "/export:ImageRvaToSection=imagehlp.ImageRvaToSection")
+#pragma comment(linker, "/export:ImageRvaToVa=imagehlp.ImageRvaToVa")
+#pragma comment(linker, "/export:ImageDirectoryEntryToData=imagehlp.ImageDirectoryEntryToData")
+#pragma comment(linker, "/export:ImageDirectoryEntryToDataEx=imagehlp.ImageDirectoryEntryToDataEx")
+#endif
+
 /* ------------------------------------------------------------------ sessions and options */
 
 typedef struct SESSION {
