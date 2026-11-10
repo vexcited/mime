@@ -145,7 +145,7 @@ typedef struct _KTHREAD {
     BOOLEAN DisableBoost;  /* recorded, nothing boosts. */
     UCHAR IdealProcessor;  /* recorded, nothing honours it. */
     BOOLEAN KernelLocked;  /* x64: switched away from with the kernel lock held, and goes on with it, see KiSwapThread. */
-    ULONG64 Affinity;      /* recorded, not enforced. */
+    ULONG64 Affinity;      /* the processors it may run on. */
     UCHAR WaitReason;
     BOOLEAN WaitIrqlRaised;
     UCHAR Processor; /* the processor it runs or last ran on. */
@@ -486,6 +486,8 @@ void KiInitializeThread(PKTHREAD thread, PKPROCESS process, PVOID stack_top, PVO
 void KiReadyThread(PKTHREAD thread);
 ULONG64 KiAllProcessors(void);
 ULONG64 KiProcessAffinity(PKPROCESS process);
+void KiSetAffinityThread(PKTHREAD thread, ULONG64 mask);
+void KiSetAffinityProcess(PKPROCESS process, ULONG64 mask);
 LONG KiQueryBasePriorityThread(PKTHREAD thread);
 void KiSetBasePriorityThread(PKTHREAD thread, LONG increment);
 void KiSetPriorityThread(PKTHREAD thread, int priority);

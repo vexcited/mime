@@ -208,6 +208,12 @@ void KiStartProcessors(void)
         }
         KeNumberProcessors = i + 1;
     }
+    /* the threads made so far got the one processor there was as their affinity. */
+    ULONG64 s = KiAcquireDispatcherLock();
+    PLIST_ENTRY head = &PsInitialSystemProcess->Pcb.ThreadListHead;
+    for (PLIST_ENTRY e = head->Flink; e != head; e = e->Flink)
+        CONTAINING_RECORD(e, KTHREAD, ThreadListEntry)->Affinity = KiAllProcessors();
+    KiReleaseDispatcherLock(s);
     KiLogPrintf("%u processors", KeNumberProcessors);
 }
 

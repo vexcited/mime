@@ -264,6 +264,7 @@ void KiInterruptThread(PKTHREAD thread)
  *
  * among the idle ones this processor comes first, which needs no waking, then those still watching their flags,
  * see KiIdleWait, which need no interrupt, then the halted ones. the processor the thread last ran on wins a tie.
+ * only the processors of the thread's affinity count.
  */
 static PKPRCB pick_processor(PKTHREAD thread)
 {
@@ -271,7 +272,7 @@ static PKPRCB pick_processor(PKTHREAD thread)
     int low_prio = thread->Priority, best = 0;
     for (ULONG i = 0; i < KeNumberProcessors; i++) {
         PKPRCB p = KiProcessorBlock[i];
-        if (!p || p->DispatchPending)
+        if (!p || p->DispatchPending || !(thread->Affinity >> i & 1))
             continue;
         PKTHREAD cur = p->CurrentThread;
         if (cur == p->IdleThread) {
@@ -399,6 +400,55 @@ void KiSetBasePriorityProcess(PKPROCESS process, int base)
     KiReleaseDispatcherLock(s);
 }
 
+/* dispatcher lock held. the current thread may come back on another processor, with the lock let go meanwhile. */
+static void set_affinity(PKTHREAD thread, ULONG64 mask)
+{
+    thread->Affinity = mask;
+    if (thread->IdleThread)
+        return;
+    if (thread->State == Ready) {
+        /* it may wait for a processor it can use now. */
+        PKPRCB target = pick_processor(thread);
+        if (target)
+            KiRequestDispatch(target->Number);
+    } else if (thread->State == Running && !(mask >> thread->Processor & 1)) {
+        if (thread == KeGetCurrentPrcb()->CurrentThread) {
+            KiReadyThread(thread);
+            KiSwapThread();
+        } else {
+            KiRequestDispatch(thread->Processor);
+        }
+    }
+}
+
+/*
+ * holds a thread to the processors of a mask. like windows, a thread that sets its own is on one of them when the
+ * call returns, and another thread leaves a processor it may no longer use as soon as that processor is told.
+ */
+void KiSetAffinityThread(PKTHREAD thread, ULONG64 mask)
+{
+    ULONG64 s = KiAcquireDispatcherLock();
+    set_affinity(thread, mask);
+    KiReleaseDispatcherLock(s);
+}
+
+/* threads are held to the process mask, and a thread left with no processor in it gets the whole mask. */
+void KiSetAffinityProcess(PKPROCESS process, ULONG64 mask)
+{
+    ULONG64 s = KiAcquireDispatcherLock();
+    PKTHREAD self = KeGetCurrentPrcb()->CurrentThread;
+    process->Affinity = mask;
+    for (PLIST_ENTRY e = process->ThreadListHead.Flink; e != &process->ThreadListHead; e = e->Flink) {
+        PKTHREAD thread = CONTAINING_RECORD(e, KTHREAD, ThreadListEntry);
+        if (thread != self)
+            set_affinity(thread, (thread->Affinity & mask) ? (thread->Affinity & mask) : mask);
+    }
+    /* the caller last: its move lets go of the lock, and the list may change then. */
+    if (self->Process == process)
+        set_affinity(self, (self->Affinity & mask) ? (self->Affinity & mask) : mask);
+    KiReleaseDispatcherLock(s);
+}
+
 void KiStartThread(PKTHREAD thread)
 {
     ULONG64 s = KiAcquireDispatcherLock();
@@ -406,26 +456,45 @@ void KiStartThread(PKTHREAD thread)
     KiReleaseDispatcherLock(s);
 }
 
+/*
+ * the best ready thread a processor may run: the first of the highest queue, unless its affinity holds it to other
+ * processors, which leaves it queued for them.
+ */
+static PKTHREAD first_ready(PKPRCB prcb)
+{
+    for (ULONG summary = KiReadySummary; summary;) {
+        int prio = 31 - __builtin_clz(summary);
+        PLIST_ENTRY head = &KiReadyListHead[prio];
+        if (IsListEmpty(head)) {
+            KiLogPrintf("ready queue %d empty although marked", prio);
+            KiReadySummary &= ~(1u << prio);
+        }
+        for (PLIST_ENTRY e = head->Flink; e != head; e = e->Flink) {
+            PKTHREAD thread = CONTAINING_RECORD(e, KTHREAD, ReadyListEntry);
+            if (thread->Affinity >> prcb->Number & 1)
+                return thread;
+        }
+        summary &= ~(1u << prio);
+    }
+    return nullptr;
+}
+
 static PKTHREAD select_next(PKPRCB prcb)
 {
     KI_ASSERT_DISPATCHER_LOCK("a thread chosen");
-    if (!KiReadySummary)
+    PKTHREAD thread = first_ready(prcb);
+    if (!thread)
         return prcb->IdleThread;
-    int prio = 31 - __builtin_clz(KiReadySummary);
-    if (IsListEmpty(&KiReadyListHead[prio])) {
-        KiLogPrintf("ready queue %d empty although marked", prio);
-        KiReadySummary &= ~(1u << prio);
-        return select_next(prcb);
-    }
-    PLIST_ENTRY e = RemoveHeadList(&KiReadyListHead[prio]);
-    InitializeListHead(e);
+    int prio = thread->Priority;
+    RemoveEntryList(&thread->ReadyListEntry);
+    InitializeListHead(&thread->ReadyListEntry);
     if (IsListEmpty(&KiReadyListHead[prio])) {
         KiReadySummary &= ~(1u << prio);
         /* user mode skips yields that would find no other thread to run. */
         if (SharedUserData)
             SharedUserData->MimeReadyThreads = KiReadySummary;
     }
-    return CONTAINING_RECORD(e, KTHREAD, ReadyListEntry);
+    return thread;
 }
 
 #ifdef __x86_64__
@@ -532,12 +601,17 @@ static void preempt_current(PKPRCB prcb)
 {
     PKTHREAD cur = prcb->CurrentThread;
     if (cur->State == Running && cur != prcb->IdleThread) {
-        int top = KiReadySummary ? 31 - __builtin_clz(KiReadySummary) : -1;
-        if (top < cur->Priority || (top == cur->Priority && cur->Quantum > 0)) {
-            prcb->DispatchPending = FALSE;
-            return;
+        /* a thread whose affinity no longer holds this processor leaves it whatever waits. */
+        if (cur->Affinity >> prcb->Number & 1) {
+            PKTHREAD first = first_ready(prcb);
+            int top = first ? first->Priority : -1;
+            if (top < cur->Priority || (top == cur->Priority && cur->Quantum > 0)) {
+                prcb->DispatchPending = FALSE;
+                return;
+            }
         }
-        KiInsertReadyThread(cur);
+        /* another processor may take it at once, as when a thread held to this one took its place. */
+        KiReadyThread(cur);
     }
     KiSwapThread();
 }

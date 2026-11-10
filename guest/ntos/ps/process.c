@@ -834,16 +834,9 @@ static NTSTATUS set_priority_class(PEPROCESS process, UCHAR klass)
     return STATUS_SUCCESS;
 }
 
-/* threads are held to the process mask, and a thread left with no processor in it gets the whole mask. */
 static void set_process_affinity(PEPROCESS process, ULONG64 mask)
 {
-    ULONG64 s = KiAcquireDispatcherLock();
-    process->Pcb.Affinity = mask;
-    for (PLIST_ENTRY e = process->Pcb.ThreadListHead.Flink; e != &process->Pcb.ThreadListHead; e = e->Flink) {
-        PKTHREAD t = CONTAINING_RECORD(e, KTHREAD, ThreadListEntry);
-        t->Affinity = (t->Affinity & mask) ? (t->Affinity & mask) : mask;
-    }
-    KiReleaseDispatcherLock(s);
+    KiSetAffinityProcess(&process->Pcb, mask);
     if (process->Peb && process == PsCurrentProcess())
         process->Peb->ActiveProcessAffinityMask = mask;
 }
