@@ -675,6 +675,184 @@ WINOLEAPI HRESULT WINAPI RoGetAgileReference(DWORD options, REFIID iid, IUnknown
     return S_OK;
 }
 
+/* ------------------------------------------------------------------ global interface table */
+
+/*
+ * each registration is table strong marshal data in its own stream, unmarshaled again by every get. cookies count up
+ * from 0x100 like windows' and are not reused.
+ */
+typedef struct IGlobalInterfaceTable IGlobalInterfaceTable;
+
+typedef struct IGlobalInterfaceTableVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IGlobalInterfaceTable *, REFIID, void **);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IGlobalInterfaceTable *);
+    ULONG(STDMETHODCALLTYPE *Release)(IGlobalInterfaceTable *);
+    HRESULT(STDMETHODCALLTYPE *RegisterInterfaceInGlobal)(IGlobalInterfaceTable *, IUnknown *, REFIID, DWORD *);
+    HRESULT(STDMETHODCALLTYPE *RevokeInterfaceFromGlobal)(IGlobalInterfaceTable *, DWORD);
+    HRESULT(STDMETHODCALLTYPE *GetInterfaceFromGlobal)(IGlobalInterfaceTable *, DWORD, REFIID, void **);
+} IGlobalInterfaceTableVtbl;
+
+struct IGlobalInterfaceTable {
+    const IGlobalInterfaceTableVtbl *lpVtbl;
+};
+
+static const CLSID CLSID_StdGlobalInterfaceTable_ = {0x00000323, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
+static const IID IID_IGlobalInterfaceTable_ = {0x00000146, 0, 0, {0xC0, 0, 0, 0, 0, 0, 0, 0x46}};
+
+typedef struct GIT_ENTRY {
+    struct GIT_ENTRY *Next;
+    DWORD Cookie;
+    IStream *Stream;
+} GIT_ENTRY;
+
+static SRWLOCK g_git_lock = SRWLOCK_INIT;
+static GIT_ENTRY *g_git_entries;
+static DWORD g_git_next = 0x100;
+
+static HRESULT STDMETHODCALLTYPE git_qi(IGlobalInterfaceTable *self, REFIID iid, void **out)
+{
+    if (!out)
+        return E_POINTER;
+    if (IsEqualGUID(iid, &IID_IUnknown) || IsEqualGUID(iid, &IID_IGlobalInterfaceTable_) ||
+        IsEqualGUID(iid, &IID_IAgileObject)) {
+        *out = self;
+        return S_OK;
+    }
+    *out = nullptr;
+    return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE git_add_ref(IGlobalInterfaceTable *self)
+{
+    return 2;
+}
+
+static ULONG STDMETHODCALLTYPE git_release(IGlobalInterfaceTable *self)
+{
+    return 1;
+}
+
+static HRESULT STDMETHODCALLTYPE git_register(IGlobalInterfaceTable *self, IUnknown *object, REFIID iid, DWORD *cookie)
+{
+    if (!cookie)
+        return E_INVALIDARG;
+    *cookie = 0;
+    if (!object || !iid)
+        return E_INVALIDARG;
+    GIT_ENTRY *e = OleAllocZero(sizeof(*e));
+    if (!e)
+        return E_OUTOFMEMORY;
+    HRESULT hr = CreateStreamOnHGlobal(nullptr, TRUE, &e->Stream);
+    if (SUCCEEDED(hr))
+        hr = CoMarshalInterface(e->Stream, iid, object, MSHCTX_INPROC, nullptr, MSHLFLAGS_TABLESTRONG);
+    if (FAILED(hr)) {
+        if (e->Stream)
+            e->Stream->lpVtbl->Release(e->Stream);
+        OleFree(e);
+        return hr;
+    }
+    AcquireSRWLockExclusive(&g_git_lock);
+    e->Cookie = g_git_next++;
+    e->Next = g_git_entries;
+    g_git_entries = e;
+    ReleaseSRWLockExclusive(&g_git_lock);
+    *cookie = e->Cookie;
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE git_revoke(IGlobalInterfaceTable *self, DWORD cookie)
+{
+    AcquireSRWLockExclusive(&g_git_lock);
+    GIT_ENTRY **link = &g_git_entries;
+    while (*link && (*link)->Cookie != cookie)
+        link = &(*link)->Next;
+    GIT_ENTRY *e = *link;
+    if (e)
+        *link = e->Next;
+    ReleaseSRWLockExclusive(&g_git_lock);
+    if (!e)
+        return E_INVALIDARG;
+    LARGE_INTEGER zero = {};
+    e->Stream->lpVtbl->Seek(e->Stream, zero, STREAM_SEEK_SET, nullptr);
+    CoReleaseMarshalData(e->Stream);
+    e->Stream->lpVtbl->Release(e->Stream);
+    OleFree(e);
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE git_get(IGlobalInterfaceTable *self, DWORD cookie, REFIID iid, void **out)
+{
+    if (!out)
+        return E_INVALIDARG;
+    *out = nullptr;
+    if (!iid)
+        return E_INVALIDARG;
+    /* a clone has its own seek pointer over the same data, so gets in parallel do not race. */
+    IStream *clone = nullptr;
+    HRESULT hr = E_INVALIDARG;
+    AcquireSRWLockShared(&g_git_lock);
+    for (GIT_ENTRY *e = g_git_entries; e; e = e->Next)
+        if (e->Cookie == cookie) {
+            hr = e->Stream->lpVtbl->Clone(e->Stream, &clone);
+            break;
+        }
+    ReleaseSRWLockShared(&g_git_lock);
+    if (FAILED(hr))
+        return hr;
+    LARGE_INTEGER zero = {};
+    clone->lpVtbl->Seek(clone, zero, STREAM_SEEK_SET, nullptr);
+    hr = CoUnmarshalInterface(clone, iid, out);
+    clone->lpVtbl->Release(clone);
+    return hr;
+}
+
+static const IGlobalInterfaceTableVtbl g_git_vtbl = {git_qi, git_add_ref, git_release, git_register, git_revoke, git_get};
+static IGlobalInterfaceTable g_git = {&g_git_vtbl};
+
+static HRESULT STDMETHODCALLTYPE gitf_query(IClassFactory *self, REFIID iid, void **out)
+{
+    if (IsEqualGUID(iid, &IID_IUnknown) || IsEqualGUID(iid, &IID_IClassFactory)) {
+        *out = self;
+        return S_OK;
+    }
+    *out = nullptr;
+    return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE gitf_add_ref(IClassFactory *self)
+{
+    return 2;
+}
+
+static ULONG STDMETHODCALLTYPE gitf_release(IClassFactory *self)
+{
+    return 1;
+}
+
+static HRESULT STDMETHODCALLTYPE gitf_create(IClassFactory *self, IUnknown *outer, REFIID iid, void **out)
+{
+    *out = nullptr;
+    if (outer)
+        return CLASS_E_NOAGGREGATION;
+    return git_qi(&g_git, iid, out);
+}
+
+static HRESULT STDMETHODCALLTYPE gitf_lock(IClassFactory *self, BOOL lock)
+{
+    return S_OK;
+}
+
+static const IClassFactoryVtbl g_gitf_vtbl = {gitf_query, gitf_add_ref, gitf_release, gitf_create, gitf_lock};
+static IClassFactory g_gitf = {&g_gitf_vtbl};
+
+BOOL OleGitClassObject(REFCLSID clsid, REFIID iid, void **object, HRESULT *hr)
+{
+    if (!IsEqualGUID(clsid, &CLSID_StdGlobalInterfaceTable_))
+        return FALSE;
+    *hr = gitf_query(&g_gitf, iid, object);
+    return TRUE;
+}
+
 /* ------------------------------------------------------------------ servers */
 
 static LONG g_server_refs;
