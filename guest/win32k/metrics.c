@@ -361,12 +361,60 @@ BOOLEAN MetricsFontSmoothing(UINT *type, UINT *contrast, UINT *orientation)
     return g_font_smoothing;
 }
 
+/*
+ * the accessibility features, none of which acts. each is a structure of 32-bit values that starts with its size, set
+ * by the action after the one that gets it. the values are those of a new account's Control Panel\Accessibility key:
+ * a program that turns the shortcuts off reads the flags first and puts them back when it ends.
+ */
+static struct {
+    UINT Get;
+    UINT Size;
+    UINT Values[14];
+} g_access[] = {
+    {0x0032, 24, {24, 126, 1000, 1000, 500, 0}}, /* FILTERKEYS: flags, wait, delay, repeat, bounce. */
+    {0x0034, 8, {8, 62}},                        /* TOGGLEKEYS */
+    {0x0036, 28, {28, 62, 80, 3000, 0, 0, 0}},   /* MOUSEKEYS: flags, top speed, time to reach it, speed with control. */
+    {0x003A, 8, {8, 510}},                       /* STICKYKEYS */
+    {0x003C, 12, {12, 2, 300000}},               /* ACCESSTIMEOUT: flags, time. */
+    {0x0040, 56, {56, 2}},                       /* SOUNDSENTRY: the name of its library is a pointer, the 11th value. */
+};
+
+static BOOL access_feature(UINT action, PVOID data, BOOL *done)
+{
+    for (ULONG i = 0; i < sizeof(g_access) / sizeof(g_access[0]); i++) {
+        UINT values[14];
+        *done = TRUE;
+        if (action == g_access[i].Get) {
+            /* a structure of another size is left as it is. */
+            if (!NT_SUCCESS(MimeCopyFromUser(values, data, sizeof(UINT))) || values[0] != g_access[i].Size)
+                return FALSE;
+            return NT_SUCCESS(MimeCopyToUser(data, g_access[i].Values, g_access[i].Size));
+        }
+        if (action == g_access[i].Get + 1) {
+            if (!NT_SUCCESS(MimeCopyFromUser(values, data, g_access[i].Size)) || values[0] != g_access[i].Size)
+                return FALSE;
+            memcpy(g_access[i].Values, values, g_access[i].Size);
+            /* the name belongs to the memory of whoever set it. */
+            if (g_access[i].Get == 0x0040)
+                g_access[i].Values[10] = g_access[i].Values[11] = 0;
+            return TRUE;
+        }
+    }
+    *done = FALSE;
+    return FALSE;
+}
+
 BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT dpi)
 {
     if (!dpi)
         dpi = DpiScaleOf(DpiCurrentAwareness());
     BOOL b;
     UINT u;
+    if (action >= 0x0032 && action <= 0x0041) {
+        BOOL result = access_feature(action, data, &b);
+        if (b)
+            return result;
+    }
     switch (action) {
     case SPI_GETNONCLIENTMETRICS: {
         NONCLIENTMETRICSW m;
@@ -566,14 +614,20 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
     }
 }
 
-/* older SPI_ pairs are get then set; newer pairs reverse that order. the work area is an exception. */
+/* from 0x1000 on the odd actions set. the older ones follow no rule, and these are the ones that set. */
 static BOOL sets_parameter(UINT action)
 {
-    if (action == 0x2F)
-        return TRUE;
-    if (action == 0x30)
-        return FALSE;
-    return action >= 0x1000 ? (action & 1) : !(action & 1);
+    static const UCHAR setters[] = {0x02, 0x04, 0x06, 0x0B, 0x0F, 0x11, 0x13, 0x14, 0x15, 0x17, 0x1A, 0x1C, 0x1D, 0x1E, 0x20,
+                                    0x21, 0x22, 0x24, 0x25, 0x2A, 0x2C, 0x2E, 0x2F, 0x31, 0x33, 0x35, 0x37, 0x39, 0x3B, 0x3D,
+                                    0x3F, 0x41, 0x43, 0x45, 0x47, 0x49, 0x4B, 0x4C, 0x4D, 0x4E, 0x51, 0x52, 0x55, 0x56, 0x57,
+                                    0x58, 0x5A, 0x5B, 0x5D, 0x61, 0x63, 0x65, 0x67, 0x69, 0x6B, 0x6D, 0x6F, 0x71, 0x75, 0x77};
+    if (action >= 0x1000)
+        return action & 1;
+    for (ULONG i = 0; i < sizeof(setters); i++) {
+        if (setters[i] == action)
+            return TRUE;
+    }
+    return FALSE;
 }
 
 BOOL NTAPI NtUserSystemParametersInfo(UINT action, UINT param, PVOID data, UINT ini)
