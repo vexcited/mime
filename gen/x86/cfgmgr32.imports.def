@@ -5,6 +5,8 @@ EXPORTS
     CM_Delete_Device_Interface_KeyW@8
     CM_Disable_DevNode@8
     CM_Enable_DevNode@8
+    CM_Free_Log_Conf_Handle@4
+    CM_Free_Res_Des_Handle@4
     CM_Get_Child@12
     CM_Get_Class_PropertyW@24
     CM_Get_Class_Property_Keys@16
@@ -32,8 +34,18 @@ EXPORTS
     CM_Get_Device_Interface_List_Size_ExW@20
     CM_Get_Device_Interface_PropertyW@24
     CM_Get_Device_Interface_Property_KeysW@16
+    CM_Get_First_Log_Conf@12
+    CM_Get_First_Log_Conf_Ex@16
+    CM_Get_Next_Log_Conf@12
+    CM_Get_Next_Log_Conf_Ex@16
+    CM_Get_Next_Res_Des@20
+    CM_Get_Next_Res_Des_Ex@24
     CM_Get_Parent@12
     CM_Get_Parent_Ex@16
+    CM_Get_Res_Des_Data@16
+    CM_Get_Res_Des_Data_Ex@20
+    CM_Get_Res_Des_Data_Size@12
+    CM_Get_Res_Des_Data_Size_Ex@16
     CM_Get_Sibling@12
     CM_Locate_DevNodeA@12
     CM_Locate_DevNodeW@12

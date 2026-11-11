@@ -1154,3 +1154,94 @@ CMAPI CONFIGRET WINAPI CM_Unregister_Notification(HCMNOTIFICATION notify)
     RtlLeaveCriticalSection(&g_notify_lock);
     return CR_SUCCESS;
 }
+
+/* ------------------------------------------------------------------ logical configurations */
+
+/*
+ * no device of this machine holds a hardware resource: none has an interrupt line, a port or a memory range of its
+ * own. so a device has no configuration of any kind, and no configuration or resource handle is ever handed out.
+ */
+CMAPI CONFIGRET WINAPI CM_Get_First_Log_Conf(PLOG_CONF out, DEVINST devinst, ULONG flags)
+{
+    if (flags & ~LOG_CONF_BITS)
+        return CR_INVALID_FLAG;
+    PCWSTR id = id_of(devinst);
+    if (!id)
+        return CR_INVALID_DEVNODE;
+    if (!is_root(id) && !present(id))
+        return CR_NO_SUCH_DEVNODE;
+    return CR_NO_MORE_LOG_CONF;
+}
+
+CMAPI CONFIGRET WINAPI CM_Get_First_Log_Conf_Ex(PLOG_CONF out, DEVINST devinst, ULONG flags, void *machine)
+{
+    if (machine)
+        return CR_INVALID_MACHINENAME;
+    return CM_Get_First_Log_Conf(out, devinst, flags);
+}
+
+CMAPI CONFIGRET WINAPI CM_Get_Next_Log_Conf(PLOG_CONF out, LOG_CONF conf, ULONG flags)
+{
+    return flags ? CR_INVALID_FLAG : CR_INVALID_LOG_CONF;
+}
+
+CMAPI CONFIGRET WINAPI CM_Get_Next_Log_Conf_Ex(PLOG_CONF out, LOG_CONF conf, ULONG flags, void *machine)
+{
+    if (machine)
+        return CR_INVALID_MACHINENAME;
+    return CM_Get_Next_Log_Conf(out, conf, flags);
+}
+
+CMAPI CONFIGRET WINAPI CM_Free_Log_Conf_Handle(LOG_CONF conf)
+{
+    return CR_INVALID_LOG_CONF;
+}
+
+CMAPI CONFIGRET WINAPI CM_Get_Next_Res_Des(PRES_DES out, RES_DES from, RESOURCEID wanted, PRESOURCEID found, ULONG flags)
+{
+    if (!out)
+        return CR_INVALID_POINTER;
+    return flags ? CR_INVALID_FLAG : CR_INVALID_RES_DES;
+}
+
+CMAPI CONFIGRET WINAPI CM_Get_Next_Res_Des_Ex(PRES_DES out, RES_DES from, RESOURCEID wanted, PRESOURCEID found,
+                                              ULONG flags, void *machine)
+{
+    if (machine)
+        return CR_INVALID_MACHINENAME;
+    return CM_Get_Next_Res_Des(out, from, wanted, found, flags);
+}
+
+CMAPI CONFIGRET WINAPI CM_Get_Res_Des_Data_Size(PULONG size, RES_DES des, ULONG flags)
+{
+    if (!size)
+        return CR_INVALID_POINTER;
+    *size = 0;
+    return flags ? CR_INVALID_FLAG : CR_INVALID_RES_DES;
+}
+
+CMAPI CONFIGRET WINAPI CM_Get_Res_Des_Data_Size_Ex(PULONG size, RES_DES des, ULONG flags, void *machine)
+{
+    if (machine)
+        return CR_INVALID_MACHINENAME;
+    return CM_Get_Res_Des_Data_Size(size, des, flags);
+}
+
+CMAPI CONFIGRET WINAPI CM_Get_Res_Des_Data(RES_DES des, PVOID buffer, ULONG length, ULONG flags)
+{
+    if (!buffer)
+        return CR_INVALID_POINTER;
+    return flags ? CR_INVALID_FLAG : CR_INVALID_RES_DES;
+}
+
+CMAPI CONFIGRET WINAPI CM_Get_Res_Des_Data_Ex(RES_DES des, PVOID buffer, ULONG length, ULONG flags, void *machine)
+{
+    if (machine)
+        return CR_INVALID_MACHINENAME;
+    return CM_Get_Res_Des_Data(des, buffer, length, flags);
+}
+
+CMAPI CONFIGRET WINAPI CM_Free_Res_Des_Handle(RES_DES des)
+{
+    return CR_INVALID_RES_DES;
+}
