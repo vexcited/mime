@@ -51,6 +51,28 @@ mime features enable <name>
 mime down
 ```
 
+## Configuration
+
+Mime reads `$XDG_CONFIG_HOME/mime/config.ini`, which defaults to `~/.config/mime/config.ini`.
+It is read when the machine starts, so run `mime down` after a change.
+
+### Default Values
+
+```ini
+[desktop]
+shortcuts = false
+```
+
+### Keys
+
+| Section     | Key         | Type      | Default | Plaform | Description |
+| ----------- | ----------- | --------- | ------- | ------- | ----------- |
+| `[desktop]` | `shortcuts` | `boolean` | `false` | Linux   | Exports the Start Menu and desktop shortcuts of Windows programs as `.desktop` entries in `$XDG_DATA_HOME/applications`, so launchers list them. Entries follow the shortcuts as programs are installed or removed. |
+
+### Values
+
+- `boolean` accepts `true`, `yes`, `on` and `1`
+
 ## How ?
 
 Mime runs its own Windows-compatible kernel and DLLs inside a virtual machine.
