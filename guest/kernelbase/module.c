@@ -383,12 +383,15 @@ static PWSTR build_search_path(LPCWSTR name, DWORD flags)
 
 static void set_load_error(NTSTATUS status)
 {
+    /* like windows, RtlGetLastNtStatus tells the status of the failed load. */
+    NtCurrentTeb()->LastStatusValue = status;
     switch (status) {
     case STATUS_DLL_NOT_FOUND:
     case STATUS_OBJECT_NAME_NOT_FOUND:
     case STATUS_OBJECT_PATH_NOT_FOUND:
     case STATUS_OBJECT_PATH_SYNTAX_BAD:
     case STATUS_NO_SUCH_FILE:
+        NtCurrentTeb()->LastStatusValue = STATUS_DLL_NOT_FOUND;
         KbSetError(ERROR_MOD_NOT_FOUND);
         break;
     case STATUS_INVALID_IMAGE_FORMAT:

@@ -555,13 +555,34 @@ static NTSTATUS open_image(PCWSTR dos_path, PHANDLE file)
     return status;
 }
 
-static NTSTATUS map_image(HANDLE file, PVOID *base)
+/* whether the file is an image made for another processor, which the kernel may refuse to map at all. */
+static BOOLEAN is_foreign_file(HANDLE file)
 {
+    UCHAR head[0x400];
+    IO_STATUS_BLOCK iosb;
+    LARGE_INTEGER start = {};
+    if (!NT_SUCCESS(NtReadFile(file, nullptr, nullptr, nullptr, &iosb, head, sizeof(head), &start, nullptr)))
+        return FALSE;
+    SIZE_T got = iosb.Information;
+    const IMAGE_DOS_HEADER *dos = (const void *)head;
+    if (got < sizeof(*dos) || dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew < 0 ||
+        (SIZE_T)dos->e_lfanew + 4 + sizeof(IMAGE_FILE_HEADER) > got)
+        return FALSE;
+    const IMAGE_NT_HEADERS *nt = (const void *)(head + dos->e_lfanew);
+    return nt->Signature == IMAGE_NT_SIGNATURE && nt->FileHeader.Machine != LDRP_MACHINE;
+}
+
+/* mismatch tells an image of another processor from a file that is no image at all. */
+static NTSTATUS map_image(HANDLE file, PVOID *base, BOOLEAN *mismatch)
+{
+    *mismatch = FALSE;
     HANDLE section;
     NTSTATUS status = NtCreateSection(&section, SECTION_MAP_READ | SECTION_MAP_EXECUTE | SECTION_QUERY, nullptr, nullptr,
                                       PAGE_EXECUTE, SEC_IMAGE, file);
-    if (!NT_SUCCESS(status))
+    if (!NT_SUCCESS(status)) {
+        *mismatch = status == STATUS_INVALID_IMAGE_FORMAT && is_foreign_file(file);
         return status;
+    }
     SIZE_T size = 0;
     *base = nullptr;
     status = NtMapViewOfSection(section, NtCurrentProcess(), base, 0, 0, nullptr, &size, ViewShare, 0,
@@ -569,10 +590,13 @@ static NTSTATUS map_image(HANDLE file, PVOID *base)
     NtClose(section);
     if (status == STATUS_IMAGE_NOT_AT_BASE)
         status = STATUS_SUCCESS;
+    if (status == STATUS_INVALID_IMAGE_FORMAT)
+        *mismatch = is_foreign_file(file);
     /* the managed runtime consumes portable il without running its native bootstrap. */
     if (NT_SUCCESS(status) && is_foreign_image(*base) && has_executable_section(*base)) {
         NtUnmapViewOfSection(NtCurrentProcess(), *base);
         status = STATUS_INVALID_IMAGE_FORMAT;
+        *mismatch = TRUE;
     }
     return status;
 }
@@ -590,7 +614,19 @@ static BOOLEAN file_exists(PCWSTR dos_path)
     return NT_SUCCESS(status) && !(info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-static BOOLEAN try_directory(PCWSTR dir, SIZE_T dir_chars, PCWSTR name, PWSTR out, SIZE_T out_chars)
+/* a search goes on past the first skip files it finds, see load_dll. */
+static BOOLEAN is_candidate(PCWSTR path, ULONG *skip)
+{
+    if (!file_exists(path))
+        return FALSE;
+    if (skip && *skip) {
+        (*skip)--;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOLEAN try_directory(PCWSTR dir, SIZE_T dir_chars, PCWSTR name, PWSTR out, SIZE_T out_chars, ULONG *skip)
 {
     SIZE_T name_chars = wcslen(name);
     BOOLEAN slash = dir_chars && dir[dir_chars - 1] != '\\';
@@ -601,11 +637,11 @@ static BOOLEAN try_directory(PCWSTR dir, SIZE_T dir_chars, PCWSTR name, PWSTR ou
     if (slash)
         out[n++] = '\\';
     memcpy(out + n, name, (name_chars + 1) * sizeof(WCHAR));
-    if (file_exists(out))
+    if (is_candidate(out, skip))
         return TRUE;
     if (!wcschr(name, '.')) {
         wcscat(out, L".dll");
-        return file_exists(out);
+        return is_candidate(out, skip);
     }
     return FALSE;
 }
@@ -627,7 +663,7 @@ static BOOLEAN is_native_system32(PCWSTR dir, SIZE_T chars)
 }
 #endif
 
-static BOOLEAN search_list(PCWSTR list, PCWSTR name, PWSTR out, SIZE_T out_chars)
+static BOOLEAN search_list(PCWSTR list, PCWSTR name, PWSTR out, SIZE_T out_chars, ULONG *skip)
 {
     while (list && *list) {
         PCWSTR end = list;
@@ -639,7 +675,7 @@ static BOOLEAN search_list(PCWSTR list, PCWSTR name, PWSTR out, SIZE_T out_chars
             dir = g_system32;
             chars = wcslen(g_system32);
         }
-        if (chars && try_directory(dir, chars, name, out, out_chars))
+        if (chars && try_directory(dir, chars, name, out, out_chars, skip))
             return TRUE;
         list = *end ? end + 1 : end;
     }
@@ -664,10 +700,19 @@ static BOOLEAN is_path_name(PCWSTR name)
     return wcschr(name, '\\') || wcschr(name, '/') || (name[0] && name[1] == ':');
 }
 
-/* windows' desktop search order with safe dll search mode. */
-static NTSTATUS find_dll(PCWSTR name, PCWSTR search_path, PWSTR out, SIZE_T out_chars)
+/* a path that names its drive or starts at the root, which no search applies to. */
+static BOOLEAN is_absolute_name(PCWSTR name)
 {
-    if (is_path_name(name)) {
+    return name[0] == '\\' || name[0] == '/' || (name[0] && name[1] == ':');
+}
+
+/*
+ * windows' desktop search order with safe dll search mode. like windows, a relative path is searched for as a plain
+ * name is, below each folder of the order. skip is how many files that were found the search passes over.
+ */
+static NTSTATUS find_dll(PCWSTR name, PCWSTR search_path, PWSTR out, SIZE_T out_chars, ULONG skip)
+{
+    if (is_absolute_name(name)) {
         ULONG n = RtlGetFullPathName_U(name, (ULONG)(out_chars * sizeof(WCHAR)), out, nullptr);
         if (!n || n >= out_chars * sizeof(WCHAR))
             return STATUS_OBJECT_PATH_SYNTAX_BAD;
@@ -677,42 +722,56 @@ static NTSTATUS find_dll(PCWSTR name, PCWSTR search_path, PWSTR out, SIZE_T out_
         SIZE_T prefix = RTL_NUMBER_OF(arm64_system32) - 1;
         WCHAR redirected[MAX_PATH];
         if (!_wcsnicmp(out, arm64_system32, prefix) && out_chars <= RTL_NUMBER_OF(redirected) &&
-            try_directory(g_system32, wcslen(g_system32), out + prefix, redirected, out_chars)) {
+            try_directory(g_system32, wcslen(g_system32), out + prefix, redirected, out_chars, nullptr)) {
             wcscpy(out, redirected);
             return STATUS_SUCCESS;
         }
 #endif
         return file_exists(out) ? STATUS_SUCCESS : STATUS_DLL_NOT_FOUND;
     }
-    if (prefers_system32() && try_directory(g_system32, wcslen(g_system32), name, out, out_chars))
+    if (prefers_system32() && try_directory(g_system32, wcslen(g_system32), name, out, out_chars, &skip))
         return STATUS_SUCCESS;
-    if (search_path && search_list(search_path, name, out, out_chars))
+    if (search_path && search_list(search_path, name, out, out_chars, &skip))
         return STATUS_SUCCESS;
     PRTL_USER_PROCESS_PARAMETERS pp = NtCurrentPeb()->ProcessParameters;
     if (!search_path && pp->DllPath.Length &&
-        try_directory(pp->DllPath.Buffer, pp->DllPath.Length / sizeof(WCHAR), name, out, out_chars))
+        try_directory(pp->DllPath.Buffer, pp->DllPath.Length / sizeof(WCHAR), name, out, out_chars, &skip))
         return STATUS_SUCCESS;
-    if (try_directory(g_system32, wcslen(g_system32), name, out, out_chars) ||
-        try_directory(g_windows, wcslen(g_windows), name, out, out_chars))
+    if (try_directory(g_system32, wcslen(g_system32), name, out, out_chars, &skip) ||
+        try_directory(g_windows, wcslen(g_windows), name, out, out_chars, &skip))
         return STATUS_SUCCESS;
     UNICODE_STRING cwd = pp->CurrentDirectory.DosPath;
-    if (try_directory(cwd.Buffer, cwd.Length / sizeof(WCHAR), name, out, out_chars))
+    if (try_directory(cwd.Buffer, cwd.Length / sizeof(WCHAR), name, out, out_chars, &skip))
         return STATUS_SUCCESS;
     WCHAR path_value[2048];
     UNICODE_STRING var = RTL_CONSTANT_STRING(L"PATH");
     UNICODE_STRING value = {0, sizeof(path_value) - sizeof(WCHAR), path_value};
     if (NT_SUCCESS(RtlQueryEnvironmentVariable_U(nullptr, &var, &value))) {
         path_value[value.Length / sizeof(WCHAR)] = 0;
-        if (search_list(path_value, name, out, out_chars))
+        if (search_list(path_value, name, out, out_chars, &skip))
             return STATUS_SUCCESS;
     }
     return STATUS_DLL_NOT_FOUND;
 }
 
+/*
+ * the file a manifest names for a dll. its path is one like any other, so System32 in a loadFrom means the folder of
+ * this processor.
+ */
+static BOOLEAN sxs_redirect(PCWSTR name, PWSTR out, SIZE_T out_chars)
+{
+    WCHAR target[MAX_PATH];
+    if (!NT_SUCCESS(LdrpSxsRedirectDll(name, target, RTL_NUMBER_OF(target))))
+        return FALSE;
+    if (!NT_SUCCESS(find_dll(target, nullptr, out, out_chars, 0)))
+        wcscpy(out, target);
+    return TRUE;
+}
+
 /* the full name a path stands for, where the file system of the processor redirects it. */
 static BOOLEAN full_dll_path(PCWSTR name, PWSTR out, SIZE_T out_chars)
 {
-    if (NT_SUCCESS(find_dll(name, nullptr, out, out_chars)))
+    if (NT_SUCCESS(find_dll(name, nullptr, out, out_chars, 0)))
         return TRUE;
     ULONG n = RtlGetFullPathName_U(name, (ULONG)(out_chars * sizeof(WCHAR)), out, nullptr);
     return n && n < out_chars * sizeof(WCHAR);
@@ -781,7 +840,7 @@ static PLDR_DATA_TABLE_ENTRY find_loaded(PCWSTR name)
     while (base_name > name && base_name[-1] != '\\' && base_name[-1] != '/')
         base_name--;
     WCHAR path[MAX_PATH];
-    if (NT_SUCCESS(LdrpSxsRedirectDll(name, path, RTL_NUMBER_OF(path))))
+    if (sxs_redirect(name, path, RTL_NUMBER_OF(path)))
         return find_by_path(path);
     return is_path_name(name) ? find_loaded_path(name) : find_by_name(base_name);
 }
@@ -1356,7 +1415,7 @@ static NTSTATUS load_dll(PCWSTR name, LOAD_CONTEXT *ctx, PLDR_DATA_TABLE_ENTRY *
         base_name--;
     /* the active activation context may redirect a plain name before searching. */
     WCHAR path[MAX_PATH];
-    BOOLEAN redirected = NT_SUCCESS(LdrpSxsRedirectDll(name, path, RTL_NUMBER_OF(path)));
+    BOOLEAN redirected = sxs_redirect(name, path, RTL_NUMBER_OF(path));
     BOOLEAN qualified = !redirected && is_path_name(name);
     RtlAcquireSRWLockExclusive(&g_table_lock);
     PLDR_DATA_TABLE_ENTRY e = redirected ? find_by_path(path) : qualified ? find_loaded_path(name) : find_by_name(base_name);
@@ -1369,22 +1428,32 @@ static NTSTATUS load_dll(PCWSTR name, LOAD_CONTEXT *ctx, PLDR_DATA_TABLE_ENTRY *
         *out = e;
         return STATUS_SUCCESS;
     }
-    NTSTATUS status = redirected ? STATUS_SUCCESS : find_dll(name, ctx->SearchPath, path, RTL_NUMBER_OF(path));
-#if defined(__x86_64__) && !defined(MIME_X64_NATIVE)
-    if (status == STATUS_DLL_NOT_FOUND && !qualified && LdrpRequestX64Runtime(base_name))
-        status = find_dll(name, ctx->SearchPath, path, RTL_NUMBER_OF(path));
-#endif
-    if (!NT_SUCCESS(status))
-        return status;
-    HANDLE file;
-    status = open_image(path, &file);
-    if (!NT_SUCCESS(status))
-        return status;
+    /* like windows, a search goes past a file made for another processor, and fails as that file does if it finds
+     * no other. */
+    BOOLEAN searched = !redirected && !is_absolute_name(name);
     PVOID base;
-    status = map_image(file, &base);
-    NtClose(file);
-    if (!NT_SUCCESS(status))
-        return status;
+    for (ULONG skipped = 0;; skipped++) {
+        NTSTATUS status = redirected ? STATUS_SUCCESS
+                                     : find_dll(name, ctx->SearchPath, path, RTL_NUMBER_OF(path), skipped);
+#if defined(__x86_64__) && !defined(MIME_X64_NATIVE)
+        if (status == STATUS_DLL_NOT_FOUND && !skipped && !qualified && LdrpRequestX64Runtime(base_name))
+            status = find_dll(name, ctx->SearchPath, path, RTL_NUMBER_OF(path), 0);
+#endif
+        if (!NT_SUCCESS(status))
+            return skipped ? STATUS_INVALID_IMAGE_FORMAT : status;
+        HANDLE file;
+        status = open_image(path, &file);
+        if (!NT_SUCCESS(status))
+            return status;
+        BOOLEAN mismatch;
+        status = map_image(file, &base, &mismatch);
+        NtClose(file);
+        if (NT_SUCCESS(status))
+            break;
+        if (!mismatch || !searched)
+            return status;
+    }
+    NTSTATUS status = STATUS_SUCCESS;
     e = create_entry(base, path);
     if (!e) {
         NtUnmapViewOfSection(NtCurrentProcess(), base);
@@ -1826,7 +1895,7 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetDllHandleEx(ULONG flags, PCWSTR path, PULONG c
     while (file > resolved && file[-1] != '\\' && file[-1] != '/')
         file--;
     WCHAR redirected[MAX_PATH];
-    BOOLEAN is_redirected = NT_SUCCESS(LdrpSxsRedirectDll(resolved, redirected, RTL_NUMBER_OF(redirected)));
+    BOOLEAN is_redirected = sxs_redirect(resolved, redirected, RTL_NUMBER_OF(redirected));
     /* like windows, a lookup takes the module table lock and never waits for the loader lock. */
     RtlAcquireSRWLockExclusive(&g_table_lock);
     PLDR_DATA_TABLE_ENTRY e = is_redirected ? find_by_path(redirected)
