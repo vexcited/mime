@@ -698,12 +698,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
     mime_dll(kernel32 ${arch} BASE 0x7FFA00000000 SOURCES ${sources} OBJECTS ${arch}-chkstk ${arch}-kernel32-thunks
         OPTIONS -DMIME_BUILD_KERNEL32 IMPORTS ntdll kernelbase DEF ${MIME_GEN}/${arch}/kernel32.def)
 
-    # the exports that only forward to the runtime are thunks, which arm64 does not have yet.
-    set(mscoree_thunks)
-    if(NOT arch STREQUAL "arm64")
-        set(mscoree_thunks guest/mscoree/${arch}/common.S ${MIME_GEN}/${arch}/mscoree_thunks.S)
-    endif()
-    mime_dll(mscoree ${arch} BASE 0x7FF7B0000000 SOURCES guest/mscoree/main.c guest/kernelbase/features.c ${mscoree_thunks} OBJECTS ${arch}-chkstk
+    mime_dll(mscoree ${arch} BASE 0x7FF7B0000000 SOURCES guest/mscoree/main.c guest/kernelbase/features.c guest/mscoree/${arch}/common.S ${MIME_GEN}/${arch}/mscoree_thunks.S OBJECTS ${arch}-chkstk
         IMPORTS ntdll kernel32 DEF ${MIME_GEN}/${arch}/mscoree.def)
 
     mime_sources(sources gdi32 ${arch})

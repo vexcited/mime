@@ -13,10 +13,8 @@ typedef void(WINAPI *REGISTER_SHIM)(SHIM_CLEANUP cleanup, SHIM_SET_VERSION set_v
 typedef void(WINAPI *REGISTER_CLEANUP)(SHIM_CLEANUP cleanup);
 typedef void(WINAPI *SET_SHELL_INSTANCE)(HINSTANCE instance);
 
-#ifndef __aarch64__
 #include "mscoree_thunks.h"
 static PVOID g_thunk_targets[RTL_NUMBER_OF(g_thunk_names)];
-#endif
 
 static RTL_CRITICAL_SECTION g_initialize_lock = RTL_CRITICAL_SECTION_INIT;
 static LONG g_initialize_state;
@@ -415,7 +413,6 @@ INT WINAPI _CorExeMain(void)
 }
 
 /* the runtime function behind a thunk, null when there is no runtime or it lacks the function. */
-#ifndef __aarch64__
 PVOID __cdecl mscoree_resolve(ULONG index)
 {
     PVOID target = __atomic_load_n(&g_thunk_targets[index], __ATOMIC_ACQUIRE);
@@ -429,7 +426,6 @@ PVOID __cdecl mscoree_resolve(ULONG index)
         __atomic_store_n(&g_thunk_targets[index], target, __ATOMIC_RELEASE);
     return target;
 }
-#endif
 
 HRESULT WINAPI GetCLRMetaHost(REFIID iid, PVOID *object)
 {
