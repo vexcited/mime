@@ -1226,8 +1226,10 @@ static void call_tls_callbacks(PLDR_DATA_TABLE_ENTRY e, ULONG reason)
     IMAGE_TLS_DIRECTORY *tls = LdrpImageDirectory(e->DllBase, IMAGE_DIRECTORY_ENTRY_TLS, &size);
     if (!tls || !tls->AddressOfCallBacks)
         return;
-    for (PIMAGE_TLS_CALLBACK *cb = (PIMAGE_TLS_CALLBACK *)tls->AddressOfCallBacks; *cb; cb++)
+    for (PIMAGE_TLS_CALLBACK *cb = (PIMAGE_TLS_CALLBACK *)tls->AddressOfCallBacks; *cb; cb++) {
+        DbgPrint("TLS callback %wZ reason %u cb %p\n", &e->BaseDllName, reason, *cb);
         (*cb)(e->DllBase, reason, nullptr);
+    }
 }
 
 /* ------------------------------------------------------------------ dll entry points */
@@ -1243,6 +1245,9 @@ static BOOLEAN call_entry(PLDR_DATA_TABLE_ENTRY e, ULONG reason, PVOID reserved)
         PVOID saved = g_ldr.EntryInProgress;
         g_ldr.EntryInProgress = e;
         ok = ((PDLL_INIT_ROUTINE)e->EntryPoint)(e->DllBase, reason, reserved);
+        /* the packed engine's protector refuses the process under mime; the dll is usable all the same. */
+        if (!ok && reason == 1 && wcsstr(e->BaseDllName.Buffer, L"FLEngine"))
+            ok = TRUE;
         g_ldr.EntryInProgress = saved;
     }
     LdrpSxsDeactivate(&frame);
@@ -1789,8 +1794,20 @@ static void unicode_to_cstr(PCUNICODE_STRING s, PWSTR out, SIZE_T out_chars)
 
 NTDLL_EXPORT NTSTATUS NTAPI LdrLoadDll(PCWSTR search_path, PULONG flags, PCUNICODE_STRING name, PVOID *base)
 {
+    extern BOOLEAN MimeTraceWanted(void);
+    static BOOLEAN all_traced;
+    if (!all_traced && MimeTraceWanted()) {
+        all_traced = TRUE;
+        extern void MimeTraceModule(PVOID base);
+        for (PLIST_ENTRY it = g_ldr.InLoadOrderModuleList.Flink; it != &g_ldr.InLoadOrderModuleList; it = it->Flink) {
+            PLDR_DATA_TABLE_ENTRY mod = CONTAINING_RECORD(it, LDR_DATA_TABLE_ENTRY, InLoadOrderLinks);
+            MimeTraceModule(mod->DllBase);
+        }
+    }
     WCHAR dll[MAX_PATH];
     unicode_to_cstr(name, dll, RTL_NUMBER_OF(dll));
+    if (MimeTraceWanted())
+        DbgPrint("LdrLoadDll %ls\n", dll);
     /* the search path is a ';' separated list unless it is a small flags value. */
     /* IMAGE_FILE_EXECUTABLE_IMAGE in the characteristics is how LoadLibraryEx passes DONT_RESOLVE_DLL_REFERENCES. */
     LOAD_CONTEXT ctx = {FALSE, ((ULONG_PTR)search_path & ~(ULONG_PTR)0xFFFF) ? search_path : nullptr,
@@ -1819,10 +1836,15 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrLoadDll(PCWSTR search_path, PULONG flags, PCUNICO
     if (NT_SUCCESS(status)) {
         allocate_process_tls();
         status = run_new_initializers(before, e);
-        if (NT_SUCCESS(status))
+        if (NT_SUCCESS(status)) {
+            extern void MimeTraceModule(PVOID base);
+            MimeTraceModule(e->DllBase);
             *base = e->DllBase;
+        }
     }
     RtlLeaveCriticalSection(&LdrpLoaderLock);
+    if (MimeTraceWanted())
+        DbgPrint("LdrLoadDll %ls -> %08x base %p\n", dll, status, NT_SUCCESS(status) ? *base : nullptr);
     return status;
 }
 
@@ -1907,6 +1929,11 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetDllHandleEx(ULONG flags, PCWSTR path, PULONG c
 {
     WCHAR dll[MAX_PATH];
     unicode_to_cstr(name, dll, RTL_NUMBER_OF(dll));
+    {
+        extern BOOLEAN MimeTraceWanted(void);
+        if (MimeTraceWanted())
+            DbgPrint("LdrGetDllHandleEx %ls flags %x\n", dll, flags);
+    }
     PCWSTR resolved = resolve_api_set(dll);
     PCWSTR file = resolved + wcslen(resolved);
     while (file > resolved && file[-1] != '\\' && file[-1] != '/')
@@ -1944,6 +1971,22 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrAddRefDll(ULONG flags, PVOID base)
     return e ? STATUS_SUCCESS : STATUS_DLL_NOT_FOUND;
 }
 
+static BOOLEAN ldr_tracing(void)
+{
+    static int known = -1;
+    if (known < 0)
+        known = wcsstr(NtCurrentPeb()->ProcessParameters->ImagePathName.Buffer, L"RobloxPlayerBet") != nullptr;
+    return known;
+}
+
+NTDLL_EXPORT NTSTATUS NTAPI LdrGetProcedureAddressEx(PVOID base, PCANSI_STRING name, ULONG ordinal, PVOID *address,
+                                                     ULONG flags);
+NTDLL_EXPORT NTSTATUS NTAPI LdrGetProcedureAddressForCaller(PVOID base, PCANSI_STRING name, ULONG ordinal,
+                                                              PVOID *address, ULONG flags, PVOID caller)
+{
+    return LdrGetProcedureAddressEx(base, name, ordinal, address, flags);
+}
+
 NTDLL_EXPORT NTSTATUS NTAPI LdrGetProcedureAddressEx(PVOID base, PCANSI_STRING name, ULONG ordinal, PVOID *address,
                                                      ULONG flags)
 {
@@ -1968,6 +2011,13 @@ NTDLL_EXPORT NTSTATUS NTAPI LdrGetProcedureAddressEx(PVOID base, PCANSI_STRING n
     RtlAcquireSRWLockShared(&g_table_lock);
     PLDR_DATA_TABLE_ENTRY e = find_by_base(base);
     NTSTATUS status = e ? resolve_export(e, cname, 0, ordinal, address, &fast, 0) : STATUS_DLL_NOT_FOUND;
+    if (ldr_tracing()) {
+        if (e)
+            DbgPrint("LDR %wZ %s -> %08x %p\n", &e->BaseDllName, cname ? cname : "(ord)", status,
+                     NT_SUCCESS(status) ? *address : nullptr);
+        else
+            DbgPrint("LDR ? %s -> %08x\n", cname ? cname : "(ord)", status);
+    }
     RtlReleaseSRWLockShared(&g_table_lock);
     if (status == STATUS_RETRY) {
         RtlEnterCriticalSection(&LdrpLoaderLock);
