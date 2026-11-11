@@ -319,15 +319,18 @@ NTSTATUS NTAPI KeUserModeCallback(ULONG api, PVOID input, ULONG input_length, PV
     PPSP_SYSTEM_DLL dll = current_system_dll();
     if (!trap || !dll || !dll->KiUserCallbackDispatcher || ((PEPROCESS)thread->Process)->SystemProcess)
         return STATUS_NOT_SUPPORTED;
-    if (thread->CallbackDepth > 48)
-        return STATUS_STACK_OVERFLOW;
     /*
-     * every nested callback keeps its kernel frames, so the depth limit alone does not keep the stack from ending: the
-     * stack gets more mapped room below it, as much as was reserved for it.
+     * every nested callback keeps its kernel frames. windows has no limit of depth, only the stacks end the nesting:
+     * the stack gets more mapped room below it, as much as was reserved for it.
      */
     while ((ULONG_PTR)__builtin_frame_address(0) - (ULONG_PTR)thread->StackLimit < CALLBACK_STACK_RESERVE)
-        if (!thread->StackAllocation || !MmGrowKernelStack(thread, CALLBACK_STACK_STEP))
+        if (!thread->StackAllocation || !MmGrowKernelStack(thread, CALLBACK_STACK_STEP)) {
+            static ULONG told;
+            if (told++ < 16)
+                KiLogPrintf("callback %u of thread %u is refused, the kernel stack ended %u callbacks deep", api,
+                            (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, thread->CallbackDepth);
             return STATUS_STACK_OVERFLOW;
+        }
 
     KTRAP_FRAME frame;
     if (!KiSetupUserCallback(&frame, trap, dll->KiUserCallbackDispatcher, api, input, input_length))
