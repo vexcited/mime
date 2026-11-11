@@ -1,6 +1,7 @@
 #include "wg_private.h"
 #include <mime/win32/shellscalingapi.h>
 #include <mime/win32/winspool.h>
+#include <mime/ntuser.h>
 #include <rtl.h>
 
 #define DMDO_DEFAULT 0
@@ -55,9 +56,25 @@ void WgQueryMode(HMONITOR monitor, WG_STATE *state)
     state->Current = (landscape ? from_landscape : from_portrait)[rotation & 3];
 }
 
+static BOOL monitor_state(HMONITOR monitor, MIME_MONITOR_INFO *state)
+{
+    MONITORINFOEXW info = {.cbSize = sizeof(info)};
+    if (!GetMonitorInfoW(monitor, (MONITORINFO *)&info))
+        return FALSE;
+    MIME_MONITOR_INFO list[MIME_USER_MAX_MONITORS];
+    ULONG count = (ULONG)NtUserCallTwoParam((ULONG_PTR)list, MIME_USER_MAX_MONITORS, MIME_TWOPARAM_GETMONITORS);
+    for (ULONG i = 0; i < count && i < MIME_USER_MAX_MONITORS; i++)
+        if (!wcscmp(list[i].Device, info.szDevice)) {
+            *state = list[i];
+            return TRUE;
+        }
+    return FALSE;
+}
+
 /*
- * a standard dynamic range panel with the primaries of srgb, as dxgi reports the output in DXGI_OUTPUT_DESC1. its
- * sdr content shows at the 80 nits of the srgb reference white.
+ * a standard dynamic range panel with the primaries of srgb unless the host says more, as dxgi reports the output in
+ * DXGI_OUTPUT_DESC1. sdr content shows at the 80 nits of the srgb reference white, or where the host puts it while the
+ * monitor shows high dynamic range.
  */
 void WgQueryColor(HMONITOR monitor, WG_COLOR *color)
 {
@@ -73,6 +90,27 @@ void WgQueryColor(HMONITOR monitor, WG_COLOR *color)
         .MaxFullFrameLuminance = 270.0f,
         .SdrWhiteLevel = 80.0f,
     };
+    MIME_MONITOR_INFO state;
+    if (!monitor_state(monitor, &state))
+        return;
+    const MIME_MONITOR_COLOR *c = &state.Color;
+    if (c->RedX && c->GreenX && c->BlueX && c->WhiteX) {
+        color->Red = (WgPoint){c->RedX / 1e6f, c->RedY / 1e6f};
+        color->Green = (WgPoint){c->GreenX / 1e6f, c->GreenY / 1e6f};
+        color->Blue = (WgPoint){c->BlueX / 1e6f, c->BlueY / 1e6f};
+        color->White = (WgPoint){c->WhiteX / 1e6f, c->WhiteY / 1e6f};
+    }
+    if (c->MaxNits) {
+        color->MinLuminance = c->MinNits / 1e4f;
+        color->MaxLuminance = c->MaxNits / 1e4f;
+        color->MaxFullFrameLuminance = c->MaxFrameNits ? c->MaxFrameNits / 1e4f : color->MaxLuminance;
+    }
+    if (state.Flags & MIME_MONITORINFOF_HDR) {
+        color->Kind = AdvancedColorKind_HighDynamicRange;
+        color->Available |= 1u << AdvancedColorKind_HighDynamicRange;
+        color->HdrMetadata = 1u << HdrMetadataFormat_Hdr10;
+        color->SdrWhiteLevel = c->WhiteNits ? c->WhiteNits / 1e4f : 203.0f;
+    }
 }
 
 /* a scale below 100 percent reads as 100, as Windows rounds it. */

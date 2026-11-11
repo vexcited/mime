@@ -443,6 +443,17 @@ typedef enum DXGI_HDR_METADATA_TYPE {
     DXGI_HDR_METADATA_TYPE_HDR10PLUS = 2
 } DXGI_HDR_METADATA_TYPE;
 
+typedef struct DXGI_HDR_METADATA_HDR10 {
+    UINT16 RedPrimary[2];
+    UINT16 GreenPrimary[2];
+    UINT16 BluePrimary[2];
+    UINT16 WhitePoint[2];
+    UINT MaxMasteringLuminance;
+    UINT MinMasteringLuminance;
+    UINT16 MaxContentLightLevel;
+    UINT16 MaxFrameAverageLightLevel;
+} DXGI_HDR_METADATA_HDR10;
+
 typedef enum DXGI_FEATURE {
     DXGI_FEATURE_PRESENT_ALLOW_TEARING = 0
 } DXGI_FEATURE;

@@ -1131,6 +1131,16 @@ typedef struct MimeRect {
  */
 #define MIME_MAX_MONITORS 8
 #define MIME_MONITOR_PRIMARY 1
+#define MIME_MONITOR_HDR 2 /* shows high dynamic range content now. */
+
+/*
+ * what a monitor can show: CIE xy chromaticities in millionths and luminances in ten thousandths of a nit, all 0
+ * when the host does not know. white is the luminance sdr content shows at while the monitor is in hdr.
+ */
+typedef struct MimeMonitorColor {
+    uint32_t red_x, red_y, green_x, green_y, blue_x, blue_y, white_x, white_y;
+    uint32_t min_nits, max_nits, max_frame_nits, white_nits;
+} MimeMonitorColor;
 
 typedef struct MimeMonitor {
     uint32_t flags; /* MIME_MONITOR_* */
@@ -1141,6 +1151,7 @@ typedef struct MimeMonitor {
     MimeRect rect; /* in the virtual screen. */
     MimeRect work; /* without panels and docks, in the virtual screen too. */
     uint16_t name[32]; /* the host's name for it, such as eDP-1. */
+    MimeMonitorColor color;
 } MimeMonitor;
 
 enum {

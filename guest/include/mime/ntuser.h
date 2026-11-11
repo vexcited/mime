@@ -212,14 +212,23 @@ enum {
 
 /* what MIME_TWOPARAM_GETMONITORS returns per monitor. */
 #define MIME_USER_MAX_MONITORS 8
+#define MIME_MONITORINFOF_HDR 0x80000000u /* the monitor shows high dynamic range content now. */
+
+/* CIE xy chromaticities in millionths and luminances in ten thousandths of a nit, all 0 when unknown. */
+typedef struct MIME_MONITOR_COLOR {
+    ULONG RedX, RedY, GreenX, GreenY, BlueX, BlueY, WhiteX, WhiteY;
+    ULONG MinNits, MaxNits, MaxFrameNits, WhiteNits; /* WhiteNits: where sdr white shows while in hdr. */
+} MIME_MONITOR_COLOR;
+
 typedef struct MIME_MONITOR_INFO {
-    ULONG Flags; /* MONITORINFOF_PRIMARY */
+    ULONG Flags; /* MONITORINFOF_PRIMARY, MIME_MONITORINFOF_HDR */
     ULONG Dpi;   /* the display's, whatever the process is aware of. */
     ULONG RefreshHz;
     RECT Rect;
     RECT Work;
     WCHAR Device[32]; /* \\.\DISPLAYn */
     WCHAR Name[32];   /* the host's name for the monitor. */
+    MIME_MONITOR_COLOR Color;
 } MIME_MONITOR_INFO;
 
 enum {

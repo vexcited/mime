@@ -129,35 +129,51 @@ static const VkSurfaceFormatKHR g_formats[] = {
     {VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
     {VK_FORMAT_R8G8B8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
     {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
+    /* the last two only while a monitor shows high dynamic range, as Windows drivers list them. */
+    {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_COLOR_SPACE_HDR10_ST2084_EXT},
+    {VK_FORMAT_R16G16B16A16_SFLOAT, VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT},
 };
 #define FORMAT_COUNT (sizeof(g_formats) / sizeof(g_formats[0]))
+#define DEEP_FORMAT_COUNT 2
+
+static uint32_t format_count(void)
+{
+    MIME_MONITOR_INFO list[MIME_USER_MAX_MONITORS];
+    ULONG count = (ULONG)NtUserCallTwoParam((ULONG_PTR)list, MIME_USER_MAX_MONITORS, MIME_TWOPARAM_GETMONITORS);
+    for (ULONG i = 0; i < count && i < MIME_USER_MAX_MONITORS; i++)
+        if (list[i].Flags & MIME_MONITORINFOF_HDR)
+            return FORMAT_COUNT;
+    return FORMAT_COUNT - DEEP_FORMAT_COUNT;
+}
 
 VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice physical, VkSurfaceKHR surface,
                                                                     uint32_t *count, VkSurfaceFormatKHR *formats)
 {
+    uint32_t all = format_count();
     if (!formats) {
-        *count = FORMAT_COUNT;
+        *count = all;
         return VK_SUCCESS;
     }
-    uint32_t n = *count < FORMAT_COUNT ? *count : FORMAT_COUNT;
+    uint32_t n = *count < all ? *count : all;
     memcpy(formats, g_formats, n * sizeof(*formats));
     *count = n;
-    return n < FORMAT_COUNT ? VK_INCOMPLETE : VK_SUCCESS;
+    return n < all ? VK_INCOMPLETE : VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceSurfaceFormats2KHR(VkPhysicalDevice physical,
                                                                      const VkPhysicalDeviceSurfaceInfo2KHR *info,
                                                                      uint32_t *count, VkSurfaceFormat2KHR *formats)
 {
+    uint32_t all = format_count();
     if (!formats) {
-        *count = FORMAT_COUNT;
+        *count = all;
         return VK_SUCCESS;
     }
-    uint32_t n = *count < FORMAT_COUNT ? *count : FORMAT_COUNT;
+    uint32_t n = *count < all ? *count : all;
     for (uint32_t i = 0; i < n; i++)
         formats[i].surfaceFormat = g_formats[i];
     *count = n;
-    return n < FORMAT_COUNT ? VK_INCOMPLETE : VK_SUCCESS;
+    return n < all ? VK_INCOMPLETE : VK_SUCCESS;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice physical,
@@ -383,3 +399,24 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue queue, const VkPresentI
     mvk_call_end(e);
     return result;
 }
+
+VKAPI_ATTR void VKAPI_CALL vkSetHdrMetadataEXT(VkDevice device, uint32_t count, const VkSwapchainKHR *swapchains,
+                                               const VkHdrMetadataEXT *metadata)
+{
+    for (uint32_t i = 0; i < count; i++) {
+        const VkHdrMetadataEXT *m = &metadata[i];
+        float v[12] = {m->displayPrimaryRed.x,   m->displayPrimaryRed.y,  m->displayPrimaryGreen.x,
+                       m->displayPrimaryGreen.y, m->displayPrimaryBlue.x, m->displayPrimaryBlue.y,
+                       m->whitePoint.x,          m->whitePoint.y,         m->maxLuminance,
+                       m->minLuminance,          m->maxContentLightLevel, m->maxFrameAverageLightLevel};
+        MvkEncoder *e = mvk_call_begin(MVK_OP_HDR_METADATA);
+        mvk_put_u64(e, swapchain_of(swapchains[i])->id);
+        mvk_put_bytes(e, v, sizeof(v));
+        mvk_call_end(e);
+    }
+}
+
+const MvkProc mvk_wsi_procs[] = {
+    {"vkSetHdrMetadataEXT", (PFN_vkVoidFunction)vkSetHdrMetadataEXT},
+    {nullptr, nullptr},
+};

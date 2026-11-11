@@ -62,6 +62,10 @@ void MonitorsRefresh(void)
         const MimeMonitor *h = &g_page[i];
         MIME_MONITOR_INFO *m = &g_monitors[i];
         m->Flags = (h->flags & MIME_MONITOR_PRIMARY) ? MONITORINFOF_PRIMARY : 0;
+        if (h->flags & MIME_MONITOR_HDR)
+            m->Flags |= MIME_MONITORINFOF_HDR;
+        _Static_assert(sizeof(m->Color) == sizeof(h->color), "the color of a monitor");
+        memcpy(&m->Color, &h->color, sizeof(m->Color));
         m->Dpi = h->dpi;
         m->RefreshHz = h->refresh_hz;
         m->Rect = (RECT){h->rect.left, h->rect.top, h->rect.right, h->rect.bottom};
@@ -242,7 +246,7 @@ ULONG_PTR MonitorCall(ULONG_PTR param1, ULONG_PTR param2, ULONG routine)
         mi.rcWork = m.Work;
         DpiRectConvert(&mi.rcMonitor, DPI_PHYSICAL, DpiCurrentAwareness());
         DpiRectConvert(&mi.rcWork, DPI_PHYSICAL, DpiCurrentAwareness());
-        mi.dwFlags = m.Flags;
+        mi.dwFlags = m.Flags & MONITORINFOF_PRIMARY;
         memcpy(mi.szDevice, m.Device, sizeof(mi.szDevice));
         return NT_SUCCESS(MimeCopyToUser((PVOID)param2, &mi, mi.cbSize));
     }

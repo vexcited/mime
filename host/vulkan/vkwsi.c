@@ -42,6 +42,7 @@ typedef unsigned long VisualID;
 
 const char *const mvk_wsi_instance_extensions[] = {
     VK_KHR_SURFACE_EXTENSION_NAME,
+    VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME,
 #ifdef __APPLE__
     VK_EXT_METAL_SURFACE_EXTENSION_NAME,
 #else
@@ -53,8 +54,11 @@ const char *const mvk_wsi_instance_extensions[] = {
 
 bool mvk_wsi_device_extension(const char *name)
 {
-    return !strcmp(name, VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    return !strcmp(name, VK_KHR_SWAPCHAIN_EXTENSION_NAME) || !strcmp(name, VK_EXT_HDR_METADATA_EXTENSION_NAME);
 }
+
+/* what the values of an image mean: sRGB, scRGB where 1 is 80 nits, or BT.2020 through the curve of ST 2084. */
+enum { SPACE_SDR, SPACE_SCRGB, SPACE_PQ };
 
 typedef struct Presenter Presenter;
 
@@ -75,6 +79,14 @@ typedef struct Swapchain {
     uint32_t queued[MAX_IMAGES]; /* presents of the image the presenting thread did not submit yet. */
     bool flip; /* bottom-first rows, as OpenGL stores them. */
     bool premultiplied; /* the alpha of the images shows what is behind the window. */
+    uint32_t space;
+    /* what draws the images of one of high dynamic range as another space. */
+    VkImageView views[MAX_IMAGES];
+    VkDescriptorPool pool;
+    VkDescriptorSet sets[MAX_IMAGES];
+    /* the mastering display the program described, under the convert lock. */
+    bool has_metadata;
+    VkHdrMetadataEXT metadata;
 } Swapchain;
 
 typedef struct Frame {
@@ -113,6 +125,23 @@ typedef struct GammaPass {
     VkFramebuffer framebuffers[MAX_HOST_IMAGES];
 } GammaPass;
 
+/* a guest image of high dynamic range drawn as another space, the size of the image. */
+typedef struct ConvertTarget {
+    VkImage image;
+    VkDeviceMemory memory;
+    VkImageView view;
+    VkFramebuffer framebuffer;
+    VkExtent2D extent;
+    uint32_t space;
+} ConvertTarget;
+
+/* how a frame of high dynamic range shows in standard range: the nits of its white, cut or rolled off above. */
+typedef struct Tone {
+    bool on;
+    float white;
+    bool roll;
+} Tone;
+
 struct Presenter {
     uint32_t window;
     uint32_t source; /* the window of the guest it presents for, 0 when a window has one presenter. */
@@ -131,6 +160,13 @@ struct Presenter {
     bool srgb;
     bool premultiplied; /* the swapchain composes with alpha. */
     bool premultiplied_wanted; /* what the last swapchain asked for, which the surface may not offer. */
+    uint32_t space; /* of the swapchain. */
+    bool deep_wanted; /* high dynamic range was asked for, which the surface may not offer. */
+    bool metadata_set;
+    VkHdrMetadataEXT metadata;
+    /* the guest image as the swapchain's space, and as standard range for the copy when that is another. */
+    ConvertTarget convert, standard;
+    Tone tone;
     VkExtent2D extent;
     VkPresentModeKHR wanted_mode;
     bool stale;
@@ -226,6 +262,17 @@ typedef struct MvkWsi {
     PFN_vkGetSwapchainImagesKHR GetSwapchainImages;
     PFN_vkAcquireNextImageKHR AcquireNextImage;
     PFN_vkQueuePresentKHR QueuePresent;
+    PFN_vkSetHdrMetadataEXT SetHdrMetadata;
+    /* what draws an image of high dynamic range as each space, made with the first swapchain of one. */
+    pthread_mutex_t convert_lock;
+    bool convert_tried, convert_ok;
+    VkDescriptorSetLayout convert_set_layout;
+    VkPipelineLayout convert_layout;
+    VkSampler convert_sampler;
+    struct {
+        VkRenderPass pass;
+        VkPipeline pipeline;
+    } convert[3];
 } MvkWsi;
 
 static pthread_mutex_t g_presenters_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -241,6 +288,7 @@ static MvkWsi *wsi_of(MvkConnection *c)
         return nullptr;
     pthread_mutex_init(&w->lock, nullptr);
     pthread_cond_init(&w->cond, nullptr);
+    pthread_mutex_init(&w->convert_lock, nullptr);
     PFN_vkGetDeviceProcAddr gdpa = (PFN_vkGetDeviceProcAddr)c->gipa(c->instance, "vkGetDeviceProcAddr");
 #define INSTANCE(field, name) w->field = (typeof(w->field))c->gipa(c->instance, name)
 #define DEVICE(field, name) w->field = (typeof(w->field))(c->device ? gdpa(c->device, name) : NULL)
@@ -259,6 +307,8 @@ static MvkWsi *wsi_of(MvkConnection *c)
     DEVICE(GetSwapchainImages, "vkGetSwapchainImagesKHR");
     DEVICE(AcquireNextImage, "vkAcquireNextImageKHR");
     DEVICE(QueuePresent, "vkQueuePresentKHR");
+    if (c->hdr_metadata)
+        DEVICE(SetHdrMetadata, "vkSetHdrMetadataEXT");
 #undef INSTANCE
 #undef DEVICE
     c->wsi = w;
@@ -339,6 +389,11 @@ static VkSemaphore new_semaphore(MvkConnection *c)
 
 static void destroy_swapchain_images(MvkConnection *c, Swapchain *s)
 {
+    for (uint32_t i = 0; i < s->count; i++)
+        if (s->views[i])
+            c->fn.vkDestroyImageView(c->device, s->views[i], nullptr);
+    if (s->pool)
+        c->fn.vkDestroyDescriptorPool(c->device, s->pool, nullptr);
     for (uint32_t i = 0; i < s->count; i++) {
         if (s->images[i])
             c->fn.vkDestroyImage(c->device, s->images[i], nullptr);
@@ -347,6 +402,19 @@ static void destroy_swapchain_images(MvkConnection *c, Swapchain *s)
         if (s->released[i])
             c->fn.vkDestroySemaphore(c->device, s->released[i], nullptr);
     }
+}
+
+static bool convert_ready(MvkConnection *c, MvkWsi *w);
+static bool convert_views(MvkConnection *c, MvkWsi *w, Swapchain *s);
+
+static uint32_t space_of(VkFormat format, VkColorSpaceKHR space)
+{
+    if (space == VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT && format == VK_FORMAT_R16G16B16A16_SFLOAT)
+        return SPACE_SCRGB;
+    if (space == VK_COLOR_SPACE_HDR10_ST2084_EXT &&
+        (format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 || format == VK_FORMAT_A2R10G10B10_UNORM_PACK32))
+        return SPACE_PQ;
+    return SPACE_SDR;
 }
 
 /*
@@ -362,7 +430,7 @@ void mvk_wsi_create_swapchain(MvkCall *call)
     uint64_t id = mvk_get_u64(d);
     uint32_t flags = mvk_get_u32(d);
     VkFormat format = (VkFormat)mvk_get_u32(d);
-    mvk_get_u32(d);
+    uint32_t space = space_of(format, (VkColorSpaceKHR)mvk_get_u32(d));
     VkExtent2D extent = {mvk_get_u32(d), mvk_get_u32(d)};
     uint32_t layers = mvk_get_u32(d);
     VkImageUsageFlags usage = mvk_get_u32(d);
@@ -399,6 +467,11 @@ void mvk_wsi_create_swapchain(MvkCall *call)
                          .premultiplied = composite == VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR};
         /* a mutable swapchain's views may differ in format; otherwise only usage the format allows. */
         bool mutable = (flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR) != 0;
+        /* one of high dynamic range is sampled by the pass that draws it as what the window shows. */
+        if (space && !convert_ready(c, wsi_of(c)))
+            space = SPACE_SDR;
+        if (space)
+            usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
         VkFormatProperties fp;
         c->fn.vkGetPhysicalDeviceFormatProperties(c->physical_device, format, &fp);
         if (!mutable && !(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT))
@@ -440,6 +513,8 @@ void mvk_wsi_create_swapchain(MvkCall *call)
             if (!s->released[i] && result == VK_SUCCESS)
                 result = VK_ERROR_OUT_OF_HOST_MEMORY;
         }
+        if (result == VK_SUCCESS && space && convert_views(c, c->wsi, s))
+            s->space = space;
         if (result == VK_SUCCESS) {
             for (uint32_t i = 0; i < count; i++) {
                 s->image_ids[i] = ids[i];
@@ -500,6 +575,7 @@ static void drop_swapchain(MvkConnection *c, Presenter *p)
         w->DestroySwapchain(c->device, p->swapchain, nullptr);
     p->swapchain = VK_NULL_HANDLE;
     p->count = 0;
+    p->metadata_set = false;
 }
 
 static void drop_last(MvkConnection *c, Presenter *p)
@@ -540,6 +616,7 @@ static void drop_gdi(MvkConnection *c, Presenter *p)
 }
 
 static void gamma_drop_compose(MvkConnection *c, GammaPass *g);
+static void convert_drop(MvkConnection *c, ConvertTarget *t);
 
 /* the window shows nothing for now: what is the window's size goes, and comes back at the next present that shows. */
 static void drop_window_images(MvkConnection *c, Presenter *p)
@@ -549,11 +626,13 @@ static void drop_window_images(MvkConnection *c, Presenter *p)
     drop_last(c, p);
     drop_gdi(c, p);
     gamma_drop_compose(c, &p->gamma);
+    convert_drop(c, &p->convert);
+    convert_drop(c, &p->standard);
 }
 
 static bool has_window_images(const Presenter *p)
 {
-    return p->swapchain || p->last || p->gdi || p->gamma.compose;
+    return p->swapchain || p->last || p->gdi || p->gamma.compose || p->convert.image || p->standard.image;
 }
 
 static void drop_surface(MvkConnection *c, Presenter *p)
@@ -724,12 +803,17 @@ static void presenter_attach(MvkConnection *c, Presenter *p, MimeRect area, uint
     pthread_mutex_unlock(&p->lock);
 }
 
-static VkSurfaceFormatKHR pick_format(MvkConnection *c, Presenter *p, bool srgb)
+static VkSurfaceFormatKHR pick_format(MvkConnection *c, Presenter *p, bool srgb, bool deep)
 {
     VkSurfaceFormatKHR formats[64];
     uint32_t n = 64;
     if (c->wsi->SurfaceFormats(c->physical_device, p->surface, &n, formats) < 0 || !n)
         return (VkSurfaceFormatKHR){VK_FORMAT_UNDEFINED};
+    /* HDR10 first, which every compositor that shows high dynamic range takes. */
+    for (uint32_t want = SPACE_PQ; deep && want >= SPACE_SCRGB; want--)
+        for (uint32_t i = 0; i < n; i++)
+            if (space_of(formats[i].format, formats[i].colorSpace) == want)
+                return formats[i];
     static const VkFormat linear[] = {VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM};
     static const VkFormat encoded[] = {VK_FORMAT_B8G8R8A8_SRGB, VK_FORMAT_R8G8B8A8_SRGB};
     const VkFormat *want = srgb ? encoded : linear;
@@ -758,7 +842,7 @@ static VkPresentModeKHR pick_mode(MvkConnection *c, Presenter *p, VkPresentModeK
 }
 
 static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExtent2D want, bool srgb,
-                           VkPresentModeKHR mode, bool premultiplied)
+                           VkPresentModeKHR mode, bool premultiplied, bool deep)
 {
     MvkWsi *w = c->wsi;
     VkSurfaceCapabilitiesKHR caps;
@@ -769,7 +853,7 @@ static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExte
     extent.height = MIME_MIN(MIME_MAX(extent.height, caps.minImageExtent.height), caps.maxImageExtent.height);
     if (!extent.width || !extent.height || !(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT))
         return false;
-    VkSurfaceFormatKHR format = pick_format(c, p, srgb);
+    VkSurfaceFormatKHR format = pick_format(c, p, srgb, deep);
     if (format.format == VK_FORMAT_UNDEFINED)
         return false;
     uint32_t count = caps.minImageCount + 1;
@@ -785,7 +869,8 @@ static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExte
     if (!(caps.supportedCompositeAlpha & alpha))
         alpha = (VkCompositeAlphaFlagBitsKHR)(caps.supportedCompositeAlpha & -caps.supportedCompositeAlpha);
     /* the old swapchain goes first when both would not fit. */
-    VkDeviceSize bytes = (VkDeviceSize)count * extent.width * extent.height * 4;
+    VkDeviceSize bytes = (VkDeviceSize)count * extent.width * extent.height *
+                         (format.format == VK_FORMAT_R16G16B16A16_SFLOAT ? 8 : 4);
     if (p->swapchain && !mvk_budget_fits(c, bytes)) {
         pthread_mutex_lock(&c->queue_lock);
         c->fn.vkQueueWaitIdle(queue);
@@ -832,6 +917,8 @@ static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExte
     p->format = format.format;
     p->srgb = srgb;
     p->premultiplied = premultiplied;
+    p->space = space_of(format.format, format.colorSpace);
+    p->deep_wanted = deep;
     p->extent = extent;
     p->wanted_mode = mode;
     p->stale = false;
@@ -1133,20 +1220,12 @@ static bool gamma_base(MvkConnection *c, GammaPass *g)
     return c->fn.vkAllocateDescriptorSets(c->device, &dsi, &g->set) == VK_SUCCESS;
 }
 
-/* the render pass and pipeline that write a swapchain image of format f. */
-static bool gamma_pipeline(MvkConnection *c, GammaPass *g, VkFormat f)
+/* a render pass over one image of format f, left in the given layout. */
+static bool make_pass(MvkConnection *c, VkFormat f, VkImageLayout final, VkRenderPass *pass)
 {
-    if (g->pipeline && g->format == f)
-        return true;
-    gamma_drop_pipeline(c, g);
-    const uint32_t *vs, *fs;
-    size_t vs_size, fs_size;
-    if (!mime_gamma_shaders(&vs, &vs_size, &fs, &fs_size))
-        return false;
     VkAttachmentDescription attachment = {0, f, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE,
                                           VK_ATTACHMENT_STORE_OP_STORE, VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-                                          VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED,
-                                          VK_IMAGE_LAYOUT_PRESENT_SRC_KHR};
+                                          VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, final};
     VkAttachmentReference ref = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     VkSubpassDescription subpass = {.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     .colorAttachmentCount = 1,
@@ -1156,8 +1235,13 @@ static bool gamma_pipeline(MvkConnection *c, GammaPass *g, VkFormat f)
                                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, 0};
     VkRenderPassCreateInfo rpi = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO, nullptr, 0, 1, &attachment, 1, &subpass, 1,
                                   &dependency};
-    if (c->fn.vkCreateRenderPass(c->device, &rpi, nullptr, &g->pass) != VK_SUCCESS)
-        return false;
+    return c->fn.vkCreateRenderPass(c->device, &rpi, nullptr, pass) == VK_SUCCESS;
+}
+
+/* a pipeline that draws one triangle over the whole pass. */
+static bool make_pipeline(MvkConnection *c, VkRenderPass pass, VkPipelineLayout layout, const uint32_t *vs,
+                          size_t vs_size, const uint32_t *fs, size_t fs_size, VkPipeline *pipeline)
+{
     VkShaderModule modules[2] = {};
     VkShaderModuleCreateInfo vmi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0, vs_size, vs};
     VkShaderModuleCreateInfo fmi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0, fs_size, fs};
@@ -1203,15 +1287,28 @@ static bool gamma_pipeline(MvkConnection *c, GammaPass *g, VkFormat f)
             .pMultisampleState = &multisample,
             .pColorBlendState = &blending,
             .pDynamicState = &dynamic,
-            .layout = g->layout,
-            .renderPass = g->pass,
+            .layout = layout,
+            .renderPass = pass,
         };
-        ok = c->fn.vkCreateGraphicsPipelines(c->device, VK_NULL_HANDLE, 1, &gpi, nullptr, &g->pipeline) == VK_SUCCESS;
+        ok = c->fn.vkCreateGraphicsPipelines(c->device, VK_NULL_HANDLE, 1, &gpi, nullptr, pipeline) == VK_SUCCESS;
     }
     for (int i = 0; i < 2; i++)
         if (modules[i])
             c->fn.vkDestroyShaderModule(c->device, modules[i], nullptr);
-    if (!ok)
+    return ok;
+}
+
+/* the render pass and pipeline that write a swapchain image of format f. */
+static bool gamma_pipeline(MvkConnection *c, GammaPass *g, VkFormat f)
+{
+    if (g->pipeline && g->format == f)
+        return true;
+    gamma_drop_pipeline(c, g);
+    const uint32_t *vs, *fs;
+    size_t vs_size, fs_size;
+    if (!mime_gamma_shaders(&vs, &vs_size, &fs, &fs_size) ||
+        !make_pass(c, f, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, &g->pass) ||
+        !make_pipeline(c, g->pass, g->layout, vs, vs_size, fs, fs_size, &g->pipeline))
         return false;
     g->format = f;
     return true;
@@ -1287,7 +1384,7 @@ static bool gamma_prepare(MvkConnection *c, Presenter *p)
     GammaPass *g = &p->gamma;
     uint16_t ramp[3][256];
     uint32_t generation;
-    if (!mime_gamma_ramp(ramp, &generation) || g->broken || unorm_of(p->format) == VK_FORMAT_UNDEFINED)
+    if (p->space || !mime_gamma_ramp(ramp, &generation) || g->broken || unorm_of(p->format) == VK_FORMAT_UNDEFINED)
         return false;
     if (!gamma_base(c, g) || !gamma_pipeline(c, g, p->format) || !gamma_compose(c, p) || !gamma_views(c, p)) {
         mime_warn("vulkan: no gamma pass on window %#x", p->window);
@@ -1342,6 +1439,281 @@ static void gamma_record(MvkConnection *c, Presenter *p, VkCommandBuffer cmd, ui
     c->fn.vkCmdSetScissor(cmd, 0, 1, &scissor);
     c->fn.vkCmdDraw(cmd, 3, 1, 0, 0);
     c->fn.vkCmdEndRenderPass(cmd);
+}
+
+/* ------------------------------------------------------------------ high dynamic range. */
+
+static const VkFormat CONVERT_FORMATS[3] = {
+    [SPACE_SDR] = VK_FORMAT_B8G8R8A8_UNORM,
+    [SPACE_SCRGB] = VK_FORMAT_R16G16B16A16_SFLOAT,
+    [SPACE_PQ] = VK_FORMAT_A2B10G10R10_UNORM_PACK32,
+};
+
+typedef struct ConvertPush {
+    uint32_t source, target;
+    float white;
+    uint32_t roll;
+    int32_t flip; /* the height of an image that has its rows bottom first, else 0. */
+} ConvertPush;
+
+static bool convert_make(MvkConnection *c, MvkWsi *w)
+{
+    const uint32_t *vs, *fs;
+    size_t vs_size, fs_size;
+    if (!mime_convert_shaders(&vs, &vs_size, &fs, &fs_size))
+        return false;
+    VkDescriptorSetLayoutBinding binding = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT,
+                                            nullptr};
+    VkDescriptorSetLayoutCreateInfo sli = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 1, &binding};
+    if (c->fn.vkCreateDescriptorSetLayout(c->device, &sli, nullptr, &w->convert_set_layout) != VK_SUCCESS)
+        return false;
+    VkPushConstantRange push = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(ConvertPush)};
+    VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1,
+                                      &w->convert_set_layout, 1, &push};
+    if (c->fn.vkCreatePipelineLayout(c->device, &pli, nullptr, &w->convert_layout) != VK_SUCCESS)
+        return false;
+    VkSamplerCreateInfo si = {
+        .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter = VK_FILTER_NEAREST,
+        .minFilter = VK_FILTER_NEAREST,
+        .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+    };
+    if (c->fn.vkCreateSampler(c->device, &si, nullptr, &w->convert_sampler) != VK_SUCCESS)
+        return false;
+    for (int i = 0; i < 3; i++)
+        if (!make_pass(c, CONVERT_FORMATS[i], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, &w->convert[i].pass) ||
+            !make_pipeline(c, w->convert[i].pass, w->convert_layout, vs, vs_size, fs, fs_size, &w->convert[i].pipeline))
+            return false;
+    return true;
+}
+
+static bool convert_ready(MvkConnection *c, MvkWsi *w)
+{
+    if (!w)
+        return false;
+    pthread_mutex_lock(&w->convert_lock);
+    if (!w->convert_tried) {
+        w->convert_tried = true;
+        w->convert_ok = convert_make(c, w);
+        if (!w->convert_ok)
+            mime_warn("vulkan: no pass for high dynamic range, its swapchains show as they are");
+    }
+    bool ok = w->convert_ok;
+    pthread_mutex_unlock(&w->convert_lock);
+    return ok;
+}
+
+static void convert_destroy(MvkConnection *c, MvkWsi *w)
+{
+    for (int i = 0; i < 3; i++) {
+        if (w->convert[i].pipeline)
+            c->fn.vkDestroyPipeline(c->device, w->convert[i].pipeline, nullptr);
+        if (w->convert[i].pass)
+            c->fn.vkDestroyRenderPass(c->device, w->convert[i].pass, nullptr);
+    }
+    if (w->convert_sampler)
+        c->fn.vkDestroySampler(c->device, w->convert_sampler, nullptr);
+    if (w->convert_layout)
+        c->fn.vkDestroyPipelineLayout(c->device, w->convert_layout, nullptr);
+    if (w->convert_set_layout)
+        c->fn.vkDestroyDescriptorSetLayout(c->device, w->convert_set_layout, nullptr);
+}
+
+/* a view and a descriptor set for each image of the swapchain. */
+static bool convert_views(MvkConnection *c, MvkWsi *w, Swapchain *s)
+{
+    VkDescriptorPoolSize size = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, s->count};
+    VkDescriptorPoolCreateInfo dpi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO, nullptr, 0, s->count, 1, &size};
+    if (c->fn.vkCreateDescriptorPool(c->device, &dpi, nullptr, &s->pool) != VK_SUCCESS)
+        return false;
+    for (uint32_t i = 0; i < s->count; i++) {
+        VkImageViewCreateInfo vi = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = s->images[i],
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = s->format,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+        };
+        VkDescriptorSetAllocateInfo dsi = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO, nullptr, s->pool, 1,
+                                           &w->convert_set_layout};
+        if (c->fn.vkCreateImageView(c->device, &vi, nullptr, &s->views[i]) != VK_SUCCESS ||
+            c->fn.vkAllocateDescriptorSets(c->device, &dsi, &s->sets[i]) != VK_SUCCESS)
+            return false;
+        VkDescriptorImageInfo image = {w->convert_sampler, s->views[i], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, s->sets[i], 0, 0, 1,
+                                      VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &image, nullptr, nullptr};
+        c->fn.vkUpdateDescriptorSets(c->device, 1, &write, 0, nullptr);
+    }
+    return true;
+}
+
+static void convert_drop(MvkConnection *c, ConvertTarget *t)
+{
+    if (t->framebuffer)
+        c->fn.vkDestroyFramebuffer(c->device, t->framebuffer, nullptr);
+    if (t->view)
+        c->fn.vkDestroyImageView(c->device, t->view, nullptr);
+    if (t->image)
+        c->fn.vkDestroyImage(c->device, t->image, nullptr);
+    if (t->memory)
+        c->fn.vkFreeMemory(c->device, t->memory, nullptr);
+    *t = (ConvertTarget){};
+}
+
+static bool convert_target(MvkConnection *c, Presenter *p, ConvertTarget *t, VkExtent2D extent, uint32_t space)
+{
+    if (t->framebuffer && t->extent.width == extent.width && t->extent.height == extent.height && t->space == space)
+        return true;
+    wait_frames(c, p);
+    convert_drop(c, t);
+    VkImageCreateInfo ii = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = CONVERT_FORMATS[space],
+        .extent = {extent.width, extent.height, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    VkFramebufferCreateInfo fi = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO, nullptr, 0, c->wsi->convert[space].pass, 1,
+                                  &t->view, extent.width, extent.height, 1};
+    if (!gamma_image(c, &ii, &t->image, &t->memory, ii.format, &t->view) ||
+        c->fn.vkCreateFramebuffer(c->device, &fi, nullptr, &t->framebuffer) != VK_SUCCESS) {
+        convert_drop(c, t);
+        return false;
+    }
+    t->extent = extent;
+    t->space = space;
+    return true;
+}
+
+/* draws image index of s as the target's space, which is left to be blitted from. */
+static void convert_draw(MvkConnection *c, VkCommandBuffer cmd, Swapchain *s, uint32_t index, ConvertTarget *t,
+                         Tone tone)
+{
+    MvkWsi *w = c->wsi;
+    VkRenderPassBeginInfo begin = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, nullptr, w->convert[t->space].pass,
+                                   t->framebuffer, {{0, 0}, t->extent}, 0, nullptr};
+    c->fn.vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    c->fn.vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, w->convert[t->space].pipeline);
+    c->fn.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, w->convert_layout, 0, 1, &s->sets[index], 0,
+                                  nullptr);
+    ConvertPush push = {s->space, t->space, tone.white, tone.roll, s->flip ? (int32_t)s->extent.height : 0};
+    c->fn.vkCmdPushConstants(cmd, w->convert_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
+    VkViewport viewport = {0, 0, (float)t->extent.width, (float)t->extent.height, 0, 1};
+    VkRect2D scissor = {{0, 0}, t->extent};
+    c->fn.vkCmdSetViewport(cmd, 0, 1, &viewport);
+    c->fn.vkCmdSetScissor(cmd, 0, 1, &scissor);
+    c->fn.vkCmdDraw(cmd, 3, 1, 0, 0);
+    c->fn.vkCmdEndRenderPass(cmd);
+    barrier(c, cmd, t->image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+}
+
+/* the guest's image goes back to the layout it presents in, from the one it was read in. */
+static void release_source(MvkConnection *c, VkCommandBuffer cmd, VkImage src, bool sampled)
+{
+    if (sampled)
+        barrier(c, cmd, src, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                VK_ACCESS_SHADER_READ_BIT, 0, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+    else
+        barrier(c, cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                VK_ACCESS_TRANSFER_READ_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+}
+
+/* whether a monitor shows high dynamic range, which is what the guest was told, and what that one can show. */
+static bool display_hdr(MimeMonitorColor *color)
+{
+    MimeMonitor monitors[MIME_MAX_MONITORS];
+    uint32_t n = mime_ui_get_monitors(monitors, MIME_MAX_MONITORS);
+    for (uint32_t i = 0; i < n && i < MIME_MAX_MONITORS; i++)
+        if (monitors[i].flags & MIME_MONITOR_HDR) {
+            *color = monitors[i].color;
+            return true;
+        }
+    return false;
+}
+
+/*
+ * scRGB on a monitor of standard range has its white at 1, and Windows cuts what is over. a program told of high
+ * dynamic range draws white where the monitor's description put it, and its highlights roll off.
+ */
+static Tone tone_of(const Swapchain *s, bool told)
+{
+    bool plain = s->space == SPACE_SCRGB && !told;
+    return (Tone){true, plain ? 80.0f : 203.0f, !plain};
+}
+
+/* tells the compositor what the frames were made for: the program's word, else the monitor itself. */
+static void show_metadata(MvkConnection *c, Presenter *p, Swapchain *s, const MimeMonitorColor *m)
+{
+    MvkWsi *w = c->wsi;
+    if (!p->space || !w->SetHdrMetadata)
+        return;
+    VkHdrMetadataEXT data;
+    memset(&data, 0, sizeof(data));
+    pthread_mutex_lock(&w->convert_lock);
+    bool given = s->has_metadata;
+    if (given)
+        data = s->metadata;
+    pthread_mutex_unlock(&w->convert_lock);
+    if (!given) {
+        if (!m->max_nits)
+            return;
+        data.sType = VK_STRUCTURE_TYPE_HDR_METADATA_EXT;
+        data.displayPrimaryRed = (VkXYColorEXT){0.708f, 0.292f};
+        data.displayPrimaryGreen = (VkXYColorEXT){0.170f, 0.797f};
+        data.displayPrimaryBlue = (VkXYColorEXT){0.131f, 0.046f};
+        data.whitePoint = (VkXYColorEXT){0.3127f, 0.3290f};
+        if (m->red_x && m->green_x && m->blue_x && m->white_x) {
+            data.displayPrimaryRed = (VkXYColorEXT){m->red_x / 1e6f, m->red_y / 1e6f};
+            data.displayPrimaryGreen = (VkXYColorEXT){m->green_x / 1e6f, m->green_y / 1e6f};
+            data.displayPrimaryBlue = (VkXYColorEXT){m->blue_x / 1e6f, m->blue_y / 1e6f};
+            data.whitePoint = (VkXYColorEXT){m->white_x / 1e6f, m->white_y / 1e6f};
+        }
+        data.maxLuminance = m->max_nits / 1e4f;
+        data.minLuminance = m->min_nits / 1e4f;
+        data.maxContentLightLevel = data.maxLuminance;
+        data.maxFrameAverageLightLevel = m->max_frame_nits ? m->max_frame_nits / 1e4f : data.maxLuminance;
+    }
+    if (p->metadata_set && !memcmp(&p->metadata, &data, sizeof(data)))
+        return;
+    w->SetHdrMetadata(c->device, 1, &p->swapchain, &data);
+    p->metadata = data;
+    p->metadata_set = true;
+}
+
+/* (swapchain id, twelve floats: red, green, blue and white xy, then max, min, content and frame average nits) */
+void mvk_wsi_hdr_metadata(MvkCall *call)
+{
+    MvkConnection *c = call->conn;
+    MvkDecoder *d = &call->in;
+    Swapchain *s = (Swapchain *)(uintptr_t)mvk_get_handle(d, 0);
+    float v[12];
+    mvk_get_bytes(d, v, sizeof(v));
+    MvkWsi *w = c->wsi;
+    if (d->error || !s || !w)
+        return;
+    pthread_mutex_lock(&w->convert_lock);
+    memset(&s->metadata, 0, sizeof(s->metadata));
+    s->metadata.sType = VK_STRUCTURE_TYPE_HDR_METADATA_EXT;
+    s->metadata.displayPrimaryRed = (VkXYColorEXT){v[0], v[1]};
+    s->metadata.displayPrimaryGreen = (VkXYColorEXT){v[2], v[3]};
+    s->metadata.displayPrimaryBlue = (VkXYColorEXT){v[4], v[5]};
+    s->metadata.whitePoint = (VkXYColorEXT){v[6], v[7]};
+    s->metadata.maxLuminance = v[8];
+    s->metadata.minLuminance = v[9];
+    s->metadata.maxContentLightLevel = v[10];
+    s->metadata.maxFrameAverageLightLevel = v[11];
+    s->has_metadata = v[8] > 0;
+    pthread_mutex_unlock(&w->convert_lock);
 }
 
 /* ------------------------------------------------------------------ recording. */
@@ -1471,9 +1843,23 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
     }
 
     /* the guest's image over the client area. */
-    VkImage src = s->images[index];
-    barrier(c, cmd, src, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0,
-            VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    VkImage src = s->images[index], from = src, kept = src;
+    bool flip = s->flip;
+    if (p->tone.on) {
+        /* one of high dynamic range is drawn as what the window shows, and as standard range for the copy. */
+        barrier(c, cmd, src, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0,
+                VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        convert_draw(c, cmd, s, index, &p->convert, p->tone);
+        from = kept = p->convert.image;
+        if (p->space && p->last) {
+            convert_draw(c, cmd, s, index, &p->standard, p->tone);
+            kept = p->standard.image;
+        }
+        flip = false;
+    } else {
+        barrier(c, cmd, src, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0,
+                VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    }
     Box crop = {0, 0, s->extent.width, s->extent.height}, area;
     if (frame->subsurface) {
         /* a layer is the part of the client area that shows, so it takes the same part of the image. */
@@ -1487,15 +1873,15 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
     } else {
         area = to_pixels(frame, frame->client);
     }
-    blit(c, cmd, src, crop, s->extent.width, s->extent.height, dst, area, p->extent.width, p->extent.height, s->flip);
+    blit(c, cmd, from, crop, s->extent.width, s->extent.height, dst, area, p->extent.width, p->extent.height, flip);
     /* and kept, for captures of the screen. */
     if (p->last) {
         barrier(c, cmd, p->last, p->last_valid ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
                 VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-        blit(c, cmd, src, (Box){0, 0, s->extent.width, s->extent.height}, s->extent.width, s->extent.height, p->last,
+        blit(c, cmd, kept, (Box){0, 0, s->extent.width, s->extent.height}, s->extent.width, s->extent.height, p->last,
              (Box){0, 0, p->last_extent.width, p->last_extent.height}, p->last_extent.width, p->last_extent.height,
-             s->flip);
+             flip);
         barrier(c, cmd, p->last, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                 VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -1513,8 +1899,7 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
     p->info_client = client;
     p->info_serial = p->last_serial;
     pthread_mutex_unlock(&p->info_lock);
-    barrier(c, cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-            VK_ACCESS_TRANSFER_READ_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+    release_source(c, cmd, src, p->tone.on);
     if (gamma)
         gamma_record(c, p, cmd, target);
     else
@@ -1608,6 +1993,10 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
         return false;
     VkExtent2D want = {frame->pixel_width, frame->pixel_height};
     bool srgb = is_srgb(s->format);
+    /* one of high dynamic range shows as that where the monitor does, over the client area alone. */
+    MimeMonitorColor color = {};
+    bool told = s->space && display_hdr(&color);
+    bool deep = told && frame->subsurface;
     /* swapchains that share the window take turns at its settings only once the one that has them stops. */
     uint64_t now = mime_now_ns();
     bool owner = !p->owner || p->owner == s->serial || now - p->owner_seen > OWNER_IDLE_NS;
@@ -1617,14 +2006,15 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
     }
     for (int attempt = 0; attempt < 2; attempt++) {
         bool settings = !p->swapchain || (owner && (p->srgb != srgb || p->wanted_mode != s->mode ||
-                                                    p->premultiplied_wanted != s->premultiplied));
+                                                    p->premultiplied_wanted != s->premultiplied ||
+                                                    p->deep_wanted != deep));
         if (settings || p->stale || p->extent.width != want.width || p->extent.height != want.height) {
             wait_frames(c, p);
             bool mine = owner || !p->swapchain;
             bool encoded = mine ? srgb : p->srgb, premultiplied = mine ? s->premultiplied : p->premultiplied_wanted;
             VkPresentModeKHR mode = mine ? s->mode : p->wanted_mode;
             p->premultiplied_wanted = premultiplied;
-            if (!make_swapchain(c, p, queue, want, encoded, mode, premultiplied))
+            if (!make_swapchain(c, p, queue, want, encoded, mode, premultiplied, mine ? deep : p->deep_wanted))
                 return false;
         }
         Frame *f = &p->frames[p->frame];
@@ -1669,6 +2059,24 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
             drop_last(c, p);
         }
         p->last_queue = queue;
+        p->tone = (Tone){};
+        if (s->space && convert_target(c, p, &p->convert, s->extent, p->space)) {
+            p->tone = tone_of(s, told);
+        } else if (p->convert.image) {
+            wait_frames(c, p);
+            convert_drop(c, &p->convert);
+        }
+        if (p->tone.on && p->space && p->last) {
+            if (!convert_target(c, p, &p->standard, s->extent, SPACE_SDR)) {
+                wait_frames(c, p);
+                drop_last(c, p);
+            }
+        } else if (p->standard.image) {
+            wait_frames(c, p);
+            convert_drop(c, &p->standard);
+        }
+        if (p->tone.on)
+            show_metadata(c, p, s, &color);
         bool gamma = gamma_prepare(c, p);
         record(c, p, f, target, s, index, frame, client, upload, gamma);
 
@@ -2016,6 +2424,8 @@ void mvk_wsi_close(MvkConnection *c)
         w->swapchains = s->next;
         free_swapchain(c, s);
     }
+    convert_destroy(c, w);
+    pthread_mutex_destroy(&w->convert_lock);
     pthread_mutex_destroy(&w->lock);
     pthread_cond_destroy(&w->cond);
     free(w);
@@ -2157,19 +2567,28 @@ static bool run_once(MvkConnection *c, Presenter *p, void (*fill)(MvkConnection 
 static void copy_shown(MvkConnection *c, Presenter *p, VkCommandBuffer cmd)
 {
     Swapchain *s = p->shown_from;
-    VkImage src = s->images[p->shown_index];
+    VkImage src = s->images[p->shown_index], from = src;
     VkExtent2D e = p->shown_extent;
-    barrier(c, cmd, src, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0,
-            VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    bool flip = s->flip;
+    if (p->tone.on) {
+        ConvertTarget *t = p->space ? &p->standard : &p->convert;
+        barrier(c, cmd, src, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, 0,
+                VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        convert_draw(c, cmd, s, p->shown_index, t, p->tone);
+        from = t->image;
+        flip = false;
+    } else {
+        barrier(c, cmd, src, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0,
+                VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    }
     barrier(c, cmd, p->last, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
             VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-    blit(c, cmd, src, (Box){0, 0, e.width, e.height}, e.width, e.height, p->last, (Box){0, 0, e.width, e.height},
-         e.width, e.height, s->flip);
+    blit(c, cmd, from, (Box){0, 0, e.width, e.height}, e.width, e.height, p->last, (Box){0, 0, e.width, e.height},
+         e.width, e.height, flip);
     barrier(c, cmd, p->last, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
             VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
             VK_PIPELINE_STAGE_TRANSFER_BIT);
-    barrier(c, cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-            VK_ACCESS_TRANSFER_READ_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+    release_source(c, cmd, src, p->tone.on);
 }
 
 /* the first capture of a window that keeps no copy takes the guest image it last presented, still as it was shown. */
@@ -2179,7 +2598,13 @@ static bool keep_shown(MvkConnection *c, Presenter *p)
     if (!s || !s->images[p->shown_index] || !p->pool || !p->last_queue)
         return false;
     VkFormat format = is_srgb(s->format) ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM;
-    if (!make_last(c, p, p->shown_extent, format) || !run_once(c, p, copy_shown))
+    if (!make_last(c, p, p->shown_extent, format))
+        return false;
+    p->tone = (Tone){};
+    MimeMonitorColor ignored;
+    if (s->space && convert_target(c, p, p->space ? &p->standard : &p->convert, p->shown_extent, SPACE_SDR))
+        p->tone = tone_of(s, display_hdr(&ignored));
+    if (!run_once(c, p, copy_shown))
         return false;
     p->last_valid = true;
     return true;

@@ -56,6 +56,9 @@ typedef struct D3dSwapChain {
     UINT max_latency;
     HANDLE latency;
     DXGI_COLOR_SPACE_TYPE color_space;
+    VkColorSpaceKHR space;
+    BOOL has_metadata;
+    VkHdrMetadataEXT metadata;
     DXGI_MODE_ROTATION rotation;
     DXGI_RGBA background;
     UINT source_width, source_height;
@@ -104,15 +107,58 @@ static void destroy_swapchain(D3dSwapChain *sc)
     sc->image_count = 0;
 }
 
-/* picks a surface format that keeps the back buffer's bytes unchanged, srgb or not. */
-static VkFormat choose_format(D3dSwapChain *sc)
+static BOOL find_format(const VkSurfaceFormatKHR *formats, UINT count, VkFormat format, VkColorSpaceKHR space)
+{
+    for (UINT i = 0; i < count; i++)
+        if (formats[i].format == format && formats[i].colorSpace == space)
+            return TRUE;
+    return FALSE;
+}
+
+static UINT surface_formats(D3dSwapChain *sc, VkSurfaceFormatKHR *formats, UINT count)
 {
     D3dVk *vk = &sc->device->vk;
-    VkSurfaceFormatKHR formats[32];
-    UINT count = RTL_NUMBER_OF(formats);
     vk->vkGetPhysicalDeviceSurfaceFormatsKHR(vk->physical, sc->surface, &count, formats);
+    return count;
+}
+
+/* floats are scRGB and nothing else, ten bits carry HDR10 while a monitor shows high dynamic range. */
+static BOOL space_supported(D3dSwapChain *sc, DXGI_COLOR_SPACE_TYPE space)
+{
+    if (sc->desc.Format == DXGI_FORMAT_R16G16B16A16_FLOAT)
+        return space == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
+    if (!sc->composition && sc->desc.Format == DXGI_FORMAT_R10G10B10A2_UNORM &&
+        space == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020) {
+        VkSurfaceFormatKHR formats[32];
+        UINT count = surface_formats(sc, formats, RTL_NUMBER_OF(formats));
+        return find_format(formats, count, VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_COLOR_SPACE_HDR10_ST2084_EXT);
+    }
+    return space == DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+}
+
+static DXGI_COLOR_SPACE_TYPE default_space(DXGI_FORMAT format)
+{
+    return format == DXGI_FORMAT_R16G16B16A16_FLOAT ? DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709
+                                                    : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+}
+
+/* picks a surface format that keeps the back buffer's bytes unchanged, srgb or not. */
+static VkFormat choose_format(D3dSwapChain *sc, VkColorSpaceKHR *space)
+{
+    VkSurfaceFormatKHR formats[32];
+    UINT count = surface_formats(sc, formats, RTL_NUMBER_OF(formats));
+    VkColorSpaceKHR plain = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    *space = plain;
     VkFormat wanted;
     switch (sc->desc.Format) {
+    case DXGI_FORMAT_R16G16B16A16_FLOAT:
+        if (find_format(formats, count, VK_FORMAT_R16G16B16A16_SFLOAT, VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT)) {
+            *space = VK_COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT;
+            return VK_FORMAT_R16G16B16A16_SFLOAT;
+        }
+        /* a standard range display clips at white, and the blit encodes the linear values. */
+        wanted = VK_FORMAT_B8G8R8A8_SRGB;
+        break;
     case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
         wanted = VK_FORMAT_B8G8R8A8_SRGB;
         break;
@@ -121,6 +167,11 @@ static VkFormat choose_format(D3dSwapChain *sc)
         break;
     case DXGI_FORMAT_R10G10B10A2_UNORM:
         wanted = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+        if (sc->color_space == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020 &&
+            find_format(formats, count, wanted, VK_COLOR_SPACE_HDR10_ST2084_EXT)) {
+            *space = VK_COLOR_SPACE_HDR10_ST2084_EXT;
+            return wanted;
+        }
         break;
     case DXGI_FORMAT_R8G8B8A8_UNORM:
         wanted = VK_FORMAT_R8G8B8A8_UNORM;
@@ -129,14 +180,17 @@ static VkFormat choose_format(D3dSwapChain *sc)
         wanted = VK_FORMAT_B8G8R8A8_UNORM;
         break;
     }
-    for (UINT i = 0; i < count; i++)
-        if (formats[i].format == wanted)
-            return wanted;
+    if (find_format(formats, count, wanted, plain))
+        return wanted;
     BOOL srgb = wanted == VK_FORMAT_B8G8R8A8_SRGB || wanted == VK_FORMAT_R8G8B8A8_SRGB;
-    for (UINT i = 0; i < count; i++)
-        if (formats[i].format == (srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM))
-            return formats[i].format;
-    return count ? formats[0].format : VK_FORMAT_B8G8R8A8_UNORM;
+    return srgb ? VK_FORMAT_B8G8R8A8_SRGB : VK_FORMAT_B8G8R8A8_UNORM;
+}
+
+static void send_metadata(D3dSwapChain *sc)
+{
+    D3dVk *vk = &sc->device->vk;
+    if (sc->swapchain && vk->vkSetHdrMetadataEXT)
+        vk->vkSetHdrMetadataEXT(vk->device, 1, &sc->swapchain, &sc->metadata);
 }
 
 /* VK_NOT_READY when the window has no area to show anything in. */
@@ -161,7 +215,7 @@ static VkResult create_swapchain(D3dSwapChain *sc, VkPresentModeKHR mode)
         for (UINT i = 0; i < count; i++)
             if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR)
                 chosen = VK_PRESENT_MODE_MAILBOX_KHR;
-    sc->format = choose_format(sc);
+    sc->format = choose_format(sc, &sc->space);
     VkSwapchainCreateInfoKHR info = {VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
     info.surface = sc->surface;
     /* the host copies a presented image out at once, so two are enough to draw one while the other shows. */
@@ -169,7 +223,7 @@ static VkResult create_swapchain(D3dSwapChain *sc, VkPresentModeKHR mode)
     if (caps.maxImageCount)
         info.minImageCount = D3D_MIN(info.minImageCount, caps.maxImageCount);
     info.imageFormat = sc->format;
-    info.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    info.imageColorSpace = sc->space;
     info.imageExtent = caps.currentExtent;
     info.imageArrayLayers = 1;
     info.imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
@@ -200,6 +254,8 @@ static VkResult create_swapchain(D3dSwapChain *sc, VkPresentModeKHR mode)
     VkSemaphoreCreateInfo sem = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
     for (UINT i = 0; i < images; i++)
         vk->vkCreateSemaphore(vk->device, &sem, nullptr, &sc->present[i]);
+    if (sc->has_metadata)
+        send_metadata(sc);
     return VK_SUCCESS;
 }
 
@@ -834,7 +890,10 @@ static HRESULT STDMETHODCALLTYPE sc_resize_buffers(IDXGISwapChain4 *iface, UINT 
         sc->resolved = nullptr;
     }
     sc->source_width = sc->source_height = 0;
-    if (sc->swapchain && choose_format(sc) != sc->format) {
+    if (!space_supported(sc, sc->color_space))
+        sc->color_space = default_space(sc->desc.Format);
+    VkColorSpaceKHR space;
+    if (sc->swapchain && (choose_format(sc, &space) != sc->format || space != sc->space)) {
         VkResult r = create_swapchain(sc, sc->mode);
         if (r != VK_SUCCESS && r != VK_NOT_READY)
             return D3dCheckResult(sc->device, r);
@@ -1076,16 +1135,20 @@ static HRESULT STDMETHODCALLTYPE sc_check_color_space_support(IDXGISwapChain4 *i
 {
     if (!support)
         return E_INVALIDARG;
-    *support = space == DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709 ? 1 /* DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT */
-                                                                : 0;
+    *support = space_supported(impl(iface), space) ? 1 /* DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT */ : 0;
     return S_OK;
 }
 
 static HRESULT STDMETHODCALLTYPE sc_set_color_space1(IDXGISwapChain4 *iface, DXGI_COLOR_SPACE_TYPE space)
 {
-    if (space != DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709)
+    D3dSwapChain *sc = impl(iface);
+    if (!space_supported(sc, space))
         return E_INVALIDARG;
-    impl(iface)->color_space = space;
+    if (sc->color_space == space)
+        return S_OK;
+    sc->color_space = space;
+    if (sc->swapchain)
+        create_swapchain(sc, sc->mode);
     return S_OK;
 }
 
@@ -1099,6 +1162,32 @@ static HRESULT STDMETHODCALLTYPE sc_resize_buffers1(IDXGISwapChain4 *iface, UINT
 static HRESULT STDMETHODCALLTYPE sc_set_hdr_meta_data(IDXGISwapChain4 *iface, DXGI_HDR_METADATA_TYPE type, UINT size,
                                                       void *metadata)
 {
+    D3dSwapChain *sc = impl(iface);
+    VkHdrMetadataEXT *v = &sc->metadata;
+    if (type == DXGI_HDR_METADATA_TYPE_NONE) {
+        /* all zero tells the host to describe the monitor again. */
+        *v = (VkHdrMetadataEXT){VK_STRUCTURE_TYPE_HDR_METADATA_EXT};
+        if (sc->has_metadata)
+            send_metadata(sc);
+        sc->has_metadata = FALSE;
+        return S_OK;
+    }
+    const DXGI_HDR_METADATA_HDR10 *m = metadata;
+    if (type != DXGI_HDR_METADATA_TYPE_HDR10 || size != sizeof(*m) || !m)
+        return E_INVALIDARG;
+    *v = (VkHdrMetadataEXT){VK_STRUCTURE_TYPE_HDR_METADATA_EXT};
+    v->displayPrimaryRed = (VkXYColorEXT){m->RedPrimary[0] / 50000.0f, m->RedPrimary[1] / 50000.0f};
+    v->displayPrimaryGreen = (VkXYColorEXT){m->GreenPrimary[0] / 50000.0f, m->GreenPrimary[1] / 50000.0f};
+    v->displayPrimaryBlue = (VkXYColorEXT){m->BluePrimary[0] / 50000.0f, m->BluePrimary[1] / 50000.0f};
+    v->whitePoint = (VkXYColorEXT){m->WhitePoint[0] / 50000.0f, m->WhitePoint[1] / 50000.0f};
+    /* documented as whole nits, but Microsoft's samples and the games that follow them give ten thousandths. */
+    v->maxLuminance = m->MaxMasteringLuminance > 10000 ? m->MaxMasteringLuminance / 10000.0f
+                                                       : (float)m->MaxMasteringLuminance;
+    v->minLuminance = m->MinMasteringLuminance / 10000.0f;
+    v->maxContentLightLevel = m->MaxContentLightLevel;
+    v->maxFrameAverageLightLevel = m->MaxFrameAverageLightLevel;
+    sc->has_metadata = TRUE;
+    send_metadata(sc);
     return S_OK;
 }
 
@@ -1312,7 +1401,7 @@ HRESULT D3dCreateSwapChain(D3dDevice *device, IDXGIFactory *factory, HWND window
         sc->fullscreen.Windowed = TRUE;
     sc->fullscreen_state = !sc->fullscreen.Windowed;
     sc->max_latency = 1;
-    sc->color_space = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+    sc->color_space = default_space(sc->desc.Format);
     sc->rotation = DXGI_MODE_ROTATION_IDENTITY;
     HRESULT hr = create_back_buffer(sc);
     if (FAILED(hr)) {
@@ -1392,7 +1481,7 @@ HRESULT D3dCreateCompositionSwapChain(D3dDevice *device, IDXGIFactory *factory, 
     sc->desc = *desc;
     sc->fullscreen.Windowed = TRUE;
     sc->max_latency = 1;
-    sc->color_space = DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+    sc->color_space = default_space(sc->desc.Format);
     sc->rotation = DXGI_MODE_ROTATION_IDENTITY;
     sc->matrix._11 = sc->matrix._22 = 1.0f;
     InitializeCriticalSection(&sc->frame_lock);

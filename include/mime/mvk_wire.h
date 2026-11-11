@@ -133,6 +133,7 @@ enum {
     MVK_OP_SHARE_IMPORT_MEMORY,     /* shared object memory imported into this device. */
     MVK_OP_SHARE_EXPORT_SEMAPHORE,  /* a timeline semaphore, kept for other processes. */
     MVK_OP_SHARE_IMPORT_SEMAPHORE,  /* shared semaphore payload imported into this device. */
+    MVK_OP_HDR_METADATA,            /* the mastering display a swapchain's frames were made for. */
     MVK_OP_HAND_END,
 };
 

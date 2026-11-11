@@ -458,7 +458,22 @@ static HRESULT STDMETHODCALLTYPE output_duplicate_output1(IDXGIOutput6 *iface, I
                                count, formats, duplication);
 }
 
-/* an sdr panel with srgb primaries. */
+static BOOL monitor_state(HMONITOR monitor, MIME_MONITOR_INFO *state)
+{
+    MONITORINFOEXW info = {.cbSize = sizeof(info)};
+    if (!GetMonitorInfoW(monitor, (MONITORINFO *)&info))
+        return FALSE;
+    MIME_MONITOR_INFO list[MIME_USER_MAX_MONITORS];
+    ULONG count = (ULONG)NtUserCallTwoParam((ULONG_PTR)list, MIME_USER_MAX_MONITORS, MIME_TWOPARAM_GETMONITORS);
+    for (ULONG i = 0; i < count && i < MIME_USER_MAX_MONITORS; i++)
+        if (!wcscmp(list[i].Device, info.szDevice)) {
+            *state = list[i];
+            return TRUE;
+        }
+    return FALSE;
+}
+
+/* an sdr panel with srgb primaries, unless the host says more about the monitor. */
 static HRESULT STDMETHODCALLTYPE output_get_desc1(IDXGIOutput6 *iface, DXGI_OUTPUT_DESC1 *desc)
 {
     if (!desc)
@@ -478,6 +493,25 @@ static HRESULT STDMETHODCALLTYPE output_get_desc1(IDXGIOutput6 *iface, DXGI_OUTP
     desc->MinLuminance = 0.5f;
     desc->MaxLuminance = 270.0f;
     desc->MaxFullFrameLuminance = 270.0f;
+    MIME_MONITOR_INFO state;
+    if (!monitor_state(impl(iface)->monitor, &state))
+        return S_OK;
+    const MIME_MONITOR_COLOR *c = &state.Color;
+    if (c->RedX && c->GreenX && c->BlueX && c->WhiteX) {
+        desc->RedPrimary[0] = c->RedX / 1e6f, desc->RedPrimary[1] = c->RedY / 1e6f;
+        desc->GreenPrimary[0] = c->GreenX / 1e6f, desc->GreenPrimary[1] = c->GreenY / 1e6f;
+        desc->BluePrimary[0] = c->BlueX / 1e6f, desc->BluePrimary[1] = c->BlueY / 1e6f;
+        desc->WhitePoint[0] = c->WhiteX / 1e6f, desc->WhitePoint[1] = c->WhiteY / 1e6f;
+    }
+    if (c->MaxNits) {
+        desc->MinLuminance = c->MinNits / 1e4f;
+        desc->MaxLuminance = c->MaxNits / 1e4f;
+        desc->MaxFullFrameLuminance = c->MaxFrameNits ? c->MaxFrameNits / 1e4f : desc->MaxLuminance;
+    }
+    if (state.Flags & MIME_MONITORINFOF_HDR) {
+        desc->BitsPerColor = 10;
+        desc->ColorSpace = DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+    }
     return S_OK;
 }
 

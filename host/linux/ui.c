@@ -408,6 +408,8 @@ typedef struct Placed {
     bool placed;
     float refresh;
     char name[32];
+    bool hdr;
+    MimeMonitorColor color;
 } Placed;
 
 static int compare_position(const void *a, const void *b)
@@ -468,6 +470,38 @@ static void layout_monitors(Placed *d, uint32_t count)
     }
 }
 
+static void displays_changed(void *arg);
+
+static void color_changed(void)
+{
+    on_main(displays_changed, nullptr);
+}
+
+/*
+ * MIME_HDR=off tells the guest of standard dynamic range outputs only, MIME_HDR=force of a 1000 nit one whatever the
+ * output is, which the compositor then maps to what it has.
+ */
+static void display_color(SDL_DisplayID id, Placed *m)
+{
+    const char *env = getenv("MIME_HDR");
+    if (env && !strcmp(env, "off"))
+        return;
+#ifdef SDL_PROP_DISPLAY_WAYLAND_WL_OUTPUT_POINTER
+    if (g_wayland) {
+        struct wl_display *display = SDL_GetPointerProperty(SDL_GetGlobalProperties(),
+                                                            SDL_PROP_GLOBAL_VIDEO_WAYLAND_WL_DISPLAY_POINTER, nullptr);
+        struct wl_output *output = SDL_GetPointerProperty(SDL_GetDisplayProperties(id),
+                                                          SDL_PROP_DISPLAY_WAYLAND_WL_OUTPUT_POINTER, nullptr);
+        mime_color_output(display, output, &m->hdr, &m->color);
+    }
+#endif
+    if (env && !strcmp(env, "force") && !m->hdr) {
+        m->hdr = true;
+        m->color = (MimeMonitorColor){708000, 292000, 170000, 797000, 131000, 46000, 312700, 329000,
+                                      50, 1000 * 10000, 600 * 10000, 203 * 10000};
+    }
+}
+
 static void update_display(void)
 {
     SDL_DisplayID primary = SDL_GetPrimaryDisplay();
@@ -495,6 +529,7 @@ static void update_display(void)
         m->refresh = mode ? mode->refresh_rate : 0;
         const char *name = SDL_GetDisplayName(ids[i]);
         strncpy(m->name, name ? name : "", sizeof(m->name) - 1);
+        display_color(ids[i], m);
         count++;
     }
     SDL_free(ids);
@@ -520,6 +555,9 @@ static void update_display(void)
         h->scale = m->scale;
         MimeMonitor *o = &h->info;
         o->flags = i == 0 ? MIME_MONITOR_PRIMARY : 0;
+        if (m->hdr)
+            o->flags |= MIME_MONITOR_HDR;
+        o->color = m->color;
         o->dpi = (uint32_t)lround(96.0 * m->scale);
         o->refresh_hz = m->refresh > 0 ? (uint32_t)lround(m->refresh) : 60;
         o->rect = (MimeRect){m->x, m->y, m->x + m->width, m->y + m->height};
@@ -2460,6 +2498,7 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     g_video = g_call_event != 0;
     mime_info("display driver %s", SDL_GetCurrentVideoDriver());
     g_wayland = SDL_GetCurrentVideoDriver() && !strcmp(SDL_GetCurrentVideoDriver(), "wayland");
+    mime_color_watch(color_changed);
     /*
      * the windows' renderers draw with gl. a renderer that fails, as when the gpu's memory is full, makes SDL put its
      * window back as it was and drop gl with the last gl window, then destroy the renderer through the dropped gl: the
@@ -2660,6 +2699,34 @@ static void report_window_display(UiWindow *w, SDL_DisplayID display)
     w->display = display;
     MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_DISPLAY, .window_id = w->id, .x = index};
     emit(&ev);
+}
+
+/* tells the guest of the displays when they are no longer what it knows. */
+static void displays_changed(void *arg)
+{
+    MimeDisplayInfo before = g_display;
+    HostMonitor old[MIME_MAX_MONITORS];
+    pthread_mutex_lock(&g_monitor_lock);
+    uint32_t old_count = g_monitor_count;
+    memcpy(old, g_monitors, sizeof(old));
+    pthread_mutex_unlock(&g_monitor_lock);
+    update_display();
+    bool changed = memcmp(&before, &g_display, sizeof(before)) != 0 || old_count != g_monitor_count;
+    for (uint32_t i = 0; !changed && i < old_count; i++)
+        changed = old[i].id != g_monitors[i].id || memcmp(&old[i].info, &g_monitors[i].info, sizeof(MimeMonitor));
+    if (changed) {
+        MimeInputEvent ev = {.type = MIME_INPUT_DISPLAY, .x = (int32_t)g_display.width,
+                             .y = (int32_t)g_display.height};
+        emit(&ev);
+        /* the indices of the windows' displays moved with the list. */
+        for (int i = 0; i < MAX_WINDOWS; i++) {
+            UiWindow *w = &g_windows[i];
+            if (w->used && w->window && w->shown && !w->popup) {
+                w->display = 0;
+                report_window_display(w, SDL_GetDisplayForWindow(w->window));
+            }
+        }
+    }
 }
 
 static void handle_event(const SDL_Event *e)
@@ -2869,32 +2936,11 @@ static void handle_event(const SDL_Event *e)
     case SDL_EVENT_DISPLAY_REMOVED:
     case SDL_EVENT_DISPLAY_MOVED:
     case SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:
-    case SDL_EVENT_DISPLAY_CONTENT_SCALE_CHANGED: {
-        MimeDisplayInfo before = g_display;
-        HostMonitor old[MIME_MAX_MONITORS];
-        pthread_mutex_lock(&g_monitor_lock);
-        uint32_t old_count = g_monitor_count;
-        memcpy(old, g_monitors, sizeof(old));
-        pthread_mutex_unlock(&g_monitor_lock);
-        update_display();
-        bool changed = memcmp(&before, &g_display, sizeof(before)) != 0 || old_count != g_monitor_count;
-        for (uint32_t i = 0; !changed && i < old_count; i++)
-            changed = old[i].id != g_monitors[i].id || memcmp(&old[i].info, &g_monitors[i].info, sizeof(MimeMonitor));
-        if (changed) {
-            MimeInputEvent ev = {.type = MIME_INPUT_DISPLAY, .x = (int32_t)g_display.width,
-                                 .y = (int32_t)g_display.height};
-            emit(&ev);
-            /* the indices of the windows' displays moved with the list. */
-            for (int i = 0; i < MAX_WINDOWS; i++) {
-                UiWindow *w = &g_windows[i];
-                if (w->used && w->window && w->shown && !w->popup) {
-                    w->display = 0;
-                    report_window_display(w, SDL_GetDisplayForWindow(w->window));
-                }
-            }
-        }
+    case SDL_EVENT_DISPLAY_CONTENT_SCALE_CHANGED:
+        if (e->type == SDL_EVENT_DISPLAY_ADDED || e->type == SDL_EVENT_DISPLAY_REMOVED)
+            mime_color_forget();
+        displays_changed(nullptr);
         break;
-    }
     default:
         break;
     }
@@ -2936,6 +2982,7 @@ void mime_ui_run(void)
     for (int i = 0; i < MAX_WINDOWS; i++)
         if (g_windows[i].used)
             destroy_host_window(&g_windows[i], false);
+    mime_color_stop();
     SDL_Quit();
 }
 
