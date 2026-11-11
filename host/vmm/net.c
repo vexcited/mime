@@ -1028,9 +1028,11 @@ static int ipc_connect(unsigned index, bool probe)
             continue;
         if (probe)
             return 0;
-        int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        /* macOS has no SOCK_CLOEXEC. */
+        int fd = socket(AF_UNIX, SOCK_STREAM, 0);
         if (fd < 0)
             return -1;
+        fcntl(fd, F_SETFD, FD_CLOEXEC);
         if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) == 0)
             return fd;
         close(fd);
