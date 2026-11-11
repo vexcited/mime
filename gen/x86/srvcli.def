@@ -1,0 +1,16 @@
+LIBRARY srvcli.dll
+EXPORTS
+    NetConnectionEnum=netapi32.NetConnectionEnum
+    NetFileClose=netapi32.NetFileClose
+    NetFileEnum=netapi32.NetFileEnum
+    NetFileGetInfo=netapi32.NetFileGetInfo
+    NetServerGetInfo=netapi32.NetServerGetInfo
+    NetSessionDel=netapi32.NetSessionDel
+    NetSessionEnum=netapi32.NetSessionEnum
+    NetSessionGetInfo=netapi32.NetSessionGetInfo
+    NetShareAdd=netapi32.NetShareAdd
+    NetShareCheck=netapi32.NetShareCheck
+    NetShareDel=netapi32.NetShareDel
+    NetShareEnum=netapi32.NetShareEnum
+    NetShareGetInfo=netapi32.NetShareGetInfo
+    NetShareSetInfo=netapi32.NetShareSetInfo
