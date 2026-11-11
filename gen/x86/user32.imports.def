@@ -267,6 +267,7 @@ EXPORTS
     GetKeyState@4
     GetKeyboardLayout@4
     GetKeyboardLayoutList@8
+    GetKeyboardLayoutNameA@4
     GetKeyboardLayoutNameW@4
     GetKeyboardState@4
     GetKeyboardType@4
@@ -435,6 +436,7 @@ EXPORTS
     LoadIconW@8
     LoadImageA@24
     LoadImageW@24
+    LoadKeyboardLayoutA@8
     LoadKeyboardLayoutW@8
     LoadMenuA@8
     LoadMenuIndirectA@4
@@ -648,6 +650,7 @@ EXPORTS
     UnhookWinEvent@4
     UnhookWindowsHookEx@4
     UnionRect@12
+    UnloadKeyboardLayout@4
     UnpackDDElParam@16
     UnregisterClassA@8
     UnregisterClassW@8

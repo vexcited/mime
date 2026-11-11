@@ -496,6 +496,18 @@ WINUSERAPI BOOL WINAPI GetKeyboardLayoutNameW(LPWSTR name)
     return TRUE;
 }
 
+WINUSERAPI BOOL WINAPI GetKeyboardLayoutNameA(LPSTR name)
+{
+    WCHAR wide[KL_NAMELENGTH];
+    if (!name || !GetKeyboardLayoutNameW(wide)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    for (int i = 0; i < KL_NAMELENGTH; i++)
+        name[i] = (char)wide[i];
+    return TRUE;
+}
+
 WINUSERAPI HKL WINAPI ActivateKeyboardLayout(HKL layout, UINT flags)
 {
     HKL current = current_layout();
@@ -509,6 +521,21 @@ WINUSERAPI HKL WINAPI ActivateKeyboardLayout(HKL layout, UINT flags)
 WINUSERAPI HKL WINAPI LoadKeyboardLayoutW(LPCWSTR name, UINT flags)
 {
     return current_layout();
+}
+
+WINUSERAPI HKL WINAPI LoadKeyboardLayoutA(LPCSTR name, UINT flags)
+{
+    return current_layout();
+}
+
+/* the host layout is the only one and every load returns it, so unloading it leaves it in place. */
+WINUSERAPI BOOL WINAPI UnloadKeyboardLayout(HKL layout)
+{
+    if (layout != current_layout()) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return TRUE;
 }
 
 /*
