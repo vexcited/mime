@@ -1163,6 +1163,11 @@ EXPORTS
     RtlFindExportedRoutineByName
     RtlFirstEntrySList
     RtlFirstFreeAce
+    RtlFlsAlloc
+    RtlFlsFree
+    RtlFlsGetValue
+    RtlFlsGetValue2
+    RtlFlsSetValue
     RtlFormatCurrentUserKeyPath
     RtlFreeActivationContextStack
     RtlFreeAnsiString
@@ -1293,6 +1298,7 @@ EXPORTS
     RtlPcToFileHeader
     RtlPrefixString
     RtlPrefixUnicodeString
+    RtlProcessFlsData
     RtlPublishWnfStateData
     RtlQueryActivationContextApplicationSettings
     RtlQueryDepthSList

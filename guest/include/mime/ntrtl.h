@@ -261,6 +261,16 @@ NTSYSAPI PVOID NTAPI RtlEncodePointer(PVOID p);
 NTSYSAPI PVOID NTAPI RtlDecodePointer(PVOID p);
 NTSYSAPI PVOID NTAPI RtlEncodeSystemPointer(PVOID p);
 NTSYSAPI PVOID NTAPI RtlDecodeSystemPointer(PVOID p);
+
+#define RTL_FLS_MAXIMUM_AVAILABLE 512
+typedef void(NTAPI *PRTL_FLS_CALLBACK)(PVOID data);
+NTSYSAPI NTSTATUS NTAPI RtlFlsAlloc(PRTL_FLS_CALLBACK callback, PULONG index);
+NTSYSAPI NTSTATUS NTAPI RtlFlsFree(ULONG index);
+NTSYSAPI NTSTATUS NTAPI RtlFlsGetValue(ULONG index, PVOID *value);
+NTSYSAPI PVOID NTAPI RtlFlsGetValue2(ULONG index);
+NTSYSAPI NTSTATUS NTAPI RtlFlsSetValue(ULONG index, PVOID value);
+NTSYSAPI void NTAPI RtlProcessFlsData(PVOID fls, ULONG flags);
+
 NTSYSAPI SIZE_T NTAPI RtlCompareMemory(const void *a, const void *b, SIZE_T length);
 NTSYSAPI SIZE_T NTAPI RtlCompareMemoryUlong(const void *source, SIZE_T length, ULONG pattern);
 NTSYSAPI void NTAPI RtlFillMemory(void *dst, SIZE_T length, UCHAR fill);

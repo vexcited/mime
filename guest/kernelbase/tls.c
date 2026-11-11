@@ -2,21 +2,10 @@
 #include "kernelbase_private.h"
 
 #define TLS_TOTAL (TLS_MINIMUM_AVAILABLE + TLS_EXPANSION_SLOTS)
-#define FLS_SLOTS 512
 
 /* every thread's teb is linked through TlsLinks so freed slots can be cleared everywhere. */
 static LIST_ENTRY g_tls_threads = {&g_tls_threads, &g_tls_threads};
 static RTL_CRITICAL_SECTION g_tls_lock = RTL_CRITICAL_SECTION_INIT;
-
-typedef struct FLS_DATA {
-    LIST_ENTRY Links;
-    PVOID Slots[FLS_SLOTS];
-} FLS_DATA;
-
-static LIST_ENTRY g_fls_list = {&g_fls_list, &g_fls_list};
-static PFLS_CALLBACK_FUNCTION g_fls_callbacks[FLS_SLOTS];
-static ULONG g_fls_bitmap[FLS_SLOTS / 32];
-static RTL_CRITICAL_SECTION g_fls_lock = RTL_CRITICAL_SECTION_INIT;
 
 void KbThreadAttach(void)
 {
@@ -173,130 +162,58 @@ BOOL WINAPI TlsSetValue(DWORD index, LPVOID value)
 
 /* ------------------------------------------------------------------ fls */
 
+/* the slots and their callbacks live in ntdll, which runs them as a thread or the process ends. */
+
 DWORD WINAPI FlsAlloc(PFLS_CALLBACK_FUNCTION callback)
 {
-    DWORD index = FLS_OUT_OF_INDEXES;
-    RtlEnterCriticalSection(&g_fls_lock);
-    /* index 0 stays unused so a zeroed variable never names a live slot. */
-    for (ULONG i = 1; i < FLS_SLOTS; i++) {
-        if (!bit_test(g_fls_bitmap, i)) {
-            bit_set(g_fls_bitmap, i);
-            g_fls_callbacks[i] = callback;
-            index = i;
-            break;
-        }
-    }
-    RtlLeaveCriticalSection(&g_fls_lock);
-    if (index == FLS_OUT_OF_INDEXES) {
+    ULONG index;
+    if (!NT_SUCCESS(RtlFlsAlloc(callback, &index))) {
         KbSetError(ERROR_NO_MORE_ITEMS);
-        return index;
+        return FLS_OUT_OF_INDEXES;
     }
-    FLS_DATA *data = NtCurrentTeb()->FlsData;
-    if (data)
-        data->Slots[index] = nullptr;
     return index;
-}
-
-static BOOL valid_fls(DWORD index)
-{
-    return index && index < FLS_SLOTS && bit_test(g_fls_bitmap, index);
 }
 
 BOOL WINAPI FlsFree(DWORD index)
 {
-    RtlEnterCriticalSection(&g_fls_lock);
-    if (!valid_fls(index)) {
-        RtlLeaveCriticalSection(&g_fls_lock);
+    if (!NT_SUCCESS(RtlFlsFree(index))) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    PFLS_CALLBACK_FUNCTION callback = g_fls_callbacks[index];
-    for (PLIST_ENTRY e = g_fls_list.Flink; e != &g_fls_list; e = e->Flink) {
-        FLS_DATA *data = CONTAINING_RECORD(e, FLS_DATA, Links);
-        PVOID value = data->Slots[index];
-        data->Slots[index] = nullptr;
-        if (value && callback)
-            callback(value);
-    }
-    g_fls_callbacks[index] = nullptr;
-    bit_clear(g_fls_bitmap, index);
-    RtlLeaveCriticalSection(&g_fls_lock);
     return TRUE;
 }
 
 PVOID WINAPI FlsGetValue2(DWORD index)
 {
-    if (!index || index >= FLS_SLOTS) {
+    if (!index || index >= RTL_FLS_MAXIMUM_AVAILABLE) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }
-    FLS_DATA *data = NtCurrentTeb()->FlsData;
-    return data ? data->Slots[index] : nullptr;
+    return RtlFlsGetValue2(index);
 }
 
 PVOID WINAPI FlsGetValue(DWORD index)
 {
-    if (!valid_fls(index)) {
+    PVOID value;
+    if (!NT_SUCCESS(RtlFlsGetValue(index, &value))) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return nullptr;
     }
     KbSetError(ERROR_SUCCESS);
-    return FlsGetValue2(index);
+    return value;
 }
 
 BOOL WINAPI FlsSetValue(DWORD index, PVOID value)
 {
-    if (!valid_fls(index)) {
-        KbSetError(ERROR_INVALID_PARAMETER);
+    NTSTATUS status = RtlFlsSetValue(index, value);
+    if (!NT_SUCCESS(status)) {
+        KbSetError(status == STATUS_NO_MEMORY ? ERROR_NOT_ENOUGH_MEMORY : ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    PTEB teb = NtCurrentTeb();
-    FLS_DATA *data = teb->FlsData;
-    if (!data) {
-        data = KbAllocZero(sizeof(FLS_DATA));
-        if (!data) {
-            KbSetError(ERROR_NOT_ENOUGH_MEMORY);
-            return FALSE;
-        }
-        RtlEnterCriticalSection(&g_fls_lock);
-        InsertTailList(&g_fls_list, &data->Links);
-        RtlLeaveCriticalSection(&g_fls_lock);
-        teb->FlsData = data;
-    }
-    data->Slots[index] = value;
     return TRUE;
-}
-
-/* runs the exiting thread's fls callbacks, then frees its data. */
-void KbFlsThreadCleanup(void)
-{
-    PTEB teb = NtCurrentTeb();
-    FLS_DATA *data = teb->FlsData;
-    if (!data)
-        return;
-    RtlEnterCriticalSection(&g_fls_lock);
-    for (ULONG i = 1; i < FLS_SLOTS; i++) {
-        PVOID value = data->Slots[i];
-        if (!value || !bit_test(g_fls_bitmap, i))
-            continue;
-        data->Slots[i] = nullptr;
-        PFLS_CALLBACK_FUNCTION callback = g_fls_callbacks[i];
-        if (callback)
-            callback(value);
-    }
-    RemoveEntryList(&data->Links);
-    teb->FlsData = nullptr;
-    RtlLeaveCriticalSection(&g_fls_lock);
-    KbFree(data);
 }
 
 void KbThreadDetach(void)
 {
-    KbFlsThreadCleanup();
     unlink_thread();
-}
-
-void KbProcessDetach(void)
-{
-    KbFlsThreadCleanup();
 }

@@ -19,9 +19,6 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     case DLL_THREAD_DETACH:
         KbThreadDetach();
         break;
-    case DLL_PROCESS_DETACH:
-        KbProcessDetach();
-        break;
     }
     return TRUE;
 }
