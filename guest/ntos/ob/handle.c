@@ -949,11 +949,17 @@ NTSTATUS NTAPI NtQuerySymbolicLinkObject(HANDLE handle, PUNICODE_STRING target, 
 NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOID info, ULONG length,
                              PULONG returned)
 {
+    /* windows probes the buffer, then the return length, before it looks at the handle or the class. */
+    NTSTATUS status = KiProbeQueryBuffer(info, length, klass == ObjectHandleFlagInformation ? 1 : sizeof(ULONG), TRUE);
+    if (NT_SUCCESS(status))
+        status = KiProbeReturnLength(returned);
+    if (!NT_SUCCESS(status))
+        return status;
     /* the table of all types needs no handle. */
     if ((ULONG)klass == 3 /* ObjectTypesInformation */)
         return ObQueryAllTypesInformation(info, length, returned);
     PVOID object;
-    NTSTATUS status = ObReferenceHandle(handle, nullptr, KeGetPreviousMode(), &object, nullptr);
+    status = ObReferenceHandle(handle, nullptr, KeGetPreviousMode(), &object, nullptr);
     if (!NT_SUCCESS(status))
         return status;
     if (klass == ObjectNameInformation) {
@@ -967,8 +973,6 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
             OBJECT_TO_HEADER(object)->Directory)
             ObpQueryNameString(object, &name, buf, 1024);
         ULONG need = sizeof(OBJECT_NAME_INFORMATION) + name.Length + sizeof(WCHAR);
-        if (returned)
-            KiCopyToUser(returned, &need, sizeof(need));
         if (length < need) {
             status = STATUS_INFO_LENGTH_MISMATCH;
         } else {
@@ -980,6 +984,9 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
             if (NT_SUCCESS(status) && name.Length)
                 status = KiCopyToUser(oni.Name.Buffer, name.Buffer, name.Length + sizeof(WCHAR));
         }
+        /* the return length is written last, so it wins when it lies inside the buffer. */
+        if (returned)
+            KiCopyToUser(returned, &need, sizeof(need));
         ExFreePool(buf);
     } else if (klass == ObjectHandleFlagInformation || klass == ObjectBasicInformation) {
         OBJECT_HANDLE_FLAGS flags;
@@ -998,10 +1005,15 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
         basic.PointerCount = (ULONG)OBJECT_TO_HEADER(object)->PointerCount;
         const void *out = klass == ObjectBasicInformation ? (const void *)&basic : (const void *)&flags;
         ULONG need = klass == ObjectBasicInformation ? sizeof(basic) : sizeof(flags);
-        if (NT_SUCCESS(status) && returned)
-            KiCopyToUser(returned, &need, sizeof(need));
+        /* the basic form takes its exact length and says nothing of it otherwise. */
+        if (klass == ObjectBasicInformation && length != need) {
+            ObDereferenceObject(object);
+            return STATUS_INFO_LENGTH_MISMATCH;
+        }
         if (NT_SUCCESS(status))
             status = length < need ? STATUS_INFO_LENGTH_MISMATCH : KiCopyToUser(info, out, need);
+        if (returned && (NT_SUCCESS(status) || status == STATUS_INFO_LENGTH_MISMATCH))
+            KiCopyToUser(returned, &need, sizeof(need));
     } else if (klass == ObjectTypeInformation) {
         POBJECT_TYPE type = OBJECT_TO_HEADER(object)->Type;
         struct {
@@ -1027,8 +1039,6 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
         t.ValidAccessMask = type->Init.ValidAccessMask;
         t.TypeIndex = (UCHAR)(type->Index + 2);
         t.PoolType = 0x200;
-        if (returned)
-            KiCopyToUser(returned, &need, sizeof(need));
         if (length < need) {
             status = STATUS_INFO_LENGTH_MISMATCH;
         } else {
@@ -1036,6 +1046,8 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
             if (NT_SUCCESS(status))
                 status = KiCopyToUser(t.TypeName.Buffer, type->Name.Buffer, type->Name.Length + sizeof(WCHAR));
         }
+        if (returned)
+            KiCopyToUser(returned, &need, sizeof(need));
     } else {
         status = STATUS_INVALID_INFO_CLASS;
     }

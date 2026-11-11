@@ -621,7 +621,30 @@ static BOOLEAN query_more(PEPROCESS process, ULONG klass, PVOID info, ULONG leng
 NTSTATUS NTAPI NtQueryInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PVOID info, ULONG length,
                                          PULONG returned)
 {
-    NTSTATUS status = KiProbeReturnLength(returned);
+    ULONG alignment = sizeof(ULONG);
+    switch ((ULONG)klass) {
+    case 18:
+    case 61:
+    case 70:
+    case 74:
+    case 87:
+        alignment = 1;
+        break;
+    case 47:
+        alignment = 2;
+        break;
+    case 65:
+    case 92:
+    case 94:
+    case 115:
+        alignment = 8;
+        break;
+    default:
+        break;
+    }
+    NTSTATUS status = KiProbeQueryBuffer(info, length, alignment, TRUE);
+    if (NT_SUCCESS(status))
+        status = KiProbeReturnLength(returned);
     if (!NT_SUCCESS(status))
         return status;
     /* like windows, these two check the length before the handle. */
