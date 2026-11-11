@@ -593,6 +593,7 @@ enum {
     MIME_HC_AUDIO_OPEN = 0x40,  /* (pa, size) -> stream, plays the format of the header at pa */
     MIME_HC_AUDIO_START = 0x41, /* (stream, running) */
     MIME_HC_AUDIO_CLOSE = 0x42, /* (stream) returns once the host no longer reads its memory */
+    MIME_HC_AUDIO_DEVICES = 0x58, /* (pa, size, capture) fills a MimeAudioDeviceList at pa */
 
     MIME_HC_POINTER = 0x44,     /* (MIME_POINTER_*, window_id, left, top, right, bottom) screen rectangle */
     MIME_HC_PAD_RUMBLE = 0x45,  /* (pad, low frequency motor, high frequency motor) from 0 to 65535 */
