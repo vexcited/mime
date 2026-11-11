@@ -780,7 +780,8 @@ static NTSTATUS create_copied_image(PFILE_OBJECT file, PSECTION *out)
         status = MiParseImageHeaders(headers, got, &info);
     if (!NT_SUCCESS(status)) {
         ExFreePool(headers);
-        return status == STATUS_END_OF_FILE ? STATUS_INVALID_IMAGE_FORMAT : status;
+        /* like windows, an empty file is refused as a file no section can be made of. */
+        return status == STATUS_END_OF_FILE ? STATUS_INVALID_FILE_FOR_SECTION : status;
     }
     const IMAGE_NT_HEADERS64 *nt = (const void *)(headers + ((PIMAGE_DOS_HEADER)headers)->e_lfanew);
     PSECTION s;
