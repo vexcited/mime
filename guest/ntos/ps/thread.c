@@ -5,8 +5,11 @@
 #include <mime/wow32.h>
 
 #define KERNEL_STACK_SIZE (64 * 1024)
-/* nested callbacks into user mode keep their kernel frames, about 5 KB for each level of a message sent to a window. */
-#define KERNEL_STACK_RESERVE (512 * 1024)
+/*
+ * nested callbacks into user mode keep their kernel frames, about 5 KB for each level of a message sent to a window.
+ * the room is address space only, enough for the user stack to be what ends a deep nest as on windows.
+ */
+#define KERNEL_STACK_RESERVE (4 * 1024 * 1024)
 #define MIME_DEFAULT_STACK_RESERVE (1024 * 1024)
 /* stack below the guard page kept for stack overflow handlers, a quarter of a small stack. */
 #define MIME_STACK_OVERFLOW_ZONE (32 * 1024)
