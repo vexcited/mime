@@ -262,12 +262,26 @@ WINSETUPAPI HDEVINFO WINAPI SetupDiGetClassDevsW(const GUID *guid, PCWSTR enumer
     return SetupDiGetClassDevsExW(guid, enumerator, parent, flags, nullptr, nullptr, nullptr);
 }
 
-WINSETUPAPI HDEVINFO WINAPI SetupDiGetClassDevsA(const GUID *guid, PCSTR enumerator, HWND parent, DWORD flags)
+WINSETUPAPI HDEVINFO WINAPI SetupDiGetClassDevsExA(const GUID *guid, PCSTR enumerator, HWND parent, DWORD flags,
+                                                   HDEVINFO existing, PCSTR machine, PVOID reserved)
 {
     WCHAR w[MAX_DEVICE_ID_LEN];
-    if (enumerator)
-        MultiByteToWideChar(CP_ACP, 0, enumerator, -1, w, MAX_DEVICE_ID_LEN);
-    return SetupDiGetClassDevsW(guid, enumerator ? w : nullptr, parent, flags);
+    WCHAR name[MAX_PATH];
+    if (enumerator && !MultiByteToWideChar(CP_ACP, 0, enumerator, -1, w, MAX_DEVICE_ID_LEN)) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return INVALID_HANDLE_VALUE;
+    }
+    if (machine && !MultiByteToWideChar(CP_ACP, 0, machine, -1, name, MAX_PATH)) {
+        SetLastError(ERROR_INVALID_MACHINENAME);
+        return INVALID_HANDLE_VALUE;
+    }
+    return SetupDiGetClassDevsExW(guid, enumerator ? w : nullptr, parent, flags, existing, machine ? name : nullptr,
+                                  reserved);
+}
+
+WINSETUPAPI HDEVINFO WINAPI SetupDiGetClassDevsA(const GUID *guid, PCSTR enumerator, HWND parent, DWORD flags)
+{
+    return SetupDiGetClassDevsExA(guid, enumerator, parent, flags, nullptr, nullptr, nullptr);
 }
 
 WINSETUPAPI BOOL WINAPI SetupDiDestroyDeviceInfoList(HDEVINFO set)
