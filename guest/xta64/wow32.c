@@ -160,7 +160,7 @@ PVOID MxCreateTeb32(PVOID peb)
     teb[MIME_TEB32_REAL_CLIENT_ID / 4 + 1] = (ULONG)(ULONG_PTR)native->ClientId.UniqueThread;
     teb[MIME_TEB32_PEB / 4] = (ULONG)(ULONG_PTR)peb;
     teb[MIME_TEB32_LOCALE / 4] = native->CurrentLocale;
-    teb[MIME_TEB32_DEALLOCATION_STACK / 4] = teb[2];
+    teb[MIME_TEB32_DEALLOCATION_STACK / 4] = (ULONG)(ULONG_PTR)native->DeallocationStack;
     MIME_STRING32 *s = (void *)((PUCHAR)teb + MIME_TEB32_STATIC_STRING);
     s->MaximumLength = 522;
     s->Buffer = (ULONG)(ULONG_PTR)teb + MIME_TEB32_STATIC_BUFFER;
