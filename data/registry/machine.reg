@@ -71,6 +71,12 @@
 ; the settings of the transaction coordinator, which programs that use it give rights to; there is no coordinator service to read them.
 [HKLM\SOFTWARE\Microsoft\MSDTC]
 
+; the DirectX version, 9.0c as on every windows since vista, in both views. the DirectX redistributable's setup ends
+; with an internal error when it cannot read it.
+[HKLM\SOFTWARE\{Microsoft,WOW6432Node\Microsoft}\DirectX]
+"InstalledVersion"=hex:00,00,00,09,00,00,00,00
+"Version"="4.09.00.0904"
+
 ; the reference counts of the files that installers share, which they read and write, empty at first.
 [HKLM\SOFTWARE\{Microsoft,WOW6432Node\Microsoft}\Windows\CurrentVersion\SharedDLLs]
 
