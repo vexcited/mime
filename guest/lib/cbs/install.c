@@ -550,6 +550,11 @@ static char *gac_directory(INSTALL *I, const CBS_COMPONENT *c, const CBS_FILE_EN
     return path ? join(I, path, folder_name) : nullptr;
 }
 
+static const char *installed_name(const CBS_FILE_ENTRY *file)
+{
+    return base_name(file->InstalledName ? file->InstalledName : file->Name);
+}
+
 /* plans one component: where each of its files goes, with the links that go with it. */
 static int plan_component(INSTALL *I, const CBS_COMPONENT *c)
 {
@@ -591,7 +596,7 @@ static int plan_component(INSTALL *I, const CBS_COMPONENT *c)
         plan.Order = I->PlanCount;
         plan.Component = c;
         plan.File = file;
-        plan.Path = join(I, directory, base_name(file->Name));
+        plan.Path = join(I, directory, installed_name(file));
         plan.Size = I->FileSize[entry->Index];
         if (!plan.Path)
             return CBS_MEMORY;
@@ -628,7 +633,7 @@ static int plan_component(INSTALL *I, const CBS_COMPONENT *c)
                 plan++;
             if (plan == I->PlanCount)
                 continue;
-            char *link = join(I, cache, base_name(c->Files[g].Name));
+            char *link = join(I, cache, installed_name(&c->Files[g]));
             if (!link)
                 return CBS_MEMORY;
             int status = add_link(I, &I->Plans[plan], link);

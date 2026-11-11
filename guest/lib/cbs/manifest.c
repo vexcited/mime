@@ -258,6 +258,7 @@ int CbsManifestParse(CBS_ARENA *arena, const char *file_name, const char *text, 
             }
             file->Name = copy_attribute(arena, &xml, "name");
             file->Destination = copy_attribute(arena, &xml, "destinationPath");
+            file->InstalledName = copy_attribute(arena, &xml, "destinationName");
             sha256 = false;
             file->FirstLink = links.Count;
             /* a file with no destination goes only into the global assembly cache, its element gac says so. */
