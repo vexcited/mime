@@ -1253,7 +1253,7 @@ MMRESULT SynthOpen(SYNTH **out)
     }
     system_reset(s, FALSE, FALSE);
     s->level = 1.0f;
-    if (!NT_SUCCESS(MimeOutputOpen(&s->out, RATE, 2, 16, FALSE))) {
+    if (!NT_SUCCESS(MimeOutputOpen(&s->out, 0, RATE, 2, 16, FALSE))) {
         unload(s);
         return MMSYSERR_NODRIVER;
     }

@@ -115,6 +115,8 @@ extern DSDEVICE *DsDevices;
 /* main.c */
 HRESULT DsCreateDevice(LPCGUID guid, DWORD version, IDirectSound8 **out);
 BOOL DsResolveDevice(LPCGUID requested, GUID *out, BOOL capture);
+/* the host device the process mix plays on, for a device besides the default one. */
+void DsMixerDevice(const GUID *guid);
 void DsCopyFormat(WAVEFORMATEX *to, const WAVEFORMATEX *from);
 DWORD DsFormatSize(const WAVEFORMATEX *f);
 WORD DsFormatTag(const WAVEFORMATEX *f);

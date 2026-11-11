@@ -1,19 +1,15 @@
 /*
- * wave output through the host's default device. each open device has a lib/audio/output.c stream and a thread
+ * wave output through the host's devices, the default one first. each open device has a lib/audio/output.c stream and a thread
  * feeding queued headers; headers return once their last frame has played. eight-bit samples are widened; the mapper
- * converts compressed formats through msacm32. wave input reads the host's default recording device through a capture
+ * converts compressed formats through msacm32. wave input reads one of the host's recording devices through a capture
  * stream of the same kind, and a thread fills the queued headers.
  */
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
 
+#include "../lib/audio/devices.h"
 #include "../lib/audio/output.h"
 
-#if defined(__aarch64__)
-#define DEVICE_NAME L"Speakers (Qualcomm Audio)"
-#else
-#define DEVICE_NAME L"Speakers (Realtek(R) Audio)"
-#endif
 #define MAPPER_NAME L"Microsoft Sound Mapper"
 #define FEED_MS 5
 
@@ -67,6 +63,8 @@ static HANDLE heap(void)
 {
     return GetProcessHeap();
 }
+
+static struct WAVE_IN *find_in(HWAVEIN h);
 
 static WAVE_OUT *find_out(HWAVEOUT h)
 {
@@ -432,13 +430,38 @@ static DWORD WINAPI feed_thread(void *arg)
 
 /* ------------------------------------------------------------------ devices */
 
-static void fill_caps(BOOL mapper, WAVEOUTCAPSW *c)
+static UINT32 endpoint_count(BOOL capture)
+{
+    MimeAudioEndpoint *all = HeapAlloc(heap(), 0, sizeof(*all) * MIME_AUDIO_ENDPOINTS);
+    if (!all)
+        return 1;
+    UINT32 count = MimeAudioEndpoints(capture, all);
+    HeapFree(heap(), 0, all);
+    return count;
+}
+
+/* a device number counts the host's devices as they are now, the default one being 0. */
+static BOOL endpoint_at(BOOL capture, UINT_PTR number, MimeAudioEndpoint *out)
+{
+    if (number >= MIME_AUDIO_ENDPOINTS)
+        return FALSE;
+    MimeAudioEndpoint *all = HeapAlloc(heap(), 0, sizeof(*all) * MIME_AUDIO_ENDPOINTS);
+    if (!all)
+        return FALSE;
+    BOOL found = number < MimeAudioEndpoints(capture, all);
+    if (found)
+        *out = all[number];
+    HeapFree(heap(), 0, all);
+    return found;
+}
+
+static void fill_caps(const WCHAR *name, WAVEOUTCAPSW *c)
 {
     memset(c, 0, sizeof(*c));
     c->wMid = MM_MICROSOFT;
-    c->wPid = mapper ? MM_WAVE_MAPPER : MM_MSFT_WDMAUDIO_WAVEOUT;
+    c->wPid = name ? MM_MSFT_WDMAUDIO_WAVEOUT : MM_WAVE_MAPPER;
     c->vDriverVersion = 0x0A00;
-    lstrcpynW(c->szPname, mapper ? MAPPER_NAME : DEVICE_NAME, MAXPNAMELEN);
+    lstrcpynW(c->szPname, name ? name : MAPPER_NAME, MAXPNAMELEN);
     c->dwFormats = 0x000FFFFF;
     c->wChannels = 2;
     c->dwSupport = WAVECAPS_VOLUME | WAVECAPS_LRVOLUME | WAVECAPS_SAMPLEACCURATE;
@@ -446,42 +469,48 @@ static void fill_caps(BOOL mapper, WAVEOUTCAPSW *c)
 
 WINMMAPI UINT WINAPI waveOutGetNumDevs(void)
 {
-    return 1;
+    return endpoint_count(FALSE);
 }
 
-/* accepts a device number, the mapper or an open device handle. */
-static MMRESULT caps_device(UINT_PTR id, BOOL *mapper)
+/* accepts a device number, the mapper or an open device handle. the mapper has no name of its own. */
+static MMRESULT caps_device(BOOL capture, UINT_PTR id, MimeAudioEndpoint *e, const WCHAR **name)
 {
-    *mapper = id == WAVE_MAPPER || id == (UINT_PTR)(UINT)WAVE_MAPPER;
-    if (*mapper || id == 0)
+    *name = nullptr;
+    if (id == WAVE_MAPPER || id == (UINT_PTR)(UINT)WAVE_MAPPER)
         return MMSYSERR_NOERROR;
-    return find_out((HWAVEOUT)id) ? MMSYSERR_NOERROR : MMSYSERR_BADDEVICEID;
+    *name = e->name;
+    if (endpoint_at(capture, id, e))
+        return MMSYSERR_NOERROR;
+    BOOL open = capture ? find_in((HWAVEIN)id) != nullptr : find_out((HWAVEOUT)id) != nullptr;
+    return open && endpoint_at(capture, 0, e) ? MMSYSERR_NOERROR : MMSYSERR_BADDEVICEID;
 }
 
 WINMMAPI MMRESULT WINAPI waveOutGetDevCapsW(UINT_PTR id, LPWAVEOUTCAPSW caps, UINT size)
 {
-    BOOL mapper;
-    MMRESULT r = caps_device(id, &mapper);
+    MimeAudioEndpoint e;
+    const WCHAR *name;
+    MMRESULT r = caps_device(FALSE, id, &e, &name);
     if (r)
         return r;
     if (!caps)
         return MMSYSERR_INVALPARAM;
     WAVEOUTCAPSW c;
-    fill_caps(mapper, &c);
+    fill_caps(name, &c);
     memcpy(caps, &c, size < sizeof(c) ? size : sizeof(c));
     return MMSYSERR_NOERROR;
 }
 
 WINMMAPI MMRESULT WINAPI waveOutGetDevCapsA(UINT_PTR id, LPWAVEOUTCAPSA caps, UINT size)
 {
-    BOOL mapper;
-    MMRESULT r = caps_device(id, &mapper);
+    MimeAudioEndpoint e;
+    const WCHAR *name;
+    MMRESULT r = caps_device(FALSE, id, &e, &name);
     if (r)
         return r;
     if (!caps)
         return MMSYSERR_INVALPARAM;
     WAVEOUTCAPSW w;
-    fill_caps(mapper, &w);
+    fill_caps(name, &w);
     WAVEOUTCAPSA c = {w.wMid, w.wPid, w.vDriverVersion};
     WideCharToMultiByte(CP_ACP, 0, w.szPname, -1, c.szPname, MAXPNAMELEN, nullptr, nullptr);
     c.dwFormats = w.dwFormats;
@@ -511,7 +540,8 @@ WINMMAPI MMRESULT WINAPI waveOutOpen(LPHWAVEOUT out, UINT id, LPCWAVEFORMATEX fo
 {
     if (out && !(flags & WAVE_FORMAT_QUERY))
         *out = nullptr;
-    if (id != 0 && id != WAVE_MAPPER) {
+    MimeAudioEndpoint device = {0};
+    if (id != WAVE_MAPPER && !endpoint_at(FALSE, id, &device)) {
         /* an open device's handle names its device. */
         if (!find_out((HWAVEOUT)(UINT_PTR)id))
             return MMSYSERR_BADDEVICEID;
@@ -558,7 +588,7 @@ WINMMAPI MMRESULT WINAPI waveOutOpen(LPHWAVEOUT out, UINT id, LPCWAVEFORMATEX fo
     }
     w->in_frame = w->format.Format.nBlockAlign;
     w->widen8 = bits == 8;
-    if (!NT_SUCCESS(MimeOutputOpen(&w->out, w->format.Format.nSamplesPerSec, w->format.Format.nChannels,
+    if (!NT_SUCCESS(MimeOutputOpen(&w->out, device.host, w->format.Format.nSamplesPerSec, w->format.Format.nChannels,
                                    w->widen8 ? 16 : bits, is_float))) {
         if (w->mapped)
             close_acm(&w->acm);
@@ -901,12 +931,6 @@ WINMMAPI MMRESULT WINAPI waveOutGetErrorTextA(MMRESULT error, LPSTR text, UINT s
 /* ------------------------------------------------------------------ input */
 
 
-#if defined(__aarch64__)
-#define INPUT_NAME L"Microphone (Qualcomm Audio)"
-#else
-#define INPUT_NAME L"Microphone (Realtek(R) Audio)"
-#endif
-
 typedef struct WAVE_IN {
     struct WAVE_IN *next;
     RTL_CRITICAL_SECTION lock;
@@ -1011,54 +1035,48 @@ static DWORD WINAPI record_thread(void *arg)
     return 0;
 }
 
-static void fill_in_caps(BOOL mapper, WAVEINCAPSW *c)
+static void fill_in_caps(const WCHAR *name, WAVEINCAPSW *c)
 {
     memset(c, 0, sizeof(*c));
     c->wMid = MM_MICROSOFT;
-    c->wPid = mapper ? MM_WAVE_MAPPER : MM_MSFT_WDMAUDIO_WAVEIN;
+    c->wPid = name ? MM_MSFT_WDMAUDIO_WAVEIN : MM_WAVE_MAPPER;
     c->vDriverVersion = 0x0A00;
-    lstrcpynW(c->szPname, mapper ? MAPPER_NAME : INPUT_NAME, MAXPNAMELEN);
+    lstrcpynW(c->szPname, name ? name : MAPPER_NAME, MAXPNAMELEN);
     c->dwFormats = 0x000FFFFF;
     c->wChannels = 2;
 }
 
-static MMRESULT in_caps_device(UINT_PTR id, BOOL *mapper)
-{
-    *mapper = id == WAVE_MAPPER || id == (UINT_PTR)(UINT)WAVE_MAPPER;
-    if (*mapper || id == 0)
-        return MMSYSERR_NOERROR;
-    return find_in((HWAVEIN)id) ? MMSYSERR_NOERROR : MMSYSERR_BADDEVICEID;
-}
-
 WINMMAPI UINT WINAPI waveInGetNumDevs(void)
 {
-    return 1;
+    return endpoint_count(TRUE);
 }
 
 WINMMAPI MMRESULT WINAPI waveInGetDevCapsW(UINT_PTR id, LPWAVEINCAPSW caps, UINT size)
 {
-    BOOL mapper;
-    MMRESULT r = in_caps_device(id, &mapper);
+    MimeAudioEndpoint e;
+    const WCHAR *name;
+    MMRESULT r = caps_device(TRUE, id, &e, &name);
     if (r)
         return r;
     if (!caps)
         return MMSYSERR_INVALPARAM;
     WAVEINCAPSW c;
-    fill_in_caps(mapper, &c);
+    fill_in_caps(name, &c);
     memcpy(caps, &c, size < sizeof(c) ? size : sizeof(c));
     return MMSYSERR_NOERROR;
 }
 
 WINMMAPI MMRESULT WINAPI waveInGetDevCapsA(UINT_PTR id, LPWAVEINCAPSA caps, UINT size)
 {
-    BOOL mapper;
-    MMRESULT r = in_caps_device(id, &mapper);
+    MimeAudioEndpoint e;
+    const WCHAR *name;
+    MMRESULT r = caps_device(TRUE, id, &e, &name);
     if (r)
         return r;
     if (!caps)
         return MMSYSERR_INVALPARAM;
     WAVEINCAPSW w;
-    fill_in_caps(mapper, &w);
+    fill_in_caps(name, &w);
     WAVEINCAPSA c = {w.wMid, w.wPid, w.vDriverVersion};
     WideCharToMultiByte(CP_ACP, 0, w.szPname, -1, c.szPname, MAXPNAMELEN, nullptr, nullptr);
     c.dwFormats = w.dwFormats;
@@ -1072,7 +1090,8 @@ WINMMAPI MMRESULT WINAPI waveInOpen(LPHWAVEIN in, UINT id, LPCWAVEFORMATEX forma
 {
     if (in && !(flags & WAVE_FORMAT_QUERY))
         *in = nullptr;
-    if (id != 0 && id != WAVE_MAPPER && !find_in((HWAVEIN)(UINT_PTR)id))
+    MimeAudioEndpoint device = {0};
+    if (id != WAVE_MAPPER && !endpoint_at(TRUE, id, &device) && !find_in((HWAVEIN)(UINT_PTR)id))
         return MMSYSERR_BADDEVICEID;
     if (!format)
         return MMSYSERR_INVALPARAM;
@@ -1107,6 +1126,7 @@ WINMMAPI MMRESULT WINAPI waveInOpen(LPHWAVEIN in, UINT id, LPCWAVEFORMATEX forma
         h->frames = w->ring_frames;
         h->volume = 65536;
         h->capture = 1;
+        h->device = device.host;
         status = NtGdiMimeAudioControl(w->slot, MIME_AUDIO_OPEN);
         if (!NT_SUCCESS(status))
             NtGdiMimeAudioControl(w->slot, MIME_AUDIO_CLOSE);
