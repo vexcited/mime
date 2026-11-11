@@ -46,38 +46,22 @@ static IMAGE_RESOURCE_DIRECTORY *root_directory(PVOID handle, PULONG size, PUCHA
     return nullptr;
 }
 
+/* like windows, the names of a file are compared as they are: kernelbase asks for them in upper case. */
 static int compare_name(const IMAGE_RESOURCE_DIR_STRING_U *s, PCWSTR name)
 {
     SIZE_T n = wcslen(name);
     SIZE_T m = s->Length;
     for (SIZE_T i = 0; i < n && i < m; i++) {
-        WCHAR a = (WCHAR)towupper(s->NameString[i]);
-        WCHAR b = (WCHAR)towupper(name[i]);
-        if (a != b)
-            return a < b ? -1 : 1;
+        if (s->NameString[i] != name[i])
+            return s->NameString[i] < name[i] ? -1 : 1;
     }
     return m == n ? 0 : (m < n ? -1 : 1);
-}
-
-static ULONG_PTR normalize_id(ULONG_PTR id)
-{
-    if (IS_INTRESOURCE(id))
-        return id;
-    PCWSTR s = (PCWSTR)id;
-    if (s[0] == '#') {
-        ULONG v = 0;
-        for (s++; *s >= '0' && *s <= '9'; s++)
-            v = v * 10 + (ULONG)(*s - '0');
-        return v;
-    }
-    return id;
 }
 
 static IMAGE_RESOURCE_DIRECTORY_ENTRY *find_entry(IMAGE_RESOURCE_DIRECTORY *root, IMAGE_RESOURCE_DIRECTORY *dir,
                                                   ULONG_PTR id)
 {
     IMAGE_RESOURCE_DIRECTORY_ENTRY *entries = (IMAGE_RESOURCE_DIRECTORY_ENTRY *)(dir + 1);
-    id = normalize_id(id);
     if (IS_INTRESOURCE(id)) {
         IMAGE_RESOURCE_DIRECTORY_ENTRY *ids = entries + dir->NumberOfNamedEntries;
         LONG lo = 0, hi = (LONG)dir->NumberOfIdEntries - 1;
@@ -116,11 +100,25 @@ static IMAGE_RESOURCE_DIRECTORY *subdirectory(IMAGE_RESOURCE_DIRECTORY *root, IM
     return (IMAGE_RESOURCE_DIRECTORY *)((PUCHAR)root + (e->OffsetToData & 0x7FFFFFFF));
 }
 
-/* language fallback: exact, neutral of the primary language, user default, english, then the first entry. */
+/*
+ * the language, as windows 11 picks it. a language is tried as asked, then without its sublanguage, then as no
+ * language at all, and nothing else stands in for it. no language, and the two defaults that have none, take
+ * what the thread and then english would, and failing that whatever the directory holds first.
+ */
 static IMAGE_RESOURCE_DIRECTORY_ENTRY *find_language(IMAGE_RESOURCE_DIRECTORY *root, IMAGE_RESOURCE_DIRECTORY *dir,
                                                      ULONG_PTR lang)
 {
-    USHORT candidates[] = {(USHORT)lang, (USHORT)(lang & 0x3FF), 0x0409, 0x0009, 0x0000, 0x0400, 0x0800};
+    if (lang & 0x3FF) {
+        USHORT candidates[] = {(USHORT)lang, (USHORT)(lang & 0x3FF), 0};
+        for (ULONG i = 0; i < RTL_NUMBER_OF(candidates); i++) {
+            IMAGE_RESOURCE_DIRECTORY_ENTRY *e = find_entry(root, dir, candidates[i]);
+            if (e)
+                return e;
+        }
+        return nullptr;
+    }
+    USHORT thread = (USHORT)(NtCurrentTeb()->CurrentLocale & 0xFFFF);
+    USHORT candidates[] = {0, thread, (USHORT)(thread & 0x3FF), 0x0409, 0x0009};
     for (ULONG i = 0; i < RTL_NUMBER_OF(candidates); i++) {
         IMAGE_RESOURCE_DIRECTORY_ENTRY *e = find_entry(root, dir, candidates[i]);
         if (e)
@@ -164,8 +162,7 @@ static NTSTATUS find_resource(PVOID handle, PLDR_RESOURCE_INFO info, ULONG level
         *out = want_dir ? (PVOID)dir : (PVOID)e;
         return STATUS_SUCCESS;
     }
-    ULONG_PTR lang = info->Language ? info->Language : NtCurrentTeb()->CurrentLocale & 0xFFFF;
-    e = find_language(root, dir, lang);
+    e = find_language(root, dir, info->Language);
     if (!e || (e->OffsetToData & 0x80000000))
         return STATUS_RESOURCE_LANG_NOT_FOUND;
     *out = (PUCHAR)root + e->OffsetToData;
