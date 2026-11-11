@@ -271,12 +271,8 @@ void mime_fs_match_case(char *path, size_t root_length)
 /* converts a guest volume path to a host path, refusing to escape the volume. */
 static bool host_path(MimeVm *vm, uint32_t volume, const uint16_t *path, uint32_t chars, char *out, size_t out_size)
 {
-    const char *root;
-    if (volume == MIME_FS_VOLUME_SYSTEM)
-        root = vm->paths->drive_c;
-    else if (volume == MIME_FS_VOLUME_HOST)
-        root = "";
-    else
+    char root[MIME_PATH_MAX];
+    if (!mime_fs_volume_root(vm, volume, root, sizeof(root)))
         return false;
 
     char utf8[MIME_PATH_MAX * 2];
@@ -622,8 +618,10 @@ static uint64_t fs_open(MimeVm *vm, MimeFsOpen *req)
         return MIME_HC_STATUS_INVALID;
     /* a link in the path is for the guest to follow, which it does by opening the name its target gives. */
     size_t through;
-    int component = mime_fs_find_link(path, req->volume == MIME_FS_VOLUME_SYSTEM ? strlen(vm->paths->drive_c) : 0,
-                                      (req->flags & MIME_FS_OPEN_REPARSE_POINT) != 0, &through);
+    char root[MIME_PATH_MAX];
+    if (!mime_fs_volume_root(vm, req->volume, root, sizeof(root)))
+        return MIME_HC_STATUS_INVALID;
+    int component = mime_fs_find_link(path, strlen(root), (req->flags & MIME_FS_OPEN_REPARSE_POINT) != 0, &through);
     if (component)
         return fs_reparse_reply(vm, req, path, through, component);
     return fs_open_path(vm, req, path);
@@ -1415,16 +1413,15 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
     }
     case MIME_HC_FS_VOLUME_QUERY: {
         MimeFsVolumeInfo *info = mime_vm_phys(vm, a[2], sizeof(*info));
-        const char *root = a[1] == MIME_FS_VOLUME_SYSTEM ? vm->paths->drive_c :
-                           a[1] == MIME_FS_VOLUME_HOST ? "/" : nullptr;
-        if (!info || !root) {
+        char root[MIME_PATH_MAX];
+        if (!info || !mime_fs_volume_root(vm, (uint32_t)a[1], root, sizeof(root))) {
             status = MIME_HC_STATUS_INVALID;
             break;
         }
         /* the volume of the file asked about, so Z:\home tells the free space of /home and not of /. */
         MimeFsHandle *fh = get_handle(vm, a[3]);
         struct statfs volume;
-        if ((fh && fh->volume == a[1] && fh->fd >= 0 ? fstatfs(fh->fd, &volume) : statfs(root, &volume)) != 0) {
+        if ((fh && fh->volume == a[1] && fh->fd >= 0 ? fstatfs(fh->fd, &volume) : statfs(root[0] ? root : "/", &volume)) != 0) {
             status = errno_status(errno);
             break;
         }
@@ -1623,17 +1620,21 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         status = mime_window_unmap(vm, a[1]);
         pthread_mutex_unlock(WINDOW_LOCK(vm));
         break;
+    case MIME_HC_FS_DRIVES:
+        status = mime_fs_drives(vm, a[1], a[2], &regs[1]);
+        break;
     case MIME_HC_FS_SYNC: {
         /* flush guest writes to the disk beyond the host page cache, at shutdown or for a volume flush. Z: spans every mount. */
         if (a[1] == MIME_FS_VOLUME_HOST) {
             sync();
             break;
         }
-        if (a[1] != MIME_FS_VOLUME_SYSTEM) {
+        char root[MIME_PATH_MAX];
+        if (!mime_fs_volume_root(vm, (uint32_t)a[1], root, sizeof(root))) {
             status = MIME_HC_STATUS_INVALID;
             break;
         }
-        int fd = open(vm->paths->drive_c, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        int fd = open(root, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
         if (fd < 0) {
             status = errno_status(errno);
             break;
@@ -1656,6 +1657,7 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
 void mime_fs_close_all(MimeVm *vm)
 {
     mime_fswatch_stop();
+    mime_fs_drives_stop();
     for (uint32_t i = 0; i < vm->fs_handle_slots; i++) {
         MimeFsHandle *fh = get_handle(vm, i + 1);
         if (fh) {

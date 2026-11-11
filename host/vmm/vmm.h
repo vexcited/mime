@@ -262,6 +262,16 @@ uint64_t mime_vcpu_sysreg(MimeVcpu *vcpu, uint32_t reg);
 
 /* fs.c */
 uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8]);
+/* fsdrives.c, the host drives the guest has as letters, followed while the machine runs. */
+void mime_fs_drives_start(MimeVm *vm);
+void mime_fs_drives_stop(void);
+/* the host directory a volume begins at, "" for Z:; false for a drive that is gone. */
+bool mime_fs_volume_root(MimeVm *vm, uint32_t volume, char *out, size_t size);
+uint64_t mime_fs_drives(MimeVm *vm, uint64_t pa, uint64_t capacity, uint64_t *count);
+/* the host directory of a drive letter of the guest. */
+bool mime_fs_letter_root(MimeVm *vm, char letter, char *out, size_t size);
+/* the letter of the host drive a host path is on and the length of its mount point, 0 when it is on none. */
+char mime_fs_drive_of(const char *host, size_t *root_length);
 /* fslink.c, hard links and ids. */
 uint64_t mime_fs_link(MimeVm *vm, MimeFsHandle *src, MimeFsHandle *dir, const char *leaf, uint32_t flags,
                       uint64_t *links);

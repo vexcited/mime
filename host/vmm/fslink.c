@@ -70,9 +70,8 @@ static uint64_t status_of(int error)
 
 static const char *volume_root(MimeVm *vm, uint32_t volume)
 {
-    if (volume == MIME_FS_VOLUME_SYSTEM)
-        return vm->paths->drive_c;
-    return volume == MIME_FS_VOLUME_HOST ? "" : nullptr;
+    static thread_local char root[MIME_PATH_MAX];
+    return mime_fs_volume_root(vm, volume, root, sizeof(root)) ? root : nullptr;
 }
 
 /* the directory part of a path, the root being "/". */
