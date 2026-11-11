@@ -14,23 +14,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: dependencies
-        run: |
-          sudo apt-get update
-
-          sudo apt-get install -y --no-install-recommends clang lld llvm cmake \
-            ninja-build pkg-config libsdl3-dev libwayland-dev \
-            libcurl4-openssl-dev libsystemd-dev
-
-      - name: build
-        run: |
-          cmake -B build -G Ninja
-          cmake --build build
+      - uses: ./.github/actions/build
 
       - name: package
         run: |
-          strip --strip-debug build/mime
-          tar -C build -czf mime-x86_64-linux.tar.gz mime
+          mkdir dist
+          strip --strip-debug -o dist/mime build/mime
+          tar -C dist -czf mime-x86_64-linux.tar.gz mime
 
       - name: publish
         env:
