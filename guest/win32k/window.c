@@ -691,6 +691,20 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
         send_kernel(w, WM_WINDOWPOSCHANGING, 0, &pos, MIME_LPARAM_INOUT, sizeof(pos));
         if (!alive(w))
             goto done;
+        /*
+         * the program may have moved the window meanwhile. what it wrote over a position or size the flags keep is
+         * ignored: delphi forms write their own bounds there whatever the flags say.
+         */
+        old_window = w->WindowRect;
+        screen_to_parent(w, &old_window);
+        if (pos.flags & SWP_NOMOVE) {
+            pos.x = old_window.left;
+            pos.y = old_window.top;
+        }
+        if (pos.flags & SWP_NOSIZE) {
+            pos.cx = old_window.right - old_window.left;
+            pos.cy = old_window.bottom - old_window.top;
+        }
     }
     if (pos.cx < 0)
         pos.cx = 0;
@@ -2018,13 +2032,15 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING user_class, PUNI
         goto fail;
     }
 
-    RECT window = {x, y, x + cx, y + cy}, client;
+    /* the window may have been placed again while it handled WM_NCCREATE, the client area follows where it is now. */
+    RECT window = w->WindowRect, client;
+    screen_to_parent(w, &window);
     calc_client(w, &window, &window, &client, FALSE);
     if (!alive(w)) {
         W32Free(cs);
         goto fail;
     }
-    parent_to_screen(parent, w->Awareness, &client);
+    parent_to_screen(w->Parent, w->Awareness, &client);
     w->ClientRect = client;
 
     r = send_kernel(w, WM_CREATE, 0, cs, MIME_LPARAM_CREATESTRUCT, cs_size);
