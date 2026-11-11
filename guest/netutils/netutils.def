@@ -1,0 +1,6 @@
+LIBRARY netutils.dll
+EXPORTS
+    NetApiBufferAllocate=netapi32.NetApiBufferAllocate
+    NetApiBufferFree=netapi32.NetApiBufferFree
+    NetApiBufferReallocate=netapi32.NetApiBufferReallocate
+    NetApiBufferSize=netapi32.NetApiBufferSize

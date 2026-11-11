@@ -1,0 +1,16 @@
+LIBRARY srvcli.dll
+EXPORTS
+    NetConnectionEnum@32
+    NetFileClose@8
+    NetFileEnum@36
+    NetFileGetInfo@16
+    NetServerGetInfo@12
+    NetSessionDel@12
+    NetSessionEnum@36
+    NetSessionGetInfo@20
+    NetShareAdd@16
+    NetShareCheck@12
+    NetShareDel@12
+    NetShareEnum@28
+    NetShareGetInfo@16
+    NetShareSetInfo@20
