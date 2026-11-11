@@ -44,3 +44,4 @@ EXPORTS
     ShellAboutW @570
     ShellAboutA @569
     PathMakeUniqueName @47
+    PathCleanupSpec @171

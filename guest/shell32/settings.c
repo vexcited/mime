@@ -304,6 +304,32 @@ SHSTDAPI BOOL WINAPI PathMakeUniqueName(PWSTR unique, UINT size, PCWSTR name, PC
     return make_unique(unique, size, long_name ? long_name : name, directory, 1, nullptr);
 }
 
+#define PCS_FATAL 0x80000000
+#define PCS_REPLACEDCHAR 0x00000001
+#define PCS_REMOVEDCHAR 0x00000002
+#define PCS_PATHTOOLONG 0x00000008
+
+/* windows keeps the characters a long name allows, makes a slash a dash and drops the rest. */
+SHSTDAPI int WINAPI PathCleanupSpec(PCWSTR directory, PWSTR spec)
+{
+    int result = 0;
+    PWSTR out = spec;
+    for (PCWSTR in = spec; *in; in++) {
+        if (PathGetCharTypeW(*in) & GCT_LFNCHAR) {
+            *out++ = *in;
+        } else if (*in == L' ' || *in == L'/') {
+            *out++ = L'-';
+            result |= PCS_REPLACEDCHAR;
+        } else {
+            result |= PCS_REMOVEDCHAR;
+        }
+    }
+    *out = 0;
+    if (directory && wcslen(directory) + wcslen(spec) >= MAX_PATH)
+        result |= PCS_FATAL | PCS_PATHTOOLONG;
+    return result;
+}
+
 /* ------------------------------------------------------------------ about box */
 
 SHSTDAPI int WINAPI ShellAboutW(HWND hwnd, PCWSTR title, PCWSTR other, HICON icon)
