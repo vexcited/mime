@@ -229,11 +229,9 @@ static void expand(const char *in, char *out, size_t size)
 /* resolves guest paths case-insensitively on the host filesystem. */
 static bool resolve_guest_path(const char *guest, char *host, size_t size)
 {
-    char drive = (char)toupper((unsigned char)guest[0]);
-    if ((drive != 'C' && drive != 'Z') || guest[1] != ':')
-        return false;
     char current[MIME_PATH_MAX];
-    mime_strlcpy(current, drive == 'C' ? g_paths->drive_c : "", sizeof(current));
+    if (!guest[0] || guest[1] != ':' || !mime_paths_drive_root(g_paths, guest[0], current, sizeof(current)))
+        return false;
     char copy[MIME_PATH_MAX * 2];
     mime_strlcpy(copy, guest + 2, sizeof(copy));
     char *save = nullptr;

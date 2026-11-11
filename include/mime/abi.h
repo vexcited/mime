@@ -463,6 +463,7 @@ typedef struct MimeRomHeader {
 #define MIME_IRQ_FS (1u << 6)   /* the host changed files in a directory the guest watches: MIME_HC_FS_CHANGES. */
 #define MIME_IRQ_WINDOW (1u << 7) /* pages of a file window are gone, the file was shortened: MIME_HC_FS_WINDOW_LOST. */
 #define MIME_IRQ_MEMORY (1u << 8) /* the host's memory pressure changed, see MimeSharedPage.memory_pressure. */
+#define MIME_IRQ_DRIVES (1u << 9) /* a host drive came or went: MIME_HC_FS_DRIVES. */
 
 /* how short of memory the host is, in MimeSharedPage.memory_pressure. */
 enum {
@@ -544,6 +545,7 @@ enum {
      * MIME_FS_VOLUME_GENUINE volume, to read, query and map read only. NOT_FOUND past the last entry.
      */
     MIME_HC_GENUINE_OPEN = 0x6D,
+    MIME_HC_FS_DRIVES = 0x6E,   /* pa and capacity in entries: the MimeFsDrive of each host drive the guest has now, returns their count. */
     MIME_HC_FS_LINKS = 0x68,    /* handle, pa and capacity: every name of the file on its volume as MimeFsLinkName records, returns the bytes they need. */
     MIME_HC_FS_SET_REPARSE = 0x69, /* handle and MimeFsReparse pa: makes the empty file or directory a symbolic link or a junction. */
     MIME_HC_FS_GET_REPARSE = 0x6A, /* handle and MimeFsReparse pa: what the link the handle was opened as says, MIME_HC_STATUS_NOT_REPARSE for any other. */
@@ -934,7 +936,26 @@ enum {
     MIME_FS_VOLUME_SYSTEM = 0, /* C:, the drive_c directory. */
     MIME_FS_VOLUME_HOST = 1,   /* Z:, the host root. */
     MIME_FS_VOLUME_GENUINE = 2, /* the copies of MIME_HC_GENUINE_OPEN, which no drive of the guest shows. */
+    MIME_FS_VOLUME_DRIVE = 0x40, /* plus the letter's index from A: a drive the host mounted, D: to Y:. */
 };
+
+#define MIME_FS_DRIVE_FIRST 'D'
+#define MIME_FS_DRIVE_LAST 'Y'
+#define MIME_FS_MAX_DRIVES (MIME_FS_DRIVE_LAST - MIME_FS_DRIVE_FIRST + 1)
+
+enum {
+    MIME_FS_DRIVE_REMOVABLE = 1u << 0,
+    MIME_FS_DRIVE_CDROM = 1u << 1,
+    MIME_FS_DRIVE_READ_ONLY = 1u << 2,
+};
+
+typedef struct MimeFsDrive {
+    uint32_t volume; /* MIME_FS_VOLUME_DRIVE + letter - 'A'. */
+    uint32_t serial;
+    uint32_t flags;  /* MIME_FS_DRIVE_*. */
+    uint32_t reserved;
+    char label[32];  /* UTF-8. */
+} MimeFsDrive;
 
 enum {
     MIME_FS_OPEN_READ = 1u << 0,
