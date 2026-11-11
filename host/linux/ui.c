@@ -60,6 +60,7 @@ typedef struct UiWindow {
     uint64_t fullscreen_ms; /* when the guest last asked for or left fullscreen. */
     uint64_t interactive_until; /* the compositor sizes the window under the pointer, as long as sizes come. */
     bool size_recheck;     /* check the size after the guest request has had time to complete. */
+    double popup_scale;    /* a popup is shown at the scale of its owner. */
     char want_app_id[200]; /* requested application id and the id currently on the toplevel. */
     char set_app_id[200];
     double wheel_x, wheel_y;
@@ -219,14 +220,32 @@ static double surface_stretch(const MimeWinConfig *c)
     return c->surface_dpi && c->dpi && c->dpi > c->surface_dpi ? (double)c->dpi / c->surface_dpi : 1.0;
 }
 
+/*
+ * a tiling compositor sizes a window below the smallest size its program accepts, which the guest refuses: the window
+ * stays larger than its host window for good.
+ */
+static bool held_at_minimum(const UiWindow *w, double gw, double gh)
+{
+    const MimeWinConfig *c = &w->config;
+    if (w->popup || (c->flags & MIME_WIN_MINIMIZED))
+        return false;
+    double scale = config_scale(c);
+    bool larger = gw / scale > w->logical_width + 1 || gh / scale > w->logical_height + 1;
+    bool smallest = (c->min_width > 0 && c->rect.right - c->rect.left <= c->min_width) ||
+                    (c->min_height > 0 && c->rect.bottom - c->rect.top <= c->min_height);
+    return larger && smallest;
+}
+
 static Fit window_fit(const UiWindow *w)
 {
     Fit fit = {1.0 / config_scale(&w->config), 0, 0};
-    if (!w->fullscreen || w->logical_width <= 0 || w->logical_height <= 0)
+    if (w->popup && w->popup_scale > 0)
+        fit.scale = w->popup_scale;
+    if (w->popup || w->logical_width <= 0 || w->logical_height <= 0)
         return fit;
     MimeRect host = host_part(&w->config);
     double gw = host.right - host.left, gh = host.bottom - host.top;
-    if (gw <= 0 || gh <= 0)
+    if (gw <= 0 || gh <= 0 || !(w->fullscreen || held_at_minimum(w, gw, gh)))
         return fit;
     fit.scale = fmin(w->logical_width / gw, w->logical_height / gh);
     fit.x = (w->logical_width - gw * fit.scale) / 2;
@@ -1062,22 +1081,32 @@ static void destroy_host_window(UiWindow *w, bool locked)
     w->texture_width = w->texture_height = 0;
 }
 
+/* where a popup goes in its owner's host window, which shows the owner through its fit. */
+static void popup_place(const UiWindow *owner, const MimeWinConfig *cfg, int *x, int *y)
+{
+    MimeRect host = host_part(cfg), oh = host_part(&owner->config);
+    Fit fit = window_fit(owner);
+    *x = (int)lround(fit.x + (cfg->rect.left + host.left - owner->config.rect.left - oh.left) * fit.scale);
+    *y = (int)lround(fit.y + (cfg->rect.top + host.top - owner->config.rect.top - oh.top) * fit.scale);
+}
+
 /* menus and tooltips become owner-relative popups on Wayland; other windows become toplevels. */
 static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
 {
     MimeRect host = host_part(cfg);
     double scale = config_scale(cfg);
-    int width = MIME_MAX(1, (int)lround((host.right - host.left) / scale));
-    int height = MIME_MAX(1, (int)lround((host.bottom - host.top) / scale));
     UiWindow *owner = cfg->owner_id ? find_window(cfg->owner_id) : nullptr;
     bool popup = (cfg->flags & MIME_WIN_TOOL) && owner && owner->window;
+    w->popup_scale = popup ? window_fit(owner).scale : 0;
+    double shown = popup ? w->popup_scale : 1.0 / scale;
+    int width = MIME_MAX(1, (int)lround((host.right - host.left) * shown));
+    int height = MIME_MAX(1, (int)lround((host.bottom - host.top) * shown));
     SDL_WindowFlags flags = SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_TRANSPARENT;
     if (g_gl)
         flags |= SDL_WINDOW_OPENGL;
     if (popup) {
-        MimeRect oh = host_part(&owner->config);
-        int x = (int)lround((cfg->rect.left + host.left - owner->config.rect.left - oh.left) / scale);
-        int y = (int)lround((cfg->rect.top + host.top - owner->config.rect.top - oh.top) / scale);
+        int x, y;
+        popup_place(owner, cfg, &x, &y);
         SDL_WindowFlags kind = (cfg->flags & MIME_WIN_NOINPUT) ? SDL_WINDOW_TOOLTIP : SDL_WINDOW_POPUP_MENU;
         /*
          * SDL gives a popup menu keyboard focus despite requesting no compositor grab. this would disable the
@@ -1277,6 +1306,7 @@ static int limit_of(int32_t limit, int outside, double scale)
 }
 
 static void unminimize(UiWindow *w, bool activate);
+static Uint32 size_timer(void *data, SDL_TimerID timer, Uint32 interval);
 
 static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
 {
@@ -1326,11 +1356,25 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
      * minimized window keeps its size: the guest's is that of its icon, and kwin would place it elsewhere on restore.
      */
     bool minimized = (cfg->flags & MIME_WIN_MINIMIZED) != 0;
+    double shown = 1.0 / scale;
+    if (w->popup) {
+        shown = window_fit(owner).scale;
+        size_changed = size_changed || shown != w->popup_scale;
+        w->popup_scale = shown;
+    }
     if (size_changed && w->interactive_until <= now_ms() && !minimized) {
-        w->want_w = MIME_MAX(1, (int)lround((host.right - host.left) / scale));
-        w->want_h = MIME_MAX(1, (int)lround((host.bottom - host.top) / scale));
+        w->want_w = MIME_MAX(1, (int)lround((host.right - host.left) * shown));
+        w->want_h = MIME_MAX(1, (int)lround((host.bottom - host.top) * shown));
         w->want_ms = now_ms();
         SDL_SetWindowSize(w->window, w->want_w, w->want_h);
+    }
+    /*
+     * a compositor that tiles the window keeps its size and sends no event: the guest is told of the size kept, which
+     * new limits may let it take.
+     */
+    if ((size_changed || limits_changed) && !fresh && !w->popup && !minimized && !w->size_recheck) {
+        w->size_recheck = true;
+        SDL_AddTimer(260, size_timer, (void *)(uintptr_t)w->id);
     }
     if (!w->popup && (limits_changed || fresh) && !minimized) {
         /* the compositor sizes a window the guest lets be sized, within the limits of its program. */
@@ -1350,10 +1394,9 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
         SDL_SetWindowMaximumSize(w->window, max_w, max_h);
     }
     if (w->popup) {
-        MimeRect oh = host_part(&owner->config);
-        SDL_SetWindowPosition(w->window,
-                              (int)lround((cfg->rect.left + host.left - owner->config.rect.left - oh.left) / scale),
-                              (int)lround((cfg->rect.top + host.top - owner->config.rect.top - oh.top) / scale));
+        int x, y;
+        popup_place(owner, cfg, &x, &y);
+        SDL_SetWindowPosition(w->window, x, y);
     } else if (!w->fullscreen) {
         /* Wayland leaves top level placement to the compositor; X11 honors it. */
         SDL_SetWindowPosition(w->window, (int)lround((cfg->rect.left + host.left) / scale),
@@ -2585,6 +2628,21 @@ static void report_size(UiWindow *w)
     MimeRect host = host_part(&w->config);
     double scale = config_scale(&w->config);
     int32_t width = (int32_t)lround(logical_w * scale), height = (int32_t)lround(logical_h * scale);
+    /*
+     * a tiling compositor goes below the smallest size the program accepts. the guest gets the smallest size of the
+     * same shape, which the fit shows over the whole host window.
+     */
+    int32_t min_w = w->config.min_width - (w->config.rect.right - w->config.rect.left - (host.right - host.left));
+    int32_t min_h = w->config.min_height - (w->config.rect.bottom - w->config.rect.top - (host.bottom - host.top));
+    if (w->config.min_width <= 0)
+        min_w = 0;
+    if (w->config.min_height <= 0)
+        min_h = 0;
+    if (width > 0 && height > 0 && (width < min_w || height < min_h)) {
+        double grow = fmax((double)min_w / width, (double)min_h / height);
+        width = MIME_MAX(min_w, (int32_t)lround(width * grow));
+        height = MIME_MAX(min_h, (int32_t)lround(height * grow));
+    }
     if (abs(width - (host.right - host.left)) <= 1 && abs(height - (host.bottom - host.top)) <= 1)
         return;
     MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_SIZE, .window_id = w->id, .width = width, .height = height};
