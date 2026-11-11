@@ -1,0 +1,25 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: build
+  cancel-in-progress: true
+
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-26.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/build
+        id: build
+
+      # a tag can only read the caches of main, so the releases build on top of this one.
+      - uses: actions/cache/save@v4
+        with:
+          path: build
+          key: ${{ steps.build.outputs.cache-key }}
