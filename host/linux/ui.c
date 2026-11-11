@@ -1679,6 +1679,7 @@ static void config_main(void *arg)
 void mime_ui_window_config(const MimeWinConfig *cfg)
 {
     mime_launcher_window_seen(cfg->window_id, cfg->process_id);
+    mime_presence_window(cfg->window_id, cfg->process_id, cfg->image_path, cfg->image_chars);
     bool queue = false;
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(cfg->window_id);
@@ -1740,6 +1741,7 @@ static void destroy_main(void *arg)
 void mime_ui_window_destroy(uint32_t id)
 {
     mime_launcher_window_gone(id);
+    mime_presence_window_gone(id);
     if (!g_video) {
         pthread_mutex_lock(&g_windows_lock);
         UiWindow *w = find_window(id);
@@ -1754,6 +1756,7 @@ void mime_ui_window_destroy(uint32_t id)
 void mime_ui_process_exit(uint32_t process_id)
 {
     mime_launcher_process_gone(process_id);
+    mime_presence_process_gone(process_id);
 }
 
 typedef struct WindowIcon {

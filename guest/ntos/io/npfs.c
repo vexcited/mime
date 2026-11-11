@@ -102,6 +102,7 @@ typedef struct NP_INSTANCE {
     ULONG ClientLevel;          /* the impersonation level the client opened with. */
     BOOLEAN ClientEffectiveOnly;
     BOOLEAN ClientImpersonating; /* ClientToken is a thread's, not the process's. */
+    ULONG Host; /* the host socket that serves the instance in place of a server end, 0 for none. */
 } NP_INSTANCE;
 
 typedef struct NP_REQUEST {
@@ -139,6 +140,10 @@ static PDEVICE_OBJECT g_device;
 static FAST_MUTEX g_lock; /* almost always uncontended, since the kernel lock is held. */
 static KMUTEX g_create_lock;
 static LIST_ENTRY g_pipes;
+static LIST_ENTRY g_host_pipes; /* the pipes to discord on the host, one instance each, not found by name. */
+/* host arguments live in the kernel image, which is physically contiguous. */
+static UCHAR g_host_buffer[16384] __attribute__((aligned(64)));
+static MimeNetPoll g_host_poll __attribute__((aligned(16)));
 static NP_CREATE *volatile g_create_owner_params;
 static PKTHREAD volatile g_create_owner;
 
@@ -596,6 +601,180 @@ static NTSTATUS create_server(PFILE_OBJECT file, const NP_CREATE *c, SD_BLOB *cr
     return STATUS_SUCCESS;
 }
 
+/* ------------------------------------------------------------ discord on the host */
+
+#define WSAEWOULDBLOCK 10035
+
+/*
+ * a client of \\.\pipe\discord-ipc-N that no program of the machine serves reaches the host's discord-ipc-N socket,
+ * so games talk to the Discord the user runs. the host stands for the server end: what the client writes is sent
+ * to it and what it answers is queued for the client.
+ */
+static BOOLEAN discord_index(PCUNICODE_STRING name, ULONG *index)
+{
+    static const char prefix[] = "discord-ipc-";
+    ULONG n = sizeof(prefix) - 1;
+    if (name->Length != (n + 1) * sizeof(WCHAR))
+        return FALSE;
+    for (ULONG i = 0; i < n; i++) {
+        WCHAR c = name->Buffer[i];
+        if ((c >= 'A' && c <= 'Z' ? c + 32 : c) != (WCHAR)prefix[i])
+            return FALSE;
+    }
+    WCHAR digit = name->Buffer[n];
+    if (digit < '0' || digit > '9')
+        return FALSE;
+    *index = digit - '0';
+    return TRUE;
+}
+
+/* returns 0 or the winsock error. */
+static LONG host_call(ULONG64 nr, ULONG64 a1, ULONG64 a2, ULONG64 a3, ULONG64 *value)
+{
+    ULONG64 v = 0;
+    ULONG64 hs = HalHypercallUnlocked(nr, a1, a2, a3, 0, 0, 0, &v);
+    if (value)
+        *value = v;
+    if (hs == MIME_HC_STATUS_OK)
+        return 0;
+    return hs == MIME_HC_STATUS_NET_ERROR ? (LONG)v : 10022;
+}
+
+/* the lock is held. the client may still read what came, then sees the pipe broken. */
+static void host_close(NP_INSTANCE *in)
+{
+    host_call(MIME_HC_NET_CLOSE, in->Host, 0, 0, nullptr);
+    in->Host = 0;
+    in->ServerOpen = FALSE;
+    flush_queue(&in->ToServer);
+    if (in->ClientOpen) {
+        in->State = FILE_PIPE_CLOSING_STATE;
+        if (IsListEmpty(&in->ToClient.Data))
+            fail_all(&in->ToClient.Readers, STATUS_PIPE_BROKEN);
+    }
+}
+
+/* the lock is held: sends what the client wrote, queues what the host answered, then watches for more. */
+static void host_pump(NP_INSTANCE *in)
+{
+    BOOLEAN broken = FALSE, blocked = FALSE;
+    NP_QUEUE *out = &in->ToServer, *back = &in->ToClient;
+    while (!IsListEmpty(&out->Data)) {
+        NP_DATA *d = CONTAINING_RECORD(out->Data.Flink, NP_DATA, Links);
+        ULONG n = d->Length - d->Offset;
+        if (n > sizeof(g_host_buffer))
+            n = sizeof(g_host_buffer);
+        memcpy(g_host_buffer, d->Data + d->Offset, n);
+        ULONG64 sent = 0;
+        LONG e = n ? host_call(MIME_HC_NET_SEND, in->Host, HalPhysicalOf(g_host_buffer), n, &sent) : 0;
+        if (e == WSAEWOULDBLOCK) {
+            blocked = TRUE;
+            break;
+        }
+        if (e) {
+            broken = TRUE;
+            break;
+        }
+        d->Offset += (ULONG)sent;
+        out->Bytes -= (ULONG)sent;
+        if (d->Offset == d->Length) {
+            RemoveEntryList(&d->Links);
+            ExFreePool(d);
+            out->Messages--;
+        }
+    }
+    while (!broken) {
+        ULONG64 got = 0;
+        LONG e = host_call(MIME_HC_NET_RECV, in->Host, HalPhysicalOf(g_host_buffer), sizeof(g_host_buffer), &got);
+        if (e == WSAEWOULDBLOCK)
+            break;
+        NP_DATA *d = !e && got ? ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(NP_DATA) + got, KI_TAG('N', 'p', 'D', 't'))
+                               : nullptr;
+        if (!d) {
+            broken = TRUE;
+            break;
+        }
+        memcpy(d->Data, g_host_buffer, got);
+        d->Length = (ULONG)got;
+        d->Offset = 0;
+        InsertTailList(&back->Data, &d->Links);
+        back->Bytes += (ULONG)got;
+        back->Messages++;
+    }
+    serve_readers(in, back, in->ReadMode[1]);
+    if (broken) {
+        host_close(in);
+        return;
+    }
+    g_host_poll.socket = in->Host;
+    g_host_poll.events = MIME_NET_READ | (blocked ? MIME_NET_WRITE : 0);
+    g_host_poll.revents = 0;
+    g_host_poll.error = 0;
+    host_call(MIME_HC_NET_POLL, HalPhysicalOf(&g_host_poll), 1, 1, nullptr);
+}
+
+static NTSTATUS open_host(PFILE_OBJECT file, PCUNICODE_STRING name, ULONG index)
+{
+    ULONG64 sock = 0;
+    if (host_call(MIME_HC_NET_IPC, index, 0, 0, &sock) || !sock)
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    NP_PIPE *p = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*p), KI_TAG('N', 'p', 'P', 'p'));
+    NP_INSTANCE *in = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*in), KI_TAG('N', 'p', 'I', 'n'));
+    PWSTR text = ExAllocatePool2(POOL_FLAG_NON_PAGED, name->Length + sizeof(WCHAR), KI_TAG('N', 'p', 'N', 'm'));
+    if (!p || !in || !text) {
+        if (p)
+            ExFreePool(p);
+        if (in)
+            ExFreePool(in);
+        if (text)
+            ExFreePool(text);
+        host_call(MIME_HC_NET_CLOSE, sock, 0, 0, nullptr);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    memset(p, 0, sizeof(*p));
+    memcpy(text, name->Buffer, name->Length);
+    p->Name = (UNICODE_STRING){name->Length, (USHORT)(name->Length + sizeof(WCHAR)), text};
+    p->Type = FILE_PIPE_BYTE_STREAM_TYPE;
+    p->MaxInstances = 1;
+    p->Instances = 1;
+    p->InQuota = p->OutQuota = sizeof(g_host_buffer);
+    p->DefaultTimeout = -500000;
+    InitializeListHead(&p->InstanceList);
+    InsertTailList(&g_host_pipes, &p->Links);
+    memset(in, 0, sizeof(*in));
+    in->Pipe = p;
+    in->State = FILE_PIPE_CONNECTED_STATE;
+    in->ServerOpen = TRUE;
+    in->ClientOpen = TRUE;
+    in->Client = file;
+    init_queue(&in->ToServer);
+    init_queue(&in->ToClient);
+    InitializeListHead(&in->Listeners);
+    in->ProcessId[1] = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
+    in->Host = (ULONG)sock;
+    InsertTailList(&p->InstanceList, &in->Links);
+    file->FsContext = in;
+    file->FsContext2 = END_CLIENT;
+    host_pump(in);
+    return STATUS_SUCCESS;
+}
+
+BOOLEAN NpfsHostEvent(ULONG sock)
+{
+    BOOLEAN mine = FALSE;
+    lock();
+    for (PLIST_ENTRY l = g_host_pipes.Flink; l != &g_host_pipes && !mine; l = l->Flink) {
+        NP_PIPE *p = CONTAINING_RECORD(l, NP_PIPE, Links);
+        NP_INSTANCE *in = CONTAINING_RECORD(p->InstanceList.Flink, NP_INSTANCE, Links);
+        if (in->Host == sock) {
+            mine = TRUE;
+            host_pump(in);
+        }
+    }
+    unlock();
+    return mine;
+}
+
 static NTSTATUS open_client(PFILE_OBJECT file, PIO_STACK_LOCATION stack)
 {
     UNICODE_STRING name;
@@ -605,6 +784,9 @@ static NTSTATUS open_client(PFILE_OBJECT file, PIO_STACK_LOCATION stack)
         return STATUS_SUCCESS;
     }
     NP_PIPE *p = find_pipe(&name);
+    ULONG index;
+    if (!p && discord_index(&name, &index))
+        return open_host(file, &name, index);
     if (!p)
         return STATUS_OBJECT_NAME_NOT_FOUND;
     PIO_SECURITY_CONTEXT context = stack->Parameters.Create.SecurityContext;
@@ -711,6 +893,8 @@ static NTSTATUS NTAPI np_cleanup(PDEVICE_OBJECT device, PIRP irp)
         in->ClientOpen = FALSE;
         in->Client = nullptr;
         fail_all(&in->ToClient.Readers, STATUS_PIPE_BROKEN);
+        if (in->Host)
+            host_close(in);
         if (in->ServerOpen) {
             in->State = FILE_PIPE_CLOSING_STATE;
             if (IsListEmpty(&in->ToServer.Data))
@@ -877,6 +1061,7 @@ void IopInitializeNamedPipes(void)
     ExInitializeFastMutex(&g_lock);
     KeInitializeMutex(&g_create_lock, 0);
     InitializeListHead(&g_pipes);
+    InitializeListHead(&g_host_pipes);
     NTSTATUS status = IoCreateDriver(L"\\FileSystem\\Npfs", NpfsDriverEntry, nullptr);
     if (!NT_SUCCESS(status)) {
         KiLogPrintf("npfs failed to start: %08x", status);
@@ -1007,6 +1192,8 @@ NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc
             q->Bytes += length;
             q->Messages++;
             serve_readers(in, q, reader_mode(in, q));
+            if (in->Host)
+                host_pump(in);
         }
         unlock();
         return call_done(&call, STATUS_SUCCESS, length);
@@ -1157,6 +1344,10 @@ static NTSTATUS wait_pipe(const FILE_PIPE_WAIT_FOR_BUFFER *w, ULONG in_len)
             have_timeout = TRUE;
         }
         unlock();
+        /* a pipe to discord is there whenever the host serves it. */
+        ULONG index;
+        if (!p && discord_index(&name, &index))
+            return host_call(MIME_HC_NET_IPC, index, 1, 0, nullptr) ? STATUS_OBJECT_NAME_NOT_FOUND : STATUS_SUCCESS;
         if (!p)
             return STATUS_OBJECT_NAME_NOT_FOUND;
         if (ready)

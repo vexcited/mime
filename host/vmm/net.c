@@ -22,11 +22,14 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #define NET_SLOTS 4096
@@ -989,6 +992,73 @@ static uint64_t net_interfaces(MimeVm *vm, uint64_t pa, uint64_t max, uint64_t *
     return MIME_HC_STATUS_OK;
 }
 
+/* ------------------------------------------------------------ discord. */
+
+/* where Discord, its Flatpak and Snap packages and the clients built like it serve discord-ipc-N. */
+static const char *const g_ipc_dirs[] = {"", "/app/com.discordapp.Discord", "/app/com.discordapp.DiscordCanary",
+                                         "/app/com.discordapp.DiscordPTB", "/app/dev.vencord.Vesktop",
+                                         "/snap.discord", "/snap.discord-canary"};
+
+static int ipc_connect(unsigned index, bool probe)
+{
+    char run[256];
+    const char *base = getenv("XDG_RUNTIME_DIR");
+    if (!base || !*base) {
+        snprintf(run, sizeof(run), "/run/user/%u", (unsigned)getuid());
+        base = run;
+    }
+    char darwin[256] = "";
+#ifdef __APPLE__
+    /* Discord serves its socket in the user's temporary folder, which the machine's environment may not name. */
+    if (confstr(_CS_DARWIN_USER_TEMP_DIR, darwin, sizeof(darwin)) > sizeof(darwin))
+        darwin[0] = 0;
+#endif
+    const char *temps[] = {getenv("TMPDIR"), darwin, getenv("TMP"), getenv("TEMP"), "/tmp"};
+    size_t runs = sizeof(g_ipc_dirs) / sizeof(g_ipc_dirs[0]), all = runs + sizeof(temps) / sizeof(temps[0]);
+    struct sockaddr_un sa = {.sun_family = AF_UNIX};
+    for (size_t i = 0; i < all; i++) {
+        const char *dir = i < runs ? base : temps[i - runs];
+        const char *sub = i < runs ? g_ipc_dirs[i] : "";
+        if (!dir || !*dir)
+            continue;
+        if ((size_t)snprintf(sa.sun_path, sizeof(sa.sun_path), "%s%s/discord-ipc-%u", dir, sub, index) >= sizeof(sa.sun_path))
+            continue;
+        struct stat st;
+        if (stat(sa.sun_path, &st) != 0 || !S_ISSOCK(st.st_mode))
+            continue;
+        if (probe)
+            return 0;
+        int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (fd < 0)
+            return -1;
+        if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) == 0)
+            return fd;
+        close(fd);
+    }
+    return -1;
+}
+
+static uint64_t net_ipc(MimeVm *vm, uint64_t index, bool probe, uint64_t *value)
+{
+    if (index > 9)
+        return fail(value, 10022);
+    if (!probe && !start(vm))
+        return fail(value, 10050);
+    int fd = ipc_connect((unsigned)index, probe);
+    if (fd < 0)
+        return fail(value, 10061); /* WSAECONNREFUSED */
+    if (probe)
+        return MIME_HC_STATUS_OK;
+    prepare_fd(fd, false);
+    NetSocket *s = add_socket(fd, true);
+    if (!s) {
+        close(fd);
+        return fail(value, 10024);
+    }
+    *value = socket_id(s);
+    return MIME_HC_STATUS_OK;
+}
+
 /* ------------------------------------------------------------ dispatch. */
 
 uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
@@ -1129,6 +1199,9 @@ uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         break;
     case MIME_HC_NET_INTERFACES:
         status = net_interfaces(vm, regs[1], regs[2], &value);
+        break;
+    case MIME_HC_NET_IPC:
+        status = net_ipc(vm, regs[1], regs[2] != 0, &value);
         break;
     default:
         status = MIME_HC_STATUS_UNSUPPORTED;

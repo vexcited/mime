@@ -20,6 +20,8 @@ bool mime_ui_get_keyboard(MimeKeyboardLayout *out);
 void mime_ui_alert(const char *text);
 /* the process that shows a host dialog when the desktop has no kdialog or zenity, see host/linux/dialog.c. */
 int mime_ui_dialog_helper(int argc, char **argv);
+/* the idle process Discord detects a guest program by: blocks until the machine lets it go, -1 when not one. */
+int mime_ui_presence_helper(int argc, char **argv);
 /*
  * asks the compositor to move with edge 0 or resize with a WMSZ_* edge while the pointer button remains held.
  * returns MIME_HC_STATUS_OK if accepted, unsupported when the guest handles movement.

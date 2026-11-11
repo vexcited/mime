@@ -596,6 +596,11 @@ enum {
     MIME_HC_PAD_RUMBLE = 0x45,  /* (pad, low frequency motor, high frequency motor) from 0 to 65535 */
     MIME_HC_GAMMA = 0x46,       /* (pa of three channels of 256 values, red first, or 0 for the identity) */
     MIME_HC_NET_CONFIG = 0x47,  /* (MimeNetConfig pa, size) -> bytes written, as many entries as fit */
+    /*
+     * index and probe: a stream to the host's discord-ipc-<index> socket, where Discord serves its pipe. a probe only
+     * tells whether the socket is there and returns no socket.
+     */
+    MIME_HC_NET_IPC = 0x57,
 
     /* the clipboard in every format the host and the guest can exchange, see MIME_CLIP_*. */
     MIME_HC_CLIP_OFFER = 0x48,   /* (MIME_CLIP_* mask) the guest owns the clipboard and can render these, none to withdraw */
