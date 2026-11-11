@@ -1130,13 +1130,54 @@ static void popup_place(const UiWindow *owner, const MimeWinConfig *cfg, int *x,
     *y = (int)lround(fit.y + (cfg->rect.top + host.top - owner->config.rect.top - oh.top) * fit.scale);
 }
 
+static UiWindow *popup_anchor(SDL_Window *focus, const UiWindow *w, const MimeRect *rect, bool inside)
+{
+    UiWindow *a = focus ? find_by_sdl(SDL_GetWindowID(focus)) : nullptr;
+    while (a && a->popup)
+        a = a->owner ? find_window(a->owner) : nullptr;
+    if (!a || a == w || !a->window || !a->shown || (a->config.flags & MIME_WIN_MINIMIZED))
+        return nullptr;
+    const MimeRect *r = &a->config.rect;
+    if (inside && (rect->left >= r->right || rect->right <= r->left || rect->top >= r->bottom || rect->bottom <= r->top))
+        return nullptr;
+    return a;
+}
+
+/*
+ * the window a popup hangs from, none for a window that is no popup. a wayland compositor places a window with no
+ * parent where it likes, a tiling one in a tile, and a program whose windows are owned by a hidden one, or by none,
+ * has its menus and tips land there. such a popup hangs from the window it is over, the one the pointer is in first.
+ */
+static UiWindow *popup_owner(const UiWindow *w, const MimeWinConfig *cfg)
+{
+    if (!(cfg->flags & MIME_WIN_TOOL))
+        return nullptr;
+    UiWindow *owner = cfg->owner_id ? find_window(cfg->owner_id) : nullptr;
+    if (owner && owner->window && (owner->shown || !g_wayland))
+        return owner;
+    if (!g_wayland)
+        return nullptr;
+    /* the one found first is kept. */
+    UiWindow *kept = w->popup && w->window && w->owner ? find_window(w->owner) : nullptr;
+    if (kept && kept->window && kept->shown)
+        return kept;
+    SDL_Window *mouse = SDL_GetMouseFocus(), *keys = SDL_GetKeyboardFocus();
+    UiWindow *a = popup_anchor(mouse, w, &cfg->rect, true);
+    if (!a)
+        a = popup_anchor(keys, w, &cfg->rect, true);
+    if (!a)
+        a = popup_anchor(mouse, w, &cfg->rect, false);
+    if (!a)
+        a = popup_anchor(keys, w, &cfg->rect, false);
+    return a;
+}
+
 /* menus and tooltips become owner-relative popups on Wayland; other windows become toplevels. */
-static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
+static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg, UiWindow *owner)
 {
     MimeRect host = host_part(cfg);
     double scale = config_scale(cfg);
-    UiWindow *owner = cfg->owner_id ? find_window(cfg->owner_id) : nullptr;
-    bool popup = (cfg->flags & MIME_WIN_TOOL) && owner && owner->window;
+    bool popup = owner != nullptr;
     w->popup_scale = popup ? window_fit(owner).scale : 0;
     double shown = popup ? w->popup_scale : 1.0 / scale;
     int width = MIME_MAX(1, (int)lround((host.right - host.left) * shown));
@@ -1174,7 +1215,7 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
     }
     w->popup = popup;
     w->says_maximized = false;
-    w->owner = cfg->owner_id;
+    w->owner = popup ? owner->id : cfg->owner_id;
     w->renderer = SDL_CreateRenderer(w->window, nullptr);
     if (!w->renderer) {
         mime_warn("cannot create a renderer: %s", SDL_GetError());
@@ -1187,8 +1228,9 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
     /* the popup owner retains keyboard focus and text input. */
     if (!(popup && g_wayland))
         SDL_StartTextInput(w->window);
-    if (owner && owner->window && !popup)
-        SDL_SetWindowParent(w->window, owner->window);
+    UiWindow *parent = !popup && cfg->owner_id ? find_window(cfg->owner_id) : nullptr;
+    if (parent && parent->window)
+        SDL_SetWindowParent(w->window, parent->window);
     return true;
 }
 
@@ -1382,9 +1424,9 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
         w->state_pending = false;
     }
     /* a popup sits on its owner from its creation: another owner or kind makes a new window. */
-    UiWindow *owner = cfg->owner_id ? find_window(cfg->owner_id) : nullptr;
-    bool want_popup = (cfg->flags & MIME_WIN_TOOL) && owner && owner->window;
-    if (w->window && (want_popup != w->popup || (w->popup && w->owner != cfg->owner_id))) {
+    UiWindow *owner = popup_owner(w, cfg);
+    bool want_popup = owner != nullptr;
+    if (w->window && (want_popup != w->popup || (w->popup && w->owner != owner->id))) {
         destroy_host_window(w, false);
         /* the new host window is not shown yet. */
         w->shown = false;
@@ -1407,7 +1449,7 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
     if (!w->window && !(cfg->flags & MIME_WIN_VISIBLE))
         return;
     bool fresh = !w->window;
-    if (fresh && !create_host_window(w, cfg))
+    if (fresh && !create_host_window(w, cfg, owner))
         return;
     if (fresh)
         set_geometry(w);
