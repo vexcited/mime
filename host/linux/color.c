@@ -144,7 +144,7 @@ static uint32_t ten_thousandths(double nits)
 }
 
 /*
- * an output is in hdr when its range reaches above its reference white. programs draw in the nits of PQ, whose
+ * an output is in hdr when what it can show reaches above its reference white. programs draw in the nits of PQ, whose
  * reference white the compositor shows at the output's own, so the output's range is told on that scale.
  */
 static void answer(const Query *q, bool *hdr, MimeMonitorColor *color)
@@ -160,7 +160,6 @@ static void answer(const Query *q, bool *hdr, MimeMonitorColor *color)
         max = q->max;
         reference = q->reference;
     }
-    *hdr = max / reference > 1.05;
     const int32_t *primaries = q->has_target_primaries ? q->target_primaries
                                : q->has_primaries      ? q->primaries
                                                        : named_primaries(q->named);
@@ -169,13 +168,15 @@ static void answer(const Query *q, bool *hdr, MimeMonitorColor *color)
         for (int i = 0; i < 8; i++)
             out[i] = primaries[i] > 0 ? (uint32_t)primaries[i] : 0;
     }
-    if (!*hdr)
-        return;
+    /* the luminances are the range the encoding spans, which KWin puts above the white of an output it shows in sdr. */
     double peak = max, floor = min;
     if (q->has_target_luminance && q->target_max) {
         peak = q->target_max;
         floor = q->target_min / 10000.0;
     }
+    *hdr = peak / reference > 1.05;
+    if (!*hdr)
+        return;
     double scale = REFERENCE_NITS / reference;
     double frame = q->max_fall && q->max_fall < peak ? q->max_fall : peak;
     color->min_nits = ten_thousandths(floor * scale);
