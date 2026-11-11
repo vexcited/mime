@@ -153,6 +153,20 @@ static char *extensions_end(char *text)
     return insert;
 }
 
+/*
+ * the built-in output a fragment shader writes: 0 for none, 1 gl_FragColor, 2 gl_FragData. the core profile has
+ * neither, and a shader that asks for it only names them in the branches it wrote for older versions.
+ */
+static int fragment_builtin(const char *text)
+{
+    const char *version = strstr(text, "#version");
+    const char *eol = version ? strchr(version, '\n') : nullptr;
+    const char *core = version ? strstr(version, " core") : nullptr;
+    if (core && (!eol || core < eol))
+        return 0;
+    return uses(text, "gl_FragColor") ? 1 : uses(text, "gl_FragData") ? 2 : 0;
+}
+
 static char *lift_source(const char *src, size_t len, bool fragment, const MimeGlslCompat *compat)
 {
     char *text = malloc(len + 1);
@@ -216,11 +230,12 @@ static char *lift_source(const char *src, size_t len, bool fragment, const MimeG
 
     /* the declarations of the replaced fragment outputs go after the last #extension line. */
     Buf decl = {};
-    if (fragment && (lift || uses(text, "gl_FragColor") || uses(text, "gl_FragData"))) {
-        if (uses(text, "gl_FragColor")) {
+    int builtin = fragment ? fragment_builtin(text) : 0;
+    if (builtin) {
+        if (builtin == 1) {
             buf_str(&out, "#define gl_FragColor mime_FragColor\n");
             buf_str(&decl, "layout(location = 0) out vec4 mime_FragColor;\n");
-        } else if (uses(text, "gl_FragData")) {
+        } else {
             buf_str(&out, "#define gl_FragData mime_FragData\n");
             buf_fmt(&decl, "layout(location = 0) out vec4 mime_FragData[%d];\n", frag_data_count(text));
         }
@@ -1083,7 +1098,7 @@ bool mime_shader_compile_stages(const char *vs, size_t vs_len, const char *fs, s
     MimeGlslCompat compat;
     {
         char *fcopy = strndup(fs, fs_len);
-        int kind = uses(fcopy, "gl_FragColor") ? 1 : uses(fcopy, "gl_FragData") ? 2 : 0;
+        int kind = fragment_builtin(fcopy);
         mime_glsl_compat_analyze(vs, vs_len, fs, fs_len, &compat, kind, kind == 2 ? frag_data_count(fcopy) : 1);
         free(fcopy);
     }
