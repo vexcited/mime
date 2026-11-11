@@ -9,6 +9,8 @@
  */
 #include "mmdevapi_private.h"
 
+#include "../lib/audio/devices.h"
+
 #include <mime/audio.h>
 
 #define PERIOD (REFERENCE_TIME)100000      /* 10 ms, in 100 ns units. */
@@ -37,6 +39,8 @@ typedef struct CLIENT {
     BYTE *scratch;
     BOOL bounced;
     BOOL capture;
+    BOOL chosen; /* an endpoint besides the default one, named by device. */
+    GUID device;
     UINT64 dropped; /* host dropped frames the program was already told of. */
     float master, channel[8];
     BOOL mute;
@@ -162,6 +166,11 @@ static HRESULT initialize(CLIENT *c, AUDCLNT_SHAREMODE mode, DWORD flags, REFERE
     if (frames > ring_frames)
         frames = ring_frames;
 
+    UINT32 host = 0;
+    if (c->chosen && !MimeAudioEndpointHost(c->capture, &c->device, &host)) {
+        ReleaseSRWLockExclusive(&c->lock);
+        return AUDCLNT_E_DEVICE_INVALIDATED;
+    }
     PVOID base;
     ULONG slot;
     NTSTATUS status = NtGdiMimeAudioCreate(&base, &slot);
@@ -174,6 +183,7 @@ static HRESULT initialize(CLIENT *c, AUDCLNT_SHAREMODE mode, DWORD flags, REFERE
         h->frames = ring_frames;
         h->volume = 65536;
         h->capture = c->capture;
+        h->device = host;
         status = NtGdiMimeAudioControl(slot, MIME_AUDIO_OPEN);
         if (!NT_SUCCESS(status))
             NtGdiMimeAudioControl(slot, MIME_AUDIO_CLOSE);
@@ -847,7 +857,7 @@ static HRESULT STDMETHODCALLTYPE client_query(void *This, REFIID riid, void **ob
     return E_NOINTERFACE;
 }
 
-HRESULT MmCreateAudioClient(BOOL capture, void **object)
+HRESULT MmCreateAudioClient(BOOL capture, const GUID *device, void **object)
 {
     CLIENT *c = HeapAlloc(heap(), HEAP_ZERO_MEMORY, sizeof(CLIENT));
     if (!c)
@@ -856,6 +866,9 @@ HRESULT MmCreateAudioClient(BOOL capture, void **object)
     c->render = &render_vtbl;
     c->capture_client = &capture_vtbl;
     c->capture = capture != FALSE;
+    c->chosen = device != nullptr;
+    if (device)
+        c->device = *device;
     c->clock = &clock_vtbl;
     c->simple = &simple_vtbl;
     c->stream = &stream_vtbl;

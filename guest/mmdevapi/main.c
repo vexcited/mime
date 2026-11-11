@@ -1,23 +1,15 @@
 /*
- * the multimedia device api: a render endpoint for the host's default output and a capture endpoint for its
- * default input. their audio clients, in client.c, play and record through the host.
+ * the multimedia device api: a render and a capture endpoint for the host's default devices, then one for each other
+ * device the host has. their audio clients, in client.c, play and record through the host.
  */
 #include "mmdevapi_private.h"
 
+#include "../lib/audio/devices.h"
+
 static constexpr WCHAR DEVICE_ID[] = L"{0.0.0.00000000}.{2c9f1a4b-8d3e-4f6a-9b1c-7e5d2a8c4f01}";
 static constexpr WCHAR CAPTURE_ID[] = L"{0.0.1.00000000}.{2c9f1a4b-8d3e-4f6a-9b1c-7e5d2a8c4f02}";
-#if defined(__aarch64__)
-#define AUDIO_BRAND L"Qualcomm Audio"
-#else
-#define AUDIO_BRAND L"Realtek(R) Audio"
-#endif
-#define AUDIO_SPEAKERS L"Speakers (" AUDIO_BRAND L")"
-#define AUDIO_MICROPHONE L"Microphone (" AUDIO_BRAND L")"
-static constexpr WCHAR DEVICE_NAME[] = AUDIO_SPEAKERS;
 static constexpr WCHAR DEVICE_DESC[] = L"Speakers";
-static constexpr WCHAR CAPTURE_NAME[] = AUDIO_MICROPHONE;
 static constexpr WCHAR CAPTURE_DESC[] = L"Microphone";
-static constexpr WCHAR INTERFACE_NAME[] = AUDIO_BRAND;
 
 /* the compiler references it from code using floating point, without a crt to define it. */
 int _fltused = 0x9875;
@@ -63,10 +55,20 @@ static HRESULT copy_string(const WCHAR *s, LPWSTR *out)
 
 /* ------------------------------------------------------------------ property store */
 
-typedef struct STORE {
-    const IPropertyStoreVtbl *vtbl;
+/* one object per endpoint, acting as device, endpoint and property store. it lasts as long as the process. */
+typedef struct DEVICE {
+    const IMMDeviceVtbl *device;
+    const IMMEndpointVtbl *endpoint;
+    const IPropertyStoreVtbl *store;
     BOOL capture;
-} STORE;
+    BOOL fixed; /* the default device of its direction. */
+    GUID guid;
+    WCHAR id[56];
+    WCHAR name[144];
+    WCHAR interface[128];
+} DEVICE;
+
+#define DEVICE_OF(field, This) ((DEVICE *)((BYTE *)(This) - offsetof(DEVICE, field)))
 
 static HRESULT STDMETHODCALLTYPE store_query(void *This, REFIID riid, void **object)
 {
@@ -111,17 +113,17 @@ static HRESULT STDMETHODCALLTYPE store_get_at(void *This, DWORD index, PROPERTYK
 
 static HRESULT STDMETHODCALLTYPE store_get_value(void *This, REFPROPERTYKEY key, PROPVARIANT *value)
 {
-    BOOL capture = ((STORE *)This)->capture;
+    DEVICE *d = DEVICE_OF(store, This);
     if (!key || !value)
         return E_POINTER;
     memset(value, 0, sizeof(*value));
     const WCHAR *text = nullptr;
     if (IsEqualGUID(&key->fmtid, &FMTID_Device) && key->pid == 14)
-        text = capture ? CAPTURE_NAME : DEVICE_NAME;
+        text = d->name;
     else if (IsEqualGUID(&key->fmtid, &FMTID_Device) && key->pid == 2)
-        text = capture ? CAPTURE_DESC : DEVICE_DESC;
+        text = d->capture ? CAPTURE_DESC : DEVICE_DESC;
     else if (IsEqualGUID(&key->fmtid, &FMTID_DeviceInterface) && key->pid == 2)
-        text = INTERFACE_NAME;
+        text = d->interface;
     if (text) {
         value->vt = VT_LPWSTR;
         return copy_string(text, &value->pwszVal);
@@ -150,20 +152,87 @@ static HRESULT STDMETHODCALLTYPE store_commit(void *This) { return S_OK; }
 static const IPropertyStoreVtbl store_vtbl = {
     store_query, static_ref, static_ref, store_count, store_get_at, store_get_value, store_set_value, store_commit,
 };
-static STORE g_render_store = {&store_vtbl, FALSE}, g_capture_store = {&store_vtbl, TRUE};
 
 /* ------------------------------------------------------------------ device */
 
-/* one object per direction, acting as both device and endpoint. */
-typedef struct DEVICE {
-    const IMMDeviceVtbl *device;
-    const IMMEndpointVtbl *endpoint;
-    BOOL capture;
-} DEVICE;
+static const IMMDeviceVtbl device_vtbl;
+static const IMMEndpointVtbl endpoint_vtbl;
 
-static DEVICE g_render_device = {nullptr, nullptr, FALSE}, g_capture_device = {nullptr, nullptr, TRUE};
+/* the default devices come first. a device the host lost keeps its object, which programs may still hold. */
+#define MAX_DEVICES (MIME_AUDIO_ENDPOINTS * 2)
+static DEVICE g_devices[2][MAX_DEVICES];
+static UINT g_device_count[2];
+static SRWLOCK g_devices_lock;
 
-#define DEVICE_OF(field, This) ((DEVICE *)((BYTE *)(This) - offsetof(DEVICE, field)))
+static void format_id(DEVICE *d)
+{
+    static const WCHAR digits[] = L"0123456789abcdef";
+    static const BYTE order[16] = {3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15};
+    const BYTE *bytes = (const BYTE *)&d->guid;
+    WCHAR *at = d->id;
+    for (const WCHAR *prefix = d->capture ? L"{0.0.1.00000000}.{" : L"{0.0.0.00000000}.{"; *prefix; prefix++)
+        *at++ = *prefix;
+    for (int i = 0; i < 16; i++) {
+        if (i == 4 || i == 6 || i == 8 || i == 10)
+            *at++ = L'-';
+        *at++ = digits[bytes[order[i]] >> 4];
+        *at++ = digits[bytes[order[i]] & 15];
+    }
+    *at++ = L'}';
+    *at = 0;
+}
+
+/* the endpoints the host has now, each with the object it had before when it is not new. */
+static UINT list_devices(BOOL capture, DEVICE **listed)
+{
+    MimeAudioEndpoint *all = HeapAlloc(GetProcessHeap(), 0, sizeof(*all) * MIME_AUDIO_ENDPOINTS);
+    UINT count = all ? MimeAudioEndpoints(capture, all) : 0, found = 0;
+    DEVICE *pool = g_devices[capture ? 1 : 0];
+    UINT *known = &g_device_count[capture ? 1 : 0];
+    AcquireSRWLockExclusive(&g_devices_lock);
+    listed[found++] = &pool[0];
+    for (UINT i = 1; i < count; i++) {
+        DEVICE *d = nullptr;
+        for (UINT j = 1; j < *known && !d; j++) {
+            if (IsEqualGUID(&pool[j].guid, &all[i].guid))
+                d = &pool[j];
+        }
+        if (!d && *known < MAX_DEVICES) {
+            d = &pool[(*known)++];
+            d->device = &device_vtbl;
+            d->endpoint = &endpoint_vtbl;
+            d->store = &store_vtbl;
+            d->capture = capture;
+            d->guid = all[i].guid;
+            format_id(d);
+        }
+        if (!d)
+            continue;
+        lstrcpynW(d->name, all[i].name, RTL_NUMBER_OF(d->name));
+        lstrcpynW(d->interface, all[i].interface, RTL_NUMBER_OF(d->interface));
+        listed[found++] = d;
+    }
+    ReleaseSRWLockExclusive(&g_devices_lock);
+    if (all)
+        HeapFree(GetProcessHeap(), 0, all);
+    return found;
+}
+
+static DEVICE *find_device(LPCWSTR id)
+{
+    DEVICE *listed[MIME_AUDIO_ENDPOINTS];
+    DEVICE *found = nullptr;
+    for (int capture = 0; capture < 2 && !found; capture++) {
+        list_devices(capture, listed);
+        AcquireSRWLockExclusive(&g_devices_lock);
+        for (UINT i = 0; i < g_device_count[capture] && !found; i++) {
+            if (!_wcsicmp(id, g_devices[capture][i].id))
+                found = &g_devices[capture][i];
+        }
+        ReleaseSRWLockExclusive(&g_devices_lock);
+    }
+    return found;
+}
 
 static HRESULT STDMETHODCALLTYPE device_query(void *This, REFIID riid, void **object)
 {
@@ -194,7 +263,7 @@ static HRESULT STDMETHODCALLTYPE device_activate(void *This, REFIID iid, DWORD c
         return E_POINTER;
     *object = nullptr;
     if (IsEqualGUID(iid, &IID_IAudioClient) || IsEqualGUID(iid, &IID_IAudioClient2) || IsEqualGUID(iid, &IID_IAudioClient3))
-        return MmCreateAudioClient(d->capture, object);
+        return MmCreateAudioClient(d->capture, d->fixed ? nullptr : &d->guid, object);
     if (IsEqualGUID(iid, &IID_IAudioEndpointVolume)) {
         *object = MmEndpointVolume(d->capture);
         return S_OK;
@@ -207,7 +276,7 @@ static HRESULT STDMETHODCALLTYPE device_open_store(void *This, DWORD access, IPr
     DEVICE *d = DEVICE_OF(device, This);
     if (!store)
         return E_POINTER;
-    *store = (IPropertyStore *)(d->capture ? &g_capture_store : &g_render_store);
+    *store = (IPropertyStore *)&d->store;
     return S_OK;
 }
 
@@ -215,7 +284,7 @@ static HRESULT STDMETHODCALLTYPE device_get_id(void *This, LPWSTR *id)
 {
     if (!id)
         return E_POINTER;
-    return copy_string(DEVICE_OF(device, This)->capture ? CAPTURE_ID : DEVICE_ID, id);
+    return copy_string(DEVICE_OF(device, This)->id, id);
 }
 
 static HRESULT STDMETHODCALLTYPE device_get_state(void *This, DWORD *state)
@@ -244,18 +313,33 @@ static const IMMEndpointVtbl endpoint_vtbl = {endpoint_query, static_ref, static
 
 typedef struct {
     const IMMDeviceCollectionVtbl *vtbl;
+    LONG refs;
     UINT count;
-    DEVICE *devices[2];
+    DEVICE *devices[MIME_AUDIO_ENDPOINTS * 2];
 } COLLECTION;
 
 static HRESULT STDMETHODCALLTYPE collection_query(void *This, REFIID riid, void **object)
 {
     if (IsEqualGUID(riid, &IID_IUnknown) || IsEqualGUID(riid, &IID_IMMDeviceCollection)) {
         *object = This;
+        InterlockedIncrement(&((COLLECTION *)This)->refs);
         return S_OK;
     }
     *object = nullptr;
     return E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE collection_add_ref(void *This)
+{
+    return (ULONG)InterlockedIncrement(&((COLLECTION *)This)->refs);
+}
+
+static ULONG STDMETHODCALLTYPE collection_release(void *This)
+{
+    LONG refs = InterlockedDecrement(&((COLLECTION *)This)->refs);
+    if (!refs)
+        HeapFree(GetProcessHeap(), 0, This);
+    return (ULONG)refs;
 }
 
 static HRESULT STDMETHODCALLTYPE collection_count(void *This, UINT *count)
@@ -280,12 +364,8 @@ static HRESULT STDMETHODCALLTYPE collection_item(void *This, UINT index, IMMDevi
 }
 
 static const IMMDeviceCollectionVtbl collection_vtbl = {
-    collection_query, static_ref, static_ref, collection_count, collection_item,
+    collection_query, collection_add_ref, collection_release, collection_count, collection_item,
 };
-static COLLECTION g_renderers = {&collection_vtbl, 1, {&g_render_device, nullptr}},
-                  g_capturers = {&collection_vtbl, 1, {&g_capture_device, nullptr}},
-                  g_both = {&collection_vtbl, 2, {&g_render_device, &g_capture_device}},
-                  g_none = {&collection_vtbl, 0, {nullptr, nullptr}};
 
 /* ------------------------------------------------------------------ enumerator */
 
@@ -311,11 +391,18 @@ static HRESULT STDMETHODCALLTYPE enum_endpoints(void *This, EDataFlow flow, DWOR
         *devices = nullptr;
         return E_INVALIDARG;
     }
-    if (!(mask & DEVICE_STATE_ACTIVE)) {
-        *devices = (IMMDeviceCollection *)&g_none;
-        return S_OK;
+    COLLECTION *c = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*c));
+    *devices = (IMMDeviceCollection *)c;
+    if (!c)
+        return E_OUTOFMEMORY;
+    c->vtbl = &collection_vtbl;
+    c->refs = 1;
+    if (mask & DEVICE_STATE_ACTIVE) {
+        if (flow != eCapture)
+            c->count += list_devices(FALSE, c->devices);
+        if (flow != eRender)
+            c->count += list_devices(TRUE, c->devices + c->count);
     }
-    *devices = (IMMDeviceCollection *)(flow == eRender ? &g_renderers : flow == eCapture ? &g_capturers : &g_both);
     return S_OK;
 }
 
@@ -328,7 +415,7 @@ static HRESULT STDMETHODCALLTYPE enum_default(void *This, EDataFlow flow, ERole 
         return E_INVALIDARG;
     if (flow == eAll)
         return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
-    *device = (IMMDevice *)(flow == eRender ? &g_render_device.device : &g_capture_device.device);
+    *device = (IMMDevice *)&g_devices[flow == eCapture][0].device;
     return S_OK;
 }
 
@@ -336,18 +423,12 @@ static HRESULT STDMETHODCALLTYPE enum_get_device(void *This, LPCWSTR id, IMMDevi
 {
     if (!id || !device)
         return E_POINTER;
-    if (!wcscmp(id, DEVICE_ID))
-        *device = (IMMDevice *)&g_render_device.device;
-    else if (!wcscmp(id, CAPTURE_ID))
-        *device = (IMMDevice *)&g_capture_device.device;
-    else {
-        *device = nullptr;
-        return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
-    }
-    return S_OK;
+    DEVICE *d = find_device(id);
+    *device = d ? (IMMDevice *)&d->device : nullptr;
+    return d ? S_OK : HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
 }
 
-/* the endpoints never change, so there is nothing to notify. */
+/* a device the host gains or loses shows in the next list, without a notification. */
 static HRESULT STDMETHODCALLTYPE enum_register(void *This, IMMNotificationClient *client)
 {
     return client ? S_OK : E_POINTER;
@@ -401,8 +482,18 @@ DECLSPEC_EXPORT HRESULT WINAPI DllCanUnloadNow(void) { return S_FALSE; }
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)
 {
     if (reason == DLL_PROCESS_ATTACH) {
-        g_render_device.device = g_capture_device.device = &device_vtbl;
-        g_render_device.endpoint = g_capture_device.endpoint = &endpoint_vtbl;
+        for (int capture = 0; capture < 2; capture++) {
+            DEVICE *d = &g_devices[capture][0];
+            d->device = &device_vtbl;
+            d->endpoint = &endpoint_vtbl;
+            d->store = &store_vtbl;
+            d->capture = capture;
+            d->fixed = TRUE;
+            lstrcpyW(d->id, capture ? CAPTURE_ID : DEVICE_ID);
+            lstrcpyW(d->name, capture ? L"Microphone (" MIME_AUDIO_BRAND L")" : L"Speakers (" MIME_AUDIO_BRAND L")");
+            lstrcpyW(d->interface, MIME_AUDIO_BRAND);
+            g_device_count[capture] = 1;
+        }
         g_enumerator.vtbl = &enumerator_vtbl;
     }
     return TRUE;
@@ -520,12 +611,8 @@ DECLSPEC_EXPORT HRESULT WINAPI ActivateAudioInterfaceAsync(LPCWSTR path, REFIID 
     op->Refs = 2;
     op->Handler = handler;
     handler->lpVtbl->AddRef(handler);
-    if (!_wcsicmp(path, render) || !_wcsicmp(path, DEVICE_ID))
-        op->Result = device_activate(&g_render_device.device, riid, CLSCTX_ALL, params, (void **)&op->Interface);
-    else if (!_wcsicmp(path, capture) || !_wcsicmp(path, CAPTURE_ID))
-        op->Result = device_activate(&g_capture_device.device, riid, CLSCTX_ALL, params, (void **)&op->Interface);
-    else
-        op->Result = E_NOTIMPL;
+    DEVICE *d = !_wcsicmp(path, render) ? &g_devices[0][0] : !_wcsicmp(path, capture) ? &g_devices[1][0] : find_device(path);
+    op->Result = d ? device_activate(&d->device, riid, CLSCTX_ALL, params, (void **)&op->Interface) : E_NOTIMPL;
     HANDLE thread = CreateThread(nullptr, 0, activate_completion, op, 0, nullptr);
     if (!thread) {
         operation_release(op);

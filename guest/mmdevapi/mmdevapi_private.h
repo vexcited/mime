@@ -232,7 +232,8 @@ MIME_DEFINE_GUID(FMTID_AudioEngine, 0xF19F064D, 0x082C, 0x4E27, 0xBC, 0x73, 0x68
 
 void *MmTaskAlloc(SIZE_T size);
 void MmMixFormat(WAVEFORMATEXTENSIBLE *format);
-HRESULT MmCreateAudioClient(BOOL capture, void **client);
+/* device names an endpoint besides the default one of the direction, which is NULL. */
+HRESULT MmCreateAudioClient(BOOL capture, const GUID *device, void **client);
 /* an endpoint's volume and mute, kept per process and not applied by its clients. */
 void *MmEndpointVolume(BOOL capture);
 
