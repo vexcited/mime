@@ -417,6 +417,14 @@ static BOOLEAN deliver_usage(PACKET *packet, USHORT page, USHORT usage)
     return no_legacy;
 }
 
+/* RIDEV_NOHOTKEYS of the foreground program's keyboard turns the hot keys of programs off. */
+BOOLEAN RawInputNoHotkeys(void)
+{
+    W32THREAD *t = InputForeground ? InputForeground->Thread : nullptr;
+    const RAWINPUTDEVICE *d = t && t->Process ? registration(t->Process->Raw, 1, 6) : nullptr;
+    return d && (d->dwFlags & RIDEV_NOHOTKEYS);
+}
+
 static BOOLEAN deliver(PACKET *packet, USHORT usage)
 {
     return deliver_usage(packet, 1, usage);

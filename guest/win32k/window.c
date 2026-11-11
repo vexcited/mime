@@ -1579,6 +1579,7 @@ WND *WndFromPoint(WND *top, POINT pt)
 static void free_window(WND *w)
 {
     TimerRemoveWindow(w);
+    HotkeyRemoveWindow(w);
     W32THREAD *t = w->Thread;
     if (t) {
         HWND h = WndHandle(w);

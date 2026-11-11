@@ -31,8 +31,16 @@ BOOLEAN QueuePost(W32THREAD *t, HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
     qm->Msg.time = W32TickCount();
     qm->Msg.pt = InputCursorPos;
     InsertTailList(&t->Posted, &qm->Links);
-    QueueWake(t, msg == WM_INPUT ? QS_RAWINPUT : QS_POSTMESSAGE | QS_ALLPOSTMESSAGE);
+    QueueWake(t, MsgPostedBits(qm));
     return TRUE;
+}
+
+ULONG MsgPostedBits(const QUEUED_MESSAGE *qm)
+{
+    if (qm->Msg.message == WM_INPUT)
+        return QS_RAWINPUT;
+    /* a hot key is a posted message that also tells of itself. */
+    return QS_POSTMESSAGE | QS_ALLPOSTMESSAGE | (qm->Msg.message == WM_HOTKEY ? QS_HOTKEY : 0);
 }
 
 BOOLEAN QueueWindowOperation(W32THREAD *t, HWND hwnd, UINT command, const WINDOWPLACEMENT *placement)
@@ -1049,7 +1057,7 @@ static ULONG pending_bits(W32THREAD *t)
     ULONG pending = 0;
     for (PLIST_ENTRY e = t->Posted.Flink; e != &t->Posted; e = e->Flink) {
         QUEUED_MESSAGE *qm = CONTAINING_RECORD(e, QUEUED_MESSAGE, Links);
-        pending |= qm->Msg.message == WM_INPUT ? QS_RAWINPUT : QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
+        pending |= MsgPostedBits(qm);
     }
     if (t->QuitPosted)
         pending |= QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;

@@ -419,6 +419,12 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
         g_key_repeat = (ev->flags & 2) != 0;
         if (g_key_dropped)
             return;
+        /* as in windows a hot key comes after the low level hooks and the key state, and before raw input. */
+        update_async_keys(ev);
+        if (HotkeyInput(ev)) {
+            g_key_dropped = TRUE;
+            return;
+        }
         break;
     case MIME_INPUT_CHAR:
         if (g_chars_follow_key ? g_key_dropped : low_level_key(ev, injected, extra))
@@ -443,7 +449,8 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
     BOOLEAN no_legacy = RawInputEvent(ev, injected);
     if (no_legacy && (ev->type == MIME_INPUT_KEY_DOWN || ev->type == MIME_INPUT_KEY_UP))
         g_key_dropped = TRUE;
-    update_async_keys(ev);
+    if (ev->type != MIME_INPUT_KEY_DOWN && ev->type != MIME_INPUT_KEY_UP)
+        update_async_keys(ev);
     WPARAM mouse_state = mouse_key_state(ev);
     switch (ev->type) {
     case MIME_INPUT_MOUSE_MOVE:
