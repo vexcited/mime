@@ -7,8 +7,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define MIME_VERSION_STRING "0.1.0"
-
 #define MIME_ARRAY_COUNT(a) (sizeof(a) / sizeof((a)[0]))
 #define MIME_MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MIME_MAX(a, b) ((a) > (b) ? (a) : (b))
