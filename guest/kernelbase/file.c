@@ -1387,8 +1387,9 @@ DWORD WINAPI GetFinalPathNameByHandleW(HANDLE file, LPWSTR path, DWORD size, DWO
         result[4] = drive_of_handle(file);
         n = 6;
     } else if (volume == VOLUME_NAME_NT) {
-        WCHAR drive = drive_of_handle(file);
-        n = (SIZE_T)KbFormat(result, 64, L"%s", drive == 'C' ? L"\\Device\\HarddiskVolume1" : L"\\Device\\HarddiskVolume2");
+        WCHAR drive[3] = {drive_of_handle(file), ':', 0};
+        n = QueryDosDeviceW(drive, result, 64);
+        n = n > 2 ? n - 2 : 0;
     } else if (volume == VOLUME_NAME_GUID) {
         KbSetError(ERROR_NOT_SUPPORTED);
         return 0;
