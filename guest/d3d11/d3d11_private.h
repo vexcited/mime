@@ -1016,6 +1016,7 @@ BOOL D3dSetProtected(D3dContext *context, BOOL protect);
 /* records into the context's command buffer, ending rendering for transfers. */
 VkCommandBuffer D3dContextCommands(D3dContext *context, BOOL transfer);
 void D3dContextFlush(D3dContext *context);
+void D3dContextUnbindResource(D3dContext *context, D3dResource *resource);
 UINT64 D3dContextSubmit(D3dContext *context, const VkSemaphoreSubmitInfo *wait, const VkSemaphoreSubmitInfo *signal);
 void D3dContextUseList(D3dContext *context, D3dResource *resource);
 /* marks the resource used by the recording: a serial on the immediate context. */

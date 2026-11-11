@@ -830,6 +830,43 @@ static void set_render_targets(D3dContext *c, UINT count, ID3D11RenderTargetView
     c->outputs_dirty = TRUE;
 }
 
+/*
+ * what the context has bound of a resource is let go. a swap chain does this before it resizes: windows counts the
+ * references of the program only, so a view of the back buffer that the program released but left bound does not
+ * keep the buffers.
+ */
+void D3dContextUnbindResource(D3dContext *c, D3dResource *r)
+{
+    D3D_SYNC(c);
+    unbind_inputs(c, r);
+    BOOL outputs = FALSE;
+    for (UINT i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++)
+        if (c->rtv[i] && c->rtv[i]->resource == r) {
+            ref_view(c, &c->rtv[i], nullptr);
+            outputs = TRUE;
+        }
+    if (c->dsv && c->dsv->resource == r) {
+        ref_view(c, &c->dsv, nullptr);
+        outputs = TRUE;
+    }
+    for (UINT i = 0; i < D3D11_1_UAV_SLOT_COUNT; i++) {
+        if (c->om_uav[i] && c->om_uav[i]->resource == r) {
+            ref_view(c, &c->om_uav[i], nullptr);
+            c->stages[D3D_PS].table_valid = FALSE;
+            outputs = TRUE;
+        }
+        for (UINT stage = 0; stage < D3D_STAGES; stage++)
+            if (c->stages[stage].uav[i] && c->stages[stage].uav[i]->resource == r) {
+                ref_view(c, &c->stages[stage].uav[i], nullptr);
+                c->stages[stage].table_valid = FALSE;
+            }
+    }
+    if (outputs) {
+        c->targets_dirty = TRUE;
+        c->outputs_dirty = TRUE;
+    }
+}
+
 static void set_om_uavs(D3dContext *c, UINT start, UINT count, ID3D11UnorderedAccessView *const *views,
                         const UINT *initial_counts)
 {
