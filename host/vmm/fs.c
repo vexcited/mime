@@ -207,6 +207,9 @@ static void fill_info(const MimeFsStat *s, const char *path, int fd, const char 
     } else if (!(st->st_mode & S_IWUSR)) {
         attrs |= FILE_ATTRIBUTE_READONLY;
     }
+    /* what the guest set stands, and with it a file is archived only when the guest said so. */
+    if (times.has_attributes && !S_ISLNK(st->st_mode))
+        attrs = (attrs & ~(uint32_t)FILE_ATTRIBUTE_ARCHIVE) | (times.attributes & (dir ? ~0u : ~(uint32_t)FILE_ATTRIBUTE_READONLY));
     if (name && name[0] == '.' && strcmp(name, ".") != 0 && strcmp(name, "..") != 0)
         attrs |= FILE_ATTRIBUTE_HIDDEN;
     if (name && system_name(path, name))
@@ -504,6 +507,22 @@ static uint64_t fs_set_basic(MimeVm *vm, MimeFsHandle *fh, uint64_t pa)
             if (fchmod(fh->fd, mode) != 0)
                 return errno_status(errno);
             changed = true;
+        }
+    }
+    /* the other attributes are kept beside the times, as the host has none of them. */
+    if (b.mask & MIME_FS_BASIC_READONLY) {
+        MimeFsStat before;
+        MimeFsTimes kept;
+        uint32_t wanted = b.attributes & MIME_FS_KEPT_ATTRIBUTES;
+        if (!fh->is_dir)
+            wanted &= ~(uint32_t)FILE_ATTRIBUTE_READONLY;
+        bool known = mime_fs_fstat(fh->fd, &before) == 0;
+        if (known)
+            mime_fs_times(fh->host_path, fh->fd, &before, &kept);
+        uint32_t current = known && kept.has_attributes ? kept.attributes : fh->is_dir ? 0 : FILE_ATTRIBUTE_ARCHIVE;
+        if (current != wanted) {
+            changed = true;
+            mime_fs_attributes_set(fh->host_path, fh->fd, wanted);
         }
     }
     uint64_t creation = b.creation_time, change = b.change_time, now = mime_fs_now();
@@ -1348,6 +1367,15 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
         MimeFsStat before = {};
         MimeFsTimes kept = {};
+        /* like ntfs, a file that is written is one to archive again. */
+        if (nr != MIME_HC_FS_READ && !fh->archived) {
+            fh->archived = true;
+            if (mime_fs_fstat(fh->fd, &before) == 0) {
+                mime_fs_times(fh->host_path, fh->fd, &before, &kept);
+                if (kept.has_attributes && !(kept.attributes & FILE_ATTRIBUTE_ARCHIVE))
+                    mime_fs_attributes_set(fh->host_path, fh->fd, kept.attributes | FILE_ATTRIBUTE_ARCHIVE);
+            }
+        }
         bool keeping = nr != MIME_HC_FS_READ && (fh->frozen & (MIME_FS_TIME_WRITE | MIME_FS_TIME_CHANGE)) &&
                        mime_fs_fstat(fh->fd, &before) == 0;
         if (keeping)

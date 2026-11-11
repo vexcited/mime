@@ -42,6 +42,9 @@
 #define RECORD_MAGIC 0x314D544Du /* "MTM1". */
 #define RECORD_CREATION 1u
 #define RECORD_CHANGE 2u
+/* the attributes of windows the guest set are in the flags too, eight bits up. */
+#define RECORD_ATTRIBUTES 4u
+#define RECORD_ATTRIBUTE_SHIFT 8
 
 typedef struct TimesRecord {
     uint32_t magic;
@@ -289,6 +292,8 @@ void mime_fs_times(const char *path, int fd, const MimeFsStat *s, MimeFsTimes *t
     t->creation = have && (record.flags & RECORD_CREATION) ? record.creation
                   : s->has_birth                            ? ts_ticks(s->birth)
                                                             : guessed_birth(&s->st);
+    t->has_attributes = have && (record.flags & RECORD_ATTRIBUTES);
+    t->attributes = t->has_attributes ? (record.flags >> RECORD_ATTRIBUTE_SHIFT) & MIME_FS_KEPT_ATTRIBUTES : 0;
     t->change = t->write;
     if (have && (record.flags & RECORD_CHANGE)) {
         bool seen = record.seen_sec == s->st.st_mtim.tv_sec && record.seen_nsec == s->st.st_mtim.tv_nsec;
@@ -324,6 +329,22 @@ void mime_fs_times_set(const char *path, int fd, const uint64_t *creation, const
         record.seen_sec = s.st.st_mtim.tv_sec;
         record.seen_nsec = s.st.st_mtim.tv_nsec;
     }
+    record_save(path, fd, &s.st, &record);
+}
+
+void mime_fs_attributes_set(const char *path, int fd, uint32_t attributes)
+{
+    MimeFsStat s;
+    if (stat_of(path, fd, &s) != 0)
+        return;
+    TimesRecord record;
+    if (!record_load(path, fd, &s.st, &record))
+        memset(&record, 0, sizeof(record));
+    uint32_t flags = (record.flags & ((1u << RECORD_ATTRIBUTE_SHIFT) - 1)) | RECORD_ATTRIBUTES |
+                     (attributes & MIME_FS_KEPT_ATTRIBUTES) << RECORD_ATTRIBUTE_SHIFT;
+    if (flags == record.flags)
+        return;
+    record.flags = flags;
     record_save(path, fd, &s.st, &record);
 }
 
