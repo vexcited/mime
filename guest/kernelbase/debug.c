@@ -127,6 +127,38 @@ static void report_delay_load(PEXCEPTION_RECORD r)
     }
 }
 
+#if defined(__x86_64__)
+NTSYSAPI PVOID NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base, ULONG64 pc, PVOID function, PCONTEXT context,
+                                      PVOID *data, PULONG64 frame, PVOID pointers);
+
+/* the callers of the failing code, which tell what led to it when its own address says little, as inside abort. */
+static void report_callers(const CONTEXT *start)
+{
+    CONTEXT context = *start;
+    PTEB teb = NtCurrentTeb();
+    for (int depth = 0; depth < 24; depth++) {
+        if (context.Rsp < (ULONG64)teb->NtTib.StackLimit || context.Rsp >= (ULONG64)teb->NtTib.StackBase)
+            break;
+        ULONG64 base;
+        PVOID function = RtlLookupFunctionEntry(context.Rip, &base, nullptr);
+        if (function) {
+            PVOID handler_data;
+            ULONG64 frame;
+            RtlVirtualUnwind(0, base, context.Rip, function, &context, &handler_data, &frame, nullptr);
+        } else {
+            /* a leaf without data returns to the address on top of the stack. */
+            context.Rip = *(ULONG64 *)context.Rsp;
+            context.Rsp += sizeof(ULONG64);
+        }
+        if (!context.Rip)
+            break;
+        char where[160];
+        describe_address((PVOID)context.Rip, where, sizeof(where));
+        DbgPrint("  called from %s\n", where);
+    }
+}
+#endif
+
 LONG WINAPI UnhandledExceptionFilter(PEXCEPTION_POINTERS info)
 {
     /* a nested exception is not reported or filtered again: the first one ends the process. */
@@ -156,6 +188,10 @@ LONG WINAPI UnhandledExceptionFilter(PEXCEPTION_POINTERS info)
                      (PVOID)r->ExceptionInformation[1]);
         if (r->ExceptionCode == VCPP_LOAD_FAILED || r->ExceptionCode == VCPP_PROC_FAILED)
             report_delay_load(r);
+#if defined(__x86_64__)
+        if (info->ContextRecord)
+            report_callers(info->ContextRecord);
+#endif
     }
     return EXCEPTION_EXECUTE_HANDLER;
 }
