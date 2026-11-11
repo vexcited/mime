@@ -348,6 +348,7 @@ typedef struct SXS_INTERFACE {
 
 typedef struct SXS_FILE {
     PWSTR Name;
+    PWSTR LoadFrom;
     SXS_WINDOW_CLASS *Classes;
     ULONG ClassCount;
     SXS_COM_CLASS *ComClasses;

@@ -768,6 +768,7 @@ static NTSTATUS read_file(PVOID *pool, const XML_NODE *n, SXS_MANIFEST *m)
     m->Files = files;
     SXS_FILE *f = &files[m->FileCount - 1];
     f->Name = dup(pool, name);
+    f->LoadFrom = dup(pool, attr(n, L"loadFrom"));
     for (const XML_NODE *c = n->First; c; c = c->Next) {
         if (!is_asm_ns(c->Ns))
             continue;

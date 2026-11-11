@@ -856,32 +856,52 @@ static void build_assembly_information(GEN *g, SECTION *s)
     s->UserFixups[s->UserFixupCount++] = offsetof(ACTCTX_ASSEMBLY_GLOBAL_INFORMATION, ApplicationDirectoryOffset);
 }
 
+/* a redirection to one path in a single segment. */
+static void whole_path_redirection(SECTION_ITEM *item, ULONG r, PCWSTR path, ULONG flags)
+{
+    BUF *d = &item->Data;
+    ULONG seg = buf_reserve(d, sizeof(ACTCTX_DLL_PATH_SEGMENT), 4);
+    ULONG length = 0, at = buf_string(d, path, &length);
+    FIELD(d, seg, ACTCTX_DLL_PATH_SEGMENT, Length) = length;
+    FIELD(d, seg, ACTCTX_DLL_PATH_SEGMENT, Offset) = at;
+    FIELD(d, r, ACTCTX_DLL_REDIRECTION, Flags) = flags;
+    FIELD(d, r, ACTCTX_DLL_REDIRECTION, TotalPathLength) = length;
+    FIELD(d, r, ACTCTX_DLL_REDIRECTION, PathSegmentCount) = 1;
+    FIELD(d, r, ACTCTX_DLL_REDIRECTION, PathSegmentOffset) = seg;
+    item_fixup(item, seg + offsetof(ACTCTX_DLL_PATH_SEGMENT, Offset));
+    item_fixup(item, offsetof(ACTCTX_DLL_REDIRECTION, PathSegmentOffset));
+}
+
+/*
+ * a loadFrom that ends with a separator is a directory the name is added to, otherwise the file itself. Inno Setup
+ * names its system dlls this way, as %SystemRoot%\system32\, against dll planting next to the installer.
+ */
+static ULONG load_from_flags(PCWSTR path)
+{
+    SIZE_T n = wcslen(path);
+    ULONG flags = path[n - 1] == '\\' || path[n - 1] == '/' ? 0 : ACTCTX_DLL_PATH_INCLUDES_BASE_NAME;
+    return wcschr(path, '%') ? flags | ACTCTX_DLL_EXPAND : flags;
+}
+
 static void build_dll_redirection(GEN *g, SECTION *s)
 {
     s->DataFormatVersion = 1;
     for (ULONG i = 0; i < g->Count; i++) {
         GEN_ASSEMBLY *a = &g->Assemblies[i];
         for (ULONG f = 0; f < a->Manifest.FileCount; f++) {
-            SECTION_ITEM *item = section_add(s, a->Manifest.Files[f].Name, nullptr, i + 1);
+            const SXS_FILE *file = &a->Manifest.Files[f];
+            SECTION_ITEM *item = section_add(s, file->Name, nullptr, i + 1);
             if (!item)
                 continue;
             BUF *d = &item->Data;
             ULONG r = buf_reserve(d, sizeof(ACTCTX_DLL_REDIRECTION), 4);
             FIELD(d, r, ACTCTX_DLL_REDIRECTION, Size) = sizeof(ACTCTX_DLL_REDIRECTION);
             if (a->System) {
-                /* the whole path in one segment, the base name included. */
                 PWSTR path = gen_concat(SYSTEM_DIRECTORY, a->SystemFile, nullptr, nullptr);
-                ULONG seg = buf_reserve(d, sizeof(ACTCTX_DLL_PATH_SEGMENT), 4);
-                ULONG length = 0, at = buf_string(d, path, &length);
+                whole_path_redirection(item, r, path, ACTCTX_DLL_PATH_INCLUDES_BASE_NAME);
                 gen_free(path);
-                FIELD(d, seg, ACTCTX_DLL_PATH_SEGMENT, Length) = length;
-                FIELD(d, seg, ACTCTX_DLL_PATH_SEGMENT, Offset) = at;
-                FIELD(d, r, ACTCTX_DLL_REDIRECTION, Flags) = ACTCTX_DLL_PATH_INCLUDES_BASE_NAME;
-                FIELD(d, r, ACTCTX_DLL_REDIRECTION, TotalPathLength) = length;
-                FIELD(d, r, ACTCTX_DLL_REDIRECTION, PathSegmentCount) = 1;
-                FIELD(d, r, ACTCTX_DLL_REDIRECTION, PathSegmentOffset) = seg;
-                item_fixup(item, seg + offsetof(ACTCTX_DLL_PATH_SEGMENT, Offset));
-                item_fixup(item, offsetof(ACTCTX_DLL_REDIRECTION, PathSegmentOffset));
+            } else if (file->LoadFrom && *file->LoadFrom) {
+                whole_path_redirection(item, r, file->LoadFrom, load_from_flags(file->LoadFrom));
             } else {
                 /* the assembly's directory followed by the name asked for. */
                 FIELD(d, r, ACTCTX_DLL_REDIRECTION, Flags) = ACTCTX_DLL_OMITS_ASSEMBLY_ROOT;
