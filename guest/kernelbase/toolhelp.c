@@ -654,13 +654,9 @@ static void volume_name(WCHAR letter, LPWSTR out)
     out[28] = out[46] = hex[letter & 15];
 }
 
-/* the letters of the volumes: every local drive, and Z: that the drive lists leave out. */
 static DWORD volume_letters(void)
 {
-    DWORD mask = GetLogicalDrives() | 1u << ('Z' - 'A');
-    WCHAR target[64];
-    if (!QueryDosDeviceW(L"Z:", target, RTL_NUMBER_OF(target)))
-        mask &= ~(1u << ('Z' - 'A'));
+    DWORD mask = GetLogicalDrives();
     for (int i = 0; i < 26; i++) {
         WCHAR root[4] = {(WCHAR)('A' + i), ':', '\\', 0};
         if ((mask & (1u << i)) && GetDriveTypeW(root) == DRIVE_REMOTE)
