@@ -77,6 +77,7 @@ void NtFlushBuffersFileEx(void);
 void NtFlushInstructionCache(void);
 void NtFlushKey(void);
 void NtFlushProcessWriteBuffers(void);
+void NtFlushVirtualMemory(void);
 void NtFreeVirtualMemory(void);
 void NtFsControlFile(void);
 void NtGetCompleteWnfStateSubscription(void);
@@ -421,6 +422,9 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtFlushProcessWriteBuffers
     KiRegisterService(MIME_SVC_NtFlushProcessWriteBuffers, (void *)NtFlushProcessWriteBuffers, STACK_ARGS(0));
+#endif
+#ifdef MIME_SVC_NtFlushVirtualMemory
+    KiRegisterService(MIME_SVC_NtFlushVirtualMemory, (void *)NtFlushVirtualMemory, STACK_ARGS(4));
 #endif
 #ifdef MIME_SVC_NtFreeVirtualMemory
     KiRegisterService(MIME_SVC_NtFreeVirtualMemory, (void *)NtFreeVirtualMemory, STACK_ARGS(4));

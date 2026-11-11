@@ -442,6 +442,19 @@ NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64
     return status;
 }
 
+NTSTATUS IoWriteFileObject(PFILE_OBJECT file, const void *buffer, ULONG length, ULONG64 offset, PULONG written)
+{
+    IO_STACK_LOCATION params;
+    memset(&params, 0, sizeof(params));
+    params.Parameters.Write.Length = length;
+    params.Parameters.Write.ByteOffset.QuadPart = (LONGLONG)offset;
+    IO_STATUS_BLOCK iosb;
+    NTSTATUS status = IopSynchronousRequest(file, IRP_MJ_WRITE, 0, (PVOID)buffer, length, &params, &iosb);
+    if (written)
+        *written = NT_SUCCESS(status) ? (ULONG)iosb.Information : 0;
+    return status;
+}
+
 NTSTATUS IoQueryFileSize(PFILE_OBJECT file, ULONG64 *size)
 {
     FILE_STANDARD_INFORMATION info;

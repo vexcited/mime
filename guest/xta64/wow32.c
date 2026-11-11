@@ -863,6 +863,19 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         }
         return status;
     }
+    case MIME_SVC_NtFlushVirtualMemory: {
+        PVOID base = pointer32(*(PULONG)pointer32(a[1]));
+        SIZE_T size = *(PULONG)pointer32(a[2]);
+        IO_STATUS_BLOCK io = {};
+        status = NtFlushVirtualMemory(handle32(a[0]), &base, &size, &io);
+        if (NT_SUCCESS(status)) {
+            store32(a[1], (ULONG_PTR)base);
+            store32(a[2], size);
+            if (a[3])
+                store_iosb32(a[3], &io);
+        }
+        return status;
+    }
     case MIME_SVC_NtFreeVirtualMemory: {
         PVOID base = pointer32(*(PULONG)pointer32(a[1]));
         SIZE_T size = *(PULONG)pointer32(a[2]);

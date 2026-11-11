@@ -120,6 +120,7 @@ EXPORTS
     NtFlushInstructionCache@12
     NtFlushKey@4
     NtFlushProcessWriteBuffers@0
+    NtFlushVirtualMemory@16
     NtFreeVirtualMemory@16
     NtFsControlFile@40
     NtGetCompleteWnfStateSubscription@24

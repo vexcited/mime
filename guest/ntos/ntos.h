@@ -761,6 +761,7 @@ typedef struct _MI_IMAGE_INFO {
 #define MI_SECTION_PHYSICAL 0x00000001 /* Flags: the pages belong to the creator. */
 #define MI_SECTION_SHARE_SOURCE 0x00000002 /* Flags: read-only data section whose pages are the file's own. */
 #define MI_SECTION_WRITABLE_WINDOW 0x00000004 /* Flags: the pages are the file's own and views write them, see IoGetFileWindowEx. */
+#define MI_SECTION_WRITE_BACK 0x00000008 /* Flags: the pages are a copy of a file that views write, see MiSectionWriteBack. */
 
 typedef struct _SECTION {
     ULONG Flags;   /* SEC_IMAGE, SEC_COMMIT, ... */
@@ -790,7 +791,31 @@ typedef struct _SECTION {
     ULONG_PTR RelocBase;   /* where the first view away from the preferred base went, and where later ones go. */
     ULONG64 *RelocPages;   /* relocated pages of the views at RelocBase, built on touch. */
     ULONG ImageSlot;       /* file images: one plus the slot in the table of images processes share. */
+    ULONG64 *PageHash;     /* MI_SECTION_WRITE_BACK: a hash of each page as the file has it. */
+    LIST_ENTRY WriteBackLinks; /* MI_SECTION_WRITE_BACK: among the sections reads and writes of their file look at. */
+    ULONG FileVolume;      /* a data section of a host file: what names the file, see IoFileIdentity. */
+    ULONG64 FileId;
+    /*
+     * a section of the file's own pages, once views write a copy of the file: its views show the pages of the copy,
+     * as every section of a file shows the same pages on windows. referenced.
+     */
+    struct _SECTION *volatile Redirect;
 } SECTION, *PSECTION;
+
+/* mm/winlost.c: the sections that show a file's own pages show those of the copy from now on. */
+void MmWindowRedirect(ULONG volume, ULONG64 file_id, PSECTION copy);
+
+/* writes the pages of the range that views changed to the file of a MI_SECTION_WRITE_BACK section. */
+void MiSectionWriteBack(PSECTION s, ULONG64 offset, ULONG64 length);
+/*
+ * a file that views write a copy of stays one with its handles: before a read or a write of the file its views'
+ * changes in the range reach the file, and after a write the views see what was written.
+ */
+extern volatile LONG MmWriteBackSections;
+void MmSyncMappedFile(ULONG volume, ULONG64 file_id, ULONG64 offset, ULONG64 length);
+void MmMappedFileWritten(ULONG volume, ULONG64 file_id, ULONG64 offset, const void *data, ULONG64 length);
+/* io/mimefs.c: what names a host file whatever handle opened it, false for a file that is not one. */
+BOOLEAN IoFileIdentity(PFILE_OBJECT file, PULONG volume, PULONG64 file_id);
 
 ULONG64 MiSectionPage(PSECTION s, ULONG index);
 /* what the first touch of a view page maps. shared says the page belongs to the section. */
@@ -1585,6 +1610,7 @@ void FsWbImageMapped(ULONG volume, ULONG64 file_id, LONG delta);
 BOOLEAN FsWbIsImageMapped(ULONG volume, ULONG64 file_id);
 BOOLEAN FsWbAnyMapped(void);
 NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64 offset, PULONG read);
+NTSTATUS IoWriteFileObject(PFILE_OBJECT file, const void *buffer, ULONG length, ULONG64 offset, PULONG written);
 void IopInitializeCompletion(void);
 void IopInitializeWaitPackets(void);
 void IopInitializeNamedPipes(void);
