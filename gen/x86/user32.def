@@ -195,6 +195,7 @@ EXPORTS
     EnumWindowStationsW=_EnumWindowStationsW@8
     EnumWindows=_EnumWindows@8
     EqualRect=_EqualRect@8
+    EvaluateProximityToRect=_EvaluateProximityToRect@12
     ExcludeUpdateRgn=_ExcludeUpdateRgn@8
     ExitWindowsEx=_ExitWindowsEx@8
     FillRect=_FillRect@12
@@ -489,6 +490,7 @@ EXPORTS
     OpenWindowStationA=_OpenWindowStationA@12
     OpenWindowStationW=_OpenWindowStationW@12
     PackDDElParam=_PackDDElParam@12
+    PackTouchHitTestingProximityEvaluation=_PackTouchHitTestingProximityEvaluation@8
     PaintDesktop=_PaintDesktop@4
     PeekMessageA=_PeekMessageA@20
     PeekMessageW=_PeekMessageW@20
@@ -521,6 +523,7 @@ EXPORTS
     RegisterRawInputDevices=_RegisterRawInputDevices@12
     RegisterShellHookWindow=_RegisterShellHookWindow@4
     RegisterSuspendResumeNotification=_RegisterSuspendResumeNotification@8
+    RegisterTouchHitTestingWindow=_RegisterTouchHitTestingWindow@8
     RegisterTouchWindow=_RegisterTouchWindow@8
     RegisterWindowMessageA=_RegisterWindowMessageA@4
     RegisterWindowMessageW=_RegisterWindowMessageW@4
@@ -582,6 +585,7 @@ EXPORTS
     SetMenuItemInfoW=_SetMenuItemInfoW@16
     SetMessageExtraInfo=_SetMessageExtraInfo@4
     SetParent=_SetParent@8
+    SetPhysicalCursorPos=_SetPhysicalCursorPos@8
     SetProcessDPIAware=_SetProcessDPIAware@0
     SetProcessDefaultLayout=_SetProcessDefaultLayout@4
     SetProcessDpiAwarenessContext=_SetProcessDpiAwarenessContext@4

@@ -1082,6 +1082,11 @@ WINUSERAPI BOOL WINAPI SetCursorPos(int x, int y)
     return (BOOL)NtUserCallTwoParam((ULONG_PTR)x, (ULONG_PTR)y, MIME_TWOPARAM_SETCURSORPOS);
 }
 
+WINUSERAPI BOOL WINAPI SetPhysicalCursorPos(int x, int y)
+{
+    return SetCursorPos(x, y);
+}
+
 WINUSERAPI int WINAPI ShowCursor(BOOL show)
 {
     return (int)(LONG_PTR)NtUserCallOneParam((ULONG_PTR)show, MIME_ONEPARAM_SHOWCURSOR);

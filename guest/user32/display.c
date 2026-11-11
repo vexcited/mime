@@ -605,6 +605,77 @@ WINUSERAPI BOOL WINAPI RegisterPointerDeviceNotifications(HWND window, BOOL rang
     return TRUE;
 }
 
+typedef struct {
+    UINT32 pointerId;
+    POINT point;
+    RECT boundingBox;
+    RECT nonOccludedBoundingBox;
+    UINT32 orientation;
+} TOUCH_HIT_TESTING_INPUT;
+
+typedef struct {
+    UINT16 score;
+    POINT adjustedPoint;
+} TOUCH_HIT_TESTING_PROXIMITY_EVALUATION;
+
+#define TOUCH_HIT_TESTING_NONE 0x2
+#define TOUCH_HIT_TESTING_PROXIMITY_FARTHEST 0xFFF
+
+/* there is no touch screen, so no window is ever asked with WM_TOUCHHITTESTING. */
+WINUSERAPI BOOL WINAPI RegisterTouchHitTestingWindow(HWND window, ULONG value)
+{
+    if (!IsWindow(window)) {
+        SetLastError(ERROR_INVALID_WINDOW_HANDLE);
+        return FALSE;
+    }
+    if (value > TOUCH_HIT_TESTING_NONE) {
+        SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* windows ranks a rectangle the contact misses by its shape, this takes the distance to its nearest point. */
+WINUSERAPI BOOL WINAPI EvaluateProximityToRect(const RECT *box, const TOUCH_HIT_TESTING_INPUT *input,
+                                               TOUCH_HIT_TESTING_PROXIMITY_EVALUATION *evaluation)
+{
+    if (!box || !input || !evaluation) {
+        SetLastError(ERROR_BAD_ARGUMENTS);
+        return FALSE;
+    }
+    if (box->top == box->bottom || box->left == box->right) {
+        evaluation->score = TOUCH_HIT_TESTING_PROXIMITY_FARTHEST;
+        return TRUE;
+    }
+    POINT p = input->point;
+    if (PtInRect(box, p)) {
+        evaluation->adjustedPoint = p;
+        evaluation->score = 0;
+        return TRUE;
+    }
+    LONG x = p.x < box->left ? box->left : p.x >= box->right ? box->right - 1 : p.x;
+    LONG y = p.y < box->top ? box->top : p.y >= box->bottom ? box->bottom - 1 : p.y;
+    LONGLONG dx = x - p.x, dy = y - p.y, squared = dx * dx + dy * dy;
+    ULONG distance = 0;
+    while ((LONGLONG)(distance + 1) * (distance + 1) <= squared && distance < TOUCH_HIT_TESTING_PROXIMITY_FARTHEST)
+        distance++;
+    evaluation->score = (UINT16)distance;
+    evaluation->adjustedPoint.x = x;
+    evaluation->adjustedPoint.y = y;
+    return TRUE;
+}
+
+/* the score in bits 20 to 31 and the adjustment in two signed 10 bit fields, or farthest when it does not fit. */
+WINUSERAPI LRESULT WINAPI PackTouchHitTestingProximityEvaluation(const TOUCH_HIT_TESTING_INPUT *input,
+                                                                 const TOUCH_HIT_TESTING_PROXIMITY_EVALUATION *evaluation)
+{
+    LONG dx = evaluation->adjustedPoint.x - input->point.x, dy = evaluation->adjustedPoint.y - input->point.y;
+    if (evaluation->score > TOUCH_HIT_TESTING_PROXIMITY_FARTHEST || (dx < 0 ? -dx : dx) >= 511 ||
+        (dy < 0 ? -dy : dy) >= 511)
+        return 0xFFF00000;
+    return (LRESULT)(((((ULONG)dx & 0x3FF) + ((ULONG)evaluation->score << 10)) << 10) + ((ULONG)dy & 0x3FF));
+}
+
 #ifndef DEVICE_NOTIFY_CALLBACK
 #define DEVICE_NOTIFY_CALLBACK 0x2
 #endif
