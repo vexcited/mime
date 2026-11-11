@@ -88,9 +88,8 @@ static bool guest_image_path(const char *image, char *path, size_t size)
         image += 4;
     if (!image[0] || image[1] != ':' || (image[2] != '\\' && image[2] != '/'))
         return false;
-    const char *root = image[0] == 'C' || image[0] == 'c' ? g_paths.drive_c :
-                       image[0] == 'Z' || image[0] == 'z' ? "" : nullptr;
-    if (!root || !format_path(path, size, "%s%s", root, image + 2))
+    char root[MIME_PATH_MAX];
+    if (!mime_paths_drive_root(&g_paths, image[0], root, sizeof(root)) || !format_path(path, size, "%s%s", root, image + 2))
         return false;
     for (char *p = path; *p; p++)
         if (*p == '\\')

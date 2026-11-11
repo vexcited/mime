@@ -1,5 +1,7 @@
 #include "mime_host.h"
 
+#include <mime/abi.h>
+
 #include <errno.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -130,6 +132,17 @@ void mime_paths_to_guest(const MimePaths *paths, const char *host, char *out, si
     } else {
         drive = 'Z';
         rest = host;
+        MimeHostDrive *drives = mime_xcalloc(MIME_FS_MAX_DRIVES, sizeof(*drives));
+        size_t count = mime_drives_scan(paths, false, drives, MIME_FS_MAX_DRIVES), best = 0;
+        for (size_t i = 0; i < count; i++) {
+            size_t n = strlen(drives[i].root);
+            if (n > best && !strncmp(host, drives[i].root, n) && (host[n] == '/' || !host[n])) {
+                best = n;
+                drive = drives[i].letter;
+                rest = host + n;
+            }
+        }
+        free(drives);
     }
     size_t n = (size_t)snprintf(out, size, "%c:", drive);
     if (!*rest)
@@ -141,10 +154,9 @@ void mime_paths_to_guest(const MimePaths *paths, const char *host, char *out, si
 
 bool mime_paths_to_host(const MimePaths *paths, const char *guest, char *out, size_t size)
 {
-    char drive = guest[0] >= 'a' && guest[0] <= 'z' ? (char)(guest[0] - 32) : guest[0];
-    if ((drive != 'C' && drive != 'Z') || guest[1] != ':')
+    char root[MIME_PATH_MAX];
+    if (!guest[0] || guest[1] != ':' || !mime_paths_drive_root(paths, guest[0], root, sizeof(root)))
         return false;
-    const char *root = drive == 'C' ? paths->drive_c : "";
     /* resolves dot components after the drive while keeping the path below its root. */
     char copy[MIME_PATH_MAX * 2];
     mime_strlcpy(copy, guest + 2, sizeof(copy));

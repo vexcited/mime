@@ -60,10 +60,24 @@ typedef struct MimePaths {
 
 bool mime_paths_init(MimePaths *paths);
 bool mime_paths_ensure(const MimePaths *paths);
-/* maps a host path to the guest: drive_c becomes C:, everything else Z:. */
+/* maps a host path to the guest: drive_c becomes C:, a host drive its letter, everything else Z:. */
 void mime_paths_to_guest(const MimePaths *paths, const char *host, char *out, size_t size);
-/* the reverse, for C: and Z: paths with either separator; the result never leaves the drive. */
+/* the reverse, for paths on C:, Z: or a host drive with either separator; the result never leaves the drive. */
 bool mime_paths_to_host(const MimePaths *paths, const char *guest, char *out, size_t size);
+
+/* drives.c: a drive the host mounted, as the guest sees it. */
+typedef struct MimeHostDrive {
+    char letter;
+    uint32_t flags;  /* MIME_FS_DRIVE_*. */
+    uint32_t serial;
+    char label[32];
+    char root[512];
+} MimeHostDrive;
+
+/* the host's drives that have a letter, ordered by mount point. assign gives letters to new ones and records them. */
+size_t mime_drives_scan(const MimePaths *paths, bool assign, MimeHostDrive *out, size_t max);
+/* the host directory of a guest drive: drive_c for C:, "" for Z: and the mount point of a host drive. */
+bool mime_paths_drive_root(const MimePaths *paths, char letter, char *out, size_t size);
 /* manifest execution level: 0 absent, 1 asInvoker, 2 highestAvailable, 3 requireAdministrator. */
 uint32_t mime_pe_run_level(const char *path);
 /* the paths of the running machine process. */
