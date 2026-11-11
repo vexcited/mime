@@ -22,6 +22,7 @@ EXPORTS
     SetupDiEnumDriverInfoW
     SetupDiGetClassDevsA
     SetupDiGetClassDevsExW
+    SetupDiGetClassDevsExA
     SetupDiGetClassDevsW
     SetupDiGetDeviceInstanceIdA
     SetupDiGetDeviceInstanceIdW
@@ -65,6 +66,18 @@ EXPORTS
     CM_Get_Device_Interface_PropertyW=cfgmgr32.CM_Get_Device_Interface_PropertyW
     CM_Open_DevNode_Key=cfgmgr32.CM_Open_DevNode_Key
     CM_MapCrToWin32Err=cfgmgr32.CM_MapCrToWin32Err
+    CM_Get_First_Log_Conf=cfgmgr32.CM_Get_First_Log_Conf
+    CM_Get_First_Log_Conf_Ex=cfgmgr32.CM_Get_First_Log_Conf_Ex
+    CM_Get_Next_Log_Conf=cfgmgr32.CM_Get_Next_Log_Conf
+    CM_Get_Next_Log_Conf_Ex=cfgmgr32.CM_Get_Next_Log_Conf_Ex
+    CM_Free_Log_Conf_Handle=cfgmgr32.CM_Free_Log_Conf_Handle
+    CM_Get_Next_Res_Des=cfgmgr32.CM_Get_Next_Res_Des
+    CM_Get_Next_Res_Des_Ex=cfgmgr32.CM_Get_Next_Res_Des_Ex
+    CM_Get_Res_Des_Data_Size=cfgmgr32.CM_Get_Res_Des_Data_Size
+    CM_Get_Res_Des_Data_Size_Ex=cfgmgr32.CM_Get_Res_Des_Data_Size_Ex
+    CM_Get_Res_Des_Data=cfgmgr32.CM_Get_Res_Des_Data
+    CM_Get_Res_Des_Data_Ex=cfgmgr32.CM_Get_Res_Des_Data_Ex
+    CM_Free_Res_Des_Handle=cfgmgr32.CM_Free_Res_Des_Handle
     SetupOpenInfFileW
     SetupOpenInfFileA
     SetupOpenMasterInf

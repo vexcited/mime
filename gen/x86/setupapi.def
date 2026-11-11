@@ -24,6 +24,7 @@ EXPORTS
     SetupDiEnumDeviceInterfaces=_SetupDiEnumDeviceInterfaces@20
     SetupDiEnumDriverInfoW=_SetupDiEnumDriverInfoW@20
     SetupDiGetClassDevsA=_SetupDiGetClassDevsA@16
+    SetupDiGetClassDevsExA=_SetupDiGetClassDevsExA@28
     SetupDiGetClassDevsExW=_SetupDiGetClassDevsExW@28
     SetupDiGetClassDevsW=_SetupDiGetClassDevsW@16
     SetupDiGetDeviceInstanceIdA=_SetupDiGetDeviceInstanceIdA@20
@@ -110,6 +111,8 @@ EXPORTS
     SetupSetDirectoryIdA=_SetupSetDirectoryIdA@12
     SetupSetDirectoryIdW=_SetupSetDirectoryIdW@12
     SetupTermDefaultQueueCallback=_SetupTermDefaultQueueCallback@4
+    CM_Free_Log_Conf_Handle=cfgmgr32.CM_Free_Log_Conf_Handle
+    CM_Free_Res_Des_Handle=cfgmgr32.CM_Free_Res_Des_Handle
     CM_Get_Child=cfgmgr32.CM_Get_Child
     CM_Get_DevNode_PropertyW=cfgmgr32.CM_Get_DevNode_PropertyW
     CM_Get_DevNode_Registry_PropertyA=cfgmgr32.CM_Get_DevNode_Registry_PropertyA
@@ -123,7 +126,17 @@ EXPORTS
     CM_Get_Device_Interface_List_SizeA=cfgmgr32.CM_Get_Device_Interface_List_SizeA
     CM_Get_Device_Interface_List_SizeW=cfgmgr32.CM_Get_Device_Interface_List_SizeW
     CM_Get_Device_Interface_PropertyW=cfgmgr32.CM_Get_Device_Interface_PropertyW
+    CM_Get_First_Log_Conf=cfgmgr32.CM_Get_First_Log_Conf
+    CM_Get_First_Log_Conf_Ex=cfgmgr32.CM_Get_First_Log_Conf_Ex
+    CM_Get_Next_Log_Conf=cfgmgr32.CM_Get_Next_Log_Conf
+    CM_Get_Next_Log_Conf_Ex=cfgmgr32.CM_Get_Next_Log_Conf_Ex
+    CM_Get_Next_Res_Des=cfgmgr32.CM_Get_Next_Res_Des
+    CM_Get_Next_Res_Des_Ex=cfgmgr32.CM_Get_Next_Res_Des_Ex
     CM_Get_Parent=cfgmgr32.CM_Get_Parent
+    CM_Get_Res_Des_Data=cfgmgr32.CM_Get_Res_Des_Data
+    CM_Get_Res_Des_Data_Ex=cfgmgr32.CM_Get_Res_Des_Data_Ex
+    CM_Get_Res_Des_Data_Size=cfgmgr32.CM_Get_Res_Des_Data_Size
+    CM_Get_Res_Des_Data_Size_Ex=cfgmgr32.CM_Get_Res_Des_Data_Size_Ex
     CM_Get_Sibling=cfgmgr32.CM_Get_Sibling
     CM_Locate_DevNodeA=cfgmgr32.CM_Locate_DevNodeA
     CM_Locate_DevNodeW=cfgmgr32.CM_Locate_DevNodeW
