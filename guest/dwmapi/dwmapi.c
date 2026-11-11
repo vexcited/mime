@@ -10,6 +10,7 @@
 #include <mime/win32/dwmapi.h>
 #include <mime/win32/wingdi.h>
 #include <mime/win32/winuser.h>
+#include <mime/vblank.h>
 
 NTSYSAPI NTSTATUS NTAPI RtlOpenCurrentUser(ACCESS_MASK access, PHANDLE key);
 WINUSERAPI BOOL WINAPI SetPropW(HWND hwnd, LPCWSTR name, HANDLE data);
@@ -264,8 +265,19 @@ DWMAPI_(BOOL) DwmDefWindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
     return FALSE;
 }
 
+/*
+ * returns at the next composition, which is the next vblank. programs pace animation threads with it, and one that
+ * returns at once lets them spin and flood their own message queue.
+ */
 DWMAPI DwmFlush(void)
 {
+    MIME_VBLANK vblank;
+    MimeVblankInfo(&vblank);
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    UINT64 next = MimeVblankTime(&vblank, MimeVblankIndex(&vblank, (UINT64)now.QuadPart) + 1);
+    UINT64 ms = ((next - (UINT64)now.QuadPart) * 1000 + vblank.frequency - 1) / vblank.frequency;
+    Sleep((DWORD)(ms ? ms : 1));
     return S_OK;
 }
 
