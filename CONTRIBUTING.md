@@ -27,7 +27,6 @@ nix develop
 ```
 
 The shell has the toolchain and libraries, the build below works as is.
-To build the package instead, run `nix build`, the binary lands in `result/bin/mime`.
 
 ## Build
 

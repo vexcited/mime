@@ -1,10 +1,12 @@
 ## Installation
 
-Mime is at an early stage, you should build from source for now, see [CONTRIBUTING.md](CONTRIBUTING.md).
+Mime is at an early stage. Releases ship a binary for x86_64 Linux, on any other platform build from source, see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Mime needs RW access to `/dev/kvm`, add your user to the `kvm` group if it is not world writable.
 
 ### NixOS
 
-The flake builds Mime from source. Add it to your system flake:
+The flake installs the binary of the last release, nothing is compiled. Add it to your system flake:
 
 ```nix
 {
@@ -21,16 +23,22 @@ The flake builds Mime from source. Add it to your system flake:
 }
 ```
 
-Then rebuild with `sudo nixos-rebuild switch`.
+Then rebuild with `sudo nixos-rebuild switch`, the module enables `hardware.graphics` for the Vulkan drivers.
 
-Without a system flake, install it in your profile:
+Move to a new release with `nix flake update mime`.
+
+### Other distributions
 
 ```sh
-nix profile install git+https://code.vexcited.com/mime/mime.git
+# on arch linux, for example
+sudo pacman -S --needed sdl3 wayland curl vulkan-icd-loader
+
+# download the x86_64 binary
+curl -L https://github.com/vexcited/mime/releases/latest/download/mime-x86_64-linux.tar.gz | tar -xz
+./mime run notepad
 ```
 
-The module enables `hardware.graphics` for the Vulkan drivers.
-Mime needs RW access to `/dev/kvm`, add your user to the `kvm` group if it is not world writable.
+Move `mime` anywhere in your `PATH` to keep it, and run the same command again to update it.
 
 ## Usage
 
