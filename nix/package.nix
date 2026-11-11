@@ -1,66 +1,36 @@
 {
   lib,
-  llvmPackages_latest,
-  cmake,
-  ninja,
-  pkg-config,
+  stdenv,
+  fetchurl,
+  autoPatchelfHook,
   sdl3,
   wayland,
   curl,
   systemdLibs,
   vulkan-loader,
-  icons,
-  audio,
-  version ? "unstable",
-  sourceDateEpoch ? 315532800,
 }:
 
-llvmPackages_latest.stdenv.mkDerivation {
+stdenv.mkDerivation (finalAttrs: {
   pname = "mime";
-  inherit version;
+  version = "0.0.0";
 
-  src = lib.fileset.toSource {
-    root = ../.;
-    fileset = lib.fileset.unions [
-      ../CMakeLists.txt
-      ../data
-      ../gen
-      ../guest
-      ../host
-      ../include
-      ../scripts
-      ../third_party
-    ];
+  src = fetchurl {
+    url = "https://github.com/vexcited/mime/releases/download/${finalAttrs.version}/mime-x86_64-linux.tar.gz";
+    hash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
   };
+  sourceRoot = ".";
 
-  nativeBuildInputs = [
-    cmake
-    ninja
-    pkg-config
-    llvmPackages_latest.llvm
-    llvmPackages_latest.lld
-  ];
+  nativeBuildInputs = [ autoPatchelfHook ];
 
   buildInputs = [
     sdl3
     wayland
     curl
     systemdLibs
+    (lib.getLib stdenv.cc.cc)
   ];
 
-  # the guest is built for windows targets, where the wrapper's hardening flags do not exist.
-  hardeningDisable = [ "all" ];
-  # and the wrapper's --gcc-toolchain is unused there.
-  env.NIX_CFLAGS_COMPILE = "-Wno-unused-command-line-argument";
-
-  cmakeBuildType = "RelWithDebInfo";
-  cmakeFlags = [
-    (lib.cmakeFeature "MIME_ICONS_DIR" "${icons}")
-    (lib.cmakeFeature "MIME_AUDIO_DIR" "${audio}")
-  ];
-
-  # the rom's files carry the build time, so it moves with the sources instead of nix's 1980.
-  env.SOURCE_DATE_EPOCH = toString sourceDateEpoch;
+  runtimeDependencies = [ vulkan-loader ];
 
   installPhase = ''
     runHook preInstall
@@ -68,15 +38,11 @@ llvmPackages_latest.stdenv.mkDerivation {
     runHook postInstall
   '';
 
-  # no wrapper: the desktop entries mime writes start /proc/self/exe.
-  postFixup = ''
-    patchelf --add-rpath ${lib.makeLibraryPath [ vulkan-loader ]} $out/bin/mime
-  '';
-
   meta = {
     description = "Running Windows programs on Linux by reimplementing Windows";
     homepage = "https://code.vexcited.com/mime/mime";
     platforms = [ "x86_64-linux" ];
+    sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
     mainProgram = "mime";
   };
-}
+})
