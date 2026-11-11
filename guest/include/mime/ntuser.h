@@ -705,6 +705,9 @@ W32KAPI BOOL NTAPI NtGdiMimeGpuGetSurface(HDC dc, MIME_GPU_SURFACE *surface);
 #define MIME_AUDIO_START 1
 #define MIME_AUDIO_STOP 2
 #define MIME_AUDIO_CLOSE 3 /* the slot and its memory stay with the process for a later stream. */
+/* write the host's devices over the header of a stream that is not open, as a MimeAudioDeviceList. */
+#define MIME_AUDIO_OUTPUTS 4
+#define MIME_AUDIO_INPUTS 5
 W32KAPI NTSTATUS NTAPI NtGdiMimeAudioCreate(PVOID *base, PULONG index);
 W32KAPI NTSTATUS NTAPI NtGdiMimeAudioControl(ULONG index, ULONG op);
 

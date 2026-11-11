@@ -582,6 +582,9 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_AUDIO_CLOSE:
         mime_audio_close(regs[1]);
         break;
+    case MIME_HC_AUDIO_DEVICES:
+        status = mime_audio_devices(vm, regs[1], regs[2], regs[3] != 0);
+        break;
     case MIME_HC_CAMERA_LIST:
         status = mime_camera_list(vm, regs[1], regs[2], &value);
         break;

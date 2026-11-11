@@ -150,6 +150,18 @@ uint64_t mime_audio_start(uint64_t stream, uint64_t running)
     return err ? MIME_HC_STATUS_IO_ERROR : MIME_HC_STATUS_OK;
 }
 
+/* only the default output is offered on this host yet. */
+uint64_t mime_audio_devices(MimeVm *vm, uint64_t pa, uint64_t size, bool capture)
+{
+    MimeAudioDeviceList *list = nullptr;
+    if (size >= sizeof(*list))
+        list = mime_vm_phys(vm, pa, sizeof(*list));
+    if (!list)
+        return MIME_HC_STATUS_INVALID;
+    memset(list, 0, sizeof(*list));
+    return MIME_HC_STATUS_OK;
+}
+
 void mime_audio_close(uint64_t stream)
 {
     pthread_mutex_lock(&g_lock);

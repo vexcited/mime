@@ -227,6 +227,73 @@ static void destroy(Stream *s)
     free(s);
 }
 
+static bool audio_ready(void)
+{
+    pthread_mutex_lock(&g_lock);
+    if (!g_audio)
+        g_audio = SDL_InitSubSystem(SDL_INIT_AUDIO);
+    bool ready = g_audio;
+    pthread_mutex_unlock(&g_lock);
+    return ready;
+}
+
+/* SDL does not tell which device is the default one, only its name. */
+static SDL_AudioDeviceID *list_devices(bool capture, int *count, const char **default_name)
+{
+    *count = 0;
+    *default_name = SDL_GetAudioDeviceName(capture ? SDL_AUDIO_DEVICE_DEFAULT_RECORDING : SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK);
+    return capture ? SDL_GetAudioRecordingDevices(count) : SDL_GetAudioPlaybackDevices(count);
+}
+
+uint64_t mime_audio_devices(MimeVm *vm, uint64_t pa, uint64_t size, bool capture)
+{
+    MimeAudioDeviceList *list = nullptr;
+    if (size >= sizeof(*list))
+        list = mime_vm_phys(vm, pa, sizeof(*list));
+    if (!list)
+        return MIME_HC_STATUS_INVALID;
+    MimeAudioDeviceList found = {0};
+    if (audio_ready()) {
+        int count;
+        const char *default_name;
+        SDL_AudioDeviceID *ids = list_devices(capture, &count, &default_name);
+        bool skipped = false;
+        for (int i = 0; ids && i < count && found.count < MIME_AUDIO_MAX_DEVICES; i++) {
+            const char *name = SDL_GetAudioDeviceName(ids[i]);
+            if (!name || !name[0])
+                continue;
+            if (!skipped && default_name && !strcmp(name, default_name)) {
+                skipped = true;
+                continue;
+            }
+            MimeAudioDevice *d = &found.devices[found.count++];
+            d->id = ids[i];
+            /* the cut may fall inside a character, which the guest's conversion replaces. */
+            snprintf(d->name, sizeof(d->name), "%s", name);
+        }
+        SDL_free(ids);
+    }
+    *list = found;
+    return MIME_HC_STATUS_OK;
+}
+
+/* the device a stream asked for while the host still has it, and the default one otherwise. */
+static SDL_AudioDeviceID pick_device(uint32_t wanted, bool capture)
+{
+    SDL_AudioDeviceID chosen = capture ? SDL_AUDIO_DEVICE_DEFAULT_RECORDING : SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+    if (!wanted)
+        return chosen;
+    int count;
+    const char *default_name;
+    SDL_AudioDeviceID *ids = list_devices(capture, &count, &default_name);
+    for (int i = 0; ids && i < count; i++) {
+        if (ids[i] == wanted)
+            chosen = wanted;
+    }
+    SDL_free(ids);
+    return chosen;
+}
+
 uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *stream)
 {
     if (size != MIME_AUDIO_STREAM_SIZE)
@@ -242,10 +309,7 @@ uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *strea
     if (!h.frames || h.frames > (size - MIME_AUDIO_HEADER_SIZE) / frame_bytes)
         return MIME_HC_STATUS_INVALID;
 
-    pthread_mutex_lock(&g_lock);
-    if (!g_audio)
-        g_audio = SDL_InitSubSystem(SDL_INIT_AUDIO);
-    pthread_mutex_unlock(&g_lock);
+    bool ready = audio_ready();
 
     Stream *s = calloc(1, sizeof(Stream));
     s->hdr = (MimeAudioHeader *)base;
@@ -261,9 +325,9 @@ uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *strea
         .channels = (int)h.channels,
         .freq = (int)h.rate,
     };
-    if (g_audio)
-        s->stream = s->capture ? SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_RECORDING, &spec, capture_render, s)
-                               : SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, render, s);
+    if (ready)
+        s->stream = SDL_OpenAudioDeviceStream(pick_device(h.device, s->capture), &spec,
+                                              s->capture ? capture_render : render, s);
     /* without a host device the guest keeps a working one whose sound goes nowhere. */
     if (!s->stream) {
         s->silent = true;

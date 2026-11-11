@@ -111,6 +111,12 @@ NTSTATUS NTAPI NtGdiMimeAudioControl(ULONG index, ULONG op)
         if (!s->Stream ||
             HalMimeHypercall(MIME_HC_AUDIO_START, s->Stream, op == MIME_AUDIO_START, 0, 0, 0, 0, nullptr) != MIME_HC_STATUS_OK)
             status = STATUS_DEVICE_NOT_READY;
+    } else if (op == MIME_AUDIO_OUTPUTS || op == MIME_AUDIO_INPUTS) {
+        if (s->Stream)
+            status = STATUS_DEVICE_BUSY;
+        else if (HalMimeHypercall(MIME_HC_AUDIO_DEVICES, s->Pa, MIME_AUDIO_STREAM_SIZE, op == MIME_AUDIO_INPUTS, 0, 0, 0,
+                                  nullptr) != MIME_HC_STATUS_OK)
+            status = STATUS_DEVICE_NOT_READY;
     } else if (op == MIME_AUDIO_CLOSE) {
         close_stream(s);
         s->InUse = FALSE;

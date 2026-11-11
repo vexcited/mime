@@ -9,6 +9,8 @@ void mime_audio_prepare(void);
 uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *stream);
 uint64_t mime_audio_start(uint64_t stream, uint64_t running);
 void mime_audio_close(uint64_t stream);
+/* writes the devices of one direction, besides the default one, as a MimeAudioDeviceList. */
+uint64_t mime_audio_devices(MimeVm *vm, uint64_t pa, uint64_t size, bool capture);
 void mime_audio_close_all(void);
 
 #endif
