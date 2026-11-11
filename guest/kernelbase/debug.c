@@ -75,6 +75,58 @@ static void describe_address(PVOID address, char *out, SIZE_T size)
     }
 }
 
+#define VCPP_LOAD_FAILED ((NTSTATUS)0xC06D007EL)
+#define VCPP_PROC_FAILED ((NTSTATUS)0xC06D007FL)
+
+/* the msvc delay load helper raises its failures with a pointer to this as the only parameter. */
+typedef struct {
+    DWORD Size;
+    PVOID Descriptor;
+    PVOID *Thunk;
+    LPCSTR Dll;
+    BOOL ByName;
+    union {
+        LPCSTR Name;
+        DWORD Ordinal;
+    } Procedure;
+    HMODULE Module;
+    FARPROC Address;
+    DWORD LastError;
+} DELAY_LOAD_INFO;
+
+/* the program owns these strings, so every byte is checked before it is read. */
+static void copy_program_string(LPCSTR source, char *out, SIZE_T size)
+{
+    SIZE_T n = 0;
+    for (; n + 1 < size; n++) {
+        if (IsBadReadPtr(source + n, 1) || !source[n])
+            break;
+        out[n] = source[n];
+    }
+    out[n] = 0;
+}
+
+static void report_delay_load(PEXCEPTION_RECORD r)
+{
+    if (r->NumberParameters < 1)
+        return;
+    const DELAY_LOAD_INFO *info = (const DELAY_LOAD_INFO *)r->ExceptionInformation[0];
+    if (IsBadReadPtr(info, sizeof(*info)) || info->Size < sizeof(*info))
+        return;
+    char dll[MAX_PATH];
+    copy_program_string(info->Dll, dll, sizeof(dll));
+    if (r->ExceptionCode == VCPP_LOAD_FAILED) {
+        DbgPrint("  delay load of %s failed, error %u\n", dll, info->LastError);
+    } else if (info->ByName) {
+        char name[256];
+        copy_program_string(info->Procedure.Name, name, sizeof(name));
+        DbgPrint("  delay load of %s from %s failed, error %u\n", name, dll, info->LastError);
+    } else {
+        DbgPrint("  delay load of ordinal %u from %s failed, error %u\n", info->Procedure.Ordinal, dll,
+                 info->LastError);
+    }
+}
+
 LONG WINAPI UnhandledExceptionFilter(PEXCEPTION_POINTERS info)
 {
     /* a nested exception is not reported or filtered again: the first one ends the process. */
@@ -102,6 +154,8 @@ LONG WINAPI UnhandledExceptionFilter(PEXCEPTION_POINTERS info)
             DbgPrint("  %s of address %p\n",
                      r->ExceptionInformation[0] == 8 ? "execution" : r->ExceptionInformation[0] ? "write" : "read",
                      (PVOID)r->ExceptionInformation[1]);
+        if (r->ExceptionCode == VCPP_LOAD_FAILED || r->ExceptionCode == VCPP_PROC_FAILED)
+            report_delay_load(r);
     }
     return EXCEPTION_EXECUTE_HANDLER;
 }
