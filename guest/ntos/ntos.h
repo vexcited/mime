@@ -1684,6 +1684,14 @@ NTSTATUS IopDriverReadWrite(PFILE_OBJECT file, BOOLEAN write, PVOID buffer, ULON
 NTSTATUS IopDriverControl(PFILE_OBJECT file, UCHAR major, ULONG code, PVOID input, ULONG in_len, PVOID output,
                           ULONG out_len, KPROCESSOR_MODE mode, PIO_STATUS_BLOCK iosb);
 NTSTATUS MimeFsDirectoryVolume(PFILE_OBJECT file, PULONG volume, PULONG64 host_handle);
+/* \Device\HarddiskVolumeN of a host volume, its length in characters. */
+ULONG MimeFsVolumeDeviceName(ULONG host_volume, PWCHAR out, ULONG capacity);
+/* makes or updates the volume of a host drive in *device, the volume answers no open while gone. */
+NTSTATUS MimeFsDriveVolume(const MimeFsDrive *drive, BOOLEAN gone, PDEVICE_OBJECT *device);
+/* fsdrives.c: the letters of the host's drives, made at boot and followed while the machine runs. */
+void IopInitializeDrives(void);
+void IopStartDrives(void);
+void IopDrivesInterrupt(void);
 
 /* http.c: the http server driver. */
 void IopInitializeHttp(void);

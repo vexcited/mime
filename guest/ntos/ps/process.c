@@ -345,9 +345,12 @@ ULONG PsGetDeviceImagePath(PEPROCESS process, PWCHAR out, ULONG capacity)
     const WCHAR *path = process->ImagePath.Buffer;
     ULONG n = process->ImagePath.Length, prefix = 0;
     if (n >= 2 * sizeof(WCHAR) && path[1] == L':') {
-        static const WCHAR system_volume[] = L"\\Device\\HarddiskVolume1", host_volume[] = L"\\Device\\HarddiskVolume2";
-        const WCHAR *volume = (path[0] | 0x20) == L'c' ? system_volume : host_volume;
-        prefix = (ULONG)wcslen(volume) * sizeof(WCHAR);
+        WCHAR letter = path[0] & ~0x20;
+        ULONG host = letter == L'C' ? MIME_FS_VOLUME_SYSTEM
+                     : letter >= MIME_FS_DRIVE_FIRST && letter <= MIME_FS_DRIVE_LAST ? MIME_FS_VOLUME_DRIVE + letter - L'A'
+                                                                                     : MIME_FS_VOLUME_HOST;
+        WCHAR volume[40];
+        prefix = MimeFsVolumeDeviceName(host, volume, RTL_NUMBER_OF(volume)) * sizeof(WCHAR);
         if (prefix > capacity)
             return 0;
         memcpy(out, volume, prefix);

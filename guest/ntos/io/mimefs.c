@@ -21,10 +21,19 @@ typedef struct MIMEFS_COUNTERS {
 
 #define MIMEFS_MAX_CPUS 64
 
+#ifndef FILE_DEVICE_CD_ROM
+#define FILE_DEVICE_CD_ROM 0x00000002
+#endif
+#define FILE_REMOVABLE_MEDIA 0x00000001
+#define FILE_READ_ONLY_DEVICE 0x00000002
+#define FILE_READ_ONLY_VOLUME 0x00080000
+
 typedef struct MIMEFS_VOLUME {
     ULONG HostVolume;
     ULONG Serial;
     BOOLEAN Raw; /* the disk device, \\.\PhysicalDrive0, which has the volume's drive behind it. */
+    BOOLEAN Gone; /* a host drive that was unplugged, its letter taken away. */
+    ULONG DriveFlags; /* MIME_FS_DRIVE_* of a host drive. */
     WCHAR Label[33]; /* ntfs takes 32 characters. */
     /* what the volume read and wrote, for each processor, as the statistics of the file system tell. */
     MIMEFS_COUNTERS Counters[MIMEFS_MAX_CPUS];
@@ -572,9 +581,7 @@ static NTSTATUS follow_link(MIMEFS_VOLUME *vol, PFILE_OBJECT file, const MimeFsO
             parts[count].Text = sub + start;
             parts[count++].Chars = length;
         }
-        PCWSTR device = vol->HostVolume == MIME_FS_VOLUME_SYSTEM ? L"\\Device\\HarddiskVolume1" : L"\\Device\\HarddiskVolume2";
-        n = (ULONG)wcslen(device);
-        memcpy(out, device, n * sizeof(WCHAR));
+        n = MimeFsVolumeDeviceName(vol->HostVolume, out, LINK_NAME_LIMIT);
         for (ULONG i = 0; i < count; i++) {
             if (n + 1 + parts[i].Chars >= LINK_NAME_LIMIT)
                 goto too_long;
@@ -635,6 +642,10 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
             ExFreePool(req);
             return complete(irp, STATUS_INVALID_PARAMETER, 0);
         }
+    }
+    if (vol->Gone) {
+        ExFreePool(req);
+        return complete(irp, STATUS_DEVICE_NOT_READY, 0);
     }
     /* the volume itself, opened as \\.\C:, has no name under the device: it answers the ioctls of the drive. */
     if (!chars) {
@@ -2163,8 +2174,9 @@ static NTSTATUS NTAPI mimefs_query_volume(PDEVICE_OBJECT device, PIRP irp)
     case FileFsDeviceInformation:
         if (length < sizeof(FILE_FS_DEVICE_INFORMATION))
             return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
-        ((PFILE_FS_DEVICE_INFORMATION)out)->DeviceType = FILE_DEVICE_DISK;
-        ((PFILE_FS_DEVICE_INFORMATION)out)->Characteristics = 0;
+        ((PFILE_FS_DEVICE_INFORMATION)out)->DeviceType = device->DeviceType == FILE_DEVICE_CD_ROM ? FILE_DEVICE_CD_ROM
+                                                                                                  : FILE_DEVICE_DISK;
+        ((PFILE_FS_DEVICE_INFORMATION)out)->Characteristics = device->Characteristics;
         return complete(irp, STATUS_SUCCESS, sizeof(FILE_FS_DEVICE_INFORMATION));
     case FileFsAttributeInformation: {
         /* FILE_FS_ATTRIBUTE_INFORMATION: flags, max component, name length, name. */
@@ -2173,6 +2185,8 @@ static NTSTATUS NTAPI mimefs_query_volume(PDEVICE_OBJECT device, PIRP irp)
         if (length < 12)
             return complete(irp, STATUS_INFO_LENGTH_MISMATCH, 0);
         ((PULONG)out)[0] = 0x00000003 | 0x00000004 | 0x00000002; /* case preserved, unicode names. */
+        if (vol->DriveFlags & MIME_FS_DRIVE_READ_ONLY)
+            ((PULONG)out)[0] |= FILE_READ_ONLY_VOLUME;
         ((PULONG)out)[1] = 255;
         ((PULONG)out)[2] = sizeof(fs) - sizeof(WCHAR);
         ULONG copy = length - 12 < sizeof(fs) - sizeof(WCHAR) ? length - 12 : (ULONG)(sizeof(fs) - sizeof(WCHAR));
@@ -2460,8 +2474,10 @@ static NTSTATUS NTAPI mimefs_device_control(PDEVICE_OBJECT device, PIRP irp)
             return complete(irp, STATUS_BUFFER_TOO_SMALL, sizeof(MIMEFS_DEVICE_NUMBER));
         MIMEFS_DEVICE_NUMBER *number = (MIMEFS_DEVICE_NUMBER *)irp->UserBuffer;
         number->DeviceType = FILE_DEVICE_DISK;
-        number->DeviceNumber = vol->HostVolume;
-        number->PartitionNumber = vol->Raw ? 0 : vol->HostVolume + 1;
+        /* a host drive is a disk of its own with one partition. */
+        BOOLEAN drive = vol->HostVolume >= MIME_FS_VOLUME_DRIVE;
+        number->DeviceNumber = drive ? vol->HostVolume - MIME_FS_VOLUME_DRIVE : vol->HostVolume;
+        number->PartitionNumber = vol->Raw ? 0 : drive ? 1 : vol->HostVolume + 1;
         return complete(irp, STATUS_SUCCESS, sizeof(*number));
     }
     case IOCTL_STORAGE_CHECK_VERIFY:
@@ -2969,6 +2985,57 @@ static NTSTATUS create_volume(PDRIVER_OBJECT driver, PCWSTR name, ULONG host_vol
     for (ULONG i = 0; label[i] && i + 1 < RTL_NUMBER_OF(vol->Label); i++)
         vol->Label[i] = (UCHAR)label[i];
     device->Flags &= ~DO_DEVICE_INITIALIZING;
+    return STATUS_SUCCESS;
+}
+
+ULONG MimeFsVolumeDeviceName(ULONG host_volume, PWCHAR out, ULONG capacity)
+{
+    ULONG number = host_volume == MIME_FS_VOLUME_SYSTEM ? 1 : host_volume == MIME_FS_VOLUME_HOST ? 2
+                                                                                                  : host_volume - MIME_FS_VOLUME_DRIVE;
+    WCHAR name[40];
+    int n = _snwprintf(name, RTL_NUMBER_OF(name), L"\\Device\\HarddiskVolume%u", number);
+    if (n <= 0 || (ULONG)n >= capacity)
+        return 0;
+    memcpy(out, name, (ULONG)n * sizeof(WCHAR));
+    out[n] = 0;
+    return (ULONG)n;
+}
+
+/*
+ * the volume of a host drive, made when its letter first comes. it is never deleted, since handles may still be open
+ * on it: an unplugged drive is gone and answers no open until the host has it again.
+ */
+NTSTATUS MimeFsDriveVolume(const MimeFsDrive *drive, BOOLEAN gone, PDEVICE_OBJECT *out)
+{
+    WCHAR name[40];
+    if (!MimeFsVolumeDeviceName(drive->volume, name, RTL_NUMBER_OF(name)))
+        return STATUS_INVALID_PARAMETER;
+    UNICODE_STRING n;
+    RtlInitUnicodeString(&n, name);
+    PDEVICE_OBJECT device = *out;
+    if (!device) {
+        BOOLEAN cd = (drive->flags & MIME_FS_DRIVE_CDROM) != 0;
+        ULONG characteristics = (drive->flags & (MIME_FS_DRIVE_REMOVABLE | MIME_FS_DRIVE_CDROM) ? FILE_REMOVABLE_MEDIA : 0) |
+                                (cd ? FILE_READ_ONLY_DEVICE : 0);
+        NTSTATUS status = IoCreateDevice(g_driver, sizeof(MIMEFS_VOLUME), &n,
+                                         cd ? FILE_DEVICE_CD_ROM : FILE_DEVICE_DISK_FILE_SYSTEM, characteristics, FALSE,
+                                         &device);
+        if (!NT_SUCCESS(status))
+            return status;
+        device->Flags &= ~DO_DEVICE_INITIALIZING;
+        *out = device;
+    }
+    MIMEFS_VOLUME *vol = device->DeviceExtension;
+    vol->HostVolume = drive->volume;
+    vol->Serial = drive->serial;
+    vol->DriveFlags = drive->flags;
+    char label[sizeof(drive->label) + 1] = {};
+    memcpy(label, drive->label, sizeof(drive->label));
+    ULONG written = 0;
+    WCHAR wide[RTL_NUMBER_OF(vol->Label)] = {};
+    if (NT_SUCCESS(RtlUTF8ToUnicodeN(wide, sizeof(wide) - sizeof(WCHAR), &written, label, (ULONG)strlen(label))))
+        memcpy(vol->Label, wide, sizeof(wide));
+    __atomic_store_n(&vol->Gone, gone, __ATOMIC_RELEASE);
     return STATUS_SUCCESS;
 }
 
