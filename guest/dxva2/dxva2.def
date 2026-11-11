@@ -1,0 +1,41 @@
+; the exports of dxva2.dll of windows with their ordinals, less the one that is not documented.
+LIBRARY dxva2.dll
+EXPORTS
+    CapabilitiesRequestAndCapabilitiesReply @2
+    DXVA2CreateDirect3DDeviceManager9 @3
+    DXVA2CreateVideoService @4
+    DXVAHD_CreateDevice @5
+    DegaussMonitor @6
+    DestroyPhysicalMonitor @7
+    DestroyPhysicalMonitors @8
+    GetCapabilitiesStringLength @9
+    GetMonitorBrightness @10
+    GetMonitorCapabilities @11
+    GetMonitorColorTemperature @12
+    GetMonitorContrast @13
+    GetMonitorDisplayAreaPosition @14
+    GetMonitorDisplayAreaSize @15
+    GetMonitorRedGreenOrBlueDrive @16
+    GetMonitorRedGreenOrBlueGain @17
+    GetMonitorTechnologyType @18
+    GetNumberOfPhysicalMonitorsFromHMONITOR @19
+    GetNumberOfPhysicalMonitorsFromIDirect3DDevice9 @20
+    GetPhysicalMonitorsFromHMONITOR @21
+    GetPhysicalMonitorsFromIDirect3DDevice9 @22
+    GetTimingReport @23
+    GetVCPFeatureAndVCPFeatureReply @24
+    OPMGetVideoOutputForTarget @25
+    OPMGetVideoOutputsFromHMONITOR @26
+    OPMGetVideoOutputsFromIDirect3DDevice9Object @27
+    RestoreMonitorFactoryColorDefaults @28
+    RestoreMonitorFactoryDefaults @29
+    SaveCurrentMonitorSettings @30
+    SaveCurrentSettings @31
+    SetMonitorBrightness @32
+    SetMonitorColorTemperature @33
+    SetMonitorContrast @34
+    SetMonitorDisplayAreaPosition @35
+    SetMonitorDisplayAreaSize @36
+    SetMonitorRedGreenOrBlueDrive @37
+    SetMonitorRedGreenOrBlueGain @38
+    SetVCPFeature @39
