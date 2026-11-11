@@ -116,6 +116,7 @@ typedef struct CBS_ID {
 typedef struct CBS_FILE_ENTRY {
     const char *Name;        /* relative to the payload folder, with backslashes. */
     const char *Destination; /* the directory, with variables. null for a file that goes only into the cache. */
+    const char *InstalledName; /* the name in the directory when it is not the payload's, as the arm64 files of a framework. */
     /* the sha-256 of the content, from the digest of the manifest. its hash attribute is of another form of the file. */
     uint8_t Digest[32];
     bool HasDigest;
