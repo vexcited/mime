@@ -93,8 +93,6 @@ void KbInitializeCommandLine(void);
 void KbThreadAttach(void);
 void KbThreadDetach(void);
 void KbInitializeDebug(void);
-void KbProcessDetach(void);
-void KbFlsThreadCleanup(void);
 
 /* user apcs queued by kernelbase count themselves, so alertable waits can report them. */
 void KbInitializeApc(void);

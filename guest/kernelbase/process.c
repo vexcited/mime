@@ -2254,6 +2254,7 @@ void WINAPI DeleteFiber(LPVOID fiber)
     PTEB teb = NtCurrentTeb();
     if (teb->NtTib.FiberData == f)
         ExitThread(1);
+    RtlProcessFlsData(f->FlsData, 3);
     if (!f->ConvertedThread)
         VirtualFree(f->DeallocationStack, 0, MEM_RELEASE);
     KbFree(f);

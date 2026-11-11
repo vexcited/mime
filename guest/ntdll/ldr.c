@@ -1720,8 +1720,21 @@ void NTAPI LdrpInitialize(PCONTEXT context)
     }
 }
 
+/* like windows, the fls callbacks of the ending thread run before any library hears of the end. */
+static void process_fls(void)
+{
+    PTEB teb = NtCurrentTeb();
+    PVOID fls = teb->FlsData;
+    if (!fls)
+        return;
+    RtlProcessFlsData(fls, 1);
+    teb->FlsData = nullptr;
+    RtlProcessFlsData(fls, 2);
+}
+
 NTDLL_EXPORT void NTAPI LdrShutdownThread(void)
 {
+    process_fls();
     if (skips_thread_attach()) {
         RtlFreeThreadActivationContextStack();
         return;
@@ -1748,6 +1761,7 @@ NTDLL_EXPORT void NTAPI LdrShutdownProcess(void)
     g_process_detaching = TRUE;
     g_ldr.ShutdownInProgress = TRUE;
     g_ldr.ShutdownThreadId = NtCurrentThreadId();
+    process_fls();
     PLDR_DATA_TABLE_ENTRY exe = find_by_base(NtCurrentPeb()->ImageBaseAddress);
     if (exe)
         call_tls_callbacks(exe, DLL_PROCESS_DETACH);
@@ -1860,6 +1874,9 @@ NTDLL_EXPORT PVOID NTAPI RtlGetUnloadEventTraceEx(PULONG *element_size, PULONG *
 
 NTDLL_EXPORT NTSTATUS NTAPI LdrUnloadDll(PVOID base)
 {
+    /* like windows, nothing is unloaded once the process is ending, and the call still succeeds. */
+    if (g_process_detaching)
+        return STATUS_SUCCESS;
     RtlEnterCriticalSection(&LdrpLoaderLock);
     RtlAcquireSRWLockExclusive(&g_table_lock);
     PLDR_DATA_TABLE_ENTRY e = find_by_base(base);

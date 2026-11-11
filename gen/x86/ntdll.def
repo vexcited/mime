@@ -373,6 +373,11 @@ EXPORTS
     RtlFindExportedRoutineByName=_RtlFindExportedRoutineByName@8
     RtlFirstEntrySList=_RtlFirstEntrySList@4
     RtlFirstFreeAce=_RtlFirstFreeAce@8
+    RtlFlsAlloc=_RtlFlsAlloc@8
+    RtlFlsFree=_RtlFlsFree@4
+    RtlFlsGetValue=_RtlFlsGetValue@8
+    RtlFlsGetValue2=_RtlFlsGetValue2@4
+    RtlFlsSetValue=_RtlFlsSetValue@8
     RtlFormatCurrentUserKeyPath=_RtlFormatCurrentUserKeyPath@4
     RtlFreeActivationContextStack=_RtlFreeActivationContextStack@4
     RtlFreeAnsiString=_RtlFreeAnsiString@4
@@ -499,6 +504,7 @@ EXPORTS
     RtlPcToFileHeader=_RtlPcToFileHeader@8
     RtlPrefixString=_RtlPrefixString@12
     RtlPrefixUnicodeString=_RtlPrefixUnicodeString@12
+    RtlProcessFlsData=_RtlProcessFlsData@8
     RtlPublishWnfStateData=_RtlPublishWnfStateData@24
     RtlQueryActivationContextApplicationSettings=_RtlQueryActivationContextApplicationSettings@28
     RtlQueryDepthSList=_RtlQueryDepthSList@4
