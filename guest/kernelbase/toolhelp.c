@@ -644,18 +644,52 @@ WINBASEAPI BOOL WINAPI Thread32Next(HANDLE snapshot, LPTHREADENTRY32 entry)
 /* ------------------------------------------------------------------ volumes */
 
 /* windows derives volume guids from the partition, these are made up from the drive letter. */
-static const WCHAR *const g_volume_names[2] = {
-    L"\\\\?\\Volume{4d696d65-0000-0043-0000-000000000043}\\",
-    L"\\\\?\\Volume{4d696d65-0000-005a-0000-00000000005a}\\",
-};
-static constexpr WCHAR g_volume_roots[2] = {'C', 'Z'};
+#define VOLUME_NAME_CHARS 49
 
-static int volume_index(LPCWSTR name)
+static void volume_name(WCHAR letter, LPWSTR out)
 {
-    for (int i = 0; i < 2; i++)
-        if (name && !_wcsnicmp(name, g_volume_names[i], 48))
-            return i;
-    return -1;
+    static const WCHAR hex[] = L"0123456789abcdef";
+    wcscpy(out, L"\\\\?\\Volume{4d696d65-0000-00XX-0000-0000000000XX}\\");
+    out[27] = out[45] = hex[letter >> 4];
+    out[28] = out[46] = hex[letter & 15];
+}
+
+/* the letters of the volumes: every local drive, and Z: that the drive lists leave out. */
+static DWORD volume_letters(void)
+{
+    DWORD mask = GetLogicalDrives() | 1u << ('Z' - 'A');
+    WCHAR target[64];
+    if (!QueryDosDeviceW(L"Z:", target, RTL_NUMBER_OF(target)))
+        mask &= ~(1u << ('Z' - 'A'));
+    for (int i = 0; i < 26; i++) {
+        WCHAR root[4] = {(WCHAR)('A' + i), ':', '\\', 0};
+        if ((mask & (1u << i)) && GetDriveTypeW(root) == DRIVE_REMOTE)
+            mask &= ~(1u << i);
+    }
+    return mask;
+}
+
+static WCHAR volume_letter(LPCWSTR name)
+{
+    if (!name || wcslen(name) < VOLUME_NAME_CHARS - 1)
+        return 0;
+    WCHAR expected[VOLUME_NAME_CHARS + 1];
+    DWORD mask = volume_letters();
+    for (int i = 0; i < 26; i++) {
+        if (!(mask & (1u << i)))
+            continue;
+        volume_name((WCHAR)('A' + i), expected);
+        if (!_wcsnicmp(name, expected, VOLUME_NAME_CHARS - 1))
+            return (WCHAR)('A' + i);
+    }
+    return 0;
+}
+
+static BOOL is_drive_root(LPCWSTR root, WCHAR *letter)
+{
+    *letter = (WCHAR)(root[0] & ~0x20);
+    return *letter >= 'A' && *letter <= 'Z' && root[1] == ':' && root[2] == '\\' && !root[3] &&
+           (volume_letters() & (1u << (*letter - 'A')));
 }
 
 WINBASEAPI BOOL WINAPI GetVolumeNameForVolumeMountPointW(LPCWSTR mount_point, LPWSTR name, DWORD length)
@@ -664,25 +698,24 @@ WINBASEAPI BOOL WINAPI GetVolumeNameForVolumeMountPointW(LPCWSTR mount_point, LP
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    WCHAR letter = (WCHAR)(mount_point[0] & ~0x20);
-    int i = letter == 'C' ? 0 : letter == 'Z' ? 1 : -1;
-    if (i < 0 || mount_point[1] != ':' || mount_point[2] != '\\' || mount_point[3]) {
-        KbSetError(i < 0 ? ERROR_FILE_NOT_FOUND : ERROR_INVALID_NAME);
+    WCHAR letter;
+    if (!is_drive_root(mount_point, &letter)) {
+        BOOL drive = mount_point[0] && mount_point[1] == ':';
+        KbSetError(drive && mount_point[2] == '\\' && !mount_point[3] ? ERROR_FILE_NOT_FOUND : ERROR_INVALID_NAME);
         return FALSE;
     }
-    SIZE_T n = wcslen(g_volume_names[i]) + 1;
-    if (length < n) {
+    if (length < VOLUME_NAME_CHARS + 1) {
         KbSetError(ERROR_FILENAME_EXCED_RANGE);
         return FALSE;
     }
-    memcpy(name, g_volume_names[i], n * sizeof(WCHAR));
+    volume_name(letter, name);
     return TRUE;
 }
 
 WINBASEAPI BOOL WINAPI GetVolumePathNamesForVolumeNameW(LPCWSTR volume, LPWSTR names, DWORD length, PDWORD returned)
 {
-    int i = volume_index(volume);
-    if (i < 0) {
+    WCHAR letter = volume_letter(volume);
+    if (!letter) {
         KbSetError(volume && !_wcsnicmp(volume, L"\\\\?\\Volume{", 11) ? ERROR_FILE_NOT_FOUND : ERROR_INVALID_NAME);
         return FALSE;
     }
@@ -694,7 +727,7 @@ WINBASEAPI BOOL WINAPI GetVolumePathNamesForVolumeNameW(LPCWSTR volume, LPWSTR n
         KbSetError(ERROR_MORE_DATA);
         return FALSE;
     }
-    names[0] = g_volume_roots[i];
+    names[0] = letter;
     names[1] = ':';
     names[2] = '\\';
     names[3] = 0;
@@ -705,7 +738,7 @@ WINBASEAPI BOOL WINAPI GetVolumePathNamesForVolumeNameW(LPCWSTR volume, LPWSTR n
 WINBASEAPI BOOL WINAPI FindNextVolumeW(HANDLE handle, LPWSTR name, DWORD length);
 
 typedef struct VOLUME_FIND {
-    int Next;
+    DWORD Left;
 } VOLUME_FIND;
 
 WINBASEAPI HANDLE WINAPI FindFirstVolumeW(LPWSTR name, DWORD length)
@@ -715,6 +748,7 @@ WINBASEAPI HANDLE WINAPI FindFirstVolumeW(LPWSTR name, DWORD length)
         KbSetError(ERROR_NOT_ENOUGH_MEMORY);
         return INVALID_HANDLE_VALUE;
     }
+    f->Left = volume_letters();
     if (!FindNextVolumeW(f, name, length)) {
         KbFree(f);
         return INVALID_HANDLE_VALUE;
@@ -729,16 +763,17 @@ WINBASEAPI BOOL WINAPI FindNextVolumeW(HANDLE handle, LPWSTR name, DWORD length)
         KbSetError(ERROR_INVALID_HANDLE);
         return FALSE;
     }
-    if (f->Next >= 2) {
+    if (!f->Left) {
         KbSetError(ERROR_NO_MORE_FILES);
         return FALSE;
     }
-    SIZE_T n = wcslen(g_volume_names[f->Next]) + 1;
-    if (!name || length < n) {
+    if (!name || length < VOLUME_NAME_CHARS + 1) {
         KbSetError(ERROR_FILENAME_EXCED_RANGE);
         return FALSE;
     }
-    memcpy(name, g_volume_names[f->Next++], n * sizeof(WCHAR));
+    int i = __builtin_ctz(f->Left);
+    f->Left &= f->Left - 1;
+    volume_name((WCHAR)('A' + i), name);
     return TRUE;
 }
 
@@ -766,9 +801,8 @@ WINBASEAPI HANDLE WINAPI FindFirstVolumeMountPointW(LPCWSTR root, LPWSTR name, D
         KbSetError(ERROR_INVALID_PARAMETER);
         return INVALID_HANDLE_VALUE;
     }
-    WCHAR letter = (WCHAR)(root[0] & ~0x20);
-    BOOL drive = (letter == 'C' || letter == 'Z') && root[1] == ':' && root[2] == '\\' && !root[3];
-    if (!drive && volume_index(root) < 0) {
+    WCHAR letter;
+    if (!is_drive_root(root, &letter) && !volume_letter(root)) {
         KbSetError(ERROR_PATH_NOT_FOUND);
         return INVALID_HANDLE_VALUE;
     }
@@ -790,7 +824,7 @@ WINBASEAPI BOOL WINAPI FindVolumeMountPointClose(HANDLE handle)
 
 WINBASEAPI BOOL WINAPI SetVolumeMountPointW(LPCWSTR mount_point, LPCWSTR volume)
 {
-    if (!mount_point || !volume || volume_index(volume) < 0) {
+    if (!mount_point || !volume || !volume_letter(volume)) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
