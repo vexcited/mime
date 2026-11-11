@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-26.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: dependencies
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y --no-install-recommends clang lld llvm cmake \
+            ninja-build pkg-config libsdl3-dev libwayland-dev \
+            libcurl4-openssl-dev libsystemd-dev
+
+      - name: build
+        run: |
+          cmake -B build -G Ninja
+          cmake --build build
+
+      - name: package
+        run: |
+          strip --strip-debug build/mime
+          tar -C build -czf mime-x86_64-linux.tar.gz mime
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --title "v$GITHUB_REF_NAME" --notes ""
+          gh release upload "$GITHUB_REF_NAME" mime-x86_64-linux.tar.gz --clobber
+
+      - name: pin the release in the flake
+        env:
+          FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+        run: |
+          forgejo="https://release:${FORGEJO_TOKEN}@code.vexcited.com/mime/mime.git"
+          hash="sha256-$(openssl dgst -sha256 -binary mime-x86_64-linux.tar.gz | base64)"
+
+          git fetch --depth 1 "$forgejo" main
+          git checkout --detach FETCH_HEAD
+          sed -i -e "s|^  version = \".*\";|  version = \"$GITHUB_REF_NAME\";|" \
+            -e "s|^    hash = \".*\";|    hash = \"$hash\";|" nix/package.nix
+
+          git diff --quiet && exit 0
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "chore: pin release v$GITHUB_REF_NAME in the flake" nix/package.nix
+          git push "$forgejo" HEAD:main
