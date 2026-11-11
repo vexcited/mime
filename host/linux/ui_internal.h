@@ -63,6 +63,15 @@ struct wl_display;
 struct wl_surface;
 bool mime_activation_attention(struct wl_display *display, struct wl_surface *surface, const char *app_id);
 bool mime_activation_activate(struct wl_display *display, struct wl_surface *surface, const char *token);
+/*
+ * main thread: what the compositor tells of an output's colors, false when it tells nothing. changed runs on a
+ * thread of its own when an answer is no longer the one given.
+ */
+struct wl_output;
+bool mime_color_output(struct wl_display *display, struct wl_output *output, bool *hdr, MimeMonitorColor *color);
+void mime_color_watch(void (*changed)(void));
+void mime_color_forget(void);
+void mime_color_stop(void);
 /* last notification click token, for the window raised in response. */
 void mime_ui_set_activation_token(const char *token);
 

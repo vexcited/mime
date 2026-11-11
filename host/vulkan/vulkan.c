@@ -466,8 +466,11 @@ static void instance_extensions(MvkCall *call)
         {VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_SURFACE_SPEC_VERSION},
         {"VK_KHR_win32_surface", 6},
         {VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME, VK_KHR_GET_SURFACE_CAPABILITIES_2_SPEC_VERSION},
+        {VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME, VK_EXT_SWAPCHAIN_COLOR_SPACE_SPEC_VERSION},
     };
     uint32_t wsi_count = host_has(list, count, VK_KHR_SURFACE_EXTENSION_NAME) ? 3 : 0;
+    if (wsi_count && host_has(list, count, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))
+        wsi_count++;
     uint32_t n = wsi_count;
     for (uint32_t i = 0; i < count; i++)
         if (protocol_has(list[i].extensionName))
@@ -586,9 +589,13 @@ static HostInstance *instance_make(VkInstanceCreateInfo info, MvkDecoder *d, VkR
             strcmp(info.ppEnabledExtensionNames[i], VK_KHR_SURFACE_EXTENSION_NAME))
             names[n++] = info.ppEnabledExtensionNames[i];
     /* the host surfaces the presenter makes on the guest's behalf. */
-    for (const char *const *x = mvk_wsi_instance_extensions; *x; x++)
-        if (host_has(list, count, *x))
+    for (const char *const *x = mvk_wsi_instance_extensions; *x; x++) {
+        bool named = false;
+        for (uint32_t i = 0; i < n; i++)
+            named |= !strcmp(names[i], *x);
+        if (!named && host_has(list, count, *x))
             names[n++] = *x;
+    }
     info.enabledLayerCount = 0;
     info.ppEnabledLayerNames = nullptr;
     free(list);
@@ -927,7 +934,7 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
         c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr);
         VkExtensionProperties *list = calloc(count ? count : 1, sizeof(*list));
         c->fn.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, list);
-        const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 16));
+        const char **names = mvk_alloc(d, sizeof(char *) * (info.enabledExtensionCount + 20));
         uint32_t n = 0;
         bool video = false;
         for (uint32_t i = 0; i < info.enabledExtensionCount; i++) {
@@ -1012,6 +1019,13 @@ static VkResult device_create(MvkConnection *c, MvkDecoder *d, VkPhysicalDevice 
             swapchain |= !strcmp(names[i], VK_KHR_SWAPCHAIN_EXTENSION_NAME);
         if (!swapchain && host_has(list, count, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
             names[n++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+        /* and what describes their frames to a compositor that shows high dynamic range. */
+        c->hdr_metadata = host_has(list, count, VK_EXT_HDR_METADATA_EXTENSION_NAME);
+        bool metadata = false;
+        for (uint32_t i = 0; i < n; i++)
+            metadata |= !strcmp(names[i], VK_EXT_HDR_METADATA_EXTENSION_NAME);
+        if (c->hdr_metadata && !metadata)
+            names[n++] = VK_EXT_HDR_METADATA_EXTENSION_NAME;
         free(list);
         info.enabledLayerCount = 0;
         info.enabledExtensionCount = n;
@@ -3044,6 +3058,7 @@ static void run_hand(MvkCall *call)
     case MVK_OP_DESTROY_SWAPCHAIN: mvk_wsi_destroy_swapchain(call); break;
     case MVK_OP_ACQUIRE_IMAGE: mvk_wsi_acquire(call); break;
     case MVK_OP_PRESENT: mvk_wsi_present(call); break;
+    case MVK_OP_HDR_METADATA: mvk_wsi_hdr_metadata(call); break;
     case MVK_OP_GET_DESCRIPTOR: get_descriptor(call); break;
     case MVK_OP_WATCH_SEMAPHORES: watch_semaphores(call); break;
     case MVK_OP_MIRROR_SEMAPHORE: mirror_semaphore(call); break;

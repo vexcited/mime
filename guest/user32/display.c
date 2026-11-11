@@ -105,28 +105,246 @@ WINUSERAPI LONG WINAPI ChangeDisplaySettingsA(DEVMODEA *mode, DWORD flags)
     return ChangeDisplaySettingsExA(nullptr, mode, nullptr, flags, nullptr);
 }
 
+/* ------------------------------------------------------------------ display configuration */
+
+/* one path per host monitor: source and target carry its index, the target 0x100 above. */
+#define CONFIG_TARGET 0x100
+#define CONFIG_ADAPTER 0x0000D3D0 /* the luid dxgi gives the first adapter. */
+#define CONFIG_DISPLAYPORT 10
+
+#define QDC_ALL_PATHS 1
+#define QDC_ONLY_ACTIVE_PATHS 2
+#define QDC_DATABASE_CURRENT 4
+
+typedef struct DISPLAYCONFIG_RATIONAL {
+    UINT32 Numerator, Denominator;
+} DISPLAYCONFIG_RATIONAL;
+
+typedef struct DISPLAYCONFIG_PATH_INFO {
+    struct {
+        LUID adapterId;
+        UINT32 id;
+        UINT32 modeInfoIdx;
+        UINT32 statusFlags;
+    } sourceInfo;
+    struct {
+        LUID adapterId;
+        UINT32 id;
+        UINT32 modeInfoIdx;
+        UINT32 outputTechnology;
+        UINT32 rotation;
+        UINT32 scaling;
+        DISPLAYCONFIG_RATIONAL refreshRate;
+        UINT32 scanLineOrdering;
+        BOOL targetAvailable;
+        UINT32 statusFlags;
+    } targetInfo;
+    UINT32 flags;
+} DISPLAYCONFIG_PATH_INFO;
+
+typedef struct DISPLAYCONFIG_MODE_INFO {
+    UINT32 infoType;
+    UINT32 id;
+    LUID adapterId;
+    union {
+        struct {
+            UINT64 pixelRate;
+            DISPLAYCONFIG_RATIONAL hSyncFreq, vSyncFreq;
+            SIZE activeSize, totalSize;
+            UINT32 videoStandard;
+            UINT32 scanLineOrdering;
+        } target;
+        struct {
+            UINT32 width, height;
+            UINT32 pixelFormat;
+            POINTL position;
+        } source;
+    };
+} DISPLAYCONFIG_MODE_INFO;
+
+typedef struct DISPLAYCONFIG_DEVICE_INFO_HEADER {
+    UINT32 type;
+    UINT32 size;
+    LUID adapterId;
+    UINT32 id;
+} DISPLAYCONFIG_DEVICE_INFO_HEADER;
+
+typedef struct DISPLAYCONFIG_SOURCE_DEVICE_NAME {
+    DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+    WCHAR viewGdiDeviceName[32];
+} DISPLAYCONFIG_SOURCE_DEVICE_NAME;
+
+typedef struct DISPLAYCONFIG_TARGET_DEVICE_NAME {
+    DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+    UINT32 flags;
+    UINT32 outputTechnology;
+    UINT16 edidManufactureId;
+    UINT16 edidProductCodeId;
+    UINT32 connectorInstance;
+    WCHAR monitorFriendlyDeviceName[64];
+    WCHAR monitorDevicePath[128];
+} DISPLAYCONFIG_TARGET_DEVICE_NAME;
+
+/* the base type, both advanced color answers and the white level: a header and up to four values. */
+typedef struct DISPLAYCONFIG_VALUES {
+    DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+    UINT32 value[4];
+} DISPLAYCONFIG_VALUES;
+
+static_assert(sizeof(DISPLAYCONFIG_PATH_INFO) == 72 && sizeof(DISPLAYCONFIG_MODE_INFO) == 64, "display paths");
+static_assert(sizeof(DISPLAYCONFIG_SOURCE_DEVICE_NAME) == 84 && sizeof(DISPLAYCONFIG_TARGET_DEVICE_NAME) == 420,
+              "display names");
+
+static ULONG config_monitors(MIME_MONITOR_INFO *list)
+{
+    ULONG count = (ULONG)NtUserCallTwoParam((ULONG_PTR)list, MIME_USER_MAX_MONITORS, MIME_TWOPARAM_GETMONITORS);
+    return count > MIME_USER_MAX_MONITORS ? 0 : count;
+}
+
+static BOOL config_flags(UINT flags)
+{
+    UINT kind = flags & (QDC_ALL_PATHS | QDC_ONLY_ACTIVE_PATHS | QDC_DATABASE_CURRENT);
+    return kind && !(kind & (kind - 1));
+}
+
 WINUSERAPI LONG WINAPI GetDisplayConfigBufferSizes(UINT flags, UINT *paths, UINT *modes)
 {
     if (!paths || !modes)
         return ERROR_INVALID_PARAMETER;
     *paths = *modes = 0;
-    return ERROR_NOT_SUPPORTED;
+    if (!config_flags(flags))
+        return ERROR_INVALID_PARAMETER;
+    MIME_MONITOR_INFO list[MIME_USER_MAX_MONITORS];
+    *paths = config_monitors(list);
+    *modes = *paths * 2;
+    return ERROR_SUCCESS;
 }
 
+/* every path is active, so all three kinds of query answer the same. */
 WINUSERAPI LONG WINAPI QueryDisplayConfig(UINT flags, UINT *paths, void *path_data, UINT *modes,
                                          void *mode_data, UINT *topology)
 {
-    if (!paths || !modes)
+    if (!paths || !modes || !path_data || !mode_data || !config_flags(flags) ||
+        !(flags & QDC_DATABASE_CURRENT) != !topology)
         return ERROR_INVALID_PARAMETER;
-    return ERROR_NOT_SUPPORTED;
+    MIME_MONITOR_INFO list[MIME_USER_MAX_MONITORS];
+    ULONG count = config_monitors(list);
+    if (*paths < count || *modes < count * 2)
+        return ERROR_INSUFFICIENT_BUFFER;
+    DISPLAYCONFIG_PATH_INFO *path = path_data;
+    DISPLAYCONFIG_MODE_INFO *mode = mode_data;
+    memset(path, 0, count * sizeof(*path));
+    memset(mode, 0, count * 2 * sizeof(*mode));
+    for (ULONG i = 0; i < count; i++) {
+        const MIME_MONITOR_INFO *m = &list[i];
+        UINT32 width = m->Rect.right - m->Rect.left, height = m->Rect.bottom - m->Rect.top;
+        UINT32 rate = m->RefreshHz ? m->RefreshHz : 60;
+        DISPLAYCONFIG_PATH_INFO *p = &path[i];
+        p->sourceInfo.adapterId.LowPart = p->targetInfo.adapterId.LowPart = CONFIG_ADAPTER;
+        p->sourceInfo.id = i;
+        p->sourceInfo.modeInfoIdx = i * 2;
+        p->sourceInfo.statusFlags = 1; /* in use. */
+        p->targetInfo.id = CONFIG_TARGET + i;
+        p->targetInfo.modeInfoIdx = i * 2 + 1;
+        p->targetInfo.outputTechnology = CONFIG_DISPLAYPORT;
+        p->targetInfo.rotation = 1; /* identity, and so is the scaling. */
+        p->targetInfo.scaling = 1;
+        p->targetInfo.refreshRate = (DISPLAYCONFIG_RATIONAL){rate, 1};
+        p->targetInfo.scanLineOrdering = 1; /* progressive. */
+        p->targetInfo.targetAvailable = TRUE;
+        p->targetInfo.statusFlags = 1;
+        p->flags = 1; /* active. */
+        DISPLAYCONFIG_MODE_INFO *source = &mode[i * 2], *target = source + 1;
+        source->infoType = 1;
+        source->id = i;
+        source->adapterId.LowPart = target->adapterId.LowPart = CONFIG_ADAPTER;
+        source->source.width = width;
+        source->source.height = height;
+        source->source.pixelFormat = 4; /* 32 bits per pixel. */
+        source->source.position = (POINTL){m->Rect.left, m->Rect.top};
+        target->infoType = 2;
+        target->id = CONFIG_TARGET + i;
+        target->target.pixelRate = (UINT64)width * height * rate;
+        target->target.hSyncFreq = (DISPLAYCONFIG_RATIONAL){rate * height, 1};
+        target->target.vSyncFreq = (DISPLAYCONFIG_RATIONAL){rate, 1};
+        target->target.activeSize = target->target.totalSize = (SIZE){(LONG)width, (LONG)height};
+        target->target.videoStandard = 255; /* other. */
+        target->target.scanLineOrdering = 1;
+    }
+    *paths = count;
+    *modes = count * 2;
+    if (topology)
+        *topology = count > 1 ? 4 /* extend */ : 1 /* internal */;
+    return ERROR_SUCCESS;
 }
 
 WINUSERAPI LONG WINAPI DisplayConfigGetDeviceInfo(void *info)
 {
-    return info ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER;
+    DISPLAYCONFIG_DEVICE_INFO_HEADER *header = info;
+    if (!header)
+        return ERROR_INVALID_PARAMETER;
+    MIME_MONITOR_INFO list[MIME_USER_MAX_MONITORS];
+    ULONG count = config_monitors(list);
+    ULONG index = header->id & (CONFIG_TARGET - 1);
+    if (index >= count)
+        return ERROR_GEN_FAILURE;
+    const MIME_MONITOR_INFO *m = &list[index];
+    BOOL hdr = !!(m->Flags & MIME_MONITORINFOF_HDR);
+    DISPLAYCONFIG_VALUES *values = info;
+    UINT32 value[4] = {};
+    UINT needed;
+    switch (header->type) {
+    case 1: { /* the source's gdi name. */
+        DISPLAYCONFIG_SOURCE_DEVICE_NAME *name = info;
+        if (header->size < sizeof(*name))
+            return ERROR_INVALID_PARAMETER;
+        wcscpy(name->viewGdiDeviceName, m->Device);
+        return ERROR_SUCCESS;
+    }
+    case 2: { /* the target's name, with the device interface EnumDisplayDevicesW gives the monitor. */
+        DISPLAYCONFIG_TARGET_DEVICE_NAME *name = info;
+        if (header->size < sizeof(*name))
+            return ERROR_INVALID_PARAMETER;
+        memset(&name->flags, 0, sizeof(*name) - sizeof(*header));
+        name->outputTechnology = CONFIG_DISPLAYPORT;
+        name->connectorInstance = index;
+        name->flags = m->Name[0] ? 1 : 0; /* the friendly name is the monitor's own. */
+        wcscpy(name->monitorFriendlyDeviceName, m->Name);
+        wsprintfW(name->monitorDevicePath,
+                  L"\\\\?\\DISPLAY#MS_0025#5&2f3c1a9b&0&UID%04u#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}", index);
+        return ERROR_SUCCESS;
+    }
+    case 6: /* the base output technology. */
+        needed = 1;
+        value[0] = CONFIG_DISPLAYPORT;
+        break;
+    case 9: /* advanced color: supported and enabled, rgb, bits per channel. */
+        needed = 3;
+        value[0] = hdr ? 3 : 0;
+        value[1] = 0;
+        value[2] = hdr ? 10 : 8;
+        break;
+    case 11: /* where sdr white shows, in thousandths of 80 nits. */
+        needed = 1;
+        value[0] = hdr ? (m->Color.WhiteNits ? m->Color.WhiteNits / 800 : 2537) : 1000;
+        break;
+    case 15: /* advanced color 2: supported, active, high dynamic range supported and enabled by the user. */
+        needed = 4;
+        value[0] = hdr ? 0x33 : 0;
+        value[1] = 0;
+        value[2] = hdr ? 10 : 8;
+        value[3] = hdr ? 2 : 0;
+        break;
+    default:
+        return ERROR_NOT_SUPPORTED;
+    }
+    if (header->size < sizeof(*header) + needed * sizeof(UINT32))
+        return ERROR_INVALID_PARAMETER;
+    memcpy(values->value, value, needed * sizeof(UINT32));
+    return ERROR_SUCCESS;
 }
 
-/* the display configuration cannot be read, so nothing in it can be changed. */
+/* the host owns the display configuration, so nothing in it can be changed. */
 WINUSERAPI LONG WINAPI DisplayConfigSetDeviceInfo(void *info)
 {
     return info ? ERROR_NOT_SUPPORTED : ERROR_INVALID_PARAMETER;

@@ -99,6 +99,7 @@
     X(vkGetSwapchainImagesKHR)                                                                                         \
     X(vkAcquireNextImageKHR)                                                                                           \
     X(vkQueuePresentKHR)                                                                                               \
+    X(vkSetHdrMetadataEXT)                                                                                             \
     X(vkCmdPipelineBarrier2)                                                                                           \
     X(vkCmdBeginRendering)                                                                                             \
     X(vkCmdEndRendering)                                                                                               \

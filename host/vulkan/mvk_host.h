@@ -44,6 +44,7 @@ struct MvkConnection {
     MvkDispatch fn;
     bool host_import; /* the device imports guest memory. */
     bool timelines;   /* the device has timeline semaphores, whether the guest asked for them or not. */
+    bool hdr_metadata; /* and VK_EXT_hdr_metadata. */
     pthread_mutex_t queue_lock; /* the queues, which the presenting thread submits to as well. */
     uint32_t queue_count;
     struct {
@@ -156,6 +157,7 @@ void mvk_wsi_create_swapchain(MvkCall *call);
 void mvk_wsi_destroy_swapchain(MvkCall *call);
 void mvk_wsi_acquire(MvkCall *call);
 void mvk_wsi_present(MvkCall *call);
+void mvk_wsi_hdr_metadata(MvkCall *call);
 /* where a present shows: the guest window it was made for, in the host window of its top level window. */
 typedef struct MvkTarget {
     uint32_t window;  /* the host window. */

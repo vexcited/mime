@@ -162,6 +162,7 @@ static HRESULT build(const Fns *fn, VkPhysicalDevice physical, MimeVkProfile *p,
     WANT(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME, p->has_compute_derivatives = TRUE)
     WANT(VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, p->has_vrs = TRUE)
     WANT(VK_KHR_MAINTENANCE_5_EXTENSION_NAME, p->has_maintenance5 = TRUE)
+    WANT(VK_EXT_HDR_METADATA_EXTENSION_NAME, (void)0)
     if (p->has_maintenance5)
         WANT(VK_EXT_DEVICE_GENERATED_COMMANDS_EXTENSION_NAME, p->has_dgc = TRUE)
     /*

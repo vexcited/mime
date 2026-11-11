@@ -116,6 +116,7 @@ extern const MvkProc mvk_procs[];
 extern const MvkProc mvk_video_procs[];
 /* share.c: memory and semaphores shared with other processes' devices. */
 extern const MvkProc mvk_share_procs[];
+extern const MvkProc mvk_wsi_procs[];
 
 /* generated entry points the hand written ones extend. */
 VKAPI_ATTR void VKAPI_CALL mvk_raw_vkGetPhysicalDeviceMemoryProperties(VkPhysicalDevice physical,
