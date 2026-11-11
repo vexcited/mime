@@ -1107,14 +1107,29 @@ NTSTATUS KiCaptureUnicodeStringValue(PUNICODE_STRING copy, UNICODE_STRING s)
     return STATUS_SUCCESS;
 }
 
-/* the checks windows makes on a caller's return length before it looks at anything else. */
+/*
+ * the probe windows makes on a caller's return length before it looks at anything else: read and written back, with
+ * no alignment asked of it.
+ */
 NTSTATUS KiProbeReturnLength(PULONG returned)
 {
     if (!returned || KeGetPreviousMode() != UserMode)
         return STATUS_SUCCESS;
-    if ((ULONG_PTR)returned & (sizeof(ULONG) - 1))
+    ULONG value;
+    if (!KiIsUserRange(returned, sizeof(ULONG)) || !NT_SUCCESS(KiCopyFromUser(&value, returned, sizeof(value))) ||
+        !NT_SUCCESS(KiCopyToUser(returned, &value, sizeof(value))))
+        return STATUS_ACCESS_VIOLATION;
+    return STATUS_SUCCESS;
+}
+
+/* the probe of a query's buffer, which comes before the return length's: alignment first, then the range. */
+NTSTATUS KiProbeQueryBuffer(PVOID info, ULONG length, ULONG alignment, BOOLEAN range)
+{
+    if (!length || KeGetPreviousMode() != UserMode)
+        return STATUS_SUCCESS;
+    if ((ULONG_PTR)info & (alignment - 1))
         return STATUS_DATATYPE_MISALIGNMENT;
-    return KiIsUserRange(returned, sizeof(ULONG)) ? STATUS_SUCCESS : STATUS_ACCESS_VIOLATION;
+    return !range || KiIsUserRange(info, length) ? STATUS_SUCCESS : STATUS_ACCESS_VIOLATION;
 }
 
 void KiFreeCapturedString(PUNICODE_STRING s)

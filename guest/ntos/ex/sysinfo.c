@@ -1023,8 +1023,8 @@ static NTSTATUS query_system_information(SYSTEM_INFORMATION_CLASS klass, PVOID i
         return copy_info(info, &pool, sizeof(pool), length, returned);
     }
     case SystemKernelDebuggerInformation: {
-        /* a machine without a kernel debugger says both false, which is what a plain windows answers. */
-        BOOLEAN dbg[2] = {FALSE, FALSE};
+        /* KdDebuggerEnabled then KdDebuggerNotPresent, which windows sets when it boots with no debugger. */
+        BOOLEAN dbg[2] = {FALSE, TRUE};
         return copy_info(info, dbg, sizeof(dbg), length, returned);
     }
     case SystemRangeStartInformation: {
@@ -1189,7 +1189,6 @@ NTSTATUS NTAPI NtRaiseHardError(NTSTATUS status, ULONG count, ULONG string_mask,
         return STATUS_PRIVILEGE_NOT_HELD;
 
     PEPROCESS process = PsCurrentProcess();
-    KiDumpApiRing();
     char text[512];
     ULONG used = 0;
     used += (ULONG)_snprintf(text, sizeof(text), "hard error %08x", (ULONG)status);

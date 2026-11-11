@@ -621,6 +621,7 @@ NTSTATUS KiCaptureUnicodeString(PUNICODE_STRING kernel_copy, PCUNICODE_STRING us
 /* captures the buffer of a string whose descriptor is already in kernel memory. */
 NTSTATUS KiCaptureUnicodeStringValue(PUNICODE_STRING kernel_copy, UNICODE_STRING string);
 NTSTATUS KiProbeReturnLength(PULONG returned);
+NTSTATUS KiProbeQueryBuffer(PVOID info, ULONG length, ULONG alignment, BOOLEAN range);
 void KiFreeCapturedString(PUNICODE_STRING s);
 
 typedef enum _KI_CLOCK {

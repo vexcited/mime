@@ -849,7 +849,11 @@ NTSTATUS NTAPI NtQueryInformationThread(HANDLE handle, THREADINFOCLASS klass, PV
     default:
         break;
     }
-    NTSTATUS status = KiProbeReturnLength(returned);
+    /* windows asks no range of this buffer up front. */
+    ULONG alignment = (ULONG)klass == 38 ? 8 : (ULONG)klass == 49 || length >= 4 ? 4 : 1;
+    NTSTATUS status = KiProbeQueryBuffer(info, length, alignment, FALSE);
+    if (NT_SUCCESS(status))
+        status = KiProbeReturnLength(returned);
     if (!NT_SUCCESS(status))
         return status;
     /* ThreadSuspendCount: like windows, an exact length is checked before the handle. */
