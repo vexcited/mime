@@ -271,7 +271,6 @@ static NTSTATUS complete(PIRP irp, NTSTATUS status, ULONG_PTR info)
 }
 
 static PDRIVER_OBJECT g_driver;
-static PDEVICE_OBJECT g_host_volume;
 
 BOOLEAN MimeFsLockIdentity(PFILE_OBJECT file, PULONG volume, PULONG64 file_id)
 {
@@ -382,12 +381,6 @@ static NTSTATUS create_rom(PIRP irp, PFILE_OBJECT file, const MimeRomEntry *rom,
     fcb->Rom = rom;
     file->FsContext = fcb;
     return complete(irp, STATUS_SUCCESS, FILE_OPENED);
-}
-
-/* the device of the host share, which the drive list can leave out so the machine looks single-disked. */
-PDEVICE_OBJECT IoGetHostVolumeDevice(void)
-{
-    return g_host_volume;
 }
 
 /* the rom file behind a file object of this driver, for zero copy image sections. */
@@ -3247,8 +3240,6 @@ static NTSTATUS create_volume(PDRIVER_OBJECT driver, PCWSTR name, ULONG host_vol
     RtlInitUnicodeString(&n, name);
     PDEVICE_OBJECT device;
     NTSTATUS status = IoCreateDevice(driver, sizeof(MIMEFS_VOLUME), &n, FILE_DEVICE_DISK_FILE_SYSTEM, 0, FALSE, &device);
-    if (NT_SUCCESS(status) && host_volume == MIME_FS_VOLUME_HOST)
-        g_host_volume = device;
     if (!NT_SUCCESS(status))
         return status;
     MIMEFS_VOLUME *vol = device->DeviceExtension;

@@ -476,11 +476,6 @@ static void query_device_map(PULONG drives, PUCHAR types)
         if (!NT_SUCCESS(ObLookupObjectName(&name, nullptr, OBJ_CASE_INSENSITIVE, IoDeviceObjectType, KernelMode, nullptr,
                                            (PVOID *)&device)))
             continue;
-        /* the second disk is the host share; a single-disk machine is more ordinary than one with a stray volume. */
-        if (device == IoGetHostVolumeDevice()) {
-            ObDereferenceObject(device);
-            continue;
-        }
         *drives |= 1u << i;
         types[i] = 3; /* DOSDEVICE_DRIVE_FIXED */
         if (device->DeviceType == FILE_DEVICE_CD_ROM)
