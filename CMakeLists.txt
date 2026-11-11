@@ -768,6 +768,7 @@ foreach(arch IN LISTS MIME_USER_ARCHS)
         ${MIME_LIB_${arch}}/oleaut32.lib ${MIME_LIB_${arch}}/version.lib)
     set(objects_winmm ${arch}-lib-audio)
     set(objects_dsound ${arch}-lib-audio)
+    set(objects_mmdevapi ${arch}-lib-audio)
     set(objects_dinput8 ${arch}-lib-dinput)
     set(objects_dinput ${arch}-lib-dinput)
     foreach(xinput xinput1_4 xinput1_3 xinput1_2 xinput1_1)
@@ -1462,7 +1463,7 @@ mime_dll(ucrtbase x86 BASE 0x47000000 ENTRY /noentry OBJECTS x86-ucrtbase x86-ch
 mime_dll(opengl32 x86 BASE 0x44000000 ENTRY /noentry SOURCES ${MIME_OPENGL32_SOURCES} ${MIME_GEN}/opengl32/procs.c ${MIME_GEN}/opengl32/dlist_gen.c
     OBJECTS ${MIME_RUNTIME_x86} OPTIONS ${opengl32_options} INCLUDES ${opengl32_includes} IMPORTS ntdll win32u)
 
-mime_dll(mmdevapi x86 BASE 0x45000000 SOURCES ${MIME_MMDEVAPI_SOURCES} OBJECTS x86-chkstk
+mime_dll(mmdevapi x86 BASE 0x45000000 SOURCES ${MIME_MMDEVAPI_SOURCES} OBJECTS x86-chkstk x86-lib-audio
     IMPORTS ntdll kernel32 user32 gdi32 win32u)
 mime_dll(avrt x86 BASE 0x43000000 SOURCES guest/avrt/main.c OBJECTS x86-chkstk IMPORTS ntdll kernel32 user32 gdi32 win32u)
 
