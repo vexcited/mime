@@ -843,4 +843,5 @@ void IoInitialize(void)
     ObCreateSymbolicLink(L"\\GLOBAL??\\Z:", L"\\Device\\HarddiskVolume2");
     ObCreateSymbolicLink(L"\\GLOBAL??\\PhysicalDrive0", L"\\Device\\Harddisk0");
     ObCreateSymbolicLink(L"\\GLOBAL??\\SystemRoot", L"\\Device\\HarddiskVolume1\\Windows");
+    IopInitializeDrives();
 }
