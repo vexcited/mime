@@ -1178,6 +1178,23 @@ foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
     endif()
 endforeach()
 
+# ===================================== notepad =====================================
+
+# notepad.exe, which the shell opens text files with, in the system folder of the machine and of x86.
+foreach(arch ${MIME_GUEST_ARCH} x86)
+    mime_objects(${arch}-notepad ${arch} SOURCES guest/notepad/main.c)
+    set(notepad_libs ${MIME_LIB_${arch}}/ntdll.lib ${MIME_LIB_${arch}}/kernel32.lib ${MIME_LIB_${arch}}/user32.lib
+        ${MIME_LIB_${arch}}/gdi32.lib ${MIME_LIB_${arch}}/comdlg32.lib ${MIME_LIB_${arch}}/shell32.lib)
+    set(notepad_flags /subsystem:windows,10.0 /entry:entry /base:0x7FF6C6000000 /highentropyva /dynamicbase
+        /stack:0x100000,0x4000)
+    if(arch STREQUAL "x86")
+        set(notepad_flags /subsystem:windows,6.0 /entry:entry /base:0x00400000 /dynamicbase /stack:0x100000,0x4000)
+    endif()
+    mime_link(${MIME_OUT_${arch}}/notepad.exe ${arch} OBJECTS ${arch}-notepad ${arch}-chkstk LIBS ${notepad_libs}
+        FLAGS ${notepad_flags} RESOURCE notepad.exe RESOURCE_SCRIPT ${CMAKE_SOURCE_DIR}/guest/notepad/notepad.rc
+        ROM ${MIME_ROM_${arch}}/notepad.exe GROUPS guest)
+endforeach()
+
 # ===================================== x86 =====================================
 
 set(gen86 ${MIME_GEN}/x86)

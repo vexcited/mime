@@ -128,6 +128,27 @@ static BOOL verb_command(LPCWSTR type, LPCWSTR verb, LPWSTR command, DWORD chars
     return read_default(subkey, command, chars);
 }
 
+/*
+ * the key that holds a verb for an extension, as windows looks for it: the extension's own type, then what
+ * SystemFileAssociations says for the extension, then for its kind, which is how every text file opens in notepad.
+ */
+static BOOL verb_type(LPCWSTR dot, LPCWSTR verb, LPWSTR type, DWORD chars)
+{
+    WCHAR probe[1024], kind[64];
+    if (wcslen(dot) + 32 >= chars)
+        return FALSE;
+    if (read_default(dot, type, chars) && verb_command(type, verb, probe, RTL_NUMBER_OF(probe)))
+        return TRUE;
+    _snwprintf(type, chars, L"SystemFileAssociations\\%ls", dot);
+    if (verb_command(type, verb, probe, RTL_NUMBER_OF(probe)))
+        return TRUE;
+    DWORD bytes = sizeof(kind);
+    if (RegGetValueW(HKEY_CLASSES_ROOT, dot, L"PerceivedType", RRF_RT_REG_SZ, nullptr, kind, &bytes))
+        return FALSE;
+    _snwprintf(type, chars, L"SystemFileAssociations\\%ls", kind);
+    return verb_command(type, verb, probe, RTL_NUMBER_OF(probe));
+}
+
 /* expands %1, %L, %* and %% of an association command. */
 static LPWSTR build_command(LPCWSTR template, LPCWSTR file, LPCWSTR parameters)
 {
@@ -462,11 +483,10 @@ SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
     }
 
     /* the extension's type, then its verb's command. */
-    WCHAR type[MAX_PATH], probe[1024];
+    WCHAR type[MAX_PATH];
     LPCWSTR dot = wcsrchr(path, L'.');
     BOOL batch = has_extension(path, L".bat") || has_extension(path, L".cmd");
-    BOOL associated = dot && !wcschr(dot, L'\\') && read_default(dot, type, RTL_NUMBER_OF(type)) &&
-                      verb_command(type, verb, probe, RTL_NUMBER_OF(probe));
+    BOOL associated = dot && !wcschr(dot, L'\\') && verb_type(dot, verb, type, RTL_NUMBER_OF(type));
     if (!associated && !batch)
         return fail(info, ERROR_NO_ASSOCIATION);
     if (!associated) {
@@ -520,7 +540,7 @@ SHSTDAPI HINSTANCE WINAPI FindExecutableW(LPCWSTR file, LPCWSTR directory, LPWST
     }
     WCHAR type[MAX_PATH], command[1024];
     LPCWSTR dot = wcsrchr(path, L'.');
-    if (!dot || wcschr(dot, L'\\') || !read_default(dot, type, RTL_NUMBER_OF(type)) ||
+    if (!dot || wcschr(dot, L'\\') || !verb_type(dot, L"open", type, RTL_NUMBER_OF(type)) ||
         !verb_command(type, L"open", command, RTL_NUMBER_OF(command)))
         return (HINSTANCE)SE_ERR_NOASSOC;
     /* the program is the quoted first word, or everything before the first space. */
