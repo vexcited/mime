@@ -39,6 +39,7 @@ EXPORTS
     BackupWrite=_BackupWrite@28
     BaseSetLastNTError=_BaseSetLastNTError@4
     Beep=_Beep@8
+    BeginUpdateResourceA=_BeginUpdateResourceA@8
     BeginUpdateResourceW=_BeginUpdateResourceW@8
     BindIoCompletionCallback=_BindIoCompletionCallback@12
     BuildCommDCBA=_BuildCommDCBA@8
@@ -192,6 +193,7 @@ EXPORTS
     EmptyWorkingSet=_EmptyWorkingSet@4
     EncodePointer=_EncodePointer@4
     EncodeSystemPointer=_EncodeSystemPointer@4
+    EndUpdateResourceA=_EndUpdateResourceA@8
     EndUpdateResourceW=_EndUpdateResourceW@8
     EnterCriticalSection=_EnterCriticalSection@4
     EnterSynchronizationBarrier=_EnterSynchronizationBarrier@8
@@ -1361,6 +1363,7 @@ EXPORTS
     UnregisterWait=_UnregisterWait@4
     UnregisterWaitEx=_UnregisterWaitEx@8
     UpdateProcThreadAttribute=_UpdateProcThreadAttribute@28
+    UpdateResourceA=_UpdateResourceA@24
     UpdateResourceW=_UpdateResourceW@24
     UrlApplySchemeA=_UrlApplySchemeA@16
     UrlApplySchemeW=_UrlApplySchemeW@16
