@@ -9,32 +9,36 @@ permissions:
 
 jobs:
   linux-x86_64:
+    name: Linux x86_64
     runs-on: ubuntu-26.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - uses: ./.github/actions/build
+      - name: Build
+        uses: ./.github/actions/build
 
-      - name: package
-        run: |
-          mkdir dist
-          strip --strip-debug -o dist/mime build/mime
-          tar -C dist -czf mime-x86_64-linux.tar.gz mime
+      - name: Package
+        uses: ./.github/actions/package
+        id: package
 
-      - name: publish
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          TARBALL: ${{ steps.package.outputs.tarball }}
         run: |
           gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --verify-tag --title "v$GITHUB_REF_NAME" --notes ""
-          gh release upload "$GITHUB_REF_NAME" mime-x86_64-linux.tar.gz --clobber
+          gh release upload "$GITHUB_REF_NAME" "$TARBALL" --clobber
 
-      - name: pin the release in the flake
+      - name: flake.nix
         env:
           FORGEJO_TOKEN: ${{ secrets.FORGEJO_TOKEN }}
+          TARBALL: ${{ steps.package.outputs.tarball }}
         run: |
           forgejo="https://release:${FORGEJO_TOKEN}@code.vexcited.com/mime/mime.git"
-          hash="sha256-$(openssl dgst -sha256 -binary mime-x86_64-linux.tar.gz | base64)"
+          hash="sha256-$(openssl dgst -sha256 -binary "$TARBALL" | base64)"
 
           git fetch --depth 1 "$forgejo" main
           git checkout --detach FETCH_HEAD

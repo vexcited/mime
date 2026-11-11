@@ -22,7 +22,7 @@ runs:
 
         echo "id=$(dpkg-query -W | sha256sum | cut -c 1-16)" >> "$GITHUB_OUTPUT"
 
-    - uses: actions/cache/restore@v4
+    - uses: actions/cache/restore@v6
       with:
         path: build
         key: build-${{ steps.dependencies.outputs.id }}-${{ github.sha }}
@@ -34,7 +34,7 @@ runs:
         git -c core.quotepath=off ls-files -s > sources
 
         if [ -f build/.sources ]; then
-          comm -12 <(sort build/.sources) <(sort sources) | cut -f2 | xargs -d '\n' touch -h -d 2000-01-01
+          comm -12 <(sort build/.sources) <(sort sources) | cut -f2 | xargs -r -d '\n' touch -h -d 2000-01-01
         fi
 
         cmake -B build -G Ninja
