@@ -67,6 +67,7 @@ enum {
     KMTQAITYPE_QUERY_ADAPTER_UNIQUE_GUID = 60,
     KMTQAITYPE_DRIVER_DESCRIPTION = 65,
     KMTQAITYPE_DRIVER_DESCRIPTION_RENDER = 66,
+    KMTQAITYPE_WDDM_2_7_CAPS = 70,
 };
 
 typedef struct _D3DKMT_SEGMENTSIZEINFO {
@@ -341,6 +342,12 @@ WINGDIAPI NTSTATUS APIENTRY D3DKMTQueryAdapterInfo(const D3DKMT_QUERYADAPTERINFO
         D3DKMT_DRIVER_DESCRIPTION *description = data;
         memset(description, 0, sizeof(*description));
         lstrcpynW(description->DriverDescription, d->Description, RTL_NUMBER_OF(description->DriverDescription));
+        return KMT_SUCCESS;
+    }
+    /* D3DKMT_WDDM_2_7_CAPS: no bit is set, the processor schedules the gpu's work and not the gpu itself. */
+    case KMTQAITYPE_WDDM_2_7_CAPS: {
+        NEED(UINT);
+        *(UINT *)data = 0;
         return KMT_SUCCESS;
     }
     /* the user mode driver of every adapter is mime's d3d runtime itself. */
