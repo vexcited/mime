@@ -866,9 +866,12 @@ static HRESULT STDMETHODCALLTYPE sc_resize_buffers(IDXGISwapChain4 *iface, UINT 
     /* no window to take the size from. */
     if (sc->composition && (!width || !height))
         return DXGI_ERROR_INVALID_CALL;
+    /* what the context still binds of the back buffer goes first: only what the program holds keeps the buffers. */
+    if (sc->back)
+        D3dContextUnbindResource(sc->device->immediate, sc->back);
+    D3dContextFlush(sc->device->immediate);
     if (sc->back && sc->back->child.refs > 1)
         return DXGI_ERROR_INVALID_CALL;
-    D3dContextFlush(sc->device->immediate);
     if (count)
         sc->desc.BufferCount = count;
     if (format != DXGI_FORMAT_UNKNOWN)
