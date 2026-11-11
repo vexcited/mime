@@ -357,7 +357,7 @@ static BOOL stamp_signer(WT_DER info, WT_BYTES digested, HCERTSTORE store, FILET
     WT_DER version, sid, issuer, serial, digest_alg, signed_attrs, sign_alg, encrypted, junk;
     if (!WtTake(&input, 2, &version) || version.value.size != 1 || version.value.data[0] != 1 ||
         !WtTake(&input, 0x30, &sid) || !WtTake(&sid.value, 0x30, &issuer) || !WtTake(&sid.value, 2, &serial) ||
-        sid.value.size || !serial.value.size || (serial.value.data[0] & 0x80) ||
+        sid.value.size || !serial.value.size ||
         !WtTake(&input, 0x30, &digest_alg) || !WtTake(&input, 0xa0, &signed_attrs) ||
         !WtTake(&input, 0x30, &sign_alg) || !WtTake(&input, 4, &encrypted) ||
         (input.size && !WtTake(&input, 0xa1, &junk)) || input.size)
@@ -497,7 +497,7 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
     WT_DER version, sid, issuer, serial, digest_alg, attributes, sign_alg, encrypted, unsigned_attributes = {};
     if (!WtTake(&input, 2, &version) || version.value.size != 1 || version.value.data[0] != 1 ||
         !WtTake(&input, 0x30, &sid) || !WtTake(&sid.value, 0x30, &issuer) ||
-        !WtTake(&sid.value, 2, &serial) || sid.value.size || !serial.value.size || (serial.value.data[0] & 0x80) ||
+        !WtTake(&sid.value, 2, &serial) || sid.value.size || !serial.value.size ||
         !WtTake(&input, 0x30, &digest_alg) || !WtTake(&input, 0xa0, &attributes) ||
         !WtTake(&input, 0x30, &sign_alg) || !WtTake(&input, 4, &encrypted) ||
         (input.size && !WtTake(&input, 0xa1, &unsigned_attributes)) || input.size)

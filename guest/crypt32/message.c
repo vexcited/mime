@@ -182,7 +182,7 @@ static DWORD signer_info(der_item signer, DWORD type, PACK *pack)
         return CRYPT_E_ASN1_CORRUPT;
     der_reader identity = {sid.content, sid.length};
     if (DerExpect(&identity, ASN_SEQUENCE, &issuer) || DerExpect(&identity, ASN_INTEGER, &serial) ||
-        identity.n || !serial.length || (serial.content[0] & 0x80))
+        identity.n || !serial.length)
         return CRYPT_E_ASN1_CORRUPT;
     if (type == CMSG_SIGNER_AUTH_ATTR_PARAM || type == CMSG_SIGNER_UNAUTH_ATTR_PARAM) {
         CRYPT_ATTRIBUTES *out = reserve(pack, sizeof(*out));
