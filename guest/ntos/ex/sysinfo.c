@@ -1,5 +1,6 @@
 /* system information and time services. */
 #include "../ntos.h"
+#include "../se/se.h"
 #ifdef __aarch64__
 #include "acpi_tables.h"
 #else
@@ -724,20 +725,52 @@ typedef struct {
     UCHAR FullPathName[256];
 } RTL_PROCESS_MODULE_INFORMATION;
 
+/* SystemModuleInformationEx: the module, then its checksum, its timestamp and the base it was built for, in 0x140 bytes. */
+typedef struct {
+    USHORT NextOffset;
+    USHORT Pad[3];
+    RTL_PROCESS_MODULE_INFORMATION BaseInfo;
+    ULONG ImageChecksum;
+    ULONG TimeDateStamp;
+    PVOID DefaultBase;
+} RTL_PROCESS_MODULE_INFORMATION_EX;
+
+static_assert(sizeof(RTL_PROCESS_MODULE_INFORMATION_EX) == 0x140, "module information ex layout");
+
 typedef struct {
     RTL_PROCESS_MODULE_INFORMATION *Entries;
+    RTL_PROCESS_MODULE_INFORMATION_EX *EntriesEx;
     ULONG Capacity;
     ULONG Count;
+    BOOLEAN Extended;
 } MODULE_LIST;
+
+/* the checksum and timestamp out of the headers of a loaded image, when they can be read. */
+static void module_stamp(PVOID base, PULONG checksum, PULONG stamp)
+{
+    const IMAGE_DOS_HEADER *dos = base;
+    *checksum = 0;
+    *stamp = 0;
+    if (dos->e_magic != 0x5A4D || dos->e_lfanew <= 0)
+        return;
+    const IMAGE_NT_HEADERS64 *nt = (const void *)((const UCHAR *)base + dos->e_lfanew);
+    if (nt->Signature != 0x4550)
+        return;
+    *checksum = nt->OptionalHeader.CheckSum;
+    *stamp = nt->FileHeader.TimeDateStamp;
+}
 
 /* the full path as the loader recorded it, the file name at its last backslash. */
 static void module_callback(PVOID context, ULONG index, PVOID base, SIZE_T size, PCUNICODE_STRING name)
 {
     MODULE_LIST *list = context;
     if (list->Count < list->Capacity) {
-        RTL_PROCESS_MODULE_INFORMATION *m = &list->Entries[list->Count];
-        memset(m, 0, sizeof(*m));
+        RTL_PROCESS_MODULE_INFORMATION *m = list->Extended ? &list->EntriesEx[list->Count].BaseInfo
+                                                           : &list->Entries[list->Count];
+        memset(list->Extended ? (void *)&list->EntriesEx[list->Count] : (void *)m, 0,
+               list->Extended ? sizeof(*list->EntriesEx) : sizeof(*m));
         m->ImageBase = base;
+        m->MappedBase = base;
         m->ImageSize = (ULONG)size;
         m->Flags = 0x08804000;
         m->LoadOrderIndex = m->InitOrderIndex = (USHORT)index;
@@ -749,36 +782,75 @@ static void module_callback(PVOID context, ULONG index, PVOID base, SIZE_T size,
             if (c == L'\\')
                 m->OffsetToFileName = (USHORT)at;
         }
+        if (list->Extended) {
+            RTL_PROCESS_MODULE_INFORMATION_EX *e = &list->EntriesEx[list->Count];
+            e->DefaultBase = base;
+            module_stamp(base, &e->ImageChecksum, &e->TimeDateStamp);
+            e->NextOffset = (USHORT)sizeof(*e);
+        }
     }
     list->Count++;
 }
 
-/* the kernel and the images it loaded, which programs list to learn the drivers. */
-static NTSTATUS query_modules(PVOID info, ULONG length, PULONG returned)
+/* the kernel and the images it loaded, which programs list to learn the drivers. the extended form has no count
+   header: each entry carries the offset to the next one, and the last one zero. */
+static NTSTATUS query_modules(BOOLEAN extended, PVOID info, ULONG length, PULONG returned)
 {
     MODULE_LIST list = {};
     list.Capacity = 256;
-    list.Entries = ExAllocatePool2(POOL_FLAG_NON_PAGED, list.Capacity * sizeof(*list.Entries), KI_TAG('S', 'y', 'M', 'o'));
+    list.Extended = extended;
+    SIZE_T entry_size = extended ? sizeof(RTL_PROCESS_MODULE_INFORMATION_EX) : sizeof(RTL_PROCESS_MODULE_INFORMATION);
+    list.Entries = ExAllocatePool2(POOL_FLAG_NON_PAGED, list.Capacity * entry_size, KI_TAG('S', 'y', 'M', 'o'));
     if (!list.Entries)
         return STATUS_INSUFFICIENT_RESOURCES;
+    list.EntriesEx = (void *)list.Entries;
     MiEnumerateSystemImages(module_callback, &list);
+    if (extended) {
+        /* the loaded user images too, as windows reports them in this class before windows 8 could ask for them. */
+        PPEB peb = PsCurrentProcess()->Peb;
+        PEB_LDR_DATA ldr = {};
+        if (peb && NT_SUCCESS(KiCopyFromUser(&ldr, peb->Ldr, sizeof(ldr)))) {
+            PLIST_ENTRY head = &ldr.InLoadOrderModuleList, it = ldr.InLoadOrderModuleList.Flink;
+            for (ULONG guard = 0; it != head && guard < 512; guard++) {
+                LDR_DATA_TABLE_ENTRY e = {};
+                if (!NT_SUCCESS(KiCopyFromUser(&e, it, sizeof(e))))
+                    break;
+                if (e.DllBase)
+                    module_callback(&list, list.Count, e.DllBase, e.SizeOfImage, &e.FullDllName);
+                it = e.InLoadOrderLinks.Flink;
+            }
+        }
+    }
     ULONG count = list.Count < list.Capacity ? list.Count : list.Capacity;
-    ULONG size = 8 + count * (ULONG)sizeof(RTL_PROCESS_MODULE_INFORMATION);
-    UCHAR header[8] = {};
-    *(PULONG)header = count;
+    /* windows 11 24h2 and later zero the base of every module for a caller without SeDebugPrivilege. */
+    if (!SeThreadHasPrivilege(SE_DEBUG_PRIVILEGE)) {
+        for (ULONG i = 0; i < count; i++) {
+            if (extended)
+                list.EntriesEx[i].BaseInfo.ImageBase = nullptr;
+            else
+                list.Entries[i].ImageBase = nullptr;
+        }
+    }
+    ULONG header = extended ? 0 : 8;
+    ULONG size = header + count * (ULONG)entry_size;
+    UCHAR count_header[8] = {};
+    if (!extended)
+        *(PULONG)count_header = count;
+    else if (count)
+        list.EntriesEx[count - 1].NextOffset = 0;
     NTSTATUS status;
     if (returned)
         KiCopyToUser(returned, &size, sizeof(size));
-    if (length < 8) {
+    if (length < header || (extended && length < entry_size)) {
         status = STATUS_INFO_LENGTH_MISMATCH;
     } else {
         /* a too small buffer gets the modules that fit and the status saying so. */
-        ULONG fit = (length - 8) / (ULONG)sizeof(RTL_PROCESS_MODULE_INFORMATION);
+        ULONG fit = (length - header) / (ULONG)entry_size;
         if (fit > count)
             fit = count;
-        status = KiCopyToUser(info, header, sizeof(header));
+        status = header ? KiCopyToUser(info, count_header, header) : STATUS_SUCCESS;
         if (NT_SUCCESS(status) && fit)
-            status = KiCopyToUser((PUCHAR)info + 8, list.Entries, fit * (ULONG)sizeof(*list.Entries));
+            status = KiCopyToUser((PUCHAR)info + header, list.Entries, fit * (ULONG)entry_size);
         if (NT_SUCCESS(status) && fit < count)
             status = STATUS_INFO_LENGTH_MISMATCH;
     }
@@ -826,7 +898,7 @@ static NTSTATUS query_process_id(PVOID info, ULONG length, PULONG returned)
     return status;
 }
 
-NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length, PULONG returned)
+static NTSTATUS query_system_information(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length, PULONG returned)
 {
     switch ((ULONG)klass) {
     case SystemHandleInformation:
@@ -836,7 +908,9 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     case SystemProcessInformation:
         return query_processes(info, length, returned);
     case SystemModuleInformation:
-        return query_modules(info, length, returned);
+        return query_modules(FALSE, info, length, returned);
+    case 77: /* SystemModuleInformationEx */
+        return query_modules(TRUE, info, length, returned);
     case SystemPageFileInformation:
         /* no paging file: the host swaps guest memory, so the list is empty. */
         return copy_info(info, nullptr, 0, length, returned);
@@ -949,7 +1023,8 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
         return copy_info(info, &pool, sizeof(pool), length, returned);
     }
     case SystemKernelDebuggerInformation: {
-        BOOLEAN dbg[2] = {FALSE, TRUE}; /* enabled, not present */
+        /* a machine without a kernel debugger says both false, which is what a plain windows answers. */
+        BOOLEAN dbg[2] = {FALSE, FALSE};
         return copy_info(info, dbg, sizeof(dbg), length, returned);
     }
     case SystemRangeStartInformation: {
@@ -1036,6 +1111,12 @@ NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID in
     }
 }
 
+NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length, PULONG returned)
+{
+    NTSTATUS status = query_system_information(klass, info, length, returned);
+    return status;
+}
+
 /* the Nt service for a kernel caller: the copy helpers take its buffers as they are. */
 NTSTATUS NTAPI ZwQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length, PULONG returned)
 {
@@ -1082,6 +1163,57 @@ NTSTATUS NTAPI NtDisplayString(PUNICODE_STRING s)
         KiFreeCapturedString(&copy);
     }
     return STATUS_SUCCESS;
+}
+
+#define HARDERROR_OVERRIDE_ERRORMODE 0x10000000
+#define MAXIMUM_HARDERROR_PARAMETERS 5
+#define OPTION_CANCEL_TRY_CONTINUE 8
+#define OPTION_SHUTDOWN_SYSTEM 6
+#define RESPONSE_RETURN_TO_CALLER 0
+
+/*
+ * no process listens on a hard error port here, so windows' answer for that case is given: the caller gets
+ * ResponseReturnToCaller and shows the error itself. the error and its string parameters go to the log.
+ */
+NTSTATUS NTAPI NtRaiseHardError(NTSTATUS status, ULONG count, ULONG string_mask, PULONG_PTR parameters, ULONG option,
+                                PULONG response)
+{
+    if (count > MAXIMUM_HARDERROR_PARAMETERS)
+        return STATUS_INVALID_PARAMETER_2;
+    if (option > OPTION_CANCEL_TRY_CONTINUE)
+        return STATUS_INVALID_PARAMETER_4;
+    ULONG_PTR values[MAXIMUM_HARDERROR_PARAMETERS] = {0};
+    if (count && !NT_SUCCESS(KiCopyFromUser(values, parameters, count * sizeof(ULONG_PTR))))
+        return STATUS_ACCESS_VIOLATION;
+    if (option == OPTION_SHUTDOWN_SYSTEM && !SepSinglePrivilegeCheck(19 /* shutdown */, KeGetPreviousMode()))
+        return STATUS_PRIVILEGE_NOT_HELD;
+
+    PEPROCESS process = PsCurrentProcess();
+    KiDumpApiRing();
+    char text[512];
+    ULONG used = 0;
+    used += (ULONG)_snprintf(text, sizeof(text), "hard error %08x", (ULONG)status);
+    for (ULONG i = 0; i < count && used < sizeof(text) - 8; i++) {
+        UNICODE_STRING copy;
+        if ((string_mask >> i & 1) && NT_SUCCESS(KiCaptureUnicodeString(&copy, (PCUNICODE_STRING)values[i]))) {
+            ULONG n = 0;
+            text[used++] = ' ';
+            text[used++] = '"';
+            RtlUnicodeToUTF8N(text + used, sizeof(text) - used - 2, &n, copy.Buffer, copy.Length);
+            used += n;
+            text[used++] = '"';
+            KiFreeCapturedString(&copy);
+        } else {
+            used += (ULONG)_snprintf(text + used, sizeof(text) - used, " %llx", (ULONG64)values[i]);
+        }
+    }
+    if (used > sizeof(text) - 1)
+        used = sizeof(text) - 1;
+    text[used] = 0;
+    KiLogPrintf("%s from %s, option %u", text, process->ImageFileName, option);
+
+    ULONG answer = RESPONSE_RETURN_TO_CALLER;
+    return KiCopyToUser(response, &answer, sizeof(answer));
 }
 
 NTSTATUS NTAPI NtTraceEvent(HANDLE handle, ULONG flags, ULONG length, PVOID data)
