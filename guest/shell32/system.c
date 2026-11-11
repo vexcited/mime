@@ -119,6 +119,36 @@ SHSTDAPI HICON WINAPI ExtractIconW(HINSTANCE instance, LPCWSTR file, UINT index)
 }
 
 /*
+ * the icon in the file, else the one of its type, else windows' generic one: imageres.dll's icon 2, whose path and
+ * index replace the ones given.
+ */
+SHSTDAPI HICON WINAPI ExtractAssociatedIconW(HINSTANCE instance, LPWSTR path, WORD *index)
+{
+    HICON icon = ExtractIconW(instance, path, *index);
+    if (icon && icon != (HICON)1)
+        return icon;
+    SHFILEINFOW info = {};
+    if (SHGetFileInfoW(path, 0, &info, sizeof(info), SHGFI_ICON | SHGFI_LARGEICON) && info.hIcon)
+        return info.hIcon;
+    static HMODULE imageres;
+    if (!imageres)
+        imageres = LoadLibraryExW(L"imageres.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    *index = 2;
+    GetModuleFileNameW(imageres, path, 128);
+    return LoadIconW(imageres, MAKEINTRESOURCEW(2));
+}
+
+SHSTDAPI HICON WINAPI ExtractAssociatedIconA(HINSTANCE instance, LPSTR path, WORD *index)
+{
+    WCHAR wide[128];
+    if (!MultiByteToWideChar(CP_ACP, 0, path, -1, wide, RTL_NUMBER_OF(wide)))
+        return nullptr;
+    HICON icon = ExtractAssociatedIconW(instance, wide, index);
+    WideCharToMultiByte(CP_ACP, 0, wide, -1, path, 128, nullptr, nullptr);
+    return icon;
+}
+
+/*
  * with no arrays it returns the icon count. a negative index names a resource id and loads one icon. the result
  * counts large and small icons separately, so one icon of both sizes gives 2: a guess from how programs use it.
  */

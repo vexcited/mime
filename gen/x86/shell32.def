@@ -8,6 +8,8 @@ EXPORTS
     DragQueryFileA=_DragQueryFileA@16
     DragQueryFileW=_DragQueryFileW@16
     DragQueryPoint=_DragQueryPoint@8
+    ExtractAssociatedIconA=_ExtractAssociatedIconA@12
+    ExtractAssociatedIconW=_ExtractAssociatedIconW@12
     ExtractIconA=_ExtractIconA@12
     ExtractIconExA=_ExtractIconExA@20
     ExtractIconExW=_ExtractIconExW@20
@@ -33,6 +35,7 @@ EXPORTS
     ILRemoveLastID=_ILRemoveLastID@4 @17
     ILSaveToStream=_ILSaveToStream@8 @27
     IsUserAnAdmin=_IsUserAnAdmin@0 @680
+    PathCleanupSpec=_PathCleanupSpec@8 @171
     PathMakeUniqueName=_PathMakeUniqueName@20 @47
     PathResolve=_PathResolve@12 @51
     SHAddToRecentDocs=_SHAddToRecentDocs@8
