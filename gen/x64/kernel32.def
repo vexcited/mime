@@ -65,6 +65,7 @@ EXPORTS
     BackupWrite=Kernel32Thunk_BackupWrite
     BaseSetLastNTError=Kernel32Thunk_BaseSetLastNTError
     Beep=Kernel32Thunk_Beep
+    BeginUpdateResourceA=Kernel32Thunk_BeginUpdateResourceA
     BeginUpdateResourceW=Kernel32Thunk_BeginUpdateResourceW
     BindIoCompletionCallback=Kernel32Thunk_BindIoCompletionCallback
     BuildCommDCBA=Kernel32Thunk_BuildCommDCBA
@@ -245,6 +246,7 @@ EXPORTS
     EmptyWorkingSet=Kernel32Thunk_EmptyWorkingSet
     EncodePointer=kernelbase.EncodePointer
     EncodeSystemPointer=kernelbase.EncodeSystemPointer
+    EndUpdateResourceA=Kernel32Thunk_EndUpdateResourceA
     EndUpdateResourceW=Kernel32Thunk_EndUpdateResourceW
     EnterCriticalSection=kernelbase.EnterCriticalSection
     EnterSynchronizationBarrier=Kernel32Thunk_EnterSynchronizationBarrier
@@ -1523,6 +1525,7 @@ EXPORTS
     UnregisterWait=Kernel32Thunk_UnregisterWait
     UnregisterWaitEx=Kernel32Thunk_UnregisterWaitEx
     UpdateProcThreadAttribute=kernelbase.UpdateProcThreadAttribute
+    UpdateResourceA=Kernel32Thunk_UpdateResourceA
     UpdateResourceW=Kernel32Thunk_UpdateResourceW
     UrlApplySchemeA=Kernel32Thunk_UrlApplySchemeA
     UrlApplySchemeW=Kernel32Thunk_UrlApplySchemeW

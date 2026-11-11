@@ -155,6 +155,12 @@ Kernel32Thunk_Beep:
     adrp    x16, __imp_Beep
     ldr     x16, [x16, :lo12:__imp_Beep]
     br      x16
+    .globl  Kernel32Thunk_BeginUpdateResourceA
+    .p2align 4
+Kernel32Thunk_BeginUpdateResourceA:
+    adrp    x16, __imp_BeginUpdateResourceA
+    ldr     x16, [x16, :lo12:__imp_BeginUpdateResourceA]
+    br      x16
     .globl  Kernel32Thunk_BeginUpdateResourceW
     .p2align 4
 Kernel32Thunk_BeginUpdateResourceW:
@@ -958,6 +964,12 @@ Kernel32Thunk_DuplicateHandle:
 Kernel32Thunk_EmptyWorkingSet:
     adrp    x16, __imp_EmptyWorkingSet
     ldr     x16, [x16, :lo12:__imp_EmptyWorkingSet]
+    br      x16
+    .globl  Kernel32Thunk_EndUpdateResourceA
+    .p2align 4
+Kernel32Thunk_EndUpdateResourceA:
+    adrp    x16, __imp_EndUpdateResourceA
+    ldr     x16, [x16, :lo12:__imp_EndUpdateResourceA]
     br      x16
     .globl  Kernel32Thunk_EndUpdateResourceW
     .p2align 4
@@ -7384,6 +7396,12 @@ Kernel32Thunk_UnregisterWait:
 Kernel32Thunk_UnregisterWaitEx:
     adrp    x16, __imp_UnregisterWaitEx
     ldr     x16, [x16, :lo12:__imp_UnregisterWaitEx]
+    br      x16
+    .globl  Kernel32Thunk_UpdateResourceA
+    .p2align 4
+Kernel32Thunk_UpdateResourceA:
+    adrp    x16, __imp_UpdateResourceA
+    ldr     x16, [x16, :lo12:__imp_UpdateResourceA]
     br      x16
     .globl  Kernel32Thunk_UpdateResourceW
     .p2align 4

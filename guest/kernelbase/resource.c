@@ -39,15 +39,69 @@ static LPWSTR name_to_wide(LPCSTR name, BOOL *allocated)
     return w;
 }
 
+/*
+ * what the loader is asked for a type or a name, as windows makes it: a number as it is, null being 0, "#" and a
+ * number read the way RtlCharToInteger reads one, with spaces, a sign and what follows the digits let through, and
+ * anything else in upper case, since the loader compares the names of a file as they are. a number that does not
+ * fit sixteen bits, or "#" alone, is ERROR_INVALID_PARAMETER.
+ */
+static BOOL lookup_key(LPCWSTR in, ULONG_PTR *out, PWSTR *allocated)
+{
+    *allocated = nullptr;
+    if (IS_INTRESOURCE(in)) {
+        *out = (ULONG_PTR)in;
+        return TRUE;
+    }
+    if (in[0] == '#') {
+        const WCHAR *p = in + 1;
+        if (!*p) {
+            KbSetError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        while (*p && *p <= ' ')
+            p++;
+        BOOL negative = *p == '-';
+        if (*p == '+' || *p == '-')
+            p++;
+        ULONG value = 0;
+        for (; *p >= '0' && *p <= '9'; p++)
+            value = value * 10 + (ULONG)(*p - '0');
+        if (negative)
+            value = 0 - value;
+        if (value > 0xFFFF) {
+            KbSetError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        *out = value;
+        return TRUE;
+    }
+    SIZE_T chars = wcslen(in);
+    PWSTR upper = KbAlloc((chars + 1) * sizeof(WCHAR));
+    if (!upper) {
+        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
+        return FALSE;
+    }
+    for (SIZE_T i = 0; i <= chars; i++)
+        upper[i] = RtlUpcaseUnicodeChar(in[i]);
+    *allocated = upper;
+    *out = (ULONG_PTR)upper;
+    return TRUE;
+}
+
 HRSRC WINAPI FindResourceExW(HMODULE module, LPCWSTR type, LPCWSTR name, WORD language)
 {
-    if (!type || !name) {
-        KbSetError(ERROR_INVALID_PARAMETER);
+    LDR_RESOURCE_INFO info = {0, 0, language};
+    PWSTR type_text, name_text;
+    if (!lookup_key(type, &info.Type, &type_text))
+        return nullptr;
+    if (!lookup_key(name, &info.Name, &name_text)) {
+        KbFree(type_text);
         return nullptr;
     }
-    LDR_RESOURCE_INFO info = {(ULONG_PTR)type, (ULONG_PTR)name, language};
     IMAGE_RESOURCE_DATA_ENTRY *entry = nullptr;
     NTSTATUS status = LdrFindResource_U(resolve_module(module), &info, 3, &entry);
+    KbFree(type_text);
+    KbFree(name_text);
     if (!NT_SUCCESS(status)) {
         set_resource_error(status);
         return nullptr;
@@ -66,10 +120,10 @@ HRSRC WINAPI FindResourceExA(HMODULE module, LPCSTR type, LPCSTR name, WORD lang
     LPWSTR wtype = name_to_wide(type, &free_type);
     LPWSTR wname = name_to_wide(name, &free_name);
     HRSRC r = nullptr;
-    if (wtype && wname)
+    if ((wtype || IS_INTRESOURCE(type)) && (wname || IS_INTRESOURCE(name)))
         r = FindResourceExW(module, wtype, wname, language);
     else
-        KbSetError(ERROR_INVALID_PARAMETER);
+        KbSetError(ERROR_NOT_ENOUGH_MEMORY);
     if (free_type)
         KbFree(wtype);
     if (free_name)
@@ -134,7 +188,7 @@ static LPWSTR entry_name(const IMAGE_RESOURCE_DIRECTORY *root, const IMAGE_RESOU
 static IMAGE_RESOURCE_DIRECTORY *find_directory(HMODULE module, LPCWSTR type, LPCWSTR name, ULONG level,
                                                 IMAGE_RESOURCE_DIRECTORY **root)
 {
-    LDR_RESOURCE_INFO info = {(ULONG_PTR)type, (ULONG_PTR)name, 0};
+    LDR_RESOURCE_INFO info = {};
     NTSTATUS status = LdrFindResourceDirectory_U(module, &info, 0, root);
     if (!NT_SUCCESS(status)) {
         set_resource_error(status == STATUS_RESOURCE_DATA_NOT_FOUND ? STATUS_RESOURCE_DATA_NOT_FOUND : status);
@@ -142,8 +196,17 @@ static IMAGE_RESOURCE_DIRECTORY *find_directory(HMODULE module, LPCWSTR type, LP
     }
     if (!level)
         return *root;
+    PWSTR type_text, name_text;
+    if (!lookup_key(type, &info.Type, &type_text))
+        return nullptr;
+    if (!lookup_key(name, &info.Name, &name_text)) {
+        KbFree(type_text);
+        return nullptr;
+    }
     IMAGE_RESOURCE_DIRECTORY *dir = nullptr;
     status = LdrFindResourceDirectory_U(module, &info, level, &dir);
+    KbFree(type_text);
+    KbFree(name_text);
     if (!NT_SUCCESS(status)) {
         set_resource_error(status);
         return nullptr;
@@ -182,7 +245,7 @@ BOOL WINAPI EnumResourceTypesW(HMODULE module, ENUMRESTYPEPROCW proc, LONG_PTR p
 BOOL WINAPI EnumResourceNamesExW(HMODULE module, LPCWSTR type, ENUMRESNAMEPROCW proc, LONG_PTR param, DWORD flags,
                                  LANGID lang)
 {
-    if (!proc || !type) {
+    if (!proc) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
@@ -211,7 +274,7 @@ BOOL WINAPI EnumResourceNamesW(HMODULE module, LPCWSTR type, ENUMRESNAMEPROCW pr
 BOOL WINAPI EnumResourceLanguagesExW(HMODULE module, LPCWSTR type, LPCWSTR name, ENUMRESLANGPROCW proc, LONG_PTR param,
                                      DWORD flags, LANGID lang)
 {
-    if (!proc || !type || !name) {
+    if (!proc) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
@@ -290,13 +353,13 @@ BOOL WINAPI EnumResourceTypesA(HMODULE module, ENUMRESTYPEPROCA proc, LONG_PTR p
 
 BOOL WINAPI EnumResourceNamesA(HMODULE module, LPCSTR type, ENUMRESNAMEPROCA proc, LONG_PTR param)
 {
-    if (!proc || !type) {
+    if (!proc) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
     BOOL free_type;
     LPWSTR wtype = name_to_wide(type, &free_type);
-    if (!wtype)
+    if (!wtype && !IS_INTRESOURCE(type))
         return FALSE;
     ANSI_ENUM e = {param};
     e.Names = proc;
@@ -309,7 +372,7 @@ BOOL WINAPI EnumResourceNamesA(HMODULE module, LPCSTR type, ENUMRESNAMEPROCA pro
 
 BOOL WINAPI EnumResourceLanguagesA(HMODULE module, LPCSTR type, LPCSTR name, ENUMRESLANGPROCA proc, LONG_PTR param)
 {
-    if (!proc || !type || !name) {
+    if (!proc) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
@@ -317,7 +380,7 @@ BOOL WINAPI EnumResourceLanguagesA(HMODULE module, LPCSTR type, LPCSTR name, ENU
     LPWSTR wtype = name_to_wide(type, &free_type);
     LPWSTR wname = name_to_wide(name, &free_name);
     BOOL ok = FALSE;
-    if (wtype && wname) {
+    if ((wtype || IS_INTRESOURCE(type)) && (wname || IS_INTRESOURCE(name))) {
         ANSI_ENUM e = {param};
         e.Languages = proc;
         e.Type = type;
@@ -329,26 +392,6 @@ BOOL WINAPI EnumResourceLanguagesA(HMODULE module, LPCSTR type, LPCSTR name, ENU
     if (free_name)
         KbFree(wname);
     return ok;
-}
-
-/* ------------------------------------------------------------------ updating */
-
-HANDLE WINAPI BeginUpdateResourceW(LPCWSTR file, BOOL delete_existing)
-{
-    KbSetError(ERROR_CALL_NOT_IMPLEMENTED);
-    return nullptr;
-}
-
-BOOL WINAPI UpdateResourceW(HANDLE update, LPCWSTR type, LPCWSTR name, WORD language, LPVOID data, DWORD size)
-{
-    KbSetError(ERROR_INVALID_HANDLE);
-    return FALSE;
-}
-
-BOOL WINAPI EndUpdateResourceW(HANDLE update, BOOL discard)
-{
-    KbSetError(ERROR_INVALID_HANDLE);
-    return FALSE;
 }
 
 /* ------------------------------------------------------------------ message tables */

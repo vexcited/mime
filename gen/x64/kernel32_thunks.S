@@ -103,6 +103,10 @@ Kernel32Thunk_BaseSetLastNTError:
     .p2align 4, 0xcc
 Kernel32Thunk_Beep:
     rex64 jmpq *__imp_Beep(%rip)
+    .globl  Kernel32Thunk_BeginUpdateResourceA
+    .p2align 4, 0xcc
+Kernel32Thunk_BeginUpdateResourceA:
+    rex64 jmpq *__imp_BeginUpdateResourceA(%rip)
     .globl  Kernel32Thunk_BeginUpdateResourceW
     .p2align 4, 0xcc
 Kernel32Thunk_BeginUpdateResourceW:
@@ -639,6 +643,10 @@ Kernel32Thunk_DuplicateHandle:
     .p2align 4, 0xcc
 Kernel32Thunk_EmptyWorkingSet:
     rex64 jmpq *__imp_EmptyWorkingSet(%rip)
+    .globl  Kernel32Thunk_EndUpdateResourceA
+    .p2align 4, 0xcc
+Kernel32Thunk_EndUpdateResourceA:
+    rex64 jmpq *__imp_EndUpdateResourceA(%rip)
     .globl  Kernel32Thunk_EndUpdateResourceW
     .p2align 4, 0xcc
 Kernel32Thunk_EndUpdateResourceW:
@@ -4924,6 +4932,10 @@ Kernel32Thunk_UnregisterWait:
     .p2align 4, 0xcc
 Kernel32Thunk_UnregisterWaitEx:
     rex64 jmpq *__imp_UnregisterWaitEx(%rip)
+    .globl  Kernel32Thunk_UpdateResourceA
+    .p2align 4, 0xcc
+Kernel32Thunk_UpdateResourceA:
+    rex64 jmpq *__imp_UpdateResourceA(%rip)
     .globl  Kernel32Thunk_UpdateResourceW
     .p2align 4, 0xcc
 Kernel32Thunk_UpdateResourceW:

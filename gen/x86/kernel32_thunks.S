@@ -103,6 +103,10 @@ _Kernel32Thunk_BaseSetLastNTError@4:
     .p2align 4
 _Kernel32Thunk_Beep@8:
     jmp     *__imp__Beep@8
+    .globl  _Kernel32Thunk_BeginUpdateResourceA@8
+    .p2align 4
+_Kernel32Thunk_BeginUpdateResourceA@8:
+    jmp     *__imp__BeginUpdateResourceA@8
     .globl  _Kernel32Thunk_BeginUpdateResourceW@8
     .p2align 4
 _Kernel32Thunk_BeginUpdateResourceW@8:
@@ -639,6 +643,10 @@ _Kernel32Thunk_DuplicateHandle@28:
     .p2align 4
 _Kernel32Thunk_EmptyWorkingSet@4:
     jmp     *__imp__EmptyWorkingSet@4
+    .globl  _Kernel32Thunk_EndUpdateResourceA@8
+    .p2align 4
+_Kernel32Thunk_EndUpdateResourceA@8:
+    jmp     *__imp__EndUpdateResourceA@8
     .globl  _Kernel32Thunk_EndUpdateResourceW@8
     .p2align 4
 _Kernel32Thunk_EndUpdateResourceW@8:
@@ -4923,6 +4931,10 @@ _Kernel32Thunk_UnregisterWait@4:
     .p2align 4
 _Kernel32Thunk_UnregisterWaitEx@8:
     jmp     *__imp__UnregisterWaitEx@8
+    .globl  _Kernel32Thunk_UpdateResourceA@24
+    .p2align 4
+_Kernel32Thunk_UpdateResourceA@24:
+    jmp     *__imp__UpdateResourceA@24
     .globl  _Kernel32Thunk_UpdateResourceW@24
     .p2align 4
 _Kernel32Thunk_UpdateResourceW@24:

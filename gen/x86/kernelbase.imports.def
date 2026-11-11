@@ -39,6 +39,7 @@ EXPORTS
     BackupWrite@28
     BaseSetLastNTError@4
     Beep@8
+    BeginUpdateResourceA@8
     BeginUpdateResourceW@8
     BindIoCompletionCallback@12
     BuildCommDCBA@8
@@ -192,6 +193,7 @@ EXPORTS
     EmptyWorkingSet@4
     EncodePointer@4
     EncodeSystemPointer@4
+    EndUpdateResourceA@8
     EndUpdateResourceW@8
     EnterCriticalSection@4
     EnterSynchronizationBarrier@8
@@ -1361,6 +1363,7 @@ EXPORTS
     UnregisterWait@4
     UnregisterWaitEx@8
     UpdateProcThreadAttribute@28
+    UpdateResourceA@24
     UpdateResourceW@24
     UrlApplySchemeA@16
     UrlApplySchemeW@16

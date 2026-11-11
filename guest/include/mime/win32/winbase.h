@@ -2688,6 +2688,10 @@ WINBASEAPI HANDLE WINAPI BeginUpdateResourceW(LPCWSTR file, BOOL delete_existing
 WINBASEAPI BOOL WINAPI UpdateResourceW(HANDLE update, LPCWSTR type, LPCWSTR name, WORD language, LPVOID data,
                                        DWORD size);
 WINBASEAPI BOOL WINAPI EndUpdateResourceW(HANDLE update, BOOL discard);
+WINBASEAPI HANDLE WINAPI BeginUpdateResourceA(LPCSTR file, BOOL delete_existing);
+WINBASEAPI BOOL WINAPI UpdateResourceA(HANDLE update, LPCSTR type, LPCSTR name, WORD language, LPVOID data,
+                                       DWORD size);
+WINBASEAPI BOOL WINAPI EndUpdateResourceA(HANDLE update, BOOL discard);
 
 /* ------------------------------------------------------------------ packages and app model */
 
