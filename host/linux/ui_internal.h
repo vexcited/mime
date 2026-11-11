@@ -43,6 +43,10 @@ void mime_app_id_for(const char *aumid, char *out, size_t size);
 void mime_launcher_window_seen(uint32_t id, uint32_t process_id);
 void mime_launcher_window_gone(uint32_t id);
 void mime_launcher_process_gone(uint32_t process_id);
+/* presence.c: the host processes Discord detects guest programs by, one for each guest process with windows. */
+void mime_presence_window(uint32_t id, uint32_t process_id, const uint16_t *image, uint32_t chars);
+void mime_presence_window_gone(uint32_t id);
+void mime_presence_process_gone(uint32_t process_id);
 /* sets a toplevel application id or flashes it: 0 stops, 1 briefly, 2 until raised. */
 void mime_ui_window_app_id(uint32_t window, const char *app_id);
 void mime_ui_window_flash(uint32_t window, uint32_t mode);

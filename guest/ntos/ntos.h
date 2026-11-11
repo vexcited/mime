@@ -1598,6 +1598,8 @@ NTSTATUS NpfsReadWrite(PFILE_OBJECT file, BOOLEAN write, HANDLE event, PVOID apc
 NTSTATUS NpfsFsControl(PFILE_OBJECT file, HANDLE event, PVOID apc_routine, PVOID apc_context, PIO_STATUS_BLOCK iosb,
                        ULONG code, PVOID input, ULONG in_len, PVOID output, ULONG out_len);
 NTSTATUS NpfsCancel(PFILE_OBJECT file, PEPROCESS process, BOOLEAN one, PVOID apc_context);
+/* a socket the host raised that neither the socket driver nor http.sys knows: true when a pipe to discord has it. */
+BOOLEAN NpfsHostEvent(ULONG sock);
 void IopInitializeAfd(void);
 void IopInitializeRedirector(void);
 void AfdInterrupt(void);

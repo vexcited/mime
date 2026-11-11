@@ -35,6 +35,9 @@ static void usage(void)
 
 int main(int argc, char **argv)
 {
+    int presence_result = mime_ui_presence_helper(argc, argv);
+    if (presence_result >= 0)
+        return presence_result;
     /* the machine shows a dialog through mime itself when the desktop has no helper for it. */
     int dialog_result = mime_ui_dialog_helper(argc, argv);
     if (dialog_result >= 0)
