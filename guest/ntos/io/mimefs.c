@@ -71,7 +71,160 @@ typedef struct MIMEFS_FCB {
     ULONG BatchCount;
     UNICODE_STRING Pattern;
     WCHAR PatternBuffer[260];
+    UCHAR Sharing;       /* SHARE_* of the open while it counts among the opens of the file, see share_open. */
+    BOOLEAN ShareHeld;   /* the open is counted. */
 } MIMEFS_FCB;
+
+/*
+ * the opens of each host file, as IoCheckShareAccess keeps them for a file: who reads, writes or may delete, and who
+ * lets others do so. an open that would do what another forbids, or that forbids what another does, is
+ * STATUS_SHARING_VIOLATION. an open that asks for attributes only does not count, yet it is a handle, and a file with
+ * a handle open is not replaced by a rename.
+ */
+#ifndef FILE_ATTRIBUTE_TEMPORARY
+#define FILE_ATTRIBUTE_TEMPORARY 0x00000100
+#endif
+
+#define SHARE_READS 0x01
+#define SHARE_WRITES 0x02
+#define SHARE_DELETES 0x04
+#define SHARE_LETS_READ 0x08
+#define SHARE_LETS_WRITE 0x10
+#define SHARE_LETS_DELETE 0x20
+
+typedef struct SHARE_FILE {
+    struct SHARE_FILE *Next;
+    ULONG Volume;
+    ULONG64 FileId;
+    ULONG Handles; /* every open with a host handle. */
+    ULONG Opens;   /* those that read, write or may delete. */
+    ULONG Readers, Writers, Deleters;
+    ULONG LetRead, LetWrite, LetDelete;
+} SHARE_FILE;
+
+#define SHARE_BUCKETS 256
+static SHARE_FILE *g_share[SHARE_BUCKETS];
+static FAST_MUTEX g_share_lock;
+
+static UCHAR share_bits(ACCESS_MASK access, ULONG share)
+{
+    UCHAR bits = 0;
+    if (access & (FILE_READ_DATA | FILE_EXECUTE | GENERIC_READ | GENERIC_EXECUTE | GENERIC_ALL | MAXIMUM_ALLOWED))
+        bits |= SHARE_READS;
+    if (access & (FILE_WRITE_DATA | FILE_APPEND_DATA | GENERIC_WRITE | GENERIC_ALL | MAXIMUM_ALLOWED))
+        bits |= SHARE_WRITES;
+    if (access & (DELETE | GENERIC_ALL | MAXIMUM_ALLOWED))
+        bits |= SHARE_DELETES;
+    if (!bits)
+        return 0;
+    if (share & FILE_SHARE_READ)
+        bits |= SHARE_LETS_READ;
+    if (share & FILE_SHARE_WRITE)
+        bits |= SHARE_LETS_WRITE;
+    if (share & FILE_SHARE_DELETE)
+        bits |= SHARE_LETS_DELETE;
+    return bits;
+}
+
+static SHARE_FILE **share_slot(ULONG volume, ULONG64 file_id)
+{
+    SHARE_FILE **link = &g_share[(file_id * 0x9E3779B97F4A7C15ull >> 56) % SHARE_BUCKETS];
+    while (*link && ((*link)->Volume != volume || (*link)->FileId != file_id))
+        link = &(*link)->Next;
+    return link;
+}
+
+static BOOLEAN share_allows(const SHARE_FILE *f, UCHAR bits)
+{
+    if (!f || !bits)
+        return TRUE;
+    if (((bits & SHARE_READS) && f->LetRead < f->Opens) || ((bits & SHARE_WRITES) && f->LetWrite < f->Opens) ||
+        ((bits & SHARE_DELETES) && f->LetDelete < f->Opens))
+        return FALSE;
+    return !((f->Readers && !(bits & SHARE_LETS_READ)) || (f->Writers && !(bits & SHARE_LETS_WRITE)) ||
+             (f->Deleters && !(bits & SHARE_LETS_DELETE)));
+}
+
+/* whether an open like this one would be let in, for an open that empties the file and cannot be taken back. */
+static BOOLEAN share_would_allow(ULONG volume, ULONG64 file_id, UCHAR bits)
+{
+    ExAcquireFastMutex(&g_share_lock);
+    BOOLEAN allowed = share_allows(*share_slot(volume, file_id), bits);
+    ExReleaseFastMutex(&g_share_lock);
+    return allowed;
+}
+
+/* counts the open of the file, or refuses it. */
+static NTSTATUS share_open(MIMEFS_FCB *fcb, UCHAR bits)
+{
+    NTSTATUS status = STATUS_SUCCESS;
+    ExAcquireFastMutex(&g_share_lock);
+    SHARE_FILE **link = share_slot(fcb->Volume, fcb->FileId), *f = *link;
+    if (!share_allows(f, bits)) {
+        status = STATUS_SHARING_VIOLATION;
+    } else if (!f && !(f = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*f), KI_TAG('M', 'f', 'S', 'h')))) {
+        status = STATUS_INSUFFICIENT_RESOURCES;
+    } else {
+        if (!*link) {
+            memset(f, 0, sizeof(*f));
+            f->Volume = fcb->Volume;
+            f->FileId = fcb->FileId;
+            *link = f;
+        }
+        f->Handles++;
+        if (bits) {
+            f->Opens++;
+            f->Readers += (bits & SHARE_READS) != 0;
+            f->Writers += (bits & SHARE_WRITES) != 0;
+            f->Deleters += (bits & SHARE_DELETES) != 0;
+            f->LetRead += (bits & SHARE_LETS_READ) != 0;
+            f->LetWrite += (bits & SHARE_LETS_WRITE) != 0;
+            f->LetDelete += (bits & SHARE_LETS_DELETE) != 0;
+        }
+        fcb->Sharing = bits;
+        fcb->ShareHeld = TRUE;
+    }
+    ExReleaseFastMutex(&g_share_lock);
+    return status;
+}
+
+/* the handle of the open closed. */
+static void share_close(MIMEFS_FCB *fcb)
+{
+    if (!fcb->ShareHeld)
+        return;
+    ExAcquireFastMutex(&g_share_lock);
+    SHARE_FILE **link = share_slot(fcb->Volume, fcb->FileId), *f = *link;
+    if (f) {
+        UCHAR bits = fcb->Sharing;
+        f->Handles--;
+        if (bits) {
+            f->Opens--;
+            f->Readers -= (bits & SHARE_READS) != 0;
+            f->Writers -= (bits & SHARE_WRITES) != 0;
+            f->Deleters -= (bits & SHARE_DELETES) != 0;
+            f->LetRead -= (bits & SHARE_LETS_READ) != 0;
+            f->LetWrite -= (bits & SHARE_LETS_WRITE) != 0;
+            f->LetDelete -= (bits & SHARE_LETS_DELETE) != 0;
+        }
+        if (!f->Handles) {
+            *link = f->Next;
+            ExFreePool(f);
+        }
+    }
+    fcb->ShareHeld = FALSE;
+    ExReleaseFastMutex(&g_share_lock);
+}
+
+/* how many handles are open on the file. */
+static ULONG share_handles(ULONG volume, ULONG64 file_id)
+{
+    ExAcquireFastMutex(&g_share_lock);
+    SHARE_FILE *f = *share_slot(volume, file_id);
+    ULONG handles = f ? f->Handles : 0;
+    ExReleaseFastMutex(&g_share_lock);
+    return handles;
+}
 
 static NTSTATUS host_status(ULONG64 hs, BOOLEAN path_missing)
 {
@@ -293,6 +446,18 @@ typedef struct MIMEFS_WINDOW_REF {
 } MIMEFS_WINDOW_REF;
 
 static NTSTATUS query(MIMEFS_FCB *fcb, MimeFsInfo *info);
+
+BOOLEAN IoFileIdentity(PFILE_OBJECT file, PULONG volume, PULONG64 file_id)
+{
+    if (!file->DeviceObject || file->DeviceObject->DriverObject != g_driver || !file->FsContext)
+        return FALSE;
+    MIMEFS_FCB *fcb = file->FsContext;
+    if (fcb->Rom || fcb->Directory || fcb->Link || fcb->StatOnly)
+        return FALSE;
+    *volume = fcb->Volume;
+    *file_id = fcb->FileId;
+    return TRUE;
+}
 
 BOOLEAN IoGetFileWindowEx(PFILE_OBJECT file, BOOLEAN writable, ULONG64 minimum_size, PULONG64 pa, PULONG64 size, PVOID *ref)
 {
@@ -785,7 +950,26 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
         req->flags = saved_flags;
         req->disposition = saved_disposition;
         req->handle_out = 0;
+        if (probe == MIME_HC_STATUS_OK && !(req->info_out.attributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            /*
+             * like ntfs, a hidden or system file is emptied only by an open that names it hidden or system too. a
+             * name with a leading dot is hidden by the host's habit and not by an attribute, and is left out.
+             */
+            ULONG kept = req->info_out.attributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+            ULONG leaf = chars;
+            while (leaf && name[leaf - 1] != '\\')
+                leaf--;
+            if ((kept & ~(ULONG)stack->Parameters.Create.FileAttributes) && !(leaf < chars && name[leaf] == '.')) {
+                ExFreePool(req);
+                return complete(irp, STATUS_ACCESS_DENIED, 0);
+            }
+        }
         if (probe == MIME_HC_STATUS_OK) {
+            if (!(req->info_out.attributes & FILE_ATTRIBUTE_DIRECTORY) &&
+                !share_would_allow(vol->HostVolume, id, share_bits(access, stack->Parameters.Create.ShareAccess))) {
+                ExFreePool(req);
+                return complete(irp, STATUS_SHARING_VIOLATION, 0);
+            }
             if (FsWbIsMapped(vol->HostVolume, id)) {
                 ExFreePool(req);
                 return complete(irp, STATUS_USER_MAPPED_FILE, 0);
@@ -875,11 +1059,21 @@ opened:
             HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
         return complete(irp, STATUS_CANNOT_DELETE, 0);
     }
+    memset(fcb, 0, sizeof(*fcb));
+    fcb->Volume = vol->HostVolume;
+    fcb->FileId = opened.file_id;
+    /* the other opens of the file have their say once the descriptor has had its own, as on windows. */
+    if (host && !(req_flags & MIME_FS_OPEN_STAT_ONLY)) {
+        NTSTATUS shared = share_open(fcb, share_bits(access, stack->Parameters.Create.ShareAccess));
+        if (!NT_SUCCESS(shared)) {
+            ExFreePool(fcb);
+            HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);
+            return complete(irp, shared, 0);
+        }
+    }
     fcb->HostHandle = host;
     fcb->StatOnly = (req_flags & MIME_FS_OPEN_STAT_ONLY) != 0;
     fcb->OpenInfo = opened;
-    fcb->Volume = vol->HostVolume;
-    fcb->FileId = opened.file_id;
     fcb->Directory = directory;
     fcb->Link = (opened.attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && host != 0;
     fcb->Access = granted;
@@ -909,8 +1103,20 @@ opened:
             FsCacheInvalidate(fcb->Volume, fcb->FileId);
             if (fcb->Cache)
                 FsCacheClose(fcb->Cache);
+            share_close(fcb);
             ExFreePool(fcb);
             return complete(irp, status, 0);
+        }
+        /* the attributes a new file is made with, which windows keeps with the archive one. */
+        ULONG made = stack->Parameters.Create.FileAttributes &
+                     (FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_TEMPORARY);
+        MimeFsBasic *change = made ? ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*change), KI_TAG('M', 'f', 'B', 's')) : nullptr;
+        if (change) {
+            memset(change, 0, sizeof(*change));
+            change->attributes = made | (fcb->Directory ? 0 : FILE_ATTRIBUTE_ARCHIVE);
+            change->mask = MIME_FS_BASIC_READONLY;
+            HalHypercallUnlocked(MIME_HC_FS_SET_BASIC, host, HalPhysicalOf(change), 0, 0, 0, 0, nullptr);
+            ExFreePool(change);
         }
     }
     if (fcb->Directory)
@@ -942,6 +1148,9 @@ static NTSTATUS NTAPI mimefs_cleanup(PDEVICE_OBJECT device, PIRP irp)
     /* the last handle is closing: flush its buffer before anything can look at the file again. */
     if (fcb && !fcb->Rom && !fcb->Directory)
         FsWbClose(&fcb->Wb);
+    /* and the open no longer stands in the way of others. */
+    if (fcb && !fcb->Rom)
+        share_close(fcb);
     return complete(irp, STATUS_SUCCESS, 0);
 }
 
@@ -955,6 +1164,7 @@ static NTSTATUS NTAPI mimefs_close(PDEVICE_OBJECT device, PIRP irp)
         ExFreePool(fcb);
         file->FsContext = nullptr;
     } else if (fcb) {
+        share_close(fcb);
         FsWbClose(&fcb->Wb);
         if (fcb->Cache)
             FsCacheClose(fcb->Cache);
@@ -1184,7 +1394,30 @@ static NTSTATUS disk_read(PIRP irp, PIO_STACK_LOCATION stack, MIMEFS_VOLUME *vol
     return complete(irp, STATUS_SUCCESS, length);
 }
 
+static NTSTATUS NTAPI read_write(PDEVICE_OBJECT device, PIRP irp);
+
+/* a file with a section that copies it is read and written with what the views of the section hold, see mm/section.c. */
 static NTSTATUS NTAPI mimefs_read_write(PDEVICE_OBJECT device, PIRP irp)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    MIMEFS_FCB *fcb = stack->FileObject->FsContext;
+    if (!__atomic_load_n(&MmWriteBackSections, __ATOMIC_ACQUIRE) || !fcb || fcb->Rom || fcb->Directory || fcb->Link)
+        return read_write(device, irp);
+    /* the request is gone once it is completed. */
+    BOOLEAN write = stack->MajorFunction == IRP_MJ_WRITE;
+    ULONG volume = fcb->Volume, length = stack->Parameters.Read.Length;
+    ULONG64 file_id = fcb->FileId, offset = (ULONG64)stack->Parameters.Read.ByteOffset.QuadPart;
+    const void *data = irp->UserBuffer;
+    BOOLEAN placed = length && offset != MIMEFS_WRITE_TO_END;
+    if (placed)
+        MmSyncMappedFile(volume, file_id, offset, length);
+    NTSTATUS status = read_write(device, irp);
+    if (placed && write && status == STATUS_SUCCESS)
+        MmMappedFileWritten(volume, file_id, offset, data, length);
+    return status;
+}
+
+static NTSTATUS NTAPI read_write(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
     MIMEFS_FCB *fcb = stack->FileObject->FsContext;
@@ -1584,6 +1817,32 @@ static NTSTATUS NTAPI mimefs_query_info(PDEVICE_OBJECT device, PIRP irp)
     return complete(irp, status, written);
 }
 
+static PWCHAR name_in_directory(PFILE_OBJECT file, PFILE_OBJECT dir, const WCHAR *leaf, ULONG leaf_chars, PULONG chars);
+
+/* what the host has under a name of the volume, without opening it. */
+static BOOLEAN stat_name(ULONG volume, const WCHAR *path, ULONG chars, MimeFsInfo *info)
+{
+    MimeFsOpen *req = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MimeFsOpen), KI_TAG('M', 'f', 'O', 'p'));
+    if (!req || chars > RTL_NUMBER_OF(req->path)) {
+        if (req)
+            ExFreePool(req);
+        return FALSE;
+    }
+    memset(req, 0, sizeof(*req));
+    memcpy(req->path, path, chars * sizeof(WCHAR));
+    req->path_chars = chars;
+    req->volume = volume;
+    req->flags = MIME_FS_OPEN_STAT_ONLY | MIME_FS_OPEN_REPARSE_POINT;
+    req->disposition = MIME_FS_DISP_OPEN;
+    BOOLEAN found = HalHypercallUnlocked(MIME_HC_FS_OPEN, HalPhysicalOf(req), 0, 0, 0, 0, 0, nullptr) == MIME_HC_STATUS_OK;
+    if (found && req->handle_out)
+        HalHypercallUnlocked(MIME_HC_FS_CLOSE, req->handle_out, 0, 0, 0, 0, 0, nullptr);
+    if (found)
+        *info = req->info_out;
+    ExFreePool(req);
+    return found;
+}
+
 /*
  * moves the file into the directory the i/o manager opened for it. the leaf is the part of the new name after its
  * last backslash, and the file object takes its new name in the directory.
@@ -1614,6 +1873,19 @@ static NTSTATUS rename_in_directory(PDEVICE_OBJECT device, PFILE_OBJECT file, MI
     if (!text)
         return STATUS_INSUFFICIENT_RESOURCES;
     memcpy(text, name + start, leaf * sizeof(WCHAR));
+    /* like windows, a file that has a handle open is not replaced: STATUS_ACCESS_DENIED. */
+    if (stack->Parameters.SetFile.ReplaceIfExists) {
+        ULONG target_chars = 0;
+        PWCHAR target = name_in_directory(file, dir, text, leaf, &target_chars);
+        MimeFsInfo there;
+        BOOLEAN found = target && stat_name(fcb->Volume, target, target_chars, &there);
+        if (target)
+            ExFreePool(target);
+        if (found && there.file_id != fcb->FileId && share_handles(fcb->Volume, there.file_id)) {
+            ExFreePool(text);
+            return STATUS_ACCESS_DENIED;
+        }
+    }
     /* buffered writes for the file, or for anything below a directory, are flushed before the name changes. */
     if (fcb->Directory)
         FsWbSyncPath(fcb->Volume, &file->FileName, TRUE);
@@ -3059,6 +3331,7 @@ static NTSTATUS create_disk(PDRIVER_OBJECT driver, ULONG serial)
 NTSTATUS MimeFsDriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
 {
     g_driver = driver;
+    ExInitializeFastMutex(&g_share_lock);
     FsCacheInitialize();
     FsAttrInitialize();
     FsWbInitialize();

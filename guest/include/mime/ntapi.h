@@ -60,6 +60,7 @@ NTSYSCALLAPI NTSTATUS NTAPI NtFlushBuffersFile(HANDLE handle, PIO_STATUS_BLOCK i
 NTSYSCALLAPI NTSTATUS NTAPI NtFlushBuffersFileEx(HANDLE handle, ULONG flags, PVOID parameters, ULONG length, PIO_STATUS_BLOCK iosb);
 NTSYSCALLAPI NTSTATUS NTAPI NtFlushInstructionCache(HANDLE process, PVOID base, SIZE_T size);
 NTSYSCALLAPI NTSTATUS NTAPI NtFlushProcessWriteBuffers(void);
+NTSYSCALLAPI NTSTATUS NTAPI NtFlushVirtualMemory(HANDLE process_handle, PVOID *base, PSIZE_T size, PIO_STATUS_BLOCK iosb);
 NTSYSCALLAPI NTSTATUS NTAPI NtFreeVirtualMemory(HANDLE process_handle, PVOID *base, PSIZE_T size, ULONG type);
 NTSYSCALLAPI NTSTATUS NTAPI NtFsControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOID apc_context, PIO_STATUS_BLOCK iosb, ULONG code, PVOID input, ULONG in_len, PVOID output, ULONG out_len);
 NTSYSCALLAPI ULONG NTAPI NtGetCurrentProcessorNumber(void);

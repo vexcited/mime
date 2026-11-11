@@ -15,11 +15,18 @@ POBJECT_TYPE MmSectionType;
 POBJECT_TYPE *MmSectionObjectType = &MmSectionType;
 
 static void forget_file_image(PSECTION s);
+static void write_back_detach(PSECTION s);
 
 static void section_delete(PVOID object)
 {
     PSECTION s = object;
     forget_file_image(s);
+    /* off the list first, so that no read of the file finds a section that is going. */
+    write_back_detach(s);
+    /* what a view wrote and no unmap sent to the file, as when a process ends with its views. */
+    MiSectionWriteBack(s, 0, s->Size);
+    if (s->PageHash)
+        ExFreePool(s->PageHash);
     if (s->SystemVa) {
         for (ULONG i = 0; i < s->PageCount; i++)
             MiUnmapPage(MiKernelRoot(), (ULONG_PTR)s->SystemVa + (ULONG_PTR)i * PAGE_SIZE, 0);
@@ -44,6 +51,8 @@ static void section_delete(PVOID object)
         ExFreePool(s->PageProtect);
     MmWindowSectionDetach(s);
     IoReleaseFileWindow(s->SourceRef);
+    if (s->Redirect)
+        ObDereferenceObject(s->Redirect);
     if (s->File)
         ObDereferenceObject(s->File);
     if (s->FileName.Buffer)
@@ -112,6 +121,9 @@ static ULONG64 build_page(PSECTION s, ULONG index)
 /* built on first use. 0 when out of memory. */
 ULONG64 MiSectionPage(PSECTION s, ULONG index)
 {
+    PSECTION copy = __atomic_load_n(&s->Redirect, __ATOMIC_ACQUIRE);
+    if (copy)
+        return index < copy->PageCount ? MiSectionPage(copy, index) : 0;
     ULONG64 pa = __atomic_load_n(&s->Pages[index], __ATOMIC_ACQUIRE);
     if (pa)
         return pa;
@@ -378,6 +390,9 @@ ULONG64 MiSectionReadyPage(PMMVAD vad, ULONG64 index, ULONG protect)
     PSECTION s = vad->Section;
     if (index >= s->PageCount || ((s->Flags & SEC_IMAGE) && (protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))))
         return 0;
+    PSECTION copy = __atomic_load_n(&s->Redirect, __ATOMIC_ACQUIRE);
+    if (copy)
+        return index < copy->PageCount ? __atomic_load_n(&copy->Pages[index], __ATOMIC_ACQUIRE) : 0;
     ULONG64 source = __atomic_load_n(&s->Pages[index], __ATOMIC_ACQUIRE);
     if (source && MmWindowPageLost(s, source))
         return 0;
@@ -824,6 +839,222 @@ static NTSTATUS create_copied_image(PFILE_OBJECT file, PSECTION *out)
     return STATUS_SUCCESS;
 }
 
+static ULONG64 hash_page(const void *page)
+{
+    const ULONG64 *words = page;
+    ULONG64 hash = 0x9E3779B97F4A7C15ull;
+    for (ULONG i = 0; i < PAGE_SIZE / sizeof(ULONG64); i++) {
+        hash = (hash ^ words[i]) * 0xFF51AFD7ED558CCDull;
+        hash ^= hash >> 29;
+    }
+    return hash;
+}
+
+static ULONG64 hash_section_page(PSECTION s, ULONG index)
+{
+    static ULONG64 empty;
+    ULONG64 pa = __atomic_load_n(&s->Pages[index], __ATOMIC_ACQUIRE);
+    if (pa && MiGetPfn(pa))
+        return hash_page(HalPhysmap(pa));
+    /* a page nothing touched yet is zeros. */
+    if (!empty) {
+        static const UCHAR zeros[PAGE_SIZE];
+        empty = hash_page(zeros);
+    }
+    return empty;
+}
+
+/* the sections that copy a file views write, which reads and writes of the file look through. */
+static LIST_ENTRY g_write_back = {&g_write_back, &g_write_back};
+volatile LONG MmWriteBackSections;
+/* one write back at a time, and the thread doing it, whose own writes of the file are not looked at again. */
+static FAST_MUTEX g_write_back_lock;
+static PVOID g_write_back_thread;
+
+static void write_back_attach(PSECTION s)
+{
+    ULONG64 state = KiAcquireDispatcherLock();
+    InsertTailList(&g_write_back, &s->WriteBackLinks);
+    KiReleaseDispatcherLock(state);
+    __atomic_fetch_add(&MmWriteBackSections, 1, __ATOMIC_ACQ_REL);
+    /* the file is a mapped one for as long: its size stays and what is written to it is not kept back. */
+    FsWbMapped(s->FileVolume, s->FileId, 1);
+}
+
+static void write_back_detach(PSECTION s)
+{
+    if (!s->WriteBackLinks.Flink)
+        return;
+    ULONG64 state = KiAcquireDispatcherLock();
+    RemoveEntryList(&s->WriteBackLinks);
+    s->WriteBackLinks.Flink = nullptr;
+    KiReleaseDispatcherLock(state);
+    __atomic_fetch_sub(&MmWriteBackSections, 1, __ATOMIC_ACQ_REL);
+    FsWbMapped(s->FileVolume, s->FileId, -1);
+}
+
+/*
+ * where the host gives no writable window of a file, a writable section is a copy of the file, and what its views
+ * write reaches the file here: when a view is flushed or unmapped, when the file is read or written, and when the
+ * section goes. a page is written when it is not what the file had, known by its hash, so a write to the file itself
+ * is not undone by a page nothing changed.
+ */
+void MiSectionWriteBack(PSECTION s, ULONG64 offset, ULONG64 length)
+{
+    if (!(s->Flags & MI_SECTION_WRITE_BACK) || !s->PageHash || !s->File || offset >= s->Size)
+        return;
+    if (length > s->Size - offset)
+        length = s->Size - offset;
+    ULONG first = (ULONG)(offset >> PAGE_SHIFT), last = (ULONG)((offset + length + PAGE_SIZE - 1) >> PAGE_SHIFT);
+    ExAcquireFastMutex(&g_write_back_lock);
+    g_write_back_thread = PsCurrentThread();
+    for (ULONG i = first; i < last && i < s->PageCount; i++) {
+        ULONG64 pa = __atomic_load_n(&s->Pages[i], __ATOMIC_ACQUIRE);
+        if (!pa || !MiGetPfn(pa))
+            continue;
+        ULONG64 hash = hash_page(HalPhysmap(pa));
+        if (hash == s->PageHash[i])
+            continue;
+        ULONG64 at = (ULONG64)i << PAGE_SHIFT;
+        ULONG bytes = s->Size - at < PAGE_SIZE ? (ULONG)(s->Size - at) : PAGE_SIZE, written = 0;
+        if (NT_SUCCESS(IoWriteFileObject(s->File, HalPhysmap(pa), bytes, at, &written)) && written == bytes)
+            s->PageHash[i] = hash;
+    }
+    g_write_back_thread = nullptr;
+    ExReleaseFastMutex(&g_write_back_lock);
+}
+
+/* the sections of the file, each referenced. a file has few. */
+#define WRITE_BACK_BATCH 8
+static ULONG sections_of_file(ULONG volume, ULONG64 file_id, PSECTION *found)
+{
+    ULONG count = 0;
+    if (g_write_back_thread == PsCurrentThread())
+        return 0;
+    ULONG64 state = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY e = g_write_back.Flink; e != &g_write_back && count < WRITE_BACK_BATCH; e = e->Flink) {
+        PSECTION s = CONTAINING_RECORD(e, SECTION, WriteBackLinks);
+        if (s->FileVolume != volume || s->FileId != file_id)
+            continue;
+        ObReferenceObject(s);
+        found[count++] = s;
+    }
+    KiReleaseDispatcherLock(state);
+    return count;
+}
+
+/* the section that copies the file and can stand for a new one of this size, referenced. */
+static PSECTION file_copy_section(PFILE_OBJECT file, ULONG64 size, ULONG allocation)
+{
+    ULONG volume;
+    ULONG64 file_id;
+    if ((allocation && allocation != SEC_COMMIT) || !__atomic_load_n(&MmWriteBackSections, __ATOMIC_ACQUIRE) ||
+        !IoFileIdentity(file, &volume, &file_id))
+        return nullptr;
+    PSECTION found = nullptr;
+    ULONG64 state = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY e = g_write_back.Flink; e != &g_write_back && !found; e = e->Flink) {
+        PSECTION s = CONTAINING_RECORD(e, SECTION, WriteBackLinks);
+        if (s->FileVolume == volume && s->FileId == file_id && size <= s->Size) {
+            ObReferenceObject(s);
+            found = s;
+        }
+    }
+    KiReleaseDispatcherLock(state);
+    return found;
+}
+
+void MmSyncMappedFile(ULONG volume, ULONG64 file_id, ULONG64 offset, ULONG64 length)
+{
+    PSECTION found[WRITE_BACK_BATCH];
+    ULONG count = sections_of_file(volume, file_id, found);
+    for (ULONG i = 0; i < count; i++) {
+        MiSectionWriteBack(found[i], offset, length);
+        ObDereferenceObject(found[i]);
+    }
+}
+
+void MmMappedFileWritten(ULONG volume, ULONG64 file_id, ULONG64 offset, const void *data, ULONG64 length)
+{
+    PSECTION found[WRITE_BACK_BATCH];
+    ULONG count = sections_of_file(volume, file_id, found);
+    for (ULONG k = 0; k < count; k++) {
+        PSECTION s = found[k];
+        const UCHAR *source = data;
+        ULONG64 at = offset, left = offset < s->Size ? length : 0;
+        if (left > s->Size - at)
+            left = s->Size - at;
+        while (left) {
+            ULONG index = (ULONG)(at >> PAGE_SHIFT), in = (ULONG)(at & (PAGE_SIZE - 1));
+            ULONG n = PAGE_SIZE - in < left ? PAGE_SIZE - in : (ULONG)left;
+            ULONG64 pa = index < s->PageCount ? MiSectionPage(s, index) : 0;
+            if (pa && MiGetPfn(pa)) {
+                PUCHAR page = HalPhysmap(pa);
+                /* a page a view changed since it was last written stays one to write, whole. */
+                BOOLEAN clean = hash_page(page) == s->PageHash[index];
+                memcpy(page + in, source, n);
+                if (clean)
+                    s->PageHash[index] = hash_page(page);
+            }
+            source += n;
+            at += n;
+            left -= n;
+        }
+        ObDereferenceObject(s);
+    }
+}
+
+/*
+ * FlushViewOfFile: what the views of the range changed reaches the file. like windows, memory that is no view
+ * is STATUS_NOT_MAPPED_VIEW and a view of no file is STATUS_NOT_MAPPED_DATA.
+ */
+NTSTATUS NTAPI NtFlushVirtualMemory(HANDLE process_handle, PVOID *base, PSIZE_T size, PIO_STATUS_BLOCK iosb)
+{
+    PVOID b;
+    SIZE_T n;
+    if (!NT_SUCCESS(KiCopyFromUser(&b, base, sizeof(b))) || !NT_SUCCESS(KiCopyFromUser(&n, size, sizeof(n))))
+        return STATUS_ACCESS_VIOLATION;
+    PEPROCESS process;
+    NTSTATUS status = PsReferenceProcessHandle(process_handle, PROCESS_VM_OPERATION, &process);
+    if (!NT_SUCCESS(status))
+        return status;
+    PMMADDRESS_SPACE as = &process->AddressSpace;
+    ULONG_PTR start = (ULONG_PTR)b & ~(ULONG_PTR)(PAGE_SIZE - 1);
+    MiLockAddressSpace(as);
+    PMMVAD vad = MiFindVad(as, start);
+    PSECTION section = nullptr;
+    ULONG64 offset = 0;
+    if (!vad || (vad->Type != MiVadImage && vad->Type != MiVadMapped) || !vad->Section) {
+        status = STATUS_NOT_MAPPED_VIEW;
+    } else if (vad->Type == MiVadImage || !vad->Section->File) {
+        status = (NTSTATUS)0xC0000088L; /* STATUS_NOT_MAPPED_DATA. */
+    } else {
+        /* no size is the rest of the view, and a size past its end is refused. */
+        ULONG_PTR end = n ? ROUND_TO_PAGES(start + n) : vad->EndVa;
+        if (n > vad->EndVa - start) {
+            status = STATUS_NOT_MAPPED_VIEW;
+        } else {
+            n = end - start;
+            section = vad->Section;
+            offset = vad->SectionOffset + (start - vad->StartVa);
+            ObReferenceObject(section);
+        }
+    }
+    MiUnlockAddressSpace(as);
+    ObDereferenceObject(process);
+    if (!section)
+        return status;
+    MiSectionWriteBack(section, offset, n);
+    ObDereferenceObject(section);
+    b = (PVOID)start;
+    IO_STATUS_BLOCK done = {};
+    KiCopyToUser(base, &b, sizeof(b));
+    KiCopyToUser(size, &n, sizeof(n));
+    if (iosb)
+        KiCopyToUser(iosb, &done, sizeof(done));
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS MiCreateDataSection(PFILE_OBJECT file, ULONG64 size, ULONG protect, ULONG flags, PSECTION *out)
 {
     if (file && size == 0) {
@@ -855,9 +1086,25 @@ NTSTATUS MiCreateDataSection(PFILE_OBJECT file, ULONG64 size, ULONG protect, ULO
             s->SourcePa = pa;
             s->SourceSize = file_size;
             s->Flags |= MI_SECTION_SHARE_SOURCE;
+            IoFileIdentity(file, &s->FileVolume, &s->FileId);
             MmWindowSectionAttach(s);
         } else {
             status = copy_file_into(s, file, 0, 0, size);
+            if (NT_SUCCESS(status) && writable && file->WriteAccess) {
+                s->PageHash = ExAllocatePool2(POOL_FLAG_NON_PAGED, (SIZE_T)s->PageCount * sizeof(ULONG64),
+                                              KI_TAG('M', 'm', 'P', 'h'));
+                if (!s->PageHash)
+                    status = STATUS_INSUFFICIENT_RESOURCES;
+                for (ULONG i = 0; s->PageHash && i < s->PageCount; i++)
+                    s->PageHash[i] = hash_section_page(s, i);
+                if (s->PageHash) {
+                    s->Flags |= MI_SECTION_WRITE_BACK;
+                    if (IoFileIdentity(file, &s->FileVolume, &s->FileId)) {
+                        write_back_attach(s);
+                        MmWindowRedirect(s->FileVolume, s->FileId, s);
+                    }
+                }
+            }
         }
         if (NT_SUCCESS(status))
             status = set_file_name(s, file);
@@ -1131,6 +1378,7 @@ NTSTATUS MiUnmapViewOfSectionEx(PEPROCESS process, PVOID base, ULONG flags)
     }
     MiReleasePages(as, vad->StartVa, vad->EndVa);
     PSECTION section = vad->Section;
+    ULONG64 view_offset = vad->SectionOffset, view_length = vad->EndVa - vad->StartVa;
     if (preserve) {
         vad->Section = nullptr;
         vad->SectionOffset = 0;
@@ -1141,8 +1389,10 @@ NTSTATUS MiUnmapViewOfSectionEx(PEPROCESS process, PVOID base, ULONG flags)
         MiRemoveVad(as, vad);
     }
     MiUnlockAddressSpace(as);
-    if (section)
+    if (section) {
+        MiSectionWriteBack(section, view_offset, view_length);
         ObDereferenceObject(section);
+    }
     if (!preserve)
         ExFreePool(vad);
     return STATUS_SUCCESS;
@@ -1268,6 +1518,7 @@ NTSTATUS NTAPI NtCreateSection(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRI
             return status;
     }
     PSECTION section;
+    BOOLEAN shared = FALSE;
     if (allocation & SEC_IMAGE) {
         /* a process that refuses low label images gets no section of one. */
         if (file && (PsGetCurrentProcess()->MitigationPolicy[MIME_POLICY_IMAGE_LOAD] & MIME_IMAGE_LOAD_NO_LOW_LABEL)) {
@@ -1283,21 +1534,33 @@ NTSTATUS NTAPI NtCreateSection(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRI
         }
         status = file ? MiCreateImageSection(file, &section) : STATUS_INVALID_FILE_FOR_SECTION;
     } else {
+        /* like windows, the sections of a file are views of the same pages: a file views write a copy of has one. */
+        section = file ? file_copy_section(file, (ULONG64)size.QuadPart, allocation) : nullptr;
+        shared = section != nullptr;
+        status = shared ? STATUS_SUCCESS : MiCreateDataSection(file, (ULONG64)size.QuadPart, protect, allocation, &section);
+    }
+    OBJECT_ATTRIBUTES oa;
+    UNICODE_STRING name = {};
+    if (NT_SUCCESS(status)) {
+        status = ObCaptureObjectAttributes(attributes, &oa, &name);
+        if (!NT_SUCCESS(status))
+            ObDereferenceObject(section);
+    }
+    /* a name belongs to one object, so a named section is one of its own. */
+    if (NT_SUCCESS(status) && shared && attributes && oa.ObjectName && oa.ObjectName->Length) {
+        ObDereferenceObject(section);
+        shared = FALSE;
         status = MiCreateDataSection(file, (ULONG64)size.QuadPart, protect, allocation, &section);
+        if (!NT_SUCCESS(status))
+            KiFreeCapturedString(&name);
     }
     if (file)
         ObDereferenceObject(file);
     if (!NT_SUCCESS(status))
         return status;
-    OBJECT_ATTRIBUTES oa;
-    UNICODE_STRING name;
-    status = ObCaptureObjectAttributes(attributes, &oa, &name);
-    if (!NT_SUCCESS(status)) {
-        ObDereferenceObject(section);
-        return status;
-    }
     HANDLE h;
-    status = ObInsertObjectNamed(section, attributes ? &oa : nullptr, access, KeGetPreviousMode(), &h);
+    status = shared ? ObInsertObject(section, access, 0, &h)
+                    : ObInsertObjectNamed(section, attributes ? &oa : nullptr, access, KeGetPreviousMode(), &h);
     KiFreeCapturedString(&name);
     if (NT_SUCCESS(status)) {
         NTSTATUS st = ObStoreHandle(handle, h);
@@ -1519,7 +1782,8 @@ NTSTATUS NTAPI NtQuerySection(HANDLE handle, ULONG klass, PVOID info, SIZE_T len
     SIZE_T size;
     memset(&out, 0, sizeof(out));
     if (klass == 0) {
-        out.basic.AllocationAttributes = s->Flags & ~(MI_SECTION_PHYSICAL | MI_SECTION_SHARE_SOURCE | MI_SECTION_WRITABLE_WINDOW);
+        out.basic.AllocationAttributes = s->Flags & ~(MI_SECTION_PHYSICAL | MI_SECTION_SHARE_SOURCE | MI_SECTION_WRITABLE_WINDOW |
+                                                     MI_SECTION_WRITE_BACK);
         out.basic.MaximumSize.QuadPart = (LONGLONG)s->Size;
         size = sizeof(out.basic);
     } else if (klass == 1 && (s->Flags & SEC_IMAGE)) {
@@ -1546,4 +1810,5 @@ void MiInitializeSections(void)
     init.DeleteProcedure = section_delete;
     ObSetGenericMapping(&init, 0x20005, 0x20002, 0x20008, 0xF001F);
     MmSectionType = ObCreateObjectType(L"Section", &init);
+    ExInitializeFastMutex(&g_write_back_lock);
 }

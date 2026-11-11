@@ -287,6 +287,13 @@ _NtFlushProcessWriteBuffers@0:
     calll *%edx
     retl $0
     .p2align 4, 0x90
+    .globl _NtFlushVirtualMemory@16
+_NtFlushVirtualMemory@16:
+    movl $0xf4, %eax
+    movl $_Wow64SystemServiceCall, %edx
+    calll *%edx
+    retl $16
+    .p2align 4, 0x90
     .globl _NtFreeVirtualMemory@16
 _NtFreeVirtualMemory@16:
     movl $0x1e, %eax

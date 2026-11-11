@@ -1285,5 +1285,11 @@ DECLSPEC_EXPORT HANDLE WINAPI OpenFileMappingFromApp(ULONG access, BOOL inherit,
 
 BOOL WINAPI FlushViewOfFile(LPCVOID base, SIZE_T size)
 {
-    return TRUE;
+    PVOID address = (PVOID)base;
+    IO_STATUS_BLOCK io;
+    NTSTATUS status = NtFlushVirtualMemory(NtCurrentProcess(), &address, &size, &io);
+    /* like windows, a view with no file behind it has nothing to flush and that is no error. */
+    if (NT_SUCCESS(status) || status == (NTSTATUS)0xC0000088L)
+        return TRUE;
+    return KbSetStatus(status);
 }

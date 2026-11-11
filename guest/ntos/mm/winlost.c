@@ -64,8 +64,11 @@ static void mark_sections(ULONG64 begin, ULONG64 end)
     KiReleaseDispatcherLock(state);
 }
 
-/* in one address space, replaces mapped pages of the lost range with first touch entries. */
-static void take_out(PEPROCESS process, ULONG64 begin, ULONG64 end)
+/*
+ * in one address space, replaces mapped pages of the range with first touch entries: in the views of sections that
+ * lost pages, or in those of one section when it is given.
+ */
+static void take_out(PEPROCESS process, ULONG64 begin, ULONG64 end, PSECTION only)
 {
     PMMADDRESS_SPACE as = &process->AddressSpace;
     PKPROCESS saved = KiCurrentThread()->ApcStateProcess;
@@ -74,7 +77,7 @@ static void take_out(PEPROCESS process, ULONG64 begin, ULONG64 end)
     for (ULONG v = 0; as->Root && v < as->VadCount; v++) {
         PMMVAD vad = as->Vads[v];
         PSECTION s = vad->Section;
-        if (!s || !s->SourceRef || s->LostEnd <= s->LostBegin)
+        if (only ? s != only : !s || !s->SourceRef || s->LostEnd <= s->LostBegin)
             continue;
         ULONG64 view_first = vad->SectionOffset >> PAGE_SHIFT;
         ULONG64 view_last = view_first + ((vad->EndVa - vad->StartVa) >> PAGE_SHIFT);
@@ -107,7 +110,7 @@ static void take_out(PEPROCESS process, ULONG64 begin, ULONG64 end)
     KiAttachProcess(saved);
 }
 
-static void take_out_everywhere(ULONG64 begin, ULONG64 end)
+static void take_out_everywhere(ULONG64 begin, ULONG64 end, PSECTION only)
 {
     for (ULONG skipped = 0;;) {
         PEPROCESS batch[BATCH];
@@ -128,9 +131,31 @@ static void take_out_everywhere(ULONG64 begin, ULONG64 end)
             return;
         for (ULONG i = 0; i < count; i++) {
             if (batch[i]->AddressSpace.Root && !batch[i]->Terminating)
-                take_out(batch[i], begin, end);
+                take_out(batch[i], begin, end, only);
             ObDereferenceObject(batch[i]);
         }
+    }
+}
+
+void MmWindowRedirect(ULONG volume, ULONG64 file_id, PSECTION copy)
+{
+    PSECTION found[BATCH];
+    ULONG count = 0;
+    ULONG64 state = KiAcquireDispatcherLock();
+    for (PLIST_ENTRY e = g_sections.Flink; e != &g_sections && count < BATCH; e = e->Flink) {
+        PSECTION s = CONTAINING_RECORD(e, SECTION, WindowLinks);
+        if (s == copy || (s->Flags & SEC_IMAGE) || s->Redirect || s->FileVolume != volume || s->FileId != file_id || !s->FileId)
+            continue;
+        ObReferenceObject(copy);
+        __atomic_store_n(&s->Redirect, copy, __ATOMIC_RELEASE);
+        ObReferenceObject(s);
+        found[count++] = s;
+    }
+    KiReleaseDispatcherLock(state);
+    /* what the views already show of the file's pages is touched again, and finds the copy. */
+    for (ULONG i = 0; i < count; i++) {
+        take_out_everywhere(found[i]->SourcePa, found[i]->SourcePa + ROUND_TO_PAGES(found[i]->SourceSize), found[i]);
+        ObDereferenceObject(found[i]);
     }
 }
 
@@ -148,7 +173,7 @@ static void worker(PVOID context)
             KiLogPrintf("window: the pages at %llx for %llx bytes are gone, the file was shortened", begin, g_io.size);
             mark_sections(begin, end);
             FsCacheWindowLost(begin, end);
-            take_out_everywhere(begin, end);
+            take_out_everywhere(begin, end, nullptr);
             acked = g_io.serial;
         }
     }
