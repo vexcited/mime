@@ -88,9 +88,7 @@ ULONG_PTR NTAPI NtUserCallOneParam(ULONG_PTR param, ULONG routine)
             ULONG flags = (ULONG)param;
             ULONG pending = 0;
             for (PLIST_ENTRY e = t->Posted.Flink; e != &t->Posted; e = e->Flink)
-                pending |= CONTAINING_RECORD(e, QUEUED_MESSAGE, Links)->Msg.message == WM_INPUT
-                               ? QS_RAWINPUT
-                               : QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
+                pending |= MsgPostedBits(CONTAINING_RECORD(e, QUEUED_MESSAGE, Links));
             if (t->QuitPosted)
                 pending |= QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
             if (!IsListEmpty(&t->Input))
@@ -194,6 +192,17 @@ ULONG_PTR NTAPI NtUserCallTwoParam(ULONG_PTR param1, ULONG_PTR param2, ULONG rou
         break;
     case MIME_TWOPARAM_DISPLAYUNIQUENESS:
         r = MetricsDisplayUniqueness();
+        break;
+    case MIME_TWOPARAM_REGISTERHOTKEY: {
+        ULONG key[3];
+        if (NT_SUCCESS(MimeCopyFromUser(key, (PVOID)param2, sizeof(key))))
+            r = HotkeyRegister(W32GetThread(), (HWND)param1, (int)key[0], key[1], key[2]);
+        else
+            W32SetLastError(ERROR_NOACCESS);
+        break;
+    }
+    case MIME_TWOPARAM_UNREGISTERHOTKEY:
+        r = HotkeyUnregister(W32GetThread(), (HWND)param1, (int)param2);
         break;
     case MIME_TWOPARAM_THREADWINDOWS: {
         W32THREAD *t = nullptr;

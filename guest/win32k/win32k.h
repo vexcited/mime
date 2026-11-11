@@ -994,6 +994,12 @@ LRESULT MsgCallWindowProc(WND *w, WNDPROC proc, BOOLEAN ansi, UINT msg, WPARAM w
                           ULONG lparam_kind, ULONG lparam_size);
 LRESULT DefWindowProcKernel(WND *w, UINT msg, WPARAM wparam, LPARAM lparam); /* kernel lparam pointers. */
 LRESULT DefWindowProcUser(WND *w, UINT msg, WPARAM wparam, LPARAM lparam);   /* user lparam pointers. */
+ULONG MsgPostedBits(const QUEUED_MESSAGE *qm); /* the QS_* kind of a posted message. */
+BOOLEAN HotkeyRegister(W32THREAD *t, HWND hwnd, int id, UINT modifiers, UINT vk);
+BOOLEAN HotkeyUnregister(W32THREAD *t, HWND hwnd, int id);
+void HotkeyRemoveWindow(WND *w);
+void HotkeyRemoveThread(W32THREAD *t);
+BOOLEAN HotkeyInput(const MimeInputEvent *ev);
 BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flags, BOOLEAN wait);
 void MsgProcessSent(W32THREAD *t);
 ULONG MsgInSendFlags(W32THREAD *t);
@@ -1063,6 +1069,7 @@ void InputCursorMoved(void);
 void InputCursorShown(void);
 void InputForegroundChanged(void);
 BOOLEAN RawInputEvent(const MimeInputEvent *ev, BOOLEAN injected);
+BOOLEAN RawInputNoHotkeys(void);
 void RawPadEvent(const MimeInputEvent *ev);
 /* host toasts and launcher integration, shell.c. */
 void ShellInitialize(void);

@@ -415,6 +415,7 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
     ClipboardThreadDestroyed(t);
     DndThreadDestroyed(t);
     TimerRemoveThread(t);
+    HotkeyRemoveThread(t);
     HookRemoveThread(t);
     leave_group(t);
     free_message_list(&t->Posted);

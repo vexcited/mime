@@ -572,12 +572,13 @@ WINUSERAPI BOOL WINAPI DrawAnimatedRects(HWND hwnd, int animation, const RECT *f
 
 WINUSERAPI BOOL WINAPI RegisterHotKey(HWND hwnd, int id, UINT modifiers, UINT vk)
 {
-    return TRUE;
+    ULONG key[3] = {(ULONG)id, modifiers, vk};
+    return (BOOL)NtUserCallTwoParam((ULONG_PTR)hwnd, (ULONG_PTR)key, MIME_TWOPARAM_REGISTERHOTKEY);
 }
 
 WINUSERAPI BOOL WINAPI UnregisterHotKey(HWND hwnd, int id)
 {
-    return TRUE;
+    return (BOOL)NtUserCallTwoParam((ULONG_PTR)hwnd, (ULONG_PTR)(LONG_PTR)id, MIME_TWOPARAM_UNREGISTERHOTKEY);
 }
 
 WINUSERAPI UINT WINAPI GetDoubleClickTime(void)
