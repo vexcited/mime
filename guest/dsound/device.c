@@ -262,6 +262,8 @@ static HRESULT initialize(DSDEVICE *d, LPCGUID guid)
         return DSERR_ALREADYINITIALIZED;
     if (!DsResolveDevice(guid, &d->guid, FALSE))
         return DSERR_NODRIVER;
+    if (!IsEqualGUID(&d->guid, &DsDeviceGuid))
+        DsMixerDevice(&d->guid);
     /* the primary buffer is 22050 hz stereo 8-bit until a program sets its format. */
     DSBUFFERDESC desc = {sizeof(desc), DSBCAPS_PRIMARYBUFFER | DSBCAPS_CTRL3D};
     DSBUFFER *primary = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*primary));

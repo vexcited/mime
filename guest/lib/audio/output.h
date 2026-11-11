@@ -18,8 +18,8 @@ typedef struct MimeOutput {
     BOOL started;
 } MimeOutput;
 
-/* bits is 16, 24 or 32, and 32 with is_float for floats. */
-NTSTATUS MimeOutputOpen(MimeOutput *o, UINT32 rate, UINT32 channels, UINT32 bits, BOOL is_float);
+/* device is a host device of devices.h or 0 for the default one. bits is 16, 24 or 32, and 32 with is_float for floats. */
+NTSTATUS MimeOutputOpen(MimeOutput *o, UINT32 device, UINT32 rate, UINT32 channels, UINT32 bits, BOOL is_float);
 void MimeOutputClose(MimeOutput *o);
 NTSTATUS MimeOutputStart(MimeOutput *o);
 void MimeOutputStop(MimeOutput *o);

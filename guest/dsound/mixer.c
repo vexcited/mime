@@ -7,8 +7,12 @@
  */
 #include "dsound_private.h"
 
+#include "../lib/audio/devices.h"
+
 static MimeOutput output;
 static BOOL output_open, output_failed;
+static BOOL output_chosen;
+static GUID output_device;
 static HANDLE wake, thread;
 static float mix[MIX_PERIOD * MIX_CHANNELS];
 /* paces the passes when there is no host stream. */
@@ -391,10 +395,27 @@ static UINT32 passes_due(void)
     return (UINT32)(due - clock_passes);
 }
 
+/*
+ * every device of the process shares the one mix, so it plays on the device chosen first, until the mix is open. a
+ * device the host lost by then gives way to the default one.
+ */
+void DsMixerDevice(const GUID *guid)
+{
+    RtlEnterCriticalSection(&DsLock);
+    if (!output_open && !output_chosen) {
+        output_device = *guid;
+        output_chosen = TRUE;
+    }
+    RtlLeaveCriticalSection(&DsLock);
+}
+
 static void begin(void)
 {
     if (!output_open && !output_failed) {
-        if (NT_SUCCESS(MimeOutputOpen(&output, MIX_RATE, MIX_CHANNELS, 32, TRUE)))
+        UINT32 host = 0;
+        if (output_chosen && !MimeAudioEndpointHost(FALSE, &output_device, &host))
+            host = 0;
+        if (NT_SUCCESS(MimeOutputOpen(&output, host, MIX_RATE, MIX_CHANNELS, 32, TRUE)))
             output_open = TRUE;
         else
             output_failed = TRUE;

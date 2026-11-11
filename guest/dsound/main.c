@@ -7,6 +7,8 @@
 #include "dsound_private.h"
 #include "amplitude.h"
 
+#include "../lib/audio/devices.h"
+
 int _fltused = 0x9875;
 
 RTL_CRITICAL_SECTION DsLock;
@@ -112,9 +114,10 @@ float DsAmplitude(LONG hundredths)
 
 /* ------------------------------------------------------------------ devices */
 
-/* null and the default ids name the one device too. */
+/* null and the default ids name the host's default device, and the guid of another device of the host names it. */
 BOOL DsResolveDevice(LPCGUID requested, GUID *out, BOOL capture)
 {
+    UINT32 host;
     if (capture)
         return FALSE;
     if (!requested || IsEqualGUID(requested, &GUID_NULL) || IsEqualGUID(requested, &DSDEVID_DefaultPlayback) ||
@@ -122,7 +125,10 @@ BOOL DsResolveDevice(LPCGUID requested, GUID *out, BOOL capture)
         *out = DsDeviceGuid;
         return TRUE;
     }
-    return FALSE;
+    if (!MimeAudioEndpointHost(FALSE, requested, &host))
+        return FALSE;
+    *out = *requested;
+    return TRUE;
 }
 
 static HRESULT create(LPCGUID guid, DWORD version, REFIID iid, void **out, IUnknown *outer)
@@ -195,7 +201,23 @@ static HRESULT enumerate(LPDSENUMCALLBACKW w, LPDSENUMCALLBACKA a, void *context
     if (!call_enum(w, a, nullptr, L"Primary Sound Driver", L"", context))
         return DS_OK;
     GUID guid = DsDeviceGuid;
-    call_enum(w, a, &guid, DsDeviceName, DsDeviceModule, context);
+    if (!call_enum(w, a, &guid, DsDeviceName, DsDeviceModule, context))
+        return DS_OK;
+    MimeAudioEndpoint *all = HeapAlloc(GetProcessHeap(), 0, sizeof(*all) * MIME_AUDIO_ENDPOINTS);
+    if (!all)
+        return DS_OK;
+    UINT32 count = MimeAudioEndpoints(FALSE, all);
+    for (UINT32 i = 1; i < count; i++) {
+        const GUID *g = &all[i].guid;
+        WCHAR module[64];
+        wsprintfW(module, L"{0.0.0.00000000}.{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}", g->Data1, g->Data2,
+                  g->Data3, g->Data4[0], g->Data4[1], g->Data4[2], g->Data4[3], g->Data4[4], g->Data4[5], g->Data4[6],
+                  g->Data4[7]);
+        guid = *g;
+        if (!call_enum(w, a, &guid, all[i].name, module, context))
+            break;
+    }
+    HeapFree(GetProcessHeap(), 0, all);
     return DS_OK;
 }
 

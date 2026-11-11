@@ -22,7 +22,7 @@ void MimeOutputPeriodEnd(void)
     period("timeEndPeriod");
 }
 
-NTSTATUS MimeOutputOpen(MimeOutput *o, UINT32 rate, UINT32 channels, UINT32 bits, BOOL is_float)
+NTSTATUS MimeOutputOpen(MimeOutput *o, UINT32 device, UINT32 rate, UINT32 channels, UINT32 bits, BOOL is_float)
 {
     memset(o, 0, sizeof(*o));
     if (!rate || !channels || channels > 8 || (bits != 16 && bits != 24 && bits != 32) || (is_float && bits != 32))
@@ -40,6 +40,7 @@ NTSTATUS MimeOutputOpen(MimeOutput *o, UINT32 rate, UINT32 channels, UINT32 bits
     h->is_float = is_float;
     h->frames = (MIME_AUDIO_STREAM_SIZE - MIME_AUDIO_HEADER_SIZE) / frame_bytes;
     h->volume = 65536;
+    h->device = device;
     status = NtGdiMimeAudioControl(slot, MIME_AUDIO_OPEN);
     if (!NT_SUCCESS(status)) {
         NtGdiMimeAudioControl(slot, MIME_AUDIO_CLOSE);
