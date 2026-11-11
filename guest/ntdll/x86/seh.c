@@ -120,9 +120,10 @@ BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, PCONTEXT conte
  * calls the handlers of frames newer than the target with the unwinding
  * flags, removing each from the list, then returns. the caller jumps to
  * the target frame's code itself. without a target the whole list is
- * unwound.
+ * unwound. windows returns through the context it captured with the value in eax, and code written in assembly
+ * reads it there, as LuaJIT's lj_vm_rtlunwind does.
  */
-NTDLL_EXPORT void NTAPI RtlUnwind(PVOID target_frame, PVOID target_ip, PEXCEPTION_RECORD record, PVOID value)
+PVOID NTAPI RtlpUnwind(PVOID target_frame, PVOID target_ip, PEXCEPTION_RECORD record, PVOID value)
 {
     EXCEPTION_RECORD local;
     if (!record) {
@@ -156,7 +157,14 @@ NTDLL_EXPORT void NTAPI RtlUnwind(PVOID target_frame, PVOID target_ip, PEXCEPTIO
         frame = frame->Next;
         tib->ExceptionList = frame;
     }
+    return value;
 }
+
+/* a jump, so that the caller of RtlUnwind is the caller of the code above. */
+__asm__(".text\n"
+        ".globl _RtlUnwind@16\n"
+        "_RtlUnwind@16:\n"
+        "    jmp _RtlpUnwind@16\n");
 
 NTDLL_EXPORT void NTAPI RtlUnwindEx(PVOID target_frame, PVOID target_ip, PEXCEPTION_RECORD record, PVOID value,
                                     PCONTEXT context, PVOID history)
