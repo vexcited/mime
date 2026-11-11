@@ -359,7 +359,8 @@ static DECLSPEC_NORETURN void raise_in_x64(MX_FRAME *f, const EXCEPTION_RECORD *
 {
     X86Cpu *c = &f->cpu;
     PNT_TIB tib = &NtCurrentTeb()->NtTib;
-    if (context->Rsp <= (ULONG64)tib->StackLimit + 0x1000 || context->Rsp > (ULONG64)tib->StackBase) {
+    /* the limit is only how far the stack is committed, what lies below grows when the exception is written there. */
+    if (context->Rsp <= (ULONG64)NtCurrentTeb()->DeallocationStack + 0x1000 || context->Rsp > (ULONG64)tib->StackBase) {
         mx_print("xta64: exception %08x at %p with an invalid stack pointer %p", (ULONG)record->ExceptionCode,
                  record->ExceptionAddress, (PVOID)context->Rsp);
         if (record->ExceptionCode == STATUS_ACCESS_VIOLATION)
@@ -393,7 +394,7 @@ static DECLSPEC_NORETURN void raise_in_x86(MX_FRAME *f, const MIME_EXCEPTION32 *
 {
     X86Cpu *c = &f->cpu;
     PNT_TIB tib = &NtCurrentTeb()->NtTib;
-    if (context->Esp <= (ULONG_PTR)tib->StackLimit + 0x1000 || context->Esp > (ULONG_PTR)tib->StackBase)
+    if (context->Esp <= (ULONG_PTR)NtCurrentTeb()->DeallocationStack + 0x1000 || context->Esp > (ULONG_PTR)tib->StackBase)
         mx_fatal(record->Code, "cannot deliver x86 exception on an invalid stack");
     ULONG sp = (context->Esp - sizeof(*context) - sizeof(*record) - 32) & ~15u;
     ULONG *arguments = (PULONG)(ULONG_PTR)sp;
@@ -934,6 +935,8 @@ static void env_syscall(X86Cpu *c)
         NTSTATUS status = guarded_call32(t, number, a);
         suspend_gate(t, 1);
         *last_error = NtCurrentTeb()->LastErrorValue;
+        /* the kernel grows the stack in the 64-bit teb only, the 32-bit one follows here. */
+        *(PULONG)((PUCHAR)t->teb32 + MIME_TEB32_STACK_LIMIT) = (ULONG)(ULONG_PTR)NtCurrentTeb()->NtTib.StackLimit;
         c->r[X86_RAX] = (ULONG)status;
         /* with strict handle checks, the kernel leaves its exception in the teb, to be raised in the emulated code. */
         if (NtCurrentTeb()->ExceptionCode) {
