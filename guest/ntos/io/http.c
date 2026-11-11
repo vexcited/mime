@@ -231,10 +231,21 @@ static void free_queue(HTTP_QUEUE *q)
 
 static const ULONG g_url_mapping[4] = {1, 1, 1, 1};
 
+/* localhost, 127.0.0.0/8 and ::1. the v4 address mapped into v6 is not one for http.sys. */
+static BOOLEAN is_loopback(const HTTP_URLREG *url)
+{
+    static const UCHAR v6[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+    if (url->Kind == HTTP_URL_HOST)
+        return url->HostLength == 9 && !memcmp(url->Host, L"localhost", 9 * sizeof(WCHAR));
+    if (url->Kind != HTTP_URL_IP)
+        return FALSE;
+    return url->IpFamily == 2 ? url->Ip[0] == 127 : !memcmp(url->Ip, v6, sizeof(v6));
+}
+
 /*
  * without a reservation for it, only the system and the administrators may take a prefix. the reservations that
- * http.sys keeps for netsh http add urlacl are not read yet, so a user's only way in is the prefix every user may
- * listen on.
+ * http.sys keeps for netsh http add urlacl are not read yet, so a user's ways in are the prefix every user may
+ * listen on and, as on windows, a loopback host on a port above 1024.
  */
 static NTSTATUS url_access(const HTTP_URLREG *url)
 {
@@ -248,6 +259,8 @@ static NTSTATUS url_access(const HTTP_URLREG *url)
     static const WCHAR temporary[] = L"/temporary_listen_addresses/";
     if (url->Kind == HTTP_URL_STRONG && url->Port == 80 && url->SegmentCount >= 1 && url->SegmentLengths[0] == 26 &&
         !_wcsnicmp(url->Text + url->Segments[0], temporary + 1, 26))
+        return STATUS_SUCCESS;
+    if (is_loopback(url) && url->Port > 1024)
         return STATUS_SUCCESS;
     return STATUS_ACCESS_DENIED;
 }

@@ -56,6 +56,18 @@ static BOOLEAN parse_v6(const WCHAR *s, ULONG n, UCHAR out[16])
         return FALSE;
     }
     while (i < n) {
+        /* the last 32 bits may be written as a v4 address, as in ::ffff:127.0.0.1. */
+        BOOLEAN dotted = FALSE;
+        for (ULONG k = i; k < n && s[k] != ':'; k++)
+            dotted |= s[k] == '.';
+        if (dotted) {
+            UCHAR quad[4];
+            if (count > 6 || !parse_v4(s + i, n - i, quad))
+                return FALSE;
+            words[count++] = (USHORT)(quad[0] << 8 | quad[1]);
+            words[count++] = (USHORT)(quad[2] << 8 | quad[3]);
+            break;
+        }
         ULONG digits = 0, value = 0;
         while (i < n && hex_value(s[i]) >= 0) {
             value = value * 16 + hex_value(s[i]);
