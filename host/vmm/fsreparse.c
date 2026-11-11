@@ -34,7 +34,8 @@
 
 static const char *root_of(MimeVm *vm, uint32_t volume)
 {
-    return volume == MIME_FS_VOLUME_SYSTEM ? vm->paths->drive_c : "";
+    static thread_local char root[MIME_PATH_MAX];
+    return mime_fs_volume_root(vm, volume, root, sizeof(root)) ? root : "";
 }
 
 /* ------------------------------------------------------------------ reading a link */
@@ -112,9 +113,14 @@ bool mime_fs_link_read(MimeVm *vm, const char *link, MimeFsReparse *r)
     } else if (text[0] == '/') {
         const char *root = vm->paths->drive_c;
         size_t root_length = strlen(root);
+        size_t drive_length;
+        char drive = mime_fs_drive_of(text, &drive_length);
         if (!strncmp(text, root, root_length) && (text[root_length] == '/' || !text[root_length])) {
             backslashes(tail, text + root_length);
             snprintf(substitute, sizeof(substitute), "\\??\\C:%s", tail[0] ? tail : "\\");
+        } else if (drive) {
+            backslashes(tail, text + drive_length);
+            snprintf(substitute, sizeof(substitute), "\\??\\%c:%s", drive, tail[0] ? tail : "\\");
         } else {
             backslashes(tail, text);
             snprintf(substitute, sizeof(substitute), "\\??\\Z:%s", tail);
@@ -218,10 +224,9 @@ static bool link_text(MimeVm *vm, uint32_t volume, const char *link, const MimeF
     bool junction = r->tag == MIME_REPARSE_TAG_MOUNT_POINT;
     char path[MIME_PATH_MAX];
     if (junction || !(r->flags & SYMLINK_FLAG_RELATIVE)) {
-        if (!strncmp(substitute, "\\??\\", 4) && ((substitute[4] | 32) == 'c' || (substitute[4] | 32) == 'z') &&
-            substitute[5] == ':' && (substitute[6] == '\\' || !substitute[6])) {
-            bool system = (substitute[4] | 32) == 'c';
-            const char *root = system ? vm->paths->drive_c : "";
+        char root[MIME_PATH_MAX];
+        if (!strncmp(substitute, "\\??\\", 4) && substitute[4] && substitute[5] == ':' &&
+            (substitute[6] == '\\' || !substitute[6]) && mime_fs_letter_root(vm, substitute[4], root, sizeof(root))) {
             snprintf(path, sizeof(path), "%s/%s", root, substitute + (substitute[6] ? 7 : 6));
             for (char *p = path; *p; p++)
                 if (*p == '\\')

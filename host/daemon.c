@@ -834,6 +834,7 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     /* no program runs without microsoft's copies of the system files, which mime setup gets, see host/genuine.c. */
     if (!mime_genuine_open_all(&g_vm))
         return 1;
+    mime_fs_drives_start(&g_vm);
 
     if (!mime_vm_load_kernel(&g_vm))
         return 1;
