@@ -1,0 +1,17 @@
+name: Package
+description: Packs the built Mime binary.
+
+outputs:
+  tarball:
+    value: mime-x86_64-linux.tar.gz
+
+runs:
+  using: composite
+
+  steps:
+    - name: package
+      shell: bash
+      run: |
+        mkdir -p dist
+        strip --strip-debug -o dist/mime build/mime
+        tar -C dist -czf mime-x86_64-linux.tar.gz mime
