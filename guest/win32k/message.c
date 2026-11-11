@@ -756,9 +756,48 @@ static void free_input(W32THREAD *t, QUEUED_MESSAGE *qm)
         }
 }
 
+/* entries of the input queue that are input. events of the host are not and are never filtered. */
+static BOOLEAN is_input(UINT type)
+{
+    switch (type) {
+    case MIME_INPUT_MOUSE_MOVE:
+    case MIME_INPUT_MOUSE_DOWN:
+    case MIME_INPUT_MOUSE_UP:
+    case MIME_INPUT_MOUSE_WHEEL:
+    case MIME_INPUT_KEY_DOWN:
+    case MIME_INPUT_KEY_UP:
+    case MIME_INPUT_CHAR:
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/*
+ * the kinds of messages the high word of PeekMessage's flags asks for, as win32k's CalcWakeMask widens them: one kind
+ * of input asks for all input, and posted messages, timers and hot keys come together.
+ */
+static UINT wanted_kinds(UINT flags)
+{
+    UINT kinds = HIWORD(flags);
+    if (!kinds)
+        return QS_ALLINPUT | QS_SENDMESSAGE;
+    if (kinds & (QS_INPUT | 0x1800))
+        kinds |= QS_INPUT;
+    if (kinds & (QS_POSTMESSAGE | QS_TIMER | QS_HOTKEY))
+        kinds |= QS_POSTMESSAGE | QS_TIMER | QS_HOTKEY;
+    return kinds;
+}
+
 BOOLEAN MsgPeek(W32THREAD *t, MSG *out, HWND hwnd, UINT min, UINT max, UINT flags, BOOLEAN wait)
 {
     BOOLEAN remove = (flags & PM_REMOVE) != 0;
+    UINT kinds = wanted_kinds(flags);
+    /* windows finds nothing while a sent message it was not asked for waits, and receives it on the way out. */
+    if (!(kinds & QS_SENDMESSAGE) && !IsListEmpty(&t->Sent)) {
+        if (!(flags & PM_NOYIELD))
+            MsgProcessSent(t);
+        return FALSE;
+    }
     for (;;) {
         t->LastRead = W32TickCount();
         MsgProcessSent(t);
@@ -780,6 +819,8 @@ scan_posted:
                 goto scan_posted;
             }
             if (!hwnd_matches(qm->Msg.hwnd, hwnd) || !range_matches(qm->Msg.message, min, max))
+                continue;
+            if (!(kinds & (qm->Msg.message == WM_INPUT ? QS_RAWINPUT : QS_POSTMESSAGE)))
                 continue;
             *out = qm->Msg;
             t->ExtraInfo = qm->ExtraInfo;
@@ -805,6 +846,8 @@ scan_posted:
                 rescan = TRUE;
                 break;
             }
+            if (!(kinds & QS_INPUT) && is_input(qm->Input.type))
+                continue;
             BOOLEAN got = InputTranslate(t, qm, out, hwnd, min, max, remove, &consumed);
             if (got) {
                 /* the source GetCurrentInputMessageSource tells while the thread handles the message. */
@@ -835,7 +878,7 @@ scan_posted:
         if (rescan)
             continue;
 
-        if (t->QuitPosted && range_matches(WM_QUIT, min, max)) {
+        if ((kinds & QS_POSTMESSAGE) && t->QuitPosted && range_matches(WM_QUIT, min, max)) {
             out->hwnd = nullptr;
             out->message = WM_QUIT;
             out->wParam = (WPARAM)t->QuitCode;
@@ -847,7 +890,7 @@ scan_posted:
             return TRUE;
         }
 
-        if (range_matches(WM_PAINT, min, max)) {
+        if ((kinds & QS_PAINT) && range_matches(WM_PAINT, min, max)) {
             WND *w = WndFindNeedsPaint(t, hwnd);
             if (w) {
                 out->hwnd = WndHandle(w);
@@ -862,7 +905,7 @@ scan_posted:
             }
         }
 
-        if (TimerGetMessage(t, hwnd, min, max, remove, out)) {
+        if ((kinds & QS_TIMER) && TimerGetMessage(t, hwnd, min, max, remove, out)) {
             set_message_state(t, out);
             return TRUE;
         }
