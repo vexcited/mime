@@ -44,6 +44,18 @@ static void system_info(LPSYSTEM_INFO info, BOOL native)
     cpu.ProcessorLevel = 6;
     cpu.ProcessorRevision = 0x9E0A;
 #endif
+    /* the processor whose kind of chip is reported. */
+    USHORT kind = native ? machine : cpu.ProcessorArchitecture;
+#if (defined(__x86_64__) && !defined(MIME_X64_NATIVE)) || defined(__i386__)
+    /*
+     * windows on arm does not name itself to a translated program here: the machine is an x64 one, with the chip of
+     * the program's own processor. IsWow64Process2 is where it tells the truth.
+     */
+    if (machine == PROCESSOR_ARCHITECTURE_ARM64) {
+        machine = PROCESSOR_ARCHITECTURE_AMD64;
+        kind = cpu.ProcessorArchitecture;
+    }
+#endif
     memset(info, 0, sizeof(*info));
     info->wProcessorArchitecture = native ? machine : cpu.ProcessorArchitecture;
     info->dwPageSize = basic.PageSize;
@@ -51,7 +63,7 @@ static void system_info(LPSYSTEM_INFO info, BOOL native)
     info->lpMaximumApplicationAddress = (LPVOID)basic.MaximumUserModeAddress;
     info->dwActiveProcessorMask = basic.ActiveProcessorsAffinityMask;
     info->dwNumberOfProcessors = (DWORD)(UCHAR)basic.NumberOfProcessors;
-    switch (info->wProcessorArchitecture) {
+    switch (kind) {
     case PROCESSOR_ARCHITECTURE_AMD64:
         info->dwProcessorType = PROCESSOR_AMD_X8664;
         break;
@@ -72,7 +84,7 @@ void WINAPI GetSystemInfo(LPSYSTEM_INFO info)
     system_info(info, FALSE);
 }
 
-/* 32-bit and emulated programs get the real machine here too. */
+/* the real machine for a 32-bit program of an x64 system, and an x64 one for the translated programs of an arm64 system. */
 void WINAPI GetNativeSystemInfo(LPSYSTEM_INFO info)
 {
     system_info(info, TRUE);
