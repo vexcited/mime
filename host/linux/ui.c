@@ -52,6 +52,8 @@ typedef struct UiWindow {
     int state_command;
     SDL_DisplayID display; /* the display last reported to the guest. */
     bool maximized;        /* the compositor has the window maximized. */
+    bool says_maximized;   /* the compositor calls it maximized whatever its state, see set_maximized. */
+    uint64_t shown_ms;     /* when the host window was last shown. */
     bool bogus_size;       /* the compositor gave a size no display could show, which is not acted on. */
     uint64_t renderer_retry_ms; /* a renderer that failed, as with the gpu's memory full, is tried again then. */
     int geometry_w, geometry_h; /* the window geometry last given to the compositor, in surface coordinates. */
@@ -1171,6 +1173,7 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg)
         return false;
     }
     w->popup = popup;
+    w->says_maximized = false;
     w->owner = cfg->owner_id;
     w->renderer = SDL_CreateRenderer(w->window, nullptr);
     if (!w->renderer) {
@@ -1346,6 +1349,31 @@ static int limit_of(int32_t limit, int outside, double scale)
 static void unminimize(UiWindow *w, bool activate);
 static Uint32 size_timer(void *data, SDL_TimerID timer, Uint32 interval);
 
+/*
+ * hyprland tells every window it is maximized, tiled or floating, so that none draws shadows. the state says nothing
+ * there, and sdl sends no request to maximize a window it takes for maximized. hyprland also takes either request as
+ * a toggle: unset_maximized on a window that is not maximized maximizes it. such a window is asked directly, and only
+ * for a change of the state asked before.
+ */
+enum { XDG_TOPLEVEL_SET_MAXIMIZED = 9, XDG_TOPLEVEL_UNSET_MAXIMIZED = 10 };
+
+static void set_maximized(UiWindow *w, bool maximized)
+{
+    if (!w->says_maximized) {
+        if (maximized)
+            SDL_MaximizeWindow(w->window);
+        else
+            SDL_RestoreWindow(w->window);
+        return;
+    }
+    struct wl_proxy *toplevel = SDL_GetPointerProperty(SDL_GetWindowProperties(w->window),
+                                                       SDL_PROP_WINDOW_WAYLAND_XDG_TOPLEVEL_POINTER, nullptr);
+    if (toplevel)
+        wl_proxy_marshal_flags(toplevel, maximized ? XDG_TOPLEVEL_SET_MAXIMIZED : XDG_TOPLEVEL_UNSET_MAXIMIZED, nullptr,
+                               wl_proxy_get_version(toplevel), 0);
+    w->maximized = maximized;
+}
+
 static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
 {
     if (w->state_pending) {
@@ -1458,8 +1486,10 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
     if (cfg->flags & MIME_WIN_VISIBLE) {
         bool opening = !w->shown;
         restore_renderer(w);
-        if (opening)
+        if (opening) {
             SDL_ShowWindow(w->window);
+            w->shown_ms = now_ms();
+        }
         if (SDL_GetWindowFlags(w->window) & SDL_WINDOW_MINIMIZED)
             unminimize(w, (cfg->flags & MIME_WIN_ACTIVATE) != 0);
         else if (cfg->flags & MIME_WIN_ACTIVATE)
@@ -1468,6 +1498,9 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
     } else if (w->shown) {
         SDL_HideWindow(w->window);
         w->shown = false;
+        /* the window that shows again is a new one to the compositor. */
+        if (w->says_maximized)
+            w->maximized = false;
         mime_vk_window_hidden(w->id);
         drop_renderer(w);
     }
@@ -1476,9 +1509,9 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
     bool maximize = !fullscreen && !w->popup && (cfg->flags & (MIME_WIN_MAXIMIZED | MIME_WIN_VISIBLE)) ==
                                                     (MIME_WIN_MAXIMIZED | MIME_WIN_VISIBLE);
     if (maximize && !w->maximized)
-        SDL_MaximizeWindow(w->window);
+        set_maximized(w, true);
     else if (!maximize && w->maximized && !w->popup && !fullscreen)
-        SDL_RestoreWindow(w->window);
+        set_maximized(w, false);
     if (fullscreen != w->fullscreen && !w->popup) {
         w->fullscreen = fullscreen;
         w->fullscreen_ms = now_ms();
@@ -1559,9 +1592,11 @@ static void unminimize(UiWindow *w, bool activate)
     SDL_HideWindow(w->window);
     /* a hidden window keeps its minimized state for the next show, this drops it. */
     SDL_RestoreWindow(w->window);
-    if (maximized)
+    if (maximized && !w->says_maximized)
         SDL_MaximizeWindow(w->window);
     SDL_ShowWindow(w->window);
+    if (maximized && w->says_maximized)
+        set_maximized(w, true);
     w->geometry_w = w->geometry_h = 0;
     w->set_app_id[0] = 0;
     apply_app_id(w);
@@ -2879,7 +2914,11 @@ static void handle_event(const SDL_Event *e)
     }
     case SDL_EVENT_WINDOW_MAXIMIZED: {
         UiWindow *w = find_by_sdl(e->window.windowID);
-        if (w && !w->popup) {
+        /* a window nobody maximized, called so as it opens: the compositor says it of every window. */
+        if (w && !w->popup && g_wayland && !w->maximized && !(w->config.flags & MIME_WIN_MAXIMIZED) &&
+            now_ms() - w->shown_ms < 1000)
+            w->says_maximized = true;
+        if (w && !w->popup && !w->says_maximized) {
             w->maximized = true;
             if (!(w->config.flags & MIME_WIN_MAXIMIZED) && !w->fullscreen)
                 request_window_state(w, 3);
