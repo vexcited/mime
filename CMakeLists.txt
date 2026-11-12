@@ -1676,8 +1676,8 @@ set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${CMAKE_SOURCE_DIR}/gen/theme
 
 get_property(rom_files GLOBAL PROPERTY MIME_ROM_FILES)
 # microsoft's originals of a few system files are fetched by the host at run time, never put in the build: the rom and
-# the host only know them by the manifest, see host/genuine.c.
-set(genuine_manifest ${CMAKE_SOURCE_DIR}/data/genuine.manifest)
+# the host only know them by the manifest of the guest's windows, see host/genuine.c.
+set(genuine_manifest ${CMAKE_SOURCE_DIR}/data/genuine-${MIME_GUEST_ARCH}.manifest)
 add_custom_command(OUTPUT ${MIME_BUILD_GEN}/rom.S
     COMMAND ${CMAKE_COMMAND} -DOUTPUT=${MIME_BUILD_GEN}/rom.S -DSYSTEM=${CMAKE_SYSTEM_NAME} "-DFILES=${rom_files}"
         -DMANIFEST=${genuine_manifest} -P ${CMAKE_SOURCE_DIR}/scripts/rom.cmake
@@ -1737,19 +1737,24 @@ set_source_files_properties(host/vulkan/vulkan.c host/vulkan/budget.c host/vulka
     INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${vulkan_gen}")
 
 if(APPLE)
-    mime_glob(host_sources host/*.c host/vmm/*.c host/ui/*.c host/gpu/*.c host/audio/*.c host/camera/*.c)
+    enable_language(OBJC)
+    mime_glob(host_sources host/*.c host/vmm/*.c host/ui/*.c host/ui/*.m host/gpu/*.c host/gpu/*.m
+        host/audio/*.c host/camera/*.c)
 
-    mime_glob(vkmetal_sources host/vkmetal/*.c host/vkmetal/*.cpp)
-    set_source_files_properties(${vkmetal_sources} PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers
+    mime_glob(vkmetal_sources host/vkmetal/*.m host/vkmetal/*.cpp)
+    # the driver keeps its metal objects in vulkan's c objects, which own them by hand as gpu.m does.
+    set_source_files_properties(${vkmetal_sources} PROPERTIES COMPILE_OPTIONS "-Wno-missing-field-initializers;-fno-objc-arc"
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${CMAKE_SOURCE_DIR}/third_party/SPIRV-Cross")
     set_source_files_properties(host/vkmetal/msl.cpp PROPERTIES COMPILE_OPTIONS "-std=c++17;-Wno-missing-field-initializers")
 
     add_executable(mime ${host_sources} ${vulkan_host_sources} ${vkmetal_sources} ${MIME_BUILD_GEN}/rom.S
         $<TARGET_OBJECTS:mvk-host> $<TARGET_OBJECTS:shaderc>)
-    set_source_files_properties(host/gpu/gpu.c host/gpu/shader.c PROPERTIES COMPILE_OPTIONS -fblocks
+    set_source_files_properties(host/gpu/gpu.m host/gpu/shader.c PROPERTIES COMPILE_OPTIONS -fblocks
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party;${CMAKE_SOURCE_DIR}/third_party/glslang")
+    # the replay keeps its metal objects in c tables it grows with realloc, which arc cannot own.
+    set_property(SOURCE host/gpu/gpu.m APPEND PROPERTY COMPILE_OPTIONS -fno-objc-arc)
     target_link_libraries(mime PRIVATE "-framework Hypervisor" "-framework AppKit" "-framework QuartzCore"
-        "-framework CoreGraphics" "-framework ImageIO" "-framework Metal" "-framework IOSurface" "-framework Carbon"
+        "-framework CoreGraphics" "-framework ImageIO" "-framework Metal" "-framework MetalFX" "-framework IOSurface" "-framework Carbon"
         "-framework AudioToolbox" "-framework CoreAudio" "-framework Security" objc)
     set_target_properties(mime PROPERTIES LINKER_LANGUAGE CXX)
     add_custom_command(TARGET mime POST_BUILD
@@ -1798,8 +1803,10 @@ endif()
 
 target_include_directories(mime PRIVATE include ${MIME_GEN})
 set_source_files_properties(host/main.c PROPERTIES COMPILE_DEFINITIONS MIME_VERSION_STRING="${PROJECT_VERSION}")
-target_compile_options(mime PRIVATE $<$<COMPILE_LANGUAGE:C>:${host_warnings}>)
+target_compile_options(mime PRIVATE $<$<COMPILE_LANGUAGE:C,OBJC>:${host_warnings}>)
+target_compile_options(mime PRIVATE $<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>)
 set_target_properties(mime PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS ${host_gnu}
+    OBJC_STANDARD 23 OBJC_STANDARD_REQUIRED ON OBJC_EXTENSIONS ${host_gnu}
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set_source_files_properties(${MIME_BUILD_GEN}/rom.S PROPERTIES OBJECT_DEPENDS "${rom_files}")
 add_dependencies(mime rom)
@@ -1813,4 +1820,8 @@ target_sources(mime PRIVATE ${MIME_BUILD_GEN}/genuine_manifest.h)
 set_source_files_properties(host/genuine.c PROPERTIES INCLUDE_DIRECTORIES ${MIME_BUILD_GEN}
     OBJECT_DEPENDS ${MIME_BUILD_GEN}/genuine_manifest.h)
 find_package(CURL REQUIRED)
+# the sdk's usr/include as -isystem comes before libc++'s headers and breaks them, and the compiler searches it already.
+if(CURL_INCLUDE_DIR MATCHES "\\.sdk/usr/include$")
+    set_target_properties(CURL::libcurl PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "")
+endif()
 target_link_libraries(mime PRIVATE CURL::libcurl)

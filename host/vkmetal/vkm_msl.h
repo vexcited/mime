@@ -6,8 +6,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "mtl.h"
-
 #define VKM_SETS 8
 #define VKM_BUFFER_PUSH 8
 #define VKM_BUFFER_AUX 9
@@ -20,6 +18,11 @@
 #define VKM_TEXTURE_SLOTS 128
 /* the descriptor set of the buffers the geometry stage's emulation binds, each a buffer of its own. */
 #define VKM_EMU_SET 31
+
+/* a compute shader's threadgroup size, as MTLSize has it, which C++ cannot include. */
+typedef struct VkmSize {
+    size_t width, height, depth;
+} VkmSize;
 
 typedef struct VkmInput {
     uint8_t location, components;
@@ -43,7 +46,7 @@ typedef struct VkmMslResult {
     char *source; /* malloced. */
     char entry[128];
     char error[256];
-    MTLSize local;
+    VkmSize local;
     uint32_t inputs;
     VkmInput input[VKM_VERTEX_ATTRIBUTES];
     uint32_t outputs;
@@ -55,6 +58,12 @@ typedef struct VkmMslResult {
  * dual_source a fragment shader's output 1 is the second source of output 0's blending.
  */
 enum { VKM_WIDEN_NONE, VKM_WIDEN_UINT8, VKM_WIDEN_UINT16 };
+
+/*
+ * accel.m: the table shaders find acceleration structures in by address, its address and its entry count less one.
+ * a descriptor or a conversion from an address gives a structure as that address.
+ */
+void vkm_as_table(uint64_t *address, uint32_t *mask);
 
 bool vkm_msl(const uint32_t *spirv, size_t words, const char *entry, int model, const VkmMslBinding *bindings,
              uint32_t binding_count, uint32_t set_mask, const VkmMslSpec *spec, uint32_t spec_count,

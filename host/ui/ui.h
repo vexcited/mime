@@ -65,9 +65,10 @@ void mime_ui_beep(uint32_t type);
 
 /*
  * places a CAMetalLayer over a window-relative rectangle in guest pixels. a flipped layer shows OpenGL bottom-first
- * rows upright. window_id 0 hides it.
+ * rows upright. a native one has drawables of the display's pixels when its window is stretched, for its owner to
+ * upscale into. window_id 0 hides it.
  */
-void *mime_ui_metal_layer_create(void *device, bool flipped);
+void *mime_ui_metal_layer_create(void *device, bool flipped, bool native);
 void mime_ui_metal_layer_place(void *layer, uint32_t window_id, int32_t x, int32_t y, uint32_t width,
                                uint32_t height, bool sync, uint32_t order);
 void mime_ui_metal_layer_destroy(void *layer);

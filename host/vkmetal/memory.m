@@ -11,10 +11,9 @@ static const NSUInteger g_untracked = MTLResourceHazardTrackingModeUntracked;
 
 /* ------------------------------------------------------------------ memory. */
 
-static id heap_buffer(id heap, uint64_t size, NSUInteger options)
+static id<MTLBuffer> heap_buffer(id<MTLHeap> heap, uint64_t size, NSUInteger options)
 {
-    return MTL_MSG(id (*)(id, SEL, NSUInteger, NSUInteger, NSUInteger), heap, "newBufferWithLength:options:offset:",
-                   size, options, 0);
+    return [heap newBufferWithLength:size options:options offset:0];
 }
 
 /* ------------------------------------------------------------------ the allocations by address. */
@@ -90,64 +89,61 @@ static VKAPI_ATTR VkResult VKAPI_CALL AllocateMemory(VkDevice device, const VkMe
     VkDeviceMemory m = vkm_zalloc(sizeof(*m));
     if (!m)
         return VK_ERROR_OUT_OF_HOST_MEMORY;
-    void *pool = objc_autoreleasePoolPush();
-    const VkImportMemoryHostPointerInfoEXT *host =
-        vkm_find(info->pNext, VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT);
-    const VkImportMemoryMetalHandleInfoEXT *metal =
-        vkm_find(info->pNext, VK_STRUCTURE_TYPE_IMPORT_MEMORY_METAL_HANDLE_INFO_EXT);
-    const VkExportMemoryAllocateInfo *export = vkm_find(info->pNext, VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO);
-    uint64_t size = MIME_MAX(info->allocationSize, (VkDeviceSize)16);
-    m->type = info->memoryTypeIndex;
-    m->exported = export && export->handleTypes;
-    m->size = size;
-    NSUInteger shared = MTLResourceStorageModeShared | g_untracked;
-    NSUInteger private = MTLResourceStorageModePrivate | g_untracked;
-    if (host && host->handleType) {
-        m->buffer = MTL_MSG(id (*)(id, SEL, void *, NSUInteger, NSUInteger, id), device->mtl,
-                            "newBufferWithBytesNoCopy:length:options:deallocator:", host->pHostPointer, size, shared,
-                            nullptr);
-        m->map = host->pHostPointer;
-    } else if (metal && metal->handle) {
-        /* another process's image comes as its texture, which the image bound here takes. */
-        if (metal->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLTEXTURE_BIT_EXT) {
-            m->texture = mtl_retain((id)metal->handle);
-            m->heap = mtl_retain(M_ID(m->texture, "heap"));
+    @autoreleasepool {
+        const VkImportMemoryHostPointerInfoEXT *host =
+            vkm_find(info->pNext, VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT);
+        const VkImportMemoryMetalHandleInfoEXT *metal =
+            vkm_find(info->pNext, VK_STRUCTURE_TYPE_IMPORT_MEMORY_METAL_HANDLE_INFO_EXT);
+        const VkExportMemoryAllocateInfo *export = vkm_find(info->pNext, VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO);
+        uint64_t size = MIME_MAX(info->allocationSize, (VkDeviceSize)16);
+        m->type = info->memoryTypeIndex;
+        m->exported = export && export->handleTypes;
+        m->size = size;
+        NSUInteger shared = MTLResourceStorageModeShared | g_untracked;
+        NSUInteger private = MTLResourceStorageModePrivate | g_untracked;
+        if (host && host->handleType) {
+            m->buffer = [device->mtl newBufferWithBytesNoCopy:host->pHostPointer length:size options:shared
+                                                  deallocator:nil];
+            m->map = host->pHostPointer;
+        } else if (metal && metal->handle) {
+            /* another process's image comes as its texture, which the image bound here takes. */
+            if (metal->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLTEXTURE_BIT_EXT) {
+                m->texture = [(id<MTLTexture>)metal->handle retain];
+                m->heap = [m->texture.heap retain];
+            } else {
+                m->heap = [(id<MTLHeap>)metal->handle retain];
+            }
+            if (m->heap) {
+                m->size = size = m->heap.size;
+                bool cpu = m->heap.storageMode == MTLStorageModeShared;
+                m->buffer = heap_buffer(m->heap, size, cpu ? shared : private);
+                m->map = cpu && m->buffer ? m->buffer.contents : nullptr;
+            }
+        } else if (m->type == VKM_MEMORY_HOST) {
+            m->buffer = [device->mtl newBufferWithLength:size options:shared];
+            m->map = m->buffer ? m->buffer.contents : nullptr;
         } else {
-            m->heap = mtl_retain((id)metal->handle);
-        }
-        if (m->heap) {
-            m->size = size = M_U64(m->heap, "size");
-            bool cpu = M_U(m->heap, "storageMode") == MTLStorageModeShared;
-            m->buffer = heap_buffer(m->heap, size, cpu ? shared : private);
-            m->map = cpu && m->buffer ? M_PTR(m->buffer, "contents") : nullptr;
-        }
-    } else if (m->type == VKM_MEMORY_HOST) {
-        m->buffer = MTL_MSG(id (*)(id, SEL, NSUInteger, NSUInteger), device->mtl, "newBufferWithLength:options:", size,
-                            shared);
-        m->map = m->buffer ? M_PTR(m->buffer, "contents") : nullptr;
-    } else {
-        MTLSizeAndAlign sa = MTL_MSG(MTLSizeAndAlign (*)(id, SEL, NSUInteger, NSUInteger), device->mtl,
-                                     "heapBufferSizeAndAlignWithLength:options:", size, private);
-        id desc = mtl_new("MTLHeapDescriptor");
-        M_V_I(desc, "setType:", MTLHeapTypePlacement);
-        M_V_U(desc, "setStorageMode:", MTLStorageModePrivate);
-        M_V_U(desc, "setHazardTrackingMode:", MTLHazardTrackingModeUntracked);
-        M_V_U(desc, "setSize:", MIME_ALIGN_UP(MIME_MAX(sa.size, size), (uint64_t)MIME_MAX(sa.align, 16384)));
-        m->heap = M_ID_ID(device->mtl, "newHeapWithDescriptor:", desc);
-        mtl_release(desc);
-        if (m->heap) {
-            m->size = size = M_U64(m->heap, "size");
-            m->buffer = heap_buffer(m->heap, size, private);
+            MTLSizeAndAlign sa = [device->mtl heapBufferSizeAndAlignWithLength:size options:private];
+            MTLHeapDescriptor *desc = [[MTLHeapDescriptor alloc] init];
+            desc.type = MTLHeapTypePlacement;
+            desc.storageMode = MTLStorageModePrivate;
+            desc.hazardTrackingMode = MTLHazardTrackingModeUntracked;
+            desc.size = MIME_ALIGN_UP(MIME_MAX(sa.size, size), (uint64_t)MIME_MAX(sa.align, 16384));
+            m->heap = [device->mtl newHeapWithDescriptor:desc];
+            [desc release];
+            if (m->heap) {
+                m->size = size = m->heap.size;
+                m->buffer = heap_buffer(m->heap, size, private);
+            }
         }
     }
-    objc_autoreleasePoolPop(pool);
     if (!m->buffer && !m->texture) {
-        mtl_release(m->heap);
+        [m->heap release];
         free(m);
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
-    m->gpu = m->buffer ? M_U64(m->buffer, "gpuAddress") : 0;
-    vkm_resident(device, m->heap ? m->heap : m->buffer ? m->buffer : m->texture);
+    m->gpu = m->buffer ? m->buffer.gpuAddress : 0;
+    vkm_resident(device, m->heap ? (id<MTLAllocation>)m->heap : m->buffer ? (id<MTLAllocation>)m->buffer : m->texture);
     memory_register(device, m);
     *out = m;
     return VK_SUCCESS;
@@ -158,7 +154,7 @@ static VKAPI_ATTR void VKAPI_CALL FreeMemory(VkDevice device, VkDeviceMemory m, 
     if (!m)
         return;
     memory_unregister(device, m);
-    id resident = m->heap ? m->heap : m->buffer ? m->buffer : m->texture;
+    id resident = m->heap ? (id)m->heap : m->buffer ? (id)m->buffer : m->texture;
     vkm_release_later(device, m->texture, m->texture == resident);
     vkm_release_later(device, m->buffer, m->buffer == resident);
     vkm_release_later(device, m->heap, m->heap == resident);
@@ -204,9 +200,9 @@ static VKAPI_ATTR VkResult VKAPI_CALL GetMemoryMetalHandleEXT(VkDevice device,
                                                               const VkMemoryGetMetalHandleInfoEXT *info, void **out)
 {
     VkDeviceMemory m = info->memory;
-    id handle = info->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLTEXTURE_BIT_EXT ? m->texture
-                : info->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLHEAP_BIT_EXT  ? m->heap
-                                                                                       : nullptr;
+    id handle = info->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLTEXTURE_BIT_EXT ? (id)m->texture
+                : info->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_MTLHEAP_BIT_EXT  ? (id)m->heap
+                                                                                       : nil;
     if (!handle)
         return VK_ERROR_INVALID_EXTERNAL_HANDLE;
     *out = handle;
@@ -250,10 +246,12 @@ static VKAPI_ATTR void VKAPI_CALL DestroyBuffer(VkDevice device, VkBuffer b, con
     free(b);
 }
 
-static void buffer_requirements(uint64_t size, VkMemoryRequirements *out)
+static void buffer_requirements(uint64_t size, VkBufferUsageFlags2 usage, VkMemoryRequirements *out)
 {
     out->size = MIME_ALIGN_UP(MIME_MAX(size, (uint64_t)1), (uint64_t)16);
-    out->alignment = BUFFER_ALIGN;
+    /* so a structure at the buffer's start is placed in its memory. */
+    bool structures = usage & VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR;
+    out->alignment = structures ? VKM_AS_ALIGN : BUFFER_ALIGN;
     out->memoryTypeBits = (1u << VKM_MEMORY_TYPES) - 1;
 }
 
@@ -266,14 +264,14 @@ static void dedicated(void *chain, bool prefer)
 
 static VKAPI_ATTR void VKAPI_CALL GetBufferMemoryRequirements(VkDevice device, VkBuffer b, VkMemoryRequirements *out)
 {
-    buffer_requirements(b->size, out);
+    buffer_requirements(b->size, b->usage, out);
 }
 
 static VKAPI_ATTR void VKAPI_CALL GetBufferMemoryRequirements2(VkDevice device,
                                                               const VkBufferMemoryRequirementsInfo2 *info,
                                                               VkMemoryRequirements2 *out)
 {
-    buffer_requirements(info->buffer->size, &out->memoryRequirements);
+    buffer_requirements(info->buffer->size, info->buffer->usage, &out->memoryRequirements);
     dedicated(out->pNext, false);
 }
 
@@ -281,7 +279,10 @@ static VKAPI_ATTR void VKAPI_CALL GetDeviceBufferMemoryRequirements(VkDevice dev
                                                                    const VkDeviceBufferMemoryRequirements *info,
                                                                    VkMemoryRequirements2 *out)
 {
-    buffer_requirements(info->pCreateInfo->size, &out->memoryRequirements);
+    const VkBufferUsageFlags2CreateInfo *usage2 =
+        vkm_find(info->pCreateInfo->pNext, VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO);
+    buffer_requirements(info->pCreateInfo->size, usage2 ? usage2->usage : info->pCreateInfo->usage,
+                        &out->memoryRequirements);
     dedicated(out->pNext, false);
 }
 
@@ -317,20 +318,23 @@ static VKAPI_ATTR uint64_t VKAPI_CALL GetBufferOpaqueCaptureAddress(VkDevice dev
 /* ------------------------------------------------------------------ buffer views. */
 
 /* a texture of texels over the memory from the offset on, the range bytes long. */
-static id texel_texture(VkDeviceMemory m, uint64_t offset, uint64_t range, const VkmFormat *f)
+static id<MTLTexture> texel_texture(VkDeviceMemory m, uint64_t offset, uint64_t range, const VkmFormat *f)
 {
     uint64_t texels = MIME_MAX(range / f->bytes, (uint64_t)1);
-    void *pool = objc_autoreleasePoolPush();
-    bool cpu = m->type == VKM_MEMORY_HOST;
-    id desc = MTL_MSG(id (*)(id, SEL, NSUInteger, NSUInteger, NSUInteger, NSUInteger), MTL_CLASS("MTLTextureDescriptor"),
-                      "textureBufferDescriptorWithPixelFormat:width:resourceOptions:usage:", f->pixel, texels,
-                      (cpu ? MTLResourceStorageModeShared : MTLResourceStorageModePrivate) | g_untracked,
-                      MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite |
-                          ((f->caps & VKM_CAP_ATOMIC) ? MTLTextureUsageShaderAtomic : 0));
-    id texture = MTL_MSG(id (*)(id, SEL, id, NSUInteger, NSUInteger), m->buffer,
-                         "newTextureWithDescriptor:offset:bytesPerRow:", desc, offset,
-                         MIME_ALIGN_UP(texels * f->bytes, (uint64_t)16));
-    objc_autoreleasePoolPop(pool);
+    id<MTLTexture> texture;
+    @autoreleasepool {
+        bool cpu = m->type == VKM_MEMORY_HOST;
+        NSUInteger options = (cpu ? MTLResourceStorageModeShared : MTLResourceStorageModePrivate) | g_untracked;
+        NSUInteger usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite |
+                           ((f->caps & VKM_CAP_ATOMIC) ? MTLTextureUsageShaderAtomic : 0);
+        MTLPixelFormat pixel = (MTLPixelFormat)f->pixel;
+        MTLTextureDescriptor *desc = [MTLTextureDescriptor textureBufferDescriptorWithPixelFormat:pixel
+                                                                                            width:texels
+                                                                                  resourceOptions:options
+                                                                                            usage:usage];
+        texture = [m->buffer newTextureWithDescriptor:desc offset:offset
+                                          bytesPerRow:MIME_ALIGN_UP(texels * f->bytes, (uint64_t)16)];
+    }
     return texture;
 }
 
@@ -350,7 +354,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateBufferView(VkDevice device, const Vk
         free(v);
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
-    v->rid = M_RID(v->texture, "gpuResourceID");
+    v->rid = v->texture.gpuResourceID;
     *out = v;
     return VK_SUCCESS;
 }
@@ -386,7 +390,7 @@ MTLResourceID vkm_texel_rid(VkDevice device, uint64_t address, uint64_t range, V
     t->address = address;
     t->range = range;
     t->format = format;
-    t->rid = M_RID(t->texture, "gpuResourceID");
+    t->rid = t->texture.gpuResourceID;
     t->next = m->texels;
     m->texels = t;
     pthread_mutex_unlock(&device->memory_lock);
@@ -466,37 +470,35 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateImage(VkDevice device, const VkImage
     image->usage = info->usage;
     image->flags = info->flags;
     image->tiling = info->tiling;
-    void *pool = objc_autoreleasePoolPush();
-    bool linear = info->tiling == VK_IMAGE_TILING_LINEAR;
-    id desc = mtl_new("MTLTextureDescriptor");
-    M_V_U(desc, "setTextureType:", image_texture_type(info));
-    M_V_U(desc, "setPixelFormat:", f->pixel);
-    M_V_U(desc, "setWidth:", info->extent.width);
-    M_V_U(desc, "setHeight:", info->extent.height);
-    M_V_U(desc, "setDepth:", info->extent.depth);
-    M_V_U(desc, "setMipmapLevelCount:", info->mipLevels);
-    M_V_U(desc, "setArrayLength:", info->imageType == VK_IMAGE_TYPE_3D ? 1 : info->arrayLayers);
-    M_V_U(desc, "setSampleCount:", info->samples);
-    M_V_U(desc, "setUsage:", image_usage(info, f));
-    M_V_U(desc, "setStorageMode:", linear ? MTLStorageModeShared : MTLStorageModePrivate);
-    M_V_U(desc, "setHazardTrackingMode:", MTLHazardTrackingModeUntracked);
-    image->desc = desc;
-    if (linear) {
-        NSUInteger align = MTL_MSG(NSUInteger (*)(id, SEL, NSUInteger), device->mtl,
-                                   "minimumLinearTextureAlignmentForPixelFormat:", f->pixel);
-        uint64_t row = (uint64_t)((info->extent.width + f->block_w - 1) / f->block_w) * f->bytes;
-        image->row_pitch = MIME_ALIGN_UP(row, (uint64_t)MIME_MAX(align, 16));
-        image->size = image->row_pitch * ((info->extent.height + f->block_h - 1) / f->block_h);
-        image->align = MIME_MAX(align, 16);
-    } else {
-        MTLSizeAndAlign sa = MTL_MSG(MTLSizeAndAlign (*)(id, SEL, id), device->mtl,
-                                     "heapTextureSizeAndAlignWithDescriptor:", desc);
-        image->size = sa.size;
-        image->align = sa.align;
+    @autoreleasepool {
+        bool linear = info->tiling == VK_IMAGE_TILING_LINEAR;
+        MTLTextureDescriptor *desc = [[MTLTextureDescriptor alloc] init];
+        desc.textureType = (MTLTextureType)image_texture_type(info);
+        desc.pixelFormat = (MTLPixelFormat)f->pixel;
+        desc.width = info->extent.width;
+        desc.height = info->extent.height;
+        desc.depth = info->extent.depth;
+        desc.mipmapLevelCount = info->mipLevels;
+        desc.arrayLength = info->imageType == VK_IMAGE_TYPE_3D ? 1 : info->arrayLayers;
+        desc.sampleCount = info->samples;
+        desc.usage = image_usage(info, f);
+        desc.storageMode = linear ? MTLStorageModeShared : MTLStorageModePrivate;
+        desc.hazardTrackingMode = MTLHazardTrackingModeUntracked;
+        image->desc = desc;
+        if (linear) {
+            NSUInteger align = [device->mtl minimumLinearTextureAlignmentForPixelFormat:(MTLPixelFormat)f->pixel];
+            uint64_t row = (uint64_t)((info->extent.width + f->block_w - 1) / f->block_w) * f->bytes;
+            image->row_pitch = MIME_ALIGN_UP(row, (uint64_t)MIME_MAX(align, 16));
+            image->size = image->row_pitch * ((info->extent.height + f->block_h - 1) / f->block_h);
+            image->align = MIME_MAX(align, 16);
+        } else {
+            MTLSizeAndAlign sa = [device->mtl heapTextureSizeAndAlignWithDescriptor:desc];
+            image->size = sa.size;
+            image->align = sa.align;
+        }
     }
-    objc_autoreleasePoolPop(pool);
     if (!image->size) {
-        mtl_release(image->desc);
+        [image->desc release];
         free(image);
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
@@ -508,8 +510,8 @@ static VKAPI_ATTR void VKAPI_CALL DestroyImage(VkDevice device, VkImage image, c
 {
     if (!image || image->swapchain)
         return;
-    vkm_release_later(device, image->texture, false);
-    mtl_release(image->desc);
+    vkm_release_later(device, image->texture, image->resident);
+    [image->desc release];
     free(image);
 }
 
@@ -573,26 +575,27 @@ static VkResult bind_image(VkDevice device, VkImage image, VkDeviceMemory m, VkD
 {
     if (image->swapchain)
         return VK_SUCCESS;
-    void *pool = objc_autoreleasePoolPush();
-    mtl_release(image->texture);
-    /* an imported image is the exporter's texture; any other image gets its own, even where one was before. */
-    bool imported = m->texture && !m->exported;
-    if (imported && !offset) {
-        image->texture = mtl_retain(m->texture);
-        if (M_U(m->texture, "width") != image->extent.width || M_U(m->texture, "height") != image->extent.height ||
-            M_U(m->texture, "pixelFormat") != image->fi->pixel)
-            VKM_ERROR("an image of %ux%u format %u is bound to an imported texture of %lux%lu format %lu",
-                      image->extent.width, image->extent.height, image->format, M_U(m->texture, "width"),
-                      M_U(m->texture, "height"), M_U(m->texture, "pixelFormat"));
-    } else if (image->tiling == VK_IMAGE_TILING_LINEAR)
-        image->texture = MTL_MSG(id (*)(id, SEL, id, NSUInteger, NSUInteger), m->buffer,
-                                 "newTextureWithDescriptor:offset:bytesPerRow:", image->desc, offset, image->row_pitch);
-    else if (m->heap)
-        image->texture = MTL_MSG(id (*)(id, SEL, id, NSUInteger), m->heap, "newTextureWithDescriptor:offset:",
-                                 image->desc, offset);
-    else
-        image->texture = nullptr;
-    objc_autoreleasePoolPop(pool);
+    bool imported;
+    @autoreleasepool {
+        vkm_release_later(device, image->texture, image->resident);
+        image->resident = false;
+        /* an imported image is the exporter's texture; any other image gets its own, even where one was before. */
+        imported = m->texture && !m->exported;
+        if (imported && !offset) {
+            image->texture = [m->texture retain];
+            if (m->texture.width != image->extent.width || m->texture.height != image->extent.height ||
+                m->texture.pixelFormat != image->fi->pixel)
+                VKM_ERROR("an image of %ux%u format %u is bound to an imported texture of %lux%lu format %lu",
+                          image->extent.width, image->extent.height, image->format, m->texture.width,
+                          m->texture.height, (NSUInteger)m->texture.pixelFormat);
+        } else if (image->tiling == VK_IMAGE_TILING_LINEAR)
+            image->texture = [m->buffer newTextureWithDescriptor:image->desc offset:offset
+                                                     bytesPerRow:image->row_pitch];
+        else if (m->heap)
+            image->texture = [m->heap newTextureWithDescriptor:image->desc offset:offset];
+        else
+            image->texture = nil;
+    }
     image->memory = m;
     image->offset = offset;
     if (!image->texture) {
@@ -600,7 +603,11 @@ static VkResult bind_image(VkDevice device, VkImage image, VkDeviceMemory m, VkD
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
     if (m->exported && !offset && !m->texture)
-        m->texture = mtl_retain(image->texture);
+        m->texture = [image->texture retain];
+    if (!imported && (image->texture.usage & MTLTextureUsageRenderTarget)) {
+        vkm_resident(device, image->texture);
+        image->resident = true;
+    }
     if (m->heap && !imported && image->tiling != VK_IMAGE_TILING_LINEAR)
         vkm_image_init(device, image);
     return VK_SUCCESS;
@@ -666,12 +673,11 @@ static uint8_t swizzle(VkComponentSwizzle s, uint8_t identity)
     }
 }
 
-static id texture_view(id texture, uint32_t format, uint32_t type, uint32_t level, uint32_t levels, uint32_t layer,
-                       uint32_t layers, MTLTextureSwizzleChannels sw)
+static id<MTLTexture> texture_view(id<MTLTexture> texture, uint32_t format, uint32_t type, uint32_t level,
+                                   uint32_t levels, uint32_t layer, uint32_t layers, MTLTextureSwizzleChannels sw)
 {
-    return MTL_MSG(id (*)(id, SEL, NSUInteger, NSUInteger, NSRange, NSRange, MTLTextureSwizzleChannels), texture,
-                   "newTextureViewWithPixelFormat:textureType:levels:slices:swizzle:", format, type,
-                   (NSRange){level, levels}, (NSRange){layer, layers}, sw);
+    return [texture newTextureViewWithPixelFormat:(MTLPixelFormat)format textureType:(MTLTextureType)type
+                                           levels:(NSRange){level, levels} slices:(NSRange){layer, layers} swizzle:sw];
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL CreateImageView(VkDevice device, const VkImageViewCreateInfo *info,
@@ -699,45 +705,47 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateImageView(VkDevice device, const VkI
     const VkImageViewUsageCreateInfo *usage = vkm_find(info->pNext, VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO);
     v->usage = usage ? usage->usage : image->usage;
     v->extent = vkm_level_extent(image, v->base_level);
-    void *pool = objc_autoreleasePoolPush();
-    uint32_t format = f->pixel;
-    if (image->fi->aspects & VK_IMAGE_ASPECT_STENCIL_BIT)
-        format = vkm_aspect_format(image->fi, r->aspectMask);
-    bool is3d = image->type == VK_IMAGE_TYPE_3D;
-    uint32_t type = vkm_texture_type(info->viewType, image->samples);
-    if (v->usage & (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)) {
-        MTLTextureSwizzleChannels sw = {
-            swizzle(info->components.r, MTLTextureSwizzleRed), swizzle(info->components.g, MTLTextureSwizzleGreen),
-            swizzle(info->components.b, MTLTextureSwizzleBlue), swizzle(info->components.a, MTLTextureSwizzleAlpha)};
-        /* storage textures take no swizzle. */
-        if (v->usage & VK_IMAGE_USAGE_STORAGE_BIT)
-            sw = (MTLTextureSwizzleChannels){MTLTextureSwizzleRed, MTLTextureSwizzleGreen, MTLTextureSwizzleBlue,
-                                             MTLTextureSwizzleAlpha};
-        v->texture = texture_view(image->texture, format, type, v->base_level, v->levels, is3d ? 0 : v->base_layer,
-                                  is3d ? 1 : v->layers, sw);
-        if (v->texture)
-            v->rid = M_RID(v->texture, "gpuResourceID");
-    }
-    if (v->usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
-                    VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
-        v->render_level = v->base_level;
-        v->render_slice = v->base_layer;
-        if (format == image->fi->pixel || (image->fi->aspects & VK_IMAGE_ASPECT_STENCIL_BIT)) {
-            v->render = mtl_retain(image->texture);
-        } else {
-            uint32_t base_type = M_U(image->texture, "textureType");
-            v->render = texture_view(image->texture, format, base_type, 0, image->levels, 0,
-                                     is3d ? 1 : image->layers,
-                                     (MTLTextureSwizzleChannels){MTLTextureSwizzleRed, MTLTextureSwizzleGreen,
-                                                                 MTLTextureSwizzleBlue, MTLTextureSwizzleAlpha});
+    @autoreleasepool {
+        uint32_t format = f->pixel;
+        if (image->fi->aspects & VK_IMAGE_ASPECT_STENCIL_BIT)
+            format = vkm_aspect_format(image->fi, r->aspectMask);
+        bool is3d = image->type == VK_IMAGE_TYPE_3D;
+        uint32_t type = vkm_texture_type(info->viewType, image->samples);
+        if (v->usage &
+            (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)) {
+            MTLTextureSwizzleChannels sw = {swizzle(info->components.r, MTLTextureSwizzleRed),
+                                            swizzle(info->components.g, MTLTextureSwizzleGreen),
+                                            swizzle(info->components.b, MTLTextureSwizzleBlue),
+                                            swizzle(info->components.a, MTLTextureSwizzleAlpha)};
+            /* storage textures take no swizzle. */
+            if (v->usage & VK_IMAGE_USAGE_STORAGE_BIT)
+                sw = (MTLTextureSwizzleChannels){MTLTextureSwizzleRed, MTLTextureSwizzleGreen, MTLTextureSwizzleBlue,
+                                                 MTLTextureSwizzleAlpha};
+            v->texture = texture_view(image->texture, format, type, v->base_level, v->levels, is3d ? 0 : v->base_layer,
+                                      is3d ? 1 : v->layers, sw);
+            if (v->texture)
+                v->rid = v->texture.gpuResourceID;
+        }
+        if (v->usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                        VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
+            v->render_level = v->base_level;
+            v->render_slice = v->base_layer;
+            if (format == image->fi->pixel || (image->fi->aspects & VK_IMAGE_ASPECT_STENCIL_BIT)) {
+                v->render = [image->texture retain];
+            } else {
+                uint32_t base_type = image->texture.textureType;
+                v->render = texture_view(image->texture, format, base_type, 0, image->levels, 0,
+                                         is3d ? 1 : image->layers,
+                                         (MTLTextureSwizzleChannels){MTLTextureSwizzleRed, MTLTextureSwizzleGreen,
+                                                                     MTLTextureSwizzleBlue, MTLTextureSwizzleAlpha});
+            }
         }
     }
-    objc_autoreleasePoolPop(pool);
     if ((v->usage & (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)) &&
         !v->texture) {
         VKM_ERROR("no view of format %u type %u on an image of format %u", info->format, info->viewType,
                   image->format);
-        mtl_release(v->render);
+        [v->render release];
         free(v);
         return VK_ERROR_FORMAT_NOT_SUPPORTED;
     }
@@ -787,46 +795,47 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateSampler(VkDevice device, const VkSam
     VkSampler s = vkm_zalloc(sizeof(*s));
     if (!s)
         return VK_ERROR_OUT_OF_HOST_MEMORY;
-    void *pool = objc_autoreleasePoolPush();
-    id desc = mtl_new("MTLSamplerDescriptor");
-    M_V_U(desc, "setMinFilter:", info->minFilter == VK_FILTER_LINEAR ? MTLSamplerMinMagFilterLinear
-                                                                     : MTLSamplerMinMagFilterNearest);
-    M_V_U(desc, "setMagFilter:", info->magFilter == VK_FILTER_LINEAR ? MTLSamplerMinMagFilterLinear
-                                                                     : MTLSamplerMinMagFilterNearest);
-    M_V_U(desc, "setMipFilter:", info->mipmapMode == VK_SAMPLER_MIPMAP_MODE_LINEAR ? MTLSamplerMipFilterLinear
-                                                                                  : MTLSamplerMipFilterNearest);
-    M_V_U(desc, "setSAddressMode:", address_mode(info->addressModeU));
-    M_V_U(desc, "setTAddressMode:", address_mode(info->addressModeV));
-    M_V_U(desc, "setRAddressMode:", address_mode(info->addressModeW));
-    M_V_U(desc, "setMaxAnisotropy:", info->anisotropyEnable ? MIME_MAX(1, MIME_MIN((int)info->maxAnisotropy, 16)) : 1);
-    M_V_F(desc, "setLodMinClamp:", info->minLod);
-    M_V_F(desc, "setLodMaxClamp:", info->maxLod);
-    M_V_F(desc, "setLodBias:", info->mipLodBias);
-    M_V_B(desc, "setNormalizedCoordinates:", !info->unnormalizedCoordinates);
-    if (info->compareEnable)
-        M_V_U(desc, "setCompareFunction:", vkm_compare(info->compareOp));
-    uint32_t border = MTLSamplerBorderColorTransparentBlack;
-    if (info->borderColor == VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK || info->borderColor == VK_BORDER_COLOR_INT_OPAQUE_BLACK)
-        border = MTLSamplerBorderColorOpaqueBlack;
-    else if (info->borderColor == VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE ||
-             info->borderColor == VK_BORDER_COLOR_INT_OPAQUE_WHITE)
-        border = MTLSamplerBorderColorOpaqueWhite;
-    M_V_U(desc, "setBorderColor:", border);
-    const VkSamplerReductionModeCreateInfo *reduction =
-        vkm_find(info->pNext, VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO);
-    if (reduction && reduction->reductionMode == VK_SAMPLER_REDUCTION_MODE_MIN)
-        M_V_U(desc, "setReductionMode:", MTLSamplerReductionModeMinimum);
-    else if (reduction && reduction->reductionMode == VK_SAMPLER_REDUCTION_MODE_MAX)
-        M_V_U(desc, "setReductionMode:", MTLSamplerReductionModeMaximum);
-    M_V_B(desc, "setSupportArgumentBuffers:", true);
-    s->state = M_ID_ID(device->mtl, "newSamplerStateWithDescriptor:", desc);
-    mtl_release(desc);
-    objc_autoreleasePoolPop(pool);
+    @autoreleasepool {
+        MTLSamplerDescriptor *desc = [[MTLSamplerDescriptor alloc] init];
+        desc.minFilter = info->minFilter == VK_FILTER_LINEAR ? MTLSamplerMinMagFilterLinear
+                                                             : MTLSamplerMinMagFilterNearest;
+        desc.magFilter = info->magFilter == VK_FILTER_LINEAR ? MTLSamplerMinMagFilterLinear
+                                                             : MTLSamplerMinMagFilterNearest;
+        desc.mipFilter = info->mipmapMode == VK_SAMPLER_MIPMAP_MODE_LINEAR ? MTLSamplerMipFilterLinear
+                                                                          : MTLSamplerMipFilterNearest;
+        desc.sAddressMode = (MTLSamplerAddressMode)address_mode(info->addressModeU);
+        desc.tAddressMode = (MTLSamplerAddressMode)address_mode(info->addressModeV);
+        desc.rAddressMode = (MTLSamplerAddressMode)address_mode(info->addressModeW);
+        desc.maxAnisotropy = info->anisotropyEnable ? MIME_MAX(1, MIME_MIN((int)info->maxAnisotropy, 16)) : 1;
+        desc.lodMinClamp = info->minLod;
+        desc.lodMaxClamp = info->maxLod;
+        desc.lodBias = info->mipLodBias;
+        desc.normalizedCoordinates = !info->unnormalizedCoordinates;
+        if (info->compareEnable)
+            desc.compareFunction = (MTLCompareFunction)vkm_compare(info->compareOp);
+        uint32_t border = MTLSamplerBorderColorTransparentBlack;
+        if (info->borderColor == VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK ||
+            info->borderColor == VK_BORDER_COLOR_INT_OPAQUE_BLACK)
+            border = MTLSamplerBorderColorOpaqueBlack;
+        else if (info->borderColor == VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE ||
+                 info->borderColor == VK_BORDER_COLOR_INT_OPAQUE_WHITE)
+            border = MTLSamplerBorderColorOpaqueWhite;
+        desc.borderColor = (MTLSamplerBorderColor)border;
+        const VkSamplerReductionModeCreateInfo *reduction =
+            vkm_find(info->pNext, VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO);
+        if (reduction && reduction->reductionMode == VK_SAMPLER_REDUCTION_MODE_MIN)
+            desc.reductionMode = MTLSamplerReductionModeMinimum;
+        else if (reduction && reduction->reductionMode == VK_SAMPLER_REDUCTION_MODE_MAX)
+            desc.reductionMode = MTLSamplerReductionModeMaximum;
+        desc.supportArgumentBuffers = true;
+        s->state = [device->mtl newSamplerStateWithDescriptor:desc];
+        [desc release];
+    }
     if (!s->state) {
         free(s);
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
-    s->rid = M_RID(s->state, "gpuResourceID");
+    s->rid = s->state.gpuResourceID;
     *out = s;
     return VK_SUCCESS;
 }

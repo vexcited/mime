@@ -464,8 +464,9 @@ static NTSTATUS load_image(PCUNICODE_STRING path, ULONG depth, PKLDR_DATA_TABLE_
         return status;
     MI_IMAGE_INFO info;
     status = MiParseImageHeaders(file, file_size, &info);
-    if (NT_SUCCESS(status) && info.Machine != IMAGE_FILE_MACHINE_AMD64)
-        status = STATUS_INVALID_IMAGE_FORMAT;
+    /* like MmLoadSystemImageEx, which takes the kernel's own machine only. */
+    if (NT_SUCCESS(status) && info.Machine != MIME_NATIVE_MACHINE)
+        status = STATUS_INVALID_IMAGE_PROTECT;
     if (!NT_SUCCESS(status)) {
         ExFreePool(file);
         ObDereferenceObject(file_object);

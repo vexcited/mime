@@ -397,6 +397,13 @@ public:
 		// and would otherwise declare a different IAB.
 		bool force_active_argument_buffer_resources = false;
 
+		// mime: acceleration structures are the 64-bit addresses Vulkan gives them, and a ray query looks its
+		// structure up in a table at a fixed address: entries of an address and the structure's resource id,
+		// open addressing on the address. acceleration_structure_table_mask is the entry count less one.
+		bool acceleration_structure_addresses = false;
+		uint64_t acceleration_structure_table = 0;
+		uint32_t acceleration_structure_table_mask = 0;
+
 		// Aligns each resource in an argument buffer to its assigned index value, id(N),
 		// by adding synthetic padding members in the argument buffer struct for any resources
 		// in the argument buffer that are not defined and used by the shader. This allows
@@ -907,6 +914,7 @@ protected:
 		SPVFuncImplConvertYCbCrBT2020,
 		SPVFuncImplDynamicImageSampler,
 		SPVFuncImplRayQueryIntersectionParams,
+		SPVFuncImplAccelerationStructureAt,
 		SPVFuncImplVariableDescriptor,
 		SPVFuncImplVariableSizedDescriptor,
 		SPVFuncImplVariableDescriptorArray,

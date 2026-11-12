@@ -8209,6 +8209,34 @@ void CompilerMSL::emit_custom_functions()
 			statement("");
 			break;
 
+		case SPVFuncImplAccelerationStructureAt:
+			statement("struct spvAccelerationStructureEntry");
+			begin_scope();
+			statement("ulong address;");
+			statement("raytracing::instance_acceleration_structure as;");
+			statement("ulong offsets;");
+			statement("ulong unused;");
+			end_scope_decl();
+			statement("");
+			statement("static inline raytracing::instance_acceleration_structure spvAccelerationStructureAt(ulong address)");
+			begin_scope();
+			statement("constant spvAccelerationStructureEntry *table = reinterpret_cast<constant spvAccelerationStructureEntry *>(",
+			          convert_to_string(msl_options.acceleration_structure_table), "ul);");
+			statement("uint mask = ", convert_to_string(msl_options.acceleration_structure_table_mask), "u;");
+			statement("uint i = uint(((address >> 8) * 0x9e3779b97f4a7c15ul) >> 32) & mask;");
+			statement("for (uint n = 0; n <= mask && address; n++, i = (i + 1) & mask)");
+			begin_scope();
+			statement("ulong at = table[i].address;");
+			statement("if (at == address)");
+			statement("    return table[i].as;");
+			statement("if (!at)");
+			statement("    break;");
+			end_scope();
+			statement("return raytracing::instance_acceleration_structure();");
+			end_scope();
+			statement("");
+			break;
+
 		case SPVFuncImplVariableDescriptor:
 			statement("template<typename T>");
 			statement("struct spvDescriptor");
@@ -10748,7 +10776,16 @@ void CompilerMSL::emit_instruction(const Instruction &instruction)
 		break; // Nothing to do in the body
 
 	case OpConvertUToAccelerationStructureKHR:
-		SPIRV_CROSS_THROW("ConvertUToAccelerationStructure is not supported in MSL.");
+	{
+		if (!msl_options.acceleration_structure_addresses)
+			SPIRV_CROSS_THROW("ConvertUToAccelerationStructure is not supported in MSL.");
+		// mime: the structure is its address, which comes as a 64-bit integer or two 32-bit halves.
+		auto &in_type = expression_type(ops[2]);
+		string expr = in_type.vecsize == 2 ? join("as_type<ulong>(", to_unpacked_expression(ops[2]), ")")
+		                                   : join("ulong(", to_unpacked_expression(ops[2]), ")");
+		emit_op(ops[0], ops[1], expr, should_forward(ops[2]));
+		break;
+	}
 	case OpRayQueryGetIntersectionInstanceShaderBindingTableRecordOffsetKHR:
 		SPIRV_CROSS_THROW("BindingTableRecordOffset is not supported in MSL.");
 
@@ -10758,8 +10795,14 @@ void CompilerMSL::emit_instruction(const Instruction &instruction)
 		register_write(ops[0]);
 		add_spv_func_and_recompile(SPVFuncImplRayQueryIntersectionParams);
 
+		string structure = to_expression(ops[1]);
+		if (msl_options.acceleration_structure_addresses)
+		{
+			add_spv_func_and_recompile(SPVFuncImplAccelerationStructureAt);
+			structure = join("spvAccelerationStructureAt(", structure, ")");
+		}
 		statement(to_expression(ops[0]), ".reset(", "ray(", to_expression(ops[4]), ", ", to_expression(ops[6]), ", ",
-		          to_expression(ops[5]), ", ", to_expression(ops[7]), "), ", to_expression(ops[1]), ", ", to_expression(ops[3]),
+		          to_expression(ops[5]), ", ", to_expression(ops[7]), "), ", structure, ", ", to_expression(ops[3]),
 		          ", spvMakeIntersectionParams(", to_expression(ops[2]), "));");
 		break;
 	}
@@ -10852,6 +10895,15 @@ void CompilerMSL::emit_instruction(const Instruction &instruction)
 	{
 		auto &type = get<SPIRType>(ops[0]);
 		auto &input_type = expression_type(ops[2]);
+
+		// mime: a structure is its address, which the ray tracing pipelines of vkmetal take back by a bitcast to a
+		// 64-bit integer.
+		if (opcode == OpBitcast && msl_options.acceleration_structure_addresses &&
+		    input_type.basetype == SPIRType::AccelerationStructure)
+		{
+			emit_op(ops[0], ops[1], join("ulong(", to_unpacked_expression(ops[2]), ")"), should_forward(ops[2]));
+			break;
+		}
 
 		if (opcode != OpBitcast || is_pointer(type) || is_pointer(input_type))
 		{
@@ -17523,7 +17575,9 @@ string CompilerMSL::type_to_glsl(const SPIRType &type, uint32_t id, bool member)
 		type_name = "bfloat";
 		break;
 	case SPIRType::AccelerationStructure:
-		if (msl_options.supports_msl_version(2, 4))
+		if (msl_options.acceleration_structure_addresses)
+			type_name = "ulong";
+		else if (msl_options.supports_msl_version(2, 4))
 			type_name = "raytracing::acceleration_structure<raytracing::instancing>";
 		else if (msl_options.supports_msl_version(2, 3))
 			type_name = "raytracing::instance_acceleration_structure";

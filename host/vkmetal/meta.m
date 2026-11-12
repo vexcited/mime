@@ -8,7 +8,7 @@
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static VkmCache *g_cache;
-static id g_samplers[2];
+static id<MTLSamplerState> g_samplers[2];
 
 static id cached(const void *key, size_t size)
 {
@@ -24,7 +24,7 @@ static id cache(const void *key, size_t size, id object)
     pthread_mutex_lock(&g_lock);
     id raced = vkm_cache_find(g_cache, key, size, hash);
     if (raced) {
-        mtl_release(object);
+        [object release];
         object = raced;
     } else {
         vkm_cache_add(&g_cache, key, size, hash, object);
@@ -50,46 +50,47 @@ static int pixel_kind(uint32_t pixel)
 static const char *const g_kind_type[] = {"float", "int", "uint"};
 
 /* a pipeline of meta_vs and meta_fs, or of meta_vs alone writing buffers with nothing rasterized. */
-static id pipeline_of(VkDevice device, const char *source, bool fragment, const uint32_t colors[VKM_COLORS],
-                      uint32_t mask, uint32_t samples, bool raster)
+static id<MTLRenderPipelineState> pipeline_of(VkDevice device, const char *source, bool fragment,
+                                              const uint32_t colors[VKM_COLORS], uint32_t mask, uint32_t samples,
+                                              bool raster)
 {
-    id library = vkm_library(device, source);
+    id<MTLLibrary> library = vkm_library(device, source);
     if (!library)
         return nullptr;
-    void *pool = objc_autoreleasePoolPush();
-    id vs = vkm_function(library, "meta_vs");
-    id fs = fragment ? vkm_function(library, "meta_fs") : nullptr;
-    id desc = mtl_new("MTL4RenderPipelineDescriptor");
-    M_V_ID(desc, "setVertexFunctionDescriptor:", vs);
-    if (fs)
-        M_V_ID(desc, "setFragmentFunctionDescriptor:", fs);
-    M_V_U(desc, "setRasterSampleCount:", MIME_MAX(samples, 1u));
-    M_V_U(desc, "setInputPrimitiveTopology:", raster ? MTLPrimitiveTopologyClassTriangle : MTLPrimitiveTopologyClassPoint);
-    if (!raster)
-        M_V_B(desc, "setRasterizationEnabled:", false);
-    id attachments = M_ID(desc, "colorAttachments");
-    for (uint32_t i = 0; i < VKM_COLORS; i++) {
-        if (!colors[i])
-            continue;
-        id c = M_AT(attachments, i);
-        M_V_U(c, "setPixelFormat:", colors[i]);
-        M_V_U(c, "setWriteMask:", fs && (mask & (1u << i)) ? MTLColorWriteMaskAll : MTLColorWriteMaskNone);
+    id<MTLRenderPipelineState> state;
+    @autoreleasepool {
+        MTL4LibraryFunctionDescriptor *vs = vkm_function(library, "meta_vs");
+        MTL4LibraryFunctionDescriptor *fs = fragment ? vkm_function(library, "meta_fs") : nil;
+        MTL4RenderPipelineDescriptor *desc = [[MTL4RenderPipelineDescriptor alloc] init];
+        desc.vertexFunctionDescriptor = vs;
+        if (fs)
+            desc.fragmentFunctionDescriptor = fs;
+        desc.rasterSampleCount = MIME_MAX(samples, 1u);
+        desc.inputPrimitiveTopology = raster ? MTLPrimitiveTopologyClassTriangle : MTLPrimitiveTopologyClassPoint;
+        if (!raster)
+            desc.rasterizationEnabled = false;
+        MTL4RenderPipelineColorAttachmentDescriptorArray *attachments = desc.colorAttachments;
+        for (uint32_t i = 0; i < VKM_COLORS; i++) {
+            if (!colors[i])
+                continue;
+            MTL4RenderPipelineColorAttachmentDescriptor *c = attachments[i];
+            c.pixelFormat = (MTLPixelFormat)colors[i];
+            c.writeMask = fs && (mask & (1u << i)) ? MTLColorWriteMaskAll : MTLColorWriteMaskNone;
+        }
+        NSError *error = nil;
+        state = mime_pipeline_cache_render(device->pipelines, desc, (id *)&error);
+        if (!state)
+            VKM_ERROR("no internal pipeline: %s", vkm_error_text(error));
+        [desc release];
+        [fs release];
+        [vs release];
+        [library release];
     }
-    id error = nullptr;
-    id state = MTL_MSG(id (*)(id, SEL, id, id, id *), device->compiler,
-                       "newRenderPipelineStateWithDescriptor:compilerTaskOptions:error:", desc, nullptr, &error);
-    if (!state)
-        VKM_ERROR("no internal pipeline: %s", mtl_error_text(error));
-    mtl_release(desc);
-    mtl_release(fs);
-    mtl_release(vs);
-    mtl_release(library);
-    objc_autoreleasePoolPop(pool);
     return state;
 }
 
-static id render_pipeline(VkDevice device, const char *source, bool fragment, const uint32_t colors[VKM_COLORS],
-                          uint32_t mask, uint32_t samples)
+static id<MTLRenderPipelineState> render_pipeline(VkDevice device, const char *source, bool fragment,
+                                                  const uint32_t colors[VKM_COLORS], uint32_t mask, uint32_t samples)
 {
     return pipeline_of(device, source, fragment, colors, mask, samples, true);
 }
@@ -110,8 +111,8 @@ static const char g_clear_vs[] = "#include <metal_stdlib>\n"
                                  "    return o;\n"
                                  "}\n";
 
-id vkm_meta_clear(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t mask, bool depth, bool stencil,
-                  uint32_t samples, bool layered)
+id<MTLRenderPipelineState> vkm_meta_clear(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t mask, bool depth,
+                                          bool stencil, uint32_t samples, bool layered)
 {
     struct {
         uint32_t tag;
@@ -119,7 +120,7 @@ id vkm_meta_clear(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t m
         uint32_t mask, samples, layered;
     } key = {1, {}, mask, samples, layered};
     memcpy(key.colors, colors, sizeof(key.colors));
-    id state = cached(&key, sizeof(key));
+    id<MTLRenderPipelineState> state = cached(&key, sizeof(key));
     if (state)
         return state;
     char source[4096];
@@ -143,7 +144,7 @@ id vkm_meta_clear(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t m
     return state ? cache(&key, sizeof(key), state) : nullptr;
 }
 
-id vkm_meta_depth_state(VkDevice device, bool depth, bool stencil)
+id<MTLDepthStencilState> vkm_meta_depth_state(VkDevice device, bool depth, bool stencil)
 {
     VkmDepthKey key;
     memset(&key, 0, sizeof(key));
@@ -180,12 +181,13 @@ static const char g_blit_vs[] = "#include <metal_stdlib>\n"
                                 "    return {%s};\n"
                                 "}\n";
 
-id vkm_meta_blit(VkDevice device, uint32_t format, uint32_t source_type, bool depth, uint32_t samples)
+id<MTLRenderPipelineState> vkm_meta_blit(VkDevice device, uint32_t format, uint32_t source_type, bool depth,
+                                         uint32_t samples)
 {
     struct {
         uint32_t tag, format, source_type, depth, samples;
     } key = {2, format, source_type, depth, samples};
-    id state = cached(&key, sizeof(key));
+    id<MTLRenderPipelineState> state = cached(&key, sizeof(key));
     if (state)
         return state;
     bool array = source_type == MTLTextureType2DArray, is3d = source_type == MTLTextureType3D;
@@ -224,38 +226,38 @@ id vkm_meta_blit(VkDevice device, uint32_t format, uint32_t source_type, bool de
     return state ? cache(&key, sizeof(key), state) : nullptr;
 }
 
-static id make_sampler(VkDevice device, bool linear)
+static id<MTLSamplerState> make_sampler(VkDevice device, bool linear)
 {
-    id desc = mtl_new("MTLSamplerDescriptor");
-    uint32_t filter = linear ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
-    M_V_U(desc, "setMinFilter:", filter);
-    M_V_U(desc, "setMagFilter:", filter);
-    M_V_U(desc, "setMipFilter:", MTLSamplerMipFilterNearest);
-    M_V_U(desc, "setSAddressMode:", MTLSamplerAddressModeClampToEdge);
-    M_V_U(desc, "setTAddressMode:", MTLSamplerAddressModeClampToEdge);
-    M_V_U(desc, "setRAddressMode:", MTLSamplerAddressModeClampToEdge);
-    M_V_B(desc, "setSupportArgumentBuffers:", true);
-    id state = M_ID_ID(device->mtl, "newSamplerStateWithDescriptor:", desc);
-    mtl_release(desc);
+    MTLSamplerDescriptor *desc = [[MTLSamplerDescriptor alloc] init];
+    MTLSamplerMinMagFilter filter = linear ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
+    desc.minFilter = filter;
+    desc.magFilter = filter;
+    desc.mipFilter = MTLSamplerMipFilterNearest;
+    desc.sAddressMode = MTLSamplerAddressModeClampToEdge;
+    desc.tAddressMode = MTLSamplerAddressModeClampToEdge;
+    desc.rAddressMode = MTLSamplerAddressModeClampToEdge;
+    desc.supportArgumentBuffers = true;
+    id<MTLSamplerState> state = [device->mtl newSamplerStateWithDescriptor:desc];
+    [desc release];
     return state;
 }
 
-static id sampler(VkDevice device, bool linear)
+static id<MTLSamplerState> sampler(VkDevice device, bool linear)
 {
     pthread_mutex_lock(&g_lock);
     if (!g_samplers[linear])
         g_samplers[linear] = make_sampler(device, linear);
-    id state = g_samplers[linear];
+    id<MTLSamplerState> state = g_samplers[linear];
     pthread_mutex_unlock(&g_lock);
     return state;
 }
 
-id vkm_sampler_linear(VkDevice device)
+id<MTLSamplerState> vkm_sampler_linear(VkDevice device)
 {
     return sampler(device, true);
 }
 
-id vkm_sampler_nearest(VkDevice device)
+id<MTLSamplerState> vkm_sampler_nearest(VkDevice device)
 {
     return sampler(device, false);
 }
@@ -387,32 +389,31 @@ static const char g_generate[] =
     "    cmd.concurrent_dispatch_threadgroups(uint3(w[0], w[1], w[2]), uint3(p.local[0], p.local[1], p.local[2]));\n"
     "}\n";
 
-id vkm_meta_generate(VkDevice device, bool dispatch)
+id<MTLComputePipelineState> vkm_meta_generate(VkDevice device, bool dispatch)
 {
     struct {
         uint32_t tag, dispatch;
     } key = {3, dispatch};
-    id state = cached(&key, sizeof(key));
+    id<MTLComputePipelineState> state = cached(&key, sizeof(key));
     if (state)
         return state;
     char source[sizeof(g_generate) + 64];
     snprintf(source, sizeof(source), "#define CHUNK %uu\n%s", VKM_DGC_CHUNK, g_generate);
-    id library = vkm_library(device, source);
+    id<MTLLibrary> library = vkm_library(device, source);
     if (!library)
         return nullptr;
-    void *pool = objc_autoreleasePoolPush();
-    id function = vkm_function(library, dispatch ? "meta_dispatch" : "meta_draw");
-    id desc = mtl_new("MTL4ComputePipelineDescriptor");
-    M_V_ID(desc, "setComputeFunctionDescriptor:", function);
-    id error = nullptr;
-    state = MTL_MSG(id (*)(id, SEL, id, id, id *), device->compiler,
-                    "newComputePipelineStateWithDescriptor:compilerTaskOptions:error:", desc, nullptr, &error);
-    if (!state)
-        VKM_ERROR("no generation pipeline: %s", mtl_error_text(error));
-    mtl_release(desc);
-    mtl_release(function);
-    mtl_release(library);
-    objc_autoreleasePoolPop(pool);
+    @autoreleasepool {
+        MTL4LibraryFunctionDescriptor *function = vkm_function(library, dispatch ? "meta_dispatch" : "meta_draw");
+        MTL4ComputePipelineDescriptor *desc = [[MTL4ComputePipelineDescriptor alloc] init];
+        desc.computeFunctionDescriptor = function;
+        NSError *error = nil;
+        state = mime_pipeline_cache_compute(device->pipelines, desc, (id *)&error);
+        if (!state)
+            VKM_ERROR("no generation pipeline: %s", vkm_error_text(error));
+        [desc release];
+        [function release];
+        [library release];
+    }
     return state ? cache(&key, sizeof(key), state) : nullptr;
 }
 
@@ -530,7 +531,7 @@ static const char g_xfb[] =
     "    }\n"
     "}\n";
 
-id vkm_meta_xfb(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t samples)
+id<MTLRenderPipelineState> vkm_meta_xfb(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t samples)
 {
     struct {
         uint32_t tag;
@@ -538,7 +539,7 @@ id vkm_meta_xfb(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t sam
         uint32_t samples;
     } key = {4, {}, samples};
     memcpy(key.colors, colors, sizeof(key.colors));
-    id state = cached(&key, sizeof(key));
+    id<MTLRenderPipelineState> state = cached(&key, sizeof(key));
     if (state)
         return state;
     state = pipeline_of(device, g_xfb, false, colors, 0, samples, false);
@@ -559,27 +560,61 @@ static const char g_byte_count[] =
     "    o[3] = p.first_instance;\n"
     "}\n";
 
-id vkm_meta_byte_count(VkDevice device)
+id<MTLComputePipelineState> vkm_meta_byte_count(VkDevice device)
 {
     uint32_t key = 5;
-    id state = cached(&key, sizeof(key));
+    id<MTLComputePipelineState> state = cached(&key, sizeof(key));
     if (state)
         return state;
-    id library = vkm_library(device, g_byte_count);
+    id<MTLLibrary> library = vkm_library(device, g_byte_count);
     if (!library)
         return nullptr;
-    void *pool = objc_autoreleasePoolPush();
-    id function = vkm_function(library, "meta_count");
-    id desc = mtl_new("MTL4ComputePipelineDescriptor");
-    M_V_ID(desc, "setComputeFunctionDescriptor:", function);
-    id error = nullptr;
-    state = MTL_MSG(id (*)(id, SEL, id, id, id *), device->compiler,
-                    "newComputePipelineStateWithDescriptor:compilerTaskOptions:error:", desc, nullptr, &error);
-    if (!state)
-        VKM_ERROR("no byte count pipeline: %s", mtl_error_text(error));
-    mtl_release(desc);
-    mtl_release(function);
-    mtl_release(library);
-    objc_autoreleasePoolPop(pool);
+    @autoreleasepool {
+        MTL4LibraryFunctionDescriptor *function = vkm_function(library, "meta_count");
+        MTL4ComputePipelineDescriptor *desc = [[MTL4ComputePipelineDescriptor alloc] init];
+        desc.computeFunctionDescriptor = function;
+        NSError *error = nil;
+        state = mime_pipeline_cache_compute(device->pipelines, desc, (id *)&error);
+        if (!state)
+            VKM_ERROR("no byte count pipeline: %s", vkm_error_text(error));
+        [desc release];
+        [function release];
+        [library release];
+    }
     return state ? cache(&key, sizeof(key), state) : nullptr;
+}
+
+/* a kernel of the driver's own, made once into its slot. */
+id<MTLComputePipelineState> vkm_meta_kernel(VkDevice device, const char *source, const char *name,
+                                            id<MTLComputePipelineState> *slot)
+{
+    pthread_mutex_lock(&g_lock);
+    id<MTLComputePipelineState> state = *slot;
+    pthread_mutex_unlock(&g_lock);
+    if (state)
+        return state;
+    id<MTLLibrary> library = vkm_library(device, source);
+    if (!library)
+        return nil;
+    @autoreleasepool {
+        MTL4LibraryFunctionDescriptor *function = vkm_function(library, name);
+        MTL4ComputePipelineDescriptor *desc = [[MTL4ComputePipelineDescriptor alloc] init];
+        desc.computeFunctionDescriptor = function;
+        NSError *error = nil;
+        state = mime_pipeline_cache_compute(device->pipelines, desc, (id *)&error);
+        if (!state)
+            VKM_ERROR("no %s pipeline: %s", name, vkm_error_text(error));
+        [desc release];
+        [function release];
+        [library release];
+    }
+    pthread_mutex_lock(&g_lock);
+    if (*slot) {
+        [state release];
+        state = *slot;
+    } else {
+        *slot = state;
+    }
+    pthread_mutex_unlock(&g_lock);
+    return state;
 }
