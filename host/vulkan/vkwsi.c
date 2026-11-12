@@ -290,6 +290,16 @@ typedef struct MvkWsi {
 } MvkWsi;
 
 static pthread_mutex_t g_presenters_lock = PTHREAD_MUTEX_INITIALIZER;
+/*
+ * the NVIDIA driver frees a state of the whole GPU when a device gets its second swapchain, and a present of any device
+ * that tested the state before the driver's lock reads it after, through null. presents hold this shared, a creation
+ * holds it alone.
+ */
+#ifdef PTHREAD_RWLOCK_WRITER_NONRECURSIVE_INITIALIZER_NP
+static pthread_rwlock_t g_swapchain_lock = PTHREAD_RWLOCK_WRITER_NONRECURSIVE_INITIALIZER_NP;
+#else
+static pthread_rwlock_t g_swapchain_lock = PTHREAD_RWLOCK_INITIALIZER;
+#endif
 static Presenter *g_presenters[MAX_PRESENTERS];
 static uint64_t g_swapchain_serial;
 
@@ -1003,7 +1013,9 @@ static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExte
         .oldSwapchain = p->swapchain,
     };
     VkSwapchainKHR swapchain;
+    pthread_rwlock_wrlock(&g_swapchain_lock);
     VkResult r = w->CreateSwapchain(c->device, &info, nullptr, &swapchain);
+    pthread_rwlock_unlock(&g_swapchain_lock);
     /* the old swapchain, retired by the new one, goes once no work uses it, even if replacement failed. */
     if (p->swapchain) {
         pthread_mutex_lock(&c->queue_lock);
@@ -2227,7 +2239,9 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
         s->pending[index] = true;
         VkPresentInfoKHR info = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, nullptr, 1, &p->done[target], 1, &p->swapchain,
                                  &target, nullptr};
+        pthread_rwlock_rdlock(&g_swapchain_lock);
         r = w->QueuePresent(queue, &info);
+        pthread_rwlock_unlock(&g_swapchain_lock);
         pthread_mutex_unlock(&c->queue_lock);
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
             p->stale = true;
