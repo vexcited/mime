@@ -1,8 +1,7 @@
 /*
  * dsound.dll exports: device and capture creation, enumeration, default
- * device ids, and the class objects CoCreateInstance reaches. the render
- * devices are the host's outputs, with the guids mmdevapi gives them, and
- * there is no capture device.
+ * device ids, and the class objects CoCreateInstance reaches. the devices
+ * are the host's outputs and inputs, with the guids mmdevapi gives them.
  */
 #include "dsound_private.h"
 #include "amplitude.h"
@@ -112,20 +111,20 @@ float DsAmplitude(LONG hundredths)
 BOOL DsResolveDevice(LPCGUID requested, GUID *out, BOOL capture, BOOL *follows)
 {
     UINT32 host;
-    if (capture)
-        return FALSE;
-    BOOL by_default = !requested || IsEqualGUID(requested, &GUID_NULL) || IsEqualGUID(requested, &DSDEVID_DefaultPlayback) ||
-                      IsEqualGUID(requested, &DSDEVID_DefaultVoicePlayback);
+    const GUID *usual = capture ? &DSDEVID_DefaultCapture : &DSDEVID_DefaultPlayback;
+    const GUID *voice = capture ? &DSDEVID_DefaultVoiceCapture : &DSDEVID_DefaultVoicePlayback;
+    BOOL by_default = !requested || IsEqualGUID(requested, &GUID_NULL) || IsEqualGUID(requested, usual) ||
+                      IsEqualGUID(requested, voice);
     if (follows)
         *follows = by_default;
     if (by_default) {
         MimeAudioEndpoint e;
-        if (!MimeAudioDefaultEndpoint(FALSE, &e))
+        if (!MimeAudioDefaultEndpoint(capture, &e))
             return FALSE;
         *out = e.guid;
         return TRUE;
     }
-    if (!MimeAudioEndpointHost(FALSE, requested, &host))
+    if (!MimeAudioEndpointHost(capture, requested, &host))
         return FALSE;
     *out = *requested;
     return TRUE;
@@ -196,18 +195,16 @@ static HRESULT enumerate(LPDSENUMCALLBACKW w, LPDSENUMCALLBACKA a, void *context
 {
     if (!w && !a)
         return DSERR_INVALIDPARAM;
-    if (capture)
-        return DS_OK;
     MimeAudioEndpoint *all = HeapAlloc(GetProcessHeap(), 0, sizeof(*all) * MIME_AUDIO_ENDPOINTS);
     if (!all)
         return DS_OK;
-    UINT32 count = MimeAudioEndpoints(FALSE, all);
+    UINT32 count = MimeAudioEndpoints(capture, all);
     /* the primary driver stands for the default device, and is not listed without one. */
-    if (count && !call_enum(w, a, nullptr, L"Primary Sound Driver", L"", context))
+    if (count && !call_enum(w, a, nullptr, capture ? L"Primary Sound Capture Driver" : L"Primary Sound Driver", L"", context))
         count = 0;
     for (UINT32 i = 0; i < count; i++) {
         WCHAR module[64];
-        MimeAudioEndpointId(FALSE, &all[i].guid, module);
+        MimeAudioEndpointId(capture, &all[i].guid, module);
         GUID guid = all[i].guid;
         if (!call_enum(w, a, &guid, all[i].name, module, context))
             break;
@@ -241,10 +238,9 @@ DSOUNDAPI HRESULT WINAPI GetDeviceID(LPCGUID src, LPGUID dst)
 {
     if (!src || !dst)
         return DSERR_INVALIDPARAM;
-    if (IsEqualGUID(src, &DSDEVID_DefaultCapture) || IsEqualGUID(src, &DSDEVID_DefaultVoiceCapture))
-        return DSERR_NODRIVER;
+    BOOL capture = IsEqualGUID(src, &DSDEVID_DefaultCapture) || IsEqualGUID(src, &DSDEVID_DefaultVoiceCapture);
     GUID guid;
-    if (!DsResolveDevice(src, &guid, FALSE, nullptr))
+    if (!DsResolveDevice(src, &guid, capture, nullptr) && (capture || !DsResolveDevice(src, &guid, TRUE, nullptr)))
         return DSERR_NODRIVER;
     *dst = guid;
     return DS_OK;
@@ -266,8 +262,17 @@ DSOUNDAPI HRESULT WINAPI DirectSoundFullDuplexCreate(LPCGUID capture_device, LPC
         return DSERR_INVALIDPARAM;
     if (outer)
         return DSERR_NOAGGREGATION;
-    /* full duplex needs a capture device, and there is none. */
-    return DSERR_NODRIVER;
+    IDirectSoundFullDuplex *d;
+    HRESULT hr = DsCreateDuplex(&d);
+    if (FAILED(hr))
+        return hr;
+    hr = d->lpVtbl->Initialize(d, capture_device, render_device, capture_desc, render_desc, window, level,
+                               capture_buffer, render_buffer);
+    if (FAILED(hr))
+        d->lpVtbl->Release(d);
+    else
+        *duplex = d;
+    return hr;
 }
 
 /* ------------------------------------------------------------------ class objects */
@@ -334,6 +339,15 @@ static HRESULT STDMETHODCALLTYPE factory_create(IClassFactory *This, IUnknown *o
             return hr;
         hr = c->lpVtbl->QueryInterface(c, riid, out);
         c->lpVtbl->Release(c);
+        return hr;
+    }
+    if (IsEqualGUID(&f->clsid, &CLSID_DirectSoundFullDuplex)) {
+        IDirectSoundFullDuplex *d;
+        HRESULT hr = DsCreateDuplex(&d);
+        if (FAILED(hr))
+            return hr;
+        hr = d->lpVtbl->QueryInterface(d, riid, out);
+        d->lpVtbl->Release(d);
         return hr;
     }
     return E_NOINTERFACE;
