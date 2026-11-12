@@ -14,6 +14,7 @@ typedef struct Enc {
     id<MTL4RenderCommandEncoder> render;
     id<MTL4ComputeCommandEncoder> compute;
     uint32_t width, height;
+    VkmOpRaster raster; /* what the render encoder has, zeroed as metal's defaults are. */
     MTLSize local;
     uint64_t value; /* the queue's value once this submission is done. */
 } Enc;
@@ -81,6 +82,7 @@ static void attachment(MTLRenderPassAttachmentDescriptor *a, const VkmAttach *at
 static void begin_render(Enc *e, const VkmBeginRender *b)
 {
     end_encoder(e);
+    e->raster = (VkmOpRaster){};
     MTL4RenderPassDescriptor *desc = [[MTL4RenderPassDescriptor alloc] init];
     MTLRenderPassColorAttachmentDescriptorArray *colors = desc.colorAttachments;
     for (uint32_t i = 0; i < b->color_count; i++) {
@@ -347,12 +349,21 @@ static void replay(Enc *e, const VkmOp *op)
         [r setDepthStencilState:(id<MTLDepthStencilState>)((const VkmOpObject *)op)->object];
         break;
     case VKM_OP_RASTER: {
+        /* validation calls the first depth clip mode of an encoder unused, even before a draw: only changes are set. */
         const VkmOpRaster *o = (const void *)op;
-        [r setCullMode:(MTLCullMode)o->cull];
-        [r setFrontFacingWinding:(MTLWinding)o->winding];
-        [r setTriangleFillMode:(MTLTriangleFillMode)o->fill];
-        [r setDepthClipMode:(MTLDepthClipMode)o->clip];
-        [r setDepthBias:o->bias_constant slopeScale:o->bias_slope clamp:o->bias_clamp];
+        VkmOpRaster *had = &e->raster;
+        if (o->cull != had->cull)
+            [r setCullMode:(MTLCullMode)o->cull];
+        if (o->winding != had->winding)
+            [r setFrontFacingWinding:(MTLWinding)o->winding];
+        if (o->fill != had->fill)
+            [r setTriangleFillMode:(MTLTriangleFillMode)o->fill];
+        if (o->clip != had->clip)
+            [r setDepthClipMode:(MTLDepthClipMode)o->clip];
+        if (o->bias_constant != had->bias_constant || o->bias_slope != had->bias_slope ||
+            o->bias_clamp != had->bias_clamp)
+            [r setDepthBias:o->bias_constant slopeScale:o->bias_slope clamp:o->bias_clamp];
+        *had = *o;
         break;
     }
     case VKM_OP_VIEWPORTS: {
