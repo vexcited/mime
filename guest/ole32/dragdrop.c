@@ -163,11 +163,8 @@ static BOOL cursor_left(HWND source_top)
     return !PtInRect(&rect, cursor);
 }
 
-WINOLEAPI HRESULT WINAPI DoDragDrop(IDataObject *data, IDropSource *source, DWORD ok_effects, DWORD *effect)
+static HRESULT run_drag(IDataObject *data, IDropSource *source, DWORD ok_effects, DWORD *effect)
 {
-    if (!data || !source || !effect)
-        return E_INVALIDARG;
-    *effect = DROPEFFECT_NONE;
     IDropTarget *target = nullptr;
     HWND target_window = nullptr;
     DWORD current = DROPEFFECT_NONE;
@@ -267,5 +264,23 @@ WINOLEAPI HRESULT WINAPI DoDragDrop(IDataObject *data, IDropSource *source, DWOR
     }
     if (target)
         target->lpVtbl->Release(target);
+    return hr;
+}
+
+WINOLEAPI HRESULT WINAPI DoDragDrop(IDataObject *data, IDropSource *source, DWORD ok_effects, DWORD *effect)
+{
+    if (!data || !source || !effect)
+        return E_INVALIDARG;
+    *effect = DROPEFFECT_NONE;
+    /*
+     * Windows takes the capture for the drag. the control that started it learns
+     * through WM_CAPTURECHANGED that its own mouse tracking is over.
+     */
+    HWND capture = OleDragWindow();
+    if (capture)
+        SetCapture(capture);
+    HRESULT hr = run_drag(data, source, ok_effects, effect);
+    if (capture && GetCapture() == capture)
+        ReleaseCapture();
     return hr;
 }

@@ -538,6 +538,11 @@ static HWND clip_window(BOOL create)
     return t->ClipWindow;
 }
 
+HWND OleDragWindow(void)
+{
+    return clip_window(TRUE);
+}
+
 /* this thread's window when it owns the clipboard. */
 static HWND owner_window(void)
 {
