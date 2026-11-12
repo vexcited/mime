@@ -4,6 +4,7 @@
  * their exact subpixel position.
  */
 #include "dw_private.h"
+#include <mime/win32/winuser.h>
 
 /* the slant of a simulated oblique, tan 12 degrees. */
 #define OBLIQUE_SHEAR 0.2126f
@@ -464,6 +465,17 @@ static HRESULT WINAPI analysis_blend(IDWriteGlyphRunAnalysis *This, IDWriteRende
         return E_POINTER;
     if (!params)
         return E_INVALIDARG;
+    /* the modes that match GDI blend as GDI does: its contrast setting as the gamma, and no enhanced contrast. */
+    DwAnalysis *a = (DwAnalysis *)This;
+    if (a->mode == DWRITE_RENDERING_MODE_GDI_CLASSIC || a->mode == DWRITE_RENDERING_MODE_GDI_NATURAL) {
+        UINT value = 0;
+        if (!SystemParametersInfoW(SPI_GETFONTSMOOTHINGCONTRAST, 0, &value, 0) || !value)
+            value = 1400;
+        *gamma = (FLOAT)value / 1000.0f;
+        *contrast = 0.0f;
+        *level = 1.0f;
+        return S_OK;
+    }
     *gamma = params->lpVtbl->GetGamma(params);
     *contrast = params->lpVtbl->GetEnhancedContrast(params);
     *level = params->lpVtbl->GetClearTypeLevel(params);

@@ -279,7 +279,8 @@ static HRESULT WINAPI factory_rendering_params(IDWriteFactory2 *This, IDWriteRen
 {
     if (!params)
         return E_POINTER;
-    return make_params(2.2f, 1.0f, 1.0f, 1.0f, DWRITE_PIXEL_GEOMETRY_RGB, DWRITE_RENDERING_MODE1_DEFAULT,
+    /* what Windows answers on a display nobody tuned ClearType for. */
+    return make_params(1.8f, 0.5f, 1.0f, 1.0f, DWRITE_PIXEL_GEOMETRY_RGB, DWRITE_RENDERING_MODE1_DEFAULT,
                        DWRITE_GRID_FIT_MODE_DEFAULT, (void **)params);
 }
 
