@@ -1676,8 +1676,8 @@ set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${CMAKE_SOURCE_DIR}/gen/theme
 
 get_property(rom_files GLOBAL PROPERTY MIME_ROM_FILES)
 # microsoft's originals of a few system files are fetched by the host at run time, never put in the build: the rom and
-# the host only know them by the manifest, see host/genuine.c.
-set(genuine_manifest ${CMAKE_SOURCE_DIR}/data/genuine.manifest)
+# the host only know them by the manifest of the guest's windows, see host/genuine.c.
+set(genuine_manifest ${CMAKE_SOURCE_DIR}/data/genuine-${MIME_GUEST_ARCH}.manifest)
 add_custom_command(OUTPUT ${MIME_BUILD_GEN}/rom.S
     COMMAND ${CMAKE_COMMAND} -DOUTPUT=${MIME_BUILD_GEN}/rom.S -DSYSTEM=${CMAKE_SYSTEM_NAME} "-DFILES=${rom_files}"
         -DMANIFEST=${genuine_manifest} -P ${CMAKE_SOURCE_DIR}/scripts/rom.cmake
