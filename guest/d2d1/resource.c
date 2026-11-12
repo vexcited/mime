@@ -835,12 +835,22 @@ static HRESULT STDMETHODCALLTYPE bm_unmap(ID2D1Bitmap1 *This)
     return S_OK;
 }
 
+static HRESULT STDMETHODCALLTYPE bm_pixels(IMimeD2DBitmap *This, BYTE **bits, UINT32 *pitch)
+{
+    BSELF;
+    if (!D2dBitmapNative(b))
+        return E_OUTOFMEMORY;
+    *bits = b->native;
+    *pitch = b->stride;
+    return S_OK;
+}
+
 const void *const d2d_bitmap_vtbl[] = {D2dQueryInterface, D2dAddRef, D2dRelease, D2dResourceGetFactory, bm_size,
                                        bm_pixel_size,     bm_format, bm_dpi,     bm_copy_bitmap,        bm_copy_rt,
                                        bm_copy_memory,    bm_color_context, bm_options, bm_surface,     bm_map,
-                                       bm_unmap};
+                                       bm_unmap,          bm_pixels};
 
-D2D_IIDS(g_bitmap_iids, &IID_ID2D1Resource, &IID_ID2D1Image, &IID_ID2D1Bitmap, &IID_ID2D1Bitmap1);
+D2D_IIDS(g_bitmap_iids, &IID_ID2D1Resource, &IID_ID2D1Image, &IID_ID2D1Bitmap, &IID_ID2D1Bitmap1, &IID_IMimeD2DBitmap);
 static D2dClass g_bitmap_class = {"bitmap", g_bitmap_iids, bitmap_destroy, nullptr};
 
 /* ------------------------------------------------------------------ gradient stop collections */

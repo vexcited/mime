@@ -12,6 +12,7 @@
 #include <mime/win32/d2d1.h>
 #include <mime/win32/d2d1effectauthor.h>
 #include <mime/win32/d3d11.h>
+#include <mime/d2d_mime.h>
 #include <vector/vector.h>
 
 #define D2D_UNUSED [[maybe_unused]]

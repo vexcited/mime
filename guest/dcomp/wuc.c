@@ -344,6 +344,7 @@ struct WUC {
     /* a graphics device. */
     IUnknown *Rendering;
     ID3D11Device *D3d;
+    ID2D1Device *D2d;
 
     /* a factory makes compositors, or controllers with theirs. */
     BOOLEAN MakesController;
@@ -653,6 +654,7 @@ static void destroy(WUC *object)
     case K_GRAPHICS_DEVICE:
         release_unknown(&object->Rendering);
         release_unknown((IUnknown **)&object->D3d);
+        release_unknown((IUnknown **)&object->D2d);
         break;
     default:
         break;
@@ -1122,23 +1124,26 @@ static HRESULT STDMETHODCALLTYPE interop_surface_for_swap_chain(void *This, IUnk
     return new_surface(This, swap, value);
 }
 
-/* the rendering device is a Direct3D device of DXGI. */
+/* the rendering device is a Direct3D device of DXGI, or a Direct2D device made on one. */
 static HRESULT STDMETHODCALLTYPE interop_create_graphics_device(void *This, IUnknown *rendering, void **value)
 {
     if (!value)
         return E_POINTER;
     *value = nullptr;
     ID3D11Device *d3d;
-    HRESULT hr = rendering ? DcResolveRenderingDevice(rendering, &d3d) : E_INVALIDARG;
+    ID2D1Device *d2d;
+    HRESULT hr = rendering ? DcResolveRenderingDevice(rendering, &d3d, &d2d) : E_INVALIDARG;
     if (FAILED(hr))
         return hr;
     WUC *device;
     hr = new_object(K_GRAPHICS_DEVICE, This, value, &device);
     if (FAILED(hr)) {
         d3d->lpVtbl->Release(d3d);
+        release_unknown((IUnknown **)&d2d);
         return hr;
     }
     device->D3d = d3d;
+    device->D2d = d2d;
     device->Rendering = rendering;
     rendering->lpVtbl->AddRef(rendering);
     return S_OK;
@@ -1162,13 +1167,16 @@ static HRESULT STDMETHODCALLTYPE graphics_set_rendering_device(void *This, IUnkn
 {
     WUC *device = wuc_of(This);
     ID3D11Device *d3d;
-    HRESULT hr = rendering ? DcResolveRenderingDevice(rendering, &d3d) : E_INVALIDARG;
+    ID2D1Device *d2d;
+    HRESULT hr = rendering ? DcResolveRenderingDevice(rendering, &d3d, &d2d) : E_INVALIDARG;
     if (FAILED(hr))
         return hr;
     lock(device);
     release_unknown((IUnknown **)&device->D3d);
+    release_unknown((IUnknown **)&device->D2d);
     release_unknown(&device->Rendering);
     device->D3d = d3d;
+    device->D2d = d2d;
     device->Rendering = rendering;
     rendering->lpVtbl->AddRef(rendering);
     unlock(device);
@@ -1186,7 +1194,7 @@ static HRESULT create_drawing_surface(void *This, SIZE_INT32 size, int format, i
     WUC *device = wuc_of(This), *c = device->Compositor;
     IUnknown *surface;
     lock(device);
-    HRESULT hr = DcCreateSurface(c->Device, device->D3d, TRUE, (UINT)size.Width, (UINT)size.Height,
+    HRESULT hr = DcCreateSurface(c->Device, device->D3d, device->D2d, TRUE, (UINT)size.Width, (UINT)size.Height,
                                  (DXGI_FORMAT)format, (DXGI_ALPHA_MODE)alpha, (void **)&surface);
     unlock(device);
     if (FAILED(hr))
