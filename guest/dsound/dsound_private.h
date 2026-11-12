@@ -157,5 +157,6 @@ void Ds3dApplyAll(DSDEVICE *d);
 
 /* capture.c */
 HRESULT DsCreateCapture(LPCGUID guid, IDirectSoundCapture **out, BOOL v8, BOOL initialize);
+HRESULT DsCreateDuplex(IDirectSoundFullDuplex **out);
 
 #endif
