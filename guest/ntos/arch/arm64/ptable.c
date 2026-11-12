@@ -214,7 +214,7 @@ ULONG64 MiProtectToPte(ULONG protect, BOOLEAN user)
     if (cow)
         pte |= MM_PTE_SW_COW;
     if (protect & PAGE_NOCACHE)
-        pte = (pte & ~MM_PTE_ATTR(7)) | MM_PTE_ATTR(2);
+        pte = (pte & ~MM_PTE_ATTR(7)) | MM_PTE_UNCACHED;
     /* the page and its data stay, out of user mode's reach. */
     if (user && ((protect & 0xFF) == PAGE_NOACCESS || (protect & PAGE_GUARD))) {
         pte &= ~MM_PTE_AP_EL0;
