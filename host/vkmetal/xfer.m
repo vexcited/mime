@@ -41,7 +41,8 @@ static bool outside(VkCommandBuffer cmd, const char *what)
 
 /* ------------------------------------------------------------------ buffers. */
 
-static void copy_buffer(VkCommandBuffer cmd, id src, uint64_t src_offset, id dst, uint64_t dst_offset, uint64_t size)
+static void copy_buffer(VkCommandBuffer cmd, id<MTLBuffer> src, uint64_t src_offset, id<MTLBuffer> dst,
+                        uint64_t dst_offset, uint64_t size)
 {
     VkmOpCopyBuffer *o = vkm_emit(cmd, VKM_OP_COPY_BUFFER, sizeof(*o));
     if (!o)
@@ -78,7 +79,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdUpdateBuffer(VkCommandBuffer cmd, VkBuffer 
 {
     if (!size || !outside(cmd, "a buffer update"))
         return;
-    id buffer;
+    id<MTLBuffer> buffer;
     uint64_t at;
     void *p = vkm_upload(cmd, size, 16, nullptr, &buffer, &at);
     if (!p)
@@ -109,7 +110,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdFillBuffer(VkCommandBuffer cmd, VkBuffer ds
     }
     /* other patterns are copies of a repeating block. */
     uint64_t block = MIME_MIN(size, (uint64_t)65536);
-    id buffer;
+    id<MTLBuffer> buffer;
     uint64_t at;
     uint32_t *p = vkm_upload(cmd, block, 16, nullptr, &buffer, &at);
     if (!p)
@@ -319,11 +320,11 @@ static void clear_image(VkCommandBuffer cmd, VkImage image, const VkClearColorVa
                 } else {
                     if ((r->aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) && b->depth.texture) {
                         b->depth.load = MTLLoadActionClear;
-                        b->depth.clear.r = ds->depth;
+                        b->depth.clear.red = ds->depth;
                     }
                     if ((r->aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT) && b->stencil.texture) {
                         b->stencil.load = MTLLoadActionClear;
-                        b->stencil.clear.r = ds->stencil;
+                        b->stencil.clear.red = ds->stencil;
                     }
                 }
                 vkm_emit(cmd, VKM_OP_END_RENDER, sizeof(VkmOp));
@@ -375,11 +376,11 @@ void vkm_clear_rects(VkCommandBuffer cmd, uint32_t count, const VkClearAttachmen
             }
             if ((c->aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) && b->depth.texture) {
                 b->depth.load = MTLLoadActionClear;
-                b->depth.clear.r = c->clearValue.depthStencil.depth;
+                b->depth.clear.red = c->clearValue.depthStencil.depth;
             }
             if ((c->aspectMask & VK_IMAGE_ASPECT_STENCIL_BIT) && b->stencil.texture) {
                 b->stencil.load = MTLLoadActionClear;
-                b->stencil.clear.r = c->clearValue.depthStencil.stencil;
+                b->stencil.clear.red = c->clearValue.depthStencil.stencil;
             }
         }
         return;
@@ -410,7 +411,7 @@ void vkm_clear_rects(VkCommandBuffer cmd, uint32_t count, const VkClearAttachmen
     }
     if (!mask && !depth && !stencil)
         return;
-    id pipeline = vkm_meta_clear(cmd->device, s->colors, mask, depth, stencil, s->samples, s->layers > 1);
+    id<MTLRenderPipelineState> pipeline = vkm_meta_clear(cmd->device, s->colors, mask, depth, stencil, s->samples, s->layers > 1);
     if (!pipeline)
         return;
     uint64_t gpu;
@@ -473,8 +474,8 @@ static void blit_image(VkCommandBuffer cmd, VkImage src, VkImage dst, const VkIm
     bool depth = (dst->fi->aspects & VK_IMAGE_ASPECT_DEPTH_BIT) != 0;
     VkExtent3D se = vkm_level_extent(src, r->srcSubresource.mipLevel);
     VkExtent3D de = vkm_level_extent(dst, r->dstSubresource.mipLevel);
-    uint32_t type = M_U(src->texture, "textureType");
-    id pipeline = vkm_meta_blit(cmd->device, dst->fi->pixel, type, depth, dst->samples);
+    uint32_t type = (uint32_t)src->texture.textureType;
+    id<MTLRenderPipelineState> pipeline = vkm_meta_blit(cmd->device, dst->fi->pixel, type, depth, dst->samples);
     if (!pipeline)
         return;
     for (uint32_t l = 0; l < layers; l++) {

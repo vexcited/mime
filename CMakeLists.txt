@@ -1741,8 +1741,9 @@ if(APPLE)
     mime_glob(host_sources host/*.c host/vmm/*.c host/ui/*.c host/ui/*.m host/gpu/*.c host/gpu/*.m
         host/audio/*.c host/camera/*.c)
 
-    mime_glob(vkmetal_sources host/vkmetal/*.c host/vkmetal/*.cpp)
-    set_source_files_properties(${vkmetal_sources} PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers
+    mime_glob(vkmetal_sources host/vkmetal/*.m host/vkmetal/*.cpp)
+    # the driver keeps its metal objects in vulkan's c objects, which own them by hand as gpu.m does.
+    set_source_files_properties(${vkmetal_sources} PROPERTIES COMPILE_OPTIONS "-Wno-missing-field-initializers;-fno-objc-arc"
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${CMAKE_SOURCE_DIR}/third_party/SPIRV-Cross")
     set_source_files_properties(host/vkmetal/msl.cpp PROPERTIES COMPILE_OPTIONS "-std=c++17;-Wno-missing-field-initializers")
 

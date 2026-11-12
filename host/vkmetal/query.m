@@ -29,16 +29,17 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateQueryPool(VkDevice device, const VkQ
     pool->statistics = info->pipelineStatistics;
     pool->queue = &device->queue;
     uint64_t size = (uint64_t)MIME_MAX(info->queryCount, 1u) * 8 * values_of(pool->type, pool->statistics);
-    pool->buffer = MTL_MSG(id (*)(id, SEL, NSUInteger, NSUInteger), device->mtl, "newBufferWithLength:options:", size,
-                           MTLResourceStorageModeShared | MTLResourceHazardTrackingModeUntracked);
+    pool->buffer = [device->mtl newBufferWithLength:size
+                                            options:MTLResourceStorageModeShared |
+                                                    MTLResourceHazardTrackingModeUntracked];
     pool->written = vkm_zalloc(sizeof(uint64_t) * MIME_MAX(info->queryCount, 1u));
     if (!pool->buffer || !pool->written) {
-        mtl_release(pool->buffer);
+        [pool->buffer release];
         free(pool->written);
         free(pool);
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
-    pool->values = M_PTR(pool->buffer, "contents");
+    pool->values = pool->buffer.contents;
     memset(pool->values, 0, size);
     vkm_resident(device, pool->buffer);
     *out = pool;

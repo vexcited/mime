@@ -6,8 +6,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "mtl.h"
-
 #define VKM_SETS 8
 #define VKM_BUFFER_PUSH 8
 #define VKM_BUFFER_AUX 9
@@ -20,6 +18,11 @@
 #define VKM_TEXTURE_SLOTS 128
 /* the descriptor set of the buffers the geometry stage's emulation binds, each a buffer of its own. */
 #define VKM_EMU_SET 31
+
+/* a compute shader's threadgroup size, as MTLSize has it, which C++ cannot include. */
+typedef struct VkmSize {
+    size_t width, height, depth;
+} VkmSize;
 
 typedef struct VkmInput {
     uint8_t location, components;
@@ -43,7 +46,7 @@ typedef struct VkmMslResult {
     char *source; /* malloced. */
     char entry[128];
     char error[256];
-    MTLSize local;
+    VkmSize local;
     uint32_t inputs;
     VkmInput input[VKM_VERTEX_ATTRIBUTES];
     uint32_t outputs;

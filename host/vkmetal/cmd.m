@@ -31,7 +31,9 @@ void *vkm_emit(VkCommandBuffer cmd, uint32_t op, size_t size)
 void vkm_forget(VkCommandBuffer cmd)
 {
     VkmGfxState *s = cmd->state;
-    s->set_pipeline = s->set_depth = s->set_compute = nullptr;
+    s->set_pipeline = nullptr;
+    s->set_depth = nullptr;
+    s->set_compute = nullptr;
     memset(s->set_buffers, 0, sizeof(s->set_buffers));
     memset(s->set_strides, 0, sizeof(s->set_strides));
     s->pipeline_dirty = s->depth_dirty = s->raster_dirty = s->viewport_dirty = s->scissor_dirty = true;
@@ -81,7 +83,7 @@ static void buffer_free(VkCommandBuffer cmd)
     for (VkmIcb *b = cmd->icbs, *next; b; b = next) {
         next = b->next;
         vkm_unresident(cmd->device, b->icb);
-        mtl_release(b->icb);
+        [b->icb release];
         free(b);
     }
     vkm_chunks_release(cmd->device, cmd->chunks);
@@ -890,12 +892,12 @@ static void begin_rendering(VkCommandBuffer cmd, const VkRenderingInfo *info)
     s->has_depth = s->has_stencil = false;
     if (v[VKM_COLORS] && v[VKM_COLORS]->render) {
         attach(&b->depth, v[VKM_COLORS], info->pDepthAttachment, whole);
-        b->depth.clear.r = info->pDepthAttachment->clearValue.depthStencil.depth;
+        b->depth.clear.red = info->pDepthAttachment->clearValue.depthStencil.depth;
         s->has_depth = true;
     }
     if (v[VKM_COLORS + 1] && v[VKM_COLORS + 1]->render) {
         attach(&b->stencil, v[VKM_COLORS + 1], info->pStencilAttachment, whole);
-        b->stencil.clear.r = info->pStencilAttachment->clearValue.depthStencil.stencil;
+        b->stencil.clear.red = info->pStencilAttachment->clearValue.depthStencil.stencil;
         s->has_stencil = true;
     }
     if (s->occlusion)
@@ -1317,7 +1319,7 @@ static uint64_t stats_counter(const VkmGfxState *s)
     if (!pool || !(pool->statistics & bit) || s->stats_query >= pool->count)
         return 0;
     uint32_t n = __builtin_popcount(pool->statistics), k = __builtin_popcount(pool->statistics & (bit - 1));
-    return M_U64(pool->buffer, "gpuAddress") + ((uint64_t)s->stats_query * n + k) * 8;
+    return pool->buffer.gpuAddress + ((uint64_t)s->stats_query * n + k) * 8;
 }
 
 /* what the host knows a draw or dispatch adds to the active statistics query. */
@@ -1373,7 +1375,7 @@ typedef struct Stages {
     uint8_t topology_class, discard;
 } Stages;
 
-static id resolve_pipeline(VkCommandBuffer cmd, const Stages *st, bool *zero)
+static id<MTLRenderPipelineState> resolve_pipeline(VkCommandBuffer cmd, const Stages *st, bool *zero)
 {
     VkmGfxState *s = STATE(cmd);
     const VkmDynamic *d = &s->dyn;
@@ -1506,7 +1508,7 @@ static bool prepare_stages(VkCommandBuffer cmd, const Stages *st)
         return false;
     bool zero = false;
     if (s->pipeline_dirty || !s->set_pipeline) {
-        id pipeline = resolve_pipeline(cmd, st, &zero);
+        id<MTLRenderPipelineState> pipeline = resolve_pipeline(cmd, st, &zero);
         if (!pipeline)
             return false;
         if (pipeline != s->set_pipeline) {
@@ -1530,7 +1532,7 @@ static bool prepare_stages(VkCommandBuffer cmd, const Stages *st)
             key.front = d->front_stencil;
             key.back = d->back_stencil;
         }
-        id depth = vkm_depth_state(cmd->device, &key);
+        id<MTLDepthStencilState> depth = vkm_depth_state(cmd->device, &key);
         if (depth && depth != s->set_depth) {
             VkmOpObject *o = vkm_emit(cmd, VKM_OP_DEPTH_STATE, sizeof(*o));
             if (o)
@@ -1713,7 +1715,7 @@ static uint32_t record_slots(VkmGfxState *s, bool indexed, uint32_t first, uint3
 static void xfb_pass(VkCommandBuffer cmd, VkmXfbParams *p, const VkmXfb *layout)
 {
     VkmGfxState *s = STATE(cmd);
-    id pipeline = vkm_meta_xfb(cmd->device, s->colors, s->samples);
+    id<MTLRenderPipelineState> pipeline = vkm_meta_xfb(cmd->device, s->colors, s->samples);
     uint64_t gpu;
     VkmXfbParams *x = vkm_upload(cmd, sizeof(*x), 16, &gpu, nullptr, nullptr);
     if (!pipeline || !x)
@@ -1726,7 +1728,7 @@ static void xfb_pass(VkCommandBuffer cmd, VkmXfbParams *p, const VkmXfb *layout)
     }
     p->state = s->xfb_state;
     if (s->xfb_query && s->xfb_query_index < s->xfb_query->count)
-        p->query = M_U64(s->xfb_query->buffer, "gpuAddress") + (uint64_t)s->xfb_query_index * 16;
+        p->query = s->xfb_query->buffer.gpuAddress + (uint64_t)s->xfb_query_index * 16;
     if (layout) {
         memcpy(p->strides, layout->strides, sizeof(p->strides));
         p->entry_count = layout->count;
@@ -2187,7 +2189,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdDrawIndirectByteCountEXT(VkCommandBuffer cm
         uint32_t vertex_offset, stride, instances, first_instance;
     } *p;
     uint64_t params, args;
-    id pipeline = vkm_meta_byte_count(cmd->device);
+    id<MTLComputePipelineState> pipeline = vkm_meta_byte_count(cmd->device);
     p = vkm_upload(cmd, sizeof(*p), 16, &params, nullptr, nullptr);
     if (!pipeline || !p || !vkm_upload(cmd, 16, 16, &args, nullptr, nullptr))
         return;
@@ -2330,30 +2332,31 @@ static VkmIcb *icb_get(VkCommandBuffer cmd, bool dispatch, uint32_t count)
     uint32_t capacity = 64;
     while (capacity < count)
         capacity *= 2;
-    id desc = mtl_new("MTLIndirectCommandBufferDescriptor");
-    M_V_B(desc, "setInheritPipelineState:", true);
-    M_V_B(desc, "setInheritBuffers:", false);
+    MTLIndirectCommandBufferDescriptor *desc = [[MTLIndirectCommandBufferDescriptor alloc] init];
+    desc.inheritPipelineState = true;
+    desc.inheritBuffers = false;
     if (dispatch) {
-        M_V_U(desc, "setCommandTypes:", MTLIndirectCommandTypeConcurrentDispatch);
-        M_V_U(desc, "setMaxKernelBufferBindCount:", VKM_BUFFER_VERTEX);
+        desc.commandTypes = MTLIndirectCommandTypeConcurrentDispatch;
+        desc.maxKernelBufferBindCount = VKM_BUFFER_VERTEX;
     } else {
-        M_V_U(desc, "setCommandTypes:", MTLIndirectCommandTypeDraw | MTLIndirectCommandTypeDrawIndexed);
-        M_V_U(desc, "setMaxVertexBufferBindCount:", VKM_BUFFER_VERTEX + VKM_VERTEX_BINDINGS);
-        M_V_U(desc, "setMaxFragmentBufferBindCount:", VKM_BUFFER_VERTEX);
-        M_V_B(desc, "setSupportDynamicAttributeStride:", true);
+        desc.commandTypes = MTLIndirectCommandTypeDraw | MTLIndirectCommandTypeDrawIndexed;
+        desc.maxVertexBufferBindCount = VKM_BUFFER_VERTEX + VKM_VERTEX_BINDINGS;
+        desc.maxFragmentBufferBindCount = VKM_BUFFER_VERTEX;
+        desc.supportDynamicAttributeStride = true;
     }
-    id icb = MTL_MSG(id (*)(id, SEL, id, NSUInteger, NSUInteger), cmd->device->mtl,
-                     "newIndirectCommandBufferWithDescriptor:maxCommandCount:options:", desc, capacity,
-                     MTLResourceStorageModePrivate);
-    mtl_release(desc);
+    id<MTLIndirectCommandBuffer> icb =
+        [cmd->device->mtl newIndirectCommandBufferWithDescriptor:desc
+                                                 maxCommandCount:capacity
+                                                         options:MTLResourceStorageModePrivate];
+    [desc release];
     VkmIcb *b = icb ? vkm_zalloc(sizeof(*b)) : nullptr;
     if (!b) {
         VKM_ERROR("no indirect command buffer of %u commands", capacity);
-        mtl_release(icb);
+        [icb release];
         return nullptr;
     }
     b->icb = icb;
-    b->rid = M_RID(icb, "gpuResourceID");
+    b->rid = icb.gpuResourceID;
     b->capacity = capacity;
     b->dispatch = dispatch;
     b->used = true;
@@ -2398,7 +2401,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdExecuteGeneratedCommandsEXT(VkCommandBuffer
         return;
     bool dispatch = l->dispatch;
     int point = dispatch ? VKM_COMPUTE : VKM_GFX;
-    id normal = s->compute;
+    id<MTLComputePipelineState> normal = s->compute;
     if (dispatch) {
         if (!s->cs || !s->compute || !(s->compute = vkm_compute_pipeline(cmd->device, s->cs, true)) ||
             !prepare_dispatch(cmd))
@@ -2417,7 +2420,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdExecuteGeneratedCommandsEXT(VkCommandBuffer
     void *ranges = vkm_upload(cmd, (uint64_t)chunks * 8, 8, &ranges_gpu, nullptr, nullptr);
     MTLResourceID *rid = vkm_upload(cmd, sizeof(*rid), 8, &rid_gpu, nullptr, nullptr);
     VkmIcb *icb = icb_get(cmd, dispatch, max);
-    id generator = vkm_meta_generate(cmd->device, dispatch);
+    id<MTLComputePipelineState> generator = vkm_meta_generate(cmd->device, dispatch);
     if (!p || !ranges || !rid || !icb || !generator)
         goto done;
     memset(p, 0, sizeof(*p));
