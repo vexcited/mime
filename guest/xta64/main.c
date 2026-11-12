@@ -218,7 +218,7 @@ static void cpu_to_context(X86Cpu *c, AMD64_CONTEXT *ctx)
     ctx->SegCs = 0x33;
     ctx->SegDs = ctx->SegEs = ctx->SegSs = ctx->SegGs = 0x2B;
     ctx->SegFs = 0x53;
-    x86_fxsave(c, (uint8_t *)&ctx->FltSave);
+    x86_fxsave(c, (uint8_t *)&ctx->FltSave, 1);
     ctx->MxCsr = x86_mxcsr(c);
 }
 
@@ -237,7 +237,7 @@ static void context_to_cpu(const AMD64_CONTEXT *ctx, X86Cpu *c)
         x86_set_flags(c, ctx->EFlags);
     }
     if ((flags & CONTEXT_AMD64_FLOATING_POINT) == CONTEXT_AMD64_FLOATING_POINT) {
-        x86_fxrstor(c, (const uint8_t *)&ctx->FltSave);
+        x86_fxrstor(c, (const uint8_t *)&ctx->FltSave, 1);
         x86_set_mxcsr(c, ctx->MxCsr);
     }
 }
@@ -260,7 +260,7 @@ static void cpu_to_context32(X86Cpu *c, I386_CONTEXT *ctx)
     ctx->SegCs = 0x23;
     ctx->SegDs = ctx->SegEs = ctx->SegSs = 0x2B;
     ctx->SegFs = 0x53;
-    x86_fxsave(c, ctx->ExtendedRegisters);
+    x86_fxsave(c, ctx->ExtendedRegisters, 0);
 }
 
 static void context32_to_cpu(const I386_CONTEXT *ctx, X86Cpu *c)
@@ -280,7 +280,7 @@ static void context32_to_cpu(const I386_CONTEXT *ctx, X86Cpu *c)
         x86_set_flags(c, ctx->EFlags);
     }
     if ((ctx->ContextFlags & CONTEXT_I386_EXTENDED_REGISTERS) == CONTEXT_I386_EXTENDED_REGISTERS)
-        x86_fxrstor(c, ctx->ExtendedRegisters);
+        x86_fxrstor(c, ctx->ExtendedRegisters, 0);
 }
 
 /* ------------------------------------------------------------ emulation */

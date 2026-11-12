@@ -1034,10 +1034,10 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
         uint64_t addr = x86_ea(c, i);
         switch (sub) {
         case 0:
-            x86_fxsave(c, (uint8_t *)(uintptr_t)addr);
+            x86_fxsave(c, (uint8_t *)(uintptr_t)addr, (i->rex & 8) != 0);
             return;
         case 1:
-            x86_fxrstor(c, (const uint8_t *)(uintptr_t)addr);
+            x86_fxrstor(c, (const uint8_t *)(uintptr_t)addr, (i->rex & 8) != 0);
             return;
         case 2:
             x86_ldmxcsr(c, rd32(addr));
