@@ -24,6 +24,7 @@ typedef struct MimeUiFrame {
     double scale;                           /* host window pixels per guest pixel. */
     double origin_x, origin_y;              /* where the host part starts, in host window pixels. */
     bool subsurface;
+    uint32_t serial; /* counts the frames of the layer. */
     bool shown;
 } MimeUiFrame;
 
@@ -37,6 +38,8 @@ bool mime_ui_vk_layers(void);
 bool mime_ui_vk_attach(uint32_t id, uint32_t source, MimeRect area, uint32_t order, MimeUiNative *native);
 void mime_ui_vk_detach(uint32_t id, uint32_t source);
 bool mime_ui_vk_frame(uint32_t id, uint32_t source, MimeRect client, MimeRect area, uint32_t order, MimeUiFrame *frame);
+/* the frame of a layer was handed to the display. */
+void mime_ui_vk_shown(uint32_t id, uint32_t source, uint32_t serial);
 /* copies changes from a guest surface of the given dimensions; returns false if unchanged. */
 bool mime_ui_vk_copy(uint32_t id, uint8_t *dst, uint32_t width, uint32_t height, MimeRect *dirty);
 

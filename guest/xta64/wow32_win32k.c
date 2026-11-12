@@ -458,6 +458,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
             out[8] = (ULONG)surface.Visible.top;
             out[9] = (ULONG)surface.Visible.right;
             out[10] = (ULONG)surface.Visible.bottom;
+            out[11] = surface.Stamp;
         }
         return ok;
     }

@@ -150,6 +150,7 @@ struct Presenter {
     uint32_t window;
     uint32_t source; /* the window of the guest it presents for, 0 when a window has one presenter. */
     uint32_t last_source; /* the window the last image was made for. */
+    MvkTarget placed; /* the last the guest told of its layer, under g_presenters_lock. */
     MvkConnection *conn;
     int refs;
     pthread_mutex_t lock;
@@ -2240,6 +2241,21 @@ static void present_one(MvkConnection *c, VkQueue queue, uint32_t family, const 
         s->presenter = presenter_get(c, t->window, source);
     Presenter *p = s->presenter;
     bool shown = false;
+    /*
+     * a frame comes with the place its window had when the guest made it, and the window may have moved since: the
+     * guest told that in a layer notice, and the old place would put the layer back over what was painted there.
+     */
+    MvkTarget now = *t;
+    if (p) {
+        pthread_mutex_lock(&g_presenters_lock);
+        if (now.stamp && p->placed.stamp && (int32_t)(p->placed.stamp - now.stamp) > 0) {
+            now.client = p->placed.client;
+            now.visible = p->placed.visible;
+            now.order = p->placed.order;
+        }
+        pthread_mutex_unlock(&g_presenters_lock);
+        t = &now;
+    }
     MimeRect area = shown_area(t);
     if (p) {
         if (area.right > area.left || p->surface)
@@ -2252,6 +2268,8 @@ static void present_one(MvkConnection *c, VkQueue queue, uint32_t family, const 
             p->last_source = t->source;
             shown = show(c, p, queue, family, waits, s, index, &frame, t->client);
             pthread_mutex_unlock(&p->lock);
+            if (shown && frame.subsurface)
+                mime_ui_vk_shown(t->window, source, frame.serial);
         }
     }
     if (!shown)
@@ -2854,12 +2872,14 @@ void mime_vk_layer(const MimeWinLayer *layer)
     for (int i = 0; i < MAX_PRESENTERS && !p; i++)
         if (g_presenters[i] && g_presenters[i]->window == layer->window_id && g_presenters[i]->source == layer->source)
             p = g_presenters[i];
-    if (p)
+    MvkTarget t = {layer->window_id, layer->source, layer->order, layer->client, layer->visible, layer->stamp};
+    if (p) {
         p->refs++;
+        p->placed = t;
+    }
     pthread_mutex_unlock(&g_presenters_lock);
     if (!p)
         return;
-    MvkTarget t = {layer->window_id, layer->source, layer->order, layer->client, layer->visible};
     MimeUiFrame frame;
     mime_ui_vk_frame(t.window, t.source, t.client, shown_area(&t), t.order, &frame);
     presenter_put(p->conn, p);

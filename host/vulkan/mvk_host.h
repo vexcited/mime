@@ -165,6 +165,7 @@ typedef struct MvkTarget {
     uint32_t order;   /* its place in the paint order of the tree, the front ones last. */
     MimeRect client;  /* its client area in the host window. */
     MimeRect visible; /* and the part of it that shows. */
+    uint32_t stamp;   /* the guest's count of what it told, see MimeGpuSurfaceConfig. 0 without one. */
 } MvkTarget;
 /* source 0 is the one presenter of a window that shows one image. */
 bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
