@@ -197,6 +197,7 @@ EXPORTS
     NtUserGetThreadDesktop@8
     NtUserGetThreadState@4
     NtUserGetUpdateRect@12
+    NtUserGetUpdateRgn@12
     NtUserGetUpdatedClipboardFormats@12
     NtUserGetWindowDC@4
     NtUserGetWindowPlacement@8

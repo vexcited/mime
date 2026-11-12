@@ -2421,6 +2421,8 @@ WINUSERAPI BOOL WINAPI EnumChildWindows(HWND parent, WNDENUMPROC proc, LPARAM pa
 WINUSERAPI int WINAPI DrawTextA(HDC dc, LPCSTR text, int count, LPRECT rect, UINT format);
 WINUSERAPI BOOL WINAPI GetUpdateRect(HWND hwnd, LPRECT rect, BOOL erase);
 WINUSERAPI int WINAPI GetUpdateRgn(HWND hwnd, HRGN region, BOOL erase);
+WINUSERAPI BOOL WINAPI InvalidateRgn(HWND hwnd, HRGN region, BOOL erase);
+WINUSERAPI BOOL WINAPI ValidateRgn(HWND hwnd, HRGN region);
 WINUSERAPI BOOL WINAPI InvertRect(HDC dc, const RECT *r);
 WINUSERAPI int WINAPI MessageBoxIndirectA(const void *params);
 

@@ -207,6 +207,7 @@ void NtUserGetSystemMenu(void);
 void NtUserGetThreadDesktop(void);
 void NtUserGetThreadState(void);
 void NtUserGetUpdateRect(void);
+void NtUserGetUpdateRgn(void);
 void NtUserGetUpdatedClipboardFormats(void);
 void NtUserGetWindowDC(void);
 void NtUserGetWindowPlacement(void);
@@ -1292,6 +1293,11 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserGetUpdateRect & 0xFFF] = (SERVICE){(void *)NtUserGetUpdateRect, STACK_ARGS(3), 1, 0};
 #else
 #warning "NtUserGetUpdateRect has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserGetUpdateRgn
+    table[MIME_SVC_NtUserGetUpdateRgn & 0xFFF] = (SERVICE){(void *)NtUserGetUpdateRgn, STACK_ARGS(3), 1, 0};
+#else
+#warning "NtUserGetUpdateRgn has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserGetUpdatedClipboardFormats
     table[MIME_SVC_NtUserGetUpdatedClipboardFormats & 0xFFF] = (SERVICE){(void *)NtUserGetUpdatedClipboardFormats, STACK_ARGS(3), 1, 0};

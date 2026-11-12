@@ -866,6 +866,20 @@ BOOL NTAPI NtUserValidateRect(HWND hwnd, const RECT *rect)
     return NtUserRedrawWindow(hwnd, rect, nullptr, RDW_VALIDATE | RDW_NOCHILDREN);
 }
 
+static void erase_update(WND *w)
+{
+    if (!(w->Flags & WNDF_ERASE_PENDING) || w->Thread != W32GetThread())
+        return;
+    HDC hdc = PaintGetDC(w, nullptr, DCX_INTERSECTUPDATE | DCX_USESTYLE);
+    w->Flags &= ~WNDF_ERASE_PENDING;
+    if (hdc) {
+        MsgSend(w, WM_ERASEBKGND, (WPARAM)hdc, 0);
+        DC *dc = DcLookup(hdc);
+        if (dc)
+            PaintReleaseDC(dc);
+    }
+}
+
 BOOL NTAPI NtUserGetUpdateRect(HWND hwnd, LPRECT user_rect, BOOL erase)
 {
     UserEnter();
@@ -880,17 +894,25 @@ BOOL NTAPI NtUserGetUpdateRect(HWND hwnd, LPRECT user_rect, BOOL erase)
         }
         if (user_rect)
             MimeCopyToUser(user_rect, &box, sizeof(box));
-        if (erase && nonempty && (w->Flags & WNDF_ERASE_PENDING) && w->Thread == W32GetThread()) {
-            HDC hdc = PaintGetDC(w, nullptr, DCX_INTERSECTUPDATE | DCX_USESTYLE);
-            w->Flags &= ~WNDF_ERASE_PENDING;
-            if (hdc) {
-                MsgSend(w, WM_ERASEBKGND, (WPARAM)hdc, 0);
-                DC *dc = DcLookup(hdc);
-                if (dc)
-                    PaintReleaseDC(dc);
-            }
-        }
+        if (erase && nonempty)
+            erase_update(w);
     }
     UserLeave();
     return nonempty;
+}
+
+int NTAPI NtUserGetUpdateRgn(HWND hwnd, HRGN region, BOOL erase)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    GDI_REGION *r = (GDI_REGION *)GdiLookup(region, GDI_TYPE_REGION);
+    int kind = ERROR;
+    if (w && r && RgnCopy(&r->Region, &w->Update)) {
+        RgnOffset(&r->Region, -w->ClientRect.left, -w->ClientRect.top);
+        kind = RgnComplexity(&r->Region);
+        if (erase && kind != NULLREGION)
+            erase_update(w);
+    }
+    UserLeave();
+    return kind;
 }
