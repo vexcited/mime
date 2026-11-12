@@ -938,18 +938,24 @@ static BOOLEAN paint_order(const WND *parent, const WND *window, ULONG *count)
  * on Windows a child that presents shares the surface of its top level window, so what it leaves when it shrinks keeps
  * its last image until something draws there. here the surface never held that image, so the layer of a window that
  * shrank keeps the place it left until a draw into the surface takes it, and the host is told with the flush that
- * carries the draw. window pixels relative to the top level window.
+ * carries the draw. a layer that grew over what its parent uncovered waits the same way, for the surface still shows
+ * the old frame there, and gives up waiting when nothing draws. window pixels relative to the top level window.
  */
 typedef struct HELD {
     WND *Window, *Top;
     RECT Now;   /* where the window shows. */
     RECT Shown; /* where the host was told its layer is. */
     RECT Left;  /* what the draws since left of that. */
+    BOOLEAN Grew;
+    ULONGLONG Until; /* when a layer that grew stops waiting for a draw. */
 } HELD;
+
+#define HELD_GREW_MS 50
 
 static HELD g_held[8];
 static KSPIN_LOCK g_held_lock;
 LONG ScreenHeldCount;
+ULONG ScreenLayerStamp;
 
 static HELD *held_of(const WND *w)
 {
@@ -981,15 +987,24 @@ static void hold_area(WND *top, WND *w, MIME_PRESENT_LAYER *out)
     shown.bottom = W32Min(shown.bottom, height);
     BOOLEAN shrank = !RectEmpty(&now) && now.left == shown.left && now.top == shown.top && now.right <= shown.right &&
                      now.bottom <= shown.bottom && !same_rect(&now, &shown);
-    if (h && !shrank) {
+    BOOLEAN grew = !RectEmpty(&now) && !RectEmpty(&shown) && now.left == shown.left && now.top == shown.top &&
+                   now.right >= shown.right && now.bottom >= shown.bottom && !same_rect(&now, &shown);
+    ULONGLONG time = KeQueryInterruptTime();
+    if (h && h->Grew && time >= h->Until)
+        grew = FALSE;
+    if (h && !(h->Grew ? grew : shrank)) {
         held_drop(h);
         h = nullptr;
-    }
-    if (!h && shrank && ScreenHeldCount < (LONG)RTL_NUMBER_OF(g_held)) {
+    } else if (!h && (shrank || grew) && ScreenHeldCount < (LONG)RTL_NUMBER_OF(g_held)) {
         h = &g_held[ScreenHeldCount++];
-        *h = (HELD){.Window = w, .Left = shown};
+        *h = (HELD){.Window = w, .Left = shown, .Grew = grew, .Until = time + HELD_GREW_MS * 10000ull};
     }
-    if (h) {
+    if (h && h->Grew) {
+        h->Top = top;
+        h->Now = now;
+        h->Shown = shown;
+        out->Visible = shown;
+    } else if (h) {
         h->Top = top;
         h->Now = now;
         h->Shown = shown;
@@ -1012,7 +1027,18 @@ void ScreenHeldDrawn(const SURFACE *s, const RECT *drawn)
     for (LONG i = 0; i < ScreenHeldCount; i++) {
         HELD *h = &g_held[i];
         RECT hit;
-        if (h->Top != s->Window || !RectIntersect(&hit, drawn, &h->Left))
+        if (h->Top != s->Window)
+            continue;
+        if (h->Grew) {
+            /* the parent draws its frame past the edge the layer had, in the rows or columns of the layer. */
+            if ((h->Now.right > h->Shown.right && drawn->right > h->Shown.right && drawn->top < h->Now.bottom &&
+                 drawn->bottom > h->Now.top) ||
+                (h->Now.bottom > h->Shown.bottom && drawn->bottom > h->Shown.bottom && drawn->left < h->Now.right &&
+                 drawn->right > h->Now.left))
+                h->Left = h->Now;
+            continue;
+        }
+        if (!RectIntersect(&hit, drawn, &h->Left))
             continue;
         if (drawn->left >= h->Now.right) {
             h->Left.right = drawn->left;
@@ -1046,6 +1072,8 @@ void ScreenHeldGone(const WND *w)
 void ScreenLayer(WND *w, MIME_PRESENT_LAYER *out)
 {
     *out = (MIME_PRESENT_LAYER){};
+    if (!++ScreenLayerStamp)
+        ScreenLayerStamp = 1;
     WND *top = WndTopLevel(w);
     if (!top || top == WndDesktop() || !(top->Flags & WNDF_HOST_WINDOW))
         return;
@@ -1091,6 +1119,7 @@ static void send_layer(WND *w)
         *g_layer = (MimeWinLayer){.window_id = where.Window,
                                   .source = (uint32_t)(ULONG_PTR)WndHandle(w),
                                   .order = where.Order,
+                                  .stamp = ScreenLayerStamp,
                                   .client = {where.Client.left, where.Client.top, where.Client.right, where.Client.bottom},
                                   .visible = {where.Visible.left, where.Visible.top, where.Visible.right,
                                               where.Visible.bottom}};
@@ -1114,7 +1143,11 @@ void ScreenHeldFlush(WND *top)
     KeAcquireSpinLock(&g_held_lock, &irql);
     for (LONG i = ScreenHeldCount - 1; i >= 0; i--) {
         HELD *h = &g_held[i];
-        if (h->Top != top || same_rect(&h->Left, &h->Shown))
+        if (h->Top != top)
+            continue;
+        if (h->Grew && KeQueryInterruptTime() >= h->Until)
+            h->Left = h->Now;
+        if (same_rect(&h->Left, &h->Shown))
             continue;
         h->Shown = h->Left;
         told[count++] = h->Window;

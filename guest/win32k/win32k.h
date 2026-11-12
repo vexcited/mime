@@ -1220,6 +1220,8 @@ void ScreenHeldDrawn(const SURFACE *s, const RECT *drawn);
 void ScreenHeldFlush(WND *top);
 void ScreenHeldGone(const WND *w);
 extern LONG ScreenHeldCount;
+/* the count of the last ScreenLayer, see MimeGpuSurfaceConfig. */
+extern ULONG ScreenLayerStamp;
 extern ULONG ScreenSerial;
 extern ULONG VkProcessCount;
 HBRUSH MetricsSysColorBrush(int index);

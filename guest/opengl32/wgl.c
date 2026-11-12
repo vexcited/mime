@@ -297,6 +297,8 @@ void gl_surface_refresh(GlSurface *s, HDC dc)
     MIME_GPU_SURFACE info;
     if (!NtGdiMimeGpuGetSurface(dc, &info) || info.Window != s->hwnd)
         return;
+    ULONG stamp = info.Stamp;
+    info.Stamp = 0;
     if (s->configured && !memcmp(&info, &s->info, sizeof(info)))
         return;
     s->info = info;
@@ -320,6 +322,7 @@ void gl_surface_refresh(GlSurface *s, HDC dc)
     c->visible[1] = info.Visible.top;
     c->visible[2] = info.Visible.right;
     c->visible[3] = info.Visible.bottom;
+    c->stamp = stamp;
     gl_device_unlock();
 }
 

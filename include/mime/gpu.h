@@ -428,6 +428,11 @@ typedef struct MimeGpuSurfaceConfig {
     uint32_t source; /* the window the surface is for, a child of the host window or the host window itself. */
     uint32_t order;  /* its place in the paint order of the host window's tree, the front ones last. */
     int32_t visible[4]; /* left, top, right and bottom of the part of the client area that shows, window-relative. */
+    /*
+     * counts what the guest tells of the places of windows, here and in MimeWinLayer, never 0. this one is read
+     * after all that was drawn before it, so a later notice of the window's layer may have come first.
+     */
+    uint32_t stamp;
 } MimeGpuSurfaceConfig;
 
 typedef struct MimeGpuAttachment {

@@ -692,6 +692,7 @@ typedef struct MIME_GPU_SURFACE {
     ULONG Width, Height;
     ULONG Order;      /* the window's place in the paint order of the host window's tree. */
     RECT Visible;     /* the part of the client area that shows, in the host window's surface. */
+    ULONG Stamp;      /* counts what is told of the places of windows: the later has the greater. */
 } MIME_GPU_SURFACE;
 
 W32KAPI NTSTATUS NTAPI NtGdiMimeGpuOpen(PVOID *base, PULONG size);

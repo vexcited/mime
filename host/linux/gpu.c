@@ -2455,7 +2455,7 @@ static void surface_config(Channel *c, const MimeGpuSurfaceConfig *sc)
     MimeRect client = {sc->x, sc->y, MIME_MAX(sc->x + (int32_t)w, sc->visible[2]),
                        MIME_MAX(sc->y + (int32_t)h, sc->visible[3])};
     s->target = (MvkTarget){sc->window_id, sc->source, sc->order, client,
-                            {sc->visible[0], sc->visible[1], sc->visible[2], sc->visible[3]}};
+                            {sc->visible[0], sc->visible[1], sc->visible[2], sc->visible[3]}, sc->stamp};
     s->sync = sc->sync != 0;
 }
 
