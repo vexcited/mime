@@ -396,8 +396,8 @@ static UINT32 passes_due(void)
 }
 
 /*
- * every device of the process shares the one mix, so it plays on the device chosen first, until the mix is open. a
- * device the host lost by then gives way to the default one.
+ * every device of the process shares the one mix, so it plays on the device chosen first, until the mix is open.
+ * with none chosen it follows the host's default one. a device the host lost by then gives way to the default one.
  */
 void DsMixerDevice(const GUID *guid)
 {

@@ -61,7 +61,7 @@ static HRESULT STDMETHODCALLTYPE capture_get_caps(IDirectSoundCapture *This, LPD
 static HRESULT STDMETHODCALLTYPE capture_initialize(IDirectSoundCapture *This, LPCGUID device)
 {
     GUID resolved;
-    return DsResolveDevice(device, &resolved, TRUE) ? DS_OK : DSERR_NODRIVER;
+    return DsResolveDevice(device, &resolved, TRUE, nullptr) ? DS_OK : DSERR_NODRIVER;
 }
 
 static const IDirectSoundCaptureVtbl capture_vtbl = {capture_query,    capture_add_ref, capture_release,
@@ -72,7 +72,7 @@ HRESULT DsCreateCapture(LPCGUID guid, IDirectSoundCapture **out, BOOL v8, BOOL i
     *out = nullptr;
     if (initialize) {
         GUID resolved;
-        if (!DsResolveDevice(guid, &resolved, TRUE))
+        if (!DsResolveDevice(guid, &resolved, TRUE, nullptr))
             return DSERR_NODRIVER;
     }
     CAPTURE *c = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*c));

@@ -107,14 +107,11 @@ struct DSDEVICE {
 
 extern RTL_CRITICAL_SECTION DsLock;
 extern HINSTANCE DsModule;
-extern const GUID DsDeviceGuid;
-extern const WCHAR DsDeviceName[];
-extern const WCHAR DsDeviceModule[];
 extern DSDEVICE *DsDevices;
 
 /* main.c */
 HRESULT DsCreateDevice(LPCGUID guid, DWORD version, IDirectSound8 **out);
-BOOL DsResolveDevice(LPCGUID requested, GUID *out, BOOL capture);
+BOOL DsResolveDevice(LPCGUID requested, GUID *out, BOOL capture, BOOL *follows);
 /* the host device the process mix plays on, for a device besides the default one. */
 void DsMixerDevice(const GUID *guid);
 void DsCopyFormat(WAVEFORMATEX *to, const WAVEFORMATEX *from);

@@ -5,11 +5,8 @@
 #define MIME_BUILD_WINMM
 #include "winmm_private.h"
 
-#if defined(__aarch64__)
-#define DEVICE_NAME L"Speakers (Qualcomm Audio)"
-#else
-#define DEVICE_NAME L"Speakers (Realtek(R) Audio)"
-#endif
+#include "../lib/audio/devices.h"
+
 #define LINE_ID 0xFFFF0000u
 #define VOLUME_ID 1
 #define MUTE_ID 2
@@ -24,6 +21,14 @@ static RTL_CRITICAL_SECTION g_lock = {nullptr, -1, 0, nullptr, nullptr, 0};
 static MIXER *g_mixers;
 static DWORD g_volume[2] = {65535, 65535};
 static BOOL g_mute;
+
+/* the mixer is the one of the default output. */
+static void device_name(WCHAR *name)
+{
+    MimeAudioEndpoint e;
+    MimeAudioDefaultEndpoint(FALSE, &e);
+    lstrcpynW(name, e.name, MAXPNAMELEN);
+}
 
 static BOOL valid(HMIXER h)
 {
@@ -77,7 +82,7 @@ WINMMAPI MMRESULT WINAPI mixerGetDevCapsW(UINT_PTR id, LPMIXERCAPSW caps, UINT s
     if (!caps)
         return MMSYSERR_INVALPARAM;
     MIXERCAPSW c = {MM_MICROSOFT, MM_MSFT_WDMAUDIO_MIXER, 0x0A00};
-    lstrcpynW(c.szPname, DEVICE_NAME, MAXPNAMELEN);
+    device_name(c.szPname);
     c.cDestinations = 1;
     memcpy(caps, &c, size < sizeof(c) ? size : sizeof(c));
     return MMSYSERR_NOERROR;
@@ -168,7 +173,7 @@ static void fill_line(MIXERLINEW *l)
     l->Target.wMid = MM_MICROSOFT;
     l->Target.wPid = MM_MSFT_WDMAUDIO_WAVEOUT;
     l->Target.vDriverVersion = 0x0A00;
-    lstrcpynW(l->Target.szPname, DEVICE_NAME, MAXPNAMELEN);
+    device_name(l->Target.szPname);
 }
 
 WINMMAPI MMRESULT WINAPI mixerGetLineInfoW(HMIXEROBJ object, LPMIXERLINEW line, DWORD flags)

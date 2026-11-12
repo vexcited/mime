@@ -1,9 +1,11 @@
 /*
  * CLSID_DirectSoundPrivate: DSPROPSETID_DirectSoundDevice, which dsound's
- * tools and xinput read devices with. mime's single render device is
- * described the way windows describes a wdm one.
+ * tools and xinput read devices with. the host's outputs are described
+ * the way windows describes wdm ones.
  */
 #include "dsound_private.h"
+
+#include "../lib/audio/devices.h"
 
 typedef struct PRIVATE {
     IKsPropertySet iface;
@@ -16,11 +18,11 @@ typedef struct PRIVATE {
 static const IKsPropertySetVtbl private_vtbl;
 
 /* the interface path follows how the audio stack names a render endpoint. */
-static void fill_strings(PRIVATE *p)
+static void fill_strings(PRIVATE *p, const MimeAudioEndpoint *e)
 {
-    lstrcpynW(p->description, DsDeviceName, RTL_NUMBER_OF(p->description));
-    lstrcpynW(p->module, DsDeviceModule, RTL_NUMBER_OF(p->module));
-    wsprintfW(p->interface, L"\\\\?\\SWD#MMDEVAPI#%s#{e6327cad-dcec-4949-ae8a-991e976a79d2}", DsDeviceModule);
+    lstrcpynW(p->description, e->name, RTL_NUMBER_OF(p->description));
+    MimeAudioEndpointId(FALSE, &e->guid, p->module);
+    wsprintfW(p->interface, L"\\\\?\\SWD#MMDEVAPI#%s#{e6327cad-dcec-4949-ae8a-991e976a79d2}", p->module);
     WideCharToMultiByte(CP_ACP, 0, p->description, -1, p->description_a, sizeof(p->description_a), nullptr, nullptr);
     WideCharToMultiByte(CP_ACP, 0, p->module, -1, p->module_a, sizeof(p->module_a), nullptr, nullptr);
     WideCharToMultiByte(CP_ACP, 0, p->interface, -1, p->interface_a, sizeof(p->interface_a), nullptr, nullptr);
@@ -33,7 +35,6 @@ HRESULT DsCreatePrivate(REFIID riid, void **out)
         return E_OUTOFMEMORY;
     p->iface.lpVtbl = &private_vtbl;
     p->ref = 1;
-    fill_strings(p);
     HRESULT hr = p->iface.lpVtbl->QueryInterface(&p->iface, riid, out);
     p->iface.lpVtbl->Release(&p->iface);
     return hr;
@@ -66,45 +67,91 @@ static ULONG STDMETHODCALLTYPE private_release(IKsPropertySet *This)
     return ref;
 }
 
-/* the only render device: a default id or its own id names it. */
-static BOOL is_device(const GUID *id)
+/* the host's outputs, the default one first, which is also winmm's order. the caller frees the list. */
+static UINT32 outputs(MimeAudioEndpoint **all)
 {
-    GUID resolved;
-    return IsEqualGUID(id, &GUID_NULL) || (DsResolveDevice(id, &resolved, FALSE) && IsEqualGUID(&resolved, &DsDeviceGuid));
+    *all = HeapAlloc(GetProcessHeap(), 0, sizeof(**all) * MIME_AUDIO_ENDPOINTS);
+    return *all ? MimeAudioEndpoints(FALSE, *all) : 0;
 }
 
-static void describe_w(PRIVATE *p, PDSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_W_DATA d)
+/* the device a default id or its own id names, and its place in the list. */
+static BOOL find_device(const GUID *id, MimeAudioEndpoint *e, ULONG *wave)
 {
+    GUID resolved;
+    if (!DsResolveDevice(id, &resolved, FALSE, nullptr))
+        return FALSE;
+    MimeAudioEndpoint *all;
+    UINT32 count = outputs(&all);
+    BOOL found = FALSE;
+    for (UINT32 i = 0; i < count && !found; i++) {
+        if (IsEqualGUID(&all[i].guid, &resolved)) {
+            *e = all[i];
+            *wave = i;
+            found = TRUE;
+        }
+    }
+    if (all)
+        HeapFree(GetProcessHeap(), 0, all);
+    return found;
+}
+
+/* winmm cuts its device names to 31 characters. */
+static BOOL find_wave_device(const WCHAR *name, GUID *guid)
+{
+    MimeAudioEndpoint *all;
+    UINT32 count = outputs(&all);
+    BOOL found = FALSE;
+    for (UINT32 i = 0; i < count && !found; i++) {
+        WCHAR cut[32];
+        lstrcpynW(cut, all[i].name, RTL_NUMBER_OF(cut));
+        if (!lstrcmpW(name, all[i].name) || !lstrcmpW(name, cut)) {
+            *guid = all[i].guid;
+            found = TRUE;
+        }
+    }
+    if (all)
+        HeapFree(GetProcessHeap(), 0, all);
+    return found;
+}
+
+static void describe_w(PRIVATE *p, PDSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_W_DATA d, const MimeAudioEndpoint *e,
+                       ULONG wave)
+{
+    fill_strings(p, e);
     d->Type = DIRECTSOUNDDEVICE_TYPE_WDM;
     d->DataFlow = DIRECTSOUNDDEVICE_DATAFLOW_RENDER;
-    d->DeviceId = DsDeviceGuid;
+    d->DeviceId = e->guid;
     d->Description = p->description;
     d->Module = p->module;
     d->Interface = p->interface;
-    d->WaveDeviceId = 0;
+    d->WaveDeviceId = wave;
 }
 
-static void describe_a(PRIVATE *p, PDSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_A_DATA d)
+static void describe_a(PRIVATE *p, PDSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_A_DATA d, const MimeAudioEndpoint *e,
+                       ULONG wave)
 {
+    fill_strings(p, e);
     d->Type = DIRECTSOUNDDEVICE_TYPE_WDM;
     d->DataFlow = DIRECTSOUNDDEVICE_DATAFLOW_RENDER;
-    d->DeviceId = DsDeviceGuid;
+    d->DeviceId = e->guid;
     d->Description = p->description_a;
     d->Module = p->module_a;
     d->Interface = p->interface_a;
-    d->WaveDeviceId = 0;
+    d->WaveDeviceId = wave;
 }
 
-static void describe_1(PRIVATE *p, PDSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_1_DATA d)
+static void describe_1(PRIVATE *p, PDSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_1_DATA d, const MimeAudioEndpoint *e,
+                       ULONG wave)
 {
-    d->DeviceId = DsDeviceGuid;
+    fill_strings(p, e);
+    d->DeviceId = e->guid;
     lstrcpynA(d->DescriptionA, p->description_a, sizeof(d->DescriptionA));
     lstrcpynW(d->DescriptionW, p->description, RTL_NUMBER_OF(d->DescriptionW));
     lstrcpynA(d->ModuleA, p->module_a, sizeof(d->ModuleA));
     lstrcpynW(d->ModuleW, p->module, RTL_NUMBER_OF(d->ModuleW));
     d->Type = DIRECTSOUNDDEVICE_TYPE_WDM;
     d->DataFlow = DIRECTSOUNDDEVICE_DATAFLOW_RENDER;
-    d->WaveDeviceId = 0;
+    d->WaveDeviceId = wave;
     d->Devnode = 0;
 }
 
@@ -134,67 +181,91 @@ static HRESULT STDMETHODCALLTYPE private_get(IKsPropertySet *This, REFGUID set, 
         return E_PROP_ID_UNSUPPORTED;
     if (data_size < g_sizes[id])
         return DSERR_INVALIDPARAM;
+    MimeAudioEndpoint e;
+    ULONG wave;
     switch (id) {
     case DSPROPERTY_DIRECTSOUNDDEVICE_WAVEDEVICEMAPPING_A: {
         PDSPROPERTY_DIRECTSOUNDDEVICE_WAVEDEVICEMAPPING_A_DATA m = data;
-        if (m->DataFlow != DIRECTSOUNDDEVICE_DATAFLOW_RENDER || !m->DeviceName || lstrcmpA(m->DeviceName, p->description_a))
+        WCHAR name[0x100];
+        if (m->DataFlow != DIRECTSOUNDDEVICE_DATAFLOW_RENDER || !m->DeviceName ||
+            !MultiByteToWideChar(CP_ACP, 0, m->DeviceName, -1, name, RTL_NUMBER_OF(name)) ||
+            !find_wave_device(name, &m->DeviceId))
             return DSERR_NODRIVER;
-        m->DeviceId = DsDeviceGuid;
         break;
     }
     case DSPROPERTY_DIRECTSOUNDDEVICE_WAVEDEVICEMAPPING_W: {
         PDSPROPERTY_DIRECTSOUNDDEVICE_WAVEDEVICEMAPPING_W_DATA m = data;
-        if (m->DataFlow != DIRECTSOUNDDEVICE_DATAFLOW_RENDER || !m->DeviceName || lstrcmpW(m->DeviceName, p->description))
+        if (m->DataFlow != DIRECTSOUNDDEVICE_DATAFLOW_RENDER || !m->DeviceName || !find_wave_device(m->DeviceName, &m->DeviceId))
             return DSERR_NODRIVER;
-        m->DeviceId = DsDeviceGuid;
         break;
     }
     case DSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_1: {
         PDSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_1_DATA d = data;
-        if (!is_device(&d->DeviceId))
+        if (!find_device(&d->DeviceId, &e, &wave))
             return DSERR_NODRIVER;
-        describe_1(p, d);
+        describe_1(p, d, &e, wave);
         break;
     }
     case DSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_A: {
         PDSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_A_DATA d = data;
-        if (!is_device(&d->DeviceId))
+        if (!find_device(&d->DeviceId, &e, &wave))
             return DSERR_NODRIVER;
-        describe_a(p, d);
+        describe_a(p, d, &e, wave);
         break;
     }
     case DSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_W: {
         PDSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_W_DATA d = data;
-        if (!is_device(&d->DeviceId))
+        if (!find_device(&d->DeviceId, &e, &wave))
             return DSERR_NODRIVER;
-        describe_w(p, d);
+        describe_w(p, d, &e, wave);
         break;
     }
     case DSPROPERTY_DIRECTSOUNDDEVICE_ENUMERATE_1: {
-        PDSPROPERTY_DIRECTSOUNDDEVICE_ENUMERATE_1_DATA e = data;
-        if (!e->Callback)
+        PDSPROPERTY_DIRECTSOUNDDEVICE_ENUMERATE_1_DATA request = data;
+        if (!request->Callback)
             return DSERR_INVALIDPARAM;
-        DSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_1_DATA d = {};
-        describe_1(p, &d);
-        e->Callback(&d, e->Context);
+        MimeAudioEndpoint *all;
+        UINT32 count = outputs(&all);
+        for (UINT32 i = 0; i < count; i++) {
+            DSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_1_DATA d = {};
+            describe_1(p, &d, &all[i], i);
+            if (!request->Callback(&d, request->Context))
+                break;
+        }
+        if (all)
+            HeapFree(GetProcessHeap(), 0, all);
         break;
     }
     case DSPROPERTY_DIRECTSOUNDDEVICE_ENUMERATE_A: {
-        PDSPROPERTY_DIRECTSOUNDDEVICE_ENUMERATE_A_DATA e = data;
-        if (!e->Callback)
+        PDSPROPERTY_DIRECTSOUNDDEVICE_ENUMERATE_A_DATA request = data;
+        if (!request->Callback)
             return DSERR_INVALIDPARAM;
-        DSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_A_DATA d = {};
-        describe_a(p, &d);
-        e->Callback(&d, e->Context);
+        MimeAudioEndpoint *all;
+        UINT32 count = outputs(&all);
+        for (UINT32 i = 0; i < count; i++) {
+            DSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_A_DATA d = {};
+            describe_a(p, &d, &all[i], i);
+            if (!request->Callback(&d, request->Context))
+                break;
+        }
+        if (all)
+            HeapFree(GetProcessHeap(), 0, all);
         break;
     }
     case DSPROPERTY_DIRECTSOUNDDEVICE_ENUMERATE_W: {
-        PDSPROPERTY_DIRECTSOUNDDEVICE_ENUMERATE_W_DATA e = data;
-        if (!e->Callback)
+        PDSPROPERTY_DIRECTSOUNDDEVICE_ENUMERATE_W_DATA request = data;
+        if (!request->Callback)
             return DSERR_INVALIDPARAM;
-        DSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_W_DATA d = {};
-        describe_w(p, &d);
-        e->Callback(&d, e->Context);
+        MimeAudioEndpoint *all;
+        UINT32 count = outputs(&all);
+        for (UINT32 i = 0; i < count; i++) {
+            DSPROPERTY_DIRECTSOUNDDEVICE_DESCRIPTION_W_DATA d = {};
+            describe_w(p, &d, &all[i], i);
+            if (!request->Callback(&d, request->Context))
+                break;
+        }
+        if (all)
+            HeapFree(GetProcessHeap(), 0, all);
         break;
     }
     }

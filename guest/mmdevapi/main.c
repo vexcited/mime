@@ -1,15 +1,13 @@
 /*
- * the multimedia device api: a render and a capture endpoint for the host's default devices, then one for each other
- * device the host has. their audio clients, in client.c, play and record through the host.
+ * the multimedia device api: an endpoint for each audio device of the host, named and formatted like it, the
+ * default one being the host's. their audio clients, in client.c, play and record through the host.
  */
 #include "mmdevapi_private.h"
 
-#include "../lib/audio/devices.h"
+#include <mime/ntapi.h>
+#include <mime/pnp.h>
 
-static constexpr WCHAR DEVICE_ID[] = L"{0.0.0.00000000}.{2c9f1a4b-8d3e-4f6a-9b1c-7e5d2a8c4f01}";
-static constexpr WCHAR CAPTURE_ID[] = L"{0.0.1.00000000}.{2c9f1a4b-8d3e-4f6a-9b1c-7e5d2a8c4f02}";
-static constexpr WCHAR DEVICE_DESC[] = L"Speakers";
-static constexpr WCHAR CAPTURE_DESC[] = L"Microphone";
+#include "../lib/audio/devices.h"
 
 /* the compiler references it from code using floating point, without a crt to define it. */
 int _fltused = 0x9875;
@@ -28,19 +26,30 @@ void *MmTaskAlloc(SIZE_T size)
     return g_task_alloc(size);
 }
 
-void MmMixFormat(WAVEFORMATEXTENSIBLE *f)
+DWORD MmChannelMask(UINT32 channels)
+{
+    static const DWORD masks[9] = {0, 0x4, 0x3, 0xB, 0x33, 0x3B, 0x3F, 0x70F, 0x63F};
+    return channels < RTL_NUMBER_OF(masks) ? masks[channels] : 0;
+}
+
+static void wave_format(WAVEFORMATEXTENSIBLE *f, UINT32 rate, UINT32 channels, UINT32 bits, BOOL is_float)
 {
     memset(f, 0, sizeof(*f));
     f->Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
-    f->Format.nChannels = 2;
-    f->Format.nSamplesPerSec = 48000;
-    f->Format.wBitsPerSample = 32;
-    f->Format.nBlockAlign = 8;
-    f->Format.nAvgBytesPerSec = 48000 * 8;
+    f->Format.nChannels = (WORD)channels;
+    f->Format.nSamplesPerSec = rate;
+    f->Format.wBitsPerSample = (WORD)bits;
+    f->Format.nBlockAlign = (WORD)(channels * bits / 8);
+    f->Format.nAvgBytesPerSec = rate * f->Format.nBlockAlign;
     f->Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
-    f->Samples.wValidBitsPerSample = 32;
-    f->dwChannelMask = 3; /* front left and right. */
-    f->SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+    f->Samples.wValidBitsPerSample = (WORD)bits;
+    f->dwChannelMask = MmChannelMask(channels);
+    f->SubFormat = is_float ? KSDATAFORMAT_SUBTYPE_IEEE_FLOAT : KSDATAFORMAT_SUBTYPE_PCM;
+}
+
+void MmMixFormat(WAVEFORMATEXTENSIBLE *f, UINT32 rate, UINT32 channels)
+{
+    wave_format(f, rate, channels, 32, TRUE);
 }
 
 static HRESULT copy_string(const WCHAR *s, LPWSTR *out)
@@ -55,17 +64,23 @@ static HRESULT copy_string(const WCHAR *s, LPWSTR *out)
 
 /* ------------------------------------------------------------------ property store */
 
-/* one object per endpoint, acting as device, endpoint and property store. it lasts as long as the process. */
+/*
+ * one object per endpoint, acting as device, endpoint and property store. it lasts as long as the process, so a
+ * device the host lost keeps the object programs may hold, and gets it back when the host has the device again.
+ */
 typedef struct DEVICE {
     const IMMDeviceVtbl *device;
     const IMMEndpointVtbl *endpoint;
     const IPropertyStoreVtbl *store;
+    struct DEVICE *next;
     BOOL capture;
-    BOOL fixed; /* the default device of its direction. */
+    BOOL present;
+    BOOL announced; /* the notification clients were told of it. */
     GUID guid;
+    UINT32 rate, channels, bits;
+    BOOL is_float;
     WCHAR id[56];
-    WCHAR name[144];
-    WCHAR interface[128];
+    WCHAR name[112];
 } DEVICE;
 
 #define DEVICE_OF(field, This) ((DEVICE *)((BYTE *)(This) - offsetof(DEVICE, field)))
@@ -90,6 +105,9 @@ static const struct {
     {&FMTID_Device, 2},          /* PKEY_Device_DeviceDesc */
     {&FMTID_DeviceInterface, 2}, /* PKEY_DeviceInterface_FriendlyName */
     {&FMTID_AudioEngine, 0},     /* PKEY_AudioEngine_DeviceFormat */
+    {&FMTID_AudioEngine, 3},     /* PKEY_AudioEngine_OEMFormat */
+    {&FMTID_AudioEndpoint, 3},   /* PKEY_AudioEndpoint_PhysicalSpeakers */
+    {&FMTID_AudioEndpoint, 4},   /* PKEY_AudioEndpoint_GUID */
 };
 
 static HRESULT STDMETHODCALLTYPE store_count(void *This, DWORD *count)
@@ -111,32 +129,38 @@ static HRESULT STDMETHODCALLTYPE store_get_at(void *This, DWORD index, PROPERTYK
     return S_OK;
 }
 
+/* the host has one name for a device, which windows splits into a description and the adapter's name. */
 static HRESULT STDMETHODCALLTYPE store_get_value(void *This, REFPROPERTYKEY key, PROPVARIANT *value)
 {
     DEVICE *d = DEVICE_OF(store, This);
     if (!key || !value)
         return E_POINTER;
     memset(value, 0, sizeof(*value));
-    const WCHAR *text = nullptr;
-    if (IsEqualGUID(&key->fmtid, &FMTID_Device) && key->pid == 14)
-        text = d->name;
-    else if (IsEqualGUID(&key->fmtid, &FMTID_Device) && key->pid == 2)
-        text = d->capture ? CAPTURE_DESC : DEVICE_DESC;
-    else if (IsEqualGUID(&key->fmtid, &FMTID_DeviceInterface) && key->pid == 2)
-        text = d->interface;
-    if (text) {
+    BOOL name = (IsEqualGUID(&key->fmtid, &FMTID_Device) && (key->pid == 14 || key->pid == 2)) ||
+                (IsEqualGUID(&key->fmtid, &FMTID_DeviceInterface) && key->pid == 2);
+    if (name) {
         value->vt = VT_LPWSTR;
-        return copy_string(text, &value->pwszVal);
+        return copy_string(d->name, &value->pwszVal);
     }
-    if (IsEqualGUID(&key->fmtid, &FMTID_AudioEngine) && key->pid == 0) {
+    if (IsEqualGUID(&key->fmtid, &FMTID_AudioEngine) && (key->pid == 0 || key->pid == 3)) {
         WAVEFORMATEXTENSIBLE *f = MmTaskAlloc(sizeof(*f));
         if (!f)
             return E_OUTOFMEMORY;
-        MmMixFormat(f);
+        wave_format(f, d->rate, d->channels, d->bits, d->is_float);
         value->vt = VT_BLOB;
         value->blob.cbSize = sizeof(*f);
         value->blob.pBlobData = (BYTE *)f;
         return S_OK;
+    }
+    if (IsEqualGUID(&key->fmtid, &FMTID_AudioEndpoint) && key->pid == 3) {
+        value->vt = VT_UI4;
+        value->ulVal = MmChannelMask(d->channels);
+        return S_OK;
+    }
+    if (IsEqualGUID(&key->fmtid, &FMTID_AudioEndpoint) && key->pid == 4) {
+        value->vt = VT_LPWSTR;
+        /* the id ends with the guid in braces. */
+        return copy_string(wcsrchr(d->id, L'{'), &value->pwszVal);
     }
     /* VT_EMPTY: the property is not set. */
     return S_OK;
@@ -158,58 +182,44 @@ static const IPropertyStoreVtbl store_vtbl = {
 static const IMMDeviceVtbl device_vtbl;
 static const IMMEndpointVtbl endpoint_vtbl;
 
-/* the default devices come first. a device the host lost keeps its object, which programs may still hold. */
-#define MAX_DEVICES (MIME_AUDIO_ENDPOINTS * 2)
-static DEVICE g_devices[2][MAX_DEVICES];
-static UINT g_device_count[2];
+static DEVICE *g_devices[2];
 static SRWLOCK g_devices_lock;
 
-static void format_id(DEVICE *d)
-{
-    static const WCHAR digits[] = L"0123456789abcdef";
-    static const BYTE order[16] = {3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15};
-    const BYTE *bytes = (const BYTE *)&d->guid;
-    WCHAR *at = d->id;
-    for (const WCHAR *prefix = d->capture ? L"{0.0.1.00000000}.{" : L"{0.0.0.00000000}.{"; *prefix; prefix++)
-        *at++ = *prefix;
-    for (int i = 0; i < 16; i++) {
-        if (i == 4 || i == 6 || i == 8 || i == 10)
-            *at++ = L'-';
-        *at++ = digits[bytes[order[i]] >> 4];
-        *at++ = digits[bytes[order[i]] & 15];
-    }
-    *at++ = L'}';
-    *at = 0;
-}
-
-/* the endpoints the host has now, each with the object it had before when it is not new. */
+/*
+ * reads the host's devices into the objects and returns the present ones, the default one first, in listed, which
+ * holds MIME_AUDIO_ENDPOINTS of them.
+ */
 static UINT list_devices(BOOL capture, DEVICE **listed)
 {
     MimeAudioEndpoint *all = HeapAlloc(GetProcessHeap(), 0, sizeof(*all) * MIME_AUDIO_ENDPOINTS);
     UINT count = all ? MimeAudioEndpoints(capture, all) : 0, found = 0;
-    DEVICE *pool = g_devices[capture ? 1 : 0];
-    UINT *known = &g_device_count[capture ? 1 : 0];
+    DEVICE **pool = &g_devices[capture ? 1 : 0];
     AcquireSRWLockExclusive(&g_devices_lock);
-    listed[found++] = &pool[0];
-    for (UINT i = 1; i < count; i++) {
-        DEVICE *d = nullptr;
-        for (UINT j = 1; j < *known && !d; j++) {
-            if (IsEqualGUID(&pool[j].guid, &all[i].guid))
-                d = &pool[j];
-        }
-        if (!d && *known < MAX_DEVICES) {
-            d = &pool[(*known)++];
+    for (DEVICE *d = *pool; d && all; d = d->next)
+        d->present = FALSE;
+    for (UINT i = 0; i < count; i++) {
+        DEVICE *d = *pool;
+        while (d && !IsEqualGUID(&d->guid, &all[i].guid))
+            d = d->next;
+        if (!d) {
+            d = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*d));
+            if (!d)
+                continue;
             d->device = &device_vtbl;
             d->endpoint = &endpoint_vtbl;
             d->store = &store_vtbl;
             d->capture = capture;
             d->guid = all[i].guid;
-            format_id(d);
+            MimeAudioEndpointId(capture, &d->guid, d->id);
+            d->next = *pool;
+            *pool = d;
         }
-        if (!d)
-            continue;
+        d->present = TRUE;
+        d->rate = all[i].rate;
+        d->channels = all[i].channels;
+        d->bits = all[i].bits;
+        d->is_float = all[i].is_float;
         lstrcpynW(d->name, all[i].name, RTL_NUMBER_OF(d->name));
-        lstrcpynW(d->interface, all[i].interface, RTL_NUMBER_OF(d->interface));
         listed[found++] = d;
     }
     ReleaseSRWLockExclusive(&g_devices_lock);
@@ -224,12 +234,12 @@ static DEVICE *find_device(LPCWSTR id)
     DEVICE *found = nullptr;
     for (int capture = 0; capture < 2 && !found; capture++) {
         list_devices(capture, listed);
-        AcquireSRWLockExclusive(&g_devices_lock);
-        for (UINT i = 0; i < g_device_count[capture] && !found; i++) {
-            if (!_wcsicmp(id, g_devices[capture][i].id))
-                found = &g_devices[capture][i];
+        AcquireSRWLockShared(&g_devices_lock);
+        for (DEVICE *d = g_devices[capture]; d && !found; d = d->next) {
+            if (!_wcsicmp(id, d->id))
+                found = d;
         }
-        ReleaseSRWLockExclusive(&g_devices_lock);
+        ReleaseSRWLockShared(&g_devices_lock);
     }
     return found;
 }
@@ -263,7 +273,7 @@ static HRESULT STDMETHODCALLTYPE device_activate(void *This, REFIID iid, DWORD c
         return E_POINTER;
     *object = nullptr;
     if (IsEqualGUID(iid, &IID_IAudioClient) || IsEqualGUID(iid, &IID_IAudioClient2) || IsEqualGUID(iid, &IID_IAudioClient3))
-        return MmCreateAudioClient(d->capture, d->fixed ? nullptr : &d->guid, object);
+        return MmCreateAudioClient(d->capture, &d->guid, d->rate, d->channels, object);
     if (IsEqualGUID(iid, &IID_IAudioEndpointVolume)) {
         *object = MmEndpointVolume(d->capture);
         return S_OK;
@@ -289,9 +299,11 @@ static HRESULT STDMETHODCALLTYPE device_get_id(void *This, LPWSTR *id)
 
 static HRESULT STDMETHODCALLTYPE device_get_state(void *This, DWORD *state)
 {
+    DEVICE *d = DEVICE_OF(device, This), *listed[MIME_AUDIO_ENDPOINTS];
     if (!state)
         return E_POINTER;
-    *state = DEVICE_STATE_ACTIVE;
+    list_devices(d->capture, listed);
+    *state = d->present ? DEVICE_STATE_ACTIVE : DEVICE_STATE_NOTPRESENT;
     return S_OK;
 }
 
@@ -315,7 +327,7 @@ typedef struct {
     const IMMDeviceCollectionVtbl *vtbl;
     LONG refs;
     UINT count;
-    DEVICE *devices[MIME_AUDIO_ENDPOINTS * 2];
+    DEVICE *devices[MIME_AUDIO_ENDPOINTS * 8];
 } COLLECTION;
 
 static HRESULT STDMETHODCALLTYPE collection_query(void *This, REFIID riid, void **object)
@@ -397,11 +409,23 @@ static HRESULT STDMETHODCALLTYPE enum_endpoints(void *This, EDataFlow flow, DWOR
         return E_OUTOFMEMORY;
     c->vtbl = &collection_vtbl;
     c->refs = 1;
-    if (mask & DEVICE_STATE_ACTIVE) {
-        if (flow != eCapture)
-            c->count += list_devices(FALSE, c->devices);
-        if (flow != eRender)
-            c->count += list_devices(TRUE, c->devices + c->count);
+    for (int capture = 0; capture < 2; capture++) {
+        DEVICE *listed[MIME_AUDIO_ENDPOINTS];
+        if (flow == (capture ? eRender : eCapture))
+            continue;
+        UINT count = list_devices(capture, listed);
+        if (mask & DEVICE_STATE_ACTIVE) {
+            memcpy(c->devices + c->count, listed, count * sizeof(listed[0]));
+            c->count += count;
+        }
+        if (mask & DEVICE_STATE_NOTPRESENT) {
+            AcquireSRWLockShared(&g_devices_lock);
+            for (DEVICE *d = g_devices[capture]; d && c->count < RTL_NUMBER_OF(c->devices) - MIME_AUDIO_ENDPOINTS; d = d->next) {
+                if (!d->present)
+                    c->devices[c->count++] = d;
+            }
+            ReleaseSRWLockShared(&g_devices_lock);
+        }
     }
     return S_OK;
 }
@@ -415,7 +439,10 @@ static HRESULT STDMETHODCALLTYPE enum_default(void *This, EDataFlow flow, ERole 
         return E_INVALIDARG;
     if (flow == eAll)
         return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
-    *device = (IMMDevice *)&g_devices[flow == eCapture][0].device;
+    DEVICE *listed[MIME_AUDIO_ENDPOINTS];
+    if (!list_devices(flow == eCapture, listed))
+        return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    *device = (IMMDevice *)&listed[0]->device;
     return S_OK;
 }
 
@@ -428,14 +455,190 @@ static HRESULT STDMETHODCALLTYPE enum_get_device(void *This, LPCWSTR id, IMMDevi
     return d ? S_OK : HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
 }
 
-/* a device the host gains or loses shows in the next list, without a notification. */
+/* ------------------------------------------------------------------ notifications */
+
+#define MAX_CLIENTS 32
+
+static IMMNotificationClient *g_clients[MAX_CLIENTS];
+static SRWLOCK g_clients_lock;
+static BOOL g_watching;
+
+typedef struct CHANGE {
+    int kind;
+    DEVICE *device; /* none when a direction is left without a default device. */
+    BOOL capture;
+    DWORD state;
+} CHANGE;
+
+enum { CHANGE_ADDED, CHANGE_STATE, CHANGE_FORMAT, CHANGE_DEFAULT };
+
+/* the clients are called without the lock, which a callback takes when it registers or unregisters. */
+static void tell(const CHANGE *c)
+{
+    static const PROPERTYKEY format = {{0xF19F064D, 0x082C, 0x4E27, {0xBC, 0x73, 0x68, 0x82, 0xA1, 0xBB, 0x8E, 0x4C}}, 0};
+    IMMNotificationClient *clients[MAX_CLIENTS];
+    UINT count = 0;
+    AcquireSRWLockShared(&g_clients_lock);
+    for (UINT i = 0; i < MAX_CLIENTS; i++) {
+        if (g_clients[i]) {
+            clients[count] = g_clients[i];
+            clients[count++]->lpVtbl->AddRef(g_clients[i]);
+        }
+    }
+    ReleaseSRWLockShared(&g_clients_lock);
+    LPCWSTR id = c->device ? c->device->id : nullptr;
+    for (UINT i = 0; i < count; i++) {
+        IMMNotificationClient *client = clients[i];
+        switch (c->kind) {
+        case CHANGE_ADDED:
+            client->lpVtbl->OnDeviceAdded(client, id);
+            break;
+        case CHANGE_STATE:
+            client->lpVtbl->OnDeviceStateChanged(client, id, c->state);
+            break;
+        case CHANGE_FORMAT:
+            client->lpVtbl->OnPropertyValueChanged(client, id, format);
+            break;
+        case CHANGE_DEFAULT:
+            for (ERole role = eConsole; role <= eCommunications; role++)
+                client->lpVtbl->OnDefaultDeviceChanged(client, c->capture ? eCapture : eRender, role, id);
+            break;
+        }
+        client->lpVtbl->Release(client);
+    }
+}
+
+typedef struct SEEN {
+    DEVICE *device;
+    UINT32 rate, channels;
+} SEEN;
+
+static BOOL seen_in(const SEEN *list, UINT count, const DEVICE *d, const SEEN **at)
+{
+    for (UINT i = 0; i < count; i++) {
+        if (list[i].device == d) {
+            if (at)
+                *at = &list[i];
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static UINT look(BOOL capture, SEEN *out)
+{
+    DEVICE *listed[MIME_AUDIO_ENDPOINTS];
+    UINT count = list_devices(capture, listed);
+    for (UINT i = 0; i < count; i++)
+        out[i] = (SEEN){listed[i], listed[i]->rate, listed[i]->channels};
+    return count;
+}
+
+/* the kernel wakes plug and play waiters when the host's audio devices change. */
+static BOOL wait_change(ULONG *generation)
+{
+    MIME_PNP_REQUEST r;
+    for (;;) {
+        memset(&r, 0, sizeof(r));
+        r.Flags = *generation;
+        NTSTATUS status = NtPlugPlayControl(MIME_PNP_WAIT_CHANGE, &r, sizeof(r));
+        if (status == STATUS_ALERTED || status == STATUS_USER_APC)
+            continue;
+        *generation = r.Flags;
+        return NT_SUCCESS(status);
+    }
+}
+
+/* the list is compared with the one before, the default device being the first of each. */
+static DWORD WINAPI watch_devices(void *arg)
+{
+    static SEEN seen[2][MIME_AUDIO_ENDPOINTS], now[MIME_AUDIO_ENDPOINTS];
+    UINT seen_count[2];
+    ULONG generation = 0xFFFFFFFF;
+    if (!wait_change(&generation))
+        return 0;
+    for (int capture = 0; capture < 2; capture++) {
+        seen_count[capture] = look(capture, seen[capture]);
+        for (UINT i = 0; i < seen_count[capture]; i++)
+            seen[capture][i].device->announced = TRUE;
+    }
+    while (wait_change(&generation)) {
+        for (int capture = 0; capture < 2; capture++) {
+            SEEN *before = seen[capture];
+            UINT before_count = seen_count[capture], count = look(capture, now);
+            for (UINT i = 0; i < before_count; i++) {
+                if (!seen_in(now, count, before[i].device, nullptr))
+                    tell(&(CHANGE){CHANGE_STATE, before[i].device, capture, DEVICE_STATE_NOTPRESENT});
+            }
+            for (UINT i = 0; i < count; i++) {
+                const SEEN *old;
+                DEVICE *d = now[i].device;
+                if (seen_in(before, before_count, d, &old)) {
+                    if (old->rate != now[i].rate || old->channels != now[i].channels)
+                        tell(&(CHANGE){CHANGE_FORMAT, d, capture, 0});
+                    continue;
+                }
+                if (!d->announced)
+                    tell(&(CHANGE){CHANGE_ADDED, d, capture, 0});
+                d->announced = TRUE;
+                tell(&(CHANGE){CHANGE_STATE, d, capture, DEVICE_STATE_ACTIVE});
+            }
+            DEVICE *was = before_count ? before[0].device : nullptr, *is = count ? now[0].device : nullptr;
+            if (was != is)
+                tell(&(CHANGE){CHANGE_DEFAULT, is, capture, 0});
+            memcpy(before, now, count * sizeof(now[0]));
+            seen_count[capture] = count;
+        }
+    }
+    return 0;
+}
+
 static HRESULT STDMETHODCALLTYPE enum_register(void *This, IMMNotificationClient *client)
 {
-    return client ? S_OK : E_POINTER;
+    if (!client)
+        return E_POINTER;
+    HRESULT hr = E_OUTOFMEMORY;
+    AcquireSRWLockExclusive(&g_clients_lock);
+    for (UINT i = 0; i < MAX_CLIENTS && hr != S_OK; i++) {
+        if (!g_clients[i]) {
+            g_clients[i] = client;
+            hr = S_OK;
+        }
+    }
+    BOOL start = hr == S_OK && !g_watching;
+    if (start)
+        g_watching = TRUE;
+    ReleaseSRWLockExclusive(&g_clients_lock);
+    if (hr == S_OK)
+        client->lpVtbl->AddRef(client);
+    if (start) {
+        HANDLE thread = CreateThread(nullptr, 0, watch_devices, nullptr, 0, nullptr);
+        if (thread)
+            CloseHandle(thread);
+    }
+    return hr;
+}
+
+static HRESULT STDMETHODCALLTYPE enum_unregister(void *This, IMMNotificationClient *client)
+{
+    if (!client)
+        return E_POINTER;
+    HRESULT hr = HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+    AcquireSRWLockExclusive(&g_clients_lock);
+    for (UINT i = 0; i < MAX_CLIENTS && hr != S_OK; i++) {
+        if (g_clients[i] == client) {
+            g_clients[i] = nullptr;
+            hr = S_OK;
+        }
+    }
+    ReleaseSRWLockExclusive(&g_clients_lock);
+    if (hr == S_OK)
+        client->lpVtbl->Release(client);
+    return hr;
 }
 
 static const IMMDeviceEnumeratorVtbl enumerator_vtbl = {
-    enum_query, static_ref, static_ref, enum_endpoints, enum_default, enum_get_device, enum_register, enum_register,
+    enum_query, static_ref, static_ref, enum_endpoints, enum_default, enum_get_device, enum_register, enum_unregister,
 };
 
 /* ------------------------------------------------------------------ class factory */
@@ -481,21 +684,8 @@ DECLSPEC_EXPORT HRESULT WINAPI DllCanUnloadNow(void) { return S_FALSE; }
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, void *reserved)
 {
-    if (reason == DLL_PROCESS_ATTACH) {
-        for (int capture = 0; capture < 2; capture++) {
-            DEVICE *d = &g_devices[capture][0];
-            d->device = &device_vtbl;
-            d->endpoint = &endpoint_vtbl;
-            d->store = &store_vtbl;
-            d->capture = capture;
-            d->fixed = TRUE;
-            lstrcpyW(d->id, capture ? CAPTURE_ID : DEVICE_ID);
-            lstrcpyW(d->name, capture ? L"Microphone (" MIME_AUDIO_BRAND L")" : L"Speakers (" MIME_AUDIO_BRAND L")");
-            lstrcpyW(d->interface, MIME_AUDIO_BRAND);
-            g_device_count[capture] = 1;
-        }
+    if (reason == DLL_PROCESS_ATTACH)
         g_enumerator.vtbl = &enumerator_vtbl;
-    }
     return TRUE;
 }
 
@@ -611,8 +801,16 @@ DECLSPEC_EXPORT HRESULT WINAPI ActivateAudioInterfaceAsync(LPCWSTR path, REFIID 
     op->Refs = 2;
     op->Handler = handler;
     handler->lpVtbl->AddRef(handler);
-    DEVICE *d = !_wcsicmp(path, render) ? &g_devices[0][0] : !_wcsicmp(path, capture) ? &g_devices[1][0] : find_device(path);
-    op->Result = d ? device_activate(&d->device, riid, CLSCTX_ALL, params, (void **)&op->Interface) : E_NOTIMPL;
+    BOOL by_class = !_wcsicmp(path, render) || !_wcsicmp(path, capture);
+    DEVICE *listed[MIME_AUDIO_ENDPOINTS];
+    DEVICE *d = !by_class ? find_device(path) : list_devices(!_wcsicmp(path, capture), listed) ? listed[0] : nullptr;
+    BOOL client = IsEqualGUID(riid, &IID_IAudioClient) || IsEqualGUID(riid, &IID_IAudioClient2) || IsEqualGUID(riid, &IID_IAudioClient3);
+    if (!d)
+        op->Result = E_NOTIMPL;
+    else if (by_class && client)
+        op->Result = MmCreateAudioClient(d->capture, nullptr, d->rate, d->channels, (void **)&op->Interface);
+    else
+        op->Result = device_activate(&d->device, riid, CLSCTX_ALL, params, (void **)&op->Interface);
     HANDLE thread = CreateThread(nullptr, 0, activate_completion, op, 0, nullptr);
     if (!thread) {
         operation_release(op);
