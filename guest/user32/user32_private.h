@@ -48,6 +48,7 @@ void UserHostDnd(const MSG *msg);
 
 extern BOOL UserGdiScaling;
 void UserInitializeDpiAwareness(void);
+void UserWatchDevices(void);
 extern MIME_CLIENT_INFO User32Client;
 
 static inline void *UserAlloc(SIZE_T size)
