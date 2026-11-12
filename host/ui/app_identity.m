@@ -3,16 +3,13 @@
 #include "pe_icon.h"
 #include "../rom.h"
 
-#include <CoreFoundation/CoreFoundation.h>
-#include <CoreGraphics/CoreGraphics.h>
+#import <AppKit/AppKit.h>
 #include <ImageIO/ImageIO.h>
 #include <copyfile.h>
 #include <dispatch/dispatch.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <mach-o/dyld.h>
-#include <objc/message.h>
-#include <objc/runtime.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stdio.h>
@@ -26,15 +23,8 @@
 
 extern char **environ;
 
-#define SEL_(name) sel_registerName(name)
-#define CLS(name) ((id)objc_getClass(name))
-#define MSG_ID(obj, sel) ((id (*)(id, SEL))objc_msgSend)((id)(obj), SEL_(sel))
-#define MSG_ID_ID(obj, sel, a) ((id (*)(id, SEL, id))objc_msgSend)((id)(obj), SEL_(sel), (id)(a))
-#define MSG_V(obj, sel) ((void (*)(id, SEL))objc_msgSend)((id)(obj), SEL_(sel))
-#define MSG_V_ID(obj, sel, a) ((void (*)(id, SEL, id))objc_msgSend)((id)(obj), SEL_(sel), (id)(a))
-
-#define APP_PROXY_FD 5
-#define APP_LIMIT 256
+static constexpr int APP_PROXY_FD = 5;
+static constexpr int APP_LIMIT = 256;
 
 typedef struct AppIdentity {
     uint32_t process_id;
@@ -53,11 +43,6 @@ typedef struct AppWindow {
     AppIdentity *app;
 } AppWindow;
 
-typedef struct AppReader {
-    AppIdentity *app;
-    int fd;
-} AppReader;
-
 static MimePaths g_paths;
 static MimeAppActionSink g_sink;
 static void *g_sink_ctx;
@@ -65,16 +50,10 @@ static bool g_initialized;
 static AppIdentity g_apps[APP_LIMIT];
 static AppWindow g_windows[APP_LIMIT];
 static constexpr char g_proxy_magic[] = "mime app proxy 1";
-static id g_proxy_app;
 static char g_proxy_icon[MIME_PATH_MAX];
 static char g_proxy_override[MIME_PATH_MAX];
 static char g_proxy_fallback[MIME_PATH_MAX];
 static bool g_proxy_ready;
-
-static id string(const char *s)
-{
-    return ((id (*)(id, SEL, const char *))objc_msgSend)(CLS("NSString"), SEL_("stringWithUTF8String:"), s);
-}
 
 static bool format_path(char *out, size_t size, const char *format, const char *a, const char *b)
 {
@@ -113,33 +92,23 @@ static void image_name(const char *image, char *name, size_t size)
 
 static bool write_plist(const char *path, const char *name, const char *identifier)
 {
-    CFMutableDictionaryRef plist = CFDictionaryCreateMutable(nullptr, 0, &kCFTypeDictionaryKeyCallBacks,
-                                                             &kCFTypeDictionaryValueCallBacks);
-    if (!plist)
-        return false;
-    CFStringRef display_name = CFStringCreateWithCString(nullptr, name, kCFStringEncodingUTF8);
-    CFStringRef bundle_id = CFStringCreateWithCString(nullptr, identifier, kCFStringEncodingUTF8);
-    bool result = false;
-    if (display_name && bundle_id) {
-        CFDictionarySetValue(plist, CFSTR("CFBundleExecutable"), display_name);
-        CFDictionarySetValue(plist, CFSTR("CFBundleName"), display_name);
-        CFDictionarySetValue(plist, CFSTR("CFBundleDisplayName"), display_name);
-        CFDictionarySetValue(plist, CFSTR("CFBundleIdentifier"), bundle_id);
-        CFDictionarySetValue(plist, CFSTR("CFBundlePackageType"), CFSTR("APPL"));
-        CFDictionarySetValue(plist, CFSTR("CFBundleVersion"), CFSTR("1"));
-        CFDictionarySetValue(plist, CFSTR("NSHighResolutionCapable"), kCFBooleanTrue);
-        CFDataRef data = CFPropertyListCreateData(nullptr, plist, kCFPropertyListXMLFormat_v1_0, 0, nullptr);
-        if (data) {
-            result = mime_write_file(path, CFDataGetBytePtr(data), (size_t)CFDataGetLength(data));
-            CFRelease(data);
-        }
+    @autoreleasepool {
+        NSString *display_name = @(name);
+        NSDictionary *plist = @{
+            @"CFBundleExecutable": display_name,
+            @"CFBundleName": display_name,
+            @"CFBundleDisplayName": display_name,
+            @"CFBundleIdentifier": @(identifier),
+            @"CFBundlePackageType": @"APPL",
+            @"CFBundleVersion": @"1",
+            @"NSHighResolutionCapable": @YES,
+        };
+        NSData *data = [NSPropertyListSerialization dataWithPropertyList:plist
+                                                                  format:NSPropertyListXMLFormat_v1_0
+                                                                 options:0
+                                                                   error:nil];
+        return data && mime_write_file(path, data.bytes, data.length);
     }
-    if (display_name)
-        CFRelease(display_name);
-    if (bundle_id)
-        CFRelease(bundle_id);
-    CFRelease(plist);
-    return result;
 }
 
 static void write_fallback_icon(const char *destination)
@@ -216,22 +185,6 @@ static bool prepare_bundle(AppIdentity *app, const char *image)
            write_plist(path, name, identifier);
 }
 
-static void close_fd(void *ctx)
-{
-    AppReader *reader = ctx;
-    close(reader->fd);
-    free(reader);
-}
-
-static void reap_proxy(void *ctx)
-{
-    dispatch_source_t source = ctx;
-    pid_t pid = (pid_t)dispatch_source_get_handle(source);
-    while (waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {}
-    dispatch_source_cancel(source);
-    dispatch_release(source);
-}
-
 static void stop_proxy(AppIdentity *app)
 {
     if (app->fd >= 0) {
@@ -241,26 +194,23 @@ static void stop_proxy(AppIdentity *app)
     }
     if (app->reader) {
         dispatch_source_cancel(app->reader);
-        dispatch_release(app->reader);
-        app->reader = nullptr;
+        app->reader = nil;
     }
 }
 
-static void read_proxy(void *ctx)
+static void read_proxy(AppIdentity *app, int fd)
 {
-    AppReader *reader = ctx;
-    AppIdentity *app = reader->app;
-    if (app->fd != reader->fd)
+    if (app->fd != fd)
         return;
     char actions[32];
-    ssize_t n = recv(reader->fd, actions, sizeof(actions), 0);
+    ssize_t n = recv(fd, actions, sizeof(actions), 0);
     if (n <= 0) {
         if (n == 0 || (errno != EAGAIN && errno != EINTR))
             stop_proxy(app);
         return;
     }
     for (ssize_t i = 0; i < n; i++) {
-        if (app->fd != reader->fd)
+        if (app->fd != fd)
             return;
         uint32_t action = actions[i] == 'a' ? MIME_APP_ACTIVATE : actions[i] == 'q' ? MIME_APP_CLOSE : 0;
         if (action && g_sink && app->window_count)
@@ -302,25 +252,29 @@ static bool start_proxy(AppIdentity *app, const char *image)
         errno = error;
         return false;
     }
+    /* the source holds itself through its handler until the cancellation releases it. */
     dispatch_source_t reaper = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, (uintptr_t)pid,
                                                        DISPATCH_PROC_EXIT, dispatch_get_main_queue());
-    dispatch_set_context(reaper, reaper);
-    dispatch_source_set_event_handler_f(reaper, reap_proxy);
+    dispatch_source_set_event_handler(reaper, ^{
+        while (waitpid(pid, nullptr, 0) < 0 && errno == EINTR) {}
+        dispatch_source_cancel(reaper);
+    });
     dispatch_resume(reaper);
     if (send(pair[0], g_proxy_magic, sizeof(g_proxy_magic), 0) != sizeof(g_proxy_magic)) {
         close(pair[0]);
         return false;
     }
     fcntl(pair[0], F_SETFL, O_NONBLOCK);
-    app->fd = pair[0];
-    app->reader = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, (uintptr_t)app->fd, 0,
-                                         dispatch_get_main_queue());
-    AppReader *reader = mime_xmalloc(sizeof(*reader));
-    *reader = (AppReader){.app = app, .fd = app->fd};
-    dispatch_set_context(app->reader, reader);
-    dispatch_source_set_event_handler_f(app->reader, read_proxy);
+    int fd = pair[0];
+    app->fd = fd;
+    app->reader = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, (uintptr_t)fd, 0, dispatch_get_main_queue());
+    dispatch_source_set_event_handler(app->reader, ^{
+        read_proxy(app, fd);
+    });
     /* the cancellation handler owns the descriptor even if this slot is reused. */
-    dispatch_source_set_cancel_handler_f(app->reader, close_fd);
+    dispatch_source_set_cancel_handler(app->reader, ^{
+        close(fd);
+    });
     dispatch_resume(app->reader);
     return true;
 }
@@ -471,27 +425,24 @@ void mime_app_shutdown(void)
         if (g_apps[i].process_id)
             stop_proxy(&g_apps[i]);
     memset(g_windows, 0, sizeof(g_windows));
-    memset(g_apps, 0, sizeof(g_apps));
     for (size_t i = 0; i < MIME_ARRAY_COUNT(g_apps); i++)
-        g_apps[i].fd = -1;
+        g_apps[i] = (AppIdentity){.fd = -1};
 }
 
 static void proxy_load_icon(void)
 {
     const char *paths[] = {g_proxy_override, g_proxy_icon, g_proxy_fallback};
-    id icon = nil;
+    NSImage *icon = nil;
     for (size_t i = 0; i < MIME_ARRAY_COUNT(paths); i++) {
-        icon = MSG_ID_ID(MSG_ID(CLS("NSImage"), "alloc"), "initWithContentsOfFile:", string(paths[i]));
-        if (icon && ((BOOL (*)(id, SEL))objc_msgSend)(icon, SEL_("isValid")))
+        icon = [[NSImage alloc] initWithContentsOfFile:@(paths[i])];
+        if (icon.valid)
             break;
-        MSG_V(icon, "release");
         icon = nil;
     }
-    MSG_V_ID(g_proxy_app, "setApplicationIconImage:", icon);
-    MSG_V(icon, "release");
+    NSApp.applicationIconImage = icon;
 }
 
-static void proxy_read(void *ctx)
+static void proxy_read(void)
 {
     char actions[32];
     ssize_t n = recv(APP_PROXY_FD, actions, sizeof(actions), 0);
@@ -505,23 +456,45 @@ static void proxy_read(void *ctx)
     }
 }
 
-static BOOL proxy_reopen(id self, SEL sel, id app, BOOL visible)
+__attribute__((objc_subclassing_restricted))
+@interface MimeAppProxyDelegate : NSObject <NSApplicationDelegate>
+@end
+
+static MimeAppProxyDelegate *g_proxy_delegate;
+static dispatch_source_t g_proxy_reader;
+
+/* activation is cooperative: the machine cannot take it, the proxy the user picked has to hand it over. */
+static void activate_machine(void)
 {
+    NSRunningApplication *machine = [NSRunningApplication runningApplicationWithProcessIdentifier:getppid()];
+    if (machine) {
+        [NSApp yieldActivationToApplication:machine];
+        [machine activateFromApplication:NSRunningApplication.currentApplication options:0];
+    }
     send(APP_PROXY_FD, "a", 1, 0);
+}
+
+@implementation MimeAppProxyDelegate
+
+- (BOOL)applicationShouldHandleReopen:(NSApplication *)app hasVisibleWindows:(BOOL)visible
+{
+    activate_machine();
     return NO;
 }
 
-static void proxy_active(id self, SEL sel, id notification)
+- (void)applicationDidBecomeActive:(NSNotification *)notification
 {
     if (g_proxy_ready)
-        send(APP_PROXY_FD, "a", 1, 0);
+        activate_machine();
 }
 
-static unsigned long proxy_terminate(id self, SEL sel, id app)
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)app
 {
     send(APP_PROXY_FD, "q", 1, 0);
-    return 0;
+    return NSTerminateCancel;
 }
+
+@end
 
 int mime_app_proxy_main(int argc, char **argv)
 {
@@ -545,34 +518,30 @@ int mime_app_proxy_main(int argc, char **argv)
         return 1;
     signal(SIGPIPE, SIG_IGN);
     fcntl(APP_PROXY_FD, F_SETFL, O_NONBLOCK);
-    id pool = MSG_ID(MSG_ID(CLS("NSAutoreleasePool"), "alloc"), "init");
-    id bundle = MSG_ID(CLS("NSBundle"), "mainBundle");
-    id resource = MSG_ID(bundle, "resourcePath");
-    const char *resource_path = ((const char *(*)(id, SEL))objc_msgSend)(resource, SEL_("fileSystemRepresentation"));
-    if (!resource_path || !format_path(g_proxy_icon, sizeof(g_proxy_icon), "%s/%s", resource_path, "application.ico") ||
-        !format_path(g_proxy_override, sizeof(g_proxy_override), "%s/%s", resource_path, "window.png") ||
-        !format_path(g_proxy_fallback, sizeof(g_proxy_fallback), "%s/%s", resource_path, "fallback.ico"))
-        return 1;
-    id name = MSG_ID_ID(bundle, "objectForInfoDictionaryKey:", string("CFBundleName"));
-    if (name)
-        MSG_V_ID(MSG_ID(CLS("NSProcessInfo"), "processInfo"), "setProcessName:", name);
-    g_proxy_app = MSG_ID(CLS("NSApplication"), "sharedApplication");
-    Class delegate_class = objc_allocateClassPair(objc_getClass("NSObject"), "MimeAppProxyDelegate", 0);
-    class_addMethod(delegate_class, SEL_("applicationShouldHandleReopen:hasVisibleWindows:"), (IMP)proxy_reopen, "c@:@c");
-    class_addMethod(delegate_class, SEL_("applicationDidBecomeActive:"), (IMP)proxy_active, "v@:@");
-    class_addMethod(delegate_class, SEL_("applicationShouldTerminate:"), (IMP)proxy_terminate, "Q@:@");
-    objc_registerClassPair(delegate_class);
-    id delegate = MSG_ID(MSG_ID((id)delegate_class, "alloc"), "init");
-    MSG_V_ID(g_proxy_app, "setDelegate:", delegate);
-    ((BOOL (*)(id, SEL, long))objc_msgSend)(g_proxy_app, SEL_("setActivationPolicy:"), 0);
-    proxy_load_icon();
-    dispatch_source_t reader = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, APP_PROXY_FD, 0,
-                                                      dispatch_get_main_queue());
-    dispatch_source_set_event_handler_f(reader, proxy_read);
-    dispatch_resume(reader);
-    MSG_V(g_proxy_app, "finishLaunching");
-    g_proxy_ready = true;
-    MSG_V(g_proxy_app, "run");
-    MSG_V(pool, "drain");
+    @autoreleasepool {
+        NSBundle *bundle = NSBundle.mainBundle;
+        const char *resource_path = bundle.resourcePath.fileSystemRepresentation;
+        if (!resource_path ||
+            !format_path(g_proxy_icon, sizeof(g_proxy_icon), "%s/%s", resource_path, "application.ico") ||
+            !format_path(g_proxy_override, sizeof(g_proxy_override), "%s/%s", resource_path, "window.png") ||
+            !format_path(g_proxy_fallback, sizeof(g_proxy_fallback), "%s/%s", resource_path, "fallback.ico"))
+            return 1;
+        NSString *name = [bundle objectForInfoDictionaryKey:@"CFBundleName"];
+        if (name)
+            NSProcessInfo.processInfo.processName = name;
+        [NSApplication sharedApplication];
+        g_proxy_delegate = [[MimeAppProxyDelegate alloc] init];
+        NSApp.delegate = g_proxy_delegate;
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        proxy_load_icon();
+        g_proxy_reader = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, APP_PROXY_FD, 0, dispatch_get_main_queue());
+        dispatch_source_set_event_handler(g_proxy_reader, ^{
+            proxy_read();
+        });
+        dispatch_resume(g_proxy_reader);
+        [NSApp finishLaunching];
+        g_proxy_ready = true;
+        [NSApp run];
+    }
     return 0;
 }

@@ -1737,7 +1737,9 @@ set_source_files_properties(host/vulkan/vulkan.c host/vulkan/budget.c host/vulka
     INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${vulkan_gen}")
 
 if(APPLE)
-    mime_glob(host_sources host/*.c host/vmm/*.c host/ui/*.c host/gpu/*.c host/audio/*.c host/camera/*.c)
+    enable_language(OBJC)
+    mime_glob(host_sources host/*.c host/vmm/*.c host/ui/*.c host/ui/*.m host/gpu/*.c
+        host/audio/*.c host/camera/*.c)
 
     mime_glob(vkmetal_sources host/vkmetal/*.c host/vkmetal/*.cpp)
     set_source_files_properties(${vkmetal_sources} PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers
@@ -1798,8 +1800,10 @@ endif()
 
 target_include_directories(mime PRIVATE include ${MIME_GEN})
 set_source_files_properties(host/main.c PROPERTIES COMPILE_DEFINITIONS MIME_VERSION_STRING="${PROJECT_VERSION}")
-target_compile_options(mime PRIVATE $<$<COMPILE_LANGUAGE:C>:${host_warnings}>)
+target_compile_options(mime PRIVATE $<$<COMPILE_LANGUAGE:C,OBJC>:${host_warnings}>)
+target_compile_options(mime PRIVATE $<$<COMPILE_LANGUAGE:OBJC>:-fobjc-arc>)
 set_target_properties(mime PROPERTIES C_STANDARD 23 C_STANDARD_REQUIRED ON C_EXTENSIONS ${host_gnu}
+    OBJC_STANDARD 23 OBJC_STANDARD_REQUIRED ON OBJC_EXTENSIONS ${host_gnu}
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set_source_files_properties(${MIME_BUILD_GEN}/rom.S PROPERTIES OBJECT_DEPENDS "${rom_files}")
 add_dependencies(mime rom)
