@@ -326,6 +326,16 @@ static uint32_t sample(const D2dPaint *p, float u, float v)
     return lerp_px(top, bottom, tv);
 }
 
+#if defined(__SSE2__)
+/* the texels at i and i + 1 of two rows of 32 bit pixels, past the edges: the first of each row, then the second. */
+static __attribute__((noinline)) __m128i texel_pair(const D2dPaint *p, const BYTE *r0, const BYTE *r1, int i)
+{
+    int i0 = extend_index(i, p->clamp_x0, p->clamp_x1, p->ex), i1 = extend_index(i + 1, p->clamp_x0, p->clamp_x1, p->ex);
+    const uint32_t *a = (const uint32_t *)r0, *b = (const uint32_t *)r1;
+    return _mm_set_epi32((int)b[i1], (int)a[i1], (int)b[i0], (int)a[i0]);
+}
+#endif
+
 /* a row that stays on one line of the texture: the two texel rows and the vertical weight are found once. */
 /* indexed is a constant at each call, so the test of it falls out of the loops. */
 #define TEXEL(row, i) (indexed ? pal[((const BYTE *)(row))[i]] : ((const uint32_t *)(row))[i])
@@ -372,6 +382,59 @@ static inline __attribute__((always_inline)) void texture_row_of(const D2dPaint 
         }
     }
 #if defined(__SSE2__)
+    float fu0 = bx * p->tex_sx + p->tex_ox - 0.5f;
+    double du = (double)step * (double)p->tex_sx;
+    if (!nearest && !indexed && fu0 > -1e6f && fu0 < 1e6f && du > -1e3 && du < 1e3) {
+        /*
+         * the coordinate walks in 32.32 fixed point, two pixels a turn. a pixel's two texels of
+         * each row load as one pair, and a * 256 + (b - a) * t is the sum of lerp_px modulo 65536.
+         */
+        const __m128i zero = _mm_setzero_si128(), half = _mm_set1_epi16(128), wv = _mm_set1_epi16((short)tv);
+        const int cx0 = p->clamp_x0, cx1 = p->clamp_x1;
+        double u0 = (double)fu0 * 4294967296.0;
+        int64_t u = (int64_t)u0;
+        if ((double)u > u0)
+            u--;
+        const int64_t dq = (int64_t)(du * 4294967296.0 + (du < 0 ? -0.5 : 0.5));
+#define PAIR(ii)                                                                                                       \
+    ((ii) >= cx0 && (ii) + 1 < cx1                                                                                     \
+         ? _mm_unpacklo_epi32(_mm_loadl_epi64((const __m128i *)(r0 + (SIZE_T)(ii) * 4)),                               \
+                              _mm_loadl_epi64((const __m128i *)(r1 + (SIZE_T)(ii) * 4)))                               \
+         : texel_pair(p, r0, r1, (ii)))
+#define ACROSS(x, t)                                                                                                   \
+    ({                                                                                                                 \
+        __m128i a_ = _mm_unpacklo_epi8((x), zero), b_ = _mm_unpackhi_epi8((x), zero);                                  \
+        _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(_mm_slli_epi16(a_, 8),                                              \
+                                                   _mm_mullo_epi16(_mm_sub_epi16(b_, a_), _mm_set1_epi16((short)(t)))), \
+                                     half),                                                                            \
+                       8);                                                                                             \
+    })
+#define DOWN(top, bottom)                                                                                              \
+    _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(_mm_slli_epi16((top), 8),                                               \
+                                               _mm_mullo_epi16(_mm_sub_epi16((bottom), (top)), wv)),                   \
+                                 half),                                                                                \
+                   8)
+        for (; i + 2 <= count; i += 2, u += 2 * dq) {
+            int64_t u1 = u + dq;
+            int ia = (int)(u >> 32), ib = (int)(u1 >> 32);
+            __m128i ha = ACROSS(PAIR(ia), (u >> 24) & 255), hb = ACROSS(PAIR(ib), (u1 >> 24) & 255);
+            __m128i o = DOWN(_mm_unpacklo_epi64(ha, hb), _mm_unpackhi_epi64(ha, hb));
+            _mm_storel_epi64((__m128i *)(out + i), _mm_packus_epi16(o, o));
+        }
+        if (i < count) {
+            int ia = (int)(u >> 32);
+            __m128i ha = ACROSS(PAIR(ia), (u >> 24) & 255);
+            __m128i o = DOWN(ha, _mm_srli_si128(ha, 8));
+            out[i] = (uint32_t)_mm_cvtsi128_si32(_mm_packus_epi16(o, o));
+        }
+#undef PAIR
+#undef ACROSS
+#undef DOWN
+        if (p->opacity < 1.0f)
+            for (i = 0; i < count; i++)
+                out[i] = apply_opacity(out[i], p->opacity);
+        return;
+    }
     if (!nearest) {
         /* the four texels of a pixel in one register: the same sums as lerp_px, a channel to a 16 bit lane. */
         const __m128i zero = _mm_setzero_si128(), half = _mm_set1_epi16(128);
