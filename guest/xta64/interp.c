@@ -575,6 +575,41 @@ static uint64_t imul_trunc(X86Cpu *c, int size, uint64_t a, uint64_t b)
     return res;
 }
 
+/*
+ * hi:lo / d with hi below d, so the quotient fits, by two 32 bit digits with the hardware's 64 bit division as
+ * hacker's delight's divlu does. the translator emits the same steps.
+ */
+static uint64_t div128(uint64_t hi, uint64_t lo, uint64_t d, uint64_t *rem)
+{
+    if (!hi) {
+        *rem = lo % d;
+        return lo / d;
+    }
+    int s = __builtin_clzll(d);
+    d <<= s;
+    uint64_t vn1 = d >> 32, vn0 = (uint32_t)d;
+    uint64_t un32 = hi << s | lo >> 1 >> (63 - s), un10 = lo << s;
+    uint64_t un1 = un10 >> 32, un0 = (uint32_t)un10;
+    uint64_t q1 = un32 / vn1, rhat = un32 - q1 * vn1;
+    while (q1 >> 32 || q1 * vn0 > (rhat << 32 | un1)) {
+        q1--;
+        rhat += vn1;
+        if (rhat >> 32)
+            break;
+    }
+    uint64_t un21 = (rhat << 32 | un1) - q1 * vn0;
+    uint64_t q0 = un21 / vn1;
+    rhat = un21 - q0 * vn1;
+    while (q0 >> 32 || q0 * vn0 > (rhat << 32 | un0)) {
+        q0--;
+        rhat += vn1;
+        if (rhat >> 32)
+            break;
+    }
+    *rem = ((rhat << 32 | un0) - q0 * vn0) >> s;
+    return q1 << 32 | q0;
+}
+
 static void div_one(X86Cpu *c, const X86Insn *i, int size, int is_signed)
 {
     uint64_t src = read_rm(c, i, size) & x86_mask(size);
@@ -634,22 +669,28 @@ static void div_one(X86Cpu *c, const X86Insn *i, int size, int is_signed)
         break;
     }
     default: {
-        unsigned __int128 n = ((unsigned __int128)c->r[X86_RDX] << 64) | c->r[X86_RAX];
+        uint64_t hi = c->r[X86_RDX], lo = c->r[X86_RAX], d = src, q, r;
         if (is_signed) {
-            __int128 sn = (__int128)n, d = (int64_t)src;
-            if (d == -1 && sn == (__int128)((unsigned __int128)1 << 127))
+            /* on the magnitudes, then the signs: the quotient's of both, the remainder's of the dividend. */
+            int nneg = (int64_t)hi < 0, dneg = (int64_t)src < 0;
+            if (nneg) {
+                lo = -lo;
+                hi = ~hi + !lo;
+            }
+            if (dneg)
+                d = -d;
+            if (hi >= d)
                 x86_fault(c, X86_STATUS_INTEGER_OVERFLOW, 0, 0);
-            __int128 q = sn / d, r = sn % d;
-            if (q != (__int128)(int64_t)q)
+            q = div128(hi, lo, d, &r);
+            if (nneg != dneg ? q > 1ull << 63 : q >> 63)
                 x86_fault(c, X86_STATUS_INTEGER_OVERFLOW, 0, 0);
-            c->r[X86_RAX] = (uint64_t)q;
-            c->r[X86_RDX] = (uint64_t)r;
+            c->r[X86_RAX] = nneg != dneg ? -q : q;
+            c->r[X86_RDX] = nneg ? -r : r;
         } else {
-            unsigned __int128 q = n / src, r = n % src;
-            if (q >> 64)
+            if (hi >= d)
                 x86_fault(c, X86_STATUS_INTEGER_OVERFLOW, 0, 0);
-            c->r[X86_RAX] = (uint64_t)q;
-            c->r[X86_RDX] = (uint64_t)r;
+            c->r[X86_RAX] = div128(hi, lo, d, &r);
+            c->r[X86_RDX] = r;
         }
         break;
     }
