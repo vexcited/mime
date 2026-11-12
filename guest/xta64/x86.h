@@ -244,8 +244,8 @@ extern uint32_t x86_jit_batch;
 void x86_jit_fault(X86Cpu *cpu, uint64_t pc, const uint64_t *x, const void *v);
 
 /* fxsave layout, used by fxsave, fxrstor and thread contexts. */
-void x86_fxsave(X86Cpu *cpu, uint8_t *area);
-void x86_fxrstor(X86Cpu *cpu, const uint8_t *area);
+void x86_fxsave(X86Cpu *cpu, uint8_t *area, int wide);
+void x86_fxrstor(X86Cpu *cpu, const uint8_t *area, int wide);
 
 /* the x87 80-bit extended format. */
 void x86_double_to_ext(double v, uint8_t out[10]);
