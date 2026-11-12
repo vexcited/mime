@@ -2396,9 +2396,36 @@ static void dialogs_process_exit(uint32_t process_id)
         }
 }
 
-/* only the dialogs: toasts, launcher entries and jump lists have no place here yet. */
+/* the folder in Finder, which also selects an item. never opened as a document: a bundle on the drive would run. */
+static uint64_t show_folder(const MimeShellFolder *f)
+{
+    char guest[MIME_PATH_MAX], host[MIME_PATH_MAX];
+    mime_utf16_to_utf8(guest, sizeof(guest), f->path, sizeof(f->path) / sizeof(f->path[0]));
+    const MimePaths *paths = mime_daemon_paths();
+    if (!paths || !mime_paths_to_host(paths, guest, host, sizeof(host)))
+        return MIME_HC_STATUS_NOT_FOUND;
+    NSString *path = [[NSFileManager defaultManager] stringWithFileSystemRepresentation:host[0] ? host : "/"
+                                                                                 length:host[0] ? strlen(host) : 1];
+    BOOL directory = NO;
+    if (!path || ![[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&directory])
+        return MIME_HC_STATUS_NOT_FOUND;
+    bool select = f->select != 0;
+    if (!select && !directory)
+        return MIME_HC_STATUS_INVALID;
+    on_main(^{
+        if (select)
+            [[NSWorkspace sharedWorkspace] selectFile:path inFileViewerRootedAtPath:@""];
+        else
+            [[NSWorkspace sharedWorkspace] selectFile:nil inFileViewerRootedAtPath:path];
+    });
+    return MIME_HC_STATUS_OK;
+}
+
+/* the dialogs and the folders: toasts, launcher entries and jump lists have no place here yet. */
 uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value)
 {
+    if (*(uint32_t *)command == MIME_SHELL_FOLDER)
+        return size >= sizeof(MimeShellFolder) ? show_folder(command) : MIME_HC_STATUS_INVALID;
     if (*(uint32_t *)command != MIME_SHELL_DIALOG)
         return MIME_HC_STATUS_UNSUPPORTED;
     const MimeShellDialog *d = command;

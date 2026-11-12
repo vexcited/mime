@@ -78,13 +78,34 @@ SHSTDAPI HRESULT WINAPI SHQueryUserNotificationState(int *state)
     return S_OK;
 }
 
-/* windows has explorer open the folder. without explorer this fails like a missing handler. */
+/* explorer shows the folder, with the first of the items selected: the file manager of the host takes one. */
 SHSTDAPI HRESULT WINAPI SHOpenFolderAndSelectItems(PCIDLIST_ABSOLUTE folder, UINT count, PCUITEMID_CHILD *items,
                                                    DWORD flags)
 {
     if (!folder)
         return E_INVALIDARG;
-    return HRESULT_FROM_WIN32(ERROR_NO_ASSOCIATION);
+    WCHAR path[MAX_PATH], command[2 * MAX_PATH + 64], windows[MAX_PATH];
+    BOOL select = count != 0 && items && items[0];
+    PIDLIST_ABSOLUTE item = select ? ILCombine(folder, (PCUIDLIST_RELATIVE)items[0]) : nullptr;
+    BOOL found = ShPathFromIdList(item ? item : folder, path, MAX_PATH);
+    if (item)
+        ILFree(item);
+    /* without items the list is the item itself, selected in the folder that holds it. */
+    if (!select && found && wcslen(path) > 3)
+        select = TRUE;
+    UINT n = GetWindowsDirectoryW(windows, MAX_PATH);
+    if (!found || !n || n >= MAX_PATH)
+        return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
+    _snwprintf(command, RTL_NUMBER_OF(command), select ? L"\"%ls\\explorer.exe\" /select,\"%ls\"" : L"\"%ls\\explorer.exe\" \"%ls\"",
+               windows, path);
+    command[RTL_NUMBER_OF(command) - 1] = 0;
+    STARTUPINFOW startup = {sizeof(startup)};
+    PROCESS_INFORMATION process;
+    if (!CreateProcessW(nullptr, command, nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process))
+        return HRESULT_FROM_WIN32(GetLastError());
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return S_OK;
 }
 
 typedef enum {

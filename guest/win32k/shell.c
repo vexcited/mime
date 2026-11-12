@@ -26,6 +26,7 @@ typedef union SHELL_COMMAND {
     MimeShellWindow Window;
     MimeShellJumpList Jump;
     MimeShellDialog Dialog;
+    MimeShellFolder Folder;
 } SHELL_COMMAND;
 
 static KSPIN_LOCK g_lock;
@@ -240,6 +241,9 @@ static LONG run_command(PUCHAR request, ULONG size)
     case MIME_SHELL_DIALOG:
         want = sizeof(MimeShellDialog);
         break;
+    case MIME_SHELL_FOLDER:
+        want = sizeof(MimeShellFolder);
+        break;
     default:
         return STATUS_INVALID_PARAMETER;
     }
@@ -313,6 +317,10 @@ static LONG run_command(PUCHAR request, ULONG size)
             UserLeave();
             return STATUS_INVALID_PARAMETER;
         }
+    } else if (op == MIME_SHELL_FOLDER) {
+        MimeShellFolder *f = &g_command->Folder;
+        zero_end(f->path, RTL_NUMBER_OF(f->path));
+        f->process_id = pid;
     } else if (want == sizeof(MimeShellJumpList)) {
         MimeShellJumpList *j = &g_command->Jump;
         zero_end(j->aumid, RTL_NUMBER_OF(j->aumid));
