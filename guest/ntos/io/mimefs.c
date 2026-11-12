@@ -216,6 +216,22 @@ static void share_close(MIMEFS_FCB *fcb)
     ExReleaseFastMutex(&g_share_lock);
 }
 
+/*
+ * the open is of another host file now, as when a link takes the place of the file or directory it was made from. its
+ * count follows it, or the count of the old file would stay for whichever file the host gives that id next.
+ */
+static void share_moved(MIMEFS_FCB *fcb, ULONG64 file_id)
+{
+    if (fcb->FileId == file_id)
+        return;
+    BOOLEAN held = fcb->ShareHeld;
+    UCHAR bits = fcb->Sharing;
+    share_close(fcb);
+    fcb->FileId = file_id;
+    if (held)
+        share_open(fcb, bits);
+}
+
 /* how many handles are open on the file. */
 static ULONG share_handles(ULONG volume, ULONG64 file_id)
 {
@@ -2973,7 +2989,7 @@ static void reparse_changed(PFILE_OBJECT file, MIMEFS_FCB *fcb)
     FsCacheInvalidate(fcb->Volume, fcb->FileId);
     if (now) {
         if (NT_SUCCESS(query(fcb, now))) {
-            fcb->FileId = now->file_id;
+            share_moved(fcb, now->file_id);
             fcb->OpenInfo = *now;
         }
         ExFreePool(now);
