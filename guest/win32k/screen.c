@@ -1010,10 +1010,8 @@ static void hold_area(WND *top, WND *w, MIME_PRESENT_LAYER *out)
         h->Shown = shown;
         h->Left.right = W32Max(W32Min(h->Left.right, shown.right), now.right);
         h->Left.bottom = W32Max(W32Min(h->Left.bottom, shown.bottom), now.bottom);
-        /* the image stretches over what is held, which is a few pixels for a few frames. */
+        /* the host fills what is held past the client area, see mime_ui_vk_frame. */
         out->Visible = shown;
-        out->Client.right = W32Max(out->Client.right, shown.right);
-        out->Client.bottom = W32Max(out->Client.bottom, shown.bottom);
     }
     KeReleaseSpinLock(&g_held_lock, irql);
     w->LayerShown = out->Visible;
@@ -1074,6 +1072,7 @@ void ScreenLayer(WND *w, MIME_PRESENT_LAYER *out)
     *out = (MIME_PRESENT_LAYER){};
     if (!++ScreenLayerStamp)
         ScreenLayerStamp = 1;
+    out->Stamp = ScreenLayerStamp;
     WND *top = WndTopLevel(w);
     if (!top || top == WndDesktop() || !(top->Flags & WNDF_HOST_WINDOW))
         return;
@@ -1111,7 +1110,7 @@ void ScreenLayer(WND *w, MIME_PRESENT_LAYER *out)
 static MimeWinLayer *g_layer;
 
 /* tells the host where a window that presents lies now, and whether it shows. */
-static void send_layer(WND *w)
+static void send_layer(WND *w, BOOLEAN follows)
 {
     if ((w->Flags & WNDF_PRESENTS) && has_connection(w) && (g_layer || (g_layer = MmAllocateContiguousPages(4096)))) {
         MIME_PRESENT_LAYER where;
@@ -1120,6 +1119,7 @@ static void send_layer(WND *w)
                                   .source = (uint32_t)(ULONG_PTR)WndHandle(w),
                                   .order = where.Order,
                                   .stamp = ScreenLayerStamp,
+                                  .follows = follows,
                                   .client = {where.Client.left, where.Client.top, where.Client.right, where.Client.bottom},
                                   .visible = {where.Visible.left, where.Visible.top, where.Visible.right,
                                               where.Visible.bottom}};
@@ -1129,7 +1129,7 @@ static void send_layer(WND *w)
 
 static void send_layers(WND *top, WND *w)
 {
-    send_layer(w);
+    send_layer(w, FALSE);
     for (WND *c = w->FirstChild; c; c = c->Next)
         send_layers(top, c);
 }
@@ -1158,7 +1158,7 @@ void ScreenHeldFlush(WND *top)
     }
     KeReleaseSpinLock(&g_held_lock, irql);
     for (ULONG i = 0; i < count; i++)
-        send_layer(told[i]);
+        send_layer(told[i], TRUE);
 }
 
 static BOOLEAN tree_has_connection(const WND *w)

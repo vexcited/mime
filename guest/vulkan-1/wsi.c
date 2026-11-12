@@ -386,6 +386,7 @@ VKAPI_ATTR VkResult VKAPI_CALL vkQueuePresentKHR(VkQueue queue, const VkPresentI
         mvk_put_u32(e, (uint32_t)layer.Visible.top);
         mvk_put_u32(e, (uint32_t)layer.Visible.right);
         mvk_put_u32(e, (uint32_t)layer.Visible.bottom);
+        mvk_put_u32(e, layer.Stamp);
         AcquireSRWLockExclusive(&s->lock);
         if (index < s->count)
             s->acquired[index] = FALSE;

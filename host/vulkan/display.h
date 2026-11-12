@@ -14,12 +14,21 @@ typedef struct MimeUiNative {
     uint64_t window; /* the X11 window. */
 } MimeUiNative;
 
+/* where a window that presents lies in its host window, in window relative pixels of its own. */
+typedef struct MimeUiPlace {
+    MimeRect client;
+    MimeRect visible; /* the part of the window that shows it, which a window that shrank holds past its client area. */
+    uint32_t order;
+    uint32_t stamp;   /* the guest's count of what it told, 0 without one. */
+    bool follows;     /* the pixels of the host window that were painted around the place come next, and it waits for them. */
+} MimeUiPlace;
+
 typedef struct MimeUiFrame {
     uint32_t pixel_width, pixel_height; /* the surface: the part of the client area that shows, or the whole host window. */
     MimeRect host;                      /* window relative part the host window covers. */
     MimeRect visible;
-    MimeRect client;                    /* window relative client area of the window that presents, in screen pixels. */
-    MimeRect area;                      /* and the part of it that shows, the same. */
+    MimeRect client;                    /* window relative place of the image, in screen pixels. */
+    MimeRect area;                      /* and the part of the window the surface of a layer takes, the same. */
     uint32_t surface_width, surface_height; /* the guest surface. */
     double scale;                           /* host window pixels per guest pixel. */
     double origin_x, origin_y;              /* where the host part starts, in host window pixels. */
@@ -37,9 +46,11 @@ typedef struct MimeUiFrame {
 bool mime_ui_vk_layers(void);
 bool mime_ui_vk_attach(uint32_t id, uint32_t source, MimeRect area, uint32_t order, MimeUiNative *native);
 void mime_ui_vk_detach(uint32_t id, uint32_t source);
-bool mime_ui_vk_frame(uint32_t id, uint32_t source, MimeRect client, MimeRect area, uint32_t order, MimeUiFrame *frame);
+bool mime_ui_vk_frame(uint32_t id, uint32_t source, const MimeUiPlace *place, MimeRect image, MimeUiFrame *frame);
+/* the guest told where a window that presents lies now, between its frames. */
+void mime_ui_vk_place(uint32_t id, uint32_t source, const MimeUiPlace *place);
 /* the frame of a layer was handed to the display. */
-void mime_ui_vk_shown(uint32_t id, uint32_t source, uint32_t serial);
+void mime_ui_vk_shown(uint32_t id, uint32_t source, uint32_t serial, bool shown);
 /* copies changes from a guest surface of the given dimensions; returns false if unchanged. */
 bool mime_ui_vk_copy(uint32_t id, uint8_t *dst, uint32_t width, uint32_t height, MimeRect *dirty);
 

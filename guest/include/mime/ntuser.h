@@ -683,6 +683,7 @@ typedef struct MIME_PRESENT_LAYER {
     ULONG Order;   /* the place of the window in the paint order of the tree, the front ones last. */
     RECT Client;
     RECT Visible;  /* the part of the client area that shows, empty while the window is hidden or covered. */
+    ULONG Stamp;   /* counts what was told of layers, see MimeGpuSurfaceConfig. */
 } MIME_PRESENT_LAYER;
 
 /* where a window dc renders in its host window, see mime/gpu.h. */
