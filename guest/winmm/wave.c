@@ -886,36 +886,55 @@ WINMMAPI MMRESULT WINAPI waveOutGetID(HWAVEOUT handle, LPUINT id)
     return MMSYSERR_NOERROR;
 }
 
-/* the device interface path of the endpoint, as the audio stack names it. */
-static constexpr WCHAR g_interface[] = L"\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{6d696d65-0000-4000-8000-000000000001}#"
-                                       L"{e6327cad-dcec-4949-ae8a-991e976a79d2}";
+#define ENDPOINT_ID_CHARS 56
+#define INTERFACE_CHARS 112
 
-WINMMAPI MMRESULT WINAPI waveOutMessage(HWAVEOUT handle, UINT message, DWORD_PTR param1, DWORD_PTR param2)
+/*
+ * answers the messages that tell which endpoint of the audio stack a device is: its id there, and its device
+ * interface path. programs pass a device number where the handle goes.
+ */
+static MMRESULT endpoint_message(BOOL capture, UINT_PTR handle, BOOL open, UINT message, DWORD_PTR param1,
+                                 DWORD_PTR param2)
 {
-    BOOL device = !handle || handle == (HWAVEOUT)(UINT_PTR)WAVE_MAPPER || find_out(handle);
-    if (!device)
+    MimeAudioEndpoint e;
+    if (!endpoint_at(capture, open || handle == (UINT_PTR)(UINT)WAVE_MAPPER ? 0 : handle, &e))
         return MMSYSERR_INVALHANDLE;
+    WCHAR id[ENDPOINT_ID_CHARS], path[INTERFACE_CHARS];
+    MimeAudioEndpointId(capture, &e.guid, id);
+    lstrcpyW(path, L"\\?\SWD#MMDEVAPI#");
+    lstrcatW(path, id);
+    lstrcatW(path, capture ? L"#{2eef81be-33fa-4800-9670-1cd474972c3f}" : L"#{e6327cad-dcec-4949-ae8a-991e976a79d2}");
+    const WCHAR *text = message == DRV_QUERYDEVICEINTERFACESIZE || message == DRV_QUERYDEVICEINTERFACE ? path : id;
+    ULONG bytes = (ULONG)(lstrlenW(text) + 1) * sizeof(WCHAR);
     switch (message) {
     case DRVM_MAPPER_PREFERRED_GET:
     case DRVM_MAPPER_CONSOLEVOICECOM_GET:
+        /* the default device is the first one. */
         if (param1)
             *(DWORD *)param1 = 0;
         if (param2)
             *(DWORD *)param2 = 0;
         return MMSYSERR_NOERROR;
     case DRV_QUERYDEVICEINTERFACESIZE:
+    case DRV_QUERYFUNCTIONINSTANCEIDSIZE:
         if (!param1)
             return MMSYSERR_INVALPARAM;
-        *(ULONG *)param1 = sizeof(g_interface);
+        *(ULONG *)param1 = bytes;
         return MMSYSERR_NOERROR;
     case DRV_QUERYDEVICEINTERFACE:
-        if (!param1 || param2 < sizeof(g_interface))
+    case DRV_QUERYFUNCTIONINSTANCEID:
+        if (!param1 || param2 < bytes)
             return MMSYSERR_INVALPARAM;
-        memcpy((void *)param1, g_interface, sizeof(g_interface));
+        memcpy((void *)param1, text, bytes);
         return MMSYSERR_NOERROR;
     default:
         return MMSYSERR_NOTSUPPORTED;
     }
+}
+
+WINMMAPI MMRESULT WINAPI waveOutMessage(HWAVEOUT handle, UINT message, DWORD_PTR param1, DWORD_PTR param2)
+{
+    return endpoint_message(FALSE, (UINT_PTR)handle, find_out(handle) != nullptr, message, param1, param2);
 }
 
 WINMMAPI MMRESULT WINAPI waveOutGetErrorTextW(MMRESULT error, LPWSTR text, UINT size)
@@ -1327,33 +1346,7 @@ WINMMAPI MMRESULT WINAPI waveInGetID(HWAVEIN handle, LPUINT id)
     return MMSYSERR_NOERROR;
 }
 
-static constexpr WCHAR g_in_interface[] = L"\\\\?\\SWD#MMDEVAPI#{0.0.1.00000000}.{2c9f1a4b-8d3e-4f6a-9b1c-7e5d2a8c4f02}#"
-                                          L"{2eef81be-33fa-4800-9670-1cd474972c3f}";
-
 WINMMAPI MMRESULT WINAPI waveInMessage(HWAVEIN handle, UINT message, DWORD_PTR param1, DWORD_PTR param2)
 {
-    BOOL device = !handle || handle == (HWAVEIN)(UINT_PTR)WAVE_MAPPER || find_in(handle);
-    if (!device)
-        return MMSYSERR_INVALHANDLE;
-    switch (message) {
-    case DRVM_MAPPER_PREFERRED_GET:
-    case DRVM_MAPPER_CONSOLEVOICECOM_GET:
-        if (param1)
-            *(DWORD *)param1 = 0;
-        if (param2)
-            *(DWORD *)param2 = 0;
-        return MMSYSERR_NOERROR;
-    case DRV_QUERYDEVICEINTERFACESIZE:
-        if (!param1)
-            return MMSYSERR_INVALPARAM;
-        *(ULONG *)param1 = sizeof(g_in_interface);
-        return MMSYSERR_NOERROR;
-    case DRV_QUERYDEVICEINTERFACE:
-        if (!param1 || param2 < sizeof(g_in_interface))
-            return MMSYSERR_INVALPARAM;
-        memcpy((void *)param1, g_in_interface, sizeof(g_in_interface));
-        return MMSYSERR_NOERROR;
-    default:
-        return MMSYSERR_NOTSUPPORTED;
-    }
+    return endpoint_message(TRUE, (UINT_PTR)handle, find_in(handle) != nullptr, message, param1, param2);
 }

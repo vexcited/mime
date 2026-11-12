@@ -260,9 +260,10 @@ static HRESULT initialize(DSDEVICE *d, LPCGUID guid)
 {
     if (d->initialized)
         return DSERR_ALREADYINITIALIZED;
-    if (!DsResolveDevice(guid, &d->guid, FALSE))
+    BOOL follows;
+    if (!DsResolveDevice(guid, &d->guid, FALSE, &follows))
         return DSERR_NODRIVER;
-    if (!IsEqualGUID(&d->guid, &DsDeviceGuid))
+    if (!follows)
         DsMixerDevice(&d->guid);
     /* the primary buffer is 22050 hz stereo 8-bit until a program sets its format. */
     DSBUFFERDESC desc = {sizeof(desc), DSBCAPS_PRIMARYBUFFER | DSBCAPS_CTRL3D};

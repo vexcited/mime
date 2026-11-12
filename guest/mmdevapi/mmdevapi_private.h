@@ -22,6 +22,7 @@ typedef enum { eConsole = 0, eMultimedia = 1, eCommunications = 2 } ERole;
 typedef enum { AUDCLNT_SHAREMODE_SHARED = 0, AUDCLNT_SHAREMODE_EXCLUSIVE = 1 } AUDCLNT_SHAREMODE;
 
 #define DEVICE_STATE_ACTIVE 1
+#define DEVICE_STATE_NOTPRESENT 4
 #define DEVICE_STATEMASK_ALL 0xF
 
 #define AUDCLNT_STREAMFLAGS_LOOPBACK 0x00020000
@@ -48,6 +49,21 @@ typedef struct IMMDevice IMMDevice;
 typedef struct IMMDeviceCollection IMMDeviceCollection;
 typedef struct IMMNotificationClient IMMNotificationClient;
 typedef struct IPropertyStore IPropertyStore;
+
+typedef struct IMMNotificationClientVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IMMNotificationClient *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IMMNotificationClient *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IMMNotificationClient *This);
+    HRESULT(STDMETHODCALLTYPE *OnDeviceStateChanged)(IMMNotificationClient *This, LPCWSTR id, DWORD state);
+    HRESULT(STDMETHODCALLTYPE *OnDeviceAdded)(IMMNotificationClient *This, LPCWSTR id);
+    HRESULT(STDMETHODCALLTYPE *OnDeviceRemoved)(IMMNotificationClient *This, LPCWSTR id);
+    HRESULT(STDMETHODCALLTYPE *OnDefaultDeviceChanged)(IMMNotificationClient *This, EDataFlow flow, ERole role, LPCWSTR id);
+    HRESULT(STDMETHODCALLTYPE *OnPropertyValueChanged)(IMMNotificationClient *This, LPCWSTR id, const PROPERTYKEY key);
+} IMMNotificationClientVtbl;
+
+struct IMMNotificationClient {
+    const IMMNotificationClientVtbl *lpVtbl;
+};
 
 typedef struct IMMDeviceEnumeratorVtbl {
     HRESULT(STDMETHODCALLTYPE *QueryInterface)(void *This, REFIID riid, void **object);
@@ -229,11 +245,19 @@ MIME_DEFINE_GUID(KSDATAFORMAT_SUBTYPE_IEEE_FLOAT, 0x00000003, 0x0000, 0x0010, 0x
 MIME_DEFINE_GUID(FMTID_Device, 0xA45C254E, 0xDF1C, 0x4EFD, 0x80, 0x20, 0x67, 0xD1, 0x46, 0xA8, 0x50, 0xE0);
 MIME_DEFINE_GUID(FMTID_DeviceInterface, 0x026E516E, 0xB814, 0x414B, 0x83, 0xCD, 0x85, 0x6D, 0x6F, 0xEF, 0x48, 0x22);
 MIME_DEFINE_GUID(FMTID_AudioEngine, 0xF19F064D, 0x082C, 0x4E27, 0xBC, 0x73, 0x68, 0x82, 0xA1, 0xBB, 0x8E, 0x4C);
+/* PKEY_AudioEndpoint_GUID and PKEY_AudioEndpoint_PhysicalSpeakers share this one. */
+MIME_DEFINE_GUID(FMTID_AudioEndpoint, 0x1DA5D803, 0xD492, 0x4EDD, 0x8C, 0x23, 0xE0, 0xC0, 0xFF, 0xEE, 0x7F, 0x0E);
 
 void *MmTaskAlloc(SIZE_T size);
-void MmMixFormat(WAVEFORMATEXTENSIBLE *format);
-/* device names an endpoint besides the default one of the direction, which is NULL. */
-HRESULT MmCreateAudioClient(BOOL capture, const GUID *device, void **client);
+/* the format the engine mixes an endpoint at: floats at the rate and channels the host runs its device at. */
+void MmMixFormat(WAVEFORMATEXTENSIBLE *format, UINT32 rate, UINT32 channels);
+/* the speakers windows gives a channel count. */
+DWORD MmChannelMask(UINT32 channels);
+/*
+ * device names the endpoint the stream stays on. NULL is the default one of the direction as it changes, which is
+ * what an activation by device interface class gets.
+ */
+HRESULT MmCreateAudioClient(BOOL capture, const GUID *device, UINT32 rate, UINT32 channels, void **client);
 /* an endpoint's volume and mute, kept per process and not applied by its clients. */
 void *MmEndpointVolume(BOOL capture);
 

@@ -39,8 +39,9 @@ typedef struct CLIENT {
     BYTE *scratch;
     BOOL bounced;
     BOOL capture;
-    BOOL chosen; /* an endpoint besides the default one, named by device. */
+    BOOL chosen; /* the stream stays on the endpoint named by device. */
     GUID device;
+    UINT32 mix_rate, mix_channels;
     UINT64 dropped; /* host dropped frames the program was already told of. */
     float master, channel[8];
     BOOL mute;
@@ -89,12 +90,12 @@ static BOOL parse_format(const WAVEFORMATEX *f, FORMAT *out)
     return TRUE;
 }
 
-static HRESULT alloc_mix_format(WAVEFORMATEX **format)
+static HRESULT alloc_mix_format(CLIENT *c, WAVEFORMATEX **format)
 {
     WAVEFORMATEXTENSIBLE *f = MmTaskAlloc(sizeof(*f));
     if (!f)
         return E_OUTOFMEMORY;
-    MmMixFormat(f);
+    MmMixFormat(f, c->mix_rate, c->mix_channels);
     *format = &f->Format;
     return S_OK;
 }
@@ -105,6 +106,12 @@ static UINT32 padding(CLIENT *c)
 {
     UINT64 queued = c->hdr->written - __atomic_load_n(&c->hdr->played, __ATOMIC_ACQUIRE);
     return queued > c->buffer_frames ? c->buffer_frames : (UINT32)queued;
+}
+
+/* the host lost the device the stream stays on. the ring keeps its pace, so nothing waits forever. */
+static BOOL lost(CLIENT *c)
+{
+    return c->hdr && __atomic_load_n(&c->hdr->lost, __ATOMIC_ACQUIRE);
 }
 
 static void apply_volume(CLIENT *c)
@@ -194,7 +201,7 @@ static HRESULT initialize(CLIENT *c, AUDCLNT_SHAREMODE mode, DWORD flags, REFERE
     }
     if (!NT_SUCCESS(status)) {
         ReleaseSRWLockExclusive(&c->lock);
-        if (c->capture)
+        if (c->capture || status == STATUS_NO_SUCH_DEVICE)
             return AUDCLNT_E_DEVICE_INVALIDATED;
         return status == STATUS_NOT_SUPPORTED ? AUDCLNT_E_UNSUPPORTED_FORMAT : AUDCLNT_E_SERVICE_NOT_RUNNING;
     }
@@ -275,6 +282,8 @@ static HRESULT STDMETHODCALLTYPE client_padding(void *This, UINT32 *frames)
         return E_POINTER;
     if (!c->initialized)
         return AUDCLNT_E_NOT_INITIALIZED;
+    if (lost(c))
+        return AUDCLNT_E_DEVICE_INVALIDATED;
     *frames = padding(c);
     return S_OK;
 }
@@ -294,7 +303,7 @@ static HRESULT STDMETHODCALLTYPE client_is_supported(void *This, AUDCLNT_SHAREMO
         return S_OK;
     if (mode == AUDCLNT_SHAREMODE_EXCLUSIVE)
         return AUDCLNT_E_UNSUPPORTED_FORMAT;
-    HRESULT hr = alloc_mix_format(closest);
+    HRESULT hr = alloc_mix_format(FROM(client, This), closest);
     return FAILED(hr) ? hr : S_FALSE;
 }
 
@@ -302,7 +311,7 @@ static HRESULT STDMETHODCALLTYPE client_mix_format(void *This, WAVEFORMATEX **fo
 {
     if (!format)
         return E_POINTER;
-    return alloc_mix_format(format);
+    return alloc_mix_format(FROM(client, This), format);
 }
 
 static HRESULT STDMETHODCALLTYPE client_period(void *This, REFERENCE_TIME *default_period, REFERENCE_TIME *minimum)
@@ -327,7 +336,7 @@ static HRESULT STDMETHODCALLTYPE client_start(void *This)
         hr = AUDCLNT_E_NOT_STOPPED;
     else if ((c->flags & AUDCLNT_STREAMFLAGS_EVENTCALLBACK) && !c->event)
         hr = AUDCLNT_E_EVENTHANDLE_NOT_SET;
-    else if (!NT_SUCCESS(NtGdiMimeAudioControl(c->slot, MIME_AUDIO_START)))
+    else if (lost(c) || !NT_SUCCESS(NtGdiMimeAudioControl(c->slot, MIME_AUDIO_START)))
         hr = AUDCLNT_E_DEVICE_INVALIDATED;
     if (SUCCEEDED(hr)) {
         c->started = TRUE;
@@ -459,7 +468,7 @@ static HRESULT STDMETHODCALLTYPE client_current_period(void *This, WAVEFORMATEX 
 {
     if (!format || !period)
         return E_POINTER;
-    HRESULT hr = alloc_mix_format(format);
+    HRESULT hr = alloc_mix_format(FROM(client, This), format);
     if (SUCCEEDED(hr))
         *period = (UINT32)((*format)->nSamplesPerSec * PERIOD / 10000000);
     return hr;
@@ -519,6 +528,8 @@ static HRESULT STDMETHODCALLTYPE render_get_buffer(void *This, UINT32 frames, BY
     *data = nullptr;
     if (c->pending)
         return AUDCLNT_E_OUT_OF_ORDER;
+    if (lost(c))
+        return AUDCLNT_E_DEVICE_INVALIDATED;
     if (!frames)
         return S_OK;
     if (frames > c->buffer_frames - padding(c))
@@ -598,6 +609,8 @@ static HRESULT STDMETHODCALLTYPE capture_get_buffer(void *This, BYTE **data, UIN
     *flags = 0;
     if (c->pending)
         return AUDCLNT_E_OUT_OF_ORDER;
+    if (lost(c))
+        return AUDCLNT_E_DEVICE_INVALIDATED;
     UINT32 packet = packet_frames(c);
     if (waiting(c) < packet)
         return AUDCLNT_S_BUFFER_EMPTY;
@@ -857,7 +870,7 @@ static HRESULT STDMETHODCALLTYPE client_query(void *This, REFIID riid, void **ob
     return E_NOINTERFACE;
 }
 
-HRESULT MmCreateAudioClient(BOOL capture, const GUID *device, void **object)
+HRESULT MmCreateAudioClient(BOOL capture, const GUID *device, UINT32 rate, UINT32 channels, void **object)
 {
     CLIENT *c = HeapAlloc(heap(), HEAP_ZERO_MEMORY, sizeof(CLIENT));
     if (!c)
@@ -869,6 +882,8 @@ HRESULT MmCreateAudioClient(BOOL capture, const GUID *device, void **object)
     c->chosen = device != nullptr;
     if (device)
         c->device = *device;
+    c->mix_rate = rate;
+    c->mix_channels = channels;
     c->clock = &clock_vtbl;
     c->simple = &simple_vtbl;
     c->stream = &stream_vtbl;

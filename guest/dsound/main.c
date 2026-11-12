@@ -1,8 +1,8 @@
 /*
  * dsound.dll exports: device and capture creation, enumeration, default
- * device ids, and the class objects CoCreateInstance reaches. there is one
- * render device, the host's default output, named like mmdevapi names it,
- * and no capture device.
+ * device ids, and the class objects CoCreateInstance reaches. the render
+ * devices are the host's outputs, with the guids mmdevapi gives them, and
+ * there is no capture device.
  */
 #include "dsound_private.h"
 #include "amplitude.h"
@@ -13,15 +13,6 @@ int _fltused = 0x9875;
 
 RTL_CRITICAL_SECTION DsLock;
 HINSTANCE DsModule;
-
-/* mmdevapi's endpoint {0.0.0.00000000}.{6d696d65-0000-4000-8000-000000000001}, whose guid is the device's. */
-const GUID DsDeviceGuid = {0x6d696d65, 0x0000, 0x4000, {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}};
-#if defined(__aarch64__)
-const WCHAR DsDeviceName[] = L"Speakers (Qualcomm Audio)";
-#else
-const WCHAR DsDeviceName[] = L"Speakers (Realtek(R) Audio)";
-#endif
-const WCHAR DsDeviceModule[] = L"{0.0.0.00000000}.{6d696d65-0000-4000-8000-000000000001}";
 
 static LONG g_objects;
 
@@ -114,15 +105,23 @@ float DsAmplitude(LONG hundredths)
 
 /* ------------------------------------------------------------------ devices */
 
-/* null and the default ids name the host's default device, and the guid of another device of the host names it. */
-BOOL DsResolveDevice(LPCGUID requested, GUID *out, BOOL capture)
+/*
+ * null and the default ids name the host's default device, whichever it is as time passes, and out gets the guid
+ * of the one it is now. the guid of a device names that one alone.
+ */
+BOOL DsResolveDevice(LPCGUID requested, GUID *out, BOOL capture, BOOL *follows)
 {
     UINT32 host;
     if (capture)
         return FALSE;
-    if (!requested || IsEqualGUID(requested, &GUID_NULL) || IsEqualGUID(requested, &DSDEVID_DefaultPlayback) ||
-        IsEqualGUID(requested, &DSDEVID_DefaultVoicePlayback) || IsEqualGUID(requested, &DsDeviceGuid)) {
-        *out = DsDeviceGuid;
+    BOOL by_default = !requested || IsEqualGUID(requested, &GUID_NULL) || IsEqualGUID(requested, &DSDEVID_DefaultPlayback) ||
+                      IsEqualGUID(requested, &DSDEVID_DefaultVoicePlayback);
+    if (follows)
+        *follows = by_default;
+    if (by_default) {
+        MimeAudioEndpoint e;
+        MimeAudioDefaultEndpoint(FALSE, &e);
+        *out = e.guid;
         return TRUE;
     }
     if (!MimeAudioEndpointHost(FALSE, requested, &host))
@@ -200,20 +199,14 @@ static HRESULT enumerate(LPDSENUMCALLBACKW w, LPDSENUMCALLBACKA a, void *context
         return DS_OK;
     if (!call_enum(w, a, nullptr, L"Primary Sound Driver", L"", context))
         return DS_OK;
-    GUID guid = DsDeviceGuid;
-    if (!call_enum(w, a, &guid, DsDeviceName, DsDeviceModule, context))
-        return DS_OK;
     MimeAudioEndpoint *all = HeapAlloc(GetProcessHeap(), 0, sizeof(*all) * MIME_AUDIO_ENDPOINTS);
     if (!all)
         return DS_OK;
     UINT32 count = MimeAudioEndpoints(FALSE, all);
-    for (UINT32 i = 1; i < count; i++) {
-        const GUID *g = &all[i].guid;
+    for (UINT32 i = 0; i < count; i++) {
         WCHAR module[64];
-        wsprintfW(module, L"{0.0.0.00000000}.{%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}", g->Data1, g->Data2,
-                  g->Data3, g->Data4[0], g->Data4[1], g->Data4[2], g->Data4[3], g->Data4[4], g->Data4[5], g->Data4[6],
-                  g->Data4[7]);
-        guid = *g;
+        MimeAudioEndpointId(FALSE, &all[i].guid, module);
+        GUID guid = all[i].guid;
         if (!call_enum(w, a, &guid, all[i].name, module, context))
             break;
     }
@@ -249,7 +242,7 @@ DSOUNDAPI HRESULT WINAPI GetDeviceID(LPCGUID src, LPGUID dst)
     if (IsEqualGUID(src, &DSDEVID_DefaultCapture) || IsEqualGUID(src, &DSDEVID_DefaultVoiceCapture))
         return DSERR_NODRIVER;
     GUID guid;
-    if (!DsResolveDevice(src, &guid, FALSE))
+    if (!DsResolveDevice(src, &guid, FALSE, nullptr))
         return DSERR_NODRIVER;
     *dst = guid;
     return DS_OK;

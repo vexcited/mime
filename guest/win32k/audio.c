@@ -106,7 +106,9 @@ NTSTATUS NTAPI NtGdiMimeAudioControl(ULONG index, ULONG op)
         if (result == MIME_HC_STATUS_OK)
             s->Stream = (ULONG)stream;
         else
-            status = result == MIME_HC_STATUS_UNSUPPORTED ? STATUS_NOT_SUPPORTED : STATUS_DEVICE_NOT_READY;
+            status = result == MIME_HC_STATUS_UNSUPPORTED ? STATUS_NOT_SUPPORTED
+                     : result == MIME_HC_STATUS_NOT_FOUND ? STATUS_NO_SUCH_DEVICE
+                                                          : STATUS_DEVICE_NOT_READY;
     } else if (op == MIME_AUDIO_START || op == MIME_AUDIO_STOP) {
         if (!s->Stream ||
             HalMimeHypercall(MIME_HC_AUDIO_START, s->Stream, op == MIME_AUDIO_START, 0, 0, 0, 0, nullptr) != MIME_HC_STATUS_OK)

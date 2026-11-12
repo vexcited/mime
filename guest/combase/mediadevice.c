@@ -234,10 +234,7 @@ static HRESULT STDMETHODCALLTYPE default_render(IMediaDeviceStatics *This, INT32
     return default_id(0, role, value);
 }
 
-/*
- * the handlers are kept for their tokens. the endpoints mmdevapi has never change, so no default changes and the
- * handlers are never called.
- */
+/* the handlers are kept for their tokens. a change of the host's default device does not call them yet. */
 typedef struct HANDLER {
     INT64 Token;
     IUnknown *Handler;

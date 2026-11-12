@@ -24,21 +24,30 @@ typedef struct MimeAudioHeader {
     uint32_t frames;   /* ring capacity. */
     uint32_t volume;   /* 0 to 65536, applied by the host. */
     uint32_t capture;  /* 1 for an input stream, 0 for an output stream. */
-    uint32_t device;   /* a host device from MimeAudioDeviceList, 0 for the default one of the direction. */
+    uint32_t device;   /* an id of MimeAudioDeviceList, or 0 to follow the host's default device as it changes. */
     uint64_t written;  /* frames written by the guest for output, host for capture. */
     uint64_t played;   /* frames consumed by the host for output, guest for capture. */
     uint64_t underruns; /* output: host callbacks that found less than they needed; input: frames dropped. */
+    uint32_t lost;     /* set by the host when the device the stream named is gone. the ring keeps its pace. */
+    uint32_t reserved;
 } MimeAudioHeader;
 
 /*
- * the host's devices of one direction besides the default one, written over the header of a stream that is not open.
- * an id names its device until the host loses it, after which a stream asking for it gets the default one.
+ * the host's devices of one direction, written over the header of a stream that is not open. the host raises
+ * MIME_IRQ_AUDIO when the list or the default device changes. an id names its device until the host loses it.
  */
 #define MIME_AUDIO_MAX_DEVICES 31
+#define MIME_AUDIO_DEVICE_DEFAULT 1u /* the one the host plays to or records from when none is named. */
 
 typedef struct MimeAudioDevice {
     uint32_t id;
-    char name[124]; /* UTF-8, ends with a zero. */
+    uint32_t flags;
+    /* the format the device runs at. */
+    uint32_t rate;
+    uint32_t channels;
+    uint32_t bits;
+    uint32_t is_float;
+    char name[104]; /* UTF-8, ends with a zero. */
 } MimeAudioDevice;
 
 typedef struct MimeAudioDeviceList {
