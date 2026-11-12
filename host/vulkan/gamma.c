@@ -54,7 +54,7 @@ bool mime_gamma_table(uint8_t table[3][256])
     return active;
 }
 
-/* draws a fullscreen triangle, applying the ramp to each composed pixel. */
+/* draws a fullscreen triangle, applying the ramp to each composed pixel of the part that is lit, clear past it. */
 static const char VERTEX[] = "#version 450\n"
                              "void main() {\n"
                              "    vec2 p = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);\n"
@@ -66,10 +66,15 @@ static const char FRAGMENT[] =
     "#version 450\n"
     "layout(set = 0, binding = 0) uniform sampler2D frame;\n"
     "layout(set = 0, binding = 1) uniform sampler2D ramp;\n"
-    "layout(push_constant) uniform Push { uint srgb; } push;\n"
+    "layout(push_constant) uniform Push { uint srgb; ivec4 lit; } push;\n"
     "layout(location = 0) out vec4 color;\n"
     "float decode(float c) { return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }\n"
     "void main() {\n"
+    "    ivec2 at = ivec2(gl_FragCoord.xy);\n"
+    "    if (at.x < push.lit.x || at.y < push.lit.y || at.x >= push.lit.z || at.y >= push.lit.w) {\n"
+    "        color = vec4(0.0);\n"
+    "        return;\n"
+    "    }\n"
     "    vec4 t = texelFetch(frame, ivec2(gl_FragCoord.xy), 0);\n"
     "    ivec3 i = ivec3(round(clamp(t.rgb, 0.0, 1.0) * 255.0));\n"
     "    vec3 c = vec3(texelFetch(ramp, ivec2(i.r, 0), 0).r, texelFetch(ramp, ivec2(i.g, 0), 0).g,\n"

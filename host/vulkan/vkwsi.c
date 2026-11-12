@@ -1328,6 +1328,12 @@ static bool gamma_image(MvkConnection *c, VkImageCreateInfo *info, VkImage *imag
     return c->fn.vkCreateImageView(c->device, &vi, nullptr, view) == VK_SUCCESS;
 }
 
+typedef struct GammaPush {
+    uint32_t srgb;
+    int32_t pad[3];
+    int32_t lit[4];
+} GammaPush;
+
 /* layouts, sampler, ramp image and staging buffer live with the presenter. */
 static bool gamma_base(MvkConnection *c, GammaPass *g)
 {
@@ -1340,7 +1346,7 @@ static bool gamma_base(MvkConnection *c, GammaPass *g)
     VkDescriptorSetLayoutCreateInfo sli = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 2, bindings};
     if (c->fn.vkCreateDescriptorSetLayout(c->device, &sli, nullptr, &g->set_layout) != VK_SUCCESS)
         return false;
-    VkPushConstantRange push = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 4};
+    VkPushConstantRange push = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(GammaPush)};
     VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, nullptr, 0, 1, &g->set_layout, 1,
                                       &push};
     if (c->fn.vkCreatePipelineLayout(c->device, &pli, nullptr, &g->layout) != VK_SUCCESS)
@@ -1660,7 +1666,7 @@ static bool gamma_prepare(MvkConnection *c, Presenter *p)
 }
 
 /* the composed frame drawn through the ramp into the swapchain image, which the render pass leaves ready to present. */
-static void gamma_record(MvkConnection *c, Presenter *p, VkCommandBuffer cmd, uint32_t target)
+static void gamma_record(MvkConnection *c, Presenter *p, VkCommandBuffer cmd, uint32_t target, VkRect2D lit)
 {
     GammaPass *g = &p->gamma;
     if (g->ramp_stale) {
@@ -1683,8 +1689,9 @@ static void gamma_record(MvkConnection *c, Presenter *p, VkCommandBuffer cmd, ui
     c->fn.vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
     c->fn.vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->pipeline);
     c->fn.vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g->layout, 0, 1, &g->set, 0, nullptr);
-    uint32_t srgb = is_srgb(p->format);
-    c->fn.vkCmdPushConstants(cmd, g->layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(srgb), &srgb);
+    GammaPush push = {is_srgb(p->format), {}, {lit.offset.x, lit.offset.y, lit.offset.x + (int32_t)lit.extent.width,
+                                               lit.offset.y + (int32_t)lit.extent.height}};
+    c->fn.vkCmdPushConstants(cmd, g->layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), &push);
     VkViewport viewport = {0, 0, (float)p->extent.width, (float)p->extent.height, 0, 1};
     VkRect2D scissor = {{0, 0}, p->extent};
     c->fn.vkCmdSetViewport(cmd, 0, 1, &viewport);
@@ -2139,7 +2146,7 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
              * than that, and the layer of another window shows there through the same window.
              */
             const MimeRect *o = &frame->opaque;
-            if (!gamma && (mask || p->premultiplied) && o->right > o->left && o->bottom > o->top) {
+            if ((mask || p->premultiplied) && o->right > o->left && o->bottom > o->top) {
                 lit = (Box){MIME_MAX(round((o->left - frame->area.left) * kx), 0),
                             MIME_MAX(round((o->top - frame->area.top) * ky), 0),
                             MIME_MIN(round((o->right - frame->area.left) * kx), whole.right),
@@ -2204,12 +2211,12 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
     p->info_serial = p->last_serial;
     pthread_mutex_unlock(&p->info_lock);
     release_source(c, cmd, src, p->tone.on);
+    VkRect2D part = {{(int32_t)lit.left, (int32_t)lit.top},
+                     {(uint32_t)(lit.right - lit.left), (uint32_t)(lit.bottom - lit.top)}};
     if (gamma)
-        gamma_record(c, p, cmd, target);
+        gamma_record(c, p, cmd, target, part);
     else if (mask)
-        mask_record(c, p, cmd, target,
-                    (VkRect2D){{(int32_t)lit.left, (int32_t)lit.top},
-                               {(uint32_t)(lit.right - lit.left), (uint32_t)(lit.bottom - lit.top)}});
+        mask_record(c, p, cmd, target, part);
     else
         barrier(c, cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                 VK_ACCESS_TRANSFER_WRITE_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
