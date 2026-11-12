@@ -246,10 +246,12 @@ static VKAPI_ATTR void VKAPI_CALL DestroyBuffer(VkDevice device, VkBuffer b, con
     free(b);
 }
 
-static void buffer_requirements(uint64_t size, VkMemoryRequirements *out)
+static void buffer_requirements(uint64_t size, VkBufferUsageFlags2 usage, VkMemoryRequirements *out)
 {
     out->size = MIME_ALIGN_UP(MIME_MAX(size, (uint64_t)1), (uint64_t)16);
-    out->alignment = BUFFER_ALIGN;
+    /* so a structure at the buffer's start is placed in its memory. */
+    bool structures = usage & VK_BUFFER_USAGE_2_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR;
+    out->alignment = structures ? VKM_AS_ALIGN : BUFFER_ALIGN;
     out->memoryTypeBits = (1u << VKM_MEMORY_TYPES) - 1;
 }
 
@@ -262,14 +264,14 @@ static void dedicated(void *chain, bool prefer)
 
 static VKAPI_ATTR void VKAPI_CALL GetBufferMemoryRequirements(VkDevice device, VkBuffer b, VkMemoryRequirements *out)
 {
-    buffer_requirements(b->size, out);
+    buffer_requirements(b->size, b->usage, out);
 }
 
 static VKAPI_ATTR void VKAPI_CALL GetBufferMemoryRequirements2(VkDevice device,
                                                               const VkBufferMemoryRequirementsInfo2 *info,
                                                               VkMemoryRequirements2 *out)
 {
-    buffer_requirements(info->buffer->size, &out->memoryRequirements);
+    buffer_requirements(info->buffer->size, info->buffer->usage, &out->memoryRequirements);
     dedicated(out->pNext, false);
 }
 
@@ -277,7 +279,10 @@ static VKAPI_ATTR void VKAPI_CALL GetDeviceBufferMemoryRequirements(VkDevice dev
                                                                    const VkDeviceBufferMemoryRequirements *info,
                                                                    VkMemoryRequirements2 *out)
 {
-    buffer_requirements(info->pCreateInfo->size, &out->memoryRequirements);
+    const VkBufferUsageFlags2CreateInfo *usage2 =
+        vkm_find(info->pCreateInfo->pNext, VK_STRUCTURE_TYPE_BUFFER_USAGE_FLAGS_2_CREATE_INFO);
+    buffer_requirements(info->pCreateInfo->size, usage2 ? usage2->usage : info->pCreateInfo->usage,
+                        &out->memoryRequirements);
     dedicated(out->pNext, false);
 }
 

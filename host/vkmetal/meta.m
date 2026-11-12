@@ -583,3 +583,38 @@ id<MTLComputePipelineState> vkm_meta_byte_count(VkDevice device)
     }
     return state ? cache(&key, sizeof(key), state) : nullptr;
 }
+
+/* a kernel of the driver's own, made once into its slot. */
+id<MTLComputePipelineState> vkm_meta_kernel(VkDevice device, const char *source, const char *name,
+                                            id<MTLComputePipelineState> *slot)
+{
+    pthread_mutex_lock(&g_lock);
+    id<MTLComputePipelineState> state = *slot;
+    pthread_mutex_unlock(&g_lock);
+    if (state)
+        return state;
+    id<MTLLibrary> library = vkm_library(device, source);
+    if (!library)
+        return nil;
+    @autoreleasepool {
+        MTL4LibraryFunctionDescriptor *function = vkm_function(library, name);
+        MTL4ComputePipelineDescriptor *desc = [[MTL4ComputePipelineDescriptor alloc] init];
+        desc.computeFunctionDescriptor = function;
+        NSError *error = nil;
+        state = mime_pipeline_cache_compute(device->pipelines, desc, (id *)&error);
+        if (!state)
+            VKM_ERROR("no %s pipeline: %s", name, vkm_error_text(error));
+        [desc release];
+        [function release];
+        [library release];
+    }
+    pthread_mutex_lock(&g_lock);
+    if (*slot) {
+        [state release];
+        state = *slot;
+    } else {
+        *slot = state;
+    }
+    pthread_mutex_unlock(&g_lock);
+    return state;
+}

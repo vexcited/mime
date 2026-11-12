@@ -44,6 +44,10 @@ static const VkExtensionProperties g_device_extensions[] = {
     {VK_GOOGLE_HLSL_FUNCTIONALITY_1_EXTENSION_NAME, VK_GOOGLE_HLSL_FUNCTIONALITY_1_SPEC_VERSION},
     {VK_GOOGLE_USER_TYPE_EXTENSION_NAME, VK_GOOGLE_USER_TYPE_SPEC_VERSION},
     {VK_GOOGLE_DECORATE_STRING_EXTENSION_NAME, VK_GOOGLE_DECORATE_STRING_SPEC_VERSION},
+    {VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME, VK_KHR_DEFERRED_HOST_OPERATIONS_SPEC_VERSION},
+    {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, VK_KHR_ACCELERATION_STRUCTURE_SPEC_VERSION},
+    {VK_KHR_RAY_QUERY_EXTENSION_NAME, VK_KHR_RAY_QUERY_SPEC_VERSION},
+    {VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME, VK_KHR_RAY_TRACING_MAINTENANCE_1_SPEC_VERSION},
 };
 
 bool vkm_device_extension(const char *name)
@@ -473,6 +477,25 @@ static void fill_features(VkBaseOutStructure *chain)
             ((VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT *)s)->dynamicRenderingUnusedAttachments =
                 VK_TRUE;
             break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR: {
+            /* builds run on the gpu: the wire carries no host memory for host commands to read. */
+            VkPhysicalDeviceAccelerationStructureFeaturesKHR *x = (void *)s;
+            x->accelerationStructure = VK_TRUE;
+            x->accelerationStructureCaptureReplay = VK_FALSE;
+            x->accelerationStructureIndirectBuild = VK_TRUE;
+            x->accelerationStructureHostCommands = VK_FALSE;
+            x->descriptorBindingAccelerationStructureUpdateAfterBind = VK_TRUE;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR:
+            ((VkPhysicalDeviceRayQueryFeaturesKHR *)s)->rayQuery = VK_TRUE;
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_MAINTENANCE_1_FEATURES_KHR: {
+            VkPhysicalDeviceRayTracingMaintenance1FeaturesKHR *x = (void *)s;
+            x->rayTracingMaintenance1 = VK_TRUE;
+            x->rayTracingPipelineTraceRaysIndirect2 = VK_FALSE;
+            break;
+        }
         default:
             break;
         }
@@ -885,6 +908,19 @@ static void fill_properties(VkPhysicalDevice p, VkBaseOutStructure *chain)
             break;
         }
         /* generated commands are encoded into indirect command buffers, without execution sets. */
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR: {
+            /* metal's limits without its extended ones, which shaders would have to ask for. */
+            VkPhysicalDeviceAccelerationStructurePropertiesKHR *x = (void *)s;
+            x->maxGeometryCount = 1u << 24;
+            x->maxInstanceCount = 1u << 24;
+            x->maxPrimitiveCount = 1u << 28;
+            x->maxPerStageDescriptorAccelerationStructures = 1u << 20;
+            x->maxPerStageDescriptorUpdateAfterBindAccelerationStructures = 1u << 20;
+            x->maxDescriptorSetAccelerationStructures = 1u << 20;
+            x->maxDescriptorSetUpdateAfterBindAccelerationStructures = 1u << 20;
+            x->minAccelerationStructureScratchOffsetAlignment = 256;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT: {
             VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT *x = (void *)s;
             x->maxIndirectPipelineCount = x->maxIndirectShaderObjectCount = 0;

@@ -193,6 +193,25 @@ VkFormatFeatureFlags2 vkm_format_features(const VkmFormat *f, bool linear, bool 
     if (buffer) {
         if (caps & VKM_CAP_VERTEX)
             out |= VK_FORMAT_FEATURE_2_VERTEX_BUFFER_BIT;
+        switch (f->vertex) {
+        case MTLVertexFormatFloat2:
+        case MTLVertexFormatFloat3:
+        case MTLVertexFormatHalf2:
+        case MTLVertexFormatHalf4:
+        case MTLVertexFormatShort2Normalized:
+        case MTLVertexFormatShort4Normalized:
+        case MTLVertexFormatUShort2Normalized:
+        case MTLVertexFormatUShort4Normalized:
+        case MTLVertexFormatChar2Normalized:
+        case MTLVertexFormatChar4Normalized:
+        case MTLVertexFormatUChar2Normalized:
+        case MTLVertexFormatUChar4Normalized:
+        case MTLVertexFormatUInt1010102Normalized:
+            out |= VK_FORMAT_FEATURE_2_ACCELERATION_STRUCTURE_VERTEX_BUFFER_BIT_KHR;
+            break;
+        default:
+            break;
+        }
         if (caps & VKM_CAP_TEXEL)
             out |= VK_FORMAT_FEATURE_2_UNIFORM_TEXEL_BUFFER_BIT;
         if (caps & VKM_CAP_STORAGE_TEXEL)

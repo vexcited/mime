@@ -59,6 +59,12 @@ typedef struct VkmMslResult {
  */
 enum { VKM_WIDEN_NONE, VKM_WIDEN_UINT8, VKM_WIDEN_UINT16 };
 
+/*
+ * accel.m: the table shaders find acceleration structures in by address, its address and its entry count less one.
+ * a descriptor or a conversion from an address gives a structure as that address.
+ */
+void vkm_as_table(uint64_t *address, uint32_t *mask);
+
 bool vkm_msl(const uint32_t *spirv, size_t words, const char *entry, int model, const VkmMslBinding *bindings,
              uint32_t binding_count, uint32_t set_mask, const VkmMslSpec *spec, uint32_t spec_count,
              const uint8_t *widen, bool dual_source, VkmMslResult *out);

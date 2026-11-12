@@ -237,8 +237,8 @@ static void query_reset(Enc *e, const VkmOpQuery *o)
 
 static void dispatch_barrier(id<MTL4CommandEncoder> encoder)
 {
-    [encoder barrierAfterEncoderStages:MTLStageDispatch | MTLStageBlit
-                   beforeEncoderStages:MTLStageDispatch | MTLStageBlit
+    [encoder barrierAfterEncoderStages:MTLStageDispatch | MTLStageBlit | MTLStageAccelerationStructure
+                   beforeEncoderStages:MTLStageDispatch | MTLStageBlit | MTLStageAccelerationStructure
                      visibilityOptions:MTL4VisibilityOptionDevice];
 }
 
@@ -247,7 +247,7 @@ static void query_copy(Enc *e, const VkmOpQuery *o)
 {
     VkQueryPool pool = o->pool;
     id<MTL4ComputeCommandEncoder> c = compute(e);
-    /* after what wrote the queries before it. */
+    /* after what wrote the queries before it, acceleration structure sizes included. */
     dispatch_barrier(c);
     id<MTLBuffer> dst = o->buffer->memory->buffer;
     uint32_t n = query_values(pool);
@@ -530,6 +530,9 @@ static void replay(Enc *e, const VkmOp *op)
                        visibilityOptions:MTL4VisibilityOptionDevice];
         break;
     case VKM_OP_EXECUTE: execute(e, (const VkmOpExecute *)op); break;
+    case VKM_OP_AS_BUILD: vkm_encode_as_build(e->q->device, compute(e), (const VkmOpAsBuild *)op); break;
+    case VKM_OP_AS_COPY: vkm_encode_as_copy(compute(e), (const VkmOpAsCopy *)op); break;
+    case VKM_OP_AS_PROPERTY: vkm_encode_as_property(compute(e), (const VkmOpAsProperty *)op, e->q, e->value); break;
     default: break;
     }
 }
