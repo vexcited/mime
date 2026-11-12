@@ -171,6 +171,8 @@ typedef struct MvkTarget {
 bool mvk_wsi_readback(uint32_t window, uint32_t source, void *pixels, uint32_t capacity_width, uint32_t capacity_height,
                       uint32_t stride, uint32_t *width, uint32_t *height, MimeRect *client, uint64_t *serial);
 void mvk_wsi_close(MvkConnection *c);
+/* the connection's instance made a surface of a host window. */
+void mvk_instance_presented(MvkConnection *c);
 /* every present sent so far submitted. */
 void mvk_wsi_drain(MvkConnection *c);
 /* every guest process's calls posted so far run and their presents shown or kept, for a read of what a window presented. */

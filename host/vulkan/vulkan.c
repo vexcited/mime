@@ -551,6 +551,7 @@ typedef struct HostInstance {
     struct HostInstance *next;
     Request key;
     uint32_t refs;
+    bool presented; /* made a surface of a window, see instance_release. */
     MvkConnection base; /* the library, the instance and its commands, never a device. */
     Spare spares[SPARES_MAX];
 } HostInstance;
@@ -637,11 +638,25 @@ static HostInstance *instance_hold(Request *key, VkInstanceCreateInfo info, MvkD
     return hi;
 }
 
+void mvk_instance_presented(MvkConnection *c)
+{
+    pthread_mutex_lock(&g_instance_lock);
+    if (c->host_instance)
+        c->host_instance->presented = true;
+    pthread_mutex_unlock(&g_instance_lock);
+}
+
 static void instance_release(HostInstance *hi)
 {
     pthread_mutex_lock(&g_instance_lock);
     bool last = --hi->refs == 0;
-    if (last)
+    /*
+     * the NVIDIA driver keeps its entry points of libwayland-client in one table for the process, and clears it when
+     * an instance that made a swapchain on a Wayland surface goes: the next acquire or present of any other instance
+     * then calls through null. an instance that presented stays, for the next request like its own.
+     */
+    bool kept = last && hi->presented;
+    if (last && !kept)
         for (HostInstance **link = &g_instances; *link; link = &(*link)->next)
             if (*link == hi) {
                 *link = hi->next;
@@ -651,6 +666,8 @@ static void instance_release(HostInstance *hi)
     if (!last)
         return;
     spare_destroy(hi);
+    if (kept)
+        return;
     mime_gpu_teardown_enter();
     hi->base.fn.vkDestroyInstance(hi->base.instance, nullptr);
     mime_gpu_teardown_leave();

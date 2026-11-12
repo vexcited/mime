@@ -903,6 +903,8 @@ static void presenter_attach(MvkConnection *c, Presenter *p, MimeRect area, uint
         if (r != VK_SUCCESS) {
             mime_warn("vulkan: cannot make a surface on window %#x (%d)", p->window, (int)r);
             p->surface = VK_NULL_HANDLE;
+        } else {
+            mvk_instance_presented(c);
         }
     }
     pthread_mutex_unlock(&p->lock);
