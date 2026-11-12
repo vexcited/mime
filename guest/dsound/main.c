@@ -120,7 +120,8 @@ BOOL DsResolveDevice(LPCGUID requested, GUID *out, BOOL capture, BOOL *follows)
         *follows = by_default;
     if (by_default) {
         MimeAudioEndpoint e;
-        MimeAudioDefaultEndpoint(FALSE, &e);
+        if (!MimeAudioDefaultEndpoint(FALSE, &e))
+            return FALSE;
         *out = e.guid;
         return TRUE;
     }
@@ -197,12 +198,13 @@ static HRESULT enumerate(LPDSENUMCALLBACKW w, LPDSENUMCALLBACKA a, void *context
         return DSERR_INVALIDPARAM;
     if (capture)
         return DS_OK;
-    if (!call_enum(w, a, nullptr, L"Primary Sound Driver", L"", context))
-        return DS_OK;
     MimeAudioEndpoint *all = HeapAlloc(GetProcessHeap(), 0, sizeof(*all) * MIME_AUDIO_ENDPOINTS);
     if (!all)
         return DS_OK;
     UINT32 count = MimeAudioEndpoints(FALSE, all);
+    /* the primary driver stands for the default device, and is not listed without one. */
+    if (count && !call_enum(w, a, nullptr, L"Primary Sound Driver", L"", context))
+        count = 0;
     for (UINT32 i = 0; i < count; i++) {
         WCHAR module[64];
         MimeAudioEndpointId(FALSE, &all[i].guid, module);

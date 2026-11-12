@@ -4,22 +4,10 @@
 #include <mime/win32/winnls.h>
 #include <rtl.h>
 
-static UINT64 hash(const char *text, UINT64 seed)
+DWORD MimeAudioChannelMask(UINT32 channels)
 {
-    UINT64 h = seed;
-    for (; *text; text++)
-        h = (h ^ (BYTE)*text) * 0x100000001B3ull;
-    return h;
-}
-
-/* devices of the same name get different guids by their place among them. */
-static void make_guid(GUID *guid, const char *name, BOOL capture, UINT32 twin)
-{
-    UINT64 low = hash(name, 0xCBF29CE484222325ull + twin), high = hash(name, 0x84222325CBF29CE4ull + twin * 31 + capture);
-    memcpy(guid, &low, sizeof(low));
-    memcpy((BYTE *)guid + sizeof(low), &high, sizeof(high));
-    guid->Data3 = (guid->Data3 & 0x0FFF) | 0x4000;
-    guid->Data4[0] = (guid->Data4[0] & 0x3F) | 0x80;
+    static const DWORD masks[9] = {0, 0x4, 0x3, 0xB, 0x33, 0x3B, 0x3F, 0x70F, 0x63F};
+    return channels < RTL_NUMBER_OF(masks) ? masks[channels] : 0;
 }
 
 static BOOL host_devices(BOOL capture, MimeAudioDeviceList *list)
@@ -37,26 +25,12 @@ static BOOL host_devices(BOOL capture, MimeAudioDeviceList *list)
     return ok;
 }
 
-#if defined(__aarch64__)
-#define NO_DEVICE_BRAND L"Qualcomm Audio"
-#else
-#define NO_DEVICE_BRAND L"Realtek(R) Audio"
-#endif
-
-/* a host without a device of the direction: programs get one whose sound the host discards or keeps silent. */
-static void no_device(BOOL capture, MimeAudioEndpoint *e)
+static UINT32 bit_count(DWORD mask)
 {
-    static const GUID guids[2] = {
-        {0x2c9f1a4b, 0x8d3e, 0x4f6a, {0x9b, 0x1c, 0x7e, 0x5d, 0x2a, 0x8c, 0x4f, 0x01}},
-        {0x2c9f1a4b, 0x8d3e, 0x4f6a, {0x9b, 0x1c, 0x7e, 0x5d, 0x2a, 0x8c, 0x4f, 0x02}},
-    };
-    memset(e, 0, sizeof(*e));
-    e->is_default = TRUE;
-    e->guid = guids[capture ? 1 : 0];
-    e->rate = 48000;
-    e->channels = 2;
-    e->bits = 16;
-    lstrcpyW(e->name, capture ? L"Microphone (" NO_DEVICE_BRAND L")" : L"Speakers (" NO_DEVICE_BRAND L")");
+    UINT32 count = 0;
+    for (; mask; mask &= mask - 1)
+        count++;
+    return count;
 }
 
 UINT32 MimeAudioEndpoints(BOOL capture, MimeAudioEndpoint *out)
@@ -72,15 +46,25 @@ UINT32 MimeAudioEndpoints(BOOL capture, MimeAudioEndpoint *out)
             MimeAudioEndpoint e = {0};
             if (!d->id || !MultiByteToWideChar(CP_UTF8, 0, d->name, -1, e.name, RTL_NUMBER_OF(e.name)))
                 continue;
+            d->adapter[sizeof(d->adapter) - 1] = 0;
+            d->port[sizeof(d->port) - 1] = 0;
+            if (!d->adapter[0] || !MultiByteToWideChar(CP_UTF8, 0, d->adapter, -1, e.adapter, RTL_NUMBER_OF(e.adapter)))
+                lstrcpynW(e.adapter, e.name, RTL_NUMBER_OF(e.adapter));
+            if (!d->port[0] || !MultiByteToWideChar(CP_UTF8, 0, d->port, -1, e.port, RTL_NUMBER_OF(e.port)))
+                lstrcpynW(e.port, e.name, RTL_NUMBER_OF(e.port));
             UINT32 twin = 0;
             for (UINT32 j = 0; j < i; j++)
                 twin += !strcmp(list.devices[j].name, d->name);
             e.host = d->id;
-            make_guid(&e.guid, d->name, capture, twin);
+            mime_audio_device_guid((uint8_t *)&e.guid, d->name, capture, twin);
             e.rate = d->rate >= 8000 && d->rate <= 192000 ? d->rate : 48000;
             e.channels = d->channels >= 1 && d->channels <= 8 ? d->channels : 2;
             e.is_float = d->is_float != 0;
             e.bits = e.is_float ? 32 : d->bits == 24 || d->bits == 32 ? d->bits : 16;
+            e.valid_bits = d->valid_bits && d->valid_bits < e.bits && !e.is_float ? d->valid_bits : e.bits;
+            e.channel_mask = bit_count(d->channel_mask) == e.channels ? d->channel_mask : MimeAudioChannelMask(e.channels);
+            /* windows has no form 0 or 7, and tells what it cannot name as speakers or a microphone too. */
+            e.form = d->form >= 1 && d->form <= 9 && d->form != 7 ? d->form : capture ? 4 : 1;
             /* one default device, moved to the front. */
             e.is_default = (d->flags & MIME_AUDIO_DEVICE_DEFAULT) && !(count && out[0].is_default);
             if (e.is_default && count) {
@@ -92,9 +76,8 @@ UINT32 MimeAudioEndpoints(BOOL capture, MimeAudioEndpoint *out)
             count++;
         }
     }
-    if (!count)
-        no_device(capture, &out[count++]);
-    out[0].is_default = TRUE;
+    if (count)
+        out[0].is_default = TRUE;
     return count;
 }
 
@@ -115,16 +98,16 @@ BOOL MimeAudioEndpointHost(BOOL capture, const GUID *guid, UINT32 *host)
     return found;
 }
 
-void MimeAudioDefaultEndpoint(BOOL capture, MimeAudioEndpoint *out)
+BOOL MimeAudioDefaultEndpoint(BOOL capture, MimeAudioEndpoint *out)
 {
     MimeAudioEndpoint *all = HeapAlloc(GetProcessHeap(), 0, sizeof(MimeAudioEndpoint) * MIME_AUDIO_ENDPOINTS);
-    if (all) {
-        MimeAudioEndpoints(capture, all);
+    if (!all)
+        return FALSE;
+    BOOL found = MimeAudioEndpoints(capture, all) != 0;
+    if (found)
         *out = all[0];
-        HeapFree(GetProcessHeap(), 0, all);
-    } else {
-        no_device(capture, out);
-    }
+    HeapFree(GetProcessHeap(), 0, all);
+    return found;
 }
 
 void MimeAudioEndpointId(BOOL capture, const GUID *guid, WCHAR *out)

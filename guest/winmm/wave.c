@@ -434,7 +434,7 @@ static UINT32 endpoint_count(BOOL capture)
 {
     MimeAudioEndpoint *all = HeapAlloc(heap(), 0, sizeof(*all) * MIME_AUDIO_ENDPOINTS);
     if (!all)
-        return 1;
+        return 0;
     UINT32 count = MimeAudioEndpoints(capture, all);
     HeapFree(heap(), 0, all);
     return count;
@@ -476,8 +476,9 @@ WINMMAPI UINT WINAPI waveOutGetNumDevs(void)
 static MMRESULT caps_device(BOOL capture, UINT_PTR id, MimeAudioEndpoint *e, const WCHAR **name)
 {
     *name = nullptr;
+    /* the mapper stands for the devices: without any, windows tells there is no driver. */
     if (id == WAVE_MAPPER || id == (UINT_PTR)(UINT)WAVE_MAPPER)
-        return MMSYSERR_NOERROR;
+        return endpoint_count(capture) ? MMSYSERR_NOERROR : MMSYSERR_NODRIVER;
     *name = e->name;
     if (endpoint_at(capture, id, e))
         return MMSYSERR_NOERROR;
@@ -546,6 +547,8 @@ WINMMAPI MMRESULT WINAPI waveOutOpen(LPHWAVEOUT out, UINT id, LPCWAVEFORMATEX fo
         if (!find_out((HWAVEOUT)(UINT_PTR)id))
             return MMSYSERR_BADDEVICEID;
     }
+    if (id == WAVE_MAPPER && !endpoint_count(FALSE))
+        return MMSYSERR_BADDEVICEID;
     if (!format)
         return MMSYSERR_INVALPARAM;
     MMRESULT r = check_callback(flags, callback);
@@ -588,12 +591,13 @@ WINMMAPI MMRESULT WINAPI waveOutOpen(LPHWAVEOUT out, UINT id, LPCWAVEFORMATEX fo
     }
     w->in_frame = w->format.Format.nBlockAlign;
     w->widen8 = bits == 8;
-    if (!NT_SUCCESS(MimeOutputOpen(&w->out, device.host, w->format.Format.nSamplesPerSec, w->format.Format.nChannels,
-                                   w->widen8 ? 16 : bits, is_float))) {
+    NTSTATUS status = MimeOutputOpen(&w->out, device.host, w->format.Format.nSamplesPerSec, w->format.Format.nChannels,
+                                     w->widen8 ? 16 : bits, is_float);
+    if (!NT_SUCCESS(status)) {
         if (w->mapped)
             close_acm(&w->acm);
         HeapFree(heap(), 0, w);
-        return MMSYSERR_ALLOCATED;
+        return status == STATUS_NO_SUCH_DEVICE ? MMSYSERR_BADDEVICEID : MMSYSERR_ALLOCATED;
     }
     w->callback = (flags & CALLBACK_TYPEMASK) >> 16;
     w->flags = flags;
@@ -1112,6 +1116,8 @@ WINMMAPI MMRESULT WINAPI waveInOpen(LPHWAVEIN in, UINT id, LPCWAVEFORMATEX forma
     MimeAudioEndpoint device = {0};
     if (id != WAVE_MAPPER && !endpoint_at(TRUE, id, &device) && !find_in((HWAVEIN)(UINT_PTR)id))
         return MMSYSERR_BADDEVICEID;
+    if (id == WAVE_MAPPER && !endpoint_count(TRUE))
+        return MMSYSERR_BADDEVICEID;
     if (!format)
         return MMSYSERR_INVALPARAM;
     MMRESULT r = check_callback(flags, callback);
@@ -1154,7 +1160,7 @@ WINMMAPI MMRESULT WINAPI waveInOpen(LPHWAVEIN in, UINT id, LPCWAVEFORMATEX forma
     }
     if (!NT_SUCCESS(status)) {
         HeapFree(heap(), 0, w);
-        return MMSYSERR_ALLOCATED;
+        return status == STATUS_NO_SUCH_DEVICE ? MMSYSERR_BADDEVICEID : MMSYSERR_ALLOCATED;
     }
     w->callback = (flags & CALLBACK_TYPEMASK) >> 16;
     w->target = callback;

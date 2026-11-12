@@ -26,13 +26,8 @@ void *MmTaskAlloc(SIZE_T size)
     return g_task_alloc(size);
 }
 
-DWORD MmChannelMask(UINT32 channels)
-{
-    static const DWORD masks[9] = {0, 0x4, 0x3, 0xB, 0x33, 0x3B, 0x3F, 0x70F, 0x63F};
-    return channels < RTL_NUMBER_OF(masks) ? masks[channels] : 0;
-}
-
-static void wave_format(WAVEFORMATEXTENSIBLE *f, UINT32 rate, UINT32 channels, UINT32 bits, BOOL is_float)
+static void wave_format(WAVEFORMATEXTENSIBLE *f, UINT32 rate, UINT32 channels, DWORD mask, UINT32 bits, UINT32 valid_bits,
+                        BOOL is_float)
 {
     memset(f, 0, sizeof(*f));
     f->Format.wFormatTag = WAVE_FORMAT_EXTENSIBLE;
@@ -42,14 +37,14 @@ static void wave_format(WAVEFORMATEXTENSIBLE *f, UINT32 rate, UINT32 channels, U
     f->Format.nBlockAlign = (WORD)(channels * bits / 8);
     f->Format.nAvgBytesPerSec = rate * f->Format.nBlockAlign;
     f->Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
-    f->Samples.wValidBitsPerSample = (WORD)bits;
-    f->dwChannelMask = MmChannelMask(channels);
+    f->Samples.wValidBitsPerSample = (WORD)valid_bits;
+    f->dwChannelMask = mask;
     f->SubFormat = is_float ? KSDATAFORMAT_SUBTYPE_IEEE_FLOAT : KSDATAFORMAT_SUBTYPE_PCM;
 }
 
-void MmMixFormat(WAVEFORMATEXTENSIBLE *f, UINT32 rate, UINT32 channels)
+void MmMixFormat(WAVEFORMATEXTENSIBLE *f, UINT32 rate, UINT32 channels, DWORD mask)
 {
-    wave_format(f, rate, channels, 32, TRUE);
+    wave_format(f, rate, channels, mask, 32, 32, TRUE);
 }
 
 static HRESULT copy_string(const WCHAR *s, LPWSTR *out)
@@ -77,10 +72,13 @@ typedef struct DEVICE {
     BOOL present;
     BOOL announced; /* the notification clients were told of it. */
     GUID guid;
-    UINT32 rate, channels, bits;
+    UINT32 rate, channels, bits, valid_bits, form;
+    DWORD channel_mask;
     BOOL is_float;
     WCHAR id[56];
     WCHAR name[112];
+    WCHAR adapter[64];
+    WCHAR port[48];
 } DEVICE;
 
 #define DEVICE_OF(field, This) ((DEVICE *)((BYTE *)(This) - offsetof(DEVICE, field)))
@@ -104,6 +102,7 @@ static const struct {
     {&FMTID_Device, 14},         /* PKEY_Device_FriendlyName */
     {&FMTID_Device, 2},          /* PKEY_Device_DeviceDesc */
     {&FMTID_DeviceInterface, 2}, /* PKEY_DeviceInterface_FriendlyName */
+    {&FMTID_AudioEndpoint, 0},   /* PKEY_AudioEndpoint_FormFactor */
     {&FMTID_AudioEngine, 0},     /* PKEY_AudioEngine_DeviceFormat */
     {&FMTID_AudioEngine, 3},     /* PKEY_AudioEngine_OEMFormat */
     {&FMTID_AudioEndpoint, 3},   /* PKEY_AudioEndpoint_PhysicalSpeakers */
@@ -129,24 +128,37 @@ static HRESULT STDMETHODCALLTYPE store_get_at(void *This, DWORD index, PROPERTYK
     return S_OK;
 }
 
-/* the host has one name for a device, which windows splits into a description and the adapter's name. */
+/*
+ * windows names an endpoint "Speakers (Realtek(R) Audio)", from its description and its adapter. the host's own name
+ * is kept whole as the friendly one, with the connector in use as description and the card as adapter.
+ */
 static HRESULT STDMETHODCALLTYPE store_get_value(void *This, REFPROPERTYKEY key, PROPVARIANT *value)
 {
     DEVICE *d = DEVICE_OF(store, This);
     if (!key || !value)
         return E_POINTER;
     memset(value, 0, sizeof(*value));
-    BOOL name = (IsEqualGUID(&key->fmtid, &FMTID_Device) && (key->pid == 14 || key->pid == 2)) ||
-                (IsEqualGUID(&key->fmtid, &FMTID_DeviceInterface) && key->pid == 2);
-    if (name) {
+    const WCHAR *text = nullptr;
+    if (IsEqualGUID(&key->fmtid, &FMTID_Device) && key->pid == 14)
+        text = d->name;
+    else if (IsEqualGUID(&key->fmtid, &FMTID_Device) && key->pid == 2)
+        text = d->port;
+    else if (IsEqualGUID(&key->fmtid, &FMTID_DeviceInterface) && key->pid == 2)
+        text = d->adapter;
+    if (text) {
         value->vt = VT_LPWSTR;
-        return copy_string(d->name, &value->pwszVal);
+        return copy_string(text, &value->pwszVal);
+    }
+    if (IsEqualGUID(&key->fmtid, &FMTID_AudioEndpoint) && key->pid == 0) {
+        value->vt = VT_UI4;
+        value->ulVal = d->form;
+        return S_OK;
     }
     if (IsEqualGUID(&key->fmtid, &FMTID_AudioEngine) && (key->pid == 0 || key->pid == 3)) {
         WAVEFORMATEXTENSIBLE *f = MmTaskAlloc(sizeof(*f));
         if (!f)
             return E_OUTOFMEMORY;
-        wave_format(f, d->rate, d->channels, d->bits, d->is_float);
+        wave_format(f, d->rate, d->channels, d->channel_mask, d->bits, d->valid_bits, d->is_float);
         value->vt = VT_BLOB;
         value->blob.cbSize = sizeof(*f);
         value->blob.pBlobData = (BYTE *)f;
@@ -154,7 +166,7 @@ static HRESULT STDMETHODCALLTYPE store_get_value(void *This, REFPROPERTYKEY key,
     }
     if (IsEqualGUID(&key->fmtid, &FMTID_AudioEndpoint) && key->pid == 3) {
         value->vt = VT_UI4;
-        value->ulVal = MmChannelMask(d->channels);
+        value->ulVal = d->channel_mask;
         return S_OK;
     }
     if (IsEqualGUID(&key->fmtid, &FMTID_AudioEndpoint) && key->pid == 4) {
@@ -218,8 +230,13 @@ static UINT list_devices(BOOL capture, DEVICE **listed)
         d->rate = all[i].rate;
         d->channels = all[i].channels;
         d->bits = all[i].bits;
+        d->valid_bits = all[i].valid_bits;
+        d->channel_mask = all[i].channel_mask;
+        d->form = all[i].form;
         d->is_float = all[i].is_float;
         lstrcpynW(d->name, all[i].name, RTL_NUMBER_OF(d->name));
+        lstrcpynW(d->adapter, all[i].adapter, RTL_NUMBER_OF(d->adapter));
+        lstrcpynW(d->port, all[i].port, RTL_NUMBER_OF(d->port));
         listed[found++] = d;
     }
     ReleaseSRWLockExclusive(&g_devices_lock);
@@ -228,15 +245,24 @@ static UINT list_devices(BOOL capture, DEVICE **listed)
     return found;
 }
 
+/* by its id, or by the path of its device interface, which holds the id: \\?\SWD#MMDEVAPI#id#{class}. */
 static DEVICE *find_device(LPCWSTR id)
 {
+    for (LPCWSTR at = id; *at; at++) {
+        if (!wcsncmp(at, L"{0.0.", 5)) {
+            id = at;
+            break;
+        }
+    }
+    if (wcslen(id) < 55)
+        return nullptr;
     DEVICE *listed[MIME_AUDIO_ENDPOINTS];
     DEVICE *found = nullptr;
     for (int capture = 0; capture < 2 && !found; capture++) {
         list_devices(capture, listed);
         AcquireSRWLockShared(&g_devices_lock);
         for (DEVICE *d = g_devices[capture]; d && !found; d = d->next) {
-            if (!_wcsicmp(id, d->id))
+            if (!_wcsnicmp(id, d->id, 55) && (!id[55] || id[55] == L'#'))
                 found = d;
         }
         ReleaseSRWLockShared(&g_devices_lock);
@@ -273,7 +299,7 @@ static HRESULT STDMETHODCALLTYPE device_activate(void *This, REFIID iid, DWORD c
         return E_POINTER;
     *object = nullptr;
     if (IsEqualGUID(iid, &IID_IAudioClient) || IsEqualGUID(iid, &IID_IAudioClient2) || IsEqualGUID(iid, &IID_IAudioClient3))
-        return MmCreateAudioClient(d->capture, &d->guid, d->rate, d->channels, object);
+        return MmCreateAudioClient(d->capture, &d->guid, d->rate, d->channels, d->channel_mask, object);
     if (IsEqualGUID(iid, &IID_IAudioEndpointVolume)) {
         *object = MmEndpointVolume(d->capture);
         return S_OK;
@@ -510,7 +536,8 @@ static void tell(const CHANGE *c)
 
 typedef struct SEEN {
     DEVICE *device;
-    UINT32 rate, channels;
+    UINT32 rate, channels, bits, valid_bits;
+    DWORD channel_mask;
 } SEEN;
 
 static BOOL seen_in(const SEEN *list, UINT count, const DEVICE *d, const SEEN **at)
@@ -530,7 +557,8 @@ static UINT look(BOOL capture, SEEN *out)
     DEVICE *listed[MIME_AUDIO_ENDPOINTS];
     UINT count = list_devices(capture, listed);
     for (UINT i = 0; i < count; i++)
-        out[i] = (SEEN){listed[i], listed[i]->rate, listed[i]->channels};
+        out[i] = (SEEN){listed[i], listed[i]->rate, listed[i]->channels, listed[i]->bits, listed[i]->valid_bits,
+                        listed[i]->channel_mask};
     return count;
 }
 
@@ -574,7 +602,8 @@ static DWORD WINAPI watch_devices(void *arg)
                 const SEEN *old;
                 DEVICE *d = now[i].device;
                 if (seen_in(before, before_count, d, &old)) {
-                    if (old->rate != now[i].rate || old->channels != now[i].channels)
+                    if (old->rate != now[i].rate || old->channels != now[i].channels || old->bits != now[i].bits ||
+                        old->valid_bits != now[i].valid_bits || old->channel_mask != now[i].channel_mask)
                         tell(&(CHANGE){CHANGE_FORMAT, d, capture, 0});
                     continue;
                 }
@@ -808,7 +837,7 @@ DECLSPEC_EXPORT HRESULT WINAPI ActivateAudioInterfaceAsync(LPCWSTR path, REFIID 
     if (!d)
         op->Result = E_NOTIMPL;
     else if (by_class && client)
-        op->Result = MmCreateAudioClient(d->capture, nullptr, d->rate, d->channels, (void **)&op->Interface);
+        op->Result = MmCreateAudioClient(d->capture, nullptr, d->rate, d->channels, d->channel_mask, (void **)&op->Interface);
     else
         op->Result = device_activate(&d->device, riid, CLSCTX_ALL, params, (void **)&op->Interface);
     HANDLE thread = CreateThread(nullptr, 0, activate_completion, op, 0, nullptr);

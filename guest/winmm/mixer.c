@@ -26,8 +26,16 @@ static BOOL g_mute;
 static void device_name(WCHAR *name)
 {
     MimeAudioEndpoint e;
-    MimeAudioDefaultEndpoint(FALSE, &e);
-    lstrcpynW(name, e.name, MAXPNAMELEN);
+    name[0] = 0;
+    if (MimeAudioDefaultEndpoint(FALSE, &e))
+        lstrcpynW(name, e.name, MAXPNAMELEN);
+}
+
+/* one mixer when the host has an output, none otherwise. */
+static UINT mixer_count(void)
+{
+    MimeAudioEndpoint e;
+    return MimeAudioDefaultEndpoint(FALSE, &e) ? 1 : 0;
 }
 
 static BOOL valid(HMIXER h)
@@ -47,7 +55,7 @@ static MMRESULT mixer_of(HMIXEROBJ object, DWORD flags)
     UINT_PTR id = (UINT_PTR)object;
     switch (type) {
     case MIXER_OBJECTF_MIXER:
-        return id == 0 ? MMSYSERR_NOERROR : MMSYSERR_BADDEVICEID;
+        return id < mixer_count() ? MMSYSERR_NOERROR : MMSYSERR_BADDEVICEID;
     case MIXER_OBJECTF_HMIXER:
         return valid((HMIXER)object) ? MMSYSERR_NOERROR : MMSYSERR_INVALHANDLE;
     case MIXER_OBJECTF_WAVEOUT:
@@ -72,7 +80,7 @@ static MMRESULT mixer_of(HMIXEROBJ object, DWORD flags)
 
 WINMMAPI UINT WINAPI mixerGetNumDevs(void)
 {
-    return 1;
+    return mixer_count();
 }
 
 WINMMAPI MMRESULT WINAPI mixerGetDevCapsW(UINT_PTR id, LPMIXERCAPSW caps, UINT size)

@@ -250,14 +250,12 @@ MIME_DEFINE_GUID(FMTID_AudioEndpoint, 0x1DA5D803, 0xD492, 0x4EDD, 0x8C, 0x23, 0x
 
 void *MmTaskAlloc(SIZE_T size);
 /* the format the engine mixes an endpoint at: floats at the rate and channels the host runs its device at. */
-void MmMixFormat(WAVEFORMATEXTENSIBLE *format, UINT32 rate, UINT32 channels);
-/* the speakers windows gives a channel count. */
-DWORD MmChannelMask(UINT32 channels);
+void MmMixFormat(WAVEFORMATEXTENSIBLE *format, UINT32 rate, UINT32 channels, DWORD mask);
 /*
  * device names the endpoint the stream stays on. NULL is the default one of the direction as it changes, which is
  * what an activation by device interface class gets.
  */
-HRESULT MmCreateAudioClient(BOOL capture, const GUID *device, UINT32 rate, UINT32 channels, void **client);
+HRESULT MmCreateAudioClient(BOOL capture, const GUID *device, UINT32 rate, UINT32 channels, DWORD mask, void **client);
 /* an endpoint's volume and mute, kept per process and not applied by its clients. */
 void *MmEndpointVolume(BOOL capture);
 
