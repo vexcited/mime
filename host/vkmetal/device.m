@@ -161,7 +161,8 @@ typedef struct VkmInit {
     uint32_t levels, layers, samples;
     VkExtent3D extent;
     VkImageAspectFlags aspects;
-    bool is3d;
+    uint32_t bytes; /* of a texel. */
+    bool is1d, is3d;
 } VkmInit;
 
 void vkm_image_init(VkDevice device, VkImage image)
@@ -182,6 +183,7 @@ void vkm_image_init(VkDevice device, VkImage image)
     }
     device->inits[device->init_count++] = (VkmInit){[image->texture retain], image->levels, image->layers,
                                                     image->samples, image->extent, image->fi->aspects,
+                                                    image->fi->bytes, image->type == VK_IMAGE_TYPE_1D,
                                                     image->type == VK_IMAGE_TYPE_3D};
     pthread_mutex_unlock(&device->init_lock);
 }
@@ -219,6 +221,30 @@ static void clear_pass(id<MTL4CommandBuffer> cmd, const VkmInit *t, uint32_t lev
     [desc release];
 }
 
+/* metal renders to no 1d texture, so its texels are copied from the zero buffer, as many at a time as it holds. */
+static void zero_1d(VkDevice device, id<MTL4ComputeCommandEncoder> encoder, const VkmInit *t)
+{
+    if (!t->bytes || !(t->aspects & VK_IMAGE_ASPECT_COLOR_BIT))
+        return;
+    uint32_t run = MIME_MAX((uint32_t)device->zero.length / t->bytes, 1u);
+    for (uint32_t level = 0; level < t->levels; level++) {
+        uint32_t width = MIME_MAX(t->extent.width >> level, 1u);
+        for (uint32_t slice = 0; slice < t->layers; slice++)
+            for (uint32_t x = 0; x < width; x += run) {
+                uint32_t n = MIME_MIN(run, width - x);
+                [encoder copyFromBuffer:device->zero
+                           sourceOffset:0
+                      sourceBytesPerRow:n * t->bytes
+                    sourceBytesPerImage:0
+                             sourceSize:MTLSizeMake(n, 1, 1)
+                              toTexture:t->texture
+                       destinationSlice:slice
+                       destinationLevel:level
+                      destinationOrigin:MTLOriginMake(x, 0, 0)];
+            }
+    }
+}
+
 /* clears the textures placed since the last submission, before its first command buffer. */
 static void encode_inits(VkQueue q, id<MTL4CommandBuffer> cmd)
 {
@@ -229,9 +255,17 @@ static void encode_inits(VkQueue q, id<MTL4CommandBuffer> cmd)
     device->inits = nullptr;
     device->init_count = device->init_capacity = 0;
     pthread_mutex_unlock(&device->init_lock);
+    id<MTL4ComputeCommandEncoder> copies = nil;
+    for (uint32_t i = 0; i < count; i++)
+        if (inits[i].is1d && device->zero) {
+            if (!copies)
+                copies = [cmd computeCommandEncoder];
+            zero_1d(device, copies, &inits[i]);
+        }
+    [copies endEncoding];
     for (uint32_t i = 0; i < count; i++) {
         const VkmInit *t = &inits[i];
-        for (uint32_t level = 0; level < t->levels; level++) {
+        for (uint32_t level = 0; !t->is1d && level < t->levels; level++) {
             uint32_t w = MIME_MAX(t->extent.width >> level, 1u), h = MIME_MAX(t->extent.height >> level, 1u);
             uint32_t slices = t->is3d ? MIME_MAX(t->extent.depth >> level, 1u) : t->layers;
             for (uint32_t slice = 0; slice < slices; slice++)
