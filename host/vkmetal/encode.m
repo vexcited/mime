@@ -13,6 +13,7 @@ typedef struct Enc {
     id<MTL4CommandBuffer> cmd;
     id<MTL4RenderCommandEncoder> render;
     id<MTL4ComputeCommandEncoder> compute;
+    id<MTLComputePipelineState> pipeline; /* the compute encoder's. */
     uint32_t width, height;
     VkmOpRaster raster; /* what the render encoder has, zeroed as metal's defaults are. */
     MTLSize local;
@@ -50,9 +51,18 @@ static id<MTL4ComputeCommandEncoder> compute(Enc *e)
         return e->compute;
     end_encoder(e);
     e->compute = [e->cmd computeCommandEncoder];
+    e->pipeline = nil;
     after_queue(e->compute);
     [e->compute setArgumentTable:e->q->tables[1]];
     return e->compute;
+}
+
+static void compute_pipeline(Enc *e, id<MTLComputePipelineState> pipeline)
+{
+    id<MTL4ComputeCommandEncoder> c = compute(e);
+    if (pipeline != e->pipeline)
+        [c setComputePipelineState:pipeline];
+    e->pipeline = pipeline;
 }
 
 /* ------------------------------------------------------------------ render passes. */
@@ -225,11 +235,20 @@ static void query_reset(Enc *e, const VkmOpQuery *o)
                      value:0];
 }
 
+static void dispatch_barrier(id<MTL4CommandEncoder> encoder)
+{
+    [encoder barrierAfterEncoderStages:MTLStageDispatch | MTLStageBlit
+                   beforeEncoderStages:MTLStageDispatch | MTLStageBlit
+                     visibilityOptions:MTL4VisibilityOptionDevice];
+}
+
 /* results go out as Vulkan lays them: each query's values, then its availability. */
 static void query_copy(Enc *e, const VkmOpQuery *o)
 {
     VkQueryPool pool = o->pool;
     id<MTL4ComputeCommandEncoder> c = compute(e);
+    /* after what wrote the queries before it. */
+    dispatch_barrier(c);
     id<MTLBuffer> dst = o->buffer->memory->buffer;
     uint32_t n = query_values(pool);
     uint32_t size = o->flags & VK_QUERY_RESULT_64_BIT ? 8 : 4;
@@ -260,19 +279,13 @@ static void timestamp(Enc *e, const VkmOpQuery *o)
 
 /* ------------------------------------------------------------------ generated commands. */
 
-static void dispatch_barrier(id<MTL4CommandEncoder> encoder)
-{
-    [encoder barrierAfterEncoderStages:MTLStageDispatch | MTLStageBlit
-                   beforeEncoderStages:MTLStageDispatch | MTLStageBlit
-                     visibilityOptions:MTL4VisibilityOptionDevice];
-}
 
 /* the generation kernel sees what the encoder wrote before, and the commands it encodes see what it wrote. */
 static void generate(Enc *e, const VkmOpGenerate *o)
 {
     id<MTL4ComputeCommandEncoder> c = compute(e);
     dispatch_barrier(c);
-    [c setComputePipelineState:o->pipeline];
+    compute_pipeline(e, o->pipeline);
     set_address(e->q->tables[1], 0, o->params);
     set_address(e->q->tables[1], 1, o->icb);
     [c dispatchThreads:(MTLSize){o->threads, 1, 1} threadsPerThreadgroup:(MTLSize){64, 1, 1}];
@@ -409,7 +422,7 @@ static void replay(Enc *e, const VkmOp *op)
     }
     case VKM_OP_COMPUTE_PIPELINE: {
         const VkmOpCompute *o = (const void *)op;
-        [compute(e) setComputePipelineState:o->pipeline];
+        compute_pipeline(e, o->pipeline);
         e->local = o->local;
         break;
     }
