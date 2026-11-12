@@ -234,3 +234,18 @@ void KiKernelExceptionHandler(PKTRAP_FRAME frame)
     KeBugCheckEx(ec == 0x25 ? 0x00000050 : 0x0000001E, frame->Far, frame->Esr, frame->Pc, 0);
 }
 
+
+/* what drivers compare user pointers against, as windows exports it. */
+ULONG_PTR MmUserProbeAddress = 0x7FFFFFFF0000;
+
+/* the arm64 kernel has no seh, so a raise lands in the thread's fault recovery, as a fault on user memory does. */
+DECLSPEC_NORETURN void NTAPI ExRaiseStatus(NTSTATUS status)
+{
+    PKTHREAD thread = KiCurrentThread();
+    if (thread && thread->FaultRecovery) {
+        KJUMP_BUFFER *recovery = thread->FaultRecovery;
+        thread->FaultRecovery = nullptr;
+        KiLongJump(recovery, 1);
+    }
+    KeBugCheckEx(0x0000001E, (ULONG_PTR)status, (ULONG_PTR)__builtin_return_address(0), 0, 0); /* KMODE_EXCEPTION_NOT_HANDLED */
+}

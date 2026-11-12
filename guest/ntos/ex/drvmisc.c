@@ -83,10 +83,11 @@ ULONG NTAPI RtlRandomEx(PULONG seed)
 
 /*
  * the return addresses of the current thread's kernel frames, past the first skip ones. with flag 1 the user mode
- * frames are asked for, which are not walked here.
+ * frames are asked for, which are not walked here. the arm64 kernel has no unwinder, so no frame is walked there.
  */
 ULONG NTAPI RtlWalkFrameChain(PVOID *callers, ULONG count, ULONG flags)
 {
+#ifdef __x86_64__
     if (flags & 1)
         return 0;
     CONTEXT context;
@@ -108,6 +109,9 @@ ULONG NTAPI RtlWalkFrameChain(PVOID *callers, ULONG count, ULONG flags)
             callers[n++] = (PVOID)context.Rip;
     }
     return n;
+#else
+    return 0;
+#endif
 }
 
 
@@ -230,7 +234,7 @@ PVOID NTAPI MmMapIoSpace(ULONG64 address, SIZE_T size, MEMORY_CACHING_TYPE cache
         return nullptr;
     for (SIZE_T i = 0; i < pages; i++)
         list[i] = (address & ~(ULONG64)(PAGE_SIZE - 1)) + i * PAGE_SIZE;
-    ULONG64 attrs = MM_KERNEL_RW | (cache == MmCached ? 0 : MM_PTE_PCD);
+    ULONG64 attrs = MM_KERNEL_RW | (cache == MmCached ? 0 : MM_PTE_UNCACHED);
     PUCHAR va = MmMapPagesInSystem(list, pages, attrs);
     if (list != frames)
         ExFreePool(list);
