@@ -375,6 +375,35 @@ static NTSTATUS wait_change(MIME_PNP_REQUEST *r)
     }
 }
 
+/*
+ * the host's audio devices are not in the tree, yet programs learn of their changes the way they learn of the
+ * tree's: mmdevapi waits for a generation and lists them again.
+ */
+static KEVENT g_host_changed;
+
+static void host_changes(PVOID context)
+{
+    (void)context;
+    for (;;) {
+        KeWaitForSingleObject(&g_host_changed, Executive, KernelMode, FALSE, nullptr);
+        lock();
+        changed();
+        unlock();
+    }
+}
+
+void IopStartPnpHostChanges(void)
+{
+    KeInitializeEvent(&g_host_changed, SynchronizationEvent, FALSE);
+    PsCreateSystemThread(nullptr, 0, nullptr, nullptr, nullptr, host_changes, nullptr);
+}
+
+/* called from the session interrupt on MIME_IRQ_AUDIO. */
+void IopPnpHostChanged(void)
+{
+    KeSetEvent(&g_host_changed, IO_NO_INCREMENT, FALSE);
+}
+
 NTSTATUS NTAPI NtPlugPlayControl(ULONG klass, PVOID user_buffer, ULONG length)
 {
     if (length < sizeof(MIME_PNP_REQUEST) || length > 0x40000)
