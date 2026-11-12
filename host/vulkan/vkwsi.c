@@ -29,6 +29,7 @@ typedef unsigned long VisualID;
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define MAX_IMAGES 8
 #define MAX_HOST_IMAGES 16
@@ -37,6 +38,9 @@ typedef unsigned long VisualID;
 #define ACQUIRE_TIMEOUT_NS 100000000ull
 /* a swapchain that stopped presenting this long gives the host swapchain's settings to another one. */
 #define OWNER_IDLE_NS 500000000ull
+/* how long a presenter outlives its last swapchain, for the one a resize makes next. */
+#define PARK_NS 500000000ull
+#define MAX_PARKED 16
 /* a capture keeps a copy of each frame this long, for the captures that follow it. */
 #define LAST_KEEP_NS 5000000000ull
 
@@ -247,6 +251,15 @@ typedef struct MvkWsi {
     PresentJob *first, *last;
     VkSemaphore ready;
     uint64_t ready_value;
+    /* presenters whose swapchain went, each with a reference until its time, and the thread that lets them go. */
+    pthread_t park_thread;
+    bool park_running, park_stop;
+    pthread_mutex_t park_lock;
+    pthread_cond_t park_cond;
+    struct {
+        Presenter *presenter;
+        uint64_t until;
+    } parked[MAX_PARKED];
     PFN_vkDestroySurfaceKHR DestroySurface;
     PFN_vkGetPhysicalDeviceSurfaceSupportKHR SurfaceSupport;
     PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR SurfaceCapabilities;
@@ -289,6 +302,8 @@ static MvkWsi *wsi_of(MvkConnection *c)
     pthread_mutex_init(&w->lock, nullptr);
     pthread_cond_init(&w->cond, nullptr);
     pthread_mutex_init(&w->convert_lock, nullptr);
+    pthread_mutex_init(&w->park_lock, nullptr);
+    pthread_cond_init(&w->park_cond, nullptr);
     PFN_vkGetDeviceProcAddr gdpa = (PFN_vkGetDeviceProcAddr)c->gipa(c->instance, "vkGetDeviceProcAddr");
 #define INSTANCE(field, name) w->field = (typeof(w->field))c->gipa(c->instance, name)
 #define DEVICE(field, name) w->field = (typeof(w->field))(c->device ? gdpa(c->device, name) : NULL)
@@ -719,6 +734,92 @@ static void presenter_put(MvkConnection *c, Presenter *p)
     }
 }
 
+static void *parking_main(void *arg)
+{
+    MvkConnection *c = arg;
+    MvkWsi *w = c->wsi;
+    mime_set_thread_name("mime-vk-park");
+    pthread_mutex_lock(&w->park_lock);
+    while (!w->park_stop) {
+        uint64_t now = mime_now_ns(), next = 0;
+        Presenter *gone = nullptr;
+        for (int i = 0; i < MAX_PARKED && !gone; i++) {
+            if (!w->parked[i].presenter)
+                continue;
+            if (w->parked[i].until <= now) {
+                gone = w->parked[i].presenter;
+                w->parked[i].presenter = nullptr;
+            } else if (!next || w->parked[i].until < next) {
+                next = w->parked[i].until;
+            }
+        }
+        if (gone) {
+            pthread_mutex_unlock(&w->park_lock);
+            presenter_put(c, gone);
+            pthread_mutex_lock(&w->park_lock);
+        } else if (next) {
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            uint64_t at = (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec + (next - now);
+            ts = (struct timespec){(time_t)(at / 1000000000ull), (long)(at % 1000000000ull)};
+            pthread_cond_timedwait(&w->park_cond, &w->park_lock, &ts);
+        } else {
+            pthread_cond_wait(&w->park_cond, &w->park_lock);
+        }
+    }
+    pthread_mutex_unlock(&w->park_lock);
+    return nullptr;
+}
+
+/*
+ * takes the reference of a swapchain that goes. a program that resizes its window destroys its swapchain and makes
+ * another, and the presenter the next one finds keeps the window's surface and what it shows in between.
+ */
+static void presenter_park(MvkConnection *c, Presenter *p)
+{
+    MvkWsi *w = c->wsi;
+    pthread_mutex_lock(&w->park_lock);
+    if (!w->park_running && !w->park_stop)
+        w->park_running = !pthread_create(&w->park_thread, nullptr, parking_main, c);
+    int slot = -1;
+    bool held = false;
+    for (int i = 0; i < MAX_PARKED && w->park_running; i++) {
+        if (w->parked[i].presenter == p) {
+            slot = i;
+            held = true;
+            break;
+        }
+        if (!w->parked[i].presenter && slot < 0)
+            slot = i;
+    }
+    if (slot >= 0) {
+        w->parked[slot].presenter = p;
+        w->parked[slot].until = mime_now_ns() + PARK_NS;
+        pthread_cond_broadcast(&w->park_cond);
+    }
+    pthread_mutex_unlock(&w->park_lock);
+    if (slot < 0 || held)
+        presenter_put(c, p);
+}
+
+static void stop_parking(MvkConnection *c)
+{
+    MvkWsi *w = c->wsi;
+    pthread_mutex_lock(&w->park_lock);
+    w->park_stop = true;
+    pthread_cond_broadcast(&w->park_cond);
+    bool running = w->park_running;
+    pthread_mutex_unlock(&w->park_lock);
+    if (running)
+        pthread_join(w->park_thread, nullptr);
+    w->park_running = false;
+    for (int i = 0; i < MAX_PARKED; i++) {
+        if (w->parked[i].presenter)
+            presenter_put(c, w->parked[i].presenter);
+        w->parked[i].presenter = nullptr;
+    }
+}
+
 void mime_vk_window_lost(uint32_t id)
 {
     pthread_mutex_lock(&g_presenters_lock);
@@ -775,6 +876,9 @@ static void presenter_attach(MvkConnection *c, Presenter *p, MimeRect area, uint
     if (!mime_ui_vk_attach(p->window, p->source, area, order, &native))
         return;
     pthread_mutex_lock(&p->lock);
+    /* one detach answers the presenter's attaches. */
+    if (p->attached)
+        mime_ui_vk_detach(p->window, p->source);
     p->attached = true;
     if (p->generation == generation && !p->surface) {
         MvkWsi *w = c->wsi;
@@ -2386,8 +2490,13 @@ static void free_swapchain(MvkConnection *c, Swapchain *s)
     c->fn.vkDeviceWaitIdle(c->device);
     pthread_mutex_unlock(&c->queue_lock);
     forget_shown(s);
-    if (s->presenter)
-        presenter_put(c, s->presenter);
+    if (s->presenter) {
+        pthread_mutex_lock(&s->presenter->lock);
+        if (s->presenter->owner == s->serial)
+            s->presenter->owner = 0;
+        pthread_mutex_unlock(&s->presenter->lock);
+        presenter_park(c, s->presenter);
+    }
     destroy_swapchain_images(c, s);
     free(s);
 }
@@ -2424,7 +2533,10 @@ void mvk_wsi_close(MvkConnection *c)
         w->swapchains = s->next;
         free_swapchain(c, s);
     }
+    stop_parking(c);
     convert_destroy(c, w);
+    pthread_mutex_destroy(&w->park_lock);
+    pthread_cond_destroy(&w->park_cond);
     pthread_mutex_destroy(&w->convert_lock);
     pthread_mutex_destroy(&w->lock);
     pthread_cond_destroy(&w->cond);

@@ -27,6 +27,7 @@ typedef struct VkLayer {
     uint32_t order;  /* place in the paint order of the window's tree, the front ones last. */
     struct wl_surface *surface;
     struct wl_subsurface *subsurface; /* none while nothing of it shows. */
+    uint32_t users; /* presenters attached to it. one that goes may be detached after its successor attached. */
     struct wl_proxy *viewport;
     MimeRect place; /* where the subsurface is, in SDL window coordinates. */
 } VkLayer;
@@ -2263,6 +2264,7 @@ static void attach_main(void *arg)
             VkLayer *layer = nullptr;
             if (display && parent && wayland_globals(display) &&
                 ((layer = find_layer(w, a->source)) || (layer = make_layer(w, parent, a->source, a->area, a->order)))) {
+                layer->users++;
                 a->native->display = display;
                 a->native->surface = layer->surface;
                 a->native->subsurface = true;
@@ -2344,6 +2346,12 @@ static void detach_main(void *arg)
     UiWindow *w = find_window(d->id);
     if (w && w->vk) {
         VkLayer *layer = w->vk_whole ? nullptr : find_layer(w, d->source);
+        if (layer && layer->users > 1) {
+            layer->users--;
+            pthread_mutex_unlock(&g_windows_lock);
+            free(d);
+            return;
+        }
         if (layer)
             destroy_layer(layer);
         /* the window stays under the presenters while a layer is left. */
