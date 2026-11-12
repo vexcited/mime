@@ -12,11 +12,11 @@
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "mime";
-  version = "0.0.1";
+  version = "0.0.2";
 
   src = fetchurl {
     url = "https://github.com/vexcited/mime/releases/download/${finalAttrs.version}/mime-x86_64-linux.tar.gz";
-    hash = "sha256-+8aqsLZSfj8UaPgH+BUERSudF93XeLAydgTHrWFr3Ik=";
+    hash = "sha256-srabRWKpQfaKqcu5cjgfWMxYxUhCssa+Ed8n3c41BTQ=";
   };
   sourceRoot = ".";
 
