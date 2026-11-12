@@ -1717,6 +1717,8 @@ NTSTATUS MimeFsDriveVolume(const MimeFsDrive *drive, BOOLEAN gone, PDEVICE_OBJEC
 /* fsdrives.c: the letters of the host's drives, made at boot and followed while the machine runs. */
 void IopInitializeDrives(void);
 void IopStartDrives(void);
+void IopStartPnpHostChanges(void);
+void IopPnpHostChanged(void);
 void IopDrivesInterrupt(void);
 
 /* http.c: the http server driver. */

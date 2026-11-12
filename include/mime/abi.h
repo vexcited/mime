@@ -464,6 +464,7 @@ typedef struct MimeRomHeader {
 #define MIME_IRQ_WINDOW (1u << 7) /* pages of a file window are gone, the file was shortened: MIME_HC_FS_WINDOW_LOST. */
 #define MIME_IRQ_MEMORY (1u << 8) /* the host's memory pressure changed, see MimeSharedPage.memory_pressure. */
 #define MIME_IRQ_DRIVES (1u << 9) /* a host drive came or went: MIME_HC_FS_DRIVES. */
+#define MIME_IRQ_AUDIO (1u << 10) /* an audio device came, went, changed or became the default: MIME_HC_AUDIO_DEVICES. */
 
 /* how short of memory the host is, in MimeSharedPage.memory_pressure. */
 enum {

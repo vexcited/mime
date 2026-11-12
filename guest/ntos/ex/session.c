@@ -129,6 +129,8 @@ static void irq_dpc(PKDPC dpc, PVOID context, PVOID a1, PVOID a2)
         MmTrimInterrupt();
     if (bits & MIME_IRQ_DRIVES)
         IopDrivesInterrupt();
+    if (bits & MIME_IRQ_AUDIO)
+        IopPnpHostChanged();
     /* the dump reads user stacks, so the session thread does it at passive level. */
     if (bits & MIME_IRQ_DUMP) {
         __atomic_store_n(&g_dump_pending, 1, __ATOMIC_RELEASE);
@@ -261,6 +263,7 @@ void MiSessionInitialize(void)
     MmWindowLostInitialize();
     MmTrimInitialize();
     IopStartDrives();
+    IopStartPnpHostChanges();
     g_ready = TRUE;
 
     MimeCtrlHeader ready = {MIME_EVT_READY, sizeof(ready)};
