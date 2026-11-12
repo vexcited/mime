@@ -172,7 +172,7 @@ static DECLSPEC_NORETURN void mx_fatal(NTSTATUS status, const char *what)
 }
 
 /*
- * the translator's own memory. a 32-bit program has the 2 GB below, so it goes above 4 GB as prism's does, else the
+ * the translator's own memory. a 32-bit program has the 2 or 4 GB below, so it goes above 4 GB as prism's does, else the
  * code it translates and its own allocations would share the program's room.
  */
 static PVOID alloc_pages(SIZE_T size, ULONG protect)
