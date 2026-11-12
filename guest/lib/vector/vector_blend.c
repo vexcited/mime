@@ -255,6 +255,52 @@ static void blend_run(uint32_t *dst, const uint32_t *src, uint32_t color, const 
             _mm_storeu_si128((__m128i *)(dst + i), _mm_packus_epi16(o_lo, o_hi));
         }
     }
+    /* premultiplied onto premultiplied: the rounding of blend_px, whose special cases are exact in the formula. */
+    if (src && sfmt == MIME_VEC_FMT_PARGB && dfmt == MIME_VEC_FMT_PARGB && n >= 4) {
+        const bool have_cov = cov != NULL;
+        const bool have_alpha = alpha != 255;
+        const bool over = mode == MIME_VEC_BLEND_OVER;
+        const __m128i zero = _mm_setzero_si128();
+        const __m128i c255 = _mm_set1_epi16(255);
+        const __m128i alpha_v = _mm_set1_epi16((short)alpha);
+        for (; i + 4 <= n; i += 4) {
+            uint32_t c4 = 0xffffffffu;
+            if (have_cov) {
+                __builtin_memcpy(&c4, cov + i, 4);
+                if (c4 == 0)
+                    continue;
+            }
+            __m128i sx = _mm_loadu_si128((const __m128i *)(src + i));
+            if (c4 == 0xffffffffu && !have_alpha) {
+                int opaque = _mm_movemask_epi8(_mm_cmpeq_epi8(sx, _mm_set1_epi8(-1))) & 0x8888;
+                if (!over || opaque == 0x8888) {
+                    _mm_storeu_si128((__m128i *)(dst + i), sx);
+                    continue;
+                }
+                if (_mm_movemask_epi8(_mm_cmpeq_epi8(sx, zero)) == 0xffff)
+                    continue;
+            }
+            __m128i dx = _mm_loadu_si128((const __m128i *)(dst + i));
+            __m128i s[2] = {_mm_unpacklo_epi8(sx, zero), _mm_unpackhi_epi8(sx, zero)};
+            __m128i d[2] = {_mm_unpacklo_epi8(dx, zero), _mm_unpackhi_epi8(dx, zero)};
+            __m128i c[2] = {c255, c255};
+            if (have_cov)
+                bcast_cov(c4, &c[0], &c[1]);
+            for (int k = 0; k < 2; k++) {
+                if (over) {
+                    __m128i e = !have_cov ? alpha_v : have_alpha ? div255w(_mm_mullo_epi16(c[k], alpha_v)) : c[k];
+                    __m128i se = div255w(_mm_mullo_epi16(s[k], e));
+                    __m128i ia = _mm_sub_epi16(c255, bcast_alpha(se));
+                    d[k] = _mm_add_epi16(se, div255w(_mm_mullo_epi16(d[k], ia)));
+                } else {
+                    __m128i pm = have_alpha ? div255w(_mm_mullo_epi16(s[k], alpha_v)) : s[k];
+                    __m128i ic = _mm_sub_epi16(c255, c[k]);
+                    d[k] = div255w(_mm_add_epi16(_mm_mullo_epi16(pm, c[k]), _mm_mullo_epi16(d[k], ic)));
+                }
+            }
+            _mm_storeu_si128((__m128i *)(dst + i), _mm_packus_epi16(d[0], d[1]));
+        }
+    }
 #endif
     for (; i < n; i++) {
         uint32_t c = cov ? cov[i] : 255;

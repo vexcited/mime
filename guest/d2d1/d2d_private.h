@@ -26,6 +26,9 @@ void *D2dAlloc(SIZE_T size);
 void *D2dAllocZero(SIZE_T size);
 void *D2dRealloc(void *p, SIZE_T size);
 void D2dFree(void *p);
+/* memory for pixels, which is not given back to the heap at once. */
+void *D2dPixelsAlloc(SIZE_T size, BOOL zero);
+void D2dPixelsFree(void *p);
 extern const MimeAllocator d2d_allocator;
 
 /* a growing array of elements of one size. */
@@ -357,6 +360,12 @@ struct D2dBitmap {
     /* the pixels in the native format, and the premultiplied bgra view of them. */
     BYTE *native;
     UINT32 stride;
+    /*
+     * a bitmap made from an 8 bit indexed source stays as its indices and a premultiplied bgra palette, a quarter
+     * of the memory to fill and to read back, until something asks for its pixels. native is null until then.
+     */
+    BYTE *index;
+    uint32_t *palette;
     D2dSurface view;
     BOOL view_valid;
     BOOL view_dirty;
@@ -372,6 +381,13 @@ struct D2dBitmap {
 D2dBitmap *D2dBitmapOf(void *p);
 HRESULT D2dBitmapCreate(D2dFactory *f, UINT32 w, UINT32 h, DXGI_FORMAT format, D2D1_ALPHA_MODE alpha, float dpi_x,
                         float dpi_y, D2D1_BITMAP_OPTIONS options, BOOL v1, D2dBitmap **out);
+HRESULT D2dBitmapCreateFilled(D2dFactory *f, UINT32 w, UINT32 h, DXGI_FORMAT format, D2D1_ALPHA_MODE alpha, float dpi_x,
+                              float dpi_y, D2D1_BITMAP_OPTIONS options, BOOL v1, D2dBitmap **out);
+/* a bitmap of indices, which the caller fills along with the 256 entries of the palette. */
+HRESULT D2dBitmapCreateIndexed(D2dFactory *f, UINT32 w, UINT32 h, float dpi_x, float dpi_y, D2D1_BITMAP_OPTIONS options,
+                               D2dBitmap **out);
+/* the native pixels, made from the indices when the bitmap still has only those. null when memory runs out. */
+BYTE *D2dBitmapNative(D2dBitmap *b);
 /* the premultiplied bgra pixels of the bitmap, rebuilt when the native ones changed. */
 const D2dSurface *D2dBitmapView(D2dBitmap *b);
 /* after drawing into the view of a bitmap that is a target, writes the view back to the native pixels. */
@@ -406,6 +422,7 @@ struct D2dFactory {
     float dpi_x, dpi_y;
     LONG registered_count;
     D2dArray effects;
+    ID2D1Device *device;
 };
 
 D2dFactory *D2dFactoryOf(ID2D1Factory *f);
@@ -522,6 +539,9 @@ D2dRt *D2dRtOf(void *p);
 static inline void *D2dRtTargetKey(const D2dRt *rt) { return rt->target_bitmap ? (void *)rt->target_bitmap : (void *)rt->target_image; }
 extern const D2dClass d2d_rt_class;
 HRESULT D2dRtCreate(D2dFactory *f, int kind, const D2D1_RENDER_TARGET_PROPERTIES *props, D2dRt **out);
+HRESULT D2dDeviceCreate(D2dFactory *f, IDXGIDevice *dxgi, ID2D1Device **out);
+/* the device behind every window, dc, wic and compatible target of a factory, with a reference. */
+ID2D1Device *D2dFactoryDevice(D2dFactory *f);
 HRESULT D2dRtResize(D2dRt *rt, UINT32 w, UINT32 h);
 void D2dRtInitState(D2dRt *rt);
 void D2dRtDestroyContents(D2dRt *rt);
@@ -554,6 +574,9 @@ typedef struct D2dPaint {
     BOOL valid;
     /* a texture to sample: the pixels, and how brush space maps to texels. */
     const D2dSurface *tex;
+    /* when set, tex has no pixels: a texel is the palette entry of its index, rows as wide as tex. */
+    const BYTE *tex_index;
+    const uint32_t *tex_palette;
     void *held;
     float tex_sx, tex_sy, tex_ox, tex_oy;
     int clamp_x0, clamp_y0, clamp_x1, clamp_y1;

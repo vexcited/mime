@@ -2,7 +2,11 @@
  * the drawing core of a render target: clips and layers, paints, filling and stroking polygons, bitmaps, glyph runs.
  */
 #include "d2d_private.h"
+#include "par/par.h"
 #include <float.h>
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 /* ------------------------------------------------------------------ the world */
 
@@ -269,7 +273,7 @@ BOOL D2dPaintTexture(D2dPaint *paint, const D2dSurface *tex, const D2dMatrix *te
     return paint->clamp_x1 > paint->clamp_x0 && paint->clamp_y1 > paint->clamp_y0;
 }
 
-static int extend_index(int i, int lo, int hi, D2D1_EXTEND_MODE mode)
+static inline int extend_index(int i, int lo, int hi, D2D1_EXTEND_MODE mode)
 {
     int n = hi - lo;
     if (i >= lo && i < hi)
@@ -296,15 +300,17 @@ static uint32_t texel(const D2dPaint *p, int i, int j)
 {
     i = extend_index(i, p->clamp_x0, p->clamp_x1, p->ex);
     j = extend_index(j, p->clamp_y0, p->clamp_y1, p->ey);
-    return p->tex->px[(SIZE_T)j * p->tex->w + i];
+    SIZE_T at = (SIZE_T)j * p->tex->w + i;
+    return p->tex_index ? p->tex_palette[p->tex_index[at]] : p->tex->px[at];
 }
 
-static uint32_t lerp_px(uint32_t a, uint32_t b, uint32_t t)
+static inline uint32_t lerp_px(uint32_t a, uint32_t b, uint32_t t)
 {
-    uint32_t it = 256 - t, out = 0;
-    for (int s = 0; s < 32; s += 8)
-        out |= ((((a >> s) & 255) * it + ((b >> s) & 255) * t + 128) >> 8) << s;
-    return out;
+    /* two channels at a time: a channel's sum stays under 16 bits, so nothing carries into its neighbour. */
+    uint32_t it = 256 - t;
+    uint32_t rb = (((a & 0xff00ffu) * it + (b & 0xff00ffu) * t + 0x800080u) >> 8) & 0xff00ffu;
+    uint32_t ag = (((a >> 8) & 0xff00ffu) * it + ((b >> 8) & 0xff00ffu) * t + 0x800080u) & 0xff00ff00u;
+    return rb | ag;
 }
 
 static uint32_t sample(const D2dPaint *p, float u, float v)
@@ -320,6 +326,110 @@ static uint32_t sample(const D2dPaint *p, float u, float v)
     return lerp_px(top, bottom, tv);
 }
 
+/* a row that stays on one line of the texture: the two texel rows and the vertical weight are found once. */
+/* indexed is a constant at each call, so the test of it falls out of the loops. */
+#define TEXEL(row, i) (indexed ? pal[((const BYTE *)(row))[i]] : ((const uint32_t *)(row))[i])
+
+static inline __attribute__((always_inline)) void texture_row_of(const D2dPaint *p, float bx, float step, float v,
+                                                                 int count, uint32_t *out, const BOOL indexed)
+{
+    const uint32_t *pal = p->tex_palette;
+    const SIZE_T texel_size = indexed ? 1 : 4;
+    const BYTE *base_px = indexed ? p->tex_index : (const BYTE *)p->tex->px;
+    const D2dSurface *t = p->tex;
+    BOOL nearest = p->interp == D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR;
+    float fv = nearest ? v : v - 0.5f, iv = D2dFloorF(fv);
+    uint32_t tv = nearest ? 0 : (uint32_t)((fv - iv) * 256.0f);
+    const BYTE *r0 = base_px + (SIZE_T)extend_index((int)iv, p->clamp_y0, p->clamp_y1, p->ey) * t->w * texel_size;
+    const BYTE *r1 = tv ? base_px + (SIZE_T)extend_index((int)iv + 1, p->clamp_y0, p->clamp_y1, p->ey) * t->w * texel_size : r0;
+    int i = 0;
+    /*
+     * a texture drawn at its own size on whole pixels: every pixel is one texel, and the sums
+     * below are exact for these small numbers, so they would give the same texels.
+     */
+    if (step == 1.0f && p->tex_sx == 1.0f && !tv && bx > -1e6f && bx < 1e6f && p->tex_ox > -1e6f && p->tex_ox < 1e6f &&
+        (float)(int)p->tex_ox == p->tex_ox) {
+        float f0 = bx + p->tex_ox - 0.5f;
+        int base = (int)f0;
+        if ((float)base == f0) {
+            const int cx0 = p->clamp_x0, cx1 = p->clamp_x1;
+            int in0 = cx0 - base < 0 ? 0 : cx0 - base > count ? count : cx0 - base;
+            int in1 = cx1 - base < in0 ? in0 : cx1 - base > count ? count : cx1 - base;
+            for (; i < in0; i++)
+                out[i] = TEXEL(r0, extend_index(base + i, cx0, cx1, p->ex));
+            if (indexed) {
+                for (; i < in1; i++)
+                    out[i] = pal[r0[base + i]];
+            } else {
+                __builtin_memcpy(out + in0, r0 + (SIZE_T)(base + in0) * 4, (SIZE_T)(in1 - in0) * 4);
+            }
+            for (i = in1; i < count; i++)
+                out[i] = TEXEL(r0, extend_index(base + i, cx0, cx1, p->ex));
+            if (p->opacity < 1.0f)
+                for (i = 0; i < count; i++)
+                    out[i] = apply_opacity(out[i], p->opacity);
+            return;
+        }
+    }
+#if defined(__SSE2__)
+    if (!nearest) {
+        /* the four texels of a pixel in one register: the same sums as lerp_px, a channel to a 16 bit lane. */
+        const __m128i zero = _mm_setzero_si128(), half = _mm_set1_epi16(128);
+        const __m128i wv = _mm_set1_epi16((short)tv), iwv = _mm_set1_epi16((short)(256 - tv));
+        const int cx0 = p->clamp_x0, cx1 = p->clamp_x1;
+        for (; i < count; i++, bx += step) {
+            /* the floor without the call, for a coordinate that fits an int. */
+            float fu = bx * p->tex_sx + p->tex_ox - 0.5f;
+            int ii = (int)fu;
+            if (fu < -2e9f || fu > 2e9f)
+                ii = (int)D2dFloorF(fu);
+            else if ((float)ii > fu)
+                ii--;
+            uint32_t tu = (uint32_t)((fu - (float)ii) * 256.0f);
+            int i0 = ii, i1 = ii + 1;
+            if (i0 < cx0 || i1 >= cx1) {
+                i0 = extend_index(ii, cx0, cx1, p->ex);
+                i1 = extend_index(ii + 1, cx0, cx1, p->ex);
+            }
+            __m128i a = _mm_unpacklo_epi8(_mm_unpacklo_epi32(_mm_cvtsi32_si128((int)TEXEL(r0, i0)), _mm_cvtsi32_si128((int)TEXEL(r1, i0))), zero);
+            __m128i b = _mm_unpacklo_epi8(_mm_unpacklo_epi32(_mm_cvtsi32_si128((int)TEXEL(r0, i1)), _mm_cvtsi32_si128((int)TEXEL(r1, i1))), zero);
+            __m128i wu = _mm_set1_epi16((short)tu), iwu = _mm_set1_epi16((short)(256 - tu));
+            __m128i h = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(_mm_mullo_epi16(a, iwu), _mm_mullo_epi16(b, wu)), half), 8);
+            __m128i bottom = _mm_srli_si128(h, 8);
+            __m128i o = _mm_srli_epi16(_mm_add_epi16(_mm_add_epi16(_mm_mullo_epi16(h, iwv), _mm_mullo_epi16(bottom, wv)), half), 8);
+            out[i] = apply_opacity((uint32_t)_mm_cvtsi128_si32(_mm_packus_epi16(o, o)), p->opacity);
+        }
+        return;
+    }
+#endif
+    for (; i < count; i++, bx += step) {
+        float u = bx * p->tex_sx + p->tex_ox;
+        float fu = nearest ? u : u - 0.5f, iu = D2dFloorF(fu);
+        uint32_t tu = nearest ? 0 : (uint32_t)((fu - iu) * 256.0f);
+        int i0 = extend_index((int)iu, p->clamp_x0, p->clamp_x1, p->ex);
+        uint32_t px = TEXEL(r0, i0);
+        if (tu) {
+            int i1 = extend_index((int)iu + 1, p->clamp_x0, p->clamp_x1, p->ex);
+            px = lerp_px(px, TEXEL(r0, i1), tu);
+            if (tv)
+                px = lerp_px(px, lerp_px(TEXEL(r1, i0), TEXEL(r1, i1), tu), tv);
+        } else if (tv) {
+            px = lerp_px(px, TEXEL(r1, i0), tv);
+        }
+        out[i] = apply_opacity(px, p->opacity);
+    }
+}
+
+#undef TEXEL
+
+static void texture_row(const D2dPaint *p, float bx, float step, float v, int count, uint32_t *out)
+{
+    if (p->tex_index)
+        texture_row_of(p, bx, step, v, count, out, TRUE);
+    else
+        texture_row_of(p, bx, step, v, count, out, FALSE);
+}
+
 void D2dPaintRow(D2dRt *rt, D2dPaint *p, int x, int y, int count, uint32_t *out)
 {
     if (p->is_solid) {
@@ -332,6 +442,10 @@ void D2dPaintRow(D2dRt *rt, D2dPaint *p, int x, int y, int count, uint32_t *out)
     float bx = (x + 0.5f) * m->_11 + (y + 0.5f) * m->_21 + m->_31;
     float by = (x + 0.5f) * m->_12 + (y + 0.5f) * m->_22 + m->_32;
     const D2dBrush *b = p->brush;
+    if (p->tex && m->_12 == 0.0f) {
+        texture_row(p, bx, m->_11, by * p->tex_sy + p->tex_oy, count, out);
+        return;
+    }
     for (int i = 0; i < count; i++, bx += m->_11, by += m->_12) {
         uint32_t px;
         if (p->tex) {
@@ -420,7 +534,6 @@ typedef struct FillCtx {
     D2dPaint *paint;
     uint32_t *row;
     uint8_t cov[4096];
-    int cap;
 } FillCtx;
 
 static void fill_span(void *user, int y, int x, int count, const uint8_t *coverage)
@@ -446,6 +559,29 @@ static void fill_span(void *user, int y, int x, int count, const uint8_t *covera
     }
 }
 
+typedef struct FillJob {
+    D2dRt *rt;
+    D2dPaint *paint;
+    const MimeVecPolys *polys;
+    MimeVecRect area;
+    int rule, aa;
+    BOOL failed;
+} FillJob;
+
+static void fill_rows(void *user, int first, int end)
+{
+    FillJob *job = user;
+    /* on the stack, as the heap lock would be fought over by every piece. */
+    uint32_t row[4096];
+    FillCtx ctx;
+    ctx.rt = job->rt;
+    ctx.paint = job->paint;
+    ctx.row = row;
+    if (mime_vec_fill_rows(&d2d_allocator, job->polys, job->rule, job->aa, &job->area, first, end, fill_span, &ctx) ==
+        MIME_VEC_NOMEM)
+        job->failed = TRUE;
+}
+
 void D2dFillPolys(D2dRt *rt, const MimeVecPolys *polys, BOOL winding, BOOL aliased, D2dPaint *paint)
 {
     MimeVecBounds b;
@@ -464,15 +600,21 @@ void D2dFillPolys(D2dRt *rt, const MimeVecPolys *polys, BOOL winding, BOOL alias
         area.bottom = cb.bottom;
     if (area.right <= area.left || area.bottom <= area.top)
         return;
-    FillCtx ctx = {rt, paint, nullptr, {0}, 0};
-    ctx.row = D2dAlloc(4096 * sizeof(uint32_t));
-    if (!ctx.row) {
-        fail(rt, E_OUTOFMEMORY);
-        return;
+    FillJob job = {rt, paint, polys, area, winding ? MIME_VEC_FILL_WINDING : MIME_VEC_FILL_ALTERNATE,
+                   aliased ? MIME_VEC_AA_NONE : MIME_VEC_AA_EXACT, FALSE};
+    int w = area.right - area.left, h = area.bottom - area.top;
+    int grain = h;
+    /* every piece walks all the edges again, so shapes of many points stay whole. */
+    if (h >= 16 && (int64_t)w * h >= 32768 && (int64_t)polys->npts * 64 < (int64_t)w * h) {
+        grain = 16384 / w;
+        if (grain < 4)
+            grain = 4;
+        if (polys->npts > 4 && grain < h / 8)
+            grain = h / 8;
     }
-    mime_vec_fill(&d2d_allocator, polys, winding ? MIME_VEC_FILL_WINDING : MIME_VEC_FILL_ALTERNATE,
-                  aliased ? MIME_VEC_AA_NONE : MIME_VEC_AA_EXACT, &area, fill_span, &ctx);
-    D2dFree(ctx.row);
+    mime_par_rows(area.top, area.bottom, grain, fill_rows, &job);
+    if (job.failed)
+        fail(rt, E_OUTOFMEMORY);
 }
 
 /* ------------------------------------------------------------------ shapes */
@@ -616,15 +758,24 @@ void D2dBlendSurface(D2dRt *rt, const D2dSurface *src, int dx, int dy, float opa
 }
 
 /* fills polygons with a texture. */
-void D2dDrawTexture(D2dRt *rt, const D2dSurface *tex, const D2dMatrix *texel_to_device, const MimeVecPolys *area,
-                    float opacity, D2D1_INTERPOLATION_MODE interp, const MimeVecRect *clamp)
+static void draw_texture(D2dRt *rt, const D2dSurface *tex, const BYTE *index, const uint32_t *palette,
+                         const D2dMatrix *texel_to_device, const MimeVecPolys *area, float opacity,
+                         D2D1_INTERPOLATION_MODE interp, const MimeVecRect *clamp)
 {
     if (!check_drawing(rt))
         return;
     D2dPaint paint;
     if (!D2dPaintTexture(&paint, tex, texel_to_device, opacity, interp, D2D1_EXTEND_MODE_CLAMP, D2D1_EXTEND_MODE_CLAMP, clamp))
         return;
+    paint.tex_index = index;
+    paint.tex_palette = palette;
     D2dFillPolys(rt, area, TRUE, aliased_mode(rt), &paint);
+}
+
+void D2dDrawTexture(D2dRt *rt, const D2dSurface *tex, const D2dMatrix *texel_to_device, const MimeVecPolys *area,
+                    float opacity, D2D1_INTERPOLATION_MODE interp, const MimeVecRect *clamp)
+{
+    draw_texture(rt, tex, nullptr, nullptr, texel_to_device, area, opacity, interp, clamp);
 }
 
 void D2dDrawBitmapRect(D2dRt *rt, D2dBitmap *bitmap, const D2D1_RECT_F *dest_in, float opacity,
@@ -636,7 +787,10 @@ void D2dDrawBitmapRect(D2dRt *rt, D2dBitmap *bitmap, const D2D1_RECT_F *dest_in,
         fail(rt, D2DERR_WRONG_FACTORY);
         return;
     }
-    const D2dSurface *view = D2dBitmapView(bitmap);
+    /* a bitmap that is still indices is drawn from them. */
+    D2dSurface shape = {(int)bitmap->width, (int)bitmap->height, nullptr};
+    const BYTE *index = bitmap->native ? nullptr : bitmap->index;
+    const D2dSurface *view = index ? &shape : D2dBitmapView(bitmap);
     if (!view)
         return;
     float bw = bitmap->width * 96.0f / bitmap->dpi_x, bh = bitmap->height * 96.0f / bitmap->dpi_y;
@@ -673,7 +827,7 @@ void D2dDrawBitmapRect(D2dRt *rt, D2dBitmap *bitmap, const D2D1_RECT_F *dest_in,
     if (extra)
         D2dMatMul(&outer, extra, &world);
     rect_polys(&polys, &dst, &outer);
-    D2dDrawTexture(rt, view, &full, &polys, opacity, mode, &clamp);
+    draw_texture(rt, view, index, bitmap->palette, &full, &polys, opacity, mode, &clamp);
     mime_vec_polys_free(&polys);
 }
 

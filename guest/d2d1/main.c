@@ -33,6 +33,99 @@ void D2dFree(void *p)
         HeapFree(GetProcessHeap(), 0, p);
 }
 
+/*
+ * pixel buffers a program frees and asks for again at once, as one that rebuilds its bitmaps for every frame
+ * does, are kept for a while. the heap gives large blocks back to the system, and fresh pages cost a fault each.
+ */
+#define PIXELS_MIN ((SIZE_T)256 << 10)
+#define PIXELS_KEEP ((SIZE_T)64 << 20)
+#define PIXELS_AGE_MS 4000
+
+static struct {
+    void *p;
+    SIZE_T size;
+    ULONGLONG freed;
+} pixels[64];
+static SIZE_T pixels_kept;
+static SRWLOCK pixels_lock = SRWLOCK_INIT;
+
+static void pixels_drop(UINT i)
+{
+    HeapFree(GetProcessHeap(), 0, pixels[i].p);
+    pixels_kept -= pixels[i].size;
+    pixels[i].p = nullptr;
+}
+
+/* the lock is held. the slot of the buffer kept the longest, or the count of slots when none is kept. */
+static UINT pixels_oldest(void)
+{
+    UINT oldest = ARRAYSIZE(pixels);
+    for (UINT i = 0; i < ARRAYSIZE(pixels); i++)
+        if (pixels[i].p && (oldest == ARRAYSIZE(pixels) || pixels[i].freed < pixels[oldest].freed))
+            oldest = i;
+    return oldest;
+}
+
+void *D2dPixelsAlloc(SIZE_T size, BOOL zero)
+{
+    void *p = nullptr;
+    if (size >= PIXELS_MIN && size <= PIXELS_KEEP / 2) {
+        /* sizes go up in steps of an eighth, so a window that grows finds the blocks of its last size. */
+        SIZE_T step = PIXELS_MIN / 8;
+        while (step * 16 <= size)
+            step *= 2;
+        size = (size + step - 1) & ~(step - 1);
+        AcquireSRWLockExclusive(&pixels_lock);
+        /* a window being resized asks for a new size at every step, so a block somewhat larger serves too. */
+        UINT best = ARRAYSIZE(pixels);
+        for (UINT i = 0; i < ARRAYSIZE(pixels); i++)
+            if (pixels[i].p && pixels[i].size >= size && pixels[i].size - size <= size / 2 &&
+                (best == ARRAYSIZE(pixels) || pixels[i].size < pixels[best].size))
+                best = i;
+        if (best < ARRAYSIZE(pixels)) {
+            p = pixels[best].p;
+            pixels[best].p = nullptr;
+            pixels_kept -= pixels[best].size;
+        }
+        ReleaseSRWLockExclusive(&pixels_lock);
+    }
+    if (!p)
+        return zero ? D2dAllocZero(size) : D2dAlloc(size);
+    if (zero)
+        memset(p, 0, size);
+    return p;
+}
+
+void D2dPixelsFree(void *p)
+{
+    if (!p)
+        return;
+    SIZE_T size = HeapSize(GetProcessHeap(), 0, p);
+    if (size < PIXELS_MIN || size > PIXELS_KEEP / 2) {
+        D2dFree(p);
+        return;
+    }
+    AcquireSRWLockExclusive(&pixels_lock);
+    ULONGLONG now = GetTickCount64();
+    for (UINT i = 0; i < ARRAYSIZE(pixels); i++)
+        if (pixels[i].p && now - pixels[i].freed > PIXELS_AGE_MS)
+            pixels_drop(i);
+    UINT slot;
+    for (;;) {
+        for (slot = 0; slot < ARRAYSIZE(pixels) && pixels[slot].p; slot++)
+            ;
+        if (slot < ARRAYSIZE(pixels) && pixels_kept + size <= PIXELS_KEEP)
+            break;
+        /* the oldest go until the new one fits. */
+        pixels_drop(pixels_oldest());
+    }
+    pixels[slot].p = p;
+    pixels[slot].size = size;
+    pixels[slot].freed = now;
+    pixels_kept += size;
+    ReleaseSRWLockExclusive(&pixels_lock);
+}
+
 static void *vec_alloc(void *ctx, size_t size) { return D2dAlloc(size); }
 static void vec_free(void *ctx, void *p) { D2dFree(p); }
 const MimeAllocator d2d_allocator = {vec_alloc, vec_free, nullptr};

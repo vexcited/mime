@@ -60,6 +60,8 @@ typedef struct Ctx {
     int32_t jmax;
     int minx, maxx;
     int err;
+    /* rows outside row0 to row1 are not emitted. */
+    int64_t row0, row1;
 } Ctx;
 
 static inline int32_t clamp_fix(int64_t v, int32_t wfix)
@@ -344,6 +346,7 @@ static int render(Ctx *c)
     int32_t wfix = c->wfix;
     int32_t j = 0;
     int cur_row = -1;
+    bool emit = true;
     c->minx = 0x7fffffff;
     c->maxx = -1;
     while (j < c->jmax) {
@@ -358,6 +361,11 @@ static int render(Ctx *c)
             if (cur_row >= 0)
                 flush_row(c, cur_row);
             cur_row = row;
+            if (c->yorg + (int64_t)row >= c->row1) {
+                cur_row = -1;
+                break;
+            }
+            emit = c->yorg + (int64_t)row >= c->row0;
         }
         for (uint32_t e = c->head[j]; e != NONE; e = edges[e].next) {
             act[naet].xc = clamp_fix(edges[e].x >> 16, wfix);
@@ -366,7 +374,9 @@ static int render(Ctx *c)
             naet++;
         }
         sort_act(act, naet);
-        if (c->winding) {
+        if (!emit) {
+            /* rows before the range only step their edges. */
+        } else if (c->winding) {
             int w = 0;
             int32_t start = 0;
             for (uint32_t k = 0; k < naet; k++) {
@@ -407,6 +417,111 @@ static int render(Ctx *c)
     return MIME_VEC_OK;
 }
 
+/* one polygon of four points whose sides follow the axes: x of its two vertical sides, y of the other two. */
+static bool axis_rect(const MimeVecPolys *p, float *xa, float *xb, float *ya, float *yb)
+{
+    if (p->nsubs != 1 || p->subs[0].count != 4)
+        return false;
+    const MimeVecPoint *q = p->pts + p->subs[0].first;
+    if (q[0].x == q[1].x && q[1].y == q[2].y && q[2].x == q[3].x && q[3].y == q[0].y) {
+        *xa = q[0].x;
+        *xb = q[2].x;
+        *ya = q[0].y;
+        *yb = q[1].y;
+        return true;
+    }
+    if (q[0].y == q[1].y && q[1].x == q[2].x && q[2].y == q[3].y && q[3].x == q[0].x) {
+        *xa = q[1].x;
+        *xb = q[3].x;
+        *ya = q[1].y;
+        *yb = q[2].y;
+        return true;
+    }
+    return false;
+}
+
+/* where a vertical side crosses the sub scanlines, as add_edge and render place it. false when it is right of the strip. */
+static bool rect_side(const Ctx *c, float x, int32_t *xc)
+{
+    float xf = mime_vec_clamp_coord(x) - c->ox;
+    if (xf >= (float)c->W)
+        return false;
+    if (xf <= 0.0f)
+        xf = 0.0f;
+    *xc = clamp_fix(to_fix64(xf) >> 16, c->wfix);
+    return true;
+}
+
+/*
+ * render for an axis aligned rectangle. its two sides cross every sub scanline at the same
+ * place, so a row is the span of one sub scanline counted once per sub scanline of the row,
+ * and the sums are those accumulate and flush_row make.
+ */
+static int render_rect(Ctx *c, float xa, float xb, float ya, float yb)
+{
+    float ay = mime_vec_clamp_coord(ya) - c->oy, by = mime_vec_clamp_coord(yb) - c->oy;
+    if (ay == by)
+        return MIME_VEC_OK;
+    if (ay > by) {
+        float t = ay;
+        ay = by;
+        by = t;
+    }
+    float vs = (float)(1 << c->vshift), jmaxf = (float)c->jmax;
+    float t0 = ay * vs - 0.5f, t1 = by * vs - 0.5f;
+    if (!(t1 > 0.0f) || !(t0 < jmaxf))
+        return MIME_VEC_OK;
+    if (t0 < 0.0f)
+        t0 = 0.0f;
+    if (t1 > jmaxf)
+        t1 = jmaxf;
+    int32_t jt = ceil_to_int(t0), jb = ceil_to_int(t1);
+    if (jt >= jb)
+        return MIME_VEC_OK;
+    int32_t ca = 0, cb = 0;
+    bool ina = rect_side(c, xa, &ca), inb = rect_side(c, xb, &cb);
+    if (!ina && !inb)
+        return MIME_VEC_OK;
+    /* a side right of the strip closes the span at the strip's end. */
+    if (!ina)
+        ca = c->wfix;
+    if (!inb)
+        cb = c->wfix;
+    int32_t s0 = to_units(c, ca < cb ? ca : cb), s1 = to_units(c, ca < cb ? cb : ca);
+    if (s1 <= s0)
+        return MIME_VEC_OK;
+    int sh = c->sh, tb = c->tbits;
+    uint32_t u = 1u << sh, m = u - 1, half = c->half;
+    int32_t pa = s0 >> sh, pb = s1 >> sh, last = (s1 - 1) >> sh;
+    int n = last - pa + 1;
+    uint8_t *out = c->out;
+    int32_t per = 1 << c->vshift;
+    int done = -1;
+    int32_t row = jt >> c->vshift, row_end = ((jb - 1) >> c->vshift) + 1;
+    if (c->row0 - c->yorg > row)
+        row = (int32_t)(c->row0 - c->yorg);
+    if (c->row1 - c->yorg < row_end)
+        row_end = (int32_t)(c->row1 - c->yorg);
+    for (; row < row_end; row++) {
+        int32_t j0 = row << c->vshift, j1 = j0 + per;
+        uint32_t k = (uint32_t)((j1 < jb ? j1 : jb) - (j0 > jt ? j0 : jt));
+        if ((int)k != done) {
+            done = (int)k;
+            if (pa == pb) {
+                out[0] = (uint8_t)((k * (uint32_t)(s1 - s0) * 255u + half) >> tb);
+            } else {
+                out[0] = (uint8_t)((k * (u - ((uint32_t)s0 & m)) * 255u + half) >> tb);
+                if (last > pa)
+                    __builtin_memset(out + 1, (int)((k * u * 255u + half) >> tb), (size_t)(last - pa));
+                if (last == pb)
+                    out[n - 1] = (uint8_t)((k * ((uint32_t)s1 & m) * 255u + half) >> tb);
+            }
+        }
+        c->fn(c->user, c->yorg + row, c->xorg + pa, n, out);
+    }
+    return MIME_VEC_OK;
+}
+
 MimeVecRect mime_vec_bounds_to_rect(const MimeVecBounds *b)
 {
     MimeVecRect r;
@@ -424,8 +539,8 @@ MimeVecRect mime_vec_bounds_to_rect(const MimeVecBounds *b)
     return r;
 }
 
-int mime_vec_fill(const MimeAllocator *a, const MimeVecPolys *polys, int rule, int aa, const MimeVecRect *clip_in,
-                  MimeVecSpanFn fn, void *user)
+int mime_vec_fill_rows(const MimeAllocator *a, const MimeVecPolys *polys, int rule, int aa, const MimeVecRect *clip_in,
+                       int row0, int row1, MimeVecSpanFn fn, void *user)
 {
     if (!polys || !clip_in || !fn || polys->nsubs == 0)
         return MIME_VEC_OK;
@@ -447,6 +562,8 @@ int mime_vec_fill(const MimeAllocator *a, const MimeVecPolys *polys, int rule, i
     c.polys = polys;
     c.fn = fn;
     c.user = user;
+    c.row0 = row0;
+    c.row1 = row1;
     c.winding = rule == MIME_VEC_FILL_WINDING;
     switch (aa) {
     case MIME_VEC_AA_8X4:
@@ -474,7 +591,8 @@ int mime_vec_fill(const MimeAllocator *a, const MimeVecPolys *polys, int rule, i
     c.half = c.tbits ? 1u << (c.tbits - 1) : 0;
 
     /* validity and bounds of the polygons. */
-    uint8_t *valid = mime_alloc(a, polys->nsubs);
+    uint8_t few[16];
+    uint8_t *valid = polys->nsubs <= sizeof(few) ? few : mime_alloc(a, polys->nsubs);
     if (!valid)
         return MIME_VEC_NOMEM;
     float minx = 0, miny = 0, maxx = 0, maxy = 0;
@@ -534,23 +652,34 @@ int mime_vec_fill(const MimeAllocator *a, const MimeVecPolys *polys, int rule, i
             goto done;
     }
     c.valid = valid;
+    float rxa = 0, rxb = 0, rya = 0, ryb = 0;
+    bool rect = valid[0] && axis_rect(polys, &rxa, &rxb, &rya, &ryb);
     {
         int64_t w = cr - cl, h = cb - ct;
         int sw = w > MAX_STRIP ? MAX_STRIP : (int)w;
         int sh_rows = h > MAX_BAND_ROWS ? MAX_BAND_ROWS : (int)h;
         uint32_t nhead = (uint32_t)(sh_rows << c.vshift) + 1;
-        c.head = mime_alloc(a, (size_t)nhead * sizeof(uint32_t));
-        c.acc = mime_alloc(a, (size_t)(sw + 8) * sizeof(int32_t));
-        c.dif = mime_alloc(a, (size_t)(sw + 8) * sizeof(int32_t));
         c.out = mime_alloc(a, (size_t)sw + 8);
-        if (!c.head || !c.acc || !c.dif || !c.out) {
+        if (!c.out) {
             ret = MIME_VEC_NOMEM;
             goto done;
         }
-        __builtin_memset(c.acc, 0, (size_t)(sw + 8) * sizeof(int32_t));
-        __builtin_memset(c.dif, 0, (size_t)(sw + 8) * sizeof(int32_t));
+        /* a rectangle needs no edges and no sums. */
+        if (!rect) {
+            c.head = mime_alloc(a, (size_t)nhead * sizeof(uint32_t));
+            c.acc = mime_alloc(a, (size_t)(sw + 8) * sizeof(int32_t));
+            c.dif = mime_alloc(a, (size_t)(sw + 8) * sizeof(int32_t));
+            if (!c.head || !c.acc || !c.dif) {
+                ret = MIME_VEC_NOMEM;
+                goto done;
+            }
+            __builtin_memset(c.acc, 0, (size_t)(sw + 8) * sizeof(int32_t));
+            __builtin_memset(c.dif, 0, (size_t)(sw + 8) * sizeof(int32_t));
+        }
         for (int64_t y0 = ct; y0 < cb && !ret; y0 += MAX_BAND_ROWS) {
             int64_t y1 = y0 + MAX_BAND_ROWS < cb ? y0 + MAX_BAND_ROWS : cb;
+            if (y1 <= row0 || y0 >= row1)
+                continue;
             for (int64_t x0 = cl; x0 < cr && !ret; x0 += MAX_STRIP) {
                 int64_t x1 = x0 + MAX_STRIP < cr ? x0 + MAX_STRIP : cr;
                 c.ox = (float)x0;
@@ -561,12 +690,13 @@ int mime_vec_fill(const MimeAllocator *a, const MimeVecPolys *polys, int rule, i
                 c.H = (int)(y1 - y0);
                 c.wfix = (int32_t)c.W << 16;
                 c.jmax = c.H << c.vshift;
-                ret = render(&c);
+                ret = rect ? render_rect(&c, rxa, rxb, rya, ryb) : render(&c);
             }
         }
     }
 done:
-    mime_free(a, valid);
+    if (valid != few)
+        mime_free(a, valid);
     mime_free(a, c.edges);
     mime_free(a, c.act);
     mime_free(a, c.head);
@@ -574,6 +704,12 @@ done:
     mime_free(a, c.dif);
     mime_free(a, c.out);
     return ret;
+}
+
+int mime_vec_fill(const MimeAllocator *a, const MimeVecPolys *polys, int rule, int aa, const MimeVecRect *clip,
+                  MimeVecSpanFn fn, void *user)
+{
+    return mime_vec_fill_rows(a, polys, rule, aa, clip, INT32_MIN, INT32_MAX, fn, user);
 }
 
 int mime_vec_fill_polygon(const MimeAllocator *a, const MimeVecPoint *pts, uint32_t count, int rule, int aa,

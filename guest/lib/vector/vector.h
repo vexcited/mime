@@ -354,6 +354,9 @@ typedef void (*MimeVecSpanFn)(void *user, int y, int x, int count, const uint8_t
  */
 int mime_vec_fill(const MimeAllocator *a, const MimeVecPolys *polys, int rule, int aa, const MimeVecRect *clip,
                   MimeVecSpanFn fn, void *user);
+/* mime_vec_fill for the rows row0 to row1 only. fills of separate row ranges emit what one whole fill does. */
+int mime_vec_fill_rows(const MimeAllocator *a, const MimeVecPolys *polys, int rule, int aa, const MimeVecRect *clip,
+                       int row0, int row1, MimeVecSpanFn fn, void *user);
 int mime_vec_fill_polygon(const MimeAllocator *a, const MimeVecPoint *pts, uint32_t count, int rule, int aa,
                           const MimeVecRect *clip, MimeVecSpanFn fn, void *user);
 /* the pixels a shape with these bounds may touch, clamped to the limits. */
