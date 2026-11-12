@@ -581,7 +581,7 @@ static BOOLEAN begin_draw(HDC hdc, DRAW_CONTEXT *ctx)
 static void end_draw(DRAW_CONTEXT *ctx, const RECT *touched)
 {
     if (ctx->Dc && ctx->Dc->Surface && touched)
-        SurfaceMarkDirty(ctx->Dc->Surface, touched);
+        SurfaceMarkDrawn(ctx->Dc->Surface, touched, &ctx->Clip);
     RgnFree(&ctx->Clip);
 }
 

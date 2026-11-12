@@ -136,7 +136,7 @@ static void TextDrawTransformed(DC *dc, FONT_INSTANCE *fi, const REGION *clip, L
     dirty.top -= 2;
     dirty.right += 2;
     dirty.bottom += 2;
-    SurfaceMarkDirty(dc->Surface, &dirty);
+    SurfaceMarkDrawn(dc->Surface, &dirty, clip);
 }
 
 void TextDraw(DC *dc, LONG x, LONG y, UINT options, const RECT *rect, PCWSTR text, ULONG count, const INT *dx)
@@ -242,7 +242,7 @@ void TextDraw(DC *dc, LONG x, LONG y, UINT options, const RECT *rect, PCWSTR tex
     dirty.right += slack;
     dirty.top -= 2;
     dirty.bottom += 2;
-    SurfaceMarkDirty(dc->Surface, &dirty);
+    SurfaceMarkDrawn(dc->Surface, &dirty, &clip);
     RgnFree(&clip);
 }
 

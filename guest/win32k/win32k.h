@@ -178,6 +178,7 @@ SURFACE *SurfaceCreate(LONG width, LONG height, UCHAR bpp, ULONG flags);
 SURFACE *SurfaceWrap(LONG width, LONG height, UCHAR bpp, PVOID bits, LONG stride, const BITMAPINFO *info);
 void SurfaceDestroy(SURFACE *s);
 void SurfaceMarkDirty(SURFACE *s, const RECT *r);
+void SurfaceMarkDrawn(SURFACE *s, const RECT *r, const REGION *clip);
 SURFACE *SurfaceLookup(HBITMAP bitmap);
 
 typedef struct BRUSH {
@@ -797,6 +798,7 @@ typedef struct WND {
     COLORREF LayerKey;
     BYTE LayerAlpha;
     SURFACE *Present;  /* composed copy shown to the host when the surface needs alpha or a shape. */
+    RECT LayerShown;   /* where the host was told the layer of a window that presents is, see hold_area. */
     ULONG TouchFlags;
     ULONG DisplayAffinity; /* WDA_*, how captures show the window. */
     int PixelFormat;
@@ -1214,6 +1216,10 @@ BOOLEAN ScreenWindowPixels(WND *w, BOOLEAN client_only, BOOLEAN host_pixels, PUC
 ULONG64 ScreenHostSerial(void);
 void ScreenLayer(WND *w, MIME_PRESENT_LAYER *out);
 void ScreenLayersChanged(WND *w);
+void ScreenHeldDrawn(const SURFACE *s, const RECT *drawn);
+void ScreenHeldFlush(WND *top);
+void ScreenHeldGone(const WND *w);
+extern LONG ScreenHeldCount;
 extern ULONG ScreenSerial;
 extern ULONG VkProcessCount;
 HBRUSH MetricsSysColorBrush(int index);

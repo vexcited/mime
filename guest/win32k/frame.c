@@ -820,8 +820,8 @@ void FramePaint(WND *w)
                    origin.y + (w->WindowRect.bottom - w->WindowRect.top)};
     if (!is_top_frame(w->Style)) {
         paint_classic_edges(w, s, &clip, window);
+        SurfaceMarkDrawn(s, &window, &clip);
         RgnFree(&clip);
-        SurfaceMarkDirty(s, &window);
         return;
     }
 
@@ -877,9 +877,9 @@ void FramePaint(WND *w)
             draw_button(w, s, &clip, origin, buttons[i], dpi, active, &colors);
     }
     MenuBarPaint(w, s, &clip, origin);
-    RgnFree(&clip);
     /* drawn straight into the surface, so the present needs to know. */
-    SurfaceMarkDirty(s, &window);
+    SurfaceMarkDrawn(s, &window, &clip);
+    RgnFree(&clip);
     if (top->Thread == W32GetThread() && (top->Flags & WNDF_PRESENTED))
         PaintPresent(top);
 }

@@ -935,6 +935,110 @@ static BOOLEAN paint_order(const WND *parent, const WND *window, ULONG *count)
 }
 
 /*
+ * on Windows a child that presents shares the surface of its top level window, so what it leaves when it shrinks keeps
+ * its last image until something draws there. here the surface never held that image, so the layer of a window that
+ * shrank keeps the place it left until a draw into the surface takes it, and the host is told with the flush that
+ * carries the draw. window pixels relative to the top level window.
+ */
+typedef struct HELD {
+    WND *Window, *Top;
+    RECT Now;   /* where the window shows. */
+    RECT Shown; /* where the host was told its layer is. */
+    RECT Left;  /* what the draws since left of that. */
+} HELD;
+
+static HELD g_held[8];
+static KSPIN_LOCK g_held_lock;
+LONG ScreenHeldCount;
+
+static HELD *held_of(const WND *w)
+{
+    for (LONG i = 0; i < ScreenHeldCount; i++)
+        if (g_held[i].Window == w)
+            return &g_held[i];
+    return nullptr;
+}
+
+static void held_drop(HELD *h)
+{
+    *h = g_held[--ScreenHeldCount];
+}
+
+static BOOLEAN same_rect(const RECT *a, const RECT *b)
+{
+    return a->left == b->left && a->top == b->top && a->right == b->right && a->bottom == b->bottom;
+}
+
+static void hold_area(WND *top, WND *w, MIME_PRESENT_LAYER *out)
+{
+    RECT now = out->Visible;
+    LONG width = top->WindowRect.right - top->WindowRect.left, height = top->WindowRect.bottom - top->WindowRect.top;
+    KIRQL irql;
+    KeAcquireSpinLock(&g_held_lock, &irql);
+    HELD *h = held_of(w);
+    RECT shown = h ? h->Shown : w->LayerShown;
+    shown.right = W32Min(shown.right, width);
+    shown.bottom = W32Min(shown.bottom, height);
+    BOOLEAN shrank = !RectEmpty(&now) && now.left == shown.left && now.top == shown.top && now.right <= shown.right &&
+                     now.bottom <= shown.bottom && !same_rect(&now, &shown);
+    if (h && !shrank) {
+        held_drop(h);
+        h = nullptr;
+    }
+    if (!h && shrank && ScreenHeldCount < (LONG)RTL_NUMBER_OF(g_held)) {
+        h = &g_held[ScreenHeldCount++];
+        *h = (HELD){.Window = w, .Left = shown};
+    }
+    if (h) {
+        h->Top = top;
+        h->Now = now;
+        h->Shown = shown;
+        h->Left.right = W32Max(W32Min(h->Left.right, shown.right), now.right);
+        h->Left.bottom = W32Max(W32Min(h->Left.bottom, shown.bottom), now.bottom);
+        /* the image stretches over what is held, which is a few pixels for a few frames. */
+        out->Visible = shown;
+        out->Client.right = W32Max(out->Client.right, shown.right);
+        out->Client.bottom = W32Max(out->Client.bottom, shown.bottom);
+    }
+    KeReleaseSpinLock(&g_held_lock, irql);
+    w->LayerShown = out->Visible;
+}
+
+/* a draw into the surface of a top level window, which takes what it covers from the layers that hold it. */
+void ScreenHeldDrawn(const SURFACE *s, const RECT *drawn)
+{
+    KIRQL irql;
+    KeAcquireSpinLock(&g_held_lock, &irql);
+    for (LONG i = 0; i < ScreenHeldCount; i++) {
+        HELD *h = &g_held[i];
+        RECT hit;
+        if (h->Top != s->Window || !RectIntersect(&hit, drawn, &h->Left))
+            continue;
+        if (drawn->left >= h->Now.right) {
+            h->Left.right = drawn->left;
+        } else if (drawn->top >= h->Now.bottom) {
+            h->Left.bottom = drawn->top;
+        } else {
+            if (drawn->right > h->Now.right)
+                h->Left.right = h->Now.right;
+            if (drawn->bottom > h->Now.bottom)
+                h->Left.bottom = h->Now.bottom;
+        }
+    }
+    KeReleaseSpinLock(&g_held_lock, irql);
+}
+
+void ScreenHeldGone(const WND *w)
+{
+    KIRQL irql;
+    KeAcquireSpinLock(&g_held_lock, &irql);
+    for (LONG i = ScreenHeldCount - 1; i >= 0; i--)
+        if (g_held[i].Window == w || g_held[i].Top == w)
+            held_drop(&g_held[i]);
+    KeReleaseSpinLock(&g_held_lock, irql);
+}
+
+/*
  * where the image a window presents lies in its top level window, which the host shows it in: the client area, the part
  * of it that shows (empty while the window is hidden or covered) and the place of the window in the paint order of
  * the tree. window pixels relative to the top level window.
@@ -950,8 +1054,10 @@ void ScreenLayer(WND *w, MIME_PRESENT_LAYER *out)
     RectOffset(&out->Client, -top->WindowRect.left, -top->WindowRect.top);
     if (w != top)
         paint_order(top, w, &out->Order);
-    if (!WndIsVisible(w) || (top->Style & WS_MINIMIZE))
+    if (!WndIsVisible(w) || (top->Style & WS_MINIMIZE)) {
+        hold_area(top, w, out);
         return;
+    }
     /* a window only its children draw in has nothing of its own to show, yet its layers need a host window. */
     if (!(top->Flags & WNDF_PRESENTED)) {
         top->Flags |= WNDF_PRESENTED;
@@ -971,12 +1077,13 @@ void ScreenLayer(WND *w, MIME_PRESENT_LAYER *out)
         out->Visible = bounds;
     }
     RgnFree(&area);
+    hold_area(top, w, out);
 }
 
 static MimeWinLayer *g_layer;
 
 /* tells the host where a window that presents lies now, and whether it shows. */
-static void send_layers(WND *top, WND *w)
+static void send_layer(WND *w)
 {
     if ((w->Flags & WNDF_PRESENTS) && has_connection(w) && (g_layer || (g_layer = MmAllocateContiguousPages(4096)))) {
         MIME_PRESENT_LAYER where;
@@ -989,8 +1096,36 @@ static void send_layers(WND *top, WND *w)
                                               where.Visible.bottom}};
         HalMimeHypercall(MIME_HC_WIN_LAYER, (ULONG64)MmGetPhysicalAddress(g_layer).QuadPart, 0, 0, 0, 0, 0, nullptr);
     }
+}
+
+static void send_layers(WND *top, WND *w)
+{
+    send_layer(w);
     for (WND *c = w->FirstChild; c; c = c->Next)
         send_layers(top, c);
+}
+
+/* the surface of a top level window is about to be shown: its layers give up what was drawn over since. */
+void ScreenHeldFlush(WND *top)
+{
+    WND *told[RTL_NUMBER_OF(g_held)];
+    ULONG count = 0;
+    KIRQL irql;
+    KeAcquireSpinLock(&g_held_lock, &irql);
+    for (LONG i = ScreenHeldCount - 1; i >= 0; i--) {
+        HELD *h = &g_held[i];
+        if (h->Top != top || same_rect(&h->Left, &h->Shown))
+            continue;
+        h->Shown = h->Left;
+        told[count++] = h->Window;
+        if (same_rect(&h->Shown, &h->Now)) {
+            h->Window->LayerShown = h->Now;
+            held_drop(h);
+        }
+    }
+    KeReleaseSpinLock(&g_held_lock, irql);
+    for (ULONG i = 0; i < count; i++)
+        send_layer(told[i]);
 }
 
 static BOOLEAN tree_has_connection(const WND *w)
