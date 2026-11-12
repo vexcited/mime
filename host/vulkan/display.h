@@ -21,6 +21,9 @@ typedef struct MimeUiPlace {
     uint32_t order;
     uint32_t stamp;   /* the guest's count of what it told, 0 without one. */
     bool follows;     /* the pixels of the host window that were painted around the place come next, and it waits for them. */
+    /* what of the visible part other windows cover, which only a notice of the guest tells: none with a frame. */
+    const MimeRect *hidden;
+    uint32_t hidden_count;
 } MimeUiPlace;
 
 typedef struct MimeUiFrame {

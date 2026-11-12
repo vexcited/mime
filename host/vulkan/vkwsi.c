@@ -2920,7 +2920,8 @@ void mime_vk_layer(const MimeWinLayer *layer)
     pthread_mutex_unlock(&g_presenters_lock);
     if (!p)
         return;
-    MimeUiPlace place = {t.client, t.visible, t.order, t.stamp, layer->follows != 0};
+    MimeUiPlace place = {t.client, t.visible, t.order, t.stamp, layer->follows != 0, layer->hidden,
+                         MIME_MIN(layer->hidden_count, MIME_LAYER_HIDDEN_MAX)};
     mime_ui_vk_place(t.window, t.source, &place);
     presenter_put(p->conn, p);
 }

@@ -25,6 +25,9 @@ typedef struct LayerPlace {
     bool set;
     MimeRect client, visible;
     uint32_t order, stamp;
+    /* what of the visible part other windows of the guest cover, and the count of the notice that told it. */
+    uint32_t hidden_count, hidden_stamp;
+    MimeRect hidden[MIME_LAYER_HIDDEN_MAX];
 } LayerPlace;
 
 /* a frame of a layer under its window, an axis at a time, in the same pixels. */
@@ -1313,6 +1316,8 @@ static void restore_renderer(UiWindow *w)
     pthread_mutex_unlock(&w->lock);
 }
 
+#define MAX_HOLES (MAX_VK_LAYERS * 4 * MIME_LAYER_HIDDEN_MAX)
+
 static int settle_layers(UiWindow *w, MimeRect *holes, bool *again);
 static void layers_drawn(UiWindow *w);
 static void reap_layers(UiWindow *w);
@@ -1381,7 +1386,7 @@ static void draw(UiWindow *w)
     }
     double density = w->logical_width > 0 ? (double)w->pixel_width / w->logical_width : 1.0;
     /* with the pixels that were just taken, so the places of the layers under them are the ones they go with. */
-    MimeRect holes[MAX_VK_LAYERS];
+    MimeRect holes[MAX_HOLES];
     bool again = false;
     int hole_count = w->texture && w->vk ? settle_layers(w, holes, &again) : 0;
     pthread_mutex_unlock(&w->lock);
@@ -2322,6 +2327,30 @@ static void set_under(VkLayer *l, bool under)
  * shows through no further than the frame the display has of it reaches, so the window's own pixels show where its
  * frame is late, and the frame that comes next is no smaller than what is clear, see frame_under.
  */
+/* takes a rectangle out of a list of them, a piece that would not fit staying whole. returns the new count. */
+static int rect_cut(MimeRect *list, int count, int capacity, MimeRect out)
+{
+    for (int i = count - 1; i >= 0; i--) {
+        MimeRect r = list[i], in = rect_and(r, out);
+        if (rect_empty(in))
+            continue;
+        MimeRect parts[4] = {{r.left, r.top, r.right, in.top},
+                             {r.left, in.bottom, r.right, r.bottom},
+                             {r.left, in.top, in.left, in.bottom},
+                             {in.right, in.top, r.right, in.bottom}};
+        int made = 0;
+        for (int k = 0; k < 4; k++)
+            made += !rect_empty(parts[k]);
+        if (count - 1 + made > capacity)
+            continue;
+        list[i] = list[--count];
+        for (int k = 0; k < 4; k++)
+            if (!rect_empty(parts[k]))
+                list[count++] = parts[k];
+    }
+    return count;
+}
+
 static int settle_layers(UiWindow *w, MimeRect *holes, bool *again)
 {
     bool under = under_wanted(w), restack = false;
@@ -2390,8 +2419,13 @@ static int settle_layers(UiWindow *w, MimeRect *holes, bool *again)
         l->cut_next[1] = open ? hole.bottom - l->at[1] : 0;
         l->cut[0] = MIME_MAX(l->cut[0], l->cut_next[0]);
         l->cut[1] = MIME_MAX(l->cut[1], l->cut_next[1]);
-        if (open)
+        if (open && count < MAX_HOLES) {
+            /* the window stays closed where another window of the guest covers the layer. */
+            int first = count;
             holes[count++] = hole;
+            for (uint32_t h = 0; h < l->shown.hidden_count; h++)
+                count = first + rect_cut(holes + first, count - first, MAX_HOLES - first, l->shown.hidden[h]);
+        }
         if (l->gone && !l->subsurface)
             w->reap = true;
         else if (l->waits || l->gone || (l->subsurface && !showing && l->shown.set))
@@ -2776,14 +2810,44 @@ static void place_main(void *arg)
  */
 static bool tell_layer(UiWindow *w, VkLayer *l, const MimeUiPlace *place)
 {
-    LayerPlace p = {true, physical_rect(w, place->client), physical_rect(w, place->visible), place->order, place->stamp};
+    LayerPlace p = {.set = true,
+                    .client = physical_rect(w, place->client),
+                    .visible = physical_rect(w, place->visible),
+                    .order = place->order,
+                    .stamp = place->stamp};
     if (rect_empty(p.visible))
         p.visible = (MimeRect){};
+    /* only a notice tells what is covered. a frame keeps what the last one told, and so does a notice older than it. */
+    const LayerPlace *t = &l->told;
+    bool covers = place->hidden && (!t->hidden_stamp || !p.stamp || (int32_t)(p.stamp - t->hidden_stamp) >= 0);
+    if (covers) {
+        p.hidden_stamp = p.stamp;
+        p.hidden_count = MIME_MIN(place->hidden_count, MIME_LAYER_HIDDEN_MAX);
+        for (uint32_t i = 0; i < p.hidden_count; i++)
+            p.hidden[i] = physical_rect(w, place->hidden[i]);
+    } else {
+        p.hidden_stamp = t->hidden_stamp;
+        p.hidden_count = t->hidden_count;
+        memcpy(p.hidden, t->hidden, sizeof(p.hidden));
+    }
+    bool hides = p.hidden_count == t->hidden_count && !memcmp(p.hidden, t->hidden, p.hidden_count * sizeof(MimeRect));
     /* a frame comes with the place its window had when the guest made it, which a notice may have overtaken. */
-    if (l->told.set && p.stamp && l->told.stamp && (int32_t)(p.stamp - l->told.stamp) < 0)
-        return false;
+    if (l->told.set && p.stamp && l->told.stamp && (int32_t)(p.stamp - l->told.stamp) < 0) {
+        if (hides)
+            return false;
+        /* the notice a frame overtook still tells what is covered. */
+        LayerPlace *to[2] = {&l->told, l->waits ? nullptr : &l->shown};
+        for (int i = 0; i < 2; i++) {
+            if (!to[i])
+                continue;
+            to[i]->hidden_stamp = p.hidden_stamp;
+            to[i]->hidden_count = p.hidden_count;
+            memcpy(to[i]->hidden, p.hidden, sizeof(p.hidden));
+        }
+        return !l->waits;
+    }
     bool same = l->told.set && !memcmp(&p.client, &l->told.client, sizeof(p.client)) &&
-                !memcmp(&p.visible, &l->told.visible, sizeof(p.visible)) && p.order == l->told.order;
+                !memcmp(&p.visible, &l->told.visible, sizeof(p.visible)) && p.order == l->told.order && hides;
     l->told = p;
     if (same)
         return false;

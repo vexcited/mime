@@ -1107,6 +1107,33 @@ void ScreenLayer(WND *w, MIME_PRESENT_LAYER *out)
     hold_area(top, w, out);
 }
 
+/*
+ * what of the bounds of the part of a window that shows other windows of the tree cover: a window in front of a corner
+ * of it leaves a part that is no rectangle. window pixels relative to the top level window.
+ */
+static ULONG layer_hidden(WND *w, MimeRect *out)
+{
+    WND *top = WndTopLevel(w);
+    if (!top || top == WndDesktop() || !WndIsVisible(w) || (top->Style & WS_MINIMIZE))
+        return 0;
+    REGION area, rest;
+    layer_area(top, w, FALSE, &area);
+    ULONG count = 0;
+    if (area.Count > 1) {
+        RgnInit(&rest);
+        RgnSetRect(&rest, &area.Extents);
+        RgnCombine(&rest, &rest, &area, RGN_DIFF);
+        for (ULONG i = 0; i < rest.Count && count < MIME_LAYER_HIDDEN_MAX; i++) {
+            RECT r = rest.Rects[i];
+            RectOffset(&r, -top->WindowRect.left, -top->WindowRect.top);
+            out[count++] = (MimeRect){r.left, r.top, r.right, r.bottom};
+        }
+        RgnFree(&rest);
+    }
+    RgnFree(&area);
+    return count;
+}
+
 static MimeWinLayer *g_layer;
 
 /* tells the host where a window that presents lies now, and whether it shows. */
@@ -1123,6 +1150,7 @@ static void send_layer(WND *w, BOOLEAN follows)
                                   .client = {where.Client.left, where.Client.top, where.Client.right, where.Client.bottom},
                                   .visible = {where.Visible.left, where.Visible.top, where.Visible.right,
                                               where.Visible.bottom}};
+        g_layer->hidden_count = layer_hidden(w, g_layer->hidden);
         HalMimeHypercall(MIME_HC_WIN_LAYER, (ULONG64)MmGetPhysicalAddress(g_layer).QuadPart, 0, 0, 0, 0, 0, nullptr);
     }
 }
