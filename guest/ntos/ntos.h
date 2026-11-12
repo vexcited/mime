@@ -1718,6 +1718,8 @@ NTSTATUS MimeFsDriveVolume(const MimeFsDrive *drive, BOOLEAN gone, PDEVICE_OBJEC
 void IopInitializeDrives(void);
 void IopStartDrives(void);
 void IopStartPnpHostChanges(void);
+/* makes the tree hold an endpoint for each audio device the host has now. */
+void IopSyncAudioEndpoints(void);
 void IopPnpHostChanged(void);
 void IopDrivesInterrupt(void);
 
