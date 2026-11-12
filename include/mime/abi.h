@@ -1250,6 +1250,8 @@ typedef struct MimeWinReadback {
     uint64_t serial; /* counts the images the window presented, so a capture can tell whether it changed. */
 } MimeWinReadback;
 
+#define MIME_LAYER_HIDDEN_MAX 16
+
 /* where a window that presents lies in its top level window, window relative pixels of its own. */
 typedef struct MimeWinLayer {
     uint32_t window_id; /* the top level window. */
@@ -1258,7 +1260,10 @@ typedef struct MimeWinLayer {
     uint32_t stamp;     /* counts what is told of the places of windows, as in MimeGpuSurfaceConfig. */
     uint32_t follows;   /* the pixels of the window that were painted around the place come in the next present. */
     MimeRect client;
-    MimeRect visible;   /* the part of the client area that shows, empty while it is hidden or covered. */
+    MimeRect visible;   /* the bounds of the part of the client area that shows, empty while it is hidden or covered. */
+    /* what of those bounds other windows of the tree cover, which the bounds of a part that is no rectangle hold. */
+    uint32_t hidden_count;
+    MimeRect hidden[MIME_LAYER_HIDDEN_MAX];
 } MimeWinLayer;
 
 typedef struct MimeWinIcon {
