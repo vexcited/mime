@@ -492,6 +492,8 @@ void PaintPresent(WND *top)
         dirty.right = W32Max(dirty.right, vis.right);
         dirty.bottom = W32Max(dirty.bottom, vis.bottom);
     }
+    if (ScreenHeldCount)
+        ScreenHeldFlush(top);
     HostPresent(top, &dirty);
     if (!(top->Flags & WNDF_PRESENTED)) {
         top->Flags |= WNDF_PRESENTED;

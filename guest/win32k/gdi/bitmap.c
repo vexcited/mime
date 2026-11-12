@@ -131,17 +131,31 @@ void SurfaceDestroy(SURFACE *s)
     W32Free(s);
 }
 
-void SurfaceMarkDirty(SURFACE *s, const RECT *r)
+/* the draw touched the part of r inside the clip, all of r without one. */
+void SurfaceMarkDrawn(SURFACE *s, const RECT *r, const REGION *clip)
 {
     RECT clipped, bounds = {0, 0, s->Width, s->Height};
     if (!RectIntersect(&clipped, r, &bounds))
         return;
     RectUnion(&s->Dirty, &s->Dirty, &clipped);
+    if (ScreenHeldCount && s->Window) {
+        RECT part;
+        if (!clip)
+            ScreenHeldDrawn(s, &clipped);
+        for (ULONG i = 0; clip && i < clip->Count; i++)
+            if (RectIntersect(&part, &clipped, &clip->Rects[i]))
+                ScreenHeldDrawn(s, &part);
+    }
     /* what a program draws into the screen is part of the screen. */
     if (s->Flags & SURF_VSCREEN)
         ScreenVirtualFlush(s, &clipped);
     else if (ScreenIsSurface(s))
         ScreenKeep(&clipped);
+}
+
+void SurfaceMarkDirty(SURFACE *s, const RECT *r)
+{
+    SurfaceMarkDrawn(s, r, nullptr);
 }
 
 SURFACE *SurfaceLookup(HBITMAP bitmap)
@@ -870,7 +884,7 @@ int NTAPI NtGdiSetDIBitsToDeviceInternal(HDC hdc, int x, int y, DWORD width, DWO
                 BltSurface(dc->Surface, &clip, dx, dy, (LONG)width, (LONG)height, src, src_x, band_top, SRCCOPY, dc);
             }
             RECT r = {dx, dy, dx + (LONG)width, dy + (LONG)height};
-            SurfaceMarkDirty(dc->Surface, &r);
+            SurfaceMarkDrawn(dc->Surface, &r, &clip);
         }
         RgnFree(&clip);
         result = (int)(lines ? lines : (DWORD)src->Height);
@@ -915,7 +929,7 @@ int NTAPI NtGdiStretchDIBitsInternal(HDC hdc, int x, int y, int width, int heigh
                 StretchSurface(dc->Surface, &clip, &dst_rect, src, &src_rect, rop, dc->State.StretchMode);
             }
             RECT dirty = {W32Min(x0, x1), W32Min(y0, y1), W32Max(x0, x1), W32Max(y0, y1)};
-            SurfaceMarkDirty(dc->Surface, &dirty);
+            SurfaceMarkDrawn(dc->Surface, &dirty, &clip);
         }
         RgnFree(&clip);
         result = src_height;

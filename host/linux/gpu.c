@@ -2451,7 +2451,9 @@ static void surface_config(Channel *c, const MimeGpuSurfaceConfig *sc)
             g_vk.fn.vkCreateSemaphore(g_vk.device, &info, nullptr, &s->rendered);
         }
     }
-    MimeRect client = {sc->x, sc->y, sc->x + (int32_t)w, sc->y + (int32_t)h};
+    /* the guest holds what a window that shrank left for its layer, and the image stretches over that. */
+    MimeRect client = {sc->x, sc->y, MIME_MAX(sc->x + (int32_t)w, sc->visible[2]),
+                       MIME_MAX(sc->y + (int32_t)h, sc->visible[3])};
     s->target = (MvkTarget){sc->window_id, sc->source, sc->order, client,
                             {sc->visible[0], sc->visible[1], sc->visible[2], sc->visible[3]}};
     s->sync = sc->sync != 0;

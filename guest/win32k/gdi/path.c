@@ -899,7 +899,7 @@ static BOOL paint_path(HDC hdc, BOOLEAN fill, BOOLEAN stroke)
                 fill_path(dc, &clip, &dirty);
             if (stroke)
                 stroke_path(dc, &clip, &dirty);
-            SurfaceMarkDirty(dc->Surface, &dirty);
+            SurfaceMarkDrawn(dc->Surface, &dirty, &clip);
         }
         RgnFree(&clip);
         discard_path(dc);
