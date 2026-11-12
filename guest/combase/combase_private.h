@@ -78,12 +78,27 @@ typedef struct CB_AUDIO_ENDPOINT {
     WCHAR Name[128];
     BOOLEAN IsDefault;
 } CB_AUDIO_ENDPOINT;
+#define CB_AUDIO_MAX 32
 /* the active endpoints of a data flow, 0 render and 1 capture. */
 UINT32 CbAudioEndpoints(INT32 flow, CB_AUDIO_ENDPOINT *endpoints, UINT32 capacity);
+/* starts listening to mmdevapi, which then raises the events of MediaDevice and refreshes the watchers. */
+void CbAudioWatch(void);
+
+/* a TypedEventHandler, whichever its arguments. */
+typedef struct CB_EVENT_HANDLER {
+    const struct {
+        void *QueryInterface;
+        ULONG(STDMETHODCALLTYPE *AddRef)(void *This);
+        ULONG(STDMETHODCALLTYPE *Release)(void *This);
+        HRESULT(STDMETHODCALLTYPE *Invoke)(void *This, IInspectable *sender, IInspectable *args);
+    } *lpVtbl;
+} CB_EVENT_HANDLER;
 
 /* devinfo.c: Windows.Devices.Enumeration.DeviceInformation. */
 extern const WCHAR CbDeviceInformationClass[];
 HRESULT CbDeviceInformationFactory(REFIID riid, void **factory);
+/* the started watchers look at the endpoints again, from a pool thread. */
+void CbDeviceWatchersRefresh(void);
 
 /* keycred.c: Windows.Security.Credentials.KeyCredentialManager. */
 extern const WCHAR CbKeyCredentialManagerClass[];

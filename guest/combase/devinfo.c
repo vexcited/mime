@@ -316,6 +316,51 @@ static IDeviceInformation *new_device(const CB_AUDIO_ENDPOINT *endpoint)
     return (IDeviceInformation *)&device->Base.Ifaces[0];
 }
 
+/* ------------------------------------------------------------------ an update */
+
+MIME_DEFINE_GUID(IID_IDeviceInformationUpdate, 0x8F315305, 0xD972, 0x44B7, 0xA3, 0x7E, 0x9E, 0x82, 0x2C, 0x78, 0x21, 0x3B);
+
+typedef struct IDeviceInformationUpdate IDeviceInformationUpdate;
+#define IDeviceInformationUpdate_METHODS(T)                                                                            \
+    MIME_INSPECTABLE_METHODS(T)                                                                                        \
+    HRESULT(STDMETHODCALLTYPE *get_Id)(T * This, HSTRING * value);                                                     \
+    HRESULT(STDMETHODCALLTYPE *get_Properties)(T * This, IInspectable * *value);
+MIME_COM_INTERFACE(IDeviceInformationUpdate)
+
+WRT_INSPECTABLE_THUNKS(IDeviceInformationUpdate)
+
+typedef struct DEVICE_UPDATE {
+    WRT_OBJECT Base;
+    WCHAR Path[CB_AUDIO_PATH];
+} DEVICE_UPDATE;
+
+static HRESULT STDMETHODCALLTYPE update_id(IDeviceInformationUpdate *This, HSTRING *value)
+{
+    return copy_string(((DEVICE_UPDATE *)((WRT_IFACE *)This)->Owner)->Path, value);
+}
+
+static HRESULT STDMETHODCALLTYPE update_properties(IDeviceInformationUpdate *This, IInspectable **value)
+{
+    return device_properties(nullptr, value);
+}
+
+static const IDeviceInformationUpdateVtbl update_vtbl = {WRT_INSPECTABLE_ENTRIES(IDeviceInformationUpdate), update_id,
+                                                         update_properties};
+
+static const WRT_CLASS update_class = {L"Windows.Devices.Enumeration.DeviceInformationUpdate", 1,
+                                       {&IID_IDeviceInformationUpdate}, 0, device_destroy};
+
+static IInspectable *new_update(LPCWSTR path)
+{
+    DEVICE_UPDATE *update = CbAlloc(sizeof(*update));
+    if (!update)
+        return nullptr;
+    const void *vtables[1] = {&update_vtbl};
+    WrtInit(&update->Base, &update_class, vtables);
+    lstrcpynW(update->Path, path, CB_AUDIO_PATH);
+    return (IInspectable *)&update->Base.Ifaces[0];
+}
+
 /* ------------------------------------------------------------------ the watcher */
 
 typedef struct IDeviceWatcher IDeviceWatcher;
@@ -338,30 +383,30 @@ MIME_COM_INTERFACE(IDeviceWatcher)
 
 WRT_INSPECTABLE_THUNKS(IDeviceWatcher)
 
-/* a TypedEventHandler of the watcher, whichever its arguments. */
-typedef struct EVENT_HANDLER {
-    const struct {
-        void *QueryInterface;
-        ULONG(STDMETHODCALLTYPE *AddRef)(void *This);
-        ULONG(STDMETHODCALLTYPE *Release)(void *This);
-        HRESULT(STDMETHODCALLTYPE *Invoke)(void *This, IInspectable *sender, IInspectable *args);
-    } *lpVtbl;
-} EVENT_HANDLER;
-
 enum { EVENT_ADDED, EVENT_UPDATED, EVENT_REMOVED, EVENT_COMPLETED, EVENT_STOPPED, EVENT_KINDS };
 
 #define WATCHER_HANDLERS 16
 
-typedef struct WATCHER {
+typedef struct WATCHER WATCHER;
+struct WATCHER {
     WRT_OBJECT Base;
+    WATCHER *Next;
     SRWLOCK Lock;
     ULONG Flows;
     volatile LONG Status;
+    /* the endpoints told so far, which a later look is compared with. one look runs at a time. */
+    SRWLOCK Pass;
+    CB_AUDIO_ENDPOINT *Known[2];
+    UINT32 KnownCount[2];
     struct {
         INT64 Token;
-        EVENT_HANDLER *Handler;
+        CB_EVENT_HANDLER *Handler;
     } Handlers[EVENT_KINDS][WATCHER_HANDLERS];
-} WATCHER;
+};
+
+static SRWLOCK g_watchers_lock = SRWLOCK_INIT;
+static WATCHER *g_watchers;
+static volatile LONG g_refresh_pending;
 
 #define WATCHER_OF(This) ((WATCHER *)((WRT_IFACE *)(This))->Owner)
 
@@ -377,7 +422,7 @@ static HRESULT watcher_add(IDeviceWatcher *This, ULONG kind, IUnknown *handler, 
     for (ULONG i = 0; i < WATCHER_HANDLERS; i++)
         if (!w->Handlers[kind][i].Handler) {
             handler->lpVtbl->AddRef(handler);
-            w->Handlers[kind][i].Handler = (EVENT_HANDLER *)handler;
+            w->Handlers[kind][i].Handler = (CB_EVENT_HANDLER *)handler;
             w->Handlers[kind][i].Token = InterlockedIncrement64(&g_next_token);
             token->value = w->Handlers[kind][i].Token;
             hr = S_OK;
@@ -390,7 +435,7 @@ static HRESULT watcher_add(IDeviceWatcher *This, ULONG kind, IUnknown *handler, 
 static HRESULT watcher_remove(IDeviceWatcher *This, ULONG kind, EventRegistrationToken token)
 {
     WATCHER *w = WATCHER_OF(This);
-    EVENT_HANDLER *removed = nullptr;
+    CB_EVENT_HANDLER *removed = nullptr;
     AcquireSRWLockExclusive(&w->Lock);
     for (ULONG i = 0; i < WATCHER_HANDLERS; i++)
         if (w->Handlers[kind][i].Handler && w->Handlers[kind][i].Token == token.value) {
@@ -407,7 +452,7 @@ static HRESULT watcher_remove(IDeviceWatcher *This, ULONG kind, EventRegistratio
 /* the handlers are called outside the lock, so one may remove itself or stop the watcher. */
 static void watcher_raise(WATCHER *w, ULONG kind, IInspectable *args)
 {
-    EVENT_HANDLER *handlers[WATCHER_HANDLERS];
+    CB_EVENT_HANDLER *handlers[WATCHER_HANDLERS];
     ULONG count = 0;
     AcquireSRWLockShared(&w->Lock);
     for (ULONG i = 0; i < WATCHER_HANDLERS; i++)
@@ -448,29 +493,116 @@ static HRESULT STDMETHODCALLTYPE watcher_status(IDeviceWatcher *This, INT32 *sta
     return S_OK;
 }
 
-/* a started watcher reports what is there, then that enumeration is complete, from a pool thread as on windows. */
-static DWORD WINAPI watcher_enumerate(PVOID context)
+static const CB_AUDIO_ENDPOINT *endpoint_in(const CB_AUDIO_ENDPOINT *list, UINT32 count, LPCWSTR path)
 {
-    WATCHER *w = context;
+    for (UINT32 i = 0; i < count; i++)
+        if (!_wcsicmp(list[i].Path, path))
+            return &list[i];
+    return nullptr;
+}
+
+static BOOL watcher_live(const WATCHER *w)
+{
+    return w->Status == STATUS_STARTED || w->Status == STATUS_ENUMERATION_COMPLETED;
+}
+
+static void raise_update(WATCHER *w, ULONG kind, LPCWSTR path)
+{
+    IInspectable *update = new_update(path);
+    if (!update)
+        return;
+    watcher_raise(w, kind, update);
+    update->lpVtbl->Release(update);
+}
+
+/* tells what came, what left and whose default state turned since the look before. */
+static void watcher_look(WATCHER *w, BOOL first)
+{
+    CB_AUDIO_ENDPOINT *now = CbAlloc(sizeof(*now) * CB_AUDIO_MAX);
+    if (!now)
+        return;
+    AcquireSRWLockExclusive(&w->Pass);
     for (INT32 flow = 0; flow < 2; flow++) {
         if (!(w->Flows & (flow ? FLOW_CAPTURE : FLOW_RENDER)))
             continue;
-        CB_AUDIO_ENDPOINT endpoints[8];
-        UINT32 count = CbAudioEndpoints(flow, endpoints, RTL_NUMBER_OF(endpoints));
-        for (UINT32 i = 0; i < count && w->Status == STATUS_STARTED; i++) {
-            IDeviceInformation *device = new_device(&endpoints[i]);
+        if (!w->Known[flow])
+            w->Known[flow] = CbAlloc(sizeof(*now) * CB_AUDIO_MAX);
+        CB_AUDIO_ENDPOINT *known = w->Known[flow];
+        if (!known)
+            continue;
+        if (first)
+            w->KnownCount[flow] = 0;
+        UINT32 known_count = w->KnownCount[flow], count = CbAudioEndpoints(flow, now, CB_AUDIO_MAX);
+        for (UINT32 i = 0; i < known_count && watcher_live(w); i++)
+            if (!endpoint_in(now, count, known[i].Path))
+                raise_update(w, EVENT_REMOVED, known[i].Path);
+        for (UINT32 i = 0; i < count && watcher_live(w); i++) {
+            const CB_AUDIO_ENDPOINT *old = endpoint_in(known, known_count, now[i].Path);
+            if (old) {
+                if (old->IsDefault != now[i].IsDefault)
+                    raise_update(w, EVENT_UPDATED, now[i].Path);
+                continue;
+            }
+            IDeviceInformation *device = new_device(&now[i]);
             if (!device)
                 continue;
             watcher_raise(w, EVENT_ADDED, (IInspectable *)device);
             device->lpVtbl->Release(device);
         }
+        memcpy(known, now, count * sizeof(*now));
+        w->KnownCount[flow] = count;
     }
+    ReleaseSRWLockExclusive(&w->Pass);
+    CbFree(now);
+}
+
+/* a started watcher reports what is there, then that enumeration is complete, from a pool thread as on windows. */
+static DWORD WINAPI watcher_enumerate(PVOID context)
+{
+    WATCHER *w = context;
+    watcher_look(w, TRUE);
     if (InterlockedCompareExchange(&w->Status, STATUS_ENUMERATION_COMPLETED, STATUS_STARTED) == STATUS_STARTED)
         watcher_raise(w, EVENT_COMPLETED, nullptr);
     if (InterlockedCompareExchange(&w->Status, STATUS_STOPPED, STATUS_STOPPING) == STATUS_STOPPING)
         watcher_raise(w, EVENT_STOPPED, nullptr);
     WrtRelease(&w->Base.Ifaces[0]);
     return 0;
+}
+
+/* a watcher whose last reference is going is left alone. */
+static DWORD WINAPI refresh_watchers(PVOID context)
+{
+    WATCHER *list[64];
+    ULONG count = 0;
+    InterlockedExchange(&g_refresh_pending, 0);
+    AcquireSRWLockShared(&g_watchers_lock);
+    for (WATCHER *w = g_watchers; w && count < RTL_NUMBER_OF(list); w = w->Next) {
+        if (w->Status != STATUS_ENUMERATION_COMPLETED)
+            continue;
+        LONG refs = w->Base.Refs;
+        while (refs > 0) {
+            LONG seen = InterlockedCompareExchange(&w->Base.Refs, refs + 1, refs);
+            if (seen == refs)
+                break;
+            refs = seen;
+        }
+        if (refs > 0)
+            list[count++] = w;
+    }
+    ReleaseSRWLockShared(&g_watchers_lock);
+    for (ULONG i = 0; i < count; i++) {
+        watcher_look(list[i], FALSE);
+        WrtRelease(&list[i]->Base.Ifaces[0]);
+    }
+    return 0;
+}
+
+void CbDeviceWatchersRefresh(void)
+{
+    if (!g_watchers || InterlockedExchange(&g_refresh_pending, 1))
+        return;
+    if (!QueueUserWorkItem(refresh_watchers, nullptr, 0))
+        g_refresh_pending = 0;
 }
 
 static DWORD WINAPI watcher_finish_stop(PVOID context)
@@ -489,6 +621,8 @@ static HRESULT STDMETHODCALLTYPE watcher_start(IDeviceWatcher *This)
     if ((status != STATUS_CREATED && status != STATUS_STOPPED && status != STATUS_ABORTED) ||
         InterlockedCompareExchange(&w->Status, STATUS_STARTED, status) != status)
         return E_ILLEGAL_METHOD_CALL;
+    if (w->Flows)
+        CbAudioWatch();
     WrtAddRef(&w->Base.Ifaces[0]);
     if (!QueueUserWorkItem(watcher_enumerate, w, 0)) {
         w->Status = STATUS_ABORTED;
@@ -532,6 +666,15 @@ static const IDeviceWatcherVtbl watcher_vtbl = {WRT_INSPECTABLE_ENTRIES(IDeviceW
 static void watcher_destroy(WRT_OBJECT *object)
 {
     WATCHER *w = (WATCHER *)object;
+    AcquireSRWLockExclusive(&g_watchers_lock);
+    for (WATCHER **link = &g_watchers; *link; link = &(*link)->Next)
+        if (*link == w) {
+            *link = w->Next;
+            break;
+        }
+    ReleaseSRWLockExclusive(&g_watchers_lock);
+    CbFree(w->Known[0]);
+    CbFree(w->Known[1]);
     for (ULONG kind = 0; kind < EVENT_KINDS; kind++)
         for (ULONG i = 0; i < WATCHER_HANDLERS; i++)
             if (w->Handlers[kind][i].Handler)
@@ -555,6 +698,10 @@ static HRESULT new_watcher(ULONG flows, void **out)
     InitializeSRWLock(&w->Lock);
     w->Flows = flows;
     w->Status = STATUS_CREATED;
+    AcquireSRWLockExclusive(&g_watchers_lock);
+    w->Next = g_watchers;
+    g_watchers = w;
+    ReleaseSRWLockExclusive(&g_watchers_lock);
     *out = &w->Base.Ifaces[0];
     return S_OK;
 }

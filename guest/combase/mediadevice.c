@@ -63,6 +63,8 @@ typedef struct ENUMERATOR {
         ULONG(STDMETHODCALLTYPE *Release)(void *This);
         HRESULT(STDMETHODCALLTYPE *EnumAudioEndpoints)(void *This, INT32 flow, DWORD mask, COLLECTION **devices);
         HRESULT(STDMETHODCALLTYPE *GetDefaultAudioEndpoint)(void *This, INT32 flow, INT32 role, void **device);
+        void *GetDevice;
+        HRESULT(STDMETHODCALLTYPE *RegisterEndpointNotificationCallback)(void *This, void *client);
     } *lpVtbl;
 } ENUMERATOR;
 
@@ -234,43 +236,203 @@ static HRESULT STDMETHODCALLTYPE default_render(IMediaDeviceStatics *This, INT32
     return default_id(0, role, value);
 }
 
-/* the handlers are kept for their tokens. a change of the host's default device does not call them yet. */
 typedef struct HANDLER {
     INT64 Token;
-    IUnknown *Handler;
+    CB_EVENT_HANDLER *Handler;
 } HANDLER;
 
+#define MAX_HANDLERS 32
+
 static SRWLOCK g_handler_lock = SRWLOCK_INIT;
-static HANDLER g_handlers[64];
+static HANDLER g_handlers[2][MAX_HANDLERS];
 static INT64 g_next_token;
 
-static HRESULT add_handler(IUnknown *handler, EventRegistrationToken *token)
+/* ------------------------------------------------------------------ the arguments of a default device change */
+
+MIME_DEFINE_GUID(IID_IDefaultAudioDeviceChangedEventArgs, 0x110F882F, 0x1C05, 0x4657, 0xA1, 0x8E, 0x47, 0xC9, 0xB6, 0x9F,
+                 0x07, 0xAB);
+
+typedef struct IDefaultAudioDeviceChangedEventArgs IDefaultAudioDeviceChangedEventArgs;
+#define IDefaultAudioDeviceChangedEventArgs_METHODS(T)                                                                 \
+    MIME_INSPECTABLE_METHODS(T)                                                                                        \
+    HRESULT(STDMETHODCALLTYPE *get_Id)(T * This, HSTRING * value);                                                     \
+    HRESULT(STDMETHODCALLTYPE *get_Role)(T * This, INT32 * value);
+MIME_COM_INTERFACE(IDefaultAudioDeviceChangedEventArgs)
+
+WRT_INSPECTABLE_THUNKS(IDefaultAudioDeviceChangedEventArgs)
+
+typedef struct CHANGED_ARGS {
+    WRT_OBJECT Base;
+    INT32 Role;
+    WCHAR Path[CB_AUDIO_PATH];
+} CHANGED_ARGS;
+
+#define ARGS_OF(This) ((CHANGED_ARGS *)((WRT_IFACE *)(This))->Owner)
+
+static HRESULT STDMETHODCALLTYPE args_id(IDefaultAudioDeviceChangedEventArgs *This, HSTRING *value)
+{
+    return make_string(ARGS_OF(This)->Path, value);
+}
+
+static HRESULT STDMETHODCALLTYPE args_role(IDefaultAudioDeviceChangedEventArgs *This, INT32 *value)
+{
+    if (!value)
+        return E_POINTER;
+    *value = ARGS_OF(This)->Role;
+    return S_OK;
+}
+
+static const IDefaultAudioDeviceChangedEventArgsVtbl args_vtbl = {
+    WRT_INSPECTABLE_ENTRIES(IDefaultAudioDeviceChangedEventArgs), args_id, args_role};
+
+static void args_destroy(WRT_OBJECT *object)
+{
+    CbFree(object);
+}
+
+/* the two classes share one interface. */
+static const WRT_CLASS args_classes[2] = {
+    {L"Windows.Media.Devices.DefaultAudioRenderDeviceChangedEventArgs", 1, {&IID_IDefaultAudioDeviceChangedEventArgs},
+     0, args_destroy},
+    {L"Windows.Media.Devices.DefaultAudioCaptureDeviceChangedEventArgs", 1, {&IID_IDefaultAudioDeviceChangedEventArgs},
+     0, args_destroy}};
+
+/* the id is empty when the direction is left without a device. the sender of a static event is null. */
+static void raise_default_changed(INT32 flow, INT32 role, LPCWSTR id)
+{
+    CHANGED_ARGS *args = CbAlloc(sizeof(*args));
+    if (!args)
+        return;
+    const void *vtables[1] = {&args_vtbl};
+    WrtInit(&args->Base, &args_classes[flow], vtables);
+    args->Role = role;
+    args->Path[0] = 0;
+    if (id)
+        endpoint_path(flow, id, args->Path);
+    CB_EVENT_HANDLER *handlers[MAX_HANDLERS];
+    ULONG count = 0;
+    AcquireSRWLockShared(&g_handler_lock);
+    for (ULONG i = 0; i < MAX_HANDLERS; i++)
+        if (g_handlers[flow][i].Handler) {
+            handlers[count] = g_handlers[flow][i].Handler;
+            handlers[count]->lpVtbl->AddRef(handlers[count]);
+            count++;
+        }
+    ReleaseSRWLockShared(&g_handler_lock);
+    for (ULONG i = 0; i < count; i++) {
+        handlers[i]->lpVtbl->Invoke(handlers[i], nullptr, (IInspectable *)&args->Base.Ifaces[0]);
+        handlers[i]->lpVtbl->Release(handlers[i]);
+    }
+    WrtRelease(&args->Base.Ifaces[0]);
+}
+
+/* ------------------------------------------------------------------ the changes mmdevapi tells */
+
+typedef struct NOTIFICATION_CLIENT NOTIFICATION_CLIENT;
+struct NOTIFICATION_CLIENT {
+    const struct {
+        HRESULT(STDMETHODCALLTYPE *QueryInterface)(NOTIFICATION_CLIENT *This, REFIID riid, void **object);
+        ULONG(STDMETHODCALLTYPE *AddRef)(NOTIFICATION_CLIENT *This);
+        ULONG(STDMETHODCALLTYPE *Release)(NOTIFICATION_CLIENT *This);
+        HRESULT(STDMETHODCALLTYPE *OnDeviceStateChanged)(NOTIFICATION_CLIENT *This, LPCWSTR id, DWORD state);
+        HRESULT(STDMETHODCALLTYPE *OnDeviceAdded)(NOTIFICATION_CLIENT *This, LPCWSTR id);
+        HRESULT(STDMETHODCALLTYPE *OnDeviceRemoved)(NOTIFICATION_CLIENT *This, LPCWSTR id);
+        HRESULT(STDMETHODCALLTYPE *OnDefaultDeviceChanged)(NOTIFICATION_CLIENT *This, INT32 flow, INT32 role,
+                                                           LPCWSTR id);
+        HRESULT(STDMETHODCALLTYPE *OnPropertyValueChanged)(NOTIFICATION_CLIENT *This, LPCWSTR id,
+                                                           const PROPERTYKEY key);
+    } *lpVtbl;
+};
+
+MIME_DEFINE_GUID(IID_CbMMNotificationClient, 0x7991EEC9, 0x7E89, 0x4D85, 0x83, 0x90, 0x6C, 0x70, 0x3C, 0xEC, 0x60, 0xC0);
+
+static HRESULT STDMETHODCALLTYPE client_query(NOTIFICATION_CLIENT *This, REFIID riid, void **object)
+{
+    if (!object)
+        return E_POINTER;
+    *object = IsEqualIID(riid, &IID_IUnknown) || IsEqualIID(riid, &IID_CbMMNotificationClient) ? This : nullptr;
+    return *object ? S_OK : E_NOINTERFACE;
+}
+
+static ULONG STDMETHODCALLTYPE client_ref(NOTIFICATION_CLIENT *This)
+{
+    return 1;
+}
+
+static HRESULT STDMETHODCALLTYPE client_state(NOTIFICATION_CLIENT *This, LPCWSTR id, DWORD state)
+{
+    CbDeviceWatchersRefresh();
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE client_listed(NOTIFICATION_CLIENT *This, LPCWSTR id)
+{
+    return S_OK;
+}
+
+/* the multimedia role has no AudioDeviceRole. */
+static HRESULT STDMETHODCALLTYPE client_default(NOTIFICATION_CLIENT *This, INT32 flow, INT32 role, LPCWSTR id)
+{
+    if ((flow == 0 || flow == 1) && role != 1)
+        raise_default_changed(flow, role ? 1 : 0, id);
+    if (role == 0)
+        CbDeviceWatchersRefresh();
+    return S_OK;
+}
+
+static HRESULT STDMETHODCALLTYPE client_property(NOTIFICATION_CLIENT *This, LPCWSTR id, const PROPERTYKEY key)
+{
+    return S_OK;
+}
+
+static NOTIFICATION_CLIENT g_client = {&(const typeof(*g_client.lpVtbl)){
+    client_query, client_ref, client_ref, client_state, client_listed, client_listed, client_default,
+    client_property}};
+static INIT_ONCE g_watch_once = INIT_ONCE_STATIC_INIT;
+
+/* the enumerator is kept: mmdevapi tells its clients for the life of the process. */
+static BOOL CALLBACK watch(PINIT_ONCE once, PVOID parameter, PVOID *context)
+{
+    ENUMERATOR *enumerator = open_enumerator();
+    if (enumerator)
+        enumerator->lpVtbl->RegisterEndpointNotificationCallback(enumerator, &g_client);
+    return TRUE;
+}
+
+void CbAudioWatch(void)
+{
+    InitOnceExecuteOnce(&g_watch_once, watch, nullptr, nullptr);
+}
+
+static HRESULT add_handler(INT32 flow, IUnknown *handler, EventRegistrationToken *token)
 {
     if (!handler || !token)
         return E_POINTER;
     HRESULT hr = E_OUTOFMEMORY;
     AcquireSRWLockExclusive(&g_handler_lock);
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_handlers); i++)
-        if (!g_handlers[i].Handler) {
+    for (ULONG i = 0; i < MAX_HANDLERS; i++)
+        if (!g_handlers[flow][i].Handler) {
             handler->lpVtbl->AddRef(handler);
-            g_handlers[i].Handler = handler;
-            g_handlers[i].Token = ++g_next_token;
+            g_handlers[flow][i].Handler = (CB_EVENT_HANDLER *)handler;
+            g_handlers[flow][i].Token = ++g_next_token;
             token->value = g_next_token;
             hr = S_OK;
             break;
         }
     ReleaseSRWLockExclusive(&g_handler_lock);
+    if (SUCCEEDED(hr))
+        CbAudioWatch();
     return hr;
 }
 
-static HRESULT remove_handler(EventRegistrationToken token)
+static HRESULT remove_handler(INT32 flow, EventRegistrationToken token)
 {
-    IUnknown *removed = nullptr;
+    CB_EVENT_HANDLER *removed = nullptr;
     AcquireSRWLockExclusive(&g_handler_lock);
-    for (ULONG i = 0; i < RTL_NUMBER_OF(g_handlers); i++)
-        if (g_handlers[i].Handler && g_handlers[i].Token == token.value) {
-            removed = g_handlers[i].Handler;
-            g_handlers[i].Handler = nullptr;
+    for (ULONG i = 0; i < MAX_HANDLERS; i++)
+        if (g_handlers[flow][i].Handler && g_handlers[flow][i].Token == token.value) {
+            removed = g_handlers[flow][i].Handler;
+            g_handlers[flow][i].Handler = nullptr;
             break;
         }
     ReleaseSRWLockExclusive(&g_handler_lock);
@@ -282,23 +444,23 @@ static HRESULT remove_handler(EventRegistrationToken token)
 static HRESULT STDMETHODCALLTYPE add_capture_changed(IMediaDeviceStatics *This, IUnknown *handler,
                                                      EventRegistrationToken *token)
 {
-    return add_handler(handler, token);
+    return add_handler(1, handler, token);
 }
 
 static HRESULT STDMETHODCALLTYPE remove_capture_changed(IMediaDeviceStatics *This, EventRegistrationToken token)
 {
-    return remove_handler(token);
+    return remove_handler(1, token);
 }
 
 static HRESULT STDMETHODCALLTYPE add_render_changed(IMediaDeviceStatics *This, IUnknown *handler,
                                                     EventRegistrationToken *token)
 {
-    return add_handler(handler, token);
+    return add_handler(0, handler, token);
 }
 
 static HRESULT STDMETHODCALLTYPE remove_render_changed(IMediaDeviceStatics *This, EventRegistrationToken token)
 {
-    return remove_handler(token);
+    return remove_handler(0, token);
 }
 
 /* the class has statics and no instances. */
