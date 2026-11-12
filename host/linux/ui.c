@@ -33,6 +33,7 @@ typedef struct LayerPlace {
 /* a frame of a layer under its window, an axis at a time, in the same pixels. */
 typedef struct LayerFrame {
     int32_t off[2];   /* the image's origin from the surface's. */
+    int32_t lit[2];   /* where the surface starts to hold what the window shows, clear before it. */
     int32_t reach[2]; /* how far from its origin the surface holds what the window shows. */
     int32_t ext[2];   /* its size. */
 } LayerFrame;
@@ -2409,7 +2410,9 @@ static int settle_layers(UiWindow *w, MimeRect *holes, bool *again)
             }
             if (has)
                 hole = rect_and(rect_and(l->shown.visible, vis),
-                                (MimeRect){l->at[0], l->at[1], l->at[0] + MIME_MIN(c->reach[0], l->framed.reach[0]),
+                                (MimeRect){l->at[0] + MIME_MAX(c->lit[0], l->framed.lit[0]),
+                                           l->at[1] + MIME_MAX(c->lit[1], l->framed.lit[1]),
+                                           l->at[0] + MIME_MIN(c->reach[0], l->framed.reach[0]),
                                            l->at[1] + MIME_MIN(c->reach[1], l->framed.reach[1])});
         }
         bool open = !rect_empty(hole);
@@ -2905,7 +2908,9 @@ static void frame_under(UiWindow *w, VkLayer *l, MimeRect image, Fit fit, double
         f.ext[i] = size;
         f.reach[i] = MIME_MIN(hi - from, size);
         f.off[i] = (i ? image.top : image.left) - from;
+        f.lit[i] = MIME_MAX(lo - from, 0);
     }
+    frame->opaque = want;
     int32_t width = MIME_MAX((int32_t)lround(f.ext[0] * fit.scale), 1), height = MIME_MAX((int32_t)lround(f.ext[1] * fit.scale), 1);
     frame->area = (MimeRect){start[0], start[1], start[0] + f.ext[0], start[1] + f.ext[1]};
     frame->pixel_width = (uint32_t)MIME_MAX(lround(width * density), 1);
@@ -2937,6 +2942,7 @@ bool mime_ui_vk_frame(uint32_t id, uint32_t source, const MimeUiPlace *place, Mi
     pthread_mutex_unlock(&g_windows_lock);
     frame->host = host_part(&w->config);
     frame->visible = visible_part(&w->config);
+    frame->opaque = (MimeRect){};
     /* guest window bounds in host pixels. */
     Fit fit = window_fit(w);
     double density = w->logical_width > 0 ? (double)w->pixel_width / w->logical_width : 1.0;

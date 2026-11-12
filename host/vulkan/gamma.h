@@ -17,5 +17,7 @@ bool mime_gamma_shaders(const uint32_t **vertex, size_t *vertex_size, const uint
 /* the SPIR-V of the pass that draws an scRGB or HDR10 image as what its target shows. */
 bool mime_convert_shaders(const uint32_t **vertex, size_t *vertex_size, const uint32_t **fragment,
                           size_t *fragment_size);
+/* the SPIR-V of the pass that makes a part of an image opaque. */
+bool mime_opaque_shaders(const uint32_t **vertex, size_t *vertex_size, const uint32_t **fragment, size_t *fragment_size);
 
 #endif
