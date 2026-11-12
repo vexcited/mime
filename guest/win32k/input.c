@@ -36,6 +36,8 @@ void InputSetForeground(WND *w)
         InputForegroundChanged();
 }
 
+static void queue_mouse_refresh(void);
+
 void InputSetCapture(W32THREAD *t, WND *w, ULONG nc_hit)
 {
     HWND old = t->Capture;
@@ -46,6 +48,8 @@ void InputSetCapture(W32THREAD *t, WND *w, ULONG nc_hit)
         if (ow)
             MsgSend(ow, WM_CAPTURECHANGED, 0, (LPARAM)t->Capture);
     }
+    if (old && !t->Capture)
+        queue_mouse_refresh();
 }
 
 HWND NTAPI NtUserSetCapture(HWND hwnd)
@@ -497,6 +501,33 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
         }
     }
     QueuePostInput(t, ev, mouse_state, injected ? IMO_INJECTED : IMO_HARDWARE, extra);
+}
+
+/*
+ * a released capture is followed by a mouse move that the hardware did not make, as on windows: the window under
+ * the cursor sets its cursor again. hooks and raw input do not see it.
+ */
+static void queue_mouse_refresh(void)
+{
+    MimeInputEvent ev = {.type = MIME_INPUT_MOUSE_MOVE, .x = InputCursorPos.x, .y = InputCursorPos.y};
+    WND *top = WndChildFromPoint(WndDesktop(), InputCursorPos, FALSE);
+    ev.window_id = top ? (uint32_t)(ULONG_PTR)WndHandle(top) : 0;
+    ev.time_ms = (uint64_t)(KeQueryInterruptTime() / 10000);
+    if (InputAsyncKeys[VK_SHIFT] & 0x80)
+        ev.modifiers |= MIME_MOD_SHIFT;
+    if (InputAsyncKeys[VK_CONTROL] & 0x80)
+        ev.modifiers |= MIME_MOD_CONTROL;
+    if (InputAsyncKeys[VK_MENU] & 0x80)
+        ev.modifiers |= MIME_MOD_ALT;
+    W32THREAD *t = mouse_target_thread(&ev);
+    if (!t)
+        return;
+    if (!IsListEmpty(&t->Input)) {
+        QUEUED_MESSAGE *last = CONTAINING_RECORD(t->Input.Blink, QUEUED_MESSAGE, Links);
+        if (last->Input.type == MIME_INPUT_MOUSE_MOVE && last->Input.window_id == ev.window_id)
+            return;
+    }
+    QueuePostInput(t, &ev, mouse_key_state(&ev), IMO_HARDWARE, 0);
 }
 
 /* events carry the left or right modifier key, never the generic one. */
