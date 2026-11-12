@@ -1,7 +1,8 @@
 /*
  * microsoft's own copies of a few system files, kept in a host cache outside the guest drive so an identity check sees
- * the bytes microsoft ships while mime's code still runs. data/genuine.manifest lists each file by its windows path,
- * sha-256, symbol server key and size, all of the manifest's build. mime needs them all to run anything: mime setup,
+ * the bytes microsoft ships while mime's code still runs. data/genuine-<arch>.manifest, of the guest's architecture,
+ * lists each file by its windows path, sha-256, symbol server key and size, all of the manifest's build: on arm64 the
+ * arm64x files of windows on arm. mime needs them all to run anything: mime setup,
  * mime up and mime run get the missing ones from microsoft's symbol server, check each against the manifest and
  * install it atomically. nothing goes on the guest drive and nothing of microsoft's is in the build, see
  * guest/ntos/io/mimefs.c and MimeRomEntry.genuine.

@@ -426,7 +426,7 @@ typedef struct MimeBootInfo {
  */
 #define MIME_ROM_MAGIC 0x004D4F52454D494Dull /* "MIMEROM". */
 
-/* the entries of data/genuine.manifest the rom and the host can know. */
+/* the entries of data/genuine-<arch>.manifest the rom and the host can know. */
 #define MIME_GENUINE_MAX 256
 
 typedef struct MimeRomEntry {
@@ -434,7 +434,7 @@ typedef struct MimeRomEntry {
     uint64_t offset; /* from the rom header, page aligned. */
     uint64_t size;
     /*
-     * a file whose microsoft original is listed in data/genuine.manifest has 1 + its index there and its size. the
+     * a file whose microsoft original is listed in data/genuine-<arch>.manifest has 1 + its index there and its size. the
      * machine starts only when the host holds every one: reads, sizes and data sections of the file show that copy,
      * see MIME_HC_GENUINE_OPEN, and images still map this one.
      */
@@ -542,7 +542,7 @@ enum {
     MIME_HC_FS_LINK = 0x67,     /* handle, directory handle or 0 for the file's own, pa, chars and MIME_FS_LINK_* flags: makes a hard link to the file in a directory, returns the links the file has now. */
     MIME_HC_FS_APPEND = 0x6C,   /* handle, unused, pa and len: writes at the end of the file in one step that no other writer can get in the middle of, host programs that append included; returns the offset it was written at, the whole length or nothing is written. */
     /*
-     * (index, MimeFsInfo pa) -> handle: the host's checked copy of entry index of data/genuine.manifest, on the
+     * (index, MimeFsInfo pa) -> handle: the host's checked copy of entry index of data/genuine-<arch>.manifest, on the
      * MIME_FS_VOLUME_GENUINE volume, to read, query and map read only. NOT_FOUND past the last entry.
      */
     MIME_HC_GENUINE_OPEN = 0x6D,
