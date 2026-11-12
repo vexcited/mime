@@ -783,6 +783,13 @@ static void put_string(uint32_t *regs, const char *s)
     }
 }
 
+/* ActiveProcessorCount of the shared user data, read only by the leaves that report it. */
+static uint32_t processor_count(void)
+{
+    uint32_t cpus = *(volatile const uint32_t *)0x7FFE03C0;
+    return cpus ? (cpus > 255 ? 255 : cpus) : 1;
+}
+
 static void cpuid(X86Cpu *c)
 {
     uint32_t leaf = (uint32_t)c->r[X86_RAX], sub = (uint32_t)c->r[X86_RCX];
@@ -794,8 +801,6 @@ static void cpuid(X86Cpu *c)
      * stay clear.
      */
     static const char brand[48] = "                          Virtual CPU @ 3.80GHz";
-    uint32_t cpus = *(volatile const uint32_t *)0x7FFE03C0; /* ActiveProcessorCount of the shared user data. */
-    cpus = cpus ? (cpus > 255 ? 255 : cpus) : 1;
     switch (leaf) {
     case 0:
     case 0x80000000:
@@ -806,11 +811,15 @@ static void cpuid(X86Cpu *c)
         break;
     case 1:
         r[0] = 0x00600F01;
-        r[1] = cpus << 16 | 8u << 8; /* 64 byte clflush lines. */
+        r[1] = processor_count() << 16 | 8u << 8; /* 64 byte clflush lines. */
         r[2] = (1u << 0) | (1u << 9) | (1u << 13) | (1u << 19) | (1u << 23); /* sse3 ssse3 cx16 sse4.1 popcnt */
         r[3] = 0x17888111u; /* fpu tsc cx8 cmov clflush mmx fxsr sse sse2 htt */
         break;
     case 7:
+        if (!sub) {
+            r[1] = (1u << 13) | (1u << 29); /* fpu cs and ds deprecated, sha */
+            r[3] = 1u << 14;                /* serialize */
+        }
         break;
     case 0x80000001:
         r[0] = 0x00600F01;
@@ -832,10 +841,12 @@ static void cpuid(X86Cpu *c)
     case 0x80000007:
         r[3] = 1u << 8; /* invariant tsc */
         break;
-    case 0x80000008:
+    case 0x80000008: {
+        uint32_t cpus = processor_count();
         r[0] = 0x2020;
         r[2] = (cpus - 1) | (uint32_t)(31 - __builtin_clz(2 * cpus - 1)) << 12;
         break;
+    }
     case 4:
         if (sub < 4) {
             static const uint32_t a[4] = {0x121, 0x122, 0x143, 0x163};
@@ -952,6 +963,10 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
     case 0x01:
         if (op == 0x01 && i->modrm == 0xD0 && 0) /* xgetbv is reserved to processors reporting osxsave. */
             return;
+        if (op == 0x01 && i->modrm == 0xE8 && !i->mandatory) { /* serialize */
+            __atomic_thread_fence(__ATOMIC_SEQ_CST);
+            return;
+        }
         x86_undefined(c);
     case 0x31: { /* rdtsc */
         uint64_t t = c->env->timestamp(c);
