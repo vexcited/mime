@@ -231,6 +231,12 @@ static BOOLEAN pointer_image(PUCHAR out, ULONG capacity, MIME_CAPTURE_SHAPE *sha
     return TRUE;
 }
 
+/* the image of the program's cursor that is shown, as the host shows it. false when it shows one of its own. */
+BOOLEAN CaptureShownImage(PUCHAR out, ULONG capacity, MIME_CAPTURE_SHAPE *shape)
+{
+    return g_shown && CursorImage(g_shown) && pointer_image(out, capacity, shape);
+}
+
 /* ------------------------------------------------------------------ frames */
 
 /* false when the rows are the same. */

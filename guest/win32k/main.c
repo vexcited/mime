@@ -453,6 +453,7 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
     if (InputForeground && InputForeground->Thread == t)
         InputForeground = nullptr;
     InputKeysChanged();
+    HostReleaseCursor(thread);
     /* otherwise a thread that hid the pointer leaves it hidden for the next program. */
     if (InputCursorHidden && (t->CursorShowCount < 0 || !t->Cursor))
         HostSetCursor(MIME_CURSOR_ARROW);

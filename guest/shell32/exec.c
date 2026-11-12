@@ -219,6 +219,9 @@ static BOOL run(LPCWSTR application, LPWSTR command, LPCWSTR directory, int show
     PROCESS_INFORMATION process;
     startup.dwFlags = STARTF_USESHOWWINDOW;
     startup.wShowWindow = (WORD)show;
+    /* an empty directory is no directory to the shell, while CreateProcess refuses one. */
+    if (directory && !directory[0])
+        directory = nullptr;
     BOOL started = !elevate && CreateProcessW(application, command, nullptr, nullptr, FALSE, 0, nullptr, directory,
                                               &startup, &process);
     /* an elevated console program gets a console of its own, unless the caller asks to share its console. */

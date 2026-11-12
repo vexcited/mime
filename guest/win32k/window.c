@@ -337,14 +337,13 @@ static void subtract_siblings_above(WND *w, REGION *rgn)
             RgnCombineRect(rgn, rgn, &s->WindowRect, RGN_DIFF);
 }
 
-void WndComputeVisRgn(WND *w, BOOLEAN client, ULONG dcx_flags, REGION *out)
+static void vis_rgn(WND *w, BOOLEAN client, BOOLEAN clip_siblings, BOOLEAN clip_children, REGION *out)
 {
     RgnClear(out);
     if (!w || w == g_desktop || !WndIsVisible(w))
         return;
     WND *top = WndTopLevel(w);
     RgnSetRect(out, client ? &w->ClientRect : &w->WindowRect);
-    BOOLEAN clip_siblings = (dcx_flags & DCX_CLIPSIBLINGS) || (w->Style & WS_CLIPSIBLINGS);
     for (WND *c = w; c != top; c = c->Parent) {
         WND *p = c->Parent;
         RgnCombineRect(out, out, &p->ClientRect, RGN_AND);
@@ -352,7 +351,7 @@ void WndComputeVisRgn(WND *w, BOOLEAN client, ULONG dcx_flags, REGION *out)
             subtract_siblings_above(c, out);
     }
     RgnCombineRect(out, out, &top->WindowRect, RGN_AND);
-    if ((dcx_flags & DCX_CLIPCHILDREN) || (w->Style & WS_CLIPCHILDREN))
+    if (clip_children)
         for (WND *c = w->FirstChild; c; c = c->Next)
             if ((c->Style & WS_VISIBLE) && !(c->ExStyle & WS_EX_TRANSPARENT))
                 RgnCombineRect(out, out, &c->WindowRect, RGN_DIFF);
@@ -360,6 +359,12 @@ void WndComputeVisRgn(WND *w, BOOLEAN client, ULONG dcx_flags, REGION *out)
     /* the surface may lag behind the window when it could not grow; never draw past it. */
     RECT surface = {0, 0, top->Surface ? top->Surface->Width : 0, top->Surface ? top->Surface->Height : 0};
     RgnCombineRect(out, out, &surface, RGN_AND);
+}
+
+void WndComputeVisRgn(WND *w, BOOLEAN client, ULONG dcx_flags, REGION *out)
+{
+    vis_rgn(w, client, (dcx_flags & DCX_CLIPSIBLINGS) || (w->Style & WS_CLIPSIBLINGS),
+            (dcx_flags & DCX_CLIPCHILDREN) || (w->Style & WS_CLIPCHILDREN), out);
 }
 
 /* invalidation. */
@@ -665,6 +670,35 @@ static void invalidate_screen_rect(WND *parent, const RECT *r)
     RgnFree(&rgn);
 }
 
+/*
+ * moves the pixels of a region of a surface by dx,dy, dst being where they land. the rectangles are taken in the order
+ * that never reads one already written.
+ */
+static void copy_surface_bits(SURFACE *s, const REGION *dst, LONG dx, LONG dy)
+{
+    for (ULONG n = 0; n < dst->Count; n++) {
+        ULONG i = dy > 0 || (!dy && dx > 0) ? dst->Count - 1 - n : n;
+        if (dy && dx) {
+            /* bands go in the order of dy, and the rectangles of one band in the order of dx. */
+            ULONG first = i, last = i;
+            while (first && dst->Rects[first - 1].top == dst->Rects[i].top)
+                first--;
+            while (last + 1 < dst->Count && dst->Rects[last + 1].top == dst->Rects[i].top)
+                last++;
+            ULONG k = dy > 0 ? last - i : i - first;
+            i = dx > 0 ? last - k : first + k;
+        }
+        const RECT *r = &dst->Rects[i];
+        SIZE_T bytes = (SIZE_T)(r->right - r->left) * 4;
+        for (LONG row = 0; row < r->bottom - r->top; row++) {
+            LONG y = dy > 0 ? r->bottom - 1 - row : r->top + row;
+            memmove(s->Bits + (SIZE_T)y * s->Stride + (SIZE_T)r->left * 4,
+                    s->Bits + (SIZE_T)(y - dy) * s->Stride + (SIZE_T)(r->left - dx) * 4, bytes);
+        }
+    }
+    SurfaceMarkDirty(s, &dst->Extents);
+}
+
 void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT flags)
 {
     if (!w || w == g_desktop)
@@ -720,6 +754,13 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     BOOLEAN was_visible = WndIsVisible(w);
     /* what the window procedure is told of the client area: it is told of a move or a size that happened to it. */
     BOOLEAN client_moved = FALSE, client_sized = FALSE;
+    /* a child that only moves keeps what it shows: its pixels follow it and only what the move uncovers is painted. */
+    BOOLEAN copy_bits = moved && !sized && was_visible && !WndIsTopLevel(w) &&
+                        !(pos.flags & (SWP_NOCOPYBITS | SWP_NOREDRAW | SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_HIDEWINDOW));
+    REGION old_vis;
+    RgnInit(&old_vis);
+    if (copy_bits)
+        vis_rgn(w, FALSE, TRUE, FALSE, &old_vis);
 
     if (moved || sized || (pos.flags & SWP_FRAMECHANGED)) {
         RECT client;
@@ -782,7 +823,34 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     } else if (!(pos.flags & SWP_NOREDRAW)) {
         BOOLEAN changed = moved || sized || (pos.flags & (SWP_SHOWWINDOW | SWP_HIDEWINDOW | SWP_FRAMECHANGED)) ||
                           !(pos.flags & SWP_NOZORDER);
-        if (changed) {
+        WND *top = WndTopLevel(w);
+        if (changed && copy_bits && visible && top->Surface && top->Surface->Bpp == 32) {
+            LONG dx = w->WindowRect.left - old_screen.left, dy = w->WindowRect.top - old_screen.top;
+            REGION new_vis, kept;
+            RgnInit(&new_vis);
+            RgnInit(&kept);
+            vis_rgn(w, FALSE, TRUE, FALSE, &new_vis);
+            /* the surface may have been made again since. */
+            RECT surface = {0, 0, top->Surface->Width, top->Surface->Height};
+            RgnCombineRect(&old_vis, &old_vis, &surface, RGN_AND);
+            RgnOffset(&old_vis, dx, dy);
+            RgnCombine(&kept, &new_vis, &old_vis, RGN_AND);
+            copy_surface_bits(top->Surface, &kept, dx, dy);
+            RgnCombine(&new_vis, &new_vis, &kept, RGN_DIFF);
+            if (!RgnIsEmpty(&new_vis)) {
+                RgnOffset(&new_vis, top->WindowRect.left, top->WindowRect.top);
+                WndInvalidateRegion(w, &new_vis, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
+            }
+            REGION left;
+            RgnInit(&left);
+            RgnSetRect(&left, &old_screen);
+            RgnCombineRect(&left, &left, &w->WindowRect, RGN_DIFF);
+            if (!RgnIsEmpty(&left))
+                WndInvalidateRegion(w->Parent, &left, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
+            RgnFree(&left);
+            RgnFree(&kept);
+            RgnFree(&new_vis);
+        } else if (changed) {
             if (was_visible)
                 invalidate_screen_rect(w->Parent, &old_screen);
             if (visible) {
@@ -793,6 +861,7 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
         }
     }
     (void)old_client_screen;
+    RgnFree(&old_vis);
 
     if (!(pos.flags & SWP_NOACTIVATE) && WndIsTopLevel(w) && visible && !(w->ExStyle & WS_EX_NOACTIVATE) &&
         (pos.flags & SWP_SHOWWINDOW))
@@ -1212,6 +1281,34 @@ void WndHostDisplay(WND *w, ULONG monitor)
     }
 }
 
+static BOOLEAN fits(const WND *w, LONG cx, LONG cy)
+{
+    LONG dx = w->WindowRect.right - w->WindowRect.left - cx, dy = w->WindowRect.bottom - w->WindowRect.top - cy;
+    return dx >= -2 && dx <= 2 && dy >= -2 && dy <= 2;
+}
+
+/*
+ * a window the host does not place has a made up position, and one the host made larger must not hang off the
+ * screen: the pointer stops at the edge of the screen and would never reach the border there.
+ */
+static void keep_on_monitor(WND *w)
+{
+    MIME_MONITOR_INFO m;
+    if ((w->Flags & WNDF_HOST_PLACED) || (w->Style & (WS_MAXIMIZE | WS_MINIMIZE)))
+        return;
+    RECT rect = w->WindowRect;
+    DpiRectConvert(&rect, w->Awareness, DPI_PHYSICAL);
+    LONG index = MonitorFromRectIndex(&rect, FALSE);
+    if (!MonitorGet(index < 0 ? 0 : (ULONG)index, &m))
+        return;
+    POINT at = {W32Max(m.Rect.left, W32Min(rect.left, m.Rect.right - (rect.right - rect.left))),
+                W32Max(m.Rect.top, W32Min(rect.top, m.Rect.bottom - (rect.bottom - rect.top)))};
+    if (at.x == rect.left && at.y == rect.top)
+        return;
+    DpiPointConvert(&at, DPI_PHYSICAL, w->Awareness);
+    WndSetPos(w, nullptr, at.x, at.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 /* the compositor reports its window size in physical pixels. add the window bounds outside the host-covered area. */
 void WndHostSize(WND *w, LONG width, LONG height)
 {
@@ -1228,8 +1325,22 @@ void WndHostSize(WND *w, LONG width, LONG height)
     window.right = window.left + cx;
     window.bottom = window.top + cy;
     DpiRectConvert(&window, DPI_PHYSICAL, w->Awareness);
-    WndSetPos(w, nullptr, 0, 0, window.right - window.left, window.bottom - window.top,
-              SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    cx = window.right - window.left;
+    cy = window.bottom - window.top;
+    UserReference(&w->Header);
+    WndSetPos(w, nullptr, 0, 0, cx, cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    if (alive(w))
+        keep_on_monitor(w);
+    /*
+     * a maximized window that keeps the size of the work area, as FL Studio's does, does not fit the place the
+     * compositor gave it, a tile. it is restored there, as a maximized window dragged off the top of the screen is.
+     */
+    if (alive(w) && (w->Style & WS_MAXIMIZE) && !fits(w, cx, cy)) {
+        MsgSend(w, WM_SYSCOMMAND, SC_RESTORE, 0);
+        if (alive(w) && !(w->Style & (WS_MAXIMIZE | WS_MINIMIZE)) && !fits(w, cx, cy))
+            WndSetPos(w, nullptr, 0, 0, cx, cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    UserDereference(&w->Header);
 }
 
 static void deactivate_minimized(WND *w)
@@ -2156,6 +2267,62 @@ BOOL NTAPI NtUserShowWindowAsync(HWND hwnd, int cmd)
     return queued;
 }
 
+static BOOLEAN follows(LONG moved, LONG pointer)
+{
+    LONG d = moved - pointer;
+    return d > -8 && d < 8;
+}
+
+/*
+ * a program that draws its own frame moves and sizes its window by placing it at each move of the mouse while the
+ * button is held, as FL Studio does. a host whose compositor alone places windows, as on Wayland, takes the drag over
+ * once a step of the window is the step of the pointer, and the button is released for the program. TRUE when it did.
+ */
+static BOOLEAN host_takes_drag(WND *w, POINT at, POINT size, UINT flags)
+{
+    static ULONG press;
+    static HWND window;
+    static POINT last;
+    /* a window with an owner or a tool style is no window of the compositor to move: a menu, or what a drag carries. */
+    if (!InputHostPress || !WndIsTopLevel(w) || !(w->Flags & WNDF_HOST_WINDOW) || w->Thread != W32GetThread() ||
+        (w->Style & (WS_VISIBLE | WS_MINIMIZE | WS_MAXIMIZE)) != WS_VISIBLE || w->Owner ||
+        (w->ExStyle & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)))
+        return FALSE;
+    if (press != InputHostPress || window != WndHandle(w)) {
+        press = InputHostPress;
+        window = WndHandle(w);
+        last = InputPressPos;
+    }
+    LONG dx = InputCursorPos.x - last.x, dy = InputCursorPos.y - last.y;
+    last = InputCursorPos;
+    if (!dx && !dy)
+        return FALSE;
+    RECT now = w->WindowRect, r = now;
+    if (!(flags & SWP_NOMOVE))
+        r = (RECT){at.x, at.y, at.x + r.right - r.left, at.y + r.bottom - r.top};
+    if (!(flags & SWP_NOSIZE)) {
+        r.right = r.left + size.x;
+        r.bottom = r.top + size.y;
+    }
+    LONG left = r.left - now.left, top = r.top - now.top, right = r.right - now.right, bottom = r.bottom - now.bottom;
+    ULONG edge = 0;
+    if (left == right && top == bottom) {
+        if ((!left && !top) || !follows(left, dx) || !follows(top, dy))
+            return FALSE;
+    } else {
+        /* one side stays where it was on each axis that changes. */
+        if ((left && right) || (top && bottom) || (left && !follows(left, dx)) || (right && !follows(right, dx)) ||
+            (top && !follows(top, dy)) || (bottom && !follows(bottom, dy)))
+            return FALSE;
+        static const UCHAR edges[3][3] = {{0, WMSZ_LEFT, WMSZ_RIGHT},
+                                          {WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT},
+                                          {WMSZ_BOTTOM, WMSZ_BOTTOMLEFT, WMSZ_BOTTOMRIGHT}};
+        edge = edges[top ? 1 : bottom ? 2 : 0][left ? 1 : right ? 2 : 0];
+    }
+    /* a host that refuses is asked again at the next step: a window leaves the whole screen as it starts to move. */
+    return HostMoveSize(w, edge);
+}
+
 BOOL NTAPI NtUserSetWindowPos(HWND hwnd, HWND after, int x, int y, int cx, int cy, UINT flags)
 {
     UserEnter();
@@ -2169,7 +2336,8 @@ BOOL NTAPI NtUserSetWindowPos(HWND hwnd, HWND after, int x, int y, int cx, int c
         else
             size_from_caller(w, &at);
         size_from_caller(w, &size);
-        WndSetPos(w, (WND *)after, at.x, at.y, size.x, size.y, flags);
+        if ((flags & (SWP_NOMOVE | SWP_NOSIZE)) == (SWP_NOMOVE | SWP_NOSIZE) || !host_takes_drag(w, at, size, flags))
+            WndSetPos(w, (WND *)after, at.x, at.y, size.x, size.y, flags);
         ok = TRUE;
     }
     UserLeave();
@@ -3159,6 +3327,7 @@ ULONG_PTR NTAPI NtUserCallHwndParam(HWND hwnd, ULONG_PTR param, ULONG routine)
     }
     case MIME_HWNDPARAM_PRESENTLAYER: {
         MIME_PRESENT_LAYER layer;
+        w->Flags |= WNDF_PRESENTS;
         ScreenLayer(w, &layer);
         r = NT_SUCCESS(MimeCopyToUser((PVOID)param, &layer, sizeof(layer)));
         break;

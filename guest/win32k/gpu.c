@@ -180,6 +180,7 @@ BOOL NTAPI NtGdiMimeGpuGetSurface(HDC hdc, MIME_GPU_SURFACE *user_surface)
         s.Window = WndHandle(w);
         s.Width = (ULONG)(w->ClientRect.right - w->ClientRect.left);
         s.Height = (ULONG)(w->ClientRect.bottom - w->ClientRect.top);
+        w->Flags |= WNDF_PRESENTS;
         ScreenLayer(w, &layer);
         /* a window that is hidden has no host window to draw in. */
         if (layer.Window && WndIsVisible(w) && !(WndTopLevel(w)->Style & WS_MINIMIZE)) {

@@ -717,6 +717,8 @@ typedef struct WND_CLASS {
 #define WNDF_NCDPI 0x200000        /* the frame is drawn at the dpi of the window, not the one of the system. */
 #define WNDF_DPI_DEFERRED 0x400000 /* the program asked for the changes of its dpi to wait, DeferWindowDpiChanges. */
 #define WNDF_DPI_PENDING 0x800000  /* the dpi changed and the program has not been told. */
+#define WNDF_HOST_PLACED 0x1000000 /* the host tells where the window is, a wayland compositor does not. */
+#define WNDF_PRESENTS 0x2000000    /* a swap chain or a GL context asked where the window lies, so it has a layer. */
 
 /* caption buttons for hot and pressed tracking. */
 enum {
@@ -1044,6 +1046,8 @@ void InputInitialize(void);
 BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, UINT min, UINT max, BOOLEAN remove,
                        BOOLEAN *consumed);
 extern POINT InputCursorPos;
+extern ULONG InputHostPress; /* the left button is held on the host: a number of its own for each press, or zero. */
+extern POINT InputPressPos;  /* where the cursor was at that press. */
 extern BOOLEAN InputCursorByProgram; /* a program set the cursor and no hardware has moved it since. */
 extern BOOLEAN InputPointerOutside; /* the host said the last pointer event was outside its window. */
 /* raw input thread owns the desktop window, like the Windows csrss threads. */
@@ -1139,6 +1143,10 @@ void VkFreeProcess(W32PROCESS *p);
 void AudioFreeProcess(W32PROCESS *p);
 void GfxShareFreeProcess(W32PROCESS *p);
 void HostSetCursor(ULONG cursor);
+BOOLEAN HostSetCursorImage(HCURSOR cursor);
+void HostForgetCursor(HCURSOR cursor);
+BOOLEAN HostHoldCursor(void);
+void HostReleaseCursor(PETHREAD thread);
 void HostBeep(UINT type);
 
 /* system. */
@@ -1219,6 +1227,7 @@ void DisplayProcessExited(HANDLE pid);
 void CursorInitialize(void);
 void CursorDrawIcon(DC *dc, LONG x, LONG y, HICON icon, LONG cx, LONG cy, UINT flags);
 void CursorSet(HCURSOR cursor);
+HCURSOR CursorSystem(ULONG idc);
 SURFACE *CursorIconImage(HICON icon);
 BOOLEAN CursorValid(HICON icon);
 SURFACE *CursorImage(HICON cursor);
@@ -1228,6 +1237,7 @@ void CursorHotspot(HICON cursor, LONG *x, LONG *y);
 void CaptureFreeProcess(W32PROCESS *p);
 void CaptureCursorKind(ULONG kind);
 void CaptureCursorShown(HCURSOR cursor);
+BOOLEAN CaptureShownImage(PUCHAR out, ULONG capacity, MIME_CAPTURE_SHAPE *shape);
 BOOLEAN WinStaOnInputDesktop(void);
 
 /* callbacks into user32 for the system classes. */

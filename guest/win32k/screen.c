@@ -978,7 +978,7 @@ static MimeWinLayer *g_layer;
 /* tells the host where a window that presents lies now, and whether it shows. */
 static void send_layers(WND *top, WND *w)
 {
-    if (has_connection(w) && (g_layer || (g_layer = MmAllocateContiguousPages(4096)))) {
+    if ((w->Flags & WNDF_PRESENTS) && has_connection(w) && (g_layer || (g_layer = MmAllocateContiguousPages(4096)))) {
         MIME_PRESENT_LAYER where;
         ScreenLayer(w, &where);
         *g_layer = (MimeWinLayer){.window_id = where.Window,
@@ -995,7 +995,7 @@ static void send_layers(WND *top, WND *w)
 
 static BOOLEAN tree_has_connection(const WND *w)
 {
-    if (has_connection(w))
+    if ((w->Flags & WNDF_PRESENTS) && has_connection(w))
         return TRUE;
     for (const WND *c = w->FirstChild; c; c = c->Next)
         if (tree_has_connection(c))

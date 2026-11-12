@@ -62,6 +62,7 @@ typedef struct UiWindow {
     uint64_t want_ms;      /* time of the last size request. */
     uint64_t fullscreen_ms; /* when the guest last asked for or left fullscreen. */
     uint64_t interactive_until; /* the compositor sizes the window under the pointer, as long as sizes come. */
+    bool self_sized; /* its program sizes it under the pointer with no sizing frame, so the compositor may too. */
     bool size_recheck;     /* check the size after the guest request has had time to complete. */
     double popup_scale;    /* a popup is shown at the scale of its owner. */
     char want_app_id[200]; /* requested application id and the id currently on the toplevel. */
@@ -93,6 +94,7 @@ static double g_scale = 1.0;  /* guest pixels per SDL window coordinate of the p
 static MimeDisplayInfo g_display;
 static void raise_window(UiWindow *w);
 static bool g_wayland;        /* the video driver is Wayland's. */
+static bool g_says_maximized; /* the compositor calls every window maximized, see set_maximized. */
 static bool g_gl;             /* gl stays loaded for the windows' renderers. */
 
 /* the displays of the host, the primary first, in the guest's virtual screen. */
@@ -1151,7 +1153,13 @@ static UiWindow *popup_anchor(SDL_Window *focus, const UiWindow *w, const MimeRe
  */
 static UiWindow *popup_owner(const UiWindow *w, const MimeWinConfig *cfg)
 {
-    if (!(cfg->flags & MIME_WIN_TOOL))
+    /*
+     * a program that draws its own menus and lists has them in bare topmost windows it owns, with none of the tool
+     * styles. a wayland compositor would place such a top level window itself, hyprland in the middle of the screen.
+     */
+    bool menu = g_wayland && cfg->owner_id && (cfg->flags & (MIME_WIN_BARE | MIME_WIN_TOPMOST | MIME_WIN_FULLSCREEN)) ==
+                                                  (MIME_WIN_BARE | MIME_WIN_TOPMOST);
+    if (!(cfg->flags & MIME_WIN_TOOL) && !menu)
         return nullptr;
     UiWindow *owner = cfg->owner_id ? find_window(cfg->owner_id) : nullptr;
     if (owner && owner->window && (owner->shown || !g_wayland))
@@ -1215,7 +1223,7 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg, UiWindow *
         return false;
     }
     w->popup = popup;
-    w->says_maximized = false;
+    w->says_maximized = g_says_maximized && !popup;
     w->owner = popup ? owner->id : cfg->owner_id;
     w->renderer = SDL_CreateRenderer(w->window, nullptr);
     if (!w->renderer) {
@@ -1370,6 +1378,16 @@ static void present_main(void *arg)
         draw(w);
 }
 
+/*
+ * a window with no sizing frame that can be maximized has a program that draws its frame and sizes the window itself.
+ * the compositor may size it as well: sdl keeps a window that cannot be sized at the size asked, cut in a smaller tile.
+ */
+static bool can_size(const UiWindow *w, const MimeWinConfig *cfg)
+{
+    return (cfg->flags & MIME_WIN_RESIZABLE) || w->self_sized ||
+           (cfg->flags & (MIME_WIN_BARE | MIME_WIN_MAXIMIZABLE)) == (MIME_WIN_BARE | MIME_WIN_MAXIMIZABLE);
+}
+
 static void request_window_state(UiWindow *w, int command)
 {
     if (w->state_pending && w->state_command == command)
@@ -1396,7 +1414,8 @@ static Uint32 size_timer(void *data, SDL_TimerID timer, Uint32 interval);
  * hyprland tells every window it is maximized, tiled or floating, so that none draws shadows. the state says nothing
  * there, and sdl sends no request to maximize a window it takes for maximized. hyprland also takes either request as
  * a toggle: unset_maximized on a window that is not maximized maximizes it. such a window is asked directly, and only
- * for a change of the state asked before.
+ * for a change of the state asked before. it drops either request on a surface that has no buffer yet, which the
+ * next one would then toggle the wrong way, so a frame goes first.
  */
 enum { XDG_TOPLEVEL_SET_MAXIMIZED = 9, XDG_TOPLEVEL_UNSET_MAXIMIZED = 10 };
 
@@ -1409,6 +1428,7 @@ static void set_maximized(UiWindow *w, bool maximized)
             SDL_RestoreWindow(w->window);
         return;
     }
+    draw(w);
     struct wl_proxy *toplevel = SDL_GetPointerProperty(SDL_GetWindowProperties(w->window),
                                                        SDL_PROP_WINDOW_WAYLAND_XDG_TOPLEVEL_POINTER, nullptr);
     if (toplevel)
@@ -1417,13 +1437,23 @@ static void set_maximized(UiWindow *w, bool maximized)
     w->maximized = maximized;
 }
 
-static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
+static void apply_config(UiWindow *w, const MimeWinConfig *given)
 {
     if (w->state_pending) {
-        if (cfg->state_request != w->state_request)
+        if (given->state_request != w->state_request)
             return;
         w->state_pending = false;
     }
+    /*
+     * a window with no size shows nothing on windows, as the one a VCL program keeps for its application. a host
+     * window cannot be empty, and a compositor would give it a size of its own: a clear window over the others that
+     * takes their clicks.
+     */
+    MimeWinConfig sized = *given;
+    const MimeWinConfig *cfg = &sized;
+    if (!(sized.flags & MIME_WIN_MINIMIZED) &&
+        (sized.rect.right <= sized.rect.left || sized.rect.bottom <= sized.rect.top))
+        sized.flags &= ~(uint32_t)MIME_WIN_VISIBLE;
     /* a popup sits on its owner from its creation: another owner or kind makes a new window. */
     UiWindow *owner = popup_owner(w, cfg);
     bool want_popup = owner != nullptr;
@@ -1440,7 +1470,7 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
     bool limits_changed = !w->configured || w->config.min_width != cfg->min_width ||
                           w->config.min_height != cfg->min_height || w->config.max_width != cfg->max_width ||
                           w->config.max_height != cfg->max_height || w->config.dpi != cfg->dpi ||
-                          ((w->config.flags ^ cfg->flags) & MIME_WIN_RESIZABLE) ||
+                          can_size(w, &w->config) != can_size(w, cfg) ||
                           host_part(&w->config).right - host_part(&w->config).left != host_part(cfg).right - host_part(cfg).left ||
                           host_part(&w->config).bottom - host_part(&w->config).top != host_part(cfg).bottom - host_part(cfg).top;
     pthread_mutex_lock(&w->lock);
@@ -1487,7 +1517,7 @@ static void apply_config(UiWindow *w, const MimeWinConfig *cfg)
     }
     if (!w->popup && (limits_changed || fresh) && !minimized) {
         /* the compositor sizes a window the guest lets be sized, within the limits of its program. */
-        SDL_SetWindowResizable(w->window, (cfg->flags & MIME_WIN_RESIZABLE) != 0);
+        SDL_SetWindowResizable(w->window, can_size(w, cfg));
         int dw = (cfg->rect.right - cfg->rect.left) - (host.right - host.left);
         int dh = (cfg->rect.bottom - cfg->rect.top) - (host.bottom - host.top);
         int min_w = limit_of(cfg->min_width, dw, scale), min_h = limit_of(cfg->min_height, dh, scale);
@@ -2191,6 +2221,10 @@ static void movesize_main(void *arg)
             if (!m->edge) {
                 wl_proxy_marshal_flags(toplevel, XDG_TOPLEVEL_MOVE, nullptr, version, 0, seat, serial);
             } else {
+                if (!can_size(w, &w->config)) {
+                    w->self_sized = true;
+                    SDL_SetWindowResizable(w->window, true);
+                }
                 wl_proxy_marshal_flags(toplevel, XDG_TOPLEVEL_RESIZE, nullptr, version, 0, seat, serial,
                                        xdg_edge(m->edge));
                 w->interactive_until = now_ms() + 3000;
@@ -2515,6 +2549,96 @@ void mime_ui_set_cursor(uint32_t cursor)
     on_main(cursor_main, (void *)(uintptr_t)cursor);
 }
 
+typedef struct CursorImage {
+    uint32_t width, height, hot_x, hot_y, dpi;
+    uint64_t hash;
+    uint8_t pixels[];
+} CursorImage;
+
+/* programs switch between a few cursors of their own on every move, so the last ones made are kept. */
+static struct {
+    uint64_t hash;
+    SDL_Cursor *cursor;
+    uint64_t used;
+} g_image_cursors[16];
+static uint64_t g_image_cursor_clock;
+
+static SDL_Cursor *make_image_cursor(CursorImage *image)
+{
+    SDL_Surface *full = SDL_CreateSurfaceFrom((int)image->width, (int)image->height, SDL_PIXELFORMAT_ARGB8888,
+                                              image->pixels, (int)image->width * 4);
+    if (!full)
+        return nullptr;
+    SDL_Cursor *cursor = nullptr;
+    /* Wayland sizes a cursor in points: the image of a guest that is scaled is the sharp one of a smaller cursor. */
+    if (g_wayland && image->dpi > 96) {
+        int width = MIME_MAX((int)(image->width * 96 / image->dpi), 1);
+        int height = MIME_MAX((int)(image->height * 96 / image->dpi), 1);
+        SDL_Surface *base = SDL_ScaleSurface(full, width, height, SDL_SCALEMODE_LINEAR);
+        if (base) {
+            SDL_AddSurfaceAlternateImage(base, full);
+            cursor = SDL_CreateColorCursor(base, (int)(image->hot_x * 96 / image->dpi), (int)(image->hot_y * 96 / image->dpi));
+            SDL_DestroySurface(base);
+        }
+    } else {
+        cursor = SDL_CreateColorCursor(full, (int)image->hot_x, (int)image->hot_y);
+    }
+    SDL_DestroySurface(full);
+    return cursor;
+}
+
+static void cursor_image_main(void *arg)
+{
+    CursorImage *image = arg;
+    int slot = 0;
+    for (int i = 0; i < (int)MIME_ARRAY_COUNT(g_image_cursors); i++) {
+        if (g_image_cursors[i].cursor && g_image_cursors[i].hash == image->hash) {
+            slot = i;
+            goto show;
+        }
+        if (g_image_cursors[i].used < g_image_cursors[slot].used)
+            slot = i;
+    }
+    SDL_Cursor *cursor = make_image_cursor(image);
+    if (!cursor) {
+        free(image);
+        cursor_main((void *)(uintptr_t)MIME_CURSOR_ARROW);
+        return;
+    }
+    SDL_Cursor *old = g_image_cursors[slot].cursor;
+    g_image_cursors[slot].cursor = cursor;
+    g_image_cursors[slot].hash = image->hash;
+    if (old) {
+        if (SDL_GetCursor() == old)
+            SDL_SetCursor(cursor);
+        SDL_DestroyCursor(old);
+    }
+show:
+    free(image);
+    g_image_cursors[slot].used = ++g_image_cursor_clock;
+    g_cursor = UINT32_MAX;
+    SDL_SetCursor(g_image_cursors[slot].cursor);
+    SDL_ShowCursor();
+}
+
+void mime_ui_set_cursor_image(const void *pixels, uint32_t width, uint32_t height, uint32_t stride, uint32_t hot_x,
+                              uint32_t hot_y, uint32_t dpi)
+{
+    if (!g_video)
+        return;
+    CursorImage *image = mime_xmalloc(sizeof(*image) + (size_t)width * height * 4);
+    *image = (CursorImage){.width = width, .height = height, .hot_x = hot_x, .hot_y = hot_y, .dpi = dpi ? dpi : 96};
+    uint64_t hash = 1469598103934665603ull ^ width ^ (uint64_t)height << 16 ^ (uint64_t)hot_x << 32 ^ (uint64_t)hot_y << 48;
+    for (uint32_t y = 0; y < height; y++) {
+        uint8_t *row = image->pixels + (size_t)y * width * 4;
+        memcpy(row, (const uint8_t *)pixels + (size_t)y * stride, (size_t)width * 4);
+        for (uint32_t x = 0; x < width * 4; x++)
+            hash = (hash ^ row[x]) * 1099511628211ull;
+    }
+    image->hash = hash ^ dpi;
+    on_main(cursor_image_main, image);
+}
+
 typedef struct PointerCall {
     uint32_t mode, window_id;
     MimeRect rect;
@@ -2586,6 +2710,8 @@ void mime_ui_init(MimeUiInputSink sink, void *ctx)
     g_video = g_call_event != 0;
     mime_info("display driver %s", SDL_GetCurrentVideoDriver());
     g_wayland = SDL_GetCurrentVideoDriver() && !strcmp(SDL_GetCurrentVideoDriver(), "wayland");
+    /* seen on a window that opens, which is too late for a program whose first window opens maximized. */
+    g_says_maximized = g_wayland && getenv("HYPRLAND_INSTANCE_SIGNATURE");
     mime_color_watch(color_changed);
     /*
      * the windows' renderers draw with gl. a renderer that fails, as when the gpu's memory is full, makes SDL put its
@@ -2964,10 +3090,13 @@ static void handle_event(const SDL_Event *e)
     }
     case SDL_EVENT_WINDOW_MAXIMIZED: {
         UiWindow *w = find_by_sdl(e->window.windowID);
-        /* a window nobody maximized, called so as it opens: the compositor says it of every window. */
+        /*
+         * a window nobody maximized, called so as it opens or as it leaves the whole screen: the compositor says it of
+         * every window.
+         */
         if (w && !w->popup && g_wayland && !w->maximized && !(w->config.flags & MIME_WIN_MAXIMIZED) &&
-            now_ms() - w->shown_ms < 1000)
-            w->says_maximized = true;
+            (now_ms() - w->shown_ms < 1000 || now_ms() - w->fullscreen_ms < 1000))
+            w->says_maximized = g_says_maximized = true;
         if (w && !w->popup && !w->says_maximized) {
             w->maximized = true;
             if (!(w->config.flags & MIME_WIN_MAXIMIZED) && !w->fullscreen)

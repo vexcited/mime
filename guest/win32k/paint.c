@@ -10,6 +10,7 @@
 static MimeWinConfig *g_config;
 static MimeWinPresent *g_present;
 static MimeWinIcon *g_icon;
+static MimeCursorImage *g_cursor_image;
 static PUCHAR g_icon_pixels;
 static SIZE_T g_icon_capacity;
 
@@ -22,6 +23,7 @@ static BOOLEAN host_buffers(void)
         g_config = (MimeWinConfig *)page;
         g_present = (MimeWinPresent *)(page + 4096);
         g_icon = (MimeWinIcon *)(page + 4096 + sizeof(*g_present));
+        g_cursor_image = (MimeCursorImage *)(g_icon + 1);
     }
     return TRUE;
 }
@@ -213,10 +215,14 @@ void HostConfigure(WND *w, BOOLEAN activate)
         c->flags |= MIME_WIN_MAXIMIZABLE;
     if ((w->ExStyle & WS_EX_APPWINDOW) || (!w->Owner && !(w->ExStyle & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE))))
         c->flags |= MIME_WIN_APPWINDOW;
-    /* a thin border, as on Godot fullscreen windows, does not imply a title bar. */
+    /*
+     * a thin border, as on Godot fullscreen windows, does not imply a title bar. a window with a maximize box is one
+     * its user maximizes and restores, whatever it covers: FL Studio draws its own frame and fills the work area, which
+     * is the monitor on a host that tells of no bar.
+     */
     BOOLEAN fullscreen = (w->Flags & WNDF_FULLSCREEN) ||
-                         ((w->Style & WS_CAPTION) != WS_CAPTION && !(w->Style & (WS_THICKFRAME | WS_MINIMIZE)) &&
-                          WndCoversMonitor(w));
+                         ((w->Style & WS_CAPTION) != WS_CAPTION &&
+                          !(w->Style & (WS_THICKFRAME | WS_MINIMIZE | WS_MAXIMIZEBOX)) && WndCoversMonitor(w));
     if (fullscreen)
         c->flags |= MIME_WIN_FULLSCREEN;
     if (visible && (w->Flags & WNDF_ACTIVATE_PENDING)) {
@@ -232,6 +238,8 @@ void HostConfigure(WND *w, BOOLEAN activate)
     }
     if (w->ExStyle & WS_EX_TRANSPARENT)
         c->flags |= MIME_WIN_NOINPUT;
+    if ((w->Style & WS_POPUP) && !FrameHasCaption(w->Style, w->ExStyle) && !(w->Style & WS_THICKFRAME))
+        c->flags |= MIME_WIN_BARE;
     RECT physical;
     WndPhysicalRect(w, &physical);
     c->rect = mime_rect(&physical);
@@ -332,15 +340,111 @@ void HostPresent(WND *w, const RECT *dirty)
 
 BOOLEAN InputCursorHidden;
 
+/* what the host shows: a MIME_CURSOR_*, or the cursor of a program with the top bit set. */
+static ULONG g_host_cursor = ~0u;
+static PUCHAR g_cursor_pixels;
+static ULONG g_cursor_capacity;
+
+static void cursor_hidden(BOOLEAN hidden);
+
+/*
+ * WM_SETCURSOR goes to the parent before the child and both set a cursor. the host has the last one alone, or the
+ * pointer would blink between the two at each move.
+ */
+static PETHREAD g_cursor_hold;
+static ULONG g_cursor_pending = ~0u;
+
+BOOLEAN HostHoldCursor(void)
+{
+    if (g_cursor_hold)
+        return FALSE;
+    g_cursor_hold = PsGetCurrentThread();
+    g_cursor_pending = ~0u;
+    return TRUE;
+}
+
+void HostReleaseCursor(PETHREAD thread)
+{
+    if (g_cursor_hold != thread)
+        return;
+    g_cursor_hold = nullptr;
+    ULONG pending = g_cursor_pending;
+    g_cursor_pending = ~0u;
+    if (pending == ~0u)
+        return;
+    if (!(pending & 0x80000000u))
+        HostSetCursor(pending);
+    else if (!HostSetCursorImage((HCURSOR)(ULONG_PTR)(pending & 0x7FFFFFFFu)))
+        HostSetCursor(MIME_CURSOR_ARROW);
+}
+
+static BOOLEAN cursor_held(void)
+{
+    return g_cursor_hold && g_cursor_hold == PsGetCurrentThread();
+}
+
+void HostForgetCursor(HCURSOR cursor)
+{
+    ULONG key = 0x80000000u | (ULONG)(ULONG_PTR)cursor;
+    if (g_host_cursor == key)
+        g_host_cursor = ~0u;
+    if (g_cursor_pending == key)
+        g_cursor_pending = MIME_CURSOR_ARROW;
+}
+
+/* shows the image of a cursor a program made, which CaptureCursorShown was told of. false when the host cannot. */
+BOOLEAN HostSetCursorImage(HCURSOR cursor)
+{
+    ULONG key = 0x80000000u | (ULONG)(ULONG_PTR)cursor;
+    MIME_CAPTURE_SHAPE shape;
+    if (!cursor_held() && key == g_host_cursor)
+        return TRUE;
+    if (!host_buffers() || !CaptureShownImage(nullptr, 0, &shape) || !shape.Size)
+        return FALSE;
+    if (cursor_held()) {
+        g_cursor_pending = key;
+        return TRUE;
+    }
+    if (shape.Size > g_cursor_capacity) {
+        PHYSICAL_ADDRESS highest;
+        highest.QuadPart = -1;
+        PUCHAR pixels = MmAllocateContiguousMemory(shape.Size, highest);
+        if (!pixels)
+            return FALSE;
+        if (g_cursor_pixels)
+            MmFreeContiguousMemory(g_cursor_pixels);
+        g_cursor_pixels = pixels;
+        g_cursor_capacity = shape.Size;
+    }
+    CaptureShownImage(g_cursor_pixels, g_cursor_capacity, &shape);
+    LONG hx = W32Max(shape.HotspotX, 0), hy = W32Max(shape.HotspotY, 0);
+    MimeCursorImage *image = g_cursor_image;
+    *image = (MimeCursorImage){shape.Width, shape.Height, shape.Pitch, (ULONG)W32Min(hx, (LONG)shape.Width - 1),
+                               (ULONG)W32Min(hy, (LONG)shape.Height - 1), W32SystemDpi(),
+                               (ULONG64)MmGetPhysicalAddress(g_cursor_pixels).QuadPart};
+    if (hypercall(MIME_HC_WIN_CURSOR_IMAGE, (ULONG64)MmGetPhysicalAddress(image).QuadPart) != MIME_HC_STATUS_OK)
+        return FALSE;
+    g_host_cursor = key;
+    cursor_hidden(FALSE);
+    return TRUE;
+}
+
 void HostSetCursor(ULONG cursor)
 {
-    static ULONG current = ~0u;
-    if (cursor == current)
+    if (cursor_held()) {
+        g_cursor_pending = cursor;
         return;
-    current = cursor;
+    }
+    if (cursor == g_host_cursor)
+        return;
+    g_host_cursor = cursor;
     CaptureCursorKind(cursor);
     hypercall(MIME_HC_WIN_CURSOR, cursor);
-    BOOLEAN hidden = cursor == MIME_CURSOR_HIDDEN;
+    cursor_hidden(cursor == MIME_CURSOR_HIDDEN);
+}
+
+static void cursor_hidden(BOOLEAN hidden)
+{
     if (hidden != InputCursorHidden) {
         InputCursorHidden = hidden;
         if (hidden)

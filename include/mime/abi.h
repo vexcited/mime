@@ -558,6 +558,7 @@ enum {
     MIME_HC_WIN_CONFIG = 0x22,  /* (MimeWinConfig pa) */
     MIME_HC_WIN_PRESENT = 0x23, /* (MimeWinPresent pa) */
     MIME_HC_WIN_CURSOR = 0x24,  /* (MIME_CURSOR_*) */
+    MIME_HC_WIN_CURSOR_IMAGE = 0x59, /* (MimeCursorImage pa) a cursor of the program's own, shown until the next cursor call */
     MIME_HC_BEEP = 0x25,        /* (type) */
     MIME_HC_CLIP_SET = 0x26,    /* (pa, len, offset, total) UTF-16LE text in chunks, committed at the last byte */
     MIME_HC_CLIP_GET = 0x27,    /* (pa, capacity, offset) -> total bytes of the host UTF-16LE text */
@@ -1197,6 +1198,7 @@ enum {
     MIME_WIN_MAXIMIZABLE = 1u << 11,
     MIME_WIN_ACTIVE = 1u << 12, /* the frame is drawn active. */
     MIME_WIN_NOINPUT = 1u << 13, /* takes no mouse input: a transparent window, such as a tooltip. */
+    MIME_WIN_BARE = 1u << 14, /* no caption and no sizing frame: only its program places it. */
 };
 
 typedef struct MimeWinConfig {
@@ -1263,6 +1265,14 @@ typedef struct MimeWinIcon {
     uint32_t width, height, stride;
     uint64_t pixels_phys;
 } MimeWinIcon;
+
+/* straight alpha bgra in the pixels of the guest's screen. */
+typedef struct MimeCursorImage {
+    uint32_t width, height, stride;
+    uint32_t hot_x, hot_y;
+    uint32_t dpi; /* of the guest's screen, 96 is one pixel a point. */
+    uint64_t pixels_phys;
+} MimeCursorImage;
 
 enum {
     MIME_CURSOR_ARROW = 0,
