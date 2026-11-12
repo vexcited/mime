@@ -2405,9 +2405,14 @@ static VKAPI_ATTR void VKAPI_CALL CmdExecuteGeneratedCommandsEXT(VkCommandBuffer
     int point = dispatch ? VKM_COMPUTE : VKM_GFX;
     id<MTLComputePipelineState> normal = s->compute;
     if (dispatch) {
-        if (!s->cs || !s->compute || !(s->compute = vkm_compute_pipeline(cmd->device, s->cs, true)) ||
-            !prepare_dispatch(cmd))
+        if (!s->cs || !s->compute || !(s->compute = vkm_compute_pipeline(cmd->device, s->cs, true)))
             goto done;
+        /* only the bindings are wanted now: the kernel takes the pipeline, which is set after it. */
+        s->set_compute = s->compute;
+        if (!prepare_dispatch(cmd)) {
+            s->set_compute = nullptr;
+            goto done;
+        }
     } else {
         s->icb = s->pipeline_dirty = true;
         bool ready = prepare_draw(cmd);
