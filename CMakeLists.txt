@@ -1738,7 +1738,7 @@ set_source_files_properties(host/vulkan/vulkan.c host/vulkan/budget.c host/vulka
 
 if(APPLE)
     enable_language(OBJC)
-    mime_glob(host_sources host/*.c host/vmm/*.c host/ui/*.c host/ui/*.m host/gpu/*.c
+    mime_glob(host_sources host/*.c host/vmm/*.c host/ui/*.c host/ui/*.m host/gpu/*.c host/gpu/*.m
         host/audio/*.c host/camera/*.c)
 
     mime_glob(vkmetal_sources host/vkmetal/*.c host/vkmetal/*.cpp)
@@ -1748,10 +1748,12 @@ if(APPLE)
 
     add_executable(mime ${host_sources} ${vulkan_host_sources} ${vkmetal_sources} ${MIME_BUILD_GEN}/rom.S
         $<TARGET_OBJECTS:mvk-host> $<TARGET_OBJECTS:shaderc>)
-    set_source_files_properties(host/gpu/gpu.c host/gpu/shader.c PROPERTIES COMPILE_OPTIONS -fblocks
+    set_source_files_properties(host/gpu/gpu.m host/gpu/shader.c PROPERTIES COMPILE_OPTIONS -fblocks
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party;${CMAKE_SOURCE_DIR}/third_party/glslang")
+    # the replay keeps its metal objects in c tables it grows with realloc, which arc cannot own.
+    set_property(SOURCE host/gpu/gpu.m APPEND PROPERTY COMPILE_OPTIONS -fno-objc-arc)
     target_link_libraries(mime PRIVATE "-framework Hypervisor" "-framework AppKit" "-framework QuartzCore"
-        "-framework CoreGraphics" "-framework ImageIO" "-framework Metal" "-framework IOSurface" "-framework Carbon"
+        "-framework CoreGraphics" "-framework ImageIO" "-framework Metal" "-framework MetalFX" "-framework IOSurface" "-framework Carbon"
         "-framework AudioToolbox" "-framework CoreAudio" "-framework Security" objc)
     set_target_properties(mime PROPERTIES LINKER_LANGUAGE CXX)
     add_custom_command(TARGET mime POST_BUILD
