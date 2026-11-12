@@ -1491,6 +1491,13 @@ _NtGdiGetDIBitsInternal@36:
     int $0x2e
     retl $36
     .p2align 4, 0x90
+    .globl _NtUserGetUpdateRgn@12
+_NtUserGetUpdateRgn@12:
+    movl $0x107e, %eax
+    movl %esp, %edx
+    int $0x2e
+    retl $12
+    .p2align 4, 0x90
     .globl _NtGdiSetDIBitsToDeviceInternal@64
 _NtGdiSetDIBitsToDeviceInternal@64:
     movl $0x1025, %eax

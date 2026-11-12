@@ -584,6 +584,7 @@ W32KAPI BOOL NTAPI NtUserInvalidateRect(HWND hwnd, const RECT *rect, BOOL erase)
 W32KAPI BOOL NTAPI NtUserValidateRect(HWND hwnd, const RECT *rect);
 W32KAPI BOOL NTAPI NtUserRedrawWindow(HWND hwnd, const RECT *rect, HRGN region, UINT flags);
 W32KAPI BOOL NTAPI NtUserGetUpdateRect(HWND hwnd, LPRECT rect, BOOL erase);
+W32KAPI int NTAPI NtUserGetUpdateRgn(HWND hwnd, HRGN region, BOOL erase);
 
 W32KAPI HWND NTAPI NtUserSetFocus(HWND hwnd);
 W32KAPI HWND NTAPI NtUserSetActiveWindow(HWND hwnd);

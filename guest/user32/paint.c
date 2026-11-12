@@ -77,13 +77,7 @@ WINUSERAPI BOOL WINAPI GetUpdateRect(HWND hwnd, LPRECT rect, BOOL erase)
 
 WINUSERAPI int WINAPI GetUpdateRgn(HWND hwnd, HRGN region, BOOL erase)
 {
-    RECT r;
-    if (!NtUserGetUpdateRect(hwnd, &r, erase)) {
-        SetRectRgn(region, 0, 0, 0, 0);
-        return NULLREGION;
-    }
-    SetRectRgn(region, r.left, r.top, r.right, r.bottom);
-    return SIMPLEREGION;
+    return NtUserGetUpdateRgn(hwnd, region, erase);
 }
 
 WINUSERAPI BOOL WINAPI LockWindowUpdate(HWND hwnd)
