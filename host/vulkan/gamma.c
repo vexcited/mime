@@ -124,6 +124,11 @@ static const char CONVERT[] =
     "    color = vec4(c, t.a);\n"
     "}\n";
 
+/* writes an alpha of one, for a pipeline that writes no other channel. */
+static const char OPAQUE[] = "#version 450\n"
+                             "layout(location = 0) out vec4 color;\n"
+                             "void main() { color = vec4(0.0, 0.0, 0.0, 1.0); }\n";
+
 typedef struct Spirv {
     uint32_t *words;
     size_t size;
@@ -163,7 +168,7 @@ static Spirv compile(glslang_stage_t stage, const char *source)
 }
 
 static pthread_once_t g_once = PTHREAD_ONCE_INIT;
-static Spirv g_vertex, g_fragment, g_convert;
+static Spirv g_vertex, g_fragment, g_convert, g_opaque;
 
 static void compile_all(void)
 {
@@ -171,6 +176,7 @@ static void compile_all(void)
     g_vertex = compile(GLSLANG_STAGE_VERTEX, VERTEX);
     g_fragment = compile(GLSLANG_STAGE_FRAGMENT, FRAGMENT);
     g_convert = compile(GLSLANG_STAGE_FRAGMENT, CONVERT);
+    g_opaque = compile(GLSLANG_STAGE_FRAGMENT, OPAQUE);
 }
 
 bool mime_gamma_shaders(const uint32_t **vertex, size_t *vertex_size, const uint32_t **fragment, size_t *fragment_size)
@@ -192,4 +198,14 @@ bool mime_convert_shaders(const uint32_t **vertex, size_t *vertex_size, const ui
     *fragment = g_convert.words;
     *fragment_size = g_convert.size;
     return g_vertex.words && g_convert.words;
+}
+
+bool mime_opaque_shaders(const uint32_t **vertex, size_t *vertex_size, const uint32_t **fragment, size_t *fragment_size)
+{
+    pthread_once(&g_once, compile_all);
+    *vertex = g_vertex.words;
+    *vertex_size = g_vertex.size;
+    *fragment = g_opaque.words;
+    *fragment_size = g_opaque.size;
+    return g_vertex.words && g_opaque.words;
 }

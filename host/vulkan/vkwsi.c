@@ -129,6 +129,18 @@ typedef struct GammaPass {
     VkFramebuffer framebuffers[MAX_HOST_IMAGES];
 } GammaPass;
 
+/* what makes the part of a layer its window shows opaque, whatever alpha the guest left in its image. */
+typedef struct MaskPass {
+    bool broken;
+    VkFormat format;
+    VkRenderPass pass;
+    VkPipelineLayout layout;
+    VkPipeline pipeline;
+    VkSwapchainKHR views_of;
+    VkImageView views[MAX_HOST_IMAGES];
+    VkFramebuffer framebuffers[MAX_HOST_IMAGES];
+} MaskPass;
+
 /* a guest image of high dynamic range drawn as another space, the size of the image. */
 typedef struct ConvertTarget {
     VkImage image;
@@ -164,6 +176,8 @@ struct Presenter {
     VkFormat format;
     bool srgb;
     bool premultiplied; /* the swapchain composes with alpha. */
+    /* it composes with alpha for a layer whose guest does not: clear past what its window shows of it, opaque there. */
+    bool masked;
     bool premultiplied_wanted; /* what the last swapchain asked for, which the surface may not offer. */
     uint32_t space; /* of the swapchain. */
     bool deep_wanted; /* high dynamic range was asked for, which the surface may not offer. */
@@ -230,6 +244,7 @@ struct Presenter {
     bool readback_coherent;
 
     GammaPass gamma;
+    MaskPass mask;
 };
 
 typedef struct PresentJob {
@@ -573,6 +588,33 @@ static void wait_frames(MvkConnection *c, Presenter *p)
             c->fn.vkWaitForFences(c->device, 1, &p->frames[i].fence, VK_TRUE, UINT64_MAX);
 }
 
+static void mask_drop_views(MvkConnection *c, Presenter *p)
+{
+    MaskPass *m = &p->mask;
+    for (uint32_t i = 0; i < MAX_HOST_IMAGES; i++) {
+        if (m->framebuffers[i])
+            c->fn.vkDestroyFramebuffer(c->device, m->framebuffers[i], nullptr);
+        if (m->views[i])
+            c->fn.vkDestroyImageView(c->device, m->views[i], nullptr);
+        m->framebuffers[i] = VK_NULL_HANDLE;
+        m->views[i] = VK_NULL_HANDLE;
+    }
+    m->views_of = VK_NULL_HANDLE;
+}
+
+static void mask_destroy(MvkConnection *c, Presenter *p)
+{
+    MaskPass *m = &p->mask;
+    mask_drop_views(c, p);
+    if (m->pipeline)
+        c->fn.vkDestroyPipeline(c->device, m->pipeline, nullptr);
+    if (m->pass)
+        c->fn.vkDestroyRenderPass(c->device, m->pass, nullptr);
+    if (m->layout)
+        c->fn.vkDestroyPipelineLayout(c->device, m->layout, nullptr);
+    *m = (MaskPass){};
+}
+
 static void gamma_drop_views(MvkConnection *c, Presenter *p)
 {
     GammaPass *g = &p->gamma;
@@ -592,6 +634,7 @@ static void drop_swapchain(MvkConnection *c, Presenter *p)
 {
     MvkWsi *w = c->wsi;
     gamma_drop_views(c, p);
+    mask_drop_views(c, p);
     for (uint32_t i = 0; i < p->count; i++) {
         if (p->done[i])
             c->fn.vkDestroySemaphore(c->device, p->done[i], nullptr);
@@ -687,6 +730,7 @@ static void destroy_presenter(MvkConnection *c, Presenter *p)
     if (p->pool)
         c->fn.vkDestroyCommandPool(c->device, p->pool, nullptr);
     gamma_destroy(c, p);
+    mask_destroy(c, p);
     bool attached = p->attached;
     pthread_mutex_unlock(&p->lock);
     pthread_mutex_destroy(&p->lock);
@@ -983,6 +1027,13 @@ static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExte
         alpha = VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
     else
         premultiplied = false;
+    /* a layer lies among the others of its window, and its surface may be larger than what the window shows of it. */
+    bool masked = !premultiplied && p->source && !p->mask.broken &&
+                  !space_of(format.format, format.colorSpace) &&
+                  (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR) &&
+                  (caps.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+    if (masked)
+        alpha = VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR;
     if (!(caps.supportedCompositeAlpha & alpha))
         alpha = (VkCompositeAlphaFlagBitsKHR)(caps.supportedCompositeAlpha & -caps.supportedCompositeAlpha);
     /* the old swapchain goes first when both would not fit. */
@@ -1036,6 +1087,7 @@ static bool make_swapchain(MvkConnection *c, Presenter *p, VkQueue queue, VkExte
     p->format = format.format;
     p->srgb = srgb;
     p->premultiplied = premultiplied;
+    p->masked = masked;
     p->space = space_of(format.format, format.colorSpace);
     p->deep_wanted = deep;
     p->extent = extent;
@@ -1339,12 +1391,15 @@ static bool gamma_base(MvkConnection *c, GammaPass *g)
     return c->fn.vkAllocateDescriptorSets(c->device, &dsi, &g->set) == VK_SUCCESS;
 }
 
-/* a render pass over one image of format f, left in the given layout. */
-static bool make_pass(MvkConnection *c, VkFormat f, VkImageLayout final, VkRenderPass *pass)
+/* a render pass over one image of format f, left in the given layout. it keeps what the image has when asked. */
+static bool make_pass_of(MvkConnection *c, VkFormat f, VkImageLayout final, bool keep, VkRenderPass *pass)
 {
-    VkAttachmentDescription attachment = {0, f, VK_SAMPLE_COUNT_1_BIT, VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+    VkAttachmentDescription attachment = {0, f, VK_SAMPLE_COUNT_1_BIT,
+                                          keep ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE,
                                           VK_ATTACHMENT_STORE_OP_STORE, VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-                                          VK_ATTACHMENT_STORE_OP_DONT_CARE, VK_IMAGE_LAYOUT_UNDEFINED, final};
+                                          VK_ATTACHMENT_STORE_OP_DONT_CARE,
+                                          keep ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+                                          final};
     VkAttachmentReference ref = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
     VkSubpassDescription subpass = {.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
                                     .colorAttachmentCount = 1,
@@ -1357,9 +1412,15 @@ static bool make_pass(MvkConnection *c, VkFormat f, VkImageLayout final, VkRende
     return c->fn.vkCreateRenderPass(c->device, &rpi, nullptr, pass) == VK_SUCCESS;
 }
 
-/* a pipeline that draws one triangle over the whole pass. */
-static bool make_pipeline(MvkConnection *c, VkRenderPass pass, VkPipelineLayout layout, const uint32_t *vs,
-                          size_t vs_size, const uint32_t *fs, size_t fs_size, VkPipeline *pipeline)
+static bool make_pass(MvkConnection *c, VkFormat f, VkImageLayout final, VkRenderPass *pass)
+{
+    return make_pass_of(c, f, final, false, pass);
+}
+
+/* a pipeline that draws one triangle over the whole pass, into the channels of the mask. */
+static bool make_pipeline_of(MvkConnection *c, VkRenderPass pass, VkPipelineLayout layout, const uint32_t *vs,
+                             size_t vs_size, const uint32_t *fs, size_t fs_size, VkColorComponentFlags channels,
+                             VkPipeline *pipeline)
 {
     VkShaderModule modules[2] = {};
     VkShaderModuleCreateInfo vmi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, nullptr, 0, vs_size, vs};
@@ -1388,7 +1449,7 @@ static bool make_pipeline(MvkConnection *c, VkRenderPass pass, VkPipelineLayout 
             .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
             .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
         };
-        VkPipelineColorBlendAttachmentState blend = {.colorWriteMask = 0xF};
+        VkPipelineColorBlendAttachmentState blend = {.colorWriteMask = channels};
         VkPipelineColorBlendStateCreateInfo blending = {.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
                                                         .attachmentCount = 1,
                                                         .pAttachments = &blend};
@@ -1415,6 +1476,78 @@ static bool make_pipeline(MvkConnection *c, VkRenderPass pass, VkPipelineLayout 
         if (modules[i])
             c->fn.vkDestroyShaderModule(c->device, modules[i], nullptr);
     return ok;
+}
+
+static bool make_pipeline(MvkConnection *c, VkRenderPass pass, VkPipelineLayout layout, const uint32_t *vs,
+                          size_t vs_size, const uint32_t *fs, size_t fs_size, VkPipeline *pipeline)
+{
+    return make_pipeline_of(c, pass, layout, vs, vs_size, fs, fs_size, 0xF, pipeline);
+}
+
+/* the pass, the pipeline and the views that make a part of the swapchain's images opaque. */
+static bool mask_prepare(MvkConnection *c, Presenter *p)
+{
+    MaskPass *m = &p->mask;
+    if (!p->masked || m->broken)
+        return false;
+    bool ok = true;
+    if (!m->pipeline || m->format != p->format) {
+        wait_frames(c, p);
+        mask_destroy(c, p);
+        const uint32_t *vs, *fs;
+        size_t vs_size, fs_size;
+        VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+        ok = mime_opaque_shaders(&vs, &vs_size, &fs, &fs_size) &&
+             c->fn.vkCreatePipelineLayout(c->device, &pli, nullptr, &m->layout) == VK_SUCCESS &&
+             make_pass_of(c, p->format, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, true, &m->pass) &&
+             make_pipeline_of(c, m->pass, m->layout, vs, vs_size, fs, fs_size, VK_COLOR_COMPONENT_A_BIT, &m->pipeline);
+        m->format = p->format;
+    }
+    if (ok && m->views_of != p->swapchain) {
+        mask_drop_views(c, p);
+        for (uint32_t i = 0; i < p->count && ok; i++) {
+            VkImageViewCreateInfo vi = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .image = p->images[i],
+                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = p->format,
+                .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+            };
+            ok = c->fn.vkCreateImageView(c->device, &vi, nullptr, &m->views[i]) == VK_SUCCESS;
+            VkFramebufferCreateInfo fi = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO, nullptr, 0, m->pass, 1, &m->views[i],
+                                          p->extent.width, p->extent.height, 1};
+            ok = ok && c->fn.vkCreateFramebuffer(c->device, &fi, nullptr, &m->framebuffers[i]) == VK_SUCCESS;
+        }
+        m->views_of = p->swapchain;
+    }
+    if (!ok) {
+        /* the next swapchain is opaque again, and so is this one's surface with whatever alpha a frame has. */
+        mime_warn("vulkan: no mask pass on window %#x", p->window);
+        mask_destroy(c, p);
+        m->broken = true;
+        p->stale = true;
+    }
+    return ok;
+}
+
+/* the part of the frame the window shows made opaque, in the pass that leaves the image ready to present. */
+static void mask_record(MvkConnection *c, Presenter *p, VkCommandBuffer cmd, uint32_t target, VkRect2D part)
+{
+    MaskPass *m = &p->mask;
+    barrier(c, cmd, p->images[target], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+    VkRenderPassBeginInfo begin = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO, nullptr, m->pass, m->framebuffers[target],
+                                   {{0, 0}, p->extent}, 0, nullptr};
+    c->fn.vkCmdBeginRenderPass(cmd, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    if (part.extent.width && part.extent.height) {
+        c->fn.vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m->pipeline);
+        VkViewport viewport = {0, 0, (float)p->extent.width, (float)p->extent.height, 0, 1};
+        c->fn.vkCmdSetViewport(cmd, 0, 1, &viewport);
+        c->fn.vkCmdSetScissor(cmd, 0, 1, &part);
+        c->fn.vkCmdDraw(cmd, 3, 1, 0, 0);
+    }
+    c->fn.vkCmdEndRenderPass(cmd);
 }
 
 /* the render pass and pipeline that write a swapchain image of format f. */
@@ -1900,6 +2033,20 @@ static void blit(MvkConnection *c, VkCommandBuffer cmd, VkImage src, Box s, uint
                          &region, same ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
 }
 
+/* a blit of which only what lands in a part of the destination is drawn. */
+static void blit_in(MvkConnection *c, VkCommandBuffer cmd, VkImage src, Box s, uint32_t sw, uint32_t sh, VkImage dst,
+                    Box d, Box in, uint32_t dw, uint32_t dh, bool flip)
+{
+    if (s.right <= s.left || s.bottom <= s.top || d.right <= d.left || d.bottom <= d.top)
+        return;
+    double fx = (s.right - s.left) / (d.right - d.left), fy = (s.bottom - s.top) / (d.bottom - d.top);
+    if (d.left < in.left) s.left += (in.left - d.left) * fx, d.left = in.left;
+    if (d.top < in.top) s.top += (in.top - d.top) * fy, d.top = in.top;
+    if (d.right > in.right) s.right -= (d.right - in.right) * fx, d.right = in.right;
+    if (d.bottom > in.bottom) s.bottom -= (d.bottom - in.bottom) * fy, d.bottom = in.bottom;
+    blit(c, cmd, src, s, sw, sh, dst, d, dw, dh, flip);
+}
+
 /* the window relative guest rect r in host window pixels. */
 static Box to_pixels(const MimeUiFrame *f, MimeRect r)
 {
@@ -1909,7 +2056,7 @@ static Box to_pixels(const MimeUiFrame *f, MimeRect r)
 }
 
 static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Swapchain *s, uint32_t index,
-                   const MimeUiFrame *frame, MimeRect client, bool upload, bool gamma)
+                   const MimeUiFrame *frame, MimeRect client, bool upload, bool gamma, bool mask)
 {
     VkCommandBuffer cmd = f->cmd;
     /* through the ramp, the frame is composed first, after the last frame's pass read it. */
@@ -1980,13 +2127,32 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
                 VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
     }
     Box crop = {0, 0, s->extent.width, s->extent.height}, area;
+    Box whole = {0, 0, p->extent.width, p->extent.height}, lit = whole;
     if (frame->subsurface) {
         /* a layer is an area of the window, and the image lies over the part of it the client area takes. */
-        Box whole = {0, 0, p->extent.width, p->extent.height};
         area = whole;
         double lw = frame->area.right - frame->area.left, lh = frame->area.bottom - frame->area.top;
         if (lw > 0 && lh > 0) {
             double kx = p->extent.width / lw, ky = p->extent.height / lh;
+            /*
+             * a surface that composes with alpha is clear past what the window shows of the layer: it may be larger
+             * than that, and the layer of another window shows there through the same window.
+             */
+            const MimeRect *o = &frame->opaque;
+            if (!gamma && (mask || p->premultiplied) && o->right > o->left && o->bottom > o->top) {
+                lit = (Box){MIME_MAX(round((o->left - frame->area.left) * kx), 0),
+                            MIME_MAX(round((o->top - frame->area.top) * ky), 0),
+                            MIME_MIN(round((o->right - frame->area.left) * kx), whole.right),
+                            MIME_MIN(round((o->bottom - frame->area.top) * ky), whole.bottom)};
+                if (lit.right <= lit.left || lit.bottom <= lit.top)
+                    lit = (Box){};
+                VkClearColorValue clear = {};
+                VkImageSubresourceRange all = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                c->fn.vkCmdClearColorImage(cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear, 1, &all);
+                barrier(c, cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT);
+            }
             area = (Box){(frame->client.left - frame->area.left) * kx, (frame->client.top - frame->area.top) * ky,
                          (frame->client.right - frame->area.left) * kx, (frame->client.bottom - frame->area.top) * ky};
             /*
@@ -2001,16 +2167,17 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
                 for (int j = 0; j < 3; j++)
                     for (int i = 0; i < 3; i++)
                         if (i != 1 || j != 1)
-                            blit(c, cmd, from, (Box){i == 1 ? 0 : sx[i], j == 1 ? 0 : sy[j], i == 1 ? sw : sx[i + 1],
-                                                     j == 1 ? sh : sy[j + 1]},
-                                 s->extent.width, s->extent.height, dst, (Box){dx[i], dy[j], dx[i + 1], dy[j + 1]},
-                                 p->extent.width, p->extent.height, flip);
+                            blit_in(c, cmd, from, (Box){i == 1 ? 0 : sx[i], j == 1 ? 0 : sy[j], i == 1 ? sw : sx[i + 1],
+                                                        j == 1 ? sh : sy[j + 1]},
+                                    s->extent.width, s->extent.height, dst, (Box){dx[i], dy[j], dx[i + 1], dy[j + 1]},
+                                    lit, p->extent.width, p->extent.height, flip);
             }
         }
     } else {
         area = to_pixels(frame, frame->client);
     }
-    blit(c, cmd, from, crop, s->extent.width, s->extent.height, dst, area, p->extent.width, p->extent.height, flip);
+    blit_in(c, cmd, from, crop, s->extent.width, s->extent.height, dst, area, lit, p->extent.width, p->extent.height,
+            flip);
     /* and kept, for captures of the screen. */
     if (p->last) {
         barrier(c, cmd, p->last, p->last_valid ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
@@ -2039,6 +2206,10 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
     release_source(c, cmd, src, p->tone.on);
     if (gamma)
         gamma_record(c, p, cmd, target);
+    else if (mask)
+        mask_record(c, p, cmd, target,
+                    (VkRect2D){{(int32_t)lit.left, (int32_t)lit.top},
+                               {(uint32_t)(lit.right - lit.left), (uint32_t)(lit.bottom - lit.top)}});
     else
         barrier(c, cmd, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                 VK_ACCESS_TRANSFER_WRITE_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
@@ -2215,7 +2386,7 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
         if (p->tone.on)
             show_metadata(c, p, s, &color);
         bool gamma = gamma_prepare(c, p);
-        record(c, p, f, target, s, index, frame, client, upload, gamma);
+        record(c, p, f, target, s, index, frame, client, upload, gamma, mask_prepare(c, p));
 
         Waits all = *waits;
         all.semaphores[all.count] = f->acquired;

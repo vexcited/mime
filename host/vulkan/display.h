@@ -32,6 +32,7 @@ typedef struct MimeUiFrame {
     MimeRect visible;
     MimeRect client;                    /* window relative place of the image, in screen pixels. */
     MimeRect area;                      /* and the part of the window the surface of a layer takes, the same. */
+    MimeRect opaque;                    /* the part of the area the window shows the layer in, all of it when empty. */
     uint32_t surface_width, surface_height; /* the guest surface. */
     double scale;                           /* host window pixels per guest pixel. */
     double origin_x, origin_y;              /* where the host part starts, in host window pixels. */
