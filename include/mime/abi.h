@@ -169,7 +169,20 @@ enum {
     MIME_SHELL_FLASH = 12,       /* MimeShellWindow: a window asks for attention, or stops. */
     MIME_SHELL_JUMPLIST = 13,    /* MimeShellJumpList: the tasks of an application's jump list. */
     MIME_SHELL_DIALOG = 14,      /* MimeShellDialog: a dialog of the host's desktop, drawn with its own fonts. */
+    MIME_SHELL_FOLDER = 15,      /* MimeShellFolder: a folder shown in the file manager of the host. */
 };
+
+/*
+ * the machine has no file manager of its own, the host's shows its folders. the path is the guest's, with the case
+ * the names have on the drive. unsupported when the host has nothing to show it with.
+ */
+typedef struct MimeShellFolder {
+    uint32_t op;
+    uint32_t process_id;
+    uint32_t select; /* the path is an item to select in the folder that holds it. */
+    uint32_t pad;
+    uint16_t path[520];
+} MimeShellFolder;
 
 /*
  * a MimeShellDialog asks a question, tells of a failure or of a result, or shows progress, outside any guest window.

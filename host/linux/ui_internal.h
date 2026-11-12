@@ -35,6 +35,8 @@ uint8_t *mime_ui_request_guest(uint32_t event, uint32_t kind, int timeout_ms, si
 uint64_t mime_ui_shell_window(const void *command);
 /* dialog.c: a MimeShellDialog, shown by kdialog, zenity or SDL in a process of its own so no thread of mime waits. */
 uint64_t mime_ui_dialog(const MimeShellDialog *dialog);
+/* folder.c: the folder in the file manager of the desktop. */
+uint64_t mime_ui_folder(const MimeShellFolder *folder);
 /* shell.c: a progress view of plasma's job server for MIME_DIALOG_PROGRESS, UPDATE and END, false without one. */
 bool mime_shell_job(const MimeShellDialog *dialog, const char *text);
 /* application id and launcher entry name: "mime." plus the user model id, or "mime" when absent. */

@@ -23,6 +23,8 @@ uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value)
         return MIME_HC_STATUS_OK;
     case MIME_SHELL_DIALOG:
         return size >= sizeof(MimeShellDialog) ? mime_ui_dialog(command) : MIME_HC_STATUS_INVALID;
+    case MIME_SHELL_FOLDER:
+        return size >= sizeof(MimeShellFolder) ? mime_ui_folder(command) : MIME_HC_STATUS_INVALID;
     default:
         return toast_command(command, size, value);
     }
