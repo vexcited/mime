@@ -1355,11 +1355,6 @@ uint64_t mime_ui_tray(const MimeTrayCommand *command)
     return MIME_HC_STATUS_UNSUPPORTED;
 }
 
-uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value)
-{
-    return MIME_HC_STATUS_UNSUPPORTED;
-}
-
 void mime_ui_desktop_start(const MimePaths *paths)
 {
 }
@@ -1522,9 +1517,12 @@ void mime_ui_window_destroy(uint32_t id_)
     on_main(destroy_main, (void *)(uintptr_t)id_);
 }
 
+static void dialogs_process_exit(uint32_t process_id);
+
 static void process_exit_main(void *arg)
 {
     mime_app_process_exit((uint32_t)(uintptr_t)arg);
+    dialogs_process_exit((uint32_t)(uintptr_t)arg);
 }
 
 void mime_ui_process_exit(uint32_t process_id)
@@ -2268,6 +2266,240 @@ uint64_t mime_ui_dnd_start(uint32_t kinds, uint32_t effects, const MimeDragIcon 
 uint64_t mime_ui_dnd_stop(uint32_t session)
 {
     return MIME_HC_STATUS_UNSUPPORTED;
+}
+
+/* ---------------------------------------------------------------- host dialogs. */
+
+/*
+ * a question or a notice is an NSAlert shown without its modal loop, which would hold the main queue the guest's
+ * windows are drawn from, and progress is a panel of its own.
+ */
+#define MAX_DIALOGS 8
+#define DIALOG_WIDTH 420.0
+#define DIALOG_MARGIN 20.0
+
+enum {
+    NSAlertStyleInformational = 1,
+    NSAlertStyleCritical = 2,
+    NSWindowStyleMaskTitled = 1 << 0,
+    NSBackingStoreBuffered = 2,
+    NSFloatingWindowLevel = 3,
+};
+
+typedef struct UiDialog {
+    uint32_t id;
+    uint32_t process_id;
+    id alert;
+    id window;
+    id heading;
+    id text;
+    id bar;
+} UiDialog;
+
+static UiDialog g_dialogs[MAX_DIALOGS]; /* main thread only. */
+static id g_dialog_target;
+
+static id ustring(const uint16_t *s, size_t capacity)
+{
+    size_t n = 0;
+    while (n < capacity && s[n])
+        n++;
+    return ((id (*)(id, SEL, const uint16_t *, NSUInteger))objc_msgSend)((id)CLS("NSString"),
+                                                                         SEL_("stringWithCharacters:length:"), s, n);
+}
+
+#define USTRING(a) ustring((a), sizeof(a) / sizeof((a)[0]))
+
+static UiDialog *find_dialog(uint32_t id_)
+{
+    for (int i = 0; i < MAX_DIALOGS; i++)
+        if (g_dialogs[i].id == id_)
+            return &g_dialogs[i];
+    return nullptr;
+}
+
+/* a question or a notice is answered with the button, -1 when it was taken away. */
+static void close_dialog(UiDialog *slot, int32_t answer)
+{
+    MSG_V_ID(slot->window, "orderOut:", nil);
+    if (slot->alert) {
+        MSG_V(slot->alert, "release");
+        MimeInputEvent ev = {.type = MIME_INPUT_SHELL, .pad = slot->id, .flags = MIME_SHELL_EVENT_DIALOG_ANSWERED,
+                             .x = answer};
+        emit(&ev);
+    } else {
+        MSG_V(slot->window, "release");
+    }
+    *slot = (UiDialog){};
+}
+
+static void dialog_pressed(id self, SEL sel, id sender)
+{
+    id window = MSG_ID(sender, "window");
+    NSInteger tag = ((NSInteger (*)(id, SEL))objc_msgSend)(sender, SEL_("tag"));
+    for (int i = 0; i < MAX_DIALOGS; i++)
+        if (g_dialogs[i].id && g_dialogs[i].window == window) {
+            close_dialog(&g_dialogs[i], (int32_t)tag);
+            return;
+        }
+}
+
+static void open_alert(UiDialog *slot, const MimeShellDialog *d)
+{
+    id alert = MSG_ID(MSG_ID(CLS("NSAlert"), "alloc"), "init");
+    MSG_V_ID(alert, "setMessageText:", d->instruction[0] ? USTRING(d->instruction) : USTRING(d->title));
+    MSG_V_ID(alert, "setInformativeText:", USTRING(d->content));
+    MSG_V_INT(alert, "setAlertStyle:", d->kind == MIME_DIALOG_ERROR ? NSAlertStyleCritical : NSAlertStyleInformational);
+    uint32_t count = d->kind == MIME_DIALOG_ASK ? d->button_count : 0;
+    if (count > MIME_DIALOG_BUTTONS)
+        count = MIME_DIALOG_BUTTONS;
+    for (uint32_t i = 0; i < (count ? count : 1); i++) {
+        id title = count ? USTRING(d->buttons[i]) : nsstring("OK");
+        id button = MSG_ID_ID(alert, "addButtonWithTitle:", title);
+        MSG_V_ID(button, "setTarget:", g_dialog_target);
+        ((void (*)(id, SEL, SEL))objc_msgSend)(button, SEL_("setAction:"), SEL_("dialogPressed:"));
+        MSG_V_INT(button, "setTag:", i);
+        /* the last choice is the one escape gives, as the guest's own dialogs have it. */
+        if (count >= 2 && i == count - 1)
+            MSG_V_ID(button, "setKeyEquivalent:", nsstring("\033"));
+    }
+    MSG_V(alert, "layout");
+    slot->alert = alert;
+    slot->window = MSG_ID(alert, "window");
+}
+
+static id dialog_label(bool heading)
+{
+    id label = MSG_ID_ID(CLS("NSTextField"), "wrappingLabelWithString:", nsstring(""));
+    id font = heading ? ((id (*)(id, SEL, double))objc_msgSend)(CLS("NSFont"), SEL_("boldSystemFontOfSize:"), 13.0)
+                      : ((id (*)(id, SEL, double))objc_msgSend)(CLS("NSFont"), SEL_("systemFontOfSize:"),
+                                                                MSG_DBL(CLS("NSFont"), "smallSystemFontSize"));
+    MSG_V_ID(label, "setFont:", font);
+    if (!heading)
+        MSG_V_ID(label, "setTextColor:", MSG_ID(CLS("NSColor"), "secondaryLabelColor"));
+    MSG_V_DBL(label, "setPreferredMaxLayoutWidth:", DIALOG_WIDTH - 2 * DIALOG_MARGIN);
+    return label;
+}
+
+static void set_frame(id view, double x, double y, double w, double h)
+{
+    ((void (*)(id, SEL, NSRect))objc_msgSend)(view, SEL_("setFrame:"), CGRectMake(x, y, w, h));
+}
+
+/* the content view grows from the bar at the bottom up to the heading. */
+static void update_progress(UiDialog *slot, const MimeShellDialog *d)
+{
+    MSG_V_ID(slot->heading, "setStringValue:", USTRING(d->instruction));
+    MSG_V_ID(slot->text, "setStringValue:", USTRING(d->content));
+    bool known = d->permille >= 0;
+    MSG_V_BOOL(slot->bar, "setIndeterminate:", !known);
+    if (known) {
+        MSG_V_DBL(slot->bar, "setDoubleValue:", d->permille > 1000 ? 1000 : d->permille);
+        MSG_V_ID(slot->bar, "stopAnimation:", nil);
+    } else {
+        MSG_V_ID(slot->bar, "startAnimation:", nil);
+    }
+    double inner = DIALOG_WIDTH - 2 * DIALOG_MARGIN;
+    NSSize heading = ((NSSize (*)(id, SEL))objc_msgSend)(slot->heading, SEL_("fittingSize"));
+    NSSize text = ((NSSize (*)(id, SEL))objc_msgSend)(slot->text, SEL_("fittingSize"));
+    double y = DIALOG_MARGIN;
+    set_frame(slot->bar, DIALOG_MARGIN, y, inner, 20);
+    y += 20 + 10;
+    set_frame(slot->text, DIALOG_MARGIN, y, inner, text.height);
+    y += text.height + 6;
+    set_frame(slot->heading, DIALOG_MARGIN, y, inner, heading.height);
+    y += heading.height + DIALOG_MARGIN;
+    ((void (*)(id, SEL, NSSize))objc_msgSend)(slot->window, SEL_("setContentSize:"), CGSizeMake(DIALOG_WIDTH, y));
+}
+
+static void open_progress(UiDialog *slot, const MimeShellDialog *d)
+{
+    id panel = ((id (*)(id, SEL, NSRect, NSUInteger, NSUInteger, BOOL))objc_msgSend)(
+        MSG_ID(CLS("NSPanel"), "alloc"), SEL_("initWithContentRect:styleMask:backing:defer:"),
+        CGRectMake(0, 0, DIALOG_WIDTH, 120), NSWindowStyleMaskTitled, NSBackingStoreBuffered, NO);
+    MSG_V_BOOL(panel, "setReleasedWhenClosed:", NO);
+    MSG_V_ID(panel, "setTitle:", USTRING(d->title));
+    id content = MSG_ID(panel, "contentView");
+    slot->heading = dialog_label(true);
+    slot->text = dialog_label(false);
+    id bar = ((id (*)(id, SEL, NSRect))objc_msgSend)(MSG_ID(CLS("NSProgressIndicator"), "alloc"),
+                                                     SEL_("initWithFrame:"), CGRectMake(0, 0, 0, 0));
+    MSG_V_DBL(bar, "setMinValue:", 0);
+    MSG_V_DBL(bar, "setMaxValue:", 1000);
+    MSG_V_ID(content, "addSubview:", slot->heading);
+    MSG_V_ID(content, "addSubview:", slot->text);
+    MSG_V_ID(content, "addSubview:", bar);
+    MSG_V(bar, "release");
+    slot->bar = bar;
+    slot->window = panel;
+    update_progress(slot, d);
+}
+
+static void dialog_main(void *arg)
+{
+    MimeShellDialog *d = arg;
+    void *pool = objc_autoreleasePoolPush();
+    if (!g_dialog_target) {
+        Class cls = objc_allocateClassPair(objc_getClass("NSObject"), "MimeHostDialogTarget", 0);
+        class_addMethod(cls, SEL_("dialogPressed:"), (IMP)dialog_pressed, "v@:@");
+        objc_registerClassPair(cls);
+        g_dialog_target = MSG_ID(MSG_ID((id)cls, "alloc"), "init");
+    }
+    UiDialog *slot = find_dialog(d->id);
+    if (d->kind == MIME_DIALOG_END) {
+        if (slot)
+            close_dialog(slot, -1);
+    } else if (d->kind == MIME_DIALOG_UPDATE) {
+        if (slot && slot->bar)
+            update_progress(slot, d);
+    } else if (!slot && (slot = find_dialog(0))) {
+        slot->id = d->id;
+        slot->process_id = d->process_id;
+        if (d->kind == MIME_DIALOG_PROGRESS)
+            open_progress(slot, d);
+        else
+            open_alert(slot, d);
+        MSG_V_INT(slot->window, "setLevel:", NSFloatingWindowLevel);
+        MSG_V(slot->window, "center");
+        if (g_background) {
+            MSG_V_ID(slot->window, "orderFront:", nil);
+        } else {
+            MSG_V_BOOL(g_app, "activateIgnoringOtherApps:", YES);
+            MSG_V_ID(slot->window, "makeKeyAndOrderFront:", nil);
+        }
+    } else if (d->kind != MIME_DIALOG_PROGRESS) {
+        MimeInputEvent ev = {.type = MIME_INPUT_SHELL, .pad = d->id, .flags = MIME_SHELL_EVENT_DIALOG_ANSWERED, .x = -1};
+        emit(&ev);
+    }
+    objc_autoreleasePoolPop(pool);
+    free(d);
+}
+
+/* a program that ends leaves no question or progress behind, and nobody waits for the answer. */
+static void dialogs_process_exit(uint32_t process_id)
+{
+    for (int i = 0; i < MAX_DIALOGS; i++)
+        if (g_dialogs[i].id && g_dialogs[i].process_id == process_id) {
+            MSG_V_ID(g_dialogs[i].window, "orderOut:", nil);
+            MSG_V(g_dialogs[i].alert ? g_dialogs[i].alert : g_dialogs[i].window, "release");
+            g_dialogs[i] = (UiDialog){};
+        }
+}
+
+/* only the dialogs: toasts, launcher entries and jump lists have no place here yet. */
+uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value)
+{
+    if (*(uint32_t *)command != MIME_SHELL_DIALOG)
+        return MIME_HC_STATUS_UNSUPPORTED;
+    const MimeShellDialog *d = command;
+    if (size < sizeof(*d) || d->kind < MIME_DIALOG_ASK || d->kind > MIME_DIALOG_END)
+        return MIME_HC_STATUS_INVALID;
+    MimeShellDialog *copy = malloc(sizeof(*copy));
+    if (!copy)
+        return MIME_HC_STATUS_NO_MEMORY;
+    *copy = *d;
+    on_main(dialog_main, copy);
+    return MIME_HC_STATUS_OK;
 }
 
 /* ---------------------------------------------------------------- Metal layers. */
