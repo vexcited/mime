@@ -7,6 +7,8 @@
 #define MAX_WORKERS 3
 /* how long a worker stays awake after a job, in microseconds. waking a sleeping thread costs more than short jobs. */
 #define AWAKE_US 200
+/* the same after a job that came this soon after the one before, as the fills of one frame do. */
+#define HOT_US 2000
 
 static struct {
     LONG volatile busy;
@@ -20,7 +22,7 @@ static struct {
     LONG end, grain;
     MimeParFn fn;
     void *ctx;
-    LONGLONG awake_ticks;
+    LONGLONG awake_ticks, hot_ticks;
 } par;
 
 static void take_rows(void)
@@ -37,6 +39,7 @@ static void take_rows(void)
 static DWORD WINAPI worker(void *arg)
 {
     (void)arg;
+    LONGLONG last = 0;
     for (;;) {
         LONG seen = par.seq;
         /* the caller closes the job and then waits for active to fall, so a job seen open stays whole. */
@@ -46,11 +49,13 @@ static DWORD WINAPI worker(void *arg)
         InterlockedDecrement(&par.active);
         LARGE_INTEGER from, now;
         QueryPerformanceCounter(&from);
+        LONGLONG limit = last && from.QuadPart - last < par.hot_ticks ? par.hot_ticks : par.awake_ticks;
+        last = from.QuadPart;
         while (par.seq == seen) {
             for (int i = 0; i < 32 && par.seq == seen; i++)
                 YieldProcessor();
             QueryPerformanceCounter(&now);
-            if (now.QuadPart - from.QuadPart > par.awake_ticks)
+            if (now.QuadPart - from.QuadPart > limit)
                 break;
         }
         if (par.seq != seen)
@@ -74,6 +79,7 @@ static void start_workers(void)
     LARGE_INTEGER freq;
     QueryPerformanceFrequency(&freq);
     par.awake_ticks = freq.QuadPart * AWAKE_US / 1000000;
+    par.hot_ticks = freq.QuadPart * HOT_US / 1000000;
     /* the workers run this module's code for the life of the process. */
     HMODULE self;
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
@@ -121,4 +127,9 @@ void mime_par_rows(int first, int end, int grain, MimeParFn fn, void *ctx)
     while (par.active)
         YieldProcessor();
     InterlockedExchange(&par.busy, 0);
+}
+
+int mime_par_ready(void)
+{
+    return par.workers && !par.busy && par.sleepers < par.workers;
 }
