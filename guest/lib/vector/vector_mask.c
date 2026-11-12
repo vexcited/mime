@@ -1,6 +1,10 @@
 /* coverage masks as sorted bands of runs. */
 #include "vector_internal.h"
 
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#endif
+
 #define MASK_LIMIT (1u << 24)
 
 void mime_vec_mask_init(MimeVecMask *m, const MimeAllocator *alloc)
@@ -160,6 +164,23 @@ typedef struct Collect {
     int err;
 } Collect;
 
+/* the first index from j on whose coverage differs from v. */
+static inline int run_end(const uint8_t *cov, int j, int count, uint8_t v)
+{
+#if defined(__SSE2__)
+    __m128i vv = _mm_set1_epi8((char)v);
+    while (j + 16 <= count) {
+        unsigned eq = (unsigned)_mm_movemask_epi8(_mm_cmpeq_epi8(_mm_loadu_si128((const __m128i *)(cov + j)), vv));
+        if (eq != 0xffff)
+            return j + __builtin_ctz(~eq);
+        j += 16;
+    }
+#endif
+    while (j < count && cov[j] == v)
+        j++;
+    return j;
+}
+
 static void collect_row(void *user, int y, int x, int count, const uint8_t *cov)
 {
     Collect *c = user;
@@ -172,9 +193,7 @@ static void collect_row(void *user, int y, int x, int count, const uint8_t *cov)
     int i = 0;
     while (i < count) {
         uint8_t v = cov[i];
-        int j = i + 1;
-        while (j < count && cov[j] == v)
-            j++;
+        int j = run_end(cov, i + 1, count, v);
         if (v) {
             c->err = add_run(m, x + i, x + j, v);
             if (c->err)
@@ -194,9 +213,7 @@ int mime_vec_mask_add_row(MimeVecMask *m, int y, int x, int count, const uint8_t
         goto fail;
     for (int i = 0; i < count;) {
         uint8_t v = cov[i];
-        int j = i + 1;
-        while (j < count && cov[j] == v)
-            j++;
+        int j = run_end(cov, i + 1, count, v);
         if (v) {
             err = add_run(m, x + i, x + j, v);
             if (err)
