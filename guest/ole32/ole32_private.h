@@ -127,6 +127,8 @@ IDropTarget *OleFindDropTarget(HWND hwnd);
 void WINAPI OleHostDndHandler(HWND hwnd, LPARAM lparam);
 void OleHostDndRegister(HWND hwnd);
 void OleHostDndRevoke(HWND hwnd);
+/* the hidden window that holds the mouse capture during a drag, as on Windows. */
+HWND OleDragWindow(void);
 /* moves a DoDragDrop drag to the host, false when it cannot. */
 bool OleHostDragBegin(IDataObject *data, DWORD allowed);
 bool OleHostDragActive(void);
