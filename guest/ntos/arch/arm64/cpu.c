@@ -47,7 +47,8 @@ void KiSetProcessorFeatures(BOOLEAN *features)
     features[19] = field(p->Pfr0, 20) != 0xF;                         /* PF_ARM_NEON_INSTRUCTIONS_AVAILABLE */
     features[21] = TRUE;                                               /* PF_VIRT_FIRMWARE_ENABLED */
     features[29] = TRUE;                                               /* PF_ARM_V8_INSTRUCTIONS_AVAILABLE */
-    features[30] = field(p->Isar0, 4) != 0 && field(p->Isar0, 8) != 0; /* PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE */
+    /* PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE: aes, sha1 and sha256. */
+    features[30] = field(p->Isar0, 4) != 0 && field(p->Isar0, 8) != 0 && field(p->Isar0, 12) != 0;
     features[31] = field(p->Isar0, 16) != 0;                           /* PF_ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE */
     features[34] = field(p->Isar0, 20) >= 2;                           /* PF_ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE */
     features[43] = field(p->Isar0, 44) != 0;                           /* PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE */

@@ -241,6 +241,7 @@ typedef struct Ctx {
     uint64_t start; /* the block's address. */
     uint16_t xloaded; /* the xmm registers held in v16 to v31, see the xmm cache. */
     uint16_t xdirty;  /* the ones changed there and not yet stored. */
+    uint32_t sha_second; /* the second sha256rnds2 of a pair whose result is in the cpu's jit_sha, or 0. */
 } Ctx;
 
 static uint32_t OFF_X(int reg) { return (uint32_t)(offsetof(X86Cpu, xmm) + (uint32_t)reg * 16); }
@@ -2070,6 +2071,108 @@ static int emit_atomic(Ctx *x, const X86Insn *i)
 /* ------------------------------------------------------------ general instructions */
 
 /* emits one instruction natively, or returns 0 for the interpreter. */
+/* ------------------------------------------------------------ sha256 */
+
+uint32_t x86_jit_sha256;
+
+#define V_ZIP1_2D 0x4EC03800u
+#define V_ZIP2_2D 0x4EC07800u
+
+static void rev64_4s(Emit *e, int vd, int vn) { put(e, 0x4EA00800u | (uint32_t)vn << 5 | (uint32_t)vd); }
+
+/* instructions that write no xmm register but the one in modrm.reg, if any. */
+static int writes_xmm_reg_only(const X86Insn *i)
+{
+    uint8_t op = i->opcode;
+    if (i->map == 0 || i->map == 2)
+        return 1;
+    if (i->map == 3)
+        return op < 0x60 || op > 0x63; /* pcmpestrm and pcmpistrm write xmm0. */
+    return op == 0x10 || op == 0x12 || op == 0x14 || op == 0x15 || op == 0x16 || op == 0x1F || op == 0x28 ||
+           (op >= 0x51 && op <= 0x70) || (op >= 0x74 && op <= 0x76) || op == 0xC2 || op == 0xC6 ||
+           (op >= 0xD1 && op <= 0xD5) || (op >= 0xD8 && op <= 0xE5) || (op >= 0xE8 && op <= 0xEF) ||
+           (op >= 0xF1 && op <= 0xFE);
+}
+
+/*
+ * sha256 code runs four rounds as sha256rnds2 x, y, then the keys moved down by pshufd xmm0, xmm0, 0xe, psrldq
+ * xmm0, 8 or punpckhqdq xmm0, xmm0, then sha256rnds2 y, x, as openssl and linux do. the arm64 instructions run four rounds, so the first one's
+ * already computed the second's result. returns the index of the second one when the block holds the pattern and
+ * nothing in between writes x, y or xmm0 or is another sha256rnds2, else 0.
+ */
+static uint32_t sha256_pair(const Ctx *x, const X86Insn *first)
+{
+    const X86Insn *all = x->insn - x->index;
+    int a = first->reg, b = first->rm, keyed = 0;
+    if (first->mod != 3 || a == b || !a || !b)
+        return 0;
+    for (uint32_t k = x->index + 1; k < x->count; k++) {
+        const X86Insn *i = &all[k];
+        if (i->map == 2 && i->opcode == 0xCB && !i->mandatory)
+            return keyed && i->mod == 3 && i->reg == b && i->rm == a ? k : 0;
+        if (i->map == 0)
+            continue;
+        int shuffle = i->map == 1 && i->mandatory == 0x66 && i->mod == 3 && i->rm == 0 &&
+                      ((i->opcode == 0x70 && i->reg == 0 && (i->imm & 0xFF) == 0x0E) ||
+                       (i->opcode == 0x6D && i->reg == 0) ||
+                       (i->opcode == 0x73 && ((i->modrm >> 3) & 7) == 3 && (i->imm & 0xFF) == 8));
+        if (shuffle && !keyed) {
+            keyed = 1;
+            continue;
+        }
+        if (!writes_xmm_reg_only(i) || i->reg == a || i->reg == b || i->reg == 0)
+            return 0;
+    }
+    return 0;
+}
+
+/*
+ * sha256rnds2, sha256msg1 and sha256msg2 with the arm64 instructions. the x86 states hold abef and cdgh with a in
+ * the top lane, the arm64 ones abcd and efgh with a in lane 0. sha256h and sha256h2 run four rounds with the four
+ * keys of xmm0, of which x86 uses two: after them c, d, g and h are the a, b, e and f of two rounds.
+ */
+static int emit_sha256(Ctx *x, const X86Insn *i)
+{
+    Emit *e = x->e;
+    if (!x86_jit_sha256)
+        return 0;
+    if (i->opcode == 0xCB && x->sha_second && x->sha_second == x->index) {
+        vldr(e, 16, V0, CPU, offsetof(X86Cpu, jit_sha));
+        xstore(x, V0, i->reg);
+        x->sha_second = 0;
+        return x->keep = 1, 1;
+    }
+    xload(x, 16, V0, i->reg);
+    load_xsrc(x, i, 16, V1);
+    if (i->opcode == 0xCC) { /* sha256msg1 */
+        put(e, 0x5E282800u | (uint32_t)V1 << 5 | V0); /* sha256su0 */
+    } else if (i->opcode == 0xCD) { /* sha256msg2: sha256su1 without its w[t - 7] term */
+        put(e, 0x4E041FE0u | V1); /* mov v1.s[0], wzr */
+        vzero(e, V2);
+        put(e, 0x5E006000u | (uint32_t)V1 << 16 | (uint32_t)V2 << 5 | V0); /* sha256su1 */
+    } else {
+        int key = xget(x, 0);
+        v3(e, V_ZIP2_2D, V2, V1, V0);
+        rev64_4s(e, V2, V2); /* abcd */
+        v3(e, V_ZIP1_2D, V3, V1, V0);
+        rev64_4s(e, V3, V3); /* efgh */
+        vmov(e, 4, V2);
+        put(e, 0x5E004000u | (uint32_t)key << 16 | (uint32_t)V3 << 5 | V2); /* sha256h */
+        put(e, 0x5E005000u | (uint32_t)key << 16 | 4u << 5 | V3);         /* sha256h2 */
+        v3(e, V_ZIP2_2D, V0, V3, V2);
+        rev64_4s(e, V0, V0);
+        uint32_t second = sha256_pair(x, i);
+        if (second) {
+            v3(e, V_ZIP1_2D, V1, V3, V2);
+            rev64_4s(e, V1, V1);
+            vstr(e, 16, V1, CPU, offsetof(X86Cpu, jit_sha));
+            x->sha_second = second;
+        }
+    }
+    xstore(x, V0, i->reg);
+    return x->keep = 1, 1;
+}
+
 /* ------------------------------------------------------------ div and idiv */
 
 enum { X16 = 16, X17 = 17 };
@@ -2299,6 +2402,8 @@ static int emit_one(Ctx *x, const X86Insn *i)
         }
         return emit_sse(x, i);
     }
+    if (i->map == 2 && op >= 0xCB && op <= 0xCD && !i->mandatory)
+        return emit_sha256(x, i);
     if (i->map == 2 && op == 0x00 && i->mandatory == 0x66) { /* pshufb: indexes with the top bit set give zero, like tbl's past the table */
         xload(x, 16, V0, i->reg);
         load_xsrc(x, i, 16, V1);
@@ -2712,7 +2817,7 @@ uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint
         if (kind >= 0 && arm_cond(kind, insns[k + 1].opcode & 15) != -1)
             lazy[k] = live[k + 1];
     }
-    Ctx x = {&e, cpu, rip, rip, 0, count, 0, 0, -1, 0, 0, nullptr, rip, 0, 0};
+    Ctx x = {&e, cpu, rip, rip, 0, count, 0, 0, -1, 0, 0, nullptr, rip, 0, 0, 0};
     prologue(&e);
     uint32_t end = count;
     if (nests(&insns[count - 1]))
