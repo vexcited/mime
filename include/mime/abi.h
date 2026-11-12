@@ -1256,6 +1256,7 @@ typedef struct MimeWinLayer {
     uint32_t source;    /* the window that presents. */
     uint32_t order;     /* its place in the paint order of the tree. */
     uint32_t stamp;     /* counts what is told of the places of windows, as in MimeGpuSurfaceConfig. */
+    uint32_t follows;   /* the pixels of the window that were painted around the place come in the next present. */
     MimeRect client;
     MimeRect visible;   /* the part of the client area that shows, empty while it is hidden or covered. */
 } MimeWinLayer;

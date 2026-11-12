@@ -1967,13 +1967,31 @@ static void record(MvkConnection *c, Presenter *p, Frame *f, uint32_t target, Sw
     }
     Box crop = {0, 0, s->extent.width, s->extent.height}, area;
     if (frame->subsurface) {
-        /* a layer is the part of the client area that shows, so it takes the same part of the image. */
-        area = (Box){0, 0, p->extent.width, p->extent.height};
-        double cw = frame->client.right - frame->client.left, ch = frame->client.bottom - frame->client.top;
-        if (cw > 0 && ch > 0) {
-            double fx = s->extent.width / cw, fy = s->extent.height / ch;
-            crop = (Box){(frame->area.left - frame->client.left) * fx, (frame->area.top - frame->client.top) * fy,
-                         (frame->area.right - frame->client.left) * fx, (frame->area.bottom - frame->client.top) * fy};
+        /* a layer is an area of the window, and the image lies over the part of it the client area takes. */
+        Box whole = {0, 0, p->extent.width, p->extent.height};
+        area = whole;
+        double lw = frame->area.right - frame->area.left, lh = frame->area.bottom - frame->area.top;
+        if (lw > 0 && lh > 0) {
+            double kx = p->extent.width / lw, ky = p->extent.height / lh;
+            area = (Box){(frame->client.left - frame->area.left) * kx, (frame->client.top - frame->area.top) * ky,
+                         (frame->client.right - frame->area.left) * kx, (frame->client.bottom - frame->area.top) * ky};
+            /*
+             * past a client area that shrank the layer still shows until the window is painted there. windows
+             * leaves the last image in it, which the edge of this one stands for: its rows, columns and corners at
+             * the ends, drawn out to the ends of the layer.
+             */
+            if (area.left > 0.5 || area.top > 0.5 || area.right < whole.right - 0.5 || area.bottom < whole.bottom - 0.5) {
+                double sw = s->extent.width, sh = s->extent.height;
+                double sx[4] = {0, 1, sw - 1, sw}, sy[4] = {0, 1, sh - 1, sh};
+                double dx[4] = {0, area.left, area.right, whole.right}, dy[4] = {0, area.top, area.bottom, whole.bottom};
+                for (int j = 0; j < 3; j++)
+                    for (int i = 0; i < 3; i++)
+                        if (i != 1 || j != 1)
+                            blit(c, cmd, from, (Box){i == 1 ? 0 : sx[i], j == 1 ? 0 : sy[j], i == 1 ? sw : sx[i + 1],
+                                                     j == 1 ? sh : sy[j + 1]},
+                                 s->extent.width, s->extent.height, dst, (Box){dx[i], dy[j], dx[i + 1], dy[j + 1]},
+                                 p->extent.width, p->extent.height, flip);
+            }
         }
     } else {
         area = to_pixels(frame, frame->client);
@@ -2246,12 +2264,14 @@ static void present_one(MvkConnection *c, VkQueue queue, uint32_t family, const 
      * guest told that in a layer notice, and the old place would put the layer back over what was painted there.
      */
     MvkTarget now = *t;
+    int32_t width = t->client.right - t->client.left, height = t->client.bottom - t->client.top;
     if (p) {
         pthread_mutex_lock(&g_presenters_lock);
         if (now.stamp && p->placed.stamp && (int32_t)(p->placed.stamp - now.stamp) > 0) {
             now.client = p->placed.client;
             now.visible = p->placed.visible;
             now.order = p->placed.order;
+            now.stamp = p->placed.stamp;
         }
         pthread_mutex_unlock(&g_presenters_lock);
         t = &now;
@@ -2261,15 +2281,18 @@ static void present_one(MvkConnection *c, VkQueue queue, uint32_t family, const 
         if (area.right > area.left || p->surface)
             presenter_attach(c, p, area, t->order);
         MimeUiFrame frame = {};
-        if (mime_ui_vk_frame(t->window, source, t->client, area, t->order, &frame)) {
+        /* the image keeps the size its frame was made for, where the client area is now. */
+        MimeUiPlace place = {t->client, t->visible, t->order, t->stamp, false};
+        MimeRect image = {t->client.left, t->client.top, t->client.left + width, t->client.top + height};
+        if (mime_ui_vk_frame(t->window, source, &place, image, &frame)) {
             if (!frame.subsurface)
                 refresh_shadow(p, &frame);
             pthread_mutex_lock(&p->lock);
             p->last_source = t->source;
             shown = show(c, p, queue, family, waits, s, index, &frame, t->client);
             pthread_mutex_unlock(&p->lock);
-            if (shown && frame.subsurface)
-                mime_ui_vk_shown(t->window, source, frame.serial);
+            if (frame.subsurface)
+                mime_ui_vk_shown(t->window, source, frame.serial, shown);
         }
     }
     if (!shown)
@@ -2420,6 +2443,7 @@ void mvk_wsi_present(MvkCall *call)
         target.visible.top = (int32_t)mvk_get_u32(d);
         target.visible.right = (int32_t)mvk_get_u32(d);
         target.visible.bottom = (int32_t)mvk_get_u32(d);
+        target.stamp = mvk_get_u32(d);
         if (d->error || !s || index >= s->count)
             break;
         /* a released image is acquired before its next present: anything else is the guest's mistake. */
@@ -2880,7 +2904,7 @@ void mime_vk_layer(const MimeWinLayer *layer)
     pthread_mutex_unlock(&g_presenters_lock);
     if (!p)
         return;
-    MimeUiFrame frame;
-    mime_ui_vk_frame(t.window, t.source, t.client, shown_area(&t), t.order, &frame);
+    MimeUiPlace place = {t.client, t.visible, t.order, t.stamp, layer->follows != 0};
+    mime_ui_vk_place(t.window, t.source, &place);
     presenter_put(p->conn, p);
 }

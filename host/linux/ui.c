@@ -20,7 +20,27 @@
 #define MAX_WINDOWS 256
 #define MAX_VK_LAYERS 8
 
-/* a surface over the window for each window of the guest that presents, stacked by the guest's paint order. */
+/* where the guest says a window that presents lies, in the screen pixels of the guest relative to its window. */
+typedef struct LayerPlace {
+    bool set;
+    MimeRect client, visible;
+    uint32_t order, stamp;
+} LayerPlace;
+
+/* a frame of a layer under its window, an axis at a time, in the same pixels. */
+typedef struct LayerFrame {
+    int32_t off[2];   /* the image's origin from the surface's. */
+    int32_t reach[2]; /* how far from its origin the surface holds what the window shows. */
+    int32_t ext[2];   /* its size. */
+} LayerFrame;
+
+/*
+ * a surface for each window of the guest that presents, stacked by the guest's paint order. the one of a top level
+ * window lies over the window. the one of a child lies under the window, whose own pixels are drawn clear where the
+ * child shows: the edge of the child is then part of the same frame as what the guest painted around it, as it is on
+ * Windows, where both are pixels of one surface. a layer over the window is cut by its own size, which is the state
+ * of another surface and lands a frame of the display apart from the window's pixels.
+ */
 typedef struct VkLayer {
     bool used;
     uint32_t source; /* the guest window it presents for. */
@@ -31,7 +51,19 @@ typedef struct VkLayer {
     struct wl_proxy *viewport;
     MimeRect place; /* where the subsurface is, in SDL window coordinates. */
     uint32_t frames;
-    bool synced; /* its next frame waits for the window's, see place_main. */
+    bool top;   /* of the top level window itself, always over the window. */
+    bool under; /* lies under the window. what follows is of such a layer, under the window's lock. */
+    bool gone;  /* its presenter left: it goes once the window closed over it. */
+    LayerPlace told, shown; /* the last place the guest told, and the one the window's pixels on screen go with. */
+    bool waits;             /* the place told waits for the pixels of the window that were painted around it. */
+    uint64_t told_ms;
+    int32_t at[2];          /* where the surface starts as of the window's last frame. */
+    int32_t cut[2];         /* how far from there a frame of the window that may be on screen is clear. */
+    int32_t cut_next[2];
+    uint64_t closed_ms;     /* when the window last closed over it. */
+    LayerFrame framed, covered; /* the frame the presenter last sized, and the last one the display has. */
+    uint32_t framed_serial;
+    int32_t dest[2];        /* the size last given to the viewport, in SDL window coordinates. */
 } VkLayer;
 
 typedef struct UiWindow {
@@ -80,10 +112,7 @@ typedef struct UiWindow {
     MimeRect dirty;
     bool has_dirty;
     bool present_queued;
-    /* the window's pixels wait for a layer's frame of this number or for the time, see place_main. */
-    bool held;
-    uint32_t held_source, held_frame;
-    uint64_t held_until;
+    bool reap; /* a layer that is gone has nothing on screen left, see present_main. */
     MimeWinConfig pending_config;
     bool config_queued;
 } UiWindow;
@@ -1284,6 +1313,15 @@ static void restore_renderer(UiWindow *w)
     pthread_mutex_unlock(&w->lock);
 }
 
+static int settle_layers(UiWindow *w, MimeRect *holes, bool *again);
+static void layers_drawn(UiWindow *w);
+static void reap_layers(UiWindow *w);
+
+static Uint32 redraw_timer(void *data, SDL_TimerID timer, Uint32 interval);
+
+/* how long a layer waits for something that should come with a frame of the window before one is drawn without. */
+#define REDRAW_MS 50
+
 /* draws the visible surface inside the host window, leaving the resize border clear. */
 static void draw(UiWindow *w)
 {
@@ -1342,6 +1380,10 @@ static void draw(UiWindow *w)
         w->has_dirty = false;
     }
     double density = w->logical_width > 0 ? (double)w->pixel_width / w->logical_width : 1.0;
+    /* with the pixels that were just taken, so the places of the layers under them are the ones they go with. */
+    MimeRect holes[MAX_VK_LAYERS];
+    bool again = false;
+    int hole_count = w->texture && w->vk ? settle_layers(w, holes, &again) : 0;
     pthread_mutex_unlock(&w->lock);
     if (!w->texture)
         return;
@@ -1362,12 +1404,26 @@ static void draw(UiWindow *w)
     SDL_FRect dst = {(float)(fit.x + (vis.left - host.left) * fit.scale), (float)(fit.y + (vis.top - host.top) * fit.scale),
                      (float)((vis.right - vis.left) * fit.scale), (float)((vis.bottom - vis.top) * fit.scale)};
     SDL_RenderTexture(w->renderer, w->texture, &src, &dst);
+    /* clear where a layer under the window shows. */
+    SDL_SetRenderDrawBlendMode(w->renderer, SDL_BLENDMODE_NONE);
+    SDL_SetRenderDrawColor(w->renderer, 0, 0, 0, 0);
+    for (int i = 0; i < hole_count; i++) {
+        double left = round(fit.x + (holes[i].left - host.left) * fit.scale), top = round(fit.y + (holes[i].top - host.top) * fit.scale);
+        double right = round(fit.x + (holes[i].right - host.left) * fit.scale),
+               bottom = round(fit.y + (holes[i].bottom - host.top) * fit.scale);
+        SDL_FRect hole = {(float)left, (float)top, (float)(right - left), (float)(bottom - top)};
+        SDL_RenderFillRect(w->renderer, &hole);
+    }
     if (w->config.border_color) {
         uint32_t c = w->config.border_color;
         SDL_SetRenderDrawColor(w->renderer, (c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF, (c >> 24) & 0xFF);
         SDL_RenderRect(w->renderer, &dst);
     }
     SDL_RenderPresent(w->renderer);
+    if (w->vk)
+        layers_drawn(w);
+    if (again)
+        SDL_AddTimer(REDRAW_MS, redraw_timer, (void *)(uintptr_t)w->id);
 }
 
 static void present_main(void *arg)
@@ -1381,24 +1437,16 @@ static void present_main(void *arg)
             w->renderer_retry_ms = now_ms() + 1000;
     }
     if (w && w->shown) {
-        pthread_mutex_lock(&w->lock);
-        bool held = w->held && now_ms() < w->held_until;
-        w->held = held;
-        pthread_mutex_unlock(&w->lock);
-        if (held)
-            return;
         draw(w);
-        /* the frame took the layers that waited for it along. */
-        pthread_mutex_lock(&g_windows_lock);
-        if (find_window((uint32_t)(uintptr_t)arg) == w)
-            for (int i = 0; i < MAX_VK_LAYERS; i++) {
-                VkLayer *l = &w->vk_layers[i];
-                if (l->used && l->synced && l->subsurface)
-                    wl_subsurface_set_desync(l->subsurface);
-                l->synced = false;
-            }
-        pthread_mutex_unlock(&g_windows_lock);
+        if (w->reap)
+            reap_layers(w);
     }
+}
+
+static Uint32 redraw_timer(void *data, SDL_TimerID timer, Uint32 interval)
+{
+    on_main(present_main, data);
+    return 0;
 }
 
 /*
@@ -1960,6 +2008,12 @@ void mime_ui_window_present(uint32_t id, const void *pixels, uint32_t width, uin
             w->dirty = (MimeRect){left, top, right, bottom};
         w->has_dirty = true;
     }
+    /* these are the pixels a layer under the window waited for: its place lands with them, in one frame. */
+    for (int i = 0; i < MAX_VK_LAYERS; i++)
+        if (w->vk_layers[i].used && w->vk_layers[i].waits) {
+            w->vk_layers[i].shown = w->vk_layers[i].told;
+            w->vk_layers[i].waits = false;
+        }
     bool queue = !w->present_queued;
     w->present_queued = true;
     pthread_mutex_unlock(&w->lock);
@@ -2065,22 +2119,42 @@ static VkLayer *find_layer(UiWindow *w, uint32_t source)
     return nullptr;
 }
 
-static void destroy_layer(VkLayer *l)
+static bool rect_empty(MimeRect r)
 {
-    if (l->viewport)
-        wl_proxy_marshal_flags(l->viewport, 0, nullptr, wl_proxy_get_version(l->viewport), WL_MARSHAL_FLAG_DESTROY);
+    return r.right <= r.left || r.bottom <= r.top;
+}
+
+static MimeRect rect_and(MimeRect a, MimeRect b)
+{
+    MimeRect r = {MIME_MAX(a.left, b.left), MIME_MAX(a.top, b.top), MIME_MIN(a.right, b.right),
+                  MIME_MIN(a.bottom, b.bottom)};
+    return rect_empty(r) ? (MimeRect){} : r;
+}
+
+static void drop_subsurface(VkLayer *l)
+{
     if (l->subsurface)
         wl_subsurface_destroy(l->subsurface);
+    l->subsurface = nullptr;
+}
+
+static void destroy_layer(UiWindow *w, VkLayer *l)
+{
+    pthread_mutex_lock(&w->lock);
+    if (l->viewport)
+        wl_proxy_marshal_flags(l->viewport, 0, nullptr, wl_proxy_get_version(l->viewport), WL_MARSHAL_FLAG_DESTROY);
+    drop_subsurface(l);
     if (l->surface)
         wl_surface_destroy(l->surface);
     *l = (VkLayer){};
+    pthread_mutex_unlock(&w->lock);
 }
 
 static void destroy_layers(UiWindow *w)
 {
     for (int i = 0; i < MAX_VK_LAYERS; i++)
         if (w->vk_layers[i].used)
-            destroy_layer(&w->vk_layers[i]);
+            destroy_layer(w, &w->vk_layers[i]);
 }
 
 static bool has_layers(const UiWindow *w)
@@ -2103,13 +2177,6 @@ static void commit_parent(UiWindow *w)
 {
     if (w->renderer && w->pixels && w->shown) {
         pthread_mutex_lock(&w->lock);
-        /* the frame that is waited for takes this along. */
-        if (w->held && now_ms() < w->held_until) {
-            w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
-            w->has_dirty = true;
-            pthread_mutex_unlock(&w->lock);
-            return;
-        }
         w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
         w->has_dirty = true;
         pthread_mutex_unlock(&w->lock);
@@ -2121,22 +2188,34 @@ static void commit_parent(UiWindow *w)
     }
 }
 
-/* the layers over the window's own pixels from the back of the guest's paint order to the front. */
+/*
+ * the layers over the window's own pixels from the back of the guest's paint order to the front, and the ones under
+ * them from the front to the back.
+ */
 static void restack_layers(UiWindow *w)
 {
-    struct wl_surface *below = parent_surface(w);
-    bool done[MAX_VK_LAYERS] = {};
-    for (int n = 0; below && n < MAX_VK_LAYERS; n++) {
-        int best = -1;
-        for (int k = 0; k < MAX_VK_LAYERS; k++)
-            if (w->vk_layers[k].used && w->vk_layers[k].subsurface && !done[k] &&
-            (best < 0 || w->vk_layers[k].order < w->vk_layers[best].order))
-                best = k;
-        if (best < 0)
-            break;
-        done[best] = true;
-        wl_subsurface_place_above(w->vk_layers[best].subsurface, below);
-        below = w->vk_layers[best].surface;
+    struct wl_surface *parent = parent_surface(w);
+    for (int under = 0; parent && under < 2; under++) {
+        struct wl_surface *next = parent;
+        bool done[MAX_VK_LAYERS] = {};
+        for (int n = 0; n < MAX_VK_LAYERS; n++) {
+            int best = -1;
+            for (int k = 0; k < MAX_VK_LAYERS; k++) {
+                const VkLayer *l = &w->vk_layers[k];
+                if (!l->used || !l->subsurface || done[k] || l->under != (under != 0))
+                    continue;
+                if (best < 0 || (under ? l->order > w->vk_layers[best].order : l->order < w->vk_layers[best].order))
+                    best = k;
+            }
+            if (best < 0)
+                break;
+            done[best] = true;
+            if (under)
+                wl_subsurface_place_below(w->vk_layers[best].subsurface, next);
+            else
+                wl_subsurface_place_above(w->vk_layers[best].subsurface, next);
+            next = w->vk_layers[best].surface;
+        }
     }
 }
 
@@ -2156,8 +2235,7 @@ static void place_layer(UiWindow *w, VkLayer *l, MimeRect area, uint32_t order)
          */
         l->place = r;
         if (l->subsurface) {
-            wl_subsurface_destroy(l->subsurface);
-            l->subsurface = nullptr;
+            drop_subsurface(l);
             commit_parent(w);
         }
         return;
@@ -2185,6 +2263,175 @@ static void place_layer(UiWindow *w, VkLayer *l, MimeRect area, uint32_t order)
     commit_parent(w);
 }
 
+/*
+ * the layers of children lie under a window that has pixels of its own to cut them with. one of the top level window
+ * covers those pixels, and the layers of its children then lie over it.
+ */
+static bool under_wanted(const UiWindow *w)
+{
+    if (!w->pixels || !w->renderer || w->vk_whole)
+        return false;
+    for (int i = 0; i < MAX_VK_LAYERS; i++)
+        if (w->vk_layers[i].used && w->vk_layers[i].top)
+            return false;
+    return true;
+}
+
+/*
+ * a subsurface lies on whole SDL window coordinates, which are several screen pixels of the guest on a display that
+ * is scaled: the count of them, or 1 where that is no whole number.
+ */
+static int32_t layer_step(Fit fit)
+{
+    double s = 1.0 / fit.scale;
+    bool whole = s >= 1.5 && fabs(s - round(s)) < 1e-6 && fit.x == floor(fit.x) && fit.y == floor(fit.y);
+    return whole ? (int32_t)lround(s) : 1;
+}
+
+/* where the surface of a layer that shows from lo on starts: on a whole coordinate, inside what the window shows. */
+static int32_t layer_start(int32_t lo, int32_t base, int32_t edge, int32_t step)
+{
+    int32_t from = base + (lo - base) / step * step;
+    return from < edge ? from + step : from;
+}
+
+static bool layer_fits(const int32_t at[2], const LayerFrame *f, MimeRect vis)
+{
+    return at[0] >= vis.left && at[1] >= vis.top && at[0] + f->ext[0] <= vis.right && at[1] + f->ext[1] <= vis.bottom;
+}
+
+/*
+ * moves a layer under the window or over it, with the window's lock. it shows again with its next frame, and keeps its
+ * subsurface: the driver may wait for the display to take a frame, which one that is not on screen never does.
+ */
+static void set_under(VkLayer *l, bool under)
+{
+    l->under = under;
+    l->framed = l->covered = (LayerFrame){};
+    l->framed_serial = 0;
+    l->cut[0] = l->cut[1] = l->cut_next[0] = l->cut_next[1] = 0;
+    l->dest[0] = l->dest[1] = 0;
+    l->waits = false;
+    l->place = (MimeRect){};
+    l->order = ~l->order;
+}
+
+/*
+ * the layers under the window for the frame of it that is about to be drawn, with the window's lock: where each lies,
+ * which is state of the window and lands with the frame, and the parts of the window to draw clear over them. a layer
+ * shows through no further than the frame the display has of it reaches, so the window's own pixels show where its
+ * frame is late, and the frame that comes next is no smaller than what is clear, see frame_under.
+ */
+static int settle_layers(UiWindow *w, MimeRect *holes, bool *again)
+{
+    bool under = under_wanted(w), restack = false;
+    int count = 0;
+    MimeRect vis = visible_part(&w->config), host = host_part(&w->config);
+    Fit fit = window_fit(w);
+    uint64_t now = now_ms();
+    struct wl_surface *parent = parent_surface(w);
+    for (int i = 0; i < MAX_VK_LAYERS; i++) {
+        VkLayer *l = &w->vk_layers[i];
+        if (!l->used || l->top)
+            continue;
+        if (l->under != under) {
+            set_under(l, under);
+            restack = true;
+        }
+        if (!l->under)
+            continue;
+        /* the pixels a place waited for never came. */
+        if (l->waits && now - l->told_ms + 5 >= REDRAW_MS) {
+            l->shown = l->told;
+            l->waits = false;
+        }
+        const LayerFrame *c = &l->covered;
+        bool has = l->shown.set && c->ext[0] > 0 && c->ext[1] > 0, showing = !rect_empty(l->shown.visible);
+        if (has) {
+            /*
+             * where the frame the display has puts its image over the client area. a surface that would reach out of
+             * the window there stays where it is: nothing covers it past the window, and its next frame fits.
+             */
+            int32_t want[2] = {l->shown.client.left - c->off[0], l->shown.client.top - c->off[1]};
+            if (!l->subsurface || layer_fits(want, c, vis) || !layer_fits(l->at, c, vis))
+                memcpy(l->at, want, sizeof(want));
+        }
+        /* one that shows nothing is unmapped once the frame that closed the window over it is on screen for sure. */
+        bool closed = !showing && l->shown.set && !l->cut[0] && now - l->closed_ms >= REDRAW_MS;
+        bool fresh = false;
+        if (l->subsurface && closed) {
+            drop_subsurface(l);
+        } else if (!l->subsurface && showing && has && parent && layer_fits(l->at, c, vis)) {
+            l->subsurface = wl_subcompositor_get_subsurface(g_subcompositor, l->surface, parent);
+            if (l->subsurface)
+                wl_subsurface_set_desync(l->subsurface);
+            fresh = restack = l->subsurface != nullptr;
+        }
+        MimeRect hole = {};
+        if (l->subsurface) {
+            int32_t x = (int32_t)lround(fit.x + (l->at[0] - host.left) * fit.scale);
+            int32_t y = (int32_t)lround(fit.y + (l->at[1] - host.top) * fit.scale);
+            if (fresh || x != l->place.left || y != l->place.top)
+                wl_subsurface_set_position(l->subsurface, x, y);
+            l->place = (MimeRect){x, y, x + l->dest[0], y + l->dest[1]};
+            if (l->shown.set && l->order != l->shown.order) {
+                l->order = l->shown.order;
+                restack = true;
+            }
+            if (has)
+                hole = rect_and(rect_and(l->shown.visible, vis),
+                                (MimeRect){l->at[0], l->at[1], l->at[0] + MIME_MIN(c->reach[0], l->framed.reach[0]),
+                                           l->at[1] + MIME_MIN(c->reach[1], l->framed.reach[1])});
+        }
+        bool open = !rect_empty(hole);
+        if (l->cut[0] && !open)
+            l->closed_ms = now;
+        l->cut_next[0] = open ? hole.right - l->at[0] : 0;
+        l->cut_next[1] = open ? hole.bottom - l->at[1] : 0;
+        l->cut[0] = MIME_MAX(l->cut[0], l->cut_next[0]);
+        l->cut[1] = MIME_MAX(l->cut[1], l->cut_next[1]);
+        if (open)
+            holes[count++] = hole;
+        if (l->gone && !l->subsurface)
+            w->reap = true;
+        else if (l->waits || l->gone || (l->subsurface && !showing && l->shown.set))
+            *again = true;
+    }
+    if (restack)
+        restack_layers(w);
+    return count;
+}
+
+/* the frame of the window that was drawn is the one that shows from now on. */
+static void layers_drawn(UiWindow *w)
+{
+    pthread_mutex_lock(&w->lock);
+    for (int i = 0; i < MAX_VK_LAYERS; i++) {
+        VkLayer *l = &w->vk_layers[i];
+        if (l->used && l->under)
+            memcpy(l->cut, l->cut_next, sizeof(l->cut));
+    }
+    pthread_mutex_unlock(&w->lock);
+}
+
+/* the layers whose presenter left and that have nothing on screen left go. */
+static void reap_layers(UiWindow *w)
+{
+    pthread_mutex_lock(&g_windows_lock);
+    w->reap = false;
+    bool any = false;
+    for (int i = 0; i < MAX_VK_LAYERS; i++) {
+        VkLayer *l = &w->vk_layers[i];
+        if (l->used && l->gone && !l->subsurface) {
+            destroy_layer(w, l);
+            any = true;
+        }
+    }
+    if (any && w->vk && !w->vk_whole && !has_layers(w))
+        w->vk = false;
+    pthread_mutex_unlock(&g_windows_lock);
+}
+
 static VkLayer *make_layer(UiWindow *w, struct wl_surface *parent, uint32_t source, MimeRect area, uint32_t order)
 {
     VkLayer *l = nullptr;
@@ -2193,26 +2440,46 @@ static VkLayer *make_layer(UiWindow *w, struct wl_surface *parent, uint32_t sour
             l = &w->vk_layers[i];
     if (!l)
         return nullptr;
-    l->surface = wl_compositor_create_surface(g_compositor);
-    l->subsurface = l->surface ? wl_subcompositor_get_subsurface(g_subcompositor, l->surface, parent) : nullptr;
-    if (!l->subsurface) {
-        destroy_layer(l);
+    struct wl_surface *surface = wl_compositor_create_surface(g_compositor);
+    struct wl_subsurface *subsurface = surface ? wl_subcompositor_get_subsurface(g_subcompositor, surface, parent) : nullptr;
+    if (!subsurface) {
+        if (surface)
+            wl_surface_destroy(surface);
         return nullptr;
     }
-    l->used = true;
-    l->source = source;
-    wl_subsurface_set_desync(l->subsurface);
+    wl_subsurface_set_desync(subsurface);
     /* the mouse goes through, to the window SDL knows. */
     struct wl_region *empty = wl_compositor_create_region(g_compositor);
-    wl_surface_set_input_region(l->surface, empty);
+    wl_surface_set_input_region(surface, empty);
     wl_region_destroy(empty);
+    pthread_mutex_lock(&w->lock);
+    *l = (VkLayer){.used = true, .source = source, .surface = surface, .subsurface = subsurface, .top = !order};
     if (g_viewporter)
         l->viewport = wl_proxy_marshal_flags(g_viewporter, 1, &viewport_interface, wl_proxy_get_version(g_viewporter), 0,
                                              nullptr, l->surface);
     wl_surface_commit(l->surface);
-    l->place = (MimeRect){0};
-    l->order = ~order;
-    place_layer(w, l, area, order);
+    l->under = !l->top && under_wanted(w);
+    l->order = l->under ? order : ~order;
+    if (l->under) {
+        /* it starts where it will show, under pixels of the window that are not clear yet. */
+        MimeRect vis = visible_part(&w->config), host = host_part(&w->config);
+        MimeRect r = rect_and(physical_rect(w, area), vis);
+        Fit fit = window_fit(w);
+        int32_t step = layer_step(fit);
+        l->at[0] = layer_start(rect_empty(r) ? vis.left : r.left, host.left, vis.left, step);
+        l->at[1] = layer_start(rect_empty(r) ? vis.top : r.top, host.top, vis.top, step);
+        int32_t x = (int32_t)lround(fit.x + (l->at[0] - host.left) * fit.scale);
+        int32_t y = (int32_t)lround(fit.y + (l->at[1] - host.top) * fit.scale);
+        wl_subsurface_set_position(l->subsurface, x, y);
+        l->place = (MimeRect){x, y, x, y};
+    }
+    pthread_mutex_unlock(&w->lock);
+    if (l->under) {
+        restack_layers(w);
+        commit_parent(w);
+    } else {
+        place_layer(w, l, area, order);
+    }
     return l;
 }
 
@@ -2328,6 +2595,15 @@ static void attach_main(void *arg)
             VkLayer *layer = nullptr;
             if (display && parent && wayland_globals(display) &&
                 ((layer = find_layer(w, a->source)) || (layer = make_layer(w, parent, a->source, a->area, a->order)))) {
+                /* one that was about to go shows again with the first frame of its new presenter. */
+                pthread_mutex_lock(&w->lock);
+                if (layer->gone) {
+                    layer->gone = false;
+                    layer->framed = layer->covered = (LayerFrame){};
+                    layer->framed_serial = 0;
+                    layer->dest[0] = layer->dest[1] = 0;
+                }
+                pthread_mutex_unlock(&w->lock);
                 layer->users++;
                 a->native->display = display;
                 a->native->surface = layer->surface;
@@ -2416,10 +2692,26 @@ static void detach_main(void *arg)
             free(d);
             return;
         }
-        if (layer)
-            destroy_layer(layer);
+        /*
+         * a layer under the window goes once a frame of the window that is closed over it is on screen, or the desktop
+         * would show through the window meanwhile.
+         */
+        bool later = layer && layer->under && layer->subsurface && w->shown && w->renderer && w->pixels && w->texture &&
+                     !w->bogus_size;
+        if (later) {
+            pthread_mutex_lock(&w->lock);
+            layer->users = 0;
+            layer->gone = true;
+            layer->waits = false;
+            layer->told.set = layer->shown.set = true;
+            layer->told.visible = layer->shown.visible = (MimeRect){};
+            pthread_mutex_unlock(&w->lock);
+        } else if (layer) {
+            destroy_layer(w, layer);
+        }
         /* the window stays under the presenters while a layer is left. */
-        if (w->vk_whole || !has_layers(w)) {
+        if (later) {
+        } else if (w->vk_whole || !has_layers(w)) {
             w->vk = false;
             w->vk_whole = false;
             destroy_layers(w);
@@ -2443,8 +2735,11 @@ static void detach_main(void *arg)
         }
     }
     pthread_mutex_unlock(&g_windows_lock);
-    if (w && w->shown)
+    if (w && w->shown) {
         draw(w);
+        if (w->reap)
+            reap_layers(w);
+    }
     free(d);
 }
 
@@ -2462,50 +2757,111 @@ typedef struct VkPlace {
     MimeRect area;
 } VkPlace;
 
-/* how long the window's pixels wait for the frame of a layer at its new size. */
-#define HOLD_MS 34
-
-static Uint32 hold_timer(void *data, SDL_TimerID timer, Uint32 interval)
-{
-    on_main(present_main, data);
-    return 0;
-}
-
 static void place_main(void *arg)
 {
     VkPlace *p = arg;
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(p->id);
     VkLayer *layer = w && w->vk && !w->vk_whole ? find_layer(w, p->source) : nullptr;
-    if (layer) {
-        MimeRect from = layer->place, to = client_in_window(w, p->area);
-        bool sized = to.right - to.left != from.right - from.left || to.bottom - to.top != from.bottom - from.top;
-        /*
-         * the guest tells of a new size right before the pixels that are painted around it. the size of a layer is
-         * its surface's own state and lands with its next frame, which the display driver commits. so that frame
-         * is kept for the window's, which waits for it, and both show in one frame of the display.
-         */
-        bool hold = sized && layer->subsurface && layer->viewport && to.right > to.left && to.bottom > to.top &&
-                    layer->order == p->order && w->shown && w->renderer && !w->held;
-        if (hold) {
-            wl_subsurface_set_sync(layer->subsurface);
-            layer->synced = true;
-            pthread_mutex_lock(&w->lock);
-            w->held = true;
-            w->held_source = layer->source;
-            w->held_frame = layer->frames + 1;
-            w->held_until = now_ms() + HOLD_MS;
-            pthread_mutex_unlock(&w->lock);
-        }
+    if (layer && !layer->under)
         place_layer(w, layer, p->area, p->order);
-        if (hold)
-            SDL_AddTimer(HOLD_MS + 1, hold_timer, (void *)(uintptr_t)w->id);
-    }
     pthread_mutex_unlock(&g_windows_lock);
     free(p);
 }
 
-bool mime_ui_vk_frame(uint32_t id, uint32_t source, MimeRect client, MimeRect area, uint32_t order, MimeUiFrame *frame)
+/*
+ * takes a place the guest told for a layer under its window, with the window's lock, and returns whether the window
+ * is to be drawn for it. a place that says the pixels of the window follow lands with them, see
+ * mime_ui_window_present: the guest tells of a child that changed size right before the pixels it painted around it.
+ */
+static bool tell_layer(UiWindow *w, VkLayer *l, const MimeUiPlace *place)
+{
+    LayerPlace p = {true, physical_rect(w, place->client), physical_rect(w, place->visible), place->order, place->stamp};
+    if (rect_empty(p.visible))
+        p.visible = (MimeRect){};
+    /* a frame comes with the place its window had when the guest made it, which a notice may have overtaken. */
+    if (l->told.set && p.stamp && l->told.stamp && (int32_t)(p.stamp - l->told.stamp) < 0)
+        return false;
+    bool same = l->told.set && !memcmp(&p.client, &l->told.client, sizeof(p.client)) &&
+                !memcmp(&p.visible, &l->told.visible, sizeof(p.visible)) && p.order == l->told.order;
+    l->told = p;
+    if (same)
+        return false;
+    if (place->follows && !l->waits) {
+        l->waits = true;
+        l->told_ms = now_ms();
+    }
+    if (l->waits)
+        return false;
+    l->shown = p;
+    return true;
+}
+
+/*
+ * sizes the next frame of a layer under its window, with the window's lock. the surface takes the client area and
+ * what the window shows of the layer past it, inside the window. it starts where that starts, and the image lies in
+ * it where the client area is, at its own size: a frame that is late for a change of size is cut or shows its edge
+ * past its end, where Windows leaves the pixels of the frame before. the surface is no smaller than what a frame of
+ * the window that may be on screen is clear over, or the desktop would show through. one that would reach out of the
+ * window from where it is to start keeps its start, the image moving inside it instead.
+ */
+static void frame_under(UiWindow *w, VkLayer *l, MimeRect image, Fit fit, double density, MimeUiFrame *frame)
+{
+    MimeRect vis = visible_part(&w->config), host = host_part(&w->config);
+    const LayerPlace *p = &l->told;
+    frame->client = image;
+    frame->area = (MimeRect){};
+    frame->pixel_width = frame->pixel_height = 0;
+    if (rect_empty(p->visible))
+        return;
+    MimeRect want = rect_and((MimeRect){MIME_MIN(p->client.left, p->visible.left), MIME_MIN(p->client.top, p->visible.top),
+                                        MIME_MAX(p->client.right, p->visible.right),
+                                        MIME_MAX(p->client.bottom, p->visible.bottom)},
+                             vis);
+    if (rect_empty(want))
+        return;
+    int32_t step = layer_step(fit), start[2];
+    bool placed = l->subsurface != nullptr;
+    LayerFrame f = {};
+    for (int i = 0; i < 2; i++) {
+        int32_t lo = i ? want.top : want.left, hi = i ? want.bottom : want.right;
+        int32_t edge = i ? vis.top : vis.left, end = i ? vis.bottom : vis.right, base = i ? host.top : host.left;
+        int32_t at = l->at[i], cut = placed ? l->cut[i] : 0;
+        int32_t from = layer_start(lo, base, edge, step);
+        int32_t size = MIME_MAX(hi - from, cut);
+        if (placed && from > at && from + size > end) {
+            from = at;
+            size = MIME_MAX(hi - from, cut);
+        }
+        size = (size + step - 1) / step * step;
+        size = MIME_MIN(size, (end - (placed ? MIME_MAX(from, at) : from)) / step * step);
+        if (size <= 0 || hi <= from)
+            return;
+        start[i] = from;
+        f.ext[i] = size;
+        f.reach[i] = MIME_MIN(hi - from, size);
+        f.off[i] = (i ? image.top : image.left) - from;
+    }
+    int32_t width = MIME_MAX((int32_t)lround(f.ext[0] * fit.scale), 1), height = MIME_MAX((int32_t)lround(f.ext[1] * fit.scale), 1);
+    frame->area = (MimeRect){start[0], start[1], start[0] + f.ext[0], start[1] + f.ext[1]};
+    frame->pixel_width = (uint32_t)MIME_MAX(lround(width * density), 1);
+    frame->pixel_height = (uint32_t)MIME_MAX(lround(height * density), 1);
+    /* the size the display shows the buffer at is state of the surface, and lands with the buffer of that size. */
+    if (l->viewport && (width != l->dest[0] || height != l->dest[1]))
+        wl_proxy_marshal_flags(l->viewport, 2, nullptr, wl_proxy_get_version(l->viewport), 0, width, height);
+    l->dest[0] = width;
+    l->dest[1] = height;
+    l->framed = f;
+    l->framed_serial = frame->serial;
+}
+
+/* the area of a layer over the window: what shows of it. */
+static MimeRect area_over(const MimeUiPlace *place)
+{
+    return rect_empty(place->visible) ? (MimeRect){} : place->visible;
+}
+
+bool mime_ui_vk_frame(uint32_t id, uint32_t source, const MimeUiPlace *place, MimeRect image, MimeUiFrame *frame)
 {
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(id);
@@ -2527,21 +2883,29 @@ bool mime_ui_vk_frame(uint32_t id, uint32_t source, MimeRect client, MimeRect ar
     frame->surface_height = w->pixels ? w->height : 0;
     frame->shown = w->shown && !(w->config.flags & MIME_WIN_MINIMIZED);
     frame->subsurface = !w->vk_whole;
-    frame->client = physical_rect(w, client);
+    MimeRect area = area_over(place);
+    frame->client = physical_rect(w, place->client);
     frame->area = physical_rect(w, area);
-    bool moved = false;
+    bool moved = false, redraw = false;
     if (frame->subsurface) {
         VkLayer *layer = find_layer(w, source);
-        if (!layer) {
+        if (!layer || layer->gone) {
             pthread_mutex_unlock(&w->lock);
             return false;
         }
-        /* the layer's area at the window's density. */
-        MimeRect r = client_in_window(w, area);
-        frame->pixel_width = (uint32_t)MIME_MAX(lround((r.right - r.left) * density), 0);
-        frame->pixel_height = (uint32_t)MIME_MAX(lround((r.bottom - r.top) * density), 0);
         frame->serial = ++layer->frames;
-        moved = memcmp(&r, &layer->place, sizeof(r)) != 0 || layer->order != order;
+        if (layer->under) {
+            redraw = tell_layer(w, layer, place) && !w->present_queued;
+            if (redraw)
+                w->present_queued = true;
+            frame_under(w, layer, physical_rect(w, image), fit, density, frame);
+        } else {
+            /* the layer's area at the window's density. */
+            MimeRect r = client_in_window(w, area);
+            frame->pixel_width = (uint32_t)MIME_MAX(lround((r.right - r.left) * density), 0);
+            frame->pixel_height = (uint32_t)MIME_MAX(lround((r.bottom - r.top) * density), 0);
+            moved = memcmp(&r, &layer->place, sizeof(r)) != 0 || layer->order != place->order;
+        }
     } else {
         frame->pixel_width = w->pixel_width;
         frame->pixel_height = w->pixel_height;
@@ -2550,27 +2914,80 @@ bool mime_ui_vk_frame(uint32_t id, uint32_t source, MimeRect client, MimeRect ar
     if (moved) {
         VkPlace *p = malloc(sizeof(*p));
         if (p) {
-            *p = (VkPlace){id, source, order, area};
+            *p = (VkPlace){id, source, place->order, area};
             on_main(place_main, p);
         }
     }
+    if (redraw)
+        on_main(present_main, (void *)(uintptr_t)id);
     return true;
 }
 
-void mime_ui_vk_shown(uint32_t id, uint32_t source, uint32_t serial)
+void mime_ui_vk_place(uint32_t id, uint32_t source, const MimeUiPlace *place)
+{
+    if (!g_video)
+        return;
+    pthread_mutex_lock(&g_windows_lock);
+    UiWindow *w = find_window(id);
+    if (!w || !w->vk || w->vk_whole) {
+        pthread_mutex_unlock(&g_windows_lock);
+        return;
+    }
+    pthread_mutex_lock(&w->lock);
+    pthread_mutex_unlock(&g_windows_lock);
+    VkLayer *l = find_layer(w, source);
+    MimeRect area = area_over(place);
+    bool moved = false, redraw = false, wait = false;
+    if (l && l->under && !l->gone) {
+        bool waited = l->waits;
+        redraw = tell_layer(w, l, place) && !w->present_queued;
+        if (redraw)
+            w->present_queued = true;
+        wait = l->waits && !waited;
+    } else if (l && !l->gone) {
+        MimeRect r = client_in_window(w, area);
+        moved = memcmp(&r, &l->place, sizeof(r)) != 0 || l->order != place->order;
+    }
+    pthread_mutex_unlock(&w->lock);
+    if (moved) {
+        VkPlace *p = malloc(sizeof(*p));
+        if (p) {
+            *p = (VkPlace){id, source, place->order, area};
+            on_main(place_main, p);
+        }
+    }
+    if (redraw)
+        on_main(present_main, (void *)(uintptr_t)id);
+    /* should the pixels that were said to follow not come. */
+    if (wait)
+        SDL_AddTimer(REDRAW_MS, redraw_timer, (void *)(uintptr_t)id);
+}
+
+void mime_ui_vk_shown(uint32_t id, uint32_t source, uint32_t serial, bool shown)
 {
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(id);
-    bool release = false;
-    if (w) {
-        pthread_mutex_lock(&w->lock);
-        release = w->held && w->held_source == source && (int32_t)(serial - w->held_frame) >= 0;
-        if (release)
-            w->held = false;
-        pthread_mutex_unlock(&w->lock);
+    if (!w) {
+        pthread_mutex_unlock(&g_windows_lock);
+        return;
     }
+    pthread_mutex_lock(&w->lock);
     pthread_mutex_unlock(&g_windows_lock);
-    if (release)
+    VkLayer *l = w->vk && !w->vk_whole ? find_layer(w, source) : nullptr;
+    bool redraw = false;
+    if (l && l->under && serial == l->framed_serial) {
+        if (!shown) {
+            l->framed = l->covered;
+        } else if (memcmp(&l->covered, &l->framed, sizeof(l->covered))) {
+            /* the window is clear over what the layer newly covers, and the layer moves to where this frame goes. */
+            l->covered = l->framed;
+            redraw = !w->present_queued;
+            if (redraw)
+                w->present_queued = true;
+        }
+    }
+    pthread_mutex_unlock(&w->lock);
+    if (redraw)
         on_main(present_main, (void *)(uintptr_t)id);
 }
 
