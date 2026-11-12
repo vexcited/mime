@@ -498,39 +498,43 @@ typedef struct CHANGE {
 
 enum { CHANGE_ADDED, CHANGE_STATE, CHANGE_FORMAT, CHANGE_DEFAULT };
 
-/* the clients are called without the lock, which a callback takes when it registers or unregisters. */
+/*
+ * windows takes no reference on a client. FL Studio's driver registers an object whose count starts at zero, so a
+ * reference given back would free it. a client is called without the list lock, which a callback takes when it
+ * registers or unregisters, and unregistering waits for the call under way.
+ */
+static SRWLOCK g_telling;
+static DWORD g_teller;
+
 static void tell(const CHANGE *c)
 {
     static const PROPERTYKEY format = {{0xF19F064D, 0x082C, 0x4E27, {0xBC, 0x73, 0x68, 0x82, 0xA1, 0xBB, 0x8E, 0x4C}}, 0};
-    IMMNotificationClient *clients[MAX_CLIENTS];
-    UINT count = 0;
-    AcquireSRWLockShared(&g_clients_lock);
-    for (UINT i = 0; i < MAX_CLIENTS; i++) {
-        if (g_clients[i]) {
-            clients[count] = g_clients[i];
-            clients[count++]->lpVtbl->AddRef(g_clients[i]);
-        }
-    }
-    ReleaseSRWLockShared(&g_clients_lock);
     LPCWSTR id = c->device ? c->device->id : nullptr;
-    for (UINT i = 0; i < count; i++) {
-        IMMNotificationClient *client = clients[i];
-        switch (c->kind) {
-        case CHANGE_ADDED:
-            client->lpVtbl->OnDeviceAdded(client, id);
-            break;
-        case CHANGE_STATE:
-            client->lpVtbl->OnDeviceStateChanged(client, id, c->state);
-            break;
-        case CHANGE_FORMAT:
-            client->lpVtbl->OnPropertyValueChanged(client, id, format);
-            break;
-        case CHANGE_DEFAULT:
-            for (ERole role = eConsole; role <= eCommunications; role++)
-                client->lpVtbl->OnDefaultDeviceChanged(client, c->capture ? eCapture : eRender, role, id);
-            break;
+    for (UINT i = 0; i < MAX_CLIENTS; i++) {
+        AcquireSRWLockExclusive(&g_telling);
+        AcquireSRWLockShared(&g_clients_lock);
+        IMMNotificationClient *client = g_clients[i];
+        ReleaseSRWLockShared(&g_clients_lock);
+        g_teller = GetCurrentThreadId();
+        if (client) {
+            switch (c->kind) {
+            case CHANGE_ADDED:
+                client->lpVtbl->OnDeviceAdded(client, id);
+                break;
+            case CHANGE_STATE:
+                client->lpVtbl->OnDeviceStateChanged(client, id, c->state);
+                break;
+            case CHANGE_FORMAT:
+                client->lpVtbl->OnPropertyValueChanged(client, id, format);
+                break;
+            case CHANGE_DEFAULT:
+                for (ERole role = eConsole; role <= eCommunications; role++)
+                    client->lpVtbl->OnDefaultDeviceChanged(client, c->capture ? eCapture : eRender, role, id);
+                break;
+            }
         }
-        client->lpVtbl->Release(client);
+        g_teller = 0;
+        ReleaseSRWLockExclusive(&g_telling);
     }
 }
 
@@ -638,8 +642,6 @@ static HRESULT STDMETHODCALLTYPE enum_register(void *This, IMMNotificationClient
     if (start)
         g_watching = TRUE;
     ReleaseSRWLockExclusive(&g_clients_lock);
-    if (hr == S_OK)
-        client->lpVtbl->AddRef(client);
     if (start) {
         HANDLE thread = CreateThread(nullptr, 0, watch_devices, nullptr, 0, nullptr);
         if (thread)
@@ -661,8 +663,10 @@ static HRESULT STDMETHODCALLTYPE enum_unregister(void *This, IMMNotificationClie
         }
     }
     ReleaseSRWLockExclusive(&g_clients_lock);
-    if (hr == S_OK)
-        client->lpVtbl->Release(client);
+    if (hr == S_OK && g_teller != GetCurrentThreadId()) {
+        AcquireSRWLockExclusive(&g_telling);
+        ReleaseSRWLockExclusive(&g_telling);
+    }
     return hr;
 }
 
