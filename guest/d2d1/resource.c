@@ -58,20 +58,24 @@ uint32_t D2dScalePixel(uint32_t p, uint32_t alpha)
     return (a << 24) | (r << 16) | (g << 8) | b;
 }
 
-BOOL D2dSurfaceInit(D2dSurface *s, int w, int h)
+static BOOL surface_init(D2dSurface *s, int w, int h, BOOL zero)
 {
     s->w = w;
     s->h = h;
     s->px = nullptr;
     if (w < 0 || h < 0 || (SIZE_T)w * h > (SIZE_T)(256 << 20) / 4)
         return FALSE;
-    s->px = D2dAllocZero(((SIZE_T)w * h + 1) * 4);
+    s->px = D2dPixelsAlloc(((SIZE_T)w * h + 1) * 4, zero);
+    if (s->px && !zero)
+        s->px[(SIZE_T)w * h] = 0;
     return s->px != nullptr;
 }
 
+BOOL D2dSurfaceInit(D2dSurface *s, int w, int h) { return surface_init(s, w, h, TRUE); }
+
 void D2dSurfaceFree(D2dSurface *s)
 {
-    D2dFree(s->px);
+    D2dPixelsFree(s->px);
     s->px = nullptr;
     s->w = s->h = 0;
 }
@@ -390,19 +394,60 @@ static D2dClass g_bitmap_class;
 
 D2dBitmap *D2dBitmapOf(void *p) { return D2dIsOfClass(p, &g_bitmap_class) ? (D2dBitmap *)p : nullptr; }
 
+/* premultiplied bgra is the view format, so the view of such a bitmap is its native pixels. */
+static BOOL bitmap_view_is_native(const D2dBitmap *b)
+{
+    return b->format == D2D_FMT_BGRA8 && b->alpha == D2D1_ALPHA_MODE_PREMULTIPLIED && b->stride == b->width * 4;
+}
+
 static void bitmap_destroy(D2dObj *o)
 {
     D2dBitmap *b = (D2dBitmap *)o;
-    D2dFree(b->native);
-    D2dSurfaceFree(&b->view);
+    if (!bitmap_view_is_native(b))
+        D2dSurfaceFree(&b->view);
+    D2dPixelsFree(b->native);
+    D2dPixelsFree(b->index);
+    D2dFree(b->palette);
     D2D_RELEASE(b->surface);
     D2D_RELEASE(b->color_context);
 }
 
+static SRWLOCK g_native_lock = SRWLOCK_INIT;
+
+BYTE *D2dBitmapNative(D2dBitmap *b)
+{
+    if (b->native || !b->index)
+        return b->native;
+    AcquireSRWLockExclusive(&g_native_lock);
+    if (!b->native) {
+        SIZE_T count = (SIZE_T)b->width * (b->height ? b->height : 1);
+        uint32_t *px = D2dPixelsAlloc((count + 1) * 4, FALSE);
+        if (px) {
+            for (SIZE_T i = 0; i < count; i++)
+                px[i] = b->palette[b->index[i]];
+            px[count] = 0;
+            /* the indices stay until the bitmap goes: a draw on another thread may be reading them. */
+            InterlockedExchangePointer((void **)&b->native, px);
+        }
+    }
+    ReleaseSRWLockExclusive(&g_native_lock);
+    return b->native;
+}
+
 const D2dSurface *D2dBitmapView(D2dBitmap *b)
 {
+    if (!D2dBitmapNative(b))
+        return nullptr;
+    if (bitmap_view_is_native(b)) {
+        b->view.w = (int)b->width;
+        b->view.h = (int)b->height;
+        b->view.px = (uint32_t *)b->native;
+        b->view_valid = TRUE;
+        return &b->view;
+    }
     if (!b->view_valid) {
-        if (!b->view.px && !D2dSurfaceInit(&b->view, (int)b->width, (int)b->height))
+        /* every row is loaded below. */
+        if (!b->view.px && !surface_init(&b->view, (int)b->width, (int)b->height, FALSE))
             return nullptr;
         for (UINT32 y = 0; y < b->height; y++)
             D2dFormatLoad(b->format, b->alpha, b->srgb, b->native + (SIZE_T)y * b->stride, D2dSurfaceRow(&b->view, (int)y),
@@ -443,15 +488,15 @@ float *D2dBitmapFloats(D2dBitmap *b)
 
 void D2dBitmapCommit(D2dBitmap *b)
 {
-    if (!b->view_valid || !b->view.px)
+    if (!b->native || !b->view_valid || !b->view.px || bitmap_view_is_native(b))
         return;
     for (UINT32 y = 0; y < b->height; y++)
         D2dFormatStore(b->format, b->alpha, b->srgb, D2dSurfaceRow(&b->view, (int)y), b->native + (SIZE_T)y * b->stride,
                        b->width);
 }
 
-HRESULT D2dBitmapCreate(D2dFactory *f, UINT32 w, UINT32 h, DXGI_FORMAT format, D2D1_ALPHA_MODE alpha, float dpi_x,
-                        float dpi_y, D2D1_BITMAP_OPTIONS options, BOOL v1, D2dBitmap **out)
+static HRESULT bitmap_create(D2dFactory *f, UINT32 w, UINT32 h, DXGI_FORMAT format, D2D1_ALPHA_MODE alpha, float dpi_x,
+                             float dpi_y, D2D1_BITMAP_OPTIONS options, BOOL v1, BOOL zero, BOOL indexed, D2dBitmap **out)
 {
     D2dFormat fmt;
     BOOL srgb;
@@ -484,18 +529,55 @@ HRESULT D2dBitmapCreate(D2dFactory *f, UINT32 w, UINT32 h, DXGI_FORMAT format, D
     b->options = options;
     b->v1 = v1;
     b->stride = (w * D2dFormatBytes(fmt) + 3) & ~3u;
-    b->native = D2dAllocZero((SIZE_T)b->stride * (h ? h : 1));
+    /* one pixel more, as a surface has, for the sampler that reads one past the last. */
+    SIZE_T bytes = (SIZE_T)b->stride * (h ? h : 1);
+    if (indexed) {
+        b->index = D2dPixelsAlloc((SIZE_T)w * (h ? h : 1) + 1, FALSE);
+        b->palette = D2dAlloc(256 * sizeof(uint32_t));
+        if (!b->index || !b->palette) {
+            D2dRelease(b);
+            return E_OUTOFMEMORY;
+        }
+        b->index[(SIZE_T)w * (h ? h : 1)] = 0;
+        *out = b;
+        return S_OK;
+    }
+    b->native = D2dPixelsAlloc(bytes + 4, zero);
     if (!b->native) {
         D2dRelease(b);
         return E_OUTOFMEMORY;
     }
+    if (!zero)
+        memset(b->native + bytes, 0, 4);
     *out = b;
     return S_OK;
+}
+
+HRESULT D2dBitmapCreate(D2dFactory *f, UINT32 w, UINT32 h, DXGI_FORMAT format, D2D1_ALPHA_MODE alpha, float dpi_x,
+                        float dpi_y, D2D1_BITMAP_OPTIONS options, BOOL v1, D2dBitmap **out)
+{
+    return bitmap_create(f, w, h, format, alpha, dpi_x, dpi_y, options, v1, TRUE, FALSE, out);
+}
+
+/* a bitmap whose pixels the caller writes all of. */
+HRESULT D2dBitmapCreateFilled(D2dFactory *f, UINT32 w, UINT32 h, DXGI_FORMAT format, D2D1_ALPHA_MODE alpha, float dpi_x,
+                              float dpi_y, D2D1_BITMAP_OPTIONS options, BOOL v1, D2dBitmap **out)
+{
+    return bitmap_create(f, w, h, format, alpha, dpi_x, dpi_y, options, v1, FALSE, FALSE, out);
+}
+
+HRESULT D2dBitmapCreateIndexed(D2dFactory *f, UINT32 w, UINT32 h, float dpi_x, float dpi_y, D2D1_BITMAP_OPTIONS options,
+                               D2dBitmap **out)
+{
+    return bitmap_create(f, w, h, (DXGI_FORMAT)F_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED, dpi_x, dpi_y, options, TRUE,
+                         FALSE, TRUE, out);
 }
 
 HRESULT D2dBitmapCopyIn(D2dBitmap *b, UINT32 x, UINT32 y, const void *src, UINT32 pitch, UINT32 w, UINT32 h)
 {
     UINT32 bpp = D2dFormatBytes(b->format);
+    if (!D2dBitmapNative(b))
+        return E_OUTOFMEMORY;
     for (UINT32 j = 0; j < h; j++)
         memcpy(b->native + (SIZE_T)(y + j) * b->stride + (SIZE_T)x * bpp, (const BYTE *)src + (SIZE_T)j * pitch,
                (SIZE_T)w * bpp);
@@ -736,6 +818,8 @@ static HRESULT STDMETHODCALLTYPE bm_map(ID2D1Bitmap1 *This, D2D1_MAP_OPTIONS opt
     if (!(options & (D2D1_MAP_OPTIONS_READ | D2D1_MAP_OPTIONS_WRITE)) || ((options & D2D1_MAP_OPTIONS_DISCARD) && !(options & D2D1_MAP_OPTIONS_WRITE)) ||
         ((options & D2D1_MAP_OPTIONS_DISCARD) && (options & D2D1_MAP_OPTIONS_READ)))
         return E_INVALIDARG;
+    if (!D2dBitmapNative(b))
+        return E_OUTOFMEMORY;
     b->mapped = TRUE;
     mapped->pitch = b->stride;
     mapped->bits = b->native;

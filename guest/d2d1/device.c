@@ -98,10 +98,11 @@ static const D2dClass g_dev_class = {"device", g_dev_iids, dev_destroy, nullptr}
 HRESULT D2dDeviceCreate(D2dFactory *f, IDXGIDevice *dxgi, ID2D1Device **out)
 {
     ID3D11Device *d3d = nullptr;
-    HRESULT hr = dxgi->lpVtbl->QueryInterface(dxgi, &IID_ID3D11Device, (void **)&d3d);
+    HRESULT hr = dxgi ? dxgi->lpVtbl->QueryInterface(dxgi, &IID_ID3D11Device, (void **)&d3d) : S_OK;
     if (FAILED(hr))
         return hr;
-    d3d->lpVtbl->Release(d3d);
+    if (d3d)
+        d3d->lpVtbl->Release(d3d);
     D2dDevice *d = D2dNew(sizeof(*d), g_dev_vtbl, &g_dev_class, f);
     if (!d)
         return E_OUTOFMEMORY;
@@ -460,6 +461,11 @@ static HRESULT STDMETHODCALLTYPE cx_glyph_bounds(ID2D1DeviceContext6 *This, D2D1
 static void STDMETHODCALLTYPE cx_get_device(ID2D1DeviceContext6 *This, ID2D1Device **out)
 {
     RT;
+    /* a window, dc or bitmap render target has a device too, the one of its factory on windows. VSTGUI keys its
+       resources on it and reads through a null one. it makes a new window target at every resize, and only a device
+       that stays the same lets it find the bitmaps it made for the last one. */
+    if (!rt->device)
+        rt->device = D2dFactoryDevice(rt->obj.factory);
     *out = rt->device;
     D2D_ADDREF(*out);
 }

@@ -45,10 +45,25 @@ HRESULT STDMETHODCALLTYPE D2dQueryInterface(void *self, REFIID riid, void **out)
 
 ULONG STDMETHODCALLTYPE D2dAddRef(void *self) { return (ULONG)InterlockedIncrement(&((D2dObj *)self)->refs); }
 
+/* a factory and its shared device hold each other. the pair goes once nothing else holds either of them. */
+static void shared_device_drop(D2dObj *o)
+{
+    D2dFactory *f = o->cls == &d2d_factory_class ? (D2dFactory *)o : o->factory;
+    if (!f || !f->device || (o != &f->obj && o != (D2dObj *)f->device))
+        return;
+    if (f->obj.refs != 1 || ((D2dObj *)f->device)->refs != 1)
+        return;
+    ID2D1Device *d = InterlockedExchangePointer((void **)&f->device, nullptr);
+    if (d)
+        D2dRelease(d);
+}
+
 ULONG STDMETHODCALLTYPE D2dRelease(void *self)
 {
     D2dObj *o = self;
     LONG refs = InterlockedDecrement(&o->refs);
+    if (refs == 1)
+        shared_device_drop(o);
     if (refs == 0) {
         D2dFactory *factory = o->factory;
         o->refs = 0x40000000;
@@ -102,6 +117,18 @@ static void factory_destroy(D2dObj *obj)
 }
 
 const D2dClass d2d_factory_class = {"factory", g_factory_iids, factory_destroy, factory_query_extra};
+
+ID2D1Device *D2dFactoryDevice(D2dFactory *f)
+{
+    EnterCriticalSection(&f->lock);
+    if (!f->device)
+        D2dDeviceCreate(f, nullptr, &f->device);
+    ID2D1Device *d = f->device;
+    if (d)
+        D2dAddRef(d);
+    LeaveCriticalSection(&f->lock);
+    return d;
+}
 
 D2dFactory *D2dFactoryOf(ID2D1Factory *f)
 {

@@ -5,6 +5,7 @@
  */
 #include "wic_private.h"
 #include "convert.h"
+#include "par/par.h"
 
 #ifdef __SSE2__
 #include <emmintrin.h>
@@ -755,13 +756,42 @@ static void writef(const FormatDesc *d, BYTE *dst, UINT x0, const float *in, UIN
 /* fast paths. */
 
 /* common BGRA paths: remove alpha or swap channels. */
+/* straight to premultiplied in place, alpha in the last byte, rounded as div255 does. */
+static void premul_row(BYTE *q, UINT count)
+{
+    UINT i = 0;
+#ifdef __SSE2__
+    const __m128i zero = _mm_setzero_si128(), half = _mm_set1_epi16(128);
+    const __m128i keep = _mm_set_epi16(-1, 0, 0, 0, -1, 0, 0, 0), one = _mm_set_epi16(255, 0, 0, 0, 255, 0, 0, 0);
+    for (; i + 4 <= count; i += 4) {
+        __m128i v = _mm_loadu_si128((const __m128i *)(q + i * 4));
+        __m128i part[2] = {_mm_unpacklo_epi8(v, zero), _mm_unpackhi_epi8(v, zero)};
+        for (int k = 0; k < 2; k++) {
+            __m128i a = _mm_shufflehi_epi16(_mm_shufflelo_epi16(part[k], 0xff), 0xff);
+            a = _mm_or_si128(_mm_andnot_si128(keep, a), one);
+            __m128i t = _mm_add_epi16(_mm_mullo_epi16(part[k], a), half);
+            part[k] = _mm_srli_epi16(_mm_add_epi16(t, _mm_srli_epi16(t, 8)), 8);
+        }
+        _mm_storeu_si128((__m128i *)(q + i * 4), _mm_packus_epi16(part[0], part[1]));
+    }
+#endif
+    for (; i < count; i++) {
+        UINT a = q[i * 4 + 3];
+        if (a == 255)
+            continue;
+        q[i * 4] = div255(q[i * 4] * a);
+        q[i * 4 + 1] = div255(q[i * 4 + 1] * a);
+        q[i * 4 + 2] = div255(q[i * 4 + 2] * a);
+    }
+}
+
 static BOOL fast_row(const FormatDesc *s, const FormatDesc *d, const BYTE *src, BYTE *dst, UINT x0, UINT count)
 {
     if (s->ctype != CT_U8 || d->ctype != CT_U8 || s->model != M_RGB || d->model != M_RGB)
         return FALSE;
-    if (s->premul || d->premul)
-        return FALSE;
     UINT sn = s->nchan, dn = d->nchan;
+    if (s->premul || (d->premul && !(sn == 4 && dn == 4 && s->a == 3 && d->a == 3)))
+        return FALSE;
     const BYTE *p = src + (SIZE_T)x0 * sn;
     BYTE *q = dst + (SIZE_T)x0 * dn;
     /* 32 bit with the same channel order, 24 bit with the same order. */
@@ -771,6 +801,8 @@ static BOOL fast_row(const FormatDesc *s, const FormatDesc *d, const BYTE *src, 
             for (UINT i = 0; i < count; i++)
                 q[i * 4 + 3] = 255;
         }
+        if (d->premul)
+            premul_row(q, count);
         return TRUE;
     }
     if (sn == 4 && dn == 4 && s->r == d->b && s->b == d->r && s->a == d->a) {
@@ -793,6 +825,8 @@ static BOOL fast_row(const FormatDesc *s, const FormatDesc *d, const BYTE *src, 
             q[i * 4 + 2] = p[i * 4];
             q[i * 4 + 3] = d->a < 0 ? 255 : p[i * 4 + 3];
         }
+        if (d->premul)
+            premul_row(q, count);
         return TRUE;
     }
     /* 24 bit to 32 bit and back, with or without swapping red and blue. */
@@ -851,9 +885,40 @@ struct WicConverter {
     Canon canon;
     const WICColor *palette;
     UINT palette_count;
+    const UINT32 *indexed; /* the destination pixel of each index, when the pair of formats has them. */
 };
 
 /* convert width 4-byte pixels starting at x0 in both rows. */
+/* 8 bit indexed to a 32 bit colour format: one palette lookup per pixel, as read8 and write8 do it. */
+static BOOL indexed_row(const WicConverter *c, const BYTE *src, BYTE *dst, UINT x0, UINT width)
+{
+    const FormatDesc *s = c->src, *d = c->dst;
+    if (s->model != M_INDEXED || s->bits != 8 || d->ctype != CT_U8 || d->model != M_RGB || d->nchan != 4 ||
+        (d->a >= 0 && d->a != 3))
+        return FALSE;
+    BYTE *q = dst + (SIZE_T)x0 * 4;
+    if (c->indexed) {
+        for (UINT i = 0; i < width; i++)
+            __builtin_memcpy(q + i * 4, &c->indexed[src[x0 + i]], 4);
+        return TRUE;
+    }
+    for (UINT i = 0; i < width; i++, q += 4) {
+        UINT index = src[x0 + i];
+        WICColor color = index < c->palette_count ? c->palette[index] : 0xff000000;
+        BYTE b = (BYTE)color, g = (BYTE)(color >> 8), r = (BYTE)(color >> 16), a = (BYTE)(color >> 24);
+        if (d->premul && a != 255) {
+            r = div255(r * (UINT)a);
+            g = div255(g * (UINT)a);
+            b = div255(b * (UINT)a);
+        }
+        q[d->r] = r;
+        q[d->g] = g;
+        q[d->b] = b;
+        q[3] = d->a >= 0 ? a : 255;
+    }
+    return TRUE;
+}
+
 static void convert_core(const WicConverter *c, const BYTE *src, BYTE *dst, UINT x0, UINT width)
 {
     if (c->src == c->dst) {
@@ -863,7 +928,7 @@ static void convert_core(const WicConverter *c, const BYTE *src, BYTE *dst, UINT
             return;
         }
     }
-    if (fast_row(c->src, c->dst, src, dst, x0, width))
+    if (fast_row(c->src, c->dst, src, dst, x0, width) || indexed_row(c, src, dst, x0, width))
         return;
     Canon canon = c->canon;
     if (canon == CANON_8) {
@@ -1153,6 +1218,21 @@ void WicIndexerRow(WicIndexer *ix, const BYTE *bgra, BYTE *dst, UINT x0, UINT co
 
 /* entry points. */
 
+typedef struct RowsJob {
+    const WicConverter *conv;
+    const BYTE *src;
+    BYTE *dest;
+    UINT src_stride, dest_stride, width;
+} RowsJob;
+
+static void convert_rows(void *ctx, int first, int end)
+{
+    RowsJob *job = ctx;
+    for (int y = first; y < end; y++)
+        convert_core(job->conv, job->src + (SIZE_T)y * job->src_stride, job->dest + (SIZE_T)y * job->dest_stride, 0,
+                     job->width);
+}
+
 HRESULT WicConvertRows(const GUID *from, const GUID *to, const BYTE *src, UINT src_stride, BYTE *dest,
                        UINT dest_stride, UINT width, UINT height, const WICColor *palette, UINT palette_count,
                        const WICColor *dest_palette, UINT dest_count, WICBitmapDitherType dither, UINT first_col,
@@ -1164,6 +1244,14 @@ HRESULT WicConvertRows(const GUID *from, const GUID *to, const BYTE *src, UINT s
     WicConverter conv = {s, d, canon_of(s) == CANON_F || canon_of(d) == CANON_F ? CANON_F
                                 : canon_of(s) == CANON_16 || canon_of(d) == CANON_16 ? CANON_16 : CANON_8,
                          palette, palette_count};
+    UINT32 indexed[256];
+    if ((SIZE_T)width * height >= 1024) {
+        BYTE each[256];
+        for (UINT i = 0; i < 256; i++)
+            each[i] = (BYTE)i;
+        if (indexed_row(&conv, each, (BYTE *)indexed, 0, 256))
+            conv.indexed = indexed;
+    }
     if (d->model == M_INDEXED) {
         WicIndexer *ix = WicIndexerNew(dest_palette, dest_count, dither, threshold, width);
         BYTE *tmp = WicAlloc((SIZE_T)width * 4);
@@ -1204,6 +1292,11 @@ HRESULT WicConvertRows(const GUID *from, const GUID *to, const BYTE *src, UINT s
     /* sixteen bit destinations dither when asked to. */
     BOOL dither_small = dither != WICBitmapDitherTypeNone && dither <= WICBitmapDitherTypeDualSpiral8x8 &&
                         (d->ctype == CT_555 || d->ctype == CT_565 || d->ctype == CT_5551);
+    if (!dither_small && height >= 8 && height <= 0x7fffffff && (SIZE_T)width * height >= 65536) {
+        RowsJob job = {&conv, src, dest, src_stride, dest_stride, width};
+        mime_par_rows(0, (int)height, width < 16384 ? (int)(16384 / width) : 1, convert_rows, &job);
+        return S_OK;
+    }
     for (UINT y = 0; y < height; y++) {
         const BYTE *row = src + (SIZE_T)y * src_stride;
         BYTE *out = dest + (SIZE_T)y * dest_stride;

@@ -659,6 +659,56 @@ HRESULT D2dRtCreateBitmap(D2dRt *rt, D2D1_SIZE_U size, const void *data, UINT32 
     return S_OK;
 }
 
+/*
+ * an 8 bit indexed source becomes a bitmap of indices: the palette is premultiplied here as the format converter
+ * does it, so the pixels read back are the ones the converter would have written.
+ */
+static HRESULT bitmap_from_indexed(D2dRt *rt, IWICBitmapSource *source, UINT w, UINT h, const D2D1_BITMAP_PROPERTIES1 *q,
+                                   ID2D1Bitmap1 **out)
+{
+    if (q->bitmapOptions != D2D1_BITMAP_OPTIONS_NONE || !w || !h || w > 16384 || h > 16384)
+        return S_FALSE;
+    IWICImagingFactory *wf = nullptr;
+    if (FAILED(CoCreateInstance(&CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, &IID_IWICImagingFactory, (void **)&wf)))
+        return S_FALSE;
+    IWICPalette *palette = nullptr;
+    WICColor colors[256];
+    UINT count = 0;
+    HRESULT hr = wf->lpVtbl->CreatePalette(wf, &palette);
+    wf->lpVtbl->Release(wf);
+    if (SUCCEEDED(hr))
+        hr = source->lpVtbl->CopyPalette(source, palette);
+    if (SUCCEEDED(hr))
+        hr = palette->lpVtbl->GetColors(palette, 256, colors, &count);
+    if (palette)
+        palette->lpVtbl->Release(palette);
+    if (FAILED(hr) || count > 256)
+        return S_FALSE;
+    D2dBitmap *b;
+    hr = D2dBitmapCreateIndexed(rt->obj.factory, w, h, q->dpiX, q->dpiY, q->bitmapOptions, &b);
+    if (FAILED(hr))
+        return hr;
+    for (UINT i = 0; i < 256; i++) {
+        uint32_t c = i < count ? colors[i] : 0xff000000u, a = c >> 24;
+        if (a != 255) {
+            uint32_t px = a << 24;
+            for (int sh = 0; sh < 24; sh += 8) {
+                uint32_t t = ((c >> sh) & 255) * a + 128;
+                px |= ((t + (t >> 8)) >> 8) << sh;
+            }
+            c = px;
+        }
+        b->palette[i] = c;
+    }
+    hr = source->lpVtbl->CopyPixels(source, nullptr, w, w * h, b->index);
+    if (FAILED(hr)) {
+        D2dRelease(b);
+        return hr;
+    }
+    *out = (ID2D1Bitmap1 *)b;
+    return S_OK;
+}
+
 HRESULT D2dRtBitmapFromWic(D2dRt *rt, IWICBitmapSource *source, const D2D1_BITMAP_PROPERTIES1 *p1, const D2D1_BITMAP_PROPERTIES *p0,
                            ID2D1Bitmap1 **out)
 {
@@ -673,6 +723,23 @@ HRESULT D2dRtBitmapFromWic(D2dRt *rt, IWICBitmapSource *source, const D2D1_BITMA
         return hr;
     WICPixelFormatGUID pf;
     source->lpVtbl->GetPixelFormat(source, &pf);
+    D2D1_BITMAP_PROPERTIES1 q;
+    if (p1)
+        q = *p1;
+    else
+        q = default_bitmap_props(rt, p0);
+    if (!p0 && !p1) {
+        double dx = 0, dy = 0;
+        if (SUCCEEDED(source->lpVtbl->GetResolution(source, &dx, &dy)) && dx > 0 && dy > 0) {
+            q.dpiX = (float)dx;
+            q.dpiY = (float)dy;
+        }
+    }
+    if (IsEqualGUID(&pf, &GUID_WICPixelFormat8bppIndexed)) {
+        hr = bitmap_from_indexed(rt, source, w, h, &q, out);
+        if (hr != S_FALSE)
+            return hr;
+    }
     IWICBitmapSource *use = source;
     IWICFormatConverter *conv = nullptr;
     BOOL straight = IsEqualGUID(&pf, &GUID_WICPixelFormat32bppBGRA);
@@ -695,22 +762,10 @@ HRESULT D2dRtBitmapFromWic(D2dRt *rt, IWICBitmapSource *source, const D2D1_BITMA
         straight = FALSE;
         opaque = FALSE;
     }
-    D2D1_BITMAP_PROPERTIES1 q;
-    if (p1)
-        q = *p1;
-    else
-        q = default_bitmap_props(rt, p0);
-    if (!p0 && !p1) {
-        double dx = 0, dy = 0;
-        if (SUCCEEDED(source->lpVtbl->GetResolution(source, &dx, &dy)) && dx > 0 && dy > 0) {
-            q.dpiX = (float)dx;
-            q.dpiY = (float)dy;
-        }
-    }
     q.pixelFormat.format = (DXGI_FORMAT)87;
     q.pixelFormat.alphaMode = opaque ? D2D1_ALPHA_MODE_IGNORE : D2D1_ALPHA_MODE_PREMULTIPLIED;
     D2dBitmap *b;
-    hr = D2dBitmapCreate(rt->obj.factory, w, h, q.pixelFormat.format, q.pixelFormat.alphaMode, q.dpiX, q.dpiY, q.bitmapOptions, TRUE, &b);
+    hr = D2dBitmapCreateFilled(rt->obj.factory, w, h, q.pixelFormat.format, q.pixelFormat.alphaMode, q.dpiX, q.dpiY, q.bitmapOptions, TRUE, &b);
     if (SUCCEEDED(hr)) {
         hr = use->lpVtbl->CopyPixels(use, nullptr, b->stride, b->stride * h, b->native);
         if (SUCCEEDED(hr) && straight) {
