@@ -148,14 +148,8 @@ static BOOL ask(UI *ui)
     }
     instruction[RTL_NUMBER_OF(instruction) - 1] = content[RTL_NUMBER_OF(content) - 1] = skip[RTL_NUMBER_OF(skip) - 1] = 0;
     ui->Yes = FALSE;
-    /* the host's buttons have one line, what each does goes under the text. */
-    WCHAR host_content[1024];
-    PCWSTR download_note = wcschr(download, L'\n'), skip_note = wcschr(skip, L'\n');
-    _snwprintf(host_content, RTL_NUMBER_OF(host_content), L"%ls\n\nDownload: %ls\nSkip: %ls", content,
-               download_note ? download_note + 1 : L"", skip_note ? skip_note + 1 : L"");
-    host_content[RTL_NUMBER_OF(host_content) - 1] = 0;
     static PCWSTR const choices[] = {L"Download", L"Skip"};
-    ULONG id = host_dialog(MIME_DIALOG_ASK, 0, instruction, host_content, choices, 2, 0);
+    ULONG id = host_dialog(MIME_DIALOG_ASK, 0, instruction, content, choices, 2, 0);
     if (id)
         return host_answer(id, &ui->Abandoned) == 0 && !ui->Abandoned;
     TASKDIALOG_BUTTON buttons[] = {{ID_DOWNLOAD, download}, {ID_SKIP, skip}};
