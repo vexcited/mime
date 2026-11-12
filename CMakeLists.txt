@@ -1813,4 +1813,8 @@ target_sources(mime PRIVATE ${MIME_BUILD_GEN}/genuine_manifest.h)
 set_source_files_properties(host/genuine.c PROPERTIES INCLUDE_DIRECTORIES ${MIME_BUILD_GEN}
     OBJECT_DEPENDS ${MIME_BUILD_GEN}/genuine_manifest.h)
 find_package(CURL REQUIRED)
+# the sdk's usr/include as -isystem comes before libc++'s headers and breaks them, and the compiler searches it already.
+if(CURL_INCLUDE_DIR MATCHES "\\.sdk/usr/include$")
+    set_target_properties(CURL::libcurl PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "")
+endif()
 target_link_libraries(mime PRIVATE CURL::libcurl)
