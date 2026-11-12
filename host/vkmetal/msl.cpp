@@ -10,7 +10,6 @@
 
 extern "C" {
 #include <vulkan/vulkan.h>
-#include "mtl.h"
 #include "vkm_msl.h"
 }
 
@@ -71,6 +70,8 @@ extern "C" bool vkm_msl(const uint32_t *spirv, size_t words, const char *entry, 
         o.buffer_size_buffer_index = VKM_BUFFER_AUX;
         o.enable_decoration_binding = false;
         o.multiview = false;
+        o.acceleration_structure_addresses = true;
+        vkm_as_table(&o.acceleration_structure_table, &o.acceleration_structure_table_mask);
         c.set_msl_options(o);
 
         auto common = c.get_common_options();

@@ -165,6 +165,8 @@ typedef struct _KJUMP_BUFFER {
 #define MI_PTE_SET_RW(p) ((p) & ~MM_PTE_AP_RO)
 #define MI_PTE_IS_RO(p) (((p) & MM_PTE_AP_RO) != 0)
 #define MI_PTE_IS_USER(p) (((p) & MM_PTE_AP_EL0) != 0)
+#define MI_PTE_SET_USER(p) ((p) | MM_PTE_AP_EL0)
+#define MI_PTE_CLEAR_USER(p) ((p) & ~MM_PTE_AP_EL0)
 #define MI_PTE_USER_EXEC(p) (((p) & MM_PTE_UXN) == 0)
 /* a present user page that user mode cannot reach: no access, or a guard page before its first touch. */
 #define MI_PTE_IS_GUARD(p) (((p) & MM_PTE_SW_GUARD) != 0)
@@ -177,5 +179,6 @@ typedef struct _KJUMP_BUFFER {
 #define MM_KERNEL_RW (MM_PTE_ATTR(0) | MM_PTE_SH_INNER | MM_PTE_AF | MM_PTE_UXN | MM_PTE_PXN)
 #define MM_KERNEL_RO (MM_KERNEL_RW | MM_PTE_AP_RO)
 #define MM_KERNEL_RX (MM_PTE_ATTR(0) | MM_PTE_SH_INNER | MM_PTE_AF | MM_PTE_UXN | MM_PTE_AP_RO)
+#define MM_PTE_UNCACHED MM_PTE_ATTR(2)
 
 #endif

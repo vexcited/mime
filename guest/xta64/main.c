@@ -172,7 +172,7 @@ static DECLSPEC_NORETURN void mx_fatal(NTSTATUS status, const char *what)
 }
 
 /*
- * the translator's own memory. a 32-bit program has the 2 GB below, so it goes above 4 GB as prism's does, else the
+ * the translator's own memory. a 32-bit program has the 2 or 4 GB below, so it goes above 4 GB as prism's does, else the
  * code it translates and its own allocations would share the program's room.
  */
 static PVOID alloc_pages(SIZE_T size, ULONG protect)
@@ -218,7 +218,7 @@ static void cpu_to_context(X86Cpu *c, AMD64_CONTEXT *ctx)
     ctx->SegCs = 0x33;
     ctx->SegDs = ctx->SegEs = ctx->SegSs = ctx->SegGs = 0x2B;
     ctx->SegFs = 0x53;
-    x86_fxsave(c, (uint8_t *)&ctx->FltSave);
+    x86_fxsave(c, (uint8_t *)&ctx->FltSave, 1);
     ctx->MxCsr = x86_mxcsr(c);
 }
 
@@ -237,7 +237,7 @@ static void context_to_cpu(const AMD64_CONTEXT *ctx, X86Cpu *c)
         x86_set_flags(c, ctx->EFlags);
     }
     if ((flags & CONTEXT_AMD64_FLOATING_POINT) == CONTEXT_AMD64_FLOATING_POINT) {
-        x86_fxrstor(c, (const uint8_t *)&ctx->FltSave);
+        x86_fxrstor(c, (const uint8_t *)&ctx->FltSave, 1);
         x86_set_mxcsr(c, ctx->MxCsr);
     }
 }
@@ -260,7 +260,7 @@ static void cpu_to_context32(X86Cpu *c, I386_CONTEXT *ctx)
     ctx->SegCs = 0x23;
     ctx->SegDs = ctx->SegEs = ctx->SegSs = 0x2B;
     ctx->SegFs = 0x53;
-    x86_fxsave(c, ctx->ExtendedRegisters);
+    x86_fxsave(c, ctx->ExtendedRegisters, 0);
 }
 
 static void context32_to_cpu(const I386_CONTEXT *ctx, X86Cpu *c)
@@ -280,7 +280,7 @@ static void context32_to_cpu(const I386_CONTEXT *ctx, X86Cpu *c)
         x86_set_flags(c, ctx->EFlags);
     }
     if ((ctx->ContextFlags & CONTEXT_I386_EXTENDED_REGISTERS) == CONTEXT_I386_EXTENDED_REGISTERS)
-        x86_fxrstor(c, ctx->ExtendedRegisters);
+        x86_fxrstor(c, ctx->ExtendedRegisters, 0);
 }
 
 /* ------------------------------------------------------------ emulation */
@@ -1231,6 +1231,7 @@ static void process_init(void)
         g_code_log = log;
     }
     g_env.suspend = env_suspend;
+    x86_jit_sha256 = USER_SHARED_DATA->ProcessorFeatures[30]; /* PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE */
     PIMAGE_DOS_HEADER dos = NtCurrentPeb()->ImageBaseAddress;
     PIMAGE_NT_HEADERS32 nt = (void *)((PUCHAR)dos + dos->e_lfanew);
     g_guest.is32 = nt->FileHeader.Machine == IMAGE_FILE_MACHINE_I386;

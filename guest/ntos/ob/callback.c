@@ -83,7 +83,7 @@ static void ensure_ready(void)
         __atomic_store_n(&g_ready, 2, __ATOMIC_RELEASE);
     }
     while (__atomic_load_n(&g_ready, __ATOMIC_ACQUIRE) != 2)
-        __builtin_ia32_pause();
+        KiPause();
 }
 
 /* a callback must be code of an image whose integrity is checked. */

@@ -241,6 +241,7 @@ typedef struct Ctx {
     uint64_t start; /* the block's address. */
     uint16_t xloaded; /* the xmm registers held in v16 to v31, see the xmm cache. */
     uint16_t xdirty;  /* the ones changed there and not yet stored. */
+    uint32_t sha_second; /* the second sha256rnds2 of a pair whose result is in the cpu's jit_sha, or 0. */
 } Ctx;
 
 static uint32_t OFF_X(int reg) { return (uint32_t)(offsetof(X86Cpu, xmm) + (uint32_t)reg * 16); }
@@ -2070,6 +2071,265 @@ static int emit_atomic(Ctx *x, const X86Insn *i)
 /* ------------------------------------------------------------ general instructions */
 
 /* emits one instruction natively, or returns 0 for the interpreter. */
+/* ------------------------------------------------------------ sha256 */
+
+uint32_t x86_jit_sha256;
+
+#define V_ZIP1_2D 0x4EC03800u
+#define V_ZIP2_2D 0x4EC07800u
+
+static void rev64_4s(Emit *e, int vd, int vn) { put(e, 0x4EA00800u | (uint32_t)vn << 5 | (uint32_t)vd); }
+
+/* instructions that write no xmm register but the one in modrm.reg, if any. */
+static int writes_xmm_reg_only(const X86Insn *i)
+{
+    uint8_t op = i->opcode;
+    if (i->map == 0 || i->map == 2)
+        return 1;
+    if (i->map == 3)
+        return op < 0x60 || op > 0x63; /* pcmpestrm and pcmpistrm write xmm0. */
+    return op == 0x10 || op == 0x12 || op == 0x14 || op == 0x15 || op == 0x16 || op == 0x1F || op == 0x28 ||
+           (op >= 0x51 && op <= 0x70) || (op >= 0x74 && op <= 0x76) || op == 0xC2 || op == 0xC6 ||
+           (op >= 0xD1 && op <= 0xD5) || (op >= 0xD8 && op <= 0xE5) || (op >= 0xE8 && op <= 0xEF) ||
+           (op >= 0xF1 && op <= 0xFE);
+}
+
+/*
+ * sha256 code runs four rounds as sha256rnds2 x, y, then the keys moved down by pshufd xmm0, xmm0, 0xe, psrldq
+ * xmm0, 8 or punpckhqdq xmm0, xmm0, then sha256rnds2 y, x, as openssl and linux do. the arm64 instructions run four rounds, so the first one's
+ * already computed the second's result. returns the index of the second one when the block holds the pattern and
+ * nothing in between writes x, y or xmm0 or is another sha256rnds2, else 0.
+ */
+static uint32_t sha256_pair(const Ctx *x, const X86Insn *first)
+{
+    const X86Insn *all = x->insn - x->index;
+    int a = first->reg, b = first->rm, keyed = 0;
+    if (first->mod != 3 || a == b || !a || !b)
+        return 0;
+    for (uint32_t k = x->index + 1; k < x->count; k++) {
+        const X86Insn *i = &all[k];
+        if (i->map == 2 && i->opcode == 0xCB && !i->mandatory)
+            return keyed && i->mod == 3 && i->reg == b && i->rm == a ? k : 0;
+        if (i->map == 0)
+            continue;
+        int shuffle = i->map == 1 && i->mandatory == 0x66 && i->mod == 3 && i->rm == 0 &&
+                      ((i->opcode == 0x70 && i->reg == 0 && (i->imm & 0xFF) == 0x0E) ||
+                       (i->opcode == 0x6D && i->reg == 0) ||
+                       (i->opcode == 0x73 && ((i->modrm >> 3) & 7) == 3 && (i->imm & 0xFF) == 8));
+        if (shuffle && !keyed) {
+            keyed = 1;
+            continue;
+        }
+        if (!writes_xmm_reg_only(i) || i->reg == a || i->reg == b || i->reg == 0)
+            return 0;
+    }
+    return 0;
+}
+
+/*
+ * sha256rnds2, sha256msg1 and sha256msg2 with the arm64 instructions. the x86 states hold abef and cdgh with a in
+ * the top lane, the arm64 ones abcd and efgh with a in lane 0. sha256h and sha256h2 run four rounds with the four
+ * keys of xmm0, of which x86 uses two: after them c, d, g and h are the a, b, e and f of two rounds.
+ */
+static int emit_sha256(Ctx *x, const X86Insn *i)
+{
+    Emit *e = x->e;
+    if (!x86_jit_sha256)
+        return 0;
+    if (i->opcode == 0xCB && x->sha_second && x->sha_second == x->index) {
+        vldr(e, 16, V0, CPU, offsetof(X86Cpu, jit_sha));
+        xstore(x, V0, i->reg);
+        x->sha_second = 0;
+        return x->keep = 1, 1;
+    }
+    xload(x, 16, V0, i->reg);
+    load_xsrc(x, i, 16, V1);
+    if (i->opcode == 0xCC) { /* sha256msg1 */
+        put(e, 0x5E282800u | (uint32_t)V1 << 5 | V0); /* sha256su0 */
+    } else if (i->opcode == 0xCD) { /* sha256msg2: sha256su1 without its w[t - 7] term */
+        put(e, 0x4E041FE0u | V1); /* mov v1.s[0], wzr */
+        vzero(e, V2);
+        put(e, 0x5E006000u | (uint32_t)V1 << 16 | (uint32_t)V2 << 5 | V0); /* sha256su1 */
+    } else {
+        int key = xget(x, 0);
+        v3(e, V_ZIP2_2D, V2, V1, V0);
+        rev64_4s(e, V2, V2); /* abcd */
+        v3(e, V_ZIP1_2D, V3, V1, V0);
+        rev64_4s(e, V3, V3); /* efgh */
+        vmov(e, 4, V2);
+        put(e, 0x5E004000u | (uint32_t)key << 16 | (uint32_t)V3 << 5 | V2); /* sha256h */
+        put(e, 0x5E005000u | (uint32_t)key << 16 | 4u << 5 | V3);         /* sha256h2 */
+        v3(e, V_ZIP2_2D, V0, V3, V2);
+        rev64_4s(e, V0, V0);
+        uint32_t second = sha256_pair(x, i);
+        if (second) {
+            v3(e, V_ZIP1_2D, V1, V3, V2);
+            rev64_4s(e, V1, V1);
+            vstr(e, 16, V1, CPU, offsetof(X86Cpu, jit_sha));
+            x->sha_second = second;
+        }
+    }
+    xstore(x, V0, i->reg);
+    return x->keep = 1, 1;
+}
+
+/* ------------------------------------------------------------ div and idiv */
+
+enum { X16 = 16, X17 = 17 };
+
+static void div_op(Emit *e, int size, int is_signed, int rd, int rn, int rm)
+{
+    put(e, (size == 8 ? 0x9AC00800u : 0x1AC00800u) | (is_signed ? 0x400u : 0) | (uint32_t)rm << 16 | (uint32_t)rn << 5 |
+               (uint32_t)rd);
+}
+
+/* rd = ra - rn * rm. */
+static void msub(Emit *e, int rd, int rn, int rm, int ra)
+{
+    put(e, 0x9B008000u | (uint32_t)rm << 16 | (uint32_t)ra << 10 | (uint32_t)rn << 5 | (uint32_t)rd);
+}
+
+/* rd = rn | rm << shift. */
+static void orr_shifted(Emit *e, int rd, int rn, int rm, int shift)
+{
+    put(e, 0xAA000000u | (uint32_t)rm << 16 | (uint32_t)shift << 10 | (uint32_t)rn << 5 | (uint32_t)rd);
+}
+
+/* lslv or lsrv. */
+static void shift_reg(Emit *e, int right, int rd, int rn, int rm)
+{
+    put(e, (right ? 0x9AC02400u : 0x9AC02000u) | (uint32_t)rm << 16 | (uint32_t)rn << 5 | (uint32_t)rd);
+}
+
+static uint32_t *cbnz_x(Emit *e, int rt)
+{
+    uint32_t *at = e->p;
+    put(e, 0xB5000000u | (uint32_t)rt);
+    return at;
+}
+
+/* cbz rt back to an earlier instruction. */
+static void cbz_to(Emit *e, int rt, const uint32_t *to)
+{
+    put(e, 0xB4000000u | ((uint32_t)(to - e->p) & 0x7FFFF) << 5 | (uint32_t)rt);
+}
+
+/*
+ * corrects a quotient digit q estimated from the top digit of the divisor alone: at most twice, while it is too large
+ * for a digit or q times the low digit exceeds the remainder rhat with the next dividend digit un. ta and tb are free.
+ */
+static void div_digit_fix(Emit *e, int q, int un, int ta, int tb)
+{
+    enum { VN1 = T4, VN0 = T5, RHAT = X17 };
+    const uint32_t *again = e->p;
+    ubfm(e, 8, ta, q, 32, 63);
+    uint32_t *adjust = cbnz_x(e, ta);
+    put(e, 0x9B007C00u | (uint32_t)VN0 << 16 | (uint32_t)q << 5 | (uint32_t)ta); /* mul ta, q, vn0 */
+    orr_shifted(e, tb, un, RHAT, 32);
+    rrr(e, OP_SUBS, 8, XZR, ta, tb);
+    uint32_t *done = b_cond(e, LS);
+    patch19(e, adjust);
+    put(e, 0xD1000400u | (uint32_t)q << 5 | (uint32_t)q); /* sub q, q, #1 */
+    rrr(e, OP_ADD, 8, RHAT, RHAT, VN1);
+    ubfm(e, 8, ta, RHAT, 32, 63);
+    cbz_to(e, ta, again);
+    patch19(e, done);
+}
+
+/*
+ * T3:T0 / T1 with T3 below T1 into the quotient T2 and the remainder T3, as the interpreter's div128: the divisor
+ * shifted to its top bit, then two 32 bit quotient digits. clobbers T4, T5, S0, ADDR, x16 and x17.
+ */
+static void div_wide(Emit *e)
+{
+    enum { S = S0, VN1 = T4, VN0 = T5, UN0 = T0, UN1 = X16, RHAT = X17, Q1 = T2, Q0 = X16, TMP = ADDR };
+    put(e, 0xDAC01000u | (uint32_t)T1 << 5 | S); /* clz */
+    shift_reg(e, 0, T1, T1, S);
+    shift_reg(e, 0, T3, T3, S);
+    /* the dividend's top bits moving up: lo >> 1 >> (63 - s), as lo >> (64 - s) would not give 0 for s = 0. */
+    ubfm(e, 8, X16, T0, 1, 63);
+    put(e, 0xAA2003E0u | (uint32_t)S << 16 | X17); /* mvn: lsrv takes ~s as 63 - s */
+    shift_reg(e, 1, X16, X16, X17);
+    rrr(e, OP_ORR, 8, T3, T3, X16);
+    shift_reg(e, 0, T0, T0, S);
+    ubfm(e, 8, VN1, T1, 32, 63);
+    mov_reg(e, 4, VN0, T1);
+    ubfm(e, 8, UN1, T0, 32, 63);
+    mov_reg(e, 4, UN0, T0);
+    div_op(e, 8, 0, Q1, T3, VN1);
+    msub(e, RHAT, Q1, VN1, T3);
+    div_digit_fix(e, Q1, UN1, T3, TMP);
+    orr_shifted(e, TMP, UN1, RHAT, 32);
+    msub(e, TMP, Q1, VN0, TMP);
+    div_op(e, 8, 0, Q0, TMP, VN1);
+    msub(e, RHAT, Q0, VN1, TMP);
+    div_digit_fix(e, Q0, UN0, T3, TMP);
+    orr_shifted(e, TMP, UN0, RHAT, 32);
+    msub(e, TMP, Q0, VN0, TMP);
+    shift_reg(e, 1, T3, TMP, S);
+    orr_shifted(e, T2, Q0, Q1, 32);
+}
+
+/*
+ * div and idiv of 32 and 64 bits. a zero divisor, a quotient too large and a signed 128 bit dividend go to the
+ * interpreter, which raises the faults. x86 leaves the flags undefined, the interpreter keeps them, and so does this.
+ */
+static int emit_div(Ctx *x, const X86Insn *i, int size, int is_signed)
+{
+    Emit *e = x->e;
+    uint32_t *slow[4], *done = nullptr;
+    int n = 0;
+    load_rm(x, i, size, T1);
+    load_reg(e, size, T0, X86_RAX, 1);
+    load_reg(e, size, T3, X86_RDX, 1);
+    slow[n++] = cbz_x(e, T1);
+    if (size == 4) {
+        orr_shifted(e, T0, T0, T3, 32);
+        if (is_signed)
+            sbfm(e, 8, T1, T1, 0, 31);
+        div_op(e, 8, is_signed, T2, T0, T1);
+        if (is_signed) {
+            sbfm(e, 8, X16, T2, 0, 31);
+            rrr(e, OP_SUBS, 8, XZR, X16, T2);
+            slow[n++] = b_cond(e, NE);
+        } else {
+            ubfm(e, 8, X16, T2, 32, 63);
+            slow[n++] = cbnz_x(e, X16);
+        }
+        msub(e, T3, T2, T1, T0);
+    } else if (is_signed) {
+        sbfm(e, 8, X16, T0, 63, 63);
+        rrr(e, OP_SUBS, 8, XZR, T3, X16);
+        slow[n++] = b_cond(e, NE);
+        put(e, 0xB100041Fu | (uint32_t)T1 << 5); /* cmn: the divisor is -1 */
+        uint32_t *fits = b_cond(e, NE);
+        mov_imm(e, X16, 1ull << 63);
+        rrr(e, OP_SUBS, 8, XZR, T0, X16);
+        slow[n++] = b_cond(e, EQ);
+        patch19(e, fits);
+        div_op(e, 8, 1, T2, T0, T1);
+        msub(e, T3, T2, T1, T0);
+    } else {
+        uint32_t *wide = cbnz_x(e, T3);
+        div_op(e, 8, 0, T2, T0, T1);
+        msub(e, T3, T2, T1, T0);
+        uint32_t *narrow_done = b_always(e);
+        patch19(e, wide);
+        rrr(e, OP_SUBS, 8, XZR, T3, T1);
+        slow[n++] = b_cond(e, HS);
+        div_wide(e);
+        patch26(e, narrow_done);
+    }
+    store_reg(e, size, T2, X86_RAX, 1);
+    store_reg(e, size, T3, X86_RDX, 1);
+    done = b_always(e);
+    for (int k = 0; k < n; k++)
+        patch19(e, slow[k]);
+    emit_fallback(x, i);
+    patch26(e, done);
+    return 1;
+}
+
 static int emit_one(Ctx *x, const X86Insn *i)
 {
     Emit *e = x->e;
@@ -2142,6 +2402,8 @@ static int emit_one(Ctx *x, const X86Insn *i)
         }
         return emit_sse(x, i);
     }
+    if (i->map == 2 && op >= 0xCB && op <= 0xCD && !i->mandatory)
+        return emit_sha256(x, i);
     if (i->map == 2 && op == 0x00 && i->mandatory == 0x66) { /* pshufb: indexes with the top bit set give zero, like tbl's past the table */
         xload(x, 16, V0, i->reg);
         load_xsrc(x, i, 16, V1);
@@ -2351,6 +2613,8 @@ static int emit_one(Ctx *x, const X86Insn *i)
             store_rm(x, i, sz, T2, 1);
             return 1;
         }
+        if ((sub == 6 || sub == 7) && sz >= 4)
+            return emit_div(x, i, sz, sub == 7);
         if ((sub == 4 || sub == 5) && sz >= 4 && !x->flags_live) { /* mul, imul: rdx:rax = rax * rm */
             load_rm(x, i, sz, T1);
             load_reg(e, sz, T0, X86_RAX, 1);
@@ -2553,7 +2817,7 @@ uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint
         if (kind >= 0 && arm_cond(kind, insns[k + 1].opcode & 15) != -1)
             lazy[k] = live[k + 1];
     }
-    Ctx x = {&e, cpu, rip, rip, 0, count, 0, 0, -1, 0, 0, nullptr, rip, 0, 0};
+    Ctx x = {&e, cpu, rip, rip, 0, count, 0, 0, -1, 0, 0, nullptr, rip, 0, 0, 0};
     prologue(&e);
     uint32_t end = count;
     if (nests(&insns[count - 1]))

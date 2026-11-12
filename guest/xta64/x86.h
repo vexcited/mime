@@ -144,6 +144,8 @@ struct X86Cpu {
     /* the block table's slots and mask, copied in before translated code runs, which looks computed addresses up there. */
     const void *jit_slots;
     uint64_t jit_mask;
+    /* the result translated code computed ahead for the second sha256rnds2 of a pair, see sha256_pair. */
+    X86Xmm jit_sha;
 };
 
 typedef struct X86Insn {
@@ -231,6 +233,8 @@ void x86_set_mxcsr(X86Cpu *cpu, uint32_t value);
 
 /* runs of a block before it is translated to arm64 code, ~0u never translates. */
 extern uint32_t x86_jit_threshold;
+/* set when the host has the arm64 sha256 instructions, which translated code then uses for the x86 ones. */
+extern uint32_t x86_jit_sha256;
 /* translations made visible together, at most X86_JIT_BATCH. the differential tests run each at once. */
 #define X86_JIT_BATCH 16
 extern uint32_t x86_jit_batch;
@@ -244,8 +248,8 @@ extern uint32_t x86_jit_batch;
 void x86_jit_fault(X86Cpu *cpu, uint64_t pc, const uint64_t *x, const void *v);
 
 /* fxsave layout, used by fxsave, fxrstor and thread contexts. */
-void x86_fxsave(X86Cpu *cpu, uint8_t *area);
-void x86_fxrstor(X86Cpu *cpu, const uint8_t *area);
+void x86_fxsave(X86Cpu *cpu, uint8_t *area, int wide);
+void x86_fxrstor(X86Cpu *cpu, const uint8_t *area, int wide);
 
 /* the x87 80-bit extended format. */
 void x86_double_to_ext(double v, uint8_t out[10]);

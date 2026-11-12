@@ -1,5 +1,8 @@
 LIBRARY ntoskrnl.exe
 EXPORTS
+    CmRegisterCallback
+    CmRegisterCallbackEx
+    CmUnRegisterCallback
     DbgPrint
     DbgPrintEx
     ExAcquireFastMutex
@@ -11,7 +14,8 @@ EXPORTS
     ExAllocatePoolWithTag
     ExAllocatePoolZero
     ExDeleteResourceLite
-    ExEventObjectType DATA
+    ExEnumHandleTable
+    ExEventObjectType=ExEventType DATA
     ExEventType DATA
     ExFreePool
     ExFreePoolWithTag
@@ -31,7 +35,7 @@ EXPORTS
     ExReleaseResourceLite
     ExSetFirmwareEnvironmentVariable
     ExReleaseTimerResolution
-    ExSemaphoreObjectType DATA
+    ExSemaphoreObjectType=ExSemaphoreType DATA
     ExSemaphoreType DATA
     ExTimerType DATA
     ExWaitHandles
@@ -40,6 +44,7 @@ EXPORTS
     ExfAcquirePushLockShared
     ExfReleasePushLockExclusive
     ExfReleasePushLockShared
+    ExfUnblockPushLock
     FsAttrBegin
     FsAttrChanged
     FsAttrHostChange
@@ -119,21 +124,26 @@ EXPORTS
     IoDetachDevice
     IoDeviceObjectType DATA
     IoDriverObjectType DATA
-    IoFileObjectType DATA
+    IoFileObjectType=IoFileObjectTypeObject DATA
     IoFileObjectTypeObject DATA
     IoFreeIrp
     IoFreeMdl
     IoGetAttachedDevice
+    IoGetCurrentProcess
     IoGetDeviceObjectPointer
     IoGetFileWindow
     IoGetFileWindowEx
     IoGetRelatedDeviceObject
     IoGetRomFile
+    IoGetTopLevelIrp
     IoInitialize
+    IoQueryFileDosDeviceName
     IoQueryFileSize
     IoReadFileObject
     IoReleaseFileWindow
     IoRenameFileObject
+    IoSetTopLevelIrp
+    IoThreadToProcess
     IofCallDriver
     IofCompleteRequest
     KeAcquireGuardedMutex
@@ -207,6 +217,7 @@ EXPORTS
     MimeFsRomSecurity @17 NONAME
     MimeFsSecurityChanged @18 NONAME
     MimeFsStoreSecurity @19 NONAME
+    MmCopyMemory
     MmCreatePhysicalSection @20 NONAME
     MimePadEvent @21 NONAME
     MimePadHidInfo @22 NONAME
@@ -263,6 +274,8 @@ EXPORTS
     MmInitialize
     MmIsAddressValid
     MmLoadSystemImage
+    MmMapIoSpace
+    MmMapIoSpaceEx
     MmMapPagesInSystem
     MmMapWritableSection
     MmMapSharedSectionUser
@@ -271,7 +284,9 @@ EXPORTS
     MmSectionObjectType DATA
     MmSectionType DATA
     MmSetProcessCallbackTable
+    MmUnmapIoSpace
     MmUnmapViewInSystemSpace
+    MmUnmapViewOfSection
     MmWindowLostFault
     MmWindowLostInitialize
     MmWindowLostInterrupt
@@ -289,6 +304,7 @@ EXPORTS
     NtAllocateVirtualMemoryEx
     NtApphelpCacheControl
     NtAssignProcessToJobObject
+    NtBuildNumber DATA
     NtCallbackReturn
     NtCancelIoFile
     NtCancelIoFileEx
@@ -475,6 +491,7 @@ EXPORTS
     ObDirectoryHasName
     ObDirectoryType DATA
     ObDuplicateHandle
+    ObGetFilterVersion
     ObGetObjectType
     ObGetWaitObject
     ObInheritHandleList
@@ -497,20 +514,24 @@ EXPORTS
     ObReferenceObjectByName
     ObReferenceObjectByPointer
     ObReferenceSecurity
+    ObRegisterCallbacks
     ObReplaceSecurity
     ObSetInteractiveSecurity
     ObStoreHandle
     ObStoreSecurity
     ObSymbolicLinkType DATA
     ObTypeType DATA
+    ObUnRegisterCallbacks
     ObfDereferenceObject
     ObfReferenceObject
+    PsAcquireProcessExitSynchronization
     PsCreateIdleThread
     PsCreateSystemThread
     PsCreateUserProcess
     PsDumpThreads
     PsDynamicCodeBlocked
     PsEstablishWin32Callouts
+    PsGetContextThread
     PsGetCurrentProcess
     PsGetCurrentProcessId
     PsGetCurrentThread
@@ -519,32 +540,45 @@ EXPORTS
     PsGetCurrentThreadWin32Thread
     PsGetProcessExitStatus
     PsGetProcessId
+    PsGetProcessImageFileName
+    PsGetProcessInheritedFromUniqueProcessId
     PsGetProcessPeb
+    PsGetProcessSessionId
     PsGetProcessWin32Process
+    PsGetProcessWow64Process
     PsGetThreadId
     PsGetThreadProcess
     PsGetThreadProcessId
     PsGetThreadTeb
     PsGetThreadWin32Thread
+    PsInitialSystemProcess DATA
     PsInitialize
     PsInitializeIdleThread
     PsIsThreadTerminating
     PsJobType DATA
     PsLookupProcessByProcessId
     PsLookupThreadByThreadId
-    PsProcessType DATA
+    PsProcessType=PsProcessTypeObject DATA
     PsProcessTypeObject DATA
     PsReferenceProcessHandle
     PsReferenceThreadHandle
+    PsReleaseProcessExitSynchronization
+    PsRemoveCreateThreadNotifyRoutine
+    PsRemoveLoadImageNotifyRoutine
+    PsResumeProcess
     PsSetCreateProcessNotifyRoutine
+    PsSetCreateProcessNotifyRoutineEx
     PsSetCreateThreadNotifyRoutine
+    PsSetLoadImageNotifyRoutine
+    PsSetLoadImageNotifyRoutineEx
     PsSetProcessWin32Process
     PsSetThreadWin32Thread
     PsShutdownInitialize
     PsShutdownSystem
     PsStartServiceController
+    PsSuspendProcess
     PsTerminateSystemThread
-    PsThreadType DATA
+    PsThreadType=PsThreadTypeObject DATA
     PsThreadTypeObject DATA
     PsWin32ProcessCallout
     PsWin32ShutdownProcess
@@ -606,8 +640,10 @@ EXPORTS
     RtlGetOwnerSecurityDescriptor
     RtlGetSaclSecurityDescriptor
     RtlGetSecurityDescriptorRMControl
+    RtlGetVersion
     RtlHashUnicodeString
     RtlIdentifierAuthoritySid
+    RtlImageNtHeader
     RtlInitAnsiString
     RtlInitString
     RtlInitUnicodeString
@@ -630,6 +666,7 @@ EXPORTS
     RtlPrefixUnicodeString
     RtlQueryInformationAcl
     RtlQuerySecurityObject
+    RtlRandomEx
     RtlReplaceSidInSd
     RtlSelfRelativeToAbsoluteSD
     RtlSelfRelativeToAbsoluteSD2
@@ -664,6 +701,7 @@ EXPORTS
     RtlValidRelativeSecurityDescriptor
     RtlValidSecurityDescriptor
     RtlValidSid
+    RtlWalkFrameChain
     SeAccessCheckRequired
     SeCheckAccess
     SeSdAddInheritedLabel
@@ -703,16 +741,22 @@ EXPORTS
     ZwCreateSection
     ZwDeleteKey
     ZwDeleteValueKey
+    ZwDeviceIoControlFile
     ZwEnumerateKey
     ZwEnumerateValueKey
     ZwFlushKey
     ZwFreeVirtualMemory
     ZwMapViewOfSection
+    ZwOpenDirectoryObject
     ZwOpenFile
     ZwOpenKey
     ZwOpenKeyEx
+    ZwOpenSection
+    ZwOpenThread
     ZwQueryDirectoryFile
+    ZwQueryDirectoryObject
     ZwQueryInformationFile
+    ZwQueryInformationThread
     ZwQueryKey
     ZwQuerySecurityObject
     ZwQuerySystemInformation
@@ -721,6 +765,8 @@ EXPORTS
     ZwSetEvent
     ZwSetSecurityObject
     ZwSetValueKey
+    ZwTerminateProcess
+    ZwTraceControl
     ZwUnmapViewOfSection
     ZwWaitForSingleObject
     ZwWriteFile
@@ -732,6 +778,7 @@ EXPORTS
     _vsnprintf
     _vsnwprintf
     _wcsicmp
+    _wcslwr
     _wcsnicmp
     memcmp
     memcpy
@@ -757,6 +804,7 @@ EXPORTS
     wcscmp
     wcscpy
     wcslen
+    wcsncat
     wcsncmp
     wcsnlen
     wcsrchr

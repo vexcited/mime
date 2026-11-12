@@ -62,21 +62,21 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDescriptorSetLayout(VkDevice device,
     /* a descriptor buffer binds embedded samplers on their own, from memory the layout keeps. */
     if (info->flags & VK_DESCRIPTOR_SET_LAYOUT_CREATE_EMBEDDED_IMMUTABLE_SAMPLERS_BIT_EXT) {
         layout->device = device;
-        layout->embedded = MTL_MSG(id (*)(id, SEL, NSUInteger, NSUInteger), device->mtl, "newBufferWithLength:options:",
-                                   MIME_MAX((uint64_t)slot * 8, (uint64_t)16),
-                                   MTLResourceStorageModeShared | MTLResourceHazardTrackingModeUntracked);
+        layout->embedded = [device->mtl newBufferWithLength:MIME_MAX((uint64_t)slot * 8, (uint64_t)16)
+                                                    options:MTLResourceStorageModeShared |
+                                                            MTLResourceHazardTrackingModeUntracked];
         if (!layout->embedded) {
             vkm_set_layout_unref(layout);
             return VK_ERROR_OUT_OF_DEVICE_MEMORY;
         }
-        uint64_t *slots = M_PTR(layout->embedded, "contents");
+        uint64_t *slots = layout->embedded.contents;
         for (uint32_t i = 0; i < layout->count; i++) {
             const VkmBinding *b = &layout->bindings[i];
             uint32_t at = b->slot + (b->type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ? b->count : 0);
             for (uint32_t e = 0; b->immutable && e < b->count; e++)
-                slots[at + e] = b->immutable[e]->rid.impl;
+                slots[at + e] = b->immutable[e]->rid._impl;
         }
-        layout->embedded_gpu = M_U64(layout->embedded, "gpuAddress");
+        layout->embedded_gpu = layout->embedded.gpuAddress;
         vkm_resident(device, layout->embedded);
     }
     *out = layout;
@@ -176,14 +176,15 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDescriptorPool(VkDevice device, cons
         return VK_ERROR_OUT_OF_HOST_MEMORY;
     pool->flags = info->flags;
     pool->size = MIME_MAX(size, (uint64_t)SET_ALIGN);
-    pool->buffer = MTL_MSG(id (*)(id, SEL, NSUInteger, NSUInteger), device->mtl, "newBufferWithLength:options:",
-                           pool->size, MTLResourceStorageModeShared | MTLResourceHazardTrackingModeUntracked);
+    pool->buffer = [device->mtl newBufferWithLength:pool->size
+                                            options:MTLResourceStorageModeShared |
+                                                    MTLResourceHazardTrackingModeUntracked];
     if (!pool->buffer) {
         free(pool);
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
-    pool->map = M_PTR(pool->buffer, "contents");
-    pool->gpu = M_U64(pool->buffer, "gpuAddress");
+    pool->map = pool->buffer.contents;
+    pool->gpu = pool->buffer.gpuAddress;
     vkm_resident(device, pool->buffer);
     *out = pool;
     return VK_SUCCESS;
@@ -292,7 +293,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL AllocateDescriptorSets(VkDevice device, co
             uint32_t sampler_slot = bind->slot + (bind->type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ? bind->count : 0);
             if (bind->immutable)
                 for (uint32_t e = 0; e < bind->count; e++)
-                    *slot_at(set, sampler_slot + e) = bind->immutable[e]->rid.impl;
+                    *slot_at(set, sampler_slot + e) = bind->immutable[e]->rid._impl;
             if (bind->type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK)
                 *slot_at(set, bind->slot) = set->gpu + inline_offset(set, bind);
         }
@@ -330,6 +331,7 @@ typedef struct Element {
     VkBufferView texel;
     VkBuffer buffer;
     VkDeviceSize offset;
+    VkAccelerationStructureKHR structure;
 } Element;
 
 /* a mutable binding takes the type of each write. */
@@ -341,27 +343,30 @@ static void write_element(VkDescriptorSet set, const VkmBinding *b, VkDescriptor
     switch (b->type == VK_DESCRIPTOR_TYPE_MUTABLE_EXT ? type : b->type) {
     case VK_DESCRIPTOR_TYPE_SAMPLER:
         if (!b->immutable)
-            *slot_at(set, b->slot + index) = e->sampler ? e->sampler->rid.impl : 0;
+            *slot_at(set, b->slot + index) = e->sampler ? e->sampler->rid._impl : 0;
         break;
     case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-        *slot_at(set, b->slot + index) = e->view ? e->view->rid.impl : 0;
+        *slot_at(set, b->slot + index) = e->view ? e->view->rid._impl : 0;
         if (!b->immutable)
-            *slot_at(set, b->slot + b->count + index) = e->sampler ? e->sampler->rid.impl : 0;
+            *slot_at(set, b->slot + b->count + index) = e->sampler ? e->sampler->rid._impl : 0;
         break;
     case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
     case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
     case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
-        *slot_at(set, b->slot + index) = e->view ? e->view->rid.impl : 0;
+        *slot_at(set, b->slot + index) = e->view ? e->view->rid._impl : 0;
         break;
     case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
     case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-        *slot_at(set, b->slot + index) = e->texel ? e->texel->rid.impl : 0;
+        *slot_at(set, b->slot + index) = e->texel ? e->texel->rid._impl : 0;
         break;
     case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
     case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
     case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
     case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
         *slot_at(set, b->slot + index) = e->buffer ? e->buffer->gpu + e->offset : 0;
+        break;
+    case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
+        *slot_at(set, b->slot + index) = e->structure ? e->structure->address : 0;
         break;
     default:
         break;
@@ -413,6 +418,12 @@ static void write_set(const VkWriteDescriptorSet *w)
         case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
             e.texel = w->pTexelBufferView[i];
             break;
+        case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: {
+            const VkWriteDescriptorSetAccelerationStructureKHR *as =
+                vkm_find(w->pNext, VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR);
+            e.structure = as && i < as->accelerationStructureCount ? as->pAccelerationStructures[i] : nullptr;
+            break;
+        }
         default:
             e.buffer = w->pBufferInfo[i].buffer;
             e.offset = w->pBufferInfo[i].offset;
@@ -499,6 +510,8 @@ static VKAPI_ATTR void VKAPI_CALL UpdateDescriptorSetWithTemplate(VkDevice devic
             write_set(&w);
             continue;
         }
+        VkWriteDescriptorSetAccelerationStructureKHR structure = {
+            VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR, nullptr, 1};
         for (uint32_t k = 0; k < e->descriptorCount; k++, p += e->stride) {
             w.dstArrayElement = e->dstArrayElement + k;
             switch (e->descriptorType) {
@@ -512,11 +525,16 @@ static VKAPI_ATTR void VKAPI_CALL UpdateDescriptorSetWithTemplate(VkDevice devic
             case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
                 w.pBufferInfo = (const VkDescriptorBufferInfo *)p;
                 break;
+            case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
+                structure.pAccelerationStructures = (const VkAccelerationStructureKHR *)p;
+                w.pNext = &structure;
+                break;
             default:
                 w.pImageInfo = (const VkDescriptorImageInfo *)p;
                 break;
             }
             write_set(&w);
+            w.pNext = nullptr;
         }
     }
 }
@@ -548,12 +566,12 @@ static VKAPI_ATTR void VKAPI_CALL GetDescriptorSetLayoutBindingOffsetEXT(VkDevic
 
 static uint64_t image_rid(const VkDescriptorImageInfo *info)
 {
-    return info && info->imageView ? info->imageView->rid.impl : 0;
+    return info && info->imageView ? info->imageView->rid._impl : 0;
 }
 
 static uint64_t texel_rid(VkDevice device, const VkDescriptorAddressInfoEXT *info)
 {
-    return info && info->address ? vkm_texel_rid(device, info->address, info->range, info->format).impl : 0;
+    return info && info->address ? vkm_texel_rid(device, info->address, info->range, info->format)._impl : 0;
 }
 
 /* a null descriptor is zero, which a shader reads as no resource. */
@@ -563,12 +581,12 @@ static VKAPI_ATTR void VKAPI_CALL GetDescriptorEXT(VkDevice device, const VkDesc
     uint64_t words[2] = {0, 0};
     switch (info->type) {
     case VK_DESCRIPTOR_TYPE_SAMPLER:
-        words[0] = info->data.pSampler && *info->data.pSampler ? (*info->data.pSampler)->rid.impl : 0;
+        words[0] = info->data.pSampler && *info->data.pSampler ? (*info->data.pSampler)->rid._impl : 0;
         break;
     case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: {
         const VkDescriptorImageInfo *image = info->data.pCombinedImageSampler;
         words[0] = image_rid(image);
-        words[1] = image && image->sampler ? image->sampler->rid.impl : 0;
+        words[1] = image && image->sampler ? image->sampler->rid._impl : 0;
         break;
     }
     case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:

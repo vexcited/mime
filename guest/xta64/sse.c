@@ -539,6 +539,73 @@ static int simd_0f38(X86Cpu *c, uint8_t op, X86Xmm *d, X86Xmm *s, int n)
     }
 }
 
+/* ------------------------------------------------------------ sha */
+
+static inline uint32_t rol32(uint32_t v, int n) { return v << n | v >> (32 - n); }
+static inline uint32_t ror32(uint32_t v, int n) { return v >> n | v << (32 - n); }
+
+/* sha1rnds4 and the 0f 38 sha instructions. lane 3 holds the first word, as the sdm writes them. */
+static void sha(X86Cpu *c, const X86Insn *i)
+{
+    X86Xmm s, k0 = c->xmm[0], t = c->xmm[i->reg];
+    uint32_t *d = t.d, *w = s.d;
+    load_xmm_src(c, i, &s, 16);
+    if (i->map == 3) { /* sha1rnds4 */
+        static const uint32_t k[4] = {0x5A827999, 0x6ED9EBA1, 0x8F1BBCDC, 0xCA62C1D6};
+        int f = (int)(i->imm & 3);
+        uint32_t a = d[3], b = d[2], cc = d[1], dd = d[0], e = 0;
+        for (int r = 0; r < 4; r++) {
+            uint32_t fv = f == 0 ? (b & cc) ^ (~b & dd) : f == 2 ? (b & cc) ^ (b & dd) ^ (cc & dd) : b ^ cc ^ dd;
+            uint32_t na = fv + rol32(a, 5) + w[3 - r] + e + k[f];
+            e = dd;
+            dd = cc;
+            cc = rol32(b, 30);
+            b = a;
+            a = na;
+        }
+        d[3] = a, d[2] = b, d[1] = cc, d[0] = dd;
+        c->xmm[i->reg] = t;
+        return;
+    }
+    switch (i->opcode) {
+    case 0xC8: /* sha1nexte */
+        d[3] = w[3] + rol32(d[3], 30);
+        d[2] = w[2], d[1] = w[1], d[0] = w[0];
+        break;
+    case 0xC9: /* sha1msg1 */
+        d[3] ^= d[1], d[2] ^= d[0], d[1] ^= w[3], d[0] ^= w[2];
+        break;
+    case 0xCA: { /* sha1msg2 */
+        uint32_t w16 = rol32(d[3] ^ w[2], 1), w17 = rol32(d[2] ^ w[1], 1), w18 = rol32(d[1] ^ w[0], 1);
+        d[0] = rol32(d[0] ^ w16, 1), d[1] = w18, d[2] = w17, d[3] = w16;
+        break;
+    }
+    case 0xCB: { /* sha256rnds2, with the words and keys of two rounds in the low half of xmm0 */
+        uint32_t a = w[3], b = w[2], cc = d[3], dd = d[2], e = w[1], f = w[0], g = d[1], h = d[0];
+        for (int r = 0; r < 2; r++) {
+            uint32_t t1 = ((e & f) ^ (~e & g)) + (ror32(e, 6) ^ ror32(e, 11) ^ ror32(e, 25)) + k0.d[r] + h;
+            uint32_t t2 = ((a & b) ^ (a & cc) ^ (b & cc)) + (ror32(a, 2) ^ ror32(a, 13) ^ ror32(a, 22));
+            h = g, g = f, f = e, e = dd + t1, dd = cc, cc = b, b = a, a = t1 + t2;
+        }
+        d[3] = a, d[2] = b, d[1] = e, d[0] = f;
+        break;
+    }
+    case 0xCC: /* sha256msg1 */
+        for (int k = 0; k < 4; k++) {
+            uint32_t v = k < 3 ? d[k + 1] : w[0];
+            d[k] += ror32(v, 7) ^ ror32(v, 18) ^ (v >> 3);
+        }
+        break;
+    default: /* sha256msg2 */
+        for (int k = 0; k < 4; k++) {
+            uint32_t v = k < 2 ? w[k + 2] : d[k - 2];
+            d[k] += ror32(v, 17) ^ ror32(v, 19) ^ (v >> 10);
+        }
+        break;
+    }
+    c->xmm[i->reg] = t;
+}
+
 /* ------------------------------------------------------------ 0f 3a */
 
 static void exec_0f3a(X86Cpu *c, const X86Insn *i)
@@ -800,10 +867,17 @@ void x86_exec_sse(X86Cpu *c, const X86Insn *i)
     X86Xmm s, t;
 
     if (i->map == 3) {
-        exec_0f3a(c, i);
+        if (op == 0xCC && !pfx)
+            sha(c, i);
+        else
+            exec_0f3a(c, i);
         return;
     }
     if (i->map == 2) {
+        if (op >= 0xC8 && op <= 0xCD && !pfx) {
+            sha(c, i);
+            return;
+        }
         if (op == 0xF0 || op == 0xF1)
             x86_undefined(c); /* movbe and crc32 are not reported. */
         if (pfx == 0) {

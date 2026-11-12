@@ -44,6 +44,13 @@ static const VkExtensionProperties g_device_extensions[] = {
     {VK_GOOGLE_HLSL_FUNCTIONALITY_1_EXTENSION_NAME, VK_GOOGLE_HLSL_FUNCTIONALITY_1_SPEC_VERSION},
     {VK_GOOGLE_USER_TYPE_EXTENSION_NAME, VK_GOOGLE_USER_TYPE_SPEC_VERSION},
     {VK_GOOGLE_DECORATE_STRING_EXTENSION_NAME, VK_GOOGLE_DECORATE_STRING_SPEC_VERSION},
+    {VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME, VK_KHR_DEFERRED_HOST_OPERATIONS_SPEC_VERSION},
+    {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, VK_KHR_ACCELERATION_STRUCTURE_SPEC_VERSION},
+    {VK_KHR_RAY_QUERY_EXTENSION_NAME, VK_KHR_RAY_QUERY_SPEC_VERSION},
+    {VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME, VK_KHR_RAY_TRACING_MAINTENANCE_1_SPEC_VERSION},
+    {VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, VK_KHR_RAY_TRACING_PIPELINE_SPEC_VERSION},
+    {VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME, VK_KHR_PIPELINE_LIBRARY_SPEC_VERSION},
+    {VK_EXT_PIPELINE_LIBRARY_GROUP_HANDLES_EXTENSION_NAME, VK_EXT_PIPELINE_LIBRARY_GROUP_HANDLES_SPEC_VERSION},
 };
 
 bool vkm_device_extension(const char *name)
@@ -109,30 +116,28 @@ static bool g_physical_ok;
 static void physical_init(void)
 {
     VkPhysicalDevice p = &g_physical;
-    void *pool = objc_autoreleasePoolPush();
-    p->mtl = MTLCreateSystemDefaultDevice();
-    if (!p->mtl || !M_B_U(p->mtl, "supportsFamily:", MTLGPUFamilyMetal4)) {
-        VKM_ERROR("the gpu has no Metal 4");
-        objc_autoreleasePoolPop(pool);
-        return;
+    @autoreleasepool {
+        p->mtl = MTLCreateSystemDefaultDevice();
+        if (!p->mtl || ![p->mtl supportsFamily:MTLGPUFamilyMetal4]) {
+            VKM_ERROR("the gpu has no Metal 4");
+            return;
+        }
+        mime_strlcpy(p->name, p->mtl.name ? p->mtl.name.UTF8String : "", sizeof(p->name));
+        p->memory_size = p->mtl.recommendedMaxWorkingSetSize;
+        p->float_filter = p->mtl.supports32BitFloatFiltering;
+        p->bc = p->mtl.supportsBCTextureCompression;
+        uint32_t align = 16;
+        for (uint32_t f = VK_FORMAT_R4G4_UNORM_PACK8; f <= VK_FORMAT_E5B9G9R9_UFLOAT_PACK32; f++) {
+            const VkmFormat *fi = vkm_format(f);
+            if (fi->caps & VKM_CAP_TEXEL)
+                align = MIME_MAX(align, (uint32_t)[p->mtl minimumTextureBufferAlignmentForPixelFormat:fi->pixel]);
+        }
+        p->texel_alignment = align;
+        uint64_t registry = p->mtl.registryID;
+        memcpy(p->uuid, "mimemtl4", 8);
+        memcpy(p->uuid + 8, &registry, 8);
+        g_physical_ok = true;
     }
-    mime_strlcpy(p->name, mtl_cstring(M_ID(p->mtl, "name")), sizeof(p->name));
-    p->memory_size = M_U64(p->mtl, "recommendedMaxWorkingSetSize");
-    p->float_filter = M_B(p->mtl, "supports32BitFloatFiltering");
-    p->bc = M_B(p->mtl, "supportsBCTextureCompression");
-    uint32_t align = 16;
-    for (uint32_t f = VK_FORMAT_R4G4_UNORM_PACK8; f <= VK_FORMAT_E5B9G9R9_UFLOAT_PACK32; f++) {
-        const VkmFormat *fi = vkm_format(f);
-        if (fi->caps & VKM_CAP_TEXEL)
-            align = MIME_MAX(align, (uint32_t)MTL_MSG(NSUInteger (*)(id, SEL, NSUInteger), p->mtl,
-                                                      "minimumTextureBufferAlignmentForPixelFormat:", fi->pixel));
-    }
-    p->texel_alignment = align;
-    uint64_t registry = M_U64(p->mtl, "registryID");
-    memcpy(p->uuid, "mimemtl4", 8);
-    memcpy(p->uuid + 8, &registry, 8);
-    g_physical_ok = true;
-    objc_autoreleasePoolPop(pool);
 }
 
 static VkPhysicalDevice physical_get(void)
@@ -475,6 +480,38 @@ static void fill_features(VkBaseOutStructure *chain)
             ((VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT *)s)->dynamicRenderingUnusedAttachments =
                 VK_TRUE;
             break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR: {
+            /* builds run on the gpu: the wire carries no host memory for host commands to read. */
+            VkPhysicalDeviceAccelerationStructureFeaturesKHR *x = (void *)s;
+            x->accelerationStructure = VK_TRUE;
+            x->accelerationStructureCaptureReplay = VK_FALSE;
+            x->accelerationStructureIndirectBuild = VK_TRUE;
+            x->accelerationStructureHostCommands = VK_FALSE;
+            x->descriptorBindingAccelerationStructureUpdateAfterBind = VK_TRUE;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR:
+            ((VkPhysicalDeviceRayQueryFeaturesKHR *)s)->rayQuery = VK_TRUE;
+            break;
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_MAINTENANCE_1_FEATURES_KHR: {
+            VkPhysicalDeviceRayTracingMaintenance1FeaturesKHR *x = (void *)s;
+            x->rayTracingMaintenance1 = VK_TRUE;
+            x->rayTracingPipelineTraceRaysIndirect2 = VK_TRUE;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR: {
+            /* pipelines are kernels of ray queries: see raytrace.m. */
+            VkPhysicalDeviceRayTracingPipelineFeaturesKHR *x = (void *)s;
+            x->rayTracingPipeline = VK_TRUE;
+            x->rayTracingPipelineShaderGroupHandleCaptureReplay = VK_FALSE;
+            x->rayTracingPipelineShaderGroupHandleCaptureReplayMixed = VK_FALSE;
+            x->rayTracingPipelineTraceRaysIndirect = VK_TRUE;
+            x->rayTraversalPrimitiveCulling = VK_TRUE;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_LIBRARY_GROUP_HANDLES_FEATURES_EXT:
+            ((VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT *)s)->pipelineLibraryGroupHandles = VK_TRUE;
+            break;
         default:
             break;
         }
@@ -499,14 +536,14 @@ static VkSampleCountFlags sample_counts(VkPhysicalDevice p)
 {
     VkSampleCountFlags out = VK_SAMPLE_COUNT_1_BIT;
     for (uint32_t s = 2; s <= 8; s *= 2)
-        if (M_B_U(p->mtl, "supportsTextureSampleCount:", s))
+        if ([p->mtl supportsTextureSampleCount:s])
             out |= s;
     return out;
 }
 
 static uint32_t max_samplers(VkPhysicalDevice p)
 {
-    return (uint32_t)MIME_MIN(M_U(p->mtl, "maxArgumentBufferSamplerCount"), 4096);
+    return (uint32_t)MIME_MIN(p->mtl.maxArgumentBufferSamplerCount, 4096);
 }
 
 #define MAX_DESCRIPTORS (1u << 20)
@@ -514,7 +551,7 @@ static uint32_t max_samplers(VkPhysicalDevice p)
 static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceProperties(VkPhysicalDevice p, VkPhysicalDeviceProperties *out)
 {
     VkSampleCountFlags samples = sample_counts(p);
-    MTLSize threads = MTL_MSG(MTLSize (*)(id, SEL), p->mtl, "maxThreadsPerThreadgroup");
+    MTLSize threads = p->mtl.maxThreadsPerThreadgroup;
     uint32_t page = (uint32_t)getpagesize();
     *out = (VkPhysicalDeviceProperties){
         .apiVersion = API_VERSION,
@@ -566,7 +603,7 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceProperties(VkPhysicalDevice p
                 .maxGeometryOutputComponents = 128,
                 .maxGeometryOutputVertices = 1024,
                 .maxGeometryTotalOutputComponents = 1024,
-                .maxComputeSharedMemorySize = (uint32_t)M_U(p->mtl, "maxThreadgroupMemoryLength"),
+                .maxComputeSharedMemorySize = (uint32_t)p->mtl.maxThreadgroupMemoryLength,
                 .maxComputeWorkGroupCount = {0x7fffffff, 65535, 65535},
                 .maxComputeWorkGroupInvocations = 1024,
                 .maxComputeWorkGroupSize = {(uint32_t)threads.width, (uint32_t)threads.height,
@@ -631,7 +668,7 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceProperties(VkPhysicalDevice p
 static void fill_properties(VkPhysicalDevice p, VkBaseOutStructure *chain)
 {
     VkSampleCountFlags samples = sample_counts(p);
-    uint64_t max_buffer = M_U(p->mtl, "maxBufferLength");
+    uint64_t max_buffer = p->mtl.maxBufferLength;
     VkSubgroupFeatureFlags subgroup_ops = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_VOTE_BIT |
                                           VK_SUBGROUP_FEATURE_ARITHMETIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT |
                                           VK_SUBGROUP_FEATURE_SHUFFLE_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_RELATIVE_BIT |
@@ -887,6 +924,32 @@ static void fill_properties(VkPhysicalDevice p, VkBaseOutStructure *chain)
             break;
         }
         /* generated commands are encoded into indirect command buffers, without execution sets. */
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR: {
+            /* a handle is its group's id; the depth is direct3d's most, which the kernel unrolls. */
+            VkPhysicalDeviceRayTracingPipelinePropertiesKHR *x = (void *)s;
+            x->shaderGroupHandleSize = 32;
+            x->maxRayRecursionDepth = 31;
+            x->maxShaderGroupStride = 4096;
+            x->shaderGroupBaseAlignment = 64;
+            x->shaderGroupHandleCaptureReplaySize = 32;
+            x->maxRayDispatchInvocationCount = 1u << 30;
+            x->shaderGroupHandleAlignment = 32;
+            x->maxRayHitAttributeSize = 32;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR: {
+            /* metal's limits without its extended ones, which shaders would have to ask for. */
+            VkPhysicalDeviceAccelerationStructurePropertiesKHR *x = (void *)s;
+            x->maxGeometryCount = 1u << 24;
+            x->maxInstanceCount = 1u << 24;
+            x->maxPrimitiveCount = 1u << 28;
+            x->maxPerStageDescriptorAccelerationStructures = 1u << 20;
+            x->maxPerStageDescriptorUpdateAfterBindAccelerationStructures = 1u << 20;
+            x->maxDescriptorSetAccelerationStructures = 1u << 20;
+            x->maxDescriptorSetUpdateAfterBindAccelerationStructures = 1u << 20;
+            x->minAccelerationStructureScratchOffsetAlignment = 256;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEVICE_GENERATED_COMMANDS_PROPERTIES_EXT: {
             VkPhysicalDeviceDeviceGeneratedCommandsPropertiesEXT *x = (void *)s;
             x->maxIndirectPipelineCount = x->maxIndirectShaderObjectCount = 0;
@@ -966,7 +1029,7 @@ static VKAPI_ATTR void VKAPI_CALL GetPhysicalDeviceMemoryProperties2(VkPhysicalD
         memset(budget->heapBudget, 0, sizeof(budget->heapBudget));
         memset(budget->heapUsage, 0, sizeof(budget->heapUsage));
         budget->heapBudget[0] = p->memory_size;
-        budget->heapUsage[0] = M_U(p->mtl, "currentAllocatedSize");
+        budget->heapUsage[0] = p->mtl.currentAllocatedSize;
     }
 }
 
@@ -1052,7 +1115,7 @@ static VkResult image_format(VkPhysicalDevice p, VkFormat format, VkImageType ty
     if (type == VK_IMAGE_TYPE_2D && tiling == VK_IMAGE_TILING_OPTIMAL && (f->caps & VKM_CAP_MSAA) &&
         !(flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) && !(usage & VK_IMAGE_USAGE_STORAGE_BIT))
         out->sampleCounts = sample_counts(p);
-    out->maxResourceSize = M_U(p->mtl, "maxBufferLength");
+    out->maxResourceSize = p->mtl.maxBufferLength;
     return VK_SUCCESS;
 }
 

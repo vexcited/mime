@@ -5,6 +5,8 @@
  */
 #include "vkm_cmd.h"
 
+#include "raytrace.h"
+
 /* ------------------------------------------------------------------ the command list. */
 
 void *vkm_emit(VkCommandBuffer cmd, uint32_t op, size_t size)
@@ -31,12 +33,14 @@ void *vkm_emit(VkCommandBuffer cmd, uint32_t op, size_t size)
 void vkm_forget(VkCommandBuffer cmd)
 {
     VkmGfxState *s = cmd->state;
-    s->set_pipeline = s->set_depth = s->set_compute = nullptr;
+    s->set_pipeline = nullptr;
+    s->set_depth = nullptr;
+    s->set_compute = nullptr;
     memset(s->set_buffers, 0, sizeof(s->set_buffers));
     memset(s->set_strides, 0, sizeof(s->set_strides));
     s->pipeline_dirty = s->depth_dirty = s->raster_dirty = s->viewport_dirty = s->scissor_dirty = true;
     s->ref_dirty = s->constants_dirty = true;
-    s->push_dirty[VKM_GFX] = s->push_dirty[VKM_COMPUTE] = true;
+    s->push_dirty[VKM_GFX] = s->push_dirty[VKM_COMPUTE] = s->push_dirty[VKM_RT] = true;
 }
 
 static void state_reset(VkmGfxState *s)
@@ -46,7 +50,7 @@ static void state_reset(VkmGfxState *s)
     s->legacy = legacy;
     s->dyn.samples = 1;
     s->dyn.sample_mask = ~0u;
-    s->dyn.depth_clip = 1;
+    s->dyn.depth_clip = VKM_CLIP_UNSET;
     for (uint32_t i = 0; i < VKM_COLORS; i++)
         s->dyn.blend[i].write = 0xf;
     s->index_type = MTLIndexTypeUInt16;
@@ -81,7 +85,7 @@ static void buffer_free(VkCommandBuffer cmd)
     for (VkmIcb *b = cmd->icbs, *next; b; b = next) {
         next = b->next;
         vkm_unresident(cmd->device, b->icb);
-        mtl_release(b->icb);
+        [b->icb release];
         free(b);
     }
     vkm_chunks_release(cmd->device, cmd->chunks);
@@ -630,9 +634,22 @@ static void apply_static(VkmGfxState *s, const VkmGfxStatic *g)
     s->ref_dirty = s->constants_dirty = true;
 }
 
+static int point_of(VkPipelineBindPoint bind)
+{
+    switch (bind) {
+    case VK_PIPELINE_BIND_POINT_COMPUTE: return VKM_COMPUTE;
+    case VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR: return VKM_RT;
+    default: return VKM_GFX;
+    }
+}
+
 static VKAPI_ATTR void VKAPI_CALL CmdBindPipeline(VkCommandBuffer cmd, VkPipelineBindPoint bind, VkPipeline p)
 {
     VkmGfxState *s = STATE(cmd);
+    if (bind == VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR) {
+        s->rays = p;
+        return;
+    }
     if (bind == VK_PIPELINE_BIND_POINT_COMPUTE) {
         s->cs = &p->stages[0];
         s->compute = p->compute;
@@ -649,7 +666,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdBindDescriptorSets(VkCommandBuffer cmd, VkP
                                                         const VkDescriptorSet *sets, uint32_t dynamic_count,
                                                         const uint32_t *dynamic)
 {
-    int point = bind == VK_PIPELINE_BIND_POINT_COMPUTE ? VKM_COMPUTE : VKM_GFX;
+    int point = point_of(bind);
     uint32_t used = 0;
     for (uint32_t i = 0; i < count && first + i < VKM_SETS; i++) {
         VkDescriptorSet set = sets[i];
@@ -691,6 +708,9 @@ static VKAPI_ATTR void VKAPI_CALL CmdBindDescriptorSets2(VkCommandBuffer cmd, co
     if (info->stageFlags & VK_SHADER_STAGE_COMPUTE_BIT)
         CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, info->layout, info->firstSet,
                               info->descriptorSetCount, info->pDescriptorSets, 0, nullptr);
+    if (info->stageFlags & VKM_RT_STAGES)
+        CmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, info->layout, info->firstSet,
+                              info->descriptorSetCount, info->pDescriptorSets, 0, nullptr);
 }
 
 /* descriptor buffers: a set is the argument buffer at the address of a bound buffer plus an offset. */
@@ -707,7 +727,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdSetDescriptorBufferOffsetsEXT(VkCommandBuff
                                                                    const VkDeviceSize *offsets)
 {
     VkmGfxState *s = STATE(cmd);
-    int point = bind == VK_PIPELINE_BIND_POINT_COMPUTE ? VKM_COMPUTE : VKM_GFX;
+    int point = point_of(bind);
     for (uint32_t i = 0; i < count && first + i < VKM_SETS; i++)
         s->sets[point][first + i] = indices[i] < VKM_SETS ? s->descriptor_buffers[indices[i]] + offsets[i] : 0;
 }
@@ -716,7 +736,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdBindDescriptorBufferEmbeddedSamplersEXT(VkC
                                                                              VkPipelineBindPoint bind,
                                                                              VkPipelineLayout layout, uint32_t set)
 {
-    int point = bind == VK_PIPELINE_BIND_POINT_COMPUTE ? VKM_COMPUTE : VKM_GFX;
+    int point = point_of(bind);
     if (set < VKM_SETS && set < layout->set_count && layout->sets[set])
         STATE(cmd)->sets[point][set] = layout->sets[set]->embedded_gpu;
 }
@@ -729,7 +749,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdPushConstants(VkCommandBuffer cmd, VkPipeli
     if (offset >= VKM_PUSH_SIZE)
         return;
     memcpy(s->push + offset, data, MIME_MIN(size, VKM_PUSH_SIZE - offset));
-    s->push_dirty[VKM_GFX] = s->push_dirty[VKM_COMPUTE] = true;
+    s->push_dirty[VKM_GFX] = s->push_dirty[VKM_COMPUTE] = s->push_dirty[VKM_RT] = true;
 }
 
 static VKAPI_ATTR void VKAPI_CALL CmdPushConstants2(VkCommandBuffer cmd, const VkPushConstantsInfo *info)
@@ -890,12 +910,12 @@ static void begin_rendering(VkCommandBuffer cmd, const VkRenderingInfo *info)
     s->has_depth = s->has_stencil = false;
     if (v[VKM_COLORS] && v[VKM_COLORS]->render) {
         attach(&b->depth, v[VKM_COLORS], info->pDepthAttachment, whole);
-        b->depth.clear.r = info->pDepthAttachment->clearValue.depthStencil.depth;
+        b->depth.clear.red = info->pDepthAttachment->clearValue.depthStencil.depth;
         s->has_depth = true;
     }
     if (v[VKM_COLORS + 1] && v[VKM_COLORS + 1]->render) {
         attach(&b->stencil, v[VKM_COLORS + 1], info->pStencilAttachment, whole);
-        b->stencil.clear.r = info->pStencilAttachment->clearValue.depthStencil.stencil;
+        b->stencil.clear.red = info->pStencilAttachment->clearValue.depthStencil.stencil;
         s->has_stencil = true;
     }
     if (s->occlusion)
@@ -1317,7 +1337,7 @@ static uint64_t stats_counter(const VkmGfxState *s)
     if (!pool || !(pool->statistics & bit) || s->stats_query >= pool->count)
         return 0;
     uint32_t n = __builtin_popcount(pool->statistics), k = __builtin_popcount(pool->statistics & (bit - 1));
-    return M_U64(pool->buffer, "gpuAddress") + ((uint64_t)s->stats_query * n + k) * 8;
+    return pool->buffer.gpuAddress + ((uint64_t)s->stats_query * n + k) * 8;
 }
 
 /* what the host knows a draw or dispatch adds to the active statistics query. */
@@ -1373,7 +1393,7 @@ typedef struct Stages {
     uint8_t topology_class, discard;
 } Stages;
 
-static id resolve_pipeline(VkCommandBuffer cmd, const Stages *st, bool *zero)
+static id<MTLRenderPipelineState> resolve_pipeline(VkCommandBuffer cmd, const Stages *st, bool *zero)
 {
     VkmGfxState *s = STATE(cmd);
     const VkmDynamic *d = &s->dyn;
@@ -1506,7 +1526,7 @@ static bool prepare_stages(VkCommandBuffer cmd, const Stages *st)
         return false;
     bool zero = false;
     if (s->pipeline_dirty || !s->set_pipeline) {
-        id pipeline = resolve_pipeline(cmd, st, &zero);
+        id<MTLRenderPipelineState> pipeline = resolve_pipeline(cmd, st, &zero);
         if (!pipeline)
             return false;
         if (pipeline != s->set_pipeline) {
@@ -1530,7 +1550,7 @@ static bool prepare_stages(VkCommandBuffer cmd, const Stages *st)
             key.front = d->front_stencil;
             key.back = d->back_stencil;
         }
-        id depth = vkm_depth_state(cmd->device, &key);
+        id<MTLDepthStencilState> depth = vkm_depth_state(cmd->device, &key);
         if (depth && depth != s->set_depth) {
             VkmOpObject *o = vkm_emit(cmd, VKM_OP_DEPTH_STATE, sizeof(*o));
             if (o)
@@ -1545,7 +1565,9 @@ static bool prepare_stages(VkCommandBuffer cmd, const Stages *st)
             o->cull = cull_mode(d->cull);
             o->winding = d->front == VK_FRONT_FACE_CLOCKWISE ? MTLWindingClockwise : MTLWindingCounterClockwise;
             o->fill = d->polygon == VK_POLYGON_MODE_LINE ? MTLTriangleFillModeLines : MTLTriangleFillModeFill;
-            o->clip = d->depth_clamp || !d->depth_clip ? MTLDepthClipModeClamp : MTLDepthClipModeClip;
+            bool clip = d->depth_clip == VKM_CLIP_UNSET ? !d->depth_clamp : d->depth_clip;
+            /* with both on, metal clamps depth a shader writes to 0 and 1 where vulkan clamps it to the viewport. */
+            o->clip = clip ? MTLDepthClipModeClip : MTLDepthClipModeClamp;
             if (d->bias_enable) {
                 o->bias_constant = d->bias_constant;
                 o->bias_slope = d->bias_slope;
@@ -1713,7 +1735,7 @@ static uint32_t record_slots(VkmGfxState *s, bool indexed, uint32_t first, uint3
 static void xfb_pass(VkCommandBuffer cmd, VkmXfbParams *p, const VkmXfb *layout)
 {
     VkmGfxState *s = STATE(cmd);
-    id pipeline = vkm_meta_xfb(cmd->device, s->colors, s->samples);
+    id<MTLRenderPipelineState> pipeline = vkm_meta_xfb(cmd->device, s->colors, s->samples);
     uint64_t gpu;
     VkmXfbParams *x = vkm_upload(cmd, sizeof(*x), 16, &gpu, nullptr, nullptr);
     if (!pipeline || !x)
@@ -1726,7 +1748,7 @@ static void xfb_pass(VkCommandBuffer cmd, VkmXfbParams *p, const VkmXfb *layout)
     }
     p->state = s->xfb_state;
     if (s->xfb_query && s->xfb_query_index < s->xfb_query->count)
-        p->query = M_U64(s->xfb_query->buffer, "gpuAddress") + (uint64_t)s->xfb_query_index * 16;
+        p->query = s->xfb_query->buffer.gpuAddress + (uint64_t)s->xfb_query_index * 16;
     if (layout) {
         memcpy(p->strides, layout->strides, sizeof(p->strides));
         p->entry_count = layout->count;
@@ -2187,7 +2209,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdDrawIndirectByteCountEXT(VkCommandBuffer cm
         uint32_t vertex_offset, stride, instances, first_instance;
     } *p;
     uint64_t params, args;
-    id pipeline = vkm_meta_byte_count(cmd->device);
+    id<MTLComputePipelineState> pipeline = vkm_meta_byte_count(cmd->device);
     p = vkm_upload(cmd, sizeof(*p), 16, &params, nullptr, nullptr);
     if (!pipeline || !p || !vkm_upload(cmd, 16, 16, &args, nullptr, nullptr))
         return;
@@ -2330,30 +2352,31 @@ static VkmIcb *icb_get(VkCommandBuffer cmd, bool dispatch, uint32_t count)
     uint32_t capacity = 64;
     while (capacity < count)
         capacity *= 2;
-    id desc = mtl_new("MTLIndirectCommandBufferDescriptor");
-    M_V_B(desc, "setInheritPipelineState:", true);
-    M_V_B(desc, "setInheritBuffers:", false);
+    MTLIndirectCommandBufferDescriptor *desc = [[MTLIndirectCommandBufferDescriptor alloc] init];
+    desc.inheritPipelineState = true;
+    desc.inheritBuffers = false;
     if (dispatch) {
-        M_V_U(desc, "setCommandTypes:", MTLIndirectCommandTypeConcurrentDispatch);
-        M_V_U(desc, "setMaxKernelBufferBindCount:", VKM_BUFFER_VERTEX);
+        desc.commandTypes = MTLIndirectCommandTypeConcurrentDispatch;
+        desc.maxKernelBufferBindCount = VKM_BUFFER_VERTEX;
     } else {
-        M_V_U(desc, "setCommandTypes:", MTLIndirectCommandTypeDraw | MTLIndirectCommandTypeDrawIndexed);
-        M_V_U(desc, "setMaxVertexBufferBindCount:", VKM_BUFFER_VERTEX + VKM_VERTEX_BINDINGS);
-        M_V_U(desc, "setMaxFragmentBufferBindCount:", VKM_BUFFER_VERTEX);
-        M_V_B(desc, "setSupportDynamicAttributeStride:", true);
+        desc.commandTypes = MTLIndirectCommandTypeDraw | MTLIndirectCommandTypeDrawIndexed;
+        desc.maxVertexBufferBindCount = VKM_BUFFER_VERTEX + VKM_VERTEX_BINDINGS;
+        desc.maxFragmentBufferBindCount = VKM_BUFFER_VERTEX;
+        desc.supportDynamicAttributeStride = true;
     }
-    id icb = MTL_MSG(id (*)(id, SEL, id, NSUInteger, NSUInteger), cmd->device->mtl,
-                     "newIndirectCommandBufferWithDescriptor:maxCommandCount:options:", desc, capacity,
-                     MTLResourceStorageModePrivate);
-    mtl_release(desc);
+    id<MTLIndirectCommandBuffer> icb =
+        [cmd->device->mtl newIndirectCommandBufferWithDescriptor:desc
+                                                 maxCommandCount:capacity
+                                                         options:MTLResourceStorageModePrivate];
+    [desc release];
     VkmIcb *b = icb ? vkm_zalloc(sizeof(*b)) : nullptr;
     if (!b) {
         VKM_ERROR("no indirect command buffer of %u commands", capacity);
-        mtl_release(icb);
+        [icb release];
         return nullptr;
     }
     b->icb = icb;
-    b->rid = M_RID(icb, "gpuResourceID");
+    b->rid = icb.gpuResourceID;
     b->capacity = capacity;
     b->dispatch = dispatch;
     b->used = true;
@@ -2398,11 +2421,16 @@ static VKAPI_ATTR void VKAPI_CALL CmdExecuteGeneratedCommandsEXT(VkCommandBuffer
         return;
     bool dispatch = l->dispatch;
     int point = dispatch ? VKM_COMPUTE : VKM_GFX;
-    id normal = s->compute;
+    id<MTLComputePipelineState> normal = s->compute;
     if (dispatch) {
-        if (!s->cs || !s->compute || !(s->compute = vkm_compute_pipeline(cmd->device, s->cs, true)) ||
-            !prepare_dispatch(cmd))
+        if (!s->cs || !s->compute || !(s->compute = vkm_compute_pipeline(cmd->device, s->cs, true)))
             goto done;
+        /* only the bindings are wanted now: the kernel takes the pipeline, which is set after it. */
+        s->set_compute = s->compute;
+        if (!prepare_dispatch(cmd)) {
+            s->set_compute = nullptr;
+            goto done;
+        }
     } else {
         s->icb = s->pipeline_dirty = true;
         bool ready = prepare_draw(cmd);
@@ -2417,7 +2445,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdExecuteGeneratedCommandsEXT(VkCommandBuffer
     void *ranges = vkm_upload(cmd, (uint64_t)chunks * 8, 8, &ranges_gpu, nullptr, nullptr);
     MTLResourceID *rid = vkm_upload(cmd, sizeof(*rid), 8, &rid_gpu, nullptr, nullptr);
     VkmIcb *icb = icb_get(cmd, dispatch, max);
-    id generator = vkm_meta_generate(cmd->device, dispatch);
+    id<MTLComputePipelineState> generator = vkm_meta_generate(cmd->device, dispatch);
     if (!p || !ranges || !rid || !icb || !generator)
         goto done;
     memset(p, 0, sizeof(*p));
@@ -2476,7 +2504,134 @@ done:
     s->compute = normal;
 }
 
+/* ------------------------------------------------------------------ ray tracing. */
+
+/*
+ * a trace is a dispatch of the pipeline's kernel with the ray tracing bind point's sets and push constants, and
+ * its parameters; the compute bind point's are set again at its next dispatch.
+ */
+static void trace(VkCommandBuffer cmd, const VkmRtParams *params, uint64_t indirect)
+{
+    VkmGfxState *s = STATE(cmd);
+    VkPipeline p = s->rays;
+    if (s->rendering || !p || !p->compute) {
+        VKM_ERROR("a trace of rays %s", s->rendering ? "inside a render pass" : "without a ray tracing pipeline");
+        return;
+    }
+    uint64_t groups = 0;
+    if (indirect) {
+        /* the threadgroups, from the command's extent. */
+        id<MTLComputePipelineState> sizes = vkm_meta_rays(cmd->device);
+        struct {
+            uint64_t indirect, out;
+            uint32_t mode;
+        } *g;
+        uint64_t at;
+        if (!sizes || !(g = vkm_upload(cmd, sizeof(*g) + 16, 16, &at, nullptr, nullptr)))
+            return;
+        *g = (typeof(*g)){indirect, at + sizeof(*g), params->mode};
+        groups = at + sizeof(*g);
+        VkmOpGenerate *o = vkm_emit(cmd, VKM_OP_GENERATE, sizeof(*o));
+        if (!o)
+            return;
+        o->pipeline = sizes;
+        o->threads = 1;
+        o->params = at;
+        s->set_compute = nullptr;
+        s->set_buffers[VKM_COMPUTE][0] = s->set_buffers[VKM_COMPUTE][1] = 0;
+    }
+    if (p->compute != s->set_compute) {
+        VkmOpCompute *o = vkm_emit(cmd, VKM_OP_COMPUTE_PIPELINE, sizeof(*o));
+        if (!o)
+            return;
+        o->pipeline = p->compute;
+        o->local = (MTLSize){VKM_RT_LOCAL_X, VKM_RT_LOCAL_Y, 1};
+        s->set_compute = p->compute;
+    }
+    for (uint32_t i = 0; i < VKM_SETS; i++)
+        if (s->sets[VKM_RT][i])
+            emit_buffer(cmd, VKM_COMPUTE, i, s->sets[VKM_RT][i], ~0u);
+    uint64_t gpu;
+    void *push = vkm_upload(cmd, VKM_PUSH_SIZE, 16, &gpu, nullptr, nullptr);
+    if (!push)
+        return;
+    memcpy(push, s->push, VKM_PUSH_SIZE);
+    emit_buffer(cmd, VKM_COMPUTE, VKM_BUFFER_PUSH, gpu, ~0u);
+    s->push_dirty[VKM_COMPUTE] = true;
+    uint64_t params_gpu;
+    VkmRtParams *copy = vkm_upload(cmd, sizeof(*copy), 16, &params_gpu, nullptr, nullptr);
+    if (!copy)
+        return;
+    *copy = *params;
+    copy->indirect = indirect;
+    emit_buffer(cmd, VKM_COMPUTE, VKM_BUFFER_VERTEX, params_gpu, ~0u);
+    if (indirect) {
+        VkmOpDispatch *o = vkm_emit(cmd, VKM_OP_DISPATCH_INDIRECT, sizeof(*o));
+        if (o)
+            o->indirect = groups;
+        return;
+    }
+    uint32_t x = (params->width + VKM_RT_LOCAL_X - 1) / VKM_RT_LOCAL_X;
+    uint32_t y = (params->height + VKM_RT_LOCAL_Y - 1) / VKM_RT_LOCAL_Y;
+    if (!x || !y || !params->depth)
+        return;
+    VkmOpDispatch *o = vkm_emit(cmd, VKM_OP_DISPATCH, sizeof(*o));
+    if (o) {
+        o->x = x;
+        o->y = y;
+        o->z = params->depth;
+    }
+}
+
+static VkmRtParams tables_of(const VkStridedDeviceAddressRegionKHR *raygen, const VkStridedDeviceAddressRegionKHR *miss,
+                             const VkStridedDeviceAddressRegionKHR *hit,
+                             const VkStridedDeviceAddressRegionKHR *callable)
+{
+    return (VkmRtParams){raygen->deviceAddress,       miss->deviceAddress,          hit->deviceAddress,
+                         callable->deviceAddress,     (uint32_t)miss->stride,       (uint32_t)hit->stride,
+                         (uint32_t)callable->stride};
+}
+
+static VKAPI_ATTR void VKAPI_CALL CmdTraceRaysKHR(VkCommandBuffer cmd, const VkStridedDeviceAddressRegionKHR *raygen,
+                                                  const VkStridedDeviceAddressRegionKHR *miss,
+                                                  const VkStridedDeviceAddressRegionKHR *hit,
+                                                  const VkStridedDeviceAddressRegionKHR *callable, uint32_t width,
+                                                  uint32_t height, uint32_t depth)
+{
+    VkmRtParams p = tables_of(raygen, miss, hit, callable);
+    p.width = width;
+    p.height = height;
+    p.depth = depth;
+    trace(cmd, &p, 0);
+}
+
+static VKAPI_ATTR void VKAPI_CALL CmdTraceRaysIndirectKHR(VkCommandBuffer cmd,
+                                                          const VkStridedDeviceAddressRegionKHR *raygen,
+                                                          const VkStridedDeviceAddressRegionKHR *miss,
+                                                          const VkStridedDeviceAddressRegionKHR *hit,
+                                                          const VkStridedDeviceAddressRegionKHR *callable,
+                                                          VkDeviceAddress indirect)
+{
+    VkmRtParams p = tables_of(raygen, miss, hit, callable);
+    p.mode = 1;
+    trace(cmd, &p, indirect);
+}
+
+static VKAPI_ATTR void VKAPI_CALL CmdTraceRaysIndirect2KHR(VkCommandBuffer cmd, VkDeviceAddress indirect)
+{
+    VkmRtParams p = {.mode = 2};
+    trace(cmd, &p, indirect);
+}
+
+static VKAPI_ATTR void VKAPI_CALL CmdSetRayTracingPipelineStackSizeKHR(VkCommandBuffer cmd, uint32_t size)
+{
+}
+
 const VkmEntry vkm_cmd_entries[] = {
+    VKM_ENTRY(CmdTraceRaysKHR),
+    VKM_ENTRY(CmdTraceRaysIndirectKHR),
+    VKM_ENTRY(CmdTraceRaysIndirect2KHR),
+    VKM_ENTRY(CmdSetRayTracingPipelineStackSizeKHR),
     VKM_ENTRY(CreateCommandPool),
     VKM_ENTRY(DestroyCommandPool),
     VKM_ENTRY(ResetCommandPool),

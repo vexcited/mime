@@ -575,6 +575,41 @@ static uint64_t imul_trunc(X86Cpu *c, int size, uint64_t a, uint64_t b)
     return res;
 }
 
+/*
+ * hi:lo / d with hi below d, so the quotient fits, by two 32 bit digits with the hardware's 64 bit division as
+ * hacker's delight's divlu does. the translator emits the same steps.
+ */
+static uint64_t div128(uint64_t hi, uint64_t lo, uint64_t d, uint64_t *rem)
+{
+    if (!hi) {
+        *rem = lo % d;
+        return lo / d;
+    }
+    int s = __builtin_clzll(d);
+    d <<= s;
+    uint64_t vn1 = d >> 32, vn0 = (uint32_t)d;
+    uint64_t un32 = hi << s | lo >> 1 >> (63 - s), un10 = lo << s;
+    uint64_t un1 = un10 >> 32, un0 = (uint32_t)un10;
+    uint64_t q1 = un32 / vn1, rhat = un32 - q1 * vn1;
+    while (q1 >> 32 || q1 * vn0 > (rhat << 32 | un1)) {
+        q1--;
+        rhat += vn1;
+        if (rhat >> 32)
+            break;
+    }
+    uint64_t un21 = (rhat << 32 | un1) - q1 * vn0;
+    uint64_t q0 = un21 / vn1;
+    rhat = un21 - q0 * vn1;
+    while (q0 >> 32 || q0 * vn0 > (rhat << 32 | un0)) {
+        q0--;
+        rhat += vn1;
+        if (rhat >> 32)
+            break;
+    }
+    *rem = ((rhat << 32 | un0) - q0 * vn0) >> s;
+    return q1 << 32 | q0;
+}
+
 static void div_one(X86Cpu *c, const X86Insn *i, int size, int is_signed)
 {
     uint64_t src = read_rm(c, i, size) & x86_mask(size);
@@ -634,22 +669,28 @@ static void div_one(X86Cpu *c, const X86Insn *i, int size, int is_signed)
         break;
     }
     default: {
-        unsigned __int128 n = ((unsigned __int128)c->r[X86_RDX] << 64) | c->r[X86_RAX];
+        uint64_t hi = c->r[X86_RDX], lo = c->r[X86_RAX], d = src, q, r;
         if (is_signed) {
-            __int128 sn = (__int128)n, d = (int64_t)src;
-            if (d == -1 && sn == (__int128)((unsigned __int128)1 << 127))
+            /* on the magnitudes, then the signs: the quotient's of both, the remainder's of the dividend. */
+            int nneg = (int64_t)hi < 0, dneg = (int64_t)src < 0;
+            if (nneg) {
+                lo = -lo;
+                hi = ~hi + !lo;
+            }
+            if (dneg)
+                d = -d;
+            if (hi >= d)
                 x86_fault(c, X86_STATUS_INTEGER_OVERFLOW, 0, 0);
-            __int128 q = sn / d, r = sn % d;
-            if (q != (__int128)(int64_t)q)
+            q = div128(hi, lo, d, &r);
+            if (nneg != dneg ? q > 1ull << 63 : q >> 63)
                 x86_fault(c, X86_STATUS_INTEGER_OVERFLOW, 0, 0);
-            c->r[X86_RAX] = (uint64_t)q;
-            c->r[X86_RDX] = (uint64_t)r;
+            c->r[X86_RAX] = nneg != dneg ? -q : q;
+            c->r[X86_RDX] = nneg ? -r : r;
         } else {
-            unsigned __int128 q = n / src, r = n % src;
-            if (q >> 64)
+            if (hi >= d)
                 x86_fault(c, X86_STATUS_INTEGER_OVERFLOW, 0, 0);
-            c->r[X86_RAX] = (uint64_t)q;
-            c->r[X86_RDX] = (uint64_t)r;
+            c->r[X86_RAX] = div128(hi, lo, d, &r);
+            c->r[X86_RDX] = r;
         }
         break;
     }
@@ -742,6 +783,13 @@ static void put_string(uint32_t *regs, const char *s)
     }
 }
 
+/* ActiveProcessorCount of the shared user data, read only by the leaves that report it. */
+static uint32_t processor_count(void)
+{
+    uint32_t cpus = *(volatile const uint32_t *)0x7FFE03C0;
+    return cpus ? (cpus > 255 ? 255 : cpus) : 1;
+}
+
 static void cpuid(X86Cpu *c)
 {
     uint32_t leaf = (uint32_t)c->r[X86_RAX], sub = (uint32_t)c->r[X86_RCX];
@@ -753,8 +801,6 @@ static void cpuid(X86Cpu *c)
      * stay clear.
      */
     static const char brand[48] = "                          Virtual CPU @ 3.80GHz";
-    uint32_t cpus = *(volatile const uint32_t *)0x7FFE03C0; /* ActiveProcessorCount of the shared user data. */
-    cpus = cpus ? (cpus > 255 ? 255 : cpus) : 1;
     switch (leaf) {
     case 0:
     case 0x80000000:
@@ -765,11 +811,15 @@ static void cpuid(X86Cpu *c)
         break;
     case 1:
         r[0] = 0x00600F01;
-        r[1] = cpus << 16 | 8u << 8; /* 64 byte clflush lines. */
+        r[1] = processor_count() << 16 | 8u << 8; /* 64 byte clflush lines. */
         r[2] = (1u << 0) | (1u << 9) | (1u << 13) | (1u << 19) | (1u << 23); /* sse3 ssse3 cx16 sse4.1 popcnt */
         r[3] = 0x17888111u; /* fpu tsc cx8 cmov clflush mmx fxsr sse sse2 htt */
         break;
     case 7:
+        if (!sub) {
+            r[1] = (1u << 13) | (1u << 29); /* fpu cs and ds deprecated, sha */
+            r[3] = 1u << 14;                /* serialize */
+        }
         break;
     case 0x80000001:
         r[0] = 0x00600F01;
@@ -791,10 +841,12 @@ static void cpuid(X86Cpu *c)
     case 0x80000007:
         r[3] = 1u << 8; /* invariant tsc */
         break;
-    case 0x80000008:
+    case 0x80000008: {
+        uint32_t cpus = processor_count();
         r[0] = 0x2020;
         r[2] = (cpus - 1) | (uint32_t)(31 - __builtin_clz(2 * cpus - 1)) << 12;
         break;
+    }
     case 4:
         if (sub < 4) {
             static const uint32_t a[4] = {0x121, 0x122, 0x143, 0x163};
@@ -911,6 +963,10 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
     case 0x01:
         if (op == 0x01 && i->modrm == 0xD0 && 0) /* xgetbv is reserved to processors reporting osxsave. */
             return;
+        if (op == 0x01 && i->modrm == 0xE8 && !i->mandatory) { /* serialize */
+            __atomic_thread_fence(__ATOMIC_SEQ_CST);
+            return;
+        }
         x86_undefined(c);
     case 0x31: { /* rdtsc */
         uint64_t t = c->env->timestamp(c);
@@ -993,10 +1049,10 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
         uint64_t addr = x86_ea(c, i);
         switch (sub) {
         case 0:
-            x86_fxsave(c, (uint8_t *)(uintptr_t)addr);
+            x86_fxsave(c, (uint8_t *)(uintptr_t)addr, (i->rex & 8) != 0);
             return;
         case 1:
-            x86_fxrstor(c, (const uint8_t *)(uintptr_t)addr);
+            x86_fxrstor(c, (const uint8_t *)(uintptr_t)addr, (i->rex & 8) != 0);
             return;
         case 2:
             x86_ldmxcsr(c, rd32(addr));

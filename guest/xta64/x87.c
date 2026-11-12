@@ -240,14 +240,14 @@ static uint16_t tag_word(X86Cpu *c)
     return tw;
 }
 
-/* fnstenv and fldenv in the 28-byte protected mode format. */
+/* fnstenv and fldenv in the 28-byte protected mode format, with the deprecated selectors stored 0. */
 static void store_env(X86Cpu *c, uint64_t a)
 {
     wr32(a, c->fcw);
     wr32(a + 4, full_fsw(c));
     wr32(a + 8, tag_word(c));
     wr32(a + 12, (uint32_t)c->fpu_ip);
-    wr32(a + 16, c->fop);
+    wr32(a + 16, (uint32_t)c->fop << 16);
     wr32(a + 20, (uint32_t)c->fpu_dp);
     wr32(a + 24, 0);
 }
@@ -263,11 +263,15 @@ static void load_env(X86Cpu *c, uint64_t a)
     for (int r = 0; r < 8; r++)
         if (((tw >> (2 * r)) & 3) != 3)
             c->ftag |= (uint8_t)(1u << r);
+    c->fpu_ip = rd32(a + 12);
+    c->fop = rd16(a + 18) & 0x7FF;
+    c->fpu_dp = rd32(a + 20);
 }
 
 /* ------------------------------------------------------------ fxsave */
 
-void x86_fxsave(X86Cpu *c, uint8_t *area)
+/* wide is the rex.w form, with 64 bit instruction and data pointers. the other one keeps 32 bits and a selector. */
+void x86_fxsave(X86Cpu *c, uint8_t *area, int wide)
 {
     __builtin_memset(area, 0, 160); /* bytes 416 to 511 are left alone, like the processor does. */
     uint16_t fsw = full_fsw(c);
@@ -275,8 +279,9 @@ void x86_fxsave(X86Cpu *c, uint8_t *area)
     __builtin_memcpy(area + 2, &fsw, 2);
     area[4] = c->ftag;
     __builtin_memcpy(area + 6, &c->fop, 2);
-    __builtin_memcpy(area + 8, &c->fpu_ip, 8);
-    __builtin_memcpy(area + 16, &c->fpu_dp, 8);
+    uint64_t ip = wide ? c->fpu_ip : (uint32_t)c->fpu_ip, dp = wide ? c->fpu_dp : (uint32_t)c->fpu_dp;
+    __builtin_memcpy(area + 8, &ip, 8);
+    __builtin_memcpy(area + 16, &dp, 8);
     uint32_t mxcsr = x86_mxcsr(c);
     __builtin_memcpy(area + 24, &mxcsr, 4);
     uint32_t mask = 0xFFFF;
@@ -293,7 +298,7 @@ void x86_fxsave(X86Cpu *c, uint8_t *area)
     __builtin_memcpy(area + 160, c->xmm, c->mode64 ? 256 : 128);
 }
 
-void x86_fxrstor(X86Cpu *c, const uint8_t *area)
+void x86_fxrstor(X86Cpu *c, const uint8_t *area, int wide)
 {
     uint16_t fsw;
     __builtin_memcpy(&c->fcw, area + 0, 2);
@@ -302,8 +307,13 @@ void x86_fxrstor(X86Cpu *c, const uint8_t *area)
     c->ftop = (uint8_t)((fsw >> 11) & 7);
     c->ftag = area[4];
     __builtin_memcpy(&c->fop, area + 6, 2);
-    __builtin_memcpy(&c->fpu_ip, area + 8, 8);
-    __builtin_memcpy(&c->fpu_dp, area + 16, 8);
+    c->fop &= 0x7FF;
+    __builtin_memcpy(&c->fpu_ip, area + 8, wide ? 8 : 4);
+    __builtin_memcpy(&c->fpu_dp, area + 16, wide ? 8 : 4);
+    if (!wide) {
+        c->fpu_ip = (uint32_t)c->fpu_ip;
+        c->fpu_dp = (uint32_t)c->fpu_dp;
+    }
     uint32_t mxcsr;
     __builtin_memcpy(&mxcsr, area + 24, 4);
     x86_set_mxcsr(c, mxcsr & 0xFFFF);
@@ -365,7 +375,6 @@ static void store_bcd(uint64_t a, double d, int mode)
 static void exec_memory(X86Cpu *c, const X86Insn *i, uint64_t a)
 {
     int sub = (i->modrm >> 3) & 7;
-    c->fpu_dp = a;
     switch (i->opcode) {
     case 0xD8:
     case 0xDA:
@@ -780,16 +789,34 @@ static void exec_register(X86Cpu *c, const X86Insn *i)
     }
 }
 
+/*
+ * the instructions that save, load or clear the fpu's own state: fldenv, fldcw, fnstenv, fnstcw, frstor, fnsave,
+ * fnstsw, fnclex, fninit and the 8087 leftovers. they leave the last instruction and data pointers and opcode alone.
+ */
+static int is_control(const X86Insn *i)
+{
+    int sub = (i->modrm >> 3) & 7;
+    if (i->mod != 3)
+        return (i->opcode == 0xD9 || i->opcode == 0xDD) && sub >= 4;
+    return (i->opcode == 0xDB && i->modrm >= 0xE0 && i->modrm <= 0xE4) || (i->opcode == 0xDF && i->modrm == 0xE0);
+}
+
 void x86_exec_x87(X86Cpu *c, const X86Insn *i)
 {
     if (c->mmx_mode) {
         c->mmx_mode = 0;
         c->ftop = 0;
     }
-    c->fop = (uint16_t)(((i->opcode & 7) << 8) | i->modrm);
-    c->fpu_ip = c->insn_rip;
+    uint64_t a = i->mod == 3 ? 0 : x86_ea(c, i);
+    if (!is_control(i)) {
+        /* anti tamper code reads them back, as securom does. */
+        c->fop = (uint16_t)(((i->opcode & 7) << 8) | i->modrm);
+        c->fpu_ip = c->insn_rip;
+        if (i->mod != 3)
+            c->fpu_dp = a;
+    }
     if (i->mod == 3)
         exec_register(c, i);
     else
-        exec_memory(c, i, x86_ea(c, i));
+        exec_memory(c, i, a);
 }

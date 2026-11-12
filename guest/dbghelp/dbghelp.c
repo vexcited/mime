@@ -800,7 +800,7 @@ DBGHELP BOOL WINAPI MiniDumpWriteDump(HANDLE process, DWORD process_id, HANDLE f
         DWORD suspended = current ? 0 : SuspendThread(thread);
         CONTEXT context;
         memset(&context, 0, sizeof(context));
-#ifdef _WIN64
+#ifdef __x86_64__
         context.ContextFlags = CONTEXT_FULL | CONTEXT_SEGMENTS;
 #else
         context.ContextFlags = CONTEXT_FULL;
@@ -829,8 +829,10 @@ DBGHELP BOOL WINAPI MiniDumpWriteDump(HANDLE process, DWORD process_id, HANDLE f
         if (have) {
             t->ThreadContext.DataSize = sizeof(context);
             t->ThreadContext.Rva = put(&d, &context, sizeof(context));
-#ifdef _WIN64
+#if defined(__x86_64__)
             ULONG64 sp = context.Rsp & ~15ull;
+#elif defined(__aarch64__)
+            ULONG64 sp = context.Sp & ~15ull;
 #else
             ULONG64 sp = context.Esp & ~15ull;
 #endif

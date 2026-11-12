@@ -1557,7 +1557,7 @@ static BOOLEAN access_fault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCE
             handled = TRUE;
         } else if ((v & MM_PTE_VALID) && mode == UserMode && !MI_PTE_IS_USER(v) && (v & MM_PTE_SW_TRIMMED)) {
             /* a trimmed page comes back into the working set, a soft fault. */
-            MiWritePte(as->Root, page, (v & ~MM_PTE_SW_TRIMMED) | MM_PTE_USER, as->Asid);
+            MiWritePte(as->Root, page, MI_PTE_SET_USER(v & ~MM_PTE_SW_TRIMMED), as->Asid);
             handled = TRUE;
         } else if ((v & MM_PTE_VALID) && mode == UserMode && !MI_PTE_IS_USER(v) && MI_PTE_IS_GUARD(v)) {
             /* like Windows, the first touch of a guard page faults and removes the guard. */
@@ -2649,9 +2649,9 @@ static void trim_pages(PEPROCESS process, ULONG_PTR start, ULONG_PTR end, BOOLEA
         if (!(v & MM_PTE_VALID) || (v & (MM_PTE_SW_GUARD | MM_PTE_SW_CODE)))
             continue;
         if (trim && MI_PTE_IS_USER(v))
-            MiWritePte(as->Root, page, (v & ~MM_PTE_USER) | MM_PTE_SW_TRIMMED, as->Asid);
+            MiWritePte(as->Root, page, MI_PTE_CLEAR_USER(v) | MM_PTE_SW_TRIMMED, as->Asid);
         else if (!trim && (v & MM_PTE_SW_TRIMMED))
-            MiWritePte(as->Root, page, (v & ~MM_PTE_SW_TRIMMED) | MM_PTE_USER, as->Asid);
+            MiWritePte(as->Root, page, MI_PTE_SET_USER(v & ~MM_PTE_SW_TRIMMED), as->Asid);
     }
     MiUnlockAddressSpace(as);
 }

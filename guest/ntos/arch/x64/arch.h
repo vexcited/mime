@@ -235,11 +235,14 @@ extern ULONG64 KiXsaveMask;
 #define MM_KERNEL_RW (MM_PTE_RW | MM_PTE_GLOBAL | MM_PTE_ACCESSED | MM_PTE_DIRTY | MM_PTE_NX)
 #define MM_KERNEL_RO (MM_PTE_GLOBAL | MM_PTE_ACCESSED | MM_PTE_NX)
 #define MM_KERNEL_RX (MM_PTE_GLOBAL | MM_PTE_ACCESSED)
+#define MM_PTE_UNCACHED MM_PTE_PCD
 
 #define MI_PTE_SET_RO(p) ((p) & ~MM_PTE_RW)
 #define MI_PTE_SET_RW(p) ((p) | MM_PTE_RW)
 #define MI_PTE_IS_RO(p) (((p) & MM_PTE_RW) == 0)
 #define MI_PTE_IS_USER(p) (((p) & MM_PTE_USER) != 0)
+#define MI_PTE_SET_USER(p) ((p) | MM_PTE_USER)
+#define MI_PTE_CLEAR_USER(p) ((p) & ~MM_PTE_USER)
 #define MI_PTE_USER_EXEC(p) (((p) & MM_PTE_NX) == 0)
 /* a present user page that user mode cannot reach: no access, or a guard page before its first touch. */
 #define MI_PTE_IS_GUARD(p) (((p) & MM_PTE_SW_GUARD) != 0)

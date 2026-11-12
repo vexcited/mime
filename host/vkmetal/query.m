@@ -18,7 +18,11 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateQueryPool(VkDevice device, const VkQ
     case VK_QUERY_TYPE_OCCLUSION:
     case VK_QUERY_TYPE_TIMESTAMP:
     case VK_QUERY_TYPE_PIPELINE_STATISTICS:
-    case VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT: break;
+    case VK_QUERY_TYPE_TRANSFORM_FEEDBACK_STREAM_EXT:
+    case VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR:
+    case VK_QUERY_TYPE_ACCELERATION_STRUCTURE_SERIALIZATION_SIZE_KHR:
+    case VK_QUERY_TYPE_ACCELERATION_STRUCTURE_SIZE_KHR:
+    case VK_QUERY_TYPE_ACCELERATION_STRUCTURE_SERIALIZATION_BOTTOM_LEVEL_POINTERS_KHR: break;
     default: return VK_ERROR_FEATURE_NOT_PRESENT;
     }
     VkQueryPool pool = vkm_zalloc(sizeof(*pool));
@@ -29,16 +33,17 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateQueryPool(VkDevice device, const VkQ
     pool->statistics = info->pipelineStatistics;
     pool->queue = &device->queue;
     uint64_t size = (uint64_t)MIME_MAX(info->queryCount, 1u) * 8 * values_of(pool->type, pool->statistics);
-    pool->buffer = MTL_MSG(id (*)(id, SEL, NSUInteger, NSUInteger), device->mtl, "newBufferWithLength:options:", size,
-                           MTLResourceStorageModeShared | MTLResourceHazardTrackingModeUntracked);
+    pool->buffer = [device->mtl newBufferWithLength:size
+                                            options:MTLResourceStorageModeShared |
+                                                    MTLResourceHazardTrackingModeUntracked];
     pool->written = vkm_zalloc(sizeof(uint64_t) * MIME_MAX(info->queryCount, 1u));
     if (!pool->buffer || !pool->written) {
-        mtl_release(pool->buffer);
+        [pool->buffer release];
         free(pool->written);
         free(pool);
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
-    pool->values = M_PTR(pool->buffer, "contents");
+    pool->values = pool->buffer.contents;
     memset(pool->values, 0, size);
     vkm_resident(device, pool->buffer);
     *out = pool;

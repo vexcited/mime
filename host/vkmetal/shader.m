@@ -10,7 +10,7 @@
 typedef struct Library {
     struct Library *next;
     uint64_t hash;
-    id library;
+    id<MTLLibrary> library;
 } Library;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -19,21 +19,21 @@ static VkmCache *g_pipelines, *g_depth_states, *g_compute;
 
 /* ------------------------------------------------------------------ MSL libraries. */
 
-static id compile_options(void)
+static MTLCompileOptions *compile_options(void)
 {
-    id options = mtl_new("MTLCompileOptions");
-    M_V_U(options, "setLanguageVersion:", MTLLanguageVersion3_2);
-    M_V_I(options, "setMathMode:", MTLMathModeSafe);
-    M_V_B(options, "setPreserveInvariance:", true);
+    MTLCompileOptions *options = [[MTLCompileOptions alloc] init];
+    options.languageVersion = MTLLanguageVersion3_2;
+    options.mathMode = MTLMathModeSafe;
+    options.preserveInvariance = true;
     return options;
 }
 
-static id library_get(VkDevice device, const char *source, uint64_t hash)
+static id<MTLLibrary> library_get(VkDevice device, const char *source, uint64_t hash)
 {
     pthread_mutex_lock(&g_lock);
     for (Library *l = g_libraries; l; l = l->next)
         if (l->hash == hash) {
-            id library = mtl_retain(l->library);
+            id<MTLLibrary> library = [l->library retain];
             pthread_mutex_unlock(&g_lock);
             return library;
         }
@@ -49,27 +49,28 @@ static id library_get(VkDevice device, const char *source, uint64_t hash)
             fclose(f);
         }
     }
-    void *pool = objc_autoreleasePoolPush();
-    id desc = mtl_new("MTL4LibraryDescriptor");
-    id options = compile_options();
-    M_V_ID(desc, "setSource:", mtl_string(source));
-    M_V_ID(desc, "setOptions:", options);
-    id error = nullptr;
-    id library = MTL_MSG(id (*)(id, SEL, id, id *), device->compiler, "newLibraryWithDescriptor:error:", desc, &error);
-    mtl_release(options);
-    mtl_release(desc);
-    if (!library) {
-        const char *text = mtl_error_text(error);
-        VKM_ERROR("an MSL library does not compile: %.2000s", text);
-        mime_debug("vkmetal: the MSL was:\n%s", source);
+    id<MTLLibrary> library;
+    @autoreleasepool {
+        MTL4LibraryDescriptor *desc = [[MTL4LibraryDescriptor alloc] init];
+        MTLCompileOptions *options = compile_options();
+        desc.source = @(source);
+        desc.options = options;
+        NSError *error = nil;
+        library = mime_pipeline_cache_library(device->pipelines, desc, (id *)&error);
+        [options release];
+        [desc release];
+        if (!library) {
+            const char *text = vkm_error_text(error);
+            VKM_ERROR("an MSL library does not compile: %.2000s", text);
+            mime_debug("vkmetal: the MSL was:\n%s", source);
+        }
     }
-    objc_autoreleasePoolPop(pool);
     if (!library)
         return nullptr;
     Library *l = vkm_zalloc(sizeof(*l));
     if (l) {
         l->hash = hash;
-        l->library = mtl_retain(library);
+        l->library = [library retain];
         pthread_mutex_lock(&g_lock);
         l->next = g_libraries;
         g_libraries = l;
@@ -78,16 +79,16 @@ static id library_get(VkDevice device, const char *source, uint64_t hash)
     return library;
 }
 
-id vkm_library(VkDevice device, const char *source)
+id<MTLLibrary> vkm_library(VkDevice device, const char *source)
 {
     return library_get(device, source, vkm_hash(source, strlen(source), 0x6d736c));
 }
 
-id vkm_function(id library, const char *name)
+MTL4LibraryFunctionDescriptor *vkm_function(id<MTLLibrary> library, const char *name)
 {
-    id f = mtl_new("MTL4LibraryFunctionDescriptor");
-    M_V_ID(f, "setName:", mtl_string(name));
-    M_V_ID(f, "setLibrary:", library);
+    MTL4LibraryFunctionDescriptor *f = [[MTL4LibraryFunctionDescriptor alloc] init];
+    f.name = @(name);
+    f.library = library;
     return f;
 }
 
@@ -150,7 +151,7 @@ static VkResult compile_msl(VkDevice device, const uint32_t *spirv, size_t words
     if (!out->library)
         return VK_ERROR_INVALID_SHADER_NV;
     out->function = vkm_function(out->library, r.entry);
-    out->local = r.local;
+    out->local = MTLSizeMake(r.local.width, r.local.height, r.local.depth);
     out->inputs = r.inputs;
     memcpy(out->input, r.input, sizeof(out->input));
     out->outputs = r.outputs;
@@ -186,6 +187,8 @@ static VkResult variant(VkDevice device, VkShaderStageFlagBits stage, const uint
     return VK_SUCCESS;
 }
 
+
+/* the buffers of the emulation set: the geometry stage's records and indices, or a ray tracing kernel's parameters. */
 static const VkmMslBinding g_gs_buffers[] = {
     {VKM_EMU_SET, 0, 1, VKM_BUFFER_VERTEX, VKM_BUFFER_VERTEX, VKM_MSL_BUFFER},
     {VKM_EMU_SET, 1, 1, VKM_BUFFER_VERTEX + 1, VKM_BUFFER_VERTEX + 1, VKM_MSL_BUFFER},
@@ -217,16 +220,17 @@ static VkResult compile_geometry(VkDevice device, const uint32_t *spirv, size_t 
     return r;
 }
 
-VkResult vkm_compile(VkDevice device, const uint32_t *spirv, size_t size, const char *entry,
-                     VkShaderStageFlagBits stage, const VkSpecializationInfo *spec, const VkmLayoutView *layout,
-                     VkmCode *out)
+/* with rays, the kernel of a ray tracing pipeline, which also reads its parameters. */
+static VkResult compile_stage(VkDevice device, const uint32_t *spirv, size_t size, const char *entry,
+                              VkShaderStageFlagBits stage, const VkSpecializationInfo *spec,
+                              const VkmLayoutView *layout, bool rays, VkmCode *out)
 {
     memset(out, 0, sizeof(*out));
     out->stage = stage;
     int model = execution_model(stage);
     if (model < 0 || size < 20 || spirv[0] != 0x07230203)
         return VK_ERROR_INVALID_SHADER_NV;
-    uint32_t count = 0, set_mask = 0;
+    uint32_t count = rays ? 1 : 0, set_mask = 0;
     for (uint32_t s = 0; s < layout->set_count; s++)
         if (layout->sets[s])
             count += layout->sets[s]->count;
@@ -238,6 +242,8 @@ VkResult vkm_compile(VkDevice device, const uint32_t *spirv, size_t size, const 
         return VK_ERROR_OUT_OF_HOST_MEMORY;
     }
     count = 0;
+    if (rays)
+        bindings[count++] = g_gs_buffers[0];
     for (uint32_t s = 0; s < layout->set_count; s++) {
         VkDescriptorSetLayout l = layout->sets[s];
         if (!l)
@@ -287,6 +293,13 @@ VkResult vkm_compile(VkDevice device, const uint32_t *spirv, size_t size, const 
     free(values);
     free(bindings);
     return r;
+}
+
+VkResult vkm_compile(VkDevice device, const uint32_t *spirv, size_t size, const char *entry,
+                     VkShaderStageFlagBits stage, const VkSpecializationInfo *spec, const VkmLayoutView *layout,
+                     VkmCode *out)
+{
+    return compile_stage(device, spirv, size, entry, stage, spec, layout, false, out);
 }
 
 static pthread_mutex_t g_capture_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -405,8 +418,8 @@ void vkm_code_free(VkmCode *code)
         }
         free(w);
     }
-    mtl_release(code->function);
-    mtl_release(code->library);
+    [code->function release];
+    [code->library release];
     VkmCode *variants[] = {code->capture, code->expand, code->replay, code->counted, code->dual};
     for (size_t i = 0; i < MIME_ARRAY_COUNT(variants); i++)
         if (variants[i]) {
@@ -470,79 +483,83 @@ static uint32_t write_mask(uint8_t vk)
            ((vk & VK_COLOR_COMPONENT_A_BIT) ? MTLColorWriteMaskAlpha : 0);
 }
 
-static id make_render_pipeline(VkDevice device, const VkmPipelineKey *key, const VkmCode *vs, const VkmCode *fs)
+static id<MTLRenderPipelineState> make_render_pipeline(VkDevice device, const VkmPipelineKey *key, const VkmCode *vs,
+                                                      const VkmCode *fs)
 {
-    void *pool = objc_autoreleasePoolPush();
-    id desc = mtl_new("MTL4RenderPipelineDescriptor");
-    M_V_ID(desc, "setVertexFunctionDescriptor:", vs->function);
-    if (fs)
-        M_V_ID(desc, "setFragmentFunctionDescriptor:", fs->function);
-    if (vs->inputs) {
-        id vd = M_ID(MTL_CLASS("MTLVertexDescriptor"), "vertexDescriptor");
-        id attributes = M_ID(vd, "attributes"), layouts = M_ID(vd, "layouts");
-        uint32_t used = 0;
-        for (uint32_t i = 0; i < key->attribute_count; i++) {
-            uint32_t location = key->attributes[i].location;
-            if (!(vs->inputs & (1u << location)))
+    id<MTLRenderPipelineState> state;
+    @autoreleasepool {
+        MTL4RenderPipelineDescriptor *desc = [[MTL4RenderPipelineDescriptor alloc] init];
+        desc.vertexFunctionDescriptor = vs->function;
+        if (fs)
+            desc.fragmentFunctionDescriptor = fs->function;
+        if (vs->inputs) {
+            MTLVertexDescriptor *vd = [MTLVertexDescriptor vertexDescriptor];
+            MTLVertexAttributeDescriptorArray *attributes = vd.attributes;
+            MTLVertexBufferLayoutDescriptorArray *layouts = vd.layouts;
+            uint32_t used = 0;
+            for (uint32_t i = 0; i < key->attribute_count; i++) {
+                uint32_t location = key->attributes[i].location;
+                if (!(vs->inputs & (1u << location)))
+                    continue;
+                MTLVertexAttributeDescriptor *a = attributes[location];
+                a.format = (MTLVertexFormat)key->attributes[i].format;
+                a.offset = key->attributes[i].offset;
+                a.bufferIndex = VKM_BUFFER_VERTEX + key->attributes[i].binding;
+                used |= 1u << key->attributes[i].binding;
+            }
+            for (uint32_t b = 0; b < VKM_VERTEX_BINDINGS; b++) {
+                if (!(used & (1u << b)))
+                    continue;
+                MTLVertexBufferLayoutDescriptor *l = layouts[VKM_BUFFER_VERTEX + b];
+                l.stride = ~(NSUInteger)0;
+                l.stepFunction = (MTLVertexStepFunction)key->bindings[b].rate;
+                l.stepRate = key->bindings[b].rate == MTLVertexStepFunctionConstant ? 0
+                                                                       : MIME_MAX(key->bindings[b].divisor, 1u);
+            }
+            desc.vertexDescriptor = vd;
+        }
+        desc.rasterSampleCount = MIME_MAX(key->samples, 1);
+        desc.alphaToCoverageState =
+            key->alpha_to_coverage ? MTL4AlphaToCoverageStateEnabled : MTL4AlphaToCoverageStateDisabled;
+        desc.alphaToOneState = key->alpha_to_one ? MTL4AlphaToOneStateEnabled : MTL4AlphaToOneStateDisabled;
+        desc.rasterizationEnabled = !key->discard;
+        desc.inputPrimitiveTopology = (MTLPrimitiveTopologyClass)key->topology_class;
+        if (key->icb)
+            desc.supportIndirectCommandBuffers = MTL4IndirectCommandBufferSupportStateEnabled;
+        MTL4RenderPipelineColorAttachmentDescriptorArray *colors = desc.colorAttachments;
+        for (uint32_t i = 0; i < VKM_COLORS; i++) {
+            if (!key->colors[i])
                 continue;
-            id a = M_AT(attributes, location);
-            M_V_U(a, "setFormat:", key->attributes[i].format);
-            M_V_U(a, "setOffset:", key->attributes[i].offset);
-            M_V_U(a, "setBufferIndex:", VKM_BUFFER_VERTEX + key->attributes[i].binding);
-            used |= 1u << key->attributes[i].binding;
+            MTL4RenderPipelineColorAttachmentDescriptor *c = colors[i];
+            const VkmBlend *b = &key->blend[i];
+            c.pixelFormat = (MTLPixelFormat)key->colors[i];
+            c.writeMask =
+                fs && (fs->outputs & (1u << i)) ? (MTLColorWriteMask)write_mask(b->write) : MTLColorWriteMaskNone;
+            c.blendingState = b->enable ? MTL4BlendStateEnabled : MTL4BlendStateDisabled;
+            if (b->enable) {
+                c.sourceRGBBlendFactor = (MTLBlendFactor)vkm_blend_factor(b->src_color);
+                c.destinationRGBBlendFactor = (MTLBlendFactor)vkm_blend_factor(b->dst_color);
+                c.rgbBlendOperation = (MTLBlendOperation)vkm_blend_op(b->color_op);
+                c.sourceAlphaBlendFactor = (MTLBlendFactor)vkm_blend_factor(b->src_alpha);
+                c.destinationAlphaBlendFactor = (MTLBlendFactor)vkm_blend_factor(b->dst_alpha);
+                c.alphaBlendOperation = (MTLBlendOperation)vkm_blend_op(b->alpha_op);
+            }
         }
-        for (uint32_t b = 0; b < VKM_VERTEX_BINDINGS; b++) {
-            if (!(used & (1u << b)))
-                continue;
-            id l = M_AT(layouts, VKM_BUFFER_VERTEX + b);
-            M_V_U(l, "setStride:", ~(NSUInteger)0);
-            M_V_U(l, "setStepFunction:", key->bindings[b].rate);
-            M_V_U(l, "setStepRate:", key->bindings[b].rate == MTLVertexStepFunctionConstant ? 0
-                                     : MIME_MAX(key->bindings[b].divisor, 1u));
-        }
-        M_V_ID(desc, "setVertexDescriptor:", vd);
+        NSError *error = nil;
+        state = mime_pipeline_cache_render(device->pipelines, desc, (id *)&error);
+        if (!state)
+            VKM_ERROR("no render pipeline: %s", vkm_error_text(error));
+        [desc release];
     }
-    M_V_U(desc, "setRasterSampleCount:", MIME_MAX(key->samples, 1));
-    M_V_I(desc, "setAlphaToCoverageState:",
-          key->alpha_to_coverage ? MTL4AlphaToCoverageStateEnabled : MTL4AlphaToCoverageStateDisabled);
-    M_V_I(desc, "setAlphaToOneState:", key->alpha_to_one ? MTL4AlphaToOneStateEnabled : MTL4AlphaToOneStateDisabled);
-    M_V_B(desc, "setRasterizationEnabled:", !key->discard);
-    M_V_U(desc, "setInputPrimitiveTopology:", key->topology_class);
-    if (key->icb)
-        M_V_I(desc, "setSupportIndirectCommandBuffers:", MTL4IndirectCommandBufferSupportStateEnabled);
-    id colors = M_ID(desc, "colorAttachments");
-    for (uint32_t i = 0; i < VKM_COLORS; i++) {
-        if (!key->colors[i])
-            continue;
-        id c = M_AT(colors, i);
-        const VkmBlend *b = &key->blend[i];
-        M_V_U(c, "setPixelFormat:", key->colors[i]);
-        M_V_U(c, "setWriteMask:", fs && (fs->outputs & (1u << i)) ? write_mask(b->write) : MTLColorWriteMaskNone);
-        M_V_I(c, "setBlendingState:", b->enable ? MTL4BlendStateEnabled : MTL4BlendStateDisabled);
-        if (b->enable) {
-            M_V_U(c, "setSourceRGBBlendFactor:", vkm_blend_factor(b->src_color));
-            M_V_U(c, "setDestinationRGBBlendFactor:", vkm_blend_factor(b->dst_color));
-            M_V_U(c, "setRgbBlendOperation:", vkm_blend_op(b->color_op));
-            M_V_U(c, "setSourceAlphaBlendFactor:", vkm_blend_factor(b->src_alpha));
-            M_V_U(c, "setDestinationAlphaBlendFactor:", vkm_blend_factor(b->dst_alpha));
-            M_V_U(c, "setAlphaBlendOperation:", vkm_blend_op(b->alpha_op));
-        }
-    }
-    id error = nullptr;
-    id state = MTL_MSG(id (*)(id, SEL, id, id, id *), device->compiler,
-                       "newRenderPipelineStateWithDescriptor:compilerTaskOptions:error:", desc, nullptr, &error);
-    if (!state)
-        VKM_ERROR("no render pipeline: %s", mtl_error_text(error));
-    mtl_release(desc);
-    objc_autoreleasePoolPop(pool);
     return state;
 }
 
-id vkm_render_pipeline(VkDevice device, const VkmPipelineKey *key, const VkmCode *vs, const VkmCode *fs)
+id<MTLRenderPipelineState> vkm_render_pipeline(VkDevice device, const VkmPipelineKey *key, const VkmCode *vs,
+                                               const VkmCode *fs)
 {
     uint64_t hash = vkm_hash(key, sizeof(*key), 1);
     pthread_mutex_lock(&g_lock);
-    id state = vkm_cache_find(g_pipelines, key, sizeof(*key), hash);
+    id<MTLRenderPipelineState> state = vkm_cache_find(g_pipelines, key, sizeof(*key), hash);
     pthread_mutex_unlock(&g_lock);
     if (state)
         return state;
@@ -552,7 +569,7 @@ id vkm_render_pipeline(VkDevice device, const VkmPipelineKey *key, const VkmCode
     pthread_mutex_lock(&g_lock);
     id raced = vkm_cache_find(g_pipelines, key, sizeof(*key), hash);
     if (raced) {
-        mtl_release(state);
+        [state release];
         state = raced;
     } else {
         vkm_cache_add(&g_pipelines, key, sizeof(*key), hash, state);
@@ -561,34 +578,33 @@ id vkm_render_pipeline(VkDevice device, const VkmPipelineKey *key, const VkmCode
     return state;
 }
 
-id vkm_compute_pipeline(VkDevice device, const VkmCode *code, bool icb)
+id<MTLComputePipelineState> vkm_compute_pipeline(VkDevice device, const VkmCode *code, bool icb)
 {
     uint64_t hash = code->hash ^ ((uint64_t)code->local.width << 40 | (uint64_t)code->local.height << 20 |
                                   (uint64_t)code->local.depth) ^ (icb ? 1ull << 63 : 0);
     pthread_mutex_lock(&g_lock);
-    id state = vkm_cache_find(g_compute, &hash, sizeof(hash), hash);
+    id<MTLComputePipelineState> state = vkm_cache_find(g_compute, &hash, sizeof(hash), hash);
     pthread_mutex_unlock(&g_lock);
     if (state)
         return state;
-    void *pool = objc_autoreleasePoolPush();
-    id desc = mtl_new("MTL4ComputePipelineDescriptor");
-    M_V_ID(desc, "setComputeFunctionDescriptor:", code->function);
-    MTL_MSG(void (*)(id, SEL, MTLSize), desc, "setRequiredThreadsPerThreadgroup:", code->local);
-    if (icb)
-        M_V_I(desc, "setSupportIndirectCommandBuffers:", MTL4IndirectCommandBufferSupportStateEnabled);
-    id error = nullptr;
-    state = MTL_MSG(id (*)(id, SEL, id, id, id *), device->compiler,
-                    "newComputePipelineStateWithDescriptor:compilerTaskOptions:error:", desc, nullptr, &error);
-    if (!state)
-        VKM_ERROR("no compute pipeline: %s", mtl_error_text(error));
-    mtl_release(desc);
-    objc_autoreleasePoolPop(pool);
+    @autoreleasepool {
+        MTL4ComputePipelineDescriptor *desc = [[MTL4ComputePipelineDescriptor alloc] init];
+        desc.computeFunctionDescriptor = code->function;
+        desc.requiredThreadsPerThreadgroup = code->local;
+        if (icb)
+            desc.supportIndirectCommandBuffers = MTL4IndirectCommandBufferSupportStateEnabled;
+        NSError *error = nil;
+        state = mime_pipeline_cache_compute(device->pipelines, desc, (id *)&error);
+        if (!state)
+            VKM_ERROR("no compute pipeline: %s", vkm_error_text(error));
+        [desc release];
+    }
     if (!state)
         return nullptr;
     pthread_mutex_lock(&g_lock);
     id raced = vkm_cache_find(g_compute, &hash, sizeof(hash), hash);
     if (raced) {
-        mtl_release(state);
+        [state release];
         state = raced;
     } else {
         vkm_cache_add(&g_compute, &hash, sizeof(hash), hash, state);
@@ -613,46 +629,47 @@ uint32_t vkm_stencil_op(VkStencilOp op)
     }
 }
 
-static id stencil_descriptor(const VkmStencilFace *f)
+static MTLStencilDescriptor *stencil_descriptor(const VkmStencilFace *f)
 {
-    id d = mtl_new("MTLStencilDescriptor");
-    M_V_U(d, "setStencilCompareFunction:", vkm_compare(f->compare));
-    M_V_U(d, "setStencilFailureOperation:", vkm_stencil_op(f->fail));
-    M_V_U(d, "setDepthFailureOperation:", vkm_stencil_op(f->depth_fail));
-    M_V_U(d, "setDepthStencilPassOperation:", vkm_stencil_op(f->pass));
-    M_V_U(d, "setReadMask:", f->read);
-    M_V_U(d, "setWriteMask:", f->write);
+    MTLStencilDescriptor *d = [[MTLStencilDescriptor alloc] init];
+    d.stencilCompareFunction = (MTLCompareFunction)vkm_compare(f->compare);
+    d.stencilFailureOperation = (MTLStencilOperation)vkm_stencil_op(f->fail);
+    d.depthFailureOperation = (MTLStencilOperation)vkm_stencil_op(f->depth_fail);
+    d.depthStencilPassOperation = (MTLStencilOperation)vkm_stencil_op(f->pass);
+    d.readMask = f->read;
+    d.writeMask = f->write;
     return d;
 }
 
-id vkm_depth_state(VkDevice device, const VkmDepthKey *key)
+id<MTLDepthStencilState> vkm_depth_state(VkDevice device, const VkmDepthKey *key)
 {
     uint64_t hash = vkm_hash(key, sizeof(*key), 2);
     pthread_mutex_lock(&g_lock);
-    id state = vkm_cache_find(g_depth_states, key, sizeof(*key), hash);
+    id<MTLDepthStencilState> state = vkm_cache_find(g_depth_states, key, sizeof(*key), hash);
     pthread_mutex_unlock(&g_lock);
     if (state)
         return state;
-    void *pool = objc_autoreleasePoolPush();
-    id desc = mtl_new("MTLDepthStencilDescriptor");
-    M_V_U(desc, "setDepthCompareFunction:", key->test ? vkm_compare(key->compare) : MTLCompareFunctionAlways);
-    M_V_B(desc, "setDepthWriteEnabled:", key->test && key->write);
-    if (key->stencil) {
-        id front = stencil_descriptor(&key->front), back = stencil_descriptor(&key->back);
-        M_V_ID(desc, "setFrontFaceStencil:", front);
-        M_V_ID(desc, "setBackFaceStencil:", back);
-        mtl_release(front);
-        mtl_release(back);
+    @autoreleasepool {
+        MTLDepthStencilDescriptor *desc = [[MTLDepthStencilDescriptor alloc] init];
+        desc.depthCompareFunction =
+            key->test ? (MTLCompareFunction)vkm_compare(key->compare) : MTLCompareFunctionAlways;
+        desc.depthWriteEnabled = key->test && key->write;
+        if (key->stencil) {
+            MTLStencilDescriptor *front = stencil_descriptor(&key->front), *back = stencil_descriptor(&key->back);
+            desc.frontFaceStencil = front;
+            desc.backFaceStencil = back;
+            [front release];
+            [back release];
+        }
+        state = [device->mtl newDepthStencilStateWithDescriptor:desc];
+        [desc release];
     }
-    state = M_ID_ID(device->mtl, "newDepthStencilStateWithDescriptor:", desc);
-    mtl_release(desc);
-    objc_autoreleasePoolPop(pool);
     if (!state)
         return nullptr;
     pthread_mutex_lock(&g_lock);
     id raced = vkm_cache_find(g_depth_states, key, sizeof(*key), hash);
     if (raced) {
-        mtl_release(state);
+        [state release];
         state = raced;
     } else {
         vkm_cache_add(&g_depth_states, key, sizeof(*key), hash, state);
@@ -795,7 +812,7 @@ static void stencil_face(VkmStencilFace *out, const VkStencilOpState *s)
 static void graphics_static(const VkGraphicsPipelineCreateInfo *info, VkmGfxStatic *g)
 {
     VkmDynamic *d = &g->state;
-    d->depth_clip = 1;
+    d->depth_clip = VKM_CLIP_UNSET;
     d->sample_mask = ~0u;
     d->samples = 1;
     if (info->pDynamicState)
@@ -854,7 +871,7 @@ static void graphics_static(const VkGraphicsPipelineCreateInfo *info, VkmGfxStat
         d->bias_slope = rs->depthBiasSlopeFactor;
         const VkPipelineRasterizationDepthClipStateCreateInfoEXT *clip =
             vkm_find(rs->pNext, VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_DEPTH_CLIP_STATE_CREATE_INFO_EXT);
-        d->depth_clip = clip ? (uint8_t)clip->depthClipEnable : (uint8_t)!rs->depthClampEnable;
+        d->depth_clip = clip ? (uint8_t)clip->depthClipEnable : VKM_CLIP_UNSET;
     }
     const VkPipelineMultisampleStateCreateInfo *ms = info->pMultisampleState;
     if (ms && !d->discard) {
@@ -932,7 +949,25 @@ static void pipeline_free(VkPipeline p)
         if (p->has[i])
             vkm_code_free(&p->stages[i]);
     free(p->gfx);
+    vkm_rt_free(p->rt);
     free(p);
+}
+
+void vkm_pipeline_free(VkPipeline p)
+{
+    [p->compute release];
+    pipeline_free(p);
+}
+
+VkResult vkm_compile_rays(VkDevice device, const uint32_t *spirv, size_t size, VkPipelineLayout layout, VkmCode *out)
+{
+    VkmLayoutView view = {};
+    if (layout) {
+        view.set_count = layout->set_count;
+        memcpy(view.sets, layout->sets, sizeof(view.sets));
+        view.push_size = layout->push_size;
+    }
+    return compile_stage(device, spirv, size, "main", VK_SHADER_STAGE_COMPUTE_BIT, nullptr, &view, true, out);
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL CreateGraphicsPipelines(VkDevice device, VkPipelineCache cache, uint32_t count,
@@ -986,7 +1021,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateComputePipelines(VkDevice device, Vk
         p->bind = VK_PIPELINE_BIND_POINT_COMPUTE;
         VkResult r = stage_compile(device, &infos[i].stage, infos[i].layout, &p->stages[0]);
         p->has[0] = r == VK_SUCCESS;
-        if (r == VK_SUCCESS && !(p->compute = mtl_retain(vkm_compute_pipeline(device, &p->stages[0], false))))
+        if (r == VK_SUCCESS && !(p->compute = [vkm_compute_pipeline(device, &p->stages[0], false) retain]))
             r = VK_ERROR_INVALID_SHADER_NV;
         if (r != VK_SUCCESS) {
             pipeline_free(p);
@@ -1002,7 +1037,7 @@ static VKAPI_ATTR void VKAPI_CALL DestroyPipeline(VkDevice device, VkPipeline p,
 {
     if (!p)
         return;
-    mtl_release(p->compute);
+    [p->compute release];
     pipeline_free(p);
 }
 
