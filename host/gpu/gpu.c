@@ -949,7 +949,7 @@ static void surface_config(Channel *c, const MimeGpuSurfaceConfig *sc)
         s->stencil_format = sc->stencil_format;
     }
     if (!s->layer)
-        s->layer = mime_ui_metal_layer_create(g_device, true);
+        s->layer = mime_ui_metal_layer_create(g_device, true, false);
     s->window_id = sc->window_id;
     s->sync = sc->sync != 0;
     mime_ui_metal_layer_place(s->layer, sc->window_id, sc->x, sc->y, w, h, s->sync, sc->order);
