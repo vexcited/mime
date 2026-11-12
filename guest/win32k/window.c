@@ -830,7 +830,10 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
     pos.y = final.top;
     pos.cx = final.right - final.left;
     pos.cy = final.bottom - final.top;
-    if (!(pos.flags & SWP_NOSENDCHANGING) || moved || sized || (pos.flags & (SWP_SHOWWINDOW | SWP_HIDEWINDOW)))
+    /* Windows does not tell a window of a call that changed nothing. */
+    BOOLEAN same = !moved && !sized && !client_moved && !client_sized && (pos.flags & SWP_NOZORDER) &&
+                   !(pos.flags & (SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_HIDEWINDOW));
+    if (!same && (!(pos.flags & SWP_NOSENDCHANGING) || moved || sized || (pos.flags & (SWP_SHOWWINDOW | SWP_HIDEWINDOW))))
         send_kernel(w, WM_WINDOWPOSCHANGED, 0, &pos, MIME_LPARAM_IN, sizeof(pos));
     if ((moved || sized) && alive(w))
         WndCheckMonitorDpi(w);
