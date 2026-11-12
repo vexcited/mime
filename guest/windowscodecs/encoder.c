@@ -500,6 +500,9 @@ static HRESULT STDMETHODCALLTYPE fenc_write_source(IWICBitmapFrameEncode *This, 
         hr = source->lpVtbl->GetPixelFormat(source, &sformat);
     if (FAILED(hr))
         return hr;
+    /* a rectangle without a size stands for the whole source, which is what WPF's encoders pass. */
+    if (rect && !rect->Width && !rect->Height)
+        rect = nullptr;
     WICRect r;
     hr = WicCheckRect(rect, sw, sh, &r);
     if (FAILED(hr))
