@@ -307,6 +307,9 @@ HWND UserCreateWindowRaw(DWORD ex_style, LPCWSTR class_name, LPCWSTR name, DWORD
         if (class_menu)
             DestroyMenu(class_menu);
         SetLastError(ERROR_CANNOT_FIND_WND_CLASS);
+    } else if (!(style & WS_CHILD) && parent != HWND_MESSAGE) {
+        /* windows tells every top level window of a change of the device tree, registered or not. */
+        UserWatchDevices();
     }
     return h;
 }

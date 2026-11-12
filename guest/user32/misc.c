@@ -999,8 +999,8 @@ static DWORD WINAPI watch_interfaces(void *param)
     return 0;
 }
 
-/* the first registration of a device interface starts the watcher. */
-static void start_watching(void)
+/* the first top level window or registration of a device interface starts the watcher. */
+void UserWatchDevices(void)
 {
     RtlEnterCriticalSection(&g_notify_lock);
     BOOL start = !g_watching;
@@ -1039,7 +1039,7 @@ static PVOID register_notification(HANDLE recipient, DWORD flags, BOOL power, co
     g_notifications = r;
     RtlLeaveCriticalSection(&g_notify_lock);
     if (!power)
-        start_watching();
+        UserWatchDevices();
     return r;
 }
 
