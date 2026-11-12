@@ -376,8 +376,8 @@ static NTSTATUS wait_change(MIME_PNP_REQUEST *r)
 }
 
 /*
- * the host's audio devices are not in the tree, yet programs learn of their changes the way they learn of the
- * tree's: mmdevapi waits for a generation and lists them again.
+ * the host's audio devices are in the tree as endpoints. a change of their default one or of a format leaves the
+ * tree as it is, yet programs learn of it the same way: mmdevapi waits for a generation and lists them again.
  */
 static KEVENT g_host_changed;
 
@@ -385,10 +385,11 @@ static void host_changes(PVOID context)
 {
     (void)context;
     for (;;) {
-        KeWaitForSingleObject(&g_host_changed, Executive, KernelMode, FALSE, nullptr);
+        IopSyncAudioEndpoints();
         lock();
         changed();
         unlock();
+        KeWaitForSingleObject(&g_host_changed, Executive, KernelMode, FALSE, nullptr);
     }
 }
 
