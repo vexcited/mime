@@ -331,6 +331,7 @@ typedef struct Element {
     VkBufferView texel;
     VkBuffer buffer;
     VkDeviceSize offset;
+    VkAccelerationStructureKHR structure;
 } Element;
 
 /* a mutable binding takes the type of each write. */
@@ -363,6 +364,9 @@ static void write_element(VkDescriptorSet set, const VkmBinding *b, VkDescriptor
     case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
     case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
         *slot_at(set, b->slot + index) = e->buffer ? e->buffer->gpu + e->offset : 0;
+        break;
+    case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
+        *slot_at(set, b->slot + index) = e->structure ? e->structure->address : 0;
         break;
     default:
         break;
@@ -414,6 +418,12 @@ static void write_set(const VkWriteDescriptorSet *w)
         case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
             e.texel = w->pTexelBufferView[i];
             break;
+        case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR: {
+            const VkWriteDescriptorSetAccelerationStructureKHR *as =
+                vkm_find(w->pNext, VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR);
+            e.structure = as && i < as->accelerationStructureCount ? as->pAccelerationStructures[i] : nullptr;
+            break;
+        }
         default:
             e.buffer = w->pBufferInfo[i].buffer;
             e.offset = w->pBufferInfo[i].offset;
@@ -500,6 +510,8 @@ static VKAPI_ATTR void VKAPI_CALL UpdateDescriptorSetWithTemplate(VkDevice devic
             write_set(&w);
             continue;
         }
+        VkWriteDescriptorSetAccelerationStructureKHR structure = {
+            VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR, nullptr, 1};
         for (uint32_t k = 0; k < e->descriptorCount; k++, p += e->stride) {
             w.dstArrayElement = e->dstArrayElement + k;
             switch (e->descriptorType) {
@@ -513,11 +525,16 @@ static VKAPI_ATTR void VKAPI_CALL UpdateDescriptorSetWithTemplate(VkDevice devic
             case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
                 w.pBufferInfo = (const VkDescriptorBufferInfo *)p;
                 break;
+            case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
+                structure.pAccelerationStructures = (const VkAccelerationStructureKHR *)p;
+                w.pNext = &structure;
+                break;
             default:
                 w.pImageInfo = (const VkDescriptorImageInfo *)p;
                 break;
             }
             write_set(&w);
+            w.pNext = nullptr;
         }
     }
 }

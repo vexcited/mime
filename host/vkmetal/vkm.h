@@ -128,6 +128,9 @@ struct VkDevice_T {
     struct VkDeviceMemory_T **memories;
     uint32_t memory_count, memory_capacity;
     pthread_mutex_t memory_lock;
+    /* the heaps acceleration structures come from when they cannot be placed in their buffer's memory. */
+    id<MTLHeap> *as_heaps;
+    uint32_t as_heap_count;
 };
 
 /* instance.c: whether the device advertises the extension. */
@@ -457,13 +460,23 @@ id<MTLDepthStencilState> vkm_depth_state(VkDevice device, const VkmDepthKey *key
 /* state a graphics pipeline sets, or leaves to the command buffer for its dynamic states. */
 typedef struct VkmGfxStatic VkmGfxStatic;
 
+typedef struct VkmRtPipeline VkmRtPipeline;
+
 struct VkPipeline_T {
     VkPipelineBindPoint bind;
-    VkmCode stages[3]; /* vertex, fragment and geometry, or compute in the first. */
+    VkmCode stages[3]; /* vertex, fragment and geometry, or compute in the first, the ray tracing kernel too. */
     bool has[3];
     id<MTLComputePipelineState> compute;
     VkmGfxStatic *gfx;
+    VkmRtPipeline *rt; /* a ray tracing pipeline's stages and groups. */
 };
+
+/* raytrace.c: a ray tracing pipeline's parts, and the kernel of the sizes of an indirect trace. */
+void vkm_rt_free(VkmRtPipeline *rt);
+id<MTLComputePipelineState> vkm_meta_rays(VkDevice device);
+/* shader.c: the kernel a ray tracing pipeline links, compiled against its layout and its parameters. */
+VkResult vkm_compile_rays(VkDevice device, const uint32_t *spirv, size_t size, VkPipelineLayout layout, VkmCode *out);
+void vkm_pipeline_free(VkPipeline p);
 
 id<MTLComputePipelineState> vkm_compute_pipeline(VkDevice device, const VkmCode *code, bool icb);
 
@@ -569,6 +582,39 @@ struct VkQueryPool_T {
     VkQueryPipelineStatisticFlags statistics;
 };
 
+/* ------------------------------------------------------------------ acceleration structures. */
+
+/*
+ * metal places acceleration structures only in private heaps, aligned to 16 kilobytes, where vulkan and direct3d put
+ * them at any 256 bytes of a buffer. a structure is a metal object made at the first build or copy into it: placed
+ * in the memory vulkan gives it when its address and size allow, else taken from heaps of the device, and made
+ * again when a build needs more. its address is the buffer's, which shaders and top level builds look up in a table
+ * of the process to find the object.
+ */
+struct VkAccelerationStructureKHR_T {
+    uint64_t address, size;
+    VkAccelerationStructureTypeKHR type;
+    VkDeviceMemory memory; /* of its buffer, and its offset there. */
+    uint64_t memory_offset;
+    id<MTLAccelerationStructure> mtl;
+    uint64_t mtl_size;
+    bool resident;      /* the object is in the residency set itself, not through a heap. */
+    uint32_t slot;      /* its entry of the table. */
+    uint32_t instances; /* of the last top level build recorded into it. */
+    id<MTLBuffer> offsets; /* a top level structure's instances' shader binding table offsets. */
+    /* the queue's value once the gpu has written its compacted size to its entry, 0 when it has not been asked. */
+    VkQueue compact_queue;
+    uint64_t compact_done;
+};
+
+/* makes the table, once a device exists. */
+bool vkm_as_init(VkDevice device);
+void vkm_as_device_free(VkDevice device);
+/* what metal aligns a structure placed in a heap to, which buffers holding structures are aligned to. */
+#define VKM_AS_ALIGN 16384
+/* the structure's metal object, made or grown to hold size bytes. */
+id<MTLAccelerationStructure> vkm_as_storage(VkDevice device, VkAccelerationStructureKHR as, uint64_t size);
+
 /* ------------------------------------------------------------------ command buffers. */
 
 typedef struct VkmChunk {
@@ -637,6 +683,8 @@ id<MTLComputePipelineState> vkm_meta_generate(VkDevice device, bool dispatch);
 /* the vertex function writing a draw's stream output, and the kernel making a draw of what it wrote. */
 id<MTLRenderPipelineState> vkm_meta_xfb(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t samples);
 id<MTLComputePipelineState> vkm_meta_byte_count(VkDevice device);
+id<MTLComputePipelineState> vkm_meta_kernel(VkDevice device, const char *source, const char *name,
+                                            id<MTLComputePipelineState> *slot);
 
 /* ------------------------------------------------------------------ entry points. */
 
@@ -650,7 +698,8 @@ typedef struct VkmEntry {
 #define VKM_ALIAS(alias, name) {alias, (PFN_vkVoidFunction)name}
 
 extern const VkmEntry vkm_instance_entries[], vkm_device_entries[], vkm_memory_entries[], vkm_descriptor_entries[],
-    vkm_shader_entries[], vkm_cmd_entries[], vkm_xfer_entries[], vkm_query_entries[], vkm_wsi_entries[];
+    vkm_shader_entries[], vkm_cmd_entries[], vkm_xfer_entries[], vkm_query_entries[], vkm_wsi_entries[],
+    vkm_accel_entries[], vkm_rt_entries[];
 
 #define VKM_ERROR(...) mime_warn("vkmetal: " __VA_ARGS__)
 

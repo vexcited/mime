@@ -409,6 +409,8 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physical, co
             device->zero_gpu = device->zero ? device->zero.gpuAddress : 0;
             if (device->zero)
                 vkm_resident(device, device->zero);
+            if (!vkm_as_init(device))
+                VKM_ERROR("no table of acceleration structures, ray queries find none");
         }
     }
     if (result != VK_SUCCESS) {
@@ -453,6 +455,7 @@ VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device, const VkAllocationCall
         free(c);
     }
     free(device->memories);
+    vkm_as_device_free(device);
     [device->zero release];
     [q->tables[0] release];
     [q->tables[1] release];
