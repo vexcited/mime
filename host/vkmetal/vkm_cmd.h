@@ -133,7 +133,7 @@ typedef struct VkmOp {
 } VkmOp;
 
 typedef struct VkmAttach {
-    id texture, resolve;
+    id<MTLTexture> texture, resolve;
     uint32_t level, slice, resolve_level, resolve_slice;
     uint8_t load, store; /* MTLLoadAction, MTLStoreAction. */
     uint8_t resolve_filter;
@@ -147,9 +147,10 @@ typedef struct VkmBeginRender {
     uint32_t color_count;
     VkmAttach colors[VKM_COLORS];
     VkmAttach depth, stencil;
-    id visibility; /* the occlusion query pool's buffer. */
+    id<MTLBuffer> visibility; /* the occlusion query pool's buffer. */
 } VkmBeginRender;
 
+/* a render pipeline state, or a depth stencil state. */
 typedef struct VkmOpObject {
     VkmOp head;
     id object;
@@ -196,7 +197,8 @@ typedef struct VkmOpDraw {
 
 typedef struct VkmOpClearRects {
     VkmOp head;
-    id pipeline, depth_state;
+    id<MTLRenderPipelineState> pipeline;
+    id<MTLDepthStencilState> depth_state;
     uint32_t rect_count;
     uint64_t values; /* gpu address of the colors, then the depth. */
     VkRect2D rects[16];
@@ -211,7 +213,7 @@ typedef struct VkmOpVisibility {
 
 typedef struct VkmOpCompute {
     VkmOp head;
-    id pipeline;
+    id<MTLComputePipelineState> pipeline;
     MTLSize local;
 } VkmOpCompute;
 
@@ -223,14 +225,15 @@ typedef struct VkmOpDispatch {
 
 typedef struct VkmOpCopyBuffer {
     VkmOp head;
-    id src, dst;
+    id<MTLBuffer> src, dst;
     uint64_t src_offset, dst_offset, size;
 } VkmOpCopyBuffer;
 
 typedef struct VkmOpCopyBufferImage {
     VkmOp head;
     bool to_image;
-    id buffer, texture;
+    id<MTLBuffer> buffer;
+    id<MTLTexture> texture;
     uint64_t offset, row, image;
     uint32_t slice, level, options;
     MTLOrigin origin;
@@ -239,7 +242,7 @@ typedef struct VkmOpCopyBufferImage {
 
 typedef struct VkmOpCopyImage {
     VkmOp head;
-    id src, dst;
+    id<MTLTexture> src, dst;
     uint32_t src_slice, src_level, dst_slice, dst_level;
     MTLOrigin src_origin, dst_origin;
     MTLSize size;
@@ -247,7 +250,7 @@ typedef struct VkmOpCopyImage {
 
 typedef struct VkmOpFill {
     VkmOp head;
-    id buffer;
+    id<MTLBuffer> buffer;
     uint64_t offset, size;
     uint32_t value;
     uint64_t gpu;
@@ -256,13 +259,15 @@ typedef struct VkmOpFill {
 /* a scaled copy drawn into a render pass of its own. */
 typedef struct VkmOpBlit {
     VkmOp head;
-    id pipeline, depth_state, src, dst;
+    id<MTLRenderPipelineState> pipeline;
+    id<MTLDepthStencilState> depth_state;
+    id<MTLTexture> src, dst;
     uint32_t dst_level, dst_slice, src_level, src_slice;
     bool depth, stencil;
     uint32_t dst_width, dst_height;
     VkRect2D rect;
     uint64_t params; /* gpu address of the shaders' VkmBlitParams. */
-    id sampler;
+    id<MTLSamplerState> sampler;
 } VkmOpBlit;
 
 /* what a blit's shaders read: the normalized source corners, the source layer or 3D depth, and level. */
@@ -289,14 +294,14 @@ typedef struct VkmOpStats {
 
 typedef struct VkmOpGenerate {
     VkmOp head;
-    id pipeline;
+    id<MTLComputePipelineState> pipeline;
     uint32_t threads;
     uint64_t params, icb; /* gpu addresses of the VkmDgcParams and of the buffer's resource id. */
 } VkmOpGenerate;
 
 typedef struct VkmOpExecute {
     VkmOp head;
-    id icb;
+    id<MTLIndirectCommandBuffer> icb;
     bool dispatch;
     uint32_t chunks;
     uint64_t ranges; /* gpu address of the chunks' MTLIndirectCommandBufferExecutionRange. */
@@ -343,7 +348,7 @@ enum { VKM_GFX, VKM_COMPUTE };
 struct VkmGfxState {
     VkmDynamic dyn;
     const VkmCode *vs, *fs, *cs, *gs;
-    id compute;            /* the bound compute pipeline state. */
+    id<MTLComputePipelineState> compute; /* the bound one. */
     bool pipeline_dirty, depth_dirty, raster_dirty, viewport_dirty, scissor_dirty, ref_dirty, constants_dirty;
 
     /* the render pass being recorded. */
@@ -366,7 +371,9 @@ struct VkmGfxState {
     bool icb; /* the next pipeline is resolved for indirect command buffers. */
 
     /* the state the list has set since the encoder began. */
-    id set_pipeline, set_depth, set_compute;
+    id<MTLRenderPipelineState> set_pipeline;
+    id<MTLDepthStencilState> set_depth;
+    id<MTLComputePipelineState> set_compute;
     uint64_t set_buffers[2][31];
     uint32_t set_strides[31];
 
@@ -401,8 +408,8 @@ void vkm_clear_rects(VkCommandBuffer cmd, uint32_t count, const VkClearAttachmen
 MTLClearColor vkm_clear_color(VkFormat format, const VkClearColorValue *v);
 
 /* the encoder side, encode.c. */
-id vkm_sampler_linear(VkDevice device);
-id vkm_sampler_nearest(VkDevice device);
+id<MTLSamplerState> vkm_sampler_linear(VkDevice device);
+id<MTLSamplerState> vkm_sampler_nearest(VkDevice device);
 uint32_t vkm_primitive(VkPrimitiveTopology topology);
 uint32_t vkm_topology_class(VkPrimitiveTopology topology);
 uint32_t vkm_compare(VkCompareOp op);

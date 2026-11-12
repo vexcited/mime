@@ -10,7 +10,6 @@
 
 extern "C" {
 #include <vulkan/vulkan.h>
-#include "mtl.h"
 #include "vkm_msl.h"
 }
 

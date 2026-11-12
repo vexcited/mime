@@ -19,8 +19,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#import <Metal/Metal.h>
+#import <QuartzCore/CAMetalLayer.h>
+
+#include "../gpu/archive.h"
 #include "../mime_host.h"
-#include "mtl.h"
 #include "vkm_msl.h"
 #include "vkmetal.h"
 
@@ -59,7 +62,7 @@ VkFormatFeatureFlags2 vkm_format_features(const VkmFormat *f, bool linear, bool 
 /* ------------------------------------------------------------------ instance and devices. */
 
 struct VkPhysicalDevice_T {
-    id mtl;
+    id<MTLDevice> mtl;
     char name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
     uint64_t memory_size;
     uint32_t texel_alignment; /* minimum texture buffer offset alignment over the formats. */
@@ -77,41 +80,41 @@ struct VkInstance_T {
 typedef struct VkmFlight {
     struct VkmFlight *next;
     uint64_t value;
-    id allocator;
-    id buffers[16];
+    id<MTL4CommandAllocator> allocator;
+    id<MTL4CommandBuffer> buffers[16];
     uint32_t buffer_count;
 } VkmFlight;
 
 struct VkQueue_T {
     VkDevice device;
-    id queue;  /* MTL4CommandQueue. */
-    id event;  /* MTLSharedEvent the queue signals after each submission. */
+    id<MTL4CommandQueue> queue;
+    id<MTLSharedEvent> event; /* the queue signals it after each submission. */
     uint64_t submitted;
     pthread_mutex_t lock;
     VkmFlight *flights, *spare;
     VkmFlight *open; /* the submission being encoded. */
-    id tables[2];    /* argument tables for render and compute encoders. */
+    id<MTL4ArgumentTable> tables[2]; /* for render and compute encoders. */
 };
 
 /* under the queue's lock: a Metal command buffer of the next submission, its commit, and the submission's end. */
-id vkm_queue_begin(VkQueue q);
-void vkm_queue_commit(VkQueue q, id cmd);
+id<MTL4CommandBuffer> vkm_queue_begin(VkQueue q);
+void vkm_queue_commit(VkQueue q, id<MTL4CommandBuffer> cmd);
 uint64_t vkm_queue_signal(VkQueue q);
 
 typedef struct VkmCache VkmCache;
 
 struct VkDevice_T {
     VkPhysicalDevice physical;
-    id mtl;
-    id compiler;  /* MTL4Compiler. */
-    id residency; /* every allocation of the device. */
+    id<MTLDevice> mtl;
+    MimePipelineCache *pipelines; /* every library and pipeline is built through it. */
+    id<MTLResidencySet> residency; /* every allocation of the device. */
     pthread_mutex_t residency_lock;
     bool residency_dirty;
     struct VkQueue_T queue;
     /* upload chunks the command buffers reuse. */
     struct VkmChunk *chunks;
     pthread_mutex_t chunk_lock;
-    id zero; /* zeros, for vertex attributes no binding gives. */
+    id<MTLBuffer> zero; /* zeros, for vertex attributes no binding gives. */
     uint64_t zero_gpu;
     /* textures placed since the last submission, which it clears first. */
     struct VkmInit *inits;
@@ -130,7 +133,7 @@ struct VkDevice_T {
 /* instance.c: whether the device advertises the extension. */
 bool vkm_device_extension(const char *name);
 
-void vkm_resident(VkDevice device, id allocation);
+void vkm_resident(VkDevice device, id<MTLAllocation> allocation);
 /*
  * releases a destroyed object, and takes it out of the residency set when resident, once the queue finishes what
  * was submitted before: a freed texture's resource id goes to the next texture, which draws still running would read.
@@ -141,7 +144,7 @@ void vkm_release_later(VkDevice device, id object, bool resident);
  * to garbage; windows zeroes new allocations and direct3d programs count on it. the next submission clears it.
  */
 void vkm_image_init(VkDevice device, VkImage image);
-void vkm_unresident(VkDevice device, id allocation);
+void vkm_unresident(VkDevice device, id<MTLAllocation> allocation);
 void vkm_residency_commit(VkDevice device);
 
 /* ------------------------------------------------------------------ memory and resources. */
@@ -157,14 +160,14 @@ typedef struct VkmTexel {
     struct VkmTexel *next;
     uint64_t address, range;
     VkFormat format;
-    id texture;
+    id<MTLTexture> texture;
     MTLResourceID rid;
 } VkmTexel;
 
 struct VkDeviceMemory_T {
-    id buffer;  /* over the whole allocation. */
-    id heap;    /* to place images in; none for host pointer imports. */
-    id texture; /* of the image at its start, when other processes share the memory through it. */
+    id<MTLBuffer> buffer; /* over the whole allocation. */
+    id<MTLHeap> heap;     /* to place images in; none for host pointer imports. */
+    id<MTLTexture> texture; /* of the image at its start, when other processes share the memory through it. */
     bool exported; /* the memory's first image is its texture for other processes. */
     uint8_t *map;
     uint64_t size, gpu;
@@ -184,7 +187,7 @@ struct VkBuffer_T {
 };
 
 struct VkBufferView_T {
-    id texture;
+    id<MTLTexture> texture;
     MTLResourceID rid;
 };
 
@@ -197,8 +200,8 @@ struct VkImage_T {
     VkImageUsageFlags usage;
     VkImageCreateFlags flags;
     VkImageTiling tiling;
-    id desc;    /* MTLTextureDescriptor the texture is made from at binding. */
-    id texture;
+    MTLTextureDescriptor *desc; /* the texture is made from it at binding. */
+    id<MTLTexture> texture;
     uint64_t size, align;
     uint64_t row_pitch; /* for linear images, which are textures over a buffer. */
     VkDeviceMemory memory;
@@ -215,14 +218,14 @@ struct VkImageView_T {
     uint32_t base_level, levels, base_layer, layers;
     VkImageUsageFlags usage;
     VkExtent3D extent; /* of the base level. */
-    id texture;        /* for shaders. */
+    id<MTLTexture> texture; /* for shaders. */
     MTLResourceID rid;
-    id render;         /* for attachments: the image's texture or a view in another format. */
+    id<MTLTexture> render;  /* for attachments: the image's texture or a view in another format. */
     uint32_t render_level, render_slice;
 };
 
 struct VkSampler_T {
-    id state;
+    id<MTLSamplerState> state;
     MTLResourceID rid;
 };
 
@@ -251,12 +254,12 @@ struct VkDescriptorSetLayout_T {
     VkDescriptorSetLayoutCreateFlags flags;
     /* the immutable samplers of a layout that embeds them, for a descriptor buffer to bind. */
     VkDevice device;
-    id embedded;
+    id<MTLBuffer> embedded;
     uint64_t embedded_gpu;
 };
 
 struct VkDescriptorPool_T {
-    id buffer;
+    id<MTLBuffer> buffer;
     uint8_t *map;
     uint64_t gpu, size, used;
     VkDescriptorPoolCreateFlags flags;
@@ -341,8 +344,8 @@ typedef struct VkmWidened VkmWidened;
 
 typedef struct VkmCode {
     VkShaderStageFlagBits stage;
-    id library;
-    id function;     /* MTL4LibraryFunctionDescriptor. */
+    id<MTLLibrary> library;
+    MTL4LibraryFunctionDescriptor *function;
     MTLSize local;   /* compute threadgroup size. */
     uint32_t inputs; /* vertex input locations. */
     VkmInput input[VKM_VERTEX_ATTRIBUTES];
@@ -389,8 +392,9 @@ const VkmCode *vkm_code_counted(VkDevice device, const VkmCode *fs);
 const VkmCode *vkm_code_widened(VkDevice device, const VkmCode *vs, const uint8_t *widen);
 const VkmCode *vkm_code_dual(VkDevice device, const VkmCode *fs);
 /* a library of MSL written for the driver itself. */
-id vkm_library(VkDevice device, const char *source);
-id vkm_function(id library, const char *name);
+id<MTLLibrary> vkm_library(VkDevice device, const char *source);
+/* retained. */
+MTL4LibraryFunctionDescriptor *vkm_function(id<MTLLibrary> library, const char *name);
 
 struct VkShaderModule_T {
     uint32_t *code;
@@ -435,7 +439,7 @@ typedef struct VkmPipelineKey {
     } bindings[VKM_VERTEX_BINDINGS];
 } VkmPipelineKey;
 
-id vkm_render_pipeline(VkDevice device, const VkmPipelineKey *key, const VkmCode *vs, const VkmCode *fs);
+id<MTLRenderPipelineState> vkm_render_pipeline(VkDevice device, const VkmPipelineKey *key, const VkmCode *vs, const VkmCode *fs);
 
 typedef struct VkmStencilFace {
     uint8_t fail, pass, depth_fail, compare;
@@ -447,7 +451,7 @@ typedef struct VkmDepthKey {
     VkmStencilFace front, back;
 } VkmDepthKey;
 
-id vkm_depth_state(VkDevice device, const VkmDepthKey *key);
+id<MTLDepthStencilState> vkm_depth_state(VkDevice device, const VkmDepthKey *key);
 
 /* state a graphics pipeline sets, or leaves to the command buffer for its dynamic states. */
 typedef struct VkmGfxStatic VkmGfxStatic;
@@ -456,11 +460,11 @@ struct VkPipeline_T {
     VkPipelineBindPoint bind;
     VkmCode stages[3]; /* vertex, fragment and geometry, or compute in the first. */
     bool has[3];
-    id compute; /* MTLComputePipelineState. */
+    id<MTLComputePipelineState> compute;
     VkmGfxStatic *gfx;
 };
 
-id vkm_compute_pipeline(VkDevice device, const VkmCode *code, bool icb);
+id<MTLComputePipelineState> vkm_compute_pipeline(VkDevice device, const VkmCode *code, bool icb);
 
 /* a step of each sequence of device generated commands, what the generation kernel reads. */
 enum {
@@ -489,7 +493,7 @@ struct VkIndirectCommandsLayoutEXT_T {
 /* indirect command buffers a command buffer's generated commands are encoded into, kept until it is reset. */
 typedef struct VkmIcb {
     struct VkmIcb *next;
-    id icb;
+    id<MTLIndirectCommandBuffer> icb;
     MTLResourceID rid;
     uint32_t capacity;
     bool dispatch, used;
@@ -529,7 +533,7 @@ uint64_t vkm_hash(const void *data, size_t size, uint64_t seed);
 /* ------------------------------------------------------------------ synchronization. */
 
 struct VkSemaphore_T {
-    id event; /* MTLSharedEvent. binary semaphores count signals in it too. */
+    id<MTLSharedEvent> event; /* binary semaphores count signals in it too. */
     VkSemaphoreType type;
     uint64_t binary; /* the last value a binary signal set. */
 };
@@ -549,14 +553,14 @@ void vkm_semaphore_wait(VkQueue q, VkSemaphore s, uint64_t value);
 void vkm_semaphore_signal(VkQueue q, VkSemaphore s, uint64_t value);
 
 /* waits for an event to reach value, false on timeout. */
-bool vkm_event_wait(id event, uint64_t value, uint64_t timeout_ns);
+bool vkm_event_wait(id<MTLSharedEvent> event, uint64_t value, uint64_t timeout_ns);
 
 /* ------------------------------------------------------------------ queries. */
 
 struct VkQueryPool_T {
     VkQueryType type;
     uint32_t count;
-    id buffer; /* 8 bytes for each value of a query, shared. */
+    id<MTLBuffer> buffer; /* 8 bytes for each value of a query, shared. */
     uint64_t *values;
     /* each query's availability: the value of the queue's event once it is written, 0 when reset. */
     uint64_t *written;
@@ -568,7 +572,7 @@ struct VkQueryPool_T {
 
 typedef struct VkmChunk {
     struct VkmChunk *next;
-    id buffer;
+    id<MTLBuffer> buffer;
     uint8_t *map;
     uint64_t gpu, size, used;
 } VkmChunk;
@@ -594,16 +598,17 @@ struct VkCommandBuffer_T {
 };
 
 /* upload memory valid as long as the command buffer's recording. */
-void *vkm_upload(VkCommandBuffer cmd, uint64_t size, uint64_t align, uint64_t *gpu, id *buffer, uint64_t *offset);
+void *vkm_upload(VkCommandBuffer cmd, uint64_t size, uint64_t align, uint64_t *gpu, id<MTLBuffer> *buffer,
+                 uint64_t *offset);
 void vkm_chunks_release(VkDevice device, VkmChunk *chunks);
 
 /* encode.c: a command buffer into a Metal 4 command buffer. */
-void vkm_encode(VkQueue queue, VkCommandBuffer cmd, id mtl_cmd);
+void vkm_encode(VkQueue queue, VkCommandBuffer cmd, id<MTL4CommandBuffer> mtl_cmd);
 
 /* ------------------------------------------------------------------ swapchains. */
 
 struct VkSurfaceKHR_T {
-    id layer; /* CAMetalLayer. */
+    CAMetalLayer *layer;
 };
 
 struct VkSwapchainKHR_T {
@@ -621,15 +626,16 @@ struct VkSwapchainKHR_T {
 /* ------------------------------------------------------------------ internal shaders, shared by every device. */
 
 /* a draw of colors or depth over rectangles of the current render pass. */
-id vkm_meta_clear(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t mask, bool depth, bool stencil,
-                  uint32_t samples, bool layered);
-id vkm_meta_blit(VkDevice device, uint32_t format, uint32_t source_type, bool depth, uint32_t samples);
-id vkm_meta_depth_state(VkDevice device, bool depth, bool stencil);
+id<MTLRenderPipelineState> vkm_meta_clear(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t mask, bool depth,
+                                          bool stencil, uint32_t samples, bool layered);
+id<MTLRenderPipelineState> vkm_meta_blit(VkDevice device, uint32_t format, uint32_t source_type, bool depth,
+                                         uint32_t samples);
+id<MTLDepthStencilState> vkm_meta_depth_state(VkDevice device, bool depth, bool stencil);
 /* the kernel encoding generated draws or dispatches into an indirect command buffer, one thread a sequence. */
-id vkm_meta_generate(VkDevice device, bool dispatch);
+id<MTLComputePipelineState> vkm_meta_generate(VkDevice device, bool dispatch);
 /* the vertex function writing a draw's stream output, and the kernel making a draw of what it wrote. */
-id vkm_meta_xfb(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t samples);
-id vkm_meta_byte_count(VkDevice device);
+id<MTLRenderPipelineState> vkm_meta_xfb(VkDevice device, const uint32_t colors[VKM_COLORS], uint32_t samples);
+id<MTLComputePipelineState> vkm_meta_byte_count(VkDevice device);
 
 /* ------------------------------------------------------------------ entry points. */
 
@@ -646,6 +652,12 @@ extern const VkmEntry vkm_instance_entries[], vkm_device_entries[], vkm_memory_e
     vkm_shader_entries[], vkm_cmd_entries[], vkm_xfer_entries[], vkm_query_entries[], vkm_wsi_entries[];
 
 #define VKM_ERROR(...) mime_warn("vkmetal: " __VA_ARGS__)
+
+/* an error's description for the log. */
+static inline const char *vkm_error_text(NSError *error)
+{
+    return error ? error.localizedDescription.UTF8String : "no error";
+}
 
 static inline void *vkm_zalloc(size_t size)
 {

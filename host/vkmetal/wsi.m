@@ -29,7 +29,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateMetalSurfaceEXT(VkInstance instance,
     VkSurfaceKHR s = vkm_zalloc(sizeof(*s));
     if (!s)
         return VK_ERROR_OUT_OF_HOST_MEMORY;
-    s->layer = mtl_retain((id)info->pLayer);
+    s->layer = [(CAMetalLayer *)info->pLayer retain];
     *out = s;
     return VK_SUCCESS;
 }
@@ -39,7 +39,7 @@ static VKAPI_ATTR void VKAPI_CALL DestroySurfaceKHR(VkInstance instance, VkSurfa
 {
     if (!s)
         return;
-    mtl_release(s->layer);
+    [s->layer release];
     free(s);
 }
 
@@ -123,10 +123,6 @@ static VKAPI_ATTR VkResult VKAPI_CALL GetPhysicalDeviceSurfacePresentModesKHR(Vk
 
 /* ------------------------------------------------------------------ swapchains. */
 
-typedef struct CGSizeD {
-    double width, height;
-} CGSizeD;
-
 static void swapchain_free(VkSwapchainKHR sc)
 {
     VkDevice device = sc->device;
@@ -139,9 +135,9 @@ static void swapchain_free(VkSwapchainKHR sc)
     }
     /* a retired swapchain's layer belongs to its replacement. */
     if (sc->resident && sc->surface) {
-        id residency = M_ID(sc->surface->layer, "residencySet");
+        id<MTLResidencySet> residency = sc->surface->layer.residencySet;
         if (residency)
-            M_V_ID(device->queue.queue, "removeResidencySet:", residency);
+            [device->queue.queue removeResidencySet:residency];
     }
     free(sc);
 }
@@ -190,25 +186,24 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const 
         swapchain_free(sc);
         return result;
     }
-    void *pool = objc_autoreleasePoolPush();
-    id layer = sc->surface->layer;
-    M_V_ID(layer, "setDevice:", device->mtl);
-    M_V_U(layer, "setPixelFormat:", f->pixel);
-    M_V_B(layer, "setFramebufferOnly:", false);
-    MTL_MSG(void (*)(id, SEL, CGSizeD), layer, "setDrawableSize:",
-            (CGSizeD){info->imageExtent.width, info->imageExtent.height});
-    M_V_U(layer, "setMaximumDrawableCount:", MIME_MIN(MIME_MAX(sc->count, 2u), 3u));
-    M_V_B(layer, "setDisplaySyncEnabled:", info->presentMode != VK_PRESENT_MODE_IMMEDIATE_KHR);
-    M_V_B(layer, "setOpaque:", info->compositeAlpha == VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR);
-    CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-    MTL_MSG(void (*)(id, SEL, CGColorSpaceRef), layer, "setColorspace:", space);
-    CGColorSpaceRelease(space);
-    id residency = M_ID(layer, "residencySet");
-    if (residency) {
-        M_V_ID(device->queue.queue, "addResidencySet:", residency);
-        sc->resident = true;
+    @autoreleasepool {
+        CAMetalLayer *layer = sc->surface->layer;
+        layer.device = device->mtl;
+        layer.pixelFormat = (MTLPixelFormat)f->pixel;
+        layer.framebufferOnly = false;
+        layer.drawableSize = (CGSize){info->imageExtent.width, info->imageExtent.height};
+        layer.maximumDrawableCount = MIME_MIN(MIME_MAX(sc->count, 2u), 3u);
+        layer.displaySyncEnabled = info->presentMode != VK_PRESENT_MODE_IMMEDIATE_KHR;
+        layer.opaque = info->compositeAlpha == VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+        layer.colorspace = space;
+        CGColorSpaceRelease(space);
+        id<MTLResidencySet> residency = layer.residencySet;
+        if (residency) {
+            [device->queue.queue addResidencySet:residency];
+            sc->resident = true;
+        }
     }
-    objc_autoreleasePoolPop(pool);
     if (info->oldSwapchain)
         info->oldSwapchain->surface = nullptr;
     *out = sc;
@@ -246,7 +241,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL AcquireNextImageKHR(VkDevice device, VkSwa
     if (semaphore) {
         uint64_t value = semaphore->type == VK_SEMAPHORE_TYPE_BINARY ? ++semaphore->binary : 0;
         if (value)
-            M_V_U64(semaphore->event, "setSignaledValue:", value);
+            semaphore->event.signaledValue = value;
     }
     if (fence) {
         fence->signaled = true;
@@ -266,36 +261,39 @@ static VkResult present_one(VkQueue q, VkSwapchainKHR sc, uint32_t index, uint32
 {
     if (!sc->surface)
         return VK_ERROR_OUT_OF_DATE_KHR;
-    id drawable = M_ID(sc->surface->layer, "nextDrawable");
+    id<CAMetalDrawable> drawable = [sc->surface->layer nextDrawable];
     pthread_mutex_lock(&q->lock);
     for (uint32_t i = 0; i < wait_count; i++)
         vkm_semaphore_wait(q, waits[i], 0);
     VkResult result = VK_SUCCESS;
     if (drawable) {
-        id target = M_ID(drawable, "texture");
+        id<MTLTexture> target = drawable.texture;
         VkImage image = sc->images[index];
-        M_V_ID(q->queue, "waitForDrawable:", drawable);
-        id cmd = vkm_queue_begin(q);
+        [q->queue waitForDrawable:drawable];
+        id<MTL4CommandBuffer> cmd = vkm_queue_begin(q);
         if (cmd) {
-            id e = M_ID(cmd, "computeCommandEncoder");
-            MTL_MSG(void (*)(id, SEL, uint64_t, uint64_t, NSUInteger), e,
-                    "barrierAfterQueueStages:beforeStages:visibilityOptions:", (uint64_t)MTLStageAll,
-                    (uint64_t)MTLStageBlit, MTL4VisibilityOptionDevice);
-            MTLSize size = {MIME_MIN(sc->extent.width, (uint32_t)M_U(target, "width")),
-                            MIME_MIN(sc->extent.height, (uint32_t)M_U(target, "height")), 1};
-            MTL_MSG(void (*)(id, SEL, id, NSUInteger, NSUInteger, MTLOrigin, MTLSize, id, NSUInteger, NSUInteger,
-                             MTLOrigin),
-                    e,
-                    "copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toTexture:destinationSlice:"
-                    "destinationLevel:destinationOrigin:",
-                    image->texture, 0, 0, (MTLOrigin){}, size, target, 0, 0, (MTLOrigin){});
-            M_V(e, "endEncoding");
+            id<MTL4ComputeCommandEncoder> e = [cmd computeCommandEncoder];
+            [e barrierAfterQueueStages:MTLStageAll
+                          beforeStages:MTLStageBlit
+                     visibilityOptions:MTL4VisibilityOptionDevice];
+            MTLSize size = {MIME_MIN(sc->extent.width, (uint32_t)target.width),
+                            MIME_MIN(sc->extent.height, (uint32_t)target.height), 1};
+            [e copyFromTexture:image->texture
+                      sourceSlice:0
+                      sourceLevel:0
+                     sourceOrigin:(MTLOrigin){}
+                       sourceSize:size
+                        toTexture:target
+                 destinationSlice:0
+                 destinationLevel:0
+                destinationOrigin:(MTLOrigin){}];
+            [e endEncoding];
             vkm_queue_commit(q, cmd);
         } else {
             result = VK_ERROR_OUT_OF_HOST_MEMORY;
         }
-        M_V_ID(q->queue, "signalDrawable:", drawable);
-        M_V(drawable, "present");
+        [q->queue signalDrawable:drawable];
+        [drawable present];
     }
     vkm_queue_signal(q);
     pthread_mutex_unlock(&q->lock);
@@ -304,19 +302,19 @@ static VkResult present_one(VkQueue q, VkSwapchainKHR sc, uint32_t index, uint32
 
 static VKAPI_ATTR VkResult VKAPI_CALL QueuePresentKHR(VkQueue q, const VkPresentInfoKHR *info)
 {
-    void *pool = objc_autoreleasePoolPush();
-    vkm_residency_commit(q->device);
     VkResult result = VK_SUCCESS;
-    for (uint32_t i = 0; i < info->swapchainCount; i++) {
-        /* the waits go before the first present only, which orders the others after them too. */
-        VkResult r = present_one(q, info->pSwapchains[i], info->pImageIndices[i], i ? 0 : info->waitSemaphoreCount,
-                                 info->pWaitSemaphores);
-        if (info->pResults)
-            info->pResults[i] = r;
-        if (r != VK_SUCCESS)
-            result = r;
+    @autoreleasepool {
+        vkm_residency_commit(q->device);
+        for (uint32_t i = 0; i < info->swapchainCount; i++) {
+            /* the waits go before the first present only, which orders the others after them too. */
+            VkResult r = present_one(q, info->pSwapchains[i], info->pImageIndices[i],
+                                     i ? 0 : info->waitSemaphoreCount, info->pWaitSemaphores);
+            if (info->pResults)
+                info->pResults[i] = r;
+            if (r != VK_SUCCESS)
+                result = r;
+        }
     }
-    objc_autoreleasePoolPop(pool);
     return result;
 }
 
