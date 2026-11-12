@@ -3,7 +3,7 @@
 
 static const VkmEntry *const g_tables[] = {
     vkm_instance_entries, vkm_device_entries, vkm_memory_entries, vkm_descriptor_entries,
-    vkm_shader_entries,   vkm_cmd_entries,    vkm_xfer_entries,   vkm_query_entries, vkm_wsi_entries,   vkm_accel_entries,
+    vkm_shader_entries,   vkm_cmd_entries,    vkm_xfer_entries,   vkm_query_entries, vkm_wsi_entries,   vkm_accel_entries, vkm_rt_entries,
 };
 
 static PFN_vkVoidFunction lookup(const char *name)

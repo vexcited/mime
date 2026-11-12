@@ -187,6 +187,8 @@ static VkResult variant(VkDevice device, VkShaderStageFlagBits stage, const uint
     return VK_SUCCESS;
 }
 
+
+/* the buffers of the emulation set: the geometry stage's records and indices, or a ray tracing kernel's parameters. */
 static const VkmMslBinding g_gs_buffers[] = {
     {VKM_EMU_SET, 0, 1, VKM_BUFFER_VERTEX, VKM_BUFFER_VERTEX, VKM_MSL_BUFFER},
     {VKM_EMU_SET, 1, 1, VKM_BUFFER_VERTEX + 1, VKM_BUFFER_VERTEX + 1, VKM_MSL_BUFFER},
@@ -218,16 +220,17 @@ static VkResult compile_geometry(VkDevice device, const uint32_t *spirv, size_t 
     return r;
 }
 
-VkResult vkm_compile(VkDevice device, const uint32_t *spirv, size_t size, const char *entry,
-                     VkShaderStageFlagBits stage, const VkSpecializationInfo *spec, const VkmLayoutView *layout,
-                     VkmCode *out)
+/* with rays, the kernel of a ray tracing pipeline, which also reads its parameters. */
+static VkResult compile_stage(VkDevice device, const uint32_t *spirv, size_t size, const char *entry,
+                              VkShaderStageFlagBits stage, const VkSpecializationInfo *spec,
+                              const VkmLayoutView *layout, bool rays, VkmCode *out)
 {
     memset(out, 0, sizeof(*out));
     out->stage = stage;
     int model = execution_model(stage);
     if (model < 0 || size < 20 || spirv[0] != 0x07230203)
         return VK_ERROR_INVALID_SHADER_NV;
-    uint32_t count = 0, set_mask = 0;
+    uint32_t count = rays ? 1 : 0, set_mask = 0;
     for (uint32_t s = 0; s < layout->set_count; s++)
         if (layout->sets[s])
             count += layout->sets[s]->count;
@@ -239,6 +242,8 @@ VkResult vkm_compile(VkDevice device, const uint32_t *spirv, size_t size, const 
         return VK_ERROR_OUT_OF_HOST_MEMORY;
     }
     count = 0;
+    if (rays)
+        bindings[count++] = g_gs_buffers[0];
     for (uint32_t s = 0; s < layout->set_count; s++) {
         VkDescriptorSetLayout l = layout->sets[s];
         if (!l)
@@ -288,6 +293,13 @@ VkResult vkm_compile(VkDevice device, const uint32_t *spirv, size_t size, const 
     free(values);
     free(bindings);
     return r;
+}
+
+VkResult vkm_compile(VkDevice device, const uint32_t *spirv, size_t size, const char *entry,
+                     VkShaderStageFlagBits stage, const VkSpecializationInfo *spec, const VkmLayoutView *layout,
+                     VkmCode *out)
+{
+    return compile_stage(device, spirv, size, entry, stage, spec, layout, false, out);
 }
 
 static pthread_mutex_t g_capture_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -937,7 +949,25 @@ static void pipeline_free(VkPipeline p)
         if (p->has[i])
             vkm_code_free(&p->stages[i]);
     free(p->gfx);
+    vkm_rt_free(p->rt);
     free(p);
+}
+
+void vkm_pipeline_free(VkPipeline p)
+{
+    [p->compute release];
+    pipeline_free(p);
+}
+
+VkResult vkm_compile_rays(VkDevice device, const uint32_t *spirv, size_t size, VkPipelineLayout layout, VkmCode *out)
+{
+    VkmLayoutView view = {};
+    if (layout) {
+        view.set_count = layout->set_count;
+        memcpy(view.sets, layout->sets, sizeof(view.sets));
+        view.push_size = layout->push_size;
+    }
+    return compile_stage(device, spirv, size, "main", VK_SHADER_STAGE_COMPUTE_BIT, nullptr, &view, true, out);
 }
 
 static VKAPI_ATTR VkResult VKAPI_CALL CreateGraphicsPipelines(VkDevice device, VkPipelineCache cache, uint32_t count,

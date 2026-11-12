@@ -48,6 +48,9 @@ static const VkExtensionProperties g_device_extensions[] = {
     {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, VK_KHR_ACCELERATION_STRUCTURE_SPEC_VERSION},
     {VK_KHR_RAY_QUERY_EXTENSION_NAME, VK_KHR_RAY_QUERY_SPEC_VERSION},
     {VK_KHR_RAY_TRACING_MAINTENANCE_1_EXTENSION_NAME, VK_KHR_RAY_TRACING_MAINTENANCE_1_SPEC_VERSION},
+    {VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, VK_KHR_RAY_TRACING_PIPELINE_SPEC_VERSION},
+    {VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME, VK_KHR_PIPELINE_LIBRARY_SPEC_VERSION},
+    {VK_EXT_PIPELINE_LIBRARY_GROUP_HANDLES_EXTENSION_NAME, VK_EXT_PIPELINE_LIBRARY_GROUP_HANDLES_SPEC_VERSION},
 };
 
 bool vkm_device_extension(const char *name)
@@ -493,9 +496,22 @@ static void fill_features(VkBaseOutStructure *chain)
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_MAINTENANCE_1_FEATURES_KHR: {
             VkPhysicalDeviceRayTracingMaintenance1FeaturesKHR *x = (void *)s;
             x->rayTracingMaintenance1 = VK_TRUE;
-            x->rayTracingPipelineTraceRaysIndirect2 = VK_FALSE;
+            x->rayTracingPipelineTraceRaysIndirect2 = VK_TRUE;
             break;
         }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR: {
+            /* pipelines are kernels of ray queries: see raytrace.m. */
+            VkPhysicalDeviceRayTracingPipelineFeaturesKHR *x = (void *)s;
+            x->rayTracingPipeline = VK_TRUE;
+            x->rayTracingPipelineShaderGroupHandleCaptureReplay = VK_FALSE;
+            x->rayTracingPipelineShaderGroupHandleCaptureReplayMixed = VK_FALSE;
+            x->rayTracingPipelineTraceRaysIndirect = VK_TRUE;
+            x->rayTraversalPrimitiveCulling = VK_TRUE;
+            break;
+        }
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_LIBRARY_GROUP_HANDLES_FEATURES_EXT:
+            ((VkPhysicalDevicePipelineLibraryGroupHandlesFeaturesEXT *)s)->pipelineLibraryGroupHandles = VK_TRUE;
+            break;
         default:
             break;
         }
@@ -908,6 +924,19 @@ static void fill_properties(VkPhysicalDevice p, VkBaseOutStructure *chain)
             break;
         }
         /* generated commands are encoded into indirect command buffers, without execution sets. */
+        case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR: {
+            /* a handle is its group's id; the depth is direct3d's most, which the kernel unrolls. */
+            VkPhysicalDeviceRayTracingPipelinePropertiesKHR *x = (void *)s;
+            x->shaderGroupHandleSize = 32;
+            x->maxRayRecursionDepth = 31;
+            x->maxShaderGroupStride = 4096;
+            x->shaderGroupBaseAlignment = 64;
+            x->shaderGroupHandleCaptureReplaySize = 32;
+            x->maxRayDispatchInvocationCount = 1u << 30;
+            x->shaderGroupHandleAlignment = 32;
+            x->maxRayHitAttributeSize = 32;
+            break;
+        }
         case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR: {
             /* metal's limits without its extended ones, which shaders would have to ask for. */
             VkPhysicalDeviceAccelerationStructurePropertiesKHR *x = (void *)s;
