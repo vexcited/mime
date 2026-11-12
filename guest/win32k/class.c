@@ -122,6 +122,7 @@ void ClassInitialize(void)
         c->System = TRUE;
         c->Fnid = sc->Fnid;
         c->Background = sc->Brush ? MetricsSysColorBrush(sc->Brush - 1) : nullptr;
+        c->Cursor = sc->Cursor ? CursorSystem((ULONG)(ULONG_PTR)sc->Cursor) : nullptr;
         InsertTailList(&g_system_classes, &c->Links);
         g_builtin_classes[i] = c;
     }

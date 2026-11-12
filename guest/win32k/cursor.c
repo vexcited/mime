@@ -101,6 +101,35 @@ static ULONG host_cursor_for_idc(ULONG id)
     }
 }
 
+/* the cursor of a built in class: one of the system's, which no process owns and the host draws. */
+HCURSOR CursorSystem(ULONG idc)
+{
+    static struct {
+        ULONG Id;
+        HCURSOR Cursor;
+    } made[8];
+    for (ULONG i = 0; i < RTL_NUMBER_OF(made); i++) {
+        if (made[i].Cursor && made[i].Id == idc)
+            return made[i].Cursor;
+        if (made[i].Cursor)
+            continue;
+        CURICON *c = W32Alloc(sizeof(CURICON));
+        if (!c)
+            return nullptr;
+        c->Width = c->Height = 32;
+        c->System = host_cursor_for_idc(idc) + 1;
+        c->Ready = TRUE;
+        made[i].Cursor = UserCreateHandle(&c->Header, USER_TYPE_CURSOR);
+        if (!made[i].Cursor) {
+            W32Free(c);
+            return nullptr;
+        }
+        made[i].Id = idc;
+        return made[i].Cursor;
+    }
+    return nullptr;
+}
+
 HICON NTAPI NtUserCreateEmptyCurObject(BOOL icon)
 {
     UserEnter();
@@ -180,6 +209,7 @@ BOOL NTAPI NtUserSetCursorIconData(HICON icon, PUNICODE_STRING module, PUNICODE_
             c->System = host_cursor_for_idc(d.Flags & 0xFFFF) + 1;
         SURFACE *img = build_image(&d);
         if (img || c->System) {
+            HostForgetCursor(icon);
             if (c->Image)
                 SurfaceDestroy(c->Image);
             c->Image = img;
@@ -197,7 +227,11 @@ BOOL NTAPI NtUserDestroyCursor(HICON icon, BOOL force)
 {
     UserEnter();
     CURICON *c = lookup(icon);
+    /* the system's own are never destroyed. */
+    if (c && c->System && !c->Process)
+        c = nullptr;
     if (c) {
+        HostForgetCursor(icon);
         if (c->Image)
             SurfaceDestroy(c->Image);
         c->Image = nullptr;
@@ -323,6 +357,12 @@ void CursorSet(HCURSOR cursor)
     if (t && t->CursorShowCount < 0)
         return;
     CURICON *c = lookup(cursor);
+    /* a cursor the program made is shown as it is, the system's are the host's own. */
+    if (c && !c->System && c->Image) {
+        CaptureCursorShown(cursor);
+        if (HostSetCursorImage(cursor))
+            return;
+    }
     HostSetCursor(c && c->System ? c->System - 1 : MIME_CURSOR_ARROW);
     CaptureCursorShown(c && !c->System && c->Image ? cursor : nullptr);
 }

@@ -428,6 +428,22 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_WIN_CURSOR:
         mime_ui_set_cursor((uint32_t)regs[1]);
         break;
+    case MIME_HC_WIN_CURSOR_IMAGE: {
+        const MimeCursorImage *image = mime_vm_phys(vm, regs[1], sizeof(*image));
+        if (!image || !image->width || !image->height || image->width > 512 || image->height > 512 ||
+            image->stride < image->width * 4) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        const void *pixels = mime_vm_phys(vm, image->pixels_phys, (uint64_t)image->stride * image->height);
+        if (!pixels) {
+            status = MIME_HC_STATUS_INVALID;
+            break;
+        }
+        mime_ui_set_cursor_image(pixels, image->width, image->height, image->stride, image->hot_x, image->hot_y,
+                                 image->dpi);
+        break;
+    }
     case MIME_HC_PAD_RUMBLE:
         mime_ui_pad_rumble((uint32_t)regs[1], (uint16_t)regs[2], (uint16_t)regs[3]);
         break;

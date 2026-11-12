@@ -55,6 +55,8 @@ void mime_ui_window_present(uint32_t id, const void *pixels, uint32_t width, uin
 /* the last image presented to a window through Vulkan: see MimeWinReadback. */
 bool mime_ui_window_readback(MimeWinReadback *r, void *pixels);
 void mime_ui_set_cursor(uint32_t cursor);
+void mime_ui_set_cursor_image(const void *pixels, uint32_t width, uint32_t height, uint32_t stride, uint32_t hot_x,
+                              uint32_t hot_y, uint32_t dpi);
 void mime_ui_pointer(uint32_t mode, uint32_t window_id, const MimeRect *rect);
 void mime_ui_pad_rumble(uint32_t pad, uint16_t low, uint16_t high);
 /* the display's gamma ramp, three channels of 256 values; null for the identity. */

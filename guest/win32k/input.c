@@ -6,6 +6,8 @@
 #include "mime_svc_win32k.h"
 
 POINT InputCursorPos;
+ULONG InputHostPress;
+POINT InputPressPos;
 UCHAR InputAsyncKeys[256];
 volatile LONG InputKeyGeneration = 1;
 WND *InputForeground;
@@ -366,6 +368,15 @@ static void dispatch_event(const MimeInputEvent *in, BOOLEAN injected, ULONG_PTR
         pt = InputClampCursor(pt);
         copy.x = pt.x;
         copy.y = pt.y;
+        if (copy.type == MIME_INPUT_MOUSE_DOWN && copy.button == MIME_MOUSE_LEFT && !injected) {
+            static ULONG presses;
+            if (!++presses)
+                presses = 1;
+            InputHostPress = presses;
+            InputPressPos = pt;
+        } else if (copy.type == MIME_INPUT_MOUSE_UP && copy.button == MIME_MOUSE_LEFT) {
+            InputHostPress = 0;
+        }
         break;
     }
     }
@@ -976,8 +987,12 @@ static BOOLEAN translate_mouse(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND 
         }
         if (!w->Header.Destroyed && !capture) {
             track_mouse(of_another_thread(t, w) ? w->Thread : t, w, hit);
-            if (ev->type != MIME_INPUT_MOUSE_UP)
+            if (ev->type != MIME_INPUT_MOUSE_UP) {
+                BOOLEAN held = HostHoldCursor();
                 MsgSend(w, WM_SETCURSOR, (WPARAM)WndHandle(w), MAKELPARAM(hit, msg));
+                if (held)
+                    HostReleaseCursor(PsGetCurrentThread());
+            }
         } else if (!w->Header.Destroyed) {
             /* under capture the mouse window is still the one under the pointer, without hit test messages. */
             WND *top = WndLookup((HWND)(ULONG_PTR)ev->window_id);
@@ -1211,7 +1226,7 @@ BOOLEAN InputTranslate(W32THREAD *t, QUEUED_MESSAGE *qm, MSG *out, HWND filter, 
         break;
     }
     case MIME_INPUT_WINDOW_MOVED:
-        w->Flags |= WNDF_HOST_MOVING;
+        w->Flags |= WNDF_HOST_MOVING | WNDF_HOST_PLACED;
         POINT moved = {ev->x, ev->y};
         DpiPointConvert(&moved, DPI_PHYSICAL, w->Awareness);
         WndSetPos(w, nullptr, moved.x, moved.y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);

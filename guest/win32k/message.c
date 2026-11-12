@@ -2004,7 +2004,8 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
     case WM_SETCURSOR: {
         LONG hit = (SHORT)LOWORD(lparam);
         if (HIWORD(lparam) && hit >= HTLEFT && hit <= HTBOTTOMRIGHT) {
-            HostSetCursor(MenuCommandEnabled(w, SC_SIZE) ? system_cursor_for_hit(hit) : MIME_CURSOR_ARROW);
+            /* whatever the frame is: a program that answers the hit test of a border itself gets the cursor too. */
+            HostSetCursor(w->Style & WS_MAXIMIZE ? MIME_CURSOR_ARROW : system_cursor_for_hit(hit));
             return TRUE;
         }
         if ((w->Style & WS_CHILD) && w->Parent && WndIsChildOf(w, WndDesktop()) && w->Parent->Thread == w->Thread) {

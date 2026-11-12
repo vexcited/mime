@@ -1993,6 +1993,13 @@ void mime_ui_set_cursor(uint32_t cursor)
     on_main(cursor_main, (void *)(uintptr_t)cursor);
 }
 
+/* not shown yet: the arrow stands for a cursor a program made. */
+void mime_ui_set_cursor_image(const void *pixels, uint32_t width, uint32_t height, uint32_t stride, uint32_t hot_x,
+                              uint32_t hot_y, uint32_t dpi)
+{
+    mime_ui_set_cursor(MIME_CURSOR_ARROW);
+}
+
 /* the pointer stays free: locking and confining it are not done on macOS yet. */
 void mime_ui_pointer(uint32_t mode, uint32_t window_id, const MimeRect *rect)
 {
