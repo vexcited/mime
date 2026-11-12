@@ -23,6 +23,9 @@ enum {
     VKM_DYN_ALL = (1 << 13) - 1,
 };
 
+/* a depth clip enable no one set follows the depth clamp, as vulkan says. */
+static constexpr uint8_t VKM_CLIP_UNSET = 2;
+
 typedef struct VkmDynamic {
     VkmVertexInput vertex;
     uint32_t strides[VKM_VERTEX_BINDINGS];

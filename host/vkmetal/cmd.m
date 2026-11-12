@@ -48,7 +48,7 @@ static void state_reset(VkmGfxState *s)
     s->legacy = legacy;
     s->dyn.samples = 1;
     s->dyn.sample_mask = ~0u;
-    s->dyn.depth_clip = 1;
+    s->dyn.depth_clip = VKM_CLIP_UNSET;
     for (uint32_t i = 0; i < VKM_COLORS; i++)
         s->dyn.blend[i].write = 0xf;
     s->index_type = MTLIndexTypeUInt16;
@@ -1547,7 +1547,9 @@ static bool prepare_stages(VkCommandBuffer cmd, const Stages *st)
             o->cull = cull_mode(d->cull);
             o->winding = d->front == VK_FRONT_FACE_CLOCKWISE ? MTLWindingClockwise : MTLWindingCounterClockwise;
             o->fill = d->polygon == VK_POLYGON_MODE_LINE ? MTLTriangleFillModeLines : MTLTriangleFillModeFill;
-            o->clip = d->depth_clamp || !d->depth_clip ? MTLDepthClipModeClamp : MTLDepthClipModeClip;
+            bool clip = d->depth_clip == VKM_CLIP_UNSET ? !d->depth_clamp : d->depth_clip;
+            /* with both on, metal clamps depth a shader writes to 0 and 1 where vulkan clamps it to the viewport. */
+            o->clip = clip ? MTLDepthClipModeClip : MTLDepthClipModeClamp;
             if (d->bias_enable) {
                 o->bias_constant = d->bias_constant;
                 o->bias_slope = d->bias_slope;

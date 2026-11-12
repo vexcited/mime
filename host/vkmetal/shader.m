@@ -800,7 +800,7 @@ static void stencil_face(VkmStencilFace *out, const VkStencilOpState *s)
 static void graphics_static(const VkGraphicsPipelineCreateInfo *info, VkmGfxStatic *g)
 {
     VkmDynamic *d = &g->state;
-    d->depth_clip = 1;
+    d->depth_clip = VKM_CLIP_UNSET;
     d->sample_mask = ~0u;
     d->samples = 1;
     if (info->pDynamicState)
@@ -859,7 +859,7 @@ static void graphics_static(const VkGraphicsPipelineCreateInfo *info, VkmGfxStat
         d->bias_slope = rs->depthBiasSlopeFactor;
         const VkPipelineRasterizationDepthClipStateCreateInfoEXT *clip =
             vkm_find(rs->pNext, VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_DEPTH_CLIP_STATE_CREATE_INFO_EXT);
-        d->depth_clip = clip ? (uint8_t)clip->depthClipEnable : (uint8_t)!rs->depthClampEnable;
+        d->depth_clip = clip ? (uint8_t)clip->depthClipEnable : VKM_CLIP_UNSET;
     }
     const VkPipelineMultisampleStateCreateInfo *ms = info->pMultisampleState;
     if (ms && !d->discard) {
