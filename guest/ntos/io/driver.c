@@ -94,6 +94,49 @@ static PDRIVER_OBJECT reference_driver(PUNICODE_STRING name)
     return driver;
 }
 
+/* the file is an image of another machine than the kernel's, read from its headers as IopIsNotNativeDriverImage does. */
+static BOOLEAN not_native_image(PCUNICODE_STRING path)
+{
+    PFILE_OBJECT file;
+    if (!NT_SUCCESS(IopOpenFileObject(path, FILE_READ_DATA | SYNCHRONIZE, FILE_NON_DIRECTORY_FILE, &file)))
+        return FALSE;
+    UCHAR *headers = ExAllocatePool2(POOL_FLAG_PAGED, PAGE_SIZE, KI_TAG('I', 'o', 'N', 'n'));
+    ULONG got = 0;
+    BOOLEAN other = FALSE;
+    if (headers && NT_SUCCESS(IoReadFileObject(file, headers, PAGE_SIZE, 0, &got)) && got >= sizeof(IMAGE_DOS_HEADER)) {
+        PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)headers;
+        ULONG at = (ULONG)dos->e_lfanew;
+        if (dos->e_magic == IMAGE_DOS_SIGNATURE && at <= got - sizeof(IMAGE_FILE_HEADER) - 4 &&
+            *(PULONG)(headers + at) == IMAGE_NT_SIGNATURE)
+            other = ((PIMAGE_FILE_HEADER)(headers + at + 4))->Machine != MIME_NATIVE_MACHINE;
+    }
+    if (headers)
+        ExFreePool(headers);
+    ObDereferenceObject(file);
+    return other;
+}
+
+/*
+ * a driver that did not load because it is built for another processor is blocked, as IopCheckIfNotNativeDriver
+ * finds out. one that is missing may be the other processor's, which installers put under SysWow64.
+ */
+static BOOLEAN not_native_driver(NTSTATUS status, PUNICODE_STRING image)
+{
+    if (status != STATUS_OBJECT_NAME_NOT_FOUND)
+        return not_native_image(image);
+    static const WCHAR drivers[] = L"\\System32\\drivers\\";
+    USHORT count = image->Length / sizeof(WCHAR), n = RTL_NUMBER_OF(drivers) - 1;
+    for (USHORT i = 0; i + n <= count; i++) {
+        UNICODE_STRING part = {(USHORT)(n * sizeof(WCHAR)), (USHORT)(n * sizeof(WCHAR)), image->Buffer + i};
+        UNICODE_STRING want = {(USHORT)(n * sizeof(WCHAR)), (USHORT)(n * sizeof(WCHAR)), (PWSTR)drivers};
+        if (RtlEqualUnicodeString(&part, &want, TRUE)) {
+            memcpy(image->Buffer + i + 1, L"SysWow64", 8 * sizeof(WCHAR));
+            return not_native_image(image);
+        }
+    }
+    return FALSE;
+}
+
 static NTSTATUS load_driver(PUNICODE_STRING key_name)
 {
     PCWSTR key = key_name->Buffer;
@@ -125,6 +168,9 @@ static NTSTATUS load_driver(PUNICODE_STRING key_name)
             MmUnloadSystemImage(module);
         }
     } else if (status != STATUS_IMAGE_ALREADY_LOADED) {
+        /* the drivers nt loads itself are never filters, which windows blocks with STATUS_DRIVER_BLOCKED. */
+        if (image.Buffer && not_native_driver(status, &image))
+            status = STATUS_DRIVER_BLOCKED_CRITICAL;
         KiLogPrintf("cannot load the driver of %wZ from %wZ: %08x", key_name, &image, status);
     }
     if (image.Buffer)
