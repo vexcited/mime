@@ -42,6 +42,7 @@ typedef struct CLIENT {
     BOOL chosen; /* the stream stays on the endpoint named by device. */
     GUID device;
     UINT32 mix_rate, mix_channels;
+    DWORD mix_mask;
     UINT64 dropped; /* host dropped frames the program was already told of. */
     float master, channel[8];
     BOOL mute;
@@ -95,7 +96,7 @@ static HRESULT alloc_mix_format(CLIENT *c, WAVEFORMATEX **format)
     WAVEFORMATEXTENSIBLE *f = MmTaskAlloc(sizeof(*f));
     if (!f)
         return E_OUTOFMEMORY;
-    MmMixFormat(f, c->mix_rate, c->mix_channels);
+    MmMixFormat(f, c->mix_rate, c->mix_channels, c->mix_mask);
     *format = &f->Format;
     return S_OK;
 }
@@ -870,7 +871,7 @@ static HRESULT STDMETHODCALLTYPE client_query(void *This, REFIID riid, void **ob
     return E_NOINTERFACE;
 }
 
-HRESULT MmCreateAudioClient(BOOL capture, const GUID *device, UINT32 rate, UINT32 channels, void **object)
+HRESULT MmCreateAudioClient(BOOL capture, const GUID *device, UINT32 rate, UINT32 channels, DWORD mask, void **object)
 {
     CLIENT *c = HeapAlloc(heap(), HEAP_ZERO_MEMORY, sizeof(CLIENT));
     if (!c)
@@ -884,6 +885,7 @@ HRESULT MmCreateAudioClient(BOOL capture, const GUID *device, UINT32 rate, UINT3
         c->device = *device;
     c->mix_rate = rate;
     c->mix_channels = channels;
+    c->mix_mask = mask;
     c->clock = &clock_vtbl;
     c->simple = &simple_vtbl;
     c->stream = &stream_vtbl;
