@@ -19,6 +19,12 @@ static void surf_commit(DcObject *object) {}
 static void surf_destroy(DcObject *object)
 {
     DcSurface *s = CONTAINING_RECORD(object, DcSurface, base);
+    if (s->d2d_bitmap)
+        s->d2d_bitmap->lpVtbl->Release(s->d2d_bitmap);
+    if (s->d2d_context)
+        s->d2d_context->lpVtbl->Release(s->d2d_context);
+    if (s->d2d)
+        s->d2d->lpVtbl->Release(s->d2d);
     if (s->texture)
         s->texture->lpVtbl->Release(s->texture);
     if (s->d3d)
@@ -67,9 +73,141 @@ static BOOL rect_valid(const DcSurface *s, const RECT *r)
            (UINT)r->bottom <= s->height;
 }
 
+/* ------------------------------------------------------------------ drawing with direct2d */
+
+static UINT format_bytes(DXGI_FORMAT format)
+{
+    return format == DXGI_FORMAT_A8_UNORM ? 1 : format == DXGI_FORMAT_R16G16B16A16_FLOAT ? 8 : 4;
+}
+
+static HRESULT d2d_make_bitmap(DcSurface *s, ID2D1Bitmap1 **out)
+{
+    D2D1_BITMAP_PROPERTIES1 props = {};
+    props.pixelFormat.format = s->format;
+    props.pixelFormat.alphaMode = s->alpha == DXGI_ALPHA_MODE_PREMULTIPLIED ? D2D1_ALPHA_MODE_PREMULTIPLIED
+                                                                            : D2D1_ALPHA_MODE_IGNORE;
+    props.dpiX = props.dpiY = 96.0f;
+    props.bitmapOptions = D2D1_BITMAP_OPTIONS_TARGET;
+    D2D1_SIZE_U size = {s->texture_width, s->texture_height};
+    return s->d2d_context->lpVtbl->CreateBitmap1(s->d2d_context, size, nullptr, 0, &props, out);
+}
+
+/* the bitmap takes the texture's pixels after the texture was drawn without it. */
+static HRESULT d2d_read_texture(DcSurface *s)
+{
+    D3D11_TEXTURE2D_DESC desc;
+    s->texture->lpVtbl->GetDesc(s->texture, &desc);
+    desc.Usage = D3D11_USAGE_STAGING;
+    desc.BindFlags = 0;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    desc.MiscFlags = 0;
+    ID3D11Texture2D *stage;
+    HRESULT hr = s->d3d->lpVtbl->CreateTexture2D(s->d3d, &desc, nullptr, &stage);
+    if (FAILED(hr))
+        return hr;
+    ID3D11DeviceContext *context;
+    s->d3d->lpVtbl->GetImmediateContext(s->d3d, &context);
+    context->lpVtbl->CopyResource(context, (ID3D11Resource *)stage, (ID3D11Resource *)s->texture);
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    hr = context->lpVtbl->Map(context, (ID3D11Resource *)stage, 0, D3D11_MAP_READ, 0, &mapped);
+    if (SUCCEEDED(hr)) {
+        hr = s->d2d_bitmap->lpVtbl->CopyFromMemory(s->d2d_bitmap, nullptr, mapped.pData, mapped.RowPitch);
+        context->lpVtbl->Unmap(context, (ID3D11Resource *)stage, 0);
+    }
+    context->lpVtbl->Release(context);
+    stage->lpVtbl->Release(stage);
+    return hr;
+}
+
 /*
- * hands out the texture and the offset of the rectangle's corner in it. the
- * program draws there and ends the draw, which it may also do while suspended.
+ * the context comes back with its draw begun on the surface and clipped to the update rectangle, as dcomp.dll gives
+ * it: the program neither begins nor ends the draw of the context.
+ */
+static HRESULT d2d_begin(DcSurface *s, const RECT *r, REFIID riid, void **object)
+{
+    HRESULT hr;
+    if (!s->d2d_context) {
+        hr = s->d2d->lpVtbl->CreateDeviceContext(s->d2d, D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &s->d2d_context);
+        if (FAILED(hr))
+            return hr;
+        s->d2d_context->lpVtbl->SetDpi(s->d2d_context, 96.0f, 96.0f);
+    }
+    ID2D1DeviceContext *c = s->d2d_context;
+    hr = c->lpVtbl->QueryInterface(c, riid, object);
+    if (FAILED(hr))
+        return hr;
+    if (!s->d2d_bitmap)
+        hr = d2d_make_bitmap(s, &s->d2d_bitmap);
+    if (SUCCEEDED(hr) && s->d2d_stale)
+        hr = d2d_read_texture(s);
+    if (FAILED(hr)) {
+        ((IUnknown *)*object)->lpVtbl->Release((IUnknown *)*object);
+        *object = nullptr;
+        return hr;
+    }
+    s->d2d_stale = FALSE;
+    static const D2D1_MATRIX_3X2_F identity = {1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
+    D2D1_RECT_F clip = {(FLOAT)r->left, (FLOAT)r->top, (FLOAT)r->right, (FLOAT)r->bottom};
+    c->lpVtbl->SetTarget(c, (ID2D1Image *)s->d2d_bitmap);
+    c->lpVtbl->BeginDraw(c);
+    c->lpVtbl->SetTransform(c, &identity);
+    c->lpVtbl->PushAxisAlignedClip(c, &clip, D2D1_ANTIALIAS_MODE_ALIASED);
+    s->d2d_drawing = TRUE;
+    return S_OK;
+}
+
+/* only the update rectangle goes to the texture. */
+static HRESULT d2d_end(DcSurface *s)
+{
+    ID2D1DeviceContext *c = s->d2d_context;
+    c->lpVtbl->PopAxisAlignedClip(c);
+    HRESULT hr = c->lpVtbl->EndDraw(c, nullptr, nullptr);
+    c->lpVtbl->SetTarget(c, nullptr);
+    s->d2d_drawing = FALSE;
+    RECT r = s->update;
+    r.right = DC_MIN(r.right, (LONG)s->texture_width);
+    r.bottom = DC_MIN(r.bottom, (LONG)s->texture_height);
+    IMimeD2DBitmap *pixels;
+    if (r.left < r.right && r.top < r.bottom &&
+        SUCCEEDED(s->d2d_bitmap->lpVtbl->QueryInterface(s->d2d_bitmap, &IID_IMimeD2DBitmap, (void **)&pixels))) {
+        BYTE *bits;
+        UINT32 pitch;
+        if (SUCCEEDED(pixels->lpVtbl->GetPixels(pixels, &bits, &pitch))) {
+            D3D11_BOX box = {(UINT)r.left, (UINT)r.top, 0, (UINT)r.right, (UINT)r.bottom, 1};
+            ID3D11DeviceContext *context;
+            s->d3d->lpVtbl->GetImmediateContext(s->d3d, &context);
+            context->lpVtbl->UpdateSubresource(context, (ID3D11Resource *)s->texture, 0, &box,
+                                               bits + (SIZE_T)r.top * pitch + (SIZE_T)r.left * format_bytes(s->format),
+                                               pitch, 0);
+            context->lpVtbl->Release(context);
+        }
+        pixels->lpVtbl->Release(pixels);
+    }
+    return hr;
+}
+
+/* a surface that changed size keeps in its bitmap what both sizes cover, as its texture does. */
+static void d2d_resize(DcSurface *s, UINT old_width, UINT old_height)
+{
+    ID2D1Bitmap1 *old = s->d2d_bitmap;
+    if (!old)
+        return;
+    s->d2d_bitmap = nullptr;
+    if (s->texture && SUCCEEDED(d2d_make_bitmap(s, &s->d2d_bitmap))) {
+        D2D1_RECT_U source = {0, 0, DC_MIN(old_width, s->texture_width), DC_MIN(old_height, s->texture_height)};
+        if (FAILED(s->d2d_bitmap->lpVtbl->CopyFromBitmap(s->d2d_bitmap, nullptr, (ID2D1Bitmap *)old, &source)))
+            s->d2d_stale = TRUE;
+    } else {
+        s->d2d_stale = TRUE;
+    }
+    old->lpVtbl->Release(old);
+}
+
+/* ------------------------------------------------------------------ surface methods */
+
+/*
+ * hands out the texture and the offset of the rectangle's corner in it, or the Direct2D context of a surface made
+ * with a Direct2D device. the program draws there and ends the draw, which it may also do while suspended.
  */
 static HRESULT STDMETHODCALLTYPE surf_begin_draw(void *This, const RECT *rect, REFIID riid, void **object, POINT *offset)
 {
@@ -91,6 +229,10 @@ static HRESULT STDMETHODCALLTYPE surf_begin_draw(void *This, const RECT *rect, R
         const RECT *r = rect ? rect : &whole;
         *object = nullptr;
         hr = s->texture->lpVtbl->QueryInterface(s->texture, riid, object);
+        if (SUCCEEDED(hr))
+            s->d2d_stale = s->d2d != nullptr;
+        else if (s->d2d)
+            hr = d2d_begin(s, r, riid, object);
         if (SUCCEEDED(hr)) {
             offset->x = r->left;
             offset->y = r->top;
@@ -110,6 +252,8 @@ static HRESULT STDMETHODCALLTYPE surf_end_draw(void *This)
     if (s->state != 1 && s->state != 2) {
         hr = DCOMPOSITION_ERROR_SURFACE_NOT_BEING_RENDERED;
     } else {
+        if (s->d2d_drawing)
+            hr = d2d_end(s);
         s->state = 0;
         s->base.device->content_changed = TRUE;
     }
@@ -183,6 +327,7 @@ static HRESULT STDMETHODCALLTYPE surf_scroll(void *This, const RECT *scroll, con
                                                        0, (ID3D11Resource *)temp, 0, nullptr);
                 context->lpVtbl->Release(context);
                 temp->lpVtbl->Release(temp);
+                s->d2d_stale = s->d2d_bitmap != nullptr;
                 s->base.device->content_changed = TRUE;
             }
         }
@@ -217,6 +362,7 @@ static HRESULT STDMETHODCALLTYPE surf_resize(void *This, UINT width, UINT height
             }
             if (old)
                 old->lpVtbl->Release(old);
+            d2d_resize(s, old_width, old_height);
             s->width = width;
             s->height = height;
             s->base.device->content_changed = TRUE;
@@ -256,8 +402,8 @@ static const IDCompositionVirtualSurfaceVtbl virtual_vtbl = {
  * alpha-only surface needs alpha, and a size gives both dimensions or, on the
  * third device, neither.
  */
-HRESULT DcCreateSurface(DcDevice *device, ID3D11Device *d3d, BOOL is_virtual, UINT width, UINT height,
-                        DXGI_FORMAT format, DXGI_ALPHA_MODE alpha, void **out)
+HRESULT DcCreateSurface(DcDevice *device, ID3D11Device *d3d, ID2D1Device *d2d, BOOL is_virtual, UINT width,
+                        UINT height, DXGI_FORMAT format, DXGI_ALPHA_MODE alpha, void **out)
 {
     if (format != DXGI_FORMAT_B8G8R8A8_UNORM && format != DXGI_FORMAT_R8G8B8A8_UNORM &&
         format != DXGI_FORMAT_R16G16B16A16_FLOAT && format != DXGI_FORMAT_A8_UNORM)
@@ -293,6 +439,9 @@ HRESULT DcCreateSurface(DcDevice *device, ID3D11Device *d3d, BOOL is_virtual, UI
         HeapFree(GetProcessHeap(), 0, s);
         return hr;
     }
+    s->d2d = d2d;
+    if (d2d)
+        d2d->lpVtbl->AddRef(d2d);
     DcObjectInit(&s->base, device, &surf_class);
     *out = &s->iface;
     return S_OK;
@@ -308,6 +457,8 @@ static void fac_destroy(DcObject *object)
 {
     DcFactory *f = CONTAINING_RECORD(object, DcFactory, base);
     f->d3d->lpVtbl->Release(f->d3d);
+    if (f->d2d)
+        f->d2d->lpVtbl->Release(f->d2d);
     HeapFree(GetProcessHeap(), 0, f);
 }
 
@@ -338,7 +489,7 @@ static HRESULT STDMETHODCALLTYPE fac_create_surface(IDCompositionSurfaceFactory 
     if (!out)
         return E_INVALIDARG;
     *out = nullptr;
-    return DcCreateSurface(f->base.device, f->d3d, FALSE, width, height, format, alpha, (void **)out);
+    return DcCreateSurface(f->base.device, f->d3d, f->d2d, FALSE, width, height, format, alpha, (void **)out);
 }
 
 static HRESULT STDMETHODCALLTYPE fac_create_virtual_surface(IDCompositionSurfaceFactory *iface, UINT width,
@@ -349,14 +500,15 @@ static HRESULT STDMETHODCALLTYPE fac_create_virtual_surface(IDCompositionSurface
     if (!out)
         return E_INVALIDARG;
     *out = nullptr;
-    return DcCreateSurface(f->base.device, f->d3d, TRUE, width, height, format, alpha, (void **)out);
+    return DcCreateSurface(f->base.device, f->d3d, f->d2d, TRUE, width, height, format, alpha, (void **)out);
 }
 
 static const IDCompositionSurfaceFactoryVtbl fac_vtbl = {
     fac_query, fac_add_ref, fac_release, fac_create_surface, fac_create_virtual_surface,
 };
 
-HRESULT DcCreateSurfaceFactory(DcDevice *device, ID3D11Device *d3d, IDCompositionSurfaceFactory **out)
+HRESULT DcCreateSurfaceFactory(DcDevice *device, ID3D11Device *d3d, ID2D1Device *d2d,
+                               IDCompositionSurfaceFactory **out)
 {
     DcFactory *f = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*f));
     if (!f)
@@ -364,6 +516,9 @@ HRESULT DcCreateSurfaceFactory(DcDevice *device, ID3D11Device *d3d, IDCompositio
     f->iface.lpVtbl = &fac_vtbl;
     f->d3d = d3d;
     d3d->lpVtbl->AddRef(d3d);
+    f->d2d = d2d;
+    if (d2d)
+        d2d->lpVtbl->AddRef(d2d);
     DcObjectInit(&f->base, device, &fac_class);
     *out = &f->iface;
     return S_OK;

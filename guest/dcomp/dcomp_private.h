@@ -14,6 +14,7 @@
 #include <mime/win32/d3d11.h>
 #include <mime/win32/dcomp.h>
 #include <mime/dxgi_mime.h>
+#include <mime/d2d_mime.h>
 #include <mime/dcomp_mime.h>
 #include <mime/vblank.h>
 
@@ -354,22 +355,34 @@ struct DcSurface {
     ID3D11Device *d3d;
     ID3D11Texture2D *texture;
     UINT texture_width, texture_height;
+    /*
+     * the Direct2D device the surface was made with, NULL for a Direct3D one. its context draws into a bitmap in
+     * memory, and the end of a draw uploads the update rectangle from it, so the texture is never read back.
+     */
+    ID2D1Device *d2d;
+    ID2D1DeviceContext *d2d_context;
+    ID2D1Bitmap1 *d2d_bitmap;
+    BOOL d2d_drawing;
+    /* the texture changed without the bitmap: a draw into the texture itself, or a scroll. */
+    BOOL d2d_stale;
 };
 
-/* factory surfaces use the Direct3D device the factory was given. */
+/* factory surfaces use the device the factory was given. */
 typedef struct DcFactory {
     IDCompositionSurfaceFactory iface;
     DcObject base;
     ID3D11Device *d3d;
+    ID2D1Device *d2d;
 } DcFactory;
 
-HRESULT DcCreateSurface(DcDevice *device, ID3D11Device *d3d, BOOL is_virtual, UINT width, UINT height,
-                        DXGI_FORMAT format, DXGI_ALPHA_MODE alpha, void **out);
-HRESULT DcCreateSurfaceFactory(DcDevice *device, ID3D11Device *d3d, IDCompositionSurfaceFactory **out);
+HRESULT DcCreateSurface(DcDevice *device, ID3D11Device *d3d, ID2D1Device *d2d, BOOL is_virtual, UINT width,
+                        UINT height, DXGI_FORMAT format, DXGI_ALPHA_MODE alpha, void **out);
+HRESULT DcCreateSurfaceFactory(DcDevice *device, ID3D11Device *d3d, ID2D1Device *d2d,
+                               IDCompositionSurfaceFactory **out);
 HRESULT DcCreateTexture(DcDevice *device, IUnknown *texture, IDCompositionTexture **out);
 HRESULT DcCreateDynamicTexture(DcDevice *device, IDCompositionDynamicTexture **out);
 HRESULT DcCreateSurfaceFromHandle(DcDevice *device, HANDLE handle, IUnknown **out);
-HRESULT DcResolveRenderingDevice(IUnknown *rendering_device, ID3D11Device **d3d);
+HRESULT DcResolveRenderingDevice(IUnknown *rendering_device, ID3D11Device **d3d, ID2D1Device **d2d);
 
 /* ------------------------------------------------------------------ the device */
 
@@ -386,6 +399,8 @@ struct DcDevice {
     CRITICAL_SECTION lock;
     /* used by surfaces and the compositor, NULL when the program gave none. */
     ID3D11Device *d3d;
+    /* the Direct2D device the program gave in place of a Direct3D one. */
+    ID2D1Device *d2d;
     DcObject *dirty;
     BOOL content_changed;
     DcTarget *targets;

@@ -53,6 +53,8 @@ static void device_destroy(DcDevice *device)
     DcGpuRelease(device);
     if (device->d3d)
         device->d3d->lpVtbl->Release(device->d3d);
+    if (device->d2d)
+        device->d2d->lpVtbl->Release(device->d2d);
     if (device->own_d3d)
         device->own_d3d->lpVtbl->Release(device->own_d3d);
     DeleteCriticalSection(&device->lock);
@@ -78,32 +80,51 @@ ULONG DcDeviceRelease(DcDevice *device)
 
 /* ------------------------------------------------------------------ creation */
 
-/* the device the program draws surfaces with must expose IDXGIDevice3 and ID3D11Device1. */
-HRESULT DcResolveRenderingDevice(IUnknown *rendering_device, ID3D11Device **d3d)
+/*
+ * the device the program draws surfaces with: a Direct3D device that exposes IDXGIDevice3 and ID3D11Device1, or a
+ * Direct2D device made on one.
+ */
+HRESULT DcResolveRenderingDevice(IUnknown *rendering_device, ID3D11Device **d3d, ID2D1Device **d2d)
 {
     static const GUID IID_ID3D11Device1_ = {0xA04BFB29, 0x08EF, 0x43D6, {0xA4, 0x9C, 0xA9, 0xBD, 0xBD, 0xCB, 0xE6, 0x86}};
     *d3d = nullptr;
+    *d2d = nullptr;
     if (!rendering_device)
         return S_OK;
     IUnknown *dxgi;
+    ID2D1Device2 *device2 = nullptr;
     HRESULT hr = rendering_device->lpVtbl->QueryInterface(rendering_device, &IID_IDXGIDevice3, (void **)&dxgi);
-    if (FAILED(hr))
-        return hr;
+    if (FAILED(hr)) {
+        if (FAILED(rendering_device->lpVtbl->QueryInterface(rendering_device, &IID_ID2D1Device2, (void **)&device2)))
+            return hr;
+        hr = device2->lpVtbl->GetDxgiDevice(device2, (IDXGIDevice **)&dxgi);
+        if (FAILED(hr)) {
+            device2->lpVtbl->Release(device2);
+            return hr;
+        }
+    }
     hr = dxgi->lpVtbl->QueryInterface(dxgi, &IID_ID3D11Device1_, (void **)d3d);
     dxgi->lpVtbl->Release(dxgi);
+    if (device2 && FAILED(hr))
+        device2->lpVtbl->Release(device2);
+    else
+        *d2d = (ID2D1Device *)device2;
     return hr;
 }
 
 HRESULT DcDeviceCreate(UINT version, IUnknown *rendering_device, DcDevice **out)
 {
     ID3D11Device *d3d;
-    HRESULT hr = DcResolveRenderingDevice(rendering_device, &d3d);
+    ID2D1Device *d2d;
+    HRESULT hr = DcResolveRenderingDevice(rendering_device, &d3d, &d2d);
     if (FAILED(hr))
         return hr;
     DcDevice *device = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(*device));
     if (!device) {
         if (d3d)
             d3d->lpVtbl->Release(d3d);
+        if (d2d)
+            d2d->lpVtbl->Release(d2d);
         return E_OUTOFMEMORY;
     }
     device->dev1 = (DcDeviceFace){&g_device1_vtbl, device};
@@ -114,6 +135,7 @@ HRESULT DcDeviceCreate(UINT version, IUnknown *rendering_device, DcDevice **out)
     device->refs = 1;
     device->version = version;
     device->d3d = d3d;
+    device->d2d = d2d;
     InitializeCriticalSection(&device->lock);
     DcObjectCountChange(1);
     devices_lock();
@@ -250,7 +272,7 @@ static HRESULT STDMETHODCALLTYPE dev_create_surface(void *This, UINT width, UINT
     if (!out)
         return E_INVALIDARG;
     *out = nullptr;
-    return DcCreateSurface(d, d->d3d, FALSE, width, height, format, alpha, (void **)out);
+    return DcCreateSurface(d, d->d3d, d->d2d, FALSE, width, height, format, alpha, (void **)out);
 }
 
 static HRESULT STDMETHODCALLTYPE dev_create_virtual_surface(void *This, UINT width, UINT height, DXGI_FORMAT format,
@@ -265,7 +287,7 @@ static HRESULT STDMETHODCALLTYPE dev_create_virtual_surface(void *This, UINT wid
     if (!out)
         return E_INVALIDARG;
     *out = nullptr;
-    return DcCreateSurface(d, d->d3d, TRUE, width, height, format, alpha, (void **)out);
+    return DcCreateSurface(d, d->d3d, d->d2d, TRUE, width, height, format, alpha, (void **)out);
 }
 
 static HRESULT STDMETHODCALLTYPE dev_create_surface_factory(void *This, IUnknown *rendering_device,
@@ -277,11 +299,14 @@ static HRESULT STDMETHODCALLTYPE dev_create_surface_factory(void *This, IUnknown
     if (!rendering_device)
         return E_INVALIDARG;
     ID3D11Device *d3d;
-    HRESULT hr = DcResolveRenderingDevice(rendering_device, &d3d);
+    ID2D1Device *d2d;
+    HRESULT hr = DcResolveRenderingDevice(rendering_device, &d3d, &d2d);
     if (FAILED(hr))
         return hr;
-    hr = DcCreateSurfaceFactory(dev(This), d3d, out);
+    hr = DcCreateSurfaceFactory(dev(This), d3d, d2d, out);
     d3d->lpVtbl->Release(d3d);
+    if (d2d)
+        d2d->lpVtbl->Release(d2d);
     return hr;
 }
 
