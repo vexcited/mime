@@ -605,10 +605,12 @@ void D2dFillPolys(D2dRt *rt, const MimeVecPolys *polys, BOOL winding, BOOL alias
     int w = area.right - area.left, h = area.bottom - area.top;
     int grain = h;
     /* every piece walks all the edges again, so shapes of many points stay whole. */
-    if (h >= 16 && (int64_t)w * h >= 32768 && (int64_t)polys->npts * 64 < (int64_t)w * h) {
-        grain = 16384 / w;
-        if (grain < 4)
-            grain = 4;
+    /* a piece costs little while the other processors are awake, so a sampled fill splits much sooner. */
+    BOOL ready = !paint->is_solid && mime_par_ready();
+    if (h >= (ready ? 4 : 16) && (int64_t)w * h >= (ready ? 4096 : 32768) && (int64_t)polys->npts * 64 < (int64_t)w * h) {
+        grain = (ready ? 2048 : 16384) / w;
+        if (grain < (ready ? 2 : 4))
+            grain = ready ? 2 : 4;
         if (polys->npts > 4 && grain < h / 8)
             grain = h / 8;
     }

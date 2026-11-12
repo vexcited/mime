@@ -11,4 +11,7 @@ typedef void (*MimeParFn)(void *ctx, int first, int end);
  */
 void mime_par_rows(int first, int end, int grain, MimeParFn fn, void *ctx);
 
+/* true when a job would start at once, with no thread to wake. */
+int mime_par_ready(void);
+
 #endif
