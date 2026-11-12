@@ -207,6 +207,7 @@ struct VkImage_T {
     VkDeviceMemory memory;
     uint64_t offset;
     bool swapchain;
+    bool resident; /* its texture is in the device's set, as validation wants of placed attachments. */
 };
 
 struct VkImageView_T {

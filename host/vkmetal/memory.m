@@ -505,7 +505,7 @@ static VKAPI_ATTR void VKAPI_CALL DestroyImage(VkDevice device, VkImage image, c
 {
     if (!image || image->swapchain)
         return;
-    vkm_release_later(device, image->texture, false);
+    vkm_release_later(device, image->texture, image->resident);
     [image->desc release];
     free(image);
 }
@@ -572,7 +572,8 @@ static VkResult bind_image(VkDevice device, VkImage image, VkDeviceMemory m, VkD
         return VK_SUCCESS;
     bool imported;
     @autoreleasepool {
-        [image->texture release];
+        vkm_release_later(device, image->texture, image->resident);
+        image->resident = false;
         /* an imported image is the exporter's texture; any other image gets its own, even where one was before. */
         imported = m->texture && !m->exported;
         if (imported && !offset) {
@@ -598,6 +599,10 @@ static VkResult bind_image(VkDevice device, VkImage image, VkDeviceMemory m, VkD
     }
     if (m->exported && !offset && !m->texture)
         m->texture = [image->texture retain];
+    if (!imported && (image->texture.usage & MTLTextureUsageRenderTarget)) {
+        vkm_resident(device, image->texture);
+        image->resident = true;
+    }
     if (m->heap && !imported && image->tiling != VK_IMAGE_TILING_LINEAR)
         vkm_image_init(device, image);
     return VK_SUCCESS;
