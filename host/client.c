@@ -1008,7 +1008,9 @@ int mime_cmd_apps(const MimePaths *paths, int argc, char **argv)
         return run_openwith(paths, "apps", false, nullptr, 0, nullptr);
     if (argc == 1 && strcmp(argv[0], "--installed") == 0)
         return run_openwith(paths, "installed", false, nullptr, 0, nullptr);
-    fprintf(stderr, "usage: mime apps [--installed]\n");
+    if (argc == 1 && strcmp(argv[0], "--scheme") == 0)
+        return run_openwith(paths, "schemes", false, nullptr, 0, nullptr);
+    fprintf(stderr, "usage: mime apps [--installed | --scheme]\n");
     return 2;
 }
 

@@ -18,7 +18,9 @@ static void usage(void)
     printf("  run [--admin] <target> [args]\n");
     printf("                               open a program, document, shortcut or url, or an app by its id or name,\n");
     printf("                               as the Windows Run box does; a console program runs in the terminal\n");
-    printf("  apps [--installed]           list the apps run opens by name, or the installed programs\n");
+    printf("  apps [--installed | --scheme]\n");
+    printf("                               list the apps run opens by name, the installed programs, or the url\n");
+    printf("                               protocols that programs registered\n");
     printf("  uninstall <id>               run the uninstaller of an installed program or app\n");
     printf("  features                     list the features fetched from Microsoft when a program needs them\n");
     printf("  features enable <name> [--source <file>]\n");

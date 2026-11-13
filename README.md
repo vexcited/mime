@@ -50,6 +50,7 @@ mime run notepad
 
 mime apps
 mime apps --installed
+mime apps --scheme
 
 mime uninstall <id>
 

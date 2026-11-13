@@ -538,6 +538,90 @@ static PROGRAM *list_programs(UINT *count)
     return programs;
 }
 
+/* ------------------------------------------------------------------ url protocols */
+
+typedef struct SCHEME {
+    WCHAR Name[64];
+    WCHAR Command[1024];
+} SCHEME;
+
+/*
+ * the url protocols: the classes with a URL Protocol value and a command to open, those of the user before those of
+ * the machine, as the shell picks them.
+ */
+static int command_schemes(int argc, WCHAR **argv)
+{
+    if (argc) {
+        err(L"usage: openwith schemes\n");
+        return EXIT_USAGE;
+    }
+    static const HKEY roots[] = {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    SCHEME *schemes = nullptr;
+    UINT count = 0, room = 0;
+    for (UINT r = 0; r < RTL_NUMBER_OF(roots); r++) {
+        HKEY classes;
+        if (RegOpenKeyExW(roots[r], L"Software\\Classes", 0, KEY_READ, &classes))
+            continue;
+        for (DWORD i = 0;; i++) {
+            WCHAR name[256], path[320];
+            DWORD chars = RTL_NUMBER_OF(name);
+            LSTATUS status = RegEnumKeyExW(classes, i, name, &chars, nullptr, nullptr, nullptr, nullptr);
+            if (status == ERROR_NO_MORE_ITEMS)
+                break;
+            if (status || chars >= RTL_NUMBER_OF(schemes->Name) || !wcscmp(name, L"*"))
+                continue;
+            BOOL seen = FALSE;
+            for (UINT k = 0; k < count && !seen; k++)
+                seen = !_wcsicmp(schemes[k].Name, name);
+            HKEY key;
+            if (seen || RegOpenKeyExW(classes, name, 0, KEY_READ, &key))
+                continue;
+            BOOL protocol = !RegQueryValueExW(key, L"URL Protocol", nullptr, nullptr, nullptr, nullptr);
+            RegCloseKey(key);
+            _snwprintf(path, RTL_NUMBER_OF(path), L"%ls\\shell\\open\\command", name);
+            if (!protocol || RegOpenKeyExW(classes, path, 0, KEY_READ, &key))
+                continue;
+            if (count == room) {
+                room = room ? room * 2 : 32;
+                SCHEME *grown = schemes ? HeapReAlloc(GetProcessHeap(), 0, schemes, room * sizeof(*schemes))
+                                        : HeapAlloc(GetProcessHeap(), 0, room * sizeof(*schemes));
+                if (!grown) {
+                    RegCloseKey(key);
+                    break;
+                }
+                schemes = grown;
+            }
+            wcscpy(schemes[count].Name, name);
+            query_string(key, nullptr, schemes[count].Command, RTL_NUMBER_OF(schemes[count].Command));
+            RegCloseKey(key);
+            count++;
+        }
+        RegCloseKey(classes);
+    }
+    if (!count) {
+        out(L"No url protocols are registered.\n");
+        return 0;
+    }
+    /* by name, the few there are. */
+    for (UINT i = 1; i < count; i++)
+        for (UINT k = i; k && _wcsicmp(schemes[k - 1].Name, schemes[k].Name) > 0; k--) {
+            SCHEME swap = schemes[k];
+            schemes[k] = schemes[k - 1];
+            schemes[k - 1] = swap;
+        }
+    SIZE_T width = 6;
+    for (UINT i = 0; i < count; i++)
+        width = MAX(width, wcslen(schemes[i].Name));
+    column(L"SCHEME", width, FALSE);
+    column(L"COMMAND", 0, TRUE);
+    for (UINT i = 0; i < count; i++) {
+        column(schemes[i].Name, width, FALSE);
+        column(schemes[i].Command, 0, TRUE);
+    }
+    HeapFree(GetProcessHeap(), 0, schemes);
+    return 0;
+}
+
 static int command_installed(int argc, WCHAR **argv)
 {
     if (argc) {
@@ -783,13 +867,15 @@ void entry(void)
     WCHAR **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     int code = EXIT_USAGE;
     if (!argv || argc < 2)
-        err(L"usage: openwith open|apps|installed|uninstall|features ...\n");
+        err(L"usage: openwith open|apps|installed|schemes|uninstall|features ...\n");
     else if (!wcscmp(argv[1], L"open"))
         code = command_open(argc - 2, argv + 2);
     else if (!wcscmp(argv[1], L"apps"))
         code = command_apps(argc - 2, argv + 2);
     else if (!wcscmp(argv[1], L"installed"))
         code = command_installed(argc - 2, argv + 2);
+    else if (!wcscmp(argv[1], L"schemes"))
+        code = command_schemes(argc - 2, argv + 2);
     else if (!wcscmp(argv[1], L"uninstall"))
         code = command_uninstall(argc - 2, argv + 2);
     else if (!wcscmp(argv[1], L"features"))
