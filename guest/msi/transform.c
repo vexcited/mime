@@ -443,6 +443,7 @@ static UINT apply_opened(MSIHANDLE handle, MIME_MSI_DATABASE *transform, int fla
     UINT error = !database ? ERROR_INVALID_HANDLE : database->Revision >= 256 ? ERROR_CALL_NOT_IMPLEMENTED :
                  MimeMsiApplyTransformStorage(database, transform, (UINT)flags);
     if (!error) {
+        database->Changes++;
         applied->Database = transform;
         applied->Flags = (UINT)flags;
         transform->Object.References++;

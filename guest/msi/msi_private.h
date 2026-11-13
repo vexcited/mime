@@ -93,6 +93,11 @@ typedef struct MIME_MSI_DATABASE {
     PWSTR Path;
     PWSTR *Strings;
     ULONG StringCount, StringWidth, CodePage, Revision;
+    /* row changes since the open, and how many of them the file has. only a writable handle commits. */
+    ULONG Changes, SavedChanges;
+    BOOL Writable, OutputPending;
+    PWSTR OutputPath;
+    HANDLE WriteLock;
     MIME_MSI_TABLE *Tables;
     struct MIME_MSI_TRANSFORM *Transforms;
     BOOL OwnedData;
@@ -120,6 +125,7 @@ UINT MimeMsiLoadStrings(MIME_MSI_DATABASE *database);
 BOOL MimeMsiEncodeName(PCWSTR name, BOOL table, WCHAR out[32]);
 BOOL MimeMsiDecodeTableName(const WCHAR encoded[32], WCHAR name[64]);
 UINT MimeMsiOpenDatabaseFile(PCWSTR path, BOOL transform, MIME_MSI_DATABASE **out);
+UINT MimeMsiCommitDatabase(MIME_MSI_DATABASE *database);
 UINT MimeMsiOpenStorageFile(PCWSTR path, BYTE kind, MIME_MSI_DATABASE **out);
 UINT MimeMsiOpenSubStorage(MIME_MSI_DATABASE *parent, PCWSTR name, MIME_MSI_DATABASE **out);
 UINT MimeMsiApplyTransform(MSIHANDLE handle, PCWSTR path, int flags, BOOL named_errors);
