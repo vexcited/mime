@@ -81,6 +81,7 @@ typedef struct UiWindow {
     bool configured;
     bool shown;
     bool popup;          /* created as a popup of its owner. */
+    struct wl_subsurface *panel; /* and as a subsurface of it, which the compositor stacks with the owner. */
     uint32_t owner;
     bool fullscreen;
     bool vk;       /* a Vulkan presenter shows the client area. */
@@ -1147,6 +1148,10 @@ static void destroy_host_window(UiWindow *w, bool locked)
     w->texture = nullptr;
     w->renderer = nullptr;
     w->window = nullptr;
+    if (w->panel) {
+        wl_subsurface_destroy(w->panel);
+        w->panel = nullptr;
+    }
     if (window) {
         /*
          * the destruction roundtrips to the compositor and serves the clipboard requests that are waiting, which wait
@@ -1226,8 +1231,44 @@ static UiWindow *popup_owner(const UiWindow *w, const MimeWinConfig *cfg)
     return a;
 }
 
+static struct wl_subcompositor *g_subcompositor;
+static bool wayland_globals(struct wl_display *display);
+
+static struct wl_surface *host_surface(const UiWindow *w)
+{
+    return SDL_GetPointerProperty(SDL_GetWindowProperties(w->window), SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
+}
+
+/*
+ * a bare window that is not topmost is a panel its program lays on its owner, as the command line of AutoCAD. windows
+ * keeps an owned window right over its owner in the order of the screen and under the windows over the owner
+ * (ZOrderByOwner in win32kfull). a compositor has its popups over every window, and places a top level window itself:
+ * a subsurface is the one surface that is placed by its program and stacked with its parent.
+ */
+static bool is_panel(const MimeWinConfig *cfg, const UiWindow *owner)
+{
+    if (!g_wayland || !owner || owner->id != cfg->owner_id ||
+        (cfg->flags & (MIME_WIN_BARE | MIME_WIN_FULLSCREEN | MIME_WIN_TOPMOST | MIME_WIN_TOOL | MIME_WIN_NOINPUT)) !=
+            MIME_WIN_BARE)
+        return false;
+    struct wl_display *display = SDL_GetPointerProperty(SDL_GetWindowProperties(owner->window),
+                                                        SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
+    return display && wayland_globals(display);
+}
+
+static void place_panel(UiWindow *w, const UiWindow *owner, const MimeWinConfig *cfg)
+{
+    int x, y;
+    popup_place(owner, cfg, &x, &y);
+    wl_subsurface_set_position(w->panel, x, y);
+    /* the position lands with the owner's next commit. */
+    struct wl_surface *under = host_surface(owner);
+    if (under)
+        wl_surface_commit(under);
+}
+
 /* menus and tooltips become owner-relative popups on Wayland; other windows become toplevels. */
-static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg, UiWindow *owner)
+static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg, UiWindow *owner, bool panel)
 {
     MimeRect host = host_part(cfg);
     double scale = config_scale(cfg);
@@ -1239,7 +1280,29 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg, UiWindow *
     SDL_WindowFlags flags = SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_TRANSPARENT;
     if (g_gl)
         flags |= SDL_WINDOW_OPENGL;
-    if (popup) {
+    if (panel) {
+        /* SDL gives the surface no role, and still draws on it and reads its mouse. */
+        SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width);
+        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height);
+        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER,
+                              flags | SDL_WINDOW_BORDERLESS | SDL_WINDOW_NOT_FOCUSABLE);
+        SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_WAYLAND_SURFACE_ROLE_CUSTOM_BOOLEAN, true);
+        w->window = SDL_CreateWindowWithProperties(props);
+        SDL_DestroyProperties(props);
+        struct wl_surface *surface = w->window ? host_surface(w) : nullptr, *under = host_surface(owner);
+        if (surface && under)
+            w->panel = wl_subcompositor_get_subsurface(g_subcompositor, surface, under);
+        if (w->window && !w->panel) {
+            SDL_DestroyWindow(w->window);
+            w->window = nullptr;
+            SDL_SetError("the surface cannot lie on its owner");
+        }
+        if (w->panel) {
+            wl_subsurface_set_desync(w->panel);
+            place_panel(w, owner, cfg);
+        }
+    } else if (popup) {
         int x, y;
         popup_place(owner, cfg, &x, &y);
         SDL_WindowFlags kind = (cfg->flags & MIME_WIN_NOINPUT) ? SDL_WINDOW_TOOLTIP : SDL_WINDOW_POPUP_MENU;
@@ -1539,8 +1602,13 @@ static void apply_config(UiWindow *w, const MimeWinConfig *given)
         sized.flags &= ~(uint32_t)MIME_WIN_VISIBLE;
     /* a popup sits on its owner from its creation: another owner or kind makes a new window. */
     UiWindow *owner = popup_owner(w, cfg);
+    bool panel = is_panel(cfg, owner);
+    /* a popup hangs from a window of the compositor, which a panel is not. */
+    while (owner && !panel && owner->panel)
+        owner = owner->owner ? find_window(owner->owner) : nullptr;
     bool want_popup = owner != nullptr;
-    if (w->window && (want_popup != w->popup || (w->popup && w->owner != owner->id))) {
+    if (w->window &&
+        (want_popup != w->popup || (w->popup && w->owner != owner->id) || panel != (w->panel != nullptr))) {
         destroy_host_window(w, false);
         /* the new host window is not shown yet. */
         w->shown = false;
@@ -1563,7 +1631,7 @@ static void apply_config(UiWindow *w, const MimeWinConfig *given)
     if (!w->window && !(cfg->flags & MIME_WIN_VISIBLE))
         return;
     bool fresh = !w->window;
-    if (fresh && !create_host_window(w, cfg, owner))
+    if (fresh && !create_host_window(w, cfg, owner, panel))
         return;
     if (fresh)
         set_geometry(w);
@@ -1615,7 +1683,9 @@ static void apply_config(UiWindow *w, const MimeWinConfig *given)
         SDL_SetWindowMinimumSize(w->window, min_w, min_h);
         SDL_SetWindowMaximumSize(w->window, max_w, max_h);
     }
-    if (w->popup) {
+    if (w->panel) {
+        place_panel(w, owner, cfg);
+    } else if (w->popup) {
         int x, y;
         popup_place(owner, cfg, &x, &y);
         SDL_SetWindowPosition(w->window, x, y);
