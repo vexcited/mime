@@ -1,5 +1,24 @@
 #include "msi_private.h"
 
+/*
+ * the name a directory is kept under. the names of a registry key ignore case and those of the table do not, so a
+ * directory whose name an earlier row has in another case, as CommonAppDataFolder and COMMONAPPDATAFOLDER, takes its row.
+ */
+static void directory_value(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, ULONG id, ULONG row, WCHAR out[96])
+{
+    PCWSTR name = MimeMsiText(package->Database, table, row, id);
+    for (ULONG earlier = 0; earlier < row; earlier++) {
+        PCWSTR other = MimeMsiText(package->Database, table, earlier, id);
+        if (other && !_wcsicmp(other, name)) {
+            _snwprintf(out, 96, L"%s:%u", name, row);
+            out[95] = 0;
+            return;
+        }
+    }
+    _snwprintf(out, 96, L"%s", name);
+    out[95] = 0;
+}
+
 UINT MimeMsiSaveDirectories(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
 {
     MIME_MSI_TABLE *table;
@@ -18,9 +37,12 @@ UINT MimeMsiSaveDirectories(MIME_MSI_PACKAGE *package, HKEY root, PCWSTR path)
             error = ERROR_INSTALL_PACKAGE_INVALID;
         else
             error = MimeMsiDirectoryPath(package, name, FALSE, &directory);
-        if (!error)
-            error = MimeMsiWriteRegistry(package, root, catalog, name, REG_SZ, directory,
+        if (!error) {
+            WCHAR value[96];
+            directory_value(package, table, id, row, value);
+            error = MimeMsiWriteRegistry(package, root, catalog, value, REG_SZ, directory,
                                          (DWORD)(wcslen(directory) + 1) * sizeof(WCHAR));
+        }
         MimeMsiFree(directory);
     }
     return error;
@@ -44,8 +66,11 @@ static UINT restore_directories(MIME_MSI_PACKAGE *package, HKEY product, BOOL va
         PWSTR directory = nullptr, current = nullptr;
         if (!name || !*name)
             error = ERROR_INSTALL_PACKAGE_INVALID;
-        else
-            error = MimeMsiRegistryText(key, name, &directory);
+        else {
+            WCHAR value[96];
+            directory_value(package, table, id, row, value);
+            error = MimeMsiRegistryText(key, value, &directory);
+        }
         /* a package from a source may have folders the installed one did not. */
         if (error == ERROR_FILE_NOT_FOUND && package->Recache) {
             error = ERROR_SUCCESS;
