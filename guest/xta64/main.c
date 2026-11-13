@@ -1232,6 +1232,7 @@ static void process_init(void)
     }
     g_env.suspend = env_suspend;
     x86_jit_sha256 = USER_SHARED_DATA->ProcessorFeatures[30]; /* PF_ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE */
+    x86_probe_host();
     PIMAGE_DOS_HEADER dos = NtCurrentPeb()->ImageBaseAddress;
     PIMAGE_NT_HEADERS32 nt = (void *)((PUCHAR)dos + dos->e_lfanew);
     g_guest.is32 = nt->FileHeader.Machine == IMAGE_FILE_MACHINE_I386;

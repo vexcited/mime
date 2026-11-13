@@ -793,7 +793,7 @@ static void exec_register(X86Cpu *c, const X86Insn *i)
  * the instructions that save, load or clear the fpu's own state: fldenv, fldcw, fnstenv, fnstcw, frstor, fnsave,
  * fnstsw, fnclex, fninit and the 8087 leftovers. they leave the last instruction and data pointers and opcode alone.
  */
-static int is_control(const X86Insn *i)
+int x86_x87_control(const X86Insn *i)
 {
     int sub = (i->modrm >> 3) & 7;
     if (i->mod != 3)
@@ -808,7 +808,7 @@ void x86_exec_x87(X86Cpu *c, const X86Insn *i)
         c->ftop = 0;
     }
     uint64_t a = i->mod == 3 ? 0 : x86_ea(c, i);
-    if (!is_control(i)) {
+    if (!x86_x87_control(i)) {
         /* anti tamper code reads them back, as securom does. */
         c->fop = (uint16_t)(((i->opcode & 7) << 8) | i->modrm);
         c->fpu_ip = c->insn_rip;
