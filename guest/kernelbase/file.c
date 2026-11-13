@@ -1582,6 +1582,10 @@ BOOL WINAPI CopyFileExW(LPCWSTR source, LPCWSTR destination, LPPROGRESS_ROUTINE 
     }
     HANDLE in = CreateFileW(source, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
                             FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    /* a source that a writer holds open is still copied, as BasepCopyFileExW retries with write sharing. */
+    if (in == INVALID_HANDLE_VALUE && GetLastError() == ERROR_SHARING_VIOLATION)
+        in = CreateFileW(source, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                         OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
     if (in == INVALID_HANDLE_VALUE)
         return FALSE;
     BY_HANDLE_FILE_INFORMATION info;
