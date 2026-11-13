@@ -198,13 +198,21 @@ static DWORD_PTR exe_type(LPCWSTR path)
     return result;
 }
 
-/* kind is 1 for the desktop and 2 for "This PC". */
+enum {
+    KIND_PATH,
+    KIND_DESKTOP,
+    KIND_COMPUTER,
+    KIND_NETWORK,
+    KIND_VIRTUAL,
+};
+
 static DWORD_PTR icon_sections(LPCWSTR path, DWORD attributes, UINT flags, int kind, SHFILEINFOW *info)
 {
+    static const int stock[] = {0, SH_STOCK_DESKTOP, SH_STOCK_COMPUTER, SIID_MYNETWORK, SIID_FOLDER};
     SH_ICON_SOURCE source;
     UINT small = flags & SHGFI_SMALLICON;
     if (kind)
-        ShIconSourceStock(kind == 1 ? SH_STOCK_DESKTOP : SH_STOCK_COMPUTER, &source);
+        ShIconSourceStock(stock[kind], &source);
     else
         ShIconSourceForPath(path, attributes, !(flags & SHGFI_USEFILEATTRIBUTES), (flags & SHGFI_OPENICON) != 0,
                             &source);
@@ -249,13 +257,26 @@ SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path, DWORD attributes, SHFILEI
         return 0;
     if (flags & SHGFI_PIDL) {
         PCIDLIST_ABSOLUTE pidl = (PCIDLIST_ABSOLUTE)path;
-        if (!ShPathFromIdList(pidl, full, MAX_PATH)) {
-            /* the desktop and "This PC" have a picture but no path. */
-            if (flags & ~(SHGFI_PIDL | SHGFI_ICON | SHGFI_SYSICONINDEX | SHGFI_ICONLOCATION | SHGFI_SMALLICON |
-                          SHGFI_OPENICON | SHGFI_SHELLICONSIZE | SHGFI_LINKOVERLAY | SHGFI_SELECTED))
+        /* the desktop is itself and not its directory. the virtual folders have no path at all. */
+        if (!pidl->mkid.cb) {
+            kind = KIND_DESKTOP;
+        } else if (!ShPathFromIdList(pidl, full, MAX_PATH)) {
+            switch (ShItemKind((const BYTE *)ILFindLastID(pidl), nullptr)) {
+            case SH_ITEM_COMPUTER:
+                kind = KIND_COMPUTER;
+                break;
+            case SH_ITEM_NETWORK:
+                kind = KIND_NETWORK;
+                break;
+            case SH_ITEM_CLASS:
+                kind = KIND_VIRTUAL;
+                break;
+            default:
                 return 0;
-            kind = !pidl->mkid.cb ? 1 : ShIsComputerItem((const BYTE *)pidl) ? 2 : 0;
-            if (!kind || !info || size < sizeof(*info))
+            }
+        }
+        if (kind) {
+            if ((flags & SHGFI_EXETYPE) || !info || size < sizeof(*info))
                 return 0;
             full[0] = 0;
         }
@@ -295,8 +316,25 @@ SHSTDAPI DWORD_PTR WINAPI SHGetFileInfoW(LPCWSTR path, DWORD attributes, SHFILEI
     DWORD_PTR result = 1;
     if (flags & (SHGFI_ICON | SHGFI_SYSICONINDEX | SHGFI_ICONLOCATION)) {
         result = icon_sections(full, attributes, flags, kind, info);
-        if (kind || !result)
+        if (!result)
             return result;
+    }
+    if (kind) {
+        if ((flags & SHGFI_DISPLAYNAME) && !(flags & SHGFI_ICONLOCATION))
+            ShListDisplayName((PCIDLIST_ABSOLUTE)path, info->szDisplayName);
+        if (flags & SHGFI_TYPENAME)
+            wcscpy(info->szTypeName, L"System Folder");
+        if (flags & SHGFI_ATTRIBUTES) {
+            SFGAOF value = SFGAO_FOLDER | SFGAO_HASSUBFOLDER | SFGAO_CANLINK;
+            if (kind == KIND_DESKTOP || kind == KIND_COMPUTER)
+                value |= SFGAO_FILESYSANCESTOR | SFGAO_STORAGEANCESTOR;
+            if (kind == KIND_DESKTOP)
+                value |= SFGAO_FILESYSTEM;
+            if (flags & SHGFI_ATTR_SPECIFIED)
+                value &= info->dwAttributes;
+            info->dwAttributes = value;
+        }
+        return result;
     }
     if (flags & SHGFI_DISPLAYNAME) {
         if (is_root(full)) {

@@ -113,6 +113,98 @@ struct IShellView {
     const IShellViewVtbl *lpVtbl;
 };
 
+/* how a view lays its items out, and what it was told to do or not to do. */
+#define FVM_ICON 1
+#define FVM_SMALLICON 2
+#define FVM_LIST 3
+#define FVM_DETAILS 4
+#define FVM_THUMBNAIL 5
+#define FVM_TILE 6
+#define FWF_AUTOARRANGE 0x00000001
+#define FWF_SINGLESEL 0x00000040
+#define FWF_NOCLIENTEDGE 0x00000200
+#define FWF_NOSCROLL 0x00000400
+#define FWF_ALIGNLEFT 0x00000800
+
+typedef struct FOLDERSETTINGS {
+    UINT ViewMode;
+    UINT fFlags;
+} FOLDERSETTINGS;
+
+#define SVUIA_DEACTIVATE 0
+#define SVUIA_ACTIVATE_NOFOCUS 1
+#define SVUIA_ACTIVATE_FOCUS 2
+#define SVUIA_INPLACEACTIVATE 3
+
+#define SVSI_DESELECT 0x00000000
+#define SVSI_SELECT 0x00000001
+#define SVSI_EDIT 0x00000003
+#define SVSI_DESELECTOTHERS 0x00000004
+#define SVSI_ENSUREVISIBLE 0x00000008
+#define SVSI_FOCUSED 0x00000010
+
+/* where IShellBrowser::BrowseObject goes, and what its list is relative to. */
+#define SBSP_DEFBROWSER 0x0000
+#define SBSP_SAMEBROWSER 0x0001
+#define SBSP_NEWBROWSER 0x0002
+#define SBSP_ABSOLUTE 0x0000
+#define SBSP_RELATIVE 0x1000
+#define SBSP_PARENT 0x2000
+
+/* the browser of a file dialog, which a view asks what to show and tells what happens in it. */
+MIME_DEFINE_GUID(IID_ICommDlgBrowser, 0x000214F1, 0x0000, 0x0000, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46);
+#define CDBOSC_SETFOCUS 0
+#define CDBOSC_KILLFOCUS 1
+#define CDBOSC_SELCHANGE 2
+#define CDBOSC_RENAME 3
+#define CDBOSC_STATECHANGE 4
+
+typedef struct ICommDlgBrowser ICommDlgBrowser;
+typedef struct ICommDlgBrowserVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(ICommDlgBrowser *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(ICommDlgBrowser *This);
+    ULONG(STDMETHODCALLTYPE *Release)(ICommDlgBrowser *This);
+    HRESULT(STDMETHODCALLTYPE *OnDefaultCommand)(ICommDlgBrowser *This, IShellView *view);
+    HRESULT(STDMETHODCALLTYPE *OnStateChange)(ICommDlgBrowser *This, IShellView *view, ULONG change);
+    HRESULT(STDMETHODCALLTYPE *IncludeObject)(ICommDlgBrowser *This, IShellView *view, PCUITEMID_CHILD pidl);
+} ICommDlgBrowserVtbl;
+struct ICommDlgBrowser {
+    const ICommDlgBrowserVtbl *lpVtbl;
+};
+
+MIME_DEFINE_GUID(IID_IFolderView, 0xCDE725B0, 0xCCC9, 0x4519, 0x91, 0x7E, 0x32, 0x5D, 0x72, 0xFA, 0xB4, 0xCE);
+typedef struct IFolderView IFolderView;
+typedef struct IFolderViewVtbl {
+    HRESULT(STDMETHODCALLTYPE *QueryInterface)(IFolderView *This, REFIID riid, void **object);
+    ULONG(STDMETHODCALLTYPE *AddRef)(IFolderView *This);
+    ULONG(STDMETHODCALLTYPE *Release)(IFolderView *This);
+    HRESULT(STDMETHODCALLTYPE *GetCurrentViewMode)(IFolderView *This, UINT *mode);
+    HRESULT(STDMETHODCALLTYPE *SetCurrentViewMode)(IFolderView *This, UINT mode);
+    HRESULT(STDMETHODCALLTYPE *GetFolder)(IFolderView *This, REFIID riid, void **folder);
+    HRESULT(STDMETHODCALLTYPE *Item)(IFolderView *This, int index, PITEMID_CHILD *pidl);
+    HRESULT(STDMETHODCALLTYPE *ItemCount)(IFolderView *This, UINT flags, int *count);
+    HRESULT(STDMETHODCALLTYPE *Items)(IFolderView *This, UINT flags, REFIID riid, void **items);
+    HRESULT(STDMETHODCALLTYPE *GetSelectionMarkedItem)(IFolderView *This, int *index);
+    HRESULT(STDMETHODCALLTYPE *GetFocusedItem)(IFolderView *This, int *index);
+    HRESULT(STDMETHODCALLTYPE *GetItemPosition)(IFolderView *This, PCUITEMID_CHILD pidl, POINT *point);
+    HRESULT(STDMETHODCALLTYPE *GetSpacing)(IFolderView *This, POINT *spacing);
+    HRESULT(STDMETHODCALLTYPE *GetDefaultSpacing)(IFolderView *This, POINT *spacing);
+    HRESULT(STDMETHODCALLTYPE *GetAutoArrange)(IFolderView *This);
+    HRESULT(STDMETHODCALLTYPE *SelectItem)(IFolderView *This, int index, DWORD flags);
+    HRESULT(STDMETHODCALLTYPE *SelectAndPositionItems)(IFolderView *This, UINT count, PCUITEMID_CHILD *items,
+                                                       POINT *points, DWORD flags);
+} IFolderViewVtbl;
+struct IFolderView {
+    const IFolderViewVtbl *lpVtbl;
+};
+
+/* the lists a data object of shell items carries: the folder first, then each item relative to it. */
+#define CFSTR_SHELLIDLIST L"Shell IDList Array"
+typedef struct _IDA {
+    UINT cidl;
+    UINT aoffset[1];
+} CIDA, *LPIDA;
+
 /* ------------------------------------------------------------------ the list of shell windows */
 
 typedef struct IShellWindows IShellWindows;
