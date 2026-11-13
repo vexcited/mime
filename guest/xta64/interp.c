@@ -1683,7 +1683,7 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
 
 /* ------------------------------------------------------------ block cache */
 
-#define BLOCK_MAX 32
+#define BLOCK_MAX 128
 #define JIT_BATCH X86_JIT_BATCH
 #define JIT_BATCH_AGE 64   /* runs of waiting blocks before the batch is made visible anyway. */
 #define TABLE_FIRST 4096
@@ -1691,6 +1691,7 @@ static void exec_0f(X86Cpu *c, const X86Insn *i)
 
 typedef struct X86BlockCache {
     X86Table table;         /* first: translated code finds it through the cpu's blocks. */
+    uint8_t *ras, *ras_raw; /* the return stack of translated code, aligned to its size, and its allocation. */
     X86Block *pages[PAGE_BUCKETS]; /* the blocks by the page they start in, to find the ones a code change hits. */
     uint8_t *arena;
     size_t arena_used;
@@ -1961,6 +1962,22 @@ decode:
     return b;
 }
 
+/* no entry of the return stack matches a return address: its code may be gone. */
+static void ras_clear(X86BlockCache *bc)
+{
+    if (bc->ras)
+        __builtin_memset(bc->ras, 0xFF, X86_RAS_BYTES);
+}
+
+static uint8_t *ras_ring(X86BlockCache *bc)
+{
+    if (!bc->ras && (bc->ras_raw = x86_alloc(2 * X86_RAS_BYTES))) {
+        bc->ras = (uint8_t *)(((uintptr_t)bc->ras_raw + X86_RAS_BYTES - 1) & ~(uintptr_t)(X86_RAS_BYTES - 1));
+        ras_clear(bc);
+    }
+    return bc->ras;
+}
+
 void *x86_new_blocks(void)
 {
     X86BlockCache *bc = x86_alloc(sizeof(X86BlockCache));
@@ -1997,6 +2014,8 @@ void x86_free_blocks(X86Cpu *c)
         a = next;
     }
     free_code(bc);
+    if (bc->ras_raw)
+        x86_free(bc->ras_raw, 2 * X86_RAS_BYTES);
     if (bc->table.slots)
         x86_free(bc->table.slots, (bc->table.mask + 1) * sizeof(X86Slot));
     x86_free(bc, sizeof(*bc));
@@ -2020,9 +2039,13 @@ void x86_flush_blocks(X86Cpu *c)
         __builtin_memset(table.slots, 0, (table.mask + 1) * sizeof(X86Slot));
     table.used = 0;
     uint32_t drops = bc->drops;
+    uint8_t *ras = bc->ras, *ras_raw = bc->ras_raw;
     __builtin_memset(bc, 0, sizeof(*bc));
     bc->table = table;
     bc->drops = drops + 1;
+    bc->ras = ras;
+    bc->ras_raw = ras_raw;
+    ras_clear(bc);
 }
 
 static int overlaps(const X86Block *b, uint64_t start, uint64_t end) { return b->rip < end && start < b->end; }
@@ -2030,10 +2053,13 @@ static int overlaps(const X86Block *b, uint64_t start, uint64_t end) { return b-
 static void drop_block(X86BlockCache *bc, X86Block *b)
 {
     b->dropped = 1;
+    ras_clear(bc);
     for (X86Link *l = b->links; l; l = l->next) {
         x86_code_write_begin();
         __atomic_store_n(&l->slot->code, nullptr, __ATOMIC_RELAXED);
+        x86_chain(l->slot);
         x86_code_write_end(l->slot, sizeof(*l->slot));
+        x86_code_write_end(l->slot->branch, 4);
     }
     b->links = nullptr;
     table_remove(&bc->table, b);
@@ -2149,7 +2175,7 @@ static void jit_block(X86Cpu *c, X86Block *b)
 {
     X86BlockCache *bc = block_cache(c);
     b->runs = ~0u;
-    if (!b->count || b->count > 64)
+    if (!b->count || b->count > BLOCK_MAX)
         return;
     if (!bc->code || bc->code_used + JIT_MAX_WORDS * 4 > CODE_ARENA_SIZE) {
         jit_publish(bc); /* a batch stays within one arena. */
@@ -2166,34 +2192,70 @@ static void jit_block(X86Cpu *c, X86Block *b)
     }
     uint16_t *offsets = cache_alloc(bc, (b->count + 1) * sizeof(uint16_t));
     uint16_t *held = cache_alloc(bc, b->count * sizeof(uint16_t));
-    uint32_t *code = (uint32_t *)(bc->code + bc->code_used);
+    uint64_t *x87 = cache_alloc(bc, b->count * sizeof(uint64_t));
+    uint8_t *region = bc->code + bc->code_used;
+    uint32_t *code = (uint32_t *)(region + 16);
     x86_code_write_begin();
-    uint32_t words = x86_jit_translate(c, b->rip, b->insns, b->count, code, JIT_MAX_WORDS, offsets, held);
+    uint32_t words = x86_jit_translate(c, b->rip, b->insns, b->count, code, JIT_MAX_WORDS - 4, offsets, held, x87, b);
     if (!words)
         return;
-    bc->code_used += (words * 4 + 63) & ~(size_t)63;
+    *(uint64_t *)region = X86_JIT_MAGIC;
+    *(X86Block **)(region + 8) = b;
+    bc->code_used += (16 + words * 4 + 63) & ~(size_t)63;
     b->jit_offsets = offsets;
     b->jit_xmm = held;
+    b->jit_x87 = x87;
     b->jit_ready = code;
     if (!bc->pending_count)
-        bc->pending_start = (uint8_t *)code;
+        bc->pending_start = region;
     bc->pending[bc->pending_count++] = b;
     if (bc->pending_count >= x86_jit_batch || bc->pending_count == JIT_BATCH)
         jit_publish(bc);
 }
 
+/* the block whose translated code holds pc, found from the mark before its code: each starts on 64 bytes. */
+static const X86Block *block_at(const X86BlockCache *bc, uint64_t pc)
+{
+    for (const X86BlockArena *a = bc ? bc->code_arenas : nullptr; a; a = a->next) {
+        uintptr_t low = (uintptr_t)a + 64;
+        if (pc < low || pc >= (uintptr_t)a + a->size)
+            continue;
+        for (uintptr_t p = (uintptr_t)pc & ~(uintptr_t)63; p >= low; p -= 64)
+            if (*(const uint64_t *)p == X86_JIT_MAGIC)
+                return *(const X86Block *const *)(p + 8);
+        return nullptr;
+    }
+    return nullptr;
+}
+
 void x86_jit_fault(X86Cpu *c, uint64_t pc, const uint64_t *x, const void *v)
 {
-    const X86Block *b = c->jit_block;
-    if (!b || pc < (uint64_t)(uintptr_t)b->jit)
+    const X86Block *b = block_at(c->blocks, pc);
+    if (!b || !b->jit || pc < (uint64_t)(uintptr_t)b->jit)
         return;
     uint32_t offset = (uint32_t)((pc - (uint64_t)(uintptr_t)b->jit) / 4);
     if (offset >= b->jit_offsets[b->count])
         return;
+    if (x86_jit_afp) {
+        /* translated code was running, in its floating point mode: what runs from here is c code again. */
+        uint64_t fpcr;
+        __asm__ volatile("mrs %0, fpcr" : "=r"(fpcr));
+        __asm__ volatile("msr fpcr, %0" ::"r"(fpcr & ~4ull));
+    }
     uint32_t k = 0;
     while (k + 1 < b->count && offset >= b->jit_offsets[k + 1])
         k++;
     c->insn_rip = x86_jit_fault_rip(b->rip, b->insns, b->count, b->jit_offsets, offset);
+    /* translated code stores the last x87 instruction pointer and opcode at its exits only. */
+    uint64_t at = b->rip;
+    for (uint32_t j = 0; j <= k; j++) {
+        const X86Insn *i = &b->insns[j];
+        if (i->map == 0 && i->opcode >= 0xD8 && i->opcode <= 0xDF && !x86_x87_control(i)) {
+            c->fop = (uint16_t)(((i->opcode & 7) << 8) | i->modrm);
+            c->fpu_ip = at;
+        }
+        at += i->len;
+    }
     /* translated code keeps rax to rdi in x20 to x27, r8 to r15 in x0 to x7 and the xmm it holds in v16 to v31. */
     for (int n = 0; n < 8; n++) {
         c->r[n] = x[20 + n];
@@ -2202,10 +2264,34 @@ void x86_jit_fault(X86Cpu *c, uint64_t pc, const uint64_t *x, const void *v)
     for (int n = 0; n < 16; n++)
         if (v && (b->jit_xmm[k] & 1u << n))
             __builtin_memcpy(&c->xmm[n], (const uint8_t *)v + (16 + n) * 16, 16);
+    /* and of the x87 stack the registers it changed in v4 to v11, the top and the tags, counted from the base in x17. */
+    uint64_t held = b->jit_x87[k];
+    if (held & 1) {
+        uint32_t base = (uint32_t)x[17] & 7, set = (uint32_t)(held >> 16 & 0xFF) << base, clear = (uint32_t)(held >> 24 & 0xFF) << base;
+        for (uint32_t n = 0; n < 8; n++)
+            if (v && (held >> 8 & 1u << n))
+                __builtin_memcpy(&c->fpr[(base + n) & 7], (const uint8_t *)v + (4 + (held >> (32 + 3 * n) & 7)) * 16, 8);
+        c->ftop = (uint8_t)((base + (held >> 1 & 7)) & 7);
+        c->ftag = (uint8_t)((c->ftag | set | set >> 8) & ~(clear | clear >> 8));
+    }
 }
 
 void x86_run(X86Cpu *c)
 {
+    if (x86_jit_afp) {
+        /* nans come out as x86 makes them from here on, for the interpreter as for translated code. */
+        uint64_t fpcr;
+        __asm__ volatile("mrs %0, fpcr" : "=r"(fpcr));
+        if (!(fpcr & 2))
+            __asm__ volatile("msr fpcr, %0" ::"r"(fpcr | 2));
+    }
+    /* translated code reads both without asking whether the environment gave them. */
+    static volatile unsigned int never;
+    static const volatile uint32_t no_epoch;
+    if (!c->suspend_pending)
+        c->suspend_pending = &never;
+    if (!c->code_epoch)
+        c->code_epoch = &no_epoch;
     X86ChainSlot *pending = nullptr; /* the slot the last translated run left through, to link to what follows. */
     c->jit_block = nullptr; /* in case a fault in translated code restarted the run. */
     uint32_t drops = block_cache(c)->drops;
@@ -2258,13 +2344,19 @@ void x86_run(X86Cpu *c)
                 pending->block = b;
                 __atomic_store_n(&pending->code, b->jit + X86_JIT_PROLOGUE, __ATOMIC_RELEASE);
                 x86_code_write_end(pending, sizeof(*pending));
+                /* the block is in the slot before the branch that makes it the running one leads to it. */
+                x86_code_write_begin();
+                x86_chain(pending);
+                x86_code_write_end(pending->branch, 4);
             }
             pending = nullptr;
         }
         uint32_t first = 0;
-        if (code) {
+        uint8_t *ring = code ? ras_ring(c->blocks) : nullptr;
+        if (code && ring) {
             c->jit_block = b;
             c->exit_slot = nullptr;
+            c->ras = ring + (c->ras_top & (X86_RAS_BYTES - 16));
             /* the table only grows, and so moves, in the dispatcher. */
             c->jit_slots = ((X86BlockCache *)c->blocks)->table.slots;
             c->jit_mask = ((X86BlockCache *)c->blocks)->table.mask;
@@ -2272,6 +2364,7 @@ void x86_run(X86Cpu *c)
             /* chained exits ran on into other blocks: the last one is where the run stopped. */
             b = (X86Block *)c->jit_block;
             c->jit_block = nullptr;
+            c->ras_top = (uint32_t)((uintptr_t)c->ras & (X86_RAS_BYTES - 1));
             c->steps += first;
             if (first == b->count)
                 pending = c->exit_slot;
