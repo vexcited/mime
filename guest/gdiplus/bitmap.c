@@ -103,7 +103,7 @@ GpStatus gp_bitmap_create_with_bits(INT width, INT height, INT stride, PixelForm
             return OutOfMemory;
         }
     }
-    b->dpi_x = b->dpi_y = 96.0f;
+    b->dpi_x = b->dpi_y = gp_desktop_dpi();
     b->raw_format = ImageFormatMemoryBMP;
     b->flags = ImageFlagsColorSpaceRGB;
     if (IsAlphaPixelFormat(format))

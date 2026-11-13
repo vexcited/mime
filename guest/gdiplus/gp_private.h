@@ -48,6 +48,8 @@ typedef struct GObject {
 
 /* true between GdiplusStartup and the matching GdiplusShutdown. functions that create objects check it. */
 BOOL gp_started(void);
+/* the dots per inch of the display, which a bitmap made in memory takes as its resolution. */
+float gp_desktop_dpi(void);
 #define GP_REQUIRE_INIT()                  \
     do {                                   \
         if (!gp_started())                 \
