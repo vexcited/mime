@@ -1196,13 +1196,19 @@ static UiWindow *popup_owner(const UiWindow *w, const MimeWinConfig *cfg)
      * a program that draws its own menus and lists has them in bare topmost windows it owns, with none of the tool
      * styles. a wayland compositor would place such a top level window itself, hyprland in the middle of the screen.
      */
-    bool menu = g_wayland && cfg->owner_id && (cfg->flags & (MIME_WIN_BARE | MIME_WIN_TOPMOST | MIME_WIN_FULLSCREEN)) ==
-                                                  (MIME_WIN_BARE | MIME_WIN_TOPMOST);
-    if (!(cfg->flags & MIME_WIN_TOOL) && !menu)
+    bool bare = g_wayland && cfg->owner_id && (cfg->flags & (MIME_WIN_BARE | MIME_WIN_FULLSCREEN)) == MIME_WIN_BARE;
+    bool menu = bare && (cfg->flags & MIME_WIN_TOPMOST);
+    if (!(cfg->flags & MIME_WIN_TOOL) && !bare)
         return nullptr;
     UiWindow *owner = cfg->owner_id ? find_window(cfg->owner_id) : nullptr;
     if (owner && owner->window && (owner->shown || !g_wayland))
         return owner;
+    /*
+     * a bare window that is not topmost is a panel its program lays on its owner, as the command line of AutoCAD. one
+     * whose owner does not show is a window of its own, as the borderless main form of a VCL program.
+     */
+    if (!(cfg->flags & MIME_WIN_TOOL) && !menu)
+        return nullptr;
     if (!g_wayland)
         return nullptr;
     /* the one found first is kept. */
