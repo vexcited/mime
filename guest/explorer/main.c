@@ -137,6 +137,33 @@ static BOOL scheme_name(const WCHAR *name)
     return n >= 2 && n < RTL_NUMBER_OF(((MimeShellProtocols *)0)->scheme[0]);
 }
 
+/* the program of an open command: the first word, in quotes or up to the end of its .exe. */
+static void command_program(HKEY key, uint16_t *out, SIZE_T chars)
+{
+    static WCHAR raw[1024], line[1024];
+    DWORD type, bytes = sizeof(raw) - sizeof(WCHAR);
+    out[0] = 0;
+    if (RegQueryValueExW(key, nullptr, nullptr, &type, (BYTE *)raw, &bytes) || (type != REG_SZ && type != REG_EXPAND_SZ))
+        return;
+    raw[bytes / sizeof(WCHAR)] = 0;
+    DWORD n = ExpandEnvironmentStringsW(raw, line, RTL_NUMBER_OF(line));
+    if (!n || n > RTL_NUMBER_OF(line))
+        return;
+    const WCHAR *start = line, *end;
+    while (*start == L' ')
+        start++;
+    if (*start == L'"') {
+        end = wcschr(++start, L'"');
+    } else {
+        for (end = start; *end && _wcsnicmp(end, L".exe", 4); end++) {}
+        end = *end ? end + 4 : nullptr;
+    }
+    if (!end || end == start || (SIZE_T)(end - start) >= chars)
+        return;
+    memcpy(out, start, (SIZE_T)(end - start) * sizeof(WCHAR));
+    out[end - start] = 0;
+}
+
 /* a class is a protocol when it has the URL Protocol value, and is answered when it has a command to open. */
 static void add_protocols(MimeShellProtocols *list, HKEY root)
 {
@@ -159,15 +186,16 @@ static void add_protocols(MimeShellProtocols *list, HKEY root)
         _snwprintf(command, RTL_NUMBER_OF(command), L"%ls\\shell\\open\\command", name);
         if (!protocol || RegOpenKeyExW(classes, command, 0, KEY_READ, &key))
             continue;
-        RegCloseKey(key);
         BOOL known = FALSE;
         for (DWORD k = 0; k < list->count && !known; k++)
             known = !_wcsicmp((const WCHAR *)list->scheme[k], name);
         if (!known && list->count < MIME_PROTOCOLS) {
             for (SIZE_T c = 0; name[c]; c++)
                 list->scheme[list->count][c] = name[c] >= L'A' && name[c] <= L'Z' ? name[c] | 0x20 : name[c];
+            command_program(key, list->program[list->count], RTL_NUMBER_OF(list->program[0]));
             list->count++;
         }
+        RegCloseKey(key);
     }
     RegCloseKey(classes);
 }

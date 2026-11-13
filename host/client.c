@@ -924,17 +924,47 @@ static char *escape_spaces(const char *address)
  * programs start directly. anything else goes to openwith: an app by its id or name, or what the run box opens, a
  * program found on the path or under App Paths, a document with its program, a shortcut, a url.
  */
+/* whether the address is of one of the schemes of a list with commas. */
+static bool scheme_listed(const char *address, const char *schemes)
+{
+    size_t length = (size_t)(strstr(address, "://") - address);
+    for (const char *p = schemes; *p;) {
+        const char *end = strchrnul(p, ',');
+        if ((size_t)(end - p) == length && !strncasecmp(p, address, length))
+            return true;
+        p = *end ? end + 1 : end;
+    }
+    return false;
+}
+
 int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
 {
     bool admin = false;
-    if (argc > 0 && strcmp(argv[0], "--admin") == 0) {
-        admin = true;
-        argc--;
-        argv++;
+    const char *schemes = nullptr;
+    for (;;) {
+        if (argc > 0 && strcmp(argv[0], "--admin") == 0) {
+            admin = true;
+            argc--;
+            argv++;
+        } else if (argc > 1 && strcmp(argv[0], "--protocols") == 0) {
+            schemes = argv[1];
+            argc -= 2;
+            argv += 2;
+        } else {
+            break;
+        }
     }
     if (argc < 1 || !strncmp(argv[0], "--", 2)) {
-        fprintf(stderr, "usage: mime run [--admin] <target> [args]\n");
+        fprintf(stderr, "usage: mime run [--admin] [--protocols <schemes>] <target> [args]\n");
         return 2;
+    }
+    /*
+     * the entry of a program is also what the desktop opens the addresses of its protocols with, and it has one
+     * command line for both. the address comes last, and is run for itself: the machine knows what answers it.
+     */
+    if (schemes && argc > 1 && is_address(argv[argc - 1]) && scheme_listed(argv[argc - 1], schemes)) {
+        argv += argc - 1;
+        argc = 1;
     }
     const char *target = argv[0];
     if (is_address(target) && strchr(target, ' ')) {
