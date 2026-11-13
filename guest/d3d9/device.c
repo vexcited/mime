@@ -860,13 +860,23 @@ static HRESULT STDMETHODCALLTYPE device_stretch_rect(IDirect3DDevice9Ex *iface, 
             desc.SampleDesc.Quality = 0;
             desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
             desc.MiscFlags = 0;
-            d->d3d11->lpVtbl->CreateTexture2D(d->d3d11, &desc, nullptr, &s->resolved);
+            if (FAILED(d->d3d11->lpVtbl->CreateTexture2D(d->d3d11, &desc, nullptr, &s->resolved))) {
+                s->resolved = nullptr;
+                D9Unlock(d);
+                return D3DERR_OUTOFVIDEOMEMORY;
+            }
         }
-        if (s->resolved) {
-            d->mime->lpVtbl->Blit(d->mime, (ID3D11Resource *)s->resolved, 0, &sr, from, from_sub, &sr, FALSE);
-            from = (ID3D11Resource *)s->resolved;
-            from_sub = 0;
+        /* a linear blit also reads the texels around the rectangle. */
+        RECT rr = sr;
+        if (filter == D3DTEXF_LINEAR) {
+            rr.left = D9_MAX(rr.left - 1, 0);
+            rr.top = D9_MAX(rr.top - 1, 0);
+            rr.right = D9_MIN(rr.right + 1, (LONG)s->width);
+            rr.bottom = D9_MIN(rr.bottom + 1, (LONG)s->height);
         }
+        d->mime->lpVtbl->Blit(d->mime, (ID3D11Resource *)s->resolved, 0, &rr, from, from_sub, &rr, FALSE);
+        from = (ID3D11Resource *)s->resolved;
+        from_sub = 0;
     }
     d->mime->lpVtbl->Blit(d->mime, (ID3D11Resource *)t->texture, D9SurfaceSubresource(t), &dr, from, from_sub, &sr,
                           filter == D3DTEXF_LINEAR);
