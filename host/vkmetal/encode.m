@@ -152,11 +152,16 @@ static void set_address(id<MTL4ArgumentTable> table, uint32_t index, uint64_t ad
     [table setAddress:address atIndex:index];
 }
 
-static void plain_raster(id<MTL4RenderCommandEncoder> r)
+/* the raster state clears and blits draw with, kept as what the encoder has so the next VKM_OP_RASTER sets its own. */
+static void plain_raster(Enc *e)
 {
+    id<MTL4RenderCommandEncoder> r = e->render;
     [r setCullMode:MTLCullModeNone];
     [r setTriangleFillMode:MTLTriangleFillModeFill];
     [r setDepthBias:0.0f slopeScale:0.0f clamp:0.0f];
+    e->raster.cull = MTLCullModeNone;
+    e->raster.fill = MTLTriangleFillModeFill;
+    e->raster.bias_constant = e->raster.bias_slope = e->raster.bias_clamp = 0.0f;
 }
 
 static void clear_rects(Enc *e, const VkmOpClearRects *o)
@@ -165,7 +170,7 @@ static void clear_rects(Enc *e, const VkmOpClearRects *o)
     [r setRenderPipelineState:o->pipeline];
     [r setDepthStencilState:o->depth_state];
     [r setStencilReferenceValue:o->stencil];
-    plain_raster(r);
+    plain_raster(e);
     set_address(e->q->tables[0], 0, o->values);
     for (uint32_t i = 0; i < o->rect_count; i++) {
         MTLScissorRect s = scissor(e, o->rects[i]);
@@ -188,7 +193,7 @@ static void blit(Enc *e, const VkmOpBlit *o)
     id<MTL4ArgumentTable> table = e->q->tables[0];
     [r setRenderPipelineState:o->pipeline];
     [r setDepthStencilState:o->depth_state];
-    plain_raster(r);
+    plain_raster(e);
     MTLScissorRect s = scissor(e, o->rect);
     if (!s.width || !s.height)
         return;
