@@ -132,6 +132,7 @@ enum {
     VKM_OP_AS_BUILD,
     VKM_OP_AS_COPY,
     VKM_OP_AS_PROPERTY,    /* a query of a structure's size. */
+    VKM_OP_WRITES,         /* what the render pass's draws write, as far as the pass has not said yet. */
 };
 
 typedef struct VkmOp {
@@ -145,6 +146,7 @@ typedef struct VkmAttach {
     uint8_t resolve_filter;
     uint8_t pad;
     MTLClearColor clear;
+    VkImage image; /* the view's, or nullptr in a pass the driver makes for a clear, a blit or a resolve. */
 } VkmAttach;
 
 typedef struct VkmBeginRender {
@@ -155,6 +157,21 @@ typedef struct VkmBeginRender {
     VkmAttach depth, stencil;
     id<MTLBuffer> visibility; /* the occlusion query pool's buffer. */
 } VkmBeginRender;
+
+/*
+ * what a render pass's draws write: a bit a color attachment, then depth and stencil. a pass that writes memory other
+ * than its attachments, or reads the one it draws to, stays apart from the passes around it.
+ */
+enum {
+    VKM_WRITES_DEPTH = 1u << VKM_COLORS,
+    VKM_WRITES_STENCIL = 1u << (VKM_COLORS + 1),
+    VKM_WRITES_APART = 1u << 31,
+};
+
+typedef struct VkmOpWrites {
+    VkmOp head;
+    uint32_t mask;
+} VkmOpWrites;
 
 /* a render pipeline state, or a depth stencil state. */
 typedef struct VkmOpObject {
@@ -411,6 +428,7 @@ struct VkmGfxState {
 
     /* the render pass being recorded. */
     bool rendering, drawn;
+    uint32_t writes; /* what its VKM_OP_WRITES have said. */
     size_t begin; /* offset of its VKM_OP_BEGIN_RENDER. */
     uint32_t color_count, colors[VKM_COLORS], samples;
     uint32_t width, height, layers;
@@ -459,6 +477,8 @@ struct VkmGfxState {
 void *vkm_emit(VkCommandBuffer cmd, uint32_t op, size_t size);
 /* forgets what the list set, after commands that change encoder state behind the state tracking. */
 void vkm_forget(VkCommandBuffer cmd);
+/* says what the render pass's next draws write that it has not said yet, VKM_WRITES_* and color attachment bits. */
+void vkm_pass_writes(VkCommandBuffer cmd, uint32_t writes);
 /* ends the render pass and begins it again where it left off, without a visibility buffer, or nullptr. */
 VkmBeginRender *vkm_render_split(VkCommandBuffer cmd);
 uint64_t vkm_stages(VkPipelineStageFlags2 stages);

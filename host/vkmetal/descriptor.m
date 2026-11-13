@@ -334,6 +334,16 @@ typedef struct Element {
     VkAccelerationStructureKHR structure;
 } Element;
 
+/* the resource a shader reads the view through. */
+static uint64_t view_rid(VkImageView view)
+{
+    if (!view)
+        return 0;
+    if (!view->image->read)
+        view->image->read = true;
+    return view->rid._impl;
+}
+
 /* a mutable binding takes the type of each write. */
 static void write_element(VkDescriptorSet set, const VkmBinding *b, VkDescriptorType type, uint32_t index,
                           const Element *e)
@@ -346,14 +356,14 @@ static void write_element(VkDescriptorSet set, const VkmBinding *b, VkDescriptor
             *slot_at(set, b->slot + index) = e->sampler ? e->sampler->rid._impl : 0;
         break;
     case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-        *slot_at(set, b->slot + index) = e->view ? e->view->rid._impl : 0;
+        *slot_at(set, b->slot + index) = view_rid(e->view);
         if (!b->immutable)
             *slot_at(set, b->slot + b->count + index) = e->sampler ? e->sampler->rid._impl : 0;
         break;
     case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
     case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
     case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
-        *slot_at(set, b->slot + index) = e->view ? e->view->rid._impl : 0;
+        *slot_at(set, b->slot + index) = view_rid(e->view);
         break;
     case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
     case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
@@ -566,7 +576,7 @@ static VKAPI_ATTR void VKAPI_CALL GetDescriptorSetLayoutBindingOffsetEXT(VkDevic
 
 static uint64_t image_rid(const VkDescriptorImageInfo *info)
 {
-    return info && info->imageView ? info->imageView->rid._impl : 0;
+    return info ? view_rid(info->imageView) : 0;
 }
 
 static uint64_t texel_rid(VkDevice device, const VkDescriptorAddressInfoEXT *info)
