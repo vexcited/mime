@@ -167,10 +167,23 @@ static DWORD open_file_name(PCWSTR name, DWORD access, OBJ **out)
     NTSTATUS status = NtOpenFile(&handle, access, &oa, &io, 7, FILE_OPEN_FOR_BACKUP_INTENT_ | FILE_OPEN_REPARSE_POINT_);
     if (status == STATUS_INVALID_PARAMETER_)
         status = NtOpenFile(&handle, access, &oa, &io, 7, FILE_OPEN_FOR_BACKUP_INTENT_);
-    RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, buffer);
-    if (!NT_SUCCESS(status))
+    if (!NT_SUCCESS(status)) {
+        RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, buffer);
         return RtlNtStatusToDosError(status);
-    OBJ *o = obj_new(SE_FILE_OBJECT, handle, TRUE, name);
+    }
+    /* the parent is found by name, so keep the full name that was opened and not a relative or slashed one. */
+    PWSTR full = buffer;
+    SIZE_T length = nt.Length / sizeof(WCHAR);
+    if (length >= 6 && buffer[5] == ':') {
+        full = buffer + 4;
+    } else if (length >= 8 && !_wcsnicmp(buffer + 4, L"UNC\\", 4)) {
+        full = buffer + 6;
+        full[0] = '\\';
+    } else {
+        buffer[1] = '\\';
+    }
+    OBJ *o = obj_new(SE_FILE_OBJECT, handle, TRUE, full);
+    RtlFreeHeap(NtCurrentPeb()->ProcessHeap, 0, buffer);
     if (!o) {
         CloseHandle(handle);
         return ERROR_NOT_ENOUGH_MEMORY;
