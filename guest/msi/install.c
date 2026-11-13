@@ -1674,6 +1674,15 @@ UINT MimeMsiStandardAction(MIME_MSI_PACKAGE *package, PCWSTR action)
             if (error)
                 return error;
         }
+        /*
+         * a first installation has its source resolved without ResolveSource: packages such as AutoCAD's read
+         * SOURCEDIR in the execute sequence and never run that action.
+         */
+        if (!*MimeMsiGetProperty(package, L"Installed") && !*MimeMsiGetProperty(package, L"SOURCEDIR")) {
+            error = MimeMsiSetProperty(package, L"SOURCEDIR", MimeMsiGetProperty(package, L"SourceDir"));
+            if (error)
+                return error;
+        }
         return MimeMsiSetProperty(package, L"CostingComplete", L"0");
     }
     if (!wcscmp(action, L"FileCost")) {
