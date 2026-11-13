@@ -65,17 +65,20 @@ static UINT duplicate_target(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, U
     PCWSTR folder = cell_text(package, table, row, L"DestFolder");
     if (!folder)
         return ERROR_INSTALL_PACKAGE_INVALID;
-    PWSTR directory = nullptr, name = nullptr;
+    /* a DestName is a Filename and not Formatted, so brackets stay as they are. */
+    PCWSTR name = long_name_of(cell_text(package, table, row, L"DestName"));
+    if (!name)
+        name = file_name_of(source);
+    if (!*name || !wcscmp(name, L".") || !wcscmp(name, L"..") || wcschr(name, L'\\') ||
+        wcschr(name, L'/') || wcschr(name, L':'))
+        return ERROR_INSTALL_PACKAGE_INVALID;
+    PWSTR directory = nullptr;
     UINT error = folder_path(package, folder, &directory);
-    PCWSTR raw = cell_text(package, table, row, L"DestName");
-    if (!error && raw)
-        error = MimeMsiFormat(package, raw, &name);
     if (!error)
-        *target = MimeMsiJoinPath(directory, name && *name ? long_name_of(name) : file_name_of(source));
+        *target = MimeMsiJoinPath(directory, name);
     if (!error && !*target)
         error = ERROR_NOT_ENOUGH_MEMORY;
     MimeMsiFree(directory);
-    MimeMsiFree(name);
     return error;
 }
 
