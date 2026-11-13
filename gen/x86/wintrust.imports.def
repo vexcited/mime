@@ -8,6 +8,7 @@ EXPORTS
     CryptCATAdminReleaseCatalogContext@12
     CryptCATAdminReleaseContext@8
     CryptCATCatalogInfoFromContext@12
+    WTHelperCertCheckValidSignature@4
     WTHelperCertIsSelfSigned@8
     WTHelperGetProvCertFromChain@8
     WTHelperGetProvSignerFromChain@16

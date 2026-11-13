@@ -8,6 +8,7 @@ EXPORTS
     CryptCATAdminReleaseCatalogContext=_CryptCATAdminReleaseCatalogContext@12
     CryptCATAdminReleaseContext=_CryptCATAdminReleaseContext@8
     CryptCATCatalogInfoFromContext=_CryptCATCatalogInfoFromContext@12
+    WTHelperCertCheckValidSignature=_WTHelperCertCheckValidSignature@4
     WTHelperCertIsSelfSigned=_WTHelperCertIsSelfSigned@8
     WTHelperGetProvCertFromChain=_WTHelperGetProvCertFromChain@8
     WTHelperGetProvSignerFromChain=_WTHelperGetProvSignerFromChain@16
