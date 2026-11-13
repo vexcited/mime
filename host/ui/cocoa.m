@@ -108,6 +108,7 @@ static uint32_t g_pointer_mode, g_pointer_window;
 static bool g_pointer_locked;
 static double g_motion_x, g_motion_y;
 static double g_warp_x, g_warp_y; /* how far the last parking carried the cursor, in points. */
+static NSTimeInterval g_warp_time; /* when it did, on the clock of the events. */
 static bool g_fullscreen_presentation;
 /* MIME_BACKGROUND: windows open behind the user's apps and never take the focus, for test runs on a desktop in use. */
 static bool g_background;
@@ -154,6 +155,7 @@ static void pointer_park(UiWindow *w)
         CFRelease(probe);
         g_warp_x += center.x - from.x;
         g_warp_y += center.y - from.y;
+        g_warp_time = NSProcessInfo.processInfo.systemUptime;
     }
     CGWarpMouseCursorPosition(center);
     /* a warp holds the mouse events back for a moment, which this call ends. */
@@ -183,9 +185,16 @@ static void pointer_apply(void)
 /* the motion of an event: the device's own counts while locked, as raw input reports them, else guest pixels. */
 static void motion_of(NSEvent *event, MimeInputEvent *ev)
 {
-    /* the first event after a parking counts the jump of the cursor in its deltas, which is not motion. */
-    double dx = (event.deltaX - g_warp_x) * g_scale, dy = (event.deltaY - g_warp_y) * g_scale;
-    g_warp_x = g_warp_y = 0;
+    double dx = event.deltaX * g_scale, dy = event.deltaY * g_scale;
+    /*
+     * the first event made after a parking counts the jump of the cursor in its deltas, which is not motion.
+     * the ones that were already queued do not, so they leave it for that event.
+     */
+    if (event.timestamp >= g_warp_time) {
+        dx -= g_warp_x * g_scale;
+        dy -= g_warp_y * g_scale;
+        g_warp_x = g_warp_y = 0;
+    }
     CGEventRef cg = event.CGEvent;
     if (g_pointer_locked && cg) {
         double x = CGEventGetDoubleValueField(cg, kCGEventUnacceleratedPointerMovementX);
