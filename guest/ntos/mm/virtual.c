@@ -946,7 +946,10 @@ NTSTATUS MiAllocateVirtualEx(PEPROCESS process, PVOID *base_io, SIZE_T *size_io,
         if (!vad || end > vad->EndVa || (vad->Flags & MM_VAD_PLACEHOLDER) || vad->Type == MiVadShared ||
             vad->Type == MiVadImage)
             status = STATUS_CONFLICTING_ADDRESSES;
-        else if ((type & (MEM_RESET | MEM_RESET_UNDO)) && vad->Type != MiVadPrivate)
+        else if (reset && vad->Type == MiVadMapped && vad->Section && !vad->Section->File &&
+                 !(vad->Section->Flags & (SEC_IMAGE | MI_SECTION_PHYSICAL))) {
+            /* windows takes the hint on a pagefile backed view. other views share the pages, so they stay. */
+        } else if (reset && vad->Type != MiVadPrivate)
             status = STATUS_SECTION_PROTECTION;
         else if (type & MEM_RESET)
             reset_range(as, start, end);
