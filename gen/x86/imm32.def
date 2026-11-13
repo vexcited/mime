@@ -26,6 +26,7 @@ EXPORTS
     ImmGetProperty=_ImmGetProperty@8
     ImmGetVirtualKey=_ImmGetVirtualKey@4
     ImmIsIME=_ImmIsIME@4
+    ImmIsUIMessageA=_ImmIsUIMessageA@16
     ImmIsUIMessageW=_ImmIsUIMessageW@16
     ImmNotifyIME=_ImmNotifyIME@16
     ImmReleaseContext=_ImmReleaseContext@8
