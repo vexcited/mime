@@ -733,8 +733,8 @@ static void emit_char(UiWindow *w, uint32_t c)
 - (void)mouseDown:(NSEvent *)event
 {
     UiWindow *w = find_by_nswindow(self.window);
-    if (w && !(w->config.flags & (MIME_WIN_MAXIMIZED | MIME_WIN_FULLSCREEN)) && in_drag_area(w, event) &&
-        event.clickCount == 1) {
+    if (w && !g_pointer_locked && !(w->config.flags & (MIME_WIN_MAXIMIZED | MIME_WIN_FULLSCREEN)) &&
+        in_drag_area(w, event) && event.clickCount == 1) {
         /* tell the guest about the click so it activates, then let macOS move the window. */
         emit_mouse(self, event, MIME_INPUT_MOUSE_DOWN, MIME_MOUSE_LEFT);
         emit_mouse(self, event, MIME_INPUT_MOUSE_UP, MIME_MOUSE_LEFT);
