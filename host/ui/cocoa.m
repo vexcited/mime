@@ -149,9 +149,10 @@ static void pointer_apply(void)
     g_pointer_locked = lock;
     g_motion_x = g_motion_y = 0;
     if (lock) {
-        /* buttons land where the cursor stays, which is in the window. */
+        /* buttons land where the cursor stays, which is in the window. Quartz counts from the top of the band. */
         NSRect frame = w->window.frame;
-        CGWarpMouseCursorPosition(CGPointMake(NSMidX(frame), g_screen_height_pts - NSMidY(frame)));
+        CGWarpMouseCursorPosition(
+            CGPointMake(NSMidX(frame), g_screen_height_pts + g_screen_band - NSMidY(frame)));
     }
     CGAssociateMouseAndMouseCursorPosition(!lock);
 }
