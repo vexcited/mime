@@ -265,19 +265,42 @@ static void format_buffers(int pixel_format, uint32_t *depth, uint32_t *stencil)
         *stencil = 253; /* MTLPixelFormatStencil8 */
 }
 
+static BOOL dc_bitmap(HDC dc, DIBSECTION *d)
+{
+    HANDLE bitmap = NtGdiGetDCObject(dc, OBJ_BITMAP);
+    memset(d, 0, sizeof(*d));
+    return bitmap && NtGdiExtGetObjectW(bitmap, sizeof(*d), d) >= (int)sizeof(BITMAP);
+}
+
+/* a memory dc has a surface of its own that no window shows, of the size of the bitmap selected in it. */
+static BOOL surface_info(HDC dc, MIME_GPU_SURFACE *info)
+{
+    if (NtGdiMimeGpuGetSurface(dc, info))
+        return TRUE;
+    DIBSECTION d;
+    if (!dc_bitmap(dc, &d))
+        return FALSE;
+    memset(info, 0, sizeof(*info));
+    info->Width = (ULONG)d.dsBm.bmWidth;
+    info->Height = (ULONG)(d.dsBm.bmHeight < 0 ? -d.dsBm.bmHeight : d.dsBm.bmHeight);
+    return TRUE;
+}
+
 GlSurface *gl_surface_for(HDC dc, int pixel_format)
 {
     MIME_GPU_SURFACE info;
-    if (!NtGdiMimeGpuGetSurface(dc, &info))
+    if (!surface_info(dc, &info))
         return nullptr;
+    HDC memory = info.Window ? nullptr : dc;
     gl_device_lock();
     GlSurface *s = g_surfaces;
-    while (s && s->hwnd != info.Window)
+    while (s && (s->hwnd != info.Window || s->memory != memory))
         s = s->next;
     if (!s) {
         s = gl_alloc(sizeof(GlSurface));
         if (s) {
             s->hwnd = info.Window;
+            s->memory = memory;
             s->id = gl_new_id(ID_SURFACE);
             s->sync = TRUE;
             format_buffers(pixel_format, &s->depth_format, &s->stencil_format);
@@ -295,7 +318,7 @@ GlSurface *gl_surface_for(HDC dc, int pixel_format)
 void gl_surface_refresh(GlSurface *s, HDC dc)
 {
     MIME_GPU_SURFACE info;
-    if (!NtGdiMimeGpuGetSurface(dc, &info) || info.Window != s->hwnd)
+    if (!surface_info(dc, &info) || info.Window != s->hwnd)
         return;
     ULONG stamp = info.Stamp;
     info.Stamp = 0;
@@ -559,6 +582,51 @@ GLAPI BOOL WINAPI wglCopyContext(HGLRC src, HGLRC dst, UINT mask)
 
 /* ---------------------------------------------------------------- presenting */
 
+/*
+ * what was drawn for a memory dc goes to the bits of its bitmap, where the program and gdi read it. a format without
+ * alpha leaves the fourth byte of a pixel zero, as the masks of windows' renderer do.
+ */
+void gl_surface_to_bitmap(GlContext *ctx)
+{
+    DIBSECTION d;
+    if (!dc_bitmap(ctx->dc, &d) || !d.dsBm.bmBits || (d.dsBm.bmBitsPixel != 32 && d.dsBm.bmBitsPixel != 24))
+        return;
+    BOOL wide = d.dsBm.bmBitsPixel == 32;
+    uint32_t w = (uint32_t)d.dsBm.bmWidth, h = (uint32_t)d.dsBm.bmHeight, stride = (uint32_t)d.dsBm.bmWidthBytes;
+    uint8_t *bits = d.dsBm.bmBits;
+    GLuint read_fbo = ctx->read_fbo, pixel_pack = ctx->pixel_pack;
+    GLint alignment = ctx->pack_alignment, row_length = ctx->pack_row_length, skip_rows = ctx->pack_skip_rows,
+          skip_pixels = ctx->pack_skip_pixels;
+    ctx->read_fbo = 0;
+    ctx->pixel_pack = 0;
+    ctx->pack_alignment = 4;
+    ctx->pack_row_length = ctx->pack_skip_rows = ctx->pack_skip_pixels = 0;
+    gl_device_lock();
+    gl_flush_clears(ctx);
+    gl_device_unlock();
+    gl_read_pixels_into(ctx, 0, 0, (GLsizei)w, (GLsizei)h, wide ? GL_BGRA : GL_BGR, GL_UNSIGNED_BYTE, bits);
+    ctx->read_fbo = read_fbo;
+    ctx->pixel_pack = pixel_pack;
+    ctx->pack_alignment = alignment;
+    ctx->pack_row_length = row_length;
+    ctx->pack_skip_rows = skip_rows;
+    ctx->pack_skip_pixels = skip_pixels;
+    if (wide && !ctx->pfd.cAlphaBits)
+        for (uint32_t y = 0; y < h; y++)
+            for (uint32_t x = 0; x < w; x++)
+                bits[(uint64_t)y * stride + x * 4 + 3] = 0;
+    /* the first row of the surface is the lowest, and the first of a top down bitmap the highest. */
+    if (d.dsBmih.biHeight < 0)
+        for (uint32_t y = 0; y < h / 2; y++) {
+            uint8_t *a = bits + (uint64_t)y * stride, *b = bits + (uint64_t)(h - 1 - y) * stride;
+            for (uint32_t x = 0; x < stride; x++) {
+                uint8_t t = a[x];
+                a[x] = b[x];
+                b[x] = t;
+            }
+        }
+}
+
 GLAPI BOOL WINAPI wglSwapBuffers(HDC dc)
 {
     GlContext *ctx = gl_current();
@@ -570,6 +638,11 @@ GLAPI BOOL WINAPI wglSwapBuffers(HDC dc)
         s = gl_surface_for(dc, format);
     if (!s)
         return FALSE;
+    if (s->memory) {
+        if (ctx && ctx->surface == s)
+            gl_surface_to_bitmap(ctx);
+        return TRUE;
+    }
     gl_device_lock();
     if (ctx) {
         gl_flush_clears(ctx);
