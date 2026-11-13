@@ -28,12 +28,14 @@ UINT AutoApiDatabaseMerge(MSIHANDLE database, MSIHANDLE merge, PCWSTR table)
 
 UINT AutoApiDatabaseGenerateTransform(MSIHANDLE database, MSIHANDLE reference, PCWSTR file)
 {
-    return UNSUPPORTED;
+    extern UINT MimeMsiGenerateTransform(MSIHANDLE database, MSIHANDLE reference, PCWSTR file);
+    return MimeMsiGenerateTransform(database, reference, file);
 }
 
 UINT AutoApiCreateTransformSummaryInfo(MSIHANDLE database, MSIHANDLE reference, PCWSTR file, int errors, int validation)
 {
-    return UNSUPPORTED;
+    extern UINT MimeMsiCreateTransformSummaryInfo(MSIHANDLE database, MSIHANDLE reference, PCWSTR file, int errors, int validation);
+    return MimeMsiCreateTransformSummaryInfo(database, reference, file, errors, validation);
 }
 
 UINT AutoApiEnableUIPreview(MSIHANDLE database, MSIHANDLE *preview)
