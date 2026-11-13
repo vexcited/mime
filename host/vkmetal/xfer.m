@@ -718,7 +718,7 @@ static VKAPI_ATTR void VKAPI_CALL CmdBeginQuery(VkCommandBuffer cmd, VkQueryPool
     VkmOpVisibility *o = vkm_emit(cmd, VKM_OP_VISIBILITY, sizeof(*o));
     if (o) {
         o->mode = s->occlusion_precise ? MTLVisibilityResultModeCounting : MTLVisibilityResultModeBoolean;
-        o->offset = query * 8;
+        o->offset = (uint32_t)pool->base + query * 8;
     }
 }
 
