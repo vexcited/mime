@@ -585,7 +585,7 @@ static PWSTR *split_command_line(PCWSTR line, int *count)
             } else {
                 for (int i = 0; i < backslashes; i++)
                     *out++ = L'\\';
-                if (*p)
+                if (*p && (quoted || (*p != L' ' && *p != L'\t')))
                     *out++ = *p++;
             }
         }
