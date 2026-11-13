@@ -66,7 +66,11 @@
 
 [HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion]
 "CommonFilesDir"="C:\\Program Files (x86)\\Common Files"
+"CommonFilesDir (x86)"="C:\\Program Files (x86)\\Common Files"
+"CommonW6432Dir"="C:\\Program Files\\Common Files"
 "ProgramFilesDir"="C:\\Program Files (x86)"
+"ProgramFilesDir (x86)"="C:\\Program Files (x86)"
+"ProgramW6432Dir"="C:\\Program Files"
 
 ; the settings of the transaction coordinator, which programs that use it give rights to; there is no coordinator service to read them.
 [HKLM\SOFTWARE\Microsoft\MSDTC]

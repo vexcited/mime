@@ -17,6 +17,8 @@ typedef struct _SH_FOLDER {
     BOOL Common;
     /* NULL for a virtual folder without a path. */
     LPCWSTR Default;
+    /* the value of the machine's CurrentVersion key that holds the path, or NULL. */
+    LPCWSTR Machine;
 } SH_FOLDER;
 
 #define NO_CSIDL -1
@@ -63,12 +65,15 @@ static const SH_FOLDER g_folders[] = {
     {CSIDL_WINDOWS, &FOLDERID_Windows, nullptr, FALSE, L"%SystemRoot%"},
     {CSIDL_SYSTEM, &FOLDERID_System, nullptr, FALSE, L"%SystemRoot%\\System32"},
     {CSIDL_SYSTEMX86, &FOLDERID_SystemX86, nullptr, FALSE, L"%SystemRoot%\\SysWOW64"},
-    {CSIDL_PROGRAM_FILES, &FOLDERID_ProgramFiles, nullptr, FALSE, L"%ProgramFiles%"},
-    {NO_CSIDL, &FOLDERID_ProgramFilesX64, nullptr, FALSE, L"%ProgramW6432%"},
-    {CSIDL_PROGRAM_FILESX86, &FOLDERID_ProgramFilesX86, nullptr, FALSE, L"%ProgramFiles(x86)%"},
-    {CSIDL_PROGRAM_FILES_COMMON, &FOLDERID_ProgramFilesCommon, nullptr, FALSE, L"%CommonProgramFiles%"},
-    {NO_CSIDL, &FOLDERID_ProgramFilesCommonX64, nullptr, FALSE, L"%CommonProgramW6432%"},
-    {CSIDL_PROGRAM_FILES_COMMONX86, &FOLDERID_ProgramFilesCommonX86, nullptr, FALSE, L"%CommonProgramFiles(x86)%"},
+    {CSIDL_PROGRAM_FILES, &FOLDERID_ProgramFiles, nullptr, FALSE, L"%ProgramFiles%", L"ProgramFilesDir"},
+    {NO_CSIDL, &FOLDERID_ProgramFilesX64, nullptr, FALSE, L"%ProgramW6432%", L"ProgramW6432Dir"},
+    {CSIDL_PROGRAM_FILESX86, &FOLDERID_ProgramFilesX86, nullptr, FALSE, L"%ProgramFiles(x86)%",
+     L"ProgramFilesDir (x86)"},
+    {CSIDL_PROGRAM_FILES_COMMON, &FOLDERID_ProgramFilesCommon, nullptr, FALSE, L"%CommonProgramFiles%",
+     L"CommonFilesDir"},
+    {NO_CSIDL, &FOLDERID_ProgramFilesCommonX64, nullptr, FALSE, L"%CommonProgramW6432%", L"CommonW6432Dir"},
+    {CSIDL_PROGRAM_FILES_COMMONX86, &FOLDERID_ProgramFilesCommonX86, nullptr, FALSE, L"%CommonProgramFiles(x86)%",
+     L"CommonFilesDir (x86)"},
     {CSIDL_MYPICTURES, &FOLDERID_Pictures, L"My Pictures", FALSE, L"%USERPROFILE%\\Pictures"},
     {CSIDL_PROFILE, &FOLDERID_Profile, nullptr, FALSE, L"%USERPROFILE%"},
     {NO_CSIDL, &FOLDERID_UserProfiles, nullptr, FALSE, L"%SystemDrive%\\Users"},
@@ -151,20 +156,33 @@ static BOOL expand(LPCWSTR template, BOOL default_user, LPWSTR out)
     return n && n <= MAX_PATH && !wcschr(out, L'%');
 }
 
-static BOOL read_override(const SH_FOLDER *folder, LPWSTR out)
+static BOOL read_path(HKEY root, LPCWSTR path, LPCWSTR value, LPWSTR out)
 {
     HKEY key;
-    if (!folder->Value || RegOpenKeyExW(folder->Common ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER, SHELL_FOLDERS_KEY, 0,
-                                        KEY_READ, &key))
+    if (!value || RegOpenKeyExW(root, path, 0, KEY_READ, &key))
         return FALSE;
     WCHAR raw[MAX_PATH];
     DWORD type, bytes = sizeof(raw) - sizeof(WCHAR);
-    LSTATUS status = RegQueryValueExW(key, folder->Value, nullptr, &type, (BYTE *)raw, &bytes);
+    LSTATUS status = RegQueryValueExW(key, value, nullptr, &type, (BYTE *)raw, &bytes);
     RegCloseKey(key);
     if (status || (type != REG_SZ && type != REG_EXPAND_SZ) || bytes < 2 * sizeof(WCHAR))
         return FALSE;
     raw[bytes / sizeof(WCHAR)] = 0;
     return expand(raw, FALSE, out);
+}
+
+static BOOL read_override(const SH_FOLDER *folder, LPWSTR out)
+{
+    return read_path(folder->Common ? HKEY_LOCAL_MACHINE : HKEY_CURRENT_USER, SHELL_FOLDERS_KEY, folder->Value, out);
+}
+
+/*
+ * windows reads the program folders from the registry and not from the environment, so a program that was handed
+ * the variables of a parent of the other kind, or that changed its own, still gets the folders of its own kind.
+ */
+static BOOL read_machine(const SH_FOLDER *folder, LPWSTR out)
+{
+    return read_path(HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows\\CurrentVersion", folder->Machine, out);
 }
 
 static HRESULT create_tree(LPWSTR path)
@@ -195,7 +213,7 @@ static HRESULT resolve(const SH_FOLDER *folder, DWORD flags, HANDLE token, LPWST
         return E_FAIL;
     BOOL default_user = token == DEFAULT_USER_TOKEN;
     if ((flags & KF_FLAG_DEFAULT_PATH) || default_user || !read_override(folder, out)) {
-        if (!expand(folder->Default, default_user, out)) {
+        if (!read_machine(folder, out) && !expand(folder->Default, default_user, out)) {
             out[0] = 0;
             return E_FAIL;
         }
