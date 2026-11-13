@@ -100,11 +100,16 @@ static void dump_state(MimeVcpu *vcpu, const char *why)
     dump_backtrace(vcpu);
 }
 
-/* walks the guest stage 1 tables; returns false for unmapped addresses. */
-static bool guest_translate(MimeVcpu *vcpu, uint64_t va, uint64_t *pa)
+/* the guest stage 1 table of the half of the address space an address is in. */
+static uint64_t guest_table(MimeVcpu *vcpu, uint64_t va)
 {
     uint64_t ttbr = (va >> 63) ? get_sys(vcpu, HV_SYS_REG_TTBR1_EL1) : get_sys(vcpu, HV_SYS_REG_TTBR0_EL1);
-    uint64_t table = ttbr & 0x0000FFFFFFFFF000ull;
+    return ttbr & 0x0000FFFFFFFFF000ull;
+}
+
+/* walks the guest stage 1 tables from guest_table's; returns false for unmapped addresses. */
+static bool table_translate(MimeVcpu *vcpu, uint64_t table, uint64_t va, uint64_t *pa)
+{
     for (int level = 0; level < 4; level++) {
         int shift = 39 - 9 * level;
         uint64_t *t = mime_vm_phys(vcpu->vm, table, MIME_PAGE_SIZE);
@@ -123,16 +128,21 @@ static bool guest_translate(MimeVcpu *vcpu, uint64_t va, uint64_t *pa)
     return false;
 }
 
-static bool guest_read64(MimeVcpu *vcpu, uint64_t va, uint64_t *value)
+static bool table_read64(MimeVcpu *vcpu, uint64_t table, uint64_t va, uint64_t *value)
 {
     uint64_t pa;
-    if ((va & 7) || !guest_translate(vcpu, va, &pa))
+    if ((va & 7) || !table_translate(vcpu, table, va, &pa))
         return false;
     uint64_t *p = mime_vm_phys(vcpu->vm, pa, 8);
     if (!p)
         return false;
     *value = *p;
     return true;
+}
+
+static bool guest_read64(MimeVcpu *vcpu, uint64_t va, uint64_t *value)
+{
+    return table_read64(vcpu, guest_table(vcpu, va), va, value);
 }
 
 static void dump_backtrace(MimeVcpu *vcpu)
@@ -165,7 +175,10 @@ typedef struct ProfileSample {
 static uint64_t profile_x86(MimeVcpu *vcpu, uint64_t pc)
 {
     uint64_t word, block, rip;
-    for (uint64_t p = pc & ~63ull, steps = 0; steps < 4096 && guest_read64(vcpu, p, &word); p -= 64, steps++)
+    /* the scan stays in the pc's half of the address space, whose table is read once. */
+    uint64_t table = guest_table(vcpu, pc);
+    for (uint64_t p = pc & ~63ull, steps = 0;
+         steps < 4096 && p >> 63 == pc >> 63 && table_read64(vcpu, table, p, &word); p -= 64, steps++)
         if (word == X86_JIT_MAGIC)
             return guest_read64(vcpu, p + 8, &block) && block && guest_read64(vcpu, block, &rip) ? rip : 0;
     return 0;
