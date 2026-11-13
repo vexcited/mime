@@ -1,5 +1,6 @@
 #include "vmm.h"
 #include "../gpu/gpu.h"
+#include "../../guest/xta64/jit.h"
 #include "../../guest/xta64/x86.h"
 
 #include <mime/hyperv.h>
@@ -153,21 +154,21 @@ static volatile bool g_dump_requested;
  * a sampling profiler: kill -PROF starts it and stops it. while on, a thread kicks every vCPU each millisecond and
  * the vCPU records where it was, with ttbr0 telling the guest processes apart; stopping writes the samples to
  * profile.txt in the state directory, one "vcpu pc cpsr ttbr0 lr x86" line each, to symbolize with the guest's binaries.
- * x86 is the x86 address of the block xta64's translated code runs, read through the cpu translated code keeps in
- * x19: it only means something for samples in translated code.
+ * x86 is the x86 address of the block of xta64's translated code the sample is in, found as a fault finds it: by the
+ * header before the block's code. it only means something for samples in translated code.
  */
 typedef struct ProfileSample {
     uint64_t pc, ttbr0, lr, x86;
     uint32_t cpsr, vcpu;
 } ProfileSample;
 
-static uint64_t profile_x86(MimeVcpu *vcpu)
+static uint64_t profile_x86(MimeVcpu *vcpu, uint64_t pc)
 {
-    uint64_t block, rip;
-    if (!guest_read64(vcpu, get_reg(vcpu, HV_REG_X19) + offsetof(X86Cpu, jit_block), &block) || !block ||
-        !guest_read64(vcpu, block, &rip))
-        return 0;
-    return rip;
+    uint64_t word, block, rip;
+    for (uint64_t p = pc & ~63ull, steps = 0; steps < 4096 && guest_read64(vcpu, p, &word); p -= 64, steps++)
+        if (word == X86_JIT_MAGIC)
+            return guest_read64(vcpu, p + 8, &block) && block && guest_read64(vcpu, block, &rip) ? rip : 0;
+    return 0;
 }
 
 #define PROFILE_SAMPLES (1u << 22)
@@ -189,8 +190,9 @@ static void profile_record(MimeVcpu *vcpu)
     if (!g_samples || at >= PROFILE_SAMPLES)
         return;
     uint32_t cpsr = (uint32_t)get_reg(vcpu, HV_REG_CPSR);
-    g_samples[at] = (ProfileSample){get_reg(vcpu, HV_REG_PC), get_sys(vcpu, HV_SYS_REG_TTBR0_EL1),
-                                    get_reg(vcpu, HV_REG_LR), (cpsr & 0xF) ? 0 : profile_x86(vcpu), cpsr, vcpu->index};
+    uint64_t pc = get_reg(vcpu, HV_REG_PC);
+    g_samples[at] = (ProfileSample){pc, get_sys(vcpu, HV_SYS_REG_TTBR0_EL1), get_reg(vcpu, HV_REG_LR),
+                                    (cpsr & 0xF) ? 0 : profile_x86(vcpu, pc), cpsr, vcpu->index};
 }
 
 static void profile_write(void)
