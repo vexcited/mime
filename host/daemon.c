@@ -23,6 +23,10 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <spawn.h>
+extern char **environ;
+#endif
 #ifdef __linux__
 #include <sys/prctl.h>
 #include <ucontext.h>
@@ -127,8 +131,21 @@ static void notify_restarted(void)
         mime_utf8_to_utf16(toast->title, 256, "Mime has restarted");
         mime_utf8_to_utf16(toast->body, 1024, body);
         uint64_t value = 0;
-        if (mime_ui_shell(toast, sizeof(*toast), &value) != MIME_HC_STATUS_OK)
-            mime_info("the desktop shows no notification of the restart");
+        if (mime_ui_shell(toast, sizeof(*toast), &value) != MIME_HC_STATUS_OK) {
+#ifdef __APPLE__
+            /* the ui has no notifications of its own there, the system's script runner posts one. */
+            char script[256];
+            /* the name comes from the guest and goes inside a quoted string. */
+            for (char *c = body; *c; c++)
+                if (*c == '"' || *c == '\\')
+                    *c = '\'';
+            snprintf(script, sizeof(script), "display notification \"%s\" with title \"Mime has restarted\"", body);
+            char *argv[] = {"osascript", "-e", script, nullptr};
+            pid_t pid;
+            if (posix_spawn(&pid, "/usr/bin/osascript", nullptr, nullptr, argv, environ) != 0)
+#endif
+                mime_info("the desktop shows no notification of the restart");
+        }
         free(toast);
     }
     mime_info("the machine has restarted%s%s", by[0] ? " for " : "", by);
