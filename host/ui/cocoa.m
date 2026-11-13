@@ -107,6 +107,7 @@ static bool g_pointer_in_guest;
 static uint32_t g_pointer_mode, g_pointer_window;
 static bool g_pointer_locked;
 static double g_motion_x, g_motion_y;
+static double g_warp_x, g_warp_y; /* how far the last parking carried the cursor, in points. */
 static bool g_fullscreen_presentation;
 /* MIME_BACKGROUND: windows open behind the user's apps and never take the focus, for test runs on a desktop in use. */
 static bool g_background;
@@ -146,7 +147,15 @@ static void pointer_park(UiWindow *w)
         return;
     /* Quartz counts from the top of the whole primary screen, band included. */
     NSRect frame = w->window.frame;
-    CGWarpMouseCursorPosition(CGPointMake(NSMidX(frame), g_screen_height_pts + g_screen_band - NSMidY(frame)));
+    CGPoint center = CGPointMake(NSMidX(frame), g_screen_height_pts + g_screen_band - NSMidY(frame));
+    CGEventRef probe = CGEventCreate(nullptr);
+    if (probe) {
+        CGPoint from = CGEventGetLocation(probe);
+        CFRelease(probe);
+        g_warp_x += center.x - from.x;
+        g_warp_y += center.y - from.y;
+    }
+    CGWarpMouseCursorPosition(center);
     /* a warp holds the mouse events back for a moment, which this call ends. */
     CGAssociateMouseAndMouseCursorPosition(false);
 }
@@ -160,6 +169,7 @@ static void pointer_apply(void)
         return;
     g_pointer_locked = lock;
     g_motion_x = g_motion_y = 0;
+    g_warp_x = g_warp_y = 0;
     if (lock) {
         pointer_park(w);
         /* the parked cursor is in the window without having entered it, so the guest's cursor is put again. */
@@ -173,7 +183,9 @@ static void pointer_apply(void)
 /* the motion of an event: the device's own counts while locked, as raw input reports them, else guest pixels. */
 static void motion_of(NSEvent *event, MimeInputEvent *ev)
 {
-    double dx = event.deltaX * g_scale, dy = event.deltaY * g_scale;
+    /* the first event after a parking counts the jump of the cursor in its deltas, which is not motion. */
+    double dx = (event.deltaX - g_warp_x) * g_scale, dy = (event.deltaY - g_warp_y) * g_scale;
+    g_warp_x = g_warp_y = 0;
     CGEventRef cg = event.CGEvent;
     if (g_pointer_locked && cg) {
         double x = CGEventGetDoubleValueField(cg, kCGEventUnacceleratedPointerMovementX);
