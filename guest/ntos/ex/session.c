@@ -95,6 +95,13 @@ void MimeSessionUserProgram(PEPROCESS process, PEPROCESS parent)
     __atomic_fetch_add(&HalSharedPage->user_processes, 1, __ATOMIC_RELEASE);
 }
 
+/* a program the kernel starts for the user without a run request, as those of the RunOnce keys. */
+void MimeSessionAdoptUserProgram(PEPROCESS process)
+{
+    if (!__atomic_exchange_n(&process->MimeUserProgram, TRUE, __ATOMIC_ACQ_REL))
+        __atomic_fetch_add(&HalSharedPage->user_processes, 1, __ATOMIC_RELEASE);
+}
+
 /* at the exit, or at the deletion of a process that failed to start. */
 void MimeSessionUserProgramGone(PEPROCESS process)
 {
@@ -264,6 +271,7 @@ void MiSessionInitialize(void)
     MmTrimInitialize();
     IopStartDrives();
     IopStartPnpHostChanges();
+    ExStartupFinishRestart();
     g_ready = TRUE;
 
     MimeCtrlHeader ready = {MIME_EVT_READY, sizeof(ready)};
@@ -275,6 +283,7 @@ void MiSessionInitialize(void)
     load_elevation_policy();
     /* the host gets its answer first; the services start alongside the first requests. */
     PsStartServiceController();
+    ExStartupRunOnce();
 
     for (;;) {
         for (;;) {
