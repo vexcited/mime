@@ -238,7 +238,12 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
         break;
     }
     case MIME_HC_HALT:
-        mime_info("guest powered off (code %llu)", (unsigned long long)regs[1]);
+        mime_info("guest powered off (code %llu)%s", (unsigned long long)regs[1], regs[2] ? ", to start again" : "");
+        if (regs[2]) {
+            memcpy(vm->restart_by, &regs[3], 16);
+            vm->restart_by[16] = 0;
+            vm->restart = true;
+        }
         mime_daemon_guest_halted(vm, (int)regs[1]);
         mime_vm_request_stop(vm, (int)regs[1]);
         break;
