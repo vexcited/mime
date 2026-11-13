@@ -1708,6 +1708,69 @@ static NTSTATUS rename_by_handle(LPCWSTR source, LPCWSTR destination, BOOL repla
     return status;
 }
 
+/*
+ * a move for the next restart is a pair of nt paths added to PendingFileRenameOperations, which the kernel applies
+ * before the first program. no target deletes the file, a target after ! replaces the one already there.
+ */
+static BOOL move_delayed(LPCWSTR source, LPCWSTR destination, DWORD flags)
+{
+    if (flags & MOVEFILE_COPY_ALLOWED) {
+        KbSetError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    if (GetFileAttributesW(source) == INVALID_FILE_ATTRIBUTES)
+        return FALSE;
+    UNICODE_STRING from = {}, to = {};
+    if (!RtlDosPathNameToNtPathName_U(source, &from, nullptr, nullptr) ||
+        (destination && !RtlDosPathNameToNtPathName_U(destination, &to, nullptr, nullptr))) {
+        RtlFreeUnicodeString(&from);
+        KbSetError(ERROR_PATH_NOT_FOUND);
+        return FALSE;
+    }
+    BOOL replace = destination && (flags & MOVEFILE_REPLACE_EXISTING);
+    DWORD added = from.Length + to.Length + (replace ? 3 : 2) * sizeof(WCHAR);
+    HKEY key;
+    LSTATUS error = RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\Session Manager", 0,
+                                  KEY_QUERY_VALUE | KEY_SET_VALUE, &key);
+    if (!error) {
+        static const WCHAR name[] = L"PendingFileRenameOperations";
+        DWORD type = 0, old = 0;
+        if (RegQueryValueExW(key, name, nullptr, &type, nullptr, &old) || type != REG_MULTI_SZ)
+            old = 0;
+        PWCHAR list = KbAlloc(old + added + sizeof(WCHAR));
+        if (!list) {
+            error = ERROR_NOT_ENOUGH_MEMORY;
+        } else {
+            if (old && RegQueryValueExW(key, name, nullptr, &type, (LPBYTE)list, &old))
+                old = 0;
+            DWORD at = old / sizeof(WCHAR);
+            /* the pairs start where the list ended. */
+            if (at && !list[at - 1])
+                at--;
+            if (at && list[at - 1])
+                list[at++] = 0;
+            memcpy(list + at, from.Buffer, from.Length);
+            at += from.Length / sizeof(WCHAR);
+            list[at++] = 0;
+            if (replace)
+                list[at++] = L'!';
+            if (to.Length)
+                memcpy(list + at, to.Buffer, to.Length);
+            at += to.Length / sizeof(WCHAR);
+            list[at++] = 0;
+            list[at++] = 0;
+            error = RegSetValueExW(key, name, 0, REG_MULTI_SZ, (const BYTE *)list, at * sizeof(WCHAR));
+            KbFree(list);
+        }
+        RegCloseKey(key);
+    }
+    RtlFreeUnicodeString(&from);
+    RtlFreeUnicodeString(&to);
+    if (error)
+        KbSetError((DWORD)error);
+    return !error;
+}
+
 BOOL WINAPI MoveFileWithProgressW(LPCWSTR source, LPCWSTR destination, LPPROGRESS_ROUTINE progress, LPVOID data,
                                   DWORD flags)
 {
@@ -1715,10 +1778,8 @@ BOOL WINAPI MoveFileWithProgressW(LPCWSTR source, LPCWSTR destination, LPPROGRES
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
     }
-    if (flags & MOVEFILE_DELAY_UNTIL_REBOOT) {
-        KbSetError(ERROR_NOT_SUPPORTED);
-        return FALSE;
-    }
+    if (flags & MOVEFILE_DELAY_UNTIL_REBOOT)
+        return move_delayed(source, destination, flags);
     if (!destination) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
