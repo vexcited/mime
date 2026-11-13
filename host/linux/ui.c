@@ -1680,8 +1680,21 @@ static void apply_config(UiWindow *w, const MimeWinConfig *given)
         max_h = max_h > 0 ? MIME_MIN(max_h, cap) : cap;
         min_w = MIME_MIN(min_w, max_w);
         min_h = MIME_MIN(min_h, max_h);
-        SDL_SetWindowMinimumSize(w->window, min_w, min_h);
-        SDL_SetWindowMaximumSize(w->window, max_w, max_h);
+        /*
+         * sdl sizes the window again at each new limit, to the size it had before the compositor tiled it: a window
+         * snapped to a side of the screen left its tile as soon as the guest took the size of the tile.
+         */
+        int now_w = 0, now_h = 0, had_w = 0, had_h = 0, got_w = 0, got_h = 0;
+        SDL_GetWindowSize(w->window, &had_w, &had_h);
+        SDL_GetWindowMinimumSize(w->window, &now_w, &now_h);
+        if (now_w != min_w || now_h != min_h)
+            SDL_SetWindowMinimumSize(w->window, min_w, min_h);
+        SDL_GetWindowMaximumSize(w->window, &now_w, &now_h);
+        if (now_w != max_w || now_h != max_h)
+            SDL_SetWindowMaximumSize(w->window, max_w, max_h);
+        SDL_GetWindowSize(w->window, &got_w, &got_h);
+        if (g_wayland && !w->fullscreen && !w->maximized && (got_w != had_w || got_h != had_h))
+            SDL_SetWindowSize(w->window, had_w, had_h);
     }
     if (w->panel) {
         place_panel(w, owner, cfg);
