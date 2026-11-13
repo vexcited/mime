@@ -777,7 +777,8 @@ static BOOL combo_info(COMBO *cb, COMBOBOXINFO *info)
     info->rcButton = cb->button_rect;
     info->stateButton = !cb->droppable ? STATE_SYSTEM_INVISIBLE : cb->button_pressed ? STATE_SYSTEM_PRESSED : 0;
     info->hwndCombo = cb->hwnd;
-    info->hwndItem = cb->has_edit ? cb->edit : nullptr;
+    /* a combo box without an edit control is its own item window on windows. */
+    info->hwndItem = cb->has_edit ? cb->edit : cb->hwnd;
     info->hwndList = cb->list;
     return TRUE;
 }
