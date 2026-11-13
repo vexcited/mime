@@ -103,6 +103,10 @@ static bool g_suppress_move;
 static uint32_t g_cursor;
 static bool g_cursor_hidden;
 static bool g_pointer_in_guest;
+/* what the guest asked of the pointer, and whether the mouse is cut from the cursor to report motion alone now. */
+static uint32_t g_pointer_mode, g_pointer_window;
+static bool g_pointer_locked;
+static double g_motion_x, g_motion_y;
 static bool g_fullscreen_presentation;
 /* MIME_BACKGROUND: windows open behind the user's apps and never take the focus, for test runs on a desktop in use. */
 static bool g_background;
@@ -133,6 +137,44 @@ static UiWindow *find_by_nswindow(NSWindow *window)
         if (g_windows[i].used && g_windows[i].window == window)
             return &g_windows[i];
     return nullptr;
+}
+
+/* the mouse is locked while the window that asked is the key one, so another app gets its cursor back. */
+static void pointer_apply(void)
+{
+    UiWindow *w = g_pointer_mode == MIME_POINTER_RELATIVE ? find_window(g_pointer_window) : nullptr;
+    bool lock = w && w->window.keyWindow && NSApp.active;
+    if (lock == g_pointer_locked)
+        return;
+    g_pointer_locked = lock;
+    g_motion_x = g_motion_y = 0;
+    if (lock) {
+        /* buttons land where the cursor stays, which is in the window. */
+        NSRect frame = w->window.frame;
+        CGWarpMouseCursorPosition(CGPointMake(NSMidX(frame), g_screen_height_pts - NSMidY(frame)));
+    }
+    CGAssociateMouseAndMouseCursorPosition(!lock);
+}
+
+/* the motion of an event: the device's own counts while locked, as raw input reports them, else guest pixels. */
+static void motion_of(NSEvent *event, MimeInputEvent *ev)
+{
+    double dx = event.deltaX * g_scale, dy = event.deltaY * g_scale;
+    CGEventRef cg = event.CGEvent;
+    if (g_pointer_locked && cg) {
+        double x = CGEventGetDoubleValueField(cg, kCGEventUnacceleratedPointerMovementX);
+        double y = CGEventGetDoubleValueField(cg, kCGEventUnacceleratedPointerMovementY);
+        if (x || y) {
+            dx = x;
+            dy = y;
+        }
+    }
+    g_motion_x += dx;
+    g_motion_y += dy;
+    ev->dx = (int32_t)g_motion_x;
+    ev->dy = (int32_t)g_motion_y;
+    g_motion_x -= ev->dx;
+    g_motion_y -= ev->dy;
 }
 
 static void update_presentation(void)
@@ -211,6 +253,15 @@ static void emit_mouse(NSView *view, NSEvent *event, uint32_t type, uint32_t but
     screen_point_to_guest(screen, &ev.x, &ev.y);
     ev.button = button;
     ev.modifiers = modifiers_of(event);
+    if (g_pointer_locked) {
+        ev.window_id = g_pointer_window;
+        ev.flags |= 4;
+    }
+    if (type == MIME_INPUT_MOUSE_MOVE) {
+        motion_of(event, &ev);
+        if (g_pointer_locked && !ev.dx && !ev.dy)
+            return;
+    }
     emit(&ev);
 }
 
@@ -724,6 +775,10 @@ static void emit_char(UiWindow *w, uint32_t c)
  */
 - (void)mouseMoved:(NSEvent *)event
 {
+    if (g_pointer_locked) {
+        emit_mouse(self, event, MIME_INPUT_MOUSE_MOVE, 0);
+        return;
+    }
     /* an event without a window carries its location in screen coordinates. */
     NSWindow *window = event.window;
     NSPoint loc = event.locationInWindow;
@@ -745,6 +800,7 @@ static void emit_char(UiWindow *w, uint32_t c)
     ev.window_id = under->id;
     screen_point_to_guest(screen, &ev.x, &ev.y);
     ev.modifiers = modifiers_of(event);
+    motion_of(event, &ev);
     emit(&ev);
 }
 
@@ -1011,6 +1067,7 @@ static void emit_char(UiWindow *w, uint32_t c)
 {
     window_focus(notification.object, true);
     update_presentation();
+    pointer_apply();
 }
 
 - (void)windowDidResignKey:(NSNotification *)notification
@@ -1018,6 +1075,7 @@ static void emit_char(UiWindow *w, uint32_t c)
     [[notification.object contentView].inputContext discardMarkedText];
     window_focus(notification.object, false);
     update_presentation();
+    pointer_apply();
 }
 
 - (BOOL)windowShouldClose:(NSWindow *)window
@@ -1126,11 +1184,13 @@ static void emit_char(UiWindow *w, uint32_t c)
 - (void)appDidBecomeActive:(NSNotification *)notification
 {
     app_became_active();
+    pointer_apply();
 }
 
 - (void)appDidResignActive:(NSNotification *)notification
 {
     app_resigned_active();
+    pointer_apply();
 }
 
 - (void)screensDidChange:(NSNotification *)notification
@@ -1454,6 +1514,10 @@ static void destroy_main(uint32_t id_)
     os_unfair_lock_unlock(&g_windows_lock);
     /* a vulkan presenter lets go of the window's layer before it goes. */
     mime_vk_window_lost(id_);
+    if (id_ == g_pointer_window) {
+        g_pointer_mode = MIME_POINTER_FREE;
+        pointer_apply();
+    }
     restore_host_cursor();
     mime_app_window_remove(id_);
     g_pointer_in_guest = false;
@@ -1957,9 +2021,14 @@ void mime_ui_set_cursor_image(const void *pixels, uint32_t width, uint32_t heigh
     mime_ui_set_cursor(MIME_CURSOR_ARROW);
 }
 
-/* the pointer stays free: locking and confining it are not done on macOS yet. */
+/* a locked pointer reports motion alone. confining it to a rectangle is not done on macOS yet. */
 void mime_ui_pointer(uint32_t mode, uint32_t window_id, const MimeRect *rect)
 {
+    on_main(^{
+        g_pointer_mode = mode;
+        g_pointer_window = window_id;
+        pointer_apply();
+    });
 }
 
 /* game controllers are not read on macOS yet. */
