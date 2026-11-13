@@ -848,8 +848,38 @@ static HRESULT STDMETHODCALLTYPE device_stretch_rect(IDirect3DDevice9Ex *iface, 
                   sr.right - sr.left != dr.right - dr.left || sr.bottom - sr.top != dr.bottom - dr.top))
         return D3DERR_INVALIDCALL;
     D9Lock(d);
-    d->mime->lpVtbl->Blit(d->mime, (ID3D11Resource *)t->texture, D9SurfaceSubresource(t), &dr,
-                          (ID3D11Resource *)s->texture, D9SurfaceSubresource(s), &sr, filter == D3DTEXF_LINEAR);
+    ID3D11Resource *from = (ID3D11Resource *)s->texture;
+    UINT from_sub = D9SurfaceSubresource(s);
+    BOOL scales = sr.right - sr.left != dr.right - dr.left || sr.bottom - sr.top != dr.bottom - dr.top;
+    /* a blit scales single samples only, so the samples of a multisampled source become one first. */
+    D3D11_TEXTURE2D_DESC desc;
+    s->texture->lpVtbl->GetDesc(s->texture, &desc);
+    if (desc.SampleDesc.Count > 1 && scales && !depth) {
+        if (!s->resolved) {
+            desc.SampleDesc.Count = 1;
+            desc.SampleDesc.Quality = 0;
+            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            desc.MiscFlags = 0;
+            if (FAILED(d->d3d11->lpVtbl->CreateTexture2D(d->d3d11, &desc, nullptr, &s->resolved))) {
+                s->resolved = nullptr;
+                D9Unlock(d);
+                return D3DERR_OUTOFVIDEOMEMORY;
+            }
+        }
+        /* a linear blit also reads the texels around the rectangle. */
+        RECT rr = sr;
+        if (filter == D3DTEXF_LINEAR) {
+            rr.left = D9_MAX(rr.left - 1, 0);
+            rr.top = D9_MAX(rr.top - 1, 0);
+            rr.right = D9_MIN(rr.right + 1, (LONG)s->width);
+            rr.bottom = D9_MIN(rr.bottom + 1, (LONG)s->height);
+        }
+        d->mime->lpVtbl->Blit(d->mime, (ID3D11Resource *)s->resolved, 0, &rr, from, from_sub, &rr, FALSE);
+        from = (ID3D11Resource *)s->resolved;
+        from_sub = 0;
+    }
+    d->mime->lpVtbl->Blit(d->mime, (ID3D11Resource *)t->texture, D9SurfaceSubresource(t), &dr, from, from_sub, &sr,
+                          filter == D3DTEXF_LINEAR);
     D9SurfaceWritten(t);
     D9Unlock(d);
     return D3D_OK;
