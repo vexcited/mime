@@ -376,6 +376,7 @@ GLuint gl_name_new(GlNames *n);
 typedef struct GlSurface {
     struct GlSurface *next;
     HWND hwnd;
+    HDC memory; /* the memory dc of a surface that no window shows. */
     uint32_t id;
     MIME_GPU_SURFACE info;
     uint32_t depth_format, stencil_format;
@@ -745,6 +746,7 @@ void gl_begin_pass(GlContext *ctx);
 void gl_end_pass(GlContext *ctx);
 void gl_flush_clears(GlContext *ctx);
 GlFramebuffer *gl_framebuffer(GlContext *ctx, GLuint name);
+void gl_surface_to_bitmap(GlContext *ctx);
 BOOL gl_read_source(GlContext *ctx, MimeGpuAttachment *a, uint32_t *format, uint32_t *width, uint32_t *height);
 BOOL gl_read_depth_source(GlContext *ctx, BOOL stencil, MimeGpuAttachment *a, uint32_t *format, uint32_t *flags,
                           uint32_t *width, uint32_t *height);
