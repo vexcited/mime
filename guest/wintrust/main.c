@@ -96,6 +96,21 @@ WINTRUSTAPI CRYPT_PROVIDER_CERT *WINAPI WTHelperGetProvCertFromChain(CRYPT_PROVI
     return signer && index < signer->csCertChain ? &signer->pasCertChain[index] : nullptr;
 }
 
+/* the verdict the policy step reached is kept per signer, so the check reads it back. */
+WINTRUSTAPI HRESULT WINAPI WTHelperCertCheckValidSignature(CRYPT_PROVIDER_DATA *data)
+{
+    if (!data)
+        return E_INVALIDARG;
+    LONG result = (LONG)data->dwFinalError;
+    for (DWORD i = 0; !result && i < data->cdwTrustStepErrors && data->padwTrustStepErrors; i++)
+        result = (LONG)data->padwTrustStepErrors[i];
+    if (!result && !data->csSigners)
+        result = TRUST_E_NOSIGNATURE;
+    for (DWORD i = 0; !result && i < data->csSigners; i++)
+        result = (LONG)data->pasSigners[i].dwError;
+    return result > 0 ? (HRESULT)((WORD)result | 0x80070000) : result;
+}
+
 /* the signature file of an app package: its subject is named by this identifier. */
 static LONG verify_blob(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
 {
