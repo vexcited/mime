@@ -128,6 +128,7 @@ IMMAPI HWND WINAPI ImmGetDefaultIMEWnd(HWND hwnd);
 IMMAPI BOOL WINAPI ImmIsIME(HKL hkl);
 IMMAPI DWORD WINAPI ImmGetProperty(HKL hkl, DWORD index);
 IMMAPI BOOL WINAPI ImmDisableIME(DWORD thread);
+IMMAPI BOOL WINAPI ImmIsUIMessageA(HWND ime, UINT msg, WPARAM wparam, LPARAM lparam);
 IMMAPI BOOL WINAPI ImmIsUIMessageW(HWND ime, UINT msg, WPARAM wparam, LPARAM lparam);
 IMMAPI UINT WINAPI ImmGetDescriptionW(HKL hkl, LPWSTR buffer, UINT size);
 IMMAPI UINT WINAPI ImmGetIMEFileNameW(HKL hkl, LPWSTR buffer, UINT size);
