@@ -537,16 +537,254 @@ static void replay(Enc *e, const VkmOp *op)
     }
 }
 
+/* ------------------------------------------------------------------ render passes that go on. */
+
+/*
+ * a program that draws to one target through its srgb view and its plain one in turn, as direct3d 9 programs do with
+ * every change of D3DRS_SRGBWRITEENABLE, ends a render pass and begins another on the same memory each time. on a
+ * tile based gpu each such pass stores every sample of its targets and loads them again, which costs far more than
+ * what is drawn. the passes are one where the gpu lets pipelines of both formats draw in a pass on either view with
+ * the results of separate passes, bit for bit: vkm_mixes_srgb draws both ways once and compares.
+ */
+static const char *const MIX_SOURCE =
+    "#include <metal_stdlib>\nusing namespace metal;\n"
+    "struct V { float4 p [[position]]; };\n"
+    "vertex V vs(uint i [[vertex_id]]) { V o; float2 q = float2((i << 1) & 2, i & 2); o.p = float4(q * 2 - 1, 0, 1); return o; }\n"
+    "fragment float4 fs(V v [[stage_in]], constant float4 &k [[buffer(0)]]) { float2 u = v.p.xy / 32.0;\n"
+    "  return float4(fract(u.x * k.x + k.y), fract(u.y * k.z + u.x * 0.37), fract((u.x + u.y) * k.w), fract(u.y * 0.91 + k.y)); }\n";
+
+static bool mix_probe(id<MTLDevice> device)
+{
+    bool same = true;
+    @autoreleasepool {
+        id<MTLLibrary> library = [[device newLibraryWithSource:@(MIX_SOURCE) options:nil error:nil] autorelease];
+        id<MTLCommandQueue> queue = [[device newCommandQueue] autorelease];
+        if (!library || !queue)
+            return false;
+        id<MTLFunction> vs = [[library newFunctionWithName:@"vs"] autorelease], fs = [[library newFunctionWithName:@"fs"] autorelease];
+        static const MTLPixelFormat formats[2] = {MTLPixelFormatBGRA8Unorm_sRGB, MTLPixelFormatBGRA8Unorm};
+        for (NSUInteger samples = 1; samples <= 4 && same; samples += 3) {
+            id<MTLRenderPipelineState> pipelines[2][3];
+            for (int f = 0; f < 2; f++)
+                for (int blend = 0; blend < 3; blend++) {
+                    MTLRenderPipelineDescriptor *d = [[MTLRenderPipelineDescriptor new] autorelease];
+                    d.vertexFunction = vs;
+                    d.fragmentFunction = fs;
+                    d.rasterSampleCount = samples;
+                    MTLRenderPipelineColorAttachmentDescriptor *c = d.colorAttachments[0];
+                    c.pixelFormat = formats[f];
+                    c.blendingEnabled = blend != 0;
+                    c.sourceRGBBlendFactor = blend == 1 ? MTLBlendFactorSourceAlpha : MTLBlendFactorOne;
+                    c.destinationRGBBlendFactor = blend == 1 ? MTLBlendFactorOneMinusSourceAlpha : MTLBlendFactorOne;
+                    c.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+                    pipelines[f][blend] = [[device newRenderPipelineStateWithDescriptor:d error:nil] autorelease];
+                    if (!pipelines[f][blend])
+                        return false;
+                }
+            uint8_t pixels[2][32 * 32 * 4];
+            for (int merged = 0; merged < 2; merged++) {
+                MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                                                                              width:32
+                                                                                             height:32
+                                                                                          mipmapped:NO];
+                td.usage = MTLTextureUsageRenderTarget | MTLTextureUsagePixelFormatView | MTLTextureUsageShaderRead;
+                td.storageMode = MTLStorageModePrivate;
+                if (samples > 1) {
+                    td.textureType = MTLTextureType2DMultisample;
+                    td.sampleCount = samples;
+                }
+                id<MTLTexture> base = [[device newTextureWithDescriptor:td] autorelease];
+                id<MTLTexture> views[2] = {[[base newTextureViewWithPixelFormat:formats[0]] autorelease],
+                                           [[base newTextureViewWithPixelFormat:formats[1]] autorelease]};
+                td.textureType = MTLTextureType2D;
+                td.sampleCount = 1;
+                td.storageMode = MTLStorageModeShared;
+                id<MTLTexture> flat = [[device newTextureWithDescriptor:td] autorelease];
+                if (!base || !views[0] || !views[1] || !flat)
+                    return false;
+                id<MTLCommandBuffer> buffer = [queue commandBuffer];
+                /* the format and the blending of each draw. */
+                static const int draws[9][2] = {{0, 0}, {1, 1}, {0, 1}, {1, 2}, {0, 2}, {1, 1}, {1, 0}, {0, 1}, {1, 1}};
+                id<MTLRenderCommandEncoder> pass = nil;
+                int bound = -1;
+                for (int k = 0; k < 9; k++) {
+                    int f = draws[k][0];
+                    if (!pass || (!merged && bound != f)) {
+                        [pass endEncoding];
+                        MTLRenderPassDescriptor *rp = [[MTLRenderPassDescriptor new] autorelease];
+                        rp.colorAttachments[0].texture = views[merged ? 0 : f];
+                        rp.colorAttachments[0].loadAction = pass ? MTLLoadActionLoad : MTLLoadActionClear;
+                        rp.colorAttachments[0].clearColor = MTLClearColorMake(0.2, 0.4, 0.6, 0.5);
+                        rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+                        pass = [buffer renderCommandEncoderWithDescriptor:rp];
+                        bound = f;
+                    }
+                    [pass setRenderPipelineState:pipelines[f][draws[k][1]]];
+                    float constants[4] = {1.0f + (float)k * 1.7f, 0.13f * (float)k, 2.3f + (float)k, 0.7f + 0.9f * (float)k};
+                    [pass setFragmentBytes:constants length:sizeof(constants) atIndex:0];
+                    [pass drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+                }
+                [pass endEncoding];
+                if (samples > 1) {
+                    MTLRenderPassDescriptor *rp = [[MTLRenderPassDescriptor new] autorelease];
+                    rp.colorAttachments[0].texture = views[1];
+                    rp.colorAttachments[0].loadAction = MTLLoadActionLoad;
+                    rp.colorAttachments[0].storeAction = MTLStoreActionMultisampleResolve;
+                    rp.colorAttachments[0].resolveTexture = flat;
+                    [[buffer renderCommandEncoderWithDescriptor:rp] endEncoding];
+                } else {
+                    id<MTLBlitCommandEncoder> blit = [buffer blitCommandEncoder];
+                    [blit copyFromTexture:views[1] sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+                               sourceSize:MTLSizeMake(32, 32, 1) toTexture:flat destinationSlice:0 destinationLevel:0
+                        destinationOrigin:MTLOriginMake(0, 0, 0)];
+                    [blit endEncoding];
+                }
+                [buffer commit];
+                [buffer waitUntilCompleted];
+                if (buffer.error)
+                    return false;
+                [flat getBytes:pixels[merged] bytesPerRow:32 * 4 fromRegion:MTLRegionMake2D(0, 0, 32, 32) mipmapLevel:0];
+            }
+            same = !memcmp(pixels[0], pixels[1], sizeof(pixels[0]));
+        }
+    }
+    return same;
+}
+
+static bool vkm_mixes_srgb(id<MTLDevice> device)
+{
+    static dispatch_once_t once;
+    static bool mixes;
+    dispatch_once(&once, ^{
+        mixes = mix_probe(device);
+        if (!mixes)
+            VKM_ERROR("a render pass does not take draws of both srgb and plain formats here: passes stay apart");
+    });
+    return mixes;
+}
+
+/* whether b draws to what a does, keeping it: the same memory, through a view that may differ in being srgb. */
+static bool same_target(const VkmAttach *a, const VkmAttach *b, bool *mixed)
+{
+    if (!a->texture || !b->texture)
+        return !a->texture && !b->texture;
+    id<MTLTexture> ta = a->texture, tb = b->texture;
+    NSUInteger la = a->level, sa = a->slice, lb = b->level, sb = b->slice;
+    for (; ta.parentTexture; ta = ta.parentTexture)
+        la += ta.parentRelativeLevel, sa += ta.parentRelativeSlice;
+    for (; tb.parentTexture; tb = tb.parentTexture)
+        lb += tb.parentRelativeLevel, sb += tb.parentRelativeSlice;
+    if (ta != tb || la != lb || sa != sb)
+        return false;
+    MTLPixelFormat fa = a->texture.pixelFormat, fb = b->texture.pixelFormat;
+    if (fa != fb) {
+        if (vkm_plain_format(fa) != vkm_plain_format(fb))
+            return false;
+        *mixed = true;
+    }
+    return b->load != MTLLoadActionClear && a->store == b->store && a->resolve == b->resolve &&
+           a->resolve_level == b->resolve_level && a->resolve_slice == b->resolve_slice &&
+           a->resolve_filter == b->resolve_filter;
+}
+
+static bool pass_goes_on(VkQueue queue, const VkmBeginRender *a, const VkmBeginRender *b)
+{
+    if (a->width != b->width || a->height != b->height || a->layers != b->layers || a->samples != b->samples ||
+        a->color_count != b->color_count || (b->visibility && b->visibility != a->visibility))
+        return false;
+    bool mixed = false;
+    for (uint32_t i = 0; i < a->color_count; i++)
+        if (!same_target(&a->colors[i], &b->colors[i], &mixed))
+            return false;
+    bool depth_mixed = false;
+    if (!same_target(&a->depth, &b->depth, &depth_mixed) || !same_target(&a->stencil, &b->stencil, &depth_mixed) ||
+        depth_mixed)
+        return false;
+    return !mixed || vkm_mixes_srgb(queue->device->mtl);
+}
+
+/*
+ * a pass takes the buffer of its occlusion queries when it begins, and one that goes on into the passes after it may
+ * only meet its first query there: the buffer of the first of those that has one, looked for from after the pass's
+ * begin.
+ */
+static id<MTLBuffer> visibility_ahead(VkQueue queue, VkCommandBuffer cmd, size_t at, const VkmBeginRender *a)
+{
+    bool inside = true;
+    for (uint32_t seen = 0; at < cmd->cmd_size && seen < 20000; seen++) {
+        const VkmOp *o = (const VkmOp *)(cmd->cmds + at);
+        if (!o->size)
+            break;
+        at += o->size;
+        if (inside) {
+            inside = o->op != VKM_OP_END_RENDER;
+            continue;
+        }
+        if (o->op == VKM_OP_BARRIER || o->op == VKM_OP_QUERY_COPY)
+            continue;
+        if (o->op != VKM_OP_BEGIN_RENDER)
+            break;
+        const VkmBeginRender *b = (const VkmBeginRender *)o;
+        VkmBeginRender with = *a;
+        with.visibility = b->visibility;
+        if (!pass_goes_on(queue, &with, b))
+            break;
+        if (b->visibility)
+            return b->visibility;
+        inside = true;
+    }
+    return nil;
+}
+
 void vkm_encode(VkQueue queue, VkCommandBuffer cmd, id<MTL4CommandBuffer> mtl_cmd)
 {
     Enc e = {queue, mtl_cmd};
     e.value = queue->submitted + 1;
+    const VkmBeginRender *pass = nullptr; /* what the render encoder was made for. */
+    VkmBeginRender first;
+    /* the barriers and copies of query results between passes that became one: done once it ends. */
+    const VkmOp *after[64];
+    uint32_t after_count = 0;
     for (size_t at = 0; at < cmd->cmd_size;) {
         const VkmOp *op = (const VkmOp *)(cmd->cmds + at);
         if (!op->size)
             break;
-        replay(&e, op);
         at += op->size;
+        if (op->op == VKM_OP_BEGIN_RENDER) {
+            first = *(const VkmBeginRender *)op;
+            if (!first.visibility)
+                first.visibility = visibility_ahead(queue, cmd, at, &first);
+            pass = &first;
+            replay(&e, &first.head);
+            continue;
+        }
+        if (op->op == VKM_OP_END_RENDER && e.render && pass) {
+            size_t next = at;
+            uint32_t held = after_count;
+            const VkmOp *o = nullptr;
+            while (next < cmd->cmd_size) {
+                o = (const VkmOp *)(cmd->cmds + next);
+                if (!o->size || (o->op != VKM_OP_BARRIER && o->op != VKM_OP_QUERY_COPY) ||
+                    held == MIME_ARRAY_COUNT(after))
+                    break;
+                after[held++] = o;
+                next += o->size;
+            }
+            if (next < cmd->cmd_size && o && o->op == VKM_OP_BEGIN_RENDER &&
+                pass_goes_on(queue, pass, (const VkmBeginRender *)o)) {
+                /* the pass goes on: its encoder has the state it had. */
+                after_count = held;
+                at = next + o->size;
+                continue;
+            }
+            replay(&e, op);
+            pass = nullptr;
+            for (uint32_t k = 0; k < after_count; k++)
+                replay(&e, after[k]);
+            after_count = 0;
+            continue;
+        }
+        replay(&e, op);
     }
     end_encoder(&e);
 }
