@@ -1144,6 +1144,9 @@ static NTSTATUS fill_tls(TLS_VECTOR *v)
     NTSTATUS status = grow_tls(v);
     if (!NT_SUCCESS(status))
         return status;
+    if (!g_tls_count)
+        return STATUS_SUCCESS;
+    v->Teb->ThreadLocalStoragePointer = v->Slots;
     for (ULONG i = 0; i < g_tls_count; i++) {
         if (v->Slots[i] || !g_tls_modules[i].Directory)
             continue;
@@ -1158,14 +1161,27 @@ static NTSTATUS fill_tls(TLS_VECTOR *v)
     return STATUS_SUCCESS;
 }
 
+/* a thread that started before any library had tls has a vector too, with a null pointer in its teb. a library
+   loaded later then gives it its block, as windows does for every running thread. */
+static TLS_VECTOR *find_tls_vector(PTEB teb)
+{
+    if (teb->ThreadLocalStoragePointer)
+        return ((TLS_VECTOR **)teb->ThreadLocalStoragePointer)[-1];
+    for (PLIST_ENTRY l = g_tls_vectors.Flink; l != &g_tls_vectors; l = l->Flink) {
+        TLS_VECTOR *v = CONTAINING_RECORD(l, TLS_VECTOR, Link);
+        if (v->Teb == teb)
+            return v;
+    }
+    return nullptr;
+}
+
 static NTSTATUS allocate_thread_tls_locked(void)
 {
-    if (!g_tls_count)
-        return STATUS_SUCCESS;
     PTEB teb = NtCurrentTeb();
-    if (teb->ThreadLocalStoragePointer)
-        return fill_tls(((TLS_VECTOR **)teb->ThreadLocalStoragePointer)[-1]);
-    TLS_VECTOR *v = heap_alloc(sizeof(*v));
+    TLS_VECTOR *v = find_tls_vector(teb);
+    if (v)
+        return fill_tls(v);
+    v = heap_alloc(sizeof(*v));
     if (!v)
         return STATUS_NO_MEMORY;
     v->Teb = teb;
@@ -1176,7 +1192,6 @@ static NTSTATUS allocate_thread_tls_locked(void)
         return STATUS_NO_MEMORY;
     }
     InsertTailList(&g_tls_vectors, &v->Link);
-    teb->ThreadLocalStoragePointer = v->Slots;
     return fill_tls(v);
 }
 
@@ -1202,14 +1217,15 @@ static NTSTATUS allocate_process_tls(void)
 static void free_thread_tls(void)
 {
     PTEB teb = NtCurrentTeb();
-    PVOID *slots = teb->ThreadLocalStoragePointer;
-    if (!slots)
-        return;
     RtlAcquireSRWLockExclusive(&g_tls_lock);
-    teb->ThreadLocalStoragePointer = nullptr;
-    TLS_VECTOR *v = ((TLS_VECTOR **)slots)[-1];
-    RemoveEntryList(&v->Link);
+    TLS_VECTOR *v = find_tls_vector(teb);
+    if (v) {
+        teb->ThreadLocalStoragePointer = nullptr;
+        RemoveEntryList(&v->Link);
+    }
     RtlReleaseSRWLockExclusive(&g_tls_lock);
+    if (!v)
+        return;
     for (ULONG i = 0; i < v->Capacity; i++)
         heap_free(v->Slots[i]);
     heap_free(v->Slots - 1);
