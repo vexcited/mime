@@ -339,8 +339,8 @@ static uint64_t view_rid(VkImageView view)
 {
     if (!view)
         return 0;
-    if (!view->image->read)
-        view->image->read = true;
+    if (!__atomic_load_n(&view->image->read, __ATOMIC_RELAXED))
+        __atomic_store_n(&view->image->read, true, __ATOMIC_RELEASE);
     return view->rid._impl;
 }
 

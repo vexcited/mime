@@ -220,7 +220,11 @@ struct VkImage_T {
     VkDeviceMemory memory;
     uint64_t offset;
     bool swapchain;
-    bool read; /* a descriptor has a view of it: a draw to it may read it too. */
+    /*
+     * a draw to it may read it too: a descriptor has a view of it, or its texture is another image's as well. set by
+     * the threads that write descriptors and read by the one that encodes, so only through atomic accesses.
+     */
+    bool read;
     bool resident; /* its texture is in the device's set, as validation wants of placed attachments. */
 };
 
