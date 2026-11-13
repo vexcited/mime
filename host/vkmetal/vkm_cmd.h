@@ -459,6 +459,8 @@ struct VkmGfxState {
 void *vkm_emit(VkCommandBuffer cmd, uint32_t op, size_t size);
 /* forgets what the list set, after commands that change encoder state behind the state tracking. */
 void vkm_forget(VkCommandBuffer cmd);
+/* ends the render pass and begins it again where it left off, without a visibility buffer, or nullptr. */
+VkmBeginRender *vkm_render_split(VkCommandBuffer cmd);
 uint64_t vkm_stages(VkPipelineStageFlags2 stages);
 /* a clear of rectangles of the render pass's attachments, folded into its load actions when it can be. */
 void vkm_clear_rects(VkCommandBuffer cmd, uint32_t count, const VkClearAttachment *clears, uint32_t rect_count,
