@@ -361,9 +361,6 @@ static DWORD wait_result(NTSTATUS status)
 
 DWORD WINAPI WaitForSingleObjectEx(HANDLE handle, DWORD milliseconds, BOOL alertable)
 {
-    /* the NUL device is always signaled. */
-    if (KbIsPseudoHandle(handle))
-        return WAIT_OBJECT_0;
     LARGE_INTEGER storage;
     PLARGE_INTEGER timeout = KbTimeout(&storage, milliseconds);
     NTSTATUS status;
@@ -393,42 +390,22 @@ DWORD WINAPI WaitForMultipleObjectsEx(DWORD count, const HANDLE *handles, BOOL a
         KbSetError(ERROR_INVALID_PARAMETER);
         return WAIT_FAILED;
     }
-    HANDLE copy[MAXIMUM_WAIT_OBJECTS];
-    DWORD map[MAXIMUM_WAIT_OBJECTS];
-    DWORD n = 0;
-    for (DWORD i = 0; i < count; i++) {
-        HANDLE h = handles[i];
-        if (KbIsPseudoHandle(h)) {
-            if (!all)
-                return WAIT_OBJECT_0 + i;
-            continue;
-        }
-        map[n] = i;
-        copy[n++] = h;
-    }
-    if (!n)
-        return WAIT_OBJECT_0;
     LARGE_INTEGER storage;
     PLARGE_INTEGER timeout = KbTimeout(&storage, milliseconds);
     NTSTATUS status = STATUS_TIMEOUT;
     if (alertable) {
         LARGE_INTEGER zero = {.QuadPart = 0};
-        status = NtWaitForMultipleObjects(n, copy, all ? WaitAll : WaitAny, FALSE, &zero);
+        status = NtWaitForMultipleObjects(count, (PHANDLE)handles, all ? WaitAll : WaitAny, FALSE, &zero);
         if (status == STATUS_TIMEOUT && KbRunPendingApcs())
             return WAIT_IO_COMPLETION;
     }
     while (status == STATUS_TIMEOUT && (!alertable || timeout == nullptr || timeout->QuadPart != 0)) {
-        status = NtWaitForMultipleObjects(n, copy, all ? WaitAll : WaitAny, (BOOLEAN)alertable, timeout);
+        status = NtWaitForMultipleObjects(count, (PHANDLE)handles, all ? WaitAll : WaitAny, (BOOLEAN)alertable, timeout);
         if (!(status == STATUS_ALERTED && alertable && milliseconds == INFINITE))
             break;
         status = STATUS_TIMEOUT;
     }
-    DWORD r = wait_result(status);
-    if (r < WAIT_OBJECT_0 + MAXIMUM_WAIT_OBJECTS && r - WAIT_OBJECT_0 < n)
-        return WAIT_OBJECT_0 + map[r - WAIT_OBJECT_0];
-    if (r >= WAIT_ABANDONED_0 && r < WAIT_ABANDONED_0 + n)
-        return WAIT_ABANDONED_0 + map[r - WAIT_ABANDONED_0];
-    return r;
+    return wait_result(status);
 }
 
 DWORD WINAPI WaitForMultipleObjects(DWORD count, const HANDLE *handles, BOOL all, DWORD milliseconds)

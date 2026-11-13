@@ -90,16 +90,6 @@ static BOOL set_path_status(NTSTATUS status)
 
 /* ------------------------------------------------------------------ creation */
 
-static HANDLE open_device_name(LPCWSTR name, DWORD access)
-{
-    PCWSTR base = name;
-    if (!wcsncmp(base, L"\\\\.\\", 4))
-        base += 4;
-    if (!_wcsicmp(base, L"NUL"))
-        return KB_NULL_DEVICE;
-    return nullptr;
-}
-
 HANDLE WINAPI CreateFileW(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_ATTRIBUTES sa, DWORD disposition,
                           DWORD flags, HANDLE template_file)
 {
@@ -107,12 +97,9 @@ HANDLE WINAPI CreateFileW(LPCWSTR name, DWORD access, DWORD share, LPSECURITY_AT
         KbSetError(ERROR_PATH_NOT_FOUND);
         return INVALID_HANDLE_VALUE;
     }
-    HANDLE device = open_device_name(name, access);
-    if (device) {
-        KbSetError(ERROR_SUCCESS);
-        return device;
-    }
-    device = KbOpenConsoleDevice(name, access, share, sa, disposition);
+    if (!_wcsicmp(name, L"NUL") || !_wcsicmp(name, L"NUL:"))
+        name = L"\\\\.\\NUL";
+    HANDLE device = KbOpenConsoleDevice(name, access, share, sa, disposition);
     if (device == INVALID_HANDLE_VALUE)
         return device;
     if (device) {
@@ -458,8 +445,6 @@ BOOL WINAPI ReadFile(HANDLE file, LPVOID buffer, DWORD length, LPDWORD read, LPO
 {
     if (read)
         *read = 0;
-    if (KbIsPseudoHandle(file))
-        return TRUE;
     IO_STATUS_BLOCK local;
     NTSTATUS status;
     if (overlapped) {
@@ -501,11 +486,6 @@ BOOL WINAPI WriteFile(HANDLE file, LPCVOID buffer, DWORD length, LPDWORD written
 {
     if (written)
         *written = 0;
-    if (KbIsPseudoHandle(file)) {
-        if (written)
-            *written = length;
-        return TRUE;
-    }
     IO_STATUS_BLOCK local;
     NTSTATUS status;
     if (overlapped) {
@@ -690,10 +670,6 @@ BOOL WINAPI CancelSynchronousIo(HANDLE thread)
 
 static BOOL query_standard(HANDLE file, FILE_STANDARD_INFORMATION *info)
 {
-    if (KbIsPseudoHandle(file)) {
-        KbSetError(ERROR_INVALID_HANDLE);
-        return FALSE;
-    }
     IO_STATUS_BLOCK iosb;
     NTSTATUS status = NtQueryInformationFile(file, &iosb, info, sizeof(*info), FileStandardInformation);
     if (!NT_SUCCESS(status))
@@ -724,10 +700,6 @@ DWORD WINAPI GetFileSize(HANDLE file, LPDWORD high)
 
 BOOL WINAPI SetFilePointerEx(HANDLE file, LARGE_INTEGER distance, PLARGE_INTEGER position, DWORD method)
 {
-    if (KbIsPseudoHandle(file)) {
-        KbSetError(ERROR_INVALID_HANDLE);
-        return FALSE;
-    }
     IO_STATUS_BLOCK iosb;
     NTSTATUS status;
     LONGLONG base = 0;
@@ -797,10 +769,6 @@ DWORD WINAPI SetFilePointer(HANDLE file, LONG distance, PLONG high, DWORD method
 
 BOOL WINAPI SetEndOfFile(HANDLE file)
 {
-    if (KbIsPseudoHandle(file)) {
-        KbSetError(ERROR_INVALID_HANDLE);
-        return FALSE;
-    }
     IO_STATUS_BLOCK iosb;
     FILE_POSITION_INFORMATION pos;
     NTSTATUS status = NtQueryInformationFile(file, &iosb, &pos, sizeof(pos), FilePositionInformation);
@@ -829,8 +797,6 @@ BOOL WINAPI SetFileValidData(HANDLE file, LONGLONG length)
 
 BOOL WINAPI FlushFileBuffers(HANDLE file)
 {
-    if (KbIsPseudoHandle(file))
-        return TRUE;
     IO_STATUS_BLOCK iosb;
     NTSTATUS status = NtFlushBuffersFile(file, &iosb);
     if (!NT_SUCCESS(status))
@@ -840,8 +806,6 @@ BOOL WINAPI FlushFileBuffers(HANDLE file)
 
 DWORD WINAPI GetFileType(HANDLE file)
 {
-    if (KbIsPseudoHandle(file))
-        return FILE_TYPE_CHAR;
     if (file == INVALID_HANDLE_VALUE || !file) {
         KbSetError(ERROR_INVALID_HANDLE);
         return FILE_TYPE_UNKNOWN;
@@ -1048,10 +1012,6 @@ static ULONG volume_serial(HANDLE file)
 
 BOOL WINAPI GetFileInformationByHandle(HANDLE file, LPBY_HANDLE_FILE_INFORMATION info)
 {
-    if (KbIsPseudoHandle(file)) {
-        KbSetError(ERROR_INVALID_HANDLE);
-        return FALSE;
-    }
     IO_STATUS_BLOCK iosb;
     FILE_BASIC_INFORMATION basic;
     FILE_STANDARD_INFORMATION std;
@@ -1091,10 +1051,6 @@ static BOOL query_directory_by_handle(HANDLE file, FILE_INFORMATION_CLASS klass,
 
 BOOL WINAPI GetFileInformationByHandleEx(HANDLE file, FILE_INFO_BY_HANDLE_CLASS klass, LPVOID info, DWORD size)
 {
-    if (KbIsPseudoHandle(file)) {
-        KbSetError(ERROR_INVALID_HANDLE);
-        return FALSE;
-    }
     IO_STATUS_BLOCK iosb;
     NTSTATUS status;
     switch (klass) {
@@ -1219,10 +1175,6 @@ HANDLE WINAPI OpenFileById(HANDLE volume, LPFILE_ID_DESCRIPTOR id, DWORD access,
 
 BOOL WINAPI SetFileInformationByHandle(HANDLE file, FILE_INFO_BY_HANDLE_CLASS klass, LPVOID info, DWORD size)
 {
-    if (KbIsPseudoHandle(file)) {
-        KbSetError(ERROR_INVALID_HANDLE);
-        return FALSE;
-    }
     FILE_INFORMATION_CLASS nt_class;
     switch (klass) {
     case FileBasicInfo:
@@ -1298,10 +1250,6 @@ BOOL WINAPI SetFileInformationByHandle(HANDLE file, FILE_INFO_BY_HANDLE_CLASS kl
 
 BOOL WINAPI GetFileTime(HANDLE file, LPFILETIME creation, LPFILETIME access, LPFILETIME write)
 {
-    if (KbIsPseudoHandle(file)) {
-        KbSetError(ERROR_INVALID_HANDLE);
-        return FALSE;
-    }
     IO_STATUS_BLOCK iosb;
     FILE_BASIC_INFORMATION basic;
     NTSTATUS status = NtQueryInformationFile(file, &iosb, &basic, sizeof(basic), FileBasicInformation);
@@ -1318,10 +1266,6 @@ BOOL WINAPI GetFileTime(HANDLE file, LPFILETIME creation, LPFILETIME access, LPF
 
 BOOL WINAPI SetFileTime(HANDLE file, const FILETIME *creation, const FILETIME *access, const FILETIME *write)
 {
-    if (KbIsPseudoHandle(file)) {
-        KbSetError(ERROR_INVALID_HANDLE);
-        return FALSE;
-    }
     FILE_BASIC_INFORMATION basic;
     memset(&basic, 0, sizeof(basic));
     if (creation)
@@ -1362,10 +1306,6 @@ static WCHAR drive_of_handle(HANDLE file)
 
 DWORD WINAPI GetFinalPathNameByHandleW(HANDLE file, LPWSTR path, DWORD size, DWORD flags)
 {
-    if (KbIsPseudoHandle(file)) {
-        KbSetError(ERROR_INVALID_HANDLE);
-        return 0;
-    }
     if (flags & ~(DWORD)(FILE_NAME_OPENED | VOLUME_NAME_GUID | VOLUME_NAME_NT | VOLUME_NAME_NONE)) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return 0;
