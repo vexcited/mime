@@ -231,7 +231,7 @@ static void query_reset(Enc *e, const VkmOpQuery *o)
         return;
     }
     [compute(e) fillBuffer:pool->buffer
-                     range:(NSRange){(NSUInteger)o->first * 8 * n, (NSUInteger)o->count * 8 * n}
+                     range:(NSRange){(NSUInteger)pool->base + (NSUInteger)o->first * 8 * n, (NSUInteger)o->count * 8 * n}
                      value:0];
 }
 
@@ -256,7 +256,7 @@ static void query_copy(Enc *e, const VkmOpQuery *o)
         uint64_t at = o->buffer->offset + o->offset + (uint64_t)i * o->stride;
         for (uint32_t k = 0; k < n; k++)
             [c copyFromBuffer:pool->buffer
-                     sourceOffset:((NSUInteger)(o->first + i) * n + k) * 8
+                     sourceOffset:(NSUInteger)pool->base + ((NSUInteger)(o->first + i) * n + k) * 8
                          toBuffer:dst
                 destinationOffset:at + k * size
                              size:size];
