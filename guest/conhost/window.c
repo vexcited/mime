@@ -347,7 +347,7 @@ static void show_first(void)
 {
     const MIME_CONDRV_HOST_STATE *s = &g.State;
     int cmd = SW_SHOWNORMAL;
-    if ((s->StartupFlags & 0x1) && s->ShowWindow != SW_HIDE)
+    if (s->StartupFlags & 0x1)
         cmd = (int)s->ShowWindow;
     if (cmd == SW_SHOWDEFAULT)
         cmd = SW_SHOWNORMAL;
