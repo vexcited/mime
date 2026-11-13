@@ -193,7 +193,8 @@ SEH_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base, U
 
     if (offset >= info->SizeOfProlog && in_epilog(pc, base, function, info)) {
         run_epilog(c, info, pointers);
-        *handler_data = nullptr;
+        if (handler_data)
+            *handler_data = nullptr;
         return nullptr;
     }
 
@@ -277,10 +278,13 @@ SEH_EXPORT PEXCEPTION_ROUTINE NTAPI RtlVirtualUnwind(ULONG type, ULONG64 base, U
     }
     if (info->Flags & type & (UNW_FLAG_EHANDLER | UNW_FLAG_UHANDLER)) {
         const ULONG *handler = (const ULONG *)&info->UnwindCode[(info->CountOfCodes + 1) & ~1];
-        *handler_data = (PVOID)(handler + 1);
+        if (handler_data)
+            *handler_data = (PVOID)(handler + 1);
         return (PEXCEPTION_ROUTINE)(base + *handler);
     }
-    *handler_data = nullptr;
+    /* the Go runtime unwinds with no place for the handler data. */
+    if (handler_data)
+        *handler_data = nullptr;
     return nullptr;
 }
 
