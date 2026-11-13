@@ -933,7 +933,7 @@ static void begin_rendering(VkCommandBuffer cmd, const VkRenderingInfo *info)
         VkmOpVisibility *o = vkm_emit(cmd, VKM_OP_VISIBILITY, sizeof(*o));
         if (o) {
             o->mode = s->occlusion_precise ? MTLVisibilityResultModeCounting : MTLVisibilityResultModeBoolean;
-            o->offset = s->occlusion_query * 8;
+            o->offset = (uint32_t)s->occlusion->base + s->occlusion_query * 8;
         }
     }
     /* a clear of part of the attachments is a draw over the render area. */
@@ -990,6 +990,40 @@ static VKAPI_ATTR void VKAPI_CALL CmdEndRendering(VkCommandBuffer cmd)
     else
         vkm_emit(cmd, VKM_OP_END_RENDER, sizeof(VkmOp));
     s->rendering = false;
+}
+
+static void split_attach(VkmAttach *before, VkmAttach *after)
+{
+    if (!before->texture)
+        return;
+    before->store = MTLStoreActionStore;
+    before->resolve = nullptr;
+    after->load = MTLLoadActionLoad;
+}
+
+VkmBeginRender *vkm_render_split(VkCommandBuffer cmd)
+{
+    VkmGfxState *s = STATE(cmd);
+    if (s->begin >= cmd->cmd_size || ((const VkmOp *)(cmd->cmds + s->begin))->op != VKM_OP_BEGIN_RENDER)
+        return nullptr;
+    VkmBeginRender *b = (VkmBeginRender *)(cmd->cmds + s->begin);
+    VkmBeginRender next = *b;
+    for (uint32_t i = 0; i < b->color_count; i++)
+        split_attach(&b->colors[i], &next.colors[i]);
+    split_attach(&b->depth, &next.depth);
+    split_attach(&b->stencil, &next.stencil);
+    next.visibility = nullptr;
+    vkm_emit(cmd, VKM_OP_END_RENDER, sizeof(VkmOp));
+    size_t at = cmd->cmd_size;
+    b = vkm_emit(cmd, VKM_OP_BEGIN_RENDER, sizeof(*b));
+    if (!b)
+        return nullptr;
+    VkmOp head = b->head;
+    *b = next;
+    b->head = head;
+    s->begin = at;
+    vkm_forget(cmd);
+    return b;
 }
 
 /* a secondary command buffer that continues a render pass draws to its formats. */

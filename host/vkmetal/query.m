@@ -11,6 +11,38 @@ static uint32_t values_of(VkQueryType type, VkQueryPipelineStatisticFlags statis
     return type == VK_QUERY_TYPE_PIPELINE_STATISTICS ? MIME_MAX(__builtin_popcount(statistics), 1) : 1;
 }
 
+/* a run of count free queries in the device's occlusion buffer, or -1 when it has none left. */
+static int64_t occlusion_take(VkDevice device, uint32_t count)
+{
+    int64_t found = -1;
+    pthread_mutex_lock(&device->occlusion_lock);
+    if (!device->occlusion) {
+        device->occlusion = [device->mtl newBufferWithLength:VKM_OCCLUSION_QUERIES * 8
+                                                     options:MTLResourceStorageModeShared |
+                                                             MTLResourceHazardTrackingModeUntracked];
+        if (device->occlusion)
+            vkm_resident(device, device->occlusion);
+    }
+    uint32_t run = 0;
+    for (uint32_t i = 0; device->occlusion && count && i < VKM_OCCLUSION_QUERIES && found < 0; i++) {
+        run = device->occlusion_map[i / 64] >> (i % 64) & 1 ? 0 : run + 1;
+        if (run == count)
+            found = (int64_t)i + 1 - count;
+    }
+    for (uint32_t i = 0; found >= 0 && i < count; i++)
+        device->occlusion_map[(found + i) / 64] |= 1ull << ((found + i) % 64);
+    pthread_mutex_unlock(&device->occlusion_lock);
+    return found;
+}
+
+static void occlusion_give(VkDevice device, uint64_t first, uint32_t count)
+{
+    pthread_mutex_lock(&device->occlusion_lock);
+    for (uint32_t i = 0; i < count; i++)
+        device->occlusion_map[(first + i) / 64] &= ~(1ull << ((first + i) % 64));
+    pthread_mutex_unlock(&device->occlusion_lock);
+}
+
 static VKAPI_ATTR VkResult VKAPI_CALL CreateQueryPool(VkDevice device, const VkQueryPoolCreateInfo *info,
                                                       const VkAllocationCallbacks *a, VkQueryPool *out)
 {
@@ -33,19 +65,30 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateQueryPool(VkDevice device, const VkQ
     pool->statistics = info->pipelineStatistics;
     pool->queue = &device->queue;
     uint64_t size = (uint64_t)MIME_MAX(info->queryCount, 1u) * 8 * values_of(pool->type, pool->statistics);
-    pool->buffer = [device->mtl newBufferWithLength:size
-                                            options:MTLResourceStorageModeShared |
-                                                    MTLResourceHazardTrackingModeUntracked];
+    int64_t taken = pool->type == VK_QUERY_TYPE_OCCLUSION ? occlusion_take(device, info->queryCount) : -1;
+    if (taken >= 0) {
+        pool->buffer = [device->occlusion retain];
+        pool->base = (uint64_t)taken * 8;
+        pool->pooled = true;
+    } else {
+        /* queries of such a pool and of another cannot share a render pass. */
+        pool->buffer = [device->mtl newBufferWithLength:size
+                                                options:MTLResourceStorageModeShared |
+                                                        MTLResourceHazardTrackingModeUntracked];
+    }
     pool->written = vkm_zalloc(sizeof(uint64_t) * MIME_MAX(info->queryCount, 1u));
     if (!pool->buffer || !pool->written) {
+        if (pool->pooled)
+            occlusion_give(device, pool->base / 8, pool->count);
         [pool->buffer release];
         free(pool->written);
         free(pool);
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
-    pool->values = pool->buffer.contents;
+    pool->values = (uint64_t *)((uint8_t *)pool->buffer.contents + pool->base);
     memset(pool->values, 0, size);
-    vkm_resident(device, pool->buffer);
+    if (!pool->pooled)
+        vkm_resident(device, pool->buffer);
     *out = pool;
     return VK_SUCCESS;
 }
@@ -54,7 +97,12 @@ static VKAPI_ATTR void VKAPI_CALL DestroyQueryPool(VkDevice device, VkQueryPool 
 {
     if (!pool)
         return;
-    vkm_release_later(device, pool->buffer, true);
+    if (pool->pooled) {
+        occlusion_give(device, pool->base / 8, pool->count);
+        [pool->buffer release];
+    } else {
+        vkm_release_later(device, pool->buffer, true);
+    }
     free(pool->written);
     free(pool);
 }

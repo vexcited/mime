@@ -384,6 +384,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateDevice(VkPhysicalDevice physical, co
         pthread_mutex_init(&device->chunk_lock, nullptr);
         pthread_mutex_init(&device->init_lock, nullptr);
         pthread_mutex_init(&device->grave_lock, nullptr);
+        pthread_mutex_init(&device->occlusion_lock, nullptr);
         pthread_mutex_init(&device->memory_lock, nullptr);
         NSError *error = nil;
         device->pipelines = mime_pipeline_cache(device->mtl, "vulkan");
@@ -457,6 +458,7 @@ VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device, const VkAllocationCall
     free(device->memories);
     vkm_as_device_free(device);
     [device->zero release];
+    [device->occlusion release];
     [q->tables[0] release];
     [q->tables[1] release];
     [q->event release];
