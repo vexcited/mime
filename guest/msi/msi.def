@@ -51,6 +51,7 @@ EXPORTS
     MsiEnumClientsW @37
     MsiGetComponentPathW @173
     MsiDatabaseApplyTransformW @19
+    MsiDatabaseApplyTransformA @18
     MsiGetFeatureStateW @58
     MsiSetFeatureStateW @139
     MsiSetInstallLevel @140

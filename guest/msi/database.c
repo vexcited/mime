@@ -35,6 +35,9 @@ static void destroy_database(MIME_MSI_OBJECT *object)
     for (ULONG i = 0; i < database->PatchCount; i++)
         MimeMsiRelease(&database->Patches[i]->Object);
     MimeMsiFree(database->Patches);
+    if (database->WriteLock)
+        CloseHandle(database->WriteLock);
+    MimeMsiFree(database->OutputPath);
     MimeMsiFree(database->Path);
     MimeMsiFree(database);
 }
@@ -89,7 +92,8 @@ UINT MimeMsiOpenStorageFile(PCWSTR path, BYTE kind, MIME_MSI_DATABASE **out)
     if (!path || !out)
         return ERROR_INVALID_PARAMETER;
     *out = nullptr;
-    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    HANDLE file = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              nullptr, OPEN_EXISTING, 0, nullptr);
     if (file == INVALID_HANDLE_VALUE)
         return GetLastError();
     LARGE_INTEGER size;
@@ -165,12 +169,48 @@ UINT WINAPI MsiOpenDatabaseW(LPCWSTR path, LPCWSTR persist, MSIHANDLE *out)
     /* a number below the addresses is a mode of opening, and one that is no mode is refused. */
     if ((ULONG_PTR)persist < 0x10000 && ((ULONG_PTR)persist & ~(ULONG_PTR)MSIDBOPEN_PATCHFILE) > 4)
         return ERROR_INVALID_PARAMETER;
-    if (persist != MSIDBOPEN_READONLY)
+    BOOL output = (ULONG_PTR)persist >= 0x10000;
+    ULONG mode = output ? 1 : (ULONG)(ULONG_PTR)persist;
+    /* DIRECT/CREATE and patch databases need separate semantics; do not pretend they are transactions. */
+    if (mode > 1)
         return ERROR_CALL_NOT_IMPLEMENTED;
-    MIME_MSI_DATABASE *database;
-    UINT error = MimeMsiOpenDatabaseFile(path, FALSE, &database);
-    if (error)
+    PWSTR output_path = nullptr;
+    HANDLE write_lock = nullptr;
+    UINT error = ERROR_SUCCESS;
+    if (mode == 1) {
+        PCWSTR target = output ? persist : path;
+        DWORD length = GetFullPathNameW(target, 0, nullptr, nullptr);
+        output_path = length ? MimeMsiAllocate((SIZE_T)length * sizeof(WCHAR)) : nullptr;
+        if (!output_path || !GetFullPathNameW(target, length, output_path, nullptr))
+            error = ERROR_INVALID_PARAMETER;
+        else {
+            DWORD attributes = GetFileAttributesW(output_path);
+            if (attributes != INVALID_FILE_ATTRIBUTES) {
+                write_lock = CreateFileW(output_path, GENERIC_READ | GENERIC_WRITE,
+                                         FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+                if (write_lock == INVALID_HANDLE_VALUE) {
+                    error = GetLastError();
+                    write_lock = nullptr;
+                }
+            } else if (!output)
+                error = GetLastError();
+        }
+    }
+    /* For an in-place transaction, acquire writer exclusivity before reading the snapshot. Otherwise a
+     * competing writer can commit between the read and the lock, and this transaction would overwrite it. */
+    MIME_MSI_DATABASE *database = nullptr;
+    if (!error)
+        error = MimeMsiOpenDatabaseFile(path, FALSE, &database);
+    if (error) {
+        if (write_lock)
+            CloseHandle(write_lock);
+        MimeMsiFree(output_path);
         return error;
+    }
+    database->Writable = mode == 1;
+    database->OutputPending = output;
+    database->OutputPath = output_path;
+    database->WriteLock = write_lock;
     AcquireSRWLockExclusive(&MimeMsiLock);
     *out = MimeMsiAddHandle(&database->Object);
     ReleaseSRWLockExclusive(&MimeMsiLock);

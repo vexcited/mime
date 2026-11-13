@@ -106,9 +106,12 @@ UINT WINAPI MsiRecordGetStringA(MSIHANDLE record, UINT field, LPSTR out, LPDWORD
 
 UINT WINAPI MsiOpenDatabaseA(LPCSTR path, LPCSTR persist, MSIHANDLE *out)
 {
-    /* persist passes through as is: a mode number, or a file name for output modes, which are not supported. */
     PWSTR wide = to_wide(path);
-    UINT error = path && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiOpenDatabaseW(wide, (LPCWSTR)persist, out);
+    BOOL output = (ULONG_PTR)persist >= 0x10000;
+    PWSTR target = output ? to_wide(persist) : nullptr;
+    UINT error = (path && !wide) || (output && !target) ? ERROR_NOT_ENOUGH_MEMORY :
+                 MsiOpenDatabaseW(wide, output ? target : (LPCWSTR)persist, out);
+    MimeMsiFree(target);
     MimeMsiFree(wide);
     return error;
 }
@@ -783,14 +786,22 @@ UINT WINAPI MsiSummaryInfoPersist(MSIHANDLE summary)
     return valid ? ERROR_FUNCTION_FAILED : ERROR_INVALID_HANDLE;
 }
 
-/* a database of this installer is read only, so it never has anything to write. */
-UINT WINAPI MsiDatabaseCommit(MSIHANDLE database)
+UINT WINAPI MsiDatabaseCommit(MSIHANDLE handle)
 {
-    MIME_REMOTE(PROXY_DatabaseCommit, UINT, MIME_ARG(database));
-    AcquireSRWLockShared(&MimeMsiLock);
-    BOOL valid = MimeMsiGetHandle(database, MIME_MSI_KIND_DATABASE) != nullptr;
-    ReleaseSRWLockShared(&MimeMsiLock);
-    return valid ? ERROR_SUCCESS : ERROR_INVALID_HANDLE;
+    MIME_REMOTE(PROXY_DatabaseCommit, UINT, MIME_ARG(handle));
+    AcquireSRWLockExclusive(&MimeMsiLock);
+    MIME_MSI_DATABASE *database = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_DATABASE);
+    UINT error = database ? MimeMsiCommitDatabase(database) : ERROR_INVALID_HANDLE;
+    ReleaseSRWLockExclusive(&MimeMsiLock);
+    return error;
+}
+
+UINT WINAPI MsiDatabaseApplyTransformA(MSIHANDLE database, LPCSTR file, int flags)
+{
+    PWSTR wide = to_wide(file);
+    UINT error = file && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiDatabaseApplyTransformW(database, wide, flags);
+    MimeMsiFree(wide);
+    return error;
 }
 
 static BOOL databases_valid(MSIHANDLE database, MSIHANDLE reference)
@@ -805,8 +816,10 @@ static BOOL databases_valid(MSIHANDLE database, MSIHANDLE reference)
 UINT WINAPI MsiDatabaseGenerateTransformW(MSIHANDLE database, MSIHANDLE reference, LPCWSTR file, int reserved1,
                                           int reserved2)
 {
-    if (!databases_valid(database, reference))
+    if (!reference || !databases_valid(database, reference))
         return ERROR_INVALID_HANDLE;
+    if (reserved1 || reserved2)
+        return ERROR_INVALID_PARAMETER;
     return AutoApiDatabaseGenerateTransform(database, reference, file);
 }
 
@@ -814,7 +827,7 @@ UINT WINAPI MsiDatabaseGenerateTransformA(MSIHANDLE database, MSIHANDLE referenc
                                           int reserved2)
 {
     PWSTR wide = to_wide(file);
-    UINT error = file && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiDatabaseGenerateTransformW(database, reference, wide, 0, 0);
+    UINT error = file && !wide ? ERROR_NOT_ENOUGH_MEMORY : MsiDatabaseGenerateTransformW(database, reference, wide, reserved1, reserved2);
     MimeMsiFree(wide);
     return error;
 }

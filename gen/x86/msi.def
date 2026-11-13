@@ -25,6 +25,7 @@ EXPORTS
     MsiCreateTransformSummaryInfoA=_MsiCreateTransformSummaryInfoA@20 @185
     MsiCreateTransformSummaryInfoW=_MsiCreateTransformSummaryInfoW@20 @186
     MsiCustomActionServer=_MsiCustomActionServer@4
+    MsiDatabaseApplyTransformA=_MsiDatabaseApplyTransformA@12 @18
     MsiDatabaseApplyTransformW=_MsiDatabaseApplyTransformW@12 @19
     MsiDatabaseCommit=_MsiDatabaseCommit@4 @20
     MsiDatabaseGenerateTransformA=_MsiDatabaseGenerateTransformA@20 @23
