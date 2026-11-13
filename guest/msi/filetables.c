@@ -46,6 +46,13 @@ static UINT wanted(MIME_MSI_PACKAGE *package, PCWSTR component, BOOL remove, BOO
     return error;
 }
 
+/* a DestName is a short name, or a short and a long one around a bar. */
+static PCWSTR long_name_of(PCWSTR name)
+{
+    PCWSTR bar = name ? wcsrchr(name, L'|') : nullptr;
+    return bar ? bar + 1 : name;
+}
+
 static PCWSTR file_name_of(PCWSTR path)
 {
     PCWSTR separator = wcsrchr(path, L'\\');
@@ -64,7 +71,7 @@ static UINT duplicate_target(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, U
     if (!error && raw)
         error = MimeMsiFormat(package, raw, &name);
     if (!error)
-        *target = MimeMsiJoinPath(directory, name && *name ? name : file_name_of(source));
+        *target = MimeMsiJoinPath(directory, name && *name ? long_name_of(name) : file_name_of(source));
     if (!error && !*target)
         error = ERROR_NOT_ENOUGH_MEMORY;
     MimeMsiFree(directory);
@@ -163,7 +170,7 @@ static UINT move_row(MIME_MSI_PACKAGE *package, MIME_MSI_TABLE *table, ULONG row
                     continue;
                 PWSTR from_path = MimeMsiJoinPath(source_folder, found.cFileName);
                 PWSTR to_path = MimeMsiJoinPath(target_folder, target_name && *target_name && !has_wildcard(what) ?
-                                                target_name : found.cFileName);
+                                                long_name_of(target_name) : found.cFileName);
                 error = from_path && to_path ? move_one(package, from_path, to_path, options != MSI_NULL_INTEGER && (options & 1)) :
                         ERROR_NOT_ENOUGH_MEMORY;
                 MimeMsiFree(from_path);
