@@ -80,8 +80,15 @@ static BOOL read_value(HKEY root, LPCWSTR subkey, LPWSTR out, DWORD chars)
     return TRUE;
 }
 
+/* HKEY_CLASSES_ROOT is the classes of the machine alone here, and a program registers its protocols for the user. */
 static BOOL read_default(LPCWSTR subkey, LPWSTR out, DWORD chars)
 {
+    WCHAR user[MAX_PATH + 32];
+    if (wcslen(subkey) < MAX_PATH) {
+        _snwprintf(user, RTL_NUMBER_OF(user), L"Software\\Classes\\%ls", subkey);
+        if (read_value(HKEY_CURRENT_USER, user, out, chars))
+            return TRUE;
+    }
     return read_value(HKEY_CLASSES_ROOT, subkey, out, chars);
 }
 
@@ -417,6 +424,30 @@ static BOOL program_name(LPCWSTR name)
     return !wcschr(file ? file : name, L'.');
 }
 
+/* an address is not a path and is not held to MAX_PATH: the one a sign in opens in the browser runs to a thousand. */
+static BOOL run_long_url(SHELLEXECUTEINFOW *info)
+{
+    WCHAR scheme[32];
+    SIZE_T length = wcslen(info->lpFile);
+    LPWSTR target = ShAlloc((length + 1) * sizeof(WCHAR));
+    if (!target)
+        return fail(info, ERROR_OUTOFMEMORY);
+    if (info->lpFile[0] == L'"' && info->lpFile[length - 1] == L'"') {
+        memcpy(target, info->lpFile + 1, (length - 2) * sizeof(WCHAR));
+        target[length - 2] = 0;
+    } else {
+        memcpy(target, info->lpFile, (length + 1) * sizeof(WCHAR));
+    }
+    BOOL ok = is_url(target, scheme, RTL_NUMBER_OF(scheme))
+                  ? run_association(info, scheme, info->lpVerb && info->lpVerb[0] ? info->lpVerb : L"open", target,
+                                    info->lpParameters ? info->lpParameters : L"")
+                  : fail(info, ERROR_INVALID_NAME);
+    DWORD error = GetLastError();
+    ShFree(target);
+    SetLastError(error);
+    return ok;
+}
+
 SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
 {
     if (!info || info->cbSize != sizeof(*info)) {
@@ -432,7 +463,7 @@ SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
     } else if (!info->lpFile || !info->lpFile[0]) {
         return fail(info, ERROR_FILE_NOT_FOUND);
     } else if (wcslen(info->lpFile) >= MAX_PATH) {
-        return fail(info, ERROR_INVALID_NAME);
+        return run_long_url(info);
     } else {
         wcscpy(target, info->lpFile);
     }
