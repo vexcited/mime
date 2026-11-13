@@ -140,6 +140,8 @@ struct X86Cpu {
     uint32_t *trace_pos;
     uint64_t steps;      /* executed instructions, for statistics. */
     const void *jit_block; /* the translated block running, for faults in its code. */
+    void *ras;             /* the return stack's top while translated code runs, see ras_call in jit.c. */
+    uint32_t ras_top;      /* and where it is in the stack between runs. */
     void *exit_slot;       /* the chain slot translated code last left through unlinked, or null. */
     /* the block table's slots and mask, copied in before translated code runs, which looks computed addresses up there. */
     const void *jit_slots;
@@ -235,6 +237,12 @@ void x86_set_mxcsr(X86Cpu *cpu, uint32_t value);
 extern uint32_t x86_jit_threshold;
 /* set when the host has the arm64 sha256 instructions, which translated code then uses for the x86 ones. */
 extern uint32_t x86_jit_sha256;
+/*
+ * the host has the alternate floating point behaviors of FEAT_AFP: translated code runs with fpcr's AH and NEP set,
+ * where scalar operations keep the rest of their register and nans come out as x86 makes them. x86_probe_host sets it.
+ */
+extern uint32_t x86_jit_afp;
+void x86_probe_host(void);
 /* translations made visible together, at most X86_JIT_BATCH. the differential tests run each at once. */
 #define X86_JIT_BATCH 16
 extern uint32_t x86_jit_batch;
