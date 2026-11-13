@@ -122,7 +122,7 @@ static HRESULT new_named(XNode *n, UINT type, BSTR name, void **out)
     if (!out)
         return E_INVALIDARG;
     *out = nullptr;
-    UINT len = name ? SysStringLen(name) : 0;
+    UINT len = name ? xd_slen(name) : 0;
     HRESULT hr = xd_check_new_name(name, len);
     if (FAILED(hr))
         return hr;
@@ -156,7 +156,7 @@ static HRESULT new_data(XNode *n, UINT type, BSTR data, void **out)
     XNode *t = xd_node_new(n->doc, type, nullptr, 0, nullptr);
     if (!t)
         return E_OUTOFMEMORY;
-    xd_node_set_value(t, data ? data : L"", data ? SysStringLen(data) : 0);
+    xd_node_set_value(t, data ? data : L"", data ? xd_slen(data) : 0);
     return xd_ret_node(t, out);
 }
 
@@ -180,7 +180,7 @@ static HRESULT new_pi(XNode *n, BSTR target, BSTR data, void **out)
     if (!out)
         return E_INVALIDARG;
     *out = nullptr;
-    UINT tlen = target ? SysStringLen(target) : 0;
+    UINT tlen = target ? xd_slen(target) : 0;
     if (!tlen)
         return (HRESULT)XE_NEED_NAME;
     if (xd_check_name(target, tlen, FALSE) >= 0)
@@ -190,7 +190,7 @@ static HRESULT new_pi(XNode *n, BSTR target, BSTR data, void **out)
         return E_OUTOFMEMORY;
     if (tlen == 3 && !memcmp(target, L"xml", 6))
         p->flags |= XF_XMLDECL;
-    HRESULT hr = xd_set_pi_data(p, data ? data : L"", data ? SysStringLen(data) : 0);
+    HRESULT hr = xd_set_pi_data(p, data ? data : L"", data ? xd_slen(data) : 0);
     if (FAILED(hr)) {
         xd_free_if_orphan(p);
         return hr;
@@ -266,7 +266,7 @@ static HRESULT STDMETHODCALLTYPE d_createNode(XNode *n, VARIANT type, BSTR name,
         return E_INVALIDARG;
     *out = nullptr;
     int t = node_type_of(&type);
-    UINT len = name ? SysStringLen(name) : 0;
+    UINT len = name ? xd_slen(name) : 0;
     switch (t) {
     case XN_ELEMENT:
     case XN_ATTRIBUTE: {
@@ -431,7 +431,7 @@ static HRESULT STDMETHODCALLTYPE d_loadXML(XNode *n, BSTR xml, VARIANT_BOOL *fla
     *flag = VARIANT_FALSE;
     xd_free(doc->url);
     doc->url = nullptr;
-    BOOL ok = xd_parse(doc, xml ? xml : L"", xml ? SysStringLen(xml) : 0, XP_STRING);
+    BOOL ok = xd_parse(doc, xml ? xml : L"", xml ? xd_slen(xml) : 0, XP_STRING);
     return load_result(doc, ok, flag);
 }
 
