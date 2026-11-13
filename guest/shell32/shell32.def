@@ -8,6 +8,7 @@ EXPORTS
     SHChangeNotification_Lock @644
     SHChangeNotification_Unlock @645
     ILCreateFromPathW @190
+    ILCreateFromPath=ILCreateFromPathW @157
     ILFindLastID @16
     ILRemoveLastID @17
     ILClone @18
