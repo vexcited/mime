@@ -734,4 +734,14 @@ static inline const void *vkm_find(const void *chain, VkStructureType type)
     return nullptr;
 }
 
+/* the format without its srgb curve: views that differ from their texture only by it need no view usage. */
+static inline uint32_t vkm_plain_format(uint32_t pixel)
+{
+    switch (pixel) {
+    case MTLPixelFormatBGRA8Unorm_sRGB: return MTLPixelFormatBGRA8Unorm;
+    case MTLPixelFormatRGBA8Unorm_sRGB: return MTLPixelFormatRGBA8Unorm;
+    default: return pixel;
+    }
+}
+
 #endif
