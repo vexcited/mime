@@ -1543,6 +1543,8 @@ void CmpJournalShutdown(void);
 NTSTATUS CmQueryValue(PCWSTR key_path, PCWSTR name, PULONG type, PVOID data, PULONG length);
 NTSTATUS CmQueryValueUnlessBusy(PCWSTR key_path, PCWSTR name, PULONG type, PVOID data, PULONG length);
 NTSTATUS CmSetValue(PCWSTR key_path, PCWSTR name, ULONG type, const void *data, ULONG length);
+NTSTATUS CmDeleteValue(PCWSTR key_path, PCWSTR name);
+NTSTATUS CmDeleteKey(PCWSTR key_path);
 NTSTATUS CmEnumerateValues(PCWSTR key_path,
                            void (*fn)(PVOID ctx, PCWSTR name, ULONG name_chars, ULONG type, const void *data, ULONG length),
                            PVOID ctx);
@@ -1812,6 +1814,9 @@ void MiSessionInitialize(void);
 void MimeSessionInterrupt(ULONG bits);
 void MimeSessionProcessExited(PEPROCESS process);
 void MimeSessionUserProgram(PEPROCESS process, PEPROCESS parent);
+void MimeSessionAdoptUserProgram(PEPROCESS process);
+void ExStartupFinishRestart(void);
+void ExStartupRunOnce(void);
 void MimeSessionUserProgramGone(PEPROCESS process);
 void MimeSendDebugOutput(PEPROCESS process, const char *text, SIZE_T length);
 void MimeSendConsole(ULONG type, ULONG64 request, ULONG value, const void *data, ULONG length);

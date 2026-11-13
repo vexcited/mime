@@ -1483,6 +1483,25 @@ NTSTATUS CmSetValue(PCWSTR key_path, PCWSTR name, ULONG type, const void *data, 
     return status;
 }
 
+NTSTATUS CmDeleteValue(PCWSTR key_path, PCWSTR name)
+{
+    ExAcquireFastMutex(&CmpLock);
+    CM_NODE *node = CmpOpenPath(key_path, FALSE);
+    NTSTATUS status = node ? CmpDeleteValue(node, name, (ULONG)wcslen(name)) : STATUS_OBJECT_NAME_NOT_FOUND;
+    CmpUnlock();
+    return status;
+}
+
+/* the key goes with the keys below it. */
+NTSTATUS CmDeleteKey(PCWSTR key_path)
+{
+    ExAcquireFastMutex(&CmpLock);
+    CM_NODE *node = CmpOpenPath(key_path, FALSE);
+    NTSTATUS status = node ? delete_tree(node) : STATUS_OBJECT_NAME_NOT_FOUND;
+    CmpUnlock();
+    return status;
+}
+
 NTSTATUS CmEnumerateValues(PCWSTR key_path, void (*fn)(PVOID ctx, PCWSTR name, ULONG name_chars, ULONG type,
                                                         const void *data, ULONG length),
                            PVOID ctx)
