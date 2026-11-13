@@ -994,13 +994,19 @@ mime_link(${MIME_OUT_${MIME_GUEST_ARCH}}/openwith.exe ${MIME_GUEST_ARCH}
     RESOURCE openwith.exe ROM ${MIME_ROM_${MIME_GUEST_ARCH}}/openwith.exe GROUPS guest)
 
 mime_glob(runonce_sources guest/runonce/*.c)
-mime_objects(${MIME_GUEST_ARCH}-runonce ${MIME_GUEST_ARCH} SOURCES ${runonce_sources} INCLUDES guest/runonce)
-mime_link(${MIME_OUT_${MIME_GUEST_ARCH}}/runonce.exe ${MIME_GUEST_ARCH}
-    OBJECTS ${MIME_GUEST_ARCH}-runonce ${MIME_GUEST_ARCH}-chkstk
-    LIBS ${MIME_LIB_${MIME_GUEST_ARCH}}/ntdll.lib ${MIME_LIB_${MIME_GUEST_ARCH}}/kernel32.lib
-        ${MIME_LIB_${MIME_GUEST_ARCH}}/advapi32.lib
-    FLAGS /subsystem:windows,10.0 /entry:entry /base:0x7FF6A4000000 /highentropyva /dynamicbase /stack:0x100000,0x4000
-    RESOURCE runonce.exe ROM ${MIME_ROM_${MIME_GUEST_ARCH}}/runonce.exe GROUPS guest)
+foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)
+    if(arch STREQUAL "x86" OR arch STREQUAL MIME_GUEST_ARCH)
+        mime_objects(${arch}-runonce ${arch} SOURCES ${runonce_sources} INCLUDES guest/runonce)
+        set(runonce_flags /subsystem:windows,10.0 /entry:entry /base:0x7FF6A4000000 /highentropyva /dynamicbase
+            /stack:0x100000,0x4000)
+        if(arch STREQUAL "x86")
+            set(runonce_flags /subsystem:windows,6.0 /entry:entry /base:0x00400000 /dynamicbase /stack:0x100000,0x4000)
+        endif()
+        mime_link(${MIME_OUT_${arch}}/runonce.exe ${arch} OBJECTS ${arch}-runonce ${arch}-chkstk
+            LIBS ${MIME_LIB_${arch}}/ntdll.lib ${MIME_LIB_${arch}}/kernel32.lib ${MIME_LIB_${arch}}/advapi32.lib
+            FLAGS ${runonce_flags} RESOURCE runonce.exe ROM ${MIME_ROM_${arch}}/runonce.exe GROUPS guest)
+    endif()
+endforeach()
 
 mime_glob(regsvr32_sources guest/regsvr32/*.c)
 foreach(arch IN LISTS MIME_USER_ARCHS ITEMS x86)

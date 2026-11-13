@@ -71,8 +71,13 @@ void entry(void)
     PCWSTR line = GetCommandLineW();
     if (has_word(line, L"/Machine")) {
         run_key(HKEY_LOCAL_MACHINE, KEY_WOW64_64KEY);
-        run_key(HKEY_LOCAL_MACHINE, KEY_WOW64_32KEY);
+#ifdef _WIN64
+        /* the entries of 32 bit programs run from the 32 bit copy, so they find their System32. */
+        run(L"C:\\Windows\\SysWOW64\\runonce.exe /RunOnce6432");
+#endif
     }
+    if (has_word(line, L"/RunOnce6432"))
+        run_key(HKEY_LOCAL_MACHINE, KEY_WOW64_32KEY);
     if (has_word(line, L"/User"))
         run_key(HKEY_CURRENT_USER, 0);
     ExitProcess(0);
