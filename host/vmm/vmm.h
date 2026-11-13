@@ -164,6 +164,8 @@ struct MimeVm {
     volatile bool halted;
     int exit_code;
     volatile bool guest_ready;
+    volatile bool restart; /* the guest asked to be started again once stopped. */
+    char restart_by[17];   /* image name of the program that asked. */
 
     MimeCtrlNode *ctrl_head, *ctrl_tail;
 

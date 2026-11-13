@@ -406,7 +406,10 @@ static void end_everything(void)
     FsWbFlushAll();
     CmpJournalShutdown();
     HalHypercall(MIME_HC_FS_SYNC, 0, 0, 0, 0, 0, 0, nullptr);
-    HalHypercall(MIME_HC_HALT, 0, 0, 0, 0, 0, 0, nullptr);
+    /* the host starts the machine again after a restart, and names the program that asked. */
+    ULONG64 by[2];
+    memcpy(by, g.RequesterName, sizeof(by));
+    HalHypercall(MIME_HC_HALT, 0, action == ShutdownReboot, by[0], by[1], 0, 0, nullptr);
     for (;;)
         KiPause();
 }

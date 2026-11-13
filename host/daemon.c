@@ -104,12 +104,44 @@ static const char *status_text(uint32_t status)
     }
 }
 
+#define RESTARTED_ENV "MIME_RESTARTED_BY"
+
+/* the machine that asked for a restart left the name of the asker to the one that replaces it. */
+static void notify_restarted(void)
+{
+    const char *by = getenv(RESTARTED_ENV);
+    if (!by)
+        return;
+    MimeShellToast *toast = calloc(1, sizeof(*toast));
+    if (toast) {
+        char body[128];
+        if (by[0])
+            snprintf(body, sizeof(body), "%s asked for a restart. Programs can run again.", by);
+        else
+            snprintf(body, sizeof(body), "A program asked for a restart. Programs can run again.");
+        toast->op = MIME_SHELL_TOAST_SHOW;
+        /* no guest toast has this id, so the guest drops what the desktop answers. */
+        toast->id = 0xFFFFFF00u;
+        mime_utf8_to_utf16(toast->app, 64, "Mime");
+        mime_utf8_to_utf16(toast->tag, 64, "restarted");
+        mime_utf8_to_utf16(toast->title, 256, "Mime has restarted");
+        mime_utf8_to_utf16(toast->body, 1024, body);
+        uint64_t value = 0;
+        if (mime_ui_shell(toast, sizeof(*toast), &value) != MIME_HC_STATUS_OK)
+            mime_info("the desktop shows no notification of the restart");
+        free(toast);
+    }
+    mime_info("the machine has restarted%s%s", by[0] ? " for " : "", by);
+    unsetenv(RESTARTED_ENV);
+}
+
 void mime_daemon_guest_event(MimeVm *vm, const MimeCtrlHeader *msg)
 {
     switch (msg->type) {
     case MIME_EVT_READY:
         mime_info("guest kernel is ready");
         vm->guest_ready = true;
+        notify_restarted();
         break;
     case MIME_EVT_PROCESS_STARTED: {
         const MimeEvtProcess *p = (const MimeEvtProcess *)msg;
@@ -872,5 +904,12 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
 
     mime_ui_run();
     mime_vm_shutdown(&g_vm);
+    if (g_vm.restart) {
+        /* the files of the new machine are not this one's to remove on exit. */
+        g_paths = nullptr;
+        setenv(RESTARTED_ENV, g_vm.restart_by, 1);
+        if (mime_instance_launch(paths, lock_fd) < 0)
+            mime_error("the machine did not start again");
+    }
     return g_vm.exit_code;
 }

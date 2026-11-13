@@ -516,7 +516,7 @@ typedef struct MimeReportRun {
 enum {
     MIME_HC_LOG = 0x01,         /* (pa, len) */
     MIME_HC_PANIC = 0x02,       /* (pa, len) */
-    MIME_HC_HALT = 0x04,        /* (exit_code) machine powered off */
+    MIME_HC_HALT = 0x04,        /* (exit_code, restart, asker[2]) machine powered off; restart starts it again, asker is the image name of who asked */
     MIME_HC_CTRL_RECV = 0x05,   /* (pa, capacity) -> length, 0 when empty */
     MIME_HC_CTRL_SEND = 0x06,   /* (pa, len) */
     MIME_HC_INPUT_RECV = 0x07,  /* (pa, max_events) -> count */
