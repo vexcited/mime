@@ -262,6 +262,15 @@ void *xd_realloc(void *p, SIZE_T size);
 void xd_free(void *p);
 WCHAR *xd_wcsdup(const WCHAR *s, UINT length);
 UINT xd_wlen(const WCHAR *s);
+
+/*
+ * msxml reads a string it is given up to its first zero and not by the length of the BSTR, DOMNode::put_text and
+ * StringRef::FromPCWSTR in msxml6. programs pass plain strings: AutoCAD gives the text of a CString to put_text.
+ */
+static inline UINT xd_slen(const WCHAR *s)
+{
+    return s ? xd_wlen(s) : 0;
+}
 BSTR xd_bstr(const WCHAR *s, UINT length);
 
 typedef struct XBuf {
