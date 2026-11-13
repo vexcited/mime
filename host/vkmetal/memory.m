@@ -600,6 +600,8 @@ static VkResult bind_image(VkDevice device, VkImage image, VkDeviceMemory m, VkD
         imported = m->texture && !m->exported;
         if (imported && !offset) {
             image->texture = [m->texture retain];
+            /* the exporter's image has the texture too, and a view of that one reads what this one draws. */
+            __atomic_store_n(&image->read, true, __ATOMIC_RELEASE);
             if (m->texture.width != image->extent.width || m->texture.height != image->extent.height ||
                 m->texture.pixelFormat != image->fi->pixel)
                 VKM_ERROR("an image of %ux%u format %u is bound to an imported texture of %lux%lu format %lu",
@@ -619,8 +621,11 @@ static VkResult bind_image(VkDevice device, VkImage image, VkDeviceMemory m, VkD
         VKM_ERROR("no texture for an image of format %u in memory of type %u", image->format, m->type);
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
-    if (m->exported && !offset && !m->texture)
+    if (m->exported && !offset && !m->texture) {
         m->texture = [image->texture retain];
+        /* as an importer's image reads it. */
+        __atomic_store_n(&image->read, true, __ATOMIC_RELEASE);
+    }
     if (!imported && (image->texture.usage & MTLTextureUsageRenderTarget)) {
         vkm_resident(device, image->texture);
         image->resident = true;
