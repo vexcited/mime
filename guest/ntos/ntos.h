@@ -1531,6 +1531,7 @@ BOOLEAN IoGetFileWindowEx(PFILE_OBJECT file, BOOLEAN writable, ULONG64 minimum_s
 void IoReleaseFileWindow(PVOID ref);
 
 NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes);
+NTSTATUS PspAdaptEnvironment(USHORT machine, const WCHAR *in, SIZE_T in_bytes, PWCHAR *block, SIZE_T *bytes);
 
 /* cm, the configuration manager. */
 extern POBJECT_TYPE CmKeyType;

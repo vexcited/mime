@@ -101,11 +101,7 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     SIZE_T environment_bytes;
     NTSTATUS status = STATUS_SUCCESS;
     if (p->Environment) {
-        environment_bytes = p->EnvironmentBytes;
-        environment = ExAllocatePool2(POOL_FLAG_NON_PAGED, environment_bytes, KI_TAG('P', 's', 'E', 'n'));
-        if (!environment)
-            return STATUS_NO_MEMORY;
-        memcpy(environment, p->Environment, environment_bytes);
+        status = PspAdaptEnvironment(process->Machine, p->Environment, p->EnvironmentBytes, &environment, &environment_bytes);
     } else {
         status = PspBuildEnvironment(process->Machine, &environment, &environment_bytes);
     }

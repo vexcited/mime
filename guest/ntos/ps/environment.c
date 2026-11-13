@@ -229,3 +229,83 @@ NTSTATUS PspBuildEnvironment(USHORT machine, PWCHAR *block, SIZE_T *bytes)
     *bytes = at * sizeof(WCHAR);
     return STATUS_SUCCESS;
 }
+
+static const WCHAR *inherited(const WCHAR *block, const WCHAR *end, PCWSTR name, ULONG *chars)
+{
+    ULONG n = (ULONG)wcslen(name);
+    for (const WCHAR *p = block; p < end && *p;) {
+        ULONG length = (ULONG)wcsnlen(p, (SIZE_T)(end - p));
+        if (length > n && p[n] == L'=' && _wcsnicmp(p, name, n) == 0) {
+            *chars = length - n - 1;
+            return p + n + 1;
+        }
+        p += length + 1;
+    }
+    return nullptr;
+}
+
+/*
+ * what wow64 does to the block a parent of the other kind hands over. a 32-bit program sees an x86 processor and
+ * the 32-bit program folders, a native one started by a 32-bit program gets the native ones back.
+ */
+NTSTATUS PspAdaptEnvironment(USHORT machine, const WCHAR *in, SIZE_T in_bytes, PWCHAR *block, SIZE_T *bytes)
+{
+    static const PCWSTR names[] = {L"PROCESSOR_ARCHITECTURE", L"ProgramFiles", L"CommonProgramFiles"};
+    static const PCWSTR from_32[] = {nullptr, L"ProgramFiles(x86)", L"CommonProgramFiles(x86)"};
+    static const PCWSTR from_native[] = {nullptr, L"ProgramW6432", L"CommonProgramW6432"};
+    const WCHAR *end = in + in_bytes / sizeof(WCHAR);
+    BOOLEAN to_32 = machine == IMAGE_FILE_MACHINE_I386;
+    ULONG unused;
+    BOOLEAN from_wow = inherited(in, end, L"PROCESSOR_ARCHITEW6432", &unused) != nullptr;
+    SIZE_T capacity = in_bytes / sizeof(WCHAR) + 4 * (MAX_PATH + 32) + 2;
+    PWCHAR out = ExAllocatePool2(POOL_FLAG_NON_PAGED, capacity * sizeof(WCHAR), KI_TAG('P', 's', 'E', 'b'));
+    if (!out)
+        return STATUS_NO_MEMORY;
+    SIZE_T at = 0;
+    for (const WCHAR *p = in; p < end && *p;) {
+        ULONG length = (ULONG)wcsnlen(p, (SIZE_T)(end - p));
+        const WCHAR *next = p + length + 1;
+        ULONG name = 1;
+        while (name < length && p[name] != L'=')
+            name++;
+        const WCHAR *value = nullptr;
+        ULONG value_chars = 0;
+        BOOLEAN drop = FALSE, processor = FALSE;
+        if (to_32 || from_wow) {
+            if (name == 22 && _wcsnicmp(p, L"PROCESSOR_ARCHITEW6432", 22) == 0)
+                drop = TRUE;
+            for (ULONG i = 0; i < RTL_NUMBER_OF(names) && !drop; i++) {
+                if (name != wcslen(names[i]) || _wcsnicmp(p, names[i], name) != 0)
+                    continue;
+                if (i == 0) {
+                    processor = TRUE;
+                    value = to_32 ? L"x86" : machine == IMAGE_FILE_MACHINE_AMD64 ? L"AMD64" : MIME_NATIVE_ARCHITECTURE_NAME;
+                    value_chars = (ULONG)wcslen(value);
+                } else {
+                    value = inherited(in, end, to_32 ? from_32[i] : from_native[i], &value_chars);
+                    if (value_chars > MAX_PATH)
+                        value = nullptr;
+                }
+            }
+        }
+        if (!drop && !value) {
+            memcpy(out + at, p, length * sizeof(WCHAR));
+            at += length;
+            out[at++] = 0;
+        } else if (!drop) {
+            memcpy(out + at, p, name * sizeof(WCHAR));
+            at += name;
+            out[at++] = L'=';
+            memcpy(out + at, value, value_chars * sizeof(WCHAR));
+            at += value_chars;
+            out[at++] = 0;
+            if (processor && to_32)
+                at += (SIZE_T)_snwprintf(out + at, 64, L"PROCESSOR_ARCHITEW6432=%ls", MIME_NATIVE_ARCHITECTURE_NAME) + 1;
+        }
+        p = next;
+    }
+    out[at++] = 0;
+    *block = out;
+    *bytes = at * sizeof(WCHAR);
+    return STATUS_SUCCESS;
+}
