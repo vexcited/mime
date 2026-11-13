@@ -679,7 +679,16 @@ static BOOL prepare(D9Device *d, D3DPRIMITIVETYPE type)
     }
     if (d->indices)
         d->indices->used = TRUE;
-    if (d->targets_dirty || d->bound_srgb != !!d->render_states[D3DRS_SRGBWRITEENABLE]) {
+    /*
+     * the srgb view of the targets only matters to a draw that writes color: one that writes none, as a depth pass
+     * does, leaves the views as they are, which spares the render pass that a change of them ends.
+     */
+    static const D3DRENDERSTATETYPE WRITES[D9_MAX_TARGETS] = {D3DRS_COLORWRITEENABLE, D3DRS_COLORWRITEENABLE1,
+                                                              D3DRS_COLORWRITEENABLE2, D3DRS_COLORWRITEENABLE3};
+    BOOL writes_color = FALSE;
+    for (UINT i = 0; i < D9_MAX_TARGETS; i++)
+        writes_color |= d->targets[i] && (d->render_states[WRITES[i]] & 15);
+    if (d->targets_dirty || (writes_color && d->bound_srgb != !!d->render_states[D3DRS_SRGBWRITEENABLE])) {
         bind_targets(d);
         /* depth tests and bias depend on the depth buffer. */
         d->state_groups |= D9_STATES_DEPTH | D9_STATES_RASTER;
