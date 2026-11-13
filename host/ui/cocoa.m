@@ -160,10 +160,14 @@ static void pointer_apply(void)
         return;
     g_pointer_locked = lock;
     g_motion_x = g_motion_y = 0;
-    if (lock)
+    if (lock) {
         pointer_park(w);
-    else
+        /* the parked cursor is in the window without having entered it, so the guest's cursor is put again. */
+        g_pointer_in_guest = true;
+        cursor_main(g_cursor);
+    } else {
         CGAssociateMouseAndMouseCursorPosition(true);
+    }
 }
 
 /* the motion of an event: the device's own counts while locked, as raw input reports them, else guest pixels. */
