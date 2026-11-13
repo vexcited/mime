@@ -2421,9 +2421,28 @@ static uint64_t show_folder(const MimeShellFolder *f)
     return MIME_HC_STATUS_OK;
 }
 
-/* the dialogs and the folders: toasts, launcher entries and jump lists have no place here yet. */
+/* only a web address: a file or any other scheme would let a program of the machine run things of the host. */
+static uint64_t open_url(const MimeShellUrl *u)
+{
+    size_t chars = 0;
+    while (chars < sizeof(u->url) / sizeof(u->url[0]) && u->url[chars])
+        chars++;
+    NSString *text = [NSString stringWithCharacters:u->url length:chars];
+    NSURL *url = text ? [NSURL URLWithString:text] : nil;
+    NSString *scheme = url.scheme.lowercaseString;
+    if (!url || !([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"]))
+        return MIME_HC_STATUS_INVALID;
+    on_main(^{
+        [[NSWorkspace sharedWorkspace] openURL:url];
+    });
+    return MIME_HC_STATUS_OK;
+}
+
+/* the dialogs, the folders and the web addresses: toasts, launcher entries and jump lists have no place here yet. */
 uint64_t mime_ui_shell(void *command, size_t size, uint64_t *value)
 {
+    if (*(uint32_t *)command == MIME_SHELL_URL)
+        return size >= sizeof(MimeShellUrl) ? open_url(command) : MIME_HC_STATUS_INVALID;
     if (*(uint32_t *)command == MIME_SHELL_FOLDER)
         return size >= sizeof(MimeShellFolder) ? show_folder(command) : MIME_HC_STATUS_INVALID;
     if (*(uint32_t *)command != MIME_SHELL_DIALOG)

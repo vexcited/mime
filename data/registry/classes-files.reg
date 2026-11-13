@@ -96,6 +96,16 @@
 [HKCR\Folder\shell\{explore,open}\command]
 @=expand:"%SystemRoot%\\explorer.exe \"%1\""
 
+; the machine has no browser: explorer.exe gives a web address to the browser of the host.
+[HKCR\{http,https}]
+"URL Protocol"=""
+[HKCR\http]
+@="URL:HyperText Transfer Protocol"
+[HKCR\https]
+@="URL:HyperText Transfer Protocol with Privacy"
+[HKCR\{http,https}\shell\open\command]
+@=expand:"%SystemRoot%\\explorer.exe \"%1\""
+
 ; the script hosts: the file types wscript.exe and cscript.exe run. A file type names its engine in ScriptEngine, which is a
 ; program id the host makes the class of. Shell holds the verb that opens the file, Open for wscript and Open2 for cscript,
 ; which //H changes.
