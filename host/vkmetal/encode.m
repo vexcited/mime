@@ -687,9 +687,8 @@ static bool same_target(const VkmAttach *a, const VkmAttach *b, bool *mixed)
             return false;
         *mixed = true;
     }
-    return b->load != MTLLoadActionClear && a->store == b->store && a->resolve == b->resolve &&
-           a->resolve_level == b->resolve_level && a->resolve_slice == b->resolve_slice &&
-           a->resolve_filter == b->resolve_filter;
+    /* a resolve is at the end of the pass, where a draw of the next one may already read what it resolves into. */
+    return b->load != MTLLoadActionClear && a->store == b->store && !a->resolve && !b->resolve;
 }
 
 static bool pass_goes_on(VkQueue queue, const VkmBeginRender *a, const VkmBeginRender *b)
@@ -709,34 +708,90 @@ static bool pass_goes_on(VkQueue queue, const VkmBeginRender *a, const VkmBeginR
 }
 
 /*
+ * what the draws of the pass whose ops begin at `at` write, as its VKM_OP_WRITES say, and where the ops after its end
+ * begin.
+ */
+static uint32_t writes_of(VkCommandBuffer cmd, size_t at, size_t *end)
+{
+    uint32_t writes = 0;
+    while (at < cmd->cmd_size) {
+        const VkmOp *o = (const VkmOp *)(cmd->cmds + at);
+        if (!o->size)
+            break;
+        at += o->size;
+        if (o->op == VKM_OP_END_RENDER)
+            break;
+        if (o->op == VKM_OP_WRITES)
+            writes |= ((const VkmOpWrites *)o)->mask;
+    }
+    *end = at;
+    return writes;
+}
+
+/* a draw of a pass may read an attachment a shader was given, where the pass does not write it. */
+static bool reads(const VkmAttach *a, bool written)
+{
+    return a->texture && a->image && a->image->read && !written;
+}
+
+/*
+ * whether a pass that writes this can be one with the passes around it. what it writes besides its attachments must be
+ * whole before what follows reads it, and what it reads of its attachments is what the passes before it stored: on a
+ * tile based gpu neither holds inside one pass, where vertex functions run ahead of every fragment and a texture only
+ * has what was drawn to it once its tile is stored.
+ */
+static bool joins(const VkmBeginRender *b, uint32_t writes)
+{
+    if (writes & VKM_WRITES_APART)
+        return false;
+    for (uint32_t i = 0; i < b->color_count; i++)
+        if (reads(&b->colors[i], writes & (1u << i)))
+            return false;
+    return !reads(&b->depth, writes & VKM_WRITES_DEPTH) && !reads(&b->stencil, writes & VKM_WRITES_STENCIL);
+}
+
+/*
+ * the pass that begins once one has ended, and where its ops start, or nullptr. only barriers may lie between the two:
+ * with no compute encoder open they encode nothing. a copy of query results does not wait for the passes to end, as
+ * the next pass may read what it writes.
+ */
+static const VkmBeginRender *pass_after(VkCommandBuffer cmd, size_t at, size_t *past)
+{
+    while (at < cmd->cmd_size) {
+        const VkmOp *o = (const VkmOp *)(cmd->cmds + at);
+        if (!o->size)
+            break;
+        at += o->size;
+        if (o->op == VKM_OP_BEGIN_RENDER) {
+            *past = at;
+            return (const VkmBeginRender *)o;
+        }
+        if (o->op != VKM_OP_BARRIER)
+            break;
+    }
+    return nullptr;
+}
+
+/*
  * a pass takes the buffer of its occlusion queries when it begins, and one that goes on into the passes after it may
  * only meet its first query there: the buffer of the first of those that has one, looked for from after the pass's
  * begin.
  */
 static id<MTLBuffer> visibility_ahead(VkQueue queue, VkCommandBuffer cmd, size_t at, const VkmBeginRender *a)
 {
-    bool inside = true;
-    for (uint32_t seen = 0; at < cmd->cmd_size && seen < 20000; seen++) {
-        const VkmOp *o = (const VkmOp *)(cmd->cmds + at);
-        if (!o->size)
+    size_t end;
+    uint32_t writes = writes_of(cmd, at, &end);
+    while (joins(a, writes)) {
+        const VkmBeginRender *b = pass_after(cmd, end, &at);
+        if (!b)
             break;
-        at += o->size;
-        if (inside) {
-            inside = o->op != VKM_OP_END_RENDER;
-            continue;
-        }
-        if (o->op == VKM_OP_BARRIER || o->op == VKM_OP_QUERY_COPY)
-            continue;
-        if (o->op != VKM_OP_BEGIN_RENDER)
-            break;
-        const VkmBeginRender *b = (const VkmBeginRender *)o;
         VkmBeginRender with = *a;
         with.visibility = b->visibility;
-        if (!pass_goes_on(queue, &with, b))
+        writes = writes_of(cmd, at, &end);
+        if (!joins(b, writes) || !pass_goes_on(queue, &with, b))
             break;
         if (b->visibility)
             return b->visibility;
-        inside = true;
     }
     return nil;
 }
@@ -747,9 +802,7 @@ void vkm_encode(VkQueue queue, VkCommandBuffer cmd, id<MTL4CommandBuffer> mtl_cm
     e.value = queue->submitted + 1;
     const VkmBeginRender *pass = nullptr; /* what the render encoder was made for. */
     VkmBeginRender first;
-    /* the barriers and copies of query results between passes that became one: done once it ends. */
-    const VkmOp *after[64];
-    uint32_t after_count = 0;
+    uint32_t writes = 0; /* what the pass's draws have written since it began or went on. */
     for (size_t at = 0; at < cmd->cmd_size;) {
         const VkmOp *op = (const VkmOp *)(cmd->cmds + at);
         if (!op->size)
@@ -760,34 +813,24 @@ void vkm_encode(VkQueue queue, VkCommandBuffer cmd, id<MTL4CommandBuffer> mtl_cm
             if (!first.visibility)
                 first.visibility = visibility_ahead(queue, cmd, at, &first);
             pass = &first;
+            writes = 0;
             replay(&e, &first.head);
             continue;
         }
-        if (op->op == VKM_OP_END_RENDER && e.render && pass) {
-            size_t next = at;
-            uint32_t held = after_count;
-            const VkmOp *o = nullptr;
-            while (next < cmd->cmd_size) {
-                o = (const VkmOp *)(cmd->cmds + next);
-                if (!o->size || (o->op != VKM_OP_BARRIER && o->op != VKM_OP_QUERY_COPY) ||
-                    held == MIME_ARRAY_COUNT(after))
-                    break;
-                after[held++] = o;
-                next += o->size;
-            }
-            if (next < cmd->cmd_size && o && o->op == VKM_OP_BEGIN_RENDER &&
-                pass_goes_on(queue, pass, (const VkmBeginRender *)o)) {
+        if (op->op == VKM_OP_WRITES) {
+            writes |= ((const VkmOpWrites *)op)->mask;
+            continue;
+        }
+        if (op->op == VKM_OP_END_RENDER) {
+            size_t past, end;
+            const VkmBeginRender *next = e.render && pass && joins(pass, writes) ? pass_after(cmd, at, &past) : nullptr;
+            if (next && joins(next, writes_of(cmd, past, &end)) && pass_goes_on(queue, pass, next)) {
                 /* the pass goes on: its encoder has the state it had. */
-                after_count = held;
-                at = next + o->size;
+                at = past;
+                writes = 0;
                 continue;
             }
-            replay(&e, op);
             pass = nullptr;
-            for (uint32_t k = 0; k < after_count; k++)
-                replay(&e, after[k]);
-            after_count = 0;
-            continue;
         }
         replay(&e, op);
     }
