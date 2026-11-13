@@ -894,6 +894,32 @@ static bool is_program(const char *path)
     return n > 4 && (strcasecmp(path + n - 4, ".exe") == 0 || strcasecmp(path + n - 4, ".com") == 0);
 }
 
+/* an address with a scheme, "name://". */
+static bool is_address(const char *target)
+{
+    const char *p = target;
+    while ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+           (p > target && *p && ((*p >= '0' && *p <= '9') || strchr("+-.", *p))))
+        p++;
+    return p - target >= 2 && !strncmp(p, "://", 3);
+}
+
+/* the opener of plasma hands an address over with its %20 turned to spaces, which no address holds. */
+static char *escape_spaces(const char *address)
+{
+    char *out = mime_xmalloc(strlen(address) * 3 + 1), *d = out;
+    for (const char *p = address; *p; p++) {
+        if (*p == ' ') {
+            memcpy(d, "%20", 3);
+            d += 3;
+        } else {
+            *d++ = *p;
+        }
+    }
+    *d = 0;
+    return out;
+}
+
 /*
  * programs start directly. anything else goes to openwith: an app by its id or name, or what the run box opens, a
  * program found on the path or under App Paths, a document with its program, a shortcut, a url.
@@ -911,6 +937,12 @@ int mime_cmd_run(const MimePaths *paths, int argc, char **argv)
         return 2;
     }
     const char *target = argv[0];
+    if (is_address(target) && strchr(target, ' ')) {
+        char *address = escape_spaces(target);
+        int r = run_openwith(paths, "open", admin, address, argc - 1, argv + 1);
+        free(address);
+        return r;
+    }
     char guest[MIME_PATH_MAX];
     bool windows = ((target[0] | 0x20) >= 'a' && (target[0] | 0x20) <= 'z') && target[1] == ':';
     /* elevation goes through the shell's runas verb, so programs go to openwith too. */
