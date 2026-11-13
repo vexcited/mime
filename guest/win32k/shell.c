@@ -340,6 +340,7 @@ static LONG run_command(PUCHAR request, ULONG size)
         for (ULONG i = 0; i < MIME_PROTOCOLS; i++) {
             zero_end(p->scheme[i], RTL_NUMBER_OF(p->scheme[i]));
             zero_end(p->program[i], RTL_NUMBER_OF(p->program[i]));
+            zero_end(p->name[i], RTL_NUMBER_OF(p->name[i]));
         }
         p->process_id = pid;
     } else if (want == sizeof(MimeShellJumpList)) {

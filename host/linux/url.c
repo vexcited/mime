@@ -22,6 +22,7 @@ typedef struct Protocols {
     bool full; /* the guest had more than the list holds, so an entry that is not in it may still be answered. */
     char scheme[MIME_PROTOCOLS][SCHEME_CHARS];
     char program[MIME_PROTOCOLS][MIME_PATH_MAX]; /* the guest path of the program that answers. */
+    char name[MIME_PROTOCOLS][200];
     struct Protocols *all;
 } Protocols;
 
@@ -140,14 +141,21 @@ static bool listed(const Protocols *p, const char *scheme)
 }
 
 /* true when the entry was written or changed. */
-static bool write_entry(const char *path, const char *exe, const char *scheme)
+/* the name is what the browser asks to open the address with, so it is the program's own when it has one. */
+static bool write_entry(const char *path, const char *exe, const char *scheme, const char *name)
 {
-    char exec[MIME_PATH_MAX * 2] = "", text[MIME_PATH_MAX * 3];
+    char exec[MIME_PATH_MAX * 2] = "", text[MIME_PATH_MAX * 3], fallback[SCHEME_CHARS + 32], clean[200];
     mime_desktop_argument(exec, sizeof(exec), exe);
+    size_t c = 0;
+    for (const char *p = name; *p && c + 1 < sizeof(clean); p++)
+        if ((unsigned char)*p >= 0x20 && *p != '\\' && *p != 0x7F)
+            clean[c++] = *p;
+    clean[c] = 0;
+    snprintf(fallback, sizeof(fallback), "Mime (%s links)", scheme);
     int n = snprintf(text, sizeof(text),
-                     "[Desktop Entry]\nType=Application\nVersion=1.1\nName=Mime (%s links)\nExec=%s run %%u\n"
+                     "[Desktop Entry]\nType=Application\nVersion=1.1\nName=%s\nExec=%s run %%u\n"
                      "Terminal=false\nNoDisplay=true\nMimeType=x-scheme-handler/%s;\nX-Mime-Protocol=true\n",
-                     scheme, exec, scheme);
+                     clean[0] ? clean : fallback, exec, scheme);
     if (n <= 0 || (size_t)n >= sizeof(text))
         return false;
     size_t length;
@@ -197,6 +205,7 @@ static void *protocols_thread(void *arg)
                 if (kept != i) {
                     memcpy(p->scheme[kept], p->scheme[i], sizeof(p->scheme[0]));
                     memcpy(p->program[kept], p->program[i], sizeof(p->program[0]));
+                    memcpy(p->name[kept], p->name[i], sizeof(p->name[0]));
                 }
                 kept++;
             }
@@ -211,7 +220,7 @@ static void *protocols_thread(void *arg)
             snprintf(path, sizeof(path), "%s/" ENTRY_PREFIX "%s.desktop", dir, p->scheme[i]);
             if (access(path, F_OK) != 0)
                 mime_info("url: %s:// addresses of the desktop open in the machine", p->scheme[i]);
-            changed |= write_entry(path, exe, p->scheme[i]);
+            changed |= write_entry(path, exe, p->scheme[i], p->name[i]);
             if (hidden != i)
                 memcpy(p->scheme[hidden], p->scheme[i], sizeof(p->scheme[0]));
             hidden++;
@@ -265,6 +274,8 @@ uint64_t mime_ui_protocols(const MimeShellProtocols *protocols)
         if (strlen(scheme) < SCHEME_CHARS && valid(scheme) && !reserved(scheme) && !listed(p, scheme)) {
             mime_utf16_to_utf8(p->program[p->count], sizeof(p->program[0]), protocols->program[i],
                                sizeof(protocols->program[0]) / sizeof(protocols->program[0][0]));
+            mime_utf16_to_utf8(p->name[p->count], sizeof(p->name[0]), protocols->name[i],
+                               sizeof(protocols->name[0]) / sizeof(protocols->name[0][0]));
             mime_strlcpy(p->scheme[p->count++], scheme, SCHEME_CHARS);
         }
     }

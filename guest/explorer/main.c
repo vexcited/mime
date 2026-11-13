@@ -8,6 +8,7 @@
 #include <mime/ntuser.h>
 #include <mime/win32/winbase.h>
 #include <mime/win32/shellapi.h>
+#include <mime/win32/winver.h>
 #include <rtl.h>
 
 #define PATH_CHARS 520
@@ -164,6 +165,27 @@ static void command_program(HKEY key, uint16_t *out, SIZE_T chars)
     out[end - start] = 0;
 }
 
+/* the description of the program in its version resource, in its first language, else the name of its product. */
+static void program_name(const uint16_t *program, uint16_t *out, SIZE_T chars)
+{
+    static BYTE info[16384];
+    out[0] = 0;
+    DWORD size = program[0] ? GetFileVersionInfoSizeW((const WCHAR *)program, nullptr) : 0;
+    if (!size || size > sizeof(info) || !GetFileVersionInfoW((const WCHAR *)program, 0, size, info))
+        return;
+    WORD *language;
+    UINT length;
+    if (!VerQueryValueW(info, L"\\VarFileInfo\\Translation", (void **)&language, &length) || length < 4)
+        return;
+    static const WCHAR *const values[] = {L"FileDescription", L"ProductName"};
+    for (SIZE_T i = 0; i < RTL_NUMBER_OF(values) && !out[0]; i++) {
+        WCHAR path[80], *text;
+        _snwprintf(path, RTL_NUMBER_OF(path), L"\\StringFileInfo\\%04x%04x\\%ls", language[0], language[1], values[i]);
+        if (VerQueryValueW(info, path, (void **)&text, &length) && length > 1 && wcslen(text) < chars)
+            wcscpy((WCHAR *)out, text);
+    }
+}
+
 /* a class is a protocol when it has the URL Protocol value, and is answered when it has a command to open. */
 static void add_protocols(MimeShellProtocols *list, HKEY root)
 {
@@ -193,6 +215,7 @@ static void add_protocols(MimeShellProtocols *list, HKEY root)
             for (SIZE_T c = 0; name[c]; c++)
                 list->scheme[list->count][c] = name[c] >= L'A' && name[c] <= L'Z' ? name[c] | 0x20 : name[c];
             command_program(key, list->program[list->count], RTL_NUMBER_OF(list->program[0]));
+            program_name(list->program[list->count], list->name[list->count], RTL_NUMBER_OF(list->name[0]));
             list->count++;
         }
         RegCloseKey(key);
