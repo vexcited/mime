@@ -1693,6 +1693,7 @@ WND *WndFromPoint(WND *top, POINT pt)
 static void free_window(WND *w)
 {
     ScreenHeldGone(w);
+    GdiWindowDestroyed(w);
     TimerRemoveWindow(w);
     HotkeyRemoveWindow(w);
     W32THREAD *t = w->Thread;

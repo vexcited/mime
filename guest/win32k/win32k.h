@@ -667,6 +667,7 @@ void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state, 
 DWORD W32TickCount(void);
 /* tick count of the last host or injected input event. */
 extern DWORD InputLastTime;
+void GdiWindowDestroyed(struct WND *w);
 ULONG GdiCountProcessObjects(HANDLE pid);
 ULONG WndCountProcessObjects(W32PROCESS *p);
 
