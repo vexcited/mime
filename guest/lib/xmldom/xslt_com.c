@@ -480,16 +480,16 @@ static HRESULT STDMETHODCALLTYPE p_get_ownerTemplate(XProc *p, void **out)
 
 static WCHAR *dup_bstr(BSTR s)
 {
-    return s ? xd_wcsdup(s, SysStringLen(s)) : nullptr;
+    return s ? xd_wcsdup(s, xd_slen(s)) : nullptr;
 }
 
 static HRESULT STDMETHODCALLTYPE p_setStartMode(XProc *p, BSTR mode, BSTR uri)
 {
     if (mode && *mode) {
-        int bad = xd_check_name(mode, SysStringLen(mode), FALSE);
+        int bad = xd_check_name(mode, xd_slen(mode), FALSE);
         if (bad >= 0) {
             XsError e = {};
-            xse_name_error(&e, mode, SysStringLen(mode), (UINT)bad);
+            xse_name_error(&e, mode, xd_slen(mode), (UINT)bad);
             HRESULT hr = fail_with(&e, p->v6);
             xse_clear(&e);
             return hr;

@@ -431,7 +431,7 @@ static HRESULT STDMETHODCALLTYPE m_getNamedItem(XList *l, BSTR name, void **out)
     *out = nullptr;
     if (!name)
         return E_INVALIDARG;
-    return xd_ret_node(xd_attr_find(l->base, name, SysStringLen(name)), out);
+    return xd_ret_node(xd_attr_find(l->base, name, xd_slen(name)), out);
 }
 
 static HRESULT STDMETHODCALLTYPE m_setNamedItem(XList *l, XNode *node, void **old)
@@ -469,7 +469,7 @@ static HRESULT STDMETHODCALLTYPE m_removeNamedItem(XList *l, BSTR name, void **o
     *out = nullptr;
     if (!name)
         return E_INVALIDARG;
-    XNode *a = xd_attr_find(l->base, name, SysStringLen(name));
+    XNode *a = xd_attr_find(l->base, name, xd_slen(name));
     if (!a)
         return S_FALSE;
     xd_attr_unlink(a);
@@ -484,7 +484,7 @@ static HRESULT STDMETHODCALLTYPE m_getQualifiedItem(XList *l, BSTR name, BSTR ur
     *out = nullptr;
     if (!name)
         return E_INVALIDARG;
-    return xd_ret_node(xd_attr_find_ns(l->base, name, SysStringLen(name), uri), out);
+    return xd_ret_node(xd_attr_find_ns(l->base, name, xd_slen(name), uri), out);
 }
 
 static HRESULT STDMETHODCALLTYPE m_removeQualifiedItem(XList *l, BSTR name, BSTR uri, void **out)
@@ -494,7 +494,7 @@ static HRESULT STDMETHODCALLTYPE m_removeQualifiedItem(XList *l, BSTR name, BSTR
     *out = nullptr;
     if (!name)
         return E_INVALIDARG;
-    XNode *a = xd_attr_find_ns(l->base, name, SysStringLen(name), uri);
+    XNode *a = xd_attr_find_ns(l->base, name, xd_slen(name), uri);
     if (!a)
         return S_FALSE;
     xd_attr_unlink(a);

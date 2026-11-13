@@ -406,7 +406,7 @@ static HRESULT STDMETHODCALLTYPE n_get_text(XNode *n, BSTR *p)
 
 static HRESULT STDMETHODCALLTYPE n_put_text(XNode *n, BSTR p)
 {
-    UINT len = p ? SysStringLen(p) : 0;
+    UINT len = p ? xd_slen(p) : 0;
     if (n->type == XN_PI && (n->flags & XF_XMLDECL))
         return set_decl_data(n, p ? p : L"", len);
     return xd_set_text(n, p ? p : L"", len) ? S_OK : E_FAIL;
@@ -615,7 +615,7 @@ static HRESULT STDMETHODCALLTYPE e_getAttribute(XNode *n, BSTR name, VARIANT *v)
     VariantInit(v);
     if (!name)
         return E_INVALIDARG;
-    XNode *a = xd_attr_find(n, name, SysStringLen(name));
+    XNode *a = xd_attr_find(n, name, xd_slen(name));
     if (!a) {
         v->vt = VT_NULL;
         return S_FALSE;
@@ -641,7 +641,7 @@ HRESULT xd_check_new_name(const WCHAR *name, UINT length)
 
 static HRESULT STDMETHODCALLTYPE e_setAttribute(XNode *n, BSTR name, VARIANT value)
 {
-    UINT nlen = name ? SysStringLen(name) : 0;
+    UINT nlen = name ? xd_slen(name) : 0;
     HRESULT hr = xd_check_new_name(name, nlen);
     if (FAILED(hr))
         return hr;
@@ -671,7 +671,7 @@ static HRESULT STDMETHODCALLTYPE e_removeAttribute(XNode *n, BSTR name)
 {
     if (!name)
         return E_INVALIDARG;
-    XNode *a = xd_attr_find(n, name, SysStringLen(name));
+    XNode *a = xd_attr_find(n, name, xd_slen(name));
     if (!a)
         return S_FALSE;
     xd_attr_unlink(a);
@@ -686,7 +686,7 @@ static HRESULT STDMETHODCALLTYPE e_getAttributeNode(XNode *n, BSTR name, void **
     *out = nullptr;
     if (!name)
         return E_INVALIDARG;
-    return xd_ret_node(xd_attr_find(n, name, SysStringLen(name)), out);
+    return xd_ret_node(xd_attr_find(n, name, xd_slen(name)), out);
 }
 
 static HRESULT STDMETHODCALLTYPE e_setAttributeNode(XNode *n, XNode *attr, void **old)
@@ -785,7 +785,7 @@ static HRESULT STDMETHODCALLTYPE c_get_data(XNode *n, BSTR *p)
 
 static HRESULT STDMETHODCALLTYPE c_put_data(XNode *n, BSTR p)
 {
-    xd_node_set_value(n, p ? p : L"", p ? SysStringLen(p) : 0);
+    xd_node_set_value(n, p ? p : L"", p ? xd_slen(p) : 0);
     return S_OK;
 }
 
@@ -836,12 +836,12 @@ static HRESULT splice(XNode *n, LONG offset, LONG count, const WCHAR *text, UINT
 
 static HRESULT STDMETHODCALLTYPE c_appendData(XNode *n, BSTR p)
 {
-    return splice(n, (LONG)n->length, 0, p ? p : L"", p ? SysStringLen(p) : 0);
+    return splice(n, (LONG)n->length, 0, p ? p : L"", p ? xd_slen(p) : 0);
 }
 
 static HRESULT STDMETHODCALLTYPE c_insertData(XNode *n, LONG offset, BSTR p)
 {
-    return splice(n, offset, 0, p ? p : L"", p ? SysStringLen(p) : 0);
+    return splice(n, offset, 0, p ? p : L"", p ? xd_slen(p) : 0);
 }
 
 static HRESULT STDMETHODCALLTYPE c_deleteData(XNode *n, LONG offset, LONG count)
@@ -851,7 +851,7 @@ static HRESULT STDMETHODCALLTYPE c_deleteData(XNode *n, LONG offset, LONG count)
 
 static HRESULT STDMETHODCALLTYPE c_replaceData(XNode *n, LONG offset, LONG count, BSTR p)
 {
-    return splice(n, offset, count, p ? p : L"", p ? SysStringLen(p) : 0);
+    return splice(n, offset, count, p ? p : L"", p ? xd_slen(p) : 0);
 }
 
 static HRESULT STDMETHODCALLTYPE c_splitText(XNode *n, LONG offset, void **out)
@@ -894,7 +894,7 @@ static HRESULT STDMETHODCALLTYPE p_get_data(XNode *n, BSTR *p)
 
 static HRESULT STDMETHODCALLTYPE p_put_data(XNode *n, BSTR p)
 {
-    return xd_set_pi_data(n, p ? p : L"", p ? SysStringLen(p) : 0);
+    return xd_set_pi_data(n, p ? p : L"", p ? xd_slen(p) : 0);
 }
 
 static HRESULT STDMETHODCALLTYPE t_get_name(XNode *n, BSTR *p)
