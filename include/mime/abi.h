@@ -170,6 +170,8 @@ enum {
     MIME_SHELL_JUMPLIST = 13,    /* MimeShellJumpList: the tasks of an application's jump list. */
     MIME_SHELL_DIALOG = 14,      /* MimeShellDialog: a dialog of the host's desktop, drawn with its own fonts. */
     MIME_SHELL_FOLDER = 15,      /* MimeShellFolder: a folder shown in the file manager of the host. */
+    MIME_SHELL_URL = 16,         /* MimeShellUrl: a web address opened in the browser of the host. */
+    MIME_SHELL_PROTOCOLS = 17,   /* MimeShellProtocols: the url protocols that programs of the machine answer. */
 };
 
 /*
@@ -183,6 +185,27 @@ typedef struct MimeShellFolder {
     uint32_t pad;
     uint16_t path[520];
 } MimeShellFolder;
+
+/* the machine has no browser of its own either. only http and https addresses are taken. */
+typedef struct MimeShellUrl {
+    uint32_t op;
+    uint32_t process_id;
+    uint16_t url[2084];
+} MimeShellUrl;
+
+/*
+ * a page of the host's browser ends a sign in by opening an address such as adskidmgr://, which only a program of
+ * the machine answers. the host makes itself the handler of each scheme it has no handler for, and runs the address
+ * in the machine. the list is the whole of them: a scheme that is no longer in it is given back.
+ */
+#define MIME_PROTOCOLS 64
+typedef struct MimeShellProtocols {
+    uint32_t op;
+    uint32_t process_id;
+    uint32_t count;
+    uint32_t pad;
+    uint16_t scheme[MIME_PROTOCOLS][40];
+} MimeShellProtocols;
 
 /*
  * a MimeShellDialog asks a question, tells of a failure or of a result, or shows progress, outside any guest window.

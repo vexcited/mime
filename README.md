@@ -69,6 +69,7 @@ It is read when the machine starts, so run `mime down` after a change.
 ```ini
 [desktop]
 shortcuts = false
+protocols = true
 ```
 
 ### Keys
@@ -76,6 +77,7 @@ shortcuts = false
 | Section     | Key         | Type      | Default | Plaform | Description |
 | ----------- | ----------- | --------- | ------- | ------- | ----------- |
 | `[desktop]` | `shortcuts` | `boolean` | `false` | Linux   | Exports the Start Menu and desktop shortcuts of Windows programs as `.desktop` entries in `$XDG_DATA_HOME/applications`, so launchers list them. Entries follow the shortcuts as programs are installed or removed. |
+| `[desktop]` | `protocols` | `boolean` | `true` | Linux   | Makes Mime the handler of the URL protocols that Windows programs register and that no program of the host answers, so a page of the host's browser can open them. A sign in that ends in the browser comes back to the program this way. |
 
 ### Values
 

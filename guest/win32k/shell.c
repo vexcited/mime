@@ -27,6 +27,8 @@ typedef union SHELL_COMMAND {
     MimeShellJumpList Jump;
     MimeShellDialog Dialog;
     MimeShellFolder Folder;
+    MimeShellUrl Url;
+    MimeShellProtocols Protocols;
 } SHELL_COMMAND;
 
 static KSPIN_LOCK g_lock;
@@ -244,6 +246,12 @@ static LONG run_command(PUCHAR request, ULONG size)
     case MIME_SHELL_FOLDER:
         want = sizeof(MimeShellFolder);
         break;
+    case MIME_SHELL_URL:
+        want = sizeof(MimeShellUrl);
+        break;
+    case MIME_SHELL_PROTOCOLS:
+        want = sizeof(MimeShellProtocols);
+        break;
     default:
         return STATUS_INVALID_PARAMETER;
     }
@@ -321,6 +329,17 @@ static LONG run_command(PUCHAR request, ULONG size)
         MimeShellFolder *f = &g_command->Folder;
         zero_end(f->path, RTL_NUMBER_OF(f->path));
         f->process_id = pid;
+    } else if (op == MIME_SHELL_URL) {
+        MimeShellUrl *u = &g_command->Url;
+        zero_end(u->url, RTL_NUMBER_OF(u->url));
+        u->process_id = pid;
+    } else if (op == MIME_SHELL_PROTOCOLS) {
+        MimeShellProtocols *p = &g_command->Protocols;
+        if (p->count > MIME_PROTOCOLS)
+            p->count = MIME_PROTOCOLS;
+        for (ULONG i = 0; i < MIME_PROTOCOLS; i++)
+            zero_end(p->scheme[i], RTL_NUMBER_OF(p->scheme[i]));
+        p->process_id = pid;
     } else if (want == sizeof(MimeShellJumpList)) {
         MimeShellJumpList *j = &g_command->Jump;
         zero_end(j->aumid, RTL_NUMBER_OF(j->aumid));

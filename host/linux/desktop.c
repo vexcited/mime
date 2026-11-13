@@ -136,17 +136,22 @@ static bool config_value(const char *path, const char *section, const char *key,
     return found;
 }
 
-static bool setting_enabled(const MimePaths *paths)
+bool mime_desktop_setting(const MimePaths *paths, const char *key, const char *variable, bool fallback)
 {
-    const char *env = getenv("MIME_DESKTOP_SHORTCUTS");
+    const char *env = getenv(variable);
     if (env && *env)
         return parse_bool(env);
     char path[MIME_PATH_MAX], value[32];
     mime_path_join(path, sizeof(path), paths->config, "config.ini");
-    return config_value(path, "desktop", "shortcuts", value, sizeof(value)) && parse_bool(value);
+    return config_value(path, "desktop", key, value, sizeof(value)) ? parse_bool(value) : fallback;
 }
 
-static void data_directory(char *out, size_t size)
+static bool setting_enabled(const MimePaths *paths)
+{
+    return mime_desktop_setting(paths, "shortcuts", "MIME_DESKTOP_SHORTCUTS", false);
+}
+
+void mime_desktop_data(char *out, size_t size)
 {
     const char *env = getenv("MIME_DESKTOP_DATA");
     if (!env || env[0] != '/')
@@ -301,7 +306,7 @@ static void escape_value(FILE *f, const char *text)
 }
 
 /* quotes and escapes Exec arguments according to the desktop entry specification. */
-static void append_argument(char *out, size_t size, const char *arg)
+void mime_desktop_argument(char *out, size_t size, const char *arg)
 {
     size_t n = strlen(out);
     bool quote = !*arg;
@@ -376,13 +381,13 @@ static int split_command_line(const char *line, char argv[][512], int max)
 static void make_exec(char *out, size_t size, const char *program_host, const char *arguments)
 {
     out[0] = 0;
-    append_argument(out, size, g_exe);
-    append_argument(out, size, "run");
-    append_argument(out, size, program_host);
+    mime_desktop_argument(out, size, g_exe);
+    mime_desktop_argument(out, size, "run");
+    mime_desktop_argument(out, size, program_host);
     char (*argv)[512] = mime_xmalloc(32 * 512);
     int argc = split_command_line(arguments, argv, 32);
     for (int i = 0; i < argc; i++)
-        append_argument(out, size, argv[i]);
+        mime_desktop_argument(out, size, argv[i]);
     free(argv);
 }
 
@@ -921,7 +926,7 @@ void mime_desktop_jump_list(const MimeShellJumpList *list)
  * the mime on PATH when it is this one, as wine writes its menu entries, so an entry outlives the binary an update
  * replaces: a store path of nix goes away, /run/current-system/sw/bin/mime stays.
  */
-static bool stable_exe(char *out, size_t size)
+bool mime_desktop_exe(char *out, size_t size)
 {
     char self[MIME_PATH_MAX];
     if (!realpath("/proc/self/exe", self))
@@ -953,8 +958,8 @@ void mime_ui_desktop_start(const MimePaths *paths)
     if (!mime_identity_load(paths, &id))
         return;
     mime_strlcpy(g_user, id.user_name, sizeof(g_user));
-    data_directory(g_data, sizeof(g_data));
-    if (!stable_exe(g_exe, sizeof(g_exe)))
+    mime_desktop_data(g_data, sizeof(g_data));
+    if (!mime_desktop_exe(g_exe, sizeof(g_exe)))
         return;
     g_inotify = inotify_init1(IN_CLOEXEC);
     if (g_inotify < 0)

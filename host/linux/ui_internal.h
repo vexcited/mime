@@ -37,6 +37,9 @@ uint64_t mime_ui_shell_window(const void *command);
 uint64_t mime_ui_dialog(const MimeShellDialog *dialog);
 /* folder.c: the folder in the file manager of the desktop. */
 uint64_t mime_ui_folder(const MimeShellFolder *folder);
+/* url.c: a web address in the browser of the desktop, and the protocols of the guest it can open in return. */
+uint64_t mime_ui_url(const MimeShellUrl *url);
+uint64_t mime_ui_protocols(const MimeShellProtocols *protocols);
 /* shell.c: a progress view of plasma's job server for MIME_DIALOG_PROGRESS, UPDATE and END, false without one. */
 bool mime_shell_job(const MimeShellDialog *dialog, const char *text);
 /* application id and launcher entry name: "mime." plus the user model id, or "mime" when absent. */
@@ -83,6 +86,12 @@ void mime_ui_set_activation_token(const char *token);
 
 /* publishes guest shortcuts in the applications menu on request. */
 void mime_desktop_jump_list(const MimeShellJumpList *list);
+/* a boolean of config.ini's [desktop] section, which the environment variable overrides. */
+bool mime_desktop_setting(const MimePaths *paths, const char *key, const char *variable, bool fallback);
+/* the data directory of the desktop, the mime that entries start, and an argument added to an Exec line. */
+void mime_desktop_data(char *out, size_t size);
+bool mime_desktop_exe(char *out, size_t size);
+void mime_desktop_argument(char *out, size_t size, const char *arg);
 
 /* ime.c, called by the main loop. */
 void mime_ime_editing(uint32_t window, const char *text, int start, int length);

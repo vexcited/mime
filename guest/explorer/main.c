@@ -1,7 +1,8 @@
 /*
  * explorer.exe: the machine has no file manager and no desktop of its own, so a folder is shown by the file manager
  * of the host. it takes what programs give Windows': a path, /select with the item to show in its folder, /root, and
- * /n and /e which change nothing here. a file is opened as the shell opens it, like Windows' does.
+ * /n and /e which change nothing here. a file is opened as the shell opens it, like Windows' does. the machine has
+ * no browser either: a web address is opened by the browser of the host.
  */
 #include <mime/abi.h>
 #include <mime/ntuser.h>
@@ -10,6 +11,7 @@
 #include <rtl.h>
 
 #define PATH_CHARS 520
+#define URL_CHARS 2084
 
 static const WCHAR *skip_program(const WCHAR *line)
 {
@@ -105,10 +107,97 @@ static void show(const WCHAR *path, BOOL select)
     NtUserMimeShell(MIME_SHELLOP_COMMAND, 0, (PUCHAR)&folder, sizeof(folder));
 }
 
+/* a web address is longer than a path, so it is read apart: the whole argument, in quotes or not. */
+static BOOL web_address(const WCHAR *line, WCHAR *url)
+{
+    while (*line == L' ' || *line == L'\t')
+        line++;
+    BOOL quoted = *line == L'"';
+    if (quoted)
+        line++;
+    if (_wcsnicmp(line, L"http://", 7) && _wcsnicmp(line, L"https://", 8))
+        return FALSE;
+    SIZE_T n = 0;
+    for (; *line && (quoted ? *line != L'"' : *line != L' ' && *line != L'\t'); line++) {
+        if (n + 1 >= URL_CHARS)
+            return FALSE;
+        url[n++] = *line;
+    }
+    url[n] = 0;
+    return TRUE;
+}
+
+static BOOL scheme_name(const WCHAR *name)
+{
+    SIZE_T n = 0;
+    for (; name[n]; n++)
+        if (!((name[n] | 0x20) >= L'a' && (name[n] | 0x20) <= L'z') && !(n && name[n] >= L'0' && name[n] <= L'9') &&
+            !(n && (name[n] == L'+' || name[n] == L'-' || name[n] == L'.')))
+            return FALSE;
+    return n >= 2 && n < RTL_NUMBER_OF(((MimeShellProtocols *)0)->scheme[0]);
+}
+
+/* a class is a protocol when it has the URL Protocol value, and is answered when it has a command to open. */
+static void add_protocols(MimeShellProtocols *list, HKEY root)
+{
+    HKEY classes;
+    if (RegOpenKeyExW(root, L"Software\\Classes", 0, KEY_READ, &classes))
+        return;
+    for (DWORD i = 0;; i++) {
+        WCHAR name[256], command[320];
+        DWORD chars = RTL_NUMBER_OF(name);
+        LSTATUS status = RegEnumKeyExW(classes, i, name, &chars, nullptr, nullptr, nullptr, nullptr);
+        if (status == ERROR_NO_MORE_ITEMS)
+            break;
+        if (status || !scheme_name(name) || !_wcsicmp(name, L"http") || !_wcsicmp(name, L"https"))
+            continue;
+        HKEY key;
+        if (RegOpenKeyExW(classes, name, 0, KEY_READ, &key))
+            continue;
+        BOOL protocol = !RegQueryValueExW(key, L"URL Protocol", nullptr, nullptr, nullptr, nullptr);
+        RegCloseKey(key);
+        _snwprintf(command, RTL_NUMBER_OF(command), L"%ls\\shell\\open\\command", name);
+        if (!protocol || RegOpenKeyExW(classes, command, 0, KEY_READ, &key))
+            continue;
+        RegCloseKey(key);
+        BOOL known = FALSE;
+        for (DWORD k = 0; k < list->count && !known; k++)
+            known = !_wcsicmp((const WCHAR *)list->scheme[k], name);
+        if (!known && list->count < MIME_PROTOCOLS) {
+            for (SIZE_T c = 0; name[c]; c++)
+                list->scheme[list->count][c] = name[c] >= L'A' && name[c] <= L'Z' ? name[c] | 0x20 : name[c];
+            list->count++;
+        }
+    }
+    RegCloseKey(classes);
+}
+
+/*
+ * the page that the browser shows may end by opening an address of a protocol that a program of the machine
+ * registered, as a sign in does. the host is told of them first, so that it can bring such an address back.
+ */
+static void open_web_address(const WCHAR *address)
+{
+    static MimeShellProtocols protocols;
+    static MimeShellUrl url;
+    protocols.op = MIME_SHELL_PROTOCOLS;
+    add_protocols(&protocols, HKEY_CURRENT_USER);
+    add_protocols(&protocols, HKEY_LOCAL_MACHINE);
+    NtUserMimeShell(MIME_SHELLOP_COMMAND, 0, (PUCHAR)&protocols, sizeof(protocols));
+    url.op = MIME_SHELL_URL;
+    memcpy(url.url, address, (wcslen(address) + 1) * sizeof(WCHAR));
+    NtUserMimeShell(MIME_SHELLOP_COMMAND, 0, (PUCHAR)&url, sizeof(url));
+}
+
 void entry(void)
 {
     WCHAR object[PATH_CHARS], full[PATH_CHARS];
+    static WCHAR address[URL_CHARS];
     BOOL select;
+    if (web_address(skip_program(GetCommandLineW()), address)) {
+        open_web_address(address);
+        ExitProcess(1);
+    }
     if (!parse(skip_program(GetCommandLineW()), object, &select)) {
         /* Windows' opens its home, the nearest here is the folder of the user. */
         DWORD n = GetEnvironmentVariableW(L"USERPROFILE", object, PATH_CHARS);
