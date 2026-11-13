@@ -13,6 +13,7 @@
 typedef struct WRITE_ENTRY {
     const MIME_CFB_NODE *Node;
     uint32_t Left, Right, Child, Start;
+    uint8_t Color;
 } WRITE_ENTRY;
 
 typedef struct WRITE_STATE {
@@ -57,14 +58,17 @@ static uint32_t count_nodes(const MIME_CFB_NODE *list)
     return count;
 }
 
-static uint32_t balance(WRITE_STATE *state, const uint32_t *order, uint32_t low, uint32_t high)
+static uint32_t balance(WRITE_STATE *state, const uint32_t *order, uint32_t low, uint32_t high,
+                        uint32_t depth, uint32_t red_depth)
 {
     if (low >= high)
         return CFB_FREE;
     uint32_t middle = low + (high - low) / 2;
     uint32_t index = order[middle];
-    state->Entries[index].Left = balance(state, order, low, middle);
-    state->Entries[index].Right = balance(state, order, middle + 1, high);
+    /* The incomplete last level is red: every path to a nil leaf has the same black height. */
+    state->Entries[index].Color = depth == red_depth ? 0 : 1;
+    state->Entries[index].Left = balance(state, order, low, middle, depth + 1, red_depth);
+    state->Entries[index].Right = balance(state, order, middle + 1, high, depth + 1, red_depth);
     return index;
 }
 
@@ -99,7 +103,10 @@ static int build(WRITE_STATE *state, const MIME_CFB_NODE *list, uint32_t *root)
         state->Entries[state->Count].Child = CFB_FREE;
         order[i] = state->Count++;
     }
-    *root = balance(state, order, 0, count);
+    uint32_t red_depth = 0;
+    for (uint64_t levels = (uint64_t)count + 1; levels > 1; levels >>= 1)
+        red_depth++;
+    *root = balance(state, order, 0, count, 0, red_depth);
     int ok = 1;
     for (uint32_t i = 0; ok && i < count; i++)
         if (nodes[i]->Type == 1)
@@ -231,7 +238,7 @@ int MimeCfbWrite(const MIME_CFB_NODE *children, const uint8_t root_class[16], MI
             put16(entry + k * 2, name[k]);
         put16(entry + 64, (uint32_t)(characters + 1) * 2);
         entry[66] = i ? source->Node->Type : 5;
-        entry[67] = 1;
+        entry[67] = i ? source->Color : 1;
         put32(entry + 68, source->Left);
         put32(entry + 72, source->Right);
         put32(entry + 76, source->Child);
@@ -239,6 +246,7 @@ int MimeCfbWrite(const MIME_CFB_NODE *children, const uint8_t root_class[16], MI
         if (class_id)
             memcpy(entry + 80, class_id, 16);
         if (i) {
+            memcpy(entry + 96, source->Node->Metadata, 20);
             put32(entry + 116, source->Node->Type == 2 ? source->Start : 0);
             put32(entry + 120, source->Node->Type == 2 ? (uint32_t)source->Node->Size : 0);
         } else {
