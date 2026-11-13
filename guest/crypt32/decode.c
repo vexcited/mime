@@ -1282,6 +1282,45 @@ static DWORD d_rsa_public_key(cr_arena *a, const der_item *item, DWORD flags)
     return 0;
 }
 
+static DWORD d_cng_rsa_public_key(cr_arena *a, const der_item *item, DWORD flags)
+{
+    if (item->tag != ASN_SEQUENCE)
+        return CRYPT_E_ASN1_BADTAG;
+    der_reader r;
+    der_item modulus, exponent;
+    DWORD error;
+    DerOpen(&r, item);
+    if ((error = DerExpect(&r, ASN_INTEGER, &modulus)) || (error = DerExpect(&r, ASN_INTEGER, &exponent)))
+        return error;
+    const BYTE *m = modulus.content;
+    DWORD mn = modulus.length;
+    while (mn > 1 && !m[0]) {
+        m++;
+        mn--;
+    }
+    const BYTE *e = exponent.content;
+    DWORD en = exponent.length;
+    while (en > 1 && !e[0]) {
+        e++;
+        en--;
+    }
+    if (!mn || !en)
+        return CRYPT_E_ASN1_CORRUPT;
+    /* A BCRYPT_RSAKEY_BLOB: six DWORDs, then the exponent and the modulus, both big endian. */
+    DWORD *blob = ArenaAlloc(a, 6 * sizeof(DWORD) + en + mn);
+    if (blob) {
+        blob[0] = 0x31415352;
+        blob[1] = mn * 8;
+        blob[2] = en;
+        blob[3] = mn;
+        blob[4] = 0;
+        blob[5] = 0;
+        memcpy(blob + 6, e, en);
+        memcpy((BYTE *)(blob + 6) + en, m, mn);
+    }
+    return 0;
+}
+
 #undef TOP
 #undef STORE
 
@@ -1346,6 +1385,8 @@ static decode_fn decoder_for(LPCSTR type)
             return d_content_info;
         case 38:
             return d_multi_uint;
+        case 72:
+            return d_cng_rsa_public_key;
         case 73:
             return d_oid;
         case 500:
