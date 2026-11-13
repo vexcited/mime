@@ -106,6 +106,16 @@ void GdiDeleteObject(GDI_OBJECT *o)
     destroy_object(o);
 }
 
+/* a window dc outlives its window when the program releases it late. */
+void GdiWindowDestroyed(struct WND *w)
+{
+    for (ULONG i = 1; g_table && i < GDI_MAX_HANDLES; i++) {
+        GDI_OBJECT *o = g_table[i].Object;
+        if (o && o->Type == GDI_TYPE_DC && ((DC *)o)->Window == w)
+            ((DC *)o)->Window = nullptr;
+    }
+}
+
 ULONG GdiCountProcessObjects(HANDLE pid)
 {
     ULONG n = 0;
