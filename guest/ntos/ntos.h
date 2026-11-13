@@ -1616,6 +1616,7 @@ NTSTATUS IoReadFileObject(PFILE_OBJECT file, PVOID buffer, ULONG length, ULONG64
 NTSTATUS IoWriteFileObject(PFILE_OBJECT file, const void *buffer, ULONG length, ULONG64 offset, PULONG written);
 void IopInitializeCompletion(void);
 void IopInitializeWaitPackets(void);
+void IopInitializeNull(void);
 void IopInitializeNamedPipes(void);
 void IopQueueCompletionApc(PETHREAD thread, PVOID routine, PVOID context, PIO_STATUS_BLOCK iosb);
 /* wow64 flags a 32-bit status block with bit 0 of the apc routine. internally bit 0 of the block's address carries it. */

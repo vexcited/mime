@@ -255,8 +255,6 @@ DWORD WINAPI GetThreadErrorMode(void)
 
 BOOL WINAPI CloseHandle(HANDLE handle)
 {
-    if (KbIsPseudoHandle(handle))
-        return TRUE;
     NTSTATUS status = NtClose(handle);
     if (!NT_SUCCESS(status))
         return KbSetStatus(status);
@@ -266,11 +264,6 @@ BOOL WINAPI CloseHandle(HANDLE handle)
 BOOL WINAPI DuplicateHandle(HANDLE source_process, HANDLE source, HANDLE target_process, LPHANDLE target,
                             DWORD access, BOOL inherit, DWORD options)
 {
-    if (KbIsPseudoHandle(source)) {
-        if (target)
-            *target = source;
-        return TRUE;
-    }
     NTSTATUS status = NtDuplicateObject(source_process, source, target_process, target, access,
                                         inherit ? OBJ_INHERIT : 0, options);
     if (!NT_SUCCESS(status))
@@ -283,10 +276,6 @@ BOOL WINAPI GetHandleInformation(HANDLE handle, LPDWORD flags)
     if (!flags) {
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
-    }
-    if (KbIsPseudoHandle(handle)) {
-        *flags = 0;
-        return TRUE;
     }
     struct {
         BOOLEAN Inherit;
@@ -301,8 +290,6 @@ BOOL WINAPI GetHandleInformation(HANDLE handle, LPDWORD flags)
 
 BOOL WINAPI SetHandleInformation(HANDLE handle, DWORD mask, DWORD flags)
 {
-    if (KbIsPseudoHandle(handle))
-        return TRUE;
     /* only the bits of the mask change. */
     DWORD current;
     if (!GetHandleInformation(handle, &current))

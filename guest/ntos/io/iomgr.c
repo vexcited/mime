@@ -841,6 +841,7 @@ void IoInitialize(void)
     IoFileObjectTypeObject = ObCreateObjectType(L"File", &init);
     IopInitializeCompletion();
     IopInitializeWaitPackets();
+    IopInitializeNull();
     IopInitializeNamedPipes();
     IopInitializeConsole();
     IopInitializeAfd();

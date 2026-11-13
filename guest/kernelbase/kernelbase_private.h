@@ -72,14 +72,6 @@ HANDLE KbPrivateNamespaceLookup(LPCWSTR *name);
 BOOL KbNamedObjectAttributes(POBJECT_ATTRIBUTES oa, PUNICODE_STRING us, LPCWSTR name, BOOL inherit,
                              const SECURITY_ATTRIBUTES *sa);
 
-/* the NUL device is a value the kernel never hands out. */
-#define KB_NULL_DEVICE ((HANDLE)(ULONG_PTR)0xF)
-
-FORCEINLINE BOOL KbIsPseudoHandle(HANDLE h)
-{
-    return h == KB_NULL_DEVICE;
-}
-
 void KbInitializeConsole(void);
 HANDLE KbPseudoConsoleHandle(HPCON console);
 HANDLE KbOpenConsoleDevice(LPCWSTR name, DWORD access, DWORD share, const SECURITY_ATTRIBUTES *sa, DWORD disposition);

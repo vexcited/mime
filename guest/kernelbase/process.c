@@ -735,8 +735,6 @@ typedef struct KB_PROCESS_ATTRIBUTES {
     DWORD Win32k[2];
     UCHAR Protection;
     const KB_SECURITY_CAPABILITIES *Capabilities;
-    PHANDLE Handles;
-    BOOL NoHandles;
 } KB_PROCESS_ATTRIBUTES;
 
 /* the mitigation creation flags as the three words the kernel takes, or an error. */
@@ -796,35 +794,10 @@ static DWORD convert_attributes(LPPROC_THREAD_ATTRIBUTE_LIST list, BOOL inherit,
             if (!add_ps(out, KB_PS_PARENT_PROCESS, sizeof(HANDLE), (ULONG_PTR)*(HANDLE *)a->Value))
                 return ERROR_INVALID_PARAMETER;
             break;
-        case PROC_THREAD_ATTRIBUTE_HANDLE_LIST: {
-            if (!inherit)
-                return ERROR_INVALID_PARAMETER;
-            /* a pseudo handle is no kernel handle: the child gets its value as is, so the list goes without it. */
-            const HANDLE *listed = a->Value;
-            SIZE_T count = a->Size / sizeof(HANDLE), kept = 0;
-            for (SIZE_T j = 0; j < count; j++)
-                kept += !KbIsPseudoHandle(listed[j]);
-            if (kept == count) {
-                if (!add_ps(out, KB_PS_HANDLE_LIST, a->Size, (ULONG_PTR)a->Value))
-                    return ERROR_INVALID_PARAMETER;
-                break;
-            }
-            if (!kept) {
-                out->NoHandles = TRUE;
-                break;
-            }
-            KbFree(out->Handles);
-            out->Handles = KbAlloc(kept * sizeof(HANDLE));
-            if (!out->Handles)
-                return ERROR_NOT_ENOUGH_MEMORY;
-            kept = 0;
-            for (SIZE_T j = 0; j < count; j++)
-                if (!KbIsPseudoHandle(listed[j]))
-                    out->Handles[kept++] = listed[j];
-            if (!add_ps(out, KB_PS_HANDLE_LIST, kept * sizeof(HANDLE), (ULONG_PTR)out->Handles))
+        case PROC_THREAD_ATTRIBUTE_HANDLE_LIST:
+            if (!inherit || !add_ps(out, KB_PS_HANDLE_LIST, a->Size, (ULONG_PTR)a->Value))
                 return ERROR_INVALID_PARAMETER;
             break;
-        }
         case PROC_THREAD_ATTRIBUTE_PREFERRED_NODE:
             add_ps(out, KB_PS_PREFERRED_NODE, a->Size, (ULONG_PTR)a->Value);
             break;
@@ -1179,17 +1152,13 @@ static BOOL create_process(HANDLE token, LPCWSTR application, LPWSTR command_lin
         ((LPSTARTUPINFOEXW)startup)->lpAttributeList) {
         DWORD error = convert_attributes(((LPSTARTUPINFOEXW)startup)->lpAttributeList, inherit, &attributes);
         if (error) {
-            KbFree(attributes.Handles);
             KbFree(converted);
             KbSetError(error);
             return FALSE;
         }
-        if (attributes.NoHandles)
-            process_flags &= ~(ULONG)PROCESS_CREATE_FLAGS_INHERIT_HANDLES;
         if (attributes.Capabilities) {
             NTSTATUS made = create_container_token(token, attributes.Capabilities, &container);
             if (!NT_SUCCESS(made)) {
-                KbFree(attributes.Handles);
                 KbFree(converted);
                 return KbSetStatus(made);
             }
@@ -1199,7 +1168,6 @@ static BOOL create_process(HANDLE token, LPCWSTR application, LPWSTR command_lin
     if (token && !add_ps(&attributes, PS_ATTRIBUTE_TOKEN, sizeof(HANDLE), (ULONG_PTR)token)) {
         if (container)
             NtClose(container);
-        KbFree(attributes.Handles);
         KbFree(converted);
         KbSetError(ERROR_INVALID_PARAMETER);
         return FALSE;
@@ -1215,7 +1183,6 @@ static BOOL create_process(HANDLE token, LPCWSTR application, LPWSTR command_lin
                                            attributes.Count ? (PS_ATTRIBUTE_LIST *)&attributes : nullptr);
     if (container)
         NtClose(container);
-    KbFree(attributes.Handles);
     KbFree(converted);
     if (status == STATUS_INVALID_IMAGE_NOT_MZ && !batch_retry && is_batch_name(full)) {
         PWSTR line = batch_command_line(command_line, wrap);
