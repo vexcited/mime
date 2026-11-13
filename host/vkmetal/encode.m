@@ -608,11 +608,15 @@ static bool mix_probe(id<MTLDevice> device)
                 if (!base || !views[0] || !views[1] || !flat)
                     return false;
                 id<MTLCommandBuffer> buffer = [queue commandBuffer];
-                /* the format and the blending of each draw. */
-                static const int draws[9][2] = {{0, 0}, {1, 1}, {0, 1}, {1, 2}, {0, 2}, {1, 1}, {1, 0}, {0, 1}, {1, 1}};
+                /*
+                 * the format and the blending of each draw. every draw covers the target, so only what follows the
+                 * last one without blending is in the result: each blending of each format is there.
+                 */
+                static const int draws[][2] = {{0, 0}, {1, 1}, {0, 1}, {1, 2}, {0, 2}, {1, 1},
+                                               {1, 0}, {0, 1}, {1, 1}, {0, 2}, {1, 2}};
                 id<MTLRenderCommandEncoder> pass = nil;
                 int bound = -1;
-                for (int k = 0; k < 9; k++) {
+                for (int k = 0; k < (int)MIME_ARRAY_COUNT(draws); k++) {
                     int f = draws[k][0];
                     if (!pass || (!merged && bound != f)) {
                         [pass endEncoding];
