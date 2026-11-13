@@ -103,6 +103,9 @@ uint64_t vkm_queue_signal(VkQueue q);
 
 typedef struct VkmCache VkmCache;
 
+/* the visibility results one render pass may address: 64 kilobytes of them. */
+#define VKM_OCCLUSION_QUERIES 8192u
+
 struct VkDevice_T {
     VkPhysicalDevice physical;
     id<MTLDevice> mtl;
@@ -131,6 +134,13 @@ struct VkDevice_T {
     /* the heaps acceleration structures come from when they cannot be placed in their buffer's memory. */
     id<MTLHeap> *as_heaps;
     uint32_t as_heap_count;
+    /*
+     * the results of the occlusion query pools, in one buffer: a render pass writes its visibility results into a
+     * single buffer, and vulkan lets it run queries of several pools. a bit of the map is set for each query in use.
+     */
+    id<MTLBuffer> occlusion;
+    uint64_t occlusion_map[VKM_OCCLUSION_QUERIES / 64];
+    pthread_mutex_t occlusion_lock;
 };
 
 /* instance.c: whether the device advertises the extension. */
@@ -575,6 +585,8 @@ struct VkQueryPool_T {
     VkQueryType type;
     uint32_t count;
     id<MTLBuffer> buffer; /* 8 bytes for each value of a query, shared. */
+    uint64_t base;        /* where the pool's values start in the buffer, past 0 in the device's occlusion buffer. */
+    bool pooled;          /* the buffer is the device's occlusion buffer. */
     uint64_t *values;
     /* each query's availability: the value of the queue's event once it is written, 0 when reset. */
     uint64_t *written;
