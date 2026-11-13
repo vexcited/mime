@@ -37,6 +37,7 @@ typedef struct MIME_CFB_NODE {
     uint16_t Name[32];
     uint8_t Type;
     uint8_t ClassId[16];
+    uint8_t Metadata[20]; /* storage state bits, creation time and modification time */
     const uint8_t *Data;
     size_t Size;
 } MIME_CFB_NODE;
