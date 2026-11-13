@@ -1321,6 +1321,122 @@ static DWORD d_cng_rsa_public_key(cr_arena *a, const der_item *item, DWORD flags
     return 0;
 }
 
+/* PKCS#1 key integers are positive, minimally encoded DER, not signed CAPI integers. */
+static BOOL rsa_der_length(const der_item *item)
+{
+    return !(item->start[1] & 0x80) || (item->length >= 128 && item->start[2] != 0);
+}
+
+static DWORD rsa_integer(der_reader *r, der_item *value, BOOL allow_zero)
+{
+    DWORD error = DerExpect(r, ASN_INTEGER, value);
+    if (error)
+        return error;
+    if (!rsa_der_length(value) || !value->length || (value->content[0] & 0x80))
+        return CRYPT_E_ASN1_CORRUPT;
+    if (value->length > 1 && !value->content[0]) {
+        if (!(value->content[1] & 0x80))
+            return CRYPT_E_ASN1_CORRUPT;
+        value->content++;
+        value->length--;
+    }
+    if (!allow_zero && value->length == 1 && !value->content[0])
+        return CRYPT_E_ASN1_CORRUPT;
+    return 0;
+}
+
+static BOOL rsa_less(const der_item *a, const der_item *b)
+{
+    return a->length < b->length ||
+           (a->length == b->length && memcmp(a->content, b->content, a->length) < 0);
+}
+
+static BOOL rsa_odd(const der_item *value)
+{
+    return (value->content[value->length - 1] & 1) &&
+           (value->length > 1 || value->content[0] > 1);
+}
+
+static DWORD rsa_public_values(der_reader *r, der_item *modulus, der_item *exponent)
+{
+    DWORD error = rsa_integer(r, modulus, FALSE);
+    if (!error)
+        error = rsa_integer(r, exponent, FALSE);
+    if (error)
+        return error;
+    if (!rsa_odd(modulus) || !rsa_odd(exponent) || !rsa_less(exponent, modulus))
+        return CRYPT_E_ASN1_CORRUPT;
+    if (modulus->length > MAXDWORD / 8)
+        return CRYPT_E_ASN1_LARGE;
+    return 0;
+}
+
+/* CAPI numbers occupy fixed width little endian slots, including zero padding. */
+static void rsa_copy_le(BYTE *out, DWORD width, const der_item *value)
+{
+    memset(out, 0, width);
+    for (DWORD i = 0; i < value->length; i++)
+        out[i] = value->content[value->length - 1 - i];
+}
+
+static DWORD d_rsa_private_key(cr_arena *a, const der_item *item, DWORD flags)
+{
+    if (item->tag != ASN_SEQUENCE)
+        return CRYPT_E_ASN1_BADTAG;
+    if (!rsa_der_length(item))
+        return CRYPT_E_ASN1_CORRUPT;
+    der_reader r;
+    der_item version, modulus, exponent, private_exponent, crt[5];
+    DerOpen(&r, item);
+    DWORD error = rsa_integer(&r, &version, TRUE);
+    if (error)
+        return error;
+    /* PRIVATEKEYBLOB represents the two-prime form, whose version is zero. */
+    if (version.length != 1 || version.content[0])
+        return CRYPT_E_ASN1_CORRUPT;
+    if ((error = rsa_public_values(&r, &modulus, &exponent)) ||
+        (error = rsa_integer(&r, &private_exponent, FALSE)))
+        return error;
+    for (DWORD i = 0; i < RTL_NUMBER_OF(crt); i++)
+        if ((error = rsa_integer(&r, &crt[i], FALSE)))
+            return error;
+    if (r.n || !(private_exponent.content[private_exponent.length - 1] & 1) ||
+        !rsa_less(&private_exponent, &modulus) ||
+        !(crt[2].content[crt[2].length - 1] & 1) || !(crt[3].content[crt[3].length - 1] & 1) ||
+        !rsa_odd(&crt[0]) || !rsa_odd(&crt[1]) || !rsa_less(&crt[0], &modulus) ||
+        !rsa_less(&crt[1], &modulus) ||
+        (!rsa_less(&crt[0], &crt[1]) && !rsa_less(&crt[1], &crt[0])) ||
+        !rsa_less(&crt[2], &crt[0]) || !rsa_less(&crt[3], &crt[1]) || !rsa_less(&crt[4], &crt[0]))
+        return CRYPT_E_ASN1_CORRUPT;
+    /* An even modulus width gives the CAPI bitlen/16 fields integral byte widths. */
+    DWORD n = (modulus.length + 1) & ~1u, half = n / 2;
+    if (n > MAXDWORD / 8 || exponent.length > sizeof(DWORD) || private_exponent.length > n)
+        return CRYPT_E_ASN1_LARGE;
+    for (DWORD i = 0; i < RTL_NUMBER_OF(crt); i++)
+        if (crt[i].length > half)
+            return CRYPT_E_ASN1_LARGE;
+    ULONGLONG size = sizeof(BLOBHEADER) + sizeof(RSAPUBKEY) + 2ull * n + 5ull * half;
+    if (size > MAXDWORD)
+        return CRYPT_E_ASN1_LARGE;
+    DWORD pubexp = 0;
+    for (DWORD i = 0; i < exponent.length; i++)
+        pubexp = (pubexp << 8) | exponent.content[i];
+    BYTE *blob = ArenaAlloc(a, (SIZE_T)size);
+    if (blob) {
+        BLOBHEADER header = {PRIVATEKEYBLOB, CUR_BLOB_VERSION, 0, CALG_RSA_KEYX};
+        RSAPUBKEY key = {0x32415352, n * 8, pubexp};
+        memcpy(blob, &header, sizeof(header));
+        memcpy(blob + sizeof(header), &key, sizeof(key));
+        BYTE *out = blob + sizeof(header) + sizeof(key);
+        rsa_copy_le(out, n, &modulus);
+        out += n;
+        for (DWORD i = 0; i < RTL_NUMBER_OF(crt); i++, out += half)
+            rsa_copy_le(out, half, &crt[i]);
+        rsa_copy_le(out, n, &private_exponent);
+    }
+    return 0;
+}
+
 #undef TOP
 #undef STORE
 
@@ -1385,6 +1501,8 @@ static decode_fn decoder_for(LPCSTR type)
             return d_content_info;
         case 38:
             return d_multi_uint;
+        case 43:
+            return d_rsa_private_key;
         case 72:
             return d_cng_rsa_public_key;
         case 73:
@@ -1435,6 +1553,8 @@ static DWORD run_decoder(decode_fn fn, const BYTE *data, DWORD size, DWORD flags
     DWORD error = DerRead(&r, &item);
     if (error)
         return error;
+    if (r.n && fn == d_rsa_private_key)
+        return CRYPT_E_ASN1_CORRUPT;
     cr_arena a = {base, 0};
     if ((error = fn(&a, &item, flags)))
         return error;
