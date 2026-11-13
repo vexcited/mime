@@ -16,6 +16,7 @@ typedef struct SQL_TOKEN {
 } SQL_TOKEN;
 
 enum { MAX_TABLES = 8, MAX_COLUMNS = 64, MAX_CONDITIONS = 64 };
+enum { SQL_SELECT, SQL_INSERT, SQL_UPDATE, SQL_DELETE };
 enum { COMPARE_EQ, COMPARE_NE, COMPARE_LT, COMPARE_LE, COMPARE_GT, COMPARE_GE };
 enum { OPERAND_COLUMN, OPERAND_LITERAL, OPERAND_PARAMETER };
 enum { NODE_COMPARE, NODE_NULL, NODE_NOT_NULL, NODE_AND, NODE_OR, NODE_NOT };
@@ -51,6 +52,9 @@ typedef struct MSI_VIEW {
     ULONG Parameters;
     ULONG *Tuples, TupleCount, Position, Revision;
     BOOL Executed;
+    ULONG Operation;
+    SQL_OPERAND Values[MAX_COLUMNS];
+    BOOL Temporary;
 } MSI_VIEW;
 
 static BOOL name_character(WCHAR ch)
@@ -71,8 +75,14 @@ static void next_token(SQL_TOKEN *token)
         WCHAR quote = *p++;
         token->Kind = quote == L'`' ? TOKEN_NAME : TOKEN_STRING;
         token->Quoted = quote == L'`';
-        while (*p && *p != quote && length < RTL_NUMBER_OF(token->Text) - 1)
+        while (*p && length < RTL_NUMBER_OF(token->Text) - 1) {
+            if (*p == quote) {
+                if (p[1] != quote)
+                    break;
+                p++;
+            }
             token->Text[length++] = *p++;
+        }
         if (*p != quote)
             token->Kind = TOKEN_INVALID;
         else
@@ -129,6 +139,8 @@ static void destroy_view(MIME_MSI_OBJECT *object)
 {
     MSI_VIEW *view = (void *)object;
     free_node(view->Where);
+    for (ULONG i = 0; i < MAX_COLUMNS; i++)
+        MimeMsiFree(view->Values[i].Value.String);
     MimeMsiFree(view->Tuples);
     for (ULONG i = 0; i < view->TableCount; i++)
         view->Tables[i] = nullptr;
@@ -198,6 +210,10 @@ static UINT parse_reference(MSI_VIEW *view, SQL_TOKEN *token, ULONG *table_out, 
 
 static UINT parse_operand(MSI_VIEW *view, SQL_TOKEN *token, SQL_OPERAND *operand)
 {
+    if (take(token, L"NULL")) {
+        operand->Kind = OPERAND_LITERAL;
+        return ERROR_SUCCESS;
+    }
     if (take(token, L"?")) {
         operand->Kind = OPERAND_PARAMETER;
         operand->Parameter = ++view->Parameters;
@@ -363,12 +379,85 @@ static UINT split_conditions(MSI_VIEW *view, SQL_NODE *node)
     return ERROR_SUCCESS;
 }
 
+/* DML shares SELECT's name, value and predicate parser. Schema-changing SQL is deliberately not accepted. */
+static UINT parse_mutation(MSI_VIEW *view, SQL_TOKEN *token)
+{
+    if (take(token, L"INSERT")) {
+        view->Operation = SQL_INSERT;
+        if (!take(token, L"INTO"))
+            return ERROR_BAD_QUERY_SYNTAX;
+    } else if (take(token, L"UPDATE"))
+        view->Operation = SQL_UPDATE;
+    else if (take(token, L"DELETE")) {
+        view->Operation = SQL_DELETE;
+        if (!take(token, L"FROM"))
+            return ERROR_BAD_QUERY_SYNTAX;
+    } else
+        return ERROR_BAD_QUERY_SYNTAX;
+    if (token->Kind != TOKEN_NAME)
+        return ERROR_BAD_QUERY_SYNTAX;
+    UINT error = MimeMsiLoadTable(view->Database, token->Text, &view->Tables[0]);
+    if (error)
+        return error;
+    view->TableCount = 1;
+    next_token(token);
+    if (view->Operation == SQL_INSERT) {
+        if (!take(token, L"("))
+            return ERROR_BAD_QUERY_SYNTAX;
+        do {
+            if (view->Count == MAX_COLUMNS)
+                return ERROR_BAD_QUERY_SYNTAX;
+            SQL_COLUMN_REF *ref = &view->Selected[view->Count++];
+            error = parse_reference(view, token, &ref->Table, &ref->Column);
+            if (error)
+                return error;
+        } while (take(token, L","));
+        if (!take(token, L")") || !take(token, L"VALUES") || !take(token, L"("))
+            return ERROR_BAD_QUERY_SYNTAX;
+        for (ULONG i = 0; i < view->Count; i++) {
+            if (i && !take(token, L","))
+                return ERROR_BAD_QUERY_SYNTAX;
+            error = parse_operand(view, token, &view->Values[i]);
+            if (error || view->Values[i].Kind == OPERAND_COLUMN)
+                return ERROR_BAD_QUERY_SYNTAX;
+        }
+        if (!take(token, L")"))
+            return ERROR_BAD_QUERY_SYNTAX;
+        view->Temporary = take(token, L"TEMPORARY");
+    } else if (view->Operation == SQL_UPDATE) {
+        if (!take(token, L"SET"))
+            return ERROR_BAD_QUERY_SYNTAX;
+        do {
+            if (view->Count == MAX_COLUMNS)
+                return ERROR_BAD_QUERY_SYNTAX;
+            ULONG i = view->Count++;
+            SQL_COLUMN_REF *ref = &view->Selected[i];
+            error = parse_reference(view, token, &ref->Table, &ref->Column);
+            if (error || !take(token, L"="))
+                return ERROR_BAD_QUERY_SYNTAX;
+            error = parse_operand(view, token, &view->Values[i]);
+            if (error || view->Values[i].Kind == OPERAND_COLUMN)
+                return ERROR_BAD_QUERY_SYNTAX;
+        } while (take(token, L","));
+    }
+    for (ULONG i = 0; i < view->Count; i++)
+        for (ULONG j = 0; j < i; j++)
+            if (view->Selected[i].Column == view->Selected[j].Column)
+                return ERROR_BAD_QUERY_SYNTAX;
+    if (view->Operation != SQL_INSERT && take(token, L"WHERE")) {
+        error = parse_expression(view, token, 0, &view->Where);
+        if (error)
+            return error;
+    }
+    return token->Kind == TOKEN_END ? ERROR_SUCCESS : ERROR_BAD_QUERY_SYNTAX;
+}
+
 static UINT parse_view(MSI_VIEW *view, PCWSTR query)
 {
     SQL_TOKEN token = {.Next = query};
     next_token(&token);
     if (!take(&token, L"SELECT"))
-        return ERROR_BAD_QUERY_SYNTAX;
+        return parse_mutation(view, &token);
     view->Distinct = take(&token, L"DISTINCT");
     /* the column list comes before FROM, so scan ahead for the tables first. */
     SQL_TOKEN scan = token;
@@ -704,6 +793,8 @@ static BOOL sort_tuples(MSI_VIEW *view, ULONG *tuples, ULONG count, BOOL by_sele
     return TRUE;
 }
 
+static UINT execute_mutation(MSI_VIEW *view, const MIME_MSI_RECORD *parameters);
+
 UINT WINAPI MsiViewExecute(MSIHANDLE handle, MSIHANDLE parameters)
 {
     MIME_REMOTE(PROXY_ViewExecute, UINT, MIME_ARG(handle), MIME_ARG(parameters));
@@ -713,6 +804,11 @@ UINT WINAPI MsiViewExecute(MSIHANDLE handle, MSIHANDLE parameters)
     UINT error = !view || (parameters && !record) ? ERROR_INVALID_HANDLE : ERROR_SUCCESS;
     if (!error && view->Parameters && (!record || record->Count < view->Parameters))
         error = ERROR_INVALID_PARAMETER;
+    if (!error && view->Operation != SQL_SELECT) {
+        error = execute_mutation(view, record);
+        ReleaseSRWLockExclusive(&MimeMsiLock);
+        return error;
+    }
     if (!error) {
         MimeMsiFree(view->Tuples);
         view->Tuples = nullptr;
@@ -860,6 +956,8 @@ static UINT intern_string(MIME_MSI_DATABASE *database, PCWSTR text, ULONG *id)
             return ERROR_SUCCESS;
         }
     }
+    if (database->StringCount >= (1u << (8 * database->StringWidth)))
+        return ERROR_FUNCTION_FAILED;
     SIZE_T length = wcslen(text) + 1;
     PWSTR copy = MimeMsiAllocate(length * sizeof(WCHAR));
     PWSTR *grown = MimeMsiAllocate(((SIZE_T)database->StringCount + 1) * sizeof(PWSTR));
@@ -874,7 +972,6 @@ static UINT intern_string(MIME_MSI_DATABASE *database, PCWSTR text, ULONG *id)
     MimeMsiFree(database->Strings);
     database->Strings = grown;
     *id = database->StringCount++;
-    /* a pool that no longer fits the width of the cells cannot be written back, and is not. */
     return ERROR_SUCCESS;
 }
 
@@ -942,11 +1039,20 @@ static UINT cell_for_field(MIME_MSI_DATABASE *database, const MIME_MSI_COLUMN *c
     return ERROR_SUCCESS;
 }
 
-static BOOL rows_have_key(const MIME_MSI_TABLE *table, ULONG row, const ULONG *values, BOOL *identical)
+static BOOL same_cell(MIME_MSI_DATABASE *database, const MIME_MSI_COLUMN *column, ULONG a, ULONG b)
+{
+    if (a == b)
+        return TRUE;
+    if (!a || !b || !is_string_column(column) || a >= database->StringCount || b >= database->StringCount)
+        return FALSE;
+    return !wcscmp(database->Strings[a] ? database->Strings[a] : L"", database->Strings[b] ? database->Strings[b] : L"");
+}
+
+static BOOL rows_have_key(MIME_MSI_DATABASE *database, const MIME_MSI_TABLE *table, ULONG row, const ULONG *values, BOOL *identical)
 {
     BOOL same_keys = TRUE;
     for (ULONG c = 0; c < table->Count; c++) {
-        if ((table->Columns[c].Type & 0x2000) && MimeMsiCell(table, row, c) != values[c]) {
+        if ((table->Columns[c].Type & 0x2000) && !same_cell(database, &table->Columns[c], MimeMsiCell(table, row, c), values[c])) {
             same_keys = FALSE;
             break;
         }
@@ -954,7 +1060,7 @@ static BOOL rows_have_key(const MIME_MSI_TABLE *table, ULONG row, const ULONG *v
     if (same_keys && identical) {
         *identical = TRUE;
         for (ULONG c = 0; c < table->Count; c++)
-            if (MimeMsiCell(table, row, c) != values[c])
+            if (!same_cell(database, &table->Columns[c], MimeMsiCell(table, row, c), values[c]))
                 *identical = FALSE;
     }
     return same_keys;
@@ -1008,7 +1114,7 @@ static UINT modify_rows(MSI_VIEW *view, int mode, const MIME_MSI_RECORD *record)
             if (!given[c])
                 continue;
             /* a key is the row's identity and does not change. */
-            if ((table->Columns[c].Type & 0x2000) && MimeMsiCell(table, row, c) != values[c])
+            if ((table->Columns[c].Type & 0x2000) && !same_cell(database, &table->Columns[c], MimeMsiCell(table, row, c), values[c]))
                 return ERROR_FUNCTION_FAILED;
             write_cell(table, row, c, values[c]);
         }
@@ -1021,7 +1127,7 @@ static UINT modify_rows(MSI_VIEW *view, int mode, const MIME_MSI_RECORD *record)
     ULONG existing = table->Rows;
     BOOL identical = FALSE;
     for (ULONG row = 0; row < table->Rows; row++) {
-        if (rows_have_key(table, row, values, &identical)) {
+        if (rows_have_key(database, table, row, values, &identical)) {
             existing = row;
             break;
         }
@@ -1043,6 +1149,123 @@ static UINT modify_rows(MSI_VIEW *view, int mode, const MIME_MSI_RECORD *record)
     return ERROR_SUCCESS;
 }
 
+static UINT stage_table(const MIME_MSI_TABLE *table, MIME_MSI_TABLE *staged)
+{
+    *staged = *table;
+    SIZE_T size = 0;
+    for (ULONG c = 0; c < table->Count; c++)
+        size += (SIZE_T)table->Rows * table->Columns[c].Width;
+    staged->Data = MimeMsiAllocate(size ? size : 1);
+    if (!staged->Data)
+        return ERROR_NOT_ENOUGH_MEMORY;
+    memcpy(staged->Data, table->Data, size);
+    return ERROR_SUCCESS;
+}
+
+static void finish_change(MIME_MSI_DATABASE *database, MIME_MSI_TABLE *table, MIME_MSI_TABLE *staged,
+                          ULONG strings, UINT error)
+{
+    if (error) {
+        MimeMsiFree(staged->Data);
+        while (database->StringCount > strings) {
+            ULONG id = --database->StringCount;
+            MimeMsiFree(database->Strings[id]);
+            database->Strings[id] = nullptr;
+        }
+    } else {
+        MimeMsiFree(table->Data);
+        *table = *staged;
+        database->Changes++;
+    }
+}
+
+/* Each SQL statement changes a private table image. A bad value, duplicate key or allocation failure leaves
+ * every original row intact, including when an UPDATE or DELETE matches more than one row. */
+static UINT execute_mutation(MSI_VIEW *view, const MIME_MSI_RECORD *parameters)
+{
+    MIME_MSI_DATABASE *database = view->Database;
+    /* Persistent handles must not silently serialize temporary rows. */
+    if (view->Temporary && database->Writable)
+        return ERROR_CALL_NOT_IMPLEMENTED;
+    MIME_MSI_TABLE *table = view->Tables[0], staged;
+    UINT error = stage_table(table, &staged);
+    if (error)
+        return error;
+    ULONG strings = database->StringCount;
+    MSI_VIEW work = *view;
+    work.Tables[0] = &staged;
+    work.Executed = TRUE;
+    MIME_MSI_RECORD *values = MimeMsiRecordCreate(view->Count);
+    if (!values)
+        error = ERROR_NOT_ENOUGH_MEMORY;
+    for (ULONG i = 0; !error && i < view->Count; i++) {
+        const SQL_OPERAND *operand = &view->Values[i];
+        const MIME_MSI_FIELD *field = operand->Kind == OPERAND_PARAMETER ?
+                                     &parameters->Fields[operand->Parameter] : &operand->Value;
+        if (field->Kind == FIELD_STRING)
+            error = MimeMsiFieldString(&values->Fields[i + 1], field->String);
+        else if (field->Kind == FIELD_INTEGER)
+            MimeMsiFieldInteger(&values->Fields[i + 1], field->Integer);
+        else if (field->Kind != FIELD_NULL)
+            error = ERROR_FUNCTION_FAILED;
+    }
+    if (!error && view->Operation == SQL_INSERT)
+        error = modify_rows(&work, view->Temporary ? MODIFY_INSERT_TEMPORARY : MODIFY_INSERT, values);
+    else {
+        /* Descending original row indices remain valid as DELETE removes later rows. */
+        for (ULONG row = table->Rows; !error && row; ) {
+            ULONG index = --row;
+            if (view->Where && !evaluate(view, view->Where, &index, parameters))
+                continue;
+            work.Tuples = &index;
+            work.TupleCount = work.Position = 1;
+            error = modify_rows(&work, view->Operation == SQL_DELETE ? MODIFY_DELETE : MODIFY_UPDATE, values);
+        }
+    }
+    if (values)
+        values->Object.Destroy(&values->Object);
+    finish_change(database, table, &staged, strings, error);
+    MimeMsiFree(view->Tuples);
+    view->Tuples = nullptr;
+    view->TupleCount = view->Position = 0;
+    view->Executed = !error;
+    view->Revision = database->Revision;
+    return error;
+}
+
+static UINT modify_atomic(MSI_VIEW *view, int mode, const MIME_MSI_RECORD *record)
+{
+    if (view->Operation != SQL_SELECT || view->TableCount != 1 || !view->Executed ||
+        view->Revision != view->Database->Revision)
+        return ERROR_FUNCTION_FAILED;
+    if (mode == MODIFY_INSERT_TEMPORARY && view->Database->Writable)
+        return ERROR_CALL_NOT_IMPLEMENTED;
+    MIME_MSI_TABLE *table = view->Tables[0], staged;
+    UINT error = stage_table(table, &staged);
+    if (error)
+        return error;
+    ULONG strings = view->Database->StringCount;
+    MSI_VIEW work = *view;
+    work.Tables[0] = &staged;
+    work.Tuples = MimeMsiAllocate(((SIZE_T)view->TupleCount + 1) * sizeof(ULONG));
+    if (!work.Tuples)
+        error = ERROR_NOT_ENOUGH_MEMORY;
+    else {
+        memcpy(work.Tuples, view->Tuples, (SIZE_T)view->TupleCount * sizeof(ULONG));
+        error = modify_rows(&work, mode, record);
+    }
+    finish_change(view->Database, table, &staged, strings, error);
+    if (!error) {
+        MimeMsiFree(view->Tuples);
+        view->Tuples = work.Tuples;
+        view->TupleCount = work.TupleCount;
+        view->Position = work.Position;
+        view->Revision = view->Database->Revision;
+    } else
+        MimeMsiFree(work.Tuples);
+    return error;
+}
+
 UINT WINAPI MsiViewModify(MSIHANDLE handle, int mode, MSIHANDLE record_handle)
 {
     MIME_REMOTE(PROXY_ViewModify, UINT, MIME_ARG(handle), MIME_ARG(mode), MIME_ARG(record_handle));
@@ -1057,7 +1280,7 @@ UINT WINAPI MsiViewModify(MSIHANDLE handle, int mode, MSIHANDLE record_handle)
     else if (mode == MODIFY_SEEK || mode == MODIFY_REFRESH || mode >= MODIFY_VALIDATE)
         error = ERROR_FUNCTION_FAILED;
     else
-        error = modify_rows(view, mode, record);
+        error = modify_atomic(view, mode, record);
     ReleaseSRWLockExclusive(&MimeMsiLock);
     return error;
 }
