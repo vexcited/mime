@@ -24,6 +24,7 @@ EXPORTS
     ILCombine=_ILCombine@8 @25
     ILCreateFromPathA=_ILCreateFromPathA@4 @189
     ILCreateFromPathW=_ILCreateFromPathW@4 @190
+    ILCreateFromPath=_ILCreateFromPathW@4 @157
     ILFindChild=_ILFindChild@8 @24
     ILFindLastID=_ILFindLastID@4 @16
     ILFree=_ILFree@4 @155
