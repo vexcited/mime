@@ -665,6 +665,9 @@ static bool vkm_mixes_srgb(id<MTLDevice> device)
     static dispatch_once_t once;
     static bool mixes;
     dispatch_once(&once, ^{
+        /* metal's api validation stops the process at a pipeline of another format than the pass's view. */
+        if ([device isKindOfClass:NSClassFromString(@"MTLDebugDevice")])
+            return;
         mixes = mix_probe(device);
         if (!mixes)
             VKM_ERROR("a render pass does not take draws of both srgb and plain formats here: passes stay apart");
