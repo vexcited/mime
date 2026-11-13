@@ -93,6 +93,7 @@ static UINT collect(const MIME_CFB *file, uint32_t index, MIME_CFB_NODE **list, 
     memcpy(node->Node.Name, entry.Name, sizeof(node->Node.Name));
     node->Node.Type = entry.Type;
     memcpy(node->Node.ClassId, file->Directory + (SIZE_T)index * 128 + 80, 16);
+    memcpy(node->Node.Metadata, file->Directory + (SIZE_T)index * 128 + 96, 20);
     node->Node.Next = *list;
     *list = &node->Node;
     if (entry.Type == 1)
@@ -295,7 +296,17 @@ static UINT build_strings(MIME_MSI_DATABASE *database, const ULONG *references, 
             error = ERROR_NOT_ENOUGH_MEMORY;
             break;
         }
-        WideCharToMultiByte(database->CodePage, 0, text, (int)wcslen(text), (PSTR)encoded[i], bytes, nullptr, nullptr);
+        int converted = WideCharToMultiByte(database->CodePage, 0, text, (int)wcslen(text), (PSTR)encoded[i], bytes, nullptr, nullptr);
+        int characters = converted == bytes ? MultiByteToWideChar(database->CodePage, 0, (PCSTR)encoded[i], bytes, nullptr, 0) : 0;
+        PWSTR roundtrip = characters > 0 ? MimeMsiAllocate(((SIZE_T)characters + 1) * sizeof(WCHAR)) : nullptr;
+        if (!roundtrip)
+            error = characters > 0 ? ERROR_NOT_ENOUGH_MEMORY : ERROR_NO_UNICODE_TRANSLATION;
+        else if (MultiByteToWideChar(database->CodePage, 0, (PCSTR)encoded[i], bytes, roundtrip, characters) != characters ||
+                 wcscmp(text, roundtrip))
+            error = ERROR_NO_UNICODE_TRANSLATION;
+        MimeMsiFree(roundtrip);
+        if (error)
+            break;
         lengths[i] = bytes;
         pool_bytes += bytes > 0xffff ? 8 : 4;
         data_bytes += (SIZE_T)bytes;
@@ -503,6 +514,11 @@ UINT MimeMsiBuildImage(MIME_MSI_DATABASE *database, const MIME_MSI_IMAGE_EDIT *e
     if (!error) {
         if (!MimeCfbWrite(list, database->File.Directory + 80, MimeMsiAllocate, MimeMsiFree, out, size))
             error = ERROR_NOT_ENOUGH_MEMORY;
+        else {
+            /* The writer emits v3 sectors; retain the source root's storage metadata as well. */
+            SIZE_T directory = ((SIZE_T)get32(*out + 48) + 1) * 512;
+            memcpy(*out + directory + 96, database->File.Directory + 96, 20);
+        }
     }
     free_nodes(list);
     return error;

@@ -8,7 +8,7 @@
 
 UINT AutoApiDatabaseCommit(MSIHANDLE database)
 {
-    return UNSUPPORTED;
+    return MsiDatabaseCommit(database);
 }
 
 UINT AutoApiDatabaseImport(MSIHANDLE database, PCWSTR folder, PCWSTR file)

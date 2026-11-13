@@ -9,6 +9,7 @@
 
 #define MSIDBSTATE_ERROR (-1)
 #define MSIDBSTATE_READ 0
+#define MSIDBSTATE_WRITE 1
 
 /*
  * the arguments the calls of a context share, checked in the order Windows checks them: a context that is one of
@@ -223,13 +224,13 @@ UINT WINAPI MsiGetProductCodeW(LPCWSTR component, LPWSTR product)
 
 /* ------------------------------------------------------------------ databases */
 
-/* a database of this installer is read only. */
 int WINAPI MsiGetDatabaseState(MSIHANDLE handle)
 {
     AcquireSRWLockShared(&MimeMsiLock);
-    MIME_MSI_OBJECT *object = MimeMsiGetHandle(handle, MIME_MSI_KIND_DATABASE);
+    MIME_MSI_DATABASE *database = (void *)MimeMsiGetHandle(handle, MIME_MSI_KIND_DATABASE);
+    int state = !database ? MSIDBSTATE_ERROR : database->Writable ? MSIDBSTATE_WRITE : MSIDBSTATE_READ;
     ReleaseSRWLockShared(&MimeMsiLock);
-    return object ? MSIDBSTATE_READ : MSIDBSTATE_ERROR;
+    return state;
 }
 
 /* a table of a stored database is persistent, one the database does not have is none. */
