@@ -669,6 +669,33 @@ static void e_rsa_public_key(enc_ctx *c, const void *p)
     DerEnd(&c->w, mark);
 }
 
+static void enc_uint_be(enc_ctx *c, const BYTE *be, DWORD size)
+{
+    while (size > 1 && !be[0]) {
+        be++;
+        size--;
+    }
+    DWORD mark = DerBegin(&c->w, ASN_INTEGER);
+    if (!size || (be[0] & 0x80))
+        DerWriteBytes(&c->w, "", 1);
+    DerWriteBytes(&c->w, be, size);
+    DerEnd(&c->w, mark);
+}
+
+static void e_cng_rsa_public_key(enc_ctx *c, const void *p)
+{
+    const DWORD *blob = p;
+    if (blob[0] != 0x31415352) {
+        fail(c, CRYPT_E_BAD_ENCODE);
+        return;
+    }
+    const BYTE *exponent = (const BYTE *)(blob + 6);
+    DWORD mark = DerBegin(&c->w, ASN_SEQUENCE);
+    enc_uint_be(c, exponent + blob[2], blob[3]);
+    enc_uint_be(c, exponent, blob[2]);
+    DerEnd(&c->w, mark);
+}
+
 static encode_fn encoder_for(LPCSTR type)
 {
     if (IS_INTRESOURCE(type)) {
@@ -726,6 +753,8 @@ static encode_fn encoder_for(LPCSTR type)
             return e_multi_uint;
         case 54:
             return e_issuing_dist_point;
+        case 72:
+            return e_cng_rsa_public_key;
         case 73:
             return e_oid;
         }

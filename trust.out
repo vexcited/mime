@@ -1,0 +1,24 @@
+C:\Program Files (x86)\Common Files\Autodesk Shared\AdskLicensing\17.0.0.16519\AdskLicensingAgent\pit.dll
+ checksum result 0 header 001845da computed 001845da
+ cb 88 verify 00000000 state 000000000002FAB0
+ prov 000000000002FAB0
+ signer 000000000002FBA0
+ signer error 00000000 certs 3
+ valid 00000000
+ cert 000000000002FBF0
+ name flags 0 len 15 Autodesk, Inc.
+ name flags 1 len 57 DigiCert Trusted G4 Code Signing RSA4096 SHA384 2021 CA1
+ key bytes 526
+ close 00000000
+C:\Program Files (x86)\Common Files\Autodesk Shared\AdskLicensing\17.0.0.16519\AdskLicensingAgent\securesite.dll
+ checksum result 0 header 0018b2de computed 0018b2de
+ cb 88 verify 00000000 state 000000000002FAB0
+ prov 000000000002FAB0
+ signer 000000000002FBA0
+ signer error 00000000 certs 3
+ valid 00000000
+ cert 000000000002FBF0
+ name flags 0 len 15 Autodesk, Inc.
+ name flags 1 len 57 DigiCert Trusted G4 Code Signing RSA4096 SHA384 2021 CA1
+ key bytes 526
+ close 00000000

@@ -1,0 +1,24 @@
+open 00007FF6F006B510
+size 46897 newline 344
+sig size query 1 256 err 0
+sig decode 1 256 err 0
+spki decode 1 350 err 00000000
+rsa blob decode 1 283 err 00000000
+open rsa 00000000
+import 00000000
+open sha 00000000
+create hash 00000000
+digest length 00000000 32 4
+hash data 00000000
+finish 00000000
+verify 00000000
+payload size query 1 34912 err 0
+payload decode 1 34912 err 0
+open aes 00000000
+set cbc 00000000
+sym key 00000000
+decrypt size 00000000 34912
+decrypt 00000000 34899
+encode back 1 270 same 1
+blob bits 2048 exp 3 mod 256
+{"sig_file_version": "1.1.0", "installer_version": "17.0.0.16519", "component": {"service": {"version": "12.13.1.1537", "files": [{"name": "AdskLicensingService.exe", "version": "12.13.1.1537", "checksum": "18135125", "certificate": {"subject": "Autodesk, Inc.", "issuer": "DigiCert Trusted G4 Code S
