@@ -310,7 +310,6 @@ static void end_rendering(D3dContext *c)
     if (c->xfb_active)
         end_stream_output(c, c->cmd->buffer);
     c->child.device->vk.vkCmdEndRendering(c->cmd->buffer);
-    D3dQueriesCopy(c, c->cmd->buffer);
     c->rendering = FALSE;
     c->pending_barrier = TRUE;
 }
@@ -337,6 +336,10 @@ UINT64 D3dContextSubmit(D3dContext *c, const VkSemaphoreSubmitInfo *wait, const 
     if (c->cmd) {
         end_rendering(c);
         D3dQueriesClose(c, c->cmd->buffer);
+        /*
+         * only the processor reads the results, once the submission is done, so their copies wait for its end: one
+         * between two render pass instances keeps a tile based gpu from drawing them as one.
+         */
         D3dQueriesCopy(c, c->cmd->buffer);
         D3dBarrier(c->cmd->buffer, device);
         c->pending_barrier = FALSE;
@@ -1611,7 +1614,6 @@ static void begin_rendering(D3dContext *c, VkCommandBuffer cmd)
         samples = c->rasterizer && c->rasterizer->desc.ForcedSampleCount ? c->rasterizer->desc.ForcedSampleCount : 1;
     /* query segments begun for dispatches end outside the render pass instance. */
     D3dQueriesClose(c, cmd);
-    D3dQueriesCopy(c, cmd);
     device->vk.vkCmdBeginRendering(cmd, &info);
     c->rendering = TRUE;
     c->targets_dirty = FALSE;
