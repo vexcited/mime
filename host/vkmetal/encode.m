@@ -731,7 +731,7 @@ static uint32_t writes_of(VkCommandBuffer cmd, size_t at, size_t *end)
 /* a draw of a pass may read an attachment a shader was given, where the pass does not write it. */
 static bool reads(const VkmAttach *a, bool written)
 {
-    return a->texture && a->image && a->image->read && !written;
+    return a->texture && a->image && !written && __atomic_load_n(&a->image->read, __ATOMIC_ACQUIRE);
 }
 
 /*
