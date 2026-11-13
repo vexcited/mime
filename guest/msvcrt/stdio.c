@@ -493,10 +493,11 @@ static FILE *open_stream(const wchar_t *name, const wchar_t *mode, int share)
     if (!f)
         return nullptr;
     FILE *r = nullptr;
+    /* an empty name fails as a file that is not there does, with no call of the invalid parameter handler. */
     if (*name)
         r = MsvcrtOpenFileW(name, mode, share, f);
     else
-        MSVCRT_INVALID(EINVAL);
+        MsvcrtSetErrno(EINVAL);
     MsvcrtUnlockFile(f);
     return r;
 }
