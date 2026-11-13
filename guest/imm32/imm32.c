@@ -476,6 +476,11 @@ IMMAPI BOOL WINAPI ImmIsUIMessageW(HWND ime, UINT msg, WPARAM wparam, LPARAM lpa
     return FALSE;
 }
 
+IMMAPI BOOL WINAPI ImmIsUIMessageA(HWND ime, UINT msg, WPARAM wparam, LPARAM lparam)
+{
+    return ImmIsUIMessageW(ime, msg, wparam, lparam);
+}
+
 IMMAPI UINT WINAPI ImmGetDescriptionW(HKL hkl, LPWSTR buffer, UINT size)
 {
     if (buffer && size)
