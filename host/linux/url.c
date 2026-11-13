@@ -21,6 +21,8 @@ typedef struct Protocols {
     uint32_t count;
     bool full; /* the guest had more than the list holds, so an entry that is not in it may still be answered. */
     char scheme[MIME_PROTOCOLS][SCHEME_CHARS];
+    char program[MIME_PROTOCOLS][MIME_PATH_MAX]; /* the guest path of the program that answers. */
+    struct Protocols *all;
 } Protocols;
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -155,9 +157,31 @@ static bool write_entry(const char *path, const char *exe, const char *scheme)
     return !same && mime_write_file(path, text, (size_t)n);
 }
 
+/* whether the program the desktop opens the scheme with is none, or an entry mime wrote. */
+static bool ours(const char *dir, const char *scheme)
+{
+    char type[SCHEME_CHARS + 32], handler[256], path[MIME_PATH_MAX * 2];
+    snprintf(type, sizeof(type), "x-scheme-handler/%s", scheme);
+    char *argv[] = {"xdg-mime", "query", "default", type, nullptr};
+    if (!run_tool(argv, handler, sizeof(handler)))
+        return false;
+    if (!handler[0])
+        return true;
+    if (strchr(handler, '/'))
+        return false;
+    snprintf(path, sizeof(path), "%s/%s", dir, handler);
+    size_t length;
+    char *text = mime_read_file(path, &length);
+    bool mark = text && (strstr(text, ENTRY_MARK) || strstr(text, "\nX-Mime-Managed=true\n"));
+    free(text);
+    return mark;
+}
+
 /*
  * an entry of the applications directory that names the scheme as its type makes mime the program the desktop opens
- * such an address with. a scheme that a program of the host answers is left to it.
+ * such an address with. a scheme that a program of the host answers is left to it. with the shortcuts of the guest
+ * exported, the scheme goes on the entry of its program, which has a name and an icon to show. the hidden entry is
+ * for what is left: the shortcuts are not exported, or the program has none.
  */
 static void *protocols_thread(void *arg)
 {
@@ -166,21 +190,34 @@ static void *protocols_thread(void *arg)
     mime_desktop_data(data, sizeof(data));
     snprintf(dir, sizeof(dir), "%s/applications", data);
     pthread_mutex_lock(&g_lock);
-    bool changed = false;
     if (mime_desktop_exe(exe, sizeof(exe)) && mime_mkdir_p(dir, 0755)) {
-        for (uint32_t i = 0; i < p->count; i++) {
-            char path[MIME_PATH_MAX * 2], type[SCHEME_CHARS + 32], handler[256];
-            snprintf(path, sizeof(path), "%s/" ENTRY_PREFIX "%s.desktop", dir, p->scheme[i]);
-            snprintf(type, sizeof(type), "x-scheme-handler/%s", p->scheme[i]);
-            if (access(path, F_OK) != 0) {
-                char *argv[] = {"xdg-mime", "query", "default", type, nullptr};
-                if (!run_tool(argv, handler, sizeof(handler)) || handler[0])
-                    continue;
-                mime_info("url: %s:// addresses of the desktop open in the machine", p->scheme[i]);
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i < p->count; i++)
+            if (ours(dir, p->scheme[i])) {
+                if (kept != i) {
+                    memcpy(p->scheme[kept], p->scheme[i], sizeof(p->scheme[0]));
+                    memcpy(p->program[kept], p->program[i], sizeof(p->program[0]));
+                }
+                kept++;
             }
+        p->count = kept;
+        bool taken[MIME_PROTOCOLS];
+        bool changed = mime_desktop_protocols(p->count, p->scheme, p->program, taken);
+        uint32_t hidden = 0;
+        for (uint32_t i = 0; i < p->count; i++) {
+            if (taken[i])
+                continue;
+            char path[MIME_PATH_MAX * 2];
+            snprintf(path, sizeof(path), "%s/" ENTRY_PREFIX "%s.desktop", dir, p->scheme[i]);
+            if (access(path, F_OK) != 0)
+                mime_info("url: %s:// addresses of the desktop open in the machine", p->scheme[i]);
             changed |= write_entry(path, exe, p->scheme[i]);
+            if (hidden != i)
+                memcpy(p->scheme[hidden], p->scheme[i], sizeof(p->scheme[0]));
+            hidden++;
         }
-        DIR *d = p->full ? nullptr : opendir(dir);
+        p->count = hidden;
+        DIR *d = opendir(dir);
         for (struct dirent *e; d && (e = readdir(d));) {
             size_t n = strlen(e->d_name), prefix = sizeof(ENTRY_PREFIX) - 1;
             char scheme[SCHEME_CHARS], path[MIME_PATH_MAX * 2];
@@ -189,13 +226,13 @@ static void *protocols_thread(void *arg)
                 continue;
             memcpy(scheme, e->d_name + prefix, n - prefix - 8);
             scheme[n - prefix - 8] = 0;
-            if (listed(p, scheme))
+            if (listed(p, scheme) || (p->full && !listed(p->all, scheme)))
                 continue;
             snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
             size_t length;
             char *text = mime_read_file(path, &length);
             if (text && strstr(text, ENTRY_MARK) && unlink(path) == 0) {
-                mime_info("url: %s:// has no program in the machine any more", scheme);
+                mime_info("url: the hidden entry of %s:// is gone", scheme);
                 changed = true;
             }
             free(text);
@@ -208,6 +245,7 @@ static void *protocols_thread(void *arg)
         }
     }
     pthread_mutex_unlock(&g_lock);
+    free(p->all);
     free(p);
     return nullptr;
 }
@@ -224,12 +262,23 @@ uint64_t mime_ui_protocols(const MimeShellProtocols *protocols)
     for (uint32_t i = 0; i < count; i++) {
         char scheme[SCHEME_CHARS * 3];
         mime_utf16_to_utf8(scheme, sizeof(scheme), protocols->scheme[i], SCHEME_CHARS);
-        if (strlen(scheme) < SCHEME_CHARS && valid(scheme) && !reserved(scheme) && !listed(p, scheme))
+        if (strlen(scheme) < SCHEME_CHARS && valid(scheme) && !reserved(scheme) && !listed(p, scheme)) {
+            mime_utf16_to_utf8(p->program[p->count], sizeof(p->program[0]), protocols->program[i],
+                               sizeof(protocols->program[0]) / sizeof(protocols->program[0][0]));
             mime_strlcpy(p->scheme[p->count++], scheme, SCHEME_CHARS);
+        }
     }
     p->full = protocols->count >= MIME_PROTOCOLS;
+    /* the list as the guest gave it, which the thread narrows to the schemes that keep a hidden entry. */
+    p->all = malloc(sizeof(*p));
+    if (!p->all) {
+        free(p);
+        return MIME_HC_STATUS_NO_MEMORY;
+    }
+    memcpy(p->all, p, sizeof(*p));
     pthread_t thread;
     if (pthread_create(&thread, nullptr, protocols_thread, p) != 0) {
+        free(p->all);
         free(p);
         return MIME_HC_STATUS_NO_MEMORY;
     }

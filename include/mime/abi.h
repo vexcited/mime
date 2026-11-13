@@ -196,7 +196,8 @@ typedef struct MimeShellUrl {
 /*
  * a page of the host's browser ends a sign in by opening an address such as adskidmgr://, which only a program of
  * the machine answers. the host makes itself the handler of each scheme it has no handler for, and runs the address
- * in the machine. the list is the whole of them: a scheme that is no longer in it is given back.
+ * in the machine. the list is the whole of them: a scheme that is no longer in it is given back. program is the
+ * path of the program that answers, which the host matches to the entry it made for a shortcut of that program.
  */
 #define MIME_PROTOCOLS 64
 typedef struct MimeShellProtocols {
@@ -205,6 +206,7 @@ typedef struct MimeShellProtocols {
     uint32_t count;
     uint32_t pad;
     uint16_t scheme[MIME_PROTOCOLS][40];
+    uint16_t program[MIME_PROTOCOLS][260];
 } MimeShellProtocols;
 
 /*

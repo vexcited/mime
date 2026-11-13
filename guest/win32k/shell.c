@@ -337,8 +337,10 @@ static LONG run_command(PUCHAR request, ULONG size)
         MimeShellProtocols *p = &g_command->Protocols;
         if (p->count > MIME_PROTOCOLS)
             p->count = MIME_PROTOCOLS;
-        for (ULONG i = 0; i < MIME_PROTOCOLS; i++)
+        for (ULONG i = 0; i < MIME_PROTOCOLS; i++) {
             zero_end(p->scheme[i], RTL_NUMBER_OF(p->scheme[i]));
+            zero_end(p->program[i], RTL_NUMBER_OF(p->program[i]));
+        }
         p->process_id = pid;
     } else if (want == sizeof(MimeShellJumpList)) {
         MimeShellJumpList *j = &g_command->Jump;

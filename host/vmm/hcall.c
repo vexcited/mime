@@ -544,6 +544,8 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     }
     case MIME_HC_SHELL: {
         size_t largest = sizeof(MimeShellJumpList) > sizeof(MimeShellDialog) ? sizeof(MimeShellJumpList) : sizeof(MimeShellDialog);
+        if (largest < sizeof(MimeShellProtocols))
+            largest = sizeof(MimeShellProtocols);
         void *command = regs[2] >= sizeof(uint32_t) && regs[2] <= largest
                             ? mime_vm_phys(vm, regs[1], regs[2])
                             : nullptr;
