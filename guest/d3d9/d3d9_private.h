@@ -119,6 +119,8 @@ struct D9Surface {
     /* made on first use. */
     ID3D11RenderTargetView *rtv, *rtv_srgb;
     ID3D11DepthStencilView *dsv;
+    /* the samples of a multisampled surface as one, for a StretchRect that scales it. */
+    ID3D11Texture2D *resolved;
     HDC dc;
     HBITMAP bitmap;
 };

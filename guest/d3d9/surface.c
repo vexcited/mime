@@ -23,6 +23,8 @@ static void destroy(D9Surface *s)
         s->rtv_srgb->lpVtbl->Release(s->rtv_srgb);
     if (s->dsv)
         s->dsv->lpVtbl->Release(s->dsv);
+    if (s->resolved)
+        s->resolved->lpVtbl->Release(s->resolved);
     if (s->texture && !s->container)
         s->texture->lpVtbl->Release(s->texture);
     if (s->memory == &s->own_memory)
