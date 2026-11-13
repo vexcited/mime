@@ -330,7 +330,10 @@ static HRESULT check_device_format(D3DFORMAT display, DWORD usage, D3DRESOURCETY
         return D3DERR_NOTAVAILABLE;
     if (depth && type == D3DRTYPE_VOLUMETEXTURE)
         return D3DERR_NOTAVAILABLE;
-    if ((usage & (D3DUSAGE_QUERY_SRGBREAD | D3DUSAGE_QUERY_SRGBWRITE)) && !(f->flags & D9_FORMAT_SRGB))
+    /* compressed textures read as srgb too, and only what renders is written as it. */
+    if ((usage & D3DUSAGE_QUERY_SRGBREAD) && f->srgb == DXGI_FORMAT_UNKNOWN)
+        return D3DERR_NOTAVAILABLE;
+    if ((usage & D3DUSAGE_QUERY_SRGBWRITE) && !(f->flags & D9_FORMAT_SRGB))
         return D3DERR_NOTAVAILABLE;
     if ((usage & D3DUSAGE_DMAP) || (usage & D3DUSAGE_QUERY_LEGACYBUMPMAP && f->view != DXGI_FORMAT_R8G8_SNORM &&
                                     f->view != DXGI_FORMAT_R16G16_SNORM))
