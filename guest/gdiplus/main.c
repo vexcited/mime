@@ -108,6 +108,19 @@ static ULONG_PTR g_init_token;
 
 BOOL gp_started(void) { return g_init_count > 0; }
 
+float gp_desktop_dpi(void)
+{
+    static LONG volatile dpi;
+    if (!dpi) {
+        HDC dc = GetDC(nullptr);
+        int v = dc ? GetDeviceCaps(dc, LOGPIXELSX) : 0;
+        if (dc)
+            ReleaseDC(nullptr, dc);
+        dpi = v > 0 ? v : 96;
+    }
+    return (float)dpi;
+}
+
 static GpStatus WINAPI notification_hook(ULONG_PTR *token)
 {
     if (!token)
