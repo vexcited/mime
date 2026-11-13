@@ -1282,45 +1282,6 @@ static DWORD d_rsa_public_key(cr_arena *a, const der_item *item, DWORD flags)
     return 0;
 }
 
-static DWORD d_cng_rsa_public_key(cr_arena *a, const der_item *item, DWORD flags)
-{
-    if (item->tag != ASN_SEQUENCE)
-        return CRYPT_E_ASN1_BADTAG;
-    der_reader r;
-    der_item modulus, exponent;
-    DWORD error;
-    DerOpen(&r, item);
-    if ((error = DerExpect(&r, ASN_INTEGER, &modulus)) || (error = DerExpect(&r, ASN_INTEGER, &exponent)))
-        return error;
-    const BYTE *m = modulus.content;
-    DWORD mn = modulus.length;
-    while (mn > 1 && !m[0]) {
-        m++;
-        mn--;
-    }
-    const BYTE *e = exponent.content;
-    DWORD en = exponent.length;
-    while (en > 1 && !e[0]) {
-        e++;
-        en--;
-    }
-    if (!mn || !en)
-        return CRYPT_E_ASN1_CORRUPT;
-    /* A BCRYPT_RSAKEY_BLOB: six DWORDs, then the exponent and the modulus, both big endian. */
-    DWORD *blob = ArenaAlloc(a, 6 * sizeof(DWORD) + en + mn);
-    if (blob) {
-        blob[0] = 0x31415352;
-        blob[1] = mn * 8;
-        blob[2] = en;
-        blob[3] = mn;
-        blob[4] = 0;
-        blob[5] = 0;
-        memcpy(blob + 6, e, en);
-        memcpy((BYTE *)(blob + 6) + en, m, mn);
-    }
-    return 0;
-}
-
 /* PKCS#1 key integers are positive, minimally encoded DER, not signed CAPI integers. */
 static BOOL rsa_der_length(const der_item *item)
 {
@@ -1368,6 +1329,34 @@ static DWORD rsa_public_values(der_reader *r, der_item *modulus, der_item *expon
         return CRYPT_E_ASN1_CORRUPT;
     if (modulus->length > MAXDWORD / 8)
         return CRYPT_E_ASN1_LARGE;
+    return 0;
+}
+
+static DWORD d_cng_rsa_public_key(cr_arena *a, const der_item *item, DWORD flags)
+{
+    if (item->tag != ASN_SEQUENCE)
+        return CRYPT_E_ASN1_BADTAG;
+    der_reader r;
+    der_item modulus, exponent;
+    DerOpen(&r, item);
+    DWORD error = rsa_public_values(&r, &modulus, &exponent);
+    if (error)
+        return error;
+    if (r.n)
+        return CRYPT_E_ASN1_CORRUPT;
+    DWORD mn = modulus.length, en = exponent.length;
+    /* A BCRYPT_RSAKEY_BLOB: six DWORDs, then the exponent and the modulus, both big endian. */
+    DWORD *blob = ArenaAlloc(a, 6 * sizeof(DWORD) + en + mn);
+    if (blob) {
+        blob[0] = 0x31415352;
+        blob[1] = mn * 8;
+        blob[2] = en;
+        blob[3] = mn;
+        blob[4] = 0;
+        blob[5] = 0;
+        memcpy(blob + 6, exponent.content, en);
+        memcpy((BYTE *)(blob + 6) + en, modulus.content, mn);
+    }
     return 0;
 }
 
@@ -1553,7 +1542,7 @@ static DWORD run_decoder(decode_fn fn, const BYTE *data, DWORD size, DWORD flags
     DWORD error = DerRead(&r, &item);
     if (error)
         return error;
-    if (r.n && fn == d_rsa_private_key)
+    if (r.n && (fn == d_rsa_private_key || fn == d_cng_rsa_public_key))
         return CRYPT_E_ASN1_CORRUPT;
     cr_arena a = {base, 0};
     if ((error = fn(&a, &item, flags)))
