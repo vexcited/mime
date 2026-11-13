@@ -220,6 +220,7 @@ struct VkImage_T {
     VkDeviceMemory memory;
     uint64_t offset;
     bool swapchain;
+    bool read; /* a descriptor has a view of it: a draw to it may read it too. */
     bool resident; /* its texture is in the device's set, as validation wants of placed attachments. */
 };
 
@@ -365,6 +366,7 @@ typedef struct VkmCode {
     VkmInput input[VKM_VERTEX_ATTRIBUTES];
     uint32_t outputs; /* fragment outputs written. */
     bool writes_depth, writes_stencil;
+    bool writes_memory; /* buffers or images it may store to. */
     uint64_t hash; /* of the MSL and its entry point. */
     /* a vertex shader keeps its SPIR-V for the variant writing records, made when a geometry shader needs it. */
     VkmSource *source;

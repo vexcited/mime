@@ -283,6 +283,7 @@ static VkmBeginRender *own_pass(VkCommandBuffer cmd, VkImage image, uint32_t lev
     b->height = e.height;
     b->layers = 1;
     b->samples = image->samples;
+    STATE(cmd)->writes = 0;
     VkmAttach a = {image->texture, nullptr, level, layer};
     a.load = MTLLoadActionLoad;
     a.store = MTLStoreActionStore;
@@ -419,6 +420,7 @@ void vkm_clear_rects(VkCommandBuffer cmd, uint32_t count, const VkClearAttachmen
     if (!p)
         return;
     memcpy(p, &values, sizeof(values));
+    vkm_pass_writes(cmd, mask | (depth ? VKM_WRITES_DEPTH : 0) | (stencil ? VKM_WRITES_STENCIL : 0));
     for (uint32_t at = 0; at < rect_count; at += 16) {
         VkmOpClearRects *o = vkm_emit(cmd, VKM_OP_CLEAR_RECTS, sizeof(*o));
         if (!o)
@@ -482,6 +484,9 @@ static void blit_image(VkCommandBuffer cmd, VkImage src, VkImage dst, const VkIm
         VkmBeginRender *b = own_pass(cmd, dst, r->dstSubresource.mipLevel, r->dstSubresource.baseArrayLayer + l);
         if (!b)
             return;
+        /* a blit inside one image reads what the pass draws to. */
+        if (src == dst)
+            vkm_pass_writes(cmd, VKM_WRITES_APART);
         VkmOpBlit *o = vkm_emit(cmd, VKM_OP_BLIT, sizeof(*o));
         if (!o)
             return;
