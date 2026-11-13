@@ -967,6 +967,42 @@ static NTSTATUS resolve_export(PLDR_DATA_TABLE_ENTRY module, PCSTR name, USHORT 
 
 /* ------------------------------------------------------------------ imports */
 
+typedef struct IMPORT_PAGE {
+    PVOID Base;
+    SIZE_T Size;
+    ULONG Protection;
+} IMPORT_PAGE;
+
+static NTSTATUS restore_import_page(IMPORT_PAGE *page)
+{
+    if (!page->Base)
+        return STATUS_SUCCESS;
+    ULONG ignored;
+    NTSTATUS status = NtProtectVirtualMemory(NtCurrentProcess(), &page->Base, &page->Size, page->Protection, &ignored);
+    page->Base = nullptr;
+    return status;
+}
+
+static NTSTATUS write_import(IMPORT_PAGE *page, IMAGE_THUNK_DATA *thunk, PVOID address)
+{
+    PVOID base = (PVOID)((ULONG_PTR)thunk & ~(ULONG_PTR)0xfff);
+    if (page->Base != base) {
+        NTSTATUS status = restore_import_page(page);
+        if (!NT_SUCCESS(status))
+            return status;
+        SIZE_T size = 0x1000;
+        ULONG old;
+        status = NtProtectVirtualMemory(NtCurrentProcess(), &base, &size, PAGE_READWRITE, &old);
+        if (!NT_SUCCESS(status))
+            return status;
+        page->Base = base;
+        page->Size = size;
+        page->Protection = old;
+    }
+    thunk->u1.Function = (ULONG_PTR)address;
+    return STATUS_SUCCESS;
+}
+
 static void report_missing(PLDR_DATA_TABLE_ENTRY importer, PCSTR dll, PCSTR name, ULONG ordinal, NTSTATUS status)
 {
     if (name)
@@ -995,6 +1031,7 @@ static NTSTATUS snap_descriptor(PLDR_DATA_TABLE_ENTRY module, IMAGE_IMPORT_DESCR
     IMAGE_THUNK_DATA *lookup = (IMAGE_THUNK_DATA *)(base + (desc->OriginalFirstThunk ? desc->OriginalFirstThunk
                                                                                           : desc->FirstThunk));
     IMAGE_THUNK_DATA *iat = (IMAGE_THUNK_DATA *)(base + desc->FirstThunk);
+    IMPORT_PAGE page = {};
     /* every name the library lacks is reported, the first failure is the status. */
     NTSTATUS first_failure = STATUS_SUCCESS;
     for (; lookup->u1.AddressOfData; lookup++, iat++) {
@@ -1018,8 +1055,13 @@ static NTSTATUS snap_descriptor(PLDR_DATA_TABLE_ENTRY module, IMAGE_IMPORT_DESCR
                 continue;
             }
         }
-        iat->u1.Function = (ULONG_PTR)address;
+        status = write_import(&page, iat, address);
+        if (!NT_SUCCESS(status) && NT_SUCCESS(first_failure))
+            first_failure = status;
     }
+    status = restore_import_page(&page);
+    if (!NT_SUCCESS(status) && NT_SUCCESS(first_failure))
+        first_failure = status;
     return first_failure;
 }
 
@@ -1031,15 +1073,10 @@ static NTSTATUS snap_imports(PLDR_DATA_TABLE_ENTRY module, LOAD_CONTEXT *ctx)
     IMAGE_IMPORT_DESCRIPTOR *desc = LdrpImageDirectory(module->DllBase, IMAGE_DIRECTORY_ENTRY_IMPORT, &size);
     if (!desc)
         return STATUS_SUCCESS;
-    /* the iat usually lives in read only data. */
-    ULONG iat_size = 0;
-    PVOID iat = LdrpImageDirectory(module->DllBase, IMAGE_DIRECTORY_ENTRY_IAT, &iat_size);
-    PVOID protect_base = iat ? iat : module->DllBase;
-    SIZE_T protect_size = iat ? iat_size : module->SizeOfImage;
-    ULONG old;
-    NTSTATUS status = NtProtectVirtualMemory(NtCurrentProcess(), &protect_base, &protect_size, PAGE_READWRITE, &old);
-    if (!NT_SUCCESS(status))
-        return status;
+    /*
+     * each page of thunks is opened and given its protection back. an image without an iat directory would else
+     * get one protection over all of it, which leaves its writable data read only.
+     */
     NTSTATUS first_failure = STATUS_SUCCESS;
     for (; desc->Name; desc++) {
         NTSTATUS result = snap_descriptor(module, desc, ctx);
@@ -1048,11 +1085,8 @@ static NTSTATUS snap_imports(PLDR_DATA_TABLE_ENTRY module, LOAD_CONTEXT *ctx)
             /* a library that cannot be loaded is not asked about its names, the rest still say what they lack. */
         }
     }
-    status = first_failure;
-    ULONG ignored;
-    NtProtectVirtualMemory(NtCurrentProcess(), &protect_base, &protect_size, old, &ignored);
     NtFlushInstructionCache(NtCurrentProcess(), nullptr, 0);
-    return status;
+    return first_failure;
 }
 
 /* ------------------------------------------------------------------ thread local storage */
