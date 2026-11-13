@@ -626,7 +626,7 @@ static DWORD WINAPI ctrl_routine(LPVOID parameter)
 /* whether a handle belongs to the console driver rather than a pipe or file. */
 static BOOL is_console_device(HANDLE h)
 {
-    if (!h || h == INVALID_HANDLE_VALUE || KbIsPseudoHandle(h))
+    if (!h || h == INVALID_HANDLE_VALUE)
         return FALSE;
     FILE_FS_DEVICE_INFORMATION info;
     IO_STATUS_BLOCK io;
