@@ -75,10 +75,11 @@ static LONG to_error(NTSTATUS status)
     return NT_SUCCESS(status) ? ERROR_SUCCESS : (LONG)RtlNtStatusToDosError(status);
 }
 
+/* windows looks at the low half only, so a value that was not sign extended, as Go passes it, is predefined too. */
 static BOOL is_predefined(HKEY key)
 {
     ULONG_PTR v = (ULONG_PTR)key;
-    return (ULONG_PTR)(LONG_PTR)(LONG)v == v && (ULONG)v - PREDEFINED_FIRST < PREDEFINED_COUNT;
+    return ((ULONG_PTR)(LONG_PTR)(LONG)v == v || (ULONG)v == v) && (ULONG)v - PREDEFINED_FIRST < PREDEFINED_COUNT;
 }
 
 static LONG open_path(PCWSTR path, ACCESS_MASK access, HANDLE *out)
