@@ -511,6 +511,73 @@ BOOL ShIsComputerItem(const BYTE *item)
            IsEqualGUID((const GUID *)(item + 4), &g_computer);
 }
 
+int ShItemKind(const BYTE *item, GUID *clsid)
+{
+    if (!item || *(const USHORT *)item < 3)
+        return SH_ITEM_OTHER;
+    if (item[2] == ID_CLSID && *(const USHORT *)item >= 4 + sizeof(GUID)) {
+        const GUID *id = (const GUID *)(item + 4);
+        if (clsid)
+            *clsid = *id;
+        return IsEqualGUID(id, &g_computer)  ? SH_ITEM_COMPUTER
+               : IsEqualGUID(id, &g_network) ? SH_ITEM_NETWORK
+                                             : SH_ITEM_CLASS;
+    }
+    if (is_drive(item))
+        return SH_ITEM_DRIVE;
+    if (is_file_entry(item))
+        return (item[2] & ID_FOLDER_BIT) ? SH_ITEM_FOLDER : SH_ITEM_FILE;
+    return SH_ITEM_OTHER;
+}
+
+PITEMID_CHILD ShDriveItem(WCHAR letter)
+{
+    SIZE_T size;
+    BYTE *drive = make_drive(letter, &size);
+    if (!drive)
+        return nullptr;
+    BYTE *list = ShAllocZero(size + sizeof(USHORT));
+    if (list)
+        memcpy(list, drive, size);
+    ShFree(drive);
+    return (PITEMID_CHILD)list;
+}
+
+/* the name a virtual folder shows, from the ones Mime knows and then from its class key. */
+BOOL ShClassName(const GUID *clsid, LPWSTR name, DWORD chars)
+{
+    static const struct {
+        GUID Class;
+        LPCWSTR Name;
+    } known[] = {
+        {{0x20D04FE0, 0x3AEA, 0x1069, {0xA2, 0xD8, 0x08, 0x00, 0x2B, 0x30, 0x30, 0x9D}}, L"This PC"},
+        {{0xF02C1A0D, 0xBE21, 0x4350, {0x88, 0xB0, 0x73, 0x67, 0xFC, 0x96, 0xEF, 0x3C}}, L"Network"},
+        {{0x5399E694, 0x6CE5, 0x4D6C, {0x8F, 0xCE, 0x1D, 0x88, 0x70, 0xFD, 0xCB, 0xA0}}, L"Control Panel"},
+        {{0x2227A280, 0x3AEA, 0x1069, {0xA2, 0xDE, 0x08, 0x00, 0x2B, 0x30, 0x30, 0x9D}}, L"Printers"},
+        {{0x645FF040, 0x5081, 0x101B, {0x9F, 0x08, 0x00, 0xAA, 0x00, 0x2F, 0x95, 0x4E}}, L"Recycle Bin"},
+    };
+    if (chars < 40)
+        return FALSE;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(known); i++)
+        if (IsEqualGUID(clsid, &known[i].Class)) {
+            wcscpy(name, known[i].Name);
+            return TRUE;
+        }
+    WCHAR key[64] = L"CLSID\\";
+    if (!StringFromGUID2(clsid, key + 6, 40))
+        return FALSE;
+    HKEY handle;
+    if (RegOpenKeyExW(HKEY_CLASSES_ROOT, key, 0, KEY_READ, &handle))
+        return FALSE;
+    DWORD type, size = (chars - 1) * sizeof(WCHAR);
+    LONG error = RegQueryValueExW(handle, nullptr, nullptr, &type, (BYTE *)name, &size);
+    RegCloseKey(handle);
+    if (error || type != REG_SZ || size < 2 * sizeof(WCHAR))
+        return FALSE;
+    name[size / sizeof(WCHAR)] = 0;
+    return TRUE;
+}
+
 BOOL ShPathFromIdList(PCUIDLIST_ABSOLUTE pidl, LPWSTR path, DWORD chars)
 {
     if (!path || !chars)
@@ -547,6 +614,18 @@ BOOL ShPathFromIdList(PCUIDLIST_ABSOLUTE pidl, LPWSTR path, DWORD chars)
         } else {
             return FALSE;
         }
+    }
+    if (is_file_entry(item)) {
+        /* an entry that leads a list is in the directory of the desktop. */
+        PWSTR desktop;
+        if (FAILED(SHGetKnownFolderPath(&FOLDERID_Desktop, KF_FLAG_DONT_VERIFY, nullptr, &desktop)))
+            return FALSE;
+        length = wcslen(desktop);
+        if (length < MAX_PATH)
+            wcscpy(buffer, desktop);
+        ShFree(desktop);
+        if (length >= MAX_PATH)
+            return FALSE;
     }
     for (; *(const USHORT *)item; item = item_next(item)) {
         WCHAR name[MAX_PATH];

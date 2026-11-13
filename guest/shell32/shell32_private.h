@@ -47,6 +47,19 @@ PIDLIST_ABSOLUTE ShIdListFromPath(LPCWSTR path);
 PIDLIST_ABSOLUTE ShComputerList(void);
 PIDLIST_ABSOLUTE ShClassList(BYTE sort, const GUID *clsid);
 BOOL ShIsComputerItem(const BYTE *item);
+enum {
+    SH_ITEM_OTHER,
+    SH_ITEM_COMPUTER,
+    SH_ITEM_NETWORK,
+    SH_ITEM_CLASS,
+    SH_ITEM_DRIVE,
+    SH_ITEM_FOLDER,
+    SH_ITEM_FILE,
+};
+/* the kind of one item, in the order a folder sorts its items by. clsid takes the class of a class item. */
+int ShItemKind(const BYTE *item, GUID *clsid);
+PITEMID_CHILD ShDriveItem(WCHAR letter);
+BOOL ShClassName(const GUID *clsid, LPWSTR name, DWORD chars);
 BOOL ShIdListLastName(PCUIDLIST_ABSOLUTE pidl, LPWSTR name, ULONG chars);
 PIDLIST_ABSOLUTE ShChildList(PCIDLIST_ABSOLUTE folder, const WIN32_FIND_DATAW *find);
 
@@ -65,6 +78,10 @@ HRESULT ShCopyPath(LPCWSTR path, LPCWSTR directory, DWORD flags, BOOL move);
 
 /* namespace.c */
 HRESULT ShBindAbsolute(PCIDLIST_ABSOLUTE pidl, REFIID riid, void **object);
+BOOL ShListDisplayName(PCIDLIST_ABSOLUTE pidl, LPWSTR name);
+
+/* defview.c */
+HRESULT ShCreateView(IShellFolder *folder, REFIID riid, void **object);
 
 /* item.c */
 SFGAOF ShAttributesFromFile(DWORD attributes);

@@ -1,12 +1,13 @@
 /*
- * the shell namespace through IShellFolder: the desktop, which takes the paths of the file system, and the folders of
- * the file system below it.
+ * the shell namespace through IShellFolder: the desktop, which takes the paths of the file system and lists "This PC"
+ * with the entries of its directory, "This PC", which lists the drives, and the folders of the file system below.
  *
  * a file whose type names a folder class, as the ProgId of .zip names the compressed folder, binds to that class like
  * a directory does: the class is created in process and told where the file is with IPersistFolder::Initialize, as
  * windows does for the files of such types.
  */
 #include "shell32_private.h"
+#include <mime/win32/shldisp.h>
 
 #define SHELL_COMPARE_RESULT(value) ((HRESULT)(USHORT)(SHORT)(value))
 
@@ -196,13 +197,20 @@ static HRESULT make_enum(PITEMID_CHILD *items, ULONG count, IEnumIDList **enumer
 
 /* ------------------------------------------------------------------ folders */
 
+enum {
+    FOLDER_FILES,
+    FOLDER_DESKTOP,
+    FOLDER_COMPUTER,
+    FOLDER_VIRTUAL,
+};
+
 typedef struct _FS_FOLDER {
     IShellFolder Folder;
     IPersistFolder2 Persist;
     LONG Refs;
     PIDLIST_ABSOLUTE Pidl;
-    /* the desktop takes absolute lists and lists nothing of its own. */
-    BOOL Desktop;
+    /* the desktop takes absolute lists. "This PC" and the virtual folders have no path. */
+    int Kind;
     WCHAR Path[MAX_PATH];
 } FS_FOLDER;
 
@@ -296,7 +304,7 @@ static const IPersistFolder2Vtbl g_persist_vtbl = {
 };
 
 /* the folder of a directory, with the list that leads to it. the list is kept. */
-static HRESULT make_folder(PCIDLIST_ABSOLUTE pidl, LPCWSTR path, BOOL desktop, REFIID riid, void **object)
+static HRESULT make_folder(PCIDLIST_ABSOLUTE pidl, LPCWSTR path, int kind, REFIID riid, void **object)
 {
     FS_FOLDER *f = ShAllocZero(sizeof(*f));
     if (!f)
@@ -304,7 +312,7 @@ static HRESULT make_folder(PCIDLIST_ABSOLUTE pidl, LPCWSTR path, BOOL desktop, R
     f->Folder.lpVtbl = &g_folder_vtbl;
     f->Persist.lpVtbl = &g_persist_vtbl;
     f->Refs = 1;
-    f->Desktop = desktop;
+    f->Kind = kind;
     f->Pidl = ILClone(pidl);
     if (!f->Pidl) {
         ShFree(f);
@@ -323,6 +331,9 @@ static SFGAOF file_attributes(LPCWSTR path, DWORD attributes)
     GUID clsid;
     if (!(attributes & FILE_ATTRIBUTE_DIRECTORY) && file_class(path, &clsid))
         result |= SFGAO_FOLDER | SFGAO_STORAGEANCESTOR;
+    SIZE_T length = wcslen(path);
+    if (!(attributes & FILE_ATTRIBUTE_DIRECTORY) && length > 4 && !_wcsicmp(path + length - 4, L".lnk"))
+        result |= SFGAO_LINK;
     return result;
 }
 
@@ -333,7 +344,7 @@ static HRESULT bind_path(PCIDLIST_ABSOLUTE pidl, LPCWSTR path, REFIID riid, void
     if (attributes == INVALID_FILE_ATTRIBUTES)
         return HRESULT_FROM_WIN32(GetLastError());
     if (attributes & FILE_ATTRIBUTE_DIRECTORY)
-        return make_folder(pidl, path, FALSE, riid, object);
+        return make_folder(pidl, path, FOLDER_FILES, riid, object);
     GUID clsid;
     if (file_class(path, &clsid))
         return bind_class(&clsid, pidl, riid, object);
@@ -369,7 +380,15 @@ HRESULT ShBindAbsolute(PCIDLIST_ABSOLUTE pidl, REFIID riid, void **object)
         WCHAR path[MAX_PATH];
         if (!ShPathFromIdList(pidl, path, MAX_PATH))
             return E_FAIL;
-        return make_folder(pidl, path, TRUE, riid, object);
+        return make_folder(pidl, path, FOLDER_DESKTOP, riid, object);
+    }
+    if (count == 1) {
+        WCHAR path[MAX_PATH];
+        int kind = ShItemKind((const BYTE *)pidl, nullptr);
+        if (kind == SH_ITEM_COMPUTER)
+            return make_folder(pidl, L"", FOLDER_COMPUTER, riid, object);
+        if ((kind == SH_ITEM_NETWORK || kind == SH_ITEM_CLASS) && !ShPathFromIdList(pidl, path, MAX_PATH))
+            return make_folder(pidl, L"", FOLDER_VIRTUAL, riid, object);
     }
     for (UINT n = count; n; n--) {
         PIDLIST_ABSOLUTE head = list_head(pidl, n);
@@ -416,6 +435,104 @@ static BOOL child_path(const FS_FOLDER *f, PCUITEMID_CHILD child, LPWSTR path)
     return TRUE;
 }
 
+/* the path of an item of this folder, which the desktop takes as an absolute list. */
+static BOOL item_path(const FS_FOLDER *f, PCUIDLIST_RELATIVE pidl, LPWSTR path)
+{
+    if (f->Kind == FOLDER_DESKTOP)
+        return ShPathFromIdList(pidl, path, MAX_PATH);
+    if (f->Kind == FOLDER_VIRTUAL)
+        return FALSE;
+    return child_path(f, pidl, path);
+}
+
+static SFGAOF item_attributes(const FS_FOLDER *f, PCUIDLIST_RELATIVE pidl)
+{
+    WCHAR path[MAX_PATH];
+    /* the empty list is the desktop itself. */
+    if (!pidl->mkid.cb)
+        return f->Kind == FOLDER_DESKTOP
+                   ? SFGAO_FOLDER | SFGAO_HASSUBFOLDER | SFGAO_FILESYSANCESTOR | SFGAO_STORAGEANCESTOR | SFGAO_CANLINK
+                   : 0;
+    if (item_path(f, pidl, path)) {
+        DWORD file = GetFileAttributesW(path);
+        if (file != INVALID_FILE_ATTRIBUTES)
+            return file_attributes(path, file);
+    }
+    switch (ShItemKind((const BYTE *)ILFindLastID(pidl), nullptr)) {
+    case SH_ITEM_COMPUTER:
+        return SFGAO_FOLDER | SFGAO_HASSUBFOLDER | SFGAO_FILESYSANCESTOR | SFGAO_STORAGEANCESTOR | SFGAO_CANLINK;
+    case SH_ITEM_NETWORK:
+    case SH_ITEM_CLASS:
+        return SFGAO_FOLDER | SFGAO_HASSUBFOLDER | SFGAO_CANLINK;
+    }
+    return 0;
+}
+
+static BOOL item_display_name(const FS_FOLDER *f, PCUIDLIST_RELATIVE pidl, SHGDNF flags, LPWSTR text)
+{
+    BOOL parsing = (flags & SHGDN_FORPARSING) != 0;
+    if (!pidl->mkid.cb) {
+        if (f->Kind != FOLDER_DESKTOP)
+            return FALSE;
+        wcscpy(text, parsing ? f->Path : L"Desktop");
+        return TRUE;
+    }
+    GUID clsid;
+    WCHAR path[MAX_PATH];
+    BOOL has_path = item_path(f, pidl, path);
+    switch (ShItemKind((const BYTE *)ILFindLastID(pidl), &clsid)) {
+    case SH_ITEM_COMPUTER:
+    case SH_ITEM_NETWORK:
+    case SH_ITEM_CLASS:
+        if (parsing) {
+            if (has_path) {
+                wcscpy(text, path);
+                return TRUE;
+            }
+            text[0] = text[1] = L':';
+            return StringFromGUID2(&clsid, text + 2, 40) != 0;
+        }
+        if (ShClassName(&clsid, text, MAX_PATH))
+            return TRUE;
+        if (!has_path)
+            return FALSE;
+        LPCWSTR slash = wcsrchr(path, L'\\');
+        wcscpy(text, slash && slash[1] ? slash + 1 : path);
+        return TRUE;
+    case SH_ITEM_DRIVE:
+        if (!ShIdListLastName(pidl, text, MAX_PATH))
+            return FALSE;
+        if (!parsing)
+            _snwprintf(text, MAX_PATH, L"Local Disk (%lc:)", text[0]);
+        return TRUE;
+    }
+    if (parsing && !(flags & SHGDN_INFOLDER)) {
+        if (has_path)
+            wcscpy(text, path);
+        return has_path;
+    }
+    return ShIdListLastName(pidl, text, MAX_PATH);
+}
+
+static BOOL add_item(PITEMID_CHILD **items, ULONG *count, ULONG *capacity, PITEMID_CHILD child)
+{
+    if (!child)
+        return FALSE;
+    if (*count == *capacity) {
+        ULONG grown = *capacity ? *capacity * 2 : 64;
+        PITEMID_CHILD *larger = *items ? HeapReAlloc(GetProcessHeap(), 0, *items, grown * sizeof(**items))
+                                       : ShAlloc(grown * sizeof(**items));
+        if (!larger) {
+            ILFree(child);
+            return FALSE;
+        }
+        *items = larger;
+        *capacity = grown;
+    }
+    (*items)[(*count)++] = child;
+    return TRUE;
+}
+
 static HRESULT STDMETHODCALLTYPE folder_parse_display_name(IShellFolder *This, HWND hwnd, IBindCtx *context,
                                                            LPWSTR name, ULONG *eaten, PIDLIST_RELATIVE *pidl,
                                                            ULONG *attributes)
@@ -430,7 +547,9 @@ static HRESULT STDMETHODCALLTYPE folder_parse_display_name(IShellFolder *This, H
         return E_INVALIDARG;
     WCHAR full[MAX_PATH];
     LPCWSTR parse = name;
-    if (!f->Desktop && !(name[0] && name[1] == L':') && !(name[0] == L'\\' && name[1] == L'\\')) {
+    if (f->Kind != FOLDER_DESKTOP && !(name[0] && name[1] == L':') && !(name[0] == L'\\' && name[1] == L'\\')) {
+        if (f->Kind != FOLDER_FILES)
+            return E_INVALIDARG;
         if (wcslen(f->Path) + wcslen(name) + 2 > MAX_PATH)
             return HRESULT_FROM_WIN32(ERROR_FILENAME_EXCED_RANGE);
         _snwprintf(full, RTL_NUMBER_OF(full), L"%ls\\%ls", f->Path, name);
@@ -441,7 +560,7 @@ static HRESULT STDMETHODCALLTYPE folder_parse_display_name(IShellFolder *This, H
     HRESULT hr = ShParseName(parse, context, &absolute, &file);
     if (FAILED(hr))
         return hr;
-    if (f->Desktop) {
+    if (f->Kind == FOLDER_DESKTOP) {
         *pidl = absolute;
     } else {
         PUIDLIST_RELATIVE rest = ILFindChild(f->Pidl, absolute);
@@ -469,7 +588,15 @@ static HRESULT STDMETHODCALLTYPE folder_enum_objects(IShellFolder *This, HWND hw
     ULONG count = 0, capacity = 0;
     WCHAR pattern[MAX_PATH];
     SIZE_T length = wcslen(f->Path);
-    if (!f->Desktop && length + 3 <= MAX_PATH) {
+    if (f->Kind == FOLDER_DESKTOP && (flags & SHCONTF_FOLDERS))
+        add_item(&items, &count, &capacity, ShComputerList());
+    if (f->Kind == FOLDER_COMPUTER && (flags & SHCONTF_FOLDERS)) {
+        DWORD drives = GetLogicalDrives();
+        for (int i = 0; i < 26; i++)
+            if (drives & (1u << i))
+                add_item(&items, &count, &capacity, ShDriveItem((WCHAR)(L'A' + i)));
+    }
+    if ((f->Kind == FOLDER_FILES || f->Kind == FOLDER_DESKTOP) && length && length + 3 <= MAX_PATH) {
         wcscpy(pattern, f->Path);
         if (length && pattern[length - 1] != L'\\')
             pattern[length++] = L'\\';
@@ -479,7 +606,7 @@ static HRESULT STDMETHODCALLTYPE folder_enum_objects(IShellFolder *This, HWND hw
         HANDLE find = FindFirstFileW(pattern, &data);
         if (find == INVALID_HANDLE_VALUE) {
             DWORD error = GetLastError();
-            if (error != ERROR_FILE_NOT_FOUND && error != ERROR_NO_MORE_FILES)
+            if (error != ERROR_FILE_NOT_FOUND && error != ERROR_NO_MORE_FILES && f->Kind == FOLDER_FILES)
                 return HRESULT_FROM_WIN32(error);
         } else {
             do {
@@ -495,20 +622,8 @@ static HRESULT STDMETHODCALLTYPE folder_enum_objects(IShellFolder *This, HWND hw
                     continue;
                 PITEMID_CHILD child = ILClone(ILFindLastID(absolute));
                 ILFree(absolute);
-                if (!child)
-                    continue;
-                if (count == capacity) {
-                    ULONG grown = capacity ? capacity * 2 : 64;
-                    PITEMID_CHILD *larger = items ? HeapReAlloc(GetProcessHeap(), 0, items, grown * sizeof(*items))
-                                                  : ShAlloc(grown * sizeof(*items));
-                    if (!larger) {
-                        ILFree(child);
-                        break;
-                    }
-                    items = larger;
-                    capacity = grown;
-                }
-                items[count++] = child;
+                if (child && !add_item(&items, &count, &capacity, child))
+                    break;
             } while (FindNextFileW(find, &data));
             FindClose(find);
         }
@@ -530,7 +645,7 @@ static HRESULT STDMETHODCALLTYPE folder_bind_to_object(IShellFolder *This, PCUID
     *object = nullptr;
     if (!pidl || !pidl->mkid.cb)
         return E_INVALIDARG;
-    PIDLIST_ABSOLUTE absolute = f->Desktop ? ILClone(pidl) : ILCombine(f->Pidl, pidl);
+    PIDLIST_ABSOLUTE absolute = ILCombine(f->Pidl, pidl);
     if (!absolute)
         return E_OUTOFMEMORY;
     HRESULT hr = ShBindAbsolute(absolute, riid, object);
@@ -541,16 +656,27 @@ static HRESULT STDMETHODCALLTYPE folder_bind_to_object(IShellFolder *This, PCUID
 static HRESULT STDMETHODCALLTYPE folder_compare_ids(IShellFolder *This, LPARAM column, PCUIDLIST_RELATIVE a,
                                                     PCUIDLIST_RELATIVE b)
 {
+    FS_FOLDER *f = folder_of(This);
     WCHAR name_a[MAX_PATH], name_b[MAX_PATH];
-    if (!a || !b || !ShIdListLastName(a, name_a, MAX_PATH) || !ShIdListLastName(b, name_b, MAX_PATH))
+    if (!a || !b)
+        return E_INVALIDARG;
+    /* virtual folders come first, then drives, folders and files, each by name. */
+    int kind_a = ShItemKind((const BYTE *)ILFindLastID(a), nullptr);
+    int kind_b = ShItemKind((const BYTE *)ILFindLastID(b), nullptr);
+    if (kind_a != kind_b)
+        return SHELL_COMPARE_RESULT(kind_a < kind_b ? -1 : 1);
+    if (!item_display_name(f, a, SHGDN_INFOLDER, name_a) || !item_display_name(f, b, SHGDN_INFOLDER, name_b))
         return E_INVALIDARG;
     return SHELL_COMPARE_RESULT(_wcsicmp(name_a, name_b));
 }
 
 static HRESULT STDMETHODCALLTYPE folder_create_view_object(IShellFolder *This, HWND hwnd, REFIID riid, void **object)
 {
-    if (object)
-        *object = nullptr;
+    if (!object)
+        return E_POINTER;
+    *object = nullptr;
+    if (IsEqualIID(riid, &IID_IShellView))
+        return ShCreateView(This, riid, object);
     return E_NOINTERFACE;
 }
 
@@ -562,13 +688,12 @@ static HRESULT STDMETHODCALLTYPE folder_get_attributes_of(IShellFolder *This, UI
         return E_POINTER;
     SFGAOF common = *attributes;
     for (UINT i = 0; i < count; i++) {
-        WCHAR path[MAX_PATH];
-        if (!child_path(f, items[i], path))
+        if (!items[i])
             return E_INVALIDARG;
-        DWORD file = GetFileAttributesW(path);
-        if (file == INVALID_FILE_ATTRIBUTES)
-            return HRESULT_FROM_WIN32(GetLastError());
-        common &= file_attributes(path, file);
+        SFGAOF item = item_attributes(f, items[i]);
+        if (!item)
+            return items[i]->mkid.cb ? HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND) : E_INVALIDARG;
+        common &= item;
     }
     *attributes &= common;
     return S_OK;
@@ -590,14 +715,8 @@ static HRESULT STDMETHODCALLTYPE folder_get_display_name_of(IShellFolder *This, 
     WCHAR text[MAX_PATH];
     if (!name)
         return E_POINTER;
-    if (!pidl || !pidl->mkid.cb)
+    if (!pidl || !item_display_name(f, pidl, flags, text))
         return E_INVALIDARG;
-    if ((flags & SHGDN_FORPARSING) && !(flags & SHGDN_INFOLDER)) {
-        if (f->Desktop ? !ShPathFromIdList(pidl, text, MAX_PATH) : !child_path(f, pidl, text))
-            return E_INVALIDARG;
-    } else if (!ShIdListLastName(pidl, text, MAX_PATH)) {
-        return E_INVALIDARG;
-    }
     name->uType = STRRET_WSTR;
     name->pOleStr = ShDuplicate(text);
     return name->pOleStr ? S_OK : E_OUTOFMEMORY;
@@ -687,7 +806,18 @@ SHSTDAPI HRESULT WINAPI SHGetDesktopFolder(IShellFolder **folder)
         return E_OUTOFMEMORY;
     if (!ShPathFromIdList(desktop, path, MAX_PATH))
         path[0] = 0;
-    HRESULT hr = make_folder(desktop, path, TRUE, &IID_IShellFolder, (void **)folder);
+    HRESULT hr = make_folder(desktop, path, FOLDER_DESKTOP, &IID_IShellFolder, (void **)folder);
     ILFree(desktop);
     return hr;
+}
+
+/* the name a list shows, as the desktop gives it. */
+BOOL ShListDisplayName(PCIDLIST_ABSOLUTE pidl, LPWSTR name)
+{
+    IShellFolder *desktop;
+    if (FAILED(SHGetDesktopFolder(&desktop)))
+        return FALSE;
+    BOOL ok = item_display_name(folder_of(desktop), pidl, SHGDN_NORMAL, name);
+    desktop->lpVtbl->Release(desktop);
+    return ok;
 }
