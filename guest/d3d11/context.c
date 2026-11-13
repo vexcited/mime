@@ -815,17 +815,22 @@ static void set_render_targets(D3dContext *c, UINT count, ID3D11RenderTargetView
                                ID3D11DepthStencilView *depth)
 {
     count = D3D_MIN(count, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT);
+    D3dView *d = D3dViewFrom(depth, D3D_VIEW_DSV);
+    /* the same targets again change nothing, and the rendering to them goes on. */
+    BOOL same = c->rtv_count == count && c->dsv == d;
     for (UINT i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++) {
         D3dView *v = i < count && views ? D3dViewFrom(views[i], D3D_VIEW_RTV) : nullptr;
         if (v)
             unbind_inputs(c, v->resource);
+        same = same && c->rtv[i] == v;
         ref_view(c, &c->rtv[i], v);
     }
     c->rtv_count = count;
-    D3dView *d = D3dViewFrom(depth, D3D_VIEW_DSV);
     if (d)
         unbind_inputs(c, d->resource);
     ref_view(c, &c->dsv, d);
+    if (same)
+        return;
     c->targets_dirty = TRUE;
     c->outputs_dirty = TRUE;
 }
