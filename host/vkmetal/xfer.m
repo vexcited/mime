@@ -712,13 +712,17 @@ static VKAPI_ATTR void VKAPI_CALL CmdBeginQuery(VkCommandBuffer cmd, VkQueryPool
     if (!s->rendering)
         return;
     VkmBeginRender *b = (VkmBeginRender *)(cmd->cmds + s->begin);
-    if (b->visibility && b->visibility != pool->buffer)
-        VKM_ERROR("occlusion queries of two pools in one render pass");
-    b->visibility = pool->buffer;
+    /* a pass has one visibility buffer: a pool outside the device's one needs a pass of its own. */
+    if (b->head.op == VKM_OP_BEGIN_RENDER && b->visibility && b->visibility != pool->buffer)
+        b = vkm_render_split(cmd);
+    if (!b || b->head.op != VKM_OP_BEGIN_RENDER)
+        VKM_ERROR("an occlusion query outside a render pass this command buffer began");
+    else
+        b->visibility = pool->buffer;
     VkmOpVisibility *o = vkm_emit(cmd, VKM_OP_VISIBILITY, sizeof(*o));
     if (o) {
         o->mode = s->occlusion_precise ? MTLVisibilityResultModeCounting : MTLVisibilityResultModeBoolean;
-        o->offset = query * 8;
+        o->offset = (uint32_t)pool->base + query * 8;
     }
 }
 
