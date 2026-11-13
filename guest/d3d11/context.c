@@ -816,12 +816,18 @@ static void set_render_targets(D3dContext *c, UINT count, ID3D11RenderTargetView
 {
     count = D3D_MIN(count, D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT);
     D3dView *d = D3dViewFrom(depth, D3D_VIEW_DSV);
-    /* the same targets again change nothing, and the rendering to them goes on. */
+    /*
+     * the same targets again change nothing, and the rendering to them goes on. without targets, the rendering takes
+     * the extent of the viewport, so it starts again.
+     */
     BOOL same = c->rtv_count == count && c->dsv == d;
+    BOOL bound = d != nullptr;
     for (UINT i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++) {
         D3dView *v = i < count && views ? D3dViewFrom(views[i], D3D_VIEW_RTV) : nullptr;
-        if (v)
+        if (v) {
             unbind_inputs(c, v->resource);
+            bound = TRUE;
+        }
         same = same && c->rtv[i] == v;
         ref_view(c, &c->rtv[i], v);
     }
@@ -829,7 +835,7 @@ static void set_render_targets(D3dContext *c, UINT count, ID3D11RenderTargetView
     if (d)
         unbind_inputs(c, d->resource);
     ref_view(c, &c->dsv, d);
-    if (same)
+    if (same && bound)
         return;
     c->targets_dirty = TRUE;
     c->outputs_dirty = TRUE;
