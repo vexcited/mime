@@ -1429,13 +1429,19 @@ static NTSTATUS do_poll(PVOID input, ULONG in_len, PVOID output, ULONG out_len, 
             unlock();
             break;
         }
-        /* watch every socket for what the caller asked, then sleep until the worker ran. */
+        /*
+         * watch every socket for what the caller asked, then sleep until the worker ran. a failed connect shows
+         * as writable, so errors watch for it only while connecting: a connected socket is writable all along,
+         * and its watch would fire at once, every time, for a caller that never asked to write.
+         */
         for (ULONG i = 0; i < head.Count; i++) {
             ULONG asked = p->Entries[i].Events;
+            AFD_SOCKET *s = files[i] ? files[i]->FsContext : nullptr;
             hp[i].events = 0;
             if (asked & (MIME_AFD_POLL_READ | MIME_AFD_POLL_HUP | MIME_AFD_POLL_ERROR))
                 hp[i].events |= MIME_NET_READ;
-            if (asked & (MIME_AFD_POLL_WRITE | MIME_AFD_POLL_EXCEPT | MIME_AFD_POLL_ERROR))
+            if ((asked & MIME_AFD_POLL_WRITE) || ((asked & (MIME_AFD_POLL_EXCEPT | MIME_AFD_POLL_ERROR)) && s &&
+                                                  s->State == MIME_AFD_STATE_CONNECTING))
                 hp[i].events |= MIME_NET_WRITE;
         }
         if (n)
