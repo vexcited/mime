@@ -139,6 +139,18 @@ static UiWindow *find_by_nswindow(NSWindow *window)
     return nullptr;
 }
 
+/* buttons land where the cursor stays, which is the center of the window that locked it. */
+static void pointer_park(UiWindow *w)
+{
+    if (!g_pointer_locked || !w || w->id != g_pointer_window)
+        return;
+    /* Quartz counts from the top of the whole primary screen, band included. */
+    NSRect frame = w->window.frame;
+    CGWarpMouseCursorPosition(CGPointMake(NSMidX(frame), g_screen_height_pts + g_screen_band - NSMidY(frame)));
+    /* a warp holds the mouse events back for a moment, which this call ends. */
+    CGAssociateMouseAndMouseCursorPosition(false);
+}
+
 /* the mouse is locked while the window that asked is the key one, so another app gets its cursor back. */
 static void pointer_apply(void)
 {
@@ -148,13 +160,10 @@ static void pointer_apply(void)
         return;
     g_pointer_locked = lock;
     g_motion_x = g_motion_y = 0;
-    if (lock) {
-        /* buttons land where the cursor stays, which is in the window. Quartz counts from the top of the band. */
-        NSRect frame = w->window.frame;
-        CGWarpMouseCursorPosition(
-            CGPointMake(NSMidX(frame), g_screen_height_pts + g_screen_band - NSMidY(frame)));
-    }
-    CGAssociateMouseAndMouseCursorPosition(!lock);
+    if (lock)
+        pointer_park(w);
+    else
+        CGAssociateMouseAndMouseCursorPosition(true);
 }
 
 /* the motion of an event: the device's own counts while locked, as raw input reports them, else guest pixels. */
@@ -1053,6 +1062,7 @@ static void emit_char(UiWindow *w, uint32_t c)
         return;
     NSWindow *window = notification.object;
     UiWindow *w = find_by_nswindow(window);
+    pointer_park(w);
     if (!w || w->fullscreen_transition || w->fullscreen)
         return;
     NSRect frame = window.frame;
@@ -1698,6 +1708,7 @@ static void config_main(const MimeWinConfig *cfg)
             [w->window setFrame:frame display:NO];
     }
     g_suppress_move = false;
+    pointer_park(w);
     if (!w->fullscreen_transition && !w->fullscreen)
         w->window.level = (cfg->flags & MIME_WIN_TOPMOST) ? NSFloatingWindowLevel : NSNormalWindowLevel;
 
@@ -2817,6 +2828,7 @@ static void screens_changed(void)
             [w->window setFrame:guest_to_frame(host_screen_rect(&w->config)) display:NO];
             g_suppress_move = false;
         }
+        pointer_park(w);
     }
     for (int i = 0; i < MAX_METAL_LAYERS; i++) {
         if (!g_metal[i].layer)
