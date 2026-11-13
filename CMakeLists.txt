@@ -265,7 +265,9 @@ set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${MIME_ASSETS}/windrivers/gm.
 
 set(MIME_TRIPLE_x64 --target=x86_64-pc-windows-msvc -march=x86-64 -mcx16)
 set(MIME_TRIPLE_arm64 --target=aarch64-pc-windows-msvc -march=armv8.2-a)
-set(MIME_TRIPLE_x86 --target=i686-pc-windows-msvc -march=pentium4)
+# programs that hook the 32-bit system libraries, such as the Steam overlay, expect the five byte start that
+# Windows gives every function there, and cut a longer first instruction short when they move it.
+set(MIME_TRIPLE_x86 --target=i686-pc-windows-msvc -march=pentium4 -fms-hotpatch -fno-omit-frame-pointer)
 set(MIME_MACHINE_x64 x64)
 set(MIME_MACHINE_arm64 arm64)
 set(MIME_MACHINE_x86 x86)
