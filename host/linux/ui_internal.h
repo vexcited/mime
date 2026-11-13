@@ -91,6 +91,8 @@ bool mime_desktop_setting(const MimePaths *paths, const char *key, const char *v
 /* the data directory of the desktop, the mime that entries start, and an argument added to an Exec line. */
 void mime_desktop_data(char *out, size_t size);
 bool mime_desktop_exe(char *out, size_t size);
+/* desktop.c: the schemes that go on the entries of the shortcuts, see there. */
+bool mime_desktop_protocols(uint32_t count, const char (*scheme)[40], const char (*program)[MIME_PATH_MAX], bool *taken);
 void mime_desktop_argument(char *out, size_t size, const char *arg);
 
 /* ime.c, called by the main loop. */

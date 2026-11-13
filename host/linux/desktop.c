@@ -54,9 +54,12 @@ typedef struct Entry {
     char aumid[160];
     char name[160];
     char comment[260];
-    char exec[3000];
+    char exec[6000];
     char path[MIME_PATH_MAX];
     char window_class[200];
+    char program[MIME_PATH_MAX]; /* the host path of the program, and its arguments as the shortcut has them. */
+    char arguments[2048];
+    char schemes[2700]; /* the url protocols the program answers in the guest, with commas between. */
 } Entry;
 
 typedef struct Watch {
@@ -378,17 +381,25 @@ static int split_command_line(const char *line, char argv[][512], int max)
     return argc;
 }
 
-static void make_exec(char *out, size_t size, const char *program_host, const char *arguments)
+/* with schemes, the desktop adds the address it opens as the last argument, and mime run takes it for itself. */
+static void make_exec(char *out, size_t size, const char *program_host, const char *arguments, const char *schemes)
 {
     out[0] = 0;
     mime_desktop_argument(out, size, g_exe);
     mime_desktop_argument(out, size, "run");
+    if (schemes && schemes[0]) {
+        mime_desktop_argument(out, size, "--protocols");
+        mime_desktop_argument(out, size, schemes);
+    }
     mime_desktop_argument(out, size, program_host);
     char (*argv)[512] = mime_xmalloc(32 * 512);
     int argc = split_command_line(arguments, argv, 32);
     for (int i = 0; i < argc; i++)
         mime_desktop_argument(out, size, argv[i]);
     free(argv);
+    size_t n = strlen(out);
+    if (schemes && schemes[0] && n + 4 < size)
+        memcpy(out + n, " %u", 4);
 }
 
 /* ------------------------------------------------------------------ the entries */
@@ -442,6 +453,15 @@ static void write_entry(Entry *e)
         escape_value(f, e->icon_file);
     }
     fputs("\nTerminal=false\nCategories=Utility;\n", f);
+    if (e->schemes[0]) {
+        fputs("MimeType=", f);
+        for (const char *p = e->schemes; *p;) {
+            const char *end = strchrnul(p, ',');
+            fprintf(f, "x-scheme-handler/%.*s;", (int)(end - p), p);
+            p = *end ? end + 1 : end;
+        }
+        fprintf(f, "\nX-Mime-Protocols=%s\n", e->schemes);
+    }
     if (e->window_class[0]) {
         fputs("StartupWMClass=", f);
         escape_value(f, e->window_class);
@@ -470,6 +490,26 @@ static void write_entry(Entry *e)
     }
     fclose(f);
     rename(temp, e->desktop_file);
+}
+
+/* the protocols the entry had before the machine started: the guest names them again only when it opens a link. */
+static void read_schemes(Entry *e)
+{
+    size_t length;
+    char *text = mime_read_file(e->desktop_file, &length);
+    char *line = text ? strstr(text, "\nX-Mime-Protocols=") : nullptr;
+    if (line && strstr(text, "\nX-Mime-Managed=true\n")) {
+        line += sizeof("\nX-Mime-Protocols=") - 1;
+        size_t n = strcspn(line, "\n");
+        bool plain = n > 0 && n < sizeof(e->schemes);
+        for (size_t i = 0; i < n && plain; i++)
+            plain = islower((unsigned char)line[i]) || isdigit((unsigned char)line[i]) || strchr("+-.,", line[i]);
+        if (plain) {
+            memcpy(e->schemes, line, n);
+            e->schemes[n] = 0;
+        }
+    }
+    free(text);
 }
 
 static void drop_entry(Entry *e)
@@ -633,6 +673,8 @@ static void process_link(const char *lnk_host)
         snprintf(e->desktop_file, sizeof(e->desktop_file), "%s/%s.desktop", dir, id);
         e->next = g_entries;
         g_entries = e;
+        if (mime_desktop_setting(g_paths, "protocols", "MIME_DESKTOP_PROTOCOLS", true))
+            read_schemes(e);
     }
     bool known = false;
     for (int i = 0; i < e->source_count; i++)
@@ -642,7 +684,9 @@ static void process_link(const char *lnk_host)
     mime_strlcpy(e->aumid, link.aumid, sizeof(e->aumid));
     mime_strlcpy(e->name, name, sizeof(e->name));
     mime_strlcpy(e->comment, link.description, sizeof(e->comment));
-    make_exec(e->exec, sizeof(e->exec), program_host, link.arguments);
+    mime_strlcpy(e->program, program_host, sizeof(e->program));
+    mime_strlcpy(e->arguments, link.arguments, sizeof(e->arguments));
+    make_exec(e->exec, sizeof(e->exec), e->program, e->arguments, e->schemes);
     e->path[0] = 0;
     if (link.directory[0]) {
         char directory[MIME_PATH_MAX];
@@ -912,12 +956,55 @@ void mime_desktop_jump_list(const MimeShellJumpList *list)
             continue;
         Task *out = &t->tasks[t->count++];
         mime_strlcpy(out->title, title, sizeof(out->title));
-        make_exec(out->exec, sizeof(out->exec), host, arguments);
+        make_exec(out->exec, sizeof(out->exec), host, arguments, nullptr);
     }
     for (Entry *e = g_entries; e; e = e->next)
         if (!strcmp(e->aumid, aumid))
             write_entry(e);
     pthread_mutex_unlock(&g_lock);
+}
+
+/* ------------------------------------------------------------------ the protocols */
+
+/*
+ * gives each scheme to the entry of the program that answers it in the guest, the one without arguments first, so
+ * the desktop names the program and shows its icon when the browser asks to open such an address. taken is set for
+ * the schemes that found an entry. true when an entry changed.
+ */
+bool mime_desktop_protocols(uint32_t count, const char (*scheme)[40], const char (*program)[MIME_PATH_MAX], bool *taken)
+{
+    memset(taken, 0, count * sizeof(*taken));
+    if (!g_running || !count)
+        return false;
+    Entry **owner = mime_xcalloc(count, sizeof(*owner));
+    bool changed = false;
+    pthread_mutex_lock(&g_lock);
+    for (uint32_t i = 0; i < count; i++) {
+        char host[MIME_PATH_MAX];
+        if (!program[i][0] || !resolve_guest_path(program[i], host, sizeof(host)))
+            continue;
+        for (Entry *e = g_entries; e; e = e->next)
+            if (!strcmp(e->program, host) && (!owner[i] || (!e->arguments[0] && owner[i]->arguments[0])))
+                owner[i] = e;
+    }
+    for (Entry *e = g_entries; e; e = e->next) {
+        char schemes[sizeof(e->schemes)] = "";
+        for (uint32_t i = 0; i < count; i++)
+            if (owner[i] == e && strlen(schemes) + strlen(scheme[i]) + 2 < sizeof(schemes)) {
+                size_t n = strlen(schemes);
+                snprintf(schemes + n, sizeof(schemes) - n, "%s%s", n ? "," : "", scheme[i]);
+                taken[i] = true;
+            }
+        if (strcmp(schemes, e->schemes)) {
+            mime_strlcpy(e->schemes, schemes, sizeof(e->schemes));
+            make_exec(e->exec, sizeof(e->exec), e->program, e->arguments, e->schemes);
+            write_entry(e);
+            changed = true;
+        }
+    }
+    pthread_mutex_unlock(&g_lock);
+    free(owner);
+    return changed;
 }
 
 /* ------------------------------------------------------------------ start */
