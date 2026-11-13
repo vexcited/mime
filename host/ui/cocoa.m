@@ -496,6 +496,11 @@ static MimeInputEvent wheel_event(UiWindow *w, NSEvent *event)
     MimeInputEvent ev = {.type = MIME_INPUT_MOUSE_WHEEL, .window_id = w->id,
                          .modifiers = modifiers_of(event)};
     screen_point_to_guest(CGPointMake(frame.origin.x + loc.x, frame.origin.y + loc.y), &ev.x, &ev.y);
+    /* the parked cursor says nothing of where the guest's one is. */
+    if (g_pointer_locked) {
+        ev.window_id = g_pointer_window;
+        ev.flags |= 4;
+    }
     return ev;
 }
 
@@ -837,7 +842,7 @@ static void emit_char(UiWindow *w, uint32_t c)
         return;
     double factor = precise ? 120.0 / 40.0 : 120.0;
     emit_wheel(&ev, wheel_units(&w->scroll_y, event.scrollingDeltaY * factor, 1));
-    ev.flags = 1;
+    ev.flags |= 1;
     emit_wheel(&ev, wheel_units(&w->scroll_x, -event.scrollingDeltaX * factor, 1));
 }
 
