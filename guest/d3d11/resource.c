@@ -957,6 +957,24 @@ static HRESULT create_texture(D3dDevice *device, D3D11_RESOURCE_DIMENSION dimens
         info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         if ((f->flags & (D3D_FORMAT_TYPELESS | D3D_FORMAT_SRGB | D3D_FORMAT_PLANAR)) || (bind & D3D11_BIND_RENDER_TARGET))
             info.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+        /*
+         * the formats of the views it may get, where direct3d leaves few: the two of a bgra texture, typeless or not,
+         * and its own for one that is mutable only for being a render target, with the srgb one a swap chain's
+         * buffer also takes. a host may store an image whose views all read its texels the same way better.
+         */
+        VkFormat view_formats[2];
+        VkImageFormatListCreateInfo views = {VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO, nullptr, 0, view_formats};
+        if (vk_format == VK_FORMAT_B8G8R8A8_UNORM || vk_format == VK_FORMAT_B8G8R8A8_SRGB) {
+            view_formats[views.viewFormatCount++] = VK_FORMAT_B8G8R8A8_UNORM;
+            view_formats[views.viewFormatCount++] = VK_FORMAT_B8G8R8A8_SRGB;
+        } else if (!(f->flags & (D3D_FORMAT_TYPELESS | D3D_FORMAT_SRGB | D3D_FORMAT_PLANAR)) &&
+                   !(r->tex.aspect & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT))) {
+            view_formats[views.viewFormatCount++] = vk_format;
+            if (vk_format == VK_FORMAT_R8G8B8A8_UNORM)
+                view_formats[views.viewFormatCount++] = VK_FORMAT_R8G8B8A8_SRGB;
+        }
+        if ((info.flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) && views.viewFormatCount && !shared)
+            info.pNext = &views;
         if ((misc & D3D11_RESOURCE_MISC_TEXTURECUBE) && layers >= 6)
             info.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
         if (dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D && (bind & (D3D11_BIND_RENDER_TARGET | D3D11_BIND_UNORDERED_ACCESS)))
