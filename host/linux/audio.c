@@ -19,10 +19,12 @@ typedef struct Stream {
     MimeAudioHeader *hdr;
     uint8_t *ring;
     uint32_t frames, frame_bytes;
+    uint32_t channels; /* as checked when the stream opened: the header is the guest's to change. */
     uint32_t bits;
     bool is_float;
     bool running;
     bool capture;
+    bool failed; /* the server gave the stream up, and the guest is told. */
     uint32_t device; /* the one the guest named, 0 when the stream follows the default one. */
 } Stream;
 
@@ -63,7 +65,7 @@ static void scale(const Stream *s, uint8_t *data, uint32_t frames)
     uint32_t volume = __atomic_load_n(&s->hdr->volume, __ATOMIC_RELAXED);
     if (volume >= 65536)
         return;
-    uint32_t samples = frames * s->hdr->channels;
+    uint32_t samples = frames * s->channels;
     if (s->is_float) {
         float gain = volume / 65536.0f, v;
         for (uint32_t i = 0; i < samples; i++, data += 4) {
@@ -117,12 +119,11 @@ static void render(void *ref, uint8_t *out, uint32_t count)
     scale(s, out, n);
 }
 
-/* appends captured frames to the ring. excess frames are dropped and counted. */
+/* appends captured frames to the ring. excess frames are dropped and counted. the server's own buffer is not written. */
 static void capture_render(void *ref, uint8_t *in, uint32_t frames)
 {
     Stream *s = ref;
     MimeAudioHeader *h = s->hdr;
-    scale(s, in, frames);
     uint64_t written = __atomic_load_n(&h->written, __ATOMIC_RELAXED);
     uint64_t used = written - __atomic_load_n(&h->played, __ATOMIC_ACQUIRE);
     uint64_t room = used >= s->frames ? 0 : s->frames - used;
@@ -131,6 +132,8 @@ static void capture_render(void *ref, uint8_t *in, uint32_t frames)
     uint32_t first = s->frames - at < n ? s->frames - at : n;
     memcpy(s->ring + (size_t)at * s->frame_bytes, in, (size_t)first * s->frame_bytes);
     memcpy(s->ring, in + (size_t)first * s->frame_bytes, (size_t)(n - first) * s->frame_bytes);
+    scale(s, s->ring + (size_t)at * s->frame_bytes, first);
+    scale(s, s->ring, n - first);
     if (n < frames)
         __atomic_fetch_add(&h->underruns, frames - n, __ATOMIC_RELAXED);
     __atomic_store_n(&h->written, written + n, __ATOMIC_RELEASE);
@@ -168,6 +171,15 @@ static void *watcher(void *arg)
         look(true, &now[1]);
         pthread_mutex_lock(&g_lock);
         bool changed = memcmp(now, g_known, sizeof(now)) != 0;
+        bool failed = false;
+        for (uint32_t i = 1; i < MAX_STREAMS; i++) {
+            Stream *s = g_streams[i];
+            if (!s || s->failed || !mime_pipewire_failed(s->stream))
+                continue;
+            s->failed = failed = true;
+            mime_warn("audio: the sound server gave up an %s stream", s->capture ? "input" : "output");
+            __atomic_store_n(&s->hdr->lost, 1, __ATOMIC_RELEASE);
+        }
         if (changed) {
             memcpy(g_known, now, sizeof(now));
             /* the stream of a device that is gone runs into nothing. */
@@ -180,9 +192,9 @@ static void *watcher(void *arg)
                 if (s->device ? !listed(list, s->device) : !list->count)
                     __atomic_store_n(&s->hdr->lost, 1, __ATOMIC_RELEASE);
             }
-            if (g_vm)
-                mime_vm_raise_irq(g_vm, MIME_IRQ_AUDIO);
         }
+        if ((changed || failed) && g_vm)
+            mime_vm_raise_irq(g_vm, MIME_IRQ_AUDIO);
         pthread_mutex_unlock(&g_lock);
     }
     return nullptr;
@@ -249,6 +261,7 @@ uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *strea
     s->ring = base + MIME_AUDIO_HEADER_SIZE;
     s->frames = h.frames;
     s->frame_bytes = frame_bytes;
+    s->channels = h.channels;
     s->bits = h.bits;
     s->is_float = h.is_float != 0;
     s->capture = h.capture != 0;

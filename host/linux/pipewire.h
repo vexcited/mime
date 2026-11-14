@@ -25,6 +25,8 @@ void mime_pipewire_list(bool capture, MimeAudioDeviceList *out);
 MimePwStream *mime_pipewire_open(bool capture, uint32_t device, uint32_t rate, uint32_t channels, uint32_t bits,
                                  bool is_float, MimePwProcess process, void *ctx);
 bool mime_pipewire_run(MimePwStream *stream, bool running);
+/* the server gave the stream up, as when it cannot play its format. it plays nothing from then on. */
+bool mime_pipewire_failed(const MimePwStream *stream);
 /* returns once no call of process is running or will run. */
 void mime_pipewire_close(MimePwStream *stream);
 
