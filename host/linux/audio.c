@@ -1,13 +1,8 @@
-/*
- * each guest stream uses an SDL stream on the device it names or on the default one, reading directly from the ring
- * in mime/audio.h. SDL converts format, rate and channels through PipeWire, PulseAudio or ALSA.
- */
 #include "../audio/audio.h"
 #include "pipewire.h"
 
 #include <mime/audio.h>
 
-#include <SDL3/SDL.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -18,15 +13,14 @@
 #include <unistd.h>
 
 #define MAX_STREAMS 64
-#define CHUNK_BYTES 8192
 
 typedef struct Stream {
-    SDL_AudioStream *stream;
+    MimePwStream *stream;
     MimeAudioHeader *hdr;
     uint8_t *ring;
-    uint32_t frames, frame_bytes, out_frame_bytes;
-    bool packed24; /* 24 bit samples, which SDL takes widened to 32 bits. */
-    uint32_t volume;
+    uint32_t frames, frame_bytes;
+    uint32_t bits;
+    bool is_float;
     bool running;
     bool capture;
     uint32_t device; /* the one the guest named, 0 when the stream follows the default one. */
@@ -50,7 +44,7 @@ static bool is_socket(const char *dir, const char *name)
 
 /*
  * the sound server listens in the user's own runtime directory. a launcher that points XDG_RUNTIME_DIR elsewhere would
- * leave SDL without it, so name it directly while the daemon is still single threaded.
+ * leave the machine without it, so name it directly while the daemon is still single threaded.
  */
 void mime_audio_prepare(void)
 {
@@ -61,165 +55,98 @@ void mime_audio_prepare(void)
         return;
     if (!getenv("PIPEWIRE_RUNTIME_DIR") && !is_socket(runtime, "pipewire-0") && is_socket(own, "pipewire-0"))
         setenv("PIPEWIRE_RUNTIME_DIR", own, 1);
-    if (!getenv("PULSE_SERVER") && !is_socket(runtime, "pulse/native") && is_socket(own, "pulse/native")) {
-        char server[96];
-        snprintf(server, sizeof(server), "unix:%s/pulse/native", own);
-        setenv("PULSE_SERVER", server, 1);
-    }
 }
 
-/* copies n frames from the ring at frame `at` into out, widening 24 bit samples. */
-static void copy_frames(Stream *s, uint8_t *out, uint32_t at, uint32_t n)
+/* the guest's volume, 65536 for all of it, on samples of the stream's format. */
+static void scale(const Stream *s, uint8_t *data, uint32_t frames)
 {
-    const uint8_t *in = s->ring + (size_t)at * s->frame_bytes;
-    if (!s->packed24) {
-        memcpy(out, in, (size_t)n * s->frame_bytes);
+    uint32_t volume = __atomic_load_n(&s->hdr->volume, __ATOMIC_RELAXED);
+    if (volume >= 65536)
         return;
-    }
-    uint32_t samples = n * s->hdr->channels;
-    for (uint32_t i = 0; i < samples; i++, in += 3, out += 4) {
-        out[0] = 0;
-        out[1] = in[0];
-        out[2] = in[1];
-        out[3] = in[2];
-    }
-}
-
-static void SDLCALL render(void *ref, SDL_AudioStream *stream, int additional, int total)
-{
-    Stream *s = ref;
-    MimeAudioHeader *h = s->hdr;
-    uint8_t chunk[CHUNK_BYTES];
-    uint32_t volume = __atomic_load_n(&h->volume, __ATOMIC_RELAXED);
-    if (volume != s->volume) {
-        s->volume = volume;
-        SDL_SetAudioStreamGain(stream, volume > 65536 ? 1.0f : volume / 65536.0f);
-    }
-    while (additional > 0) {
-        uint32_t count = (uint32_t)MIME_MIN((size_t)additional, sizeof(chunk)) / s->out_frame_bytes;
-        if (!count)
-            break;
-        uint64_t played = __atomic_load_n(&h->played, __ATOMIC_RELAXED);
-        uint64_t queued = __atomic_load_n(&h->written, __ATOMIC_ACQUIRE) - played;
-        /* the guest owns written: a value past the ring only garbles its own sound. */
-        if (queued > s->frames)
-            queued = s->frames;
-        uint32_t n = queued < count ? (uint32_t)queued : count;
-        uint32_t at = (uint32_t)(played % s->frames);
-        uint32_t first = s->frames - at < n ? s->frames - at : n;
-        copy_frames(s, chunk, at, first);
-        copy_frames(s, chunk + (size_t)first * s->out_frame_bytes, 0, n - first);
-        memset(chunk + (size_t)n * s->out_frame_bytes, 0, (size_t)(count - n) * s->out_frame_bytes);
-        __atomic_store_n(&h->played, played + n, __ATOMIC_RELEASE);
-        if (n < count)
-            __atomic_fetch_add(&h->underruns, 1, __ATOMIC_RELAXED);
-        SDL_PutAudioStreamData(stream, chunk, (int)(count * s->out_frame_bytes));
-        additional -= (int)(count * s->out_frame_bytes);
-    }
-}
-
-/*
- * appends captured frames to the ring, narrowing 24-bit samples to three bytes. excess frames are dropped and
- * counted.
- */
-static void SDLCALL capture_render(void *ref, SDL_AudioStream *stream, int additional, int total)
-{
-    Stream *s = ref;
-    MimeAudioHeader *h = s->hdr;
-    uint8_t chunk[CHUNK_BYTES];
-    uint32_t volume = __atomic_load_n(&h->volume, __ATOMIC_RELAXED);
-    if (volume != s->volume) {
-        s->volume = volume;
-        SDL_SetAudioStreamGain(stream, volume > 65536 ? 1.0f : volume / 65536.0f);
-    }
-    while (additional > 0) {
-        int want = (int)(MIME_MIN((size_t)additional, sizeof(chunk)) / s->out_frame_bytes * s->out_frame_bytes);
-        if (want <= 0)
-            break;
-        int got = SDL_GetAudioStreamData(stream, chunk, want);
-        if (got <= 0)
-            break;
-        uint32_t frames = (uint32_t)got / s->out_frame_bytes;
-        uint64_t written = __atomic_load_n(&h->written, __ATOMIC_RELAXED);
-        uint64_t used = written - __atomic_load_n(&h->played, __ATOMIC_ACQUIRE);
-        uint64_t room = used >= s->frames ? 0 : s->frames - used;
-        uint32_t n = frames < room ? frames : (uint32_t)room;
-        uint32_t at = (uint32_t)(written % s->frames);
-        uint32_t first = s->frames - at < n ? s->frames - at : n;
-        for (int part = 0; part < 2; part++) {
-            uint32_t count = part ? n - first : first;
-            const uint8_t *in = chunk + (part ? (size_t)first * s->out_frame_bytes : 0);
-            uint8_t *out = s->ring + (part ? 0 : (size_t)at * s->frame_bytes);
-            if (!s->packed24) {
-                memcpy(out, in, (size_t)count * s->frame_bytes);
-            } else {
-                uint32_t samples = count * s->hdr->channels;
-                for (uint32_t i = 0; i < samples; i++, in += 4, out += 3) {
-                    out[0] = in[1];
-                    out[1] = in[2];
-                    out[2] = in[3];
-                }
-            }
+    uint32_t samples = frames * s->hdr->channels;
+    if (s->is_float) {
+        float gain = volume / 65536.0f, v;
+        for (uint32_t i = 0; i < samples; i++, data += 4) {
+            memcpy(&v, data, 4);
+            v *= gain;
+            memcpy(data, &v, 4);
         }
-        if (n < frames)
-            __atomic_fetch_add(&h->underruns, frames - n, __ATOMIC_RELAXED);
-        __atomic_store_n(&h->written, written + n, __ATOMIC_RELEASE);
-        additional -= got;
+    } else if (s->bits == 16) {
+        int16_t v;
+        for (uint32_t i = 0; i < samples; i++, data += 2) {
+            memcpy(&v, data, 2);
+            v = (int16_t)(v * (int32_t)volume >> 16);
+            memcpy(data, &v, 2);
+        }
+    } else if (s->bits == 24) {
+        for (uint32_t i = 0; i < samples; i++, data += 3) {
+            int32_t v = (int32_t)((uint32_t)data[0] << 8 | (uint32_t)data[1] << 16 | (uint32_t)data[2] << 24) >> 8;
+            v = (int32_t)(v * (int64_t)volume >> 16);
+            data[0] = (uint8_t)v;
+            data[1] = (uint8_t)(v >> 8);
+            data[2] = (uint8_t)(v >> 16);
+        }
+    } else {
+        int32_t v;
+        for (uint32_t i = 0; i < samples; i++, data += 4) {
+            memcpy(&v, data, 4);
+            v = (int32_t)(v * (int64_t)volume >> 16);
+            memcpy(data, &v, 4);
+        }
     }
+}
+
+static void render(void *ref, uint8_t *out, uint32_t count)
+{
+    Stream *s = ref;
+    MimeAudioHeader *h = s->hdr;
+    uint64_t played = __atomic_load_n(&h->played, __ATOMIC_RELAXED);
+    uint64_t queued = __atomic_load_n(&h->written, __ATOMIC_ACQUIRE) - played;
+    /* the guest owns written: a value past the ring only garbles its own sound. */
+    if (queued > s->frames)
+        queued = s->frames;
+    uint32_t n = queued < count ? (uint32_t)queued : count;
+    uint32_t at = (uint32_t)(played % s->frames);
+    uint32_t first = s->frames - at < n ? s->frames - at : n;
+    memcpy(out, s->ring + (size_t)at * s->frame_bytes, (size_t)first * s->frame_bytes);
+    memcpy(out + (size_t)first * s->frame_bytes, s->ring, (size_t)(n - first) * s->frame_bytes);
+    memset(out + (size_t)n * s->frame_bytes, 0, (size_t)(count - n) * s->frame_bytes);
+    __atomic_store_n(&h->played, played + n, __ATOMIC_RELEASE);
+    if (n < count)
+        __atomic_fetch_add(&h->underruns, 1, __ATOMIC_RELAXED);
+    scale(s, out, n);
+}
+
+/* appends captured frames to the ring. excess frames are dropped and counted. */
+static void capture_render(void *ref, uint8_t *in, uint32_t frames)
+{
+    Stream *s = ref;
+    MimeAudioHeader *h = s->hdr;
+    scale(s, in, frames);
+    uint64_t written = __atomic_load_n(&h->written, __ATOMIC_RELAXED);
+    uint64_t used = written - __atomic_load_n(&h->played, __ATOMIC_ACQUIRE);
+    uint64_t room = used >= s->frames ? 0 : s->frames - used;
+    uint32_t n = frames < room ? frames : (uint32_t)room;
+    uint32_t at = (uint32_t)(written % s->frames);
+    uint32_t first = s->frames - at < n ? s->frames - at : n;
+    memcpy(s->ring + (size_t)at * s->frame_bytes, in, (size_t)first * s->frame_bytes);
+    memcpy(s->ring, in + (size_t)first * s->frame_bytes, (size_t)(n - first) * s->frame_bytes);
+    if (n < frames)
+        __atomic_fetch_add(&h->underruns, frames - n, __ATOMIC_RELAXED);
+    __atomic_store_n(&h->written, written + n, __ATOMIC_RELEASE);
 }
 
 static void destroy(Stream *s)
 {
-    /* destroying waits for a callback in progress, after which the guest may reuse the memory. */
+    /* closing waits for a callback in progress, after which the guest may reuse the memory. */
     if (s->stream)
-        SDL_DestroyAudioStream(s->stream);
+        mime_pipewire_close(s->stream);
     free(s);
 }
 
-/*
- * SDL's PipeWire backend does not read the format of a device: it tells 16 bit samples for all of them, and 44100 Hz
- * for those without a rate. so the server is asked for the format, and for what SDL has no word for. SDL also names
- * the default device without telling which one of the list it is, so the server's choice is taken, or else the first
- * of that name. the list is read as it stands, since SDL keeps it up to date from the sound server's own thread.
- */
 static void look(bool capture, MimeAudioDeviceList *out)
 {
-    memset(out, 0, sizeof(*out));
-    int count = 0;
-    const char *default_name =
-        SDL_GetAudioDeviceName(capture ? SDL_AUDIO_DEVICE_DEFAULT_RECORDING : SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK);
-    SDL_AudioDeviceID *ids = capture ? SDL_GetAudioRecordingDevices(&count) : SDL_GetAudioPlaybackDevices(&count);
-    MimeAudioDevice *named = nullptr, *chosen = nullptr;
-    for (int i = 0; ids && i < count && out->count < MIME_AUDIO_MAX_DEVICES; i++) {
-        const char *name = SDL_GetAudioDeviceName(ids[i]);
-        if (!name || !name[0])
-            continue;
-        MimeAudioDevice *d = &out->devices[out->count++];
-        d->id = ids[i];
-        /* the cut may fall inside a character, which the guest's conversion replaces. */
-        snprintf(d->name, sizeof(d->name), "%s", name);
-        SDL_AudioSpec spec;
-        if (SDL_GetAudioDeviceFormat(ids[i], &spec, nullptr)) {
-            d->rate = (uint32_t)spec.freq;
-            d->channels = (uint32_t)spec.channels;
-            d->bits = SDL_AUDIO_BITSIZE(spec.format);
-            d->is_float = SDL_AUDIO_ISFLOAT(spec.format);
-        }
-        uint32_t twin = 0;
-        for (uint32_t j = 0; j + 1 < out->count; j++)
-            twin += !strcmp(out->devices[j].name, d->name);
-        if (mime_pipewire_describe(capture, twin, d) > 0 && !chosen)
-            chosen = d;
-        if (!named && default_name && !strcmp(name, default_name))
-            named = d;
-    }
-    if (!chosen)
-        chosen = named;
-    if (!chosen && out->count)
-        chosen = &out->devices[0];
-    if (chosen)
-        chosen->flags |= MIME_AUDIO_DEVICE_DEFAULT;
-    SDL_free(ids);
+    mime_pipewire_list(capture, out);
 }
 
 static bool listed(const MimeAudioDeviceList *list, uint32_t id)
@@ -230,7 +157,7 @@ static bool listed(const MimeAudioDeviceList *list, uint32_t id)
     return false;
 }
 
-/* SDL has no event for a change of the default device, so the lists are compared a few times a second. */
+/* the lists are compared a few times a second, which also tells of a change of the default device. */
 static void *watcher(void *arg)
 {
     struct timespec tick = {0, 200000000};
@@ -243,7 +170,7 @@ static void *watcher(void *arg)
         bool changed = memcmp(now, g_known, sizeof(now)) != 0;
         if (changed) {
             memcpy(g_known, now, sizeof(now));
-            /* SDL keeps the stream of a device that is gone running into nothing. */
+            /* the stream of a device that is gone runs into nothing. */
             for (uint32_t i = 1; i < MAX_STREAMS; i++) {
                 Stream *s = g_streams[i];
                 if (!s)
@@ -266,9 +193,8 @@ static bool audio_ready(MimeVm *vm)
     pthread_mutex_lock(&g_lock);
     g_vm = vm;
     if (!g_audio)
-        g_audio = SDL_InitSubSystem(SDL_INIT_AUDIO);
+        g_audio = mime_pipewire_start();
     if (g_audio && !g_watcher) {
-        mime_pipewire_start();
         look(false, &g_known[0]);
         look(true, &g_known[1]);
         pthread_t thread;
@@ -323,20 +249,14 @@ uint64_t mime_audio_open(MimeVm *vm, uint64_t pa, uint64_t size, uint64_t *strea
     s->ring = base + MIME_AUDIO_HEADER_SIZE;
     s->frames = h.frames;
     s->frame_bytes = frame_bytes;
-    s->packed24 = h.bits == 24;
-    s->out_frame_bytes = s->packed24 ? h.channels * 4 : frame_bytes;
-    s->volume = 65536;
+    s->bits = h.bits;
+    s->is_float = h.is_float != 0;
     s->capture = h.capture != 0;
     s->device = h.device;
-    SDL_AudioSpec spec = {
-        .format = h.is_float ? SDL_AUDIO_F32 : h.bits == 16 ? SDL_AUDIO_S16 : SDL_AUDIO_S32,
-        .channels = (int)h.channels,
-        .freq = (int)h.rate,
-    };
-    SDL_AudioDeviceID followed = s->capture ? SDL_AUDIO_DEVICE_DEFAULT_RECORDING : SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
-    s->stream = SDL_OpenAudioDeviceStream(h.device ? h.device : followed, &spec, s->capture ? capture_render : render, s);
+    s->stream = mime_pipewire_open(s->capture, h.device, h.rate, h.channels, h.bits, s->is_float,
+                                   s->capture ? capture_render : render, s);
     if (!s->stream) {
-        mime_warn("audio: the host %s device does not open (%s)", s->capture ? "input" : "output", SDL_GetError());
+        mime_warn("audio: the host %s device does not open", s->capture ? "input" : "output");
         free(s);
         return MIME_HC_STATUS_IO_ERROR;
     }
@@ -360,7 +280,7 @@ uint64_t mime_audio_start(uint64_t stream, uint64_t running)
     Stream *s = stream < MAX_STREAMS ? g_streams[stream] : nullptr;
     bool ok = true;
     if (s && s->running != (running != 0)) {
-        ok = running ? SDL_ResumeAudioStreamDevice(s->stream) : SDL_PauseAudioStreamDevice(s->stream);
+        ok = mime_pipewire_run(s->stream, running != 0);
         if (ok)
             s->running = running != 0;
     }

@@ -18,7 +18,7 @@ void mime_ui_get_display(MimeDisplayInfo *info);
 bool mime_ui_get_keyboard(MimeKeyboardLayout *out);
 /* shows an error outside the machine, for a client started without a terminal. */
 void mime_ui_alert(const char *text);
-/* the process that shows a host dialog when the desktop has no kdialog or zenity, see host/linux/dialog.c. */
+/* a process of mime that shows a host dialog, -1 when the arguments are not for one. Linux has none. */
 int mime_ui_dialog_helper(int argc, char **argv);
 /* the idle process Discord detects a guest program by: blocks until the machine lets it go, -1 when not one. */
 int mime_ui_presence_helper(int argc, char **argv);

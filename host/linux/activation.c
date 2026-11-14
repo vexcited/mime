@@ -1,6 +1,6 @@
 /*
- * XDG activation for attention requests and notification tokens, which SDL does not handle here. requests and events
- * are described directly from the protocol specification, as for the viewporter in ui.c.
+ * XDG activation for attention requests, raises and notification tokens. requests and events are described directly
+ * from the protocol specification.
  */
 #include "ui_internal.h"
 
@@ -75,7 +75,8 @@ static void token_done(void *data, struct wl_proxy *proxy, const char *token)
 }
 
 /* a request without a serial or surface cannot represent user input. */
-static bool make_token(struct wl_display *display, const char *app_id, Token *token)
+static bool make_token(struct wl_display *display, struct wl_seat *seat, uint32_t serial, struct wl_surface *focus,
+                       Token *token)
 {
     struct wl_proxy *proxy = wl_proxy_marshal_flags(g_activation, 1, &token_interface,
                                                     wl_proxy_get_version(g_activation), 0, nullptr);
@@ -83,6 +84,10 @@ static bool make_token(struct wl_display *display, const char *app_id, Token *to
         return false;
     static const void *listener[1] = {(void *)token_done};
     wl_proxy_add_listener(proxy, (void (**)(void))listener, token);
+    if (seat && serial)
+        wl_proxy_marshal_flags(proxy, 0, nullptr, wl_proxy_get_version(proxy), 0, serial, seat);
+    if (focus)
+        wl_proxy_marshal_flags(proxy, 2, nullptr, wl_proxy_get_version(proxy), 0, focus);
     wl_proxy_marshal_flags(proxy, 3, nullptr, wl_proxy_get_version(proxy), 0);
     wl_display_roundtrip_queue(display, g_queue);
     wl_proxy_marshal_flags(proxy, 4, nullptr, wl_proxy_get_version(proxy), WL_MARSHAL_FLAG_DESTROY);
@@ -101,7 +106,20 @@ bool mime_activation_attention(struct wl_display *display, struct wl_surface *su
     if (!display || !surface || !bind(display))
         return false;
     Token token = {};
-    if (!make_token(display, app_id, &token))
+    if (!make_token(display, nullptr, 0, nullptr, &token))
+        return false;
+    activate(display, surface, token.value);
+    return true;
+}
+
+/* asks for the keyboard with the serial of the last input and the surface that has it. */
+bool mime_activation_raise(struct wl_display *display, struct wl_surface *surface, struct wl_seat *seat, uint32_t serial,
+                           struct wl_surface *focus, const char *app_id)
+{
+    if (!display || !surface || !bind(display))
+        return false;
+    Token token = {};
+    if (!make_token(display, seat, serial, focus, &token))
         return false;
     activate(display, surface, token.value);
     return true;

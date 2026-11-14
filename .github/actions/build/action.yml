@@ -17,7 +17,7 @@ runs:
         sudo apt-get update
 
         sudo apt-get install -y --no-install-recommends clang lld llvm cmake \
-          ninja-build pkg-config libsdl3-dev libwayland-dev \
+          ninja-build pkg-config libwayland-dev libwayland-bin libxkbcommon-dev \
           libcurl4-openssl-dev libsystemd-dev libpipewire-0.3-dev
 
         echo "id=$(dpkg-query -W | sha256sum | cut -c 1-16)" >> "$GITHUB_OUTPUT"

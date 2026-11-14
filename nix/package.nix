@@ -3,8 +3,9 @@
   stdenv,
   fetchurl,
   autoPatchelfHook,
-  sdl3,
   wayland,
+  libxkbcommon,
+  pipewire,
   curl,
   systemdLibs,
   vulkan-loader,
@@ -23,14 +24,17 @@ stdenv.mkDerivation (finalAttrs: {
   nativeBuildInputs = [ autoPatchelfHook ];
 
   buildInputs = [
-    sdl3
     wayland
+    libxkbcommon
     curl
     systemdLibs
     (lib.getLib stdenv.cc.cc)
   ];
 
-  runtimeDependencies = [ vulkan-loader ];
+  runtimeDependencies = [
+    vulkan-loader
+    pipewire
+  ];
 
   installPhase = ''
     runHook preInstall

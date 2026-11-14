@@ -1,11 +1,6 @@
-/*
- * Wayland drag and drop between host and guest. uses a separate data device on SDL's default queue, with handlers on
- * the main thread; SDL drop acceptance is disabled to avoid competing replies. host offers map to MIME_CLIP_* kinds
- * and clipboard conversions, and guest effects select accepted types and actions. outgoing drags advertise guest
- * formats and effects and use the button-press serial captured by a private pointer.
- */
 #include "convert.h"
 #include "ui_internal.h"
+#include "wayland.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -71,8 +66,8 @@ static int kind_index(uint32_t kind)
 }
 
 /*
- * prefetches offered data on drag entry. SDL's second data device may destroy its rejected offer on drop, causing
- * the compositor to release source data before later requests arrive. formats sharing a MIME type share one read.
+ * prefetches offered data on drag entry, so it is there whatever the source does once the drop is done. formats
+ * sharing a MIME type share one read.
  */
 typedef struct Reader {
     int fd;
@@ -390,9 +385,16 @@ static void device_drop(void *data, struct wl_data_device *device)
 
 static void device_selection(void *data, struct wl_data_device *device, struct wl_data_offer *id)
 {
-    /* discards clipboard offers handled by SDL to avoid retaining compositor objects. */
-    if (id)
-        offer_destroy(wl_data_offer_get_user_data(id));
+    if (!id) {
+        mime_clipboard_selection(nullptr, nullptr, 0);
+        return;
+    }
+    /* the clipboard keeps the offer and its types, which are all told by now. */
+    Offer *o = wl_data_offer_get_user_data(id);
+    mime_clipboard_selection(o->offer, o->mimes, o->mime_count);
+    o->mimes = nullptr;
+    o->mime_count = 0;
+    offer_free(o);
 }
 
 static const struct wl_data_device_listener device_listener = {device_data_offer, device_enter, device_leave,
@@ -692,7 +694,7 @@ static void *end_thread(void *arg)
 {
     Drag *d = arg;
     mime_set_thread_name("mime-dnd-end");
-    /* SDL's data device of a target ends a drop before the reads that came with it. */
+    /* a target may end a drop before the reads that came with it. */
     struct timespec grace = {0, 150 * 1000 * 1000};
     nanosleep(&grace, nullptr);
     for (int i = 0; i < 500; i++) {
@@ -721,10 +723,7 @@ static void source_handle_dnd_drop_performed(void *data, struct wl_data_source *
 
 static void source_handle_dnd_finished(void *data, struct wl_data_source *source)
 {
-    /*
-     * keeps the source until the next drag because targets may read after compositor completion; SDL ends drops into
-     * our own Windows early.
-     */
+    /* keeps the source until the next drag because targets may read after compositor completion. */
     Drag *d = data;
     pthread_t thread;
     __atomic_add_fetch(&d->refs, 1, __ATOMIC_RELAXED);
@@ -921,18 +920,24 @@ static void seat_name(void *data, struct wl_seat *seat, const char *name)
 
 static const struct wl_seat_listener seat_listener = {seat_capabilities, seat_name};
 
-static bool g_text_input;
-
 bool mime_ui_has_text_input(void)
 {
-    return g_text_input;
+    return mime_wl_has_text_input();
+}
+
+struct wl_data_device *mime_dnd_device(void)
+{
+    return g_device;
+}
+
+struct wl_data_device_manager *mime_dnd_manager(void)
+{
+    return g_manager;
 }
 
 static void registry_global(void *data, struct wl_registry *registry, uint32_t name, const char *interface,
                             uint32_t version)
 {
-    if (!strcmp(interface, "zwp_text_input_manager_v3"))
-        g_text_input = true;
     if (!strcmp(interface, wl_seat_interface.name) && !g_seat)
         g_seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
     else if (!strcmp(interface, wl_compositor_interface.name))
@@ -951,23 +956,14 @@ static const struct wl_registry_listener registry_listener = {registry_global, r
 
 void mime_dnd_init(void)
 {
-    if (!SDL_GetCurrentVideoDriver() || strcmp(SDL_GetCurrentVideoDriver(), "wayland"))
-        return;
-    g_display = SDL_GetPointerProperty(SDL_GetGlobalProperties(), SDL_PROP_GLOBAL_VIDEO_WAYLAND_WL_DISPLAY_POINTER,
-                                       nullptr);
+    g_display = mime_wl_display();
     if (!g_display)
         return;
-    /* SDL's own handling declines what it does not take, which would race with the answers given here. */
-    SDL_SetEventEnabled(SDL_EVENT_DROP_BEGIN, false);
-    SDL_SetEventEnabled(SDL_EVENT_DROP_POSITION, false);
-    SDL_SetEventEnabled(SDL_EVENT_DROP_FILE, false);
-    SDL_SetEventEnabled(SDL_EVENT_DROP_TEXT, false);
-    SDL_SetEventEnabled(SDL_EVENT_DROP_COMPLETE, false);
     struct wl_registry *registry = wl_display_get_registry(g_display);
     wl_registry_add_listener(registry, &registry_listener, nullptr);
     wl_display_roundtrip(g_display);
     if (!g_seat || !g_manager) {
-        mime_warn("the compositor has no data device: no drag and drop with the desktop");
+        mime_warn("the compositor has no data device: no clipboard and no drag and drop with the desktop");
         return;
     }
     wl_seat_add_listener(g_seat, &seat_listener, nullptr);

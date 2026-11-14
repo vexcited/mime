@@ -43,7 +43,7 @@ typedef struct MimeUiFrame {
 
 /*
  * Wayland uses a subsurface for each window of the guest that presents, over the part of its client area that shows
- * and excluded from SDL rendering, macOS a Metal layer over the client area; X11 uses the whole window and draws its
+ * and clear in the pixels of its window, macOS a Metal layer over the client area; X11 uses the whole window and draws its
  * frame. attach waits for the main thread. rectangles are window-relative guest pixels of the window's own, order is
  * the window's place in the paint order of its tree. without layers a window has one presenter and source is 0.
  */

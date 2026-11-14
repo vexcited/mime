@@ -17,7 +17,7 @@ Running Mime requires x86_64 Linux with KVM enabled and RW access to `/dev/kvm`.
 #### Arch Linux
 
 ```sh
-sudo pacman -Syu --needed base-devel clang llvm lld cmake ninja sdl3 wayland
+sudo pacman -Syu --needed base-devel clang llvm lld cmake ninja wayland libxkbcommon libpipewire
 ```
 
 #### NixOS
