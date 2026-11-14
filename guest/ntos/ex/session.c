@@ -45,7 +45,7 @@ void MimeSendDebugOutput(PEPROCESS process, const char *text, SIZE_T length)
 {
     UCHAR buffer[1024];
     MimeEvtDebugOutput *evt = (MimeEvtDebugOutput *)buffer;
-    ULONG64 request = process ? process->MimeRequestId : 0;
+    ULONG64 request = process ? process->MimeDebugRequest : 0;
     while (length) {
         SIZE_T n = length;
         if (n > sizeof(buffer) - sizeof(*evt))

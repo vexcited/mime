@@ -31,7 +31,7 @@ Move to a new release with `nix flake update mime`.
 
 ```sh
 # on arch linux, for example
-sudo pacman -S --needed sdl3 wayland curl vulkan-icd-loader
+sudo pacman -S --needed wayland libxkbcommon libpipewire curl vulkan-icd-loader
 
 # download the x86_64 binary
 curl -L https://github.com/vexcited/mime/releases/latest/download/mime-x86_64-linux.tar.gz | tar -xz

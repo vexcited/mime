@@ -918,7 +918,7 @@ void mime_vk_window_hidden(uint32_t id)
     pthread_mutex_unlock(&g_presenters_lock);
 }
 
-/* takes the host window from SDL and makes the surface, outside the presenter's lock. */
+/* takes the host window from the ui and makes the surface, outside the presenter's lock. */
 static void presenter_attach(MvkConnection *c, Presenter *p, MimeRect area, uint32_t order)
 {
     pthread_mutex_lock(&p->lock);

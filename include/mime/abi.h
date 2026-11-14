@@ -82,6 +82,7 @@ typedef struct MimeDisplayInfo {
 } MimeDisplayInfo;
 
 #define MIME_DISPLAY_STRETCH 0x1 /* windows drawn at a lower dpi than the display's are stretched by the host, see MimeWinConfig. */
+#define MIME_DISPLAY_NO_MINIMIZE 0x2 /* the desktop of the host has no place for a minimized window, as a tiling one. */
 
 /*
  * MIME_HC_TRAY manages notification icons, balloons and menus. commands occupy up to MIME_TRAY_COMMAND_SIZE
@@ -456,7 +457,7 @@ typedef struct MimeBootInfo {
     MimeKeyboardLayout keyboard;
     /* the host's gpus in the order dxgi lists them, which the display key and the device tree name. */
     uint32_t gpu_count;
-    uint32_t pad3;
+    uint32_t wheel_lines; /* the lines a notch of the wheel scrolls on the host, 0 when its desktop has no such setting. */
     MimeBootGpu gpus[MIME_BOOT_GPUS];
 } MimeBootInfo;
 

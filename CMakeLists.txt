@@ -1809,12 +1809,27 @@ if(APPLE)
         VERBATIM)
 else()
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(HOST_LIBS REQUIRED IMPORTED_TARGET sdl3 wayland-client)
+    pkg_check_modules(HOST_LIBS REQUIRED IMPORTED_TARGET wayland-client wayland-cursor xkbcommon)
     pkg_check_modules(HOST_SDBUS IMPORTED_TARGET libsystemd)
     find_package(Threads REQUIRED)
-    mime_glob(host_sources host/*.c host/linux/*.c host/vmm/*.c host/camera/*.c)
+    mime_glob(host_sources host/*.c host/linux/*.c host/vmm/*.c host/camera/*.c guest/lib/png/*.c)
     list(FILTER host_sources EXCLUDE REGEX "/host/vmm/(vm|vcpu|lazy|loader|window)[.]c$")
     list(APPEND host_sources host/gpu/shader.c host/gpu/glsl_compat.c host/ui/pe_icon.c)
+
+    # the protocols of the compositor past the core one, from the descriptions kept in third_party/wayland-protocols.
+    find_program(WAYLAND_SCANNER wayland-scanner REQUIRED)
+    set(wayland_gen ${MIME_BUILD_GEN}/wayland)
+    file(MAKE_DIRECTORY ${wayland_gen})
+    foreach(protocol xdg-shell viewporter tablet-v2 fractional-scale-v1 cursor-shape-v1 xdg-toplevel-icon-v1
+            text-input-unstable-v3 pointer-constraints-unstable-v1 relative-pointer-unstable-v1 xdg-output-unstable-v1)
+        set(xml ${CMAKE_SOURCE_DIR}/third_party/wayland-protocols/${protocol}.xml)
+        add_custom_command(OUTPUT ${wayland_gen}/${protocol}.h ${wayland_gen}/${protocol}.c
+            COMMAND ${WAYLAND_SCANNER} client-header ${xml} ${wayland_gen}/${protocol}.h
+            COMMAND ${WAYLAND_SCANNER} private-code ${xml} ${wayland_gen}/${protocol}.c
+            DEPENDS ${xml} VERBATIM)
+        list(APPEND host_sources ${wayland_gen}/${protocol}.c)
+        list(APPEND wayland_headers ${wayland_gen}/${protocol}.h)
+    endforeach()
 
     add_executable(mime ${host_sources} ${vulkan_host_sources} ${MIME_BUILD_GEN}/rom.S $<TARGET_OBJECTS:mvk-host>
         $<TARGET_OBJECTS:shaderc>)
@@ -1822,6 +1837,8 @@ else()
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party;${CMAKE_SOURCE_DIR}/third_party/glslang")
     set_source_files_properties(host/linux/gpu.c PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers
         INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_party/khronos;${vulkan_gen};${CMAKE_SOURCE_DIR}/third_party/glslang")
+    set_source_files_properties(host/linux/wayland.c PROPERTIES OBJECT_DEPENDS "${wayland_headers}")
+    target_include_directories(mime PRIVATE ${wayland_gen} guest/lib)
     target_compile_definitions(mime PRIVATE _GNU_SOURCE)
     target_link_libraries(mime PRIVATE PkgConfig::HOST_LIBS Threads::Threads m)
     # the client tells a machine of another build by it, see host/build_id.c.
@@ -1832,19 +1849,14 @@ else()
     else()
         message(STATUS "mime: no libsystemd, the host will not show the guest's notification icons")
     endif()
-    # only the headers: the library is loaded at run time, so a host without PipeWire still starts.
-    pkg_check_modules(HOST_PIPEWIRE libpipewire-0.3)
-    if(HOST_PIPEWIRE_FOUND)
-        set(pipewire_includes "")
-        foreach(dir ${HOST_PIPEWIRE_INCLUDE_DIRS})
-            list(APPEND pipewire_includes "-isystem${dir}")
-        endforeach()
-        set_source_files_properties(host/linux/pipewire.c PROPERTIES COMPILE_DEFINITIONS MIME_HAVE_PIPEWIRE=1
-            COMPILE_OPTIONS "${pipewire_includes}")
-        target_link_libraries(mime PRIVATE ${CMAKE_DL_LIBS})
-    else()
-        message(STATUS "mime: no libpipewire headers, audio devices get the formats SDL tells")
-    endif()
+    # only the headers: the library is loaded at run time, so a host without PipeWire still starts, with no sound.
+    pkg_check_modules(HOST_PIPEWIRE REQUIRED libpipewire-0.3)
+    set(pipewire_includes "")
+    foreach(dir ${HOST_PIPEWIRE_INCLUDE_DIRS})
+        list(APPEND pipewire_includes "-isystem${dir}")
+    endforeach()
+    set_source_files_properties(host/linux/pipewire.c PROPERTIES COMPILE_OPTIONS "${pipewire_includes}")
+    target_link_libraries(mime PRIVATE ${CMAKE_DL_LIBS})
     set_target_properties(mime PROPERTIES LINKER_LANGUAGE CXX)
 endif()
 

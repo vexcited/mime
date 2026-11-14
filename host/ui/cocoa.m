@@ -1396,6 +1396,12 @@ bool mime_ui_get_keyboard(MimeKeyboardLayout *out)
     return false;
 }
 
+/* macOS scrolls by distance, not by lines. */
+uint32_t mime_ui_wheel_lines(void)
+{
+    return 0;
+}
+
 void mime_ui_get_display(MimeDisplayInfo *info)
 {
     memset(info, 0, sizeof(*info));

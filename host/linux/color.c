@@ -1,7 +1,7 @@
 /*
- * what the compositor tells of each output's colors through wp_color_manager_v1, which SDL keeps to itself. requests
+ * what the compositor tells of each output's colors through wp_color_manager_v1. requests
  * and events are described directly from the protocol specification, as for the activation in activation.c. a thread
- * of its own reads the events, as the main thread sleeps in SDL and nothing there wakes for another queue.
+ * of its own reads the events, as nothing wakes the main thread for another queue.
  */
 #include "ui_internal.h"
 
@@ -71,7 +71,7 @@ enum { PRIMARIES_SRGB = 1, PRIMARIES_BT2020 = 6, PRIMARIES_DCI_P3 = 8, PRIMARIES
 #define REFERENCE_NITS 203.0
 
 typedef struct Output {
-    struct wl_output *output; /* SDL's, what tells the outputs apart. */
+    struct wl_output *output; /* what tells the outputs apart. */
     struct wl_proxy *proxy;
     uint32_t serial; /* of the last question asked. */
     bool answered;
@@ -439,7 +439,7 @@ bool mime_color_output(struct wl_display *display, struct wl_output *output, boo
     return known;
 }
 
-/* the outputs came or went: SDL's objects for them are other ones now. */
+/* the outputs came or went: the objects for them are other ones now. */
 void mime_color_forget(void)
 {
     if (!g_manager)
