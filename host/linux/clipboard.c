@@ -88,12 +88,30 @@ void mime_clipboard_init(void)
 {
 }
 
-/* main thread. a program that gives the keyboard away keeps its selection, so an empty one changes nothing. */
+/* main thread. an offer without a type, or the machine's own, changes nothing. */
 void mime_clipboard_selection(struct wl_data_offer *offer, char **mimes, size_t count)
 {
     bool own = false;
     for (size_t i = 0; i < count; i++)
         own = own || !strcmp(mimes[i], OWN_TYPE);
+    if (!offer && !count) {
+        /* the selection is gone, as when the program that held it ended: what the guest knew of it is too. */
+        pthread_mutex_lock(&g.lock);
+        if (!g.offer) {
+            pthread_mutex_unlock(&g.lock);
+            return;
+        }
+        wl_data_offer_destroy(g.offer);
+        g.offer = nullptr;
+        free_mimes_locked();
+        free_cache_locked();
+        g.mask = 0;
+        uint32_t generation = ++g.generation;
+        pthread_mutex_unlock(&g.lock);
+        MimeInputEvent ev = {.type = MIME_INPUT_CLIPBOARD, .y = (int32_t)generation};
+        mime_ui_emit(&ev);
+        return;
+    }
     if (!offer || !count || own) {
         if (offer)
             wl_data_offer_destroy(offer);
@@ -370,14 +388,20 @@ static void *send_thread(void *arg)
     } else {
         data = serve(s->mime, &size);
     }
+    /* a program that asks and then does not read would hold the thread for good. */
+    int flags = fcntl(s->fd, F_GETFL);
+    if (flags >= 0)
+        fcntl(s->fd, F_SETFL, flags | O_NONBLOCK);
     while (data && done < size) {
         ssize_t n = write(s->fd, data + done, size - done);
         if (n < 0 && errno == EINTR)
             continue;
         if (n < 0 && errno == EAGAIN) {
             struct pollfd pfd = {s->fd, POLLOUT, 0};
-            poll(&pfd, 1, REQUEST_TIMEOUT_MS);
-            continue;
+            int ready = poll(&pfd, 1, REQUEST_TIMEOUT_MS);
+            if (ready > 0 || (ready < 0 && errno == EINTR))
+                continue;
+            break;
         }
         if (n <= 0)
             break;
