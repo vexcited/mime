@@ -100,3 +100,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions and contribution g
 ## Community
 
 If you're running into any issue or asking for any feature, please feel free to [open an issue](https://code.vexcited.com/mime/mime/issues) or [join Mime's Discord server](https://discord.gg/SfH2VgX2aq) to come talk with us!
+
+## License
+
+Mime is licensed under the [GNU Lesser General Public License](LICENSE), either version 2.1 of the License, or (at your option) any later version.
