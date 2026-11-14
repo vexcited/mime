@@ -550,6 +550,7 @@ BOOLEAN KiSetupUserException(PKTRAP_FRAME frame, PVOID dispatcher, PEXCEPTION_RE
 BOOLEAN KiSetupUserCallback(PKTRAP_FRAME frame, const KTRAP_FRAME *trap, PVOID dispatcher, ULONG api,
                             const void *input, ULONG input_length);
 void KiDumpTrapFrame(const char *what, const KTRAP_FRAME *frame);
+void KiDumpFailedServices(void);
 void KiFlushInstructionCache(void);
 void KiInitializeProcessorArch(void);
 void KiDeliverApcs(KPROCESSOR_MODE mode, PKTRAP_FRAME frame);
@@ -1326,6 +1327,8 @@ typedef struct _PSP_SYSTEM_DLL {
     PVOID KiUserCallbackDispatcher;
 } PSP_SYSTEM_DLL, *PPSP_SYSTEM_DLL;
 
+#define PS_FAILED_SERVICES 32
+
 typedef struct _EPROCESS {
     KPROCESS Pcb;
     HANDLE UniqueProcessId;
@@ -1381,6 +1384,15 @@ typedef struct _EPROCESS {
     ULONG64 MitigationMap[3];                     /* the creation options, in the kernel's layout. */
     ULONG64 MitigationFlags[2];                   /* the same as PROCESS_CREATION_MITIGATION_POLICY and POLICY2. */
     ULONG MitigationPolicy[MIME_POLICY_COUNT];    /* the flag word of each PROCESS_MITIGATION_POLICY class. */
+    /* the last system services that failed, for the report of a crash. a repeat of the newest one is only counted. */
+    struct {
+        USHORT Service;
+        USHORT Repeats;
+        ULONG Thread;
+        NTSTATUS Status;
+        ULONG64 Time;
+    } FailedServices[PS_FAILED_SERVICES];
+    ULONG FailedServiceCount;
     ULONG ChildProcessPolicy;                     /* PROCESS_CREATION_CHILD_PROCESS_*. */
     ULONG Win32kFilter[2];
     ULONG AllApplicationPackagesPolicy, DesktopAppPolicy, ComponentFilter;

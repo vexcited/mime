@@ -302,6 +302,7 @@ NTSTATUS NTAPI NtRaiseException(PEXCEPTION_RECORD record, PCONTEXT context, BOOL
         KiLogPrintf("  %s of address %p", rec.ExceptionInformation[0] == 1 ? "write" : rec.ExceptionInformation[0] == 8 ? "execute" : "read",
                     (PVOID)rec.ExceptionInformation[1]);
     KiDumpTrapFrame("raised from", frame);
+    KiDumpFailedServices();
     PspTerminateProcess(process, rec.ExceptionCode);
     KiExitToUserMode(frame);
     return STATUS_SUCCESS;
