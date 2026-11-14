@@ -40,6 +40,7 @@ typedef struct Pad {
     bool hidden; /* not told to the guest, see hide_shadowed. */
     bool told;
     bool dirty;
+    bool dropped; /* the kernel lost events, and what is left of their packet is not read. */
 } Pad;
 
 static Pad g_pads[MAX_PADS];
@@ -246,6 +247,19 @@ static void pad_read(Pad *p)
         }
         for (size_t i = 0; i < (size_t)got / sizeof(events[0]); i++) {
             const struct input_event *e = &events[i];
+            if (p->dropped) {
+                /* the state is read whole once the packet that lost events ends. */
+                if (e->type != EV_SYN || e->code != SYN_REPORT)
+                    continue;
+                p->dropped = false;
+                if (ioctl(p->fd, EVIOCGKEY(sizeof(p->keys)), p->keys) < 0) {
+                }
+                for (unsigned axis = 0; axis < ABS_CNT; axis++)
+                    if (p->abs[axis].maximum > p->abs[axis].minimum && ioctl(p->fd, EVIOCGABS(axis), &p->abs[axis]) >= 0)
+                        p->value[axis] = p->abs[axis].value;
+                p->dirty = true;
+                continue;
+            }
             if (e->type == EV_KEY && e->code < KEY_CNT) {
                 unsigned long mask = 1ul << (e->code % (8 * sizeof(unsigned long)));
                 unsigned long *word = &p->keys[e->code / (8 * sizeof(unsigned long))];
@@ -255,13 +269,7 @@ static void pad_read(Pad *p)
                 p->value[e->code] = e->value;
                 p->dirty = true;
             } else if (e->type == EV_SYN && e->code == SYN_DROPPED) {
-                /* the kernel lost events: the state is read whole again. */
-                if (ioctl(p->fd, EVIOCGKEY(sizeof(p->keys)), p->keys) < 0) {
-                }
-                for (unsigned axis = 0; axis < ABS_CNT; axis++)
-                    if (p->abs[axis].maximum > p->abs[axis].minimum && ioctl(p->fd, EVIOCGABS(axis), &p->abs[axis]) >= 0)
-                        p->value[axis] = p->abs[axis].value;
-                p->dirty = true;
+                p->dropped = true;
             }
         }
     }
