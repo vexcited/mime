@@ -366,6 +366,11 @@ static void display_adapter(void)
             set(keys[i], L"HardwareInformation.AdapterString", REG_BINARY, name, (ULONG)(wcslen(name) + 1) * sizeof(WCHAR));
         }
 #endif
+        /* the manifests of the vulkan driver, where the khronos loader a program ships looks for them. */
+        static const WCHAR icd[] = L"C:\\Windows\\System32\\vulkan-icd.json\0";
+        static const WCHAR icd_wow[] = L"C:\\Windows\\SysWOW64\\vulkan-icd.json\0";
+        set(keys[i], L"VulkanDriverName", REG_MULTI_SZ, icd, sizeof(icd));
+        set(keys[i], L"VulkanDriverNameWoW", REG_MULTI_SZ, icd_wow, sizeof(icd_wow));
     }
 }
 
