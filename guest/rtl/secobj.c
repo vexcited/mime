@@ -317,12 +317,15 @@ static PACL acl_from(BUFFER *aces, USHORT count, UCHAR revision)
     return acl;
 }
 
-/* appends the acl's explicit aces, skipping inherited ones. */
-static BOOLEAN keep_explicit(BUFFER *out, const ACL *acl, USHORT *count, UCHAR *revision)
+/*
+ * appends the creator's aces, all of them or only the explicit ones. the header is not trusted: windows walks the
+ * aces by their count, whatever the revision and the size say, and the list it makes has a header of its own.
+ */
+static BOOLEAN keep_aces(BUFFER *out, const ACL *acl, BOOLEAN explicit_only, USHORT *count, UCHAR *revision)
 {
     const UCHAR *ace = (const UCHAR *)(acl + 1);
     for (ULONG i = 0; i < acl->AceCount; i++, ace += *(const USHORT *)(ace + 2)) {
-        if (ace[1] & INHERITED_ACE)
+        if (explicit_only && (ace[1] & INHERITED_ACE))
             continue;
         if (!buffer_put(out, ace, *(const USHORT *)(ace + 2)))
             return FALSE;
@@ -411,8 +414,8 @@ static PACL copy_acl(const ACL *acl, const GENERIC_MAPPING *mapping)
 }
 
 /*
- * one acl of a new object. without auto inheritance the creator's acl is used as is, otherwise the creator's explicit
- * aces come first, then what the parent hands down. returns false when there is nothing, so the caller uses a default.
+ * one acl of a new object. without auto inheritance the creator's aces are all there is, otherwise its explicit aces
+ * come first, then what the parent hands down. returns false when there is nothing, so the caller uses a default.
  */
 static NTSTATUS build_list(INHERIT *in, const ACL *creator_acl, BOOLEAN creator_present, BOOLEAN creator_default,
                            BOOLEAN protect, const ACL *parent_acl, PACL *out, BOOLEAN *present)
@@ -425,15 +428,8 @@ static NTSTATUS build_list(INHERIT *in, const ACL *creator_acl, BOOLEAN creator_
     *out = nullptr;
     *present = FALSE;
 
-    if (explicit_present && !in->auto_inherit) {
-        *out = copy_acl(creator_acl, in->mapping);
-        if (creator_acl && !*out)
-            return STATUS_NO_MEMORY;
-        *present = TRUE;
-        return STATUS_SUCCESS;
-    }
     if (explicit_present && creator_acl) {
-        if (!keep_explicit(&aces, creator_acl, &count, &revision))
+        if (!keep_aces(&aces, creator_acl, in->auto_inherit, &count, &revision))
             return STATUS_NO_MEMORY;
         if (in->mapping) {
             UCHAR *ace = aces.data;
@@ -441,7 +437,7 @@ static NTSTATUS build_list(INHERIT *in, const ACL *creator_acl, BOOLEAN creator_
                 map_ace(ace, in->mapping);
         }
     }
-    if (!protect && parent_acl)
+    if (!protect && parent_acl && (in->auto_inherit || !explicit_present))
         status = inherit_aces(in, parent_acl, &aces, &count, &revision);
     if (NT_SUCCESS(status) && (count || (explicit_present && creator_acl))) {
         if (8 + aces.length > 0xFFFF) {
@@ -466,7 +462,8 @@ NTSTATUS MimeSecNewObject(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR crea
 {
     if (!object)
         return STATUS_INVALID_PARAMETER;
-    if ((parent && !RtlValidSecurityDescriptor(parent)) || (creator && !RtlValidSecurityDescriptor(creator)))
+    /* the creator's descriptor is not checked, as in windows: wix 3 bundles hand in a list that is all zeroes. */
+    if (parent && !RtlValidSecurityDescriptor(parent))
         return STATUS_INVALID_PARAMETER;
 
     BOOLEAN creator_default = (flags & SEF_DEFAULT_DESCRIPTOR_FOR_OBJECT) != 0;
@@ -522,7 +519,10 @@ NTSTATUS MimeSecNewObject(PSECURITY_DESCRIPTOR parent, PSECURITY_DESCRIPTOR crea
                 dacl_present = TRUE;
             }
         }
-        if (source) {
+        /* a default list is copied whole, so its header has to be right. */
+        if (source && !RtlValidAcl(source)) {
+            status = STATUS_INVALID_PARAMETER;
+        } else if (source) {
             dacl = copy_acl(source, mapping);
             if (!dacl)
                 status = STATUS_NO_MEMORY;
