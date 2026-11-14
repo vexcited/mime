@@ -1196,8 +1196,14 @@ void mime_wl_window_position(MimeWlWindow *w, int x, int y)
 
 void mime_wl_window_minimize(MimeWlWindow *w)
 {
-    if (w->kind != MIME_WL_TOPLEVEL || g.no_minimize)
+    if (w->kind != MIME_WL_TOPLEVEL)
         return;
+    /* a desktop that cannot minimize shows the window that starts as an icon. */
+    if (g.no_minimize) {
+        if (!w->toplevel)
+            mime_wl_window_show(w);
+        return;
+    }
     /* a window that starts as an icon is one of the compositor's all the same. */
     if (!w->toplevel)
         mime_wl_window_show(w);
