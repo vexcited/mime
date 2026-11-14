@@ -1694,6 +1694,13 @@ set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${CMAKE_SOURCE_DIR}/data/winf
 set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${CMAKE_SOURCE_DIR}/data/wintypelibs/stdole2.tlb
     ${CMAKE_SOURCE_DIR}/data/syswow64/stdole2.tlb)
 
+# ===================================== vulkan =====================================
+
+# the manifest that names vulkan-1.dll as the adapter's vulkan driver, for the khronos loader a program ships: as
+# C:\Windows\System32\vulkan-icd.json and C:\Windows\SysWOW64\vulkan-icd.json, each beside the dll it names.
+set_property(GLOBAL APPEND PROPERTY MIME_ROM_FILES ${CMAKE_SOURCE_DIR}/data/vulkan/vulkan-icd.json
+    ${CMAKE_SOURCE_DIR}/data/syswow64/vulkan-icd.json)
+
 # ===================================== color =====================================
 
 # the sRGB profile of the color folder, made by scripts/asset/icc.cmake, served from the ROM as
