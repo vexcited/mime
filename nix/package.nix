@@ -3,6 +3,7 @@
   stdenv,
   fetchurl,
   autoPatchelfHook,
+  sdl3,
   wayland,
   libxkbcommon,
   pipewire,
@@ -24,6 +25,8 @@ stdenv.mkDerivation (finalAttrs: {
   nativeBuildInputs = [ autoPatchelfHook ];
 
   buildInputs = [
+    # the release above still links it.
+    sdl3
     wayland
     libxkbcommon
     curl
