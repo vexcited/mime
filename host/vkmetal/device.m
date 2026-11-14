@@ -464,7 +464,6 @@ VKAPI_ATTR void VKAPI_CALL DestroyDevice(VkDevice device, const VkAllocationCall
     [q->event release];
     [q->queue release];
     [device->residency release];
-    mime_pipeline_cache_flush(device->pipelines);
     [device->mtl release];
     free(device);
 }
