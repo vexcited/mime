@@ -514,7 +514,12 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
     case SPI_GETBORDER:
         u = 1;
         return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
-    case SPI_GETWHEELSCROLLLINES:
+    case SPI_GETWHEELSCROLLLINES: {
+        /* the host's own count where its desktop has one. */
+        const MimeBootInfo *boot = HalMimeGetBootInfo();
+        u = boot && boot->wheel_lines ? boot->wheel_lines : 3;
+        return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
+    }
     case SPI_GETWHEELSCROLLCHARS:
         u = 3;
         return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));

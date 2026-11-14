@@ -6,6 +6,7 @@
 #include <linux/input-event-codes.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -775,6 +776,34 @@ static void update_layout(void)
               c[0x11][0] < 0x80 ? (char)c[0x11][0] : '?');
     MimeInputEvent ev = {.type = MIME_INPUT_KEYMAP};
     emit(&ev);
+}
+
+/* plasma keeps the count for its programs in kdeglobals, three when it is not written. gnome has none. */
+uint32_t mime_ui_wheel_lines(void)
+{
+    const char *desktop = getenv("XDG_CURRENT_DESKTOP");
+    if (!desktop || !strstr(desktop, "KDE"))
+        return 0;
+    char path[1024];
+    const char *config = getenv("XDG_CONFIG_HOME"), *home = getenv("HOME");
+    if (config && *config)
+        snprintf(path, sizeof(path), "%s/kdeglobals", config);
+    else
+        snprintf(path, sizeof(path), "%s/.config/kdeglobals", home ? home : "");
+    FILE *f = fopen(path, "r");
+    if (!f)
+        return 3;
+    char line[512];
+    bool group = false;
+    long lines = 3;
+    while (fgets(line, sizeof(line), f)) {
+        if (line[0] == '[')
+            group = !strncmp(line, "[KDE]", 5);
+        else if (group && !strncmp(line, "WheelScrollLines=", 17))
+            lines = strtol(line + 17, nullptr, 10);
+    }
+    fclose(f);
+    return lines >= 1 && lines <= 100 ? (uint32_t)lines : 3;
 }
 
 bool mime_ui_get_keyboard(MimeKeyboardLayout *out)
