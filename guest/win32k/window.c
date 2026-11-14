@@ -1366,12 +1366,24 @@ static void deactivate_minimized(WND *w)
         MsgSendEvent(w, WM_ACTIVATE, MAKEWPARAM(WA_INACTIVE, TRUE), 0);
 }
 
+BOOLEAN WndCanMinimize(WND *w)
+{
+    return !(W32Display.NoMinimize && WndIsTopLevel(w));
+}
+
 void WndShow(WND *w, int cmd)
 {
     if (!w || w == g_desktop || (UINT)cmd > SW_FORCEMINIMIZE)
         return;
     if (cmd == SW_SHOWDEFAULT)
         cmd = SW_SHOWNORMAL;
+    if (!WndCanMinimize(w) && !(w->Style & WS_MINIMIZE) &&
+        (cmd == SW_MINIMIZE || cmd == SW_SHOWMINIMIZED || cmd == SW_SHOWMINNOACTIVE || cmd == SW_FORCEMINIMIZE)) {
+        /* a window that is there stays as it is, one that opens as an icon opens as a window. */
+        if (w->Style & WS_VISIBLE)
+            return;
+        cmd = cmd == SW_SHOWMINIMIZED ? SW_SHOWNORMAL : SW_SHOWNOACTIVATE;
+    }
     UserReference(&w->Header);
     if ((w->Flags & WNDF_FULLSCREEN) && cmd != SW_SHOW && cmd != SW_SHOWNA) {
         WndFullscreen(w, FALSE, nullptr);

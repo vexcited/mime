@@ -132,6 +132,7 @@ void MetricsInitialize(void)
     MonitorsTakeChanged();
     W32Display.Dpi = boot->display.dpi ? boot->display.dpi : 96;
     W32Display.Stretch = (boot->display.flags & MIME_DISPLAY_STRETCH) != 0;
+    W32Display.NoMinimize = (boot->display.flags & MIME_DISPLAY_NO_MINIMIZE) != 0;
     for (int i = 0; i < NUM_SYSCOLORS; i++) {
         g_colors[i] = g_default_colors[i];
         g_brushes[i] = GdiCreateSystemBrush(g_colors[i], i);

@@ -572,6 +572,8 @@ void mime_ui_get_display(MimeDisplayInfo *info)
     }
     *info = g_display;
     info->flags |= MIME_DISPLAY_STRETCH;
+    if (g_video && !mime_wl_can_minimize())
+        info->flags |= MIME_DISPLAY_NO_MINIMIZE;
 }
 
 uint32_t mime_ui_get_monitors(MimeMonitor *monitors, uint32_t capacity)
