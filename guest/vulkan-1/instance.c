@@ -396,3 +396,20 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(VkDevice device, co
 {
     return find_proc(name);
 }
+
+/*
+ * the driver interface of the khronos loader. a program that ships its own vulkan-1.dll finds this one through the
+ * VulkanDriverName of the adapter, see data/vulkan/vulkan-icd.json, and loads it as its driver. version 5 is the
+ * last one that asks for nothing more than these two: surfaces and vulkan 1.1 and later are the driver's.
+ */
+VKAPI_ATTR VkResult VKAPI_CALL vk_icdNegotiateLoaderICDInterfaceVersion(uint32_t *version)
+{
+    if (*version > 5)
+        *version = 5;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vk_icdGetInstanceProcAddr(VkInstance instance, const char *name)
+{
+    return vkGetInstanceProcAddr(instance, name);
+}

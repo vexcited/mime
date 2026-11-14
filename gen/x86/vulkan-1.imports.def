@@ -244,3 +244,5 @@ EXPORTS
     vkUpdateDescriptorSets@20
     vkWaitForFences@24
     vkWaitSemaphores@16
+    vk_icdGetInstanceProcAddr@8
+    vk_icdNegotiateLoaderICDInterfaceVersion@4
