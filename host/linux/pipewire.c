@@ -591,6 +591,7 @@ struct MimePwStream {
     void *ctx;
     uint32_t stride;
     bool capture;
+    bool failed;
 };
 
 static void stream_process(void *data)
@@ -616,8 +617,16 @@ static void stream_process(void *data)
     pw.stream_queue_buffer(s->stream, b);
 }
 
+static void stream_state(void *data, enum pw_stream_state old, enum pw_stream_state state, const char *error)
+{
+    MimePwStream *s = data;
+    if (state == PW_STREAM_STATE_ERROR)
+        __atomic_store_n(&s->failed, true, __ATOMIC_RELEASE);
+}
+
 static const struct pw_stream_events stream_events = {
     PW_VERSION_STREAM_EVENTS,
+    .state_changed = stream_state,
     .process = stream_process,
 };
 
@@ -711,6 +720,11 @@ bool mime_pipewire_run(MimePwStream *s, bool running)
     bool ok = pw.stream_set_active(s->stream, running) >= 0;
     pw.thread_loop_unlock(g_loop);
     return ok;
+}
+
+bool mime_pipewire_failed(const MimePwStream *s)
+{
+    return __atomic_load_n(&s->failed, __ATOMIC_ACQUIRE);
 }
 
 void mime_pipewire_close(MimePwStream *s)
