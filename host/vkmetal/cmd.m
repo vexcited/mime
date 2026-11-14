@@ -853,6 +853,7 @@ MTLClearColor vkm_clear_color(VkFormat format, const VkClearColorValue *v)
 static void attach(VkmAttach *a, VkImageView view, const VkRenderingAttachmentInfo *info, bool whole)
 {
     a->texture = view->render;
+    a->image = view->image;
     a->level = view->render_level;
     a->slice = view->render_slice;
     bool resolve = info->resolveMode != VK_RESOLVE_MODE_NONE && info->resolveImageView;
@@ -922,6 +923,7 @@ static void begin_rendering(VkCommandBuffer cmd, const VkRenderingInfo *info)
         b->visibility = s->occlusion->buffer;
     s->rendering = true;
     s->drawn = false;
+    s->writes = 0;
     s->begin = at;
     s->color_count = b->color_count;
     s->samples = b->samples;
@@ -1022,6 +1024,7 @@ VkmBeginRender *vkm_render_split(VkCommandBuffer cmd)
     *b = next;
     b->head = head;
     s->begin = at;
+    s->writes = 0;
     vkm_forget(cmd);
     return b;
 }
@@ -1034,6 +1037,7 @@ static void begin_inherited(VkCommandBuffer cmd, const VkCommandBufferInheritanc
         vkm_find(inherit->pNext, VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_RENDERING_INFO);
     s->rendering = true;
     s->drawn = true;
+    s->writes = 0;
     s->samples = 1;
     s->width = s->height = 16384;
     if (r) {
@@ -1551,6 +1555,43 @@ static uint32_t cull_mode(uint8_t cull)
     }
 }
 
+void vkm_pass_writes(VkCommandBuffer cmd, uint32_t writes)
+{
+    VkmGfxState *s = STATE(cmd);
+    if (!(writes & ~s->writes))
+        return;
+    VkmOpWrites *o = vkm_emit(cmd, VKM_OP_WRITES, sizeof(*o));
+    if (!o)
+        return;
+    o->mask = writes & ~s->writes;
+    s->writes |= writes;
+}
+
+static bool stencil_writes(const VkmStencilFace *f)
+{
+    return f->write && (f->fail || f->pass || f->depth_fail);
+}
+
+/* the attachments a draw of the stages writes as the state is, and whether its shaders store to other memory. */
+static uint32_t draw_writes(const VkmGfxState *s, const Stages *st)
+{
+    const VkmDynamic *d = &s->dyn;
+    uint32_t writes = st->vs->writes_memory || (st->fs && st->fs->writes_memory) ? VKM_WRITES_APART : 0;
+    if (st->discard)
+        return writes;
+    for (uint32_t i = 0; i < s->color_count; i++)
+        if (s->colors[i] && d->blend[i].write && st->fs && (st->fs->outputs & (1u << i)))
+            writes |= 1u << i;
+    /* the second output of dual source blending is a source of the first attachment's, not the second's color. */
+    if (d->blend[0].enable && uses_src1(&d->blend[0]))
+        writes &= ~2u;
+    if (s->has_depth && d->depth_test && d->depth_write)
+        writes |= VKM_WRITES_DEPTH;
+    if (s->has_stencil && d->stencil_test && (stencil_writes(&d->front_stencil) || stencil_writes(&d->back_stencil)))
+        writes |= VKM_WRITES_STENCIL;
+    return writes;
+}
+
 /* the state of a draw that differs from the last one; false when nothing can be drawn. */
 static bool prepare_stages(VkCommandBuffer cmd, const Stages *st)
 {
@@ -1558,6 +1599,7 @@ static bool prepare_stages(VkCommandBuffer cmd, const Stages *st)
     const VkmDynamic *d = &s->dyn;
     if (!s->rendering || !st->vs || (d->cull == VK_CULL_MODE_FRONT_AND_BACK && !st->discard))
         return false;
+    vkm_pass_writes(cmd, draw_writes(s, st));
     bool zero = false;
     if (s->pipeline_dirty || !s->set_pipeline) {
         id<MTLRenderPipelineState> pipeline = resolve_pipeline(cmd, st, &zero);
@@ -1774,6 +1816,7 @@ static void xfb_pass(VkCommandBuffer cmd, VkmXfbParams *p, const VkmXfb *layout)
     VkmXfbParams *x = vkm_upload(cmd, sizeof(*x), 16, &gpu, nullptr, nullptr);
     if (!pipeline || !x)
         return;
+    vkm_pass_writes(cmd, VKM_WRITES_APART);
     for (uint32_t b = 0; b < 4; b++) {
         p->buffers[b] = s->xfb[b].address;
         p->sizes[b] = (uint32_t)MIME_MIN(s->xfb[b].size, (uint64_t)UINT32_MAX);

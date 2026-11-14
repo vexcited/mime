@@ -142,6 +142,17 @@ static void swapchain_free(VkSwapchainKHR sc)
     free(sc);
 }
 
+static VkFormat srgb_twin(VkFormat format)
+{
+    switch (format) {
+    case VK_FORMAT_B8G8R8A8_UNORM: return VK_FORMAT_B8G8R8A8_SRGB;
+    case VK_FORMAT_B8G8R8A8_SRGB: return VK_FORMAT_B8G8R8A8_UNORM;
+    case VK_FORMAT_R8G8B8A8_UNORM: return VK_FORMAT_R8G8B8A8_SRGB;
+    case VK_FORMAT_R8G8B8A8_SRGB: return VK_FORMAT_R8G8B8A8_UNORM;
+    default: return VK_FORMAT_UNDEFINED;
+    }
+}
+
 static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const VkSwapchainCreateInfoKHR *info,
                                                          const VkAllocationCallbacks *a, VkSwapchainKHR *out)
 {
@@ -158,8 +169,17 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateSwapchainKHR(VkDevice device, const 
     sc->mode = info->presentMode;
     sc->count = MIME_MIN(MIME_MAX(info->minImageCount, 2u), (uint32_t)MIME_ARRAY_COUNT(sc->images));
     VkResult result = VK_SUCCESS;
+    /* views of a swapchain that is not mutable have its format, or differ from it only in being srgb. */
+    VkFormat alike[2] = {info->imageFormat, srgb_twin(info->imageFormat)};
+    VkImageFormatListCreateInfo own = {VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO, nullptr, alike[1] ? 2 : 1,
+                                       alike};
+    const VkImageFormatListCreateInfo *named = vkm_find(info->pNext, VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO);
+    bool mutable = (info->flags & VK_SWAPCHAIN_CREATE_MUTABLE_FORMAT_BIT_KHR) != 0;
+    VkImageFormatListCreateInfo list = mutable && named ? *named : own;
+    list.pNext = nullptr;
     VkImageCreateInfo ici = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = mutable && !named ? nullptr : &list,
         .flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT,
         .imageType = VK_IMAGE_TYPE_2D,
         .format = info->imageFormat,

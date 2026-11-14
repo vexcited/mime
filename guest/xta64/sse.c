@@ -186,6 +186,19 @@ uint32_t x86_mxcsr(X86Cpu *c)
  * and up where arm64 numbers them up and down. arm64 flushes inputs and results alike, which is mxcsr's flush to zero
  * with denormals are zero.
  */
+uint32_t x86_jit_afp;
+
+/* the bits read back as written only where the processor has them. */
+void x86_probe_host(void)
+{
+    uint64_t old, now;
+    __asm__ volatile("mrs %0, fpcr" : "=r"(old));
+    __asm__ volatile("msr fpcr, %0" ::"r"(old | 6));
+    __asm__ volatile("mrs %0, fpcr" : "=r"(now));
+    __asm__ volatile("msr fpcr, %0" ::"r"(old));
+    x86_jit_afp = (now & 6) == 6;
+}
+
 void x86_set_mxcsr(X86Cpu *c, uint32_t v)
 {
     static const uint64_t ROUNDING[4] = {0, 2, 1, 3};
@@ -194,10 +207,11 @@ void x86_set_mxcsr(X86Cpu *c, uint32_t v)
     fpsr &= ~(uint64_t)0x9F;
     __asm__ volatile("msr fpsr, %0" ::"r"(fpsr));
     __asm__ volatile("mrs %0, fpcr" : "=r"(fpcr));
-    fpcr &= ~((3ull << 22) | (1ull << 24));
+    fpcr &= ~((3ull << 22) | (1ull << 24) | (uint64_t)x86_jit_afp);
     fpcr |= ROUNDING[(v >> 13) & 3] << 22;
+    /* with AH set, as translated code runs, FZ only flushes results: FIZ flushes the inputs too then. */
     if ((v & 0x8040) == 0x8040)
-        fpcr |= 1ull << 24;
+        fpcr |= 1ull << 24 | (uint64_t)x86_jit_afp;
     __asm__ volatile("msr fpcr, %0" ::"r"(fpcr));
     c->mxcsr = v;
 }

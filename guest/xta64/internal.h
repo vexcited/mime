@@ -96,6 +96,8 @@ void x86_set_szp(X86Cpu *c, uint64_t res, int size, uint32_t others);
 
 void x86_exec_sse(X86Cpu *c, const X86Insn *i);
 void x86_exec_x87(X86Cpu *c, const X86Insn *i);
+/* whether an x87 instruction leaves the last instruction and data pointers and opcode alone. */
+int x86_x87_control(const X86Insn *i);
 void x86_exec_mmx(X86Cpu *c, const X86Insn *i);
 void x86_ldmxcsr(X86Cpu *c, uint32_t v);
 void x86_fpu_init(X86Cpu *c);

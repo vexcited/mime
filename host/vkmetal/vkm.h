@@ -220,6 +220,11 @@ struct VkImage_T {
     VkDeviceMemory memory;
     uint64_t offset;
     bool swapchain;
+    /*
+     * a draw to it may read it too: a descriptor has a view of it, or its texture is another image's as well. set by
+     * the threads that write descriptors and read by the one that encodes, so only through atomic accesses.
+     */
+    bool read;
     bool resident; /* its texture is in the device's set, as validation wants of placed attachments. */
 };
 
@@ -365,6 +370,7 @@ typedef struct VkmCode {
     VkmInput input[VKM_VERTEX_ATTRIBUTES];
     uint32_t outputs; /* fragment outputs written. */
     bool writes_depth, writes_stencil;
+    bool writes_memory; /* buffers or images it may store to. */
     uint64_t hash; /* of the MSL and its entry point. */
     /* a vertex shader keeps its SPIR-V for the variant writing records, made when a geometry shader needs it. */
     VkmSource *source;
@@ -732,6 +738,16 @@ static inline const void *vkm_find(const void *chain, VkStructureType type)
         if (s->sType == type)
             return s;
     return nullptr;
+}
+
+/* the format without its srgb curve: views that differ from their texture only by it need no view usage. */
+static inline uint32_t vkm_plain_format(uint32_t pixel)
+{
+    switch (pixel) {
+    case MTLPixelFormatBGRA8Unorm_sRGB: return MTLPixelFormatBGRA8Unorm;
+    case MTLPixelFormatRGBA8Unorm_sRGB: return MTLPixelFormatRGBA8Unorm;
+    default: return pixel;
+    }
 }
 
 #endif

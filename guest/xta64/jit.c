@@ -23,12 +23,16 @@
 #include <stddef.h>
 
 /* x19 holds the cpu, x9 addresses, x10 to x15 and x8 values. x14 is only free between uses of ea. */
+/* x28 holds the top of the return stack, see ras_call, and x29 counts down to the next poll, see poll. */
+enum { RAS = 28, POLL = 29 };
 enum { CPU = 19, ADDR = 9, T0 = 10, T1 = 11, T2 = 12, T3 = 13, T4 = 14, T5 = 15, S0 = 8, XZR = 31 };
 enum { EQ = 0, NE = 1, HS = 2, LO = 3, MI = 4, PL = 5, VS = 6, VC = 7, HI = 8, LS = 9, GE = 10, LT = 11, GT = 12, LE = 13 };
 
 typedef struct Emit {
     uint32_t *code, *end, *p;
     int overflow;
+    uint32_t *leave;  /* the block's return to the dispatcher, once one was emitted: the others branch to it. */
+    const void *self; /* the block translated. */
 } Emit;
 
 static void put(Emit *e, uint32_t word)
@@ -192,25 +196,82 @@ static void sync_regs(Emit *e, int store)
     sync_high(e, store);
 }
 
-static void prologue(Emit *e)
+/* stores or loads the first count xmm registers, which live in v16 on, to or from the cpu. */
+static void sync_xmm(Emit *e, int store, int count)
 {
-    put(e, 0xA9BB7BF3u); /* stp x19, x30, [sp, #-80]! */
-    for (int k = 0; k < 4; k++)
-        pair(e, 1, HOST_REGS + 2 * k, HOST_REGS + 2 * k + 1, 31, 16 + 16 * (uint32_t)k);
-    mov_reg(e, 8, CPU, 0);
-    sync_regs(e, 0);
+    for (int k = 0; k < count; k += 2) /* stp or ldp of two q registers */
+        put(e, (store ? 0xAD000000u : 0xAD400000u) | (uint32_t)((offsetof(X86Cpu, xmm) + 16 * (uint32_t)k) / 16) << 15 |
+                   (uint32_t)(17 + k) << 10 | (uint32_t)CPU << 5 | (uint32_t)(16 + k));
 }
 
-/* stores the registers back and returns index to the dispatcher. */
+/*
+ * enters or leaves the floating point mode of translated code, where the host has it: AH and NEP of fpcr set, see
+ * x86_jit_afp. writing fpcr is slow and reading it is not, so it is only written when it has to change. AH stays
+ * set once it is, see x86_run, and the dispatcher and what it calls run without NEP, as c code is compiled for. the
+ * interpreter runs single instructions with it, which the tests check it does right. x16 is lost.
+ */
+static void fp_mode(Emit *e, int translated)
+{
+    if (!x86_jit_afp)
+        return;
+    put(e, 0xD53B4410u); /* mrs x16, fpcr */
+    if (translated) {
+        put(e, 0x37100070u); /* tbnz w16, #2, past the write */
+        put(e, 0xB27F0610u); /* orr x16, x16, #6 */
+    } else {
+        put(e, 0x927DFA10u); /* and x16, x16, #~4 */
+    }
+    put(e, 0xD51B4410u); /* msr fpcr, x16 */
+}
+
+static void prologue(Emit *e)
+{
+    put(e, 0xA9BA7BF3u); /* stp x19, x30, [sp, #-96]! */
+    for (int k = 0; k < 4; k++)
+        pair(e, 1, HOST_REGS + 2 * k, HOST_REGS + 2 * k + 1, 31, 16 + 16 * (uint32_t)k);
+    pair(e, 1, RAS, POLL, 31, 80);
+    mov_reg(e, 8, CPU, 0);
+    sync_regs(e, 0);
+    sync_xmm(e, 0, 16);
+    ldr(e, 8, RAS, CPU, offsetof(X86Cpu, ras));
+    mov_imm(e, POLL, 1); /* the first way back polls. */
+    fp_mode(e, 1);
+    for (int k = x86_jit_afp ? 4 : 0; k < 4; k++)
+        put(e, 0xD503201Fu); /* nop: the prologue is as long on every host. */
+}
+
+/*
+ * returns index to the dispatcher, with the registers stored back and the block as the one that ran last: translated
+ * code keeps no record of that while it runs on from block to block. a block has one such return, which its exits
+ * share. t5 is lost.
+ */
 static void epilogue(Emit *e, uint32_t index)
 {
+    mov_imm(e, T5, index);
+    if (e->leave) {
+        put(e, 0x14000000u | ((uint32_t)(e->leave - e->p) & 0x3FFFFFFu));
+        return;
+    }
+    e->leave = e->p;
+    mov_imm(e, 17, (uint64_t)(uintptr_t)e->self);
+    str(e, 8, 17, CPU, offsetof(X86Cpu, jit_block));
+    str(e, 8, RAS, CPU, offsetof(X86Cpu, ras));
+    fp_mode(e, 0);
+    sync_xmm(e, 1, 16);
     sync_regs(e, 1);
     for (int k = 0; k < 4; k++)
         pair(e, 0, HOST_REGS + 2 * k, HOST_REGS + 2 * k + 1, 31, 16 + 16 * (uint32_t)k);
-    put(e, 0xA8C57BF3u); /* ldp x19, x30, [sp], #80 */
-    mov_imm(e, 0, index);
+    pair(e, 0, RAS, POLL, 31, 80);
+    put(e, 0xA8C67BF3u); /* ldp x19, x30, [sp], #96 */
+    mov_reg(e, 8, 0, T5);
     put(e, 0xD65F03C0u); /* ret */
 }
+
+/*
+ * a block begins with its prologue, which the dispatcher enters and a chained exit skips, then the poll that a loop
+ * of the block alone comes back to, at X86_JIT_LOOP, then its code, at X86_JIT_PROLOGUE.
+ */
+enum { X86_JIT_LOOP = X86_JIT_PROLOGUE - 2 };
 
 /* sets rip and returns how many instructions ran. */
 static void exit_to(Emit *e, int rip_reg, uint64_t rip, uint32_t index)
@@ -239,18 +300,33 @@ typedef struct Ctx {
     int nzcv_set;   /* set by an emitter that left arm64 flags describing its x86 ones. */
     const X86Insn *insn;
     uint64_t start; /* the block's address. */
-    uint16_t xloaded; /* the xmm registers held in v16 to v31, see the xmm cache. */
-    uint16_t xdirty;  /* the ones changed there and not yet stored. */
     uint32_t sha_second; /* the second sha256rnds2 of a pair whose result is in the cpu's jit_sha, or 0. */
+    /* the x87 stack as the block holds it, see emit_x87: masks are of registers counted from the base. */
+    int fbase;        /* x17 holds the base. */
+    int fcur;         /* the top, counted from the base. */
+    uint8_t floaded, fdirty, ftag_set, ftag_clear;
+    int fmoved;       /* the top was moved, 2 once it was stored somewhere else than where it began. */
+    uint8_t fmap[8];  /* which of v4 to v11 holds each: fxch only swaps two of these. */
+    int final;        /* the fallback being emitted is on every path. */
+    /*
+     * an inc or dec whose flags only the code after the conditional branch that follows it may read: the branch taken
+     * needs no record of them, so the record is made after the branch, on the way that stays.
+     */
+    uint32_t sink_at;  /* the index of that branch, ~0 for none. */
+    int sink_live, sink_reg;
+    uint32_t sink_lf;
+    struct ColdList *cold;
+    const void *self; /* the block translated. */
+    int x87_seen;     /* an x87 instruction of the block ran, with nothing after it that leaves mmx mode set. */
+    int x87_pending;  /* the cpu's last x87 instruction pointer and opcode are these, not stored yet. */
+    uint32_t x87_fop;
+    uint64_t x87_ip;
 } Ctx;
 
-static uint32_t OFF_X(int reg) { return (uint32_t)(offsetof(X86Cpu, xmm) + (uint32_t)reg * 16); }
-
 /*
- * the xmm cache: within a block, xmm n lives in v16 + n from its first use on, and the block's exits store the ones it
- * changed. c code called meanwhile may change v16 to v31 and reads the cpu's xmm, so the changed ones are stored
- * before such a call and the held ones loaded again after it. a fault restores the held ones from the faulting
- * context, see x86_jit_fault.
+ * the xmm registers live in v16 to v31 while translated code runs, like the general ones in theirs: loaded by the
+ * prologue, stored by the returns to the dispatcher, and kept through chained exits. c code keeps none of them, so
+ * a call stores them before and loads them after. a fault takes them from the faulting context, see x86_jit_fault.
  */
 enum { XCACHE = 16 };
 
@@ -260,10 +336,6 @@ static void vmov(Emit *e, int vd, int vn);
 
 static int xget(Ctx *x, int n)
 {
-    if (!(x->xloaded & 1u << n)) {
-        vldr(x->e, 16, XCACHE + n, CPU, OFF_X(n));
-        x->xloaded |= (uint16_t)(1u << n);
-    }
     return XCACHE + n;
 }
 
@@ -280,40 +352,36 @@ static void xload(Ctx *x, int bytes, int vt, int n)
 static void xstore(Ctx *x, int vt, int n)
 {
     vmov(x->e, XCACHE + n, vt);
-    x->xloaded |= (uint16_t)(1u << n);
-    x->xdirty |= (uint16_t)(1u << n);
 }
 
-/* stores the changed registers. a path that may not run keeps them marked: storing again later does no harm. */
-static void xstore_dirty(Ctx *x)
-{
-    for (int n = 0; n < 16; n++)
-        if (x->xdirty & 1u << n)
-            vstr(x->e, 16, XCACHE + n, CPU, OFF_X(n));
-}
+/* the ones the mode has: 32-bit code only reaches the first eight. */
+static void xstore_dirty(Ctx *x) { sync_xmm(x->e, 1, x->cpu->mode64 ? 16 : 8); }
+static void xreload(Ctx *x) { sync_xmm(x->e, 0, x->cpu->mode64 ? 16 : 8); }
 
-static void xreload(Ctx *x)
-{
-    for (int n = 0; n < 16; n++)
-        if (x->xloaded & 1u << n)
-            vldr(x->e, 16, XCACHE + n, CPU, OFF_X(n));
-}
+static void x87_store(Ctx *x);
+static void x87_reload(Ctx *x);
 
-/* around a call to c code, which keeps none of x0 to x7 and v16 to v31. */
+/* around a call to c code, which keeps none of x0 to x7, v16 to v31 and what the block holds of the x87 stack. */
 static void call_begin(Ctx *x)
 {
     sync_high(x->e, 1);
     xstore_dirty(x);
+    x87_store(x);
 }
 
 static void call_end(Ctx *x)
 {
     sync_high(x->e, 0);
     xreload(x);
+    x87_reload(x);
 }
 
 static void emit_fallback(Ctx *x, const X86Insn *i);
 static void add_imm(Emit *e, int size, int rd, int rn, int64_t imm);
+static void x87_reset(Ctx *x);
+static void leave_at(Ctx *x, uint32_t *site, uint64_t target);
+static void sink_record(Ctx *x);
+static int is_bt(const X86Insn *i);
 
 static uint32_t *cbz_x(Emit *e, int rt)
 {
@@ -322,23 +390,16 @@ static uint32_t *cbz_x(Emit *e, int rt)
     return at;
 }
 
-/* the conditions to run on into another block: no suspension pending and code unchanged, else the branches out. */
-static void chain_checks(Ctx *x, uint32_t **suspended, uint32_t **stale)
-{
-    Emit *e = x->e;
-    ldr(e, 8, 17, CPU, offsetof(X86Cpu, suspend_pending));
-    uint32_t *no_suspend = cbz_x(e, 17);
-    ldr(e, 4, 17, 17, 0);
-    *suspended = cbnz_w(e, 17);
-    patch19(e, no_suspend);
-    ldr(e, 8, 17, CPU, offsetof(X86Cpu, code_epoch));
-    uint32_t *no_epoch = cbz_x(e, 17);
-    ldr(e, 4, 17, 17, 0);
-    ldr(e, 4, T5, CPU, offsetof(X86Cpu, blocks_epoch));
-    put(e, 0x6B00001Fu | (uint32_t)T5 << 16 | 17u << 5); /* cmp w17, w15 */
-    *stale = b_cond(e, NE);
-    patch19(e, no_epoch);
-}
+/*
+ * translated code that goes back, to a block at or before its own, could run without end: there it asks whether the
+ * thread is to be suspended or code changed, in which case the dispatcher takes over. both are words in memory, so it
+ * only looks once in X86_POLL_EVERY times, counted down in x29, and the looking is done after the block's code.
+ * poll_fails says where a poll that found something goes. x17 and t5 are lost.
+ */
+enum { X86_POLL_EVERY = 512 };
+
+static uint32_t poll(Ctx *x);
+static void poll_fails(Ctx *x, uint32_t poll);
 
 /*
  * leaves for an address in rip_reg, or in the cpu's rip when rip_reg is -1: straight into the block translated there
@@ -347,6 +408,7 @@ static void chain_checks(Ctx *x, uint32_t **suspended, uint32_t **stale)
 static void exit_computed(Ctx *x, int rip_reg)
 {
     Emit *e = x->e;
+    x87_store(x);
     int stored = rip_reg < 0;
     if (stored) {
         ldr(e, 8, T0, CPU, offsetof(X86Cpu, rip));
@@ -354,7 +416,6 @@ static void exit_computed(Ctx *x, int rip_reg)
     }
     ldr(e, 8, 17, CPU, offsetof(X86Cpu, jit_slots));
     ldr(e, 8, T5, CPU, offsetof(X86Cpu, jit_mask));
-    uint32_t *no_table = cbz_x(e, 17);
     put(e, 0xCA400000u | (uint32_t)rip_reg << 16 | 4u << 10 | (uint32_t)rip_reg << 5 | T1);  /* eor t1, rip, rip, lsr #4 */
     put(e, 0xCA400000u | (uint32_t)rip_reg << 16 | 15u << 10 | (uint32_t)T1 << 5 | T1);      /* eor t1, t1, rip, lsr #15 */
     rrr(e, OP_AND, 8, T1, T1, T5);
@@ -364,10 +425,7 @@ static void exit_computed(Ctx *x, int rip_reg)
     put(e, 0xEB00001Fu | (uint32_t)rip_reg << 16 | (uint32_t)T3 << 5); /* cmp t3, rip */
     uint32_t *other = b_cond(e, NE);
     uint32_t *untranslated = cbz_x(e, 16);
-    uint32_t *suspended, *stale;
-    chain_checks(x, &suspended, &stale);
-    ldr(e, 8, T4, T2, offsetof(X86Slot, block));
-    str(e, 8, T4, CPU, offsetof(X86Cpu, jit_block));
+    uint32_t polled = poll(x);
     put(e, 0xD61F0200u); /* br x16 */
     /* another address in the slot: the next one, unless this one is free. */
     patch19(e, other);
@@ -376,11 +434,9 @@ static void exit_computed(Ctx *x, int rip_reg)
     add_imm(e, 8, T1, T1, 1);
     rrr(e, OP_AND, 8, T1, T1, T5);
     put(e, 0x14000000u | ((uint32_t)(probe - e->p) & 0x3FFFFFFu)); /* b probe */
-    patch19(e, no_table);
     patch19(e, free_slot);
     patch19(e, untranslated);
-    patch19(e, suspended);
-    patch19(e, stale);
+    poll_fails(x, polled);
     if (!stored)
         str(e, 8, rip_reg, CPU, offsetof(X86Cpu, rip));
     epilogue(e, x->count);
@@ -394,23 +450,26 @@ static void exit_computed(Ctx *x, int rip_reg)
 static void exit_const(Ctx *x, uint64_t rip, uint32_t index)
 {
     Emit *e = x->e;
+    x87_store(x);
     if (index != x->count) {
         exit_to(e, -1, rip, index);
         return;
     }
-    uint32_t *load_code = e->p;
-    put(e, 0x58000000u | 16); /* ldr x16, slot.code */
-    uint32_t *unlinked = cbz_x(e, 16);
-    uint32_t *suspended = nullptr, *stale = nullptr;
-    if (rip <= x->start)
-        chain_checks(x, &suspended, &stale);
-    uint32_t *load_block = e->p;
-    put(e, 0x58000000u | 17); /* ldr x17, slot.block */
-    str(e, 8, 17, CPU, offsetof(X86Cpu, jit_block));
-    put(e, 0xD61F0200u); /* br x16 */
-    patch19(e, unlinked);
-    patch19(e, suspended);
-    patch19(e, stale);
+    if (rip == x->start) {
+        /* a loop of the block alone goes straight back to the checks at its start. */
+        put(e, 0x14000000u | ((uint32_t)(e->code + X86_JIT_LOOP - e->p) & 0x3FFFFFFu));
+        return;
+    }
+    /*
+     * a branch goes to the block the exit leads to once the dispatcher linked it: one the dispatcher writes over the
+     * branch here, which leads back to it while the exit is not linked.
+     */
+    int back = rip <= x->start;
+    uint32_t polled = back ? poll(x) : 0;
+    uint32_t *branch = e->p;
+    put(e, X86_CHAIN_UNLINKED);
+    if (back)
+        poll_fails(x, polled);
     mov_imm(e, T4, rip);
     str(e, 8, T4, CPU, offsetof(X86Cpu, rip));
     uint32_t *address_slot = e->p;
@@ -419,18 +478,20 @@ static void exit_const(Ctx *x, uint64_t rip, uint32_t index)
     epilogue(e, index);
     if ((e->p - e->code) & 1)
         put(e, 0xD503201Fu); /* nop: the slot's words are 8 byte aligned. */
-    patch19(e, load_code);
     patch19(e, address_slot);
     put(e, 0);
     put(e, 0);
-    patch19(e, load_block);
     put(e, 0);
     put(e, 0);
     put(e, (uint32_t)rip);
     put(e, (uint32_t)(rip >> 32));
+    put(e, (uint32_t)(uintptr_t)branch);
+    put(e, (uint32_t)((uint64_t)(uintptr_t)branch >> 32));
+    /* for a block too far for a branch to reach: X86_CHAIN_FAR words after the slot. */
+    put(e, 0x58000000u | (uint32_t)(-8 & 0x7FFFF) << 5 | 16); /* ldr x16, slot.code */
+    put(e, 0xD61F0200u);                                       /* br x16 */
 }
 
-/* the stack word: 8 bytes in 64-bit code, 4 in 32-bit code, whose stack and branch targets wrap at 4 GiB. */
 static int stack_word(const Ctx *x) { return x->cpu->mode64 ? 8 : 4; }
 
 static uint64_t branch_target(const Ctx *x, uint64_t target) { return x->cpu->mode64 ? target : (uint32_t)target; }
@@ -445,42 +506,41 @@ static void set_nzcv(Ctx *x, int kind)
 
 static uint64_t size_mask(int size) { return size == 8 ? ~0ull : (1ull << (size * 8)) - 1; }
 
-/* rd = rn + imm at size, with t4 for immediates past 24 bits. rd and rn are never 31, the stack pointer here. */
+/* rd = rn + imm at size, with t4 for immediates that are not one add's. rd and rn are never 31, the stack pointer here. */
 static void add_imm(Emit *e, int size, int rd, int rn, int64_t imm)
 {
     uint64_t m = imm < 0 ? -(uint64_t)imm : (uint64_t)imm;
     uint32_t op = (imm < 0 ? 0x51000000u : 0x11000000u) | sf(size);
-    if (m >= 1u << 24) {
+    if (m >= 4096 && (m >= 1u << 24 || (m & 0xFFF))) {
+        /* one add of a constant made aside, where two adds would both be waited for. */
         mov_imm(e, T4, (uint64_t)imm);
         rrr(e, OP_ADD, size, rd, rn, T4);
     } else if (m >= 4096) {
         put(e, op | 1u << 22 | (uint32_t)(m >> 12) << 10 | (uint32_t)rn << 5 | (uint32_t)rd);
-        if (m & 0xFFF)
-            put(e, op | (uint32_t)(m & 0xFFF) << 10 | (uint32_t)rd << 5 | (uint32_t)rd);
     } else {
         put(e, op | (uint32_t)m << 10 | (uint32_t)rn << 5 | (uint32_t)rd);
     }
 }
 
 /*
- * computes the memory operand's address into ADDR. 32-bit addresses are
+ * computes the memory operand's address into a register, which may be one it is made of. 32-bit addresses are
  * computed with 32-bit operations, which wrap and zero extend like x86.
  */
-static void ea(Ctx *x, const X86Insn *i)
+static void ea_into(Ctx *x, const X86Insn *i, int A)
 {
     Emit *e = x->e;
     int size = i->addrsize == 4 ? 4 : 8;
     int64_t disp = i->disp;
     int base = -1, index = -1;
     if (i->base == -2) {
-        mov_imm(e, ADDR, (x->next + (uint64_t)disp) & size_mask(size));
-        base = ADDR;
+        mov_imm(e, A, (x->next + (uint64_t)disp) & size_mask(size));
+        base = A;
         disp = 0;
     } else if (i->base >= 0) {
         base = host_reg(i->base);
         if (base < 0) {
-            ldr(e, 8, ADDR, CPU, OFF_R(i->base));
-            base = ADDR;
+            ldr(e, 8, A, CPU, OFF_R(i->base));
+            base = A;
         }
     }
     if (i->index >= 0) {
@@ -491,21 +551,27 @@ static void ea(Ctx *x, const X86Insn *i)
         }
     }
     if (base < 0 && index < 0) {
-        mov_imm(e, ADDR, (uint64_t)disp & size_mask(size));
+        mov_imm(e, A, (uint64_t)disp & size_mask(size));
+    } else if (index >= 0 && base < 0 && disp) {
+        /* a table at a constant address: the index is added to it in one step. */
+        mov_imm(e, T4, (uint64_t)disp & size_mask(size));
+        rrr(e, OP_ADD | (uint32_t)i->scale << 10, size, A, T4, index);
     } else if (index >= 0) {
-        rrr(e, OP_ADD | (uint32_t)i->scale << 10, size, ADDR, base < 0 ? XZR : base, index); /* add rd, rn, rm, lsl #scale */
+        rrr(e, OP_ADD | (uint32_t)i->scale << 10, size, A, base < 0 ? XZR : base, index); /* add rd, rn, rm, lsl #scale */
         if (disp)
-            add_imm(e, size, ADDR, ADDR, disp);
+            add_imm(e, size, A, A, disp);
     } else if (disp) {
-        add_imm(e, size, ADDR, base, disp);
-    } else if (base != ADDR || size == 4) {
-        mov_reg(e, size, ADDR, base);
+        add_imm(e, size, A, base, disp);
+    } else if (base != A || size == 4) {
+        mov_reg(e, size, A, base);
     }
     if (i->seg == 4 || i->seg == 5) {
         ldr(e, 8, T4, CPU, i->seg == 4 ? offsetof(X86Cpu, fs_base) : offsetof(X86Cpu, gs_base));
-        add_shifted(e, ADDR, ADDR, T4, 0);
+        add_shifted(e, A, A, T4, 0);
     }
 }
+
+static void ea(Ctx *x, const X86Insn *i) { ea_into(x, i, ADDR); }
 
 /* ah, ch, dh and bh: the byte registers 4 to 7 without a rex prefix. */
 static int high_byte(int size, int reg, int rex) { return size == 1 && !rex && reg >= 4 && reg < 8; }
@@ -578,7 +644,7 @@ static void narrow(Emit *e, int size, int r)
 
 enum {
     ALU_ADD, ALU_OR, ALU_ADC, ALU_SBB, ALU_AND, ALU_SUB, ALU_XOR, ALU_CMP,
-    ALU_TEST, ALU_UCOMI, ALU_INCDEC, ALU_SHIFT,
+    ALU_TEST, ALU_UCOMI, ALU_INCDEC, ALU_SHIFT, ALU_BT,
 };
 
 /* the alu operation of an instruction the translator emits, or -1. */
@@ -629,6 +695,8 @@ static int writes_flags(const X86Insn *i)
     if (alu_op(i) >= 0)
         return 1;
     uint8_t op = i->opcode;
+    if (i->map == 0 && (op == 0xDB || op == 0xDF)) /* fucomi, fcomi and the ones that pop */
+        return i->mod == 3 && i->modrm >= 0xE8 && i->modrm <= 0xF7;
     if (i->map == 0)
         return op == 0x69 || op == 0x6B || ((op == 0xF6 || op == 0xF7) && ((i->modrm >> 3) & 7) == 3);
     if (i->map != 1)
@@ -638,12 +706,25 @@ static int writes_flags(const X86Insn *i)
     return (op == 0x2E || op == 0x2F) && (!i->mandatory || i->mandatory == 0x66);
 }
 
+static int is_x87(const X86Insn *i) { return i->map == 0 && i->opcode >= 0xD8 && i->opcode <= 0xDF; }
+
+/* fcmov reads the flags, and fcomi and its kin write them. */
+static int x87_uses_flags(const X86Insn *i)
+{
+    int sub = (i->modrm >> 3) & 7;
+    if (i->mod != 3)
+        return 0;
+    return ((i->opcode == 0xDA || i->opcode == 0xDB) && sub < 4) || ((i->opcode == 0xDB || i->opcode == 0xDF) && sub >= 5 && sub <= 6);
+}
+
 /* instructions known to leave the flags alone and not to read them. */
 static int ignores_flags(const X86Insn *i)
 {
     uint8_t op = i->opcode;
+    if (is_x87(i))
+        return !x87_uses_flags(i);
     if (i->map == 0)
-        return (op >= 0x88 && op <= 0x8B) || op == 0x8D || op == 0xC6 || op == 0xC7 || (op >= 0xB0 && op <= 0xBF) ||
+        return op == 0x9B || (op >= 0x88 && op <= 0x8B) || op == 0x8D || op == 0xC6 || op == 0xC7 || (op >= 0xB0 && op <= 0xBF) ||
                (op >= 0x50 && op <= 0x5F) || op == 0x68 || op == 0x6A || op == 0xE8 || op == 0xE9 || op == 0xEB ||
                op == 0xC3 || op == 0xC2 || op == 0x90 || op == 0x63 || op == 0x98 || op == 0x99 ||
                (op >= 0x86 && op <= 0x87) || (op >= 0x91 && op <= 0x97) ||
@@ -743,10 +824,8 @@ static void record_flags(Ctx *x, int kind, int size, int ra, int rb, int rr)
     mov_imm(e, T4, X86_LF(lf, log2_size(size)));
     str(e, 4, T4, CPU, offsetof(X86Cpu, lf_op));
     /* the flags of logic operations only need the result. */
-    if (lf != X86_LF_LOGIC) {
-        str(e, 8, ra, CPU, offsetof(X86Cpu, lf_a));
-        str(e, 8, rb, CPU, offsetof(X86Cpu, lf_b));
-    }
+    if (lf != X86_LF_LOGIC)
+        pair(e, 1, ra, rb, CPU, offsetof(X86Cpu, lf_a));
     str(e, 8, rr, CPU, offsetof(X86Cpu, lf_res));
     if (kind == ALU_ADC || kind == ALU_SBB)
         str(e, 8, T3, CPU, offsetof(X86Cpu, lf_carry));
@@ -792,6 +871,16 @@ static int reg_operand(Emit *e, int size, int reg, int tmp)
     if (host_reg(reg) >= 0)
         return host_reg(reg);
     ldr(e, size, tmp, CPU, OFF_R(reg));
+    return tmp;
+}
+
+/* the modrm operand at 4 or 8 bytes: its host register, or tmp loaded from memory. */
+static int rm_operand(Ctx *x, const X86Insn *i, int size, int tmp)
+{
+    if (i->mod == 3)
+        return host_reg(i->rm);
+    ea(x, i);
+    ldr(x->e, size, tmp, ADDR, 0);
     return tmp;
 }
 
@@ -969,6 +1058,7 @@ static int arm_cond(int kind, int cc)
     case ALU_UCOMI: return ucomi[cc];
     case ALU_INCDEC: return incdec[cc];
     case ALU_SHIFT: return shift[cc];
+    case ALU_BT: return cc == 2 ? HS : cc == 3 ? LO : -1; /* after a compare of the bit with 1. */
     }
     return -1;
 }
@@ -1054,9 +1144,29 @@ static void emit_jcc(Ctx *x, const X86Insn *i)
         condition_t3(x, cc);
         taken = cbnz_w(e, T3);
     }
+    if (target == x->start && !x->fbase && !x->x87_pending) {
+        leave_at(x, taken, target);
+        sink_record(x);
+        exit_const(x, x->next, x->count);
+        return;
+    }
+    sink_record(x);
     exit_const(x, x->next, x->count);
     patch19(e, taken);
     exit_const(x, target, x->count);
+}
+
+/* the record of the flags of the inc or dec before the branch being emitted, when it was left for here. t3 holds cf. */
+static void sink_record(Ctx *x)
+{
+    Emit *e = x->e;
+    if (x->sink_at != x->index)
+        return;
+    mov_imm(e, T4, x->sink_lf);
+    str(e, 4, T4, CPU, offsetof(X86Cpu, lf_op));
+    str(e, 8, x->sink_reg, CPU, offsetof(X86Cpu, lf_res));
+    if (x->sink_live & LIVE_CF)
+        str(e, 8, T3, CPU, offsetof(X86Cpu, lf_carry));
 }
 
 /* a conditional branch before the block's end: the branch taken leaves the block, the code after it runs on. */
@@ -1069,17 +1179,19 @@ static int emit_side_exit(Ctx *x, const X86Insn *i)
     x->keep = 1;
     if (cond == -2)
         return 1;
-    uint32_t *stay = nullptr;
-    if (cond >= 0)
-        stay = b_cond(e, cond ^ 1);
-    else if (cond == -1) {
-        x->keep = condition_t3(x, cc);
-        stay = cbz_x(e, T3);
+    if (cond == -3) {
+        exit_const(x, target, x->count);
+        return 1;
     }
-    /* the arm64 flags still describe the branch's condition on the way out, which the stores leave alone. */
-    xstore_dirty(x);
-    exit_const(x, target, x->count);
-    patch19(e, stay);
+    uint32_t *leave;
+    if (cond >= 0) {
+        leave = b_cond(e, cond);
+    } else {
+        x->keep = condition_t3(x, cc);
+        leave = cbnz_w(e, T3);
+    }
+    leave_at(x, leave, target);
+    sink_record(x);
     return 1;
 }
 
@@ -1088,10 +1200,13 @@ static int emit_incdec(Ctx *x, const X86Insn *i, int size, int dec)
 {
     Emit *e = x->e;
     int lf = X86_LF(dec ? X86_LF_DEC : X86_LF_INC, log2_size(size));
-    if (x->flags_lazy & LIVE_CF)
+    int sunk = x->sink_at == x->index + 1 ? x->sink_live : 0;
+    if ((x->flags_lazy | sunk) & LIVE_CF)
         carry_t3(x);
     if (size >= 4 && i->mod == 3 && host_reg(i->rm) >= 0) {
         int h = host_reg(i->rm);
+        x->sink_reg = h;
+        x->sink_lf = (uint32_t)lf;
         uint32_t op = dec ? (x->flags_live ? 0x71000400u : 0x51000400u) : (x->flags_live ? 0x31000400u : 0x11000400u);
         put(e, op | sf(size) | (uint32_t)h << 5 | (uint32_t)h); /* adds or subs h, h, #1 */
         if (x->flags_lazy) {
@@ -1161,9 +1276,13 @@ static int emit_shift(Ctx *x, const X86Insn *i)
         return 1;
     }
     int bits = size * 8;
-    load_rm(x, i, size, T0);
+    /* a register of 4 or 8 bytes is shifted where it is, unless the lazy flags need what it held. */
+    int direct = size >= 4 && i->mod == 3 && !(x->flags_live && x->flags_lazy);
+    int from = direct ? host_reg(i->rm) : T0, to = direct ? from : T2;
+    if (!direct)
+        load_rm(x, i, size, T0);
     if (sub == 7 && size < 4)
-        sbfm(e, 4, T0, T0, 0, bits - 1);
+        sbfm(e, 4, from, from, 0, bits - 1);
     int work = size == 8 ? 8 : 4;
     if (op <= 0xD1) {
         unsigned n = op <= 0xC1 ? (unsigned)(i->imm & 0xFF) : 1;
@@ -1171,20 +1290,20 @@ static int emit_shift(Ctx *x, const X86Insn *i)
         if (!n) {
             /* no flags, but a 32 bit register is still written: its upper half clears. */
             if (size == 4 && i->mod == 3)
-                store_reg(e, 4, T0, i->rm, i->rex);
+                store_reg(e, 4, from, i->rm, i->rex);
             return x->keep = 1, 1;
         }
         switch (sub) {
-        case 4: case 6: ubfm(e, work, T2, T0, (int)((unsigned)(work * 8) - n) & (work * 8 - 1), work * 8 - 1 - (int)n); break;
-        case 5: ubfm(e, work, T2, T0, (int)n, work * 8 - 1); break;
-        case 7: sbfm(e, work, T2, T0, (int)(n < 32 || work == 8 ? n : 31), work * 8 - 1); break;
+        case 4: case 6: ubfm(e, work, to, from, (int)((unsigned)(work * 8) - n) & (work * 8 - 1), work * 8 - 1 - (int)n); break;
+        case 5: ubfm(e, work, to, from, (int)n, work * 8 - 1); break;
+        case 7: sbfm(e, work, to, from, (int)(n < 32 || work == 8 ? n : 31), work * 8 - 1); break;
         case 1: /* ror */
-            put(e, (size == 8 ? 0x93C00000u : 0x13800000u) | (uint32_t)T0 << 16 | n << 10 | (uint32_t)T0 << 5 | T2);
+            put(e, (size == 8 ? 0x93C00000u : 0x13800000u) | (uint32_t)from << 16 | n << 10 | (uint32_t)from << 5 | to);
             break;
         default: /* rol */
             n %= (unsigned)bits;
-            put(e, (size == 8 ? 0x93C00000u : 0x13800000u) | (uint32_t)T0 << 16 | (((unsigned)bits - n) % (unsigned)bits) << 10 |
-                       (uint32_t)T0 << 5 | T2);
+            put(e, (size == 8 ? 0x93C00000u : 0x13800000u) | (uint32_t)from << 16 | (((unsigned)bits - n) % (unsigned)bits) << 10 |
+                       (uint32_t)from << 5 | to);
             break;
         }
         if (x->flags_live) {
@@ -1193,18 +1312,19 @@ static int emit_shift(Ctx *x, const X86Insn *i)
             if (x->flags_lazy) {
                 mov_imm(e, T4, X86_LF(lf[sub - 4], log2_size(size)));
                 str(e, 4, T4, CPU, offsetof(X86Cpu, lf_op));
-                str(e, 8, T0, CPU, offsetof(X86Cpu, lf_a));
+                str(e, 8, from, CPU, offsetof(X86Cpu, lf_a));
                 mov_imm(e, T1, n);
                 str(e, 8, T1, CPU, offsetof(X86Cpu, lf_b));
-                str(e, 8, T2, CPU, offsetof(X86Cpu, lf_res));
+                str(e, 8, to, CPU, offsetof(X86Cpu, lf_res));
             }
             if (size >= 4) {
-                rrr(e, OP_ANDS, size, XZR, T2, T2);
+                rrr(e, OP_ANDS, size, XZR, to, to);
             } else {
-                ubfm(e, 4, S0, T2, size * 8, size * 8 - 1); /* lsl s0, t2, #32 - bits */
+                ubfm(e, 4, S0, to, size * 8, size * 8 - 1); /* lsl s0, t2, #32 - bits */
                 rrr(e, OP_ANDS, 4, XZR, S0, S0);
             }
-            store_rm(x, i, size, T2, 1);
+            if (!direct)
+                store_rm(x, i, size, T2, 1);
             set_nzcv(x, ALU_SHIFT);
             return 1;
         }
@@ -1215,9 +1335,10 @@ static int emit_shift(Ctx *x, const X86Insn *i)
             put(e, (work == 8 ? 0xCB000000u : 0x4B000000u) | (uint32_t)T1 << 16 | (uint32_t)XZR << 5 | T1); /* neg */
         }
         uint32_t ops[] = {OP_RORV, OP_RORV, 0, 0, OP_LSLV, OP_LSRV, OP_LSLV, OP_ASRV};
-        rrr(e, ops[sub], work, T2, T0, T1);
+        rrr(e, ops[sub], work, to, from, T1);
     }
-    store_rm(x, i, size, T2, 1);
+    if (!direct)
+        store_rm(x, i, size, T2, 1);
     return 1;
 }
 
@@ -1278,6 +1399,20 @@ static void ins(Emit *e, int bytes, int vd, int dst, int vn, int src)
 
 static void vmov(Emit *e, int vd, int vn) { v3(e, V_ORR, vd, vn, vn); }
 
+/* the register holding the xmm or memory source operand: the one xmm lives in, or tmp loaded from memory. */
+static int xsrc(Ctx *x, const X86Insn *i, int bytes, int tmp)
+{
+    if (i->mod == 3)
+        return xget(x, i->rm);
+    ea(x, i);
+    vldr(x->e, bytes, tmp, ADDR, 0);
+    return tmp;
+}
+
+/* the register xmm n lives in, to change. */
+static int xdst(Ctx *x, int n) { return xget(x, n); }
+static int xnew(Ctx *x, int n) { return xget(x, n); }
+
 /* loads the xmm or memory source operand into vt. */
 static void load_xsrc(Ctx *x, const X86Insn *i, int bytes, int vt)
 {
@@ -1289,36 +1424,141 @@ static void load_xsrc(Ctx *x, const X86Insn *i, int bytes, int vt)
     }
 }
 
-/* a nan result goes through the interpreter, which applies the x86 nan rules. cond holds when there is none. */
-static uint32_t *nan_guard(Ctx *x, int cond)
+/*
+ * the rare case of an instruction, which the interpreter runs: its code goes after the block's, out of the way of
+ * the one that runs. the instruction must not have changed anything yet where it branches there.
+ */
+typedef struct Cold {
+    uint32_t *branch, *resume;
+    int leaves;      /* an exit to target, not the interpreter. */
+    uint64_t target;
+    Ctx at;
+} Cold;
+
+typedef struct Poll {
+    uint32_t *branch, *resume, *fail;
+} Poll;
+
+typedef struct ColdList {
+    uint32_t count, polls;
+    Poll poll[280]; /* the block's own, and one for an exit of each instruction and of each of its rare cases. */
+    Cold list[136]; /* one for an instruction at most. */
+} ColdList;
+
+/* the branch at site, a conditional one with its target not set, goes to the interpreter. */
+static uint32_t cold_at(Ctx *x, uint32_t *site)
 {
-    uint32_t *ok = b_cond(x->e, cond);
-    emit_fallback(x, x->insn);
-    return ok;
+    if (x->cold->count == sizeof(x->cold->list) / sizeof(x->cold->list[0])) {
+        x->e->overflow = 1;
+        return 0;
+    }
+    Cold *c = &x->cold->list[x->cold->count];
+    c->branch = site;
+    c->resume = nullptr;
+    c->leaves = 0;
+    c->at = *x;
+    return x->cold->count++;
 }
 
-static void nan_join(Ctx *x, uint32_t *ok, uint32_t **done)
+/* branches to the interpreter on cond. cold_resume says where it comes back, past what the instruction did itself. */
+static uint32_t cold_branch(Ctx *x, int cond)
 {
-    *done = b_always(x->e);
-    patch19(x->e, ok);
+    return cold_at(x, b_cond(x->e, cond));
 }
 
-/* checks lane 0 of a scalar result: ok when ordered. */
-static uint32_t *scalar_nan_check(Ctx *x, int dbl, int v)
+/*
+ * where the branch at site, a conditional one with its target not set, leaves the block for target: the exit goes
+ * after the block's code, so the code that stays in the block runs straight on. a loop of the block alone goes
+ * right back to its start when nothing of the x87 state is left to store.
+ */
+static void leave_at(Ctx *x, uint32_t *site, uint64_t target)
+{
+    Emit *e = x->e;
+    if (target == x->start && !x->fbase && !x->x87_pending) {
+        if (!e->overflow)
+            *site |= ((uint32_t)(e->code + X86_JIT_LOOP - site) & 0x7FFFFu) << 5;
+        return;
+    }
+    if (x->cold->count == sizeof(x->cold->list) / sizeof(x->cold->list[0])) {
+        e->overflow = 1;
+        return;
+    }
+    Cold *c = &x->cold->list[x->cold->count++];
+    c->branch = site;
+    c->leaves = 1;
+    c->target = target;
+    c->at = *x;
+}
+
+static void cold_resume(Ctx *x, uint32_t stub) { x->cold->list[stub].resume = x->e->p; }
+
+static uint32_t poll(Ctx *x)
+{
+    Emit *e = x->e;
+    ColdList *c = x->cold;
+    if (c->polls == sizeof(c->poll) / sizeof(c->poll[0])) {
+        e->overflow = 1;
+        return 0;
+    }
+    put(e, 0xF1000400u | (uint32_t)POLL << 5 | POLL); /* subs x29, x29, #1 */
+    c->poll[c->polls].branch = b_cond(e, EQ);
+    c->poll[c->polls].resume = e->p;
+    c->poll[c->polls].fail = nullptr;
+    return c->polls++;
+}
+
+static void poll_fails(Ctx *x, uint32_t poll) { x->cold->poll[poll].fail = x->e->p; }
+
+static void cold_emit(Ctx *x)
+{
+    Emit *e = x->e;
+    /* the poll at the block's start found something: the dispatcher takes over there. */
+    poll_fails(x, 0);
+    exit_to(e, -1, x->start, 0);
+    for (uint32_t k = 0; k < x->cold->count; k++) {
+        Cold *c = &x->cold->list[k];
+        patch19(e, c->branch);
+        if (c->leaves) {
+            exit_const(&c->at, c->target, x->count);
+            continue;
+        }
+        c->at.final = 0;
+        emit_fallback(&c->at, c->at.insn);
+        put(e, 0x14000000u | ((uint32_t)(c->resume - e->p) & 0x3FFFFFFu));
+    }
+    /* the exits emitted above polled too. */
+    for (uint32_t k = 0; k < x->cold->polls && !e->overflow; k++) {
+        Poll *p = &x->cold->poll[k];
+        patch19(e, p->branch);
+        mov_imm(e, POLL, X86_POLL_EVERY);
+        ldr(e, 8, 17, CPU, offsetof(X86Cpu, suspend_pending));
+        ldr(e, 4, 17, 17, 0);
+        put(e, 0x35000000u | ((uint32_t)(p->fail - e->p) & 0x7FFFFu) << 5 | 17u); /* cbnz w17, fail */
+        ldr(e, 8, 17, CPU, offsetof(X86Cpu, code_epoch));
+        ldr(e, 4, 17, 17, 0);
+        ldr(e, 4, T5, CPU, offsetof(X86Cpu, blocks_epoch));
+        put(e, 0x6B00001Fu | (uint32_t)T5 << 16 | 17u << 5); /* cmp w17, w15 */
+        put(e, 0x54000001u | ((uint32_t)(p->fail - e->p) & 0x7FFFFu) << 5); /* b.ne fail */
+        put(e, 0x14000000u | ((uint32_t)(p->resume - e->p) & 0x3FFFFFFu));
+    }
+}
+
+/* a nan result goes through the interpreter, which applies the x86 nan rules. checks lane 0 of a scalar result. */
+static uint32_t scalar_nan_check(Ctx *x, int dbl, int v)
 {
     put(x->e, (dbl ? 0x1E602000u : 0x1E202000u) | (uint32_t)v << 16 | (uint32_t)v << 5);
-    return nan_guard(x, VC);
+    return cold_branch(x, VS);
 }
 
-/* checks every lane of a packed result: ok when none is a nan. */
-static uint32_t *packed_nan_check(Ctx *x, int dbl, int v)
+/* checks every lane of a packed result. */
+static uint32_t packed_nan_check(Ctx *x, int dbl, int v)
 {
     Emit *e = x->e;
     v3(e, dbl ? 0x4E60E400u : 0x4E20E400u, V3, v, v); /* fcmeq v3, v, v */
     put(e, (dbl ? 0x0EA12800u : 0x0E612800u) | (uint32_t)V3 << 5 | V3); /* xtn */
     put(e, 0x9E660000u | (uint32_t)V3 << 5 | 16);                       /* fmov x16, d3 */
     put(e, 0xB100061Fu);                                                /* cmn x16, #1 */
-    return nan_guard(x, EQ);
+    return cold_branch(x, NE);
 }
 
 /*
@@ -1523,7 +1763,6 @@ static int emit_sse(Ctx *x, const X86Insn *i)
     int scalar = pfx == 0xF2 || pfx == 0xF3;
     int lane = pfx == 0xF2 || pfx == 0x66 ? 8 : 4; /* element size */
     uint32_t sz = dbl ? 1u << 22 : 0;
-    uint32_t *ok = nullptr, *done = nullptr;
     x->keep = 1; /* every case but the arithmetic, conversions to integers and compares. */
     if (pfx == 0x66 || op == 0x70) {
         int r = emit_simd_int(x, i);
@@ -1532,48 +1771,98 @@ static int emit_sse(Ctx *x, const X86Insn *i)
     }
     switch (op) {
     case 0x10: /* movups, movupd, movss, movsd */
-        if (scalar && i->mod == 3) {
-            xload(x, 16, V0, i->reg);
-            xload(x, 16, V1, i->rm);
-            ins(e, lane, V0, 0, V1, 0);
-            xstore(x, V0, i->reg);
+        if (i->mod == 3) {
+            int from = xget(x, i->rm);
+            if (scalar)
+                ins(e, lane, xdst(x, i->reg), 0, from, 0);
+            else
+                vmov(e, xnew(x, i->reg), from);
         } else {
-            load_xsrc(x, i, scalar ? lane : 16, V0);
-            xstore(x, V0, i->reg);
+            /* the load faults before the register changes. */
+            ea(x, i);
+            vldr(e, scalar ? lane : 16, xnew(x, i->reg), ADDR, 0);
         }
         return 1;
-    case 0x11:
-        xload(x, 16, V0, i->reg);
+    case 0x11: {
+        int from = xget(x, i->reg);
         if (i->mod == 3 && scalar) {
-            xload(x, 16, V1, i->rm);
-            ins(e, lane, V1, 0, V0, 0);
-            xstore(x, V1, i->rm);
+            ins(e, lane, xdst(x, i->rm), 0, from, 0);
         } else if (i->mod == 3) {
-            xstore(x, V0, i->rm);
+            vmov(e, xnew(x, i->rm), from);
         } else {
             ea(x, i);
-            vstr(e, scalar ? lane : 16, V0, ADDR, 0);
+            vstr(e, scalar ? lane : 16, from, ADDR, 0);
         }
         return 1;
+    }
     case 0x28: /* movaps, movapd */
     case 0x6F: /* movdqa, movdqu */
         if ((op == 0x28 && scalar) || (op == 0x6F && pfx != 0x66 && pfx != 0xF3))
             return 0;
-        load_xsrc(x, i, 16, V0);
-        xstore(x, V0, i->reg);
-        return 1;
-    case 0x29:
-    case 0x7F:
-        if ((op == 0x29 && scalar) || (op == 0x7F && pfx != 0x66 && pfx != 0xF3))
-            return 0;
-        xload(x, 16, V0, i->reg);
-        if (i->mod == 3)
-            xstore(x, V0, i->rm);
-        else {
+        if (i->mod == 3) {
+            int from = xget(x, i->rm);
+            vmov(e, xnew(x, i->reg), from);
+        } else {
             ea(x, i);
-            vstr(e, 16, V0, ADDR, 0);
+            vldr(e, 16, xnew(x, i->reg), ADDR, 0);
         }
         return 1;
+    case 0x2B: /* movntps, movntpd */
+    case 0xE7: /* movntdq */
+        if (i->mod == 3 || scalar || (op == 0xE7 && pfx != 0x66))
+            return 0;
+        ea(x, i);
+        vstr(e, 16, xget(x, i->reg), ADDR, 0);
+        return 1;
+    case 0x50: { /* movmskps, movmskpd: the sign of each element, gathered into the low byte. */
+        if (scalar || i->mod != 3)
+            return 0;
+        int from = xget(x, i->rm), to = host_reg(i->reg);
+        if (dbl) {
+            put(e, 0x6F410400u | (uint32_t)from << 5 | V0); /* ushr v0.2d, from, #63 */
+            put(e, 0x4E083C00u | (uint32_t)V0 << 5 | T0);   /* umov x, v0.d[0] */
+            put(e, 0x4E183C00u | (uint32_t)V0 << 5 | T1);   /* umov x, v0.d[1] */
+            put(e, 0x2A000000u | (uint32_t)T1 << 16 | 1u << 10 | (uint32_t)T0 << 5 | (uint32_t)to);
+        } else {
+            put(e, 0x6F210400u | (uint32_t)from << 5 | V0); /* ushr v0.4s, from, #31 */
+            put(e, 0x6F611400u | (uint32_t)V0 << 5 | V0);   /* usra v0.2d, v0.2d, #31: each half's two bits together */
+            put(e, 0x0E013C00u | (uint32_t)V0 << 5 | T0);   /* umov w, v0.b[0] */
+            put(e, 0x0E113C00u | (uint32_t)V0 << 5 | T1);   /* umov w, v0.b[8] */
+            put(e, 0x2A000000u | (uint32_t)T1 << 16 | 2u << 10 | (uint32_t)T0 << 5 | (uint32_t)to);
+        }
+        return 1;
+    }
+    case 0xC4: { /* pinsrw into an xmm register */
+        if (pfx != 0x66)
+            return 0;
+        int word = T0;
+        if (i->mod == 3) {
+            word = host_reg(i->rm);
+        } else {
+            ea(x, i);
+            ldr(e, 2, T0, ADDR, 0);
+        }
+        put(e, 0x4E001C00u | ((uint32_t)(i->imm & 7) << 2 | 2u) << 16 | (uint32_t)word << 5 | (uint32_t)xdst(x, i->reg));
+        return 1;
+    }
+    case 0xC5: /* pextrw from an xmm register */
+        if (pfx != 0x66 || i->mod != 3)
+            return 0;
+        put(e, 0x0E003C00u | ((uint32_t)(i->imm & 7) << 2 | 2u) << 16 | (uint32_t)xget(x, i->rm) << 5 | (uint32_t)host_reg(i->reg));
+        return 1;
+    case 0x29:
+    case 0x7F: {
+        if ((op == 0x29 && scalar) || (op == 0x7F && pfx != 0x66 && pfx != 0xF3))
+            return 0;
+        int from = xget(x, i->reg);
+        if (i->mod == 3)
+            vmov(e, xnew(x, i->rm), from);
+        else {
+            ea(x, i);
+            vstr(e, 16, from, ADDR, 0);
+        }
+        return 1;
+    }
     case 0xD6: /* movq xmm/m64, xmm */
         if (pfx != 0x66)
             return 0;
@@ -1628,78 +1917,95 @@ static int emit_sse(Ctx *x, const X86Insn *i)
     case 0x15:
         if (scalar)
             return 0;
-        xload(x, 16, V0, i->reg);
-        load_xsrc(x, i, 16, V1);
-        v3(e, (op == 0x14 ? 0x0E003800u : 0x0E007800u) | 0x40000000u | (dbl ? 3u : 2u) << 22, V0, V0, V1);
-        xstore(x, V0, i->reg);
+        {
+            int b = xsrc(x, i, 16, V1), a = xdst(x, i->reg);
+            v3(e, (op == 0x14 ? 0x0E003800u : 0x0E007800u) | 0x40000000u | (dbl ? 3u : 2u) << 22, a, a, b);
+        }
         return 1;
     case 0x54: case 0x55: case 0x56: case 0x57: /* andps, andnps, orps, xorps and the pd forms */
     case 0xDB: case 0xDF: case 0xEB: case 0xEF: { /* pand, pandn, por, pxor */
         if (op >= 0xDB ? pfx != 0x66 : scalar)
             return 0;
         int k = op >= 0xDB ? (op == 0xDB ? 0 : op == 0xDF ? 1 : op == 0xEB ? 2 : 3) : op - 0x54;
-        xload(x, 16, V0, i->reg);
-        load_xsrc(x, i, 16, V1);
+        if (k == 3 && i->mod == 3 && i->rm == i->reg) { /* a register cleared */
+            vzero(e, xnew(x, i->reg));
+            return 1;
+        }
+        int b = xsrc(x, i, 16, V1), a = xdst(x, i->reg);
         if (k == 1)
-            v3(e, V_BIC, V0, V1, V0); /* ~dst & src */
+            v3(e, V_BIC, a, b, a); /* ~dst & src */
         else
-            v3(e, k == 0 ? V_AND : k == 2 ? V_ORR : V_EOR, V0, V0, V1);
-        xstore(x, V0, i->reg);
+            v3(e, k == 0 ? V_AND : k == 2 ? V_ORR : V_EOR, a, a, b);
         return 1;
     }
     case 0x58: case 0x59: case 0x5C: case 0x5E: case 0x51: { /* add, mul, sub, div, sqrt */
         x->keep = 0;
         static const uint32_t vec[] = {0x4E20D400u, 0x6E20DC00u, 0, 0, 0x4EA0D400u, 0, 0x6E20FC00u};
         static const uint32_t sca[] = {0x1E202800u, 0x1E200800u, 0, 0, 0x1E203800u, 0, 0x1E201800u};
-        xload(x, 16, V0, i->reg);
-        load_xsrc(x, i, scalar ? lane : 16, V1);
+        int b = xsrc(x, i, scalar ? lane : 16, V1), a = xget(x, i->reg);
+        if (x86_jit_afp) {
+            /* nans come out as x86 makes them, and a scalar operation keeps the rest of its first operand, or of the
+             * register it writes when it has one operand. */
+            if (op == 0x51)
+                put(e, (scalar ? 0x1E21C000u : 0x6EA1F800u) | sz | (uint32_t)b << 5 | (uint32_t)a);
+            else
+                v3(e, (scalar ? sca : vec)[op - 0x58] | sz, a, a, b);
+            return x->keep = 1, 1;
+        }
+        /* the result is made aside: a nan leaves the registers to the interpreter as they were. */
+        uint32_t stub;
         if (scalar) {
             if (op == 0x51)
-                put(e, 0x1E21C000u | sz | (uint32_t)V1 << 5 | V2);
+                put(e, 0x1E21C000u | sz | (uint32_t)b << 5 | V2);
             else
-                v3(e, sca[op - 0x58] | sz, V2, V0, V1);
-            ok = scalar_nan_check(x, dbl, V2);
-            nan_join(x, ok, &done);
-            ins(e, lane, V0, 0, V2, 0);
+                v3(e, sca[op - 0x58] | sz, V2, a, b);
+            stub = scalar_nan_check(x, dbl, V2);
+            ins(e, lane, xdst(x, i->reg), 0, V2, 0);
         } else {
             if (op == 0x51)
-                put(e, 0x6EA1F800u | sz | (uint32_t)V1 << 5 | V2);
+                put(e, 0x6EA1F800u | sz | (uint32_t)b << 5 | V2);
             else
-                v3(e, vec[op - 0x58] | sz, V2, V0, V1);
-            ok = packed_nan_check(x, dbl, V2);
-            nan_join(x, ok, &done);
-            vmov(e, V0, V2);
+                v3(e, vec[op - 0x58] | sz, V2, a, b);
+            stub = packed_nan_check(x, dbl, V2);
+            vmov(e, xdst(x, i->reg), V2);
         }
-        xstore(x, V0, i->reg);
-        patch26(e, done);
+        cold_resume(x, stub);
         return 1;
     }
     case 0x5D: /* min: a < b ? a : b, the second operand for nans and equal values. */
-    case 0x5F: /* max: a > b ? a : b */
-        xload(x, 16, V0, i->reg);
-        load_xsrc(x, i, scalar ? lane : 16, V1);
+    case 0x5F: { /* max: a > b ? a : b */
+        int b = xsrc(x, i, scalar ? lane : 16, V1), a = xdst(x, i->reg);
+        if (x86_jit_afp) { /* fmin and fmax give the second operand for nans and equal values there, as x86 does. */
+            v3(e, (scalar ? (op == 0x5D ? 0x1E205800u : 0x1E204800u) : (op == 0x5D ? 0x4EA0F400u : 0x4E20F400u)) | sz, a, a, b);
+            return 1;
+        }
         if (op == 0x5D)
-            v3(e, 0x6EA0E400u | sz, V2, V1, V0); /* fcmgt v2, b, a */
+            v3(e, 0x6EA0E400u | sz, V2, b, a); /* fcmgt v2, b, a */
         else
-            v3(e, 0x6EA0E400u | sz, V2, V0, V1); /* fcmgt v2, a, b */
-        v3(e, V_BSL, V2, V0, V1);
+            v3(e, 0x6EA0E400u | sz, V2, a, b); /* fcmgt v2, a, b */
+        v3(e, V_BSL, V2, a, b);
         if (scalar)
-            ins(e, lane, V0, 0, V2, 0);
+            ins(e, lane, a, 0, V2, 0);
         else
-            vmov(e, V0, V2);
-        xstore(x, V0, i->reg);
+            vmov(e, a, V2);
         return 1;
+    }
     case 0xC2: { /* cmpps, cmppd, cmpss, cmpsd */
         int pred = (int)(i->imm & 7);
-        xload(x, 16, V0, i->reg);
-        load_xsrc(x, i, scalar ? lane : 16, V1);
+        int b = xsrc(x, i, scalar ? lane : 16, V1), a = xdst(x, i->reg);
+        if (x86_jit_afp && scalar && pred < 3) {
+            /* the scalar compares keep the rest of their second operand there, as the processor was seen to do. */
+            static const uint32_t ops[3] = {0x5E20E400u, 0x7EA0E400u, 0x7E20E400u}; /* fcmeq, fcmgt, fcmge */
+            v3(e, ops[pred] | sz, a, b, a);
+            return 1;
+        }
         switch (pred & 3) {
-        case 0: v3(e, 0x4E20E400u | sz, V2, V0, V1); break; /* eq: fcmeq */
-        case 1: v3(e, 0x6EA0E400u | sz, V2, V1, V0); break; /* lt: fcmgt b, a */
-        case 2: v3(e, 0x6E20E400u | sz, V2, V1, V0); break; /* le: fcmge b, a */
+        case 0: v3(e, 0x4E20E400u | sz, V2, a, b); break; /* eq: fcmeq */
+        case 1: v3(e, 0x6EA0E400u | sz, V2, b, a); break; /* lt: fcmgt b, a */
+        case 2: v3(e, 0x6E20E400u | sz, V2, b, a); break; /* le: fcmge b, a */
         default: /* unordered: not both ordered */
-            v3(e, 0x4E20E400u | sz, V2, V0, V0);
-            v3(e, 0x4E20E400u | sz, V3, V1, V1);
+            v3(e, 0x4E20E400u | sz, V2, a, a);
+            v3(e, 0x4E20E400u | sz, V3, b, b);
             v3(e, V_AND, V2, V2, V3);
             pred ^= 4;
             break;
@@ -1707,10 +2013,9 @@ static int emit_sse(Ctx *x, const X86Insn *i)
         if (pred & 4)
             put(e, 0x6E205800u | (uint32_t)V2 << 5 | V2); /* not */
         if (scalar)
-            ins(e, lane, V0, 0, V2, 0);
+            ins(e, lane, a, 0, V2, 0);
         else
-            vmov(e, V0, V2);
-        xstore(x, V0, i->reg);
+            vmov(e, a, V2);
         return 1;
     }
     case 0x2E: /* ucomiss, ucomisd */
@@ -1718,22 +2023,23 @@ static int emit_sse(Ctx *x, const X86Insn *i)
         if (scalar)
             return 0;
         x->keep = 0;
-        xload(x, 16, V0, i->reg);
-        load_xsrc(x, i, lane, V1);
-        put(e, (dbl ? 0x1E602000u : 0x1E202000u) | (uint32_t)V1 << 16 | (uint32_t)V0 << 5);
-        put(e, 0x1A9F07E0u | (uint32_t)(EQ ^ 1) << 12 | T0); /* cset t0, eq */
-        put(e, 0x1A9F07E0u | (uint32_t)(VS ^ 1) << 12 | T1); /* cset t1, vs: unordered */
-        put(e, 0x1A9F07E0u | (uint32_t)(LO ^ 1) << 12 | T2); /* cset t2, lo: less */
-        rrr(e, OP_ORR, 4, T0, T0, T1);                       /* zf */
-        rrr(e, OP_ORR, 4, T2, T2, T1);                       /* cf */
-        put(e, OP_ORR | 6u << 10 | (uint32_t)T0 << 16 | (uint32_t)T2 << 5 | T2); /* | zf << 6 */
-        put(e, OP_ORR | 2u << 10 | (uint32_t)T1 << 16 | (uint32_t)T2 << 5 | T2); /* | pf << 2 */
-        ldr(e, 4, T3, CPU, offsetof(X86Cpu, flags));
-        mov_imm(e, T4, X86_ARITH_FLAGS);
-        put(e, 0x0A200000u | (uint32_t)T4 << 16 | (uint32_t)T3 << 5 | T3); /* bic */
-        rrr(e, OP_ORR, 4, T3, T3, T2);
-        str(e, 4, T3, CPU, offsetof(X86Cpu, flags));
-        str(e, 4, XZR, CPU, offsetof(X86Cpu, lf_op));
+        int b = xsrc(x, i, lane, V1), a = xget(x, i->reg);
+        put(e, (dbl ? 0x1E602000u : 0x1E202000u) | (uint32_t)b << 16 | (uint32_t)a << 5);
+        if (x->flags_lazy) {
+            put(e, 0x1A9F07E0u | (uint32_t)(EQ ^ 1) << 12 | T0); /* cset t0, eq */
+            put(e, 0x1A9F07E0u | (uint32_t)(VS ^ 1) << 12 | T1); /* cset t1, vs: unordered */
+            put(e, 0x1A9F07E0u | (uint32_t)(LO ^ 1) << 12 | T2); /* cset t2, lo: less */
+            rrr(e, OP_ORR, 4, T0, T0, T1);                       /* zf */
+            rrr(e, OP_ORR, 4, T2, T2, T1);                       /* cf */
+            put(e, OP_ORR | 6u << 10 | (uint32_t)T0 << 16 | (uint32_t)T2 << 5 | T2); /* | zf << 6 */
+            put(e, OP_ORR | 2u << 10 | (uint32_t)T1 << 16 | (uint32_t)T2 << 5 | T2); /* | pf << 2 */
+            ldr(e, 4, T3, CPU, offsetof(X86Cpu, flags));
+            mov_imm(e, T4, X86_ARITH_FLAGS);
+            put(e, 0x0A200000u | (uint32_t)T4 << 16 | (uint32_t)T3 << 5 | T3); /* bic */
+            rrr(e, OP_ORR, 4, T3, T3, T2);
+            str(e, 4, T3, CPU, offsetof(X86Cpu, flags));
+            str(e, 4, XZR, CPU, offsetof(X86Cpu, lf_op));
+        }
         set_nzcv(x, ALU_UCOMI);
         return 1;
     }
@@ -1741,45 +2047,54 @@ static int emit_sse(Ctx *x, const X86Insn *i)
         if (!scalar)
             return 0;
         int wide = (i->rex & 8) != 0;
-        load_rm(x, i, wide ? 8 : 4, T0);
-        put(e, (wide ? 0x80000000u : 0) | (dbl ? 0x1E620000u : 0x1E220000u) | (uint32_t)T0 << 5 | V2);
-        xload(x, 16, V0, i->reg);
-        ins(e, lane, V0, 0, V2, 0);
-        xstore(x, V0, i->reg);
+        int from = rm_operand(x, i, wide ? 8 : 4, T0);
+        put(e, (wide ? 0x80000000u : 0) | (dbl ? 0x1E620000u : 0x1E220000u) | (uint32_t)from << 5 |
+                   (uint32_t)(x86_jit_afp ? xdst(x, i->reg) : V2));
+        if (!x86_jit_afp)
+            ins(e, lane, xdst(x, i->reg), 0, V2, 0);
         return 1;
     }
-    case 0x2C: { /* cvttss2si, cvttsd2si: nans and out of range values take the interpreter's indefinite value. */
+    case 0x2C:
+    case 0x2D: { /* cvttss2si, cvttsd2si: nans and out of range values take the interpreter's indefinite value. */
         if (!scalar)
             return 0;
         x->keep = 0;
         int wide = (i->rex & 8) != 0;
-        load_xsrc(x, i, lane, V1);
-        put(e, (wide ? 0x80000000u : 0) | (dbl ? 0x1E780000u : 0x1E380000u) | (uint32_t)V1 << 5 | T0);
-        put(e, (dbl ? 0x1E602000u : 0x1E202000u) | (uint32_t)V1 << 16 | (uint32_t)V1 << 5); /* fcmp v1, v1 */
-        uint32_t *nan = b_cond(e, VS);
-        /* saturated: x - min is 0 or -1, all ones, for the two limits. */
+        int from = xsrc(x, i, lane, V1), to = host_reg(i->reg);
+        if (op == 0x2D) {
+            /* cvtss2si, cvtsd2si: rounded as mxcsr says, which fpcr mirrors. */
+            put(e, (dbl ? 0x1E67C000u : 0x1E27C000u) | (uint32_t)from << 5 | V2); /* frinti */
+            from = V2;
+        }
+        /* the interpreter writes the register again when it runs, so it is converted into here. */
+        put(e, (wide ? 0x80000000u : 0) | (dbl ? 0x1E780000u : 0x1E380000u) | (uint32_t)from << 5 | (uint32_t)to);
+        /* saturated: x - min is 0 or -1, all ones, for the two limits. a nan converts to 0 and fails with them. */
         mov_imm(e, T1, wide ? 0x8000000000000000ull : 0x80000000ull);
-        rrr(e, OP_EOR, wide ? 8 : 4, T1, T0, T1);
-        put(e, (wide ? 0xB1000400u : 0x31000400u) | (uint32_t)T1 << 5 | XZR); /* cmn t1, #1 */
-        uint32_t *max = b_cond(e, EQ);
-        rrr(e, OP_SUBS, wide ? 8 : 4, XZR, T1, XZR);
-        ok = b_cond(e, NE);
-        patch19(e, nan);
-        patch19(e, max);
-        emit_fallback(x, i);
-        done = b_always(e);
-        patch19(e, ok);
-        store_reg(e, 8, T0, i->reg, 1);
-        patch26(e, done);
+        rrr(e, OP_EOR, wide ? 8 : 4, T1, to, T1);
+        add_imm(e, wide ? 8 : 4, T1, T1, 1);
+        put(e, (dbl ? 0x1E602000u : 0x1E202000u) | (uint32_t)from << 16 | (uint32_t)from << 5); /* fcmp */
+        put(e, (wide ? 0xFA400800u : 0x7A400800u) | 1u << 16 | (uint32_t)VC << 12 | (uint32_t)T1 << 5 | 4u); /* ccmp t1, #1, #z, vc */
+        cold_resume(x, cold_branch(x, LS));
         return 1;
     }
-    case 0x5A: /* cvtss2sd, cvtsd2ss */
-        if (!scalar)
+    case 0x5A: { /* cvtss2sd, cvtsd2ss, and cvtps2pd, cvtpd2ps */
+        if (!scalar) {
+            int wide = xsrc(x, i, dbl ? 16 : 8, V1);
+            put(e, (dbl ? 0x0E616800u : 0x0E617800u) | (uint32_t)wide << 5 | (uint32_t)xnew(x, i->reg)); /* fcvtn, fcvtl */
+            return 1;
+        }
+        int from = xsrc(x, i, lane, V1);
+        put(e, (dbl ? 0x1E624000u : 0x1E22C000u) | (uint32_t)from << 5 | (uint32_t)(x86_jit_afp ? xdst(x, i->reg) : V2));
+        if (!x86_jit_afp)
+            ins(e, dbl ? 4 : 8, xdst(x, i->reg), 0, V2, 0);
+        return 1;
+    }
+    case 0xE6: /* cvtdq2pd */
+        if (pfx != 0xF3)
             return 0;
-        xload(x, 16, V0, i->reg);
-        load_xsrc(x, i, lane, V1);
-        put(e, (dbl ? 0x1E624000u : 0x1E22C000u) | (uint32_t)V1 << 5 | V2);
-        ins(e, dbl ? 4 : 8, V0, 0, V2, 0);
+        load_xsrc(x, i, 16, V1);
+        put(e, 0x0F20A400u | (uint32_t)V1 << 5 | V0); /* sxtl v0.2d, v1.2s */
+        put(e, 0x4E61D800u | (uint32_t)V0 << 5 | V0); /* scvtf v0.2d */
         xstore(x, V0, i->reg);
         return 1;
     case 0x5B: /* cvtdq2ps, cvtps2dq, cvttps2dq */
@@ -1909,6 +2224,7 @@ static uint32_t *misaligned(Emit *e, int size)
 static void atomic_call(Ctx *x, const void *fn, uint64_t a1, int a2, int a3, int rd)
 {
     Emit *e = x->e;
+    x87_store(x);
     mov_imm(e, T4, x->addr);
     str(e, 8, T4, CPU, offsetof(X86Cpu, rip));
     str(e, 8, T4, CPU, offsetof(X86Cpu, insn_rip));
@@ -1923,6 +2239,7 @@ static void atomic_call(Ctx *x, const void *fn, uint64_t a1, int a2, int a3, int
     mov_reg(e, 8, rd, 0);
     sync_regs(e, 0);
     xreload(x);
+    x87_reload(x);
 }
 
 /*
@@ -2330,6 +2647,698 @@ static int emit_div(Ctx *x, const X86Insn *i, int size, int is_signed)
     return 1;
 }
 
+
+/* ------------------------------------------------------------ x87 */
+
+/*
+ * the x87 stack, in double precision as the interpreter keeps it. within a block the registers a program uses live
+ * in v4 to v11: x17 holds the top the stack had when the block first used it, the base, and v4 + n holds the
+ * register n places past it. pushes and pops only move the block's own count, and the top, the tags and the changed
+ * registers go to the cpu where something reads them: at the exits and around calls, with the last instruction
+ * pointer and opcode. a fault takes them from the faulting context, see x86_jit_fault.
+ */
+enum { FCACHE = 4 };
+
+static uint32_t OFF_FPR(void) { return (uint32_t)offsetof(X86Cpu, fpr); }
+static void fmov(Emit *e, int vd, int vn) { put(e, 0x1E604000u | (uint32_t)vn << 5 | (uint32_t)vd); }
+
+static void x87_base(Ctx *x)
+{
+    if (!x->fbase)
+        ldr(x->e, 1, 17, CPU, offsetof(X86Cpu, ftop));
+    x->fbase = 1;
+}
+
+/* reg = the address of the register n places past the base, less the offset of the registers. */
+static void x87_addr(Ctx *x, int n, int reg)
+{
+    Emit *e = x->e;
+    x87_base(x);
+    if (!n) {
+        add_shifted(e, reg, CPU, 17, 3);
+        return;
+    }
+    add_imm(e, 4, reg, 17, n);
+    put(e, 0x12000800u | (uint32_t)reg << 5 | (uint32_t)reg); /* and w, w, #7 */
+    add_shifted(e, reg, CPU, reg, 3);
+}
+
+/* the host register of st(i), loaded. */
+static int x87_st(Ctx *x, int i)
+{
+    int n = (x->fcur + i) & 7;
+    if (!(x->floaded & 1u << n)) {
+        x87_addr(x, n, 16);
+        vldr(x->e, 8, FCACHE + x->fmap[n], 16, OFF_FPR());
+        x->floaded |= (uint8_t)(1u << n);
+    }
+    return FCACHE + x->fmap[n];
+}
+
+/* the host register of st(i) to write: all of it when whole is set, so that it is not loaded. */
+static int x87_write(Ctx *x, int i, int whole)
+{
+    int n = (x->fcur + i) & 7;
+    if (whole)
+        x87_base(x);
+    else
+        x87_st(x, i);
+    x->floaded |= (uint8_t)(1u << n);
+    x->fdirty |= (uint8_t)(1u << n);
+    return FCACHE + x->fmap[n];
+}
+
+/* the host register the next push writes: a load may go straight into it, which leaves it alone when it faults. */
+static int x87_next(const Ctx *x) { return FCACHE + x->fmap[(x->fcur - 1) & 7]; }
+
+/* the host register of the new st(0). */
+static int x87_push(Ctx *x)
+{
+    x->fcur = (x->fcur - 1) & 7;
+    x->fmoved = 1;
+    x->ftag_set |= (uint8_t)(1u << x->fcur);
+    x->ftag_clear &= (uint8_t)~(1u << x->fcur);
+    return x87_write(x, 0, 1);
+}
+
+static void x87_pop(Ctx *x)
+{
+    x87_base(x);
+    x->ftag_clear |= (uint8_t)(1u << x->fcur);
+    x->ftag_set &= (uint8_t)~(1u << x->fcur);
+    x->fcur = (x->fcur + 1) & 7;
+    x->fmoved = 1;
+}
+
+/* t0 = a mask of registers counted from the base, as one of the registers themselves in its low byte. */
+static void x87_rotate(Emit *e, uint32_t mask)
+{
+    mov_imm(e, T0, mask);
+    put(e, 0x1AC02000u | 17u << 16 | (uint32_t)T0 << 5 | T0);                       /* lsl w, w, w17 */
+    put(e, 0x2A400000u | (uint32_t)T0 << 16 | 8u << 10 | (uint32_t)T0 << 5 | T0); /* orr w, w, w, lsr #8 */
+}
+
+/*
+ * stores what the block holds of the x87 state. the state the translator tracks stays as it is: what follows may
+ * be a path that leaves, and storing again does no harm. only x16 is lost.
+ */
+static void x87_store(Ctx *x)
+{
+    Emit *e = x->e;
+    if (x->x87_pending) {
+        mov_imm(e, 16, x->x87_fop);
+        str(e, 2, 16, CPU, offsetof(X86Cpu, fop));
+        mov_imm(e, 16, x->x87_ip);
+        str(e, 8, 16, CPU, offsetof(X86Cpu, fpu_ip));
+    }
+    if (!x->fbase)
+        return;
+    /* what a popped register held is left where it is: nothing reads it before it is pushed again. */
+    for (int n = 0; n < 8; n++)
+        if (x->fdirty & ~x->ftag_clear & 1u << n) {
+            x87_addr(x, n, 16);
+            vstr(e, 8, FCACHE + x->fmap[n], 16, OFF_FPR());
+        }
+    if (x->fcur)
+        x->fmoved = 2; /* stored away from where it began. */
+    if (x->fmoved == 2) {
+        add_imm(e, 4, 16, 17, x->fcur);
+        put(e, 0x12000800u | 16u << 5 | 16u);
+        str(e, 1, 16, CPU, offsetof(X86Cpu, ftop));
+    }
+    if (x->ftag_set | x->ftag_clear) {
+        put(e, 0xF81F0FE0u | T0); /* str t0, [sp, #-16]! */
+        ldr(e, 1, 16, CPU, offsetof(X86Cpu, ftag));
+        if (x->ftag_set) {
+            x87_rotate(e, x->ftag_set);
+            rrr(e, OP_ORR, 4, 16, 16, T0);
+        }
+        if (x->ftag_clear) {
+            x87_rotate(e, x->ftag_clear);
+            rrr(e, 0x0A200000u, 4, 16, 16, T0);
+        }
+        str(e, 1, 16, CPU, offsetof(X86Cpu, ftag));
+        put(e, 0xF84107E0u | T0); /* ldr t0, [sp], #16 */
+    }
+}
+
+/* after a call that x87_store went before: the base and the registers held, which c code does not keep. */
+static void x87_reload(Ctx *x)
+{
+    Emit *e = x->e;
+    if (!x->fbase)
+        return;
+    ldr(e, 1, 17, CPU, offsetof(X86Cpu, ftop));
+    if (x->fcur) {
+        add_imm(e, 4, 17, 17, -x->fcur);
+        put(e, 0x12000800u | 17u << 5 | 17u);
+    }
+    for (int n = 0; n < 8; n++)
+        if (x->floaded & 1u << n) {
+            x87_addr(x, n, 16);
+            vldr(e, 8, FCACHE + x->fmap[n], 16, OFF_FPR());
+        }
+}
+
+/* after x87_store and something that may have changed the x87 state: the block starts over from the cpu's. */
+static void x87_reset(Ctx *x)
+{
+    x->fbase = 0;
+    x->fcur = x->fmoved = 0;
+    for (int n = 0; n < 8; n++)
+        x->fmap[n] = (uint8_t)n;
+    x->floaded = x->fdirty = x->ftag_set = x->ftag_clear = 0;
+    x->x87_pending = 0;
+    x->x87_seen = 0;
+}
+
+/*
+ * where the host keeps the rest of the register a scalar operation writes, see x86_jit_afp, one with a single operand
+ * waits for what the register held. so those are done in place on a copy, which the register then takes whole.
+ * v = the signed integer in t2 as a double.
+ */
+static void x87_int(Emit *e, int v)
+{
+    put(e, 0x9E670000u | (uint32_t)T2 << 5 | (uint32_t)v);       /* fmov d, x */
+    put(e, 0x5E61D800u | (uint32_t)v << 5 | (uint32_t)v);        /* scvtf d, d */
+}
+
+/* vd = a op b, as the interpreter's arith. */
+static void x87_arith(Emit *e, int op, int vd, int a, int b)
+{
+    static const uint32_t ops[8] = {0x1E602800u, 0x1E600800u, 0, 0, 0x1E603800u, 0x1E603800u, 0x1E601800u, 0x1E601800u};
+    int n = op == 5 || op == 7 ? b : a, m = op == 5 || op == 7 ? a : b;
+    put(e, ops[op] | (uint32_t)m << 16 | (uint32_t)n << 5 | (uint32_t)vd);
+}
+
+/* the condition codes of a compared with b. loses t0 to t2 and the arm64 flags. */
+static void x87_compare(Ctx *x, int a, int b)
+{
+    Emit *e = x->e;
+    x->keep = 0;
+    put(e, 0x1E602000u | (uint32_t)b << 16 | (uint32_t)a << 5); /* fcmp */
+    cset(e, T0, MI);
+    cset(e, T1, EQ);
+    mov_imm(e, T2, 0x4500);
+    put(e, 0x1A800000u | 31u << 16 | (uint32_t)VS << 12 | (uint32_t)T2 << 5 | T2); /* csel w, w, wzr, vs */
+    put(e, 0x2A000000u | (uint32_t)T0 << 16 | 8u << 10 | (uint32_t)T2 << 5 | T2);
+    put(e, 0x2A000000u | (uint32_t)T1 << 16 | 14u << 10 | (uint32_t)T2 << 5 | T2);
+    ldr(e, 2, T0, CPU, offsetof(X86Cpu, fsw));
+    mov_imm(e, T1, 0x4700);
+    rrr(e, 0x0A200000u, 4, T0, T0, T1);
+    rrr(e, OP_ORR, 4, T0, T0, T2);
+    str(e, 2, T0, CPU, offsetof(X86Cpu, fsw));
+}
+
+/* d1 = v rounded to an integer as the control word says. loses t0 and the arm64 flags. */
+static void x87_round(Ctx *x, int v)
+{
+    Emit *e = x->e;
+    static const uint32_t ops[4] = {0x1E644000u, 0x1E654000u, 0x1E64C000u, 0x1E65C000u}; /* frintn, m, p, z */
+    uint32_t *done[3];
+    x->keep = 0;
+    put(e, 0x2F00E400u | V1); /* movi d1, #0 */
+    ldr(e, 2, T0, CPU, offsetof(X86Cpu, fcw));
+    ubfm(e, 4, T0, T0, 10, 11);
+    for (int mode = 0; mode < 4; mode++) {
+        uint32_t *next = nullptr;
+        if (mode < 3) {
+            put(e, 0x7100001Fu | (uint32_t)mode << 10 | (uint32_t)T0 << 5); /* cmp w, #mode */
+            next = b_cond(e, NE);
+        }
+        put(e, ops[mode] | (uint32_t)v << 5 | V1);
+        if (mode < 3) {
+            done[mode] = b_always(e);
+            patch19(e, next);
+        }
+    }
+    for (int mode = 0; mode < 3; mode++)
+        patch26(e, done[mode]);
+}
+
+/* t2 = the integer of size bytes that v holds, or the indefinite one when it does not fit. loses t0 and t3. */
+static void x87_to_int(Ctx *x, int v, int size)
+{
+    Emit *e = x->e;
+    x->keep = 0;
+    put(e, 0x9E780000u | (uint32_t)v << 5 | T2); /* fcvtzs x, d */
+    if (size == 8) {
+        mov_imm(e, T0, 0x43E0000000000000ull);
+        put(e, 0x9E670000u | (uint32_t)T0 << 5 | V2); /* fmov d2, x */
+        put(e, 0x1E602000u | (uint32_t)V2 << 16 | (uint32_t)v << 5);
+        mov_imm(e, T0, 0x8000000000000000ull);
+        put(e, 0x9A800000u | (uint32_t)T2 << 16 | (uint32_t)HS << 12 | (uint32_t)T0 << 5 | T2); /* csel: hs is over or nan */
+        return;
+    }
+    sbfm(e, 8, T3, T2, 0, size * 8 - 1);
+    put(e, 0x1E602000u | (uint32_t)v << 16 | (uint32_t)v << 5);
+    put(e, 0xFA400000u | (uint32_t)T2 << 16 | (uint32_t)VC << 12 | (uint32_t)T3 << 5); /* ccmp x, x, #0, vc */
+    mov_imm(e, T0, size == 4 ? 0x80000000u : 0x8000u);
+    put(e, 0x9A800000u | (uint32_t)T2 << 16 | (uint32_t)NE << 12 | (uint32_t)T0 << 5 | T2);
+}
+
+/* t0 = the status word with the top in it. loses t1. */
+static void x87_status(Ctx *x)
+{
+    Emit *e = x->e;
+    x87_base(x);
+    ldr(e, 2, T0, CPU, offsetof(X86Cpu, fsw));
+    add_imm(e, 4, T1, 17, x->fcur);
+    put(e, 0x33150800u | (uint32_t)T1 << 5 | T0); /* bfi w, w, #11, #3 */
+}
+
+static int x87_supported(const X86Insn *i)
+{
+    uint8_t op = i->opcode, m = i->modrm;
+    int sub = (m >> 3) & 7;
+    if (i->mod != 3) {
+        switch (op) {
+        case 0xD9: return sub == 0 || sub == 2 || sub == 3 || sub == 5 || sub == 7;
+        case 0xDB: return sub < 4;
+        case 0xDD: return sub < 4 || sub == 7;
+        case 0xDF: return sub < 4 || sub == 5 || sub == 7;
+        default: return 1;
+        }
+    }
+    switch (op) {
+    case 0xD8:
+    case 0xDC: return 1;
+    case 0xD9: return m <= 0xD0 || m == 0xE0 || m == 0xE1 || m == 0xE4 || (m >= 0xE8 && m <= 0xEE) || m == 0xFA || m == 0xFC;
+    case 0xDA: return m == 0xE9 || sub < 4;
+    case 0xDB: return sub < 4 || sub == 5 || sub == 6;
+    case 0xDD: return sub == 0 || (sub >= 2 && sub <= 5);
+    case 0xDE: return sub != 3 || m == 0xD9;
+    case 0xDF: return m == 0xE0 || sub == 5 || sub == 6;
+    default: return 0;
+    }
+}
+
+/* memory operands are read into v0 to v2 or written before the stack changes, so a fault leaves it as it was. */
+static int emit_x87(Ctx *x, const X86Insn *i)
+{
+    Emit *e = x->e;
+    uint8_t op = i->opcode, m = i->modrm;
+    int sub = (m >> 3) & 7, r = m & 7, mem = i->mod != 3;
+    if (!x87_supported(i))
+        return 0;
+    x->keep = 1; /* but for the compares and the conversions to integers. */
+    if (!x->x87_seen) {
+        /* mmx instructions left the registers theirs: the stack starts over. */
+        ldr(e, 8, 16, CPU, offsetof(X86Cpu, mmx_mode));
+        uint32_t *none = cbz_x(e, 16);
+        str(e, 8, XZR, CPU, offsetof(X86Cpu, mmx_mode));
+        str(e, 1, XZR, CPU, offsetof(X86Cpu, ftop));
+        patch19(e, none);
+        x->x87_seen = 1;
+    }
+    if (mem)
+        ea(x, i);
+    if (!x86_x87_control(i)) {
+        x->x87_pending = 1;
+        x->x87_fop = (uint32_t)((op & 7) << 8) | m;
+        x->x87_ip = x->addr;
+        if (mem)
+            str(e, 8, ADDR, CPU, offsetof(X86Cpu, fpu_dp));
+    }
+    if (mem) {
+        switch (op) {
+        case 0xD8:
+        case 0xDA:
+        case 0xDC:
+        case 0xDE: {
+            if (op == 0xD8) {
+                vldr(e, 4, V1, ADDR, 0);
+                put(e, 0x1E22C000u | (uint32_t)V1 << 5 | V1); /* fcvt d, s */
+            } else if (op == 0xDC) {
+                vldr(e, 8, V1, ADDR, 0);
+            } else {
+                ldr(e, op == 0xDA ? 4 : 2, T2, ADDR, 0);
+                sbfm(e, 8, T2, T2, 0, op == 0xDA ? 31 : 15);
+                x87_int(e, V1);
+            }
+            int s = x87_st(x, 0);
+            if (sub == 2 || sub == 3) {
+                x87_compare(x, s, V1);
+                if (sub == 3)
+                    x87_pop(x);
+            } else {
+                x87_arith(e, sub, x87_write(x, 0, 0), s, V1);
+            }
+            return 1;
+        }
+        case 0xD9:
+            if (sub == 0) {
+                vldr(e, 4, x87_next(x), ADDR, 0);
+                put(e, 0x1E22C000u | (uint32_t)x87_next(x) << 5 | (uint32_t)x87_next(x));
+                x87_push(x);
+            } else if (sub == 5) {
+                ldr(e, 2, T0, ADDR, 0);
+                str(e, 2, T0, CPU, offsetof(X86Cpu, fcw));
+            } else if (sub == 7) {
+                ldr(e, 2, T0, CPU, offsetof(X86Cpu, fcw));
+                str(e, 2, T0, ADDR, 0);
+            } else {
+                put(e, 0x2F00E400u | V1); /* movi d1, #0: the conversion does not wait for what v1 held. */
+                put(e, 0x1E624000u | (uint32_t)x87_st(x, 0) << 5 | V1); /* fcvt s, d */
+                vstr(e, 4, V1, ADDR, 0);
+                if (sub == 3)
+                    x87_pop(x);
+            }
+            return 1;
+        case 0xDD:
+            if (sub == 0) {
+                vldr(e, 8, x87_next(x), ADDR, 0);
+                x87_push(x);
+                return 1;
+            }
+            if (sub == 7) {
+                x87_status(x);
+                str(e, 2, T0, ADDR, 0);
+                return 1;
+            }
+            if (sub == 1) {
+                x87_to_int(x, x87_st(x, 0), 8);
+                str(e, 8, T2, ADDR, 0);
+            } else {
+                vstr(e, 8, x87_st(x, 0), ADDR, 0);
+            }
+            if (sub != 2)
+                x87_pop(x);
+            return 1;
+        default: { /* db and df */
+            int size = op == 0xDB ? 4 : 2;
+            if (sub == 0 || sub == 5) {
+                if (sub == 5)
+                    size = 8;
+                ldr(e, size, T2, ADDR, 0);
+                if (size < 8)
+                    sbfm(e, 8, T2, T2, 0, size * 8 - 1);
+                x87_int(e, x87_next(x));
+                x87_push(x);
+                return 1;
+            }
+            if (sub == 7)
+                size = 8;
+            int s = x87_st(x, 0);
+            if (sub == 1) {
+                x87_to_int(x, s, size);
+            } else {
+                x87_round(x, s);
+                x87_to_int(x, V1, size);
+            }
+            str(e, size, T2, ADDR, 0);
+            if (sub != 2)
+                x87_pop(x);
+            return 1;
+        }
+        }
+    }
+    switch (op) {
+    case 0xD8: {
+        int a = x87_st(x, 0), b = x87_st(x, r);
+        if (sub == 2 || sub == 3) {
+            x87_compare(x, a, b);
+            if (sub == 3)
+                x87_pop(x);
+        } else {
+            x87_arith(e, sub, x87_write(x, 0, 0), a, b);
+        }
+        return 1;
+    }
+    case 0xD9:
+        if (m == 0xD0)
+            return 1;
+        if (m < 0xC8) { /* fld st(i) */
+            int from = x87_st(x, r);
+            fmov(e, x87_push(x), from);
+        } else if (m < 0xD0) { /* fxch */
+            int top = x->fcur, other = (x->fcur + r) & 7;
+            x87_write(x, 0, 0);
+            x87_write(x, r, 0);
+            uint8_t held = x->fmap[top];
+            x->fmap[top] = x->fmap[other];
+            x->fmap[other] = held;
+        } else if (m == 0xE4) { /* ftst */
+            put(e, 0x2F00E400u | V1);
+            x87_compare(x, x87_st(x, 0), V1);
+        } else if (m >= 0xE8 && m <= 0xEE) {
+            static const uint64_t constants[7] = {0x3FF0000000000000ull, 0x400A934F0979A371ull, 0x3FF71547652B82FEull,
+                                                  0x400921FB54442D18ull, 0x3FD34413509F79FFull, 0x3FE62E42FEFA39EFull, 0};
+            mov_imm(e, T0, constants[m - 0xE8]);
+            put(e, 0x9E670000u | (uint32_t)T0 << 5 | (uint32_t)x87_push(x));
+        } else if (m == 0xFC) { /* frndint */
+            int s = x87_write(x, 0, 0);
+            x87_round(x, s);
+            fmov(e, s, V1);
+        } else { /* fchs, fabs, fsqrt */
+            int s = x87_write(x, 0, 0);
+            put(e, (m == 0xE0 ? 0x1E614000u : m == 0xE1 ? 0x1E60C000u : 0x1E61C000u) | (uint32_t)s << 5 | (uint32_t)s);
+        }
+        return 1;
+    case 0xDA:
+    case 0xDB:
+    case 0xDF:
+        if (op == 0xDF && m == 0xE0) { /* fnstsw ax */
+            x87_status(x);
+            store_reg(e, 2, T0, X86_RAX, 1);
+            return 1;
+        }
+        if (op != 0xDA && sub >= 5) { /* fucomi, fcomi, and with a pop: the flags as ucomisd sets them, and c1 cleared */
+            int a = x87_st(x, 0), b = x87_st(x, r);
+            x->keep = 0;
+            ldr(e, 2, T0, CPU, offsetof(X86Cpu, fsw));
+            put(e, 0x12167800u | (uint32_t)T0 << 5 | T0); /* and w, w, #~0x200 */
+            str(e, 2, T0, CPU, offsetof(X86Cpu, fsw));
+            if (op == 0xDF)
+                x87_pop(x);
+            put(e, 0x1E602000u | (uint32_t)b << 16 | (uint32_t)a << 5);
+            if (x->flags_lazy) {
+                cset(e, T0, EQ);
+                cset(e, T1, VS);
+                cset(e, T2, LO);
+                rrr(e, OP_ORR, 4, T0, T0, T1);
+                rrr(e, OP_ORR, 4, T2, T2, T1);
+                put(e, OP_ORR | 6u << 10 | (uint32_t)T0 << 16 | (uint32_t)T2 << 5 | T2);
+                put(e, OP_ORR | 2u << 10 | (uint32_t)T1 << 16 | (uint32_t)T2 << 5 | T2);
+                ldr(e, 4, T3, CPU, offsetof(X86Cpu, flags));
+                mov_imm(e, T4, X86_ARITH_FLAGS);
+                rrr(e, 0x0A200000u, 4, T3, T3, T4);
+                rrr(e, OP_ORR, 4, T3, T3, T2);
+                str(e, 4, T3, CPU, offsetof(X86Cpu, flags));
+                str(e, 4, XZR, CPU, offsetof(X86Cpu, lf_op));
+            }
+            set_nzcv(x, ALU_UCOMI);
+            return 1;
+        }
+        if (sub < 4) { /* fcmov */
+            static const int cc[2][4] = {{2, 4, 6, 0xA}, {3, 5, 7, 0xB}};
+            condition_t3(x, cc[op & 1][sub]);
+            int from = x87_st(x, r), to = x87_write(x, 0, 0);
+            x->keep = 0;
+            put(e, 0x7100001Fu | (uint32_t)T3 << 5); /* cmp w, #0 */
+            put(e, 0x1E600C00u | (uint32_t)to << 16 | (uint32_t)NE << 12 | (uint32_t)from << 5 | (uint32_t)to); /* fcsel */
+            return 1;
+        }
+        /* fucompp */
+        x87_compare(x, x87_st(x, 0), x87_st(x, 1));
+        x87_pop(x);
+        x87_pop(x);
+        return 1;
+    case 0xDC:
+    case 0xDE: {
+        int b = x87_st(x, 0), a = x87_st(x, r);
+        if (sub == 2 || sub == 3) {
+            x87_compare(x, b, a);
+            if (op == 0xDE || sub == 3)
+                x87_pop(x);
+            if (op == 0xDE && sub == 3)
+                x87_pop(x);
+            return 1;
+        }
+        x87_arith(e, sub >= 4 ? sub ^ 1 : sub, x87_write(x, r, 0), a, b);
+        if (op == 0xDE)
+            x87_pop(x);
+        return 1;
+    }
+    case 0xDD:
+        if (sub == 0) { /* ffree */
+            int n = (x->fcur + r) & 7;
+            x87_base(x);
+            x->ftag_clear |= (uint8_t)(1u << n);
+            x->ftag_set &= (uint8_t)~(1u << n);
+            return 1;
+        }
+        if (sub < 4) {
+            int from = x87_st(x, 0), to = x87_write(x, r, 1);
+            if (from != to)
+                fmov(e, to, from);
+            if (sub == 3)
+                x87_pop(x);
+        } else {
+            x87_compare(x, x87_st(x, 0), x87_st(x, r));
+            if (sub == 5)
+                x87_pop(x);
+        }
+        return 1;
+    default: return 0;
+    }
+}
+
+/*
+ * movs and stos, alone or repeated, going up: one element at a time as the processor does, so a fault leaves the
+ * registers where the instruction goes on from. a repeated one first goes 16 bytes at a time while that many are
+ * left, when what a copy reads is not what it wrote a moment before. the interpreter does the ones going down.
+ */
+static int emit_string(Ctx *x, const X86Insn *i)
+{
+    Emit *e = x->e;
+    int copy = i->opcode <= 0xA5, size = i->opcode & 1 ? i->opsize : 1, w = x->cpu->mode64 ? 8 : 4;
+    if (i->seg || i->addrsize != w || i->rep == 0xF2)
+        return 0;
+    int si = host_reg(X86_RSI), di = host_reg(X86_RDI), cx = host_reg(X86_RCX), ax = host_reg(X86_RAX);
+    ldr(e, 4, T0, CPU, offsetof(X86Cpu, flags));
+    ubfm(e, 4, T0, T0, 10, 10);
+    uint32_t stub = cold_at(x, cbnz_w(e, T0)); /* df */
+    uint32_t *done = nullptr;
+    if (i->rep) {
+        uint32_t *slow = nullptr;
+        if (copy) {
+            /* a copy onto what it is about to read repeats it: that goes element by element. */
+            rrr(e, OP_SUB, 8, T2, di, si);
+            put(e, 0xF100001Fu | 16u << 10 | (uint32_t)T2 << 5); /* cmp t2, #16 */
+            slow = b_cond(e, LO);
+        } else {
+            static const uint32_t dup[9] = {0, 0x4E010C00u, 0x4E020C00u, 0, 0x4E040C00u, 0, 0, 0, 0x4E080C00u};
+            put(e, dup[size] | (uint32_t)ax << 5 | V0);
+        }
+        uint32_t *wide = e->p;
+        put(e, (w == 8 ? 0xF100001Fu : 0x7100001Fu) | (uint32_t)(16 / size) << 10 | (uint32_t)cx << 5); /* cmp cx, #n */
+        uint32_t *few = b_cond(e, LO);
+        if (copy)
+            vldr(e, 16, V0, si, 0);
+        vstr(e, 16, V0, di, 0);
+        if (copy)
+            add_imm(e, w, si, si, 16);
+        add_imm(e, w, di, di, 16);
+        add_imm(e, w, cx, cx, -(16 / size));
+        put(e, 0x14000000u | ((uint32_t)(wide - e->p) & 0x3FFFFFFu));
+        patch19(e, slow);
+        patch19(e, few);
+        uint32_t *top = e->p;
+        done = e->p;
+        put(e, (w == 8 ? 0xB4000000u : 0x34000000u) | (uint32_t)cx); /* cbz cx, done */
+        if (copy)
+            ldr(e, size, T1, si, 0);
+        str(e, size, copy ? T1 : ax, di, 0);
+        if (copy)
+            add_imm(e, w, si, si, size);
+        add_imm(e, w, di, di, size);
+        add_imm(e, w, cx, cx, -1);
+        put(e, 0x14000000u | ((uint32_t)(top - e->p) & 0x3FFFFFFu));
+        patch19(e, done);
+    } else {
+        if (copy)
+            ldr(e, size, T1, si, 0);
+        str(e, size, copy ? T1 : ax, di, 0);
+        if (copy)
+            add_imm(e, w, si, si, size);
+        add_imm(e, w, di, di, size);
+    }
+    cold_resume(x, stub);
+    return 1;
+}
+
+/*
+ * the flags of a result of 4 or 8 bytes as x86_set_szp leaves them, in the cpu's flags themselves: zf, sf and pf of
+ * res, with cf and of as t3 has them, bits 0 and 11. t1, t4, v0 and the arm64 flags are lost.
+ */
+static void emit_szp(Ctx *x, int size, int res)
+{
+    Emit *e = x->e;
+    put(e, (size == 8 ? 0xF100001Fu : 0x7100001Fu) | (uint32_t)res << 5); /* cmp res, #0 */
+    cset(e, T1, EQ);
+    put(e, 0x2A000000u | (uint32_t)T1 << 16 | 6u << 10 | (uint32_t)T3 << 5 | T3);
+    ubfm(e, size, T1, res, size * 8 - 1, size * 8 - 1);
+    put(e, 0x2A000000u | (uint32_t)T1 << 16 | 7u << 10 | (uint32_t)T3 << 5 | T3);
+    put(e, 0x1E270000u | (uint32_t)res << 5 | V0);  /* fmov s0, w */
+    put(e, 0x0E205800u | (uint32_t)V0 << 5 | V0);   /* cnt v0.8b: the bits set in the low byte */
+    put(e, 0x0E013C00u | (uint32_t)V0 << 5 | T1);   /* umov w, v0.b[0] */
+    put(e, 0x52000000u | (uint32_t)T1 << 5 | T1);   /* eor w, w, #1: pf is set for an even count */
+    put(e, 0x12000000u | (uint32_t)T1 << 5 | T1);   /* and w, w, #1 */
+    put(e, 0x2A000000u | (uint32_t)T1 << 16 | 2u << 10 | (uint32_t)T3 << 5 | T3);
+    ldr(e, 4, T1, CPU, offsetof(X86Cpu, flags));
+    mov_imm(e, T4, X86_ARITH_FLAGS);
+    rrr(e, 0x0A200000u, 4, T1, T1, T4);
+    rrr(e, OP_ORR, 4, T1, T1, T3);
+    str(e, 4, T1, CPU, offsetof(X86Cpu, flags));
+    str(e, 4, XZR, CPU, offsetof(X86Cpu, lf_op));
+}
+
+/* shld and shrd of registers, with their flags when something reads them: as the interpreter's double_shift. */
+static int emit_double_shift(Ctx *x, const X86Insn *i)
+{
+    Emit *e = x->e;
+    int size = i->opsize, bits = size * 8, left = i->opcode <= 0xA5, by_cl = i->opcode & 1;
+    if (i->mod != 3 || size < 4 || (by_cl && size != 4))
+        return 0;
+    int d = host_reg(i->rm), s = host_reg(i->reg), live = x->flags_live != 0;
+    if (!by_cl) {
+        int n = (int)(i->imm & (unsigned)(bits - 1));
+        if (!n) {
+            if (size == 4)
+                mov_reg(e, 4, d, d);
+            return x->keep = 1, 1;
+        }
+        if (live)
+            mov_reg(e, 8, T0, d);
+        /* extr takes the low bits of the pair shifted right: for the shift left, by what is left of the width. */
+        if (left)
+            put(e, (size == 8 ? 0x93C00000u : 0x13800000u) | (uint32_t)s << 16 | (uint32_t)(bits - n) << 10 | (uint32_t)d << 5 | (uint32_t)d);
+        else
+            put(e, (size == 8 ? 0x93C00000u : 0x13800000u) | (uint32_t)d << 16 | (uint32_t)n << 10 | (uint32_t)s << 5 | (uint32_t)d);
+        if (!live)
+            return x->keep = 1, 1;
+        int out = left ? bits - n : n - 1;
+        ubfm(e, size, T3, T0, out, out); /* cf: the last bit shifted out */
+        rrr(e, OP_EOR, size, T1, d, T0);
+        ubfm(e, size, T1, T1, bits - 1, bits - 1);
+        put(e, 0x2A000000u | (uint32_t)T1 << 16 | 11u << 10 | (uint32_t)T3 << 5 | T3); /* of: the sign changed */
+        emit_szp(x, size, d);
+        return 1;
+    }
+    /* by cl, of 4 bytes: a count of 0 changes nothing, flags included. */
+    put(e, 0x12001000u | (uint32_t)host_reg(X86_RCX) << 5 | T5); /* and w, cl, #31 */
+    mov_reg(e, 4, d, d); /* the register is written all the same: its upper half clears. */
+    uint32_t *none = cbz_x(e, T5);
+    mov_reg(e, 4, T0, d);
+    if (left) {
+        mov_reg(e, 4, T1, s);
+        put(e, 0xAA000000u | (uint32_t)T0 << 16 | 32u << 10 | (uint32_t)T1 << 5 | T2); /* orr x, src, dst, lsl #32 */
+        rrr(e, OP_LSLV, 8, T2, T2, T5);
+        ubfm(e, 8, d, T2, 32, 63);
+    } else {
+        put(e, 0xAA000000u | (uint32_t)s << 16 | 32u << 10 | (uint32_t)T0 << 5 | T2); /* orr x, dst, src, lsl #32 */
+        rrr(e, OP_LSRV, 8, T2, T2, T5);
+        mov_reg(e, 4, d, T2);
+    }
+    if (live) {
+        if (left) {
+            mov_imm(e, T4, 32);
+            rrr(e, OP_SUB, 4, T4, T4, T5);
+        } else {
+            add_imm(e, 4, T4, T5, -1);
+        }
+        rrr(e, OP_LSRV, 4, T3, T0, T4);
+        put(e, 0x12000000u | (uint32_t)T3 << 5 | T3); /* and w, w, #1 */
+        rrr(e, OP_EOR, 4, T1, d, T0);
+        ubfm(e, 4, T1, T1, 31, 31);
+        put(e, 0x2A000000u | (uint32_t)T1 << 16 | 11u << 10 | (uint32_t)T3 << 5 | T3);
+        emit_szp(x, 4, d);
+    }
+    patch19(e, none);
+    return 1;
+}
+
 static int emit_one(Ctx *x, const X86Insn *i)
 {
     Emit *e = x->e;
@@ -2337,6 +3346,10 @@ static int emit_one(Ctx *x, const X86Insn *i)
     int size = i->opsize;
     if (is_jcc(i))
         return emit_side_exit(x, i);
+    if (is_x87(i))
+        return emit_x87(x, i);
+    if (i->map == 0 && op == 0x9B) /* fwait */
+        return x->keep = 1, 1;
     int kind = alu_op(i);
     if (kind < 0)
         kind = carry_op(i);
@@ -2352,6 +3365,18 @@ static int emit_one(Ctx *x, const X86Insn *i)
             int src = op & 1 ? 2 : 1;
             if (size == 2 && src == 2)
                 return 0;
+            if (size >= 4 && !(i->mod == 3 && high_byte(src, i->rm, i->rex))) {
+                int rd = host_reg(i->reg);
+                if (i->mod != 3) {
+                    ea(x, i);
+                    ldr(e, src, rd, ADDR, 0);
+                }
+                if (op >= 0xBE)
+                    sbfm(e, size, rd, i->mod == 3 ? host_reg(i->rm) : rd, 0, src * 8 - 1);
+                else if (i->mod == 3)
+                    ubfm(e, 4, rd, host_reg(i->rm), 0, src * 8 - 1);
+                return x->keep = 1, 1;
+            }
             load_rm(x, i, src, T0);
             if (op >= 0xBE)
                 sbfm(e, size == 8 ? 8 : 4, T0, T0, 0, src * 8 - 1);
@@ -2377,6 +3402,20 @@ static int emit_one(Ctx *x, const X86Insn *i)
             x->keep = cond != -1;
             if (cond == -1)
                 condition_t3(x, cc);
+            if (size >= 4) {
+                int rs = rm_operand(x, i, size, T1), rd = host_reg(i->reg);
+                if (cond == -1) {
+                    put(e, 0x7100001Fu | (uint32_t)T3 << 5); /* cmp w13, #0 */
+                    cond = NE;
+                }
+                /* the 4 byte one clears the upper half whether it moves or not. */
+                if (cond == -2 || cond == -3)
+                    mov_reg(e, size, rd, cond == -3 ? rs : rd);
+                else
+                    put(e, (size == 8 ? 0x9A800000u : 0x1A800000u) | (uint32_t)rd << 16 | (uint32_t)cond << 12 |
+                               (uint32_t)rs << 5 | (uint32_t)rd);
+                return 1;
+            }
             load_rm(x, i, size, T1);
             load_reg(e, size, T0, i->reg, i->rex);
             if (cond == -2 || cond == -3) {
@@ -2393,11 +3432,33 @@ static int emit_one(Ctx *x, const X86Insn *i)
             store_reg(e, size, T0, i->reg, i->rex);
             return 1;
         }
+        if (!i->lock && !i->mandatory && (op == 0xA4 || op == 0xA5 || op == 0xAC || op == 0xAD))
+            return emit_double_shift(x, i);
+        if (is_bt(i)) {
+            /* cf alone changes: it is left in the arm64 flags for what reads it next, when nothing else reads flags. */
+            if ((x->flags_live & LIVE_REST) || x->flags_lazy)
+                return 0;
+            if (!x->flags_live)
+                return x->keep = 1, 1;
+            int v = rm_operand(x, i, size, T0);
+            if (op == 0xA3) {
+                rrr(e, OP_LSRV, size, T3, v, host_reg(i->reg));
+            } else {
+                int bit = (int)(i->imm & (size * 8 - 1));
+                ubfm(e, size, T3, v, bit, bit);
+            }
+            put(e, 0x12000000u | (uint32_t)T3 << 5 | T3);        /* and w, w, #1 */
+            put(e, 0x7100041Fu | (uint32_t)T3 << 5);              /* cmp w, #1 */
+            set_nzcv(x, ALU_BT);
+            return 1;
+        }
+        if (op == 0xC3 && !i->mandatory && i->mod != 3 && size >= 4) { /* movnti */
+            store_rm(x, i, size, host_reg(i->reg), 0);
+            return x->keep = 1, 1;
+        }
         if ((op == 0xAF) && !i->mandatory && !x->flags_live && size >= 4) { /* imul r, rm */
-            load_rm(x, i, size, T1);
-            load_reg(e, size, T0, i->reg, i->rex);
-            put(e, (size == 8 ? 0x9B007C00u : 0x1B007C00u) | (uint32_t)T1 << 16 | (uint32_t)T0 << 5 | T2);
-            store_reg(e, size, T2, i->reg, i->rex);
+            int rb = rm_operand(x, i, size, T1), rd = host_reg(i->reg);
+            put(e, (size == 8 ? 0x9B007C00u : 0x1B007C00u) | (uint32_t)rb << 16 | (uint32_t)rd << 5 | (uint32_t)rd);
             return 1;
         }
         return emit_sse(x, i);
@@ -2435,8 +3496,9 @@ static int emit_one(Ctx *x, const X86Insn *i)
     case 0x89: /* mov rm, r */
         size = op == 0x88 ? 1 : size;
         if (size >= 4 && host_reg(i->reg) >= 0 && (i->mod != 3 || host_reg(i->rm) >= 0)) {
+            /* in 32-bit code the registers hold nothing past 4 bytes, and a move of all 8 is one the host does for free. */
             if (i->mod == 3)
-                mov_reg(e, size, host_reg(i->rm), host_reg(i->reg));
+                mov_reg(e, x->cpu->mode64 ? size : 8, host_reg(i->rm), host_reg(i->reg));
             else
                 store_rm(x, i, size, host_reg(i->reg), 0);
             return x->keep = 1, 1;
@@ -2448,7 +3510,10 @@ static int emit_one(Ctx *x, const X86Insn *i)
     case 0x8B: /* mov r, rm */
         size = op == 0x8A ? 1 : size;
         if (size >= 4 && host_reg(i->reg) >= 0) {
-            load_rm(x, i, size, host_reg(i->reg));
+            if (i->mod == 3 && !x->cpu->mode64)
+                mov_reg(e, 8, host_reg(i->reg), host_reg(i->rm));
+            else
+                load_rm(x, i, size, host_reg(i->reg));
             return x->keep = 1, 1;
         }
         load_rm(x, i, size, T0);
@@ -2519,6 +3584,13 @@ static int emit_one(Ctx *x, const X86Insn *i)
             return 0;
         X86Insn flat = *i;
         flat.seg = 0;
+        if (size >= 4) {
+            /* 4 byte address arithmetic leaves the upper half clear by itself. */
+            ea_into(x, &flat, host_reg(i->reg));
+            if (size == 4 && i->addrsize != 4)
+                mov_reg(e, 4, host_reg(i->reg), host_reg(i->reg));
+            return x->keep = 1, 1;
+        }
         ea(x, &flat);
         if (size == 4)
             mov_reg(e, 4, ADDR, ADDR);
@@ -2528,9 +3600,7 @@ static int emit_one(Ctx *x, const X86Insn *i)
     case 0x63: /* movsxd */
         if (size != 8)
             return 0;
-        load_rm(x, i, 4, T0);
-        sbfm(e, 8, T0, T0, 0, 31);
-        store_reg(e, 8, T0, i->reg, 1);
+        sbfm(e, 8, host_reg(i->reg), rm_operand(x, i, 4, T0), 0, 31);
         return x->keep = 1, 1;
     case 0x98: /* cwde, cdqe */
         if (size < 4)
@@ -2542,9 +3612,7 @@ static int emit_one(Ctx *x, const X86Insn *i)
     case 0x99: /* cdq, cqo */
         if (size < 4)
             return 0;
-        load_reg(e, size, T0, X86_RAX, 1);
-        sbfm(e, size, T0, T0, size * 8 - 1, size * 8 - 1);
-        store_reg(e, size, T0, X86_RDX, 1);
+        sbfm(e, size, host_reg(X86_RDX), host_reg(X86_RAX), size * 8 - 1, size * 8 - 1);
         return x->keep = 1, 1;
     case 0x50: case 0x51: case 0x52: case 0x53: case 0x54: case 0x55: case 0x56: case 0x57: {
         int reg = (op & 7) | ((i->rex & 1) << 3);
@@ -2565,13 +3633,13 @@ static int emit_one(Ctx *x, const X86Insn *i)
         int reg = (op & 7) | ((i->rex & 1) << 3);
         if (size != stack_word(x) || reg == X86_RSP)
             return 0;
-        load_reg(e, size, T3, X86_RSP, 1);
         if (host_reg(reg) >= 0) {
             /* the stack pointer moves once the load did not fault. */
-            ldr(e, size, host_reg(reg), T3, 0);
-            add_imm(e, size, host_reg(X86_RSP), T3, size);
+            ldr(e, size, host_reg(reg), host_reg(X86_RSP), 0);
+            add_imm(e, size, host_reg(X86_RSP), host_reg(X86_RSP), size);
             return x->keep = 1, 1;
         }
+        load_reg(e, size, T3, X86_RSP, 1);
         ldr(e, size, T0, T3, 0);
         move_stack(x, 1);
         store_reg(e, 8, T3, X86_RSP, 1);
@@ -2582,6 +3650,30 @@ static int emit_one(Ctx *x, const X86Insn *i)
         if (i->rex & 1)
             return 0;
         return x->keep = 1, 1;
+    case 0xA4: case 0xA5: case 0xAA: case 0xAB:
+        return emit_string(x, i);
+    case 0x91: case 0x92: case 0x93: case 0x94: case 0x95: case 0x96: case 0x97: { /* xchg with the accumulator */
+        if (size < 4)
+            return 0;
+        int a = host_reg(X86_RAX), b = host_reg((op & 7) | ((i->rex & 1) << 3));
+        int width = size == 8 || !x->cpu->mode64 ? 8 : 4;
+        mov_reg(e, width, T0, a);
+        mov_reg(e, width, a, b);
+        mov_reg(e, width, b, T0);
+        return x->keep = 1, 1;
+    }
+    case 0x9F: /* lahf: sf, zf, af, pf and cf, with bit 1 set, as the flags' low byte has them */
+        call_begin(x);
+        mov_reg(e, 8, 0, CPU);
+        call(e, (const void *)x86_arith_flags);
+        mov_reg(e, 4, T3, 0);
+        call_end(x);
+        mov_imm(e, T4, 0xD5);
+        rrr(e, OP_AND, 4, T3, T3, T4);
+        mov_imm(e, T4, 2);
+        rrr(e, OP_ORR, 4, T3, T3, T4);
+        store_reg(e, 1, T3, 4, 0);
+        return 1;
     case 0xC0: case 0xC1: case 0xD0: case 0xD1: case 0xD2: case 0xD3:
         return emit_shift(x, i);
     case 0xFE:
@@ -2599,6 +3691,10 @@ static int emit_one(Ctx *x, const X86Insn *i)
     case 0xF6:
     case 0xF7: {
         int sub = (i->modrm >> 3) & 7, sz = op == 0xF6 ? 1 : size;
+        if (sub == 2 && sz >= 4 && i->mod == 3) {
+            put(e, (sz == 8 ? 0xAA2003E0u : 0x2A2003E0u) | (uint32_t)host_reg(i->rm) << 16 | (uint32_t)host_reg(i->rm));
+            return x->keep = 1, 1;
+        }
         if (sub == 2) { /* not */
             load_rm(x, i, sz, T0);
             put(e, (sz == 8 ? 0xAA2003E0u : 0x2A2003E0u) | (uint32_t)T0 << 16 | T2); /* mvn */
@@ -2636,10 +3732,11 @@ static int emit_one(Ctx *x, const X86Insn *i)
     case 0x6B: /* imul r, rm, imm */
         if (x->flags_live || size < 4)
             return 0;
-        load_rm(x, i, size, T0);
-        mov_imm(e, T1, i->imm & size_mask(size));
-        put(e, (size == 8 ? 0x9B007C00u : 0x1B007C00u) | (uint32_t)T1 << 16 | (uint32_t)T0 << 5 | T2);
-        store_reg(e, size, T2, i->reg, i->rex);
+        {
+            int ra = rm_operand(x, i, size, T0);
+            mov_imm(e, T1, i->imm & size_mask(size));
+            put(e, (size == 8 ? 0x9B007C00u : 0x1B007C00u) | (uint32_t)T1 << 16 | (uint32_t)ra << 5 | (uint32_t)host_reg(i->reg));
+        }
         return 1;
     }
     return 0;
@@ -2658,6 +3755,42 @@ static int emit_insn(Ctx *x, const X86Insn *i)
     else if (!x->nzcv_set)
         x->nzcv_alu = -1;
     return 1;
+}
+
+/*
+ * the return stack. a call pushes the address it returns to with the code that goes on there, and jumps to its target
+ * with bl. a return pops a pair, and when the address is the one it returns to it leaves with ret, which the host
+ * predicts like the return of the bl. the pairs sit in a ring that the dispatcher clears when blocks go: any pair in
+ * it is good for its address, whatever was pushed and popped in between. reg holds the return address.
+ */
+static void ras_call(Ctx *x, int reg)
+{
+    Emit *e = x->e;
+    x87_store(x);
+    x87_reset(x);
+    put(e, 0xD1004391u);        /* sub x17, x28, #16 */
+    put(e, 0xB340263Cu);        /* bfxil x28, x17, #0, #10: one down, around the ring */
+    put(e, 0x10000071u);        /* adr x17, the code after the bl */
+    pair(e, 1, reg, 17, RAS, 0);
+    uint32_t *call = e->p;
+    put(e, 0x94000000u);        /* bl the exit to the target */
+    exit_const(x, x->next, x->count);
+    patch26(e, call);
+}
+
+/* reg holds the address returned to. falls through when the stack does not have it. x16, x17 and t1 are lost. */
+static void ras_return(Ctx *x, int reg)
+{
+    Emit *e = x->e;
+    x87_store(x);
+    x87_reset(x);
+    pair(e, 0, 16, 17, RAS, 0);
+    put(e, 0x91004000u | (uint32_t)RAS << 5 | T1);              /* add t1, x28, #16 */
+    put(e, 0xB3402400u | (uint32_t)T1 << 5 | (uint32_t)RAS);    /* bfxil x28, t1, #0, #10 */
+    put(e, 0xEB00001Fu | (uint32_t)reg << 16 | 16u << 5);       /* cmp x16, reg */
+    uint32_t *other = b_cond(e, NE);
+    put(e, 0xD65F0220u);                                         /* ret x17 */
+    patch19(e, other);
 }
 
 /* control transfers ending the block natively. returns 0 to leave it to the interpreter. */
@@ -2681,6 +3814,7 @@ static int emit_branch(Ctx *x, const X86Insn *i)
             return 0;
         mov_imm(e, T0, x->next);
         push_value(x, T0);
+        ras_call(x, T0);
         exit_const(x, branch_target(x, x->next + i->imm), x->count);
         return 1;
     case 0xC3: /* ret */
@@ -2688,11 +3822,10 @@ static int emit_branch(Ctx *x, const X86Insn *i)
         int w = stack_word(x);
         if (i->opsize != w)
             return 0;
-        load_reg(e, w, T3, X86_RSP, 1);
-        ldr(e, w, T0, T3, 0);
-        mov_imm(e, T1, (uint64_t)w + (op == 0xC2 ? (i->imm & 0xFFFF) : 0));
-        rrr(e, OP_ADD, w, T3, T3, T1);
-        store_reg(e, 8, T3, X86_RSP, 1);
+        /* the stack pointer is whole in its host register: what writes 4 bytes of one clears the rest. */
+        ldr(e, w, T0, host_reg(X86_RSP), 0);
+        add_imm(e, w, host_reg(X86_RSP), host_reg(X86_RSP), w + (op == 0xC2 ? (int64_t)(i->imm & 0xFFFF) : 0));
+        ras_return(x, T0);
         exit_computed(x, T0);
         return 1;
     }
@@ -2701,7 +3834,10 @@ static int emit_branch(Ctx *x, const X86Insn *i)
         /* near calls and jumps take targets of the stack word: 64 bits in 64-bit code without rex.w. */
         if ((sub != 2 && sub != 4) || i->p66)
             return 0;
-        load_rm(x, i, w, T0);
+        if (i->mod == 3 && !x->cpu->mode64)
+            mov_reg(e, 8, T0, host_reg(i->rm));
+        else
+            load_rm(x, i, w, T0);
         if (i->mod != 3 && i->base == -2 && x->cpu->mode64) {
             /*
              * a pointer beside the code that leads to a bare jmp rax is control flow guard's dispatch without the
@@ -2719,6 +3855,7 @@ static int emit_branch(Ctx *x, const X86Insn *i)
         if (sub == 2) {
             mov_imm(e, T1, x->next);
             push_value(x, T1);
+            ras_call(x, T1);
         }
         exit_computed(x, T0);
         return 1;
@@ -2731,6 +3868,7 @@ static int emit_branch(Ctx *x, const X86Insn *i)
 static void emit_fallback(Ctx *x, const X86Insn *i)
 {
     Emit *e = x->e;
+    x87_store(x);
     mov_imm(e, T4, x->addr);
     str(e, 8, T4, CPU, offsetof(X86Cpu, rip));
     sync_regs(e, 1);
@@ -2738,14 +3876,49 @@ static void emit_fallback(Ctx *x, const X86Insn *i)
     mov_reg(e, 8, 0, CPU);
     mov_imm(e, 1, (uint64_t)(uintptr_t)i);
     call(e, (const void *)x86_exec_insn);
+    /* emulation the instruction nested left the mode as it returned. */
+    fp_mode(e, 1);
     sync_regs(e, 0);
     xreload(x);
+    /* on every path the instruction may have changed the x87 state, as an x87 or mmx one or fxrstor does. */
+    if (x->final)
+        x87_reset(x);
+    else
+        x87_reload(x);
+    x->final = 0;
     x->nzcv_alu = -1;
 }
 
 /* the kind of arm64 flags the translation of i leaves for the instruction after it when that one reads them, or -1. */
+/* bt of 4 or 8 bytes, with the bit in a register for a register or in the instruction. */
+static int is_bt(const X86Insn *i)
+{
+    if (i->map != 1 || i->lock || i->opsize < 4)
+        return 0;
+    return (i->opcode == 0xA3 && i->mod == 3) || (i->opcode == 0xBA && ((i->modrm >> 3) & 7) == 4);
+}
+
+/* the host register an inc or dec of 4 or 8 bytes changes, -1 for one of memory or less, -2 for another instruction. */
+static int incdec_reg(const X86Cpu *cpu, const X86Insn *i)
+{
+    if (i->map != 0 || i->lock)
+        return -2;
+    if (i->opcode >= 0x40 && i->opcode <= 0x4F && !cpu->mode64)
+        return i->opsize >= 4 ? host_reg(i->opcode & 7) : -1;
+    if ((i->opcode == 0xFE || i->opcode == 0xFF) && ((i->modrm >> 3) & 7) < 2)
+        return i->opcode == 0xFF && i->mod == 3 && i->opsize >= 4 ? host_reg(i->rm) : -1;
+    return -2;
+}
+
 static int nzcv_kind(const X86Insn *i)
 {
+    /* the compares of floats, whose flags the cpu only gets when something later reads them. */
+    if (i->map == 1 && (i->opcode == 0x2E || i->opcode == 0x2F) && (!i->mandatory || i->mandatory == 0x66))
+        return ALU_UCOMI;
+    if (i->map == 0 && (i->opcode == 0xDB || i->opcode == 0xDF) && i->mod == 3 && i->modrm >= 0xE8 && i->modrm <= 0xF7)
+        return ALU_UCOMI;
+    if (is_bt(i))
+        return ALU_BT;
     if (i->map != 0 || i->lock)
         return -1;
     int kind = alu_op(i);
@@ -2782,12 +3955,21 @@ static int flags_live_after(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uin
     return LIVE_ALL;
 }
 
-uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint32_t count, uint32_t *code,
-                           uint32_t capacity, uint16_t *offsets, uint16_t *xmm_held)
+static uint64_t x87_held(const Ctx *x)
 {
-    Emit e = {code, code + capacity, code, 0};
-    uint8_t live[64], lazy[64];
-    if (!count || count > 64)
+    uint64_t held = (uint64_t)(x->fbase != 0) | (uint64_t)x->fcur << 1 | (uint64_t)(x->fdirty & ~x->ftag_clear) << 8 |
+                    (uint64_t)x->ftag_set << 16 | (uint64_t)x->ftag_clear << 24;
+    for (int n = 0; n < 8; n++)
+        held |= (uint64_t)x->fmap[n] << (32 + 3 * n);
+    return held;
+}
+
+uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint32_t count, uint32_t *code,
+                           uint32_t capacity, uint16_t *offsets, uint16_t *xmm_held, uint64_t *x87, const void *block)
+{
+    Emit e = {.code = code, .end = code + capacity, .p = code};
+    uint8_t live[128], lazy[128];
+    if (!count || count > 128)
         return 0;
     uint64_t end_addr = rip;
     for (uint32_t k = 0; k < count; k++)
@@ -2798,7 +3980,7 @@ uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint
     if (cpu->env && cpu->env->code_bounds && cpu->env->code_bounds(cpu, rip, &region_lo, &region_hi) && region_lo <= lo &&
         hi <= region_hi)
         lo = region_lo, hi = region_hi;
-    uint64_t starts[64], a = rip;
+    uint64_t starts[128], a = rip;
     for (uint32_t k = 0; k < count; a += insns[k++].len)
         starts[k] = a;
     for (uint32_t k = count; k-- > 0;) {
@@ -2816,9 +3998,38 @@ uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint
         int kind = k + 1 < count && reads_condition(&insns[k + 1]) ? nzcv_kind(&insns[k]) : -1;
         if (kind >= 0 && arm_cond(kind, insns[k + 1].opcode & 15) != -1)
             lazy[k] = live[k + 1];
+        /* an inc or dec only keeps cf of what came before it, which it reads from the arm64 flags too. */
+        if (k + 1 < count && incdec_reg(cpu, &insns[k + 1]) >= -1 && nzcv_kind(&insns[k]) >= 0 &&
+            arm_cond(nzcv_kind(&insns[k]), 2) != -1)
+            lazy[k] = 0;
     }
-    Ctx x = {&e, cpu, rip, rip, 0, count, 0, 0, -1, 0, 0, nullptr, rip, 0, 0, 0};
+    /* see sink_at: an inc or dec of a register, then a branch on its flags to where nothing reads them. */
+    uint32_t sink_at = ~0u;
+    int sink_live = 0;
+    for (uint32_t k = 0; k + 1 < count; k++) {
+        const X86Insn *j = &insns[k + 1];
+        if (!lazy[k] || incdec_reg(cpu, &insns[k]) < 0 || !is_jcc(j) || arm_cond(ALU_INCDEC, j->opcode & 15) < 0)
+            continue;
+        uint64_t after = starts[k + 1] + j->len;
+        if (flags_read_at(cpu, cpu->mode64 ? after + j->imm : (uint32_t)(after + j->imm), lo, hi))
+            continue;
+        /* one a block: the first is the one of a loop that ends where the block goes on. */
+        sink_at = k + 1;
+        sink_live = lazy[k];
+        lazy[k] = 0;
+        break;
+    }
+    e.self = block;
+    ColdList *cold = x86_alloc(sizeof(ColdList));
+    if (!cold)
+        return 0;
+    cold->count = 0;
+    Ctx x = {.e = &e, .cpu = cpu, .addr = rip, .next = rip, .count = count, .nzcv_alu = -1, .start = rip, .cold = cold,
+             .sink_at = sink_at, .sink_live = sink_live};
+    x87_reset(&x);
+    cold->polls = 0;
     prologue(&e);
+    poll(&x);
     uint32_t end = count;
     if (nests(&insns[count - 1]))
         end = count - 1;
@@ -2826,7 +4037,8 @@ uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint
     for (uint32_t k = 0; k < end; k++) {
         const X86Insn *i = &insns[k];
         offsets[k] = (uint16_t)(e.p - code);
-        xmm_held[k] = x.xloaded;
+        xmm_held[k] = 0xFFFF;
+        x87[k] = x87_held(&x);
         x.addr = addr;
         x.next = addr + i->len;
         x.index = k;
@@ -2834,29 +4046,33 @@ uint32_t x86_jit_translate(X86Cpu *cpu, uint64_t rip, const X86Insn *insns, uint
         x.flags_live = live[k];
         x.flags_lazy = lazy[k];
         if (k == count - 1 && x86_ends_block(i)) {
-            /* the stores leave the arm64 flags alone, which a conditional branch may still test. */
-            xstore_dirty(&x);
-            x.xdirty = 0;
             if (!emit_branch(&x, i)) {
+                x.final = 1;
                 emit_fallback(&x, i);
                 /* the interpreter set rip to wherever the instruction went. */
                 exit_computed(&x, -1);
             }
             offsets[count] = (uint16_t)(e.p - code);
+            cold_emit(&x);
+            x86_free(cold, sizeof(*cold));
             return e.overflow || e.p - code > 0xFFFF ? 0 : (uint32_t)(e.p - code);
         }
-        if (!emit_insn(&x, i))
+        if (!emit_insn(&x, i)) {
+            x.final = 1;
             emit_fallback(&x, i);
+        }
         addr = x.next;
     }
     offsets[end] = (uint16_t)(e.p - code);
-    if (end < count)
-        xmm_held[end] = x.xloaded;
-    xstore_dirty(&x);
-    x.xdirty = 0;
+    if (end < count) {
+        xmm_held[end] = 0xFFFF;
+        x87[end] = x87_held(&x);
+    }
     exit_const(&x, addr, end);
     if (end < count)
         offsets[count] = (uint16_t)(e.p - code);
+    cold_emit(&x);
+    x86_free(cold, sizeof(*cold));
     return e.overflow || e.p - code > 0xFFFF ? 0 : (uint32_t)(e.p - code);
 }
 

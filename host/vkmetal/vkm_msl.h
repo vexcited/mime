@@ -51,6 +51,7 @@ typedef struct VkmMslResult {
     VkmInput input[VKM_VERTEX_ATTRIBUTES];
     uint32_t outputs;
     bool writes_depth, writes_stencil, discards;
+    bool writes_memory; /* buffers or images it may store to. */
 } VkmMslResult;
 
 /*

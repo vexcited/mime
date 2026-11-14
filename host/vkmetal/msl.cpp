@@ -175,6 +175,16 @@ extern "C" bool vkm_msl(const uint32_t *spirv, size_t words, const char *entry, 
                     out->writes_stencil = true;
             }
         }
+        for (auto &b : res.storage_buffers)
+            if (!c.get_buffer_block_flags(b.id).get(spv::DecorationNonWritable))
+                out->writes_memory = true;
+        for (auto &i : res.storage_images)
+            if (!c.has_decoration(i.id, spv::DecorationNonWritable))
+                out->writes_memory = true;
+        /* a pointer made from an address stores where no declaration says. */
+        for (auto capability : c.get_declared_capabilities())
+            if (capability == spv::CapabilityPhysicalStorageBufferAddresses)
+                out->writes_memory = true;
         std::string name = c.get_cleansed_entry_point_name(entry, execution);
         snprintf(out->entry, sizeof(out->entry), "%s", name.c_str());
         out->source = strdup(source.c_str());

@@ -426,6 +426,22 @@ static uint32_t image_texture_type(const VkImageCreateInfo *info)
     }
 }
 
+/*
+ * whether every view the image may get has its format, or one that differs only in being srgb. Metal makes those
+ * without the view usage, which keeps a texture from lossless compression: every pass and copy of a large one
+ * then moves about three times the memory.
+ */
+static bool views_alike(const VkImageCreateInfo *info, const VkmFormat *f)
+{
+    const VkImageFormatListCreateInfo *list = vkm_find(info->pNext, VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO);
+    if (!list || !list->viewFormatCount)
+        return false;
+    for (uint32_t i = 0; i < list->viewFormatCount; i++)
+        if (vkm_plain_format(vkm_format(list->pViewFormats[i])->pixel) != vkm_plain_format(f->pixel))
+            return false;
+    return true;
+}
+
 static NSUInteger image_usage(const VkImageCreateInfo *info, const VkmFormat *f)
 {
     NSUInteger u = 0;
@@ -438,7 +454,8 @@ static NSUInteger image_usage(const VkImageCreateInfo *info, const VkmFormat *f)
     if ((usage & (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) ||
         ((usage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) && (f->caps & (VKM_CAP_COLOR | VKM_CAP_DEPTH))))
         u |= MTLTextureUsageRenderTarget;
-    if ((info->flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) || (f->aspects & VK_IMAGE_ASPECT_STENCIL_BIT))
+    if (((info->flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) && !views_alike(info, f)) ||
+        (f->aspects & VK_IMAGE_ASPECT_STENCIL_BIT))
         u |= MTLTextureUsagePixelFormatView;
     if ((usage & VK_IMAGE_USAGE_STORAGE_BIT) && (f->caps & VKM_CAP_ATOMIC))
         u |= MTLTextureUsageShaderAtomic;
@@ -583,6 +600,8 @@ static VkResult bind_image(VkDevice device, VkImage image, VkDeviceMemory m, VkD
         imported = m->texture && !m->exported;
         if (imported && !offset) {
             image->texture = [m->texture retain];
+            /* the exporter's image has the texture too, and a view of that one reads what this one draws. */
+            __atomic_store_n(&image->read, true, __ATOMIC_RELEASE);
             if (m->texture.width != image->extent.width || m->texture.height != image->extent.height ||
                 m->texture.pixelFormat != image->fi->pixel)
                 VKM_ERROR("an image of %ux%u format %u is bound to an imported texture of %lux%lu format %lu",
@@ -602,8 +621,11 @@ static VkResult bind_image(VkDevice device, VkImage image, VkDeviceMemory m, VkD
         VKM_ERROR("no texture for an image of format %u in memory of type %u", image->format, m->type);
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
-    if (m->exported && !offset && !m->texture)
+    if (m->exported && !offset && !m->texture) {
         m->texture = [image->texture retain];
+        /* as an importer's image reads it. */
+        __atomic_store_n(&image->read, true, __ATOMIC_RELEASE);
+    }
     if (!imported && (image->texture.usage & MTLTextureUsageRenderTarget)) {
         vkm_resident(device, image->texture);
         image->resident = true;
@@ -709,6 +731,10 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateImageView(VkDevice device, const VkI
         uint32_t format = f->pixel;
         if (image->fi->aspects & VK_IMAGE_ASPECT_STENCIL_BIT)
             format = vkm_aspect_format(image->fi, r->aspectMask);
+        if (vkm_plain_format(format) != vkm_plain_format(image->texture.pixelFormat) &&
+            !(image->texture.usage & MTLTextureUsagePixelFormatView))
+            VKM_ERROR("a view of format %u on an image of format %u whose format list did not name it", info->format,
+                      image->format);
         bool is3d = image->type == VK_IMAGE_TYPE_3D;
         uint32_t type = vkm_texture_type(info->viewType, image->samples);
         if (v->usage &
