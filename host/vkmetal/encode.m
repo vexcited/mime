@@ -16,6 +16,7 @@ typedef struct Enc {
     id<MTLComputePipelineState> pipeline; /* the compute encoder's. */
     uint32_t width, height;
     VkmOpRaster raster; /* what the render encoder has, zeroed as metal's defaults are. */
+    bool unbuilt;       /* its pipeline could not be built. */
     MTLSize local;
     uint64_t value; /* the queue's value once this submission is done. */
 } Enc;
@@ -93,6 +94,7 @@ static void begin_render(Enc *e, const VkmBeginRender *b)
 {
     end_encoder(e);
     e->raster = (VkmOpRaster){};
+    e->unbuilt = false;
     MTL4RenderPassDescriptor *desc = [[MTL4RenderPassDescriptor alloc] init];
     MTLRenderPassColorAttachmentDescriptorArray *colors = desc.colorAttachments;
     for (uint32_t i = 0; i < b->color_count; i++) {
@@ -306,7 +308,7 @@ static void execute(Enc *e, const VkmOpExecute *o)
             [c executeCommandsInBuffer:o->icb indirectBuffer:o->ranges + (uint64_t)i * 8];
         return;
     }
-    id<MTL4RenderCommandEncoder> r = e->render;
+    id<MTL4RenderCommandEncoder> r = e->unbuilt ? nil : e->render;
     for (uint32_t i = 0; r && i < o->chunks; i++)
         [r executeCommandsInBuffer:o->icb indirectBuffer:o->ranges + (uint64_t)i * 8];
 }
@@ -360,7 +362,16 @@ static void replay(Enc *e, const VkmOp *op)
     switch (op->op) {
     case VKM_OP_BEGIN_RENDER: begin_render(e, (const VkmBeginRender *)op); break;
     case VKM_OP_END_RENDER: end_encoder(e); break;
-    case VKM_OP_PIPELINE:
+    case VKM_OP_PIPELINE: {
+        /* the draws of a pipeline that cannot be built are left out. */
+        id<MTLRenderPipelineState> state = vkm_pipeline_wait(((const VkmOpObject *)op)->object);
+        e->unbuilt = !state;
+        if (state)
+            [r setRenderPipelineState:state];
+        break;
+    }
+    case VKM_OP_PIPELINE_STATE:
+        e->unbuilt = false;
         [r setRenderPipelineState:(id<MTLRenderPipelineState>)((const VkmOpObject *)op)->object];
         break;
     case VKM_OP_DEPTH_STATE:
@@ -418,7 +429,10 @@ static void replay(Enc *e, const VkmOp *op)
     case VKM_OP_DRAW:
     case VKM_OP_DRAW_INDEXED:
     case VKM_OP_DRAW_INDIRECT:
-    case VKM_OP_DRAW_INDEXED_INDIRECT: draw(e, op->op, (const VkmOpDraw *)op); break;
+    case VKM_OP_DRAW_INDEXED_INDIRECT:
+        if (!e->unbuilt)
+            draw(e, op->op, (const VkmOpDraw *)op);
+        break;
     case VKM_OP_CLEAR_RECTS: clear_rects(e, (const VkmOpClearRects *)op); break;
     case VKM_OP_VISIBILITY: {
         const VkmOpVisibility *o = (const void *)op;

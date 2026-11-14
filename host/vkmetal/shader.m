@@ -7,11 +7,37 @@
 
 #include <stdio.h>
 
+/*
+ * the compiler takes about a tenth of a second for the MSL of a shader it has not seen and half of that for a
+ * pipeline, which a frame that draws with dozens of new shaders cannot wait for one after the other. libraries and
+ * render pipelines build on other threads from the moment they are known, all at once, and only what needs their
+ * result waits: the encoder, when the draws that were recorded with them are submitted.
+ */
 typedef struct Library {
     struct Library *next;
     uint64_t hash;
-    id<MTLLibrary> library;
+    id<MTLLibrary> library; /* once built, null when the MSL does not compile. */
+    dispatch_group_t built;
 } Library;
+
+/* a render pipeline of a draw's shaders. */
+@interface VkmRenderPipeline : NSObject {
+@public
+    id<MTLRenderPipelineState> state; /* once built, null when it cannot be. */
+    dispatch_group_t built;
+}
+@end
+
+@implementation VkmRenderPipeline
+
+- (void)dealloc
+{
+    [state release];
+    dispatch_release(built);
+    [super dealloc];
+}
+
+@end
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 static Library *g_libraries;
@@ -28,16 +54,37 @@ static MTLCompileOptions *compile_options(void)
     return options;
 }
 
-static id<MTLLibrary> library_get(VkDevice device, const char *source, uint64_t hash)
+static dispatch_queue_t build_queue(void)
+{
+    static dispatch_once_t once;
+    static dispatch_queue_t queue;
+    dispatch_once(&once, ^{
+        /* as urgent as the thread that waits for the builds. */
+        queue = dispatch_queue_create(
+            "mime.vkmetal.build",
+            dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_CONCURRENT, QOS_CLASS_USER_INTERACTIVE, 0));
+    });
+    return queue;
+}
+
+/* the library of the source, which starts to build if it is new. */
+static Library *library_start(VkDevice device, const char *source, uint64_t hash)
 {
     pthread_mutex_lock(&g_lock);
-    for (Library *l = g_libraries; l; l = l->next)
-        if (l->hash == hash) {
-            id<MTLLibrary> library = [l->library retain];
-            pthread_mutex_unlock(&g_lock);
-            return library;
-        }
+    Library *l = g_libraries;
+    while (l && l->hash != hash)
+        l = l->next;
+    bool found = l != nullptr;
+    if (!found && (l = vkm_zalloc(sizeof(*l)))) {
+        l->hash = hash;
+        l->built = dispatch_group_create();
+        dispatch_group_enter(l->built);
+        l->next = g_libraries;
+        g_libraries = l;
+    }
     pthread_mutex_unlock(&g_lock);
+    if (found || !l)
+        return l;
     /* MIME_VK_DUMP names a folder that gets every source made, by its hash, to read what a shader became. */
     const char *dump = getenv("MIME_VK_DUMP");
     if (dump && *dump) {
@@ -49,39 +96,40 @@ static id<MTLLibrary> library_get(VkDevice device, const char *source, uint64_t 
             fclose(f);
         }
     }
-    id<MTLLibrary> library;
-    @autoreleasepool {
-        MTL4LibraryDescriptor *desc = [[MTL4LibraryDescriptor alloc] init];
-        MTLCompileOptions *options = compile_options();
-        desc.source = @(source);
-        desc.options = options;
-        NSError *error = nil;
-        library = mime_pipeline_cache_library(device->pipelines, desc, (id *)&error);
-        [options release];
-        [desc release];
-        if (!library) {
-            const char *text = vkm_error_text(error);
-            VKM_ERROR("an MSL library does not compile: %.2000s", text);
-            mime_debug("vkmetal: the MSL was:\n%s", source);
+    MimePipelineCache *compiler = device->pipelines;
+    NSString *text = [[NSString alloc] initWithUTF8String:source];
+    dispatch_async(build_queue(), ^{
+        @autoreleasepool {
+            MTL4LibraryDescriptor *desc = [[MTL4LibraryDescriptor alloc] init];
+            MTLCompileOptions *options = compile_options();
+            desc.source = text;
+            desc.options = options;
+            NSError *error = nil;
+            l->library = mime_pipeline_cache_library(compiler, desc, (id *)&error);
+            [options release];
+            [desc release];
+            if (!l->library) {
+                VKM_ERROR("an MSL library does not compile: %.2000s", vkm_error_text(error));
+                mime_debug("vkmetal: the MSL was:\n%s", text.UTF8String);
+            }
         }
-    }
-    if (!library)
-        return nullptr;
-    Library *l = vkm_zalloc(sizeof(*l));
-    if (l) {
-        l->hash = hash;
-        l->library = [library retain];
-        pthread_mutex_lock(&g_lock);
-        l->next = g_libraries;
-        g_libraries = l;
-        pthread_mutex_unlock(&g_lock);
-    }
-    return library;
+        dispatch_group_leave(l->built);
+    });
+    [text release];
+    return l;
+}
+
+static id<MTLLibrary> library_wait(Library *l)
+{
+    if (!l)
+        return nil;
+    dispatch_group_wait(l->built, DISPATCH_TIME_FOREVER);
+    return l->library;
 }
 
 id<MTLLibrary> vkm_library(VkDevice device, const char *source)
 {
-    return library_get(device, source, vkm_hash(source, strlen(source), 0x6d736c));
+    return [library_wait(library_start(device, source, vkm_hash(source, strlen(source), 0x6d736c))) retain];
 }
 
 MTL4LibraryFunctionDescriptor *vkm_function(id<MTLLibrary> library, const char *name)
@@ -146,11 +194,11 @@ static VkResult compile_msl(VkDevice device, const uint32_t *spirv, size_t words
         return VK_ERROR_INVALID_SHADER_NV;
     }
     out->hash = vkm_hash(r.source, strlen(r.source), vkm_hash(r.entry, strlen(r.entry), 0));
-    out->library = library_get(device, r.source, out->hash);
+    out->library = library_start(device, r.source, out->hash);
     free(r.source);
     if (!out->library)
-        return VK_ERROR_INVALID_SHADER_NV;
-    out->function = vkm_function(out->library, r.entry);
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+    snprintf(out->entry, sizeof(out->entry), "%s", r.entry);
     out->local = MTLSizeMake(r.local.width, r.local.height, r.local.depth);
     out->inputs = r.inputs;
     memcpy(out->input, r.input, sizeof(out->input));
@@ -419,8 +467,6 @@ void vkm_code_free(VkmCode *code)
         }
         free(w);
     }
-    [code->function release];
-    [code->library release];
     VkmCode *variants[] = {code->capture, code->expand, code->replay, code->counted, code->dual};
     for (size_t i = 0; i < MIME_ARRAY_COUNT(variants); i++)
         if (variants[i]) {
@@ -484,23 +530,25 @@ static uint32_t write_mask(uint8_t vk)
            ((vk & VK_COLOR_COMPONENT_A_BIT) ? MTLColorWriteMaskAlpha : 0);
 }
 
-static id<MTLRenderPipelineState> make_render_pipeline(VkDevice device, const VkmPipelineKey *key, const VkmCode *vs,
-                                                      const VkmCode *fs)
+/* inputs are the vertex shader's input locations, outputs the fragment shader's outputs: fs is null without one. */
+static id<MTLRenderPipelineState> make_render_pipeline(MimePipelineCache *compiler, const VkmPipelineKey *key,
+                                                      MTL4LibraryFunctionDescriptor *vs, uint32_t inputs,
+                                                      MTL4LibraryFunctionDescriptor *fs, uint32_t outputs)
 {
     id<MTLRenderPipelineState> state;
     @autoreleasepool {
         MTL4RenderPipelineDescriptor *desc = [[MTL4RenderPipelineDescriptor alloc] init];
-        desc.vertexFunctionDescriptor = vs->function;
+        desc.vertexFunctionDescriptor = vs;
         if (fs)
-            desc.fragmentFunctionDescriptor = fs->function;
-        if (vs->inputs) {
+            desc.fragmentFunctionDescriptor = fs;
+        if (inputs) {
             MTLVertexDescriptor *vd = [MTLVertexDescriptor vertexDescriptor];
             MTLVertexAttributeDescriptorArray *attributes = vd.attributes;
             MTLVertexBufferLayoutDescriptorArray *layouts = vd.layouts;
             uint32_t used = 0;
             for (uint32_t i = 0; i < key->attribute_count; i++) {
                 uint32_t location = key->attributes[i].location;
-                if (!(vs->inputs & (1u << location)))
+                if (!(inputs & (1u << location)))
                     continue;
                 MTLVertexAttributeDescriptor *a = attributes[location];
                 a.format = (MTLVertexFormat)key->attributes[i].format;
@@ -535,7 +583,7 @@ static id<MTLRenderPipelineState> make_render_pipeline(VkDevice device, const Vk
             const VkmBlend *b = &key->blend[i];
             c.pixelFormat = (MTLPixelFormat)key->colors[i];
             c.writeMask =
-                fs && (fs->outputs & (1u << i)) ? (MTLColorWriteMask)write_mask(b->write) : MTLColorWriteMaskNone;
+                fs && (outputs & (1u << i)) ? (MTLColorWriteMask)write_mask(b->write) : MTLColorWriteMaskNone;
             c.blendingState = b->enable ? MTL4BlendStateEnabled : MTL4BlendStateDisabled;
             if (b->enable) {
                 c.sourceRGBBlendFactor = (MTLBlendFactor)vkm_blend_factor(b->src_color);
@@ -547,7 +595,7 @@ static id<MTLRenderPipelineState> make_render_pipeline(VkDevice device, const Vk
             }
         }
         NSError *error = nil;
-        state = mime_pipeline_cache_render(device->pipelines, desc, (id *)&error);
+        state = mime_pipeline_cache_render(compiler, desc, (id *)&error);
         if (!state)
             VKM_ERROR("no render pipeline: %s", vkm_error_text(error));
         [desc release];
@@ -555,28 +603,56 @@ static id<MTLRenderPipelineState> make_render_pipeline(VkDevice device, const Vk
     return state;
 }
 
-id<MTLRenderPipelineState> vkm_render_pipeline(VkDevice device, const VkmPipelineKey *key, const VkmCode *vs,
-                                               const VkmCode *fs)
+id vkm_render_pipeline(VkDevice device, const VkmPipelineKey *key, const VkmCode *vs, const VkmCode *fs)
 {
     uint64_t hash = vkm_hash(key, sizeof(*key), 1);
     pthread_mutex_lock(&g_lock);
-    id<MTLRenderPipelineState> state = vkm_cache_find(g_pipelines, key, sizeof(*key), hash);
-    pthread_mutex_unlock(&g_lock);
-    if (state)
-        return state;
-    state = make_render_pipeline(device, key, vs, fs);
-    if (!state)
-        return nullptr;
-    pthread_mutex_lock(&g_lock);
-    id raced = vkm_cache_find(g_pipelines, key, sizeof(*key), hash);
-    if (raced) {
-        [state release];
-        state = raced;
-    } else {
-        vkm_cache_add(&g_pipelines, key, sizeof(*key), hash, state);
+    VkmRenderPipeline *p = vkm_cache_find(g_pipelines, key, sizeof(*key), hash);
+    bool found = p != nil;
+    if (!found) {
+        p = [[VkmRenderPipeline alloc] init];
+        p->built = dispatch_group_create();
+        dispatch_group_enter(p->built);
+        vkm_cache_add(&g_pipelines, key, sizeof(*key), hash, p);
     }
     pthread_mutex_unlock(&g_lock);
-    return state;
+    if (found)
+        return p;
+    /* what the build takes of the shaders, which may be destroyed before it runs. */
+    VkmPipelineKey k = *key;
+    Library *vl = vs->library, *fl = fs ? fs->library : nullptr;
+    NSString *vname = [[NSString alloc] initWithUTF8String:vs->entry];
+    NSString *fname = fs ? [[NSString alloc] initWithUTF8String:fs->entry] : nil;
+    uint32_t inputs = vs->inputs, outputs = fs ? fs->outputs : 0;
+    MimePipelineCache *compiler = device->pipelines;
+    dispatch_queue_t queue = build_queue();
+    dispatch_block_t build = ^{
+        if (vl->library && (!fl || fl->library)) {
+            MTL4LibraryFunctionDescriptor *vf = vkm_function(vl->library, vname.UTF8String);
+            MTL4LibraryFunctionDescriptor *ff = fl ? vkm_function(fl->library, fname.UTF8String) : nil;
+            p->state = make_render_pipeline(compiler, &k, vf, inputs, ff, outputs);
+            [ff release];
+            [vf release];
+        }
+        dispatch_group_leave(p->built);
+    };
+    /* it begins when its libraries are built, without a thread that waits for them. */
+    if (fl)
+        dispatch_group_notify(vl->built, queue, ^{
+            dispatch_group_notify(fl->built, queue, build);
+        });
+    else
+        dispatch_group_notify(vl->built, queue, build);
+    [fname release];
+    [vname release];
+    return p;
+}
+
+id<MTLRenderPipelineState> vkm_pipeline_wait(id pipeline)
+{
+    VkmRenderPipeline *p = pipeline;
+    dispatch_group_wait(p->built, DISPATCH_TIME_FOREVER);
+    return p->state;
 }
 
 id<MTLComputePipelineState> vkm_compute_pipeline(VkDevice device, const VkmCode *code, bool icb)
@@ -588,9 +664,14 @@ id<MTLComputePipelineState> vkm_compute_pipeline(VkDevice device, const VkmCode 
     pthread_mutex_unlock(&g_lock);
     if (state)
         return state;
+    id<MTLLibrary> library = library_wait(code->library);
+    if (!library)
+        return nullptr;
     @autoreleasepool {
         MTL4ComputePipelineDescriptor *desc = [[MTL4ComputePipelineDescriptor alloc] init];
-        desc.computeFunctionDescriptor = code->function;
+        MTL4LibraryFunctionDescriptor *function = vkm_function(library, code->entry);
+        desc.computeFunctionDescriptor = function;
+        [function release];
         desc.requiredThreadsPerThreadgroup = code->local;
         if (icb)
             desc.supportIndirectCommandBuffers = MTL4IndirectCommandBufferSupportStateEnabled;

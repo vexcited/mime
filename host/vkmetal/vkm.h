@@ -363,8 +363,8 @@ typedef struct VkmWidened VkmWidened;
 
 typedef struct VkmCode {
     VkShaderStageFlagBits stage;
-    id<MTLLibrary> library;
-    MTL4LibraryFunctionDescriptor *function;
+    void *library;   /* its MSL library, which shader.m builds on another thread. */
+    char entry[128]; /* its function there. */
     MTLSize local;   /* compute threadgroup size. */
     uint32_t inputs; /* vertex input locations. */
     VkmInput input[VKM_VERTEX_ATTRIBUTES];
@@ -459,7 +459,12 @@ typedef struct VkmPipelineKey {
     } bindings[VKM_VERTEX_BINDINGS];
 } VkmPipelineKey;
 
-id<MTLRenderPipelineState> vkm_render_pipeline(VkDevice device, const VkmPipelineKey *key, const VkmCode *vs, const VkmCode *fs);
+/*
+ * the pipeline of the key, which builds on another thread: draws are recorded with it, and vkm_pipeline_wait gives its
+ * state, or null when it cannot be built, to what encodes them.
+ */
+id vkm_render_pipeline(VkDevice device, const VkmPipelineKey *key, const VkmCode *vs, const VkmCode *fs);
+id<MTLRenderPipelineState> vkm_pipeline_wait(id pipeline);
 
 typedef struct VkmStencilFace {
     uint8_t fail, pass, depth_fail, compare;
