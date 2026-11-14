@@ -2,7 +2,7 @@
 ; the user, identifiers, the time zone, the processor, is written by the kernel, see guest/ntos/cm/boot.c. the 32-bit
 ; side is made from this one by regc, except where a line below names Wow6432Node.
 ;
-; the sources hold what the traced programs read, see docs/registry-inventory.md in the research repository, and what the
+; the sources hold what the traced programs read and what the
 ; kernel and the services need. a key a program turns out to need is added here with the program that needs it.
 
 ; the version of the system. installers and the installation manager read the build and the display version, the

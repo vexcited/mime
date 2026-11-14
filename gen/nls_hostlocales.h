@@ -1,5 +1,3 @@
-/* generated, do not edit. */
-
 static const struct {
     const char *Name;
     unsigned Lcid;

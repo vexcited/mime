@@ -1,4 +1,3 @@
-/* generated from vk.xml, do not edit. */
 #include "mvk_host.h"
 
 static void reply_VkPhysicalDeviceFeatures(MvkEncoder *e, const VkPhysicalDeviceFeatures *s);

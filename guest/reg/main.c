@@ -3,7 +3,7 @@
  *
  *   reg query | add | delete | copy | save | restore | load | unload | compare | export | import | flags
  *
- * the exit code is 0 for success and 1 for failure; compare answers 2 when the keys differ. see docs/reg.md.
+ * the exit code is 0 for success and 1 for failure; compare answers 2 when the keys differ.
  */
 #include "reg.h"
 #include <mime/win32/winnls.h>

@@ -217,7 +217,7 @@ typedef struct CBS_PROGRESS {
     void *Context;
 } CBS_PROGRESS;
 
-/* installs the components that a servicing cabinet holds for the system, see docs/servicing.md. */
+/* installs the components that a servicing cabinet holds for the system. */
 int CbsInstallCabinet(const uint8_t *cabinet, size_t size, const CBS_LAYOUT *layout, const CBS_TARGET *target,
                       const CBS_PROGRESS *progress);
 

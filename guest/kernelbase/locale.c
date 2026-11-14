@@ -1,6 +1,6 @@
 /*
  * locales: identifiers, names, locale information and the default locales. The tables are the answers of Windows 11 for
- * every locale, see docs/nls.md.
+ * every locale.
  */
 #include "kernelbase_private.h"
 #include "nls_locslots.h"
