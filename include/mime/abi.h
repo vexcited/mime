@@ -456,7 +456,7 @@ typedef struct MimeBootInfo {
     MimeKeyboardLayout keyboard;
     /* the host's gpus in the order dxgi lists them, which the display key and the device tree name. */
     uint32_t gpu_count;
-    uint32_t pad3;
+    uint32_t wheel_lines; /* the lines a notch of the wheel scrolls on the host, 0 when its desktop has no such setting. */
     MimeBootGpu gpus[MIME_BOOT_GPUS];
 } MimeBootInfo;
 

@@ -16,6 +16,8 @@ void mime_ui_run(void);
 void mime_ui_get_display(MimeDisplayInfo *info);
 /* the keyboard layout of the host, false when the ui does not know it. */
 bool mime_ui_get_keyboard(MimeKeyboardLayout *out);
+/* the lines a notch of the wheel scrolls, 0 when the desktop has no such setting. */
+uint32_t mime_ui_wheel_lines(void);
 /* shows an error outside the machine, for a client started without a terminal. */
 void mime_ui_alert(const char *text);
 /* a process of mime that shows a host dialog, -1 when the arguments are not for one. Linux has none. */
