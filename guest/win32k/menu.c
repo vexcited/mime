@@ -319,7 +319,7 @@ void MenuRefreshWindowState(WND *w)
         BOOLEAN grey = FALSE;
         switch (it->Id) {
         case SC_MINIMIZE:
-            grey = !(w->Style & WS_MINIMIZEBOX) || (w->Style & WS_MINIMIZE);
+            grey = !(w->Style & WS_MINIMIZEBOX) || (w->Style & WS_MINIMIZE) || !WndCanMinimize(w);
             break;
         case SC_MAXIMIZE:
             grey = !(w->Style & WS_MAXIMIZEBOX) || (w->Style & WS_MAXIMIZE);

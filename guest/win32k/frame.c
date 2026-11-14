@@ -155,7 +155,10 @@ void FrameGetVisibleRect(WND *w, RECT *r)
 
 static BOOLEAN has_minmax(WND *w)
 {
-    return (w->Style & (WS_MINIMIZEBOX | WS_MAXIMIZEBOX)) && !(w->ExStyle & WS_EX_TOOLWINDOW);
+    DWORD boxes = w->Style & (WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
+    if (!WndCanMinimize(w))
+        boxes &= ~(DWORD)WS_MINIMIZEBOX;
+    return boxes && !(w->ExStyle & WS_EX_TOOLWINDOW);
 }
 
 static BOOLEAN has_help(WND *w)
@@ -187,7 +190,7 @@ void FrameGetButtonRect(WND *w, int button, RECT *r)
         slot = 1;
         break;
     case CAPTION_MIN:
-        if (!has_minmax(w))
+        if (!has_minmax(w) || !WndCanMinimize(w))
             return;
         slot = 2;
         break;

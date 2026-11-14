@@ -293,6 +293,8 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
         process->AddressSpace.AllocationLimit =
             section->Image.Characteristics & IMAGE_FILE_LARGE_ADDRESS_AWARE ? 0xFFFF0000 : 0x7FFF0000;
     process->MimeRequestId = request_id;
+    /* a program that cmd's start waits for tells its debug output where the run of cmd does. */
+    process->MimeDebugRequest = request_id ? request_id : parent ? parent->MimeDebugRequest : 0;
     MimeSessionUserProgram(process, parent);
     /* a gui program gets no console. a console program shares the one it is given. */
     if (!p->Detached && section->Image.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI) {

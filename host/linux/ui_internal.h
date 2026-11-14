@@ -7,7 +7,7 @@
 
 #include "../ui/ui.h"
 
-#include <SDL3/SDL.h>
+#include <pthread.h>
 
 /* queues an input event for the guest, stamped with the time. any thread. */
 void mime_ui_emit(MimeInputEvent *ev);
@@ -33,7 +33,7 @@ uint8_t *mime_ui_request_guest(uint32_t event, uint32_t kind, int timeout_ms, si
 
 /* launcher.c: the identity of a window and the launcher entry of an application, a MimeShellWindow. */
 uint64_t mime_ui_shell_window(const void *command);
-/* dialog.c: a MimeShellDialog, shown by kdialog, zenity or SDL in a process of its own so no thread of mime waits. */
+/* dialog.c: a MimeShellDialog, shown by a helper of the desktop in a process of its own so no thread of mime waits. */
 uint64_t mime_ui_dialog(const MimeShellDialog *dialog);
 /* folder.c: the folder in the file manager of the desktop. */
 uint64_t mime_ui_folder(const MimeShellFolder *folder);
@@ -72,6 +72,9 @@ struct wl_display;
 struct wl_surface;
 bool mime_activation_attention(struct wl_display *display, struct wl_surface *surface, const char *app_id);
 bool mime_activation_activate(struct wl_display *display, struct wl_surface *surface, const char *token);
+struct wl_seat;
+bool mime_activation_raise(struct wl_display *display, struct wl_surface *surface, struct wl_seat *seat, uint32_t serial,
+                           struct wl_surface *focus, const char *app_id);
 /*
  * main thread: what the compositor tells of an output's colors, false when it tells nothing. changed runs on a
  * thread of its own when an answer is no longer the one given.
@@ -114,8 +117,19 @@ bool mime_ui_pointer_press(void **seat, uint32_t *serial);
 /* dnd.c, called by the main loop once the display is up. */
 void mime_dnd_init(void);
 
+/* dnd.c: the data device of the seat, which the clipboard goes through as well. null without one. */
+struct wl_data_device;
+struct wl_data_device_manager;
+struct wl_data_offer;
+struct wl_data_device *mime_dnd_device(void);
+struct wl_data_device_manager *mime_dnd_manager(void);
+
 /* clipboard.c, called by the main loop. */
 void mime_clipboard_init(void);
-void mime_clipboard_event(const SDL_ClipboardEvent *e);
+/* what another program copied, null when the clipboard is empty. the offer and the types are the clipboard's to free. */
+void mime_clipboard_selection(struct wl_data_offer *offer, char **mimes, size_t count);
+
+/* gamepad.c: reads the game controllers on a thread of its own. */
+void mime_gamepad_start(void);
 
 #endif

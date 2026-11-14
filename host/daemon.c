@@ -908,6 +908,7 @@ int mime_vmm_main(const MimePaths *paths, int lock_fd)
     mime_vk_warm_up();
     get_display(&g_vm.boot->display);
     get_keyboard();
+    g_vm.boot->wheel_lines = mime_ui_wheel_lines();
     __atomic_store_n(&g_vm.boot->display_ready, 1, __ATOMIC_RELEASE);
     mime_info("display %ux%u at %u dpi", g_vm.boot->display.width, g_vm.boot->display.height,
               g_vm.boot->display.dpi);

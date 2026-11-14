@@ -132,6 +132,7 @@ void MetricsInitialize(void)
     MonitorsTakeChanged();
     W32Display.Dpi = boot->display.dpi ? boot->display.dpi : 96;
     W32Display.Stretch = (boot->display.flags & MIME_DISPLAY_STRETCH) != 0;
+    W32Display.NoMinimize = (boot->display.flags & MIME_DISPLAY_NO_MINIMIZE) != 0;
     for (int i = 0; i < NUM_SYSCOLORS; i++) {
         g_colors[i] = g_default_colors[i];
         g_brushes[i] = GdiCreateSystemBrush(g_colors[i], i);
@@ -514,7 +515,12 @@ BOOL MetricsParametersInfo(UINT action, UINT param, PVOID data, UINT ini, UINT d
     case SPI_GETBORDER:
         u = 1;
         return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
-    case SPI_GETWHEELSCROLLLINES:
+    case SPI_GETWHEELSCROLLLINES: {
+        /* the host's own count where its desktop has one. */
+        const MimeBootInfo *boot = HalMimeGetBootInfo();
+        u = boot && boot->wheel_lines ? boot->wheel_lines : 3;
+        return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
+    }
     case SPI_GETWHEELSCROLLCHARS:
         u = 3;
         return NT_SUCCESS(MimeCopyToUser(data, &u, sizeof(u)));
