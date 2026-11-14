@@ -1360,6 +1360,7 @@ typedef struct _EPROCESS {
     PVOID Win32Process;
     PVOID KernelCallbackTable;
     ULONG64 MimeRequestId; /* the host run request that created the process. */
+    ULONG64 MimeDebugRequest; /* the one whose terminal gets its debug output: its own, or that of its ancestors. */
     BOOLEAN MimeUserProgram; /* a run started it or its ancestors, counted in MimeSharedPage.user_processes. */
     struct _MIME_CONSOLE *Console; /* the attached console, io/console.c. */
     PVOID ConsoleCtrlRoutine;      /* kernelbase's, started on a new thread for each ctrl event. */
