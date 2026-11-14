@@ -553,9 +553,10 @@ typedef struct HostInstance {
     uint32_t refs;
     bool presented; /* made a surface of a window, see instance_release. */
     MvkConnection base; /* the library, the instance and its commands, never a device. */
-    /* the extensions the host has and the ones the instance was made with, see instance_covers. */
+    /* the extensions the host has, and the ones and the version the instance was made with, see instance_covers. */
     VkExtensionProperties *offered, *enabled;
     uint32_t offered_count, enabled_count;
+    uint32_t api_version;
     Spare spares[SPARES_MAX];
 } HostInstance;
 
@@ -567,6 +568,14 @@ void mime_gpu_teardown_leave(void);
 static void spare_destroy(HostInstance *hi);
 
 /* creates an instance with only available host layers and extensions. */
+/* the version an instance is asked for, without its patch: none named is vulkan 1.0. */
+static uint32_t requested_api(const VkInstanceCreateInfo *info)
+{
+    uint32_t version = info->pApplicationInfo ? info->pApplicationInfo->apiVersion : 0;
+    return version ? VK_MAKE_API_VERSION(0, VK_API_VERSION_MAJOR(version), VK_API_VERSION_MINOR(version), 0)
+                   : VK_API_VERSION_1_0;
+}
+
 static HostInstance *instance_make(VkInstanceCreateInfo info, MvkDecoder *d, VkResult *result)
 {
     *result = VK_ERROR_INITIALIZATION_FAILED;
@@ -610,6 +619,7 @@ static HostInstance *instance_make(VkInstanceCreateInfo info, MvkDecoder *d, VkR
     for (uint32_t i = 0; hi->enabled && i < n; i++)
         snprintf(hi->enabled[i].extensionName, sizeof(hi->enabled[i].extensionName), "%s", names[i]);
     hi->enabled_count = hi->enabled ? n : 0;
+    hi->api_version = requested_api(&info);
     PFN_vkCreateInstance create = (PFN_vkCreateInstance)b->gipa(nullptr, "vkCreateInstance");
     *result = hi->enabled ? create(&info, nullptr, &b->instance) : VK_ERROR_OUT_OF_HOST_MEMORY;
     if (*result != VK_SUCCESS) {
@@ -688,9 +698,14 @@ static void instance_release(HostInstance *hi)
     free(hi);
 }
 
-/* whether the instance has every extension a request names, leaving out the ones the host lacks as instance_make does. */
+/*
+ * whether the instance has the version and every extension a request names, leaving out the extensions the host lacks
+ * as instance_make does.
+ */
 static bool instance_covers(const HostInstance *hi, const VkInstanceCreateInfo *info)
 {
+    if (requested_api(info) > hi->api_version)
+        return false;
     for (uint32_t i = 0; i < info->enabledExtensionCount; i++)
         if (host_has(hi->offered, hi->offered_count, info->ppEnabledExtensionNames[i]) &&
             !host_has(hi->enabled, hi->enabled_count, info->ppEnabledExtensionNames[i]))
@@ -710,11 +725,15 @@ static void create_instance(MvkCall *call)
     if (!d->error && c->instance) {
         /*
          * a process has one host instance. another instance of the guest is that one too, as the one a program
-         * makes after dxgi made its own to list the adapters, or after it destroyed its first.
+         * makes after dxgi made its own to list the adapters, or after it destroyed its first. the first one stays
+         * for the life of the connection, with the physical devices and the device bound to it, so a request it
+         * does not cover is refused as a driver refuses a version it lacks.
          */
         if (c->host_instance && instance_covers(c->host_instance, &info)) {
             bind(c, id, (uint64_t)(uintptr_t)c->instance);
             result = VK_SUCCESS;
+        } else if (c->host_instance) {
+            result = VK_ERROR_INCOMPATIBLE_DRIVER;
         }
     } else if (!d->error && load_library(c)) {
         Request key = {};
