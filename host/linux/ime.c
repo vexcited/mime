@@ -1,5 +1,5 @@
 /*
- * SDL editing events become MIME_INPUT_IME composition events; text waits in a queue because events cannot hold it.
+ * the editing events of the compositor become MIME_INPUT_IME composition events; text waits in a queue because events cannot hold it.
  * empty preedit followed by text means commit; without text it means cancellation, so empty preedit is deferred
  * until the next event. text without composition becomes MIME_INPUT_CHAR.
  */

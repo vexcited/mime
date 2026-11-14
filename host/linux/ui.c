@@ -1,21 +1,15 @@
-/*
- * Linux display through SDL3 on Wayland or X11. each guest top level window has a borderless host window
- * showing the guest's pixels, including its frame. without a display server, the machine runs headless.
- *
- * SDL video calls run on the main thread, which initializes it. vCPU threads copy presented pixels into
- * staging buffers and queue other work for the main loop.
- */
 #include "../vulkan/display.h"
 #include "../vulkan/gamma.h"
 #include "ui_internal.h"
+#include "wayland.h"
 
-#include <SDL3/SDL.h>
+#include <linux/input-event-codes.h>
 #include <math.h>
-#include <wayland-client.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <wayland-client.h>
 
 #define MAX_WINDOWS 256
 #define MAX_VK_LAYERS 8
@@ -52,8 +46,8 @@ typedef struct VkLayer {
     struct wl_surface *surface;
     struct wl_subsurface *subsurface; /* none while nothing of it shows. */
     uint32_t users; /* presenters attached to it. one that goes may be detached after its successor attached. */
-    struct wl_proxy *viewport;
-    MimeRect place; /* where the subsurface is, in SDL window coordinates. */
+    struct wp_viewport *viewport;
+    MimeRect place; /* where the subsurface is, in surface coordinates. */
     uint32_t frames;
     bool top;   /* of the top level window itself, always over the window. */
     bool under; /* lies under the window. what follows is of such a layer, under the window's lock. */
@@ -67,16 +61,14 @@ typedef struct VkLayer {
     uint64_t closed_ms;     /* when the window last closed over it. */
     LayerFrame framed, covered; /* the frame the presenter last sized, and the last one the display has. */
     uint32_t framed_serial;
-    int32_t dest[2];        /* the size last given to the viewport, in SDL window coordinates. */
+    int32_t dest[2];        /* the size last given to the viewport, in surface coordinates. */
 } VkLayer;
 
 typedef struct UiWindow {
     uint32_t id;
     bool used;
-    SDL_Window *window;
-    SDL_Renderer *renderer;
-    SDL_Texture *texture;
-    uint32_t texture_width, texture_height;
+    MimeWlWindow *window;
+    uint64_t draw_key; /* what the frame on screen was laid out by, see draw. */
     MimeWinConfig config;
     bool configured;
     bool shown;
@@ -85,19 +77,17 @@ typedef struct UiWindow {
     uint32_t owner;
     bool fullscreen;
     bool vk;       /* a Vulkan presenter shows the client area. */
-    bool vk_whole; /* and the frame too, the renderer gone: the window has no subsurface. */
     VkLayer vk_layers[MAX_VK_LAYERS];
     bool state_pending;
     uint32_t state_request;
     int state_command;
-    SDL_DisplayID display; /* the display last reported to the guest. */
+    uint32_t display;      /* the display last reported to the guest. */
     bool maximized;        /* the compositor has the window maximized. */
     bool says_maximized;   /* the compositor calls it maximized whatever its state, see set_maximized. */
     uint64_t shown_ms;     /* when the host window was last shown. */
     bool bogus_size;       /* the compositor gave a size no display could show, which is not acted on. */
-    uint64_t renderer_retry_ms; /* a renderer that failed, as with the gpu's memory full, is tried again then. */
     int geometry_w, geometry_h; /* the window geometry last given to the compositor, in surface coordinates. */
-    int want_w, want_h;    /* the last size asked of the compositor, in SDL window coordinates. */
+    int want_w, want_h;    /* the last size asked of the compositor, in surface coordinates. */
     uint64_t want_ms;      /* time of the last size request. */
     uint64_t fullscreen_ms; /* when the guest last asked for or left fullscreen. */
     uint64_t interactive_until; /* the compositor sizes the window under the pointer, as long as sizes come. */
@@ -113,7 +103,7 @@ typedef struct UiWindow {
     uint8_t *pixels; /* the latest guest surface, copied by the presenting vCPU. */
     uint32_t width, height;
     uint32_t pixel_width, pixel_height;
-    int32_t logical_width, logical_height; /* the host window in SDL window coordinates. */
+    int32_t logical_width, logical_height; /* the host window in surface coordinates. */
     MimeRect dirty;
     bool has_dirty;
     bool present_queued;
@@ -123,23 +113,20 @@ typedef struct UiWindow {
 } UiWindow;
 
 static UiWindow g_windows[MAX_WINDOWS];
-/* guest processors take it, so the main thread lets go of it before an SDL call that can dispatch the compositor's events. */
+/* guest processors take it, so the main thread never waits for the guest with it. */
 static pthread_mutex_t g_windows_lock = PTHREAD_MUTEX_INITIALIZER;
 static MimeUiInputSink g_sink;
 static void *g_sink_ctx;
-static bool g_video;          /* SDL runs; without it the display is headless. */
-static Uint32 g_call_event;   /* the event type of calls posted to the main thread. */
+static bool g_video;          /* the compositor is there; without it the display is headless. */
 static pthread_t g_main_thread;
-static double g_scale = 1.0;  /* guest pixels per SDL window coordinate of the primary display, the system's. */
+static double g_scale = 1.0;  /* guest pixels per surface coordinate of the primary display, the system's. */
 static MimeDisplayInfo g_display;
 static void raise_window(UiWindow *w);
-static bool g_wayland;        /* the video driver is Wayland's. */
 static bool g_says_maximized; /* the compositor calls every window maximized, see set_maximized. */
-static bool g_gl;             /* gl stays loaded for the windows' renderers. */
 
 /* the displays of the host, the primary first, in the guest's virtual screen. */
 typedef struct HostMonitor {
-    SDL_DisplayID id;
+    uint32_t id;
     double scale;
     MimeMonitor info;
 } HostMonitor;
@@ -147,7 +134,6 @@ typedef struct HostMonitor {
 static HostMonitor g_monitors[MIME_MAX_MONITORS];
 static uint32_t g_monitor_count;
 static pthread_mutex_t g_monitor_lock = PTHREAD_MUTEX_INITIALIZER;
-static SDL_Cursor *g_cursors[MIME_CURSOR_HIDDEN];
 static uint32_t g_cursor;
 static bool g_stop;
 static pthread_mutex_t g_stop_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -186,12 +172,7 @@ static void on_main(void (*fn)(void *), void *arg)
         fn(arg);
         return;
     }
-    SDL_Event ev;
-    SDL_zero(ev);
-    ev.type = g_call_event;
-    ev.user.data1 = (void *)fn;
-    ev.user.data2 = arg;
-    SDL_PushEvent(&ev);
+    mime_wl_post(fn, arg);
 }
 
 bool mime_ui_call_main(void (*fn)(void *), void *arg)
@@ -210,15 +191,21 @@ static UiWindow *find_window(uint32_t id)
     return nullptr;
 }
 
-static UiWindow *find_by_sdl(SDL_WindowID id)
+static UiWindow *ui_of(const MimeWlWindow *window)
 {
-    SDL_Window *window = SDL_GetWindowFromID(id);
-    if (!window)
-        return nullptr;
-    for (int i = 0; i < MAX_WINDOWS; i++)
-        if (g_windows[i].used && g_windows[i].window == window)
-            return &g_windows[i];
-    return nullptr;
+    return window ? find_window((uint32_t)(uintptr_t)mime_wl_window_user(window)) : nullptr;
+}
+
+static bool rect_empty(MimeRect r)
+{
+    return r.right <= r.left || r.bottom <= r.top;
+}
+
+static MimeRect rect_and(MimeRect a, MimeRect b)
+{
+    MimeRect r = {MIME_MAX(a.left, b.left), MIME_MAX(a.top, b.top), MIME_MIN(a.right, b.right),
+                  MIME_MIN(a.bottom, b.bottom)};
+    return rect_empty(r) ? (MimeRect){} : r;
 }
 
 /* visible rectangle relative to the guest window. */
@@ -241,7 +228,7 @@ static MimeRect host_part(const MimeWinConfig *c)
 }
 
 /*
- * maps guest window coordinates to SDL coordinates with a scale and offset. ordinary windows use the display
+ * maps guest window coordinates to surface coordinates with a scale and offset. ordinary windows use the display
  * scale. fullscreen windows preserve their aspect ratio and fill unused space with black, like a monitor
  * displaying a smaller mode.
  */
@@ -250,7 +237,7 @@ typedef struct Fit {
     double x, y;
 } Fit;
 
-/* guest pixels per SDL coordinate, using the program's DPI. */
+/* guest pixels per surface coordinate, using the program's DPI. */
 static double config_scale(const MimeWinConfig *c)
 {
     return c->dpi ? c->dpi / 96.0 : g_scale;
@@ -312,22 +299,6 @@ static void window_point_to_guest(UiWindow *w, float x, float y, int32_t *gx, in
     *gy = w->config.rect.top + host.top + (int32_t)lround((y - fit.y) / fit.scale);
 }
 
-static uint32_t modifiers_of(SDL_Keymod mod)
-{
-    uint32_t m = 0;
-    if (mod & SDL_KMOD_SHIFT)
-        m |= MIME_MOD_SHIFT;
-    if (mod & SDL_KMOD_CTRL)
-        m |= MIME_MOD_CONTROL;
-    if (mod & SDL_KMOD_ALT)
-        m |= MIME_MOD_ALT;
-    if (mod & SDL_KMOD_GUI)
-        m |= MIME_MOD_WIN;
-    if (mod & SDL_KMOD_CAPS)
-        m |= MIME_MOD_CAPS;
-    return m;
-}
-
 /* text entry rectangle in screen pixels, shown by the window with keyboard focus. */
 static struct {
     bool valid;
@@ -345,9 +316,7 @@ static void apply_text_area(void)
     if (!g_text_area.valid)
         return;
     UiWindow *w = nullptr;
-    SDL_Window *focus = SDL_GetKeyboardFocus();
-    if (focus)
-        w = find_by_sdl(SDL_GetWindowID(focus));
+    w = ui_of(mime_wl_keyboard_focus());
     if (!w || !w->window)
         w = find_window(g_text_area.window);
     if (!w || !w->window)
@@ -356,11 +325,11 @@ static void apply_text_area(void)
     Fit fit = window_fit(w);
     int32_t left = w->config.rect.left + host.left, top = w->config.rect.top + host.top;
     MimeRect r = g_text_area.screen;
-    SDL_Rect rect = {(int)lround(fit.x + (r.left - left) * fit.scale), (int)lround(fit.y + (r.top - top) * fit.scale),
-                     MIME_MAX(1, (int)lround((r.right - r.left) * fit.scale)),
-                     MIME_MAX(1, (int)lround((r.bottom - r.top) * fit.scale))};
     /* the caret is an offset from the left of the area. */
-    SDL_SetTextInputArea(w->window, &rect, (int)lround((g_text_area.cursor - r.left) * fit.scale));
+    int caret = (int)lround((g_text_area.cursor - r.left) * fit.scale);
+    mime_wl_window_text_area(w->window, (int)lround(fit.x + (r.left - left) * fit.scale) + caret,
+                             (int)lround(fit.y + (r.top - top) * fit.scale), 1,
+                             MIME_MAX(1, (int)lround((r.bottom - r.top) * fit.scale)));
 }
 
 /* the area is relative to the window it was made for, which may not be the one the keyboard is in. */
@@ -383,28 +352,15 @@ void mime_ui_set_text_area(uint32_t id, MimeRect r, int32_t cursor)
     apply_text_area();
 }
 
-/*
- * SDL has no Wayland composition cancellation call. restarting text input resets the input method's state as
- * required by the protocol.
- */
 void mime_ui_clear_composition(uint32_t id)
 {
-    UiWindow *w = find_window(id);
-    SDL_Window *focus = SDL_GetKeyboardFocus();
-    SDL_Window *window = focus ? focus : (w ? w->window : nullptr);
-    if (!window)
-        return;
-    if (g_wayland && SDL_TextInputActive(window)) {
-        SDL_StopTextInput(window);
-        SDL_StartTextInput(window);
-    } else {
-        SDL_ClearComposition(window);
-    }
+    mime_wl_text_reset();
 }
 
 uint32_t mime_ui_modifiers(void)
 {
-    return modifiers_of(SDL_GetModState());
+    /* the bits of MIME_WL_MOD_* are those of MIME_MOD_*. */
+    return mime_wl_mods();
 }
 
 void *mime_ui_window_surface(uint32_t id)
@@ -412,7 +368,7 @@ void *mime_ui_window_surface(uint32_t id)
     UiWindow *w = find_window(id);
     if (!w || !w->window)
         return nullptr;
-    return SDL_GetPointerProperty(SDL_GetWindowProperties(w->window), SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
+    return mime_wl_window_surface(w->window);
 }
 
 bool mime_ui_surface_point(void *surface, double x, double y, uint32_t *window, int32_t *gx, int32_t *gy)
@@ -421,8 +377,7 @@ bool mime_ui_surface_point(void *surface, double x, double y, uint32_t *window, 
         UiWindow *w = &g_windows[i];
         if (!w->used || !w->window || !w->shown)
             continue;
-        void *main_surface = SDL_GetPointerProperty(SDL_GetWindowProperties(w->window),
-                                                    SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
+        void *main_surface = mime_wl_window_surface(w->window);
         double ox = 0, oy = 0;
         if (surface == main_surface) {
         } else {
@@ -444,9 +399,13 @@ bool mime_ui_surface_point(void *surface, double x, double y, uint32_t *window, 
 
 /* ------------------------------------------------------------------ display. */
 
+typedef struct Box {
+    int x, y, w, h;
+} Box;
+
 typedef struct Placed {
-    SDL_DisplayID id;
-    SDL_Rect bounds, usable; /* in the compositor's coordinates. */
+    uint32_t id;
+    Box bounds, usable; /* in the compositor's coordinates. */
     double scale;
     int32_t width, height; /* guest pixels. */
     int32_t x, y;
@@ -483,8 +442,8 @@ static void layout_monitors(Placed *d, uint32_t count)
                 const Placed *p = &d[j];
                 if (!p->placed)
                     continue;
-                SDL_Rect *m = &d[i].bounds;
-                const SDL_Rect *r = &p->bounds;
+                Box *m = &d[i].bounds;
+                const Box *r = &p->bounds;
                 bool vertical = m->y < r->y + r->h && r->y < m->y + m->h;
                 bool horizontal = m->x < r->x + r->w && r->x < m->x + m->w;
                 if (m->x == r->x + r->w && vertical) {
@@ -526,20 +485,12 @@ static void color_changed(void)
  * MIME_HDR=off tells the guest of standard dynamic range outputs only, MIME_HDR=force of a 1000 nit one whatever the
  * output is, which the compositor then maps to what it has.
  */
-static void display_color(SDL_DisplayID id, Placed *m)
+static void display_color(struct wl_output *output, Placed *m)
 {
     const char *env = getenv("MIME_HDR");
     if (env && !strcmp(env, "off"))
         return;
-#ifdef SDL_PROP_DISPLAY_WAYLAND_WL_OUTPUT_POINTER
-    if (g_wayland) {
-        struct wl_display *display = SDL_GetPointerProperty(SDL_GetGlobalProperties(),
-                                                            SDL_PROP_GLOBAL_VIDEO_WAYLAND_WL_DISPLAY_POINTER, nullptr);
-        struct wl_output *output = SDL_GetPointerProperty(SDL_GetDisplayProperties(id),
-                                                          SDL_PROP_DISPLAY_WAYLAND_WL_OUTPUT_POINTER, nullptr);
-        mime_color_output(display, output, &m->hdr, &m->color);
-    }
-#endif
+    mime_color_output(mime_wl_display(), output, &m->hdr, &m->color);
     if (env && !strcmp(env, "force") && !m->hdr) {
         m->hdr = true;
         m->color = (MimeMonitorColor){708000, 292000, 170000, 797000, 131000, 46000, 312700, 329000,
@@ -549,45 +500,26 @@ static void display_color(SDL_DisplayID id, Placed *m)
 
 static void update_display(void)
 {
-    SDL_DisplayID primary = SDL_GetPrimaryDisplay();
-    int n = 0;
-    SDL_DisplayID *ids = SDL_GetDisplays(&n);
+    MimeWlOutput outputs[MIME_MAX_MONITORS];
+    uint32_t count = mime_wl_outputs(outputs, MIME_MAX_MONITORS);
     Placed d[MIME_MAX_MONITORS];
-    uint32_t count = 0;
-    for (int i = 0; ids && i < n && count < MIME_MAX_MONITORS; i++) {
-        Placed *m = &d[count];
+    for (uint32_t i = 0; i < count; i++) {
+        const MimeWlOutput *o = &outputs[i];
+        Placed *m = &d[i];
         memset(m, 0, sizeof(*m));
-        m->id = ids[i];
-        if (!SDL_GetDisplayBounds(ids[i], &m->bounds))
-            continue;
-        if (!SDL_GetDisplayUsableBounds(ids[i], &m->usable))
-            m->usable = m->bounds;
-        /* Wayland tells a display's scale as the pixel density of its mode, other systems as a content scale. */
-        float scale = SDL_GetDisplayContentScale(ids[i]);
-        const SDL_DisplayMode *desktop = SDL_GetDesktopDisplayMode(ids[i]);
-        if (desktop && desktop->pixel_density >= 1.0f)
-            scale *= desktop->pixel_density;
-        m->scale = scale >= 1.0f ? scale : 1.0;
+        m->id = o->id;
+        /* the compositor tells nothing of its panels: the work area is the whole output. */
+        m->bounds = m->usable = (Box){o->x, o->y, o->width, o->height};
+        m->scale = o->scale;
         m->width = (int32_t)lround(m->bounds.w * m->scale);
         m->height = (int32_t)lround(m->bounds.h * m->scale);
-        const SDL_DisplayMode *mode = SDL_GetCurrentDisplayMode(ids[i]);
-        m->refresh = mode ? mode->refresh_rate : 0;
-        const char *name = SDL_GetDisplayName(ids[i]);
-        strncpy(m->name, name ? name : "", sizeof(m->name) - 1);
-        display_color(ids[i], m);
-        count++;
+        m->refresh = (float)o->refresh;
+        strncpy(m->name, o->name, sizeof(m->name) - 1);
+        display_color(o->output, m);
     }
-    SDL_free(ids);
     if (!count)
         return;
     /* the primary first, then left to right. */
-    uint32_t first = 0;
-    for (uint32_t i = 0; i < count; i++)
-        if (d[i].id == primary)
-            first = i;
-    Placed tmp = d[0];
-    d[0] = d[first];
-    d[first] = tmp;
     qsort(d + 1, count - 1, sizeof(Placed), compare_position);
     layout_monitors(d, count);
 
@@ -666,9 +598,9 @@ uint32_t mime_ui_get_monitors(MimeMonitor *monitors, uint32_t capacity)
 }
 
 /* returns the display with the largest overlap. */
-static SDL_DisplayID display_of_rect(const MimeRect *r)
+static uint32_t display_of_rect(const MimeRect *r)
 {
-    SDL_DisplayID best = 0;
+    uint32_t best = 0;
     int64_t best_area = -1;
     pthread_mutex_lock(&g_monitor_lock);
     for (uint32_t i = 0; i < g_monitor_count; i++) {
@@ -686,7 +618,7 @@ static SDL_DisplayID display_of_rect(const MimeRect *r)
 }
 
 /* returns -1 when the display is absent from the guest list. */
-static int monitor_index(SDL_DisplayID id)
+static int monitor_index(uint32_t id)
 {
     int index = -1;
     pthread_mutex_lock(&g_monitor_lock);
@@ -704,55 +636,56 @@ typedef struct KeyMap {
     uint16_t scan; /* set 1, 0x100 marks extended keys. */
 } KeyMap;
 
-/* by USB usage, the SDL scancode. */
-static const KeyMap g_keymap[SDL_SCANCODE_COUNT] = {
-    [SDL_SCANCODE_A] = {'A', 0x1E}, [SDL_SCANCODE_B] = {'B', 0x30}, [SDL_SCANCODE_C] = {'C', 0x2E},
-    [SDL_SCANCODE_D] = {'D', 0x20}, [SDL_SCANCODE_E] = {'E', 0x12}, [SDL_SCANCODE_F] = {'F', 0x21},
-    [SDL_SCANCODE_G] = {'G', 0x22}, [SDL_SCANCODE_H] = {'H', 0x23}, [SDL_SCANCODE_I] = {'I', 0x17},
-    [SDL_SCANCODE_J] = {'J', 0x24}, [SDL_SCANCODE_K] = {'K', 0x25}, [SDL_SCANCODE_L] = {'L', 0x26},
-    [SDL_SCANCODE_M] = {'M', 0x32}, [SDL_SCANCODE_N] = {'N', 0x31}, [SDL_SCANCODE_O] = {'O', 0x18},
-    [SDL_SCANCODE_P] = {'P', 0x19}, [SDL_SCANCODE_Q] = {'Q', 0x10}, [SDL_SCANCODE_R] = {'R', 0x13},
-    [SDL_SCANCODE_S] = {'S', 0x1F}, [SDL_SCANCODE_T] = {'T', 0x14}, [SDL_SCANCODE_U] = {'U', 0x16},
-    [SDL_SCANCODE_V] = {'V', 0x2F}, [SDL_SCANCODE_W] = {'W', 0x11}, [SDL_SCANCODE_X] = {'X', 0x2D},
-    [SDL_SCANCODE_Y] = {'Y', 0x15}, [SDL_SCANCODE_Z] = {'Z', 0x2C},
-    [SDL_SCANCODE_1] = {'1', 0x02}, [SDL_SCANCODE_2] = {'2', 0x03}, [SDL_SCANCODE_3] = {'3', 0x04},
-    [SDL_SCANCODE_4] = {'4', 0x05}, [SDL_SCANCODE_5] = {'5', 0x06}, [SDL_SCANCODE_6] = {'6', 0x07},
-    [SDL_SCANCODE_7] = {'7', 0x08}, [SDL_SCANCODE_8] = {'8', 0x09}, [SDL_SCANCODE_9] = {'9', 0x0A},
-    [SDL_SCANCODE_0] = {'0', 0x0B},
-    [SDL_SCANCODE_RETURN] = {0x0D, 0x1C}, [SDL_SCANCODE_ESCAPE] = {0x1B, 0x01},
-    [SDL_SCANCODE_BACKSPACE] = {0x08, 0x0E}, [SDL_SCANCODE_TAB] = {0x09, 0x0F},
-    [SDL_SCANCODE_SPACE] = {0x20, 0x39}, [SDL_SCANCODE_MINUS] = {0xBD, 0x0C},
-    [SDL_SCANCODE_EQUALS] = {0xBB, 0x0D}, [SDL_SCANCODE_LEFTBRACKET] = {0xDB, 0x1A},
-    [SDL_SCANCODE_RIGHTBRACKET] = {0xDD, 0x1B}, [SDL_SCANCODE_BACKSLASH] = {0xDC, 0x2B},
-    [SDL_SCANCODE_NONUSHASH] = {0xDC, 0x2B}, [SDL_SCANCODE_SEMICOLON] = {0xBA, 0x27},
-    [SDL_SCANCODE_APOSTROPHE] = {0xDE, 0x28}, [SDL_SCANCODE_GRAVE] = {0xC0, 0x29},
-    [SDL_SCANCODE_COMMA] = {0xBC, 0x33}, [SDL_SCANCODE_PERIOD] = {0xBE, 0x34},
-    [SDL_SCANCODE_SLASH] = {0xBF, 0x35}, [SDL_SCANCODE_CAPSLOCK] = {0x14, 0x3A},
-    [SDL_SCANCODE_F1] = {0x70, 0x3B}, [SDL_SCANCODE_F2] = {0x71, 0x3C}, [SDL_SCANCODE_F3] = {0x72, 0x3D},
-    [SDL_SCANCODE_F4] = {0x73, 0x3E}, [SDL_SCANCODE_F5] = {0x74, 0x3F}, [SDL_SCANCODE_F6] = {0x75, 0x40},
-    [SDL_SCANCODE_F7] = {0x76, 0x41}, [SDL_SCANCODE_F8] = {0x77, 0x42}, [SDL_SCANCODE_F9] = {0x78, 0x43},
-    [SDL_SCANCODE_F10] = {0x79, 0x44}, [SDL_SCANCODE_F11] = {0x7A, 0x57}, [SDL_SCANCODE_F12] = {0x7B, 0x58},
-    [SDL_SCANCODE_F13] = {0x7C, 0x64}, [SDL_SCANCODE_F14] = {0x7D, 0x65}, [SDL_SCANCODE_F15] = {0x7E, 0x66},
-    [SDL_SCANCODE_F16] = {0x7F, 0x67}, [SDL_SCANCODE_F17] = {0x80, 0x68}, [SDL_SCANCODE_F18] = {0x81, 0x69},
-    [SDL_SCANCODE_F19] = {0x82, 0x6A}, [SDL_SCANCODE_F20] = {0x83, 0x6B}, [SDL_SCANCODE_F21] = {0x84, 0x6C},
-    [SDL_SCANCODE_F22] = {0x85, 0x6D}, [SDL_SCANCODE_F23] = {0x86, 0x6E}, [SDL_SCANCODE_F24] = {0x87, 0x76},
-    [SDL_SCANCODE_PRINTSCREEN] = {0x2C, 0x137}, [SDL_SCANCODE_SCROLLLOCK] = {0x91, 0x46},
-    [SDL_SCANCODE_PAUSE] = {0x13, 0x45}, [SDL_SCANCODE_INSERT] = {0x2D, 0x152},
-    [SDL_SCANCODE_HOME] = {0x24, 0x147}, [SDL_SCANCODE_PAGEUP] = {0x21, 0x149},
-    [SDL_SCANCODE_DELETE] = {0x2E, 0x153}, [SDL_SCANCODE_END] = {0x23, 0x14F},
-    [SDL_SCANCODE_PAGEDOWN] = {0x22, 0x151}, [SDL_SCANCODE_RIGHT] = {0x27, 0x14D},
-    [SDL_SCANCODE_LEFT] = {0x25, 0x14B}, [SDL_SCANCODE_DOWN] = {0x28, 0x150}, [SDL_SCANCODE_UP] = {0x26, 0x148},
-    [SDL_SCANCODE_NUMLOCKCLEAR] = {0x90, 0x145}, [SDL_SCANCODE_KP_DIVIDE] = {0x6F, 0x135},
-    [SDL_SCANCODE_KP_MULTIPLY] = {0x6A, 0x37}, [SDL_SCANCODE_KP_MINUS] = {0x6D, 0x4A},
-    [SDL_SCANCODE_KP_PLUS] = {0x6B, 0x4E}, [SDL_SCANCODE_KP_ENTER] = {0x0D, 0x11C},
-    [SDL_SCANCODE_KP_1] = {0x61, 0x4F}, [SDL_SCANCODE_KP_2] = {0x62, 0x50}, [SDL_SCANCODE_KP_3] = {0x63, 0x51},
-    [SDL_SCANCODE_KP_4] = {0x64, 0x4B}, [SDL_SCANCODE_KP_5] = {0x65, 0x4C}, [SDL_SCANCODE_KP_6] = {0x66, 0x4D},
-    [SDL_SCANCODE_KP_7] = {0x67, 0x47}, [SDL_SCANCODE_KP_8] = {0x68, 0x48}, [SDL_SCANCODE_KP_9] = {0x69, 0x49},
-    [SDL_SCANCODE_KP_0] = {0x60, 0x52}, [SDL_SCANCODE_KP_PERIOD] = {0x6E, 0x53},
-    [SDL_SCANCODE_NONUSBACKSLASH] = {0xE2, 0x56}, [SDL_SCANCODE_APPLICATION] = {0x5D, 0x15D},
-    [SDL_SCANCODE_LCTRL] = {0xA2, 0x1D}, [SDL_SCANCODE_LSHIFT] = {0xA0, 0x2A}, [SDL_SCANCODE_LALT] = {0xA4, 0x38},
-    [SDL_SCANCODE_LGUI] = {0x5B, 0x15B}, [SDL_SCANCODE_RCTRL] = {0xA3, 0x11D}, [SDL_SCANCODE_RSHIFT] = {0xA1, 0x36},
-    [SDL_SCANCODE_RALT] = {0xA5, 0x138}, [SDL_SCANCODE_RGUI] = {0x5C, 0x15C},
+/* by the key code of linux/input-event-codes.h. */
+#define KEY_CODES 256
+static const KeyMap g_keymap[KEY_CODES] = {
+    [KEY_A] = {'A', 0x1E}, [KEY_B] = {'B', 0x30}, [KEY_C] = {'C', 0x2E},
+    [KEY_D] = {'D', 0x20}, [KEY_E] = {'E', 0x12}, [KEY_F] = {'F', 0x21},
+    [KEY_G] = {'G', 0x22}, [KEY_H] = {'H', 0x23}, [KEY_I] = {'I', 0x17},
+    [KEY_J] = {'J', 0x24}, [KEY_K] = {'K', 0x25}, [KEY_L] = {'L', 0x26},
+    [KEY_M] = {'M', 0x32}, [KEY_N] = {'N', 0x31}, [KEY_O] = {'O', 0x18},
+    [KEY_P] = {'P', 0x19}, [KEY_Q] = {'Q', 0x10}, [KEY_R] = {'R', 0x13},
+    [KEY_S] = {'S', 0x1F}, [KEY_T] = {'T', 0x14}, [KEY_U] = {'U', 0x16},
+    [KEY_V] = {'V', 0x2F}, [KEY_W] = {'W', 0x11}, [KEY_X] = {'X', 0x2D},
+    [KEY_Y] = {'Y', 0x15}, [KEY_Z] = {'Z', 0x2C},
+    [KEY_1] = {'1', 0x02}, [KEY_2] = {'2', 0x03}, [KEY_3] = {'3', 0x04},
+    [KEY_4] = {'4', 0x05}, [KEY_5] = {'5', 0x06}, [KEY_6] = {'6', 0x07},
+    [KEY_7] = {'7', 0x08}, [KEY_8] = {'8', 0x09}, [KEY_9] = {'9', 0x0A},
+    [KEY_0] = {'0', 0x0B},
+    [KEY_ENTER] = {0x0D, 0x1C}, [KEY_ESC] = {0x1B, 0x01},
+    [KEY_BACKSPACE] = {0x08, 0x0E}, [KEY_TAB] = {0x09, 0x0F},
+    [KEY_SPACE] = {0x20, 0x39}, [KEY_MINUS] = {0xBD, 0x0C},
+    [KEY_EQUAL] = {0xBB, 0x0D}, [KEY_LEFTBRACE] = {0xDB, 0x1A},
+    [KEY_RIGHTBRACE] = {0xDD, 0x1B}, [KEY_BACKSLASH] = {0xDC, 0x2B},
+    [KEY_SEMICOLON] = {0xBA, 0x27},
+    [KEY_APOSTROPHE] = {0xDE, 0x28}, [KEY_GRAVE] = {0xC0, 0x29},
+    [KEY_COMMA] = {0xBC, 0x33}, [KEY_DOT] = {0xBE, 0x34},
+    [KEY_SLASH] = {0xBF, 0x35}, [KEY_CAPSLOCK] = {0x14, 0x3A},
+    [KEY_F1] = {0x70, 0x3B}, [KEY_F2] = {0x71, 0x3C}, [KEY_F3] = {0x72, 0x3D},
+    [KEY_F4] = {0x73, 0x3E}, [KEY_F5] = {0x74, 0x3F}, [KEY_F6] = {0x75, 0x40},
+    [KEY_F7] = {0x76, 0x41}, [KEY_F8] = {0x77, 0x42}, [KEY_F9] = {0x78, 0x43},
+    [KEY_F10] = {0x79, 0x44}, [KEY_F11] = {0x7A, 0x57}, [KEY_F12] = {0x7B, 0x58},
+    [KEY_F13] = {0x7C, 0x64}, [KEY_F14] = {0x7D, 0x65}, [KEY_F15] = {0x7E, 0x66},
+    [KEY_F16] = {0x7F, 0x67}, [KEY_F17] = {0x80, 0x68}, [KEY_F18] = {0x81, 0x69},
+    [KEY_F19] = {0x82, 0x6A}, [KEY_F20] = {0x83, 0x6B}, [KEY_F21] = {0x84, 0x6C},
+    [KEY_F22] = {0x85, 0x6D}, [KEY_F23] = {0x86, 0x6E}, [KEY_F24] = {0x87, 0x76},
+    [KEY_SYSRQ] = {0x2C, 0x137}, [KEY_SCROLLLOCK] = {0x91, 0x46},
+    [KEY_PAUSE] = {0x13, 0x45}, [KEY_INSERT] = {0x2D, 0x152},
+    [KEY_HOME] = {0x24, 0x147}, [KEY_PAGEUP] = {0x21, 0x149},
+    [KEY_DELETE] = {0x2E, 0x153}, [KEY_END] = {0x23, 0x14F},
+    [KEY_PAGEDOWN] = {0x22, 0x151}, [KEY_RIGHT] = {0x27, 0x14D},
+    [KEY_LEFT] = {0x25, 0x14B}, [KEY_DOWN] = {0x28, 0x150}, [KEY_UP] = {0x26, 0x148},
+    [KEY_NUMLOCK] = {0x90, 0x145}, [KEY_KPSLASH] = {0x6F, 0x135},
+    [KEY_KPASTERISK] = {0x6A, 0x37}, [KEY_KPMINUS] = {0x6D, 0x4A},
+    [KEY_KPPLUS] = {0x6B, 0x4E}, [KEY_KPENTER] = {0x0D, 0x11C},
+    [KEY_KP1] = {0x61, 0x4F}, [KEY_KP2] = {0x62, 0x50}, [KEY_KP3] = {0x63, 0x51},
+    [KEY_KP4] = {0x64, 0x4B}, [KEY_KP5] = {0x65, 0x4C}, [KEY_KP6] = {0x66, 0x4D},
+    [KEY_KP7] = {0x67, 0x47}, [KEY_KP8] = {0x68, 0x48}, [KEY_KP9] = {0x69, 0x49},
+    [KEY_KP0] = {0x60, 0x52}, [KEY_KPDOT] = {0x6E, 0x53},
+    [KEY_102ND] = {0xE2, 0x56}, [KEY_COMPOSE] = {0x5D, 0x15D},
+    [KEY_LEFTCTRL] = {0xA2, 0x1D}, [KEY_LEFTSHIFT] = {0xA0, 0x2A}, [KEY_LEFTALT] = {0xA4, 0x38},
+    [KEY_LEFTMETA] = {0x5B, 0x15B}, [KEY_RIGHTCTRL] = {0xA3, 0x11D}, [KEY_RIGHTSHIFT] = {0xA1, 0x36},
+    [KEY_RIGHTALT] = {0xA5, 0x138}, [KEY_RIGHTMETA] = {0x5C, 0x15C},
 };
 
 /*
@@ -776,13 +709,11 @@ static const LayoutKey g_uk[] = {{0x28, 0xC0}, {0x29, 0xDF}, {0x2B, 0xDE}, {0x56
 static MimeKeyboardLayout g_layout;
 static bool g_layout_known;
 
-/* the character a key types with the given modifiers, 0 for none. */
-static uint16_t layout_char(SDL_Scancode code, SDL_Keymod mod)
+/* the character a key types at a level of the layout, 0 for none. */
+static uint16_t layout_char(uint32_t code, int level)
 {
-    SDL_Keycode key = SDL_GetKeyFromScancode(code, mod, false);
-    if ((key & SDLK_SCANCODE_MASK) || key < 0x20 || key == 0x7F || key > 0xFFFF)
-        return 0;
-    return (uint16_t)key;
+    uint32_t c = mime_wl_key_char(code, level);
+    return c < 0x20 || c == 0x7F || c > 0xFFFF ? 0 : (uint16_t)c;
 }
 
 static bool lower_letter(uint16_t c)
@@ -790,22 +721,21 @@ static bool lower_letter(uint16_t c)
     return c >= 'a' && c <= 'z';
 }
 
-/* reads the layout of the host from SDL's keymap, and tells the guest when it changed. */
+/* reads the layout of the host from the compositor's keymap, and tells the guest when it changed. */
 static void update_layout(void)
 {
     MimeKeyboardLayout l = {};
     l.language = 0x0409;
-    SDL_Scancode by_scan[MIME_KEYBOARD_KEYS] = {};
-    for (int code = 0; code < SDL_SCANCODE_COUNT; code++) {
+    uint32_t by_scan[MIME_KEYBOARD_KEYS] = {};
+    for (uint32_t code = 0; code < KEY_CODES; code++) {
         const KeyMap *k = &g_keymap[code];
-        /* two SDL scancodes share a place, as backslash and the ISO key next to enter: the first is the one keyboards send. */
         if (!k->vk || k->scan >= MIME_KEYBOARD_KEYS || by_scan[k->scan])
             continue;
-        by_scan[k->scan] = (SDL_Scancode)code;
+        by_scan[k->scan] = code;
         l.vk[k->scan] = k->vk;
-        l.chars[k->scan][0] = layout_char((SDL_Scancode)code, SDL_KMOD_NONE);
-        l.chars[k->scan][1] = layout_char((SDL_Scancode)code, SDL_KMOD_SHIFT);
-        l.chars[k->scan][2] = layout_char((SDL_Scancode)code, SDL_KMOD_MODE);
+        l.chars[k->scan][0] = layout_char(code, 0);
+        l.chars[k->scan][1] = layout_char(code, 1);
+        l.chars[k->scan][2] = layout_char(code, 2);
         if (l.chars[k->scan][2] == l.chars[k->scan][0])
             l.chars[k->scan][2] = 0;
     }
@@ -867,49 +797,43 @@ static void alt_char_flush(void)
     }
 }
 
-static void emit_key(const SDL_KeyboardEvent *key)
+static void emit_key(UiWindow *w, uint32_t key, bool down, bool repeat)
 {
-    UiWindow *w = find_by_sdl(key->windowID);
-    if (!w || key->scancode >= SDL_SCANCODE_COUNT || !g_keymap[key->scancode].vk)
+    if (key >= KEY_CODES || !g_keymap[key].vk)
         return;
-    const KeyMap *k = &g_keymap[key->scancode];
+    const KeyMap *k = &g_keymap[key];
+    uint32_t mods = mime_wl_mods();
     MimeInputEvent ev = {};
-    ev.type = key->down ? MIME_INPUT_KEY_DOWN : MIME_INPUT_KEY_UP;
+    ev.type = down ? MIME_INPUT_KEY_DOWN : MIME_INPUT_KEY_UP;
     ev.window_id = w->id;
     ev.vk = k->vk;
+    /* letter keys take the virtual key of the letter they type in the host layout, like windows layouts do. */
     if (g_layout_known && k->scan < MIME_KEYBOARD_KEYS)
         ev.vk = g_layout.vk[k->scan];
-    /* letter keys take the virtual key of the letter they type in the host layout, like windows layouts do. */
-    else if (k->vk >= 'A' && k->vk <= 'Z' && key->key >= 'a' && key->key <= 'z')
-        ev.vk = (uint32_t)(key->key - 32);
     ev.scancode = k->scan;
-    ev.modifiers = modifiers_of(key->mod);
-    if (key->repeat)
+    ev.modifiers = mods;
+    if (repeat)
         ev.flags = 2;
     emit(&ev);
     /*
-     * SDL does not generate typed text while Alt is held. Windows uses WM_SYSCHAR for Alt+Space and
-     * Alt+letter menus. AltGr also appears as Alt to SDL, so defer the character until the next event
-     * confirms whether text follows.
+     * no text is typed while Alt is held. Windows uses WM_SYSCHAR for Alt+Space and Alt+letter menus. a layout may
+     * have its third level on Alt, so the character waits until the next event tells whether text follows.
      */
-    if (key->down && (key->mod & SDL_KMOD_ALT) && !(key->mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI))) {
-        SDL_Keycode code = SDL_GetKeyFromScancode(key->scancode, key->mod & SDL_KMOD_SHIFT, false);
+    if (down && (mods & MIME_MOD_ALT) && !(mods & (MIME_MOD_CONTROL | MIME_MOD_WIN))) {
+        uint32_t code = mime_wl_key_char(key, mods & MIME_MOD_SHIFT ? 1 : 0);
         if (code >= 0x20 && code < 0x7F) {
             alt_char_flush();
-            g_alt_char = (MimeInputEvent){.type = MIME_INPUT_CHAR, .window_id = w->id, .ch = (uint32_t)code,
+            g_alt_char = (MimeInputEvent){.type = MIME_INPUT_CHAR, .window_id = w->id, .ch = code,
                                           .modifiers = ev.modifiers, .scancode = ev.scancode};
             g_alt_char_pending = true;
         }
     }
 }
 
-static void emit_text(const SDL_TextInputEvent *text)
+static void emit_text(UiWindow *w, const char *text)
 {
-    UiWindow *w = find_by_sdl(text->windowID);
-    if (!w || !text->text)
-        return;
     uint16_t buf[64];
-    size_t n = mime_utf8_to_utf16(buf, MIME_ARRAY_COUNT(buf), text->text);
+    size_t n = mime_utf8_to_utf16(buf, MIME_ARRAY_COUNT(buf), text);
     for (size_t i = 0; i < n; i++) {
         MimeInputEvent ev = {};
         ev.type = MIME_INPUT_CHAR;
@@ -921,20 +845,17 @@ static void emit_text(const SDL_TextInputEvent *text)
 
 /* ------------------------------------------------------------------ mouse. */
 
-static void emit_mouse(SDL_WindowID id, float x, float y, uint32_t type, uint32_t button)
+static void emit_mouse(UiWindow *w, double x, double y, uint32_t type, uint32_t button)
 {
-    UiWindow *w = find_by_sdl(id);
-    if (!w)
-        return;
     MimeInputEvent ev = {};
     ev.type = type;
     ev.window_id = w->id;
-    window_point_to_guest(w, x, y, &ev.x, &ev.y);
+    window_point_to_guest(w, (float)x, (float)y, &ev.x, &ev.y);
     ev.button = button;
-    ev.modifiers = modifiers_of(SDL_GetModState());
-    if (w->window && SDL_GetWindowRelativeMouseMode(w->window))
+    ev.modifiers = mime_wl_mods();
+    if (w->window && mime_wl_pointer_locked(w->window))
         ev.flags |= 4;
-    if (point_outside(w, x, y))
+    if (point_outside(w, (float)x, (float)y))
         ev.flags |= 8;
     emit(&ev);
 }
@@ -943,26 +864,23 @@ static bool g_pointer_known;
 static int32_t g_pointer_x, g_pointer_y;
 
 /* motion in guest pixels; locked, the device's own counts, as raw input reports them. */
-static void emit_motion(const SDL_MouseMotionEvent *m)
+static void emit_motion(UiWindow *w, double x, double y, double dx, double dy)
 {
-    UiWindow *w = find_by_sdl(m->windowID);
-    if (!w)
-        return;
     MimeInputEvent ev = {};
     ev.type = MIME_INPUT_MOUSE_MOVE;
     ev.window_id = w->id;
-    ev.modifiers = modifiers_of(SDL_GetModState());
+    ev.modifiers = mime_wl_mods();
     double scale = 1.0;
-    if (w->window && SDL_GetWindowRelativeMouseMode(w->window))
+    if (w->window && mime_wl_pointer_locked(w->window))
         ev.flags |= 4;
     else {
-        window_point_to_guest(w, m->x, m->y, &ev.x, &ev.y);
+        window_point_to_guest(w, (float)x, (float)y, &ev.x, &ev.y);
         scale = window_fit(w).scale;
-        if (point_outside(w, m->x, m->y))
+        if (point_outside(w, (float)x, (float)y))
             ev.flags |= 8;
     }
-    w->motion_x += m->xrel / scale;
-    w->motion_y += m->yrel / scale;
+    w->motion_x += dx / scale;
+    w->motion_y += dy / scale;
     ev.dx = (int32_t)w->motion_x;
     ev.dy = (int32_t)w->motion_y;
     w->motion_x -= ev.dx;
@@ -980,32 +898,29 @@ static void emit_motion(const SDL_MouseMotionEvent *m)
     emit(&ev);
 }
 
-static uint32_t mouse_button(Uint8 button)
+static uint32_t mouse_button(uint32_t button)
 {
     switch (button) {
-    case SDL_BUTTON_LEFT: return MIME_MOUSE_LEFT;
-    case SDL_BUTTON_RIGHT: return MIME_MOUSE_RIGHT;
-    case SDL_BUTTON_MIDDLE: return MIME_MOUSE_MIDDLE;
-    case SDL_BUTTON_X1: return MIME_MOUSE_X1;
-    case SDL_BUTTON_X2: return MIME_MOUSE_X2;
+    case BTN_LEFT: return MIME_MOUSE_LEFT;
+    case BTN_RIGHT: return MIME_MOUSE_RIGHT;
+    case BTN_MIDDLE: return MIME_MOUSE_MIDDLE;
+    case BTN_SIDE: return MIME_MOUSE_X1;
+    case BTN_EXTRA: return MIME_MOUSE_X2;
     default: return 0;
     }
 }
 
-static void emit_wheel(const SDL_MouseWheelEvent *wheel)
+/* in notches, up and right positive. */
+static void emit_wheel(UiWindow *w, double x, double y, double wheel_x, double wheel_y)
 {
-    UiWindow *w = find_by_sdl(wheel->windowID);
-    if (!w)
-        return;
-    float sign = wheel->direction == SDL_MOUSEWHEEL_FLIPPED ? -1.0f : 1.0f;
     MimeInputEvent ev = {};
     ev.type = MIME_INPUT_MOUSE_WHEEL;
     ev.window_id = w->id;
-    window_point_to_guest(w, wheel->mouse_x, wheel->mouse_y, &ev.x, &ev.y);
-    ev.modifiers = modifiers_of(SDL_GetModState());
+    window_point_to_guest(w, (float)x, (float)y, &ev.x, &ev.y);
+    ev.modifiers = mime_wl_mods();
     /* fractions of a notch from smooth scrolling add up to whole wheel deltas of 120 per notch. */
-    w->wheel_y += wheel->y * sign * 120.0;
-    w->wheel_x += wheel->x * sign * 120.0;
+    w->wheel_y += wheel_y * 120.0;
+    w->wheel_x += wheel_x * 120.0;
     int32_t dy = (int32_t)w->wheel_y, dx = (int32_t)w->wheel_x;
     w->wheel_y -= dy;
     w->wheel_x -= dx;
@@ -1023,48 +938,17 @@ static void emit_wheel(const SDL_MouseWheelEvent *wheel)
 /* ------------------------------------------------------------------ windows. */
 
 /*
- * caption drag rectangles let the compositor move the window. other input goes to the guest, including resize
- * border handling.
- */
-static SDL_HitTestResult hit_test(SDL_Window *window, const SDL_Point *point, void *data)
-{
-    uint32_t id = (uint32_t)(uintptr_t)data;
-    UiWindow *w = find_window(id);
-    if (!w || (w->config.flags & (MIME_WIN_MAXIMIZED | MIME_WIN_FULLSCREEN)))
-        return SDL_HITTEST_NORMAL;
-    /* on Wayland the press reaches the guest, which asks the compositor to move or size the window once the
-       pointer drags, and a double click on a caption is its own. */
-    if (g_wayland)
-        return SDL_HITTEST_NORMAL;
-    MimeRect host = host_part(&w->config);
-    double scale = config_scale(&w->config);
-    int32_t x = (int32_t)lround(point->x * scale) + host.left;
-    int32_t y = (int32_t)lround(point->y * scale) + host.top;
-    for (uint32_t i = 0; i < w->config.drag_count && i < MIME_WIN_MAX_DRAG_RECTS; i++) {
-        MimeRect r = w->config.drag[i];
-        if (x >= r.left && x < r.right && y >= r.top && y < r.bottom)
-            return SDL_HITTEST_DRAGGABLE;
-    }
-    return SDL_HITTEST_NORMAL;
-}
-
-/*
  * a size past twice the largest display, or past 16384, is none a window should have. kwin gave such sizes, 100000
  * pixels more than the window, while the window geometry was left to the extent of the surfaces, see set_geometry.
- * a buffer of that size is tens of gigabytes, which the nvidia driver takes from system memory when video memory
- * cannot hold it, and the host runs out within a second.
+ * a buffer of that size is tens of gigabytes, and the host runs out within a second.
  */
 static int sane_limit(void)
 {
-    int largest = 0, n = 0;
-    SDL_DisplayID *ids = SDL_GetDisplays(&n);
-    for (int i = 0; ids && i < n; i++) {
-        SDL_Rect r;
-        float scale = SDL_GetDisplayContentScale(ids[i]);
-        if (SDL_GetDisplayBounds(ids[i], &r))
-            largest = MIME_MAX(largest, (int)lround(MIME_MAX(r.w, r.h) * (scale > 1.0f ? scale : 1.0f)));
-    }
-    SDL_free(ids);
+    MimeWlOutput outputs[MIME_MAX_MONITORS];
+    uint32_t count = mime_wl_outputs(outputs, MIME_MAX_MONITORS);
+    int largest = 0;
+    for (uint32_t i = 0; i < count; i++)
+        largest = MIME_MAX(largest, (int)lround(MIME_MAX(outputs[i].width, outputs[i].height) * outputs[i].scale));
     return MIME_MIN(MIME_MAX(largest * 2, 4096), 16384);
 }
 
@@ -1079,30 +963,25 @@ static bool sane_size(int width, int height)
  * subsurfaces, and a layer that reaches past the window would make the compositor configure it larger. it lands with
  * the next commit.
  */
-enum { XDG_SURFACE_SET_WINDOW_GEOMETRY = 3 };
-
 static void set_geometry(UiWindow *w)
 {
-    if (!g_wayland || !w->window)
+    if (!w->window)
         return;
-    struct wl_proxy *xdg = SDL_GetPointerProperty(SDL_GetWindowProperties(w->window),
-                                                  SDL_PROP_WINDOW_WAYLAND_XDG_SURFACE_POINTER, nullptr);
     int width = 0, height = 0;
-    SDL_GetWindowSize(w->window, &width, &height);
-    if (!xdg || width <= 0 || height <= 0 || !sane_size(width, height) ||
-        (width == w->geometry_w && height == w->geometry_h))
+    mime_wl_window_get_size(w->window, &width, &height);
+    if (width <= 0 || height <= 0 || !sane_size(width, height) || (width == w->geometry_w && height == w->geometry_h))
         return;
     w->geometry_w = width;
     w->geometry_h = height;
-    wl_proxy_marshal_flags(xdg, XDG_SURFACE_SET_WINDOW_GEOMETRY, nullptr, wl_proxy_get_version(xdg), 0, 0, 0, width, height);
+    mime_wl_window_geometry(w->window, width, height);
 }
 
 static void update_pixel_size(UiWindow *w)
 {
     int width = 0, height = 0, logical_width = 0, logical_height = 0;
     if (w->window) {
-        SDL_GetWindowSizeInPixels(w->window, &width, &height);
-        SDL_GetWindowSize(w->window, &logical_width, &logical_height);
+        mime_wl_window_get_pixels(w->window, &width, &height);
+        mime_wl_window_get_size(w->window, &logical_width, &logical_height);
     }
     bool bogus = !sane_size(width, height);
     if (bogus && !w->bogus_size)
@@ -1119,6 +998,14 @@ static void update_pixel_size(UiWindow *w)
     pthread_mutex_unlock(&w->lock);
 }
 
+/* shows the host window, which is a new one to the compositor each time. */
+static void show_host(UiWindow *w)
+{
+    mime_wl_window_show(w->window);
+    w->geometry_w = w->geometry_h = 0;
+    set_geometry(w);
+}
+
 static void destroy_layers(UiWindow *w);
 
 static bool has_open_popup(const UiWindow *w)
@@ -1130,42 +1017,25 @@ static bool has_open_popup(const UiWindow *w)
     return false;
 }
 
-/* locked: the caller holds g_windows_lock, which is let go while the host window goes. */
-static void destroy_host_window(UiWindow *w, bool locked)
+static void destroy_host_window(UiWindow *w)
 {
     if (w->vk) {
         mime_vk_window_lost(w->id);
         destroy_layers(w);
         w->vk = false;
-        w->vk_whole = false;
     }
     mime_gpu_teardown_enter();
-    if (w->texture)
-        SDL_DestroyTexture(w->texture);
-    if (w->renderer)
-        SDL_DestroyRenderer(w->renderer);
-    SDL_Window *window = w->window;
-    w->texture = nullptr;
-    w->renderer = nullptr;
+    MimeWlWindow *window = w->window;
     w->window = nullptr;
     if (w->panel) {
         wl_subsurface_destroy(w->panel);
         w->panel = nullptr;
     }
-    if (window) {
-        /*
-         * the destruction roundtrips to the compositor and serves the clipboard requests that are waiting, which wait
-         * for the guest. a processor of the guest that waits for the lock here would hold the guest still.
-         */
-        if (locked)
-            pthread_mutex_unlock(&g_windows_lock);
-        SDL_DestroyWindow(window);
-        if (locked)
-            pthread_mutex_lock(&g_windows_lock);
-    }
+    if (window)
+        mime_wl_window_destroy(window);
     mime_gpu_teardown_leave();
     w->display = 0;
-    w->texture_width = w->texture_height = 0;
+    w->draw_key = 0;
 }
 
 /* where a popup goes in its owner's host window, which shows the owner through its fit. */
@@ -1177,9 +1047,9 @@ static void popup_place(const UiWindow *owner, const MimeWinConfig *cfg, int *x,
     *y = (int)lround(fit.y + (cfg->rect.top + host.top - owner->config.rect.top - oh.top) * fit.scale);
 }
 
-static UiWindow *popup_anchor(SDL_Window *focus, const UiWindow *w, const MimeRect *rect, bool inside)
+static UiWindow *popup_anchor(MimeWlWindow *focus, const UiWindow *w, const MimeRect *rect, bool inside)
 {
-    UiWindow *a = focus ? find_by_sdl(SDL_GetWindowID(focus)) : nullptr;
+    UiWindow *a = ui_of(focus);
     while (a && a->popup)
         a = a->owner ? find_window(a->owner) : nullptr;
     if (!a || a == w || !a->window || !a->shown || (a->config.flags & MIME_WIN_MINIMIZED))
@@ -1201,12 +1071,12 @@ static UiWindow *popup_owner(const UiWindow *w, const MimeWinConfig *cfg)
      * a program that draws its own menus and lists has them in bare topmost windows it owns, with none of the tool
      * styles. a wayland compositor would place such a top level window itself, hyprland in the middle of the screen.
      */
-    bool bare = g_wayland && cfg->owner_id && (cfg->flags & (MIME_WIN_BARE | MIME_WIN_FULLSCREEN)) == MIME_WIN_BARE;
+    bool bare = cfg->owner_id && (cfg->flags & (MIME_WIN_BARE | MIME_WIN_FULLSCREEN)) == MIME_WIN_BARE;
     bool menu = bare && (cfg->flags & MIME_WIN_TOPMOST);
     if (!(cfg->flags & MIME_WIN_TOOL) && !bare)
         return nullptr;
     UiWindow *owner = cfg->owner_id ? find_window(cfg->owner_id) : nullptr;
-    if (owner && owner->window && (owner->shown || !g_wayland))
+    if (owner && owner->window && owner->shown)
         return owner;
     /*
      * a bare window that is not topmost is a panel its program lays on its owner, as the command line of AutoCAD. one
@@ -1214,13 +1084,11 @@ static UiWindow *popup_owner(const UiWindow *w, const MimeWinConfig *cfg)
      */
     if (!(cfg->flags & MIME_WIN_TOOL) && !menu)
         return nullptr;
-    if (!g_wayland)
-        return nullptr;
     /* the one found first is kept. */
     UiWindow *kept = w->popup && w->window && w->owner ? find_window(w->owner) : nullptr;
     if (kept && kept->window && kept->shown)
         return kept;
-    SDL_Window *mouse = SDL_GetMouseFocus(), *keys = SDL_GetKeyboardFocus();
+    MimeWlWindow *mouse = mime_wl_pointer_focus(), *keys = mime_wl_keyboard_focus();
     UiWindow *a = popup_anchor(mouse, w, &cfg->rect, true);
     if (!a)
         a = popup_anchor(keys, w, &cfg->rect, true);
@@ -1231,12 +1099,9 @@ static UiWindow *popup_owner(const UiWindow *w, const MimeWinConfig *cfg)
     return a;
 }
 
-static struct wl_subcompositor *g_subcompositor;
-static bool wayland_globals(struct wl_display *display);
-
 static struct wl_surface *host_surface(const UiWindow *w)
 {
-    return SDL_GetPointerProperty(SDL_GetWindowProperties(w->window), SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
+    return mime_wl_window_surface(w->window);
 }
 
 /*
@@ -1247,13 +1112,11 @@ static struct wl_surface *host_surface(const UiWindow *w)
  */
 static bool is_panel(const MimeWinConfig *cfg, const UiWindow *owner)
 {
-    if (!g_wayland || !owner || owner->id != cfg->owner_id ||
+    if (!owner || owner->id != cfg->owner_id ||
         (cfg->flags & (MIME_WIN_BARE | MIME_WIN_FULLSCREEN | MIME_WIN_TOPMOST | MIME_WIN_TOOL | MIME_WIN_NOINPUT)) !=
             MIME_WIN_BARE)
         return false;
-    struct wl_display *display = SDL_GetPointerProperty(SDL_GetWindowProperties(owner->window),
-                                                        SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
-    return display && wayland_globals(display);
+    return mime_wl_subcompositor() != nullptr;
 }
 
 static void place_panel(UiWindow *w, const UiWindow *owner, const MimeWinConfig *cfg)
@@ -1262,9 +1125,7 @@ static void place_panel(UiWindow *w, const UiWindow *owner, const MimeWinConfig 
     popup_place(owner, cfg, &x, &y);
     wl_subsurface_set_position(w->panel, x, y);
     /* the position lands with the owner's next commit. */
-    struct wl_surface *under = host_surface(owner);
-    if (under)
-        wl_surface_commit(under);
+    mime_wl_window_commit_state(owner->window);
 }
 
 /* menus and tooltips become owner-relative popups on Wayland; other windows become toplevels. */
@@ -1277,26 +1138,16 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg, UiWindow *
     double shown = popup ? w->popup_scale : 1.0 / scale;
     int width = MIME_MAX(1, (int)lround((host.right - host.left) * shown));
     int height = MIME_MAX(1, (int)lround((host.bottom - host.top) * shown));
-    SDL_WindowFlags flags = SDL_WINDOW_HIDDEN | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_TRANSPARENT;
-    if (g_gl)
-        flags |= SDL_WINDOW_OPENGL;
+    void *user = (void *)(uintptr_t)w->id;
     if (panel) {
-        /* SDL gives the surface no role, and still draws on it and reads its mouse. */
-        SDL_PropertiesID props = SDL_CreateProperties();
-        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width);
-        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height);
-        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER,
-                              flags | SDL_WINDOW_BORDERLESS | SDL_WINDOW_NOT_FOCUSABLE);
-        SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_WAYLAND_SURFACE_ROLE_CUSTOM_BOOLEAN, true);
-        w->window = SDL_CreateWindowWithProperties(props);
-        SDL_DestroyProperties(props);
+        /* a surface with no role, drawn on and read for its mouse like any other. */
+        w->window = mime_wl_window_create(MIME_WL_BARE, nullptr, 0, 0, width, height, user);
         struct wl_surface *surface = w->window ? host_surface(w) : nullptr, *under = host_surface(owner);
         if (surface && under)
-            w->panel = wl_subcompositor_get_subsurface(g_subcompositor, surface, under);
+            w->panel = wl_subcompositor_get_subsurface(mime_wl_subcompositor(), surface, under);
         if (w->window && !w->panel) {
-            SDL_DestroyWindow(w->window);
+            mime_wl_window_destroy(w->window);
             w->window = nullptr;
-            SDL_SetError("the surface cannot lie on its owner");
         }
         if (w->panel) {
             wl_subsurface_set_desync(w->panel);
@@ -1305,81 +1156,30 @@ static bool create_host_window(UiWindow *w, const MimeWinConfig *cfg, UiWindow *
     } else if (popup) {
         int x, y;
         popup_place(owner, cfg, &x, &y);
-        SDL_WindowFlags kind = (cfg->flags & MIME_WIN_NOINPUT) ? SDL_WINDOW_TOOLTIP : SDL_WINDOW_POPUP_MENU;
-        /*
-         * SDL gives a popup menu keyboard focus despite requesting no compositor grab. this would disable the
-         * owner's text input and tag keys with the popup window. keep focus on the compositor's focused
-         * window.
-         */
-        if (g_wayland)
-            kind |= SDL_WINDOW_NOT_FOCUSABLE;
-        w->window = SDL_CreatePopupWindow(owner->window, x, y, width, height, flags | kind);
+        /* neither takes the keyboard: it stays with the window the compositor gave it to, and so does its text input. */
+        w->window = mime_wl_window_create((cfg->flags & MIME_WIN_NOINPUT) ? MIME_WL_TOOLTIP : MIME_WL_POPUP, owner->window,
+                                          x, y, width, height, user);
     } else {
-        SDL_PropertiesID props = SDL_CreateProperties();
-        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width);
-        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height);
-        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, (int)lround((cfg->rect.left + host.left) / scale));
-        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, (int)lround((cfg->rect.top + host.top) / scale));
-        SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER, flags | SDL_WINDOW_BORDERLESS);
-        if (cfg->flags & MIME_WIN_TOOL)
-            SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_UTILITY_BOOLEAN, true);
-        w->window = SDL_CreateWindowWithProperties(props);
-        SDL_DestroyProperties(props);
+        w->window = mime_wl_window_create(MIME_WL_TOPLEVEL, nullptr, 0, 0, width, height, user);
     }
     if (!w->window) {
-        mime_warn("cannot create a host window: %s", SDL_GetError());
+        mime_warn("cannot create a host window");
         return false;
     }
     w->popup = popup;
     w->says_maximized = g_says_maximized && !popup;
     w->owner = popup ? owner->id : cfg->owner_id;
-    w->renderer = SDL_CreateRenderer(w->window, nullptr);
-    if (!w->renderer) {
-        mime_warn("cannot create a renderer: %s", SDL_GetError());
-        destroy_host_window(w, false);
-        return false;
-    }
-    SDL_SetRenderVSync(w->renderer, 0);
+    w->draw_key = 0;
     update_pixel_size(w);
-    SDL_SetWindowHitTest(w->window, hit_test, (void *)(uintptr_t)w->id);
-    /* the popup owner retains keyboard focus and text input. */
-    if (!(popup && g_wayland))
-        SDL_StartTextInput(w->window);
     UiWindow *parent = !popup && cfg->owner_id ? find_window(cfg->owner_id) : nullptr;
     if (parent && parent->window)
-        SDL_SetWindowParent(w->window, parent->window);
+        mime_wl_window_parent(w->window, parent->window);
     return true;
 }
 
-/* a hidden window keeps nothing of its size: its renderer goes, and comes back when it shows. */
-static void drop_renderer(UiWindow *w)
+/* the whole of the window's pixels is to be drawn again, with its lock. */
+static void mark_dirty(UiWindow *w)
 {
-    pthread_mutex_lock(&g_windows_lock);
-    SDL_Texture *texture = w->texture;
-    SDL_Renderer *renderer = w->renderer;
-    w->texture = nullptr;
-    w->renderer = nullptr;
-    w->texture_width = w->texture_height = 0;
-    pthread_mutex_unlock(&g_windows_lock);
-    if (texture)
-        SDL_DestroyTexture(texture);
-    if (renderer)
-        SDL_DestroyRenderer(renderer);
-}
-
-static void restore_renderer(UiWindow *w)
-{
-    if (w->renderer || w->vk_whole || !w->window)
-        return;
-    SDL_Renderer *renderer = SDL_CreateRenderer(w->window, nullptr);
-    if (!renderer) {
-        mime_warn("cannot create a renderer: %s", SDL_GetError());
-        return;
-    }
-    SDL_SetRenderVSync(renderer, 0);
-    pthread_mutex_lock(&g_windows_lock);
-    w->renderer = renderer;
-    pthread_mutex_unlock(&g_windows_lock);
     pthread_mutex_lock(&w->lock);
     w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
     w->has_dirty = w->pixels != nullptr;
@@ -1391,114 +1191,241 @@ static void restore_renderer(UiWindow *w)
 static int settle_layers(UiWindow *w, MimeRect *holes, bool *again);
 static void layers_drawn(UiWindow *w);
 static void reap_layers(UiWindow *w);
-
-static Uint32 redraw_timer(void *data, SDL_TimerID timer, Uint32 interval);
+static void present_main(void *arg);
 
 /* how long a layer waits for something that should come with a frame of the window before one is drawn without. */
 #define REDRAW_MS 50
 
-/* draws the visible surface inside the host window, leaving the resize border clear. */
-static void draw(UiWindow *w)
+/* where the pixels of the guest's surface go in the buffer of the host window, in pixels of each. */
+typedef struct Blit {
+    const uint8_t *src;
+    int src_w, src_h;
+    double u0, v0, step_u, step_v; /* the surface pixel under the centre of a buffer pixel is u0 + x * step_u. */
+    MimeRect dst;                  /* the buffer pixels the surface covers. */
+    bool linear, graded;
+    uint8_t table[3][256];
+    uint32_t back; /* around the surface. */
+} Blit;
+
+static uint64_t mix(uint64_t h, const void *data, size_t size)
 {
-    /* presenting would make the renderer's buffers that size. */
-    if ((!w->renderer && !w->vk_whole) || w->bogus_size)
-        return;
-    pthread_mutex_lock(&w->lock);
-    w->present_queued = false;
-    if (!w->pixels || w->vk_whole) {
-        pthread_mutex_unlock(&w->lock);
-        /* a window the guest draws nothing in, such as a popup its GPU process fills, is clear, not black. */
-        if (w->renderer && !w->pixels) {
-            SDL_SetRenderDrawColor(w->renderer, 0, 0, 0, 0);
-            SDL_RenderClear(w->renderer);
-            SDL_RenderPresent(w->renderer);
-        }
-        return;
-    }
-    if (!w->texture || w->texture_width != w->width || w->texture_height != w->height) {
-        if (w->texture)
-            SDL_DestroyTexture(w->texture);
-        w->texture = SDL_CreateTexture(w->renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
-                                       (int)w->width, (int)w->height);
-        w->texture_width = w->width;
-        w->texture_height = w->height;
-        w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
-        w->has_dirty = true;
-        if (w->texture) {
-            SDL_SetTextureBlendMode(w->texture, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
-            SDL_SetTextureScaleMode(w->texture, SDL_SCALEMODE_NEAREST);
-        }
-    }
-    if (w->texture && w->has_dirty) {
-        MimeRect d = w->dirty;
-        SDL_Rect r = {d.left, d.top, d.right - d.left, d.bottom - d.top};
-        uint8_t table[3][256];
-        void *locked;
-        int pitch;
-        if (r.w > 0 && r.h > 0 && mime_gamma_table(table) && SDL_LockTexture(w->texture, &r, &locked, &pitch)) {
-            /* through the display's ramp, blue, green, red then alpha in memory. */
-            for (int y = 0; y < r.h; y++) {
-                const uint8_t *in = w->pixels + ((size_t)(d.top + y) * w->width + (size_t)d.left) * 4;
-                uint8_t *out = (uint8_t *)locked + (size_t)y * (size_t)pitch;
-                for (int x = 0; x < r.w; x++, in += 4, out += 4) {
-                    out[0] = table[2][in[0]];
-                    out[1] = table[1][in[1]];
-                    out[2] = table[0][in[2]];
+    const uint8_t *p = data;
+    for (size_t i = 0; i < size; i++)
+        h = (h ^ p[i]) * 1099511628211ull;
+    return h;
+}
+
+static inline uint32_t sample(const Blit *b, int x, int y)
+{
+    x = x < 0 ? 0 : x >= b->src_w ? b->src_w - 1 : x;
+    y = y < 0 ? 0 : y >= b->src_h ? b->src_h - 1 : y;
+    uint32_t p;
+    memcpy(&p, b->src + ((size_t)y * b->src_w + x) * 4, 4);
+    return p;
+}
+
+static inline uint32_t blend(uint32_t a, uint32_t b, uint32_t t)
+{
+    uint32_t rb = ((a & 0xFF00FF) * (256 - t) + (b & 0xFF00FF) * t) >> 8 & 0xFF00FF;
+    uint32_t ag = ((a >> 8 & 0xFF00FF) * (256 - t) + (b >> 8 & 0xFF00FF) * t) & 0xFF00FF00;
+    return rb | ag;
+}
+
+/* through the display's ramp when it has one, blue, green, red then alpha in memory. */
+static inline uint32_t grade(const Blit *b, uint32_t p)
+{
+    if (!b->graded)
+        return p;
+    return (p & 0xFF000000) | (uint32_t)b->table[0][p >> 16 & 0xFF] << 16 | (uint32_t)b->table[1][p >> 8 & 0xFF] << 8 |
+           b->table[2][p & 0xFF];
+}
+
+/* draws a part of the buffer: the surface where it lies, stretched as the fit has it, and the ground around it. */
+static void blit(const Blit *b, const MimeWlFrame *f, MimeRect part)
+{
+    bool same = fabs(b->step_u - 1.0) < 1e-6 && fabs(b->step_v - 1.0) < 1e-6 && fabs(b->u0 - 0.5 - round(b->u0 - 0.5)) < 1e-3 &&
+                fabs(b->v0 - 0.5 - round(b->v0 - 0.5)) < 1e-3;
+    int shift_x = (int)lround(b->u0 - 0.5), shift_y = (int)lround(b->v0 - 0.5);
+    for (int y = part.top; y < part.bottom; y++) {
+        uint32_t *row = (uint32_t *)(void *)(f->pixels + (size_t)y * f->stride);
+        bool inside = y >= b->dst.top && y < b->dst.bottom;
+        int left = inside ? MIME_MAX(part.left, b->dst.left) : part.right;
+        int right = inside ? MIME_MIN(part.right, b->dst.right) : part.right;
+        left = MIME_MIN(left, part.right);
+        right = MIME_MAX(right, left);
+        for (int x = part.left; x < left; x++)
+            row[x] = b->back;
+        for (int x = right; x < part.right; x++)
+            row[x] = b->back;
+        if (left >= right)
+            continue;
+        if (same) {
+            /* a pixel for a pixel, the usual case. */
+            int sy = y + shift_y;
+            int from = MIME_MAX(left, -shift_x), to = MIME_MIN(right, b->src_w - shift_x);
+            if (sy < 0 || sy >= b->src_h || from >= to) {
+                for (int x = left; x < right; x++)
+                    row[x] = grade(b, sample(b, x + shift_x, sy));
+                continue;
+            }
+            for (int x = left; x < from; x++)
+                row[x] = grade(b, sample(b, x + shift_x, sy));
+            for (int x = to; x < right; x++)
+                row[x] = grade(b, sample(b, x + shift_x, sy));
+            const uint8_t *in = b->src + ((size_t)sy * b->src_w + (size_t)(from + shift_x)) * 4;
+            if (!b->graded) {
+                memcpy(row + from, in, (size_t)(to - from) * 4);
+            } else {
+                uint8_t *out = (uint8_t *)(row + from);
+                for (int x = from; x < to; x++, in += 4, out += 4) {
+                    out[0] = b->table[2][in[0]];
+                    out[1] = b->table[1][in[1]];
+                    out[2] = b->table[0][in[2]];
                     out[3] = in[3];
                 }
             }
-            SDL_UnlockTexture(w->texture);
-        } else if (r.w > 0 && r.h > 0) {
-            SDL_UpdateTexture(w->texture, &r, w->pixels + ((size_t)d.top * w->width + (size_t)d.left) * 4,
-                              (int)w->width * 4);
+            continue;
         }
-        w->has_dirty = false;
+        double v = b->v0 + y * b->step_v;
+        for (int x = left; x < right; x++) {
+            double u = b->u0 + x * b->step_u;
+            uint32_t p;
+            if (!b->linear) {
+                p = sample(b, (int)floor(u), (int)floor(v));
+            } else {
+                double fu = u - 0.5, fv = v - 0.5;
+                int ix = (int)floor(fu), iy = (int)floor(fv);
+                uint32_t tx = (uint32_t)((fu - ix) * 256), ty = (uint32_t)((fv - iy) * 256);
+                p = blend(blend(sample(b, ix, iy), sample(b, ix + 1, iy), tx),
+                          blend(sample(b, ix, iy + 1), sample(b, ix + 1, iy + 1), tx), ty);
+            }
+            row[x] = grade(b, p);
+        }
+    }
+}
+
+static void fill(const MimeWlFrame *f, MimeRect r, MimeRect part, uint32_t color)
+{
+    r = rect_and(r, part);
+    for (int y = r.top; y < r.bottom; y++) {
+        uint32_t *row = (uint32_t *)(void *)(f->pixels + (size_t)y * f->stride);
+        for (int x = r.left; x < r.right; x++)
+            row[x] = color;
+    }
+}
+
+/* draws the visible surface inside the host window, leaving the resize border clear. */
+static void draw(UiWindow *w)
+{
+    if (!w->window || w->bogus_size)
+        return;
+    MimeWlFrame frame;
+    pthread_mutex_lock(&w->lock);
+    w->present_queued = false;
+    if (!w->pixels) {
+        pthread_mutex_unlock(&w->lock);
+        /* a window the guest draws nothing in, such as a popup its GPU process fills, is clear, not black. */
+        if (!mime_wl_window_attached(w->window) && mime_wl_window_frame(w->window, nullptr, &frame)) {
+            memset(frame.pixels, 0, (size_t)frame.stride * (size_t)frame.height);
+            mime_wl_window_commit(w->window, &frame, nullptr);
+        } else {
+            mime_wl_window_commit_state(w->window);
+        }
+        return;
     }
     double density = w->logical_width > 0 ? (double)w->pixel_width / w->logical_width : 1.0;
-    /* with the pixels that were just taken, so the places of the layers under them are the ones they go with. */
-    MimeRect holes[MAX_HOLES];
-    bool again = false;
-    int hole_count = w->texture && w->vk ? settle_layers(w, holes, &again) : 0;
-    pthread_mutex_unlock(&w->lock);
-    if (!w->texture)
-        return;
     MimeRect vis = visible_part(&w->config), host = host_part(&w->config);
-    /* around a window the fit leaves smaller than the screen, black as a monitor's border. */
-    SDL_SetRenderDrawColor(w->renderer, 0, 0, 0, w->fullscreen ? 255 : 0);
-    SDL_RenderClear(w->renderer);
     double stretch = surface_stretch(&w->config);
-    SDL_FRect src = {(float)(vis.left / stretch), (float)(vis.top / stretch), (float)((vis.right - vis.left) / stretch),
-                     (float)((vis.bottom - vis.top) / stretch)};
-    /* whole multiples repeat pixels, any other stretch blends them, like the compositor does. */
-    SDL_SetTextureScaleMode(w->texture, stretch == floor(stretch) ? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR);
-    /* the renderer draws in pixels, the fit is in window coordinates. */
+    /* the buffer is in pixels, the fit in surface coordinates. */
     Fit fit = window_fit(w);
     fit.scale *= density;
     fit.x *= density;
     fit.y *= density;
-    SDL_FRect dst = {(float)(fit.x + (vis.left - host.left) * fit.scale), (float)(fit.y + (vis.top - host.top) * fit.scale),
-                     (float)((vis.right - vis.left) * fit.scale), (float)((vis.bottom - vis.top) * fit.scale)};
-    SDL_RenderTexture(w->renderer, w->texture, &src, &dst);
+    double left = fit.x + (vis.left - host.left) * fit.scale, top = fit.y + (vis.top - host.top) * fit.scale;
+    double width = (vis.right - vis.left) * fit.scale, height = (vis.bottom - vis.top) * fit.scale;
+    Blit b = {.src = w->pixels, .src_w = (int)w->width, .src_h = (int)w->height};
+    b.dst = (MimeRect){(int32_t)ceil(left - 0.5), (int32_t)ceil(top - 0.5), (int32_t)ceil(left + width - 0.5),
+                       (int32_t)ceil(top + height - 0.5)};
+    b.step_u = width > 0 ? (vis.right - vis.left) / stretch / width : 1.0;
+    b.step_v = height > 0 ? (vis.bottom - vis.top) / stretch / height : 1.0;
+    b.u0 = vis.left / stretch + (0.5 - left) * b.step_u;
+    b.v0 = vis.top / stretch + (0.5 - top) * b.step_v;
+    /* whole multiples repeat pixels, any other stretch blends them, like the compositor does. */
+    b.linear = stretch != floor(stretch);
+    /* around a window the fit leaves smaller than the screen, black as a monitor's border. */
+    b.back = w->fullscreen ? 0xFF000000 : 0;
+    /* what the guest painted since the last frame, in the pixels of the buffer. */
+    MimeRect damage = {};
+    if (w->has_dirty) {
+        MimeRect d = w->dirty;
+        int margin = b.linear || fabs(b.step_u - 1.0) > 1e-6 ? 2 : 0;
+        damage = (MimeRect){(int32_t)floor(left + (d.left * stretch - vis.left) * fit.scale) - margin,
+                            (int32_t)floor(top + (d.top * stretch - vis.top) * fit.scale) - margin,
+                            (int32_t)ceil(left + (d.right * stretch - vis.left) * fit.scale) + margin,
+                            (int32_t)ceil(top + (d.bottom * stretch - vis.top) * fit.scale) + margin};
+    }
+    if (!mime_wl_window_frame(w->window, &damage, &frame)) {
+        /* no buffer yet, or none free: what is dirty stays so for the frame that comes then. */
+        pthread_mutex_unlock(&w->lock);
+        return;
+    }
+    MimeRect whole = {0, 0, frame.width, frame.height};
+    damage = rect_and(damage, whole);
+    /* with the pixels that were just taken, so the places of the layers under them are the ones they go with. */
+    MimeRect holes[MAX_HOLES];
+    bool again = false;
+    int hole_count = w->vk ? settle_layers(w, holes, &again) : 0;
+    b.graded = mime_gamma_table(b.table);
+    /* a frame that lies otherwise than the one before is drawn whole. */
+    uint64_t key = 1469598103934665603ull;
+    key = mix(key, &b.dst, sizeof(b.dst));
+    key = mix(key, &b.u0, 4 * sizeof(double));
+    key = mix(key, &b.src_w, 2 * sizeof(int));
+    key = mix(key, &b.back, sizeof(b.back));
+    key = mix(key, &w->config.border_color, sizeof(w->config.border_color));
+    key = mix(key, &whole, sizeof(whole));
+    key = mix(key, holes, (size_t)hole_count * sizeof(MimeRect));
+    MimeRect part = frame.stale;
+    bool all = key != w->draw_key || !mime_wl_window_attached(w->window);
+    if (all) {
+        mime_wl_window_stale(w->window);
+        part = whole;
+    }
+    if (!all && rect_empty(damage)) {
+        /* nothing of the pixels changed: the state of the layers lands alone. */
+        pthread_mutex_unlock(&w->lock);
+        mime_wl_window_commit_state(w->window);
+        if (w->vk)
+            layers_drawn(w);
+        if (again)
+            mime_wl_timer(REDRAW_MS, present_main, (void *)(uintptr_t)w->id);
+        return;
+    }
+    w->draw_key = key;
+    w->has_dirty = false;
+    blit(&b, &frame, part);
+    pthread_mutex_unlock(&w->lock);
     /* clear where a layer under the window shows. */
-    SDL_SetRenderDrawBlendMode(w->renderer, SDL_BLENDMODE_NONE);
-    SDL_SetRenderDrawColor(w->renderer, 0, 0, 0, 0);
     for (int i = 0; i < hole_count; i++) {
-        double left = round(fit.x + (holes[i].left - host.left) * fit.scale), top = round(fit.y + (holes[i].top - host.top) * fit.scale);
-        double right = round(fit.x + (holes[i].right - host.left) * fit.scale),
-               bottom = round(fit.y + (holes[i].bottom - host.top) * fit.scale);
-        SDL_FRect hole = {(float)left, (float)top, (float)(right - left), (float)(bottom - top)};
-        SDL_RenderFillRect(w->renderer, &hole);
+        MimeRect hole = {(int32_t)round(fit.x + (holes[i].left - host.left) * fit.scale),
+                         (int32_t)round(fit.y + (holes[i].top - host.top) * fit.scale),
+                         (int32_t)round(fit.x + (holes[i].right - host.left) * fit.scale),
+                         (int32_t)round(fit.y + (holes[i].bottom - host.top) * fit.scale)};
+        fill(&frame, hole, part, 0);
     }
     if (w->config.border_color) {
         uint32_t c = w->config.border_color;
-        SDL_SetRenderDrawColor(w->renderer, (c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF, (c >> 24) & 0xFF);
-        SDL_RenderRect(w->renderer, &dst);
+        MimeRect r = b.dst;
+        fill(&frame, (MimeRect){r.left, r.top, r.right, r.top + 1}, part, c);
+        fill(&frame, (MimeRect){r.left, r.bottom - 1, r.right, r.bottom}, part, c);
+        fill(&frame, (MimeRect){r.left, r.top, r.left + 1, r.bottom}, part, c);
+        fill(&frame, (MimeRect){r.right - 1, r.top, r.right, r.bottom}, part, c);
     }
-    SDL_RenderPresent(w->renderer);
+    mime_wl_window_commit(w->window, &frame, all ? nullptr : &damage);
     if (w->vk)
         layers_drawn(w);
     if (again)
-        SDL_AddTimer(REDRAW_MS, redraw_timer, (void *)(uintptr_t)w->id);
+        mime_wl_timer(REDRAW_MS, present_main, (void *)(uintptr_t)w->id);
 }
 
 static void present_main(void *arg)
@@ -1506,22 +1433,11 @@ static void present_main(void *arg)
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window((uint32_t)(uintptr_t)arg);
     pthread_mutex_unlock(&g_windows_lock);
-    if (w && w->shown && !w->renderer && !w->vk_whole && w->window && now_ms() >= w->renderer_retry_ms) {
-        restore_renderer(w);
-        if (!w->renderer)
-            w->renderer_retry_ms = now_ms() + 1000;
-    }
     if (w && w->shown) {
         draw(w);
         if (w->reap)
             reap_layers(w);
     }
-}
-
-static Uint32 redraw_timer(void *data, SDL_TimerID timer, Uint32 interval)
-{
-    on_main(present_main, data);
-    return 0;
 }
 
 /*
@@ -1547,40 +1463,28 @@ static void request_window_state(UiWindow *w, int command)
     emit(&ev);
 }
 
-/* converts a guest size limit to SDL window coordinates; 0 means no limit. */
+/* converts a guest size limit to surface coordinates; 0 means no limit. */
 static int limit_of(int32_t limit, int outside, double scale)
 {
     return limit > 0 ? MIME_MAX(1, (int)lround((limit - outside) / scale)) : 0;
 }
 
 static void unminimize(UiWindow *w, bool activate);
-static Uint32 size_timer(void *data, SDL_TimerID timer, Uint32 interval);
+static void size_recheck_main(void *arg);
 
 /*
  * hyprland tells every window it is maximized, tiled or floating, so that none draws shadows. the state says nothing
- * there, and sdl sends no request to maximize a window it takes for maximized. hyprland also takes either request as
- * a toggle: unset_maximized on a window that is not maximized maximizes it. such a window is asked directly, and only
- * for a change of the state asked before. it drops either request on a surface that has no buffer yet, which the
- * next one would then toggle the wrong way, so a frame goes first.
+ * there. hyprland also takes either request as a toggle: unset_maximized on a window that is not maximized maximizes
+ * it. such a window is asked only for a change of the state asked before. it drops either request on a surface that
+ * has no buffer yet, which the next one would then toggle the wrong way, so a frame goes first.
  */
-enum { XDG_TOPLEVEL_SET_MAXIMIZED = 9, XDG_TOPLEVEL_UNSET_MAXIMIZED = 10 };
-
 static void set_maximized(UiWindow *w, bool maximized)
 {
-    if (!w->says_maximized) {
-        if (maximized)
-            SDL_MaximizeWindow(w->window);
-        else
-            SDL_RestoreWindow(w->window);
-        return;
+    if (w->says_maximized) {
+        draw(w);
+        w->maximized = maximized;
     }
-    draw(w);
-    struct wl_proxy *toplevel = SDL_GetPointerProperty(SDL_GetWindowProperties(w->window),
-                                                       SDL_PROP_WINDOW_WAYLAND_XDG_TOPLEVEL_POINTER, nullptr);
-    if (toplevel)
-        wl_proxy_marshal_flags(toplevel, maximized ? XDG_TOPLEVEL_SET_MAXIMIZED : XDG_TOPLEVEL_UNSET_MAXIMIZED, nullptr,
-                               wl_proxy_get_version(toplevel), 0);
-    w->maximized = maximized;
+    mime_wl_window_maximize(w->window, maximized);
 }
 
 static void apply_config(UiWindow *w, const MimeWinConfig *given)
@@ -1609,7 +1513,7 @@ static void apply_config(UiWindow *w, const MimeWinConfig *given)
     bool want_popup = owner != nullptr;
     if (w->window &&
         (want_popup != w->popup || (w->popup && w->owner != owner->id) || panel != (w->panel != nullptr))) {
-        destroy_host_window(w, false);
+        destroy_host_window(w);
         /* the new host window is not shown yet. */
         w->shown = false;
         w->fullscreen = false;
@@ -1638,7 +1542,7 @@ static void apply_config(UiWindow *w, const MimeWinConfig *given)
 
     char title[1024];
     mime_utf16_to_utf8(title, sizeof(title), cfg->title, MIME_MIN(cfg->title_chars, 256u));
-    SDL_SetWindowTitle(w->window, title);
+    mime_wl_window_title(w->window, title);
     MimeRect host = host_part(cfg);
     double scale = config_scale(cfg);
     /*
@@ -1656,7 +1560,7 @@ static void apply_config(UiWindow *w, const MimeWinConfig *given)
         w->want_w = MIME_MAX(1, (int)lround((host.right - host.left) * shown));
         w->want_h = MIME_MAX(1, (int)lround((host.bottom - host.top) * shown));
         w->want_ms = now_ms();
-        SDL_SetWindowSize(w->window, w->want_w, w->want_h);
+        mime_wl_window_size(w->window, w->want_w, w->want_h);
     }
     /*
      * a compositor that tiles the window keeps its size and sends no event: the guest is told of the size kept, which
@@ -1664,84 +1568,72 @@ static void apply_config(UiWindow *w, const MimeWinConfig *given)
      */
     if ((size_changed || limits_changed) && !fresh && !w->popup && !minimized && !w->size_recheck) {
         w->size_recheck = true;
-        SDL_AddTimer(260, size_timer, (void *)(uintptr_t)w->id);
+        mime_wl_timer(260, size_recheck_main, (void *)(uintptr_t)w->id);
     }
     if (!w->popup && (limits_changed || fresh) && !minimized) {
         /* the compositor sizes a window the guest lets be sized, within the limits of its program. */
-        SDL_SetWindowResizable(w->window, can_size(w, cfg));
         int dw = (cfg->rect.right - cfg->rect.left) - (host.right - host.left);
         int dh = (cfg->rect.bottom - cfg->rect.top) - (host.bottom - host.top);
         int min_w = limit_of(cfg->min_width, dw, scale), min_h = limit_of(cfg->min_height, dh, scale);
         int max_w = limit_of(cfg->max_width, dw, scale), max_h = limit_of(cfg->max_height, dh, scale);
         /* no window is let grow past what a display could show, whatever the compositor proposes. */
-        float density = SDL_GetWindowPixelDensity(w->window);
-        int cap = (int)(sane_limit() / (density > 1.0f ? density : 1.0f));
+        double density = mime_wl_window_scale(w->window);
+        int cap = (int)(sane_limit() / (density > 1.0 ? density : 1.0));
         max_w = max_w > 0 ? MIME_MIN(max_w, cap) : cap;
         max_h = max_h > 0 ? MIME_MIN(max_h, cap) : cap;
         min_w = MIME_MIN(min_w, max_w);
         min_h = MIME_MIN(min_h, max_h);
-        /*
-         * sdl sizes the window again at each new limit, to the size it had before the compositor tiled it: a window
-         * snapped to a side of the screen left its tile as soon as the guest took the size of the tile.
-         */
-        int now_w = 0, now_h = 0, had_w = 0, had_h = 0, got_w = 0, got_h = 0;
-        SDL_GetWindowSize(w->window, &had_w, &had_h);
-        SDL_GetWindowMinimumSize(w->window, &now_w, &now_h);
-        if (now_w != min_w || now_h != min_h)
-            SDL_SetWindowMinimumSize(w->window, min_w, min_h);
-        SDL_GetWindowMaximumSize(w->window, &now_w, &now_h);
-        if (now_w != max_w || now_h != max_h)
-            SDL_SetWindowMaximumSize(w->window, max_w, max_h);
-        SDL_GetWindowSize(w->window, &got_w, &got_h);
-        if (g_wayland && !w->fullscreen && !w->maximized && (got_w != had_w || got_h != had_h))
-            SDL_SetWindowSize(w->window, had_w, had_h);
+        mime_wl_window_limits(w->window, min_w, min_h, max_w, max_h, can_size(w, cfg));
     }
     if (w->panel) {
         place_panel(w, owner, cfg);
     } else if (w->popup) {
         int x, y;
         popup_place(owner, cfg, &x, &y);
-        SDL_SetWindowPosition(w->window, x, y);
-    } else if (!w->fullscreen) {
-        /* Wayland leaves top level placement to the compositor; X11 honors it. */
-        SDL_SetWindowPosition(w->window, (int)lround((cfg->rect.left + host.left) / scale),
-                              (int)lround((cfg->rect.top + host.top) / scale));
+        mime_wl_window_position(w->window, x, y);
     }
-    SDL_SetWindowAlwaysOnTop(w->window, (cfg->flags & MIME_WIN_TOPMOST) != 0);
+    /* the compositor places a top level window itself, and stacks it. */
 
     if (cfg->flags & MIME_WIN_MINIMIZED) {
-        if (cfg->flags & MIME_WIN_VISIBLE)
-            SDL_MinimizeWindow(w->window);
-        else
-            SDL_HideWindow(w->window);
+        if (cfg->flags & MIME_WIN_VISIBLE) {
+            bool opening = !w->shown;
+            mime_wl_window_minimize(w->window);
+            if (opening) {
+                w->geometry_w = w->geometry_h = 0;
+                set_geometry(w);
+            }
+        } else {
+            mime_wl_window_hide(w->window);
+        }
         w->shown = (cfg->flags & MIME_WIN_VISIBLE) != 0;
         mime_vk_window_hidden(w->id);
         if (w->shown)
-            restore_renderer(w);
-        else
-            drop_renderer(w);
+            mark_dirty(w);
         return;
     }
     if (cfg->flags & MIME_WIN_VISIBLE) {
         bool opening = !w->shown;
-        restore_renderer(w);
         if (opening) {
-            SDL_ShowWindow(w->window);
+            mark_dirty(w);
+            /* a window that opens maximized is told so before the compositor sizes it. */
+            if (!w->says_maximized && !w->popup)
+                mime_wl_window_maximize(w->window, (cfg->flags & (MIME_WIN_MAXIMIZED | MIME_WIN_FULLSCREEN)) ==
+                                                       MIME_WIN_MAXIMIZED);
+            show_host(w);
             w->shown_ms = now_ms();
         }
-        if (SDL_GetWindowFlags(w->window) & SDL_WINDOW_MINIMIZED)
+        if (mime_wl_window_minimized(w->window))
             unminimize(w, (cfg->flags & MIME_WIN_ACTIVATE) != 0);
         else if (cfg->flags & MIME_WIN_ACTIVATE)
             raise_window(w);
         w->shown = true;
     } else if (w->shown) {
-        SDL_HideWindow(w->window);
+        mime_wl_window_hide(w->window);
         w->shown = false;
         /* the window that shows again is a new one to the compositor. */
         if (w->says_maximized)
             w->maximized = false;
         mime_vk_window_hidden(w->id);
-        drop_renderer(w);
     }
     bool fullscreen = (cfg->flags & (MIME_WIN_FULLSCREEN | MIME_WIN_VISIBLE)) == (MIME_WIN_FULLSCREEN | MIME_WIN_VISIBLE);
     /* matches the guest's maximized state on the window's monitor. */
@@ -1756,12 +1648,11 @@ static void apply_config(UiWindow *w, const MimeWinConfig *given)
         w->fullscreen_ms = now_ms();
         if (fullscreen) {
             /* a window that covers a monitor goes fullscreen on that one. */
-            SDL_DisplayID display = display_of_rect(&cfg->rect);
-            const SDL_DisplayMode *mode =
-                display && display != SDL_GetDisplayForWindow(w->window) ? SDL_GetDesktopDisplayMode(display) : nullptr;
-            SDL_SetWindowFullscreenMode(w->window, mode);
+            uint32_t display = display_of_rect(&cfg->rect);
+            mime_wl_window_fullscreen(w->window, true, display != mime_wl_window_output(w->window) ? display : 0);
+        } else {
+            mime_wl_window_fullscreen(w->window, false, 0);
         }
-        SDL_SetWindowFullscreen(w->window, fullscreen);
     }
     if (w->shown)
         draw(w);
@@ -1788,14 +1679,13 @@ static void raise_window(UiWindow *w)
         mime_strlcpy(token, g_activation_token, sizeof(token));
     g_activation_token[0] = 0;
     pthread_mutex_unlock(&g_token_lock);
-    if (token[0] && g_wayland) {
-        SDL_PropertiesID props = SDL_GetWindowProperties(w->window);
-        struct wl_display *display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
-        struct wl_surface *surface = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
-        if (mime_activation_activate(display, surface, token))
-            return;
-    }
-    SDL_RaiseWindow(w->window);
+    struct wl_surface *surface = mime_wl_window_surface(w->window);
+    if (token[0] && mime_activation_activate(mime_wl_display(), surface, token))
+        return;
+    /* the compositor gives the keyboard to a window whose program had the last input. */
+    MimeWlWindow *focus = mime_wl_keyboard_focus();
+    mime_activation_raise(mime_wl_display(), surface, mime_wl_seat(), mime_wl_serial(),
+                          focus ? mime_wl_window_surface(focus) : nullptr, w->want_app_id);
 }
 
 static bool fresh_token(void)
@@ -1817,46 +1707,30 @@ static void commit_parent(UiWindow *w);
  */
 static void unminimize(UiWindow *w, bool activate)
 {
-    if (!g_wayland) {
-        SDL_RestoreWindow(w->window);
-        if (activate)
-            raise_window(w);
-        return;
-    }
-    if (activate && (fresh_token() || SDL_GetKeyboardFocus())) {
+    if (activate && (fresh_token() || mime_wl_keyboard_focus())) {
         raise_window(w);
         return;
     }
     bool maximized = w->maximized;
-    SDL_HideWindow(w->window);
+    mime_wl_window_hide(w->window);
     /* a hidden window keeps its minimized state for the next show, this drops it. */
-    SDL_RestoreWindow(w->window);
-    if (maximized && !w->says_maximized)
-        SDL_MaximizeWindow(w->window);
-    SDL_ShowWindow(w->window);
+    mime_wl_window_unminimize(w->window);
+    if (!w->says_maximized)
+        mime_wl_window_maximize(w->window, maximized);
+    mark_dirty(w);
+    show_host(w);
     if (maximized && w->says_maximized)
         set_maximized(w, true);
-    w->geometry_w = w->geometry_h = 0;
     w->set_app_id[0] = 0;
     apply_app_id(w);
-    set_geometry(w);
     commit_parent(w);
 }
 
-/* sets xdg_toplevel's application id by protocol opcode. */
-enum { XDG_TOPLEVEL_SET_APP_ID = 3 };
-
 static void apply_app_id(UiWindow *w)
 {
-    if (!g_wayland || !w->window || !w->want_app_id[0] || !strcmp(w->want_app_id, w->set_app_id))
+    if (!w->window || !w->want_app_id[0] || !strcmp(w->want_app_id, w->set_app_id))
         return;
-    SDL_PropertiesID props = SDL_GetWindowProperties(w->window);
-    struct wl_proxy *toplevel = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_XDG_TOPLEVEL_POINTER, nullptr);
-    struct wl_display *display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
-    if (!toplevel || !display)
-        return;
-    wl_proxy_marshal_flags(toplevel, XDG_TOPLEVEL_SET_APP_ID, nullptr, wl_proxy_get_version(toplevel), 0, w->want_app_id);
-    wl_display_flush(display);
+    mime_wl_window_app_id(w->window, w->want_app_id);
     mime_strlcpy(w->set_app_id, w->want_app_id, sizeof(w->set_app_id));
 }
 
@@ -1899,21 +1773,9 @@ static void flash_main(void *arg)
     UiWindow *w = find_window(call->window);
     /* windows go on this thread alone, so w stays while the lock is let go for the compositor's roundtrips. */
     pthread_mutex_unlock(&g_windows_lock);
-    if (w && w->window) {
-        SDL_PropertiesID props = SDL_GetWindowProperties(w->window);
-        struct wl_display *display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
-        struct wl_surface *surface = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
-        if (call->mode == 0) {
-            SDL_FlashWindow(w->window, SDL_FLASH_CANCEL);
-        } else if (!g_wayland || !mime_activation_attention(display, surface, w->want_app_id)) {
-            /*
-             * SDL flashes X11 windows but raises Wayland windows; use the protocol above for Wayland
-             * attention requests.
-             */
-            if (!g_wayland)
-                SDL_FlashWindow(w->window, call->mode == 2 ? SDL_FLASH_UNTIL_FOCUSED : SDL_FLASH_BRIEFLY);
-        }
-    }
+    /* nothing takes a request for attention back: the compositor drops it when the window gets the keyboard. */
+    if (w && w->window && call->mode != 0)
+        mime_activation_attention(mime_wl_display(), mime_wl_window_surface(w->window), w->want_app_id);
     free(call);
 }
 
@@ -1999,10 +1861,10 @@ static void destroy_main(void *arg)
     /* popups go first: they cannot outlive the window they hang from. */
     for (int i = 0; i < MAX_WINDOWS; i++)
         if (g_windows[i].used && g_windows[i].popup && g_windows[i].owner == w->id) {
-            destroy_host_window(&g_windows[i], true);
+            destroy_host_window(&g_windows[i]);
             g_windows[i].shown = false;
         }
-    destroy_host_window(w, true);
+    destroy_host_window(w);
     pthread_mutex_lock(&w->lock);
     free(w->pixels);
     w->pixels = nullptr;
@@ -2042,14 +1904,8 @@ static void icon_main(void *arg)
 {
     WindowIcon *icon = arg;
     UiWindow *w = find_window(icon->window_id);
-    if (w && w->window && icon->width && icon->height) {
-        SDL_Surface *s = SDL_CreateSurfaceFrom((int)icon->width, (int)icon->height, SDL_PIXELFORMAT_ARGB8888,
-                                               icon->pixels, (int)icon->width * 4);
-        if (s) {
-            SDL_SetWindowIcon(w->window, s);
-            SDL_DestroySurface(s);
-        }
-    }
+    if (w && w->window && icon->width && icon->height)
+        mime_wl_window_icon(w->window, icon->pixels, (int)icon->width, (int)icon->height);
     free(icon);
 }
 
@@ -2118,68 +1974,6 @@ void mime_ui_window_present(uint32_t id, const void *pixels, uint32_t width, uin
 
 /* ------------------------------------------------------------------ Vulkan presentation. */
 
-/*
- * wp_viewporter scales presenter buffers to the client area. its two requests are described here from the
- * protocol.
- */
-static const struct wl_interface viewport_interface;
-static const struct wl_interface *viewporter_types[] = {&viewport_interface, &wl_surface_interface};
-static const struct wl_interface *no_types[] = {nullptr, nullptr, nullptr, nullptr};
-static const struct wl_message viewporter_requests[] = {
-    {"destroy", "", no_types},
-    {"get_viewport", "no", viewporter_types},
-};
-static const struct wl_interface viewporter_interface = {"wp_viewporter", 1, 2, viewporter_requests, 0, nullptr};
-static const struct wl_message viewport_requests[] = {
-    {"destroy", "", no_types},
-    {"set_source", "ffff", no_types},
-    {"set_destination", "ii", no_types},
-};
-static const struct wl_interface viewport_interface = {"wp_viewport", 1, 3, viewport_requests, 0, nullptr};
-
-/* subsurface globals use their own event queue; SDL's dispatch never receives them. */
-static struct wl_display *g_wl;
-static struct wl_event_queue *g_wl_queue;
-static struct wl_compositor *g_compositor;
-static struct wl_subcompositor *g_subcompositor;
-static struct wl_proxy *g_viewporter;
-static bool g_wl_tried;
-
-static void registry_global(void *data, struct wl_registry *registry, uint32_t name, const char *interface,
-                            uint32_t version)
-{
-    if (!strcmp(interface, wl_compositor_interface.name))
-        g_compositor = wl_registry_bind(registry, name, &wl_compositor_interface, MIME_MIN(version, 4u));
-    else if (!strcmp(interface, wl_subcompositor_interface.name))
-        g_subcompositor = wl_registry_bind(registry, name, &wl_subcompositor_interface, 1);
-    else if (!strcmp(interface, viewporter_interface.name))
-        g_viewporter = wl_registry_bind(registry, name, &viewporter_interface, 1);
-}
-
-static void registry_remove(void *data, struct wl_registry *registry, uint32_t name)
-{
-}
-
-static const struct wl_registry_listener g_registry_listener = {registry_global, registry_remove};
-
-static bool wayland_globals(struct wl_display *display)
-{
-    if (g_wl_tried)
-        return g_wl == display && g_compositor && g_subcompositor;
-    g_wl_tried = true;
-    g_wl = display;
-    g_wl_queue = wl_display_create_queue(display);
-    struct wl_display *wrapper = wl_proxy_create_wrapper(display);
-    wl_proxy_set_queue((struct wl_proxy *)wrapper, g_wl_queue);
-    struct wl_registry *registry = wl_display_get_registry(wrapper);
-    wl_proxy_wrapper_destroy(wrapper);
-    wl_registry_add_listener(registry, &g_registry_listener, nullptr);
-    wl_display_roundtrip_queue(display, g_wl_queue);
-    if (!g_compositor || !g_subcompositor)
-        mime_warn("the compositor has no subsurfaces: vulkan windows take the whole window");
-    return g_compositor && g_subcompositor;
-}
-
 /* a rectangle of the window's own pixels in the pixels of the guest's screen, which differ for a window that is stretched. */
 static MimeRect physical_rect(const UiWindow *w, MimeRect r)
 {
@@ -2191,7 +1985,7 @@ static MimeRect physical_rect(const UiWindow *w, MimeRect r)
 }
 
 /*
- * a rectangle of the window's own pixels in SDL window coordinates. the guest gives it in the pixels of the program,
+ * a rectangle of the window's own pixels in surface coordinates. the guest gives it in the pixels of the program,
  * which a window that is not aware of the display's dpi has fewer of: the image is shown over the whole rectangle,
  * stretched as the rest of the window is.
  */
@@ -2214,18 +2008,6 @@ static VkLayer *find_layer(UiWindow *w, uint32_t source)
     return nullptr;
 }
 
-static bool rect_empty(MimeRect r)
-{
-    return r.right <= r.left || r.bottom <= r.top;
-}
-
-static MimeRect rect_and(MimeRect a, MimeRect b)
-{
-    MimeRect r = {MIME_MAX(a.left, b.left), MIME_MAX(a.top, b.top), MIME_MIN(a.right, b.right),
-                  MIME_MIN(a.bottom, b.bottom)};
-    return rect_empty(r) ? (MimeRect){} : r;
-}
-
 static void drop_subsurface(VkLayer *l)
 {
     if (l->subsurface)
@@ -2237,7 +2019,7 @@ static void destroy_layer(UiWindow *w, VkLayer *l)
 {
     pthread_mutex_lock(&w->lock);
     if (l->viewport)
-        wl_proxy_marshal_flags(l->viewport, 0, nullptr, wl_proxy_get_version(l->viewport), WL_MARSHAL_FLAG_DESTROY);
+        mime_wl_viewport_destroy(l->viewport);
     drop_subsurface(l);
     if (l->surface)
         wl_surface_destroy(l->surface);
@@ -2262,25 +2044,17 @@ static bool has_layers(const UiWindow *w)
 
 static struct wl_surface *parent_surface(UiWindow *w)
 {
-    return w->window ? SDL_GetPointerProperty(SDL_GetWindowProperties(w->window), SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER,
-                                              nullptr)
-                     : nullptr;
+    return w->window ? mime_wl_window_surface(w->window) : nullptr;
 }
 
 /* a change of the parent's stack or of a position lands with the parent's next commit. */
 static void commit_parent(UiWindow *w)
 {
-    if (w->renderer && w->pixels && w->shown) {
-        pthread_mutex_lock(&w->lock);
-        w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
-        w->has_dirty = true;
-        pthread_mutex_unlock(&w->lock);
+    /* a frame that changes nothing of the pixels is a commit of the state alone, see draw. */
+    if (w->window && w->shown)
         draw(w);
-    } else {
-        struct wl_surface *parent = parent_surface(w);
-        if (parent)
-            wl_surface_commit(parent);
-    }
+    else if (w->window)
+        mime_wl_window_commit_state(w->window);
 }
 
 /*
@@ -2338,7 +2112,7 @@ static void place_layer(UiWindow *w, VkLayer *l, MimeRect area, uint32_t order)
     bool fresh = !l->subsurface;
     if (fresh) {
         struct wl_surface *parent = parent_surface(w);
-        l->subsurface = parent ? wl_subcompositor_get_subsurface(g_subcompositor, l->surface, parent) : nullptr;
+        l->subsurface = parent ? wl_subcompositor_get_subsurface(mime_wl_subcompositor(), l->surface, parent) : nullptr;
         if (!l->subsurface)
             return;
         wl_subsurface_set_desync(l->subsurface);
@@ -2350,8 +2124,7 @@ static void place_layer(UiWindow *w, VkLayer *l, MimeRect area, uint32_t order)
         l->place = r;
         wl_subsurface_set_position(l->subsurface, r.left, r.top);
         if (l->viewport)
-            wl_proxy_marshal_flags(l->viewport, 2, nullptr, wl_proxy_get_version(l->viewport), 0, r.right - r.left,
-                                   r.bottom - r.top);
+            mime_wl_viewport_size(l->viewport, r.right - r.left, r.bottom - r.top);
     }
     if (restack)
         restack_layers(w);
@@ -2364,7 +2137,7 @@ static void place_layer(UiWindow *w, VkLayer *l, MimeRect area, uint32_t order)
  */
 static bool under_wanted(const UiWindow *w)
 {
-    if (!w->pixels || !w->renderer || w->vk_whole)
+    if (!w->pixels || !w->window)
         return false;
     for (int i = 0; i < MAX_VK_LAYERS; i++)
         if (w->vk_layers[i].used && w->vk_layers[i].top)
@@ -2373,7 +2146,7 @@ static bool under_wanted(const UiWindow *w)
 }
 
 /*
- * a subsurface lies on whole SDL window coordinates, which are several screen pixels of the guest on a display that
+ * a subsurface lies on whole surface coordinates, which are several screen pixels of the guest on a display that
  * is scaled: the count of them, or 1 where that is no whole number.
  */
 static int32_t layer_step(Fit fit)
@@ -2481,7 +2254,7 @@ static int settle_layers(UiWindow *w, MimeRect *holes, bool *again)
         if (l->subsurface && closed) {
             drop_subsurface(l);
         } else if (!l->subsurface && showing && has && parent && layer_fits(l->at, c, vis)) {
-            l->subsurface = wl_subcompositor_get_subsurface(g_subcompositor, l->surface, parent);
+            l->subsurface = wl_subcompositor_get_subsurface(mime_wl_subcompositor(), l->surface, parent);
             if (l->subsurface)
                 wl_subsurface_set_desync(l->subsurface);
             fresh = restack = l->subsurface != nullptr;
@@ -2553,7 +2326,7 @@ static void reap_layers(UiWindow *w)
             any = true;
         }
     }
-    if (any && w->vk && !w->vk_whole && !has_layers(w))
+    if (any && w->vk && !has_layers(w))
         w->vk = false;
     pthread_mutex_unlock(&g_windows_lock);
 }
@@ -2566,23 +2339,22 @@ static VkLayer *make_layer(UiWindow *w, struct wl_surface *parent, uint32_t sour
             l = &w->vk_layers[i];
     if (!l)
         return nullptr;
-    struct wl_surface *surface = wl_compositor_create_surface(g_compositor);
-    struct wl_subsurface *subsurface = surface ? wl_subcompositor_get_subsurface(g_subcompositor, surface, parent) : nullptr;
+    struct wl_surface *surface = wl_compositor_create_surface(mime_wl_compositor());
+    struct wl_subsurface *subsurface =
+        surface ? wl_subcompositor_get_subsurface(mime_wl_subcompositor(), surface, parent) : nullptr;
     if (!subsurface) {
         if (surface)
             wl_surface_destroy(surface);
         return nullptr;
     }
     wl_subsurface_set_desync(subsurface);
-    /* the mouse goes through, to the window SDL knows. */
-    struct wl_region *empty = wl_compositor_create_region(g_compositor);
+    /* the mouse goes through, to the window. */
+    struct wl_region *empty = wl_compositor_create_region(mime_wl_compositor());
     wl_surface_set_input_region(surface, empty);
     wl_region_destroy(empty);
     pthread_mutex_lock(&w->lock);
     *l = (VkLayer){.used = true, .source = source, .surface = surface, .subsurface = subsurface, .top = !order};
-    if (g_viewporter)
-        l->viewport = wl_proxy_marshal_flags(g_viewporter, 1, &viewport_interface, wl_proxy_get_version(g_viewporter), 0,
-                                             nullptr, l->surface);
+    l->viewport = mime_wl_viewport(l->surface);
     wl_surface_commit(l->surface);
     l->under = !l->top && under_wanted(w);
     l->order = l->under ? order : ~order;
@@ -2617,9 +2389,6 @@ typedef struct MoveSize {
     pthread_cond_t cond;
 } MoveSize;
 
-/* xdg_toplevel move and resize requests, by protocol opcode. */
-enum { XDG_TOPLEVEL_MOVE = 5, XDG_TOPLEVEL_RESIZE = 6 };
-
 /* xdg_toplevel's resize edges for the guest's WMSZ_* ones. */
 static uint32_t xdg_edge(uint32_t edge)
 {
@@ -2634,27 +2403,22 @@ static void movesize_main(void *arg)
     void *seat;
     uint32_t serial;
     m->status = MIME_HC_STATUS_UNSUPPORTED;
-    if (g_wayland && w && w->window && w->shown && !w->popup && !w->fullscreen && m->edge <= 8 &&
+    if (w && w->window && w->shown && !w->popup && !w->fullscreen && m->edge <= 8 &&
         mime_ui_pointer_press(&seat, &serial)) {
-        SDL_PropertiesID props = SDL_GetWindowProperties(w->window);
-        struct wl_proxy *toplevel = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_XDG_TOPLEVEL_POINTER, nullptr);
-        struct wl_display *display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
-        if (toplevel && display) {
-            uint32_t version = wl_proxy_get_version(toplevel);
-            if (!m->edge) {
-                wl_proxy_marshal_flags(toplevel, XDG_TOPLEVEL_MOVE, nullptr, version, 0, seat, serial);
-            } else {
-                if (!can_size(w, &w->config)) {
-                    w->self_sized = true;
-                    SDL_SetWindowResizable(w->window, true);
-                }
-                wl_proxy_marshal_flags(toplevel, XDG_TOPLEVEL_RESIZE, nullptr, version, 0, seat, serial,
-                                       xdg_edge(m->edge));
-                w->interactive_until = now_ms() + 3000;
+        bool ok;
+        if (!m->edge) {
+            ok = mime_wl_window_move(w->window, serial);
+        } else {
+            if (!can_size(w, &w->config)) {
+                w->self_sized = true;
+                mime_wl_window_resizable(w->window, true);
             }
-            wl_display_flush(display);
-            m->status = MIME_HC_STATUS_OK;
+            ok = mime_wl_window_resize(w->window, serial, xdg_edge(m->edge));
+            if (ok)
+                w->interactive_until = now_ms() + 3000;
         }
+        if (ok)
+            m->status = MIME_HC_STATUS_OK;
     }
     pthread_mutex_lock(&m->lock);
     m->done = true;
@@ -2664,7 +2428,7 @@ static void movesize_main(void *arg)
 
 uint64_t mime_ui_window_movesize(uint32_t window, uint32_t edge)
 {
-    if (!g_video || !g_wayland)
+    if (!g_video)
         return MIME_HC_STATUS_UNSUPPORTED;
     MoveSize *m = calloc(1, sizeof(*m));
     if (!m)
@@ -2700,10 +2464,10 @@ typedef struct VkAttach {
     pthread_cond_t cond;
 } VkAttach;
 
-/* Wayland gives every window of the guest that presents a subsurface of its own, X11 and the others one swapchain. */
+/* every window of the guest that presents has a subsurface of its own. */
 bool mime_ui_vk_layers(void)
 {
-    return g_video && g_wayland;
+    return g_video;
 }
 
 static void attach_main(void *arg)
@@ -2712,57 +2476,28 @@ static void attach_main(void *arg)
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(a->id);
     if (w && w->window) {
-        SDL_PropertiesID props = SDL_GetWindowProperties(w->window);
-        const char *driver = SDL_GetCurrentVideoDriver();
         *a->native = (MimeUiNative){0};
-        if (driver && !strcmp(driver, "wayland")) {
-            struct wl_display *display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, nullptr);
-            struct wl_surface *parent = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, nullptr);
-            VkLayer *layer = nullptr;
-            if (display && parent && wayland_globals(display) &&
-                ((layer = find_layer(w, a->source)) || (layer = make_layer(w, parent, a->source, a->area, a->order)))) {
-                /* one that was about to go shows again with the first frame of its new presenter. */
-                pthread_mutex_lock(&w->lock);
-                if (layer->gone) {
-                    layer->gone = false;
-                    layer->framed = layer->covered = (LayerFrame){};
-                    layer->framed_serial = 0;
-                    layer->dest[0] = layer->dest[1] = 0;
-                }
-                pthread_mutex_unlock(&w->lock);
-                layer->users++;
-                a->native->display = display;
-                a->native->surface = layer->surface;
-                a->native->subsurface = true;
-                a->ok = true;
+        struct wl_surface *parent = mime_wl_window_surface(w->window);
+        VkLayer *layer = nullptr;
+        if (parent && mime_wl_subcompositor() &&
+            ((layer = find_layer(w, a->source)) || (layer = make_layer(w, parent, a->source, a->area, a->order)))) {
+            /* one that was about to go shows again with the first frame of its new presenter. */
+            pthread_mutex_lock(&w->lock);
+            if (layer->gone) {
+                layer->gone = false;
+                layer->framed = layer->covered = (LayerFrame){};
+                layer->framed_serial = 0;
+                layer->dest[0] = layer->dest[1] = 0;
             }
-        } else if (driver && !strcmp(driver, "x11")) {
-            a->native->x11 = true;
-            a->native->display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, nullptr);
-            a->native->window = (uint64_t)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
-            a->ok = a->native->display && a->native->window;
-            /* the window takes one swapchain: the renderer's goes, and the presenter draws the frame. */
-            if (a->ok) {
-                SDL_Texture *texture = w->texture;
-                SDL_Renderer *renderer = w->renderer;
-                w->texture = nullptr;
-                w->renderer = nullptr;
-                pthread_mutex_unlock(&g_windows_lock);
-                if (texture)
-                    SDL_DestroyTexture(texture);
-                if (renderer)
-                    SDL_DestroyRenderer(renderer);
-                pthread_mutex_lock(&g_windows_lock);
-                w->texture_width = w->texture_height = 0;
-                pthread_mutex_lock(&w->lock);
-                w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
-                w->has_dirty = w->pixels != nullptr;
-                pthread_mutex_unlock(&w->lock);
-            }
+            pthread_mutex_unlock(&w->lock);
+            layer->users++;
+            a->native->display = mime_wl_display();
+            a->native->surface = layer->surface;
+            a->native->subsurface = true;
+            a->ok = true;
         }
         if (a->ok) {
             w->vk = true;
-            w->vk_whole = !a->native->subsurface;
             update_pixel_size(w);
         }
     }
@@ -2811,7 +2546,7 @@ static void detach_main(void *arg)
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(d->id);
     if (w && w->vk) {
-        VkLayer *layer = w->vk_whole ? nullptr : find_layer(w, d->source);
+        VkLayer *layer = find_layer(w, d->source);
         if (layer && layer->users > 1) {
             layer->users--;
             pthread_mutex_unlock(&g_windows_lock);
@@ -2822,7 +2557,8 @@ static void detach_main(void *arg)
          * a layer under the window goes once a frame of the window that is closed over it is on screen, or the desktop
          * would show through the window meanwhile.
          */
-        bool later = layer && layer->under && layer->subsurface && w->shown && w->renderer && w->pixels && w->texture &&
+        bool later = layer && layer->under && layer->subsurface && w->shown && w->window && w->pixels &&
+                     mime_wl_window_attached(w->window) &&
                      !w->bogus_size;
         if (later) {
             pthread_mutex_lock(&w->lock);
@@ -2837,21 +2573,8 @@ static void detach_main(void *arg)
         }
         /* the window stays under the presenters while a layer is left. */
         if (later) {
-        } else if (w->vk_whole || !has_layers(w)) {
+        } else if (!has_layers(w)) {
             w->vk = false;
-            w->vk_whole = false;
-            destroy_layers(w);
-            if (w->window && !w->renderer) {
-                SDL_Renderer *renderer;
-                pthread_mutex_unlock(&g_windows_lock);
-                renderer = SDL_CreateRenderer(w->window, nullptr);
-                pthread_mutex_lock(&g_windows_lock);
-                w->renderer = renderer;
-                if (w->renderer)
-                    SDL_SetRenderVSync(w->renderer, 0);
-                else
-                    mime_warn("cannot create a renderer: %s", SDL_GetError());
-            }
             pthread_mutex_lock(&w->lock);
             w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
             w->has_dirty = w->pixels != nullptr;
@@ -2888,7 +2611,7 @@ static void place_main(void *arg)
     VkPlace *p = arg;
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(p->id);
-    VkLayer *layer = w && w->vk && !w->vk_whole ? find_layer(w, p->source) : nullptr;
+    VkLayer *layer = w && w->vk ? find_layer(w, p->source) : nullptr;
     if (layer && !layer->under)
         place_layer(w, layer, p->area, p->order);
     pthread_mutex_unlock(&g_windows_lock);
@@ -3006,7 +2729,7 @@ static void frame_under(UiWindow *w, VkLayer *l, MimeRect image, Fit fit, double
     frame->pixel_height = (uint32_t)MIME_MAX(lround(height * density), 1);
     /* the size the display shows the buffer at is state of the surface, and lands with the buffer of that size. */
     if (l->viewport && (width != l->dest[0] || height != l->dest[1]))
-        wl_proxy_marshal_flags(l->viewport, 2, nullptr, wl_proxy_get_version(l->viewport), 0, width, height);
+        mime_wl_viewport_size(l->viewport, width, height);
     l->dest[0] = width;
     l->dest[1] = height;
     l->framed = f;
@@ -3041,7 +2764,7 @@ bool mime_ui_vk_frame(uint32_t id, uint32_t source, const MimeUiPlace *place, Mi
     frame->surface_width = w->pixels ? w->width : 0;
     frame->surface_height = w->pixels ? w->height : 0;
     frame->shown = w->shown && !(w->config.flags & MIME_WIN_MINIMIZED);
-    frame->subsurface = !w->vk_whole;
+    frame->subsurface = true;
     MimeRect area = area_over(place);
     frame->client = physical_rect(w, place->client);
     frame->area = physical_rect(w, area);
@@ -3088,7 +2811,7 @@ void mime_ui_vk_place(uint32_t id, uint32_t source, const MimeUiPlace *place)
         return;
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window(id);
-    if (!w || !w->vk || w->vk_whole) {
+    if (!w || !w->vk) {
         pthread_mutex_unlock(&g_windows_lock);
         return;
     }
@@ -3119,7 +2842,7 @@ void mime_ui_vk_place(uint32_t id, uint32_t source, const MimeUiPlace *place)
         on_main(present_main, (void *)(uintptr_t)id);
     /* should the pixels that were said to follow not come. */
     if (wait)
-        SDL_AddTimer(REDRAW_MS, redraw_timer, (void *)(uintptr_t)id);
+        mime_wl_timer(REDRAW_MS, present_main, (void *)(uintptr_t)id);
 }
 
 void mime_ui_vk_shown(uint32_t id, uint32_t source, uint32_t serial, bool shown)
@@ -3132,7 +2855,7 @@ void mime_ui_vk_shown(uint32_t id, uint32_t source, uint32_t serial, bool shown)
     }
     pthread_mutex_lock(&w->lock);
     pthread_mutex_unlock(&g_windows_lock);
-    VkLayer *l = w->vk && !w->vk_whole ? find_layer(w, source) : nullptr;
+    VkLayer *l = w->vk ? find_layer(w, source) : nullptr;
     bool redraw = false;
     if (l && l->under && serial == l->framed_serial) {
         if (!shown) {
@@ -3150,53 +2873,22 @@ void mime_ui_vk_shown(uint32_t id, uint32_t source, uint32_t serial, bool shown)
         on_main(present_main, (void *)(uintptr_t)id);
 }
 
+/* a window always presents through layers here, so none draws the frame of its window itself. */
 bool mime_ui_vk_copy(uint32_t id, uint8_t *dst, uint32_t width, uint32_t height, MimeRect *dirty)
 {
-    pthread_mutex_lock(&g_windows_lock);
-    UiWindow *w = find_window(id);
-    if (!w) {
-        pthread_mutex_unlock(&g_windows_lock);
-        return false;
-    }
-    pthread_mutex_lock(&w->lock);
-    pthread_mutex_unlock(&g_windows_lock);
-    bool copied = false;
-    if (w->vk_whole && w->pixels && w->has_dirty && w->width == width && w->height == height) {
-        MimeRect d = w->dirty;
-        for (int32_t y = d.top; y < d.bottom; y++)
-            memcpy(dst + ((size_t)y * width + (size_t)d.left) * 4, w->pixels + ((size_t)y * width + (size_t)d.left) * 4,
-                   (size_t)(d.right - d.left) * 4);
-        *dirty = d;
-        w->has_dirty = false;
-        copied = true;
-    }
-    pthread_mutex_unlock(&w->lock);
-    return copied;
+    return false;
 }
 
 /* ------------------------------------------------------------------ cursor. */
 
 static void cursor_main(void *arg)
 {
-    static const SDL_SystemCursor kinds[] = {
-        SDL_SYSTEM_CURSOR_DEFAULT,     SDL_SYSTEM_CURSOR_TEXT,      SDL_SYSTEM_CURSOR_WAIT,
-        SDL_SYSTEM_CURSOR_CROSSHAIR,   SDL_SYSTEM_CURSOR_POINTER,   SDL_SYSTEM_CURSOR_NS_RESIZE,
-        SDL_SYSTEM_CURSOR_EW_RESIZE,   SDL_SYSTEM_CURSOR_NWSE_RESIZE, SDL_SYSTEM_CURSOR_NESW_RESIZE,
-        SDL_SYSTEM_CURSOR_MOVE,        SDL_SYSTEM_CURSOR_NOT_ALLOWED,
-    };
     uint32_t c = (uint32_t)(uintptr_t)arg;
     if (c == g_cursor)
         return;
     g_cursor = c;
-    if (c >= MIME_CURSOR_HIDDEN) {
-        SDL_HideCursor();
-        return;
-    }
-    if (!g_cursors[c])
-        g_cursors[c] = SDL_CreateSystemCursor(kinds[c]);
-    if (g_cursors[c])
-        SDL_SetCursor(g_cursors[c]);
-    SDL_ShowCursor();
+    /* MIME_CURSOR_HIDDEN and past it hide the cursor. */
+    mime_wl_cursor_set(nullptr, c);
 }
 
 void mime_ui_set_cursor(uint32_t cursor)
@@ -3213,34 +2905,10 @@ typedef struct CursorImage {
 /* programs switch between a few cursors of their own on every move, so the last ones made are kept. */
 static struct {
     uint64_t hash;
-    SDL_Cursor *cursor;
+    MimeWlCursor *cursor;
     uint64_t used;
 } g_image_cursors[16];
 static uint64_t g_image_cursor_clock;
-
-static SDL_Cursor *make_image_cursor(CursorImage *image)
-{
-    SDL_Surface *full = SDL_CreateSurfaceFrom((int)image->width, (int)image->height, SDL_PIXELFORMAT_ARGB8888,
-                                              image->pixels, (int)image->width * 4);
-    if (!full)
-        return nullptr;
-    SDL_Cursor *cursor = nullptr;
-    /* Wayland sizes a cursor in points: the image of a guest that is scaled is the sharp one of a smaller cursor. */
-    if (g_wayland && image->dpi > 96) {
-        int width = MIME_MAX((int)(image->width * 96 / image->dpi), 1);
-        int height = MIME_MAX((int)(image->height * 96 / image->dpi), 1);
-        SDL_Surface *base = SDL_ScaleSurface(full, width, height, SDL_SCALEMODE_LINEAR);
-        if (base) {
-            SDL_AddSurfaceAlternateImage(base, full);
-            cursor = SDL_CreateColorCursor(base, (int)(image->hot_x * 96 / image->dpi), (int)(image->hot_y * 96 / image->dpi));
-            SDL_DestroySurface(base);
-        }
-    } else {
-        cursor = SDL_CreateColorCursor(full, (int)image->hot_x, (int)image->hot_y);
-    }
-    SDL_DestroySurface(full);
-    return cursor;
-}
 
 static void cursor_image_main(void *arg)
 {
@@ -3254,26 +2922,24 @@ static void cursor_image_main(void *arg)
         if (g_image_cursors[i].used < g_image_cursors[slot].used)
             slot = i;
     }
-    SDL_Cursor *cursor = make_image_cursor(image);
+    /* the compositor sizes a cursor in points: the image of a guest that is scaled is the sharp one of a smaller cursor. */
+    MimeWlCursor *cursor = mime_wl_cursor_create(image->pixels, (int)image->width, (int)image->height, (int)image->hot_x,
+                                                 (int)image->hot_y, image->dpi / 96.0);
     if (!cursor) {
         free(image);
         cursor_main((void *)(uintptr_t)MIME_CURSOR_ARROW);
         return;
     }
-    SDL_Cursor *old = g_image_cursors[slot].cursor;
+    MimeWlCursor *old = g_image_cursors[slot].cursor;
     g_image_cursors[slot].cursor = cursor;
     g_image_cursors[slot].hash = image->hash;
-    if (old) {
-        if (SDL_GetCursor() == old)
-            SDL_SetCursor(cursor);
-        SDL_DestroyCursor(old);
-    }
+    mime_wl_cursor_set(cursor, 0);
+    mime_wl_cursor_destroy(old);
 show:
     free(image);
     g_image_cursors[slot].used = ++g_image_cursor_clock;
     g_cursor = UINT32_MAX;
-    SDL_SetCursor(g_image_cursors[slot].cursor);
-    SDL_ShowCursor();
+    mime_wl_cursor_set(g_image_cursors[slot].cursor, 0);
 }
 
 void mime_ui_set_cursor_image(const void *pixels, uint32_t width, uint32_t height, uint32_t stride, uint32_t hot_x,
@@ -3302,27 +2968,27 @@ typedef struct PointerCall {
 static void pointer_main(void *arg)
 {
     PointerCall *c = arg;
-    static SDL_Window *held;
-    UiWindow *w = find_window(c->window_id);
-    SDL_Window *window = w && c->mode != MIME_POINTER_FREE ? w->window : nullptr;
-    if (held && held != window) {
-        SDL_SetWindowRelativeMouseMode(held, false);
-        SDL_SetWindowMouseRect(held, nullptr);
+    static uint32_t held;
+    UiWindow *w = find_window(c->window_id), *before = held ? find_window(held) : nullptr;
+    MimeWlWindow *window = w && c->mode != MIME_POINTER_FREE ? w->window : nullptr;
+    if (before && before->window && before->window != window) {
+        mime_wl_pointer_lock(before->window, false);
+        mime_wl_pointer_confine(before->window, nullptr);
     }
-    held = window;
+    held = window ? w->id : 0;
     if (window) {
-        SDL_SetWindowRelativeMouseMode(window, c->mode == MIME_POINTER_RELATIVE);
+        mime_wl_pointer_lock(window, c->mode == MIME_POINTER_RELATIVE);
         if (c->mode == MIME_POINTER_CONFINED) {
             MimeRect host = host_part(&w->config);
             Fit fit = window_fit(w);
             double left = fit.x + (c->rect.left - w->config.rect.left - host.left) * fit.scale;
             double top = fit.y + (c->rect.top - w->config.rect.top - host.top) * fit.scale;
-            SDL_Rect r = {(int)ceil(left), (int)ceil(top),
-                          (int)floor((c->rect.right - c->rect.left) * fit.scale),
-                          (int)floor((c->rect.bottom - c->rect.top) * fit.scale)};
-            SDL_SetWindowMouseRect(window, r.w > 0 && r.h > 0 ? &r : nullptr);
+            int width = (int)floor((c->rect.right - c->rect.left) * fit.scale);
+            int height = (int)floor((c->rect.bottom - c->rect.top) * fit.scale);
+            MimeRect r = {(int)ceil(left), (int)ceil(top), (int)ceil(left) + width, (int)ceil(top) + height};
+            mime_wl_pointer_confine(window, width > 0 && height > 0 ? &r : nullptr);
         } else {
-            SDL_SetWindowMouseRect(window, nullptr);
+            mime_wl_pointer_confine(window, nullptr);
         }
     }
     free(c);
@@ -3345,127 +3011,14 @@ void mime_ui_beep(uint32_t type)
 {
 }
 
-/* ------------------------------------------------------------------ main loop. */
-
-void mime_ui_init(MimeUiInputSink sink, void *ctx)
-{
-    g_sink = sink;
-    g_sink_ctx = ctx;
-    g_main_thread = pthread_self();
-    SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "1");
-    SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
-    SDL_SetHint(SDL_HINT_APP_ID, "mime");
-    /* game controller input is independent of window focus and does not target a window. */
-    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
-        mime_info("no display (%s): windows are not shown", SDL_GetError());
-        return;
-    }
-    g_call_event = SDL_RegisterEvents(1);
-    g_video = g_call_event != 0;
-    mime_info("display driver %s", SDL_GetCurrentVideoDriver());
-    g_wayland = SDL_GetCurrentVideoDriver() && !strcmp(SDL_GetCurrentVideoDriver(), "wayland");
-    /* seen on a window that opens, which is too late for a program whose first window opens maximized. */
-    g_says_maximized = g_wayland && getenv("HYPRLAND_INSTANCE_SIGNATURE");
-    mime_color_watch(color_changed);
-    /*
-     * the windows' renderers draw with gl. a renderer that fails, as when the gpu's memory is full, makes SDL put its
-     * window back as it was and drop gl with the last gl window, then destroy the renderer through the dropped gl: the
-     * whole machine went down. gl stays loaded, and windows are made for gl from the start, so a failed renderer is
-     * only a null one.
-     */
-    if (g_video && g_wayland && !(g_gl = SDL_GL_LoadLibrary(nullptr)))
-        mime_warn("cannot load gl for the windows: %s", SDL_GetError());
-    if (g_video) {
-        update_display();
-        update_layout();
-        mime_dnd_init();
-    }
-}
-
-/* ------------------------------------------------------------------ game controllers. */
-
-/* maps a controller to Xbox 360 state, with positive Y upward as in Windows. */
-static void emit_pad(SDL_JoystickID id, uint32_t type)
-{
-    MimeInputEvent ev = {.type = type, .pad = id};
-    SDL_Gamepad *g = SDL_GetGamepadFromID(id);
-    if (type == MIME_INPUT_PAD_REMOVED || !g) {
-        ev.type = MIME_INPUT_PAD_REMOVED;
-        emit(&ev);
-        return;
-    }
-    ev.pad_vid = SDL_GetGamepadVendor(g);
-    ev.pad_pid = SDL_GetGamepadProduct(g);
-    static const struct {
-        SDL_GamepadButton button;
-        uint16_t bit;
-    } BUTTONS[] = {
-        {SDL_GAMEPAD_BUTTON_DPAD_UP, 0x0001},      {SDL_GAMEPAD_BUTTON_DPAD_DOWN, 0x0002},
-        {SDL_GAMEPAD_BUTTON_DPAD_LEFT, 0x0004},    {SDL_GAMEPAD_BUTTON_DPAD_RIGHT, 0x0008},
-        {SDL_GAMEPAD_BUTTON_START, 0x0010},        {SDL_GAMEPAD_BUTTON_BACK, 0x0020},
-        {SDL_GAMEPAD_BUTTON_LEFT_STICK, 0x0040},   {SDL_GAMEPAD_BUTTON_RIGHT_STICK, 0x0080},
-        {SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, 0x0100}, {SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, 0x0200},
-        {SDL_GAMEPAD_BUTTON_GUIDE, 0x0400},        {SDL_GAMEPAD_BUTTON_SOUTH, 0x1000},
-        {SDL_GAMEPAD_BUTTON_EAST, 0x2000},         {SDL_GAMEPAD_BUTTON_WEST, 0x4000},
-        {SDL_GAMEPAD_BUTTON_NORTH, 0x8000},
-    };
-    for (size_t i = 0; i < sizeof(BUTTONS) / sizeof(BUTTONS[0]); i++)
-        if (SDL_GetGamepadButton(g, BUTTONS[i].button))
-            ev.pad_buttons |= BUTTONS[i].bit;
-    int lx = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTX), ly = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFTY);
-    int rx = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHTX), ry = SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHTY);
-    ev.pad_axes[MIME_PAD_LX] = (int16_t)lx;
-    ev.pad_axes[MIME_PAD_LY] = (int16_t)(ly == -32768 ? 32767 : -ly);
-    ev.pad_axes[MIME_PAD_RX] = (int16_t)rx;
-    ev.pad_axes[MIME_PAD_RY] = (int16_t)(ry == -32768 ? 32767 : -ry);
-    ev.pad_axes[MIME_PAD_LT] = (int16_t)(SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) * 255 / 32767);
-    ev.pad_axes[MIME_PAD_RT] = (int16_t)(SDL_GetGamepadAxis(g, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) * 255 / 32767);
-    emit(&ev);
-}
-
-static void pad_added(SDL_JoystickID id)
-{
-    if (!SDL_GetGamepadFromID(id) && !SDL_OpenGamepad(id))
-        return;
-    emit_pad(id, MIME_INPUT_PAD_ADDED);
-    emit_pad(id, MIME_INPUT_PAD_STATE);
-}
-
-static void pad_removed(SDL_JoystickID id)
-{
-    emit_pad(id, MIME_INPUT_PAD_REMOVED);
-    SDL_Gamepad *g = SDL_GetGamepadFromID(id);
-    if (g)
-        SDL_CloseGamepad(g);
-}
-
-typedef struct RumbleCall {
-    uint32_t pad;
-    uint16_t low, high;
-} RumbleCall;
-
-/* XInput motors run until stopped; SDL requires a duration, so request a long one. */
-static void rumble_main(void *arg)
-{
-    RumbleCall *c = arg;
-    SDL_Gamepad *g = SDL_GetGamepadFromID(c->pad);
-    if (g)
-        SDL_RumbleGamepad(g, c->low, c->high, c->low || c->high ? 600000 : 0);
-    free(c);
-}
-
 /* a new ramp shows on every window drawn here at once; swapchains take it at their next present. */
 static void regrade_main(void *arg)
 {
     for (int i = 0; i < MAX_WINDOWS; i++) {
         UiWindow *w = &g_windows[i];
-        if (!w->used || !w->renderer || !w->pixels || !w->shown)
+        if (!w->used || !w->window || !w->pixels || !w->shown)
             continue;
-        pthread_mutex_lock(&w->lock);
-        w->dirty = (MimeRect){0, 0, (int32_t)w->width, (int32_t)w->height};
-        w->has_dirty = true;
-        pthread_mutex_unlock(&w->lock);
+        mark_dirty(w);
         draw(w);
     }
 }
@@ -3475,19 +3028,6 @@ void mime_ui_gamma(const uint16_t *ramp)
     mime_gamma_set(ramp);
     if (g_video)
         on_main(regrade_main, nullptr);
-}
-
-void mime_ui_pad_rumble(uint32_t pad, uint16_t low, uint16_t high)
-{
-    RumbleCall *c = malloc(sizeof(*c));
-    if (!c)
-        return;
-    *c = (RumbleCall){pad, low, high};
-    if (!g_video) {
-        free(c);
-        return;
-    }
-    on_main(rumble_main, c);
 }
 
 static void report_size(UiWindow *w);
@@ -3501,12 +3041,6 @@ static void size_recheck_main(void *arg)
     }
 }
 
-static Uint32 size_timer(void *data, SDL_TimerID timer, Uint32 interval)
-{
-    on_main(size_recheck_main, data);
-    return 0;
-}
-
 /*
  * reports compositor-initiated maximization, tiling and interactive resizing. ignores events that echo a
  * guest size request.
@@ -3517,7 +3051,7 @@ static void report_size(UiWindow *w)
         return;
     uint64_t now = now_ms();
     int logical_w, logical_h;
-    SDL_GetWindowSize(w->window, &logical_w, &logical_h);
+    mime_wl_window_get_size(w->window, &logical_w, &logical_h);
     bool interactive = w->interactive_until > now;
     if (!w->maximized && !interactive) {
         if (logical_w == w->want_w && logical_h == w->want_h)
@@ -3526,7 +3060,7 @@ static void report_size(UiWindow *w)
         if (now - w->want_ms < 250) {
             if (!w->size_recheck) {
                 w->size_recheck = true;
-                SDL_AddTimer(260, size_timer, (void *)(uintptr_t)w->id);
+                mime_wl_timer(260, size_recheck_main, (void *)(uintptr_t)w->id);
             }
             return;
         }
@@ -3558,7 +3092,7 @@ static void report_size(UiWindow *w)
 }
 
 /* tells the guest which monitor a window is on, as the compositor shows it. */
-static void report_window_display(UiWindow *w, SDL_DisplayID display)
+static void report_window_display(UiWindow *w, uint32_t display)
 {
     if (w->popup || !display || w->display == display)
         return;
@@ -3592,246 +3126,264 @@ static void displays_changed(void *arg)
             UiWindow *w = &g_windows[i];
             if (w->used && w->window && w->shown && !w->popup) {
                 w->display = 0;
-                report_window_display(w, SDL_GetDisplayForWindow(w->window));
+                report_window_display(w, mime_wl_window_output(w->window));
             }
         }
     }
 }
 
-static void handle_event(const SDL_Event *e)
+/* ------------------------------------------------------------------ what the compositor tells. */
+
+static uint64_t g_events;
+
+/* an empty composition followed by no other text means cancellation, and an alt character waits for text too. */
+static void before_event(bool text, bool editing)
 {
-    if (e->type == g_call_event) {
-        ((void (*)(void *))e->user.data1)(e->user.data2);
-        return;
-    }
-    /* an empty composition followed by no other text means cancellation. */
-    if (e->type != SDL_EVENT_TEXT_INPUT && e->type != SDL_EVENT_TEXT_EDITING)
+    g_events++;
+    if (!text && !editing)
         mime_ime_flush();
-    if (e->type == SDL_EVENT_TEXT_INPUT)
+    if (text)
         g_alt_char_pending = false;
     else
         alt_char_flush();
-    switch (e->type) {
-    case SDL_EVENT_KEY_DOWN:
-    case SDL_EVENT_KEY_UP:
-        if (!g_layout_known)
-            update_layout();
-        emit_key(&e->key);
-        break;
-    case SDL_EVENT_KEYMAP_CHANGED:
+}
+
+static void on_key(MimeWlWindow *window, uint32_t key, bool down, bool repeat)
+{
+    before_event(false, false);
+    if (!g_layout_known)
         update_layout();
-        break;
-    case SDL_EVENT_TEXT_INPUT: {
-        UiWindow *w = find_by_sdl(e->text.windowID);
-        if (!w || !mime_ime_commit(w->id, e->text.text))
-            emit_text(&e->text);
-        break;
+    UiWindow *w = ui_of(window);
+    if (w)
+        emit_key(w, key, down, repeat);
+}
+
+static void on_keymap(void)
+{
+    update_layout();
+}
+
+static void on_text(MimeWlWindow *window, const char *text)
+{
+    before_event(true, false);
+    UiWindow *w = ui_of(window);
+    if (w && !mime_ime_commit(w->id, text))
+        emit_text(w, text);
+}
+
+static void on_editing(MimeWlWindow *window, const char *text, int start, int length)
+{
+    before_event(false, true);
+    UiWindow *w = ui_of(window);
+    if (w)
+        mime_ime_editing(w->id, text, start, length);
+}
+
+static void on_motion(MimeWlWindow *window, double x, double y, double dx, double dy)
+{
+    before_event(false, false);
+    UiWindow *w = ui_of(window);
+    if (w)
+        emit_motion(w, x, y, dx, dy);
+}
+
+static void on_button(MimeWlWindow *window, double x, double y, uint32_t button, bool down)
+{
+    before_event(false, false);
+    UiWindow *w = ui_of(window);
+    uint32_t which = mouse_button(button);
+    if (w && which)
+        emit_mouse(w, x, y, down ? MIME_INPUT_MOUSE_DOWN : MIME_INPUT_MOUSE_UP, which);
+}
+
+static void on_wheel(MimeWlWindow *window, double x, double y, double wx, double wy)
+{
+    before_event(false, false);
+    UiWindow *w = ui_of(window);
+    if (w)
+        emit_wheel(w, x, y, wx, wy);
+}
+
+static void on_leave(MimeWlWindow *window)
+{
+    before_event(false, false);
+    UiWindow *w = ui_of(window);
+    if (w) {
+        MimeInputEvent ev = {.type = MIME_INPUT_MOUSE_LEAVE, .window_id = w->id};
+        emit(&ev);
     }
-    case SDL_EVENT_TEXT_EDITING: {
-        UiWindow *w = find_by_sdl(e->edit.windowID);
-        if (w)
-            mime_ime_editing(w->id, e->edit.text, e->edit.start, e->edit.length);
-        break;
+}
+
+static void on_focus(MimeWlWindow *window, bool gained)
+{
+    before_event(false, false);
+    UiWindow *w = ui_of(window);
+    /* a popup that grabs the keyboard takes it from its owner without the guest's window losing the activation. */
+    if (!w || w->popup || (!gained && has_open_popup(w)))
+        return;
+    MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_FOCUS, .window_id = w->id, .x = gained};
+    emit(&ev);
+    /* the input method of the window that has the keyboard needs to know where text is entered. */
+    if (gained)
+        apply_text_area();
+}
+
+static void on_close(MimeWlWindow *window)
+{
+    before_event(false, false);
+    UiWindow *w = ui_of(window);
+    if (w) {
+        MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_CLOSE, .window_id = w->id};
+        emit(&ev);
     }
-    case SDL_EVENT_MOUSE_MOTION:
-        emit_motion(&e->motion);
-        break;
-    case SDL_EVENT_MOUSE_BUTTON_DOWN:
-    case SDL_EVENT_MOUSE_BUTTON_UP: {
-        uint32_t button = mouse_button(e->button.button);
-        if (button)
-            emit_mouse(e->button.windowID, e->button.x, e->button.y,
-                       e->button.down ? MIME_INPUT_MOUSE_DOWN : MIME_INPUT_MOUSE_UP, button);
-        break;
-    }
-    case SDL_EVENT_MOUSE_WHEEL:
-        emit_wheel(&e->wheel);
-        break;
-    case SDL_EVENT_GAMEPAD_ADDED:
-        pad_added(e->gdevice.which);
-        break;
-    case SDL_EVENT_GAMEPAD_REMOVED:
-        pad_removed(e->gdevice.which);
-        break;
-    case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-    case SDL_EVENT_GAMEPAD_BUTTON_UP:
-        emit_pad(e->gdevice.which, MIME_INPUT_PAD_STATE);
-        break;
-    case SDL_EVENT_WINDOW_MOUSE_LEAVE: {
-        UiWindow *w = find_by_sdl(e->window.windowID);
-        if (w) {
-            MimeInputEvent ev = {.type = MIME_INPUT_MOUSE_LEAVE, .window_id = w->id};
-            emit(&ev);
-        }
-        break;
-    }
-    case SDL_EVENT_WINDOW_FOCUS_GAINED:
-    case SDL_EVENT_WINDOW_FOCUS_LOST: {
-        UiWindow *w = find_by_sdl(e->window.windowID);
-        /* a popup that grabs the keyboard takes it from its owner without the guest's window losing the activation. */
-        if (w && (w->popup || (e->type == SDL_EVENT_WINDOW_FOCUS_LOST && has_open_popup(w))))
-            break;
-        if (w) {
-            MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_FOCUS, .window_id = w->id,
-                                 .x = e->type == SDL_EVENT_WINDOW_FOCUS_GAINED};
-            emit(&ev);
-            /* the input method of the window that has the keyboard needs to know where text is entered. */
-            if (ev.x)
-                apply_text_area();
-        }
-        break;
-    }
-    case SDL_EVENT_WINDOW_CLOSE_REQUESTED: {
-        UiWindow *w = find_by_sdl(e->window.windowID);
-        if (w) {
-            MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_CLOSE, .window_id = w->id};
-            emit(&ev);
-        }
-        break;
-    }
-    case SDL_EVENT_WINDOW_MOVED: {
-        /*
-         * X11 reports window positions. Wayland hides toplevel positions, including in the initial position
-         * event.
-         */
-        UiWindow *w = find_by_sdl(e->window.windowID);
-        const char *driver = SDL_GetCurrentVideoDriver();
-        if (w && !w->popup && !w->fullscreen && w->configured && !(driver && !strcmp(driver, "wayland"))) {
+}
+
+static void on_restored(UiWindow *w)
+{
+    if (w->config.flags & MIME_WIN_MINIMIZED) {
+        request_window_state(w, 9);
+    } else if (w->maximized && !mime_wl_window_maximized(w->window)) {
+        /* the compositor took the window out of the maximized state, as it does when it is dragged. */
+        w->maximized = false;
+        if (w->config.flags & MIME_WIN_MAXIMIZED) {
+            request_window_state(w, 9);
+        } else if (!w->popup && !w->fullscreen) {
+            /* the guest restored it. kwin leaves the size of a window it restores to the client. */
             MimeRect host = host_part(&w->config);
             double scale = config_scale(&w->config);
-            int32_t x = (int32_t)lround(e->window.data1 * scale) - host.left;
-            int32_t y = (int32_t)lround(e->window.data2 * scale) - host.top;
-            if (x != w->config.rect.left || y != w->config.rect.top) {
-                w->config.rect.right += x - w->config.rect.left;
-                w->config.rect.bottom += y - w->config.rect.top;
-                w->config.rect.left = x;
-                w->config.rect.top = y;
-                MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_MOVED, .window_id = w->id, .x = x, .y = y};
-                emit(&ev);
-            }
+            w->want_w = MIME_MAX(1, (int)lround((host.right - host.left) / scale));
+            w->want_h = MIME_MAX(1, (int)lround((host.bottom - host.top) / scale));
+            w->want_ms = now_ms();
+            mime_wl_window_size(w->window, w->want_w, w->want_h);
         }
-        break;
     }
-    case SDL_EVENT_WINDOW_MINIMIZED: {
-        UiWindow *w = find_by_sdl(e->window.windowID);
-        if (w && !(w->config.flags & MIME_WIN_MINIMIZED))
+}
+
+static void on_fullscreen(UiWindow *w, bool enter)
+{
+    /* report compositor changes, skipping echoes of guest requests. */
+    if (w->popup || w->fullscreen == enter || now_ms() - w->fullscreen_ms <= 500)
+        return;
+    w->fullscreen = enter;
+    MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_FULLSCREEN, .window_id = w->id, .flags = enter};
+    MimeRect rect = {0, 0, 0, 0};
+    if (enter) {
+        uint32_t display = mime_wl_window_output(w->window);
+        pthread_mutex_lock(&g_monitor_lock);
+        for (uint32_t i = 0; i < g_monitor_count; i++)
+            if (g_monitors[i].id == display)
+                rect = g_monitors[i].info.rect;
+        pthread_mutex_unlock(&g_monitor_lock);
+        if (rect.right <= rect.left)
+            rect = (MimeRect){0, 0, (int32_t)g_display.width, (int32_t)g_display.height};
+    }
+    ev.x = rect.left;
+    ev.y = rect.top;
+    ev.width = rect.right - rect.left;
+    ev.height = rect.bottom - rect.top;
+    emit(&ev);
+}
+
+static void on_state(MimeWlWindow *window, MimeWlState state)
+{
+    before_event(false, false);
+    UiWindow *w = ui_of(window);
+    if (!w)
+        return;
+    switch (state) {
+    case MIME_WL_MINIMIZED:
+        if (!(w->config.flags & MIME_WIN_MINIMIZED))
             request_window_state(w, 6);
         break;
-    }
-    case SDL_EVENT_WINDOW_RESTORED: {
-        UiWindow *w = find_by_sdl(e->window.windowID);
-        if (w && (w->config.flags & MIME_WIN_MINIMIZED)) {
-            request_window_state(w, 9);
-        } else if (w && w->maximized && !(SDL_GetWindowFlags(w->window) & SDL_WINDOW_MAXIMIZED)) {
-            /* the compositor took the window out of the maximized state, as it does when it is dragged. */
-            w->maximized = false;
-            if (w->config.flags & MIME_WIN_MAXIMIZED) {
-                request_window_state(w, 9);
-            } else if (!w->popup && !w->fullscreen) {
-                /*
-                 * the guest restored it. kwin leaves the size of a window it restores to the client, and sdl keeps the
-                 * maximized one, not the size asked while it was maximized.
-                 */
-                MimeRect host = host_part(&w->config);
-                double scale = config_scale(&w->config);
-                w->want_w = MIME_MAX(1, (int)lround((host.right - host.left) / scale));
-                w->want_h = MIME_MAX(1, (int)lround((host.bottom - host.top) / scale));
-                w->want_ms = now_ms();
-                SDL_SetWindowSize(w->window, w->want_w, w->want_h);
-            }
-        }
+    case MIME_WL_RESTORED:
+        on_restored(w);
         break;
-    }
-    case SDL_EVENT_WINDOW_MAXIMIZED: {
-        UiWindow *w = find_by_sdl(e->window.windowID);
+    case MIME_WL_MAXIMIZED:
         /*
          * a window nobody maximized, called so as it opens or as it leaves the whole screen: the compositor says it of
          * every window.
          */
-        if (w && !w->popup && g_wayland && !w->maximized && !(w->config.flags & MIME_WIN_MAXIMIZED) &&
+        if (!w->popup && !w->maximized && !(w->config.flags & MIME_WIN_MAXIMIZED) &&
             (now_ms() - w->shown_ms < 1000 || now_ms() - w->fullscreen_ms < 1000))
             w->says_maximized = g_says_maximized = true;
-        if (w && !w->popup && !w->says_maximized) {
+        if (!w->popup && !w->says_maximized) {
             w->maximized = true;
             if (!(w->config.flags & MIME_WIN_MAXIMIZED) && !w->fullscreen)
                 request_window_state(w, 3);
         }
         break;
-    }
-    case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
-    case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN: {
-        UiWindow *w = find_by_sdl(e->window.windowID);
-        bool enter = e->type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN;
-        /* report compositor changes, skipping echoes of guest requests. */
-        if (w && !w->popup && w->fullscreen != enter && now_ms() - w->fullscreen_ms > 500) {
-            w->fullscreen = enter;
-            MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_FULLSCREEN, .window_id = w->id, .flags = enter};
-            MimeRect rect = {0, 0, 0, 0};
-            if (enter) {
-                SDL_DisplayID display = SDL_GetDisplayForWindow(w->window);
-                pthread_mutex_lock(&g_monitor_lock);
-                for (uint32_t i = 0; i < g_monitor_count; i++)
-                    if (g_monitors[i].id == display)
-                        rect = g_monitors[i].info.rect;
-                pthread_mutex_unlock(&g_monitor_lock);
-                if (rect.right <= rect.left)
-                    rect = (MimeRect){0, 0, (int32_t)g_display.width, (int32_t)g_display.height};
-            }
-            ev.x = rect.left;
-            ev.y = rect.top;
-            ev.width = rect.right - rect.left;
-            ev.height = rect.bottom - rect.top;
-            emit(&ev);
-        }
-        break;
-    }
-    case SDL_EVENT_WINDOW_EXPOSED:
-    case SDL_EVENT_WINDOW_RESIZED:
-    case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
-        UiWindow *w = find_by_sdl(e->window.windowID);
-        if (w)
-            update_pixel_size(w);
-        if (w && e->type == SDL_EVENT_WINDOW_RESIZED)
-            report_size(w);
-        if (w && w->shown)
-            draw(w);
-        break;
-    }
-    case SDL_EVENT_CLIPBOARD_UPDATE:
-        mime_clipboard_event(&e->clipboard);
-        break;
-    case SDL_EVENT_WINDOW_DISPLAY_CHANGED: {
-        UiWindow *w = find_by_sdl(e->window.windowID);
-        if (w)
-            report_window_display(w, (SDL_DisplayID)e->window.data1);
-        break;
-    }
-    case SDL_EVENT_DISPLAY_ORIENTATION:
-    case SDL_EVENT_DISPLAY_ADDED:
-    case SDL_EVENT_DISPLAY_REMOVED:
-    case SDL_EVENT_DISPLAY_MOVED:
-    case SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:
-    case SDL_EVENT_DISPLAY_CONTENT_SCALE_CHANGED:
-        if (e->type == SDL_EVENT_DISPLAY_ADDED || e->type == SDL_EVENT_DISPLAY_REMOVED)
-            mime_color_forget();
-        displays_changed(nullptr);
-        break;
-    default:
+    case MIME_WL_FULLSCREEN_ENTERED:
+    case MIME_WL_FULLSCREEN_LEFT:
+        on_fullscreen(w, state == MIME_WL_FULLSCREEN_ENTERED);
         break;
     }
 }
 
+static void on_resized(MimeWlWindow *window, bool sized)
+{
+    before_event(false, false);
+    UiWindow *w = ui_of(window);
+    if (!w)
+        return;
+    update_pixel_size(w);
+    if (sized)
+        report_size(w);
+    if (w->shown)
+        draw(w);
+}
+
+static void on_redraw(MimeWlWindow *window)
+{
+    UiWindow *w = ui_of(window);
+    if (w && w->shown)
+        draw(w);
+}
+
+static void on_output(MimeWlWindow *window, uint32_t output)
+{
+    before_event(false, false);
+    UiWindow *w = ui_of(window);
+    if (w)
+        report_window_display(w, output);
+}
+
+static void on_outputs(bool listed)
+{
+    before_event(false, false);
+    if (listed)
+        mime_color_forget();
+    displays_changed(nullptr);
+}
+
+/* ------------------------------------------------------------------ main loop. */
+
+void mime_ui_init(MimeUiInputSink sink, void *ctx)
+{
+    g_sink = sink;
+    g_sink_ctx = ctx;
+    g_main_thread = pthread_self();
+    static const MimeWlHandlers handlers = {
+        .key = on_key,       .keymap = on_keymap, .text = on_text,     .editing = on_editing, .motion = on_motion,
+        .button = on_button, .wheel = on_wheel,   .leave = on_leave,   .focus = on_focus,     .close = on_close,
+        .state = on_state,   .resized = on_resized, .redraw = on_redraw, .output = on_output, .outputs = on_outputs,
+    };
+    if (!mime_wl_init(&handlers)) {
+        mime_info("no wayland display: windows are not shown");
+        return;
+    }
+    g_video = true;
+    /* seen on a window that opens, which is too late for a program whose first window opens maximized. */
+    g_says_maximized = getenv("HYPRLAND_INSTANCE_SIGNATURE") != nullptr;
+    mime_color_watch(color_changed);
+    update_display();
+    update_layout();
+    mime_dnd_init();
+    mime_clipboard_init();
+}
+
 void mime_ui_run(void)
 {
-    /*
-     * controller discovery takes 80 ms, so run it here while the guest boots rather than in mime_ui_init.
-     * existing controllers arrive as events afterward.
-     */
-    uint64_t began = mime_now_ns();
-    if (g_video && !SDL_InitSubSystem(SDL_INIT_GAMEPAD))
-        mime_info("no game controllers (%s)", SDL_GetError());
-    mime_info("game controllers %llu us", (unsigned long long)((mime_now_ns() - began) / 1000));
+    mime_gamepad_start();
     if (!g_video) {
         pthread_mutex_lock(&g_stop_lock);
         while (!g_stop)
@@ -3839,27 +3391,24 @@ void mime_ui_run(void)
         pthread_mutex_unlock(&g_stop_lock);
         return;
     }
-    SDL_Event e;
     while (!g_stop) {
         /* defer composition clears and Alt characters until the next event shows whether text follows. */
-        if (mime_ime_pending() || g_alt_char_pending) {
-            if (SDL_WaitEventTimeout(&e, g_alt_char_pending ? 10 : 30))
-                handle_event(&e);
-            else {
-                mime_ime_flush();
-                alt_char_flush();
-            }
-        } else if (SDL_WaitEvent(&e)) {
-            handle_event(&e);
-        } else {
+        int timeout = mime_ime_pending() || g_alt_char_pending ? (g_alt_char_pending ? 10 : 30) : -1;
+        uint64_t seen = g_events, began = now_ms();
+        if (!mime_wl_wait(timeout)) {
+            mime_warn("the compositor closed the connection");
             break;
+        }
+        if (timeout >= 0 && g_events == seen && now_ms() - began >= (uint64_t)timeout) {
+            mime_ime_flush();
+            alt_char_flush();
         }
     }
     for (int i = 0; i < MAX_WINDOWS; i++)
         if (g_windows[i].used)
-            destroy_host_window(&g_windows[i], false);
+            destroy_host_window(&g_windows[i]);
     mime_color_stop();
-    SDL_Quit();
+    mime_wl_quit();
 }
 
 static void stop_main(void *arg)
@@ -3873,13 +3422,8 @@ void mime_ui_stop(void)
     g_stop = true;
     pthread_cond_broadcast(&g_stop_cond);
     pthread_mutex_unlock(&g_stop_lock);
-    if (g_video) {
-        SDL_Event ev;
-        SDL_zero(ev);
-        ev.type = g_call_event;
-        ev.user.data1 = (void *)stop_main;
-        SDL_PushEvent(&ev);
-    }
+    if (g_video)
+        mime_wl_post(stop_main, nullptr);
 }
 
 /* macOS uses this entry for per-program app bundles; Linux needs no companion processes. */
