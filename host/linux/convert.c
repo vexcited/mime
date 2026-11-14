@@ -5,6 +5,7 @@
 #include <png/png.h>
 
 #include <ctype.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -188,11 +189,18 @@ static uint32_t scale_channel(uint32_t value, uint32_t mask)
     return mask == 255 ? shifted : (shifted * 255 + mask / 2) / mask;
 }
 
-static bool dib_to_argb(const uint8_t *dib, size_t size, Argb *out)
+/* rows_at is where the first row is when a file puts it further than right after the header and the colors. */
+static bool dib_to_argb(const uint8_t *dib, size_t size, size_t rows_at, Argb *out)
 {
     DibLayout l;
     if (!dib_layout(dib, size, &l))
         return false;
+    if (rows_at > l.pixels) {
+        size_t rows = (size_t)(l.height < 0 ? -l.height : l.height);
+        if (rows_at > size || size - rows_at < l.stride * rows)
+            return false;
+        l.pixels = rows_at;
+    }
     int height = l.height < 0 ? -l.height : l.height;
     uint32_t *pixels = malloc((size_t)l.width * (size_t)height * sizeof(uint32_t));
     if (!pixels)
@@ -277,19 +285,25 @@ static void lib_free(void *ctx, void *p)
 
 static const MimeAllocator g_alloc = {lib_alloc, lib_free, nullptr};
 
+static uint32_t g_crc_table[256];
+static pthread_once_t g_crc_once = PTHREAD_ONCE_INIT;
+
+static void png_crc_table(void)
+{
+    for (uint32_t n = 0; n < 256; n++) {
+        uint32_t c = n;
+        for (int k = 0; k < 8; k++)
+            c = c & 1 ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+        g_crc_table[n] = c;
+    }
+}
+
 static uint32_t png_crc(uint32_t crc, const uint8_t *data, size_t size)
 {
-    static uint32_t table[256];
-    if (!table[1])
-        for (uint32_t n = 0; n < 256; n++) {
-            uint32_t c = n;
-            for (int k = 0; k < 8; k++)
-                c = c & 1 ? 0xEDB88320u ^ (c >> 1) : c >> 1;
-            table[n] = c;
-        }
+    pthread_once(&g_crc_once, png_crc_table);
     crc = ~crc;
     for (size_t i = 0; i < size; i++)
-        crc = table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+        crc = g_crc_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
     return ~crc;
 }
 
@@ -354,7 +368,7 @@ static uint8_t *argb_to_png(uint32_t *pixels, int width, int height, size_t *out
 uint8_t *mime_conv_dib_to_png(const void *dib, size_t size, size_t *out_size)
 {
     Argb a;
-    if (!dib_to_argb(dib, size, &a))
+    if (!dib_to_argb(dib, size, 0, &a))
         return nullptr;
     uint8_t *png = argb_to_png(a.pixels, a.width, a.height, out_size);
     free(a.pixels);
@@ -383,9 +397,13 @@ uint8_t *mime_conv_dib_to_bmp(const void *dib, size_t size, size_t *out_size)
 static bool decode_image(const void *file, size_t size, Argb *out)
 {
     const uint8_t *bytes = file;
-    /* a BMP file is a header of 14 bytes before the bytes of CF_DIB. */
-    if (size > 14 && bytes[0] == 'B' && bytes[1] == 'M')
-        return dib_to_argb(bytes + 14, size - 14, out);
+    /* a BMP file is a header of 14 bytes before the bytes of CF_DIB, which says where the rows are in the file. */
+    if (size > 14 && bytes[0] == 'B' && bytes[1] == 'M') {
+        uint32_t rows = rd32(bytes + 10);
+        if (rows && (rows < 14 || rows > size))
+            return false;
+        return dib_to_argb(bytes + 14, size - 14, rows ? rows - 14 : 0, out);
+    }
     MimePngInfo info;
     if (!mime_png_info(file, size, &info) || !info.width || !info.height || info.width > MAX_IMAGE_SIDE ||
         info.height > MAX_IMAGE_SIDE || (uint64_t)info.width * info.height > MAX_IMAGE_PIXELS)
