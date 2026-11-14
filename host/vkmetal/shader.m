@@ -157,6 +157,7 @@ static VkResult compile_msl(VkDevice device, const uint32_t *spirv, size_t words
     out->outputs = r.outputs;
     out->writes_depth = r.writes_depth;
     out->writes_stencil = r.writes_stencil;
+    out->writes_memory = r.writes_memory;
     return VK_SUCCESS;
 }
 
