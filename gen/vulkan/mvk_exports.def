@@ -245,4 +245,5 @@ EXPORTS
     vkWaitForFences
     vkWaitSemaphores
     vk_icdGetInstanceProcAddr
+    vk_icdGetPhysicalDeviceProcAddr
     vk_icdNegotiateLoaderICDInterfaceVersion
