@@ -29,6 +29,7 @@ typedef struct Progress {
     uint32_t id;
     pid_t pid;
     int input; /* zenity reads the percentage and the text from it, -1 for the scene, which reads its file. */
+    MimeShellDialog first; /* an update that leaves the title or the instruction empty keeps these. */
 } Progress;
 
 typedef struct Asked {
@@ -438,7 +439,7 @@ static void *dialog_thread(void *arg)
 }
 
 /* a window with the bar: the scene on plasma, zenity elsewhere. false when the desktop has neither. */
-static bool window_progress(const MimeShellDialog *d, const char *text)
+static bool window_progress(const MimeShellDialog *d)
 {
     pthread_mutex_lock(&g_lock);
     Progress *p = nullptr;
@@ -457,7 +458,7 @@ static bool window_progress(const MimeShellDialog *d, const char *text)
             int r = posix_spawn(&pid, tool, nullptr, nullptr, argv, env ? env : environ);
             free(env);
             if (r == 0)
-                *p = (Progress){d->id, pid, -1};
+                *p = (Progress){d->id, pid, -1, *d};
             else
                 unlink(state);
             pthread_mutex_unlock(&g_lock);
@@ -484,7 +485,7 @@ static bool window_progress(const MimeShellDialog *d, const char *text)
             pthread_mutex_unlock(&g_lock);
             return false;
         }
-        *p = (Progress){d->id, pid, fds[1]};
+        *p = (Progress){d->id, pid, fds[1], *d};
     }
     if (!p) {
         pthread_mutex_unlock(&g_lock);
@@ -508,12 +509,18 @@ static bool window_progress(const MimeShellDialog *d, const char *text)
             unlink(state);
         return true;
     }
+    MimeShellDialog merged = *d;
+    if (!merged.title[0])
+        memcpy(merged.title, p->first.title, sizeof(merged.title));
+    if (!merged.instruction[0])
+        memcpy(merged.instruction, p->first.instruction, sizeof(merged.instruction));
     if (scene) {
-        scene_state(d, state);
+        scene_state(&merged, state);
         pthread_mutex_unlock(&g_lock);
         return true;
     }
-    char line[4096];
+    char line[4096], text[4096];
+    dialog_text(&merged, text, sizeof(text), MARKUP_NONE);
     int length = snprintf(line, sizeof(line), "%s# ", d->permille >= 0 ? "" : "pulsate\n");
     if (d->permille >= 0)
         length = snprintf(line, sizeof(line), "%d\n# ", d->permille / 10);
@@ -539,13 +546,11 @@ uint64_t mime_ui_dialog(const MimeShellDialog *d)
         pthread_mutex_unlock(&g_lock);
     }
     if (d->kind == MIME_DIALOG_PROGRESS || d->kind == MIME_DIALOG_UPDATE || d->kind == MIME_DIALOG_END) {
-        char text[4096];
-        dialog_text(d, text, sizeof(text), MARKUP_NONE);
         /* the instruction is the view's title, the content its line. */
         char content[4096];
         mime_utf16_to_utf8(content, sizeof(content), d->content, SIZE_MAX);
         /* plasma's job tracker only where no window can be shown: it sits in the notifications. */
-        if (!window_progress(d, text))
+        if (!window_progress(d))
             mime_shell_job(d, content);
         return MIME_HC_STATUS_OK;
     }
