@@ -1458,9 +1458,18 @@ SIZE_T MmCopyToProcessFast(PEPROCESS process, PVOID dst, const void *src, SIZE_T
 static BOOLEAN stack_growth_guard(ULONG_PTR page)
 {
     PETHREAD thread = PsCurrentThread();
-    ULONG_PTR top = (ULONG_PTR)thread->UserStackAllocation + thread->UserStackSize;
-    return thread->UserStackGuard && page > thread->UserStackGuard && page < top &&
-           thread->Tcb.ApcStateProcess == thread->Tcb.Process;
+    if (thread->Tcb.ApcStateProcess != thread->Tcb.Process)
+        return FALSE;
+    /* the TEB follows a fiber, so its stack is the one to grow, not the thread's own. */
+    PTEB teb = thread->Tcb.Teb;
+    ULONG_PTR top = teb ? (ULONG_PTR)teb->NtTib.StackBase : 0;
+    ULONG_PTR bottom = teb ? (ULONG_PTR)teb->DeallocationStack : 0;
+    if (!top || !bottom)
+        return FALSE;
+    /* the last guard below the stack is the stack overflow, not growth. */
+    if (thread->UserStackGuard && page == thread->UserStackGuard)
+        return FALSE;
+    return page > bottom && page < top;
 }
 
 static void guard_fault(ULONG_PTR page)
@@ -1479,9 +1488,12 @@ static void grow_user_stack(ULONG_PTR page)
 {
     PETHREAD thread = PsCurrentThread();
     PEPROCESS process = (PEPROCESS)thread->Tcb.Process;
+    ULONG_PTR floor = thread->UserStackGuard;
+    if (thread->Tcb.Teb && ((PTEB)thread->Tcb.Teb)->DeallocationStack)
+        floor = (ULONG_PTR)((PTEB)thread->Tcb.Teb)->DeallocationStack;
     ULONG_PTR next = page - MI_STACK_GUARD_SIZE;
-    if (next <= thread->UserStackGuard)
-        next = thread->UserStackGuard + PAGE_SIZE;
+    if (next <= floor)
+        next = floor + PAGE_SIZE;
     if (next < page) {
         PVOID at = (PVOID)next;
         SIZE_T size = page - next;
@@ -1532,6 +1544,12 @@ static BOOLEAN access_fault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCE
                     grow = TRUE;
                     handled = TRUE;
                 } else {
+                    PETHREAD current = PsCurrentThread();
+                    KiLogPrintf("guard fault at %p: guard %p top %p alloc %p/%llx thread %p process %p/%p", (PVOID)page,
+                                (PVOID)current->UserStackGuard,
+                                (PVOID)((ULONG_PTR)current->UserStackAllocation + current->UserStackSize),
+                                current->UserStackAllocation, (ULONG64)current->UserStackSize, current,
+                                current->Tcb.ApcStateProcess, current->Tcb.Process);
                     guard_fault(page);
                     handled = FALSE;
                 }
@@ -1569,6 +1587,12 @@ static BOOLEAN access_fault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute, KPROCE
                 grow = TRUE;
                 handled = TRUE;
             } else {
+                PETHREAD current = PsCurrentThread();
+                KiLogPrintf("guard fault(valid) at %p: guard %p top %p alloc %p/%llx thread %p process %p/%p", (PVOID)page,
+                            (PVOID)current->UserStackGuard,
+                            (PVOID)((ULONG_PTR)current->UserStackAllocation + current->UserStackSize),
+                            current->UserStackAllocation, (ULONG64)current->UserStackSize, current,
+                            current->Tcb.ApcStateProcess, current->Tcb.Process);
                 guard_fault(page);
                 handled = FALSE;
             }

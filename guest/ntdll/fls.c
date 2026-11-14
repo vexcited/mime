@@ -31,9 +31,11 @@ NTDLL_EXPORT NTSTATUS NTAPI RtlFlsAlloc(PRTL_FLS_CALLBACK callback, PULONG index
     RtlLeaveCriticalSection(&g_fls_lock);
     if (!found)
         return STATUS_NO_MEMORY;
-    FLS_DATA *data = NtCurrentTeb()->FlsData;
-    if (data)
-        data->Slots[found] = nullptr;
+    if (found > 100)
+        DbgPrint("ntdll: fls index %u\n", found);
+    /* a recycled index starts empty in every thread, not just in the caller. */
+    for (PLIST_ENTRY e = g_fls_list.Flink; e != &g_fls_list; e = e->Flink)
+        CONTAINING_RECORD(e, FLS_DATA, Links)->Slots[found] = nullptr;
     *index = found;
     return STATUS_SUCCESS;
 }
