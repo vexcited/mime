@@ -264,6 +264,22 @@ void PspProcessExit(PEPROCESS process)
 
 NTSTATUS PspTerminateProcess(PEPROCESS process, NTSTATUS status)
 {
+    /* keep a crashed program around for inspection. */
+    if ((ULONG)status == 0xC0000005 || (ULONG)status == 0x80000003 || (ULONG)status == 0x40000015) {
+        static const char held[] = "HeldProgram";
+        BOOLEAN matches = TRUE;
+        for (ULONG i = 0; i < sizeof(held) - 1; i++)
+            if ((UCHAR)process->ImageFileName[i] != (UCHAR)held[i]) {
+                matches = FALSE;
+                break;
+            }
+        if (matches) {
+            LARGE_INTEGER wait;
+            wait.QuadPart = -5LL * 1000 * 1000;
+            NTSTATUS waited = KeDelayExecutionThread(KernelMode, FALSE, &wait);
+            KiLogPrintf("PspTerminateProcess: held %s, wait %08x", process->ImageFileName, waited);
+        }
+    }
     ULONG64 s = KiAcquireDispatcherLock();
     if (!process->Terminating) {
         process->Terminating = TRUE;

@@ -479,9 +479,13 @@ HMODULE WINAPI LoadLibraryExW(LPCWSTR name, HANDLE file, DWORD flags)
         status = LdrLoadDll(search, &ldr_flags, &us, &base);
     KbFree(search);
     if (!NT_SUCCESS(status)) {
+        if (wcsstr(name, L"sl."))
+            DbgPrint("kernelbase: LoadLibrary(%ls) failed: %08x\n", name, status);
         set_load_error(status);
         return nullptr;
     }
+    if (wcsstr(name, L"sl."))
+        DbgPrint("kernelbase: LoadLibrary(%ls) = %p\n", name, base);
     return base;
 }
 
@@ -554,6 +558,11 @@ FARPROC WINAPI GetProcAddress(HMODULE module, LPCSTR name)
         status = LdrGetProcedureAddress(base, &as, 0, &address);
     }
     if (!NT_SUCCESS(status)) {
+        if (IS_INTRESOURCE(name))
+            DbgPrint("kernelbase: GetProcAddress(%p, ordinal %u) failed: %08x\n", base, (ULONG)(ULONG_PTR)name,
+                     status);
+        else
+            DbgPrint("kernelbase: GetProcAddress(%p, %s) failed: %08x\n", base, name, status);
         KbSetError(status == STATUS_DLL_NOT_FOUND ? ERROR_MOD_NOT_FOUND : ERROR_PROC_NOT_FOUND);
         return nullptr;
     }
