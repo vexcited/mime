@@ -1,4 +1,3 @@
-/* generated from vk.xml, do not edit. */
 #ifndef MVK_DISPATCH_H
 #define MVK_DISPATCH_H
 

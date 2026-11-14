@@ -1,7 +1,7 @@
 /*
  * display lists. a command issued while a list is compiled is written to the list's stream of operations, and runs again when
  * the list is called. the commands that are compiled are the ones of guest/opengl32/dlist.txt, whose recorders and replays
- * tools/gengl.c writes; the vertex commands, the arrays and the pixel commands are recorded by hand in dlist.c.
+ * are in gen/opengl32/dlist_gen.c; the vertex commands, the arrays and the pixel commands are recorded by hand in dlist.c.
  */
 #ifndef MIME_OPENGL32_DLIST_H
 #define MIME_OPENGL32_DLIST_H

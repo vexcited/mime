@@ -6,7 +6,7 @@
  *   regedit /a file [key]           the same in the ANSI format of Windows 9x and NT 4
  *   regedit                         the editor window
  *
- * the process ends with exit code 0 whatever happened, which is what the original does. see docs/regedit.md.
+ * the process ends with exit code 0 whatever happened, which is what the original does.
  */
 #include "../lib/regfile/regsys.h"
 #include "regedit.h"

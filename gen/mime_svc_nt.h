@@ -1,4 +1,3 @@
-/* generated, do not edit. */
 #pragma once
 #define MIME_NT_SERVICES_BASE 0x0000
 #define MIME_NT_SERVICES_COUNT 489

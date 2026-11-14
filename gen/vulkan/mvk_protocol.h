@@ -1,4 +1,3 @@
-/* generated from vk.xml, do not edit. */
 #ifndef MVK_PROTOCOL_H
 #define MVK_PROTOCOL_H
 

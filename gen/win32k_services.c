@@ -1,4 +1,3 @@
-/* generated, do not edit. */
 #if defined(__x86_64__)
 #define REGISTER_ARGS 4
 #else

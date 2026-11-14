@@ -1,4 +1,3 @@
-/* generated from the description of oaproxy: do not edit. */
 #ifndef NDRGEN_OAPROXY_H
 #define NDRGEN_OAPROXY_H
 

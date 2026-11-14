@@ -1,4 +1,3 @@
-/* generated from vk.xml, do not edit. */
 #include "mvk_protocol.h"
 
 void mvk_put_VkPhysicalDeviceFeatures(MvkEncoder *e, const VkPhysicalDeviceFeatures *s)

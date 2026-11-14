@@ -1,7 +1,7 @@
 /*
  * the dispatch core of the scripting objects: the members of an object come from its table, as msi.dll's own
  * objects do, with no type library behind them. how a call is looked up, how its arguments are read and how a
- * failure is reported follows the installer of windows; see docs/msi.md.
+ * failure is reported follows the installer of windows.
  */
 #include "automation.h"
 #include <mime/win32/winver.h>

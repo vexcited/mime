@@ -1,4 +1,4 @@
-; the roots of the ROOT store of Windows 11 out of the box, written by mime-research/tools/genroots.py.
+; the roots of the ROOT store of Windows 11 out of the box.
 
 ; Microsoft Root Authority.
 [HKLM\SOFTWARE\Microsoft\SystemCertificates\ROOT\Certificates\A43489159A520F0D93D032CCAF37E7FE20A8B419]

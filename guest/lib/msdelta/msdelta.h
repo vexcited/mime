@@ -1,7 +1,7 @@
 /*
  * the apply side of Microsoft's MSDelta patches, the PA30 files that servicing packages carry. a patch turns a source
  * buffer into a target buffer and holds the hash of the target. what is here was written from the behavior of
- * msdelta.dll and from the public description of the format, see docs/msdelta.md.
+ * msdelta.dll and from the public description of the format.
  */
 #ifndef MIME_LIB_MSDELTA_H
 #define MIME_LIB_MSDELTA_H

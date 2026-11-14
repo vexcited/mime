@@ -1,4 +1,4 @@
-# the commands a display list compiles, read by tools/gengl.c.
+# the commands a display list compiles.
 #
 # one command to a line: its name, then words.
 #   begin          allowed between glBegin and glEnd, any other command in there is a GL_INVALID_OPERATION.

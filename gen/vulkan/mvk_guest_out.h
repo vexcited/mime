@@ -1,4 +1,3 @@
-/* generated from vk.xml, do not edit. */
 #ifndef MVK_GUEST_OUT_H
 #define MVK_GUEST_OUT_H
 void mvk_out_VkPhysicalDeviceFeatures(MvkDecoder *d, VkPhysicalDeviceFeatures *s);

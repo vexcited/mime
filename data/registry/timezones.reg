@@ -1,4 +1,4 @@
-; the Windows time zone database, made by tools/gentimezones.py from the IANA tz database and CLDR windowsZones.xml.
+; the Windows time zone database, made from the IANA tz database and CLDR windowsZones.xml.
 ; do not edit by hand.
 
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Time Zones\Dateline Standard Time]

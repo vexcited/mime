@@ -1,5 +1,3 @@
-/* generated, do not edit. */
-
 #define NLS_KIND_SBCS 1
 #define NLS_KIND_DBCS 2
 #define NLS_KIND_GB18030 3

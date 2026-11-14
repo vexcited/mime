@@ -1,4 +1,3 @@
-/* generated, do not edit. */
 #pragma once
 #define MIME_WIN32K_SERVICES_BASE 0x1000
 #define MIME_WIN32K_SERVICES_COUNT 1905

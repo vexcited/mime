@@ -1,4 +1,3 @@
-/* generated from vk.xml, do not edit. */
 #include "mvk_guest.h"
 
 VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFeatures(VkPhysicalDevice physicalDevice, VkPhysicalDeviceFeatures * pFeatures)

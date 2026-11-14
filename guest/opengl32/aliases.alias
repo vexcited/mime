@@ -1,4 +1,4 @@
-# written by tools/genglaliases.py: names answered with the function of the same signature.
+# names answered with the function of the same signature.
 glActiveTextureARB glActiveTexture
 glBeginQueryARB glBeginQuery
 glBindAttribLocationARB glBindAttribLocation

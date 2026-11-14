@@ -1,4 +1,4 @@
-# names that are answered with the function of another name and that tools/genglaliases.py does not find by itself.
+# names that are answered with the function of another name, written by hand.
 glCreateShaderObjectARB glCreateShader
 glCreateProgramObjectARB glCreateProgram
 glAttachObjectARB glAttachShader

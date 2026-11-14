@@ -1,8 +1,8 @@
 /*
- * the 8 by 16 bitmap font of conhost.exe for a machine with no monospaced font, made by tools/gen_conhost_font.py of
- * the research repository. the letters are rendered from Liberation Mono (SIL Open Font License 1.1, Copyright 2010
+ * the 8 by 16 bitmap font of conhost.exe for a machine with no monospaced font.
+ * the letters are rendered from Liberation Mono (SIL Open Font License 1.1, Copyright 2010
  * Google Corporation, with Reserved Font Name Liberation), hinted and not antialiased. this file holds bitmaps made
- * from the font and is distributed under the same license. the box drawing and block characters are drawn by the script.
+ * from the font and is distributed under the same license. the box drawing and block characters are not from the font.
  * a row of a glyph is one byte, the highest bit is the leftmost pixel, a set bit is ink.
  */
 #ifndef MIME_CONHOST_RASTERFONT_H

@@ -1,6 +1,6 @@
 /*
  * the intrinsic controls of Visual Basic 6: for each class its properties in the order the runtime keeps them, the events of its
- * sink and the layout of the vtable the runtime gives the object of a control. vbclass.c is written by tools/genvbclass.py from
+ * sink and the layout of the vtable the runtime gives the object of a control. vbclass.c is made from
  * the runtime of Windows.
  */
 #ifndef VBCLASS_H

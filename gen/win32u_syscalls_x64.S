@@ -1,4 +1,3 @@
-/* generated, do not edit. */
     .text
     .globl NtUserGetThreadState
     .p2align 5
