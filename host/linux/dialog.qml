@@ -39,11 +39,13 @@ Controls.ApplicationWindow {
     flags: progress ? Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint : Qt.Dialog
     width: Kirigami.Units.gridUnit * 26
     readonly property int margin: Kirigami.Units.largeSpacing * 2
-    height: column.implicitHeight + margin * 2
+    // a long text scrolls, so that the buttons stay on the screen.
+    readonly property int fitted: Math.min(column.implicitHeight + margin * 2, Math.round(Screen.desktopAvailableHeight * 0.8))
+    height: fitted
     minimumWidth: width
     maximumWidth: width
-    minimumHeight: column.implicitHeight + margin * 2
-    maximumHeight: column.implicitHeight + margin * 2
+    minimumHeight: fitted
+    maximumHeight: fitted
     visible: false
 
     onClosing: close => {
@@ -74,6 +76,7 @@ Controls.ApplicationWindow {
         x: root.margin
         y: root.margin
         width: root.width - root.margin * 2
+        height: root.height - root.margin * 2
         spacing: Kirigami.Units.largeSpacing
 
         RowLayout {
@@ -87,25 +90,39 @@ Controls.ApplicationWindow {
                 source: root.view.kind === "error" ? "dialog-error" : root.view.kind === "ask" ? "dialog-question" : "dialog-information"
             }
 
-            ColumnLayout {
-                spacing: Kirigami.Units.smallSpacing
+            Controls.ScrollView {
+                id: scroll
 
-                Kirigami.Heading {
-                    Layout.fillWidth: true
-                    level: 4
-                    font.weight: Font.DemiBold
-                    text: root.view.heading
-                    textFormat: Text.PlainText
-                    wrapMode: Text.Wrap
-                    visible: text.length > 0
-                }
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredHeight: message.implicitHeight
+                contentWidth: availableWidth
+                contentHeight: message.implicitHeight
+                clip: true
 
-                Controls.Label {
-                    Layout.fillWidth: true
-                    text: root.view.text
-                    textFormat: Text.PlainText
-                    wrapMode: Text.Wrap
-                    visible: text.length > 0
+                ColumnLayout {
+                    id: message
+
+                    width: scroll.availableWidth
+                    spacing: Kirigami.Units.smallSpacing
+
+                    Kirigami.Heading {
+                        Layout.fillWidth: true
+                        level: 4
+                        font.weight: Font.DemiBold
+                        text: root.view.heading
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                        visible: text.length > 0
+                    }
+
+                    Controls.Label {
+                        Layout.fillWidth: true
+                        text: root.view.text
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                        visible: text.length > 0
+                    }
                 }
             }
         }
