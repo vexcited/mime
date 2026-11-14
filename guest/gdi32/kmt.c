@@ -58,6 +58,7 @@ enum {
     KMTQAITYPE_UMD_DRIVER_VERSION = 18,
     KMTQAITYPE_PHYSICALADAPTERCOUNT = 30,
     KMTQAITYPE_PHYSICALADAPTERDEVICEIDS = 31,
+    KMTQAITYPE_QUERYREGISTRY = 48,
     KMTQAITYPE_ADAPTERGUID_RENDER = 52,
     KMTQAITYPE_ADAPTERADDRESS_RENDER = 53,
     KMTQAITYPE_ADAPTERREGISTRYINFO_RENDER = 54,
@@ -111,6 +112,28 @@ typedef struct _D3DKMT_QUERY_DEVICE_IDS {
 typedef struct _D3DKMT_DRIVER_DESCRIPTION {
     WCHAR DriverDescription[4096];
 } D3DKMT_DRIVER_DESCRIPTION;
+
+typedef struct _D3DDDI_QUERYREGISTRY_INFO {
+    UINT QueryType;
+    UINT QueryFlags;
+    WCHAR ValueName[MAX_PATH];
+    ULONG ValueType;
+    ULONG PhysicalAdapterIndex;
+    ULONG OutputValueSize;
+    UINT Status;
+    union {
+        DWORD OutputDword;
+        UINT64 OutputQword;
+        WCHAR OutputString[1];
+        BYTE OutputBinary[1];
+    };
+} D3DDDI_QUERYREGISTRY_INFO;
+static_assert(sizeof(D3DDDI_QUERYREGISTRY_INFO) == 552);
+
+#define KMT_QUERYREGISTRY_ADAPTERKEY 1
+#define KMT_QUERYREGISTRY_STATUS_SUCCESS 0
+#define KMT_QUERYREGISTRY_STATUS_BUFFER_OVERFLOW 1
+#define KMT_QUERYREGISTRY_STATUS_FAIL 2
 
 /* the adapter type bits: render, display and software. */
 #define KMT_TYPE_RENDER 0x1
@@ -239,6 +262,14 @@ WINGDIAPI NTSTATUS APIENTRY D3DKMTCloseAdapter(const D3DKMT_CLOSEADAPTER *close)
     return KMT_SUCCESS;
 }
 
+static BOOL terminated(const WCHAR *text, UINT count)
+{
+    for (UINT i = 0; i < count; i++)
+        if (!text[i])
+            return TRUE;
+    return FALSE;
+}
+
 #define NEED(type)                                                                                                     \
     do {                                                                                                               \
         if (query->PrivateDriverDataSize != sizeof(type))                                                              \
@@ -348,6 +379,34 @@ WINGDIAPI NTSTATUS APIENTRY D3DKMTQueryAdapterInfo(const D3DKMT_QUERYADAPTERINFO
     case KMTQAITYPE_WDDM_2_7_CAPS: {
         NEED(UINT);
         *(UINT *)data = 0;
+        return KMT_SUCCESS;
+    }
+    /*
+     * a value of the adapter's driver key, which only the gpu of the display class key has. the khronos loader a
+     * program ships reads VulkanDriverName here: a first time for its size, then with room after the structure.
+     */
+    case KMTQAITYPE_QUERYREGISTRY: {
+        if (query->PrivateDriverDataSize < sizeof(D3DDDI_QUERYREGISTRY_INFO))
+            return KMT_INVALID_PARAMETER;
+        D3DDDI_QUERYREGISTRY_INFO *info = data;
+        info->Status = KMT_QUERYREGISTRY_STATUS_FAIL;
+        info->OutputValueSize = 0;
+        HKEY key;
+        if (info->QueryType != KMT_QUERYREGISTRY_ADAPTERKEY || query->hAdapter != HANDLE_BASE || software ||
+            !terminated(info->ValueName, MAX_PATH) ||
+            RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+                          L"SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0000", 0,
+                          KEY_QUERY_VALUE, &key))
+            return KMT_SUCCESS;
+        DWORD type = 0, size = 0;
+        if (!RegQueryValueExW(key, info->ValueName, nullptr, &type, nullptr, &size) && type == info->ValueType) {
+            info->OutputValueSize = size;
+            if (size > query->PrivateDriverDataSize - offsetof(D3DDDI_QUERYREGISTRY_INFO, OutputDword))
+                info->Status = KMT_QUERYREGISTRY_STATUS_BUFFER_OVERFLOW;
+            else if (!RegQueryValueExW(key, info->ValueName, nullptr, nullptr, (BYTE *)&info->OutputDword, &size))
+                info->Status = KMT_QUERYREGISTRY_STATUS_SUCCESS;
+        }
+        RegCloseKey(key);
         return KMT_SUCCESS;
     }
     /* the user mode driver of every adapter is mime's d3d runtime itself. */
