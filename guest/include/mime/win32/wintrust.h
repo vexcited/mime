@@ -65,6 +65,18 @@ typedef struct _WINTRUST_BLOB_INFO {
     BYTE *pbMemSignedMsg;
 } WINTRUST_BLOB_INFO, *PWINTRUST_BLOB_INFO;
 
+#define WSS_VERIFY_SPECIFIC 0x00000001
+#define WSS_GET_SECONDARY_SIG_COUNT 0x00000002
+
+typedef struct _WINTRUST_SIGNATURE_SETTINGS {
+    DWORD cbStruct;
+    DWORD dwIndex;
+    DWORD dwFlags;
+    DWORD cSecondarySigs;
+    DWORD dwVerifiedSigIndex;
+    PVOID pCryptoPolicy;
+} WINTRUST_SIGNATURE_SETTINGS, *PWINTRUST_SIGNATURE_SETTINGS;
+
 typedef struct _WINTRUST_DATA {
     DWORD cbStruct;
     PVOID pPolicyCallbackData;
@@ -78,7 +90,7 @@ typedef struct _WINTRUST_DATA {
     WCHAR *pwszURLReference;
     DWORD dwProvFlags;
     DWORD dwUIContext;
-    PVOID pSignatureSettings;
+    WINTRUST_SIGNATURE_SETTINGS *pSignatureSettings;
 } WINTRUST_DATA, *PWINTRUST_DATA;
 
 typedef struct _CRYPT_PROVIDER_CERT {

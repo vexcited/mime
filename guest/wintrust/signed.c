@@ -583,7 +583,7 @@ static LONG signer(WT_DER encoded, WT_DER content, ALG_ID declared, HCERTSTORE s
 }
 
 LONG WtVerifySignedData(WT_BYTES encoded, const WT_SUBJECT *subject, const WINTRUST_DATA *options,
-                        PCCERT_CHAIN_CONTEXT *chain)
+                        PCCERT_CHAIN_CONTEXT *chain, DWORD *signer_count)
 {
     WT_DER envelope, wrapper, data, version, algorithms, content_info, content_wrapper, content, certs, signers, one;
     if (!WtTake(&encoded, 0x30, &envelope))
@@ -602,9 +602,21 @@ LONG WtVerifySignedData(WT_BYTES encoded, const WT_SUBJECT *subject, const WINTR
                        sizeof(oid_cat_indirect)) ||
         !WtTake(&content_info.value, 0xa0, &content_wrapper) || content_info.value.size ||
         !WtTake(&content_wrapper.value, 0x30, &content) || content_wrapper.value.size ||
-        !WtTake(&data.value, 0xa0, &certs) || !WtTake(&data.value, 0x31, &signers) || data.value.size ||
-        !WtTake(&signers.value, 0x30, &one) || signers.value.size)
+        !WtTake(&data.value, 0xa0, &certs) || !WtTake(&data.value, 0x31, &signers) || data.value.size)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
+    /* the first signer is the one verified; the others are only counted for the signature settings. */
+    DWORD signer_total = 0;
+    while (signers.value.size) {
+        WT_DER current;
+        if (!WtTake(&signers.value, 0x30, &current) || ++signer_total > 64)
+            return TRUST_E_SUBJECT_FORM_UNKNOWN;
+        if (signer_total == 1)
+            one = current;
+    }
+    if (!signer_total)
+        return TRUST_E_SUBJECT_FORM_UNKNOWN;
+    if (signer_count)
+        *signer_count = signer_total;
     WT_DER digest_algorithm;
     if (!WtTake(&algorithms.value, 0x30, &digest_algorithm) || algorithms.value.size)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;

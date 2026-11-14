@@ -17,7 +17,8 @@ static DWORD dword(const BYTE *p)
     return word(p) | (DWORD)word(p + 2) << 16;
 }
 
-LONG WtVerifyCab(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain)
+LONG WtVerifyCab(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain,
+                 DWORD *signer_count)
 {
     if (size < 36 || dword(bytes) != 0x4643534d)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
@@ -76,7 +77,7 @@ LONG WtVerifyCab(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PC
     out += names;
     memcpy(out, bytes + header, offset - header);
     WT_SUBJECT subject = {.digest_input = input, .digest_size = input_size};
-    LONG result = WtVerifySignedData((WT_BYTES){bytes + offset, length}, &subject, options, chain);
+    LONG result = WtVerifySignedData((WT_BYTES){bytes + offset, length}, &subject, options, chain, signer_count);
     LocalFree(input);
     return result;
 }

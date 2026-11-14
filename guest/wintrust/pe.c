@@ -23,21 +23,22 @@ static BOOL padding_checked(void)
 #define TABLE_LIMIT 0x1000000
 
 static LONG verify_views(HANDLE mapping, const BYTE *bytes, DWORD head, DWORD size, const WINTRUST_DATA *options,
-                         PCCERT_CHAIN_CONTEXT *chain);
+                         PCCERT_CHAIN_CONTEXT *chain, DWORD *signer_count);
 
-LONG WtVerifyPe(HANDLE mapping, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain)
+LONG WtVerifyPe(HANDLE mapping, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain,
+                DWORD *signer_count)
 {
     DWORD head = size < HEAD_LIMIT ? size : HEAD_LIMIT;
     const BYTE *bytes = head ? MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, head) : nullptr;
     if (!bytes)
         return head ? HRESULT_FROM_WIN32(GetLastError()) : TRUST_E_SUBJECT_FORM_UNKNOWN;
-    LONG result = verify_views(mapping, bytes, head, size, options, chain);
+    LONG result = verify_views(mapping, bytes, head, size, options, chain, signer_count);
     UnmapViewOfFile(bytes);
     return result;
 }
 
 static LONG verify_views(HANDLE mapping, const BYTE *bytes, DWORD head, DWORD size, const WINTRUST_DATA *options,
-                         PCCERT_CHAIN_CONTEXT *chain)
+                         PCCERT_CHAIN_CONTEXT *chain, DWORD *signer_count)
 {
     if (head < 64 || word(bytes) != 0x5a4d)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
@@ -109,7 +110,7 @@ static LONG verify_views(HANDLE mapping, const BYTE *bytes, DWORD head, DWORD si
         if (!result) {
             WT_SUBJECT subject = {.mapping = mapping, .image = bytes, .size = size, .checksum = optional + 64,
                                   .directory = directory, .certificate = certificate};
-            result = WtVerifySignedData((WT_BYTES){table_bytes + 8, length - 8}, &subject, options, chain);
+            result = WtVerifySignedData((WT_BYTES){table_bytes + 8, length - 8}, &subject, options, chain, signer_count);
         }
     }
     UnmapViewOfFile(view);

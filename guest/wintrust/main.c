@@ -112,7 +112,7 @@ WINTRUSTAPI HRESULT WINAPI WTHelperCertCheckValidSignature(CRYPT_PROVIDER_DATA *
 }
 
 /* the signature file of an app package: its subject is named by this identifier. */
-static LONG verify_blob(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
+static LONG verify_blob(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain, DWORD *signers)
 {
     static const GUID p7x = {0x5598cff1, 0x68db, 0x4340, {0xb5, 0x7f, 0x1c, 0xac, 0xf8, 0x8c, 0x9a, 0x51}};
     const WINTRUST_BLOB_INFO *info = data->pBlob;
@@ -120,14 +120,15 @@ static LONG verify_blob(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
         return E_INVALIDARG;
     if (memcmp(&info->gSubject, &p7x, sizeof(p7x)))
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
-    return WtVerifyP7x(info->pbMemObject, info->cbMemObject, data, chain);
+    return WtVerifyP7x(info->pbMemObject, info->cbMemObject, data, chain, signers);
 }
 
 /* the kind of the file comes from its first bytes. cabinets and packages are mapped whole, executables in views. */
-static LONG verify_mapping(HANDLE mapping, DWORD size, const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
+static LONG verify_mapping(HANDLE mapping, DWORD size, const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain,
+                           DWORD *signers)
 {
     if (!mapping)
-        return WtVerifyPe(nullptr, 0, data, chain);
+        return WtVerifyPe(nullptr, 0, data, chain, signers);
     BYTE magic[8] = {};
     DWORD got = size < sizeof(magic) ? size : sizeof(magic);
     const BYTE *start = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, got);
@@ -140,18 +141,18 @@ static LONG verify_mapping(HANDLE mapping, DWORD size, const WINTRUST_DATA *data
     /* a catalog is a bare pkcs#7 signed data, a DER sequence. */
     BOOL catalog = got >= 2 && magic[0] == 0x30 && (magic[1] == 0x82 || magic[1] == 0x81);
     if (!package && !cabinet && !catalog)
-        return WtVerifyPe(mapping, size, data, chain);
+        return WtVerifyPe(mapping, size, data, chain, signers);
     const BYTE *bytes = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0);
     if (!bytes)
         return HRESULT_FROM_WIN32(GetLastError());
-    LONG result = package ? WtVerifyInstaller(bytes, size, data, chain)
-                 : cabinet ? WtVerifyCab(bytes, size, data, chain)
-                           : WtVerifyCatalog(bytes, size, data, chain);
+    LONG result = package ? WtVerifyInstaller(bytes, size, data, chain, signers)
+                 : cabinet ? WtVerifyCab(bytes, size, data, chain, signers)
+                           : WtVerifyCatalog(bytes, size, data, chain, signers);
     UnmapViewOfFile(bytes);
     return result;
 }
 
-static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
+static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain, DWORD *signers)
 {
     WINTRUST_FILE_INFO *info = data->pFile;
     /* pgKnownSubject came later, callers of the older size leave it out and only a larger size is read. */
@@ -188,7 +189,7 @@ static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
     if (owned)
         CloseHandle(file);
     if (!result)
-        result = verify_mapping(mapping, (DWORD)size.QuadPart, data, chain);
+        result = verify_mapping(mapping, (DWORD)size.QuadPart, data, chain, signers);
     if (mapping)
         CloseHandle(mapping);
     if (result == TRUST_E_NOSIGNATURE && system_image)
@@ -197,7 +198,7 @@ static LONG verify_file(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
 }
 
 /* a file verified against a catalog: what is checked here is the catalog's own signature. */
-static LONG verify_catalog(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain)
+static LONG verify_catalog(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chain, DWORD *signers)
 {
     const WINTRUST_CATALOG_INFO *info = data->pCatalog;
     if (!info || info->cbStruct < offsetof(WINTRUST_CATALOG_INFO, pcwszCatalogFilePath) + sizeof(LPCWSTR) ||
@@ -221,7 +222,7 @@ static LONG verify_catalog(const WINTRUST_DATA *data, PCCERT_CHAIN_CONTEXT *chai
         if (!bytes)
             result = HRESULT_FROM_WIN32(GetLastError());
         else {
-            result = WtVerifyCatalog(bytes, (DWORD)size.QuadPart, data, chain);
+            result = WtVerifyCatalog(bytes, (DWORD)size.QuadPart, data, chain, signers);
             UnmapViewOfFile(bytes);
         }
     }
@@ -244,22 +245,33 @@ LONG WINAPI WinVerifyTrust(HWND window, GUID *action, PVOID input)
     if (data->dwStateAction == WTD_STATEACTION_CLOSE)
         return state_close(data);
     if (data->dwStateAction > WTD_STATEACTION_VERIFY || data->pPolicyCallbackData || data->pSIPClientData ||
-        data->dwUIChoice < WTD_UI_ALL || data->dwUIChoice > WTD_UI_NOGOOD || data->fdwRevocationChecks > 1 ||
-        (data->cbStruct == sizeof(*data) && data->pSignatureSettings))
+        data->dwUIChoice < WTD_UI_ALL || data->dwUIChoice > WTD_UI_NOGOOD || data->fdwRevocationChecks > 1)
+        return E_INVALIDARG;
+    WINTRUST_SIGNATURE_SETTINGS *settings = data->pSignatureSettings;
+    if (settings &&
+        (settings->cbStruct < offsetof(WINTRUST_SIGNATURE_SETTINGS, pCryptoPolicy) ||
+         (settings->dwFlags & ~(DWORD)(WSS_VERIFY_SPECIFIC | WSS_GET_SECONDARY_SIG_COUNT)) ||
+         (settings->dwFlags & WSS_VERIFY_SPECIFIC ? settings->dwIndex > 63 : settings->dwIndex)))
         return E_INVALIDARG;
     if (data->dwUnionChoice != WTD_CHOICE_FILE && data->dwUnionChoice != WTD_CHOICE_BLOB &&
         data->dwUnionChoice != WTD_CHOICE_CATALOG)
         return TRUST_E_SUBJECT_FORM_UNKNOWN;
-    LONG (*verify)(const WINTRUST_DATA *, PCCERT_CHAIN_CONTEXT *) =
+    LONG (*verify)(const WINTRUST_DATA *, PCCERT_CHAIN_CONTEXT *, DWORD *) =
         data->dwUnionChoice == WTD_CHOICE_BLOB   ? verify_blob
         : data->dwUnionChoice == WTD_CHOICE_CATALOG ? verify_catalog
                                                     : verify_file;
+    DWORD signers = 0;
     if (data->dwStateAction != WTD_STATEACTION_VERIFY)
-        return verify(data, nullptr);
+        return verify(data, nullptr, &signers);
     if (data->hWVTStateData)
         return E_INVALIDARG;
     PCCERT_CHAIN_CONTEXT chain = nullptr;
-    LONG result = verify(data, &chain);
+    LONG result = verify(data, &chain, &signers);
+    if (settings) {
+        settings->cSecondarySigs = signers;
+        if (result >= 0)
+            settings->dwVerifiedSigIndex = settings->dwIndex;
+    }
     if (!state_open(data, chain, result)) {
         if (chain)
             CertFreeCertificateChain(chain);
