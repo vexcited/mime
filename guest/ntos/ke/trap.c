@@ -98,6 +98,15 @@ void KiTraceUserStack(ULONG64 pc, ULONG64 sp)
             break;
         if (KiDescribeUserAddress(word, text, sizeof(text))) {
             KiLogPrintf("  stack +0x%x: %s", i * step, text);
+            if (word > 32 && word <= MIME_USER_ADDRESS_LIMIT) {
+                UCHAR code[32];
+                if (NT_SUCCESS(KiCopyFromUser(code, (PVOID)(word - 24), sizeof(code)))) {
+                    char hex[3 * sizeof(code) + 1];
+                    for (ULONG j = 0; j < sizeof(code); j++)
+                        _snprintf(hex + 3 * j, 4, "%02x ", code[j]);
+                    KiLogPrintf("  code at stack: %s", hex);
+                }
+            }
             shown++;
         }
     }
@@ -161,6 +170,15 @@ static void trace_unwound(PKTRAP_FRAME frame)
             KiLogPrintf("  frame %u: %s", depth, text);
         else
             KiLogPrintf("  frame %u: %llx", depth, pc);
+        if (depth < 8 && pc > 32) {
+            UCHAR code[32];
+            if (read_user(pc - 24, code, sizeof(code))) {
+                char hex[3 * sizeof(code) + 1];
+                for (ULONG i = 0; i < sizeof(code); i++)
+                    _snprintf(hex + 3 * i, 4, "%02x ", code[i]);
+                KiLogPrintf("  code: %s", hex);
+            }
+        }
         ULONG64 base = image_base_of(pc);
         ULONG function[3];
         if (base && find_function(base, pc, function)) {

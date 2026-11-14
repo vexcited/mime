@@ -618,6 +618,15 @@ void KiDumpTrapFrame(const char *what, const KTRAP_FRAME *frame)
     if (sp && !(sp & 7) && MmIsAddressValid((PVOID)sp) && MmIsAddressValid((PVOID)(sp + 24))) {
         ULONG64 *top = (ULONG64 *)sp;
         KiLogPrintf("  stack %016llx %016llx %016llx %016llx", top[0], top[1], top[2], top[3]);
+        if (top[0] > 32 && top[0] <= MIME_USER_ADDRESS_LIMIT) {
+            UCHAR code[32];
+            if (NT_SUCCESS(KiCopyFromUser(code, (PVOID)(top[0] - 24), sizeof(code)))) {
+                char hex[3 * sizeof(code) + 1];
+                for (ULONG i = 0; i < sizeof(code); i++)
+                    _snprintf(hex + 3 * i, 4, "%02x ", code[i]);
+                KiLogPrintf("  code before caller: %s", hex);
+            }
+        }
     }
     /* the frame pointer chain, when the code keeps one. */
     ULONG64 fp = frame->Rbp;

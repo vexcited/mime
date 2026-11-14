@@ -842,6 +842,10 @@ WINOLEAPI HRESULT WINAPI CoCreateInstance(REFCLSID clsid, IUnknown *outer, DWORD
         return E_INVALIDARG;
     IClassFactory *factory;
     HRESULT hr = CoGetClassObject(clsid, context, nullptr, &IID_IClassFactory, (void **)&factory);
+    if (clsid && clsid->Data1 == 0x834366da)
+        DbgPrint("ole32: create 834366DA iid %08lx-%04x-%04x-%02x%02x%02x%02x%02x%02x%02x%02x: %08lx\n", riid->Data1,
+                 riid->Data2, riid->Data3, riid->Data4[0], riid->Data4[1], riid->Data4[2], riid->Data4[3],
+                 riid->Data4[4], riid->Data4[5], riid->Data4[6], riid->Data4[7], hr);
     if (FAILED(hr))
         return hr;
     hr = factory->lpVtbl->CreateInstance(factory, outer, riid, object);
