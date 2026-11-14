@@ -201,6 +201,70 @@ DECLSPEC_EXPORT LONG WINAPI PackageIdFromFullName(PCWSTR full, UINT32 flags, UIN
     return parse_full_name(full, length, buffer, nullptr);
 }
 
+/* the name is a package name, 3 to 50 characters of the file system's name alphabet. */
+static BOOL valid_name(const WCHAR *text, SIZE_T length)
+{
+    if (length < NAME_MIN_LENGTH || length > NAME_MAX_LENGTH)
+        return FALSE;
+    for (SIZE_T i = 0; i < length; i++)
+        if (!name_character(text[i]))
+            return FALSE;
+    return valid_part(text, length);
+}
+
+static BOOL valid_publisher_id(const WCHAR *text, SIZE_T length)
+{
+    if (length != PUBLISHER_ID_LENGTH)
+        return FALSE;
+    for (SIZE_T i = 0; i < length; i++) {
+        BOOL good = FALSE;
+        for (SIZE_T j = 0; g_publisher_alphabet[j]; j++)
+            good |= g_publisher_alphabet[j] == text[i];
+        if (!good)
+            return FALSE;
+    }
+    return TRUE;
+}
+
+/* a family name is the package name, an underscore, then the publisher id. */
+DECLSPEC_EXPORT LONG WINAPI PackageNameAndPublisherIdFromFamilyName(PCWSTR family, UINT32 *name_length,
+                                                                    PWSTR name, UINT32 *publisher_length,
+                                                                    PWSTR publisher)
+{
+    if (!family || !name_length || !publisher_length)
+        return ERROR_INVALID_PARAMETER;
+    const WCHAR *separator = nullptr;
+    for (const WCHAR *p = family; *p; p++)
+        if (*p == L'_')
+            separator = p;
+    if (!separator)
+        return ERROR_INVALID_PARAMETER;
+    SIZE_T name_size = (SIZE_T)(separator - family);
+    SIZE_T publisher_size = wcslen(separator + 1);
+    if (!valid_name(family, name_size) || !valid_publisher_id(separator + 1, publisher_size))
+        return ERROR_INVALID_PARAMETER;
+
+    LONG error = ERROR_SUCCESS;
+    UINT32 name_needed = (UINT32)name_size + 1;
+    if (!name || *name_length < name_needed) {
+        *name_length = name_needed;
+        error = ERROR_INSUFFICIENT_BUFFER;
+    } else {
+        memcpy(name, family, name_size * sizeof(WCHAR));
+        name[name_size] = 0;
+        *name_length = name_needed;
+    }
+    UINT32 publisher_needed = (UINT32)publisher_size + 1;
+    if (!publisher || *publisher_length < publisher_needed) {
+        *publisher_length = publisher_needed;
+        error = ERROR_INSUFFICIENT_BUFFER;
+    } else {
+        memcpy(publisher, separator + 1, (publisher_size + 1) * sizeof(WCHAR));
+        *publisher_length = publisher_needed;
+    }
+    return error;
+}
+
 DECLSPEC_EXPORT LONG WINAPI PackageFamilyNameFromFullName(PCWSTR full, UINT32 *length, PWSTR family)
 {
     BYTE parts[sizeof(PACKAGE_ID_) + 2 * (NAME_MAX_LENGTH + 1 + RESOURCE_MAX_LENGTH + 1 + PUBLISHER_ID_LENGTH + 1)];

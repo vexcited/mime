@@ -340,6 +340,28 @@ NTDLL_EXPORT void NTAPI RtlGetDeviceFamilyInfoEnum(ULONGLONG *version, ULONG *fa
     }
 }
 
+/* the strings of the device family and form above, for the programs that ask for text. sizes are in bytes. */
+NTDLL_EXPORT DWORD NTAPI RtlConvertDeviceFamilyInfoToString(DWORD *family_size, DWORD *form_size, PWSTR family,
+                                                            PWSTR form)
+{
+    static const WCHAR family_text[] = L"Windows.Desktop";
+    static const WCHAR form_text[] = L"Unknown";
+    if (!family_size || !form_size)
+        return STATUS_INVALID_PARAMETER;
+    DWORD status = STATUS_SUCCESS;
+    if (family && *family_size >= sizeof(family_text))
+        memcpy(family, family_text, sizeof(family_text));
+    else
+        status = STATUS_BUFFER_TOO_SMALL;
+    if (form && *form_size >= sizeof(form_text))
+        memcpy(form, form_text, sizeof(form_text));
+    else
+        status = STATUS_BUFFER_TOO_SMALL;
+    *family_size = sizeof(family_text);
+    *form_size = sizeof(form_text);
+    return status;
+}
+
 NTDLL_EXPORT BOOLEAN NTAPI RtlGetNtProductType(ULONG *type)
 {
     *type = 1; /* NtProductWinNt */

@@ -2614,6 +2614,7 @@ WINBASEAPI DWORD WINAPI WerUnregisterRuntimeExceptionModule(PCWSTR dll, PVOID co
 WINBASEAPI HRESULT WINAPI WerGetFlags(HANDLE process, PDWORD flags);
 WINBASEAPI HRESULT WINAPI WerSetFlags(DWORD flags);
 WINBASEAPI HRESULT WINAPI WerRegisterMemoryBlock(PVOID address, DWORD size);
+WINBASEAPI HRESULT WINAPI WerUnregisterMemoryBlock(PVOID address);
 WINBASEAPI HRESULT WINAPI WerRegisterFile(PCWSTR file, int type, DWORD flags);
 WINBASEAPI HRESULT WINAPI WerRegisterCustomMetadata(PCWSTR key, PCWSTR value);
 WINBASEAPI HRESULT WINAPI WerUnregisterCustomMetadata(PCWSTR key);
@@ -2699,6 +2700,9 @@ WINBASEAPI LONG WINAPI GetCurrentPackageId(UINT32 *length, BYTE *buffer);
 WINBASEAPI LONG WINAPI GetCurrentPackageFullName(UINT32 *length, PWSTR name);
 WINBASEAPI LONG WINAPI GetCurrentPackageFamilyName(UINT32 *length, PWSTR name);
 WINBASEAPI LONG WINAPI GetCurrentApplicationUserModelId(UINT32 *length, PWSTR id);
+WINBASEAPI LONG WINAPI GetCurrentPackagePath2(UINT32 path_type, UINT32 *length, PWSTR path);
+WINBASEAPI LONG WINAPI PackageNameAndPublisherIdFromFamilyName(PCWSTR family, UINT32 *name_length, PWSTR name,
+                                                               UINT32 *publisher_length, PWSTR publisher);
 WINBASEAPI LONG WINAPI GetPackageFullName(HANDLE process, UINT32 *length, PWSTR name);
 WINBASEAPI LONG WINAPI GetPackageFamilyName(HANDLE process, UINT32 *length, PWSTR name);
 WINBASEAPI LONG WINAPI GetApplicationUserModelId(HANDLE process, UINT32 *length, PWSTR id);

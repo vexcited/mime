@@ -1091,6 +1091,7 @@ EXPORTS
     RtlCompareUnicodeString
     RtlCompareUnicodeStrings
     RtlComputeCrc32
+    RtlConvertDeviceFamilyInfoToString
     RtlConvertSidToUnicodeString
     RtlConvertToAutoInheritSecurityObject
     RtlCopyMemory
