@@ -761,9 +761,16 @@ static void add_control(void *sd, WORD bits)
     ((SECURITY_DESCRIPTOR *)sd)->Control |= bits;
 }
 
+/* a list the information names that is not a valid one. */
+static BOOL malformed_list(DWORD info, PACL dacl, PACL sacl)
+{
+    return ((info & DACL_SECURITY_INFORMATION) && dacl && !RtlValidAcl(dacl)) ||
+           ((info & SACL_PARTS) && sacl && !RtlValidAcl(sacl));
+}
+
 /*
- * builds an absolute descriptor from the caller's parts, like SetNamedSecurityInfo. a malformed part is refused with
- * its kind's error before anything is touched.
+ * builds an absolute descriptor from the caller's parts, like SetNamedSecurityInfo. a malformed owner or group is
+ * refused with its kind's error before anything is touched. the lists are taken as they are.
  */
 static DWORD build_absolute(SECURITY_DESCRIPTOR *sd, DWORD info, PSID owner, PSID group, PACL dacl, PACL sacl)
 {
@@ -785,8 +792,6 @@ static DWORD build_absolute(SECURITY_DESCRIPTOR *sd, DWORD info, PSID owner, PSI
     if (info & DACL_SECURITY_INFORMATION) {
         /* a missing list is a null one, which nothing can inherit into, so it starts protected. */
         if (dacl) {
-            if (!RtlValidAcl(dacl))
-                return ERROR_INVALID_ACL;
             RtlSetDaclSecurityDescriptor(sd, TRUE, dacl, FALSE);
             if (info & PROTECTED_DACL_SECURITY_INFORMATION)
                 add_control(sd, SE_DACL_PROTECTED);
@@ -795,11 +800,8 @@ static DWORD build_absolute(SECURITY_DESCRIPTOR *sd, DWORD info, PSID owner, PSI
         }
     }
     if (info & SACL_PARTS) {
-        if (sacl) {
-            if (!RtlValidAcl(sacl))
-                return ERROR_INVALID_ACL;
+        if (sacl)
             RtlSetSaclSecurityDescriptor(sd, TRUE, sacl, FALSE);
-        }
         if (!sacl || (info & PROTECTED_SACL_SECURITY_INFORMATION))
             add_control(sd, SE_SACL_PROTECTED);
     }
@@ -1237,6 +1239,13 @@ static DWORD set_security(SE_OBJECT_TYPE type, PCWSTR name, HANDLE handle, DWORD
     DWORD error = build_absolute(&sd, info, owner, group, dacl, sacl);
     if (error)
         return error;
+    /*
+     * the lists of a file or a key are made again from their aces, and windows does not check them first: wix 3
+     * bundles reset the permissions of what they cache with a list that is all zeroes. any other kind hands its
+     * lists to the kernel, which refuses a malformed one.
+     */
+    if (!propagates(type) && malformed_list(info, dacl, sacl))
+        return ERROR_INVALID_ACL;
     /* a list's protection is kept when the caller says nothing about it. */
     BOOL keep = ((info & DACL_SECURITY_INFORMATION) && !(info & (PROTECTED_DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION))) ||
                 ((info & SACL_PARTS) && !(info & (PROTECTED_SACL_SECURITY_INFORMATION | UNPROTECTED_SACL_SECURITY_INFORMATION)));
@@ -1468,6 +1477,9 @@ static DWORD tree_operation(PWSTR name, SE_OBJECT_TYPE type, DWORD info, PSID ow
     DWORD error = build_absolute(&sd, info, owner, group, dacl, sacl);
     if (error)
         return error;
+    /* unlike the plain functions, the tree ones check the lists. */
+    if (malformed_list(info, dacl, sacl))
+        return ERROR_INVALID_ACL;
     BOOL keep = ((info & DACL_SECURITY_INFORMATION) && !(info & (PROTECTED_DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION))) ||
                 ((info & SACL_PARTS) && !(info & (PROTECTED_SACL_SECURITY_INFORMATION | UNPROTECTED_SACL_SECURITY_INFORMATION)));
     OBJ *o = nullptr;
