@@ -183,6 +183,7 @@ static void user_exception(PKTRAP_FRAME frame)
                     (ULONG)(ULONG_PTR)process->UniqueProcessId, process->ImageFileName);
         KiDumpTrapFrame("user context", frame);
         KiTraceUserFrames(frame);
+        KiDumpFailedServices();
         PspTerminateProcess(process, STATUS_STACK_BUFFER_OVERRUN);
         KiExitToUserMode(frame);
         return;

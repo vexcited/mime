@@ -325,6 +325,43 @@ static const char *service_name(ULONG table, ULONG index)
     return "?";
 }
 
+/* an error of a service is remembered by its process. the kernel lock is held. */
+static void note_failed_service(ULONG index, NTSTATUS status)
+{
+    PEPROCESS process = PsCurrentProcess();
+    ULONG thread = (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread;
+    ULONG64 now = HalReadCounter();
+    if (process->FailedServiceCount) {
+        auto last = &process->FailedServices[(process->FailedServiceCount - 1) % PS_FAILED_SERVICES];
+        if (last->Service == index && last->Status == status && last->Thread == thread) {
+            if (last->Repeats != 0xFFFF)
+                last->Repeats++;
+            last->Time = now;
+            return;
+        }
+    }
+    auto entry = &process->FailedServices[process->FailedServiceCount++ % PS_FAILED_SERVICES];
+    entry->Service = (USHORT)index;
+    entry->Repeats = 0;
+    entry->Thread = thread;
+    entry->Status = status;
+    entry->Time = now;
+}
+
+/* the services that failed in the process before it crashed, oldest first, with how long before now. */
+void KiDumpFailedServices(void)
+{
+    PEPROCESS process = PsCurrentProcess();
+    ULONG count = process->FailedServiceCount;
+    ULONG64 now = HalReadCounter();
+    for (ULONG i = count > PS_FAILED_SERVICES ? count - PS_FAILED_SERVICES : 0; i < count; i++) {
+        auto entry = &process->FailedServices[i % PS_FAILED_SERVICES];
+        KiLogPrintf("  %s failed with %08x in thread %u, %llu ms before, %u more times in a row",
+                    service_name(0, entry->Service), (ULONG)entry->Status, entry->Thread,
+                    HalCounterToHns(now - entry->Time) / 10000, (ULONG)entry->Repeats);
+    }
+}
+
 /* what a service leaves to do once it has its result. the kernel lock is held and interrupts are on. */
 static void finish_service(PKTHREAD thread, PKTRAP_FRAME frame, ULONG table, ULONG index, ULONG64 result,
                            ULONG64 entry_pc)
@@ -335,6 +372,8 @@ static void finish_service(PKTHREAD thread, PKTRAP_FRAME frame, ULONG table, ULO
         KiLogPrintf("service %s returned at irql %u", service_name(table, index), (ULONG)left);
         KeLowerIrql(PASSIVE_LEVEL);
     }
+    if (!table && (ULONG)result >> 30 == 3)
+        note_failed_service(index, (NTSTATUS)result);
     KI_SERVICE_RESULT(frame) = result;
     if (thread->ContextSetInService) {
         thread->ContextSetInService = FALSE;
