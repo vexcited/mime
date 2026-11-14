@@ -134,7 +134,8 @@ static void cfb_release(void *memory)
     LocalFree(memory);
 }
 
-LONG WtVerifyInstaller(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain)
+LONG WtVerifyInstaller(const BYTE *bytes, DWORD size, const WINTRUST_DATA *options, PCCERT_CHAIN_CONTEXT *chain,
+                       DWORD *signer_count)
 {
     MIME_CFB file;
     if (!MimeCfbOpen(&file, bytes, size, cfb_allocate, cfb_release))
@@ -180,7 +181,7 @@ LONG WtVerifyInstaller(const BYTE *bytes, DWORD size, const WINTRUST_DATA *optio
             }
             if (ok && walk(&collect, 0, TRUE)) {
                 WT_SUBJECT subject = {.digest_input = input, .digest_size = collect.Size, .installer = TRUE};
-                result = WtVerifySignedData((WT_BYTES){sig, (DWORD)item.Size}, &subject, options, chain);
+                result = WtVerifySignedData((WT_BYTES){sig, (DWORD)item.Size}, &subject, options, chain, signer_count);
             }
         }
         LocalFree(sig);
