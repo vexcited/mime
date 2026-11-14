@@ -553,6 +553,9 @@ typedef struct HostInstance {
     uint32_t refs;
     bool presented; /* made a surface of a window, see instance_release. */
     MvkConnection base; /* the library, the instance and its commands, never a device. */
+    /* the extensions the host has and the ones the instance was made with, see instance_covers. */
+    VkExtensionProperties *offered, *enabled;
+    uint32_t offered_count, enabled_count;
     Spare spares[SPARES_MAX];
 } HostInstance;
 
@@ -599,13 +602,20 @@ static HostInstance *instance_make(VkInstanceCreateInfo info, MvkDecoder *d, VkR
     }
     info.enabledLayerCount = 0;
     info.ppEnabledLayerNames = nullptr;
-    free(list);
     info.enabledExtensionCount = n;
     info.ppEnabledExtensionNames = names;
+    hi->offered = list;
+    hi->offered_count = count;
+    hi->enabled = calloc(n ? n : 1, sizeof(*hi->enabled));
+    for (uint32_t i = 0; hi->enabled && i < n; i++)
+        snprintf(hi->enabled[i].extensionName, sizeof(hi->enabled[i].extensionName), "%s", names[i]);
+    hi->enabled_count = hi->enabled ? n : 0;
     PFN_vkCreateInstance create = (PFN_vkCreateInstance)b->gipa(nullptr, "vkCreateInstance");
-    *result = create(&info, nullptr, &b->instance);
+    *result = hi->enabled ? create(&info, nullptr, &b->instance) : VK_ERROR_OUT_OF_HOST_MEMORY;
     if (*result != VK_SUCCESS) {
         dlclose(b->library);
+        free(hi->offered);
+        free(hi->enabled);
         free(hi);
         return nullptr;
     }
@@ -673,7 +683,19 @@ static void instance_release(HostInstance *hi)
     mime_gpu_teardown_leave();
     dlclose(hi->base.library);
     request_free(&hi->key);
+    free(hi->offered);
+    free(hi->enabled);
     free(hi);
+}
+
+/* whether the instance has every extension a request names, leaving out the ones the host lacks as instance_make does. */
+static bool instance_covers(const HostInstance *hi, const VkInstanceCreateInfo *info)
+{
+    for (uint32_t i = 0; i < info->enabledExtensionCount; i++)
+        if (host_has(hi->offered, hi->offered_count, info->ppEnabledExtensionNames[i]) &&
+            !host_has(hi->enabled, hi->enabled_count, info->ppEnabledExtensionNames[i]))
+            return false;
+    return true;
 }
 
 static void create_instance(MvkCall *call)
@@ -685,7 +707,16 @@ static void create_instance(MvkCall *call)
     mvk_get_VkInstanceCreateInfo(d, &info);
     MvkEncoder *e = mvk_reply_begin(call);
     VkResult result = VK_ERROR_INITIALIZATION_FAILED;
-    if (!d->error && load_library(c) && !c->instance) {
+    if (!d->error && c->instance) {
+        /*
+         * a process has one host instance. another instance of the guest is that one too, as the one a program
+         * makes after dxgi made its own to list the adapters, or after it destroyed its first.
+         */
+        if (c->host_instance && instance_covers(c->host_instance, &info)) {
+            bind(c, id, (uint64_t)(uintptr_t)c->instance);
+            result = VK_SUCCESS;
+        }
+    } else if (!d->error && load_library(c)) {
         Request key = {};
         static const size_t id_at = 0;
         request_make(&key, d, &id_at, 1);
