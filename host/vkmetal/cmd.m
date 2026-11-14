@@ -1431,7 +1431,7 @@ typedef struct Stages {
     uint8_t topology_class, discard;
 } Stages;
 
-static id<MTLRenderPipelineState> resolve_pipeline(VkCommandBuffer cmd, const Stages *st, bool *zero)
+static id resolve_pipeline(VkCommandBuffer cmd, const Stages *st, bool *zero)
 {
     VkmGfxState *s = STATE(cmd);
     const VkmDynamic *d = &s->dyn;
@@ -1602,7 +1602,7 @@ static bool prepare_stages(VkCommandBuffer cmd, const Stages *st)
     vkm_pass_writes(cmd, draw_writes(s, st));
     bool zero = false;
     if (s->pipeline_dirty || !s->set_pipeline) {
-        id<MTLRenderPipelineState> pipeline = resolve_pipeline(cmd, st, &zero);
+        id pipeline = resolve_pipeline(cmd, st, &zero);
         if (!pipeline)
             return false;
         if (pipeline != s->set_pipeline) {
@@ -1832,7 +1832,7 @@ static void xfb_pass(VkCommandBuffer cmd, VkmXfbParams *p, const VkmXfb *layout)
         memcpy(p->entries, layout->entries, sizeof(p->entries));
     }
     *x = *p;
-    VkmOpObject *o = vkm_emit(cmd, VKM_OP_PIPELINE, sizeof(*o));
+    VkmOpObject *o = vkm_emit(cmd, VKM_OP_PIPELINE_STATE, sizeof(*o));
     if (o)
         o->object = pipeline;
     s->set_pipeline = pipeline;

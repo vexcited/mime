@@ -97,7 +97,8 @@ struct VkmGfxStatic {
 enum {
     VKM_OP_BEGIN_RENDER = 1,
     VKM_OP_END_RENDER,
-    VKM_OP_PIPELINE,
+    VKM_OP_PIPELINE,       /* a draw's, from vkm_render_pipeline. */
+    VKM_OP_PIPELINE_STATE, /* a render pipeline state the driver made itself. */
     VKM_OP_DEPTH_STATE,
     VKM_OP_RASTER,
     VKM_OP_VIEWPORTS,
@@ -447,7 +448,7 @@ struct VkmGfxState {
     bool icb; /* the next pipeline is resolved for indirect command buffers. */
 
     /* the state the list has set since the encoder began. */
-    id<MTLRenderPipelineState> set_pipeline;
+    id set_pipeline; /* what the last VKM_OP_PIPELINE or VKM_OP_PIPELINE_STATE had. */
     id<MTLDepthStencilState> set_depth;
     id<MTLComputePipelineState> set_compute;
     uint64_t set_buffers[2][31];
