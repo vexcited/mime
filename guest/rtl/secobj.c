@@ -320,20 +320,27 @@ static PACL acl_from(BUFFER *aces, USHORT count, UCHAR revision)
 /*
  * appends the creator's aces, all of them or only the explicit ones. the header is not trusted: windows walks the
  * aces by their count, whatever the revision and the size say, and the list it makes has a header of its own.
+ * an ace too short for its header and mask is refused. windows copies it and leaves the kernel to refuse the list,
+ * so the status is a guess.
  */
-static BOOLEAN keep_aces(BUFFER *out, const ACL *acl, BOOLEAN explicit_only, USHORT *count, UCHAR *revision)
+static NTSTATUS keep_aces(BUFFER *out, const ACL *acl, BOOLEAN explicit_only, USHORT *count, UCHAR *revision)
 {
     const UCHAR *ace = (const UCHAR *)(acl + 1);
     for (ULONG i = 0; i < acl->AceCount; i++, ace += *(const USHORT *)(ace + 2)) {
+        ULONG size = *(const USHORT *)(ace + 2);
+        if (size < 8)
+            return STATUS_INVALID_ACL;
         if (explicit_only && (ace[1] & INHERITED_ACE))
             continue;
-        if (!buffer_put(out, ace, *(const USHORT *)(ace + 2)))
-            return FALSE;
+        if (8 + out->length + size > 0xFFFF)
+            return STATUS_BAD_INHERITANCE_ACL;
+        if (!buffer_put(out, ace, size))
+            return STATUS_NO_MEMORY;
         (*count)++;
     }
     if (acl->AclRevision > *revision)
         *revision = acl->AclRevision;
-    return TRUE;
+    return STATUS_SUCCESS;
 }
 
 /* ---------------------------------------------------------------- descriptors */
@@ -429,15 +436,14 @@ static NTSTATUS build_list(INHERIT *in, const ACL *creator_acl, BOOLEAN creator_
     *present = FALSE;
 
     if (explicit_present && creator_acl) {
-        if (!keep_aces(&aces, creator_acl, in->auto_inherit, &count, &revision))
-            return STATUS_NO_MEMORY;
-        if (in->mapping) {
+        status = keep_aces(&aces, creator_acl, in->auto_inherit, &count, &revision);
+        if (NT_SUCCESS(status) && in->mapping) {
             UCHAR *ace = aces.data;
             for (USHORT i = 0; i < count; i++, ace += *(USHORT *)(ace + 2))
                 map_ace(ace, in->mapping);
         }
     }
-    if (!protect && parent_acl && (in->auto_inherit || !explicit_present))
+    if (NT_SUCCESS(status) && !protect && parent_acl && (in->auto_inherit || !explicit_present))
         status = inherit_aces(in, parent_acl, &aces, &count, &revision);
     if (NT_SUCCESS(status) && (count || (explicit_present && creator_acl))) {
         if (8 + aces.length > 0xFFFF) {
