@@ -157,10 +157,89 @@ static void report_callers(const CONTEXT *start)
         DbgPrint("  called from %s\n", where);
     }
 }
+
+#define REPORT_TEXT_MIN 6
+#define REPORT_TEXT_MAX 200
+
+/* the text at an address of the program, narrow or wide, or nothing when it is not text. */
+static BOOL program_text(ULONG64 address, char *out)
+{
+    if (address < 0x10000 || IsBadReadPtr((PVOID)address, 2))
+        return FALSE;
+    const UCHAR *bytes = (const UCHAR *)address;
+    BOOL wide = !bytes[1] && !(address & 1);
+    SIZE_T step = wide ? 2 : 1, n = 0;
+    for (; n + 1 < REPORT_TEXT_MAX; n++) {
+        const UCHAR *at = bytes + n * step;
+        /* a page is checked once, when the text enters it. */
+        if ((!n || !((ULONG_PTR)at & 0xFFF)) && IsBadReadPtr(at, step))
+            break;
+        UCHAR c = at[0];
+        if (wide && at[1])
+            return FALSE;
+        if (!c)
+            break;
+        if (c == '\n' || c == '\r' || c == '\t')
+            c = ' ';
+        if (c < 0x20 || c > 0x7E)
+            return FALSE;
+        out[n] = (char)c;
+    }
+    out[n] = 0;
+    return n >= REPORT_TEXT_MIN;
+}
+
+/* a failed check of the program often holds its message in a register or on the stack, or one pointer further. */
+static void report_text(const char *name, ULONG index, ULONG64 value)
+{
+    char text[REPORT_TEXT_MAX], where[32];
+    if (index == ~0u)
+        KbFormatA(where, sizeof(where), "%s", name);
+    else
+        KbFormatA(where, sizeof(where), "%s %u", name, index);
+    if (program_text(value, text)) {
+        DbgPrint("  %s is the text \"%s\"\n", where, text);
+        return;
+    }
+    if (value < 0x10000 || (value & 7) || IsBadReadPtr((PVOID)value, 4 * sizeof(ULONG64)))
+        return;
+    for (ULONG i = 0; i < 4; i++)
+        if (program_text(((const ULONG64 *)value)[i], text))
+            DbgPrint("  %s holds at pointer %u the text \"%s\"\n", where, i, text);
+}
+
+static void report_state(const CONTEXT *context, DWORD last_error)
+{
+    DbgPrint("  last error %u, rax %p rcx %p rdx %p r8 %p r9 %p\n", last_error, (PVOID)context->Rax,
+             (PVOID)context->Rcx, (PVOID)context->Rdx, (PVOID)context->R8, (PVOID)context->R9);
+    const UCHAR *code = (const UCHAR *)context->Rip - 16;
+    if (!IsBadReadPtr(code, 32)) {
+        char hex[32 * 3 + 1];
+        for (int i = 0; i < 32; i++)
+            KbFormatA(hex + i * 3, 4, "%02x ", code[i]);
+        DbgPrint("  code from 16 bytes before: %s\n", hex);
+    }
+    /* rax to r15 lie in this order in the context. */
+    static const char *const names[16] = {"rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
+                                          "r8",  "r9",  "r10", "r11", "r12", "r13", "r14", "r15"};
+    const ULONG64 *registers = &context->Rax;
+    for (ULONG i = 0; i < 16; i++)
+        if (i != 4)
+            report_text(names[i], ~0u, registers[i]);
+    PTEB teb = NtCurrentTeb();
+    const ULONG64 *stack = (const ULONG64 *)context->Rsp;
+    for (ULONG i = 0; i < 96; i++) {
+        if ((ULONG64)(stack + i) < (ULONG64)teb->NtTib.StackLimit ||
+            (ULONG64)(stack + i + 1) > (ULONG64)teb->NtTib.StackBase)
+            break;
+        report_text("stack slot", i, stack[i]);
+    }
+}
 #endif
 
 LONG WINAPI UnhandledExceptionFilter(PEXCEPTION_POINTERS info)
 {
+    [[maybe_unused]] DWORD last_error = GetLastError();
     /* a nested exception is not reported or filtered again: the first one ends the process. */
     if (info && info->ExceptionRecord && (info->ExceptionRecord->ExceptionFlags & EXCEPTION_NESTED_CALL))
         return EXCEPTION_CONTINUE_SEARCH;
@@ -189,8 +268,10 @@ LONG WINAPI UnhandledExceptionFilter(PEXCEPTION_POINTERS info)
         if (r->ExceptionCode == VCPP_LOAD_FAILED || r->ExceptionCode == VCPP_PROC_FAILED)
             report_delay_load(r);
 #if defined(__x86_64__)
-        if (info->ContextRecord)
+        if (info->ContextRecord) {
             report_callers(info->ContextRecord);
+            report_state(info->ContextRecord, last_error);
+        }
 #endif
     }
     return EXCEPTION_EXECUTE_HANDLER;
