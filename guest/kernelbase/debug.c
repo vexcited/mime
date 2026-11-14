@@ -505,6 +505,12 @@ HRESULT WINAPI WerRegisterMemoryBlock(PVOID address, DWORD size)
     return S_OK;
 }
 
+/* nothing is ever registered, so nothing is ever removed. */
+HRESULT WINAPI WerUnregisterMemoryBlock(PVOID address)
+{
+    return address ? S_OK : E_INVALIDARG;
+}
+
 HRESULT WINAPI WerRegisterCustomMetadata(PCWSTR key, PCWSTR value)
 {
     return key && value ? S_OK : E_INVALIDARG;

@@ -582,6 +582,14 @@ DECLSPEC_EXPORT LONG WINAPI GetCurrentPackagePath(UINT32 *length, PWSTR path)
     return APPMODEL_ERROR_NO_PACKAGE;
 }
 
+/* the folder type, 0 to 5, does not matter when no package is installed. */
+DECLSPEC_EXPORT LONG WINAPI GetCurrentPackagePath2(UINT32 path_type, UINT32 *length, PWSTR path)
+{
+    if (path_type > 5 || !length || (*length && !path))
+        return ERROR_INVALID_PARAMETER;
+    return APPMODEL_ERROR_NO_PACKAGE;
+}
+
 DECLSPEC_EXPORT LONG WINAPI GetPackageId(HANDLE process, UINT32 *length, BYTE *buffer)
 {
     if (!process || !length)
