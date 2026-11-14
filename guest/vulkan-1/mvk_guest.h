@@ -110,6 +110,8 @@ void mvk_cmd_end(VkCommandBuffer buffer, MvkEncoder *e);
 typedef struct MvkProc {
     const char *name;
     PFN_vkVoidFunction fn;
+    /* its first argument is a physical device, set in the generated table only. */
+    int physical;
 } MvkProc;
 extern const MvkProc mvk_procs[];
 /* video.c: private commands. */

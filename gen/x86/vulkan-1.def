@@ -244,3 +244,6 @@ EXPORTS
     vkUpdateDescriptorSets=_vkUpdateDescriptorSets@20
     vkWaitForFences=_vkWaitForFences@24
     vkWaitSemaphores=_vkWaitSemaphores@16
+    vk_icdGetInstanceProcAddr=_vk_icdGetInstanceProcAddr@8
+    vk_icdGetPhysicalDeviceProcAddr=_vk_icdGetPhysicalDeviceProcAddr@8
+    vk_icdNegotiateLoaderICDInterfaceVersion=_vk_icdNegotiateLoaderICDInterfaceVersion@4
