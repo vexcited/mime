@@ -819,6 +819,9 @@ static inline HWND WndHandle(WND *w)
     return w ? (HWND)w->Header.Handle : nullptr;
 }
 BOOLEAN WndIsTopLevel(WND *w); /* direct child of the desktop. */
+/* false for a top level window on a host desktop that has no place for a minimized one: it has no minimize button
+ * then and stays as it is when it is asked to minimize, which windows itself never does. */
+BOOLEAN WndCanMinimize(WND *w);
 void WndPhysicalRect(const WND *w, RECT *out);
 UINT WndMonitorDpi(const WND *w);
 LONG WndToPhysical(const WND *w, LONG value);
@@ -1162,6 +1165,7 @@ typedef struct W32_DISPLAY {
     UINT RefreshHz;
     DWORD Bits; /* of the display mode a program set, 32 otherwise. */
     BOOLEAN Stretch; /* the host stretches the windows of a program that is not dpi aware. */
+    BOOLEAN NoMinimize; /* the desktop of the host has no place for a minimized window. */
 } W32_DISPLAY;
 
 extern W32_DISPLAY W32Display;

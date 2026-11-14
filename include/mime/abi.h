@@ -82,6 +82,7 @@ typedef struct MimeDisplayInfo {
 } MimeDisplayInfo;
 
 #define MIME_DISPLAY_STRETCH 0x1 /* windows drawn at a lower dpi than the display's are stretched by the host, see MimeWinConfig. */
+#define MIME_DISPLAY_NO_MINIMIZE 0x2 /* the desktop of the host has no place for a minimized window, as a tiling one. */
 
 /*
  * MIME_HC_TRAY manages notification icons, balloons and menus. commands occupy up to MIME_TRAY_COMMAND_SIZE
