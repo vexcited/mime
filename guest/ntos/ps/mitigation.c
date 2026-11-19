@@ -203,8 +203,8 @@ NTSTATUS PspQueryMitigationPolicy(PEPROCESS process, PVOID info, ULONG length, P
     case MIME_POLICY_REDIRECTION_TRUST:
     case MIME_POLICY_USER_POINTER_AUTH:
         break;
-    default:
-        return STATUS_INVALID_PARAMETER;
+    default: /* measured on windows 11 26300 with a policy that does not exist. */
+        return STATUS_NOT_SUPPORTED;
     }
     request[1] = process->MitigationPolicy[policy];
     status = KiCopyToUser(info, request, sizeof(request));

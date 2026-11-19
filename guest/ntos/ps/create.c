@@ -47,9 +47,19 @@ static PVOID arena_alloc(USER_ARENA *a, SIZE_T size)
     return a->Base + off;
 }
 
-static BOOLEAN arena_string(USER_ARENA *a, PUNICODE_STRING dst, const WCHAR *src, SIZE_T chars)
+/* the next bytes, with no padding before them: the strings of the process parameters lie one after the other. */
+static PVOID packed_alloc(USER_ARENA *a, SIZE_T size)
 {
-    PWSTR buf = arena_alloc(a, (chars + 1) * sizeof(WCHAR));
+    if (a->Used + size > a->Size)
+        return nullptr;
+    PVOID at = a->Base + a->Used;
+    a->Used += size;
+    return at;
+}
+
+static BOOLEAN packed_string(USER_ARENA *a, PUNICODE_STRING dst, const WCHAR *src, SIZE_T chars)
+{
+    PWSTR buf = packed_alloc(a, (chars + 1) * sizeof(WCHAR));
     if (!buf)
         return FALSE;
     memcpy(buf, src, chars * sizeof(WCHAR));
@@ -61,8 +71,10 @@ static BOOLEAN arena_string(USER_ARENA *a, PUNICODE_STRING dst, const WCHAR *src
 }
 
 /*
- * the 32-bit peb of a 32-bit process, below 2 GiB, mirroring what the 64-bit peb says about the process.
- * the 32-bit layer adds the 32-bit process parameters.
+ * the 32-bit peb of a 32-bit process, below 2 GiB, mirroring what the 64-bit peb says about the process: the fields
+ * MiInitializeWowPeb of ntoskrnl 26300 copies, the view of the api set schema MmMapApiSetView names in both pebs, and
+ * the processor feature mask KeCopyXfdMaskToPeb writes to both. the process parameters follow, see
+ * thunk_process_parameters.
  */
 static NTSTATUS setup_wow64_peb(PEPROCESS process)
 {
@@ -90,9 +102,129 @@ static NTSTATUS setup_wow64_peb(PEPROCESS process)
     peb->HeapDeCommitFreeBlockThreshold = (ULONG)native->HeapDeCommitFreeBlockThreshold;
     peb->MaximumNumberOfHeaps = native->MaximumNumberOfHeaps;
     peb->SessionId = native->SessionId;
+    peb->InheritedAddressSpace = native->InheritedAddressSpace;
+    peb->BitField = native->BitField;
+    peb->Mutant = (ULONG)(ULONG_PTR)native->Mutant;
+    peb->NtGlobalFlag = native->NtGlobalFlag;
+    peb->OSCSDVersion = native->OSCSDVersion;
+    peb->ApiSetMap = (ULONG)(ULONG_PTR)native->ApiSetMap;
+    /* a 32-bit heap reserves no more than 1 MiB unless the image asks for less than 1 GiB, and commits within that. */
+    if (peb->HeapSegmentReserve > 0x40000000)
+        peb->HeapSegmentReserve = 0x100000;
+    if (peb->HeapSegmentCommit > peb->HeapSegmentReserve)
+        peb->HeapSegmentCommit = 0x2000;
+    PUCHAR raw = base;
+    *(PULONG)(raw + 0x208) = (ULONG)native->MinimumStackCommit;
+    *(PUSHORT)(raw + MIME_PEB32_ACTIVE_CODE_PAGE) = native->ActiveCodePage;
+    *(PUSHORT)(raw + MIME_PEB32_OEM_CODE_PAGE) = native->OemCodePage;
+    *(PUSHORT)(raw + MIME_PEB32_USE_CASE_MAPPING) = native->UseCaseMapping;
+    *(PULONG)(raw + 0x470) = (ULONG)(ULONG_PTR)native->LeapSecondData;
+    *(PULONG)(raw + 0x474) = native->LeapSecondFlags;
+    *(PULONG)(raw + 0x478) = native->NtGlobalFlag2;
+    *(PULONG64)(raw + 0x480) = native->ExtendedFeatureDisableMask;
     process->Wow64Peb = peb;
     return STATUS_SUCCESS;
 }
+
+/* copies a string of the 64-bit parameters to the 32-bit block whole, as long as its room. */
+static void thunk_string(MIME_STRING32 *to, const UNICODE_STRING *from, PUCHAR *at)
+{
+    to->Length = from->Length;
+    to->MaximumLength = from->MaximumLength;
+    to->Buffer = 0;
+    if (!from->Buffer)
+        return;
+    to->Buffer = (ULONG)(ULONG_PTR)*at;
+    memcpy(*at, from->Buffer, from->MaximumLength);
+    *at += from->MaximumLength;
+}
+
+/*
+ * like PspWow64ThunkProcessParameters of ntoskrnl 26300: the 32-bit process parameters, a block of their own in
+ * the 32-bit peb. the structure, then each string with the whole of its room in the order of the structure, then the
+ * environment, which starts as far from the block as in the 64-bit one less what the structure is smaller by. the
+ * runtime data keeps its count and flags, and each of its handles becomes 32 bits.
+ */
+static NTSTATUS thunk_process_parameters(PEPROCESS process)
+{
+    const RTL_USER_PROCESS_PARAMETERS *pp = process->Peb->ProcessParameters;
+    MIME_PEB32 *peb32 = process->Wow64Peb;
+    ULONG smaller = sizeof(RTL_USER_PROCESS_PARAMETERS) - sizeof(MIME_PARAMETERS32) - (pp->DefaultThreadpoolCpuSetMaskCount ? 4 : 0);
+    ULONG strings = pp->MaximumLength - smaller;
+    SIZE_T size = strings + pp->EnvironmentSize;
+    PVOID base = nullptr;
+    NTSTATUS status = MiAllocateVirtual(process, &base, &size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    if (!NT_SUCCESS(status))
+        return status;
+    MIME_PARAMETERS32 *p32 = base;
+    PUCHAR at = (PUCHAR)(p32 + 1);
+    p32->MaximumLength = p32->Length = strings + (ULONG)pp->EnvironmentSize;
+    p32->Flags = pp->Flags;
+    p32->DebugFlags = pp->DebugFlags;
+    p32->ConsoleHandle = (ULONG)(ULONG_PTR)pp->ConsoleHandle;
+    p32->ConsoleFlags = pp->ConsoleFlags;
+    p32->StandardInput = (ULONG)(ULONG_PTR)pp->StandardInput;
+    p32->StandardOutput = (ULONG)(ULONG_PTR)pp->StandardOutput;
+    p32->StandardError = (ULONG)(ULONG_PTR)pp->StandardError;
+    p32->StartingX = pp->StartingX;
+    p32->StartingY = pp->StartingY;
+    p32->CountX = pp->CountX;
+    p32->CountY = pp->CountY;
+    p32->CountCharsX = pp->CountCharsX;
+    p32->CountCharsY = pp->CountCharsY;
+    p32->FillAttribute = pp->FillAttribute;
+    p32->WindowFlags = pp->WindowFlags;
+    p32->ShowWindowFlags = pp->ShowWindowFlags;
+    p32->LoaderThreads = pp->LoaderThreads;
+    p32->DefaultThreadpoolThreadMaximum = pp->DefaultThreadpoolThreadMaximum;
+    thunk_string(&p32->CurrentDirectory, &pp->CurrentDirectory.DosPath, &at);
+    p32->CurrentDirectoryHandle = (ULONG)(ULONG_PTR)pp->CurrentDirectory.Handle;
+    thunk_string(&p32->DllPath, &pp->DllPath, &at);
+    thunk_string(&p32->ImagePathName, &pp->ImagePathName, &at);
+    thunk_string(&p32->CommandLine, &pp->CommandLine, &at);
+    thunk_string(&p32->WindowTitle, &pp->WindowTitle, &at);
+    thunk_string(&p32->DesktopInfo, &pp->DesktopInfo, &at);
+    thunk_string(&p32->ShellInfo, &pp->ShellInfo, &at);
+    thunk_string(&p32->RedirectionDllName, &pp->RedirectionDllName, &at);
+    thunk_string(&p32->HeapPartitionName, &pp->HeapPartitionName, &at);
+    if (pp->RuntimeData.Length && pp->RuntimeData.Buffer) {
+        const UCHAR *from = (const UCHAR *)pp->RuntimeData.Buffer;
+        ULONG length = pp->RuntimeData.Length, count = length >= 4 ? *(const ULONG *)from : 0;
+        ULONG64 wide = (ULONG64)count * 9 + 4;
+        p32->RuntimeData.Buffer = (ULONG)(ULONG_PTR)at;
+        if (length >= wide) {
+            memcpy(at, from, count + 4);
+            const ULONG64 *handles = (const ULONG64 *)(from + 4 + count);
+            PULONG narrow = (PULONG)(at + 4 + count);
+            for (ULONG i = 0; i < count; i++)
+                narrow[i] = (ULONG)handles[i];
+            memcpy(narrow + count, handles + count, length - wide);
+            p32->RuntimeData.Length = (USHORT)(length - wide + 5 * count + 4);
+        } else {
+            memcpy(at, from, length);
+            p32->RuntimeData.Length = (USHORT)length;
+        }
+        p32->RuntimeData.MaximumLength = p32->RuntimeData.Length;
+        at += p32->RuntimeData.Length;
+    }
+    if (pp->DefaultThreadpoolCpuSetMaskCount) {
+        at = (PUCHAR)(((ULONG_PTR)at + 3) & ~(ULONG_PTR)3);
+        p32->DefaultThreadpoolCpuSetMaskCount = pp->DefaultThreadpoolCpuSetMaskCount;
+        p32->DefaultThreadpoolCpuSetMasks = (ULONG)(ULONG_PTR)at;
+        memcpy(at, pp->DefaultThreadpoolCpuSetMasks, 8ull * pp->DefaultThreadpoolCpuSetMaskCount);
+    }
+    PUCHAR environment = (PUCHAR)base + strings;
+    p32->Environment = (ULONG)(ULONG_PTR)environment;
+    p32->EnvironmentSize = (ULONG)pp->EnvironmentSize;
+    p32->EnvironmentVersion = (ULONG)pp->EnvironmentVersion;
+    p32->ProcessGroupId = pp->ProcessGroupId;
+    memcpy(environment, pp->Environment, pp->EnvironmentSize);
+    peb32->ProcessParameters = (ULONG)(ULONG_PTR)p32;
+    return STATUS_SUCCESS;
+}
+
+/* windows keeps the peb in one page, and the teb of the first thread starts on the next. */
+_Static_assert(sizeof(PEB) <= PAGE_SIZE, "the peb is one page");
 
 static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
 {
@@ -108,14 +240,26 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     if (!NT_SUCCESS(status))
         return status;
     SIZE_T size = 64 * 1024 + environment_bytes + p->RuntimeDataLength + p->WindowTitle.Length + p->DesktopInfo.Length;
-    PVOID base = nullptr;
-    status = MiAllocateVirtual(process, &base, &size, MEM_RESERVE | MEM_COMMIT | MEM_TOP_DOWN, PAGE_READWRITE);
+    PVOID base = nullptr, peb_page = nullptr;
+    /*
+     * like windows, the peb is a page among the tebs, see MiAllocatePebOrTeb, and the parameters are an allocation
+     * of their own where a search from below starts, which the system dll releases whole once it has copied them
+     * to its heap. the peb of a 32-bit program is a block of its own, as before.
+     */
+    if (process->Machine == IMAGE_FILE_MACHINE_I386) {
+        SIZE_T peb_size = PAGE_SIZE;
+        status = MiAllocateThreadMemory(process, &peb_page, &peb_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    } else {
+        status = MiAllocatePebOrTeb(process, sizeof(PEB), TRUE, &peb_page);
+    }
+    if (NT_SUCCESS(status))
+        status = MiAllocateVirtual(process, &base, &size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     if (!NT_SUCCESS(status)) {
         ExFreePool(environment);
         return status;
     }
     USER_ARENA a = {base, 0, size};
-    PPEB peb = arena_alloc(&a, sizeof(PEB));
+    PPEB peb = peb_page;
     PRTL_USER_PROCESS_PARAMETERS pp = arena_alloc(&a, sizeof(RTL_USER_PROCESS_PARAMETERS));
     if (!peb || !pp) {
         ExFreePool(environment);
@@ -125,6 +269,11 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     memset(pp, 0, sizeof(*pp));
     PSECTION img = process->ImageSection;
 
+    /* like MmCreatePeb on 26300: no mutant, the relocation bit of an image away from its base, an empty worker list. */
+    peb->Mutant = (HANDLE)-1;
+    if ((ULONG_PTR)process->SectionBaseAddress != img->Image.ImageBase)
+        peb->BitField |= PEB_IMAGE_DYNAMICALLY_RELOCATED;
+    InitializeListHead(&peb->TppWorkerpList);
     peb->ImageBaseAddress = process->SectionBaseAddress;
     peb->ProcessParameters = pp;
     peb->NumberOfProcessors = HalBootInfo->cpu_count;
@@ -145,6 +294,12 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     peb->SessionId = process->SessionId;
     peb->ActiveCodePage = HalBootInfo->ansi_code_page ? HalBootInfo->ansi_code_page : 1252;
     peb->OemCodePage = HalBootInfo->oem_code_page ? HalBootInfo->oem_code_page : 437;
+    peb->UseCaseMapping = 0x6a5; /* read on 26300, the same in every process. */
+    extern BOOLEAN PspLoaderLog;
+    if (PspLoaderLog) {
+        peb->NtGlobalFlag |= 2; /* test: let the loader DbgPrint its own log. */
+        SharedUserData->KdDebuggerEnabled = 3; /* test: prints go through int 2d. */
+    }
 
     pp->Flags = RTL_USER_PROC_PARAMS_NORMALIZED;
     pp->ShowWindowFlags = p->ShowWindowFlags;
@@ -162,50 +317,53 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     pp->CountCharsY = p->CountCharsY;
     pp->FillAttribute = p->FillAttribute;
     PCUNICODE_STRING title = p->WindowTitle.Length ? &p->WindowTitle : image;
-    BOOLEAN ok = arena_string(&a, &pp->ImagePathName, image->Buffer, image->Length / sizeof(WCHAR)) &&
-                 arena_string(&a, &pp->CommandLine, cmdline->Buffer, cmdline->Length / sizeof(WCHAR)) &&
-                 arena_string(&a, &pp->WindowTitle, title->Buffer, title->Length / sizeof(WCHAR)) &&
-                 (p->DesktopInfo.Length
-                      ? arena_string(&a, &pp->DesktopInfo, p->DesktopInfo.Buffer, p->DesktopInfo.Length / sizeof(WCHAR))
-                      : arena_string(&a, &pp->DesktopInfo, L"WinSta0\\Default", 15)) &&
-                 arena_string(&a, &pp->ShellInfo, L"", 0);
-    /* the runtime data is bytes: the c library's inherited file descriptors. */
-    PUCHAR runtime = ok ? arena_alloc(&a, p->RuntimeDataLength + sizeof(WCHAR)) : nullptr;
-    if (runtime) {
-        memcpy(runtime, p->RuntimeData, p->RuntimeDataLength);
-        memset(runtime + p->RuntimeDataLength, 0, sizeof(WCHAR));
-        pp->RuntimeData.Buffer = (PWSTR)runtime;
-        pp->RuntimeData.Length = p->RuntimeDataLength;
-        pp->RuntimeData.MaximumLength = (USHORT)(p->RuntimeDataLength + sizeof(WCHAR));
-    }
-    ok = ok && runtime;
-    /* like Windows, the current directory always ends with a backslash. */
+    /*
+     * measured on windows 11 26300 in a suspended child, scratch/dlls/probe/ppchild.c of the research repository: the
+     * block starts its allocation and is one piece. the strings follow the structure with nothing between them, the
+     * current directory first with the room of a whole path, and both lengths tell the structure and the strings.
+     * the dll path is empty, a program without runtime data has no buffer for it, and the environment begins where
+     * the block ends. the loader of windows copies as many bytes as the length tells to its heap, moves each string
+     * by the same step and frees the allocation.
+     */
+    /* like windows, the current directory always ends with a backslash. */
     WCHAR dir[MIME_IMAGE_NAME_CHARS + 2];
     SIZE_T dlen = cwd->Length / sizeof(WCHAR);
-    if (dlen > MIME_IMAGE_NAME_CHARS)
-        dlen = MIME_IMAGE_NAME_CHARS;
+    if (dlen > MIME_IMAGE_NAME_CHARS - 2)
+        dlen = MIME_IMAGE_NAME_CHARS - 2;
     memcpy(dir, cwd->Buffer, dlen * sizeof(WCHAR));
     if (!dlen || dir[dlen - 1] != '\\')
         dir[dlen++] = '\\';
-    UNICODE_STRING cur;
-    ok = ok && arena_string(&a, &cur, dir, dlen);
+    /* the room SetCurrentDirectory grows the path in. */
+    PWSTR current = packed_alloc(&a, MIME_IMAGE_NAME_CHARS * sizeof(WCHAR));
+    BOOLEAN ok = current != nullptr;
     if (ok) {
-        pp->CurrentDirectory.DosPath = cur;
-        pp->CurrentDirectory.DosPath.MaximumLength = (USHORT)((MIME_IMAGE_NAME_CHARS + 1) * sizeof(WCHAR));
-        /* reserve room so SetCurrentDirectory can grow the path in place. */
-        PWSTR grow = arena_alloc(&a, (MIME_IMAGE_NAME_CHARS + 1) * sizeof(WCHAR));
-        if (grow) {
-            memcpy(grow, cur.Buffer, cur.Length + sizeof(WCHAR));
-            pp->CurrentDirectory.DosPath.Buffer = grow;
+        memset(current, 0, MIME_IMAGE_NAME_CHARS * sizeof(WCHAR));
+        memcpy(current, dir, dlen * sizeof(WCHAR));
+        pp->CurrentDirectory.DosPath.Buffer = current;
+        pp->CurrentDirectory.DosPath.Length = (USHORT)(dlen * sizeof(WCHAR));
+        pp->CurrentDirectory.DosPath.MaximumLength = (USHORT)(MIME_IMAGE_NAME_CHARS * sizeof(WCHAR));
+    }
+    ok = ok && packed_string(&a, &pp->ImagePathName, image->Buffer, image->Length / sizeof(WCHAR)) &&
+         packed_string(&a, &pp->CommandLine, cmdline->Buffer, cmdline->Length / sizeof(WCHAR)) &&
+         packed_string(&a, &pp->WindowTitle, title->Buffer, title->Length / sizeof(WCHAR)) &&
+         (p->DesktopInfo.Length
+              ? packed_string(&a, &pp->DesktopInfo, p->DesktopInfo.Buffer, p->DesktopInfo.Length / sizeof(WCHAR))
+              : packed_string(&a, &pp->DesktopInfo, L"WinSta0\\Default", 15)) &&
+         packed_string(&a, &pp->ShellInfo, L"", 0);
+    /* the runtime data is bytes: the c library's inherited file descriptors. */
+    if (ok && p->RuntimeDataLength) {
+        PUCHAR runtime = packed_alloc(&a, (p->RuntimeDataLength + sizeof(WCHAR) + 1) & ~(SIZE_T)1);
+        ok = runtime != nullptr;
+        if (ok) {
+            memcpy(runtime, p->RuntimeData, p->RuntimeDataLength);
+            memset(runtime + p->RuntimeDataLength, 0, sizeof(WCHAR));
+            pp->RuntimeData.Buffer = (PWSTR)runtime;
+            pp->RuntimeData.Length = p->RuntimeDataLength;
+            pp->RuntimeData.MaximumLength = (USHORT)(p->RuntimeDataLength + sizeof(WCHAR));
         }
     }
-    /* the dll search path starts with the application directory. */
-    SIZE_T img_chars = image->Length / sizeof(WCHAR);
-    SIZE_T slash = img_chars;
-    while (slash > 0 && image->Buffer[slash - 1] != '\\')
-        slash--;
-    ok = ok && arena_string(&a, &pp->DllPath, image->Buffer, slash ? slash - 1 : 0);
-    PWSTR env = arena_alloc(&a, environment_bytes);
+    pp->MaximumLength = pp->Length = (ULONG)(a.Base + a.Used - (PUCHAR)pp);
+    PWSTR env = packed_alloc(&a, environment_bytes);
     if (ok && env)
         memcpy(env, environment, environment_bytes);
     ExFreePool(environment);
@@ -213,7 +371,9 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
         return STATUS_NO_MEMORY;
     pp->Environment = env;
     pp->EnvironmentSize = environment_bytes;
-    pp->MaximumLength = pp->Length = sizeof(RTL_USER_PROCESS_PARAMETERS);
+    status = PspMapPebBlocks(process, peb);
+    if (!NT_SUCCESS(status))
+        return status;
     process->Peb = peb;
     return STATUS_SUCCESS;
 }
@@ -288,6 +448,14 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
     process->Subsystem = section->Image.Subsystem;
     process->SystemDll = system_dll;
     process->Machine = machine;
+    /* windows 11 26300: the error mode of the parent goes on to the process; one launched by the shell reads 1. */
+    process->DefaultHardErrorMode = parent ? parent->DefaultHardErrorMode : 0x8000;
+    if (machine != IMAGE_FILE_MACHINE_I386 &&
+        (section->Image.DllCharacteristics & (IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE | IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA)) ==
+            (IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE | IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA))
+        MiRandomizeAddressSpace(&process->AddressSpace);
+    if (machine != IMAGE_FILE_MACHINE_I386 && (section->Image.DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE))
+        MiRandomizeTopDown(&process->AddressSpace);
     /* a large address aware 32-bit program has the whole 4 GiB on 64-bit windows. */
     if (process->Machine == IMAGE_FILE_MACHINE_I386)
         process->AddressSpace.AllocationLimit =
@@ -300,7 +468,8 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
     if (!p->Detached && section->Image.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI) {
         MIME_CONSOLE *pty = p->PtyHandle ? ConsoleOfPtyHandle(p->PtyHandle) : nullptr;
         if (pty) {
-            ConsoleAttach(process, pty);
+            if (NT_SUCCESS(ConsoleAttach(process, pty)))
+                process->ConsoleShared = TRUE;
             ConsoleInitialTitle(pty, p->WindowTitle.Length ? &p->WindowTitle : image);
             ConsoleDereference(pty);
         } else if (p->NewConsole || (!console && !p->NoWindow)) {
@@ -317,7 +486,8 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
                 ConsoleDereference(own);
             }
         } else if (console) {
-            ConsoleAttach(process, console);
+            if (NT_SUCCESS(ConsoleAttach(process, console)))
+                process->ConsoleShared = TRUE;
             ConsoleInitialTitle(console, p->WindowTitle.Length ? &p->WindowTitle : image);
         }
     }
@@ -348,7 +518,7 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
         SIZE_T ntdll_view = 0;
         status = MiMapViewOfSection(system_dll->Section, process, &ntdll, 0, &ntdll_view, PAGE_EXECUTE_WRITECOPY, 0);
         if (status == STATUS_IMAGE_NOT_AT_BASE) {
-            /* the system dll must sit at its preferred base, since the kernel caches its exports. */
+            /* the system dll must sit at the base of its section, since the kernel caches its exports. */
             status = STATUS_CONFLICTING_ADDRESSES;
         }
         process->NtdllBase = ntdll;
@@ -372,12 +542,28 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
     }
     if (NT_SUCCESS(status))
         status = setup_peb(process, p);
+    /* the first program of a run allocates its console, which is the run's terminal, and gets the redirected streams. */
+    if (NT_SUCCESS(status) && request_id && process->Console) {
+        HANDLE streams[3];
+        status = ConsoleCreateStreamHandles(process, streams);
+        PRTL_USER_PROCESS_PARAMETERS pp = process->Peb->ProcessParameters;
+        if (NT_SUCCESS(status) && (streams[0] || streams[1] || streams[2])) {
+            pp->StandardInput = streams[0];
+            pp->StandardOutput = streams[1];
+            pp->StandardError = streams[2];
+            pp->WindowFlags |= 0x100; /* STARTF_USESTDHANDLES */
+        }
+    }
     /* wow64.dll and xta64 find the guest ntdll through a spare peb pointer. */
     if (NT_SUCCESS(status) && ntdll32)
         process->Peb->SparePointers[0] = ntdll32;
     /* every 32-bit process has its 32-bit peb, which wow64.dll on x64 and xta64 on arm64 complete. */
     if (NT_SUCCESS(status) && process->Machine == IMAGE_FILE_MACHINE_I386)
         status = setup_wow64_peb(process);
+    if (NT_SUCCESS(status) && PspIsWow64Process(process))
+        status = thunk_process_parameters(process);
+    if (NT_SUCCESS(status))
+        status = PspPrepareSystemDllInitBlocks(process, ntdll32);
     KiAttachProcess(saved);
 
     PETHREAD thread = nullptr;
@@ -478,6 +664,11 @@ NTSTATUS PsCreateUserProcess(PCUNICODE_STRING image, PCUNICODE_STRING cmdline, P
     UNICODE_STRING default_cwd = RTL_CONSTANT_STRING(L"C:\\");
     PSP_PARAMS p = {.Image = *image, .CommandLine = *cmdline, .CurrentDirectory = cwd ? *cwd : default_cwd,
                     .ShowWindowFlags = 1 /* SW_SHOWNORMAL */};
+    /* all ones for the console asks for none at all, as DETACHED_PROCESS does. */
+    if (console == (MIME_CONSOLE *)(LONG_PTR)-1) {
+        p.Detached = TRUE;
+        console = nullptr;
+    }
     struct _TOKEN *token = elevated ? SepCreateElevatedUserToken() : nullptr;
     if (elevated && !token)
         return STATUS_INSUFFICIENT_RESOURCES;
@@ -639,11 +830,17 @@ typedef struct PSP_ATTRIBUTES {
     ULONG ChildPolicy;
     ULONG Win32kFilter[2];
     ULONG AllApplicationPackages, DesktopApp, ComponentFilter;
+    BOOLEAN HasErrorMode;
+    ULONG ErrorMode;
     UNICODE_STRING Image;    /* the image name, captured. */
     PVOID ClientId;          /* where the process and thread ids go, and their length. */
     PSIZE_T ClientIdLength;
     PVOID TebAddress;
     PSIZE_T TebAddressLength;
+    PVOID ImageInfo; /* where the SECTION_IMAGE_INFORMATION of the image goes, and its length. */
+    PSIZE_T ImageInfoLength;
+    ULONG StdHandleFlags; /* PS_STD_HANDLE_INFO: the duplicate state in bits 0 and 1, pseudo handles in bits 2 to 4. */
+    ULONG StdHandleSubsystem;
 } PSP_ATTRIBUTES;
 
 static void free_attributes(PSP_ATTRIBUTES *a)
@@ -770,6 +967,9 @@ static NTSTATUS capture_one(const PS_ATTRIBUTE *attribute, PSP_ATTRIBUTES *a)
     case PS_ATTRIBUTE_PROTECTION_LEVEL:
         return size == 1 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
     case PS_ATTRIBUTE_ERROR_MODE:
+        VALUE(4, &a->ErrorMode);
+        a->HasErrorMode = TRUE;
+        return STATUS_SUCCESS;
     case PS_ATTRIBUTE_CHPE:
         return STATUS_SUCCESS;
     case PS_ATTRIBUTE_PREFERRED_NODE:
@@ -781,8 +981,15 @@ static NTSTATUS capture_one(const PS_ATTRIBUTE *attribute, PSP_ATTRIBUTES *a)
         return size == 16 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
     case PS_ATTRIBUTE_MEMORY_RESERVE:
         return size == 16 || size == 24 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
-    case PS_ATTRIBUTE_STD_HANDLE_INFO:
-        return size == 16 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
+    case PS_ATTRIBUTE_STD_HANDLE_INFO: {
+        if (size != 8 && size != 16)
+            return STATUS_INVALID_PARAMETER;
+        ULONG info[2];
+        VALUE(8, info);
+        a->StdHandleFlags = info[0];
+        a->StdHandleSubsystem = info[1];
+        return STATUS_SUCCESS;
+    }
     case PS_ATTRIBUTE_ENABLE_OPTIONAL_XSTATE_FEATURES:
         return size == 8 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
     case PS_ATTRIBUTE_BNO_ISOLATION:
@@ -792,7 +999,11 @@ static NTSTATUS capture_one(const PS_ATTRIBUTE *attribute, PSP_ATTRIBUTES *a)
     case PS_ATTRIBUTE_MITIGATION_AUDIT_OPTIONS:
         return size == 8 || size == 16 || size == 24 ? STATUS_SUCCESS : STATUS_INVALID_PARAMETER;
     case PS_ATTRIBUTE_IMAGE_INFO:
-        return STATUS_NOT_SUPPORTED;
+        if (size != sizeof(SECTION_IMAGE_INFORMATION))
+            return STATUS_INVALID_PARAMETER;
+        a->ImageInfo = attribute->ValuePtr;
+        a->ImageInfoLength = attribute->ReturnLength;
+        return STATUS_SUCCESS;
     default:
         return STATUS_INVALID_PARAMETER;
     }
@@ -855,6 +1066,102 @@ static void return_attributes(const PSP_ATTRIBUTES *a, PEPROCESS process, PETHRE
             KiCopyToUser(a->TebAddressLength, &n, sizeof(n));
         }
     }
+    /* kernelbase asks every creation for the image's information, as NtQuerySection gives it. */
+    if (a->ImageInfo) {
+        SECTION_IMAGE_INFORMATION info;
+        MmGetSectionImageInformation(process->ImageSection, &info);
+        KiCopyToUser(a->ImageInfo, &info, sizeof(info));
+        if (a->ImageInfoLength) {
+            SIZE_T n = sizeof(info);
+            KiCopyToUser(a->ImageInfoLength, &n, sizeof(n));
+        }
+    }
+}
+
+/* NtCreateThreadEx takes the same list: kernelbase's CreateThread asks every new thread for its client id there. */
+NTSTATUS PspCaptureThreadAttributes(PVOID user, PVOID *captured)
+{
+    *captured = nullptr;
+    if (!user)
+        return STATUS_SUCCESS;
+    PSP_ATTRIBUTES *a = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*a), KI_TAG('P', 's', 'A', 't'));
+    if (!a)
+        return STATUS_INSUFFICIENT_RESOURCES;
+    memset(a, 0, sizeof(*a));
+    NTSTATUS status = capture_attributes(user, a);
+    if (!NT_SUCCESS(status)) {
+        free_attributes(a);
+        ExFreePool(a);
+        return status;
+    }
+    *captured = a;
+    return STATUS_SUCCESS;
+}
+
+void PspReturnThreadAttributes(PVOID captured, PEPROCESS process, PETHREAD thread)
+{
+    if (captured)
+        return_attributes(captured, process, thread);
+}
+
+void PspFreeThreadAttributes(PVOID captured)
+{
+    if (!captured)
+        return;
+    free_attributes(captured);
+    ExFreePool(captured);
+}
+
+/*
+ * PS_STD_HANDLE_INFO. on request, for a program of the subsystem it names that inherits nothing, the child gets a copy
+ * of each standard handle of its creator. always, as with a parent process attribute, the handles kernelbase put in the
+ * parameters are copied from that parent. a handle the mask calls a console pseudo handle stays as it is, one that
+ * cannot be copied becomes empty.
+ */
+static void duplicate_std_handles(PEPROCESS process, PEPROCESS creator, PEPROCESS parent, const PSP_ATTRIBUTES *a,
+                                  BOOLEAN inherit)
+{
+    ULONG state = a->StdHandleFlags & 3;
+    if (!state || state == 3)
+        return;
+    if (state == 1 && (inherit || process->Subsystem != a->StdHandleSubsystem))
+        return;
+    HANDLE values[3] = {};
+    PEPROCESS source = state == 1 ? creator : parent;
+    PKPROCESS saved = KiCurrentThread()->ApcStateProcess;
+    KiAttachProcess(state == 1 ? &creator->Pcb : &process->Pcb);
+    PRTL_USER_PROCESS_PARAMETERS pp = (state == 1 ? creator : process)->Peb->ProcessParameters;
+    values[0] = pp->StandardInput;
+    values[1] = pp->StandardOutput;
+    values[2] = pp->StandardError;
+    KiAttachProcess(saved);
+    for (int i = 0; i < 3; i++) {
+        if (!values[i] || ((a->StdHandleFlags & (4u << i)) && ((ULONG_PTR)values[i] & 3) == 3))
+            continue;
+        HANDLE copy = nullptr;
+        if (!NT_SUCCESS(ObDuplicateHandle(source, values[i], process, &copy, 0, 0, 2 /* DUPLICATE_SAME_ACCESS */)))
+            copy = nullptr;
+        values[i] = copy;
+    }
+    KiAttachProcess(&process->Pcb);
+    pp = process->Peb->ProcessParameters;
+    pp->StandardInput = values[0];
+    pp->StandardOutput = values[1];
+    pp->StandardError = values[2];
+    KiAttachProcess(saved);
+}
+
+static NTSTATUS give_console_reference(PEPROCESS process)
+{
+    HANDLE handle;
+    NTSTATUS status = ConsoleCreateReference(process, &handle);
+    if (!NT_SUCCESS(status))
+        return status;
+    PKPROCESS saved = KiCurrentThread()->ApcStateProcess;
+    KiAttachProcess(&process->Pcb);
+    process->Peb->ProcessParameters->ConsoleHandle = handle;
+    KiAttachProcess(saved);
+    return STATUS_SUCCESS;
 }
 
 static void apply_attributes(PEPROCESS process, PEPROCESS parent, const PSP_ATTRIBUTES *a)
@@ -878,7 +1185,8 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
 {
     if (!process_handle || !thread_handle || !parameters)
         return STATUS_INVALID_PARAMETER;
-    if ((process_flags & ~(PROCESS_CREATE_FLAGS_BREAKAWAY | PROCESS_CREATE_FLAGS_INHERIT_HANDLES)) ||
+    /* kernelbase of 26100 adds 0x200 to every creation without CREATE_SUSPENDED, and resumes only the thread after. */
+    if ((process_flags & ~(PROCESS_CREATE_FLAGS_BREAKAWAY | PROCESS_CREATE_FLAGS_INHERIT_HANDLES | 0x200)) ||
         (thread_flags & ~1u))
         return STATUS_NOT_SUPPORTED;
     if (create_info) {
@@ -957,9 +1265,17 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
         ObDereferenceObject(token);
     if (NT_SUCCESS(status)) {
         apply_attributes(process, parent, &attrs);
+        /* the error mode asked for, CREATE_DEFAULT_ERROR_MODE sends 1, replaces the one taken from the parent. */
+        if (attrs.HasErrorMode)
+            process->DefaultHardErrorMode = attrs.ErrorMode;
         if (process_flags & PROCESS_CREATE_FLAGS_INHERIT_HANDLES)
             status = attrs.HasHandleList ? ObInheritHandleList(parent, process, attrs.HandleList, attrs.HandleCount)
                                          : ObInheritHandles(parent, process);
+        if (NT_SUCCESS(status))
+            duplicate_std_handles(process, creator, parent, &attrs, (process_flags & PROCESS_CREATE_FLAGS_INHERIT_HANDLES) != 0);
+        /* a program that shares its creator's console gets its own handle to it, after the inherited ones. */
+        if (NT_SUCCESS(status) && process->ConsoleShared)
+            status = give_console_reference(process);
         /* the parent's job first, then the listed job nested below it. */
         if (NT_SUCCESS(status))
             status = PspInheritJob(process, parent, process_flags);
@@ -984,6 +1300,11 @@ NTSTATUS NTAPI NtCreateUserProcess(PHANDLE process_handle, PHANDLE thread_handle
         return status;
     }
     HANDLE ph = nullptr, th = nullptr;
+    /* kernelbase asks for MAXIMUM_ALLOWED, which is everything for the creator of the process. */
+    if (process_access & MAXIMUM_ALLOWED)
+        process_access = (process_access & ~(ACCESS_MASK)MAXIMUM_ALLOWED) | PROCESS_ALL_ACCESS;
+    if (thread_access & MAXIMUM_ALLOWED)
+        thread_access = (thread_access & ~(ACCESS_MASK)MAXIMUM_ALLOWED) | THREAD_ALL_ACCESS;
     ObReferenceObject(process);
     status = ObCreateHandle(creator, process, process_access, 0, &ph);
     if (!NT_SUCCESS(status))
