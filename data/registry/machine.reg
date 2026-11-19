@@ -20,6 +20,10 @@
 [HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows NT\CurrentVersion]
 "BuildLabEx"="26100.1.x86fre.ge_release.240331-1435"
 
+; what user32 reads of the window manager: the library it loads to turn the png image of an icon into a bitmap.
+[HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Windows]
+"IconServiceLib"="IconCodecService.dll"
+
 ; the profiles folders, read by the profile functions and the service control manager.
 [HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList]
 "Default"=expand:"%SystemDrive%\\Users\\Default"
