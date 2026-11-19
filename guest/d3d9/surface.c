@@ -529,6 +529,8 @@ HRESULT D9CreateSurface(D9Device *device, UINT width, UINT height, D3DFORMAT for
         return D3DERR_INVALIDCALL;
     if ((f->flags & D9_FORMAT_NULL) && !(usage & D3DUSAGE_RENDERTARGET))
         return D3DERR_INVALIDCALL;
+    if (D9FormatPlain(f) && (usage & (D3DUSAGE_RENDERTARGET | D3DUSAGE_DEPTHSTENCIL)))
+        return D3DERR_INVALIDCALL;
     D9Surface *s;
     HRESULT hr = D9NewSurface(device, format, usage, pool, width, height, &s);
     if (FAILED(hr))
@@ -539,7 +541,7 @@ HRESULT D9CreateSurface(D9Device *device, UINT width, UINT height, D3DFORMAT for
     /* plain surfaces and lockable depth formats can always be locked, render targets only when asked. */
     s->lockable = lockable_flag || !(usage & (D3DUSAGE_RENDERTARGET | D3DUSAGE_DEPTHSTENCIL)) ||
                   (f->flags & D9_FORMAT_LOCKABLE);
-    if (pool == D3DPOOL_DEFAULT || pool == D3DPOOL_MANAGED) {
+    if ((pool == D3DPOOL_DEFAULT || pool == D3DPOOL_MANAGED) && !D9FormatPlain(f)) {
         hr = D9SurfaceMakeTexture(s);
     } else if (memory) {
         s->memory->pitch = D9FormatPitch(f, width);

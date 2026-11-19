@@ -50,6 +50,8 @@ typedef struct D9Format {
 } D9Format;
 
 const D9Format *D9GetFormat(D3DFORMAT format);
+/* a format with no gpu layout, only for plain surfaces held in memory. */
+BOOL D9FormatPlain(const D9Format *f);
 UINT D9FormatPitch(const D9Format *f, UINT width);
 UINT D9FormatRows(const D9Format *f, UINT height);
 UINT D9PackColor(const D9Format *f, D3DCOLOR color, BYTE out[16]);

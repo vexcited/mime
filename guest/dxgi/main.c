@@ -73,6 +73,10 @@ static void describe(DxgiGpu *gpu, UINT index)
         desc->SharedSystemMemory += desc->DedicatedVideoMemory;
         desc->DedicatedVideoMemory = 128 << 20;
     }
+    /* windows gives every adapter half of the physical memory as its shared segment, whatever the driver could map. */
+    MEMORYSTATUSEX status = {sizeof(status)};
+    if (GlobalMemoryStatusEx(&status))
+        desc->SharedSystemMemory = (SIZE_T)(status.ullTotalPhys / 2);
     /* adapters keep their luid across processes: shared resources name them by it. */
     desc->AdapterLuid.LowPart = 0x0000D3D0 + index;
     desc->Flags = DXGI_ADAPTER_FLAG3_SUPPORT_MONITORED_FENCES | DXGI_ADAPTER_FLAG3_SUPPORT_NON_MONITORED_FENCES |
@@ -165,14 +169,14 @@ static void find_gpus(DxgiVulkan *vk)
 }
 
 /*
- * the basic render driver, windows' warp adapter. with a gpu, its devices run on the first gpu's vulkan device: warp
- * is complete there and fast, and only its identity tells it apart. a cpu vulkan driver like lavapipe is never used
- * for it, being slower than the gpu. without a gpu it has no vulkan device, and d3d11 makes the software device of
- * warp.c on it.
+ * the basic render driver, windows' warp adapter, and the adapters that render with it: the basic display adapter's,
+ * which is not software by its flags, and an indirect display's. with a gpu, their devices run on the first gpu's
+ * vulkan device: warp is complete there and fast, and only its identity tells it apart. a cpu vulkan driver like
+ * lavapipe is never used for it, being slower than the gpu. without a gpu they have no vulkan device, and d3d11 makes
+ * the software device of warp.c on them.
  */
-static void describe_warp(DxgiVulkan *vk)
+static void describe_warp(DxgiVulkan *vk, DxgiGpu *gpu, UINT luid, UINT flags)
 {
-    DxgiGpu *gpu = &vk->warp;
     DXGI_ADAPTER_DESC3 *desc = &gpu->desc;
     if (vk->count) {
         gpu->physical = vk->gpus[0].physical;
@@ -187,8 +191,8 @@ static void describe_warp(DxgiVulkan *vk)
     MEMORYSTATUSEX status = {sizeof(status)};
     if (GlobalMemoryStatusEx(&status))
         desc->SharedSystemMemory = (SIZE_T)(status.ullTotalPhys / 2);
-    desc->AdapterLuid.LowPart = 0x0000D3D0 + RTL_NUMBER_OF(vk->gpus);
-    desc->Flags = DXGI_ADAPTER_FLAG3_SOFTWARE;
+    desc->AdapterLuid.LowPart = luid;
+    desc->Flags = flags;
     desc->GraphicsPreemptionGranularity = DXGI_GRAPHICS_PREEMPTION_DMA_BUFFER_BOUNDARY;
     desc->ComputePreemptionGranularity = DXGI_COMPUTE_PREEMPTION_DMA_BUFFER_BOUNDARY;
     /* the version of d3d10warp.dll. */
@@ -196,10 +200,54 @@ static void describe_warp(DxgiVulkan *vk)
     gpu->umd_version.LowPart = (26100 << 16) | 9278;
 }
 
+#define DISPLAY_CLASS_KEY L"SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}"
+
+/* what the kernel's registry tells of the display: the service of its adapter, an indirect display, gpus with a driver. */
+static BOOL basic_display(BOOL *indirect, BOOL *gpus)
+{
+    WCHAR text[96];
+    DWORD size = sizeof(text), count = 0;
+    *indirect = *gpus = FALSE;
+    if (RegGetValueW(HKEY_LOCAL_MACHINE,
+                     L"SYSTEM\\CurrentControlSet\\Control\\Video\\{b3f36b7e-6a4d-5a41-9e2c-4d8fa1c7e903}\\Video",
+                     L"Service", RRF_RT_REG_SZ, nullptr, text, &size) ||
+        lstrcmpiW(text, L"BasicDisplay"))
+        return FALSE;
+    size = sizeof(count);
+    *indirect = !RegGetValueW(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Services\\IndirectKmd\\Enum", L"Count",
+                              RRF_RT_REG_DWORD, nullptr, &count, &size) && count;
+    static const PCWSTR drivers[] = {DISPLAY_CLASS_KEY L"\\0001", DISPLAY_CLASS_KEY L"\\0002"};
+    for (UINT i = 0; i < RTL_NUMBER_OF(drivers); i++) {
+        size = sizeof(text);
+        if (!RegGetValueW(HKEY_LOCAL_MACHINE, drivers[i], L"MatchingDeviceId", RRF_RT_REG_SZ, nullptr, text, &size) &&
+            !memcmp(text, L"PCI\\VEN_", 8 * sizeof(WCHAR)))
+            *gpus = TRUE;
+    }
+    return TRUE;
+}
+
 static BOOL CALLBACK init_vulkan(INIT_ONCE *once, void *param, void **context)
 {
-    find_gpus(&g_vulkan);
-    describe_warp(&g_vulkan);
+    DxgiVulkan *vk = &g_vulkan;
+    find_gpus(vk);
+    /* adapters keep their luid across processes, the kernel tells the same ones in the directx key. */
+    UINT luid = 0x0000D3D0 + RTL_NUMBER_OF(vk->gpus);
+    describe_warp(vk, &vk->warp, luid, DXGI_ADAPTER_FLAG3_SOFTWARE);
+    describe_warp(vk, &vk->basic, luid + 1, 0);
+    describe_warp(vk, &vk->indirect, luid + 2, 0);
+    BOOL indirect, gpus;
+    if (basic_display(&indirect, &gpus)) {
+        vk->list[vk->listed++] = &vk->basic;
+        vk->list[vk->listed++] = &vk->warp;
+        if (indirect)
+            vk->list[vk->listed++] = &vk->indirect;
+        for (UINT i = 0; gpus && i < vk->count; i++)
+            vk->list[vk->listed++] = &vk->gpus[i];
+    } else {
+        for (UINT i = 0; i < vk->count; i++)
+            vk->list[vk->listed++] = &vk->gpus[i];
+        vk->list[vk->listed++] = &vk->warp;
+    }
     return TRUE;
 }
 
@@ -212,9 +260,13 @@ const DxgiVulkan *DxgiGetVulkan(void)
 const DxgiGpu *DxgiGpuAt(UINT index)
 {
     const DxgiVulkan *vk = DxgiGetVulkan();
-    if (index < vk->count)
-        return &vk->gpus[index];
-    return index == vk->count ? &vk->warp : nullptr;
+    return index < vk->listed ? vk->list[index] : nullptr;
+}
+
+BOOL DxgiHostGpu(const DxgiGpu *gpu)
+{
+    const DxgiVulkan *vk = DxgiGetVulkan();
+    return gpu >= vk->gpus && gpu < vk->gpus + vk->count;
 }
 
 DXGIAPI HRESULT WINAPI CreateDXGIFactory2(UINT flags, REFIID riid, void **factory)

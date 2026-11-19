@@ -320,6 +320,9 @@ static HRESULT check_device_format(D3DFORMAT display, DWORD usage, D3DRESOURCETY
     if (f->d3d == D3DFMT_UNKNOWN)
         return D3DERR_NOTAVAILABLE;
     BOOL depth = f->flags & D9_FORMAT_DEPTH;
+    if (D9FormatPlain(f))
+        return type == D3DRTYPE_SURFACE && !(usage & (D3DUSAGE_RENDERTARGET | D3DUSAGE_DEPTHSTENCIL)) ? D3D_OK
+                                                                                                    : D3DERR_NOTAVAILABLE;
     if (f->flags & D9_FORMAT_NULL)
         return type == D3DRTYPE_SURFACE && (usage & D3DUSAGE_RENDERTARGET) ? D3D_OK : D3DERR_NOTAVAILABLE;
     if ((usage & D3DUSAGE_RENDERTARGET) && !(f->flags & D9_FORMAT_RENDER))

@@ -96,7 +96,7 @@ static HRESULT STDMETHODCALLTYPE adapter_enum_outputs(IDXGIAdapter4 *iface, UINT
         return DXGI_ERROR_INVALID_CALL;
     *output = nullptr;
     DxgiAdapter *adapter = impl(iface);
-    if (adapter->gpu != &DxgiGetVulkan()->gpus[0])
+    if (adapter->gpu != DxgiGpuAt(0))
         return DXGI_ERROR_NOT_FOUND;
     FIND_MONITOR find = {index, nullptr};
     EnumDisplayMonitors(nullptr, nullptr, find_monitor, (LPARAM)&find);
@@ -189,13 +189,13 @@ static struct {
     UINT64 budget;
 } g_budget_events[BUDGET_EVENTS];
 static BOOL g_budget_watching;
-/* what the process reserved in each segment of each gpu, the basic render driver last. */
-static UINT64 g_reservations[RTL_NUMBER_OF(((DxgiVulkan *)0)->gpus) + 1][2];
+/* what the process reserved in each segment of each gpu, the adapters of the basic render driver last. */
+static UINT64 g_reservations[RTL_NUMBER_OF(((DxgiVulkan *)0)->gpus) + 3][2];
 
 static UINT64 *reservation_of(const DxgiGpu *gpu, DXGI_MEMORY_SEGMENT_GROUP group)
 {
     const DxgiVulkan *vk = DxgiGetVulkan();
-    UINT index = gpu == &vk->warp ? RTL_NUMBER_OF(vk->gpus) : (UINT)(gpu - vk->gpus);
+    UINT index = DxgiHostGpu(gpu) ? (UINT)(gpu - vk->gpus) : RTL_NUMBER_OF(vk->gpus) + (UINT)(gpu - &vk->warp);
     return &g_reservations[index][group];
 }
 
@@ -204,7 +204,7 @@ static void memory_info(const DxgiGpu *gpu, DXGI_MEMORY_SEGMENT_GROUP group, DXG
 {
     memset(info, 0, sizeof(*info));
     /* the software adapter's only segment is its share of system memory. */
-    if (gpu == &DxgiGetVulkan()->warp) {
+    if (!DxgiHostGpu(gpu)) {
         if (group == DXGI_MEMORY_SEGMENT_GROUP_LOCAL)
             info->Budget = gpu->desc.SharedSystemMemory;
     } else {
