@@ -51,7 +51,7 @@ typedef struct MimePaths {
     char drive_c[MIME_PATH_MAX]; /* data/drive_c */
     char socket[MIME_PATH_MAX];  /* runtime/mime.sock */
     char pidfile[MIME_PATH_MAX]; /* runtime/mime.pid */
-    char lockfile[MIME_PATH_MAX]; /* per user, outside the XDG dirs. */
+    char lockfile[MIME_PATH_MAX]; /* runtime/mime.lock; other XDG directories give another machine. */
     char logfile[MIME_PATH_MAX]; /* state/vmm.log */
     char exe_dir[MIME_PATH_MAX];  /* directory of the running mime binary. */
 } MimePaths;

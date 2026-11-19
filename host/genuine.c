@@ -1,18 +1,23 @@
 /*
- * microsoft's own copies of a few system files, kept in a host cache outside the guest drive so an identity check sees
- * the bytes microsoft ships while mime's code still runs. data/genuine-<arch>.manifest, of the guest's architecture,
- * lists each file by its windows path, sha-256, symbol server key and size, all of the manifest's build: on arm64 the
- * arm64x files of windows on arm. mime needs them all to run anything: mime setup,
- * mime up and mime run get the missing ones from microsoft's symbol server, check each against the manifest and
- * install it atomically. nothing goes on the guest drive and nothing of microsoft's is in the build, see
- * guest/ntos/io/mimefs.c and MimeRomEntry.genuine.
+ * the system files of windows that are microsoft's own, kept in a host cache outside the guest drive: mime has no code
+ * for them, and a program only ever sees the bytes microsoft ships. data/genuine-<arch>.manifest, of the guest's
+ * architecture, lists each file by its windows path, sha-256, source and size, all of the manifest's build: on arm64
+ * the arm64x files of windows on arm. mime needs them all to run anything: mime setup, mime up and mime run get the
+ * missing ones from microsoft, check each against the manifest and install it atomically. a file's source is its
+ * symbol server key, or image:<sha-1> for a file read out of the windows image the manifest names, see
+ * genuine_image.c. nothing goes on the guest drive and nothing of microsoft's is in the build: the rom names each file
+ * with no bytes, see guest/ntos/io/mimefs.c and MimeRomEntry.genuine.
  */
+#include "genuine.h"
 #include "mime_cli.h"
 #include "mime_host.h"
 #include "ui/ui.h"
+#include "rom.h"
+#include "ui/pe_icon.h"
 #include "vmm/vmm.h"
 
 #include "genuine_manifest.h" /* mime_genuine_manifest[], written by scripts/genuine.cmake. */
+#include "../guest/lib/wim/wim.h"
 
 #include <curl/curl.h>
 #include <dirent.h>
@@ -28,19 +33,14 @@
 #define SYMBOL_SERVER "https://msdl.microsoft.com/download/symbols"
 #define GENUINE_MAX_FILE (64u << 20) /* no system file the manifest names is near this big. */
 
-typedef struct {
-    char path[128]; /* below \Windows, forward slashes, e.g. System32/wow64.dll. */
-    char name[64];  /* the leaf, for the symbol server. */
-    char sha256[65];
-    char key[40]; /* time-date stamp and size-of-image, the symbol server key. */
-    uint64_t size;
-} GenuineEntry;
-
-static GenuineEntry g_entries[MIME_GENUINE_MAX];
-static uint32_t g_count;
-static char g_build[32] = "?";
-static char g_dir[MIME_PATH_MAX]; /* <cache>/genuine/<manifest digest>. */
+GenuineEntry g_genuine[MIME_GENUINE_MAX];
+uint32_t g_genuine_count;
+char g_genuine_build[32] = "?";
+char g_genuine_dir[MIME_PATH_MAX]; /* <cache>/genuine/<manifest digest>. */
+bool g_genuine_terminal;
+static char g_image[512]; /* the address of the windows image. */
 static bool g_parsed;
+
 
 /* ------------------------------------------------------------------ the manifest */
 
@@ -58,7 +58,7 @@ static void hex_of(const uint8_t *bytes, size_t n, char *out)
 static bool parse_manifest(const MimePaths *paths)
 {
     if (g_parsed)
-        return g_count > 0;
+        return g_genuine_count > 0;
     g_parsed = true;
     uint8_t digest[32];
     MimeSha256 sha;
@@ -67,22 +67,27 @@ static bool parse_manifest(const MimePaths *paths)
     mime_sha256_final(&sha, digest);
     char tag[17];
     hex_of(digest, 8, tag);
-    snprintf(g_dir, sizeof(g_dir), "%s/genuine/%s", paths->cache, tag);
+    snprintf(g_genuine_dir, sizeof(g_genuine_dir), "%s/genuine/%s", paths->cache, tag);
 
-    for (const char *line = mime_genuine_manifest; *line && g_count < MIME_GENUINE_MAX;) {
+    for (const char *line = mime_genuine_manifest; *line && g_genuine_count < MIME_GENUINE_MAX;) {
         const char *end = strchr(line, '\n');
         size_t length = end ? (size_t)(end - line) : strlen(line);
         const char *next = end ? end + 1 : line + length;
         if (length > 8 && !strncmp(line, "# build ", 8)) {
-            size_t n = length - 8 < sizeof(g_build) - 1 ? length - 8 : sizeof(g_build) - 1;
-            memcpy(g_build, line + 8, n);
-            g_build[n] = 0;
+            size_t n = length - 8 < sizeof(g_genuine_build) - 1 ? length - 8 : sizeof(g_genuine_build) - 1;
+            memcpy(g_genuine_build, line + 8, n);
+            g_genuine_build[n] = 0;
+        }
+        if (length > 8 && !strncmp(line, "# image ", 8)) {
+            size_t n = length - 8 < sizeof(g_image) - 1 ? length - 8 : sizeof(g_image) - 1;
+            memcpy(g_image, line + 8, n);
+            g_image[n] = 0;
         }
         if (length == 0 || line[0] == '#') {
             line = next;
             continue;
         }
-        /* path, sha256, key and size, by tabs. */
+        /* path, sha256, source and size, by tabs. */
         const char *field[4];
         size_t field_length[4];
         const char *at = line, *stop = line + length;
@@ -94,49 +99,67 @@ static bool parse_manifest(const MimePaths *paths)
             fields++;
             at = tab ? tab + 1 : stop + 1;
         }
-        GenuineEntry *e = &g_entries[g_count];
+        GenuineEntry *e = &g_genuine[g_genuine_count];
         if (fields != 4 || field_length[0] >= sizeof(e->path) || field_length[1] != 64 ||
-            field_length[2] >= sizeof(e->key)) {
+            (field_length[2] >= sizeof(e->key) && strncmp(field[2], "image:", 6))) {
             mime_warn("genuine: ignoring a malformed manifest line");
             line = next;
             continue;
         }
+        *e = (GenuineEntry){};
         memcpy(e->path, field[0], field_length[0]);
         e->path[field_length[0]] = 0;
         memcpy(e->sha256, field[1], 64);
         e->sha256[64] = 0;
-        memcpy(e->key, field[2], field_length[2]);
-        e->key[field_length[2]] = 0;
+        if (field_length[2] > 6 && !strncmp(field[2], "image:", 6)) {
+            e->image = mime_wim_sha1(field[2] + 6, field_length[2] - 6, e->sha1);
+            if (!e->image) {
+                mime_warn("genuine: ignoring a malformed manifest line");
+                line = next;
+                continue;
+            }
+        } else {
+            memcpy(e->key, field[2], field_length[2]);
+            e->key[field_length[2]] = 0;
+        }
         e->size = strtoull(field[3], nullptr, 10);
         const char *slash = strrchr(e->path, '/');
         mime_strlcpy(e->name, slash ? slash + 1 : e->path, sizeof(e->name));
-        g_count++;
+        g_genuine_count++;
         line = next;
     }
-    return g_count > 0;
+    return g_genuine_count > 0;
 }
 
 static void cache_path(uint32_t index, char *out, size_t size)
 {
-    snprintf(out, size, "%s/%s", g_dir, g_entries[index].path);
+    snprintf(out, size, "%s/%s", g_genuine_dir, g_genuine[index].path);
 }
 
 /* ------------------------------------------------------------------ the cache */
 
 /* a file is in the cache only after its bytes matched the manifest, so its size is all that is looked at here. */
-static bool cached(uint32_t index)
+bool genuine_cached(uint32_t index)
 {
     char path[MIME_PATH_MAX];
     cache_path(index, path, sizeof(path));
     struct stat st;
-    return stat(path, &st) == 0 && S_ISREG(st.st_mode) && (uint64_t)st.st_size == g_entries[index].size;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode) && (uint64_t)st.st_size == g_genuine[index].size;
 }
 
 static uint32_t missing(void)
 {
     uint32_t n = 0;
-    for (uint32_t i = 0; i < g_count; i++)
-        n += !cached(i);
+    for (uint32_t i = 0; i < g_genuine_count; i++)
+        n += !genuine_cached(i);
+    return n;
+}
+
+static uint32_t missing_from(bool image)
+{
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < g_genuine_count; i++)
+        n += g_genuine[i].image == image && !genuine_cached(i);
     return n;
 }
 
@@ -152,7 +175,7 @@ static bool hash_is(const uint8_t *bytes, size_t length, const char *want_hex)
     return strcasecmp(got, want_hex) == 0;
 }
 
-static bool make_parents(const char *path)
+bool genuine_make_parents(const char *path)
 {
     char work[MIME_PATH_MAX];
     mime_strlcpy(work, path, sizeof(work));
@@ -164,17 +187,17 @@ static bool make_parents(const char *path)
 }
 
 /* checks the bytes against the manifest and puts them in the cache in one rename, so a reader never sees half a file. */
-static bool install(uint32_t index, const uint8_t *bytes, size_t length, const char *from, char *detail, size_t detail_size)
+bool genuine_install(uint32_t index, const uint8_t *bytes, size_t length, const char *from, char *detail, size_t detail_size)
 {
-    const GenuineEntry *e = &g_entries[index];
+    const GenuineEntry *e = &g_genuine[index];
     if (length != e->size || !hash_is(bytes, length, e->sha256)) {
-        snprintf(detail, detail_size, "the %s that %s gave is not the one of Windows build %s", e->name, from, g_build);
+        snprintf(detail, detail_size, "the %s that %s gave is not the one of Windows build %s", e->name, from, g_genuine_build);
         return false;
     }
     char path[MIME_PATH_MAX], part[MIME_PATH_MAX];
     cache_path(index, path, sizeof(path));
     snprintf(part, sizeof(part), "%s.%d.part", path, (int)getpid());
-    int fd = make_parents(path) ? open(part, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644) : -1;
+    int fd = genuine_make_parents(path) ? open(part, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644) : -1;
     if (fd < 0) {
         snprintf(detail, detail_size, "cannot write %s: %s", path, strerror(errno));
         return false;
@@ -197,7 +220,7 @@ static bool install(uint32_t index, const uint8_t *bytes, size_t length, const c
     return false;
 }
 
-static void remove_tree(const char *path)
+void genuine_remove_tree(const char *path)
 {
     DIR *root = opendir(path);
     if (!root)
@@ -210,7 +233,7 @@ static void remove_tree(const char *path)
         snprintf(child, sizeof(child), "%s/%s", path, e->d_name);
         struct stat st;
         if (lstat(child, &st) == 0 && S_ISDIR(st.st_mode))
-            remove_tree(child);
+            genuine_remove_tree(child);
         else
             unlink(child);
     }
@@ -222,7 +245,7 @@ static void remove_tree(const char *path)
 static void remove_old_sets(void)
 {
     char base[MIME_PATH_MAX];
-    mime_strlcpy(base, g_dir, sizeof(base));
+    mime_strlcpy(base, g_genuine_dir, sizeof(base));
     char *slash = strrchr(base, '/');
     if (!slash)
         return;
@@ -237,18 +260,16 @@ static void remove_old_sets(void)
             continue;
         char child[MIME_PATH_MAX];
         snprintf(child, sizeof(child), "%s/%s", base, e->d_name);
-        remove_tree(child);
+        genuine_remove_tree(child);
     }
     closedir(root);
 }
 
 /* ------------------------------------------------------------------ getting them */
 
-static bool g_terminal_progress;
-
 static void progress(const char *what, uint32_t done, uint32_t total)
 {
-    if (!g_terminal_progress)
+    if (!g_genuine_terminal)
         return;
     printf("\r%s: %u of %u", what, done, total);
     if (done == total)
@@ -281,7 +302,7 @@ static size_t on_bytes(char *ptr, size_t size, size_t count, void *context)
 
 static CURL *start_download(CURLM *multi, Download *d, uint32_t index)
 {
-    const GenuineEntry *e = &g_entries[index];
+    const GenuineEntry *e = &g_genuine[index];
     d->index = index;
     d->length = 0;
     d->overflow = false;
@@ -335,7 +356,7 @@ static bool from_network(char *detail, size_t detail_size)
         snprintf(detail, detail_size, "cannot start a download");
         return false;
     }
-    uint32_t todo = missing(), done = 0, next = 0;
+    uint32_t todo = missing_from(false), done = 0, next = 0;
     printf("Downloading %u Windows system files from Microsoft...\n", todo);
     Download slots[PARALLEL_DOWNLOADS] = {};
     bool ok = true;
@@ -344,9 +365,9 @@ static bool from_network(char *detail, size_t detail_size)
         for (int k = 0; k < PARALLEL_DOWNLOADS && ok; k++) {
             if (slots[k].curl)
                 continue;
-            while (next < g_count && cached(next))
+            while (next < g_genuine_count && (g_genuine[next].image || genuine_cached(next)))
                 next++;
-            if (next == g_count)
+            if (next == g_genuine_count)
                 break;
             if (!start_download(multi, &slots[k], next++)) {
                 snprintf(detail, detail_size, "cannot start a download");
@@ -362,15 +383,15 @@ static bool from_network(char *detail, size_t detail_size)
             Download *d = nullptr;
             curl_easy_getinfo(message->easy_handle, CURLINFO_PRIVATE, (char **)&d);
             CURLcode result = message->data.result;
-            const GenuineEntry *e = &g_entries[d->index];
+            const GenuineEntry *e = &g_genuine[d->index];
             if (ok && result != CURLE_OK) {
                 long status = 0;
                 curl_easy_getinfo(d->curl, CURLINFO_RESPONSE_CODE, &status);
-                if (g_terminal_progress && done)
+                if (g_genuine_terminal && done)
                     printf("\n");
                 if (d->overflow)
                     snprintf(detail, detail_size, "Microsoft's server gave a %s larger than the one of build %s.",
-                             e->name, g_build);
+                             e->name, g_genuine_build);
                 else if (status)
                     snprintf(detail, detail_size, "Microsoft's server did not give %s: %s, http %ld.", e->name,
                              curl_easy_strerror(result), status);
@@ -378,7 +399,7 @@ static bool from_network(char *detail, size_t detail_size)
                     snprintf(detail, detail_size, "Cannot download %s from Microsoft: %s. Check the connection and "
                              "try again.", e->name, curl_easy_strerror(result));
                 ok = false;
-            } else if (ok && !install(d->index, d->data, d->length, "Microsoft's server", detail, detail_size)) {
+            } else if (ok && !genuine_install(d->index, d->data, d->length, "Microsoft's server", detail, detail_size)) {
                 ok = false;
             } else if (ok) {
                 progress("Downloaded", ++done, todo);
@@ -388,7 +409,7 @@ static bool from_network(char *detail, size_t detail_size)
         bool busy = false;
         for (int k = 0; k < PARALLEL_DOWNLOADS; k++)
             busy |= slots[k].curl != nullptr;
-        if (!busy && (!ok || next == g_count))
+        if (!busy && (!ok || next == g_genuine_count))
             break;
         if (!ok) {
             /* the first failure says it all: the rest are dropped. */
@@ -403,21 +424,104 @@ static bool from_network(char *detail, size_t detail_size)
     return ok;
 }
 
-int mime_genuine_ensure(const MimePaths *paths)
+/* a file whose bytes are not the manifest's any more, the disk's doing or a hand's, goes and comes again. */
+static bool hash_file_is(const char *path, const char *want_hex)
+{
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return false;
+    static uint8_t buffer[1 << 20];
+    MimeSha256 sha;
+    mime_sha256_init(&sha);
+    ssize_t n;
+    while ((n = read(fd, buffer, sizeof(buffer))) > 0)
+        mime_sha256_update(&sha, buffer, (size_t)n);
+    close(fd);
+    if (n < 0)
+        return false;
+    uint8_t digest[32];
+    char got[65];
+    mime_sha256_final(&sha, digest);
+    hex_of(digest, 32, got);
+    return strcasecmp(got, want_hex) == 0;
+}
+
+static uint32_t remove_damaged(void)
+{
+    uint32_t removed = 0;
+    for (uint32_t i = 0; i < g_genuine_count; i++) {
+        char path[MIME_PATH_MAX];
+        cache_path(i, path, sizeof(path));
+        if (genuine_cached(i) && !hash_file_is(path, g_genuine[i].sha256)) {
+            mime_warn("genuine: %s is not the file of the manifest, it is fetched again", g_genuine[i].path);
+            unlink(path);
+            removed++;
+        }
+    }
+    return removed;
+}
+
+/* a file an earlier set has with the same bytes moves into this one, so a new manifest fetches only what is new. */
+static void adopt_from_old_sets(void)
+{
+    char base[MIME_PATH_MAX];
+    mime_strlcpy(base, g_genuine_dir, sizeof(base));
+    char *slash = strrchr(base, '/');
+    if (!slash)
+        return;
+    const char *current = slash + 1;
+    *slash = 0;
+    DIR *root = opendir(base);
+    if (!root)
+        return;
+    struct dirent *d;
+    while ((d = readdir(root))) {
+        if (d->d_name[0] == '.' || !strcmp(d->d_name, current))
+            continue;
+        for (uint32_t i = 0; i < g_genuine_count; i++) {
+            if (genuine_cached(i))
+                continue;
+            char old[MIME_PATH_MAX], path[MIME_PATH_MAX];
+            snprintf(old, sizeof(old), "%s/%s/%s", base, d->d_name, g_genuine[i].path);
+            cache_path(i, path, sizeof(path));
+            struct stat st;
+            if (stat(old, &st) == 0 && (uint64_t)st.st_size == g_genuine[i].size && hash_file_is(old, g_genuine[i].sha256) &&
+                genuine_make_parents(path))
+                rename(old, path);
+        }
+    }
+    closedir(root);
+}
+
+int mime_genuine_ensure(const MimePaths *paths, bool verify)
 {
     if (!parse_manifest(paths))
         return 0;
+    if (verify)
+        remove_damaged();
     if (!missing()) {
         remove_old_sets();
         return 0;
     }
-    g_terminal_progress = isatty(STDOUT_FILENO);
+    adopt_from_old_sets();
+    g_genuine_terminal = isatty(STDOUT_FILENO);
     char detail[1024] = "";
-    if (from_network(detail, sizeof(detail)) && !missing()) {
+    bool ok = !missing_from(false) || from_network(detail, sizeof(detail));
+    if (ok && missing_from(true)) {
+        if (g_image[0])
+            ok = genuine_from_image(g_image, detail, sizeof(detail));
+        else {
+            snprintf(detail, sizeof(detail), "the manifest names files of a Windows image, and no image");
+            ok = false;
+        }
+    }
+    if (ok && !missing()) {
         remove_old_sets();
         printf("The Windows system files are ready.\n");
         return 0;
     }
+    if (!detail[0])
+        snprintf(detail, sizeof(detail), "%u Windows system files are still missing", missing());
     if (detail[0] >= 'a' && detail[0] <= 'z')
         detail[0] = (char)(detail[0] - 'a' + 'A');
     fprintf(stderr, "mime: %s\n", detail);
@@ -431,9 +535,9 @@ void mime_genuine_print_status(const MimePaths *paths)
 {
     if (!parse_manifest(paths))
         return;
-    uint32_t have = g_count - missing();
-    printf("Windows system files: %u of %u, build %s%s\n", have, g_count, g_build,
-           have < g_count ? ", run mime setup for the rest" : "");
+    uint32_t have = g_genuine_count - missing();
+    printf("Windows system files: %u of %u, build %s%s\n", have, g_genuine_count, g_genuine_build,
+           have < g_genuine_count ? ", run mime setup for the rest" : "");
 }
 
 /* ------------------------------------------------------------------ the running machine */
@@ -444,15 +548,15 @@ bool mime_genuine_open_all(MimeVm *vm)
 {
     if (!parse_manifest(vm->paths))
         return true;
-    for (uint32_t i = 0; i < g_count; i++)
+    for (uint32_t i = 0; i < g_genuine_count; i++)
         g_fds[i] = -1;
-    for (uint32_t i = 0; i < g_count; i++) {
+    for (uint32_t i = 0; i < g_genuine_count; i++) {
         char path[MIME_PATH_MAX];
         cache_path(i, path, sizeof(path));
         int fd = open(path, O_RDONLY | O_CLOEXEC);
         struct stat st;
-        if (fd < 0 || fstat(fd, &st) != 0 || (uint64_t)st.st_size != g_entries[i].size) {
-            mime_error("the Windows system file %s is not in %s, run mime setup", g_entries[i].path, g_dir);
+        if (fd < 0 || fstat(fd, &st) != 0 || (uint64_t)st.st_size != g_genuine[i].size) {
+            mime_error("the Windows system file %s is not in %s, run mime setup", g_genuine[i].path, g_genuine_dir);
             if (fd >= 0)
                 close(fd);
             for (uint32_t k = 0; k < i; k++)
@@ -461,14 +565,43 @@ bool mime_genuine_open_all(MimeVm *vm)
         }
         g_fds[i] = fd;
     }
-    mime_info("genuine: %u Windows system files of build %s", g_count, g_build);
+    mime_info("genuine: %u Windows system files of build %s", g_genuine_count, g_genuine_build);
     return true;
 }
 
 int mime_genuine_dup(uint32_t index, char *path, size_t size)
 {
-    if (index >= g_count || g_fds[index] < 0)
+    if (index >= g_genuine_count || g_fds[index] < 0)
         return -1;
     cache_path(index, path, size);
     return fcntl(g_fds[index], F_DUPFD_CLOEXEC, 0);
+}
+
+static int32_t find_entry(const char *path)
+{
+    for (uint32_t i = 0; i < g_genuine_count; i++)
+        if (!strcasecmp(g_genuine[i].path, path))
+            return (int32_t)i;
+    return -1;
+}
+
+/*
+ * an icon group of a file of the manifest, by id or -1 for the first. on windows 11 a module of the system keeps its
+ * icons in SystemResources\<name>.mun and the loader finds them there, as this does.
+ */
+bool mime_genuine_icon(const MimeRomEntry *rom, int32_t group, void **icon, size_t *icon_size)
+{
+    if (!rom || !rom->genuine || rom->genuine > g_genuine_count)
+        return false;
+    char path[MIME_PATH_MAX];
+    cache_path(rom->genuine - 1, path, sizeof(path));
+    if (mime_pe_icon_read(path, group, icon, icon_size))
+        return true;
+    char mun[160];
+    snprintf(mun, sizeof(mun), "SystemResources/%s.mun", g_genuine[rom->genuine - 1].name);
+    int32_t index = find_entry(mun);
+    if (index < 0)
+        return false;
+    cache_path((uint32_t)index, path, sizeof(path));
+    return mime_pe_icon_read(path, group, icon, icon_size);
 }
