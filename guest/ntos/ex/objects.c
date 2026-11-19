@@ -658,6 +658,23 @@ NTSTATUS NTAPI NtWaitForMultipleObjects(ULONG count, PHANDLE handles, WAIT_TYPE 
     return ExWaitHandles(count, copy, type == WaitAll ? WaitAll : WaitAny, alertable, timeout ? &t : nullptr, UserMode);
 }
 
+/* the wait of a 32-bit program, which wow64 passes on with the handles as the program has them, 32 bits each. */
+NTSTATUS NTAPI NtWaitForMultipleObjects32(ULONG count, LONG *handles, WAIT_TYPE type, BOOLEAN alertable,
+                                          PLARGE_INTEGER timeout)
+{
+    LONG narrow[MAXIMUM_WAIT_OBJECTS];
+    HANDLE copy[MAXIMUM_WAIT_OBJECTS];
+    LARGE_INTEGER t;
+    if (count == 0 || count > MAXIMUM_WAIT_OBJECTS)
+        return STATUS_INVALID_PARAMETER_1;
+    if (!NT_SUCCESS(KiCopyFromUser(narrow, handles, count * sizeof(LONG))) ||
+        (timeout && !NT_SUCCESS(KiCopyFromUser(&t, timeout, sizeof(t)))))
+        return STATUS_ACCESS_VIOLATION;
+    for (ULONG i = 0; i < count; i++)
+        copy[i] = (HANDLE)(LONG_PTR)narrow[i];
+    return ExWaitHandles(count, copy, type == WaitAll ? WaitAll : WaitAny, alertable, timeout ? &t : nullptr, UserMode);
+}
+
 NTSTATUS NTAPI NtSignalAndWaitForSingleObject(HANDLE signal, HANDLE wait, BOOLEAN alertable, PLARGE_INTEGER timeout)
 {
     PVOID object;
