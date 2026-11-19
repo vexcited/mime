@@ -500,21 +500,9 @@ static void color_changed(void)
     on_main(displays_changed, nullptr);
 }
 
-/*
- * MIME_HDR=off tells the guest of standard dynamic range outputs only, MIME_HDR=force of a 1000 nit one whatever the
- * output is, which the compositor then maps to what it has.
- */
 static void display_color(struct wl_output *output, Placed *m)
 {
-    const char *env = getenv("MIME_HDR");
-    if (env && !strcmp(env, "off"))
-        return;
     mime_color_output(mime_wl_display(), output, &m->hdr, &m->color);
-    if (env && !strcmp(env, "force") && !m->hdr) {
-        m->hdr = true;
-        m->color = (MimeMonitorColor){708000, 292000, 170000, 797000, 131000, 46000, 312700, 329000,
-                                      50, 1000 * 10000, 600 * 10000, 203 * 10000};
-    }
 }
 
 static void update_display(void)

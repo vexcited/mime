@@ -6,8 +6,6 @@
  * the host is short when MemAvailable falls below a share of its memory or the kernel's own stall figures for memory
  * the pressure stall information say tasks wait for it. leaving a level takes a margin, so a host that sits on the line
  * does not make the guest trim twice a second.
- *   MIME_MEMORY_LOW_MB  MemAvailable under which the host is short, in megabytes; half of it is critical. for tests.
- *   MIME_MEMORY_LOW_FILE  a file holding that number, read every second, so a test can make the host short while it runs.
  *
  * the guest sees all of the host's memory, but a page it has not written yet costs the host nothing, so before it starts
  * on a host memory block it asks for it with MIME_HC_MEM_GRANT. a grant never takes MemAvailable below a floor left for
@@ -286,11 +284,6 @@ static void *monitor_main(void *arg)
 {
     MimeVm *vm = arg;
     mime_set_thread_name("mime-memory");
-    uint64_t env_override = 0;
-    const char *env = getenv("MIME_MEMORY_LOW_MB");
-    if (env && atoi(env) > 0)
-        env_override = (uint64_t)atoi(env);
-    const char *low_file = getenv("MIME_MEMORY_LOW_FILE");
     uint32_t level = MIME_MEMORY_NORMAL;
     uint64_t asked_ms = 0;
     for (;;) {
@@ -302,17 +295,8 @@ static void *monitor_main(void *arg)
         HostMemory m;
         if (!read_host(&m))
             continue;
-        uint64_t low_override = env_override;
-        if (low_file) {
-            FILE *f = fopen(low_file, "r");
-            int mb = 0;
-            if (f && fscanf(f, "%d", &mb) == 1 && mb > 0)
-                low_override = (uint64_t)mb;
-            if (f)
-                fclose(f);
-        }
-        uint64_t low_mb = low_override ? low_override : MIME_MAX(768, m.total_mb * 12 / 100);
-        uint64_t critical_mb = low_override ? low_override / 2 : MIME_MAX(384, m.total_mb * 5 / 100);
+        uint64_t low_mb = MIME_MAX(768, m.total_mb * 12 / 100);
+        uint64_t critical_mb = MIME_MAX(384, m.total_mb * 5 / 100);
         uint32_t want = classify(level, &m, low_mb, critical_mb);
         uint64_t now = now_ms();
         bool changed = want != level;

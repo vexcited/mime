@@ -671,7 +671,6 @@ static void show_icon(Drag *d, const MimeDragIcon *icon)
     wl_surface_attach(d->icon, d->icon_buffer, -icon->hot_x / scale, -icon->hot_y / scale);
     wl_surface_damage_buffer(d->icon, 0, 0, (int32_t)icon->width, (int32_t)icon->height);
     wl_surface_commit(d->icon);
-    mime_debug("drag icon %ux%u, hot spot %d,%d, scale %d", icon->width, icon->height, icon->hot_x, icon->hot_y, scale);
 }
 
 static void drag_end(Drag *d, bool dropped)

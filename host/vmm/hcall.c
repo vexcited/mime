@@ -273,10 +273,7 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
             break;
         }
         uint32_t v = __atomic_load_n(word, __ATOMIC_ACQUIRE);
-        static int spin = -1;
-        if (spin < 0)
-            spin = getenv("MIME_LOCK_SPIN") != nullptr;
-        if (!spin && (uint16_t)v != (uint16_t)regs[2])
+        if ((uint16_t)v != (uint16_t)regs[2])
             mime_host_wait_word(word, v, 1000000);
         break;
     }
@@ -564,13 +561,6 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
             break;
         }
         value = mime_ui_get_monitors(dst, (uint32_t)capacity);
-        /* MIME_DISPLAY_DPI sets the dpi of the display of the boot information, so the primary monitor has it too. */
-        const char *text = getenv("MIME_DISPLAY_DPI");
-        long dpi = text ? strtol(text, nullptr, 10) : 0;
-        if (dpi >= 96 && dpi <= 480)
-            for (uint64_t i = 0; i < value && i < capacity; i++)
-                if (dst[i].flags & MIME_MONITOR_PRIMARY)
-                    dst[i].dpi = (uint32_t)dpi;
         break;
     }
     case MIME_HC_GPU_OPEN:

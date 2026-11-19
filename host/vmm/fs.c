@@ -53,53 +53,6 @@ uint64_t mime_fs_status_of(int err)
     return errno_status(err);
 }
 
-/*
- * MIME_FS_FAULT=<end>,<skip>,<count>[;...] injects short writes into paths ending in <end>. after <skip>
- * writes, <count> writes return half the requested bytes without error, simulating a filesystem running out
- * of space mid-write.
- */
-#define FAULT_MAX 4
-static struct {
-    char text[256];
-    unsigned skip, count, seen;
-} g_fault[FAULT_MAX];
-static unsigned g_fault_count;
-static pthread_once_t g_fault_once = PTHREAD_ONCE_INIT;
-
-static void fault_init(void)
-{
-    const char *spec = getenv("MIME_FS_FAULT");
-    while (spec && *spec && g_fault_count < FAULT_MAX) {
-        const char *c1 = strchr(spec, ',');
-        const char *c2 = c1 ? strchr(c1 + 1, ',') : nullptr;
-        if (!c2 || (size_t)(c1 - spec) >= sizeof(g_fault[0].text))
-            return;
-        char *end;
-        __typeof__(g_fault[0]) *f = &g_fault[g_fault_count++];
-        memcpy(f->text, spec, (size_t)(c1 - spec));
-        f->skip = (unsigned)strtoul(c1 + 1, nullptr, 10);
-        f->count = (unsigned)strtoul(c2 + 1, &end, 10);
-        mime_warn("fs: writes to files with a path ending in '%s' come back short %u times after %u", f->text, f->count,
-                  f->skip);
-        spec = *end == ';' ? end + 1 : end;
-    }
-}
-
-static bool fault_hits(const char *path)
-{
-    pthread_once(&g_fault_once, fault_init);
-    size_t have = strlen(path);
-    for (unsigned i = 0; i < g_fault_count; i++) {
-        size_t want = strlen(g_fault[i].text);
-        if (have < want || strcmp(path + have - want, g_fault[i].text))
-            continue;
-        unsigned seen = __atomic_fetch_add(&g_fault[i].seen, 1, __ATOMIC_SEQ_CST);
-        if (seen >= g_fault[i].skip && seen - g_fault[i].skip < g_fault[i].count)
-            return true;
-    }
-    return false;
-}
-
 static uint64_t flush_fd(int fd)
 {
     int result;
@@ -1434,30 +1387,24 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
             break;
         } else {
             n = 0;
-            if (a[4] > 1 && fault_hits(fh->host_path)) {
-                n = pwrite(fh->fd, buf, (size_t)(a[4] / 2), (off_t)a[2]);
-                mime_warn("fs: write of %llu bytes at %llu to %s cut to %lld bytes", (unsigned long long)a[4],
-                          (unsigned long long)a[2], fh->host_path, (long long)n);
-            } else {
-                /* a write that comes back short is asked again for the rest: the guest takes a short count for a full disk. */
-                while ((uint64_t)n < a[4]) {
-                    ssize_t part = pwrite(fh->fd, (const char *)buf + n, (size_t)(a[4] - (uint64_t)n),
-                                          (off_t)(a[2] + (uint64_t)n));
-                    if (part < 0 && errno == EINTR)
-                        continue;
-                    if (part == 0)
-                        errno = ENOSPC;
-                    if (part <= 0) {
-                        if (part < 0 && n == 0)
-                            n = -1;
-                        break;
-                    }
-                    n += part;
+            /* a write that comes back short is asked again for the rest: the guest takes a short count for a full disk. */
+            while ((uint64_t)n < a[4]) {
+                ssize_t part = pwrite(fh->fd, (const char *)buf + n, (size_t)(a[4] - (uint64_t)n),
+                                      (off_t)(a[2] + (uint64_t)n));
+                if (part < 0 && errno == EINTR)
+                    continue;
+                if (part == 0)
+                    errno = ENOSPC;
+                if (part <= 0) {
+                    if (part < 0 && n == 0)
+                        n = -1;
+                    break;
                 }
-                if (n >= 0 && (uint64_t)n < a[4])
-                    mime_warn("fs: write of %llu bytes at %llu to %s stopped after %lld bytes: %s", (unsigned long long)a[4],
-                              (unsigned long long)a[2], fh->host_path, (long long)n, strerror(errno));
+                n += part;
             }
+            if (n >= 0 && (uint64_t)n < a[4])
+                mime_warn("fs: write of %llu bytes at %llu to %s stopped after %lld bytes: %s", (unsigned long long)a[4],
+                          (unsigned long long)a[2], fh->host_path, (long long)n, strerror(errno));
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
             if (n > 0) {
                 if (keeping)

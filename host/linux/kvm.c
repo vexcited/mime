@@ -270,7 +270,6 @@ static void spoof_model(struct kvm_cpuid2 *cpuid)
 }
 
 /* a physical machine has no hypervisor: its leaf 1 bit 31 is clear and the 0x40000000 leaves are absent. */
-static bool g_expose_hypervisor;
 
 static void set_leaf(uint32_t function, uint32_t index, bool indexed, uint32_t eax, uint32_t ebx, uint32_t ecx,
                      uint32_t edx)
@@ -392,8 +391,7 @@ static bool load_cpuid(MimeVm *vm)
     const MimeHardwareProfile *model = mime_hardware_profile();
     bool intel = !model || !model->cpu_vendor || !strcmp(model->cpu_vendor, "GenuineIntel");
     /* the reference machine runs under a hypervisor too: hiding it makes vmmcall execute instead of raising the
-       illegal instruction windows raises, which is a tell of its own. MIME_HIDE_HYPERVISOR opts out. */
-    g_expose_hypervisor = getenv("MIME_HIDE_HYPERVISOR") == nullptr;
+       illegal instruction windows raises, which is a tell of its own. */
     uint32_t out = 0;
     for (uint32_t i = 0; i < g_cpuid->nent; i++) {
         struct kvm_cpuid_entry2 *e = &g_cpuid->entries[i];
@@ -414,51 +412,17 @@ static bool load_cpuid(MimeVm *vm)
             e->edx |= (1u << 28); /* HTT */
             e->ecx &= ~(1u << 3); /* MONITOR is clear on the reference */
         }
-        /* svm stays as the reference reports it. hidden, kvm would answer vmmcall instead of leaving it illegal. */
-        if (e->function == 0x80000001 && !g_expose_hypervisor)
-            e->ecx &= ~(1u << 2);
         if (intel && e->function == 0x80000001) {
             e->ecx &= ~((1u << 6) | (1u << 7) | (1u << 8) | (1u << 22)); /* sse4a, misalignsse, 3dnowprefetch, topology extensions. */
             e->edx &= ~((1u << 22) | (1u << 30) | (1u << 31));                      /* mmxext, 3dnowext, 3dnow. */
         }
-        /*
-         * kvm leaves the processor topology leaves blank: it is the vmm that fills them from the smp layout. a real
-         * machine always answers them, so the guest copies the host's own, which match the physical processor the
-         * guest is told it runs on. without this a reader finds a cpu with no topology, the mark of emulation.
-         */
-        if (!g_expose_hypervisor &&
-            (e->function == 0xB || e->function == 0x1F || e->function == 0x8000001E || e->function == 0x8000001D)) {
-            uint32_t ha, hb, hc, hd;
-            __asm__ volatile("cpuid" : "=a"(ha), "=b"(hb), "=c"(hc), "=d"(hd)
-                             : "a"(e->function), "c"(e->index));
-            e->eax = ha;
-            e->ebx = hb;
-            e->ecx = hc;
-            e->edx = hd;
-        }
         g_cpuid->entries[out++] = *e;
     }
-    /* kvm leaves out the amd sev leaf when sev is not enabled; a bare ryzen still answers it. */
-    if (!intel && !g_expose_hypervisor) {
-        bool found = false;
-        for (uint32_t i = 0; i < out; i++) {
-            struct kvm_cpuid_entry2 *e = &g_cpuid->entries[i];
-            if (e->function == 0x8000001F) {
-                e->eax = 0x2B;
-                e->ebx = e->ecx = e->edx = 0;
-                found = true;
-            }
-        }
-        if (!found && out < (uint32_t)n) {
-            struct kvm_cpuid_entry2 e = {.function = 0x8000001F, .eax = 0x2B};
-            g_cpuid->entries[out++] = e;
-        }
-    }
     g_cpuid->nent = out;
-    if (!intel && g_expose_hypervisor)
+    if (!intel)
         reference_leaves(vm->vcpu_count);
     out = g_cpuid->nent;
-    uint32_t hv = g_expose_hypervisor ? add_hyperv_leaves(vm, g_cpuid->entries + out, (uint32_t)n - out) : 0;
+    uint32_t hv = add_hyperv_leaves(vm, g_cpuid->entries + out, (uint32_t)n - out);
     for (uint32_t i = 0; i < out; i++) {
         struct kvm_cpuid_entry2 *e = &g_cpuid->entries[i];
         if (e->function == 1)
@@ -716,7 +680,7 @@ static bool setup_vcpu(MimeVcpu *vcpu)
         if (e->function == 0xB || e->function == 0x1F)
             e->edx = vcpu->index;
         /* one thread a core: the core id is the apic id. */
-        if (e->function == 0x8000001E && g_expose_hypervisor)
+        if (e->function == 0x8000001E)
             e->eax = e->ebx = vcpu->index;
     }
     int r = ioctl(vcpu->fd, KVM_SET_CPUID2, cpuid);
