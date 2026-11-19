@@ -246,6 +246,11 @@ static FONT *new_font(const LOGFONTW *lf)
     return f;
 }
 
+FONT *GdiCreateFont(const LOGFONTW *lf)
+{
+    return new_font(lf);
+}
+
 GDI_REGION *GdiCreateRegion(void)
 {
     GDI_REGION *r = W32Alloc(sizeof(GDI_REGION));
