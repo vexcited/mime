@@ -57,7 +57,6 @@ EXPORTS
     NtGdiGetRandomRgn@12
     NtGdiGetRegionData@12
     NtGdiGetRgnBox@8
-    NtGdiGetStockObject@4
     NtGdiGetTextExtentExW@32
     NtGdiGetTextFaceW@16
     NtGdiGetTextMetricsW@12
@@ -66,21 +65,6 @@ EXPORTS
     NtGdiIntersectClipRect@20
     NtGdiInvertRgn@8
     NtGdiLineTo@12
-    NtGdiMimeAudioControl@8
-    NtGdiMimeAudioCreate@8
-    NtGdiMimeGamma@8
-    NtGdiMimeGfxShare@8
-    NtGdiMimeGpuAddBlock@12
-    NtGdiMimeGpuGetSurface@8
-    NtGdiMimeGpuKick@0
-    NtGdiMimeGpuOpen@8
-    NtGdiMimeGpuWait@12
-    NtGdiMimeSetExtent@20
-    NtGdiMimeVkAlloc@12
-    NtGdiMimeVkFree@4
-    NtGdiMimeVkKick@0
-    NtGdiMimeVkOpen@4
-    NtGdiMimeVkWait@12
     NtGdiModifyWorldTransform@12
     NtGdiMoveTo@16
     NtGdiOffsetRgn@12
@@ -108,9 +92,7 @@ EXPORTS
     NtGdiSetPixel@16
     NtGdiSetPixelFormat@8
     NtGdiSetRectRgn@20
-    NtGdiSetViewportOrgEx@16
     NtGdiSetVirtualResolution@20
-    NtGdiSetWindowOrgEx@16
     NtGdiStretchBlt@48
     NtGdiStretchDIBitsInternal@64
     NtGdiStrokeAndFillPath@4
@@ -138,7 +120,6 @@ EXPORTS
     NtUserCloseWindowStation@4
     NtUserCountClipboardFormats@0
     NtUserCreateDesktopEx@24
-    NtUserCreateEmptyCurObject@4
     NtUserCreateMenu@0
     NtUserCreatePopupMenu@0
     NtUserCreateWindowEx@52
@@ -179,6 +160,7 @@ EXPORTS
     NtUserGetForegroundWindow@0
     NtUserGetGuiResources@8
     NtUserGetIconInfo@24
+    NtUserInternalGetWindowIcon@8
     NtUserGetKeyState@4
     NtUserGetKeyboardState@4
     NtUserGetLayeredWindowAttributes@16
@@ -212,16 +194,6 @@ EXPORTS
     NtUserKillTimer@8
     NtUserMessageBeep@4
     NtUserMessageCall@28
-    NtUserMimeCallMenu@12
-    NtUserMimeCapture@20
-    NtUserMimeDnd@16
-    NtUserMimeDndData@24
-    NtUserMimeDndProvide@20
-    NtUserMimeExitWindows@8
-    NtUserMimeGetMenuItemInfo@16
-    NtUserMimeIme@20
-    NtUserMimeShell@16
-    NtUserMimeTray@12
     NtUserMsgWaitForMultipleObjectsEx@20
     NtUserOpenClipboard@8
     NtUserOpenDesktop@12
@@ -244,7 +216,6 @@ EXPORTS
     NtUserSetActiveWindow@4
     NtUserSetCapture@4
     NtUserSetClassLong@16
-    NtUserSetClassLongPtr@16
     NtUserSetClassWord@12
     NtUserSetClipboardData@12
     NtUserSetClipboardViewer@4
@@ -263,7 +234,6 @@ EXPORTS
     NtUserSetThreadDesktop@4
     NtUserSetTimer@20
     NtUserSetWindowLong@16
-    NtUserSetWindowLongPtr@16
     NtUserSetWindowPlacement@8
     NtUserSetWindowPos@28
     NtUserSetWindowRgn@12
@@ -286,3 +256,28 @@ EXPORTS
     NtUserValidateRect@8
     NtUserWaitForInputIdle@12
     NtUserWaitMessage@0
+    NtGdiMimeAudioControl@8
+    NtGdiMimeAudioCreate@8
+    NtGdiMimeGamma@8
+    NtGdiMimeGfxShare@8
+    NtGdiMimeGpuAddBlock@12
+    NtGdiMimeGpuGetSurface@8
+    NtGdiMimeGpuKick@0
+    NtGdiMimeGpuOpen@8
+    NtGdiMimeGpuWait@12
+    NtGdiMimeSetExtent@20
+    NtGdiMimeVkAlloc@12
+    NtGdiMimeVkFree@4
+    NtGdiMimeVkKick@0
+    NtGdiMimeVkOpen@4
+    NtGdiMimeVkWait@12
+    NtUserMimeCallMenu@12
+    NtUserMimeCapture@20
+    NtUserMimeDnd@16
+    NtUserMimeDndData@24
+    NtUserMimeDndProvide@20
+    NtUserMimeExitWindows@8
+    NtUserMimeGetMenuItemInfo@16
+    NtUserMimeIme@20
+    NtUserMimeShell@16
+    NtUserMimeTray@12

@@ -330,26 +330,14 @@ EXPORTS
     BSTR_UserMarshal@12 @284
     BSTR_UserUnmarshal@12 @285
     BSTR_UserFree@8 @286
-    BSTR_UserSize64@12 @151
-    BSTR_UserMarshal64@12 @145
-    BSTR_UserUnmarshal64@12 @300
-    BSTR_UserFree64@8 @144
     VARIANT_UserSize@12 @287
     VARIANT_UserMarshal@12 @288
     VARIANT_UserUnmarshal@12 @289
     VARIANT_UserFree@8 @290
-    VARIANT_UserSize64@12 @380
-    VARIANT_UserMarshal64@12 @359
-    VARIANT_UserUnmarshal64@12 @381
-    VARIANT_UserFree64@8 @358
     LPSAFEARRAY_UserSize@12 @291
     LPSAFEARRAY_UserMarshal@12 @292
     LPSAFEARRAY_UserUnmarshal@12 @293
     LPSAFEARRAY_UserFree@8 @294
-    LPSAFEARRAY_UserSize64@12 @350
-    LPSAFEARRAY_UserMarshal64@12 @328
-    LPSAFEARRAY_UserUnmarshal64@12 @351
-    LPSAFEARRAY_UserFree64@8 @324
     LPSAFEARRAY_Size@16 @295
     LPSAFEARRAY_Marshal@16 @296
     LPSAFEARRAY_Unmarshal@16 @297
@@ -371,10 +359,6 @@ EXPORTS
     HWND_UserMarshal @446
     HWND_UserSize @447
     HWND_UserUnmarshal @448
-    HWND_UserFree64 @449
-    HWND_UserMarshal64 @450
-    HWND_UserSize64 @451
-    HWND_UserUnmarshal64 @452
     VarDecAdd@12 @177
     VarDecDiv@12 @178
     VarDecMul@12 @179

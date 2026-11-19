@@ -1,0 +1,30 @@
+LIBRARY evr.dll
+EXPORTS
+    MFGetUncompressedVideoFormat=_EvrGetUncompressedVideoFormat@4 @1
+    DllCanUnloadNow=_DllCanUnloadNow@0 @2 PRIVATE
+    DllGetClassObject=_DllGetClassObject@12 @3 PRIVATE
+    DllRegisterServer=_DllRegisterServer@0 @4 PRIVATE
+    DllUnregisterServer=_DllUnregisterServer@0 @5 PRIVATE
+    MFConvertColorInfoFromDXVA=_EvrConvertColorInfoFromDXVA@8 @6
+    MFConvertColorInfoToDXVA=_EvrConvertColorInfoToDXVA@8 @7
+    MFConvertFromFP16Array=_EvrConvertFromFP16Array@12 @8
+    MFConvertToFP16Array=_EvrConvertToFP16Array@12 @9
+    MFCopyImage=_EvrCopyImage@24 @10
+    MFCreateDXSurfaceBuffer=_EvrCreateDXSurfaceBuffer@16 @11
+    MFCreateVideoMediaType=_EvrCreateVideoMediaType@8 @12
+    MFCreateVideoMediaTypeFromBitMapInfoHeader=_MFCreateVideoMediaTypeFromBitMapInfoHeader@48 @13
+    MFCreateVideoMediaTypeFromSubtype=_EvrCreateVideoMediaTypeFromSubtype@8 @14
+    MFCreateVideoMediaTypeFromVideoInfoHeader=_EvrCreateVideoMediaTypeFromVideoInfoHeader@36 @15
+    MFCreateVideoMediaTypeFromVideoInfoHeader2=_EvrCreateVideoMediaTypeFromVideoInfoHeader2@24 @16
+    MFCreateVideoMixer=_MFCreateVideoMixer@16 @17
+    MFCreateVideoMixerAndPresenter=_MFCreateVideoMixerAndPresenter@24 @18
+    MFCreateVideoOTA=_MFCreateVideoOTA@8 @19
+    MFCreateVideoPresenter=_MFCreateVideoPresenter@16 @20
+    MFCreateVideoPresenter2=_MFCreateVideoPresenter2@16 @21
+    MFCreateVideoSampleAllocator=_MFCreateVideoSampleAllocator@8 @22
+    MFCreateVideoSampleFromSurface=_MFCreateVideoSampleFromSurface@8 @23
+    MFGetPlaneSize=_EvrGetPlaneSize@16 @24
+    MFGetStrideForBitmapInfoHeader=_EvrGetStrideForBitmapInfoHeader@12 @25
+    MFInitVideoFormat=_EvrInitVideoFormat@8 @26
+    MFInitVideoFormat_RGB=_EvrInitVideoFormat_RGB@16 @27
+    MFIsFormatYUV=_EvrIsFormatYUV@4 @28

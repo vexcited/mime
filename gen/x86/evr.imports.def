@@ -1,0 +1,26 @@
+LIBRARY evr.dll
+EXPORTS
+    MFGetUncompressedVideoFormat@4 @1
+    MFConvertColorInfoFromDXVA@8 @6
+    MFConvertColorInfoToDXVA@8 @7
+    MFConvertFromFP16Array@12 @8
+    MFConvertToFP16Array@12 @9
+    MFCopyImage@24 @10
+    MFCreateDXSurfaceBuffer@16 @11
+    MFCreateVideoMediaType@8 @12
+    MFCreateVideoMediaTypeFromBitMapInfoHeader@48 @13
+    MFCreateVideoMediaTypeFromSubtype@8 @14
+    MFCreateVideoMediaTypeFromVideoInfoHeader@36 @15
+    MFCreateVideoMediaTypeFromVideoInfoHeader2@24 @16
+    MFCreateVideoMixer@16 @17
+    MFCreateVideoMixerAndPresenter@24 @18
+    MFCreateVideoOTA@8 @19
+    MFCreateVideoPresenter@16 @20
+    MFCreateVideoPresenter2@16 @21
+    MFCreateVideoSampleAllocator@8 @22
+    MFCreateVideoSampleFromSurface@8 @23
+    MFGetPlaneSize@16 @24
+    MFGetStrideForBitmapInfoHeader@12 @25
+    MFInitVideoFormat@8 @26
+    MFInitVideoFormat_RGB@16 @27
+    MFIsFormatYUV@4 @28

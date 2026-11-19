@@ -3,51 +3,73 @@ EXPORTS
     MFAllocateWorkQueue@4
     MFAllocateWorkQueueEx@8
     MFAverageTimePerFrameToFrameRate@16
+    MFCalculateImageSize@16
     MFCancelWorkItem@8
+    MFConvertColorInfoFromDXVA@8
+    MFConvertColorInfoToDXVA@8
+    MFConvertFromFP16Array@12
+    MFConvertToFP16Array@12
+    MFCopyImage@24
+    MFCreate2DMediaBuffer@20
     MFCreateAlignedMemoryBuffer@12
     MFCreateAsyncResult@16
     MFCreateAttributes@8
     MFCreateCollection@4
     MFCreateDXGIDeviceManager@8
     MFCreateDXGISurfaceBuffer@20
+    MFCreateDXSurfaceBuffer@16
     MFCreateEventQueue@4
-    MFCreateMFByteStreamOnStream@8
     MFCreateMediaBufferWrapper@16
     MFCreateMediaEvent@20
     MFCreateMediaType@4
     MFCreateMemoryBuffer@8
+    MFCreateMFByteStreamOnStream@8
+    MFCreateMFVideoFormatFromMFMediaType@12
     MFCreatePresentationDescriptor@12
     MFCreateSample@4
     MFCreateStreamDescriptor@16
+    MFCreateVideoMediaType@8
+    MFCreateVideoMediaTypeFromBitMapInfoHeaderEx@44
+    MFCreateVideoMediaTypeFromSubtype@8
+    MFCreateVideoMediaTypeFromVideoInfoHeader@36
+    MFCreateVideoMediaTypeFromVideoInfoHeader2@24
     MFCreateVideoSampleAllocatorEx@8
     MFCreateWaveFormatExFromMFMediaType@16
     MFDeserializeAttributesFromStream@12
     MFFrameRateToAverageTimePerFrame@12
     MFGetAttributesAsBlob@12
     MFGetAttributesAsBlobSize@8
+    MFGetPlaneSize@16
+    MFGetStrideForBitmapInfoHeader@12
     MFGetSystemTime@0
+    MFGetUncompressedVideoFormat@4
     MFHeapAlloc@20
     MFHeapFree@4
     MFInitAttributesFromBlob@12
+    MFInitMediaTypeFromMFVideoFormat@12
+    MFInitMediaTypeFromVideoInfoHeader@16
+    MFInitMediaTypeFromVideoInfoHeader2@16
     MFInitMediaTypeFromWaveFormatEx@12
+    MFInitVideoFormat@8
+    MFInitVideoFormat_RGB@16
     MFInvokeCallback@4
+    MFllMulDiv@32
     MFLockDXGIDeviceManager@8
     MFLockPlatform@0
     MFLockWorkQueue@4
-    MFPutWorkItem2@16
     MFPutWorkItem@12
-    MFPutWorkItemEx2@12
+    MFPutWorkItem2@16
     MFPutWorkItemEx@8
+    MFPutWorkItemEx2@12
     MFScheduleWorkItem@20
     MFScheduleWorkItemEx@16
     MFSerializeAttributesToStream@12
     MFSetMinimumMemoryAlignment@4
     MFShutdown@0
     MFStartup@8
-    MFTEnum2@40
     MFTEnum@40
+    MFTEnum2@40
     MFTEnumEx@36
     MFUnlockDXGIDeviceManager@0
     MFUnlockPlatform@0
     MFUnlockWorkQueue@4
-    MFllMulDiv@32

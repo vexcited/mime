@@ -3,12 +3,9 @@ EXPORTS
     AcquireSRWLockExclusive@4
     AcquireSRWLockShared@4
     ActivateActCtx@8
-    AddAtomA@4
-    AddAtomW@4
     AddConsoleAliasA@12
     AddConsoleAliasW@12
     AddDllDirectory@4
-    AddIntegrityLabelToBoundaryDescriptor@8
     AddRefActCtx@4
     AddSIDToBoundaryDescriptor@8
     AddVectoredContinueHandler@8
@@ -29,31 +26,15 @@ EXPORTS
     AppPolicyGetShowDeveloperDiagnostic@8
     AppPolicyGetThreadInitializationType@8
     AppPolicyGetWindowingModel@8
-    ApplicationRecoveryFinished@4
-    ApplicationRecoveryInProgress@4
     AreFileApisANSI@0
-    AssignProcessToJobObject@8
     AttachConsole@4
-    BackupRead@28
-    BackupSeek@24
-    BackupWrite@28
-    BaseSetLastNTError@4
     Beep@8
-    BeginUpdateResourceA@8
-    BeginUpdateResourceW@8
-    BindIoCompletionCallback@12
-    BuildCommDCBA@8
-    BuildCommDCBAndTimeoutsA@12
-    BuildCommDCBAndTimeoutsW@12
-    BuildCommDCBW@8
-    CallNamedPipeA@28
     CallNamedPipeW@28
     CallbackMayRunLong@4
     CancelIo@4
     CancelIoEx@8
     CancelSynchronousIo@4
     CancelThreadpoolIo@4
-    CancelTimerQueueTimer@8
     CancelWaitableTimer@4
     ChangeTimerQueueTimer@16
     CheckRemoteDebuggerPresent@8
@@ -86,18 +67,12 @@ EXPORTS
     ConvertThreadToFiberEx@8
     CopyContext@12
     CopyFile2@12
-    CopyFileA@12
-    CopyFileExA@24
     CopyFileExW@24
     CopyFileW@12
-    CopyLZFile@8
-    CreateActCtxA@4
     CreateActCtxW@4
-    CreateBoundaryDescriptorA@8
     CreateBoundaryDescriptorW@8
     CreateConsoleScreenBuffer@20
     CreateDirectoryA@8
-    CreateDirectoryExA@12
     CreateDirectoryExW@12
     CreateDirectoryW@8
     CreateEventA@16
@@ -108,7 +83,6 @@ EXPORTS
     CreateFiberEx@20
     CreateFile2@20
     CreateFileA@28
-    CreateFileMappingA@24
     CreateFileMappingFromApp@24
     CreateFileMappingNumaW@28
     CreateFileMappingW@24
@@ -116,19 +90,13 @@ EXPORTS
     CreateHardLinkA@12
     CreateHardLinkW@12
     CreateIoCompletionPort@16
-    CreateJobObjectA@8
-    CreateJobObjectW@8
-    CreateMailslotA@16
-    CreateMailslotW@16
     CreateMemoryResourceNotification@4
     CreateMutexA@12
     CreateMutexExA@16
     CreateMutexExW@16
     CreateMutexW@12
-    CreateNamedPipeA@32
     CreateNamedPipeW@32
     CreatePipe@16
-    CreatePrivateNamespaceA@12
     CreatePrivateNamespaceW@12
     CreateProcessA@40
     CreateProcessAsUserA@44
@@ -139,13 +107,9 @@ EXPORTS
     CreatePseudoConsole@20
     CreateRemoteThread@28
     CreateRemoteThreadEx@32
-    CreateSemaphoreA@16
-    CreateSemaphoreExA@24
     CreateSemaphoreExW@24
     CreateSemaphoreW@16
-    CreateSymbolicLinkA@12
     CreateSymbolicLinkW@12
-    CreateTapePartition@16
     CreateThread@24
     CreateThreadpool@4
     CreateThreadpoolCleanupGroup@0
@@ -155,22 +119,16 @@ EXPORTS
     CreateThreadpoolWork@12
     CreateTimerQueue@0
     CreateTimerQueueTimer@28
-    CreateToolhelp32Snapshot@8
-    CreateWaitableTimerA@12
-    CreateWaitableTimerExA@16
     CreateWaitableTimerExW@16
     CreateWaitableTimerW@12
     DeactivateActCtx@8
     DebugActiveProcess@4
     DebugActiveProcessStop@4
     DebugBreak@0
-    DebugBreakProcess@4
     DecodePointer@4
     DecodeSystemPointer@4
-    DefineDosDeviceA@12
     DefineDosDeviceW@12
     DelayLoadFailureHook@8
-    DeleteAtom@4
     DeleteBoundaryDescriptor@4
     DeleteCriticalSection@4
     DeleteFiber@4
@@ -188,36 +146,24 @@ EXPORTS
     DiscardVirtualMemory@8
     DisconnectNamedPipe@4
     DnsHostnameToComputerNameExW@12
-    DosDateTimeToFileTime@12
     DuplicateHandle@28
     EmptyWorkingSet@4
     EncodePointer@4
     EncodeSystemPointer@4
-    EndUpdateResourceA@8
-    EndUpdateResourceW@8
     EnterCriticalSection@4
     EnterSynchronizationBarrier@8
-    EnumCalendarInfoA@16
-    EnumCalendarInfoExA@16
     EnumCalendarInfoExEx@24
     EnumCalendarInfoExW@16
     EnumCalendarInfoW@16
-    EnumDateFormatsA@12
-    EnumDateFormatsExA@12
     EnumDateFormatsExEx@16
     EnumDateFormatsExW@12
     EnumDateFormatsW@12
     EnumLanguageGroupLocalesW@16
-    EnumResourceLanguagesA@20
     EnumResourceLanguagesExW@28
-    EnumResourceLanguagesW@20
     EnumResourceNamesA@16
     EnumResourceNamesExW@24
     EnumResourceNamesW@16
-    EnumResourceTypesA@12
     EnumResourceTypesExW@20
-    EnumResourceTypesW@12
-    EnumSystemCodePagesA@8
     EnumSystemCodePagesW@8
     EnumSystemFirmwareTables@12
     EnumSystemGeoID@12
@@ -225,11 +171,9 @@ EXPORTS
     EnumSystemLocalesA@8
     EnumSystemLocalesEx@16
     EnumSystemLocalesW@8
-    EnumTimeFormatsA@12
     EnumTimeFormatsEx@16
     EnumTimeFormatsW@12
     EnumUILanguagesW@12
-    EraseTape@12
     EscapeCommFunction@8
     ExitProcess@4
     ExitThread@4
@@ -239,29 +183,16 @@ EXPORTS
     ExpungeConsoleCommandHistoryW@4
     FatalAppExitA@8
     FatalAppExitW@8
-    FatalExit@4
-    FileTimeToDosDateTime@12
     FileTimeToLocalFileTime@8
     FileTimeToSystemTime@8
     FillConsoleOutputAttribute@20
     FillConsoleOutputCharacterA@20
     FillConsoleOutputCharacterW@20
     FindActCtxSectionGuid@20
-    FindActCtxSectionStringA@20
     FindActCtxSectionStringW@20
-    FindAtomA@4
-    FindAtomW@4
     FindClose@4
     FindCloseChangeNotification@4
-    DeleteVolumeMountPointA@4
     DeleteVolumeMountPointW@4
-    FindFirstVolumeMountPointA@12
-    FindFirstVolumeMountPointW@12
-    FindNextVolumeMountPointA@12
-    FindNextVolumeMountPointW@12
-    FindVolumeMountPointClose@4
-    SetVolumeMountPointA@8
-    SetVolumeMountPointW@8
     FindFirstChangeNotificationA@12
     FindFirstChangeNotificationW@12
     FindFirstFileA@8
@@ -270,7 +201,6 @@ EXPORTS
     FindFirstFileNameW@16
     FindFirstFileW@8
     FindFirstStreamW@16
-    FindFirstVolumeA@8
     FindFirstVolumeW@8
     FindNLSString@28
     FindNLSStringEx@40
@@ -279,11 +209,8 @@ EXPORTS
     FindNextFileNameW@12
     FindNextFileW@8
     FindNextStreamW@8
-    FindNextVolumeA@12
     FindNextVolumeW@12
     FindPackagesByPackageFamily@28
-    FindResourceA@12
-    FindResourceExA@16
     FindResourceExW@16
     FindResourceW@12
     FindStringOrdinal@24
@@ -298,7 +225,6 @@ EXPORTS
     FlushInstructionCache@12
     FlushProcessWriteBuffers@0
     FlushViewOfFile@8
-    FoldStringA@20
     FoldStringW@20
     FormatMessageA@28
     FormatMessageW@28
@@ -314,18 +240,12 @@ EXPORTS
     GetACP@0
     GetAcceptLanguagesA@8
     GetAcceptLanguagesW@8
-    GetActiveProcessorCount@4
-    GetActiveProcessorGroupCount@0
     GetAppContainerNamedObjectPath@20
     GetApplicationRecoveryCallback@20
     GetApplicationRestartSettings@16
     GetApplicationUserModelId@12
-    GetAtomNameA@12
-    GetAtomNameW@12
     GetCPInfo@8
-    GetCPInfoExA@12
     GetCPInfoExW@12
-    GetCalendarInfoA@24
     GetCalendarInfoEx@28
     GetCalendarInfoW@24
     GetCommMask@8
@@ -337,10 +257,8 @@ EXPORTS
     GetCommandLineW@0
     GetCompressedFileSizeA@8
     GetCompressedFileSizeW@8
-    GetComputerNameA@8
     GetComputerNameExA@12
     GetComputerNameExW@12
-    GetComputerNameW@8
     GetConsoleAliasA@16
     GetConsoleAliasExesA@8
     GetConsoleAliasExesLengthA@0
@@ -373,7 +291,6 @@ EXPORTS
     GetConsoleTitleA@8
     GetConsoleTitleW@8
     GetConsoleWindow@0
-    GetCurrencyFormatA@24
     GetCurrencyFormatEx@24
     GetCurrencyFormatW@24
     GetCurrentActCtx@4
@@ -397,16 +314,12 @@ EXPORTS
     GetDateFormatA@24
     GetDateFormatEx@28
     GetDateFormatW@24
-    GetDevicePowerState@8
     GetDiskFreeSpaceA@20
     GetDiskFreeSpaceExA@16
     GetDiskFreeSpaceExW@16
     GetDiskFreeSpaceW@20
-    GetDllDirectoryA@8
-    GetDllDirectoryW@8
     GetDriveTypeA@4
     GetDriveTypeW@4
-    GetDurationFormat@32
     GetDurationFormatEx@32
     GetDynamicTimeZoneInformation@4
     GetDynamicTimeZoneInformationEffectiveYears@12
@@ -419,8 +332,6 @@ EXPORTS
     GetErrorMode@0
     GetExitCodeProcess@8
     GetExitCodeThread@8
-    GetExpandedNameA@8
-    GetExpandedNameW@8
     GetFileAttributesA@4
     GetFileAttributesExA@12
     GetFileAttributesExW@12
@@ -434,42 +345,16 @@ EXPORTS
     GetFileType@4
     GetFinalPathNameByHandleA@16
     GetFinalPathNameByHandleW@16
-    GetFirmwareType@4
-    GetFirmwareEnvironmentVariableA@16
-    GetFirmwareEnvironmentVariableW@16
-    GetFirmwareEnvironmentVariableExA@20
-    GetFirmwareEnvironmentVariableExW@20
-    GetMailslotInfo@20
     GetNumaNodeProcessorMaskEx@8
-    GetTapeParameters@16
-    GetTapePosition@20
-    GetTapeStatus@4
-    GetThreadSelectorEntry@12
-    GetVolumeNameForVolumeMountPointA@12
-    GetVolumePathNameA@12
-    GetVolumePathNamesForVolumeNameA@16
-    Heap32First@12
-    Heap32ListFirst@8
-    Heap32ListNext@8
-    Heap32Next@4
     MapUserPhysicalPages@12
-    MapUserPhysicalPagesScatter@12
-    MoveFileWithProgressA@20
-    PrepareTape@12
     PssCaptureSnapshot@16
     PssFreeSnapshot@8
     PssQuerySnapshot@16
     QueryProcessAffinityUpdateMode@8
     ReadFileScatter@20
-    ReplaceFileA@24
     SetFileIoOverlappedRange@12
-    SetFirmwareEnvironmentVariableA@16
-    SetFirmwareEnvironmentVariableW@16
-    SetFirmwareEnvironmentVariableExA@20
-    SetFirmwareEnvironmentVariableExW@20
     GetFullPathNameA@16
     GetFullPathNameW@16
-    GetGeoInfoA@20
     GetGeoInfoW@20
     GetHandleInformation@8
     GetLargePageMinimum@0
@@ -479,7 +364,6 @@ EXPORTS
     GetLocaleInfoA@16
     GetLocaleInfoEx@16
     GetLocaleInfoW@16
-    GetLogicalDriveStringsA@8
     GetLogicalDriveStringsW@8
     GetLogicalDrives@0
     GetLogicalProcessorInformation@8
@@ -487,8 +371,6 @@ EXPORTS
     GetLongPathNameA@12
     GetLongPathNameW@12
     GetMachineTypeAttributes@8
-    GetMaximumProcessorCount@4
-    GetMaximumProcessorGroupCount@0
     GetMemoryErrorHandlingCapabilities@4
     GetModuleFileNameA@12
     GetModuleFileNameW@12
@@ -499,20 +381,10 @@ EXPORTS
     GetNLSVersion@12
     GetNLSVersionEx@12
     GetNamedPipeClientComputerNameW@12
-    GetNamedPipeClientProcessId@8
-    GetNamedPipeClientSessionId@8
-    GetNamedPipeHandleStateA@28
     GetNamedPipeHandleStateW@28
     GetNamedPipeInfo@20
-    GetNamedPipeServerProcessId@8
-    GetNamedPipeServerSessionId@8
     GetNativeSystemInfo@4
-    GetNumaAvailableMemoryNode@8
     GetNumaHighestNodeNumber@4
-    GetNumaNodeProcessorMask@8
-    GetNumaProcessorNode@8
-    GetNumaProcessorNodeEx@8
-    GetNumberFormatA@24
     GetNumberFormatEx@24
     GetNumberFormatW@24
     GetNumberOfConsoleInputEvents@8
@@ -533,20 +405,8 @@ EXPORTS
     GetPackagesByPackageFamily@20
     GetPhysicallyInstalledSystemMemory@4
     GetPriorityClass@4
-    GetPrivateProfileIntA@16
-    GetPrivateProfileIntW@16
-    GetPrivateProfileSectionA@16
-    GetPrivateProfileSectionNamesA@12
-    GetPrivateProfileSectionNamesW@12
-    GetPrivateProfileSectionW@16
-    GetPrivateProfileStringA@24
-    GetPrivateProfileStringW@24
-    GetPrivateProfileStructA@20
-    GetPrivateProfileStructW@20
     GetProcAddress@8
     GetProcAddressForCaller@12
-    GetProcessAffinityMask@12
-    GetProcessDEPPolicy@12
     GetProcessGroupAffinity@12
     GetProcessHandleCount@8
     GetProcessHeap@0
@@ -554,7 +414,6 @@ EXPORTS
     GetProcessId@4
     GetProcessIdOfThread@4
     GetProcessInformation@16
-    GetProcessIoCounters@8
     GetProcessMemoryInfo@12
     GetProcessMitigationPolicy@16
     GetProcessPreferredUILanguages@16
@@ -565,25 +424,15 @@ EXPORTS
     GetProcessWorkingSetSize@12
     GetProcessWorkingSetSizeEx@16
     GetProductInfo@20
-    GetProfileIntA@12
-    GetProfileIntW@12
-    GetProfileSectionA@12
-    GetProfileSectionW@12
-    GetProfileStringA@20
-    GetProfileStringW@20
     GetQueuedCompletionStatus@20
     GetQueuedCompletionStatusEx@24
-    GetShortPathNameA@12
     GetShortPathNameW@12
-    GetStartupInfoA@4
     GetStartupInfoW@4
     GetStdHandle@4
     GetStringScripts@20
     GetStringTypeA@20
-    GetStringTypeExA@20
     GetStringTypeExW@20
     GetStringTypeW@16
-    GetSystemDEPPolicy@0
     GetSystemDefaultLCID@0
     GetSystemDefaultLangID@0
     GetSystemDefaultLocaleName@8
@@ -592,12 +441,10 @@ EXPORTS
     GetSystemDirectoryW@8
     GetSystemFirmwareTable@16
     GetSystemInfo@4
-    GetSystemPowerStatus@4
     GetSystemPreferredUILanguages@16
     GetSystemTime@4
     GetSystemTimeAdjustment@12
     GetSystemTimeAsFileTime@4
-    GetSystemTimeAsFileTimeRaw@4
     GetSystemTimePreciseAsFileTime@4
     GetSystemTimes@12
     GetSystemWindowsDirectoryA@8
@@ -651,28 +498,15 @@ EXPORTS
     GetWindowsDirectoryA@8
     GetWindowsDirectoryW@8
     GetWriteWatch@24
-    GlobalAddAtomA@4
-    GlobalAddAtomW@4
     GlobalAlloc@8
-    GlobalCompact@4
-    GlobalDeleteAtom@4
-    GlobalFindAtomA@4
-    GlobalFindAtomW@4
-    GlobalFix@4
     GlobalFlags@4
     GlobalFree@4
-    GlobalGetAtomNameA@12
-    GlobalGetAtomNameW@12
     GlobalHandle@4
     GlobalLock@4
-    GlobalMemoryStatus@4
     GlobalMemoryStatusEx@4
     GlobalReAlloc@12
     GlobalSize@4
-    GlobalUnWire@4
-    GlobalUnfix@4
     GlobalUnlock@4
-    GlobalWire@4
     HashData@16
     HeapAlloc@12
     HeapCompact@8
@@ -691,7 +525,6 @@ EXPORTS
     IdnToAscii@20
     IdnToNameprepUnicode@20
     IdnToUnicode@20
-    InitAtomTable@4
     InitOnceBeginInitialize@16
     InitOnceComplete@12
     InitOnceExecuteOnce@16
@@ -716,13 +549,6 @@ EXPORTS
     InterlockedPushEntrySList@8
     InterlockedPushListSListEx@16
     IsApiSetImplemented@4
-    IsBadCodePtr@4
-    IsBadHugeReadPtr@8
-    IsBadHugeWritePtr@8
-    IsBadReadPtr@8
-    IsBadStringPtrA@8
-    IsBadStringPtrW@8
-    IsBadWritePtr@8
     IsCharBlankW@4
     IsCharCntrlW@4
     IsCharDigitW@4
@@ -735,7 +561,6 @@ EXPORTS
     IsDebuggerPresent@0
     IsInternetESCEnabled@0
     IsNLSDefinedString@20
-    IsNativeVhdBoot@4
     IsNormalizedString@12
     IsProcessCritical@8
     IsProcessInJob@12
@@ -779,17 +604,6 @@ EXPORTS
     LCMapStringA@24
     LCMapStringEx@36
     LCMapStringW@24
-    LZClose@4
-    LZCloseFile@4
-    LZCopy@8
-    LZCreateFileW@20
-    LZDone@0
-    LZInit@4
-    LZOpenFileA@12
-    LZOpenFileW@12
-    LZRead@12
-    LZSeek@12
-    LZStart@0
     LeaveCriticalSection@4
     LeaveCriticalSectionWhenCallbackReturns@8
     LoadLibraryA@4
@@ -799,14 +613,11 @@ EXPORTS
     LoadPackagedLibrary@8
     LoadResource@8
     LocalAlloc@8
-    LocalCompact@4
     LocalFileTimeToFileTime@8
     LocalFlags@4
     LocalFree@4
-    LocalHandle@4
     LocalLock@4
     LocalReAlloc@12
-    LocalShrink@8
     LocalSize@4
     LocalUnlock@4
     LocaleNameToLCID@8
@@ -821,14 +632,7 @@ EXPORTS
     MapViewOfFileExNuma@28
     MapViewOfFileFromApp@20
     MapViewOfFileNuma2@36
-    Module32First@8
-    Module32FirstW@8
-    Module32Next@8
-    Module32NextW@8
-    MoveFileA@8
-    MoveFileExA@12
     MoveFileExW@12
-    MoveFileW@8
     MoveFileWithProgressW@20
     MulDiv@12
     MultiByteToWideChar@24
@@ -839,20 +643,13 @@ EXPORTS
     OfferVirtualMemory@12
     OpenEventA@12
     OpenEventW@12
-    OpenFile@12
     OpenFileById@24
-    OpenFileMappingA@12
     OpenFileMappingFromApp@12
     OpenFileMappingW@12
-    OpenJobObjectA@12
-    OpenJobObjectW@12
-    OpenMutexA@12
     OpenMutexW@12
     OpenPackageInfoByFullName@12
-    OpenPrivateNamespaceA@8
     OpenPrivateNamespaceW@8
     OpenProcess@12
-    OpenSemaphoreA@12
     OpenSemaphoreW@12
     OpenThread@12
     OpenWaitableTimerW@12
@@ -971,14 +768,7 @@ EXPORTS
     PeekConsoleInputW@16
     PeekNamedPipe@24
     PostQueuedCompletionStatus@16
-    PowerClearRequest@8
-    PowerCreateRequest@4
-    PowerSetRequest@8
     PrefetchVirtualMemory@16
-    Process32First@8
-    Process32FirstW@8
-    Process32Next@8
-    Process32NextW@8
     ProcessIdToSessionId@8
     PulseEvent@4
     PurgeComm@8
@@ -986,11 +776,9 @@ EXPORTS
     QueryActCtxSettingsW@28
     QueryActCtxW@28
     QueryDepthSList@4
-    QueryDosDeviceA@12
     QueryDosDeviceW@12
     QueryFullProcessImageNameA@16
     QueryFullProcessImageNameW@16
-    QueryInformationJobObject@20
     QueryInterruptTime@4
     QueryInterruptTimePrecise@4
     QueryMemoryResourceNotification@8
@@ -1027,28 +815,20 @@ EXPORTS
     ReadProcessMemory@20
     ReclaimVirtualMemory@8
     RegCloseKey@4
-    RegCopyTreeA@12
     RegCopyTreeW@12
-    RegCreateKeyA@12
     RegCreateKeyExA@36
     RegCreateKeyExW@36
-    RegCreateKeyW@12
-    RegDeleteKeyA@8
     RegDeleteKeyExA@16
     RegDeleteKeyExW@16
     RegDeleteKeyValueA@12
     RegDeleteKeyValueW@12
-    RegDeleteKeyW@8
     RegDeleteTreeA@8
     RegDeleteTreeW@8
     RegDeleteValueA@8
     RegDeleteValueW@8
     RegDisablePredefinedCacheEx@0
-    RegDuplicateHKey@8
-    RegEnumKeyA@16
     RegEnumKeyExA@32
     RegEnumKeyExW@32
-    RegEnumKeyW@16
     RegEnumValueA@32
     RegEnumValueW@32
     RegFlushKey@4
@@ -1062,36 +842,26 @@ EXPORTS
     RegLoadMUIStringW@28
     RegNotifyChangeKeyValue@20
     RegOpenCurrentUser@8
-    RegOpenKeyA@12
     RegOpenKeyExA@20
     RegOpenKeyExW@20
-    RegOpenKeyW@12
     RegOpenUserClassesRoot@16
-    RegOverridePredefKey@8
     RegQueryInfoKeyA@48
     RegQueryInfoKeyW@48
     RegQueryMultipleValuesA@20
     RegQueryMultipleValuesW@20
     RegQueryValueExA@24
     RegQueryValueExW@24
-    RegReplaceKeyA@16
-    RegReplaceKeyW@16
     RegRestoreKeyA@12
     RegRestoreKeyW@12
-    RegSaveKeyA@12
     RegSaveKeyExA@16
     RegSaveKeyExW@16
-    RegSaveKeyW@12
     RegSetKeyValueA@24
     RegSetKeyValueW@24
     RegSetValueExA@24
     RegSetValueExW@24
     RegUnLoadKeyA@8
     RegUnLoadKeyW@8
-    RegisterAppStateChangeNotification@12
-    RegisterApplicationRecoveryCallback@16
     RegisterApplicationRestart@8
-    RegisterWaitForSingleObject@24
     RegisterWaitForSingleObjectEx@20
     ReleaseActCtx@4
     ReleaseMutex@4
@@ -1146,7 +916,6 @@ EXPORTS
     ScrollConsoleScreenBufferW@20
     SearchPathA@24
     SearchPathW@24
-    SetCalendarInfoA@16
     SetCalendarInfoW@16
     SetCommBreak@4
     SetCommMask@8
@@ -1181,8 +950,6 @@ EXPORTS
     SetCurrentDirectoryA@4
     SetCurrentDirectoryW@4
     SetDefaultDllDirectories@4
-    SetDllDirectoryA@4
-    SetDllDirectoryW@4
     SetEndOfFile@4
     SetEnvironmentStringsW@4
     SetEnvironmentVariableA@8
@@ -1194,7 +961,6 @@ EXPORTS
     SetFileApisToOEM@0
     SetFileAttributesA@8
     SetFileAttributesW@8
-    SetFileCompletionNotificationModes@8
     SetFileInformationByHandle@16
     SetFilePointer@16
     SetFilePointerEx@20
@@ -1202,17 +968,12 @@ EXPORTS
     SetFileValidData@12
     SetHandleCount@4
     SetHandleInformation@12
-    SetInformationJobObject@16
     SetLastError@4
     SetLocalTime@4
-    SetLocaleInfoA@12
     SetLocaleInfoW@12
-    SetMailslotInfo@8
     SetNamedPipeHandleState@16
     SetPriorityClass@8
-    SetProcessAffinityMask@8
     SetProcessAffinityUpdateMode@8
-    SetProcessDEPPolicy@4
     SetProcessInformation@16
     SetProcessMitigationPolicy@12
     SetProcessPreferredUILanguages@12
@@ -1221,18 +982,13 @@ EXPORTS
     SetProcessValidCallTargets@20
     SetProcessWorkingSetSize@12
     SetProcessWorkingSetSizeEx@16
-    SetSearchPathMode@4
     SetStdHandle@8
     SetStdHandleEx@12
     SetSystemTime@4
     SetSystemTimeAdjustment@8
-    SetTapeParameters@12
-    SetTapePosition@24
-    SetThreadAffinityMask@8
     SetThreadContext@8
     SetThreadDescription@8
     SetThreadErrorMode@8
-    SetThreadExecutionState@4
     SetThreadGroupAffinity@12
     SetThreadIdealProcessor@8
     SetThreadIdealProcessorEx@12
@@ -1253,8 +1009,6 @@ EXPORTS
     SetTimeZoneInformation@4
     SetUnhandledExceptionFilter@4
     SetUserGeoID@4
-    SetVolumeLabelA@8
-    SetVolumeLabelW@8
     SetWaitableTimer@24
     SetWaitableTimerEx@28
     SetXStateFeaturesMask@12
@@ -1332,12 +1086,9 @@ EXPORTS
     SystemTimeToFileTime@8
     SystemTimeToTzSpecificLocalTime@12
     SystemTimeToTzSpecificLocalTimeEx@12
-    TerminateJobObject@8
     TerminateProcess@8
     TerminateProcessOnMemoryExhaustion@4
     TerminateThread@8
-    Thread32First@8
-    Thread32Next@8
     TlsAlloc@0
     TlsFree@4
     TlsGetValue2@4
@@ -1357,14 +1108,9 @@ EXPORTS
     UnmapViewOfFile2@12
     UnmapViewOfFile@4
     UnmapViewOfFileEx@8
-    UnregisterAppStateChangeNotification@4
-    UnregisterApplicationRecoveryCallback@0
     UnregisterApplicationRestart@0
-    UnregisterWait@4
     UnregisterWaitEx@8
     UpdateProcThreadAttribute@28
-    UpdateResourceA@24
-    UpdateResourceW@24
     UrlApplySchemeA@16
     UrlApplySchemeW@16
     UrlCanonicalizeA@16
@@ -1393,8 +1139,6 @@ EXPORTS
     UrlUnescapeA@16
     UrlUnescapeW@16
     VerifyScripts@20
-    VerifyVersionInfoA@16
-    VerifyVersionInfoW@16
     VirtualAlloc2@28
     VirtualAlloc2FromApp@28
     VirtualAlloc@16
@@ -1411,7 +1155,6 @@ EXPORTS
     VirtualQueryEx@16
     VirtualUnlock@8
     VirtualUnlockEx@12
-    WTSGetActiveConsoleSessionId@0
     WaitCommEvent@12
     WaitForMultipleObjects@16
     WaitForMultipleObjectsEx@20
@@ -1421,7 +1164,6 @@ EXPORTS
     WaitForThreadpoolTimerCallbacks@8
     WaitForThreadpoolWaitCallbacks@8
     WaitForThreadpoolWorkCallbacks@8
-    WaitNamedPipeA@8
     WaitNamedPipeW@8
     WaitOnAddress@16
     WakeAllConditionVariable@4
@@ -1437,7 +1179,6 @@ EXPORTS
     WerUnregisterRuntimeExceptionModule@8
     WerSetFlags@4
     WideCharToMultiByte@32
-    WinExec@8
     Wow64DisableWow64FsRedirection@4
     Wow64EnableWow64FsRedirection@4
     Wow64GetThreadContext@8
@@ -1446,8 +1187,6 @@ EXPORTS
     Wow64SetThreadDefaultGuestMachine@4
     WriteConsoleA@20
     WriteConsoleInputA@16
-    WriteConsoleInputVDMA@16
-    WriteConsoleInputVDMW@16
     WriteConsoleInputW@16
     WriteConsoleOutputA@20
     WriteConsoleOutputAttribute@20
@@ -1458,35 +1197,12 @@ EXPORTS
     WriteFile@20
     WriteFileEx@20
     WriteFileGather@20
-    WritePrivateProfileSectionA@12
-    WritePrivateProfileSectionW@12
-    WritePrivateProfileStringA@16
-    WritePrivateProfileStringW@16
-    WritePrivateProfileStructA@20
-    WritePrivateProfileStructW@20
     WriteProcessMemory@20
-    WriteProfileSectionA@8
-    WriteProfileSectionW@8
-    WriteProfileStringA@12
-    WriteProfileStringW@12
-    WriteTapemark@16
     ZombifyActCtx@4
-    _hread@12
-    _hwrite@12
-    _lclose@4
-    _lcreat@8
-    _llseek@12
-    _lopen@8
-    _lread@12
-    _lwrite@12
-    lstrcatA@8
-    lstrcatW@8
     lstrcmpA@8
     lstrcmpW@8
     lstrcmpiA@8
     lstrcmpiW@8
-    lstrcpyA@8
-    lstrcpyW@8
     lstrcpynA@12
     lstrcpynW@12
     lstrlenA@4
@@ -1512,6 +1228,6 @@ EXPORTS
     UnregisterTraceGuids@8
     VerSetConditionMask@16
     ContinueDebugEvent@12
-    DebugSetProcessKillOnExit@4
     WaitForDebugEvent@8
     WaitForDebugEventEx@8
+    RegDuplicateHKey@8

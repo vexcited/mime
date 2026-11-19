@@ -78,7 +78,6 @@ EXPORTS
     _chdir
     _chdrive
     _chgsign
-    _chgsignf
     _chmod
     _chsize
     _chsize_s
@@ -90,7 +89,6 @@ EXPORTS
     _controlfp
     _controlfp_s
     _copysign
-    _copysignf
     _cprintf
     _cputs
     _cputws
@@ -144,12 +142,10 @@ EXPORTS
     _findnext64
     _findnexti64
     _finite
-    _finitef
     _flsbuf
     _flushall
     _fmode DATA
     _fpclass
-    _fpclassf
     _fpreset
     _fprintf_l
     _fputchar
@@ -211,7 +207,6 @@ EXPORTS
     _heapset
     _HUGE DATA
     _hypot
-    _hypotf
     _i64toa
     _i64toa_s
     _i64tow
@@ -238,7 +233,6 @@ EXPORTS
     _ismbcspace
     _ismbcupper
     _isnan
-    _isnanf
     _isprint_l
     _isspace_l
     _isupper_l
@@ -268,7 +262,6 @@ EXPORTS
     _lock
     _locking
     _logb
-    _logbf
     _lrotl
     _lrotr
     _lsearch
@@ -334,7 +327,6 @@ EXPORTS
     _mktime64
     _msize
     _nextafter
-    _nextafterf
     _onexit
     _open
     _open_osfhandle
@@ -363,7 +355,6 @@ EXPORTS
     _rotr
     _rotr64
     _scalb
-    _scalbf
     _scprintf
     _scwprintf
     _searchenv
@@ -467,7 +458,6 @@ EXPORTS
     _ultow_s
     _umask
     _umask_s
-    _ungetc_nolock
     _ungetch
     _ungetwch
     _unlink
@@ -615,15 +605,11 @@ EXPORTS
     abort
     abs
     acos
-    acosf
     asctime
     asctime_s
     asin
-    asinf
     atan
     atan2
-    atan2f
-    atanf
     atexit
     atof
     atoi
@@ -633,20 +619,16 @@ EXPORTS
     btowc
     calloc
     ceil
-    ceilf
     clearerr
     clearerr_s
     clock
     cos
-    cosf
     cosh
-    coshf
     ctime
     difftime
     div
     exit
     exp
-    expf
     fabs
     fclose
     feof
@@ -658,9 +640,7 @@ EXPORTS
     fgetwc
     fgetws
     floor
-    floorf
     fmod
-    fmodf
     fopen
     fopen_s
     fprintf
@@ -725,8 +705,6 @@ EXPORTS
     localtime
     log
     log10
-    log10f
-    logf
     longjmp
     malloc
     mblen
@@ -745,10 +723,8 @@ EXPORTS
     memset
     mktime
     modf
-    modff
     perror
     pow
-    powf
     printf
     printf_s
     putc
@@ -772,13 +748,10 @@ EXPORTS
     setvbuf
     signal
     sin
-    sinf
     sinh
-    sinhf
     sprintf
     sprintf_s
     sqrt
-    sqrtf
     srand
     sscanf
     sscanf_s
@@ -816,9 +789,7 @@ EXPORTS
     swscanf_s
     system
     tan
-    tanf
     tanh
-    tanhf
     time
     tmpfile
     tmpfile_s
@@ -881,9 +852,6 @@ EXPORTS
     wprintf_s
     wscanf
     wscanf_s
-    _invalid_parameter_noinfo
-    _lock_file
-    _unlock_file
     ??_7__non_rtti_object@@6B@ DATA
     ??_7bad_cast@@6B@ DATA
     ??_7bad_typeid@@6B@ DATA
@@ -908,57 +876,8 @@ EXPORTS
     _get_unexpected
     __unDName
     __unDNameEx
-    __current_exception
-    __current_exception_context
-    __processing_throw
-    __std_exception_copy
-    __std_exception_destroy
-    __std_type_info_compare
-    __std_type_info_hash
-    __std_type_info_name
-    __std_type_info_destroy_list
-    __std_terminate
-    __stdio_common_vsprintf
-    __stdio_common_vswprintf_s
-    _dupenv_s
-    _wdupenv_s
     __pioinfo DATA
     __badioinfo DATA
-    __C_specific_handler
-    _atoflt
-    _byteswap_uint64
-    _byteswap_ulong
-    _byteswap_ushort
-    _configthreadlocale
-    _fflush_nolock
-    _fgetc_nolock
-    _fgetwc_nolock
-    _fputc_nolock
-    _fputwc_nolock
-    _fread_nolock
-    fread_s
-    _fseeki64_nolock
-    _fseek_nolock
-    _fstat32
-    _ftelli64
-    _ftelli64_nolock
-    _ftell_nolock
-    _fwrite_nolock
-    _get_daylight
-    _get_dstbias
-    _get_invalid_parameter_handler
-    _get_printf_count_output
-    _get_timezone
-    _get_tzname
-    _invoke_watson
-    isblank
-    _ispunct_l
-    iswblank
-    __iswcsym
-    __iswcsymf
-    llabs
-    lldiv
-    ___mb_cur_max_l_func
     __p__acmdln
     __p___argc
     __p___argv
@@ -970,51 +889,6 @@ EXPORTS
     __p__wcmdln
     __p__wenviron
     __p__wpgmptr
-    _recalloc
-    _set_abort_behavior
-    _set_invalid_parameter_handler
-    _set_printf_count_output
-    _stat32
-    _strftime_l
-    __sys_errlist
-    __sys_nerr
-    wctype
-    _wstat32
-    _set_new_mode
-    _query_new_mode
-    _set_new_handler
-    _query_new_handler
-    _set_app_type
-    strtoll
-    strtoull
-    strtoimax
-    strtoumax
-    _strtoll_l
-    _strtoull_l
-    _strtoimax_l
-    _strtoumax_l
-    wcstoll
-    wcstoull
-    wcstoimax
-    wcstoumax
-    _wcstoll_l
-    _wcstoull_l
-    _wcstoimax_l
-    _wcstoumax_l
-    atoll
-    _atoll_l
-    _wtoll
-    _wtoll_l
-    imaxabs
-    imaxdiv
-    strtof
-    wcstof
-    _strtof_l
-    _wcstof_l
-    strtold
-    _strtold_l
-    wcstold
-    _wcstold_l
     _atoldbl_l
     _mbsdec_l
     _mbsinc_l
@@ -1044,7 +918,6 @@ EXPORTS
     _mbsnbcpy_l
     _mbsncat_l
     _mbsnbcat_l
-    _mbbtype_l
     _mbctolower_l
     _mbctoupper_l
     _ismbcdigit_l
@@ -1113,7 +986,6 @@ EXPORTS
     _ismbbkprint
     _ismbbalnum
     _ismbbalpha
-    _ismbbblank
     _ismbbgraph
     _ismbbprint
     _ismbbpunct
@@ -1123,7 +995,6 @@ EXPORTS
     _ismbbkprint_l
     _ismbbalnum_l
     _ismbbalpha_l
-    _ismbbblank_l
     _ismbbgraph_l
     _ismbbprint_l
     _ismbbpunct_l
@@ -1140,7 +1011,6 @@ EXPORTS
     _ismbcgraph
     _ismbcprint
     _ismbcpunct
-    _ismbcblank
     _ismbclegal_l
     _ismbchira_l
     _ismbckata_l
@@ -1152,7 +1022,6 @@ EXPORTS
     _ismbcgraph_l
     _ismbcprint_l
     _ismbcpunct_l
-    _ismbcblank_l
     _ismbslead
     _ismbstrail
     _ismbslead_l
@@ -1171,21 +1040,12 @@ EXPORTS
     _mbcjistojms_l
     __p__mbctype
     __p__mbcasemap
-    mbrtoc16
-    mbrtoc32
-    c16rtomb
-    c32rtomb
     mbsrtowcs_s
     wcsrtombs_s
     _wctomb_l
     _wctomb_s_l
     _wcstombs_s_l
-    wmemcpy_s
-    wmemmove_s
-    wctrans
-    towctrans
     _create_locale
-    _wcreate_locale
     _free_locale
     _get_current_locale
     _stricoll_l
@@ -1202,84 +1062,12 @@ EXPORTS
     _wcsupr_l
     _wcslwr_s_l
     _wcsupr_s_l
-    _isblank_l
-    _iswblank_l
-    _iswcsym_l
-    _iswcsymf_l
-    _timespec64_get
-    _timespec32_get
-    _aligned_msize
-    _aligned_offset_recalloc
-    _aligned_recalloc
     _heapwalk
     _lfind_s
     _lsearch_s
-    __stdio_common_vswscanf
-    __stdio_common_vfscanf
-    __stdio_common_vfwscanf
-    __stdio_common_vfprintf_p
-    __stdio_common_vfwprintf_p
-    __stdio_common_vsprintf_p
-    __stdio_common_vswprintf_p
-    __stdio_common_vfprintf_s
-    __stdio_common_vfwprintf_s
-    _fclose_nolock
-    _getc_nolock
-    _putc_nolock
-    _getwc_nolock
-    _putwc_nolock
-    _ungetwc_nolock
-    _fread_nolock_s
-    gets_s
-    _getws_s
-    __conio_common_vcprintf
-    __conio_common_vcprintf_s
-    __conio_common_vcwprintf
-    __conio_common_vcwprintf_s
-    __conio_common_vcprintf_p
-    __conio_common_vcwprintf_p
-    __conio_common_vcscanf
-    __conio_common_vcwscanf
-    _putch_nolock
-    _putwch_nolock
-    _getch_nolock
-    _getche_nolock
-    _getwch_nolock
-    _getwche_nolock
-    _ungetch_nolock
-    _ungetwch_nolock
     _cgets_s
     _cgetws_s
     _cgetws
-    _stat32i64
-    _stat64i32
-    _wstat32i64
-    _wstat64i32
-    _fstat32i64
-    _fstat64i32
-    _findfirst32
-    _findnext32
-    _wfindfirst32
-    _wfindnext32
-    _findfirst32i64
-    _findnext32i64
-    _wfindfirst32i64
-    _wfindnext32i64
-    _findfirst64i32
-    _findnext64i32
-    _wfindfirst64i32
-    _wfindnext64i32
-    _set_purecall_handler
-    _get_purecall_handler
-    _set_thread_local_invalid_parameter_handler
-    _get_thread_local_invalid_parameter_handler
-    set_terminate
-    set_unexpected
-    unexpected
-    _set_se_translator
-    __uncaught_exceptions
-    __timezone
-    __tzname
     _j0
     _j1
     _jn
@@ -1305,10 +1093,6 @@ EXPORTS
     _CItan
     _CItanh
     _EH_prolog
-    _NLG_Dispatch2
-    _NLG_Return
-    _NLG_Return2
-    __intrinsic_abnormal_termination
     _abnormal_termination
     _adjust_fdiv DATA
     _adj_fdiv_m16i
@@ -1430,23 +1214,10 @@ EXPORTS
     _libm_sse2_sin_precise
     _libm_sse2_sqrt_precise
     _libm_sse2_tan_precise
-    __control87_2
-    _statusfp2
     _set_SSE2_enable
-    _Cbuild
-    _Cmulcc
-    _Cmulcr
-    _CreateFrameInfo
-    _Exit
-    _FCbuild
-    _FCmulcc
-    _FCmulcr
-    _FindAndUnlinkFrame
     _Getdays
     _Getmonths
     _Gettnames
-    _IsExceptionObjectToBeDestroyed
-    _SetWinRTOutOfMemoryExceptionCallback
     _Strftime
     _W_Getdays
     _W_Getmonths
@@ -1456,243 +1227,12 @@ EXPORTS
     __BuildCatchObject
     __BuildCatchObjectHelper
     __DestructExceptionObject
-    __FrameUnwindFilter
-    __GetPlatformExceptionInfo
     __TypeMatch
-    ___lc_locale_name_func
-    __acrt_iob_func
-    __dcrt_get_wide_environment_from_os
-    __dcrt_initial_narrow_environment
-    __fpe_flt_rounds
-    __initialize_lconv_for_unsigned_char
-    __report_gsfailure
-    __stdio_common_vfprintf
-    __stdio_common_vfwprintf
-    __stdio_common_vsnprintf_s
-    __stdio_common_vsnwprintf_s
-    __stdio_common_vsprintf_s
-    __stdio_common_vsscanf
-    __stdio_common_vswprintf
-    _configure_narrow_argv
-    _configure_wide_argv
-    _crt_at_quick_exit
-    _crt_atexit
-    _crt_debugger_hook
-    _d_int
-    _dclass
-    _dexp
-    _dlog
-    _dnorm
-    _dpcomp
-    _dpoly
-    _dscale
-    _dsign
-    _dsin
-    _dtest
-    _dunscale
-    _except1
-    _execute_onexit_table
-    _fd_int
-    _fdclass
-    _fdexp
-    _fdlog
-    _fdnorm
-    _fdpcomp
-    _fdpoly
-    _fdscale
-    _fdsign
-    _fdsin
-    _fdtest
-    _fdunscale
     _fpieee_flt
-    _get_FMA3_enable
-    _get_initial_narrow_environment
-    _get_initial_wide_environment
-    _get_narrow_winmain_command_line
-    _get_stream_buffer_pointers
-    _get_wide_winmain_command_line
     _getdllprocaddr
-    _initialize_narrow_environment
-    _initialize_onexit_table
-    _initialize_wide_environment
-    _invalid_parameter_noinfo_noreturn
-    _is_exception_typeof
     _loaddll
-    _lock_locales
-    _query_app_type
-    _register_onexit_function
-    _register_thread_local_exe_atexit_callback
-    _seh_filter_dll
-    _set_FMA3_enable
-    _sopen_dispatch
     _strcoll_l
     _strxfrm_l
     _unloaddll
-    _unlock_locales
     _wcscoll_l
     _wcsxfrm_l
-    _wsopen_dispatch
-    acosh
-    acoshf
-    acoshl
-    asinh
-    asinhf
-    asinhl
-    atanh
-    atanhf
-    atanhl
-    cabs
-    cabsf
-    cacos
-    cacosf
-    cacosh
-    cacoshf
-    carg
-    cargf
-    casin
-    casinf
-    casinh
-    casinhf
-    catan
-    catanf
-    catanh
-    catanhf
-    cbrt
-    cbrtf
-    cbrtl
-    ccos
-    ccosf
-    ccosh
-    ccoshf
-    cexp
-    cexpf
-    cimag
-    cimagf
-    clog
-    clog10
-    clog10f
-    clogf
-    conj
-    conjf
-    copysign
-    copysignf
-    copysignl
-    cpow
-    cpowf
-    cproj
-    cprojf
-    creal
-    crealf
-    csin
-    csinf
-    csinh
-    csinhf
-    csqrt
-    csqrtf
-    ctan
-    ctanf
-    ctanh
-    ctanhf
-    erf
-    erfc
-    erfcf
-    erfcl
-    erff
-    erfl
-    exp2
-    exp2f
-    exp2l
-    expm1
-    expm1f
-    expm1l
-    fabsf
-    fdim
-    fdimf
-    fdiml
-    feclearexcept
-    fegetenv
-    fegetexceptflag
-    fegetround
-    feholdexcept
-    fesetenv
-    fesetexceptflag
-    fesetround
-    fetestexcept
-    fma
-    fmaf
-    fmax
-    fmaxf
-    fmaxl
-    fmin
-    fminf
-    fminl
-    hypot
-    hypotf
-    hypotl
-    ilogb
-    ilogbf
-    ilogbl
-    lgamma
-    lgammaf
-    lgammal
-    llrint
-    llrintf
-    llrintl
-    llround
-    llroundf
-    llroundl
-    log1p
-    log1pf
-    log1pl
-    log2
-    log2f
-    log2l
-    logb
-    logbf
-    logbl
-    lrint
-    lrintf
-    lrintl
-    lround
-    lroundf
-    lroundl
-    nan
-    nanf
-    nanl
-    nearbyint
-    nearbyintf
-    nearbyintl
-    nextafter
-    nextafterf
-    nextafterl
-    nexttoward
-    nexttowardf
-    nexttowardl
-    norm
-    normf
-    quick_exit
-    remainder
-    remainderf
-    remainderl
-    remquo
-    remquof
-    remquol
-    rint
-    rintf
-    rintl
-    round
-    roundf
-    roundl
-    scalbln
-    scalblnf
-    scalblnl
-    scalbn
-    scalbnf
-    scalbnl
-    terminate
-    tgamma
-    tgammaf
-    tgammal
-    trunc
-    truncf
-    truncl

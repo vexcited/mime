@@ -7,6 +7,7 @@ EXPORTS
     CM_Enable_DevNode=_CM_Enable_DevNode@8
     CM_Free_Log_Conf_Handle=_CM_Free_Log_Conf_Handle@4
     CM_Free_Res_Des_Handle=_CM_Free_Res_Des_Handle@4
+    CM_Enumerate_Classes=_CM_Enumerate_Classes@12
     CM_Get_Child=_CM_Get_Child@12
     CM_Get_Class_PropertyW=_CM_Get_Class_PropertyW@24
     CM_Get_Class_Property_Keys=_CM_Get_Class_Property_Keys@16

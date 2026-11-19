@@ -260,6 +260,7 @@ EXPORTS
     FindNextVolumeMountPointA=_FindNextVolumeMountPointA@12
     FindNextVolumeMountPointW=_FindNextVolumeMountPointW@12
     FindVolumeMountPointClose=_FindVolumeMountPointClose@4
+    KernelbasePostInit=_KernelbasePostInit@0
     SetVolumeMountPointA=_SetVolumeMountPointA@8
     SetVolumeMountPointW=_SetVolumeMountPointW@8
     FindFirstChangeNotificationA=_FindFirstChangeNotificationA@12
