@@ -5,6 +5,7 @@
  * of its own here, so its indexes, which are the stock icon numbers, come from the stock table.
  */
 #include "shell32_private.h"
+#include "stockicons.h"
 
 typedef struct {
     int Siid;
@@ -371,10 +372,16 @@ static HICON load_stock(int siid, int cx, int cy)
         siid = SIID_DOCNOASSOC;
     const STOCK_ICON *stock = find_stock(siid);
     int resource = stock ? stock->Resource : g_stock[0].Resource;
+    LPCWSTR name = L"imageres.dll";
+    if (siid < (int)RTL_NUMBER_OF(g_stock_icons)) {
+        resource = g_stock_icons[siid].Resource;
+        name = g_stock_modules[g_stock_icons[siid].Module];
+    }
     HICON icon = nullptr;
     WCHAR path[MAX_PATH];
     if (resource && windows_directory(path, MAX_PATH) && wcslen(path) + 24 < MAX_PATH) {
-        wcscat(path, L"\\System32\\imageres.dll");
+        wcscat(path, L"\\System32\\");
+        wcscat(path, name);
         BOOL owned;
         HMODULE module = open_module(path, &owned);
         if (module) {
@@ -399,9 +406,9 @@ static void stock_location(int siid, WCHAR *path, int *index)
     *index = 0;
     if (!windows_directory(windir, MAX_PATH) || wcslen(windir) + 24 >= MAX_PATH)
         return;
-    if (siid <= SIID_MYNETWORK) {
-        _snwprintf(path, MAX_PATH, L"%ls\\System32\\shell32.dll", windir);
-        *index = siid;
+    if (siid >= 0 && siid < (int)RTL_NUMBER_OF(g_stock_icons)) {
+        _snwprintf(path, MAX_PATH, L"%ls\\system32\\%ls", windir, g_stock_modules[g_stock_icons[siid].Module]);
+        *index = -(int)g_stock_icons[siid].Resource;
     } else if (stock && stock->Resource) {
         _snwprintf(path, MAX_PATH, L"%ls\\System32\\imageres.dll", windir);
         *index = -stock->Resource;

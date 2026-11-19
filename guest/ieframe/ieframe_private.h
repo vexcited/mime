@@ -39,4 +39,7 @@ IDispatch *DocumentCreate(BROWSER *browser);
 IClassFactory *BrowserFactory(void);
 extern HINSTANCE g_ieframe;
 
+/* shortcut.c: CLSID_InternetShortcut. */
+IClassFactory *ShortcutFactory(void);
+
 #endif

@@ -59,6 +59,11 @@ DECLSPEC_EXPORT HRESULT WINAPI DllGetClassObject(REFCLSID clsid, REFIID riid, vo
     *object = nullptr;
     if (!clsid || !riid)
         return E_INVALIDARG;
+    static const CLSID internet_shortcut = {0xFBF23B40, 0xE3F0, 0x101B, {0x84, 0x88, 0x00, 0xAA, 0x00, 0x3E, 0x56, 0xF8}};
+    if (IsEqualCLSID(clsid, &internet_shortcut)) {
+        IClassFactory *shortcut = ShortcutFactory();
+        return shortcut->lpVtbl->QueryInterface(shortcut, riid, object);
+    }
     if (!IsEqualCLSID(clsid, &CLSID_WebBrowser) && !IsEqualCLSID(clsid, &CLSID_WebBrowser_V1))
         return CLASS_E_CLASSNOTAVAILABLE;
     IClassFactory *factory = BrowserFactory();

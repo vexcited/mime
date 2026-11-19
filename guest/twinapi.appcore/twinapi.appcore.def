@@ -1,0 +1,7 @@
+LIBRARY twinapi.appcore.dll
+EXPORTS
+    RegisterAppConstrainedChangeNotification @140
+    RegisterAppStateChangeNotification @141
+    UnregisterAppConstrainedChangeNotification @142
+    UnregisterAppStateChangeNotification @143
+    IsImmersiveWindow @12 NONAME
