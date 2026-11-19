@@ -835,6 +835,19 @@ NTSTATUS NTAPI NtCreateDirectoryObject(PHANDLE handle, ACCESS_MASK access, POBJE
     return status;
 }
 
+/*
+ * measured on windows 11 26300: directories, links and sections do not take OBJ_OPENLINK, which is of the registry.
+ * the name is looked up without it first, so a name that is not found or cannot be followed tells that, and a
+ * name that is found tells c000000d. the attribute is taken off here and the caller refuses what it opened.
+ */
+BOOLEAN ObRefuseOpenLink(POBJECT_ATTRIBUTES attributes)
+{
+    if (KeGetPreviousMode() != UserMode || !(attributes->Attributes & OBJ_OPENLINK))
+        return FALSE;
+    attributes->Attributes &= ~(ULONG)OBJ_OPENLINK;
+    return TRUE;
+}
+
 NTSTATUS NTAPI NtOpenDirectoryObject(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes)
 {
     OBJECT_ATTRIBUTES oa;
@@ -842,8 +855,13 @@ NTSTATUS NTAPI NtOpenDirectoryObject(PHANDLE handle, ACCESS_MASK access, POBJECT
     NTSTATUS status = capture_attributes(attributes, &oa, &name);
     if (!NT_SUCCESS(status))
         return status;
+    BOOLEAN refused = ObRefuseOpenLink(&oa);
     HANDLE h;
     status = ObOpenObjectByName(&oa, ObDirectoryType, KeGetPreviousMode(), nullptr, access, nullptr, &h);
+    if (NT_SUCCESS(status) && refused) {
+        NtClose(h);
+        status = STATUS_INVALID_PARAMETER;
+    }
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);
@@ -857,9 +875,15 @@ NTSTATUS NTAPI NtOpenSymbolicLinkObject(PHANDLE handle, ACCESS_MASK access, POBJ
     NTSTATUS status = capture_attributes(attributes, &oa, &name);
     if (!NT_SUCCESS(status))
         return status;
+    /* the type opens a link itself rather than what it names. a program may not ask for that, see ObRefuseOpenLink. */
+    BOOLEAN refused = ObRefuseOpenLink(&oa);
     oa.Attributes |= OBJ_OPENLINK;
     HANDLE h;
     status = ObOpenObjectByName(&oa, ObSymbolicLinkType, KeGetPreviousMode(), nullptr, access, nullptr, &h);
+    if (NT_SUCCESS(status) && refused) {
+        NtClose(h);
+        status = STATUS_INVALID_PARAMETER;
+    }
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);
@@ -930,14 +954,18 @@ NTSTATUS NTAPI NtQuerySymbolicLinkObject(HANDLE handle, PUNICODE_STRING target, 
     UNICODE_STRING out;
     status = KiCopyFromUser(&out, target, sizeof(out));
     if (NT_SUCCESS(status)) {
-        ULONG need = link->Target.Length;
+        /*
+         * measured on windows 11 26300: a caller that takes the length is told the target with its nul, needs the room
+         * of both and gets both. one that does not needs the room of the characters only.
+         */
+        ULONG need = returned ? link->Target.MaximumLength : link->Target.Length;
         if (returned)
             KiCopyToUser(returned, &need, sizeof(need));
         if (need > out.MaximumLength) {
             status = STATUS_BUFFER_TOO_SMALL;
         } else {
             status = KiCopyToUser(out.Buffer, link->Target.Buffer, need);
-            out.Length = (USHORT)need;
+            out.Length = link->Target.Length;
             if (NT_SUCCESS(status))
                 status = KiCopyToUser(target, &out, sizeof(out));
         }
@@ -1000,6 +1028,15 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
             LARGE_INTEGER CreationTime;
         } basic = {};
         basic.Attributes = (flags.Inherit ? OBJ_INHERIT : 0) | (flags.ProtectFromClose ? OBJ_PROTECT_CLOSE : 0);
+        /* measured on windows 11 26300: a permanent object says so, and one a directory names tells the room of its name. */
+        if (OBJECT_TO_HEADER(object)->Flags & OB_FLAG_PERMANENT)
+            basic.Attributes |= OBJ_PERMANENT;
+        if (OBJECT_TO_HEADER(object)->Directory) {
+            WCHAR text[512];
+            UNICODE_STRING name;
+            if (NT_SUCCESS(ObpQueryNameString(object, &name, text, RTL_NUMBER_OF(text))))
+                basic.NameInfoSize = (ULONG)sizeof(UNICODE_STRING) + name.Length + sizeof(WCHAR);
+        }
         basic.GrantedAccess = granted;
         basic.HandleCount = (ULONG)OBJECT_TO_HEADER(object)->HandleCount;
         basic.PointerCount = (ULONG)OBJECT_TO_HEADER(object)->PointerCount;
@@ -1015,39 +1052,7 @@ NTSTATUS NTAPI NtQueryObject(HANDLE handle, OBJECT_INFORMATION_CLASS klass, PVOI
         if (returned && (NT_SUCCESS(status) || status == STATUS_INFO_LENGTH_MISMATCH))
             KiCopyToUser(returned, &need, sizeof(need));
     } else if (klass == ObjectTypeInformation) {
-        POBJECT_TYPE type = OBJECT_TO_HEADER(object)->Type;
-        struct {
-            UNICODE_STRING TypeName;
-            ULONG TotalNumberOfObjects, TotalNumberOfHandles, TotalPagedPoolUsage, TotalNonPagedPoolUsage;
-            ULONG TotalNamePoolUsage, TotalHandleTableUsage, HighWaterNumberOfObjects, HighWaterNumberOfHandles;
-            ULONG HighWaterPagedPoolUsage, HighWaterNonPagedPoolUsage, HighWaterNamePoolUsage;
-            ULONG HighWaterHandleTableUsage, InvalidAttributes;
-            ULONG GenericMapping[4];
-            ULONG ValidAccessMask;
-            BOOLEAN SecurityRequired, MaintainHandleCount;
-            UCHAR TypeIndex;
-            CHAR ReservedByte;
-            ULONG PoolType, DefaultPagedPoolCharge, DefaultNonPagedPoolCharge;
-        } t = {};
-        ULONG need = sizeof(t) + type->Name.Length + sizeof(WCHAR);
-        t.TypeName.Length = type->Name.Length;
-        t.TypeName.MaximumLength = (USHORT)(type->Name.Length + sizeof(WCHAR));
-        t.TypeName.Buffer = (PWSTR)((PUCHAR)info + sizeof(t));
-        t.TotalNumberOfObjects = t.HighWaterNumberOfObjects = (ULONG)type->TotalObjects;
-        t.TotalNumberOfHandles = t.HighWaterNumberOfHandles = (ULONG)type->TotalHandles;
-        t.InvalidAttributes = 0xB0;
-        t.ValidAccessMask = type->Init.ValidAccessMask;
-        t.TypeIndex = (UCHAR)(type->Index + 2);
-        t.PoolType = 0x200;
-        if (length < need) {
-            status = STATUS_INFO_LENGTH_MISMATCH;
-        } else {
-            status = KiCopyToUser(info, &t, sizeof(t));
-            if (NT_SUCCESS(status))
-                status = KiCopyToUser(t.TypeName.Buffer, type->Name.Buffer, type->Name.Length + sizeof(WCHAR));
-        }
-        if (returned)
-            KiCopyToUser(returned, &need, sizeof(need));
+        status = ObQueryTypeInformation(OBJECT_TO_HEADER(object)->Type, info, length, returned);
     } else {
         status = STATUS_INVALID_INFO_CLASS;
     }

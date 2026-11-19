@@ -31,9 +31,11 @@ typedef struct {
     const SEP_GROUP *Groups;
     ULONG Count;
     BOOLEAN UserFirst; /* the first sid is the user, which cannot be disabled. */
+    const UCHAR *Self; /* what an ace for principal self, S-1-5-10, stands for in this check, or NULL. */
 } IDENTITY;
 
 static const UCHAR g_owner_rights[12] = {1, 1, 0, 0, 0, 0, 0, 3, 4, 0, 0, 0};
+static const UCHAR g_principal_self[12] = {1, 1, 0, 0, 0, 0, 0, 5, 10, 0, 0, 0};
 
 static BOOLEAN identity_has(const IDENTITY *id, const UCHAR *sid, BOOLEAN deny)
 {
@@ -97,7 +99,9 @@ static void evaluate(const ACL *dacl, const UCHAR *owner, const IDENTITY *id, co
         if (!sid || (ace[1] & INHERIT_ONLY_ACE) || *(const USHORT *)(ace + 2) < 12)
             continue;
         BOOLEAN allow = is_allow(ace[0]);
-        /* an owner rights ace applies to whoever owns the object. */
+        /* an owner rights ace applies to whoever owns the object, a principal self one to the sid the caller named. */
+        if (id->Self && SepSidEqual(sid, g_principal_self))
+            sid = id->Self;
         BOOLEAN match = SepSidEqual(sid, g_owner_rights) ? owns : identity_has(id, sid, !allow);
         if (!match)
             continue;
@@ -211,7 +215,7 @@ static BOOLEAN token_owns(const TOKEN *token, const UCHAR *owner)
 }
 
 /* the most a token is granted of the descriptor, for the bits asked for or all of them. */
-static void check_token(const PTOKEN token, const UCHAR *sd, const ULONG *mapping, VERDICT *v)
+static void check_token(const PTOKEN token, const UCHAR *sd, const ULONG *mapping, const UCHAR *self, VERDICT *v)
 {
     PSID owner = nullptr;
     PACL dacl = nullptr;
@@ -220,7 +224,7 @@ static void check_token(const PTOKEN token, const UCHAR *sd, const ULONG *mappin
     RtlGetDaclSecurityDescriptor((PSECURITY_DESCRIPTOR)sd, &present, &dacl, &defaulted);
     ACCESS_MASK everything = mapping[3] | 0x1F0000;
     ACCESS_MASK allowed = 0, denied = 0;
-    IDENTITY normal = {token->Groups, token->GroupCount, TRUE};
+    IDENTITY normal = {token->Groups, token->GroupCount, TRUE, self};
     BOOLEAN owns = token_owns(token, owner);
     if (!present || !dacl)
         allowed = everything;
@@ -230,7 +234,7 @@ static void check_token(const PTOKEN token, const UCHAR *sd, const ULONG *mappin
 
     /* a second pass against the restricting sids. a write restricted token only checks write rights there. */
     if (token->RestrictedCount) {
-        IDENTITY restricting = {token->Restricted, token->RestrictedCount, FALSE};
+        IDENTITY restricting = {token->Restricted, token->RestrictedCount, FALSE, self};
         ACCESS_MASK second_allowed = 0, second_denied = 0;
         if (!present || !dacl)
             second_allowed = everything;
@@ -259,7 +263,7 @@ static void check_token(const PTOKEN token, const UCHAR *sd, const ULONG *mappin
                 use[count++] = token->Capabilities[i];
             memcpy(use[count].Sid, SeSidAllAppPackages, sizeof(SeSidAllAppPackages));
             use[count++].Attributes = SE_GROUP_ENABLED;
-            IDENTITY container = {use, count, FALSE};
+            IDENTITY container = {use, count, FALSE, self};
             ACCESS_MASK second_allowed = 0, second_denied = 0;
             if (!present || !dacl)
                 second_allowed = everything;
@@ -288,9 +292,9 @@ static void check_token(const PTOKEN token, const UCHAR *sd, const ULONG *mappin
     v->Granted = (granted | by_privilege) & mask;
 }
 
-NTSTATUS NTAPI NtAccessCheck(PVOID descriptor, HANDLE token_handle, ACCESS_MASK desired, PVOID mapping_pointer,
-                             PVOID privilege_set, PULONG privilege_length, PACCESS_MASK granted_pointer,
-                             PNTSTATUS access_status_pointer)
+static NTSTATUS access_check(PVOID descriptor, const UCHAR *self, HANDLE token_handle, ACCESS_MASK desired,
+                             PVOID mapping_pointer, PVOID privilege_set, PULONG privilege_length,
+                             PACCESS_MASK granted_pointer, PNTSTATUS access_status_pointer)
 {
     KPROCESSOR_MODE mode = KeGetPreviousMode();
     ULONG mapping[4], length = 0;
@@ -344,7 +348,7 @@ NTSTATUS NTAPI NtAccessCheck(PVOID descriptor, HANDLE token_handle, ACCESS_MASK 
     else if (token->ImpersonationLevel < SecurityIdentification)
         status = STATUS_BAD_IMPERSONATION_LEVEL;
     else
-        check_token(token, sd->Data, mapping, &v);
+        check_token(token, sd->Data, mapping, self, &v);
     ExReleaseFastMutex(&SeLock);
     ObDereferenceObject(token);
     SeSdDereference(sd);
@@ -412,6 +416,57 @@ NTSTATUS NTAPI NtAccessCheck(PVOID descriptor, HANDLE token_handle, ACCESS_MASK 
         *privilege_length = need;
     }
     return status;
+}
+
+NTSTATUS NTAPI NtAccessCheck(PVOID descriptor, HANDLE token_handle, ACCESS_MASK desired, PVOID mapping_pointer,
+                             PVOID privilege_set, PULONG privilege_length, PACCESS_MASK granted_pointer,
+                             PNTSTATUS access_status_pointer)
+{
+    return access_check(descriptor, nullptr, token_handle, desired, mapping_pointer, privilege_set, privilege_length,
+                        granted_pointer, access_status_pointer);
+}
+
+/*
+ * the check of an object with parts, which combase's CoInitializeSecurity uses with a principal self sid: an ace for
+ * S-1-5-10 grants or denies the sid the caller names. the result is the one of the whole object; object aces count as
+ * plain ones, the list of object types is only checked to be readable.
+ */
+NTSTATUS NTAPI NtAccessCheckByType(PVOID descriptor, PSID principal_self, HANDLE token_handle, ACCESS_MASK desired,
+                                   PVOID object_types, ULONG object_type_count, PVOID mapping_pointer,
+                                   PVOID privilege_set, PULONG privilege_length, PACCESS_MASK granted_pointer,
+                                   PNTSTATUS access_status_pointer)
+{
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    UCHAR self[SEP_SID_MAX];
+    const UCHAR *self_sid = nullptr;
+    if (principal_self) {
+        UCHAR head[8];
+        NTSTATUS status = mode == UserMode ? KiCopyFromUser(head, principal_self, sizeof(head))
+                                           : (memcpy(head, principal_self, sizeof(head)), STATUS_SUCCESS);
+        if (!NT_SUCCESS(status))
+            return status;
+        if (head[0] != 1 || head[1] > 15)
+            return STATUS_INVALID_SID;
+        ULONG size = 8 + 4 * head[1];
+        status = mode == UserMode ? KiCopyFromUser(self, principal_self, size)
+                                  : (memcpy(self, principal_self, size), STATUS_SUCCESS);
+        if (!NT_SUCCESS(status))
+            return status;
+        self_sid = self;
+    }
+    if (object_type_count) {
+        /* an OBJECT_TYPE_LIST is a level, a sbz and a pointer to the guid; the first one must be readable. */
+        UCHAR first[2 * sizeof(USHORT) + sizeof(PVOID)];
+        if (object_type_count > 0x10000 || !object_types)
+            return STATUS_INVALID_PARAMETER;
+        if (mode == UserMode) {
+            NTSTATUS status = KiCopyFromUser(first, object_types, sizeof(first));
+            if (!NT_SUCCESS(status))
+                return status;
+        }
+    }
+    return access_check(descriptor, self_sid, token_handle, desired, mapping_pointer, privilege_set, privilege_length,
+                        granted_pointer, access_status_pointer);
 }
 
 /* ---------------------------------------------------------------- the kernel's check */
@@ -587,7 +642,7 @@ NTSTATUS SeCheckAccess(const SD_BLOB *sd, SD_MAPPING mapping, ACCESS_MASK desire
     if (c->TokenId == t->TokenId && c->ModifiedId == t->ModifiedId && c->Serial == sd->Serial && c->Mapping == mapping) {
         v = c->Verdict;
     } else {
-        check_token(t, sd->Data, mapping, &v);
+        check_token(t, sd->Data, mapping, nullptr, &v);
         c->TokenId = t->TokenId;
         c->ModifiedId = t->ModifiedId;
         c->Serial = sd->Serial;

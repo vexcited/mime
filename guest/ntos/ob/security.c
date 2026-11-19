@@ -172,6 +172,14 @@ static BOOLEAN creatable_directory(PVOID object)
     return FALSE;
 }
 
+/* measured on windows 11 26300: \Driver opens for the system and the administrators, and a plain token gets c0000022. */
+static BOOLEAN system_directory(PVOID object)
+{
+    WCHAR buffer[128];
+    UNICODE_STRING name;
+    return NT_SUCCESS(ObpQueryNameString(object, &name, buffer, RTL_NUMBER_OF(buffer))) && !_wcsicmp(buffer, L"\\Driver");
+}
+
 /* for objects the kernel put in the namespace, see SeSdBootDefault. */
 NTSTATUS ObAssignBootSecurity(PVOID object)
 {
@@ -182,8 +190,10 @@ NTSTATUS ObAssignBootSecurity(PVOID object)
         return STATUS_SUCCESS;
     SD_BLOB *sd;
     NTSTATUS status = SeSdBootDefault(mapping_of(type), type == ObDirectoryType,
-                                      type == ObDirectoryType && creatable_directory(object) ? SE_BOOT_CREATABLE
-                                                                                              : SE_BOOT_PLAIN,
+                                      type != ObDirectoryType       ? SE_BOOT_PLAIN
+                                      : creatable_directory(object) ? SE_BOOT_CREATABLE
+                                      : system_directory(object)    ? SE_BOOT_PLAIN_SYSTEM
+                                                                    : SE_BOOT_PLAIN,
                                       &sd);
     if (NT_SUCCESS(status))
         h->Reserved = (ULONG_PTR)sd;
