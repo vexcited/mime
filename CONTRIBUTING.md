@@ -47,4 +47,4 @@ build/mime down
 | `~/.local/share/mime/drive_c`     | The C: drive seen by Windows programs. |
 | `~/.local/state/mime/vmm.log`     | Kernel and machine log.                |
 
-Only one machine runs per user, it shows as `mime-vmm`.
+Each set of XDG directories gives a machine of its own, so machines started with another `XDG_*_HOME`/`XDG_RUNTIME_DIR` run side by side. Two starts on the same directories meet on the same lock, and one machine per set runs.
