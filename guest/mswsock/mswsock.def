@@ -1,4 +1,5 @@
-; mswsock.dll: the Microsoft extensions of winsock, forwarded to wsock32 where they are implemented.
+; mswsock.dll: the service provider of the genuine ws2_32's catalog and the dns namespace provider, and the Microsoft
+; extensions of winsock, forwarded to wsock32 where they are implemented.
 LIBRARY mswsock.dll
 EXPORTS
     AcceptEx=wsock32.AcceptEx
@@ -13,7 +14,9 @@ EXPORTS
     GetTypeByNameW=wsock32.GetTypeByNameW
     MigrateWinsockConfiguration=wsock32.MigrateWinsockConfiguration
     NPLoadNameSpaces=wsock32.NPLoadNameSpaces
+    NSPStartup
     SetServiceA=wsock32.SetServiceA
     SetServiceW=wsock32.SetServiceW
     TransmitFile=wsock32.TransmitFile
     WSARecvEx=wsock32.WSARecvEx
+    WSPStartup

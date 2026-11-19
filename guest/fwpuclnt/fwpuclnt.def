@@ -1,0 +1,3 @@
+LIBRARY fwpuclnt.dll
+EXPORTS
+    NamespaceCallout
