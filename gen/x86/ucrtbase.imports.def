@@ -3,34 +3,25 @@ EXPORTS
     _CreateFrameInfo
     _CxxThrowException
     _FindAndUnlinkFrame
-    _GetImageBase
-    _GetThrowImageBase
     _IsExceptionObjectToBeDestroyed
     _NLG_Dispatch2
     _NLG_Return
     _NLG_Return2
-    _SetImageBase
-    _SetThrowImageBase
     _SetWinRTOutOfMemoryExceptionCallback
     __AdjustPointer
     __BuildCatchObject
     __BuildCatchObjectHelper
-    __C_specific_handler
-    __C_specific_handler_noexcept
     __CxxDetectRethrow
     __CxxExceptionFilter
     __CxxFrameHandler
     __CxxFrameHandler2
     __CxxFrameHandler3
-    __CxxFrameHandler4
     __CxxQueryExceptionSize
     __CxxRegisterExceptionObject
     __CxxUnregisterExceptionObject
     __DestructExceptionObject
     __FrameUnwindFilter
     __GetPlatformExceptionInfo
-    __NLG_Dispatch2
-    __NLG_Return2
     __RTCastToVoid
     __RTDynamicCast
     __RTtypeid
@@ -50,7 +41,6 @@ EXPORTS
     __initialize_lconv_for_unsigned_char
     __intrinsic_abnormal_termination
     __intrinsic_setjmp
-    __intrinsic_setjmpex
     __isascii
     __iscsym
     __iscsymf
@@ -199,10 +189,8 @@ EXPORTS
     _findfirst64
     _findnext64
     _finite
-    _finitef
     _flushall
     _fpclass
-    _fpclassf
     _fpieee_flt
     _fpreset
     _fputc_nolock
@@ -299,7 +287,6 @@ EXPORTS
     _ismbcspace
     _ismbcupper
     _isnan
-    _isnanf
     _isprint_l
     _ispunct_l
     _isspace_l
@@ -323,7 +310,6 @@ EXPORTS
     _itow_s
     _kbhit
     _lfind
-    _local_unwind
     _localtime32
     _localtime32_s
     _localtime64
@@ -508,7 +494,6 @@ EXPORTS
     _o__findnext64
     _o__flushall
     _o__fpclass
-    _o__fpclassf
     _o__fputc_nolock
     _o__fputchar
     _o__fputwc_nolock
@@ -602,7 +587,6 @@ EXPORTS
     _o__lock_file
     _o__locking
     _o__logb
-    _o__logbf
     _o__lsearch
     _o__lseek
     _o__lseeki64
@@ -660,7 +644,6 @@ EXPORTS
     _o__mktime64
     _o__msize
     _o__nextafter
-    _o__nextafterf
     _o__open_osfhandle
     _o__pclose
     _o__pipe
@@ -680,7 +663,6 @@ EXPORTS
     _o__rmdir
     _o__rmtmp
     _o__scalb
-    _o__scalbf
     _o__searchenv
     _o__searchenv_s
     _o__seh_filter_dll
@@ -866,19 +848,15 @@ EXPORTS
     _o__wutime64
     _o_abort
     _o_acos
-    _o_acosf
     _o_acosh
     _o_acoshf
     _o_asctime
     _o_asctime_s
     _o_asin
-    _o_asinf
     _o_asinh
     _o_asinhf
     _o_atan
     _o_atan2
-    _o_atan2f
-    _o_atanf
     _o_atanh
     _o_atanhf
     _o_atof
@@ -891,16 +869,12 @@ EXPORTS
     _o_cbrt
     _o_cbrtf
     _o_ceil
-    _o_ceilf
     _o_clearerr
     _o_clearerr_s
     _o_cos
-    _o_cosf
     _o_cosh
-    _o_coshf
     _o_exit
     _o_exp
-    _o_expf
     _o_fabs
     _o_fclose
     _o_feof
@@ -912,11 +886,9 @@ EXPORTS
     _o_fgetwc
     _o_fgetws
     _o_floor
-    _o_floorf
     _o_fma
     _o_fmaf
     _o_fmod
-    _o_fmodf
     _o_fopen
     _o_fopen_s
     _o_fputc
@@ -972,10 +944,8 @@ EXPORTS
     _o_localeconv
     _o_log
     _o_log10
-    _o_log10f
     _o_log2
     _o_log2f
-    _o_logf
     _o_malloc
     _o_mblen
     _o_mbrlen
@@ -987,7 +957,6 @@ EXPORTS
     _o_memcpy_s
     _o_memset
     _o_modf
-    _o_modff
     _o_pow
     _o_powf
     _o_putc
@@ -1008,11 +977,8 @@ EXPORTS
     _o_setlocale
     _o_setvbuf
     _o_sin
-    _o_sinf
     _o_sinh
-    _o_sinhf
     _o_sqrt
-    _o_sqrtf
     _o_srand
     _o_strcat_s
     _o_strcoll
@@ -1030,9 +996,7 @@ EXPORTS
     _o_strtoull
     _o_system
     _o_tan
-    _o_tanf
     _o_tanh
-    _o_tanhf
     _o_terminate
     _o_tmpfile_s
     _o_tmpnam_s
@@ -1088,7 +1052,6 @@ EXPORTS
     _rotr
     _rotr64
     _scalb
-    _scalbf
     _searchenv
     _searchenv_s
     _seh_filter_dll
@@ -1306,19 +1269,15 @@ EXPORTS
     abort
     abs
     acos
-    acosf
     acosh
     acoshf
     asctime
     asctime_s
     asin
-    asinf
     asinh
     asinhf
     atan
     atan2
-    atan2f
-    atanf
     atanh
     atanhf
     atof
@@ -1331,18 +1290,14 @@ EXPORTS
     cbrt
     cbrtf
     ceil
-    ceilf
     clearerr
     clearerr_s
     clock
     cos
-    cosf
     cosh
-    coshf
     div
     exit
     exp
-    expf
     fabs
     fclose
     feof
@@ -1354,11 +1309,9 @@ EXPORTS
     fgetwc
     fgetws
     floor
-    floorf
     fma
     fmaf
     fmod
-    fmodf
     fopen
     fopen_s
     fputc
@@ -1420,10 +1373,8 @@ EXPORTS
     localeconv
     log
     log10
-    log10f
     log2
     log2f
-    logf
     longjmp
     malloc
     mblen
@@ -1441,7 +1392,6 @@ EXPORTS
     memmove_s
     memset
     modf
-    modff
     perror
     pow
     powf
@@ -1464,11 +1414,8 @@ EXPORTS
     setvbuf
     signal
     sin
-    sinf
     sinh
-    sinhf
     sqrt
-    sqrtf
     srand
     strcat
     strcat_s
@@ -1501,9 +1448,7 @@ EXPORTS
     strxfrm
     system
     tan
-    tanf
     tanh
-    tanhf
     terminate
     tmpfile
     tmpfile_s
@@ -1562,8 +1507,6 @@ EXPORTS
     __CxxLongjmpUnwind
     _setjmp3
     _ftol
-    _ftol2
-    _ftol2_sse
     _CIacos
     _CIasin
     _CIatan
@@ -1632,8 +1575,6 @@ EXPORTS
     fminl
     hypot
     _o_hypot
-    hypotf
-    hypotl
     ilogbl
     lgamma
     _o_lgamma
@@ -2374,8 +2315,6 @@ EXPORTS
     _query_app_type
     _crt_debugger_hook
     __fpe_flt_rounds
-    _set_FMA3_enable
-    _get_FMA3_enable
     _loaddll
     _unloaddll
     _getdllprocaddr
@@ -2395,7 +2334,6 @@ EXPORTS
     __timezone
     __tzname
     _seh_filter_exe
-    setjmp
     _longjmpex
     _j0
     _j1
@@ -2534,8 +2472,6 @@ EXPORTS
     _o__ldsin
     _o__ldtest
     _o__ldunscale
-    fabsf
-    _o_fabsf
     _sopen_dispatch
     _o__sopen_dispatch
     _wsopen_dispatch
@@ -2608,5 +2544,3 @@ EXPORTS
     __control87_2
     _statusfp2
     _set_SSE2_enable
-    _snscanf_s
-    _snwscanf_s

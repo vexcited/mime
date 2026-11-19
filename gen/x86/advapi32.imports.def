@@ -556,8 +556,6 @@ EXPORTS
     SetThreadToken@8
     SetTokenInformation@16
     SetTraceCallback@8
-    SspiPublishToken@4
-    SspiRedeemToken@8
     StartServiceA@12
     StartServiceCtrlDispatcherA@4
     StartServiceCtrlDispatcherW@4

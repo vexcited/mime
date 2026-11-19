@@ -26,7 +26,6 @@ EXPORTS
     I_RpcGetBufferWithObject@8
     I_RpcGetCurrentCallHandle@0
     I_RpcMapWin32Status@4
-    I_RpcMimeSetWaitFunction@12
     I_RpcNegotiateTransferSyntax@4
     I_RpcOpenClientProcess@12
     I_RpcPauseExecution@4
@@ -46,7 +45,6 @@ EXPORTS
     NdrByteCountPointerBufferSize@12
     NdrByteCountPointerFree@12
     NdrByteCountPointerMarshall@12
-    NdrByteCountPointerMemorySize@8
     NdrByteCountPointerUnmarshall@16
     NdrCStdStubBuffer2_Release@8
     NdrCStdStubBuffer_Release@8
@@ -71,7 +69,6 @@ EXPORTS
     NdrConformantArrayMemorySize@8
     NdrConformantArrayUnmarshall@16
     NdrConformantStringBufferSize@12
-    NdrConformantStringFree@12
     NdrConformantStringMarshall@12
     NdrConformantStringMemorySize@8
     NdrConformantStringUnmarshall@16
@@ -130,7 +127,6 @@ EXPORTS
     NdrInterfacePointerUnmarshall@16
     NdrMapCommAndFaultStatus@16
     NdrNonConformantStringBufferSize@12
-    NdrNonConformantStringFree@12
     NdrNonConformantStringMarshall@12
     NdrNonConformantStringMemorySize@8
     NdrNonConformantStringUnmarshall@16
@@ -149,36 +145,6 @@ EXPORTS
     NdrPointerMemorySize@8
     NdrPointerUnmarshall@16
     NdrProxyErrorHandler@4
-    NdrProxyForwardingFunction10
-    NdrProxyForwardingFunction11
-    NdrProxyForwardingFunction12
-    NdrProxyForwardingFunction13
-    NdrProxyForwardingFunction14
-    NdrProxyForwardingFunction15
-    NdrProxyForwardingFunction16
-    NdrProxyForwardingFunction17
-    NdrProxyForwardingFunction18
-    NdrProxyForwardingFunction19
-    NdrProxyForwardingFunction20
-    NdrProxyForwardingFunction21
-    NdrProxyForwardingFunction22
-    NdrProxyForwardingFunction23
-    NdrProxyForwardingFunction24
-    NdrProxyForwardingFunction25
-    NdrProxyForwardingFunction26
-    NdrProxyForwardingFunction27
-    NdrProxyForwardingFunction28
-    NdrProxyForwardingFunction29
-    NdrProxyForwardingFunction3
-    NdrProxyForwardingFunction30
-    NdrProxyForwardingFunction31
-    NdrProxyForwardingFunction32
-    NdrProxyForwardingFunction4
-    NdrProxyForwardingFunction5
-    NdrProxyForwardingFunction6
-    NdrProxyForwardingFunction7
-    NdrProxyForwardingFunction8
-    NdrProxyForwardingFunction9
     NdrProxyFreeBuffer@8
     NdrProxyGetBuffer@8
     NdrProxyInitialize@20
@@ -215,7 +181,6 @@ EXPORTS
     NdrStubForwardingFunction@16
     NdrStubGetBuffer@12
     NdrStubInitialize@16
-    NdrStubInitializePartial@20
     NdrTypeFree@12
     NdrTypeMarshall@12
     NdrTypeSize@12
@@ -237,36 +202,6 @@ EXPORTS
     NdrXmitOrRepAsMarshall@12
     NdrXmitOrRepAsMemorySize@8
     NdrXmitOrRepAsUnmarshall@16
-    ObjectStublessClient10
-    ObjectStublessClient11
-    ObjectStublessClient12
-    ObjectStublessClient13
-    ObjectStublessClient14
-    ObjectStublessClient15
-    ObjectStublessClient16
-    ObjectStublessClient17
-    ObjectStublessClient18
-    ObjectStublessClient19
-    ObjectStublessClient20
-    ObjectStublessClient21
-    ObjectStublessClient22
-    ObjectStublessClient23
-    ObjectStublessClient24
-    ObjectStublessClient25
-    ObjectStublessClient26
-    ObjectStublessClient27
-    ObjectStublessClient28
-    ObjectStublessClient29
-    ObjectStublessClient3
-    ObjectStublessClient30
-    ObjectStublessClient31
-    ObjectStublessClient32
-    ObjectStublessClient4
-    ObjectStublessClient5
-    ObjectStublessClient6
-    ObjectStublessClient7
-    ObjectStublessClient8
-    ObjectStublessClient9
     RpcAsyncCancelCall@8
     RpcAsyncCompleteCall@8
     RpcAsyncInitializeHandle@8
@@ -414,3 +349,4 @@ EXPORTS
     UuidIsNil@8
     UuidToStringA@8
     UuidToStringW@8
+    I_RpcMimeSetWaitFunction@12

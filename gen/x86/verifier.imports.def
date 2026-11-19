@@ -1,0 +1,28 @@
+LIBRARY VERIFIER.dll
+EXPORTS
+    AVrfAPILookupCallback@16 @1
+    VerifierAddFreeMemoryCallback@4 @2
+    VerifierCheckPageHeapAllocation@8 @3
+    VerifierCreateRpcPageHeap@24 @4
+    VerifierDeleteFreeMemoryCallback@4 @5
+    VerifierDestroyRpcPageHeap@4 @6
+    VerifierDisableFaultInjectionExclusionRange@8 @7
+    VerifierDisableFaultInjectionTargetRange@8 @8
+    VerifierEnableFaultInjectionExclusionRange@8 @9
+    VerifierEnableFaultInjectionTargetRange@8 @10
+    VerifierEnumerateResource@20 @11
+    VerifierForceNormalHeap@8 @12
+    VerifierGetInfoForException@20 @13
+    VerifierGetMemoryForDump@16 @14
+    VerifierGetPropertyValueByName@16 @15
+    VerifierGetProviderHelper@4 @16
+    VerifierIsAddressInAnyPageHeap@16 @17
+    VerifierIsCurrentThreadHoldingLocks@0 @18
+    VerifierIsDllEntryActive@4 @19
+    VerifierIsPerUserSettingsEnabled@0 @20
+    VerifierQueryRuntimeFlags@8 @21
+    VerifierRedirectStopFunctions@4 @22
+    VerifierSetFaultInjectionProbability@8 @23
+    VerifierSetFlags@12 @24
+    VerifierSetRuntimeFlags@4 @25
+    VerifierStopMessage@40 @26

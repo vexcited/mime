@@ -53,6 +53,15 @@ EXPORTS
     GetUdpTable=_GetUdpTable@12 @151
     GetUnicastIpAddressEntry=_GetUnicastIpAddressEntry@4 @153
     GetUnicastIpAddressTable=_GetUnicastIpAddressTable@8 @154
+    Icmp6CreateFile=_Icmp6CreateFile@0 @156
+    Icmp6ParseReplies=_Icmp6ParseReplies@8 @157
+    Icmp6SendEcho2=_Icmp6SendEcho2@48 @158
+    IcmpCloseHandle=_IcmpCloseHandle@4 @159
+    IcmpCreateFile=_IcmpCreateFile@0 @160
+    IcmpParseReplies=_IcmpParseReplies@8 @161
+    IcmpSendEcho2=_IcmpSendEcho2@44 @162
+    IcmpSendEcho2Ex=_IcmpSendEcho2Ex@48 @163
+    IcmpSendEcho=_IcmpSendEcho@32 @164
     InitializeIpInterfaceEntry=_InitializeIpInterfaceEntry@4 @168
     InitializeUnicastIpAddressEntry=_InitializeUnicastIpAddressEntry@4 @169
     IpReleaseAddress=_IpReleaseAddress@4 @239

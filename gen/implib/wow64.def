@@ -1,0 +1,10 @@
+LIBRARY wow64.dll
+EXPORTS
+    Wow64ApcRoutine
+    Wow64KiUserCallbackDispatcher
+    Wow64LdrpInitialize
+    Wow64PrepareForDebuggerAttach
+    Wow64PrepareForException
+    Wow64SuspendLocalProcess
+    Wow64SuspendLocalThread
+    Wow64SystemServiceEx
