@@ -214,7 +214,6 @@ WINSTA BOOLEAN WINAPI WinStationVerify(HANDLE server, ULONG id)
 WINSTA BOOLEAN WINAPI WinStationQueryInformationW(HANDLE server, ULONG id, ULONG klass, PVOID info, ULONG length,
                                                   PULONG returned)
 {
-    DbgPrint("WINSTA_QIW server %p id %u class %u info %p length %u\n", server, id, klass, info, length);
     SetLastError(ERROR_NOT_SUPPORTED);
     return FALSE;
 }

@@ -82,7 +82,6 @@ static void forget_composition(SERVICE *svc)
 static HRESULT STDMETHODCALLTYPE sink_terminated(ITfCompositionSink *This, TfEditCookie cookie, ITfComposition *comp)
 {
     SERVICE *svc = from_sink(This);
-    CTF_TRACE("msctf: composition terminated by the program\n");
     if (svc->Composition == comp) {
         forget_composition(svc);
         NtUserMimeIme(MIME_IME_RESET, 0, 0, nullptr, 0);
@@ -308,7 +307,6 @@ static HRESULT STDMETHODCALLTYPE session_do(ITfEditSession *This, TfEditCookie c
             hr = do_end(svc, ctx, cookie, L"", 0);
             break;
         }
-        CTF_TRACE("msctf: host event %u of %lu characters -> %lx\n", ev->Kind, ev->Count, hr);
     }
     if (SUCCEEDED(hr) && svc->Context == ctx)
         update_area(svc, ctx);
@@ -362,7 +360,6 @@ static LRESULT host_event(SERVICE *svc, UINT kind, LPARAM selection)
     HRESULT result = E_FAIL;
     HRESULT hr = CtxRequestSession(ctx, TmClientId(svc->Tm), &session->Iface, TF_ES_READWRITE, &result);
     session->Iface.lpVtbl->Release(&session->Iface);
-    CTF_TRACE("msctf: host event %u session request %lx result %lx\n", kind, hr, result);
     return SUCCEEDED(hr) && (SUCCEEDED(result) || result == TS_S_ASYNC);
 }
 
@@ -436,7 +433,6 @@ void ServiceThreadAttach(TM *tm)
     SetWindowLongPtrW(svc->Window, GWLP_USERDATA, (LONG_PTR)svc);
     TmSetService(tm, svc);
     NtUserMimeIme(MIME_IME_TSF, (ULONG_PTR)svc->Window, 0, nullptr, 0);
-    CTF_TRACE("msctf: text service window %p\n", svc->Window);
 }
 
 void ServiceThreadDetach(TM *tm)

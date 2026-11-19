@@ -18,18 +18,9 @@ static BOOL shaders(void)
     return ok;
 }
 
-/*
- * a pass costs an upload and a read back, so the gpu takes an effect when its work is large: MIME_D2D_GPU set to 0
- * keeps everything on the cpu, set to force sends every effect it can to the gpu.
- */
+/* a pass costs an upload and a read back, so the gpu takes an effect when its work is large. */
 static BOOL wanted(UINT64 work)
 {
-    char v[8];
-    DWORD n = GetEnvironmentVariableA("MIME_D2D_GPU", v, sizeof(v));
-    if (n == 1 && v[0] == '0')
-        return FALSE;
-    if (n == 5 && !memcmp(v, "force", 5))
-        return TRUE;
     return work >= (UINT64)1 << 24;
 }
 

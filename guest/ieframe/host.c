@@ -166,7 +166,6 @@ static void register_events(HOST *host);
 
 static HRESULT STDMETHODCALLTYPE controller_done(HANDLER *self, HRESULT result, void *controller)
 {
-    DbgPrint("ieframe controller done hr %08x ctl %p\n", result, controller);
     HOST *host = self->Host;
     if (host->Dead)
         return S_OK;
@@ -215,7 +214,6 @@ static void create_controller(HOST *host)
     host->State = HOST_CONTROLLER;
     typedef HRESULT(STDMETHODCALLTYPE * F)(void *, HWND, HANDLER *);
     HRESULT hr = ((F)slot(host->Environment, ENV_CREATE_CONTROLLER))(host->Environment, host->Parent, handler);
-    DbgPrint("ieframe create controller parent %p hr %08x\n", host->Parent, hr);
     if (FAILED(hr))
         host->State = HOST_FAILED;
     handler_release(handler);
@@ -247,7 +245,6 @@ static HRESULT STDMETHODCALLTYPE starting_event(HANDLER *self, void *sender, voi
     if (host->Dead)
         return S_OK;
     WV_CALL(WV_FN_OUTSTR, args, 3, &url);
-    DbgPrint("ieframe navigation starting %ls\n", url ? url : L"");
     BrowserNavigationStarting(host->Browser, url ? url : L"", &cancel);
     if (cancel)
         WV_CALL(WV_FN_BOOL, args, 8, TRUE);
@@ -265,7 +262,6 @@ static HRESULT STDMETHODCALLTYPE completed_event(HANDLER *self, void *sender, vo
         return S_OK;
     WV_CALL(WV_FN_OUTBOOL, args, 3, &success);
     WV_CALL(WV_FN_OUTSTR, sender, 4, &url);
-    DbgPrint("ieframe navigation completed success %d url %ls\n", (int)success, url ? url : L"");
     BrowserNavigationCompleted(host->Browser, url ? url : L"about:blank", success);
     if (url)
         CoTaskMemFree(url);
@@ -542,7 +538,6 @@ static BOOL queue_or_run(HOST *host, LPCWSTR text, int slot_index, LPWSTR *pendi
 
 BOOL HostNavigate(HOST *host, LPCWSTR url)
 {
-    DbgPrint("ieframe navigate %ls state %d\n", url, host->State);
     HeapFree(GetProcessHeap(), 0, host->PendingHtml);
     host->PendingHtml = nullptr;
     return queue_or_run(host, url, VIEW_NAVIGATE, &host->PendingUrl);
@@ -550,7 +545,6 @@ BOOL HostNavigate(HOST *host, LPCWSTR url)
 
 BOOL HostNavigateHtml(HOST *host, LPCWSTR html)
 {
-    DbgPrint("ieframe html %u bytes state %d\n", (unsigned)(html ? lstrlenW(html) : 0), host->State);
     HeapFree(GetProcessHeap(), 0, host->PendingUrl);
     host->PendingUrl = nullptr;
     return queue_or_run(host, html, VIEW_NAVIGATE_TO_STRING, &host->PendingHtml);

@@ -92,7 +92,6 @@ static HRESULT tm_query(TM *tm, REFIID riid, void **object)
     else if (IsEqualIID(riid, &IID_ITfDisplayAttributeMgr))
         return DisplayAttributeMgrCreate(riid, object);
     if (!found) {
-        CTF_TRACE("msctf: thread manager query %08lx-%04x refused\n", riid->Data1, riid->Data2);
         *object = nullptr;
         return E_NOINTERFACE;
     }
@@ -263,7 +262,6 @@ static HRESULT activate(TM *tm, TfClientId *id, DWORD flags)
     }
     tm->Activations++;
     *id = tm->Client;
-    CTF_TRACE("msctf: activate flags %lx client %lu count %ld\n", flags, tm->Client, tm->Activations);
     return hr;
 }
 
@@ -290,7 +288,6 @@ static HRESULT STDMETHODCALLTYPE tm_get_active_flags(ITfThreadMgrEx *This, DWORD
 static HRESULT STDMETHODCALLTYPE tm_deactivate(ITfThreadMgrEx *This)
 {
     TM *tm = CTF_OBJ(TM, Mgr, This);
-    CTF_TRACE("msctf: deactivate count %ld\n", tm->Activations);
     if (!tm->Activations)
         return E_UNEXPECTED;
     if (!--tm->Activations) {
@@ -363,7 +360,6 @@ static HRESULT STDMETHODCALLTYPE tm_set_focus(ITfThreadMgrEx *This, ITfDocumentM
 {
     TM *tm = CTF_OBJ(TM, Mgr, This);
     DOC *doc = document ? DocFromInterface(document) : nullptr;
-    CTF_TRACE("msctf: set focus %p\n", doc);
     if (tm->Deactivating)
         return E_UNEXPECTED;
     if (document && !doc)
@@ -382,7 +378,6 @@ static HRESULT STDMETHODCALLTYPE tm_associate_focus(ITfThreadMgrEx *This, HWND h
 {
     TM *tm = CTF_OBJ(TM, Mgr, This);
     DOC *doc = document ? DocFromInterface(document) : nullptr;
-    CTF_TRACE("msctf: associate focus window %p document %p\n", hwnd, doc);
     if (!hwnd || !previous || (document && !doc))
         return E_INVALIDARG;
     *previous = nullptr;

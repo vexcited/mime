@@ -207,7 +207,6 @@ static HRESULT STDMETHODCALLTYPE pr_query(ITfProperty *This, REFIID riid, void *
         InterlockedIncrement(&((PROPERTY *)This)->Refs);
         return S_OK;
     }
-    CTF_TRACE("msctf: property query %08lx-%04x-%04x refused\n", riid->Data1, riid->Data2, riid->Data3);
     *object = nullptr;
     return E_NOINTERFACE;
 }
@@ -429,7 +428,6 @@ static HRESULT STDMETHODCALLTYPE tr_query(ITfReadOnlyProperty *This, REFIID riid
         InterlockedIncrement(&((TRACKED *)This)->Refs);
         return S_OK;
     }
-    CTF_TRACE("msctf: tracked property query %08lx-%04x-%04x refused\n", riid->Data1, riid->Data2, riid->Data3);
     *object = nullptr;
     return E_NOINTERFACE;
 }
@@ -781,7 +779,6 @@ static HRESULT STDMETHODCALLTYPE rec_query(ITfEditRecord *This, REFIID riid, voi
         InterlockedIncrement(&((RECORD *)This)->Refs);
         return S_OK;
     }
-    CTF_TRACE("msctf: edit record query %08lx-%04x-%04x refused\n", riid->Data1, riid->Data2, riid->Data3);
     *object = nullptr;
     return E_NOINTERFACE;
 }

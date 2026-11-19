@@ -5,21 +5,15 @@
  */
 #include "msctf_private.h"
 
-BOOL g_ctf_trace;
 static LONG g_objects;
 HMODULE g_ctf_module;
-
-WINBASEAPI DWORD WINAPI GetEnvironmentVariableA(LPCSTR name, LPSTR buffer, DWORD size);
 
 BOOL WINAPI DllMain(HINSTANCE module, DWORD reason, PVOID reserved)
 {
     switch (reason) {
-    case DLL_PROCESS_ATTACH: {
-        char value[8];
+    case DLL_PROCESS_ATTACH:
         g_ctf_module = module;
-        g_ctf_trace = GetEnvironmentVariableA("MIME_TSF_TRACE", value, sizeof(value)) != 0;
         break;
-    }
     case DLL_THREAD_DETACH:
         break;
     }
@@ -35,16 +29,6 @@ void CtfFree(void *p)
 {
     if (p)
         HeapFree(GetProcessHeap(), 0, p);
-}
-
-void CtfTrace(const char *format, ...)
-{
-    char text[256];
-    va_list args;
-    va_start(args, format);
-    wvsprintfA(text, format, args);
-    va_end(args);
-    OutputDebugStringA(text);
 }
 
 void CtfObjectCreated(void)

@@ -81,13 +81,11 @@ SECURITYAPI NTSTATUS NTAPI LsaFreeReturnBuffer(PVOID buffer)
 
 SECURITYAPI NTSTATUS NTAPI LsaEnumerateLogonSessions(PULONG count, PSSPI_LUID *sessions)
 {
-    DbgPrint("LsaEnumerateLogonSessions\n");
     return STATUS_NOT_IMPLEMENTED;
 }
 
 SECURITYAPI NTSTATUS NTAPI LsaGetLogonSessionData(PSSPI_LUID logon_id, PVOID *data)
 {
-    DbgPrint("LsaGetLogonSessionData\n");
     return STATUS_NOT_IMPLEMENTED;
 }
 
@@ -105,7 +103,6 @@ SECURITYAPI NTSTATUS NTAPI LsaUnregisterPolicyChangeNotification(POLICY_NOTIFICA
 
 SECURITYAPI NTSTATUS NTAPI GetSecurityUserInfo(PSSPI_LUID logon_id, ULONG flags, PVOID *information)
 {
-    DbgPrint("GetSecurityUserInfo\n");
     return STATUS_NOT_IMPLEMENTED;
 }
 

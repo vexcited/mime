@@ -73,7 +73,6 @@ static HRESULT STDMETHODCALLTYPE doc_query(ITfDocumentMgr *This, REFIID riid, vo
     else if (IsEqualIID(riid, &IID_ITfCompartmentMgr))
         *object = &doc->CompartmentMgr;
     else {
-        CTF_TRACE("msctf: document manager query %08lx refused\n", riid->Data1);
         *object = nullptr;
         return E_NOINTERFACE;
     }

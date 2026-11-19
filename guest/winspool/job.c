@@ -1,7 +1,6 @@
 /*
  * jobs run in the process that starts them; there is no spooler service. Microsoft Print to PDF converts GDI bitmap
- * pages to PDF and copies RAW data unchanged. output comes from the document's path, MIME_PRINT_DIR plus its name,
- * or a save dialog.
+ * pages to PDF and copies RAW data unchanged. output comes from the document's path or a save dialog.
  */
 #include "winspool_private.h"
 #include "pdf.h"
@@ -47,20 +46,6 @@ static void file_name_of(LPCWSTR document, WCHAR *name, SIZE_T chars)
     name[n] = 0;
     if (!n)
         wcscpy(name, L"Document");
-}
-
-/* the first name free in a folder, "Name.pdf", "Name (2).pdf" and so on. */
-static BOOL free_path(LPCWSTR directory, LPCWSTR base, WCHAR *path)
-{
-    for (int i = 1; i < 1000; i++) {
-        if (i == 1)
-            _snwprintf(path, MAX_PATH, L"%ls\\%ls.pdf", directory, base);
-        else
-            _snwprintf(path, MAX_PATH, L"%ls\\%ls (%d).pdf", directory, base, i);
-        if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES)
-            return TRUE;
-    }
-    return FALSE;
 }
 
 typedef BOOL(WINAPI *GET_SAVE_FILE_NAME)(void *ofn);
@@ -121,19 +106,8 @@ static PWSTR ask_user(LPCWSTR document, LPCWSTR directory)
 
 PWSTR SpoolAskOutput(LPCWSTR document, int printer)
 {
-    WCHAR folder[MAX_PATH], base[MAX_PATH], path[MAX_PATH];
-    DWORD n = GetEnvironmentVariableW(L"MIME_PRINT_DIR", folder, ARRAYSIZE(folder));
-    if (n && n < ARRAYSIZE(folder)) {
-        file_name_of(document, base, ARRAYSIZE(base));
-        CreateDirectoryW(folder, nullptr);
-        if (!free_path(folder, base, path))
-            return nullptr;
-        PWSTR result = SpoolAlloc((wcslen(path) + 1) * sizeof(WCHAR));
-        if (result)
-            wcscpy(result, path);
-        return result;
-    }
-    n = GetEnvironmentVariableW(L"USERPROFILE", folder, ARRAYSIZE(folder));
+    WCHAR folder[MAX_PATH];
+    DWORD n = GetEnvironmentVariableW(L"USERPROFILE", folder, ARRAYSIZE(folder));
     if (n && n + 12 < ARRAYSIZE(folder))
         wcscat(folder, L"\\Documents");
     else

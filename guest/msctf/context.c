@@ -40,7 +40,6 @@ void CtxSetDoc(CTX *ctx, DOC *doc)
     if (doc && !ctx->SinkAdvised) {
         HRESULT hr = ctx->Store->lpVtbl->AdviseSink(ctx->Store, &IID_ITextStoreACPSink, (IUnknown *)&ctx->StoreSink,
                                                     TS_AS_ALL_SINKS);
-        CTF_TRACE("msctf: advise text store sink %08lx\n", hr);
         ctx->SinkAdvised = SUCCEEDED(hr);
     } else if (!doc && ctx->SinkAdvised) {
         ctx->Store->lpVtbl->UnadviseSink(ctx->Store, (IUnknown *)&ctx->StoreSink);
@@ -90,7 +89,6 @@ HRESULT CtxStoreGetSelection(CTX *ctx, LONG *start, LONG *end)
     if (!ctx->Store)
         return E_FAIL;
     HRESULT hr = ctx->Store->lpVtbl->GetSelection(ctx->Store, TS_DEFAULT_SELECTION, 1, &selection, &fetched);
-    CTF_TRACE("msctf: store GetSelection -> %lx %lu %ld %ld\n", hr, fetched, selection.acpStart, selection.acpEnd);
     if (FAILED(hr))
         return hr;
     if (!fetched)
@@ -115,8 +113,6 @@ HRESULT CtxStoreTextExt(CTX *ctx, LONG start, LONG end, RECT *rect)
     if (FAILED(hr))
         return hr;
     hr = ctx->Store->lpVtbl->GetTextExt(ctx->Store, view, start, end, rect, &clipped);
-    CTF_TRACE("msctf: store GetTextExt %ld %ld -> %lx %ld %ld %ld %ld\n", start, end, hr, rect->left, rect->top,
-              rect->right, rect->bottom);
     return hr;
 }
 
@@ -134,8 +130,6 @@ HRESULT CtxStoreSetText(CTX *ctx, DWORD flags, LONG start, LONG end, const WCHAR
     if (!ctx->Store)
         return E_FAIL;
     HRESULT hr = ctx->Store->lpVtbl->SetText(ctx->Store, flags, start, end, text, (ULONG)cch, change);
-    CTF_TRACE("msctf: store SetText %lx %ld %ld cch %ld -> %lx change %ld %ld %ld\n", flags, start, end, cch, hr,
-              change->acpStart, change->acpOldEnd, change->acpNewEnd);
     return hr;
 }
 
@@ -147,7 +141,6 @@ HRESULT CtxStoreGetText(CTX *ctx, LONG start, LONG end, WCHAR *buffer, ULONG max
     if (!ctx->Store)
         return E_FAIL;
     HRESULT hr = ctx->Store->lpVtbl->GetText(ctx->Store, start, end, buffer, max, got, runs, 2, &run_count, &next);
-    CTF_TRACE("msctf: store GetText %ld %ld -> %lx\n", start, end, hr);
     return hr;
 }
 
@@ -208,16 +201,13 @@ static void notify_end_edit(CTX *ctx, TfEditCookie cookie)
     ITfEditRecord *record = ctx->Record;
     if (!record)
         return;
-    CTF_TRACE("msctf: end of edit, changed %d\n", EditRecordChanged(record));
     if (EditRecordChanged(record)) {
         IUnknown **sinks;
         ULONG n = SinksSnapshot(&ctx->Sinks, &IID_ITfTextEditSink, &sinks);
-        CTF_TRACE("msctf: %lu edit sinks\n", n);
         ctx->InNotify = TRUE;
         for (ULONG i = 0; i < n; i++) {
             ITfTextEditSink *sink = (ITfTextEditSink *)sinks[i];
-            HRESULT hr = sink->lpVtbl->OnEndEdit(sink, &ctx->Context, cookie, record);
-            CTF_TRACE("msctf: OnEndEdit -> %lx\n", hr);
+            sink->lpVtbl->OnEndEdit(sink, &ctx->Context, cookie, record);
         }
         ctx->InNotify = FALSE;
         SinksSnapshotFree(sinks, n);
@@ -360,8 +350,7 @@ void CtxRunPostponed(CTX *ctx)
         write = write || pending_writes(p);
     HRESULT session_hr = E_FAIL;
     CtxAddRef(ctx);
-    HRESULT hr = ctx->Store->lpVtbl->RequestLock(ctx->Store, write ? TS_LF_READWRITE : TS_LF_READ, &session_hr);
-    CTF_TRACE("msctf: postponed lock -> %lx session %lx\n", hr, session_hr);
+    ctx->Store->lpVtbl->RequestLock(ctx->Store, write ? TS_LF_READWRITE : TS_LF_READ, &session_hr);
     CtxRelease(ctx);
 }
 
@@ -446,7 +435,6 @@ HRESULT CtxRequestSession(CTX *ctx, TfClientId tid, ITfEditSession *session, DWO
     entry->Waited = TRUE;
     CtxAddRef(ctx);
     HRESULT hr = ctx->Store->lpVtbl->RequestLock(ctx->Store, lock_flags, &session_hr);
-    CTF_TRACE("msctf: lock %lx -> %lx session %lx\n", lock_flags, hr, session_hr);
     *result = session_hr;
 
     if (entry->Done) {
@@ -502,7 +490,6 @@ static HRESULT STDMETHODCALLTYPE ss_on_text_change(ITextStoreACPSink *This, DWOR
         return TS_E_NOLOCK;
     if (change->acpStart == change->acpOldEnd && change->acpStart == change->acpNewEnd)
         return S_OK;
-    CTF_TRACE("msctf: text changed %ld %ld %ld\n", change->acpStart, change->acpOldEnd, change->acpNewEnd);
     CtxTextChanged(ctx, change->acpStart, change->acpOldEnd, change->acpNewEnd, FALSE);
     return S_OK;
 }
@@ -590,7 +577,6 @@ static HRESULT ctx_query(CTX *ctx, REFIID riid, void **object)
     else if (IsEqualIID(riid, &IID_ITfContextOwnerServices))
         found = &ctx->OwnerServices;
     if (!found) {
-        CTF_TRACE("msctf: context query %08lx-%04x refused\n", riid->Data1, riid->Data2);
         *object = nullptr;
         return E_NOINTERFACE;
     }
@@ -676,7 +662,6 @@ static HRESULT STDMETHODCALLTYPE c_set_selection(ITfContext *This, TfEditCookie 
     }
     if (SUCCEEDED(hr))
         hr = ctx->Store->lpVtbl->SetSelection(ctx->Store, count, acp);
-    CTF_TRACE("msctf: store SetSelection %ld %ld -> %lx\n", acp[0].acpStart, acp[0].acpEnd, hr);
     CtfFree(acp);
     if (SUCCEEDED(hr) && ctx->Record)
         EditRecordSelection(ctx->Record);
@@ -929,7 +914,6 @@ static HRESULT STDMETHODCALLTYPE ins_text(ITfInsertAtSelection *This, TfEditCook
     TS_TEXTCHANGE change = {};
     DWORD ts_flags = (query ? TS_IAS_QUERYONLY : 0) | (flags & TF_IAS_NOQUERY ? TS_IAS_NOQUERY : 0);
     HRESULT hr = ctx->Store->lpVtbl->InsertTextAtSelection(ctx->Store, ts_flags, text, (ULONG)cch, &start, &end, &change);
-    CTF_TRACE("msctf: store InsertTextAtSelection %lx cch %ld -> %lx %ld %ld\n", ts_flags, cch, hr, start, end);
     if (FAILED(hr))
         return hr;
     if (!query) {
@@ -1142,7 +1126,6 @@ HRESULT CtxCreate(TM *tm, TfClientId owner, DWORD flags, IUnknown *unknown, ITfC
         if (FAILED(unknown->lpVtbl->QueryInterface(unknown, &IID_ITfContextOwnerCompositionSink,
                                                    (void **)&ctx->OwnerSink)))
             ctx->OwnerSink = nullptr;
-        CTF_TRACE("msctf: create context store %p composition sink %p\n", ctx->Store, ctx->OwnerSink);
     }
     CtfObjectCreated();
     if (cookie)

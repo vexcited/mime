@@ -1115,6 +1115,5 @@ ADVAPI NTSTATUS WINAPI LsaLookupUserAccountType(PSID sid, ULONG *type)
 /* mappings of capability sids to names are kept by lsass, which this machine does not have. */
 ADVAPI NTSTATUS WINAPI LsaLookupManageSidNameMapping(ULONG operation, PVOID input, PVOID *output)
 {
-    DbgPrint("LsaLookupManageSidNameMapping op %u input %p output %p\n", operation, input, output);
     return STATUS_NOT_IMPLEMENTED;
 }
