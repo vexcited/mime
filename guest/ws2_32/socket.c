@@ -19,6 +19,8 @@ typedef struct _WS_SOCKET {
     BOOL reuseaddr, exclusive, connreset;
     LINGER linger;
     DWORD rcvtimeo, sndtimeo;
+    /* what the program set, which windows answers back: -1 until then. */
+    int sndbuf, rcvbuf, ttl;
     struct {
         int level, name, value;
     } extra[WS_EXTRA_OPTIONS];
@@ -45,11 +47,12 @@ void WsSocketsInitialize(void)
 
 /* ------------------------------------------------------------------ the driver */
 
-static HANDLE afd_open(void)
+/* windows makes socket handles inheritable unless WSA_FLAG_NO_HANDLE_INHERIT asks otherwise. */
+static HANDLE afd_open(BOOL inherit)
 {
     UNICODE_STRING name = RTL_CONSTANT_STRING(MIME_AFD_DEVICE);
     OBJECT_ATTRIBUTES oa;
-    InitializeObjectAttributes(&oa, &name, 0, nullptr, nullptr);
+    InitializeObjectAttributes(&oa, &name, inherit ? OBJ_INHERIT : 0, nullptr, nullptr);
     IO_STATUS_BLOCK io;
     HANDLE h;
     if (!NT_SUCCESS(NtCreateFile(&h, GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE, &oa, &io, nullptr, 0,
@@ -63,7 +66,7 @@ static HANDLE helper_handle(void)
 {
     EnterCriticalSection(&lock);
     if (!helper)
-        helper = afd_open();
+        helper = afd_open(FALSE);
     HANDLE h = helper;
     LeaveCriticalSection(&lock);
     return h;
@@ -168,6 +171,7 @@ static WS_SOCKET *new_record(SOCKET s, int family, int type, int protocol)
     sock->type = type;
     sock->protocol = protocol;
     sock->connreset = TRUE;
+    sock->sndbuf = sock->rcvbuf = sock->ttl = -1;
     return sock;
 }
 
@@ -331,9 +335,9 @@ static int resolve_kind(int *af, int *type, int *protocol)
     return WSAESOCKTNOSUPPORT;
 }
 
-static int open_socket(int af, int type, int protocol, HANDLE *out)
+static int open_socket(int af, int type, int protocol, BOOL inherit, HANDLE *out)
 {
-    HANDLE h = afd_open();
+    HANDLE h = afd_open(inherit);
     if (!h)
         return WSAENETDOWN;
     MIME_AFD_CREATE c = {(ULONG)af, (ULONG)type, (ULONG)protocol};
@@ -346,8 +350,13 @@ static int open_socket(int af, int type, int protocol, HANDLE *out)
     return 0;
 }
 
+BOOL (*WsCatalogEntry)(int family, int type, WSAPROTOCOL_INFOW *info);
+int (*WsAnnounceSocket)(SOCKET s, int family, int type);
+
 static WS_SOCKET *register_socket(HANDLE h, int af, int type, int protocol)
 {
+    if (WsAnnounceSocket && WsAnnounceSocket((SOCKET)h, af, type))
+        return nullptr;
     WS_SOCKET *sock = new_record((SOCKET)h, af, type, protocol);
     if (!sock)
         return nullptr;
@@ -365,7 +374,7 @@ static SOCKET create_socket(int af, int type, int protocol, DWORD flags)
         error = resolve_kind(&af, &type, &protocol);
     HANDLE h = nullptr;
     if (!error)
-        error = open_socket(af, type, protocol, &h);
+        error = open_socket(af, type, protocol, !(flags & WSA_FLAG_NO_HANDLE_INHERIT), &h);
     if (error) {
         SetLastError(error);
         return INVALID_SOCKET;
@@ -587,7 +596,7 @@ SOCKET WSAAPI accept(SOCKET s, struct sockaddr *addr, int *addrlen)
         return INVALID_SOCKET;
     }
     HANDLE h;
-    if ((error = open_socket(sock->family, sock->type, sock->protocol, &h))) {
+    if ((error = open_socket(sock->family, sock->type, sock->protocol, TRUE, &h))) {
         fail(sock, error);
         return INVALID_SOCKET;
     }
@@ -1549,7 +1558,7 @@ static int routing_query(const WS_SOCKET *sock, LPVOID in, DWORD in_size, LPVOID
     if (error)
         return error;
     HANDLE h;
-    if ((error = open_socket(sock->family, SOCK_DGRAM, IPPROTO_UDP, &h)))
+    if ((error = open_socket(sock->family, SOCK_DGRAM, IPPROTO_UDP, FALSE, &h)))
         return error;
     MIME_AFD_CONNECT c;
     memset(&c, 0, sizeof(c));
@@ -1572,6 +1581,102 @@ static int routing_query(const WS_SOCKET *sock, LPVOID in, DWORD in_size, LPVOID
 }
 
 /* ------------------------------------------------------------------ ioctls */
+
+/* the precedence of the default policy table of rfc 6724, which windows uses. */
+static int policy_precedence(const IN6_ADDR *a)
+{
+    static const BYTE mapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF};
+    static const BYTE zero[16] = {};
+    const BYTE *b = a->u.Byte;
+    if (!memcmp(b, zero, 15) && b[15] == 1)
+        return 50;
+    if (!memcmp(b, mapped, 12))
+        return 35;
+    if (b[0] == 0x20 && b[1] == 0x02)
+        return 30;
+    if (b[0] == 0x20 && b[1] == 0x01 && !b[2] && !b[3])
+        return 5;
+    if ((b[0] & 0xFE) == 0xFC)
+        return 3;
+    if (!memcmp(b, zero, 12) || (b[0] == 0xFE && (b[1] & 0xC0) == 0xC0) || (b[0] == 0x3F && b[1] == 0xFE))
+        return 1;
+    return 40;
+}
+
+/* whether this machine has a source for the destination: an IPv4 address for a mapped one, else a global IPv6. */
+static BOOL has_source(const IN6_ADDR *a, const MIME_AFD_INTERFACE *list, int n)
+{
+    static const BYTE mapped[12] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF};
+    BOOL v4 = !memcmp(a->u.Byte, mapped, 12);
+    if ((v4 && a->u.Byte[12] == 127) || WsIsLoopbackV6(a))
+        return TRUE;
+    /* the host gives no routes, so a source of the same kind stands for one: link-local, unique local, global. */
+    const BYTE *d = a->u.Byte;
+    int kind = d[0] == 0xFE && (d[1] & 0xC0) == 0x80 ? 0 : (d[0] & 0xFE) == 0xFC ? 1 : 2;
+    for (int i = 0; i < n; i++) {
+        if ((list[i].Flags & (MIME_AFD_IF_UP | MIME_AFD_IF_RUNNING)) != (MIME_AFD_IF_UP | MIME_AFD_IF_RUNNING) ||
+            (list[i].Flags & MIME_AFD_IF_LOOPBACK))
+            continue;
+        if (v4 && list[i].Address.Family == AF_INET)
+            return TRUE;
+        if (!v4 && list[i].Address.Family == AF_INET6) {
+            const BYTE *s = ((const SOCKADDR_IN6 *)&list[i].Address)->sin6_addr.u.Byte;
+            int source = s[0] == 0xFE && (s[1] & 0xC0) == 0x80 ? 0 : (s[0] & 0xFE) == 0xFC ? 1 : (s[0] & 0xE0) == 0x20 ? 2 : -1;
+            if (source == kind)
+                return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+/*
+ * SIO_ADDRESS_LIST_SORT: the destinations, IPv6 or IPv4 mapped, ordered by rfc 6724 as far as the host tells its
+ * addresses: those this machine can reach first, then by the precedence of the policy table, else in their order.
+ */
+static int sort_addresses(LPVOID in, DWORD in_size, LPVOID out, DWORD out_size, LPDWORD returned)
+{
+    SOCKET_ADDRESS_LIST *l = in;
+    if (!in || in_size < offsetof(SOCKET_ADDRESS_LIST, Address) || l->iAddressCount < 0 ||
+        in_size < offsetof(SOCKET_ADDRESS_LIST, Address) + (DWORD)l->iAddressCount * sizeof(SOCKET_ADDRESS))
+        return WSAEINVAL;
+    if (!out || out_size < in_size)
+        return WSAEFAULT;
+    for (int i = 0; i < l->iAddressCount; i++) {
+        if (!l->Address[i].lpSockaddr || l->Address[i].iSockaddrLength < (int)sizeof(SOCKADDR_IN6) ||
+            l->Address[i].lpSockaddr->sa_family != AF_INET6)
+            return WSAEINVAL;
+    }
+    MIME_AFD_INTERFACE list[64];
+    int n = WsInterfaces(list, 64);
+    if (n < 0)
+        n = 0;
+    if (out != in)
+        memcpy(out, in, in_size);
+    l = out;
+    int count = l->iAddressCount;
+    for (int i = 1; i < count; i++) {
+        SOCKET_ADDRESS item = l->Address[i];
+        const IN6_ADDR *a = &((const SOCKADDR_IN6 *)item.lpSockaddr)->sin6_addr;
+        int key = (has_source(a, list, n) ? 100 : 0) + policy_precedence(a);
+        int j = i;
+        for (; j > 0; j--) {
+            const IN6_ADDR *b = &((const SOCKADDR_IN6 *)l->Address[j - 1].lpSockaddr)->sin6_addr;
+            if ((has_source(b, list, n) ? 100 : 0) + policy_precedence(b) >= key)
+                break;
+            l->Address[j] = l->Address[j - 1];
+        }
+        l->Address[j] = item;
+    }
+    /* windows leaves out the destinations it has no source address for: the VM, without IPv6 beyond its link, gives
+       getaddrinfo of a dual stack name its IPv4 addresses only. */
+    int usable = 0;
+    while (usable < count && has_source(&((const SOCKADDR_IN6 *)l->Address[usable].lpSockaddr)->sin6_addr, list, n))
+        usable++;
+    if (usable)
+        l->iAddressCount = usable;
+    *returned = in_size;
+    return 0;
+}
 
 int WSAAPI ioctlsocket(SOCKET s, long cmd, u_long *argp)
 {
@@ -1679,6 +1784,9 @@ int WSAAPI WSAIoctl(SOCKET s, DWORD code, LPVOID in, DWORD in_size, LPVOID out, 
     case SIO_ADDRESS_LIST_QUERY:
         error = address_list(sock, out, out_size, &size);
         break;
+    case SIO_ADDRESS_LIST_SORT:
+        error = sort_addresses(in, in_size, out, out_size, &size);
+        break;
     case SIO_ADDRESS_LIST_CHANGE:
     case SIO_ROUTING_INTERFACE_CHANGE:
         /* Winsock does not watch the host's addresses yet, iphlpapi does: an overlapped watch never completes. */
@@ -1727,6 +1835,8 @@ static const GUID provider_v6 = {0xF9EAB0C0, 0x26D4, 0x11D0, {0xBB, 0xBF, 0x00, 
 
 BOOL WsProtocolInfo(int family, int type, WSAPROTOCOL_INFOW *info)
 {
+    if (WsCatalogEntry)
+        return WsCatalogEntry(family, type, info);
     if ((family != AF_INET && family != AF_INET6) || (type != SOCK_STREAM && type != SOCK_DGRAM))
         return FALSE;
     memset(info, 0, sizeof(*info));
@@ -1924,6 +2034,17 @@ static BOOL membership_option(int level, int name)
     return level == IPPROTO_IPV6 && (name == IPV6_ADD_MEMBERSHIP || name == IPV6_DROP_MEMBERSHIP);
 }
 
+/* options windows reads from a one byte buffer as well as from an int. */
+static BOOL boolean_option(int level, int name)
+{
+    if (level == SOL_SOCKET)
+        return name == SO_KEEPALIVE || name == SO_OOBINLINE || name == SO_BROADCAST || name == SO_REUSEADDR ||
+               name == SO_EXCLUSIVEADDRUSE || name == SO_DONTLINGER;
+    if (level == IPPROTO_TCP)
+        return name == TCP_NODELAY;
+    return (level == IPPROTO_IP || level == IPPROTO_IPV6) && name == IP_TTL;
+}
+
 /* maps a Windows option to a host option, or 0 if unsupported. */
 static ULONG host_option_id(const WS_SOCKET *sock, int level, int name, int *error)
 {
@@ -1949,7 +2070,7 @@ static ULONG host_option_id(const WS_SOCKET *sock, int level, int name, int *err
     if (level == IPPROTO_TCP) {
         if (sock->type != SOCK_STREAM && (name == TCP_NODELAY || name == TCP_KEEPALIVE || name == TCP_KEEPINTVL ||
                                           name == TCP_KEEPCNT)) {
-            *error = WSAENOPROTOOPT;
+            *error = WSAEINVAL;
             return 0;
         }
         switch (name) {
@@ -2010,11 +2131,17 @@ int WSAAPI setsockopt(SOCKET s, int level, int name, const char *value, int leng
     ULONG option = host_option_id(sock, level, name, &error);
     if (error)
         return fail(sock, error);
+    if (length < (int)sizeof(int) && !boolean_option(level, name))
+        return fail(sock, WSAEFAULT);
     if (option) {
         error = host_option(sock, option, TRUE, (ULONG)v, nullptr);
-        /* windows takes buffer sizes the host refuses, such as 0. */
-        if (option == MIME_AFD_OPT_SNDBUF || option == MIME_AFD_OPT_RCVBUF)
+        /* windows takes buffer sizes the host refuses, such as 0, and answers them back as set. */
+        if (option == MIME_AFD_OPT_SNDBUF || option == MIME_AFD_OPT_RCVBUF) {
             error = 0;
+            *(option == MIME_AFD_OPT_SNDBUF ? &sock->sndbuf : &sock->rcvbuf) = v;
+        }
+        if (option == MIME_AFD_OPT_TTL && !error)
+            sock->ttl = v;
         return error ? fail(sock, error) : succeed(sock);
     }
     switch (level == SOL_SOCKET ? name : -1) {
@@ -2081,13 +2208,23 @@ int WSAAPI getsockopt(SOCKET s, int level, int name, char *value, int *length)
         return fail(sock, WSAEFAULT);
     int v = 0, initial;
     ULONG option = host_option_id(sock, level, name, &error);
-    if (error)
+    if (error) {
+        if (error == WSAEINVAL)
+            *length = 0;
         return fail(sock, error);
+    }
     if (option) {
         ULONG got = 0;
         if ((error = host_option(sock, option, FALSE, 0, &got)))
             return fail(sock, error);
         v = (int)got;
+        /* windows answers its defaults and the values the program set, not what the host made of them. */
+        if (option == MIME_AFD_OPT_SNDBUF || option == MIME_AFD_OPT_RCVBUF) {
+            int set = option == MIME_AFD_OPT_SNDBUF ? sock->sndbuf : sock->rcvbuf;
+            v = set >= 0 ? set : 65536;
+        }
+        if (option == MIME_AFD_OPT_TTL)
+            v = sock->ttl >= 0 ? sock->ttl : 128;
         if (option == MIME_AFD_OPT_KEEPALIVE || option == MIME_AFD_OPT_NODELAY || option == MIME_AFD_OPT_BROADCAST ||
             option == MIME_AFD_OPT_OOBINLINE || option == MIME_AFD_OPT_V6ONLY)
             v = v != 0;
@@ -2175,7 +2312,20 @@ int WSAAPI getsockopt(SOCKET s, int level, int name, char *value, int *length)
                               ? WSAENOPROTOOPT
                               : WSAEINVAL);
     }
-    if ((error = write_int(value, length, v)))
+    /* measured on windows: nodelay and keepalive answer one byte, the other booleans one byte when asked for one. */
+    if (boolean_option(level, name) &&
+        ((level == IPPROTO_TCP && name == TCP_NODELAY) || (level == SOL_SOCKET && name == SO_KEEPALIVE) ||
+         (*length >= 1 && *length < (int)sizeof(int)))) {
+        if (*length < 1)
+            return fail(sock, WSAEFAULT);
+        value[0] = (char)v;
+        *length = 1;
+        return succeed(sock);
+    }
+    if ((error = write_int(value, length, v))) {
+        if (level == IPPROTO_IPV6 && name == IPV6_V6ONLY)
+            *length = 0;
         return fail(sock, error);
+    }
     return succeed(sock);
 }
