@@ -2207,7 +2207,6 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, const void *user_class, const vo
     ATOM atom, version_atom;
     SIZE_T name_chars = 0;
     HWND result = nullptr;
-    const char *why = "";
     (void)band, (void)unknown, (void)actctx, (void)flags;
     ex_style &= ~0x80000000u;
     DWORD requested_style = style;
@@ -2235,7 +2234,6 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, const void *user_class, const vo
     WND *desktop = WndDesktop();
     WND_CLASS *cls = t ? ClassFind(t->Process, version_name, version_atom, instance) : nullptr;
     if (!cls || !desktop) {
-        why = "class not found";
         W32SetLastError(1407); /* ERROR_CANNOT_FIND_WND_CLASS */
         goto out;
     }
@@ -2244,33 +2242,26 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, const void *user_class, const vo
     WND *parent = desktop, *owner = nullptr;
     if (parent_h && !message_only) {
         WND *p = WndLookup(parent_h);
-        if (!p) {
-            why = "bad parent";
+        if (!p)
             goto out;
-        }
         if (style & WS_CHILD)
             parent = p;
         else
             owner = p == desktop ? nullptr : WndTopLevel(p);
     } else if (style & WS_CHILD) {
-        if (!message_only) {
-            why = "child without parent";
+        if (!message_only)
             goto out; /* children need a parent. */
-        }
         style &= ~WS_CHILD;
     }
 
     WND *w = W32Alloc(sizeof(WND));
-    if (!w) {
-        why = "no memory";
+    if (!w)
         goto out;
-    }
     w->Extra = cls->WindowExtra > 0 ? W32Alloc((SIZE_T)cls->WindowExtra) : nullptr;
     w->ExtraSize = cls->WindowExtra > 0 ? (ULONG)cls->WindowExtra : 0;
     if (!UserCreateHandle(&w->Header, USER_TYPE_WINDOW)) {
         W32Free(w->Extra);
         W32Free(w);
-        why = "no handle";
         goto out;
     }
     RgnInit(&w->Update);
@@ -2472,18 +2463,10 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, const void *user_class, const vo
     goto out;
 
 fail:
-    if (!why[0])
-        why = "callbacks failed";
     if (alive(w) && !(w->Flags & WNDF_DESTROYING))
         WndDestroy(w);
     UserDereference(&w->Header);
 out:
-    {
-        RECT r = result ? (WndLookup(result) ? WndLookup(result)->WindowRect : (RECT){0}) : (RECT){0};
-        DbgPrint("win32k: CreateWindowEx pid %u class %ws -> %p %s rect %d,%d %d,%d\n",
-                 (ULONG)(ULONG_PTR)PsGetCurrentProcessId(), class_name ? class_name : L"?", result, why[0] ? why : "ok",
-                 r.left, r.top, r.right - r.left, r.bottom - r.top);
-    }
     UserLeave();
     W32Free(version_name);
     W32Free(class_name);
@@ -2527,22 +2510,9 @@ BOOL NTAPI NtUserShowWindow(HWND hwnd, int cmd)
     UserEnter();
     WND *w = WndLookup(hwnd);
     BOOL was = FALSE;
-    if (!w)
-        DbgPrint("win32k: ShowWindow pid %u hwnd %p cmd %d: no window\n", (ULONG)(ULONG_PTR)PsGetCurrentProcessId(),
-                 hwnd, cmd);
-    else if (!can_touch(w))
-        DbgPrint("win32k: ShowWindow pid %u hwnd %p cmd %d: not ours\n", (ULONG)(ULONG_PTR)PsGetCurrentProcessId(),
-                 hwnd, cmd);
     if (can_touch(w)) {
         was = (w->Style & WS_VISIBLE) != 0;
-        DbgPrint("win32k: ShowWindow pid %u hwnd %p cmd %d: was %d style %x rect %d,%d %dx%d\n",
-                 (ULONG)(ULONG_PTR)PsGetCurrentProcessId(), hwnd, cmd, was, w->Style, w->WindowRect.left,
-                 w->WindowRect.top, w->WindowRect.right - w->WindowRect.left,
-                 w->WindowRect.bottom - w->WindowRect.top);
         WndShow(w, cmd);
-        if (alive(w))
-            DbgPrint("win32k: ShowWindow pid %u hwnd %p cmd %d: now %d\n", (ULONG)(ULONG_PTR)PsGetCurrentProcessId(),
-                     hwnd, cmd, (w->Style & WS_VISIBLE) != 0);
     }
     UserLeave();
     return was;
