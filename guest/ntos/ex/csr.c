@@ -58,6 +58,9 @@ typedef struct CSR_PORT {
 
 #define ALPC_KIND_CSR 1
 
+/* server 1 is basesrv, whose request 0x1e sxssrv answers. */
+#define CSR_BASE_CREATE_ACTIVATION_CONTEXT 0x1001e
+
 extern POBJECT_TYPE ExAlpcPortType;
 void ExInitializeAlpc(void);
 
@@ -249,6 +252,22 @@ static NTSTATUS serve(const CSR_PORT *port, CSR_MESSAGE *message)
         KiLogPrintf("csr: process %u connects to server dll %u with %u bytes at %p, answered empty", pid, dll, length,
                     local(port, message->Arguments[2], length));
         return STATUS_SUCCESS;
+    }
+    if (message->Api == CSR_BASE_CREATE_ACTIVATION_CONTEXT &&
+        message->TotalLength >= 0x40 + sizeof(BASE_SXS_CREATE_ACTIVATION_CONTEXT)) {
+        /* the strings of the message are in the view, at the addresses csrss has for them. */
+        BASE_SXS_CREATE_ACTIVATION_CONTEXT request;
+        memcpy(&request, &message->Arguments[1], sizeof(request));
+        PUNICODE_STRING strings[] = {&request.CultureFallbacks, &request.Manifest.Path, &request.Policy.Path,
+                                     &request.AssemblyDirectory, &request.TextualAssemblyIdentity};
+        for (ULONG i = 0; i < RTL_NUMBER_OF(strings); i++) {
+            if (!strings[i]->Buffer)
+                continue;
+            strings[i]->Buffer = local(port, (ULONG64)strings[i]->Buffer, strings[i]->Length);
+            if (!strings[i]->Buffer)
+                return STATUS_INVALID_PARAMETER;
+        }
+        return PspSxsCreateClientContext(&request);
     }
     KiLogPrintf("csr: process %u asks %x in %u bytes, capture %llx, answered empty: %llx %llx %llx %llx", pid, message->Api,
                 message->TotalLength, (unsigned long long)message->CaptureBuffer, (unsigned long long)message->Arguments[0],

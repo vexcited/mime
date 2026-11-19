@@ -1632,6 +1632,49 @@ BOOLEAN IopRemoveCompletionPacket(PVOID port, ULONG64 values[4]);
 NTSTATUS PspAllocateId(PVOID object, PHANDLE id);
 void PspFreeId(HANDLE id);
 NTSTATUS PsReferenceProcessHandle(HANDLE handle, ACCESS_MASK access, PEPROCESS *process);
+/* the activation context of a new process, from the manifest of its image: see sxs/process.c. */
+void PspSxsInitialize(void);
+NTSTATUS PspSxsCreateProcessContext(PEPROCESS process, PCUNICODE_STRING image);
+
+/* a manifest or a configuration as kernel32 found it: bytes of the client at an address, or a section it holds. */
+typedef struct BASE_SXS_STREAM {
+    UCHAR FileType, PathType, HandleType;
+    UNICODE_STRING Path;
+    HANDLE FileHandle;
+    HANDLE Handle;
+    ULONG64 Offset, Size;
+} BASE_SXS_STREAM;
+
+#define BASE_SXS_HANDLE_PROCESS 1
+#define BASE_SXS_HANDLE_SECTION 3
+
+#define BASE_SXS_MANIFEST_PRESENT 0x1
+#define BASE_SXS_POLICY_PRESENT 0x2
+#define BASE_SXS_SYSTEM_DEFAULT_IDENTITY 0x4
+#define BASE_SXS_TEXTUAL_IDENTITY 0x8
+
+/*
+ * request 0x1e of basesrv, which CreateActCtx sends, read from BaseSrvSxsCreateActivationContextFromMessage of
+ * sxssrv 26300. a 32-bit client sends the same layout. the tail is what the generator tells csrss, which kernel32
+ * does not read.
+ */
+typedef struct BASE_SXS_CREATE_ACTIVATION_CONTEXT {
+    ULONG Flags;
+    USHORT ProcessorArchitecture;
+    UNICODE_STRING CultureFallbacks;
+    BASE_SXS_STREAM Manifest;
+    BASE_SXS_STREAM Policy;
+    UNICODE_STRING AssemblyDirectory;
+    UNICODE_STRING TextualAssemblyIdentity;
+    LARGE_INTEGER FileTime;
+    ULONG_PTR ResourceName;
+    PVOID ActivationContextData; /* where the address of the view is written, 8 bytes in any client. */
+    PVOID NativeData;            /* where it is written again, at the width of the client. */
+    UCHAR Generated[0x130];
+} BASE_SXS_CREATE_ACTIVATION_CONTEXT;
+MIME_STATIC_ASSERT(sizeof(BASE_SXS_CREATE_ACTIVATION_CONTEXT) == 0x1F8, "sxs message");
+
+NTSTATUS PspSxsCreateClientContext(const BASE_SXS_CREATE_ACTIVATION_CONTEXT *message);
 NTSTATUS PsReferenceThreadHandle(HANDLE handle, ACCESS_MASK access, PETHREAD *thread);
 void PspReapDeadThreads(void);
 void PspStartReaper(void);

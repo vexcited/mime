@@ -303,9 +303,12 @@ typedef struct _MIME_SXS_GENERATE {
     USHORT ProcessorArchitecture;
     LANGID LangId;
     BOOLEAN ApplicationConfig; /* the program's <Source>.config adds private paths for probing. */
+    PCWSTR Config;             /* the configuration file when the caller found it, in place of <Source>.config. */
 } MIME_SXS_GENERATE, *PMIME_SXS_GENERATE;
 
 NTSTATUS SxsGenerateActivationContext(const MIME_SXS_GENERATE *request, PVOID *data);
+/* the same from a manifest the caller read itself, as csrss is sent it. */
+NTSTATUS SxsGenerateFromStream(const MIME_SXS_GENERATE *request, const void *text, SIZE_T size, PVOID *data);
 void SxsFreeActivationContextData(PVOID data);
 
 #endif
