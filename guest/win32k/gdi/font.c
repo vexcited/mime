@@ -850,6 +850,18 @@ static FONT_INSTANCE *realize_face(FONT_FACE *face, const LOGFONTW *lf, UINT dpi
     BOOLEAN sim_bold = weight >= FW_SEMIBOLD && face->Weight < FW_SEMIBOLD;
     BOOLEAN sim_italic = lf->lfItalic && !face->Italic;
     UCHAR smooth = smooth_of(lf);
+    /*
+     * the gasp table of the font can turn the smoothing off, measured on windows with smooth.c of scratch/steam:
+     * gray text is black and white at the sizes without the gray flag, and ClearType only for a font that asks
+     * for no smoothing at any size, which is marlett.
+     */
+    if (smooth == FONT_SMOOTH_GRAY) {
+        unsigned gasp = mime_ttf_gasp(&face->Ttf, (int)em);
+        if (gasp != 0xffff && !(gasp & 2))
+            smooth = FONT_SMOOTH_ALIASED;
+    } else if (smooth != FONT_SMOOTH_ALIASED && !mime_ttf_gasp_any(&face->Ttf, 2 | 4 | 8)) {
+        smooth = FONT_SMOOTH_ALIASED;
+    }
     UCHAR charset = resolve_charset(face, lf->lfCharSet);
     for (PLIST_ENTRY e = g_instances.Flink; e != &g_instances; e = e->Flink) {
         FONT_INSTANCE *fi = CONTAINING_RECORD(e, FONT_INSTANCE, Links);
