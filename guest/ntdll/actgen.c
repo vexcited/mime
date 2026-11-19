@@ -196,7 +196,7 @@ static NTSTATUS load_manifest_image(PCWSTR path, ULONG_PTR name, SXS_MANIFEST *m
     if (NT_SUCCESS(status)) {
         const void *data;
         SIZE_T size;
-        if (!LdrpNtHeaders(f.View))
+        if (!RtlImageNtHeader(f.View))
             status = STATUS_INVALID_IMAGE_FORMAT;
         else
             status = find_manifest_resource((PVOID)((ULONG_PTR)f.View | 1), name, &data, &size);
@@ -1227,7 +1227,7 @@ static NTSTATUS open_resource(const MIME_SXS_GENERATE *r, ULONG_PTR name, MAPPED
     if (r->Module)
         return find_manifest_resource(r->Module, name, data, size);
     NTSTATUS status = map_file(r->Source, file);
-    if (NT_SUCCESS(status) && !LdrpNtHeaders(file->View))
+    if (NT_SUCCESS(status) && !RtlImageNtHeader(file->View))
         status = STATUS_INVALID_IMAGE_FORMAT;
     if (NT_SUCCESS(status))
         status = find_manifest_resource((PVOID)((ULONG_PTR)file->View | 1), name, data, size);
@@ -1468,7 +1468,7 @@ static NTSTATUS generate(const MIME_SXS_GENERATE *request, const void *text, SIZ
     return status;
 }
 
-NTDLL_EXPORT NTSTATUS NTAPI RtlGenerateActivationContext(const MIME_SXS_GENERATE *request, PVOID *data)
+NTSTATUS SxsGenerateActivationContext(const MIME_SXS_GENERATE *request, PVOID *data)
 {
     if (!request || !request->Source || !data)
         return STATUS_INVALID_PARAMETER;
@@ -1481,7 +1481,7 @@ NTSTATUS SxspGenerateFromText(const void *text, SIZE_T size, PCWSTR path, PVOID 
     return generate(&request, text, size, data);
 }
 
-NTDLL_EXPORT void NTAPI RtlFreeActivationContextData(PVOID data)
+void SxsFreeActivationContextData(PVOID data)
 {
     if (!data)
         return;

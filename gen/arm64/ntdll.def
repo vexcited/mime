@@ -1037,9 +1037,6 @@ EXPORTS
     LdrUnloadDll
     LdrUnlockLoaderLock
     LdrUnregisterDllNotification
-    RtlFreeActivationContextData
-    RtlGenerateActivationContext
-    RtlInheritActivationContext
     RtlAbsoluteToSelfRelativeSD
     RtlAcquirePebLock
     RtlAcquirePrivilege
@@ -1131,8 +1128,6 @@ EXPORTS
     RtlDeNormalizeProcessParams
     RtlDestroyProcessParameters
     RtlDetermineDosPathNameType_U
-    RtlDispatchException
-    RtlDispatchFrameException
     RtlDllShutdownInProgress
     RtlDoesFileExists_U
     RtlDosApplyFileIsolationRedirection_Ustr
@@ -1310,13 +1305,11 @@ EXPORTS
     RtlQueryInformationActivationContext
     RtlQueryInformationActiveActivationContext
     RtlQueryPackageClaims
-    RtlQueryPackageClaimsEx
     RtlQueryPackageIdentity
     RtlQueryPackageIdentityEx
     RtlQueryPerformanceCounter
     RtlQueryPerformanceFrequency
     RtlQuerySecurityObject
-    RtlQuerySystemTime
     RtlQueryWnfStateData
     RtlQueryWnfStateDataWithExplicitScope
     RtlRaiseException
@@ -1342,7 +1335,6 @@ EXPORTS
     RtlRunOnceInitialize
     RtlSecondsSince1970ToTime
     RtlSecondsSince1980ToTime
-    RtlSectionTableFromVirtualAddress
     RtlSelfRelativeToAbsoluteSD
     RtlSelfRelativeToAbsoluteSD2
     RtlSetAttributesSecurityDescriptor

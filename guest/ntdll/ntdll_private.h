@@ -40,5 +40,7 @@ LONG NTAPI LdrpLogFatalUserCallbackException(PEXCEPTION_RECORD record, PCONTEXT 
 BOOLEAN LdrpUserCallbackExceptions(void);
 LONG NTAPI RtlUnhandledExceptionFilter2(PEXCEPTION_POINTERS pointers, ULONG flags);
 extern void(NTAPI *LdrpWow64PrepareForException)(PEXCEPTION_RECORD record, PCONTEXT context);
+BOOLEAN MimeTraceWanted(void);
+void MimeTraceModule(PVOID base);
 
 #endif

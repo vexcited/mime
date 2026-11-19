@@ -1,4 +1,0 @@
-; the exports genx86exports.py cannot match by name: fastcall functions keep their decoration.
-EXPORTS
-    RtlActivateActivationContextUnsafeFast=@RtlActivateActivationContextUnsafeFast
-    RtlDeactivateActivationContextUnsafeFast=@RtlDeactivateActivationContextUnsafeFast
