@@ -2,3 +2,8 @@ LIBRARY windows.storage.dll
 EXPORTS
     DllCanUnloadNow @177
     DllGetClassObject @179
+    ExtractIconA=StorageExtractIconA
+    ExtractIconExA=StorageExtractIconExA
+    ExtractIconExW=StorageExtractIconExW
+    ExtractIconW=StorageExtractIconW
+    SHGetStockIconInfo=StorageGetStockIconInfo

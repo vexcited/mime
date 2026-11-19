@@ -448,12 +448,8 @@ static BOOL run_long_url(SHELLEXECUTEINFOW *info)
     return ok;
 }
 
-SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
+static BOOL execute(SHELLEXECUTEINFOW *info)
 {
-    if (!info || info->cbSize != sizeof(*info)) {
-        SetLastError(ERROR_INVALID_PARAMETER);
-        return FALSE;
-    }
     info->hInstApp = nullptr;
     info->hProcess = nullptr;
     WCHAR target[MAX_PATH], scheme[32];
@@ -464,6 +460,10 @@ SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
         return fail(info, ERROR_FILE_NOT_FOUND);
     } else if (wcslen(info->lpFile) >= MAX_PATH) {
         return run_long_url(info);
+    } else if (info->fMask & SEE_MASK_DOENVSUBST) {
+        DWORD n = ExpandEnvironmentStringsW(info->lpFile, target, MAX_PATH);
+        if (!n || n > MAX_PATH)
+            return fail(info, ERROR_FILE_NOT_FOUND);
     } else {
         wcscpy(target, info->lpFile);
     }
@@ -543,6 +543,24 @@ SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
         return fail(info, ERROR_NO_ASSOCIATION);
     }
     return run_association(info, type, verb, path, parameters);
+}
+
+/*
+ * as windows.storage does: a wrong size is access denied in hInstApp and the last error, and the last error is 0 after
+ * a success, whatever the calls on the way left there. measured with shex32.c of scratch/dlls/shellexec.
+ */
+SHSTDAPI BOOL WINAPI ShellExecuteExW(SHELLEXECUTEINFOW *info)
+{
+    if (!info || info->cbSize != sizeof(*info)) {
+        if (info)
+            info->hInstApp = (HINSTANCE)SE_ERR_ACCESSDENIED;
+        SetLastError(ERROR_ACCESS_DENIED);
+        return FALSE;
+    }
+    BOOL ok = execute(info);
+    if (ok)
+        SetLastError(ERROR_SUCCESS);
+    return ok;
 }
 
 /* the file itself for programs, else its type's open command. */
