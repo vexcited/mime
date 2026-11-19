@@ -219,8 +219,20 @@ void CmpJournalInitialize(void)
     }
     if (NT_SUCCESS(CmpJournalStatus))
         CmpJournalDurable = CmpJournalOffset;
-    if (!NT_SUCCESS(CmpJournalStatus))
-        KiLogPrintf("registry: journal unavailable at offset %llu: %08x", CmpJournalOffset, CmpJournalStatus);
+    if (!NT_SUCCESS(CmpJournalStatus)) {
+        /* a torn or stale journal would otherwise refuse every later write; start over from empty. */
+        NTSTATUS broken = CmpJournalStatus;
+        KiLogPrintf("registry: journal unusable at offset %llu: %08x, starting empty", CmpJournalOffset, broken);
+        CmpJournalOffset = 0;
+        CmpJournalSequence = 0;
+        NTSTATUS emptied = truncate_tail();
+        if (NT_SUCCESS(emptied)) {
+            CmpJournalStatus = STATUS_SUCCESS;
+        } else {
+            CmpJournalStatus = broken;
+            KiLogPrintf("registry: journal cannot be emptied: %08x", emptied);
+        }
+    }
 }
 
 void CmpJournalEnable(void)

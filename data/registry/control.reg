@@ -11,6 +11,8 @@
 [HKLM\SYSTEM\CurrentControlSet\Control]
 "EarlyStartServices"=multi:"RpcSs","Power","BrokerInfrastructure","SystemEventsBroker","DcomLaunch","RpcEpMapper","LSM","AppIdSvc","AppxSvc"
 "PreshutdownOrder"=multi:
+; the options the boot loader started the system with, as read on windows 11.
+"SystemStartOptions"=" NOEXECUTE=OPTIN  FVEBOOT=2666496  NOVGA"
 
 ; the groups services start in, as the install image has them. services.exe starts the automatic services by this order.
 [HKLM\SYSTEM\CurrentControlSet\Control\ServiceGroupOrder]
@@ -35,6 +37,23 @@
 [HKLM\SYSTEM\CurrentControlSet\Control\Nls\CodePage]
 "ACP"="1252"
 "OEMCP"="437"
+
+; the language of the installation and the languages of its interface, as an English windows 11 26300 has them. the
+; loader and NtGetMUIRegistryInfo read the languages to find the resources of a program.
+[HKLM\SYSTEM\CurrentControlSet\Control\Nls\Language]
+"InstallLanguage"="0409"
+[HKLM\SYSTEM\CurrentControlSet\Control\MUI\UILanguages\en-US]
+"LCID"=dword:00000409
+"Type"=dword:00000111
+[HKLM\SYSTEM\CurrentControlSet\Control\MUI\PreinstalledLanguages\en-US]
+[HKLM\SYSTEM\CurrentControlSet\Control\MUI\Settings]
+"PreferredUILanguages"=multi:"en-US"
+[HKLM\SYSTEM\CurrentControlSet\Control\MUI\Settings\LanguageConfiguration]
+[HKLM\SYSTEM\CurrentControlSet\Control\MUI\LanguageSettings\FallbackConfiguration]
+"en-US"="en-AS;en-DM;en-GD;en-GU;en-LR;en-MH;en-PH;en-PR;en-PW;en-UM;en-US;en-VI"
+"es-ES"="es;es-ES;es-GQ;es-PH"
+[HKLM\SYSTEM\CurrentControlSet\Control\MUI\StringCacheSettings]
+"StringCacheGeneration"=dword:0000000a
 
 ; the classes of symbolic links that the system follows, as a fresh install has them: a link on a local volume to a local or a
 ; network path, and none on a network share. fsutil behavior sets them.

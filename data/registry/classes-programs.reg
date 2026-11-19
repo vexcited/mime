@@ -1,0 +1,249 @@
+; the file types of programs and shortcuts, with every key below them, as the SOFTWARE hive of the pinned image has
+; them. genuine windows.storage runs a program through the open verb of its type. made by
+; scratch/dlls/shellexec/mktypes.sh of the research repository.
+
+[HKCR\.bat]
+@="batfile"
+[HKCR\.bat\PersistentHandler]
+@="{5e941d80-bf96-11cd-b579-08002b30bfeb}"
+
+[HKCR\batfile]
+@="Windows Batch File"
+"EditFlags"=hex:30,04,00,00
+"FriendlyTypeName"=expand:"@%SystemRoot%\\System32\\acppage.dll,-6002"
+[HKCR\batfile\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\imageres.dll,-68"
+[HKCR\batfile\shell]
+[HKCR\batfile\shell\edit]
+[HKCR\batfile\shell\edit\command]
+@=expand:"%SystemRoot%\\System32\\NOTEPAD.EXE %1"
+[HKCR\batfile\shell\open]
+[HKCR\batfile\shell\open\command]
+@="\"%1\" %*"
+[HKCR\batfile\shell\print]
+[HKCR\batfile\shell\print\command]
+@=expand:"%SystemRoot%\\System32\\NOTEPAD.EXE /p %1"
+[HKCR\batfile\shell\runas]
+"HasLUAShield"=""
+[HKCR\batfile\shell\runas\command]
+@=expand:"%SystemRoot%\\System32\\cmd.exe /C \"%1\" %*"
+[HKCR\batfile\shell\runasuser]
+@="@shell32.dll,-50944"
+"Extended"=""
+"SuppressionPolicyEx"="{F211AA05-D4DF-4370-A2A0-9F19C09756A7}"
+[HKCR\batfile\shell\runasuser\command]
+"DelegateExecute"="{ea72d00e-4960-42fa-ba92-7792a7944c1d}"
+[HKCR\batfile\shellex]
+[HKCR\batfile\shellex\ContextMenuHandlers]
+@="Compatibility"
+[HKCR\batfile\shellex\ContextMenuHandlers\Compatibility]
+@="{1d27f844-3a1f-4410-85ac-14651078412d}"
+[HKCR\batfile\shellex\DropHandler]
+@="{86C86720-42A0-1069-A2E8-08002B30309D}"
+[HKCR\batfile\shellex\PropertySheetHandlers]
+[HKCR\batfile\shellex\PropertySheetHandlers\ShimLayer Property Page]
+@="{513D916F-2A8E-4F51-AEAB-0CBC76FB1AF8}"
+[HKCR\batfile\shellex\{8895b1c6-b41f-4c1c-a562-0d564250836f}]
+@="{1531d583-8375-4d3f-b5fb-d23bbd169f22}"
+
+[HKCR\.cmd]
+@="cmdfile"
+[HKCR\.cmd\PersistentHandler]
+@="{5e941d80-bf96-11cd-b579-08002b30bfeb}"
+
+[HKCR\cmdfile]
+@="Windows Command Script"
+"EditFlags"=hex:30,04,00,00
+"FriendlyTypeName"=expand:"@%SystemRoot%\\System32\\acppage.dll,-6003"
+[HKCR\cmdfile\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\imageres.dll,-68"
+[HKCR\cmdfile\shell]
+[HKCR\cmdfile\shell\edit]
+[HKCR\cmdfile\shell\edit\command]
+@=expand:"%SystemRoot%\\System32\\NOTEPAD.EXE %1"
+[HKCR\cmdfile\shell\open]
+"EditFlags"=hex:00,00,00,00
+[HKCR\cmdfile\shell\open\command]
+@="\"%1\" %*"
+[HKCR\cmdfile\shell\print]
+[HKCR\cmdfile\shell\print\command]
+@=expand:"%SystemRoot%\\System32\\NOTEPAD.EXE /p %1"
+[HKCR\cmdfile\shell\runas]
+"HasLUAShield"=""
+[HKCR\cmdfile\shell\runas\command]
+@=expand:"%SystemRoot%\\System32\\cmd.exe /C \"%1\" %*"
+[HKCR\cmdfile\shell\runasuser]
+@="@shell32.dll,-50944"
+"Extended"=""
+"SuppressionPolicyEx"="{F211AA05-D4DF-4370-A2A0-9F19C09756A7}"
+[HKCR\cmdfile\shell\runasuser\command]
+"DelegateExecute"="{ea72d00e-4960-42fa-ba92-7792a7944c1d}"
+[HKCR\cmdfile\shellex]
+[HKCR\cmdfile\shellex\ContextMenuHandlers]
+@="Compatibility"
+[HKCR\cmdfile\shellex\ContextMenuHandlers\Compatibility]
+@="{1d27f844-3a1f-4410-85ac-14651078412d}"
+[HKCR\cmdfile\shellex\DropHandler]
+@="{86C86720-42A0-1069-A2E8-08002B30309D}"
+[HKCR\cmdfile\shellex\PropertySheetHandlers]
+[HKCR\cmdfile\shellex\PropertySheetHandlers\ShimLayer Property Page]
+@="{513D916F-2A8E-4F51-AEAB-0CBC76FB1AF8}"
+[HKCR\cmdfile\shellex\{8895b1c6-b41f-4c1c-a562-0d564250836f}]
+@="{1531d583-8375-4d3f-b5fb-d23bbd169f22}"
+
+[HKCR\.com]
+@="comfile"
+[HKCR\.com\PersistentHandler]
+@="{098f2470-bae0-11cd-b579-08002b30bfeb}"
+
+[HKCR\comfile]
+@="MS-DOS Application"
+"EditFlags"=hex:30,00,00,00
+"FriendlyTypeName"=expand:"@%SystemRoot%\\System32\\shell32.dll,-8464"
+[HKCR\comfile\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\shell32.dll,2"
+[HKCR\comfile\shell]
+[HKCR\comfile\shell\open]
+"EditFlags"=dword:00000000
+[HKCR\comfile\shell\open\command]
+@="\"%1\" %*"
+[HKCR\comfile\shellex]
+[HKCR\comfile\shellex\DropHandler]
+@="{86C86720-42A0-1069-A2E8-08002B30309D}"
+
+[HKCR\.exe]
+@="exefile"
+"Content Type"="application/x-msdownload"
+[HKCR\.exe\PersistentHandler]
+@="{098f2470-bae0-11cd-b579-08002b30bfeb}"
+
+[HKCR\exefile]
+@="Application"
+"EditFlags"=hex:38,07,00,00
+"FriendlyTypeName"=expand:"@%SystemRoot%\\System32\\shell32.dll,-10156"
+[HKCR\exefile\DefaultIcon]
+@="%1"
+[HKCR\exefile\shell]
+[HKCR\exefile\shell\open]
+"EditFlags"=hex:00,00,00,00
+[HKCR\exefile\shell\open\command]
+@="\"%1\" %*"
+"IsolatedCommand"="\"%1\" %*"
+[HKCR\exefile\shell\runas]
+"HasLUAShield"=""
+[HKCR\exefile\shell\runas\command]
+@="\"%1\" %*"
+"IsolatedCommand"="\"%1\" %*"
+[HKCR\exefile\shell\runasuser]
+@="@shell32.dll,-50944"
+"Extended"=""
+"SuppressionPolicyEx"="{F211AA05-D4DF-4370-A2A0-9F19C09756A7}"
+[HKCR\exefile\shell\runasuser\command]
+"DelegateExecute"="{ea72d00e-4960-42fa-ba92-7792a7944c1d}"
+[HKCR\exefile\shellex]
+[HKCR\exefile\shellex\ContextMenuHandlers]
+@="Compatibility"
+[HKCR\exefile\shellex\ContextMenuHandlers\Compatibility]
+@="{1d27f844-3a1f-4410-85ac-14651078412d}"
+[HKCR\exefile\shellex\ContextMenuHandlers\PintoStartScreen]
+@="{470C0EBD-5D73-4d58-9CED-E91E22E23282}"
+[HKCR\exefile\shellex\DropHandler]
+@="{86C86720-42A0-1069-A2E8-08002B30309D}"
+[HKCR\exefile\shellex\PropertySheetHandlers]
+[HKCR\exefile\shellex\PropertySheetHandlers\ShimLayer Property Page]
+@="{513D916F-2A8E-4F51-AEAB-0CBC76FB1AF8}"
+
+[HKCR\.lnk]
+@="lnkfile"
+[HKCR\.lnk\ShellEx]
+[HKCR\.lnk\ShellEx\{000214EE-0000-0000-C000-000000000046}]
+@="{00021401-0000-0000-C000-000000000046}"
+[HKCR\.lnk\ShellEx\{000214F9-0000-0000-C000-000000000046}]
+@="{00021401-0000-0000-C000-000000000046}"
+[HKCR\.lnk\ShellEx\{00021500-0000-0000-C000-000000000046}]
+@="{00021401-0000-0000-C000-000000000046}"
+[HKCR\.lnk\ShellEx\{BB2E617C-0920-11d1-9A0B-00C04FC2D6C1}]
+@="{00021401-0000-0000-C000-000000000046}"
+[HKCR\.lnk\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}]
+@="{00021401-0000-0000-C000-000000000046}"
+[HKCR\.lnk\ShellNew]
+"Handler"="{ceefea1b-3e29-4ef1-b34c-fec79c4f70af}"
+"IconPath"=expand:"%SystemRoot%\\system32\\shell32.dll,-16769"
+"ItemName"="@shell32.dll,-30397"
+"MenuText"="@shell32.dll,-30318"
+"NullFile"=""
+[HKCR\.lnk\ShellNew\Config]
+"DontRename"=""
+
+[HKCR\lnkfile]
+@="Shortcut"
+"EditFlags"=dword:00000001
+"FriendlyTypeName"="@shell32.dll,-4153"
+"IsShortcut"=""
+"NeverShowExt"=""
+[HKCR\lnkfile\CLSID]
+@="{00021401-0000-0000-C000-000000000046}"
+[HKCR\lnkfile\shellex]
+[HKCR\lnkfile\shellex\ContextMenuHandlers]
+[HKCR\lnkfile\shellex\ContextMenuHandlers\OpenContainingFolderMenu]
+@="{37ea3a21-7493-4208-a011-7f9ea79ce9f5}"
+[HKCR\lnkfile\shellex\ContextMenuHandlers\{00021401-0000-0000-C000-000000000046}]
+@=""
+[HKCR\lnkfile\shellex\DropHandler]
+@="{00021401-0000-0000-C000-000000000046}"
+[HKCR\lnkfile\shellex\IconHandler]
+@="{00021401-0000-0000-C000-000000000046}"
+[HKCR\lnkfile\shellex\PropertySheetHandlers]
+[HKCR\lnkfile\shellex\PropertySheetHandlers\Console]
+@="{D2942F8E-478E-41D3-870A-35A16238F4EE}"
+[HKCR\lnkfile\shellex\PropertySheetHandlers\ShimLayer Property Page]
+@="{513D916F-2A8E-4F51-AEAB-0CBC76FB1AF8}"
+[HKCR\lnkfile\tabsets]
+"selection"=dword:00000705
+
+[HKCR\.pif]
+@="piffile"
+
+[HKCR\piffile]
+@="Shortcut to MS-DOS Program"
+"EditFlags"=hex:01,00,00,00
+"FriendlyTypeName"=expand:"@%SystemRoot%\\System32\\acppage.dll,-6005"
+"IsShortcut"=""
+"NeverShowExt"=""
+[HKCR\piffile\shell]
+[HKCR\piffile\shell\open]
+[HKCR\piffile\shell\open\command]
+@="\"%1\" %*"
+[HKCR\piffile\shellex]
+[HKCR\piffile\shellex\DropHandler]
+@="{86C86720-42A0-1069-A2E8-08002B30309D}"
+[HKCR\piffile\shellex\IconHandler]
+@="{00021401-0000-0000-C000-000000000046}"
+[HKCR\piffile\shellex\PropertySheetHandlers]
+[HKCR\piffile\shellex\PropertySheetHandlers\ShimLayer Property Page]
+@="{513D916F-2A8E-4F51-AEAB-0CBC76FB1AF8}"
+
+[HKCR\.scr]
+@="scrfile"
+
+[HKCR\scrfile]
+@="Screen saver"
+"FriendlyTypeName"="@shell32,-10162"
+[HKCR\scrfile\shell]
+[HKCR\scrfile\shell\config]
+@="C&onfigure"
+"MUIVerb"="@shell32.dll,-10209"
+[HKCR\scrfile\shell\config\command]
+@="\"%1\""
+[HKCR\scrfile\shell\install]
+@="&Install"
+"MUIVerb"="@shell32.dll,-10210"
+[HKCR\scrfile\shell\install\command]
+@="rundll32.exe desk.cpl,InstallScreenSaver %l"
+[HKCR\scrfile\shell\open]
+@="T&est"
+[HKCR\scrfile\shell\open\command]
+@="\"%1\" /S"
+[HKCR\scrfile\shellex]
+[HKCR\scrfile\shellex\DropHandler]
+@="{86C86720-42A0-1069-A2E8-08002B30309D}"

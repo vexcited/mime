@@ -1,0 +1,43 @@
+; the classes oleaut32 serves that mime did not list, the record info and the standard font and picture, as the
+; SOFTWARE hive of the image 26300 has them.
+
+[HKCR\CLSID\{0000002F-0000-0000-C000-000000000046}]
+@="CLSID_RecordInfo"
+[HKCR\CLSID\{0000002F-0000-0000-C000-000000000046}\InprocServer32]
+@="C:\\Windows\\System32\\oleaut32.dll"
+"ThreadingModel"="Both"
+
+[HKCR\CLSID\{0BE35203-8F91-11CE-9DE3-00AA004BB851}]
+@="Standard Font"
+[HKCR\CLSID\{0BE35203-8F91-11CE-9DE3-00AA004BB851}\CLSID]
+@="Standard Font"
+[HKCR\CLSID\{0BE35203-8F91-11CE-9DE3-00AA004BB851}\InprocServer32]
+@="C:\\Windows\\System32\\oleaut32.dll"
+"Assembly"="stdole, Version=7.0.3300.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a"
+"Class"="stdole.StdFontClass"
+"RuntimeVersion"="v1.0.3705"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{0BE35203-8F91-11CE-9DE3-00AA004BB851}\ProgID]
+@="StdFont"
+
+[HKCR\CLSID\{0BE35204-8F91-11CE-9DE3-00AA004BB851}]
+@="Standard Picture"
+[HKCR\CLSID\{0BE35204-8F91-11CE-9DE3-00AA004BB851}\CLSID]
+@="Standard Picture"
+[HKCR\CLSID\{0BE35204-8F91-11CE-9DE3-00AA004BB851}\InprocServer32]
+@="C:\\Windows\\System32\\oleaut32.dll"
+"Assembly"="stdole, Version=7.0.3300.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a"
+"Class"="stdole.StdPictureClass"
+"RuntimeVersion"="v1.0.3705"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{0BE35204-8F91-11CE-9DE3-00AA004BB851}\ProgID]
+@="StdPicture"
+
+[HKCR\CLSID\{46763EE0-CAB2-11CE-8C20-00AA0051E5D4}]
+@="Obsolete Font"
+[HKCR\CLSID\{46763EE0-CAB2-11CE-8C20-00AA0051E5D4}\CLSID]
+@="Obsolete Font"
+[HKCR\CLSID\{46763EE0-CAB2-11CE-8C20-00AA0051E5D4}\InprocServer32]
+@="C:\\Windows\\System32\\oleaut32.dll"
+[HKCR\CLSID\{46763EE0-CAB2-11CE-8C20-00AA0051E5D4}\ProgID]
+@="OldFont"

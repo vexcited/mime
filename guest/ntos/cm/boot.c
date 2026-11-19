@@ -183,6 +183,23 @@ static void service_profiles(void)
     }
 }
 
+/*
+ * what the State Repository service adds to its cache when the user signs in: a row for the account. the launcher
+ * looks the caller up there, and falls back on the DefaultAccount, whose sid it asks the lsa for. the tables are in
+ * data/registry/staterepository.reg, rows 1 and 2 there.
+ */
+static void state_repository_user(PCWSTR sid)
+{
+    WCHAR key[200] = {}, index[64] = {};
+    PCWSTR cache = L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AppModel\\StateRepository\\Cache";
+    _snwprintf(key, RTL_NUMBER_OF(key) - 1, L"%ls\\User\\Data\\3", cache);
+    set_sz(key, L"UserSid", REG_SZ, sid);
+    ULONG chars = (ULONG)_snwprintf(index, RTL_NUMBER_OF(index) - 2, L"UserSid\\%ls", sid);
+    set(key, L"_IndexKeys", REG_MULTI_SZ, index, (chars + 2) * sizeof(WCHAR));
+    _snwprintf(key, RTL_NUMBER_OF(key) - 1, L"%ls\\User\\Index\\UserSid\\%ls\\3", cache, sid);
+    open_key(key);
+}
+
 /* what winlogon writes at logon: the volatile part of the environment. */
 static void volatile_environment(PCWSTR computer, PCWSTR user, PCWSTR sid)
 {
@@ -235,7 +252,7 @@ static void hardware(void)
 {
     WCHAR identifier[96] = {}, vendor[48], name[64];
     widen(vendor, RTL_NUMBER_OF(vendor), KiProcessorVendor());
-    widen(name, RTL_NUMBER_OF(name), HalBootInfo->cpu_name);
+    widen(name, RTL_NUMBER_OF(name), KiProcessorBrand());
     KiFormatProcessorIdentifier(identifier, RTL_NUMBER_OF(identifier) - 1);
     for (ULONG cpu = 0; cpu < HalBootInfo->cpu_count; cpu++) {
         WCHAR path[128] = {};
@@ -318,29 +335,503 @@ static PCWSTR gpu_service(ULONG vendor)
 }
 #endif
 
+#define SERVICES L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Services\\"
+#define ENUM L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Enum\\"
+#define DISPLAY_CLASS_KEY CONTROL L"\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}"
+#define MONITOR_CLASS_KEY CONTROL L"\\Class\\{4d36e96e-e325-11ce-bfc1-08002be10318}"
+/* the video keys: of the adapter that drives the display, which user32 reads, of the two root drivers and of the indirect display. */
+#define VIDEO_ID L"{b3f36b7e-6a4d-5a41-9e2c-4d8fa1c7e903}"
+#define BASIC_DISPLAY_VIDEO_ID L"{b3f36b6e-6a4d-5a41-9e2c-4d8fa1c7e903}"
+#define BASIC_RENDER_VIDEO_ID L"{b3f36b70-6a4d-5a41-9e2c-4d8fa1c7e903}"
+#define INDIRECT_VIDEO_ID L"{b5a7c1d1-6a60-5a41-9e35-3e9d2c5a4b82}"
+#define BASIC_DISPLAY_INSTANCE L"PCI\\VEN_1234&DEV_1111&SUBSYS_11001AF4&REV_02\\3&11583659&0&18"
+#define INDIRECT_INSTANCE L"ROOT\\MTTVDD\\0002"
+#define set_multi(path, name, text) set(path, name, REG_MULTI_SZ, text, sizeof(text))
+
+/*
+ * what drives the display. by default the host gpu, with the driver package of its vendor. "display=basic" on the
+ * command line presents a machine with no gpu driver, as the windows reference machine is: its vga device runs windows'
+ * basic display adapter and direct3d is the basic render driver. ",vdd" adds the indirect display driver installed
+ * there, and ",gpu" keeps the host gpu as a further adapter behind them.
+ */
+static BOOLEAN display_option(PCSTR word)
+{
+    const char *option = strstr(HalBootInfo->cmdline, "display=");
+    if (!option)
+        return FALSE;
+    SIZE_T length = strlen(word);
+    for (option += 8; *option && *option != ' ';) {
+        const char *end = option;
+        while (*end && *end != ' ' && *end != ',')
+            end++;
+        if ((SIZE_T)(end - option) == length && !memcmp(option, word, length))
+            return TRUE;
+        option = *end == ',' ? end + 1 : end;
+    }
+    return FALSE;
+}
+
+static BOOLEAN display_basic(void)
+{
+#if defined(__aarch64__)
+    return FALSE;
+#else
+    return !HalBootInfo->gpu_count || display_option("basic");
+#endif
+}
+
+static BOOLEAN display_gpus(void)
+{
+    return !display_basic() || display_option("gpu");
+}
+
+static BOOLEAN display_indirect(void)
+{
+    return display_basic() && display_option("vdd");
+}
+
+/*
+ * a monitor that tells nothing of itself, as the one of the reference machine's vga device: windows names it
+ * Default_Monitor and it has no edid. the basic display has that one, and "display=noedid" gives it to a host gpu.
+ */
+static BOOLEAN display_plain_monitor(void)
+{
+    return display_basic() || display_option("noedid");
+}
+
+/* the driver key of a device, in its class key and in its video key: what its inf left there. */
+static void driver_key(PCWSTR key, PCWSTR desc, PCWSTR provider, PCWSTR date, ULONG64 date_data, PCWSTR version,
+                       PCWSTR inf, PCWSTR section, PCWSTR matching, ULONG score)
+{
+    set_sz(key, L"DriverDesc", REG_SZ, desc);
+    set_sz(key, L"ProviderName", REG_SZ, provider);
+    set(key, L"DriverDateData", REG_BINARY, &date_data, sizeof(date_data));
+    set_sz(key, L"DriverDate", REG_SZ, date);
+    set_sz(key, L"DriverVersion", REG_SZ, version);
+    set_sz(key, L"InfPath", REG_SZ, inf);
+    set_sz(key, L"InfSection", REG_SZ, section);
+    set_sz(key, L"MatchingDeviceId", REG_SZ, matching);
+    if (score)
+        set_dword(key, L"FeatureScore", score);
+}
+
+/* the Video key of a video id, which names the service and the driver key of the adapter. */
+static void video_key(PCWSTR id, PCWSTR service, PCWSTR desc, ULONG score, PCWSTR driver)
+{
+    WCHAR path[200] = CONTROL L"\\Video\\";
+    wcscat(path, id);
+    wcscat(path, L"\\Video");
+    set_sz(path, L"Service", REG_SZ, service);
+    set_sz(path, L"DeviceDesc", REG_SZ, desc);
+    if (score)
+        set_dword(path, L"FeatureScore", score);
+    set_sz(path, L"Driver", REG_SZ, driver);
+}
+
+/*
+ * the map of the video devices, in the order the reference machine holds it: the adapter of the display, the root
+ * fallback driver, the remote desktop display, and an indirect display after them.
+ */
+static void video_device_map(PCWSTR indirect)
+{
+    static const PCWSTR map = L"\\REGISTRY\\MACHINE\\HARDWARE\\DEVICEMAP\\VIDEO";
+    static const ULONG numbers[3] = {0, 1, 2};
+    ULONG last = indirect ? 2 : 1;
+    set_sz(map, L"\\Device\\Video0", REG_SZ,
+           L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\" VIDEO_ID L"\\0000");
+    set_dword(map, L"MaxObjectNumber", last);
+    set(map, L"ObjectNumberList", REG_BINARY, numbers, (last + 1) * sizeof(ULONG));
+    set_sz(map, L"\\Device\\Video1", REG_SZ, L"\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet001\\Services\\BasicDisplay");
+    set_sz(map, L"\\Device\\Disc", REG_SZ, L"\\REGISTRY\\Machine\\System\\CurrentControlSet\\Services\\TSDDD\\Device0");
+    if (indirect)
+        set_sz(map, L"\\Device\\Video2", REG_SZ, indirect);
+}
+
+/* a kernel driver's service key, with the devices it runs. */
+static void driver_service(PCWSTR name, PCWSTR image, ULONG start, PCWSTR group, ULONG tag, PCWSTR first, PCWSTR second)
+{
+    WCHAR path[160] = SERVICES, sub[176];
+    wcscat(path, name);
+    set_sz(path, L"ImagePath", REG_EXPAND_SZ, image);
+    set_dword(path, L"Type", 1);
+    set_dword(path, L"Start", start);
+    set_dword(path, L"ErrorControl", 0);
+    if (group) {
+        set_sz(path, L"Group", REG_SZ, group);
+        set_dword(path, L"Tag", tag);
+    }
+    wcscpy(sub, path);
+    wcscat(sub, L"\\Enum");
+    ULONG count = (first ? 1 : 0) + (second ? 1 : 0);
+    if (first)
+        set_sz(sub, L"0", REG_SZ, first);
+    if (second)
+        set_sz(sub, L"1", REG_SZ, second);
+    set_dword(sub, L"Count", count);
+    set_dword(sub, L"NextInstance", count);
+}
+
+/* an adapter as dxgkrnl records it for the directx database, under its video id. */
+static void directx_adapter(PCWSTR id, ULONG type, ULONG luid)
+{
+    WCHAR path[160] = L"\\REGISTRY\\MACHINE\\SOFTWARE\\Microsoft\\DirectX\\";
+    wcscat(path, id);
+    /* the version of d3d10warp.dll, 10.0.26100.9818. */
+    set_qword(path, L"DriverVersion", 0x000A000065F4265A);
+    set_qword(path, L"UMDVersion", 0x000A000065F4265A);
+    set_dword(path, L"AdapterType", type);
+    set_dword(path, L"SchemaVersion", 2);
+    set_sz(path, L"Description", REG_SZ, L"Microsoft Basic Render Driver");
+    set_qword(path, L"AdapterLuid", luid);
+    set_dword(path, L"VendorId", 0x1414);
+    set_dword(path, L"DeviceId", 0x8C);
+    set_qword(path, L"DedicatedVideoMemory", 0);
+    set_qword(path, L"DedicatedSystemMemory", 0);
+    set_qword(path, L"SharedSystemMemory", (ULONG64)HalBootInfo->ram_size / 2);
+    set_dword(path, L"MaxD3D11FeatureLevel", 0xC100);
+    set_dword(path, L"MaxD3D12FeatureLevel", 0xC100);
+}
+
+/* a monitor: its driver key in the monitor class and its device under the display enumerator. */
+static void monitor(PCWSTR number, PCWSTR instance, PCWSTR desc, PCWSTR section, PCWSTR matching, PCWSTR hardware,
+                    ULONG hardware_size, PCWSTR friendly, ULONG address, PCWSTR container, PCWSTR parent,
+                    const UCHAR *edid, ULONG edid_size)
+{
+    WCHAR key[200] = MONITOR_CLASS_KEY L"\\", driver[64] = L"{4d36e96e-e325-11ce-bfc1-08002be10318}\\", path[220] = ENUM;
+    wcscat(key, number);
+    wcscat(driver, number);
+    driver_key(key, desc, L"Microsoft", L"6-21-2006", 0x01C694C5A38C8000, L"10.0.26100.9818", L"monitor.inf", section,
+               matching, 0);
+    set_sz(key, L"MaxResolution", REG_SZ, L"1600,1200");
+    /* monitor.inf writes it as text for a plug and play monitor, and as a number for one that is not. */
+    if (!wcscmp(section, L"PnPMonitor.Install"))
+        set_sz(key, L"DPMS", REG_SZ, L"1");
+    else
+        set_dword(key, L"DPMS", 1);
+    wcscat(key, L"\\MODES");
+    open_key(key);
+    MIME_DEVICE_PROPERTIES p = {desc, hardware, L"*PNP09FF\0", L"Monitor", L"{4d36e96e-e325-11ce-bfc1-08002be10318}",
+                                L"(Standard monitor types)", L"monitor", nullptr, container, friendly};
+    MimePnpAddDevice(instance, parent, &p);
+    wcscat(path, instance);
+    set(path, L"HardwareID", REG_MULTI_SZ, hardware, hardware_size);
+    set_dword(path, L"Capabilities", 0xE4);
+    set_dword(path, L"Address", address);
+    set_dword(path, L"ConfigFlags", 0);
+    set_sz(path, L"Driver", REG_SZ, driver);
+    /* the monitor driver's list of its devices, in the order they came, which user32 names the monitors of a display by. */
+    static ULONG monitors;
+    WCHAR order[8] = {};
+    _snwprintf(order, RTL_NUMBER_OF(order) - 1, L"%u", monitors++);
+    set_sz(SERVICES L"monitor\\Enum", order, REG_SZ, instance);
+    set_dword(SERVICES L"monitor\\Enum", L"Count", monitors);
+    set_dword(SERVICES L"monitor\\Enum", L"NextInstance", monitors);
+    /* where the monitor driver keeps what the monitor told of itself, which programs read to know the screen. */
+    wcscat(path, L"\\Device Parameters");
+    if (edid)
+        set(path, L"EDID", REG_BINARY, edid, edid_size);
+    else
+        open_key(path);
+    /* the framework's key of the monitor driver, empty on the reference machine. */
+    wcscat(path, L"\\WDF");
+    open_key(path);
+}
+
+/*
+ * the edid of a host monitor, as a displayport panel of its size tells it: the identifiers user32 names the monitor
+ * by, MS_0025, one detailed timing for its mode with the reduced blanking of the cvt standard, its range and its name.
+ */
+static void monitor_edid(ULONG index, ULONG width, ULONG height, ULONG hz, ULONG width_mm, ULONG height_mm,
+                         const USHORT *name, UCHAR edid[128])
+{
+    static const UCHAR head[] = {
+        0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00,
+        0x36, 0x7F,             /* "MS_", five bits a letter. */
+        0x25, 0x00,             /* the product, 0025. */
+        0x00, 0x00, 0x00, 0x00, /* the serial number, the monitor's index below. */
+        0x01, 0x22,             /* the first week of 2024. */
+        0x01, 0x04,             /* edid 1.4. */
+        0xA5,                   /* digital, eight bits a color, displayport. */
+        0x00, 0x00,             /* the size in centimeters, below. */
+        0x78,                   /* gamma 2.2. */
+        0x06,                   /* srgb, and the first timing is the native one. */
+        0xEE, 0x91, 0xA3, 0x54, 0x4C, 0x99, 0x26, 0x0F, 0x50, 0x54, /* the srgb primaries. */
+        0x00, 0x00, 0x00,       /* no established timings. */
+        0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+    };
+    memset(edid, 0, 128);
+    memcpy(edid, head, sizeof(head));
+    edid[12] = (UCHAR)(index + 1);
+    edid[21] = (UCHAR)(width_mm / 10);
+    edid[22] = (UCHAR)(height_mm / 10);
+    /* a reader derives millimeters from these and rejects a zero, so an unknown physical size still gets one. */
+    if (!edid[21])
+        edid[21] = 34;
+    if (!edid[22])
+        edid[22] = 19;
+    if (!width || !height || width > 4095 || height > 4095) {
+        width = 1920;
+        height = 1080;
+    }
+    if (hz < 24 || hz > 500)
+        hz = 60;
+    /* reduced blanking: 160 pixels a line, and the lines 460 microseconds take, or the porches and the sync at least. */
+    ULONG hblank = 160, hfront = 48, hsync = 32, vfront = 3;
+    ULONG vsync = width * 3 == height * 4 ? 4 : width * 10 == height * 16 ? 6 : 5;
+    ULONG vblank, clock;
+    for (;;) {
+        ULONG line_ns = (1000000000 / hz - 460000) / height;
+        vblank = 460000 / line_ns + 1;
+        if (vblank < vfront + vsync + 6)
+            vblank = vfront + vsync + 6;
+        clock = (ULONG)((ULONG64)(width + hblank) * (height + vblank) * hz / 10000);
+        /* the pixel clock has sixteen bits of ten kilohertz: a mode past it is told at sixty hertz. */
+        if (clock <= 0xFFFF || hz == 60)
+            break;
+        hz = 60;
+    }
+    if (clock > 0xFFFF)
+        clock = 0xFFFF;
+    UCHAR *t = edid + 54;
+    t[0] = (UCHAR)clock;
+    t[1] = (UCHAR)(clock >> 8);
+    t[2] = (UCHAR)width;
+    t[3] = (UCHAR)hblank;
+    t[4] = (UCHAR)((width >> 8) << 4 | hblank >> 8);
+    t[5] = (UCHAR)height;
+    t[6] = (UCHAR)vblank;
+    t[7] = (UCHAR)((height >> 8) << 4 | vblank >> 8);
+    t[8] = (UCHAR)hfront;
+    t[9] = (UCHAR)hsync;
+    t[10] = (UCHAR)(vfront << 4 | vsync);
+    t[12] = (UCHAR)width_mm;
+    t[13] = (UCHAR)height_mm;
+    t[14] = (UCHAR)((width_mm >> 8 & 15) << 4 | (height_mm >> 8 & 15));
+    t[17] = 0x1A; /* separate syncs, the horizontal one positive. */
+    UCHAR *range = edid + 72;
+    ULONG line_khz = clock * 10 / (width + hblank);
+    range[3] = 0xFD;
+    range[5] = 48;
+    range[6] = (UCHAR)(hz > 255 ? 255 : hz);
+    range[7] = 30;
+    range[8] = (UCHAR)(line_khz + 1 > 255 ? 255 : line_khz + 1);
+    range[9] = (UCHAR)(clock / 1000 + 1 > 255 ? 255 : clock / 1000 + 1);
+    range[10] = 0x01;
+    range[11] = 0x0A;
+    memset(range + 12, 0x20, 6);
+    UCHAR *label = edid + 90;
+    label[3] = 0xFC;
+    ULONG chars = 0;
+    for (; chars < 13 && name && name[chars] >= 0x20 && name[chars] < 0x7F; chars++)
+        label[5 + chars] = (UCHAR)name[chars];
+    if (!chars) {
+        memcpy(label + 5, "Monitor", 7);
+        chars = 7;
+    }
+    if (chars < 13) {
+        label[5 + chars] = 0x0A;
+        memset(label + 6 + chars, 0x20, 12 - chars);
+    }
+    edid[108 + 3] = 0x10;
+    UCHAR sum = 0;
+    for (ULONG i = 0; i < 127; i++)
+        sum += edid[i];
+    edid[127] = (UCHAR)(0 - sum);
+}
+
+/*
+ * the monitors of the host under the adapter that drives them, each with the instance user32 names it by and the
+ * edid a real one leaves in its device key. returns how many there are.
+ */
+static ULONG host_monitors(PCWSTR parent)
+{
+    ULONG count = 0;
+    MimeMonitor *list = MmAllocateContiguousPages(4096);
+    if (list) {
+        ULONG64 value = 0;
+        memset(list, 0, MIME_MAX_MONITORS * sizeof(MimeMonitor));
+        if (HalMimeHypercall(MIME_HC_MONITORS, (ULONG64)MmGetPhysicalAddress(list).QuadPart, MIME_MAX_MONITORS, 0, 0, 0, 0,
+                             &value) == MIME_HC_STATUS_OK &&
+            value <= MIME_MAX_MONITORS)
+            count = (ULONG)value;
+    }
+    MimeMonitor only = {};
+    if (!count) {
+        /* before the host has its monitors, the display of the boot information is the one there is. */
+        only.rect.right = (int32_t)HalBootInfo->display.width;
+        only.rect.bottom = (int32_t)HalBootInfo->display.height;
+        only.refresh_hz = HalBootInfo->display.refresh_hz;
+        count = 1;
+    }
+    for (ULONG i = 0; i < count; i++) {
+        const MimeMonitor *m = list && !only.rect.right ? &list[i] : &only;
+        UCHAR edid[128];
+        WCHAR number[8] = {}, instance[64] = {};
+        monitor_edid(i, (ULONG)(m->rect.right - m->rect.left), (ULONG)(m->rect.bottom - m->rect.top), m->refresh_hz,
+                     m->width_mm, m->height_mm, m->name, edid);
+        _snwprintf(number, RTL_NUMBER_OF(number) - 1, L"%04u", i);
+        /* the instance ends with the target of the adapter, a plain number, after the prefix of its parent. */
+        if (display_plain_monitor()) {
+            _snwprintf(instance, RTL_NUMBER_OF(instance) - 1, L"DISPLAY\\Default_Monitor\\%ls&UID%u",
+                       display_basic() ? L"4&3740937b&0" : L"5&2f3c1a9b&0", i);
+            monitor(number, instance, L"Generic Non-PnP Monitor", L"NonPnPMonitor.Install", L"MONITOR\\Default_Monitor",
+                    L"MONITOR\\Default_Monitor\0", sizeof(L"MONITOR\\Default_Monitor\0"), L"Generic Monitor", i,
+                    L"{376ddafa-71e0-5880-a232-a4a16069cc71}", parent, nullptr, 0);
+            continue;
+        }
+        _snwprintf(instance, RTL_NUMBER_OF(instance) - 1, L"DISPLAY\\MS_0025\\5&2f3c1a9b&0&UID%u", i);
+        monitor(number, instance, L"Generic PnP Monitor", L"PnPMonitor.Install", L"*PNP09FF", L"MONITOR\\MS_0025\0",
+                sizeof(L"MONITOR\\MS_0025\0"), L"Generic Monitor", i, L"{376ddafa-71e0-5880-a232-a4a16069cc71}", parent,
+                edid, sizeof(edid));
+    }
+    if (list)
+        MmFreeContiguousPages(list, 4096);
+    return count;
+}
+
+/* the two drivers windows always runs on the root bus, whatever drives the display: its fallback and warp's kernel half. */
+static void root_display_drivers(void)
+{
+    static const struct {
+        PCWSTR instance, hardware, service, desc, mfg, driver, video;
+        ULONG hardware_size;
+    } roots[] = {
+        {L"ROOT\\BasicDisplay\\0000", L"ROOT\\BasicDisplay\0", L"BasicDisplay",
+         L"@basicdisplay.inf,%msbddfallbackname%;Microsoft Basic Display Driver",
+         L"@basicdisplay.inf,%std%;(Standard display types)", L"{4d36e97d-e325-11ce-bfc1-08002be10318}\\0021",
+         BASIC_DISPLAY_VIDEO_ID, sizeof(L"ROOT\\BasicDisplay\0")},
+        {L"ROOT\\BasicRender\\0000", L"ROOT\\BasicRender\0", L"BasicRender",
+         L"@basicrender.inf,%basicrender%;Microsoft Basic Render Driver", L"@basicrender.inf,%ms%;Microsoft",
+         L"{4d36e97d-e325-11ce-bfc1-08002be10318}\\0022", BASIC_RENDER_VIDEO_ID, sizeof(L"ROOT\\BasicRender\0")},
+    };
+    for (ULONG i = 0; i < RTL_NUMBER_OF(roots); i++) {
+        MIME_DEVICE_PROPERTIES p = {roots[i].desc, roots[i].hardware, nullptr, L"System",
+                                    L"{4d36e97d-e325-11ce-bfc1-08002be10318}", roots[i].mfg, roots[i].service, nullptr,
+                                    L"{00000000-0000-0000-FFFF-FFFFFFFFFFFF}", nullptr};
+        MimePnpAddDevice(roots[i].instance, nullptr, &p);
+        WCHAR path[200] = ENUM;
+        wcscat(path, roots[i].instance);
+        set(path, L"HardwareID", REG_MULTI_SZ, roots[i].hardware, roots[i].hardware_size);
+        set_dword(path, L"ConfigFlags", 0);
+        set_dword(path, L"DeviceReported", 1);
+        set_dword(path, L"Capabilities", 0);
+        set_sz(path, L"Driver", REG_SZ, roots[i].driver);
+        wcscat(path, L"\\Device Parameters");
+        set_sz(path, L"VideoID", REG_SZ, roots[i].video);
+    }
+    driver_service(L"BasicDisplay",
+                   L"\\SystemRoot\\System32\\DriverStore\\FileRepository\\basicdisplay.inf_amd64_9f34636ebdd89def\\BasicDisplay.sys",
+                   1, L"Video", 1, L"ROOT\\BasicDisplay\\0000", display_basic() ? BASIC_DISPLAY_INSTANCE : nullptr);
+    set_multi(SERVICES L"BasicDisplay", L"Owners", L"display.inf\0basicdisplay.inf\0");
+    set_dword(SERVICES L"BasicDisplay\\Parameters", L"SingleDeviceInstall", 1);
+    driver_service(L"BasicRender",
+                   L"\\SystemRoot\\System32\\DriverStore\\FileRepository\\basicrender.inf_amd64_ff9364d9eff240c3\\BasicRender.sys",
+                   1, L"Video", 2, L"ROOT\\BasicRender\\0000", nullptr);
+    set_multi(SERVICES L"BasicRender", L"Owners", L"basicrender.inf\0");
+    set_dword(SERVICES L"BasicRender\\Parameters", L"SingleDeviceInstall", 1);
+    driver_service(L"DXGKrnl", L"System32\\drivers\\dxgkrnl.sys", 0, L"Video Init", 1, nullptr, nullptr);
+    set_sz(SERVICES L"DXGKrnl", L"DisplayName", REG_SZ, L"LDDM Graphics Subsystem");
+    set_sz(SERVICES L"DXGKrnl", L"Description", REG_SZ,
+           L"Controls the underlying video driver stacks to provide fully-featured display capabilities.");
+    /* its devices are listed as the monitors come, see monitor(). */
+    driver_service(L"monitor", L"\\SystemRoot\\System32\\drivers\\monitor.sys", 3, nullptr, 0, nullptr, nullptr);
+    set_dword(SERVICES L"monitor", L"ErrorControl", 1);
+    set_sz(SERVICES L"monitor", L"DisplayName", REG_SZ,
+           L"@monitor.inf,%Monitor.SVCDESC%;Microsoft Monitor Class Function Driver Service");
+    set_multi(SERVICES L"monitor", L"Owners", L"monitor.inf\0");
+    /* the video key of the remote desktop display, the same id on every windows. */
+    set_dword(CONTROL L"\\Video\\{DEB039CC-B704-4F53-B43E-9DD4432FA2E9}\\0000", L"TSCompatible", 1);
+    static const PCWSTR graphics = CONTROL L"\\GraphicsDrivers";
+    set_dword(graphics, L"PlatformSupportMiracast", 1);
+    set_dword(graphics, L"DxgKrnlVersion", 0x11007);
+    set_dword(graphics, L"MinDxgKrnlVersion", 0x5013);
+    set_dword(CONTROL L"\\GraphicsDrivers\\DCI", L"Timeout", 7);
+    static const PCWSTR display = DISPLAY_CLASS_KEY, monitors = MONITOR_CLASS_KEY;
+    set_sz(display, L"Class", REG_SZ, L"Display");
+    set_sz(display, L"ClassDesc", REG_SZ, L"@c_display.inf,%ClassDesc%;Display adapters");
+    set_multi(display, L"IconPath", L"%SystemRoot%\\system32\\setupapi.dll,-1\0");
+    set_sz(display, L"LowerLogoVersion", REG_SZ, L"6.0");
+    set_sz(monitors, L"Class", REG_SZ, L"Monitor");
+    set_sz(monitors, L"ClassDesc", REG_SZ, L"@c_monitor.inf,%ClassDesc%;Monitors");
+    set_multi(monitors, L"IconPath", L"%SystemRoot%\\system32\\setupapi.dll,-35\0");
+    set_sz(monitors, L"NoInstallClass", REG_SZ, L"1");
+    set_sz(monitors, L"SilentInstall", REG_SZ, L"1");
+    set_sz(monitors, L"Default Service", REG_SZ, L"monitor");
+}
+
+/* windows' basic display adapter on the machine's vga device, its monitor, and the adapters of the directx database. */
+static void basic_display(void)
+{
+    static const PCWSTR keys[] = {DISPLAY_CLASS_KEY L"\\0000", CONTROL L"\\Video\\" VIDEO_ID L"\\0000"};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(keys); i++) {
+        driver_key(keys[i], L"Microsoft Basic Display Adapter", L"Microsoft", L"6-21-2006", 0x01C694C5A38C8000,
+                   L"10.0.26100.1", L"display.inf", L"MSBDA", L"PCI\\CC_0300", 0xFB);
+        set_multi(keys[i], L"IncludedInfs", L"basicdisplay.inf\0");
+        set_sz(keys[i], L"HardwareInformation.ChipType", REG_SZ, L"");
+        set_sz(keys[i], L"HardwareInformation.DacType", REG_SZ, L"");
+        set_sz(keys[i], L"HardwareInformation.AdapterString", REG_SZ, L"Microsoft Basic Display Adapter");
+        set_sz(keys[i], L"HardwareInformation.BiosString", REG_SZ, L"");
+        set_dword(keys[i], L"HardwareInformation.MemorySize", 0);
+    }
+    video_key(VIDEO_ID, L"BasicDisplay", L"@display.inf,%msbdaname%;Microsoft Basic Display Adapter", 0xFB, DISPLAY_DRIVER);
+    static const PCWSTR service_video = SERVICES L"BasicDisplay\\Video";
+    set_sz(service_video, L"Service", REG_SZ, L"BasicDisplay");
+    set_sz(service_video, L"DeviceDesc", REG_SZ, L"@display.inf,%msbdaname%;Microsoft Basic Display Adapter");
+    set_dword(service_video, L"FeatureScore", 0xFB);
+    set_sz(service_video, L"VideoID", REG_SZ, VIDEO_ID);
+    set_dword(CONTROL L"\\GraphicsDrivers\\BasicDisplay", L"BasicDisplayUserNotified", 1);
+    video_device_map(display_indirect() ? L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\"
+                                          INDIRECT_VIDEO_ID L"\\0000"
+                                        : nullptr);
+    /* the luids dxgi gives these adapters, see its main.c. */
+    directx_adapter(VIDEO_ID, 0x10A, 0xD3D9);
+    directx_adapter(BASIC_RENDER_VIDEO_ID, 0x105, 0xD3D8);
+    if (!display_indirect())
+        return;
+    static const PCWSTR indirect[] = {DISPLAY_CLASS_KEY L"\\0001", CONTROL L"\\Video\\" INDIRECT_VIDEO_ID L"\\0000"};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(indirect); i++)
+        driver_key(indirect[i], L"Virtual Display Driver", L"MikeTheTech", L"12-24-2024", 0x01DB5596C66C4000,
+                   L"11.30.4.434", L"oem16.inf", L"MyDevice_Install.NT", L"Root\\MttVDD", 0xFF);
+    video_key(INDIRECT_VIDEO_ID, L"IndirectKmd", L"@oem16.inf,%devicename%;Virtual Display Driver", 0xFF,
+              L"{4d36e968-e325-11ce-bfc1-08002be10318}\\0001");
+    driver_service(L"IndirectKmd", L"\\SystemRoot\\System32\\drivers\\IndirectKmd.sys", 3, nullptr, 0, INDIRECT_INSTANCE,
+                   nullptr);
+    set_sz(SERVICES L"IndirectKmd", L"Group", REG_SZ, L"Base");
+    set_sz(SERVICES L"IndirectKmd", L"DisplayName", REG_SZ, L"@%SystemRoot%\\system32\\drivers\\IndirectKmd.sys,-100");
+    set_sz(SERVICES L"IndirectKmd", L"Description", REG_SZ, L"@%SystemRoot%\\system32\\drivers\\IndirectKmd.sys,-101");
+    directx_adapter(INDIRECT_VIDEO_ID, 0x342, 0xD3DA);
+}
+
 /*
  * the display class key and the video key of the adapter, where its device key leads: the driver description and
  * the identifiers a device reader of the class finds. on x64 that is the host gpu dxgi lists first, and windows'
- * basic display adapter on a host without one.
+ * basic display adapter on a host without one or when the command line asks for it.
  */
 static void display_adapter(void)
 {
+#if !defined(__aarch64__)
+    root_display_drivers();
+    if (display_basic()) {
+        basic_display();
+        return;
+    }
+#endif
     static const WCHAR class_key[] = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Class"
                                     L"\\{4d36e968-e325-11ce-bfc1-08002be10318}\\0000";
-    static const WCHAR video_key[] = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Video"
+    static const WCHAR driver_video_key[] = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Video"
                                     L"\\{b3f36b7e-6a4d-5a41-9e2c-4d8fa1c7e903}\\0000";
-    static const PCWSTR keys[] = {class_key, video_key};
+    static const PCWSTR keys[] = {class_key, driver_video_key};
 #if !defined(__aarch64__)
-    const MimeBootGpu *gpu = HalBootInfo->gpu_count ? &HalBootInfo->gpus[0] : nullptr;
-    WCHAR name[128] = L"Microsoft Basic Display Adapter", version[48] = L"10.0.26100.1", hardware[96] = L"PCI\\CC_0300";
-    if (gpu) {
-        USHORT parts[4];
-        MimeGpuName(gpu->name, name, RTL_NUMBER_OF(name));
-        MimeGpuDriverVersion(gpu->vendor, gpu->driver_version, parts);
-        memset(version, 0, sizeof(version));
-        _snwprintf(version, RTL_NUMBER_OF(version) - 1, L"%u.%u.%u.%u", parts[0], parts[1], parts[2], parts[3]);
-        gpu_hardware_id(gpu, hardware, RTL_NUMBER_OF(hardware));
-    }
+    const MimeBootGpu *gpu = &HalBootInfo->gpus[0];
+    WCHAR name[128], version[48] = {}, hardware[96];
+    USHORT parts[4];
+    MimeGpuName(gpu->name, name, RTL_NUMBER_OF(name));
+    MimeGpuDriverVersion(gpu->vendor, gpu->driver_version, parts);
+    _snwprintf(version, RTL_NUMBER_OF(version) - 1, L"%u.%u.%u.%u", parts[0], parts[1], parts[2], parts[3]);
+    gpu_hardware_id(gpu, hardware, RTL_NUMBER_OF(hardware));
+    /* what every adapter of the reference machine has beside its driver key: the Video key of its id and its place in the map. */
+    video_key(VIDEO_ID, gpu_service(gpu->vendor), name, 0, DISPLAY_DRIVER);
+    video_device_map(nullptr);
 #endif
     for (ULONG i = 0; i < RTL_NUMBER_OF(keys); i++) {
         if (!CmpOpenPath(keys[i], TRUE))
@@ -355,16 +846,14 @@ static void display_adapter(void)
         set_sz(keys[i], L"InfSection", REG_SZ, L"qcdx8380_DevDesc");
 #else
         set_sz(keys[i], L"DriverDesc", REG_SZ, name);
-        set_sz(keys[i], L"ProviderName", REG_SZ, gpu ? MimeGpuProvider(gpu->vendor) : L"Microsoft");
+        set_sz(keys[i], L"ProviderName", REG_SZ, MimeGpuProvider(gpu->vendor));
         set_sz(keys[i], L"DriverVersion", REG_SZ, version);
-        set_sz(keys[i], L"DriverDate", REG_SZ, gpu ? L"6-12-2025" : L"6-21-2006");
+        set_sz(keys[i], L"DriverDate", REG_SZ, L"6-12-2025");
         set_sz(keys[i], L"MatchingDeviceId", REG_SZ, hardware);
-        set_sz(keys[i], L"InfPath", REG_SZ, gpu ? L"oem4.inf" : L"display.inf");
-        set_sz(keys[i], L"InfSection", REG_SZ, gpu ? gpu_inf_section(gpu->vendor) : L"MSBDA");
-        if (gpu) {
-            set_qword(keys[i], L"HardwareInformation.qwMemorySize", gpu->memory);
-            set(keys[i], L"HardwareInformation.AdapterString", REG_BINARY, name, (ULONG)(wcslen(name) + 1) * sizeof(WCHAR));
-        }
+        set_sz(keys[i], L"InfPath", REG_SZ, L"oem4.inf");
+        set_sz(keys[i], L"InfSection", REG_SZ, gpu_inf_section(gpu->vendor));
+        set_qword(keys[i], L"HardwareInformation.qwMemorySize", gpu->memory);
+        set(keys[i], L"HardwareInformation.AdapterString", REG_BINARY, name, (ULONG)(wcslen(name) + 1) * sizeof(WCHAR));
 #endif
         /* the manifests of the vulkan driver, where the khronos loader a program ships looks for them. */
         static const WCHAR icd[] = L"C:\\Windows\\System32\\vulkan-icd.json\0";
@@ -565,11 +1054,17 @@ static void pnp(PCWSTR instance, PCWSTR parent, PCWSTR desc, PCWSTR hardware, PC
     MimePnpAddDevice(instance, parent, &p);
 }
 
-/* the host's gpus, real hardware in the machine, each where the host has it; the first is the display key's. */
+/*
+ * the host's gpus, real hardware in the machine, each where the host has it; the first is the display key's. behind
+ * the basic display adapter they take the driver keys after its own.
+ */
 static void host_gpus(PCWSTR root)
 {
 #if !defined(__aarch64__)
-    for (ULONG i = 0; i < HalBootInfo->gpu_count && i < MIME_BOOT_GPUS; i++) {
+    if (!display_gpus())
+        return;
+    ULONG number = display_basic() ? (display_indirect() ? 2 : 1) : 0;
+    for (ULONG i = 0; i < HalBootInfo->gpu_count && i < MIME_BOOT_GPUS; i++, number++) {
         const MimeBootGpu *gpu = &HalBootInfo->gpus[i];
         WCHAR instance[160], hardware[100] = {}, name[128], location[64] = {};
         gpu_instance(gpu, instance, RTL_NUMBER_OF(instance));
@@ -579,12 +1074,97 @@ static void host_gpus(PCWSTR root)
                    gpu->slot >> 3, gpu->slot & 7);
         pnp(instance, root, name, hardware, L"Display", DISPLAY_CLASS, MimeGpuProvider(gpu->vendor),
             gpu_service(gpu->vendor), location);
-        if (i == 0) {
-            WCHAR path[220] = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Enum\\";
+        if (i == 0 && !display_basic())
+            host_monitors(instance);
+        if (i == 0 || display_basic()) {
+            WCHAR path[220] = ENUM, driver[64] = {};
             wcscat(path, instance);
-            set_sz(path, L"Driver", REG_SZ, DISPLAY_DRIVER);
+            _snwprintf(driver, RTL_NUMBER_OF(driver) - 1, L"{4d36e968-e325-11ce-bfc1-08002be10318}\\%04u", number);
+            set_sz(path, L"Driver", REG_SZ, driver);
+            if (!display_basic()) {
+                wcscat(path, L"\\Device Parameters");
+                set_sz(path, L"VideoID", REG_SZ, VIDEO_ID);
+            }
+        }
+        if (display_basic()) {
+            WCHAR key[160] = {}, version[48] = {};
+            USHORT parts[4];
+            _snwprintf(key, RTL_NUMBER_OF(key) - 1, DISPLAY_CLASS_KEY L"\\%04u", number);
+            MimeGpuDriverVersion(gpu->vendor, gpu->driver_version, parts);
+            _snwprintf(version, RTL_NUMBER_OF(version) - 1, L"%u.%u.%u.%u", parts[0], parts[1], parts[2], parts[3]);
+            driver_key(key, name, MimeGpuProvider(gpu->vendor), L"6-12-2025", 0x01DBDB2D3C1D0000, version, L"oem4.inf",
+                       gpu_inf_section(gpu->vendor), hardware, 0);
         }
     }
+#endif
+}
+
+/* the vga device of the machine under windows' basic display adapter, with the monitor it cannot identify. */
+static void basic_display_devices(PCWSTR root)
+{
+#if !defined(__aarch64__)
+    if (!display_basic())
+        return;
+    static const WCHAR hardware[] = L"PCI\\VEN_1234&DEV_1111&SUBSYS_11001AF4&REV_02\0PCI\\VEN_1234&DEV_1111&SUBSYS_11001AF4\0"
+                                    L"PCI\\VEN_1234&DEV_1111&CC_030000\0PCI\\VEN_1234&DEV_1111&CC_0300\0";
+    static const WCHAR compatible[] = L"PCI\\VEN_1234&DEV_1111&REV_02\0PCI\\VEN_1234&DEV_1111\0PCI\\VEN_1234&CC_030000\0"
+                                      L"PCI\\VEN_1234&CC_0300\0PCI\\VEN_1234\0PCI\\CC_030000\0PCI\\CC_0300\0";
+    MIME_DEVICE_PROPERTIES vga = {L"Microsoft Basic Display Adapter", hardware, compatible, L"Display", DISPLAY_CLASS,
+                                  L"(Standard display types)", L"BasicDisplay", L"PCI bus 0, device 3, function 0",
+                                  L"{00000000-0000-0000-ffff-ffffffffffff}", nullptr};
+    MimePnpAddDevice(BASIC_DISPLAY_INSTANCE, root, &vga);
+    static const PCWSTR path = ENUM BASIC_DISPLAY_INSTANCE;
+    set(path, L"HardwareID", REG_MULTI_SZ, hardware, sizeof(hardware));
+    set(path, L"CompatibleIDs", REG_MULTI_SZ, compatible, sizeof(compatible));
+    set_dword(path, L"Capabilities", 0);
+    set_dword(path, L"ConfigFlags", 0);
+    set_dword(path, L"Address", 0x30000);
+    set_sz(path, L"Driver", REG_SZ, DISPLAY_DRIVER);
+    set_sz(ENUM BASIC_DISPLAY_INSTANCE L"\\Device Parameters", L"VideoID", REG_SZ, VIDEO_ID);
+    /* the reference machine's vga device has a monitor with no edid, and so have the host's monitors under it. */
+    ULONG monitors = host_monitors(BASIC_DISPLAY_INSTANCE);
+    if (!display_indirect())
+        return;
+    /* the indirect display driver of the reference machine: a root device of the user mode driver framework, and its monitor. */
+    MIME_DEVICE_PROPERTIES indirect = {L"Virtual Display Driver", L"Root\\MttVDD\0", nullptr, L"Display", DISPLAY_CLASS,
+                                       L"MikeTheTech", L"WUDFRd", nullptr, L"{00000000-0000-0000-FFFF-FFFFFFFFFFFF}",
+                                       nullptr};
+    MimePnpAddDevice(INDIRECT_INSTANCE, nullptr, &indirect);
+    static const PCWSTR device = ENUM INDIRECT_INSTANCE, parameters = ENUM INDIRECT_INSTANCE L"\\Device Parameters";
+    set_multi(device, L"HardwareID", L"Root\\MttVDD\0");
+    set_dword(device, L"Capabilities", 0);
+    set_dword(device, L"ConfigFlags", 0);
+    set_multi(device, L"UpperFilters", L"IndirectKmd\0");
+    set_sz(device, L"Driver", REG_SZ, L"{4d36e968-e325-11ce-bfc1-08002be10318}\\0001");
+    set_sz(device, L"ParentIdPrefix", REG_SZ, L"1&48a0621&0");
+    set_sz(parameters, L"VideoID", REG_SZ, INDIRECT_VIDEO_ID);
+    set_sz(ENUM INDIRECT_INSTANCE L"\\Device Parameters\\WUDF", L"DeviceGroupId", REG_SZ, L"MttVDDGroup");
+    set_multi(ENUM INDIRECT_INSTANCE L"\\Device Parameters\\WUDF", L"DriverList", L"MttVDD\0");
+    set_dword(ENUM INDIRECT_INSTANCE L"\\Device Parameters\\WUDF", L"KernelModeClientPolicy", 1);
+    /* the edid that driver gives its monitor, as the reference machine holds it. */
+    static const UCHAR edid[256] = {
+        0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x36, 0x94, 0x37, 0x13, 0xE7, 0x1E, 0xE7, 0x1E,
+        0x1C, 0x22, 0x01, 0x03, 0x80, 0x32, 0x1F, 0x78, 0x07, 0xEE, 0x95, 0xA3, 0x54, 0x4C, 0x99, 0x26,
+        0x0F, 0x50, 0x54, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+        0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x02, 0x3A, 0x80, 0x18, 0x71, 0x38, 0x2D, 0x40, 0x58, 0x2C,
+        0x45, 0x00, 0x63, 0xC8, 0x10, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0xFD, 0x00, 0x17, 0xF0, 0x0F,
+        0xFF, 0x37, 0x00, 0x0A, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFC,
+        0x00, 0x56, 0x44, 0x44, 0x20, 0x62, 0x79, 0x20, 0x4D, 0x54, 0x54, 0x0A, 0x20, 0x20, 0x01, 0xC2,
+        0x02, 0x03, 0x20, 0x40, 0xE6, 0x06, 0x0D, 0x01, 0xA2, 0xA2, 0x10, 0xE3, 0x05, 0xD8, 0x00, 0x67,
+        0xD8, 0x5D, 0xC4, 0x01, 0x6E, 0x80, 0x00, 0x68, 0x03, 0x0C, 0x00, 0x00, 0x00, 0x30, 0x00, 0x0B,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x8C,
+    };
+    WCHAR number[8] = {};
+    _snwprintf(number, RTL_NUMBER_OF(number) - 1, L"%04u", monitors);
+    monitor(number, L"DISPLAY\\MTT1337\\1&48a0621&0&UID256", L"Generic PnP Monitor", L"PnPMonitor.Install", L"*PNP09FF",
+            L"MONITOR\\MTT1337\0", sizeof(L"MONITOR\\MTT1337\0"), L"Generic Monitor (VDD by MTT)", 0x100,
+            L"{b0173242-b081-4f1c-90fd-c4d9cd9669a5}", INDIRECT_INSTANCE, edid, sizeof(edid));
 #endif
 }
 
@@ -600,6 +1180,7 @@ static void devices(void)
         L"Microsoft", L"pci", L"PCI bus 0");
     pnp(L"PCI\\VEN_8086&DEV_7E00&SUBSYS_00000000&REV_01\\3&11583659&0&00", root, L"Intel(R) Host Bridge",
         L"PCI\\VEN_8086&DEV_7E00&SUBSYS_00000000&REV_01\0", L"System", SYSTEM_CLASS, L"Intel", L"", L"PCI bus 0, device 0, function 0");
+    basic_display_devices(root);
     host_gpus(root);
     pnp(L"PCI\\VEN_8086&DEV_7E28&SUBSYS_00000000&REV_01\\3&11583659&0&1F", root, L"Intel(R) LPC Controller",
         L"PCI\\VEN_8086&DEV_7E28&SUBSYS_00000000&REV_01\0", L"System", SYSTEM_CLASS, L"Intel", L"msisadrv",
@@ -684,11 +1265,37 @@ static void drivers(void)
     static const PCWSTR names[] = {
         L"\\Driver\\ACPI", L"\\Driver\\pci", L"\\Driver\\msisadrv", L"\\Driver\\disk", L"\\Driver\\partmgr",
         L"\\Driver\\volmgr", L"\\Driver\\volsnap", L"\\Driver\\mountmgr", L"\\Driver\\stornvme",
-        L"\\Driver\\CmBatt", L"\\Driver\\netwtw", L"\\Driver\\nvlddmkm", L"\\Driver\\amdkmdag", L"\\Driver\\igdkmd64",
-        L"\\Driver\\IntcAudioBus", L"\\Driver\\i8042prt", L"\\FileSystem\\FltMgr",
+        L"\\Driver\\CmBatt", L"\\Driver\\netwtw", L"\\Driver\\IntcAudioBus", L"\\Driver\\i8042prt",
+        L"\\FileSystem\\FltMgr",
     };
     for (ULONG i = 0; i < RTL_NUMBER_OF(names); i++)
         IoCreateDriver(names[i], empty_driver, nullptr);
+#if defined(__aarch64__)
+    static const PCWSTR vendors[] = {L"\\Driver\\nvlddmkm", L"\\Driver\\amdkmdag", L"\\Driver\\igdkmd64"};
+    for (ULONG i = 0; i < RTL_NUMBER_OF(vendors); i++)
+        IoCreateDriver(vendors[i], empty_driver, nullptr);
+#else
+    /* the display drivers: windows' own two always, then the monitor's or the gpu vendors' as the display has them. */
+    IoCreateDriver(L"\\Driver\\BasicDisplay", empty_driver, nullptr);
+    IoCreateDriver(L"\\Driver\\BasicRender", empty_driver, nullptr);
+    if (display_basic())
+        IoCreateDriver(L"\\Driver\\monitor", empty_driver, nullptr);
+    if (display_indirect()) {
+        IoCreateDriver(L"\\Driver\\IndirectKmd", empty_driver, nullptr);
+        IoCreateDriver(L"\\Driver\\WUDFRd", empty_driver, nullptr);
+    }
+    if (!display_basic()) {
+        IoCreateDriver(L"\\Driver\\nvlddmkm", empty_driver, nullptr);
+        IoCreateDriver(L"\\Driver\\amdkmdag", empty_driver, nullptr);
+        IoCreateDriver(L"\\Driver\\igdkmd64", empty_driver, nullptr);
+    } else if (display_gpus()) {
+        for (ULONG i = 0; i < HalBootInfo->gpu_count && i < MIME_BOOT_GPUS; i++) {
+            WCHAR name[40] = L"\\Driver\\";
+            wcscat(name, gpu_service(HalBootInfo->gpus[i].vendor));
+            IoCreateDriver(name, empty_driver, nullptr);
+        }
+    }
+#endif
 }
 
 void CmpSpecialize(void)
@@ -705,7 +1312,16 @@ void CmpSpecialize(void)
     feature_cache();
     service_profiles();
     volatile_environment(computer, user, sid);
+    state_repository_user(sid);
     shell_state(sid);
+    {
+        /* the compatibility layers of programs: both keys are there on Windows, empty. */
+        WCHAR layers[200] = {};
+        open_key(NT_CURRENT_VERSION L"\\AppCompatFlags\\Layers");
+        _snwprintf(layers, RTL_NUMBER_OF(layers) - 1,
+                   L"\\REGISTRY\\USER\\%ls\\Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers", sid);
+        open_key(layers);
+    }
     firmware();
     acpi_description();
     display_adapter();
