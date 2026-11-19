@@ -77,14 +77,21 @@ BOOLEAN MxFillPeb32(PVOID memory)
     SIZE_T strings = pp->ImagePathName.Length + pp->CommandLine.Length + pp->CurrentDirectory.DosPath.Length +
                      pp->DllPath.Length + pp->WindowTitle.Length + pp->DesktopInfo.Length + pp->ShellInfo.Length +
                      pp->RuntimeData.Length + CURRENT_DIRECTORY_CHARS * sizeof(WCHAR) + 32;
-    SIZE_T size = sizeof(MIME_PARAMETERS32) + strings + pp->EnvironmentSize;
+    /*
+     * the 32-bit system dll of windows copies the block of the length it says to its heap, moves the pointers of the
+     * texts with it and releases the block, so the texts count in the length and the environment is a block of its own.
+     */
+    SIZE_T size = sizeof(MIME_PARAMETERS32) + strings;
     MIME_PARAMETERS32 *out = allocate32(size);
-    if (!out)
+    PVOID environment = allocate32(pp->EnvironmentSize ? pp->EnvironmentSize : sizeof(WCHAR) * 2);
+    if (!out || !environment)
         return FALSE;
     MIME_PEB32 *peb = memory;
     PUCHAR cursor = (void *)(out + 1);
     peb->ImageBaseAddress = (ULONG)(ULONG_PTR)native->ImageBaseAddress;
     peb->ProcessParameters = (ULONG)(ULONG_PTR)out;
+    /* the api set map is one view for both system dlls, under 4 GiB in a 32-bit program. */
+    peb->ApiSetMap = (ULONG)(ULONG_PTR)native->ApiSetMap;
     peb->NumberOfProcessors = native->NumberOfProcessors;
     peb->OSMajorVersion = native->OSMajorVersion;
     peb->OSMinorVersion = native->OSMinorVersion;
@@ -103,7 +110,11 @@ BOOLEAN MxFillPeb32(PVOID memory)
     peb->SessionId = native->SessionId;
     *(USHORT *)((PUCHAR)peb + MIME_PEB32_ACTIVE_CODE_PAGE) = native->ActiveCodePage;
     *(USHORT *)((PUCHAR)peb + MIME_PEB32_OEM_CODE_PAGE) = native->OemCodePage;
-    out->MaximumLength = out->Length = sizeof(*out);
+    /* measured on windows 11 26300: the word that makes the system dll ask for the case tables is the native one. */
+    *(USHORT *)((PUCHAR)peb + MIME_PEB32_USE_CASE_MAPPING) = native->UseCaseMapping;
+    /* the memory csrss shares is one view for both pebs, with pointers of 8 bytes in it. */
+    peb->ReadOnlySharedMemoryBase = (ULONG)(ULONG_PTR)native->ReadOnlySharedMemoryBase;
+    peb->ReadOnlyStaticServerData = (ULONG)(ULONG_PTR)native->ReadOnlyStaticServerData;
     out->Flags = RTL_USER_PROC_PARAMS_NORMALIZED;
     out->ConsoleHandle = (ULONG)(ULONG_PTR)pp->ConsoleHandle;
     out->StandardInput = (ULONG)(ULONG_PTR)pp->StandardInput;
@@ -127,9 +138,10 @@ BOOLEAN MxFillPeb32(PVOID memory)
     out->DesktopInfo = copy_string32(&cursor, &pp->DesktopInfo);
     out->ShellInfo = copy_string32(&cursor, &pp->ShellInfo);
     out->RuntimeData = copy_string32(&cursor, &pp->RuntimeData);
-    out->Environment = (ULONG)(ULONG_PTR)cursor;
+    out->MaximumLength = out->Length = (ULONG)(cursor - (PUCHAR)out);
+    out->Environment = (ULONG)(ULONG_PTR)environment;
     out->EnvironmentSize = (ULONG)pp->EnvironmentSize;
-    memcpy(cursor, pp->Environment, pp->EnvironmentSize);
+    memcpy(environment, pp->Environment, pp->EnvironmentSize);
     return TRUE;
 }
 
@@ -738,6 +750,14 @@ static void redirect_image32(RTL_USER_PROCESS_PARAMETERS *pp, WCHAR *nt, SIZE_T 
     pp->ImagePathName.MaximumLength = (USHORT)(name.MaximumLength - 4 * sizeof(WCHAR));
 }
 
+/* whether four bytes can be read and written back, asked of the kernel so that a bad pointer is no fault here. */
+static BOOLEAN writable32(ULONG address)
+{
+    ULONG value;
+    return NT_SUCCESS(NtReadVirtualMemory(NtCurrentProcess(), pointer32(address), &value, sizeof(value), nullptr)) &&
+           NT_SUCCESS(NtWriteVirtualMemory(NtCurrentProcess(), pointer32(address), &value, sizeof(value), nullptr));
+}
+
 /* a 64-bit image cannot be mapped into a 32-bit process, the loader is told it is not an image of this kind of program. */
 static NTSTATUS too_high32(HANDLE process, PVOID base)
 {
@@ -754,6 +774,102 @@ static NTSTATUS too_high32(HANDLE process, PVOID base)
     return status;
 }
 
+/*
+ * the services the 32-bit system dll of windows 11 26300 has past the native table, which the 64-bit layer answers
+ * itself. the ones of the client of csrss, the debugger call and the call of a 64-bit function are not served.
+ */
+#define WOW64_SVC_FIRST 0x1E9
+#define WOW64_SVC_GetCurrentProcessorNumberEx 0x1F4
+#define WOW64_SVC_GetNativeSystemInformation 0x1F5
+#define WOW64_SVC_QueryInformationProcess64 0x1F6
+#define WOW64_SVC_AllocateVirtualMemory64 0x1F7
+#define WOW64_SVC_ReadVirtualMemory64 0x1F8
+#define WOW64_SVC_WriteVirtualMemory64 0x1F9
+#define WOW64_SVC_IsProcessorFeaturePresent 0x1FB
+#define WOW64_SVC_GetCurrentProcessorNumber 0x1FC
+
+static ULONG64 wide32(const ULONG *a)
+{
+    return (ULONG64)a[1] << 32 | a[0];
+}
+
+static NTSTATUS wow64_service(ULONG number, const ULONG *a)
+{
+    NTSTATUS status;
+    switch (number) {
+    case WOW64_SVC_IsProcessorFeaturePresent:
+        return a[0] < 64 ? ((PKUSER_SHARED_DATA)0x7FFE0000)->ProcessorFeatures[a[0]] : 0;
+    case WOW64_SVC_GetCurrentProcessorNumber:
+        return (NTSTATUS)NtGetCurrentProcessorNumber();
+    case WOW64_SVC_GetCurrentProcessorNumberEx: {
+        /* the group, the number in it and a byte kept clear. */
+        UCHAR processor[4] = {0, 0, (UCHAR)NtGetCurrentProcessorNumber(), 0};
+        memcpy(pointer32(a[0]), processor, sizeof(processor));
+        return STATUS_SUCCESS;
+    }
+    case WOW64_SVC_GetNativeSystemInformation: {
+        /* the processor as it is and the address space of a 64-bit program, in the 32-bit records; the rest as usual. */
+        PVOID out = pointer32(a[1]);
+        if (a[0] == SystemBasicInformation || a[0] == SystemEmulationBasicInformation) {
+            store32(a[3], 44);
+            if (a[2] < 44)
+                return STATUS_INFO_LENGTH_MISMATCH;
+            SYSTEM_BASIC_INFORMATION info;
+            status = NtQuerySystemInformation(SystemBasicInformation, &info, sizeof(info), nullptr);
+            if (NT_SUCCESS(status)) {
+                ULONG o[11] = {info.Reserved, info.TimerResolution, info.PageSize, info.NumberOfPhysicalPages,
+                               info.LowestPhysicalPageNumber, info.HighestPhysicalPageNumber, info.AllocationGranularity,
+                               (ULONG)info.MinimumUserModeAddress, (ULONG)info.MaximumUserModeAddress,
+                               (ULONG)info.ActiveProcessorsAffinityMask, (UCHAR)info.NumberOfProcessors};
+                memcpy(out, o, sizeof(o));
+            }
+            return status;
+        }
+        if (a[0] == SystemProcessorInformation || a[0] == SystemEmulationProcessorInformation) {
+            ULONG returned = 0;
+            status = NtQuerySystemInformation(SystemProcessorInformation, out, a[2], &returned);
+            store32(a[3], returned);
+            return status;
+        }
+        return Mx32QuerySystemInformation(a);
+    }
+    case WOW64_SVC_QueryInformationProcess64: {
+        /* the record of a 64-bit program, as it is. */
+        if (a[1] != ProcessBasicInformation)
+            return STATUS_NOT_SUPPORTED;
+        ULONG returned = 0;
+        status = NtQueryInformationProcess(handle32(a[0]), ProcessBasicInformation, pointer32(a[2]), a[3], &returned);
+        store32(a[4], returned);
+        return status;
+    }
+    case WOW64_SVC_AllocateVirtualMemory64: {
+        PVOID base;
+        SIZE_T size;
+        memcpy(&base, pointer32(a[1]), sizeof(base));
+        memcpy(&size, pointer32(a[4]), sizeof(size));
+        status = NtAllocateVirtualMemory(handle32(a[0]), &base, wide32(a + 2), &size, a[5], a[6]);
+        if (NT_SUCCESS(status)) {
+            memcpy(pointer32(a[1]), &base, sizeof(base));
+            memcpy(pointer32(a[4]), &size, sizeof(size));
+        }
+        return status;
+    }
+    case WOW64_SVC_ReadVirtualMemory64:
+    case WOW64_SVC_WriteVirtualMemory64: {
+        SIZE_T done = 0;
+        PVOID address = (PVOID)wide32(a + 1);
+        status = number == WOW64_SVC_ReadVirtualMemory64
+                     ? NtReadVirtualMemory(handle32(a[0]), address, pointer32(a[3]), wide32(a + 4), &done)
+                     : NtWriteVirtualMemory(handle32(a[0]), address, pointer32(a[3]), wide32(a + 4), &done);
+        if (a[6])
+            memcpy(pointer32(a[6]), &done, sizeof(done));
+        return status;
+    }
+    default:
+        return STATUS_NOT_IMPLEMENTED;
+    }
+}
+
 NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
 {
     UNICODE_STRING name;
@@ -764,6 +880,8 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     WCHAR redirected[MAX_PATH * 2];
     if ((number >> 12) == 1)
         return (NTSTATUS)Mx32Win32kCall(number, a);
+    if (number >= WOW64_SVC_FIRST)
+        return wow64_service(number, a);
     switch (number) {
     case MIME_SVC_NtTerminateProcess:
         return NtTerminateProcess(handle32(a[0]), a[1]);
@@ -1219,6 +1337,44 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
         oa = attributes32(a[2], &name);
         status = NtCreateIoCompletion(&handle, a[1], a[2] ? &oa : nullptr, a[3]);
         return handle_out(status, a[0], handle);
+    case MIME_SVC_NtRaiseHardError: {
+        /* the parameters are numbers, or strings where the mask has their bit. */
+        ULONG_PTR parameters[5] = {};
+        UNICODE_STRING strings[5];
+        ULONG count = a[1] > 5 ? 5 : a[1], response = 0;
+        PULONG in = pointer32(a[3]);
+        for (ULONG i = 0; in && i < count; i++) {
+            parameters[i] = in[i];
+            if ((a[2] >> i & 1) && in[i]) {
+                strings[i] = string32(in[i]);
+                parameters[i] = (ULONG_PTR)&strings[i];
+            }
+        }
+        status = NtRaiseHardError(a[0], count, a[2], in ? parameters : nullptr, a[4], a[5] ? &response : nullptr);
+        if (a[5])
+            store32(a[5], response);
+        return status;
+    }
+    case MIME_SVC_NtCreateTimer2:
+        /* the attributes of the object must be null, and a pointer that is not says so by being there. */
+        status = NtCreateTimer2(&handle, pointer32(a[1]), a[2] ? &oa : nullptr, a[3], a[4]);
+        return handle_out(status, a[0], handle);
+    case MIME_SVC_NtSetTimer2:
+        return NtSetTimer2(handle32(a[0]), pointer32(a[1]), pointer32(a[2]), pointer32(a[3]));
+    case MIME_SVC_NtCancelTimer2:
+        return NtCancelTimer2(handle32(a[0]), pointer32(a[1]));
+    case MIME_SVC_NtCreateWorkerFactory:
+        oa = attributes32(a[2], &name);
+        status = NtCreateWorkerFactory(&handle, a[1], a[2] ? &oa : nullptr, handle32(a[3]), handle32(a[4]), pointer32(a[5]),
+                                       pointer32(a[6]), a[7], a[8], a[9]);
+        return handle_out(status, a[0], handle);
+    case MIME_SVC_NtQueryInformationWorkerFactory:
+    case MIME_SVC_NtSetInformationWorkerFactory:
+    case MIME_SVC_NtShutdownWorkerFactory:
+    case MIME_SVC_NtReleaseWorkerFactoryWorker:
+    case MIME_SVC_NtWorkerFactoryWorkerReady:
+    case MIME_SVC_NtWaitForWorkViaWorkerFactory:
+        return Mx32WorkerFactoryCall(number, a);
     case MIME_SVC_NtCreateWaitCompletionPacket:
         oa = attributes32(a[2], &name);
         status = NtCreateWaitCompletionPacket(&handle, a[1], a[2] ? &oa : nullptr);
@@ -1557,6 +1713,8 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     /* the system. */
     case MIME_SVC_NtQuerySystemInformation:
         return Mx32QuerySystemInformation(a);
+    case MIME_SVC_NtQuerySystemInformationEx:
+        return Mx32QuerySystemInformationEx(a);
     case MIME_SVC_NtSetSystemInformation:
         /* a shutdown request is four 32-bit numbers, the same in both word sizes. */
         return NtSetSystemInformation((SYSTEM_INFORMATION_CLASS)a[0], pointer32(a[1]), a[2]);
@@ -1581,6 +1739,52 @@ NTSTATUS Mx32SystemCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtQueryLicenseValue:
         name = a[0] ? string32(a[0]) : (UNICODE_STRING){0};
         return NtQueryLicenseValue(a[0] ? &name : nullptr, pointer32(a[1]), pointer32(a[2]), a[3], pointer32(a[4]));
+
+    /*
+     * the nls services, measured from a 32-bit program on windows 11 26300: the views are the same files, with a
+     * pointer and a size of 32 bits, and a pointer that cannot take the answer is an access violation.
+     */
+    case MIME_SVC_NtGetNlsSectionPtr: {
+        PVOID base = nullptr;
+        SIZE_T size = 0;
+        UCHAR byte;
+        if ((a[2] && !NT_SUCCESS(NtReadVirtualMemory(NtCurrentProcess(), pointer32(a[2]), &byte, 1, nullptr))) ||
+            (a[3] && !writable32(a[3])) || (a[4] && !writable32(a[4])))
+            return STATUS_ACCESS_VIOLATION;
+        status = NtGetNlsSectionPtr(a[0], a[1], pointer32(a[2]), a[3] ? &base : nullptr, &size);
+        if (NT_SUCCESS(status) && (ULONG_PTR)base + size > Mx32AddressLimit())
+            return too_high32(NtCurrentProcess(), base);
+        if (NT_SUCCESS(status)) {
+            store32(a[3], (ULONG_PTR)base);
+            store32(a[4], size);
+        }
+        return status;
+    }
+    case MIME_SVC_NtInitializeNlsFiles: {
+        PVOID base = nullptr;
+        LCID locale = 0;
+        if (!a[0] || !writable32(a[0]) || !a[1] || !writable32(a[1]))
+            return STATUS_ACCESS_VIOLATION;
+        status = NtInitializeNlsFiles(&base, &locale, nullptr);
+        if (NT_SUCCESS(status) && (ULONG_PTR)base > Mx32AddressLimit())
+            return too_high32(NtCurrentProcess(), base);
+        if (NT_SUCCESS(status)) {
+            store32(a[0], (ULONG_PTR)base);
+            store32(a[1], locale);
+        }
+        return status;
+    }
+    case MIME_SVC_NtIsUILanguageComitted:
+        return NtIsUILanguageComitted();
+    case MIME_SVC_NtGetMUIRegistryInfo:
+        return NtGetMUIRegistryInfo(a[0], pointer32(a[1]), pointer32(a[2]));
+    /* a 32-bit program only reaches the kernel with class 8 and a block of 0x100 bytes or class 9 and one of 8. */
+    case MIME_SVC_NtManageHotPatch:
+        if (a[0] < 7 || a[0] > 11)
+            return STATUS_INVALID_INFO_CLASS;
+        if (!(a[0] == 8 && a[2] == 0x100) && !(a[0] == 9 && a[2] == 8))
+            return STATUS_INVALID_PARAMETER;
+        return NtManageHotPatch(a[0], pointer32(a[1]), a[2], pointer32(a[3]));
 
     /* the firmware variables: strings of 8 bytes in 32-bit programs, the rest is the same in both widths. */
     case MIME_SVC_NtQuerySystemEnvironmentValueEx:

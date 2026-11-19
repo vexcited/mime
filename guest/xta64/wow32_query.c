@@ -8,6 +8,7 @@
 #define NTSYSCALLAPI
 #include <mime/ntrtl.h>
 #include "wow32_convert.h"
+#include "mime_svc_nt.h"
 
 /* classes nt.h does not name. */
 enum {
@@ -1417,5 +1418,204 @@ NTSTATUS Mx32QueryVirtualMemory(const ULONG *a)
     }
     default:
         return STATUS_INVALID_INFO_CLASS;
+    }
+}
+
+/*
+ * the records of the logical processors hold affinity masks, 8 bytes wide for a 64-bit program and 4 for a 32-bit
+ * one. a record keeps its head, each group affinity loses the top of its mask, and the sizes follow.
+ */
+static ULONG narrow_processor_record(const UCHAR *in, PUCHAR out)
+{
+    ULONG relationship = *(const ULONG *)in, size = *(const ULONG *)(in + 4);
+    /* where the masks start in the record, how long one is, and where their count is; a count of 0 stands for one. */
+    ULONG first, wide, count = 1;
+    switch (relationship) {
+    case 0: /* a core */
+    case 3: /* a package */
+    case 5: /* a die */
+    case 7: /* a module */
+    case 1: /* a node */
+        first = 8 + 24;
+        wide = 16;
+        count = *(const USHORT *)(in + 8 + 22);
+        break;
+    case 2: /* a cache */
+        first = 8 + 32;
+        wide = 16;
+        count = *(const USHORT *)(in + 8 + 30);
+        break;
+    case 4: /* the groups: the mask ends each entry of 48 bytes */
+        first = 8 + 24;
+        wide = 48;
+        count = *(const USHORT *)(in + 8 + 2);
+        break;
+    default:
+        if (out)
+            memcpy(out, in, size);
+        return size;
+    }
+    if (!count)
+        count = 1;
+    if (first + count * wide > size)
+        count = (size - first) / wide;
+    ULONG narrow = first + count * (wide - 4);
+    if (!out)
+        return narrow;
+    memcpy(out, in, first);
+    *(PULONG)(out + 4) = narrow;
+    for (ULONG i = 0; i < count; i++) {
+        const UCHAR *from = in + first + i * wide;
+        PUCHAR to = out + first + i * (wide - 4);
+        if (wide == 48) {
+            memcpy(to, from, 40);
+            memcpy(to + 40, from + 40, 4);
+        } else {
+            memcpy(to, from, 4);
+            memcpy(to + 4, from + 8, 8);
+        }
+    }
+    return narrow;
+}
+
+static NTSTATUS query_logical_processors32(const ULONG *a)
+{
+    ULONG needed = 0;
+    NTSTATUS status = NtQuerySystemInformationEx(a[0], pointer32(a[1]), a[2], nullptr, 0, &needed);
+    if (status != STATUS_INFO_LENGTH_MISMATCH)
+        return status;
+    PUCHAR wide = Mx32Scratch(needed);
+    if (!wide)
+        return STATUS_NO_MEMORY;
+    status = NtQuerySystemInformationEx(a[0], pointer32(a[1]), a[2], wide, needed, &needed);
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG total = 0;
+    for (ULONG at = 0; at + 8 <= needed; at += *(PULONG)(wide + at + 4))
+        total += narrow_processor_record(wide + at, nullptr);
+    if (a[5])
+        store32(a[5], total);
+    if (a[4] < total)
+        return STATUS_INFO_LENGTH_MISMATCH;
+    PUCHAR out = pointer32(a[3]);
+    for (ULONG at = 0; at + 8 <= needed; at += *(PULONG)(wide + at + 4))
+        out += narrow_processor_record(wide + at, out);
+    return STATUS_SUCCESS;
+}
+
+/* NtQuerySystemInformationEx(class, request, its length, answer, its length, the length returned). */
+NTSTATUS Mx32QuerySystemInformationEx(const ULONG *a)
+{
+    ULONG returned = 0;
+    NTSTATUS status;
+    switch (a[0]) {
+    case 107:
+        return query_logical_processors32(a);
+    case 175: {
+        /* the request is a process handle, and the records hold no pointer. */
+        HANDLE process = a[1] && a[2] == sizeof(ULONG) ? handle32(*(PULONG)pointer32(a[1])) : nullptr;
+        status = NtQuerySystemInformationEx(a[0], a[1] ? &process : nullptr, a[2] == sizeof(ULONG) ? sizeof(process) : a[2],
+                                            pointer32(a[3]), a[4], &returned);
+        break;
+    }
+    default:
+        /* a group, and records of numbers alone. */
+        status = NtQuerySystemInformationEx(a[0], pointer32(a[1]), a[2], pointer32(a[3]), a[4], &returned);
+        break;
+    }
+    if (a[5])
+        store32(a[5], returned);
+    return status;
+}
+
+/*
+ * the worker factory of a 32-bit program. the basic information is 0x60 bytes there against 0x78, a packet 16
+ * against 32, the stack sizes and the deferred work hold pointers and sizes, and the rest goes through as it is.
+ */
+NTSTATUS Mx32WorkerFactoryCall(ULONG number, const ULONG *a)
+{
+    NTSTATUS status;
+    switch (number) {
+    case MIME_SVC_NtQueryInformationWorkerFactory: {
+        struct {
+            LARGE_INTEGER Timeout, RetryTimeout, IdleTimeout;
+            UCHAR Flags[8];
+            ULONG Counts[7];
+            ULONG Pad;
+            LONGLONG Goal;
+            PVOID Start, Parameter;
+            HANDLE Process;
+            SIZE_T Reserve, Commit;
+            NTSTATUS Last;
+        } wide;
+        if (a[1] != 7)
+            return STATUS_INVALID_INFO_CLASS;
+        if (a[3] != 0x60) {
+            if (a[4])
+                store32(a[4], 0x60);
+            return STATUS_INFO_LENGTH_MISMATCH;
+        }
+        if (a[2] & 7)
+            return STATUS_DATATYPE_MISALIGNMENT;
+        status = NtQueryInformationWorkerFactory(handle32(a[0]), 7, &wide, sizeof(wide), nullptr);
+        if (!NT_SUCCESS(status))
+            return status;
+        PUCHAR out = pointer32(a[2]);
+        memcpy(out, &wide, 0x48);
+        ULONG tail[6] = {(ULONG)(ULONG_PTR)wide.Start,   (ULONG)(ULONG_PTR)wide.Parameter, (ULONG)(ULONG_PTR)wide.Process,
+                         (ULONG)wide.Reserve, (ULONG)wide.Commit,              (ULONG)wide.Last};
+        memcpy(out + 0x48, tail, sizeof(tail));
+        if (a[4])
+            store32(a[4], 0x60);
+        return STATUS_SUCCESS;
+    }
+    case MIME_SVC_NtSetInformationWorkerFactory:
+        if (a[1] == 10) {
+            /* the stack: what is kept and what is committed. */
+            if (a[3] != 8)
+                return STATUS_INFO_LENGTH_MISMATCH;
+            PULONG in = pointer32(a[2]);
+            SIZE_T sizes[2] = {in[0], in[1]};
+            return NtSetInformationWorkerFactory(handle32(a[0]), 10, sizes, sizeof(sizes));
+        }
+        return NtSetInformationWorkerFactory(handle32(a[0]), a[1], pointer32(a[2]), a[3]);
+    case MIME_SVC_NtShutdownWorkerFactory:
+        return NtShutdownWorkerFactory(handle32(a[0]), pointer32(a[1]));
+    case MIME_SVC_NtReleaseWorkerFactoryWorker:
+        return NtReleaseWorkerFactoryWorker(handle32(a[0]));
+    case MIME_SVC_NtWorkerFactoryWorkerReady:
+        return NtWorkerFactoryWorkerReady(handle32(a[0]));
+    case MIME_SVC_NtWaitForWorkViaWorkerFactory: {
+        struct {
+            PVOID Key, Apc;
+            IO_STATUS_BLOCK Io;
+        } wide[16];
+        struct {
+            PVOID Message, Port;
+            ULONG SendFlags, Flags;
+        } work = {};
+        ULONG count = a[2] > RTL_NUMBER_OF(wide) ? RTL_NUMBER_OF(wide) : a[2], got = 0;
+        if (!a[1] || !a[3] || !a[4])
+            return count ? STATUS_ACCESS_VIOLATION : STATUS_INVALID_PARAMETER;
+        PULONG deferred = pointer32(a[4]);
+        work.Message = pointer32(deferred[0]);
+        work.Port = handle32(deferred[1]);
+        work.SendFlags = deferred[2];
+        work.Flags = deferred[3];
+        status = NtWaitForWorkViaWorkerFactory(handle32(a[0]), wide, count, &got, &work);
+        if (status != STATUS_SUCCESS)
+            return status;
+        PULONG out = pointer32(a[1]);
+        for (ULONG i = 0; i < got; i++) {
+            out[i * 4] = (ULONG)(ULONG_PTR)wide[i].Key;
+            out[i * 4 + 1] = (ULONG)(ULONG_PTR)wide[i].Apc;
+            out[i * 4 + 2] = (ULONG)wide[i].Io.Status;
+            out[i * 4 + 3] = (ULONG)wide[i].Io.Information;
+        }
+        store32(a[3], got);
+        return status;
+    }
+    default:
+        return STATUS_NOT_IMPLEMENTED;
     }
 }

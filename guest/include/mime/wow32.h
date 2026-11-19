@@ -44,9 +44,15 @@ typedef struct MIME_PARAMETERS32 {
     MIME_STRING32 WindowTitle, DesktopInfo, ShellInfo, RuntimeData;
     UCHAR CurrentDirectories[0x200];
     ULONG EnvironmentSize, EnvironmentVersion, PackageDependencyData, ProcessGroupId, LoaderThreads;
+    MIME_STRING32 RedirectionDllName, HeapPartitionName;
+    ULONG DefaultThreadpoolCpuSetMasks, DefaultThreadpoolCpuSetMaskCount, DefaultThreadpoolThreadMaximum;
+    ULONG HeapMemoryTypeMask;
+    /* the list of attributes the process was made with, which the loader of 26300 reads when it is not null. */
+    ULONG AttributeList;
 } MIME_PARAMETERS32;
 MIME_FIELD_AT(MIME_PARAMETERS32, ImagePathName, 0x38);
 MIME_FIELD_AT(MIME_PARAMETERS32, EnvironmentSize, 0x290);
+MIME_FIELD_AT(MIME_PARAMETERS32, AttributeList, 0x2C4);
 
 typedef struct MIME_PEB32 {
     UCHAR InheritedAddressSpace, ReadImageFileExecOptions, BeingDebugged, BitField;
@@ -68,6 +74,7 @@ MIME_FIELD_AT(MIME_PEB32, SessionId, 0x1D4);
 /* code page fields of the 32-bit PEB, read by the x86 kernelbase. */
 #define MIME_PEB32_ACTIVE_CODE_PAGE 0x228
 #define MIME_PEB32_OEM_CODE_PAGE 0x22A
+#define MIME_PEB32_USE_CASE_MAPPING 0x22C
 
 #define MIME_TEB32_EXCEPTION_LIST 0x0
 #define MIME_TEB32_STACK_BASE 0x4
@@ -75,6 +82,7 @@ MIME_FIELD_AT(MIME_PEB32, SessionId, 0x1D4);
 #define MIME_TEB32_SELF 0x18
 #define MIME_TEB32_CLIENT_ID 0x20
 #define MIME_TEB32_PEB 0x30
+#define MIME_TEB32_WOW32_RESERVED 0xC0
 #define MIME_TEB32_LOCALE 0xC4
 #define MIME_TEB32_STATIC_STRING 0xBF8
 #define MIME_TEB32_STATIC_BUFFER 0xC00

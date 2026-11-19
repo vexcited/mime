@@ -380,17 +380,9 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
     ULONG64 v[16] = {};
     switch (number) {
 #include "x86/win32k_calls.h"
-    case MIME_SVC_NtUserInitializeClientPfnArrays: {
-        const ULONG *p = ptr32(a[0]);
-        if (!p || p[0] != 12 + 4 * (MIME_FNID_COUNT + 1))
-            return FALSE;
-        MIME_CLIENT_INFO info = {sizeof(info), MIME_CLIENT_WOW, ptr32(p[2])};
-        for (ULONG i = 0; i < MIME_FNID_COUNT; i++)
-            info.Procs[i] = ptr32(p[i + 3]);
-        info.DefWindowProcW = ptr32(p[3 + MIME_FNID_COUNT]);
-        v[0] = (ULONG_PTR)&info;
-        return (ULONG)MxCallService(number, v);
-    }
+    /* the tables of a 32-bit server process are of no use to the kernel, which reads those of the 64-bit ntdll. */
+    case MIME_SVC_NtUserInitializeClientPfnArrays:
+        return STATUS_SUCCESS;
     /* the vulkan connection lives below 4 GiB in a 32-bit process, so pointers narrow. */
     case MIME_SVC_NtGdiMimeVkOpen: {
         PVOID base = nullptr;
@@ -482,17 +474,28 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         v[1] = a[2];
         return (ULONG)MxCallService(number, v);
     case MIME_SVC_NtUserRegisterClassExWOW: {
+        /* the 48-byte x86 WNDCLASSEXW, the two names, and the x86 CLSMENUNAME of three pointers. */
         const ULONG *p = ptr32(a[0]);
         if (!p || p[0] != 48)
             return 0;
         WNDCLASSEXW wc = {sizeof(wc), p[1], ptr32(p[2]), (int)p[3], (int)p[4], ptr32(p[5]),
                          ptr32(p[6]), ptr32(p[7]), ptr32(p[8]), ptr32(p[9]), ptr32(p[10]), ptr32(p[11])};
-        UNICODE_STRING name = str32(a[1]), menu = str32(a[2]);
+        UNICODE_STRING name = str32(a[1]), version = str32(a[2]), menu_name;
+        const ULONG *m = ptr32(a[3]);
+        ULONG64 menu[3] = {};
+        if (m) {
+            menu[0] = m[0];
+            menu[1] = m[1];
+            menu_name = str32(m[2]);
+            menu[2] = m[2] ? (ULONG_PTR)&menu_name : 0;
+        }
         v[0] = (ULONG_PTR)&wc;
-        v[1] = (ULONG_PTR)&name;
-        v[2] = a[2] ? (ULONG_PTR)&menu : 0;
-        v[3] = a[3];
+        v[1] = a[1] ? (ULONG_PTR)&name : 0;
+        v[2] = a[2] ? (ULONG_PTR)&version : 0;
+        v[3] = m ? (ULONG_PTR)menu : 0;
         v[4] = a[4];
+        v[5] = a[5];
+        v[6] = a[6];
         return (ULONG)MxCallService(number, v);
     }
     case MIME_SVC_NtUserGetClassInfoEx: {
@@ -535,11 +538,25 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         return (ULONG)MxCallService(number, v);
     }
     case MIME_SVC_NtUserCreateWindowEx: {
-        UNICODE_STRING name = str32(a[1]), title = str32(a[2]);
-        for (ULONG i = 0; i < 13; i++)
+        /* the three strings are x86 LARGE_STRINGs, a length, a room with bAnsi in its top bit and a buffer, or atoms. */
+        struct {
+            ULONG Length, Maximum;
+            ULONG64 Buffer;
+        } strings[3];
+        for (ULONG i = 0; i < 17; i++)
             v[i] = a[i];
-        v[1] = a[1] ? (ULONG_PTR)&name : 0;
-        v[2] = a[2] ? (ULONG_PTR)&title : 0;
+        for (ULONG i = 0; i < 3; i++) {
+            const ULONG *s32 = a[i + 1] >= 0x10000 ? ptr32(a[i + 1]) : nullptr;
+            if (!s32)
+                continue;
+            strings[i].Length = s32[0];
+            strings[i].Maximum = s32[1];
+            strings[i].Buffer = s32[2];
+            v[i + 1] = (ULONG_PTR)&strings[i];
+        }
+        v[5] = (LONG64)(LONG)a[5];
+        v[6] = (LONG64)(LONG)a[6];
+        v[7] = (LONG64)(LONG)a[7];
         v[8] = (LONG64)(LONG)a[8];
         return (ULONG)MxCallService(number, v);
     }
@@ -553,6 +570,39 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         v[3] = a[3];
         return (ULONG)MxCallService(number, v);
     }
+    /* a RECT is the same in both layouts. the procedure and the lparam come back to the x86 side as they are. */
+    case MIME_SVC_NtUserEnumDisplayMonitors:
+        v[0] = (LONG64)(LONG)a[0];
+        v[1] = a[1];
+        v[2] = a[2];
+        v[3] = (LONG64)(LONG)a[3];
+        return (ULONG)MxCallService(number, v);
+    case MIME_SVC_NtUserGetHDevName:
+    case MIME_SVC_NtUserGetDpiForMonitor:
+    case MIME_SVC_NtUserWindowFromDC:
+    case MIME_SVC_NtUserGetProcessDpiAwarenessContext:
+    case MIME_SVC_NtUserGetSystemDpiForProcess:
+        v[0] = (LONG64)(LONG)a[0];
+        v[1] = a[1];
+        v[2] = a[2];
+        v[3] = a[3];
+        return (ULONG)MxCallService(number, v);
+    case MIME_SVC_NtUserGetAutoRotationState:
+    case MIME_SVC_NtUserGetDisplayAutoRotationPreferences:
+    case MIME_SVC_NtUserSetDisplayAutoRotationPreferences:
+        v[0] = a[0];
+        return (ULONG)MxCallService(number, v);
+    case MIME_SVC_NtUserSetProcessDpiAwarenessContext:
+        v[0] = a[0];
+        v[1] = a[1];
+        return (ULONG)MxCallService(number, v);
+    /* the records of QueryDisplayConfig and the packets of DisplayConfigGetDeviceInfo hold no pointer. */
+    case MIME_SVC_NtUserGetDisplayConfigBufferSizes:
+    case MIME_SVC_NtUserQueryDisplayConfig:
+    case MIME_SVC_NtUserDisplayConfigGetDeviceInfo:
+        for (ULONG i = 0; i < 5; i++)
+            v[i] = a[i];
+        return (ULONG)MxCallService(number, v);
     /* the x86 layout: memory, format, width, height, pitch, device dc, color table, then dc and bitmap back. */
     case MIME_SVC_NtGdiDdDDICreateDCFromMemory: {
         ULONG *p = ptr32(a[0]);
@@ -598,16 +648,55 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         }
         return result;
     }
-    case MIME_SVC_NtUserSetCursorIconData: {
-        const ULONG *p = ptr32(a[3]);
+    case MIME_SVC_NtUserSetCursorIconData:
+    case MIME_SVC_NtUserSetCursorIconDataEx: {
+        /* the x86 CURSORDATA: the 64-bit one with 4 byte pointers and handles, 0x60 bytes. not measured yet. */
+        const UCHAR *p = ptr32(a[3]);
         if (!p)
             return FALSE;
         UNICODE_STRING module = str32(a[1]), resource = str32(a[2]);
-        MIME_CURSOR_DATA data = {p[0], p[1], p[2], p[3], p[4], p[5], ptr32(p[6]), ptr32(p[7])};
+        const ULONG *u = (const ULONG *)p;
+        CURSORDATA data = {};
+        data.Name = ptr32(u[0]);
+        data.Module = ptr32(u[1]);
+        data.Type = *(const USHORT *)(p + 8);
+        data.Reserved = u[3];
+        data.Flags = u[4];
+        data.HotspotX = *(const SHORT *)(p + 20);
+        data.HotspotY = *(const SHORT *)(p + 22);
+        data.Mask = (HBITMAP)(ULONG_PTR)u[6];
+        data.Color = (HBITMAP)(ULONG_PTR)u[7];
+        data.Alpha = (HBITMAP)(ULONG_PTR)u[8];
+        data.Bounds = *(const RECT *)(p + 36);
+        data.UserAlpha = (HBITMAP)(ULONG_PTR)u[13];
+        data.Bpp = u[14];
+        data.Cx = u[15];
+        data.Cy = u[16];
+        data.Extra = u[17];
+        data.FrameCount = u[18];
+        data.StepCount = u[19];
+        /* the frames of an x86 animated cursor are 4 byte handles: widen them into a buffer of the 64-bit layout. */
+        ULONG64 *frames = nullptr;
+        if (data.Flags & CURSORF_ACON) {
+            ULONG n = data.FrameCount, steps = data.StepCount;
+            const ULONG *from = ptr32(u[20]);
+            if (n > 0xFFFF || steps > 0xFFFF || !from)
+                return FALSE;
+            frames = __builtin_alloca(8 * (SIZE_T)(n + steps));
+            for (ULONG i = 0; i < n; i++)
+                frames[i] = from[i];
+            data.RateOffset = 8 * (ULONG_PTR)n;
+            data.SequenceOffset = data.RateOffset + 4 * (ULONG_PTR)steps;
+            memcpy((UCHAR *)frames + data.RateOffset, (const UCHAR *)from + u[22], 4 * (SIZE_T)steps);
+            memcpy((UCHAR *)frames + data.SequenceOffset, (const UCHAR *)from + u[21], 4 * (SIZE_T)steps);
+            data.Frames = (HCURSOR *)frames;
+        }
+        data.Step = u[23];
         v[0] = a[0];
         v[1] = a[1] ? (ULONG_PTR)&module : 0;
         v[2] = a[2] ? (ULONG_PTR)&resource : 0;
         v[3] = (ULONG_PTR)&data;
+        v[4] = number == MIME_SVC_NtUserSetCursorIconDataEx ? a[4] : 0;
         return (ULONG)MxCallService(number, v);
     }
     case MIME_SVC_NtGdiCreateDIBSection: {
@@ -802,7 +891,17 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
         v[1] = a[1];
         v[2] = a[2];
         return (ULONG)MxCallService(number, v);
-    case MIME_SVC_NtUserUnregisterClass:
+    case MIME_SVC_NtUserUnregisterClass: {
+        UNICODE_STRING name = str32(a[0]);
+        ULONG64 menu[3] = {};
+        v[0] = a[0] ? (ULONG_PTR)&name : 0;
+        v[1] = a[1];
+        v[2] = a[2] ? (ULONG_PTR)menu : 0;
+        ULONG ok = (ULONG)MxCallService(number, v);
+        if (ok && a[2])
+            memset(ptr32(a[2]), 0, 12);
+        return ok;
+    }
     case MIME_SVC_NtUserDefSetText: {
         BOOLEAN text = number == MIME_SVC_NtUserDefSetText;
         UNICODE_STRING name = str32(a[text]);
@@ -937,7 +1036,7 @@ ULONG Mx32Win32kCall(ULONG number, const ULONG *a)
     case MIME_SVC_NtGdiOpenDCW: {
         /* DEVMODEW holds no pointers. */
         UNICODE_STRING device = str32(a[0]), port = str32(a[2]);
-        for (ULONG i = 0; i < 8; i++)
+        for (ULONG i = 0; i < 9; i++)
             v[i] = a[i];
         v[0] = a[0] ? (ULONG_PTR)&device : 0;
         v[2] = a[2] ? (ULONG_PTR)&port : 0;
