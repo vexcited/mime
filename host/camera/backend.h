@@ -1,7 +1,7 @@
 #ifndef MIME_HOST_CAMERA_BACKEND_H
 #define MIME_HOST_CAMERA_BACKEND_H
 
-/* camera backends: V4L2 on Linux and a synthetic source selected by MIME_FAKE_CAMERA. */
+/* camera backends: V4L2 on Linux. */
 #include "../../include/mime/abi.h"
 #include "../../include/mime/camera.h"
 #include "../mime_host.h"
@@ -51,7 +51,6 @@ struct CameraBackend {
     void (*control)(const CameraSource *source, MimeCameraControl *control);
 };
 
-extern const CameraBackend camera_backend_fake;
 #ifdef __linux__
 extern const CameraBackend camera_backend_v4l2;
 #endif

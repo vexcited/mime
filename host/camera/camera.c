@@ -43,7 +43,6 @@ static bool g_started, g_have_scan;
 static Stream g_streams[MAX_STREAMS];
 
 static const CameraBackend *const g_backends[] = {
-    &camera_backend_fake,
 #ifdef __linux__
     &camera_backend_v4l2,
 #endif

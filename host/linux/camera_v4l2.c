@@ -203,11 +203,8 @@ static void probe(const char *node, CameraList *list)
     char path[64];
     snprintf(path, sizeof(path), "/dev/%s", node);
     int fd = open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
-    if (fd < 0) {
-        if (errno == EACCES || errno == EPERM)
-            mime_debug("camera: no access to %s", path);
+    if (fd < 0)
         return;
-    }
     struct v4l2_capability cap;
     if (xioctl(fd, VIDIOC_QUERYCAP, &cap) < 0) {
         close(fd);
@@ -254,10 +251,6 @@ static int by_node(const void *a, const void *b)
 
 static void scan(CameraList *list)
 {
-    /* MIME_CAMERA_REAL=0 hides host cameras. */
-    const char *real = getenv("MIME_CAMERA_REAL");
-    if (real && !strcmp(real, "0"))
-        return;
     DIR *dir = opendir("/dev");
     if (!dir)
         return;
