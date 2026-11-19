@@ -279,6 +279,11 @@ EXPORTS
     MmMapPagesInSystem
     MmMapWritableSection
     MmMapSharedSectionUser
+    MmMapReadOnlySection
+    MmCreateReservedSection
+    ExRegisterCsrServerDll
+    PsQueryNtUserPfn
+    PsQuerySubsystemIds
     MmMapViewInSystemSpace
     MmQueryVmCounters
     MmSectionObjectType DATA

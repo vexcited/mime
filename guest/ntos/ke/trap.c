@@ -282,6 +282,26 @@ void KiExitToUserMode(PKTRAP_FRAME frame)
             KiDispatchPendingWork();
             continue;
         }
+#ifdef __x86_64__
+        /*
+         * the end of a system service, measured on windows 11 26300: the volatile registers are those of the frame
+         * it returns with, an apc's included, then comes the instrumentation callback when the process had one as
+         * the service was entered, and the single step is raised on that frame, at the callback.
+         */
+        if (thread->ServiceExit) {
+            thread->ServiceExit = FALSE;
+            KiServiceExitVolatiles(frame);
+            if (thread->ServiceInstrumented)
+                KiInstrumentServiceReturn(frame, ((PEPROCESS)thread->Process)->InstrumentationCallback);
+            EXCEPTION_RECORD step;
+            if (KiServiceSingleStep(thread, frame, &step)) {
+                KiEnableInterrupts();
+                if (!KiDispatchUserException(&step, frame))
+                    PspTerminateProcess(PsCurrentProcess(), step.ExceptionCode);
+                continue;
+            }
+        }
+#endif
         break;
     }
     if (thread->InstrumentReturn) {

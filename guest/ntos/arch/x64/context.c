@@ -12,15 +12,34 @@ extern UCHAR KiFlushIpi[];
 
 ULONG KiXsaveSize;
 ULONG64 KiXsaveMask;
+/* the bits of mxcsr the processor has, as fxsave reports them. */
+ULONG KiMxcsrMask = 0xFFBF;
+static ULONG g_xsave_exact, g_xstate_size;
+static BOOLEAN g_xsave_compact;
+static struct {
+    ULONG Standard, User, Size;
+    BOOLEAN Aligned;
+} g_xfeature[64];
+/*
+ * the supervisor state windows 11 enables and shows to user mode: the user shadow stack, feature 11. no thread has a
+ * shadow stack here, so the state is its initial one, sixteen zero bytes, and the system never saves it.
+ */
+static ULONG64 g_xsave_supervisor;
+#define MSR_XSS 0xDA0
+#define XFEATURE_CET_USER 11
 
 static ULONG64 g_idt[512];
 static DECLSPEC_ALIGN(16) UCHAR g_fault_stacks[MAXIMUM_PROCESSORS][8192];
+/* the stack of the debug trap: it can arrive on the first instruction of a kernel entry, see KiDebugTrap. */
+static DECLSPEC_ALIGN(16) UCHAR g_debug_stacks[MAXIMUM_PROCESSORS][1024];
+extern UCHAR KiDebugTrap[];
 
 #define CR4_PGE (1ull << 7)
 #define CR4_OSFXSR (1ull << 9)
 #define CR4_OSXMMEXCPT (1ull << 10)
 #define CR4_OSXSAVE (1ull << 18)
 #define CR4_SMEP (1ull << 20)
+#define CR4_FSGSBASE (1ull << 16)
 
 /* the legacy area of the user extended state, as in XSAVE_FORMAT. */
 #define XSAVE_HEADER 512
@@ -46,12 +65,19 @@ static void set_teb32(ULONG_PTR teb32)
     KiWriteMsr(MSR_FS_BASE, teb32);
 }
 
-/* dr7: the enables of the four breakpoints and their conditions and lengths, never general detect. */
-#define DR7_USER_MASK 0xFFFF00FFull
+/*
+ * dr7, as windows 11 26300 keeps it: the local enables of the four breakpoints, the exact enables and the conditions
+ * and lengths, never the global enables or general detect. the breakpoints are on when an enable is left.
+ */
+#define DR7_USER_MASK 0xFFFF0355ull
+#define DR7_ACTIVE 0x355ull
+#define DR6_RESET 0xFFFF0FF0ull
+/* the highest address a program has, 64 KiB under the end of user space. */
+#define DR_HIGHEST_ADDRESS 0x7FFFFFFEFFFFull
 
 static void load_debug(PKTHREAD thread)
 {
-    ULONG64 dr7 = thread->UserDr7 & 0xFF ? thread->UserDr7 : 0;
+    ULONG64 dr7 = thread->UserDr7 & DR7_ACTIVE ? thread->UserDr7 : 0;
     __asm__ volatile("mov %0, %%dr7" ::"r"(0ull));
     if (dr7) {
         __asm__ volatile("mov %0, %%dr0" ::"r"(thread->UserDr[0]));
@@ -59,44 +85,100 @@ static void load_debug(PKTHREAD thread)
         __asm__ volatile("mov %0, %%dr2" ::"r"(thread->UserDr[2]));
         __asm__ volatile("mov %0, %%dr3" ::"r"(thread->UserDr[3]));
         __asm__ volatile("mov %0, %%dr7" ::"r"(dr7));
+        /* from here the thread reads them as the processor holds them. */
+        if (!thread->UserDrLoaded) {
+            thread->UserDrLoaded = TRUE;
+            thread->UserDr6 = DR6_RESET;
+        }
     }
 }
 
 /*
  * like windows, a context's breakpoints name user addresses only, others become 0, and dr7 keeps what user mode may
- * use. the thread loads them when it runs, at once when it is the caller.
+ * use. a dr7 that leaves no breakpoint on drops them all, and the dr6 of the context is not taken: it is the
+ * processor's. the thread loads them when it runs, at once when it is the caller.
  */
 void KiSetThreadDebug(PKTHREAD thread, const CONTEXT *ctx)
 {
     const ULONG64 dr[4] = {ctx->Dr0, ctx->Dr1, ctx->Dr2, ctx->Dr3};
+    ULONG64 dr7 = ctx->Dr7 & DR7_USER_MASK;
+    BOOLEAN active = (dr7 & DR7_ACTIVE) != 0;
     for (int i = 0; i < 4; i++)
-        thread->UserDr[i] = dr[i] <= MIME_USER_ADDRESS_LIMIT ? dr[i] : 0;
-    thread->UserDr6 = ctx->Dr6;
-    thread->UserDr7 = ctx->Dr7 & DR7_USER_MASK;
+        thread->UserDr[i] = active && dr[i] <= DR_HIGHEST_ADDRESS ? dr[i] : 0;
+    thread->UserDr6 = 0;
+    thread->UserDr7 = active ? dr7 : 0;
+    thread->UserDrLoaded = FALSE;
     if (thread == KiCurrentThread())
         load_debug(thread);
 }
 
+/*
+ * a thread without breakpoints reads zeroes. one with them reads what was set until it runs with them: from then
+ * dr6 and dr7 are as the processor holds them, dr7 with bit 10 set.
+ */
 void KiGetThreadDebug(PKTHREAD thread, CONTEXT *ctx)
 {
-    ctx->Dr0 = thread->UserDr[0];
-    ctx->Dr1 = thread->UserDr[1];
-    ctx->Dr2 = thread->UserDr[2];
-    ctx->Dr3 = thread->UserDr[3];
-    ctx->Dr6 = thread->UserDr6;
-    ctx->Dr7 = thread->UserDr7;
+    BOOLEAN active = (thread->UserDr7 & DR7_ACTIVE) != 0;
+    ctx->Dr0 = active ? thread->UserDr[0] : 0;
+    ctx->Dr1 = active ? thread->UserDr[1] : 0;
+    ctx->Dr2 = active ? thread->UserDr[2] : 0;
+    ctx->Dr3 = active ? thread->UserDr[3] : 0;
+    ctx->Dr6 = active ? thread->UserDr6 : 0;
+    ctx->Dr7 = active ? thread->UserDr7 | (thread->UserDrLoaded ? 0x400 : 0) : 0;
+}
+
+/*
+ * the status of the breakpoints at an exception, read from the processor and reset there. the processor never
+ * clears it, so what one exception left would show in the next.
+ */
+void KiCaptureDebugStatus(PKTHREAD thread)
+{
+    ULONG64 dr6;
+    __asm__ volatile("mov %%dr6, %0" : "=r"(dr6));
+    __asm__ volatile("mov %0, %%dr6" ::"r"(DR6_RESET));
+    thread->UserDr6 = thread->UserDr7 & DR7_ACTIVE ? dr6 : 0;
+}
+
+/*
+ * a service that returns with the trap flag in its frame, set before the syscall or by a context set meanwhile.
+ * measured on windows 11 26300: the single step is raised at the address the service returns to, before any
+ * instruction there runs, with the flag off in its context and the step bit in dr6. a return of the processor
+ * would trap one instruction later, which is what NtContinue does, there and here.
+ */
+BOOLEAN KiServiceSingleStep(PKTHREAD thread, PKTRAP_FRAME frame, PEXCEPTION_RECORD record)
+{
+    if (!(frame->Rflags & 0x100))
+        return FALSE;
+    /* the step is the processor's, whose flags always hold bit 1, even when a context set them without. */
+    frame->Rflags = (frame->Rflags & ~0x100ull) | 0x2;
+    extern BOOLEAN KiTraceUserExceptions;
+    static ULONG logged;
+    if (KiTraceUserExceptions && logged++ < 50)
+        KiLogPrintf("exc vec 1 rip %llx from a service, rsp %llx", (ULONG64)frame->Rip, (ULONG64)frame->Rsp);
+    thread->UserDr6 = thread->UserDr7 & DR7_ACTIVE ? DR6_RESET | 0x4000 : 0;
+    memset(record, 0, sizeof(*record));
+    record->ExceptionCode = (NTSTATUS)0x80000004L;
+    record->ExceptionAddress = (PVOID)frame->Rip;
+    return TRUE;
 }
 
 void KiSwapContext(PKTHREAD old, PKTHREAD next)
 {
     /* the processor holds the breakpoints of the thread that runs, and none for threads without. */
-    if ((next->UserDr7 & 0xFF) || (old->UserDr7 & 0xFF))
+    if ((next->UserDr7 & DR7_ACTIVE) || (old->UserDr7 & DR7_ACTIVE))
         load_debug(next);
-    /* in user mode gs is the teb, swapped in at each return there. */
+    /* in user mode gs is the teb, swapped in at each return there; a program may change it with wrgsbase. */
+    if (old->Teb && next->Teb) {
+        ULONG lo, hi;
+        __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(MSR_KERNEL_GS_BASE));
+        old->UserGsBase = (ULONG64)hi << 32 | lo;
+    }
     if (next->Teb)
-        KiWriteMsr(MSR_KERNEL_GS_BASE, (ULONG64)next->Teb);
+        KiWriteMsr(MSR_KERNEL_GS_BASE, next->UserGsBase >= 0x10000ull ? next->UserGsBase : (ULONG64)next->Teb);
     if (next->Teb32)
         set_teb32((ULONG_PTR)next->Teb32);
+    else
+        KiWriteMsr(MSR_FS_BASE, 0); /* 64-bit windows keeps the teb in gs and leaves fs zero. */
     KiSwapContextInternal(&old->KernelSp, next->KernelSp, old->XSaveArea, next->XSaveArea);
 }
 
@@ -211,12 +293,14 @@ static void initialize_idt(void)
 {
     for (ULONG v = 0; v < 256; v++) {
         ULONG dpl = 0;
-        /* int3, into, __fastfail, assertions, debug services and int 2e system calls come from user code. */
-        if (v == 3 || v == 4 || v == 0x29 || v == 0x2C || v == 0x2D || v == 0x2E)
+        /* int3, into, __fastfail, assertions and debug services come from user code. int 2e does not: windows opens it only
+           when SharedUserData tells the stubs to use it, and a program that tries it takes an access violation. */
+        if (v == 3 || v == 4 || v == 0x29 || v == 0x2C || v == 0x2D)
             dpl = 3;
         set_gate(v, KiIsrBase + v * 16, dpl, v == 8 || v == 2 || v == 18 ? 1 : 0);
     }
     set_gate(KI_VECTOR_FLUSH, KiFlushIpi, 0, 0);
+    set_gate(1, KiDebugTrap, 0, 2);
 }
 
 static ULONG64 segment(ULONG64 access, ULONG64 flags)
@@ -237,6 +321,337 @@ static void initialize_xsave(void)
     __asm__ volatile("xsetbv" ::"c"(0), "a"((ULONG)KiXsaveMask), "d"((ULONG)(KiXsaveMask >> 32)));
     KiCpuid(0xD, 0, regs);
     KiXsaveSize = (regs[1] + 63) & ~63u;
+    g_xsave_exact = regs[1];
+    /* where each feature beyond sse lies: in the standard area the processor saves, and in the area a user context
+       carries, which starts at the header and is compacted when the processor can compact. */
+    ULONG sub[4];
+    KiCpuid(0xD, 1, sub);
+    g_xsave_compact = (sub[0] & 2) != 0;
+    ULONG compact = sizeof(XSAVE_AREA_HEADER);
+    for (ULONG i = 2; i < 64; i++) {
+        if (!(KiXsaveMask >> i & 1))
+            continue;
+        ULONG f[4];
+        KiCpuid(0xD, i, f);
+        if (f[2] & 2)
+            compact = (compact + 63) & ~63u;
+        g_xfeature[i].Standard = f[1];
+        g_xfeature[i].Size = f[0];
+        g_xfeature[i].Aligned = (f[2] & 2) != 0;
+        g_xfeature[i].User = g_xsave_compact ? compact : f[1] - XSAVE_HEADER;
+        compact += f[0];
+    }
+    if (KiXsaveMask & ~3ull)
+        g_xstate_size = g_xsave_compact ? compact : g_xsave_exact - XSAVE_HEADER;
+    /* the supervisor state is enabled where the processor compacts and saves it, as windows does. */
+    ULONG64 supervisor = (ULONG64)sub[3] << 32 | sub[2];
+    if ((sub[0] & 8) && g_xsave_compact && (supervisor >> XFEATURE_CET_USER & 1)) {
+        ULONG f[4];
+        KiCpuid(0xD, XFEATURE_CET_USER, f);
+        g_xfeature[XFEATURE_CET_USER].Size = f[0];
+        g_xfeature[XFEATURE_CET_USER].Aligned = (f[2] & 2) != 0;
+        g_xsave_supervisor = 1ull << XFEATURE_CET_USER;
+        KiWriteMsr(MSR_XSS, g_xsave_supervisor);
+    }
+    static DECLSPEC_ALIGN(16) UCHAR legacy[512];
+    __asm__ volatile("fxsave64 %0" : "=m"(legacy));
+    if (*(ULONG *)(legacy + 0x1C))
+        KiMxcsrMask = *(ULONG *)(legacy + 0x1C);
+}
+
+/* where a feature lies in an area laid out for a set of them, from the header: feature 64 is the end of them all. */
+static ULONG xfeature_at(ULONG64 layout, ULONG feature)
+{
+    if (!g_xsave_compact)
+        return feature < 64 ? g_xfeature[feature].Standard - XSAVE_HEADER : g_xsave_exact - XSAVE_HEADER;
+    ULONG at = sizeof(XSAVE_AREA_HEADER);
+    for (ULONG i = 2; i < 64; i++) {
+        if (!(layout >> i & 1))
+            continue;
+        if (g_xfeature[i].Aligned)
+            at = (at + 63) & ~63u;
+        if (i == feature)
+            return at;
+        at += g_xfeature[i].Size;
+    }
+    return at;
+}
+
+/* what the shared page tells user mode of the extended state, the way windows 11 fills it from cpuid leaf 0xD. */
+void KiSetExtendedState(XSTATE_CONFIGURATION *x)
+{
+    ULONG regs[4], sub[4];
+    KiCpuid(0xD, 0, regs);
+    KiCpuid(0xD, 1, sub);
+    ULONG64 user = (ULONG64)regs[3] << 32 | regs[0], supervisor = (ULONG64)sub[3] << 32 | sub[2];
+    x->EnabledFeatures = x->EnabledVolatileFeatures = KiXsaveMask;
+    x->Size = g_xsave_exact;
+    x->ControlFlags = sub[0] & 3;
+    x->Features[0].Size = x->AllFeatures[0] = 0xA0;
+    x->Features[1].Offset = 0xA0;
+    x->Features[1].Size = x->AllFeatures[1] = 0x100;
+    for (ULONG i = 2; i < 64; i++) {
+        if (!((user | supervisor) >> i & 1))
+            continue;
+        ULONG f[4];
+        KiCpuid(0xD, i, f);
+        x->AllFeatures[i] = f[0];
+        if (user >> i & 1) {
+            x->Features[i].Offset = f[1];
+            x->Features[i].Size = f[0];
+        }
+        if ((f[2] & 2) && (KiXsaveMask >> i & 1))
+            x->AlignedFeatures |= 1ull << i;
+    }
+    x->EnabledSupervisorFeatures = x->EnabledUserVisibleSupervisorFeatures = g_xsave_supervisor;
+    x->AllFeatureSize = x->AllNonLargeFeatureSize =
+        g_xsave_compact ? XSAVE_HEADER + xfeature_at((KiXsaveMask & ~3ull) | g_xsave_supervisor, 64) : g_xsave_exact;
+}
+
+ULONG KiXstateSize(void)
+{
+    return g_xstate_size;
+}
+
+/* room for a standard area of the features beyond sse, holding what the processor has of them now when asked. */
+static PUCHAR live_area(BOOLEAN save, PVOID *room)
+{
+    *room = ExAllocatePoolWithTag(NonPagedPool, KiXsaveSize + 64, 'tsXK');
+    if (!*room)
+        return nullptr;
+    PUCHAR area = (PUCHAR)(((ULONG_PTR)*room + 63) & ~(ULONG_PTR)63);
+    memset(area, 0, KiXsaveSize);
+    if (save) {
+        ULONG64 mask = KiXsaveMask & ~3ull;
+        __asm__ volatile("xsave64 (%[area])" : : [area] "r"(area), "a"((ULONG)mask), "d"((ULONG)(mask >> 32)) : "memory");
+    }
+    return area;
+}
+
+/*
+ * the extended state of a thread beyond sse, in the layout a user context carries: the features asked for that
+ * the thread has in use, the others as zeroes. the caller's own is what the processor holds, another thread's is
+ * what its last switch saved.
+ */
+void KiCaptureXstate(PKTHREAD thread, ULONG64 asked, PUCHAR out)
+{
+    memset(out, 0, g_xstate_size);
+    if (!g_xstate_size)
+        return;
+    ULONG64 mask = KiXsaveMask & ~3ull;
+    BOOLEAN live = thread == KiCurrentThread();
+    PVOID room = nullptr;
+    PUCHAR area = live ? live_area(TRUE, &room) : thread->XSaveArea;
+    XSAVE_AREA_HEADER *header = (XSAVE_AREA_HEADER *)out;
+    header->CompactionMask = g_xsave_compact ? 1ull << 63 | mask : 0;
+    if (!area)
+        return;
+    header->Mask = *(ULONG64 *)(area + XSAVE_HEADER) & mask & asked;
+    for (ULONG i = 2; i < 64; i++)
+        if (header->Mask >> i & 1)
+            memcpy(out + g_xfeature[i].User, area + g_xfeature[i].Standard, g_xfeature[i].Size);
+    if (live)
+        ExFreePool(room);
+}
+
+/* the reverse: the features the area holds are set, the others the system saves go back to their initial state. */
+void KiRestoreXstate(PKTHREAD thread, const UCHAR *in)
+{
+    if (!g_xstate_size)
+        return;
+    ULONG64 mask = KiXsaveMask & ~3ull, held = ((const XSAVE_AREA_HEADER *)in)->Mask & mask;
+    BOOLEAN live = thread == KiCurrentThread();
+    PVOID room = nullptr;
+    PUCHAR area = live ? live_area(FALSE, &room) : thread->XSaveArea;
+    if (!area)
+        return;
+    ULONG64 *present = (ULONG64 *)(area + XSAVE_HEADER);
+    *present = (*present & ~mask) | held;
+    for (ULONG i = 2; i < 64; i++)
+        if (held >> i & 1)
+            memcpy(area + g_xfeature[i].Standard, in + g_xfeature[i].User, g_xfeature[i].Size);
+    if (live) {
+        /* the standard form reloads mxcsr with the avx state: give it the one in force. */
+        __asm__ volatile("stmxcsr %[m]" : [m] "=m"(*(ULONG *)(area + XSAVE_LEGACY_MXCSR)));
+        __asm__ volatile("xrstor64 (%[area])" : : [area] "r"(area), "a"((ULONG)mask), "d"((ULONG)(mask >> 32)) : "memory");
+        ExFreePool(room);
+    }
+}
+
+/*
+ * the extended state area a user context names in the CONTEXT_EX behind it, as windows 11 26300 takes it, measured
+ * with scratch/dlls/probe/xctx.c of the research repository. both chunks start at the context, the legacy one
+ * holds it all, the area lies behind the CONTEXT_EX and inside the whole, on a 64 byte boundary, and has room for
+ * its header. the header names the layout: the compaction bit, enabled features alone, and no feature in the mask
+ * that the layout lacks.
+ */
+NTSTATUS KiProbeUserXstate(PCONTEXT context, KI_USER_XSTATE *where)
+{
+    CONTEXT_EX ex;
+    NTSTATUS status = KiCopyFromUser(&ex, context + 1, sizeof(ex));
+    if (!NT_SUCCESS(status))
+        return status;
+    LONG legacy = -(LONG)sizeof(CONTEXT);
+    ULONG all = (ULONG)ex.All.Length, length = (ULONG)ex.XState.Length;
+    if (ex.All.Offset != legacy || ex.Legacy.Offset != legacy || (ULONG)ex.Legacy.Length < sizeof(CONTEXT) ||
+        all < sizeof(CONTEXT) || ex.XState.Offset < 0x20 ||
+        (ULONG64)ex.XState.Offset + length > all - sizeof(CONTEXT))
+        return STATUS_INVALID_PARAMETER;
+    where->Area = (PUCHAR)(context + 1) + ex.XState.Offset;
+    where->Length = length;
+    if ((ULONG_PTR)where->Area & 63)
+        return STATUS_DATATYPE_MISALIGNMENT;
+    if (length < sizeof(XSAVE_AREA_HEADER))
+        return STATUS_BUFFER_OVERFLOW;
+    XSAVE_AREA_HEADER header;
+    status = KiCopyFromUser(&header, where->Area, sizeof(header));
+    if (!NT_SUCCESS(status))
+        return status;
+    where->Mask = header.Mask;
+    where->Layout = KiXsaveMask & ~3ull;
+    if (g_xsave_compact) {
+        ULONG64 held = header.CompactionMask & ~(1ull << 63);
+        if (!(header.CompactionMask >> 63) || (held & ~(KiXsaveMask | g_xsave_supervisor)) ||
+            (header.Mask & ~held & ~3ull))
+            return STATUS_INVALID_PARAMETER;
+        where->Layout = held & ~3ull;
+    }
+    return STATUS_SUCCESS;
+}
+
+/*
+ * the shadow stack state is not a thread's to change: a context that names it must hold what the thread has, which
+ * is the initial state, or windows denies the whole context.
+ */
+BOOLEAN KiUserXstateDenied(const KI_USER_XSTATE *where)
+{
+    for (ULONG i = 2; i < 64; i++) {
+        if (!((where->Mask & where->Layout & g_xsave_supervisor) >> i & 1))
+            continue;
+        UCHAR held[64];
+        ULONG at = xfeature_at(where->Layout, i), size = g_xfeature[i].Size;
+        if (size > sizeof(held) || (ULONG64)at + size > where->Length)
+            continue;
+        if (!NT_SUCCESS(KiCopyFromUser(held, where->Area + at, size)))
+            return TRUE;
+        for (ULONG k = 0; k < size; k++)
+            if (held[k])
+                return TRUE;
+    }
+    return FALSE;
+}
+
+/*
+ * what a thread holds, see KiCaptureXstate, into the area of a user context in the layout its header names. the mask
+ * is what the thread has in use of that layout, whatever the caller asked for, and the shadow stack state always is.
+ * a feature the area has no room for is left out and the status tells.
+ */
+NTSTATUS KiStoreUserXstate(const KI_USER_XSTATE *where, const UCHAR *buffer)
+{
+    static const UCHAR zero[64];
+    ULONG64 mask = (((const XSAVE_AREA_HEADER *)buffer)->Mask | g_xsave_supervisor) & where->Layout;
+    NTSTATUS status = KiCopyToUser(where->Area, &mask, sizeof(mask));
+    if (!NT_SUCCESS(status))
+        return status;
+    for (ULONG i = 2; i < 64; i++) {
+        if (!(mask >> i & 1))
+            continue;
+        ULONG at = xfeature_at(where->Layout, i), size = g_xfeature[i].Size;
+        if ((ULONG64)at + size > where->Length) {
+            status = STATUS_BUFFER_OVERFLOW;
+            continue;
+        }
+        BOOLEAN supervisor = (g_xsave_supervisor >> i & 1) != 0;
+        NTSTATUS copied = KiCopyToUser(where->Area + at, supervisor ? zero : buffer + g_xfeature[i].User,
+                                       supervisor && size > sizeof(zero) ? sizeof(zero) : size);
+        if (!NT_SUCCESS(copied))
+            return copied;
+    }
+    return status;
+}
+
+/* the reverse, for KiRestoreXstate: the features the mask of the area names, the others go back to their start. */
+NTSTATUS KiLoadUserXstate(const KI_USER_XSTATE *where, PUCHAR buffer)
+{
+    memset(buffer, 0, g_xstate_size > sizeof(XSAVE_AREA_HEADER) ? g_xstate_size : sizeof(XSAVE_AREA_HEADER));
+    XSAVE_AREA_HEADER *held = (XSAVE_AREA_HEADER *)buffer;
+    held->Mask = where->Mask & where->Layout & KiXsaveMask & ~3ull;
+    for (ULONG i = 2; i < 64; i++) {
+        if (!(held->Mask >> i & 1))
+            continue;
+        ULONG at = xfeature_at(where->Layout, i), size = g_xfeature[i].Size;
+        if ((ULONG64)at + size > where->Length) {
+            held->Mask &= ~(1ull << i);
+            continue;
+        }
+        NTSTATUS status = KiCopyFromUser(buffer + g_xfeature[i].User, where->Area + at, size);
+        if (!NT_SUCCESS(status))
+            return status;
+    }
+    return STATUS_SUCCESS;
+}
+
+/* a thread starts with the features beyond sse in their initial state. */
+void KiResetXstate(PKTHREAD thread)
+{
+    UCHAR none[KI_XSTATE_MAXIMUM];
+    if (!g_xstate_size)
+        return;
+    memset(none, 0, g_xstate_size);
+    KiRestoreXstate(thread, none);
+}
+
+/*
+ * the x87 state of a thread, the first 0xA0 bytes of what fxsave writes: the caller's own is the processor's, that
+ * of a thread which does not run is what its last switch saved, or the processor's initial state when it saved none.
+ * the six bytes behind each register are zero.
+ */
+static void capture_x87(PKTHREAD thread, XSAVE_FORMAT *out)
+{
+    DECLSPEC_ALIGN(16) UCHAR area[512];
+    const UCHAR *from = nullptr;
+    if (thread == KiCurrentThread()) {
+        __asm__ volatile("fxsave64 %0" : "=m"(area));
+        from = area;
+    } else if (thread->XSaveArea && (*(ULONG64 *)((PUCHAR)thread->XSaveArea + XSAVE_HEADER) & 1)) {
+        from = thread->XSaveArea;
+    }
+    if (from) {
+        memcpy(out, from, 0xA0);
+    } else {
+        memset(out, 0, 0xA0);
+        out->ControlWord = 0x37F;
+    }
+    for (ULONG i = 0; i < 8; i++)
+        memset((PUCHAR)&out->FloatRegisters[i] + 10, 0, 6);
+}
+
+/*
+ * the reverse. the processor takes the state and gives it back, with the bits it does not have dropped, the busy and
+ * summary flags of the status made from the rest and the pointers of the last instruction cleared: a thread that
+ * does not run keeps that in its save area, the caller keeps it loaded. the sse registers and mxcsr stay as they are.
+ */
+static void restore_x87(PKTHREAD thread, const XSAVE_FORMAT *in)
+{
+    DECLSPEC_ALIGN(16) UCHAR mine[512], theirs[512];
+    BOOLEAN live = thread == KiCurrentThread();
+    if (!live && !thread->XSaveArea)
+        return;
+    ULONG64 flags = KiDisableInterrupts();
+    __asm__ volatile("fxsave64 %0" : "=m"(mine));
+    memcpy(theirs, mine, sizeof(theirs));
+    memcpy(theirs, in, 0x18);
+    memcpy(theirs + 0x20, (const UCHAR *)in + 0x20, 0x80);
+    __asm__ volatile("fxrstor64 %0" : : "m"(theirs));
+    if (!live) {
+        __asm__ volatile("fxsave64 %0" : "=m"(theirs));
+        __asm__ volatile("fxrstor64 %0" : : "m"(mine));
+        PUCHAR area = thread->XSaveArea;
+        memcpy(area, theirs, 0x18);
+        memcpy(area + 0x20, theirs + 0x20, 0x80);
+        *(ULONG64 *)(area + XSAVE_HEADER) |= 1;
+    }
+    KiRestoreInterrupts(flags);
 }
 
 void KiInitializeProcessorArch(void)
@@ -253,11 +668,24 @@ void KiInitializeProcessorArch(void)
     KiCpuid(7, 0, regs);
     if (regs[1] & (1u << 7))
         cr4 |= CR4_SMEP;
+    /* the processor feature is advertised to user mode, so rd/wrfsbase and rd/wrgsbase must be legal there. */
+    if (regs[1] & (1u << 0))
+        cr4 |= CR4_FSGSBASE;
     __asm__ volatile("movq %0, %%cr4" ::"r"(cr4) : "memory");
+    /*
+     * windows checks alignment in user mode: a thread that sets the flag faults on a misaligned access, and its
+     * exception dispatcher runs with the flag still set. measured with scratch/dlls/crash3/ac.c.
+     */
+    ULONG64 cr0;
+    __asm__ volatile("movq %%cr0, %0" : "=r"(cr0));
+    __asm__ volatile("movq %0, %%cr0" ::"r"(cr0 | (1ull << 18)) : "memory");
     if (number == 0)
         initialize_xsave();
-    else
+    else {
         __asm__ volatile("xsetbv" ::"c"(0), "a"((ULONG)KiXsaveMask), "d"((ULONG)(KiXsaveMask >> 32)));
+        if (g_xsave_supervisor)
+            KiWriteMsr(MSR_XSS, g_xsave_supervisor);
+    }
 
     /* the windows gdt layout: kernel code and data, 32-bit and 64-bit user code, user data, the tss. */
     ULONG64 *gdt = pcr->Gdt;
@@ -272,6 +700,7 @@ void KiInitializeProcessorArch(void)
     ULONG64 tss = (ULONG64)pcr->Tss;
     memset(pcr->Tss, 0, sizeof(pcr->Tss));
     *(ULONG64 *)(pcr->Tss + 0x24) = (ULONG64)(g_fault_stacks[number] + sizeof(g_fault_stacks[number])); /* ist1 */
+    *(ULONG64 *)(pcr->Tss + 0x2C) = (ULONG64)(g_debug_stacks[number] + sizeof(g_debug_stacks[number])); /* ist2 */
     *(USHORT *)(pcr->Tss + 0x66) = sizeof(pcr->Tss); /* no i/o permission bitmap */
     gdt[KGDT64_SYS_TSS / 8] = (sizeof(pcr->Tss) - 1) | (tss & 0xFFFFFF) << 16 | 0x89ull << 40 |
                               ((tss >> 24) & 0xFF) << 56;
@@ -330,7 +759,9 @@ void KiInitializeSwitchFrame(PKTHREAD thread, PKSTART_ROUTINE routine, PVOID con
         top = (PUCHAR)(((ULONG_PTR)top - KiXsaveSize) & ~(ULONG_PTR)63);
         memset(top, 0, KiXsaveSize);
         *(ULONG *)(top + XSAVE_LEGACY_MXCSR) = MXCSR_DEFAULT;
-        *(USHORT *)top = 0x27F; /* the x87 control word windows starts threads with */
+        /* the x87 control word windows starts threads with: the area says it holds x87 state, so it is loaded. */
+        *(USHORT *)top = 0x27F;
+        *(ULONG64 *)(top + XSAVE_HEADER) = 1;
         thread->XSaveArea = top;
         thread->InitialStack = top;
     }
@@ -364,7 +795,8 @@ void KiInitializeUserFrame(PKTRAP_FRAME frame, ULONG64 pc, ULONG64 sp, ULONG64 a
     frame->Rsp = sp - 8;
     frame->Rcx = arg0;
     frame->Rdx = arg1;
-    frame->Rflags = EFLAGS_IF | 0x2;
+    /* as a context reads it before the thread runs: the processor sets bit 1 by itself. */
+    frame->Rflags = EFLAGS_IF;
     frame->MxCsr = MXCSR_DEFAULT;
     frame->Flags = KTRAP_FLAG_FP_SAVED; /* start with zeroed registers */
     frame->Vector = KTRAP_VECTOR_SYSCALL;
@@ -414,12 +846,115 @@ void KiTrapFrameToContext(const KTRAP_FRAME *frame, CONTEXT *ctx, ULONG flags)
     ctx->SegSs = (USHORT)frame->Ss;
     ctx->SegDs = ctx->SegEs = ctx->SegGs = KGDT64_R3_DATA | RPL_USER;
     ctx->SegFs = KGDT64_R3_CMTEB | RPL_USER;
+    /* the x87 state is the processor's: the kernel does not use it, so it is that of the thread which runs. */
+    capture_x87(KiCurrentThread(), &ctx->FltSave);
     ctx->MxCsr = frame->MxCsr;
     ctx->FltSave.MxCsr = frame->MxCsr;
-    ctx->FltSave.MxCsr_Mask = 0xFFFF;
-    ctx->FltSave.ControlWord = 0x27F;
+    ctx->FltSave.MxCsr_Mask = KiMxcsrMask;
     if (frame->Flags & KTRAP_FLAG_FP_SAVED)
         memcpy(ctx->FltSave.XmmRegisters, frame->Xmm, sizeof(frame->Xmm));
+}
+
+/*
+ * the whole user context of a thread from the frame it entered the kernel with, as windows 11 26300 reads it,
+ * measured with scratch/dlls/probe/xctx.c of the research repository. a system service saves rax, its first two
+ * arguments as rcx and rdx and the nonvolatile registers: r8 to r11 and xmm0 to xmm5 read as what the last
+ * interrupt or context left in the frame, see KiNoteUserTrap. the x87 state of another thread is what it saved.
+ */
+void KiCaptureThreadContext(PKTHREAD thread, PKTRAP_FRAME frame, BOOLEAN in_service, CONTEXT *ctx)
+{
+    KiTrapFrameToContext(frame, ctx, CONTEXT_ALL);
+    if (in_service) {
+        if (!(thread->ContextSetInService & KI_CONTEXT_SET_INTEGER))
+            ctx->Rcx = frame->R10;
+        ctx->R8 = thread->ServiceStale[0];
+        ctx->R9 = thread->ServiceStale[1];
+        ctx->R10 = thread->ServiceStale[2];
+        ctx->R11 = thread->ServiceStale[3];
+        /*
+         * a service entered with an instrumentation callback saves more: on windows 11 26300 r8 to r10 read as the
+         * service was entered with them, and r11 as its first argument, seen in one measure with icb.c.
+         */
+        if (thread->ServiceInstrumented) {
+            ctx->R8 = frame->R8;
+            ctx->R9 = frame->R9;
+            ctx->R10 = frame->R10;
+            ctx->R11 = frame->R10;
+        }
+        memcpy(ctx->FltSave.XmmRegisters, thread->ServiceStaleXmm, sizeof(thread->ServiceStaleXmm));
+    }
+    if (thread != KiCurrentThread())
+        capture_x87(thread, &ctx->FltSave);
+    ctx->FltSave.MxCsr = frame->MxCsr;
+    ctx->FltSave.MxCsr_Mask = KiMxcsrMask;
+    KiGetThreadDebug(thread, ctx);
+}
+
+/* what a system service leaves unsaved in its frame is what was last written there: an interrupt taken in user mode. */
+void KiNoteUserTrap(PKTHREAD thread, const KTRAP_FRAME *frame)
+{
+    thread->ServiceStale[0] = frame->R8;
+    thread->ServiceStale[1] = frame->R9;
+    thread->ServiceStale[2] = frame->R10;
+    thread->ServiceStale[3] = frame->R11;
+    memcpy(thread->ServiceStaleXmm, frame->Xmm, sizeof(thread->ServiceStaleXmm));
+}
+
+/*
+ * a context never takes a native thread into 32-bit code, whoever sets it and through whichever service: measured on
+ * windows 11 26300 with scratch/dlls/probe/gate32res.c of the research repository, a handler that continues from a
+ * fault of 32-bit code with the selector as delivered resumes in the 64-bit segment at the same address. only the
+ * thread of a 32-bit program keeps the selector.
+ */
+void KiNativeCodeSegment(PKTHREAD thread, PKTRAP_FRAME frame, ULONG parts)
+{
+    if ((parts & CONTEXT_CONTROL) == CONTEXT_CONTROL && !PspIsWow64Process((PEPROCESS)thread->Process))
+        frame->Cs = KGDT64_R3_CODE | RPL_USER;
+}
+
+/*
+ * the parts of a context a thread takes, as windows 11 26300 does: the instruction pointer sign extended from bit 47,
+ * the flags user mode may set, the 64-bit segments, mxcsr from the context and not from the save area, the x87
+ * state through the processor. a thread in a system service keeps the frame it returns with, see
+ * KiServiceExitVolatiles, and the frame reads back as written until then.
+ */
+void KiApplyThreadContext(PKTHREAD thread, PKTRAP_FRAME frame, BOOLEAN in_service, const CONTEXT *ctx, ULONG parts)
+{
+    KiContextToTrapFrame(ctx, frame, parts, UserMode);
+    KiNativeCodeSegment(thread, frame, parts);
+    if ((parts & CONTEXT_INTEGER) == CONTEXT_INTEGER) {
+        thread->ServiceStale[0] = ctx->R8;
+        thread->ServiceStale[1] = ctx->R9;
+        thread->ServiceStale[2] = ctx->R10;
+        thread->ServiceStale[3] = ctx->R11;
+        if (in_service)
+            thread->ContextSetInService |= KI_CONTEXT_SET_INTEGER;
+    }
+    if ((parts & CONTEXT_FLOATING_POINT) == CONTEXT_FLOATING_POINT) {
+        memcpy(thread->ServiceStaleXmm, ctx->FltSave.XmmRegisters, sizeof(thread->ServiceStaleXmm));
+        restore_x87(thread, &ctx->FltSave);
+    }
+    if ((parts & CONTEXT_DEBUG_REGISTERS) == CONTEXT_DEBUG_REGISTERS)
+        KiSetThreadDebug(thread, ctx);
+}
+
+/*
+ * what windows makes of the flags of a context it is asked for. the parts are the low five bits whatever the
+ * architecture bits say, and the amd64 bit is set in the answer. the extended state and the kernel shadow stack
+ * count only in a context that is amd64 alone, without bit 5: the first needs a CONTEXT_EX, the second is not
+ * supported. the unwound mark stays, the exception request is answered with the report bit and what the thread
+ * was in, the other marks are dropped.
+ */
+NTSTATUS KiContextRequest(ULONG flags, KI_CONTEXT_REQUEST *request)
+{
+    BOOLEAN extended = (flags & CONTEXT_AMD64) && !(flags & 0x10020);
+    request->Parts = CONTEXT_AMD64 | (flags & 0x1F);
+    request->Xstate = extended && (flags & 0x40);
+    request->Report = (flags & CONTEXT_EXCEPTION_REQUEST) != 0;
+    request->Out = request->Parts | (request->Xstate ? 0x40 : 0) | (flags & (CONTEXT_UNWOUND_TO_CALL | CONTEXT_EXCEPTION_REQUEST));
+    if (extended && (flags & 0x80))
+        return STATUS_NOT_SUPPORTED;
+    return STATUS_SUCCESS;
 }
 
 /* copies the parts of a context the flags name into another. */
@@ -456,8 +991,9 @@ void KiMergeContext(CONTEXT *to, const CONTEXT *from, ULONG flags)
         to->SegGs = from->SegGs;
     }
     if ((flags & CONTEXT_FLOATING_POINT) == CONTEXT_FLOATING_POINT) {
+        /* the x87 and sse registers: the 96 bytes behind them in the save area stay the caller's. */
         to->MxCsr = from->MxCsr;
-        to->FltSave = from->FltSave;
+        memcpy(&to->FltSave, &from->FltSave, FIELD_OFFSET(XSAVE_FORMAT, XmmRegisters) + sizeof(from->FltSave.XmmRegisters));
     }
     if ((flags & CONTEXT_DEBUG_REGISTERS) == CONTEXT_DEBUG_REGISTERS) {
         to->Dr0 = from->Dr0;
@@ -466,6 +1002,9 @@ void KiMergeContext(CONTEXT *to, const CONTEXT *from, ULONG flags)
         to->Dr3 = from->Dr3;
         to->Dr6 = from->Dr6;
         to->Dr7 = from->Dr7;
+        /* the branch records go with the breakpoints, zero as nothing records them. */
+        to->LastBranchToRip = to->LastBranchFromRip = 0;
+        to->LastExceptionToRip = to->LastExceptionFromRip = 0;
     }
     to->ContextFlags = flags;
 }
@@ -493,85 +1032,118 @@ void KiContextToTrapFrame(const CONTEXT *ctx, PKTRAP_FRAME frame, ULONG flags, K
         frame->Rip = ctx->Rip;
         frame->Rsp = ctx->Rsp;
         if (mode == UserMode) {
-            /* user mode may change only the arithmetic and trace flags, and stays in user mode, 64 or 32-bit. */
-            frame->Rflags = (ctx->EFlags & EFLAGS_USER_MASK) | EFLAGS_IF | 0x2;
+            /* like windows, an instruction pointer that is not canonical is made so from its low 48 bits. */
+            frame->Rip = (ULONG64)((LONG64)(ctx->Rip << 16) >> 16);
+            /* user mode may change only the arithmetic, trace and identification flags, and stays in user mode, 64 or
+               32-bit. bit 1 is the processor's and reads back clear until the thread runs. */
+            frame->Rflags = (ctx->EFlags & EFLAGS_USER_MASK) | EFLAGS_IF;
             user_segments(frame);
             if (ctx->SegCs == (KGDT64_R3_CMCODE | RPL_USER))
                 frame->Cs = KGDT64_R3_CMCODE | RPL_USER;
         } else {
-            frame->Rflags = ctx->EFlags;
+            frame->Rflags = ctx->EFlags & ~0x3000ull;
             frame->Cs = ctx->SegCs;
             frame->Ss = ctx->SegSs;
         }
     }
     if ((flags & CONTEXT_FLOATING_POINT) == CONTEXT_FLOATING_POINT) {
         memcpy(frame->Xmm, ctx->FltSave.XmmRegisters, sizeof(frame->Xmm));
-        frame->MxCsr = ctx->MxCsr & 0xFFFF;
+        frame->MxCsr = ctx->MxCsr & KiMxcsrMask;
         frame->Flags |= KTRAP_FLAG_FP_SAVED;
     }
 }
 
 /*
- * like on windows, the user apc dispatcher finds the interrupted CONTEXT at its
- * sp, the routine and arguments in the home slots, then a machine frame for unwinding.
+ * the layout of windows 11 26300 for KiUserApcDispatcher, measured with scratch/dlls/probe/icb.c of the research
+ * repository: the interrupted CONTEXT at its sp with the breakpoints, the routine and its arguments in the home
+ * slots, and 0x530 above a machine frame that ends at the interrupted sp, of which the rip and rsp alone are
+ * written. the instrumentation callback is the business of the service that returns here, see KiExitToUserMode.
  */
 BOOLEAN KiSetupUserApc(PKTRAP_FRAME frame, PVOID dispatcher, PKNORMAL_ROUTINE routine, PVOID context, PVOID arg1,
                        PVOID arg2)
 {
     CONTEXT ctx;
-    KiTrapFrameToContext(frame, &ctx, CONTEXT_FULL);
+    KiTrapFrameToContext(frame, &ctx, CONTEXT_FULL | CONTEXT_DEBUG_REGISTERS);
+    KiGetThreadDebug(KiCurrentThread(), &ctx);
     ctx.P1Home = (ULONG64)context;
     ctx.P2Home = (ULONG64)arg1;
     ctx.P3Home = (ULONG64)arg2;
     ctx.P4Home = (ULONG64)routine;
-    ULONG64 machine = ((user_stack(frame) - 0x80) & ~15ull) - 0x30;
-    ULONG64 sp = machine - sizeof(CONTEXT);
-    ULONG64 mframe[5] = {frame->Rip, frame->Cs, frame->Rflags, frame->Rsp, frame->Ss};
-    if (!NT_SUCCESS(KiCopyToUser((PVOID)machine, mframe, sizeof(mframe))) ||
+    ULONG64 machine = (user_stack(frame) - 0x28) & ~15ull;
+    ULONG64 sp = machine - 0x530;
+    /* at 0x4F0 the KCONTINUE_ARGUMENT the dispatcher gives NtContinueEx: resume, test alert and deliver apcs. */
+    ULONG64 resume[3] = {0x300000001ull, 0, 0};
+    if (!NT_SUCCESS(KiCopyToUser((PVOID)machine, &frame->Rip, sizeof(ULONG64))) ||
+        !NT_SUCCESS(KiCopyToUser((PVOID)(machine + 0x18), &frame->Rsp, sizeof(ULONG64))) ||
+        !NT_SUCCESS(KiCopyToUser((PVOID)(sp + 0x4F0), resume, sizeof(resume))) ||
         !NT_SUCCESS(KiCopyToUser((PVOID)sp, &ctx, sizeof(ctx))))
         return FALSE;
     frame->Rsp = sp;
     frame->Rip = (ULONG64)dispatcher;
     user_segments(frame);
-    /* like KiInitializeUserApc, the apc dispatcher is reached through the instrumentation callback. */
-    KiCurrentThread()->InstrumentReturn = TRUE;
     return TRUE;
 }
 
 /*
- * windows' layout for KiUserExceptionDispatcher: at its sp the CONTEXT and its CONTEXT_EX, the EXCEPTION_RECORD at
- * 0x4F0, then at 0x590 a machine frame with the faulting rip and rsp, as its unwind codes describe. it takes nothing
- * in registers.
+ * windows' layout for KiUserExceptionDispatcher, measured on windows 11 26300 with scratch/dlls/probe/xctx.c of the
+ * research repository: at its sp the CONTEXT and its CONTEXT_EX, the EXCEPTION_RECORD at 0x4F0, at 0x590 a machine
+ * frame of which the faulting rip and rsp alone are written, and at 0x5C0 the extended state beyond sse. that area
+ * is the first 64 byte boundary with room for the state below the faulting sp, the frame hangs under it, and the
+ * CONTEXT_EX gives the area the length up to the faulting sp. the home slots that open the context are left as they
+ * were. it takes nothing in registers.
  */
 BOOLEAN KiSetupUserException(PKTRAP_FRAME frame, PVOID dispatcher, PEXCEPTION_RECORD record)
 {
     CONTEXT ctx;
-    KiTrapFrameToContext(frame, &ctx, CONTEXT_FULL);
+    /* the context of an exception always carries the segments and the breakpoints, zeroes when there are none. */
+    KiTrapFrameToContext(frame, &ctx, CONTEXT_FULL | CONTEXT_SEGMENTS | CONTEXT_DEBUG_REGISTERS);
     PKTHREAD thread = KiCurrentThread();
-    if ((thread->UserDr7 & 0xFF) || record->ExceptionCode == (NTSTATUS)0x80000004L) {
-        ctx.ContextFlags |= CONTEXT_DEBUG_REGISTERS;
-        KiGetThreadDebug(thread, &ctx);
-    }
-    ULONG64 machine = ((user_stack(frame) - 0x80) & ~15ull) - 0x30;
-    ULONG64 ctx_addr = machine - 0x590;
-    ULONG64 rec = ctx_addr + 0x4F0;
+    KiGetThreadDebug(thread, &ctx);
     MIME_STATIC_ASSERT(sizeof(EXCEPTION_RECORD) <= 0xA0 && sizeof(CONTEXT) == 0x4D0, "dispatcher layout");
-    /* CONTEXT_EX: the whole and the legacy part start at the context, there is no extended state. */
-    LONG context_ex[6] = {-(LONG)sizeof(CONTEXT), (LONG)sizeof(CONTEXT) + 0x18, -(LONG)sizeof(CONTEXT),
-                          (LONG)sizeof(CONTEXT), 0x18, 0};
-    ULONG64 mframe[5] = {frame->Rip, frame->Cs, frame->Rflags, frame->Rsp, frame->Ss};
-    if (!NT_SUCCESS(KiCopyToUser((PVOID)machine, mframe, sizeof(mframe))) ||
+    ULONG64 sp = user_stack(frame), ctx_addr, machine_sp = frame->Rsp;
+    /* under 32-bit code the frame is laid out from the stack pointer rounded down to 16, and its machine frame says
+       that one, while the context keeps the real one. see gate32res.c beside xctx.c. */
+    if (frame->Cs == (KGDT64_R3_CMCODE | RPL_USER))
+        machine_sp = sp &= ~15ull;
+    /* the CONTEXT_EX takes 0x20 bytes, its last quad zero. */
+    struct {
+        CONTEXT_EX Ex;
+        ULONG64 Zero;
+    } tail = {{{-(LONG)sizeof(CONTEXT), sizeof(CONTEXT) + 0x20}, {-(LONG)sizeof(CONTEXT), sizeof(CONTEXT)}, {0x21, 0}}, 0};
+#define ex tail.Ex
+    UCHAR state[KI_XSTATE_MAXIMUM];
+    ULONG size = KiXstateSize();
+    if (size) {
+        ULONG64 area = (sp - size) & ~63ull;
+        ctx_addr = area - 0x5C0;
+        ex.XState.Offset = 0x5C0 - (LONG)sizeof(CONTEXT);
+        ex.XState.Length = (ULONG)(sp - area);
+        ex.All.Length = sizeof(CONTEXT) + (ULONG)ex.XState.Offset + ex.XState.Length;
+        ctx.ContextFlags |= CONTEXT_AMD64_XSTATE;
+        KiCaptureXstate(thread, ~0ull, state);
+        if (!NT_SUCCESS(KiCopyToUser((PVOID)area, state, size)))
+            return FALSE;
+    } else {
+        ctx_addr = ((sp & ~15ull) - 0x5C0) & ~63ull;
+    }
+    ULONG64 rec = ctx_addr + 0x4F0, machine = ctx_addr + 0x590;
+    if (!NT_SUCCESS(KiCopyToUser((PVOID)machine, &frame->Rip, sizeof(ULONG64))) ||
+        !NT_SUCCESS(KiCopyToUser((PVOID)(machine + 0x18), &machine_sp, sizeof(ULONG64))) ||
         !NT_SUCCESS(KiCopyToUser((PVOID)rec, record, sizeof(*record))) ||
-        !NT_SUCCESS(KiCopyToUser((PVOID)(ctx_addr + sizeof(CONTEXT)), context_ex, sizeof(context_ex))) ||
-        !NT_SUCCESS(KiCopyToUser((PVOID)ctx_addr, &ctx, sizeof(ctx))))
+        !NT_SUCCESS(KiCopyToUser((PVOID)(ctx_addr + sizeof(CONTEXT)), &tail, sizeof(tail))) ||
+        !NT_SUCCESS(KiCopyToUser((PVOID)(ctx_addr + FIELD_OFFSET(CONTEXT, ContextFlags)), &ctx.ContextFlags,
+                                 sizeof(ctx) - FIELD_OFFSET(CONTEXT, ContextFlags))))
         return FALSE;
+    /* every register but the stack pointer reaches the dispatcher as the exception found it. */
     frame->Rsp = ctx_addr;
+    KiCurrentThread()->ExceptionContext = ctx_addr;
     /* the dispatcher runs without the trap flag, the context keeps it. */
     frame->Rflags &= ~0x100ull;
     frame->Rip = (ULONG64)dispatcher;
     KiCurrentThread()->InstrumentReturn = TRUE;
     user_segments(frame);
     return TRUE;
+#undef ex
 }
 
 /*
@@ -602,6 +1174,9 @@ BOOLEAN KiSetupUserCallback(PKTRAP_FRAME frame, const KTRAP_FRAME *trap, PVOID d
     frame->MxCsr = trap->MxCsr;
     frame->Vector = KTRAP_VECTOR_SYSCALL;
     user_segments(frame);
+    /* like windows, the dispatcher is reached through the instrumentation callback of the service that calls out. */
+    if (KiCurrentThread()->ServiceInstrumented)
+        KiInstrumentReturn(frame, PsCurrentProcess()->InstrumentationCallback);
     return TRUE;
 }
 

@@ -187,6 +187,14 @@ void FASTCALL ExfReleasePushLockShared(PEX_PUSH_LOCK lock)
     ExfReleasePushLockExclusive(lock);
 }
 
+/* the resources that are initialised, which SystemLocksInformation lists. */
+static volatile LONG g_resource_count;
+
+ULONG ExQueryResourceCount(void)
+{
+    return (ULONG)__atomic_load_n(&g_resource_count, __ATOMIC_RELAXED);
+}
+
 NTSTATUS NTAPI ExInitializeResourceLite(PERESOURCE resource)
 {
     memset(resource, 0, sizeof(*resource));
@@ -194,11 +202,14 @@ NTSTATUS NTAPI ExInitializeResourceLite(PERESOURCE resource)
     if (!resource->ExclusiveWaiters)
         return STATUS_INSUFFICIENT_RESOURCES;
     KeInitializeEvent(resource->ExclusiveWaiters, SynchronizationEvent, TRUE);
+    __atomic_add_fetch(&g_resource_count, 1, __ATOMIC_RELAXED);
     return STATUS_SUCCESS;
 }
 
 NTSTATUS NTAPI ExDeleteResourceLite(PERESOURCE resource)
 {
+    if (resource->ExclusiveWaiters)
+        __atomic_sub_fetch(&g_resource_count, 1, __ATOMIC_RELAXED);
     ExFreePool(resource->ExclusiveWaiters);
     resource->ExclusiveWaiters = nullptr;
     return STATUS_SUCCESS;

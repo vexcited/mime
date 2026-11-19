@@ -276,6 +276,10 @@ void KiInitializeKernel(MimeBootInfo *boot)
     KiForeignDirect = strstr(boot->cmdline, "foreign-direct") != nullptr;
     KiForeignUnlock = !KiForeignDirect && strstr(boot->cmdline, "foreign-locked") == nullptr;
 #endif
+    extern BOOLEAN PspLoaderLog;
+    /* off unless asked for: the hooks patch ntdll, which a program that checks its system files refuses. */
+    const char *loader_log = strstr(boot->cmdline, "loader-log");
+    PspLoaderLog = loader_log && (loader_log < boot->cmdline + 3 || memcmp(loader_log - 3, "no-", 3));
     MiTraceRoutines = strstr(boot->cmdline, "trace-routines") != nullptr;
     extern BOOLEAN MiDiscoverRoutines;
     MiDiscoverRoutines = strstr(boot->cmdline, "discover-routines") != nullptr;
@@ -322,7 +326,11 @@ void KiInitializeKernel(MimeBootInfo *boot)
     ExInitialize();
     PsInitialize();
     SepInitialize();
+    extern void PspCreateSubsystemProcess(void);
+    PspCreateSubsystemProcess();
     KiInitializeSystemServices();
+    extern void KiRegisterLateServices(void);
+    KiRegisterLateServices();
     KiInitializeTimers();
     if (KiTimelineImage[0]) {
         extern void KiEnableTimeline(void);
@@ -359,6 +367,8 @@ static void KiPhase1Initialization(PVOID context)
     KiBootStamp("system dll");
     if (!NT_SUCCESS(status))
         KeBugCheckEx(0x0000006B, status, 0, 0, 0); /* PROCESS1_INITIALIZATION_FAILED. */
+    ExCreateKnownDlls();
+    KiBootStamp("known dlls");
 
     UNICODE_STRING win32k = RTL_CONSTANT_STRING(L"\\SystemRoot\\System32\\win32k.sys");
     PKLDR_DATA_TABLE_ENTRY module;
@@ -372,7 +382,12 @@ static void KiPhase1Initialization(PVOID context)
         KiLogPrintf("cannot load win32k.sys: %08x", status);
     }
 
+    extern void ExPopulateReference(void);
     KiBootStamp("win32k");
+    ExPopulateReference();
+    ExInitializeCsr();
+    IopPublishDeviceLinks();
+    KiBootStamp("population");
     KiBootReport();
     MiSessionInitialize();
 }

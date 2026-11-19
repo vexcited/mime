@@ -86,8 +86,7 @@ KiAcquireKernelLock:
     jz      6f
     decl    %r10d
     jnz     3b
-    cmpq    $0, KiKernelLockPhys(%rip)
-    je      2b
+    jmp     2b                  /* pure spin: the word wait hypercall is suspect under contention */
     lock incl LOCK_SLEEPERS(%r8)
     movl    (%r8), %eax
     testb   $1, %al
@@ -423,6 +422,54 @@ KiIsrBase:
     ISR     vec
     .set    vec, vec + 1
     .endr
+
+/*
+ * the debug trap, on a stack of its own. a load of ss holds back the trap of a data breakpoint on the selector for
+ * one instruction, and when that instruction enters the kernel, int3, a fault or syscall, the trap arrives on the
+ * first instruction of the entry: in kernel mode, before swapgs, and for syscall on the stack of the program.
+ * such a trap is returned from at once and dr6 keeps what it was for, which the exception the entry is for reports,
+ * as windows does. any other trap in kernel mode is a breakpoint of the program on memory the kernel touched:
+ * dr6 is reset and the program never sees it. a trap from user mode moves to the stack of the thread and goes the
+ * usual way.
+ */
+    .globl  KiDebugTrap
+    .p2align 4
+KiDebugTrap:
+    testb   $RPL_USER, 8(%rsp)
+    jnz     2f
+    pushq   %rax
+    pushq   %rcx
+    movq    16(%rsp), %rax
+    leaq    KiIsrBase(%rip), %rcx
+    subq    %rcx, %rax
+    cmpq    $(256 * 16), %rax
+    jb      1f
+    movq    16(%rsp), %rax
+    leaq    KiSystemCall64(%rip), %rcx
+    cmpq    %rcx, %rax
+    je      1f
+    movl    $0xFFFF0FF0, %eax
+    movq    %rax, %dr6
+1:  popq    %rcx
+    popq    %rax
+    iretq
+2:  swapgs
+    pushq   %rax
+    pushq   %rcx
+    movq    %rsp, %rcx
+    movq    %gs:KPCR_TSS, %rax
+    movq    KTSS_RSP0(%rax), %rsp
+    pushq   48(%rcx)                /* ss */
+    pushq   40(%rcx)                /* rsp */
+    pushq   32(%rcx)                /* rflags */
+    pushq   24(%rcx)                /* cs */
+    pushq   16(%rcx)                /* rip */
+    movq    8(%rcx), %rax
+    movq    0(%rcx), %rcx
+    swapgs
+    pushq   $0
+    pushq   $1
+    jmp     KiTrapCommon
 
 /*
  * common entry: the processor pushed ss, rsp, rflags, cs, rip, the stub an

@@ -131,6 +131,14 @@ void KiRegisterService(ULONG number, PVOID routine, UCHAR stack_args)
     }
 }
 
+/* the services the generated list does not carry yet. */
+void KiRegisterLateServices(void)
+{
+    extern void NtQuerySystemInformationEx(void);
+    KiRegisterService(MIME_SVC_NtQuerySystemInformationEx, (void *)NtQuerySystemInformationEx,
+                      6 > KI_SERVICE_REGISTER_ARGS ? 6 - KI_SERVICE_REGISTER_ARGS : 0);
+}
+
 /* the image name whose system calls are logged, from the kernel option trace-syscalls=<name>, or * for all. */
 char KiTraceSyscallImage[16];
 /* the service whose callers are walked too, from the kernel option trace-stack=<service name>. */
@@ -162,6 +170,116 @@ static BOOLEAN trace_filtered(const char *name)
             at++;
     }
     return TRUE;
+}
+
+/*
+ * what a traced call points to, which its arguments alone do not tell: for each service the arguments that are
+ * pointers, how many bytes to show, and whether before the call, after it, or both. a length of 0xFF is a counted
+ * string and 0xFE the root and the attributes of an OBJECT_ATTRIBUTES.
+ */
+static const struct {
+    const char *Name;
+    UCHAR Argument, Bytes, When;
+} g_trace_pointee[] = {
+    {"NtCreateFile", 0, 8, 2},          {"NtCreateFile", 2, 0xFE, 1},        {"NtCreateFile", 3, 16, 2},
+    {"NtOpenFile", 0, 8, 2},            {"NtOpenFile", 2, 0xFE, 1},          {"NtOpenFile", 3, 16, 2},
+    {"NtQueryAttributesFile", 0, 0xFE, 1}, {"NtQueryAttributesFile", 1, 40, 2},
+    {"NtOpenKey", 0, 8, 2},             {"NtOpenKey", 2, 0xFE, 1},
+    {"NtOpenKeyEx", 0, 8, 2},           {"NtOpenKeyEx", 2, 0xFE, 1},
+    {"NtQueryValueKey", 1, 0xFF, 1},    {"NtQueryValueKey", 5, 4, 2},        {"NtQueryValueKey", 3, 64, 2},
+    {"NtEnumerateKey", 5, 4, 2},        {"NtEnumerateKey", 3, 64, 2},
+    {"NtOpenMutant", 0, 8, 2},          {"NtOpenMutant", 2, 0xFE, 1},
+    {"NtCreateSection", 0, 8, 2},       {"NtCreateSection", 2, 0xFE, 1},     {"NtCreateSection", 3, 8, 1},
+    {"NtMapViewOfSection", 2, 8, 3},    {"NtMapViewOfSection", 5, 8, 1},     {"NtMapViewOfSection", 6, 8, 3},
+    {"NtAllocateVirtualMemory", 1, 8, 3}, {"NtAllocateVirtualMemory", 3, 8, 3},
+    {"NtProtectVirtualMemory", 1, 8, 3}, {"NtProtectVirtualMemory", 2, 8, 3}, {"NtProtectVirtualMemory", 4, 4, 2},
+    {"NtFreeVirtualMemory", 1, 8, 3},   {"NtFreeVirtualMemory", 2, 8, 3},
+    {"NtSetInformationThread", 2, 16, 1}, {"NtSetInformationProcess", 2, 16, 1},
+    {"NtOpenDirectoryObject", 2, 0xFE, 1}, {"NtQueryDirectoryObject", 1, 64, 2}, {"NtQueryDirectoryObject", 6, 4, 2},
+    {"NtQueryVirtualMemory", 3, 16, 3},
+    {"NtFsControlFile", 4, 16, 2},      {"NtFsControlFile", 6, 32, 1},       {"NtFsControlFile", 8, 64, 2},
+    {"NtDeviceIoControlFile", 4, 16, 2}, {"NtDeviceIoControlFile", 6, 32, 1}, {"NtDeviceIoControlFile", 8, 64, 2},
+    {"NtQueryVolumeInformationFile", 1, 16, 2}, {"NtQueryVolumeInformationFile", 2, 32, 2},
+    {"NtDuplicateObject", 3, 8, 2},     {"NtOpenProcessToken", 2, 8, 2},
+    {"NtSetContextThread", 1, 0x78, 1}, {"NtGetContextThread", 1, 0x78, 3},
+    {"NtQueryDefaultLocale", 1, 4, 2},
+    {"NtQuerySystemInformation", 1, 16, 1}, {"NtUnmapViewOfSection", 1, 0xFD, 1},
+    {"NtOpenSection", 2, 0xFE, 1},
+    {"NtOpenProcess", 3, 16, 1},        {"NtOpenThread", 3, 16, 1},          {"NtOpenProcess", 0, 8, 2},
+    {"NtUserFindWindowEx", 2, 0xFF, 1}, {"NtUserFindWindowEx", 3, 0xFF, 1},
+    {"NtQuerySecurityObject", 2, 0x70, 2}, {"NtQueryInformationProcess", 2, 0x40, 2},
+    {"NtQueryInformationToken", 2, 8, 2},
+    {"NtConvertBetweenAuxiliaryCounterAndPerformanceCounter", 1, 8, 3},
+    {"NtConvertBetweenAuxiliaryCounterAndPerformanceCounter", 2, 8, 3},
+    {"NtQuerySystemInformation", 1, 16, 2}, {"NtQuerySystemInformation", 3, 4, 2},
+};
+
+static void trace_pointees(const char *name, const ULONG64 *args, ULONG when)
+{
+    ULONG pid = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
+    ULONG tid = (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread;
+    for (ULONG i = 0; i < sizeof(g_trace_pointee) / sizeof(g_trace_pointee[0]); i++) {
+        if (!(g_trace_pointee[i].When & when) || strcmp(name, g_trace_pointee[i].Name))
+            continue;
+        ULONG index = g_trace_pointee[i].Argument, bytes = g_trace_pointee[i].Bytes;
+        ULONG64 at = args[index];
+        if (!at)
+            continue;
+        char text[260];
+        if (bytes == 0xFD) {
+            /* an address passed by value: only where it lies is told. */
+            if (KiDescribeUserAddress((ULONG_PTR)at, text, sizeof(text)))
+                KiLogPrintf("svc %u.%u   at %u %s", pid, tid, index, text);
+            continue;
+        }
+        if (bytes == 0xFE) {
+            ULONG64 attrs[4];
+            if (NT_SUCCESS(KiCopyFromUser(attrs, (PVOID)at, sizeof(attrs)))) {
+                KiLogPrintf("svc %u.%u   oa %u root %llx attributes %x", pid, tid, index, attrs[1], (ULONG)attrs[3]);
+                if (attrs[2]) {
+                    struct { USHORT Length, Maximum; ULONG Pad; ULONG64 Buffer; } us;
+                    WCHAR wide[100];
+                    if (NT_SUCCESS(KiCopyFromUser(&us, (PVOID)attrs[2], sizeof(us)))) {
+                        ULONG chars = us.Length / 2 < 99 ? us.Length / 2 : 99;
+                        if (chars && NT_SUCCESS(KiCopyFromUser(wide, (PVOID)us.Buffer, chars * 2))) {
+                            for (ULONG k = 0; k < chars; k++)
+                                text[k] = wide[k] < 0x80 && wide[k] >= 0x20 ? (char)wide[k] : '?';
+                            text[chars] = 0;
+                            KiLogPrintf("svc %u.%u   name %s", pid, tid, text);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        if (bytes == 0xFF) {
+            struct {
+                USHORT Length, Maximum;
+                ULONG Pad;
+                ULONG64 Buffer;
+            } string;
+            WCHAR wide[100];
+            if (!NT_SUCCESS(KiCopyFromUser(&string, (PVOID)at, sizeof(string))))
+                continue;
+            ULONG chars = string.Length / 2 < 99 ? string.Length / 2 : 99;
+            if (chars && !NT_SUCCESS(KiCopyFromUser(wide, (PVOID)string.Buffer, chars * 2)))
+                continue;
+            for (ULONG k = 0; k < chars; k++)
+                text[k] = wide[k] < 0x80 && wide[k] >= 0x20 ? (char)wide[k] : '?';
+            text[chars] = 0;
+            KiLogPrintf("svc %u.%u   string %u %s", pid, tid, index, text);
+            continue;
+        }
+        UCHAR data[0x78];
+        if (!NT_SUCCESS(KiCopyFromUser(data, (PVOID)at, bytes)))
+            continue;
+        for (ULONG k = 0; k < bytes; k++)
+            mime_format(text + k * 2, 3, "%02x", data[k]);
+        char where[96] = "";
+        if (bytes == 8 && !strstr(name, "File") && !strstr(name, "Create") && !strstr(name, "Open"))
+            KiDescribeUserAddress((ULONG_PTR) * (ULONG64 *)data, where, sizeof(where));
+        KiLogPrintf("svc %u.%u   %s %u %s %s", pid, tid, when == 1 ? "in" : "out", index, text, where);
+    }
 }
 
 /*
@@ -336,12 +454,19 @@ static void finish_service(PKTHREAD thread, PKTRAP_FRAME frame, ULONG table, ULO
         KeLowerIrql(PASSIVE_LEVEL);
     }
     KI_SERVICE_RESULT(frame) = result;
+#ifdef __x86_64__
+    thread->ContextSetInService = FALSE;
+    KiServiceExitVolatiles(frame);
+#else
     if (thread->ContextSetInService) {
         thread->ContextSetInService = FALSE;
         KiServiceExitVolatiles(frame);
     }
+#endif
     PETHREAD ethread = PsCurrentThread();
+    BOOLEAN raised = FALSE;
     if (ethread->PendingException) {
+        raised = TRUE;
         EXCEPTION_RECORD record = {};
         record.ExceptionCode = ethread->PendingException;
         record.ExceptionAddress = (PVOID)KI_TRAP_PC(frame);
@@ -354,9 +479,14 @@ static void finish_service(PKTHREAD thread, PKTRAP_FRAME frame, ULONG table, ULO
             PspTerminateProcess(PsCurrentProcess(), record.ExceptionCode);
         }
     }
-    /* a service that returns where it was called from goes through the instrumentation callback, as sysret does. */
+#ifdef __x86_64__
+    /* an exception raised for the service left the frame of its dispatcher, which is no return of the service. */
+    thread->ServiceExit = !raised;
+#else
+    /* a service that returns where it was called from goes through the instrumentation callback. */
     if (KI_TRAP_PC(frame) == entry_pc)
         thread->InstrumentReturn = TRUE;
+#endif
     KiExitToUserMode(frame);
 }
 
@@ -464,9 +594,30 @@ static ULONG fast_decline(PKTHREAD thread, PKTRAP_FRAME frame, PVOID objects[], 
  * the plain ones, or after it: an apc, the end of the thread, a context set meanwhile, the last reference to an
  * object. a thread that waited comes back on any processor, which may hold the lock from the thread before.
  */
+/* gdi32 left records in the batch of the teb, which a service of win32k runs first, see gdi/batch.c of win32k. */
+static BOOLEAN gdi_batch_pending(PKTHREAD thread)
+{
+    PTEB teb = thread->Teb;
+    return teb && *(volatile ULONG *)&teb->GdiBatchCount != 0;
+}
+
 ULONG KiFastSystemService(PKTRAP_FRAME frame)
 {
     ULONG number = KI_SERVICE_NUMBER(frame);
+    {
+        extern ULONG64 g_svc_ring[512];
+        extern ULONG64 g_svc_pc[512];
+        extern ULONG g_svc_n;
+        g_svc_pc[g_svc_n & 511] = KI_TRAP_PC(frame);
+        g_svc_ring[g_svc_n++ & 511] = ((ULONG64)number << 32) | (KI_TRAP_PC(frame) & 0xFFFFFFFF);
+    }
+#ifdef __x86_64__
+    /* the single step of a service that returns is raised the usual way, see KiServiceSingleStep. */
+    if (frame->Rflags & 0x100)
+        return 0;
+#endif
+    /* the callback a service returns through is the one of a process that had one as the service was entered. */
+    KiCurrentThread()->ServiceInstrumented = ((PEPROCESS)KiCurrentThread()->Process)->InstrumentationCallback != nullptr;
     if (number >= MIME_WIN32K_SERVICES_BASE) {
         /* nothing is done when win32k declines, and whatever is pending for the thread is left to the usual way. */
         PKTHREAD current = KiCurrentThread();
@@ -475,10 +626,14 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         if (!g_win32.FastService || KiTraceSyscallImage[0] || g_timeline || (KiOptions & KI_OPT_NO_FAST_SERVICE) ||
             pcr->Irql != PASSIVE_LEVEL || current->KernelApcPending || current->Terminating || current->UserApcPending ||
             pcr->Prcb.DpcPending || current->ContextSetInService || ((PETHREAD)current)->PendingException ||
-            !g_win32.FastService(number, KI_SERVICE_REGISTER_ARG(frame, 0), &answer))
+            gdi_batch_pending(current) || !g_win32.FastService(number, KI_SERVICE_REGISTER_ARG(frame, 0), &answer))
             return 0;
         KI_SERVICE_RESULT(frame) = answer;
-        KiInstrumentReturn(frame, ((PEPROCESS)current->Process)->InstrumentationCallback);
+#ifdef __x86_64__
+        KiServiceExitVolatiles(frame);
+#endif
+        if (current->ServiceInstrumented)
+            KiInstrumentServiceReturn(frame, ((PEPROCESS)current->Process)->InstrumentationCallback);
         pcr->Prcb.FastWin32Services++;
         return 1;
     }
@@ -514,6 +669,7 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         kind = FAST_PARK;
         break;
     case MIME_SVC_NtAlertThreadByThreadId:
+    case MIME_SVC_NtAlertThreadByThreadIdEx:
         kind = FAST_UNPARK;
         break;
     case MIME_SVC_NtTestAlert:
@@ -727,9 +883,13 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         outputs[0] = (FAST_OUTPUT){previous, (ULONG)old, sizeof(LONG)};
         output_count = 1;
     }
-    ULONG64 result = (ULONG64)(LONG64)status;
+    /* windows leaves the status in eax, the upper half of rax clear. */
+    ULONG64 result = (ULONG)status;
     /* a thread switched away from below shows its result to whoever reads its context. */
     KI_SERVICE_RESULT(frame) = result;
+#ifdef __x86_64__
+    KiServiceExitVolatiles(frame);
+#endif
 
     /* still set unless a kernel apc in the wait made it a service like any other, see KiWaitObjects. */
     if (thread->FastService) {
@@ -771,8 +931,8 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
                     held--;
                 if (!held) {
                     thread->FastService = FALSE;
-                    if (KI_TRAP_PC(frame) == entry_pc)
-                        KiInstrumentReturn(frame, ((PEPROCESS)thread->Process)->InstrumentationCallback);
+                    if (thread->ServiceInstrumented)
+                        KiInstrumentServiceReturn(frame, ((PEPROCESS)thread->Process)->InstrumentationCallback);
                     pcr->Prcb.FastServices[kind]++;
                     return 1;
                 }
@@ -789,14 +949,14 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         if (kind == FAST_QUERY) {
             /* the length is stored whatever became of the region. */
             if (written < sizeof(region) / sizeof(ULONG64)) {
-                result = (ULONG64)(LONG64)STATUS_ACCESS_VIOLATION;
+                result = (ULONG)STATUS_ACCESS_VIOLATION;
                 written = sizeof(region) / sizeof(ULONG64) - 1;
             }
             continue;
         }
         /* a packet whose values cannot be stored is lost, and the previous state of an object is not asked for again. */
         if (kind == FAST_REMOVE)
-            result = (ULONG64)(LONG64)STATUS_ACCESS_VIOLATION;
+            result = (ULONG)STATUS_ACCESS_VIOLATION;
         break;
     }
     finish_service(thread, frame, 0, number, result, entry_pc);
@@ -804,12 +964,17 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
 }
 #endif
 
+ULONG64 g_svc_ring[512];
+ULONG64 g_svc_pc[512];
+ULONG g_svc_n;
+
 void KiSystemService(PKTRAP_FRAME frame)
 {
     PKTHREAD thread = KiCurrentThread();
     thread->TrapFrame = frame;
     thread->PreviousMode = UserMode;
     ULONG64 entry_pc = KI_TRAP_PC(frame);
+    thread->ServiceInstrumented = ((PEPROCESS)thread->Process)->InstrumentationCallback != nullptr;
     KiEnableInterrupts();
 
     ULONG number = KI_SERVICE_NUMBER(frame);
@@ -833,8 +998,13 @@ void KiSystemService(PKTRAP_FRAME frame)
         if (!NT_SUCCESS(status))
             KiLogPrintf("cannot convert thread to a gui thread: %08x", status);
     }
+    if (table == 1 && !locked && thread->Win32Thread && g_win32.FlushUserBatch)
+        g_win32.FlushUserBatch();
     if (locked) {
-        result = (ULONG64)(LONG64)STATUS_INVALID_SYSTEM_SERVICE;
+        result = (ULONG)STATUS_INVALID_SYSTEM_SERVICE;
+    } else if (table == 0 && !strcmp(service_name(table, index), "?")) {
+        /* a number past the end of the table of windows. */
+        result = (ULONG)STATUS_INVALID_SYSTEM_SERVICE;
     } else if (!t || !t->Table || index >= t->Count || !t->Table[index].Routine) {
         if (table < 2 && !(g_reported[table][index / 8] & (1u << (index % 8)))) {
             g_reported[table][index / 8] |= (UCHAR)(1u << (index % 8));
@@ -843,7 +1013,15 @@ void KiSystemService(PKTRAP_FRAME frame)
             /* who calls it, for the first call. */
             KiTraceUserStack(KI_TRAP_PC(frame), KI_TRAP_SP(frame));
         }
-        result = table == 1 ? 0 : (ULONG64)(LONG64)STATUS_NOT_IMPLEMENTED;
+        if (table == 0 && KiTraceSyscallImage[0]) {
+            ULONG64 more[2] = {};
+            KiCopyFromUser(more, (PVOID)KI_SERVICE_STACK_ARGS(frame), sizeof(more));
+            KiLogPrintf("unimplemented %s(%llx, %llx, %llx, %llx, %llx, %llx)", service_name(table, index),
+                        (ULONG64)KI_SERVICE_REGISTER_ARG(frame, 0), (ULONG64)KI_SERVICE_REGISTER_ARG(frame, 1),
+                        (ULONG64)KI_SERVICE_REGISTER_ARG(frame, 2), (ULONG64)KI_SERVICE_REGISTER_ARG(frame, 3), more[0],
+                        more[1]);
+        }
+        result = table == 1 ? 0 : (ULONG)STATUS_NOT_IMPLEMENTED;
     } else {
         ULONG64 args[16];
         for (int i = 0; i < KI_SERVICE_REGISTER_ARGS; i++)
@@ -913,13 +1091,19 @@ void KiSystemService(PKTRAP_FRAME frame)
                         (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, service_name(table, index), args[0],
                         args[1], args[2], args[3], shown > 4 ? args[4] : 0, shown > 5 ? args[5] : 0,
                         shown > 6 ? args[6] : 0, caller);
+            if (shown > 7)
+                KiLogPrintf("svc %u.%u   more %llx %llx %llx %llx", (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
+                            (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, args[7], shown > 8 ? args[8] : 0,
+                            shown > 9 ? args[9] : 0, shown > 10 ? args[10] : 0);
+            trace_pointees(service_name(table, index), args, 1);
             /* the name a call on a file or a key is for, which the arguments only point to. */
             {
                 const char *name = service_name(table, index);
                 int object = !strcmp(name, "NtCreateFile") || !strcmp(name, "NtOpenFile") || !strcmp(name, "NtOpenKey") ||
                              !strcmp(name, "NtOpenKeyEx") || !strcmp(name, "NtCreateKey") ||
                              !strcmp(name, "NtCreateSection") || !strcmp(name, "NtCreateMutant") ||
-                             !strcmp(name, "NtOpenMutant") || !strcmp(name, "NtCreateEvent") || !strcmp(name, "NtOpenEvent");
+                             !strcmp(name, "NtOpenMutant") || !strcmp(name, "NtCreateEvent") || !strcmp(name, "NtOpenEvent") ||
+                             !strcmp(name, "NtOpenDirectoryObject");
                 int first = !strcmp(name, "NtQueryAttributesFile") || !strcmp(name, "NtQueryFullAttributesFile") ||
                             !strcmp(name, "NtDeleteFile");
                 if (object || first) {
@@ -949,12 +1133,13 @@ void KiSystemService(PKTRAP_FRAME frame)
                 KiTraceUserFrames(frame);
         }
         if (!copied)
-            result = (ULONG64)(LONG64)STATUS_ACCESS_VIOLATION;
+            result = (ULONG)STATUS_ACCESS_VIOLATION;
         else
             result = KiCallService(t->Table[index].Routine, args, stack);
         if (trace) {
             KiLogPrintf("svc %u.%u %s = %llx", (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
                         (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, service_name(table, index), result);
+            trace_pointees(service_name(table, index), args, 2);
             /* the message a queue call returned, as window, message, wparam and lparam. */
             if (table == 1 && (ULONG)result == 1 && !strncmp(service_name(table, index), "NtUser", 6) &&
                 (!strcmp(service_name(table, index) + 6, "PeekMessage") || !strcmp(service_name(table, index) + 6, "GetMessage"))) {
@@ -1021,7 +1206,7 @@ NTSTATUS KiCopyFromUser(void *dst, const void *user_src, SIZE_T length)
     KJUMP_BUFFER jb;
     if (KI_TRY_USER(jb)) {
         memcpy(dst, user_src, length);
-        KI_END_TRY_USER();
+        KI_END_TRY_USER(jb);
         return STATUS_SUCCESS;
     }
     return KiFaultResult();
@@ -1040,7 +1225,7 @@ NTSTATUS KiCopyToUser(void *user_dst, const void *src, SIZE_T length)
     KJUMP_BUFFER jb;
     if (KI_TRY_USER(jb)) {
         memcpy(user_dst, src, length);
-        KI_END_TRY_USER();
+        KI_END_TRY_USER(jb);
         return STATUS_SUCCESS;
     }
     return KiFaultResult();
