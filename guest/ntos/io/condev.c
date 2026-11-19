@@ -491,12 +491,13 @@ static NTSTATUS read_bytes(MIME_CONSOLE *c, ULONG room, PUCHAR out, PWCHAR initi
 /* ------------------------------------------------------------ the handles */
 
 /* the referenced console of a pseudo console file, or NULL. */
+/* the console of a pseudo console handle, or of the reference or connection a creator passes as ConsoleHandle. */
 MIME_CONSOLE *ConPtyFromFile(PFILE_OBJECT file)
 {
     if (file->DeviceObject != g_device)
         return nullptr;
     CON_HANDLE *h = file->FsContext2;
-    if (!h || h->Kind != CH_PTY)
+    if (!h || !h->Console || (h->Kind != CH_PTY && h->Kind != CH_REFERENCE && h->Kind != CH_CONNECT))
         return nullptr;
     ConReference(h->Console);
     return h->Console;
@@ -528,6 +529,137 @@ static BOOLEAN name_is(PUNICODE_STRING file, PCWSTR name)
     return RtlEqualUnicodeString(file, &n, TRUE);
 }
 
+/* the last component of a name, which is what a relative open names: \Server\Reference\Connect is a connection. */
+static BOOLEAN leaf_is(PUNICODE_STRING file, PCWSTR name)
+{
+    USHORT n = file->Length / sizeof(WCHAR), start = n;
+    while (start && file->Buffer[start - 1] != '\\')
+        start--;
+    UNICODE_STRING leaf = {(USHORT)((n - start) * sizeof(WCHAR)), (USHORT)((n - start) * sizeof(WCHAR)), file->Buffer + start};
+    UNICODE_STRING want;
+    RtlInitUnicodeString(&want, name);
+    return RtlEqualUnicodeString(&leaf, &want, TRUE);
+}
+
+/* the value of the extended attribute of that name in an open's buffer, or NULL. */
+static const UCHAR *ea_value(PIRP irp, const char *name, ULONG *length)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    const UCHAR *ea = irp->AssociatedIrp.SystemBuffer;
+    ULONG total = stack->Parameters.Create.EaLength, at = 0;
+    ULONG name_length = (ULONG)strlen(name);
+    while (ea && at + 8 <= total) {
+        ULONG next = *(const ULONG *)(ea + at);
+        ULONG nlen = ea[at + 5], vlen = *(const USHORT *)(ea + at + 6);
+        if (at + 8 + nlen + 1 + vlen > total)
+            break;
+        if (nlen == name_length && !memcmp(ea + at + 8, name, nlen)) {
+            *length = vlen;
+            return ea + at + 8 + nlen + 1;
+        }
+        if (!next)
+            break;
+        at += next;
+    }
+    return nullptr;
+}
+
+/*
+ * windows' client side of a console, as genuine kernelbase opens it: \Server for a console of its own, \Reference of a
+ * server or a connection, \Connect of a reference, which connects the process, and \Input and \Output of a connection.
+ * the console behind them is this driver's, so a server needs no host process to answer it.
+ */
+static NTSTATUS open_relative(CON_HANDLE *h, PIRP irp, PFILE_OBJECT file, CON_HANDLE *parent)
+{
+    PEPROCESS self = PsCurrentProcess();
+    MIME_CONSOLE *c = parent->Console;
+    if (!c)
+        return STATUS_INVALID_HANDLE;
+    if (leaf_is(&file->FileName, L"Reference")) {
+        if (parent->Kind != CH_SERVER && parent->Kind != CH_CONNECT && parent->Kind != CH_REFERENCE)
+            return STATUS_OBJECT_NAME_INVALID;
+        h->Kind = CH_REFERENCE;
+    } else if (leaf_is(&file->FileName, L"Connect")) {
+        ULONG length;
+        if (parent->Kind != CH_REFERENCE || !ea_value(irp, "server", &length))
+            return STATUS_INVALID_PARAMETER;
+        NTSTATUS status = ConsoleAttach(self, c);
+        if (status == STATUS_ACCESS_DENIED && self->Console == c)
+            status = STATUS_SUCCESS;
+        if (!NT_SUCCESS(status))
+            return status;
+        h->Kind = CH_CONNECT;
+        h->Process = self;
+        ObReferenceObject(self);
+    } else if (leaf_is(&file->FileName, L"Input") && parent->Kind == CH_CONNECT) {
+        h->Kind = CH_INPUT;
+        file->Flags |= FO_SKIP_SET_EVENT;
+        ConReference(c);
+        h->Console = c;
+        ExAcquireFastMutex(&g_con_lock);
+        InsertTailList(&c->InputHandles, &h->Links);
+        if (ConInputWaiting(c))
+            KeSetEvent(&file->Event, 0, FALSE);
+        ExReleaseFastMutex(&g_con_lock);
+        return STATUS_SUCCESS;
+    } else if (leaf_is(&file->FileName, L"Output") && parent->Kind == CH_CONNECT) {
+        h->Kind = CH_OUTPUT;
+        ConReference(c);
+        h->Console = c;
+        ExAcquireFastMutex(&g_con_lock);
+        h->Buffer = c->Term.Shown ? c->Term.Shown : c->Main;
+        h->Buffer->Refs++;
+        ExReleaseFastMutex(&g_con_lock);
+        return STATUS_SUCCESS;
+    } else {
+        return STATUS_OBJECT_NAME_NOT_FOUND;
+    }
+    ConReference(c);
+    h->Console = c;
+    return STATUS_SUCCESS;
+}
+
+/*
+ * \Server: the console the kernel gave the process when it started, which a console program allocates at once, or the
+ * one AllocConsole gets now.
+ */
+static NTSTATUS open_server(CON_HANDLE *h)
+{
+    PEPROCESS self = PsCurrentProcess();
+    MIME_CONSOLE *c = ConProcessConsole(self);
+    if (!c) {
+        NTSTATUS status = ConAllocFor(self, MIME_CONDRV_ALLOC_RUN_TERMINAL | MIME_CONDRV_ALLOC_WINDOW);
+        if (!NT_SUCCESS(status))
+            return status;
+        c = ConProcessConsole(self);
+        if (!c)
+            return STATUS_INVALID_HANDLE;
+    }
+    h->Kind = CH_SERVER;
+    h->Console = c;
+    return STATUS_SUCCESS;
+}
+
+/* \Device\ConDrv\Connect without a reference: AttachConsole names the process in an "attach" attribute. */
+static NTSTATUS open_attach(CON_HANDLE *h, PIRP irp)
+{
+    PEPROCESS self = PsCurrentProcess();
+    ULONG length;
+    const UCHAR *value = ea_value(irp, "attach", &length);
+    if (!value || length < sizeof(ULONG))
+        return ea_value(irp, "broker", &length) ? STATUS_NOT_SUPPORTED : STATUS_INVALID_PARAMETER;
+    NTSTATUS status = ConAttachProcess(self, *(const ULONG *)value);
+    if (!NT_SUCCESS(status))
+        return status;
+    h->Console = ConProcessConsole(self);
+    if (!h->Console)
+        return STATUS_INVALID_HANDLE;
+    h->Kind = CH_CONNECT;
+    h->Process = self;
+    ObReferenceObject(self);
+    return STATUS_SUCCESS;
+}
+
 static NTSTATUS NTAPI con_create(PDEVICE_OBJECT device, PIRP irp)
 {
     PFILE_OBJECT file = IoGetCurrentIrpStackLocation(irp)->FileObject;
@@ -549,10 +681,19 @@ static NTSTATUS NTAPI con_create(PDEVICE_OBJECT device, PIRP irp)
     CON_HANDLE *h = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*h), KI_TAG('C', 'o', 'n', 'h'));
     if (!h)
         return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
+    memset(h, 0, sizeof(*h));
     InitializeListHead(&h->Links);
     h->File = file;
     NTSTATUS status = STATUS_SUCCESS;
-    if (!file->FileName.Length) {
+    PFILE_OBJECT related = file->RelatedFileObject;
+    CON_HANDLE *parent = related && related->DeviceObject == g_device ? related->FsContext2 : nullptr;
+    if (parent) {
+        status = open_relative(h, irp, file, parent);
+    } else if (name_is(&file->FileName, L"Server")) {
+        status = open_server(h);
+    } else if (name_is(&file->FileName, L"Connect")) {
+        status = open_attach(h, irp);
+    } else if (!file->FileName.Length) {
         h->Kind = CH_CONTROL;
     } else if (name_is(&file->FileName, MIME_CONDRV_CURRENT_IN) || name_is(&file->FileName, L"Input")) {
         MIME_CONSOLE *c = ConProcessConsole(PsCurrentProcess());
@@ -616,10 +757,20 @@ static NTSTATUS NTAPI con_create(PDEVICE_OBJECT device, PIRP irp)
         status = STATUS_OBJECT_NAME_NOT_FOUND;
     }
     if (!NT_SUCCESS(status)) {
+        if (h->Console)
+            ConRelease(h->Console);
+        if (h->Process)
+            ObDereferenceObject(h->Process);
         ExFreePool(h);
         return complete(irp, status, 0);
     }
     file->FsContext2 = h;
+    /* windows names every handle of the device by the device alone, and what a handle is lives in its context. */
+    if (file->FileName.Buffer) {
+        ExFreePool(file->FileName.Buffer);
+        file->FileName.Buffer = nullptr;
+        file->FileName.Length = file->FileName.MaximumLength = 0;
+    }
     return complete(irp, STATUS_SUCCESS, 0);
 }
 
@@ -654,8 +805,13 @@ static NTSTATUS NTAPI con_close(PDEVICE_OBJECT device, PIRP irp)
             ConClose(c);
         else if (h->Kind == CH_HOST)
             ConHostDetached(c);
+        /* closing its connection is how a process leaves its console, FreeConsole does just that. */
+        else if (h->Kind == CH_CONNECT && h->Process && h->Process->Console == c)
+            ConsoleDetach(h->Process);
         ConRelease(c);
     }
+    if (h->Process)
+        ObDereferenceObject(h->Process);
     ExFreePool(h);
     return complete(irp, STATUS_SUCCESS, 0);
 }
@@ -973,42 +1129,38 @@ static NTSTATUS host_control(MIME_CONSOLE *c, PFILE_OBJECT file, ULONG code, PUC
     return STATUS_INVALID_DEVICE_REQUEST;
 }
 
-static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
+/* a device control of mime/condrv.h on a handle of the console device, with buf holding the input and the output. */
+NTSTATUS ConControl(PFILE_OBJECT file, ULONG code, PUCHAR buf, ULONG in_len, ULONG out_len, ULONG_PTR *out_information)
 {
-    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
-    ULONG code = stack->Parameters.DeviceIoControl.IoControlCode;
-    ULONG in_len = stack->Parameters.DeviceIoControl.InputBufferLength;
-    ULONG out_len = stack->Parameters.DeviceIoControl.OutputBufferLength;
-    PUCHAR buf = irp->AssociatedIrp.SystemBuffer;
     PEPROCESS self = PsCurrentProcess();
-    PFILE_OBJECT file = stack->FileObject;
-    CON_HANDLE *h = device == g_device ? file->FsContext2 : nullptr;
+    CON_HANDLE *h = file->DeviceObject == g_device ? file->FsContext2 : nullptr;
     ULONG_PTR information = 0;
     NTSTATUS status = STATUS_SUCCESS;
+    *out_information = 0;
     if (!h)
-        return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+        return STATUS_INVALID_DEVICE_REQUEST;
 
     /* requests that work without a console. */
     switch (code) {
     case IOCTL_CONDRV_REGISTER:
         if (in_len < sizeof(MIME_CONDRV_REGISTER))
-            return complete(irp, STATUS_INVALID_PARAMETER, 0);
+            return STATUS_INVALID_PARAMETER;
         self->ConsoleCtrlRoutine = (PVOID)(ULONG_PTR)((MIME_CONDRV_REGISTER *)buf)->CtrlRoutine;
-        return complete(irp, STATUS_SUCCESS, 0);
+        return STATUS_SUCCESS;
     case IOCTL_CONDRV_ATTACH:
         if (in_len < sizeof(ULONG))
-            return complete(irp, STATUS_INVALID_PARAMETER, 0);
-        return complete(irp, ConAttachProcess(self, *(PULONG)buf), 0);
+            return STATUS_INVALID_PARAMETER;
+        return ConAttachProcess(self, *(PULONG)buf);
     case IOCTL_CONDRV_FREE:
         ConsoleDetach(self);
-        return complete(irp, STATUS_SUCCESS, 0);
+        return STATUS_SUCCESS;
     case IOCTL_CONDRV_ALLOC:
         if (in_len < sizeof(MIME_CONDRV_ALLOC))
-            return complete(irp, STATUS_INVALID_PARAMETER, 0);
-        return complete(irp, ConAllocFor(self, ((MIME_CONDRV_ALLOC *)buf)->Flags), 0);
+            return STATUS_INVALID_PARAMETER;
+        return ConAllocFor(self, ((MIME_CONDRV_ALLOC *)buf)->Flags);
     case IOCTL_CONDRV_HOST_ATTACH: {
         if (h->Kind != CH_HOST || h->Console || in_len < sizeof(MIME_CONDRV_HOST_ATTACH) || out_len < sizeof(MIME_CONDRV_HOST_STATE))
-            return complete(irp, STATUS_INVALID_PARAMETER, 0);
+            return STATUS_INVALID_PARAMETER;
         MIME_CONDRV_HOST_ATTACH attach = *(MIME_CONDRV_HOST_ATTACH *)buf;
         ExAcquireFastMutex(&g_con_lock);
         MIME_CONSOLE *target = ConFindWindow(attach.Console);
@@ -1016,13 +1168,13 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
             ExReleaseFastMutex(&g_con_lock);
             if (target)
                 ConRelease(target);
-            return complete(irp, STATUS_ACCESS_DENIED, 0);
+            return STATUS_ACCESS_DENIED;
         }
         PKEVENT event = nullptr;
         if (!NT_SUCCESS(ObReferenceHandle((HANDLE)(ULONG_PTR)attach.Event, ExEventType, UserMode, (PVOID *)&event, nullptr))) {
             ExReleaseFastMutex(&g_con_lock);
             ConRelease(target);
-            return complete(irp, STATUS_INVALID_HANDLE, 0);
+            return STATUS_INVALID_HANDLE;
         }
         h->Console = target;
         target->HostHandle = h;
@@ -1032,7 +1184,8 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
         ConHostFillState(target, (MIME_CONDRV_HOST_STATE *)buf, TRUE);
         KeClearEvent(event);
         ExReleaseFastMutex(&g_con_lock);
-        return complete(irp, STATUS_SUCCESS, sizeof(MIME_CONDRV_HOST_STATE));
+        *out_information = sizeof(MIME_CONDRV_HOST_STATE);
+        return STATUS_SUCCESS;
     }
     }
 
@@ -1061,10 +1214,11 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
         }
         if (owned)
             ConRelease(c);
-        return complete(irp, status, information);
+        *out_information = information;
+        return status;
     }
     if (!c)
-        return complete(irp, STATUS_INVALID_HANDLE, 0);
+        return STATUS_INVALID_HANDLE;
 
     if (code == IOCTL_CONDRV_OUT_INFO || code == IOCTL_CONDRV_OUT_FONT)
         ConWaitForHost(c);
@@ -1788,6 +1942,20 @@ static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
     }
     if (owned)
         ConRelease(c);
+    *out_information = information;
+    return status;
+}
+
+static NTSTATUS NTAPI con_control(PDEVICE_OBJECT device, PIRP irp)
+{
+    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
+    ULONG code = stack->Parameters.DeviceIoControl.IoControlCode;
+    if (device == g_device && ConIsDriverControl(code))
+        return ConDriverControl(irp);
+    ULONG_PTR information;
+    NTSTATUS status = ConControl(stack->FileObject, code, irp->AssociatedIrp.SystemBuffer,
+                                 stack->Parameters.DeviceIoControl.InputBufferLength,
+                                 stack->Parameters.DeviceIoControl.OutputBufferLength, &information);
     return complete(irp, status, information);
 }
 
@@ -2010,11 +2178,76 @@ static NTSTATUS NTAPI ConDrvEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registr
     driver->MajorFunction[IRP_MJ_SET_INFORMATION] = con_set;
     driver->MajorFunction[IRP_MJ_FILE_SYSTEM_CONTROL] = con_fs_control;
     UNICODE_STRING name = RTL_CONSTANT_STRING(MIME_CONDRV_DEVICE);
-    NTSTATUS status = IoCreateDevice(driver, 0, &name, 0x50 /* FILE_DEVICE_CONSOLE */, 0, FALSE, &g_device);
+    NTSTATUS status = IoCreateDevice(driver, 0, &name, 0x50 /* FILE_DEVICE_CONSOLE */,
+                                     0x20000 /* FILE_DEVICE_ALLOW_APPCONTAINER_TRAVERSAL, as windows has it */, FALSE, &g_device);
     UNICODE_STRING stream = RTL_CONSTANT_STRING(MIME_CONDRV_STREAM_DEVICE);
     if (NT_SUCCESS(status))
         status = IoCreateDevice(driver, 0, &stream, FILE_DEVICE_NAMED_PIPE, 0, FALSE, &g_stream_device);
     return status;
+}
+
+/*
+ * a console program that shares its creator's console finds a handle to \Reference of it as ConsoleHandle, which windows
+ * duplicates into the child before it runs, and connects through it. the name of every handle of the device is the device.
+ */
+NTSTATUS ConsoleCreateReference(PEPROCESS process, PHANDLE handle)
+{
+    MIME_CONSOLE *c = ConProcessConsole(process);
+    if (!c)
+        return STATUS_INVALID_HANDLE;
+    UNICODE_STRING name = RTL_CONSTANT_STRING(MIME_CONDRV_DEVICE);
+    PFILE_OBJECT file;
+    NTSTATUS status = IopOpenFileObject(&name, 0x12019F, 0, &file);
+    if (!NT_SUCCESS(status)) {
+        ConRelease(c);
+        return status;
+    }
+    CON_HANDLE *h = file->FsContext2;
+    h->Kind = CH_REFERENCE;
+    h->Console = c;
+    /* the handle takes the reference of the open. */
+    status = ObCreateHandle(process, file, 0x12019F, 0, handle);
+    if (!NT_SUCCESS(status))
+        ObDereferenceObject(file);
+    return status;
+}
+
+/*
+ * the streams of a run that went to a pipe or a file are pipe ends of \Device\ConDrvStream, as a redirected handle is
+ * on windows. a stream the terminal shows is left empty, for kernelbase to fill with a handle of the console.
+ */
+NTSTATUS ConsoleCreateStreamHandles(PEPROCESS process, HANDLE handles[3])
+{
+    static const PCWSTR names[] = {MIME_CONDRV_STREAM_DEVICE L"\\Input", MIME_CONDRV_STREAM_DEVICE L"\\Output",
+                                   MIME_CONDRV_STREAM_DEVICE L"\\Error"};
+    static const ULONG tty[] = {MIME_CONDRV_TTY_INPUT, MIME_CONDRV_TTY_OUTPUT, MIME_CONDRV_TTY_ERROR};
+    static const ACCESS_MASK access[] = {FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_GENERIC_WRITE};
+    handles[0] = handles[1] = handles[2] = nullptr;
+    MIME_CONSOLE *c = ConProcessConsole(process);
+    if (!c)
+        return STATUS_SUCCESS;
+    ULONG flags = c->Flags;
+    BOOLEAN run = c->Backend == CON_BACKEND_RUN;
+    ConRelease(c);
+    if (!run)
+        return STATUS_SUCCESS;
+    for (int i = 0; i < 3; i++) {
+        if (flags & tty[i])
+            continue;
+        UNICODE_STRING name;
+        RtlInitUnicodeString(&name, names[i]);
+        PFILE_OBJECT file;
+        ACCESS_MASK want = access[i] | FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES;
+        NTSTATUS status = IopOpenFileObject(&name, want, 0, &file);
+        if (NT_SUCCESS(status)) {
+            status = ObCreateHandle(process, file, want, OBJ_INHERIT, &handles[i]);
+            if (!NT_SUCCESS(status))
+                ObDereferenceObject(file);
+        }
+        if (!NT_SUCCESS(status))
+            return status;
+    }
+    return STATUS_SUCCESS;
 }
 
 void IopInitializeConsoleDevice(void)

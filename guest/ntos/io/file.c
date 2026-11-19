@@ -98,6 +98,9 @@ NTSTATUS NTAPI IoCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     thread->CreateQos = 0;
     KiFreeCapturedString(&name);
     if (!NT_SUCCESS(status)) {
+        /* Windows leaves the status block of a program alone when the open fails with an error. */
+        if (mode == UserMode && NT_ERROR(status))
+            return status;
         local.Status = status;
         store_iosb(iosb, &local);
         return status;
@@ -227,6 +230,7 @@ static NTSTATUS rw_file(BOOLEAN write, HANDLE handle, HANDLE event, PVOID apc_ro
                                          write ? "NtWriteFile" : "NtReadFile");
     if (!NT_SUCCESS(status))
         return status;
+    IopTakeWow64Iosb(file, &apc_routine, &iosb);
     /* scatter and gather i/o is for files with no buffering that do not serve one request at a time. */
     if (pages && ((file->Flags & FO_SYNCHRONOUS_IO) || !(file->Flags & FO_NO_INTERMEDIATE_BUFFERING))) {
         ObDereferenceObject(file);
@@ -1036,6 +1040,7 @@ NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTIN
     PVOID routine = (PVOID)apc;
     if (KeGetPreviousMode() == UserMode)
         IopTakeIosb32(&routine, &iosb);
+    IopTakeWow64Iosb(file, &routine, &iosb);
     /* sockets and game controllers read the caller's buffers themselves and may stay pending. */
     if (IopIsAfd(file))
         status = AfdDeviceControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
@@ -1055,17 +1060,38 @@ NTSTATUS NTAPI NtFsControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc,
                                ULONG out_len)
 {
     PFILE_OBJECT file;
+    if ((code & 0xFFFFF) == 0x900C0) {
+        PKTRAP_FRAME tf = KiCurrentThread()->TrapFrame;
+        KPCR* pcr = KeGetPcr();
+        ULONG64 rbp = tf ? tf->Rbp : 0;
+        ULONG64 stk[40] = {0};
+        ULONG64 outb = (ULONG64)output;
+        KiLogPrintf("fsctl code %x rbp %llx tf %p", code, rbp, tf);
+        if (rbp && KiCopyFromUser(stk, (PVOID)(rbp + 0x10c0), sizeof(stk)) == 0) {
+            KiLogPrintf("objid rbp %llx out %llx +10c0: %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx",
+                        rbp, outb, stk[0], stk[1], stk[2], stk[3], stk[4], stk[5], stk[6], stk[7], stk[8], stk[9], stk[10], stk[11], stk[12], stk[13], stk[14], stk[15], stk[16], stk[17], stk[18], stk[19], stk[20], stk[21], stk[22], stk[23], stk[24], stk[25], stk[26], stk[27], stk[28], stk[29], stk[30], stk[31], stk[32], stk[33], stk[34], stk[35], stk[36], stk[37], stk[38], stk[39]);
+        }
+    }
     NTSTATUS status = reference_file(handle, control_rights(code), 0, &file);
     if (!NT_SUCCESS(status))
         return status;
     PVOID routine = (PVOID)apc;
     if (KeGetPreviousMode() == UserMode)
         IopTakeIosb32(&routine, &iosb);
+    IopTakeWow64Iosb(file, &routine, &iosb);
     if (IopIsNamedPipe(file))
         status = NpfsFsControl(file, event, routine, apc_context, iosb, code, input, in_len, output, out_len);
     else
         status = buffered_control(file, IRP_MJ_FILE_SYSTEM_CONTROL, event, apc_context, iosb, code, input, in_len,
                                   output, out_len);
+    if ((code & 0xFFFFF) == 0x900C0 && output) {
+        PUCHAR ob = (PUCHAR)output;
+        KiLogPrintf("objid-after %llx: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x | %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x | %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x | %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+                    (ULONG64)ob, ob[0],ob[1],ob[2],ob[3],ob[4],ob[5],ob[6],ob[7],ob[8],ob[9],ob[10],ob[11],ob[12],ob[13],ob[14],ob[15],
+                    ob[16],ob[17],ob[18],ob[19],ob[20],ob[21],ob[22],ob[23],ob[24],ob[25],ob[26],ob[27],ob[28],ob[29],ob[30],ob[31],
+                    ob[32],ob[33],ob[34],ob[35],ob[36],ob[37],ob[38],ob[39],ob[40],ob[41],ob[42],ob[43],ob[44],ob[45],ob[46],ob[47],
+                    ob[48],ob[49],ob[50],ob[51],ob[52],ob[53],ob[54],ob[55],ob[56],ob[57],ob[58],ob[59],ob[60],ob[61],ob[62],ob[63]);
+    }
     ObDereferenceObject(file);
     return status;
 }
@@ -1121,5 +1147,73 @@ NTSTATUS NTAPI NtCancelIoFileEx(HANDLE handle, PIO_STATUS_BLOCK request, PIO_STA
     ObDereferenceObject(file);
     IO_STATUS_BLOCK io = {{status}, 0};
     store_iosb(iosb, &io);
+    return status;
+}
+
+#define COPY_CHUNK_BUFFER (64 * 1024)
+
+/*
+ * the copy of a range of one file into another that kernelbase's CopyFile makes since windows 11 24h2: the bytes from
+ * the source offset to the destination offset, as reads and writes of the two files, done before it returns. a source
+ * that ends before the range answers what it had, and a range past its end the end of file.
+ */
+NTSTATUS NTAPI NtCopyFileChunk(HANDLE source, HANDLE dest, HANDLE event, PIO_STATUS_BLOCK iosb, ULONG length,
+                               PLARGE_INTEGER source_offset, PLARGE_INTEGER dest_offset, PULONG source_key,
+                               PULONG dest_key, ULONG flags)
+{
+    KPROCESSOR_MODE mode = KeGetPreviousMode();
+    if (flags || !source_offset || !dest_offset)
+        return STATUS_INVALID_PARAMETER;
+    LARGE_INTEGER from, to;
+    NTSTATUS status = mode == UserMode ? KiCopyFromUser(&from, source_offset, sizeof(from))
+                                       : (from = *source_offset, STATUS_SUCCESS);
+    if (NT_SUCCESS(status))
+        status = mode == UserMode ? KiCopyFromUser(&to, dest_offset, sizeof(to)) : (to = *dest_offset, STATUS_SUCCESS);
+    if (!NT_SUCCESS(status))
+        return status;
+    if (from.QuadPart < 0 || to.QuadPart < 0)
+        return STATUS_INVALID_PARAMETER;
+    PFILE_OBJECT in, out;
+    status = ObReferenceHandleFor(source, FILE_READ_DATA, IoFileObjectTypeObject, mode, &in);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = ObReferenceHandleFor(dest, FILE_WRITE_DATA, IoFileObjectTypeObject, mode, &out);
+    if (!NT_SUCCESS(status)) {
+        ObDereferenceObject(in);
+        return status;
+    }
+    PUCHAR buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, COPY_CHUNK_BUFFER, KI_TAG('I', 'o', 'C', 'c'));
+    ULONG done = 0;
+    if (!buffer)
+        status = STATUS_INSUFFICIENT_RESOURCES;
+    while (NT_SUCCESS(status) && done < length) {
+        ULONG want = length - done < COPY_CHUNK_BUFFER ? length - done : COPY_CHUNK_BUFFER, got = 0, put = 0;
+        status = IoReadFileObject(in, buffer, want, (ULONG64)from.QuadPart + done, &got);
+        if (status == STATUS_END_OF_FILE) {
+            status = done ? STATUS_SUCCESS : STATUS_END_OF_FILE;
+            break;
+        }
+        if (!NT_SUCCESS(status) || !got)
+            break;
+        status = IoWriteFileObject(out, buffer, got, (ULONG64)to.QuadPart + done, &put);
+        done += put;
+        if (NT_SUCCESS(status) && put < got)
+            status = STATUS_DISK_FULL;
+        if (got < want)
+            break;
+    }
+    if (buffer)
+        ExFreePool(buffer);
+    ObDereferenceObject(out);
+    ObDereferenceObject(in);
+    IO_STATUS_BLOCK io = {.Status = status, .Information = done};
+    store_iosb(iosb, &io);
+    if (event) {
+        PKEVENT ev;
+        if (NT_SUCCESS(ObReferenceHandleFor(event, EVENT_MODIFY_STATE, ExEventType, mode, &ev))) {
+            KeSetEvent(ev, 0, FALSE);
+            ObDereferenceObject(ev);
+        }
+    }
     return status;
 }

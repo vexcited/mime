@@ -35,6 +35,16 @@ NTSTATUS NTAPI IopInvalidDeviceRequest(PDEVICE_OBJECT device, PIRP irp)
     return STATUS_INVALID_DEVICE_REQUEST;
 }
 
+/* the drivers built into the kernel, in the order they started, which the module list names an image for. */
+static PDRIVER_OBJECT g_builtin_drivers[96];
+static LONG g_builtin_driver_count;
+
+PDRIVER_OBJECT IoBuiltinDriver(ULONG index)
+{
+    return index < (ULONG)g_builtin_driver_count && index < RTL_NUMBER_OF(g_builtin_drivers) ? g_builtin_drivers[index]
+                                                                                             : nullptr;
+}
+
 NTSTATUS IoCreateDriver(PCWSTR name, PDRIVER_INITIALIZE init, PDRIVER_OBJECT *out)
 {
     PDRIVER_OBJECT driver;
@@ -50,6 +60,17 @@ NTSTATUS IoCreateDriver(PCWSTR name, PDRIVER_INITIALIZE init, PDRIVER_OBJECT *ou
     driver->DriverInit = init;
     for (int i = 0; i <= IRP_MJ_MAXIMUM_FUNCTION; i++)
         driver->MajorFunction[i] = IopInvalidDeviceRequest;
+    /* a driver without a name owns devices and is neither in \Driver nor among the built in ones. */
+    if (!name) {
+        status = init(driver, nullptr);
+        if (!NT_SUCCESS(status)) {
+            ObDereferenceObject(driver);
+            return status;
+        }
+        if (out)
+            *out = driver;
+        return STATUS_SUCCESS;
+    }
     UNICODE_STRING n;
     RtlInitUnicodeString(&n, name);
     driver->DriverName.Buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, n.Length + sizeof(WCHAR), KI_TAG('I', 'o', 'D', 'n'));
@@ -68,6 +89,9 @@ NTSTATUS IoCreateDriver(PCWSTR name, PDRIVER_INITIALIZE init, PDRIVER_OBJECT *ou
         ObDereferenceObject(driver);
         return status;
     }
+    LONG slot = __atomic_fetch_add(&g_builtin_driver_count, 1, __ATOMIC_SEQ_CST);
+    if (slot < (LONG)RTL_NUMBER_OF(g_builtin_drivers))
+        g_builtin_drivers[slot] = driver;
     if (out)
         *out = driver;
     else
@@ -489,6 +513,8 @@ static NTSTATUS parse_device(PVOID object, PVOID type, ULONG attributes, PUNICOD
     file->Size = sizeof(FILE_OBJECT);
     file->DeviceObject = device;
     file->RelatedFileObject = op->RelatedFile;
+    if (op->RelatedFile)
+        ObReferenceObject(op->RelatedFile);
     KeInitializeEvent(&file->Lock, SynchronizationEvent, FALSE);
     KeInitializeEvent(&file->Event, NotificationEvent, FALSE);
     if (op->Options & (FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT))
@@ -572,6 +598,8 @@ static void file_delete(PVOID object)
     PFILE_OBJECT file = object;
     if (file->DeviceObject && (file->Flags & FO_HANDLE_CREATED))
         IopSynchronousRequest(file, IRP_MJ_CLOSE, 0, nullptr, 0, nullptr, nullptr);
+    if (file->RelatedFileObject)
+        ObDereferenceObject(file->RelatedFileObject);
     if (file->FileName.Buffer)
         ExFreePool(file->FileName.Buffer);
     IopReleaseCompletion(file);
@@ -674,7 +702,10 @@ static NTSTATUS create_file(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
             buf[n] = 0;
             UNICODE_STRING remaining = {(USHORT)(n * 2), (USHORT)(n * 2 + 2), buf};
             PVOID found;
+            /* the driver also gets the related file, as on windows, which the console driver opens relative to. */
+            op.RelatedFile = rel;
             NTSTATUS st = parse_device(rel->DeviceObject, nullptr, attributes->Attributes, &remaining, &remaining, &op, &found);
+            op.RelatedFile = nullptr;
             ExFreePool(buf);
             if (st == STATUS_REPARSE)
                 st = follow_reparse(&remaining, attributes->Attributes, mode, &op, &found);
@@ -841,9 +872,11 @@ void IoInitialize(void)
     IoFileObjectTypeObject = ObCreateObjectType(L"File", &init);
     IopInitializeCompletion();
     IopInitializeWaitPackets();
+    ExInitializeWorkerFactory();
     IopInitializeNull();
     IopInitializeNamedPipes();
     IopInitializeConsole();
+    IopInitializeKsec();
     IopInitializeAfd();
     IopInitializeHttp();
     IopInitializeRedirector();
@@ -858,4 +891,5 @@ void IoInitialize(void)
     ObCreateSymbolicLink(L"\\GLOBAL??\\PhysicalDrive0", L"\\Device\\Harddisk0");
     ObCreateSymbolicLink(L"\\GLOBAL??\\SystemRoot", L"\\Device\\HarddiskVolume1\\Windows");
     IopInitializeDrives();
+    IopInitializeMountManager();
 }

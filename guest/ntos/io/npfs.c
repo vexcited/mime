@@ -1084,7 +1084,11 @@ NTSTATUS NTAPI NtCreateNamedPipeFile(PHANDLE handle, ACCESS_MASK access, POBJECT
 {
     if (disposition != FILE_CREATE && disposition != FILE_OPEN && disposition != FILE_OPEN_IF)
         return STATUS_INVALID_PARAMETER;
-    if (type > FILE_PIPE_MESSAGE_TYPE || read_mode > FILE_PIPE_MESSAGE_MODE ||
+    /* the type carries FILE_PIPE_REJECT_REMOTE_CLIENTS beside the kind of pipe: no client here is remote. */
+    if (type & ~(FILE_PIPE_MESSAGE_TYPE | 2u))
+        return STATUS_INVALID_PARAMETER;
+    type &= FILE_PIPE_MESSAGE_TYPE;
+    if (read_mode > FILE_PIPE_MESSAGE_MODE ||
         (read_mode == FILE_PIPE_MESSAGE_MODE && type == FILE_PIPE_BYTE_STREAM_TYPE))
         return STATUS_INVALID_PARAMETER;
     NP_CREATE c = {type, read_mode, completion_mode, max_instances == 0xFFFFFFFF ? 0xFFFFFFFF : max_instances, in_quota,

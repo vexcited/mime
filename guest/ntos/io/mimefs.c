@@ -44,7 +44,7 @@ static NTSTATUS volume_size(MIMEFS_VOLUME *vol, ULONG64 host, MimeFsVolumeInfo *
 
 typedef struct MIMEFS_FCB {
     const MimeRomEntry *Rom; /* set for system files served from the rom. */
-    ULONG64 Genuine;         /* host handle of microsoft's copy of a rom file, 0 when none is ready, see host/genuine.c. */
+    ULONG64 Genuine;         /* host handle of microsoft's copy of a rom file of the manifest, 0 until it is opened, see host/genuine.c. */
     ULONG64 GenuineSize;     /* its size, which reads and data sections of the rom file show instead of the rom's. */
     MIMEFS_CACHE *Cache;     /* read only opens of host files. */
     ULONG Volume;
@@ -324,7 +324,7 @@ static BOOLEAN access_time_disabled(void)
 static void rom_info(const MimeRomEntry *rom, MimeFsInfo *info)
 {
     memset(info, 0, sizeof(*info));
-    /* a file microsoft's copy stands in for has that copy's size in reads and listings. */
+    /* a file of the manifest is microsoft's copy and has its size: the rom has no bytes for it. */
     info->size = rom->genuine ? rom->genuine_size : rom->size;
     info->allocation_size = (info->size + PAGE_SIZE - 1) & ~(ULONG64)(PAGE_SIZE - 1);
     info->creation_time = info->access_time = info->write_time = info->change_time = HalRomFiletime();
@@ -408,9 +408,9 @@ const MimeRomEntry *IoGetRomFile(PFILE_OBJECT file)
 }
 
 /*
- * the host handle of microsoft's copy of a rom file, opened on the first read or data section that needs it, 0 for a
- * file the manifest does not list or when the host cannot open it. one open per file object at most: an open, a stat or an image load never asks for it. GenuineSize is
- * published before the handle, so a reader that sees the handle sees the size.
+ * the host handle of microsoft's copy of a rom file, opened on the first read or section that needs it, 0 for a file
+ * the manifest does not list or when the host cannot open it. one open per file object at most: an open or a stat
+ * never asks for it. GenuineSize is published before the handle, so a reader that sees the handle sees the size.
  */
 static ULONG64 ensure_genuine(MIMEFS_FCB *fcb)
 {
@@ -477,7 +477,7 @@ BOOLEAN IoGetFileWindowEx(PFILE_OBJECT file, BOOLEAN writable, ULONG64 minimum_s
     if (fcb->Rom) {
         if (writable)
             return FALSE;
-        /* a data section of a rom file microsoft's copy stands in for maps that copy, never mime's own bytes. */
+        /* a data section of a file of the manifest maps microsoft's copy. */
         if (fcb->Rom->genuine) {
             ULONG64 genuine = ensure_genuine(fcb);
             MIMEFS_WINDOW_REF *r =
@@ -554,12 +554,15 @@ BOOLEAN IoGetFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *re
     return IoGetFileWindowEx(file, FALSE, 0, pa, size, ref);
 }
 
+/*
+ * the image of a file of the manifest maps microsoft's copy, the only bytes there are for it: the rom has none. when
+ * the host cannot map it, the section reads the file instead, which is that copy too.
+ */
 BOOLEAN IoGetImageFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOID *ref)
 {
     *ref = nullptr;
-    /* an image maps the code mime runs, while reads and data sections see the genuine copy of the file. */
     if (file->DeviceObject && file->DeviceObject->DriverObject == g_driver && file->FsContext &&
-        ((MIMEFS_FCB *)file->FsContext)->Rom) {
+        ((MIMEFS_FCB *)file->FsContext)->Rom && !((MIMEFS_FCB *)file->FsContext)->Rom->genuine) {
         const MimeRomEntry *rom = ((MIMEFS_FCB *)file->FsContext)->Rom;
         *pa = HalRomPhysical(rom);
         *size = rom->size;
@@ -568,7 +571,7 @@ BOOLEAN IoGetImageFileWindow(PFILE_OBJECT file, PULONG64 pa, PULONG64 size, PVOI
     if (!IoGetFileWindowEx(file, FALSE, 0, pa, size, ref))
         return FALSE;
     MIMEFS_WINDOW_REF *r = *ref;
-    if (r) {
+    if (r && !r->Genuine) {
         r->Image = TRUE;
         FsWbImageMapped(r->Volume, r->FileId, 1);
     }
@@ -1452,9 +1455,11 @@ static NTSTATUS NTAPI read_write(PDEVICE_OBJECT device, PIRP irp)
     if (fcb->Rom) {
         if (write)
             return complete(irp, STATUS_ACCESS_DENIED, 0);
-        /* microsoft's copy is open: reads of the file come from it, byte for byte, through the host handle. */
-        ULONG64 genuine = ensure_genuine(fcb);
-        if (genuine) {
+        /* a file of the manifest has no bytes but microsoft's copy, read through the host handle. */
+        if (fcb->Rom->genuine) {
+            ULONG64 genuine = ensure_genuine(fcb);
+            if (!genuine)
+                return complete(irp, STATUS_NO_SUCH_FILE, 0);
             if (offset >= fcb->GenuineSize)
                 return complete(irp, STATUS_END_OF_FILE, 0);
             ULONG want = fcb->GenuineSize - offset < length ? (ULONG)(fcb->GenuineSize - offset) : length;
@@ -1484,8 +1489,6 @@ static NTSTATUS NTAPI read_write(PDEVICE_OBJECT device, PIRP irp)
                 status = STATUS_END_OF_FILE;
             return complete(irp, status, done);
         }
-        if (fcb->Rom->genuine)
-            return complete(irp, STATUS_INSUFFICIENT_RESOURCES, 0);
         if (offset >= fcb->Rom->size)
             return complete(irp, STATUS_END_OF_FILE, 0);
         ULONG n = fcb->Rom->size - offset < length ? (ULONG)(fcb->Rom->size - offset) : length;
@@ -1719,7 +1722,10 @@ static NTSTATUS NTAPI mimefs_query_info(PDEVICE_OBJECT device, PIRP irp)
         *(PULONG)out = 0;
         written = sizeof(ULONG);
         break;
-    case FileNameInformation: {
+    case FileNameInformation:
+    /* the name with the case and long names it has on the volume; mime has no short names, and names are opened as
+     * they are on the host, so it is the opened name. */
+    case 48: /* FileNormalizedNameInformation */ {
         if (length < offsetof(FILE_NAME_INFORMATION, FileName)) {
             status = STATUS_INFO_LENGTH_MISMATCH;
             break;
@@ -1818,6 +1824,26 @@ static NTSTATUS NTAPI mimefs_query_info(PDEVICE_OBJECT device, PIRP irp)
         written = need;
         break;
     }
+    case 22: { /* FileStreamInformation: a file has its data stream, a directory none, measured on ntfs. */
+        static const WCHAR data[] = L"::$DATA";
+        const ULONG entry = 24 + sizeof(data) - sizeof(WCHAR);
+        if (fcb->Directory)
+            break;
+        if (length < entry) {
+            status = STATUS_INFO_LENGTH_MISMATCH;
+            break;
+        }
+        memset(out, 0, 24);
+        *(PULONG)(out + 4) = sizeof(data) - sizeof(WCHAR);
+        *(PLONGLONG)(out + 8) = (LONGLONG)info->size;
+        *(PLONGLONG)(out + 16) = (LONGLONG)info->allocation_size;
+        memcpy(out + 24, data, sizeof(data) - sizeof(WCHAR));
+        written = entry;
+        break;
+    }
+    case 55: /* FileRemoteProtocolInformation: a local volume has no remote protocol, as ntfs answers. */
+        status = length < 0x74 ? STATUS_INFO_LENGTH_MISMATCH : STATUS_INVALID_PARAMETER;
+        break;
     default:
         status = STATUS_INVALID_INFO_CLASS;
         break;
@@ -2747,7 +2773,55 @@ static NTSTATUS NTAPI mimefs_device_control(PDEVICE_OBJECT device, PIRP irp)
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
     MIMEFS_VOLUME *vol = device->DeviceExtension;
     ULONG length = stack->Parameters.DeviceIoControl.OutputBufferLength;
-    switch (stack->Parameters.DeviceIoControl.IoControlCode) {
+    ULONG code = stack->Parameters.DeviceIoControl.IoControlCode;
+    /* a handle of a file or directory is no volume: ntfs refuses the volume's own queries there. */
+    if (stack->FileObject->FileName.Length && (code == 0x4D0008 || code == 0x4D0000 || code == 0x2D0C14))
+        return complete(irp, STATUS_INVALID_PARAMETER, 0);
+    switch (code) {
+    case 0x2D0C14: { /* IOCTL_STORAGE_GET_HOTPLUG_INFO: a fixed disk, nothing removable or hot plugged. */
+        if (length < 8)
+            return complete(irp, STATUS_BUFFER_TOO_SMALL, 0);
+        PUCHAR out = irp->AssociatedIrp.SystemBuffer;
+        BOOLEAN removable = (vol->DriveFlags & (MIME_FS_DRIVE_REMOVABLE | MIME_FS_DRIVE_CDROM)) != 0;
+        *(PULONG)out = 8;
+        out[4] = removable;
+        out[5] = removable;
+        out[6] = 0;
+        out[7] = 0;
+        return complete(irp, STATUS_SUCCESS, 8);
+    }
+    case 0x4D0008: { /* IOCTL_MOUNTDEV_QUERY_DEVICE_NAME: the length then the name; a short buffer gets the length. */
+        WCHAR name[40];
+        ULONG chars = vol->Raw ? 0 : MimeFsVolumeDeviceName(vol->HostVolume, name, RTL_NUMBER_OF(name));
+        if (!chars)
+            return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+        if (length < sizeof(USHORT))
+            return complete(irp, STATUS_INVALID_PARAMETER, 0);
+        PUCHAR out = irp->AssociatedIrp.SystemBuffer;
+        *(PUSHORT)out = (USHORT)(chars * sizeof(WCHAR));
+        if (length < sizeof(USHORT) + chars * sizeof(WCHAR))
+            return complete(irp, STATUS_BUFFER_OVERFLOW, sizeof(USHORT));
+        memcpy(out + sizeof(USHORT), name, chars * sizeof(WCHAR));
+        return complete(irp, STATUS_SUCCESS, sizeof(USHORT) + chars * sizeof(WCHAR));
+    }
+    case 0x4D0000: { /* IOCTL_MOUNTDEV_QUERY_UNIQUE_ID: the length then the id the mount manager knows the volume by. */
+        ULONG number = vol->HostVolume == MIME_FS_VOLUME_SYSTEM ? 1
+                       : vol->HostVolume == MIME_FS_VOLUME_HOST ? 2
+                                                                 : vol->HostVolume - MIME_FS_VOLUME_DRIVE;
+        WCHAR letter = number == 1 ? L'C' : number == 2 ? L'Z' : (WCHAR)(L'A' + number);
+        if (vol->Raw)
+            return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+        if (length < sizeof(USHORT))
+            return complete(irp, STATUS_INVALID_PARAMETER, 0);
+        UCHAR id[24];
+        ULONG bytes = MountVolumeUniqueId(letter, id);
+        PUCHAR out = irp->AssociatedIrp.SystemBuffer;
+        *(PUSHORT)out = (USHORT)bytes;
+        if (length < sizeof(USHORT) + bytes)
+            return complete(irp, STATUS_BUFFER_OVERFLOW, sizeof(USHORT));
+        memcpy(out + sizeof(USHORT), id, bytes);
+        return complete(irp, STATUS_SUCCESS, sizeof(USHORT) + bytes);
+    }
     case IOCTL_STORAGE_QUERY_PROPERTY:
         return storage_query(irp, stack, vol, length);
     case IOCTL_STORAGE_GET_DEVICE_NUMBER: {
@@ -3194,6 +3268,98 @@ static NTSTATUS query_usn_journal(PIRP irp, MIMEFS_VOLUME *vol, ULONG length)
     return complete(irp, STATUS_SUCCESS, size);
 }
 
+/*
+ * FSCTL_CREATE_OR_GET_OBJECT_ID and FSCTL_GET_OBJECT_ID: ntfs gives a file a guid of its own the first time one is
+ * asked for, and tells it with the volume's as the one it was born on. the id is drawn from the volume and the file,
+ * shaped like the time based guid ntfs draws, and the host stores it in an attribute of the file. asking without
+ * creating finds none on a file that was never given one, as on ntfs. the layout and the statuses are those of
+ * windows 11 26300, measured with scratch/dlls/probe/objid.c of the research repository.
+ */
+#define FSCTL_GET_OBJECT_ID 0x0009009Cu
+#define FSCTL_CREATE_OR_GET_OBJECT_ID 0x000900C0u
+#define STATUS_OBJECTID_NOT_FOUND ((NTSTATUS)0xC00002F0)
+#define OBJECT_IDS 256
+
+static struct {
+    ULONG Volume;
+    ULONG64 FileId;
+} g_object_ids[OBJECT_IDS];
+static ULONG g_object_id_count;
+
+static ULONG64 object_id_mix(ULONG64 value)
+{
+    value ^= value >> 33;
+    value *= 0xFF51AFD7ED558CCDull;
+    value ^= value >> 33;
+    value *= 0xC4CEB9FE1A85EC53ull;
+    return value ^ value >> 33;
+}
+
+static NTSTATUS object_id(PIRP irp, MIMEFS_VOLUME *vol, PFILE_OBJECT file, ULONG length, BOOLEAN create)
+{
+    MIMEFS_FCB *fcb = file->FsContext;
+    if (!fcb)
+        return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
+    /* no buffer at all is told apart from one too short. */
+    if (!length || !irp->AssociatedIrp.SystemBuffer)
+        return complete(irp, STATUS_INVALID_USER_BUFFER, 0);
+    if (length < 64)
+        return complete(irp, STATUS_INVALID_PARAMETER, 0);
+    PUCHAR out = irp->AssociatedIrp.SystemBuffer;
+    ULONG64 id = fcb->Rom ? (ULONG64)(fcb->Rom - HalRomEntry(0)) + 1 : fcb->FileId ? fcb->FileId : fcb->OpenInfo.file_id;
+    ULONG64 seed = object_id_mix(0x4E544653ull << 32 | vol->Serial), drawn = object_id_mix(seed ^ id);
+    /* the object id: a time, the version 1, a clock sequence and the node of the machine, which the volume's serial stands for. */
+    UCHAR object[16];
+    memcpy(object, &drawn, 6);
+    object[6] = 0xF1;
+    object[7] = 0x11;
+    object[8] = (UCHAR)(0x80 | (seed >> 8 & 0x3F));
+    object[9] = (UCHAR)seed;
+    memcpy(object + 10, (PUCHAR)&seed + 2, 6);
+    object[10] |= 1;
+    /* the host keeps the id with the file, as ntfs does, so it is there after a restart and after a rename. */
+    ULONG64 hs = MIME_HC_STATUS_INVALID;
+    PUCHAR shared = !fcb->Rom && fcb->HostHandle ? ExAllocatePool2(POOL_FLAG_NON_PAGED, 16, KI_TAG('M', 'f', 'O', 'i')) : nullptr;
+    if (shared) {
+        memcpy(shared, object, 16);
+        hs = HalHypercallUnlocked(MIME_HC_FS_OBJECT_ID, fcb->HostHandle, HalPhysicalOf(shared), create, 0, 0, 0, nullptr);
+        if (hs == MIME_HC_STATUS_OK)
+            memcpy(object, shared, 16);
+        ExFreePool(shared);
+    }
+    if (hs == MIME_HC_STATUS_NOT_FOUND)
+        return complete(irp, STATUS_OBJECTID_NOT_FOUND, 0);
+    if (hs != MIME_HC_STATUS_OK) {
+        /* a file of the machine's image, or a host file system without attributes: remembered until the machine stops. */
+        ULONG volume = fcb->Rom ? ~0u : fcb->Volume;
+        BOOLEAN known = FALSE;
+        ExAcquireFastMutex(&g_share_lock);
+        for (ULONG i = 0; i < g_object_id_count && !known; i++)
+            known = g_object_ids[i].Volume == volume && g_object_ids[i].FileId == id;
+        if (!known && create) {
+            if (g_object_id_count < OBJECT_IDS) {
+                g_object_ids[g_object_id_count].Volume = volume;
+                g_object_ids[g_object_id_count++].FileId = id;
+            }
+            known = TRUE;
+        }
+        ExReleaseFastMutex(&g_share_lock);
+        if (!known)
+            return complete(irp, STATUS_OBJECTID_NOT_FOUND, 0);
+    }
+    memset(out, 0, 64);
+    memcpy(out, object, 16);
+    /* the birth volume, a random guid ntfs draws when the volume gets its own id, and the birth id, the object's. */
+    ULONG64 low = object_id_mix(seed + 1), high = object_id_mix(seed + 2);
+    memcpy(out + 16, &low, 8);
+    memcpy(out + 24, &high, 8);
+    out[23] = (UCHAR)((out[23] & 0x0F) | 0x40);
+    out[24] = (UCHAR)((out[24] & 0x3F) | 0x80);
+    memcpy(out + 32, out, 16);
+    /* the domain id stays zero, as windows 11 26300 answers in scratch/dlls/probe/win-objid.txt. */
+    return complete(irp, STATUS_SUCCESS, 64);
+}
+
 static NTSTATUS NTAPI mimefs_fs_control(PDEVICE_OBJECT device, PIRP irp)
 {
     PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
@@ -3224,6 +3390,10 @@ static NTSTATUS NTAPI mimefs_fs_control(PDEVICE_OBJECT device, PIRP irp)
         return fs_statistics(irp, vol, length, TRUE);
     case FSCTL_QUERY_USN_JOURNAL:
         return query_usn_journal(irp, vol, length);
+    case FSCTL_GET_OBJECT_ID:
+        return object_id(irp, vol, stack->FileObject, length, FALSE);
+    case FSCTL_CREATE_OR_GET_OBJECT_ID:
+        return object_id(irp, vol, stack->FileObject, length, TRUE);
     default:
         return complete(irp, STATUS_INVALID_DEVICE_REQUEST, 0);
     }

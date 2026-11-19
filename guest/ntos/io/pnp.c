@@ -8,16 +8,19 @@
  */
 #define MIME_KERNEL_PNP
 #include "../cm/cm.h"
+#include <mime/ntrtlsec.h>
 #include <mime/pnp.h>
 
 #define INSTANCE_CHARS 200
 #define LINK_CHARS 260
 #define REFERENCE_CHARS 32
+#define CLASS_CHARS 40
 
 typedef struct DEVNODE {
     LIST_ENTRY Links;
     struct DEVNODE *Parent;
     WCHAR Instance[INSTANCE_CHARS];
+    WCHAR Class[CLASS_CHARS]; /* the setup class, a guid in braces. */
     LIST_ENTRY Interfaces;
 } DEVNODE;
 
@@ -110,6 +113,28 @@ static void set_value(CM_NODE *key, PCWSTR name, PCWSTR value, BOOLEAN multi)
 
 /* ------------------------------------------------------------------ devices */
 
+/*
+ * the two keys every device of the reference machine has under its own: its parameters, and its properties, which
+ * only the system opens. a user is refused there, an administrator too.
+ */
+static void device_subkeys(PCWSTR instance)
+{
+    WCHAR path[INSTANCE_CHARS + 96] = L"\\REGISTRY\\MACHINE\\SYSTEM\\CurrentControlSet\\Enum\\";
+    wcscat(path, instance);
+    SIZE_T end = wcslen(path);
+    wcscat(path, L"\\Device Parameters");
+    CmpOpenPath(path, TRUE);
+    path[end] = 0;
+    wcscat(path, L"\\Properties");
+    CM_NODE *properties = CmpOpenPath(path, TRUE);
+    if (!properties || properties->Sd)
+        return;
+    SD_ACE aces[] = {{CONTAINER_INHERIT_ACE, 0xF003F /* KEY_ALL_ACCESS */, SeSidSystem}};
+    SD_BLOB *sd;
+    if (NT_SUCCESS(SeSdBuild(SeSidSystem, SeSidSystem, SE_DACL_PROTECTED, aces, 1, &sd)))
+        properties->Sd = sd;
+}
+
 /* adds a device under its parent, with the properties windows' installers would leave in its Enum key. */
 NTSTATUS NTAPI MimePnpAddDevice(PCWSTR instance, PCWSTR parent, const MIME_DEVICE_PROPERTIES *props)
 {
@@ -130,11 +155,14 @@ NTSTATUS NTAPI MimePnpAddDevice(PCWSTR instance, PCWSTR parent, const MIME_DEVIC
     set_value(key, L"LocationInformation", props->Location, FALSE);
     set_value(key, L"ContainerID", props->ContainerId, FALSE);
     set_value(key, L"FriendlyName", props->FriendlyName, FALSE);
+    device_subkeys(instance);
     DEVNODE *d = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*d), KI_TAG('P', 'n', 'p', 'D'));
     if (!d)
         return STATUS_INSUFFICIENT_RESOURCES;
     memset(d, 0, sizeof(*d));
     memcpy(d->Instance, instance, (wcslen(instance) + 1) * sizeof(WCHAR));
+    if (props->ClassGuid && wcslen(props->ClassGuid) < CLASS_CHARS)
+        wcscpy(d->Class, props->ClassGuid);
     InitializeListHead(&d->Interfaces);
     lock();
     d->Parent = parent ? find(parent) : nullptr;
@@ -142,6 +170,30 @@ NTSTATUS NTAPI MimePnpAddDevice(PCWSTR instance, PCWSTR parent, const MIME_DEVIC
     changed();
     unlock();
     return STATUS_SUCCESS;
+}
+
+/* shows the devices there are now to the visitor, which runs without the lock and may add interfaces and devices. */
+void IopPnpEachDevice(void (*visit)(PCWSTR instance, PCWSTR klass))
+{
+    enum { ENTRY_CHARS = INSTANCE_CHARS + CLASS_CHARS };
+    lock();
+    ULONG count = 0;
+    for (LIST_ENTRY *e = g_devnodes.Flink; e != &g_devnodes; e = e->Flink)
+        count++;
+    PWCHAR copy = count ? ExAllocatePool2(POOL_FLAG_NON_PAGED, (SIZE_T)count * ENTRY_CHARS * sizeof(WCHAR),
+                                          KI_TAG('P', 'n', 'p', 'V'))
+                        : nullptr;
+    ULONG n = 0;
+    for (LIST_ENTRY *e = g_devnodes.Flink; copy && e != &g_devnodes; e = e->Flink, n++) {
+        DEVNODE *d = CONTAINING_RECORD(e, DEVNODE, Links);
+        memcpy(copy + (SIZE_T)n * ENTRY_CHARS, d->Instance, sizeof(d->Instance));
+        memcpy(copy + (SIZE_T)n * ENTRY_CHARS + INSTANCE_CHARS, d->Class, sizeof(d->Class));
+    }
+    unlock();
+    for (ULONG i = 0; i < n; i++)
+        visit(copy + (SIZE_T)i * ENTRY_CHARS, copy + (SIZE_T)i * ENTRY_CHARS + INSTANCE_CHARS);
+    if (copy)
+        ExFreePool(copy);
 }
 
 static void remove_interface(DEVINTERFACE *i)
