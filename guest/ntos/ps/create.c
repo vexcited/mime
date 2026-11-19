@@ -565,6 +565,10 @@ static NTSTATUS create_process(const PSP_PARAMS *p, struct _TOKEN *token, ULONG6
     if (NT_SUCCESS(status))
         status = PspPrepareSystemDllInitBlocks(process, ntdll32);
     KiAttachProcess(saved);
+    /* what csrss does for the program that starts another, before the first thread of the new one runs. */
+    if (NT_SUCCESS(status) && (section->Image.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_GUI ||
+                               section->Image.Subsystem == IMAGE_SUBSYSTEM_WINDOWS_CUI))
+        status = PspSxsCreateProcessContext(process, image);
 
     PETHREAD thread = nullptr;
     if (NT_SUCCESS(status)) {

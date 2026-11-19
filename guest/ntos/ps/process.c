@@ -1495,6 +1495,7 @@ void PsInitialize(void)
     extern FAST_MUTEX PspSharedSlotLock;
     ExInitializeFastMutex(&PspSharedSlotLock);
     PspInitializePebBlocks();
+    PspSxsInitialize();
     InitializeListHead(&PsActiveProcessHead);
     g_cid_capacity = 65536 / 4;
     g_cid_table = ExAllocatePool2(POOL_FLAG_NON_PAGED, g_cid_capacity * sizeof(PVOID), KI_TAG('P', 's', 'C', 'i'));
