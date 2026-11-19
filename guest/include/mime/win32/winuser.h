@@ -742,6 +742,30 @@ typedef struct tagICONINFO {
     HBITMAP hbmColor;
 } ICONINFO, *PICONINFO;
 
+typedef struct _ICONINFOEXA {
+    DWORD cbSize;
+    BOOL fIcon;
+    DWORD xHotspot;
+    DWORD yHotspot;
+    HBITMAP hbmMask;
+    HBITMAP hbmColor;
+    WORD wResID;
+    CHAR szModName[MAX_PATH];
+    CHAR szResName[MAX_PATH];
+} ICONINFOEXA, *PICONINFOEXA;
+
+typedef struct _ICONINFOEXW {
+    DWORD cbSize;
+    BOOL fIcon;
+    DWORD xHotspot;
+    DWORD yHotspot;
+    HBITMAP hbmMask;
+    HBITMAP hbmColor;
+    WORD wResID;
+    WCHAR szModName[MAX_PATH];
+    WCHAR szResName[MAX_PATH];
+} ICONINFOEXW, *PICONINFOEXW;
+
 typedef struct tagNONCLIENTMETRICSW {
     UINT cbSize;
     int iBorderWidth;
@@ -1384,7 +1408,6 @@ WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI GetWindowDpiAwarenessContext(HWND hwnd);
 WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI GetThreadDpiAwarenessContext(void);
 WINUSERAPI DPI_AWARENESS_CONTEXT WINAPI SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT context);
 WINUSERAPI BOOL WINAPI EnableNonClientDpiScaling(HWND hwnd);
-WINUSERAPI UINT WINAPI GetWindowDPI(HWND hwnd);
 
 typedef enum DPI_HOSTING_BEHAVIOR {
     DPI_HOSTING_BEHAVIOR_INVALID = -1,
@@ -1682,11 +1705,18 @@ WINUSERAPI UINT WINAPI GetDlgItemInt(HWND dialog, int id, BOOL *ok, BOOL is_sign
 WINUSERAPI BOOL WINAPI CheckRadioButton(HWND dialog, int first, int last, int check);
 WINUSERAPI BOOL WINAPI AdjustWindowRect(LPRECT rect, DWORD style, BOOL menu);
 WINUSERAPI int WINAPI GetDlgCtrlID(HWND hwnd);
-WINUSERAPI LONG_PTR WINAPI GetWindowLongPtrW(HWND hwnd, int index);
-WINUSERAPI LONG_PTR WINAPI SetWindowLongPtrW(HWND hwnd, int index, LONG_PTR value);
 WINUSERAPI LONG WINAPI GetWindowLongW(HWND hwnd, int index);
 WINUSERAPI LONG WINAPI SetWindowLongW(HWND hwnd, int index, LONG value);
+/* the user32 of 32-bit windows exports no pointer-sized variant: there the names are the 32-bit calls. */
+#ifdef __i386__
+#define GetWindowLongPtrW GetWindowLongW
+#define SetWindowLongPtrW SetWindowLongW
+#define GetClassLongPtrW GetClassLongW
+#else
+WINUSERAPI LONG_PTR WINAPI GetWindowLongPtrW(HWND hwnd, int index);
+WINUSERAPI LONG_PTR WINAPI SetWindowLongPtrW(HWND hwnd, int index, LONG_PTR value);
 WINUSERAPI ULONG_PTR WINAPI GetClassLongPtrW(HWND hwnd, int index);
+#endif
 WINUSERAPI int WINAPI GetClassNameW(HWND hwnd, LPWSTR buffer, int count);
 WINUSERAPI BOOL WINAPI SetWindowTextW(HWND hwnd, LPCWSTR text);
 WINUSERAPI int WINAPI GetWindowTextW(HWND hwnd, LPWSTR buffer, int count);
@@ -2400,6 +2430,8 @@ typedef struct tagNONCLIENTMETRICSA {
 
 WINUSERAPI BOOL WINAPI TrackMouseEvent(LPTRACKMOUSEEVENT track);
 WINUSERAPI BOOL WINAPI GetIconInfo(HICON icon, PICONINFO info);
+WINUSERAPI BOOL WINAPI GetIconInfoExA(HICON icon, PICONINFOEXA info);
+WINUSERAPI BOOL WINAPI GetIconInfoExW(HICON icon, PICONINFOEXW info);
 WINUSERAPI BOOL WINAPI IsIconic(HWND hwnd);
 WINUSERAPI BOOL WINAPI CloseWindow(HWND hwnd);
 WINUSERAPI BOOL WINAPI IsZoomed(HWND hwnd);

@@ -7,7 +7,6 @@
 
 #define HOOK_CHAINS (WH_MAX - WH_MIN + 1)
 #define LOW_LEVEL_TIMEOUT_MS 1000
-#define ALIGN16(x) (((x) + 15) & ~(SIZE_T)15)
 
 static LIST_ENTRY g_chains[HOOK_CHAINS];
 static BOOLEAN g_chains_ready;
@@ -65,26 +64,40 @@ static ULONG64 now_ms(void)
     return KeQueryInterruptTime() / 10000;
 }
 
+/*
+ * a hook procedure is called through user32 as win32kfull does: the GENERICHOOKHEADER, the code with the kind of
+ * the hook in its high word, wparam, the procedure as the extra parameter and DispatchHook of ntdll's table of
+ * client procedures as the one to call, then what the kind carries. __fnHkINDWORD takes a value after a word of
+ * flags, __fnHkINLPMSG a MSG and gives it back. the hooks of the other structures are not called yet.
+ */
 LRESULT HookInvoke(HOOK *h, int code, WPARAM wparam, LPARAM lparam, ULONG size)
 {
     W32THREAD *t = W32GetThread();
     if (!t || t->Destroying || h->Header.Destroyed)
         return 0;
-    SIZE_T total = sizeof(MIME_HOOKPROC_ARGS) + ALIGN16(size);
-    UCHAR local[sizeof(MIME_HOOKPROC_ARGS) + 128];
-    MIME_HOOKPROC_ARGS *args = total <= sizeof(local) ? (MIME_HOOKPROC_ARGS *)local : W32Alloc(total);
-    if (!args)
+    enum { FI_HKINDWORD = 40, FI_HKINLPMSG = 47, PFN_DISPATCH_HOOK = 19 };
+    BOOLEAN msg = size == sizeof(MSG) && (h->Id == WH_GETMESSAGE || h->Id == WH_MSGFILTER || h->Id == WH_SYSMSGFILTER);
+    if (size && !msg) {
+        static ULONG reported;
+        if (!(reported & (1u << (h->Id + 1)))) {
+            reported |= 1u << (h->Id + 1);
+            DbgPrint("win32k: hook %d with a structure of %u bytes is not called yet\n", h->Id, size);
+        }
         return 0;
-    memset(args, 0, sizeof(*args));
-    args->Proc = h->Proc;
-    args->Id = h->Id;
-    args->Code = code;
-    args->Wparam = wparam;
-    args->Lparam = size ? 0 : lparam;
-    args->Ansi = h->Ansi;
-    args->DataSize = size;
-    if (size)
-        memcpy(args->Data, (PVOID)lparam, size);
+    }
+    UCHAR m[32 + 56] = {};
+    *(PULONG)(m + 0) = (ULONG)(code & 0xFFFF) | (ULONG)(h->Id & 0xFFFF) << 16;
+    *(PULONG64)(m + 8) = wparam;
+    *(PULONG64)(m + 16) = (ULONG64)(ULONG_PTR)h->Proc;
+    *(PULONG64)(m + 24) = ClientPfn((h->Ansi ? 0 : 24) + PFN_DISPATCH_HOOK);
+    ULONG length;
+    if (msg) {
+        memcpy(m + 32, (PVOID)lparam, sizeof(MSG));
+        length = 32 + 56;
+    } else {
+        *(PULONG64)(m + 40) = lparam;
+        length = 48;
+    }
 
     HOOK *prev = t->CurrentHook;
     t->CurrentHook = h;
@@ -93,26 +106,25 @@ LRESULT HookInvoke(HOOK *h, int code, WPARAM wparam, LPARAM lparam, ULONG size)
     ULONG depth = UserLeaveAll();
     PVOID out = nullptr;
     ULONG out_len = 0;
-    NTSTATUS status = KeUserModeCallback(MIME_CB_HOOKPROC, args, (ULONG)total, &out, &out_len);
+    NTSTATUS status = KeUserModeCallback(msg ? FI_HKINLPMSG : FI_HKINDWORD, m, length, &out, &out_len);
     UserReenter(depth);
     t->CallbackDepth--;
     t->CurrentHook = prev;
 
     LRESULT result = 0;
-    if (NT_SUCCESS(status) && out && out_len >= sizeof(MIME_CALLBACK_RESULT)) {
-        MIME_CALLBACK_RESULT hdr;
-        if (NT_SUCCESS(MimeCopyFromUser(&hdr, out, sizeof(hdr)))) {
-            result = hdr.Result;
-            ULONG n = hdr.DataSize < size ? hdr.DataSize : size;
-            if (n && out_len >= sizeof(hdr) + n)
-                MimeCopyFromUser((PVOID)lparam, (PUCHAR)out + sizeof(hdr), n);
-        }
+    struct {
+        LONG64 Result;
+        ULONG OutputSize, Pad;
+        ULONG64 Output;
+    } r;
+    if (NT_SUCCESS(status) && out_len == sizeof(r) && NT_SUCCESS(MimeCopyFromUser(&r, out, sizeof(r)))) {
+        result = (LRESULT)r.Result;
+        if (msg && r.Output)
+            MimeCopyFromUser((PVOID)lparam, (PVOID)(ULONG_PTR)r.Output, sizeof(MSG));
     } else if (!NT_SUCCESS(status)) {
         DbgPrint("win32k: hook %d callback failed: %08x\n", h->Id, status);
     }
     UserDereference(&h->Header);
-    if ((PUCHAR)args != local)
-        W32Free(args);
     return result;
 }
 

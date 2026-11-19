@@ -124,6 +124,10 @@ void UserLeave(void)
 {
     if (g_lock_owner != KeGetCurrentThread())
         KeBugCheckEx(0x000000E3, 0x55534552, 0, 0, 0); /* RESOURCE_NOT_OWNED */
+    if (g_lock_depth == 1) {
+        DcAttrFlush();
+        DeskSync();
+    }
     if (--g_lock_depth)
         return;
     __atomic_store_n(&g_lock_owner, nullptr, __ATOMIC_RELEASE);
@@ -165,6 +169,34 @@ typedef struct ATOM_ENTRY {
 #define MAX_ATOMS 4096
 static ATOM_ENTRY g_atoms[MAX_ATOMS];
 
+/*
+ * the atoms windows 11 has from its start, 0xc001 on, read with GetClipboardFormatName by atoms.c of
+ * scratch/dlls/window: user32 compares the atoms of its classes with the ones the server information names, and
+ * gives some of them to properties.
+ */
+static const PCWSTR g_boot_atoms[] = {
+    L"USER32", L"ObjectLink", L"OwnerLink", L"Native", L"Binary", L"FileName", L"FileNameW", L"NetworkName",
+    L"DataObject", L"Embedded Object", L"Embed Source", L"Custom Link Source", L"Link Source", L"Object Descriptor",
+    L"Link Source Descriptor", L"OleDraw", L"PBrush", L"MSDraw", L"Ole Private Data", L"Screen Picture",
+    L"OleClipboardPersistOnFlush", L"MoreOlePrivateData", L"AdditionalFGBoostProp", L"Button", L"Edit",
+    L"Static", L"ListBox", L"ScrollBar", L"ComboBox", L"MDIClient", L"ComboLBox", L"DDEMLEvent", L"DDEMLMom",
+    L"DMGClass", L"DDEMLAnsiClient", L"DDEMLUnicodeClient", L"DDEMLAnsiServer", L"DDEMLUnicodeServer", L"IME",
+    L"Ghost", L"SHELLHOOK", L"SysFrostedWindow", L"SysCP", L"SysDT", L"SysQOS", L"SysDDEI", L"SysWNDO", L"SysIMEL",
+    L"SysLayer", L"SysDispAffinity", L"SysSwapChain", L"SysDCompHwndTargets", L"SysVisRgnTracker",
+    L"SysDCompHwndBitmap", L"SysCompositionInputQueue", L"SysWndMargin", L"ACTIVATESHELLWINDOW",
+    L"OTHERWINDOWCREATED", L"OTHERWINDOWDESTROYED", L"Message", L"SysShadow", L"OleMainThreadWndClass",
+    L"FlashWState", L"SysTouchFlags", L"MicrosoftWindowsTargetingWindow", L"SysFeedbackSettings",
+    L"ShutdownBlockingReason", L"BrokeredForeground", L"MiPFlags", L"CoreWindowProp",
+};
+
+static void atoms_initialize(void)
+{
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_boot_atoms); i++) {
+        g_atoms[i + 1].Name = W32StrDup(g_boot_atoms[i], wcslen(g_boot_atoms[i]));
+        g_atoms[i + 1].Refs = 1;
+    }
+}
+
 ATOM AtomFind(PCWSTR name)
 {
     for (ULONG i = 0; i < MAX_ATOMS; i++)
@@ -180,7 +212,8 @@ ATOM AtomAdd(PCWSTR name)
         g_atoms[a - ATOM_BASE].Refs++;
         return a;
     }
-    for (ULONG i = 0; i < MAX_ATOMS; i++) {
+    /* windows never gives 0xc000. */
+    for (ULONG i = 1; i < MAX_ATOMS; i++) {
         if (!g_atoms[i].Name) {
             g_atoms[i].Name = W32StrDup(name, wcslen(name));
             if (!g_atoms[i].Name)
@@ -190,6 +223,16 @@ ATOM AtomAdd(PCWSTR name)
         }
     }
     return 0;
+}
+
+void AtomDelete(ATOM atom)
+{
+    if (atom < ATOM_BASE || atom >= ATOM_BASE + MAX_ATOMS || !g_atoms[atom - ATOM_BASE].Name)
+        return;
+    if (--g_atoms[atom - ATOM_BASE].Refs == 0) {
+        W32Free(g_atoms[atom - ATOM_BASE].Name);
+        g_atoms[atom - ATOM_BASE].Name = nullptr;
+    }
 }
 
 ULONG AtomGetName(ATOM atom, PWSTR buffer, ULONG chars)
@@ -202,6 +245,46 @@ ULONG AtomGetName(ATOM atom, PWSTR buffer, ULONG chars)
         n = chars - 1;
     memcpy(buffer, name, n * sizeof(WCHAR));
     buffer[n] = 0;
+    return n;
+}
+
+/*
+ * the name of an atom of the window manager into the buffer of a UNICODE_STRING, the characters written are the
+ * answer. an integer atom, below 0xc000, is named by its number after a #, as the classes #32770 and the like.
+ */
+ULONG NTAPI NtUserGetAtomName(ATOM atom, PUNICODE_STRING user_name)
+{
+    UNICODE_STRING s;
+    if (!user_name || !NT_SUCCESS(MimeCopyFromUser(&s, user_name, sizeof(s))) || s.MaximumLength < sizeof(WCHAR))
+        return 0;
+    WCHAR name[256];
+    ULONG n = 0;
+    if (atom && atom < ATOM_BASE) {
+        char digits[8];
+        int k = 0;
+        for (ULONG v = atom; v; v /= 10)
+            digits[k++] = (char)('0' + v % 10);
+        name[n++] = L'#';
+        while (k)
+            name[n++] = (WCHAR)digits[--k];
+        name[n] = 0;
+    } else {
+        UserEnter();
+        n = AtomGetName(atom, name, RTL_NUMBER_OF(name));
+        UserLeave();
+    }
+    if (!n) {
+        W32SetLastError(ERROR_INVALID_HANDLE);
+        return 0;
+    }
+    ULONG room = s.MaximumLength / sizeof(WCHAR) - 1;
+    if (n > room)
+        n = room;
+    name[n] = 0;
+    if (!NT_SUCCESS(MimeCopyToUser(s.Buffer, name, (n + 1) * sizeof(WCHAR))))
+        return 0;
+    s.Length = (USHORT)(n * sizeof(WCHAR));
+    MimeCopyToUser(&user_name->Length, &s.Length, sizeof(s.Length));
     return n;
 }
 
@@ -251,6 +334,7 @@ W32PROCESS *W32GetProcess(void)
         }
     }
     InitializeListHead(&p->Classes);
+    p->Wow = PsGetProcessWow64Process(process) != nullptr;
     /* a program is dpi unaware until its manifest or a call says otherwise. */
     p->DpiAwareness = DPI_AWARE_UNAWARE;
     InsertTailList(&W32Processes, &p->Links);
@@ -280,7 +364,15 @@ W32THREAD *W32GetThread(void)
     t->LastRead = W32TickCount();
     InsertTailList(&g_threads, &t->Links);
     PsSetThreadWin32Thread(PsGetCurrentThread(), t, nullptr);
+    DeskAttachThread(p);
     return t;
+}
+
+/* the threads of the window manager one after another, from null. the lock is held. */
+W32THREAD *W32NextThread(W32THREAD *previous)
+{
+    PLIST_ENTRY e = previous ? previous->Links.Flink : g_threads.Flink;
+    return e == &g_threads ? nullptr : CONTAINING_RECORD(e, W32THREAD, Links);
 }
 
 W32THREAD *W32LookupThread(HANDLE tid)
@@ -404,16 +496,20 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
         UserEnter();
         W32GetThread();
         UserLeave();
+        ClientThreadSetup();
         return STATUS_SUCCESS;
     }
     W32THREAD *t = PsGetThreadWin32Thread(thread);
     if (!t)
         return STATUS_SUCCESS;
+    if (thread == PsGetCurrentThread())
+        GdiThreadExitBatch();
     UserEnter();
     t->Destroying = TRUE;
     WndDestroyThreadWindows(t);
     ClipboardThreadDestroyed(t);
     DndThreadDestroyed(t);
+    CaretDestroyThread(t);
     TimerRemoveThread(t);
     HotkeyRemoveThread(t);
     HookRemoveThread(t);
@@ -450,14 +546,18 @@ static NTSTATUS NTAPI thread_callout(PETHREAD thread, BOOLEAN initialize)
         sm->Result = 0;
         KeSetEvent(&sm->Done, 0, FALSE);
     }
-    if (InputForeground && InputForeground->Thread == t)
+    if (InputForeground && InputForeground->Thread == t) {
         InputForeground = nullptr;
+        UserSharedForeground(nullptr);
+    }
     InputKeysChanged();
     HostReleaseCursor(thread);
+    CursorFreeThread(t);
     /* otherwise a thread that hid the pointer leaves it hidden for the next program. */
     if (InputCursorHidden && (t->CursorShowCount < 0 || !t->Cursor))
         HostSetCursor(MIME_CURSOR_ARROW);
     WinStaFreeThread(t);
+    DeskThreadFreed(t);
     RemoveEntryList(&t->Links);
     PsSetThreadWin32Thread(thread, nullptr, t);
     UserLeave();
@@ -488,6 +588,8 @@ static NTSTATUS NTAPI process_callout(PEPROCESS process, BOOLEAN initialize)
         ShellFreeProcess(p);
         MenuFreeProcess(p);
         ClassFreeProcess(p);
+        CursorFreeProcess(p);
+        DeskProcessExited(p);
         WinStaFreeProcess(p);
         RemoveEntryList(&p->Links);
         PsSetProcessWin32Process(process, nullptr, p);
@@ -500,27 +602,66 @@ static NTSTATUS NTAPI process_callout(PEPROCESS process, BOOLEAN initialize)
 
 /* ------------------------------------------------------------------ client registration */
 
-BOOL NTAPI NtUserInitializeClientPfnArrays(const MIME_CLIENT_INFO *user_info)
+/*
+ * ClientThreadSetup of user32 calls it in a server process only, with the tables RtlRetrieveNtUserPfn gives and
+ * the module of user32. win32k takes the procedures from the tables of ntdll instead, which are the same in every
+ * process, see ClientPfn.
+ */
+NTSTATUS NTAPI NtUserInitializeClientPfnArrays(PVOID ansi, PVOID unicode, PVOID workers, HINSTANCE user32)
 {
-    MIME_CLIENT_INFO info;
-    if (!NT_SUCCESS(MimeCopyFromUser(&info, user_info, sizeof(info))) || info.Size != sizeof(info))
-        return FALSE;
-    UserEnter();
-    W32PROCESS *p = W32GetProcess();
-    if (p) {
-        p->Client = info;
-        p->ClientValid = TRUE;
-        p->Wow = (info.Flags & MIME_CLIENT_WOW) != 0;
-    }
-    UserLeave();
-    return p != nullptr;
+    (void)ansi, (void)unicode, (void)workers, (void)user32;
+    return STATUS_SUCCESS;
 }
 
-WNDPROC W32ClientProc(W32PROCESS *p, ULONG fnid)
+/*
+ * ClientThreadSetup asks it once per thread and only tells 1, a session without its display, from the others. the
+ * console session of the reference machine answers 3, measured with uictx.c of scratch/dlls/window.
+ */
+ULONG NTAPI NtUserRemoteConnectState(void)
 {
-    if (!p || !p->ClientValid || fnid >= MIME_FNID_COUNT)
-        return nullptr;
-    return p->Client.Procs[fnid];
+    return 3;
+}
+
+/* the process uses the library of complex scripts, which win32k keeps for its text calls. */
+BOOL NTAPI NtUserRegisterLPK(DWORD flags)
+{
+    UserEnter();
+    W32PROCESS *p = W32GetProcess();
+    if (p)
+        p->LpkFlags = flags;
+    UserLeave();
+    return TRUE;
+}
+
+/*
+ * the kind of user interface a process has, PROCESS_UICONTEXT_DESKTOP for every program of mime, and its flags.
+ * the reference machine answers 1 and two zeros for a program of its desktop.
+ */
+BOOL NTAPI NtUserGetProcessUIContextInformation(HANDLE process, PULONG info)
+{
+    if (process != (HANDLE)-1) {
+        PEPROCESS object;
+        if (!NT_SUCCESS(ObReferenceObjectByHandle(process, 0x1000, PsProcessType, UserMode, (PVOID *)&object, nullptr))) {
+            W32SetLastError(ERROR_INVALID_PARAMETER);
+            return FALSE;
+        }
+        ObDereferenceObject(object);
+    }
+    ULONG none[2] = {0, 0};
+    return NT_SUCCESS(MimeCopyToUser(info, none, sizeof(none)));
+}
+
+/* the flags of the queue of the thread user32 sets, as QF_DIALOGACTIVE around a dialog loop: those of mask take
+ * the values of flags, and the old ones come back. */
+DWORD NTAPI NtUserSetThreadState(DWORD flags, DWORD mask)
+{
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    DWORD old = t ? t->StateFlags : 0;
+    if (t)
+        t->StateFlags = (old & ~mask) | (flags & mask);
+    UserLeave();
+    return old;
 }
 
 ULONG_PTR NTAPI NtUserGetThreadState(ULONG routine)
@@ -660,10 +801,13 @@ NTSTATUS NTAPI DriverEntry(PDRIVER_OBJECT driver, PUNICODE_STRING registry)
         DbgPrint("win32k: cannot register the system service table\n");
         return STATUS_UNSUCCESSFUL;
     }
-    static WIN32_CALLOUTS callouts = {process_callout, thread_callout, W32ShutdownProcess, W32TimeChange, W32FastService};
+    static WIN32_CALLOUTS callouts = {process_callout, thread_callout, W32ShutdownProcess, W32TimeChange, W32FastService,
+                                      GdiFlushUserBatch};
     PsEstablishWin32Callouts(&callouts);
+    UserSharedInitialize();
 
     UserEnter();
+    atoms_initialize();
     MetricsInitialize();
     GdiInitializeStockObjects();
     FontInitialize();
