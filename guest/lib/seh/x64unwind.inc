@@ -320,7 +320,8 @@ SEH_EXPORT BOOLEAN NTAPI RtlDispatchFrameException(PEXCEPTION_RECORD record, PCO
     memset(&dc, 0, sizeof(dc));
     ULONG64 nested_frame = 0;
     for (ULONG depth = 0; depth < 4096; depth++) {
-        if (!c.Rip || !frame_in_stack(c.Rsp))
+        /* a fault at address zero is a call through a null pointer: windows walks on from the return address. */
+        if ((depth && !c.Rip) || !frame_in_stack(c.Rsp))
             break;
         PEXCEPTION_ROUTINE handler = unwind_frame(UNW_FLAG_EHANDLER, &c, &dc);
         if (!handler)
