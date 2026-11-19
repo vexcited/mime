@@ -262,6 +262,7 @@ void NtUnsubscribeWnfStateChange(void);
 void NtUpdateWnfStateData(void);
 void NtWaitForAlertByThreadId(void);
 void NtWaitForMultipleObjects(void);
+void NtWaitForMultipleObjects32(void);
 void NtWaitForSingleObject(void);
 void NtWriteFile(void);
 void NtWriteVirtualMemory(void);
@@ -1034,6 +1035,9 @@ void KiInitializeSystemServices(void)
 #endif
 #ifdef MIME_SVC_NtWaitForMultipleObjects
     KiRegisterService(MIME_SVC_NtWaitForMultipleObjects, (void *)NtWaitForMultipleObjects, STACK_ARGS(5));
+#endif
+#ifdef MIME_SVC_NtWaitForMultipleObjects32
+    KiRegisterService(MIME_SVC_NtWaitForMultipleObjects32, (void *)NtWaitForMultipleObjects32, STACK_ARGS(5));
 #endif
 #ifdef MIME_SVC_NtWaitForSingleObject
     KiRegisterService(MIME_SVC_NtWaitForSingleObject, (void *)NtWaitForSingleObject, STACK_ARGS(3));

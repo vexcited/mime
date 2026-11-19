@@ -147,9 +147,14 @@ NTSTATUS SeSdCapture(const void *descriptor, KPROCESSOR_MODE mode, SD_BLOB **out
     }
     /*
      * absolute: owner, group, sacl and dacl are pointers after the header. a 32-bit program keeps them as 32-bit
-     * addresses where a relative descriptor has its offsets.
+     * addresses where a relative descriptor has its offsets. on x64 wow64.dll of windows has widened them before
+     * the call gets here, xta64 hands the descriptor of the program over as it is.
      */
+#ifdef __x86_64__
+    BOOLEAN narrow = FALSE;
+#else
     BOOLEAN narrow = mode == UserMode && PsCurrentProcess()->Machine == IMAGE_FILE_MACHINE_I386;
+#endif
     status = copy_in(mode, head, descriptor, narrow ? 20 : sizeof(head));
     if (!NT_SUCCESS(status))
         return status;
