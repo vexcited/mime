@@ -97,6 +97,16 @@ HRESULT STDMETHODCALLTYPE MfAttrCopyAllItems(IMFAttributes *iface, IMFAttributes
         MfAttrSetUnknown, MfAttrLockStore, MfAttrUnlockStore, MfAttrGetCount, MfAttrGetItemByIndex,                    \
         MfAttrCopyAllItems                                                                                             \
     }
+/* the same, for an object that answers more interfaces than its class lists. */
+#define MF_ATTRIBUTES_VTBL_WITH_QUERY(query)                                                                           \
+    {                                                                                                                  \
+        query, MfObjectAddRef, MfObjectRelease, MfAttrGetItem, MfAttrGetItemType, MfAttrCompareItem, MfAttrCompare,    \
+        MfAttrGetUint32, MfAttrGetUint64, MfAttrGetDouble, MfAttrGetGuid, MfAttrGetStringLength, MfAttrGetString,      \
+        MfAttrGetAllocatedString, MfAttrGetBlobSize, MfAttrGetBlob, MfAttrGetAllocatedBlob, MfAttrGetUnknown,          \
+        MfAttrSetItem, MfAttrDeleteItem, MfAttrDeleteAllItems, MfAttrSetUint32, MfAttrSetUint64, MfAttrSetDouble,      \
+        MfAttrSetGuid, MfAttrSetString, MfAttrSetBlob, MfAttrSetUnknown, MfAttrLockStore, MfAttrUnlockStore,           \
+        MfAttrGetCount, MfAttrGetItemByIndex, MfAttrCopyAllItems                                                       \
+    }
 extern const IMFAttributesVtbl MfAttributesVtbl;
 
 void MfStoreInit(MfStore *store);
@@ -108,6 +118,7 @@ HRESULT MfStoreCompare(MfStore *ours, IMFAttributes *theirs, MF_ATTRIBUTES_MATCH
 
 extern int _fltused;
 BOOL MfStarted(void);
+HRESULT MfCreateVideoMediaType(IMFMediaType **type);
 HRESULT MfCreateMemoryBuffer(DWORD max_length, DWORD alignment_mask, IMFMediaBuffer **out);
 void MfWorkQueuesShutdown(void);
 HRESULT MfQueueResult(DWORD queue, IMFAsyncResult *result);

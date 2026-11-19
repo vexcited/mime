@@ -1,0 +1,31 @@
+; the exports of evr.dll of windows 11 with their ordinals.
+LIBRARY evr.dll
+EXPORTS
+    MFGetUncompressedVideoFormat=EvrGetUncompressedVideoFormat @1
+    DllCanUnloadNow @2 PRIVATE
+    DllGetClassObject @3 PRIVATE
+    DllRegisterServer @4 PRIVATE
+    DllUnregisterServer @5 PRIVATE
+    MFConvertColorInfoFromDXVA=EvrConvertColorInfoFromDXVA @6
+    MFConvertColorInfoToDXVA=EvrConvertColorInfoToDXVA @7
+    MFConvertFromFP16Array=EvrConvertFromFP16Array @8
+    MFConvertToFP16Array=EvrConvertToFP16Array @9
+    MFCopyImage=EvrCopyImage @10
+    MFCreateDXSurfaceBuffer=EvrCreateDXSurfaceBuffer @11
+    MFCreateVideoMediaType=EvrCreateVideoMediaType @12
+    MFCreateVideoMediaTypeFromBitMapInfoHeader @13
+    MFCreateVideoMediaTypeFromSubtype=EvrCreateVideoMediaTypeFromSubtype @14
+    MFCreateVideoMediaTypeFromVideoInfoHeader=EvrCreateVideoMediaTypeFromVideoInfoHeader @15
+    MFCreateVideoMediaTypeFromVideoInfoHeader2=EvrCreateVideoMediaTypeFromVideoInfoHeader2 @16
+    MFCreateVideoMixer @17
+    MFCreateVideoMixerAndPresenter @18
+    MFCreateVideoOTA @19
+    MFCreateVideoPresenter @20
+    MFCreateVideoPresenter2 @21
+    MFCreateVideoSampleAllocator @22
+    MFCreateVideoSampleFromSurface @23
+    MFGetPlaneSize=EvrGetPlaneSize @24
+    MFGetStrideForBitmapInfoHeader=EvrGetStrideForBitmapInfoHeader @25
+    MFInitVideoFormat=EvrInitVideoFormat @26
+    MFInitVideoFormat_RGB=EvrInitVideoFormat_RGB @27
+    MFIsFormatYUV=EvrIsFormatYUV @28

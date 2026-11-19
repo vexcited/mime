@@ -1,8 +1,7 @@
 /*
  * dxva2.dll: the device manager that shares a Direct3D 9 device between video components, and the monitor
- * configuration calls. No video is decoded on the gpu and no monitor answers DDC/CI, so the services and the monitor
- * settings are refused the way Windows refuses them on such hardware. The answers were read from dxva2.dll of
- * Windows 11 with a test program.
+ * configuration calls. No monitor answers DDC/CI, so the monitor settings are refused the way Windows refuses them on
+ * such hardware. The video services are in vp.c. The answers were read from dxva2.dll of Windows 11 with a test program.
  */
 #include <mime/win32/winbase.h>
 #include <mime/win32/winuser.h>
@@ -232,7 +231,9 @@ static HRESULT STDMETHODCALLTYPE manager_unlock_device(IDirect3DDeviceManager9 *
     return hr;
 }
 
-/* there is no decoder and no video processor behind the device. */
+HRESULT WINAPI DXVA2CreateVideoService(IUnknown *device, REFIID riid, void **service);
+
+/* the services of the device the handle names, made by DXVA2CreateVideoService. */
 static HRESULT STDMETHODCALLTYPE manager_get_video_service(IDirect3DDeviceManager9 *This, HANDLE handle, REFIID riid,
                                                            void **service)
 {
@@ -242,8 +243,15 @@ static HRESULT STDMETHODCALLTYPE manager_get_video_service(IDirect3DDeviceManage
     *service = nullptr;
     EnterCriticalSection(&m->Lock);
     HRESULT hr = m->Device ? check_handle(m, handle) : DXVA2_E_NOT_INITIALIZED;
+    IUnknown *device = m->Device;
+    if (hr == S_OK)
+        device->lpVtbl->AddRef(device);
     LeaveCriticalSection(&m->Lock);
-    return hr == S_OK ? E_NOINTERFACE : hr;
+    if (hr != S_OK)
+        return hr;
+    hr = DXVA2CreateVideoService(device, riid, service);
+    device->lpVtbl->Release(device);
+    return hr;
 }
 
 static const IDirect3DDeviceManager9Vtbl g_manager_vtbl = {
@@ -268,14 +276,6 @@ DECLSPEC_EXPORT HRESULT WINAPI DXVA2CreateDirect3DDeviceManager9(UINT *token, ID
     *token = m->Token;
     *manager = &m->Interface;
     return S_OK;
-}
-
-DECLSPEC_EXPORT HRESULT WINAPI DXVA2CreateVideoService(IUnknown *device, REFIID riid, void **service)
-{
-    if (!device || !service)
-        return E_POINTER;
-    *service = nullptr;
-    return E_NOINTERFACE;
 }
 
 DECLSPEC_EXPORT HRESULT WINAPI DXVAHD_CreateDevice(IUnknown *device, const void *content, int usage, void *plugin,

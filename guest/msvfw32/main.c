@@ -433,6 +433,32 @@ DWORD VFWAPIV ICDecompress(HIC hic, DWORD flags, LPBITMAPINFOHEADER format, LPVO
     return (DWORD)ICSendMessage(hic, ICM_DECOMPRESS, (DWORD_PTR)&decompress, sizeof(decompress));
 }
 
+/* ------------------------------------------------------------------ sequence compression */
+
+BOOL WINAPI ICSeqCompressFrameStart(COMPVARS *vars, LPBITMAPINFOHEADER header)
+{
+    (void)vars;
+    (void)header;
+    return FALSE;
+}
+
+LPVOID WINAPI ICSeqCompressFrame(COMPVARS *vars, UINT flags, LPVOID bits, BOOL *key, LONG *size)
+{
+    (void)vars;
+    (void)flags;
+    (void)bits;
+    if (key)
+        *key = FALSE;
+    if (size)
+        *size = 0;
+    return nullptr;
+}
+
+void WINAPI ICSeqCompressFrameEnd(COMPVARS *vars)
+{
+    (void)vars;
+}
+
 /* ------------------------------------------------------------------ the compressor dialog */
 
 static void free_global(LPVOID memory)
