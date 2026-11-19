@@ -8,6 +8,50 @@ WINBASEAPI int WINAPI LZOpenFileW(LPWSTR name, LPVOID info, WORD style);
 WINBASEAPI LONG WINAPI LZCopy(int source, int destination);
 WINBASEAPI void WINAPI LZClose(int file);
 
+/* the class image list draws device manager icons; there is no image list behind it, so it is empty. */
+typedef struct _SP_CLASSIMAGELIST_DATA_LOCAL {
+    DWORD cbSize;
+    HANDLE ImageList;
+    ULONG_PTR Reserved;
+} SP_CLASSIMAGELIST_DATA_LOCAL, *PSP_CLASSIMAGELIST_DATA_LOCAL;
+
+WINSETUPAPI BOOL WINAPI SetupDiGetClassDescriptionA(const GUID *guid, PSTR description, DWORD size, PDWORD required)
+{
+    (void)guid;
+    if (required)
+        *required = 0;
+    if (!description || !size) {
+        SetLastError(ERROR_INSUFFICIENT_BUFFER);
+        return FALSE;
+    }
+    description[0] = 0;
+    return TRUE;
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiGetClassImageList(PSP_CLASSIMAGELIST_DATA_LOCAL data)
+{
+    if (!data)
+        return FALSE;
+    data->ImageList = nullptr;
+    data->Reserved = 0;
+    return TRUE;
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiGetClassImageIndex(PSP_CLASSIMAGELIST_DATA_LOCAL data, const GUID *guid, PINT index)
+{
+    (void)data;
+    (void)guid;
+    if (index)
+        *index = 0;
+    return TRUE;
+}
+
+WINSETUPAPI BOOL WINAPI SetupDiDestroyClassImageList(PSP_CLASSIMAGELIST_DATA_LOCAL data)
+{
+    (void)data;
+    return TRUE;
+}
+
 SETUPAPI DWORD WINAPI SetupDecompressOrCopyFileW(PCWSTR source, PCWSTR target, PUINT compression)
 {
     if (!source || !target)

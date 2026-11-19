@@ -1,0 +1,29 @@
+; verifier.dll: the standard provider of the application verifier, with the ordinals of windows.
+LIBRARY VERIFIER.dll
+EXPORTS
+    AVrfAPILookupCallback @1
+    VerifierAddFreeMemoryCallback @2
+    VerifierCheckPageHeapAllocation @3
+    VerifierCreateRpcPageHeap @4
+    VerifierDeleteFreeMemoryCallback @5
+    VerifierDestroyRpcPageHeap @6
+    VerifierDisableFaultInjectionExclusionRange @7
+    VerifierDisableFaultInjectionTargetRange @8
+    VerifierEnableFaultInjectionExclusionRange @9
+    VerifierEnableFaultInjectionTargetRange @10
+    VerifierEnumerateResource @11
+    VerifierForceNormalHeap @12
+    VerifierGetInfoForException @13
+    VerifierGetMemoryForDump @14
+    VerifierGetPropertyValueByName @15
+    VerifierGetProviderHelper @16
+    VerifierIsAddressInAnyPageHeap @17
+    VerifierIsCurrentThreadHoldingLocks @18
+    VerifierIsDllEntryActive @19
+    VerifierIsPerUserSettingsEnabled @20
+    VerifierQueryRuntimeFlags @21
+    VerifierRedirectStopFunctions @22
+    VerifierSetFaultInjectionProbability @23
+    VerifierSetFlags @24
+    VerifierSetRuntimeFlags @25
+    VerifierStopMessage @26

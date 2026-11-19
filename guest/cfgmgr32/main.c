@@ -438,6 +438,40 @@ BOOL parse_guid(PCWSTR text, GUID *out)
     return TRUE;
 }
 
+/* the classes are the keys of the registry that are named by a guid: setup classes, or interface classes with flag 1. */
+CMAPI CONFIGRET WINAPI CM_Enumerate_Classes(ULONG index, GUID *guid, ULONG flags)
+{
+    if (!guid)
+        return CR_INVALID_POINTER;
+    if (flags > 1)
+        return CR_INVALID_FLAG;
+    HKEY key;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+                      flags ? L"SYSTEM\\CurrentControlSet\\Control\\DeviceClasses"
+                            : L"SYSTEM\\CurrentControlSet\\Control\\Class",
+                      0, KEY_ENUMERATE_SUB_KEYS, &key))
+        return CR_REGISTRY_ERROR;
+    CONFIGRET result = CR_NO_SUCH_VALUE;
+    ULONG seen = 0;
+    for (DWORD i = 0;; i++) {
+        WCHAR name[64];
+        DWORD length = ARRAYSIZE(name);
+        LONG error = RegEnumKeyExW(key, i, name, &length, nullptr, nullptr, nullptr, nullptr);
+        if (error == ERROR_NO_MORE_ITEMS)
+            break;
+        GUID parsed;
+        if (error || !parse_guid(name, &parsed))
+            continue;
+        if (seen++ == index) {
+            *guid = parsed;
+            result = CR_SUCCESS;
+            break;
+        }
+    }
+    RegCloseKey(key);
+    return result;
+}
+
 CMAPI CONFIGRET WINAPI CM_Get_DevNode_PropertyW(DEVINST devinst, const DEVPROPKEY *key, DEVPROPTYPE *type,
                                                 PBYTE buffer, PULONG size, ULONG flags)
 {
