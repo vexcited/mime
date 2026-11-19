@@ -3,33 +3,55 @@ EXPORTS
     MFAllocateWorkQueue
     MFAllocateWorkQueueEx
     MFAverageTimePerFrameToFrameRate
+    MFCalculateImageSize
     MFCancelWorkItem
+    MFConvertColorInfoFromDXVA
+    MFConvertColorInfoToDXVA
+    MFConvertFromFP16Array
+    MFConvertToFP16Array
+    MFCopyImage
+    MFCreate2DMediaBuffer
     MFCreateAlignedMemoryBuffer
     MFCreateAsyncResult
     MFCreateAttributes
     MFCreateCollection
     MFCreateDXGIDeviceManager
     MFCreateDXGISurfaceBuffer
+    MFCreateDXSurfaceBuffer
     MFCreateEventQueue
     MFCreateMediaBufferWrapper
     MFCreateMediaEvent
     MFCreateMediaType
     MFCreateMemoryBuffer
     MFCreateMFByteStreamOnStream
+    MFCreateMFVideoFormatFromMFMediaType
     MFCreatePresentationDescriptor
     MFCreateSample
     MFCreateStreamDescriptor
+    MFCreateVideoMediaType
+    MFCreateVideoMediaTypeFromBitMapInfoHeaderEx
+    MFCreateVideoMediaTypeFromSubtype
+    MFCreateVideoMediaTypeFromVideoInfoHeader
+    MFCreateVideoMediaTypeFromVideoInfoHeader2
     MFCreateVideoSampleAllocatorEx
     MFCreateWaveFormatExFromMFMediaType
     MFDeserializeAttributesFromStream
     MFFrameRateToAverageTimePerFrame
     MFGetAttributesAsBlob
     MFGetAttributesAsBlobSize
+    MFGetPlaneSize
+    MFGetStrideForBitmapInfoHeader
     MFGetSystemTime
+    MFGetUncompressedVideoFormat
     MFHeapAlloc
     MFHeapFree
     MFInitAttributesFromBlob
+    MFInitMediaTypeFromMFVideoFormat
+    MFInitMediaTypeFromVideoInfoHeader
+    MFInitMediaTypeFromVideoInfoHeader2
     MFInitMediaTypeFromWaveFormatEx
+    MFInitVideoFormat
+    MFInitVideoFormat_RGB
     MFInvokeCallback
     MFllMulDiv
     MFLockDXGIDeviceManager

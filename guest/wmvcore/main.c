@@ -17,6 +17,11 @@ static HRESULT create(void **object)
     return E_NOTIMPL_;
 }
 
+HRESULT WINAPI WMCreateProfileManager(void **manager)
+{
+    return create(manager);
+}
+
 HRESULT WINAPI WMCreateReader(void *reserved, DWORD rights, void **reader)
 {
     return create(reader);
