@@ -130,6 +130,7 @@ NTSTATUS NTAPI NtLockFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc, PVOI
     NTSTATUS status = ObReferenceHandle(handle, IoFileObjectTypeObject, KeGetPreviousMode(), (PVOID *)&file, &access);
     if (!NT_SUCCESS(status))
         return status;
+    IopTakeWow64Iosb(file, &routine, &iosb);
     FS_RANGE_LOCK *lock = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(*lock), KI_TAG('F', 's', 'L', 'k'));
     if (!lock) {
         ObDereferenceObject(file);

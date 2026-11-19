@@ -19,6 +19,7 @@ typedef struct IO_COMPLETION {
     volatile LONG Lock;
     LIST_ENTRY Queue;
     LONG Count;
+    PVOID Factory; /* the worker factory bound to the port, told of each packet. */
 } IO_COMPLETION;
 
 /* what NtSetInformationFile(FileCompletionInformation) attaches to a file object. */
@@ -65,8 +66,12 @@ static NTSTATUS queue_packet(IO_COMPLETION *port, PVOID key, PVOID apc_context, 
     ULONG64 state = KiAcquireRawLock(&port->Lock);
     InsertTailList(&port->Queue, &p->Links);
     port->Count++;
+    /* a factory is unbound under this lock before its last handle goes, so it is whole here. */
+    PVOID factory = port->Factory ? ExWorkerFactoryPacketQueued(port->Factory) : nullptr;
     KiReleaseRawLock(&port->Lock, state);
     KeReleaseSemaphore(&port->Packets, IO_NO_INCREMENT, 1, FALSE);
+    if (factory)
+        ExWorkerFactoryCheck(factory);
     if (KiTimelineOn) {
         char text[24];
         mime_format(text, sizeof(text), "port%llx", (ULONG64)(ULONG_PTR)port & 0xFFFFFFFFFFFull);
@@ -210,18 +215,14 @@ BOOLEAN IopRemoveCompletionPacket(PVOID object, ULONG64 values[4])
     return TRUE;
 }
 
-/* waits in the caller's mode for up to count packets, into a kernel buffer. */
-static NTSTATUS remove_packets(HANDLE handle, FILE_IO_COMPLETION_INFORMATION *out, ULONG count, PULONG removed,
-                               PLARGE_INTEGER timeout, BOOLEAN alertable)
+/* waits in the caller's mode for up to count packets of a port, into a kernel buffer. */
+static NTSTATUS remove_from(IO_COMPLETION *port, FILE_IO_COMPLETION_INFORMATION *out, ULONG count, PULONG removed,
+                            PLARGE_INTEGER timeout, BOOLEAN alertable)
 {
-    IO_COMPLETION *port;
     KPROCESSOR_MODE mode = KeGetPreviousMode();
-    *removed = 0;
-    NTSTATUS status = ObReferenceHandleFor(handle, IO_COMPLETION_MODIFY_STATE, IoCompletionObjectType, mode, &port);
-    if (!NT_SUCCESS(status))
-        return status;
     ULONG n = 0;
-    status = KeWaitForSingleObject(&port->Packets, UserRequest, mode, alertable, timeout);
+    *removed = 0;
+    NTSTATUS status = KeWaitForSingleObject(&port->Packets, UserRequest, mode, alertable, timeout);
     while (status == STATUS_SUCCESS) {
         ULONG64 values[4];
         if (!IopRemoveCompletionPacket(port, values))
@@ -237,9 +238,45 @@ static NTSTATUS remove_packets(HANDLE handle, FILE_IO_COMPLETION_INFORMATION *ou
         if (KeWaitForSingleObject(&port->Packets, UserRequest, mode, FALSE, &zero) != STATUS_SUCCESS)
             break;
     }
-    ObDereferenceObject(port);
     *removed = n;
     return n ? STATUS_SUCCESS : status;
+}
+
+static NTSTATUS remove_packets(HANDLE handle, FILE_IO_COMPLETION_INFORMATION *out, ULONG count, PULONG removed,
+                               PLARGE_INTEGER timeout, BOOLEAN alertable)
+{
+    IO_COMPLETION *port;
+    *removed = 0;
+    NTSTATUS status = ObReferenceHandleFor(handle, IO_COMPLETION_MODIFY_STATE, IoCompletionObjectType,
+                                           KeGetPreviousMode(), &port);
+    if (!NT_SUCCESS(status))
+        return status;
+    status = remove_from(port, out, count, removed, timeout, alertable);
+    ObDereferenceObject(port);
+    return status;
+}
+
+/* the wait of a worker factory on its port. */
+NTSTATUS IopRemoveCompletionPackets(PVOID port, PVOID out, ULONG count, PULONG removed, PLARGE_INTEGER timeout)
+{
+    return remove_from(port, out, count, removed, timeout, FALSE);
+}
+
+LONG IopCompletionDepth(PVOID port)
+{
+    return ((IO_COMPLETION *)port)->Count;
+}
+
+/* a port tells the factory bound last, and a factory that goes takes only its own binding away. */
+void IopBindCompletionFactory(PVOID object, PVOID factory, BOOLEAN bind)
+{
+    IO_COMPLETION *port = object;
+    ULONG64 state = KiAcquireRawLock(&port->Lock);
+    if (bind)
+        port->Factory = factory;
+    else if (port->Factory == factory)
+        port->Factory = nullptr;
+    KiReleaseRawLock(&port->Lock, state);
 }
 
 static NTSTATUS capture_timeout(PLARGE_INTEGER user, PLARGE_INTEGER storage, PLARGE_INTEGER *out)
@@ -350,6 +387,24 @@ void IopTakeIosb32(PVOID *apc_routine, PIO_STATUS_BLOCK *iosb)
     *apc_routine = (PVOID)((ULONG_PTR)*apc_routine & ~(ULONG_PTR)1);
     if (*iosb)
         *iosb = (PIO_STATUS_BLOCK)((ULONG_PTR)*iosb | 1);
+}
+
+/*
+ * like NtLockFile, IopReadFile and IopXxxControlFile of ntoskrnl 26300: a 32-bit program's request for a file that is
+ * not synchronous comes from wow64 with a 64-bit status block whose first word holds the address of the 32-bit one,
+ * which the request then completes in the 32-bit layout. a synchronous one is done before the service returns, and
+ * wow64 copies the 64-bit block itself.
+ */
+void IopTakeWow64Iosb(PFILE_OBJECT file, PVOID *apc_routine, PIO_STATUS_BLOCK *iosb)
+{
+    if (KeGetPreviousMode() != UserMode || !*iosb || ((ULONG_PTR)*iosb & 1) || (file->Flags & FO_SYNCHRONOUS_IO) ||
+        !PspIsWow64Process(PsCurrentProcess()))
+        return;
+    ULONG block = 0;
+    if (!NT_SUCCESS(KiCopyFromUser(&block, *iosb, sizeof(block))))
+        return;
+    *iosb = (PIO_STATUS_BLOCK)((ULONG_PTR)block | 1);
+    *apc_routine = (PVOID)((ULONG_PTR)*apc_routine & ~(ULONG_PTR)1);
 }
 
 /* the status block bytes and their address, in the 32-bit layout when the iosb is marked. */
