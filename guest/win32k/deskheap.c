@@ -69,7 +69,9 @@
 #define WND_EXTRA_SIZE 0xc8
 #define WND_USER_DATA 0xd8
 #define WND_CLASS_BLOCK 0x80
+#define WND_UPDATE 0x88
 #define WND_SCROLL 0x90
+#define WND_BAND 0xec
 #define WND_DPI 0x11c
 #define WND_EXTRA_BYTES 0x128
 #define WND_ID 0x140
@@ -108,6 +110,11 @@
 #define STATE_SENDSIZEMOVEMSGS 0x00000010u
 #define STATE_MSGBOX 0x00000020u
 #define STATE_ACTIVEFRAME 0x00000040u
+/* what UpdateWindow, GetUpdateRect and GetUpdateRgn of user32 read before they ask: with none of them and no update
+   region they answer that nothing is to be painted. */
+#define STATE_SENDNCPAINT 0x00000200u
+#define STATE_SENDERASEBKGND 0x00000800u
+#define STATE_INTERNALPAINT 0x00001000u
 #define STATE_DIALOGWINDOW 0x00010000u
 #define STATE_HASCREATESTRUCTNAME 0x00020000u
 #define STATE_SERVER_PROC 0x00040000u
@@ -436,6 +443,17 @@ static void write_window(WND *w)
         if (!(w->Style & (WS_CHILD | WS_POPUP)))
             state |= STATE_MAXIMIZESTOFULLSCREEN;
     }
+    if (!desktop) {
+        if (w->Flags & WNDF_FRAME_DIRTY)
+            state |= STATE_SENDNCPAINT;
+        if (w->Flags & WNDF_ERASE_PENDING)
+            state |= STATE_SENDERASEBKGND;
+        if (w->Flags & WNDF_INTERNAL_PAINT)
+            state |= STATE_INTERNALPAINT;
+        /* the handle of the update region, of which user32 only asks whether there is one: HRGN_FULL stands for it. */
+        if (!RgnIsEmpty(&w->Update))
+            *(PULONG64)(image + WND_UPDATE) = 1;
+    }
     *(PULONG)(image + WND_STATE) = state;
     *(PULONG)(image + WND_STATE2) = STATE2_COMMON | (w->Style & WS_CHILD ? STATE2_CHILD : 0);
     *(PULONG)(image + WND_EXSTYLE) = w->ExStyle;
@@ -478,6 +496,8 @@ static void write_window(WND *w)
     *(PULONG64)(image + WND_EXTRA_SIZE) = w->ExtraSize;
     *(PULONG64)(image + WND_USER_DATA) = (ULONG64)w->UserData;
     *(PULONG)(image + WND_DPI) = w->Dpi ? w->Dpi : 96;
+    /* ZBID_DESKTOP, the band of every window of a desktop program. GetWindow of user32 skips a window of no band. */
+    *(PULONG)(image + WND_BAND) = 1;
     /*
      * the dpi awareness context of the window, which user32 compares with the one of its thread before it maps a
      * point. measured on windows 11 with dpictx.exe of scratch/dlls/wall: 0x6010 unaware and 0x6011 system aware,

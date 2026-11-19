@@ -184,6 +184,7 @@ void NtUserCallTwoParam(void);
 void NtUserChangeClipboardChain(void);
 void NtUserChangeDisplaySettings(void);
 void NtUserCheckMenuItem(void);
+void NtUserClearWindowState(void);
 void NtUserClipCursor(void);
 void NtUserCloseClipboard(void);
 void NtUserCloseDesktop(void);
@@ -217,6 +218,13 @@ void NtUserGetDpiForCurrentProcess(void);
 void NtUserInternalGetWindowIcon(void);
 void NtUserEnumDisplaySettings(void);
 void NtUserEnumDisplayMonitors(void);
+void NtUserMapVirtualKeyEx(void);
+void NtUserToUnicodeEx(void);
+void NtUserVkKeyScanEx(void);
+void NtUserGetKeyNameText(void);
+void NtUserActivateKeyboardLayout(void);
+void NtUserBitBltSysBmp(void);
+void NtUserGetOemBitmapSize(void);
 void NtUserSetForegroundWindow(void);
 void NtUserWindowFromPoint(void);
 void NtUserGetHDevName(void);
@@ -238,6 +246,8 @@ void NtUserGetAsyncKeyState(void);
 void NtUserGetClassInfoEx(void);
 void NtUserGetClassName(void);
 void NtUserGetClipCursor(void);
+void NtUserGetProp2(void);
+void NtUserGetComboBoxInfo(void);
 void NtUserGetClipboardData(void);
 void NtUserGetClipboardFormatName(void);
 void NtUserGetClipboardOwner(void);
@@ -308,6 +318,7 @@ void NtUserRedrawWindow(void);
 void NtUserRegisterClassExWOW(void);
 void NtUserRegisterRawInputDevices(void);
 void NtUserRegisterWindowMessage(void);
+void NtUserReleaseCapture(void);
 void NtUserReleaseDC(void);
 void NtUserRemoveClipboardFormatListener(void);
 void NtUserRemoveMenu(void);
@@ -381,6 +392,7 @@ void NtUserSetMenu(void);
 void NtUserSetMenuDefaultItem(void);
 void NtUserSetObjectInformation(void);
 void NtUserSetParent(void);
+void NtUserSetProp2(void);
 void NtUserSetProcessWindowStation(void);
 void NtUserSetProp(void);
 void NtUserSetThreadDesktop(void);
@@ -390,6 +402,7 @@ void NtUserSetWindowLongPtr(void);
 void NtUserSetWindowPlacement(void);
 void NtUserSetWindowPos(void);
 void NtUserSetWindowRgn(void);
+void NtUserSetWindowState(void);
 void NtUserSetWindowsHookEx(void);
 void NtUserShowWindow(void);
 void NtUserShowWindowAsync(void);
@@ -1297,6 +1310,11 @@ void Win32kInitializeServices(SERVICE *table)
 #else
 #warning "NtUserCheckMenuItem has no syscall number"
 #endif
+#ifdef MIME_SVC_NtUserClearWindowState
+    table[MIME_SVC_NtUserClearWindowState & 0xFFF] = (SERVICE){(void *)NtUserClearWindowState, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserClearWindowState has no syscall number"
+#endif
 #ifdef MIME_SVC_NtUserClipCursor
     table[MIME_SVC_NtUserClipCursor & 0xFFF] = (SERVICE){(void *)NtUserClipCursor, STACK_ARGS(1), 1, 0};
 #else
@@ -1467,6 +1485,41 @@ void Win32kInitializeServices(SERVICE *table)
 #else
 #warning "NtUserWindowFromPoint has no syscall number"
 #endif
+#ifdef MIME_SVC_NtUserMapVirtualKeyEx
+    table[MIME_SVC_NtUserMapVirtualKeyEx & 0xFFF] = (SERVICE){(void *)NtUserMapVirtualKeyEx, STACK_ARGS(4), 1, 0};
+#else
+#warning "NtUserMapVirtualKeyEx has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserToUnicodeEx
+    table[MIME_SVC_NtUserToUnicodeEx & 0xFFF] = (SERVICE){(void *)NtUserToUnicodeEx, STACK_ARGS(7), 1, 0};
+#else
+#warning "NtUserToUnicodeEx has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserVkKeyScanEx
+    table[MIME_SVC_NtUserVkKeyScanEx & 0xFFF] = (SERVICE){(void *)NtUserVkKeyScanEx, STACK_ARGS(3), 1, 0};
+#else
+#warning "NtUserVkKeyScanEx has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserGetKeyNameText
+    table[MIME_SVC_NtUserGetKeyNameText & 0xFFF] = (SERVICE){(void *)NtUserGetKeyNameText, STACK_ARGS(3), 1, 0};
+#else
+#warning "NtUserGetKeyNameText has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserActivateKeyboardLayout
+    table[MIME_SVC_NtUserActivateKeyboardLayout & 0xFFF] = (SERVICE){(void *)NtUserActivateKeyboardLayout, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserActivateKeyboardLayout has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserBitBltSysBmp
+    table[MIME_SVC_NtUserBitBltSysBmp & 0xFFF] = (SERVICE){(void *)NtUserBitBltSysBmp, STACK_ARGS(5), 1, 0};
+#else
+#warning "NtUserBitBltSysBmp has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserGetOemBitmapSize
+    table[MIME_SVC_NtUserGetOemBitmapSize & 0xFFF] = (SERVICE){(void *)NtUserGetOemBitmapSize, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserGetOemBitmapSize has no syscall number"
+#endif
 #ifdef MIME_SVC_NtUserEnumDisplayMonitors
     table[MIME_SVC_NtUserEnumDisplayMonitors & 0xFFF] = (SERVICE){(void *)NtUserEnumDisplayMonitors, STACK_ARGS(4), 1, 0};
 #else
@@ -1566,6 +1619,11 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserGetClipCursor & 0xFFF] = (SERVICE){(void *)NtUserGetClipCursor, STACK_ARGS(1), 1, 0};
 #else
 #warning "NtUserGetClipCursor has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserGetComboBoxInfo
+    table[MIME_SVC_NtUserGetComboBoxInfo & 0xFFF] = (SERVICE){(void *)NtUserGetComboBoxInfo, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserGetComboBoxInfo has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserGetClipboardData
     table[MIME_SVC_NtUserGetClipboardData & 0xFFF] = (SERVICE){(void *)NtUserGetClipboardData, STACK_ARGS(2), 1, 0};
@@ -1676,6 +1734,11 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserGetProcessWindowStation & 0xFFF] = (SERVICE){(void *)NtUserGetProcessWindowStation, STACK_ARGS(0), 1, 0};
 #else
 #warning "NtUserGetProcessWindowStation has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserGetProp2
+    table[MIME_SVC_NtUserGetProp2 & 0xFFF] = (SERVICE){(void *)NtUserGetProp2, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserGetProp2 has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserGetProp
     table[MIME_SVC_NtUserGetProp & 0xFFF] = (SERVICE){(void *)NtUserGetProp, STACK_ARGS(2), 1, 0};
@@ -1916,6 +1979,11 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserRegisterWindowMessage & 0xFFF] = (SERVICE){(void *)NtUserRegisterWindowMessage, STACK_ARGS(1), 1, 0};
 #else
 #warning "NtUserRegisterWindowMessage has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserReleaseCapture
+    table[MIME_SVC_NtUserReleaseCapture & 0xFFF] = (SERVICE){(void *)NtUserReleaseCapture, STACK_ARGS(0), 1, 0};
+#else
+#warning "NtUserReleaseCapture has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserReleaseDC
     table[MIME_SVC_NtUserReleaseDC & 0xFFF] = (SERVICE){(void *)NtUserReleaseDC, STACK_ARGS(1), 1, 0};
@@ -2287,6 +2355,11 @@ void Win32kInitializeServices(SERVICE *table)
 #else
 #warning "NtUserSetProcessWindowStation has no syscall number"
 #endif
+#ifdef MIME_SVC_NtUserSetProp2
+    table[MIME_SVC_NtUserSetProp2 & 0xFFF] = (SERVICE){(void *)NtUserSetProp2, STACK_ARGS(3), 1, 0};
+#else
+#warning "NtUserSetProp2 has no syscall number"
+#endif
 #ifdef MIME_SVC_NtUserSetProp
     table[MIME_SVC_NtUserSetProp & 0xFFF] = (SERVICE){(void *)NtUserSetProp, STACK_ARGS(3), 1, 0};
 #else
@@ -2326,6 +2399,11 @@ void Win32kInitializeServices(SERVICE *table)
     table[MIME_SVC_NtUserSetWindowRgn & 0xFFF] = (SERVICE){(void *)NtUserSetWindowRgn, STACK_ARGS(3), 1, 0};
 #else
 #warning "NtUserSetWindowRgn has no syscall number"
+#endif
+#ifdef MIME_SVC_NtUserSetWindowState
+    table[MIME_SVC_NtUserSetWindowState & 0xFFF] = (SERVICE){(void *)NtUserSetWindowState, STACK_ARGS(2), 1, 0};
+#else
+#warning "NtUserSetWindowState has no syscall number"
 #endif
 #ifdef MIME_SVC_NtUserSetWindowsHookEx
     table[MIME_SVC_NtUserSetWindowsHookEx & 0xFFF] = (SERVICE){(void *)NtUserSetWindowsHookEx, STACK_ARGS(6), 1, 0};

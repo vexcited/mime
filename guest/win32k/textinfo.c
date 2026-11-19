@@ -13,6 +13,7 @@ BOOL NTAPI NtGdiGetCharWidthInfo(HDC hdc, PVOID user_info)
     UserLeave();
     if (!font)
         return FALSE;
-    LONG info[4] = {0, 0, 0, 0};
+    /* CHWIDTHINFO is three longs: the edit control of user32 keeps it right under its stack cookie. */
+    LONG info[3] = {0, 0, 0};
     return NT_SUCCESS(MimeCopyToUser(user_info, info, sizeof(info)));
 }

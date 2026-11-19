@@ -357,6 +357,10 @@ BOOL GdiPolyPatBltDc(DC *dc, DWORD rop, const UCHAR *list, ULONG count);
 int DcSelectClip(DC *dc, const REGION *region, int mode);
 HFONT DcSelectFont(DC *dc, FONT *f);
 BRUSH *GdiCreateBrush(UINT style, COLORREF color, ULONG_PTR hatch);
+struct FONT *GdiCreateFont(const LOGFONTW *lf);
+BOOL GdiBltFromSurface(HDC hdst, int x, int y, int width, int height, struct SURFACE *src, int src_x, int src_y, DWORD rop);
+/* oembitmap.c: the check marks and radio buttons user32 draws, made again after the colours of the system change. */
+void OemBitmapsInvalidate(void);
 DC *DcLookup(HDC dc);
 void DcSelectPalette(DC *dc, PALETTE *palette);
 /* gdi/palette.c. */
@@ -563,6 +567,7 @@ typedef struct W32PROCESS {
     BOOLEAN DpiGdiScaled; /* chosen as DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED, which works as unaware. */
     BOOLEAN Wow;        /* a 32-bit program, its structures are converted at its boundary. */
     DWORD LpkFlags;     /* NtUserRegisterLPK. */
+    HINSTANCE ClientModule; /* user32 as the process loaded it, known from the first control class it registers. */
     DWORD StartupFlags; /* NtUserModifyUserStartupInfoFlags. */
     HICON ExeIcon;      /* the first icon of the program's file, for a window that has none. */
     BOOLEAN ExeIconTried;
@@ -645,6 +650,7 @@ typedef struct W32THREAD {
     LIST_ENTRY Input;
     LIST_ENTRY Sent;        /* messages sent to this thread by others. */
     ULONG DeskInfo;         /* its CLIENTTHREADINFO in the desktop heap, see deskheap.c. */
+    BOOLEAN ClientSetup;    /* ClientThreadSetup of user32 was asked for, see service_enter of main.c. */
     SENT_MESSAGE *Receiving; /* sent message being processed. */
     BOOLEAN Replied;         /* the message being processed was answered before its procedure returned. */
     ULONG ReceivingKind;     /* 1 for a sent message being processed, 2 when its sender does not wait, else 0. */
@@ -1269,6 +1275,7 @@ void RawFreeProcess(W32PROCESS *p);
 
 void PaintFlushThread(W32THREAD *t);
 void PaintPresent(WND *top);
+void PaintUpdateNow(WND *w);
 HDC PaintGetDC(WND *w, HRGN clip, ULONG flags);
 HDC PaintGetMonitorDC(ULONG index);
 void PaintReleaseDC(DC *dc);
@@ -1321,6 +1328,7 @@ void DndHostEvent(const MimeInputEvent *ev);
 void DndThreadDestroyed(W32THREAD *t);
 void DndWindowDestroyed(WND *w);
 /* release a left button whose up event was consumed by the host, input.c. */
+void InputHostDragStep(WND *w, LONG dx, LONG dy, LONG cursor_dx, LONG cursor_dy);
 void InputReleaseLeftButton(void);         /* another host program pastes a clipboard format owned by the session. */
 void GpuFreeProcess(W32PROCESS *p);
 void VkFreeProcess(W32PROCESS *p);
@@ -1367,8 +1375,10 @@ void MonitorEdidSize(ULONG index, ULONG mm[2], ULONG cm[2]); /* what its edid te
 ULONG_PTR MonitorCall(ULONG_PTR param1, ULONG_PTR param2, ULONG routine);
 void WndHostDisplay(WND *w, ULONG monitor);
 void WndHostSize(WND *w, LONG width, LONG height);
-BOOLEAN HostMoveSize(WND *w, ULONG edge);
+BOOLEAN HostMoveSize(WND *w, ULONG edge, BOOLEAN held);
 BOOLEAN MoveSizeDefault(WND *w, UINT msg, WPARAM wparam, LPARAM lparam);
+BOOLEAN MoveSizeHostStep(WND *w, LONG *cx, LONG *cy);
+void MoveSizeHostEnd(WND *w);
 W32THREAD *W32NextThread(W32THREAD *previous);
 void DeskThreadFreed(W32THREAD *t);
 BOOLEAN FontFamilyInstalled(PCWSTR name);
