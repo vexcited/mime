@@ -2,7 +2,7 @@
  * The families of the fonts that the catalog of features on demand can fetch, in lower case and in order.
  * Generated, do not edit.
  */
-#include "gdi32_private.h"
+#include "../win32k.h"
 
 const char *const g_catalog_font_names[] = {
     "aharoni",

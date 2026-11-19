@@ -47,6 +47,20 @@ static ULONG swap32(ULONG v)
 
 /* ------------------------------------------------------------------ font data */
 
+/* the pairs of the first format 0 subtable of kern, which the truetype driver reports as cKerningPairs. */
+static ULONG kerning_pairs(FONT_FACE *f)
+{
+    UCHAR head[14];
+    if (!FontReadTable(f, 0x6B65726E, 0, head, sizeof(head), nullptr) || be16(head) != 0 || !be16(head + 2))
+        return 0;
+    return (be16(head + 8) >> 8) == 0 ? be16(head + 10) : 0;
+}
+
+ULONG FontLanguageInfo(FONT_INSTANCE *fi)
+{
+    return 0x40000 | (kerning_pairs(fi->Face) ? 8 : 0);
+}
+
 ULONG NTAPI NtGdiGetFontData(HDC hdc, DWORD table, DWORD offset, PVOID buffer, ULONG size)
 {
     UserEnter();
@@ -92,11 +106,32 @@ static const UCHAR *table_data(const MimeTtfTable *t, ULONG need)
     return t->data && t->size >= need ? t->data : nullptr;
 }
 
+static ULONG ansi_bytes(PCWSTR text)
+{
+    CHAR out[2 * LF_FULLFACESIZE];
+    ULONG n = 0;
+    RtlUnicodeToMultiByteN(out, sizeof(out), &n, text, (ULONG)wcslen(text) * sizeof(WCHAR));
+    return n;
+}
+
+/*
+ * as win32kfull's GrepGetOutlineTextMetrics: a size of 232 bytes or less takes that much of the structure alone, a
+ * size short of the strings gives 0, and a larger one gets everything with the rest zeroed. on success the TMDIFF
+ * gdi32full passes gets the size of the OUTLINETEXTMETRICA, 236 and the ansi bytes of the four names, and the ansi
+ * characters of the text metrics.
+ */
 ULONG NTAPI NtGdiGetOutlineTextMetricsInternalW(HDC hdc, ULONG size, OUTLINETEXTMETRICW *user_otm, PVOID tmdiff)
 {
     WCHAR family[LF_FACESIZE], face_name[LF_FULLFACESIZE], style[LF_FACESIZE], full[LF_FULLFACESIZE];
     OUTLINETEXTMETRICW otm;
+    UCHAR diff[8] = {};
     memset(&otm, 0, sizeof(otm));
+    if (!size && user_otm) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return 0;
+    }
+    if (!size)
+        user_otm = nullptr;
     UserEnter();
     DC *dc = DcLookup(hdc);
     FONT_INSTANCE *fi = dc ? DcGetFont(dc) : nullptr;
@@ -165,25 +200,35 @@ ULONG NTAPI NtGdiGetOutlineTextMetricsInternalW(HDC hdc, ULONG size, OUTLINETEXT
         otm.otmpFullName = (PSTR)(ULONG_PTR)offset;
         offset += (nfull + 1) * sizeof(WCHAR);
         otm.otmSize = offset;
+        *(ULONG *)diff = 236 + ansi_bytes(family) + ansi_bytes(face_name) + ansi_bytes(style) + ansi_bytes(full);
+        memcpy(diff + 4, FontAnsiChars(fi), 4);
     }
     UserLeave();
-    (void)tmdiff;
-    if (!fi)
+    if (!fi) {
+        W32SetLastError(ERROR_INVALID_HANDLE);
+        return 0;
+    }
+    ULONG fixed = sizeof(OUTLINETEXTMETRICW);
+    if (user_otm && size > fixed && size < otm.otmSize)
+        return 0;
+    if (!NT_SUCCESS(MimeCopyToUser(tmdiff, diff, sizeof(diff))))
         return 0;
     if (!user_otm)
         return otm.otmSize;
-    PUCHAR full_buffer = W32Alloc(otm.otmSize);
+    if (size <= fixed)
+        return NT_SUCCESS(MimeCopyToUser(user_otm, &otm, size)) ? size : 0;
+    PUCHAR full_buffer = W32Alloc(size);
     if (!full_buffer)
         return 0;
+    memset(full_buffer, 0, size);
     memcpy(full_buffer, &otm, sizeof(otm));
     memcpy(full_buffer + (ULONG_PTR)otm.otmpFamilyName, family, (wcslen(family) + 1) * sizeof(WCHAR));
     memcpy(full_buffer + (ULONG_PTR)otm.otmpFaceName, face_name, (wcslen(face_name) + 1) * sizeof(WCHAR));
     memcpy(full_buffer + (ULONG_PTR)otm.otmpStyleName, style, (wcslen(style) + 1) * sizeof(WCHAR));
     memcpy(full_buffer + (ULONG_PTR)otm.otmpFullName, full, (wcslen(full) + 1) * sizeof(WCHAR));
-    ULONG n = size < otm.otmSize ? size : otm.otmSize;
-    BOOLEAN ok = n && NT_SUCCESS(MimeCopyToUser(user_otm, full_buffer, n));
+    BOOLEAN ok = NT_SUCCESS(MimeCopyToUser(user_otm, full_buffer, size));
     W32Free(full_buffer);
-    return ok ? n : 0;
+    return ok ? otm.otmSize : 0;
 }
 
 /* ------------------------------------------------------------------ unicode coverage and glyph indices */
@@ -399,36 +444,6 @@ static void xform_apply(const GLYPH_XFORM *t, float x, float y, float *ox, float
 {
     *ox = x * t->A + y * t->C;
     *oy = x * t->B + y * t->D;
-}
-
-void FontGlyphAbcFloat(FONT_INSTANCE *fi, USHORT index, ABCFLOAT *abc)
-{
-    int advance = 0, lsb = 0;
-    mime_ttf_glyph_hmetrics(&fi->Face->Ttf, index, &advance, &lsb);
-    BOOLEAN hinted = FontHinter(fi) != nullptr;
-    float adv = hinted ? (float)FontGlyphAdvance(fi, index) : advance * fi->ScaleX;
-    abc->abcfA = 0;
-    abc->abcfB = 0;
-    abc->abcfC = adv;
-    OUTLINE o;
-    if (!outline_load_ex(fi, index, hinted, &o))
-        return;
-    float sx = o.Pixels ? 1.0f : fi->ScaleX, sy = o.Pixels ? 1.0f : fi->ScaleY;
-    if (o.Count) {
-        float shear = fi->SimItalic ? 0.2f * sy : 0;
-        float lo = 0, hi = 0;
-        for (ULONG i = 0; i < o.Count; i++) {
-            float x = o.X[i] * sx + o.Y[i] * shear;
-            if (!i || x < lo)
-                lo = x;
-            if (!i || x > hi)
-                hi = x;
-        }
-        abc->abcfA = lo;
-        abc->abcfB = hi - lo;
-        abc->abcfC = adv - hi;
-    }
-    outline_free(&o);
 }
 
 /* outline segments with explicit points: lines, or quadratic curves with their control point. */

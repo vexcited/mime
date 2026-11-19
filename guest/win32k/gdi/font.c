@@ -604,6 +604,13 @@ static FONT_FACE *match_family(PCWSTR name, LONG weight, BOOLEAN italic)
     return best;
 }
 
+/* a family by the name a program gives it, after the substitutes. the caller holds the lock. */
+BOOLEAN FontFamilyInstalled(PCWSTR name)
+{
+    wait_scanned();
+    return match_family(substitute(name), FW_NORMAL, FALSE) != nullptr;
+}
+
 /*
  * a face that is not installed is stood in for by the generic family the request names, then by a face the process
  * added for itself, then by whatever is installed. the face is never given the name asked.
@@ -646,6 +653,117 @@ static LONG round_f(float v)
     return (LONG)(v >= 0 ? v + 0.5f : v - 0.5f);
 }
 
+/*
+ * the characters of the text metrics, as windows 11 gives them for a truetype face: the first and the last character
+ * of its cmap, the break character the first one but at least 2 and the default character the one before. a symbol
+ * face covers 0 to 0xf0ff and its ansi characters start at 0x20. measured with textm.c of scratch/dlls/gdibatch.
+ */
+static void face_chars(FONT_FACE *f)
+{
+    if (f->CharsKnown)
+        return;
+    f->CharsKnown = TRUE;
+    if (f->Symbol) {
+        ULONG first = 0xF000, last = 0xF0FF;
+        while (first < last && !mime_ttf_glyph_index(&f->Ttf, first))
+            first++;
+        while (last > first && !mime_ttf_glyph_index(&f->Ttf, last))
+            last--;
+        f->FirstChar = 0;
+        f->LastChar = 0xF0FF;
+        f->DefaultChar = 0x1F;
+        f->BreakChar = 0x20;
+        f->AnsiChars[0] = 0x1E;
+        f->AnsiChars[1] = (UCHAR)W32Min(0xFF, (LONG)(last - first) + 0x20);
+        f->AnsiChars[2] = 0x1F;
+        f->AnsiChars[3] = 0x20;
+        return;
+    }
+    ULONG first = 0, last = 0xFFFF;
+    while (first < last && !mime_ttf_glyph_index(&f->Ttf, first))
+        first++;
+    while (last > first && !mime_ttf_glyph_index(&f->Ttf, last))
+        last--;
+    ULONG brk = first < 2 ? 2 : first;
+    f->FirstChar = (WCHAR)first;
+    f->LastChar = (WCHAR)last;
+    f->BreakChar = (WCHAR)brk;
+    f->DefaultChar = (WCHAR)(brk - 1);
+    f->AnsiChars[0] = (UCHAR)(brk - 2);
+    f->AnsiChars[1] = (UCHAR)W32Min(0xFF, (LONG)last);
+    f->AnsiChars[2] = (UCHAR)(brk - 1);
+    f->AnsiChars[3] = (UCHAR)brk;
+}
+
+const UCHAR *FontAnsiChars(FONT_INSTANCE *fi)
+{
+    face_chars(fi->Face);
+    return fi->Face->AnsiChars;
+}
+
+ULONG FontFaceId(FONT_FACE *f)
+{
+    return (ULONG)(f - g_faces) + 1;
+}
+
+/* the charsets and their bit in the code page ranges of the OS/2 table. */
+static const struct {
+    UCHAR CharSet;
+    UCHAR Bit;
+    USHORT CodePage;
+} g_charsets[] = {
+    {ANSI_CHARSET, 0, 1252},         {EASTEUROPE_CHARSET, 1, 1250}, {RUSSIAN_CHARSET, 2, 1251},
+    {GREEK_CHARSET, 3, 1253},        {TURKISH_CHARSET, 4, 1254},    {HEBREW_CHARSET, 5, 1255},
+    {ARABIC_CHARSET, 6, 1256},       {BALTIC_CHARSET, 7, 1257},     {VIETNAMESE_CHARSET, 8, 1258},
+    {THAI_CHARSET, 16, 874},         {SHIFTJIS_CHARSET, 17, 932},   {GB2312_CHARSET, 18, 936},
+    {HANGEUL_CHARSET, 19, 949},      {CHINESEBIG5_CHARSET, 20, 950}, {JOHAB_CHARSET, 21, 1361},
+    {SYMBOL_CHARSET, 31, 42},
+};
+
+UINT FontCharSetCodePage(UCHAR charset)
+{
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_charsets); i++)
+        if (g_charsets[i].CharSet == charset)
+            return g_charsets[i].CodePage;
+    if (charset == OEM_CHARSET)
+        return 437;
+    if (charset == MAC_CHARSET)
+        return 10000;
+    return 1252;
+}
+
+/* the charset asked for when the face has it, else ansi, else the first the face has. */
+static UCHAR resolve_charset(FONT_FACE *face, UCHAR asked)
+{
+    if (face->Symbol)
+        return SYMBOL_CHARSET;
+    ULONG ranges = face->Signature.fsCsb[0];
+    for (ULONG i = 0; asked != DEFAULT_CHARSET && i < RTL_NUMBER_OF(g_charsets); i++)
+        if (g_charsets[i].CharSet == asked && (ranges & (1u << g_charsets[i].Bit)))
+            return asked;
+    if (ranges & 1)
+        return ANSI_CHARSET;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_charsets); i++)
+        if (ranges & (1u << g_charsets[i].Bit))
+            return g_charsets[i].CharSet;
+    return ANSI_CHARSET;
+}
+
+/* the faces with a value under FontLink\SystemLink on windows 11, read with NtGdiFontIsLinked in textj.c. */
+static const WCHAR *const g_system_linked[] = {
+    L"Segoe UI", L"Segoe UI Semibold", L"Segoe UI Light", L"Segoe UI Semilight", L"Tahoma", L"Microsoft Sans Serif",
+    L"Lucida Sans Unicode", L"MS Gothic", L"MS PGothic", L"MS UI Gothic", L"Yu Gothic UI", L"Malgun Gothic",
+    L"Microsoft YaHei UI", L"Microsoft JhengHei UI", L"SimSun", L"Ebrima", L"Nirmala UI", L"Leelawadee UI", L"Gadugi",
+};
+
+BOOLEAN FontHasSystemLink(FONT_FACE *f)
+{
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_system_linked); i++)
+        if (!_wcsicmp(f->Family, g_system_linked[i]))
+            return TRUE;
+    return FALSE;
+}
+
 static void compute_metrics(FONT_INSTANCE *fi, const LOGFONTW *lf)
 {
     FONT_FACE *face = fi->Face;
@@ -670,27 +788,24 @@ static void compute_metrics(FONT_INSTANCE *fi, const LOGFONTW *lf)
     LONG gap = m->line_gap + m->ascender - m->descender - (m->win_ascent + m->win_descent);
     tm->tmExternalLeading = gap > 0 ? round_f((float)gap * fi->ScaleY) : 0;
     tm->tmAveCharWidth = round_f((float)m->avg_char_width * fi->ScaleX);
-    tm->tmMaxCharWidth = round_f((float)m->max_advance * fi->ScaleX);
+    /* the width of the bounding box of the face, not the widest advance. */
+    tm->tmMaxCharWidth = round_f((float)(m->x_max - m->x_min) * fi->ScaleX);
     tm->tmWeight = fi->Weight;
     tm->tmOverhang = 0;
     tm->tmDigitizedAspectX = 96;
     tm->tmDigitizedAspectY = 96;
-    tm->tmFirstChar = 0x1E;
-    tm->tmLastChar = 0xFFFC;
-    tm->tmDefaultChar = 0x1F;
-    tm->tmBreakChar = 0x20;
+    face_chars(face);
+    tm->tmFirstChar = face->FirstChar;
+    tm->tmLastChar = face->LastChar;
+    tm->tmDefaultChar = face->DefaultChar;
+    tm->tmBreakChar = face->BreakChar;
     tm->tmItalic = fi->Italic ? 255 : 0;
     tm->tmUnderlined = fi->Underline ? 255 : 0;
     tm->tmStruckOut = fi->StrikeOut ? 255 : 0;
     /* TMPF_FIXED_PITCH is inverted: it is set for variable pitch fonts. */
     tm->tmPitchAndFamily = (face->Fixed ? 0 : TMPF_FIXED_PITCH) | TMPF_VECTOR | TMPF_TRUETYPE |
                            face->PitchFamily;
-    tm->tmCharSet = face->Symbol ? SYMBOL_CHARSET : ANSI_CHARSET;
-    if (face->Symbol) {
-        tm->tmFirstChar = 0x20;
-        tm->tmLastChar = 0xFF;
-        tm->tmDefaultChar = 0x1F;
-    }
+    tm->tmCharSet = fi->CharSet;
     fi->UnderlinePos = -round_f((float)m->underline_position * fi->ScaleY);
     fi->UnderlineSize = W32Max(1, round_f((float)m->underline_thickness * fi->ScaleY));
     fi->StrikeoutPos = round_f((float)m->strikeout_position * fi->ScaleY);
@@ -735,11 +850,12 @@ static FONT_INSTANCE *realize_face(FONT_FACE *face, const LOGFONTW *lf, UINT dpi
     BOOLEAN sim_bold = weight >= FW_SEMIBOLD && face->Weight < FW_SEMIBOLD;
     BOOLEAN sim_italic = lf->lfItalic && !face->Italic;
     UCHAR smooth = smooth_of(lf);
+    UCHAR charset = resolve_charset(face, lf->lfCharSet);
     for (PLIST_ENTRY e = g_instances.Flink; e != &g_instances; e = e->Flink) {
         FONT_INSTANCE *fi = CONTAINING_RECORD(e, FONT_INSTANCE, Links);
         if (fi->Face == face && fi->EmPixels == em && fi->Smooth == smooth && fi->Width == lf->lfWidth &&
             fi->Weight == weight &&
-            fi->Italic == !!lf->lfItalic && fi->Underline == !!lf->lfUnderline && fi->StrikeOut == !!lf->lfStrikeOut)
+            fi->Italic == !!lf->lfItalic && fi->Underline == !!lf->lfUnderline && fi->StrikeOut == !!lf->lfStrikeOut && fi->CharSet == charset)
             return fi;
     }
     FONT_INSTANCE *fi = W32Alloc(sizeof(FONT_INSTANCE));
@@ -755,6 +871,9 @@ static FONT_INSTANCE *realize_face(FONT_FACE *face, const LOGFONTW *lf, UINT dpi
     fi->StrikeOut = lf->lfStrikeOut != 0;
     fi->SimBold = sim_bold;
     fi->SimItalic = sim_italic;
+    fi->CharSet = charset;
+    static ULONG next_id;
+    fi->Id = ++next_id;
     fi->ScaleY = (float)em / (float)m->units_per_em;
     fi->ScaleX = fi->ScaleY;
     if (lf->lfWidth > 0 && m->avg_char_width > 0)

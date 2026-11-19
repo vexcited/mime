@@ -2,6 +2,7 @@
  * drawing primitives on surfaces and the gdi drawing services.
  */
 #include "../win32k.h"
+#include "gdimath.h"
 #include "ttf/ttf.h"
 
 /* ------------------------------------------------------------------ raster operations */
@@ -113,28 +114,32 @@ void DrawFillRectRop(SURFACE *s, const REGION *clip, const RECT *rect, ULONG pix
         DrawFillRect(s, clip, rect, pixel);
         return;
     }
+    /* the mix works on the stored bits, alpha and palette indices included, as win32kfull's does. */
+    ULONG pen = SurfaceRawOf(s, pixel);
     for (ULONG i = 0; i < clip->Count; i++) {
         RECT r;
         if (!RectIntersect(&r, &clip->Rects[i], rect))
             continue;
         for (LONG y = r.top; y < r.bottom; y++)
             for (LONG x = r.left; x < r.right; x++)
-                SurfacePutPixel(s, x, y, rop2_apply(rop2, pixel, SurfaceGetPixel(s, x, y)) & 0xFFFFFF);
+                SurfacePutRaw(s, x, y, rop2_apply(rop2, pen, SurfaceGetRaw(s, x, y)));
     }
 }
 
 static ULONG brush_pixel(DC *dc, BRUSH *b, LONG x, LONG y)
 {
     if (b->Header.Handle == GdiStockHandle(DC_BRUSH))
-        return ColorToPixel(dc->State.BrushColor);
+        return DcColorPixel(dc, dc->State.BrushColor);
     if (b->SysColor >= 0)
         return ColorToPixel(MetricsSysColor(b->SysColor));
-    if (b->Style == BS_PATTERN && b->Pattern) {
+    x -= dc->State.BrushOrg.x;
+    y -= dc->State.BrushOrg.y;
+    if (b->Pattern) {
         SURFACE *p = b->Pattern;
         LONG px = ((x % p->Width) + p->Width) % p->Width, py = ((y % p->Height) + p->Height) % p->Height;
         ULONG v = SurfaceGetPixel(p, px, py);
         if (p->Bpp == 1)
-            return ColorToPixel((v & 0xFFFFFF) ? dc->State.BkColor : dc->State.TextColor);
+            return DcColorPixel(dc, (v & 0xFFFFFF) ? dc->State.BkColor : dc->State.TextColor);
         return v & 0xFFFFFF;
     }
     if (b->Style == BS_HATCHED) {
@@ -148,9 +153,9 @@ static ULONG brush_pixel(DC *dc, BRUSH *b, LONG x, LONG y)
         case 4: on = hx == 4 || hy == 4; break; /* HS_CROSS */
         case 5: on = hx == hy || hx == 7 - hy; break;
         }
-        return ColorToPixel(on ? b->Color : dc->State.BkColor);
+        return DcColorPixel(dc, on ? b->Color : dc->State.BkColor);
     }
-    return ColorToPixel(b->Color);
+    return DcColorPixel(dc, b->Color);
 }
 
 void DrawBrushRect(DC *dc, const REGION *clip, const RECT *rect, BRUSH *brush, DWORD rop)
@@ -166,15 +171,16 @@ void DrawBrushRect(DC *dc, const REGION *clip, const RECT *rect, BRUSH *brush, D
         return;
     }
     BOOLEAN needs_dst = ((code >> 1) & 0x55) != (code & 0x55);
+    ULONG solid_raw = SurfaceRawOf(s, solid_pixel);
     for (ULONG i = 0; i < clip->Count; i++) {
         RECT r;
         if (!RectIntersect(&r, &clip->Rects[i], rect))
             continue;
         for (LONG y = r.top; y < r.bottom; y++) {
             for (LONG x = r.left; x < r.right; x++) {
-                ULONG p = solid ? solid_pixel : brush_pixel(dc, brush, x - dc->Origin.x, y - dc->Origin.y);
-                ULONG d = needs_dst ? SurfaceGetPixel(s, x, y) : 0;
-                SurfacePutPixel(s, x, y, rop3(code, p, 0, d) & 0xFFFFFF);
+                ULONG p = solid ? solid_raw : SurfaceRawOf(s, brush_pixel(dc, brush, x - dc->Origin.x, y - dc->Origin.y));
+                ULONG d = needs_dst ? SurfaceGetRaw(s, x, y) : 0;
+                SurfacePutRaw(s, x, y, rop3(code, p, 0, d));
             }
         }
     }
@@ -235,9 +241,9 @@ BOOLEAN BltSurface(SURFACE *dst, const REGION *clip, LONG dx, LONG dy, LONG widt
                     s = SurfaceGetPixel(src, sx + (x - dx), syy);
                     if (src->Bpp == 1 && dst->Bpp != 1 && dst_dc) {
                         /* monochrome sources map 0 to the text color and 1 to the background color. */
-                        s = ColorToPixel((s & 0xFFFFFF) ? dst_dc->State.BkColor : dst_dc->State.TextColor);
+                        s = DcColorPixel(dst_dc, (s & 0xFFFFFF) ? dst_dc->State.BkColor : dst_dc->State.TextColor);
                     } else if (dst->Bpp == 1 && src->Bpp != 1 && dst_dc) {
-                        s = ((s & 0xFFFFFF) == ColorToPixel(dst_dc->State.BkColor)) ? 0xFFFFFF : 0;
+                        s = ((s & 0xFFFFFF) == DcColorPixel(dst_dc, dst_dc->State.BkColor)) ? 0xFFFFFF : 0;
                     }
                 }
                 ULONG p = needs_pat && dst_dc ? brush_pixel(dst_dc, brush, x - dst_dc->Origin.x, y - dst_dc->Origin.y) : 0;
@@ -291,6 +297,13 @@ static inline UCHAR div255(ULONG v)
     return (UCHAR)((v + 1 + (v >> 8)) >> 8);
 }
 
+/* v / 255 to the nearest. */
+static inline UCHAR div255_round(ULONG v)
+{
+    v += 128;
+    return (UCHAR)((v + (v >> 8)) >> 8);
+}
+
 BOOLEAN AlphaBlendSurface(SURFACE *dst, const REGION *clip, const RECT *dst_rect, SURFACE *src, const RECT *src_rect,
                           BLENDFUNCTION blend)
 {
@@ -322,10 +335,11 @@ BOOLEAN AlphaBlendSurface(SURFACE *dst, const REGION *clip, const RECT *dst_rect
                     continue;
                 ULONG d = SurfaceGetPixel(dst, x, y);
                 ULONG inv = 255 - sa;
-                ULONG ob = sb + div255((d & 0xFF) * inv);
-                ULONG og = sg + div255(((d >> 8) & 0xFF) * inv);
-                ULONG orr = sr + div255(((d >> 16) & 0xFF) * inv);
-                ULONG oa = sa + div255((d >> 24) * inv);
+                /* the destination's share is rounded: measured with curpx.exe of scratch/dlls/cursor. */
+                ULONG ob = sb + div255_round((d & 0xFF) * inv);
+                ULONG og = sg + div255_round(((d >> 8) & 0xFF) * inv);
+                ULONG orr = sr + div255_round(((d >> 16) & 0xFF) * inv);
+                ULONG oa = sa + div255_round((d >> 24) * inv);
                 SurfacePutPixel(dst, x, y, (oa << 24) | (W32Min((LONG)orr, 255) << 16) | (W32Min((LONG)og, 255) << 8) |
                                                W32Min((LONG)ob, 255));
             }
@@ -439,129 +453,6 @@ void DrawGlyph(SURFACE *s, const REGION *clip, LONG x, LONG y, const GLYPH *g, U
         DrawCoverage(s, clip, x + g->Left, y + g->Top, g->Coverage, g->Width, g->Height, g->Width, pixel);
 }
 
-/*
- * tests whether a point is inside the ellipse with semi axes a and b around the origin, all in the same unit. for
- * large axes the squares are scaled down so the products fit in 64 bits.
- */
-typedef struct ELLIPSE_TEST {
-    ULONG64 A2, B2, Limit;
-    UINT Shift;
-} ELLIPSE_TEST;
-
-static void ellipse_test_init(ELLIPSE_TEST *e, LONG a, LONG b)
-{
-    ULONG64 big = (ULONG64)(a > b ? a : b);
-    UINT shift = 0;
-    /* with the axes under 40000 the sum of two such products fits in 64 bits. */
-    while ((big >> shift) > 40000)
-        shift++;
-    e->Shift = shift;
-    ULONG64 sa = (ULONG64)a >> shift, sb = (ULONG64)b >> shift;
-    e->A2 = sa * sa;
-    e->B2 = sb * sb;
-    e->Limit = e->A2 * e->B2;
-}
-
-/* grows with the distance from the center, compared against Limit. */
-static ULONG64 ellipse_value(const ELLIPSE_TEST *e, LONG px, LONG py)
-{
-    ULONG64 x = (ULONG64)(px < 0 ? -px : px) >> e->Shift, y = (ULONG64)(py < 0 ? -py : py) >> e->Shift;
-    return x * x * e->B2 + y * y * e->A2;
-}
-
-/*
- * anti-aliased rectangle whose corners are quarter ellipses with semi axes rx and ry, so an ellipse is its box with
- * the largest corners. an optional border of border_width pixels sits inside the rectangle, plus a fill. coverage
- * uses 4x4 supersampling, only on pixels the edge crosses.
- */
-void DrawRoundRectAA(SURFACE *s, const REGION *clip, const RECT *rect, LONG rx, LONG ry, BOOLEAN filled, ULONG fill,
-                     ULONG border, LONG border_width)
-{
-    LONG w = rect->right - rect->left, h = rect->bottom - rect->top;
-    if (w <= 0 || h <= 0)
-        return;
-    rx = W32Min(rx, w / 2);
-    ry = W32Min(ry, h / 2);
-    BOOLEAN corners = rx > 0 && ry > 0;
-    ELLIPSE_TEST outer_test, inner_test;
-    LONG rin_x = rx - border_width, rin_y = ry - border_width;
-    BOOLEAN has_inner = rin_x > 0 && rin_y > 0;
-    if (corners) {
-        ellipse_test_init(&outer_test, rx * 8, ry * 8);
-        if (has_inner)
-            ellipse_test_init(&inner_test, rin_x * 8, rin_y * 8);
-    }
-    for (ULONG i = 0; i < clip->Count; i++) {
-        RECT r;
-        if (!RectIntersect(&r, &clip->Rects[i], rect))
-            continue;
-        for (LONG y = r.top; y < r.bottom; y++) {
-            for (LONG x = r.left; x < r.right; x++) {
-                LONG lx = x - rect->left, ly = y - rect->top;
-                /* the center of the corner the pixel is in, if it is in one. */
-                LONG cx = lx < rx ? rx : lx >= w - rx ? w - rx : -1;
-                LONG cy = ly < ry ? ry : ly >= h - ry ? h - ry : -1;
-                ULONG outer = 16, inner = 16;
-                if (cx >= 0 && cy >= 0 && corners) {
-                    /* the pixel's nearest and farthest corners from the center, in 1/8 pixels. */
-                    LONG near_x = (lx < cx ? cx - lx - 1 : lx - cx) * 8, far_x = near_x + 8;
-                    LONG near_y = (ly < cy ? cy - ly - 1 : ly - cy) * 8, far_y = near_y + 8;
-                    ULONG outer_hits = 16, inner_hits = 16;
-                    if (ellipse_value(&outer_test, near_x, near_y) >= outer_test.Limit) {
-                        outer_hits = 0;
-                    } else if (ellipse_value(&outer_test, far_x, far_y) > outer_test.Limit) {
-                        outer_hits = 0;
-                        for (int sy = 0; sy < 4; sy++)
-                            for (int sx = 0; sx < 4; sx++) {
-                                LONG px = (lx * 8 + sx * 2 + 1) - cx * 8, py = (ly * 8 + sy * 2 + 1) - cy * 8;
-                                if (ellipse_value(&outer_test, px, py) <= outer_test.Limit)
-                                    outer_hits++;
-                            }
-                    }
-                    if (!has_inner || ellipse_value(&inner_test, near_x, near_y) >= inner_test.Limit) {
-                        inner_hits = 0;
-                    } else if (ellipse_value(&inner_test, far_x, far_y) > inner_test.Limit) {
-                        inner_hits = 0;
-                        for (int sy = 0; sy < 4; sy++)
-                            for (int sx = 0; sx < 4; sx++) {
-                                LONG px = (lx * 8 + sx * 2 + 1) - cx * 8, py = (ly * 8 + sy * 2 + 1) - cy * 8;
-                                if (ellipse_value(&inner_test, px, py) <= inner_test.Limit)
-                                    inner_hits++;
-                            }
-                    }
-                    outer = outer_hits;
-                    inner = inner_hits;
-                } else if (border_width > 0) {
-                    BOOLEAN on_edge = lx < border_width || ly < border_width || lx >= w - border_width ||
-                                      ly >= h - border_width;
-                    inner = on_edge ? 0 : 16;
-                }
-                if (!border_width)
-                    inner = outer;
-                if (!outer)
-                    continue;
-                ULONG d = SurfaceGetPixel(s, x, y);
-                /* the inner area takes the fill, the ring between takes the border. */
-                ULONG fa = filled ? inner * 255 / 16 : 0, ba = (outer - inner) * 255 / 16;
-                ULONG out_px = d;
-                if (ba) {
-                    ULONG inv = 255 - ba;
-                    out_px = (div255(((border >> 16) & 0xFF) * ba + ((out_px >> 16) & 0xFF) * inv) << 16) |
-                             (div255(((border >> 8) & 0xFF) * ba + ((out_px >> 8) & 0xFF) * inv) << 8) |
-                             div255((border & 0xFF) * ba + (out_px & 0xFF) * inv);
-                }
-                if (fa) {
-                    ULONG inv = 255 - fa;
-                    out_px = (div255(((fill >> 16) & 0xFF) * fa + ((out_px >> 16) & 0xFF) * inv) << 16) |
-                             (div255(((fill >> 8) & 0xFF) * fa + ((out_px >> 8) & 0xFF) * inv) << 8) |
-                             div255((fill & 0xFF) * fa + (out_px & 0xFF) * inv);
-                }
-                SurfacePutPixel(s, x, y, out_px);
-            }
-        }
-    }
-}
-
 /* ------------------------------------------------------------------ helpers for services */
 
 typedef struct DRAW_CONTEXT {
@@ -604,30 +495,93 @@ static RECT shape_rect(DC *dc, LONG left, LONG top, LONG right, LONG bottom)
     return r;
 }
 
+/* the inside of a shape is the brush through the mix mode, as R2_XORPEN xors it: the rop3 of each rop2. */
+static DWORD brush_rop(DC *dc)
+{
+    static const DWORD rop_of_rop2[16] = {BLACKNESS, 0x050000, 0x0A0000, 0x0F0000, 0x500000, DSTINVERT, PATINVERT,
+                                          0x5F0000, 0xA00000, 0xA50000, 0xAA0000, 0xAF0000, PATCOPY, 0xF50000,
+                                          0xFA0000, WHITENESS};
+    int rop2 = dc->State.Rop2;
+    return rop2 >= R2_BLACK && rop2 <= R2_WHITE ? rop_of_rop2[rop2 - 1] : PATCOPY;
+}
+
 static ULONG pen_pixel(DC *dc)
 {
     PEN *p = dc->State.Pen;
     if (p->Header.Handle == GdiStockHandle(DC_PEN))
-        return ColorToPixel(dc->State.PenColor);
-    return ColorToPixel(p->Color);
+        return DcColorPixel(dc, dc->State.PenColor);
+    return DcColorPixel(dc, p->Color);
 }
 
 /* ------------------------------------------------------------------ services */
 
+/* a raster operation that reads a source, which PatBlt and PolyPatBlt refuse. */
+static BOOLEAN rop_uses_source(DWORD rop)
+{
+    UCHAR code = (UCHAR)(rop >> 16);
+    return ((code ^ (code << 2)) & 0xCC) != 0;
+}
+
+/* PatBlt on a dc the caller holds, with a brush of its own or the one of the dc for null. */
+BOOL GdiPatBltDc(DC *dc, int x, int y, int width, int height, DWORD rop, BRUSH *brush)
+{
+    if (!dc->Surface)
+        return TRUE;
+    REGION clip;
+    RgnInit(&clip);
+    if (DcGetClip(dc, &clip)) {
+        RECT r = logical_rect_to_surface(dc, x, y, x + width, y + height);
+        DrawBrushRect(dc, &clip, &r, brush ? brush : dc->State.Brush, rop);
+        SurfaceMarkDrawn(dc->Surface, &r, &clip);
+    }
+    RgnFree(&clip);
+    return TRUE;
+}
+
+/*
+ * PolyPatBlt and FillRect of user32: rectangles of 24 bytes, each with a brush of its own or null for the one of
+ * the dc. like win32kfull's GrepPolyPatBlt, a mode other than 0 or a raster operation with a source fails.
+ */
+BOOL GdiPolyPatBltDc(DC *dc, DWORD rop, const UCHAR *list, ULONG count)
+{
+    for (ULONG i = 0; i < count; i++) {
+        const UCHAR *item = list + (SIZE_T)i * 24;
+        int r[4];
+        HBRUSH h;
+        memcpy(r, item, sizeof(r));
+        memcpy(&h, item + 16, sizeof(h));
+        BRUSH *brush = h ? (BRUSH *)GdiLookup(h, GDI_TYPE_BRUSH) : nullptr;
+        GdiPatBltDc(dc, r[0], r[1], r[2], r[3], rop, brush);
+    }
+    return TRUE;
+}
+
+BOOL NTAPI NtGdiPolyPatBlt(HDC hdc, DWORD rop, const void *user_list, ULONG count, ULONG mode)
+{
+    if (!count)
+        return TRUE;
+    if (!user_list || mode || count > 0x100000 || rop_uses_source(rop))
+        return FALSE;
+    UCHAR *list = W32Alloc((SIZE_T)count * 24);
+    if (!list)
+        return FALSE;
+    BOOL ok = FALSE;
+    if (NT_SUCCESS(MimeCopyFromUser(list, user_list, (SIZE_T)count * 24))) {
+        UserEnter();
+        DC *dc = DcLookup(hdc);
+        if (dc)
+            ok = GdiPolyPatBltDc(dc, rop, list, count);
+        UserLeave();
+    }
+    W32Free(list);
+    return ok;
+}
+
 BOOL NTAPI NtGdiPatBlt(HDC hdc, int x, int y, int width, int height, DWORD rop)
 {
     UserEnter();
-    DRAW_CONTEXT ctx;
-    BOOL ok = FALSE;
-    RECT r = {0, 0, 0, 0};
-    if (begin_draw(hdc, &ctx)) {
-        r = logical_rect_to_surface(ctx.Dc, x, y, x + width, y + height);
-        DrawBrushRect(ctx.Dc, &ctx.Clip, &r, ctx.Dc->State.Brush, rop);
-        ok = TRUE;
-    } else if (ctx.Dc) {
-        ok = TRUE;
-    }
-    end_draw(&ctx, &r);
+    DC *dc = DcLookup(hdc);
+    BOOL ok = dc && GdiPatBltDc(dc, x, y, width, height, rop, nullptr);
     UserLeave();
     return ok;
 }
@@ -748,6 +702,206 @@ BOOL NTAPI NtGdiAlphaBlend(HDC hdst, int x, int y, int width, int height, HDC hs
     return ok;
 }
 
+/* a pixel of a source surface as a colour of the destination: a monochrome one takes the colours of the dc. */
+static ULONG source_pixel(DC *dst, SURFACE *src, LONG x, LONG y)
+{
+    ULONG v = SurfaceGetPixel(src, x, y);
+    if (src->Bpp == 1)
+        return DcColorPixel(dst, (v & 0xFFFFFF) ? dst->State.BkColor : dst->State.TextColor);
+    return v & 0xFFFFFF;
+}
+
+/* the source rectangle stretched over the destination by nearest pixels, without the colour of the key. */
+BOOL NTAPI NtGdiTransparentBlt(HDC hdst, int x, int y, int width, int height, HDC hsrc, int src_x, int src_y,
+                               int src_width, int src_height, COLORREF transparent)
+{
+    if (width <= 0 || height <= 0 || src_width <= 0 || src_height <= 0)
+        return FALSE;
+    UserEnter();
+    DRAW_CONTEXT ctx;
+    BOOL ok = FALSE;
+    RECT dirty = {0, 0, 0, 0};
+    DC *src = DcLookup(hsrc);
+    if (begin_draw(hdst, &ctx) && src && src->Surface) {
+        RECT dr = logical_rect_to_surface(ctx.Dc, x, y, x + width, y + height);
+        RECT sr = logical_rect_to_surface(src, src_x, src_y, src_x + src_width, src_y + src_height);
+        SURFACE *ss = src->Surface, *ds = ctx.Dc->Surface;
+        if (ScreenIsSurface(ss))
+            ScreenComposeFor(ss, &sr);
+        ULONG key = SurfaceRawOf(ss, ColorToPixel(transparent));
+        ULONG mask = ss->Bpp == 32 ? 0xFFFFFF : 0xFFFFFFFF;
+        LONG dw = dr.right - dr.left, dh = dr.bottom - dr.top, sw = sr.right - sr.left, sh = sr.bottom - sr.top;
+        for (ULONG i = 0; dw > 0 && dh > 0 && i < ctx.Clip.Count; i++) {
+            RECT r;
+            if (!RectIntersect(&r, &ctx.Clip.Rects[i], &dr))
+                continue;
+            for (LONG py = r.top; py < r.bottom; py++) {
+                LONG sy = sr.top + (LONG)((LONG64)(py - dr.top) * sh / dh);
+                if (sy < 0 || sy >= ss->Height)
+                    continue;
+                for (LONG px = r.left; px < r.right; px++) {
+                    LONG sx = sr.left + (LONG)((LONG64)(px - dr.left) * sw / dw);
+                    if (sx < 0 || sx >= ss->Width || (SurfaceGetRaw(ss, sx, sy) & mask) == (key & mask))
+                        continue;
+                    SurfacePutPixel(ds, px, py, source_pixel(ctx.Dc, ss, sx, sy));
+                }
+            }
+        }
+        dirty = dr;
+        ok = TRUE;
+    } else if (ctx.Dc) {
+        ok = TRUE;
+    }
+    end_draw(&ctx, &dirty);
+    UserLeave();
+    return ok;
+}
+
+/*
+ * where the monochrome mask has a 1 the foreground rop of the low three bytes of rop4 runs, elsewhere the background
+ * rop of its high byte. without a mask it is a BitBlt of the foreground rop.
+ */
+BOOL NTAPI NtGdiMaskBlt(HDC hdst, int x, int y, int width, int height, HDC hsrc, int src_x, int src_y, HBITMAP mask,
+                        int mask_x, int mask_y, DWORD rop4, DWORD bk_color)
+{
+    DWORD fore = rop4 & 0xFFFFFF;
+    if (!mask)
+        return NtGdiBitBlt(hdst, x, y, width, height, hsrc, src_x, src_y, fore, bk_color, 0);
+    UserEnter();
+    DRAW_CONTEXT ctx;
+    BOOL ok = FALSE;
+    RECT dirty = {0, 0, 0, 0};
+    DC *src = hsrc ? DcLookup(hsrc) : nullptr;
+    SURFACE *m = SurfaceLookup(mask);
+    if (begin_draw(hdst, &ctx) && m && m->Bpp == 1) {
+        DC *dc = ctx.Dc;
+        SURFACE *ds = dc->Surface, *ss = src ? src->Surface : nullptr;
+        UCHAR fcode = (UCHAR)(fore >> 16), bcode = (UCHAR)(rop4 >> 24);
+        LONG dx = x, dy = y, sx = src_x, sy = src_y;
+        DcLogicalToSurface(dc, &dx, &dy);
+        if (src)
+            DcLogicalToSurface(src, &sx, &sy);
+        RECT dr = {dx, dy, dx + width, dy + height};
+        for (ULONG i = 0; i < ctx.Clip.Count; i++) {
+            RECT r;
+            if (!RectIntersect(&r, &ctx.Clip.Rects[i], &dr))
+                continue;
+            for (LONG py = r.top; py < r.bottom; py++) {
+                for (LONG px = r.left; px < r.right; px++) {
+                    LONG mx = mask_x + px - dx, my = mask_y + py - dy;
+                    BOOLEAN on = mx >= 0 && my >= 0 && mx < m->Width && my < m->Height && SurfaceGetRaw(m, mx, my);
+                    UCHAR code = on ? fcode : bcode;
+                    LONG qx = sx + px - dx, qy = sy + py - dy;
+                    ULONG s = ss && qx >= 0 && qy >= 0 && qx < ss->Width && qy < ss->Height
+                                  ? SurfaceRawOf(ds, source_pixel(dc, ss, qx, qy))
+                                  : 0;
+                    ULONG p = SurfaceRawOf(ds, brush_pixel(dc, dc->State.Brush, px - dc->Origin.x, py - dc->Origin.y));
+                    SurfacePutRaw(ds, px, py, rop3(code, p, s, SurfaceGetRaw(ds, px, py)));
+                }
+            }
+        }
+        dirty = dr;
+        ok = TRUE;
+    } else if (ctx.Dc) {
+        ok = m != nullptr;
+    }
+    end_draw(&ctx, &dirty);
+    UserLeave();
+    return ok;
+}
+
+typedef struct GRADIENT_VERTEX {
+    LONG X, Y;
+    USHORT Red, Green, Blue, Alpha;
+} GRADIENT_VERTEX;
+
+static void gradient_put(DC *dc, SURFACE *s, LONG x, LONG y, const double c[4])
+{
+    ULONG v = (ULONG)((USHORT)c[2] >> 8) | (ULONG)((USHORT)c[1] >> 8) << 8 | (ULONG)((USHORT)c[0] >> 8) << 16;
+    if (s->Bpp == 32)
+        SurfacePutRaw(s, x, y, v | (ULONG)((USHORT)c[3] >> 8) << 24);
+    else
+        SurfacePutPixel(s, x, y, v);
+}
+
+/* modes 0 and 1 shade rectangles across and down, 2 triangles, the colours in 16 bits each. */
+BOOL NTAPI NtGdiGradientFill(HDC hdc, PVOID user_vertices, ULONG vertices, PVOID user_mesh, ULONG meshes, ULONG mode)
+{
+    if (!vertices || !meshes || mode > 2 || vertices > 0x100000 || meshes > 0x100000)
+        return FALSE;
+    ULONG each = mode == 2 ? 3 : 2;
+    GRADIENT_VERTEX *v = W32Alloc((SIZE_T)vertices * sizeof(*v));
+    ULONG *mesh = W32Alloc((SIZE_T)meshes * each * sizeof(ULONG));
+    BOOL ok = v && mesh && NT_SUCCESS(MimeCopyFromUser(v, user_vertices, (SIZE_T)vertices * sizeof(*v))) &&
+              NT_SUCCESS(MimeCopyFromUser(mesh, user_mesh, (SIZE_T)meshes * each * sizeof(ULONG)));
+    for (ULONG i = 0; ok && i < meshes * each; i++)
+        ok = mesh[i] < vertices;
+    UserEnter();
+    DRAW_CONTEXT ctx;
+    RECT dirty = {0, 0, 0, 0};
+    if (ok && begin_draw(hdc, &ctx)) {
+        DC *dc = ctx.Dc;
+        for (ULONG i = 0; i < vertices; i++)
+            DcLogicalToSurface(dc, &v[i].X, &v[i].Y);
+        for (ULONG k = 0; k < meshes; k++) {
+            const ULONG *idx = mesh + k * each;
+            RECT box;
+            if (mode != 2) {
+                const GRADIENT_VERTEX *a = &v[idx[0]], *b = &v[idx[1]];
+                if (a->X > b->X || (mode == 1 && a->Y > b->Y)) {
+                    const GRADIENT_VERTEX *t = a;
+                    a = b;
+                    b = t;
+                }
+                box = (RECT){W32Min(a->X, b->X), W32Min(a->Y, b->Y), W32Max(a->X, b->X), W32Max(a->Y, b->Y)};
+                LONG span = mode == 0 ? box.right - box.left : box.bottom - box.top;
+                for (ULONG i = 0; span > 0 && i < ctx.Clip.Count; i++) {
+                    RECT r;
+                    if (!RectIntersect(&r, &ctx.Clip.Rects[i], &box))
+                        continue;
+                    for (LONG y = r.top; y < r.bottom; y++)
+                        for (LONG x = r.left; x < r.right; x++) {
+                            double t = (double)(mode == 0 ? x - box.left : y - box.top) / span;
+                            double c[4] = {a->Red + (b->Red - a->Red) * t, a->Green + (b->Green - a->Green) * t,
+                                           a->Blue + (b->Blue - a->Blue) * t, a->Alpha + (b->Alpha - a->Alpha) * t};
+                            gradient_put(dc, dc->Surface, x, y, c);
+                        }
+                }
+            } else {
+                const GRADIENT_VERTEX *a = &v[idx[0]], *b = &v[idx[1]], *c3 = &v[idx[2]];
+                box = (RECT){W32Min(a->X, W32Min(b->X, c3->X)), W32Min(a->Y, W32Min(b->Y, c3->Y)),
+                             W32Max(a->X, W32Max(b->X, c3->X)) + 1, W32Max(a->Y, W32Max(b->Y, c3->Y)) + 1};
+                double area = (double)(b->X - a->X) * (c3->Y - a->Y) - (double)(c3->X - a->X) * (b->Y - a->Y);
+                for (ULONG i = 0; area != 0 && i < ctx.Clip.Count; i++) {
+                    RECT r;
+                    if (!RectIntersect(&r, &ctx.Clip.Rects[i], &box))
+                        continue;
+                    for (LONG y = r.top; y < r.bottom; y++)
+                        for (LONG x = r.left; x < r.right; x++) {
+                            double w1 = ((double)(b->X - x) * (c3->Y - y) - (double)(c3->X - x) * (b->Y - y)) / area;
+                            double w2 = ((double)(c3->X - x) * (a->Y - y) - (double)(a->X - x) * (c3->Y - y)) / area;
+                            double w3 = 1 - w1 - w2;
+                            if (w1 < 0 || w2 < 0 || w3 < 0)
+                                continue;
+                            double c[4] = {a->Red * w1 + b->Red * w2 + c3->Red * w3,
+                                           a->Green * w1 + b->Green * w2 + c3->Green * w3,
+                                           a->Blue * w1 + b->Blue * w2 + c3->Blue * w3,
+                                           a->Alpha * w1 + b->Alpha * w2 + c3->Alpha * w3};
+                            gradient_put(dc, dc->Surface, x, y, c);
+                        }
+                }
+            }
+            RectUnion(&dirty, &dirty, &box);
+        }
+    }
+    if (ok)
+        end_draw(&ctx, &dirty);
+    UserLeave();
+    W32Free(v);
+    W32Free(mesh);
+    return ok;
+}
+
 /* bresenham in surface coordinates, last point excluded like gdi. */
 void DrawLine(DC *dc, const REGION *clip, LONG x0, LONG y0, LONG x1, LONG y1, RECT *dirty)
 {
@@ -816,6 +970,11 @@ BOOL NTAPI NtGdiLineTo(HDC hdc, int x, int y)
     return ok;
 }
 
+/*
+ * the frame of a rectangle: a pen centred on the edges l, t, r - 1 and b - 1, or inside them for PS_INSIDEFRAME,
+ * with square corners. each pixel is drawn once, which a mix mode like R2_XORPEN shows. measured with rx.exe of
+ * scratch/dlls/gdibatch.
+ */
 static void frame_rect_pen(DC *dc, const REGION *clip, const RECT *r, RECT *dirty)
 {
     PEN *pen = dc->State.Pen;
@@ -823,15 +982,24 @@ static void frame_rect_pen(DC *dc, const REGION *clip, const RECT *r, RECT *dirt
         return;
     LONG w = DcPenWidth(dc);
     ULONG px = pen_pixel(dc);
-    RECT edges[4] = {
-        {r->left, r->top, r->right, r->top + w},
-        {r->left, r->bottom - w, r->right, r->bottom},
-        {r->left, r->top, r->left + w, r->bottom},
-        {r->right - w, r->top, r->right, r->bottom},
-    };
-    for (int i = 0; i < 4; i++)
-        DrawFillRectRop(dc->Surface, clip, &edges[i], px, dc->State.Rop2);
-    RectUnion(dirty, dirty, r);
+    RECT o = *r;
+    if (PenStyle(pen) != PS_INSIDEFRAME && w > 1) {
+        o = (RECT){r->left - (w - 1) / 2, r->top - (w - 1) / 2, r->right + w / 2, r->bottom + w / 2};
+    }
+    LONG t = w;
+    if (2 * t > o.right - o.left || 2 * t > o.bottom - o.top) {
+        DrawFillRectRop(dc->Surface, clip, &o, px, dc->State.Rop2);
+    } else {
+        RECT edges[4] = {
+            {o.left, o.top, o.right, o.top + t},
+            {o.left, o.bottom - t, o.right, o.bottom},
+            {o.left, o.top + t, o.left + t, o.bottom - t},
+            {o.right - t, o.top + t, o.right, o.bottom - t},
+        };
+        for (int i = 0; i < 4; i++)
+            DrawFillRectRop(dc->Surface, clip, &edges[i], px, dc->State.Rop2);
+    }
+    RectUnion(dirty, dirty, &o);
 }
 
 BOOL NTAPI NtGdiRectangle(HDC hdc, int left, int top, int right, int bottom)
@@ -848,14 +1016,15 @@ BOOL NTAPI NtGdiRectangle(HDC hdc, int left, int top, int right, int bottom)
     BOOL ok = FALSE;
     if (begin_draw(hdc, &ctx)) {
         RECT r = shape_rect(ctx.Dc, left, top, right, bottom);
-        LONG inset = PenStyle(ctx.Dc->State.Pen) == PS_NULL ? 0 : 1;
-        /* with a null pen the rectangle shrinks by one pixel at the right and bottom. */
+        /* the inside stops at the pen, and with a null pen the rectangle loses its right and bottom pixel. */
         RECT inner = r;
-        if (!inset) {
+        if (PenStyle(ctx.Dc->State.Pen) == PS_NULL) {
             inner.right--;
             inner.bottom--;
+        } else {
+            inner = (RECT){r.left + 1, r.top + 1, r.right - 1, r.bottom - 1};
         }
-        DrawBrushRect(ctx.Dc, &ctx.Clip, &inner, ctx.Dc->State.Brush, PATCOPY);
+        DrawBrushRect(ctx.Dc, &ctx.Clip, &inner, ctx.Dc->State.Brush, brush_rop(ctx.Dc));
         frame_rect_pen(ctx.Dc, &ctx.Clip, &r, &dirty);
         RectUnion(&dirty, &dirty, &inner);
         ok = TRUE;
@@ -867,6 +1036,11 @@ BOOL NTAPI NtGdiRectangle(HDC hdc, int left, int top, int right, int bottom)
     return ok;
 }
 
+/*
+ * an ellipse or a rectangle with elliptic corners, without smoothing like windows: the shape is the region of the
+ * same corners grown by the last column and row, which Ellipse draws, the pen takes the ring of its width inside it
+ * and the brush the rest. windows makes both from a flattened path, so the corners may differ by a pixel.
+ */
 static BOOL draw_round_rect(HDC hdc, int left, int top, int right, int bottom, int width, int height, BOOLEAN ellipse)
 {
     DRAW_CONTEXT ctx;
@@ -874,30 +1048,39 @@ static BOOL draw_round_rect(HDC hdc, int left, int top, int right, int bottom, i
     BOOL ok = FALSE;
     UserEnter();
     if (begin_draw(hdc, &ctx)) {
-        RECT r = shape_rect(ctx.Dc, left, top, right, bottom);
-        BRUSH *b = ctx.Dc->State.Brush;
-        ULONG fill = b->Style == BS_NULL ? 0 : brush_pixel(ctx.Dc, b, 0, 0);
-        PEN *p = ctx.Dc->State.Pen;
-        LONG bw = PenStyle(p) == PS_NULL ? 0 : DcPenWidth(ctx.Dc);
-        LONG rx, ry;
-        if (ellipse) {
-            rx = (r.right - r.left) / 2;
-            ry = (r.bottom - r.top) / 2;
-        } else {
-            rx = DcScaleToDevice(ctx.Dc, width < 0 ? -width : width) / 2;
-            ry = DcScaleToDevice(ctx.Dc, height < 0 ? -height : height) / 2;
+        DC *dc = ctx.Dc;
+        RECT r = shape_rect(dc, left, top, right, bottom);
+        PEN *p = dc->State.Pen;
+        LONG w = PenStyle(p) == PS_NULL ? 0 : DcPenWidth(dc);
+        LONG ew = ellipse ? r.right - r.left : DcScaleToDevice(dc, width < 0 ? -width : width);
+        LONG eh = ellipse ? r.bottom - r.top : DcScaleToDevice(dc, height < 0 ? -height : height);
+        LONG grow = w > 1 && PenStyle(p) != PS_INSIDEFRAME ? (w - 1) / 2 : 0;
+        RECT o = {r.left - grow, r.top - grow, r.right + 1 + grow, r.bottom + 1 + grow};
+        REGION outer, inner, part;
+        RgnInit(&outer);
+        RgnInit(&inner);
+        RgnInit(&part);
+        RgnRoundRect(&outer, o.left, o.top, o.right, o.bottom, ew + 2 * grow, eh + 2 * grow);
+        if (w)
+            RgnRoundRect(&inner, o.left + w, o.top + w, o.right - w, o.bottom - w, ew + 2 * grow - 2 * w,
+                         eh + 2 * grow - 2 * w);
+        else
+            RgnRoundRect(&inner, r.left, r.top, r.right, r.bottom, ew, eh);
+        if (dc->State.Brush->Style != BS_NULL) {
+            RgnCombine(&part, &inner, &ctx.Clip, RGN_AND);
+            DrawBrushRect(dc, &part, &part.Extents, dc->State.Brush, brush_rop(dc));
         }
-        if (b->Style == BS_NULL) {
-            /* frame only: draw the border ring over the existing pixels. */
-            REGION ring;
-            RgnInit(&ring);
-            RgnCopy(&ring, &ctx.Clip);
-            DrawRoundRectAA(ctx.Dc->Surface, &ring, &r, rx, ry, FALSE, 0, pen_pixel(ctx.Dc), bw);
-            RgnFree(&ring);
-        } else {
-            DrawRoundRectAA(ctx.Dc->Surface, &ctx.Clip, &r, rx, ry, TRUE, fill, bw ? pen_pixel(ctx.Dc) : fill, bw);
+        if (w) {
+            RgnCombine(&part, &outer, &inner, RGN_DIFF);
+            RgnCombine(&part, &part, &ctx.Clip, RGN_AND);
+            ULONG px = pen_pixel(dc);
+            for (ULONG i = 0; i < part.Count; i++)
+                DrawFillRectRop(dc->Surface, &part, &part.Rects[i], px, dc->State.Rop2);
         }
-        dirty = r;
+        dirty = outer.Extents;
+        RgnFree(&outer);
+        RgnFree(&inner);
+        RgnFree(&part);
         ok = TRUE;
     } else if (ctx.Dc) {
         ok = TRUE;
@@ -991,33 +1174,17 @@ static void record_path(DC *dc, POINT *pts, const ULONG *counts, ULONG count, in
 }
 
 /* polygons are filled with the brush and outlined with the pen; the other functions draw lines and curves. */
-ULONG NTAPI NtGdiPolyPolyDraw(HDC hdc, POINT *user_points, ULONG *user_counts, ULONG count, int function)
+/* draws figures given in kernel memory, as NtGdiPolyPolyDraw does: pts is changed. */
+static ULONG poly_draw(HDC hdc, POINT *pts, const ULONG *counts, ULONG count, int function)
 {
-    if (count == 0 || count > 1024 || function < MIME_POLY_POLYGON || function > MIME_POLY_BEZIERTO)
-        return 0;
-    ULONG counts[1024];
-    if (!NT_SUCCESS(MimeCopyFromUser(counts, user_counts, count * sizeof(ULONG))))
-        return 0;
     ULONG total = 0;
-    for (ULONG i = 0; i < count; i++) {
+    for (ULONG i = 0; i < count; i++)
         total += counts[i];
-        if (total > 65536)
-            return 0;
-    }
-    if ((function == MIME_POLY_BEZIER && (counts[0] < 1 || (counts[0] - 1) % 3)) ||
-        (function == MIME_POLY_BEZIERTO && counts[0] % 3))
-        return 0;
-    POINT *pts = W32Alloc(total * sizeof(POINT) + 1);
-    if (!pts || !NT_SUCCESS(MimeCopyFromUser(pts, user_points, total * sizeof(POINT)))) {
-        W32Free(pts);
-        return 0;
-    }
     UserEnter();
     DC *pdc = path_dc(hdc);
     if (pdc) {
         record_path(pdc, pts, counts, count, function);
         UserLeave();
-        W32Free(pts);
         return 1;
     }
     DRAW_CONTEXT ctx;
@@ -1092,7 +1259,251 @@ ULONG NTAPI NtGdiPolyPolyDraw(HDC hdc, POINT *user_points, ULONG *user_counts, U
     }
     end_draw(&ctx, &dirty);
     UserLeave();
+    return ok;
+}
+
+/*
+ * as win32kfull: up to 0x9C4000 figures and 0x4E2000 points, beziers in one figure only. function 6 is
+ * CreatePolyPolygonRgn, where the first argument is the fill mode and the result a new region.
+ */
+ULONG_PTR NTAPI NtGdiPolyPolyDraw(HDC hdc, POINT *user_points, ULONG *user_counts, ULONG count, int function)
+{
+    if (count == 0 || count > 0x9C4000 || function < MIME_POLY_POLYGON || function > MIME_POLY_REGION)
+        return 0;
+    if (function >= MIME_POLY_BEZIER && function <= MIME_POLY_BEZIERTO && count != 1)
+        return 0;
+    ULONG *counts = W32Alloc((SIZE_T)count * sizeof(ULONG));
+    if (!counts || !NT_SUCCESS(MimeCopyFromUser(counts, user_counts, (SIZE_T)count * sizeof(ULONG)))) {
+        W32Free(counts);
+        return 0;
+    }
+    ULONG total = 0;
+    BOOLEAN ok = TRUE;
+    for (ULONG i = 0; i < count && ok; i++) {
+        total += counts[i];
+        ok = counts[i] <= 0x4E2000 && total <= 0x4E2000;
+    }
+    if ((function == MIME_POLY_BEZIER && (counts[0] < 1 || (counts[0] - 1) % 3)) ||
+        (function == MIME_POLY_BEZIERTO && counts[0] % 3) || !total)
+        ok = FALSE;
+    POINT *pts = ok ? W32Alloc((SIZE_T)total * sizeof(POINT)) : nullptr;
+    ULONG_PTR result = 0;
+    if (pts && NT_SUCCESS(MimeCopyFromUser(pts, user_points, (SIZE_T)total * sizeof(POINT)))) {
+        if (function == MIME_POLY_REGION) {
+            UserEnter();
+            GDI_REGION *r = GdiCreateRegion();
+            if (r && !RgnFromPolygons(&r->Region, pts, counts, count, (int)(ULONG_PTR)hdc == WINDING ? WINDING : ALTERNATE)) {
+                GdiDeleteObject(&r->Header);
+                r = nullptr;
+            }
+            result = r ? (ULONG_PTR)r->Header.Handle : 0;
+            UserLeave();
+        } else {
+            result = poly_draw(hdc, pts, counts, count, function);
+        }
+    }
     W32Free(pts);
+    W32Free(counts);
+    return result;
+}
+
+/* ------------------------------------------------------------------ arcs */
+
+/*
+ * elliptic arcs as cubic beziers of at most a quarter turn each. the box gives the ellipse, the radials through the
+ * two points give the angles and the arc direction of the dc picks the way around. angles grow counterclockwise on
+ * screen, with y down.
+ */
+typedef struct ARC {
+    double Cx, Cy, Rx, Ry;
+    double Start, Sweep;
+} ARC;
+
+static LONG round_d(double v)
+{
+    return (LONG)(v >= 0 ? v + 0.5 : v - 0.5);
+}
+
+static POINT ellipse_point(const ARC *a, double t)
+{
+    double s, c;
+    GdiSinCos(t, &s, &c);
+    return (POINT){round_d(a->Cx + a->Rx * c), round_d(a->Cy - a->Ry * s)};
+}
+
+static void arc_setup(ARC *a, int direction, int left, int top, int right, int bottom, int x1, int y1, int x2, int y2)
+{
+    a->Cx = (left + right) / 2.0;
+    a->Cy = (top + bottom) / 2.0;
+    a->Rx = (right > left ? right - left : left - right) / 2.0;
+    a->Ry = (bottom > top ? bottom - top : top - bottom) / 2.0;
+    double rx = a->Rx ? a->Rx : 1, ry = a->Ry ? a->Ry : 1;
+    double t1 = GdiAtan2(-(y1 - a->Cy) / ry, (x1 - a->Cx) / rx);
+    double t2 = GdiAtan2(-(y2 - a->Cy) / ry, (x2 - a->Cx) / rx);
+    double sweep = t2 - t1;
+    if (direction == AD_CLOCKWISE) {
+        while (sweep >= 0)
+            sweep -= 2 * GDI_PI;
+    } else {
+        while (sweep <= 0)
+            sweep += 2 * GDI_PI;
+    }
+    a->Start = t1;
+    a->Sweep = sweep;
+}
+
+/* the points after the start, three for each segment. */
+static ULONG arc_curves(const ARC *a, POINT *out)
+{
+    double sweep = a->Sweep < 0 ? -a->Sweep : a->Sweep;
+    int segs = (int)(sweep / (GDI_PI / 2) + 0.999);
+    segs = segs < 1 ? 1 : segs > 16 ? 16 : segs;
+    double step = a->Sweep / segs, s, c;
+    GdiSinCos(step / 4, &s, &c);
+    double k = 4.0 / 3.0 * s / c;
+    ULONG n = 0;
+    for (int i = 0; i < segs; i++) {
+        double t0 = a->Start + step * i, t1 = t0 + step, s0, c0, s1, c1;
+        GdiSinCos(t0, &s0, &c0);
+        GdiSinCos(t1, &s1, &c1);
+        double x0 = a->Cx + a->Rx * c0, y0 = a->Cy - a->Ry * s0;
+        double x3 = a->Cx + a->Rx * c1, y3 = a->Cy - a->Ry * s1;
+        out[n++] = (POINT){round_d(x0 - k * a->Rx * s0), round_d(y0 - k * a->Ry * c0)};
+        out[n++] = (POINT){round_d(x3 + k * a->Rx * s1), round_d(y3 + k * a->Ry * c1)};
+        out[n++] = (POINT){round_d(x3), round_d(y3)};
+    }
+    return n;
+}
+
+static int arc_direction(HDC hdc)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    int direction = dc ? dc->State.ArcDirection : 0;
+    UserLeave();
+    return direction;
+}
+
+/* gdi32full passes 0 for Arc, 1 for ArcTo, 2 for Chord and 3 for Pie, before the dc. */
+BOOL NTAPI NtGdiArcInternal(ULONG type, HDC hdc, int left, int top, int right, int bottom, int x1, int y1, int x2,
+                            int y2)
+{
+    int direction = arc_direction(hdc);
+    if (!direction || type > 3)
+        return FALSE;
+    /* the box leaves out its right column and bottom row, as Ellipse does: measured with shp.exe. */
+    if (left > right) {
+        int t = left;
+        left = right;
+        right = t;
+    }
+    if (top > bottom) {
+        int t = top;
+        top = bottom;
+        bottom = t;
+    }
+    ARC a;
+    arc_setup(&a, direction, left, top, right - 1, bottom - 1, x1, y1, x2, y2);
+    POINT pts[2 + 48];
+    pts[0] = ellipse_point(&a, a.Start);
+    if (type <= 1) {
+        ULONG n = arc_curves(&a, pts + 1);
+        if (type == 1) {
+            ULONG one = 1;
+            if (!poly_draw(hdc, pts, &one, 1, MIME_POLY_LINETO))
+                return FALSE;
+            return (BOOL)poly_draw(hdc, pts + 1, &n, 1, MIME_POLY_BEZIERTO);
+        }
+        n++;
+        return (BOOL)poly_draw(hdc, pts, &n, 1, MIME_POLY_BEZIER);
+    }
+    /* chords and pies are one closed polygon, filled and outlined. */
+    ULONG n = 49;
+    for (ULONG i = 0; i < n; i++)
+        pts[i] = ellipse_point(&a, a.Start + a.Sweep * i / (n - 1));
+    if (type == 3)
+        pts[n++] = (POINT){round_d(a.Cx), round_d(a.Cy)};
+    return (BOOL)poly_draw(hdc, pts, &n, 1, MIME_POLY_POLYGON);
+}
+
+/* a line to the start of a circular arc, then the arc. the angles come as the bits of floats. */
+BOOL NTAPI NtGdiAngleArc(HDC hdc, int x, int y, DWORD radius, DWORD start_bits, DWORD sweep_bits)
+{
+    if ((LONG)radius < 0) {
+        W32SetLastError(ERROR_INVALID_PARAMETER);
+        return FALSE;
+    }
+    float start, sweep;
+    memcpy(&start, &start_bits, sizeof(start));
+    memcpy(&sweep, &sweep_bits, sizeof(sweep));
+    ARC a = {x, y, radius, radius, start * GDI_PI / 180, sweep * GDI_PI / 180};
+    if (a.Sweep > 2 * GDI_PI)
+        a.Sweep = 2 * GDI_PI;
+    if (a.Sweep < -2 * GDI_PI)
+        a.Sweep = -2 * GDI_PI;
+    POINT pts[1 + 48];
+    pts[0] = ellipse_point(&a, a.Start);
+    ULONG one = 1;
+    if (!poly_draw(hdc, pts, &one, 1, MIME_POLY_LINETO))
+        return FALSE;
+    if (!a.Sweep)
+        return TRUE;
+    ULONG n = arc_curves(&a, pts + 1);
+    return (BOOL)poly_draw(hdc, pts + 1, &n, 1, MIME_POLY_BEZIERTO);
+}
+
+/*
+ * PT_MOVETO, PT_LINETO and PT_BEZIERTO points with PT_CLOSEFIGURE on the last two. the types are checked before
+ * anything is drawn, as on windows.
+ */
+BOOL NTAPI NtGdiPolyDraw(HDC hdc, POINT *user_points, BYTE *user_types, ULONG count)
+{
+    if (!count || count > 0x4E2000)
+        return FALSE;
+    POINT *pts = W32Alloc((SIZE_T)count * sizeof(POINT));
+    BYTE *types = W32Alloc(count);
+    BOOL ok = pts && types && NT_SUCCESS(MimeCopyFromUser(pts, user_points, (SIZE_T)count * sizeof(POINT))) &&
+              NT_SUCCESS(MimeCopyFromUser(types, user_types, count));
+    for (ULONG i = 0; ok && i < count; i++) {
+        BYTE t = types[i] & ~PT_CLOSEFIGURE;
+        if (t == PT_BEZIERTO) {
+            ok = i + 2 < count && (types[i + 1] & ~PT_CLOSEFIGURE) == PT_BEZIERTO &&
+                 (types[i + 2] & ~PT_CLOSEFIGURE) == PT_BEZIERTO;
+            i += 2;
+        } else {
+            ok = t == PT_MOVETO || t == PT_LINETO;
+        }
+    }
+    UserEnter();
+    DC *dc = ok ? DcLookup(hdc) : nullptr;
+    POINT start = dc ? dc->State.CurrentPos : (POINT){0, 0};
+    BOOLEAN path = dc && DcIsPathOpen(dc);
+    UserLeave();
+    ok = ok && dc;
+    for (ULONG i = 0; ok && i < count; i++) {
+        BYTE t = types[i] & ~PT_CLOSEFIGURE;
+        ULONG n = t == PT_BEZIERTO ? 3 : 1;
+        if (t == PT_MOVETO) {
+            NtGdiMoveTo(hdc, pts[i].x, pts[i].y, nullptr);
+            start = pts[i];
+            continue;
+        }
+        POINT seg[3];
+        memcpy(seg, pts + i, n * sizeof(POINT));
+        ok = (BOOL)poly_draw(hdc, seg, &n, 1, t == PT_BEZIERTO ? MIME_POLY_BEZIERTO : MIME_POLY_LINETO);
+        i += n - 1;
+        if (ok && (types[i] & PT_CLOSEFIGURE)) {
+            if (path) {
+                NtGdiCloseFigure(hdc);
+            } else {
+                POINT back = start;
+                ULONG one = 1;
+                ok = (BOOL)poly_draw(hdc, &back, &one, 1, MIME_POLY_LINETO);
+            }
+        }
+    }
+    W32Free(pts);
+    W32Free(types);
     return ok;
 }
 
@@ -1106,7 +1517,7 @@ COLORREF NTAPI NtGdiSetPixel(HDC hdc, int x, int y, COLORREF color)
         LONG sx = x, sy = y;
         DcLogicalToSurface(ctx.Dc, &sx, &sy);
         if (RgnPtIn(&ctx.Clip, sx, sy)) {
-            SurfacePutPixel(ctx.Dc->Surface, sx, sy, ColorToPixel(color));
+            SurfacePutPixel(ctx.Dc->Surface, sx, sy, DcColorPixel(ctx.Dc, color));
             result = PixelToColor(SurfaceGetPixel(ctx.Dc->Surface, sx, sy));
             dirty = (RECT){sx, sy, sx + 1, sy + 1};
         }

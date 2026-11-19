@@ -45,6 +45,12 @@ typedef struct FONT_FACE {
     WCRANGE *Ranges; /* GetFontUnicodeRanges cache. */
     ULONG RangeCount;
     ULONG GlyphsSupported;
+    BOOLEAN CharsKnown;
+    WCHAR FirstChar; /* the characters of the text metrics, see face_chars. */
+    WCHAR LastChar;
+    WCHAR DefaultChar;
+    WCHAR BreakChar;
+    UCHAR AnsiChars[4]; /* first, last, default and break, for TEXTMETRICA and the TMDIFF of the services. */
 } FONT_FACE;
 
 extern const MimeAllocator FontAllocator;
@@ -58,5 +64,11 @@ ULONG FontRegisterMemory(PVOID data, SIZE_T size, HANDLE owner, FONT_FILE **file
 ULONG FontFaceCount(void);
 FONT_FACE *FontFaceAt(ULONG index);
 BOOLEAN FontFaceVisible(FONT_FACE *f);
+ULONG FontFaceId(FONT_FACE *f);
+const UCHAR *FontAnsiChars(FONT_INSTANCE *fi);
+/* the code page of a charset, CP_SYMBOL for symbol fonts. */
+UINT FontCharSetCodePage(UCHAR charset);
+/* the faces windows lists under FontLink\SystemLink. */
+BOOLEAN FontHasSystemLink(FONT_FACE *f);
 
 #endif

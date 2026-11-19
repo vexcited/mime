@@ -1,7 +1,3 @@
-/*
- * the floating point gdi32 needs without a c library: square roots, sines,
- * cosines and arc tangents in double precision.
- */
 #pragma once
 
 #define GDI_PI 3.14159265358979323846
