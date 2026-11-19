@@ -19,9 +19,10 @@ const UCHAR SeSidUsers[16] = {1, 2, 0, 0, 0, 0, 0, 5, 32, 0, 0, 0, 0x21, 0x02, 0
 const UCHAR SeSidEveryone[12] = {1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0};
 const UCHAR SeSidAuthenticatedUsers[12] = {1, 1, 0, 0, 0, 0, 0, 5, 11, 0, 0, 0};
 const UCHAR SeSidCreatorOwner[12] = {1, 1, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0};
-const UCHAR SeSidTrustedInstaller[32] = {1, 6, 0, 0, 0, 0, 0, 5, 80, 0, 0, 0, 0x35, 0x74, 0x8F, 0x38, 0x99, 0xEE,
-                                         0x4F, 0xCB, 0xDC, 0xA5, 0x1C, 0x6D, 0x57, 0xA6, 0x8F, 0x6E, 0x40, 0x28,
-                                         0x74, 0x87};
+/* S-1-5-80 and the sha-1 of the service name in upper case, TRUSTEDINSTALLER. */
+const UCHAR SeSidTrustedInstaller[32] = {1, 6, 0, 0, 0, 0, 0, 5, 80, 0, 0, 0, 0xB5, 0x89, 0xFB, 0x38, 0x19, 0x84,
+                                         0xC2, 0xCB, 0x5C, 0x6C, 0x23, 0x6D, 0x57, 0x00, 0x77, 0x6E, 0xC0, 0x02,
+                                         0x64, 0x87};
 const UCHAR SeSidAllAppPackages[16] = {1, 2, 0, 0, 0, 0, 0, 15, 2, 0, 0, 0, 1, 0, 0, 0};
 const UCHAR SeSidRestrictedPackages[16] = {1, 2, 0, 0, 0, 0, 0, 15, 2, 0, 0, 0, 2, 0, 0, 0};
 

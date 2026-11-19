@@ -162,5 +162,6 @@ NTSTATUS SepImpersonateClient(PETHREAD thread, PTOKEN token, BOOLEAN copy_on_ope
 NTSTATUS SepSetThreadToken(HANDLE thread_handle, PVOID info, ULONG length);
 NTSTATUS SepSetProcessAccessToken(HANDLE process_handle, PVOID info, ULONG length);
 NTSTATUS SepReferenceTokenForNewProcess(HANDLE handle, PTOKEN *out);
+void SeSetVirtualizationToken(PTOKEN token, BOOLEAN enable);
 
 #endif
