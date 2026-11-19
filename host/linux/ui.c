@@ -51,6 +51,15 @@ typedef struct VkLayer {
     MimeRect place; /* where the subsurface is, in surface coordinates. */
     uint32_t frames;
     bool top;   /* of the top level window itself, always over the window. */
+    /*
+     * of a layer over the window, with the window's lock. on Windows a swapchain is copied into the surface of its
+     * window (dxgi takes it with DwmpDxGetWindowSharedSurface and clamps where it copies to its size), so nothing of
+     * it ever shows past the window. here the image is a surface of its own, which keeps the size of its last frame
+     * while the window gets smaller: until the next frame comes it is cut where the window ends.
+     */
+    int32_t next_at[2], next_size[2], next_pixels[2]; /* of the frame that was sized last, in surface coordinates and in pixels. */
+    int32_t have_at[2], have_size[2], have_pixels[2]; /* of the frame the display has. */
+    int32_t cut_size[2];   /* what the frame the display has is cut to, 0 while it shows whole. */
     bool under; /* lies under the window. what follows is of such a layer, under the window's lock. */
     bool gone;  /* its presenter left: it goes once the window closed over it. */
     LayerPlace told, shown; /* the last place the guest told, and the one the window's pixels on screen go with. */
@@ -102,6 +111,15 @@ typedef struct UiWindow {
 
     pthread_mutex_t lock;
     uint8_t *pixels; /* the latest guest surface, copied by the presenting vCPU. */
+    size_t pixels_room; /* its bytes. a window that is dragged to a size takes a new size with each move of the pointer. */
+    bool content_due;   /* the guest took a size while a border is dragged, its pixels of that size are to come. */
+    uint32_t drag_edge; /* the WMSZ_* edge the pointer drags, as the guest asked. */
+    bool size_answered; /* the guest gave the window a size since it was last told one. */
+    uint64_t commit_ms; /* when the window last drew a frame. */
+    bool hold_timer;    /* a frame that waits for the guest is drawn without it once the wait is over. */
+    bool drag_live;     /* the guest waits to be told that the drag of the border ended. */
+    bool drag_seen;     /* the compositor said that it sizes the window. */
+    uint64_t drag_ms;   /* when the drag was asked for. */
     uint32_t width, height;
     uint32_t pixel_width, pixel_height;
     int32_t logical_width, logical_height; /* the host window in surface coordinates. */
@@ -1220,6 +1238,7 @@ static void mark_dirty(UiWindow *w)
 #define MAX_HOLES (MAX_VK_LAYERS * 4 * MIME_LAYER_HIDDEN_MAX)
 
 static int settle_layers(UiWindow *w, MimeRect *holes, bool *again);
+static void cut_layers(UiWindow *w);
 static void layers_drawn(UiWindow *w);
 static void reap_layers(UiWindow *w);
 static void present_main(void *arg);
@@ -1345,12 +1364,80 @@ static void fill(const MimeWlFrame *f, MimeRect r, MimeRect part, uint32_t color
     }
 }
 
+/*
+ * whether the pixels of the guest are of the size the guest told for the window, with the window's lock. the pixels
+ * come from the processor that painted them and the size through the main thread, one a moment before the other.
+ */
+static bool pixels_fit(const UiWindow *w)
+{
+    const MimeWinConfig *c = &w->config;
+    double stretch = surface_stretch(c);
+    return w->pixels && labs(lround((c->rect.right - c->rect.left) / stretch) - (long)w->width) <= 1 &&
+           labs(lround((c->rect.bottom - c->rect.top) / stretch) - (long)w->height) <= 1;
+}
+
+/* whether the guest window has the size the host window is drawn at. */
+static bool host_fit(const UiWindow *w)
+{
+    const MimeWinConfig *c = &w->config;
+    MimeRect host = host_part(c);
+    double shown = 1.0 / config_scale(c);
+    double gw = host.right - host.left, gh = host.bottom - host.top;
+    return held_at_minimum(w, gw, gh) || (labs(lround(gw * shown) - (long)w->logical_width) <= 1 &&
+                                         labs(lround(gh * shown) - (long)w->logical_height) <= 1);
+}
+
+static void draw(UiWindow *w);
+
+static void hold_main(void *arg)
+{
+    pthread_mutex_lock(&g_windows_lock);
+    UiWindow *w = find_window((uint32_t)(uintptr_t)arg);
+    pthread_mutex_unlock(&g_windows_lock);
+    if (!w)
+        return;
+    w->hold_timer = false;
+    if (w->shown)
+        draw(w);
+}
+
+/* how long a frame waits for the guest to have drawn itself at the size of a border that is dragged. */
+#define HOLD_MS 100
+
 /* draws the visible surface inside the host window, leaving the resize border clear. */
 static void draw(UiWindow *w)
 {
     if (!w->window || w->bogus_size)
         return;
+    /* the size may be newer than the one the window was last told of: its rectangle goes with the buffer of that size. */
+    update_pixel_size(w);
+    if (w->bogus_size)
+        return;
     MimeWlFrame frame;
+    pthread_mutex_lock(&w->lock);
+    bool drawn = w->pixels != nullptr;
+    /*
+     * while a border is dragged a frame of a new size waits for the guest to have taken that size and drawn itself
+     * at it, as windows holds the frame of a window between GreWindowResizeStarted and GreWindowResizeComplete of
+     * each step of its drag loop (xxxDrawDragRectEx), and for no longer than a timer: a guest that does not answer,
+     * or answers with another size, is shown as it is.
+     */
+    bool torn = drawn && mime_wl_window_resizing(w->window) &&
+                (!pixels_fit(w) || (!w->size_answered && !host_fit(w))) && now_ms() - w->commit_ms < HOLD_MS;
+    if (torn)
+        w->present_queued = false;
+    pthread_mutex_unlock(&w->lock);
+    if (torn) {
+        if (!w->hold_timer) {
+            w->hold_timer = true;
+            mime_wl_timer(HOLD_MS, hold_main, (void *)(uintptr_t)w->id);
+        }
+        return;
+    }
+    w->commit_ms = now_ms();
+    /* a buffer of a new size takes its time, which a processor of the guest that presents would wait out. */
+    if (drawn)
+        mime_wl_window_ready(w->window);
     pthread_mutex_lock(&w->lock);
     w->present_queued = false;
     if (!w->pixels) {
@@ -1406,6 +1493,8 @@ static void draw(UiWindow *w)
     MimeRect holes[MAX_HOLES];
     bool again = false;
     int hole_count = w->vk ? settle_layers(w, holes, &again) : 0;
+    if (w->vk)
+        cut_layers(w);
     b.graded = mime_gamma_table(b.table);
     /* a frame that lies otherwise than the one before is drawn whole. */
     uint64_t key = 1469598103934665603ull;
@@ -1459,12 +1548,35 @@ static void draw(UiWindow *w)
         mime_wl_timer(REDRAW_MS, present_main, (void *)(uintptr_t)w->id);
 }
 
+/*
+ * while a border is dragged a frame of the window is of the size the guest has, once the guest has drawn itself at
+ * that size: the size and the pixels come one after the other, and a frame between the two would show the window cut.
+ */
+static void content_sync(UiWindow *w)
+{
+    if (!w->content_due || !w->window)
+        return;
+    const MimeWinConfig *c = &w->config;
+    pthread_mutex_lock(&w->lock);
+    bool drawn = pixels_fit(w);
+    pthread_mutex_unlock(&w->lock);
+    if (!drawn)
+        return;
+    MimeRect host = host_part(c);
+    double shown = 1.0 / config_scale(c);
+    w->content_due = false;
+    mime_wl_window_content(w->window, MIME_MAX(1, (int)lround((host.right - host.left) * shown)),
+                           MIME_MAX(1, (int)lround((host.bottom - host.top) * shown)));
+    update_pixel_size(w);
+}
+
 static void present_main(void *arg)
 {
     pthread_mutex_lock(&g_windows_lock);
     UiWindow *w = find_window((uint32_t)(uintptr_t)arg);
     pthread_mutex_unlock(&g_windows_lock);
     if (w && w->shown) {
+        content_sync(w);
         draw(w);
         if (w->reap)
             reap_layers(w);
@@ -1562,6 +1674,8 @@ static void apply_config(UiWindow *w, const MimeWinConfig *given)
     pthread_mutex_lock(&w->lock);
     w->config = *cfg;
     pthread_mutex_unlock(&w->lock);
+    if (size_changed)
+        w->size_answered = true;
     w->configured = true;
     if (!w->window && !(cfg->flags & MIME_WIN_VISIBLE))
         return;
@@ -1591,7 +1705,20 @@ static void apply_config(UiWindow *w, const MimeWinConfig *given)
         w->want_w = MIME_MAX(1, (int)lround((host.right - host.left) * shown));
         w->want_h = MIME_MAX(1, (int)lround((host.bottom - host.top) * shown));
         w->want_ms = now_ms();
+        w->content_due = false;
         mime_wl_window_size(w->window, w->want_w, w->want_h);
+    } else if (size_changed && !minimized && !w->popup) {
+        /* a border is dragged: the frames of the window are of the size the guest has taken. */
+        /*
+         * a border is dragged. the compositor keeps the corner across from it in place by the size of the buffer, so
+         * with the left or the top border the buffer has the size the guest has taken, not the one the compositor
+         * asked: the window would sit in a buffer of another size, its far corner off by the difference. with the
+         * right or the bottom border alone the window sits at the start of the buffer anyway.
+         */
+        bool leading = w->drag_edge == 1 || w->drag_edge == 3 || w->drag_edge == 4 || w->drag_edge == 5 ||
+                       w->drag_edge == 7;
+        w->content_due = leading && mime_wl_window_resizing(w->window);
+        content_sync(w);
     }
     /*
      * a compositor that tiles the window keeps its size and sends no event: the guest is told of the size kept, which
@@ -1899,6 +2026,7 @@ static void destroy_main(void *arg)
     pthread_mutex_lock(&w->lock);
     free(w->pixels);
     w->pixels = nullptr;
+    w->pixels_room = 0;
     pthread_mutex_unlock(&w->lock);
     pthread_mutex_destroy(&w->lock);
     w->used = false;
@@ -1966,8 +2094,12 @@ void mime_ui_window_present(uint32_t id, const void *pixels, uint32_t width, uin
     pthread_mutex_lock(&w->lock);
     pthread_mutex_unlock(&g_windows_lock);
     if (!w->pixels || w->width != width || w->height != height) {
-        free(w->pixels);
-        w->pixels = malloc((size_t)width * height * 4);
+        size_t need = (size_t)width * height * 4;
+        if (!w->pixels || need > w->pixels_room || need < w->pixels_room / 2) {
+            free(w->pixels);
+            w->pixels_room = need + need / 4;
+            w->pixels = malloc(w->pixels_room);
+        }
         w->width = width;
         w->height = height;
         dirty = (MimeRect){0, 0, (int32_t)width, (int32_t)height};
@@ -2154,8 +2286,6 @@ static void place_layer(UiWindow *w, VkLayer *l, MimeRect area, uint32_t order)
     if (fresh || memcmp(&r, &l->place, sizeof(r))) {
         l->place = r;
         wl_subsurface_set_position(l->subsurface, r.left, r.top);
-        if (l->viewport)
-            mime_wl_viewport_size(l->viewport, r.right - r.left, r.bottom - r.top);
     }
     if (restack)
         restack_layers(w);
@@ -2243,6 +2373,67 @@ static int rect_cut(MimeRect *list, int count, int capacity, MimeRect out)
                 list[count++] = parts[k];
     }
     return count;
+}
+
+/*
+ * cuts the layers over the window where the frame of it that is about to be drawn ends, with the window's lock. the
+ * surface of a layer is the driver's, and a commit of ours among those of a frame it hands over would end the
+ * connection: the presenter holds the window's lock for as long as that takes, see mime_ui_vk_landing.
+ */
+/* where the part of the window that shows ends in the host window as it is now, in surface coordinates. */
+static void window_end(const UiWindow *w, int32_t end[2])
+{
+    MimeRect vis = visible_part(&w->config), host = host_part(&w->config);
+    Fit fit = window_fit(w);
+    /* a host window that is smaller than the guest has it yet ends where its own border for sizing starts. */
+    end[0] = MIME_MIN((int32_t)lround(fit.x + (vis.right - host.left) * fit.scale),
+                      w->logical_width - (int32_t)lround((host.right - vis.right) * fit.scale));
+    end[1] = MIME_MIN((int32_t)lround(fit.y + (vis.bottom - host.top) * fit.scale),
+                      w->logical_height - (int32_t)lround((host.bottom - vis.bottom) * fit.scale));
+}
+
+/* what a frame of a size that starts at a place shows of itself inside the window. false when nothing or all of it. */
+static bool layer_cut(const UiWindow *w, int32_t left, int32_t top, const int32_t size[2], int32_t want[2])
+{
+    int32_t end[2];
+    window_end(w, end);
+    want[0] = MIME_MIN(end[0] - left, size[0]);
+    want[1] = MIME_MIN(end[1] - top, size[1]);
+    if (want[0] <= 0 || want[1] <= 0) {
+        memcpy(want, size, 2 * sizeof(int32_t));
+        return false;
+    }
+    return want[0] != size[0] || want[1] != size[1];
+}
+
+static bool layer_cuts(const VkLayer *l)
+{
+    return !l->under && !l->gone && l->subsurface && l->viewport && l->have_size[0] > 0 && l->have_size[1] > 0 &&
+           l->have_pixels[0] > 0 && l->have_pixels[1] > 0;
+}
+
+static void cut_layers(UiWindow *w)
+{
+    for (int i = 0; i < MAX_VK_LAYERS; i++) {
+        VkLayer *l = &w->vk_layers[i];
+        if (!l->used || !layer_cuts(l))
+            continue;
+        int32_t want[2], now[2];
+        bool whole = !layer_cut(w, l->have_at[0], l->have_at[1], l->have_size, want);
+        for (int k = 0; k < 2; k++)
+            now[k] = l->cut_size[0] ? l->cut_size[k] : l->have_size[k];
+        if (want[0] == now[0] && want[1] == now[1])
+            continue;
+        if (whole) {
+            mime_wl_viewport_whole(l->viewport, want[0], want[1]);
+            l->cut_size[0] = l->cut_size[1] = 0;
+        } else {
+            mime_wl_viewport_part(l->viewport, (double)l->have_pixels[0] * want[0] / l->have_size[0],
+                                  (double)l->have_pixels[1] * want[1] / l->have_size[1], want[0], want[1]);
+            memcpy(l->cut_size, want, sizeof(want));
+        }
+        wl_surface_commit(l->surface);
+    }
 }
 
 static int settle_layers(UiWindow *w, MimeRect *holes, bool *again)
@@ -2427,6 +2618,37 @@ static uint32_t xdg_edge(uint32_t edge)
     return edge < sizeof(edges) / sizeof(edges[0]) ? edges[edge] : 0;
 }
 
+/* the window whose border the compositor drags for the guest, 0 for none. */
+static uint32_t g_drag_window;
+
+static void drag_ended(UiWindow *w)
+{
+    if (!w->drag_live)
+        return;
+    w->drag_live = false;
+    if (g_drag_window == w->id)
+        g_drag_window = 0;
+    MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_SIZE, .window_id = w->id, .flags = 1};
+    emit(&ev);
+}
+
+/*
+ * the pointer is ours again. a compositor that says when it sizes a window says when it stops too, one that does not
+ * has ended its drag by the time the pointer is back.
+ */
+static void drag_pointer_back(void)
+{
+    UiWindow *w = g_drag_window ? find_window(g_drag_window) : nullptr;
+    if (!w) {
+        g_drag_window = 0;
+        return;
+    }
+    if (w->window && mime_wl_window_resizing(w->window))
+        w->drag_seen = true;
+    else if (w->drag_seen || now_ms() - w->drag_ms > 300)
+        drag_ended(w);
+}
+
 static void movesize_main(void *arg)
 {
     MoveSize *m = arg;
@@ -2445,8 +2667,14 @@ static void movesize_main(void *arg)
                 mime_wl_window_resizable(w->window, true);
             }
             ok = mime_wl_window_resize(w->window, serial, xdg_edge(m->edge));
-            if (ok)
+            if (ok) {
                 w->interactive_until = now_ms() + 3000;
+                w->drag_edge = m->edge;
+                w->drag_live = true;
+                w->drag_seen = false;
+                w->drag_ms = now_ms();
+                g_drag_window = w->id;
+            }
         }
         if (ok)
             m->status = MIME_HC_STATUS_OK;
@@ -2495,7 +2723,6 @@ typedef struct VkAttach {
     pthread_cond_t cond;
 } VkAttach;
 
-/* every window of the guest that presents has a subsurface of its own. */
 bool mime_ui_vk_layers(void)
 {
     return g_video;
@@ -2818,6 +3045,16 @@ bool mime_ui_vk_frame(uint32_t id, uint32_t source, const MimeUiPlace *place, Mi
             frame->pixel_width = (uint32_t)MIME_MAX(lround((r.right - r.left) * density), 0);
             frame->pixel_height = (uint32_t)MIME_MAX(lround((r.bottom - r.top) * density), 0);
             moved = memcmp(&r, &layer->place, sizeof(r)) != 0 || layer->order != place->order;
+            /* the size the display shows the buffer at is state of the surface, and lands with the buffer. */
+            if (layer->viewport && frame->pixel_width && frame->pixel_height) {
+                layer->next_at[0] = r.left;
+                layer->next_at[1] = r.top;
+                layer->next_size[0] = r.right - r.left;
+                layer->next_size[1] = r.bottom - r.top;
+                layer->next_pixels[0] = (int32_t)frame->pixel_width;
+                layer->next_pixels[1] = (int32_t)frame->pixel_height;
+                frame->landing = w;
+            }
         }
     } else {
         frame->pixel_width = w->pixel_width;
@@ -2874,6 +3111,42 @@ void mime_ui_vk_place(uint32_t id, uint32_t source, const MimeUiPlace *place)
     /* should the pixels that were said to follow not come. */
     if (wait)
         mime_wl_timer(REDRAW_MS, present_main, (void *)(uintptr_t)id);
+}
+
+/*
+ * the size the display shows the buffer of a layer at, and the part of it, are state of its surface that lands with
+ * the buffer. the window of a frame that is late may be smaller by now than the one the guest made it for.
+ */
+bool mime_ui_vk_landing(const MimeUiFrame *frame, uint32_t source)
+{
+    UiWindow *w = frame->landing;
+    if (!w)
+        return false;
+    pthread_mutex_lock(&w->lock);
+    VkLayer *l = w->vk ? find_layer(w, source) : nullptr;
+    if (!l || l->under || l->gone || !l->viewport || frame->serial != l->frames) {
+        pthread_mutex_unlock(&w->lock);
+        return false;
+    }
+    int32_t want[2];
+    bool cut = layer_cut(w, l->next_at[0], l->next_at[1], l->next_size, want);
+    if (cut)
+        mime_wl_viewport_part(l->viewport, (double)l->next_pixels[0] * want[0] / l->next_size[0],
+                              (double)l->next_pixels[1] * want[1] / l->next_size[1], want[0], want[1]);
+    else
+        mime_wl_viewport_whole(l->viewport, l->next_size[0], l->next_size[1]);
+    memcpy(l->have_at, l->next_at, sizeof(l->have_at));
+    memcpy(l->have_size, l->next_size, sizeof(l->have_size));
+    memcpy(l->have_pixels, l->next_pixels, sizeof(l->have_pixels));
+    l->cut_size[0] = cut ? want[0] : 0;
+    l->cut_size[1] = cut ? want[1] : 0;
+    return true;
+}
+
+void mime_ui_vk_landed(const MimeUiFrame *frame)
+{
+    UiWindow *w = frame->landing;
+    pthread_mutex_unlock(&w->lock);
 }
 
 void mime_ui_vk_shown(uint32_t id, uint32_t source, uint32_t serial, bool shown)
@@ -3082,7 +3355,7 @@ static void report_size(UiWindow *w)
         return;
     uint64_t now = now_ms();
     int logical_w, logical_h;
-    mime_wl_window_get_size(w->window, &logical_w, &logical_h);
+    mime_wl_window_get_told(w->window, &logical_w, &logical_h);
     bool interactive = w->interactive_until > now;
     if (!w->maximized && !interactive) {
         if (logical_w == w->want_w && logical_h == w->want_h)
@@ -3118,6 +3391,7 @@ static void report_size(UiWindow *w)
     }
     if (abs(width - (host.right - host.left)) <= 1 && abs(height - (host.bottom - host.top)) <= 1)
         return;
+    w->size_answered = false;
     MimeInputEvent ev = {.type = MIME_INPUT_WINDOW_SIZE, .window_id = w->id, .width = width, .height = height};
     emit(&ev);
 }
@@ -3213,6 +3487,8 @@ static void on_editing(MimeWlWindow *window, const char *text, int start, int le
 static void on_motion(MimeWlWindow *window, double x, double y, double dx, double dy)
 {
     before_event(false, false);
+    if (g_drag_window)
+        drag_pointer_back();
     UiWindow *w = ui_of(window);
     if (w)
         emit_motion(w, x, y, dx, dy);
@@ -3221,6 +3497,8 @@ static void on_motion(MimeWlWindow *window, double x, double y, double dx, doubl
 static void on_button(MimeWlWindow *window, double x, double y, uint32_t button, bool down)
 {
     before_event(false, false);
+    if (g_drag_window)
+        drag_pointer_back();
     UiWindow *w = ui_of(window);
     uint32_t which = mouse_button(button);
     if (w && which)
@@ -3328,6 +3606,9 @@ static void on_state(MimeWlWindow *window, MimeWlState state)
         break;
     case MIME_WL_RESTORED:
         on_restored(w);
+        break;
+    case MIME_WL_RESIZE_ENDED:
+        drag_ended(w);
         break;
     case MIME_WL_MAXIMIZED:
         /*

@@ -2406,12 +2406,16 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
         VkSubmitInfo submit = {VK_STRUCTURE_TYPE_SUBMIT_INFO, c->timelines ? &values : nullptr, all.count, all.semaphores,
                                all.stages, 1, &f->cmd, 2, signals};
         c->fn.vkResetFences(c->device, 1, &f->fence);
+        /* what the surface shows of the image is set while nothing else commits it, until the driver has. */
+        bool landing = mime_ui_vk_landing(frame, p->source);
         pthread_mutex_lock(&c->queue_lock);
         if (c->fn.vkQueueSubmit(queue, 1, &submit, f->fence) != VK_SUCCESS) {
             /* the fence stays unsignaled: a submit that only signals it keeps the next wait from hanging. */
             VkSubmitInfo none = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
             c->fn.vkQueueSubmit(queue, 1, &none, f->fence);
             pthread_mutex_unlock(&c->queue_lock);
+            if (landing)
+                mime_ui_vk_landed(frame);
             return false;
         }
         s->pending[index] = true;
@@ -2421,6 +2425,8 @@ static bool show(MvkConnection *c, Presenter *p, VkQueue queue, uint32_t family,
         r = w->QueuePresent(queue, &info);
         pthread_rwlock_unlock(&g_swapchain_lock);
         pthread_mutex_unlock(&c->queue_lock);
+        if (landing)
+            mime_ui_vk_landed(frame);
         if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR)
             p->stale = true;
         return true;

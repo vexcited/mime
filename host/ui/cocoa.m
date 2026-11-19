@@ -2784,6 +2784,16 @@ void mime_ui_vk_shown(uint32_t id, uint32_t source, uint32_t serial, bool shown)
 {
 }
 
+/* a layer of the window system is cut by the view it lies in. */
+bool mime_ui_vk_landing(const MimeUiFrame *frame, uint32_t source)
+{
+    return false;
+}
+
+void mime_ui_vk_landed(const MimeUiFrame *frame)
+{
+}
+
 bool mime_ui_vk_frame(uint32_t id_, uint32_t source, const MimeUiPlace *place, MimeRect image, MimeUiFrame *frame)
 {
     /* the part of the client area that shows. */

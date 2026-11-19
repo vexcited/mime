@@ -891,8 +891,22 @@ void WndSetPos(WND *w, WND *after_wnd, LONG x, LONG y, LONG cx, LONG cy, UINT fl
             RgnFree(&kept);
             RgnFree(&new_vis);
         } else if (changed) {
-            if (was_visible)
+            /*
+             * the parent draws again what the window uncovered, not what it still covers: a combo box of user32
+             * takes the height of its field, draws itself at once with UpdateWindow, and is not drawn again after
+             * its parent.
+             */
+            if (was_visible && visible && !(w->ExStyle & WS_EX_TRANSPARENT) && w->Parent && w->Parent != g_desktop) {
+                REGION left;
+                RgnInit(&left);
+                RgnSetRect(&left, &old_screen);
+                RgnCombineRect(&left, &left, &w->WindowRect, RGN_DIFF);
+                if (!RgnIsEmpty(&left))
+                    WndInvalidateRegion(w->Parent, &left, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
+                RgnFree(&left);
+            } else if (was_visible) {
                 invalidate_screen_rect(w->Parent, &old_screen);
+            }
             if (visible) {
                 if (sized || (pos.flags & (SWP_SHOWWINDOW | SWP_FRAMECHANGED)) || !(pos.flags & SWP_NOZORDER) ||
                     !(pos.flags & SWP_NOCOPYBITS) || moved)
@@ -982,6 +996,7 @@ static void post_theme_change(WND *w)
 
 void WndSystemChanged(void)
 {
+    OemBitmapsInvalidate();
     WND *desktop = WndDesktop();
     for (WND *c = desktop ? desktop->FirstChild : nullptr; c; c = c->Next) {
         if (c->Flags & WNDF_DESTROYING)
@@ -1374,9 +1389,22 @@ void WndHostSize(WND *w, LONG width, LONG height)
     cx = window.right - window.left;
     cy = window.bottom - window.top;
     UserReference(&w->Header);
-    WndSetPos(w, nullptr, 0, 0, cx, cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    /* the drag loop of windows places the window with its position and these flags, seen in WM_WINDOWPOSCHANGING. */
+    if (MoveSizeHostStep(w, &cx, &cy)) {
+        if (alive(w))
+            WndSetPos(w, nullptr, window.left, window.top, cx, cy, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+    } else {
+        WndSetPos(w, nullptr, 0, 0, cx, cy, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
     if (alive(w))
         keep_on_monitor(w);
+    /*
+     * a step of a border that is dragged. windows paints the windows of the thread right after it gives the window
+     * its size (xxxDrawDragRectEx: xxxMoveSizeSetWindowPos, then xxxUpdateThreadsWindows), so a program draws itself
+     * at each size and not when its queue is next empty, which it is not while the sizes keep coming.
+     */
+    if (alive(w))
+        PaintUpdateNow(w);
     /*
      * a maximized window that keeps the size of the work area, as FL Studio's does, does not fit the place the
      * compositor gave it, a tile. it is restored there, as a maximized window dragged off the top of the screen is.
@@ -1847,10 +1875,13 @@ static void free_window(WND *w)
     w->Extra = nullptr;
     W32Free(w->Scroll);
     w->Scroll = nullptr;
-    /* user32 frees its copy of the extra bytes when its own thread lets the window go. */
+    /*
+     * user32 frees its copy of the extra bytes when its own thread lets the window go. a thread that ends is not
+     * called back: a call that never returns would leave the window half freed, with the thread gone under it.
+     */
     PVOID user_extra = w->UserExtra;
     w->UserExtra = nullptr;
-    if (user_extra && w->Thread == PsGetCurrentThreadWin32Thread())
+    if (user_extra && w->Thread == PsGetCurrentThreadWin32Thread() && !w->Thread->Destroying)
         ClientFreeExtraBytes(w, user_extra);
     RgnFree(&w->Update);
     w->Header.Destroyed = TRUE;
@@ -2247,7 +2278,11 @@ HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, const void *user_class, const vo
     w->Class = cls;
     cls->Windows++;
     w->Proc = ClassProc(cls, t->Process);
-    w->Fnid = (USHORT)cls->Fnid;
+    /*
+     * the list of a combo box has a class of its own, yet ListBoxWndProcWorker of user32 26300 takes a window of
+     * no kind or a list box alone, and refuses WM_NCCREATE for any other.
+     */
+    w->Fnid = (USHORT)(cls->Fnid == FNID_COMBOLISTBOX ? FNID_LISTBOX : cls->Fnid);
     if (w->ExtraSize) {
         w->UserExtra = ClientAllocExtraBytes(w->ExtraSize);
         WndExtraChanged(w, 0, w->ExtraSize);
@@ -2586,7 +2621,7 @@ static BOOLEAN host_takes_drag(WND *w, POINT at, POINT size, UINT flags)
         edge = edges[top ? 1 : bottom ? 2 : 0][left ? 1 : right ? 2 : 0];
     }
     /* a host that refuses is asked again at the next step: a window leaves the whole screen as it starts to move. */
-    return HostMoveSize(w, edge);
+    return HostMoveSize(w, edge, FALSE);
 }
 
 BOOL NTAPI NtUserSetWindowPos(HWND hwnd, HWND after, int x, int y, int cx, int cy, UINT flags)
@@ -2649,6 +2684,40 @@ BOOL NTAPI NtUserTransformRect(RECT *user_rect, DWORD from, DWORD to, HANDLE mon
     r.right = W32MulDiv(r.right, context_dpi(to), context_dpi(from));
     r.bottom = W32MulDiv(r.bottom, context_dpi(to), context_dpi(from));
     return NT_SUCCESS(MimeCopyToUser(user_rect, &r, sizeof(r)));
+}
+
+/*
+ * SetWindowState and ClearWindowState of user32: the high byte of the flag is a byte of the window, 8 of state, 4 of
+ * extended style and 4 of style, and the low byte the bits in it. a control changes its own styles this way with no
+ * message, as a combo box gives up the scroll bar and the edge asked for it, which are those of its list. the
+ * state bytes are made anew for each window that is mirrored, so only the styles are kept.
+ */
+static BOOL window_state(HWND hwnd, DWORD flag, BOOLEAN set)
+{
+    UserEnter();
+    WND *w = WndLookup(hwnd);
+    BOOL ok = w && w->Thread && w->Thread->Process == W32GetProcess();
+    if (ok) {
+        ULONG index = (flag >> 8) & 0xFF;
+        DWORD bits = (flag & 0xFF) << ((index & 3) * 8);
+        DWORD *word = index >= 8 && index < 12 ? &w->ExStyle : index >= 12 && index < 16 ? &w->Style : nullptr;
+        if (word)
+            *word = set ? *word | bits : *word & ~bits;
+    } else {
+        W32SetLastError(w ? ERROR_ACCESS_DENIED : ERROR_INVALID_WINDOW_HANDLE);
+    }
+    UserLeave();
+    return ok;
+}
+
+BOOL NTAPI NtUserSetWindowState(HWND hwnd, DWORD flag)
+{
+    return window_state(hwnd, flag, TRUE);
+}
+
+BOOL NTAPI NtUserClearWindowState(HWND hwnd, DWORD flag)
+{
+    return window_state(hwnd, flag, FALSE);
 }
 
 /*

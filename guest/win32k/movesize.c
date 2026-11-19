@@ -89,6 +89,9 @@ static RECT placed_rect(WND *w)
     return r;
 }
 
+/* the loop whose window the host sizes, with the user lock. */
+static MOVESIZE *g_host_sizing;
+
 /*
  * sizing is handed over at once since the edge was pressed, moving only after a drag, so clicks and double clicks on
  * a caption stay the program's. TRUE when the host took over.
@@ -104,12 +107,60 @@ static BOOLEAN host_takes_over(MOVESIZE *ms, POINT pt)
         if (dx > -threshold && dx < threshold && dy > -threshold && dy < threshold)
             return FALSE;
     }
-    if (HostMoveSize(w, ms->Size ? ms->Edge : 0)) {
+    /*
+     * the loop of a border lasts as long as the host drags it, as the loop of windows lasts as long as the button is
+     * down: the program is between WM_ENTERSIZEMOVE and WM_EXITSIZEMOVE for all the sizes of the drag.
+     */
+    if (HostMoveSize(w, ms->Size ? ms->Edge : 0, ms->Size)) {
         ms->Host = TRUE;
+        if (ms->Size)
+            g_host_sizing = ms;
         return TRUE;
     }
     ms->HostRefused = TRUE;
     return FALSE;
+}
+
+/*
+ * the host gave a size to the window whose border it drags, cx and cy in the window's own coordinates. windows
+ * moves the cursor, sends WM_SIZING with the rectangle the border makes, and gives the window what the program left
+ * of it (xxxTM_MoveDragRect, then xxxDrawDragRectEx). FALSE when no border of the window is dragged.
+ */
+BOOLEAN MoveSizeHostStep(WND *w, LONG *cx, LONG *cy)
+{
+    MOVESIZE *ms = g_host_sizing;
+    if (!ms || ms->Window != WndHandle(w))
+        return FALSE;
+    RECT now = placed_rect(w), r = now;
+    LONG dx = *cx - (now.right - now.left), dy = *cy - (now.bottom - now.top);
+    /* the guest keeps the corner of its window where it is, whichever border moves on the host. */
+    BOOLEAN left = has_left(ms->Edge), top = has_top(ms->Edge);
+    InputHostDragStep(w, left ? -dx : dx, top ? -dy : dy, left ? 0 : dx, top ? 0 : dy);
+    w = window_of(ms);
+    if (!w)
+        return TRUE;
+    if (left)
+        r.left = r.right - *cx;
+    else
+        r.right = r.left + *cx;
+    if (top)
+        r.top = r.bottom - *cy;
+    else
+        r.bottom = r.top + *cy;
+    MsgSendKernel(w, WM_SIZING, ms->Edge, (LPARAM)&r, MIME_LPARAM_INOUT, sizeof(r));
+    *cx = r.right - r.left;
+    *cy = r.bottom - r.top;
+    return TRUE;
+}
+
+/* the host let go of the border: the button goes up, which ends the loop. */
+void MoveSizeHostEnd(WND *w)
+{
+    MOVESIZE *ms = g_host_sizing;
+    if (!ms || ms->Window != WndHandle(w))
+        return;
+    g_host_sizing = nullptr;
+    InputReleaseLeftButton();
 }
 
 /* places the window for the mouse at pt, in screen coordinates. */
@@ -298,6 +349,11 @@ static void move_size(WND *w, WPARAM command, BOOLEAN pressed, POINT press)
         }
         if (done)
             break;
+    }
+    /* a loop that ends on its own, by a key or a lost capture, while the host still drags. */
+    if (g_host_sizing == &ms) {
+        g_host_sizing = nullptr;
+        InputReleaseLeftButton();
     }
     w = window_of(&ms);
     if (cancel && w && !ms.Host) {
