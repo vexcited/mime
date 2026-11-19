@@ -14,12 +14,15 @@
 #include <net/if_dl.h>
 #include <sys/event.h>
 #else
+#include <linux/errqueue.h>
 #include <linux/if_packet.h>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
 #endif
 #include <netdb.h>
+#include <netinet/icmp6.h>
 #include <netinet/in.h>
+#include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <stdio.h>
@@ -57,6 +60,8 @@ typedef struct NetSocket {
     bool severed; /* a remote connection aborted when the machine went offline. */
     uint64_t polled; /* the poll that listed it first, and where. */
     uint32_t polled_at;
+    bool echo;               /* an icmp echo of MIME_HC_NET_ECHO. */
+    uint16_t echo_id, echo_sequence;
 } NetSocket;
 
 typedef struct NetResolve {
@@ -385,6 +390,7 @@ static NetSocket *add_socket(int fd, bool stream)
         s->queued = false;
         s->remote = false;
         s->severed = false;
+        s->echo = false;
         return s;
     }
     return nullptr;
@@ -1061,6 +1067,269 @@ static uint64_t net_ipc(MimeVm *vm, uint64_t index, bool probe, uint64_t *value)
     return MIME_HC_STATUS_OK;
 }
 
+/* ------------------------------------------------------------ icmp echoes. */
+
+static uint8_t g_echo_packet[8 + 65535 + 128]; /* used under the lock. */
+
+static int32_t echo_error(int e)
+{
+    switch (e) {
+    case EMSGSIZE:
+        return 10040; /* WSAEMSGSIZE */
+    case ENETUNREACH:
+        return 10051;
+    case EHOSTUNREACH:
+        return 10065;
+    case EADDRNOTAVAIL:
+        return 10049;
+    case EAFNOSUPPORT:
+        return 10047;
+    default:
+        return wsa_error(e);
+    }
+}
+
+static uint16_t icmp_checksum(const uint8_t *p, size_t n)
+{
+    uint32_t sum = 0;
+    for (; n > 1; p += 2, n -= 2)
+        sum += (uint32_t)p[0] << 8 | p[1];
+    if (n)
+        sum += (uint32_t)p[0] << 8;
+    while (sum >> 16)
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    return (uint16_t)~sum;
+}
+
+/*
+ * an unprivileged datagram socket of icmp, which linux allows to the groups of net.ipv4.ping_group_range and macos to
+ * everyone. linux picks the identifier and reports icmp errors about the echo through the error queue.
+ */
+static uint64_t net_echo(MimeVm *vm, uint64_t pa, uint64_t data_pa, uint64_t len, uint64_t *value)
+{
+    const MimeNetEcho *e = pa ? mime_vm_phys(vm, pa, sizeof(MimeNetEcho)) : nullptr;
+    const uint8_t *data = len ? mime_vm_phys(vm, data_pa, len) : (const uint8_t *)"";
+    if (!e || !data || len > 65535)
+        return MIME_HC_STATUS_INVALID;
+    struct sockaddr_storage to, from;
+    socklen_t to_len, from_len;
+    if (!to_host(&e->destination, &to, &to_len))
+        return fail(value, 10047);
+    if (!reachable(&to))
+        return fail(value, 10051);
+    if (!start(vm))
+        return fail(value, 10050);
+    bool v6 = to.ss_family == AF_INET6;
+    int fd = socket(to.ss_family, SOCK_DGRAM, v6 ? IPPROTO_ICMPV6 : IPPROTO_ICMP);
+    if (fd < 0)
+        return fail(value, echo_error(errno));
+    prepare_fd(fd, false);
+    int on = 1, ttl = e->ttl;
+    if (v6) {
+        setsockopt(fd, IPPROTO_IPV6, IPV6_RECVHOPLIMIT, &on, sizeof(on));
+#ifndef __APPLE__
+        setsockopt(fd, IPPROTO_IPV6, IPV6_RECVERR, &on, sizeof(on));
+#endif
+        if (ttl)
+            setsockopt(fd, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &ttl, sizeof(ttl));
+    } else {
+        setsockopt(fd, IPPROTO_IP, IP_RECVTTL, &on, sizeof(on));
+        setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &on, sizeof(on));
+#ifdef __APPLE__
+        int df = (e->flags & MIME_NET_ECHO_DONT_FRAGMENT) != 0;
+        setsockopt(fd, IPPROTO_IP, IP_DONTFRAG, &df, sizeof(df));
+#else
+        setsockopt(fd, IPPROTO_IP, IP_RECVTOS, &on, sizeof(on));
+        setsockopt(fd, IPPROTO_IP, IP_RECVERR, &on, sizeof(on));
+        int pmtu = e->flags & MIME_NET_ECHO_DONT_FRAGMENT ? IP_PMTUDISC_DO : IP_PMTUDISC_DONT;
+        setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &pmtu, sizeof(pmtu));
+#endif
+        if (ttl)
+            setsockopt(fd, IPPROTO_IP, IP_TTL, &ttl, sizeof(ttl));
+    }
+    if (e->source.family && (!to_host(&e->source, &from, &from_len) || from.ss_family != to.ss_family ||
+                             bind(fd, (struct sockaddr *)&from, from_len) < 0)) {
+        int32_t error = errno == EADDRNOTAVAIL || from.ss_family != to.ss_family ? 10049 : echo_error(errno);
+        close(fd);
+        return fail(value, error);
+    }
+    uint16_t id = (uint16_t)(getpid() ^ (fd << 4) ^ e->sequence);
+    uint8_t *p = g_echo_packet;
+    p[0] = v6 ? 128 : 8;
+    p[1] = 0;
+    p[2] = p[3] = 0;
+    p[4] = (uint8_t)(id >> 8);
+    p[5] = (uint8_t)id;
+    p[6] = (uint8_t)(e->sequence >> 8);
+    p[7] = (uint8_t)e->sequence;
+    memcpy(p + 8, data, len);
+    /* the kernel sums icmpv6 itself; linux sums icmp too, macos takes ours. */
+    if (!v6) {
+        uint16_t sum = icmp_checksum(p, 8 + len);
+        p[2] = (uint8_t)(sum >> 8);
+        p[3] = (uint8_t)sum;
+    }
+    if (sendto(fd, p, 8 + len, 0, (struct sockaddr *)&to, to_len) < 0) {
+        int32_t error = echo_error(errno);
+        close(fd);
+        return fail(value, error);
+    }
+    NetSocket *s = add_socket(fd, false);
+    if (!s) {
+        close(fd);
+        return fail(value, 10024);
+    }
+    s->echo = true;
+    s->echo_id = id;
+    s->echo_sequence = e->sequence;
+    s->remote = !loopback(&to);
+    *value = socket_id(s);
+    return MIME_HC_STATUS_OK;
+}
+
+static void echo_control(struct msghdr *msg, MimeNetEchoReply *r, bool *icmp_error)
+{
+    for (struct cmsghdr *c = CMSG_FIRSTHDR(msg); c; c = CMSG_NXTHDR(msg, c)) {
+        if (c->cmsg_level == IPPROTO_IP && (c->cmsg_type == IP_TTL || c->cmsg_type == IP_RECVTTL)) {
+            int ttl = 0;
+            memcpy(&ttl, CMSG_DATA(c), c->cmsg_len >= CMSG_LEN(sizeof(int)) ? sizeof(int) : 1);
+            r->ttl = (uint8_t)ttl;
+        } else if (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_HOPLIMIT) {
+            int hops = 0;
+            memcpy(&hops, CMSG_DATA(c), sizeof(hops));
+            r->ttl = (uint8_t)hops;
+        }
+#ifndef __APPLE__
+        else if (c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_TOS) {
+            r->tos = *(const uint8_t *)CMSG_DATA(c);
+        } else if ((c->cmsg_level == IPPROTO_IP && c->cmsg_type == IP_RECVERR) ||
+                   (c->cmsg_level == IPPROTO_IPV6 && c->cmsg_type == IPV6_RECVERR)) {
+            const struct sock_extended_err *ee = (const struct sock_extended_err *)CMSG_DATA(c);
+            if (ee->ee_origin == SO_EE_ORIGIN_ICMP || ee->ee_origin == SO_EE_ORIGIN_ICMP6) {
+                *icmp_error = true;
+                r->error = 1;
+                r->type = ee->ee_type;
+                r->code = ee->ee_code;
+                from_host(SO_EE_OFFENDER(ee), &r->from);
+            }
+        }
+#endif
+    }
+}
+
+/* the answer of an echo: its reply, or an icmp error a router or the destination sent about it. */
+static uint64_t net_echo_reply(MimeVm *vm, NetSocket *s, uint64_t pa, uint64_t data_pa, uint64_t max, uint64_t *value)
+{
+    MimeNetEchoReply *r = pa ? mime_vm_phys(vm, pa, sizeof(MimeNetEchoReply)) : nullptr;
+    uint8_t *data = max ? mime_vm_phys(vm, data_pa, max) : nullptr;
+    if (!r || (max && !data) || !s->echo)
+        return MIME_HC_STATUS_INVALID;
+    struct sockaddr_storage ss;
+    union {
+        struct cmsghdr align;
+        char bytes[512];
+    } control;
+    struct iovec iov = {g_echo_packet, sizeof(g_echo_packet)};
+    struct msghdr msg;
+#ifndef __APPLE__
+    for (;;) {
+        memset(&msg, 0, sizeof(msg));
+        memset(r, 0, sizeof(*r));
+        msg.msg_name = &ss;
+        msg.msg_namelen = sizeof(ss);
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = control.bytes;
+        msg.msg_controllen = sizeof(control.bytes);
+        if (recvmsg(s->fd, &msg, MSG_ERRQUEUE) < 0)
+            break;
+        bool icmp_error = false;
+        echo_control(&msg, r, &icmp_error);
+        if (icmp_error) {
+            *value = 0;
+            return MIME_HC_STATUS_OK;
+        }
+    }
+#endif
+    for (;;) {
+        memset(&msg, 0, sizeof(msg));
+        memset(r, 0, sizeof(*r));
+        memset(&ss, 0, sizeof(ss));
+        msg.msg_name = &ss;
+        msg.msg_namelen = sizeof(ss);
+        msg.msg_iov = &iov;
+        msg.msg_iovlen = 1;
+        msg.msg_control = control.bytes;
+        msg.msg_controllen = sizeof(control.bytes);
+        ssize_t n = recvmsg(s->fd, &msg, 0);
+        if (n < 0) {
+            /* linux also reports a queued icmp error here once, the error queue has it. */
+            if (errno == EWOULDBLOCK || errno == EINTR || errno == EHOSTUNREACH || errno == ENETUNREACH ||
+                errno == ECONNREFUSED || errno == EMSGSIZE || errno == EPROTO)
+                return fail(value, 10035);
+            return fail(value, echo_error(errno));
+        }
+        bool icmp_error = false;
+        echo_control(&msg, r, &icmp_error);
+        const uint8_t *p = g_echo_packet;
+        bool v6 = ss.ss_family == AF_INET6;
+#ifdef __APPLE__
+        /* macos hands icmp datagrams over with their ip header, and icmp errors as datagrams of their own. */
+        if (!v6) {
+            if (n < 20)
+                continue;
+            size_t ihl = (size_t)(p[0] & 15) * 4;
+            r->tos = p[1];
+            r->ttl = p[8];
+            if ((size_t)n < ihl + 8)
+                continue;
+            p += ihl;
+            n -= (ssize_t)ihl;
+        }
+        uint8_t kind = p[0];
+        bool error = v6 ? kind < 128 : kind == 3 || kind == 4 || kind == 11 || kind == 12;
+        if (error) {
+            /* the original echo follows the error header, behind its own ip header for ipv4. */
+            const uint8_t *orig = p + 8;
+            ssize_t left = n - 8;
+            if (!v6 && left >= 20) {
+                size_t ihl = (size_t)(orig[0] & 15) * 4;
+                orig += ihl;
+                left -= (ssize_t)ihl;
+            } else if (v6) {
+                orig += 40;
+                left -= 40;
+            }
+            if (left < 8 || (orig[4] << 8 | orig[5]) != s->echo_id || (orig[6] << 8 | orig[7]) != s->echo_sequence)
+                continue;
+            r->error = 1;
+            r->type = kind;
+            r->code = p[1];
+            from_host((struct sockaddr *)&ss, &r->from);
+            *value = 0;
+            return MIME_HC_STATUS_OK;
+        }
+        if (n < 8 || (p[4] << 8 | p[5]) != s->echo_id)
+            continue;
+#else
+        if (icmp_error) {
+            *value = 0;
+            return MIME_HC_STATUS_OK;
+        }
+#endif
+        if (n < 8 || p[0] != (v6 ? 129 : 0) || (p[6] << 8 | p[7]) != s->echo_sequence)
+            continue;
+        uint32_t size = (uint32_t)(n - 8);
+        uint32_t copy = size < max ? size : (uint32_t)max;
+        if (copy)
+            memcpy(data, p + 8, copy);
+        r->size = size;
+        from_host((struct sockaddr *)&ss, &r->from);
+        *value = copy;
+        return MIME_HC_STATUS_OK;
+    }
+}
+
 /* ------------------------------------------------------------ dispatch. */
 
 uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
@@ -1204,6 +1473,13 @@ uint64_t mime_net_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
         break;
     case MIME_HC_NET_IPC:
         status = net_ipc(vm, regs[1], regs[2] != 0, &value);
+        break;
+    case MIME_HC_NET_ECHO:
+        status = net_echo(vm, regs[1], regs[2], regs[3], &value);
+        break;
+    case MIME_HC_NET_ECHO_REPLY:
+        s = g_kq >= 0 ? lookup(regs[1]) : nullptr;
+        status = s ? net_echo_reply(vm, s, regs[2], regs[3], regs[4], &value) : fail(&value, 10038);
         break;
     default:
         status = MIME_HC_STATUS_UNSUPPORTED;

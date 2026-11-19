@@ -559,7 +559,7 @@ static bool make_icon(const MimeLink *link, const char *program_host, const char
     char location[MIME_PATH_MAX], host[MIME_PATH_MAX];
     expand(link->icon_raw[0] ? link->icon_raw : link->icon, location, sizeof(location));
     bool from_program = !location[0];
-    /* the system libraries are not files of the drive, an icon of imageres.dll comes from the embedded copy. */
+    /* the system libraries are not files of the drive: an icon of imageres.dll comes from the host's copy, a mime dll from the rom. */
     const MimeRomEntry *rom = !from_program && location[1] == ':' ? mime_rom_find(location + 2) : nullptr;
     if (from_program) {
         mime_strlcpy(host, program_host, sizeof(host));
@@ -575,6 +575,10 @@ static bool make_icon(const MimeLink *link, const char *program_host, const char
     bool plain = n > 4 && !strcasecmp(host + n - 4, ".ico");
     if (plain) {
         ico = mime_read_file(host, &ico_size);
+    } else if (rom && rom->genuine) {
+        int group = link->icon_index < 0 ? -link->icon_index : -1;
+        if (!mime_genuine_icon(rom, group, &ico, &ico_size) && group >= 0)
+            mime_genuine_icon(rom, -1, &ico, &ico_size);
     } else if (rom) {
         const uint8_t *image = (const uint8_t *)mime_rom + rom->offset;
         int group = link->icon_index < 0 ? -link->icon_index : -1;

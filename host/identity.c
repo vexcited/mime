@@ -51,13 +51,12 @@ static void make_machine_uuid(char *out, size_t size)
 const MimeHardwareProfile *mime_hardware_profile(void)
 {
     static const MimeHardwareProfile profile = {
-        .cpu_name = "Intel(R) Core(TM) Ultra 7 165H",
-        .cpu_vendor = "GenuineIntel",
-        .cpu_mhz = 5000,
-        /* meteor lake: family 6, model 0xaa, stepping 3. */
-        .cpu_family = 6,
-        .cpu_model = 0xAA,
-        .cpu_stepping = 3,
+        .cpu_name = "AMD Ryzen 7 7435HS",
+        .cpu_vendor = "AuthenticAMD",
+        .cpu_mhz = 4100,
+        .cpu_family = 0x19,
+        .cpu_model = 0x44,
+        .cpu_stepping = 1,
         .manufacturer = "Microsoft Corporation",
         .product = "Microsoft Surface Laptop 6 for Business",
         .family = "Surface",

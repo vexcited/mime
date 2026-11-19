@@ -80,22 +80,44 @@ static bool make_dirs_nocase(const MimePaths *paths, const char *const *folders,
     return true;
 }
 
-/* the folders of a user profile, the shell folders and the places programs write their data. */
-static bool make_profile(const MimePaths *paths, const char *name)
+/*
+ * the folders of a user profile, as Users\Default of the pinned image has them. the account that logs on also gets the
+ * known folders that FolderDescriptions marks PreCreate, which windows makes at its first logon.
+ */
+static bool make_profile(const MimePaths *paths, const char *name, bool logs_on)
 {
     static const char *const folders[] = {
         "Desktop", "Documents", "Downloads", "Music", "Pictures", "Videos", "Favorites", "Links", "Saved Games",
-        "AppData/Local/Temp", "AppData/LocalLow", "AppData/Local/Microsoft/Windows/INetCache",
-        "AppData/Local/Microsoft/Windows/History", "AppData/Local/Microsoft/Windows/INetCookies",
-        "AppData/Local/Microsoft/Windows/Shell", "AppData/Local/Microsoft/WindowsApps",
-        "AppData/Roaming/Microsoft/Internet Explorer/Quick Launch", "AppData/Roaming/Microsoft/Windows/Network Shortcuts",
-        "AppData/Roaming/Microsoft/Windows/Printer Shortcuts", "AppData/Roaming/Microsoft/Windows/Recent",
-        "AppData/Roaming/Microsoft/Windows/SendTo", "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup",
+        "AppData/Local/Temp", "AppData/LocalLow", "AppData/Local/Microsoft/GameDVR",
+        "AppData/Local/Microsoft/Windows/CloudStore", "AppData/Local/Microsoft/Windows/GameExplorer",
+        "AppData/Local/Microsoft/Windows/INetCache", "AppData/Local/Microsoft/Windows/History",
+        "AppData/Local/Microsoft/Windows/INetCookies", "AppData/Local/Microsoft/Windows/Shell",
+        "AppData/Local/Microsoft/Windows/WinX/Group1", "AppData/Local/Microsoft/Windows/WinX/Group2",
+        "AppData/Local/Microsoft/Windows/WinX/Group3", "AppData/Local/Microsoft/Windows Sidebar/Gadgets",
+        "AppData/Local/Microsoft/WindowsApps", "AppData/Roaming/Microsoft/Internet Explorer/Quick Launch",
+        "AppData/Roaming/Microsoft/Spelling", "AppData/Roaming/Microsoft/Windows/CloudStore",
+        "AppData/Roaming/Microsoft/Windows/Network Shortcuts", "AppData/Roaming/Microsoft/Windows/Printer Shortcuts",
+        "AppData/Roaming/Microsoft/Windows/Recent", "AppData/Roaming/Microsoft/Windows/SendTo",
+        "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup",
+        "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Accessibility",
+        "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Accessories",
+        "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Maintenance",
+        "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/System Tools",
+        "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Windows PowerShell",
         "AppData/Roaming/Microsoft/Windows/Templates",
+    };
+    static const char *const precreated[] = {
+        "Contacts", "Searches", "AppData/Local/Microsoft/Windows/Application Shortcuts",
+        "AppData/Local/Microsoft/Windows/Ringtones", "AppData/Local/Microsoft/Windows/RoamingTiles",
+        "AppData/Roaming/Microsoft/Internet Explorer/Quick Launch/User Pinned/ImplicitAppShortcuts",
+        "AppData/Roaming/Microsoft/Windows/AccountPictures", "AppData/Roaming/Microsoft/Windows/Libraries",
+        "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Administrative Tools",
     };
     char root[MIME_PATH_MAX];
     snprintf(root, sizeof(root), "Users/%s", name);
     if (!make_dirs(paths, root, folders, MIME_ARRAY_COUNT(folders)))
+        return false;
+    if (logs_on && !make_dirs(paths, root, precreated, MIME_ARRAY_COUNT(precreated)))
         return false;
     /* the junctions windows keeps for the programs of older versions, and its old shell folder names. */
     static const struct {
@@ -128,7 +150,7 @@ static bool create_profile(const MimePaths *paths)
 {
     MimeIdentity id;
     mime_identity_load(paths, &id);
-    return make_profile(paths, "Default") && make_profile(paths, id.user_name);
+    return make_profile(paths, "Default", false) && make_profile(paths, id.user_name, true);
 }
 
 /*
@@ -214,14 +236,23 @@ static void create_name_files(const MimePaths *paths)
 
 /*
  * creates shared profile, Start Menu and Common Files folders. shortcut creation may fail if either shared or per-user
- * folders are missing, and installers check they can write to Common Files before they start.
+ * folders are missing, and installers check they can write to Common Files before they start. the folders below
+ * Users\Public and ProgramData\Microsoft\Windows are the ones of the pinned image that are known folders or hold them.
  */
 static void create_shared_folders(const MimePaths *paths)
 {
     static const char *const folders[] = {
-        "Users/Public/Desktop",   "Users/Public/Documents", "Users/Public/Downloads", "Users/Public/Music",
-        "Users/Public/Pictures",  "Users/Public/Videos",    "ProgramData/Microsoft/Windows/Start Menu/Programs",
+        "Users/Public/AccountPictures", "Users/Public/Desktop", "Users/Public/Documents", "Users/Public/Downloads",
+        "Users/Public/Libraries", "Users/Public/Music", "Users/Public/Pictures", "Users/Public/Videos",
+        "ProgramData/Microsoft/Windows/DeviceMetadataStore", "ProgramData/Microsoft/Windows/GameExplorer",
+        "ProgramData/Microsoft/Windows/RetailDemo", "ProgramData/Microsoft/Windows/Ringtones",
         "ProgramData/Microsoft/Windows/Start Menu/Programs/Startup",
+        "ProgramData/Microsoft/Windows/Start Menu/Programs/Accessibility",
+        "ProgramData/Microsoft/Windows/Start Menu/Programs/Accessories/System Tools",
+        "ProgramData/Microsoft/Windows/Start Menu/Programs/Administrative Tools",
+        "ProgramData/Microsoft/Windows/Start Menu/Programs/Maintenance",
+        "ProgramData/Microsoft/Windows/Start Menu/Programs/System Tools",
+        "ProgramData/Microsoft/Windows/Start Menu/Programs/Windows PowerShell", "ProgramData/Microsoft/Windows/Templates",
         "Program Files/Common Files", "Program Files (x86)/Common Files",
 #ifdef __aarch64__
         "Program Files (Arm)/Common Files",
@@ -333,7 +364,10 @@ bool mime_prepare_drive(const MimePaths *paths)
 {
     if (!create_skeleton(paths))
         return false;
-    /* copies written by older versions are shadowed by the ROM, remove them. */
+    /*
+     * copies written by older versions are shadowed by the ROM, remove them. the folder of a ROM file is a folder of the
+     * drive, so it opens and lists as on Windows.
+     */
     const MimeRomHeader *h = mime_rom_header();
     for (uint32_t i = 0; i < h->count; i++) {
         char path[MIME_PATH_MAX];
@@ -342,6 +376,12 @@ bool mime_prepare_drive(const MimePaths *paths)
             if (*c == '\\')
                 *c = '/';
         unlink(path);
+        char *leaf = strrchr(path, '/');
+        *leaf = 0;
+        if (!mime_dir_exists(path) && !make_dir_nocase(paths->drive_c, path + strlen(paths->drive_c) + 1)) {
+            mime_error("cannot create %s: %s", path, strerror(errno));
+            return false;
+        }
     }
     create_name_files(paths);
     create_shared_folders(paths);

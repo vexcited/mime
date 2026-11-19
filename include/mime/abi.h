@@ -462,22 +462,23 @@ typedef struct MimeBootInfo {
 } MimeBootInfo;
 
 /*
- * embedded kernel, drivers and DLLs. files are page-aligned for direct guest mapping; DLLs use 4K file
- * alignment to match their memory layout.
+ * embedded kernel, drivers, programs and mime's own DLLs. files are page-aligned for direct guest mapping; DLLs use 4K
+ * file alignment to match their memory layout. the system files of windows that are microsoft's are named with no
+ * bytes, see MimeRomEntry.genuine.
  */
 #define MIME_ROM_MAGIC 0x004D4F52454D494Dull /* "MIMEROM". */
 
 /* the entries of data/genuine-<arch>.manifest the rom and the host can know. */
-#define MIME_GENUINE_MAX 256
+#define MIME_GENUINE_MAX 1024
 
 typedef struct MimeRomEntry {
     char path[96]; /* relative to C:, e.g. \Windows\System32\ntdll.dll, NUL padded. */
     uint64_t offset; /* from the rom header, page aligned. */
-    uint64_t size;
+    uint64_t size; /* 0 for a file of the manifest. */
     /*
-     * a file whose microsoft original is listed in data/genuine-<arch>.manifest has 1 + its index there and its size. the
-     * machine starts only when the host holds every one: reads, sizes and data sections of the file show that copy,
-     * see MIME_HC_GENUINE_OPEN, and images still map this one.
+     * a file listed in data/genuine-<arch>.manifest has 1 + its index there and its size, and no bytes here: size is 0.
+     * it is always microsoft's copy, which the host holds, and the machine starts only when the host has every one:
+     * reads, sizes, data sections and images of the file are that copy, see MIME_HC_GENUINE_OPEN.
      */
     uint64_t genuine_size;
     uint32_t genuine;
@@ -592,6 +593,7 @@ enum {
     MIME_HC_FS_SET_REPARSE = 0x69, /* handle and MimeFsReparse pa: makes the empty file or directory a symbolic link or a junction. */
     MIME_HC_FS_GET_REPARSE = 0x6A, /* handle and MimeFsReparse pa: what the link the handle was opened as says, MIME_HC_STATUS_NOT_REPARSE for any other. */
     MIME_HC_FS_DELETE_REPARSE = 0x6B, /* handle and the tag the guest expects: the link becomes the empty file or directory it was made from. */
+    MIME_HC_FS_OBJECT_ID = 0x6F, /* handle, pa of 16 bytes and create: the object id stored with the file. with create, the bytes at pa are stored when it has none. MIME_HC_STATUS_NOT_FOUND for a file without one, MIME_HC_STATUS_INVALID where none can be stored. */
     MIME_HC_FS_WINDOW_LOST = 0xA0, /* (pa of MimeWindowLost) the next range of window pages whose file lost them, after MIME_IRQ_WINDOW */
 
     MIME_HC_WIN_CREATE = 0x20,  /* (window_id) */
@@ -647,6 +649,12 @@ enum {
      * tells whether the socket is there and returns no socket.
      */
     MIME_HC_NET_IPC = 0x57,
+    /*
+     * an icmp echo on a socket of its own, MimeNetEcho at pa and the payload: the socket to watch for reading, then
+     * MIME_HC_NET_ECHO_REPLY takes the answer, an echo reply or an icmp error about it.
+     */
+    MIME_HC_NET_ECHO = 0x5A,       /* (MimeNetEcho pa, pa, len) -> socket */
+    MIME_HC_NET_ECHO_REPLY = 0x5B, /* (socket, MimeNetEchoReply pa, pa, max) -> bytes of payload written */
 
     /* the clipboard in every format the host and the guest can exchange, see MIME_CLIP_*. */
     MIME_HC_CLIP_OFFER = 0x48,   /* (MIME_CLIP_* mask) the guest owns the clipboard and can render these, none to withdraw */
@@ -874,6 +882,30 @@ typedef struct MimeNetConfig {
     MimeNetAddr server[MIME_NET_MAX_DNS];
     /* MimeNetLink link[links], MimeNetAddress address[addresses], MimeNetRoute route[routes]. */
 } MimeNetConfig;
+
+enum {
+    MIME_NET_ECHO_DONT_FRAGMENT = 1u << 0,
+};
+
+typedef struct MimeNetEcho {
+    MimeNetAddr destination;
+    MimeNetAddr source; /* family 0 for any. */
+    uint8_t ttl;        /* 0 for the host's default. */
+    uint8_t flags;      /* MIME_NET_ECHO_* */
+    uint16_t sequence;
+    uint32_t pad;
+} MimeNetEcho;
+
+typedef struct MimeNetEchoReply {
+    MimeNetAddr from;
+    uint32_t size; /* of the whole payload, more than was written when it did not fit. */
+    uint8_t error; /* an icmp error about the echo rather than its reply, type and code say which. */
+    uint8_t type;
+    uint8_t code;
+    uint8_t ttl;
+    uint8_t tos;
+    uint8_t pad[3];
+} MimeNetEchoReply;
 
 /*
  * control channel. the host queues messages and raises MIME_IRQ_CTRL, the

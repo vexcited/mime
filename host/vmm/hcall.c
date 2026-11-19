@@ -328,6 +328,7 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_FS_SET_REPARSE:
     case MIME_HC_FS_GET_REPARSE:
     case MIME_HC_FS_DELETE_REPARSE:
+    case MIME_HC_FS_OBJECT_ID:
     case MIME_HC_FS_APPEND:
     case MIME_HC_GENUINE_OPEN:
     case MIME_HC_FS_DRIVES:
@@ -644,6 +645,8 @@ void mime_hcall_dispatch(MimeVcpu *vcpu, uint64_t regs[8])
     case MIME_HC_NET_INTERFACES:
     case MIME_HC_NET_CONFIG:
     case MIME_HC_NET_IPC:
+    case MIME_HC_NET_ECHO:
+    case MIME_HC_NET_ECHO_REPLY:
         status = mime_net_hcall(vm, nr, regs);
         value = regs[1];
         break;

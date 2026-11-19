@@ -27,23 +27,12 @@ static void xdg_dir(char *out, size_t size, const char *env, const char *fallbac
 }
 
 /*
- * one machine runs per user regardless of XDG overrides. keep the lock in the system-assigned per-user
- * temporary directory, outside environment-controlled paths.
+ * the lock lives beside the machine's socket, so machines started with different XDG directories run side by side
+ * while two starts on the same directories still meet on the same lock.
  */
-static void lock_path(char *out, size_t size)
+static void lock_path(char *out, size_t size, const char *runtime)
 {
-#ifdef _CS_DARWIN_USER_TEMP_DIR
-    char dir[MIME_PATH_MAX];
-    size_t len = confstr(_CS_DARWIN_USER_TEMP_DIR, dir, sizeof(dir));
-    if (len > 0 && len <= sizeof(dir)) {
-        len = strlen(dir);
-        while (len > 1 && dir[len - 1] == '/')
-            len--;
-        snprintf(out, size, "%.*s/mime.lock", (int)len, dir);
-        return;
-    }
-#endif
-    snprintf(out, size, "/tmp/mime-%u.lock", (unsigned)getuid());
+    snprintf(out, size, "%s/mime.lock", runtime);
 }
 
 bool mime_paths_init(MimePaths *paths)
@@ -77,7 +66,7 @@ bool mime_paths_init(MimePaths *paths)
     snprintf(paths->drive_c, sizeof(paths->drive_c), "%s/drive_c", paths->data);
     snprintf(paths->socket, sizeof(paths->socket), "%s/mime.sock", paths->runtime);
     snprintf(paths->pidfile, sizeof(paths->pidfile), "%s/mime.pid", paths->runtime);
-    lock_path(paths->lockfile, sizeof(paths->lockfile));
+    lock_path(paths->lockfile, sizeof(paths->lockfile), paths->runtime);
     snprintf(paths->logfile, sizeof(paths->logfile), "%s/vmm.log", paths->state);
 
     char exe[MIME_PATH_MAX];

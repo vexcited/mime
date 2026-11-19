@@ -159,7 +159,7 @@ static int machine_up(const MimePaths *paths, bool quiet)
         return 1;
     /* lets a concurrent `mime up` see which machine is starting. */
     mime_instance_publish(lock_fd, paths);
-    if (!mime_prepare_drive(paths) || mime_genuine_ensure(paths) != 0) {
+    if (!mime_prepare_drive(paths) || mime_genuine_ensure(paths, false) != 0) {
         close(lock_fd);
         return 1;
     }
@@ -203,7 +203,7 @@ int mime_cmd_setup(const MimePaths *paths, int argc, char **argv)
         if (!prepared)
             return 1;
     }
-    int r = mime_genuine_ensure(paths);
+    int r = mime_genuine_ensure(paths, true);
     if (r == 0)
         printf("Mime is set up.\n");
     return r;
@@ -222,15 +222,17 @@ int mime_cmd_status(const MimePaths *paths, int argc, char **argv)
         mime_genuine_print_status(paths);
         return 1;
     }
+    /* a program outlives the run that started it, as from the Run box: the count is the one of the guest. */
     printf("Mime machine is %s (pid %u), up for %llus, %u program(s) running.\n", status.ready ? "up" : "booting",
-           status.pid, (unsigned long long)(status.uptime_ms / 1000), status.running_programs);
+           status.pid, (unsigned long long)(status.uptime_ms / 1000),
+           status.user_processes != UINT32_MAX ? status.user_processes : status.running_programs);
     uint8_t id[MIME_BUILD_ID_MAX];
     size_t length = mime_build_id(id);
     char machine[2 * MIME_BUILD_ID_MAX + 1], self[2 * MIME_BUILD_ID_MAX + 1];
     mime_build_id_text(status.build_id, status.build_id_size, machine, sizeof(machine));
     mime_build_id_text(id, length, self, sizeof(self));
-    if (status.user_processes != UINT32_MAX)
-        printf("  programs  %u process(es) the user started\n", status.user_processes);
+    if (status.running_programs)
+        printf("  runs      %u `mime run` still attached\n", status.running_programs);
     printf("  build     %s\n", machine);
     if (!same_build(&status))
         printf("            this mime is %s, the machine moves to it at the next `mime down`\n", self);

@@ -862,6 +862,38 @@ static void load_dir(MimeFsHandle *fh)
 #define sd_remove_attribute(path) lremovexattr((path), SD_ATTRIBUTE)
 #endif
 
+/* the object id ntfs keeps with a file, sixteen bytes, kept the same way. */
+#ifdef __APPLE__
+#define OBJECT_ID_ATTRIBUTE "mime.objectid"
+#define object_id_get(path, buf) getxattr((path), OBJECT_ID_ATTRIBUTE, (buf), 16, 0, 0)
+#define object_id_set(path, buf) setxattr((path), OBJECT_ID_ATTRIBUTE, (buf), 16, 0, 0)
+#else
+#define OBJECT_ID_ATTRIBUTE "user.mime.objectid"
+#define object_id_get(path, buf) lgetxattr((path), OBJECT_ID_ATTRIBUTE, (buf), 16)
+#define object_id_set(path, buf) lsetxattr((path), OBJECT_ID_ATTRIBUTE, (buf), 16, 0)
+#endif
+
+static uint64_t fs_object_id(MimeVm *vm, MimeFsHandle *fh, uint64_t pa, bool create)
+{
+    uint8_t *id = mime_vm_phys(vm, pa, 16);
+    if (!id || !fh->host_path)
+        return MIME_HC_STATUS_INVALID;
+    uint8_t stored[16];
+    if (object_id_get(fh->host_path, stored) == 16) {
+        memcpy(id, stored, 16);
+        return MIME_HC_STATUS_OK;
+    }
+    if (errno != ENODATA
+#ifdef ENOATTR
+        && errno != ENOATTR
+#endif
+    )
+        return MIME_HC_STATUS_INVALID;
+    if (!create)
+        return MIME_HC_STATUS_NOT_FOUND;
+    return object_id_set(fh->host_path, id) == 0 ? MIME_HC_STATUS_OK : MIME_HC_STATUS_INVALID;
+}
+
 #define SD_MAX_BYTES (64u << 10)
 
 typedef struct SdMemory {
@@ -1612,6 +1644,13 @@ uint64_t mime_fs_hcall(MimeVm *vm, uint64_t nr, uint64_t regs[8])
                                               : mime_fs_reparse_delete(vm, fh, (uint32_t)a[2]);
         if (status == MIME_HC_STATUS_OK && fh->host_path)
             mime_fswatch_self(fh->host_path, MIME_FSWATCH_MODIFY);
+        break;
+    }
+    case MIME_HC_FS_OBJECT_ID: {
+        MimeFsHandle *fh = get_handle(vm, a[1]);
+        pthread_mutex_lock(&vm->fs_lock);
+        status = fh ? fs_object_id(vm, fh, a[2], a[3] != 0) : MIME_HC_STATUS_INVALID;
+        pthread_mutex_unlock(&vm->fs_lock);
         break;
     }
     case MIME_HC_FS_LINKS: {
