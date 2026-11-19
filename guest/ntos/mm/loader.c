@@ -651,18 +651,57 @@ static PVOID section_export(PSECTION s, const char *name)
             ULONG func;
             memcpy(&ordinal, AT(exp.AddressOfNameOrdinals + i * 2), 2);
             memcpy(&func, AT(exp.AddressOfFunctions + ordinal * 4), 4);
-            return (PVOID)(s->Image.ImageBase + func);
+            return (PVOID)(s->BasedAddress + func);
         }
     }
     return nullptr;
 #undef AT
 }
 
+/*
+ * ntdll keeps three tables side by side for RtlRetrieveNtUserPfn, which csrss hands to win32k on windows: the ansi
+ * and the unicode window procedures, 24 each, then 18 workers. no export names them. they hold the addresses of a
+ * run of stubs 16 bytes apart of which NtdllDefWindowProc_A is exported: the ansi table starts with the stub 0x80
+ * before it, then itself, then the stub 0x40 before it. seen alike in the ntdll of 26300.9457 and of 26100.9974.
+ */
+NTSTATUS NTAPI PsQueryNtUserPfn(ULONG64 *procedures)
+{
+    static ULONG64 found[MIME_NTUSER_PFN_COUNT];
+    static BOOLEAN done;
+    PSECTION s = PspNativeSystemDll.Section;
+    if (!done && s) {
+#define AT(rva) ((PUCHAR)HalPhysmap(MiSectionPage(s, (rva) >> PAGE_SHIFT)) + ((rva) & (PAGE_SIZE - 1)))
+        ULONG64 def = (ULONG64)section_export(s, "NtdllDefWindowProc_A");
+        ULONG size = ((PIMAGE_NT_HEADERS64)AT((ULONG)((PIMAGE_DOS_HEADER)AT(0))->e_lfanew))->OptionalHeader.SizeOfImage;
+        ULONG last = size - MIME_NTUSER_PFN_COUNT * 8;
+        for (ULONG rva = PAGE_SIZE; def && rva < last && !done; rva += 8) {
+            if (!MiSectionPage(s, rva >> PAGE_SHIFT)) {
+                rva |= PAGE_SIZE - 8;
+                continue;
+            }
+            ULONG64 q[3];
+            for (ULONG k = 0; k < 3; k++)
+                q[k] = MiSectionPage(s, (rva + k * 8) >> PAGE_SHIFT) ? *(PULONG64)AT(rva + k * 8) : 0;
+            /* the pages may hold the addresses of another base, which differs by whole 64 KB. */
+            if (q[1] - q[0] != 0x80 || q[2] - q[0] != 0x40 || ((q[1] ^ def) & 0xffff))
+                continue;
+            for (ULONG k = 0; k < MIME_NTUSER_PFN_COUNT; k++)
+                found[k] = *(PULONG64)AT(rva + k * 8) - q[1] + def;
+            done = TRUE;
+        }
+#undef AT
+    }
+    if (!done)
+        return STATUS_ENTRYPOINT_NOT_FOUND;
+    memcpy(procedures, found, sizeof(found));
+    return STATUS_SUCCESS;
+}
+
 /* the offset of an export of the 32-bit ntdll from its base, or 0. */
 ULONG PspWow64NtdllExport(const char *name)
 {
     PUCHAR at = PspWow64NtdllSection ? section_export(PspWow64NtdllSection, name) : nullptr;
-    return at ? (ULONG)(at - (PUCHAR)PspWow64NtdllSection->Image.ImageBase) : 0;
+    return at ? (ULONG)(at - (PUCHAR)PspWow64NtdllSection->BasedAddress) : 0;
 }
 
 PSP_SYSTEM_DLL PspNativeSystemDll;
@@ -686,7 +725,10 @@ static PSECTION guest_ntdll_section(PCWSTR name)
     return section;
 }
 
-/* creates a system dll's image section once; every process maps it at its preferred base. */
+/* the loader test hooks, which the kernel option loader-log turns on. */
+BOOLEAN PspLoaderLog = FALSE;
+
+/* creates a system dll's image section once; every process maps it at the base the section has. */
 static NTSTATUS load_system_dll(PCWSTR path_string, PPSP_SYSTEM_DLL dll)
 {
     UNICODE_STRING path;
@@ -703,7 +745,19 @@ static NTSTATUS load_system_dll(PCWSTR path_string, PPSP_SYSTEM_DLL dll)
         KiLogPrintf("invalid %wZ: %08x", &path, status);
         return status;
     }
-    dll->Base = (PVOID)dll->Section->Image.ImageBase;
+    dll->Base = (PVOID)dll->Section->BasedAddress;
+    /* test: let every loader log line through, by starting LdrpDebugFlags at all ones. */
+    if (PspLoaderLog && path_string && wcsstr(path_string, L"ntdll")) {
+        ULONG idx = 0x1ccf60 >> PAGE_SHIFT;
+        ULONG64 src = MiSectionPage(dll->Section, idx);
+        ULONG64 pg = src ? MmAllocatePage() : 0;
+        if (pg) {
+            memcpy(HalPhysmap(pg), HalPhysmap(src), PAGE_SIZE);
+            *(UCHAR *)((PUCHAR)HalPhysmap(pg) + (0x1ccf60 & (PAGE_SIZE - 1))) = 0x2E;
+            dll->Section->Pages[idx] = pg;
+            dll->Section->PageProtect[idx] = PAGE_READWRITE;
+        }
+    }
     dll->LdrInitializeThunk = section_export(dll->Section, "LdrInitializeThunk");
     dll->RtlUserThreadStart = section_export(dll->Section, "RtlUserThreadStart");
     dll->KiUserExceptionDispatcher = section_export(dll->Section, "KiUserExceptionDispatcher");
@@ -728,6 +782,91 @@ NTSTATUS PspInitializeSystemDll(void)
     if (MIME_NATIVE_MACHINE != IMAGE_FILE_MACHINE_AMD64 && PspX86SystemDll.Section)
         PspX64NtdllSection = guest_ntdll_section(L"\\SystemRoot\\SysX64\\ntdll.dll");
     return STATUS_SUCCESS;
+}
+
+/*
+ * PS_SYSTEM_DLL_INIT_BLOCK, the export LdrSystemDllInitBlock of ntdll that the kernel fills in each process, read from
+ * PspPrepareSystemDllInitBlock of ntoskrnl 26300 and measured on windows 11 with initblk.c of
+ * scratch/dlls/wow in the research repository. the 32-bit ntdll of a wow64 process has a block of the same layout.
+ */
+typedef struct {
+    ULONG Size;
+    ULONG64 SystemDllWowRelocation;
+    ULONG64 SystemDllNativeRelocation;
+    ULONG64 Wow64SharedInformation[16];
+    ULONG RngData;
+    ULONG Flags;
+    ULONG64 MitigationOptionsMap[3];
+    ULONG64 CfgBitMap;
+    ULONG64 CfgBitMapSize;
+    ULONG64 Wow64CfgBitMap;
+    ULONG64 Wow64CfgBitMapSize;
+    ULONG64 MitigationAuditOptionsMap[3];
+    ULONG64 ScpCfgFunctions[7];
+} PS_SYSTEM_DLL_INIT_BLOCK;
+MIME_STATIC_ASSERT(sizeof(PS_SYSTEM_DLL_INIT_BLOCK) == 0x128, "the init block of 26300");
+MIME_STATIC_ASSERT(offsetof(PS_SYSTEM_DLL_INIT_BLOCK, RngData) == 0x98, "the init block of 26300");
+MIME_STATIC_ASSERT(offsetof(PS_SYSTEM_DLL_INIT_BLOCK, CfgBitMap) == 0xB8, "the init block of 26300");
+
+/*
+ * PsWowX86SharedInformation: where the 32-bit ntdll keeps what wow64.dll and the kernel call in it. the same in every
+ * process, since that ntdll has one base.
+ */
+static void wow64_shared_information(ULONG64 info[16])
+{
+    static const char *const names[] = {
+        "LdrInitializeThunk", "KiUserExceptionDispatcher", "KiUserApcDispatcher", "KiUserCallbackDispatcher",
+        "RtlUserThreadStart", "RtlpQueryProcessDebugInformationRemote", nullptr, "LdrSystemDllInitBlock",
+        "RtlpFreezeTimeBias",
+    };
+    memset(info, 0, 16 * sizeof(ULONG64));
+    if (!PspWow64NtdllSection)
+        return;
+    ULONG64 base = PspWow64NtdllSection->BasedAddress;
+    for (ULONG i = 0; i < RTL_NUMBER_OF(names); i++) {
+        ULONG offset = names[i] ? PspWow64NtdllExport(names[i]) : 0;
+        info[i] = names[i] ? (offset ? base + offset : 0) : base;
+    }
+}
+
+#define STATUS_REVISION_MISMATCH ((NTSTATUS)0xC0000059L)
+
+static NTSTATUS write_init_block(PVOID at, const PS_SYSTEM_DLL_INIT_BLOCK *block)
+{
+    ULONG size = 0;
+    NTSTATUS status = KiCopyFromUser(&size, at, sizeof(size));
+    if (!NT_SUCCESS(status))
+        return status;
+    if (size != sizeof(*block))
+        return STATUS_REVISION_MISMATCH;
+    return KiCopyToUser(at, block, sizeof(*block));
+}
+
+/*
+ * like PspPrepareSystemDllInitBlock, in the address space of a new process with its system dlls mapped: the block of
+ * the native ntdll, then that of the 32-bit one of a wow64 process. the control flow guard bitmaps and the secure call
+ * functions stay zero, there are none here.
+ */
+NTSTATUS PspPrepareSystemDllInitBlocks(PEPROCESS process, PVOID ntdll32)
+{
+    if (MIME_NATIVE_MACHINE != IMAGE_FILE_MACHINE_AMD64)
+        return STATUS_SUCCESS;
+    PS_SYSTEM_DLL_INIT_BLOCK block = {};
+    block.Size = sizeof(block);
+    PSECTION native = PspNativeSystemDll.Section;
+    block.SystemDllNativeRelocation = native->BasedAddress - native->Image.ImageBase;
+    if (PspWow64NtdllSection)
+        block.SystemDllWowRelocation = PspWow64NtdllSection->BasedAddress - PspWow64NtdllSection->Image.ImageBase;
+    wow64_shared_information(block.Wow64SharedInformation);
+    memcpy(block.MitigationOptionsMap, process->MitigationMap, sizeof(block.MitigationOptionsMap));
+    block.RngData = (ULONG)MiRandom();
+    PVOID at = section_export(native, "LdrSystemDllInitBlock");
+    NTSTATUS status = at ? write_init_block(at, &block) : STATUS_ENTRYPOINT_NOT_FOUND;
+    if (!NT_SUCCESS(status) || !ntdll32 || !PspIsWow64Process(process))
+        return status;
+    block.RngData = (ULONG)MiRandom();
+    ULONG offset = PspWow64NtdllExport("LdrSystemDllInitBlock");
+    return offset ? write_init_block((PUCHAR)ntdll32 + offset, &block) : STATUS_ENTRYPOINT_NOT_FOUND;
 }
 
 /* the system dll this machine's programs run on, or NULL. */
