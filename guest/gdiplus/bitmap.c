@@ -400,7 +400,8 @@ WINGDIPAPI GpStatus WINAPI GdipCreateHBITMAPFromBitmap(GpBitmap *bitmap, HBITMAP
             UINT r = (((c >> 16) & 0xff) * a + bg_r * (255 - a) + 127) / 255;
             UINT g = (((c >> 8) & 0xff) * a + bg_g * (255 - a) + 127) / 255;
             UINT bl = ((c & 0xff) * a + bg_b * (255 - a) + 127) / 255;
-            out[x] = 0xff000000u | r << 16 | g << 8 | bl;
+            /* measured on windows: the colors are laid over those of the background, and the alpha stays the picture's. */
+            out[x] = a << 24 | r << 16 | g << 8 | bl;
         }
     }
     gp_free(row);
