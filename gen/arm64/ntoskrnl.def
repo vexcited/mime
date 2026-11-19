@@ -206,6 +206,7 @@ EXPORTS
     MimeCopyFromUser @7 NONAME
     MimeCopyToUser @8 NONAME
     MimeCurrentHasPrivilege @9 NONAME
+    MimeAddGlobalAtom @42 NONAME
     MimeFindGlobalAtom @41 NONAME
     MimeFsAssignNewFile @10 NONAME
     MimeFsCheckOpen @11 NONAME
