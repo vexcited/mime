@@ -54,6 +54,8 @@ EXPORTS
     CoMarshalHresult=ole32.CoMarshalHresult @315
     CoIsHandlerConnected=ole32.CoIsHandlerConnected @312
     CoIsOle1Class=ole32.CoIsOle1Class @313
+    CLSIDFromOle1Class=ole32.CLSIDFromOle1Class @109
+    CoGetModuleType=ole32.CoGetModuleType @298
     CoIncrementMTAUsage=ole32.CoIncrementMTAUsage @307
     CoImpersonateClient=ole32.CoImpersonateClient @306
     CoGetTreatAsClass=ole32.CoGetTreatAsClass @305
