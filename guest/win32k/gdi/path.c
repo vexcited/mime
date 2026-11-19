@@ -756,7 +756,7 @@ static void stroke_path(DC *dc, REGION *clip, RECT *dirty)
                 RgnCombine(&area, &area, clip, RGN_AND);
                 if (!RgnIsEmpty(&area)) {
                     const PEN *p = dc->State.Pen;
-                    ULONG pixel = ColorToPixel(p->Header.Handle == GdiStockHandle(DC_PEN) ? dc->State.PenColor : p->Color);
+                    ULONG pixel = DcColorPixel(dc, p->Header.Handle == GdiStockHandle(DC_PEN) ? dc->State.PenColor : p->Color);
                     DrawFillRectRop(dc->Surface, &area, &area.Extents, pixel, dc->State.Rop2);
                     RectUnion(dirty, dirty, &area.Extents);
                 }

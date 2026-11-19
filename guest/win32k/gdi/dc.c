@@ -6,9 +6,14 @@
 
 GDI_OBJECT *GdiStockObject(int index);
 
+static void attr_pull(DC *dc);
+
 DC *DcLookup(HDC hdc)
 {
-    return (DC *)GdiLookup(hdc, GDI_TYPE_DC);
+    DC *dc = (DC *)GdiLookup(hdc, GDI_TYPE_DC);
+    if (dc && dc->Attr)
+        attr_pull(dc);
+    return dc;
 }
 
 static void select_ref(GDI_OBJECT *o)
@@ -30,6 +35,15 @@ static void select_unref(GDI_OBJECT *o)
     }
 }
 
+void DcSelectPalette(DC *dc, PALETTE *palette)
+{
+    if (dc->Palette == palette)
+        return;
+    select_ref(palette ? &palette->Header : nullptr);
+    select_unref(dc->Palette ? &dc->Palette->Header : nullptr);
+    dc->Palette = palette;
+}
+
 void DcResetState(DC *dc)
 {
     DC_STATE *s = &dc->State;
@@ -48,6 +62,7 @@ void DcResetState(DC *dc)
     s->ViewportOrg = (POINT){0, 0};
     s->WindowOrg = (POINT){0, 0};
     s->CurrentPos = (POINT){0, 0};
+    s->BrushOrg = (POINT){0, 0};
     RgnClear(&s->ClipRgn);
     s->HasClip = FALSE;
     s->HasXform = FALSE;
@@ -68,12 +83,285 @@ void DcSelectDefaults(DC *dc)
     select_unref(&s->Brush->Header);
     select_unref(&s->Pen->Header);
     select_unref(&s->Font->Header);
+    DcSelectPalette(dc, nullptr);
     s->Brush = (BRUSH *)GdiStockObject(WHITE_BRUSH);
     s->Pen = (PEN *)GdiStockObject(BLACK_PEN);
     s->Font = (FONT *)GdiStockObject(SYSTEM_FONT);
     select_ref(&s->Brush->Header);
     select_ref(&s->Pen->Header);
     select_ref(&s->Font->Header);
+}
+
+/* ------------------------------------------------------------------ attributes in the program */
+
+/*
+ * gdi32 keeps the attributes of a device context in the memory of the program that owns it, 0x170 bytes the entry of
+ * the handle points to, see gdi/shared.c. it reads them there, and writes most of them there without a call: the
+ * colours, the modes, the brush, the pen and the font, the current position, the origins and the extents. measured
+ * on windows 11 26100 with dcattr.exe of scratch/dlls/probe in the research repository, and the offsets gdi32full
+ * 26300 reads agree:
+ *
+ *   0x10 the colour space          0x20 the transform, as floats  0x68 the mapping mode       0x6c the layout
+ *   0x80 the size of the bitmap    0x98 what gdi32 changed        0xa0 the brush              0xa8 the pen
+ *   0xb0 the background colour     0xb8 the text colour           0xc0 the colour of the brush of the context
+ *   0xc8 the colour of its pen     0xd0 the graphics mode         0xd4 a byte each: rop2, background mode, fill
+ *   mode, stretch mode             0xd8 the current position      0xe0 the background mode    0xe4 the fill mode
+ *   0xe8 the stretch mode          0x110 the text alignment, twice 0x118 the extra of characters
+ *   0x11c the extra of SetTextJustification and 0x120 its count of breaks
+ *   0x128 the font                 0x130 the origin of the window: x, x as the layout mirrors it, y
+ *   0x13c the extent of the window 0x144 the origin of the viewport 0x14c its extent           0x158 the origin of
+ *   the brush
+ *
+ * each colour is there twice, as asked and as realized. the kernel takes what the program changed when a call
+ * names the context, and writes what the call changed when it lets go of the lock of the window manager. the
+ * transform stays the one of a fresh context, and the bits of what changed are left as gdi32 wrote them.
+ */
+#define ATTR_SIZE 0x170
+#define ATTR_CHUNK 0x10000
+
+static const UCHAR g_attr_fresh[ATTR_SIZE] = {
+    [0x00] = 2,
+    [0x20] = 0x00, [0x21] = 0x00, [0x22] = 0x80, [0x23] = 0x41, [0x2c] = 0x00, [0x2d] = 0x00, [0x2e] = 0x80, [0x2f] = 0x41,
+    [0x40] = 0x4b, [0x44] = 0x00, [0x45] = 0x00, [0x46] = 0x80, [0x47] = 0x3d, [0x50] = 0x00, [0x51] = 0x00, [0x52] = 0x80, [0x53] = 0x3d,
+    [0x64] = 0x53, [0x68] = 1,
+    [0x88] = 1,
+    [0x98] = 0x1f, [0x99] = 0x00, [0x9a] = 0x12,
+    [0xd0] = 1,
+    [0x100] = 0xff, [0x101] = 0xff, [0x102] = 0xff, [0x103] = 0xff, [0x104] = 0xff, [0x105] = 0xff, [0x106] = 0xff, [0x107] = 0xff,
+    [0x13c] = 1, [0x140] = 1, [0x14c] = 1, [0x150] = 1,
+    [0x154] = 0x02, [0x155] = 0x18,
+};
+
+static DC *g_attr_touched[32];
+static ULONG g_attr_touched_count;
+
+#define A32(block, at) (*(ULONG *)((block) + (at)))
+#define A64(block, at) (*(ULONG64 *)((block) + (at)))
+
+/* the attributes as the state of the context has them, over a block that keeps what the kernel does not hold. */
+static void attr_image(const DC *dc, UCHAR *block)
+{
+    const DC_STATE *s = &dc->State;
+    BOOLEAN memory = (dc->Flags & DC_MEMORY) != 0;
+    /* bit 0 while a dib section is selected: gdi32 batches nothing for such a dc, its program reads the bits. */
+    A32(block, 0x00) = (A32(block, 0x00) & ~1u) | (memory && dc->Surface && (dc->Surface->Flags & (SURF_USER_BITS | SURF_FOREIGN)));
+    A32(block, 0x68) = (ULONG)s->MapMode;
+    A32(block, 0x6c) = s->Layout;
+    A32(block, 0x74) = memory ? 2 : 0;
+    /* a memory context holds the stock bitmap of one pixel until another is selected. */
+    A32(block, 0x80) = !memory ? 0 : dc->Surface ? (ULONG)dc->Surface->Width : 1;
+    A32(block, 0x84) = !memory ? 0 : dc->Surface ? (ULONG)dc->Surface->Height : 1;
+    A64(block, 0xa0) = (ULONG64)(ULONG_PTR)s->Brush->Header.Handle;
+    A64(block, 0xa8) = (ULONG64)(ULONG_PTR)s->Pen->Header.Handle;
+    A32(block, 0xb0) = A32(block, 0xb4) = s->BkColor;
+    A32(block, 0xb8) = A32(block, 0xbc) = s->TextColor;
+    A32(block, 0xc0) = A32(block, 0xc4) = s->BrushColor;
+    A32(block, 0xc8) = A32(block, 0xcc) = s->PenColor;
+    A32(block, 0xd0) = (ULONG)s->GraphicsMode;
+    block[0xd4] = (UCHAR)s->Rop2;
+    block[0xd5] = (UCHAR)s->BkMode;
+    block[0xd6] = (UCHAR)s->PolyFillMode;
+    block[0xd7] = (UCHAR)s->StretchMode;
+    A32(block, 0xd8) = (ULONG)s->CurrentPos.x;
+    A32(block, 0xdc) = (ULONG)s->CurrentPos.y;
+    A32(block, 0xe0) = (ULONG)s->BkMode;
+    A32(block, 0xe4) = (ULONG)s->PolyFillMode;
+    A32(block, 0xe8) = (ULONG)s->StretchMode;
+    A32(block, 0x110) = A32(block, 0x114) = s->TextAlign;
+    A32(block, 0x118) = (ULONG)s->TextCharExtra;
+    A32(block, 0x11c) = (ULONG)s->BreakExtra;
+    A32(block, 0x120) = (ULONG)s->BreakCount;
+    A64(block, 0x128) = (ULONG64)(ULONG_PTR)s->Font->Header.Handle;
+    A32(block, 0x130) = A32(block, 0x134) = (ULONG)s->WindowOrg.x;
+    A32(block, 0x138) = (ULONG)s->WindowOrg.y;
+    A32(block, 0x13c) = (ULONG)s->WindowExt.cx;
+    A32(block, 0x140) = (ULONG)s->WindowExt.cy;
+    A32(block, 0x144) = (ULONG)s->ViewportOrg.x;
+    A32(block, 0x148) = (ULONG)s->ViewportOrg.y;
+    A32(block, 0x14c) = (ULONG)s->ViewportExt.cx;
+    A32(block, 0x150) = (ULONG)s->ViewportExt.cy;
+    A32(block, 0x158) = (ULONG)s->BrushOrg.x;
+    A32(block, 0x15c) = (ULONG)s->BrushOrg.y;
+    A32(block, 0xec) = s->AttrFlag;
+    /*
+     * the matrices at 0x20 and 0x44 stay those of a fresh dc, so a mapping other than the identity sets the bits of
+     * 0x154 that send LPtoDP, DPtoLP and GetCurrentPositionEx of gdi32 to the kernel, as win32kfull's
+     * DC::iSetMapMode and bModifyWorldTransform set them. 0x400 marks the isotropic and anisotropic modes and 0x800
+     * clears with a mode other than MM_TEXT, as measured with dcattr.exe of scratch/dlls/probe.
+     */
+    ULONG fl = A32(block, 0x154);
+    fl = s->MapMode == MM_ISOTROPIC || s->MapMode == MM_ANISOTROPIC ? fl | 0x400 : fl & ~0x400u;
+    if (s->MapMode != MM_TEXT)
+        fl &= ~0x800u;
+    if (s->MapMode != MM_TEXT || s->HasXform || s->HasPage || (s->Layout & LAYOUT_RTL) || s->WindowOrg.x ||
+        s->WindowOrg.y || s->ViewportOrg.x || s->ViewportOrg.y)
+        fl |= 0xE010;
+    A32(block, 0x154) = fl;
+}
+
+static void update_page(DC_STATE *s);
+
+/* what the program wrote since the kernel last looked becomes the state of the context. called with the lock held. */
+static void attr_pull(DC *dc)
+{
+    if (dc->Header.OwnerPid != PsGetCurrentProcessId())
+        return;
+    UCHAR now[ATTR_SIZE];
+    if (!NT_SUCCESS(MimeCopyFromUser(now, dc->Attr, ATTR_SIZE)))
+        return;
+    if (!dc->AttrTouched && g_attr_touched_count < RTL_NUMBER_OF(g_attr_touched)) {
+        dc->AttrTouched = TRUE;
+        g_attr_touched[g_attr_touched_count++] = dc;
+    }
+    const UCHAR *was = dc->AttrSeen;
+    if (!memcmp(now, was, ATTR_SIZE))
+        return;
+    DC_STATE *s = &dc->State;
+    if (A64(now, 0xa0) != A64(was, 0xa0)) {
+        BRUSH *b = (BRUSH *)GdiLookup((HANDLE)(ULONG_PTR)A64(now, 0xa0), GDI_TYPE_BRUSH);
+        if (b) {
+            select_unref(&s->Brush->Header);
+            s->Brush = b;
+            select_ref(&b->Header);
+        }
+    }
+    if (A64(now, 0xa8) != A64(was, 0xa8)) {
+        PEN *pen = (PEN *)GdiLookup((HANDLE)(ULONG_PTR)A64(now, 0xa8), GDI_TYPE_PEN);
+        if (!pen)
+            pen = (PEN *)GdiLookup((HANDLE)(ULONG_PTR)A64(now, 0xa8), GDI_TYPE_EXTPEN);
+        if (pen) {
+            select_unref(&s->Pen->Header);
+            s->Pen = pen;
+            select_ref(&pen->Header);
+        }
+    }
+    if (A64(now, 0x128) != A64(was, 0x128)) {
+        FONT *f = (FONT *)GdiLookup((HANDLE)(ULONG_PTR)A64(now, 0x128), GDI_TYPE_FONT);
+        if (f) {
+            select_unref(&s->Font->Header);
+            s->Font = f;
+            dc->Realized = nullptr;
+            dc->RealizedFor = nullptr;
+            select_ref(&f->Header);
+        }
+    }
+    if (A32(now, 0xb0) != A32(was, 0xb0))
+        s->BkColor = A32(now, 0xb0);
+    if (A32(now, 0xb8) != A32(was, 0xb8))
+        s->TextColor = A32(now, 0xb8);
+    if (A32(now, 0xc0) != A32(was, 0xc0))
+        s->BrushColor = A32(now, 0xc0);
+    if (A32(now, 0xc8) != A32(was, 0xc8))
+        s->PenColor = A32(now, 0xc8);
+    if (A32(now, 0xd0) != A32(was, 0xd0))
+        s->GraphicsMode = (int)A32(now, 0xd0);
+    if (now[0xd4] != was[0xd4])
+        s->Rop2 = now[0xd4];
+    if (A32(now, 0xe0) != A32(was, 0xe0))
+        s->BkMode = (int)A32(now, 0xe0);
+    if (A32(now, 0xe4) != A32(was, 0xe4))
+        s->PolyFillMode = (int)A32(now, 0xe4);
+    if (A32(now, 0xe8) != A32(was, 0xe8))
+        s->StretchMode = (int)A32(now, 0xe8);
+    if (A64(now, 0xd8) != A64(was, 0xd8))
+        s->CurrentPos = (POINT){(LONG)A32(now, 0xd8), (LONG)A32(now, 0xdc)};
+    if (A32(now, 0x110) != A32(was, 0x110))
+        s->TextAlign = A32(now, 0x110);
+    if (A32(now, 0x118) != A32(was, 0x118))
+        s->TextCharExtra = (int)A32(now, 0x118);
+    /* SetTextJustification writes them there and makes no call. */
+    if (A64(now, 0x11c) != A64(was, 0x11c)) {
+        s->BreakExtra = (LONG)A32(now, 0x11c);
+        s->BreakCount = (LONG)A32(now, 0x120);
+    }
+    if (A32(now, 0xec) != A32(was, 0xec))
+        s->AttrFlag = A32(now, 0xec);
+    if (A64(now, 0x158) != A64(was, 0x158))
+        s->BrushOrg = (POINT){(LONG)A32(now, 0x158), (LONG)A32(now, 0x15c)};
+    if (A32(now, 0x68) != A32(was, 0x68))
+        s->MapMode = (int)A32(now, 0x68);
+    if (memcmp(now + 0x130, was + 0x130, 0x24)) {
+        s->WindowOrg = (POINT){(LONG)A32(now, 0x130), (LONG)A32(now, 0x138)};
+        s->WindowExt = (SIZE){(LONG)A32(now, 0x13c), (LONG)A32(now, 0x140)};
+        s->ViewportOrg = (POINT){(LONG)A32(now, 0x144), (LONG)A32(now, 0x148)};
+        s->ViewportExt = (SIZE){(LONG)A32(now, 0x14c), (LONG)A32(now, 0x150)};
+        if (!s->WindowExt.cx || !s->WindowExt.cy || !s->ViewportExt.cx || !s->ViewportExt.cy) {
+            s->WindowExt = (SIZE){1, 1};
+            s->ViewportExt = (SIZE){1, 1};
+        }
+        update_page(s);
+    }
+    memcpy(dc->AttrSeen, now, ATTR_SIZE);
+}
+
+/* what the calls changed is written where the program reads it. called as the lock of the window manager is let go. */
+void DcAttrFlush(void)
+{
+    HANDLE pid = PsGetCurrentProcessId();
+    for (ULONG i = 0; i < g_attr_touched_count; i++) {
+        DC *dc = g_attr_touched[i];
+        dc->AttrTouched = FALSE;
+        if (!dc->Attr || dc->Header.OwnerPid != pid)
+            continue;
+        UCHAR image[ATTR_SIZE];
+        memcpy(image, dc->AttrSeen, ATTR_SIZE);
+        attr_image(dc, image);
+        /* NtGdiGetCharSet leaves its answer at 0x04 and takes back the bit 0x10 gdi32 sets when it selects a font. */
+        if (dc->AttrCharSet) {
+            A32(image, 0x04) = dc->AttrCharSet;
+            A32(image, 0x98) &= ~0x10u;
+            dc->AttrCharSet = 0;
+        }
+        if (memcmp(image, dc->AttrSeen, ATTR_SIZE) && NT_SUCCESS(MimeCopyToUser(dc->Attr, image, ATTR_SIZE)))
+            memcpy(dc->AttrSeen, image, ATTR_SIZE);
+    }
+    g_attr_touched_count = 0;
+    GdiObjectAttrFlush();
+}
+
+/* a new context of a program of gdi32 gets its attributes in the memory of that program. */
+static void attr_attach(DC *dc)
+{
+    W32PROCESS *p = W32GetProcess();
+    if (!p || !p->GdiBase || p->Process != PsGetCurrentProcess())
+        return;
+    PUCHAR slot = nullptr;
+    if (p->DcAttrFreeCount) {
+        slot = p->DcAttrFree[--p->DcAttrFreeCount];
+    } else {
+        if (!p->DcAttrChunk || p->DcAttrUsed + ATTR_SIZE > ATTR_CHUNK) {
+            PVOID base = nullptr;
+            SIZE_T size = ATTR_CHUNK;
+            if (!NT_SUCCESS(ZwAllocateVirtualMemory(NtCurrentProcess(), &base, 0, &size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)))
+                return;
+            p->DcAttrChunk = base;
+            p->DcAttrUsed = 0;
+        }
+        slot = p->DcAttrChunk + p->DcAttrUsed;
+        p->DcAttrUsed += ATTR_SIZE;
+    }
+    UCHAR image[ATTR_SIZE];
+    memcpy(image, g_attr_fresh, ATTR_SIZE);
+    attr_image(dc, image);
+    if (!NT_SUCCESS(MimeCopyToUser(slot, image, ATTR_SIZE)))
+        return;
+    memcpy(dc->AttrSeen, image, ATTR_SIZE);
+    dc->Attr = slot;
+    GdiSharedSetUser(dc->Header.Handle, slot);
+}
+
+static void attr_detach(DC *dc)
+{
+    for (ULONG i = 0; i < g_attr_touched_count; i++)
+        if (g_attr_touched[i] == dc)
+            g_attr_touched[i] = g_attr_touched[--g_attr_touched_count], i--;
+    if (!dc->Attr)
+        return;
+    W32PROCESS *p = W32GetProcess();
+    if (p && p->Process == PsGetCurrentProcess() && dc->Header.OwnerPid == PsGetCurrentProcessId() &&
+        p->DcAttrFreeCount < RTL_NUMBER_OF(p->DcAttrFree))
+        p->DcAttrFree[p->DcAttrFreeCount++] = dc->Attr;
+    dc->Attr = nullptr;
 }
 
 DC *DcCreate(ULONG flags)
@@ -94,6 +382,7 @@ DC *DcCreate(ULONG flags)
         W32Free(dc);
         return nullptr;
     }
+    attr_attach(dc);
     return dc;
 }
 
@@ -109,6 +398,9 @@ void DcSetSurface(DC *dc, SURFACE *s)
     RECT bounds = {0, 0, s ? s->Width : 0, s ? s->Height : 0};
     if (dc->Flags & DC_MEMORY)
         RgnSetRect(&dc->VisRgn, &bounds);
+    /* the dcs of the screen have 4 in the flags of their entry, see gdi/shared.c. */
+    if (!(dc->Flags & DC_MEMORY) && s && (s == ScreenSurface() || (s->Flags & SURF_VSCREEN)))
+        GdiSharedSetFlags(dc->Header.Handle, 4);
 }
 
 static void free_saved(DC *dc)
@@ -132,6 +424,7 @@ void DcFree(DC *dc)
     select_unref(&dc->State.Brush->Header);
     select_unref(&dc->State.Pen->Header);
     select_unref(&dc->State.Font->Header);
+    DcSelectPalette(dc, nullptr);
     if ((dc->Flags & DC_MEMORY) && dc->Surface)
         select_unref(&dc->Surface->Header);
     if (dc->DefaultBitmap)
@@ -140,6 +433,7 @@ void DcFree(DC *dc)
     RgnFree(&dc->State.ClipRgn);
     RgnFree(&dc->State.MetaRgn);
     PathFree(&dc->Path);
+    attr_detach(dc);
     GdiFreeHandle(&dc->Header);
     W32Free(dc);
 }
@@ -355,8 +649,9 @@ HDC NTAPI NtGdiCreateMetafileDC(HDC hdc)
     return result;
 }
 
+/* the ninth argument is where the printer drivers of user mode get a handle back, which gdi32full keeps in their LDC. */
 HDC NTAPI NtGdiOpenDCW(PUNICODE_STRING device, PVOID mode, PUNICODE_STRING port, ULONG type, BOOL display,
-                       HANDLE pdev, PVOID driver_info, PVOID umpd)
+                       HANDLE pdev, PVOID driver_info, PVOID umpd, PVOID umpd_out)
 {
     /*
      * the display dc reads the screen as composed from the windows, and what it draws is not shown. no name or
@@ -654,101 +949,75 @@ BOOL NTAPI NtGdiGetMiterLimit(HDC hdc, DWORD *limit)
 
 /* ------------------------------------------------------------------ attributes */
 
+/* as win32kfull's NtGdiGetAndSetDCDword, see the indices in ntuser.h: the old value goes to result. */
 BOOL NTAPI NtGdiGetAndSetDCDword(HDC hdc, UINT index, DWORD value, DWORD *result)
 {
     UserEnter();
     DC *dc = DcLookup(hdc);
-    DWORD old = CLR_INVALID;
+    DWORD old = 0;
     BOOL ok = dc != nullptr;
     if (dc) {
         DC_STATE *s = &dc->State;
         switch (index) {
-        case MIME_DCDW_TEXTCOLOR:
-            old = s->TextColor;
-            s->TextColor = value & 0xFFFFFF;
+        case 1:
+        case 2:
+        case 6:
             break;
-        case MIME_DCDW_BKCOLOR:
-            old = s->BkColor;
-            s->BkColor = value & 0xFFFFFF;
+        case MIME_DCDW_SET_RELABS:
+            old = (DWORD)s->RelAbs;
+            s->RelAbs = (int)value;
             break;
-        case MIME_DCDW_BKMODE:
-            old = (DWORD)s->BkMode;
-            if (value == TRANSPARENT || value == OPAQUE)
-                s->BkMode = (int)value;
-            else
-                ok = FALSE, old = 0;
+        case MIME_DCDW_SET_ATTRFLAG:
+            old = s->AttrFlag;
+            if (value > 1) {
+                W32SetLastError(ERROR_INVALID_PARAMETER);
+                old = (DWORD)-1;
+            } else {
+                s->AttrFlag = value;
+            }
             break;
-        case MIME_DCDW_TEXTALIGN:
-            old = s->TextAlign;
-            s->TextAlign = value;
-            break;
-        case MIME_DCDW_ROP2:
-            old = (DWORD)s->Rop2;
-            if (value >= R2_BLACK && value <= R2_WHITE)
-                s->Rop2 = (int)value;
-            else
-                ok = FALSE, old = 0;
-            break;
-        case MIME_DCDW_BRUSHCOLOR:
-            old = s->BrushColor;
-            s->BrushColor = value & 0xFFFFFF;
-            break;
-        case MIME_DCDW_PENCOLOR:
-            old = s->PenColor;
-            s->PenColor = value & 0xFFFFFF;
-            break;
-        case MIME_DCDW_STRETCHMODE:
-            old = (DWORD)s->StretchMode;
-            s->StretchMode = (int)value;
-            break;
-        case MIME_DCDW_GRAPHICSMODE:
-            old = (DWORD)s->GraphicsMode;
-            /* leaving the advanced mode needs the identity transform. */
-            if ((value != GM_COMPATIBLE && value != GM_ADVANCED) || (value == GM_COMPATIBLE && s->HasXform))
-                ok = FALSE, old = 0;
-            else
-                s->GraphicsMode = (int)value;
-            break;
-        case MIME_DCDW_POLYFILLMODE:
-            old = (DWORD)s->PolyFillMode;
-            if (value == ALTERNATE || value == WINDING)
-                s->PolyFillMode = (int)value;
-            else
-                ok = FALSE, old = 0;
-            break;
-        case MIME_DCDW_ARCDIRECTION:
-            old = (DWORD)s->ArcDirection;
-            if (value == AD_CLOCKWISE || value == AD_COUNTERCLOCKWISE)
-                s->ArcDirection = (int)value;
-            else
-                ok = FALSE, old = 0;
-            break;
-        case MIME_DCDW_MAPMODE:
-            ok = set_map_mode(dc, (int)value, &old);
-            if (!ok)
+        case MIME_DCDW_SET_MAPMODE:
+            if (!set_map_mode(dc, (int)value, &old))
                 old = 0;
             break;
-        case MIME_DCDW_TEXTCHAREXTRA:
-            old = (DWORD)s->TextCharExtra;
-            s->TextCharExtra = (int)value;
-            break;
-        case MIME_DCDW_LAYOUT:
-            /* the orientation flags and LAYOUT_BITMAPORIENTATIONPRESERVED, nothing else. */
-            old = s->Layout;
-            if (value & ~0xFu)
-                ok = FALSE, old = GDI_ERROR;
-            else
-                s->Layout = value;
+        case MIME_DCDW_SET_ARCDIRECTION:
+            old = (DWORD)s->ArcDirection;
+            if (value == AD_CLOCKWISE || value == AD_COUNTERCLOCKWISE) {
+                s->ArcDirection = (int)value;
+            } else {
+                W32SetLastError(ERROR_INVALID_PARAMETER);
+                old = 0;
+            }
             break;
         default:
             ok = FALSE;
             break;
         }
+    } else if (index == 5) {
+        old = 0x80000000;
     }
     UserLeave();
     if (result)
         MimeCopyToUser(result, &old, sizeof(old));
     return ok;
+}
+
+/*
+ * like win32kfull's NtGdiSetLayout, which gdi32full's SetLayout calls with a width of -1: the flags of the layout
+ * are kept and the old ones given back, GDI_ERROR for no context. the mirroring itself is not drawn yet.
+ */
+DWORD NTAPI NtGdiSetLayout(HDC hdc, LONG width, DWORD layout)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    DWORD old = GDI_ERROR;
+    if (dc) {
+        old = dc->State.Layout;
+        dc->State.Layout = layout;
+    }
+    UserLeave();
+    (void)width;
+    return old;
 }
 
 BOOL NTAPI NtGdiGetDCDword(HDC hdc, UINT index, DWORD *result)
@@ -760,47 +1029,39 @@ BOOL NTAPI NtGdiGetDCDword(HDC hdc, UINT index, DWORD *result)
     if (dc) {
         DC_STATE *s = &dc->State;
         switch (index) {
-        case MIME_DCDW_TEXTCOLOR:
-            v = s->TextColor;
+        case 0:
+            v = 1;
             break;
-        case MIME_DCDW_BKCOLOR:
-            v = s->BkColor;
+        case MIME_DCDW_RELABS:
+            v = (DWORD)s->RelAbs;
             break;
-        case MIME_DCDW_BKMODE:
-            v = (DWORD)s->BkMode;
+        case MIME_DCDW_BREAKEXTRA:
+            v = *(const ULONG *)(dc->AttrSeen + 0x11c);
             break;
-        case MIME_DCDW_TEXTALIGN:
-            v = s->TextAlign;
-            break;
-        case MIME_DCDW_ROP2:
-            v = (DWORD)s->Rop2;
-            break;
-        case MIME_DCDW_BRUSHCOLOR:
-            v = s->BrushColor;
-            break;
-        case MIME_DCDW_PENCOLOR:
-            v = s->PenColor;
-            break;
-        case MIME_DCDW_STRETCHMODE:
-            v = (DWORD)s->StretchMode;
-            break;
-        case MIME_DCDW_GRAPHICSMODE:
-            v = (DWORD)s->GraphicsMode;
-            break;
-        case MIME_DCDW_MAPMODE:
-            v = (DWORD)s->MapMode;
-            break;
-        case MIME_DCDW_TEXTCHAREXTRA:
-            v = (DWORD)s->TextCharExtra;
-            break;
-        case MIME_DCDW_LAYOUT:
-            v = s->Layout;
-            break;
-        case MIME_DCDW_POLYFILLMODE:
-            v = (DWORD)s->PolyFillMode;
+        case MIME_DCDW_BREAKCOUNT:
+            v = *(const ULONG *)(dc->AttrSeen + 0x120);
             break;
         case MIME_DCDW_ARCDIRECTION:
             v = (DWORD)s->ArcDirection;
+            break;
+        case MIME_DCDW_SAVELEVEL:
+            v = (DWORD)dc->SaveLevel;
+            break;
+        case MIME_DCDW_FONTLANGUAGE: {
+            /* like NtGdiGetCharSet, it also leaves the charset in the attributes. GCP_ERROR without a font. */
+            FONT_INSTANCE *fi = DcGetFont(dc);
+            v = 0x8000;
+            if (fi) {
+                v = FontLanguageInfo(fi);
+                dc->AttrCharSet = (DWORD)fi->CharSet << 16 | FontCharSetCodePage(fi->CharSet);
+            }
+            break;
+        }
+        case MIME_DCDW_MEMORYDC:
+            v = (dc->Flags & DC_MEMORY) != 0;
+            break;
+        case MIME_DCDW_MAPMODE:
+            v = (DWORD)s->MapMode;
             break;
         case MIME_DCDW_PIXELFORMAT:
             v = (DWORD)(dc->Window ? dc->Window->PixelFormat : dc->PixelFormat);
@@ -829,27 +1090,32 @@ BOOL NTAPI NtGdiGetDCPoint(HDC hdc, UINT index, POINT *point)
     POINT p = {0, 0};
     BOOL ok = dc != nullptr;
     if (dc) {
-        switch (index) {
-        case MIME_DCPT_VIEWPORTORG:
-            p = dc->State.ViewportOrg;
-            break;
-        case MIME_DCPT_WINDOWORG:
-            p = dc->State.WindowOrg;
-            break;
-        case MIME_DCPT_CURRENTPOSITION:
-            p = dc->State.CurrentPos;
+        DC_STATE *s = &dc->State;
+        switch (index & ~(UINT)MIME_DCPT_SCREEN) {
+        case MIME_DCPT_VIEWPORTEXT:
+            if (s->MapMode == MM_ISOTROPIC)
+                isotropic_adjust(s);
+            p = (POINT){s->ViewportExt.cx, s->ViewportExt.cy};
             break;
         case MIME_DCPT_WINDOWEXT:
-            p = (POINT){dc->State.WindowExt.cx, dc->State.WindowExt.cy};
+            p = (POINT){s->WindowExt.cx, s->WindowExt.cy};
             break;
-        case MIME_DCPT_VIEWPORTEXT:
-            p = (POINT){dc->State.ViewportExt.cx, dc->State.ViewportExt.cy};
+        case MIME_DCPT_VIEWPORTORG:
+            p = s->ViewportOrg;
+            break;
+        case MIME_DCPT_WINDOWORG:
+            p = s->WindowOrg;
+            break;
+        case MIME_DCPT_ASPECTFILTER:
             break;
         case MIME_DCPT_DCORG:
-            p = dc->Origin;
-            if (dc->Window && dc->Surface && dc->Surface->Window) {
-                p.x += dc->Surface->Window->WindowRect.left;
-                p.y += dc->Surface->Window->WindowRect.top;
+            /* the surface is a top level window's: 0x40 asks for the place of the origin on the screen. */
+            if (dc->Window) {
+                p = dc->Origin;
+                if ((index & MIME_DCPT_SCREEN) && dc->Surface && dc->Surface->Window) {
+                    p.x += dc->Surface->Window->WindowRect.left;
+                    p.y += dc->Surface->Window->WindowRect.top;
+                }
             }
             break;
         default:
@@ -860,10 +1126,17 @@ BOOL NTAPI NtGdiGetDCPoint(HDC hdc, UINT index, POINT *point)
     return ok && NT_SUCCESS(MimeCopyToUser(point, &p, sizeof(p)));
 }
 
+/*
+ * gdi32 passes 1 for LPtoDP, 2 for LPtoDP into 28.4 fixed point and 0 for DPtoLP, with the top bit when the dc
+ * scales for dpi. win32kfull answers TRUE for no points.
+ */
 BOOL NTAPI NtGdiTransformPoints(HDC hdc, POINT *in, POINT *out, int count, int mode)
 {
-    if (count < 0 || count > 65536)
+    if (count <= 0)
+        return TRUE;
+    if (count > 65536)
         return FALSE;
+    mode &= 0x7FFFFFFF;
     POINT local[64];
     POINT *pts = count <= 64 ? local : W32Alloc((SIZE_T)count * sizeof(POINT));
     if (!pts || !NT_SUCCESS(MimeCopyFromUser(pts, in, (SIZE_T)count * sizeof(POINT)))) {
@@ -875,11 +1148,21 @@ BOOL NTAPI NtGdiTransformPoints(HDC hdc, POINT *in, POINT *out, int count, int m
     DC *dc = DcLookup(hdc);
     BOOL ok = dc != nullptr;
     if (dc) {
+        /* the map is affine, so 16 times a point lands on 16 times its image less 15 times the image of 0. */
+        LONG ox = 0, oy = 0;
+        DcLogicalToDevice(dc, &ox, &oy);
         for (int i = 0; i < count; i++) {
-            if (mode == 1) /* logical to device. */
+            if (mode == 1) {
                 DcLogicalToDevice(dc, &pts[i].x, &pts[i].y);
-            else
+            } else if (mode == 2) {
+                pts[i].x *= 16;
+                pts[i].y *= 16;
+                DcLogicalToDevice(dc, &pts[i].x, &pts[i].y);
+                pts[i].x += 15 * ox;
+                pts[i].y += 15 * oy;
+            } else {
                 DcDeviceToLogical(dc, &pts[i].x, &pts[i].y);
+            }
         }
     }
     UserLeave();
@@ -945,7 +1228,30 @@ HANDLE NTAPI NtGdiGetDCObject(HDC hdc, int type)
     DC *dc = DcLookup(hdc);
     HANDLE h = nullptr;
     if (dc) {
+        /* gdi32 asks with the type of the handle it wants, 0x80000 for a palette: the OBJ_ values are the same objects. */
         switch (type) {
+        case 0x100000:
+            type = OBJ_BRUSH;
+            break;
+        case 0x300000:
+            type = OBJ_PEN;
+            break;
+        case 0xa0000:
+            type = OBJ_FONT;
+            break;
+        case 0x50000:
+            type = OBJ_BITMAP;
+            break;
+        case 0x80000:
+            type = OBJ_PAL;
+            break;
+        }
+        switch (type) {
+        case OBJ_PAL: {
+            GDI_OBJECT *p = dc->Palette ? &dc->Palette->Header : GdiStockObject(DEFAULT_PALETTE);
+            h = p ? p->Handle : nullptr;
+            break;
+        }
         case OBJ_BRUSH:
             h = dc->State.Brush->Header.Handle;
             break;
@@ -963,6 +1269,8 @@ HANDLE NTAPI NtGdiGetDCObject(HDC hdc, int type)
                 dc->DefaultBitmap->Header.Flags |= GDI_FLAG_SYSTEM;
             }
             h = dc->Surface && dc->Surface->Header.Handle ? dc->Surface->Header.Handle : nullptr;
+            if (!(dc->Flags & DC_MEMORY) && GdiDisplayBitmap())
+                h = GdiDisplayBitmap()->Header.Handle;
             break;
         }
     }
@@ -976,6 +1284,8 @@ HBITMAP NTAPI NtGdiSelectBitmap(HDC hdc, HBITMAP bitmap)
     DC *dc = DcLookup(hdc);
     SURFACE *s = SurfaceLookup(bitmap);
     HBITMAP old = nullptr;
+    if (s == GdiDisplayBitmap())
+        s = nullptr;
     if (dc && s && (dc->Flags & DC_MEMORY)) {
         /* a bitmap can be selected into one dc at a time. */
         if (s->Header.SelectCount && dc->Surface != s) {
@@ -994,6 +1304,21 @@ HBITMAP NTAPI NtGdiSelectBitmap(HDC hdc, HBITMAP bitmap)
     }
     UserLeave();
     return old;
+}
+
+/* the memory dc a bitmap is selected into. the stock bitmap that every new memory dc holds belongs to none. */
+HDC NTAPI NtGdiGetDCforBitmap(HBITMAP bitmap)
+{
+    UserEnter();
+    SURFACE *s = SurfaceLookup(bitmap);
+    HDC found = nullptr;
+    if (s && s->Header.SelectCount && !(s->Header.Flags & (GDI_FLAG_STOCK | GDI_FLAG_SYSTEM))) {
+        DC *dc = GdiSelectingDc(s);
+        if (dc)
+            found = (HDC)dc->Header.Handle;
+    }
+    UserLeave();
+    return found;
 }
 
 HBRUSH NTAPI NtGdiSelectBrush(HDC hdc, HBRUSH brush)
@@ -1030,20 +1355,35 @@ HPEN NTAPI NtGdiSelectPen(HDC hdc, HPEN pen)
     return old;
 }
 
+/* the font of a dc the caller holds becomes another, and the old one is given back. */
+HFONT DcSelectFont(DC *dc, FONT *f)
+{
+    HFONT old = (HFONT)dc->State.Font->Header.Handle;
+    if (dc->State.Font == f)
+        return old;
+    select_unref(&dc->State.Font->Header);
+    dc->State.Font = f;
+    dc->Realized = nullptr;
+    dc->RealizedFor = nullptr;
+    select_ref(&f->Header);
+    return old;
+}
+
+/*
+ * gdi32 wrote the new font in the attributes before the call, so the old one is the font the kernel held before it
+ * pulls them, as win32kfull returns the font of its own dc.
+ */
 HFONT NTAPI NtGdiSelectFont(HDC hdc, HFONT font)
 {
     UserEnter();
-    DC *dc = DcLookup(hdc);
+    DC *dc = (DC *)GdiLookup(hdc, GDI_TYPE_DC);
+    HFONT old = dc ? (HFONT)dc->State.Font->Header.Handle : nullptr;
+    dc = DcLookup(hdc);
     FONT *f = (FONT *)GdiLookup(font, GDI_TYPE_FONT);
-    HFONT old = nullptr;
-    if (dc && f) {
-        old = (HFONT)dc->State.Font->Header.Handle;
-        select_unref(&dc->State.Font->Header);
-        dc->State.Font = f;
-        dc->Realized = nullptr;
-        dc->RealizedFor = nullptr;
-        select_ref(&f->Header);
-    }
+    if (dc && f)
+        DcSelectFont(dc, f);
+    else
+        old = nullptr;
     UserLeave();
     return old;
 }
@@ -1115,7 +1455,35 @@ BOOL NTAPI NtGdiRestoreDC(HDC hdc, int saved)
 
 /* ------------------------------------------------------------------ clipping */
 
-/* the application clip region is kept in device coordinates. */
+/* the application clip region is kept in device coordinates. a null region with RGN_COPY takes the clip away. */
+int DcSelectClip(DC *dc, const REGION *region, int mode)
+{
+    if (!region && mode == RGN_COPY) {
+        RgnClear(&dc->State.ClipRgn);
+        dc->State.HasClip = FALSE;
+        return SIMPLEREGION;
+    }
+    if (!region)
+        return ERROR;
+    if (!dc->State.HasClip || mode == RGN_COPY) {
+        if (mode == RGN_COPY || mode == RGN_AND || mode == RGN_OR) {
+            RgnCopy(&dc->State.ClipRgn, region);
+        } else {
+            /* combining with "no clip" means combining with the whole surface. */
+            RECT all = {-0x4000000, -0x4000000, 0x4000000, 0x4000000};
+            REGION full;
+            RgnInit(&full);
+            RgnSetRect(&full, &all);
+            RgnCombine(&dc->State.ClipRgn, &full, region, mode);
+            RgnFree(&full);
+        }
+    } else {
+        RgnCombine(&dc->State.ClipRgn, &dc->State.ClipRgn, region, mode);
+    }
+    dc->State.HasClip = TRUE;
+    return RgnComplexity(&dc->State.ClipRgn);
+}
+
 int NTAPI NtGdiExtSelectClipRgn(HDC hdc, HRGN region, int mode)
 {
     UserEnter();
@@ -1123,29 +1491,8 @@ int NTAPI NtGdiExtSelectClipRgn(HDC hdc, HRGN region, int mode)
     int result = ERROR;
     if (dc) {
         GDI_REGION *r = region ? (GDI_REGION *)GdiLookup(region, GDI_TYPE_REGION) : nullptr;
-        if (!r && mode == RGN_COPY) {
-            RgnClear(&dc->State.ClipRgn);
-            dc->State.HasClip = FALSE;
-            result = SIMPLEREGION;
-        } else if (r) {
-            if (!dc->State.HasClip || mode == RGN_COPY) {
-                if (mode == RGN_COPY || mode == RGN_AND || mode == RGN_OR) {
-                    RgnCopy(&dc->State.ClipRgn, &r->Region);
-                } else {
-                    /* combining with "no clip" means combining with the whole surface. */
-                    RECT all = {-0x4000000, -0x4000000, 0x4000000, 0x4000000};
-                    REGION full;
-                    RgnInit(&full);
-                    RgnSetRect(&full, &all);
-                    RgnCombine(&dc->State.ClipRgn, &full, &r->Region, mode);
-                    RgnFree(&full);
-                }
-            } else {
-                RgnCombine(&dc->State.ClipRgn, &dc->State.ClipRgn, &r->Region, mode);
-            }
-            dc->State.HasClip = TRUE;
-            result = RgnComplexity(&dc->State.ClipRgn);
-        }
+        if (r || mode == RGN_COPY)
+            result = DcSelectClip(dc, r ? &r->Region : nullptr, mode);
     }
     UserLeave();
     return result;
@@ -1179,7 +1526,9 @@ int NTAPI NtGdiGetAppClipBox(HDC hdc, LPRECT rect)
         RgnFree(&clip);
         /* surface to logical coordinates, the corners through the inverse transform. */
         RectOffset(&box, -dc->Origin.x, -dc->Origin.y);
-        if (result != NULLREGION) {
+        if (result == NULLREGION) {
+            box = (RECT){0, 0, 0, 0};
+        } else {
             LONG xs[4] = {box.left, box.right, box.left, box.right}, ys[4] = {box.top, box.top, box.bottom, box.bottom};
             for (int i = 0; i < 4; i++) {
                 DcDeviceToLogical(dc, &xs[i], &ys[i]);
@@ -1266,6 +1615,83 @@ int NTAPI NtGdiIntersectClipRect(HDC hdc, int left, int top, int right, int bott
 int NTAPI NtGdiExcludeClipRect(HDC hdc, int left, int top, int right, int bottom)
 {
     return clip_rect_op(hdc, left, top, right, bottom, RGN_DIFF);
+}
+
+/* the clip region moves by a logical distance, scaled to the device. without one there is nothing to move. */
+int NTAPI NtGdiOffsetClipRgn(HDC hdc, int x, int y)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    int result = ERROR;
+    if (dc) {
+        LONG x0 = 0, y0 = 0, x1 = x, y1 = y;
+        DcLogicalToDevice(dc, &x0, &y0);
+        DcLogicalToDevice(dc, &x1, &y1);
+        if (dc->State.HasClip) {
+            RgnOffset(&dc->State.ClipRgn, x1 - x0, y1 - y0);
+            result = RgnComplexity(&dc->State.ClipRgn);
+        } else {
+            result = SIMPLEREGION;
+        }
+    }
+    UserLeave();
+    return result;
+}
+
+/* whether a logical point or a part of a logical rectangle is inside the clip of the dc, -1 for no dc. */
+BOOL NTAPI NtGdiPtVisible(HDC hdc, int x, int y)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    BOOL result = -1;
+    if (dc) {
+        REGION clip;
+        RgnInit(&clip);
+        LONG sx = x, sy = y;
+        DcLogicalToSurface(dc, &sx, &sy);
+        result = DcGetClip(dc, &clip) && RgnPtIn(&clip, sx, sy);
+        RgnFree(&clip);
+    }
+    UserLeave();
+    return result;
+}
+
+BOOL NTAPI NtGdiRectVisible(HDC hdc, const RECT *user_rect)
+{
+    RECT r;
+    if (!user_rect || !NT_SUCCESS(MimeCopyFromUser(&r, user_rect, sizeof(r))))
+        return FALSE;
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    BOOL result = FALSE;
+    if (dc) {
+        REGION clip;
+        RgnInit(&clip);
+        LONG l = r.left, t = r.top, rr = r.right, b = r.bottom;
+        DcLogicalToSurface(dc, &l, &t);
+        DcLogicalToSurface(dc, &rr, &b);
+        RECT s = {W32Min(l, rr), W32Min(t, b), W32Max(l, rr), W32Max(t, b)};
+        result = DcGetClip(dc, &clip) && RgnRectIn(&clip, &s);
+        RgnFree(&clip);
+    }
+    UserLeave();
+    return result;
+}
+
+/* SetBrushOrgEx when gdi32 cannot batch it: the old origin goes back and DC_ATTR+0x158 follows. */
+BOOL NTAPI NtGdiSetBrushOrg(HDC hdc, int x, int y, POINT *old)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    POINT was = {0, 0};
+    if (dc) {
+        was = dc->State.BrushOrg;
+        dc->State.BrushOrg = (POINT){x, y};
+    }
+    UserLeave();
+    if (!dc)
+        return FALSE;
+    return !old || NT_SUCCESS(MimeCopyToUser(old, &was, sizeof(was)));
 }
 
 /* the clip region joins the meta region and the dc has no clip region left. */
@@ -1425,4 +1851,101 @@ BOOL NTAPI NtGdiSetPixelFormat(HDC hdc, int format)
     if (error)
         W32SetLastError(error);
     return !error;
+}
+
+/* ------------------------------------------------------------------ transform queries */
+
+/*
+ * win32kfull refreshes its world to device matrix and answers whether it only scales, which gdi32full's font cache
+ * needs. the matrices at 0x20 of the attributes stay those of a fresh dc, see attr_image.
+ */
+BOOL NTAPI NtGdiComputeXformCoefficients(HDC hdc)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    BOOL scale = dc && (!dc->State.HasXform || (dc->State.World.eM12 == 0 && dc->State.World.eM21 == 0));
+    UserLeave();
+    return scale;
+}
+
+BOOL NTAPI NtGdiUpdateTransform(HDC hdc)
+{
+    UserEnter();
+    BOOL ok = DcLookup(hdc) != nullptr;
+    UserLeave();
+    return ok;
+}
+
+/*
+ * as win32kfull: the old extent goes out first, the extents of the fixed mapping modes stay, and a zero denominator,
+ * a zero result or an overflow fails.
+ */
+static BOOL scale_extent(HDC hdc, BOOLEAN viewport, int xn, int xd, int yn, int yd, SIZE *user_old)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    SIZE old = {0, 0};
+    BOOL ok = dc != nullptr;
+    if (dc) {
+        DC_STATE *s = &dc->State;
+        SIZE *ext = viewport ? &s->ViewportExt : &s->WindowExt;
+        old = *ext;
+        if (s->MapMode == MM_ISOTROPIC || s->MapMode == MM_ANISOTROPIC) {
+            ok = xd && yd && !(xn == (int)0x80000000 && xd == -1) && !(yn == (int)0x80000000 && yd == -1);
+            LONG64 cx = ok ? (LONG64)ext->cx * xn / xd : 0, cy = ok ? (LONG64)ext->cy * yn / yd : 0;
+            ok = ok && cx && cy && cx == (LONG)cx && cy == (LONG)cy;
+            if (ok) {
+                *ext = (SIZE){(LONG)cx, (LONG)cy};
+                if (s->MapMode == MM_ISOTROPIC)
+                    isotropic_adjust(s);
+                update_page(s);
+            }
+        }
+    }
+    UserLeave();
+    if (dc && user_old && !NT_SUCCESS(MimeCopyToUser(user_old, &old, sizeof(old))))
+        return FALSE;
+    return ok;
+}
+
+BOOL NTAPI NtGdiScaleViewportExtEx(HDC hdc, int xn, int xd, int yn, int yd, SIZE *old)
+{
+    return scale_extent(hdc, TRUE, xn, xd, yn, yd, old);
+}
+
+BOOL NTAPI NtGdiScaleWindowExtEx(HDC hdc, int xn, int xd, int yn, int yd, SIZE *old)
+{
+    return scale_extent(hdc, FALSE, xn, xd, yn, yd, old);
+}
+
+BOOL NTAPI NtGdiCombineTransform(XFORM *user_out, const XFORM *user_a, const XFORM *user_b)
+{
+    XFORM a, b, out;
+    if (!NT_SUCCESS(MimeCopyFromUser(&a, user_a, sizeof(a))) || !NT_SUCCESS(MimeCopyFromUser(&b, user_b, sizeof(b))))
+        return FALSE;
+    xform_multiply(&out, &a, &b);
+    return NT_SUCCESS(MimeCopyToUser(user_out, &out, sizeof(out)));
+}
+
+/* the width of the window of the dc, or of its surface. */
+LONG NTAPI NtGdiGetDeviceWidth(HDC hdc)
+{
+    UserEnter();
+    DC *dc = DcLookup(hdc);
+    LONG width = -1;
+    if (dc && dc->Window)
+        width = dc->Window->WindowRect.right - dc->Window->WindowRect.left;
+    else if (dc && dc->Surface)
+        width = dc->Surface->Width;
+    UserLeave();
+    return width;
+}
+
+/* gdi32full calls it only under LAYOUT_RTL, whose mirroring is not drawn yet, see NtGdiSetLayout. */
+BOOL NTAPI NtGdiMirrorWindowOrg(HDC hdc)
+{
+    UserEnter();
+    BOOL ok = DcLookup(hdc) != nullptr;
+    UserLeave();
+    return ok;
 }

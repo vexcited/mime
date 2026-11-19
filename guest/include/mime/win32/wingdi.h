@@ -2142,6 +2142,14 @@ typedef struct tagRGBTRIPLE {
     BYTE rgbtRed;
 } RGBTRIPLE, *PRGBTRIPLE, *LPRGBTRIPLE;
 
+typedef struct tagBITMAPCOREHEADER {
+    DWORD bcSize;
+    WORD bcWidth;
+    WORD bcHeight;
+    WORD bcPlanes;
+    WORD bcBitCount;
+} BITMAPCOREHEADER, *LPBITMAPCOREHEADER, *PBITMAPCOREHEADER;
+
 typedef struct tagCIEXYZ {
     LONG ciexyzX;
     LONG ciexyzY;

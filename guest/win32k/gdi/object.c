@@ -44,6 +44,7 @@ HANDLE GdiCreateHandle(GDI_OBJECT *object, UCHAR type)
             object->Type = type;
             object->Handle = make_handle(i, type, g_table[i].Unique);
             object->OwnerPid = PsGetCurrentProcessId();
+            GdiSharedSet(object);
             return object->Handle;
         }
     }
@@ -54,8 +55,10 @@ HANDLE GdiCreateHandle(GDI_OBJECT *object, UCHAR type)
 void GdiFreeHandle(GDI_OBJECT *object)
 {
     ULONG i = (ULONG)(ULONG_PTR)object->Handle & 0xFFFF;
-    if (i && i < GDI_MAX_HANDLES && g_table[i].Object == object)
+    if (i && i < GDI_MAX_HANDLES && g_table[i].Object == object) {
         g_table[i].Object = nullptr;
+        GdiSharedClear(i);
+    }
     object->Handle = nullptr;
 }
 
@@ -66,15 +69,35 @@ GDI_OBJECT *GdiLookup(HANDLE handle, UCHAR type)
     if (!g_table || !i || i >= GDI_MAX_HANDLES)
         return nullptr;
     GDI_OBJECT *o = g_table[i].Object;
-    if (!o || o->Handle != handle)
+    /* a 32-bit program hands its handles back zero extended, windows makes them sign extended. */
+    if (!o || (ULONG)(ULONG_PTR)o->Handle != (ULONG)v)
         return nullptr;
     if (type && o->Type != type)
         return nullptr;
+    if (o->User)
+        GdiObjectAttrPull(o);
     return o;
+}
+
+void GdiForEachRegionOf(HANDLE pid, void (*fn)(GDI_OBJECT *object))
+{
+    for (ULONG i = 1; g_table && i < GDI_MAX_HANDLES; i++) {
+        GDI_OBJECT *o = g_table[i].Object;
+        if (o && o->Type == GDI_TYPE_REGION && o->User && o->OwnerPid == pid)
+            fn(o);
+    }
 }
 
 static void destroy_object(GDI_OBJECT *o)
 {
+    if (o->User) {
+        GdiObjectAttrForget(o);
+        /* the block of a font is gdi32's, which frees it itself. */
+        if (o->Type == GDI_TYPE_FONT)
+            o->User = nullptr;
+        else
+            GdiAttrFree(o, 0x20);
+    }
     switch (o->Type) {
     case GDI_TYPE_BITMAP:
         SurfaceDestroy((SURFACE *)o);
@@ -88,6 +111,9 @@ static void destroy_object(GDI_OBJECT *o)
         break;
     case GDI_TYPE_DC:
         DcFree((DC *)o);
+        return;
+    case GDI_TYPE_PALETTE:
+        PaletteFree((PALETTE *)o);
         return;
     }
     GdiFreeHandle(o);
@@ -114,6 +140,17 @@ void GdiWindowDestroyed(struct WND *w)
         if (o && o->Type == GDI_TYPE_DC && ((DC *)o)->Window == w)
             ((DC *)o)->Window = nullptr;
     }
+}
+
+/* the memory dc a bitmap is selected into, which windows keeps in the surface. */
+DC *GdiSelectingDc(const SURFACE *s)
+{
+    for (ULONG i = 1; g_table && i < GDI_MAX_HANDLES; i++) {
+        GDI_OBJECT *o = g_table[i].Object;
+        if (o && o->Type == GDI_TYPE_DC && (((DC *)o)->Flags & DC_MEMORY) && ((DC *)o)->Surface == s)
+            return (DC *)o;
+    }
+    return nullptr;
 }
 
 ULONG GdiCountProcessObjects(HANDLE pid)
@@ -153,7 +190,8 @@ static BRUSH *new_brush(UINT style, COLORREF color, ULONG_PTR hatch)
     if (!b)
         return nullptr;
     b->Style = style;
-    b->Color = color & 0xFFFFFF;
+    /* PALETTEINDEX and PALETTERGB stay, the dc they draw in decides their color. */
+    b->Color = color & 0x03FFFFFF;
     b->Hatch = hatch;
     b->SysColor = -1;
     if (!GdiCreateHandle(&b->Header, GDI_TYPE_BRUSH)) {
@@ -161,6 +199,11 @@ static BRUSH *new_brush(UINT style, COLORREF color, ULONG_PTR hatch)
         return nullptr;
     }
     return b;
+}
+
+BRUSH *GdiCreateBrush(UINT style, COLORREF color, ULONG_PTR hatch)
+{
+    return new_brush(style, color, hatch);
 }
 
 BRUSH *GdiCreateSystemBrush(COLORREF color, int sys_color)
@@ -180,7 +223,7 @@ static PEN *new_pen(UINT style, LONG width, COLORREF color, UCHAR type)
         return nullptr;
     p->Style = style;
     p->Width = width;
-    p->Color = color & 0xFFFFFF;
+    p->Color = color & 0x03FFFFFF;
     p->BrushStyle = style == PS_NULL ? BS_NULL : BS_SOLID;
     if (!GdiCreateHandle(&p->Header, type)) {
         W32Free(p);
@@ -223,6 +266,9 @@ static void make_stock(int index, GDI_OBJECT *o)
     if (!o)
         return;
     o->Flags |= GDI_FLAG_STOCK;
+    GdiSharedSet(o);
+    if (g_making == g_stock)
+        GdiSharedStock(index, o->Handle);
     g_making[index] = o;
 }
 
@@ -256,6 +302,13 @@ static void stock_fonts(UINT dpi)
     make_stock(DEFAULT_GUI_FONT, &new_font(&lf)->Header);
 }
 
+static SURFACE *g_display_bitmap;
+
+SURFACE *GdiDisplayBitmap(void)
+{
+    return g_display_bitmap;
+}
+
 void GdiInitializeStockObjects(void)
 {
     make_stock(WHITE_BRUSH, &new_brush(BS_SOLID, RGB(255, 255, 255), 0)->Header);
@@ -269,6 +322,21 @@ void GdiInitializeStockObjects(void)
     make_stock(NULL_PEN, &new_pen(PS_NULL, 0, 0, GDI_TYPE_PEN)->Header);
     make_stock(DC_BRUSH, &new_brush(BS_SOLID, RGB(255, 255, 255), 0)->Header);
     make_stock(DC_PEN, &new_pen(PS_SOLID, 0, RGB(0, 0, 0), GDI_TYPE_PEN)->Header);
+    PALETTE *palette = PaletteCreateStock();
+    make_stock(DEFAULT_PALETTE, palette ? &palette->Header : nullptr);
+    /* the bitmap of one monochrome pixel at index 21, which gdi32 gives for CreateBitmap of size 0. */
+    SURFACE *bitmap = SurfaceCreate(1, 1, 1, 0);
+    if (bitmap && GdiCreateHandle(&bitmap->Header, GDI_TYPE_BITMAP)) {
+        bitmap->Header.Flags |= GDI_FLAG_STOCK;
+        GdiSharedSet(&bitmap->Header);
+        GdiSharedStock(21, bitmap->Header.Handle);
+    }
+    SURFACE *display = SurfaceCreate(1, 1, 32, 0);
+    if (display && GdiCreateHandle(&display->Header, GDI_TYPE_BITMAP)) {
+        display->Header.Flags |= GDI_FLAG_STOCK;
+        GdiSharedSet(&display->Header);
+        g_display_bitmap = display;
+    }
     stock_fonts(W32SystemDpi());
     /* a program that is not dpi aware has its own fonts, those of a 96 dpi display. */
     if (W32SystemDpi() != 96) {
@@ -308,7 +376,10 @@ BOOL NTAPI NtGdiDeleteObjectApp(HANDLE handle)
     UserEnter();
     GDI_OBJECT *o = GdiLookup(handle, 0);
     BOOL ok = FALSE;
-    if (o && !(o->Flags & GDI_FLAG_STOCK)) {
+    if (o && o->Type == GDI_TYPE_PALETTE && o->SelectCount && !(o->Flags & GDI_FLAG_STOCK)) {
+        /* a palette a dc holds stays, and the call fails: measured with pal.exe of scratch/dlls/cursor. */
+        ok = FALSE;
+    } else if (o && !(o->Flags & GDI_FLAG_STOCK)) {
         GdiDeleteObject(o);
         ok = TRUE;
     } else if (o) {
@@ -322,6 +393,19 @@ HBRUSH NTAPI NtGdiCreateSolidBrush(COLORREF color, HBRUSH reuse)
 {
     UserEnter();
     BRUSH *b = new_brush(BS_SOLID, color, 0);
+    if (b)
+        GdiBrushAttrAttach(&b->Header);
+    UserLeave();
+    return b ? (HBRUSH)b->Header.Handle : nullptr;
+}
+
+/* gdi32full passes the style, the colour and whether a pen asks for it. windows knows six hatches. */
+HBRUSH NTAPI NtGdiCreateHatchBrushInternal(ULONG style, COLORREF color, BOOL pen)
+{
+    if (style > 5)
+        return nullptr;
+    UserEnter();
+    BRUSH *b = new_brush(BS_HATCHED, color, style);
     UserLeave();
     return b ? (HBRUSH)b->Header.Handle : nullptr;
 }
@@ -335,8 +419,14 @@ HPEN NTAPI NtGdiCreatePen(int style, int width, COLORREF color, HBRUSH reuse)
 }
 
 /* pens of ExtCreatePen keep their type, end cap and join; custom dashes are not kept. */
-HPEN NTAPI NtGdiExtCreatePen(ULONG style, ULONG width, ULONG brush_style, ULONG color, ULONG_PTR hatch, ULONG count,
-                             const DWORD *styles)
+/*
+ * gdi32full passes the style, the width, the style, colour and hatch of the brush as the program gave them and as
+ * the kernel takes them, a dib made a BITMAPINFOHEADER for the pattern pens, the count and the array of user styles,
+ * the size of the dib, whether CreatePen asks and a brush.
+ */
+HPEN NTAPI NtGdiExtCreatePen(ULONG style, ULONG width, ULONG brush_style, ULONG color, ULONG_PTR client_hatch,
+                             ULONG_PTR hatch, ULONG count, const DWORD *styles, ULONG dib_size, BOOL old_style,
+                             HBRUSH brush)
 {
     if ((style & PS_TYPE_MASK) == PS_COSMETIC && width != 1) {
         W32SetLastError(ERROR_INVALID_PARAMETER);
@@ -346,7 +436,7 @@ HPEN NTAPI NtGdiExtCreatePen(ULONG style, ULONG width, ULONG brush_style, ULONG 
     PEN *p = new_pen(style, (LONG)width, brush_style == BS_NULL ? 0 : color, GDI_TYPE_EXTPEN);
     if (p) {
         p->BrushStyle = brush_style;
-        p->Hatch = hatch;
+        p->Hatch = client_hatch;
         if (brush_style == BS_NULL)
             p->Style = (p->Style & ~(UINT)PS_STYLE_MASK) | PS_NULL;
     }
@@ -359,6 +449,8 @@ HFONT NTAPI NtGdiHfontCreate(const LOGFONTW *font, ULONG size, ULONG type, ULONG
     LOGFONTW lf;
     if (size < sizeof(LOGFONTW) || !NT_SUCCESS(MimeCopyFromUser(&lf, font, sizeof(lf))))
         return nullptr;
+    lf.lfFaceName[LF_FACESIZE - 1] = 0;
+    FontAskFor(lf.lfFaceName);
     UserEnter();
     FONT *f = new_font(&lf);
     UserLeave();
@@ -378,7 +470,7 @@ int NTAPI NtGdiExtGetObjectW(HANDLE handle, int size, PVOID buffer)
     } out;
     int needed = 0;
     memset(&out, 0, sizeof(out));
-    if (o) {
+    if (o && o != &g_display_bitmap->Header) {
         switch (o->Type) {
         case GDI_TYPE_BRUSH: {
             BRUSH *b = (BRUSH *)o;
@@ -433,6 +525,11 @@ int NTAPI NtGdiExtGetObjectW(HANDLE handle, int size, PVOID buffer)
         case GDI_TYPE_REGION:
             needed = 0;
             break;
+        case GDI_TYPE_PALETTE:
+            /* the number of entries as a WORD, nothing into less room than that. */
+            memcpy(&out, &((PALETTE *)o)->Count, sizeof(WORD));
+            needed = size && size < (int)sizeof(WORD) ? 0 : sizeof(WORD);
+            break;
         }
     }
     UserLeave();
@@ -458,7 +555,20 @@ HRGN NTAPI NtGdiCreateRectRgn(int left, int top, int right, int bottom)
     if (r) {
         RECT rc = {W32Min(left, right), W32Min(top, bottom), W32Max(left, right), W32Max(top, bottom)};
         RgnSetRect(&r->Region, &rc);
+        GdiRegionAttrAttach(&r->Header);
     }
+    UserLeave();
+    return r ? (HRGN)r->Header.Handle : nullptr;
+}
+
+/* an ellipse in the rectangle, which windows gives no attributes. */
+HRGN NTAPI NtGdiCreateEllipticRgn(int left, int top, int right, int bottom)
+{
+    UserEnter();
+    GDI_REGION *r = GdiCreateRegion();
+    if (r)
+        RgnRoundRect(&r->Region, left, top, right, bottom, right > left ? right - left : left - right,
+                     bottom > top ? bottom - top : top - bottom);
     UserLeave();
     return r ? (HRGN)r->Header.Handle : nullptr;
 }

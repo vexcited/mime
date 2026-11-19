@@ -239,6 +239,78 @@ ULONG SurfaceGetPixel(SURFACE *s, LONG x, LONG y)
     return 0;
 }
 
+/*
+ * the bits of a pixel as the surface stores them: an index at 8 bits or less, the packed value at 16, all 32 bits
+ * with alpha at 32. raster operations work on these, so WHITENESS gives index 0xff and alpha 0xff.
+ */
+ULONG SurfaceRawOf(SURFACE *s, ULONG pixel)
+{
+    switch (s->Bpp) {
+    case 32:
+        return pixel & 0xFFFFFF;
+    case 24:
+        return pixel & 0xFFFFFF;
+    case 16:
+        return pack_channel((pixel >> 16) & 0xFF, s->Masks[0]) | pack_channel((pixel >> 8) & 0xFF, s->Masks[1]) |
+               pack_channel(pixel & 0xFF, s->Masks[2]);
+    default:
+        return nearest_color(s, pixel);
+    }
+}
+
+ULONG SurfaceGetRaw(SURFACE *s, LONG x, LONG y)
+{
+    PUCHAR row = s->Bits + (LONG_PTR)y * s->Stride;
+    switch (s->Bpp) {
+    case 32:
+        return ((PULONG)row)[x];
+    case 24:
+        return (ULONG)row[x * 3] | (ULONG)row[x * 3 + 1] << 8 | (ULONG)row[x * 3 + 2] << 16;
+    case 16:
+        return ((PUSHORT)row)[x];
+    case 8:
+        return row[x];
+    case 4:
+        return (row[x >> 1] >> ((x & 1) ? 0 : 4)) & 0xF;
+    case 1:
+        return (row[x >> 3] >> (7 - (x & 7))) & 1;
+    }
+    return 0;
+}
+
+void SurfacePutRaw(SURFACE *s, LONG x, LONG y, ULONG raw)
+{
+    PUCHAR row = s->Bits + (LONG_PTR)y * s->Stride;
+    switch (s->Bpp) {
+    case 32:
+        ((PULONG)row)[x] = (s->Flags & SURF_DEVICE) ? raw | 0xFF000000u : raw;
+        break;
+    case 24:
+        row[x * 3] = (UCHAR)raw;
+        row[x * 3 + 1] = (UCHAR)(raw >> 8);
+        row[x * 3 + 2] = (UCHAR)(raw >> 16);
+        break;
+    case 16:
+        ((PUSHORT)row)[x] = (USHORT)raw;
+        break;
+    case 8:
+        row[x] = (UCHAR)raw;
+        break;
+    case 4:
+        if (x & 1)
+            row[x >> 1] = (UCHAR)((row[x >> 1] & 0xF0) | (raw & 0xF));
+        else
+            row[x >> 1] = (UCHAR)((row[x >> 1] & 0x0F) | (raw & 0xF) << 4);
+        break;
+    case 1:
+        if (raw & 1)
+            row[x >> 3] |= (UCHAR)(0x80 >> (x & 7));
+        else
+            row[x >> 3] &= (UCHAR)~(0x80 >> (x & 7));
+        break;
+    }
+}
+
 void SurfacePutPixel(SURFACE *s, LONG x, LONG y, ULONG pixel)
 {
     PUCHAR row = s->Bits + (LONG_PTR)y * s->Stride;
@@ -317,11 +389,10 @@ static BOOLEAN describe_dib_rle(const BITMAPINFO *info, UINT usage, DIB_DESC *d,
         return FALSE;
     }
     d->Stride = dib_stride(d->Width, d->Bpp);
-    d->Colors = d->Bpp <= 8 ? (h->biClrUsed ? h->biClrUsed : 1u << d->Bpp) : 0;
-    if (d->Colors > 256)
-        return FALSE;
+    /* a count of colours past the format is cut to it, and DIB_PAL_INDICES comes with no table. */
+    d->Colors = d->Bpp <= 8 ? (h->biClrUsed && h->biClrUsed < 1u << d->Bpp ? h->biClrUsed : 1u << d->Bpp) : 0;
     d->HeaderSize = h->biSize + (d->Compression == BI_BITFIELDS && h->biSize == sizeof(BITMAPINFOHEADER) ? 12 : 0) +
-                    d->Colors * (usage == DIB_PAL_COLORS ? 2 : 4);
+                    d->Colors * (usage == DIB_PAL_COLORS ? 2 : usage == 2 ? 0 : 4);
     return TRUE;
 }
 
@@ -345,6 +416,13 @@ static BITMAPINFO *capture_info(const BITMAPINFO *user, UINT usage, DIB_DESC *d,
     }
     SIZE_T table = d->HeaderSize - h.biSize;
     if (table && !NT_SUCCESS(MimeCopyFromUser(info->bmiColors, (const UCHAR *)user + h.biSize, table))) {
+        W32Free(info);
+        return nullptr;
+    }
+    info->bmiHeader.biClrUsed = d->Colors;
+    /* a BITMAPV4HEADER or BITMAPV5HEADER has its masks inside, at 40. */
+    if (d->Compression == BI_BITFIELDS && h.biSize >= 52 &&
+        !NT_SUCCESS(MimeCopyFromUser(info->bmiColors, (const UCHAR *)user + sizeof(BITMAPINFOHEADER), 12))) {
         W32Free(info);
         return nullptr;
     }
@@ -372,6 +450,82 @@ static SURFACE *wrap_dib_bits(const DIB_DESC *d, const BITMAPINFO *info, PVOID b
     }
     (void)start;
     return SurfaceWrap(d->Width, height, d->Bpp, first, stride, info);
+}
+
+/* ------------------------------------------------------------------ pattern brushes */
+
+/* a copy of a surface in its own format, which a pattern brush keeps: the bitmap may go while the brush stays. */
+static SURFACE *copy_surface(SURFACE *src)
+{
+    SURFACE *s = SurfaceCreate(src->Width, src->Height, src->Bpp, 0);
+    if (!s)
+        return nullptr;
+    memcpy(s->Colors, src->Colors, sizeof(s->Colors));
+    memcpy(s->Masks, src->Masks, sizeof(s->Masks));
+    s->ColorCount = src->ColorCount;
+    for (LONG y = 0; y < src->Height; y++)
+        for (LONG x = 0; x < src->Width; x++)
+            SurfacePutRaw(s, x, y, SurfaceGetRaw(src, x, y));
+    return s;
+}
+
+/*
+ * CreatePatternBrush passes the bitmap, whether a pen asks and whether it is BS_PATTERN8X8. a monochrome pattern
+ * takes the text and background colours of the dc it draws in, any other its own colours.
+ */
+HBRUSH NTAPI NtGdiCreatePatternBrushInternal(HBITMAP bitmap, BOOL pen, BOOL b8x8)
+{
+    UserEnter();
+    SURFACE *src = SurfaceLookup(bitmap);
+    SURFACE *pattern = src ? copy_surface(src) : nullptr;
+    BRUSH *b = pattern ? GdiCreateBrush(BS_PATTERN, 0, (ULONG_PTR)bitmap) : nullptr;
+    if (b)
+        b->Pattern = pattern;
+    else
+        SurfaceDestroy(pattern);
+    UserLeave();
+    return b ? (HBRUSH)b->Header.Handle : nullptr;
+}
+
+/*
+ * CreateDIBPatternBrushPt passes the packed dib with its header made a BITMAPINFOHEADER, the usage, its size, whether
+ * it is BS_DIBPATTERN8X8, whether a pen asks, and the program's own pointer, which GetObject gives back as lbHatch.
+ * the pattern is kept in 32 bits with the colours of the dib, a monochrome one too.
+ */
+HBRUSH NTAPI NtGdiCreateDIBBrush(PVOID packed, ULONG usage, UINT size, BOOL b8x8, BOOL pen, PVOID client)
+{
+    DIB_DESC d;
+    if (usage > DIB_PAL_COLORS || size < sizeof(BITMAPINFOHEADER))
+        return nullptr;
+    BITMAPINFO *info = capture_info(packed, usage, &d, FALSE);
+    if (!info)
+        return nullptr;
+    SIZE_T bytes = (SIZE_T)d.Stride * (SIZE_T)d.Height;
+    PUCHAR bits = d.HeaderSize <= size && bytes <= size - d.HeaderSize ? W32Alloc(bytes) : nullptr;
+    HBRUSH h = nullptr;
+    if (bits && NT_SUCCESS(MimeCopyFromUser(bits, (const UCHAR *)packed + d.HeaderSize, bytes))) {
+        UserEnter();
+        SURFACE *view = wrap_dib_bits(&d, info, bits, (ULONG)d.Height, 0);
+        SURFACE *pattern = view ? SurfaceCreate(d.Width, d.Height, 32, 0) : nullptr;
+        if (pattern)
+            for (LONG y = 0; y < d.Height; y++)
+                for (LONG x = 0; x < d.Width; x++)
+                    SurfacePutPixel(pattern, x, y, SurfaceGetPixel(view, x, y) & 0xFFFFFF);
+        BRUSH *b = pattern ? GdiCreateBrush(BS_DIBPATTERNPT, usage,
+                                            (ULONG_PTR)client) : nullptr;
+        if (b)
+            b->Pattern = pattern;
+        else
+            SurfaceDestroy(pattern);
+        if (view)
+            W32Free(view);
+        if (b)
+            h = (HBRUSH)b->Header.Handle;
+        UserLeave();
+    }
+    W32Free(bits);
+    W32Free(info);
+    return h;
 }
 
 /* ------------------------------------------------------------------ bitmap services */
@@ -519,9 +673,12 @@ HBITMAP NTAPI NtGdiCreateDIBSection(HDC hdc, HANDLE section, DWORD offset, const
  * for GetDIBColorTable and SetDIBColorTable. only a dib section of 8 bits a pixel or fewer has a color table.
  * returns the number of entries read or written, 0 for anything else or for entries past the table.
  */
-ULONG NTAPI NtGdiDoPalette(HGDIOBJ object, WORD start, WORD count, PVOID user_entries, DWORD function, BOOL inbound)
+/* the color table of the dib section a dc holds, NtGdiDoPalette 4 and 5. */
+ULONG GdiDibColorTable(HDC hdc, WORD start, WORD count, PVOID user_entries, BOOLEAN set)
 {
-    if ((function != MIME_PAL_GETDIBCOLORTABLE && function != MIME_PAL_SETDIBCOLORTABLE) || !user_entries || !count)
+    DWORD function = set ? MIME_PAL_SETDIBCOLORTABLE : MIME_PAL_GETDIBCOLORTABLE;
+    HGDIOBJ object = hdc;
+    if (!user_entries || !count)
         return 0;
     RGBQUAD entries[256];
     ULONG n = 0;
@@ -653,76 +810,181 @@ NTSTATUS NTAPI NtGdiDdDDIDestroyDCFromMemory(const D3DKMT_DESTROYDCFROMMEMORY *u
     return status;
 }
 
+/*
+ * the table GetDIBits gives a bitmap of more than 8 bits read at 8 bits or less, measured with dibpal.exe of
+ * scratch/dlls/gdibatch: black and white, the 16 colours of vga, or at 8 bits the 20 static colours at both ends and
+ * between them 8 levels of red and green and 4 of blue, as the index i makes them.
+ */
+static void default_dib_table(UCHAR bpp, RGBQUAD *out)
+{
+    static const ULONG low[10] = {0x000000, 0x800000, 0x008000, 0x808000, 0x000080, 0x800080, 0x008080, 0xc0c0c0,
+                                  0xc0dcc0, 0xa6caf0};
+    static const ULONG high[10] = {0xfffbf0, 0xa0a0a4, 0x808080, 0xff0000, 0x00ff00, 0xffff00, 0x0000ff, 0xff00ff,
+                                   0x00ffff, 0xffffff};
+    static const ULONG vga[16] = {0x000000, 0x800000, 0x008000, 0x808000, 0x000080, 0x800080, 0x008080, 0x808080,
+                                  0xc0c0c0, 0xff0000, 0x00ff00, 0xffff00, 0x0000ff, 0xff00ff, 0x00ffff, 0xffffff};
+    ULONG n = 1u << bpp;
+    for (ULONG i = 0; i < n && i < 256; i++) {
+        ULONG v;
+        if (bpp == 1)
+            v = i ? 0xffffff : 0;
+        else if (bpp == 4)
+            v = vga[i];
+        else if (i < 10)
+            v = low[i];
+        else if (i >= 246)
+            v = high[i - 246];
+        else
+            v = (i % 8) * 0x20 << 16 | ((i / 8) % 8) * 0x20 << 8 | (i / 64) * 0x40;
+        out[i] = (RGBQUAD){(BYTE)v, (BYTE)(v >> 8), (BYTE)(v >> 16), 0};
+    }
+}
+
+/*
+ * as win32kfull's GreGetDIBitsInternalWorker. gdi32 passes the header as the program gave it, a BITMAPCOREHEADER
+ * too. a query, biBitCount 0, zeroes the header and fills a BITMAPINFOHEADER of the bitmap, with BI_BITFIELDS at 16 and
+ * 32 bits and biClrUsed the size of the table. otherwise the header becomes a BITMAPINFOHEADER with biSizeImage,
+ * the masks or the table follow it at 40, and without bits the call answers 1 with the width and height left as the
+ * caller gave them. bits narrower or wider than the bitmap are clipped to it.
+ */
 int NTAPI NtGdiGetDIBitsInternal(HDC hdc, HBITMAP bitmap, UINT start, UINT lines, PVOID bits, BITMAPINFO *user_info,
                                  UINT usage, UINT max_bits, UINT max_info)
 {
-    BITMAPINFOHEADER h;
-    if (!user_info || !NT_SUCCESS(MimeCopyFromUser(&h, user_info, sizeof(h))))
+    UCHAR raw[124];
+    ULONG size;
+    if (!user_info || !NT_SUCCESS(MimeCopyFromUser(&size, user_info, sizeof(size))))
         return 0;
+    BOOLEAN core = size == sizeof(BITMAPCOREHEADER);
+    if (!core && (size < sizeof(BITMAPINFOHEADER) || size > sizeof(raw)))
+        return 0;
+    if (!NT_SUCCESS(MimeCopyFromUser(raw, user_info, size)))
+        return 0;
+    BITMAPINFOHEADER h;
+    if (core) {
+        const BITMAPCOREHEADER *c = (const BITMAPCOREHEADER *)raw;
+        h = (BITMAPINFOHEADER){sizeof(BITMAPINFOHEADER), c->bcWidth, c->bcHeight, c->bcPlanes, c->bcBitCount, BI_RGB};
+    } else {
+        memcpy(&h, raw, sizeof(h));
+    }
+    if (!lines)
+        bits = nullptr;
     UserEnter();
     SURFACE *s = SurfaceLookup(bitmap);
-    int result = 0;
-    if (!s) {
+    if (!s || usage > DIB_PAL_COLORS) {
         UserLeave();
         return 0;
     }
     if (h.biBitCount == 0) {
-        /* a query: fill in the header from the bitmap. */
-        BITMAPINFOHEADER out = {sizeof(BITMAPINFOHEADER), s->Width, s->Height, 1, s->Bpp, BI_RGB, 0, 0, 0, 0, 0};
-        out.biSizeImage = (DWORD)(dib_stride(s->Width, s->Bpp) * s->Height);
+        UCHAR bpp = s->Bpp;
+        if (core) {
+            BITMAPCOREHEADER out = {sizeof(BITMAPCOREHEADER), (WORD)s->Width, (WORD)s->Height, 1, bpp >= 16 ? 24 : bpp};
+            UserLeave();
+            return NT_SUCCESS(MimeCopyToUser(user_info, &out, sizeof(out))) ? 1 : 0;
+        }
+        /* only the 40 bytes of a BITMAPINFOHEADER change, what a longer header has after them stays. */
+        memset(raw, 0, sizeof(BITMAPINFOHEADER));
+        BITMAPINFOHEADER *out = (BITMAPINFOHEADER *)raw;
+        *out = (BITMAPINFOHEADER){sizeof(BITMAPINFOHEADER), s->Width, s->Height, 1, bpp};
+        out->biCompression = bpp == 16 || bpp == 32 ? BI_BITFIELDS : BI_RGB;
+        out->biSizeImage = (DWORD)(dib_stride(s->Width, bpp) * s->Height);
+        out->biClrUsed = out->biClrImportant = bpp <= 8 ? 1u << bpp : 0;
         UserLeave();
-        return NT_SUCCESS(MimeCopyToUser(user_info, &out, sizeof(out))) ? 1 : 0;
+        return NT_SUCCESS(MimeCopyToUser(user_info, raw, sizeof(BITMAPINFOHEADER))) ? 1 : 0;
     }
     DIB_DESC d;
     BITMAPINFO tmp_info;
     tmp_info.bmiHeader = h;
-    if (!bits) {
-        /* the bitmap in the asked format, with the size of its bits for the caller to allocate. */
-        tmp_info.bmiHeader.biWidth = s->Width;
-        tmp_info.bmiHeader.biHeight = h.biHeight < 0 ? -s->Height : s->Height;
-    }
-    if (!describe_dib(&tmp_info, usage, &d) || (bits && d.Width != s->Width)) {
+    tmp_info.bmiHeader.biClrUsed = 0;
+    if (!describe_dib(&tmp_info, DIB_RGB_COLORS, &d)) {
         UserLeave();
         return 0;
     }
-    if (start >= (UINT)s->Height) {
-        UserLeave();
-        return 0;
-    }
-    if (lines > (UINT)s->Height - start)
-        lines = (UINT)s->Height - start;
-    if (!bits) {
-        h.biWidth = s->Width;
-        h.biHeight = tmp_info.bmiHeader.biHeight;
+    /* the header as windows leaves it: 40 bytes, the size of the image, no count of colours. */
+    if (!core) {
+        memset(raw + sizeof(BITMAPINFOHEADER), 0, size - sizeof(BITMAPINFOHEADER));
+        h.biSize = sizeof(BITMAPINFOHEADER);
         h.biPlanes = 1;
-        h.biSizeImage = (DWORD)((SIZE_T)d.Stride * d.Height);
-        UserLeave();
-        return NT_SUCCESS(MimeCopyToUser(user_info, &h, sizeof(h))) ? (int)lines : 0;
+        if (h.biCompression == BI_RGB || h.biCompression == BI_BITFIELDS)
+            h.biSizeImage = (DWORD)((SIZE_T)d.Stride * d.Height);
+        h.biClrUsed = h.biClrImportant = 0;
+        memcpy(raw, &h, sizeof(h));
     }
-    PUCHAR buffer = W32Alloc((SIZE_T)d.Stride * lines);
-    if (buffer) {
-        SURFACE *dst = SurfaceWrap(d.Width, (LONG)lines, d.Bpp, buffer, d.Stride, nullptr);
+    /* the masks of BI_BITFIELDS or the table, after the header. */
+    union {
+        DWORD Masks[3];
+        RGBQUAD Quads[256];
+        WORD Indices[256];
+        RGBTRIPLE Triples[256];
+    } table;
+    SIZE_T table_size = 0;
+    RGBQUAD out_colors[256];
+    if (h.biCompression == BI_BITFIELDS && (d.Bpp == 16 || d.Bpp == 32)) {
+        if (d.Bpp == 32)
+            table.Masks[0] = 0xFF0000, table.Masks[1] = 0xFF00, table.Masks[2] = 0xFF;
+        else if (s->Bpp == 16)
+            memcpy(table.Masks, s->Masks, sizeof(table.Masks));
+        else
+            table.Masks[0] = 0x7C00, table.Masks[1] = 0x3E0, table.Masks[2] = 0x1F;
+        table_size = sizeof(table.Masks);
+    } else if (d.Bpp <= 8) {
+        ULONG n = 1u << d.Bpp;
+        RGBQUAD *colors = out_colors;
+        if (s->Bpp > 8 || s->Bpp != d.Bpp)
+            default_dib_table(d.Bpp, colors);
+        else
+            memcpy(colors, s->Colors, n * sizeof(RGBQUAD));
+        for (ULONG i = 0; i < n; i++) {
+            if (usage == DIB_PAL_COLORS)
+                table.Indices[i] = (WORD)i;
+            else if (core)
+                table.Triples[i] = (RGBTRIPLE){colors[i].rgbBlue, colors[i].rgbGreen, colors[i].rgbRed};
+            else
+                table.Quads[i] = colors[i];
+        }
+        table_size = n * (usage == DIB_PAL_COLORS ? sizeof(WORD) : core ? sizeof(RGBTRIPLE) : sizeof(RGBQUAD));
+    }
+    int result = 0;
+    if (!bits) {
+        result = 1;
+    } else if (start < (UINT)s->Height) {
+        if (lines > (UINT)s->Height - start)
+            lines = (UINT)s->Height - start;
+        if (lines > (UINT)d.Height)
+            lines = (UINT)d.Height;
+        LONG width = d.Width < s->Width ? d.Width : s->Width;
+        PUCHAR buffer = W32Alloc((SIZE_T)d.Stride * lines);
+        SURFACE *dst = buffer ? SurfaceWrap(d.Width, (LONG)lines, d.Bpp, buffer, d.Stride, nullptr) : nullptr;
         if (dst) {
             if (d.Bpp <= 8) {
-                memcpy(dst->Colors, s->Colors, sizeof(s->Colors));
-                dst->ColorCount = s->ColorCount ? s->ColorCount : (USHORT)(1u << d.Bpp);
+                memcpy(dst->Colors, out_colors, (SIZE_T)(1u << d.Bpp) * sizeof(RGBQUAD));
+                dst->ColorCount = (USHORT)(1u << d.Bpp);
+            } else if (h.biCompression == BI_BITFIELDS) {
+                memcpy(dst->Masks, table.Masks, sizeof(table.Masks));
             }
             /* scan `start` counts from the bottom; a bottom up buffer starts with it, a top down one ends with it. */
             for (UINT i = 0; i < lines; i++) {
                 LONG src_y = s->Height - 1 - (LONG)(start + i);
                 LONG dst_y = d.TopDown ? (LONG)(lines - 1 - i) : (LONG)i;
-                for (LONG x = 0; x < d.Width; x++)
+                for (LONG x = 0; x < width; x++)
                     SurfacePutPixel(dst, x, dst_y, SurfaceGetPixel(s, x, src_y));
             }
-            W32Free(dst);
             if (NT_SUCCESS(MimeCopyToUser(bits, buffer, (SIZE_T)d.Stride * lines)))
                 result = (int)lines;
-            if (d.Bpp <= 8 && result)
-                MimeCopyToUser((PUCHAR)user_info + h.biSize, s->Colors, d.Colors * sizeof(RGBQUAD));
         }
+        W32Free(dst);
         W32Free(buffer);
     }
     UserLeave();
+    if (result) {
+        if (core) {
+            if (table_size)
+                MimeCopyToUser((PUCHAR)user_info + sizeof(BITMAPCOREHEADER), &table, table_size);
+        } else if (!NT_SUCCESS(MimeCopyToUser(user_info, raw, size)) ||
+                   (table_size && !NT_SUCCESS(MimeCopyToUser((PUCHAR)user_info + sizeof(BITMAPINFOHEADER), &table,
+                                                             table_size)))) {
+            result = 0;
+        }
+    }
     return result;
 }
 
@@ -852,6 +1114,80 @@ static SURFACE *capture_dib(const void *bits, const BITMAPINFO *user_info, UINT 
     return s;
 }
 
+/*
+ * CreateDIBitmap. a dib of two colors, black and white, makes a monochrome bitmap, CBM_CREATEDIB one of the format of
+ * the dib, and any other one of the depth of the display, as user32 needs for the masks and pictures of icons.
+ */
+HBITMAP NTAPI NtGdiCreateDIBitmapInternal(HDC hdc, int width, int height, DWORD init, const void *bits,
+                                          const BITMAPINFO *user_info, DWORD usage, UINT info_size, UINT bits_size,
+                                          ULONG flags, HANDLE xform)
+{
+    (void)info_size;
+    (void)bits_size;
+    (void)flags;
+    (void)xform;
+    DIB_DESC d = {};
+    BITMAPINFO *info = user_info ? capture_info(user_info, usage, &d, FALSE) : nullptr;
+    /* a top down header gives a negative height, which the kernel takes as its size. */
+    if (height < 0)
+        height = -height;
+    if ((user_info && !info) || ((init & 2) && !info) || width <= 0 || height <= 0 || usage > DIB_PAL_COLORS) {
+        if (info)
+            W32Free(info);
+        return nullptr;
+    }
+    BOOLEAN mono = info && d.Bpp == 1 && usage == DIB_RGB_COLORS && d.Colors == 2;
+    for (ULONG i = 0; mono && i < 2; i++) {
+        RGBQUAD q = info->bmiColors[i];
+        ULONG v = (ULONG)q.rgbRed | (ULONG)q.rgbGreen << 8 | (ULONG)q.rgbBlue << 16;
+        mono = v == 0 || v == 0xFFFFFF;
+    }
+    if (mono && info->bmiColors[0].rgbRed == info->bmiColors[1].rgbRed)
+        mono = FALSE;
+    UCHAR bpp = (init & 2) ? d.Bpp : mono ? 1 : 32;
+    /* without CBM_CREATEDIB windows makes a bitmap compatible with the dc, monochrome for a fresh memory dc. */
+    HBITMAP compatible = !(init & 2) && hdc ? NtGdiCreateCompatibleBitmap(hdc, width, height) : nullptr;
+    UserEnter();
+    if (hdc && !DcLookup(hdc)) {
+        UserLeave();
+        W32Free(info);
+        return nullptr;
+    }
+    SURFACE *s = compatible ? SurfaceLookup(compatible) : SurfaceCreate(width, height, bpp, 0);
+    HBITMAP h = compatible;
+    if (compatible) {
+    } else if (s && GdiCreateHandle(&s->Header, GDI_TYPE_BITMAP)) {
+        h = (HBITMAP)s->Header.Handle;
+        if ((init & 2) && bpp <= 8) {
+            memcpy(s->Colors, info->bmiColors, d.Colors * sizeof(RGBQUAD));
+            s->ColorCount = (USHORT)d.Colors;
+        }
+    } else if (s) {
+        SurfaceDestroy(s);
+        s = nullptr;
+    }
+    UserLeave();
+    if (h && (init & CBM_INIT) && bits && info) {
+        PVOID buffer;
+        BITMAPINFO *captured;
+        BOOLEAN coded;
+        SURFACE *src = capture_dib(bits, user_info, usage, 0, &buffer, &captured, &coded);
+        if (src) {
+            UserEnter();
+            if (SurfaceLookup(h) == s)
+                for (LONG y = 0; y < s->Height && y < src->Height; y++)
+                    for (LONG x = 0; x < s->Width && x < src->Width; x++)
+                        SurfacePutPixel(s, x, y, SurfaceGetPixel(src, x, y));
+            UserLeave();
+            W32Free(src);
+            W32Free(buffer);
+            W32Free(captured);
+        }
+    }
+    W32Free(info);
+    return h;
+}
+
 int NTAPI NtGdiSetDIBitsToDeviceInternal(HDC hdc, int x, int y, DWORD width, DWORD height, int src_x, int src_y,
                                          DWORD start, DWORD lines, const void *bits, const BITMAPINFO *info,
                                          UINT usage, UINT max_bits, UINT max_info, BOOL transform, HANDLE xform)
@@ -903,6 +1239,17 @@ int NTAPI NtGdiStretchDIBitsInternal(HDC hdc, int x, int y, int width, int heigh
     PVOID buffer;
     BITMAPINFO *captured;
     BOOLEAN coded;
+    /* without bits or a header win32kfull only draws a rop that reads no source, as a PatBlt. */
+    if (!bits || !info) {
+        UCHAR code = (UCHAR)(rop >> 16);
+        if ((code ^ (code << 2)) & 0xCC)
+            return 0;
+        UserEnter();
+        DC *dc = DcLookup(hdc);
+        BOOL ok = dc && GdiPatBltDc(dc, x, y, width, height, rop, nullptr);
+        UserLeave();
+        return ok;
+    }
     SURFACE *src = capture_dib(bits, info, usage, 0, &buffer, &captured, &coded);
     if (!src)
         return 0;
@@ -914,8 +1261,9 @@ int NTAPI NtGdiStretchDIBitsInternal(HDC hdc, int x, int y, int width, int heigh
         DcLogicalToSurface(dc, &x0, &y0);
         DcLogicalToSurface(dc, &x1, &y1);
         RECT dst_rect = {x0, y0, x1, y1};
-        /* src_y is measured from the bottom of the dib. */
-        RECT src_rect = {src_x, src->Height - src_y - src_height, src_x + src_width, src->Height - src_y};
+        /* src_y counts from the bottom of a bottom up dib and from the top of a top down one. */
+        LONG top = captured && captured->bmiHeader.biHeight < 0 ? src_y : src->Height - src_y - src_height;
+        RECT src_rect = {src_x, top, src_x + src_width, top + src_height};
         REGION clip;
         RgnInit(&clip);
         if (DcGetClip(dc, &clip)) {
@@ -932,7 +1280,8 @@ int NTAPI NtGdiStretchDIBitsInternal(HDC hdc, int x, int y, int width, int heigh
             SurfaceMarkDrawn(dc->Surface, &dirty, &clip);
         }
         RgnFree(&clip);
-        result = src_height;
+        /* windows answers the height of the dib, whatever part of it was drawn. */
+        result = src->Height;
     }
     UserLeave();
     W32Free(src);

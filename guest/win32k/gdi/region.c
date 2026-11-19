@@ -389,19 +389,6 @@ BOOLEAN RgnFromRects(REGION *r, const RECT *rects, ULONG count)
     return TRUE;
 }
 
-/* integer square root for the ellipse corners. */
-static LONG isqrt(LONG64 v)
-{
-    if (v <= 0)
-        return 0;
-    LONG64 x = v, y = (x + 1) / 2;
-    while (y < x) {
-        x = y;
-        y = (x + v / x) / 2;
-    }
-    return (LONG)x;
-}
-
 /* adds the rows from top to bottom between left and right to the end of the bands, which grow downward. */
 static void append_rows(REGION *r, LONG left, LONG top, LONG right, LONG bottom)
 {
@@ -417,20 +404,14 @@ static void append_rows(REGION *r, LONG left, LONG top, LONG right, LONG bottom)
     r->Rects[r->Count++] = (RECT){left, top, right, bottom};
 }
 
-/* the corner of a round rectangle takes one band for each scanline, and a million of them is as far as one goes. */
+/* the corners of a round rectangle take one band for each scanline, and a million of them is as far as one goes. */
 #define ROUND_RECT_MAX_CORNER 0x100000
 
-/* how far in from the sides the scanline i of a corner starts, for ellipse radii rx and ry. */
-static LONG corner_inset(LONG i, LONG rx, LONG ry)
-{
-    /* distance of this scanline center from the ellipse center, in doubled units. */
-    LONG64 dy = 2 * ((LONG64)ry - i) - 1;
-    LONG64 inner = (LONG64)ry * ry * 4 - dy * dy;
-    LONG dx = (LONG)(((LONG64)rx * isqrt(inner)) / (2 * ry));
-    return rx - dx;
-}
-
-/* a rectangle with elliptic corners of diameters ew and eh, one band per scanline in the corners. */
+/*
+ * a rectangle with elliptic corners of diameters ew and eh, which CreateEllipticRgn makes with the whole rectangle.
+ * like windows, the region leaves out the last column and row of the rectangle, the diameters shrink to fit it, and
+ * the corners follow the midpoint ellipse of Alois Zingl, measured with rgn.exe of scratch/dlls/gdibatch.
+ */
 BOOLEAN RgnRoundRect(REGION *r, LONG left, LONG top, LONG right, LONG bottom, LONG ew, LONG eh)
 {
     if (right < left) {
@@ -443,31 +424,62 @@ BOOLEAN RgnRoundRect(REGION *r, LONG left, LONG top, LONG right, LONG bottom, LO
         top = bottom;
         bottom = t;
     }
-    LONG64 width = (LONG64)right - left, height = (LONG64)bottom - top;
-    LONG64 ew64 = ew < width ? ew : width;
-    LONG64 eh64 = eh < height ? eh : height;
+    right--;
+    bottom--;
     RgnClear(r);
     if (right <= left || bottom <= top)
         return TRUE;
-    if (ew64 < 2 || eh64 < 2) {
+    ew = ew < 0 ? -ew : ew;
+    eh = eh < 0 ? -eh : eh;
+    if (ew > right - left)
+        ew = right - left;
+    if (eh > bottom - top)
+        eh = bottom - top;
+    if (ew < 2 || eh < 2) {
         RECT rc = {left, top, right, bottom};
         return RgnSetRect(r, &rc);
     }
-    if (eh64 / 2 > ROUND_RECT_MAX_CORNER)
+    if (eh > 2 * ROUND_RECT_MAX_CORNER)
         return FALSE;
-    LONG rx = (LONG)(ew64 / 2), ry = (LONG)(eh64 / 2);
-    /* the bands are made from the top down: the upper corners, the middle and the lower corners. */
-    if (!reserve(r, (ULONG)(2 * ry + 1)))
+    LONG *sides = W32Alloc((SIZE_T)eh * 2 * sizeof(LONG));
+    if (!sides)
         return FALSE;
-    for (LONG i = 0; i < ry; i++) {
-        LONG inset = corner_inset(i, rx, ry);
-        append_rows(r, left + inset, top + i, right - inset, top + i + 1);
+    LONG64 a = ew - 1, b = eh - 1;
+    LONG64 asq = 8 * a * a, bsq = 8 * b * b;
+    LONG64 dx = 4 * b * b * (1 - a), dy = 4 * a * a * (1 + (b % 2));
+    LONG64 err = dx + dy + a * a * (b % 2);
+    LONG x = 0, y = eh / 2;
+    sides[2 * y] = left;
+    sides[2 * y + 1] = right;
+    while (x <= ew / 2) {
+        LONG64 e2 = 2 * err;
+        if (e2 >= dx) {
+            x++;
+            err += dx += bsq;
+        }
+        if (e2 <= dy) {
+            y++;
+            err += dy += asq;
+            if (y < eh) {
+                sides[2 * y] = left + x;
+                sides[2 * y + 1] = right - x;
+            }
+        }
     }
-    append_rows(r, left, top + ry, right, bottom - ry);
-    for (LONG i = ry - 1; i >= 0; i--) {
-        LONG inset = corner_inset(i, rx, ry);
-        append_rows(r, left + inset, bottom - i - 1, right - inset, bottom - i);
+    for (LONG i = 0; i < eh / 2; i++) {
+        sides[2 * i] = sides[2 * (b - i)];
+        sides[2 * i + 1] = sides[2 * (b - i) + 1];
     }
-    update_extents(r);
-    return TRUE;
+    BOOLEAN ok = reserve(r, (ULONG)eh);
+    if (ok) {
+        for (LONG i = 0; i < eh / 2; i++)
+            append_rows(r, sides[2 * i], top + i, sides[2 * i + 1], top + i + 1);
+        /* the middle row reaches up to the top corners, over the straight sides. */
+        append_rows(r, sides[2 * (eh / 2)], top + eh / 2, sides[2 * (eh / 2) + 1], bottom - eh + eh / 2 + 1);
+        for (LONG i = eh / 2 + 1; i < eh; i++)
+            append_rows(r, sides[2 * i], bottom - eh + i, sides[2 * i + 1], bottom - eh + i + 1);
+        update_extents(r);
+    }
+    W32Free(sides);
+    return ok;
 }
