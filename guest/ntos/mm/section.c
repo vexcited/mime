@@ -2,7 +2,8 @@
  * section objects: image sections from PE files, file and pagefile backed data sections, and views.
  *
  * an image section keeps one prototype copy of the image laid out at its preferred base. views at that
- * base share the read-only pages and get private copies of writable ones.
+ * base share the read-only pages and get private copies of writable ones. an image the system may move has
+ * a base drawn for it, see select_image_base, and its views there share the pages relocated for that base.
  *
  * prototype pages are built on first touch from the file's read-only pages: the rom for system files,
  * the host window for others, see IoGetFileWindow. when the loaded page equals the file page byte for
@@ -11,16 +12,22 @@
  */
 #include "../ntos.h"
 
+#ifndef STATUS_MAPPED_ALIGNMENT
+#define STATUS_MAPPED_ALIGNMENT ((NTSTATUS)0xC0000220L)
+#endif
+
 POBJECT_TYPE MmSectionType;
 POBJECT_TYPE *MmSectionObjectType = &MmSectionType;
 
 static void forget_file_image(PSECTION s);
 static void write_back_detach(PSECTION s);
+static void release_image_base(PSECTION s);
 
 static void section_delete(PVOID object)
 {
     PSECTION s = object;
     forget_file_image(s);
+    release_image_base(s);
     /* off the list first, so that no read of the file finds a section that is going. */
     write_back_detach(s);
     /* what a view wrote and no unmap sent to the file, as when a process ends with its views. */
@@ -57,6 +64,8 @@ static void section_delete(PVOID object)
         ObDereferenceObject(s->File);
     if (s->FileName.Buffer)
         ExFreePool(s->FileName.Buffer);
+    if (s->DeviceName.Buffer)
+        ExFreePool(s->DeviceName.Buffer);
 }
 
 static NTSTATUS alloc_section(ULONG64 size, PSECTION *out)
@@ -161,8 +170,9 @@ ULONG64 MiSectionPteAttrs(PSECTION s, ULONG protect, ULONG64 pa, BOOLEAN shared)
  * for images of hundreds of megabytes. pages relocated for the first view's base belong to the section
  * and are shared by views at that base. views elsewhere get private ones.
  */
-#define RELOC_NO_BLOCK 0x7FFFFFFFu
-#define RELOC_BLOCK_MASK 0x7FFFFFFFu
+#define RELOC_NO_BLOCK 0x3FFFFFFFu
+#define RELOC_BLOCK_MASK 0x3FFFFFFFu
+#define RELOC_HEADER 0x40000000u    /* the page holds bytes of the base the headers name. */
 #define RELOC_STRADDLED 0x80000000u /* a fixup of the previous page reaches into this one. */
 
 /* reads image bytes as the file has them, from the prototype pages. */
@@ -213,7 +223,7 @@ static ULONG *reloc_index(PSECTION s)
     ULONG state = __atomic_load_n(&s->RelocIndexState, __ATOMIC_ACQUIRE);
     if (state == 1)
         return s->RelocIndex;
-    if (state == 2 || !s->RelocSize || s->RelocSize >= RELOC_BLOCK_MASK)
+    if (state == 2 || s->RelocSize >= RELOC_BLOCK_MASK)
         return nullptr;
     ULONG *index = ExAllocatePool2(POOL_FLAG_NON_PAGED | POOL_FLAG_UNINITIALIZED, ((SIZE_T)s->PageCount + 1) * sizeof(ULONG),
                                    KI_TAG('M', 'm', 'R', 'x'));
@@ -251,6 +261,9 @@ static ULONG *reloc_index(PSECTION s)
         __atomic_store_n(&s->RelocIndexState, 2, __ATOMIC_RELEASE);
         return nullptr;
     }
+    for (ULONG b = 0; b < s->Image.BaseFieldWidth; b++)
+        if (((s->Image.BaseFieldRva + b) >> PAGE_SHIFT) < s->PageCount)
+            index[(s->Image.BaseFieldRva + b) >> PAGE_SHIFT] |= RELOC_HEADER;
     s->RelocIndex = index;
     __atomic_store_n(&s->RelocIndexState, 1, __ATOMIC_RELEASE);
     return index;
@@ -259,7 +272,21 @@ static ULONG *reloc_index(PSECTION s)
 static BOOLEAN page_needs_relocation(PSECTION s, ULONG64 index)
 {
     ULONG entry = s->RelocIndex[index];
-    return (entry & RELOC_BLOCK_MASK) != RELOC_NO_BLOCK || (entry & RELOC_STRADDLED);
+    return (entry & RELOC_BLOCK_MASK) != RELOC_NO_BLOCK || (entry & (RELOC_STRADDLED | RELOC_HEADER));
+}
+
+/*
+ * the base the headers name is the one the image is at: windows 11 shows the base it drew for an image there, and a
+ * program finds its own image, or relocates a view it mapped itself, by that field.
+ */
+static void relocate_base_field(PSECTION s, ULONG page, LONG64 delta, PUCHAR out)
+{
+    ULONG64 base = s->Image.ImageBase + (ULONG64)delta;
+    for (ULONG b = 0; b < s->Image.BaseFieldWidth; b++) {
+        ULONG rva = s->Image.BaseFieldRva + b;
+        if ((rva >> PAGE_SHIFT) == page)
+            out[rva & (PAGE_SIZE - 1)] = (UCHAR)(base >> (8 * b));
+    }
 }
 
 /*
@@ -315,6 +342,8 @@ static BOOLEAN build_relocated_page(PSECTION s, ULONG page, LONG64 delta, PUCHAR
         if (before != RELOC_NO_BLOCK && !relocate_block(s, before, page - 1, page, delta, out))
             return FALSE;
     }
+    if (entry & RELOC_HEADER)
+        relocate_base_field(s, page, delta, out);
     return TRUE;
 }
 
@@ -464,8 +493,9 @@ NTSTATUS MiParseImageHeaders(const void *headers, SIZE_T length, MI_IMAGE_INFO *
     if (dos->e_lfanew < 0 || (SIZE_T)dos->e_lfanew > length || length - dos->e_lfanew < nt_offset)
         return STATUS_INVALID_IMAGE_FORMAT;
     const IMAGE_NT_HEADERS64 *nt = (const void *)((const UCHAR *)headers + dos->e_lfanew);
+    /* windows answers a missing PE signature this way, measured with badexe.c of scratch/dlls/shellexec. */
     if (nt->Signature != IMAGE_NT_SIGNATURE)
-        return STATUS_INVALID_IMAGE_FORMAT;
+        return STATUS_INVALID_IMAGE_PROTECT;
     BOOLEAN pe32 = nt->FileHeader.Machine == IMAGE_FILE_MACHINE_I386;
     SIZE_T optional_size = pe32 ? sizeof(IMAGE_OPTIONAL_HEADER32) : sizeof(IMAGE_OPTIONAL_HEADER64);
     if (nt->FileHeader.SizeOfOptionalHeader < optional_size ||
@@ -473,6 +503,11 @@ NTSTATUS MiParseImageHeaders(const void *headers, SIZE_T length, MI_IMAGE_INFO *
         return STATUS_INVALID_IMAGE_FORMAT;
     IMAGE_OPTIONAL_HEADER64 normalized;
     const IMAGE_OPTIONAL_HEADER64 *opt = &nt->OptionalHeader;
+    info->OsMajor = opt->MajorOperatingSystemVersion;
+    info->OsMinor = opt->MinorOperatingSystemVersion;
+    info->LoaderFlags = pe32 ? ((const IMAGE_OPTIONAL_HEADER32 *)opt)->LoaderFlags : opt->LoaderFlags;
+    info->CheckSum = opt->CheckSum;
+    info->FileSize = 0;
     if (pe32) {
         const IMAGE_OPTIONAL_HEADER32 *o = (const void *)opt;
         if (o->Magic != IMAGE_NT_OPTIONAL_HDR32_MAGIC)
@@ -518,6 +553,10 @@ NTSTATUS MiParseImageHeaders(const void *headers, SIZE_T length, MI_IMAGE_INFO *
     info->StackReserve = opt->SizeOfStackReserve;
     info->StackCommit = opt->SizeOfStackCommit;
     info->Relocatable = !(nt->FileHeader.Characteristics & IMAGE_FILE_RELOCS_STRIPPED);
+    info->BaseFieldRva = (ULONG)dos->e_lfanew + (ULONG)offsetof(IMAGE_NT_HEADERS64, OptionalHeader) +
+                         (pe32 ? (ULONG)offsetof(IMAGE_OPTIONAL_HEADER32, ImageBase)
+                               : (ULONG)offsetof(IMAGE_OPTIONAL_HEADER64, ImageBase));
+    info->BaseFieldWidth = pe32 ? 4 : 8;
     return STATUS_SUCCESS;
 }
 
@@ -569,21 +608,37 @@ BOOLEAN MiImageIsPortableIl(PSECTION s)
     return (flags & COR_FLAG_ILONLY) && !(flags & (COR_FLAG_32BITREQUIRED | COR_FLAG_NATIVE_ENTRYPOINT));
 }
 
+/*
+ * windows' protection of an image section by its shared, execute, read and write bits, bit 28 up: a section that
+ * names none of them cannot be touched, one that only executes is execute only. measured on windows 11 with
+ * scratch/dlls/crash3/imgpages.c of the research repository, on a code section without the execute and read bits.
+ * a writable section is copy on write, which mime keeps as read-write here, see MiMapViewOfSectionEx.
+ */
 static UCHAR protect_of(ULONG chars)
 {
-    BOOLEAN x = (chars & IMAGE_SCN_MEM_EXECUTE) != 0, w = (chars & IMAGE_SCN_MEM_WRITE) != 0;
-    if (x)
-        return w ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ;
-    return w ? PAGE_READWRITE : PAGE_READONLY;
+    static const UCHAR table[16] = {
+        PAGE_NOACCESS,  PAGE_NOACCESS,  PAGE_EXECUTE,           PAGE_EXECUTE,
+        PAGE_READONLY,  PAGE_READONLY,  PAGE_EXECUTE_READ,      PAGE_EXECUTE_READ,
+        PAGE_READWRITE, PAGE_READWRITE, PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_READWRITE,
+        PAGE_READWRITE, PAGE_READWRITE, PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_READWRITE,
+    };
+    return table[(chars >> 28) & 15];
 }
 
+/* a page two sections share takes what either allows. */
 static UCHAR merge_protect(UCHAR a, UCHAR b)
 {
-    BOOLEAN x = (a | b) & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE);
-    BOOLEAN w = (a | b) & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE);
-    if (x)
-        return w ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ;
-    return w ? PAGE_READWRITE : PAGE_READONLY;
+    ULONG bits = 0;
+    for (ULONG i = 0; i < 2; i++) {
+        UCHAR p = i ? b : a;
+        if (p & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE))
+            bits |= IMAGE_SCN_MEM_EXECUTE;
+        if (p & (PAGE_READONLY | PAGE_EXECUTE_READ | PAGE_READWRITE | PAGE_EXECUTE_READWRITE))
+            bits |= IMAGE_SCN_MEM_READ;
+        if (p & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE))
+            bits |= IMAGE_SCN_MEM_WRITE;
+    }
+    return protect_of(bits);
 }
 
 static NTSTATUS set_file_name(PSECTION s, PFILE_OBJECT file)
@@ -597,6 +652,16 @@ static NTSTATUS set_file_name(PSECTION s, PFILE_OBJECT file)
     s->FileName.Buffer[file->FileName.Length / sizeof(WCHAR)] = 0;
     s->FileName.Length = file->FileName.Length;
     s->FileName.MaximumLength = (USHORT)(file->FileName.Length + sizeof(WCHAR));
+    WCHAR device[64];
+    UNICODE_STRING name;
+    if (file->DeviceObject && OBJECT_TO_HEADER(file->DeviceObject)->Directory &&
+        NT_SUCCESS(ObpQueryNameString(file->DeviceObject, &name, device, RTL_NUMBER_OF(device))) && name.Length) {
+        s->DeviceName.Buffer = ExAllocatePool2(POOL_FLAG_NON_PAGED, name.Length, KI_TAG('M', 'm', 'F', 'n'));
+        if (s->DeviceName.Buffer) {
+            memcpy(s->DeviceName.Buffer, name.Buffer, name.Length);
+            s->DeviceName.Length = s->DeviceName.MaximumLength = name.Length;
+        }
+    }
     return STATUS_SUCCESS;
 }
 
@@ -625,6 +690,136 @@ static NTSTATUS image_protections(PSECTION s, const IMAGE_NT_HEADERS64 *nt)
     return STATUS_SUCCESS;
 }
 
+/* ----------------------------------------------------------------- image bases */
+
+/*
+ * where windows 11 loads an image that lets the system choose, one marked IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE whose
+ * relocations are not stripped. measured on build 26300 over several boots with scratch/dlls/probe/imgreloc.c of
+ * the research repository. the base belongs to the image, not to a process: it is drawn when the section is made,
+ * every process maps the image there, and the headers of the image name it.
+ *
+ * a program goes to a 64 KiB step drawn in [0x7FF6'00000000, 0x7FF8'00000000), the same each time its file runs and
+ * another after a boot. one built for a base below 4 GiB stays below it, up to 16 MiB under that base.
+ *
+ * a dll takes the highest free run of 64 KiB steps under a top drawn per boot in [0x7FF8'00000000, 0x7FFF'FFFE0000),
+ * so dlls pack downwards from ntdll, the first of them, and are at one address in every process. one built for a
+ * base below 4 GiB, or made with MI_IMAGE_BASE_BELOW_4GB, packs down from a top drawn in [0x50000000, 0x78000000)
+ * instead. the steps of a dll are free
+ * again when its section goes.
+ *
+ * only x64 images on an x64 machine are moved so far: 32-bit images and the images of other machines keep the base
+ * they were built for, as before.
+ */
+#define MI_IMAGE_STEP 0x10000ull
+#define MI_PROGRAM_LOWEST 0x7FF600000000ull
+#define MI_PROGRAM_END 0x7FF800000000ull
+#define MI_DLL_LOWEST 0x7FF800000000ull
+#define MI_DLL_SLOTS ((0x7FFFFFFE0000ull - MI_DLL_LOWEST) / MI_IMAGE_STEP)
+#define MI_LOW_DLL_LOWEST 0x50000000ull
+#define MI_LOW_DLL_SLOTS ((0x78000000ull - MI_LOW_DLL_LOWEST) / MI_IMAGE_STEP)
+
+typedef struct {
+    ULONG_PTR Lowest;
+    ULONG Slots;
+    ULONG Top; /* the slot dlls pack down from, drawn with the first of them. */
+    ULONG64 *Taken;
+} MI_DLL_RANGE;
+
+static ULONG64 g_dll_taken[(MI_DLL_SLOTS + 63) / 64], g_low_dll_taken[(MI_LOW_DLL_SLOTS + 63) / 64];
+static MI_DLL_RANGE g_dll_ranges[2] = {
+    {MI_DLL_LOWEST, (ULONG)MI_DLL_SLOTS, 0, g_dll_taken},
+    {MI_LOW_DLL_LOWEST, (ULONG)MI_LOW_DLL_SLOTS, 0, g_low_dll_taken},
+};
+static FAST_MUTEX g_image_base_lock;
+static ULONG64 g_image_base_seed;
+
+/* the highest free run under the top, or else the highest one above it. */
+static BOOLEAN take_dll_slots(MI_DLL_RANGE *range, ULONG count, ULONG *out)
+{
+    if (!range->Top)
+        range->Top = (ULONG)(MiRandom() % range->Slots) + 1;
+    for (ULONG pass = 0; pass < 2; pass++) {
+        ULONG high = pass ? range->Slots : range->Top, low = pass ? range->Top : 0, run = 0;
+        for (ULONG i = high; i > low; i--) {
+            if (range->Taken[(i - 1) / 64] & (1ull << ((i - 1) % 64))) {
+                run = 0;
+            } else if (++run == count) {
+                for (ULONG k = i - 1; k < i - 1 + count; k++)
+                    range->Taken[k / 64] |= 1ull << (k % 64);
+                *out = i - 1;
+                return TRUE;
+            }
+        }
+    }
+    return FALSE;
+}
+
+static void release_image_base(PSECTION s)
+{
+    if (!s->BaseRange)
+        return;
+    MI_DLL_RANGE *range = &g_dll_ranges[s->BaseRange - 1];
+    ExAcquireFastMutex(&g_image_base_lock);
+    for (ULONG k = s->BaseSlot; k < s->BaseSlot + s->BaseSlots; k++)
+        range->Taken[k / 64] &= ~(1ull << (k % 64));
+    ExReleaseFastMutex(&g_image_base_lock);
+    s->BaseRange = 0;
+}
+
+/*
+ * what a program's base is drawn from: the boot, the name of its file and what its headers say, so that a file runs at
+ * one base until the next boot and another file of the same name does not.
+ */
+static ULONG64 program_draw(PSECTION s)
+{
+    if (!s->FileName.Length)
+        return MiRandom();
+    ULONG64 z = g_image_base_seed ^ s->SourceSize ^ ((ULONG64)s->Image.EntryPoint << 32) ^
+                ((ULONG64)s->Image.SizeOfImage << 16) ^ s->Image.DllCharacteristics;
+    for (ULONG i = 0; i < s->FileName.Length / sizeof(WCHAR); i++) {
+        WCHAR c = s->FileName.Buffer[i];
+        if (c >= 'A' && c <= 'Z')
+            c += 'a' - 'A';
+        z = (z ^ c) * 0x100000001B3ull;
+    }
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+    return z ^ (z >> 31);
+}
+
+static void select_image_base(PSECTION s)
+{
+    const MI_IMAGE_INFO *image = &s->Image;
+    s->BasedAddress = image->ImageBase;
+    if (MIME_NATIVE_MACHINE != IMAGE_FILE_MACHINE_AMD64 || image->Machine != IMAGE_FILE_MACHINE_AMD64 ||
+        !(image->DllCharacteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE) || !image->Relocatable)
+        return;
+    ULONG64 size = (s->Size + MI_IMAGE_STEP - 1) & ~(MI_IMAGE_STEP - 1);
+    BOOLEAN low = image->ImageBase < 0x100000000ull || s->BaseBelow4gb;
+    if (image->Characteristics & IMAGE_FILE_DLL) {
+        MI_DLL_RANGE *range = &g_dll_ranges[low];
+        ULONG slot = 0;
+        ExAcquireFastMutex(&g_image_base_lock);
+        BOOLEAN taken = take_dll_slots(range, (ULONG)(size / MI_IMAGE_STEP), &slot);
+        ExReleaseFastMutex(&g_image_base_lock);
+        if (!taken)
+            return;
+        s->BaseRange = (ULONG)low + 1;
+        s->BaseSlot = slot;
+        s->BaseSlots = (ULONG)(size / MI_IMAGE_STEP);
+        s->BasedAddress = range->Lowest + slot * MI_IMAGE_STEP;
+    } else if (low) {
+        /* windows wraps a base that would leave the first 16 MiB back into them. */
+        ULONG64 steps = image->ImageBase / MI_IMAGE_STEP, back = program_draw(s) & 0xFF;
+        ULONG64 base = (steps > back ? steps - back : (steps - back) & 0xFF) * MI_IMAGE_STEP;
+        if (base && base + size <= 0x100000000ull)
+            s->BasedAddress = base;
+    } else if (size < MI_PROGRAM_END - MI_PROGRAM_LOWEST) {
+        ULONG64 steps = (MI_PROGRAM_END - MI_PROGRAM_LOWEST - size) / MI_IMAGE_STEP + 1;
+        s->BasedAddress = MI_PROGRAM_LOWEST + (program_draw(s) % steps) * MI_IMAGE_STEP;
+    }
+}
+
 /* lays out one page of an in-memory PE file the way the loader would. */
 static void load_image_page(const UCHAR *file, ULONG64 file_size, const IMAGE_NT_HEADERS64 *nt, ULONG page, PUCHAR out)
 {
@@ -647,11 +842,57 @@ static void load_image_page(const UCHAR *file, ULONG64 file_size, const IMAGE_NT
     }
 }
 
+static const UCHAR g_extension_page[] = {
+    0x40, 0x00, 0x00, 0x00, 0xc0, 0x00, 0x00, 0x00, 0x40, 0x01, 0x00, 0x00, 0xc0, 0x01, 0x00, 0x00,
+    0x40, 0x02, 0x00, 0x00, 0xa4, 0x02, 0x00, 0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f,
+    0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f,
+    0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x48, 0xff, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x90,
+    0x48, 0xff, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x90,
+    0xc3, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x1f, 0x00,
+    0xc3, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x1f, 0x00,
+    0x49, 0xbb, 0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01, 0x49, 0xff, 0xe3, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x66, 0x66, 0x66, 0x66,
+    0x66, 0x66, 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00,
+    0x81, 0x39, 0x06, 0x00, 0x00, 0xc0, 0x74, 0x0a, 0x33, 0xd2, 0xb9, 0x0a, 0x00, 0x00, 0x00, 0xcd,
+    0x29, 0x90, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x19, 0x00, 0x00, 0x00, 0x80, 0x02, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0x02, 0x00, 0x00, 0x98, 0x02,
+};
+
 static PSECTION g_rom_images[64];
-static NTSTATUS create_copied_image(PFILE_OBJECT file, PSECTION *out);
+static NTSTATUS create_copied_image(PFILE_OBJECT file, ULONG flags, PSECTION *out);
 
 /* built lazily from file data the guest can read in place. takes ownership of ref. */
-static NTSTATUS create_source_image(PFILE_OBJECT file, ULONG64 pa, ULONG64 size, PVOID ref, PSECTION *out)
+static NTSTATUS create_source_image(PFILE_OBJECT file, ULONG64 pa, ULONG64 size, PVOID ref, ULONG flags, PSECTION *out)
 {
     const UCHAR *data = HalPhysmap(pa);
     MI_IMAGE_INFO info;
@@ -660,14 +901,17 @@ static NTSTATUS create_source_image(PFILE_OBJECT file, ULONG64 pa, ULONG64 size,
         IoReleaseFileWindow(ref);
         return status;
     }
+    info.FileSize = size > 0xFFFFFFFFull ? 0xFFFFFFFF : (ULONG)size;
     const IMAGE_NT_HEADERS64 *nt = (const void *)(data + ((const IMAGE_DOS_HEADER *)data)->e_lfanew);
     const IMAGE_SECTION_HEADER *sec = IMAGE_FIRST_SECTION(nt);
     for (USHORT i = 0; NT_SUCCESS(status) && i < nt->FileHeader.NumberOfSections; i++)
         if ((ULONG64)sec[i].PointerToRawData + sec[i].SizeOfRawData > size)
             status = STATUS_INVALID_IMAGE_FORMAT;
+    /* an image built with control flow guard gets a page of stubs after it, as windows gives every such image. */
+    BOOLEAN extended = (info.DllCharacteristics & 0x4000) != 0;
     PSECTION s = nullptr;
     if (NT_SUCCESS(status))
-        status = alloc_section(info.SizeOfImage, &s);
+        status = alloc_section(info.SizeOfImage + (extended ? PAGE_SIZE : 0), &s);
     if (!NT_SUCCESS(status)) {
         IoReleaseFileWindow(ref);
         return status;
@@ -682,17 +926,32 @@ static NTSTATUS create_source_image(PFILE_OBJECT file, ULONG64 pa, ULONG64 size,
     s->SourceRef = ref;
     MmWindowSectionAttach(s);
     status = image_protections(s, nt);
+    if (NT_SUCCESS(status) && extended) {
+        ULONG64 page = MmAllocatePage();
+        if (!page) {
+            status = STATUS_INSUFFICIENT_RESOURCES;
+        } else {
+            memcpy(HalPhysmap(page), g_extension_page, sizeof(g_extension_page));
+            ULONG at = (ULONG)(info.SizeOfImage >> PAGE_SHIFT);
+            s->Pages[at] = page;
+            s->PageProtect[at] = PAGE_EXECUTE_READ;
+            s->ExtensionRva = info.SizeOfImage;
+        }
+    }
     if (NT_SUCCESS(status))
         status = set_file_name(s, file);
     if (!NT_SUCCESS(status)) {
         ObDereferenceObject(s);
         return status;
     }
+    s->BaseBelow4gb = (flags & MI_IMAGE_BASE_BELOW_4GB) != 0;
+    select_image_base(s);
     ObReferenceObject(file);
     s->File = file;
     *out = s;
     return STATUS_SUCCESS;
 }
+
 
 static PSECTION g_rom_images[64];
 
@@ -700,13 +959,28 @@ static PSECTION g_rom_images[64];
  * weak table of file image sections: a section leaves it when deleted. a section keeps its file window
  * mapped, so the same address and size mean the same bytes.
  */
-static PSECTION g_file_images[128];
+static PSECTION g_file_images[1024];
 
 static PSECTION find_file_image(ULONG64 pa, ULONG64 size)
 {
     for (ULONG i = 0; i < RTL_NUMBER_OF(g_file_images); i++) {
         PSECTION s = g_file_images[i];
         if (s && s->SourcePa == pa && s->SourceSize == size)
+            return s;
+    }
+    return nullptr;
+}
+
+/*
+ * a file of the system has one image whoever opens it, as on windows, where the dll the kernel maps into a process
+ * and the section of \KnownDlls are the same image at the same base. microsoft's copy of it gets a window per open,
+ * so its entry names it here.
+ */
+static PSECTION find_rom_image(const MimeRomEntry *rom)
+{
+    for (ULONG i = 0; i < RTL_NUMBER_OF(g_file_images); i++) {
+        PSECTION s = g_file_images[i];
+        if (s && s->SourceRom == rom)
             return s;
     }
     return nullptr;
@@ -731,6 +1005,15 @@ static void forget_file_image(PSECTION s)
 
 NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out)
 {
+    return MiCreateImageSectionEx(file, 0, out);
+}
+
+/*
+ * flags are MI_IMAGE_BASE_*. a file has one image whoever opens it, so the flags of the first creation stay: on
+ * windows the session manager makes the sections of \KnownDlls before anything maps those files.
+ */
+NTSTATUS MiCreateImageSectionEx(PFILE_OBJECT file, ULONG flags, PSECTION *out)
+{
     ULONG64 pa, size;
     PVOID ref;
     const MimeRomEntry *rom = IoGetRomFile(file);
@@ -743,6 +1026,14 @@ NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out)
             return STATUS_SUCCESS;
         }
     }
+    if (rom && index >= RTL_NUMBER_OF(g_rom_images)) {
+        PSECTION shared = find_rom_image(rom);
+        if (shared) {
+            ObReferenceObject(shared);
+            *out = shared;
+            return STATUS_SUCCESS;
+        }
+    }
     if (IoGetImageFileWindow(file, &pa, &size, &ref)) {
         /* processes running the same image share its section, and so its built and relocated pages. */
         PSECTION shared = index >= RTL_NUMBER_OF(g_rom_images) ? find_file_image(pa, size) : nullptr;
@@ -752,7 +1043,11 @@ NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out)
             *out = shared;
             return STATUS_SUCCESS;
         }
-        NTSTATUS status = create_source_image(file, pa, size, ref, out);
+        NTSTATUS status = create_source_image(file, pa, size, ref, flags, out);
+        if (NT_SUCCESS(status) && rom) {
+            (*out)->SystemImage = TRUE;
+            (*out)->SourceRom = rom;
+        }
         if (NT_SUCCESS(status) && index < RTL_NUMBER_OF(g_rom_images)) {
             PSECTION expected = nullptr;
             ObReferenceObject(*out);
@@ -764,11 +1059,18 @@ NTSTATUS MiCreateImageSection(PFILE_OBJECT file, PSECTION *out)
         }
         return status;
     }
-    return create_copied_image(file, out);
+    NTSTATUS status = create_copied_image(file, flags, out);
+    if (NT_SUCCESS(status) && rom) {
+        (*out)->SystemImage = TRUE;
+        (*out)->SourceRom = rom;
+        if (index >= RTL_NUMBER_OF(g_rom_images))
+            remember_file_image(*out);
+    }
+    return status;
 }
 
 /* for files no window covers, such as files opened for writing: the image is read into memory. */
-static NTSTATUS create_copied_image(PFILE_OBJECT file, PSECTION *out)
+static NTSTATUS create_copied_image(PFILE_OBJECT file, ULONG flags, PSECTION *out)
 {
     PUCHAR headers = ExAllocatePool2(POOL_FLAG_NON_PAGED, PAGE_SIZE, KI_TAG('M', 'm', 'H', 'd'));
     if (!headers)
@@ -784,6 +1086,9 @@ static NTSTATUS create_copied_image(PFILE_OBJECT file, PSECTION *out)
         return status == STATUS_END_OF_FILE ? STATUS_INVALID_FILE_FOR_SECTION : status;
     }
     const IMAGE_NT_HEADERS64 *nt = (const void *)(headers + ((PIMAGE_DOS_HEADER)headers)->e_lfanew);
+    ULONG64 file_size = 0;
+    if (NT_SUCCESS(IoQueryFileSize(file, &file_size)))
+        info.FileSize = file_size > 0xFFFFFFFFull ? 0xFFFFFFFF : (ULONG)file_size;
     PSECTION s;
     status = alloc_section(info.SizeOfImage, &s);
     if (!NT_SUCCESS(status)) {
@@ -834,6 +1139,8 @@ static NTSTATUS create_copied_image(PFILE_OBJECT file, PSECTION *out)
         ObDereferenceObject(s);
         return status;
     }
+    s->BaseBelow4gb = (flags & MI_IMAGE_BASE_BELOW_4GB) != 0;
+    select_image_base(s);
     ObReferenceObject(file);
     s->File = file;
     *out = s;
@@ -1132,6 +1439,12 @@ static void apply_relocations(PSECTION s, ULONG64 *pages, ULONG_PTR base)
 {
     LONG64 delta = (LONG64)(base - s->Image.ImageBase);
     ULONG off = 0;
+    /* the base the headers name, see relocate_base_field. */
+    for (ULONG b = 0; b < s->Image.BaseFieldWidth; b++) {
+        ULONG64 rva = (ULONG64)s->Image.BaseFieldRva + b;
+        if (rva < s->Size)
+            *((PUCHAR)HalPhysmap(pages[rva >> PAGE_SHIFT]) + (rva & (PAGE_SIZE - 1))) = (UCHAR)((ULONG64)base >> (8 * b));
+    }
     while (off + sizeof(IMAGE_BASE_RELOCATION) <= s->RelocSize) {
         IMAGE_BASE_RELOCATION block;
         ULONG64 rva = s->RelocRva + off;
@@ -1174,6 +1487,8 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
     if (!ext)
         ext = &none;
     BOOLEAN image = (s->Flags & SEC_IMAGE) != 0;
+    if (image)
+        KiLogPrintf("map image %wZ want %p size %llx", &s->FileName, *base, (unsigned long long)*view_size);
     BOOLEAN replace = (allocation_type & MEM_REPLACE_PLACEHOLDER) != 0;
     if (replace && (image || !*base))
         return image ? STATUS_INVALID_PARAMETER : STATUS_CONFLICTING_ADDRESSES;
@@ -1201,21 +1516,35 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
     NTSTATUS status = STATUS_SUCCESS;
     PMMVAD placeholder = nullptr;
     if (image) {
+        /* like windows, an image goes to a 64 KiB boundary or nowhere. */
+        if (va & 0xFFFF) {
+            MiUnlockAddressSpace(as);
+            return STATUS_MAPPED_ALIGNMENT;
+        }
         if (!va)
-            va = s->Image.ImageBase;
+            va = s->BasedAddress;
         if (!MiRangeIsFree(as, va, va + bytes)) {
             if (*base || !s->Image.Relocatable) {
                 MiUnlockAddressSpace(as);
                 return STATUS_CONFLICTING_ADDRESSES;
             }
-            /* reuse the section's relocated base so views there can share relocated pages. */
-            if (s->RelocBase && MiRangeIsFree(as, s->RelocBase, s->RelocBase + bytes))
+            /*
+             * reuse the section's relocated base so views there can share relocated pages. or else, like windows, the
+             * view goes where a search from below finds room, under 4 GiB for an image that lives there. a 32-bit
+             * program keeps the search from above it had.
+             */
+            if (s->RelocBase && MiRangeIsFree(as, s->RelocBase, s->RelocBase + bytes)) {
                 va = s->RelocBase;
-            else
-                status = MiFindFreeRange(as, bytes, 0x10000, TRUE, &va);
-            relocated = TRUE;
+            } else {
+                status = STATUS_NO_MEMORY;
+                if (!as->AllocationLimit && s->BasedAddress < 0x100000000ull)
+                    status = MiFindFreeRangeEx(as, bytes, 0x10000, 0, 0xFFFFFFFFull, FALSE, &va);
+                if (!NT_SUCCESS(status))
+                    status = MiFindFreeRange(as, bytes, 0x10000, as->AllocationLimit != 0, &va);
+            }
         }
-        relocated = relocated || va != s->Image.ImageBase;
+        /* the pages are laid out for the preferred base: a view anywhere else shows them fixed for where it is. */
+        relocated = va != s->Image.ImageBase;
     } else if (replace) {
         va &= ~(ULONG_PTR)(PAGE_SIZE - 1);
         PMMVAD vad = MiFindVad(as, va);
@@ -1262,6 +1591,8 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
     vad->Section = s;
     vad->SectionOffset = first_page << PAGE_SHIFT;
     vad->Flags = replace ? MM_VAD_REPLACED : 0;
+    if (!image && ((allocation_type & SEC_NO_CHANGE) || (s->Flags & SEC_NO_CHANGE)))
+        vad->Flags |= MM_VAD_NO_CHANGE;
     vad->RelocDelta = 0;
     if (lazy) {
         vad->Flags |= MM_VAD_RELOCATED;
@@ -1269,8 +1600,9 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
         if (!s->RelocBase) {
             s->RelocPages = ExAllocatePool2(POOL_FLAG_NON_PAGED, ((SIZE_T)s->PageCount + 1) * sizeof(ULONG64),
                                             KI_TAG('M', 'm', 'R', 's'));
+            /* the base drawn for the image is where its views are, whichever view comes first. */
             if (s->RelocPages)
-                s->RelocBase = va;
+                s->RelocBase = s->BasedAddress != s->Image.ImageBase ? s->BasedAddress : va;
         }
         if (s->RelocBase == va)
             vad->Flags |= MM_VAD_RELOCATED_SHARED;
@@ -1301,7 +1633,7 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
             }
             memcpy(HalPhysmap(private_pages[i]), HalPhysmap(src), PAGE_SIZE);
         }
-        if (NT_SUCCESS(status) && s->RelocSize)
+        if (NT_SUCCESS(status))
             apply_relocations(s, private_pages, va);
     }
 
@@ -1310,6 +1642,8 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
         ULONG_PTR pva = va + (i << PAGE_SHIFT);
         ULONG prot = image ? s->PageProtect[i] : protect;
         BOOLEAN writable = (prot & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE)) != 0;
+        /* an image page nobody wrote is copy on write, and that is what a query and a protect report for it. */
+        ULONG untouched = !image || !writable ? prot : prot & PAGE_READWRITE ? PAGE_WRITECOPY : PAGE_EXECUTE_WRITECOPY;
         if (lazy) {
             ULONG64 ready = MiSectionReadyPage(vad, i, prot);
             if (ready) {
@@ -1320,17 +1654,18 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
                 if (!pte)
                     status = STATUS_INSUFFICIENT_RESOURCES;
                 else
-                    *pte = MiSectionSwPte(prot);
+                    *pte = MiSectionSwPte(untouched);
             }
             continue;
         }
         ULONG64 pa = relocated ? private_pages[i] : __atomic_load_n(&s->Pages[first_page + i], __ATOMIC_ACQUIRE);
-        if (!pa || (image && !relocated && writable)) {
+        /* windows maps a program's view of data on first touch, which the working set of its pages tells. */
+        if (!pa || (image && !relocated && writable) || (!image && ext->OnDemand)) {
             ULONG64 *pte = MiWalk(as->Root, pva, TRUE, 3);
             if (!pte)
                 status = STATUS_INSUFFICIENT_RESOURCES;
             else
-                *pte = MiSectionSwPte(prot);
+                *pte = MiSectionSwPte(untouched);
             continue;
         }
         ULONG64 attrs = MiSectionPteAttrs(s, prot, pa, !relocated);
@@ -1353,7 +1688,14 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
     *view_size = bytes;
     if (image && PspImageNotifyRegistered())
         PspNotifyImage(&s->FileName, process, (PVOID)va, bytes, s->File);
-    return relocated ? STATUS_IMAGE_NOT_AT_BASE : STATUS_SUCCESS;
+    if (!image || va == s->BasedAddress)
+        return STATUS_SUCCESS;
+    /*
+     * measured on windows 11 with collide.exe: a caller that lets the kernel move the image is told the view is
+     * already fixed for where it is, and ntdll then leaves its relocations alone. any other caller is told to fix it.
+     */
+    return allocation_type & 0x800000 /* MEM_DIFFERENT_IMAGE_BASE_OK */ ? STATUS_IMAGE_AT_DIFFERENT_BASE
+                                                                         : STATUS_IMAGE_NOT_AT_BASE;
 }
 
 NTSTATUS MiMapViewOfSection(PSECTION s, PEPROCESS process, PVOID *base, ULONG64 offset, SIZE_T *view_size,
@@ -1423,6 +1765,29 @@ NTSTATUS NTAPI MmCreateSharedSection(SIZE_T size, PVOID *kernel_base, PVOID *sec
     return STATUS_SUCCESS;
 }
 
+/* a section whose head alone has pages, like the heap a server shares and commits as it grows. the kernel sees the head. */
+NTSTATUS NTAPI MmCreateReservedSection(SIZE_T size, SIZE_T committed, PVOID *kernel_base, PVOID *section)
+{
+    PSECTION s;
+    NTSTATUS status = MiCreateDataSection(nullptr, size, PAGE_READWRITE, SEC_COMMIT, &s);
+    if (!NT_SUCCESS(status))
+        return status;
+    ULONG pages = (ULONG)BYTES_TO_PAGES(committed);
+    PVOID va = nullptr;
+    BOOLEAN ok = pages <= s->PageCount;
+    for (ULONG i = 0; ok && i < pages; i++)
+        ok = MiSectionPage(s, i) != 0;
+    if (ok)
+        va = MmMapPagesInSystem(s->Pages, pages, MM_KERNEL_RW);
+    if (!va) {
+        ObDereferenceObject(s);
+        return STATUS_INSUFFICIENT_RESOURCES;
+    }
+    *kernel_base = va;
+    *section = s;
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS NTAPI MmCreatePhysicalSection(ULONG64 pa, SIZE_T size, PVOID *section)
 {
     PSECTION s;
@@ -1464,6 +1829,13 @@ NTSTATUS NTAPI MmMapSharedSectionUser(PVOID section, PEPROCESS process, PVOID *u
     *user_base = nullptr;
     return MiMapViewOfSection(section, process, user_base, 0, &size, writable ? PAGE_READWRITE : PAGE_READONLY,
                               MEM_TOP_DOWN);
+}
+
+NTSTATUS NTAPI MmMapReadOnlySection(PVOID section, PEPROCESS process, PVOID *user_base)
+{
+    SIZE_T size = 0;
+    *user_base = nullptr;
+    return MiMapViewOfSection(section, process, user_base, 0, &size, PAGE_READONLY, 0);
 }
 
 NTSTATUS NTAPI MmMapViewInSystemSpace(PVOID section, PVOID *base, PSIZE_T size)
@@ -1589,12 +1961,26 @@ NTSTATUS NTAPI NtOpenSection(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBU
     NTSTATUS status = ObCaptureObjectAttributes(attributes, &oa, &name);
     if (!NT_SUCCESS(status))
         return status;
+    BOOLEAN refused = ObRefuseOpenLink(&oa);
     HANDLE h;
     status = ObOpenObjectByName(&oa, MmSectionType, KeGetPreviousMode(), nullptr, access, nullptr, &h);
+    if (NT_SUCCESS(status) && refused) {
+        NtClose(h);
+        status = STATUS_INVALID_PARAMETER;
+    }
     if (NT_SUCCESS(status))
         status = ObStoreHandle(handle, h);
     KiFreeCapturedString(&name);
     return status;
+}
+
+/*
+ * a view of a pagefile backed section asks no more than the section allows. the sections of a file are one object in
+ * mime, made with the first caller's protection, so their views are left to the handle's access.
+ */
+static BOOLEAN view_protection_fits(PSECTION section, ULONG protect)
+{
+    return (section->Flags & SEC_IMAGE) || section->File || MiProtectionCompatible(section->Protect, protect);
 }
 
 NTSTATUS NTAPI NtMapViewOfSection(HANDLE section_handle, HANDLE process_handle, PVOID *base, ULONG_PTR zero_bits,
@@ -1623,9 +2009,13 @@ NTSTATUS NTAPI NtMapViewOfSection(HANDLE section_handle, HANDLE process_handle, 
     if ((protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) &&
         !(section->Flags & SEC_IMAGE) && PsDynamicCodeBlocked(process))
         status = (NTSTATUS)0xC0000604L; /* STATUS_DYNAMIC_CODE_BLOCKED. */
-    else
+    else if (!view_protection_fits(section, protect))
+        status = STATUS_SECTION_PROTECTION;
+    else {
+        MI_EXTENDED ext = {.OnDemand = TRUE};
         status = MiMapViewOfSectionEx(section, process, &b, (ULONG64)off.QuadPart, &vs, protect, allocation_type,
-                                      zero_bits, nullptr);
+                                      zero_bits, &ext);
+    }
     if (NT_SUCCESS(status)) {
         KiCopyToUser(base, &b, sizeof(b));
         if (view_size)
@@ -1664,6 +2054,7 @@ NTSTATUS NTAPI NtMapViewOfSectionEx(HANDLE section_handle, HANDLE process_handle
     }
     MI_EXTENDED ext;
     status = MiCaptureExtendedParameters(parameters, count, 0x66, KeGetPreviousMode() == UserMode, &ext);
+    ext.OnDemand = TRUE;
     if (NT_SUCCESS(status) && ((ext.Attributes & ~0x260ull) || ext.Node > 1 || (allocation_type & ~(ULONG)0x20906000)))
         status = STATUS_INVALID_PARAMETER;
     if (NT_SUCCESS(status) && (allocation_type & MEM_REPLACE_PLACEHOLDER) &&
@@ -1674,11 +2065,16 @@ NTSTATUS NTAPI NtMapViewOfSectionEx(HANDLE section_handle, HANDLE process_handle
         status = STATUS_INVALID_PARAMETER;
     if (NT_SUCCESS(status) && b && (ext.Lowest || ext.Highest || ext.Alignment))
         status = STATUS_INVALID_PARAMETER;
-    if (NT_SUCCESS(status) && (allocation_type & (MEM_LARGE_PAGES | MEM_ROTATE)))
+    /* the bit of MEM_ROTATE says of an image that a base other than its own is fine, which the loader always passes. */
+    BOOLEAN image = (section->Flags & SEC_IMAGE) != 0;
+    if (NT_SUCCESS(status) && (allocation_type & (MEM_LARGE_PAGES | (image ? 0 : MEM_ROTATE))))
         status = STATUS_NOT_SUPPORTED;
+    if (NT_SUCCESS(status) && !view_protection_fits(section, protect & ~(ULONG)PAGE_TARGETS_INVALID))
+        status = STATUS_SECTION_PROTECTION;
     if (NT_SUCCESS(status))
         status = MiMapViewOfSectionEx(section, process, &b, (ULONG64)off.QuadPart, &vs,
-                                      protect & ~(ULONG)PAGE_TARGETS_INVALID, allocation_type, 0, &ext);
+                                      protect & ~(ULONG)PAGE_TARGETS_INVALID,
+                                      image ? allocation_type & ~(ULONG)MEM_ROTATE : allocation_type, 0, &ext);
     if (NT_SUCCESS(status)) {
         KiCopyToUser(base, &b, sizeof(b));
         KiCopyToUser(view_size, &vs, sizeof(vs));
@@ -1758,7 +2154,7 @@ typedef struct _SECTION_BASIC_INFORMATION {
 void MmGetSectionImageInformation(PSECTION s, SECTION_IMAGE_INFORMATION *image)
 {
     memset(image, 0, sizeof(*image));
-    image->TransferAddress = (PVOID)(s->Image.ImageBase + s->Image.EntryPoint);
+    image->TransferAddress = (PVOID)(s->BasedAddress + s->Image.EntryPoint);
     image->MaximumStackSize = s->Image.StackReserve;
     image->CommittedStackSize = s->Image.StackCommit;
     image->SubSystemType = s->Image.Subsystem;
@@ -1768,6 +2164,17 @@ void MmGetSectionImageInformation(PSECTION s, SECTION_IMAGE_INFORMATION *image)
     image->DllCharacteristics = s->Image.DllCharacteristics;
     image->Machine = s->Image.Machine;
     image->ImageContainsCode = TRUE;
+    /* measured on windows 11 26100 with prebox.exe of scratch/dlls/probe: the version of the system the image asks
+       for, the size of its file, and the flag of an image that is not at the base its headers name. */
+    image->MajorOperatingSystemVersion = s->Image.OsMajor;
+    image->MinorOperatingSystemVersion = s->Image.OsMinor;
+    image->LoaderFlags = s->Image.LoaderFlags;
+    image->CheckSum = s->Image.CheckSum;
+    image->ImageFileSize = s->Image.FileSize;
+    if (s->BasedAddress != s->Image.ImageBase)
+        image->ImageFlags |= 0x4; /* ImageDynamicallyRelocated */
+    if (s->BaseBelow4gb)
+        image->ImageFlags |= 0x10; /* BaseBelow4gb */
 }
 
 NTSTATUS NTAPI NtQuerySection(HANDLE handle, ULONG klass, PVOID info, SIZE_T length, PSIZE_T returned)
@@ -1779,17 +2186,29 @@ NTSTATUS NTAPI NtQuerySection(HANDLE handle, ULONG klass, PVOID info, SIZE_T len
     union {
         SECTION_BASIC_INFORMATION basic;
         SECTION_IMAGE_INFORMATION image;
+        ULONG_PTR pointer;
     } out;
     SIZE_T size;
     memset(&out, 0, sizeof(out));
     if (klass == 0) {
         out.basic.AllocationAttributes = s->Flags & ~(MI_SECTION_PHYSICAL | MI_SECTION_SHARE_SOURCE | MI_SECTION_WRITABLE_WINDOW |
                                                      MI_SECTION_WRITE_BACK);
+        /* windows names the file behind a section among its attributes, read on the sections of \KnownDlls. */
+        if (s->File)
+            out.basic.AllocationAttributes |= SEC_FILE;
         out.basic.MaximumSize.QuadPart = (LONGLONG)s->Size;
         size = sizeof(out.basic);
     } else if (klass == 1 && (s->Flags & SEC_IMAGE)) {
         MmGetSectionImageInformation(s, &out.image);
         size = sizeof(out.image);
+    } else if (klass == 2 || klass == 3) {
+        /* SectionRelocationInformation: how far the image is from the base it was built for. SectionOriginalBaseInformation: that base. */
+        if (!(s->Flags & SEC_IMAGE)) {
+            ObDereferenceObject(s);
+            return STATUS_SECTION_NOT_IMAGE;
+        }
+        out.pointer = klass == 2 ? s->BasedAddress - s->Image.ImageBase : s->Image.ImageBase;
+        size = sizeof(out.pointer);
     } else {
         ObDereferenceObject(s);
         return STATUS_INVALID_INFO_CLASS;
@@ -1812,4 +2231,6 @@ void MiInitializeSections(void)
     ObSetGenericMapping(&init, 0x20005, 0x20002, 0x20008, 0xF001F);
     MmSectionType = ObCreateObjectType(L"Section", &init);
     ExInitializeFastMutex(&g_write_back_lock);
+    ExInitializeFastMutex(&g_image_base_lock);
+    g_image_base_seed = MiRandom();
 }
