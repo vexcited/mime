@@ -1,0 +1,1040 @@
+; the classes of the microsoft files windows.storage.dll, propsys.dll, SHCore.dll and WinTypes.dll, with every key below
+; them, as the SOFTWARE hive of the pinned image has them. the 32-bit side is made by regc.
+
+[HKCR\CLSID\{00021400-0000-0000-C000-000000000046}]
+@="Desktop"
+[HKCR\CLSID\{00021400-0000-0000-C000-000000000046}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{00021400-0000-0000-C000-000000000046}\shell]
+[HKCR\CLSID\{00021400-0000-0000-C000-000000000046}\shell\cmd]
+@="@shell32.dll,-8506"
+"Extended"=""
+"NeverDefault"=""
+"NoWorkingDirectory"=""
+[HKCR\CLSID\{00021400-0000-0000-C000-000000000046}\shell\cmd\command]
+@="cmd.exe /s /k pushd \"%V\""
+[HKCR\CLSID\{00021400-0000-0000-C000-000000000046}\ShellFolder]
+"FolderValueFlags"=dword:00180000
+[HKCR\CLSID\{00021401-0000-0000-C000-000000000046}]
+@="Shortcut"
+"AppID"="{00021401-0000-0000-C000-000000000046}"
+"DisableProcessIsolation"=dword:00000001
+"NoOplock"=dword:00000001
+"ImplementsVerbs_57785863"="runas"
+[HKCR\CLSID\{00021401-0000-0000-C000-000000000046}\Implemented Categories]
+[HKCR\CLSID\{00021401-0000-0000-C000-000000000046}\Implemented Categories\{00000003-0000-0000-C000-000000000046}]
+[HKCR\CLSID\{00021401-0000-0000-C000-000000000046}\InProcServer32]
+@="C:\\Windows\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{00021401-0000-0000-C000-000000000046}\OverrideFileSystemProperties]
+"System.Kind"=dword:00000001
+[HKCR\CLSID\{00021401-0000-0000-C000-000000000046}\ProgID]
+@="lnkfile"
+[HKCR\CLSID\{00021401-0000-0000-C000-000000000046}\shellex]
+[HKCR\CLSID\{00021401-0000-0000-C000-000000000046}\shellex\MayChangeDefaultMenu]
+[HKCR\CLSID\{02df6db6-9405-4812-b3f6-500e8615b7af}]
+@="Registry Data Driven Command"
+[HKCR\CLSID\{02df6db6-9405-4812-b3f6-500e8615b7af}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{031E4825-7B94-4dc3-B131-E946B44C8DD5}]
+@="UsersLibraries"
+"LocalizedString"=expand:"@%SystemRoot%\\system32\\windows.storage.dll,-50691"
+"SortOrderIndex"=dword:00000054
+"System.IsPinnedToNameSpaceTree"=dword:00000000
+"System.PropList.DetailsPaneNullSelect"="prop:"
+"System.PropList.DetailsPaneNullSelectTitle"="prop:"
+[HKCR\CLSID\{031E4825-7B94-4dc3-B131-E946B44C8DD5}\DefaultIcon]
+@=expand:"%SystemRoot%\\system32\\imageres.dll,-1023"
+[HKCR\CLSID\{031E4825-7B94-4dc3-B131-E946B44C8DD5}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{031E4825-7B94-4dc3-B131-E946B44C8DD5}\shell]
+[HKCR\CLSID\{031E4825-7B94-4dc3-B131-E946B44C8DD5}\shell\restorelibraries]
+"Description"="@shell32.dll,-34646"
+"MUIVerb"="@shell32.dll,-34645"
+"SeparatorAfter"=dword:00000001
+"SeparatorBefore"=dword:00000001
+[HKCR\CLSID\{031E4825-7B94-4dc3-B131-E946B44C8DD5}\shell\restorelibraries\command]
+"DelegateExecute"="{c51b83e5-9edd-4250-b45a-da672ee3c70e}"
+[HKCR\CLSID\{031E4825-7B94-4dc3-B131-E946B44C8DD5}\ShellFolder]
+"Attributes"=dword:b080010d
+"FolderValueFlags"=dword:00042220
+[HKCR\CLSID\{0340F119-A598-4ed9-B0AC-6F6A12D3E755}]
+@="Property Store over folder final"
+[HKCR\CLSID\{0340F119-A598-4ed9-B0AC-6F6A12D3E755}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{0997898B-0713-11d2-A4AA-00C04F8EEB3E}]
+@="Common Places FS Folder"
+[HKCR\CLSID\{0997898B-0713-11d2-A4AA-00C04F8EEB3E}\InProcServer32]
+@=expand:"%SystemRoot%\\System32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{0c39a5cf-1a7a-40c8-ba74-8900e6df5fcd}]
+"NoPreviousVersions"=""
+[HKCR\CLSID\{0c39a5cf-1a7a-40c8-ba74-8900e6df5fcd}\DefaultIcon]
+@=expand:"%SystemRoot%\\system32\\imageres.dll,-117"
+[HKCR\CLSID\{0c39a5cf-1a7a-40c8-ba74-8900e6df5fcd}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{0c39a5cf-1a7a-40c8-ba74-8900e6df5fcd}\shellex]
+[HKCR\CLSID\{0c39a5cf-1a7a-40c8-ba74-8900e6df5fcd}\shellex\ContextMenuHandlers]
+[HKCR\CLSID\{0c39a5cf-1a7a-40c8-ba74-8900e6df5fcd}\shellex\ContextMenuHandlers\{A8E64375-B645-4314-9EFC-C085981786FA}]
+[HKCR\CLSID\{0c39a5cf-1a7a-40c8-ba74-8900e6df5fcd}\ShellFolder]
+"Attributes"=dword:20040000
+"RestrictedAttributes"=dword:00000032
+[HKCR\CLSID\{0E5AAE11-A475-4c5b-AB00-C66DE400274E}]
+@="Shell File System Folder"
+[HKCR\CLSID\{0E5AAE11-A475-4c5b-AB00-C66DE400274E}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\Windows.Storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{0E5AAE11-A475-4c5b-AB00-C66DE400274E}\ShellFolder]
+"FolderValueFlags"=dword:00080000
+[HKCR\CLSID\{11659a23-5884-4d1b-9cf6-67d6f4f90b36}]
+@="Ptype_PSFactory"
+[HKCR\CLSID\{11659a23-5884-4d1b-9cf6-67d6f4f90b36}\InProcServer32]
+@="C:\\Windows\\System32\\WinTypes.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{11d162b6-1cea-4b4a-8037-2518ecd6554b}]
+@="CLSID_FTItemContainer"
+[HKCR\CLSID\{11d162b6-1cea-4b4a-8037-2518ecd6554b}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{155D4413-6C57-494B-9455-416506801D76}]
+@="App Defaults Integrity"
+[HKCR\CLSID\{155D4413-6C57-494B-9455-416506801D76}\InProcServer32]
+@="C:\\Windows\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{1649d1cf-deaf-4a68-abe8-5c9f68572fd1}]
+@="ExecuteAssociation"
+[HKCR\CLSID\{1649d1cf-deaf-4a68-abe8-5c9f68572fd1}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{18F546F6-B34B-4B30-B4C6-5E88BED8BD84}]
+@="MS Graph Shared File Folder"
+[HKCR\CLSID\{18F546F6-B34B-4B30-B4C6-5E88BED8BD84}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{18F546F6-B34B-4B30-B4C6-5E88BED8BD84}\ShellFolder]
+"Attributes"=dword:68000004
+"FolderValueFlags"=dword:00002020
+"WantsParseDisplayName"=""
+[HKCR\CLSID\{19eb3aee-148e-42fe-a569-a7dc9b25d658}]
+@="CMusicPropertiesProxy"
+[HKCR\CLSID\{19eb3aee-148e-42fe-a569-a7dc9b25d658}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{1f486a52-3cb1-48fd-8f50-b8dc300d9f9d}]
+@="Memory Mapped Cache Mgr"
+[HKCR\CLSID\{1f486a52-3cb1-48fd-8f50-b8dc300d9f9d}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{20D04FE0-3AEA-1069-A2D8-08002B30309D}]
+@="This PC"
+"InfoTip"=expand:"@%SystemRoot%\\system32\\shell32.dll,-22913"
+"LocalizedString"=expand:"@%SystemRoot%\\system32\\windows.storage.dll,-9216"
+"System.Keywords"="@%windir%\\system32\\windows.storage.dll,-9012"
+"System.PropList.DetailsPaneNullSelect"="prop:*System.Computer.DomainName;*System.Computer.Workgroup;*System.Computer.Processor;System.Computer.Memory"
+"System.PropList.DetailsPaneNullSelectTitle"="prop:System.Computer.SimpleName;*System.Computer.Description"
+[HKCR\CLSID\{20D04FE0-3AEA-1069-A2D8-08002B30309D}\DefaultIcon]
+@=expand:"%SystemRoot%\\System32\\imageres.dll,-109"
+[HKCR\CLSID\{20D04FE0-3AEA-1069-A2D8-08002B30309D}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{20D04FE0-3AEA-1069-A2D8-08002B30309D}\shell]
+@="none"
+[HKCR\CLSID\{20D04FE0-3AEA-1069-A2D8-08002B30309D}\shell\find]
+@=expand:"@%SystemRoot%\\system32\\windows.storage.dll,-8503"
+"LegacyDisable"=""
+"SuppressionPolicy"=dword:00000080
+[HKCR\CLSID\{20D04FE0-3AEA-1069-A2D8-08002B30309D}\shell\find\command]
+@=expand:"%SystemRoot%\\Explorer.exe"
+"DelegateExecute"="{a015411a-f97d-4ef3-8425-8a38d022aebc}"
+[HKCR\CLSID\{20D04FE0-3AEA-1069-A2D8-08002B30309D}\shell\Manage]
+@=expand:"@%systemroot%\\system32\\mycomput.dll,-400"
+"MUIVerb"=expand:"@%systemroot%\\system32\\mycomput.dll,-400"
+"SuppressionPolicy"=dword:4000003c
+[HKCR\CLSID\{20D04FE0-3AEA-1069-A2D8-08002B30309D}\shell\Manage\command]
+@=expand:"%SystemRoot%\\system32\\CompMgmtLauncher.exe"
+[HKCR\CLSID\{20D04FE0-3AEA-1069-A2D8-08002B30309D}\ShellFolder]
+"FolderValueFlags"=dword:00182200
+[HKCR\CLSID\{22877a6d-37a1-461a-91b0-dbda5aaebc99}]
+@="Recent Places Folder"
+"LocalizedString"=expand:"@%SystemRoot%\\system32\\shell32.dll,-37217"
+[HKCR\CLSID\{22877a6d-37a1-461a-91b0-dbda5aaebc99}\DefaultIcon]
+@=expand:"%SystemRoot%\\system32\\imageres.dll,-117"
+[HKCR\CLSID\{22877a6d-37a1-461a-91b0-dbda5aaebc99}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{22877a6d-37a1-461a-91b0-dbda5aaebc99}\shellex]
+[HKCR\CLSID\{22877a6d-37a1-461a-91b0-dbda5aaebc99}\shellex\ContextMenuHandlers]
+[HKCR\CLSID\{22877a6d-37a1-461a-91b0-dbda5aaebc99}\shellex\ContextMenuHandlers\{A8E64375-B645-4314-9EFC-C085981786FA}]
+[HKCR\CLSID\{22877a6d-37a1-461a-91b0-dbda5aaebc99}\ShellFolder]
+"Attributes"=dword:20040000
+"FolderValueFlags"=dword:00000800
+"RestrictedAttributes"=dword:00000032
+[HKCR\CLSID\{26671179-2ec2-42bf-93d3-64108589cad5}]
+@="ShellItemArray Shell Namespace helper"
+[HKCR\CLSID\{26671179-2ec2-42bf-93d3-64108589cad5}\Implemented Categories]
+[HKCR\CLSID\{26671179-2ec2-42bf-93d3-64108589cad5}\Implemented Categories\{00000003-0000-0000-C000-000000000046}]
+[HKCR\CLSID\{26671179-2ec2-42bf-93d3-64108589cad5}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{267cf8a9-f4e3-41e6-95b1-af881be130ff}]
+@="Location Folder"
+[HKCR\CLSID\{267cf8a9-f4e3-41e6-95b1-af881be130ff}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{267cf8a9-f4e3-41e6-95b1-af881be130ff}\ShellFolder]
+"FolderValueFlags"=dword:00000800
+[HKCR\CLSID\{273eb5e7-88b0-4843-bfef-e2c81d43aae5}]
+@="Application Startup Link"
+[HKCR\CLSID\{273eb5e7-88b0-4843-bfef-e2c81d43aae5}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{2d3468c1-36a7-43b6-ac24-d3f02fd9607a}]
+@="A collection of IUnknown objects that can be enumerated"
+[HKCR\CLSID\{2d3468c1-36a7-43b6-ac24-d3f02fd9607a}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{3134ef9c-6b18-4996-ad04-ed5912e00eb5}]
+"NoPreviousVersions"=""
+[HKCR\CLSID\{3134ef9c-6b18-4996-ad04-ed5912e00eb5}\DefaultIcon]
+@=expand:"%SystemRoot%\\system32\\imageres.dll,-117"
+[HKCR\CLSID\{3134ef9c-6b18-4996-ad04-ed5912e00eb5}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{3134ef9c-6b18-4996-ad04-ed5912e00eb5}\shellex]
+[HKCR\CLSID\{3134ef9c-6b18-4996-ad04-ed5912e00eb5}\shellex\ContextMenuHandlers]
+[HKCR\CLSID\{3134ef9c-6b18-4996-ad04-ed5912e00eb5}\shellex\ContextMenuHandlers\{A8E64375-B645-4314-9EFC-C085981786FA}]
+[HKCR\CLSID\{3134ef9c-6b18-4996-ad04-ed5912e00eb5}\ShellFolder]
+"Attributes"=dword:20040000
+"FolderValueFlags"=dword:00000030
+"RestrictedAttributes"=dword:00000032
+"WantsParseDisplayName"=""
+[HKCR\CLSID\{37600FF7-470B-408F-8718-F2A7ABF0EF20}]
+@="Set Known Folder Broker"
+"AppID"="{3AAE9875-AF81-4221-9B60-8656412C7812}"
+[HKCR\CLSID\{37600FF7-470B-408F-8718-F2A7ABF0EF20}\InProcServer32]
+@="C:\\Windows\\System32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{38fe0cf4-6a59-4729-8e4a-2d580059ede4}]
+@="DestinationListBoth"
+[HKCR\CLSID\{38fe0cf4-6a59-4729-8e4a-2d580059ede4}\InProcServer32]
+@="C:\\Windows\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{3936E9E4-D92C-4EEE-A85A-BC16D5EA0819}]
+@="Frequent Places Folder"
+"LocalizedString"=expand:"@%SystemRoot%\\system32\\windows.storage.dll,-37218"
+"SortOrderIndex"=dword:00001000
+[HKCR\CLSID\{3936E9E4-D92C-4EEE-A85A-BC16D5EA0819}\DefaultIcon]
+@=expand:"%SystemRoot%\\system32\\shell32.dll,-37219"
+[HKCR\CLSID\{3936E9E4-D92C-4EEE-A85A-BC16D5EA0819}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{3936E9E4-D92C-4EEE-A85A-BC16D5EA0819}\ShellFolder]
+"Attributes"=dword:e8040004
+"CallForAttributes"=dword:00100000
+"FolderValueFlags"=dword:00002020
+"WantsParseDisplayName"=""
+[HKCR\CLSID\{3ad05575-8857-4850-9277-11b85bdb8e09}]
+@="Copy/Move/Rename/Delete/Link Object"
+"AppID"="{3ad05575-8857-4850-9277-11b85bdb8e09}"
+"LocalizedString"=expand:"@%SystemRoot%\\system32\\shell32.dll,-50176"
+[HKCR\CLSID\{3ad05575-8857-4850-9277-11b85bdb8e09}\Elevation]
+"Enabled"=dword:00000001
+[HKCR\CLSID\{3ad05575-8857-4850-9277-11b85bdb8e09}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{3DC7A020-0ACD-11CF-A9BB-00AA004AE837}]
+@="The Internet"
+[HKCR\CLSID\{3DC7A020-0ACD-11CF-A9BB-00AA004AE837}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{40319fab-cc2f-4cea-890c-1e676b139824}]
+@="CBasicPropertiesProxy"
+[HKCR\CLSID\{40319fab-cc2f-4cea-890c-1e676b139824}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{41fd88f7-f295-4d39-91ac-a85f3149a05b}]
+[HKCR\CLSID\{41fd88f7-f295-4d39-91ac-a85f3149a05b}\Implemented Categories]
+[HKCR\CLSID\{41fd88f7-f295-4d39-91ac-a85f3149a05b}\Implemented Categories\{00000003-0000-0000-C000-000000000046}]
+[HKCR\CLSID\{41fd88f7-f295-4d39-91ac-a85f3149a05b}\InProcServer32]
+@="C:\\Windows\\System32\\WinTypes.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{42254EE9-E625-4065-8F70-775090256F72}]
+@="MS Graph Recent File Folder"
+[HKCR\CLSID\{42254EE9-E625-4065-8F70-775090256F72}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{42254EE9-E625-4065-8F70-775090256F72}\ShellFolder]
+"Attributes"=dword:68000004
+"FolderValueFlags"=dword:00002020
+"WantsParseDisplayName"=""
+[HKCR\CLSID\{42aedc87-2188-41fd-b9a3-0c966feabec1}]
+@="MruPidlList"
+[HKCR\CLSID\{42aedc87-2188-41fd-b9a3-0c966feabec1}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{4564b25e-30cd-4787-82ba-39e73a750b14}]
+@="Recent Items Instance Folder"
+[HKCR\CLSID\{4564b25e-30cd-4787-82ba-39e73a750b14}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{4564b25e-30cd-4787-82ba-39e73a750b14}\Instance]
+"CLSID"="{0C39A5CF-1A7A-40C8-BA74-8900E6DF5FCD}"
+[HKCR\CLSID\{4564b25e-30cd-4787-82ba-39e73a750b14}\Instance\InitPropertyBag]
+"Filter"=dword:00000001
+"MaxItems"=dword:00000014
+"UseKnownFolder"=dword:00000001
+[HKCR\CLSID\{4564b25e-30cd-4787-82ba-39e73a750b14}\ShellFolder]
+"Attributes"=dword:20040000
+"FolderValueFlags"=dword:00000410
+"RestrictedAttributes"=dword:00000032
+[HKCR\CLSID\{487af411-1d5e-4f7f-b4f4-4721fe1e95d9}]
+@="CVideoPropertiesProxy"
+[HKCR\CLSID\{487af411-1d5e-4f7f-b4f4-4721fe1e95d9}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{4bc70a10-fbab-4ada-8fc4-e4f898a6f810}]
+@="CImagePropertiesProxy"
+[HKCR\CLSID\{4bc70a10-fbab-4ada-8fc4-e4f898a6f810}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{4df0c730-df9d-4ae3-9153-aa6b82e9795a}]
+@="Known Folder Manager"
+[HKCR\CLSID\{4df0c730-df9d-4ae3-9153-aa6b82e9795a}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{4E29E41B-D022-4D7D-9ADE-E42352C23DD6}]
+@="App URL Defaults"
+[HKCR\CLSID\{4E29E41B-D022-4D7D-9ADE-E42352C23DD6}\InProcServer32]
+@="C:\\Windows\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{4E7D6B2C-1F7E-45B6-9EC0-8FA541BDD163}]
+@="Per User Initialization Task Handler"
+[HKCR\CLSID\{4E7D6B2C-1F7E-45B6-9EC0-8FA541BDD163}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{4FE04BFD-85B9-49DD-B914-F4C9556B9DA6}]
+@="Shell File System NetFolder"
+[HKCR\CLSID\{4FE04BFD-85B9-49DD-B914-F4C9556B9DA6}\InProcServer32]
+@="C:\\Windows\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{4FE04BFD-85B9-49DD-B914-F4C9556B9DA6}\ShellFolder]
+"FolderValueFlags"=dword:00080000
+[HKCR\CLSID\{52ce2fe5-04c3-42fd-8a8b-4251affb8408}]
+@="CLSID_ResultSetManager"
+[HKCR\CLSID\{52ce2fe5-04c3-42fd-8a8b-4251affb8408}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{531A5E27-80E7-4EAC-9AC6-13953AF33693}]
+@="Cloud Files Interrupt Source"
+[HKCR\CLSID\{531A5E27-80E7-4EAC-9AC6-13953AF33693}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{53bd6b4e-3780-4693-afc3-7161c2f3ee9c}]
+@="MruLongList"
+[HKCR\CLSID\{53bd6b4e-3780-4693-afc3-7161c2f3ee9c}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{56ad4c5d-b908-4f85-8ff1-7940c29b3bcf}]
+@="Window Property Store"
+[HKCR\CLSID\{56ad4c5d-b908-4f85-8ff1-7940c29b3bcf}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{59031a47-3f72-44a7-89c5-5595fe6b30ee}]
+@="UsersFiles"
+[HKCR\CLSID\{59031a47-3f72-44a7-89c5-5595fe6b30ee}\DefaultIcon]
+@=expand:"%SystemRoot%\\system32\\imageres.dll,-123"
+[HKCR\CLSID\{59031a47-3f72-44a7-89c5-5595fe6b30ee}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\Windows.Storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{59031a47-3f72-44a7-89c5-5595fe6b30ee}\ShellFolder]
+"Attributes"=dword:f084012d
+"FolderValueFlags"=dword:00500229
+[HKCR\CLSID\{591209c7-767b-42b2-9fba-44ee4615f2c7}]
+@="Application Registration"
+[HKCR\CLSID\{591209c7-767b-42b2-9fba-44ee4615f2c7}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{5b53b2c2-46d6-433e-ab6e-b82efef22b6e}]
+@="ExplorerCommandEnumerator"
+[HKCR\CLSID\{5b53b2c2-46d6-433e-ab6e-b82efef22b6e}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{5B6D1451-B1E1-4372-90F5-88E541B4DAB9}]
+@="CUpdateEncryptionSettings"
+[HKCR\CLSID\{5B6D1451-B1E1-4372-90F5-88E541B4DAB9}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{5b934b42-522b-4c34-bbfe-37a3ef7b9c90}]
+@="This Device"
+"LocalizedString"=expand:"@%SystemRoot%\\system32\\windows.storage.dll,-51409"
+"System.ItemNameDisplayWithoutExtension"=expand:"@%SystemRoot%\\system32\\Windows.Storage.dll,-51409"
+[HKCR\CLSID\{5b934b42-522b-4c34-bbfe-37a3ef7b9c90}\InProcServer32]
+@=expand:"%SystemRoot%\\System32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{5b934b42-522b-4c34-bbfe-37a3ef7b9c90}\Instance]
+"CLSID"="{0E5AAE11-A475-4c5b-AB00-C66DE400274E}"
+[HKCR\CLSID\{5b934b42-522b-4c34-bbfe-37a3ef7b9c90}\Instance\InitPropertyBag]
+"AllowChildAliasRegistration"=dword:00000001
+"Attributes"=dword:00000011
+"TargetKnownFolder"="{DFDF76A2-C82A-4D63-906A-5644AC457385}"
+[HKCR\CLSID\{5b934b42-522b-4c34-bbfe-37a3ef7b9c90}\ShellFolder]
+"Attributes"=dword:f0900105
+"FolderValueFlags"=dword:00500020
+[HKCR\CLSID\{5E5F29CE-E0A8-49D3-AF32-7A7BDC173478}]
+@="This PC"
+[HKCR\CLSID\{5E5F29CE-E0A8-49D3-AF32-7A7BDC173478}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{5E5F29CE-E0A8-49D3-AF32-7A7BDC173478}\ShellFolder]
+"FolderValueFlags"=dword:00182200
+[HKCR\CLSID\{603D3800-BD81-11d0-A3A5-00C04FD706EC}]
+@="Background Task Scheduler"
+[HKCR\CLSID\{603D3800-BD81-11d0-A3A5-00C04FD706EC}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{603D3801-BD81-11d0-A3A5-00C04FD706EC}]
+@="Shared Task Scheduler"
+[HKCR\CLSID\{603D3801-BD81-11d0-A3A5-00C04FD706EC}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{639bdb5a-7959-48d4-afc3-44f252bf2924}]
+@="Cached File Updater Placeholder Stream Resolver"
+[HKCR\CLSID\{639bdb5a-7959-48d4-afc3-44f252bf2924}\Implemented Categories]
+[HKCR\CLSID\{639bdb5a-7959-48d4-afc3-44f252bf2924}\Implemented Categories\{DED247FF-46B3-4b31-A168-081211CFED19}]
+[HKCR\CLSID\{639bdb5a-7959-48d4-afc3-44f252bf2924}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{63e83cf9-0acb-4ae6-a075-7a7f4514a1cb}]
+@="Pin To Home File Command"
+[HKCR\CLSID\{63e83cf9-0acb-4ae6-a075-7a7f4514a1cb}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{656e51bd-cad6-4683-ac07-3e3d50d7f453}]
+@="AutomaticDestinationListBoth"
+[HKCR\CLSID\{656e51bd-cad6-4683-ac07-3e3d50d7f453}\InProcServer32]
+@="C:\\Windows\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{679f85cb-0220-4080-b29b-5540cc05aab6}]
+"System.Home.PropList.Sort"="prop:System.Home.SortOrder;System.ItemNameDisplay"
+"System.IsPinnedToNameSpaceTree"=dword:00000001
+[HKCR\CLSID\{679f85cb-0220-4080-b29b-5540cc05aab6}\DefaultIcon]
+@=expand:"%SystemRoot%\\system32\\shell32.dll,-51380"
+[HKCR\CLSID\{679f85cb-0220-4080-b29b-5540cc05aab6}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{679f85cb-0220-4080-b29b-5540cc05aab6}\shell]
+[HKCR\CLSID\{679f85cb-0220-4080-b29b-5540cc05aab6}\shell\pintohome]
+"MUIVerb"="@shell32.dll,-51388"
+"SkipCloudDownload"=dword:00000000
+[HKCR\CLSID\{679f85cb-0220-4080-b29b-5540cc05aab6}\shell\pintohome\command]
+"DelegateExecute"="{b455f46e-e4af-4035-b0a4-cf18d2f6f28e}"
+[HKCR\CLSID\{679f85cb-0220-4080-b29b-5540cc05aab6}\shell\Windows.folderoptions]
+"ExplorerCommandHandler"="{83bb272f-7d5e-4b6e-9250-889893f0dac7}"
+[HKCR\CLSID\{679f85cb-0220-4080-b29b-5540cc05aab6}\ShellFolder]
+"Attributes"=dword:a0100000
+"FolderValueFlags"=dword:00000001
+[HKCR\CLSID\{6817c9d8-a197-466a-b155-2742dd5cecba}]
+@="Home Folder Categorizer"
+[HKCR\CLSID\{6817c9d8-a197-466a-b155-2742dd5cecba}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{6D48E7F7-8ECD-404C-8E30-81C49E8E36EE}]
+@="Windows.Storage.Search.StorageLibraryContentChangedTriggerDetails Factory"
+[HKCR\CLSID\{6D48E7F7-8ECD-404C-8E30-81C49E8E36EE}\InProcServer32]
+@="C:\\Windows\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{70438d09-456a-4a6f-86fe-1c1a3afc699e}]
+@="Pin To Home Command"
+[HKCR\CLSID\{70438d09-456a-4a6f-86fe-1c1a3afc699e}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{71797627-00A1-4BF2-A6C4-34B6321060BD}]
+@="App Defaults Initializer"
+[HKCR\CLSID\{71797627-00A1-4BF2-A6C4-34B6321060BD}\InProcServer32]
+@="C:\\Windows\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{72c57034-02c4-4e9f-bf9c-ca711031757e}]
+@="Shell File Operation Undo Unit"
+[HKCR\CLSID\{72c57034-02c4-4e9f-bf9c-ca711031757e}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{72eb61e0-8672-4303-9175-f2e4c68b2e7c}]
+@="Namespace Walker"
+[HKCR\CLSID\{72eb61e0-8672-4303-9175-f2e4c68b2e7c}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{75847177-f077-4171-bd2c-a6bb2164fbd0}]
+@="Private Profile Object"
+[HKCR\CLSID\{75847177-f077-4171-bd2c-a6bb2164fbd0}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{76765b11-3f95-4af2-ac9d-ea55d8994f1a}]
+@="Property System Both Class Factory"
+[HKCR\CLSID\{76765b11-3f95-4af2-ac9d-ea55d8994f1a}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{7763B7C0-A5FD-4AA9-BD1B-58B17137236B}]
+@="Location Description"
+"UseInProcHandlerCache"=dword:00000001
+[HKCR\CLSID\{7763B7C0-A5FD-4AA9-BD1B-58B17137236B}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{77F10CF0-3DB5-4966-B520-B7C54FD35ED6}]
+@="Custom Destination List"
+[HKCR\CLSID\{77F10CF0-3DB5-4966-B520-B7C54FD35ED6}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{7abbbcca-e01b-4560-8228-92e1eedbc908}]
+@="CLSID_CopyUndoHandler"
+[HKCR\CLSID\{7abbbcca-e01b-4560-8228-92e1eedbc908}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{7afb974e-3842-4106-a702-82a13e088f46}]
+@="CLSID_AppContentPropertyStore"
+[HKCR\CLSID\{7afb974e-3842-4106-a702-82a13e088f46}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{7afb974e-3842-4106-a702-82a13e088f46}\OverrideFileSystemProperties]
+"System.DateModified"=dword:00000001
+"System.ItemNameDisplay"=dword:00000001
+"System.ItemPathDisplay"=dword:00000001
+"System.ItemType"=dword:00000001
+"System.Kind"=dword:00000001
+[HKCR\CLSID\{7df2cfcd-6c09-415a-ae9d-5263f4964cbb}]
+@="SortColumnArray"
+[HKCR\CLSID\{7df2cfcd-6c09-415a-ae9d-5263f4964cbb}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{811F592B-CDE7-4ca4-A6D4-7BB3F60AD8FB}]
+@="Library Group Policy Shell Service Object"
+[HKCR\CLSID\{811F592B-CDE7-4ca4-A6D4-7BB3F60AD8FB}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{81B9D4E2-F5EF-4BC7-8F1A-E45948024369}]
+@="MSGraph file Thumbnail Provider"
+[HKCR\CLSID\{81B9D4E2-F5EF-4BC7-8F1A-E45948024369}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{82c588e7-e54b-408c-9f8c-6af9adf6f1e9}]
+@="FormatForDisplay Helper"
+[HKCR\CLSID\{82c588e7-e54b-408c-9f8c-6af9adf6f1e9}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{85cfccaf-2d14-42b6-80b6-f40f65d016e7}]
+@="Shortcut"
+[HKCR\CLSID\{85cfccaf-2d14-42b6-80b6-f40f65d016e7}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{85cfccaf-2d14-42b6-80b6-f40f65d016e7}\shellex]
+[HKCR\CLSID\{85cfccaf-2d14-42b6-80b6-f40f65d016e7}\shellex\MayChangeDefaultMenu]
+[HKCR\CLSID\{86bec222-30f2-47e0-9f25-60d11cd75c28}]
+@="Application Document Lists"
+[HKCR\CLSID\{86bec222-30f2-47e0-9f25-60d11cd75c28}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{86c14003-4d6b-4ef3-a7b4-0506663b2e68}]
+@="Application Destination List"
+[HKCR\CLSID\{86c14003-4d6b-4ef3-a7b4-0506663b2e68}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{871C5380-42A0-1069-A2EA-08002B30309D}]
+@="Internet Folder"
+"InfoTip"="@C:\\Windows\\System32\\ieframe.dll,-881"
+"LocalizedString"=expand:"@%systemroot%\\system32\\ieframe.dll,-5723"
+[HKCR\CLSID\{871C5380-42A0-1069-A2EA-08002B30309D}\DefaultIcon]
+@="C:\\Windows\\System32\\ieframe.dll,-190"
+[HKCR\CLSID\{871C5380-42A0-1069-A2EA-08002B30309D}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{871C5380-42A0-1069-A2EA-08002B30309D}\shell]
+@="OpenHomePage"
+[HKCR\CLSID\{871C5380-42A0-1069-A2EA-08002B30309D}\shell\NoAddOns]
+@="Start Without Add-ons"
+"LegacyDisable"=""
+[HKCR\CLSID\{871C5380-42A0-1069-A2EA-08002B30309D}\shell\NoAddOns\Command]
+@="\"C:\\Program Files\\Internet Explorer\\iexplore.exe\" -extoff"
+[HKCR\CLSID\{871C5380-42A0-1069-A2EA-08002B30309D}\shell\OpenHomePage]
+@="Open &Home Page"
+"LegacyDisable"=""
+[HKCR\CLSID\{871C5380-42A0-1069-A2EA-08002B30309D}\shell\OpenHomePage\Command]
+@="\"C:\\Program Files\\Internet Explorer\\iexplore.exe\""
+[HKCR\CLSID\{871C5380-42A0-1069-A2EA-08002B30309D}\Shellex]
+[HKCR\CLSID\{871C5380-42A0-1069-A2EA-08002B30309D}\Shellex\ContextMenuHandlers]
+[HKCR\CLSID\{871C5380-42A0-1069-A2EA-08002B30309D}\Shellex\ContextMenuHandlers\ieframe]
+@="{871C5380-42A0-1069-A2EA-08002B30309D}"
+[HKCR\CLSID\{871C5380-42A0-1069-A2EA-08002B30309D}\Shellex\MayChangeDefaultMenu]
+@=""
+[HKCR\CLSID\{871C5380-42A0-1069-A2EA-08002B30309D}\ShellFolder]
+"Attributes"=dword:00000024
+"FolderValueFlags"=dword:00020212
+"HideAsDeletePerUser"=""
+[HKCR\CLSID\{8cbd7e60-5575-4493-b366-c920b7c831d5}]
+@="Dismiss Recommendation Command"
+[HKCR\CLSID\{8cbd7e60-5575-4493-b366-c920b7c831d5}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{8d14113b-5715-4714-8a20-69fc343626de}]
+@="Multiplex Property Store"
+[HKCR\CLSID\{8d14113b-5715-4714-8a20-69fc343626de}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{8d80504a-0826-40c5-97e1-ebc68f953792}]
+@="OLE DocFile Property Handler"
+"EnableShareDenyNone"=dword:00000001
+"ManualSafeSave"=dword:00000001
+[HKCR\CLSID\{8d80504a-0826-40c5-97e1-ebc68f953792}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{948B45F7-EFB8-46fb-8704-B340D847227A}]
+@="Location Description Property Handler"
+[HKCR\CLSID\{948B45F7-EFB8-46fb-8704-B340D847227A}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{948B45F7-EFB8-46fb-8704-B340D847227A}\OverrideFileSystemProperties]
+"System.IconPath"=dword:00000001
+[HKCR\CLSID\{97e467b4-98c6-4f19-9588-161b7773d6f6}]
+@="Office Document Property Handler"
+"EnableShareDenyNone"=dword:00000001
+"ManualSafeSave"=dword:00000001
+[HKCR\CLSID\{97e467b4-98c6-4f19-9588-161b7773d6f6}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{9909aba6-519d-4b42-b57f-cc1408214ddb}]
+@="User Name Format"
+[HKCR\CLSID\{9909aba6-519d-4b42-b57f-cc1408214ddb}\InProcServer32]
+@="C:\\Windows\\System32\\shcore.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{99d6470e-d780-4fce-99d2-40324846c10b}]
+@="CTransactedMemPropertyStoreProxy"
+[HKCR\CLSID\{99d6470e-d780-4fce-99d2-40324846c10b}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{9a02e012-6303-4e1e-b9a1-630f802592c5}]
+@="Packed Property Storage Object"
+[HKCR\CLSID\{9a02e012-6303-4e1e-b9a1-630f802592c5}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{9ac9fbe1-e0a2-4ad6-b4ee-e212013ea917}]
+@="ShellItem Shell Namespace helper"
+[HKCR\CLSID\{9ac9fbe1-e0a2-4ad6-b4ee-e212013ea917}\Implemented Categories]
+[HKCR\CLSID\{9ac9fbe1-e0a2-4ad6-b4ee-e212013ea917}\Implemented Categories\{00000003-0000-0000-C000-000000000046}]
+[HKCR\CLSID\{9ac9fbe1-e0a2-4ad6-b4ee-e212013ea917}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{9cfc2df3-6ba3-46ef-a836-e519e81f0ec4}]
+@="Property System Apartment Class Factory"
+[HKCR\CLSID\{9cfc2df3-6ba3-46ef-a836-e519e81f0ec4}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{a07034fd-6caa-4954-ac3f-97a27216f98a}]
+@="Query file associations"
+[HKCR\CLSID\{a07034fd-6caa-4954-ac3f-97a27216f98a}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{A33FB695-B731-4A85-AABE-656397D0E88D}]
+@="Cloud Files Toast Callback Handler"
+[HKCR\CLSID\{A33FB695-B731-4A85-AABE-656397D0E88D}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{a5a3563a-5755-4a6f-854e-afa3230b199f}]
+@="Library Folder"
+[HKCR\CLSID\{a5a3563a-5755-4a6f-854e-afa3230b199f}\Implemented Categories]
+[HKCR\CLSID\{a5a3563a-5755-4a6f-854e-afa3230b199f}\Implemented Categories\{00021490-0000-0000-C000-000000000046}]
+@="Browsable Shell Extension"
+[HKCR\CLSID\{a5a3563a-5755-4a6f-854e-afa3230b199f}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{a5a3563a-5755-4a6f-854e-afa3230b199f}\ShellFolder]
+"Attributes"=dword:f0800048
+"HasNavigationEnum"=""
+[HKCR\CLSID\{a5a3563a-5755-4a6f-854e-afa3230b199f}\ShellNew]
+"Handler"="{c7ca6167-2f46-4c4c-98b2-c92591368971}"
+[HKCR\CLSID\{a5a3563a-5755-4a6f-854e-afa3230b199f}\ShellNew\Config]
+"IsFolder"=""
+[HKCR\CLSID\{a5a3563a-5755-4a6f-854e-afa3230b199f}\Tabsets]
+"location"=dword:00000103
+"UseIdentityItem"=dword:00000001
+[HKCR\CLSID\{a6482830-08eb-41e2-84c1-73920c2badb9}]
+@="Removable Storage Devices"
+[HKCR\CLSID\{a6482830-08eb-41e2-84c1-73920c2badb9}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{a6482830-08eb-41e2-84c1-73920c2badb9}\Instance]
+"CLSID"="{5E5F29CE-E0A8-49D3-AF32-7A7BDC173478}"
+[HKCR\CLSID\{a6482830-08eb-41e2-84c1-73920c2badb9}\Instance\InitPropertyBag]
+"AllowChildAliasRegistration"=dword:00000001
+"HideNonRemovableDrives"=dword:00000001
+"HideNonStorageServiceMountedDrives"=dword:00000001
+"ShowAllOpticalDevices"=dword:00000001
+"UseRemovableStorageRegPath"=dword:00000001
+[HKCR\CLSID\{a6482830-08eb-41e2-84c1-73920c2badb9}\ShellFolder]
+"Attributes"=dword:b0000000
+"FolderValueFlags"=dword:00100410
+"WantsParseDisplayName"=""
+[HKCR\CLSID\{a893aa73-054f-4dbc-9e53-f4ee5fe07fd3}]
+@="Cached File Updater Merge Handler"
+[HKCR\CLSID\{a893aa73-054f-4dbc-9e53-f4ee5fe07fd3}\Implemented Categories]
+[HKCR\CLSID\{a893aa73-054f-4dbc-9e53-f4ee5fe07fd3}\Implemented Categories\{3E9C9A51-D4AA-4870-B47C-7424B491F1CC}]
+[HKCR\CLSID\{a893aa73-054f-4dbc-9e53-f4ee5fe07fd3}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{A8CA4495-65AB-4333-9FF9-4FEB6FBF5169}]
+@="App URI Resolver"
+[HKCR\CLSID\{A8CA4495-65AB-4333-9FF9-4FEB6FBF5169}\InProcServer32]
+@="C:\\Windows\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{AD182E17-4754-4742-8529-C11EEEF0C299}]
+@="Recommendations File Folder"
+[HKCR\CLSID\{AD182E17-4754-4742-8529-C11EEEF0C299}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{AD182E17-4754-4742-8529-C11EEEF0C299}\ShellFolder]
+"Attributes"=dword:68000004
+"FolderValueFlags"=dword:00002020
+"WantsParseDisplayName"=""
+[HKCR\CLSID\{AF9F2C0D-6B9F-4e32-A94D-A3E235A31BF7}]
+@="XML property store"
+[HKCR\CLSID\{AF9F2C0D-6B9F-4e32-A94D-A3E235A31BF7}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{b455f46e-e4af-4035-b0a4-cf18d2f6f28e}]
+@="Pin To Frequent Command"
+[HKCR\CLSID\{b455f46e-e4af-4035-b0a4-cf18d2f6f28e}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{b77b1cbf-e827-44a9-a33a-6ccfeeaa142a}]
+@="ShellItemArray Shell Namespace helper"
+[HKCR\CLSID\{b77b1cbf-e827-44a9-a33a-6ccfeeaa142a}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{b8967f85-58ae-4f46-9fb2-5d7904798f4b}]
+@="Property System"
+[HKCR\CLSID\{b8967f85-58ae-4f46-9fb2-5d7904798f4b}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="both"
+[HKCR\CLSID\{b918dbc4-162c-43e5-85bf-19059a776e9e}]
+@="Remove From Frequent Places Command"
+[HKCR\CLSID\{b918dbc4-162c-43e5-85bf-19059a776e9e}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{b9b61a03-caa7-43bb-b859-acd26d73b3f7}]
+@="CLSID_ResultHandlerFactory"
+[HKCR\CLSID\{b9b61a03-caa7-43bb-b859-acd26d73b3f7}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{bf78a650-d489-4360-a0b7-c32471e07692}]
+@="XML Filter Handler"
+[HKCR\CLSID\{bf78a650-d489-4360-a0b7-c32471e07692}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{C2566514-DD44-4c6c-AAAD-FBD2F18D8DEE}]
+@="Property Set Storage In Memory Object"
+[HKCR\CLSID\{C2566514-DD44-4c6c-AAAD-FBD2F18D8DEE}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{c5872cfd-52d1-4494-aa0d-22d42bbb2e30}]
+@="Remove From Recent Documents Command"
+[HKCR\CLSID\{c5872cfd-52d1-4494-aa0d-22d42bbb2e30}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{c6a50e1e-d34c-45e9-9b0c-1d92eb71e49c}]
+@="Storage Provider Registration Broker"
+"AppID"="{86EA8210-D213-4437-A7C8-ADF1188BA1CD}"
+[HKCR\CLSID\{c6a50e1e-d34c-45e9-9b0c-1d92eb71e49c}\InProcServer32]
+@="C:\\Windows\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{C7CA6167-2F46-4C4C-98B2-C92591368971}]
+@="New Library Menu Handler"
+[HKCR\CLSID\{C7CA6167-2F46-4C4C-98B2-C92591368971}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{c8c97725-c948-4720-bf0f-e3c2273bfb7d}]
+@="Library Initialization Handler"
+[HKCR\CLSID\{c8c97725-c948-4720-bf0f-e3c2273bfb7d}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{CDC82860-468D-4d4e-B7E7-C298FF23AB2C}]
+@="ShellItemArray Shell Namespace helper"
+[HKCR\CLSID\{CDC82860-468D-4d4e-B7E7-C298FF23AB2C}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{cfd82661-9b9e-4c87-9dcb-e0fd11681b44}]
+@="CLSID_AppContentXmlPropertyStore"
+[HKCR\CLSID\{cfd82661-9b9e-4c87-9dcb-e0fd11681b44}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{cfd82661-9b9e-4c87-9dcb-e0fd11681b44}\Instance]
+"CLSID"="{AF9F2C0D-6B9F-4e32-A94D-A3E235A31BF7}"
+[HKCR\CLSID\{cfd82661-9b9e-4c87-9dcb-e0fd11681b44}\Instance\InitPropertyBag]
+"LoadWithSax"=dword:00000001
+[HKCR\CLSID\{cfd82661-9b9e-4c87-9dcb-e0fd11681b44}\Instance\PropertySetStorage]
+"Namespace"="http://schemas.microsoft.com/Search/2013/ApplicationContent"
+"Schema"=expand:"%SystemRoot%\\system32\\Windows.Storage.dll,1"
+[HKCR\CLSID\{cfd82661-9b9e-4c87-9dcb-e0fd11681b44}\Instance\PropertySetStorage\OpenMetadata]
+"OpenMetadataKeyInXMLAttribute"=dword:00000001
+"XPath"="./Properties/AdditionalProperties"
+[HKCR\CLSID\{cfd82661-9b9e-4c87-9dcb-e0fd11681b44}\Instance\PropertySetStorage\{6B8DA074-3B5C-43BC-886F-0A2CDCE00B6F}]
+[HKCR\CLSID\{cfd82661-9b9e-4c87-9dcb-e0fd11681b44}\Instance\PropertySetStorage\{6B8DA074-3B5C-43BC-886F-0A2CDCE00B6F}\100]
+"VT"=dword:0000001f
+"XPath"="./Properties/Name"
+[HKCR\CLSID\{cfd82661-9b9e-4c87-9dcb-e0fd11681b44}\Instance\PropertySetStorage\{B725F130-47EF-101A-A5F1-02608C9EEBAC}]
+[HKCR\CLSID\{cfd82661-9b9e-4c87-9dcb-e0fd11681b44}\Instance\PropertySetStorage\{B725F130-47EF-101A-A5F1-02608C9EEBAC}\10]
+"VT"=dword:0000001f
+"XPath"="./Properties/Name"
+[HKCR\CLSID\{cfd82661-9b9e-4c87-9dcb-e0fd11681b44}\Instance\PropertySetStorage\{F29F85E0-4FF9-1068-AB91-08002B27B3D9}]
+[HKCR\CLSID\{cfd82661-9b9e-4c87-9dcb-e0fd11681b44}\Instance\PropertySetStorage\{F29F85E0-4FF9-1068-AB91-08002B27B3D9}\5]
+"VT"=dword:0000001f
+"XPath"="./Properties/Keywords"
+[HKCR\CLSID\{cfd82661-9b9e-4c87-9dcb-e0fd11681b44}\Instance\PropertySetStorage\{F29F85E0-4FF9-1068-AB91-08002B27B3D9}\6]
+"VT"=dword:0000001f
+"XPath"="./Properties/Comment"
+[HKCR\CLSID\{D105A4D4-344C-48EB-9866-EE378D90658B}]
+@="CLSID_HomeOperationSink"
+[HKCR\CLSID\{D105A4D4-344C-48EB-9866-EE378D90658B}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{D1BBB611-641B-4B9C-9A7F-030E0CB6845E}]
+@="UnPin From Recent Command"
+[HKCR\CLSID\{D1BBB611-641B-4B9C-9A7F-030E0CB6845E}\InProcServer32]
+@="C:\\Windows\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}]
+@="App Content Filter"
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\InprocServer32]
+@=expand:"%systemroot%\\system32\\Windows.Storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\Instance]
+"CLSID"="{bf78a650-d489-4360-a0b7-c32471e07692}"
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\Instance\InitPropertyBag]
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\Instance\PropertySetStorage]
+"Namespace"="http://schemas.microsoft.com/Search/2013/ApplicationContent"
+"Schema"=expand:"%SystemRoot%\\system32\\Windows.Storage.dll,1"
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\Instance\PropertySetStorage\AdditionalContent]
+"ContentTypeAttribute"="ContentType"
+"XPath"="./[@IndexableContent='true']"
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\Instance\PropertySetStorage\OpenMetadata]
+"OpenMetadataKeyInXMLAttribute"=dword:00000001
+"XPath"="./Properties/AdditionalProperties"
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\Instance\PropertySetStorage\{6B8DA074-3B5C-43BC-886F-0A2CDCE00B6F}]
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\Instance\PropertySetStorage\{6B8DA074-3B5C-43BC-886F-0A2CDCE00B6F}\100]
+"VT"=dword:0000001f
+"XPath"="./Properties/Name"
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\Instance\PropertySetStorage\{B725F130-47EF-101A-A5F1-02608C9EEBAC}]
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\Instance\PropertySetStorage\{B725F130-47EF-101A-A5F1-02608C9EEBAC}\10]
+"VT"=dword:0000001f
+"XPath"="./Properties/Name"
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\Instance\PropertySetStorage\{F29F85E0-4FF9-1068-AB91-08002B27B3D9}]
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\Instance\PropertySetStorage\{F29F85E0-4FF9-1068-AB91-08002B27B3D9}\5]
+"VT"=dword:0000001f
+"XPath"="./Properties/Keywords"
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\Instance\PropertySetStorage\{F29F85E0-4FF9-1068-AB91-08002B27B3D9}\6]
+"VT"=dword:0000001f
+"XPath"="./Properties/Comment"
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\ProgID]
+@="Search.AppContentFilter.1"
+[HKCR\CLSID\{d3c0b79d-0fd2-4b5d-9bf6-5e41d6f15c08}\VersionIndependentProgID]
+@="Search.AppContentFilter"
+[HKCR\CLSID\{D4CA0E2D-6DA7-4b75-A97C-5F306F0EAEDC}]
+@="Packed Property Storage Object (marshal by value)"
+[HKCR\CLSID\{D4CA0E2D-6DA7-4b75-A97C-5F306F0EAEDC}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{d66c2605-9d5d-475e-a5b8-3790743ee2ff}]
+@="CDocumentPropertiesProxy"
+[HKCR\CLSID\{d66c2605-9d5d-475e-a5b8-3790743ee2ff}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{d88dc591-4172-4a00-a6b1-7b657d2a6643}]
+@="Home Folder Categorizer"
+[HKCR\CLSID\{d88dc591-4172-4a00-a6b1-7b657d2a6643}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{d9b3211d-e57f-4426-aaef-30a806add397}]
+@="Shell Library API"
+[HKCR\CLSID\{d9b3211d-e57f-4426-aaef-30a806add397}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{DFFACDC5-679F-4156-8947-C5C76BC0B67F}]
+@="delegate folder that appears in Users Files Folder"
+[HKCR\CLSID\{DFFACDC5-679F-4156-8947-C5C76BC0B67F}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\Windows.Storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{DFFACDC5-679F-4156-8947-C5C76BC0B67F}\Instance]
+"CLSID"="{0E5AAE11-A475-4c5b-AB00-C66DE400274E}"
+[HKCR\CLSID\{DFFACDC5-679F-4156-8947-C5C76BC0B67F}\Instance\InitPropertyBag]
+"Attributes"=dword:00000011
+"TargetKnownFolder"="{5E6C858F-0E22-4760-9AFE-EA3317B67173}"
+[HKCR\CLSID\{DFFACDC5-679F-4156-8947-C5C76BC0B67F}\ShellFolder]
+"FolderValueFlags"=dword:00000438
+[HKCR\CLSID\{E0DF7408-44FF-47D8-BE3B-79729980CAD8}]
+@="Windows.Storage.Search.StorageLibraryChangeTrackerTriggerDetails Factory"
+[HKCR\CLSID\{E0DF7408-44FF-47D8-BE3B-79729980CAD8}\InProcServer32]
+@="C:\\Windows\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{e22b3065-b83a-4ffd-9b08-9e73841a442f}]
+@="Content Snippet Builder"
+[HKCR\CLSID\{e22b3065-b83a-4ffd-9b08-9e73841a442f}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{e2eb4ca4-c96e-4da4-94b1-673c8334a5bb}]
+@="Shell Oplock Provider"
+[HKCR\CLSID\{e2eb4ca4-c96e-4da4-94b1-673c8334a5bb}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\shcore.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{e3e478d6-a2f2-4791-89a3-21f5c78dc3ec}]
+@="File enumerator helper"
+[HKCR\CLSID\{e3e478d6-a2f2-4791-89a3-21f5c78dc3ec}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{E7E4BC40-E76A-11CE-A9BB-00AA004AE837}]
+@="Shell DocObject Viewer"
+[HKCR\CLSID\{E7E4BC40-E76A-11CE-A9BB-00AA004AE837}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{E7E4BC40-E76A-11CE-A9BB-00AA004AE837}\ShellFolder]
+"Attributes"=dword:a0000050
+[HKCR\CLSID\{ea8b451c-5a19-49cf-bc5e-98accca49ef3}]
+@="Library Factory"
+[HKCR\CLSID\{ea8b451c-5a19-49cf-bc5e-98accca49ef3}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{EDC978D6-4D53-4b2f-A265-5805674BE568}]
+@="StreamBackedFolder"
+[HKCR\CLSID\{EDC978D6-4D53-4b2f-A265-5805674BE568}\InProcServer32]
+@="C:\\Windows\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{EDC978D6-4D53-4b2f-A265-5805674BE568}\ShellFolder]
+"Attributes"=dword:20100000
+"FolderValueFlags"=dword:00000000
+[HKCR\CLSID\{ee20eeba-df64-4a4e-b7bb-2d1c6b2dfcc1}]
+@="UnPin From Frequent Command"
+[HKCR\CLSID\{ee20eeba-df64-4a4e-b7bb-2d1c6b2dfcc1}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{eea0c191-dda8-4656-8fc4-72bdedba8a78}]
+@="Library Property Store"
+"NoOplock"=dword:00000001
+[HKCR\CLSID\{eea0c191-dda8-4656-8fc4-72bdedba8a78}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{eea0c191-dda8-4656-8fc4-72bdedba8a78}\OverrideFileSystemProperties]
+"System.IconPath"=dword:00000001
+"System.IsPinnedToNameSpaceTree"=dword:00000001
+[HKCR\CLSID\{f0ae1542-f497-484b-a175-a20db09144ba}]
+@=""
+[HKCR\CLSID\{f0ae1542-f497-484b-a175-a20db09144ba}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{f0ce6592-5bce-41cc-bf2d-ec4f3f55e711}]
+@="CStorageItemPropertiesProxy"
+[HKCR\CLSID\{f0ce6592-5bce-41cc-bf2d-ec4f3f55e711}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{F1C46D71-B791-4110-8D5C-7108F22C1010}]
+@="MarshalByValueValueSet"
+[HKCR\CLSID\{F1C46D71-B791-4110-8D5C-7108F22C1010}\InProcServer32]
+@="C:\\Windows\\System32\\wintypes.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{F3364BA0-65B9-11CE-A9BA-00AA004AE837}]
+@="Shell File System Folder"
+[HKCR\CLSID\{F3364BA0-65B9-11CE-A9BA-00AA004AE837}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{F3364BA0-65B9-11CE-A9BA-00AA004AE837}\ShellFolder]
+"FolderValueFlags"=dword:00180000
+[HKCR\CLSID\{f507f854-308b-401e-a1b7-b55ba6ba679a}]
+@="Association Property Handler"
+[HKCR\CLSID\{f507f854-308b-401e-a1b7-b55ba6ba679a}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{F562A2C8-E850-4F05-8E7A-E7192E4E6C23}]
+@="PSFactoryBuffer"
+[HKCR\CLSID\{F562A2C8-E850-4F05-8E7A-E7192E4E6C23}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\propsys.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{f5a8b627-4d46-4d65-92f3-73626ae31971}]
+@="Explorer command store"
+[HKCR\CLSID\{f5a8b627-4d46-4d65-92f3-73626ae31971}\InProcServer32]
+@=expand:"%SystemRoot%\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{F6166DAD-D3BE-4ebd-8419-9B5EAD8D0EC7}]
+@="ShellItemArray Shell Namespace helper"
+[HKCR\CLSID\{F6166DAD-D3BE-4ebd-8419-9B5EAD8D0EC7}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{f6c29334-47dc-4397-9150-f549cf1d4861}]
+@="BufferProxy"
+[HKCR\CLSID\{f6c29334-47dc-4397-9150-f549cf1d4861}\InProcServer32]
+@="C:\\Windows\\System32\\WinTypes.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{F6C3AC3E-E642-4795-A9F2-9B3AB94EAC5D}]
+@="Cached File Updater Merge Handler Helpers"
+[HKCR\CLSID\{F6C3AC3E-E642-4795-A9F2-9B3AB94EAC5D}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{f8278c54-a712-415b-b593-b77a2be0dda9}]
+@="This Device"
+"LocalizedString"=expand:"@%SystemRoot%\\system32\\windows.storage.dll,-51409"
+"System.ItemNameDisplayWithoutExtension"=expand:"@%SystemRoot%\\system32\\Windows.Storage.dll,-51409"
+[HKCR\CLSID\{f8278c54-a712-415b-b593-b77a2be0dda9}\InProcServer32]
+@=expand:"%SystemRoot%\\System32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{f8278c54-a712-415b-b593-b77a2be0dda9}\Instance]
+"CLSID"="{0E5AAE11-A475-4c5b-AB00-C66DE400274E}"
+[HKCR\CLSID\{f8278c54-a712-415b-b593-b77a2be0dda9}\Instance\InitPropertyBag]
+"AllowChildAliasRegistration"=dword:00000001
+"Attributes"=dword:00000011
+"TargetKnownFolder"="{5E6C858F-0E22-4760-9AFE-EA3317B67173}"
+[HKCR\CLSID\{f8278c54-a712-415b-b593-b77a2be0dda9}\ShellFolder]
+"Attributes"=dword:f0900105
+"FolderValueFlags"=dword:00500020
+[HKCR\CLSID\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}]
+"SortOrderIndex"=dword:00000040
+"System.Home.PropList.Sort"="prop:System.Home.SortOrder;System.DateAccessed;System.ItemNameDisplay"
+"System.IsPinnedToNameSpaceTree"=dword:00000001
+[HKCR\CLSID\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}\DefaultIcon]
+@=expand:"%SystemRoot%\\system32\\shell32.dll,-51380"
+[HKCR\CLSID\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Apartment"
+[HKCR\CLSID\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}\shell]
+[HKCR\CLSID\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}\shell\pintohome]
+"MUIVerb"="@shell32.dll,-51388"
+"SkipCloudDownload"=dword:00000000
+[HKCR\CLSID\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}\shell\pintohome\command]
+"DelegateExecute"="{b455f46e-e4af-4035-b0a4-cf18d2f6f28e}"
+[HKCR\CLSID\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}\ShellFolder]
+"Attributes"=dword:20000000
+"FolderValueFlags"=dword:00000001
+[HKCR\CLSID\{fe5afcf2-e681-4ada-9703-ef39b8ecb9bf}]
+@="Library Description"
+"EnableShareDenyNone"=dword:00000001
+"EnableShareDenyWrite"=dword:00000001
+"UseInProcHandlerCache"=dword:00000001
+[HKCR\CLSID\{fe5afcf2-e681-4ada-9703-ef39b8ecb9bf}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{ff183a37-b6da-4d32-bb24-157b282ffa48}]
+@="CLSID_ApplicationSearchScopeFactory"
+[HKCR\CLSID\{ff183a37-b6da-4d32-bb24-157b282ffa48}\InProcServer32]
+@=expand:"%SystemRoot%\\System32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{ff8a32e3-a9a7-4093-b9c4-5b5b4f30ab63}]
+@="CLSID_ResultShape"
+[HKCR\CLSID\{ff8a32e3-a9a7-4093-b9c4-5b5b4f30ab63}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"
+[HKCR\CLSID\{ff9e6131-a8c1-4188-aa03-82e9f10a05a8}]
+@="Elevatable Shortcut"
+"AppId"="{ff9e6131-a8c1-4188-aa03-82e9f10a05a8}"
+"LocalizedString"=expand:"@%SystemRoot%\\system32\\shell32.dll,-50197"
+[HKCR\CLSID\{ff9e6131-a8c1-4188-aa03-82e9f10a05a8}\Elevation]
+"Enabled"=dword:00000001
+[HKCR\CLSID\{ff9e6131-a8c1-4188-aa03-82e9f10a05a8}\InProcServer32]
+@=expand:"%SystemRoot%\\system32\\windows.storage.dll"
+"ThreadingModel"="Both"

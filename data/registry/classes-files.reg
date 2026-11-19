@@ -1,19 +1,6 @@
-; the file types that Mime handles: batch files run by the command interpreter, registry files merged by regedit, installer
-; packages run by msiexec, zip files the shell opens as folders, and the pictures and text the shell names an icon for.
-
-[HKCR\.bat]
-@="batfile"
-[HKCR\batfile\shell\open\command]
-@="\"%1\" %*"
-[HKCR\batfile\shell\runas\command]
-@=expand:"%SystemRoot%\\System32\\cmd.exe /C \"%1\" %*"
-
-[HKCR\.cmd]
-@="cmdfile"
-[HKCR\cmdfile\shell\open\command]
-@="\"%1\" %*"
-[HKCR\cmdfile\shell\runas\command]
-@=expand:"%SystemRoot%\\System32\\cmd.exe /C \"%1\" %*"
+; the file types that Mime handles: registry files merged by regedit, installer packages run by msiexec, zip files the
+; shell opens as folders, and the pictures and text the shell names an icon for. programs, batch files and shortcuts are
+; the image's, see classes-programs.reg.
 
 [HKCR\.reg]
 @="regfile"
@@ -80,7 +67,7 @@
 "Content Type"="image/png"
 "PerceivedType"="image"
 [HKCR\pngfile\DefaultIcon]
-@=expand:"%SystemRoot%\\System32\\imageres.dll,-71"
+@=expand:"%SystemRoot%\\System32\\imageres.dll,-83"
 
 ; what the shell looks at for a type that has no program of its own: the type and its kind.
 [HKCR\SystemFileAssociations\{.html,.ico,.png,.txt,image}]

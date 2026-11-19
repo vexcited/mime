@@ -1,372 +1,858 @@
-; the sound scheme and the names of the events, read by PlaySound and MessageBeep. a program that plays a system sound
-; names an event, the event's .Current value is the file, and a value that is empty is an event without a sound. the files
-; are the sounds Mime makes from the recipes of mime-audio, see CMakeLists.txt.
+; the sound scheme and the names of the events, read by PlaySound and MessageBeep, as the default account of the
+; 26300.9457 image has them. a program that plays a system sound names an event, the event's .Current value is the file,
+; and a value that is empty is an event without a sound. the files are microsoft's, see the genuine manifest.
+
+[HKCU\AppEvents]
+
+[HKCU\AppEvents\EventLabels]
+
+[HKCU\AppEvents\EventLabels\.Default]
+@="Default Beep"
+"DispFileName"="@mmres.dll,-5824"
+
+[HKCU\AppEvents\EventLabels\ActivatingDocument]
+@="Complete Navigation"
+"DispFileName"="@ieframe.dll,-10321"
+
+[HKCU\AppEvents\EventLabels\AppGPFault]
+@="Program Error"
+"DispFileName"="@mmres.dll,-5825"
+
+[HKCU\AppEvents\EventLabels\BlockedPopup]
+@="Blocked Pop-up Window"
+"DispFileName"="@ieframe.dll,-10325"
+
+[HKCU\AppEvents\EventLabels\CCSelect]
+@="Select"
+"DispFileName"="@ieframe.dll,-10323"
+
+[HKCU\AppEvents\EventLabels\ChangeTheme]
+@="Change Theme"
+"DispFileName"="@mmres.dll,-5860"
+
+[HKCU\AppEvents\EventLabels\Close]
+@="Close Program"
+"DispFileName"="@mmres.dll,-5826"
+
+[HKCU\AppEvents\EventLabels\CriticalBatteryAlarm]
+@="Critical Battery Alarm"
+"DispFileName"="@mmres.dll,-5827"
+
+[HKCU\AppEvents\EventLabels\DeviceConnect]
+@="Device Connect"
+"DispFileName"="@mmres.dll,-5828"
+
+[HKCU\AppEvents\EventLabels\DeviceDisconnect]
+@="Device Disconnect"
+"DispFileName"="@mmres.dll,-5829"
+
+[HKCU\AppEvents\EventLabels\DeviceFail]
+@="Device Failed to Connect"
+"DispFileName"="@mmres.dll,-5830"
+
+[HKCU\AppEvents\EventLabels\DisNumbersSound]
+@="Disambiguation Numbers"
+"DispFileName"="@X:\\Windows\\System32\\speech\\speechux\\sapi.cpl,-5566"
+
+[HKCU\AppEvents\EventLabels\EmptyRecycleBin]
+@="Empty Recycle Bin"
+"DispFileName"="@mmres.dll,-5831"
+
+[HKCU\AppEvents\EventLabels\FaxBeep]
+@="New Fax Notification"
+"DispFileName"="@mmres.dll,-5858"
+
+[HKCU\AppEvents\EventLabels\FeedDiscovered]
+@="Feed Discovered"
+"DispFileName"="@ieframe.dll,-17315"
+
+[HKCU\AppEvents\EventLabels\HubOffSound]
+@="Off"
+"DispFileName"="@X:\\Windows\\System32\\speech\\speechux\\sapi.cpl,-5563"
+
+[HKCU\AppEvents\EventLabels\HubOnSound]
+@="On"
+"DispFileName"="@X:\\Windows\\System32\\speech\\speechux\\sapi.cpl,-5562"
+
+[HKCU\AppEvents\EventLabels\HubSleepSound]
+@="Sleep"
+"DispFileName"="@X:\\Windows\\System32\\speech\\speechux\\sapi.cpl,-5564"
+
+[HKCU\AppEvents\EventLabels\LowBatteryAlarm]
+@="Low Battery Alarm"
+"DispFileName"="@mmres.dll,-5832"
+
+[HKCU\AppEvents\EventLabels\MailBeep]
+@="Desktop Mail Notification"
+"DispFileName"="@mmres.dll,-5837"
+
+[HKCU\AppEvents\EventLabels\Maximize]
+@="Maximize"
+"DispFileName"="@mmres.dll,-5833"
+
+[HKCU\AppEvents\EventLabels\MenuCommand]
+@="Menu Command"
+"DispFileName"="@mmres.dll,-5834"
+
+[HKCU\AppEvents\EventLabels\MenuPopup]
+@="Menu Pop-up"
+"DispFileName"="@mmres.dll,-5835"
+
+[HKCU\AppEvents\EventLabels\MessageNudge]
+@="Message Nudge"
+"DispFileName"="@mmres.dll,-5866"
+
+[HKCU\AppEvents\EventLabels\Minimize]
+@="Minimize"
+"DispFileName"="@mmres.dll,-5836"
+
+[HKCU\AppEvents\EventLabels\MisrecoSound]
+@="Misrecognition"
+"DispFileName"="@X:\\Windows\\System32\\speech\\speechux\\sapi.cpl,-5561"
+
+[HKCU\AppEvents\EventLabels\MoveMenuItem]
+@="Move Menu Item"
+"DispFileName"="@ieframe.dll,-10322"
+
+[HKCU\AppEvents\EventLabels\Navigating]
+@="Start Navigation"
+"DispFileName"="@ieframe.dll,-10320"
+
+[HKCU\AppEvents\EventLabels\Notification.Default]
+@="Notification"
+"DispFileName"="@mmres.dll,-5865"
+
+[HKCU\AppEvents\EventLabels\Notification.IM]
+@="Instant Message Notification"
+"DispFileName"="@mmres.dll,-5863"
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Alarm]
+@="Alarm 1"
+"DispFileName"="@mmres.dll,-5888"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Alarm10]
+@="Alarm 10"
+"DispFileName"="@mmres.dll,-5897"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Alarm2]
+@="Alarm 2"
+"DispFileName"="@mmres.dll,-5889"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Alarm3]
+@="Alarm 3"
+"DispFileName"="@mmres.dll,-5890"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Alarm4]
+@="Alarm 4"
+"DispFileName"="@mmres.dll,-5891"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Alarm5]
+@="Alarm 5"
+"DispFileName"="@mmres.dll,-5892"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Alarm6]
+@="Alarm 6"
+"DispFileName"="@mmres.dll,-5893"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Alarm7]
+@="Alarm 7"
+"DispFileName"="@mmres.dll,-5894"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Alarm8]
+@="Alarm 8"
+"DispFileName"="@mmres.dll,-5895"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Alarm9]
+@="Alarm 9"
+"DispFileName"="@mmres.dll,-5896"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Call]
+@="Incoming Call Notification 1"
+"DispFileName"="@mmres.dll,-5872"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Call10]
+@="Incoming Call Notification 10"
+"DispFileName"="@mmres.dll,-5881"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Call2]
+@="Incoming Call Notification 2"
+"DispFileName"="@mmres.dll,-5873"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Call3]
+@="Incoming Call Notification 3"
+"DispFileName"="@mmres.dll,-5874"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Call4]
+@="Incoming Call Notification 4"
+"DispFileName"="@mmres.dll,-5875"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Call5]
+@="Incoming Call Notification 5"
+"DispFileName"="@mmres.dll,-5876"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Call6]
+@="Incoming Call Notification 6"
+"DispFileName"="@mmres.dll,-5877"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Call7]
+@="Incoming Call Notification 7"
+"DispFileName"="@mmres.dll,-5878"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Call8]
+@="Incoming Call Notification 8"
+"DispFileName"="@mmres.dll,-5879"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Looping.Call9]
+@="Incoming Call Notification 9"
+"DispFileName"="@mmres.dll,-5880"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\Notification.Mail]
+@="New Mail Notification"
+"DispFileName"="@mmres.dll,-5861"
+
+[HKCU\AppEvents\EventLabels\Notification.Proximity]
+@="NFP Completion"
+"DispFileName"="@mmres.dll,-5868"
+
+[HKCU\AppEvents\EventLabels\Notification.Reminder]
+@="Calendar Reminder"
+"DispFileName"="@mmres.dll,-5864"
+
+[HKCU\AppEvents\EventLabels\Notification.SMS]
+@="New Text Message Notification"
+"DispFileName"="@mmres.dll,-5862"
+
+[HKCU\AppEvents\EventLabels\Open]
+@="Open Program"
+"DispFileName"="@mmres.dll,-5839"
+
+[HKCU\AppEvents\EventLabels\PanelSound]
+@="Disambiguation Panel"
+"DispFileName"="@X:\\Windows\\System32\\speech\\speechux\\sapi.cpl,-5565"
+
+[HKCU\AppEvents\EventLabels\PrintComplete]
+@="Print Complete"
+"DispFileName"="@mmres.dll,-5840"
+
+[HKCU\AppEvents\EventLabels\ProximityConnection]
+@="NFP Connection"
+"DispFileName"="@mmres.dll,-5867"
+
+[HKCU\AppEvents\EventLabels\RestoreDown]
+@="Restore Down"
+"DispFileName"="@mmres.dll,-5841"
+
+[HKCU\AppEvents\EventLabels\RestoreUp]
+@="Restore Up"
+"DispFileName"="@mmres.dll,-5842"
+
+[HKCU\AppEvents\EventLabels\SecurityBand]
+@="Information Bar"
+"DispFileName"="@ieframe.dll,-10326"
+
+[HKCU\AppEvents\EventLabels\ShowBand]
+@="Show Toolbar Band"
+"DispFileName"="@ieframe.dll,-10324"
+
+[HKCU\AppEvents\EventLabels\SystemAsterisk]
+@="Asterisk"
+"DispFileName"="@mmres.dll,-5843"
+
+[HKCU\AppEvents\EventLabels\SystemExclamation]
+@="Exclamation"
+"DispFileName"="@mmres.dll,-5845"
+
+[HKCU\AppEvents\EventLabels\SystemExit]
+@="Exit Windows"
+"DispFileName"="@mmres.dll,-5846"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\SystemHand]
+@="Critical Stop"
+"DispFileName"="@mmres.dll,-5847"
+
+[HKCU\AppEvents\EventLabels\SystemNotification]
+@="System Notification"
+"DispFileName"="@mmres.dll,-5848"
+
+[HKCU\AppEvents\EventLabels\SystemQuestion]
+@="Question"
+"DispFileName"="@mmres.dll,-5849"
+
+[HKCU\AppEvents\EventLabels\WindowsLogoff]
+@="Windows Logoff"
+"DispFileName"="@mmres.dll,-5852"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\WindowsLogon]
+@="Windows Logon"
+"DispFileName"="@mmres.dll,-5853"
+"ExcludeFromCPL"=dword:00000001
+
+[HKCU\AppEvents\EventLabels\WindowsUAC]
+@="Windows User Account Control"
+"DispFileName"="@mmres.dll,-5859"
+
+[HKCU\AppEvents\EventLabels\WindowsUnlock]
+@="Windows Unlock"
+"DispFileName"="@mmres.dll,-5869"
+"ExcludeFromCPL"=dword:00000001
 
 [HKCU\AppEvents\Schemes]
 @=".Default"
 
-[HKCU\AppEvents\Schemes\Names\.Default]
-@="Windows Default"
+[HKCU\AppEvents\Schemes\Apps]
 
-[HKCU\AppEvents\Schemes\Names\.None]
-@="No Sounds"
+[HKCU\AppEvents\Schemes\Apps\.Default]
+@="Windows"
+"DispFileName"="@mmres.dll,-5856"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\.Default\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Background.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\.Default]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\.Default\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Background.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\AppGPFault\.Default]
-@=""
+[HKCU\AppEvents\Schemes\Apps\.Default\.Default\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Background.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\AppGPFault]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\AppGPFault\.Current]
-@=""
 
-[HKCU\AppEvents\Schemes\Apps\.Default\CriticalBatteryAlarm\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Battery Critical.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\AppGPFault\.Default]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\CCSelect]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\ChangeTheme]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\ChangeTheme\.Current]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\ChangeTheme\.Default]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Close]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Close\.Current]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Close\.Default]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\CriticalBatteryAlarm]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\CriticalBatteryAlarm\.Current]
-@=expand:"%SystemRoot%\\media\\Windows Battery Critical.wav"
+@=expand:"%SystemRoot%\\media\\Windows Foreground.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\DeviceConnect\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Hardware Insert.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\CriticalBatteryAlarm\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Foreground.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\DeviceConnect]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\DeviceConnect\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Hardware Insert.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\DeviceDisconnect\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Hardware Remove.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\DeviceConnect\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Hardware Insert.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\DeviceDisconnect]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\DeviceDisconnect\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Hardware Remove.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\DeviceFail\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Hardware Fail.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\DeviceDisconnect\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Hardware Remove.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\DeviceFail]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\DeviceFail\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Hardware Fail.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\LowBatteryAlarm\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Battery Low.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\DeviceFail\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Hardware Fail.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\FaxBeep]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\FaxBeep\.Current]
+@=expand:"%SystemRoot%\\media\\Windows Notify Email.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\FaxBeep\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Notify Email.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\LowBatteryAlarm]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\LowBatteryAlarm\.Current]
-@=expand:"%SystemRoot%\\media\\Windows Battery Low.wav"
+@=expand:"%SystemRoot%\\media\\Windows Background.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\MailBeep\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Notify Email.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\LowBatteryAlarm\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Background.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\MailBeep]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\MailBeep\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Notify Email.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\Maximize\.Default]
-@=""
+[HKCU\AppEvents\Schemes\Apps\.Default\MailBeep\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Notify Email.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Maximize]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\Maximize\.Current]
-@=""
 
-[HKCU\AppEvents\Schemes\Apps\.Default\MenuCommand\.Default]
-@=""
+[HKCU\AppEvents\Schemes\Apps\.Default\Maximize\.Default]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\MenuCommand]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\MenuCommand\.Current]
-@=""
 
-[HKCU\AppEvents\Schemes\Apps\.Default\MenuPopup\.Default]
-@=""
+[HKCU\AppEvents\Schemes\Apps\.Default\MenuCommand\.Default]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\MenuPopup]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\MenuPopup\.Current]
-@=""
 
-[HKCU\AppEvents\Schemes\Apps\.Default\MessageNudge\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Message Nudge.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\MenuPopup\.Default]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\MessageNudge]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\MessageNudge\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Message Nudge.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\Minimize\.Default]
-@=""
+[HKCU\AppEvents\Schemes\Apps\.Default\MessageNudge\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Message Nudge.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Minimize]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\Minimize\.Current]
-@=""
 
-[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Default\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Notify System Generic.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\Minimize\.Default]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Default]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\Notification.Default\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Notify System Generic.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\Notification.IM\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Notify Messaging.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Default\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Notify System Generic.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.IM]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\Notification.IM\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Notify Messaging.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Mail\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Notify Email.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.IM\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Notify Messaging.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm\.Current]
+@=expand:"%SystemRoot%\\media\\Alarm01.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm\.Default]
+@=expand:"%SystemRoot%\\media\\Alarm01.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm10]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm10\.Current]
+@=expand:"%SystemRoot%\\media\\Alarm10.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm10\.Default]
+@=expand:"%SystemRoot%\\media\\Alarm10.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm2]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm2\.Current]
+@=expand:"%SystemRoot%\\media\\Alarm02.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm2\.Default]
+@=expand:"%SystemRoot%\\media\\Alarm02.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm3]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm3\.Current]
+@=expand:"%SystemRoot%\\media\\Alarm03.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm3\.Default]
+@=expand:"%SystemRoot%\\media\\Alarm03.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm4]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm4\.Current]
+@=expand:"%SystemRoot%\\media\\Alarm04.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm4\.Default]
+@=expand:"%SystemRoot%\\media\\Alarm04.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm5]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm5\.Current]
+@=expand:"%SystemRoot%\\media\\Alarm05.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm5\.Default]
+@=expand:"%SystemRoot%\\media\\Alarm05.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm6]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm6\.Current]
+@=expand:"%SystemRoot%\\media\\Alarm06.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm6\.Default]
+@=expand:"%SystemRoot%\\media\\Alarm06.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm7]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm7\.Current]
+@=expand:"%SystemRoot%\\media\\Alarm07.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm7\.Default]
+@=expand:"%SystemRoot%\\media\\Alarm07.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm8]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm8\.Current]
+@=expand:"%SystemRoot%\\media\\Alarm08.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm8\.Default]
+@=expand:"%SystemRoot%\\media\\Alarm08.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm9]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm9\.Current]
+@=expand:"%SystemRoot%\\media\\Alarm09.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Alarm9\.Default]
+@=expand:"%SystemRoot%\\media\\Alarm09.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call\.Current]
+@=expand:"%SystemRoot%\\media\\Ring01.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call\.Default]
+@=expand:"%SystemRoot%\\media\\Ring01.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call10]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call10\.Current]
+@=expand:"%SystemRoot%\\media\\Ring10.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call10\.Default]
+@=expand:"%SystemRoot%\\media\\Ring10.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call2]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call2\.Current]
+@=expand:"%SystemRoot%\\media\\Ring02.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call2\.Default]
+@=expand:"%SystemRoot%\\media\\Ring02.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call3]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call3\.Current]
+@=expand:"%SystemRoot%\\media\\Ring03.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call3\.Default]
+@=expand:"%SystemRoot%\\media\\Ring03.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call4]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call4\.Current]
+@=expand:"%SystemRoot%\\media\\Ring04.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call4\.Default]
+@=expand:"%SystemRoot%\\media\\Ring04.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call5]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call5\.Current]
+@=expand:"%SystemRoot%\\media\\Ring05.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call5\.Default]
+@=expand:"%SystemRoot%\\media\\Ring05.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call6]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call6\.Current]
+@=expand:"%SystemRoot%\\media\\Ring06.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call6\.Default]
+@=expand:"%SystemRoot%\\media\\Ring06.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call7]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call7\.Current]
+@=expand:"%SystemRoot%\\media\\Ring07.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call7\.Default]
+@=expand:"%SystemRoot%\\media\\Ring07.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call8]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call8\.Current]
+@=expand:"%SystemRoot%\\media\\Ring08.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call8\.Default]
+@=expand:"%SystemRoot%\\media\\Ring08.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call9]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call9\.Current]
+@=expand:"%SystemRoot%\\media\\Ring09.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Looping.Call9\.Default]
+@=expand:"%SystemRoot%\\media\\Ring09.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Mail]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\Notification.Mail\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Notify Email.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Proximity\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Proximity Notification.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Mail\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Notify Email.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Proximity]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\Notification.Proximity\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Proximity Notification.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Reminder\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Notify Calendar.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Proximity\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Proximity Notification.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Reminder]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\Notification.Reminder\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Notify Calendar.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\Notification.SMS\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Notify Messaging.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.Reminder\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Notify Calendar.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.SMS]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\Notification.SMS\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Notify Messaging.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\Open\.Default]
-@=""
+[HKCU\AppEvents\Schemes\Apps\.Default\Notification.SMS\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Notify Messaging.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\Open]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\Open\.Current]
-@=""
 
-[HKCU\AppEvents\Schemes\Apps\.Default\PrintComplete\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Print complete.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\Open\.Default]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\PrintComplete]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\PrintComplete\.Current]
-@=expand:"%SystemRoot%\\media\\Windows Print complete.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\ProximityConnection\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Proximity Connection.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\PrintComplete\.Default]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\ProximityConnection]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\ProximityConnection\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Proximity Connection.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\RestoreDown\.Default]
-@=""
+[HKCU\AppEvents\Schemes\Apps\.Default\ProximityConnection\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Proximity Connection.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\RestoreDown]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\RestoreDown\.Current]
-@=""
 
-[HKCU\AppEvents\Schemes\Apps\.Default\RestoreUp\.Default]
-@=""
+[HKCU\AppEvents\Schemes\Apps\.Default\RestoreDown\.Default]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\RestoreUp]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\RestoreUp\.Current]
-@=""
 
-[HKCU\AppEvents\Schemes\Apps\.Default\SystemAsterisk\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Background.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\RestoreUp\.Default]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\ShowBand]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\SystemAsterisk]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\SystemAsterisk\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Background.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\SystemExclamation\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Exclamation.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\SystemAsterisk\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Background.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\SystemExclamation]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\SystemExclamation\.Current]
-@=expand:"%SystemRoot%\\media\\Windows Exclamation.wav"
+@=expand:"%SystemRoot%\\media\\Windows Background.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\SystemExit\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Shutdown.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\SystemExclamation\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Background.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\SystemExit]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\SystemExit\.Current]
-@=expand:"%SystemRoot%\\media\\Windows Shutdown.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\SystemHand\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Error.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\SystemExit\.Default]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\SystemHand]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\SystemHand\.Current]
-@=expand:"%SystemRoot%\\media\\Windows Error.wav"
+@=expand:"%SystemRoot%\\media\\Windows Foreground.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\SystemNotification\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Balloon.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\SystemHand\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Foreground.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\SystemNotification]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\SystemNotification\.Current]
-@=expand:"%SystemRoot%\\media\\Windows Balloon.wav"
+@=expand:"%SystemRoot%\\media\\Windows Background.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\SystemQuestion\.Default]
-@=""
+[HKCU\AppEvents\Schemes\Apps\.Default\SystemNotification\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Background.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\SystemQuestion]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\SystemQuestion\.Current]
-@=""
 
-[HKCU\AppEvents\Schemes\Apps\.Default\WindowsLogoff\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Logoff Sound.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\SystemQuestion\.Default]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\WindowsLogoff]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\WindowsLogoff\.Current]
-@=expand:"%SystemRoot%\\media\\Windows Logoff Sound.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\WindowsLogon\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Logon.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\WindowsLogoff\.Default]
+
+[HKCU\AppEvents\Schemes\Apps\.Default\WindowsLogon]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\WindowsLogon\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Logon.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\WindowsUAC\.Default]
-@=expand:"%SystemRoot%\\media\\Windows User Account Control.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\WindowsLogon\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Logon.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\WindowsUAC]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\WindowsUAC\.Current]
 @=expand:"%SystemRoot%\\media\\Windows User Account Control.wav"
 
-[HKCU\AppEvents\Schemes\Apps\.Default\WindowsUnlock\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Unlock.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\WindowsUAC\.Default]
+@=expand:"%SystemRoot%\\media\\Windows User Account Control.wav"
+
+[HKCU\AppEvents\Schemes\Apps\.Default\WindowsUnlock]
 
 [HKCU\AppEvents\Schemes\Apps\.Default\WindowsUnlock\.Current]
 @=expand:"%SystemRoot%\\media\\Windows Unlock.wav"
 
-[HKCU\AppEvents\Schemes\Apps\Explorer\BlockedPopup\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Pop-up Blocked.wav"
+[HKCU\AppEvents\Schemes\Apps\.Default\WindowsUnlock\.Default]
+@=expand:"%SystemRoot%\\media\\Windows Unlock.wav"
 
-[HKCU\AppEvents\Schemes\Apps\Explorer\BlockedPopup\.Current]
-@=expand:"%SystemRoot%\\media\\Windows Pop-up Blocked.wav"
+[HKCU\AppEvents\Schemes\Apps\Explorer]
+@="File Explorer"
+"DispFileName"="@mmres.dll,-5854"
 
-[HKCU\AppEvents\Schemes\Apps\Explorer\EmptyRecycleBin\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Recycle.wav"
+[HKCU\AppEvents\Schemes\Apps\Explorer\ActivatingDocument]
+
+[HKCU\AppEvents\Schemes\Apps\Explorer\BlockedPopup]
+
+[HKCU\AppEvents\Schemes\Apps\Explorer\BlockedPopup\.current]
+
+[HKCU\AppEvents\Schemes\Apps\Explorer\BlockedPopup\.default]
+
+[HKCU\AppEvents\Schemes\Apps\Explorer\EmptyRecycleBin]
 
 [HKCU\AppEvents\Schemes\Apps\Explorer\EmptyRecycleBin\.Current]
-@=expand:"%SystemRoot%\\media\\Windows Recycle.wav"
 
-[HKCU\AppEvents\Schemes\Apps\Explorer\FeedDiscovered\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Feed Discovered.wav"
+[HKCU\AppEvents\Schemes\Apps\Explorer\EmptyRecycleBin\.Default]
 
-[HKCU\AppEvents\Schemes\Apps\Explorer\FeedDiscovered\.Current]
-@=expand:"%SystemRoot%\\media\\Windows Feed Discovered.wav"
+[HKCU\AppEvents\Schemes\Apps\Explorer\FeedDiscovered]
 
-[HKCU\AppEvents\Schemes\Apps\Explorer\MoveMenuItem\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Menu Command.wav"
+[HKCU\AppEvents\Schemes\Apps\Explorer\FeedDiscovered\.current]
 
-[HKCU\AppEvents\Schemes\Apps\Explorer\MoveMenuItem\.Current]
-@=expand:"%SystemRoot%\\media\\Windows Menu Command.wav"
+[HKCU\AppEvents\Schemes\Apps\Explorer\FeedDiscovered\.default]
 
-[HKCU\AppEvents\Schemes\Apps\Explorer\Navigating\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Navigation Start.wav"
+[HKCU\AppEvents\Schemes\Apps\Explorer\MoveMenuItem]
+
+[HKCU\AppEvents\Schemes\Apps\Explorer\Navigating]
 
 [HKCU\AppEvents\Schemes\Apps\Explorer\Navigating\.Current]
-@=expand:"%SystemRoot%\\media\\Windows Navigation Start.wav"
 
-[HKCU\AppEvents\Schemes\Apps\Explorer\SecurityBand\.Default]
-@=expand:"%SystemRoot%\\media\\Windows Information Bar.wav"
+[HKCU\AppEvents\Schemes\Apps\Explorer\Navigating\.Default]
 
-[HKCU\AppEvents\Schemes\Apps\Explorer\SecurityBand\.Current]
-@=expand:"%SystemRoot%\\media\\Windows Information Bar.wav"
+[HKCU\AppEvents\Schemes\Apps\Explorer\SecurityBand]
 
-[HKCU\AppEvents\EventLabels\.Default]
-@="Default Beep"
+[HKCU\AppEvents\Schemes\Apps\Explorer\SecurityBand\.current]
 
-[HKCU\AppEvents\EventLabels\AppGPFault]
-@="Program Error"
+[HKCU\AppEvents\Schemes\Apps\Explorer\SecurityBand\.default]
 
-[HKCU\AppEvents\EventLabels\CriticalBatteryAlarm]
-@="Critical Battery Alarm"
+[HKCU\AppEvents\Schemes\Apps\sapisvr]
+@="Speech Recognition"
+"DispFileName"="@X:\\Windows\\System32\\speech\\speechux\\sapi.cpl,-5555"
 
-[HKCU\AppEvents\EventLabels\DeviceConnect]
-@="Device Connect"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\DisNumbersSound]
 
-[HKCU\AppEvents\EventLabels\DeviceDisconnect]
-@="Device Disconnect"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\DisNumbersSound\.current]
+@=expand:"%SystemRoot%\\media\\Speech Disambiguation.wav"
 
-[HKCU\AppEvents\EventLabels\DeviceFail]
-@="Device Failed to Connect"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\DisNumbersSound\.default]
+@=expand:"%SystemRoot%\\media\\Speech Disambiguation.wav"
 
-[HKCU\AppEvents\EventLabels\LowBatteryAlarm]
-@="Low Battery Alarm"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\HubOffSound]
 
-[HKCU\AppEvents\EventLabels\MailBeep]
-@="New Mail Notification"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\HubOffSound\.current]
+@=expand:"%SystemRoot%\\media\\Speech Off.wav"
 
-[HKCU\AppEvents\EventLabels\Maximize]
-@="Maximize"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\HubOffSound\.default]
+@=expand:"%SystemRoot%\\media\\Speech Off.wav"
 
-[HKCU\AppEvents\EventLabels\MenuCommand]
-@="Menu Command"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\HubOnSound]
 
-[HKCU\AppEvents\EventLabels\MenuPopup]
-@="Menu Pop-up"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\HubOnSound\.current]
+@=expand:"%SystemRoot%\\media\\Speech On.wav"
 
-[HKCU\AppEvents\EventLabels\MessageNudge]
-@="Message Nudge"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\HubOnSound\.default]
+@=expand:"%SystemRoot%\\media\\Speech On.wav"
 
-[HKCU\AppEvents\EventLabels\Minimize]
-@="Minimize"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\HubSleepSound]
 
-[HKCU\AppEvents\EventLabels\Notification.Default]
-@="Notification"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\HubSleepSound\.current]
+@=expand:"%SystemRoot%\\media\\Speech Sleep.wav"
 
-[HKCU\AppEvents\EventLabels\Notification.IM]
-@="Instant Message Notification"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\HubSleepSound\.default]
+@=expand:"%SystemRoot%\\media\\Speech Sleep.wav"
 
-[HKCU\AppEvents\EventLabels\Notification.Mail]
-@="New Mail Notification"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\MisrecoSound]
 
-[HKCU\AppEvents\EventLabels\Notification.Proximity]
-@="Proximity Notification"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\MisrecoSound\.current]
+@=expand:"%SystemRoot%\\media\\Speech Misrecognition.wav"
 
-[HKCU\AppEvents\EventLabels\Notification.Reminder]
-@="Calendar Reminder"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\MisrecoSound\.default]
+@=expand:"%SystemRoot%\\media\\Speech Misrecognition.wav"
 
-[HKCU\AppEvents\EventLabels\Notification.SMS]
-@="Text Message Notification"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\PanelSound]
 
-[HKCU\AppEvents\EventLabels\Open]
-@="Open Program"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\PanelSound\.current]
+@=expand:"%SystemRoot%\\media\\Speech Disambiguation.wav"
 
-[HKCU\AppEvents\EventLabels\PrintComplete]
-@="Print Complete"
+[HKCU\AppEvents\Schemes\Apps\sapisvr\PanelSound\.default]
+@=expand:"%SystemRoot%\\media\\Speech Disambiguation.wav"
 
-[HKCU\AppEvents\EventLabels\ProximityConnection]
-@="Proximity Connection"
+[HKCU\AppEvents\Schemes\Names]
 
-[HKCU\AppEvents\EventLabels\RestoreDown]
-@="Restore Down"
+[HKCU\AppEvents\Schemes\Names\.Default]
+@="@mmres.dll,-800"
 
-[HKCU\AppEvents\EventLabels\RestoreUp]
-@="Restore Up"
-
-[HKCU\AppEvents\EventLabels\SystemAsterisk]
-@="Asterisk"
-
-[HKCU\AppEvents\EventLabels\SystemExclamation]
-@="Exclamation"
-
-[HKCU\AppEvents\EventLabels\SystemExit]
-@="Exit Windows"
-
-[HKCU\AppEvents\EventLabels\SystemHand]
-@="Critical Stop"
-
-[HKCU\AppEvents\EventLabels\SystemNotification]
-@="Notification"
-
-[HKCU\AppEvents\EventLabels\SystemQuestion]
-@="Question"
-
-[HKCU\AppEvents\EventLabels\WindowsLogoff]
-@="Windows Logoff"
-
-[HKCU\AppEvents\EventLabels\WindowsLogon]
-@="Windows Logon"
-
-[HKCU\AppEvents\EventLabels\WindowsUAC]
-@="User Account Control"
-
-[HKCU\AppEvents\EventLabels\WindowsUnlock]
-@="Windows Unlock"
-
-[HKCU\AppEvents\EventLabels\BlockedPopup]
-@="Blocked Pop-up Window"
-
-[HKCU\AppEvents\EventLabels\EmptyRecycleBin]
-@="Empty Recycle Bin"
-
-[HKCU\AppEvents\EventLabels\FeedDiscovered]
-@="Feed Discovered"
-
-[HKCU\AppEvents\EventLabels\MoveMenuItem]
-@="Move Menu Item"
-
-[HKCU\AppEvents\EventLabels\Navigating]
-@="Start Navigation"
-
-[HKCU\AppEvents\EventLabels\SecurityBand]
-@="Information Bar"
+[HKCU\AppEvents\Schemes\Names\.None]
+@="@mmres.dll,-801"

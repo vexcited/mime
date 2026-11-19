@@ -1,0 +1,287 @@
+; the namespaces of the shell folders, the desktop, this pc, the control panel and the others, as the SOFTWARE hive of
+; the pinned image has them. the 32-bit side is made by regc.
+
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommonPlaces\NameSpace]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommonPlaces\NameSpace\DelegateFolders]
+"StorageDelegate"="{d34a6ca6-62c2-4c34-8a7c-14709c1ad938}"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\CommonPlaces\NameSpace\DelegateFolders\{d34a6ca6-62c2-4c34-8a7c-14709c1ad938}]
+@="common places delegate folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\DelegateFolders]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\DelegateFolders\{C2B136E2-D50E-405C-8784-363C582BF43E}]
+@="Wireless Devices"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{025A5937-A6BE-4686-A844-36FE4BEC8B6D}]
+@="Power Options"
+"PreferredPlan"="381b4222-f694-41f0-9685-ff5bb260df2e"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{025A5937-A6BE-4686-A844-36FE4BEC8B6D}\HardwareOverride]
+@="Power Options"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{0DF44EAA-FF21-4412-828E-260A8728E7F1}]
+@="Taskbar and Start Menu"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{1206F5F1-0569-412C-8FEC-3204630DFB70}]
+@="Credential Manager"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{17cd9488-1228-4b2f-88ce-4298e93e0966}]
+@="Set User Defaults"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{241D7C96-F8BF-4F85-B01F-E2B043341A4B}]
+@="Workspaces Center"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{4026492F-2F69-46B8-B9BF-5654FC07E423}]
+@="Windows Defender Firewall"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{40419485-C444-4567-851A-2DD7BFA1684D}]
+@="Phone and Modem"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{5ea4f148-308c-46d7-98a9-49041b1dd468}]
+@="Mobility Center"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{60632754-c523-4b62-b45c-4172da012619}]
+@="User Accounts"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{62D8ED13-C9D0-4CE8-A914-47DD628FB1B0}]
+@="Region and Language"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{6C8EEC18-8D75-41B2-A177-8831D59D2D50}]
+@="Mouse"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{6DFD7C5C-2451-11d3-A299-00C04F8EF6AF}]
+@="Folder Options"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{725BE8F7-668E-4C7B-8F90-46BDB0936430}]
+@="Keyboard"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{74246bfc-4c96-11d0-abef-0020af6b0b7a}]
+@="Device Manager"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{7b81be6a-ce2b-4676-a29e-eb907a5126c5}]
+@="Programs and Features"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{80F3F1D5-FECA-45F3-BC32-752C152E456E}]
+@="Tablet PC Settings"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{87D66A43-7B11-4A28-9811-C86EE395ACF7}]
+@="Indexing Options"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{8E908FC9-BECC-40f6-915B-F4CA0E70D03D}]
+@="Network and Sharing Center"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{9C60DE1E-E5FC-40f4-A487-460851A8D915}]
+@="AutoPlay"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{9C73F5E5-7AE7-4E32-A8E8-8D23B85255BF}]
+@="Sync Center Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{9FE63AFD-59CF-4419-9775-ABCC3849F861}]
+@="Recovery"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{A3DD4F92-658A-410F-84FD-6FBBBEF2FFFE}]
+@="Internet Options"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{A8A91A66-3A7D-4424-8D24-04E180695C7A}]
+@="Device Center"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{B2C761C6-29BC-4f19-9251-E6195265BAF1}]
+@="Color Management"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{B98A2BEA-7D42-4558-8BD1-832F41BAC6FD}]
+@="Windows 7 File Recovery"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{BB06C0E4-D293-4f75-8A90-CB05B6477EEE}]
+@="System"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{BB64F8A7-BEE7-4E1A-AB8D-7D8273F7FDB6}]
+@="Security and Maintenance CPL"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{BD84B380-8CA2-1069-AB1D-08000948F534}]
+@="Font Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{C58C4893-3BE0-4B45-ABB5-A63E4B8C8651}]
+@="Troubleshooting"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{D17D1D6D-CC3F-4815-8FE3-607E7D5D10B3}]
+@="Text to Speech"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{D20EA4E1-3957-11d2-A40B-0C5020524153}]
+@="Windows Tools"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{D555645E-D4F8-4c29-A827-D93C859C4F2A}]
+@="Ease of Access"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{D9EF8727-CAC2-4e60-809E-86F80A666C91}]
+@="Secure Startup"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{E2E7934B-DCE5-43C4-9576-7FE4F75E7480}]
+@="Date and Time"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{ECDB0924-4208-451E-8EE0-373C0956DE16}]
+@="ECS"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{ED834ED6-4B5A-4bfe-8F11-A626DCB6A921}]
+@="Personalization"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{F2DDFC82-8F12-4CDD-B7DC-D4FE1425AA4D}]
+@="Sound"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{F6B6E965-E9B2-444B-9286-10C9152EDBC5}]
+@="History Vault"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{F82DF8F7-8B9F-442E-A48C-818EA735FF9B}]
+@="Pen and Touch"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\ControlPanel\NameSpace\{F942C606-0914-47AB-BE56-1321B8035096}]
+@="Storage Spaces"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace]
+"MonitorRegistry"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\DelegateFolders]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\DelegateFolders\{3936E9E4-D92C-4EEE-A85A-BC16D5EA0819}]
+@="CLSID_FrequentPlacesFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\DelegateFolders\{F5FB2C77-0E2F-4A16-A381-3E560C68BC83}]
+@="Removable Drives"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{031E4825-7B94-4dc3-B131-E946B44C8DD5}]
+@="UsersLibraries"
+"Removal Message"="@shell32.dll,-9047"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{04731B67-D933-450a-90E6-4ACD2E9408FE}]
+@="CLSID_SearchFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{11016101-E366-4D22-BC06-4ADA335C892B}]
+@="IE History and Feeds Shell Data Source for Windows Search"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{1CF1260C-4DD0-4ebb-811F-33C572699FDE}]
+@="CLSID_ThisPCMyMusicRegFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{26EE0668-A00A-44D7-9371-BEB064C98683}]
+@="ControlPanelHome"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{2F6CE85C-F9EE-43CA-90C7-8A9BD53A2467}]
+@="File History Data Source"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{374DE290-123F-4565-9164-39C4925E467B}]
+@="CLSID_ThisPCDownloadsRegFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{3ADD1653-EB32-4cb0-BBD7-DFA0ABB5ACCA}]
+@="CLSID_ThisPCMyPicturesRegFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{4336a54d-038b-4685-ab02-99bb52d3fb8b}]
+@="Public folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{450D8FBA-AD25-11D0-98A8-0800361B1103}]
+@="Documents"
+"Removal Message"="@mydocs.dll,-900"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{5399E694-6CE5-4D6C-8FCE-1D8870FDCBA0}]
+@="ControlPanelStartupPage"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{59031a47-3f72-44a7-89c5-5595fe6b30ee}]
+@="UsersFiles"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{5b934b42-522b-4c34-bbfe-37a3ef7b9c90}]
+@="This Device Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{645FF040-5081-101B-9F08-00AA002F954E}]
+@="Recycle Bin"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{64693913-1c21-4f30-a98f-4e52906d3b56}]
+@="AppInstanceFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{89D83576-6BD1-4c86-9454-BEB04E94C819}]
+@="MAPI Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{8FD8B88D-30E1-4F25-AC2B-553D3D65F0EA}]
+@="DXP"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{9343812e-1c37-4a49-a12e-4b2d810d956b}]
+@="Search Home"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{98F275B4-4FFF-11E0-89E2-7B86DFD72085}]
+@="CLSID_StartMenuLauncherProviderFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{a00ee528-ebd9-48b8-944a-8942113d46ac}]
+@="CLSID_StartMenuCommandingProviderFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{A0953C92-50DC-43bf-BE83-3742FED03C9C}]
+@="CLSID_ThisPCMyVideosRegFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{A8CDFF1C-4878-43be-B5FD-F8091C1C60D0}]
+@="CLSID_ThisPCDocumentsRegFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}]
+@="CLSID_ThisPCDesktopRegFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{BD7A2E7B-21CB-41b2-A086-B309680C6B7E}]
+@="CSC Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{daf95313-e44d-46af-be1b-cbacea2c3065}]
+@="CLSID_StartMenuProviderFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{e345f35f-9397-435c-8f95-4e922c26259e}]
+@="CLSID_StartMenuPathCompleteProviderFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}]
+@="{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{EDC978D6-4D53-4b2f-A265-5805674BE568}]
+@="StreamBackedFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{F02C1A0D-BE21-4350-88B0-7367FC96EF3C}]
+@="Computers and Devices"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{f8278c54-a712-415b-b593-b77a2be0dda9}]
+@="This Device Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}]
+@="CLSID_MSGraphHomeFolder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FontsFolder\NameSpace]
+"DontUseDelegatingTransfer"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FontsFolder\NameSpace\{93412589-74D4-4E4E-AD0E-E0CB621440FD}]
+@="Font Settings"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderDesktop\NameSpace]
+"ValidateRegItems"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderDesktop\NameSpace\DelegateFolders]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderDesktop\NameSpace\DelegateFolders\{3134ef9c-6b18-4996-ad04-ed5912e00eb5}]
+@="Recent Files Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderDesktop\NameSpace\DelegateFolders\{3936E9E4-D92C-4EEE-A85A-BC16D5EA0819}]
+@="Frequent Places Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMobile\NameSpace]
+"ValidateRegItems"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMobile\NameSpace\DelegateFolders]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMobile\NameSpace\DelegateFolders\{3134ef9c-6b18-4996-ad04-ed5912e00eb5}]
+@="Recent Files Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph\NameSpace]
+"ValidateRegItems"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph\NameSpace\DelegateFolders]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph\NameSpace\DelegateFolders\{3134ef9c-6b18-4996-ad04-ed5912e00eb5}]
+@="Recent Files Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph\NameSpace\DelegateFolders\{3936E9E4-D92C-4EEE-A85A-BC16D5EA0819}]
+@="Frequent Places Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph\NameSpace\DelegateFolders\{42254EE9-E625-4065-8F70-775090256F72}]
+@="MS Graph Recent Files Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithRecommendations\NameSpace]
+"ValidateRegItems"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithRecommendations\NameSpace\DelegateFolders]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithRecommendations\NameSpace\DelegateFolders\{3134ef9c-6b18-4996-ad04-ed5912e00eb5}]
+@="Recent Files Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithRecommendations\NameSpace\DelegateFolders\{42254EE9-E625-4065-8F70-775090256F72}]
+@="MS Graph Recent Files Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithRecommendations\NameSpace\DelegateFolders\{AD182E17-4754-4742-8529-C11EEEF0C299}]
+@="Recommendations Files Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithShared\NameSpace]
+"ValidateRegItems"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithShared\NameSpace\DelegateFolders]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithShared\NameSpace\DelegateFolders\{18F546F6-B34B-4B30-B4C6-5E88BED8BD84}]
+@="Shared Files Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithShared\NameSpace\DelegateFolders\{3134ef9c-6b18-4996-ad04-ed5912e00eb5}]
+@="Recent Files Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithShared\NameSpace\DelegateFolders\{42254EE9-E625-4065-8F70-775090256F72}]
+@="MS Graph Recent Files Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithShared\NameSpace\DelegateFolders\{AD182E17-4754-4742-8529-C11EEEF0C299}]
+@="Recommendations Files Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithSharedNoRecommendations\NameSpace]
+"ValidateRegItems"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithSharedNoRecommendations\NameSpace\DelegateFolders]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithSharedNoRecommendations\NameSpace\DelegateFolders\{18F546F6-B34B-4B30-B4C6-5E88BED8BD84}]
+@="Shared Files Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithSharedNoRecommendations\NameSpace\DelegateFolders\{3134ef9c-6b18-4996-ad04-ed5912e00eb5}]
+@="Recent Files Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithSharedNoRecommendations\NameSpace\DelegateFolders\{3936E9E4-D92C-4EEE-A85A-BC16D5EA0819}]
+@="Frequent Places Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\HomeFolderMSGraph_WithSharedNoRecommendations\NameSpace\DelegateFolders\{42254EE9-E625-4065-8F70-775090256F72}]
+@="MS Graph Recent Files Folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\DelegateFolders]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\DelegateFolders\{289AF617-1CC3-42A6-926C-E6A863F0E3BA}]
+@="DLNA Media Servers Data Source"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\DelegateFolders\{35786D3C-B075-49b9-88DD-029876E11C01}]
+@="Portable Devices"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\DelegateFolders\{9113A02D-00A3-46B9-BC5F-9C04DADDD5D7}]
+@="Enhanced Storage Data Source"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\DelegateFolders\{b155bdf8-02f0-451e-9a26-ae317cfd7779}]
+@="nethood delegate folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\{088e3905-0323-4b02-9826-5d99428e115f}]
+@="CLSID_ThisPCLocalDownloadsRegFolder"
+"HiddenByDefault"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\{1CF1260C-4DD0-4ebb-811F-33C572699FDE}]
+@="CLSID_ThisPCMyMusicRegFolder"
+"HiddenByDefault"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\{24ad3ad4-a569-4530-98e1-ab02f9417aa8}]
+@="CLSID_ThisPCLocalPicturesRegFolder"
+"HiddenByDefault"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\{374DE290-123F-4565-9164-39C4925E467B}]
+@="CLSID_ThisPCDownloadsRegFolder"
+"HiddenByDefault"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\{3ADD1653-EB32-4cb0-BBD7-DFA0ABB5ACCA}]
+@="CLSID_ThisPCMyPicturesRegFolder"
+"HiddenByDefault"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\{3dfdf296-dbec-4fb4-81d1-6a3438bcf4de}]
+@="CLSID_ThisPCLocalMusicRegFolder"
+"HiddenByDefault"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\{A0953C92-50DC-43bf-BE83-3742FED03C9C}]
+@="CLSID_ThisPCMyVideosRegFolder"
+"HiddenByDefault"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\{A8CDFF1C-4878-43be-B5FD-F8091C1C60D0}]
+@="CLSID_ThisPCDocumentsRegFolder"
+"HiddenByDefault"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}]
+@="CLSID_ThisPCDesktopRegFolder"
+"HiddenByDefault"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\{d3162b92-9365-467a-956b-92703aca08af}]
+@="CLSID_ThisPCLocalDocumentsRegFolder"
+"HiddenByDefault"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\{f86fa3ab-70d2-4fc7-9c99-fcbf05467f3a}]
+@="CLSID_ThisPCLocalVideosRegFolder"
+"HiddenByDefault"=dword:00000001
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\NetworkNeighborhood\NameSpace]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\NetworkNeighborhood\NameSpace\{D4480A50-BA28-11d1-8E75-00C04FA31A86}]
+@="{D4480A50-BA28-11d1-8E75-00C04FA31A86}"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\PrintersAndFaxes\NameSpace]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\PrintersAndFaxes\NameSpace\DelegateFolders]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\PrintersAndFaxes\NameSpace\DelegateFolders\{ed50fc29-b964-48a9-afb3-15ebb9b97f36}]
+@="printhood delegate folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\RemoteComputer\NameSpace]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\RemoteComputer\NameSpace\{863aa9fd-42df-457b-8e4d-0de1b8015c60}]
+@="Printers"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\UsersFiles\NameSpace]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\UsersFiles\NameSpace\DelegateFolders]
+"StorageDelegate"="{DFFACDC5-679F-4156-8947-C5C76BC0B67F}"
+"StorageDelegateSuppressionPolicy"="{92803FB4-7706-4035-ACD7-F63E069D3697}"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\UsersFiles\NameSpace\DelegateFolders\{DFFACDC5-679F-4156-8947-C5C76BC0B67F}]
+@="Profile delegate folder"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\UsersLibraries\NameSpace]
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\UsersLibraries\NameSpace\DelegateFolders]
+"StorageDelegate"="{896664F7-12E1-490f-8782-C0835AFD98FC}"
+"StorageDelegateSuppressionPolicy"="{92803FB4-7706-4035-ACD7-F63E069D3697}"
+[HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\UsersLibraries\NameSpace\DelegateFolders\{896664F7-12E1-490f-8782-C0835AFD98FC}]
+@="Libraries delegate folder"

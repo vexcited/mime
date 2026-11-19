@@ -116,6 +116,7 @@ typedef struct CM_KEY_BODY {
     CM_NOTIFY *Notify;
     UCHAR RegistryView;
     BOOLEAN PhysicalView;
+    USHORT HandleTags; /* the KEY_WOW64 bits the handle was opened with, as KeyHandleTagsInformation tells them. */
 } CM_KEY_BODY;
 
 NTSTATUS CmpMapRegistryView(CM_KEY_BODY *root, ULONG view, PWCHAR path, ULONG *length, ULONG capacity,
