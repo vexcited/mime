@@ -170,6 +170,17 @@ struct SERVICE {
     ULONGLONG Stamp; /* when the state last changed, for notifications. */
 };
 
+/* a control waiting in an image's mailbox for its dispatcher to take it. */
+typedef struct SCM_CONTROL_POST {
+    DWORD Control, Reason;
+    UINT64 StatusId;
+    WCHAR *Name;
+    DWORD Count;
+    WCHAR **Arguments;
+    BYTE *EventData;
+    DWORD EventSize;
+} SCM_CONTROL_POST;
+
 struct IMAGE {
     IMAGE *Next;
     WCHAR *Key;       /* the command line, which share process services match on. */
@@ -186,6 +197,16 @@ struct IMAGE {
     DWORD Type;
     BOOL Connected;
     DWORD Refs;
+    /*
+     * a dispatcher of genuine sechost talks over the svcctl channel interface instead of the pipe: it answers the
+     * last control and takes the next one in one call, see rpc.c. the mailbox is guarded by MailLock.
+     */
+    BOOL Rpc;
+    CRITICAL_SECTION MailLock;
+    CONDITION_VARIABLE Mail;
+    BOOL Posted, Awaiting, Answered, Quit;
+    DWORD Answer;
+    SCM_CONTROL_POST Post;
 };
 
 typedef struct SCHANDLE SCHANDLE;
@@ -319,6 +340,9 @@ void RunStartTimeoutInit(void);
 DWORD RunControl(SERVICE *s, DWORD control, DWORD event_type, const void *event_data, DWORD event_size, DWORD *result);
 DWORD RunSetStatus(UINT64 status_id, DWORD pid, const SERVICE_STATUS *status);
 DWORD RunOpenChannel(HANDLE pipe, DWORD pid);
+DWORD RunRpcOpenChannel(DWORD pid);
+DWORD RunRpcExchange(DWORD pid, DWORD answer, SCM_CONTROL_POST *post);
+void RunRpcChannelClosed(DWORD pid);
 void RunChannelOpened(HANDLE pipe, DWORD pid, BOOL ok);
 void RunStatusSnapshot(SERVICE *s, SERVICE_STATUS_PROCESS *out);
 void RunStateChanged(SERVICE *s, DWORD old_state);
@@ -368,6 +392,10 @@ typedef struct ELEVATE_RESULT {
 } ELEVATE_RESULT;
 
 DWORD ElevateLaunch(HANDLE pipe, DWORD pid, const ELEVATE_REQUEST *request, ELEVATE_RESULT *result);
+DWORD ElevateLaunchAs(HANDLE caller, DWORD pid, const ELEVATE_REQUEST *request, ELEVATE_RESULT *result);
+
+/* appinfo.c: the same broker as windows offers it, over rpc. */
+void AppInfoStart(void);
 
 /* lsa.c */
 DWORD SspiPublish(HANDLE pipe, UCHAR *id);
@@ -381,6 +409,14 @@ void TimerInit(void);
 
 /* main.c */
 void MainWake(void);
+DWORD MainRpcRequest(DWORD pid, DWORD op, SCM_WRITER *request, SCM_WRITER *reply);
+
+/* rpc.c: svcctl and the service channel over ncalrpc:[ntsvcs], as genuine sechost calls them. */
+void RpcStart(void);
+/* lsalookup.c: the lookup interface of the lsa over ncalrpc:[lsapolicylookup]. */
+void LsaLookupStart(void);
+/* a pipe value that stands for the caller of the current rpc call, for the access checks. */
+#define SCM_RPC_CALLER ((HANDLE)(LONG_PTR)-10)
 void MainCollect(void);
 void entry(void);
 

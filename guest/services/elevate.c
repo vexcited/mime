@@ -131,6 +131,13 @@ DWORD ElevateLaunch(HANDLE pipe, DWORD pid, const ELEVATE_REQUEST *q, ELEVATE_RE
     HANDLE caller = client_token(pipe, &error);
     if (!caller)
         return error;
+    return ElevateLaunchAs(caller, pid, q, out);
+}
+
+/* the same for a caller known by its token, which is closed here. */
+DWORD ElevateLaunchAs(HANDLE caller, DWORD pid, const ELEVATE_REQUEST *q, ELEVATE_RESULT *out)
+{
+    DWORD error;
     DWORD elevation = ELEVATION_DEFAULT;
     HANDLE token;
     if (q->Unelevated) {

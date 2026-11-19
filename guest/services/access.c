@@ -4,6 +4,18 @@
  */
 #include "services.h"
 #include <crypto/crypto.h>
+#include <mime/win32/rpc.h>
+
+/* the identity of a pipe's client, or of the caller of the rpc call this thread serves. */
+static BOOL impersonate(HANDLE pipe)
+{
+    if (pipe != SCM_RPC_CALLER)
+        return ImpersonateNamedPipeClient(pipe);
+    RPC_STATUS status = RpcImpersonateClient(nullptr);
+    if (status)
+        SetLastError(status);
+    return status == RPC_S_OK;
+}
 
 PSECURITY_DESCRIPTOR g_manager_sd;
 /* windows' generic mappings for the manager and for services. */
@@ -21,6 +33,30 @@ static const WCHAR g_manager_sddl[] =
 static const WCHAR g_service_sddl[] = L"O:SYG:SYD:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)"
                                       L"(A;;CCLCSWLOCRRC;;;IU)(A;;CCLCSWLOCRRC;;;SU)";
 
+/*
+ * the luids of the privileges the manager uses, which are fixed. LookupPrivilegeValueW of microsoft's advapi32 asks lsass,
+ * which mime does not have.
+ */
+static BOOL privilege_luid(const WCHAR *name, LUID *luid)
+{
+    static const struct {
+        const WCHAR *Name;
+        DWORD Value;
+    } table[] = {
+        {L"SeCreateTokenPrivilege", 2},        {L"SeAssignPrimaryTokenPrivilege", 3}, {L"SeIncreaseQuotaPrivilege", 5},
+        {L"SeShutdownPrivilege", 19},          {L"SeChangeNotifyPrivilege", 23},      {L"SeImpersonatePrivilege", 29},
+        {L"SeCreateGlobalPrivilege", 30},      {L"SeIncreaseWorkingSetPrivilege", 33},
+    };
+    for (DWORD i = 0; i < RTL_NUMBER_OF(table); i++) {
+        if (!_wcsicmp(name, table[i].Name)) {
+            luid->LowPart = table[i].Value;
+            luid->HighPart = 0;
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 void AccessEnablePrivilege(const WCHAR *name)
 {
     HANDLE token;
@@ -29,7 +65,7 @@ void AccessEnablePrivilege(const WCHAR *name)
     TOKEN_PRIVILEGES p;
     p.PrivilegeCount = 1;
     p.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-    if (LookupPrivilegeValueW(nullptr, name, &p.Privileges[0].Luid))
+    if (privilege_luid(name, &p.Privileges[0].Luid))
         AdjustTokenPrivileges(token, FALSE, &p, sizeof(p), nullptr, nullptr);
     CloseHandle(token);
 }
@@ -115,7 +151,7 @@ DWORD AccessCheckClient(HANDLE pipe, PSECURITY_DESCRIPTOR sd, DWORD desired, con
 {
     if (!sd)
         return ERROR_INVALID_SECURITY_DESCR_;
-    if (!ImpersonateNamedPipeClient(pipe))
+    if (!impersonate(pipe))
         return GetLastError();
     HANDLE token;
     BOOL ok = OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &token);
@@ -140,7 +176,7 @@ DWORD AccessCheckClient(HANDLE pipe, PSECURITY_DESCRIPTOR sd, DWORD desired, con
 /* DOMAIN\name of the client, for the lock owner. */
 DWORD AccessClientName(HANDLE pipe, WCHAR *name, DWORD chars)
 {
-    if (!ImpersonateNamedPipeClient(pipe))
+    if (!impersonate(pipe))
         return GetLastError();
     HANDLE token;
     BOOL ok = OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &token);
@@ -288,7 +324,7 @@ static HANDLE build_service_token(DWORD account, const WCHAR *name, DWORD sid_ty
         LUID_AND_ATTRIBUTES Privileges[4];
     } privileges = {};
     for (DWORD i = 0; i < RTL_NUMBER_OF(names); i++) {
-        if (LookupPrivilegeValueW(nullptr, names[i], &privileges.Privileges[privileges.Count].Luid)) {
+        if (privilege_luid(names[i], &privileges.Privileges[privileges.Count].Luid)) {
             /* the first three are enabled, as a logon of the account enables them. */
             privileges.Privileges[privileges.Count].Attributes = i < 3 ? 3 : 1;
             privileges.Count++;
