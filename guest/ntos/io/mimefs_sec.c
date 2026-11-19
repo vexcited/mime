@@ -540,10 +540,6 @@ static NTSTATUS check_traverse(ULONG volume, ULONG64 host, PCUNICODE_STRING path
             return status == STATUS_OBJECT_PATH_NOT_FOUND ? STATUS_SUCCESS : status;
         ACCESS_MASK unused;
         status = SeCheckAccess(dir, file_mapping(), FILE_TRAVERSE_, 0, flags, &unused);
-        if (!NT_SUCCESS(status) && SeTraceAccess) {
-            KiLogPrintf("  the directory %u levels above has no traverse", up);
-            SeTraceDescriptor(dir);
-        }
         SeSdDereference(dir);
         if (!NT_SUCCESS(status))
             return status;
@@ -607,10 +603,6 @@ NTSTATUS MimeFsCheckOpen(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOL
         SeSdDereference(sd);
         return status;
     }
-    if (!NT_SUCCESS(status) && SeTraceAccess) {
-        KiLogPrintf("  the file");
-        SeTraceDescriptor(sd);
-    }
     /* the rights the parent lends: what is left to ask for, or with MAXIMUM_ALLOWED what is added. */
     ACCESS_MASK mapped = want & ~(ACCESS_MASK)MAXIMUM_ALLOWED_;
     RtlMapGenericMask(&mapped, (const GENERIC_MAPPING *)mapping);
@@ -629,10 +621,6 @@ NTSTATUS MimeFsCheckOpen(ULONG volume, ULONG64 host, PCUNICODE_STRING path, BOOL
         return up == STATUS_MORE_PROCESSING_REQUIRED ? up : status;
     }
     ACCESS_MASK lent = 0, unused;
-    if (SeTraceAccess) {
-        KiLogPrintf("  the directory above");
-        SeTraceDescriptor(parent);
-    }
     if (SeCheckAccess(parent, mapping, FILE_DELETE_CHILD_, 0, flags, &unused) == STATUS_SUCCESS)
         lent |= DELETE_;
     if (SeCheckAccess(parent, mapping, FILE_LIST_DIRECTORY_, 0, flags, &unused) == STATUS_SUCCESS)

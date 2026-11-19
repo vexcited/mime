@@ -442,25 +442,8 @@ static void port_close(PEPROCESS process, PVOID object, ULONG handle_count)
     disconnect(port);
 }
 
-/* the kernel option trace-alpc logs every message as it is delivered, with the first bytes of its data. */
-static BOOLEAN g_trace;
-
-static void trace(const char *what, const ALPC_MESSAGE *m, ULONG id)
-{
-    if (!g_trace)
-        return;
-    char bytes[3 * 160 + 1];
-    ULONG n = m->DataLength < 160 ? m->DataLength : 160;
-    for (ULONG i = 0; i < n; i++)
-        _snprintf(bytes + 3 * i, 4, "%02x ", m->Data[i]);
-    bytes[3 * n] = 0;
-    KiLogPrintf("alpc: %s %s type %x id %x length %u: %s", PsCurrentProcess()->ImageFileName, what, m->Type, id,
-                m->DataLength, bytes);
-}
-
 void ExInitializeAlpc(void)
 {
-    g_trace = strstr(HalBootInfo->cmdline, "trace-alpc") != nullptr;
     OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = PORT_ALL_ACCESS;
     init.CloseProcedure = port_close;
@@ -621,18 +604,6 @@ static NTSTATUS connect(PHANDLE handle, PUNICODE_STRING name, POBJECT_ATTRIBUTES
     }
     ACCESS_MASK granted;
     status = ObCheckOpenAccess(server_port, PORT_CONNECT, KeGetPreviousMode(), &granted);
-    if (!NT_SUCCESS(status) && g_trace) {
-        SD_BLOB *sd = nullptr;
-        if (NT_SUCCESS(ObReferenceSecurity(server_port, &sd)) && sd) {
-            char text[3 * 96 + 1];
-            ULONG n = sd->Length < 96 ? sd->Length : 96;
-            for (ULONG i = 0; i < n; i++)
-                _snprintf(text + 3 * i, 4, "%02x ", sd->Data[i]);
-            text[3 * n] = 0;
-            KiLogPrintf("alpc: %s may not connect to %wZ: %s", PsCurrentProcess()->ImageFileName, name, text);
-            SeSdDereference(sd);
-        }
-    }
     if (NT_SUCCESS(status) && required_sid) {
         UCHAR sid[SEP_SID_MAX];
         if (!process_sid(server_port->Owner, sid) || !SepSidEqual(sid, wanted_sid))
@@ -1242,7 +1213,6 @@ static NTSTATUS attach(ALPC_MESSAGE *m, ALPC_PORT *port, PVOID user)
 /* writes a message and the attributes the receiver allocated for it into the receiver's buffers. */
 static NTSTATUS deliver(ALPC_MESSAGE *m, ULONG id, ULONG callback, PVOID buffer, PVOID attributes)
 {
-    trace("receives", m, id);
     ALPC_PORT_HEADER out = {};
     out.DataLength = (USHORT)m->DataLength;
     out.TotalLength = (USHORT)(sizeof(out) + m->DataLength);

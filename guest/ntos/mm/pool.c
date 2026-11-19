@@ -225,11 +225,6 @@ static BOOLEAN refill(int cls)
 {
     if (size > POOL_MAX_REQUEST)
         return nullptr;
-    if (__builtin_expect(MmVerifyPool, 0)) {
-        PVOID special = MiSpecialPoolAllocate(size, tag, zero, __builtin_return_address(0));
-        if (special)
-            return special;
-    }
     if (size == 0)
         size = 1;
     SIZE_T total = size + sizeof(POOL_HEADER);
@@ -279,10 +274,6 @@ static BOOLEAN refill(int cls)
 {
     if (!p)
         return;
-    if (__builtin_expect(MmVerifyPool, 0) && MiSpecialPoolContains(p)) {
-        MiSpecialPoolFree(p, tag, __builtin_return_address(0));
-        return;
-    }
     if (((ULONG_PTR)p & (PAGE_SIZE - 1)) == 0) {
         ULONG64 pa = HalPhysicalOf(p);
         PMMPFN pfn = MiGetPfn(pa);

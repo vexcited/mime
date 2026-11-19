@@ -295,11 +295,6 @@ static NTSTATUS setup_peb(PEPROCESS process, const PSP_PARAMS *p)
     peb->ActiveCodePage = HalBootInfo->ansi_code_page ? HalBootInfo->ansi_code_page : 1252;
     peb->OemCodePage = HalBootInfo->oem_code_page ? HalBootInfo->oem_code_page : 437;
     peb->UseCaseMapping = 0x6a5; /* read on 26300, the same in every process. */
-    extern BOOLEAN PspLoaderLog;
-    if (PspLoaderLog) {
-        peb->NtGlobalFlag |= 2; /* test: let the loader DbgPrint its own log. */
-        SharedUserData->KdDebuggerEnabled = 3; /* test: prints go through int 2d. */
-    }
 
     pp->Flags = RTL_USER_PROC_PARAMS_NORMALIZED;
     pp->ShowWindowFlags = p->ShowWindowFlags;

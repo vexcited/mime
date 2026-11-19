@@ -151,10 +151,6 @@ BOOLEAN KiServiceSingleStep(PKTHREAD thread, PKTRAP_FRAME frame, PEXCEPTION_RECO
         return FALSE;
     /* the step is the processor's, whose flags always hold bit 1, even when a context set them without. */
     frame->Rflags = (frame->Rflags & ~0x100ull) | 0x2;
-    extern BOOLEAN KiTraceUserExceptions;
-    static ULONG logged;
-    if (KiTraceUserExceptions && logged++ < 50)
-        KiLogPrintf("exc vec 1 rip %llx from a service, rsp %llx", (ULONG64)frame->Rip, (ULONG64)frame->Rsp);
     thread->UserDr6 = thread->UserDr7 & DR7_ACTIVE ? DR6_RESET | 0x4000 : 0;
     memset(record, 0, sizeof(*record));
     record->ExceptionCode = (NTSTATUS)0x80000004L;
@@ -218,7 +214,7 @@ void KiIdleWait(void)
         g_idle_poll_longest = HalBootInfo->timer_frequency / 5000;   /* 200 microseconds */
         prcb->IdlePoll = g_idle_poll_shortest;
     }
-    ULONG64 poll = (KiOptions & KI_OPT_NO_IDLE_SPIN) ? 0 : prcb->IdlePoll;
+    ULONG64 poll = prcb->IdlePoll;
     pcr->IdleSleeping = 1;
     prcb->IdleWaiting = TRUE;
     if (poll)

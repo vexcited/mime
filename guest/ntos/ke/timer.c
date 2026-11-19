@@ -175,21 +175,15 @@ void KiProgramNextTimer(void)
      * fire: its interrupt finds nothing due, or this deadline not yet come, and arms the next. there is no disarming
      * either, the interrupt does that.
      */
-    if (deadline == ~0ull) {
-        if (KiOptions & KI_OPT_EAGER_TIMER) {
-            HalDisarmTimer();
-            prcb->TimerArmed = 0;
-            prcb->UnlockWork &= (UCHAR)~KI_UNLOCK_TIMER;
-        }
+    if (deadline == ~0ull)
         return;
-    }
     {
         ULONG64 now = KiQueryInterruptTime();
         if (deadline > now + 2000)
             deadline = now + (deadline - now) / 8 * 7;
     }
     ULONG64 target = g_boot_counter + HalHnsToCounter(deadline);
-    if (prcb->TimerArmed && prcb->TimerArmed <= target && !(KiOptions & KI_OPT_EAGER_TIMER))
+    if (prcb->TimerArmed && prcb->TimerArmed <= target)
         return;
     prcb->TimerArmed = target;
     /* the write waits until the dispatcher lock is let go, see KiDispatcherUnlockWork. */
@@ -428,19 +422,6 @@ void KiInitializeTimers(void)
     g_boot_counter = HalBootInfo->boot_counter;
     KeBootFiletime = HalBootInfo->boot_filetime;
     initialize_hypervisor_page();
-    /* the kernel option time-offset=<seconds> shifts the clock from the host's, for instance to sit at a daylight
-       saving change. */
-    const char *offset = strstr(HalBootInfo->cmdline, "time-offset=");
-    if (offset) {
-        offset += 12;
-        BOOLEAN negative = *offset == '-';
-        if (*offset == '-' || *offset == '+')
-            offset++;
-        ULONG64 seconds = 0;
-        while (*offset >= '0' && *offset <= '9')
-            seconds = seconds * 10 + (ULONG64)(*offset++ - '0');
-        KeBootFiletime = negative ? KeBootFiletime - seconds * 10000000ull : KeBootFiletime + seconds * 10000000ull;
-    }
     ULONG64 counter = HalReadCounter();
     g_next_tick = HalCounterToHns(counter - g_boot_counter) + KI_CLOCK_TICK_HNS;
     update_shared_time(counter);

@@ -13,7 +13,6 @@ LIST_ENTRY PsLoadedModuleList = {&PsLoadedModuleList, &PsLoadedModuleList};
 ERESOURCE PsLoadedModuleResource;
 static FAST_MUTEX g_modules_lock;
 static PKLDR_DATA_TABLE_ENTRY g_kernel_module;
-BOOLEAN MiTraceRoutines;
 
 #define MI_MAX_IMPORT_DEPTH 8
 
@@ -252,17 +251,6 @@ PVOID MiFindKernelExport(PVOID image_base, const char *name)
     return find_export(image_base, name, 0, FALSE);
 }
 
-/* a stand in for routines the kernel lacks, while finding out which ones a driver looks up. */
-BOOLEAN MiDiscoverRoutines;
-
-static ULONG_PTR NTAPI MiMissingRoutine(void)
-{
-    char caller[96];
-    MiDescribeCodeAddress((ULONG_PTR)__builtin_return_address(0), caller, sizeof(caller));
-    KiLogPrintf("a missing routine was called from %s", caller);
-    return 0;
-}
-
 /* the routines of the kernel and the hal, which mime's kernel holds both of. */
 PVOID NTAPI MmGetSystemRoutineAddress(PUNICODE_STRING name)
 {
@@ -274,13 +262,11 @@ PVOID NTAPI MmGetSystemRoutineAddress(PUNICODE_STRING name)
         ansi[i] = (char)name->Buffer[i];
     ansi[n] = 0;
     PVOID found = find_export((PVOID)HalBootInfo->kernel_virt, ansi, 0, FALSE);
-    if (!found && MiDiscoverRoutines)
-        found = (PVOID)MiMissingRoutine;
 #ifdef __x86_64__
     if (found && KiIsForeignCaller((ULONG_PTR)__builtin_return_address(0)))
         found = KiForeignImport(found, ansi);
 #endif
-    if (!found || MiTraceRoutines) {
+    if (!found) {
         char caller[96];
         MiDescribeCodeAddress((ULONG_PTR)__builtin_return_address(0), caller, sizeof(caller));
         KiLogPrintf("MmGetSystemRoutineAddress(%s) = %p from %s", ansi, found, caller);
@@ -725,9 +711,6 @@ static PSECTION guest_ntdll_section(PCWSTR name)
     return section;
 }
 
-/* the loader test hooks, which the kernel option loader-log turns on. */
-BOOLEAN PspLoaderLog = FALSE;
-
 /* creates a system dll's image section once; every process maps it at the base the section has. */
 static NTSTATUS load_system_dll(PCWSTR path_string, PPSP_SYSTEM_DLL dll)
 {
@@ -746,18 +729,6 @@ static NTSTATUS load_system_dll(PCWSTR path_string, PPSP_SYSTEM_DLL dll)
         return status;
     }
     dll->Base = (PVOID)dll->Section->BasedAddress;
-    /* test: let every loader log line through, by starting LdrpDebugFlags at all ones. */
-    if (PspLoaderLog && path_string && wcsstr(path_string, L"ntdll")) {
-        ULONG idx = 0x1ccf60 >> PAGE_SHIFT;
-        ULONG64 src = MiSectionPage(dll->Section, idx);
-        ULONG64 pg = src ? MmAllocatePage() : 0;
-        if (pg) {
-            memcpy(HalPhysmap(pg), HalPhysmap(src), PAGE_SIZE);
-            *(UCHAR *)((PUCHAR)HalPhysmap(pg) + (0x1ccf60 & (PAGE_SIZE - 1))) = 0x2E;
-            dll->Section->Pages[idx] = pg;
-            dll->Section->PageProtect[idx] = PAGE_READWRITE;
-        }
-    }
     dll->LdrInitializeThunk = section_export(dll->Section, "LdrInitializeThunk");
     dll->RtlUserThreadStart = section_export(dll->Section, "RtlUserThreadStart");
     dll->KiUserExceptionDispatcher = section_export(dll->Section, "KiUserExceptionDispatcher");

@@ -349,72 +349,7 @@ static BOOLEAN link_target(CM_NODE *node, PWCHAR *target, ULONG *chars)
 }
 
 
-/* ------------------------------------------------------------------ trace */
-
-static BOOLEAN g_trace;
-static ULONG64 g_trace_seen[1 << 16];
-
-static ULONG64 trace_hash(ULONG64 h, const void *data, ULONG bytes)
-{
-    const UCHAR *p = data;
-    for (ULONG i = 0; i < bytes; i++)
-        h = (h ^ p[i]) * 0x100000001B3ull;
-    return h;
-}
-
-/* logs the first time a program touches a key or value: where it was found, the hive, a journal or nowhere. */
-static void trace_registry(char kind, char where, CM_NODE *node, PCWSTR rest, ULONG rest_chars, PCWSTR value, ULONG value_chars)
-{
-    if (!g_trace)
-        return;
-    WCHAR path[300];
-    ULONG chars = node ? CmpFullPath(node, path, RTL_NUMBER_OF(path) - 1) : 0;
-    if (chars > RTL_NUMBER_OF(path) - 1)
-        chars = RTL_NUMBER_OF(path) - 1;
-    if (rest_chars && chars + 1 + rest_chars < RTL_NUMBER_OF(path)) {
-        path[chars++] = '\\';
-        memcpy(path + chars, rest, rest_chars * sizeof(WCHAR));
-        chars += rest_chars;
-    }
-    ULONG64 h = 0xCBF29CE484222325ull;
-    const char *image = PsCurrentProcess()->ImageFileName;
-    h = trace_hash(h, &kind, 1);
-    h = trace_hash(h, image, (ULONG)strlen(image));
-    h = trace_hash(h, path, chars * sizeof(WCHAR));
-    h = trace_hash(h, value, value_chars * sizeof(WCHAR));
-    h = trace_hash(h, &where, 1);
-    ULONG slot = (ULONG)h & (RTL_NUMBER_OF(g_trace_seen) - 1);
-    for (ULONG probe = 0; probe < 64; probe++, slot = (slot + 1) & (RTL_NUMBER_OF(g_trace_seen) - 1)) {
-        if (g_trace_seen[slot] == h)
-            return;
-        if (!g_trace_seen[slot]) {
-            g_trace_seen[slot] = h;
-            break;
-        }
-    }
-    KiLogPrintf("regtrace %c%c %s %.*ls | %.*ls", kind, where, image, chars, path, value_chars, value ? value : L"");
-}
-
 /* ------------------------------------------------------------------ security */
-
-/* logs a refusal with the key's path, its tail if too long. */
-static void trace_key(CM_NODE *node, ACCESS_MASK access, NTSTATUS status)
-{
-    if (!SeTraceAccess)
-        return;
-    WCHAR path[96];
-    ULONG at = RTL_NUMBER_OF(path) - 1;
-    path[at] = 0;
-    for (CM_NODE *n = node; n && at > 1; n = n->Parent) {
-        ULONG take = n->NameLength < at - 1 ? n->NameLength : at - 1;
-        at -= take;
-        memcpy(path + at, n->Name, take * sizeof(WCHAR));
-        path[--at] = '\\';
-    }
-    UNICODE_STRING name;
-    RtlInitUnicodeString(&name, path + at);
-    SeTraceDenial("key", &name, access, status);
-}
 
 static SD_MAPPING key_mapping(void)
 {
@@ -579,14 +514,10 @@ static NTSTATUS walk(CM_NODE *start, PWCHAR path, ULONG len, ULONG attributes, C
                     status = SeCheckAccess(parent_sd, key_mapping(), KEY_CREATE_SUB_KEY_, 0,
                                            (create->Options & REG_OPTION_BACKUP_RESTORE_) ? SE_ACCESS_BACKUP_INTENT : 0,
                                            &unused);
-                    if (!NT_SUCCESS(status))
-                        SeTraceDescriptor(parent_sd);
                     SeSdDereference(parent_sd);
                 }
-                if (!NT_SUCCESS(status)) {
-                    trace_key(node, KEY_CREATE_SUB_KEY_, status);
+                if (!NT_SUCCESS(status))
                     return status;
-                }
             }
             /* the new key's descriptor is worked out first, so a refusal creates nothing. */
             SD_BLOB *sd = nullptr;
@@ -700,21 +631,8 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
             view = ctx->Mode == UserMode && PsCurrentProcess()->Machine == IMAGE_FILE_MACHINE_I386 ? 32 : 64;
         status = CmpMapRegistryView(root, view, path, &len, MAX_PATH_CHARS, &start, &physical, &ctx->ViewContainer);
     }
-    PWCHAR requested = nullptr;
-    if (g_trace) {
-        requested = ExAllocatePool2(POOL_FLAG_NON_PAGED, (len + 1) * sizeof(WCHAR), KI_TAG('C', 'm', 'T', 'r'));
-        if (requested)
-            memcpy(requested, path, len * sizeof(WCHAR));
-    }
     if (NT_SUCCESS(status))
         status = walk(start, path, len, attributes, context, &node);
-    if (requested) {
-        if (NT_SUCCESS(status))
-            trace_registry('O', node->Hive ? 'h' : (node->Flags & CM_NODE_VOLATILE) ? 'v' : 'j', node, nullptr, 0, nullptr, 0);
-        else
-            trace_registry('O', 'm', start, requested, len, nullptr, 0);
-        ExFreePool(requested);
-    }
     /* an existing key is checked against its descriptor; a key the program just made is its own. */
     if (NT_SUCCESS(status) && ctx && ctx->Check && ctx->Disposition != REG_CREATED_NEW_KEY) {
         SD_BLOB *sd;
@@ -727,15 +645,6 @@ static NTSTATUS key_parse(PVOID object, PVOID type, ULONG attributes, PUNICODE_S
         }
         if (NT_SUCCESS(status))
             ctx->Checked = TRUE;
-        else
-            trace_key(node, ctx->Access, status);
-        if (!NT_SUCCESS(status) && SeTraceAccess) {
-            SD_BLOB *shown;
-            if (NT_SUCCESS(effective_sd(node, &shown))) {
-                SeTraceDescriptor(shown);
-                SeSdDereference(shown);
-            }
-        }
     }
     CmpUnlock();
     ExFreePool(path);
@@ -1214,7 +1123,6 @@ NTSTATUS NTAPI NtEnumerateKey(HANDLE key, ULONG index, ULONG klass, PVOID info, 
     CM_NODE *child = node->Child;
     for (ULONG i = 0; child && i < index; i++)
         child = child->Next;
-    trace_registry('S', node->Hive ? 'h' : 'j', node, nullptr, 0, nullptr, 0);
     OUT_BUFFER o;
     ULONG fixed;
     /* the flags are told of an open key only. */
@@ -1240,7 +1148,6 @@ NTSTATUS NTAPI NtQueryValueKey(HANDLE key, PUNICODE_STRING name, ULONG klass, PV
     }
     CmpLoadValues(node);
     CM_VALUE *v = CmpFindValue(node, captured.Buffer, captured.Length / sizeof(WCHAR));
-    trace_registry('V', !v ? 'm' : v->Written ? 'w' : 'h', node, nullptr, 0, captured.Buffer, captured.Length / sizeof(WCHAR));
     OUT_BUFFER o;
     ULONG fixed;
     status = v ? value_info(v, klass, &o, &fixed) : STATUS_OBJECT_NAME_NOT_FOUND;
@@ -1261,7 +1168,6 @@ NTSTATUS NTAPI NtEnumerateValueKey(HANDLE key, ULONG index, ULONG klass, PVOID i
     CM_VALUE *v = node->Values;
     for (ULONG i = 0; v && i < index; i++)
         v = v->Next;
-    trace_registry('E', node->Hive ? 'h' : 'j', node, nullptr, 0, nullptr, 0);
     OUT_BUFFER o;
     ULONG fixed;
     status = v ? value_info(v, klass, &o, &fixed) : STATUS_NO_MORE_ENTRIES;
@@ -1355,8 +1261,6 @@ NTSTATUS NTAPI NtQueryMultipleValueKey(HANDLE key, KEY_VALUE_ENTRY *entries, ULO
             status = STATUS_INSUFFICIENT_RESOURCES;
         for (ULONG i = 0; NT_SUCCESS(status) && i < count; i++) {
             found[i] = CmpFindValue(node, names[i].Buffer, names[i].Length / sizeof(WCHAR));
-            trace_registry('V', !found[i] ? 'm' : found[i]->Written ? 'w' : 'h', node, nullptr, 0, names[i].Buffer,
-                           names[i].Length / sizeof(WCHAR));
             if (!found[i]) {
                 status = STATUS_OBJECT_NAME_NOT_FOUND;
                 break;
@@ -1802,7 +1706,6 @@ static void hold_user_hive_files(void)
 void CmInitSystem1(void)
 {
     ExInitializeFastMutex(&CmpLock);
-    g_trace = strstr(HalBootInfo->cmdline, "trace-registry") != nullptr;
     OBJECT_TYPE_INITIALIZER init = {};
     init.ValidAccessMask = 0xF003F;
     init.ParseProcedure = key_parse;

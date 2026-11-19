@@ -383,10 +383,8 @@ static NTSTATUS create_rom(PIRP irp, PFILE_OBJECT file, const MimeRomEntry *rom,
     if (check) {
         ACCESS_MASK granted;
         NTSTATUS status = MimeFsCheckRomOpen(access, options, &granted);
-        if (!NT_SUCCESS(status)) {
-            SeTraceDenial("rom file", &file->FileName, access, status);
+        if (!NT_SUCCESS(status))
             return complete(irp, status, 0);
-        }
         security->GrantedAccess = granted;
         security->Checked = TRUE;
         file->ReadAccess = (granted & (FILE_READ_DATA | FILE_EXECUTE)) != 0;
@@ -951,7 +949,6 @@ static NTSTATUS NTAPI mimefs_create(PDEVICE_OBJECT device, PIRP irp)
             if (req->handle_out)
                 HalHypercallUnlocked(MIME_HC_FS_CLOSE, req->handle_out, 0, 0, 0, 0, 0, nullptr);
             if (!NT_SUCCESS(allowed)) {
-                SeTraceDenial("file", &file->FileName, access, allowed);
                 ExFreePool(req);
                 return complete(irp, allowed, 0);
             }
@@ -1006,8 +1003,6 @@ opened:
     }
     if (hs != MIME_HC_STATUS_OK) {
         NTSTATUS status = host_status(hs, req->action_out == 1);
-        if (SeTraceAccess)
-            KiLogPrintf("the host refused the open of '%wZ': status %llu, parent missing %u", &file->FileName, hs, req->action_out);
         ExFreePool(req);
         return complete(irp, status, 0);
     }
@@ -1045,7 +1040,6 @@ opened:
             goto reopen;
         }
         if (!NT_SUCCESS(allowed)) {
-            SeTraceDenial("file", &file->FileName, access, allowed);
             /* a file created by a refused open is not left behind. */
             if (host && action == FILE_CREATED)
                 HalHypercallUnlocked(MIME_HC_FS_DELETE, host, 1, 0, 0, 0, 0, nullptr);
@@ -1107,8 +1101,6 @@ opened:
         NTSTATUS status = MimeFsAssignNewFile(vol->HostVolume, host, &file->FileName, fcb->Directory,
                                               security ? security->SecurityDescriptor : nullptr, KeGetPreviousMode());
         if (!NT_SUCCESS(status)) {
-            if (SeTraceAccess)
-                KiLogPrintf("the descriptor of '%wZ' cannot be kept: %08x", &file->FileName, status);
             /* a file the creator may not create that way is not left behind. */
             HalHypercallUnlocked(MIME_HC_FS_DELETE, host, 1, 0, 0, 0, 0, nullptr);
             HalHypercallUnlocked(MIME_HC_FS_CLOSE, host, 0, 0, 0, 0, 0, nullptr);

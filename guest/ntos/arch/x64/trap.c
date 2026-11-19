@@ -4,7 +4,6 @@
  */
 #include "../../ntos.h"
 
-extern BOOLEAN KiTraceUserExceptions;
 
 #define STATUS_ARRAY_BOUNDS_EXCEEDED_CODE ((NTSTATUS)0xC000008CL)
 #define STATUS_FLOAT_DENORMAL_OPERAND ((NTSTATUS)0xC000008DL)
@@ -162,20 +161,6 @@ static void build_record(PKTRAP_FRAME frame, PEXCEPTION_RECORD record)
         record->ExceptionCode = STATUS_ILLEGAL_INSTRUCTION;
         break;
     case 13:
-        /* the earlier work's notes of a fault, kept for trace-exceptions: a log line costs a program's timing. */
-        if (KiTraceUserExceptions) {
-            UCHAR db[6] = {0};
-            KiCopyFromUser(db, (PVOID)frame->Rip, sizeof(db));
-            static ULONG d13;
-            if (d13++ < 6)
-                KiLogPrintf("gp rip %llx err %llx bytes %02x %02x %02x %02x", (ULONG64)frame->Rip,
-                            (ULONG64)frame->ErrorCode, db[0], db[1], db[2], db[3]);
-            if (d13 < 7) {
-                KiLogPrintf("gp rsp %llx rbp %llx rax %llx rcx %llx", (ULONG64)frame->Rsp, (ULONG64)frame->Rbp,
-                            (ULONG64)frame->Rax, (ULONG64)frame->Rcx);
-                KiTraceUserStack(frame->Rip, frame->Rsp);
-            }
-        }
         /* privileged instructions and non canonical addresses both raise #gp; windows tells them apart by decoding. */
         if (frame->ErrorCode == 0 && illegal_instruction(frame->Rip)) {
             record->ExceptionCode = STATUS_ILLEGAL_INSTRUCTION;
@@ -299,24 +284,10 @@ static void user_exception(PKTRAP_FRAME frame)
     thread->TrapFrame = frame;
     thread->PreviousMode = UserMode;
     KiEnableInterrupts();
-    {
-        static ULONG v6;
-        if (KiTraceUserExceptions && (frame->Vector == 6 || frame->Vector == 13) && v6++ < 6) {
-            UCHAR vb[6] = {0};
-            KiCopyFromUser(vb, (PVOID)frame->Rip, sizeof(vb));
-            KiLogPrintf("vec %llx rip %llx err %llx bytes %02x %02x %02x", (ULONG64)frame->Vector,
-                        (ULONG64)frame->Rip, (ULONG64)frame->ErrorCode, vb[0], vb[1], vb[2]);
-        }
-    }
     if (frame->Vector == 14 && !(frame->ErrorCode & 0x8)) {
         BOOLEAN write = (frame->ErrorCode & 0x2) != 0;
         BOOLEAN exec = (frame->ErrorCode & 0x10) != 0;
-        extern char KiTimelineImage[16];
-        ULONG64 started = KiTimelineImage[0] ? HalReadCounter() : 0;
-        BOOLEAN resolved = MmAccessFault(frame->Cr2, write, exec, UserMode);
-        if (started)
-            KiTimelineFault(started, 1, (ULONG)(frame->Cr2 >> 12));
-        if (resolved) {
+        if (MmAccessFault(frame->Cr2, write, exec, UserMode)) {
             KiExitToUserMode(frame);
             return;
         }
@@ -338,13 +309,6 @@ static void user_exception(PKTRAP_FRAME frame)
         return;
     }
 
-    {
-        static ULONG n;
-        if (KiTraceUserExceptions && n++ < 150)
-            KiLogPrintf("exc vec %llx rip %llx cr2 %llx err %llx rsp %llx tf %llx cs %llx", (ULONG64)frame->Vector,
-                        (ULONG64)frame->Rip, (ULONG64)frame->Cr2, (ULONG64)frame->ErrorCode, (ULONG64)frame->Rsp,
-                        ((ULONG64)frame->Rflags >> 8) & 1, (ULONG64)frame->Cs);
-    }
     /*
      * the debug services a kernel without a debugger takes for itself, measured on windows 11 26300: the print, the
      * two notices of symbols and the command string raise nothing, rax stays, and the thread goes on past the byte
@@ -367,24 +331,6 @@ static void user_exception(PKTRAP_FRAME frame)
         PEPROCESS process = PsCurrentProcess();
         KiLogPrintf("fast fail %llu in process %u (%s)", (ULONGLONG)frame->Rcx,
                     (ULONG)(ULONG_PTR)process->UniqueProcessId, process->ImageFileName);
-        {
-            ULONG64 v = 0;
-            if (NT_SUCCESS(KiCopyFromUser(&v, (PVOID)(frame->Rbp + 0x268), 8)))
-                KiLogPrintf("ff slot %llx rbp %llx rip %llx img %llx", v, (ULONG64)frame->Rbp, (ULONG64)frame->Rip,
-                            (ULONG64)PsCurrentProcess()->SectionBaseAddress);
-            {
-                UCHAR b[16] = {0};
-                if (NT_SUCCESS(KiCopyFromUser(b, (PVOID)(frame->Rip - 8), 16))) {
-                    KiLogPrintf("ff bytes %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
-                                b[0],b[1],b[2],b[3],b[4],b[5],b[6],b[7],b[8],b[9],b[10],b[11],b[12],b[13],b[14],b[15]);
-                }
-            }
-            for (ULONG k = 0; k < 16; k++) {
-                ULONG64 q = 0;
-                if (NT_SUCCESS(KiCopyFromUser(&q, (PVOID)(frame->Rbp + 0x220 + k * 8), 8)))
-                    KiLogPrintf("ff q%x %llx", k, q);
-            }
-        }
         KiDumpTrapFrame("user context", frame);
         KiTraceUserFrames(frame);
         PspTerminateProcess(process, STATUS_STACK_BUFFER_OVERRUN);
@@ -392,12 +338,6 @@ static void user_exception(PKTRAP_FRAME frame)
         return;
     }
     KiApplyFaultStatus(&record);
-    if (KiTraceUserExceptions) {
-        KiLogPrintf("first chance exception %08x at %p in %s", record.ExceptionCode, (PVOID)frame->Rip,
-                    PsCurrentProcess()->ImageFileName);
-        KiDumpTrapFrame("user context", frame);
-        KiTraceUserFrames(frame);
-    }
     if (!KiDispatchUserException(&record, frame)) {
         PEPROCESS process = PsCurrentProcess();
         KiLogPrintf("unhandled exception %08x in process %u (%s)", record.ExceptionCode,
@@ -423,8 +363,6 @@ static void kernel_exception(PKTRAP_FRAME frame)
     if (frame->Vector == 14) {
         ULONG_PTR address = frame->Cr2;
         BOOLEAN write = (frame->ErrorCode & 0x2) != 0;
-        if (__builtin_expect(MmVerifyPool, 0))
-            MiSpecialPoolFault(address, (ULONG)frame->ErrorCode, frame->Rip);
         if (address <= MIME_USER_ADDRESS_LIMIT && KI_TRAP_INTERRUPTS_ENABLED(frame)) {
             /* demand faults on user memory touched by the kernel, only from interruptible code. */
             KiEnableInterrupts();
@@ -516,8 +454,6 @@ static void interrupt(PKTRAP_FRAME frame)
  */
 ULONG KiFastUserInterrupt(PKTRAP_FRAME frame)
 {
-    if (KiOptions & KI_OPT_NO_FAST_SERVICE)
-        return 0;
     PKTHREAD thread = KiCurrentThread();
     PKPCR pcr = KeGetPcr();
     PKPRCB prcb = pcr->CurrentPrcb;
@@ -573,12 +509,7 @@ ULONG KiFastUserInterrupt(PKTRAP_FRAME frame)
 BOOLEAN KiFastPageFault(PKTRAP_FRAME frame)
 {
     KiNoteUserTrap(KiCurrentThread(), frame);
-    extern char KiTimelineImage[16];
-    ULONG64 started = KiTimelineImage[0] ? HalReadCounter() : 0;
-    BOOLEAN done = MmFastFault(frame->Cr2, (frame->ErrorCode & 0x2) != 0, (frame->ErrorCode & 0x10) != 0);
-    if (started)
-        KiTimelineFault(started, done ? 0 : 2, (ULONG)(frame->Cr2 >> 12));
-    return done;
+    return MmFastFault(frame->Cr2, (frame->ErrorCode & 0x2) != 0, (frame->ErrorCode & 0x10) != 0);
 }
 
 void KiTrapDispatch(PKTRAP_FRAME frame)

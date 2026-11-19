@@ -471,9 +471,6 @@ NTSTATUS NTAPI NtAccessCheckByType(PVOID descriptor, PSID principal_self, HANDLE
 
 /* ---------------------------------------------------------------- the kernel's check */
 
-BOOLEAN SeAccessEnforced = TRUE;
-BOOLEAN SeTraceAccess;
-
 #define CACHE_ENTRIES 256
 
 /*
@@ -524,8 +521,6 @@ static BOOLEAN unrestricted_system(const TOKEN *t)
 
 BOOLEAN SeAccessCheckRequired(void)
 {
-    if (!SeAccessEnforced)
-        return FALSE;
     BOOLEAN impersonating;
     ExAcquireFastMutex(&SeLock);
     PTOKEN t = subject_locked(0, &impersonating);
@@ -559,71 +554,12 @@ ULONG SeThreadIntegrityRid(void)
     return rid;
 }
 
-/* logs a descriptor's aces and the token's groups, to explain an unexpected denial. */
-static void sid_text(const UCHAR *sid, char *out, ULONG size)
-{
-    ULONG n = 0;
-    n += mime_format(out + n, size - n, "S-1-%u", (ULONG)sid[7]);
-    for (ULONG i = 0; i < sid[1] && i < 6 && n + 12 < size; i++)
-        n += mime_format(out + n, size - n, "-%u", ((const ULONG *)(sid + 8))[i]);
-}
-
-void SeTraceDescriptor(const SD_BLOB *sd)
-{
-    if (!SeTraceAccess || !sd)
-        return;
-    PSID owner = nullptr;
-    PACL dacl = nullptr;
-    BOOLEAN present, defaulted;
-    char text[96];
-    RtlGetOwnerSecurityDescriptor((PSECURITY_DESCRIPTOR)sd->Data, &owner, &defaulted);
-    RtlGetDaclSecurityDescriptor((PSECURITY_DESCRIPTOR)sd->Data, &present, &dacl, &defaulted);
-    if (owner)
-        sid_text(owner, text, sizeof(text));
-    else
-        text[0] = 0;
-    ULONG level, policy;
-    sd_label(sd->Data, &level, &policy);
-    KiLogPrintf("  descriptor serial %llu owner %s, label %x policy %x, list %s with %u entries", sd->Serial, text, level,
-                policy, !present ? "absent" : dacl ? "present" : "null", dacl ? dacl->AceCount : 0);
-    if (!dacl)
-        return;
-    const UCHAR *ace = (const UCHAR *)(dacl + 1);
-    for (ULONG i = 0; i < dacl->AceCount && i < 24; i++, ace += *(const USHORT *)(ace + 2)) {
-        sid_text(ace + 8, text, sizeof(text));
-        KiLogPrintf("    entry type %u flags %02x mask %08x %s", (ULONG)ace[0], (ULONG)ace[1], *(const ULONG *)(ace + 4), text);
-    }
-}
-
-void SeTraceDenial(PCSTR what, const UNICODE_STRING *name, ACCESS_MASK desired, NTSTATUS status)
-{
-    if (!SeTraceAccess)
-        return;
-    char text[96];
-    ULONG n = 0;
-    if (name && name->Buffer) {
-        ULONG chars = name->Length / sizeof(WCHAR);
-        for (ULONG i = chars > 90 ? chars - 90 : 0; i < chars && n < sizeof(text) - 1; i++)
-            text[n++] = name->Buffer[i] < 0x80 && name->Buffer[i] >= 0x20 ? (char)name->Buffer[i] : '?';
-    }
-    text[n] = 0;
-    BOOLEAN impersonating;
-    ExAcquireFastMutex(&SeLock);
-    PTOKEN t = subject_locked(0, &impersonating);
-    ULONG rid = t ? SepIntegrityRid(t) : 0, restricted = t ? t->RestrictedCount : 0, flags = t ? t->Flags : 0;
-    ExReleaseFastMutex(&SeLock);
-    KiLogPrintf("access denied %s '%s' access %08x status %08x, %s pid %u, integrity %x, restricting sids %u, token flags %x%s",
-                what, text, desired, status, PsCurrentProcess()->ImageFileName,
-                (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId, rid, restricted, flags,
-                impersonating ? ", impersonating" : "");
-}
-
 NTSTATUS SeCheckAccess(const SD_BLOB *sd, SD_MAPPING mapping, ACCESS_MASK desired, ACCESS_MASK previous, ULONG flags,
                        ACCESS_MASK *granted)
 {
     ACCESS_MASK want = map_generic(desired & ~(ACCESS_MASK)MAXIMUM_ALLOWED, mapping);
     BOOLEAN maximum = (desired & MAXIMUM_ALLOWED) != 0;
-    if (!sd || !SeAccessEnforced)
+    if (!sd)
         goto everything;
 
     ExAcquireFastMutex(&SeLock);

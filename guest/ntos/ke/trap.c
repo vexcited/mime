@@ -4,8 +4,6 @@
  */
 #include "../ntos.h"
 
-BOOLEAN KiTraceUserExceptions;
-
 /* the image and offset of a user address in the current process, as "name+0xoffset". */
 static BOOLEAN describe_in(PEPROCESS process, ULONG_PTR va, char *out, ULONG size)
 {

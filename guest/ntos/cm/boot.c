@@ -343,60 +343,30 @@ static PCWSTR gpu_service(ULONG vendor)
 #define VIDEO_ID L"{b3f36b7e-6a4d-5a41-9e2c-4d8fa1c7e903}"
 #define BASIC_DISPLAY_VIDEO_ID L"{b3f36b6e-6a4d-5a41-9e2c-4d8fa1c7e903}"
 #define BASIC_RENDER_VIDEO_ID L"{b3f36b70-6a4d-5a41-9e2c-4d8fa1c7e903}"
-#define INDIRECT_VIDEO_ID L"{b5a7c1d1-6a60-5a41-9e35-3e9d2c5a4b82}"
 #define BASIC_DISPLAY_INSTANCE L"PCI\\VEN_1234&DEV_1111&SUBSYS_11001AF4&REV_02\\3&11583659&0&18"
-#define INDIRECT_INSTANCE L"ROOT\\MTTVDD\\0002"
 #define set_multi(path, name, text) set(path, name, REG_MULTI_SZ, text, sizeof(text))
 
 /*
- * what drives the display. by default the host gpu, with the driver package of its vendor. "display=basic" on the
- * command line presents a machine with no gpu driver, as the windows reference machine is: its vga device runs windows'
- * basic display adapter and direct3d is the basic render driver. ",vdd" adds the indirect display driver installed
- * there, and ",gpu" keeps the host gpu as a further adapter behind them.
+ * what drives the display: the host gpu, with the driver package of its vendor. a machine with no gpu is as the
+ * windows reference machine: its vga device runs windows' basic display adapter and direct3d is the basic render
+ * driver.
  */
-static BOOLEAN display_option(PCSTR word)
-{
-    const char *option = strstr(HalBootInfo->cmdline, "display=");
-    if (!option)
-        return FALSE;
-    SIZE_T length = strlen(word);
-    for (option += 8; *option && *option != ' ';) {
-        const char *end = option;
-        while (*end && *end != ' ' && *end != ',')
-            end++;
-        if ((SIZE_T)(end - option) == length && !memcmp(option, word, length))
-            return TRUE;
-        option = *end == ',' ? end + 1 : end;
-    }
-    return FALSE;
-}
-
 static BOOLEAN display_basic(void)
 {
 #if defined(__aarch64__)
     return FALSE;
 #else
-    return !HalBootInfo->gpu_count || display_option("basic");
+    return !HalBootInfo->gpu_count;
 #endif
-}
-
-static BOOLEAN display_gpus(void)
-{
-    return !display_basic() || display_option("gpu");
-}
-
-static BOOLEAN display_indirect(void)
-{
-    return display_basic() && display_option("vdd");
 }
 
 /*
  * a monitor that tells nothing of itself, as the one of the reference machine's vga device: windows names it
- * Default_Monitor and it has no edid. the basic display has that one, and "display=noedid" gives it to a host gpu.
+ * Default_Monitor and it has no edid. the basic display has that one.
  */
 static BOOLEAN display_plain_monitor(void)
 {
-    return display_basic() || display_option("noedid");
+    return display_basic();
 }
 
 /* the driver key of a device, in its class key and in its video key: what its inf left there. */
@@ -432,19 +402,17 @@ static void video_key(PCWSTR id, PCWSTR service, PCWSTR desc, ULONG score, PCWST
  * the map of the video devices, in the order the reference machine holds it: the adapter of the display, the root
  * fallback driver, the remote desktop display, and an indirect display after them.
  */
-static void video_device_map(PCWSTR indirect)
+static void video_device_map(void)
 {
     static const PCWSTR map = L"\\REGISTRY\\MACHINE\\HARDWARE\\DEVICEMAP\\VIDEO";
-    static const ULONG numbers[3] = {0, 1, 2};
-    ULONG last = indirect ? 2 : 1;
+    static const ULONG numbers[2] = {0, 1};
+    ULONG last = 1;
     set_sz(map, L"\\Device\\Video0", REG_SZ,
            L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\" VIDEO_ID L"\\0000");
     set_dword(map, L"MaxObjectNumber", last);
     set(map, L"ObjectNumberList", REG_BINARY, numbers, (last + 1) * sizeof(ULONG));
     set_sz(map, L"\\Device\\Video1", REG_SZ, L"\\REGISTRY\\MACHINE\\SYSTEM\\ControlSet001\\Services\\BasicDisplay");
     set_sz(map, L"\\Device\\Disc", REG_SZ, L"\\REGISTRY\\Machine\\System\\CurrentControlSet\\Services\\TSDDD\\Device0");
-    if (indirect)
-        set_sz(map, L"\\Device\\Video2", REG_SZ, indirect);
 }
 
 /* a kernel driver's service key, with the devices it runs. */
@@ -780,32 +748,16 @@ static void basic_display(void)
     set_dword(service_video, L"FeatureScore", 0xFB);
     set_sz(service_video, L"VideoID", REG_SZ, VIDEO_ID);
     set_dword(CONTROL L"\\GraphicsDrivers\\BasicDisplay", L"BasicDisplayUserNotified", 1);
-    video_device_map(display_indirect() ? L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\"
-                                          INDIRECT_VIDEO_ID L"\\0000"
-                                        : nullptr);
+    video_device_map();
     /* the luids dxgi gives these adapters, see its main.c. */
     directx_adapter(VIDEO_ID, 0x10A, 0xD3D9);
     directx_adapter(BASIC_RENDER_VIDEO_ID, 0x105, 0xD3D8);
-    if (!display_indirect())
-        return;
-    static const PCWSTR indirect[] = {DISPLAY_CLASS_KEY L"\\0001", CONTROL L"\\Video\\" INDIRECT_VIDEO_ID L"\\0000"};
-    for (ULONG i = 0; i < RTL_NUMBER_OF(indirect); i++)
-        driver_key(indirect[i], L"Virtual Display Driver", L"MikeTheTech", L"12-24-2024", 0x01DB5596C66C4000,
-                   L"11.30.4.434", L"oem16.inf", L"MyDevice_Install.NT", L"Root\\MttVDD", 0xFF);
-    video_key(INDIRECT_VIDEO_ID, L"IndirectKmd", L"@oem16.inf,%devicename%;Virtual Display Driver", 0xFF,
-              L"{4d36e968-e325-11ce-bfc1-08002be10318}\\0001");
-    driver_service(L"IndirectKmd", L"\\SystemRoot\\System32\\drivers\\IndirectKmd.sys", 3, nullptr, 0, INDIRECT_INSTANCE,
-                   nullptr);
-    set_sz(SERVICES L"IndirectKmd", L"Group", REG_SZ, L"Base");
-    set_sz(SERVICES L"IndirectKmd", L"DisplayName", REG_SZ, L"@%SystemRoot%\\system32\\drivers\\IndirectKmd.sys,-100");
-    set_sz(SERVICES L"IndirectKmd", L"Description", REG_SZ, L"@%SystemRoot%\\system32\\drivers\\IndirectKmd.sys,-101");
-    directx_adapter(INDIRECT_VIDEO_ID, 0x342, 0xD3DA);
 }
 
 /*
  * the display class key and the video key of the adapter, where its device key leads: the driver description and
  * the identifiers a device reader of the class finds. on x64 that is the host gpu dxgi lists first, and windows'
- * basic display adapter on a host without one or when the command line asks for it.
+ * basic display adapter on a host without one.
  */
 static void display_adapter(void)
 {
@@ -831,7 +783,7 @@ static void display_adapter(void)
     gpu_hardware_id(gpu, hardware, RTL_NUMBER_OF(hardware));
     /* what every adapter of the reference machine has beside its driver key: the Video key of its id and its place in the map. */
     video_key(VIDEO_ID, gpu_service(gpu->vendor), name, 0, DISPLAY_DRIVER);
-    video_device_map(nullptr);
+    video_device_map();
 #endif
     for (ULONG i = 0; i < RTL_NUMBER_OF(keys); i++) {
         if (!CmpOpenPath(keys[i], TRUE))
@@ -1061,10 +1013,9 @@ static void pnp(PCWSTR instance, PCWSTR parent, PCWSTR desc, PCWSTR hardware, PC
 static void host_gpus(PCWSTR root)
 {
 #if !defined(__aarch64__)
-    if (!display_gpus())
+    if (display_basic())
         return;
-    ULONG number = display_basic() ? (display_indirect() ? 2 : 1) : 0;
-    for (ULONG i = 0; i < HalBootInfo->gpu_count && i < MIME_BOOT_GPUS; i++, number++) {
+    for (ULONG i = 0; i < HalBootInfo->gpu_count && i < MIME_BOOT_GPUS; i++) {
         const MimeBootGpu *gpu = &HalBootInfo->gpus[i];
         WCHAR instance[160], hardware[100] = {}, name[128], location[64] = {};
         gpu_instance(gpu, instance, RTL_NUMBER_OF(instance));
@@ -1074,26 +1025,13 @@ static void host_gpus(PCWSTR root)
                    gpu->slot >> 3, gpu->slot & 7);
         pnp(instance, root, name, hardware, L"Display", DISPLAY_CLASS, MimeGpuProvider(gpu->vendor),
             gpu_service(gpu->vendor), location);
-        if (i == 0 && !display_basic())
+        if (i == 0) {
             host_monitors(instance);
-        if (i == 0 || display_basic()) {
-            WCHAR path[220] = ENUM, driver[64] = {};
+            WCHAR path[220] = ENUM;
             wcscat(path, instance);
-            _snwprintf(driver, RTL_NUMBER_OF(driver) - 1, L"{4d36e968-e325-11ce-bfc1-08002be10318}\\%04u", number);
-            set_sz(path, L"Driver", REG_SZ, driver);
-            if (!display_basic()) {
-                wcscat(path, L"\\Device Parameters");
-                set_sz(path, L"VideoID", REG_SZ, VIDEO_ID);
-            }
-        }
-        if (display_basic()) {
-            WCHAR key[160] = {}, version[48] = {};
-            USHORT parts[4];
-            _snwprintf(key, RTL_NUMBER_OF(key) - 1, DISPLAY_CLASS_KEY L"\\%04u", number);
-            MimeGpuDriverVersion(gpu->vendor, gpu->driver_version, parts);
-            _snwprintf(version, RTL_NUMBER_OF(version) - 1, L"%u.%u.%u.%u", parts[0], parts[1], parts[2], parts[3]);
-            driver_key(key, name, MimeGpuProvider(gpu->vendor), L"6-12-2025", 0x01DBDB2D3C1D0000, version, L"oem4.inf",
-                       gpu_inf_section(gpu->vendor), hardware, 0);
+            set_sz(path, L"Driver", REG_SZ, L"{4d36e968-e325-11ce-bfc1-08002be10318}\\0000");
+            wcscat(path, L"\\Device Parameters");
+            set_sz(path, L"VideoID", REG_SZ, VIDEO_ID);
         }
     }
 #endif
@@ -1122,49 +1060,7 @@ static void basic_display_devices(PCWSTR root)
     set_sz(path, L"Driver", REG_SZ, DISPLAY_DRIVER);
     set_sz(ENUM BASIC_DISPLAY_INSTANCE L"\\Device Parameters", L"VideoID", REG_SZ, VIDEO_ID);
     /* the reference machine's vga device has a monitor with no edid, and so have the host's monitors under it. */
-    ULONG monitors = host_monitors(BASIC_DISPLAY_INSTANCE);
-    if (!display_indirect())
-        return;
-    /* the indirect display driver of the reference machine: a root device of the user mode driver framework, and its monitor. */
-    MIME_DEVICE_PROPERTIES indirect = {L"Virtual Display Driver", L"Root\\MttVDD\0", nullptr, L"Display", DISPLAY_CLASS,
-                                       L"MikeTheTech", L"WUDFRd", nullptr, L"{00000000-0000-0000-FFFF-FFFFFFFFFFFF}",
-                                       nullptr};
-    MimePnpAddDevice(INDIRECT_INSTANCE, nullptr, &indirect);
-    static const PCWSTR device = ENUM INDIRECT_INSTANCE, parameters = ENUM INDIRECT_INSTANCE L"\\Device Parameters";
-    set_multi(device, L"HardwareID", L"Root\\MttVDD\0");
-    set_dword(device, L"Capabilities", 0);
-    set_dword(device, L"ConfigFlags", 0);
-    set_multi(device, L"UpperFilters", L"IndirectKmd\0");
-    set_sz(device, L"Driver", REG_SZ, L"{4d36e968-e325-11ce-bfc1-08002be10318}\\0001");
-    set_sz(device, L"ParentIdPrefix", REG_SZ, L"1&48a0621&0");
-    set_sz(parameters, L"VideoID", REG_SZ, INDIRECT_VIDEO_ID);
-    set_sz(ENUM INDIRECT_INSTANCE L"\\Device Parameters\\WUDF", L"DeviceGroupId", REG_SZ, L"MttVDDGroup");
-    set_multi(ENUM INDIRECT_INSTANCE L"\\Device Parameters\\WUDF", L"DriverList", L"MttVDD\0");
-    set_dword(ENUM INDIRECT_INSTANCE L"\\Device Parameters\\WUDF", L"KernelModeClientPolicy", 1);
-    /* the edid that driver gives its monitor, as the reference machine holds it. */
-    static const UCHAR edid[256] = {
-        0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x36, 0x94, 0x37, 0x13, 0xE7, 0x1E, 0xE7, 0x1E,
-        0x1C, 0x22, 0x01, 0x03, 0x80, 0x32, 0x1F, 0x78, 0x07, 0xEE, 0x95, 0xA3, 0x54, 0x4C, 0x99, 0x26,
-        0x0F, 0x50, 0x54, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
-        0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x02, 0x3A, 0x80, 0x18, 0x71, 0x38, 0x2D, 0x40, 0x58, 0x2C,
-        0x45, 0x00, 0x63, 0xC8, 0x10, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0xFD, 0x00, 0x17, 0xF0, 0x0F,
-        0xFF, 0x37, 0x00, 0x0A, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFC,
-        0x00, 0x56, 0x44, 0x44, 0x20, 0x62, 0x79, 0x20, 0x4D, 0x54, 0x54, 0x0A, 0x20, 0x20, 0x01, 0xC2,
-        0x02, 0x03, 0x20, 0x40, 0xE6, 0x06, 0x0D, 0x01, 0xA2, 0xA2, 0x10, 0xE3, 0x05, 0xD8, 0x00, 0x67,
-        0xD8, 0x5D, 0xC4, 0x01, 0x6E, 0x80, 0x00, 0x68, 0x03, 0x0C, 0x00, 0x00, 0x00, 0x30, 0x00, 0x0B,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x8C,
-    };
-    WCHAR number[8] = {};
-    _snwprintf(number, RTL_NUMBER_OF(number) - 1, L"%04u", monitors);
-    monitor(number, L"DISPLAY\\MTT1337\\1&48a0621&0&UID256", L"Generic PnP Monitor", L"PnPMonitor.Install", L"*PNP09FF",
-            L"MONITOR\\MTT1337\0", sizeof(L"MONITOR\\MTT1337\0"), L"Generic Monitor (VDD by MTT)", 0x100,
-            L"{b0173242-b081-4f1c-90fd-c4d9cd9669a5}", INDIRECT_INSTANCE, edid, sizeof(edid));
+    host_monitors(BASIC_DISPLAY_INSTANCE);
 #endif
 }
 
@@ -1280,20 +1176,10 @@ static void drivers(void)
     IoCreateDriver(L"\\Driver\\BasicRender", empty_driver, nullptr);
     if (display_basic())
         IoCreateDriver(L"\\Driver\\monitor", empty_driver, nullptr);
-    if (display_indirect()) {
-        IoCreateDriver(L"\\Driver\\IndirectKmd", empty_driver, nullptr);
-        IoCreateDriver(L"\\Driver\\WUDFRd", empty_driver, nullptr);
-    }
     if (!display_basic()) {
         IoCreateDriver(L"\\Driver\\nvlddmkm", empty_driver, nullptr);
         IoCreateDriver(L"\\Driver\\amdkmdag", empty_driver, nullptr);
         IoCreateDriver(L"\\Driver\\igdkmd64", empty_driver, nullptr);
-    } else if (display_gpus()) {
-        for (ULONG i = 0; i < HalBootInfo->gpu_count && i < MIME_BOOT_GPUS; i++) {
-            WCHAR name[40] = L"\\Driver\\";
-            wcscat(name, gpu_service(HalBootInfo->gpus[i].vendor));
-            IoCreateDriver(name, empty_driver, nullptr);
-        }
     }
 #endif
 }

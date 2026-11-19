@@ -45,7 +45,7 @@ static BOOLEAN idle_work(PKPRCB prcb)
 void KiIdleWait(void)
 {
     PKPRCB prcb = KeGetCurrentPrcb();
-    ULONG64 spin = (KiOptions & KI_OPT_NO_IDLE_SPIN) ? 0 : g_idle_spin_ticks;
+    ULONG64 spin = g_idle_spin_ticks;
     if (spin)
         __atomic_store_n(&prcb->IdleState, KI_IDLE_POLLING, __ATOMIC_SEQ_CST);
     KiReleaseKernelLock();

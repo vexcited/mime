@@ -245,19 +245,6 @@ NTSTATUS ObReplaceSecurity(PVOID object, const OBJECT_ATTRIBUTES *attributes, KP
 
 /* ---------------------------------------------------------------- checks on open */
 
-static void trace_open_denial(PVOID object, ACCESS_MASK desired, NTSTATUS status)
-{
-    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
-    char what[24];
-    ULONG n = 0;
-    if (h->Type == SeTokenObjectType)
-        KiLogPrintf("  the token is %llx", ((PTOKEN)object)->TokenId);
-    for (; n < sizeof(what) - 1 && n < h->Type->Name.Length / sizeof(WCHAR); n++)
-        what[n] = (char)h->Type->Name.Buffer[n];
-    what[n] = 0;
-    SeTraceDenial(what, &h->Name, desired, status);
-}
-
 /*
  * kernel mode callers, types that keep no descriptor and objects without one are not checked, and then
  * *granted is the access asked for. the file system and the registry check their own during the open.
@@ -266,18 +253,15 @@ NTSTATUS ObCheckOpenAccessEx(PVOID object, ACCESS_MASK desired, KPROCESSOR_MODE 
 {
     const OBJECT_TYPE *type = OBJECT_TO_HEADER(object)->Type;
     *granted = desired;
-    if (mode != UserMode || !SeAccessEnforced || !type->Init.GenericMapping[3] || type->Init.GetSecurity)
+    if (mode != UserMode || !type->Init.GenericMapping[3] || type->Init.GetSecurity)
         return STATUS_SUCCESS;
     SD_BLOB *sd;
     ObReferenceSecurity(object, &sd);
     if (!sd)
         return STATUS_SUCCESS;
     NTSTATUS status = SeCheckAccess(sd, type->Init.GenericMapping, desired, 0, flags, granted);
-    if (!NT_SUCCESS(status)) {
+    if (!NT_SUCCESS(status))
         *granted = 0;
-        trace_open_denial(object, desired, status);
-        SeTraceDescriptor(sd);
-    }
     SeSdDereference(sd);
     return status;
 }
@@ -293,7 +277,7 @@ NTSTATUS ObCheckOpenAccess(PVOID object, ACCESS_MASK desired, KPROCESSOR_MODE mo
 NTSTATUS ObCheckCreateAccess(PVOID directory, KPROCESSOR_MODE mode)
 {
     ACCESS_MASK granted;
-    if (mode != UserMode || !SeAccessEnforced)
+    if (mode != UserMode)
         return STATUS_SUCCESS;
     SD_BLOB *sd;
     ObReferenceSecurity(directory, &sd);
@@ -301,8 +285,6 @@ NTSTATUS ObCheckCreateAccess(PVOID directory, KPROCESSOR_MODE mode)
         return STATUS_SUCCESS;
     NTSTATUS status = SeCheckAccess(sd, ObDirectoryType->Init.GenericMapping, DIRECTORY_CREATE_OBJECT_, 0, 0, &granted);
     SeSdDereference(sd);
-    if (!NT_SUCCESS(status))
-        trace_open_denial(directory, DIRECTORY_CREATE_OBJECT_, status);
     return status;
 }
 
@@ -360,11 +342,6 @@ NTSTATUS NTAPI NtSetSecurityObject(HANDLE handle, ULONG info, PVOID descriptor)
             SeSdDereference(old);
         if (NT_SUCCESS(status)) {
             status = ObStoreSecurity(object, next);
-            if (SeTraceAccess) {
-                KiLogPrintf("security set on a %ws %llx, status %08x", type->Name.Buffer,
-                            type == SeTokenObjectType ? ((PTOKEN)object)->TokenId : 0, status);
-                SeTraceDescriptor(next);
-            }
             SeSdDereference(next);
         }
         ExReleaseFastMutex(&set_lock);

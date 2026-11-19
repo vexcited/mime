@@ -15,7 +15,7 @@
 
 #include <stdint.h>
 
-#define MIME_ABI_VERSION 5
+#define MIME_ABI_VERSION 6
 
 /* guest physical layout. */
 #ifdef __x86_64__
@@ -433,7 +433,6 @@ typedef struct MimeBootInfo {
     MimeMemRange reserved[MIME_BOOT_MAX_RANGES];
 
     char system_root[64]; /* "C:\\Windows". */
-    char cmdline[256];
     /* where programs write fetched feature packages; on the host share, so nothing of mime lands on C:. */
     char feature_cache[260];
     /* the root bundle of a host that keeps its roots outside /etc, exported beside the cache; empty when it has none. */

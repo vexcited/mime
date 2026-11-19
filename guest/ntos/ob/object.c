@@ -540,7 +540,7 @@ static NTSTATUS lookup_name(PUNICODE_STRING name, HANDLE root, ULONG attributes,
         while (pos < len && path[pos] != '\\')
             pos++;
         /* without the bypass traverse privilege, a program needs traverse access on each directory. */
-        if (mode == UserMode && SeAccessEnforced) {
+        if (mode == UserMode) {
             if (bypass < 0)
                 bypass = SeThreadBypassesTraverse();
             ACCESS_MASK passed;

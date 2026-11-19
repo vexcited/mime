@@ -366,45 +366,13 @@ static NTSTATUS invalid_handle(HANDLE handle, KPROCESSOR_MODE mode)
     return STATUS_INVALID_HANDLE;
 }
 
-BOOLEAN ObAuditHandleAccess;
-
-/* each service and type is reported once. a report lost or doubled between two processors does not matter. */
-static void report_missing_rights(PVOID object, ACCESS_MASK granted, ACCESS_MASK desired, PCSTR service, BOOLEAN denied)
-{
-    static struct {
-        PCSTR service;
-        const OBJECT_TYPE *type;
-        ACCESS_MASK missing;
-    } seen[128];
-    static ULONG count;
-    OBJECT_HEADER *h = OBJECT_TO_HEADER(object);
-    ACCESS_MASK missing = desired & ~granted;
-    ULONG n = count < 128 ? count : 128;
-    for (ULONG i = 0; i < n; i++) {
-        if (seen[i].service == service && seen[i].type == h->Type && seen[i].missing == missing)
-            return;
-    }
-    if (n < 128) {
-        seen[n].service = service, seen[n].type = h->Type, seen[n].missing = missing;
-        count = n + 1;
-    }
-    char type[24];
-    ULONG chars = 0;
-    for (; chars < sizeof(type) - 1 && chars < h->Type->Name.Length / sizeof(WCHAR); chars++)
-        type[chars] = (char)h->Type->Name.Buffer[chars];
-    type[chars] = 0;
-    KiLogPrintf("handle access %s: %s needs %08x of a %s handle that has %08x, %s pid %u", denied ? "denied" : "missing",
-                service, desired, type, granted, PsCurrentProcess()->ImageFileName,
-                (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId);
-}
-
 /*
  * a service a program calls needs its rights in the handle the object came from. kernel mode callers are not
- * checked. the kernel option audit-handle-access reports a handle with too few rights and lets it pass.
+ * checked.
  */
 BOOLEAN ObHandleAllows(PVOID object, ACCESS_MASK granted, ACCESS_MASK desired, KPROCESSOR_MODE mode, PCSTR service)
 {
-    if (mode != UserMode || !SeAccessEnforced || (granted & desired) == desired)
+    if (mode != UserMode || (granted & desired) == desired)
         return TRUE;
     const OBJECT_TYPE *type = OBJECT_TO_HEADER(object)->Type;
     if ((granted | desired) & GENERIC_RIGHTS) {
@@ -416,9 +384,7 @@ BOOLEAN ObHandleAllows(PVOID object, ACCESS_MASK granted, ACCESS_MASK desired, K
         if ((granted & desired) == desired)
             return TRUE;
     }
-    if (ObAuditHandleAccess || SeTraceAccess)
-        report_missing_rights(object, granted, desired, service, !ObAuditHandleAccess);
-    return ObAuditHandleAccess;
+    return FALSE;
 }
 
 /* the rights of a handle as its type names them. a type that names none for the generic ones gives them all. */

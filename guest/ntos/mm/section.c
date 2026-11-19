@@ -1487,8 +1487,6 @@ NTSTATUS MiMapViewOfSectionEx(PSECTION s, PEPROCESS process, PVOID *base, ULONG6
     if (!ext)
         ext = &none;
     BOOLEAN image = (s->Flags & SEC_IMAGE) != 0;
-    if (image)
-        KiLogPrintf("map image %wZ want %p size %llx", &s->FileName, *base, (unsigned long long)*view_size);
     BOOLEAN replace = (allocation_type & MEM_REPLACE_PLACEHOLDER) != 0;
     if (replace && (image || !*base))
         return image ? STATUS_INVALID_PARAMETER : STATUS_CONFLICTING_ADDRESSES;

@@ -240,14 +240,6 @@ void PspProcessExit(PEPROCESS process)
 {
     KiLogPrintf("process %u (%s) exited with status %08x", (ULONG)(ULONG_PTR)process->UniqueProcessId,
                 process->ImageFileName, process->ExitStatus);
-    {
-        extern ULONG64 g_svc_ring[512];
-        extern ULONG64 g_svc_pc[512];
-        extern ULONG g_svc_n;
-        ULONG first = g_svc_n < 512 ? 0 : g_svc_n - 512;
-        for (ULONG i = first; i < g_svc_n && i < first + 6; i++)
-            KiLogPrintf("exit svc %llx @ %llx", g_svc_ring[i & 511] >> 32, g_svc_pc[i & 511]);
-    }
     process->ExitStatusReady = TRUE;
     PspJobProcessExit(process);
     ExReleaseTimerResolution(process);
@@ -329,19 +321,6 @@ static void PspTerminateOtherThreads(PEPROCESS process, NTSTATUS status)
 
 NTSTATUS NTAPI NtTerminateProcess(HANDLE handle, NTSTATUS exit_status)
 {
-    {
-        PKTRAP_FRAME tf = KiCurrentThread()->TrapFrame;
-        if (tf && exit_status == (NTSTATUS)0xC0000005)
-        {
-            ULONG64 w[64] = {0};
-            KiCopyFromUser(w, (PVOID)tf->Rsp, sizeof(w));
-            KiLogPrintf("terminate caller ip %llx rsp %llx img %llx", (ULONG64)tf->Rip, (ULONG64)tf->Rsp,
-                        (ULONG64)KiCurrentThread()->Teb->ProcessEnvironmentBlock->ImageBaseAddress);
-            for (ULONG wi = 0; wi < 64; wi += 8)
-                KiLogPrintf("tstack %llx %llx %llx %llx %llx %llx %llx %llx", w[wi], w[wi+1], w[wi+2], w[wi+3],
-                            w[wi+4], w[wi+5], w[wi+6], w[wi+7]);
-        }
-    }
     PEPROCESS process;
     /* no handle means the threads of the calling process other than the caller. */
     if (!handle) {
@@ -1142,7 +1121,6 @@ NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PV
     if ((ULONG)klass == 35) /* ProcessTlsInformation */
         return set_tls_information(handle, info, length);
     if ((ULONG)klass == 53) { /* ProcessDynamicFunctionTableInformation */
-        KiLogPrintf("setdynft handle %p info %p len %u", handle, info, length);
         struct {
             PVOID Table;
             BOOLEAN Remove;
@@ -1152,11 +1130,8 @@ NTSTATUS NTAPI NtSetInformationProcess(HANDLE handle, PROCESSINFOCLASS klass, PV
         if (!NT_SUCCESS(KiCopyFromUser(&table, info, sizeof(table))))
             return STATUS_ACCESS_VIOLATION;
         /* the tables unwind dynamic code: user mode unwinds its own, so they are only checked here. */
-        if (!table.Table && !table.Remove) {
-            KiLogPrintf("setdynft bad null");
+        if (!table.Table && !table.Remove)
             return STATUS_INVALID_PARAMETER;
-        }
-        KiLogPrintf("setdynft ok table %p remove %u", table.Table, table.Remove);
         return STATUS_SUCCESS;
     }
     if (klass == ProcessAccessToken)

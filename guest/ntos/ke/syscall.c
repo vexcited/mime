@@ -139,298 +139,6 @@ void KiRegisterLateServices(void)
                       6 > KI_SERVICE_REGISTER_ARGS ? 6 - KI_SERVICE_REGISTER_ARGS : 0);
 }
 
-/* the image name whose system calls are logged, from the kernel option trace-syscalls=<name>, or * for all. */
-char KiTraceSyscallImage[16];
-/* the service whose callers are walked too, from the kernel option trace-stack=<service name>. */
-char KiTraceStackService[40];
-/* a part of a service name the traced calls must have, from the kernel option trace-filter=<text>. */
-char KiTraceFilter[256];
-/* one in this many of the calls the filter lets through is logged, from the kernel option trace-every=<count>. */
-ULONG KiTraceEvery;
-static ULONG g_trace_passed;
-
-/* whether the filter lets a service's calls be logged: a part of its name, or !a,b,c for the names it leaves out. */
-static BOOLEAN trace_filtered(const char *name)
-{
-    if (!KiTraceFilter[0])
-        return TRUE;
-    if (KiTraceFilter[0] != '!')
-        return strstr(name, KiTraceFilter) != nullptr;
-    char part[40];
-    for (const char *at = KiTraceFilter + 1; *at;) {
-        ULONG n = 0;
-        while (at[n] && at[n] != ',' && n + 1 < sizeof(part))
-            n++;
-        memcpy(part, at, n);
-        part[n] = 0;
-        if (n && strstr(name, part))
-            return FALSE;
-        at += n;
-        if (*at == ',')
-            at++;
-    }
-    return TRUE;
-}
-
-/*
- * what a traced call points to, which its arguments alone do not tell: for each service the arguments that are
- * pointers, how many bytes to show, and whether before the call, after it, or both. a length of 0xFF is a counted
- * string and 0xFE the root and the attributes of an OBJECT_ATTRIBUTES.
- */
-static const struct {
-    const char *Name;
-    UCHAR Argument, Bytes, When;
-} g_trace_pointee[] = {
-    {"NtCreateFile", 0, 8, 2},          {"NtCreateFile", 2, 0xFE, 1},        {"NtCreateFile", 3, 16, 2},
-    {"NtOpenFile", 0, 8, 2},            {"NtOpenFile", 2, 0xFE, 1},          {"NtOpenFile", 3, 16, 2},
-    {"NtQueryAttributesFile", 0, 0xFE, 1}, {"NtQueryAttributesFile", 1, 40, 2},
-    {"NtOpenKey", 0, 8, 2},             {"NtOpenKey", 2, 0xFE, 1},
-    {"NtOpenKeyEx", 0, 8, 2},           {"NtOpenKeyEx", 2, 0xFE, 1},
-    {"NtQueryValueKey", 1, 0xFF, 1},    {"NtQueryValueKey", 5, 4, 2},        {"NtQueryValueKey", 3, 64, 2},
-    {"NtEnumerateKey", 5, 4, 2},        {"NtEnumerateKey", 3, 64, 2},
-    {"NtOpenMutant", 0, 8, 2},          {"NtOpenMutant", 2, 0xFE, 1},
-    {"NtCreateSection", 0, 8, 2},       {"NtCreateSection", 2, 0xFE, 1},     {"NtCreateSection", 3, 8, 1},
-    {"NtMapViewOfSection", 2, 8, 3},    {"NtMapViewOfSection", 5, 8, 1},     {"NtMapViewOfSection", 6, 8, 3},
-    {"NtAllocateVirtualMemory", 1, 8, 3}, {"NtAllocateVirtualMemory", 3, 8, 3},
-    {"NtProtectVirtualMemory", 1, 8, 3}, {"NtProtectVirtualMemory", 2, 8, 3}, {"NtProtectVirtualMemory", 4, 4, 2},
-    {"NtFreeVirtualMemory", 1, 8, 3},   {"NtFreeVirtualMemory", 2, 8, 3},
-    {"NtSetInformationThread", 2, 16, 1}, {"NtSetInformationProcess", 2, 16, 1},
-    {"NtOpenDirectoryObject", 2, 0xFE, 1}, {"NtQueryDirectoryObject", 1, 64, 2}, {"NtQueryDirectoryObject", 6, 4, 2},
-    {"NtQueryVirtualMemory", 3, 16, 3},
-    {"NtFsControlFile", 4, 16, 2},      {"NtFsControlFile", 6, 32, 1},       {"NtFsControlFile", 8, 64, 2},
-    {"NtDeviceIoControlFile", 4, 16, 2}, {"NtDeviceIoControlFile", 6, 32, 1}, {"NtDeviceIoControlFile", 8, 64, 2},
-    {"NtQueryVolumeInformationFile", 1, 16, 2}, {"NtQueryVolumeInformationFile", 2, 32, 2},
-    {"NtDuplicateObject", 3, 8, 2},     {"NtOpenProcessToken", 2, 8, 2},
-    {"NtSetContextThread", 1, 0x78, 1}, {"NtGetContextThread", 1, 0x78, 3},
-    {"NtQueryDefaultLocale", 1, 4, 2},
-    {"NtQuerySystemInformation", 1, 16, 1}, {"NtUnmapViewOfSection", 1, 0xFD, 1},
-    {"NtOpenSection", 2, 0xFE, 1},
-    {"NtOpenProcess", 3, 16, 1},        {"NtOpenThread", 3, 16, 1},          {"NtOpenProcess", 0, 8, 2},
-    {"NtUserFindWindowEx", 2, 0xFF, 1}, {"NtUserFindWindowEx", 3, 0xFF, 1},
-    {"NtQuerySecurityObject", 2, 0x70, 2}, {"NtQueryInformationProcess", 2, 0x40, 2},
-    {"NtQueryInformationToken", 2, 8, 2},
-    {"NtConvertBetweenAuxiliaryCounterAndPerformanceCounter", 1, 8, 3},
-    {"NtConvertBetweenAuxiliaryCounterAndPerformanceCounter", 2, 8, 3},
-    {"NtQuerySystemInformation", 1, 16, 2}, {"NtQuerySystemInformation", 3, 4, 2},
-};
-
-static void trace_pointees(const char *name, const ULONG64 *args, ULONG when)
-{
-    ULONG pid = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
-    ULONG tid = (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread;
-    for (ULONG i = 0; i < sizeof(g_trace_pointee) / sizeof(g_trace_pointee[0]); i++) {
-        if (!(g_trace_pointee[i].When & when) || strcmp(name, g_trace_pointee[i].Name))
-            continue;
-        ULONG index = g_trace_pointee[i].Argument, bytes = g_trace_pointee[i].Bytes;
-        ULONG64 at = args[index];
-        if (!at)
-            continue;
-        char text[260];
-        if (bytes == 0xFD) {
-            /* an address passed by value: only where it lies is told. */
-            if (KiDescribeUserAddress((ULONG_PTR)at, text, sizeof(text)))
-                KiLogPrintf("svc %u.%u   at %u %s", pid, tid, index, text);
-            continue;
-        }
-        if (bytes == 0xFE) {
-            ULONG64 attrs[4];
-            if (NT_SUCCESS(KiCopyFromUser(attrs, (PVOID)at, sizeof(attrs)))) {
-                KiLogPrintf("svc %u.%u   oa %u root %llx attributes %x", pid, tid, index, attrs[1], (ULONG)attrs[3]);
-                if (attrs[2]) {
-                    struct { USHORT Length, Maximum; ULONG Pad; ULONG64 Buffer; } us;
-                    WCHAR wide[100];
-                    if (NT_SUCCESS(KiCopyFromUser(&us, (PVOID)attrs[2], sizeof(us)))) {
-                        ULONG chars = us.Length / 2 < 99 ? us.Length / 2 : 99;
-                        if (chars && NT_SUCCESS(KiCopyFromUser(wide, (PVOID)us.Buffer, chars * 2))) {
-                            for (ULONG k = 0; k < chars; k++)
-                                text[k] = wide[k] < 0x80 && wide[k] >= 0x20 ? (char)wide[k] : '?';
-                            text[chars] = 0;
-                            KiLogPrintf("svc %u.%u   name %s", pid, tid, text);
-                        }
-                    }
-                }
-            }
-            continue;
-        }
-        if (bytes == 0xFF) {
-            struct {
-                USHORT Length, Maximum;
-                ULONG Pad;
-                ULONG64 Buffer;
-            } string;
-            WCHAR wide[100];
-            if (!NT_SUCCESS(KiCopyFromUser(&string, (PVOID)at, sizeof(string))))
-                continue;
-            ULONG chars = string.Length / 2 < 99 ? string.Length / 2 : 99;
-            if (chars && !NT_SUCCESS(KiCopyFromUser(wide, (PVOID)string.Buffer, chars * 2)))
-                continue;
-            for (ULONG k = 0; k < chars; k++)
-                text[k] = wide[k] < 0x80 && wide[k] >= 0x20 ? (char)wide[k] : '?';
-            text[chars] = 0;
-            KiLogPrintf("svc %u.%u   string %u %s", pid, tid, index, text);
-            continue;
-        }
-        UCHAR data[0x78];
-        if (!NT_SUCCESS(KiCopyFromUser(data, (PVOID)at, bytes)))
-            continue;
-        for (ULONG k = 0; k < bytes; k++)
-            mime_format(text + k * 2, 3, "%02x", data[k]);
-        char where[96] = "";
-        if (bytes == 8 && !strstr(name, "File") && !strstr(name, "Create") && !strstr(name, "Open"))
-            KiDescribeUserAddress((ULONG_PTR) * (ULONG64 *)data, where, sizeof(where));
-        KiLogPrintf("svc %u.%u   %s %u %s %s", pid, tid, when == 1 ? "in" : "out", index, text, where);
-    }
-}
-
-/*
- * the kernel option svc-timeline=<image name> records every system call of that image's processes with when it
- * began, how long it took and how much of that the thread was switched out, to be logged at the next dump.
- */
-typedef struct KI_TIMELINE_ENTRY {
-    ULONG64 Start, End, Blocked;
-    ULONG Process, Thread, Service, Status;
-    char Path[32];
-} KI_TIMELINE_ENTRY;
-#define KI_TIMELINE_ENTRIES (1u << 20)
-char KiTimelineImage[16];
-/* set once the timeline records, so the hot paths ask a flag and not the image's name. */
-BOOLEAN KiTimelineOn;
-static KI_TIMELINE_ENTRY *g_timeline;
-static volatile LONG g_timeline_used;
-
-/* the end of the name an OBJECT_ATTRIBUTES points to, as ascii, for the timeline. */
-static void timeline_path(ULONG64 attributes, char out[32])
-{
-    out[0] = 0;
-    ULONG64 attrs[3];
-    if (!attributes || !NT_SUCCESS(KiCopyFromUser(attrs, (PVOID)attributes, sizeof(attrs))) || !attrs[2])
-        return;
-    struct {
-        USHORT Length, Maximum;
-        ULONG Pad;
-        ULONG64 Buffer;
-    } name;
-    if (!NT_SUCCESS(KiCopyFromUser(&name, (PVOID)attrs[2], sizeof(name))) || !name.Length || !name.Buffer)
-        return;
-    ULONG chars = name.Length / 2, skip = chars > 31 ? chars - 31 : 0, n = chars - skip;
-    WCHAR wide[32];
-    if (!NT_SUCCESS(KiCopyFromUser(wide, (PVOID)(name.Buffer + skip * 2), n * 2)))
-        return;
-    for (ULONG i = 0; i < n; i++)
-        out[i] = wide[i] < 0x80 && wide[i] >= 0x20 && wide[i] != ' ' ? (char)wide[i] : '?';
-    out[n] = 0;
-}
-
-/* the name in an OBJECT_ATTRIBUTES as ascii, whole up to the room there is, for the system call trace. */
-static void trace_name(ULONG64 attributes, char *out, ULONG room)
-{
-    out[0] = 0;
-    ULONG64 attrs[3];
-    if (!attributes || !NT_SUCCESS(KiCopyFromUser(attrs, (PVOID)attributes, sizeof(attrs))) || !attrs[2])
-        return;
-    struct {
-        USHORT Length, Maximum;
-        ULONG Pad;
-        ULONG64 Buffer;
-    } name;
-    if (!NT_SUCCESS(KiCopyFromUser(&name, (PVOID)attrs[2], sizeof(name))) || !name.Length || !name.Buffer)
-        return;
-    ULONG chars = name.Length / 2, n = chars < room - 1 ? chars : room - 1;
-    for (ULONG i = 0; i < n; i++) {
-        WCHAR c;
-        if (!NT_SUCCESS(KiCopyFromUser(&c, (PVOID)(name.Buffer + i * 2), 2)))
-            break;
-        out[i] = c < 0x80 && c >= 0x20 ? (char)c : '?';
-        out[i + 1] = 0;
-    }
-}
-
-/* records a page fault of the traced image as a call to the pseudo service 0x2000 + kind. */
-void KiTimelineFault(ULONG64 started, ULONG kind, ULONG address_page)
-{
-    PKTHREAD thread = KiCurrentThread();
-    if (!g_timeline || !thread || strcmp(PsCurrentProcess()->ImageFileName, KiTimelineImage))
-        return;
-    LONG slot = __atomic_fetch_add(&g_timeline_used, 1, __ATOMIC_RELAXED);
-    if ((ULONG)slot >= KI_TIMELINE_ENTRIES)
-        return;
-    KI_TIMELINE_ENTRY *e = &g_timeline[slot];
-    e->Start = started;
-    e->End = HalReadCounter();
-    e->Blocked = 0;
-    e->Process = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
-    e->Thread = (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread;
-    e->Service = 0x2000 + kind;
-    e->Status = address_page;
-    e->Path[0] = 0;
-}
-
-/* appends the timeout of a wait to the timeline's text, in milliseconds, or inf for none. */
-static void timeline_timeout(const char *name, const ULONG64 *args, char out[32])
-{
-    int slot = -1;
-    if (!strcmp(name, "NtWaitForSingleObject") || !strcmp(name, "NtDelayExecution"))
-        slot = !strcmp(name, "NtDelayExecution") ? 1 : 2;
-    else if (!strcmp(name, "NtWaitForMultipleObjects") || !strcmp(name, "NtRemoveIoCompletion") ||
-             !strcmp(name, "NtRemoveIoCompletionEx"))
-        slot = 4;
-    else if (!strcmp(name, "NtWaitForAlertByThreadId"))
-        slot = 1;
-    else if (!strcmp(name, "NtSignalAndWaitForSingleObject"))
-        slot = 3;
-    size_t used = strlen(out);
-    if (!strcmp(name, "NtUserMsgWaitForMultipleObjectsEx")) {
-        mime_format(out + used, 32 - used, "/t%u", (ULONG)args[2]);
-        return;
-    }
-    if (slot < 0)
-        return;
-    LONG64 value;
-    if (!args[slot])
-        mime_format(out + used, 32 - used, "/tinf");
-    else if (NT_SUCCESS(KiCopyFromUser(&value, (PVOID)args[slot], sizeof(value))))
-        mime_format(out + used, 32 - used, value < 0 ? "/t%lld" : "/ta%lld", value < 0 ? -value / 10000 : value / 10000);
-}
-
-/* the name a thread is given with NtSetInformationThread, as ascii. */
-static void timeline_thread_name(ULONG64 string, char out[32])
-{
-    struct {
-        USHORT Length, Maximum;
-        ULONG Pad;
-        ULONG64 Buffer;
-    } name;
-    out[0] = 0;
-    if (!string || !NT_SUCCESS(KiCopyFromUser(&name, (PVOID)string, sizeof(name))) || !name.Length || !name.Buffer)
-        return;
-    ULONG n = name.Length / 2 > 31 ? 31 : name.Length / 2;
-    WCHAR wide[32];
-    if (!NT_SUCCESS(KiCopyFromUser(wide, (PVOID)name.Buffer, n * 2)))
-        return;
-    for (ULONG i = 0; i < n; i++)
-        out[i] = wide[i] < 0x80 && wide[i] >= 0x20 && wide[i] != ' ' ? (char)wide[i] : '?';
-    out[n] = 0;
-}
-
-/* a mark of the kernel in the timeline, as a call of no length to the pseudo service 0x2000 + kind. */
-void KiTimelineNote(ULONG kind, const char *text, ULONG64 detail)
-{
-    PKTHREAD thread = KiCurrentThread();
-    if (!g_timeline || !thread || strcmp(PsCurrentProcess()->ImageFileName, KiTimelineImage))
-        return;
-    LONG slot = __atomic_fetch_add(&g_timeline_used, 1, __ATOMIC_RELAXED);
-    if ((ULONG)slot >= KI_TIMELINE_ENTRIES)
-        return;
-    KI_TIMELINE_ENTRY *e = &g_timeline[slot];
-    e->Start = e->End = HalReadCounter();
-    e->Blocked = 0;
-    e->Process = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
-    e->Thread = (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread;
-    e->Service = 0x2000 + kind;
-    e->Status = (ULONG)detail;
-    mime_format(e->Path, sizeof(e->Path), "%s", text);
-}
-
 static const char *service_name(ULONG table, ULONG index)
 {
     if (table == 2)
@@ -604,13 +312,6 @@ static BOOLEAN gdi_batch_pending(PKTHREAD thread)
 ULONG KiFastSystemService(PKTRAP_FRAME frame)
 {
     ULONG number = KI_SERVICE_NUMBER(frame);
-    {
-        extern ULONG64 g_svc_ring[512];
-        extern ULONG64 g_svc_pc[512];
-        extern ULONG g_svc_n;
-        g_svc_pc[g_svc_n & 511] = KI_TRAP_PC(frame);
-        g_svc_ring[g_svc_n++ & 511] = ((ULONG64)number << 32) | (KI_TRAP_PC(frame) & 0xFFFFFFFF);
-    }
 #ifdef __x86_64__
     /* the single step of a service that returns is raised the usual way, see KiServiceSingleStep. */
     if (frame->Rflags & 0x100)
@@ -623,7 +324,7 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
         PKTHREAD current = KiCurrentThread();
         PKPCR pcr = KeGetPcr();
         ULONG64 answer;
-        if (!g_win32.FastService || KiTraceSyscallImage[0] || g_timeline || (KiOptions & KI_OPT_NO_FAST_SERVICE) ||
+        if (!g_win32.FastService ||
             pcr->Irql != PASSIVE_LEVEL || current->KernelApcPending || current->Terminating || current->UserApcPending ||
             pcr->Prcb.DpcPending || current->ContextSetInService || ((PETHREAD)current)->PendingException ||
             gdi_batch_pending(current) || !g_win32.FastService(number, KI_SERVICE_REGISTER_ARG(frame, 0), &answer))
@@ -681,9 +382,7 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
     default:
         return 0;
     }
-    /* tracing and the timeline see every call, and pool blocks with guard pages are no part of the fixed mappings. */
-    if (KiTraceSyscallImage[0] || g_timeline || KiTimelineOn || MmVerifyPool || (KiOptions & KI_OPT_NO_FAST_SERVICE) ||
-        KeGetPcr()->Irql != PASSIVE_LEVEL)
+    if (KeGetPcr()->Irql != PASSIVE_LEVEL)
         return 0;
 
     /* what is not plain is left to the usual way, with its status and its exception: nothing is done before. */
@@ -964,10 +663,6 @@ ULONG KiFastSystemService(PKTRAP_FRAME frame)
 }
 #endif
 
-ULONG64 g_svc_ring[512];
-ULONG64 g_svc_pc[512];
-ULONG g_svc_n;
-
 void KiSystemService(PKTRAP_FRAME frame)
 {
     PKTHREAD thread = KiCurrentThread();
@@ -984,9 +679,6 @@ void KiSystemService(PKTRAP_FRAME frame)
     ULONG64 started = HalReadCounter(), blocked = thread->BlockedTicks;
     KiKernelLock[KI_LOCK_REASON] = (table << 12 | index) + 1;
     KiNoteLockWait((table << 12 | index) + 1);
-    BOOLEAN timeline = g_timeline && table < 2 && !strcmp(PsCurrentProcess()->ImageFileName, KiTimelineImage);
-    char tpath[32];
-    tpath[0] = 0;
     if (table < 2)
         g_calls[table][index]++;
     KI_SERVICE_TABLE *t = table < 2 ? &g_tables[table] : nullptr;
@@ -1013,14 +705,6 @@ void KiSystemService(PKTRAP_FRAME frame)
             /* who calls it, for the first call. */
             KiTraceUserStack(KI_TRAP_PC(frame), KI_TRAP_SP(frame));
         }
-        if (table == 0 && KiTraceSyscallImage[0]) {
-            ULONG64 more[2] = {};
-            KiCopyFromUser(more, (PVOID)KI_SERVICE_STACK_ARGS(frame), sizeof(more));
-            KiLogPrintf("unimplemented %s(%llx, %llx, %llx, %llx, %llx, %llx)", service_name(table, index),
-                        (ULONG64)KI_SERVICE_REGISTER_ARG(frame, 0), (ULONG64)KI_SERVICE_REGISTER_ARG(frame, 1),
-                        (ULONG64)KI_SERVICE_REGISTER_ARG(frame, 2), (ULONG64)KI_SERVICE_REGISTER_ARG(frame, 3), more[0],
-                        more[1]);
-        }
         result = table == 1 ? 0 : (ULONG)STATUS_NOT_IMPLEMENTED;
     } else {
         ULONG64 args[16];
@@ -1029,142 +713,13 @@ void KiSystemService(PKTRAP_FRAME frame)
         ULONG stack = t->Table[index].StackArgs;
         if (stack > 16 - KI_SERVICE_REGISTER_ARGS)
             stack = 16 - KI_SERVICE_REGISTER_ARGS;
-        BOOLEAN trace = KiTraceSyscallImage[0] &&
-                        (KiTraceSyscallImage[0] == '*' || !strcmp(PsCurrentProcess()->ImageFileName, KiTraceSyscallImage)) &&
-                        trace_filtered(service_name(table, index)) &&
-                        (KiTraceEvery < 2 || ++g_trace_passed % KiTraceEvery == 0);
         BOOLEAN copied = !stack || NT_SUCCESS(KiCopyFromUser(&args[KI_SERVICE_REGISTER_ARGS],
                                                              (PVOID)KI_SERVICE_STACK_ARGS(frame),
                                                              stack * sizeof(ULONG64)));
-        if (timeline) {
-            const char *name = service_name(table, index);
-            /* the object a wait or a signal is on, to tell who woke whom. */
-            if (!strcmp(name, "NtWaitForSingleObject") || !strcmp(name, "NtSetEvent") || !strcmp(name, "NtResetEvent") ||
-                !strcmp(name, "NtReleaseSemaphore") || !strcmp(name, "NtReleaseMutant") || !strcmp(name, "NtClearEvent") ||
-                !strcmp(name, "NtPulseEvent") || !strcmp(name, "NtSetTimer") || !strcmp(name, "NtSetTimer2")) {
-                PVOID object;
-                if (NT_SUCCESS(ObReferenceHandle((HANDLE)args[0], nullptr, UserMode, &object, nullptr))) {
-                    mime_format(tpath, sizeof(tpath), "obj%llx", (ULONG64)(ULONG_PTR)object & 0xFFFFFFFFFFFull);
-                    ObDereferenceObject(object);
-                }
-            }
-            timeline_timeout(name, args, tpath);
-            if (!strcmp(name, "NtRemoveIoCompletion") || !strcmp(name, "NtRemoveIoCompletionEx")) {
-                PVOID object;
-                if (NT_SUCCESS(ObReferenceHandle((HANDLE)args[0], nullptr, UserMode, &object, nullptr))) {
-                    char port[16];
-                    mime_format(port, sizeof(port), "port%llx", (ULONG64)(ULONG_PTR)object & 0xFFFFFFFFFFFull);
-                    size_t used = strlen(tpath);
-                    mime_format(tpath + used, sizeof(tpath) - used, "%s", port);
-                    ObDereferenceObject(object);
-                }
-            }
-            /* the end of a pipe a read or a write is on, to tell who talks to whom: the instance, the end, the length. */
-            if (!strcmp(name, "NtReadFile") || !strcmp(name, "NtWriteFile")) {
-                PFILE_OBJECT file;
-                if (NT_SUCCESS(ObReferenceHandle((HANDLE)args[0], IoFileObjectTypeObject, UserMode, (PVOID *)&file, nullptr))) {
-                    if (IopIsNamedPipe(file))
-                        mime_format(tpath, sizeof(tpath), "p%llx%c/%u", (ULONG64)(ULONG_PTR)file->FsContext & 0xFFFFFFFFull,
-                                    file->FsContext2 == (PVOID)1 ? 's' : 'c', (ULONG)args[6]);
-                    ObDereferenceObject(file);
-                }
-            }
-            if (!strcmp(name, "NtSetInformationThread") && args[1] == 38)
-                timeline_thread_name(args[2], tpath);
-            if (!strcmp(name, "NtCreateFile") || !strcmp(name, "NtOpenFile") || !strcmp(name, "NtOpenKey") ||
-                !strcmp(name, "NtOpenKeyEx") || !strcmp(name, "NtCreateKey"))
-                timeline_path(args[2], tpath);
-            else if (!strcmp(name, "NtQueryAttributesFile") || !strcmp(name, "NtQueryFullAttributesFile") ||
-                     !strcmp(name, "NtDeleteFile"))
-                timeline_path(args[0], tpath);
-        }
-        if (trace) {
-            /* the first return address on the stack names the caller of the system call stub. */
-            char caller[96] = "";
-            ULONG64 ret = 0;
-            if (!NT_SUCCESS(KiCopyFromUser(&ret, (PVOID)KI_TRAP_SP(frame), sizeof(ret))) ||
-                !KiDescribeUserAddress((ULONG_PTR)ret, caller, sizeof(caller)))
-                caller[0] = 0;
-            ULONG shown = KI_SERVICE_REGISTER_ARGS + stack;
-            KiLogPrintf("svc %u.%u %s(%llx, %llx, %llx, %llx, %llx, %llx, %llx) %s",
-                        (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
-                        (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, service_name(table, index), args[0],
-                        args[1], args[2], args[3], shown > 4 ? args[4] : 0, shown > 5 ? args[5] : 0,
-                        shown > 6 ? args[6] : 0, caller);
-            if (shown > 7)
-                KiLogPrintf("svc %u.%u   more %llx %llx %llx %llx", (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
-                            (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, args[7], shown > 8 ? args[8] : 0,
-                            shown > 9 ? args[9] : 0, shown > 10 ? args[10] : 0);
-            trace_pointees(service_name(table, index), args, 1);
-            /* the name a call on a file or a key is for, which the arguments only point to. */
-            {
-                const char *name = service_name(table, index);
-                int object = !strcmp(name, "NtCreateFile") || !strcmp(name, "NtOpenFile") || !strcmp(name, "NtOpenKey") ||
-                             !strcmp(name, "NtOpenKeyEx") || !strcmp(name, "NtCreateKey") ||
-                             !strcmp(name, "NtCreateSection") || !strcmp(name, "NtCreateMutant") ||
-                             !strcmp(name, "NtOpenMutant") || !strcmp(name, "NtCreateEvent") || !strcmp(name, "NtOpenEvent") ||
-                             !strcmp(name, "NtOpenDirectoryObject");
-                int first = !strcmp(name, "NtQueryAttributesFile") || !strcmp(name, "NtQueryFullAttributesFile") ||
-                            !strcmp(name, "NtDeleteFile");
-                if (object || first) {
-                    char text[200];
-                    trace_name(object ? args[2] : args[0], text, sizeof(text));
-                    if (text[0])
-                        KiLogPrintf("svc %u.%u   name %s", (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
-                                    (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, text);
-                }
-            }
-#ifdef __x86_64__
-            /* what a raise is for: the record, and where the context says it is. */
-            if (!strcmp(service_name(table, index), "NtRaiseException")) {
-                EXCEPTION_RECORD raised;
-                CONTEXT raised_context;
-                if (NT_SUCCESS(KiCopyFromUser(&raised, (PVOID)args[0], sizeof(raised))) &&
-                    NT_SUCCESS(KiCopyFromUser(&raised_context, (PVOID)args[1], offsetof(CONTEXT, Rip) + 8)))
-                    KiLogPrintf("svc %u.%u   code %08x flags %x at %llx, %u parameters %llx %llx, context rip %llx rsp %llx",
-                                (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
-                                (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, (ULONG)raised.ExceptionCode,
-                                raised.ExceptionFlags, (ULONG64)(ULONG_PTR)raised.ExceptionAddress,
-                                raised.NumberParameters, (ULONG64)raised.ExceptionInformation[0],
-                                (ULONG64)raised.ExceptionInformation[1], raised_context.Rip, raised_context.Rsp);
-            }
-#endif
-            if (KiTraceStackService[0] && !strcmp(service_name(table, index), KiTraceStackService))
-                KiTraceUserFrames(frame);
-        }
         if (!copied)
             result = (ULONG)STATUS_ACCESS_VIOLATION;
         else
             result = KiCallService(t->Table[index].Routine, args, stack);
-        if (trace) {
-            KiLogPrintf("svc %u.%u %s = %llx", (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
-                        (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, service_name(table, index), result);
-            trace_pointees(service_name(table, index), args, 2);
-            /* the message a queue call returned, as window, message, wparam and lparam. */
-            if (table == 1 && (ULONG)result == 1 && !strncmp(service_name(table, index), "NtUser", 6) &&
-                (!strcmp(service_name(table, index) + 6, "PeekMessage") || !strcmp(service_name(table, index) + 6, "GetMessage"))) {
-                ULONG64 msg[4];
-                if (NT_SUCCESS(KiCopyFromUser(msg, (PVOID)args[0], sizeof(msg))))
-                    KiLogPrintf("msg %u.%u hwnd %llx message %llx wparam %llx lparam %llx",
-                                (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId,
-                                (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread, msg[0], msg[1] & 0xFFFFFFFF,
-                                msg[2], msg[3]);
-            }
-        }
-    }
-    if (timeline) {
-        LONG slot = __atomic_fetch_add(&g_timeline_used, 1, __ATOMIC_RELAXED);
-        if ((ULONG)slot < KI_TIMELINE_ENTRIES) {
-            KI_TIMELINE_ENTRY *e = &g_timeline[slot];
-            e->Start = started;
-            e->End = HalReadCounter();
-            e->Blocked = thread->BlockedTicks - blocked;
-            e->Process = (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId;
-            e->Thread = (ULONG)(ULONG_PTR)PsCurrentThread()->Cid.UniqueThread;
-            e->Service = table << 12 | index;
-            e->Status = (ULONG)result;
-            memcpy(e->Path, tpath, sizeof(tpath));
-        }
     }
     if (table < 2) {
         ULONG64 held = HalReadCounter() - started - (thread->BlockedTicks - blocked);
@@ -1322,33 +877,6 @@ void KiFreeCapturedString(PUNICODE_STRING s)
     if (s->Buffer)
         ExFreePool(s->Buffer);
     s->Buffer = nullptr;
-}
-
-void KiEnableTimeline(void)
-{
-    g_timeline = ExAllocatePool2(POOL_FLAG_NON_PAGED, KI_TIMELINE_ENTRIES * sizeof(KI_TIMELINE_ENTRY), KI_TAG('T', 'l', 'i', 'n'));
-    KiTimelineOn = g_timeline != nullptr;
-}
-
-/* one line per call, several to a log write: pid tid start duration blocked status service, times in microseconds. */
-static void dump_timeline(void)
-{
-    ULONG used = (ULONG)g_timeline_used;
-    if (used > KI_TIMELINE_ENTRIES)
-        used = KI_TIMELINE_ENTRIES;
-    char buf[1024];
-    int n = 0;
-    for (ULONG i = 0; i < used; i++) {
-        KI_TIMELINE_ENTRY *e = &g_timeline[i];
-        n += mime_format(buf + n, sizeof(buf) - n, "tl %u %u %llu %llu %llu %x %s %s\n", e->Process, e->Thread,
-                         HalCounterToHns(e->Start) / 10, HalCounterToHns(e->End - e->Start) / 10,
-                         HalCounterToHns(e->Blocked) / 10, e->Status, service_name(e->Service >> 12, e->Service & 0xFFF), e->Path);
-        if (n > (int)sizeof(buf) - 160 || i + 1 == used) {
-            HalLog(buf, (SIZE_T)n);
-            n = 0;
-        }
-    }
-    g_timeline_used = 0;
 }
 
 /* the counters of the dump, started over. */
@@ -1530,9 +1058,4 @@ void KiDumpServiceCalls(void)
 #endif
     AfdDumpStats();
     reset_dump_counters();
-    /* the timeline is long, and the lock is held while it is written: its own cost is no part of the counters above. */
-    if (g_timeline) {
-        dump_timeline();
-        reset_dump_counters();
-    }
 }

@@ -88,8 +88,6 @@ static NTSTATUS exception_code(PKTRAP_FRAME frame, ULONG ec)
     }
 }
 
-extern BOOLEAN KiTraceUserExceptions;
-
 /* carries an EL0 hypercall to EL2 for the program, its x0 to x17 registers in and out. */
 static void user_hypercall(PKTRAP_FRAME frame)
 {
@@ -189,13 +187,6 @@ void KiUserExceptionHandler(PKTRAP_FRAME frame)
         frame->Pc += 4;
         record.ExceptionAddress = (PVOID)(frame->Pc - 4);
     }
-    if (KiTraceUserExceptions) {
-        KiLogPrintf("first chance exception %08x at %p in %s, pte of far %016llx", record.ExceptionCode,
-                    (PVOID)frame->Pc, PsCurrentProcess()->ImageFileName,
-                    MiReadPte(PsCurrentProcess()->AddressSpace.Root, frame->Far & ~0xFFFull));
-        KiDumpTrapFrame("user context", frame);
-        KiTraceUserStack(KI_TRAP_PC(frame), KI_TRAP_SP(frame));
-    }
     if (!KiDispatchUserException(&record, frame)) {
         PEPROCESS process = PsCurrentProcess();
         KiLogPrintf("unhandled exception %08x in process %u (%s)", record.ExceptionCode,
@@ -214,8 +205,6 @@ void KiKernelExceptionHandler(PKTRAP_FRAME frame)
     if (ec == 0x25 || ec == 0x21) {
         BOOLEAN write = ec == 0x25 && (frame->Esr & (1u << 6)) && !(frame->Esr & (1u << 8));
         ULONG_PTR far = frame->Far;
-        if (__builtin_expect(MmVerifyPool, 0))
-            MiSpecialPoolFault(far, write ? 2 : 0, frame->Pc);
         if (far <= MIME_USER_ADDRESS_LIMIT && !(frame->Spsr & (1u << 7))) {
             /* demand faults on user memory touched by the kernel, from interruptible code only. */
             KiEnableInterrupts();

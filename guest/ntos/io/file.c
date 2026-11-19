@@ -26,9 +26,6 @@ static NTSTATUS store_iosb(PIO_STATUS_BLOCK user, const IO_STATUS_BLOCK *iosb)
     return STATUS_SUCCESS;
 }
 
-/* the kernel option trace-files logs the name and the status of every open by a program that fails. */
-BOOLEAN IoTraceFiles;
-
 NTSTATUS NTAPI IoCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUTES attributes, PIO_STATUS_BLOCK iosb,
                             PLARGE_INTEGER allocation, ULONG file_attributes, ULONG share, ULONG disposition,
                             ULONG options, PVOID ea, ULONG ea_length, ULONG create_file_type, PVOID parameters,
@@ -82,15 +79,6 @@ NTSTATUS NTAPI IoCreateFile(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTRIBUT
     thread->CreateEa = ea_copy;
     thread->CreateEaLength = ea_copy ? ea_length : 0;
     status = IopCreateFile(&h, access, &oa, &local, file_attributes, share, disposition, options, mode);
-    if (!NT_SUCCESS(status) && IoTraceFiles && mode == UserMode) {
-        char text[120];
-        ULONG n = 0, chars = name.Length / sizeof(WCHAR);
-        for (ULONG i = chars > 110 ? chars - 110 : 0; i < chars && n < sizeof(text) - 1; i++)
-            text[n++] = name.Buffer[i] < 0x80 && name.Buffer[i] >= 0x20 ? (char)name.Buffer[i] : '?';
-        text[n] = 0;
-        KiLogPrintf("open of '%s' failed with %08x, %s pid %u", text, status, PsCurrentProcess()->ImageFileName,
-                    (ULONG)(ULONG_PTR)PsCurrentProcess()->UniqueProcessId);
-    }
     thread->CreateEa = outer_ea;
     thread->CreateEaLength = outer_ea_length;
     if (ea_copy)
@@ -1060,18 +1048,6 @@ NTSTATUS NTAPI NtFsControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc,
                                ULONG out_len)
 {
     PFILE_OBJECT file;
-    if ((code & 0xFFFFF) == 0x900C0) {
-        PKTRAP_FRAME tf = KiCurrentThread()->TrapFrame;
-        KPCR* pcr = KeGetPcr();
-        ULONG64 rbp = tf ? tf->Rbp : 0;
-        ULONG64 stk[40] = {0};
-        ULONG64 outb = (ULONG64)output;
-        KiLogPrintf("fsctl code %x rbp %llx tf %p", code, rbp, tf);
-        if (rbp && KiCopyFromUser(stk, (PVOID)(rbp + 0x10c0), sizeof(stk)) == 0) {
-            KiLogPrintf("objid rbp %llx out %llx +10c0: %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx %llx",
-                        rbp, outb, stk[0], stk[1], stk[2], stk[3], stk[4], stk[5], stk[6], stk[7], stk[8], stk[9], stk[10], stk[11], stk[12], stk[13], stk[14], stk[15], stk[16], stk[17], stk[18], stk[19], stk[20], stk[21], stk[22], stk[23], stk[24], stk[25], stk[26], stk[27], stk[28], stk[29], stk[30], stk[31], stk[32], stk[33], stk[34], stk[35], stk[36], stk[37], stk[38], stk[39]);
-        }
-    }
     NTSTATUS status = reference_file(handle, control_rights(code), 0, &file);
     if (!NT_SUCCESS(status))
         return status;
@@ -1084,14 +1060,6 @@ NTSTATUS NTAPI NtFsControlFile(HANDLE handle, HANDLE event, PIO_APC_ROUTINE apc,
     else
         status = buffered_control(file, IRP_MJ_FILE_SYSTEM_CONTROL, event, apc_context, iosb, code, input, in_len,
                                   output, out_len);
-    if ((code & 0xFFFFF) == 0x900C0 && output) {
-        PUCHAR ob = (PUCHAR)output;
-        KiLogPrintf("objid-after %llx: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x | %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x | %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x | %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
-                    (ULONG64)ob, ob[0],ob[1],ob[2],ob[3],ob[4],ob[5],ob[6],ob[7],ob[8],ob[9],ob[10],ob[11],ob[12],ob[13],ob[14],ob[15],
-                    ob[16],ob[17],ob[18],ob[19],ob[20],ob[21],ob[22],ob[23],ob[24],ob[25],ob[26],ob[27],ob[28],ob[29],ob[30],ob[31],
-                    ob[32],ob[33],ob[34],ob[35],ob[36],ob[37],ob[38],ob[39],ob[40],ob[41],ob[42],ob[43],ob[44],ob[45],ob[46],ob[47],
-                    ob[48],ob[49],ob[50],ob[51],ob[52],ob[53],ob[54],ob[55],ob[56],ob[57],ob[58],ob[59],ob[60],ob[61],ob[62],ob[63]);
-    }
     ObDereferenceObject(file);
     return status;
 }

@@ -142,8 +142,6 @@ KiAcquireKernelLock:
      */
 8:  testb   $KPCR_FLUSH_USER, %gs:KPCR_FLUSH_PENDING
     jz      9f
-    cmpb    $0, KiNoLockFlush(%rip)
-    jne     9f
     movb    $0, %gs:KPCR_FLUSH_PENDING
     movq    %cr3, %rax
     movq    %rax, %cr3

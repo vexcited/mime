@@ -323,7 +323,7 @@ BOOLEAN FsAttrBegin(ULONG volume, PCUNICODE_STRING name, PLONG token)
 {
     ULONG chars = name->Length / sizeof(WCHAR);
     *token = 0;
-    if (g_disabled || (KiOptions & KI_OPT_NO_ATTR_CACHE) || !chars || chars > 400)
+    if (g_disabled || !chars || chars > 400)
         return FALSE;
     ULONG dir = parent_chars(name->Buffer, chars);
     ULONG hash = hash_of(name->Buffer, dir);

@@ -539,8 +539,7 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, UL
                   (flags & THREAD_CREATE_FLAGS_LOADER_WORKER ? 0x2000 : 0) |
                   (flags & THREAD_CREATE_FLAGS_SKIP_LOADER_INIT ? 0x4000 : 0) |
                   (first ? 0x0400 : 0); /* InitialThread. */
-    extern BOOLEAN PspLoaderLog;
-    teb->SameTebFlags = same | (PspLoaderLog ? 0x0020 : 0); /* test: let loader workers DbgPrint too. */
+    teb->SameTebFlags = same;
     if (flags & THREAD_CREATE_FLAGS_HIDE_FROM_DEBUGGER)
         thread->HideFromDebugger = TRUE;
 
@@ -558,7 +557,6 @@ NTSTATUS PspCreateUserThread(PEPROCESS process, PVOID start, PVOID parameter, UL
         setup_wow64_teb(process, thread, teb, stack, stack_limit, stack_reserve, (ULONG_PTR)native_stack + native_size,
                         &native_base, start, parameter);
         *(PUSHORT)((PUCHAR)teb + MIME_TEB_SIZE + 0xFCA) = same;
-        KiLogPrintf("teb wow64 same %x teb32 %p start %p", same, thread->Tcb.Teb32, start);
         teb->NtTib.StackBase = (PVOID)native_base;
         teb->NtTib.StackLimit = native_stack;
         teb->DeallocationStack = native_stack;
@@ -757,11 +755,6 @@ NTSTATUS NTAPI NtCreateThreadEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTR
 {
     PEPROCESS process;
     NTSTATUS status = PsReferenceProcessHandle(process_handle, PROCESS_CREATE_THREAD, &process);
-    {
-        PKTRAP_FRAME tf = KiCurrentThread()->TrapFrame;
-        KiLogPrintf("thread create in %s start %p flags %x from %p -> %08x", PsCurrentProcess()->ImageFileName,
-                    start, flags, tf ? (PVOID)tf->Rip : nullptr, status);
-    }
     if (!NT_SUCCESS(status))
         return status;
     /* the descriptor and the attribute list are worked out first, so a refused one starts no thread. */
@@ -784,7 +777,6 @@ NTSTATUS NTAPI NtCreateThreadEx(PHANDLE handle, ACCESS_MASK access, POBJECT_ATTR
     PETHREAD thread;
     status = PspCreateUserThread(process, start, parameter, flags,
                                  max_stack_size, stack_size, &thread);
-    KiLogPrintf("thread create %s start %p -> %08x", process->ImageFileName, start, status);
     if (!NT_SUCCESS(status)) {
         ObDereferenceObject(process);
         PspFreeThreadAttributes(list);

@@ -632,10 +632,6 @@ volatile LONG KeExceptionDispatchCount;
 BOOLEAN KiDispatchUserException(PEXCEPTION_RECORD record, PKTRAP_FRAME frame)
 {
     __atomic_add_fetch(&KeExceptionDispatchCount, 1, __ATOMIC_RELAXED);
-    extern BOOLEAN KiTraceUserExceptions;
-    if (KiTraceUserExceptions)
-        KiLogPrintf("dispatch %08x at %p to thread %u of %s", record->ExceptionCode, record->ExceptionAddress,
-                    (ULONG)(ULONG_PTR)PsGetCurrentThreadId(), PsCurrentProcess()->ImageFileName);
     PPSP_SYSTEM_DLL dll = current_system_dll();
     if (!dll || !dll->KiUserExceptionDispatcher)
         return FALSE;

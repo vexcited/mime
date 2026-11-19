@@ -736,8 +736,6 @@ EXPORTS
     SeThreadHasPrivilege
     SeThreadIntegrityRid
     SeTokenObjectType DATA
-    SeTraceDenial
-    SeTraceDescriptor
     SharedUserData DATA
     ZwAllocateVirtualMemory
     ZwClose

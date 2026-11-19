@@ -71,13 +71,11 @@ ULONG64 HalHnsToCounter(ULONG64 hns);
 
 void KiLogPrintf(const char *fmt, ...);
 void KiBootStamp(const char *what);
-void KiTimelineFault(ULONG64 started, ULONG kind, ULONG address_page);
 void KiTraceUserStack(ULONG64 pc, ULONG64 sp);
 void KiTraceUserFrames(PKTRAP_FRAME frame);
 BOOLEAN KiDescribeUserAddress(ULONG_PTR va, char *out, ULONG size);
 void KiFormatUserStack(PEPROCESS process, ULONG64 sp, char *out, ULONG size);
 #define KdPrint(args) KiLogPrintf args
-#define MIME_TRACE(...) KiLogPrintf(__VA_ARGS__)
 
 #define ASSERT(e)                                                                                                 \
     do {                                                                                                          \
@@ -388,7 +386,6 @@ void KiReleaseKernelLock(void);
 
 /* arch/x64/foreign.c: the drivers mime did not build. a lock held for their calls is named by this reason. */
 #define KI_LOCK_REASON_FOREIGN (0x2001 + 0xF1)
-extern BOOLEAN KiForeignDirect, KiForeignUnlock;
 void KiForeignRun(PKSTART_ROUTINE routine, PVOID context);
 BOOLEAN KiIsForeignCaller(ULONG_PTR return_address);
 void KiForeignTrapTaken(PKTRAP_FRAME frame);
@@ -493,17 +490,6 @@ FORCEINLINE BOOLEAN KiDispatcherLockHeld(void)
     } while (0)
 void KiDispatcherLockMissing(const char *what, PVOID caller);
 #endif
-
-/* MIME_KERNEL_ARGS options that turn the lock free paths off, to tell what a failure depends on. */
-#define KI_OPT_NO_FAST_FAULT 0x1
-#define KI_OPT_NO_SECTION_FAULT 0x2
-#define KI_OPT_NO_IDLE_SPIN 0x4
-#define KI_OPT_EAGER_TIMER 0x8
-#define KI_OPT_NO_ATTR_CACHE 0x10
-#define KI_OPT_PRECISE_TIMERS 0x20
-#define KI_OPT_NO_FAST_SERVICE 0x40
-extern ULONG KiOptions;
-extern UCHAR KiNoLockFlush;
 
 void KiInitializeKernel(MimeBootInfo *boot);
 void KiInitializeProcessor(PKPCR pcr);
@@ -1023,17 +1009,6 @@ ULONG ExQueryPoolTags(PVOID out, ULONG room);
 ULONG ExQueryBigPool(PVOID out, ULONG room);
 ULONG ExQueryResourceCount(void);
 
-/* the verifying pool, kernel option verify-pool, see mm/specpool.c. */
-extern BOOLEAN MmVerifyPool;
-extern BOOLEAN MmVerifyPoolFill;
-PVOID MiSpecialPoolAllocate(SIZE_T size, ULONG tag, BOOLEAN zero, PVOID caller);
-void MiSpecialPoolFree(PVOID block, ULONG tag, PVOID caller);
-BOOLEAN MiSpecialPoolContains(PVOID block);
-ULONG MiSpecialPoolSweep(BOOLEAN fatal);
-void MiSpecialPoolBugCheckReport(void);
-void MiSpecialPoolFault(ULONG_PTR address, ULONG error, ULONG_PTR rip);
-void MiSpecialPoolQuery(MIME_POOL_INFORMATION *out);
-NTSTATUS MiSpecialPoolSelfTest(ULONG operation);
 BOOLEAN MiIsCodeAddress(ULONG_PTR address);
 void MiDescribeCodeAddress(ULONG_PTR address, char *out, SIZE_T size);
 
@@ -1134,7 +1109,6 @@ MIME_FIELD_AT(KLDR_DATA_TABLE_ENTRY, TimeDateStamp, 0x9C);
 MIME_STATIC_ASSERT(sizeof(KLDR_DATA_TABLE_ENTRY) == 0xA0, "KLDR_DATA_TABLE_ENTRY");
 
 extern LIST_ENTRY PsLoadedModuleList;
-extern BOOLEAN MiTraceRoutines;
 void MiInitializeLoadedModules(void);
 PKLDR_DATA_TABLE_ENTRY MiKernelModule(void);
 PKLDR_DATA_TABLE_ENTRY MiLookupModule(ULONG_PTR address);
@@ -1324,7 +1298,6 @@ extern const UCHAR SeSidSystem[12], SeSidAdministrators[16], SeSidUsers[16], SeS
 #define SE_RESTORE_PRIVILEGE 18
 #define SE_DEBUG_PRIVILEGE 20
 #endif
-extern BOOLEAN SeAccessEnforced;
 /*
  * fails with STATUS_ACCESS_DENIED, the status of a missing privilege, or STATUS_BAD_IMPERSONATION_LEVEL for
  * a thread that may only identify a client. desired may hold MAXIMUM_ALLOWED and generic rights. *granted
@@ -1340,10 +1313,6 @@ BOOLEAN SeThreadHasPrivilege(ULONG luid);
 BOOLEAN SeThreadBypassesTraverse(void);
 /* the integrity level of the thread's token and of its process, as a rid. */
 ULONG SeThreadIntegrityRid(void);
-/* logs a refusal when the trace-access kernel option is set. */
-void SeTraceDescriptor(const SD_BLOB *sd);
-void SeTraceDenial(PCSTR what, const UNICODE_STRING *name, ACCESS_MASK desired, NTSTATUS status);
-extern BOOLEAN SeTraceAccess;
 
 /* descriptors of mimefs files, io/mimefs_sec.c. */
 void MimeUserSid(UCHAR sid[28]);
@@ -1407,7 +1376,6 @@ NTSTATUS ObDuplicateHandle(PEPROCESS source_process, HANDLE source, PEPROCESS ta
 PDISPATCHER_HEADER ObGetWaitObject(PVOID object);
 /* the object of one of two types behind a handle of the calling process, or none. needs no kernel lock. */
 PVOID ObReferenceHandleFast(HANDLE handle, ACCESS_MASK access, POBJECT_TYPE type, POBJECT_TYPE other);
-extern BOOLEAN ObAuditHandleAccess;
 /* lets go of a reference unless it is the last one, which takes the kernel lock to let go of. */
 BOOLEAN ObDereferenceObjectFast(PVOID object);
 NTSTATUS ObCreateSymbolicLinkObject(PCUNICODE_STRING link, PCUNICODE_STRING target, BOOLEAN permanent);
@@ -1619,8 +1587,6 @@ NTSTATUS PspReferenceJobForCreation(const HANDLE *list, ULONG count, struct EJOB
 NTSTATUS PspAssignNewProcessToJob(struct EJOB *job, PEPROCESS process);
 void PspJobProcessExit(PEPROCESS process);
 void PsDumpThreads(void);
-void KiTimelineNote(ULONG kind, const char *text, ULONG64 detail);
-extern BOOLEAN KiTimelineOn;
 void NpfsDumpState(void);
 PVOID KiSatisfiedWaitObject(PKTHREAD thread);
 void KiDumpServiceCalls(void);

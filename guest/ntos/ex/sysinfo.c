@@ -2464,11 +2464,6 @@ static NTSTATUS query_system_information(SYSTEM_INFORMATION_CLASS klass, PVOID i
         cache[6] = cache[1] >> PAGE_SHIFT;
         return copy_info(info, cache, sizeof(cache), length, returned);
     }
-    case SystemMimePoolInformation: {
-        MIME_POOL_INFORMATION pool;
-        MiSpecialPoolQuery(&pool);
-        return copy_info(info, &pool, sizeof(pool), length, returned);
-    }
     case SystemKernelDebuggerInformation: {
         /* KdDebuggerEnabled then KdDebuggerNotPresent, which windows sets when it boots with no debugger. */
         BOOLEAN dbg[2] = {FALSE, TRUE};
@@ -2988,22 +2983,8 @@ static NTSTATUS query_as_windows(ULONG klass, PVOID info, ULONG length, PULONG r
     return status;
 }
 
-ULONG g_qsi_ring[64];
-ULONG g_qsi_n;
-
 NTSTATUS NTAPI NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS klass, PVOID info, ULONG length, PULONG returned)
 {
-    {
-        extern ULONG g_qsi_ring[64], g_qsi_n;
-        g_qsi_ring[g_qsi_n++ & 63] = (ULONG)klass;
-        if ((ULONG)klass == 0x4c) {
-            ULONG fw[4] = {0};
-            KiCopyFromUser(fw, info, sizeof(fw));
-            static ULONG nfw;
-            if (nfw++ < 40)
-                KiLogPrintf("fw sig %08x id %x len %lx want %lx", fw[0], fw[1], (ULONG)length, fw[2]);
-        }
-    }
     return query_as_windows((ULONG)klass, info, length, returned);
 }
 
@@ -3352,13 +3333,9 @@ static BOOLEAN hard_error_box_thread(const WCHAR *body, const WCHAR *caption)
         status = KiCopyToUser((PVOID)(ULONG_PTR)block.Text, body, body_size);
     if (NT_SUCCESS(status))
         status = KiCopyToUser((PVOID)(ULONG_PTR)block.Caption, caption, caption_size);
-    ULONG64 b169d = 0, a169d = 0;
-    KiCopyFromUser(&b169d, (PVOID)((ULONG64)KiCurrentThread()->Teb + 0x169D), 8);
     if (NT_SUCCESS(status))
         /* the reporting thread holds the loader lock; skip the loader init or the box thread never starts. */
         status = PspCreateUserThread(process, start, memory, 0, 0, 0, &thread);
-    KiCopyFromUser(&a169d, (PVOID)((ULONG64)KiCurrentThread()->Teb + 0x169D), 8);
-    KiLogPrintf("box teb169d %llx -> %llx thread %p start %p status %08x", b169d, a169d, thread, start, status);
     if (!NT_SUCCESS(status) || !thread) {
         KiLogPrintf("hard error box: no thread (%08x)", status);
         SIZE_T freed = 0;
@@ -3391,17 +3368,6 @@ NTSTATUS NTAPI NtRaiseHardError(NTSTATUS status, ULONG count, ULONG string_mask,
         return STATUS_ACCESS_VIOLATION;
     if (option == OPTION_SHUTDOWN_SYSTEM && !SepSinglePrivilegeCheck(19 /* shutdown */, KeGetPreviousMode()))
         return STATUS_PRIVILEGE_NOT_HELD;
-    if (status == (NTSTATUS)0xC0000145) {
-        PKTRAP_FRAME tf = KiCurrentThread()->TrapFrame;
-        ULONG64 w[64] = {0};
-        if (tf) {
-            KiCopyFromUser(w, (PVOID)tf->Rsp, sizeof(w));
-            KiLogPrintf("her ip %llx rsp %llx", (ULONG64)tf->Rip, (ULONG64)tf->Rsp);
-            for (ULONG wi = 0; wi < 64; wi += 6)
-                KiLogPrintf("hstack %llx %llx %llx %llx %llx %llx", w[wi], w[wi+1], w[wi+2], w[wi+3], w[wi+4],
-                            w[wi+5]);
-        }
-    }
 
     PEPROCESS process = PsCurrentProcess();
     char text[512];
@@ -3436,104 +3402,6 @@ NTSTATUS NTAPI NtRaiseHardError(NTSTATUS status, ULONG count, ULONG string_mask,
         used = sizeof(text) - 1;
     text[used] = 0;
     KiLogPrintf("%s from %s, option %u", text, process->ImageFileName, option);
-
-    {
-        extern ULONG64 g_svc_ring[512];
-        extern ULONG64 g_svc_pc[512];
-        extern ULONG g_svc_n;
-        ULONG first = g_svc_n < 512 ? 0 : g_svc_n - 512;
-        char line[512];
-        for (ULONG i = first; i < g_svc_n; ) {
-            ULONG at = (ULONG)_snprintf(line, sizeof(line), "last svc:");
-            for (ULONG k = 0; k < 6 && i < g_svc_n; k++, i++) {
-                ULONG64 e = g_svc_ring[i & 511];
-                at += (ULONG)_snprintf(line + at, sizeof(line) - at, " %llx@%llx", e >> 32, g_svc_pc[i & 511]);
-            }
-            KiLogPrintf("%s", line);
-        }
-        {
-            extern ULONG g_qsi_ring[64], g_qsi_n;
-            ULONG f2 = g_qsi_n < 64 ? 0 : g_qsi_n - 64;
-            char l2[256];
-            ULONG a2 = 0;
-            a2 += (ULONG)_snprintf(l2, sizeof(l2), "qsi:");
-            for (ULONG i = f2; i < g_qsi_n && a2 < sizeof(l2) - 12; i++)
-                a2 += (ULONG)_snprintf(l2 + a2, sizeof(l2) - a2, " %x", g_qsi_ring[i & 63]);
-            KiLogPrintf("%s", l2);
-        {
-            extern ULONG64 g_qvm_ring[128];
-            extern ULONG g_qvm_n;
-            ULONG f3 = g_qvm_n < 64 ? 0 : g_qvm_n - 64;
-            char l3[512];
-            ULONG a3 = 0;
-            a3 += (ULONG)_snprintf(l3, sizeof(l3), "qvm:");
-            for (ULONG i = f3; i < g_qvm_n && a3 < sizeof(l3) - 20; i++) {
-                ULONG64 e = g_qvm_ring[i & 63];
-                a3 += (ULONG)_snprintf(l3 + a3, sizeof(l3) - a3, " %llx:%llx", (e >> 56) & 0xFF, e & 0xFFFFFFFFFFFFull);
-            }
-            KiLogPrintf("%s", l3);
-        }
-        }
-    }
-    {
-        PKTRAP_FRAME tf = KiCurrentThread()->TrapFrame;
-        if (tf) {
-            ULONG64 words[512] = {0};
-            if (NT_SUCCESS(KiCopyFromUser(words, (PVOID)tf->Rsp, sizeof(words)))) {
-                char line[4096];
-                ULONG at = 0;
-                PMMVAD vad = MiFindVad(&process->AddressSpace, (ULONG_PTR)tf->Rip);
-                ULONG64 vbase = vad ? (ULONG64)vad->StartVa : 0;
-                at += (ULONG)_snprintf(line, sizeof(line), "raiser ip %llx mod %llx rva %llx efl %llx stack:",
-                                       (ULONG64)tf->Rip, vbase, vbase ? (ULONG64)tf->Rip - vbase : 0,
-                                       (ULONG64)tf->Rflags);
-                for (ULONG i = 0; i < 512 && at < sizeof(line) - 40; i++) {
-                    ULONG64 w = words[i];
-                    PMMVAD fv = w > 0x10000 ? MiFindVad(&process->AddressSpace, (ULONG_PTR)w) : nullptr;
-                    if (fv && (ULONG64)fv->StartVa != vbase)
-                        at += (ULONG)_snprintf(line + at, sizeof(line) - at, " [%llx+%llx]", (ULONG64)fv->StartVa,
-                                               w - (ULONG64)fv->StartVa);
-                    else
-                        at += (ULONG)_snprintf(line + at, sizeof(line) - at, " %llx", w);
-                }
-                KiLogPrintf("%s", line);
-                {
-                    ULONG64 c68 = 0, cb8 = 0, slotv = 0, at = 0;
-                    if (NT_SUCCESS(KiCopyFromUser(&c68, (PVOID)(tf->Rbp + 0xC68), 8)) &&
-                        NT_SUCCESS(KiCopyFromUser(&cb8, (PVOID)(tf->Rbp + 0xCB8), 8))) {
-                        ULONG cnt = (ULONG)cb8 & 0xFF;
-                        USHORT v = (USHORT)c68;
-                        for (ULONG i = 0; i < (cnt & 15); i++)
-                            v = (USHORT)((v >> 1) | (v << 15));
-                        ULONG64 slot = (ULONG64)(v ^ 0x9353);
-                        PTEB teb = KiCurrentThread()->Teb;
-                        if (teb)
-                            KiCopyFromUser(&slotv, (PVOID)((ULONG64)teb + slot), 8);
-                        if (slotv)
-                            KiCopyFromUser(&at, (PVOID)(slotv + 0x2C0), 8);
-                        {
-                        ULONG nt = 0;
-                        LIST_ENTRY *head = &process->ThreadListHead;
-                        for (LIST_ENTRY *e = head->Flink; e != head && nt < 2000; e = e->Flink)
-                            nt++;
-                        KiLogPrintf("raiser threads %u", nt);
-                    }
-                    { ULONG v2c0 = 0; NTSTATUS st2 = KiCopyFromUser(&v2c0, (PVOID)0x2c0, 4);
-                      KiLogPrintf("raiser null %08x %x", st2, v2c0); }
-                    KiLogPrintf("raiser tid %llx field slot %llx ptr %llx at2c0 %llx",
-                                (ULONG64)(ULONG_PTR)((PETHREAD)KiCurrentThread())->Cid.UniqueThread, slot, slotv, at);
-                        if (slotv) {
-                            ULONG64 head[8] = {0};
-                            if (NT_SUCCESS(KiCopyFromUser(head, (PVOID)slotv, sizeof(head))))
-                                KiLogPrintf("raiser obj %llx %llx %llx %llx %llx %llx %llx %llx",
-                                            head[0], head[1], head[2], head[3], head[4], head[5], head[6], head[7]);
-                        }
-                        /* early return disabled */
-                    }
-                }
-            }
-        }
-    }
     /* windows returns from the call while the box is still up, with a response of zero, and the program carries on
      * behind it: the box goes on a thread of its own. the reporting thread holds the loader lock, so the box thread
      * skips loader init (hard_error_box_thread). only when that thread cannot be had is the box shown in the caller. */

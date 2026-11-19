@@ -1604,7 +1604,7 @@ static BOOLEAN fast_fault(PMMADDRESS_SPACE as, ULONG_PTR page, BOOLEAN write, BO
     if (!(v & MM_SWPTE_COMMITTED) || (protect & 0xFF) == PAGE_NOACCESS || (protect & PAGE_GUARD))
         return FALSE;
     if (v & MM_SWPTE_SECTION)
-        return vad->Section && !(KiOptions & KI_OPT_NO_SECTION_FAULT) && fast_section_fault(as, vad, page, pte, v, image_touch_protect(vad, protect, write));
+        return vad->Section && fast_section_fault(as, vad, page, pte, v, image_touch_protect(vad, protect, write));
 
     BOOLEAN watch = (vad->Flags & MM_VAD_WRITE_WATCH) != 0;
     ULONG stream = (ULONG)-1;
@@ -1681,7 +1681,7 @@ MM_FAULT_STATS MmFaultStats[MAXIMUM_PROCESSORS];
 
 BOOLEAN MmFastFault(ULONG_PTR va, BOOLEAN write, BOOLEAN execute)
 {
-    if (va > MM_HIGHEST_USER_ADDRESS || (KiOptions & KI_OPT_NO_FAST_FAULT))
+    if (va > MM_HIGHEST_USER_ADDRESS)
         return FALSE;
     /* a thread preempted inside the gate would keep a writer waiting. */
     ULONG64 state = KiDisableInterrupts();
@@ -1720,7 +1720,7 @@ BOOLEAN MmFastQueryVirtual(PEPROCESS process, PVOID base, PMEMORY_BASIC_INFORMAT
 {
     PMMADDRESS_SPACE as = &(process ? process : (PEPROCESS)KiCurrentThread()->ApcStateProcess)->AddressSpace;
     ULONG_PTR va = (ULONG_PTR)base & ~(ULONG_PTR)(PAGE_SIZE - 1);
-    if (va > MM_HIGHEST_USER_ADDRESS || (KiOptions & KI_OPT_NO_FAST_FAULT))
+    if (va > MM_HIGHEST_USER_ADDRESS)
         return FALSE;
     ULONG gate = __atomic_load_n(&as->FaultGate, __ATOMIC_RELAXED);
     do {
@@ -2563,21 +2563,9 @@ ULONG MmQueryVmCounters(PEPROCESS process, PVOID out, ULONG length)
     return size;
 }
 
-ULONG64 g_qvm_ring[128];
-ULONG g_qvm_n;
-
 NTSTATUS NTAPI NtQueryVirtualMemory(HANDLE process_handle, PVOID base, MEMORY_INFORMATION_CLASS klass, PVOID info,
                                     SIZE_T length, PSIZE_T returned)
 {
-    {
-        extern ULONG64 g_qvm_ring[128];
-        extern ULONG g_qvm_n;
-        ULONG k = g_qvm_n++;
-        g_qvm_ring[k & 63] = (ULONG64)base ^ ((ULONG64)klass << 56);
-        static ULONG dbg;
-        if (dbg++ < 30)
-            KiLogPrintf("qvmc k %u base %llx", (unsigned)klass, (ULONG64)base);
-    }
     PEPROCESS process;
     NTSTATUS status = reference_process(process_handle, PROCESS_QUERY_INFORMATION, &process);
     if (!NT_SUCCESS(status))
