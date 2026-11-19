@@ -3,6 +3,59 @@
  */
 #include "win32k.h"
 
+/* what GetQueueStatus answers: the kinds that arrived since the last call in the high word, those waiting in the low. */
+static ULONG queue_status(W32THREAD *t, ULONG flags, BOOL clear)
+{
+    t->LastRead = W32TickCount();
+    MsgProcessSent(t);
+    ULONG pending = 0;
+    for (PLIST_ENTRY e = t->Posted.Flink; e != &t->Posted; e = e->Flink)
+        pending |= MsgPostedBits(CONTAINING_RECORD(e, QUEUED_MESSAGE, Links));
+    if (t->QuitPosted)
+        pending |= QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
+    if (!IsListEmpty(&t->Input))
+        pending |= QS_MOUSE | QS_KEY;
+    if (WndFindNeedsPaint(t, nullptr))
+        pending |= QS_PAINT;
+    if (TimerNextDue(t) >= 0 && (LONG64)(KeQueryInterruptTime() / 10000) >= TimerNextDue(t))
+        pending |= QS_TIMER;
+    ULONG r = MAKELONG(t->ChangeBits & flags, pending & flags);
+    if (clear)
+        t->ChangeBits &= ~flags;
+    return r;
+}
+
+/* the kinds GetQueueStatus takes, measured on windows 11: bits 0 to 8, 10 to 12 and 14; the others are
+ * ERROR_INVALID_FLAGS. */
+#define QS_VALID 0x5DFF
+
+/* the service genuine user32 calls for GetQueueStatus; the readonly one leaves the change bits as they are. */
+DWORD NTAPI NtUserGetQueueStatus(UINT flags)
+{
+    if (flags & ~QS_VALID) {
+        W32SetLastError(ERROR_INVALID_FLAGS);
+        return 0;
+    }
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    DWORD r = t ? queue_status(t, flags, TRUE) : 0;
+    UserLeave();
+    return r;
+}
+
+DWORD NTAPI NtUserGetQueueStatusReadonly(UINT flags)
+{
+    if (flags & ~QS_VALID) {
+        W32SetLastError(ERROR_INVALID_FLAGS);
+        return 0;
+    }
+    UserEnter();
+    W32THREAD *t = W32GetThread();
+    DWORD r = t ? queue_status(t, flags, FALSE) : 0;
+    UserLeave();
+    return r;
+}
+
 ULONG_PTR NTAPI NtUserCallNoParam(ULONG routine)
 {
     UserEnter();
@@ -82,24 +135,8 @@ ULONG_PTR NTAPI NtUserCallOneParam(ULONG_PTR param, ULONG routine)
         }
         break;
     case MIME_ONEPARAM_GETQUEUESTATUS:
-        if (t) {
-            t->LastRead = W32TickCount();
-            MsgProcessSent(t);
-            ULONG flags = (ULONG)param;
-            ULONG pending = 0;
-            for (PLIST_ENTRY e = t->Posted.Flink; e != &t->Posted; e = e->Flink)
-                pending |= MsgPostedBits(CONTAINING_RECORD(e, QUEUED_MESSAGE, Links));
-            if (t->QuitPosted)
-                pending |= QS_POSTMESSAGE | QS_ALLPOSTMESSAGE;
-            if (!IsListEmpty(&t->Input))
-                pending |= QS_MOUSE | QS_KEY;
-            if (WndFindNeedsPaint(t, nullptr))
-                pending |= QS_PAINT;
-            if (TimerNextDue(t) >= 0 && (LONG64)(KeQueryInterruptTime() / 10000) >= TimerNextDue(t))
-                pending |= QS_TIMER;
-            r = MAKELONG(t->ChangeBits & flags, pending & flags);
-            t->ChangeBits &= ~flags;
-        }
+        if (t)
+            r = queue_status(t, (ULONG)param, TRUE);
         break;
     case MIME_ONEPARAM_SHOWCURSOR:
         if (t) {

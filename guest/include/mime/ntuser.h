@@ -386,24 +386,27 @@ typedef struct MIME_ADJUST_RECT {
     UINT Dpi;
 } MIME_ADJUST_RECT;
 
-/* NtGdiGetAndSetDCDword and NtGdiGetDCDword indices. */
+/*
+ * NtGdiGetDCDword indices as win32kfull numbers them: 1 the relative mode, 2 and 3 the extra and the count of the
+ * justification, 4 the direction of arcs, 5 the level of saves, 6 the language information of the font, 7 whether
+ * the dc is a memory dc, 8 the mapping mode. NtGdiGetAndSetDCDword takes 4 for the relative mode, 7 for a flag of the
+ * dc kept at DC_ATTR+0xec, 8 for the mapping mode and 9 for the direction of arcs. mime's own start at 0x1000.
+ */
 enum {
-    MIME_DCDW_TEXTCOLOR = 1,
-    MIME_DCDW_BKCOLOR,
-    MIME_DCDW_BKMODE,
-    MIME_DCDW_TEXTALIGN,
-    MIME_DCDW_ROP2,
-    MIME_DCDW_BRUSHCOLOR,
-    MIME_DCDW_PENCOLOR,
-    MIME_DCDW_STRETCHMODE,
-    MIME_DCDW_GRAPHICSMODE,
-    MIME_DCDW_MAPMODE,
-    MIME_DCDW_LAYOUT,
-    MIME_DCDW_ARCDIRECTION,
-    MIME_DCDW_POLYFILLMODE,
-    MIME_DCDW_TEXTCHAREXTRA,
-    MIME_DCDW_PIXELFORMAT,  /* read only, set with NtGdiSetPixelFormat. */
-    MIME_DCDW_PATHSTATE,    /* read only: 0 no path, 1 open, 2 closed. */
+    MIME_DCDW_RELABS = 1,
+    MIME_DCDW_BREAKEXTRA = 2,
+    MIME_DCDW_BREAKCOUNT = 3,
+    MIME_DCDW_ARCDIRECTION = 4,
+    MIME_DCDW_SAVELEVEL = 5,
+    MIME_DCDW_FONTLANGUAGE = 6,
+    MIME_DCDW_MEMORYDC = 7,
+    MIME_DCDW_MAPMODE = 8,
+    MIME_DCDW_SET_RELABS = 4,
+    MIME_DCDW_SET_ATTRFLAG = 7,
+    MIME_DCDW_SET_MAPMODE = 8,
+    MIME_DCDW_SET_ARCDIRECTION = 9,
+    MIME_DCDW_PIXELFORMAT = 0x1000, /* read only, set with NtGdiSetPixelFormat. */
+    MIME_DCDW_PATHSTATE,            /* read only: 0 no path, 1 open, 2 closed. */
     MIME_DCDW_WINDOW,
 };
 
@@ -411,11 +414,15 @@ enum {
 #define MIME_PAL_GETDIBCOLORTABLE 4
 #define MIME_PAL_SETDIBCOLORTABLE 5
 
-/* NtGdiGetCharWidthW and NtGdiGetCharABCWidthsW flags. */
+/* NtGdiGetCharWidthW, NtGdiGetCharABCWidthsW and the text extent flags, as gdi32full passes them. */
+#define MIME_GCW_OVERHANG 0x0001     /* GetCharWidth adds the overhang of the font. */
+#define MIME_GCW_INT 0x0002          /* INT widths, else FLOAT. */
 #define MIME_GCW_INDICES 0x0008      /* chars are glyph indices. */
+#define MIME_GCABCW_INT 0x0001       /* ABC widths, else ABCFLOAT. */
 #define MIME_GCABCW_INDICES 0x0002   /* chars are glyph indices. */
-#define MIME_GCABCW_FLOAT 0x0100     /* the buffer receives ABCFLOAT values. */
 #define MIME_GTEE_INDICES 0x0001     /* NtGdiGetTextExtentExW: the text is glyph indices. */
+#define MIME_GTE_OVERHANG 0x0001     /* NtGdiGetTextExtent for GetTextExtentPoint: adds the overhang. */
+#define MIME_GTE_INDICES 0x0002      /* NtGdiGetTextExtent: the text is glyph indices. */
 
 /* NtGdiPolyPolyDraw functions. */
 enum {
@@ -424,6 +431,7 @@ enum {
     MIME_POLY_BEZIER = 3,
     MIME_POLY_LINETO = 4,
     MIME_POLY_BEZIERTO = 5,
+    MIME_POLY_REGION = 6, /* CreatePolyPolygonRgn: the dc argument is the fill mode, the result a region. */
 };
 
 /* NtGdiGetTransform selectors, as on windows. */
@@ -447,32 +455,68 @@ typedef struct MIME_FONT_ENUM_RECORD {
     DWORD Pad;
 } MIME_FONT_ENUM_RECORD;
 
-/* NtGdiGetDCPoint indices and the private NtGdiSetDCPoint routine. */
+/* NtGdiGetDCPoint indices, as win32kbase's GreGetDCPoint takes them. 0x40 with the origin adds the window's place. */
 enum {
-    MIME_DCPT_VIEWPORTORG = 1,
-    MIME_DCPT_WINDOWORG,
-    MIME_DCPT_CURRENTPOSITION,
-    MIME_DCPT_DCORG,
-    MIME_DCPT_WINDOWEXT,
-    MIME_DCPT_VIEWPORTEXT,
+    MIME_DCPT_VIEWPORTEXT = 1,
+    MIME_DCPT_WINDOWEXT = 2,
+    MIME_DCPT_VIEWPORTORG = 4,
+    MIME_DCPT_WINDOWORG = 8,
+    MIME_DCPT_ASPECTFILTER = 0x10,
+    MIME_DCPT_DCORG = 0x20,
+    MIME_DCPT_SCREEN = 0x40,
 };
 
 /*
- * icons: the color bitmap is 32 bpp premultiplied and the mask optional. without a color bitmap the mask is
- * twice as tall, mask then image. MIME_CURSORF_SYSTEM marks a system cursor with its IDC_ value in the low word
- * of Flags, which the host shows as its native cursor.
+ * what user32 hands NtUserSetCursorIconDataEx, read from the pinned user32 of 26300 and the win32kfull of 26100.
+ * an animated cursor sets CURSORF_ACON and points Frames at one buffer: the handles of its frames, then at
+ * RateOffset bytes the jiffies of each step, then at SequenceOffset bytes the frame of each step.
  */
-#define MIME_CURSORF_SYSTEM 0x80000000u
-typedef struct MIME_CURSOR_DATA {
-    ULONG Width;
-    ULONG Height;
-    ULONG HotspotX;
-    ULONG HotspotY;
-    BOOL IsIcon;
+#define CURSORF_FROMRESOURCE 0x0001
+#define CURSORF_GLOBAL 0x0002
+#define CURSORF_LRSHARED 0x0004
+#define CURSORF_ACON 0x0008
+#define CURSORF_ACONFRAME 0x0040
+#define CURSORF_SECRET 0x0080
+#define CURSORF_LINKED 0x0100
+#define CURSORF_SYSTEM 0x0200
+#define CURSORF_INIT 0x0800
+#define CURSORF_DPISCALED 0x1000
+#define CURSORF_DESTROYED 0x2000
+#define CURSORF_SIZES 0x4000
+
+typedef struct CURSORDATA {
+    PWSTR Name;
+    PWSTR Module;
+    USHORT Type;
+    USHORT Pad;
+    ULONG Reserved;
     ULONG Flags;
-    HBITMAP Color;
+    SHORT HotspotX;
+    SHORT HotspotY;
     HBITMAP Mask;
-} MIME_CURSOR_DATA;
+    HBITMAP Color;
+    HBITMAP Alpha;
+    RECT Bounds;
+    HBITMAP UserAlpha;
+    ULONG Bpp;
+    ULONG Cx;
+    ULONG Cy; /* twice the height of the picture. */
+    ULONG Extra;
+    ULONG FrameCount;
+    ULONG StepCount;
+    HCURSOR *Frames;
+    ULONG_PTR SequenceOffset;
+    ULONG_PTR RateOffset;
+    ULONG Step;
+} CURSORDATA;
+
+typedef struct CURSORFIND {
+    HCURSOR Cursor;
+    ULONG Type;
+    ULONG Cx;
+    ULONG Cy;
+    ULONG Bpp;
+} CURSORFIND;
 
 /* ------------------------------------------------------------------ menus */
 
@@ -510,20 +554,32 @@ typedef struct PROPLISTITEM {
 
 /* ------------------------------------------------------------------ user services */
 
-W32KAPI BOOL NTAPI NtUserInitializeClientPfnArrays(const MIME_CLIENT_INFO *info);
-W32KAPI ATOM NTAPI NtUserRegisterClassExWOW(const WNDCLASSEXW *wc, PUNICODE_STRING name, PUNICODE_STRING menu,
-                                            DWORD fnid, DWORD flags);
-W32KAPI BOOL NTAPI NtUserUnregisterClass(PUNICODE_STRING name, HINSTANCE instance);
+W32KAPI NTSTATUS NTAPI NtUserInitializeClientPfnArrays(PVOID ansi, PVOID unicode, PVOID workers, HINSTANCE user32);
+/* the menu names of a class: CLSMENUNAME of user32, an ansi and a wide name and a UNICODE_STRING. */
+struct CLSMENUNAME;
+W32KAPI ATOM NTAPI NtUserRegisterClassExWOW(const WNDCLASSEXW *wc, PUNICODE_STRING name, PUNICODE_STRING version,
+                                            const struct CLSMENUNAME *menu, DWORD fnid, DWORD flags, PDWORD wow);
+W32KAPI BOOL NTAPI NtUserUnregisterClass(PUNICODE_STRING name, HINSTANCE instance, struct CLSMENUNAME *menu);
 W32KAPI BOOL NTAPI NtUserGetClassInfoEx(HINSTANCE instance, PUNICODE_STRING name, LPWNDCLASSEXW wc, LPWSTR *menu,
                                         BOOL ansi);
 W32KAPI ULONG_PTR NTAPI NtUserSetClassLongPtr(HWND hwnd, int index, ULONG_PTR value, BOOL ansi);
 W32KAPI ULONG NTAPI NtUserSetClassLong(HWND hwnd, int index, ULONG value, BOOL ansi);
 W32KAPI USHORT NTAPI NtUserSetClassWord(HWND hwnd, int index, USHORT value);
 W32KAPI int NTAPI NtUserGetClassName(HWND hwnd, BOOL real, PUNICODE_STRING name);
-W32KAPI HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, PUNICODE_STRING class_name, PUNICODE_STRING window_name,
-                                        DWORD style, int x, int y, int width, int height, HWND parent, HMENU menu,
-                                        HINSTANCE instance, LPVOID param, DWORD flags);
+/* the class, the name of its version and the window name are LARGE_STRINGs or atoms, see window.c. */
+W32KAPI HWND NTAPI NtUserCreateWindowEx(DWORD ex_style, const void *class_name, const void *class_version,
+                                        const void *window_name, DWORD style, int x, int y, int width, int height,
+                                        HWND parent, HMENU menu, HINSTANCE instance, LPVOID param, DWORD band,
+                                        DWORD flags, DWORD unknown, PVOID actctx);
 W32KAPI BOOL NTAPI NtUserDestroyWindow(HWND hwnd);
+W32KAPI BOOL NTAPI NtUserUpdateWindow(HWND hwnd);
+W32KAPI ULONG NTAPI NtUserRemoteConnectState(void);
+W32KAPI BOOL NTAPI NtUserRegisterLPK(DWORD flags);
+W32KAPI BOOL NTAPI NtUserGetProcessUIContextInformation(HANDLE process, PULONG info);
+W32KAPI BOOL NTAPI NtUserMoveWindow(HWND hwnd, int x, int y, int width, int height, BOOL repaint);
+W32KAPI BOOL NTAPI NtUserPrintWindow(HWND hwnd, HDC hdc, UINT flags);
+W32KAPI BOOL NTAPI NtUserTransformPoint(POINT *point, DWORD from, DWORD to, HANDLE monitor);
+W32KAPI BOOL NTAPI NtUserTransformRect(RECT *rect, DWORD from, DWORD to, HANDLE monitor);
 W32KAPI BOOL NTAPI NtUserShowWindow(HWND hwnd, int cmd);
 W32KAPI BOOL NTAPI NtUserShowWindowAsync(HWND hwnd, int cmd);
 W32KAPI BOOL NTAPI NtUserSetWindowPos(HWND hwnd, HWND after, int x, int y, int cx, int cy, UINT flags);
@@ -579,7 +635,7 @@ W32KAPI BOOL NTAPI NtUserEndPaint(HWND hwnd, const PAINTSTRUCT *ps);
 W32KAPI HDC NTAPI NtUserGetDC(HWND hwnd);
 W32KAPI HDC NTAPI NtUserGetDCEx(HWND hwnd, HRGN clip, ULONG flags);
 W32KAPI HDC NTAPI NtUserGetWindowDC(HWND hwnd);
-W32KAPI int NTAPI NtUserReleaseDC(HWND hwnd, HDC dc);
+W32KAPI int NTAPI NtUserReleaseDC(HDC dc);
 W32KAPI BOOL NTAPI NtUserInvalidateRect(HWND hwnd, const RECT *rect, BOOL erase);
 W32KAPI BOOL NTAPI NtUserValidateRect(HWND hwnd, const RECT *rect);
 W32KAPI BOOL NTAPI NtUserRedrawWindow(HWND hwnd, const RECT *rect, HRGN region, UINT flags);
@@ -608,6 +664,20 @@ W32KAPI NTSTATUS NTAPI NtUserEnumDisplaySettings(PUNICODE_STRING device, DWORD i
                                                  DWORD flags);
 W32KAPI LONG NTAPI NtUserChangeDisplaySettings(PUNICODE_STRING device, struct _devicemodeW *mode, DWORD flags,
                                                PVOID param);
+W32KAPI BOOL NTAPI NtUserEnumDisplayMonitors(HDC hdc, const RECT *clip, MONITORENUMPROC proc, LPARAM lparam);
+W32KAPI BOOL NTAPI NtUserGetHDevName(HMONITOR monitor, PWSTR name);
+W32KAPI BOOL NTAPI NtUserGetDpiForMonitor(HMONITOR monitor, ULONG type, UINT *x, UINT *y);
+W32KAPI BOOL NTAPI NtUserGetAutoRotationState(PDWORD state);
+W32KAPI BOOL NTAPI NtUserGetDisplayAutoRotationPreferences(PDWORD preference);
+W32KAPI BOOL NTAPI NtUserSetDisplayAutoRotationPreferences(DWORD preference);
+W32KAPI HWND NTAPI NtUserWindowFromDC(HDC hdc);
+W32KAPI BOOL NTAPI NtUserSetProcessDpiAwarenessContext(ULONG context, ULONG forced);
+W32KAPI ULONG NTAPI NtUserGetProcessDpiAwarenessContext(HANDLE process);
+W32KAPI UINT NTAPI NtUserGetSystemDpiForProcess(HANDLE process);
+W32KAPI NTSTATUS NTAPI NtUserGetDisplayConfigBufferSizes(ULONG flags, PUINT paths);
+W32KAPI NTSTATUS NTAPI NtUserQueryDisplayConfig(ULONG flags, PUINT paths, PVOID records, PULONG topology,
+                                               ULONG reserved);
+W32KAPI NTSTATUS NTAPI NtUserDisplayConfigGetDeviceInfo(PVOID packet);
 W32KAPI BOOL NTAPI NtUserSystemParametersInfoForDpi(UINT action, UINT param, PVOID data, UINT ini, UINT dpi);
 W32KAPI BOOL NTAPI NtUserForceWindowToDpiForTest(HWND hwnd, UINT dpi);
 W32KAPI BOOL NTAPI NtUserDeferWindowDpiChanges(HWND hwnd);
@@ -618,10 +688,19 @@ W32KAPI BOOL NTAPI NtUserIsChildWindowDpiMessageEnabled(HWND hwnd);
 W32KAPI BOOL NTAPI NtUserIsWindowBroadcastingDpiToChildren(HWND hwnd);
 W32KAPI BOOL NTAPI NtUserMessageBeep(UINT type);
 
-W32KAPI HICON NTAPI NtUserCreateEmptyCurObject(BOOL icon);
+W32KAPI HICON NTAPI NtUserCreateEmptyCursorObject(BOOL global);
 W32KAPI BOOL NTAPI NtUserSetCursorIconData(HICON icon, PUNICODE_STRING module, PUNICODE_STRING resource,
-                                           const MIME_CURSOR_DATA *data);
-W32KAPI BOOL NTAPI NtUserDestroyCursor(HICON icon, BOOL force);
+                                           CURSORDATA *data);
+W32KAPI BOOL NTAPI NtUserSetCursorIconDataEx(HICON icon, PUNICODE_STRING module, PUNICODE_STRING resource,
+                                             CURSORDATA *data, ULONG size);
+W32KAPI HICON NTAPI NtUserFindExistingCursorIcon(PUNICODE_STRING module, PUNICODE_STRING resource, CURSORFIND *find);
+W32KAPI BOOL NTAPI NtUserGetIconSize(HICON icon, UINT step, LONG *cx, LONG *cy);
+W32KAPI HCURSOR NTAPI NtUserGetCursorFrameInfo(HCURSOR cursor, UINT step, DWORD *rate, DWORD *steps);
+W32KAPI BOOL NTAPI NtUserGetRequiredCursorSizes(HCURSOR cursor, PVOID sizes);
+W32KAPI BOOL NTAPI NtUserLinkDpiCursor(HCURSOR root, HCURSOR cursor, UINT size);
+W32KAPI ULONG_PTR NTAPI NtUserGetClassIcoCur(HWND hwnd, int index);
+W32KAPI BOOL NTAPI NtUserDestroyCursor(HICON icon, UINT how);
+W32KAPI HICON NTAPI NtUserInternalGetWindowIcon(HWND window, UINT type);
 W32KAPI BOOL NTAPI NtUserGetIconInfo(HICON icon, ICONINFO *info, PUNICODE_STRING module, PUNICODE_STRING resource,
                                      LPDWORD bpp, BOOL internal);
 W32KAPI BOOL NTAPI NtUserDrawIconEx(HDC dc, int x, int y, HICON icon, int cx, int cy, UINT step, HBRUSH brush,
@@ -963,7 +1042,7 @@ W32KAPI int NTAPI NtGdiExtGetObjectW(HANDLE object, int size, PVOID buffer);
 W32KAPI HANDLE NTAPI NtGdiGetDCObject(HDC dc, int type);
 W32KAPI HDC NTAPI NtGdiCreateCompatibleDC(HDC dc);
 W32KAPI HDC NTAPI NtGdiOpenDCW(PUNICODE_STRING device, PVOID mode, PUNICODE_STRING port, ULONG type, BOOL display,
-                               HANDLE pdev, PVOID driver_info, PVOID umpd);
+                               HANDLE pdev, PVOID driver_info, PVOID umpd, PVOID umpd_out);
 W32KAPI int NTAPI NtGdiSaveDC(HDC dc);
 W32KAPI BOOL NTAPI NtGdiRestoreDC(HDC dc, int saved);
 W32KAPI int NTAPI NtGdiGetDeviceCaps(HDC dc, int index);
@@ -1015,7 +1094,24 @@ W32KAPI BOOL NTAPI NtGdiLineTo(HDC dc, int x, int y);
 W32KAPI BOOL NTAPI NtGdiRectangle(HDC dc, int left, int top, int right, int bottom);
 W32KAPI BOOL NTAPI NtGdiRoundRect(HDC dc, int left, int top, int right, int bottom, int width, int height);
 W32KAPI BOOL NTAPI NtGdiEllipse(HDC dc, int left, int top, int right, int bottom);
-W32KAPI ULONG NTAPI NtGdiPolyPolyDraw(HDC dc, POINT *points, ULONG *counts, ULONG count, int function);
+W32KAPI ULONG_PTR NTAPI NtGdiPolyPolyDraw(HDC dc, POINT *points, ULONG *counts, ULONG count, int function);
+W32KAPI BOOL NTAPI NtGdiArcInternal(ULONG type, HDC dc, int left, int top, int right, int bottom, int x1, int y1,
+                                    int x2, int y2);
+W32KAPI BOOL NTAPI NtGdiAngleArc(HDC dc, int x, int y, DWORD radius, DWORD start_bits, DWORD sweep_bits);
+W32KAPI BOOL NTAPI NtGdiPolyDraw(HDC dc, POINT *points, BYTE *types, ULONG count);
+W32KAPI BOOL NTAPI NtGdiGradientFill(HDC dc, PVOID vertices, ULONG vertex_count, PVOID mesh, ULONG mesh_count,
+                                     ULONG mode);
+W32KAPI BOOL NTAPI NtGdiTransparentBlt(HDC dst, int x, int y, int width, int height, HDC src, int src_x, int src_y,
+                                       int src_width, int src_height, COLORREF transparent);
+W32KAPI BOOL NTAPI NtGdiMaskBlt(HDC dst, int x, int y, int width, int height, HDC src, int src_x, int src_y,
+                                HBITMAP mask, int mask_x, int mask_y, DWORD rop4, DWORD bk_color);
+W32KAPI BOOL NTAPI NtGdiComputeXformCoefficients(HDC dc);
+W32KAPI BOOL NTAPI NtGdiUpdateTransform(HDC dc);
+W32KAPI BOOL NTAPI NtGdiScaleViewportExtEx(HDC dc, int xn, int xd, int yn, int yd, SIZE *old);
+W32KAPI BOOL NTAPI NtGdiScaleWindowExtEx(HDC dc, int xn, int xd, int yn, int yd, SIZE *old);
+W32KAPI BOOL NTAPI NtGdiCombineTransform(XFORM *out, const XFORM *a, const XFORM *b);
+W32KAPI LONG NTAPI NtGdiGetDeviceWidth(HDC dc);
+W32KAPI BOOL NTAPI NtGdiMirrorWindowOrg(HDC dc);
 W32KAPI COLORREF NTAPI NtGdiSetPixel(HDC dc, int x, int y, COLORREF color);
 W32KAPI COLORREF NTAPI NtGdiGetPixel(HDC dc, int x, int y);
 
@@ -1041,6 +1137,14 @@ W32KAPI DWORD NTAPI NtGdiGetFontUnicodeRanges(HDC dc, LPGLYPHSET set);
 W32KAPI ULONG NTAPI NtGdiGetGlyphOutline(HDC dc, WCHAR ch, UINT format, LPGLYPHMETRICS gm, ULONG size, PVOID buffer,
                                          LPMAT2 mat, BOOL ignore_rotation);
 W32KAPI DWORD NTAPI NtGdiGetGlyphIndicesW(HDC dc, LPCWSTR text, int count, LPWORD indices, DWORD flags);
+W32KAPI BOOL NTAPI NtGdiGetTextExtent(HDC dc, LPCWSTR text, int count, LPSIZE size, UINT flags);
+W32KAPI BOOL NTAPI NtGdiGetRealizationInfo(HDC dc, PVOID info);
+W32KAPI DWORD NTAPI NtGdiQueryFontAssocInfo(HDC dc);
+W32KAPI BOOL NTAPI NtGdiAnyLinkedFonts(void);
+W32KAPI BOOL NTAPI NtGdiFontIsLinked(HDC dc);
+W32KAPI DWORD NTAPI NtGdiGetCharSet(HDC dc);
+W32KAPI int NTAPI NtGdiGetTextCharsetInfo(HDC dc, FONTSIGNATURE *signature, DWORD flags);
+W32KAPI DWORD NTAPI NtGdiGetDCDpiScaleValue(HDC dc);
 
 W32KAPI BOOL NTAPI NtGdiBeginPath(HDC dc);
 W32KAPI BOOL NTAPI NtGdiEndPath(HDC dc);
@@ -1085,7 +1189,17 @@ W32KAPI BOOL NTAPI NtGdiSetVirtualResolution(HDC dc, int px, int py, int mx, int
 W32KAPI BOOL NTAPI NtGdiSetMiterLimit(HDC dc, DWORD limit, DWORD *old);
 W32KAPI BOOL NTAPI NtGdiGetMiterLimit(HDC dc, DWORD *limit);
 W32KAPI BOOL NTAPI NtGdiWidenPath(HDC dc);
-W32KAPI HPEN NTAPI NtGdiExtCreatePen(ULONG style, ULONG width, ULONG brush_style, ULONG color, ULONG_PTR hatch,
-                                     ULONG count, const DWORD *styles);
+W32KAPI HPEN NTAPI NtGdiExtCreatePen(ULONG style, ULONG width, ULONG brush_style, ULONG color, ULONG_PTR client_hatch,
+                                     ULONG_PTR hatch, ULONG count, const DWORD *styles, ULONG dib_size, BOOL old_style,
+                                     HBRUSH brush);
+W32KAPI HBRUSH NTAPI NtGdiCreateHatchBrushInternal(ULONG style, COLORREF color, BOOL pen);
+W32KAPI HBRUSH NTAPI NtGdiCreatePatternBrushInternal(HBITMAP bitmap, BOOL pen, BOOL b8x8);
+W32KAPI HBRUSH NTAPI NtGdiCreateDIBBrush(PVOID packed, ULONG usage, UINT size, BOOL b8x8, BOOL pen, PVOID client);
+W32KAPI BOOL NTAPI NtGdiSetBrushOrg(HDC dc, int x, int y, POINT *old);
+W32KAPI HRGN NTAPI NtGdiCreateEllipticRgn(int left, int top, int right, int bottom);
+W32KAPI int NTAPI NtGdiOffsetClipRgn(HDC dc, int x, int y);
+W32KAPI BOOL NTAPI NtGdiPtVisible(HDC dc, int x, int y);
+W32KAPI BOOL NTAPI NtGdiRectVisible(HDC dc, const RECT *rect);
+W32KAPI NTSTATUS NTAPI NtGdiGetEntry(ULONG index, PVOID entry);
 
 #endif

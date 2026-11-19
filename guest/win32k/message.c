@@ -82,97 +82,14 @@ void QueuePostInput(W32THREAD *t, const MimeInputEvent *ev, WPARAM mouse_state, 
 
 /* callbacks. */
 
-#define ALIGN16(x) (((x) + 15) & ~(SIZE_T)15)
-
-/* larger blocks need a separate allocation in the receiver's address space. */
-#define MSG_INLINE_MAX 0x8000
-
 LRESULT MsgCallWindowProc(WND *w, WNDPROC proc, BOOLEAN ansi, UINT msg, WPARAM wparam, LPARAM lparam,
                           ULONG lparam_kind, ULONG lparam_size)
 {
     if (!proc || !w->Thread)
         return DefWindowProcKernel(w, msg, wparam, lparam);
-    W32THREAD *t = w->Thread;
-    if (t != W32GetThread())
+    if (w->Thread != W32GetThread())
         return 0;
-    if (lparam_kind == MIME_LPARAM_VALUE)
-        lparam_size = 0;
-    /* allocate below 4 GiB for a 32-bit receiver. */
-    PVOID external = nullptr;
-    SIZE_T external_size = 0;
-    if (lparam_size > MSG_INLINE_MAX) {
-        external_size = lparam_size;
-        NTSTATUS alloc = ZwAllocateVirtualMemory((HANDLE)-1, &external, 0, &external_size, MEM_COMMIT | MEM_RESERVE,
-                                                 PAGE_READWRITE);
-        if (!NT_SUCCESS(alloc) || (t->Process && t->Process->Wow && (ULONG_PTR)external + external_size > 0xFFFFFFFFull) ||
-            !NT_SUCCESS(MimeCopyToUser(external, (PVOID)lparam, lparam_size))) {
-            if (NT_SUCCESS(alloc)) {
-                external_size = 0;
-                ZwFreeVirtualMemory((HANDLE)-1, &external, &external_size, MEM_RELEASE);
-            }
-            return 0;
-        }
-    }
-    SIZE_T size = sizeof(MIME_WINDOWPROC_ARGS) + (external ? 0 : ALIGN16(lparam_size));
-    UCHAR local[sizeof(MIME_WINDOWPROC_ARGS) + 256];
-    MIME_WINDOWPROC_ARGS *args = size <= sizeof(local) ? (MIME_WINDOWPROC_ARGS *)local : W32Alloc(size);
-    if (!args) {
-        if (external) {
-            external_size = 0;
-            ZwFreeVirtualMemory((HANDLE)-1, &external, &external_size, MEM_RELEASE);
-        }
-        return 0;
-    }
-    args->Proc = proc;
-    args->Hwnd = WndHandle(w);
-    args->Msg = msg;
-    args->LparamKind = lparam_kind | (external ? MIME_LPARAM_EXTERNAL : 0);
-    args->Wparam = wparam;
-    args->Lparam = lparam_kind == MIME_LPARAM_VALUE ? lparam : 0;
-    if (lparam_kind == MIME_LPARAM_WPTR)
-        args->Lparam = *(LPARAM *)((PUCHAR)lparam + 8);
-    if (external)
-        args->Lparam = (LPARAM)external;
-    args->Ansi = ansi;
-    args->DataSize = lparam_size;
-    if (lparam_size && !external)
-        memcpy(args->Data, (PVOID)lparam, lparam_size);
-
-    t->CallbackDepth++;
-    UserReference(&w->Header);
-    ULONG depth = UserLeaveAll();
-    PVOID out = nullptr;
-    ULONG out_len = 0;
-    NTSTATUS status = KeUserModeCallback(MIME_CB_WINDOWPROC, args, (ULONG)size, &out, &out_len);
-    UserReenter(depth);
-    t->CallbackDepth--;
-
-    BOOLEAN writes = lparam_kind == MIME_LPARAM_INOUT || lparam_kind == MIME_LPARAM_PTR2 ||
-                     lparam_kind == MIME_LPARAM_WPTR;
-    LRESULT result = 0;
-    if (NT_SUCCESS(status) && out && out_len >= sizeof(MIME_CALLBACK_RESULT)) {
-        MIME_CALLBACK_RESULT hdr;
-        if (NT_SUCCESS(MimeCopyFromUser(&hdr, out, sizeof(hdr)))) {
-            result = hdr.Result;
-            if (writes && lparam_size && external) {
-                MimeCopyFromUser((PVOID)lparam, external, lparam_size);
-            } else if (writes && lparam_size) {
-                ULONG n = hdr.DataSize < lparam_size ? hdr.DataSize : lparam_size;
-                if (n && out_len >= sizeof(hdr) + n)
-                    MimeCopyFromUser((PVOID)lparam, (PUCHAR)out + sizeof(hdr), n);
-            }
-        }
-    } else if (!NT_SUCCESS(status)) {
-        DbgPrint("win32k: window procedure callback for message %x failed: %08x\n", msg, status);
-    }
-    UserDereference(&w->Header);
-    if ((PUCHAR)args != local)
-        W32Free(args);
-    if (external) {
-        external_size = 0;
-        ZwFreeVirtualMemory((HANDLE)-1, &external, &external_size, MEM_RELEASE);
-    }
-    return result;
+    return ClientCallWindowProc(w, proc, ansi, msg, wparam, lparam, lparam_kind, lparam_size);
 }
 
 /* sending. */
@@ -247,12 +164,17 @@ static void complete_sent(SENT_MESSAGE *sm, LRESULT result)
 /* SendMessageCallback runs its callback in the sending thread. */
 static void call_async(W32THREAD *t, SENDASYNCPROC proc, HWND hwnd, UINT msg, ULONG_PTR data, LRESULT result)
 {
-    MIME_SENDASYNC_ARGS args = {proc, hwnd, msg, data, result};
+    /* __fnDWORD calls its procedure with the first four fields, which are what a SENDASYNCPROC takes. */
+    struct {
+        ULONG64 Hwnd;
+        ULONG Msg, Pad;
+        ULONG64 Data, Result, Xparam, Proc;
+    } args = {(ULONG64)(ULONG_PTR)hwnd, msg, 0, data, (ULONG64)result, 0, (ULONG64)(ULONG_PTR)proc};
     t->CallbackDepth++;
     ULONG depth = UserLeaveAll();
     PVOID out = nullptr;
     ULONG out_len = 0;
-    NTSTATUS status = KeUserModeCallback(MIME_CB_SENDASYNC, &args, sizeof(args), &out, &out_len);
+    NTSTATUS status = KeUserModeCallback(2 /* __fnDWORD */, &args, sizeof(args), &out, &out_len);
     UserReenter(depth);
     t->CallbackDepth--;
     if (!NT_SUCCESS(status))
@@ -695,7 +617,14 @@ BOOLEAN TimerGetMessage(W32THREAD *t, HWND hwnd, UINT min, UINT max, BOOLEAN rem
     ULONG64 now = now_ms();
     for (PLIST_ENTRY e = g_timers.Flink; e != &g_timers; e = e->Flink) {
         TIMER *tm = CONTAINING_RECORD(e, TIMER, Links);
-        if (tm->Thread != t || tm->Due > now || !hwnd_matches(tm->Hwnd, hwnd) || !(tm->System ? system : user))
+        if (tm->Thread != t || tm->Due > now)
+            continue;
+        /* the caret blinks inside win32k, its timer never reaches the window. */
+        if (tm->System && CaretTimer(t, tm->Hwnd, tm->Id)) {
+            tm->Due = now + tm->Elapse;
+            continue;
+        }
+        if (!hwnd_matches(tm->Hwnd, hwnd) || !(tm->System ? system : user))
             continue;
         out->hwnd = tm->Hwnd;
         out->message = tm->System ? WM_SYSTIMER : WM_TIMER;
@@ -1346,7 +1275,7 @@ static BOOLEAN stays_in_process(const WND *w, UINT msg)
     if (msg == MSG_INITDIALOG || msg == MSG_NOTIFY)
         return TRUE;
     BOOLEAN reveals_password = msg == WM_GETTEXT || msg == EM_GETLINE || msg == EM_SETPASSWORDCHAR;
-    BOOLEAN password_edit = w->Class && w->Class->Fnid == MIME_FNID_EDIT && (w->Style & ES_PASSWORD);
+    BOOLEAN password_edit = w->Class && w->Class->Fnid == FNID_EDIT && (w->Style & ES_PASSWORD);
     return reveals_password && password_edit;
 }
 
@@ -1458,8 +1387,12 @@ static LRESULT send_one(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, DWORD ty
     }
     BOOLEAN wow_layout = target && target->Process && target->Process->Wow && rule.Layout;
     BOOLEAN notifies = type == MIME_MSGCALL_SENDNOTIFY || type == MIME_MSGCALL_SENDCALLBACK;
-    BOOLEAN marshal = rule.Class != MC_VALUE && rule.Class != MC_CREATE &&
-                      (cross_process || wow_layout || (notifies && cross_thread));
+    /*
+     * the procedures of user32 are called with copies win32k holds, so data of a pointer is copied whoever sends it:
+     * its pointer reaches the receiver in a callback of win32k, never as it is.
+     */
+    BOOLEAN marshal = rule.Class != MC_VALUE && rule.Class != MC_CREATE;
+    (void)wow_layout, (void)cross_process;
     SEND_OPTS local = {};
     if (opts)
         local = *opts;
@@ -1550,10 +1483,18 @@ void NTAPI W32TimeChange(void)
     UserLeave();
 }
 
+/* SNDMSGTIMEOUT of user32: the flags and the time, then what SendMessageTimeout answers and the result. */
+typedef struct SNDMSGTIMEOUT {
+    UINT Flags;
+    UINT Timeout;
+    ULONG_PTR Return;
+    ULONG_PTR Result;
+} SNDMSGTIMEOUT;
+
 static LRESULT send_user(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, DWORD type, ULONG_PTR info)
 {
     SEND_OPTS opts = {};
-    MIME_SEND_TIMEOUT st = {};
+    SNDMSGTIMEOUT st = {};
     if (type == MIME_MSGCALL_SENDTIMEOUT) {
         if (!info || !NT_SUCCESS(MimeCopyFromUser(&st, (PVOID)info, sizeof(st))))
             return 0;
@@ -1586,6 +1527,7 @@ static LRESULT send_user(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam, DWOR
         }
     }
     if (type == MIME_MSGCALL_SENDTIMEOUT) {
+        st.Return = ok;
         st.Result = ok ? (ULONG_PTR)r : 0;
         MimeCopyToUser((PVOID)info, &st, sizeof(st));
         return ok;
@@ -1648,8 +1590,49 @@ LRESULT NTAPI NtUserMessageCall(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
         W32SetLastError(ERROR_INVALID_PARAMETER);
         return 0;
     }
+    /*
+     * the kinds user32 of 26300.9457 gives, by the procedure of win32kfull that answers them: the procedures of the
+     * window, the desktop and the menu run in the kernel, SendMessageFF is a send to every top level window through
+     * the desktop, with the times of SendMessageTimeout when there are some.
+     */
+    switch (type) {
+    case FNID_MENU:
+    case FNID_DESKTOP:
+    case FNID_DEFWINDOWPROC:
+    case FNID_MESSAGEWND:
+    case FNID_ICONTITLE:
+    case FNID_CALLWINDOWPROC:
+        type = MIME_MSGCALL_DEFWINDOWPROC;
+        break;
+    case FNID_SENDMESSAGE:
+        type = MIME_MSGCALL_SEND;
+        break;
+    case FNID_SENDMESSAGEFF:
+        hwnd = HWND_BROADCAST;
+        type = result_info ? MIME_MSGCALL_SENDTIMEOUT : MIME_MSGCALL_SEND;
+        break;
+    case FNID_SENDMESSAGEEX:
+        type = MIME_MSGCALL_SENDTIMEOUT;
+        break;
+    case FNID_SENDNOTIFYMESSAGE:
+        type = MIME_MSGCALL_SENDNOTIFY;
+        break;
+    case FNID_SENDMESSAGECALLBACK:
+        type = MIME_MSGCALL_SENDCALLBACK;
+        break;
+    case FNID_SENDMESSAGEBSM:
+        type = MIME_MSGCALL_BROADCAST;
+        break;
+    default:
+        DbgPrint("win32k: NtUserMessageCall of kind %x for message %x is not known\n", type, msg);
+        return 0;
+    }
     UserEnter();
     LRESULT r = 0;
+    W32THREAD *caller = W32GetThread();
+    BOOLEAN was_ansi = caller ? caller->SendAnsi : FALSE;
+    if (caller)
+        caller->SendAnsi = ansi != 0;
     switch (type) {
     case MIME_MSGCALL_DEFWINDOWPROC: {
         WND *w = WndLookup(hwnd);
@@ -1666,8 +1649,9 @@ LRESULT NTAPI NtUserMessageCall(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpara
         r = send_user(hwnd, msg, wparam, lparam, type, result_info);
         break;
     }
+    if (caller)
+        caller->SendAnsi = was_ansi;
     UserLeave();
-    (void)ansi;
     return r;
 }
 
@@ -1807,10 +1791,19 @@ static PWSTR capture_sz(LPARAM lparam, BOOLEAN user, ULONG *chars)
         return nullptr;
     ULONG cap = 64, n = 0;
     PWSTR buf = W32Alloc(cap * sizeof(WCHAR));
+    /* DefWindowProcA hands win32k the string of an ansi window as it is. */
+    W32THREAD *t = user ? PsGetCurrentThreadWin32Thread() : nullptr;
+    BOOLEAN ansi = t && t->SendAnsi;
     while (buf) {
         WCHAR c;
-        if (!read_lparam(&c, lparam + (LPARAM)n * (LPARAM)sizeof(WCHAR), sizeof(c), user) || !c)
+        if (ansi) {
+            CHAR b;
+            if (!read_lparam(&b, lparam + (LPARAM)n, sizeof(b), user) || !b)
+                break;
+            RtlMultiByteToUnicodeN(&c, sizeof(c), nullptr, &b, 1);
+        } else if (!read_lparam(&c, lparam + (LPARAM)n * (LPARAM)sizeof(WCHAR), sizeof(c), user) || !c) {
             break;
+        }
         if (n + 1 >= cap) {
             if (cap >= 65536)
                 break;
@@ -1962,6 +1955,13 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
             w->Flags |= WNDF_ACTIVE_FRAME;
         else
             w->Flags &= ~WNDF_ACTIVE_FRAME;
+        /* the caption about to be drawn asks for its icon, the small ones first, as windows does when it shows. */
+        if (wparam && (w->Style & WS_CAPTION) == WS_CAPTION && (w->Style & WS_SYSMENU) && !w->IconSmall && !w->Icon) {
+            static const WPARAM order[] = {2 /* ICON_SMALL2 */, ICON_SMALL, ICON_BIG};
+            for (ULONG i = 0; i < RTL_NUMBER_OF(order) && !w->Header.Destroyed; i++)
+                if (MsgSend(w, WM_GETICON, order[i], 0))
+                    break;
+        }
         /* the host draws the border, whose color follows the activation. */
         if (WndIsTopLevel(w))
             WndUpdateHostConfig(w, FALSE);
@@ -1976,10 +1976,16 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
     case WM_NCMOUSELEAVE:
     case WM_NCRBUTTONUP: {
         POINT pt = {(SHORT)LOWORD(lparam), (SHORT)HIWORD(lparam)};
-        return FrameMouse(w, msg, (LONG)wparam, pt);
+        LRESULT r = FrameMouse(w, msg, (LONG)wparam, pt);
+        /* a press that no caption button took moves or sizes the window. */
+        if (msg == WM_NCLBUTTONDOWN && !w->Header.Destroyed && !w->CaptionTracking)
+            MoveSizeDefault(w, msg, wparam, lparam);
+        return r;
     }
 
     case WM_SYSCOMMAND:
+        if (MoveSizeDefault(w, msg, wparam, lparam))
+            return 0;
         switch (wparam & 0xFFF0) {
         case SC_CLOSE:
             if (!(WndTopLevel(w)->Flags & WNDF_NOCLOSE))
@@ -2044,7 +2050,8 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         if (LOWORD(wparam) != WA_INACTIVE && !(w->Style & WS_MINIMIZE)) {
             W32THREAD *t = w->Thread;
             WND *focus = t ? WndLookup(t->Focus) : nullptr;
-            if (!focus || (focus != w && !WndIsChildOf(focus, w)))
+            /* a disabled window is activated and takes no focus, the focus stays where it was. */
+            if (!(w->Style & WS_DISABLED) && (!focus || (focus != w && !WndIsChildOf(focus, w))))
                 WndSetFocus(w);
         }
         return 0;
@@ -2115,6 +2122,9 @@ static LRESULT def_proc(WND *w, UINT msg, WPARAM wparam, LPARAM lparam, BOOLEAN 
         PWSTR text = capture_sz(lparam, user, &chars);
         WndSetText(w, text, chars);
         W32Free(text);
+        /* the caption is drawn again through WM_NCUAHDRAWCAPTION, DC_TEXT with DC_ACTIVE when it is active. */
+        if ((w->Style & WS_CAPTION) == WS_CAPTION)
+            MsgSend(w, 0x00AE, 8 | ((w->Flags & WNDF_ACTIVE_FRAME) ? 1 : 0), 0);
         return TRUE;
     }
 

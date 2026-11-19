@@ -360,7 +360,8 @@ LRESULT FrameHitTest(WND *w, POINT pt)
         case CAPTION_HELP:
             return HTHELP;
         }
-        if ((w->Style & WS_SYSMENU) && w->IconSmall && !(w->ExStyle & (WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW)) &&
+        if ((w->Style & WS_SYSMENU) && (w->IconSmall || w->Icon || (w->Class && (w->Class->IconSmall || w->Class->Icon))) &&
+            !(w->ExStyle & (WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW)) &&
             wp.x < vis.left + scale(32, dpi) && wp.y >= vis.top)
             return HTSYSMENU;
         if (wp.y >= vis.top && wp.x >= vis.left && wp.x < vis.right)
@@ -850,7 +851,11 @@ void FramePaint(WND *w)
         LONG caption_top = vis.top;
         LONG caption_bottom = origin.y + m.Top;
         LONG x = vis.left + scale(12, dpi);
-        BOOLEAN icon = (w->Style & WS_SYSMENU) && w->IconSmall && !(w->ExStyle & (WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW));
+        /* like windows, the small icon of the window, then of its class, then the large ones. */
+        HICON shown_icon = w->IconSmall ? w->IconSmall
+                           : w->Class && w->Class->IconSmall ? w->Class->IconSmall
+                           : w->Icon ? w->Icon : w->Class ? w->Class->Icon : nullptr;
+        BOOLEAN icon = (w->Style & WS_SYSMENU) && shown_icon && !(w->ExStyle & (WS_EX_DLGMODALFRAME | WS_EX_TOOLWINDOW));
         if (icon) {
             LONG size = MetricsGet(SM_CXSMICON, dpi);
             LONG ix = vis.left + scale(8, dpi);
@@ -861,7 +866,7 @@ void FramePaint(WND *w)
             DC *dc = DcLookup(hdc);
             if (dc) {
                 RgnCopy(&dc->VisRgn, &clip);
-                CursorDrawIcon(dc, ix - origin.x, iy - origin.y, w->IconSmall, size, size, DI_NORMAL);
+                CursorDrawIcon(dc, ix - origin.x, iy - origin.y, shown_icon, size, size, DI_NORMAL);
                 PaintReleaseDC(dc);
             }
             x = ix + size + scale(8, dpi);

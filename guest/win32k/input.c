@@ -31,6 +31,7 @@ void InputSetForeground(WND *w)
 {
     WND *old = InputForeground;
     InputForeground = w;
+    UserSharedForeground(w ? WndHandle(w) : nullptr);
     InputKeysChanged();
     if (old != w)
         InputForegroundChanged();
