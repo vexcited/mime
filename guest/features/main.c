@@ -15,6 +15,7 @@
  * is 0 or the error, a Win32 error or an HRESULT.
  */
 #include "featurep.h"
+#include <mime/elevate.h>
 
 #define TOKEN_QUERY_ 0x0008
 #define TokenElevation_ 20
@@ -24,8 +25,6 @@
 WINBASEAPI BOOL WINAPI OpenProcessToken(HANDLE process, DWORD access, PHANDLE token);
 WINBASEAPI BOOL WINAPI GetTokenInformation(HANDLE token, int klass, LPVOID info, DWORD length, PDWORD returned);
 
-typedef DWORD(WINAPI *LAUNCH_ELEVATED)(LPCWSTR application, LPCWSTR command, LPCWSTR directory, DWORD flags,
-                                       const STARTUPINFOW *startup, PROCESS_INFORMATION *info, DWORD *kind);
 
 typedef enum ACTION {
     ACTION_NONE,
@@ -212,17 +211,13 @@ static int run_elevated(void)
     DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH);
     if (!n || n >= MAX_PATH)
         return ERROR_PATH_NOT_FOUND;
-    HMODULE advapi32 = LoadLibraryW(L"advapi32.dll");
-    LAUNCH_ELEVATED launch = advapi32 ? (LAUNCH_ELEVATED)(void *)GetProcAddress(advapi32, "LaunchElevated") : nullptr;
-    if (!launch)
-        return ERROR_NOT_SUPPORTED;
     TU_STR command = {};
     tu_str_format(&command, L"\"%ls\" %ls /elevated", self, tu_tail);
     STARTUPINFOW startup = {sizeof(startup)};
     PROCESS_INFORMATION process;
     /* a request of a program comes without a console, and the second run goes without one too. */
     DWORD flags = GetConsoleWindow() ? 0 : DETACHED_PROCESS;
-    DWORD error = launch(nullptr, tu_str_text(&command), nullptr, flags, &startup, &process, nullptr);
+    DWORD error = MimeLaunchElevated(nullptr, tu_str_text(&command), nullptr, flags, &startup, &process, nullptr);
     tu_str_free(&command);
     if (error) {
         tu_eprint(L"features: administrator rights are needed and could not be had (error %lu).\n", error);
