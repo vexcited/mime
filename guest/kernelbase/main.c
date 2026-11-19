@@ -22,3 +22,12 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
     }
     return TRUE;
 }
+
+/*
+ * the loader of windows calls this once kernel32 and kernelbase are loaded and the process is set up, and ends the
+ * process when it fails. measured on windows 11 26300: 0. what windows does here mime did when the dll attached.
+ */
+__declspec(dllexport) NTSTATUS WINAPI KernelbasePostInit(void)
+{
+    return STATUS_SUCCESS;
+}
