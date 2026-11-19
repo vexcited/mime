@@ -311,6 +311,9 @@ ATOM NTAPI NtUserRegisterClassExWOW(const WNDCLASSEXW *user_wc, PUNICODE_STRING 
     W32PROCESS *p = W32GetProcess();
     ATOM result = 0;
     if (p) {
+        /* only user32 registers the classes of its controls, with its own module. */
+        if (fnid && !p->ClientModule)
+            p->ClientModule = wc.hInstance;
         WND_CLASS *existing = ClassFind(p, name, atom, wc.hInstance);
         if (existing && !existing->System && (existing->Process == p || (existing->Style & CS_GLOBALCLASS)) &&
             (existing->Instance == wc.hInstance || (existing->Style & CS_GLOBALCLASS))) {
@@ -402,7 +405,14 @@ BOOL NTAPI NtUserGetClassInfoEx(HINSTANCE instance, PUNICODE_STRING user_name, L
         return FALSE;
     }
     UserEnter();
-    WND_CLASS *c = ClassFind(W32GetProcess(), name, atom, instance);
+    /*
+     * measured on windows 11 26300 with clsinst.c of the research repository: no instance stands for user32, so a
+     * class local to another module is not found without its instance, and the instance told is the one asked with,
+     * none for user32.
+     */
+    W32PROCESS *p = W32GetProcess();
+    HINSTANCE client = p ? p->ClientModule : nullptr;
+    WND_CLASS *c = ClassFind(p, name, atom, instance ? instance : client);
     WNDCLASSEXW wc;
     memset(&wc, 0, sizeof(wc));
     ATOM found = 0;
@@ -416,7 +426,7 @@ BOOL NTAPI NtUserGetClassInfoEx(HINSTANCE instance, PUNICODE_STRING user_name, L
         wc.lpfnWndProc = ClassProc(c, W32GetProcess());
         wc.cbClsExtra = c->ClassExtra;
         wc.cbWndExtra = c->WindowExtra;
-        wc.hInstance = c->Instance;
+        wc.hInstance = !client ? c->Instance : instance == client ? nullptr : instance;
         wc.hIcon = c->Icon;
         wc.hCursor = c->Cursor;
         wc.hbrBackground = c->Background;
