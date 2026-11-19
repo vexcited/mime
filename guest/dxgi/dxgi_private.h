@@ -29,7 +29,12 @@ typedef struct DxgiGpu {
     LARGE_INTEGER umd_version;
 } DxgiGpu;
 
-/* the process's vulkan instance and its gpus, in adapter order, then the basic render driver listed after them. */
+/*
+ * the process's vulkan instance and its gpus, then the adapters windows makes itself, all of them the basic render
+ * driver by name: warp, the one of the basic display adapter and the one of an indirect display. the list is the
+ * enumeration: the gpus then warp, or behind the basic display adapter its own, warp, the indirect display's and
+ * the gpus the machine still tells.
+ */
 typedef struct DxgiVulkan {
     VkInstance instance;
     PFN_vkGetInstanceProcAddr get_instance_proc;
@@ -38,11 +43,17 @@ typedef struct DxgiVulkan {
     UINT count;
     DxgiGpu gpus[8];
     DxgiGpu warp;
+    DxgiGpu basic;
+    DxgiGpu indirect;
+    UINT listed;
+    const DxgiGpu *list[11];
 } DxgiVulkan;
 
 const DxgiVulkan *DxgiGetVulkan(void);
-/* the adapter at an index of the enumeration, the basic render driver being the last. */
+/* the adapter at an index of the enumeration. */
 const DxgiGpu *DxgiGpuAt(UINT index);
+/* true for a gpu of the host, false for an adapter windows renders itself. */
+BOOL DxgiHostGpu(const DxgiGpu *gpu);
 
 struct DxgiFactory {
     IDXGIFactory7 iface;

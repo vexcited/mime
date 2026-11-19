@@ -325,6 +325,11 @@ static HRESULT STDMETHODCALLTYPE factory_enum_adapter_by_gpu_preference(IDXGIFac
         return DXGI_ERROR_INVALID_CALL;
     *adapter = nullptr;
     const DxgiVulkan *vk = DxgiGetVulkan();
+    /* behind the basic display adapter the order is the enumeration's whatever the preference. */
+    if (vk->list[0] == &vk->basic) {
+        const DxgiGpu *gpu = DxgiGpuAt(index);
+        return gpu ? DxgiCreateAdapter(impl(iface), gpu, riid, adapter) : DXGI_ERROR_NOT_FOUND;
+    }
     if (index > vk->count)
         return DXGI_ERROR_NOT_FOUND;
     /* software adapters sort last whatever the preference. */
